@@ -14,7 +14,7 @@ AI-operable REST API with capabilities manifest, 2400+ tests, MIT license. -->
   Open-source desktop GUI for JAV metadata — one-line install, 6 scrape sources, actress favorites + alias system, Jellyfin/Emby ready, AI-operable REST API.
 </em></p>
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
+![Python](https://img.shields.io/badge/Python-3.12-blue.svg)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 ![Tests](https://github.com/slive777/OpenAver/actions/workflows/test.yml/badge.svg)
@@ -173,7 +173,7 @@ curl http://localhost:<port>/api/capabilities
 
 | 層級 | 技術 |
 |------|------|
-| **Backend** | FastAPI (Python 3.10+) |
+| **Backend** | FastAPI (Python 3.12) |
 | **Frontend** | Jinja2 + DaisyUI + Tailwind CSS + Alpine.js 3.x + Fluent Design 2 |
 | **Animation** | GSAP 3.14+ + Motion Adapter (reduced-motion support) |
 | **Desktop** | PyWebView (Windows/macOS) |
@@ -182,7 +182,7 @@ curl http://localhost:<port>/api/capabilities
 
 ### 從原始碼執行
 
-**前置需求**: Python 3.10+、Chrome/Edge、[WebView2 Runtime](https://go.microsoft.com/fwlink/p/?LinkId=2124703) (Windows 10/VM)
+**前置需求**: Python 3.12（與打包版本一致；其他版本僅 venv 開發勉強可跑，不保證）、Chrome/Edge、[WebView2 Runtime](https://go.microsoft.com/fwlink/p/?LinkId=2124703) (Windows 10/VM)
 
 ```bash
 # Clone + 建立虛擬環境 + 安裝依賴
