@@ -196,6 +196,12 @@
       "gallery_advanced": "進階顯示選項",
       "system": "系統設定"
     },
+    "favorite_folder": {
+      "pick_from_scanner": "從 Scanner 資料夾選取",
+      "no_directories": "尚未設定 Scanner 資料夾",
+      "linked_text": "✓ 已連動 Scanner",
+      "not_linked_text": "⚠ 未連動 Scanner"
+    },
     "search": {
       "uncensored_mode": "無碼模式",
       "default_source_hint": "預設搜尋來源",

@@ -186,7 +186,10 @@ export function stateConfig() {
 
         // ===== Lifecycle =====
         init() {
-            this.loadConfig();
+            this.loadConfig().then(() => {
+                // B1: init scanner link state after config loaded
+                if (typeof this._initB1 === 'function') this._initB1();
+            });
 
             // Watch for form changes
             this.$watch('form.translateEnabled', () => this.updateTranslateOptions());
