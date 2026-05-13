@@ -156,6 +156,60 @@ class TestGalleryScanner:
         assert found == ""
 
 
+# ============ NUM_PATTERNS 多字母後綴 ============
+
+class TestNumPatternsMultiLetterSuffix:
+    """VideoScanner.find_num_from_filename() 多字母小寫後綴正/負 case"""
+
+    @pytest.fixture
+    def scanner(self):
+        return VideoScanner()
+
+    # --- 正面 case ---
+
+    def test_multi_letter_suffix_ch_abp(self, scanner):
+        """多字母後綴 ch — abp-321ch.mp4 應抽出 ABP-321"""
+        result = scanner.find_num_from_filename("abp-321ch.mp4")
+        assert result == "ABP-321"
+
+    def test_multi_letter_suffix_ch_ipzz(self, scanner):
+        """多字母後綴 ch，不同前綴長度 — ipzz-789ch.mp4 應抽出 IPZZ-789"""
+        result = scanner.find_num_from_filename("ipzz-789ch.mp4")
+        assert result == "IPZZ-789"
+
+    def test_multi_letter_suffix_uncen(self, scanner):
+        """多字母後綴 uncen — abp-321uncen.mp4 應抽出 ABP-321"""
+        result = scanner.find_num_from_filename("abp-321uncen.mp4")
+        assert result == "ABP-321"
+
+    def test_separator_number_suffix_not_regressed(self, scanner):
+        """有分隔符數字後綴（既已覆蓋）— abp-321-2024.mp4 應抽出 ABP-321，不退化"""
+        result = scanner.find_num_from_filename("abp-321-2024.mp4")
+        assert result == "ABP-321"
+
+    def test_single_letter_suffix_not_regressed(self, scanner):
+        """原有單字母後綴 d — sone-205d.mp4 應抽出 SONE-205，不退化"""
+        result = scanner.find_num_from_filename("sone-205d.mp4")
+        assert result == "SONE-205"
+
+    # --- 負面 case ---
+
+    def test_prefix_too_long_vacation(self, scanner):
+        """前綴 vacation（7 字母，正好超上限）— my-vacation-2024.mp4 不應誤抓"""
+        result = scanner.find_num_from_filename("my-vacation-2024.mp4")
+        assert result == ""
+
+    def test_prefix_too_long_tutorial(self, scanner):
+        """前綴 tutorial（8 字母）超上限 — tutorial-123.mp4 不應誤抓"""
+        result = scanner.find_num_from_filename("tutorial-123.mp4")
+        assert result == ""
+
+    def test_no_separator_number_suffix_not_supported(self, scanner):
+        """無分隔符數字後綴 CD-58-1 釘版不支援 — abp-3212024.mp4 不應誤抓"""
+        result = scanner.find_num_from_filename("abp-3212024.mp4")
+        assert result == ""
+
+
 # ============ normalize_maker() 兩步邏輯 ============
 
 class TestNormalizeMaker:
