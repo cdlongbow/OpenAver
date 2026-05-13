@@ -167,7 +167,9 @@
       "no_valid_files": "無有效影片檔案（無法識別番號）",
       "desktop_only": "此功能需要在桌面應用程式中使用",
       "load_failed": "載入失敗，請重試",
-      "translate_failed": "翻譯失敗，請重試"
+      "translate_failed": "翻譯失敗，請重試",
+      "db_not_synced": "未連動 — 整理完成後不會出現在 Showcase",
+      "db_sync_failed": "DB 同步失敗（檔案已整理但未出現在 Showcase）"
     },
     "duplicate": {
       "title": "檔案重複",

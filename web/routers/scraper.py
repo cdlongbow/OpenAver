@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from typing import List, Literal, Optional
 
 from core.database import VideoRepository
+from core.db_inflow import try_inflow_upsert
 from core.enricher import enrich_single, fetch_samples_only
 from core.organizer import organize_file
 from core.path_utils import to_file_uri, uri_to_fs_path
@@ -118,7 +119,16 @@ def scrape_single(request: ScrapeRequest) -> dict:
         except Exception:
             logger.warning("scrape_single: DB upsert user_tags 失敗，result 仍回傳", exc_info=True)
 
-    return result
+    # in-flow upsert：整理成功後條件式寫入 DB（只在 Scanner 追蹤目錄內才執行）
+    db_sync_status = "not_linked"
+    if result.get("success"):
+        target_file = result.get("new_filename")
+        if target_file:
+            db_sync_status = try_inflow_upsert(target_file)
+        else:
+            logger.warning("scrape_single: organize_file 回傳缺 new_filename，skip in-flow upsert")
+
+    return {**result, "db_sync_status": db_sync_status}
 
 
 class EnrichRequest(BaseModel):
