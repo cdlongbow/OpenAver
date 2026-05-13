@@ -79,3 +79,15 @@
     max-width: 22rem;    /* 避免單行太寬 */
     white-space: normal; /* 仍可自動換行 */
 }
+
+/* 窄螢幕（< Tailwind md 768px）改向下展開，對齊 icon 右邊往左 */
+@media (max-width: 768px) {
+    .tag-alias-ai-hint-popover {
+        top: 100%;
+        left: auto;
+        right: 0;                       /* 對齊 icon 右邊，往左展開 */
+        margin-top: 0.5rem;
+        transform: none;
+        max-width: calc(100vw - 2rem);  /* viewport-aware clamp，防止溢出 */
+    }
+}

@@ -408,7 +408,9 @@
                         class="help-popover-btn"
                         :title="window.t('scanner.tag_alias.ai_hint.icon_title')"
                         :aria-label="window.t('scanner.tag_alias.ai_hint.icon_title')"
-                        @click.stop.prevent="toggleTagAliasAiHint()">
+                        @click.stop.prevent="toggleTagAliasAiHint()"
+                        @keydown.enter.stop
+                        @keydown.space.stop>
                     <i class="bi bi-question-circle"></i>
                 </button>
                 <div class="help-popover tag-alias-ai-hint-popover"

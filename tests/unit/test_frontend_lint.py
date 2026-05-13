@@ -7129,6 +7129,42 @@ class TestScannerTagAliasGuard:
             "AI hint 違規：zh_TW.json scanner.tag_alias.ai_hint.tooltip 不存在"
         )
 
+    def test_ai_hint_btn_has_keydown_stop(self):
+        """(?) button 或其 wrap 含 @keydown.enter.stop / @keydown.space.stop，
+        防止鍵盤 enter/space 冒泡到 header role=button 觸發 toggleTagAliasCard()。
+
+        接受兩種實作方式：
+          A) button 自身帶 @keydown.enter.stop 和 @keydown.space.stop
+          B) wrap div 帶 @keydown.stop（攔截所有 keydown）
+        """
+        content = self.SCANNER_HTML.read_text(encoding="utf-8")
+        has_wrap_stop = "@keydown.stop" in content and "tag-alias-ai-hint-wrap" in content
+        has_btn_enter_stop = "@keydown.enter.stop" in content
+        has_btn_space_stop = "@keydown.space.stop" in content
+        assert has_wrap_stop or (has_btn_enter_stop and has_btn_space_stop), (
+            "AI hint 鍵盤冒泡違規：(?) button 或其 wrap 必須含 @keydown.enter.stop + "
+            "@keydown.space.stop（或 wrap @keydown.stop）以防止 keydown 冒泡到 "
+            "header role=button 觸發 toggleTagAliasCard()"
+        )
+
+    def test_ai_hint_popover_mobile_fallback(self):
+        """help-popover.css 的 .tag-alias-ai-hint-popover 含 @media narrow-screen fallback，
+        防止 popover 在小螢幕往右 overflow。
+        """
+        content = (PROJECT_ROOT / 'web' / 'static' / 'css' / 'components' / 'help-popover.css').read_text(encoding="utf-8")
+        assert "@media" in content and "tag-alias-ai-hint-popover" in content, (
+            "AI hint popover 違規：help-popover.css 缺少 .tag-alias-ai-hint-popover "
+            "@media narrow-screen fallback（窄螢幕 popover 可能向右 overflow）"
+        )
+        # 確認 fallback block 在 @media 內包含 tag-alias-ai-hint-popover
+        import re
+        media_blocks = re.findall(r'@media[^{]+\{.*?\}(?:\s*\})', content, re.DOTALL)
+        has_mobile_override = any("tag-alias-ai-hint-popover" in block for block in media_blocks)
+        assert has_mobile_override, (
+            "AI hint popover 違規：@media block 應覆蓋 .tag-alias-ai-hint-popover 定位，"
+            "使窄螢幕不向右 overflow"
+        )
+
 
 class TestSampleGalleryTemplateGuard:
     """T8：Search Sample Gallery 模板守衛
