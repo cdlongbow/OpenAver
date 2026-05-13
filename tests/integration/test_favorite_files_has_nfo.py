@@ -54,12 +54,14 @@ class TestFavoriteFilesHasNfoE2E:
 
         with patch("core.config.load_config") as mock_cfg:
             mock_cfg.return_value = {
-                "gallery": {
+                "search": {
                     "favorite_folder": str(tmp_path),
+                },
+                "gallery": {
                     "min_size_mb": 0,
                     "scan_subdirectories": False,
                     "video_extensions": [".mp4"],
-                }
+                },
             }
             resp = client.get("/api/search/favorite-files")
 
