@@ -278,6 +278,7 @@ export function searchStateFileList() {
     async setFileList(paths) {
         // 呼叫過濾 API
         const setFileListSignal = this._getAbortSignal('setFileList');  // T4.3
+        var hasNfoMap = {};
         try {
             const resp = await fetch('/api/search/filter-files', {
                 method: 'POST',
@@ -300,7 +301,8 @@ export function searchStateFileList() {
                     // T6b: 後端過濾提示（info 類型）
                     this.showToast(msg, 'info');
                 }
-                paths = result.files;
+                paths = result.files.map(f => f.path);
+                result.files.forEach(f => { hasNfoMap[f.path] = !!f.has_nfo; });
             }
         } catch (err) {
             if (err.name === 'AbortError') return;  // T4.3: 新搜尋取代，靜默退出
@@ -356,6 +358,7 @@ export function searchStateFileList() {
                 searchResults: [],
                 hasMoreResults: false,
                 searched: false,
+                has_nfo: hasNfoMap[path] || false,
                 user_tags: []
             };
         });
@@ -449,7 +452,7 @@ export function searchStateFileList() {
 
             // 自動開始搜尋（T4.2: 改用 _setTimer，離頁時可統一清除）
             this._setTimer('loadFavorite', () => {
-                const searchableFiles = this.fileList.filter(f => f.number && !f.searched);
+                const searchableFiles = this.fileList.filter(f => f.number && !f.searched && !f.has_nfo);
                 if (searchableFiles.length > 0) {
                     this.searchAll();
                 }

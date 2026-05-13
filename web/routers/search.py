@@ -734,6 +734,7 @@ async def filter_files(request: Request) -> dict:
 
     filtered = []
     rejected = {"extension": 0, "size": 0, "not_found": 0}
+    nfo_stem_cache: dict = {}
 
     for original_path in paths:
         # 轉換路徑格式（Windows -> WSL）
@@ -762,8 +763,21 @@ async def filter_files(request: Request) -> dict:
                 rejected["not_found"] += 1
                 continue
 
-        # 保留原始路徑（前端需要）
-        filtered.append(original_path)
+        # NFO 同 stem 偵測（case-insensitive，父目錄 listing cache）
+        parent = p.parent
+        if parent not in nfo_stem_cache:
+            try:
+                nfo_stem_cache[parent] = {
+                    s.stem.lower()
+                    for s in parent.iterdir()
+                    if s.suffix.lower() == ".nfo"
+                }
+            except (OSError, PermissionError):
+                nfo_stem_cache[parent] = set()
+        has_nfo = p.stem.lower() in nfo_stem_cache[parent]
+
+        # 保留原始路徑（前端需要），帶 has_nfo 欄位
+        filtered.append({"path": original_path, "has_nfo": has_nfo})
 
     return {
         "success": True,

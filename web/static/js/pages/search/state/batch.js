@@ -88,8 +88,8 @@ export function searchStateBatch() {
         }
 
         // === 新的批次開始 ===
-        const searchableFiles = this.fileList.filter(f => f.number && !f.searched);
-        const failedFiles = this.fileList.filter(f => f.number && f.searched && (!f.searchResults || f.searchResults.length === 0));
+        const searchableFiles = this.fileList.filter(f => f.number && !f.searched && !f.has_nfo);
+        const failedFiles = this.fileList.filter(f => f.number && f.searched && (!f.searchResults || f.searchResults.length === 0) && !f.has_nfo);
 
         let targetFiles;
         if (searchableFiles.length > 0) {

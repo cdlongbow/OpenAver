@@ -258,8 +258,8 @@ export function searchStateBase() {
         },
 
         searchAllButtonText() {
-            const searchableFiles = this.fileList.filter(f => f.number && !f.searched);
-            const failedFiles = this.fileList.filter(f => f.number && f.searched && (!f.searchResults || f.searchResults.length === 0));
+            const searchableFiles = this.fileList.filter(f => f.number && !f.searched && !f.has_nfo);
+            const failedFiles = this.fileList.filter(f => f.number && f.searched && (!f.searchResults || f.searchResults.length === 0) && !f.has_nfo);
             const totalWithNumber = this.fileList.filter(f => f.number).length;
             const batch = this.batchState;
 
@@ -283,8 +283,8 @@ export function searchStateBase() {
             if (batch.isProcessing) {
                 return batch.isPaused ? 'bi-play-fill' : 'bi-pause-fill';
             }
-            const searchableFiles = this.fileList.filter(f => f.number && !f.searched);
-            const failedFiles = this.fileList.filter(f => f.number && f.searched && (!f.searchResults || f.searchResults.length === 0));
+            const searchableFiles = this.fileList.filter(f => f.number && !f.searched && !f.has_nfo);
+            const failedFiles = this.fileList.filter(f => f.number && f.searched && (!f.searchResults || f.searchResults.length === 0) && !f.has_nfo);
             if (searchableFiles.length === 0 && failedFiles.length > 0) {
                 return 'bi-arrow-clockwise';
             }
@@ -292,8 +292,8 @@ export function searchStateBase() {
         },
 
         searchAllDisabled() {
-            const searchableFiles = this.fileList.filter(f => f.number && !f.searched);
-            const failedFiles = this.fileList.filter(f => f.number && f.searched && (!f.searchResults || f.searchResults.length === 0));
+            const searchableFiles = this.fileList.filter(f => f.number && !f.searched && !f.has_nfo);
+            const failedFiles = this.fileList.filter(f => f.number && f.searched && (!f.searchResults || f.searchResults.length === 0) && !f.has_nfo);
             return searchableFiles.length === 0 && failedFiles.length === 0 && !this.batchState.isProcessing;
         },
 

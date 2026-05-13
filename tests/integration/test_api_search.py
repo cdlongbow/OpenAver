@@ -523,7 +523,8 @@ class TestFilterFiles:
         data = response.json()
         assert data["success"] is True
         assert len(data["files"]) == 1
-        assert str(p1) in data["files"]
+        assert data["files"][0]["path"] == str(p1)
+        assert "has_nfo" in data["files"][0]
         assert data["rejected"]["extension"] == 1
         assert data["rejected"]["not_found"] == 1
 

@@ -821,6 +821,11 @@
                             <!-- 檔名 -->
                             <span class="file-name" :title="file.path" x-text="file.filename">-</span>
 
+                            <!-- 已整理 chip -->
+                            <span x-show="file.has_nfo"
+                                  class="badge badge-ghost badge-sm text-muted ml-1"
+                                  x-text="t('search.filelist.already_organized')"></span>
+
                             <!-- 狀態圖示 -->
                             <span :class="fileStatusClass(file)"
                                   x-text="fileStatusIcon(file)"></span>

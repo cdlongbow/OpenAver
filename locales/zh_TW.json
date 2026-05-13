@@ -153,7 +153,8 @@
       "unrecognized": "無法識別番號: {filename}",
       "not_found": "找不到 {number} 的資料",
       "search_failed": "搜尋失敗",
-      "connection_error": "連線錯誤，請稍後再試"
+      "connection_error": "連線錯誤，請稍後再試",
+      "already_organized": "已整理"
     },
     "toast": {
       "no_searchable_files": "沒有需要搜尋的檔案",
