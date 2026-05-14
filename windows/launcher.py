@@ -17,13 +17,28 @@ if WINDOWS_DIR not in sys.path:
 
 import webview
 from pywebview_api import api, bind_events
+import window_state
 
 if __name__ == '__main__':
+    saved = window_state.load_state()
+    create_kwargs = dict(js_api=api, width=saved['width'], height=saved['height'])
+    if saved['x'] is not None and saved['y'] is not None:
+        create_kwargs['x'] = saved['x']
+        create_kwargs['y'] = saved['y']
+
     window = webview.create_window(
         'OpenAver',
         'http://localhost:8000',
-        js_api=api,
-        width=1200,
-        height=800
+        **create_kwargs,
     )
-    webview.start(bind_events, window)
+
+    def startup(w):
+        bind_events(w)
+        window_state.attach(w, saved)
+        if saved['maximized']:
+            try:
+                w.maximize()
+            except Exception:
+                pass
+
+    webview.start(startup, window)
