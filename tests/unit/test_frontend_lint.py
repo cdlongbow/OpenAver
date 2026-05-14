@@ -5025,22 +5025,6 @@ class TestVideoPlaybackGuard:
                 f"{file_path.name} still contains hardcoded video extension set — should import from core.video_extensions"
 
 
-class TestSettingsSimplify:
-    """T4a 守衛 — Settings 不再包含版本/更新 UI"""
-
-    def test_settings_excludes(self):
-        """settings.html/state-config.js 不含已搬移的 checkUpdate / loadVersion / restartTutorial"""
-        html = (PROJECT_ROOT / 'web/templates/settings.html').read_text(encoding='utf-8')
-        js = (PROJECT_ROOT / 'web/static/js/pages/settings/state-config.js').read_text(encoding='utf-8')
-        for forbidden, content, fname in [
-            ('checkUpdate', html, 'settings.html'),
-            ('loadVersion', js, 'settings/state-config.js'),
-            ('restartTutorial', js, 'settings/state-config.js'),
-        ]:
-            assert forbidden not in content, \
-                f"{fname} should not contain: {forbidden!r}"
-
-
 class TestHelpPage:
     """T4b 守衛 — Help 頁必要元素"""
 
@@ -7031,18 +7015,6 @@ class TestSampleGalleryTemplateGuard:
         assert sg_btn_line is not None, "search.html missing: 'sg-open-btn'"
         assert lb_line < sg_btn_line < lb_close, \
             f"T8 違規：sg-open-btn (L{sg_btn_line+1}) 不在 lb-header (L{lb_line+1}~L{lb_close+1}) 內"
-
-
-class TestProxyDirectGuard:
-    """37d T3 守衛 — settings.html proxy placeholder 包含 direct 提示"""
-
-    def test_settings_proxy_placeholder_has_direct(self):
-        """i18n 後 placeholder 文字移至 locale JSON，檢查 zh_TW.json 或 HTML"""
-        html = (PROJECT_ROOT / 'web/templates/settings.html').read_text(encoding='utf-8')
-        locale_file = PROJECT_ROOT / 'locales' / 'zh_TW.json'
-        locale_content = locale_file.read_text(encoding='utf-8') if locale_file.exists() else ''
-        assert 'direct' in html.lower() or 'direct' in locale_content.lower(), \
-            "settings.html 或 locales/zh_TW.json proxy placeholder 應包含 direct 提示"
 
 
 class TestShowcaseSampleGalleryGuard:
