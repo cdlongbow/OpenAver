@@ -2225,17 +2225,17 @@ class TestGhostFlyGuards:
 
 
 class TestTutorialExpandGuard:
-    """T10: 新手教學 7 步守衛 (method folded)"""
+    """T10: 新手教學 7 步守衛 (method folded)
+
+    v0.9 (spec-59) 把 tutorial 從 Search-first 翻轉為 Scanner-first：
+    步驟 IDs 改為 folder → generate → scanner → showcase → search → settings → help。
+    """
 
     def test_tutorial_js_and_i18n(self):
-        """tutorial.js 7 步 + samples large: true + 四語系 i18n keys"""
+        """tutorial.js 7 步 (Scanner-first) + 四語系 i18n keys"""
         js = Path("web/static/js/components/tutorial.js").read_text(encoding="utf-8")
-        for step_id in ['search', 'files', 'scanner', 'showcase', 'settings', 'help', 'samples']:
+        for step_id in ['folder', 'generate', 'scanner', 'showcase', 'search', 'settings', 'help']:
             assert f"id: '{step_id}'" in js, f"tutorial.js missing: \"id: '{step_id}'\""
-        samples_idx = js.find("id: 'samples'")
-        assert samples_idx > 0, "tutorial.js missing: \"id: 'samples'\""
-        block = js[samples_idx:js.find('}', samples_idx)]
-        assert 'large: true' in block, "tutorial.js samples step missing: 'large: true'"
         for locale in ["zh_TW", "en", "ja", "zh_CN"]:
             data = json.loads(Path(f"locales/{locale}.json").read_text(encoding="utf-8"))
             tutorial = data.get("tutorial", {})
