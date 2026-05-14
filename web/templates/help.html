@@ -114,6 +114,24 @@
                     <div class="text-base opacity-50 mt-0.5">{{ t('help.workflow.step3_desc') }}</div>
                 </div>
             </div>
+
+            <!-- Next Steps mini-list -->
+            <div class="mt-4">
+                <h6 class="text-sm font-bold mb-2">{{ t('help.workflow.next_steps_title') }}</h6>
+                <ul class="text-sm opacity-80">
+                    <li>{{ t('help.workflow.next_steps_similar') }}</li>
+                    <li>{{ t('help.workflow.next_steps_favorite') }}</li>
+                    <li>{{ t('help.workflow.next_steps_tag_alias') }}</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- 想要更多控制？分流段 -->
+    <div class="card help-card fluent-rounded-xl mb-4">
+        <div class="card-body py-3 px-5">
+            <h3 class="text-base font-bold mb-2">{{ t('help.power_user.title') }}</h3>
+            <p class="text-sm opacity-80 mb-0">{{ t('help.power_user.intro') }}</p>
         </div>
     </div>
 
@@ -172,6 +190,7 @@
                 <li>{{ t('help.batch.fav_settings') | safe }}</li>
                 <li>{{ t('help.batch.fav_load') }}</li>
                 <li>{{ t('help.batch.fav_auto') }}</li>
+                <li>{{ t('help.batch.fav_nfo_skip') | safe }}</li>
             </ul>
 
             <h6 class="mt-4">{{ t('help.batch.h6_pause') }}</h6>
@@ -360,6 +379,33 @@
             <ul>
                 <li>{{ t('help.similar.manage_enable') | safe }}</li>
                 <li>{{ t('help.similar.manage_scanner') | safe }}</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Tag 別名管理 -->
+    <div class="card help-card fluent-rounded-xl mb-4" id="tag-alias">
+        <div class="card-body">
+            <h2 class="card-title text-lg">
+                <i class="bi bi-tags"></i> {{ t('help.tag_alias.title') }}
+            </h2>
+            <p>{{ t('help.tag_alias.intro') }}</p>
+
+            <h6 class="mt-4">{{ t('help.tag_alias.h6_scanner') }}</h6>
+            <ul>
+                <li>{{ t('help.tag_alias.scanner_chipwall') }}</li>
+                <li>{{ t('help.tag_alias.scanner_ai_hint') }}</li>
+            </ul>
+
+            <h6 class="mt-4">{{ t('help.tag_alias.h6_showcase') }}</h6>
+            <ul>
+                <li>{{ t('help.tag_alias.showcase_expand') }}</li>
+                <li>{{ t('help.tag_alias.showcase_click') }}</li>
+            </ul>
+
+            <h6 class="mt-4">{{ t('help.tag_alias.h6_tips') }}</h6>
+            <ul>
+                <li>{{ t('help.tag_alias.tip_ranker') }}</li>
             </ul>
         </div>
     </div>
