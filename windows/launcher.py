@@ -34,11 +34,13 @@ if __name__ == '__main__':
 
     def startup(w):
         bind_events(w)
-        window_state.attach(w, saved)
+        live = window_state.attach(w, saved)
         if saved['maximized']:
             try:
                 w.maximize()
             except Exception:
-                pass
+                # Codex P2: maximize 失敗時清 live state，否則 on_resized/on_moved
+                # 永遠 early-return，下次啟動仍寫回 maximized=true 形成 sticky failure
+                live["maximized"] = False
 
     webview.start(startup, window)
