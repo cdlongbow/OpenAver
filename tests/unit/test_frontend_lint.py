@@ -3716,12 +3716,15 @@ class TestSettingsESMGuard:
             "settings.html pre_alpine_module block 缺少 main.js module script"
 
     def test_settings_html_xdata_is_settings(self):
-        """settings.html x-data 值為 'settings'（非 'settingsPage'）"""
+        """settings.html x-data 值為 'settings'（非 'settingsPage'）+ 含 primarySource binding"""
         content = self._read("web/templates/settings.html")
         assert 'x-data="settings"' in content, \
             "settings.html x-data 非 settings（54d-T2 切換未完成）"
         assert 'x-data="settingsPage"' not in content, \
             "settings.html 仍有舊 x-data=settingsPage（54d-T2 切換未完成）"
+        # 59b-1b: TestSettingsSourceBadge REFACTOR — primarySource 正向斷言併入此 method
+        assert 'primarySource' in content, \
+            "settings.html missing: 'primarySource' (37d T2 badge selector binding)"
 
     def test_settings_html_no_settings_js_script(self):
         """settings.html extra_js block 不含 /pages/settings.js script 載入"""
@@ -5119,18 +5122,6 @@ class TestPageLifecycleGuard:
         content = js_file.read_text(encoding='utf-8')
         assert '__registerPage' in content, \
             "scanner/state-scan.js 缺少 __registerPage 呼叫 — Scanner lifecycle 未接入統一機制"
-
-
-class TestSettingsSourceBadge:
-    """37d T2 守衛 — Settings radio 區塊已移除，badge 改為 primarySource 選擇器"""
-
-    def test_settings_source_badge_html_contains(self):
-        """settings.html badge 選擇器：不含 radio name=primarySource；含 primarySource 綁定"""
-        html = (PROJECT_ROOT / 'web/templates/settings.html').read_text(encoding='utf-8')
-        assert 'name="primarySource"' not in html, \
-            "settings.html should not contain: 'name=\"primarySource\"'"
-        assert 'primarySource' in html, \
-            "settings.html missing: 'primarySource'"
 
 
 class TestScannerLifecycleGuard:
