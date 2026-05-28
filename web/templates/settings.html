@@ -400,9 +400,10 @@
                                     id="sourcesUncensoredToggle"
                                     class="settings-sources-uncensored-toggle"
                                     :class="{ 'is-on': uncensoredMode }"
-                                    :aria-pressed="uncensoredMode ? 'true' : 'false'">
+                                    :aria-pressed="uncensoredMode ? 'true' : 'false'"
+                                    @click="uncensoredMode = !uncensoredMode">
                                 <span class="track"><span class="thumb"></span></span>
-                                <span class="lbl">{{ t('settings.sources.uncensored_mode_label') }}</span>
+                                <span class="lbl" x-text="uncensoredMode ? t('settings.sources.uncensored_mode_on') : t('settings.sources.uncensored_mode_off')">{{ t('settings.sources.uncensored_mode_label') }}</span>
                             </button>
                             <span class="settings-sources-counter">
                                 <span>{{ t('settings.sources.counter_prefix') }}</span>
@@ -491,11 +492,7 @@
                     </div>
 
                     <div class="settings-form-group">
-                        <label class="settings-label">
-                            <input type="checkbox" class="toggle toggle-primary" id="uncensoredModeEnabled"
-                                x-model="form.uncensoredModeEnabled">
-                            <span class="label-text">{{ t('settings.search.uncensored_mode') }}</span>
-                        </label>
+                        <!-- 61c-3: OLD #uncensoredModeEnabled checkbox removed — batch-bar button is now the sole uncensored control. -->
 
                         <!-- Source Badges -->
                         <!-- CD-61-14: deprecated, B2 source picker replaces -->

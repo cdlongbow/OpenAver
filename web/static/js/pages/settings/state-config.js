@@ -6,7 +6,6 @@ export function stateConfig() {
         // ===== Form State =====
         form: {
             // Search
-            uncensoredModeEnabled: false,
             searchFavoriteFolder: '',
             proxyUrl: '',
             primarySource: 'javbus',
@@ -73,11 +72,13 @@ export function stateConfig() {
         showCapAlert: false,     // _flashCapAlert() 觸發 + auto-dismiss
         _capAlertTimer: null,
 
-        // 61c-1 inert stubs — still owned by later tasks. Declared so the
-        // sources-panel bindings don't throw ReferenceError before those tasks land.
-        // uncensoredMode → 61c-3 變 getter/setter；metatubeEnabled → 61c-4。本 task 不動。
-        uncensoredMode: false,
+        // 61c-1 inert stub — still owned by 61c-4. Declared so the
+        // sources-panel bindings don't throw ReferenceError before that task lands.
         metatubeEnabled: false,
+
+        // 無碼模式 transient off-hint（EC-2：off 不自動重開有碼，僅提示使用者手動重啟）
+        showUncensoredOffHint: false,
+        _uncensoredOffHintTimer: null,
 
         // ===== Constants =====
 
@@ -212,6 +213,40 @@ export function stateConfig() {
             return !src.is_censored;
         },
 
+        // ===== 無碼模式 computed（61c-3，CD-61-7b）=====
+        // getter = sources 中所有有碼來源（CENSORED_SOURCES 4 個）全 enabled=false ⟺ true。
+        // 讀 this.sources → Alpine 自動追蹤；點任一有碼 pill 重啟 → getter 反應性回 false（雙向 sync，無需 $watch）。
+        // 與後端 is_uncensored_mode_effective 同口徑（all censored disabled），不加 POC 的「some uncensored enabled」條件以免 mirror 漂移。
+        get uncensoredMode() {
+            return this.sources
+                .filter(s => this.CENSORED_SOURCES.includes(s.id))
+                .every(s => !s.enabled);
+        },
+        // setter(true) = batch 停用 4 個有碼來源後 saveConfig。
+        // setter(false) = NO-OP + transient hint（EC-2：off 不自動重開有碼，由使用者手動重啟任一有碼 pill）。
+        set uncensoredMode(v) {
+            if (v === true) {
+                this.sources.forEach(s => {
+                    if (this.CENSORED_SOURCES.includes(s.id) && !s.manual_only) {
+                        s.enabled = false;
+                    }
+                });
+                this.saveConfig();
+            } else {
+                this._flashUncensoredOffHint();
+            }
+        },
+        _flashUncensoredOffHint() {
+            this.showUncensoredOffHint = true;
+            if (this._uncensoredOffHintTimer) clearTimeout(this._uncensoredOffHintTimer);
+            this._uncensoredOffHintTimer = setTimeout(() => {
+                this.showUncensoredOffHint = false;
+            }, 5000);
+            if (typeof this.showToast === 'function') {
+                this.showToast(window.t('settings.sources.uncensored_mode_off_hint'), 'info');
+            }
+        },
+
         // promote 可行性：未啟用、非 manual_only、cap 未滿。
         canPromote(src) {
             return !!src && !src.enabled && !src.manual_only
@@ -239,12 +274,12 @@ export function stateConfig() {
         isSourceActive(src) {
             const isUncensored = this.UNCENSORED_SOURCES.includes(src);
             if (isUncensored) {
-                return this.form.uncensoredModeEnabled;
+                return this.uncensoredMode;
             }
             if (src === 'dmm') {
-                return !this.form.uncensoredModeEnabled && !!this.form.proxyUrl.trim();
+                return !this.uncensoredMode && !!this.form.proxyUrl.trim();
             }
-            return !this.form.uncensoredModeEnabled;
+            return !this.uncensoredMode;
         },
 
         /**
@@ -347,7 +382,7 @@ export function stateConfig() {
                     const config = result.data;
 
                     // Search
-                    this.form.uncensoredModeEnabled = config.search?.uncensored_mode_enabled || false;
+                    // 61c-3: uncensoredMode 由 sources 段推導（computed getter），不再單獨讀 uncensored_mode_enabled。
                     this.form.searchFavoriteFolder = config.search?.favorite_folder || '';
                     this.form.proxyUrl = config.search?.proxy_url || '';
                     this.form.primarySource = config.search?.primary_source || 'javbus';
@@ -500,7 +535,7 @@ export function stateConfig() {
                 // 更新 search
                 config.search = {
                     ...config.search,
-                    uncensored_mode_enabled: this.form.uncensoredModeEnabled,
+                    uncensored_mode_enabled: this.uncensoredMode,
                     favorite_folder: this.form.searchFavoriteFolder.trim(),
                     proxy_url: this.form.proxyUrl.trim(),
                     primary_source: this.form.primarySource,

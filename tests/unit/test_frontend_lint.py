@@ -7385,8 +7385,7 @@ class TestSettingsPanelStructureGuard:
         html = self._settings()
         required_ids = [
             "settingsForm", "saveBtn",
-            # sources
-            "uncensoredModeEnabled",
+            # sources — 61c-3 removed #uncensoredModeEnabled checkbox (batch-bar button is sole control)
             # translate
             "translateEnabled", "translateProvider", "translateOptions",
             "ollamaUrl", "ollamaModel", "geminiApiKey", "geminiModel",
