@@ -28,6 +28,10 @@ The core workflow spans three pages: 🔍 Search video info → 📋 Scan & buil
 
 **✨ Highlights**: Search 6 sources at once · Actress favorites with auto profile + alias expansion · One-click NFO & cover fill from the web · AI-operable library in natural language · Jellyfin / Emby cover auto-generation · 2400+ automated tests
 
+⚡ **[Live Demo → openaver.slive.uk](https://openaver.slive.uk/)**
+
+*Just mecha villains and fictional movie posters inside — zero NSFW, totally safe to open with your boss walking by.*
+
 ## Screenshots
 
 | Search | Actress Collection |

@@ -28,6 +28,10 @@ AI-operable REST API with capabilities manifest, 2400+ tests, MIT license. -->
 
 **✨ 亮點**：同時搜 6 個來源一次查完 · 女優收藏自動建檔 + 別名搜尋展開 · 跨語言 Tag 別名 — 中日英同義詞自動展開，搜尋框 / chip / 模糊探索一致 · 缺 NFO 或封面一鍵從網路補齊 · AI 一句話操作你的片庫 · Jellyfin / Emby 封面自動生成 · 2400+ 自動化測試
 
+⚡ **[Live Demo → openaver.slive.uk](https://openaver.slive.uk/)**
+
+*裡面只有 mecha 反派與虛構電影海報，零 NSFW—老闆從你身後走過也沒事。*
+
 ## 截圖預覽
 
 | 搜尋頁 | 女優收藏 |
