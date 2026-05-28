@@ -190,6 +190,15 @@
       "translate": "AI 翻譯",
       "advanced": "進階"
     },
+    "display": {
+      "font_size_label": "介面字級",
+      "locale_label": "介面語言",
+      "theme_label": "主題"
+    },
+    "sources": {
+      "primary_source_deprecated_hint": "預設搜尋來源（已停用設定）",
+      "primary_source_deprecated_note": "已不再於此設定主來源：系統依排序自動使用最前面的，請至「掃描來源」分頁拖曳排序。"
+    },
     "mock": {
       "page_title": "Settings IA POC",
       "eyebrow": "FEATURE/61 · VISUAL POC",
