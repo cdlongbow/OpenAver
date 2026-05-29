@@ -208,7 +208,20 @@
       "manual_only_badge": "BETA",
       "cap_exceeded_title": "已達啟用上限",
       "cap_exceeded_body": "已達同時啟用來源的上限，請先停用其他來源再啟用新的。",
-      "warn_all_disabled": "目前沒有啟用任何掃描來源，刮削將無法取得任何資料。"
+      "warn_all_disabled": "目前沒有啟用任何掃描來源，刮削將無法取得任何資料。",
+      "mt_server_url_label": "Server URL",
+      "mt_token_label": "Bearer Token",
+      "mt_connect_btn": "連線",
+      "mt_connected_status": "✓ 已連線",
+      "mt_edit_btn": "編輯",
+      "mt_disconnect_btn": "中斷",
+      "mt_connected_tier_hint": "連線後所有 provider 預設停留在下方清單（未進入 Active Row）。⭐ 為建議起手，但不會自動啟用任何 provider，由你手動加入。",
+      "mt_provider_list_header": "Provider 清單",
+      "mt_provider_list_expand_aria": "展開 Provider 清單",
+      "mt_provider_list_collapse_aria": "收合 Provider 清單",
+      "mt_recommended_label": "⭐ Recommended",
+      "mt_other_label": "其他",
+      "mt_promote_hint": "點擊可加入 Active Row"
     },
     "mock": {
       "page_title": "Settings IA POC",

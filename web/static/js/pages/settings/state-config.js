@@ -72,9 +72,17 @@ export function stateConfig() {
         showCapAlert: false,     // _flashCapAlert() 觸發 + auto-dismiss
         _capAlertTimer: null,
 
-        // 61c-1 inert stub — still owned by 61c-4. Declared so the
-        // sources-panel bindings don't throw ReferenceError before that task lands.
+        // ===== Metatube connection state machine (61c-4, CD-61-11 two-boolean model) =====
+        // 三狀態由兩布林推導：
+        //   disabled  = !metatubeEnabled                          → Section 3 整段不渲染
+        //   idle      = metatubeEnabled && !metatubeConnected     → 連線表單
+        //   connected = metatubeEnabled && metatubeConnected      → 連線狀態列 + 摺疊 Parts Bin
+        // B1：metatubeEnabled 維持 hardcoded false（production 不渲染 Section 3）；B3 接實際連線翻 true。
         metatubeEnabled: false,
+        metatubeConnected: false,
+        partsBinExpanded: false,   // §2.8 Parts Bin 預設摺疊
+        metatubeServerUrl: '',     // idle 連線表單 Server URL
+        metatubeToken: '',         // idle 連線表單 Bearer Token
 
         // 無碼模式 transient off-hint（EC-2：off 不自動重開有碼，僅提示使用者手動重啟）
         showUncensoredOffHint: false,
@@ -775,6 +783,60 @@ export function stateConfig() {
         // Manual-Only（JavLibrary）：Active Row 內 no-op（[BETA] badge 取代 toggle，固定末尾）。
         clickJavLibrary() {
             // 進階搜尋專用 — no-op。
+        },
+
+        // ═══════════════════════════════════════════════════════════════
+        // Metatube 連線狀態機 handlers（61c-4）
+        // B1 STUB：無真實 HTTP；B3 換成真實 /v1/providers 列舉 + MetatubeConnectionState。
+        // ═══════════════════════════════════════════════════════════════
+
+        // STUB connect：翻 connected + bulk-set available=true 於所有 metatube source
+        // （NOTE-A / EC-9：connect success → 已註冊 provider 全部視為 live，避免 promoted
+        // metatube 因 available=undefined 被誤判斷線）。B3 換成真實列舉回填 available。
+        metatubeConnect() {
+            this.metatubeConnected = true;
+            this.sources.forEach(s => { if (s.type === 'metatube') s.available = true; });
+        },
+
+        // STUB disconnect：回 idle + 全部 metatube available=false（保留 enabled — EC-9，
+        // 斷線不掉 cap 槽，重連即恢復 live）。
+        metatubeDisconnect() {
+            this.metatubeConnected = false;
+            this.sources.forEach(s => { if (s.type === 'metatube') s.available = false; });
+        },
+
+        // 編輯：回 idle 連線表單（保留 url/token 供修改），不動 enabled。
+        metatubeEdit() {
+            this.metatubeConnected = false;
+        },
+
+        // TODO(B4): remove metatube mock providers after B3 lands （CD-61-13）
+        // 手動瀏覽器驗證用：console 呼叫 `$data._injectMetatubeMockProviders()` 注入 30 個
+        // mock metatube provider（available=true，未啟用 → 全進 Parts Bin），驗證摺疊清單
+        // 30-pill 渲染不爆版 + Recommended group 排序。production 不自動呼叫（metatubeEnabled
+        // 維持 false）。B3 由真實 /v1/providers 列舉取代。
+        _injectMetatubeMockProviders(n = 30) {
+            const recommended = new Set(['fanza', 'mgs', 'duga', 'sod']);
+            const baseOrder = this.sources.length;
+            const mock = Array.from({ length: n }, (_, i) => {
+                const id = `mt_mock_${i + 1}`;
+                return {
+                    id,
+                    type: 'metatube',
+                    enabled: false,
+                    available: true,
+                    order: baseOrder + i,
+                    manual_only: false,
+                    is_beta: false,
+                    is_censored: false,
+                    config: {},
+                    display_name_key: '',
+                    display_name: i < 4 ? [...recommended][i].toUpperCase() : `Provider ${i + 1}`,
+                    recommended: i < 4,
+                };
+            });
+            this.sources = [...this.sources, ...mock];
+            this.metatubeEnabled = true;
         },
 
         // 全開：builtin 先（依序），到 cap 即 break；不碰 metatube / manual_only。

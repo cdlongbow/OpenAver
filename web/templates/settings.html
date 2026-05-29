@@ -487,8 +487,125 @@
                     </div>
 
                     <!-- ===== Section 3 — Metatube Connection (Zone B) — 61c-1 guard wrapper ===== -->
+                    <!-- B1: metatubeEnabled hardcoded false → 整段不渲染（disabled state）。
+                         idle/connected 結構在此就位，供測試 + B3 接實際連線。 -->
                     <div class="settings-sources-section3" x-show="metatubeEnabled">
-                        <!-- 61c-4: metatube connection state machine + Parts Bin -->
+
+                        <!-- STATE: idle — connect form (metatubeEnabled && !metatubeConnected) -->
+                        <div class="settings-mt-connect-form"
+                             x-show="!metatubeConnected"
+                             role="group">
+                            <label class="settings-mt-field">
+                                <span>{{ t('settings.sources.mt_server_url_label') }}</span>
+                                <input type="text"
+                                       x-model="metatubeServerUrl"
+                                       placeholder="http://localhost:8080">
+                            </label>
+                            <label class="settings-mt-field">
+                                <span>{{ t('settings.sources.mt_token_label') }}</span>
+                                <input type="password"
+                                       x-model="metatubeToken"
+                                       autocomplete="off">
+                            </label>
+                            <button type="button"
+                                    class="settings-mt-connect-btn"
+                                    @click="metatubeConnect()">
+                                <i class="bi bi-plug"></i> {{ t('settings.sources.mt_connect_btn') }}
+                            </button>
+                        </div>
+
+                        <!-- STATE: connected — status row + Parts Bin (metatubeEnabled && metatubeConnected) -->
+                        <div x-show="metatubeConnected">
+
+                            <!-- Connection status row -->
+                            <div class="settings-mt-connect-status">
+                                <i class="bi bi-check-circle-fill" aria-hidden="true"></i>
+                                <span class="status-text">
+                                    {{ t('settings.sources.mt_connected_status') }}
+                                    <code x-text="metatubeServerUrl" x-show="metatubeServerUrl"></code>
+                                </span>
+                                <button type="button"
+                                        class="settings-sources-mini-btn"
+                                        @click="metatubeEdit()">
+                                    <i class="bi bi-pencil"></i> {{ t('settings.sources.mt_edit_btn') }}
+                                </button>
+                                <button type="button"
+                                        class="settings-sources-mini-btn"
+                                        @click="metatubeDisconnect()">
+                                    <i class="bi bi-x-circle"></i> {{ t('settings.sources.mt_disconnect_btn') }}
+                                </button>
+                            </div>
+
+                            <!-- Tier hint -->
+                            <div class="settings-mt-tier-hint">
+                                <i class="bi bi-stars" aria-hidden="true"></i>
+                                <span>{{ t('settings.sources.mt_connected_tier_hint') }}</span>
+                            </div>
+
+                            <!-- Parts Bin header (collapsible, default collapsed) — N = partsBinSources.length -->
+                            <button type="button"
+                                    class="settings-mt-partsbin-head"
+                                    @click="partsBinExpanded = !partsBinExpanded"
+                                    :aria-expanded="partsBinExpanded ? 'true' : 'false'"
+                                    :aria-label="partsBinExpanded ? '{{ t('settings.sources.mt_provider_list_collapse_aria') }}' : '{{ t('settings.sources.mt_provider_list_expand_aria') }}'">
+                                <i class="bi" :class="partsBinExpanded ? 'bi-chevron-down' : 'bi-chevron-right'" aria-hidden="true"></i>
+                                <span>{{ t('settings.sources.mt_provider_list_header') }}</span>
+                                <span class="settings-mt-partsbin-count" x-text="partsBinSources.length"></span>
+                            </button>
+
+                            <!-- Parts Bin body — Parts Bin pills (NOT draggable). Recommended group first. -->
+                            <div class="settings-mt-partsbin-body" x-show="partsBinExpanded">
+                                <!-- Recommended group -->
+                                <template x-if="partsBinSources.filter(s => s.recommended).length > 0">
+                                    <div>
+                                        <div class="settings-mt-group-head">{{ t('settings.sources.mt_recommended_label') }}</div>
+                                        <div class="settings-sources-pills" role="listbox" aria-label="Recommended providers">
+                                            <template x-for="src in partsBinSources.filter(s => s.recommended)" :key="src.id">
+                                                <div class="settings-sources-pill is-partsbin"
+                                                     data-enabled="false"
+                                                     data-rec="true"
+                                                     role="option"
+                                                     :aria-selected="false"
+                                                     :aria-label="`${src.display_name} — {{ t('settings.sources.mt_promote_hint') }}`"
+                                                     :title="'{{ t('settings.sources.mt_promote_hint') }}'"
+                                                     tabindex="0"
+                                                     @click="promoteMetatube(src.id)"
+                                                     @keydown.enter.prevent="promoteMetatube(src.id)"
+                                                     @keydown.space.prevent="promoteMetatube(src.id)">
+                                                    <i class="bi bi-star-fill rec-star" aria-hidden="true"></i>
+                                                    <i class="bi bi-slash-circle slash-icn" aria-hidden="true"></i>
+                                                    <span class="pill-name" x-text="src.display_name"></span>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+
+                                <!-- Other group -->
+                                <template x-if="partsBinSources.filter(s => !s.recommended).length > 0">
+                                    <div>
+                                        <div class="settings-mt-group-head">{{ t('settings.sources.mt_other_label') }}</div>
+                                        <div class="settings-sources-pills" role="listbox" aria-label="Other providers">
+                                            <template x-for="src in partsBinSources.filter(s => !s.recommended)" :key="src.id">
+                                                <div class="settings-sources-pill is-partsbin"
+                                                     data-enabled="false"
+                                                     role="option"
+                                                     :aria-selected="false"
+                                                     :aria-label="`${src.display_name} — {{ t('settings.sources.mt_promote_hint') }}`"
+                                                     :title="'{{ t('settings.sources.mt_promote_hint') }}'"
+                                                     tabindex="0"
+                                                     @click="promoteMetatube(src.id)"
+                                                     @keydown.enter.prevent="promoteMetatube(src.id)"
+                                                     @keydown.space.prevent="promoteMetatube(src.id)">
+                                                    <i class="bi bi-slash-circle slash-icn" aria-hidden="true"></i>
+                                                    <span class="pill-name" x-text="src.display_name"></span>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="settings-form-group">
