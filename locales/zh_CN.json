@@ -571,6 +571,22 @@
   },
   "showcase": {
     "page_title": "影片浏览",
+    "rescrape": {
+      "modal_title": "高级重新刮削",
+      "entry_tooltip": "高级重新刮削",
+      "number_label": "番号",
+      "filename_hint": "原文件名",
+      "source_question": "用哪个来源？",
+      "auto_source": "自动",
+      "searching": "搜索中…",
+      "not_found": "找不到，换个番号或来源再试。",
+      "overwrite_warning": "覆盖现有封面 + NFO（不可逆）",
+      "confirm": "覆盖写入",
+      "back_to_pick": "换来源",
+      "close": "关闭",
+      "success": "已覆盖写入（封面 + NFO）",
+      "fail": "重新刮削失败，请稍后再试。"
+    },
     "placeholder": {
       "search": "搜索番号、女优、标题..."
     },

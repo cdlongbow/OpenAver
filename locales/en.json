@@ -571,6 +571,22 @@
   },
   "showcase": {
     "page_title": "Browse",
+    "rescrape": {
+      "modal_title": "Advanced Re-scrape",
+      "entry_tooltip": "Advanced Re-scrape",
+      "number_label": "ID",
+      "filename_hint": "Original filename",
+      "source_question": "Which source?",
+      "auto_source": "Auto",
+      "searching": "Searching…",
+      "not_found": "Not found — try a different ID or source.",
+      "overwrite_warning": "Overwrite existing cover + NFO (irreversible)",
+      "confirm": "Overwrite",
+      "back_to_pick": "Change source",
+      "close": "Close",
+      "success": "Overwritten (cover + NFO)",
+      "fail": "Re-scrape failed, please try again later."
+    },
     "placeholder": {
       "search": "Search ID, actress, title..."
     },

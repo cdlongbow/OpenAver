@@ -571,6 +571,22 @@
   },
   "showcase": {
     "page_title": "動画ブラウズ",
+    "rescrape": {
+      "modal_title": "高度な再スクレイプ",
+      "entry_tooltip": "高度な再スクレイプ",
+      "number_label": "番号",
+      "filename_hint": "元のファイル名",
+      "source_question": "どのソースを使う？",
+      "auto_source": "自動",
+      "searching": "検索中…",
+      "not_found": "見つかりません。番号かソースを変えてお試しください。",
+      "overwrite_warning": "既存のカバー + NFO を上書き（取り消し不可）",
+      "confirm": "上書き",
+      "back_to_pick": "ソースを変更",
+      "close": "閉じる",
+      "success": "上書きしました（カバー + NFO）",
+      "fail": "再スクレイプに失敗しました。後でもう一度お試しください。"
+    },
     "placeholder": {
       "search": "番号・女優名・タイトルを検索..."
     },
