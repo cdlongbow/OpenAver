@@ -56,9 +56,28 @@
           </template>
         </div>
 
-        {# Metatube 分組（B2 空組占位；品牌名不走 i18n，CD-62-12） #}
+        {# Metatube 分組（62c-5 data-driven；品牌名不走 i18n，CD-62-12）。
+           pill 鏡射 builtin（45-56）+ metatube `m` type badge。連線態 chrome
+           （斷線灰標 / Parts Bin 星標）留 B3（依賴 B3 才定義的連線狀態資料 shape）。 #}
         <div class="rescrape-group-sep">Metatube</div>
-        <div class="rescrape-empty-note">{{ t('settings.advanced_search.group_metatube_empty') }}</div>
+        <div class="source-pill-row" x-show="rescrapeMetatubeSources().length > 0">
+          <template x-for="s in rescrapeMetatubeSources()" :key="s.id">
+            <button type="button" class="source-pill source-pill--action"
+                    :class="{ 'source-pill--uncensored': !s.is_censored, 'is-loading': rescrapeLoadingSource === s.id }"
+                    :data-enabled="s.enabled ? 'true' : 'false'"
+                    :disabled="rescrapeLoadingSource !== null && rescrapeLoadingSource !== s.id"
+                    @click="rescrapeWithSource(s.id)">
+              <span class="pill-spin" x-show="rescrapeLoadingSource === s.id"></span>
+              <i class="bi bi-slash-circle slash-icn" x-show="rescrapeLoadingSource !== s.id" aria-hidden="true"></i>
+              {# 品牌名（display_name_raw → display_name_key fallback；不走 i18n，CD-62-12） #}
+              <span class="pill-name" x-text="s.display_name_raw || s.display_name_key || s.id"></span>
+              {# metatube `m` type badge（純 type marker；連線態 chrome 留 B3） #}
+              <span class="source-pill-mt-badge" aria-hidden="true">m</span>
+            </button>
+          </template>
+        </div>
+        {# 空組 note：僅當 metatube 來源為 0 時顯示（B2 無 metatube → 仍顯示；B3 註冊後自動隱） #}
+        <div class="rescrape-empty-note" x-show="rescrapeMetatubeSources().length === 0">{{ t('settings.advanced_search.group_metatube_empty') }}</div>
 
         {# not-found：留在 pick + inline error（不換頁） #}
         <div class="rescrape-inline-error" x-show="rescrapeNotFound" x-cloak>

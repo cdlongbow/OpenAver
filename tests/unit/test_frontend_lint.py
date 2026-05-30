@@ -7610,6 +7610,38 @@ class TestRescrapeModalGuard:
             "62a-2 違規：partial pill 未使用 source-pill--action 點擊變體"
         )
 
+    def test_metatube_group_is_data_driven(self):
+        """62c-5：Metatube 分組 data-driven（x-for over rescrapeMetatubeSources()，
+        鏡射 builtin pill + metatube `m` type badge）；非靜態空組占位。"""
+        html = self._modal_html()
+        assert 'x-for="s in rescrapeMetatubeSources()"' in html, (
+            "62c-5 違規：Metatube 分組未用 x-for over rescrapeMetatubeSources()（仍是靜態空組）"
+        )
+        # Metatube group-sep label 保留（品牌名不走 i18n，CD-62-12）
+        assert '<div class="rescrape-group-sep">Metatube</div>' in html, (
+            "62c-5 違規：缺少 Metatube group-sep label"
+        )
+        # metatube `m` type badge（用 source-pill.css 既有 class；連線態 chrome 留 B3）
+        assert "source-pill-mt-badge" in html, (
+            "62c-5 違規：metatube pill 缺少 source-pill-mt-badge type badge"
+        )
+        # 註：連線態 chrome（斷線灰標 / Parts Bin 星標）是 B3 才接資料的擴充，本 task 不做。
+        # 不在此加負向守衛——B3 合法加入時不應被本守衛絆住（scope 邊界由 card/commit 記錄即可）。
+
+    def test_metatube_empty_note_is_conditional(self):
+        """62c-5：group_metatube_empty note 條件化（僅 metatube=0 顯示），非無條件靜態。"""
+        html = self._modal_html()
+        m = re.search(
+            r'<div class="rescrape-empty-note"([^>]*)>',
+            html,
+        )
+        assert m, "62c-5 違規：找不到 rescrape-empty-note 元素"
+        attrs = m.group(1)
+        assert 'x-show="rescrapeMetatubeSources().length === 0"' in attrs, (
+            "62c-5 違規：rescrape-empty-note 未條件化於 "
+            "x-show=\"rescrapeMetatubeSources().length === 0\"（仍是靜態空組 note）"
+        )
+
     def test_preview_img_uses_proxy_image(self):
         """preview cover 走 /api/proxy-image?url= + encodeURIComponent，禁用 gallery/image。"""
         html = self._modal_html()
@@ -7827,6 +7859,7 @@ class TestRescrapeStateGuard:
         for method in (
             "openRescrape", "rescrapeWithSource", "rescrapeConfirm",
             "rescrapeBackToPick", "closeRescrape", "rescrapeBuiltinSources",
+            "rescrapeMetatubeSources",
         ):
             assert method in src, f"state-rescrape.js missing method: {method}"
 

@@ -108,6 +108,16 @@ export function rescrapeState() {
         },
 
         /**
+         * metatube pill 清單（method 非 getter；鏡射 rescrapeBuiltinSources，只改 filter）。
+         * 62c-5：metatube 分組 data-driven（B3 註冊 metatube SourceConfig rows 後彈窗自動長出 pill）。
+         */
+        rescrapeMetatubeSources() {
+            return this.rescrapeSources
+                .filter(s => s.type === 'metatube')
+                .sort((a, b) => (b.enabled - a.enabled) || (a.order - b.order));
+        },
+
+        /**
          * 解析 preview 卡的來源顯示名（落差#1：端點回 source id，partial 綁 sourceName）。
          */
         _resolveSourceName(sourceId) {
