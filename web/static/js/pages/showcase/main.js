@@ -14,6 +14,7 @@ import { stateActress }  from '@/showcase/state-actress.js';
 import { stateLightbox } from '@/showcase/state-lightbox.js';
 import { stateSimilar }  from '@/showcase/state-similar.js';
 import { rescrapeState } from '@/shared/state-rescrape.js';
+import { longPressState } from '@/shared/long-press.js';
 
 function mergeState(...parts) {
     const target = {};
@@ -31,6 +32,7 @@ window.showcaseState = function() {
         stateLightbox.call(this),
         stateSimilar.call(this),
         rescrapeState.call(this),
+        longPressState.call(this),
     );
 };
 

@@ -41,6 +41,15 @@ export function rescrapeState() {
         _rescrapeCommitSource: null,       // 進 preview 用的 source（commit 沿用，auto→null 映射前原值）
 
         /**
+         * 進階重刮入口 gate（62b-1，決策 #1）。三入口（⚙ / grid 長壓 / lightbox 🔍 長壓）共用，
+         * 守衛可斷言、與 advancedSearchEnabled() 命名平行，避免 template 散落 window 讀取。
+         * method 非 getter（規避 Alpine reactivity 凍結；CD-62-14 #0）。
+         */
+        rescrapeEnabled() {
+            return !!(window.__ADVANCED_SEARCH__ && window.__ADVANCED_SEARCH__.enabled);
+        },
+
+        /**
          * 開啟彈窗（62b-1 wire ⚙ / 🔍 長壓呼叫；search 入口傳 video=null）。
          */
         openRescrape(video, entryPoint = 'lightbox') {

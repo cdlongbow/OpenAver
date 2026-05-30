@@ -322,10 +322,18 @@
                                     title="{{ t('search.action.open_folder') }}">
                                 <i class="bi bi-folder2-open"></i>
                             </button>
+                            <!-- 62b-1: tap=enrichVideo（快速補缺）/ 長壓 700ms=進階重刮（openRescrape ,'enrich'）。
+                                 longPressClickGuard 攔截長壓 fire 後的同一次 click，避免連帶觸發 enrich。 -->
                             <button class="btn-glass-circle enrich-btn"
                                     x-show="!video.has_cover || !video.has_nfo"
                                     :disabled="_enriching"
-                                    @click.stop="enrichVideo(video)"
+                                    @click.stop="longPressClickGuard($event) || enrichVideo(video)"
+                                    @mousedown="longPressStart(() => openRescrape(video, 'enrich'), () => rescrapeEnabled())"
+                                    @mouseup="longPressEnd()"
+                                    @mouseleave="longPressCancel()"
+                                    @touchstart.passive="longPressStart(() => openRescrape(video, 'enrich'), () => rescrapeEnabled())"
+                                    @touchend="longPressEnd()"
+                                    @touchcancel="longPressCancel()"
                                     :title="t('showcase.action.enrich')">
                                 <i class="bi" :class="_enriching ? 'bi-arrow-clockwise spin' : 'bi-search'"></i>
                             </button>
@@ -675,10 +683,18 @@
                                 <button class="lb-action-btn" @click="openLocal(currentLightboxVideo?.path)" data-tooltip="{{ t('search.action.open_folder') }}" aria-label="{{ t('search.action.open_folder') }}">
                                     <i class="bi bi-folder2-open"></i>
                                 </button>
+                                <!-- 62b-1: tap=enrichVideo（快速補缺）/ 長壓 700ms=進階重刮（openRescrape ,'enrich'）。
+                                     與番號旁 ⚙ 並存（缺卡片兩進階入口）。 -->
                                 <button class="lb-action-btn"
                                         x-show="!currentLightboxVideo?.has_cover || !currentLightboxVideo?.has_nfo"
                                         :disabled="_enriching"
-                                        @click.stop="enrichVideo(currentLightboxVideo)"
+                                        @click.stop="longPressClickGuard($event) || enrichVideo(currentLightboxVideo)"
+                                        @mousedown="longPressStart(() => openRescrape(currentLightboxVideo, 'enrich'), () => rescrapeEnabled())"
+                                        @mouseup="longPressEnd()"
+                                        @mouseleave="longPressCancel()"
+                                        @touchstart.passive="longPressStart(() => openRescrape(currentLightboxVideo, 'enrich'), () => rescrapeEnabled())"
+                                        @touchend="longPressEnd()"
+                                        @touchcancel="longPressCancel()"
                                         data-tooltip="{{ t('showcase.action.enrich') }}"
                                         :aria-label="t('showcase.action.enrich')">
                                     <i class="bi" :class="_enriching ? 'bi-arrow-clockwise spin' : 'bi-search'"></i>
@@ -723,6 +739,15 @@
                             <!-- 分隔符 " · " 內嵌於各 span 開頭，隨 x-show 一起顯示/隱藏，避免孤立 · -->
                             <div class="lb-details">
                                 <span x-text="currentLightboxVideo?.number || t('showcase.lightbox.unknown_number')"></span>
+                                <!-- 62b-1: 進階重刮 ⚙ 入口（番號旁 inline 細鈕，gate by 進階搜尋 toggle）-->
+                                <button type="button"
+                                        class="lb-rescrape-gear"
+                                        x-show="rescrapeEnabled()"
+                                        @click.stop="openRescrape(currentLightboxVideo, 'lightbox')"
+                                        :data-tooltip="t('showcase.rescrape.entry_tooltip')"
+                                        :aria-label="t('showcase.rescrape.entry_tooltip')">
+                                    <i class="bi bi-gear" aria-hidden="true"></i>
+                                </button>
                                 <span x-show="currentLightboxVideo?.maker">
                                     &nbsp;·&nbsp;<a href="#" class="lb-link" @click.prevent="searchFromMetadata(currentLightboxVideo?.maker)" x-text="currentLightboxVideo?.maker"></a>
                                 </span>

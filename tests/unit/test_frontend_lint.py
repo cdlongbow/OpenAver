@@ -7788,3 +7788,190 @@ class TestRescrapeStateGuard:
             "main.js missing: import { rescrapeState } from '@/shared/state-rescrape.js'"
         assert "rescrapeState.call(this)" in src, \
             "main.js mergeState chain missing: rescrapeState.call(this)"
+
+
+class TestRescrapeEntryGuard:
+    """62b-1: 守衛三個 Showcase 進階重刮入口接線 contract（lightbox ⚙ + grid 長壓 + lightbox 🔍 長壓）。
+
+    入口全受 rescrapeEnabled() gate；長壓走 shared/long-press.js helper（grid + lightbox 共用）；
+    tap 路徑（enrichVideo）不得被長壓覆蓋；長壓 callback 路由到 openRescrape(...,'enrich')，不直接 enrichVideo。
+    強守衛採 element-bound regex（綁到具體 button tag）避免「字串存在性」假測試（gotchas Frontend Guard 強度）。
+    對齊 TestSimilarStageGuard L1164 / TestRescrapeStateGuard pattern。
+    """
+
+    SHARED_DIR = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "shared"
+    SHOWCASE_DIR = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase"
+    LONG_PRESS_JS = SHARED_DIR / "long-press.js"
+    STATE_RESCRAPE_JS = SHARED_DIR / "state-rescrape.js"
+    MAIN_JS = SHOWCASE_DIR / "main.js"
+
+    def _html(self):
+        return SHOWCASE_HTML.read_text(encoding="utf-8")
+
+    def _grid_enrich_btn(self, html):
+        """擷取 grid 缺卡 enrich-btn 的完整 <button>...</button> 區塊（btn-glass-circle enrich-btn）。
+
+        注意：button tag 內 @mousedown 等屬性值含 arrow function `() =>`，含 `>` 字元，
+        故不可用 `[^>]*>` 截到第一個 `>`；改用 non-greedy 抓到 </button>。
+        """
+        m = re.search(
+            r'<button\b[^>]*?\bclass="btn-glass-circle enrich-btn".*?</button>',
+            html, re.DOTALL,
+        )
+        assert m, "grid .btn-glass-circle.enrich-btn button 區塊不存在"
+        return m.group(0)
+
+    def _lightbox_enrich_btn(self, html):
+        """擷取 lightbox cover-actions 🔍 enrich-btn 區塊（含 enrichVideo(currentLightboxVideo) 的 lb-action-btn）。"""
+        # (?:(?!</button>).)*? 確保不跨越前一個 </button>，避免抓到 play/open 等其他 lb-action-btn
+        m = re.search(
+            r'<button\b(?:(?!</button>).)*?\bclass="lb-action-btn"'
+            r'(?:(?!</button>).)*?enrichVideo\(currentLightboxVideo\)'
+            r'(?:(?!</button>).)*?</button>',
+            html, re.DOTALL,
+        )
+        assert m, "lightbox cover-actions .lb-action-btn（enrichVideo(currentLightboxVideo)）button 區塊不存在"
+        return m.group(0)
+
+    def _gear_btn(self, html):
+        """擷取 lightbox 番號旁 ⚙ gear 的完整 <button>...</button> 區塊。"""
+        m = re.search(
+            r'<button\b[^>]*?\bclass="lb-rescrape-gear".*?</button>',
+            html, re.DOTALL,
+        )
+        assert m, "lightbox .lb-rescrape-gear ⚙ button 區塊不存在"
+        return m.group(0)
+
+    # ── 入口 1：lightbox 番號旁 ⚙ gear ──────────────────────────────────
+
+    def test_gear_has_bi_gear_icon(self):
+        """⚙ 入口必須用 bi-gear icon（CD-62-0 #4：magic 已被相似探索佔用）。"""
+        html = self._html()
+        # icon 緊接在 gear button 之後
+        m = re.search(
+            r'<button[^>]*\bclass="lb-rescrape-gear"[^>]*>\s*<i[^>]*\bbi-gear\b',
+            html, re.DOTALL,
+        )
+        assert m, "⚙ gear button 內必須含 bi-gear icon"
+
+    def test_gear_opens_rescrape_lightbox(self):
+        """⚙ @click 必須呼叫 openRescrape(currentLightboxVideo, 'lightbox')（顯式傳當前影片，CD-62-2）。"""
+        tag = self._gear_btn(self._html())
+        m = re.search(r'@click(?:\.stop)?="([^"]*)"', tag)
+        assert m, "⚙ gear button 缺 @click handler"
+        assert "openRescrape(currentLightboxVideo, 'lightbox')" in m.group(1), \
+            f"⚙ @click 必須 openRescrape(currentLightboxVideo, 'lightbox')，實際: {m.group(1)!r}"
+
+    def test_gear_gated_by_rescrape_enabled(self):
+        """⚙ 必須 x-show=rescrapeEnabled() gate（toggle OFF 時不顯示，決策 #1）。"""
+        tag = self._gear_btn(self._html())
+        m = re.search(r'x-show="([^"]*)"', tag)
+        assert m, "⚙ gear button 缺 x-show gate"
+        assert "rescrapeEnabled()" in m.group(1), \
+            f"⚙ x-show 必須 gate by rescrapeEnabled()，實際: {m.group(1)!r}"
+
+    def test_gear_tooltip_uses_i18n_key(self):
+        """⚙ 的 aria-label / data-tooltip 走 i18n key，不硬編碼（i18n.md）。"""
+        tag = self._gear_btn(self._html())
+        assert "t('showcase.rescrape.entry_tooltip')" in tag, \
+            "⚙ gear 必須用 t('showcase.rescrape.entry_tooltip') 作 aria-label / data-tooltip"
+        # aria-label 必須存在於 gear tag（可及性）
+        assert re.search(r':aria-label="[^"]*entry_tooltip', tag), \
+            "⚙ gear 缺 :aria-label（可及性）"
+
+    # ── 入口 2：grid 缺卡 enrich-btn 長壓 ───────────────────────────────
+
+    def test_grid_enrich_tap_preserved_via_clickguard(self):
+        """grid enrich-btn @click 仍走 enrichVideo（tap 路徑不移除），但前置 longPressClickGuard 分流。"""
+        tag = self._grid_enrich_btn(self._html())
+        m = re.search(r'@click(?:\.stop)?="([^"]*)"', tag)
+        assert m, "grid enrich-btn 缺 @click handler"
+        expr = m.group(1)
+        assert "longPressClickGuard($event)" in expr, \
+            f"grid enrich-btn @click 必須前置 longPressClickGuard($event)，實際: {expr!r}"
+        assert "enrichVideo(video)" in expr, \
+            f"grid enrich-btn tap 路徑（enrichVideo(video)）不得移除，實際: {expr!r}"
+
+    def test_grid_enrich_longpress_events_wired(self):
+        """grid enrich-btn 必須疊 6 長壓事件（鏡像 search.html）。"""
+        tag = self._grid_enrich_btn(self._html())
+        for ev in ("@mousedown", "@mouseup", "@mouseleave",
+                   "@touchstart.passive", "@touchend", "@touchcancel"):
+            assert ev in tag, f"grid enrich-btn 缺長壓事件 {ev}"
+
+    def test_grid_longpress_routes_to_rescrape_enrich(self):
+        """grid 長壓 callback 走 openRescrape(video, 'enrich')（不直接 enrichVideo），且 gate by rescrapeEnabled。"""
+        tag = self._grid_enrich_btn(self._html())
+        m = re.search(r'@mousedown="([^"]*)"', tag)
+        assert m, "grid enrich-btn 缺 @mousedown"
+        expr = m.group(1)
+        assert "longPressStart(" in expr, f"grid @mousedown 必須呼叫 longPressStart，實際: {expr!r}"
+        assert "openRescrape(video, 'enrich')" in expr, \
+            f"grid 長壓 callback 必須 openRescrape(video, 'enrich')（不直接 enrichVideo），實際: {expr!r}"
+        assert "rescrapeEnabled()" in expr, \
+            f"grid 長壓 enabledFn 必須 gate by rescrapeEnabled()，實際: {expr!r}"
+
+    # ── 入口 3：lightbox cover-actions 🔍 enrich-btn 長壓 ───────────────
+
+    def test_lightbox_enrich_tap_preserved_via_clickguard(self):
+        """lightbox 🔍 @click 仍走 enrichVideo(currentLightboxVideo)（tap 不移除），前置 longPressClickGuard。"""
+        tag = self._lightbox_enrich_btn(self._html())
+        m = re.search(r'@click(?:\.stop)?="([^"]*)"', tag)
+        assert m, "lightbox 🔍 enrich-btn 缺 @click handler"
+        expr = m.group(1)
+        assert "longPressClickGuard($event)" in expr, \
+            f"lightbox 🔍 @click 必須前置 longPressClickGuard($event)，實際: {expr!r}"
+        assert "enrichVideo(currentLightboxVideo)" in expr, \
+            f"lightbox 🔍 tap 路徑不得移除，實際: {expr!r}"
+
+    def test_lightbox_enrich_longpress_events_wired(self):
+        """lightbox 🔍 enrich-btn 必須疊 6 長壓事件。"""
+        tag = self._lightbox_enrich_btn(self._html())
+        for ev in ("@mousedown", "@mouseup", "@mouseleave",
+                   "@touchstart.passive", "@touchend", "@touchcancel"):
+            assert ev in tag, f"lightbox 🔍 enrich-btn 缺長壓事件 {ev}"
+
+    def test_lightbox_longpress_routes_to_rescrape_enrich(self):
+        """lightbox 🔍 長壓 callback 走 openRescrape(currentLightboxVideo, 'enrich')，gate by rescrapeEnabled。"""
+        tag = self._lightbox_enrich_btn(self._html())
+        m = re.search(r'@mousedown="([^"]*)"', tag)
+        assert m, "lightbox 🔍 enrich-btn 缺 @mousedown"
+        expr = m.group(1)
+        assert "longPressStart(" in expr, f"lightbox 🔍 @mousedown 必須呼叫 longPressStart，實際: {expr!r}"
+        assert "openRescrape(currentLightboxVideo, 'enrich')" in expr, \
+            f"lightbox 🔍 長壓 callback 必須 openRescrape(currentLightboxVideo, 'enrich')，實際: {expr!r}"
+        assert "rescrapeEnabled()" in expr, \
+            f"lightbox 🔍 長壓 enabledFn 必須 gate by rescrapeEnabled()，實際: {expr!r}"
+
+    # ── helper 檔 + mergeState 接線 ────────────────────────────────────
+
+    def test_long_press_helper_exists(self):
+        """shared/long-press.js 必須存在（決策 #2：獨立檔，62c-2 可引用）。"""
+        assert self.LONG_PRESS_JS.exists(), \
+            f"long-press.js missing at {self.LONG_PRESS_JS!s}"
+
+    def test_long_press_exports_factory_and_methods(self):
+        """long-press.js 必須 export function longPressState 並含通用契約 method。"""
+        src = self.LONG_PRESS_JS.read_text(encoding="utf-8")
+        assert re.search(r"export\s+function\s+longPressState\s*\(", src), \
+            "long-press.js missing: export function longPressState()"
+        for method in ("longPressStart", "longPressEnd", "longPressCancel", "longPressClickGuard"):
+            assert method in src, f"long-press.js missing method: {method}"
+        # 700ms 長壓常數（與 advanced-picker.js 對齊）
+        assert "700" in src, "long-press.js missing LONG_PRESS_MS = 700"
+
+    def test_main_js_imports_and_merges_long_press(self):
+        """main.js 必須 import longPressState 並插入 mergeState 鏈（descriptor-preserving）。"""
+        src = self.MAIN_JS.read_text(encoding="utf-8")
+        assert "from '@/shared/long-press.js'" in src, \
+            "main.js missing: import { longPressState } from '@/shared/long-press.js'"
+        assert "longPressState.call(this)" in src, \
+            "main.js mergeState chain missing: longPressState.call(this)"
+
+    def test_rescrape_enabled_method_in_mixin(self):
+        """state-rescrape.js 必須揭露 rescrapeEnabled() gate（決策 #1，三入口共用）。"""
+        src = self.STATE_RESCRAPE_JS.read_text(encoding="utf-8")
+        assert "rescrapeEnabled()" in src, \
+            "state-rescrape.js missing rescrapeEnabled() method（決策 #1）"
+        assert "window.__ADVANCED_SEARCH__" in src, \
+            "rescrapeEnabled() 必須讀 window.__ADVANCED_SEARCH__.enabled"

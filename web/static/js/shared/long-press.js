@@ -1,0 +1,76 @@
+/**
+ * long-press.js — 可複用長壓 Alpine state mixin（62b-1，決策 #2）
+ *
+ * 通用 700ms 長壓 timer + click guard，供多入口共用：
+ *   - Showcase grid 缺卡 enrich-btn（tap=enrich / 長壓=進階重刮）
+ *   - Showcase lightbox cover-actions 🔍 enrich-btn（同上）
+ *   - （62c-2）Search picker 入口統一接通（advanced-picker.js 的 timer/clickGuard 改接此 helper；
+ *      search 特有的 form submit guard `advancedLongPressSubmitGuard` 留在 advanced-picker.js）
+ *
+ * factory mixin，透過 longPressState.call(this) 接入 main.js mergeState（descriptor-preserving）。
+ * method 非 getter（規避 Alpine reactivity 凍結；CD-62-14 #0）。
+ *
+ * 契約（鏡像 advanced-picker.js 長壓核心邏輯）：
+ *   longPressStart(cb, enabledFn) — 設旗標 → gate（enabledFn 回 false 不啟 timer）→ 700ms 後 fire cb。
+ *   longPressEnd() / longPressCancel() — 清 timer（mouseup/touchend vs mouseleave/touchcancel）。
+ *   longPressClickGuard(ev) — 長壓 fire 過 → 吞掉同一次 click（preventDefault + stopPropagation）並重置旗標。
+ *
+ * cb / enabledFn 由 template 以 arrow closure 傳入（→ this / video 在元件作用域解析），
+ * 本 mixin 的 method 為 plain object method（Alpine 在 mergeState 後把 this 綁到元件）。
+ */
+
+const LONG_PRESS_MS = 700;   // 與 advanced-picker.js:14 LONG_PRESS_MS 對齊
+
+export function longPressState() {
+    return {
+        // ── 長壓 state ──
+        _lpTimer: null,
+        _lpFired: false,   // 長壓已觸發旗標（攔截同一次 click）
+
+        /**
+         * 長壓開始（@mousedown / @touchstart）。
+         * @param {Function} cb        — fire callback（700ms 達標後執行，如 () => openRescrape(video,'enrich')）
+         * @param {Function} [enabledFn] — gate：回 false 則不啟 timer（如 () => rescrapeEnabled()）
+         */
+        longPressStart(cb, enabledFn) {
+            this._lpFired = false;
+            if (enabledFn && !enabledFn()) return;   // gate off → no-op（toggle OFF 時只剩 tap）
+            if (this._lpTimer !== null) {
+                clearTimeout(this._lpTimer);
+            }
+            this._lpTimer = setTimeout(() => {
+                this._lpTimer = null;
+                this._lpFired = true;   // 攔截後續同一次 click
+                cb();
+            }, LONG_PRESS_MS);
+        },
+
+        // 放開（@mouseup / @touchend）→ 清 timer（未達標則不 fire）
+        longPressEnd() {
+            if (this._lpTimer !== null) {
+                clearTimeout(this._lpTimer);
+                this._lpTimer = null;
+            }
+        },
+
+        // 移開 / 取消（@mouseleave / @touchcancel）→ 清 timer
+        longPressCancel() {
+            if (this._lpTimer !== null) {
+                clearTimeout(this._lpTimer);
+                this._lpTimer = null;
+            }
+        },
+
+        // @click guard：長壓 fire 過 → 吞掉這次 click（避免長壓完又觸發 tap 的 enrich）並消化旗標。
+        // 回傳 truthy 時，template `longPressClickGuard($event) || enrichVideo(...)` 的短路會跳過 enrich。
+        longPressClickGuard(ev) {
+            if (this._lpFired) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                this._lpFired = false;
+                return true;
+            }
+            return false;
+        },
+    };
+}
