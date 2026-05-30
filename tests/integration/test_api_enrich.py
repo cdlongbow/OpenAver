@@ -351,3 +351,114 @@ class TestEnrichSingleModeValidation:
             "mode": "bad_mode",
         })
         assert response.status_code == 422
+
+
+# ── CD-62-4: refresh_full + overwrite_existing=false 分裂陷阱智慧防呆 ──────────
+
+class TestEnrichRefreshFullOverwriteGuard:
+    """智慧版守衛：僅當 NFO 與 cover 皆已存在（純分裂）才回 400；
+    缺封面 quick-enrich（refresh_full+overwrite=false+cover缺）放行（零回歸）。
+    mock 由 patch resolve_nfo_cover_paths（router 命名空間）+ os.path.exists。"""
+
+    def _patch_paths(self, mocker, nfo_exists, cover_exists):
+        """mock resolve_nfo_cover_paths 回固定路徑 + os.path.exists 依旗標回應。"""
+        mocker.patch(
+            "web.routers.scraper.resolve_nfo_cover_paths",
+            return_value=("/video/SONE-205.nfo", "/video/SONE-205.jpg"),
+        )
+        exists_map = {
+            "/video/SONE-205.nfo": nfo_exists,
+            "/video/SONE-205.jpg": cover_exists,
+        }
+        mocker.patch(
+            "web.routers.scraper.os.path.exists",
+            side_effect=lambda p: exists_map.get(p, False),
+        )
+
+    def test_refresh_full_overwrite_false_both_files_exist_returns_400(self, client, mocker):
+        """NFO+cover 皆存在 → 400，enrich_single 未被呼叫。"""
+        self._patch_paths(mocker, nfo_exists=True, cover_exists=True)
+        mock_enrich = mocker.patch(
+            "web.routers.scraper.enrich_single", return_value=_ok_result()
+        )
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/video/SONE-205.mp4",
+            "number": "SONE-205",
+            "mode": "refresh_full",
+            "overwrite_existing": False,
+        })
+
+        assert response.status_code == 400
+        detail = response.json().get("detail", "")
+        assert "overwrite" in detail or "分裂" in detail
+        mock_enrich.assert_not_called()
+
+    def test_refresh_full_overwrite_false_cover_missing_passes(self, client, mocker):
+        """cover 不存在（NFO 存在）→ 200 放行，enrich_single 被呼叫（quick-enrich 零回歸關鍵測試）。"""
+        self._patch_paths(mocker, nfo_exists=True, cover_exists=False)
+        mock_enrich = mocker.patch(
+            "web.routers.scraper.enrich_single", return_value=_ok_result()
+        )
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/video/SONE-205.mp4",
+            "number": "SONE-205",
+            "mode": "refresh_full",
+            "overwrite_existing": False,
+        })
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        mock_enrich.assert_called_once()
+
+    def test_refresh_full_overwrite_false_both_missing_passes(self, client, mocker):
+        """NFO+cover 皆不存在（新卡）→ 200 放行。"""
+        self._patch_paths(mocker, nfo_exists=False, cover_exists=False)
+        mock_enrich = mocker.patch(
+            "web.routers.scraper.enrich_single", return_value=_ok_result()
+        )
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/video/SONE-205.mp4",
+            "number": "SONE-205",
+            "mode": "refresh_full",
+            "overwrite_existing": False,
+        })
+
+        assert response.status_code == 200
+        mock_enrich.assert_called_once()
+
+    def test_refresh_full_overwrite_true_passes(self, client, mocker):
+        """overwrite_existing=true → 200，守衛不觸發（不論檔案是否存在）。"""
+        self._patch_paths(mocker, nfo_exists=True, cover_exists=True)
+        mock_enrich = mocker.patch(
+            "web.routers.scraper.enrich_single", return_value=_ok_result()
+        )
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/video/SONE-205.mp4",
+            "number": "SONE-205",
+            "mode": "refresh_full",
+            "overwrite_existing": True,
+        })
+
+        assert response.status_code == 200
+        mock_enrich.assert_called_once()
+
+    def test_fill_missing_overwrite_false_still_allowed(self, client, mocker):
+        """fill_missing+overwrite=false（預設）→ 200，不被守衛誤殺。"""
+        self._patch_paths(mocker, nfo_exists=True, cover_exists=True)
+        mock_enrich = mocker.patch(
+            "web.routers.scraper.enrich_single", return_value=_ok_result()
+        )
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/video/SONE-205.mp4",
+            "number": "SONE-205",
+            "mode": "fill_missing",
+            "overwrite_existing": False,
+        })
+
+        assert response.status_code == 200
+        mock_enrich.assert_called_once()
