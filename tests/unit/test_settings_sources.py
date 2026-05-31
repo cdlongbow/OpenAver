@@ -72,12 +72,15 @@ class TestSection3StateMachineTemplate:
             "Parts Bin count must NOT use enabledCount (that's the Active Row cap counter)"
 
     def test_parts_bin_iterates_partsBinSources(self):
-        """connected：Parts Bin pills x-for over partsBinSources + promoteMetatube on click。"""
+        """connected：Parts Bin pills 單一 flat x-for over partsBinSources + promoteMetatube on click。
+
+        63b-5：靜態 Recommended/Other 群組已拔除（spec §4.2 delta），改用單一 flat loop。
+        """
         html = self._html()
-        assert 'partsBinSources.filter(s => s.recommended)' in html, \
-            "Parts Bin must group Recommended via partsBinSources.filter(s => s.recommended)"
-        assert 'partsBinSources.filter(s => !s.recommended)' in html, \
-            "Parts Bin must group Other via partsBinSources.filter(s => !s.recommended)"
+        assert 'x-for="src in partsBinSources"' in html, \
+            "Parts Bin must iterate partsBinSources via a single flat x-for (no Recommended group)"
+        assert 'partsBinSources.filter(s => s.recommended)' not in html, \
+            "63b-5 違規：Parts Bin 仍含 Recommended 群組 filter（應已改 flat loop）"
         assert '@click="promoteMetatube(src.id)"' in html, \
             "Parts Bin pill click must call promoteMetatube(src.id)"
 
