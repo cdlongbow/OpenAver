@@ -476,7 +476,7 @@ def batch_search(body: BatchSearchRequest) -> dict:
         try:
             data = smart_search(num, limit=1, proxy_url=proxy_url, primary_source=primary_source)
             if data:
-                entry = dict(data[0])
+                entry = strip_internal_nfo_keys(data[0])
                 entry['found'] = True
                 return num, entry
         except Exception:

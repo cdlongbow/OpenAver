@@ -1354,6 +1354,30 @@ class TestBatchSearch:
         assert 'found' in data['summary']
         assert 'not_found' in data['summary']
 
+    def test_batch_search_strips_internal_nfo_keys(self, client, mocker):
+        """§161：_summary/_rating 不得洩漏到 batch-search response（P1 修正守衛）"""
+        def mock_smart_search(q, limit=1, **kwargs):
+            return [{
+                'number': q,
+                'title': 'Found Title',
+                'cover_url': 'http://example.com/cover.jpg',
+                '_summary': 'internal summary should be stripped',
+                '_rating': 4.5,
+            }]
+
+        mocker.patch('web.routers.search.smart_search', side_effect=mock_smart_search)
+
+        response = client.post('/api/batch-search', json={'numbers': ['SONE-100']})
+        assert response.status_code == 200
+        data = response.json()
+
+        entry = data['results']['SONE-100']
+        assert entry['found'] is True
+        assert '_summary' not in entry, "_summary must be stripped from batch-search response"
+        assert '_rating' not in entry, "_rating must be stripped from batch-search response"
+        # Canonical fields should still be present
+        assert entry['title'] == 'Found Title'
+
     def test_batch_search_dedup_numbers(self, client, mocker):
         """重複番號去重：["SONE-100", "SONE-100", "SONE-101"] 只呼叫 smart_search 兩次"""
         def mock_smart_search(q, limit=1, **kwargs):

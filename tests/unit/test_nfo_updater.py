@@ -1,6 +1,6 @@
 """
 測試 core/nfo_updater.py 的 needs_update() 和 update_nfo_file()
-新欄位：director / duration / series / label
+新欄位：director / duration / series / label / plot / rating / mpaa
 
 TDD-lite 策略：先 RED → 實作 GREEN
 """
@@ -391,3 +391,155 @@ class TestUpdateNfoFileNewFields:
         assert name_elem.text == '補完シリーズ'
         # <set> 只存在一個
         assert len(root.findall('set')) == 1
+
+
+# ============================================================
+# update_nfo_file() — plot / rating / mpaa（63c-5 / CD-63c-10）
+# ============================================================
+
+class TestUpdateNfoFilePlotRatingMpaa:
+    """update_nfo_file() 補入 / 不覆蓋 <plot>/<rating>/<mpaa>（63c-5 US7 parity）"""
+
+    @staticmethod
+    def _nfo(*, plot: str = None, rating: str = None, mpaa: str = None,
+              premiered: str = None) -> str:
+        lines = [
+            '<?xml version="1.0" encoding="utf-8"?>',
+            '<movie>',
+            '  <title>テスト</title>',
+            '  <num>TEST-001</num>',
+        ]
+        if premiered is not None:
+            lines.append(f'  <premiered>{premiered}</premiered>')
+        if plot is not None:
+            lines.append(f'  <plot>{plot}</plot>')
+        if rating is not None:
+            lines.append(f'  <rating>{rating}</rating>')
+        if mpaa is not None:
+            lines.append(f'  <mpaa>{mpaa}</mpaa>')
+        lines.append('</movie>')
+        return '\n'.join(lines)
+
+    # ── P2-1: fill all three when missing ──
+
+    def test_fill_plot_rating_mpaa_when_all_missing(self, tmp_path):
+        """NFO 缺 plot/rating/mpaa + metadata 有 _summary/_rating → 三者全部補入"""
+        nfo_path = write_nfo(tmp_path, self._nfo())
+        info = make_base_info()
+        metadata = {'_summary': 'Test plot summary', '_rating': 4.0}
+
+        updated, msg = update_nfo_file(nfo_path, metadata, info)
+
+        assert updated is True
+        root = ET.parse(nfo_path).getroot()
+        assert root.find('plot') is not None
+        # ET round-trips text 1:1（plain text 無需 escape）；XSS escape 另由
+        # test_plot_special_chars_safe_in_xml 驗證
+        assert root.find('plot').text == 'Test plot summary'
+        assert root.find('rating') is not None
+        assert root.find('rating').text == '8.0'   # 4.0 × 2
+        assert root.find('mpaa') is not None
+        assert root.find('mpaa').text == 'JP-18+'
+        assert 'plot' in msg
+        assert 'rating' in msg
+        assert 'mpaa' in msg
+
+    # ── P2-2: rating × 2, format ──
+
+    def test_rating_doubled_and_formatted(self, tmp_path):
+        """rating × 2，格式為 X.X（一位小數）"""
+        nfo_path = write_nfo(tmp_path, self._nfo())
+        info = make_base_info()
+        metadata = {'_summary': 'x', '_rating': 3.75}
+
+        update_nfo_file(nfo_path, metadata, info)
+
+        root = ET.parse(nfo_path).getroot()
+        assert root.find('rating').text == '7.5'
+
+    # ── P2-3: do not overwrite existing plot ──
+
+    def test_existing_plot_not_overwritten(self, tmp_path):
+        """現 NFO 已有 <plot> → 不覆蓋"""
+        nfo_path = write_nfo(tmp_path, self._nfo(plot='Existing plot'))
+        info = make_base_info()
+        metadata = {'_summary': 'New summary', '_rating': 3.0}
+
+        update_nfo_file(nfo_path, metadata, info)
+
+        root = ET.parse(nfo_path).getroot()
+        assert root.find('plot').text == 'Existing plot'
+
+    # ── P2-4: do not overwrite existing rating ──
+
+    def test_existing_rating_not_overwritten(self, tmp_path):
+        """現 NFO 已有 <rating> → 不覆蓋"""
+        nfo_path = write_nfo(tmp_path, self._nfo(rating='6.0'))
+        info = make_base_info()
+        metadata = {'_rating': 4.0}
+
+        update_nfo_file(nfo_path, metadata, info)
+
+        root = ET.parse(nfo_path).getroot()
+        assert root.find('rating').text == '6.0'
+
+    # ── P2-5: do not overwrite existing mpaa ──
+
+    def test_existing_mpaa_not_overwritten(self, tmp_path):
+        """現 NFO 已有 <mpaa> → 不覆蓋"""
+        nfo_path = write_nfo(tmp_path, self._nfo(mpaa='R'))
+        info = make_base_info()
+        metadata = {'_summary': 'x', '_rating': 3.0}
+
+        update_nfo_file(nfo_path, metadata, info)
+
+        root = ET.parse(nfo_path).getroot()
+        assert root.find('mpaa').text == 'R'
+
+    # ── P2-6: mpaa filled even without _summary/_rating (builtin path) ──
+
+    def test_mpaa_filled_for_builtin_metadata_no_summary_rating(self, tmp_path):
+        """builtin 來源（無 _summary/_rating）→ mpaa 仍補 JP-18+（無條件補，fill-if-missing）"""
+        nfo_path = write_nfo(tmp_path, self._nfo())
+        info = make_base_info()
+        metadata = {}   # no _summary, no _rating
+
+        updated, msg = update_nfo_file(nfo_path, metadata, info)
+
+        # mpaa should still be filled
+        root = ET.parse(nfo_path).getroot()
+        assert root.find('mpaa') is not None
+        assert root.find('mpaa').text == 'JP-18+'
+        # plot and rating should NOT be added (no data)
+        assert root.find('plot') is None
+        assert root.find('rating') is None
+
+    # ── P2-7: zero rating is not written ──
+
+    def test_zero_rating_not_written(self, tmp_path):
+        """_rating=0 → 不寫 <rating>（無效值）"""
+        nfo_path = write_nfo(tmp_path, self._nfo())
+        info = make_base_info()
+        metadata = {'_summary': 'x', '_rating': 0}
+
+        update_nfo_file(nfo_path, metadata, info)
+
+        root = ET.parse(nfo_path).getroot()
+        assert root.find('rating') is None
+
+    # ── P2-8: injection prevention via ET escaping ──
+
+    def test_plot_special_chars_safe_in_xml(self, tmp_path):
+        """<plot> 帶特殊字元時 XML 仍可解析，ET round-trip 還原原始文字（ET 自動 escape on write）"""
+        nfo_path = write_nfo(tmp_path, self._nfo())
+        info = make_base_info()
+        evil = '<script>alert("xss")</script> & "quotes"'
+        metadata = {'_summary': evil}
+
+        update_nfo_file(nfo_path, metadata, info)
+
+        # ET write escapes automatically; ET.parse round-trips back to original text
+        root = ET.parse(nfo_path).getroot()
+        plot_elem = root.find('plot')
+        assert plot_elem is not None
+        assert plot_elem.text == evil   # ET round-trips unescaped

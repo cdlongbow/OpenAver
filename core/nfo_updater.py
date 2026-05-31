@@ -343,6 +343,31 @@ def update_nfo_file(nfo_path: str, metadata: dict, info: dict) -> Tuple[bool, st
         modified = True
         changes.append('label')
 
+    # 補 plot（63c-5 / CD-63c-10：metatube _summary carrier → <plot>）
+    # fill-if-missing：現 NFO 無 <plot> 且 metadata 帶 _summary
+    # 注意：set_element_text 透過 ET element.text 賦值，ET 寫出時自動 escape；
+    # 此處不需 html.escape 前置處理（避免雙重 escape）。
+    _summary = metadata.get('_summary', '')
+    if not get_element_text(root, 'plot') and _summary:
+        set_element_text(root, 'plot', _summary, after_tag='premiered')
+        modified = True
+        changes.append('plot')
+
+    # 補 rating（63c-5 / CD-63c-10：metatube _rating carrier × 2 → Jellyfin 0-10 scale）
+    # fill-if-missing：現 NFO 無 <rating> 且 metadata._rating > 0
+    _rating = metadata.get('_rating')
+    if not get_element_text(root, 'rating') and _rating is not None and _rating > 0:
+        set_element_text(root, 'rating', f"{_rating * 2:.1f}", after_tag='plot')
+        modified = True
+        changes.append('rating')
+
+    # 補 mpaa（63c-5：所有 JAV 共通 JP-18+，fill-if-missing 不覆蓋既有值）
+    # 與 generate_nfo 無條件寫不同，此處僅在缺失時補入，保守策略對齊 update_nfo_file 語意。
+    if not get_element_text(root, 'mpaa'):
+        set_element_text(root, 'mpaa', 'JP-18+', after_tag='rating')
+        modified = True
+        changes.append('mpaa')
+
     if modified:
         indent_xml(root)
         tree.write(nfo_path, encoding='utf-8', xml_declaration=True)
