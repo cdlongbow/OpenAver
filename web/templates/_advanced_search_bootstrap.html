@@ -3,6 +3,7 @@
 <script>
 window.__ADVANCED_SEARCH__ = {
     enabled: {{ config.advanced_search_enabled|default(false)|tojson|safe }},
-    sources: {{ (config.sources or [])|tojson|safe }}
+    sources: {{ (config.sources or [])|tojson|safe }},
+    proxy_configured: {{ proxy_configured|default(false)|tojson|safe }}
 };
 </script>

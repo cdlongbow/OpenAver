@@ -8954,3 +8954,48 @@ class TestMetatubeB6I18n:
         assert "⭐" not in hint and "建議起手" not in hint, (
             "CD-63b-8 違規：mt_connected_tier_hint 仍含 Recommended 星標 / 建議起手 文案"
         )
+
+
+# ─── 63c-3: 進階 picker 接 metatube 真資料（routable / available / proxy_configured 注入）───
+class TestMetatubePickerWiringGuard:
+    """63c-3: bootstrap 注入 proxy_configured + state-rescrape.js routable gate 保留 +
+    _rescrape_modal.html metatube 分組未被刪除（驗 B1 data-driven 分組仍在）。
+
+    routable/available 隨 config.sources|tojson 自動帶出（不在 template 逐欄寫），
+    故守衛綁在 state-rescrape.js 的 routable gate 與後端注入（後端走 integration test）。
+    """
+
+    STATE_RESCRAPE_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "shared" / "state-rescrape.js"
+
+    def _bootstrap(self):
+        return ADV_SEARCH_BOOTSTRAP.read_text(encoding="utf-8")
+
+    def _modal(self):
+        return RESCRAPE_MODAL_HTML.read_text(encoding="utf-8")
+
+    def _state_rescrape(self):
+        return self.STATE_RESCRAPE_JS.read_text(encoding="utf-8")
+
+    def test_bootstrap_injects_proxy_configured(self):
+        """_advanced_search_bootstrap.html 含 proxy_configured 注入行（63c-3/63c-6 Surface 2）。"""
+        assert "proxy_configured:" in self._bootstrap(), (
+            "63c-3 違規：bootstrap 缺少 proxy_configured 注入行"
+        )
+
+    def test_state_rescrape_keeps_routable_gate(self):
+        """rescrapeMetatubeSources() 保留 s.routable === true gate（斷線 metatube 不長 stale pill）。"""
+        src = self._state_rescrape()
+        assert "rescrapeMetatubeSources" in src, "63c-3 違規：缺 rescrapeMetatubeSources()"
+        assert "routable === true" in src, (
+            "63c-3 違規：rescrapeMetatubeSources 應保留 routable === true gate"
+        )
+        assert "s.type === 'metatube'" in src, (
+            "63c-3 違規：rescrapeMetatubeSources 應 filter type === 'metatube'"
+        )
+
+    def test_modal_metatube_grouping_present(self):
+        """_rescrape_modal.html 保留 metatube 分組渲染（rescrapeMetatubeSources 驅動，B1 分組未被刪）。"""
+        html = self._modal()
+        assert "rescrapeMetatubeSources()" in html, (
+            "63c-3 違規：_rescrape_modal.html 缺 metatube 分組（rescrapeMetatubeSources 引用）"
+        )

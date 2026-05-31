@@ -145,9 +145,31 @@ def get_common_context(request: Request) -> dict:
     def _t_bound(key, **params):
         return _t(key, locale=locale, **params)
 
+    # 63c-3：per-source routable / available 注入（CD-63c-9）。在 save_config 之後 mutate，
+    # 確保 transient 欄位不被寫回 config.json。_advanced_search_bootstrap.html 做
+    # config.sources|tojson → routable/available 自動帶出（不需逐欄改 template）。
+    # builtin 永遠 routable+available；metatube 依 runtime 連線 + availability gate。
+    from core.metatube.state import metatube_state as _mt_state
+    _avail_map = _mt_state.availability_map()
+    _mt_connected = _mt_state.is_connected
+    for _src in (config.get('sources') or []):
+        if not isinstance(_src, dict):
+            continue
+        _sid = _src.get('id', '')
+        if isinstance(_sid, str) and _sid.startswith('metatube:'):
+            _src['routable'] = _mt_connected
+            _src['available'] = _avail_map.get(_sid, False)
+        else:
+            _src['routable'] = True
+            _src['available'] = True
+    # 63c-3 / 63c-6：proxy 是否已設定（DMM requires_proxy 灰化 Surface 2 用，獨立 context key）
+    _proxy_url = (config.get('search') or {}).get('proxy_url') or ''
+    proxy_configured = len(_proxy_url) > 0
+
     return {
         "request": request,
         "config": config,
+        "proxy_configured": proxy_configured,
         "theme": config.get('general', {}).get('theme', 'light'),
         "sidebar_collapsed": config.get('general', {}).get('sidebar_collapsed', False),
         "font_size": font_size,

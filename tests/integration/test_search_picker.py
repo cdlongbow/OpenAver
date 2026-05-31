@@ -1,0 +1,94 @@
+"""63c-3: 進階 picker explicit dispatch — metatube 選定單源整包贏（US8）。
+
+picker 前端元件不改（B1 已 data-driven）；本檔驗 validate + dispatch 閉合：
+exact + source=metatube:FANZA → search_jav_single_source → explicit 分支整包贏。
+另驗 get_common_context 注入 routable/available/proxy_configured（bootstrap 資料來源）。
+"""
+import pytest
+
+from core.metatube.state import metatube_state
+from core.scrapers.models import Video
+
+
+@pytest.fixture(autouse=True)
+def _reset_metatube_state():
+    """metatube_state 是 process-global singleton；每個 test 前後 disconnect。"""
+    metatube_state.disconnect()
+    yield
+    metatube_state.disconnect()
+
+
+def test_explicit_metatube_source_wins(client, temp_config_path, monkeypatch):
+    """exact + source=metatube:FANZA + connected → shim 結果整包贏（source 正確）。"""
+    metatube_state.connect("http://localhost:8080", "tok", ["FANZA"])
+    fixture = Video(
+        number="SSIS-001", title="T", source="metatube:FANZA",
+        summary="plot text", rating=4.0,
+    )
+    monkeypatch.setattr("core.scraper._MetatubeShim.search", lambda self, number: fixture)
+
+    resp = client.get(
+        "/api/search",
+        params={"mode": "exact", "source": "metatube:FANZA", "q": "SSIS-001"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    assert len(body["data"]) == 1
+    item = body["data"][0]
+    assert item["source"] == "metatube:FANZA"  # 整包贏（explicit 分支）
+    # spec §161 echo strip：internal carrier 不外洩
+    for k in ("_summary", "summary", "_rating", "rating"):
+        assert k not in item, f"echo 不應含 {k!r}"
+
+
+def test_empty_suffix_source_returns_400(client, temp_config_path):
+    """source=metatube: 空後綴 → validate_source_id False → 400。"""
+    resp = client.get(
+        "/api/search",
+        params={"mode": "exact", "source": "metatube:", "q": "SSIS-001"},
+    )
+    assert resp.status_code == 400
+
+
+def test_connected_unknown_provider_none_empty(client, temp_config_path, monkeypatch):
+    """source=metatube:UNKNOWN + connected + shim 回 None → 空結果（非 400）。"""
+    metatube_state.connect("http://localhost:8080", "tok", ["UNKNOWN"])
+    monkeypatch.setattr("core.scraper._MetatubeShim.search", lambda self, number: None)
+    resp = client.get(
+        "/api/search",
+        params={"mode": "exact", "source": "metatube:UNKNOWN", "q": "SSIS-001"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is False
+    assert body["data"] == []
+
+
+def test_disconnected_metatube_source_no_dispatch(client, temp_config_path):
+    """斷線時選 metatube → source_to_scraper 無 entry → 空結果（正確：斷線不 dispatch）。"""
+    # autouse fixture 已 disconnect
+    resp = client.get(
+        "/api/search",
+        params={"mode": "exact", "source": "metatube:FANZA", "q": "SSIS-001"},
+    )
+    # validate 放行（200 路徑）但無 routable entry → 空
+    assert resp.status_code == 200
+    assert resp.json()["data"] == []
+
+
+def test_bootstrap_injects_routable_and_proxy_configured(client, temp_config_path):
+    """get_common_context 注入：builtin sources 帶 routable=true，bootstrap 有 proxy_configured。"""
+    html = client.get("/search").text
+    assert "proxy_configured:" in html, "bootstrap 缺少 proxy_configured 注入"
+    assert '"routable": true' in html, "builtin source 應帶 routable=true（config.sources|tojson 自動帶出）"
+    assert '"available": true' in html, "builtin source 應帶 available=true"
+
+
+def test_routable_available_not_persisted_to_config(client, temp_config_path):
+    """transient routable/available 欄位不得寫回 config.json（注入在 save_config 之後）。"""
+    client.get("/search")  # 觸發 get_common_context（含首次 locale 偵測 save_config）
+    cfg = client.get("/api/config").json()["data"]
+    for s in cfg.get("sources", []):
+        assert "routable" not in s, "routable 不應持久化進 config"
+        assert "available" not in s, "available 不應持久化進 config"
