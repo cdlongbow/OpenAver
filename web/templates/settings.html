@@ -435,6 +435,7 @@
                                      'drop-target': dropTargetId === s.id,
                                  }"
                                  :data-enabled="pillVisualEnabled(s) ? 'true' : 'false'"
+                                 :data-proxy-required="(s.requires_proxy && !isDmmAvailable()) ? 'true' : 'false'"
                                  role="option"
                                  :aria-selected="s.enabled ? 'true' : 'false'"
                                  :aria-grabbed="_grabbedId === s.id ? 'true' : 'false'"

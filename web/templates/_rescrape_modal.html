@@ -47,8 +47,9 @@
             <button type="button" class="source-pill source-pill--action"
                     :class="{ 'source-pill--uncensored': !s.is_censored, 'is-loading': rescrapeLoadingSource === s.id }"
                     :data-enabled="s.enabled ? 'true' : 'false'"
+                    :data-proxy-required="isSourceProxyBlocked(s) ? 'true' : 'false'"
                     :disabled="rescrapeLoadingSource !== null && rescrapeLoadingSource !== s.id"
-                    @click="rescrapeWithSource(s.id)">
+                    @click="isSourceProxyBlocked(s) ? showToast(window.t('settings.sources.dmm_proxy_required_hint'), 'warning') : rescrapeWithSource(s.id)">
               <span class="pill-spin" x-show="rescrapeLoadingSource === s.id"></span>
               <i class="bi bi-slash-circle slash-icn" x-show="rescrapeLoadingSource !== s.id" aria-hidden="true"></i>
               {# 品牌名（display_name_raw → display_name_key fallback；不走 i18n，CD-62-12） #}

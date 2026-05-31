@@ -8999,3 +8999,206 @@ class TestMetatubePickerWiringGuard:
         assert "rescrapeMetatubeSources()" in html, (
             "63c-3 違規：_rescrape_modal.html 缺 metatube 分組（rescrapeMetatubeSources 引用）"
         )
+
+
+# ─── 63c-6: DMM requires_proxy 灰化（兩 surface） ───
+class TestDmmProxyRequiredGuard:
+    """63c-6: DMM requires_proxy 灰化 — Surface 1（Settings Active Row）+ Surface 2（rescrape picker）。
+
+    Frontend-guard 強度：每個斷言都綁到具體元素/屬性，而非對整檔做字串存在性檢查。
+    gotchas.md 「字串存在性 ≠ contract」：先 regex 擷取目標元素的 tag 範圍，再在 tag 範圍內斷言。
+    """
+
+    SETTINGS_CONFIG_JS = PROJECT_ROOT / "web" / "static" / "js" / "pages" / "settings" / "state-config.js"
+    SETTINGS_HTML      = PROJECT_ROOT / "web" / "templates" / "settings.html"
+    STATE_RESCRAPE_JS  = PROJECT_ROOT / "web" / "static" / "js" / "shared" / "state-rescrape.js"
+    RESCRAPE_MODAL_HTML = PROJECT_ROOT / "web" / "templates" / "_rescrape_modal.html"
+    SOURCE_PILL_CSS    = PROJECT_ROOT / "web" / "static" / "css" / "components" / "source-pill.css"
+
+    # ── Surface 1: state-config.js ──────────────────────────────────────────────
+
+    def test_click_active_row_pill_has_requires_proxy_intercept(self):
+        """clickActiveRowPill 在函數開頭加 requires_proxy + isDmmAvailable 攔截（Surface 1）。
+
+        策略：用 regex 擷取 clickActiveRowPill 函數體，再在其中斷言三個 token。
+        「字串存在性 ≠ contract」：斷言在函數體範圍內，而非整檔字串搜尋。
+        """
+        js = self.SETTINGS_CONFIG_JS.read_text(encoding="utf-8")
+        # 擷取 clickActiveRowPill 函數體（直到下一個方法定義）
+        m = re.search(
+            r'clickActiveRowPill\s*\([^)]*\)\s*\{(.+?)(?=\n\s{8}\w|\Z)',
+            js, re.DOTALL
+        )
+        assert m, "63c-6 違規：找不到 clickActiveRowPill 函數體"
+        fn_body = m.group(1)
+        assert "requires_proxy" in fn_body, (
+            "63c-6 違規：clickActiveRowPill 函數體缺 requires_proxy 判斷（Surface 1 攔截）"
+        )
+        assert "isDmmAvailable" in fn_body, (
+            "63c-6 違規：clickActiveRowPill 函數體缺 isDmmAvailable() 呼叫（Surface 1 proxy 判斷）"
+        )
+        assert "dmm_proxy_required_hint" in fn_body, (
+            "63c-6 違規：clickActiveRowPill 函數體缺 dmm_proxy_required_hint toast key（Surface 1）"
+        )
+
+    def test_click_active_row_pill_no_window_confirm(self):
+        """clickActiveRowPill 不含 window.confirm（eslint no-confirm 全域 rule，禁 modal block）。"""
+        js = self.SETTINGS_CONFIG_JS.read_text(encoding="utf-8")
+        m = re.search(
+            r'clickActiveRowPill\s*\([^)]*\)\s*\{(.+?)(?=\n\s{8}\w|\Z)',
+            js, re.DOTALL
+        )
+        assert m, "63c-6 違規：找不到 clickActiveRowPill 函數體"
+        fn_body = m.group(1)
+        assert "window.confirm" not in fn_body, (
+            "63c-6 違規：clickActiveRowPill 含 window.confirm — 用 showToast 取代（no-confirm rule）"
+        )
+
+    # ── Surface 1: settings.html Active Row pill ─────────────────────────────────
+
+    def test_settings_active_row_pill_has_data_proxy_required_binding(self):
+        """settings.html Active Row source-pill div 含 :data-proxy-required binding（Surface 1）。
+
+        策略：用 regex 擷取 x-for="s in activeRowSources" 的 source-pill div 開口 tag（到第一個 >），
+        再在 tag 內容中斷言 :data-proxy-required 屬性存在。
+        """
+        html = self.SETTINGS_HTML.read_text(encoding="utf-8")
+        # 擷取 x-for activeRowSources 模板內的 source-pill div 開口 tag
+        m = re.search(
+            r'x-for="s in activeRowSources"[^>]*>.*?<div\s+class="source-pill"(.*?)role="option"',
+            html, re.DOTALL
+        )
+        assert m, (
+            "63c-6 違規：找不到 Active Row source-pill div（settings.html x-for activeRowSources 內）"
+        )
+        tag_attrs = m.group(1)
+        assert ":data-proxy-required" in tag_attrs, (
+            "63c-6 違規：settings.html Active Row source-pill 缺 :data-proxy-required binding（Surface 1）"
+        )
+
+    def test_settings_active_row_pill_proxy_required_uses_is_dmm_available(self):
+        """settings.html Active Row :data-proxy-required 引用 isDmmAvailable()（不用硬編碼邏輯）。"""
+        html = self.SETTINGS_HTML.read_text(encoding="utf-8")
+        m = re.search(
+            r'x-for="s in activeRowSources"[^>]*>.*?<div\s+class="source-pill"(.*?)role="option"',
+            html, re.DOTALL
+        )
+        assert m, "63c-6 違規：找不到 Active Row source-pill div"
+        tag_attrs = m.group(1)
+        assert "isDmmAvailable" in tag_attrs, (
+            "63c-6 違規：settings.html Active Row :data-proxy-required 應引用 isDmmAvailable()（Surface 1）"
+        )
+
+    # ── Surface 2: state-rescrape.js ─────────────────────────────────────────────
+
+    def test_state_rescrape_has_is_source_proxy_blocked(self):
+        """state-rescrape.js 定義 isSourceProxyBlocked method（Surface 2）。
+
+        綁到 method 定義（非全檔字串存在 — gotchas「字串存在性 ≠ contract」），
+        避免 comment 裡的字串繞過守衛。"""
+        js = self.STATE_RESCRAPE_JS.read_text(encoding="utf-8")
+        assert re.search(r"isSourceProxyBlocked\s*\([^)]*\)\s*\{", js), (
+            "63c-6 違規：state-rescrape.js 缺 isSourceProxyBlocked 方法定義（Surface 2）"
+        )
+
+    def test_state_rescrape_is_source_proxy_blocked_reads_proxy_configured(self):
+        """isSourceProxyBlocked helper 讀取 proxy_configured（不依賴 Settings scope isDmmAvailable）。
+
+        策略：擷取 isSourceProxyBlocked 函數體，斷言其中含 proxy_configured。
+        """
+        js = self.STATE_RESCRAPE_JS.read_text(encoding="utf-8")
+        m = re.search(
+            r'isSourceProxyBlocked\s*\([^)]*\)\s*\{([^}]+)\}',
+            js, re.DOTALL
+        )
+        assert m, "63c-6 違規：找不到 isSourceProxyBlocked 函數體（state-rescrape.js）"
+        fn_body = m.group(1)
+        assert "proxy_configured" in fn_body, (
+            "63c-6 違規：isSourceProxyBlocked 函數體缺 proxy_configured 讀取（不可依賴 isDmmAvailable()）"
+        )
+        assert "requires_proxy" in fn_body, (
+            "63c-6 違規：isSourceProxyBlocked 函數體缺 requires_proxy 讀取（Surface 2）"
+        )
+
+    # ── Surface 2: _rescrape_modal.html builtin pill ─────────────────────────────
+
+    def test_rescrape_modal_builtin_pill_has_data_proxy_required(self):
+        """_rescrape_modal.html builtin pill button 含 :data-proxy-required binding（Surface 2）。
+
+        策略：擷取 x-for="s in rescrapeBuiltinSources()" 模板內的 button tag（到第一個 >），
+        再在 tag 屬性內容斷言 :data-proxy-required 存在（綁定到具體 builtin 元素，不是整檔搜尋）。
+        """
+        html = self.RESCRAPE_MODAL_HTML.read_text(encoding="utf-8")
+        m = re.search(
+            r'x-for="s in rescrapeBuiltinSources\(\)"[^>]*>.*?<button\s+([^>]+)>',
+            html, re.DOTALL
+        )
+        assert m, (
+            "63c-6 違規：找不到 rescrapeBuiltinSources() 模板內的 button tag（_rescrape_modal.html）"
+        )
+        button_attrs = m.group(1)
+        assert ":data-proxy-required" in button_attrs, (
+            "63c-6 違規：_rescrape_modal.html builtin pill button 缺 :data-proxy-required binding（Surface 2）"
+        )
+
+    def test_rescrape_modal_builtin_pill_click_uses_is_source_proxy_blocked(self):
+        """_rescrape_modal.html builtin pill @click handler 引用 isSourceProxyBlocked（Surface 2）。
+
+        策略：同上，在 builtin pill button tag 屬性內斷言 isSourceProxyBlocked 出現（click guard）。
+        """
+        html = self.RESCRAPE_MODAL_HTML.read_text(encoding="utf-8")
+        m = re.search(
+            r'x-for="s in rescrapeBuiltinSources\(\)"[^>]*>.*?<button\s+([^>]+)>',
+            html, re.DOTALL
+        )
+        assert m, "63c-6 違規：找不到 rescrapeBuiltinSources() 模板內的 button tag"
+        button_attrs = m.group(1)
+        assert "isSourceProxyBlocked" in button_attrs, (
+            "63c-6 違規：_rescrape_modal.html builtin pill @click 缺 isSourceProxyBlocked guard（Surface 2）"
+        )
+
+    def test_rescrape_modal_builtin_pill_no_window_confirm(self):
+        """_rescrape_modal.html builtin pill button tag 不含 window.confirm。"""
+        html = self.RESCRAPE_MODAL_HTML.read_text(encoding="utf-8")
+        m = re.search(
+            r'x-for="s in rescrapeBuiltinSources\(\)"[^>]*>.*?<button\s+([^>]+)>',
+            html, re.DOTALL
+        )
+        assert m, "63c-6 違規：找不到 rescrapeBuiltinSources() 模板內的 button tag"
+        button_attrs = m.group(1)
+        assert "window.confirm" not in button_attrs, (
+            "63c-6 違規：_rescrape_modal.html builtin pill 含 window.confirm（用 showToast 取代）"
+        )
+
+    # ── CSS: source-pill.css ─────────────────────────────────────────────────────
+
+    def test_source_pill_css_has_proxy_required_opacity_rule(self):
+        """source-pill.css 含 [data-proxy-required="true"] opacity rule（兩 surface 共用）。"""
+        css = self.SOURCE_PILL_CSS.read_text(encoding="utf-8")
+        # 擷取含 data-proxy-required="true" 的 rule block
+        m = re.search(
+            r'\.source-pill\[data-proxy-required="true"\]\s*\{([^}]+)\}',
+            css, re.DOTALL
+        )
+        assert m, (
+            "63c-6 違規：source-pill.css 缺 .source-pill[data-proxy-required=\"true\"] rule block"
+        )
+        rule_body = m.group(1)
+        assert "opacity" in rule_body, (
+            "63c-6 違規：[data-proxy-required=\"true\"] rule 缺 opacity 設定（灰化機制）"
+        )
+
+    def test_source_pill_css_proxy_required_hover_no_lift(self):
+        """source-pill.css [data-proxy-required="true"]:hover 不 lift（mirror is-disconnected）。"""
+        css = self.SOURCE_PILL_CSS.read_text(encoding="utf-8")
+        m = re.search(
+            r'\.source-pill\[data-proxy-required="true"\]:hover\s*\{([^}]+)\}',
+            css, re.DOTALL
+        )
+        assert m, (
+            "63c-6 違規：source-pill.css 缺 [data-proxy-required=\"true\"]:hover rule（hover 不亮回）"
+        )
+        hover_body = m.group(1)
+        assert "transform" in hover_body, (
+            "63c-6 違規：:hover rule 缺 transform: none（防 lift）"
+        )

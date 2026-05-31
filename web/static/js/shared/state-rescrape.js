@@ -125,6 +125,15 @@ export function rescrapeState() {
         },
 
         /**
+         * 63c-6 Surface 2：來源是否因 proxy 未設定而被封鎖。
+         * 使用 SSR bootstrap 注入的 proxy_configured（CD-63c-9），
+         * 不依賴 Settings Alpine scope 的 isDmmAvailable()（兩者 scope 隔離）。
+         */
+        isSourceProxyBlocked(s) {
+            return !!(s && s.requires_proxy && !(window.__ADVANCED_SEARCH__ && window.__ADVANCED_SEARCH__.proxy_configured));
+        },
+
+        /**
          * 解析 preview 卡的來源顯示名（落差#1：端點回 source id，partial 綁 sourceName）。
          */
         _resolveSourceName(sourceId) {

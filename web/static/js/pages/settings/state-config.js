@@ -752,6 +752,11 @@ export function stateConfig() {
         // Dispatcher：依 type / 狀態分流。B1 只命中 builtin-toggle 分支。
         clickActiveRowPill(src) {
             if (!src) return;
+            // 63c-6 Surface 1：DMM requires_proxy 且 proxy 未設定 → toast + return（不 demote）
+            if (src.requires_proxy && !this.isDmmAvailable()) {
+                this.showToast(window.t('settings.sources.dmm_proxy_required_hint'), 'warning');
+                return;
+            }
             if (src.manual_only) { this.clickJavLibrary(); return; }
             if (this.isDisconnectedMetatube(src)) {
                 this.clickDisconnectedMetatube(src.display_name);
