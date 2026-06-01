@@ -510,6 +510,7 @@ export function stateConfig() {
                     this.metatubeEnabled = config.metatube?.enabled || false;
                     this.metatubeServerUrl = config.metatube?.url || '';
                     this.metatubeToken = config.metatube?.token || '';
+                    this.metatubeLanMode = !!config.metatube?.allow_lan;   // hydrate LAN opt-in so re-connect doesn't fail SSRF (Codex P2)
                     try { await this.hydrateMetatubeStatus(); } catch (_e) { this.metatubeConnected = false; }
 
                     // 背景載入 Ollama 模型列表（不阻塞表單）

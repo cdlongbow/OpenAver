@@ -89,6 +89,7 @@ class MetatubeConfig(BaseModel):
     enabled: bool = False  # 使用者在 Settings › Advanced 啟用 metatube（CD-63b-3）
     url: str = ""    # metatube server URL (persisted; runtime connected state NOT stored here)
     token: str = ""  # API token（空字串 = 不需驗證）
+    allow_lan: bool = False  # 允許連線至 LAN IP（TASK-63e-1：startup 重連沿用用戶當初的選擇）
 
 
 class TranslateConfig(BaseModel):

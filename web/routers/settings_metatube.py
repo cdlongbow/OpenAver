@@ -37,6 +37,129 @@ class ConnectRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Sync helper: token canary (shared by connect + startup_reconnect) — Codex P1
+# ---------------------------------------------------------------------------
+
+def _verify_token_canary(base_url: str, token: str, providers: dict) -> None:
+    """Verify the token is accepted by a real auth-required endpoint.
+
+    Selects the first provider present in METATUBE_PROBE_CANARIES from the
+    given providers dict, then calls search() to confirm the token works.
+
+    Raises:
+        MetatubeAuthError: if the server returns HTTP 401 (definitive token failure).
+        MetatubeError (non-401): re-raised; caller decides whether to block or continue.
+
+    Returns None (without raising) when:
+        - No canary provider is available in the providers list (skip → pass).
+        - search() succeeds (token OK).
+    """
+    names = list(providers.keys())
+    canary_provider = next((n for n in names if n in METATUBE_PROBE_CANARIES), None)
+    if canary_provider is None:
+        # No known canary in this server's provider list — skip, treat as pass.
+        return
+    MetatubeHttpClient(base_url, token, timeout=5).search(
+        canary_provider, METATUBE_PROBE_CANARIES[canary_provider]
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sync helper: persist allow_lan only (for dedup early-return path) — Codex P2
+# ---------------------------------------------------------------------------
+
+def _persist_allow_lan(url: str, token: str, allow_lan: bool) -> bool:
+    """Update config.metatube.allow_lan if the stored url+token match.
+
+    Called before the dedup early-return in connect() so that a second call
+    with the same url/token but a different allow_lan value still updates the
+    persisted config.  Does NOT touch runtime state, does NOT trigger a
+    reconnect, does NOT write any other field.
+
+    Returns True on success (or no-op when url/token don't match), False if the
+    config write fails — caller must surface the failure rather than reporting
+    success, otherwise the LAN opt-in is silently lost (Codex P2).
+    """
+    try:
+        config = load_config()
+        mt = config.get("metatube") or {}
+        if mt.get("url") == url and mt.get("token") == token:
+            mt["allow_lan"] = allow_lan
+            config["metatube"] = mt
+            save_config(config)
+        return True
+    except Exception:
+        logger.exception("_persist_allow_lan: failed to update allow_lan in config")
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Sync: startup reconnect — TASK-63e-1
+# ---------------------------------------------------------------------------
+
+def startup_reconnect(config: dict) -> list[str] | None:
+    """Re-establish metatube connection from persisted config at startup.
+
+    Reads the metatube section of *config* (a raw dict as returned by
+    load_config()), validates the stored URL, fetches providers, verifies the
+    token via canary, then calls state.connect().
+
+    Returns:
+        list[str]  — provider names if successfully reconnected.
+        None       — if reconnect was skipped or failed (state stays disconnected).
+
+    This function is intentionally synchronous so it can be called from
+    lifespan via loop.run_in_executor() without any async context dependency.
+    It never raises; all error paths log a warning and return None.
+    """
+    mt = config.get("metatube") or {}
+
+    # enabled guard
+    if mt.get("enabled") is not True:
+        return None
+
+    url = mt.get("url", "").strip()
+    token = mt.get("token", "")
+    allow_lan = bool(mt.get("allow_lan", False))
+
+    if not url:
+        return None
+
+    # SSRF validation — honour the allow_lan that was persisted at connect time
+    err = validate_metatube_url(url, allow_lan=allow_lan)
+    if err:
+        logger.warning("startup_reconnect: SSRF blocked for stored URL: %s", err)
+        return None
+
+    # Fetch provider list
+    try:
+        providers = MetatubeHttpClient(url, token).list_providers()
+    except MetatubeError:
+        logger.warning("startup_reconnect: list_providers failed for url=%r", url)
+        return None
+
+    # Token canary (Codex P1) — same semantics as connect endpoint
+    try:
+        _verify_token_canary(url, token, providers)
+    except MetatubeAuthError:
+        logger.warning(
+            "startup_reconnect: token rejected (401) — not reconnecting"
+        )
+        return None
+    except MetatubeError:
+        # Non-401: transient / canary issue — log and continue (same as connect)
+        logger.info(
+            "startup_reconnect: canary non-401 error, continuing with reconnect"
+        )
+
+    # Reconnect runtime state
+    names = list(providers.keys())
+    state.connect(url, token, names)
+    logger.info("startup_reconnect: reconnected to %r with %d providers", url, len(names))
+    return names
+
+
+# ---------------------------------------------------------------------------
 # Module-level probe helper (must be called from inside an async handler
 # so asyncio.get_running_loop() works)
 # ---------------------------------------------------------------------------
@@ -78,8 +201,14 @@ async def connect(req: ConnectRequest):
     if err:
         return {"success": False, "error": err}
 
-    # Step 2: dedup — already connected to same URL and token
+    # Step 2: dedup — already connected to same URL and token.
+    # Even on dedup hit we still need to persist allow_lan in case the user
+    # changed it (Codex P2: _persist_allow_lan updates config without re-connecting).
     if state.is_connected and state.base_url == req.url and state.token == req.token:
+        if not _persist_allow_lan(req.url, req.token, req.allow_lan):
+            # Mirror Step5 semantics: don't report success if the opt-in wasn't
+            # persisted, otherwise the restart bug silently returns (Codex P2).
+            return {"success": False, "error": "設定儲存失敗，請重試。"}
         return {"success": True, "provider_count": state.provider_count}
 
     # Step 3: fetch provider list from the metatube server
@@ -97,28 +226,22 @@ async def connect(req: ConnectRequest):
     # Step 3b: token canary — verify token is accepted by an auth-required endpoint.
     # list_providers() calls GET /v1/providers which is AUTH-FREE (returns 200 even
     # without a token).  We must probe a token-required endpoint before persisting.
-    # Only MetatubeAuthError (HTTP 401) is a definitive token failure; all other
-    # MetatubeError subclasses are transient/canary issues and must NOT block connect.
-    _canary_provider = next((n for n in names if n in METATUBE_PROBE_CANARIES), None)
-    if _canary_provider is not None:
-        try:
-            MetatubeHttpClient(req.url, req.token, timeout=5).search(
-                _canary_provider, METATUBE_PROBE_CANARIES[_canary_provider]
-            )
-        except MetatubeAuthError:
-            return {
-                "success": False,
-                "error": "Token 錯誤或缺少：無法通過 metatube server 驗證，請確認 Bearer Token",
-            }
-        except MetatubeError as e:
-            # Non-401 errors (timeout, 404, 5xx, …) are canary / transient issues.
-            # Log class name only — do NOT include token or request detail.
-            logger.info(
-                "metatube connect: canary non-401 error (%s), not blocking connect",
-                type(e).__name__,
-            )
-    # If _canary_provider is None (server has no provider in METATUBE_PROBE_CANARIES),
-    # skip canary verification entirely — defensive design, do NOT block connect.
+    # _verify_token_canary: 401 → MetatubeAuthError; non-401 MetatubeError → re-raised;
+    # no canary provider in list → returns (skip, treat as pass).
+    try:
+        _verify_token_canary(req.url, req.token, providers)
+    except MetatubeAuthError:
+        return {
+            "success": False,
+            "error": "Token 錯誤或缺少：無法通過 metatube server 驗證，請確認 Bearer Token",
+        }
+    except MetatubeError as e:
+        # Non-401 errors (timeout, 404, 5xx, …) are canary / transient issues.
+        # Log class name only — do NOT include token or request detail.
+        logger.info(
+            "metatube connect: canary non-401 error (%s), not blocking connect",
+            type(e).__name__,
+        )
 
     # Step 4: update runtime state
     state.connect(req.url, req.token, names)
@@ -127,11 +250,14 @@ async def connect(req: ConnectRequest):
     try:
         config = load_config()
 
-        # Persist metatube URL + token, preserving existing `enabled` flag (CD-63b-3).
-        # Do NOT wipe `enabled` on reconnect — user's toggle state must survive.
+        # Persist metatube URL + token + allow_lan, preserving existing `enabled`
+        # flag (CD-63b-3).  Do NOT wipe `enabled` on reconnect — user's toggle
+        # state must survive.  allow_lan is stored so startup_reconnect can honour
+        # the user's LAN opt-in when re-connecting after a restart (TASK-63e-1).
         mt = config.get("metatube") or {}
         mt["url"] = req.url
         mt["token"] = req.token
+        mt["allow_lan"] = req.allow_lan
         config["metatube"] = mt
 
         # Merge metatube sources (preserve existing enabled flags)

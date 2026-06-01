@@ -22,6 +22,7 @@ logger = get_logger(__name__)
 
 from core.config import load_config, save_config
 from core.database import VideoRepository, init_db
+from core.metatube.state import metatube_state as _mt_startup_state
 
 
 # 路徑設定
@@ -37,6 +38,20 @@ async def lifespan(app: FastAPI):
     # 移除 legacy clip_embedding / clip_model_id），確保 Video.from_row cls(**data)
     # 不會因 legacy schema 欄位收到未知 keyword 而 500。CD-57b-8 contract。
     init_db()
+
+    # TASK-63e-1: auto-reconnect metatube from persisted config.
+    # Wrapped in try-except so any unexpected failure cannot crash startup.
+    try:
+        import asyncio as _asyncio
+        _config = load_config()
+        _loop = _asyncio.get_event_loop()
+        _names = await _loop.run_in_executor(None, lambda: startup_reconnect(_config))
+        if _names:
+            _gen = _mt_startup_state.generation
+            _fire_probe(_mt_startup_state.base_url, _mt_startup_state.token, _names, _gen)
+    except Exception:
+        logger.warning("lifespan: startup_reconnect failed unexpectedly", exc_info=True)
+
     yield
     # ── shutdown ──────────────────────────────────────────────
     # 目前無 shutdown 邏輯（setup_logging 是 module-level，不需 teardown）
@@ -79,6 +94,10 @@ from web.routers import settings_link as settings_link_router
 from web.routers import settings_mock as settings_mock_router
 from web.routers import scraper_sources as scraper_sources_router
 from web.routers import settings_metatube as settings_metatube_router
+# Module-level imports for startup_reconnect / _fire_probe so that
+# patch("web.app.startup_reconnect") / patch("web.app._fire_probe") target the
+# correct use-site binding (TASK-63e-1; function-local import would defeat patch).
+from web.routers.settings_metatube import startup_reconnect, _fire_probe  # noqa: E402
 app.include_router(search_router.router)
 app.include_router(config_router.router)
 app.include_router(scraper_router.router)
