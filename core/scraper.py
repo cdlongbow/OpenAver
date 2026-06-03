@@ -349,7 +349,7 @@ def search_jav(number: str, source: str = 'auto', proxy_url: str = '', primary_s
     else:
         # auto path: merge follows Active Row drag-sort order (get_enabled_source_ids order);
         # primary_source is deprecated (CD-61-14) and must NOT override the merge winner —
-        # DMM Top-1 privilege lives in smart_search Rule 4a, not here.
+        # DMM Top-1 shortcut removed in feature/65; merge winner = first in enabled order.
         user_order = list(all_data.keys())  # already in get_enabled_source_ids() / drag order
         main_video = merge_results(all_data, user_order)
 
@@ -797,16 +797,6 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
         if offset > 0:
             return []
 
-        # DMM Top-1（primary_source='dmm' 且 DMM 已啟用時精確搜尋優先用 DMM）
-        if primary_source == 'dmm' and _is_dmm_enabled(proxy_url):
-            if status_callback:
-                status_callback('dmm', 'searching')
-            res = search_jav(query, source='dmm', proxy_url=proxy_url)
-            if res:
-                res['_mode'] = 'exact'
-                if status_callback: status_callback('done', 'found:1')
-                return [res]
-
         # Rule 4b（CD-61-19）：JavBus variant probe 僅在 JavBus 在 Active Row 啟用時觸發。
         # JavBus 停用 → 跳過 variant 探查 + 不發 javbus status（靜默降級），落一般 search_jav。
         if 'javbus' in get_enabled_source_ids():
@@ -825,7 +815,7 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
                     return [res]
 
         # 一般搜尋
-        res = search_jav(query, proxy_url=proxy_url, primary_source=primary_source)
+        res = search_jav(query, proxy_url=proxy_url)
         results = [res] if res else []
         if status_callback: status_callback('done', f'found:{len(results)}')
         for r in results: r['_mode'] = 'exact'
