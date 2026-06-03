@@ -939,6 +939,10 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
 
     # 4. 女優/關鍵字搜尋
     else:
+        # CD-plan-65-5: chain = get_all_source_ids_ordered() ∩ FUZZY_SEARCH_SOURCES.
+        # Chain result (including []) is final — "Active Row order is truth".
+        # No post-chain fallback: a hardcoded jav321 fallback here would bypass Active Row
+        # order and run jav321 a second time if it was already in the chain.
         results = search_actress(
             query,
             limit=limit,
@@ -948,12 +952,5 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
             result_callback=result_callback if not discovery_only else None,
             discovery_only=discovery_only,
         )
-        mode = 'actress'
-
-        if not results and not discovery_only:
-            if status_callback: status_callback('mode', 'keyword')
-            results = search_jav321_keyword(query, limit=limit, status_callback=status_callback)
-            if results: mode = 'keyword'
-
-        for r in results: r['_mode'] = mode
+        for r in results: r['_mode'] = 'actress'
         return results

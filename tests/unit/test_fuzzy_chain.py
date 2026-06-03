@@ -307,8 +307,8 @@ class TestFuzzyChain:
                 discovery_only=True,
             )
 
-        mock_dmm.assert_not_called(), \
-            "DMM keyword search must NOT be called in discovery_only mode"
+        # DMM keyword search must NOT be called in discovery_only mode
+        mock_dmm.assert_not_called()
         assert len(results) == 1
         assert results[0] == {'number': 'SONE-999', 'title': ''}, \
             f"Expected javbus stub, got {results[0]}"
@@ -338,3 +338,65 @@ class TestFuzzyChain:
         assert len(results) == 2
         for r in results:
             assert r['title'] == '', f"Expected empty title stub, got title={r['title']!r}"
+
+
+# ============================================================
+# Regression: smart_search fuzzy else-branch — no post-chain jav321 fallback (CD-plan-65-5)
+# ============================================================
+
+class TestSmartSearchFuzzyNoPostChainFallback:
+    """Regression tests for Codex finding: smart_search fuzzy else-branch must NOT
+    call search_jav321_keyword after the chain is exhausted (CD-plan-65-5).
+
+    The Active Row order is the single source of truth.  A hardcoded jav321
+    fallback after _fuzzy_search_chain returns [] would:
+      (a) bypass Active Row ordering entirely, and
+      (b) call jav321 a second time if it was already in the chain.
+    """
+
+    # ---- 16. No fuzzy candidates → smart_search returns [] (no order bypass) ----
+    def test_smart_search_no_fuzzy_candidates_returns_empty(self, monkeypatch):
+        """Codex regression: get_all_source_ids_ordered=['heyzo','fc2'] (no fuzzy
+        candidates) + non-number keyword → smart_search returns [] and
+        JAV321Scraper.search_by_keyword is NEVER called."""
+        from core.scraper import smart_search
+        from core.scrapers.jav321 import JAV321Scraper
+
+        monkeypatch.setattr(
+            "core.scraper.get_all_source_ids_ordered",
+            lambda: ['heyzo', 'fc2'],
+        )
+
+        with patch.object(JAV321Scraper, 'search_by_keyword', return_value=[_make_video('jav321')]) as mock_jav321:
+            results = smart_search("蒼井そら", limit=5)
+
+        # JAV321Scraper.search_by_keyword must NOT be called when jav321 is not in the Active Row
+        mock_jav321.assert_not_called()
+        assert results == [], \
+            f"Expected [] when chain has no fuzzy candidates, got {results}"
+
+    # ---- 17. jav321 in chain, returns empty → NOT called a second time ----
+    def test_smart_search_jav321_in_chain_not_called_twice(self, monkeypatch):
+        """jav321 is in the Active Row chain and returns empty → search_jav321_keyword
+        must not be called a second time as a post-chain fallback."""
+        from core.scraper import smart_search
+        from core.scrapers.jav321 import JAV321Scraper
+
+        monkeypatch.setattr(
+            "core.scraper.get_all_source_ids_ordered",
+            lambda: ['jav321'],
+        )
+
+        call_count = []
+
+        def fake_jav321_search(query, limit=20, status_callback=None):
+            call_count.append(1)
+            return []
+
+        with patch('core.scraper.search_jav321_keyword', side_effect=fake_jav321_search):
+            results = smart_search("some keyword query", limit=5)
+
+        assert len(call_count) == 1, \
+            f"search_jav321_keyword must be called exactly once (via chain), got {len(call_count)} calls"
+        assert results == [], \
+            f"Expected [] when jav321 chain returns empty, got {results}"

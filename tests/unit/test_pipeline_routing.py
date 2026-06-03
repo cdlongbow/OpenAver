@@ -231,9 +231,9 @@ class TestPipeline:
 
         assert result['_source'] == 'javbus'
 
-    def test_get_fuzzy_source_dmm_no_proxy(self):
+    def test_fuzzy_chain_dmm_no_proxy_falls_through(self):
         """DMM 排第一 + 無 proxy → 跳過 DMM，fallback 到 javbus（新鏈行為）"""
-        from core.scraper import search_actress, _fuzzy_search_chain
+        from core.scraper import search_actress
         from core.scrapers.javdb import JavDBScraper
 
         mock_video = _make_video("javbus", "SONE-205")
