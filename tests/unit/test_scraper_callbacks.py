@@ -290,28 +290,46 @@ class TestSearchActressResultCallback:
                 f"Slot {slot} should be {expected_number}, got {data['number']}"
             )
 
-    def test_javdb_fallback_no_seed(self, make_mock_search_jav):
-        """JavDB fallback 路徑 (JavBus 找不到) 不應呼叫 result_callback"""
+    def test_fallback_source_does_not_reseed(self, make_mock_search_jav, monkeypatch):
+        """DMM fallback 路徑 (JavBus 找不到) 不應呼叫 result_callback（seed 合約）
+
+        When JavBus (first dispatched source) returns empty and DMM (fallback) returns
+        results, the fuzzy chain must NOT pass result_callback to DMM — seed is sent
+        at most once, by the first dispatched source.  After TASK-65g javdb is no longer
+        in FUZZY_SEARCH_SOURCES; this test uses the actual 2-source pool (javbus + dmm).
+        """
         from core.scraper import search_actress
+
+        monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
+                            lambda: ['javbus', 'dmm'])
 
         callback_calls = []
 
         def result_callback(slot, data):
             callback_calls.append((slot, data))
 
-        # JavBusScraper returns empty list — triggers JavDB fallback
+        # JavBusScraper returns empty list → first_dispatched=True, then DMM is tried
         mock_scraper = make_mock_scraper_actress([[]])
 
-        mock_db_scraper = MagicMock()
-        mock_video = MagicMock()
-        mock_video.to_legacy_dict.return_value = {'number': 'SONE-100', 'actors': ['三上悠亜']}
-        mock_db_scraper.search_by_keyword.return_value = [mock_video]
-
         with patch('core.scraper.JavBusScraper', return_value=mock_scraper), \
-             patch('core.scraper.JavDBScraper', return_value=mock_db_scraper):
-            results = search_actress('三上悠亜', limit=20, result_callback=result_callback)
+             patch('core.scraper._dmm_keyword_search_progressive',
+                   return_value=[{'number': 'SONE-100', 'actors': ['三上悠亜']}]) as mock_dmm:
+            results = search_actress('三上悠亜', limit=20,
+                                     proxy_url='http://proxy:8080',
+                                     result_callback=result_callback)
 
-        assert callback_calls == [], f"JavDB fallback should not call result_callback, got {callback_calls}"
+        # DMM must have been called (fallback ran)
+        mock_dmm.assert_called_once()
+        # Critically: DMM must have received result_callback=None (not the caller's callback).
+        # Signature: _dmm_keyword_search_progressive(scraper, query, limit, status_cb, result_cb, ...)
+        # result_callback is positional arg index 4.
+        positional_args = mock_dmm.call_args[0]
+        dmm_result_cb = positional_args[4] if len(positional_args) > 4 else mock_dmm.call_args[1].get('result_callback')
+        assert dmm_result_cb is None, \
+            f"Fallback source must NOT receive result_callback, got {dmm_result_cb}"
+        # And therefore no seed/item callbacks were fired by the mock
+        assert callback_calls == [], \
+            f"Fallback source should not call result_callback, got {callback_calls}"
 
 
 # ============ smart_search result_callback 透傳測試 ============
@@ -491,9 +509,12 @@ class TestDiscoveryOnly:
         assert mock_jav.call_count == 2, \
             f"search_jav should be called twice (once per ID), got {mock_jav.call_count}"
 
-    def test_search_actress_discovery_only_returns_ids_no_enrich(self, make_mock_search_jav):
+    def test_search_actress_discovery_only_returns_ids_no_enrich(self, monkeypatch, make_mock_search_jav):
         """discovery_only=True: search_actress 只做 get_ids_from_search，不呼叫 search_jav"""
         from core.scraper import search_actress
+
+        # Pin source order so test is not config-coupled
+        monkeypatch.setattr("core.scraper.get_all_source_ids_ordered", lambda: ['javbus'])
 
         ids = ['SONE-100', 'SONE-101']
         mock_scraper = make_mock_scraper_actress([ids])
@@ -773,7 +794,7 @@ class TestDisabledSourceRouting:
         searched = []
         fc2_result = {'number': 'FC2-PPV-123', 'title': 'FC2'}
 
-        def fake_search_jav(num, source='auto', proxy_url='', primary_source='javbus', javbus_lang=None):
+        def fake_search_jav(num, source='auto', proxy_url='', javbus_lang=None):
             searched.append(source)
             return fc2_result if source == 'fc2' else None
 

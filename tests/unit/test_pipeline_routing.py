@@ -42,7 +42,7 @@ def _make_video(source: str, number: str = "TEST-001") -> Video:
 
 
 # ============================================================
-# TestPipeline (13 tests — excluding test_exact_mode_passes_primary_source)
+# TestPipeline — smart_search routing 測試
 # ============================================================
 
 class TestPipeline:
@@ -109,16 +109,32 @@ class TestPipeline:
         mock_heyzo.assert_called()
 
     def test_dmm_top1_when_proxy(self):
-        """primary_source='dmm' + proxy_url + 番號格式 → DMM Top-1 shortcut 被觸發"""
-        mock_video = _make_video("dmm", "SONE-205")
+        """DMM first in Active Row order + proxy_url → exact path goes fan-out, DMM wins merge.
 
-        with patch.object(DMMScraper, 'search', return_value=mock_video) as mock_dmm:
-            with patch('core.scrapers.dmm.rate_limit'):
-                results = smart_search("SONE-205", proxy_url="http://proxy:8080", primary_source="dmm")
+        DMM Top-1 shortcut removed in feature/65; exact path runs Rule 4b (JavBus
+        variant probe) first, then falls through to search_jav(auto) fan-out + merge.
+        DMM排第一 + 有 proxy → search_jav(auto) fan-out → merge winner _source == 'dmm'.
+        """
+        from core.scrapers.jav321 import JAV321Scraper
+        from core.scrapers.javdb import JavDBScraper
+        from core.scrapers.fc2 import FC2Scraper
+        from core.scrapers.avsox import AVSOXScraper
+        dmm_video = _make_video("dmm", "SONE-205")
 
-        mock_dmm.assert_called()
+        # Class autouse fixture already sets get_enabled_source_ids → SOURCE_ORDER (dmm first).
+        with patch.object(DMMScraper, 'search', return_value=dmm_video), \
+             patch.object(JavBusScraper, 'search', return_value=None), \
+             patch.object(JAV321Scraper, 'search', return_value=None), \
+             patch.object(JavDBScraper, 'search', return_value=None), \
+             patch.object(FC2Scraper, 'search', return_value=None), \
+             patch.object(AVSOXScraper, 'search', return_value=None), \
+             patch('core.scrapers.dmm.rate_limit'), \
+             patch('core.scraper.get_all_variant_ids', return_value=[]):
+            results = smart_search("SONE-205", proxy_url="http://proxy:8080")
+
         assert len(results) >= 1
         assert results[0]['_mode'] == 'exact'
+        assert results[0]['_source'] == 'dmm'
 
     def test_uncensored_mode_fast_path_fc2(self):
         """uncensored_mode=True + FC2 前綴 → D2PassScraper 不被呼叫"""
@@ -137,35 +153,19 @@ class TestPipeline:
         assert len(results) == 1
         mock_d2.assert_not_called()
 
-    def test_primary_source_javbus_skips_dmm_shortcut(self):
-        """primary_source='javbus'（預設）→ 不走 DMM Top-1 shortcut，走 search_jav(auto)"""
-        mock_video = _make_video("javbus", "SONE-205")
-        with patch('core.scraper.search_jav', return_value=mock_video.to_legacy_dict()) as mock_sj:
-            with patch.object(DMMScraper, 'search') as mock_dmm:
-                with patch('core.scraper.get_all_variant_ids', return_value=[]):
-                    results = smart_search("SONE-205", proxy_url="http://proxy:8080", primary_source="javbus")
-        # DMM shortcut should NOT be called directly
-        mock_dmm.assert_not_called()
-        # search_jav(auto) should be called
-        mock_sj.assert_called()
+    def test_exact_path_always_fan_out(self):
+        """精確番號路徑一律走 fan-out，不論 proxy 是否為空。
 
-    def test_dmm_top1_when_proxy_primary_dmm(self):
-        """primary_source='dmm' + proxy → DMM Top-1 shortcut"""
-        mock_video = _make_video("dmm", "SONE-205")
-        with patch.object(DMMScraper, 'search', return_value=mock_video) as mock_dmm:
-            with patch('core.scrapers.dmm.rate_limit'):
-                results = smart_search("SONE-205", proxy_url="http://proxy:8080", primary_source="dmm")
-        mock_dmm.assert_called()
-        assert len(results) >= 1
-        assert results[0]['_mode'] == 'exact'
-
-    def test_primary_source_dmm_no_proxy_fallback(self):
-        """primary_source='dmm' + 無 proxy → search_jav(auto) 不含 DMM"""
+        DMM Top-1 shortcut removed in feature/65; exact path runs Rule 4b (JavBus
+        variant probe) first, then falls through to search_jav(auto) fan-out + merge.
+        proxy_url='' → search_jav(auto) fan-out still called,
+        DMM simply returns no data (dmm_config=None when proxy empty), merge winner = other source.
+        """
         mock_video = _make_video("javbus", "SONE-205")
         with patch('core.scraper.search_jav', return_value=mock_video.to_legacy_dict()) as mock_sj:
             with patch('core.scraper.get_all_variant_ids', return_value=[]):
-                results = smart_search("SONE-205", proxy_url="", primary_source="dmm")
-        # Should still work via search_jav(auto)
+                results = smart_search("SONE-205", proxy_url="")
+        # Exact path always calls search_jav(auto) fan-out regardless of proxy
         mock_sj.assert_called()
 
     def test_merge_winner_first_in_order_dmm(self, monkeypatch):
@@ -174,8 +174,8 @@ class TestPipeline:
         Class fixture sets SOURCE_ORDER (dmm first) as the enabled order.
         With dmm first in order + dmm returning data → winner _source == 'dmm'.
         This is ORDER-driven, NOT primary_source-driven (CD-61-14: primary_source
-        no longer overrides merge winner; DMM Top-1 privilege lives in smart_search
-        Rule 4a, not in search_jav auto-merge).
+        no longer overrides merge winner; DMM Top-1 shortcut removed in feature/65;
+        this test exercises search_jav(auto) merge directly, not the smart_search exact path).
         """
         from core.scrapers.jav321 import JAV321Scraper
         from core.scrapers.javdb import JavDBScraper
@@ -231,30 +231,39 @@ class TestPipeline:
 
         assert result['_source'] == 'javbus'
 
-    def test_get_fuzzy_source_dmm_no_proxy(self):
-        """primary_source='dmm' + 無 proxy → fallback to javbus"""
-        from core.scraper import _get_fuzzy_source
-        assert _get_fuzzy_source('dmm', '') == 'javbus'
-        assert _get_fuzzy_source('dmm', None) == 'javbus'
-        assert _get_fuzzy_source('dmm', 'http://proxy') == 'dmm'
-        assert _get_fuzzy_source('javbus', '') == 'javbus'
-        assert _get_fuzzy_source('javbus', 'http://proxy') == 'javbus'
+    def test_fuzzy_chain_dmm_no_proxy_falls_through(self):
+        """DMM 排第一 + 無 proxy → 跳過 DMM，fallback 到 javbus（新鏈行為）"""
+        from core.scraper import search_actress
+        from core.scrapers.javdb import JavDBScraper
+
+        mock_video = _make_video("javbus", "SONE-205")
+
+        with patch('core.scraper.get_all_source_ids_ordered', return_value=['dmm', 'javbus', 'jav321', 'javdb']), \
+             patch.object(DMMScraper, 'search_by_keyword_with_ids') as mock_dmm_kw, \
+             patch.object(JavBusScraper, 'get_ids_from_search', return_value=['SONE-205']), \
+             patch('core.scraper.search_jav', return_value=mock_video.to_legacy_dict()), \
+             patch.object(JavDBScraper, 'search_by_keyword', return_value=[]):
+            results = search_actress("未歩なな", limit=1, proxy_url='')
+
+        # DMM must NOT be called when proxy_url is empty
+        mock_dmm_kw.assert_not_called()
+        assert len(results) >= 1
 
     def test_search_actress_dmm_routing(self):
-        """search_actress(primary_source='dmm', proxy_url=...) → DMM search_by_keyword_with_ids 先被呼叫"""
+        """DMM 排第一 + proxy 有效 → DMM search_by_keyword_with_ids 先被呼叫，JavBus 不呼叫"""
         from core.scraper import search_actress
 
         mock_video = _make_video("dmm", "SONE-205")
         mock_pairs = [("sone00205", mock_video)]
 
-        with patch.object(DMMScraper, 'search_by_keyword_with_ids', return_value=mock_pairs) as mock_dmm_kw, \
+        with patch('core.scraper.get_all_source_ids_ordered', return_value=['dmm', 'javbus', 'jav321', 'javdb']), \
+             patch.object(DMMScraper, 'search_by_keyword_with_ids', return_value=mock_pairs) as mock_dmm_kw, \
              patch.object(DMMScraper, '_fetch_by_id', return_value=mock_video), \
              patch.object(JavBusScraper, 'get_ids_from_search', return_value=[]) as mock_jb, \
              patch('core.scrapers.dmm.rate_limit'):
             results = search_actress(
                 "未歩なな",
                 limit=10,
-                primary_source='dmm',
                 proxy_url='http://test-proxy:8080',
             )
 
@@ -265,18 +274,18 @@ class TestPipeline:
         assert results[0]['source'] == 'dmm'
 
     def test_search_actress_dmm_fallback_to_javbus(self):
-        """search_actress(primary_source='dmm') → DMM 無結果時 fallback 到 JavBus"""
+        """DMM 排第一 + proxy 有效 + DMM 無結果 → fallback 到 JavBus"""
         from core.scraper import search_actress
         from core.scrapers.javdb import JavDBScraper
 
         # DMM returns nothing → should fall through to JavBus path
-        with patch.object(DMMScraper, 'search_by_keyword_with_ids', return_value=[]) as mock_dmm_kw, \
+        with patch('core.scraper.get_all_source_ids_ordered', return_value=['dmm', 'javbus', 'jav321', 'javdb']), \
+             patch.object(DMMScraper, 'search_by_keyword_with_ids', return_value=[]) as mock_dmm_kw, \
              patch.object(JavBusScraper, 'get_ids_from_search', return_value=[]) as mock_jb, \
              patch.object(JavDBScraper, 'search_by_keyword', return_value=[]) as mock_javdb_kw:
             results = search_actress(
                 "未歩なな",
                 limit=10,
-                primary_source='dmm',
                 proxy_url='http://test-proxy:8080',
             )
 
