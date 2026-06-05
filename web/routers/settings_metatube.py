@@ -236,7 +236,10 @@ def _connect_sync(url: str, token: str, allow_lan: bool) -> dict:
         )
 
     # Step 4: update runtime state (thread-safe: metatube_state uses threading.Lock)
-    state.connect(url, token, names)
+    # 66 Codex P2：capture THIS connect 設的 generation 一路帶回給 _fire_probe，
+    # 不可在 await 後重讀 state.generation（並發 connect/disconnect 會推進它 → 探測
+    # 會用錯的 generation 蓋掉現役連線的 availability）
+    gen = state.connect(url, token, names)
 
     # Step 5: persist to config.json (CD-63b-3 merge)
     try:
@@ -288,7 +291,7 @@ def _connect_sync(url: str, token: str, allow_lan: bool) -> dict:
         state.disconnect()  # rollback — don't stay connected with unsaved config
         return {"ok": False, "error": "設定儲存失敗，請重試。"}
 
-    return {"ok": True, "names": names}
+    return {"ok": True, "names": names, "generation": gen}
 
 
 @router.post("/connect")
@@ -320,8 +323,9 @@ async def connect(req: ConnectRequest):
         return {"success": False, "error": result["error"]}
 
     # Step 6: fire background probe (must stay on loop — uses asyncio.get_running_loop())
-    gen = state.generation
-    _fire_probe(req.url, req.token, result["names"], gen)
+    # 66 Codex P2：用 _connect_sync 回傳的 generation（此次 connect 設的），不重讀
+    # state.generation（avoid stale/superseded generation under concurrent connects）
+    _fire_probe(req.url, req.token, result["names"], result["generation"])
 
     return {"success": True, "provider_count": len(result["names"])}
 

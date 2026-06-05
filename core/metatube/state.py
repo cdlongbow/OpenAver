@@ -50,7 +50,7 @@ class MetatubeConnectionState:
     # Mutations
     # ------------------------------------------------------------------
 
-    def connect(self, base_url: str, token: str, provider_names: list[str]) -> None:
+    def connect(self, base_url: str, token: str, provider_names: list[str]) -> int:
         """Mark as connected and bulk-set all named providers to available.
 
         Repeated connect rebuilds availability from scratch: _availability is
@@ -64,6 +64,13 @@ class MetatubeConnectionState:
             token:    API token (empty string means no auth required).
             provider_names: Raw provider names WITHOUT 'metatube:' prefix
                             (e.g. ['FANZA', 'HEYZO']).
+
+        Returns:
+            The generation counter this connect set (captured under the lock).
+            Callers that fire a generation-fenced probe AFTER an await/threadpool
+            boundary MUST use this returned value rather than re-reading
+            `state.generation` later — a concurrent connect/disconnect could have
+            advanced the global generation in between (66 Codex P2 race).
         """
         with self._lock:
             self._availability = {}  # clear stale keys before rebuilding
@@ -74,10 +81,12 @@ class MetatubeConnectionState:
             for name in provider_names:
                 self._availability[f'metatube:{name}'] = True
             self._generation += 1
+            gen = self._generation  # capture while lock held — atomic with the bump
         logger.debug(
             'MetatubeConnectionState.connect: base_url=%r providers=%r',
             base_url, provider_names,
         )
+        return gen
 
     def disconnect(self) -> None:
         """Mark as disconnected; bulk-set all known providers to unavailable.
