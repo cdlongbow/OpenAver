@@ -412,10 +412,17 @@ class TestJellyfinCheck:
         assert data['error'] == '檢查 Jellyfin 圖片狀態失敗'
 
     def test_jellyfin_check_uses_to_thread(self):
-        """靜態掃描確認 scanner.py 使用 asyncio.to_thread 包裝同步呼叫"""
+        """靜態掃描確認 scanner.py 使用 asyncio.to_thread 包裝 _check_jellyfin_needed helper，
+        且 helper 內含 db_path.exists、VideoRepository、check_jellyfin_images_needed"""
         import pathlib
         scanner_src = (pathlib.Path(__file__).parents[2] / 'web' / 'routers' / 'scanner.py').read_text(encoding='utf-8')
-        assert 'asyncio.to_thread(check_jellyfin_images_needed' in scanner_src
+        # helper 函式透過 to_thread 包裝
+        assert 'asyncio.to_thread(_check_jellyfin_needed' in scanner_src
+        # helper 函式 body 包含三個被 offload 的呼叫
+        assert 'def _check_jellyfin_needed(' in scanner_src
+        assert 'db_path.exists()' in scanner_src
+        assert 'VideoRepository(db_path)' in scanner_src
+        assert 'check_jellyfin_images_needed(repo)' in scanner_src
 
     # ---- T3(40c): TTL 快取相關測試 ----
 

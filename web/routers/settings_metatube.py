@@ -189,35 +189,27 @@ def _fire_probe(base_url: str, token: str, names: list[str], generation: int) ->
 # POST /connect
 # ---------------------------------------------------------------------------
 
-@router.post("/connect")
-async def connect(req: ConnectRequest):
-    """Connect to a metatube HTTP server.
+def _connect_sync(url: str, token: str, allow_lan: bool) -> dict:
+    """Threadpool helper: Step3 list_providers + Step3b canary + Step4 state.connect
+    + Step5 load_config / merge / save_config (+ rollback state.disconnect on failure).
 
-    Validates URL (SSRF guard), fetches provider list, persists config,
-    and fires a background probe of all providers.
+    Returns:
+        {"ok": True,  "names": [...]}
+        {"ok": False, "error": "<exact error string>"}
+
+    Error-string / catch-order is preserved exactly as the original connect() body:
+      - Step3 MetatubeError (catches MetatubeAuthError subclass too) → "無法連線..."
+      - Step3b MetatubeAuthError → "Token 錯誤..."
+      - Step3b non-401 MetatubeError → log only, continue
+      - Step5 Exception → state.disconnect() rollback → "設定儲存失敗，請重試。"
     """
-    # Step 1: SSRF validation
-    err = validate_metatube_url(req.url, req.allow_lan)
-    if err:
-        return {"success": False, "error": err}
-
-    # Step 2: dedup — already connected to same URL and token.
-    # Even on dedup hit we still need to persist allow_lan in case the user
-    # changed it (Codex P2: _persist_allow_lan updates config without re-connecting).
-    if state.is_connected and state.base_url == req.url and state.token == req.token:
-        if not _persist_allow_lan(req.url, req.token, req.allow_lan):
-            # Mirror Step5 semantics: don't report success if the opt-in wasn't
-            # persisted, otherwise the restart bug silently returns (Codex P2).
-            return {"success": False, "error": "設定儲存失敗，請重試。"}
-        return {"success": True, "provider_count": state.provider_count}
-
     # Step 3: fetch provider list from the metatube server
     try:
-        providers = MetatubeHttpClient(req.url, req.token).list_providers()
+        providers = MetatubeHttpClient(url, token).list_providers()
     except MetatubeError:
-        logger.exception("metatube connect: list_providers failed for url=%r", req.url)
+        logger.exception("metatube connect: list_providers failed for url=%r", url)
         return {
-            "success": False,
+            "ok": False,
             "error": "無法連線到 metatube server，請確認 URL 與 token",
         }
 
@@ -229,10 +221,10 @@ async def connect(req: ConnectRequest):
     # _verify_token_canary: 401 → MetatubeAuthError; non-401 MetatubeError → re-raised;
     # no canary provider in list → returns (skip, treat as pass).
     try:
-        _verify_token_canary(req.url, req.token, providers)
+        _verify_token_canary(url, token, providers)
     except MetatubeAuthError:
         return {
-            "success": False,
+            "ok": False,
             "error": "Token 錯誤或缺少：無法通過 metatube server 驗證，請確認 Bearer Token",
         }
     except MetatubeError as e:
@@ -243,8 +235,8 @@ async def connect(req: ConnectRequest):
             type(e).__name__,
         )
 
-    # Step 4: update runtime state
-    state.connect(req.url, req.token, names)
+    # Step 4: update runtime state (thread-safe: metatube_state uses threading.Lock)
+    state.connect(url, token, names)
 
     # Step 5: persist to config.json (CD-63b-3 merge)
     try:
@@ -255,9 +247,9 @@ async def connect(req: ConnectRequest):
         # state must survive.  allow_lan is stored so startup_reconnect can honour
         # the user's LAN opt-in when re-connecting after a restart (TASK-63e-1).
         mt = config.get("metatube") or {}
-        mt["url"] = req.url
-        mt["token"] = req.token
-        mt["allow_lan"] = req.allow_lan
+        mt["url"] = url
+        mt["token"] = token
+        mt["allow_lan"] = allow_lan
         config["metatube"] = mt
 
         # Merge metatube sources (preserve existing enabled flags)
@@ -294,13 +286,43 @@ async def connect(req: ConnectRequest):
     except Exception:
         logger.exception("metatube connect: failed to persist config")
         state.disconnect()  # rollback — don't stay connected with unsaved config
-        return {"success": False, "error": "設定儲存失敗，請重試。"}
+        return {"ok": False, "error": "設定儲存失敗，請重試。"}
 
-    # Step 6: fire background probe
+    return {"ok": True, "names": names}
+
+
+@router.post("/connect")
+async def connect(req: ConnectRequest):
+    """Connect to a metatube HTTP server.
+
+    Validates URL (SSRF guard), fetches provider list, persists config,
+    and fires a background probe of all providers.
+    """
+    # Step 1: SSRF validation
+    err = validate_metatube_url(req.url, req.allow_lan)
+    if err:
+        return {"success": False, "error": err}
+
+    # Step 2: dedup — already connected to same URL and token.
+    # Even on dedup hit we still need to persist allow_lan in case the user
+    # changed it (Codex P2: _persist_allow_lan updates config without re-connecting).
+    if state.is_connected and state.base_url == req.url and state.token == req.token:
+        if not _persist_allow_lan(req.url, req.token, req.allow_lan):
+            # Mirror Step5 semantics: don't report success if the opt-in wasn't
+            # persisted, otherwise the restart bug silently returns (Codex P2).
+            return {"success": False, "error": "設定儲存失敗，請重試。"}
+        return {"success": True, "provider_count": state.provider_count}
+
+    # Step 3–5: run blocking I/O (HTTP + config) in threadpool
+    result = await asyncio.to_thread(_connect_sync, req.url, req.token, req.allow_lan)
+    if not result["ok"]:
+        return {"success": False, "error": result["error"]}
+
+    # Step 6: fire background probe (must stay on loop — uses asyncio.get_running_loop())
     gen = state.generation
-    _fire_probe(req.url, req.token, names, gen)
+    _fire_probe(req.url, req.token, result["names"], gen)
 
-    return {"success": True, "provider_count": len(names)}
+    return {"success": True, "provider_count": len(result["names"])}
 
 
 # ---------------------------------------------------------------------------
