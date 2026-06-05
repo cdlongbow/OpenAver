@@ -12,8 +12,10 @@
 
 import asyncio
 import json
+import os
 import random
 import re
+import tempfile
 import time
 from typing import Optional, List
 from urllib.parse import quote
@@ -385,9 +387,7 @@ async def list_photo_candidates(name: str):
     雲端 0–3 張並行抓取 + 本機影片封面 crop 補足至 6 張。
     actress 不存在 → JSONResponse 404。
     """
-    init_db()
-    repo = ActressRepository()
-    actress = repo.get_by_name(name)
+    _, actress = await asyncio.to_thread(_load_actress, name)
     if actress is None:
         return JSONResponse(
             status_code=404,
@@ -467,6 +467,53 @@ async def list_photo_candidates(name: str):
 # NOTE：必須定義在 GET /{name} 之前！
 # ---------------------------------------------------------------------------
 
+def _check_cover_path(fs_path: str) -> bool:
+    """Threadpool helper: init DB + check cover path is known (防任意檔案讀取)."""
+    init_db()
+    return VideoRepository().is_known_cover_path(fs_path)
+
+
+def _load_actress(name: str):
+    """Threadpool helper: init DB + load ActressRepository + fetch actress by name.
+
+    Returns (repo, actress) tuple so the caller can reuse the same repo instance
+    for repo.save() later, preserving original semantics.
+    """
+    init_db()
+    repo = ActressRepository()
+    return repo, repo.get_by_name(name)
+
+
+def _get_actress_videos(name: str) -> list:
+    """Threadpool helper: fetch videos for actress (init_db already ran in _load_actress)."""
+    return VideoRepository().get_videos_by_actress(name)
+
+
+def _write_actress_photo(name: str, crop_bytes: bytes) -> None:
+    """Threadpool helper: atomically write crop_bytes to GFRIENDS_DIR, replacing old files.
+
+    Lock-free: same-actress concurrent writers are last-writer-wins (acceptable).
+    unlink(missing_ok=True) avoids the glob/unlink TOCTOU 500; temp+os.replace
+    avoids torn reads (66b-T4b).
+    """
+    safe = sanitize_filename(name)
+    GFRIENDS_DIR.mkdir(parents=True, exist_ok=True)
+    for old in GFRIENDS_DIR.glob(f"{safe}.*"):
+        old.unlink(missing_ok=True)
+    dest = GFRIENDS_DIR / f"{safe}.jpg"
+    fd, tmp = tempfile.mkstemp(dir=GFRIENDS_DIR, suffix=".jpg")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(crop_bytes)
+        os.replace(tmp, dest)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 @router.get("/actress-crop")
 async def actress_crop(path: str, spec: str = "v1"):
     """
@@ -477,9 +524,8 @@ async def actress_crop(path: str, spec: str = "v1"):
     # Fix 2 (T2): uri_to_fs_path 已 idempotent（非 URI 直接 normalize_path），直接呼叫
     fs_path = uri_to_fs_path(path)
     # Security: cover_path 必須是 DB 中某個 video 的 cover_path（防任意檔案讀取）
-    init_db()
-    video_repo = VideoRepository()
-    if not video_repo.is_known_cover_path(fs_path):
+    allowed = await asyncio.to_thread(_check_cover_path, fs_path)
+    if not allowed:
         return Response(b"", status_code=403)
     result = await asyncio.to_thread(crop_video_cover, fs_path, spec)
     if result is None:
@@ -504,9 +550,7 @@ async def set_actress_photo(name: str, req: SetActressPhotoRequest):
     覆蓋時先 glob 刪舊副檔名，再寫入新圖。
     更新 DB photo_source 欄位，回傳帶 cache-bust timestamp 的新 photo_url。
     """
-    init_db()
-    repo = ActressRepository()
-    actress = repo.get_by_name(name)
+    repo, actress = await asyncio.to_thread(_load_actress, name)
     if actress is None:
         return JSONResponse(status_code=404, content={"error": "not_found"})
 
@@ -526,8 +570,7 @@ async def set_actress_photo(name: str, req: SetActressPhotoRequest):
         # file:/// URI → FS path（禁止手動 strip）
         video_fs_path = uri_to_fs_path(req.video_path)
         # 從 DB 取該影片的 cover_path
-        video_repo = VideoRepository()
-        videos = video_repo.get_videos_by_actress(name)
+        videos = await asyncio.to_thread(_get_actress_videos, name)
         # Fix 3 (T3): v.path 在 DB 存 file:/// URI（gallery_scanner 用 to_file_uri 寫入），
         # 比對前雙邊都正規化為 FS path，避免 URI vs FS path 永遠 fail
         match = next(
@@ -547,15 +590,11 @@ async def set_actress_photo(name: str, req: SetActressPhotoRequest):
         if crop_bytes is None:
             return JSONResponse(status_code=500, content={"error": "crop_failed"})
         # glob 刪舊副檔名 + 寫入
-        safe = sanitize_filename(name)
-        GFRIENDS_DIR.mkdir(parents=True, exist_ok=True)
-        for old in GFRIENDS_DIR.glob(f"{safe}.*"):
-            old.unlink()
-        (GFRIENDS_DIR / f"{safe}.jpg").write_bytes(crop_bytes)
+        await asyncio.to_thread(_write_actress_photo, name, crop_bytes)
 
     # 更新 photo_source + 回傳
     actress.photo_source = req.source
-    repo.save(actress)
+    await asyncio.to_thread(repo.save, actress)
 
     t = int(time.time())
     photo_url = f"/api/actresses/photo/{quote(name)}?t={t}"

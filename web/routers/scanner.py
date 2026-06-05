@@ -445,7 +445,7 @@ async def generate():
 
 
 @router.get("/stats")
-async def get_stats():
+def get_stats():
     """取得 Scanner 統計資訊（從 SQLite 讀取）"""
     try:
         db_path = get_db_path()
@@ -471,7 +471,7 @@ async def get_stats():
 
 
 @router.delete("/cache")
-async def clear_cache():  # noqa: ranker-invalidate (DELETE FROM videos only in docstring; actual deletion delegates to repo.clear_all() which already calls SimilarRankerCache.invalidate())
+def clear_cache():  # noqa: ranker-invalidate (DELETE FROM videos only in docstring; actual deletion delegates to repo.clear_all() which already calls SimilarRankerCache.invalidate())
     """清除所有影片快取（DELETE FROM videos）"""
     try:
         db_path = get_db_path()
@@ -492,7 +492,7 @@ async def clear_cache():  # noqa: ranker-invalidate (DELETE FROM videos only in 
 
 
 @router.get("/update-check")
-async def check_update():
+def check_update():
     """檢查需要更新的影片數量（從 SQLite 讀取）"""
     try:
         db_path = get_db_path()
@@ -544,7 +544,7 @@ async def check_update():
 
 
 @router.get("/missing-check")
-async def check_missing():
+def check_missing():
     """T10: 檢查 DB 中缺少 NFO 或封面的影片數量與清單"""
     try:
         db_path = get_db_path()
@@ -672,7 +672,7 @@ async def run_update():
 
 
 @router.get("/view")
-async def view_list():
+def view_list():
     """取得產生的 HTML 列表檔案（修改圖片路徑為 API 代理）"""
     try:
         config = load_config()
@@ -722,7 +722,7 @@ async def view_list():
 
 
 @router.get("/image")
-async def get_image(path: str = Query(..., description="圖片路徑")):
+def get_image(path: str = Query(..., description="圖片路徑")):
     """代理圖片請求，解決 file:// 在 iframe 中無法載入的問題"""
     from urllib.parse import unquote
     from core.path_utils import normalize_path
@@ -787,7 +787,7 @@ async def get_image(path: str = Query(..., description="圖片路徑")):
 
 
 @router.get("/video")
-async def get_video(request: Request, path: str = Query(..., description="影片路徑（file:/// URI 或 FS 路徑）")):
+def get_video(request: Request, path: str = Query(..., description="影片路徑（file:/// URI 或 FS 路徑）")):
     """代理影片請求，解決瀏覽器無法開啟 file:/// URI 的問題"""
     # URL decode
     path = unquote(path)
@@ -931,7 +931,7 @@ async def video_player(path: str = Query(..., description="影片路徑（file:/
 
 
 @router.get("/actress-stats")
-async def get_actress_stats(name: str = Query(..., description="女優名稱")):
+def get_actress_stats(name: str = Query(..., description="女優名稱")):
     """查詢某名字的片數"""
     try:
         db_path = get_db_path()
@@ -1038,21 +1038,36 @@ def generate_jellyfin_images_stream() -> Generator[str, None, None]:
         yield _sse_event({"type": "error", "message": "產生 Jellyfin 圖片失敗"})
 
 
+def _check_jellyfin_needed() -> dict | None:
+    """Threadpool helper: get_db_path + check DB existence + open repo + run jellyfin check.
+
+    Returns None if DB does not exist (caller handles as need_update=0 early return).
+    Returns the result dict from check_jellyfin_images_needed otherwise.
+    """
+    db_path = get_db_path()
+    if not db_path.exists():
+        return None
+    repo = VideoRepository(db_path)
+    return check_jellyfin_images_needed(repo)
+
+
 @router.get("/jellyfin-check")
 async def jellyfin_image_check():
     """檢查多少影片需要補齊 Jellyfin 圖片"""
     global _jellyfin_cache_result, _jellyfin_cache_time
     try:
-        db_path = get_db_path()
-        if not db_path.exists():
-            return {"success": True, "data": {"need_update": 0}}
-
-        # T3(40c): TTL 快取命中
+        # T3(40c): TTL 快取命中（純記憶體，命中時 zero-threadpool）
+        # T4b(66): get_db_path（含 mkdir）+ db_path.exists() + repo 全併入
+        # _check_jellyfin_needed helper 移出 loop，故 DB 偵測現在排在 TTL 快取之後。
+        # 副作用：DB 在 60s TTL 窗內被刪除時，warm cache 會回舊值而非 0
+        # （pathological，無 workflow 觸發）；屬刻意取捨。
         if _jellyfin_cache_result is not None and time.time() - _jellyfin_cache_time < 60:
             return {"success": True, "data": {"need_update": _jellyfin_cache_result['need_update']}}
 
-        repo = VideoRepository(db_path)
-        result = await asyncio.to_thread(check_jellyfin_images_needed, repo)
+        result = await asyncio.to_thread(_check_jellyfin_needed)
+
+        if result is None:
+            return {"success": True, "data": {"need_update": 0}}
 
         # T3(40c): 更新快取
         _jellyfin_cache_result = result

@@ -18,10 +18,10 @@
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+import asyncio
 import httpx
 
 from core.logger import get_logger
-from core import config as _core_config
 from core.config import (
     AppConfig,
     ScraperConfig,
@@ -34,6 +34,8 @@ from core.config import (
     GeneralConfig,
     load_config,
     save_config,
+    mutate_config,
+    reset_config_file,
 )
 from core.source_config import MAX_ENABLED_SOURCES
 from core.translate_service import LANGUAGE_PROMPTS
@@ -50,13 +52,13 @@ def _reset_translate_service():
 
 
 @router.get("/config")
-async def get_config() -> dict:
+def get_config() -> dict:
     """取得所有設定"""
     return {"success": True, "data": load_config()}
 
 
 @router.put("/config")
-async def update_config(config: AppConfig) -> dict:
+def update_config(config: AppConfig) -> dict:
     """更新所有設定"""
     # Cap 守衛（CD-61-16，endpoint-level；非 model_validator）：
     # 同時啟用且非 manual_only 的來源數不得超過 MAX_ENABLED_SOURCES。
@@ -77,11 +79,10 @@ async def update_config(config: AppConfig) -> dict:
 
 
 @router.delete("/config")
-async def reset_config() -> dict:
+def reset_config() -> dict:
     """恢復原廠設定 - 刪除 config.json"""
     try:
-        if _core_config.CONFIG_PATH.exists():
-            _core_config.CONFIG_PATH.unlink()
+        reset_config_file()  # 鎖內 exists/unlink，無 TOCTOU（CD-66b-1）
         _reset_translate_service()  # 清除舊服務實例
         return {"success": True, "message": "已恢復預設設定"}
     except Exception as e:
@@ -90,7 +91,7 @@ async def reset_config() -> dict:
 
 
 @router.get("/tutorial-status")
-async def get_tutorial_status() -> dict:
+def get_tutorial_status() -> dict:
     """取得新手引導完成狀態"""
     config = load_config()
     completed = config.get("general", {}).get("tutorial_completed", False)
@@ -98,24 +99,20 @@ async def get_tutorial_status() -> dict:
 
 
 @router.post("/tutorial-completed")
-async def mark_tutorial_completed() -> dict:
+def mark_tutorial_completed() -> dict:
     """標記新手引導已完成（僅在點擊完成時呼叫）"""
-    config = load_config()
-    if "general" not in config:
-        config["general"] = {}
-    config["general"]["tutorial_completed"] = True
-    save_config(config)
+    def _mut(cfg):
+        cfg.setdefault("general", {})["tutorial_completed"] = True
+    mutate_config(_mut)
     return {"success": True}
 
 
 @router.post("/tutorial-reset")
-async def reset_tutorial() -> dict:
+def reset_tutorial() -> dict:
     """重置新手引導狀態（供設定頁使用）"""
-    config = load_config()
-    if "general" not in config:
-        config["general"] = {}
-    config["general"]["tutorial_completed"] = False
-    save_config(config)
+    def _mut(cfg):
+        cfg.setdefault("general", {})["tutorial_completed"] = False
+    mutate_config(_mut)
     return {"success": True}
 
 
@@ -124,20 +121,21 @@ class GeneralFieldRequest(BaseModel):
 
 
 @router.put("/config/general/{field}")
-async def update_general_field(field: str, request: GeneralFieldRequest) -> dict:
+def update_general_field(field: str, request: GeneralFieldRequest) -> dict:
     """更新 general 區塊單一欄位（輕量端點，供 UI toggle 即時同步）"""
     allowed = {"sidebar_collapsed", "theme", "font_size", "locale"}
     if field not in allowed:
         return {"success": False, "error": f"不允許更新欄位: {field}"}
     try:
-        config = load_config()
-        if "general" not in config:
-            config["general"] = {}
+        # locale 驗證在 mutate 前（保留既有順序：驗證 → 寫入 → translate reset）
         if field == "locale" and request.value not in ("zh-TW", "zh-CN", "ja", "en"):
             logger.warning("嘗試設定不支援的語系: %s", request.value)
             return {"success": False, "error": "不支援的語系"}
-        config["general"][field] = request.value
-        save_config(config)
+
+        def _mut(cfg):
+            cfg.setdefault("general", {})[field] = request.value
+        mutate_config(_mut)
+
         if field == "locale":
             _reset_translate_service()
         return {"success": True}
@@ -208,7 +206,7 @@ async def test_ollama_model(request: OllamaTestRequest) -> dict:
     try:
         url = request.url.rstrip('/')
 
-        config = load_config()
+        config = await asyncio.to_thread(load_config)
         locale = config.get("general", {}).get("locale", "zh-TW")
         lang_config = LANGUAGE_PROMPTS.get(locale, LANGUAGE_PROMPTS["zh-TW"])
         lang_name = lang_config["name"]

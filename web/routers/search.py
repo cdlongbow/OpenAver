@@ -523,7 +523,7 @@ async def search_stream(
 
     # 讀取設定（無碼模式 + proxy）
     from core.config import load_config
-    config = load_config()
+    config = await asyncio.to_thread(load_config)
     uncensored_mode = is_uncensored_mode_effective(config)
     proxy_url = config.get('search', {}).get('proxy_url', '')
 
@@ -605,7 +605,11 @@ async def search_stream(
                     top_actor = _analyze_top_actor(results, threshold=0.8, min_samples=3)
                     if top_actor:
                         logger.info(f"[Actress Profile] Fetching profile for: {top_actor}")
-                        actress_profile = _fetch_actress_profile_with_db(top_actor, _extract_top_makers(results))
+                        # 66 Codex P1：event_generator 是 async generator、跑在 event loop 上，
+                        # 此 helper 做 init_db/repo + DB-miss 時同步 scraper HTTP → 必須 to_thread
+                        actress_profile = await asyncio.to_thread(
+                            _fetch_actress_profile_with_db, top_actor, _extract_top_makers(results)
+                        )
                         if not actress_profile:
                             logger.info(f"[Actress Profile] Not found for: {top_actor}")
 
@@ -676,7 +680,7 @@ async def get_sources() -> dict:
 
 
 @router.get("/search/favorite-files")
-async def get_favorite_files() -> dict:
+def get_favorite_files() -> dict:
     """取得我的最愛資料夾的檔案列表（已過濾）
 
     Returns:
@@ -761,26 +765,13 @@ async def get_favorite_files() -> dict:
     }
 
 
-@router.post("/search/filter-files")
-async def filter_files(request: Request) -> dict:
-    """過濾檔案列表：移除非影片檔與過小檔案
+def _filter_files_sync(paths: list) -> dict:
+    """Threadpool helper（CD-66-3 外層）：load_config + 檔案走訪（exists/stat/iterdir）。
 
-    Args:
-        request: {"paths": ["/path/to/file1.mp4", "C:\\path\\to\\file2.txt", ...]}
-
-    Returns:
-        {
-            "success": True,
-            "files": ["filtered paths"],
-            "rejected": {"extension": 0, "size": 0, "not_found": 0},
-            "total_rejected": 0
-        }
+    整段同步阻塞 I/O，由 filter_files 經 await asyncio.to_thread 移出 event loop。
     """
     from core.config import load_config
     from core.path_utils import normalize_path
-
-    data = await request.json()
-    paths = data.get("paths", [])
 
     # 載入設定
     config = load_config()
@@ -843,8 +834,28 @@ async def filter_files(request: Request) -> dict:
     }
 
 
+@router.post("/search/filter-files")
+async def filter_files(request: Request) -> dict:
+    """過濾檔案列表：移除非影片檔與過小檔案
+
+    Args:
+        request: {"paths": ["/path/to/file1.mp4", "C:\\path\\to\\file2.txt", ...]}
+
+    Returns:
+        {
+            "success": True,
+            "files": ["filtered paths"],
+            "rejected": {"extension": 0, "size": 0, "not_found": 0},
+            "total_rejected": 0
+        }
+    """
+    data = await request.json()
+    paths = data.get("paths", [])
+    return await asyncio.to_thread(_filter_files_sync, paths)
+
+
 @router.get("/search/local-status")
-async def get_local_status(numbers: str = Query(..., description="逗號分隔的番號列表")) -> dict:
+def get_local_status(numbers: str = Query(..., description="逗號分隔的番號列表")) -> dict:
     """查詢番號在本地庫的存在狀態
 
     Args:

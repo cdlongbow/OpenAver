@@ -345,6 +345,34 @@ def test_connect_bumps_generation(state):
     assert state.generation == gen_before + 1
 
 
+def test_connect_returns_new_generation(state):
+    """66 Codex P2: connect() 必須回傳它所設的 generation（lock 內原子取得）。
+
+    這是 _connect_sync 的契約——它把此值帶給 _fire_probe，避免在 await 後重讀
+    state.generation 而拿到並發 connect/disconnect 推進後的錯誤值。
+    """
+    gen0 = state.generation
+    returned = state.connect('http://host', 'tok', ['FANZA'])
+    assert returned == gen0 + 1
+    assert returned == state.generation  # 單執行緒測試下與 property 一致
+
+
+def test_returned_generation_fences_superseded_probe(state):
+    """66 Codex P2: 用 connect() 回傳的 generation 帶探測，被後續 connect 取代時
+    其寫入會被 generation guard 正確擋下（不污染現役連線的 availability）。"""
+    # 模擬請求 A connect，捕捉回傳 generation
+    gen_a = state.connect('http://serverA', 'tokA', ['HEYZO'])
+    # 模擬並發請求 B 取代 A
+    gen_b = state.connect('http://serverB', 'tokB', ['HEYZO'])
+    assert gen_b > gen_a
+    # A 的 stale 探測（帶 gen_a）對現役 B 連線的寫入應被擋下
+    state.mark_failed('metatube:HEYZO', generation=gen_a)
+    assert state.is_available('metatube:HEYZO') is True  # 未被 A 污染
+    # B 自己的探測（帶 gen_b，當前 generation）正常生效
+    state.mark_failed('metatube:HEYZO', generation=gen_b)
+    assert state.is_available('metatube:HEYZO') is False
+
+
 def test_disconnect_bumps_generation(state):
     """disconnect() must increment _generation."""
     state.connect('http://host', 'tok', ['FANZA'])
@@ -467,3 +495,50 @@ def test_mark_no_generation_arg_backward_compatible(state):
     assert state.is_available('metatube:FANZA') is False
     state.mark_available('metatube:FANZA')  # no generation arg
     assert state.is_available('metatube:FANZA') is True
+
+
+# ===========================================================================
+# CD-66b-3: probe_snapshot() — atomic (names, gen, base_url, token)
+# ===========================================================================
+
+def test_probe_snapshot_after_connect(state):
+    """probe_snapshot() returns connected names/gen/url/token in one atomic read."""
+    state.connect('http://host:8080', 'tok', ['FANZA', 'HEYZO'])
+    names, gen, url, token = state.probe_snapshot()
+    assert set(names) == {'FANZA', 'HEYZO'}
+    assert gen == state.generation
+    assert url == 'http://host:8080'
+    assert token == 'tok'
+
+
+def test_probe_snapshot_none_to_empty_string(state):
+    """Fresh state (no connect): base_url/token None map to '', names empty, gen 0."""
+    names, gen, url, token = state.probe_snapshot()
+    assert names == []
+    assert url == ''
+    assert token == ''
+    assert gen == 0
+
+
+def test_probe_snapshot_names_from_availability_not_providers(state):
+    """CD-66b-3: after disconnect, names still come from _availability keys.
+
+    disconnect() clears _providers but keeps _availability keys (set False), so
+    /test must still list previously-known providers. base_url/token are cleared.
+    """
+    state.connect('http://host:8080', 'tok', ['FANZA', 'HEYZO'])
+    state.disconnect()
+    names, gen, url, token = state.probe_snapshot()
+    # _providers is now empty, but _availability keys are preserved
+    assert set(names) == {'FANZA', 'HEYZO'}
+    # disconnect cleared base_url/token → ''
+    assert url == ''
+    assert token == ''
+
+
+def test_probe_snapshot_names_stripped_prefix(state):
+    """names are stripped of the 'metatube:' prefix."""
+    state.connect('http://host:8080', 'tok', ['FANZA'])
+    names, _gen, _url, _token = state.probe_snapshot()
+    assert 'metatube:FANZA' not in names
+    assert 'FANZA' in names
