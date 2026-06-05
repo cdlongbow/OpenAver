@@ -8,6 +8,7 @@ Endpoints (prefix /api/settings/metatube):
   POST /test       — re-probe all known providers in background
 """
 import asyncio
+import threading
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -24,6 +25,13 @@ from core.source_config import build_metatube_sources
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/settings/metatube", tags=["settings-metatube"])
+
+# 66 Codex P2 (round 2)：connect 序列化鎖。offload 後 _connect_sync 跑在 threadpool
+# thread、兩個並發 /connect 會交錯各自的 state.connect()/save_config()/rollback
+# （config↔runtime 不一致、rollback 拆掉別人的連線）。pre-branch event loop 隱式序列
+# 化了這段；此鎖在 threadpool thread 上阻塞（不卡 event loop）以還原該序列化。
+# connect/persist-allow-lan 皆罕見管理動作，序列化其慢 I/O 可接受。
+_connect_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -79,18 +87,23 @@ def _persist_allow_lan(url: str, token: str, allow_lan: bool) -> bool:
     Returns True on success (or no-op when url/token don't match), False if the
     config write fails — caller must surface the failure rather than reporting
     success, otherwise the LAN opt-in is silently lost (Codex P2).
+
+    66 Codex P2 (round 2)：與 _connect_sync 共用 _connect_lock —— 兩個並發
+    dedup-save，或 dedup-save 與 full-connect-save 競爭同一個 config.json，會互相
+    clobber。序列化即可避免。
     """
-    try:
-        config = load_config()
-        mt = config.get("metatube") or {}
-        if mt.get("url") == url and mt.get("token") == token:
-            mt["allow_lan"] = allow_lan
-            config["metatube"] = mt
-            save_config(config)
-        return True
-    except Exception:
-        logger.exception("_persist_allow_lan: failed to update allow_lan in config")
-        return False
+    with _connect_lock:
+        try:
+            config = load_config()
+            mt = config.get("metatube") or {}
+            if mt.get("url") == url and mt.get("token") == token:
+                mt["allow_lan"] = allow_lan
+                config["metatube"] = mt
+                save_config(config)
+            return True
+        except Exception:
+            logger.exception("_persist_allow_lan: failed to update allow_lan in config")
+            return False
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +203,18 @@ def _fire_probe(base_url: str, token: str, names: list[str], generation: int) ->
 # ---------------------------------------------------------------------------
 
 def _connect_sync(url: str, token: str, allow_lan: bool) -> dict:
+    """Threadpool entry for /connect — serializes via _connect_lock then delegates.
+
+    66 Codex P2 (round 2)：整個連線臨界段（Step3–5 + rollback）在 _connect_lock 內
+    執行，避免兩個並發 connect 交錯（config↔runtime 不一致、rollback 拆別人連線）。
+    鎖在 threadpool thread 上阻塞、不卡 event loop。_fire_probe 仍在外層 async
+    handler（需 running loop），不在此鎖內。
+    """
+    with _connect_lock:
+        return _connect_sync_impl(url, token, allow_lan)
+
+
+def _connect_sync_impl(url: str, token: str, allow_lan: bool) -> dict:
     """Threadpool helper: Step3 list_providers + Step3b canary + Step4 state.connect
     + Step5 load_config / merge / save_config (+ rollback state.disconnect on failure).
 

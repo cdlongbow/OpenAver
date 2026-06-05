@@ -1075,3 +1075,88 @@ class TestStartupReconnect:
 
         assert resp.json()["success"] is False
         assert resp.json()["error"] == "設定儲存失敗，請重試。"
+
+
+# ======================================================================
+# 66 Codex P2 (round 2): connect 序列化鎖 — 防並發 connect 交錯
+# clobber config/runtime 或 rollback 拆別人連線
+# ======================================================================
+
+class TestConnectSerialization:
+    """確定性測試（無真 race）：_connect_lock 在臨界段持有 + 序列結果一致。"""
+
+    def test_connect_lock_is_threading_lock(self):
+        import threading
+        from web.routers.settings_metatube import _connect_lock
+        assert isinstance(_connect_lock, type(threading.Lock()))
+
+    def test_connect_sync_holds_lock_during_save_config(self, reset_state):
+        """save_config 被呼叫時 _connect_lock 必須持有（臨界段涵蓋 save）。"""
+        from web.routers.settings_metatube import _connect_sync, _connect_lock
+
+        held = []
+
+        def _fake_save(cfg):
+            held.append(_connect_lock.locked())
+
+        with patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient, \
+             patch("web.routers.settings_metatube.load_config", return_value=_fresh_config()), \
+             patch("web.routers.settings_metatube.save_config", side_effect=_fake_save):
+            mock_inst = MagicMock()
+            mock_inst.list_providers.return_value = {"FANZA": _PUBLIC_URL}
+            mock_inst.search.return_value = []
+            MockClient.return_value = mock_inst
+
+            result = _connect_sync(_PUBLIC_URL, "", True)
+
+        assert result["ok"] is True
+        assert held and all(held), "save_config 必須在 _connect_lock 持有時被呼叫"
+
+    def test_persist_allow_lan_holds_lock_during_save_config(self, reset_state):
+        """_persist_allow_lan 的 save_config 也在 _connect_lock 內。"""
+        from web.routers.settings_metatube import _persist_allow_lan, _connect_lock
+
+        held = []
+
+        def _fake_save(cfg):
+            held.append(_connect_lock.locked())
+
+        cfg = {"metatube": {"url": _PUBLIC_URL, "token": "tok", "allow_lan": False}}
+        with patch("web.routers.settings_metatube.load_config", return_value=cfg), \
+             patch("web.routers.settings_metatube.save_config", side_effect=_fake_save):
+            ok = _persist_allow_lan(_PUBLIC_URL, "tok", True)
+
+        assert ok is True
+        assert held and all(held), "_persist_allow_lan 的 save 必須在 _connect_lock 內"
+
+    def test_sequential_connects_leave_config_consistent(self, reset_state):
+        """兩次連續 connect 後 config 與 runtime state 皆指向最後一次（B）。
+
+        序列代理並發 clobber 場景：序列化下，config 永遠反映最後一次 connect，
+        不會殘留前一台 server 的 URL。
+        """
+        import copy
+        from web.routers.settings_metatube import _connect_sync
+
+        saved = []
+
+        def _fake_load():
+            return copy.deepcopy(saved[-1]) if saved else _fresh_config()
+
+        def _fake_save(cfg):
+            saved.append(copy.deepcopy(cfg))
+
+        with patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient, \
+             patch("web.routers.settings_metatube.load_config", side_effect=_fake_load), \
+             patch("web.routers.settings_metatube.save_config", side_effect=_fake_save):
+            mock_inst = MagicMock()
+            mock_inst.list_providers.return_value = {"FANZA": _PUBLIC_URL}
+            mock_inst.search.return_value = []
+            MockClient.return_value = mock_inst
+
+            r1 = _connect_sync("http://8.8.4.4:8080", "", True)
+            r2 = _connect_sync("http://8.8.8.8:8080", "", True)
+
+        assert r1["ok"] is True and r2["ok"] is True
+        assert state.base_url == "http://8.8.8.8:8080"
+        assert saved[-1]["metatube"]["url"] == "http://8.8.8.8:8080"
