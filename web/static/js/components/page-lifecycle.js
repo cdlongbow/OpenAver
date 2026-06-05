@@ -33,7 +33,12 @@ if (_handlers.onBeforeUnload) {
 // pagehide：頁面確定要卸載了，best-effort cleanup
 // （新版 Chrome 以 Permissions-Policy 預設封鎖 'unload' → 改用 bfcache-safe 的 'pagehide'，
 //  涵蓋 tab-close/reload/nav；_doCleanup 的 _cleanedUp one-shot guard 保證與 leavePage 雙觸發安全）
-window.addEventListener('pagehide', function () {
+// ⚠️ bfcache：persisted=true 表頁面進 back/forward cache、之後可能被 Back 還原且「不重跑 module init」。
+//    此時若 cleanup（拆 SSE/abort/resize/GSAP ctx），還原後頁面缺 listener/resource → 壞掉。
+//    故只有真正丟棄（persisted=false：tab-close/reload/discard）才 cleanup；進 bfcache 跳過、整頁凍結還原即可用。
+//    （有活躍 SSE 的頁本就 bfcache-ineligible → persisted=false → 照常 cleanup。）
+window.addEventListener('pagehide', function (e) {
+if (e.persisted) return;
 _doCleanup();
 });
 

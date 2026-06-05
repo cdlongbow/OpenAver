@@ -9682,3 +9682,15 @@ class TestCoverLoadingUx67Guard:
             "page-lifecycle.js 缺 addEventListener('pagehide')"
         assert "addEventListener('unload'" not in src, \
             "page-lifecycle.js 仍有 addEventListener('unload')（應改 pagehide）"
+
+    def test_pagehide_skips_cleanup_on_bfcache_persist(self):
+        """Codex P2 (bfcache): pagehide handler 須在 event.persisted（進 bfcache）時跳過 cleanup，
+        否則 Back 還原（不重跑 module init）後頁面缺 SSE/abort/resize listener。抽 pagehide handler
+        callback body 再斷言含 persisted 短路，不整檔裸 grep。"""
+        src = PAGE_LIFECYCLE_JS.read_text(encoding="utf-8")
+        m = re.search(r"addEventListener\('pagehide',\s*function\s*\([^)]*\)\s*\{(.*?)\}\s*\)", src, re.S)
+        assert m, "page-lifecycle.js: 找不到 pagehide handler callback"
+        body = m.group(1)
+        assert "persisted" in body, \
+            ("pagehide handler 未檢查 event.persisted（Codex P2 bfcache）：進 bfcache 時無條件 cleanup "
+             "會讓 Back 還原的頁面缺 listener/resource。需 `if (e.persisted) return;`")
