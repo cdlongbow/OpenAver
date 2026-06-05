@@ -4997,7 +4997,9 @@ class TestVideoPlaybackGuard:
             ),
             (
                 PROJECT_ROOT / "web" / "routers" / "scanner.py",
-                ['async def get_video(', 'async def video_player(', 'os.path.normpath',
+                # 66-T1: get_video async→def（移出 event loop，Starlette 自動 threadpool）；
+                # video_player 維持 async。security 守衛字串不變。
+                ['def get_video(', 'async def video_player(', 'os.path.normpath',
                  'get_proxy_extensions', 'is_path_under_dir'],
             ),
         ]:

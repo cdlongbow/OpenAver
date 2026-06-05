@@ -1038,12 +1038,13 @@ def generate_jellyfin_images_stream() -> Generator[str, None, None]:
         yield _sse_event({"type": "error", "message": "產生 Jellyfin 圖片失敗"})
 
 
-def _check_jellyfin_needed(db_path) -> dict | None:
-    """Threadpool helper: check DB existence + open repo + run jellyfin check.
+def _check_jellyfin_needed() -> dict | None:
+    """Threadpool helper: get_db_path + check DB existence + open repo + run jellyfin check.
 
     Returns None if DB does not exist (caller handles as need_update=0 early return).
     Returns the result dict from check_jellyfin_images_needed otherwise.
     """
+    db_path = get_db_path()
     if not db_path.exists():
         return None
     repo = VideoRepository(db_path)
@@ -1055,16 +1056,15 @@ async def jellyfin_image_check():
     """檢查多少影片需要補齊 Jellyfin 圖片"""
     global _jellyfin_cache_result, _jellyfin_cache_time
     try:
-        db_path = get_db_path()
-
-        # T3(40c): TTL 快取命中
-        # T4b(66): db_path.exists() 併入 _check_jellyfin_needed helper（NAS stat 移出
-        # loop），故 exists 檢查現在排在 TTL 快取之後。副作用：DB 在 60s TTL 窗內被刪除
-        # 時，warm cache 會回舊值而非 0（pathological，無 workflow 觸發）；屬刻意取捨。
+        # T3(40c): TTL 快取命中（純記憶體，命中時 zero-threadpool）
+        # T4b(66): get_db_path（含 mkdir）+ db_path.exists() + repo 全併入
+        # _check_jellyfin_needed helper 移出 loop，故 DB 偵測現在排在 TTL 快取之後。
+        # 副作用：DB 在 60s TTL 窗內被刪除時，warm cache 會回舊值而非 0
+        # （pathological，無 workflow 觸發）；屬刻意取捨。
         if _jellyfin_cache_result is not None and time.time() - _jellyfin_cache_time < 60:
             return {"success": True, "data": {"need_update": _jellyfin_cache_result['need_update']}}
 
-        result = await asyncio.to_thread(_check_jellyfin_needed, db_path)
+        result = await asyncio.to_thread(_check_jellyfin_needed)
 
         if result is None:
             return {"success": True, "data": {"need_update": 0}}
