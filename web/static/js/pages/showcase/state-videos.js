@@ -38,6 +38,10 @@ export function stateVideos() {
                 // (core.js uses direct assignment; ESM re-exports work because we read
                 // _videos/_filteredVideos at call time, not at import time)
                 var vids = data.videos || [];
+                // 67-A2: per-card 三態旗標。video 物件由此唯一來源流穿整條 render 鏈
+                // （_videos → _filteredVideos → paginatedVideos slice，皆同 ref），故初始化一處即涵蓋
+                // 初次載入/retry/翻頁/搜尋/排序；後端不回此欄位。補封面走 refreshVideoData reset。
+                vids.forEach(function (v) { if (v._imgLoaded === undefined) v._imgLoaded = false; });
                 _setVideos(vids);
                 this.videoCount = _videos.length;
                 _setFilteredVideos(_videos);

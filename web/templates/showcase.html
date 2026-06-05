@@ -307,10 +307,25 @@
                      :style="`--card-index: ${index}`"
                      :data-flip-id="video.path">
                     <div class="av-card-preview-img">
+                        <!-- 67-A2: 三態（CD-67-3）。保留單一 <img> 沿用 handleCoverError 換圖；
+                             淡入靠 _imgLoaded 的 .cover-loaded class（A1 CSS）；首屏前 8 張 eager+high（CD-67-5，不可 lazy+high 並存） -->
                         <img :src="video.cover_url"
                              :alt="video.number"
-                             loading="lazy"
+                             :loading="index < 8 ? 'eager' : 'lazy'"
+                             :fetchpriority="index < 8 ? 'high' : 'auto'"
+                             x-show="video.cover_url"
+                             :class="{ 'cover-loaded': video._imgLoaded }"
+                             @load="video._imgLoaded = true"
                              @error="handleCoverError(video, $event)">
+                        <!-- 67-A2: skeleton overlay（pending 時，gate 含 has_cover → stale @error 後 has_cover=false 自動退出）-->
+                        <div class="skeleton-cover shimmer"
+                             x-show="video.cover_url && video.has_cover && !video._imgLoaded"></div>
+                        <!-- 67-A2: no-cover（CD-67-3 (a)：DB 缺封面 cover_url="" 空白 img 不發請求；鏡射 hero :272-276）。
+                             與 stale-@error 換 placeholder 路徑互斥（stale 時 cover_url 仍非空 → 不顯示，不雙重渲染）-->
+                        <div x-show="!video.cover_url" class="av-card-no-cover">
+                          <i class="bi bi-image"></i>
+                          <span x-text="t('common.no_image')"></span>
+                        </div>
                         <div class="av-card-preview-overlay">
                             <button class="btn-glass-circle"
                                     @click.stop="playVideo(video.path)"
