@@ -9,7 +9,7 @@
  *
  * 兩條離頁路徑：
  *   路徑 A（sidebar）：beforeLeave → cleanup → 頁面卸載
- *   路徑 B（tab close）：onBeforeUnload → [原生提示] → unload 事件 → cleanup
+ *   路徑 B（tab close）：onBeforeUnload → [原生提示] → pagehide 事件 → cleanup
  */
 var _handlers = { beforeLeave: null, onBeforeUnload: null, cleanup: null };
 var _cleanedUp = false;
@@ -30,8 +30,10 @@ if (_handlers.onBeforeUnload) {
 }
 });
 
-// unload：頁面確定要卸載了，best-effort cleanup
-window.addEventListener('unload', function () {
+// pagehide：頁面確定要卸載了，best-effort cleanup
+// （新版 Chrome 以 Permissions-Policy 預設封鎖 'unload' → 改用 bfcache-safe 的 'pagehide'，
+//  涵蓋 tab-close/reload/nav；_doCleanup 的 _cleanedUp one-shot guard 保證與 leavePage 雙觸發安全）
+window.addEventListener('pagehide', function () {
 _doCleanup();
 });
 
