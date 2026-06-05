@@ -2900,3 +2900,58 @@ body.sidebar-collapsed .showcase-footer {
 @media (max-width: 959px) {
     .similar-stage-inner { display: none; }
 }
+
+/* ==================== 67-A1: Cover Loading UX — skeleton/shimmer + per-image 淡入 + PRM guard ==================== */
+/* skeleton/shimmer 複製自 search.css:682-702，補 overlay 定位：showcase 的封面 img 淡入時 opacity:0
+   仍佔 flow（CD-67-3 用 x-show=cover_url + _imgLoaded 淡入，非互斥 x-show）→ skeleton 須 absolute overlay。
+   容器 aspect-ratio:3/2 由 theme.css:1017 提供、img height:100% 撐滿 → A1 不重複宣告（G1：無 height 互斥、不需 height:auto）。
+   容器 position:relative（theme.css:1016）+ overflow:hidden（:1018）→ overlay 定位 context + 圓角裁切皆現成。 */
+.av-card-preview-img .skeleton-cover {
+    position: absolute;
+    inset: 0;
+    background: var(--color-base-300);
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+
+.shimmer {
+    background: linear-gradient(
+        90deg,
+        var(--color-base-300) 25%,
+        var(--color-base-200) 50%,
+        var(--color-base-300) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* per-image 淡入（CSS transition，不用 GSAP — CD-67-1/G3）：掛 img 層；
+   .av-card-preview 容器 opacity 由 GSAP playEntry 專屬（animations.js:142/177/193），此處零容器 transition。
+   ⚠️ 選擇器須對齊 theme.css:1022 的 :is(#ds-gallery-components,.ds-gallery-composition) scope（specificity 1,1,1）——
+   否則裸 .av-card-preview-img img(0,1,1) 的 transition:opacity 蓋不過 theme 的 transition:transform → 淡入失效。
+   合併保留 transform transition（hover-zoom 過渡不回歸）。 */
+:is(#ds-gallery-components, .ds-gallery-composition) .av-card-preview-img img {
+    opacity: 0;
+    transition:
+        opacity var(--fluent-duration-fast) var(--fluent-ease-standard),
+        transform var(--fluent-duration-slow) var(--fluent-ease-standard);
+}
+:is(#ds-gallery-components, .ds-gallery-composition) .av-card-preview-img img.cover-loaded {
+    opacity: 1;
+}
+
+/* reduced-motion：shimmer + 淡入皆退化靜態（per-rule，可被 inspection/lint 驗證；DoD A-4）。
+   兩條都要——只 guard .shimmer 不夠，淡入也是動畫。 */
+@media (prefers-reduced-motion: reduce) {
+    .shimmer {
+        animation: none;
+    }
+    :is(#ds-gallery-components, .ds-gallery-composition) .av-card-preview-img img {
+        transition: none;
+        opacity: 1;
+    }
+}
