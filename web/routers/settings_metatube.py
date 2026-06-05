@@ -107,6 +107,25 @@ def _persist_allow_lan(url: str, token: str, allow_lan: bool) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Sync helper: disconnect serialized against in-flight connect — Codex P2
+# ---------------------------------------------------------------------------
+
+def _disconnect_sync() -> None:
+    """Acquire _connect_lock then state.disconnect().
+
+    66 Codex P2：序列化 disconnect 對在途的 _connect_sync —— 連線 HTTP/config I/O
+    執行期間送出的 disconnect 會等該 connect 完成後才斷線，確保 last-action-wins，
+    避免 connect worker 在使用者已 disconnect 後又把 connected 設回 True。
+    連線完成後 disconnect 把 generation 推進 → connect 的 stale 探測被 generation
+    guard 擋下（探測本就不會動 connected）。
+    必須經 asyncio.to_thread 呼叫：在 event loop thread 上直接 acquire 已被持有的
+    threading.Lock 會卡死整個 loop。
+    """
+    with _connect_lock:
+        state.disconnect()
+
+
+# ---------------------------------------------------------------------------
 # Sync: startup reconnect — TASK-63e-1
 # ---------------------------------------------------------------------------
 
@@ -365,8 +384,11 @@ async def disconnect():
 
     URL/token are NOT cleared from config.json so they can prefill the
     next connect dialog.  Source enabled flags are also untouched.
+
+    66 Codex P2：經 _connect_lock 序列化（via to_thread），等在途 connect 完成後
+    才斷線 → last-action-wins，不會被 connect worker 的晚到完成蓋回 connected。
     """
-    state.disconnect()
+    await asyncio.to_thread(_disconnect_sync)
     return {"success": True}
 
 

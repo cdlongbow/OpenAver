@@ -1160,3 +1160,60 @@ class TestConnectSerialization:
         assert r1["ok"] is True and r2["ok"] is True
         assert state.base_url == "http://8.8.8.8:8080"
         assert saved[-1]["metatube"]["url"] == "http://8.8.8.8:8080"
+
+    def test_disconnect_holds_connect_lock(self, client, reset_state):
+        """disconnect 路由經 _connect_lock 序列化：state.disconnect() 在鎖內執行。"""
+        from web.routers.settings_metatube import _connect_lock
+
+        held = []
+        orig = state.disconnect
+
+        def _spy():
+            held.append(_connect_lock.locked())
+            orig()
+
+        with patch.object(state, "disconnect", side_effect=_spy):
+            resp = client.post("/api/settings/metatube/disconnect")
+
+        assert resp.json()["success"] is True
+        assert held == [True], "state.disconnect() 必須在 _connect_lock 持有時執行"
+
+    def test_disconnect_waits_for_inflight_connect_then_wins(self, reset_state):
+        """在途 connect 持鎖時 disconnect 必須等待，鎖釋放後斷線（last-action-wins）。
+
+        確定性：用 Barrier/Event 強制順序，不依賴 timing。
+        """
+        import threading
+        import time
+        from web.routers.settings_metatube import _disconnect_sync, _connect_lock
+
+        barrier = threading.Barrier(2)
+        release = threading.Event()
+
+        def _hold_lock():
+            with _connect_lock:
+                barrier.wait()            # 通知「已持鎖」
+                release.wait(timeout=2.0)  # 持鎖直到被釋放
+
+        holder = threading.Thread(target=_hold_lock, daemon=True)
+        holder.start()
+        barrier.wait()                     # 等 holder 拿到鎖
+
+        state.connect("http://8.8.8.8:8080", "", ["FANZA"])
+        assert state.is_connected is True
+
+        result = []
+
+        def _run_disconnect():
+            _disconnect_sync()
+            result.append(state.is_connected)
+
+        t = threading.Thread(target=_run_disconnect, daemon=True)
+        t.start()
+
+        time.sleep(0.05)
+        assert state.is_connected is True, "鎖被持有時 disconnect 必須仍在等待"
+
+        release.set()
+        t.join(timeout=2.0)
+        assert result == [False], "鎖釋放後 disconnect 應使狀態變為斷線"
