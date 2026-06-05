@@ -355,3 +355,77 @@ class TestT4OffloadHousePattern:
 
     def test_translate_routes_load_config_offloaded(self):
         assert "await asyncio.to_thread(load_config)" in self._src("translate.py")
+
+
+# ============================================================
+# 66b-T5：config 寫入序列化守衛
+# ============================================================
+
+# 唯一白名單：config.py::update_config 是 full-replace（client 送完整 AppConfig），
+# 已走 public locked+atomic save_config，非 unlocked-RMW 反模式 → 允許直接呼叫。
+# 其餘 router 一律不得裸呼 save_config：RMW 走 core.config.mutate_config（鎖內
+# load→mutate→save），delete 走 reset_config_file（鎖內 exists/unlink）。
+WHITELIST_SAVE_CONFIG: frozenset = frozenset({("config", "update_config")})
+
+
+def _find_save_config_callers(tree: ast.Module) -> list:
+    """回傳 [(enclosing_func_name_or_None)] for every direct `save_config(...)` call.
+
+    用最近的具名 enclosing function 標記每個 save_config 呼叫（含 nested def）。
+    module-level 呼叫 → None。`_call_name` 同時涵蓋 `save_config()`（Name）與
+    `core.config.save_config()`（Attribute.attr）。
+    """
+    callers = []
+
+    def _walk(node, func_stack):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                _walk(child, func_stack + [child.name])
+            else:
+                if isinstance(child, ast.Call) and _call_name(child) == "save_config":
+                    callers.append(func_stack[-1] if func_stack else None)
+                _walk(child, func_stack)
+
+    _walk(tree, [])
+    return callers
+
+
+class TestConfigWriteSerializationGuard:
+    """66b-T5：web/routers/*.py 不得裸呼 save_config（除 update_config 白名單）。
+
+    根據 CD-66b-1 / plan-66b T5：T1 把所有 config RMW caller 遷移到 mutate_config /
+    reset_config_file（core/config.py 內單一 _config_write_lock 序列化 + 原子寫）後，
+    router 內唯一合法的直接 save_config 呼叫只剩 config.py::update_config（full-replace）。
+    新 router 若裸呼 save_config 做 RMW → 重新引入 lost-update 競態 → 守衛報錯。
+    """
+
+    def test_no_bare_save_config_outside_whitelist(self):
+        violations = []
+        for py_file in sorted(ROUTERS_DIR.glob("*.py")):
+            if py_file.name == "__init__.py":
+                continue
+            tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+            for func_name in _find_save_config_callers(tree):
+                if (py_file.stem, func_name) in WHITELIST_SAVE_CONFIG:
+                    continue
+                violations.append(
+                    f"{py_file.name}:{func_name}() — bare save_config() call"
+                )
+        assert not violations, (
+            "Routers must not call save_config() directly (RMW lost-update risk): "
+            "use core.config.mutate_config() for RMW or reset_config_file() for delete. "
+            "Only config.py::update_config (full-replace) is whitelisted:\n"
+            + "\n".join(f"  {v}" for v in violations)
+        )
+
+    def test_whitelisted_update_config_still_calls_save_config(self):
+        """白名單防腐：update_config 必須真的存在且真的呼叫 save_config（避免殭屍白名單）。"""
+        tree = ast.parse(
+            (ROUTERS_DIR / "config.py").read_text(encoding="utf-8"),
+            filename="config.py",
+        )
+        callers = _find_save_config_callers(tree)
+        assert "update_config" in callers, (
+            "config.py::update_config 不再直接呼叫 save_config —— 白名單已過時，應清理 "
+            "WHITELIST_SAVE_CONFIG"
+        )
