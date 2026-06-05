@@ -20,7 +20,7 @@ setup_logging()
 
 logger = get_logger(__name__)
 
-from core.config import load_config, save_config
+from core.config import load_config
 from core.database import VideoRepository, init_db
 from core.metatube.state import metatube_state as _mt_startup_state
 
@@ -139,7 +139,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 def get_common_context(request: Request) -> dict:
     """取得共用的模板 Context (包含設定)"""
-    from core.config import load_config, save_config
+    from core.config import load_config, mutate_config
     from core.i18n import t as _t, get_merged_translations, detect_locale_from_accept_language
     config = load_config()
 
@@ -158,8 +158,14 @@ def get_common_context(request: Request) -> dict:
         try:
             if 'general' not in config:
                 config['general'] = {}
-            config['general']['locale'] = locale
-            save_config(config)
+            config['general']['locale'] = locale  # 本地副本供 template context 用
+            # 66b（Codex P2）：get_common_context 跑在 event loop thread，舊裸 RMW
+            # （load_config→mutate→save_config）跨兩次 lock，會與 threadpool 上的
+            # config/metatube 寫入交錯 → lost-update。改 mutate_config 在單一
+            # critical section 內「只設 locale」於 fresh-load 的 cfg，不蓋他人欄位。
+            def _persist_locale(cfg):
+                cfg.setdefault('general', {})['locale'] = locale
+            mutate_config(_persist_locale)
         except Exception as e:
             logger.warning("[i18n] 首次偵測語系寫入 config 失敗: %s", e)
 
