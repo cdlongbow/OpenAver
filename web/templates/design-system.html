@@ -880,12 +880,13 @@
                         </div>
                     </div>
 
-                    <!-- 7. segmented 控件容器（完整狀態見下方 §15；需 id=settings-components 啟用 scoped CSS） -->
+                    <!-- 7. segmented 控件容器（白名單僅示意 pill 外形，自包含 inline mock；完整可互動 + dim 校準 demo 見 §15。刻意不 clone 生產 id="settings-components"） -->
                     <div class="ds-pill-card">
-                        <div class="ds-pill-card-demo" id="settings-components" style="display: flex; justify-content: center;">
-                            <div class="settings-sources-segmented" style="pointer-events: none;" aria-hidden="true">
-                                <button type="button" class="is-on">全開</button>
-                                <button type="button">無碼模式</button>
+                        <div class="ds-pill-card-demo" style="display: flex; justify-content: center;">
+                            <!-- 白名單僅示意 pill 外形；可互動 + dim 校準的完整 segmented demo 見 §15（不 clone 生產 id） -->
+                            <div style="display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--radius-pill); background: color-mix(in oklch, var(--surface-1) 60%, transparent); border: 1px solid var(--stroke-subtle);">
+                                <span style="padding: 0.25rem 0.75rem; border-radius: var(--radius-pill); background: color-mix(in oklch, var(--surface-2) 80%, transparent); color: var(--text-primary); font-size: 0.85rem; font-weight: 500;">全開</span>
+                                <span style="padding: 0.25rem 0.75rem; color: var(--text-secondary); font-size: 0.85rem; font-weight: 500;">無碼模式</span>
                             </div>
                         </div>
                         <div class="ds-pill-card-meta">
