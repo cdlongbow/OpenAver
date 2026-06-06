@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.8] - 2026-06-06
+
+本版單一主軸：**dim（暗色）主題色彩編碼修復**（feature/69），純前端 CSS、零後端、零依賴、零 i18n、零 ZIP 影響。問題：切到 dim 主題時大量「靠顏色區分狀態」的 UI 變得無法分辨——有碼 vs 無碼來源膠囊長一樣、metatube 連沒連看不出、segmented 選中態消失、警告 banner 跟一般容器混同。根因兩 factor 疊加：(A) 狀態用 `color-mix(語義色 ≤15%, transparent/surface)` 當背景 tint，dim surface 近黑（oklch 26–31%）把低% 色調吃光；(B) dim 沒 override `--color-primary` → 有碼膠囊掉回 DaisyUI 萊姆綠（139°），與無碼 success 綠（166°）只差 27° → 都綠。修復後每個色彩編碼狀態在 dim 下都能一眼辨識，且 light 主題完全不回歸。
+
+*This release has one theme: **dim (dark) theme color-encoding fix** (feature/69) — pure frontend CSS, zero backend, zero deps, zero i18n, zero ZIP impact. Switching to dim made many "state-by-color" UIs indistinguishable — censored vs uncensored source pills looked identical, metatube connected/not was unreadable, the segmented selection state vanished, warning banners blended into ordinary containers. Two stacked root causes: (A) states used `color-mix(semantic ≤15%, transparent/surface)` as a background tint, and the near-black dim surface (oklch 26–31%) swallows the low-% hue; (B) dim never overrode `--color-primary`, so the censored pill fell back to DaisyUI lime-green (139°), only 27° from the uncensored success green (166°) → both green. After the fix every color-encoded state is legible in dim, with zero light-theme regression.*
+
+### Fixed
+#### 🎨 dim 主題色彩編碼 / dim color encoding
+- **token patch（根 unlock）**：`theme.css` 的 `[data-theme="dim"]` 區補 `--color-primary`（`oklch(0.66 0.04 250)`，與 light 同 250° 冷色家族、調亮供暗底對比、遠離綠相 → 根除膠囊色相碰撞）+ `--color-warning`（`#ff9f0a` Apple dark-mode amber）。cascade 自動改善所有引用這兩 token 的 dim border/文字通道。
+- **來源膠囊**（跨 Settings 掃描來源 / Search / 進階重刮三入口共用）：dim 下有碼（primary 冷藍）vs 無碼（success 綠）一眼可辨；啟用態 tint + solid 色邊；Parts Bin 不可達 warning 色邊；載入 spinner 對比提升。
+- **Settings**：segmented 選中態（亮面 + 1.5px inset accent 環，純結構信號）、suffix-tag（改 oklch + accent 邊）、metatube 已連線 status banner（綠 tint + 3px 左色條）、來源上限/全停用警告 banner、tier-hint / focus 環。
+- **散點**：進階重刮彈窗 inline-error / 取消鈕 / 數字輸入 focus、showcase 取樣鈕、女優別名 primary 膠囊。
+- **color-mix 色相插值修正**（CDP 終驗發現）：tint/border 的 `color-mix` partner 一律用 `transparent`（同 base 慣例）——dim surface 帶藍色相（264°），oklch 與暖色 mix 會沿色相環插值變調（amber→紫）；`transparent` 無色相 → 精準保留語義色。
+
+### Changed
+- **design-system**：補進階重刮彈窗 + metatube 連線 banner 兩 demo（dim 驗證面）；膠囊 999px 白名單標題「5 類」→「7 類」+ 補類 6（source-pill）/ 類 7（segmented）交叉引用卡；過時 notification center 註解修正。修掉新增 demo 引入的 duplicate `id="settings-components"`（Codex P3）。
+
+### Non-Goals（明確不做）
+- 不改 light 主題行為、不換主題 / 不調 surface 明度、不新增第二套狀態色（一律走命名 token）、不碰 design-system 完整 dedupe（→ feature/70）。
+
+### 測試
+- CDP 雙主題實機終驗（design-system demo + 生產 /settings 掃描來源頁）：dim 各色彩編碼狀態可辨（amber 67° / 膠囊 blue 250° vs green 147°）、light computed 全 base 值零回歸。
+- 全套 pytest 綠（unit + integration，排除 smoke / e2e）+ `npm run lint`（eslint + stylelint）綠；無 pytest 守衛（CLAUDE.md lint-guard：CSS 字串守衛歸 stylelint）。
+
 ## [0.9.7] - 2026-06-06
 
 本版主軸：**VR 投影標籤保留 + 自動 VR tag**（feature/68），純後端、單檔 `core/organizer.py`、零新依賴、零 ZIP 影響、零 i18n、零 UI。問題根因：頭顯 App（DeoVR / HereSphere / Skybox / Pigasus）100% 靠「**檔名 token**」判斷 VR 投影/立體格式（`_180_LR` / `_3dh` / `mkx200`…），不讀 NFO；而 OpenAver 改名是用模板從頭重組檔名，原檔名的 VR token **不會被帶過來** → 改名後 VR 檔在頭顯 App 變成平面 2D 播放。本版讓改名時偵測原檔名的 VR token 並**原樣保留**到輸出檔名尾端，同時在 NFO 加一個 `VR` tag/genre。**無 toggle、無需用戶輸入；檔名無 VR token 時輸出 byte 級零變化**（2D 轉檔 / 一般片完全不受影響）。同梱兩處先前的小修正：`/static` no-cache 根治 stale cache、「Jellyfin / Emby 圖片模式」正名。
