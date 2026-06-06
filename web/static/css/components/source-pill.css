@@ -170,24 +170,59 @@
     border-radius: var(--radius-pill);
 }
 
-/* Parts Bin pill — disabled visual reuses [data-enabled="false"]; accent tint for metatube */
+/* Parts Bin pill — click-to-promote affordance.
+   TASK-partsbin-staged-affordance: cursor pointer on all partsbin pills (available or not)
+   reflects click-to-promote semantics. The previous --pill-accent tint override is removed —
+   it was a no-op (partsbin pills are always data-enabled="false", and --pill-accent is only
+   consumed under [data-enabled="true"], which they never reach).
+   Available / unavailable visual split is handled below via data-available. */
 .source-pill.is-partsbin {
-    --pill-accent: color-mix(in oklch, var(--accent) 70%, var(--color-warning));
+    cursor: pointer;
 }
 
-/* Probe-failed Parts Bin pill (CD-63b-4 US9): dimmed but still clickable (promote-with-warning).
-   Mirror: .source-pill.dragging opacity 0.5 (L131) and .source-pill:disabled opacity 0.45 (L202).
-   63d-3 / Codex P3: warn signal must be a *visible* property — Parts Bin pills are always
-   data-enabled="false", and --pill-accent is only consumed under [data-enabled="true"] (L49-50),
-   so an accent override here is a no-op. Drive border-color + slash icon directly with --color-warning.
-   cursor kept default (pill is still promotable — contrast DMM not-allowed below). */
+/* plus-icn: base hidden; shown for partsbin available=true (can-add affordance). */
+.source-pill .plus-icn {
+    display: none;
+    font-size: 0.95rem;
+    color: var(--accent);
+}
+
+/* STAGED (available=true): positive can-add state.
+   specificity (0,4,0) > global .source-pill[data-enabled="false"] .pill-name (0,3,0) → wins. */
+.source-pill.is-partsbin[data-available="true"] {
+    color: var(--text-primary);
+    border-color: color-mix(in oklch, var(--color-base-content) 30%, transparent);
+    border-style: dashed;
+}
+
+.source-pill.is-partsbin[data-available="true"] .pill-name {
+    text-decoration: none;
+}
+
+.source-pill.is-partsbin[data-available="true"] .slash-icn {
+    display: none;
+}
+
+.source-pill.is-partsbin[data-available="true"] .plus-icn {
+    display: inline-block;
+}
+
+/* UNREACHABLE (available=false): low-key warning — gray dashed + gray slash + amber dot.
+   Falls back to base [data-enabled="false"] gray dashed border (no warning border override).
+   amber dot via ::after micro-badge (position:absolute on .source-pill which has position:relative). */
 .source-pill.is-partsbin[data-available="false"] {
     opacity: 0.5;
-    border-color: color-mix(in oklch, var(--color-warning) 55%, transparent);
 }
 
-.source-pill.is-partsbin[data-available="false"] .slash-icn {
-    color: var(--color-warning);
+.source-pill.is-partsbin[data-available="false"]::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-warning);
 }
 
 /* 63c-6: DMM requires_proxy — proxy 未設定時灰化（兩 surface 共用）。
@@ -289,9 +324,9 @@
     border-color: color-mix(in oklch, var(--accent) 60%, transparent);
 }
 
-/* P7: Parts Bin 不可達 — warning 色邊提至 70%（slash-icon 已救，補 border 在暗底可見） */
-[data-theme="dim"] .source-pill.is-partsbin[data-available="false"] {
-    border-color: color-mix(in oklch, var(--color-warning) 70%, transparent);
+/* P7: Parts Bin dim 可達態（staged）— 虛線在暗底提強度（base-content 40%，transparent partner） */
+[data-theme="dim"] .source-pill.is-partsbin[data-available="true"] {
+    border-color: color-mix(in oklch, var(--color-base-content) 40%, transparent);
 }
 
 /* P8: 載入 spinner — track 由 35% 提至 55%，暗底上轉動對比清楚 */

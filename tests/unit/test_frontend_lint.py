@@ -8804,11 +8804,11 @@ class TestMetatubeB4Guard:
             "CD-63b-4 違規：settings.html 缺少 metatubeRetest() 呼叫（retest button）"
         )
 
-    def test_html_has_mt_probe_hint_title_key(self):
-        """B3: settings.html 含 mt_probe_hint_title i18n key（hint details summary）。"""
+    def test_html_has_no_probe_hint_details(self):
+        """B3 (TASK-partsbin-staged-affordance)：settings.html 不再含 settings-mt-probe-hint（三因摺疊已硬刪，改靠 hover tooltip）。"""
         html = self._html()
-        assert "mt_probe_hint_title" in html, (
-            "CD-63b-4 違規：settings.html 缺少 mt_probe_hint_title key（probe-hint details）"
+        assert "settings-mt-probe-hint" not in html, (
+            "TASK-partsbin 違規：settings.html 仍含 settings-mt-probe-hint（三因 <details> 應已整段硬刪）"
         )
 
     def test_html_has_data_available_binding(self):
@@ -9707,3 +9707,127 @@ class TestCoverLoadingUx67Guard:
         assert "persisted" in body, \
             ("pagehide handler 未檢查 event.persisted（Codex P2 bfcache）：進 bfcache 時無條件 cleanup "
              "會讓 Back 還原的頁面缺 listener/resource。需 `if (e.persisted) return;`")
+
+
+class TestPartsBinStagedAffordanceGuard:
+    """Parts Bin 可達/不可達膠囊視覺語義對調守衛（TASK-partsbin-staged-affordance）。
+
+    Template（settings.html）↔ CSS（source-pill.css）↔ Design-system（D.13）跨檔 contract；
+    eslint 不解析 Jinja template，stylelint 無法表達選擇器歸屬語義，故走 pytest
+    （沿用 TestPicker64aThreeStateGuard / TestCoverLoadingUx67Guard 先例）。
+
+    強度：先 regex 擷取目標區塊再斷言，非整檔裸字串存在性（gotchas G5）。
+    6 條契約各對應 1 個 test method，獨立失敗便於定位。
+    """
+
+    SETTINGS_HTML    = Path(__file__).parent.parent.parent / "web" / "templates" / "settings.html"
+    SOURCE_PILL_CSS  = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "components" / "source-pill.css"
+    DS_SETTINGS_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "design_system" / "settings-components.html"
+
+    def _settings(self):
+        return self.SETTINGS_HTML.read_text(encoding="utf-8")
+
+    def _css(self):
+        return self.SOURCE_PILL_CSS.read_text(encoding="utf-8")
+
+    def _ds(self):
+        return self.DS_SETTINGS_HTML.read_text(encoding="utf-8")
+
+    def _partsbin_pill_block(self):
+        """抽出 settings.html Parts Bin pill loop 的 template x-for 區塊。"""
+        html = self._settings()
+        m = re.search(
+            r'<template x-for="src in partsBinSources"[^>]*>.*?</template>',
+            html, re.DOTALL,
+        )
+        assert m, "settings.html: 找不到 Parts Bin pill x-for 區塊（partsBinSources）"
+        return m.group(0)
+
+    # ── 契約 1：settings.html Parts Bin pill 含 bi-plus-circle（plus-icn）──────────────
+
+    def test_settings_partsbin_pill_has_plus_icn(self):
+        """Contract 1：settings.html Parts Bin pill loop 內存在 bi-plus-circle plus-icn（可加入 affordance）。"""
+        block = self._partsbin_pill_block()
+        assert "bi-plus-circle" in block, (
+            "TASK-partsbin 違規 C1：settings.html Parts Bin pill 缺 bi-plus-circle（plus-icn）。"
+            "可加入 affordance 需常駐 DOM，靠 CSS 依 data-available 控顯隱。"
+        )
+        assert "plus-icn" in block, (
+            "TASK-partsbin 違規 C1：settings.html Parts Bin pill 缺 plus-icn class。"
+        )
+
+    # ── 契約 2：settings.html 不再含 settings-mt-probe-hint / mt_probe_hint_title ──────
+
+    def test_settings_no_probe_hint_details(self):
+        """Contract 2：settings.html 不含 settings-mt-probe-hint（3-cause <details> 已硬刪）。"""
+        html = self._settings()
+        assert "settings-mt-probe-hint" not in html, (
+            "TASK-partsbin 違規 C2：settings.html 仍含 settings-mt-probe-hint（三因摺疊區塊應已整段硬刪）。"
+        )
+        assert "mt_probe_hint_title" not in html, (
+            "TASK-partsbin 違規 C2：settings.html 仍含 mt_probe_hint_title（三因摺疊標題應已整段硬刪）。"
+        )
+
+    # ── 契約 3：settings.html Parts Bin slash-icn 仍在（不可達態靠它）────────────────
+
+    def test_settings_partsbin_pill_slash_icn_retained(self):
+        """Contract 3：settings.html Parts Bin pill loop 內 slash-icn 仍在（不可達態靠 CSS 顯示）。"""
+        block = self._partsbin_pill_block()
+        assert "slash-icn" in block, (
+            "TASK-partsbin 違規 C3：settings.html Parts Bin pill 的 slash-icn 被誤刪（不可達態靠它，CSS 控顯隱）。"
+        )
+        assert "bi-slash-circle" in block, (
+            "TASK-partsbin 違規 C3：settings.html Parts Bin pill 缺 bi-slash-circle icon。"
+        )
+
+    # ── 契約 4：source-pill.css 含可達態 .pill-name text-decoration:none ───────────────
+
+    def test_css_partsbin_available_true_removes_line_through(self):
+        """Contract 4：source-pill.css 含 .is-partsbin[data-available='true'] .pill-name text-decoration:none（選擇器歸屬）。"""
+        css = self._css()
+        m = re.search(
+            r'\.source-pill\.is-partsbin\[data-available="true"\]\s+\.pill-name\s*\{([^}]+)\}',
+            css, re.DOTALL,
+        )
+        assert m, (
+            "TASK-partsbin 違規 C4：source-pill.css 缺 "
+            ".source-pill.is-partsbin[data-available=\"true\"] .pill-name 規則。"
+            "（可達正面態需 (0,4,0) specificity 勝全域 (0,3,0) line-through）"
+        )
+        assert "text-decoration: none" in m.group(1), (
+            "TASK-partsbin 違規 C4：可達態 .pill-name 規則缺 text-decoration:none。"
+        )
+
+    # ── 契約 5：source-pill.css .is-partsbin cursor pointer ───────────────────────────
+
+    def test_css_partsbin_cursor_pointer(self):
+        """Contract 5：source-pill.css .source-pill.is-partsbin cursor 為 pointer（click-to-promote 語義）。"""
+        css = self._css()
+        m = re.search(
+            r'\.source-pill\.is-partsbin\s*\{([^}]+)\}',
+            css, re.DOTALL,
+        )
+        assert m, (
+            "TASK-partsbin 違規 C5：source-pill.css 缺 .source-pill.is-partsbin cursor 規則。"
+        )
+        assert "cursor: pointer" in m.group(1), (
+            "TASK-partsbin 違規 C5：.source-pill.is-partsbin 的 cursor 非 pointer。"
+        )
+
+    # ── 契約 6：design-system D.13 不含 rec-star/data-rec，含 available true/false 兩 demo ──
+
+    def test_ds_d13_no_rec_star_and_has_both_available_states(self):
+        """Contract 6：design-system D.13 不含 rec-star/data-rec（dead 清除），含 available=true 與 false 兩 demo。"""
+        ds = self._ds()
+        assert "rec-star" not in ds, (
+            "TASK-partsbin 違規 C6：design-system settings-components.html 仍含 rec-star（dead CSS class，應清除）。"
+        )
+        assert "data-rec" not in ds, (
+            "TASK-partsbin 違規 C6：design-system settings-components.html 仍含 data-rec 屬性（dead，應清除）。"
+        )
+        assert 'data-available="true"' in ds, (
+            "TASK-partsbin 違規 C6：design-system D.13 缺 is-partsbin data-available=\"true\" demo（staged 可加入態）。"
+        )
+        assert 'data-available="false"' in ds, (
+            "TASK-partsbin 違規 C6：design-system D.13 缺 is-partsbin data-available=\"false\" demo（不可達態）。"
+        )

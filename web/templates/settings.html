@@ -332,16 +332,6 @@
                                 <span>{{ t('settings.sources.mt_connected_tier_hint') }}</span>
                             </div>
 
-                            <!-- Three-cause hint: why some providers are greyed (CD-63b-4 B3) -->
-                            <details class="settings-mt-probe-hint">
-                                <summary>{{ t('settings.sources.mt_probe_hint_title') }}</summary>
-                                <ul>
-                                    <li>{{ t('settings.sources.mt_probe_hint_reason1') }}</li>
-                                    <li>{{ t('settings.sources.mt_probe_hint_reason2') }}</li>
-                                    <li>{{ t('settings.sources.mt_probe_hint_reason3') }}</li>
-                                </ul>
-                            </details>
-
                             <!-- Parts Bin header (collapsible, default collapsed) — N = partsBinSources.length -->
                             <button type="button"
                                     class="settings-mt-partsbin-head"
@@ -368,6 +358,7 @@
                                              @click="promoteMetatube(src.id)"
                                              @keydown.enter.prevent="promoteMetatube(src.id)"
                                              @keydown.space.prevent="promoteMetatube(src.id)">
+                                            <i class="bi bi-plus-circle plus-icn" aria-hidden="true"></i>
                                             <i class="bi bi-slash-circle slash-icn" aria-hidden="true"></i>
                                             <span class="pill-name" x-text="src.display_name"></span>
                                         </div>

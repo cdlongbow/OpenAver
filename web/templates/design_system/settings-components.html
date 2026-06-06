@@ -736,10 +736,13 @@
 <div class="ds-subsection">
     <h3>13. Source Pill（跨頁共用元件）</h3>
     <p class="ds-desc">
-        掃描來源膠囊 — 來源排序開關 / parts-bin 推薦。元件已從 settings.css 抽至
+        掃描來源膠囊 — 來源排序開關 / Parts Bin 可加入態。元件已從 settings.css 抽至
         <code>components/source-pill.css</code> 並去 <code>#settings-components</code> scope，
         故 Settings / Search / Showcase 皆可直接渲染。
         <strong>本卡刻意不包 <code>id="settings-components"</code></strong> — 仍正確著色即證明已 unscoped。
+        Parts Bin 三態：<strong>可加入（staged, available=true）</strong>：+ icon、無刪除線、cursor pointer；
+        <strong>不可達（available=false）</strong>：灰 dashed + 灰 slash + 右上 amber dot；
+        <strong>active（promoted）</strong>：由 Settings Active Row 管理（非 Parts Bin）。
     </p>
 
     <!-- NOTE: 無 id="settings-components" 包裹（unscoped component 的證明） -->
@@ -776,11 +779,18 @@
             <span class="source-pill-mt-badge" aria-hidden="true">m</span>
         </div>
 
-        <!-- parts-bin 推薦（warning accent + rec-star） -->
-        <div class="source-pill is-partsbin" data-enabled="false" data-rec="true">
-            <i class="bi bi-star-fill rec-star" aria-hidden="true"></i>
+        <!-- parts-bin 可加入（staged reachable：available=true，顯 +，無刪除線） -->
+        <div class="source-pill is-partsbin" data-enabled="false" data-available="true">
+            <i class="bi bi-plus-circle plus-icn" aria-hidden="true"></i>
             <i class="bi bi-slash-circle slash-icn" aria-hidden="true"></i>
-            <span class="pill-name">Recommended</span>
+            <span class="pill-name">StagedProvider</span>
+        </div>
+
+        <!-- parts-bin 不可達（unreachable：available=false，灰 dashed + slash + amber dot） -->
+        <div class="source-pill is-partsbin" data-enabled="false" data-available="false">
+            <i class="bi bi-plus-circle plus-icn" aria-hidden="true"></i>
+            <i class="bi bi-slash-circle slash-icn" aria-hidden="true"></i>
+            <span class="pill-name">UnreachableProvider</span>
         </div>
     </div>
 
@@ -803,9 +813,18 @@
 &lt;!-- metatube（m 角標）--&gt;
 &lt;span class="source-pill-mt-badge"&gt;m&lt;/span&gt;
 
-&lt;!-- parts-bin 推薦（rec-star）--&gt;
-&lt;div class="source-pill is-partsbin" data-enabled="false" data-rec="true"&gt;
-  &lt;i class="bi bi-star-fill rec-star"&gt;&lt;/i&gt;...
+&lt;!-- parts-bin 可加入（staged，available=true：+ icon、無刪除線、pointer）--&gt;
+&lt;div class="source-pill is-partsbin" data-enabled="false" data-available="true"&gt;
+  &lt;i class="bi bi-plus-circle plus-icn" aria-hidden="true"&gt;&lt;/i&gt;
+  &lt;i class="bi bi-slash-circle slash-icn" aria-hidden="true"&gt;&lt;/i&gt;
+  &lt;span class="pill-name"&gt;StagedProvider&lt;/span&gt;
+&lt;/div&gt;
+
+&lt;!-- parts-bin 不可達（available=false：灰 dashed + slash + 右上 amber dot）--&gt;
+&lt;div class="source-pill is-partsbin" data-enabled="false" data-available="false"&gt;
+  &lt;i class="bi bi-plus-circle plus-icn" aria-hidden="true"&gt;&lt;/i&gt;
+  &lt;i class="bi bi-slash-circle slash-icn" aria-hidden="true"&gt;&lt;/i&gt;
+  &lt;span class="pill-name"&gt;UnreachableProvider&lt;/span&gt;
 &lt;/div&gt;</code></pre>
 </div>
 
