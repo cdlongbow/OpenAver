@@ -737,6 +737,11 @@ def organize_file(
         filename_base = truncate_to_chars(filename_base, max(0, max_chars - reserve))
     # VR tail 永遠最後接（CD-68-6）；vr_tail='' 時零變化（CD-68-9）
     filename_base = filename_base + vr_tail
+    # 最終長度上限保護（Codex PR P2）：即使退化情形也不突破 max_filename_length。
+    # 正常/spec 情形 reserve 已預留 → base+vr_tail == max_chars → 此為 no-op、VR tail 完整；
+    # 僅 max_filename_length 被設到連 ext+VR cluster 都裝不下（低於 UI 下限的 config/API 值）時才作用，
+    # 鏡射 suffix 路徑的 truncate_to_chars(suffix, max_chars) 上限語意。
+    filename_base = truncate_to_chars(filename_base, max_chars)
 
     new_filename = filename_base + original_ext
     target_path = os.path.join(target_dir, new_filename)

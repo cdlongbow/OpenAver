@@ -2322,6 +2322,51 @@ class TestOrganizeVrFilename:
         assert "_180" not in name1 and "_LR" not in name1, f"CD1 意外多了 VR tail：{name1}"
         assert "_180" not in name2 and "_LR" not in name2, f"CD2 意外多了 VR tail：{name2}"
 
+    # ---- Codex PR P2 回歸：退化 config 最終長度上限保護 ----
+
+    def test_degenerate_max_len_vr_tail_bounded(self, tmp_path):
+        """退化 config（max_filename_length < ext + vr_tail）最終檔名不得超出上限。
+
+        SIVR-1_180_3dh_LR.mp4：
+          vr_tail = _180_3dh_LR（11 chars）
+          ext     = .mp4（4 chars）
+          vr_tail + ext = 15 chars
+          max_filename_length = 10 < 15  → 退化（連 ext+vr_tail 都裝不下）
+
+        修前行為：filename_base = '' + '_180_3dh_LR' = '_180_3dh_LR'（11）
+                  new_filename  = '_180_3dh_LR.mp4'（15）> 10  → overflow
+        修後行為：最終 cap 截到 max_chars=6 → len(new_filename) <= 10
+        """
+        src = tmp_path / "SIVR-1_180_3dh_LR.mp4"
+        src.write_bytes(b"degenerate vr content")
+
+        config = {
+            "create_folder": False,
+            "filename_format": "[{num}] {title}{suffix}",
+            "download_cover": False,
+            "create_nfo": False,
+            "max_title_length": 50,
+            "max_filename_length": 10,   # < ext(4) + vr_tail(11) = 15 → 退化
+            "suffix_keywords": ["-cd1", "-cd2"],
+        }
+        metadata = {
+            "number": "SIVR-1",
+            "title": "Title",
+            "actors": [],
+            "tags": [],
+            "maker": "Studio",
+            "date": "2024-01-15",
+            "cover": "",
+            "url": "",
+        }
+
+        result = organize_file(str(src), metadata, config)
+        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
+        new_name = Path(result["new_filename"]).name
+        assert len(new_name) <= 10, (
+            f"退化 config overflow 未被 cap：len={len(new_name)}，filename={new_name!r}"
+        )
+
 
 # ============ generate_nfo() VR tag/genre 去重測試 (T3) ============
 
