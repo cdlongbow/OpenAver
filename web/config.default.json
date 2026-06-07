@@ -181,7 +181,7 @@
       "is_censored": false
     }
   ],
-  "advanced_search_enabled": false,
+  "advanced_search_enabled": true,
   "metatube": {
     "enabled": false,
     "url": "",

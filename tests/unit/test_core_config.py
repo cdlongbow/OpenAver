@@ -783,9 +783,9 @@ class TestConfigDefaultSchemaParity:
         missing = set(schema) - set(default)
         assert not missing, f"config.default.json 缺 top-level 欄位（fresh install /api/config 會漏）: {sorted(missing)}"
 
-    def test_default_advanced_search_enabled_present_and_false(self):
+    def test_default_advanced_search_enabled_present_and_true(self):
         default = self._default()
-        assert default.get("advanced_search_enabled") is False
+        assert default.get("advanced_search_enabled") is True
 
     def test_default_sources_carry_is_censored(self):
         default = self._default()

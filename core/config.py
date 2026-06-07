@@ -151,7 +151,7 @@ class AppConfig(BaseModel):
     showcase: ShowcaseConfig = ShowcaseConfig()
     general: GeneralConfig = GeneralConfig()
     sources: list[SourceConfig] = Field(default_factory=get_builtin_sources)
-    advanced_search_enabled: bool = False  # 進階搜尋 picker（TASK-61c-7）；Pydantic default 自動補缺漏
+    advanced_search_enabled: bool = True  # 進階搜尋 picker（TASK-61c-7）；預設開啟（v0.9.x）；Pydantic default 自動補缺漏
     metatube: MetatubeConfig = MetatubeConfig()  # CD-63b-3；Pydantic default 自動補缺漏（no migration needed）
 
 

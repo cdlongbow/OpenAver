@@ -8,7 +8,7 @@ export function stateConfig() {
             // Search
             searchFavoriteFolder: '',
             proxyUrl: '',
-            advancedSearchEnabled: false,  // 進階搜尋 picker（TASK-61c-7，top-level config 欄位）
+            advancedSearchEnabled: true,  // 進階搜尋 picker（TASK-61c-7，top-level config 欄位）；預設開啟（v0.9.x）
 
             // Translate
             translateEnabled: false,
