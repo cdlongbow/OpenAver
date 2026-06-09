@@ -3,7 +3,7 @@
 PyWebView implementation of the CfTransport Protocol.
 
 Provides:
-  _wv_fetch(window, url, timeout)  — module-level helper (column 0)
+  _wv_fetch(window, url, timeout, attempts, retry_delay)  — module-level helper (column 0)
   PyWebViewCfTransport             — CfTransport implementation
 
 Design:
@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import queue
+import time
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -45,7 +46,13 @@ logger = get_logger(__name__)
 # Module-level helper (column 0)
 # ──────────────────────────────────────────────────────────────
 
-def _wv_fetch(window: webview.Window, url: str, timeout: float = 40.0) -> tuple[str, int, str]:
+def _wv_fetch(
+    window: webview.Window,
+    url: str,
+    timeout: float = 12.0,
+    attempts: int = 3,
+    retry_delay: float = 0.5,
+) -> tuple[str, int, str]:
     """
     Execute fetch(url) inside the WebView (same-origin, credentials:include)
     and return (final_url, http_status, html_text).
@@ -55,12 +62,15 @@ def _wv_fetch(window: webview.Window, url: str, timeout: float = 40.0) -> tuple[
       We bridge via queue.Queue(1): the callback puts the result in,
       the worker thread blocking-gets with timeout.
 
-    Raises:
-        TimeoutError:   callback not called within timeout seconds.
-        RuntimeError:   JS-layer error (e.g. network failure).
-    """
-    result_q: queue.Queue[dict] = queue.Queue(maxsize=1)
+    Retries up to `attempts` times if the callback is never called (hang),
+    using a fresh queue + callback each attempt so stale callbacks from a
+    hung earlier attempt land in their own abandoned queue and never
+    contaminate a later attempt's result.
 
+    Raises:
+        TimeoutError:   all attempts timed out (callback never fired).
+        RuntimeError:   JS-layer error (e.g. network failure) — not retried.
+    """
     js_url = json.dumps(url)
     js_code = (
         f"(async()=>{{"
@@ -74,28 +84,58 @@ def _wv_fetch(window: webview.Window, url: str, timeout: float = 40.0) -> tuple[
         f"}})()"
     )
 
-    def _cb(result: Any) -> None:
-        """pywebview Promise callback — called in pywebview's internal thread."""
+    last_timeout_err: TimeoutError | None = None
+
+    for attempt in range(1, attempts + 1):
+        # Fresh queue + fresh callback each attempt — stale callbacks from a
+        # prior hung attempt will put into their own abandoned queue (harmless).
+        result_q: queue.Queue[dict] = queue.Queue(maxsize=1)
+
+        def _cb(result: Any, _q: queue.Queue = result_q) -> None:
+            """pywebview Promise callback — called in pywebview's internal thread."""
+            try:
+                _q.put_nowait(result if isinstance(result, dict) else {})
+            except queue.Full:
+                pass  # guard against duplicate callbacks (extremely rare)
+
+        window.evaluate_js(js_code, callback=_cb)
+
         try:
-            result_q.put_nowait(result if isinstance(result, dict) else {})
-        except queue.Full:
-            pass  # guard against duplicate callbacks (extremely rare)
+            data = result_q.get(timeout=timeout)
+        except queue.Empty:
+            last_timeout_err = TimeoutError(
+                f"_wv_fetch timed out after {timeout}s for {url} (attempt {attempt}/{attempts})"
+            )
+            if attempt < attempts:
+                logger.info(
+                    "_wv_fetch: attempt %d/%d timed out for %s — retrying",
+                    attempt, attempts, url,
+                )
+                if retry_delay > 0:
+                    time.sleep(retry_delay)
+            continue
 
-    window.evaluate_js(js_code, callback=_cb)
+        # Got data — check for JS/network error (not a hang; don't retry)
+        final_url = data.get("finalUrl") or url
+        status = data.get("status") or 0
+        html = data.get("html") or ""
 
-    try:
-        data = result_q.get(timeout=timeout)
-    except queue.Empty:
-        raise TimeoutError(f"_wv_fetch timed out after {timeout}s for {url}")
+        if js_err := data.get("error"):
+            raise RuntimeError(f"JS fetch error: {js_err}")
 
-    final_url = data.get("finalUrl") or url
-    status = data.get("status") or 0
-    html = data.get("html") or ""
+        if attempt > 1:
+            logger.info(
+                "_wv_fetch succeeded on attempt %d/%d for %s",
+                attempt, attempts, url,
+            )
+        return final_url, status, html
 
-    if js_err := data.get("error"):
-        raise RuntimeError(f"JS fetch error: {js_err}")
-
-    return final_url, status, html
+    # All attempts exhausted
+    logger.warning(
+        "_wv_fetch exhausted %d attempts (%.0fs each) for %s",
+        attempts, timeout, url,
+    )
+    raise last_timeout_err  # type: ignore[misc]
 
 
 # ──────────────────────────────────────────────────────────────

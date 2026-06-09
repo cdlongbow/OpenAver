@@ -134,11 +134,14 @@ class TestWvFetch:
             _wv_fetch(win, 'https://www.javlibrary.com/ja/')
 
     def test_timeout_raises_timeout_error(self):
-        """Callback never called → raises TimeoutError after short timeout."""
+        """Callback never called → raises TimeoutError (single-attempt, fast)."""
         win = FakeWindow()
         win._never_callback = True
         with pytest.raises(TimeoutError):
-            _wv_fetch(win, 'https://www.javlibrary.com/ja/', timeout=0.05)
+            _wv_fetch(win, 'https://www.javlibrary.com/ja/', timeout=0.05, attempts=1)
+        # Exactly 1 evaluate_js call for single-attempt
+        eval_calls = [c for c in win.calls if c[0] == 'evaluate_js']
+        assert len(eval_calls) == 1
 
     def test_non_dict_callback_degrades_gracefully(self):
         """Non-dict passed to callback → put_nowait({}) → returns ('', 0, '')."""
@@ -159,6 +162,111 @@ class TestWvFetch:
         assert final_url == 'https://www.javlibrary.com/ja/'  # falls back to input url
         assert status == 0
         assert html == ''
+
+    def test_retry_then_succeed(self):
+        """
+        1st attempt: callback never fires → timeout.
+        2nd attempt: callback fires with valid result → returns correct tuple.
+        Asserts recovery on attempt 2 with no actual wait.
+        """
+        call_count = [0]
+        captured_callbacks: list = []
+        GOOD_RESULT = {
+            'finalUrl': 'https://www.javlibrary.com/ja/vl_movie.php?v=START492',
+            'status': 200,
+            'html': '<html><title>START-492</title></html>',
+        }
+
+        class RetryFakeWindow(FakeWindow):
+            def evaluate_js(self, code, callback=None):
+                self.calls.append(('evaluate_js', code, callback))
+                call_count[0] += 1
+                if callback is not None:
+                    if call_count[0] == 1:
+                        # 1st attempt: do nothing → timeout
+                        captured_callbacks.append(callback)
+                    else:
+                        # 2nd attempt onwards: call callback with good result
+                        callback(GOOD_RESULT)
+                return None
+
+        win = RetryFakeWindow()
+        result = _wv_fetch(win, 'https://www.javlibrary.com/ja/', timeout=0.05, attempts=3, retry_delay=0)
+
+        assert isinstance(result, tuple)
+        final_url, status, html = result
+        assert final_url == GOOD_RESULT['finalUrl']
+        assert status == 200
+        assert html == GOOD_RESULT['html']
+        # evaluate_js called exactly twice: 1 timed-out + 1 successful
+        eval_calls = [c for c in win.calls if c[0] == 'evaluate_js']
+        assert len(eval_calls) == 2, f"Expected 2 evaluate_js calls, got {len(eval_calls)}"
+
+    def test_all_attempts_exhausted_raises_timeout(self):
+        """
+        evaluate_js never calls callback → all 3 attempts time out →
+        TimeoutError raised, evaluate_js called exactly `attempts` times.
+        """
+        win = FakeWindow()
+        win._never_callback = True
+        with pytest.raises(TimeoutError):
+            _wv_fetch(win, 'https://www.javlibrary.com/ja/', timeout=0.05, attempts=3, retry_delay=0)
+        eval_calls = [c for c in win.calls if c[0] == 'evaluate_js']
+        assert len(eval_calls) == 3, (
+            f"Expected 3 evaluate_js calls (one per attempt), got {len(eval_calls)}"
+        )
+
+    def test_stale_callback_isolation(self):
+        """
+        Stale-callback isolation: the 1st attempt's callback fires LATE (injected
+        at the start of the 2nd evaluate_js call, into the 1st attempt's queue).
+        The 2nd attempt supplies its OWN correct result.
+        Assert that the returned html belongs to attempt 2, not the stale result.
+
+        Implementation note: each attempt captures its OWN `result_q` via the
+        default-argument closure `_q=result_q`.  The stale callback fires into
+        the 1st (abandoned) queue; the 2nd attempt's queue receives the fresh
+        result.  This verifies the per-attempt queue isolation design.
+        """
+        STALE_RESULT = {
+            'finalUrl': 'https://www.javlibrary.com/ja/stale',
+            'status': 200,
+            'html': '<html><title>STALE</title></html>',
+        }
+        FRESH_RESULT = {
+            'finalUrl': 'https://www.javlibrary.com/ja/fresh',
+            'status': 200,
+            'html': '<html><title>FRESH</title></html>',
+        }
+
+        stale_cb_holder: list = []
+        call_count = [0]
+
+        class StaleCallbackWindow(FakeWindow):
+            def evaluate_js(self, code, callback=None):
+                self.calls.append(('evaluate_js', code, callback))
+                call_count[0] += 1
+                if callback is not None:
+                    if call_count[0] == 1:
+                        # 1st attempt: store callback, never invoke → timeout
+                        stale_cb_holder.append(callback)
+                    elif call_count[0] == 2:
+                        # 2nd attempt: first fire the stale 1st-attempt callback
+                        # (simulates late arrival after the retry started)
+                        if stale_cb_holder:
+                            stale_cb_holder[0](STALE_RESULT)
+                        # Then fire THIS attempt's fresh callback
+                        callback(FRESH_RESULT)
+                return None
+
+        win = StaleCallbackWindow()
+        result = _wv_fetch(win, 'https://www.javlibrary.com/ja/', timeout=0.05, attempts=3, retry_delay=0)
+
+        final_url, status, html = result
+        assert html == FRESH_RESULT['html'], (
+            f"Expected fresh result html, got: {html!r} (stale callback must not contaminate)"
+        )
+        assert final_url == FRESH_RESULT['finalUrl']
 
 
 # ──────────────────────────────────────────────────────────────
@@ -197,7 +305,7 @@ class TestFetch:
 
     def test_timeout_bubbles_through_fetch(self, monkeypatch):
         """_wv_fetch TimeoutError bubbles out of fetch() unmodified."""
-        def fake_wv_fetch(window, url, timeout=40.0):
+        def fake_wv_fetch(window, url, timeout=12.0, attempts=3, retry_delay=0.5):
             raise TimeoutError(f"_wv_fetch timed out after {timeout}s for {url}")
 
         monkeypatch.setattr(cf_transport_impl, '_wv_fetch', fake_wv_fetch)
