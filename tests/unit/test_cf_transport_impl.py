@@ -314,8 +314,12 @@ class TestFetch:
         with pytest.raises(TimeoutError):
             transport.fetch('https://www.javlibrary.com/ja/')
 
-    def test_fetch_does_not_raise_for_age_gate_page(self):
-        """age gate check is NOT in fetch() — only in is_ready(). fetch returns html."""
+    def test_fetch_does_not_raise_for_footer_terms_page(self):
+        """
+        Normal content page with footer terms (利用規約/over18 but NO agreeBtn)
+        → fetch() returns html without raising.  _is_age_gate only matches agreeBtn,
+        so footer-only content is never mis-classified as an age gate.
+        """
         age_gate_html = '<html><head><title>JavLibrary</title></head><body>利用規約 over18</body></html>'
         win = FakeWindow()
         win._eval_callback_result['default'] = {
@@ -324,9 +328,67 @@ class TestFetch:
             'html': age_gate_html,
         }
         transport = PyWebViewCfTransport(win)
-        # Should NOT raise — age gate is only in is_ready()
+        # Should NOT raise — footer terms do not trigger _is_age_gate (no agreeBtn)
         result = transport.fetch('https://www.javlibrary.com/ja/')
         assert isinstance(result, str)
+
+    def test_age_gate_html_raises_cf_challenge_required(self):
+        """
+        Fallback path: if agreeBtn is present in the fetched HTML (age gate persisted
+        despite the proactive over18 cookie), fetch() raises CfChallengeRequired so
+        the caller routes into the solve/poll flow instead of returning empty content.
+        """
+        age_gate_html = (
+            '<html><head><title>JavLibrary</title></head>'
+            '<body><button id="agreeBtn">同意</button></body></html>'
+        )
+        win = FakeWindow()
+        win._eval_callback_result['default'] = {
+            'finalUrl': 'https://www.javlibrary.com/ja/',
+            'status': 200,
+            'html': age_gate_html,
+        }
+        transport = PyWebViewCfTransport(win)
+        with pytest.raises(CfChallengeRequired, match='age gate detected'):
+            transport.fetch('https://www.javlibrary.com/ja/')
+
+    def test_fetch_sets_over18_cookie_before_fetch(self):
+        """
+        Proactive cookie path: fetch() calls evaluate_js with the over18=1 cookie
+        string BEFORE calling _wv_fetch.  FakeWindow records all evaluate_js codes;
+        the cookie call must appear before the callback-bearing _wv_fetch call.
+        """
+        win = FakeWindow()
+        win._eval_callback_result['default'] = {
+            'finalUrl': 'https://www.javlibrary.com/ja/',
+            'status': 200,
+            'html': NORMAL_HTML,
+        }
+        transport = PyWebViewCfTransport(win)
+        transport.fetch('https://www.javlibrary.com/ja/')
+
+        # Collect all evaluate_js call codes
+        eval_calls = [(i, c) for i, c in enumerate(win.calls) if c[0] == 'evaluate_js']
+
+        # There must be at least 2: one cookie (no callback) + one _wv_fetch (callback)
+        assert len(eval_calls) >= 2, (
+            f"Expected at least 2 evaluate_js calls (cookie + fetch), got {len(eval_calls)}"
+        )
+
+        # The first evaluate_js must contain 'over18' and have no callback
+        first_idx, first_call = eval_calls[0]
+        assert 'over18' in first_call[1], (
+            f"First evaluate_js must set over18 cookie, got: {first_call[1]!r}"
+        )
+        assert first_call[2] is None, (
+            "Cookie evaluate_js must be a no-callback (sync) call"
+        )
+
+        # The second evaluate_js must be the _wv_fetch call (has a callback)
+        _, fetch_call = eval_calls[1]
+        assert fetch_call[2] is not None, (
+            "Second evaluate_js must be the _wv_fetch call (has callback)"
+        )
 
 
 # ──────────────────────────────────────────────────────────────

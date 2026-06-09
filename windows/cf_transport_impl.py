@@ -173,11 +173,24 @@ class PyWebViewCfTransport:
         """
         Fetch url via same-origin WebView request and return HTML string.
 
-        Raises CfChallengeRequired if the returned page is a CF challenge.
-        Does NOT check age gate (age gate is only checked in is_ready()).
+        Raises CfChallengeRequired if the returned page is a CF challenge or a
+        persisting age gate (agreeBtn detected despite the proactive over18 cookie).
+
+        The over18 cookie is set proactively before every fetch so the 18+ age gate
+        is never served on cold-start (cookie-governed, not a human step).  Mirrors
+        the idiom in is_ready().  If the gate somehow persists (race / unexpected
+        markup), the fallback _is_age_gate check routes into the solve/poll flow
+        exactly like a CF challenge.
         """
         if self._dead:
             raise CfTransportUnavailable("JavLibrary CF window was unexpectedly destroyed (crash / forced close); restart OpenAver to use JavLibrary again")
+
+        # Set over18 cookie before fetching so the 18+ age gate is never served
+        # (the gate is cookie-governed, not a human step). Mirrors is_ready().
+        self._win.evaluate_js(
+            "document.cookie='over18=1; path=/; domain=.javlibrary.com';"
+        )
+
         final_url, status, html = _wv_fetch(self._win, url)  # C1: unpack correctly
 
         # Detect CF challenge via title
@@ -188,6 +201,12 @@ class PyWebViewCfTransport:
 
         if _is_cf_challenge(title, html):
             raise CfChallengeRequired(f'CF challenge detected for {url}')
+
+        # Fallback: if the age gate still shows despite the cookie (race / unexpected
+        # agreeBtn id), route into the solve/poll flow so begin_solve re-sets the
+        # cookie (and the user can click if needed) — same recovery path as CF.
+        if _is_age_gate(html):
+            raise CfChallengeRequired(f'age gate detected (cookie did not suppress) for {url}')
 
         return html
 
