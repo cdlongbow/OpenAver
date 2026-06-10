@@ -349,7 +349,7 @@ class JavLibraryScraper(BaseScraper):
             base_lang_url = f'{BASE_URL}/{LANG}'
             found_url = _extract_detail_url(html, number, base_lang_url)
             if not found_url:
-                logger.debug("javlibrary: no detail URL found for %s", number)
+                logger.info("javlibrary: no detail URL found for %s (站上真的沒有此番號)", number)
                 return None
             detail_url = found_url
             detail_html = transport.fetch(detail_url, cache_key='javlibrary')
@@ -367,7 +367,7 @@ class JavLibraryScraper(BaseScraper):
 
         # 步驟 10：parse 品質保護
         if not fields.get("title") and not fields.get("cover"):
-            logger.debug("javlibrary: parse failed for %s (title+cover both empty)", number)
+            logger.info("javlibrary: parse failed for %s (title+cover both empty — selector 失準或頁面結構變動)", number)
             return None
 
         # FIX-5：番號核對守衛

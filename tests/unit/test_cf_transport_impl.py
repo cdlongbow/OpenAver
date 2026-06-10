@@ -46,12 +46,41 @@ class FakeEvents:
             h()
 
 
+class FakeEvent:
+    """Stub for a threading.Event-like pywebview lifecycle event.
+
+    Defaults to set=True so `_bridge_ready()` reports ready and existing tests
+    keep their pre-0.9.9c behavior. Tests that exercise the bridge-not-ready /
+    forced-reload paths flip it via .clear()/.set()."""
+
+    def __init__(self, initial: bool = True):
+        self._set = initial
+        self.wait_calls = 0
+
+    def is_set(self):
+        return self._set
+
+    def set(self):
+        self._set = True
+
+    def clear(self):
+        self._set = False
+
+    def wait(self, timeout=None):
+        self.wait_calls += 1
+        return self._set
+
+
 class FakeWindowEvents:
-    """Stub for window.events, with `closed` and `closing` sub-containers."""
+    """Stub for window.events, with `closed`/`closing` + lifecycle events."""
 
     def __init__(self):
         self.closed = FakeEvents()
         self.closing = FakeEvents()
+        # 0.9.9c/e: bridge-readiness events. Default set=True → bridge ready.
+        self._pywebviewready = FakeEvent(initial=True)
+        self.shown = FakeEvent(initial=True)
+        self.loaded = FakeEvent(initial=True)
 
 
 class FakeWindow:
@@ -354,7 +383,7 @@ class TestFetch:
 
     def test_fetch_sets_over18_cookie_before_fetch(self):
         """
-        Proactive cookie path: fetch() calls evaluate_js with the over18=1 cookie
+        Proactive cookie path: fetch() calls evaluate_js with the over18=18 cookie
         string BEFORE calling _wv_fetch.  FakeWindow records all evaluate_js codes;
         the cookie call must appear before the callback-bearing _wv_fetch call.
         """
@@ -396,8 +425,14 @@ class TestFetch:
 # ──────────────────────────────────────────────────────────────
 
 class TestBeginSolve:
-    def test_calls_show_load_url_and_over18_cookie(self):
-        """begin_solve → show() + load_url(origin) + evaluate_js(over18 cookie)."""
+    def test_calls_show_then_load_url_no_blocking_eval(self):
+        """begin_solve → show() + load_url(origin) only — NO evaluate_js.
+
+        ROOT-CAUSE FIX (0.9.9c): setting the over18 cookie via evaluate_js right
+        after load_url to a CF-challenged origin blocks ~20s on _pywebviewready and
+        raises WebViewException, stranding the bridge. over18 is set in
+        fetch()/is_ready() instead. begin_solve must stay show + navigate only.
+        """
         win = FakeWindow()
         transport = PyWebViewCfTransport(win)
         origin = 'https://www.javlibrary.com/ja/'
@@ -406,21 +441,19 @@ class TestBeginSolve:
         method_calls = [c[0] for c in win.calls]
         assert 'show' in method_calls
         assert 'load_url' in method_calls
-        assert 'evaluate_js' in method_calls
+        assert 'evaluate_js' not in method_calls, (
+            "begin_solve must not call evaluate_js — it blocks on a CF page and "
+            "strands the pywebview bridge (0.9.9b repro)"
+        )
 
-        # Check order: show before load_url before evaluate_js
+        # Check order: show before load_url
         show_idx = next(i for i, c in enumerate(win.calls) if c[0] == 'show')
         load_idx = next(i for i, c in enumerate(win.calls) if c[0] == 'load_url')
-        eval_idx = next(i for i, c in enumerate(win.calls) if c[0] == 'evaluate_js')
-        assert show_idx < load_idx < eval_idx
+        assert show_idx < load_idx
 
         # load_url gets the origin
         load_call = next(c for c in win.calls if c[0] == 'load_url')
         assert load_call[1] == origin
-
-        # evaluate_js contains over18 cookie
-        eval_call = next(c for c in win.calls if c[0] == 'evaluate_js')
-        assert 'over18' in eval_call[1]
 
     def test_returns_immediately(self):
         """begin_solve() must return immediately (no blocking)."""
@@ -663,3 +696,68 @@ class TestDeadFlagFailFast:
         win.events.closed.fire()
         with pytest.raises(CfTransportUnavailable):
             transport.fetch('https://www.javlibrary.com/ja/')
+
+
+# ──────────────────────────────────────────────────────────────
+# Tests: 0.9.9g begin_solve navigates to CF-challenged URL
+# ──────────────────────────────────────────────────────────────
+
+class TestBeginSolveTargetsCfUrl:
+    """
+    0.9.9g: begin_solve must navigate to the exact URL that triggered CF
+    (self._cf_url) so the user sees the real Turnstile challenge immediately,
+    rather than the homepage which has no CF challenge.
+    """
+
+    CF_SEARCH_URL = 'https://www.javlibrary.com/ja/vl_searchbyid.php?keyword=START-578'
+    ORIGIN_URL = 'https://www.javlibrary.com/ja/'
+
+    def test_begin_solve_navigates_to_remembered_cf_url(self):
+        """When _cf_url is set, begin_solve navigates to it (not origin)."""
+        win = FakeWindow()
+        transport = PyWebViewCfTransport(win)
+        # Simulate a CF fetch having recorded the challenged URL
+        transport._cf_url = self.CF_SEARCH_URL
+
+        transport.begin_solve(self.ORIGIN_URL)
+
+        load_calls = [c for c in win.calls if c[0] == 'load_url']
+        assert len(load_calls) == 1
+        assert load_calls[0][1] == self.CF_SEARCH_URL, (
+            f"begin_solve must navigate to _cf_url ({self.CF_SEARCH_URL!r}), "
+            f"not origin ({self.ORIGIN_URL!r}); got {load_calls[0][1]!r}"
+        )
+
+    def test_begin_solve_falls_back_to_origin_when_no_cf_url(self):
+        """When _cf_url is None (fresh transport), begin_solve falls back to origin."""
+        win = FakeWindow()
+        transport = PyWebViewCfTransport(win)
+        assert transport._cf_url is None
+
+        transport.begin_solve(self.ORIGIN_URL)
+
+        load_calls = [c for c in win.calls if c[0] == 'load_url']
+        assert len(load_calls) == 1
+        assert load_calls[0][1] == self.ORIGIN_URL, (
+            f"begin_solve must fall back to origin when _cf_url is None; "
+            f"got {load_calls[0][1]!r}"
+        )
+
+    def test_fetch_cf_detected_records_cf_url(self, monkeypatch):
+        """fetch() with CF title → raises CfChallengeRequired AND records _cf_url."""
+        search_url = self.CF_SEARCH_URL
+
+        def fake_wv_fetch(window, url, **kwargs):
+            return (url, 200, CF_HTML)
+
+        monkeypatch.setattr(cf_transport_impl, '_wv_fetch', fake_wv_fetch)
+        win = FakeWindow()
+        transport = PyWebViewCfTransport(win)
+
+        with pytest.raises(CfChallengeRequired):
+            transport.fetch(search_url)
+
+        assert transport._cf_url == search_url, (
+            f"_cf_url must be set to the CF-challenged URL ({search_url!r}); "
+            f"got {transport._cf_url!r}"
+        )
