@@ -335,3 +335,82 @@ class TestBatchEnrich:
         })
 
         assert response.status_code == 422
+
+
+class TestBatchEnrichThumbnailInvalidation:
+    """feature/71 T8 邊界5：每筆成功 → invalidate（帶 path_mappings）；失敗不呼叫；去重後至多一次。"""
+
+    _MAPPINGS = {"/nas": "//NAS/share"}
+
+    @pytest.fixture(autouse=True)
+    def _stub(self, mocker):
+        mocker.patch(
+            "web.routers.scraper.search_jav",
+            return_value={"title": "stub", "source": "javbus"},
+        )
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value={
+                "gallery": {"path_mappings": self._MAPPINGS},
+                "search": {},
+            },
+        )
+
+    def test_each_success_invalidates_with_mappings(self, client, mocker):
+        """2 筆皆成功 → 各以 to_file_uri(file_path, mappings) 的 URI invalidate 一次。"""
+        from core.path_utils import to_file_uri
+        mocker.patch("web.routers.scraper.enrich_single", return_value=_ok_result())
+        inval_spy = mocker.patch("web.routers.scraper.thumbnail_cache.invalidate")
+
+        response = client.post("/api/batch-enrich", json={
+            "items": [
+                {"file_path": "/nas/a.mp4", "number": "IPZ-154"},
+                {"file_path": "/nas/b.mp4", "number": "SONE-205"},
+            ],
+            "mode": "refresh_full",
+        })
+
+        assert response.status_code == 200
+        called = [c.args[0] for c in inval_spy.call_args_list]
+        assert to_file_uri("/nas/a.mp4", self._MAPPINGS) in called
+        assert to_file_uri("/nas/b.mp4", self._MAPPINGS) in called
+        assert len(called) == 2
+
+    def test_failed_item_not_invalidated(self, client, mocker):
+        """1 成功 1 失敗 → 只有成功筆 invalidate。"""
+        from core.path_utils import to_file_uri
+        mocker.patch(
+            "web.routers.scraper.enrich_single",
+            side_effect=[_ok_result(), _err_result("找不到番號資料")],
+        )
+        inval_spy = mocker.patch("web.routers.scraper.thumbnail_cache.invalidate")
+
+        response = client.post("/api/batch-enrich", json={
+            "items": [
+                {"file_path": "/nas/ok.mp4", "number": "IPZ-154"},
+                {"file_path": "/nas/bad.mp4", "number": "XXX-999"},
+            ],
+            "mode": "refresh_full",
+        })
+
+        assert response.status_code == 200
+        called = [c.args[0] for c in inval_spy.call_args_list]
+        assert called == [to_file_uri("/nas/ok.mp4", self._MAPPINGS)]
+
+    def test_duplicate_path_invalidated_once(self, client, mocker):
+        """同 file_path 兩筆 → 去重後成功的唯一 file_path 至多 invalidate 一次。"""
+        from core.path_utils import to_file_uri
+        mocker.patch("web.routers.scraper.enrich_single", return_value=_ok_result())
+        inval_spy = mocker.patch("web.routers.scraper.thumbnail_cache.invalidate")
+
+        response = client.post("/api/batch-enrich", json={
+            "items": [
+                {"file_path": "/nas/dup.mp4", "number": "IPZ-154"},
+                {"file_path": "/nas/dup.mp4", "number": "IPZ-154"},
+            ],
+            "mode": "refresh_full",
+        })
+
+        assert response.status_code == 200
+        called = [c.args[0] for c in inval_spy.call_args_list]
+        assert called == [to_file_uri("/nas/dup.mp4", self._MAPPINGS)]

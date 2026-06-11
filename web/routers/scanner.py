@@ -233,6 +233,10 @@ def generate_avlist() -> Generator[str, None, None]:
                     deleted_paths = [p for p in db_index.keys() if is_path_under_dir(p, normalized_dir_uri) and p not in current_paths]
                     if deleted_paths:
                         deleted_count = repo.delete_by_paths(deleted_paths)
+                        # feature/71 T8: prune 連動失效縮圖。deleted_paths 已是 DB URI
+                        # （db_index.keys()）→ 原樣傳入、不過 to_file_uri、不疊轉換（plan §0.1）。
+                        for p in deleted_paths:
+                            thumbnail_cache.invalidate(p)
                         total_deleted += deleted_count
                         yield _sse_event({"type": "log", "level": "info", "message": f"  清理 {deleted_count} 個已刪除檔案"})
 
@@ -483,6 +487,8 @@ def clear_cache():  # noqa: ranker-invalidate (DELETE FROM videos only in docstr
 
         repo = VideoRepository(db_path)
         deleted = repo.clear_all()
+        # feature/71 T8: 清空整個縮圖快取目錄（CD-11 / spec 2.A.9）
+        thumbnail_cache.clear_all()
         # T3(40c): 清空 jellyfin check 快取
         global _jellyfin_cache_result, _jellyfin_cache_time
         _jellyfin_cache_result = None
@@ -829,8 +835,14 @@ def get_thumb(request: Request, path: str = Query(..., description="影片路徑
     tf = thumbnail_cache.thumb_file_for(path)
 
     # hit：零 DB、零 NAS（只一次本地 stat）— 驗收 4.A 核心
+    # feature/71 T8 M1：hit 判定（tf.exists()）通過後、_serve_thumb_file 內 tf.stat() 前，
+    # thumb 可能被並發 invalidate(unlink) → stat 拋 OSError（含 FileNotFoundError）。
+    # 此時降級 fall through 到下方 miss 重生路徑（DB 有 cover → 重生；無 → 404），不 500。
     if tf.exists():
-        return _serve_thumb_file(tf, request)
+        try:
+            return _serve_thumb_file(tf, request)
+        except OSError as e:
+            logger.warning("thumb hit 後並發失效，降級重生: path=%s err=%s", path, e)
 
     # miss：DB 背書取 cover
     db_path = get_db_path()

@@ -26,6 +26,7 @@ from core.cf_transport import get_cf_transport, CfChallengeRequired, CfTransport
 from core.scrapers.javlibrary import JAVLIBRARY_ORIGIN
 from core.logger import get_logger
 from core.config import load_config
+from core import thumbnail_cache
 from web.routers.notifications import emit_notification as _emit_notif
 
 logger = get_logger(__name__)
@@ -250,6 +251,12 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
             source=request.source,
             javbus_lang=request.javbus_lang,
         )
+        # feature/71 T8: 換封面成功 → 失效舊縮圖（下次 lazy/prewarm 重生，CD-9 / spec 2.A.7）。
+        # path_mappings 必帶：對齊 scan 寫入 DB 的 v.path key，否則 WSL 非 /mnt prefix 砍錯 hash。
+        if result.success:
+            thumbnail_cache.invalidate(
+                to_file_uri(request.file_path, config.get("gallery", {}).get("path_mappings", {}))
+            )
         from dataclasses import asdict
         return asdict(result)
     except Exception:
@@ -379,6 +386,11 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                     result_dict = asdict(result)
                     if result.success:
                         success_count += 1
+                        # feature/71 T8: 換封面成功 → 失效舊縮圖（廉價同步 unlink，不需 offload）。
+                        # path_mappings 必帶（對齊 scan 寫入 DB key）。config 於 :296 load。
+                        thumbnail_cache.invalidate(
+                            to_file_uri(item.file_path, config.get("gallery", {}).get("path_mappings", {}))
+                        )
                     else:
                         failed_count += 1
                     yield f"data: {json.dumps({'type': 'result-item', 'number': item.number, 'file_path': item.file_path, **result_dict})}\n\n"

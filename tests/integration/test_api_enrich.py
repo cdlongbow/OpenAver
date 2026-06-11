@@ -533,3 +533,91 @@ class TestEnrichRefreshFullOverwriteGuard:
             f"400 detail 應說明分裂風險並指向 fetch-samples，實際: {detail!r}"
         )
         mock_enrich.assert_not_called()
+
+
+class TestEnrichSingleThumbnailInvalidation:
+    """feature/71 T8 邊界3/4/6：enrich 成功 → invalidate 帶 path_mappings 的 URI；失敗不呼叫。"""
+
+    _MAPPINGS = {"/nas": "//NAS/share"}
+
+    def _patch_config(self, mocker):
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value={
+                "gallery": {"path_mappings": self._MAPPINGS},
+                "search": {},
+            },
+        )
+
+    def test_success_invalidates_with_path_mappings_uri(self, client, mocker):
+        """邊界3：enrich 成功 → invalidate 被以 to_file_uri(file_path, mappings) 計算出的 URI 呼叫。"""
+        from core.path_utils import to_file_uri
+        self._patch_config(mocker)
+        mocker.patch("web.routers.scraper.enrich_single", return_value=_ok_result())
+        inval_spy = mocker.patch("web.routers.scraper.thumbnail_cache.invalidate")
+
+        file_path = "/nas/v.mp4"
+        response = client.post("/api/enrich-single", json={
+            "file_path": file_path,
+            "number": "SONE-205",
+        })
+
+        assert response.status_code == 200
+        expected_uri = to_file_uri(file_path, self._MAPPINGS)
+        inval_spy.assert_called_once_with(expected_uri)
+        # path_mappings 確實生效（mapped URI ≠ 不帶 mappings 的 URI）
+        assert expected_uri != to_file_uri(file_path)
+
+    def test_failure_does_not_invalidate(self, client, mocker):
+        """邊界4：enrich 回 success=False → invalidate 不被呼叫（封面未換）。"""
+        self._patch_config(mocker)
+        mocker.patch(
+            "web.routers.scraper.enrich_single",
+            return_value=_err_result("找不到番號資料"),
+        )
+        inval_spy = mocker.patch("web.routers.scraper.thumbnail_cache.invalidate")
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/nas/v.mp4",
+            "number": "SONE-205",
+        })
+
+        assert response.status_code == 200
+        inval_spy.assert_not_called()
+
+    def test_exception_does_not_invalidate(self, client, mocker):
+        """enrich_single 拋例外 → 端點吞成 success=False，invalidate 不被呼叫。"""
+        self._patch_config(mocker)
+        mocker.patch(
+            "web.routers.scraper.enrich_single",
+            side_effect=RuntimeError("boom"),
+        )
+        inval_spy = mocker.patch("web.routers.scraper.thumbnail_cache.invalidate")
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/nas/v.mp4",
+            "number": "SONE-205",
+        })
+
+        assert response.status_code == 200
+        assert response.json()["success"] is False
+        inval_spy.assert_not_called()
+
+    def test_refresh_full_success_invalidates(self, client, mocker):
+        """邊界6：rescrape（refresh_full）成功 → invalidate 被呼叫（與 #3 同掛鉤點，不漏）。"""
+        from core.path_utils import to_file_uri
+        self._patch_config(mocker)
+        # refresh_full + overwrite=True 繞過分裂守衛
+        mocker.patch("web.routers.scraper.enrich_single", return_value=_ok_result())
+        inval_spy = mocker.patch("web.routers.scraper.thumbnail_cache.invalidate")
+
+        file_path = "/nas/v.mp4"
+        response = client.post("/api/enrich-single", json={
+            "file_path": file_path,
+            "number": "SONE-205",
+            "mode": "refresh_full",
+            "overwrite_existing": True,
+        })
+
+        assert response.status_code == 200
+        inval_spy.assert_called_once_with(to_file_uri(file_path, self._MAPPINGS))

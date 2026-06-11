@@ -219,3 +219,70 @@ class TestThumbPrewarm:
             thread_spy.assert_not_called()
         finally:
             scanner_mod._prewarming = False
+
+
+# ============ M1: hit 後並發 unlink race（feature/71 T8）============
+
+class TestThumbHitConcurrentUnlinkRace:
+    """T8 邊界9：hit 判定（tf.exists()）通過後、_serve_thumb_file 內 tf.stat() 前，
+    thumb 被並發 invalidate(unlink) → 不得 500（降級走 miss 重生或 404）。
+    """
+
+    def test_stat_filenotfound_does_not_500(self, client, thumb_dir, temp_db, tmp_path, mocker):
+        """hit 後 stat 拋 FileNotFoundError：DB 有 video+cover → 降級重生 200（非 500）。"""
+        from core.database import Video
+        _, repo = temp_db
+        cover = _make_small_jpg(tmp_path / "cover.jpg")
+        uri = to_file_uri("/movies/v1.mp4")
+        # 放真 thumb 讓 tf.exists() 為 True（hit 判定通過）
+        _make_webp(thumbnail_cache.thumb_file_for(uri))
+        repo.upsert_batch([
+            Video(path=uri, mtime=100.0, cover_path=to_file_uri(str(cover))),
+        ])
+
+        # 模擬 race：tf.exists() 仍 True（hit 判定通過），但 _serve_thumb_file 的
+        # tf.stat()（無 follow_symlinks kwarg）拋 FileNotFoundError。
+        # Path.exists() 內部 stat 帶 follow_symlinks → 用此區分，不影響 hit 判定。
+        # 只在「第一次」serve stat 拋（模擬 race）；降級重生後的 serve stat 正常。
+        real_stat = Path.stat
+        tf = thumbnail_cache.thumb_file_for(uri)
+        state = {"raised": False}
+
+        def racing_stat(self, *a, **kw):
+            if self == tf and "follow_symlinks" not in kw and not state["raised"]:
+                state["raised"] = True
+                raise FileNotFoundError("raced unlink")
+            return real_stat(self, *a, **kw)
+
+        mocker.patch.object(Path, "stat", racing_stat)
+
+        resp = client.get("/api/gallery/thumb", params={"path": uri})
+
+        assert resp.status_code != 500, (
+            f"hit 後並發 unlink（stat FileNotFound）不得 500，實際 {resp.status_code}"
+        )
+        # 降級重生：200 webp（DB 有 cover）
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "image/webp"
+
+    def test_stat_filenotfound_no_cover_returns_404_not_500(
+        self, client, thumb_dir, temp_db, mocker
+    ):
+        """hit 後 stat 拋 FileNotFoundError、DB 無 video → 404（非 500）。"""
+        uri = to_file_uri("/movies/ghost.mp4")
+        _make_webp(thumbnail_cache.thumb_file_for(uri))  # 有檔 → hit
+
+        real_stat = Path.stat
+        tf = thumbnail_cache.thumb_file_for(uri)
+
+        def racing_stat(self, *a, **kw):
+            if self == tf and "follow_symlinks" not in kw:
+                raise FileNotFoundError("raced unlink")
+            return real_stat(self, *a, **kw)
+
+        mocker.patch.object(Path, "stat", racing_stat)
+
+        resp = client.get("/api/gallery/thumb", params={"path": uri})
+
+        assert resp.status_code != 500
+        assert resp.status_code == 404
