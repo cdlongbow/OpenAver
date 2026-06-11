@@ -9499,6 +9499,63 @@ class TestSettingsQuickToggleGuard:
         assert 'showThumbCacheHelp' in row_block, \
             "71-T5 違規：quick-toggle 列內封面縮圖快取區塊缺少 showThumbCacheHelp state binding"
 
+    # ── 71-T11: 估算搬出 help-popover → confirm modal ──────────────────
+    def test_thumbnail_cache_help_popover_no_longer_has_hint_estimate(self):
+        """71-T11：help-popover（quick-toggle 列內）不得再含動態估算 hint_estimate x-text（已搬入 confirm modal）"""
+        html = self._html()
+        row_start = html.index('class="settings-quick-toggle-row"')
+        sec_search_pos = html.index('id="sec-search"')
+        row_block = html[row_start:sec_search_pos]
+        assert 'hint_estimate' not in row_block, \
+            "71-T11 違規：估算 hint_estimate 必須搬出 help-popover（不得留在 quick-toggle 列內）"
+
+    def test_thumbnail_cache_toggle_has_change_interceptor(self):
+        """71-T11：thumbnailCacheEnabled toggle 必須有 @change="onThumbCacheToggleChange()" 攔截（鏡像 metatube）"""
+        html = self._html()
+        row_start = html.index('class="settings-quick-toggle-row"')
+        sec_search_pos = html.index('id="sec-search"')
+        row_block = html[row_start:sec_search_pos]
+        m = re.search(
+            r'<input\b[^>]*x-model="form\.thumbnailCacheEnabled"[^>]*>',
+            row_block, re.DOTALL,
+        )
+        assert m, "71-T11 違規：找不到 form.thumbnailCacheEnabled toggle input"
+        tag = m.group(0)
+        assert 'onThumbCacheToggleChange()' in tag, \
+            "71-T11 違規：thumbnailCacheEnabled toggle 必須在同一 input 上綁 @change=onThumbCacheToggleChange()"
+        assert 'x-model="form.thumbnailCacheEnabled"' in tag, \
+            "71-T11 違規：thumbnailCacheEnabled toggle 必須保留 x-model（@change 攔截不取代 x-model）"
+
+    def test_thumbnail_cache_confirm_modal_exists(self):
+        """71-T11：confirm fluent-modal 存在 + 綁 thumbCacheConfirmOpen + confirm/cancel handler"""
+        html = self._html()
+        idx = html.find('thumbCacheConfirmOpen')
+        assert idx != -1, \
+            "71-T11 違規：settings.html 缺少 thumbCacheConfirmOpen confirm modal binding"
+        # 抽 thumbCacheConfirmOpen 首次出現的鄰域（modal 區塊）
+        block = html[idx - 200: idx + 1200]
+        assert 'fluent-modal' in block, \
+            "71-T11 違規：thumbCacheConfirmOpen 必須綁在 fluent-modal 上"
+        assert 'confirmThumbCacheEnable()' in block, \
+            "71-T11 違規：confirm modal 缺少 confirmThumbCacheEnable() 確認 handler"
+        assert 'cancelThumbCacheConfirm()' in block, \
+            "71-T11 違規：confirm modal 缺少 cancelThumbCacheConfirm() 取消 handler"
+
+    def test_thumbnail_cache_confirm_modal_body_is_dynamic(self):
+        """71-T11：confirm modal body 用 x-text 動態替換 {count}/{mb}/{min}（非靜態 SSR）"""
+        html = self._html()
+        idx = html.find('thumbCacheConfirmOpen')
+        assert idx != -1, \
+            "71-T11 違規：settings.html 缺少 thumbCacheConfirmOpen confirm modal binding"
+        block = html[idx - 200: idx + 1200]
+        assert 'confirm_modal.body' in block, \
+            "71-T11 違規：confirm modal body 必須引用 settings.thumbnail_cache.confirm_modal.body"
+        for token in ("'{count}'", "'{mb}'", "'{min}'"):
+            assert token in block, \
+                f"71-T11 違規：confirm modal body 必須 .replace({token}, ...) 動態填值"
+        assert '_thumbEstimateMin' in block, \
+            "71-T11 違規：confirm modal body 必須用 _thumbEstimateMin（HDD 時間估算）"
+
 
 class TestSettingsDmmProxyContract:
     """64b-3: DMM 灰化 + proxy binding contract 驗證（CD-64-B4）"""

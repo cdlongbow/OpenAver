@@ -23,6 +23,9 @@ export function stateUI() {
         resetConfigModalOpen: false,
         _resetConfigLoading: false,
 
+        // 71-T11: 開啟封面縮圖快取 Confirm Modal State
+        thumbCacheConfirmOpen: false,
+
         // B1: Scanner directory link state
         favoriteScannerLink: null,   // null=隱藏, {linked, matched_directory}=已查
         showDirDropdown: false,

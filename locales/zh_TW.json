@@ -245,7 +245,12 @@
     "thumbnail_cache": {
       "label": "封面縮圖快取",
       "hint": "在本機產生封面的小圖快取，大幅加快封面牆與燈箱載入（尤其影片檔放在 NAS / HDD 時）。每張約 30KB。",
-      "hint_estimate": "目前 {count} 片，預計約 {mb}MB；首次開啟會在背景生成"
+      "confirm_modal": {
+        "title": "開啟封面縮圖快取",
+        "body": "將為目前 {count} 部影片建立封面縮圖，約佔 {mb}MB 空間。在傳統硬碟（HDD）上預計約需 {min} 分鐘於背景生成；SSD 會快很多。期間可繼續正常使用，完成後會通知你。（確認後會立即儲存目前設定）",
+        "cancel": "取消",
+        "confirm": "儲存並開始建立"
+      }
     },
     "toast": {
       "desktop_only": "此功能需要在桌面應用程式中使用"

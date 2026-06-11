@@ -195,6 +195,12 @@ export function stateConfig() {
             return Math.round((this.videoCount || 0) * 32 / 1024);
         },
 
+        // 71-T11: 縮圖快取 HDD 時間估算（分鐘）。每張 ~0.25s（HDD 常數）→ 分鐘；
+        // Math.ceil 確保非 0 庫至少 1 分鐘（videoCount=0 → 0）；`|| 0` 防 NaN。
+        get _thumbEstimateMin() {
+            return Math.ceil((this.videoCount || 0) * 0.25 / 60);
+        },
+
         // ===== Sources computed (61c-2) =====
         // Cap basis（counter + promote/toggle 守衛）。**不看 available**（design §2.2 —
         // 斷線 metatube 仍占槽，避免重連後 cap 暴衝）。manual_only 不計入。
@@ -321,10 +327,10 @@ export function stateConfig() {
                     this.form.folderLayer1 = '';
                 }
             });
-            // 71-T5: 縮圖快取開關 false→true → 觸發背景 prewarm（hydrate / 關閉不觸發）
-            this.$watch('form.thumbnailCacheEnabled', (n, o) => {
-                if (n === true && o === false) this._triggerThumbPrewarm();
-            });
+            // 71-T5 prewarm 觸發點不放 checkbox $watch：Settings 是表單式儲存，
+            // toggle 當下 config.json 尚未寫入，後端 gate（load_config）讀到舊 false → disabled，
+            // 且 hydrate（loadConfig false→true）會每次開 Settings 誤觸。改在 saveConfig() 成功後
+            // 比對「persisted false → 現在 true」才 POST（見 saveConfig）。
 
             // 接入 page lifecycle（取代 window.confirmLeavingSettings）
             if (window.__registerPage) {
@@ -532,8 +538,8 @@ export function stateConfig() {
             }
         },
 
-        // 71-T5: 縮圖快取開關 false→true 觸發背景全量 prewarm。
-        // 無條件 POST（後端依 thumbnail_cache_enabled 自 gate，disabled→no-op）。
+        // 71-T5: 觸發背景全量 prewarm（由 saveConfig 在「剛開啟並已存檔」時呼叫，
+        // 確保此刻 config.json 已 true、後端 gate 放行）。scan-done 亦無條件 POST，同由後端 gate。
         async _triggerThumbPrewarm() {
             try {
                 // fire-and-forget：不 await（toast 立即出）；.catch 收 async rejection
@@ -556,6 +562,9 @@ export function stateConfig() {
                     return;
                 }
                 const config = currentResult.data;
+                // 71-T5: 存檔前的「已持久化」縮圖快取狀態（authoritative：剛從 server GET 的 config.json）。
+                // 用來在 PUT 成功後判定「這次儲存是否剛把它從關打開」→ 才觸發背景 prewarm。
+                const prevThumbEnabled = config.thumbnail_cache_enabled === true;
 
                 // 更新 scraper
                 const folderLayers = [
@@ -666,6 +675,11 @@ export function stateConfig() {
                     // 更新快照（避免儲存後仍為 dirty）
                     this.savedState = JSON.parse(JSON.stringify(this.form));
                     this.savedOpenaiUseCustomModel = this.openaiUseCustomModel;
+                    // 71-T5: 縮圖快取「剛被開啟」(persisted false → 現在 true) 才觸發背景 prewarm。
+                    // 必在 PUT 成功之後——此刻 config.json 已寫入 true，後端 gate 才會放行（非 disabled）。
+                    if (!prevThumbEnabled && this.form.thumbnailCacheEnabled === true) {
+                        this._triggerThumbPrewarm();
+                    }
                 } else {
                     this.showToast('儲存失敗: ' + result.error, 'error');
                 }
@@ -715,6 +729,36 @@ export function stateConfig() {
         async resetConfig() {
             // Thin wrapper：保留向後相容，template @click="resetConfig()" 不需改
             this.openResetConfigModal();
+        },
+
+        // ===== Thumbnail Cache Confirm Modal (71-T11) =====
+        // toggle @change 攔截（鏡像 onMetatubeEnabledChange）。x-model 先翻值，
+        // 故進來時 this.form.thumbnailCacheEnabled 已是使用者撥到的新值。
+        // 只在「真正首次開啟」（persisted 仍 false）攔截開 modal（Codex P2 #1）。
+        onThumbCacheToggleChange() {
+            // ON→OFF：不開 modal，照常 toggle（由表單儲存 persist false）。
+            if (this.form.thumbnailCacheEnabled !== true) return;
+            // persisted 已 true（未存的 OFF 後撥回 ON）：不開 modal，讓 toggle 照常變 true。
+            if (this.savedState?.thumbnailCacheEnabled === true) return;
+            // 真正首次開啟（persisted false）：還原 toggle + 開 confirm modal。
+            // 真正的 true 留到 confirmThumbCacheEnable() 才設。
+            this.form.thumbnailCacheEnabled = false;
+            this.thumbCacheConfirmOpen = true;
+        },
+
+        // 取消 / ESC / backdrop 三路徑統一走此：關 modal，toggle 已在 @change 還原為
+        // false，無需再動；不存檔、不 prewarm。
+        cancelThumbCacheConfirm() {
+            this.thumbCacheConfirmOpen = false;
+        },
+
+        // 確認：先關 modal（移除確認鈕即防雙擊，無需 :disabled / loading flag）→
+        // 設 true → saveConfig()（命中 saveConfig 內 !prevThumbEnabled && now true 鏈
+        // → 背景 _triggerThumbPrewarm() + start bell；非阻塞、無頁面鎖）。
+        async confirmThumbCacheEnable() {
+            this.thumbCacheConfirmOpen = false;
+            this.form.thumbnailCacheEnabled = true;
+            await this.saveConfig();
         },
 
         insertVariable(targetField, varName) {
