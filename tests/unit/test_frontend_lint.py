@@ -9431,6 +9431,24 @@ class TestSettingsQuickToggleGuard:
         assert 'help-popover' in row_block, \
             "64e-1 違規：quick-toggle 列內進階搜尋區塊缺少 help-popover 元件"
 
+    def test_thumbnail_cache_enabled_in_quick_toggle_row(self):
+        """71-T5：封面縮圖快取 toggle（form.thumbnailCacheEnabled）必須在 quick-toggle 列內"""
+        html = self._html()
+        row_start = html.index('class="settings-quick-toggle-row"')
+        sec_search_pos = html.index('id="sec-search"')
+        row_block = html[row_start:sec_search_pos]
+        assert 'x-model="form.thumbnailCacheEnabled"' in row_block, \
+            "71-T5 違規：form.thumbnailCacheEnabled x-model 必須在 .settings-quick-toggle-row 內"
+
+    def test_thumbnail_cache_has_help_popover_state(self):
+        """71-T5：封面縮圖快取區塊必須有 showThumbCacheHelp state binding（Alpine↔HTML API contract）"""
+        html = self._html()
+        row_start = html.index('class="settings-quick-toggle-row"')
+        sec_search_pos = html.index('id="sec-search"')
+        row_block = html[row_start:sec_search_pos]
+        assert 'showThumbCacheHelp' in row_block, \
+            "71-T5 違規：quick-toggle 列內封面縮圖快取區塊缺少 showThumbCacheHelp state binding"
+
 
 class TestSettingsDmmProxyContract:
     """64b-3: DMM 灰化 + proxy binding contract 驗證（CD-64-B4）"""

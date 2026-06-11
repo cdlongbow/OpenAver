@@ -6,6 +6,7 @@ export function stateUI() {
         showSampleImagesHelp: false,
         showAdvancedSearchHelp: false,
         showCounterHelp: false,
+        showThumbCacheHelp: false,
 
         // 64b-1: 進階摺疊開關（x-collapse 驅動）
         scraperAdvanced: false,

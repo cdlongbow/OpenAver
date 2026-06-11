@@ -60,6 +60,10 @@ export function stateConfig() {
         pendingNavigationUrl: '',
         _configLoading: true,  // 初始 true，loadConfig 完成後 false
 
+        // ===== 縮圖快取空間估算（71-T5）=====
+        // 非 config 欄位（不入 saveConfig）；由 loadConfig() fetch /api/gallery/stats 填。
+        videoCount: 0,
+
         // ===== Sources (61c-2) =====
         // 單一 unified scope：sources[] 容 builtin + metatube + manual_only 一個陣列，
         // cap 天然全域（design §0 + §9 B1 row）。由 loadConfig() 填、saveConfig() 序列化回。
@@ -184,6 +188,11 @@ export function stateConfig() {
 
             const folder = folderPreview ? folderPreview + '/' : '';
             return folder + filenamePreview + '.mp4';
+        },
+
+        // 71-T5: 縮圖快取預估空間（MB）。每張封面縮圖 ~32KB；`|| 0` 防 NaN。
+        get _thumbEstimateMb() {
+            return Math.round((this.videoCount || 0) * 32 / 1024);
         },
 
         // ===== Sources computed (61c-2) =====
@@ -312,6 +321,10 @@ export function stateConfig() {
                     this.form.folderLayer1 = '';
                 }
             });
+            // 71-T5: 縮圖快取開關 false→true → 觸發背景 prewarm（hydrate / 關閉不觸發）
+            this.$watch('form.thumbnailCacheEnabled', (n, o) => {
+                if (n === true && o === false) this._triggerThumbPrewarm();
+            });
 
             // 接入 page lifecycle（取代 window.confirmLeavingSettings）
             if (window.__registerPage) {
@@ -381,6 +394,8 @@ export function stateConfig() {
                     // 進階搜尋（TASK-61c-7）：top-level bool 欄位
                     this.form.advancedSearchEnabled = config.advanced_search_enabled || false;
                     this.form.thumbnailCacheEnabled = config.thumbnail_cache_enabled || false;
+                    // 71-T5: 載入目前片數供縮圖快取空間估算（失敗降級 0，不阻塞表單）
+                    this._loadVideoCount();
 
                     // Translate
                     this.form.translateEnabled = config.translate.enabled;
@@ -500,6 +515,34 @@ export function stateConfig() {
                 console.error('載入設定失敗:', e);
             } finally {
                 this._configLoading = false;
+            }
+        },
+
+        // 71-T5: 載入目前片數（供縮圖快取空間估算）。失敗/缺值 → videoCount 維持 0，不阻塞表單。
+        async _loadVideoCount() {
+            try {
+                const r = await fetch('/api/gallery/stats');
+                const j = await r.json();
+                this.videoCount = (j.success && j.data && typeof j.data.total === 'number')
+                    ? j.data.total
+                    : 0;
+            } catch (e) {
+                console.error('[71-T5] 載入片數失敗:', e);
+                this.videoCount = 0;
+            }
+        },
+
+        // 71-T5: 縮圖快取開關 false→true 觸發背景全量 prewarm。
+        // 無條件 POST（後端依 thumbnail_cache_enabled 自 gate，disabled→no-op）。
+        async _triggerThumbPrewarm() {
+            try {
+                // fire-and-forget：不 await（toast 立即出）；.catch 收 async rejection
+                // 避免 fetch 失敗變 unhandled promise rejection（try/catch 只接同步 throw）。
+                fetch('/api/gallery/thumb/prewarm', { method: 'POST' })
+                    .catch((e) => console.error('[71-T5] 縮圖 prewarm POST 失敗:', e));
+                this.showToast(window.t('notif.thumb_prewarm_start'), 'info');
+            } catch (e) {
+                console.error('[71-T5] 觸發縮圖 prewarm 失敗:', e);
             }
         },
 
