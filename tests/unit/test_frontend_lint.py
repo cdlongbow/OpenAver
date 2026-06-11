@@ -1766,23 +1766,25 @@ class TestShowcaseLightboxSentinel:
 
     # ----- 71-T7: video delete trash button + delete modal + x-trap（element-bound）-----
 
-    def test_t7_delete_trash_button_in_video_cover_actions(self):
-        """垃圾桶鈕必須是影片 cover-actions 內的 danger button，綁 openDeleteVideoModal()。"""
+    def test_t7_delete_trash_button_in_lightbox_info_panel(self):
+        """[transient-guard] 71b-T1：垃圾桶鈕從 hover overlay `.cover-actions` 搬進 info panel
+        的 `.lb-delete-strip`（metadata 區常駐 muted icon），綁 openDeleteVideoModal()。
+        搬位是一次性 rename — 舊斷言「鈕在 .cover-actions 內」失效屬預期。"""
         html = self._html()
-        # 抽影片 cover-actions 區塊（x-show 限定有 path 的影片 lightbox）
+        # 抽 info-panel 的 .lb-delete-strip 區塊（常駐刪除條，x-show 限有 path 的影片 lightbox）
         m = re.search(
-            r'<div class="cover-actions" x-show="!!currentLightboxVideo\?\.path">(.*?)</div>',
+            r'<div class="lb-delete-strip"[^>]*>(.*?)</div>',
             html, re.DOTALL,
         )
-        assert m, '影片 cover-actions（x-show="!!currentLightboxVideo?.path"）區塊不存在'
+        assert m, '.lb-delete-strip（info-panel 常駐刪除條）區塊不存在'
         block = m.group(1)
         # 垃圾桶 button：抽出綁 openDeleteVideoModal() 的 <button> tag，三要素同 tag
         btn = re.search(r'<button\b[^>]*openDeleteVideoModal\(\)[^>]*>.*?</button>',
                         block, re.DOTALL)
-        assert btn, '影片 cover-actions 內缺綁 openDeleteVideoModal() 的垃圾桶 button'
+        assert btn, '.lb-delete-strip 內缺綁 openDeleteVideoModal() 的垃圾桶 button'
         btn_html = btn.group(0)
-        assert 'lb-action-btn--danger' in btn_html, \
-            f'垃圾桶 button 缺 danger class: {btn_html!r}'
+        assert 'lb-delete-btn' in btn_html, \
+            f'垃圾桶 button 缺 .lb-delete-btn class（muted info-panel 樣式）: {btn_html!r}'
         assert 'bi-trash' in btn_html, f'垃圾桶 button 缺 bi-trash icon: {btn_html!r}'
         assert "t('showcase.video.delete')" in btn_html, \
             f'垃圾桶 button 缺 i18n showcase.video.delete: {btn_html!r}'
@@ -7800,6 +7802,17 @@ class TestRescrapeModalGuard:
         assert rescrape_z < toast_z, (
             f"62-showcase 違規：rescrape z-index {rescrape_z} 未低於 "
             f".fluent-toast-container {toast_z}（成功 toast 會被彈窗蓋住）"
+        )
+
+    def test_fluent_modal_zindex_above_showcase_lightbox(self):
+        """71b-T1 (CD-71b-2) root-fix：base .fluent-modal z-index 必須 > .showcase-lightbox(1000)，
+        讓 lightbox-triggered confirm modal（delete / removeActress）不被燈箱蓋住。
+        把 rescrape 的 scoped 1600 升級為全 fluent-modal 通用。實際數字 regex 抽出，調低就紅。"""
+        fluent_modal_z = self._zindex_of(self._theme_css(), ".fluent-modal")
+        lightbox_z = self._zindex_of(self._showcase_css(), ".showcase-lightbox")
+        assert fluent_modal_z > lightbox_z, (
+            f"71b-T1 違規：base .fluent-modal z-index {fluent_modal_z} 未高於 "
+            f".showcase-lightbox {lightbox_z}（確認 modal 會渲染在燈箱下方）"
         )
 
     def test_fluent_modal_class_open_backdrop_uses_tokens(self):

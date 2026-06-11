@@ -733,13 +733,6 @@
                                         :aria-label="t('showcase.action.enrich')">
                                     <i class="bi" :class="_enriching ? 'bi-arrow-clockwise spin' : 'bi-search'"></i>
                                 </button>
-                                <!-- 71-T7: 從收藏移除（破壞性，只刪 DB row + thumb，不碰磁碟影片/封面）-->
-                                <button class="lb-action-btn lb-action-btn--danger"
-                                        @click.stop="openDeleteVideoModal()"
-                                        :data-tooltip="t('showcase.video.delete')"
-                                        :aria-label="t('showcase.video.delete')">
-                                    <i class="bi bi-trash"></i>
-                                </button>
                             </div>
                         </div>
 
@@ -819,6 +812,16 @@
                                 <span class="lb-size" x-show="currentLightboxVideo?.size">
                                     &nbsp;·&nbsp;<span x-text="formatSize(currentLightboxVideo?.size || 0)"></span>
                                 </span>
+                            </div>
+                            <!-- 71b-T1: 從收藏移除（破壞性，只刪 DB row + thumb，不碰磁碟影片/封面）。
+                                 從 hover overlay .cover-actions 搬進 info panel 作常駐 muted icon affordance。-->
+                            <div class="lb-delete-strip" x-show="!!currentLightboxVideo?.path">
+                                <button class="lb-delete-btn"
+                                        @click.stop="openDeleteVideoModal()"
+                                        :data-tooltip="t('showcase.video.delete')"
+                                        :aria-label="t('showcase.video.delete')">
+                                    <i class="bi bi-trash"></i>
+                                </button>
                             </div>
                             <!-- Row 5: Tags (with +N chips, T4) -->
                             <div class="lb-tags" x-show="currentLightboxVideo?.tags">

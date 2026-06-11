@@ -1093,6 +1093,54 @@
     box-shadow: 0 0 0 4px var(--glow-subtle);   /* §6 #5 focus 4px glow */
 }
 
+/* 71b-T1: 單筆刪除常駐 strip（info panel，.lb-details 後 .lb-tags 前）
+ * 從 hover overlay .cover-actions 搬進 metadata 區，常駐靠右、muted icon affordance。
+ * 鏡像 .lb-rescrape-gear muted 模式，差別只在 hover → danger（不是 accent）。 */
+.lightbox-metadata .lb-delete-strip {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 8px;                                  /* layout 級 8pt（§4）*/
+    padding-top: 8px;
+    border-top: 1px solid var(--stroke-subtle);       /* 細上分隔線（subtle）*/
+}
+
+.lightbox-metadata .lb-delete-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--fluent-radius-md);           /* 互動小元件 4px（§1）*/
+    background: transparent;
+    color: var(--text-muted);                         /* subtle 常駐態 */
+    font-size: 0.875rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: color var(--fluent-duration-fast) var(--fluent-ease-standard),
+                background var(--fluent-duration-fast) var(--fluent-ease-standard),
+                border-color var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+
+.lightbox-metadata .lb-delete-btn:hover {
+    color: var(--color-error-hover);                  /* hover → danger 紅（非 accent）*/
+    background: var(--surface-1);
+    border-color: var(--stroke-subtle);
+}
+
+.lightbox-metadata .lb-delete-btn:active {
+    color: var(--color-error-hover);
+    background: var(--surface-1);
+}
+
+.lightbox-metadata .lb-delete-btn:focus-visible {
+    outline: 2px solid var(--color-error-hover);
+    outline-offset: 2px;                              /* stroke / focus 級（§4）*/
+    color: var(--color-error-hover);
+    box-shadow: 0 0 0 4px var(--glow-subtle);         /* §6 #5 focus 4px glow */
+}
+
 /* Responsive: 小螢幕 */
 @media (max-width: 1024px) {
     .lightbox-nav {
