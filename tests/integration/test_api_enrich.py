@@ -552,6 +552,11 @@ class TestEnrichSingleThumbnailInvalidation:
     def test_success_invalidates_with_path_mappings_uri(self, client, mocker):
         """邊界3：enrich 成功 → invalidate 被以 to_file_uri(file_path, mappings) 計算出的 URI 呼叫。"""
         from core.path_utils import to_file_uri
+        # path_mappings 只在 CURRENT_ENV=='wsl' 生效（path_utils.py:354）。強制 wsl 讓本測
+        # 在純 Linux CI 也確定性走 mapping 分支——否則 mapping 為 no-op、下方 sanity assert
+        # （mapped URI ≠ 不帶 mappings 的 URI）會炸（端點與 expected_uri 共用同一 to_file_uri，
+        # 同步受 patch 影響，契約斷言仍成立）。
+        mocker.patch("core.path_utils.CURRENT_ENV", "wsl")
         self._patch_config(mocker)
         mocker.patch("web.routers.scraper.enrich_single", return_value=_ok_result())
         inval_spy = mocker.patch("web.routers.scraper.thumbnail_cache.invalidate")
