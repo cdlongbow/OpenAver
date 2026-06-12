@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 from PIL import Image
 
-from core.organizer import _detect_suffixes, format_string, organize_file, crop_to_poster, generate_nfo, extract_chinese_title, download_image, truncate_to_chars, truncate_title, _detect_vr_cluster
+from core.organizer import _detect_suffixes, format_string, organize_file, crop_to_poster, generate_nfo, extract_chinese_title, download_image, truncate_to_chars, truncate_title, _detect_vr_cluster, _is_multipart_kw
 
 
 # ============ _detect_suffixes() 測試 ============
@@ -3186,3 +3186,340 @@ class TestVrCrossCheck:
         assert stem.endswith("_MKX200_lr"), (
             f"spec §4 Row 8: VR tail 大小寫應原樣（_MKX200_lr），實際 stem：{stem!r}"
         )
+
+
+# ============ TestOrganizeMultipart — 72b-T5 多段整合測試 ============
+
+class TestIsMultipartKw:
+    """_is_multipart_kw() 單元測試"""
+
+    def test_cd1_with_dash(self):
+        assert _is_multipart_kw('-cd1') is True
+
+    def test_cd2_with_dash(self):
+        assert _is_multipart_kw('-cd2') is True
+
+    def test_dvd1_with_dash(self):
+        assert _is_multipart_kw('-dvd1') is True
+
+    def test_part2_no_prefix(self):
+        assert _is_multipart_kw('part2') is True
+
+    def test_pt1_with_underscore(self):
+        assert _is_multipart_kw('_pt1') is True
+
+    def test_disc1(self):
+        assert _is_multipart_kw('-disc1') is True
+
+    def test_4k_not_multipart(self):
+        assert _is_multipart_kw('-4k') is False
+
+    def test_uc_not_multipart(self):
+        assert _is_multipart_kw('_uc') is False
+
+    def test_empty_string(self):
+        assert _is_multipart_kw('') is False
+
+    def test_separator_only(self):
+        assert _is_multipart_kw('-') is False
+
+    def test_cd10_not_multipart(self):
+        """cd10 數字>9 → 不算多段 token（與 _MULTIPART_RE 一致）"""
+        assert _is_multipart_kw('-cd10') is False
+
+    def test_cd1_no_prefix(self):
+        """無前導分隔符的 'cd1' 也應識別為多段"""
+        assert _is_multipart_kw('cd1') is True
+
+
+class TestOrganizeMultipart:
+    """organize_file() 多段（multipart）整合測試（TASK-72b-T5）
+
+    涵蓋：
+    A  cd1 外部模式 → 正常 NFO、part_tail 在 stem 末
+    B  cd2 外部模式 → 跳 NFO、保留封面/poster/fanart、success True
+    C  長標題 + cd1 → 不超 max_filename_length 且 -cd1 不被截
+    D  防 {suffix} 雙寫（-cd1-cd1 negative）
+    E  off 模式 byte-identical（cd2 也照產 NFO）
+    F  VR + cd1 → 順序 {vr_tail}-cd1
+    G  kodi cd2 → 保留封面
+    H  邊界：apartment1（前緣字母不誤命中）
+    """
+
+    # ---- 共用 helper ----
+
+    def _ext_config(self, tmp_path=None, ext_mode='jellyfin_emby', max_len=60,
+                    suffix_keywords=None, filename_format=None, create_nfo=True):
+        cfg = {
+            'create_folder': False,
+            'filename_format': filename_format or '[{num}] {title}{suffix}',
+            'download_cover': True,
+            'cover_filename': 'poster.jpg',
+            'create_nfo': create_nfo,
+            'max_title_length': 50,
+            'max_filename_length': max_len,
+            'suffix_keywords': suffix_keywords if suffix_keywords is not None
+                               else ['-cd1', '-cd2', '-4k', '-uc'],
+            'external_manager': ext_mode,
+        }
+        return cfg
+
+    def _base_metadata(self, number='MIRD-151', title='Test Title', cover='http://fake/cover.jpg'):
+        return {
+            'number': number,
+            'title': title,
+            'actors': [],
+            'tags': [],
+            'maker': 'Studio',
+            'date': '2024-01-15',
+            'cover': cover,
+            'url': '',
+        }
+
+    # ---- A: cd1 外部模式 → 正常 NFO、part_tail 在末 ----
+
+    def test_cd1_external_nfo_written_and_part_tail(self, tmp_path):
+        """A：外部模式 cd1 → NFO 產出（nfo_path not None），stem 以 -cd1 結尾"""
+        src = tmp_path / 'MIRD-151-cd1.mp4'
+        src.write_bytes(b'cd1 content')
+
+        config = self._ext_config()
+        metadata = self._base_metadata()
+
+        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
+            result = organize_file(str(src), metadata, config)
+
+        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
+        assert result.get('nfo_path') is not None, 'cd1 應產 NFO（nfo_path not None）'
+        assert not result.get('skipped_nfo_multipart'), 'cd1 不應設 skipped_nfo_multipart'
+
+        stem = Path(result['new_filename']).stem
+        import re
+        assert re.search(r'-cd1$', stem), f'stem 應以 -cd1 結尾，實際：{stem!r}'
+
+        # NFO sidecar stem 也應帶 -cd1
+        nfo_stem = Path(result['nfo_path']).stem
+        assert re.search(r'-cd1$', nfo_stem), f'NFO stem 應以 -cd1 結尾，實際：{nfo_stem!r}'
+
+    # ---- B: cd2 外部模式 → 跳 NFO、保留封面/poster/fanart ----
+
+    def test_cd2_external_skip_nfo_keep_cover(self, tmp_path):
+        """B：外部模式 cd2 → nfo_path None、skipped_nfo_multipart True、success True、封面保留"""
+        src = tmp_path / 'MIRD-151-cd2.mp4'
+        src.write_bytes(b'cd2 content')
+
+        config = self._ext_config()
+        metadata = self._base_metadata()
+
+        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
+            result = organize_file(str(src), metadata, config)
+
+        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
+        assert result['nfo_path'] is None, 'cd2 外部模式應跳過 NFO（nfo_path None）'
+        assert result.get('skipped_nfo_multipart') is True, '應設 skipped_nfo_multipart=True'
+
+        # 封面/poster/fanart 照常
+        assert result.get('cover_path') is not None, 'cd2 應保留 cover'
+        assert result.get('fanart_path') is not None, 'cd2 應保留 fanart'
+        assert result.get('poster_path') is not None, 'cd2 應保留 poster'
+
+        # 目標目錄下無 .nfo 檔
+        stem = Path(result['new_filename']).stem
+        nfo_candidate = tmp_path / (stem + '.nfo')
+        assert not nfo_candidate.exists(), f'.nfo 不應存在：{nfo_candidate}'
+
+        # stem 以 -cd2 結尾
+        import re
+        assert re.search(r'-cd2$', stem), f'stem 應以 -cd2 結尾，實際：{stem!r}'
+
+    # ---- C: 長標題 + cd1 → 不超 max_filename_length 且 part token 不被截 ----
+
+    def test_long_title_cd1_budget_preserved(self, tmp_path):
+        """C：超長 title + cd1 + max=40 → 長度 <= 40、stem 仍以 -cd1 結尾"""
+        src = tmp_path / 'MIRD-151-cd1.mp4'
+        src.write_bytes(b'long title cd1')
+
+        config = self._ext_config(max_len=40)
+        metadata = self._base_metadata(title='超級無敵長的標題名稱會被截斷但part_token應完整保留不被切掉')
+
+        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
+            result = organize_file(str(src), metadata, config)
+
+        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
+        new_name = Path(result['new_filename']).name
+        assert len(new_name) <= 40, f'檔名長度 {len(new_name)} 超過 max=40：{new_name!r}'
+
+        stem = Path(result['new_filename']).stem
+        import re
+        assert re.search(r'-cd1$', stem), f'stem 應以 -cd1 結尾（token 不被截），實際：{stem!r}'
+
+    def test_degenerate_max_len_cd1_no_crash(self, tmp_path):
+        """C 退化：max_filename_length 極小（6）→ 不 crash、長度不超 max"""
+        src = tmp_path / 'MIRD-151-cd1.mp4'
+        src.write_bytes(b'degenerate')
+
+        config = self._ext_config(max_len=6)
+        metadata = self._base_metadata(title='Title')
+
+        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
+            result = organize_file(str(src), metadata, config)
+
+        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
+        new_name = Path(result['new_filename']).name
+        assert len(new_name) <= 6, f'檔名長度 {len(new_name)} 超過 max=6：{new_name!r}'
+
+    # ---- D: 防 {suffix} 雙寫 ----
+
+    def test_no_double_cd1_suffix_and_part_tail(self, tmp_path):
+        """D：預設 config（suffix_keywords 含 -cd1）+ 外部模式 + cd1 → -cd1 恰一次，無 -cd1-cd1"""
+        src = tmp_path / 'MIRD-151-cd1.mp4'
+        src.write_bytes(b'no double')
+
+        # 預設 config：suffix_keywords 含 -cd1，filename_format 含 {suffix}
+        config = self._ext_config(suffix_keywords=['-cd1', '-cd2', '-4k', '-uc'])
+        metadata = self._base_metadata()
+
+        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
+            result = organize_file(str(src), metadata, config)
+
+        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
+        new_name = Path(result['new_filename']).name
+        assert '-cd1-cd1' not in new_name, f'出現雙寫 -cd1-cd1：{new_name!r}'
+        assert new_name.count('-cd1') == 1, f'-cd1 應恰出現一次，實際：{new_name!r}'
+
+    def test_version_token_kept_part_tail_not_doubled(self, tmp_path):
+        """D 加碼：-4k-cd1 檔 + suffix_keywords 含 -4k/-cd1 → stem 含 -4k（version），-cd1 恰一次"""
+        src = tmp_path / 'MIRD-151-4k-cd1.mp4'
+        src.write_bytes(b'4k cd1')
+
+        config = self._ext_config(suffix_keywords=['-cd1', '-cd2', '-4k', '-uc'])
+        metadata = self._base_metadata()
+
+        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
+            result = organize_file(str(src), metadata, config)
+
+        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
+        new_name = Path(result['new_filename']).name
+        assert '-4k' in new_name, f'version token -4k 應保留：{new_name!r}'
+        assert '-cd1-cd1' not in new_name, f'-cd1 不應雙寫：{new_name!r}'
+        assert new_name.count('-cd1') == 1, f'-cd1 應恰一次：{new_name!r}'
+
+    def test_config_suffix_keywords_not_mutated(self, tmp_path):
+        """D 不 mutate：organize_file 呼叫後 config['suffix_keywords'] 原樣"""
+        src = tmp_path / 'MIRD-151-cd1.mp4'
+        src.write_bytes(b'no mutate')
+
+        config = self._ext_config(suffix_keywords=['-cd1', '-cd2', '-4k'])
+        original_kws = list(config['suffix_keywords'])  # 拷貝備用
+        metadata = self._base_metadata(cover='')
+
+        organize_file(str(src), metadata, config)
+
+        assert config['suffix_keywords'] == original_kws, (
+            f'config["suffix_keywords"] 被 mutate，原：{original_kws!r}，後：{config["suffix_keywords"]!r}'
+        )
+
+    # ---- E: off 模式 byte-identical ----
+
+    def test_off_mode_cd1_nfo_written_via_suffix(self, tmp_path):
+        """E：off 模式 cd1 → NFO 照產（-cd1 經 {suffix} 路徑，不跳）"""
+        src = tmp_path / 'MIRD-151-cd1.mp4'
+        src.write_bytes(b'off cd1')
+
+        # off 模式（或 key 不存在）= _make_config 的預設
+        config = _make_config(tmp_path)  # no external_manager key → off
+        config['create_nfo'] = True
+        metadata = _make_metadata(number='MIRD-151')
+
+        result = organize_file(str(src), metadata, config)
+
+        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
+        assert result.get('nfo_path') is not None, 'off 模式 cd1 應產 NFO'
+        assert not result.get('skipped_nfo_multipart'), 'off 模式不應設 skipped_nfo_multipart'
+        # -cd1 經 {suffix} 路徑進檔名
+        assert '-cd1' in Path(result['new_filename']).name
+
+    def test_off_mode_cd2_nfo_written_no_skip(self, tmp_path):
+        """E：off 模式 cd2 → NFO 照產（不跳），無 skipped_nfo_multipart flag"""
+        src = tmp_path / 'MIRD-151-cd2.mp4'
+        src.write_bytes(b'off cd2')
+
+        config = _make_config(tmp_path)
+        config['create_nfo'] = True
+        metadata = _make_metadata(number='MIRD-151')
+
+        result = organize_file(str(src), metadata, config)
+
+        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
+        assert result.get('nfo_path') is not None, 'off 模式 cd2 應照產 NFO（不跳）'
+        assert 'skipped_nfo_multipart' not in result, 'off 模式不應設 skipped_nfo_multipart key'
+        assert '-cd2' in Path(result['new_filename']).name
+
+    # ---- F: VR + cd1 → 順序 {base}{vr_tail}-cd1 ----
+
+    def test_vr_and_cd1_order(self, tmp_path):
+        """F：VR cluster + cd1 → stem 形如 ...{vr_tail}-cd1，-cd1 最末"""
+        # ABC-123_180_LR-cd1.mp4 → vr_tail=_180_LR，part_tail=-cd1
+        src = tmp_path / 'ABC-123_180_LR-cd1.mp4'
+        src.write_bytes(b'vr cd1')
+
+        config = self._ext_config(suffix_keywords=['-cd1', '-4k'])
+        metadata = self._base_metadata(number='ABC-123')
+
+        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
+            result = organize_file(str(src), metadata, config)
+
+        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
+        stem = Path(result['new_filename']).stem
+        import re
+        # -cd1 在最末
+        assert re.search(r'-cd1$', stem), f'stem 應以 -cd1 結尾，實際：{stem!r}'
+        # vr_tail 在 -cd1 之前
+        assert '_180_LR' in stem, f'stem 應含 _180_LR（vr_tail），實際：{stem!r}'
+        idx_vr = stem.index('_180_LR')
+        idx_cd = stem.index('-cd1')
+        assert idx_vr < idx_cd, f'vr_tail 應在 -cd1 之前，實際：{stem!r}'
+
+    # ---- G: kodi cd2 → 保留封面 ----
+
+    def test_kodi_cd2_keep_cover(self, tmp_path):
+        """G：kodi 模式 cd2 → 跳 NFO + 保留 poster.jpg/fanart.jpg"""
+        src = tmp_path / 'MIRD-151-cd2.mp4'
+        src.write_bytes(b'kodi cd2')
+
+        config = self._ext_config(ext_mode='kodi')
+        metadata = self._base_metadata()
+
+        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
+            result = organize_file(str(src), metadata, config)
+
+        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
+        assert result['nfo_path'] is None, 'kodi cd2 應跳 NFO'
+        assert result.get('skipped_nfo_multipart') is True
+        # kodi poster/fanart 裸名
+        assert result.get('poster_path') is not None, 'kodi cd2 應保留 poster'
+        assert result.get('fanart_path') is not None, 'kodi cd2 應保留 fanart'
+        poster_name = Path(result['poster_path']).name
+        fanart_name = Path(result['fanart_path']).name
+        assert poster_name == 'poster.jpg', f'kodi poster 應為裸名 poster.jpg，實際：{poster_name!r}'
+        assert fanart_name == 'fanart.jpg', f'kodi fanart 應為裸名 fanart.jpg，實際：{fanart_name!r}'
+
+    # ---- H: 邊界 negative — apartment1 不誤命中 ----
+
+    def test_apartment1_not_multipart(self, tmp_path):
+        """H：apartment1.mp4 — part1 前緣為字母 → part_match None → 正常產 NFO、無 part_tail"""
+        src = tmp_path / 'apartment1.mp4'
+        src.write_bytes(b'apartment')
+
+        config = self._ext_config(suffix_keywords=[])
+        metadata = self._base_metadata(number='FAKE-001')
+
+        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
+            result = organize_file(str(src), metadata, config)
+
+        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
+        assert result.get('nfo_path') is not None, 'apartment1 不應觸發 skip_nfo'
+        assert not result.get('skipped_nfo_multipart'), 'apartment1 不應設 skipped_nfo_multipart'
+        # 檔名不應帶任何 part_tail
+        stem = Path(result['new_filename']).stem
+        assert not stem.endswith('-cd1'), f'apartment1 不應接 -cd1 part_tail：{stem!r}'

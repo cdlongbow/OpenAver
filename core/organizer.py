@@ -224,6 +224,32 @@ def _strip_part_token(stem: str) -> str:
     return stem[:strip_from] + stem[token_end:]
 
 
+def _is_multipart_kw(kw: str) -> bool:
+    """
+    判斷一個 suffix keyword 是否為多段 token（cd/dvd/part/pt/disc 後接 1-9）。
+
+    外部模式下用來濾掉 suffix_keywords 中的多段 token，避免與 part_tail 雙寫。
+    複用 `_MULTIPART_RE` 與 `MULTIPART_TOKENS`，確保契約與 `_detect_multipart_token` 一致。
+
+    Args:
+        kw: suffix keyword，如 ``'-cd1'``、``'_uc'``、``'-4k'``。
+
+    Returns:
+        True 若 keyword 是多段 token（strip 前導分隔符後 fullmatch）；否則 False。
+        ``'-cd1'`` / ``'-dvd1'`` / ``'part2'`` → True；``'-4k'`` / ``'_uc'`` → False。
+    """
+    if not kw:
+        return False
+    # strip 前導分隔符（keyword 慣例帶 -/_/.，也允許無前綴如 'cd1'）
+    stripped = kw.lstrip('-_. ')
+    if not stripped:
+        return False
+    # fullmatch：整個 stripped 字串必須是 (prefix)(1-9)，且後不再接數字
+    # 與 _MULTIPART_RE 用同一 MULTIPART_TOKENS 集合、同一數字規則（1-9，不含 cd10+）
+    m = re.fullmatch(r'(cd|dvd|part|pt|disc)([1-9])', stripped, re.IGNORECASE)
+    return m is not None
+
+
 _VR_UNIQUE: frozenset = frozenset({
     'mkx200', 'mkx220', 'vrca220', 'rf52', 'fisheye190', 'fisheye',
     'f180', '180f', '180x180', 'eac360', '360eac', 'mono180', '180mono',
@@ -710,11 +736,20 @@ def organize_file(
     original_ext = os.path.splitext(file_path)[1]
     original_filename = os.path.basename(file_path)
 
+    # 外部管理器模式（單一來源，早偵測層；CD-72b-T5）
+    ext_mode = config.get('external_manager', 'off')
+
     # 偵測 VR cluster（CD-68-5/6/7）：算一次，作用域涵蓋 title 剝除、組裝段與 nfo 呼叫（GA）
     # 上移至 extract_chinese_title 之前，用於剝除 extracted_title 尾端的 VR token（Codex P2）
     vr_cluster = _detect_vr_cluster(original_filename)
     vr_tail = f'_{vr_cluster}' if vr_cluster else ''
-    reserve = len(vr_tail)  # 兩分支共用 budget，CD-68-7
+
+    # 多段（multipart）token 早偵測（CD-72b-T5）；off 模式恆不啟用（part_tail=''）
+    part_match = _detect_multipart_token(original_filename) if ext_mode != 'off' else None
+    part_tail = f'-{part_match[0]}' if part_match else ''   # e.g. '-cd1'；off 模式恆 ''
+
+    # budget reserve：兩分支共用，part_tail 也預留；off 模式 part_tail='' → 等同現狀（CD-68-7/CD-72b-T5）
+    reserve = len(vr_tail) + len(part_tail)
 
     # 準備格式化資料
     actors = metadata.get('actors', [])
@@ -754,9 +789,14 @@ def organize_file(
         'date': metadata.get('date', ''),
     }
 
-    # 偵測版本後綴
+    # 偵測版本後綴；外部模式過濾掉多段 token 避免 {suffix}+part_tail 雙寫（CD-72b-T5）
+    # 注意：絕不 mutate config['suffix_keywords']，只過濾傳入 _detect_suffixes 的區域變數
     suffix_keywords = config.get('suffix_keywords', [])
-    suffix = _detect_suffixes(original_filename, suffix_keywords)
+    if ext_mode != 'off':
+        detect_keywords = [kw for kw in suffix_keywords if not _is_multipart_kw(kw)]
+    else:
+        detect_keywords = suffix_keywords   # off 模式：原始未過濾 list，byte-identical
+    suffix = _detect_suffixes(original_filename, detect_keywords)
     format_data['suffix'] = suffix
 
     # 記錄哪些欄位實際用了 fallback（僅資料夾層級會觸發 fallback）
@@ -837,10 +877,12 @@ def organize_file(
         filename_base = truncate_to_chars(filename_base, max(0, max_chars - reserve))
     # VR tail 永遠最後接（CD-68-6）；vr_tail='' 時零變化（CD-68-9）
     filename_base = filename_base + vr_tail
+    # part token 接在 VR tail 之後（最末）；off 模式 part_tail='' → no-op（CD-72b-T5）
+    # 順序：{base}{vr_tail}{part_tail}；Jellyfin stacking 要求 part token 落在 stem 最末
+    filename_base = filename_base + part_tail
     # 最終長度上限保護（Codex PR P2）：即使退化情形也不突破 max_filename_length。
-    # 正常/spec 情形 reserve 已預留 → base+vr_tail == max_chars → 此為 no-op、VR tail 完整；
-    # 僅 max_filename_length 被設到連 ext+VR cluster 都裝不下（低於 UI 下限的 config/API 值）時才作用，
-    # 鏡射 suffix 路徑的 truncate_to_chars(suffix, max_chars) 上限語意。
+    # 正常/spec 情形 reserve 已預留 → base+vr_tail+part_tail == max_chars → 此為 no-op；
+    # 僅 max_filename_length 被設到連 ext+VR cluster+part token 都裝不下時才作用。
     filename_base = truncate_to_chars(filename_base, max_chars)
 
     new_filename = filename_base + original_ext
@@ -886,8 +928,7 @@ def organize_file(
             if download_image(img_url, cover_path):
                 result['cover_path'] = cover_path
 
-        # 外部管理器模式：依 ext_mode 決定 poster/fanart 命名規則
-        ext_mode = config.get('external_manager', 'off')
+        # 外部管理器模式：依 ext_mode 決定 poster/fanart 命名規則（ext_mode 已在早偵測層定義）
         if ext_mode != 'off' and result.get('cover_path'):
             cover_jpg = result['cover_path']
             if ext_mode == 'jellyfin_emby':
@@ -933,34 +974,41 @@ def organize_file(
 
         # 生成 NFO（檔名跟隨影片命名）
         nfo_path = os.path.join(target_dir, filename_base + '.nfo')
-        tags = metadata.get('tags', [])
-        user_tags = metadata.get('user_tags', [])
-        if generate_nfo(
-            number=number,
-            title=format_data['title'],
-            original_title=original_title,  # 日文原始標題
-            actors=actors,
-            tags=tags,
-            user_tags=user_tags,
-            date=metadata.get('date', ''),
-            maker=metadata.get('maker', ''),
-            url=metadata.get('url', ''),
-            has_subtitle=has_subtitle,
-            has_vr=(vr_cluster is not None),
-            output_path=nfo_path,
-            has_poster=bool(result.get('poster_path')),
-            has_fanart=bool(result.get('fanart_path')),
-            director=metadata.get('director', ''),
-            duration=metadata.get('duration'),
-            series=metadata.get('series', ''),
-            label=metadata.get('label', ''),
-            # 63c-5：metadata 是 raw search_jav 結果 dict，summary/rating 走 _ 前綴 carrier
-            # （server re-search 路徑帶值；frontend-passed 路徑因 echo strip 無值 → default）
-            summary=metadata.get('_summary', ''),
-            rating=metadata.get('_rating'),
-            external_manager=ext_mode,
-        ):
-            result['nfo_path'] = nfo_path
+        # part-2+ 且外部模式：跳過 NFO（CD-2 只有一份 metadata 由 cd1 產；封面/poster/fanart 照常）
+        # off 模式恆不跳（即使 cd2 也照產 NFO，byte-identical）（CD-72b-T5）
+        skip_nfo = bool(part_match) and part_match[1] >= 2 and ext_mode != 'off'
+        if skip_nfo:
+            result['nfo_path'] = None            # dict 初值已 None，明確設更清楚
+            result['skipped_nfo_multipart'] = True
+        else:
+            tags = metadata.get('tags', [])
+            user_tags = metadata.get('user_tags', [])
+            if generate_nfo(
+                number=number,
+                title=format_data['title'],
+                original_title=original_title,  # 日文原始標題
+                actors=actors,
+                tags=tags,
+                user_tags=user_tags,
+                date=metadata.get('date', ''),
+                maker=metadata.get('maker', ''),
+                url=metadata.get('url', ''),
+                has_subtitle=has_subtitle,
+                has_vr=(vr_cluster is not None),
+                output_path=nfo_path,
+                has_poster=bool(result.get('poster_path')),
+                has_fanart=bool(result.get('fanart_path')),
+                director=metadata.get('director', ''),
+                duration=metadata.get('duration'),
+                series=metadata.get('series', ''),
+                label=metadata.get('label', ''),
+                # 63c-5：metadata 是 raw search_jav 結果 dict，summary/rating 走 _ 前綴 carrier
+                # （server re-search 路徑帶值；frontend-passed 路徑因 echo strip 無值 → default）
+                summary=metadata.get('_summary', ''),
+                rating=metadata.get('_rating'),
+                external_manager=ext_mode,
+            ):
+                result['nfo_path'] = nfo_path
 
         result['used_fallbacks'] = used_fallbacks
         result['success'] = True
