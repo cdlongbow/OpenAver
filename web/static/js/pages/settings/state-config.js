@@ -33,6 +33,7 @@ export function stateConfig() {
             videoExtensions: '.mp4, .avi, .mkv, .wmv, .rmvb, .flv, .mov, .m4v, .ts',
             suffixKeywords: [],
             jellyfinMode: false,
+            externalManager: 'off',
             downloadSampleImages: false,
 
             // Gallery
@@ -451,7 +452,7 @@ export function stateConfig() {
                     this.form.maxFilenameLength = config.scraper.max_filename_length;
                     this.form.videoExtensions = config.scraper.video_extensions.join(', ');
                     this.form.suffixKeywords = config.scraper?.suffix_keywords || ['-cd1', '-cd2', '-4k', '-uc'];
-                    this.form.jellyfinMode = config.scraper?.jellyfin_mode || false;
+                    this.form.externalManager = config.scraper?.external_manager || 'off';
                     this.form.downloadSampleImages = config.scraper?.download_sample_images || false;
 
                     // Gallery
@@ -597,7 +598,7 @@ export function stateConfig() {
                     video_extensions: this.form.videoExtensions
                         .split(',').map(s => s.trim()).filter(s => s),
                     suffix_keywords: this.form.suffixKeywords,
-                    jellyfin_mode: this.form.jellyfinMode,
+                    external_manager: this.form.externalManager,
                     download_sample_images: this.form.downloadSampleImages,
                 };
 

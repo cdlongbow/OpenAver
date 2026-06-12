@@ -297,6 +297,88 @@ class TestMigrationJellyfinMode:
         assert result["scraper"]["jellyfin_mode"] is False
 
 
+# ============ test_migration_external_manager ============
+
+class TestMigrationExternalManager:
+    """external_manager 三態補齊與 jellyfin_mode 遷移（Fix-72b）"""
+
+    def test_legacy_jellyfin_mode_true_maps_to_jellyfin_emby(self, tmp_path, monkeypatch):
+        """舊 config 有 jellyfin_mode:true，無 external_manager → 補 jellyfin_emby"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"scraper": {"jellyfin_mode": True}})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert result["scraper"]["external_manager"] == "jellyfin_emby"
+
+    def test_legacy_jellyfin_mode_false_maps_to_off(self, tmp_path, monkeypatch):
+        """舊 config 有 jellyfin_mode:false，無 external_manager → 補 off"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"scraper": {"jellyfin_mode": False}})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert result["scraper"]["external_manager"] == "off"
+
+    def test_no_jellyfin_mode_at_all_maps_to_off(self, tmp_path, monkeypatch):
+        """完全沒有 jellyfin_mode 也沒有 external_manager → 補 off"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"scraper": {"create_folder": True}})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert result["scraper"]["external_manager"] == "off"
+
+    def test_existing_external_manager_not_overwritten(self, tmp_path, monkeypatch):
+        """config 已含 external_manager:kodi → migration 不觸發、值不被覆蓋"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"scraper": {"jellyfin_mode": True, "external_manager": "kodi"}})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert result["scraper"]["external_manager"] == "kodi"
+
+    def test_schema_roundtrip_off(self, tmp_path, monkeypatch):
+        """ScraperConfig round-trip: external_manager='off' 正確讀回"""
+        from core.config import ScraperConfig
+        cfg = ScraperConfig(external_manager="off")
+        assert cfg.external_manager == "off"
+
+    def test_schema_roundtrip_jellyfin_emby(self, tmp_path, monkeypatch):
+        """ScraperConfig round-trip: external_manager='jellyfin_emby' 正確讀回"""
+        from core.config import ScraperConfig
+        cfg = ScraperConfig(external_manager="jellyfin_emby")
+        assert cfg.external_manager == "jellyfin_emby"
+
+    def test_schema_roundtrip_kodi(self, tmp_path, monkeypatch):
+        """ScraperConfig round-trip: external_manager='kodi' 正確讀回"""
+        from core.config import ScraperConfig
+        cfg = ScraperConfig(external_manager="kodi")
+        assert cfg.external_manager == "kodi"
+
+    def test_schema_rejects_invalid_literal(self):
+        """ScraperConfig: external_manager='plex' 應被 Literal 驗證拒絕"""
+        from core.config import ScraperConfig
+        import pydantic
+        with pytest.raises((pydantic.ValidationError, ValueError)):
+            ScraperConfig(external_manager="plex")
+
+    def test_jellyfin_mode_still_present_in_schema(self):
+        """jellyfin_mode 欄位必須保留（向後相容）"""
+        from core.config import ScraperConfig
+        cfg = ScraperConfig()
+        assert hasattr(cfg, "jellyfin_mode")
+        assert cfg.jellyfin_mode is False
+
+
 # ============ test_migration_download_sample_images ============
 
 class TestMigrationDownloadSampleImages:

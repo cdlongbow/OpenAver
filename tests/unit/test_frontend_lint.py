@@ -443,10 +443,10 @@ class TestJellyfinCheckManualGuard:
     def test_trigger_row_xshow_uses_jellyfin_image_visible(self):
         """T3(40c) Codex fix: 觸發列 x-show 改為 !jellyfinImageVisible 而非 jellyfinCheckState !== 'done'"""
         html = self._html()
-        assert "config?.scraper?.jellyfin_mode && !jellyfinImageVisible" in html, \
-            "scanner.html 觸發列 x-show 應使用 !jellyfinImageVisible（而非 jellyfinCheckState !== 'done'）"
-        assert "config?.scraper?.jellyfin_mode && jellyfinCheckState !== 'done'" not in html, \
-            "scanner.html 觸發列 x-show 仍使用舊的 jellyfinCheckState !== 'done' 條件"
+        assert "config?.scraper?.external_manager === 'jellyfin_emby' && !jellyfinImageVisible" in html, \
+            "scanner.html 觸發列 x-show 應使用 external_manager === 'jellyfin_emby' && !jellyfinImageVisible（T2 repoint）"
+        assert "config?.scraper?.jellyfin_mode && !jellyfinImageVisible" not in html, \
+            "scanner.html 觸發列 x-show 仍使用舊的 jellyfin_mode 讀取點（應已 repoint 為 external_manager）"
 
     def test_trigger_row_done_state_text_present(self):
         """T3(40c) Codex fix: 觸發列包含 done 狀態顯示文字"""

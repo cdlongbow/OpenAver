@@ -52,6 +52,7 @@ class ScraperConfig(BaseModel):
     video_extensions: List[str] = list(DEFAULT_VIDEO_EXTENSIONS)
     suffix_keywords: List[str] = ["-cd1", "-cd2", "-4k", "-uc"]
     jellyfin_mode: bool = False
+    external_manager: Literal["off", "jellyfin_emby", "kodi"] = "off"
     download_sample_images: bool = False
 
 
@@ -278,6 +279,12 @@ def _load_config_unlocked() -> dict:
         s = raw_config.get('scraper', {})
         if 'jellyfin_mode' not in s:
             s['jellyfin_mode'] = False
+            need_save = True
+
+        # Migration: scraper.jellyfin_mode(bool) → scraper.external_manager(str)（Fix-72b）
+        s = raw_config.get('scraper', {})
+        if 'external_manager' not in s:
+            s['external_manager'] = 'jellyfin_emby' if s.get('jellyfin_mode', False) else 'off'
             need_save = True
 
         # 確保 scraper.download_sample_images 存在（Task 38e 拆分 extrafanart 下載）
