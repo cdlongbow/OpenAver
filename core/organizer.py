@@ -154,6 +154,70 @@ def _detect_suffixes(filename: str, keywords: list) -> str:
 
 
 # ---------------------------------------------------------------------------
+# B2：標題 junk-validation + 前綴剝除 helpers（plan-72c FIX A / FIX B）
+# ---------------------------------------------------------------------------
+
+def _extracted_has_organize_junk(
+    extracted: str,
+    number: str,
+    metadata: dict,
+    config: dict,
+) -> bool:
+    """
+    判斷 extract_chinese_title 的結果是否殘留 organize 模板 artifact。
+    回 True（= 應丟棄 extracted）IFF 以下任一命中：
+      (i)  日期 token：YYYY[-.]MM[-.]DD 格式
+      (ii) 刮削 maker 殘留：maker 非空且出現在提取結果中（大小寫不敏感）
+      (iii) suffix token 殘留：config['suffix_keywords'] 中帶前導 '-' 的 token
+            以整段帶 dash 比對（不去 dash），尾端加 boundary——
+            避免誤殺生檔 standalone '4K'（B-1）。
+    mode-agnostic：不讀 external_manager。
+    """
+    if not extracted:
+        return False
+
+    # (i) 日期 token
+    if re.search(r'\d{4}[-.]\d{2}[-.]\d{2}', extracted):
+        return True
+
+    # (ii) maker 殘留（非空才比對）
+    maker = (metadata.get('maker') or '').strip()
+    if maker and maker.lower() in extracted.lower():
+        return True
+
+    # (iii) suffix token 殘留（保留前導 '-'，帶 boundary）
+    for kw in config.get('suffix_keywords', []):
+        kw_l = kw.lower().strip()
+        if not kw_l:
+            continue
+        if re.search(re.escape(kw_l) + r'(?=[-_.\s]|$)', extracted.lower()):
+            return True
+
+    return False
+
+
+def _strip_num_prefixes(s: str, number: str) -> str:
+    """
+    迴圈剝除字串開頭的番號前綴層，直到 fixpoint。
+    支援 bracket 形式 [number] 及裸 number（後接非英數邊界）。
+    使用 re.escape(number) 防特殊番號（如 FC2-PPV-123）。
+    邊界 guard 保證不 over-strip 真標題、不誤命中 ABC-1234 開頭的 ABC-123。
+    """
+    if not s or not number:
+        return s
+    _re = re.compile(
+        r'^(?:\[' + re.escape(number) + r'\]|' + re.escape(number) + r'(?![0-9A-Za-z]))[\s\-_]*',
+        re.IGNORECASE,
+    )
+    while s:
+        nxt = _re.sub('', s, count=1)
+        if nxt == s:
+            break
+        s = nxt
+    return s
+
+
+# ---------------------------------------------------------------------------
 # 多段（multi-part）token 偵測與剝除（CD-8 / plan-72b §1.4）
 # ---------------------------------------------------------------------------
 
@@ -541,8 +605,10 @@ def generate_nfo(
     # 封面檔名（不含副檔名）
     basename = os.path.splitext(os.path.basename(output_path))[0]
 
-    # 顯示標題
-    display_title = f"[{number}]{title}" if title else f"[{number}]{original_title}"
+    # 顯示標題（belt-and-suspenders：剝除前置番號前綴後組 display_title，B2 FIX B CD-c7）
+    _t = title or original_title
+    _t = _strip_num_prefixes(_t, number) if _t else _t
+    display_title = f"[{number}]{_t}" if _t else f"[{number}]"
 
     poster_suffix = '-poster' if has_poster else ''
     fanart_suffix = '-fanart' if has_fanart else ''
@@ -769,6 +835,11 @@ def organize_file(
             _trimmed = extracted_title[:_m.start()].rstrip('_-. ')
             extracted_title = _trimmed or extracted_title
 
+    # FIX A：B2 junk-validation（CD-c5/c6）
+    # 若提取結果殘留 organize 模板 artifact（日期/maker/suffix），丟棄改用翻譯/刮削源
+    if extracted_title and _extracted_has_organize_junk(extracted_title, number, metadata, config):
+        extracted_title = None   # fall through 到翻譯/刮削源（CD-c6）
+
     # 決定最終使用的標題
     if translated_title:
         title = translated_title
@@ -780,6 +851,13 @@ def organize_file(
     else:
         title = original_title
         result['title_source'] = 'original'
+
+    # FIX B：B2 標題決定段去前綴（CD-c7）
+    # 勝出 title 若帶 [{number}]/{number} 前綴，迴圈剝盡至本體
+    # → 檔名（format_data['title']）、NFO <title>、<sorttitle> 同時受惠
+    # → 迴圈剝盡可修復舊 bug 寫進磁碟/DB 的 [ABC-123][ABC-123]Title 雙重堆疊
+    if title:
+        title = _strip_num_prefixes(title, number)
 
     format_data = {
         'number': number,
