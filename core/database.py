@@ -540,8 +540,15 @@ class VideoRepository:
             try:
                 cursor.execute(sql, set_values)
                 conn.commit()
+                rowcount = cursor.rowcount  # 讀在 close() 之前
             finally:
                 conn.close()
+
+            if rowcount == 0:
+                # old row 在 existence check 後被並行刪除 → 退化為 upsert
+                # upsert 自帶 invalidate，不再額外呼叫（避免 double invalidate）
+                self.upsert(video)
+                return
 
             # ranker invalidate（不繼承 upsert，必須顯式呼叫）
             try:
@@ -637,6 +644,42 @@ class VideoRepository:
             SimilarRankerCache.invalidate()
         except Exception:
             logger.exception("SimilarRankerCache invalidate failed (non-fatal)")
+
+    def repath_path_only(self, old_uri: str, new_uri: str) -> bool:
+        """scan-fail 保卡專用：只更新 path，不觸碰其他欄位。
+
+        Contract:
+        - old_uri 空或 old_uri == new_uri → return False（no-op）
+        - new_uri 已有 row → 不 UPDATE（避免 UNIQUE 碰撞）→ return False
+        - 否則 UPDATE path + updated_at WHERE path=old_uri；commit；
+          invalidate ranker cache（non-fatal）；rowcount > 0 → True else False
+        """
+        if not old_uri or old_uri == new_uri:
+            return False
+
+        # 碰撞預檢：new_uri 已有 row → 放棄（讓 prune 自癒）
+        if self.get_by_path(new_uri) is not None:
+            return False
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE videos SET path = ?, updated_at = CURRENT_TIMESTAMP WHERE path = ?",
+                (new_uri, old_uri),
+            )
+            conn.commit()
+            rowcount = cursor.rowcount  # 讀在 close() 之前
+        finally:
+            conn.close()
+
+        try:
+            from core.similar.ranker_cache import SimilarRankerCache
+            SimilarRankerCache.invalidate()
+        except Exception:
+            logger.exception("SimilarRankerCache invalidate failed (non-fatal)")
+
+        return rowcount > 0
 
     def upsert_batch(self, videos: List[Video]) -> tuple:
         """批次新增或更新

@@ -399,7 +399,6 @@ def test_b1_repath_no_dead_card_jellyfin(client, tmp_path):
             "actresses": [],
             "tags": [],
             "release": "",
-            "external_manager": "jellyfin_emby",
         },
     }
 
@@ -411,7 +410,8 @@ def test_b1_repath_no_dead_card_jellyfin(client, tmp_path):
             "original_path": old_fs,
         }),
         patch("core.db_inflow.load_config", return_value={
-            "gallery": {"directories": [str(tmp_path)], "path_mappings": None}
+            "gallery": {"directories": [str(tmp_path)], "path_mappings": None},
+            "scraper": {"external_manager": "jellyfin_emby"},
         }),
         patch("core.db_inflow.find_matched_directory", return_value=str(tmp_path)),
         patch("core.db_inflow.VideoScanner") as MockScanner,

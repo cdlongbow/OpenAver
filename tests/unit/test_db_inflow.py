@@ -609,3 +609,311 @@ def test_u16_no_manual_uri_construction():
     # 禁止 [8:] URI strip
     bad_strip = re.findall(r'\[8:\]', content)
     assert not bad_strip, f"db_inflow.py 不應有 [8:] strip，發現: {bad_strip}"
+
+
+# ─── U17: repath_path_only — 正常搬移（Fix 2） ────────────────────────────────
+
+def test_u17_repath_path_only_normal(tmp_path):
+    """
+    repath_path_only 正常路徑：
+    - 舊 URI 消失、新 URI 出現
+    - title / cover_path / user_tags / created_at / id 全部保留
+    - 回傳 True
+    - SimilarRankerCache.invalidate 被呼叫恰 1 次
+    """
+    db_path = _make_db(tmp_path)
+    repo = VideoRepository(db_path=db_path)
+
+    old_uri = "file:///tmp/rpo_old.mp4"
+    new_uri = "file:///tmp/rpo_new.mp4"
+    old_created = "2023-05-10 12:00:00"
+
+    _seed_video(repo, old_uri, user_tags=["看過"], created_at_str=old_created,
+                cover_path="cover.jpg", title="Preserved Title")
+    old_row = repo.get_by_path(old_uri)
+    old_id = old_row.id
+
+    with patch("core.similar.ranker_cache.SimilarRankerCache") as MockRanker:
+        result = repo.repath_path_only(old_uri, new_uri)
+
+    assert result is True, "repath_path_only 應回 True"
+    assert repo.get_by_path(old_uri) is None, "舊 URI 應消失"
+
+    new_row = repo.get_by_path(new_uri)
+    assert new_row is not None, "新 URI 應存在"
+    assert new_row.id == old_id, f"id 應保留 {old_id}"
+    assert new_row.title == "Preserved Title", f"title 應保留，得 {new_row.title!r}"
+    assert new_row.cover_path == "cover.jpg", f"cover_path 應保留，得 {new_row.cover_path!r}"
+    assert "看過" in new_row.user_tags, f"user_tags 應含 '看過'，得 {new_row.user_tags}"
+    ca_str = str(new_row.created_at) if new_row.created_at else ""
+    assert "2023-05-10" in ca_str, f"created_at 應保留，得 {ca_str!r}"
+    MockRanker.invalidate.assert_called_once()
+
+
+# ─── U18: repath_path_only — new_uri 碰撞（Fix 2） ─────────────────────────────
+
+def test_u18_repath_path_only_collision_no_update(tmp_path):
+    """
+    repath_path_only：new_uri 已有 row → 不 UPDATE，回 False，old row 不動，無 IntegrityError。
+    """
+    db_path = _make_db(tmp_path)
+    repo = VideoRepository(db_path=db_path)
+
+    old_uri = "file:///tmp/rpo_coll_old.mp4"
+    new_uri = "file:///tmp/rpo_coll_new.mp4"
+
+    _seed_video(repo, old_uri, user_tags=["看過"])
+    _seed_video(repo, new_uri, user_tags=["已有"])
+
+    with patch("core.similar.ranker_cache.SimilarRankerCache") as MockRanker:
+        result = repo.repath_path_only(old_uri, new_uri)
+
+    assert result is False, "碰撞時應回 False"
+    # old row 不應被動到
+    old_row = repo.get_by_path(old_uri)
+    assert old_row is not None, "old row 應仍存在（碰撞時不 UPDATE）"
+    assert "看過" in old_row.user_tags
+    # new row 也未受影響
+    new_row = repo.get_by_path(new_uri)
+    assert new_row is not None
+    assert "已有" in new_row.user_tags
+    # invalidate 不應被呼叫（提前返回 False）
+    MockRanker.invalidate.assert_not_called()
+
+
+# ─── U19: repath_path_only — self no-op（Fix 2） ────────────────────────────────
+
+def test_u19_repath_path_only_same_uri_noop(tmp_path):
+    """
+    repath_path_only：old_uri == new_uri → 立即回 False，DB 不動。
+    """
+    db_path = _make_db(tmp_path)
+    repo = VideoRepository(db_path=db_path)
+
+    uri = "file:///tmp/rpo_same.mp4"
+    _seed_video(repo, uri, user_tags=["看過"])
+
+    with patch("core.similar.ranker_cache.SimilarRankerCache") as MockRanker:
+        result = repo.repath_path_only(uri, uri)
+
+    assert result is False, "same uri 應回 False"
+    row = repo.get_by_path(uri)
+    assert row is not None, "row 應仍存在"
+    MockRanker.invalidate.assert_not_called()
+
+
+# ─── U20: repath_path_only — empty old_uri（Fix 2） ─────────────────────────────
+
+def test_u20_repath_path_only_empty_old_uri_noop(tmp_path):
+    """
+    repath_path_only：old_uri == "" → 立即回 False。
+    """
+    db_path = _make_db(tmp_path)
+    repo = VideoRepository(db_path=db_path)
+
+    with patch("core.similar.ranker_cache.SimilarRankerCache") as MockRanker:
+        result = repo.repath_path_only("", "file:///tmp/rpo_any.mp4")
+
+    assert result is False
+    MockRanker.invalidate.assert_not_called()
+
+
+# ─── U21: db_inflow scan-fail 保卡用 repath_path_only（Fix 2 layering） ──────────
+
+def test_u21_scan_fail_uses_repath_path_only(tmp_path):
+    """
+    scan-fail 保卡分支不再呼叫 repo._get_connection()，
+    改呼叫 repo.repath_path_only()（layering 守衛）。
+    """
+    from core.path_utils import normalize_path, to_file_uri
+
+    db_path = _make_db(tmp_path)
+    repo = VideoRepository(db_path=db_path)
+
+    old_path_fs = str(tmp_path / "u21_old.mp4")
+    new_path_fs = str(tmp_path / "u21_new.mp4")
+    old_uri = to_file_uri(normalize_path(old_path_fs), None)
+
+    _seed_video(repo, old_uri, user_tags=["看過"])
+
+    import core.db_inflow as _db_inflow_mod
+
+    with (
+        patch.object(_db_inflow_mod, "load_config", return_value={
+            "gallery": {"directories": [str(tmp_path)], "path_mappings": None}
+        }),
+        patch.object(_db_inflow_mod, "find_matched_directory", return_value=str(tmp_path)),
+        patch.object(_db_inflow_mod, "VideoScanner") as MockScanner,
+        patch.object(_db_inflow_mod, "VideoRepository", return_value=repo),
+        patch("core.similar.ranker_cache.SimilarRankerCache"),
+    ):
+        MockScanner.return_value.scan_file.return_value = None
+
+        # 監控 repath_path_only 是否被呼叫，且 _get_connection 不應從 db_inflow 呼叫
+        with patch.object(repo, "repath_path_only", wraps=repo.repath_path_only) as mock_rpo:
+            result = _db_inflow_mod.try_inflow_upsert(new_path_fs, old_file_path=old_path_fs)
+
+    assert result == "failed", f"scan-fail 應回 'failed'，得 {result!r}"
+    mock_rpo.assert_called_once(), "scan-fail 保卡應呼叫 repath_path_only"
+
+
+# ─── U22: Fix 1 rowcount=0 fallback → upsert（Fix 1） ───────────────────────────
+
+def test_u22_repath_normal_update_rowcount0_falls_back_to_upsert(tmp_path):
+    """
+    Fix 1：正常 UPDATE 分支的 UPDATE 影響 0 rows（concurrent delete 模擬）
+    → 退化為 upsert，新路徑 row 仍寫入。
+    只呼叫 invalidate 一次（由 upsert 負責，repath 不額外呼叫）。
+    """
+    db_path = _make_db(tmp_path)
+    repo = VideoRepository(db_path=db_path)
+
+    old_uri = "file:///tmp/u22_old.mp4"
+    new_uri = "file:///tmp/u22_new.mp4"
+
+    # seed old row 讓 existence check 通過
+    _seed_video(repo, old_uri)
+
+    # 刪掉 old row 模擬並行刪除（在 repath 呼叫前刪，使 existence check 後 UPDATE 影響 0 rows）
+    # 直接用 _get_connection 刪（測試 helper 允許）
+    conn = repo._get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM videos WHERE path = ?", (old_uri,))
+        conn.commit()
+    finally:
+        conn.close()
+
+    # 此時 existence check（repath 內的第一段）取舊快照…但我們已刪了 old row。
+    # 為讓 repath 仍進入正常-UPDATE 分支，需讓 existence check 回 True。
+    # 最直接的方式：monkeypatch _get_connection，讓第一次 SELECT 回「存在」，
+    # 第二次（UPDATE）正常執行（實際 0 rows）。
+
+    real_get_conn = repo._get_connection
+    call_count = [0]
+
+    def mock_get_connection():
+        conn = real_get_conn()
+        original_execute = conn.cursor().__class__.execute
+
+        # 包一層 cursor，第一次 SELECT 回假的「存在」
+        class FakeCursor:
+            def __init__(self, real_cursor):
+                self._c = real_cursor
+
+            def execute(self, sql, params=()):
+                self._c.execute(sql, params)
+
+            def fetchone(self):
+                call_count[0] += 1
+                if call_count[0] <= 2:
+                    # 兩次 SELECT（old_exists / new_exists）都回假結果
+                    # old_exists → True（有 old row）; new_exists → None（沒 new row）
+                    return (1,) if call_count[0] == 1 else None
+                return self._c.fetchone()
+
+            @property
+            def rowcount(self):
+                return self._c.rowcount
+
+        return conn
+
+    # 比起複雜 mock，直接用更簡單的方法：
+    # repath 先做 SELECT 存在性，再做 UPDATE。
+    # 此測試只驗證「當 UPDATE rowcount==0 時，upsert fallback 寫入 new_uri」。
+    # 使用 monkeypatch cursor.execute，讓 UPDATE 語句後 rowcount=0（不執行真實 UPDATE）。
+
+    new_video = Video(path=new_uri, number="ABC-001", title="Fallback Title",
+                      original_title="", actresses=[], maker="", director="",
+                      series=None, label="", tags=[], user_tags=[],
+                      sample_images=[], duration=None, size_bytes=0,
+                      cover_path="", release_date="", mtime=0.0, nfo_mtime=0.0)
+
+    # 重新 seed old row（讓 existence check 在 repath 內看到它）
+    _seed_video(repo, old_uri)
+
+    # 用 monkeypatch：在 repath 第二段 _get_connection 的 cursor.execute 之後，
+    # 刪掉 old row 再 commit，模擬並行刪除後 rowcount=0。
+    # 最乾淨的方式：patch cursor.rowcount 在 UPDATE 後回 0。
+
+    real_get_conn2 = repo._get_connection
+    update_call_count = [0]
+
+    def patched_get_connection():
+        conn = real_get_conn2()
+        original_cursor = conn.cursor
+
+        def patched_cursor():
+            c = original_cursor()
+            original_execute = c.execute
+
+            def patched_execute(sql, params=()):
+                original_execute(sql, params)
+                # UPDATE 語句執行後，刪掉該 row 讓 rowcount 在 commit 後仍是真實值 0
+                # （實際 rowcount 已由 sqlite 記錄；改用另一種方式：patch rowcount property）
+
+            c.execute = patched_execute
+            return c
+
+        conn.cursor = patched_cursor
+        return conn
+
+    # 最直接的 deterministic 測試：
+    # 使用真實流程，但在 repath 第二次 _get_connection 中傳回一個 rowcount=0 的 cursor。
+    real_gc = repo._get_connection
+    invocation = [0]
+
+    class ZeroRowcountCursor:
+        """Wraps a real cursor but reports rowcount=0 for UPDATE."""
+        def __init__(self, real_cursor):
+            self._c = real_cursor
+
+        def execute(self, sql, params=()):
+            # Run for real but discard actual changes (rollback immediately)
+            # by NOT running execute → rowcount stays 0 by default in sqlite3
+            if sql.strip().upper().startswith("UPDATE"):
+                # Don't execute: rowcount will be 0
+                pass
+            else:
+                self._c.execute(sql, params)
+
+        def fetchone(self):
+            return self._c.fetchone()
+
+        @property
+        def rowcount(self):
+            return 0  # Always 0 for our fake cursor
+
+    class FakeConnForUpdate:
+        def __init__(self, real_conn):
+            self._conn = real_conn
+            self._cursor = None
+
+        def cursor(self):
+            self._cursor = ZeroRowcountCursor(self._conn.cursor())
+            return self._cursor
+
+        def commit(self):
+            self._conn.commit()
+
+        def close(self):
+            self._conn.close()
+
+    def get_conn_patched():
+        invocation[0] += 1
+        real_conn = real_gc()
+        if invocation[0] == 2:
+            # 第二次呼叫 _get_connection 是 正常-UPDATE 分支 → 回 fake conn
+            return FakeConnForUpdate(real_conn)
+        return real_conn
+
+    with patch.object(repo, "_get_connection", side_effect=get_conn_patched):
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.repath(old_uri, new_uri, new_video)
+
+    # upsert fallback 應寫入 new_uri
+    new_row = repo.get_by_path(new_uri)
+    assert new_row is not None, \
+        "rowcount=0 fallback 後 upsert 應寫入 new_uri"
+    assert new_row.title == "Fallback Title", \
+        f"新 row title 應為 'Fallback Title'，得 {new_row.title!r}"

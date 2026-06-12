@@ -66,28 +66,11 @@ def try_inflow_upsert(target_file_path: str, old_file_path: str | None = None) -
             # 若無舊 row，沿用既有 "not_linked" 行為。
             if old_uri:
                 repo = VideoRepository()
-                existing = repo.get_by_path(old_uri)
-                if existing:
-                    # 算 new_uri（scan 失敗，只能從 target_file_path 建）
+                if repo.get_by_path(old_uri):
                     new_uri_fallback = to_file_uri(target_file_path, path_mappings)
-                    conn = repo._get_connection()
-                    cursor = conn.cursor()
-                    try:
-                        cursor.execute(
-                            "UPDATE videos SET path = ?, updated_at = CURRENT_TIMESTAMP WHERE path = ?",
-                            (new_uri_fallback, old_uri),
-                        )
-                        conn.commit()
-                    finally:
-                        conn.close()
-                    # ranker invalidate（scan-fail 保卡分支）
-                    try:
-                        from core.similar.ranker_cache import SimilarRankerCache
-                        SimilarRankerCache.invalidate()
-                    except Exception:
-                        logger.exception("SimilarRankerCache invalidate failed (non-fatal)")
+                    repo.repath_path_only(old_uri, new_uri_fallback)
                     logger.info(
-                        "try_inflow_upsert: scan-fail 保卡 — 舊路徑 %r 已搬至 %r，保留舊 metadata",
+                        "try_inflow_upsert: scan-fail 保卡 — 舊路徑 %r → %r",
                         old_uri,
                         new_uri_fallback,
                     )
