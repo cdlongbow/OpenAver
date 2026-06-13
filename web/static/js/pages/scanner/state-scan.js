@@ -240,7 +240,7 @@ export function stateScan() {
             if (this.jellyfinCheckState === 'checking') {
                 return {
                     shouldWarn: true,
-                    message: 'Jellyfin 圖片檢查進行中，離開將會中斷！',
+                    message: '圖片檢查進行中，離開將會中斷！',
                     useModal: false
                 };
             }
@@ -364,7 +364,7 @@ export function stateScan() {
 
         // ===== T6d: Jellyfin Image Check =====
         async checkJellyfinImages() {
-            if (this.config?.scraper?.external_manager !== 'jellyfin_emby') return;
+            if (this.config?.scraper?.external_manager === 'off') return;
 
             // T2(40c): 取消上一次未完成的請求（防重複點擊）
             if (this._jellyfinCheckController) {

@@ -441,10 +441,24 @@ class TestJellyfinCheckManualGuard:
             f"scanner.js jellyfinCheckState = 'idle' 出現 {count} 次，期望 >= 2（cleanup + clearCache）"
 
     def test_trigger_row_xshow_uses_jellyfin_image_visible(self):
-        """T3(40c) Codex fix: 觸發列 x-show 改為 !jellyfinImageVisible 而非 jellyfinCheckState !== 'done'"""
+        """T3(40c) Codex fix / T-d4: 觸發列 x-show 改為 !='off' 三態 gate（含 kodi）"""
+        from bs4 import BeautifulSoup
         html = self._html()
-        assert "config?.scraper?.external_manager === 'jellyfin_emby' && !jellyfinImageVisible" in html, \
-            "scanner.html 觸發列 x-show 應使用 external_manager === 'jellyfin_emby' && !jellyfinImageVisible（T2 repoint）"
+        soup = BeautifulSoup(html, "html.parser")
+        # There are multiple nfo-update-row divs; the jellyfin trigger row is the one
+        # whose x-show references jellyfinImageVisible (not nfoUpdateVisible etc.)
+        rows = soup.find_all("div", class_="nfo-update-row")
+        jellyfin_row = next(
+            (r for r in rows if "jellyfinImageVisible" in r.get("x-show", "") and "config" in r.get("x-show", "")),
+            None
+        )
+        assert jellyfin_row is not None, \
+            "scanner.html 找不到含 jellyfinImageVisible + config 的 nfo-update-row element"
+        xshow = jellyfin_row.get("x-show", "")
+        assert "config?.scraper?.external_manager !== 'off' && !jellyfinImageVisible" in xshow, \
+            f"nfo-update-row x-show 應使用 !== 'off' 三態 gate，實際: {xshow!r}"
+        assert "config?.scraper?.external_manager === 'jellyfin_emby' && !jellyfinImageVisible" not in html, \
+            "scanner.html 觸發列 x-show 仍殘留舊 === 'jellyfin_emby' gate（應已改為 !== 'off'）"
         assert "config?.scraper?.jellyfin_mode && !jellyfinImageVisible" not in html, \
             "scanner.html 觸發列 x-show 仍使用舊的 jellyfin_mode 讀取點（應已 repoint 為 external_manager）"
 

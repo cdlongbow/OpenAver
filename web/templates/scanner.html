@@ -206,7 +206,7 @@
         <!-- T2(40c): Jellyfin 圖片檢查觸發列 -->
         <!-- T3(40c) Codex fix: x-show 改為 !jellyfinImageVisible，done 狀態仍顯示觸發列 -->
         <div class="nfo-update-row"
-             x-show="config?.scraper?.external_manager === 'jellyfin_emby' && !jellyfinImageVisible">
+             x-show="config?.scraper?.external_manager !== 'off' && !jellyfinImageVisible">
             <span class="nfo-badge">
                 <i class="bi bi-image"></i>
                 <span x-show="jellyfinCheckState === 'idle'">
@@ -230,7 +230,7 @@
             <span x-show="jellyfinCheckState === 'checking'"
                   class="loading loading-spinner loading-sm"></span>
         </div>
-        <!-- Jellyfin 圖片補齊列（只在 external_manager === 'jellyfin_emby' 時顯示） -->
+        <!-- 補圖結果列（jellyfinImageVisible 由檢查結果驅動：偵測到缺漏才顯示，與 external_manager 模式無關） -->
         <div class="nfo-update-row" x-show="jellyfinImageVisible">
             <span class="nfo-badge">
                 <i class="bi bi-image"></i>

@@ -409,7 +409,7 @@ class TestJellyfinCheck:
         data = response.json()
         assert data['success'] is False
         assert 'error' in data
-        assert data['error'] == '檢查 Jellyfin 圖片狀態失敗'
+        assert data['error'] == '檢查圖片狀態失敗'
 
     def test_jellyfin_check_uses_to_thread(self):
         """靜態掃描確認 scanner.py 使用 asyncio.to_thread 包裝 _check_jellyfin_needed helper，

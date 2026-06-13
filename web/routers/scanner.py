@@ -1247,7 +1247,7 @@ def generate_jellyfin_images_stream() -> Generator[str, None, None]:
             yield _sse_event({"type": "done", "message": "沒有需要補齊的影片", "updated": 0})
             return
 
-        yield _sse_event({"type": "log", "level": "info", "message": f"需補齊 {total} 部影片的 Jellyfin 圖片..."})
+        yield _sse_event({"type": "log", "level": "info", "message": f"需補齊 {total} 部影片的圖片..."})
 
         for i, item in enumerate(items, 1):
             cover = item['cover_path']
@@ -1274,11 +1274,11 @@ def generate_jellyfin_images_stream() -> Generator[str, None, None]:
         # T3(40c): 清空快取，讓下次 check 反映最新圖片狀態
         _jellyfin_cache_result = None
         _jellyfin_cache_time = 0
-        yield _sse_event({"type": "done", "message": f"完成！已補齊 {total} 部影片的 Jellyfin 圖片"})
+        yield _sse_event({"type": "done", "message": f"完成！已補齊 {total} 部影片的圖片"})
 
     except Exception as e:
         logger.error("產生 Jellyfin 圖片失敗: %s", e)
-        yield _sse_event({"type": "error", "message": "產生 Jellyfin 圖片失敗"})
+        yield _sse_event({"type": "error", "message": "產生圖片失敗"})
 
 
 def _check_jellyfin_needed() -> dict | None:
@@ -1319,7 +1319,7 @@ async def jellyfin_image_check():
         return {"success": True, "data": {"need_update": result['need_update']}}
     except Exception as e:
         logger.error("檢查 Jellyfin 圖片狀態失敗: %s", e)
-        return {"success": False, "error": "檢查 Jellyfin 圖片狀態失敗"}
+        return {"success": False, "error": "檢查圖片狀態失敗"}
 
 
 @router.get("/jellyfin-update")

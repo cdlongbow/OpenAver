@@ -720,7 +720,7 @@ _TOOLS: list[dict] = [
     {
         "name": "jellyfin_check",
         "description": (
-            "檢查本地收藏中有多少影片缺少 Jellyfin poster/fanart 圖片，回傳待更新數量。"
+            "檢查本地收藏中有多少影片缺少外部媒體管理器 poster/fanart 圖片，回傳待更新數量。"
             " update 操作（批次產生圖片）為 SSE 串流，不適合 AI 直接呼叫，需透過 UI 操作。"
         ),
         "method": "GET",
@@ -732,7 +732,7 @@ _TOOLS: list[dict] = [
         },
         "output_schema": {
             "success": "boolean",
-            "data": "{need_update: integer} — 缺少 Jellyfin 圖片的影片數量",
+            "data": "{need_update: integer} — 缺少外部媒體管理器圖片的影片數量",
         },
         "side_effect": False,
         "confirmation_required": False,
