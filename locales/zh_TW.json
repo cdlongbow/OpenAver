@@ -36,6 +36,9 @@
     "auto_pill": {
       "tooltip": "點擊挑選來源"
     },
+    "source_pill": {
+      "tooltip": "點擊換來源"
+    },
     "action": {
       "search": "搜尋",
       "cancel_search": "取消搜尋",

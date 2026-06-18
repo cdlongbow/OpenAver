@@ -8549,58 +8549,25 @@ class TestSwitchSourcePickGuard:
     def _ui(self):
         return self.UI_JS.read_text(encoding="utf-8")
 
-    def _switch_btn(self, html):
-        """擷取結果面板 🔄 鈕 #switchSourceBtn 的完整 <button>...</button> 區塊。"""
-        m = re.search(
-            r'<button\b(?:(?!</button>).)*?\bid="switchSourceBtn"(?:(?!</button>).)*?</button>',
-            html, re.DOTALL,
-        )
-        assert m, "search.html #switchSourceBtn button 區塊不存在"
-        return m.group(0)
+    # ── (a) #switchSourceBtn 已退役（T3 翻轉 62c-3 US7）──
+    #
+    # TASK-74a-T3（CD-74a-6）：結果面板 🔄 #switchSourceBtn（含 6 長壓 handler + tap 循環）
+    # 整顆移除，原位改放「目前來源膠囊」（action 變體，@click 直接 openSwitchSourcePicker()）。
+    # 原 (a) 群的長壓 wiring 守衛（test_switch_btn_longpress_opens_picker / _six_events_wired /
+    # _touchstart_opens_picker / _click_guard_preserves_switch_source）已退役，改為下方單一
+    # 退役守衛——只觸及 #switchSourceBtn 該按鈕的存在性，不動本 class 其餘 contract
+    # （openSourceUrl 負向、_rescrape_modal 番號可編輯、state-rescrape.js switch-source 分支、
+    # ui.js seedSwitchState export 全部保留，膠囊仍走 openSwitchSourcePicker → switch-source 入口）。
+    # 膠囊本身的 @click/name/loading 接線由 TestResultSourcePill 守衛。
 
-    # ── (a) #switchSourceBtn 長壓六事件 + click 分流（tap 維持循環）──
+    def test_switch_source_btn_retired(self):
+        """TASK-74a-T3：#switchSourceBtn 整顆退役，search.html 不得再出現該 id（含其長壓 wiring）。
 
-    def test_switch_btn_longpress_opens_picker(self):
-        """#switchSourceBtn @mousedown 長壓接共用 longPressStart，fire callback 開 openSwitchSourcePicker()。"""
-        tag = self._switch_btn(self._html())
-        m = re.search(r'@mousedown="([^"]*)"', tag)
-        assert m, "#switchSourceBtn 缺 @mousedown 長壓 wiring"
-        wiring = m.group(1)
-        assert "longPressStart(" in wiring, \
-            f"#switchSourceBtn @mousedown 必須接共用 longPressStart(...)，實際: {wiring!r}"
-        assert "openSwitchSourcePicker()" in wiring, \
-            f"#switchSourceBtn @mousedown fire callback 必須開 openSwitchSourcePicker()，實際: {wiring!r}"
-        assert "rescrapeEnabled()" in wiring, \
-            f"#switchSourceBtn @mousedown enabledFn 必須是 rescrapeEnabled()（toggle OFF gate），實際: {wiring!r}"
-
-    def test_switch_btn_six_events_wired(self):
-        """#switchSourceBtn 六事件齊全且接共用 longPress*（mousedown/up/leave + touchstart.passive/end/cancel）。"""
-        tag = self._switch_btn(self._html())
-        assert re.search(r'@mousedown="longPressStart\(', tag), "#switchSourceBtn 缺 @mousedown longPressStart"
-        assert re.search(r'@mouseup="longPressEnd\([^)]*\)"', tag), "#switchSourceBtn 缺 @mouseup longPressEnd()"
-        assert re.search(r'@mouseleave="longPressCancel\([^)]*\)"', tag), "#switchSourceBtn 缺 @mouseleave longPressCancel()"
-        assert re.search(r'@touchstart\.passive="longPressStart\(', tag), "#switchSourceBtn 缺 @touchstart.passive longPressStart"
-        assert re.search(r'@touchend="longPressEnd\([^)]*\)"', tag), "#switchSourceBtn 缺 @touchend longPressEnd()"
-        assert re.search(r'@touchcancel="longPressCancel\([^)]*\)"', tag), "#switchSourceBtn 缺 @touchcancel longPressCancel()"
-
-    def test_switch_btn_touchstart_opens_picker(self):
-        """#switchSourceBtn @touchstart.passive fire callback 同樣開 openSwitchSourcePicker()（mousedown/touchstart 一致）。"""
-        tag = self._switch_btn(self._html())
-        m = re.search(r'@touchstart\.passive="([^"]*)"', tag)
-        assert m, "#switchSourceBtn 缺 @touchstart.passive 長壓 wiring"
-        assert "openSwitchSourcePicker()" in m.group(1), \
-            f"#switchSourceBtn @touchstart.passive fire callback 必須開 openSwitchSourcePicker()，實際: {m.group(1)!r}"
-
-    def test_switch_btn_click_guard_preserves_switch_source(self):
-        """#switchSourceBtn @click 走 longPressClickGuard($event) || switchSource()（tap 維持循環，長壓 fire 後短路）。"""
-        tag = self._switch_btn(self._html())
-        m = re.search(r'@click="([^"]*)"', tag)
-        assert m, "#switchSourceBtn 缺 @click 分流"
-        guard = m.group(1)
-        assert "longPressClickGuard($event)" in guard, \
-            f"#switchSourceBtn @click 必須 longPressClickGuard($event)（長壓短路），實際: {guard!r}"
-        assert "switchSource()" in guard, \
-            f"#switchSourceBtn @click 必須保留 switchSource()（tap 循環不回歸），實際: {guard!r}"
+        過「三問」：把長壓按鈕加回（id 重現）→ 紅。膠囊接線改由 TestResultSourcePill 守衛。
+        """
+        html = self._html()
+        assert 'id="switchSourceBtn"' not in html, \
+            "search.html 仍含 id=\"switchSourceBtn\" — 該按鈕應整顆退役（T3，膠囊取代）"
 
     def test_open_source_url_btn_not_touched(self):
         """負向（§1.6 D）：長壓只疊 #switchSourceBtn，旁邊 ↗ openSourceUrl 鈕不得沾長壓 wiring。"""
@@ -8797,14 +8764,6 @@ class TestLongPressTouchSuppression:
         assert m, "search.html #btnSubmit button 區塊不存在"
         return m.group(0)
 
-    def _switch_btn(self, html):
-        m = re.search(
-            r'<button\b(?:(?!</button>).)*?\bid="switchSourceBtn"(?:(?!</button>).)*?</button>',
-            html, re.DOTALL,
-        )
-        assert m, "search.html #switchSourceBtn button 區塊不存在"
-        return m.group(0)
-
     def _grid_enrich_btn(self, html):
         m = re.search(
             r'<button\b[^>]*?\bclass="btn-glass-circle enrich-btn".*?</button>',
@@ -8839,15 +8798,23 @@ class TestLongPressTouchSuppression:
     def test_search_submit_btn_longpress_retired(self):
         """TASK-74a-T2（翻轉）：#btnSubmit 退役為純提交鈕，不再是長壓入口（不傳 $event 因無 longPress* wiring）。
 
-        其餘三入口（#switchSourceBtn / showcase grid+lightbox enrich）仍走長壓並保留 $event 傳遞守衛。
+        其餘兩入口（showcase grid+lightbox enrich）仍走長壓並保留 $event 傳遞守衛
+        （#switchSourceBtn 已由 T3 整顆退役為膠囊，見 test_switch_source_btn_retired）。
         """
         tag = self._submit_btn(self._search_html())
         assert "longPressStart" not in tag and "longPressEnd" not in tag \
             and "longPressCancel" not in tag, \
             f"#btnSubmit 不應再有任何 longPress* wiring（T2 退役）；tag: {tag!r}"
 
-    def test_switch_source_btn_passes_event(self):
-        self._assert_entry_passes_event(self._switch_btn(self._search_html()), "#switchSourceBtn")
+    def test_switch_source_btn_retired(self):
+        """TASK-74a-T3：#switchSourceBtn 整顆退役（膠囊取代），不再是長壓 $event 入口。
+
+        原 test_switch_source_btn_passes_event 斷言該按鈕長壓傳 $event；按鈕移除後改為退役守衛。
+        過「三問」：把長壓按鈕加回（id 重現）→ 紅。膠囊接線由 TestResultSourcePill 守衛。
+        """
+        html = self._search_html()
+        assert 'id="switchSourceBtn"' not in html, \
+            "search.html 仍含 id=\"switchSourceBtn\" — 該長壓入口應整顆退役（T3，膠囊取代）"
 
     def test_grid_enrich_btn_passes_event(self):
         self._assert_entry_passes_event(self._grid_enrich_btn(self._showcase_html()), "grid enrich-btn")
@@ -10923,6 +10890,83 @@ class TestSearchSubmitBtnNoLongPress:
             assert forbidden not in tag, (
                 f"#btnSubmit 不應再含 {forbidden!r}（長壓已移除）；tag: {tag!r}"
             )
+
+
+class TestSwitchSourceBtnRemoved:
+    """TASK-74a-T3: 結果面板 🔄 #switchSourceBtn 整顆移除（CD-74a-6）。
+
+    負向守衛：search.html 全檔不得再出現 id=\"switchSourceBtn\"。
+    過「三問」：把按鈕加回 → 紅（id 重現）。
+    """
+
+    def test_switch_source_btn_id_gone(self):
+        """search.html 不得再含 id=\"switchSourceBtn\"（整顆按鈕已移除）。"""
+        html = SEARCH_HTML.read_text(encoding="utf-8")
+        assert 'id="switchSourceBtn"' not in html, (
+            "search.html 仍含 id=\"switchSourceBtn\" — #switchSourceBtn 應整顆移除（T3）"
+        )
+
+    def test_switch_source_btn_arrow_repeat_icon_gone(self):
+        """強化：原 🔄 icon bi-arrow-repeat 隨按鈕一併消失於 .av-card-full-header 區段。"""
+        html = SEARCH_HTML.read_text(encoding="utf-8")
+        m = re.search(
+            r'<div class="av-card-full-header">(.*?)</div>\s*<div class="av-card-full-body">',
+            html, re.DOTALL,
+        )
+        assert m, "search.html 找不到 .av-card-full-header 區段"
+        header = m.group(1)
+        assert "bi-arrow-repeat" not in header, (
+            f"av-card-full-header 不應再含 bi-arrow-repeat（🔄 icon 隨 #switchSourceBtn 移除）；header: {header!r}"
+        )
+
+
+class TestResultSourcePill:
+    """TASK-74a-T3: 結果面板「目前來源膠囊」macro 呼叫 DOM contract（call-site-bound）。
+
+    守衛抽出 search.html 內含 extra_classes='result-source-pill' 的 source_pill(...)
+    macro 呼叫文字，斷言同一呼叫上接 openSwitchSourcePicker()（@click）、
+    _resolveSourceName（name 表達式）、isSwitchingSource（:disabled / :class is-loading）。
+
+    過「三問」：把 binding 搬到別的 macro 呼叫 → 紅（regex 只取 result-source-pill 那一個 call）；
+    註解化 → 紅；刪關鍵子表達式 → 紅。
+    """
+
+    def _result_pill_call(self) -> str:
+        """抽出帶 extra_classes='result-source-pill' 的 source_pill(...) macro 呼叫文字。
+
+        macro 呼叫 attrs 內含多層巢狀括號（rescrapeSources.find(... (current()...) ...)），
+        故不走 balanced-paren regex；改抽「source_pill( 起點 → 含 result-source-pill →
+        到下一個 ) }} macro 收尾」的呼叫文字（call-site-bound）。
+        """
+        html = SEARCH_HTML.read_text(encoding="utf-8")
+        m = re.search(
+            r"source_pill\((?:(?!source_pill\().)*?result-source-pill.*?\)\s*\}\}",
+            html,
+            re.DOTALL,
+        )
+        assert m, "search.html 找不到 extra_classes='result-source-pill' 的 source_pill(...) 呼叫"
+        return m.group(0)
+
+    def test_result_pill_click_opens_switch_picker(self):
+        """目前來源膠囊 @click 含 openSwitchSourcePicker()（沿用既有換源入口）。"""
+        call = self._result_pill_call()
+        assert "openSwitchSourcePicker()" in call, (
+            f"result-source-pill 呼叫缺 openSwitchSourcePicker()（@click）；call: {call!r}"
+        )
+
+    def test_result_pill_name_resolves_source(self):
+        """目前來源膠囊 name 表達式走 _resolveSourceName（backend-authoritative 顯示名）。"""
+        call = self._result_pill_call()
+        assert "_resolveSourceName" in call, (
+            f"result-source-pill 呼叫缺 _resolveSourceName（name 顯示名）；call: {call!r}"
+        )
+
+    def test_result_pill_loading_bound_to_switching(self):
+        """目前來源膠囊 loading 綁 isSwitchingSource（:disabled + :class is-loading 驅動 spinner）。"""
+        call = self._result_pill_call()
+        assert "isSwitchingSource" in call, (
+            f"result-source-pill 呼叫缺 isSwitchingSource 綁定（:disabled / is-loading）；call: {call!r}"
+        )
 
 
 class TestIsComposingGetter:
