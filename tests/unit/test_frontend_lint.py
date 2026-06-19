@@ -4691,9 +4691,9 @@ class TestSearchCssHardcoded:
 
     HARDCODED_RGBA_ALLOWLIST = {
         # 75b-T2 search.css US1 重排插入 ~54 行（@ ~L107）後行號順移：788→840；90 在插入點上方不變。
-        # T9-port 在 L718 後插入 ~61 行（3-col + poster-crop + coarse + cover-fit blocks）：840→902。
+        # T9-port 在 L718 後插入 blocks：840→902；T9 Codex-P2 fix 補註解 +4 行：902→906。
         90: "drop-shadow rgba 0.3 — §2 例外（drop-shadow 跟封面去背形狀，非矩形 box-shadow 無法用 --fluent-shadow-* token）",
-        902: "var(--bg-card, rgba(0, 0, 0, 0.05)) fallback — defensive fallback，非硬編碼違規",
+        906: "var(--bg-card, rgba(0, 0, 0, 0.05)) fallback — defensive fallback，非硬編碼違規",
     }
 
     SIX_PX_ALLOWLIST = {
@@ -11968,6 +11968,21 @@ class TestUS9SearchGridMobileFix:
         m4 = re.search(r'\.footer-default \.av-num \{([^}]*)\}', block)
         assert m4, "找不到 .footer-default .av-num 規則"
         assert "text-overflow: ellipsis" in m4.group(1), ".av-num（番號）應單行 ellipsis"
+
+    def test_search_grid_scope_is_compound_not_descendant(self):
+        """Codex P2 回歸守衛：search grid 的 scope class 在 .search-grid 元素本身
+        （`<div class="search-grid ds-gallery-composition">`），故 :is(…) 必須**複合**接 .search-grid（無空格）。
+        後代形式 `:is(…) .search-grid`（有空格）要求 scope 在「祖先」→ search 無此祖先 → 永不命中（silent no-op）。
+        靜態守衛抓不到「runtime 是否命中」，但能鎖死「複合 vs 後代」這個唯一致命差別。
+        三問：把任一 :is(…).search-grid 改回 :is(…) .search-grid（加一個空格）→ 紅。
+        """
+        css = self._strip_comments(self._search_css())
+        assert ":is(#ds-gallery-components, .ds-gallery-composition).search-grid" in css, (
+            "search.css 的 .search-grid scope 規則必須用複合 :is(…).search-grid（scope class 在 grid 本身，非祖先）"
+        )
+        assert ":is(#ds-gallery-components, .ds-gallery-composition) .search-grid" not in css, (
+            "search.css 不得用後代 :is(…) .search-grid（有空格）——scope 在 grid 本身、後代選擇器永不命中（Codex P2 silent no-op）"
+        )
 
     def test_search_touch_narrow_reshows_footer_default(self):
         """T5：≤480px ∩ pointer:coarse .search-grid 還原 .footer-default（番號層）+ 壓 .footer-hover。

@@ -724,27 +724,30 @@
 }
 
 /* T9-port：≤480px search 影片格 poster-crop + caption（對齊 showcase T4/T5，Option P 平行）。
-   selector scope 同 showcase：:is(#ds-gallery-components, .ds-gallery-composition) 帶 (1,0,0) 贏
-   search.css 同類基準；:not(.hero-card) 排除女優入口 hero 卡（其 contain 圖不可 poster-crop）。
-   search-grid 和 showcase-grid 外觀一致：≤480px 三欄直幅格，番號 ellipsis，女優名隱藏。 */
+   ★ Codex P2 修正：search grid 是 `<div class="search-grid ds-gallery-composition">`——scope class 在
+   grid 元素「本身」，非祖先（showcase 是 `.showcase-container.ds-gallery-composition` 祖先，故用後代）。
+   故此處用**複合選擇器** `:is(…).search-grid`（無空格，同元素），而非後代 `:is(…) .search-grid`——
+   後者要求 scope 在 .search-grid 的祖先 → search 無此祖先 → 永不命中（poster-crop/caption silent no-op）。
+   :is(#id,…) 仍必要：帶 (1,0,0) 使複合 (1,4,0) 勝基準 :is(…) .av-card-preview-img (1,1,0)；
+   去掉 #id 的純 class 複合僅 (0,4,0) 會輸基準。:not(.hero-card) 排除女優入口 hero 卡。 */
 @media (max-width: 480px) {
-    :is(#ds-gallery-components, .ds-gallery-composition) .search-grid .av-card-preview:not(.hero-card) .av-card-preview-img {
+    :is(#ds-gallery-components, .ds-gallery-composition).search-grid .av-card-preview:not(.hero-card) .av-card-preview-img {
         aspect-ratio: var(--poster-crop-ratio, 0.71);
         height: auto;
     }
 
-    :is(#ds-gallery-components, .ds-gallery-composition) .search-grid .av-card-preview:not(.hero-card) .av-card-preview-img img {
+    :is(#ds-gallery-components, .ds-gallery-composition).search-grid .av-card-preview:not(.hero-card) .av-card-preview-img img {
         object-position: right center;
     }
 
-    :is(#ds-gallery-components, .ds-gallery-composition) .search-grid .av-card-preview:not(.hero-card) .av-card-preview-footer .footer-default .av-num {
+    :is(#ds-gallery-components, .ds-gallery-composition).search-grid .av-card-preview:not(.hero-card) .av-card-preview-footer .footer-default .av-num {
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
         font-size: 0.7rem;
     }
 
-    :is(#ds-gallery-components, .ds-gallery-composition) .search-grid .av-card-preview:not(.hero-card) .av-card-preview-footer .footer-default .av-actress {
+    :is(#ds-gallery-components, .ds-gallery-composition).search-grid .av-card-preview:not(.hero-card) .av-card-preview-footer .footer-default .av-actress {
         display: none;
     }
 }
@@ -753,13 +756,14 @@
    showcase.css 的 @media(pointer:coarse) US3c 把全局 .av-card-preview .footer-default opacity:0，
    而 showcase 的 ≤480∩coarse 修正只 scope 在 .showcase-grid（L894–902），不涵蓋 .search-grid。
    故補平行規則：≤480px ∩ coarse ∩ .search-grid 非 hero → 還原 footer-default 番號層。
-   specificity :is(…) ID 帶 (1,0,0) 使 (1,4,0) 勝 US3c .av-card-preview .footer-* (0,2,0)。 */
+   specificity :is(…) ID 帶 (1,0,0) 使 (1,4,0) 勝 US3c .av-card-preview .footer-* (0,2,0)。
+   selector 同用複合 `:is(…).search-grid`（scope 在 grid 本身，見上 Codex P2 註）。 */
 @media (max-width: 480px) and (pointer: coarse) {
-    :is(#ds-gallery-components, .ds-gallery-composition) .search-grid .av-card-preview:not(.hero-card) .footer-default {
+    :is(#ds-gallery-components, .ds-gallery-composition).search-grid .av-card-preview:not(.hero-card) .footer-default {
         opacity: 1;
     }
 
-    :is(#ds-gallery-components, .ds-gallery-composition) .search-grid .av-card-preview:not(.hero-card) .footer-hover {
+    :is(#ds-gallery-components, .ds-gallery-composition).search-grid .av-card-preview:not(.hero-card) .footer-hover {
         opacity: 0;
     }
 }
