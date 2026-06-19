@@ -24,7 +24,7 @@ async def motion_lab_page(request: Request):
     from web.app import get_common_context, templates
     context = get_common_context(request)
     context["page"] = "motion-lab"
-    return templates.TemplateResponse("motion_lab.html", context)
+    return templates.TemplateResponse(request, "motion_lab.html", context)
 
 
 @router.get("/api/motion-lab/data")
