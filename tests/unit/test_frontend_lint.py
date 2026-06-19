@@ -4690,16 +4690,16 @@ class TestSearchCssHardcoded:
     SEARCH_CSS = PROJECT_ROOT / "web/static/css/pages/search.css"
 
     HARDCODED_RGBA_ALLOWLIST = {
-        # T2.1 commit 41f2a5b 後狀態：
+        # T2.1 commit 41f2a5b 後狀態（75a-T2 search.css US3a 插入 +8 行後行號順移）：
         90: "drop-shadow rgba 0.3 — §2 例外（drop-shadow 跟封面去背形狀，非矩形 box-shadow 無法用 --fluent-shadow-* token）",
-        780: "var(--bg-card, rgba(0, 0, 0, 0.05)) fallback — defensive fallback，非硬編碼違規",
+        788: "var(--bg-card, rgba(0, 0, 0, 0.05)) fallback — defensive fallback，非硬編碼違規",
     }
 
     SIX_PX_ALLOWLIST = {
-        # T2.2 commit 89d52b6 後狀態：
+        # T2.2 commit 89d52b6 後狀態（75a-T2 search.css US3a 插入 +8 行後 516/571 順移為 524/579；235 在插入點上方不變）：
         235: "row inline btn optical 6px — T2.2 加 optical 註記（btn-sm 12px padding 對 row inline 太寬）",
-        516: ".batch-progress-bar height: 6px — intrinsic dimension（非 §4 spacing）",
-        571: "chip optical 6px — T2.2 加 optical 註記（對齊 showcase .lb-tag-add-btn）",
+        524: ".batch-progress-bar height: 6px — intrinsic dimension（非 §4 spacing）",
+        579: "chip optical 6px — T2.2 加 optical 註記（對齊 showcase .lb-tag-add-btn）",
     }
 
     def _scan(self, regex: str, allowlist=None):
@@ -11064,3 +11064,381 @@ class TestRescrapePreviewEffectiveSource:
         assert "sourceCensored" in body and "is_censored" in body and "?? true" in body, (
             f"rescrapePreview 必須含 sourceCensored: ...is_censored ?? true；body: {body!r}"
         )
+
+
+# ── 75a-T4 path constants ──────────────────────────────────────────────────
+CONSTELLATION_ANIMATIONS_JS = (
+    Path(__file__).parent.parent.parent
+    / "web" / "static" / "js" / "shared" / "constellation" / "animations.js"
+)
+T4_STATE_SIMILAR_JS = (
+    Path(__file__).parent.parent.parent
+    / "web" / "static" / "js" / "pages" / "showcase" / "state-similar.js"
+)
+T4_SHOWCASE_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "showcase.css"
+T4_THEME_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "theme.css"
+T4_MOTION_LAB_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "motion_lab.html"
+T4_SHOWCASE_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "showcase.html"
+
+
+class TestPosterCropCSSGuard:
+    """75a-T4: poster-crop token 守衛 — theme.css 變數 + showcase.css selector-bound 斷言。
+
+    涵蓋：
+    - theme.css 含 --poster-crop-ratio: 0.71
+    - .poster-crop rule block 含 var(--poster-crop-ratio) + right center，不含 71/100
+    - showcase.css .similar-slot-img block 含 right center，不含 100% 20%
+    - showcase.css .similar-main-static block 含 width: 178px，不含 width: 200px
+    """
+
+    def _theme(self):
+        return T4_THEME_CSS.read_text(encoding="utf-8")
+
+    def _css(self):
+        return T4_SHOWCASE_CSS.read_text(encoding="utf-8")
+
+    def test_poster_crop_ratio_token_value(self):
+        """theme.css 含 --poster-crop-ratio: 0.71"""
+        css = self._theme()
+        assert "--poster-crop-ratio: 0.71" in css, \
+            "theme.css missing: --poster-crop-ratio: 0.71"
+
+    def test_poster_crop_class_uses_token(self):
+        """.poster-crop rule block 含 var(--poster-crop-ratio)"""
+        css = self._theme()
+        match = re.search(r'\.poster-crop\s*\{([^}]+)\}', css)
+        assert match, "theme.css: .poster-crop selector not found"
+        block = match.group(1)
+        assert "var(--poster-crop-ratio)" in block, \
+            ".poster-crop block must contain var(--poster-crop-ratio)"
+
+    def test_poster_crop_class_has_right_center(self):
+        """.poster-crop rule block 含 right center"""
+        css = self._theme()
+        match = re.search(r'\.poster-crop\s*\{([^}]+)\}', css)
+        assert match, "theme.css: .poster-crop selector not found"
+        block = match.group(1)
+        assert "right center" in block, \
+            ".poster-crop block must contain object-position: right center"
+
+    def test_poster_crop_class_no_hardcoded_ratio(self):
+        """.poster-crop rule block 不含 71/100 硬編碼比例"""
+        css = self._theme()
+        match = re.search(r'\.poster-crop\s*\{([^}]+)\}', css)
+        assert match, "theme.css: .poster-crop selector not found"
+        block = match.group(1)
+        assert "71/100" not in block, \
+            ".poster-crop block must not contain hardcoded 71/100 (use var(--poster-crop-ratio))"
+
+    def test_similar_slot_img_no_100_20(self):
+        """showcase.css .similar-slot-img block 不含 100% 20%"""
+        css = self._css()
+        match = re.search(r'\.similar-slot-img\s*\{([^}]+)\}', css)
+        assert match, "showcase.css: .similar-slot-img selector not found"
+        block = match.group(1)
+        assert "100% 20%" not in block, \
+            ".similar-slot-img block must not contain object-position: 100% 20%"
+
+    def test_similar_slot_img_has_right_center(self):
+        """showcase.css .similar-slot-img block 含 right center"""
+        css = self._css()
+        match = re.search(r'\.similar-slot-img\s*\{([^}]+)\}', css)
+        assert match, "showcase.css: .similar-slot-img selector not found"
+        block = match.group(1)
+        assert "right center" in block, \
+            ".similar-slot-img block must contain object-position: right center"
+
+    def test_similar_main_static_width_178(self):
+        """showcase.css .similar-main-static block 含 width: 178px"""
+        css = self._css()
+        match = re.search(r'\.similar-main-static\s*\{([^}]+)\}', css)
+        assert match, "showcase.css: .similar-main-static selector not found"
+        block = match.group(1)
+        assert "width: 178px" in block, \
+            ".similar-main-static block must contain width: 178px"
+
+    def test_similar_main_static_no_200(self):
+        """showcase.css .similar-main-static block 不含 width: 200px"""
+        css = self._css()
+        match = re.search(r'\.similar-main-static\s*\{([^}]+)\}', css)
+        assert match, "showcase.css: .similar-main-static selector not found"
+        block = match.group(1)
+        assert "width: 200px" not in block, \
+            ".similar-main-static block must not contain width: 200px (use 178px)"
+
+
+class TestMotionLabObjectPositionGuard:
+    """75a-T4: motion_lab.html inline <style> 守衛 — clip-lab-* object-position。
+
+    NOTE: stylelint glob (web/static/css/**/*.css) 不覆蓋 motion_lab.html inline <style>；
+    且 picker-candidate-img 有合法 100% 20%，不可全域 ban。
+    故用 pytest selector-scoped HTML style-block read（plan-sanctioned pytest fallback）。
+    """
+
+    def _html(self):
+        return T4_MOTION_LAB_HTML.read_text(encoding="utf-8")
+
+    def _style_blocks(self, html):
+        blocks = re.findall(r"<style[^>]*>(.*?)</style>", html, re.DOTALL)
+        assert blocks, "motion_lab.html has no <style> blocks"
+        return "\n".join(blocks)
+
+    def test_clip_lab_img_object_position_right_center(self):
+        """.clip-lab-slot-img, .clip-lab-main-img rule block 含 right center，不含 100% 20%"""
+        html = self._html()
+        css = self._style_blocks(html)
+        match = re.search(
+            r'\.clip-lab-slot-img\s*,\s*\.clip-lab-main-img\s*\{([^}]+)\}',
+            css,
+        )
+        assert match, "motion_lab.html <style>: .clip-lab-slot-img, .clip-lab-main-img rule not found"
+        block = match.group(1)
+        assert "right center" in block, \
+            ".clip-lab-slot-img,.clip-lab-main-img block must contain object-position: right center"
+        assert "100% 20%" not in block, \
+            ".clip-lab-slot-img,.clip-lab-main-img block must not contain 100% 20%"
+
+    def test_clip_lab_slot_no_120(self):
+        """.clip-lab-slot rule block 不含 width: 120px（應為 107px）"""
+        html = self._html()
+        css = self._style_blocks(html)
+        match = re.search(r'\.clip-lab-slot\s*\{([^}]+)\}', css)
+        assert match, "motion_lab.html <style>: .clip-lab-slot rule not found"
+        block = match.group(1)
+        assert "width: 120px" not in block, \
+            ".clip-lab-slot block must not contain width: 120px (should be 107px)"
+
+
+class TestSimilarSlotGsapGuard:
+    """75a-T4: GSAP width literal 守衛 — constellation/animations.js + state-similar.js。
+
+    animations.js: T1 後所有 width 已改為 SLOT_W/MAIN_W 具名常量（無 120/200 literal）；
+    用全文 ban 安全（確認無其他合法 120/200 出現）。
+    assert 'width: 120' not in js + assert 'width: 200' not in js；
+    正向斷言 POSTER_CROP_RATIO 常數存在。
+
+    state-similar.js: 全文只有一處 width: 107（gsap.set slot reset），無 120 出現；
+    用全文 ban 安全。
+    """
+
+    def _animations(self):
+        return CONSTELLATION_ANIMATIONS_JS.read_text(encoding="utf-8")
+
+    def _similar(self):
+        return T4_STATE_SIMILAR_JS.read_text(encoding="utf-8")
+
+    def test_animations_no_width_120_literal(self):
+        """animations.js 全文不含 width: 120（T1 後已改 SLOT_W 常量）"""
+        js = self._animations()
+        assert "width: 120" not in js, \
+            "animations.js must not contain literal 'width: 120' (use SLOT_W constant)"
+
+    def test_animations_no_width_200_literal(self):
+        """animations.js 全文不含 width: 200（T1 後已改 MAIN_W 常量）"""
+        js = self._animations()
+        assert "width: 200" not in js, \
+            "animations.js must not contain literal 'width: 200' (use MAIN_W constant)"
+
+    def test_animations_has_poster_crop_ratio_const(self):
+        """animations.js 含 POSTER_CROP_RATIO 具名常量（單一真理 NC#7）"""
+        js = self._animations()
+        assert "POSTER_CROP_RATIO" in js, \
+            "animations.js must define POSTER_CROP_RATIO constant (single source of truth NC#7)"
+
+    def test_animations_has_slot_w_const(self):
+        """animations.js 含 SLOT_W 具名常量"""
+        js = self._animations()
+        assert "SLOT_W" in js, \
+            "animations.js must define SLOT_W constant derived from POSTER_CROP_RATIO"
+
+    def test_animations_has_main_w_const(self):
+        """animations.js 含 MAIN_W 具名常量"""
+        js = self._animations()
+        assert "MAIN_W" in js, \
+            "animations.js must define MAIN_W constant derived from POSTER_CROP_RATIO"
+
+    def test_state_similar_no_width_120(self):
+        """state-similar.js 全文不含 width: 120（slot reset 應為 107）"""
+        js = self._similar()
+        assert "width: 120" not in js, \
+            "state-similar.js must not contain 'width: 120' (slot width should be 107)"
+
+    def test_state_similar_has_width_107(self):
+        """state-similar.js 含 width: 107（slot reset 正確值）"""
+        js = self._similar()
+        assert "width: 107" in js, \
+            "state-similar.js must contain 'width: 107' (slot reset value)"
+
+
+class TestSimilarMobileDOMOrderGuard:
+    """75a-T4: showcase.html DOM 順序 — lightbox-similar-mobile 在 lightbox-metadata 之前。
+
+    使用 re.search 取 class attr 出現位置，避免誤中 HTML comment。
+    """
+
+    def _html(self):
+        return T4_SHOWCASE_HTML.read_text(encoding="utf-8")
+
+    def test_similar_mobile_before_metadata(self):
+        """lightbox-similar-mobile div 在主 lightbox-metadata div 之前。
+
+        showcase.html 有兩個 lightbox-metadata：actress-lightbox-meta（上方）和主 metadata（下方）。
+        守衛目標是主 lightbox-metadata（不含 actress 子 class），故用 exact class= match。
+        """
+        html = self._html()
+        m_mobile = re.search(r'class="lightbox-similar-mobile"', html)
+        # Match the standalone lightbox-metadata (not actress-lightbox-meta)
+        m_meta = re.search(r'class="lightbox-metadata"(?!\s)', html)
+        assert m_mobile, "showcase.html: lightbox-similar-mobile class attr not found"
+        assert m_meta, "showcase.html: class=\"lightbox-metadata\" (main, non-actress) not found"
+        assert m_mobile.start() < m_meta.start(), (
+            "showcase.html: lightbox-similar-mobile must appear before main lightbox-metadata in DOM"
+        )
+
+
+class TestSimilarJSThresholdGuard:
+    """75a-T4: state-similar.js openSimilarMode 手機門檻 960px 守衛。
+
+    提取 openSimilarMode 函式體後斷言 < 960（不是 < 768）。
+    三問：改回 768 → 紅；刪 960 → 紅；加 768 → 紅。
+    """
+
+    def _js(self):
+        return T4_STATE_SIMILAR_JS.read_text(encoding="utf-8")
+
+    def _extract_method_body(self, js, method_name):
+        """提取 Alpine/module method 函式體（大括號平衡法）"""
+        pattern = re.compile(
+            r'(?:^|\n)\s*async ' + re.escape(method_name) + r'\s*\([^)]*\)\s*\{',
+            re.DOTALL,
+        )
+        m = pattern.search(js)
+        if m is None:
+            # try non-async form
+            pattern2 = re.compile(
+                r'(?:^|\n)\s*' + re.escape(method_name) + r'\s*\([^)]*\)\s*\{',
+                re.DOTALL,
+            )
+            m = pattern2.search(js)
+        assert m is not None, f"state-similar.js: cannot find method {method_name}"
+        start = m.end()
+        depth = 1
+        i = start
+        while i < len(js) and depth > 0:
+            c = js[i]
+            if c == '{':
+                depth += 1
+            elif c == '}':
+                depth -= 1
+            i += 1
+        return js[start:i - 1]
+
+    def test_open_similar_mode_threshold_960(self):
+        """openSimilarMode 函式體含 innerWidth < 960"""
+        js = self._js()
+        body = self._extract_method_body(js, 'openSimilarMode')
+        assert "innerWidth < 960" in body, \
+            "state-similar.js openSimilarMode must use 'innerWidth < 960' threshold (not 768)"
+
+    def test_open_similar_mode_no_threshold_768(self):
+        """openSimilarMode 函式體不含 innerWidth < 768（舊錯誤門檻）"""
+        js = self._js()
+        body = self._extract_method_body(js, 'openSimilarMode')
+        assert "innerWidth < 768" not in body, \
+            "state-similar.js openSimilarMode must not use 'innerWidth < 768' (should be 960)"
+
+
+class TestSimilarCssSafetyAndGridGuard:
+    """75a-T4: showcase.css 安全規則 + 手機網格守衛。
+
+    涵蓋：
+    - @media (min-width: 960px) 包含 .lightbox-similar-mobile（安全網，不用 768px）
+    - .similar-mobile-card img block 含 var(--poster-crop-ratio)，不含 4/5
+    - .similar-slot block 含 width: 107px，不含 width: 120px
+    - .similar-mobile-grid block 含 repeat(4
+    - @media (max-width: 960px) 含 .lightbox-content.similar-open .lightbox-cover 縮高規則
+    """
+
+    def _css(self):
+        return T4_SHOWCASE_CSS.read_text(encoding="utf-8")
+
+    def test_safety_rule_min_960_hides_mobile(self):
+        """@media (min-width: 960px) 安全網存在且包含 .lightbox-similar-mobile"""
+        css = self._css()
+        match = re.search(r'@media\s*\(\s*min-width\s*:\s*960px\s*\)', css)
+        assert match, "showcase.css: @media (min-width: 960px) not found"
+        # Verify lightbox-similar-mobile is within or near this media block
+        after = css[match.start():]
+        assert "lightbox-similar-mobile" in after[:500], \
+            "@media (min-width: 960px) block must contain .lightbox-similar-mobile rule"
+
+    def test_safety_rule_not_768(self):
+        """安全網媒體查詢用 960px 而非 768px"""
+        css = self._css()
+        # The safety rule specifically for lightbox-similar-mobile hides it at 960px
+        # Confirm there's a min-width: 960px block (not just 768px) for the mobile section
+        idx_960 = css.find("min-width: 960px")
+        assert idx_960 != -1, "showcase.css: min-width: 960px not found (safety rule)"
+        # Confirm lightbox-similar-mobile appears after min-width: 960px
+        idx_mobile = css.find("lightbox-similar-mobile", idx_960)
+        assert idx_mobile != -1, \
+            "showcase.css: lightbox-similar-mobile not found after min-width: 960px"
+
+    def test_similar_mobile_card_img_has_poster_crop_ratio(self):
+        """.similar-mobile-card img block 含 var(--poster-crop-ratio)"""
+        css = self._css()
+        match = re.search(r'\.similar-mobile-card\s+img\s*\{([^}]+)\}', css)
+        assert match, "showcase.css: .similar-mobile-card img rule not found"
+        block = match.group(1)
+        assert "var(--poster-crop-ratio)" in block, \
+            ".similar-mobile-card img must contain var(--poster-crop-ratio)"
+
+    def test_similar_mobile_card_img_no_hardcoded_4_5(self):
+        """.similar-mobile-card img block 不含 4/5 硬編碼比例"""
+        css = self._css()
+        match = re.search(r'\.similar-mobile-card\s+img\s*\{([^}]+)\}', css)
+        assert match, "showcase.css: .similar-mobile-card img rule not found"
+        block = match.group(1)
+        assert "4/5" not in block, \
+            ".similar-mobile-card img must not contain hardcoded 4/5 (use var(--poster-crop-ratio))"
+
+    def test_similar_slot_width_107(self):
+        """.similar-slot rule block 含 width: 107px"""
+        css = self._css()
+        match = re.search(r'\.similar-slot\s*\{([^}]+)\}', css)
+        assert match, "showcase.css: .similar-slot selector not found"
+        block = match.group(1)
+        assert "width: 107px" in block, \
+            ".similar-slot block must contain width: 107px"
+
+    def test_similar_slot_no_width_120(self):
+        """.similar-slot rule block 不含 width: 120px"""
+        css = self._css()
+        match = re.search(r'\.similar-slot\s*\{([^}]+)\}', css)
+        assert match, "showcase.css: .similar-slot selector not found"
+        block = match.group(1)
+        assert "width: 120px" not in block, \
+            ".similar-slot block must not contain width: 120px (should be 107px)"
+
+    def test_similar_mobile_grid_repeat_4(self):
+        """.similar-mobile-grid block 含 repeat(4"""
+        css = self._css()
+        match = re.search(r'\.similar-mobile-grid\s*\{([^}]+)\}', css)
+        assert match, "showcase.css: .similar-mobile-grid selector not found"
+        block = match.group(1)
+        assert "repeat(4" in block, \
+            ".similar-mobile-grid must contain repeat(4, 1fr) grid-template-columns"
+
+    def test_similar_open_cover_height_override(self):
+        """@media (max-width: 960px) 含 similar-open 封面縮高規則（min(38vh + height: 40vh）"""
+        css = self._css()
+        # Find the max-width: 960px media block containing similar-open
+        match = re.search(r'@media\s*\(\s*max-width\s*:\s*960px\s*\)', css)
+        assert match, "showcase.css: @media (max-width: 960px) not found"
+        after = css[match.start():]
+        assert "similar-open" in after[:500], \
+            "@media (max-width: 960px) must contain .similar-open cover rule"
+        assert "min(38vh" in after[:500], \
+            "@media (max-width: 960px) similar-open must contain min(38vh cover override"
+        assert "height: 40vh" in after[:500], \
+            "@media (max-width: 960px) similar-open must contain height: 40vh override"
