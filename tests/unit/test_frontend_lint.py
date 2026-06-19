@@ -11736,3 +11736,63 @@ class TestUS5PosterCropScoped:
         assert "opacity: 0" in mh.group(1), (
             "≤480px ∩ coarse poster 格應把 .footer-hover opacity:0（標題層在 107px 窄格不可讀）"
         )
+
+
+# ============================================================================
+# TASK-75b-T7（CD-75b-12）：≤480px poster 格 → lightbox ghost-fly 溶接守衛
+# 跨檔契約：state-lightbox.js 計算並傳 posterCrop → ghost-fly.js 消費（對齊右裁 + 落地 crossfade）
+# ============================================================================
+
+GHOST_FLY_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "shared" / "ghost-fly.js"
+STATE_LIGHTBOX_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-lightbox.js"
+
+
+class TestUS5PosterCropGhostCrossfade:
+    """TASK-75b-T7：poster 格開燈箱的 cover→contain 溶接（Codex 視覺 bug2）。
+
+    契約：state-lightbox.js 依「≤480px ∩ 非女優模式 ∩ 非 hero」算 posterCrop 並傳給
+    playGridToLightbox；ghost-fly.js 在 posterCrop 下對齊縮圖右裁（objectPosition right center）
+    並於落地 crossfade（coverEl 淡入 + ghost 淡出 0.12s）取代硬切 cleanupGhost。
+    三問：刪 posterCrop 傳遞 → 紅；刪 objectPosition 對齊 → 紅；把 crossfade 改回硬切 → 紅。
+    """
+
+    def _grid_to_lightbox_body(self) -> str:
+        js = GHOST_FLY_JS.read_text(encoding="utf-8")
+        start = js.find("playGridToLightbox: function")
+        assert start >= 0, "ghost-fly.js 找不到 playGridToLightbox"
+        end = js.find("playLightboxToGrid: function", start)
+        assert end > start, "ghost-fly.js 找不到 playGridToLightbox 結束邊界"
+        return js[start:end]
+
+    def test_state_lightbox_threads_poster_crop(self):
+        js = STATE_LIGHTBOX_JS.read_text(encoding="utf-8")
+        # 計算條件三要素
+        assert "posterCrop" in js, "state-lightbox.js 應計算 posterCrop"
+        assert "window.innerWidth <= 480" in js, "posterCrop 應 gate ≤480px"
+        assert "showFavoriteActresses" in js, "posterCrop 應排除女優模式"
+        assert "hero-card" in js, "posterCrop 應排除 hero 卡（女優入口）"
+        # 傳入 playGridToLightbox 的 options
+        assert "posterCrop: posterCrop" in js, (
+            "state-lightbox.js 應把 posterCrop 傳入 playGridToLightbox options"
+        )
+
+    def test_ghost_fly_consumes_and_aligns_crop(self):
+        body = self._grid_to_lightbox_body()
+        assert "options.posterCrop" in body, "playGridToLightbox 應消費 options.posterCrop"
+        # (A) 對齊縮圖右裁
+        assert "objectPosition = 'right center'" in body, (
+            "posterCrop 下 ghost 應對齊縮圖 objectPosition right center（消起飛 pan）"
+        )
+
+    def test_ghost_fly_landing_crossfade(self):
+        body = self._grid_to_lightbox_body()
+        # (D) 落地 crossfade：coverEl 淡入 + ghost 淡出，且綁在 posterCrop 分支
+        assert "posterCrop && coverEl" in body, (
+            "落地 crossfade 應 gate 在 posterCrop（非 poster 路徑維持硬切 cleanupGhost）"
+        )
+        assert "opacity: 1, duration: 0.12" in body, "coverEl 應 0.12s 淡入（contain 真圖浮現）"
+        assert "opacity: 0, duration: 0.12" in body, "ghost 應 0.12s 淡出（溶接 cover→contain）"
+        # 非 poster 仍走硬切 cleanupGhost
+        assert "cleanupGhost(ghost, coverEl)" in body, (
+            "非 posterCrop 路徑應保留硬切 cleanupGhost（桌面零回歸）"
+        )
