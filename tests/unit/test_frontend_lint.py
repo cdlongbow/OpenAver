@@ -4691,8 +4691,9 @@ class TestSearchCssHardcoded:
 
     HARDCODED_RGBA_ALLOWLIST = {
         # 75b-T2 search.css US1 重排插入 ~54 行（@ ~L107）後行號順移：788→840；90 在插入點上方不變。
+        # T9-port 在 L718 後插入 ~61 行（3-col + poster-crop + coarse + cover-fit blocks）：840→902。
         90: "drop-shadow rgba 0.3 — §2 例外（drop-shadow 跟封面去背形狀，非矩形 box-shadow 無法用 --fluent-shadow-* token）",
-        840: "var(--bg-card, rgba(0, 0, 0, 0.05)) fallback — defensive fallback，非硬編碼違規",
+        902: "var(--bg-card, rgba(0, 0, 0, 0.05)) fallback — defensive fallback，非硬編碼違規",
     }
 
     SIX_PX_ALLOWLIST = {
@@ -11877,4 +11878,204 @@ class TestUS5VideoCoverFitMobile:
         html = SHOWCASE_HTML.read_text(encoding="utf-8")
         assert "'has-cover': !!currentLightboxVideo?.cover_url" in html, (
             "影片燈箱 .lightbox-cover 應綁 :class=\"{'has-cover': !!currentLightboxVideo?.cover_url}\""
+        )
+
+
+# ============================================================================
+# TASK-75b-T9：search 頁 ≤480px 影片格 + 燈箱修正守衛
+# Port of showcase T4/T5/T7/T8 — all search-specific rules live in search.css (決策 ②)
+# ============================================================================
+
+_SHOWCASE_CSS_T9 = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "showcase.css"
+
+
+class TestUS9SearchGridMobileFix:
+    """TASK-75b-T9：search grid ≤480px 三欄 poster + 燈箱 letterbox 消除守衛。
+
+    涵蓋 T4（3-col）、T5（poster-crop/caption/coarse footer）、T7（posterCrop 傳遞）、T8（cover-fit）。
+    全部 search-specific 規則在 search.css（決策 ②）；showcase.css 零改動（回歸護欄）。
+    """
+
+    @staticmethod
+    def _strip_comments(text: str) -> str:
+        """移除 /* ... */ 註解——避免守衛被註解內提及的 selector 字串騙過。"""
+        return re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
+
+    def _search_css(self):
+        return SEARCH_CSS.read_text(encoding="utf-8")
+
+    # --- T4 ---
+
+    def test_search_grid_3col_at_480(self):
+        """T4：search.css ≤480px .search-grid 為 repeat(3, 1fr)（非單欄 1fr）。
+        三問：改回 1fr → 紅；刪 3-col 規則 → 紅。
+        """
+        css = self._search_css()
+        blocks = re.findall(r'@media \(max-width: 480px\) \{(.*?)\n\}', css, re.DOTALL)
+        assert blocks, "search.css 找不到 @media (max-width: 480px) block"
+        target = [b for b in blocks if re.search(r'\.search-grid \{', b)]
+        assert target, "找不到含 .search-grid 的 ≤480px block"
+        block = target[0]
+        m = re.search(r'\.search-grid \{([^}]*)\}', block)
+        assert m, "≤480px block 內找不到 .search-grid 規則"
+        rule = m.group(1)
+        assert "repeat(3, 1fr)" in rule, (
+            "≤480px .search-grid 應為 repeat(3, 1fr)（T9-T4 port）；目前: " + rule.strip()
+        )
+        assert "grid-template-columns: 1fr;" not in rule, (
+            "≤480px .search-grid 不應殘留單欄 grid-template-columns: 1fr;"
+        )
+
+    # --- T5 ---
+
+    def test_search_poster_crop_scoped(self):
+        """T5：search.css ≤480px poster-crop + caption 帶正確 :is() scope + :not(.hero-card)。
+        STRIP CSS COMMENTS first（防被 selector 說明文字騙過，mirror TestUS5PosterCropScoped）。
+        三問：拔 :is() 前綴 → 紅；用錯 class .av-maker → 紅；拔 :not(.hero-card) → 紅。
+        """
+        css = self._strip_comments(self._search_css())
+        blocks = re.findall(r'@media \(max-width: 480px\) \{(.*?)\n\}', css, re.DOTALL)
+        target = [b for b in blocks if ".av-card-preview-img" in b and ".search-grid" in b]
+        assert target, "找不到含 .av-card-preview-img + .search-grid 的 ≤480px block（T9-T5 poster-crop 缺失）"
+        block = target[0]
+
+        # rule-bound：aspect-ratio 規則自身 selector 必帶 :is() + :not(.hero-card)
+        m = re.search(r'([^{}]*)\{[^{}]*aspect-ratio: var\(--poster-crop-ratio[^{}]*\}', block, re.DOTALL)
+        assert m, "找不到 aspect-ratio: var(--poster-crop-ratio) 規則"
+        sel = m.group(1)
+        assert ":is(#ds-gallery-components, .ds-gallery-composition)" in sel, (
+            "aspect-ratio 規則 selector 必帶 :is(#ds-gallery-components,…) scope；"
+            f"目前 selector: {sel.strip()!r}"
+        )
+        assert ":not(.hero-card)" in sel, (
+            "aspect-ratio 規則 selector 必帶 :not(.hero-card)（排除女優 hero 卡）"
+        )
+
+        # object-position 同款 rule-bound 檢查
+        m2 = re.search(r'([^{}]*)\{[^{}]*object-position: right center[^{}]*\}', block, re.DOTALL)
+        assert m2, "找不到 object-position: right center 規則"
+        sel2 = m2.group(1)
+        assert ":is(#ds-gallery-components, .ds-gallery-composition)" in sel2 and ":not(.hero-card)" in sel2, (
+            "object-position 規則 selector 必帶 :is(…) scope + :not(.hero-card)"
+        )
+
+        # caption：.av-actress display:none
+        m3 = re.search(r'\.footer-default \.av-actress \{([^}]*)\}', block)
+        assert m3, "找不到 .footer-default .av-actress 規則"
+        assert "display: none" in m3.group(1), ".av-actress（女優名次行）應 display: none"
+
+        # .av-num ellipsis
+        m4 = re.search(r'\.footer-default \.av-num \{([^}]*)\}', block)
+        assert m4, "找不到 .footer-default .av-num 規則"
+        assert "text-overflow: ellipsis" in m4.group(1), ".av-num（番號）應單行 ellipsis"
+
+    def test_search_touch_narrow_reshows_footer_default(self):
+        """T5：≤480px ∩ pointer:coarse .search-grid 還原 .footer-default（番號層）+ 壓 .footer-hover。
+        三問：刪此 block → 紅；把 footer-default opacity 改回 0 → 紅。
+        """
+        css = self._strip_comments(self._search_css())
+        m = re.search(
+            r'@media \(max-width: 480px\) and \(pointer: coarse\) \{(.*?)\n\}',
+            css, re.DOTALL,
+        )
+        assert m, "search.css 找不到 @media (max-width: 480px) and (pointer: coarse) block（T9-T5 coarse 還原缺失）"
+        block = m.group(1)
+
+        assert ".search-grid" in block, "coarse 交集 block 應 scope 到 .search-grid"
+
+        # footer-default 還原：selector 帶 :is() + :not(.hero-card) + opacity:1
+        md = re.search(r'([^{}]*\.footer-default)\s*\{([^}]*)\}', block)
+        assert md, "coarse 交集 block 內找不到 .footer-default 規則"
+        assert ":is(#ds-gallery-components, .ds-gallery-composition)" in md.group(1) and ":not(.hero-card)" in md.group(1), (
+            ".footer-default 還原規則 selector 必帶 :is(…) scope + :not(.hero-card)"
+        )
+        assert "opacity: 1" in md.group(2), (
+            "≤480px ∩ coarse 應把 search 影片格 .footer-default opacity: 1（還原番號 caption 層）"
+        )
+
+        # footer-hover 壓回 opacity:0
+        mh = re.search(r'\.footer-hover\s*\{([^}]*)\}', block)
+        assert mh, "coarse 交集 block 內找不到 .footer-hover 規則"
+        assert "opacity: 0" in mh.group(1), (
+            "≤480px ∩ coarse search 影片格應把 .footer-hover opacity: 0"
+        )
+
+    # --- T8 ---
+
+    def test_search_lightbox_cover_fit(self):
+        """T8：search.css ≤480px .search-container .lightbox-cover.has-cover 消 letterbox。
+        決策 ①：容器 + img 皆 gate .has-cover（排除女優燈箱）。
+        護欄：block 內不得出現未 gate .has-cover 的裸 .search-container .lightbox-cover img（波及女優）。
+        三問：拿掉容器 min-height:0 → 紅；拿掉 img has-cover gate → 紅（bare 出現）。
+        """
+        css = self._search_css()
+        blocks = re.findall(r'@media \(max-width: 480px\) \{(.*?)\n\}', css, re.DOTALL)
+        target = [b for b in blocks if ".search-container .lightbox-cover" in b]
+        assert target, "search.css 找不到含 .search-container .lightbox-cover 的 ≤480px block（T9-T8 cover-fit 缺失）"
+        block = target[0]
+
+        # 容器：.search-container .lightbox-cover.has-cover { min-height: 0; min-width: 0 }
+        mc = re.search(r'\.search-container \.lightbox-cover\.has-cover \{([^}]*)\}', block)
+        assert mc, "T9-T8 容器規則須為 .search-container .lightbox-cover.has-cover"
+        cbody = mc.group(1)
+        assert "min-height: 0" in cbody, "容器須 min-height: 0（make-or-break）"
+        assert "min-width: 0" in cbody, "容器須 min-width: 0"
+
+        # img：.search-container .lightbox-cover.has-cover img { height: auto; width: 100% }
+        mi = re.search(r'\.search-container \.lightbox-cover\.has-cover img \{([^}]*)\}', block)
+        assert mi, "T9-T8 img 規則須為 .search-container .lightbox-cover.has-cover img（決策 ①：img 同 gate has-cover）"
+        ibody = mi.group(1)
+        assert "height: auto" in ibody, "img 須 height: auto（覆寫 60vh letterbox 源）"
+        assert "width: 100%" in ibody, "img 須 width: 100%"
+
+        # 護欄：不得含裸 .search-container .lightbox-cover img（無 .has-cover）
+        # 正確寫法一定有 .has-cover（如 .lightbox-cover.has-cover img），裸寫不含 .has-cover
+        bare = re.search(r'\.search-container \.lightbox-cover(?!\.has-cover) img \{', block)
+        assert not bare, (
+            "T9-T8 block 不得含裸 .search-container .lightbox-cover img（無 .has-cover gate）"
+            "——會波及女優燈箱封面（決策 ①）"
+        )
+
+    # --- T8 template ---
+
+    def test_search_lightbox_has_cover_class(self):
+        """T8：search.html .lightbox-cover 帶完整三條件 has-cover 旗標（決策 ②）。
+        三條件缺一即紅：非女優模式 + 有 cover 欄位 + 封面未 404。
+        注意：search 欄位是 .cover（非 .cover_url，R3 guard）。
+        """
+        html = SEARCH_HTML.read_text(encoding="utf-8")
+        assert (
+            "'has-cover': !actressLightboxMode() && !!currentLightboxVideo()?.cover && !_heroLightboxImageError"
+            in html
+        ), (
+            "search.html .lightbox-cover 應綁完整三條件 has-cover（決策 ②）；"
+            "缺少非女優判斷、或用 .cover_url（應為 .cover）、或漏 error-state 均為紅"
+        )
+
+    # --- T7 ---
+
+    def test_search_grid_mode_threads_poster_crop(self):
+        """T7：grid-mode.js openLightbox 計算 posterCrop 並傳入 playGridToLightbox。
+        三問：刪 posterCrop 計算 → 紅；刪傳遞 → 紅；拔 hero-card 判斷 → 紅。
+        """
+        js = GRID_MODE_JS.read_text(encoding="utf-8")
+        assert "posterCrop" in js, "grid-mode.js 應計算 posterCrop"
+        assert "window.innerWidth <= 480" in js, "posterCrop 應 gate ≤480px"
+        assert "hero-card" in js, "posterCrop 應排除 hero 卡（防禦性 guard）"
+        assert "posterCrop: posterCrop" in js, (
+            "grid-mode.js 應把 posterCrop 傳入 playGridToLightbox options"
+        )
+
+    # --- showcase 回歸護欄 ---
+
+    def test_showcase_t8_untouched(self):
+        """回歸護欄：T9 不動 showcase.css——showcase T8 block 仍在。
+        三問：T9 誤刪 showcase T8 container 規則 → 紅。
+        """
+        css = _SHOWCASE_CSS_T9.read_text(encoding="utf-8")
+        assert ".lightbox-cover.has-cover:has(.lb-full)" in css, (
+            "showcase.css T8 container 規則 .lightbox-cover.has-cover:has(.lb-full) 應保留（T9 不動 showcase.css）"
+        )
+        assert "min-height: 0" in css, (
+            "showcase.css T8 min-height: 0 應保留（T9 回歸護欄）"
         )

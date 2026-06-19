@@ -32,7 +32,7 @@
             </button>
 
             <!-- Cover Image -->
-            <div class="lightbox-cover">
+            <div class="lightbox-cover" :class="{'has-cover': !actressLightboxMode() && !!currentLightboxVideo()?.cover && !_heroLightboxImageError}">
                 <img :src="actressLightboxMode()
                          ? (actressProfile?.img ? (actressProfile.img.startsWith('/api/') ? actressProfile.img : `/api/proxy-image?url=${encodeURIComponent(actressProfile.img)}`) : '')
                          : (currentLightboxVideo()?.cover ? `/api/proxy-image?url=${encodeURIComponent(currentLightboxVideo().cover)}` : '')"

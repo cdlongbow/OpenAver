@@ -717,8 +717,70 @@
 
 @media (max-width: 480px) {
     .search-grid {
-        grid-template-columns: 1fr;
-        padding: 1rem;
+        grid-template-columns: repeat(3, 1fr);  /* T9-port：search 影片格對齊 showcase 3-col */
+        gap: 0.5rem;
+        padding: 0.75rem;
+    }
+}
+
+/* T9-port：≤480px search 影片格 poster-crop + caption（對齊 showcase T4/T5，Option P 平行）。
+   selector scope 同 showcase：:is(#ds-gallery-components, .ds-gallery-composition) 帶 (1,0,0) 贏
+   search.css 同類基準；:not(.hero-card) 排除女優入口 hero 卡（其 contain 圖不可 poster-crop）。
+   search-grid 和 showcase-grid 外觀一致：≤480px 三欄直幅格，番號 ellipsis，女優名隱藏。 */
+@media (max-width: 480px) {
+    :is(#ds-gallery-components, .ds-gallery-composition) .search-grid .av-card-preview:not(.hero-card) .av-card-preview-img {
+        aspect-ratio: var(--poster-crop-ratio, 0.71);
+        height: auto;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition) .search-grid .av-card-preview:not(.hero-card) .av-card-preview-img img {
+        object-position: right center;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition) .search-grid .av-card-preview:not(.hero-card) .av-card-preview-footer .footer-default .av-num {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-size: 0.7rem;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition) .search-grid .av-card-preview:not(.hero-card) .av-card-preview-footer .footer-default .av-actress {
+        display: none;
+    }
+}
+
+/* T9-port：≤480px ∩ touch 裝置 — search 影片格還原 .footer-default（番號可讀層）。
+   showcase.css 的 @media(pointer:coarse) US3c 把全局 .av-card-preview .footer-default opacity:0，
+   而 showcase 的 ≤480∩coarse 修正只 scope 在 .showcase-grid（L894–902），不涵蓋 .search-grid。
+   故補平行規則：≤480px ∩ coarse ∩ .search-grid 非 hero → 還原 footer-default 番號層。
+   specificity :is(…) ID 帶 (1,0,0) 使 (1,4,0) 勝 US3c .av-card-preview .footer-* (0,2,0)。 */
+@media (max-width: 480px) and (pointer: coarse) {
+    :is(#ds-gallery-components, .ds-gallery-composition) .search-grid .av-card-preview:not(.hero-card) .footer-default {
+        opacity: 1;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition) .search-grid .av-card-preview:not(.hero-card) .footer-hover {
+        opacity: 0;
+    }
+}
+
+/* T9-port：≤480px search 影片燈箱封面貼合原圖比例（消 letterbox 死白）。
+   判別子 .search-container 精準限 search 頁——showcase 頁根為 .showcase-container，零波及。
+   容器 + img 皆 gate .has-cover（決策 ①）：search 無 similar-open、無「保低 specificity」顧慮；
+     gate has-cover 後女優模式（has-cover=false）/無封面/404 皆不命中 → 乾淨排除女優燈箱、不塌。
+   specificity（皆自勝、不靠源序）：容器 .search-container .lightbox-cover.has-cover (0,3,0) 勝基準 (0,1,0)；
+     img .search-container .lightbox-cover.has-cover img (0,3,1) 勝基準 .lightbox-cover img (0,1,1)。 */
+@media (max-width: 480px) {
+    /* (b) 容器：有封面才塌到圖盒 */
+    .search-container .lightbox-cover.has-cover {
+        min-height: 0;
+        min-width: 0;
+    }
+    /* (a) img：寬填滿、高隨原圖比例（覆寫 60vh letterbox 源）；同 gate has-cover 排除女優燈箱 */
+    .search-container .lightbox-cover.has-cover img {
+        width: 100%;
+        height: auto;
+        object-fit: contain;
     }
 }
 
