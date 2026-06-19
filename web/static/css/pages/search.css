@@ -484,6 +484,14 @@
         width: 100%;
         min-width: auto;
     }
+
+    /* 75a-US3a: mobile scroll trap 解鎖 —
+     * 桌面 .av-card-full-info 已有 overflow-y:auto，不動。
+     * column-stacked layout 下四層 overflow:hidden + height 鎖定形成 scroll trap。 */
+    .result-area        { overflow: visible; }
+    #resultCard         { overflow: visible; max-height: none; }
+    #resultCard > .av-card-full { overflow: visible; }
+    .search-container   { height: auto; overflow-y: auto; }
 }
 
 /* Mobile 額外調整 */

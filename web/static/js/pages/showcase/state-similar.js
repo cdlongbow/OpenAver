@@ -226,8 +226,8 @@ export function stateSimilar() {
       if (this.showFavoriteActresses) return;     // CD-56C-13 fail-safe
       if (!this.currentLightboxVideo) return;     // 無 lightbox video metadata 時 no-op
 
-      // 56c-T7：手機降級 — viewport < 768px 不進 constellation
-      if (window.innerWidth < 768) {
+      // 56c-T7：手機降級 — viewport < 960px 不進 constellation
+      if (window.innerWidth < 960) {
         if (this.similarModeAnimating) return;
         if (this.similarModeMobileOpen) {
           this.similarModeMobileOpen = false;   // toggle：再點收合

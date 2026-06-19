@@ -828,6 +828,28 @@
     }
 }
 
+/* 75a-US3c: touch 裝置 hover-only 三處直達（比照 .lightbox-cover .cover-actions 先例，showcase.css:825-829）*/
+@media (pointer: coarse) {
+    /* (1) showcase grid 影片卡 overlay — 常駐顯示 */
+    :is(#ds-gallery-components, .ds-gallery-composition) .av-card-preview-overlay {
+        opacity: 1;
+        pointer-events: auto;
+    }
+    /* (2) 影片卡 footer-hover（標題層）— 常駐顯示，解除 translateY(100%) 入場 transform */
+    .av-card-preview .footer-hover {
+        opacity: 1;
+        transform: translateY(0);
+    }
+    .av-card-preview .footer-default {
+        opacity: 0;    /* touch 裝置：標題層常駐、番號/女優層隱藏 */
+    }
+    /* (3) actress card overlay — 常駐顯示 */
+    .actress-card-overlay {
+        opacity: 1;
+        pointer-events: auto;
+    }
+}
+
 /* ─── 56c-T3 / T3fix: Similar Mode 入口按鈕 + Sparkle Burst 預覽 ────────────
  * .lightbox-similar-btn — 玻璃材質圓鈕，與 .lightbox-close 鏡射對稱（左上 1rem/1rem）
  *   尺寸 44×44，與 .lightbox-close 鏡射對稱（同尺寸 + 同距邊 1rem）
@@ -938,7 +960,7 @@
 }
 
 /* 確保 mobile collapse 只在小螢幕渲染（桌面應永遠 similarModeMobileOpen = false） */
-@media (min-width: 768px) {
+@media (min-width: 960px) {
     .lightbox-similar-mobile {
         display: none !important;   /* 桌面安全網：即使 state 殘留也不顯示 */
     }
@@ -1188,6 +1210,21 @@
     .toolbar-controls .control-group {
         flex-wrap: wrap;
         justify-content: flex-end;
+    }
+}
+
+/* 75a-US3d: tablet toolbar 769–1023px 銜接規則（舊缺失，補齊斷層）*/
+@media (min-width: 769px) and (max-width: 1023px) {
+    .showcase-toolbar {
+        grid-template-columns: auto 1fr auto;   /* 搜尋框置中，控制區靠右 */
+        gap: 0.75rem;
+        padding: 0.75rem 1rem;
+    }
+    .toolbar-search {
+        grid-column: 2;
+    }
+    .toolbar-controls {
+        grid-column: 3;
     }
 }
 
