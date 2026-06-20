@@ -70,7 +70,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install ruff
-        run: pip install ruff
+        run: pip install ruff==0.15.17  # keep in sync with requirements-test.txt pin
 
       - name: Run ruff
         run: ruff check .

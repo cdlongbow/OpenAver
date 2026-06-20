@@ -5,6 +5,7 @@
 前提）。解析 YAML 後檢查語意，不依賴 attribute 順序。
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "test.yml"
+_REQUIREMENTS = _REPO_ROOT / "requirements-test.txt"
 
 
 @pytest.fixture(scope="module")
@@ -48,6 +50,29 @@ def test_lint_frontend_runs_npm_lint_and_ruff(workflow):
 def test_lint_frontend_is_independent(workflow):
     """lint-frontend 與 test 平行（無 needs），任一紅各自擋 PR。"""
     assert "needs" not in workflow["jobs"]["lint-frontend"], "lint-frontend 不應依賴其他 job（平行擋 PR）"
+
+
+def test_ci_ruff_pin_matches_requirements(workflow):
+    """CI 的 ruff pin 必須與 requirements-test.txt 一致——
+
+    pip `-c` constraints 無法消費含 extras 的 requirements-test.txt（uvicorn[standard]
+    → pip 拒絕），故 ruff 版本必須在兩處各寫一次（CI step + requirements）。本守衛把
+    這個「兩處重複」鎖成 single source of truth：任一漂移即 RED，防 upstream ruff
+    自動升級或人為忘記同步在 repo 無改動下讓 CI 轉紅。
+    """
+    req_match = re.search(r"^ruff==(\S+)", _REQUIREMENTS.read_text(encoding="utf-8"), re.MULTILINE)
+    assert req_match, "requirements-test.txt 缺 `ruff==<version>` 精確 pin（lint 是 PR gate，需鎖版本）"
+    req_version = req_match.group(1).split("#")[0].strip()
+
+    runs = " ".join(_run_commands(workflow["jobs"]["lint-frontend"]))
+    ci_match = re.search(r"ruff==(\S+)", runs)
+    assert ci_match, "CI lint-frontend 未以 `ruff==<version>` 精確 pin 安裝 ruff（避免版本漂移）"
+    ci_version = ci_match.group(1).split("#")[0].strip()
+
+    assert ci_version == req_version, (
+        f"CI ruff pin（{ci_version}）與 requirements-test.txt（{req_version}）不一致；"
+        "兩處必須同步（single source of truth）"
+    )
 
 
 # ── mypy 殭屍防復活（TASK-78-T5）────────────────────────────────────────────
