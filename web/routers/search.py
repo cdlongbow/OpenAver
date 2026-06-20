@@ -123,7 +123,11 @@ def proxy_image(url: str = Query(..., description="圖片 URL")):
         resp = requests.get(url, headers=headers, timeout=10)
         if resp.status_code == 200:
             content_type = resp.headers.get('Content-Type', 'image/jpeg')
-            return Response(content=resp.content, media_type=content_type)
+            return Response(
+                content=resp.content,
+                media_type=content_type,
+                headers={"Cache-Control": "public, max-age=86400"},
+            )
     except Exception:
         logger.exception("proxy_image failed: %s", url)
 
