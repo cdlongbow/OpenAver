@@ -48,3 +48,18 @@ def test_lint_frontend_runs_npm_lint_and_ruff(workflow):
 def test_lint_frontend_is_independent(workflow):
     """lint-frontend 與 test 平行（無 needs），任一紅各自擋 PR。"""
     assert "needs" not in workflow["jobs"]["lint-frontend"], "lint-frontend 不應依賴其他 job（平行擋 PR）"
+
+
+# ── mypy 殭屍防復活（TASK-78-T5）────────────────────────────────────────────
+# mypy config + 依賴齊全但 CI 從不執行＝殭屍（spec D4）。已於 feature/78 刪除；
+# 以下守衛防它被無意識復活（config 在但永不跑的假象保護）。
+
+def test_no_mypy_ini():
+    assert not (_REPO_ROOT / "mypy.ini").exists(), "mypy.ini 殭屍復活（spec D4：已刪除，CI 從不跑 mypy）"
+
+
+def test_requirements_test_has_no_mypy():
+    txt = (_REPO_ROOT / "requirements-test.txt").read_text(encoding="utf-8")
+    lines = [ln.split("#")[0].strip().lower() for ln in txt.splitlines()]
+    offenders = [ln for ln in lines if ln.startswith("mypy") or ln.startswith("types-requests")]
+    assert not offenders, f"requirements-test.txt 不應有 mypy/types-requests 依賴（已刪）：{offenders}"

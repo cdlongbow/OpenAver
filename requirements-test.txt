@@ -22,7 +22,5 @@ pytest-asyncio>=0.21.0
 pytest-mock>=3.12.0
 pytest-cov>=7.0.0  # US4 cov-floor (scripts/run_cov.sh)
 httpx>=0.25.0
-mypy>=1.0.0
-types-requests
 pytest-playwright>=0.4.0  # e2e testing
 ruff>=0.15.0

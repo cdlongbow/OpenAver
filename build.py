@@ -62,8 +62,8 @@ EXCLUDE_PACKAGES = {
     'coverage', 'pluggy', 'iniconfig',
     'playwright',
 
-    # 類型檢查工具
-    'mypy', 'mypy-extensions', 'typed-ast', 'types-requests',
+    # 類型檢查 stub（mypy 已於 feature/78 移除；以下為防禦性 denylist，
+    # 萬一 stub 進 venv 不打包進 ZIP）
     'types-beautifulsoup4', 'types-html5lib',
 
     # 開發工具
