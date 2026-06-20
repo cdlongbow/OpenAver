@@ -103,18 +103,33 @@ class TestFluentMaterialsGuards:
             f"theme.css link (line {theme_idx})"
         )
 
-    # ─── Guard 2 ─────────────────────────────────────────────────────────────
+    # ─── Guard 2 (77d-T3: role-split) ────────────────────────────────────────
 
-    def test_all_backdrop_filter_dim_scoped(self):
-        """Every backdrop-filter: declaration must be inside a [data-theme="dim"]-scoped selector.
+    # The chrome top-bar SHELL rules are theme-agnostic from 77d-T2 (glass material in both
+    # dim and light), so they are legitimately NOT dim-scoped. Their light token values are
+    # guarded by test_light_shell_tokens_complete (IACVT completeness).
+    UNSCOPED_SHELL_TOPBARS = (
+        ".search-bar",
+        ".settings-header",
+        ".avlist-header",
+        ".showcase-toolbar",
+    )
+
+    def test_non_shell_backdrop_filter_dim_scoped(self):
+        """Every backdrop-filter must be dim-scoped EXCEPT the 77d theme-agnostic chrome top-bars.
 
         CI-backstop for a stylelint-class rule (CI runs pytest only; reference_ci_no_eslint)
         — keep even though it asserts CSS strings (documented exception to CLAUDE.md lint routing).
 
-        Protects IACVT iron rule: unscoped backdrop-filter in light mode causes the property
-        to revert to initial (backdrop-filter: none), silently removing glass effects.
-        The rule .page-search #main-content:has(.showcase-lightbox.show) has no backdrop-filter
-        and is intentionally not dim-scoped — it's excluded by the backdrop-filter check itself.
+        Role split (plan-77d CD-D2): the 4 chrome top-bar shell rules (.search-bar /
+        .settings-header / .avlist-header / .showcase-toolbar) are intentionally unscoped in
+        77d-T2 — they consume shell tokens that have BOTH dim and light values
+        (test_light_shell_tokens_complete guards completeness, preventing IACVT). EVERY OTHER
+        backdrop-filter (panel / overlay / sidebar / offcanvas / top-navbar / footer) must stay
+        [data-theme="dim"]-scoped: those roles have dim-only tokens (S-2), so an unscoped
+        reference in light would IACVT to backdrop-filter: none, silently removing the glass.
+        The .page-search #main-content:has(.showcase-lightbox.show) rule has no backdrop-filter
+        and is excluded by the backdrop-filter check itself.
         """
         css = _strip_css_comments(self._css())
         blocks = _parse_rule_blocks(css)
@@ -125,20 +140,21 @@ class TestFluentMaterialsGuards:
             has_backdrop = bool(re.search(r"(?<!-webkit-)backdrop-filter\s*:", declarations))
             if not has_backdrop:
                 continue
-            # The selector may be prefixed by an @media line; strip it.
-            # We need the actual CSS selector (the innermost one).
-            # _parse_rule_blocks at depth==0 returns @media blocks as a single entry;
-            # since we recurse implicitly via our walker, @media bodies are also blocks.
-            # Strip any @media(...) prefix from selector:
+            # The selector may be prefixed by an @media line; strip it to the inner selector.
             clean_selector = re.sub(r"@media\s*\([^)]*\)\s*", "", selector).strip()
-            if '[data-theme="dim"]' not in clean_selector:
-                violations.append(
-                    f"  selector={selector!r} contains backdrop-filter but is not dim-scoped"
-                )
+            if '[data-theme="dim"]' in clean_selector:
+                continue
+            # Not dim-scoped — allowed only for the 77d theme-agnostic chrome top-bars.
+            if any(cls in clean_selector for cls in self.UNSCOPED_SHELL_TOPBARS):
+                continue
+            violations.append(
+                f"  selector={selector!r} contains backdrop-filter but is neither "
+                "dim-scoped nor a 77d theme-agnostic chrome top-bar"
+            )
 
         assert not violations, (
-            "fluent-materials.css: backdrop-filter found outside [data-theme=\"dim\"] scope:\n"
-            + "\n".join(violations)
+            "fluent-materials.css: backdrop-filter outside [data-theme=\"dim\"] scope "
+            "(and not a whitelisted 77d chrome top-bar):\n" + "\n".join(violations)
         )
 
     # ─── Guard 3 ─────────────────────────────────────────────────────────────
@@ -351,14 +367,15 @@ class TestFluentMaterialsGuards:
             "theme.css: .av-card-preview.gsap-animating rule block not found"
         )
 
-    # ─── Guard 10 ────────────────────────────────────────────────────────────
+    # ─── Guard 10 (77d-T3: theme-agnostic) ───────────────────────────────────
 
-    def test_77c_search_bar_float_dim_desktop(self):
-        """fluent-materials.css: [data-theme="dim"] .search-bar inside @media (min-width:1024px) must set border-radius + border + margin.
+    def test_77d_search_bar_float_theme_agnostic(self):
+        """.search-bar float (@media ≥1024px) sets border-radius + border + margin and is THEME-AGNOSTIC.
 
-        Protects CD-C1 (Rule 45, 77c-T1): the search bar gets B floating treatment only on
-        desktop (≥1024px), leaving mobile as a full-width A shelf. This gate ensures the
-        search bar doesn't accidentally float on narrow viewports (feature/75 compat).
+        Protects CD-D1 (Rule 45, 77d-T1): the search-bar B floating geometry was unscoped from
+        [data-theme="dim"] so light gets the same shape as dim. Assert the desktop rule exists,
+        sets radius/border/margin, and its selector does NOT contain [data-theme="dim"]. The
+        @media (min-width:1024px) gate still keeps mobile as a full-width shelf (feature/75 compat).
         """
         css_raw = self._css()
 
@@ -368,64 +385,71 @@ class TestFluentMaterialsGuards:
             css_raw,
         )
 
-        dim_search_bar_blocks = []
+        search_bar_blocks = []
         for mb in media_blocks:
-            # Find [data-theme="dim"] .search-bar rules inside
-            inner_blocks = _parse_rule_blocks(mb)
-            for sel, decls in inner_blocks:
-                if '[data-theme="dim"]' in sel and ".search-bar" in sel:
-                    dim_search_bar_blocks.append((sel, decls))
+            for sel, decls in _parse_rule_blocks(mb):
+                if ".search-bar" in sel:
+                    search_bar_blocks.append((sel, decls))
 
-        assert dim_search_bar_blocks, (
-            "fluent-materials.css: no [data-theme=\"dim\"] .search-bar rule found "
-            "inside @media (min-width: 1024px) — CD-C1 (Rule 45) missing"
+        assert search_bar_blocks, (
+            "fluent-materials.css: no .search-bar rule found inside "
+            "@media (min-width: 1024px) — CD-D1 (Rule 45) missing"
         )
 
-        for sel, decls in dim_search_bar_blocks:
+        for sel, decls in search_bar_blocks:
+            assert '[data-theme="dim"]' not in sel, (
+                f".search-bar @media 1024px float rule must be theme-agnostic "
+                f"(no [data-theme=\"dim\"]) after 77d-T1: {sel!r}"
+            )
             assert re.search(r"border-radius\s*:", decls), (
-                f"[data-theme=\"dim\"] .search-bar @media 1024px block missing border-radius"
+                ".search-bar @media 1024px block missing border-radius"
             )
             assert re.search(r"\bborder\s*:", decls), (
-                f"[data-theme=\"dim\"] .search-bar @media 1024px block missing border"
+                ".search-bar @media 1024px block missing border"
             )
             assert re.search(r"\bmargin\s*:", decls), (
-                f"[data-theme=\"dim\"] .search-bar @media 1024px block missing margin"
+                ".search-bar @media 1024px block missing margin"
             )
 
-    # ─── Guard 11 ────────────────────────────────────────────────────────────
+    # ─── Guard 11 (77d-T3: theme-agnostic) ────────────────────────────────────
 
-    def test_77c_headers_float_dim_desktop(self):
-        """:is(.settings-header, .avlist-header) rules: padding at all widths + radius/border at ≥1024px, dim-scoped.
+    def test_77d_headers_float_theme_agnostic(self):
+        """:is(.settings-header, .avlist-header): padding (all widths) + float (@media) THEME-AGNOSTIC.
 
-        Protects CD-C2 (Rules 46/47, 77c-T2): the header flush-left fix (padding: 1rem 1.5rem)
-        applies universally; the B floating treatment (border-radius + 4-side border) is
-        desktop-gated. Both rules must be dim-scoped.
+        Protects CD-D1 (Rules 46/47, 77d-T1): the header flush-left fix (padding: 1rem 1.5rem,
+        all widths) and the desktop B floating treatment (border-radius + 4-side border) were
+        unscoped from [data-theme="dim"] so light headers match dim. Assert both rules exist,
+        set the right declarations, and are NOT dim-scoped.
         """
         css_raw = self._css()
         css_no_comments = _strip_css_comments(css_raw)
 
-        # Guard 11a: all-widths padding rule
+        # Guard 11a: all-widths padding rule (theme-agnostic — selector has no @media prefix)
         all_blocks = _parse_rule_blocks(css_no_comments)
         padding_found = False
         for sel, decls in all_blocks:
             if (
-                '[data-theme="dim"]' in sel
-                and ".settings-header" in sel
+                ".settings-header" in sel
                 and ".avlist-header" in sel
+                and "@media" not in sel
             ):
                 if re.search(r"padding\s*:", decls):
                     padding_found = True
+                    assert '[data-theme="dim"]' not in sel, (
+                        f":is(.settings-header, .avlist-header) padding rule must be "
+                        f"theme-agnostic (no [data-theme=\"dim\"]) after 77d-T1: {sel!r}"
+                    )
                     assert re.search(r"padding\s*:\s*1rem\s+1\.5rem", decls), (
-                        f"[data-theme=\"dim\"] :is(.settings-header, .avlist-header) "
-                        f"padding should be '1rem 1.5rem' (flush-left fix CD-C2)"
+                        ":is(.settings-header, .avlist-header) padding should be "
+                        "'1rem 1.5rem' (flush-left fix CD-C2)"
                     )
 
         assert padding_found, (
-            "fluent-materials.css: [data-theme=\"dim\"] :is(.settings-header, .avlist-header) "
-            "all-widths padding rule not found (Rule 46 / CD-C2)"
+            "fluent-materials.css: :is(.settings-header, .avlist-header) "
+            "all-widths padding rule not found (Rule 46)"
         )
 
-        # Guard 11b: desktop-gated floating rule
+        # Guard 11b: desktop-gated floating rule (theme-agnostic)
         media_blocks = re.findall(
             r"@media\s*\(\s*min-width\s*:\s*1024px\s*\)\s*\{([\s\S]*?)\}(?=\s*(?:/\*|@|[\[\.\#a-zA-Z]|$))",
             css_raw,
@@ -433,28 +457,25 @@ class TestFluentMaterialsGuards:
 
         desktop_header_blocks = []
         for mb in media_blocks:
-            inner_blocks = _parse_rule_blocks(mb)
-            for sel, decls in inner_blocks:
-                if (
-                    '[data-theme="dim"]' in sel
-                    and ".settings-header" in sel
-                    and ".avlist-header" in sel
-                ):
+            for sel, decls in _parse_rule_blocks(mb):
+                if ".settings-header" in sel and ".avlist-header" in sel:
                     desktop_header_blocks.append((sel, decls))
 
         assert desktop_header_blocks, (
-            "fluent-materials.css: no [data-theme=\"dim\"] :is(.settings-header, .avlist-header) "
-            "rule inside @media (min-width: 1024px) — Rule 47 / CD-C2 missing"
+            "fluent-materials.css: no :is(.settings-header, .avlist-header) "
+            "rule inside @media (min-width: 1024px) — Rule 47 missing"
         )
 
         for sel, decls in desktop_header_blocks:
+            assert '[data-theme="dim"]' not in sel, (
+                f":is(.settings-header, .avlist-header) @media float rule must be "
+                f"theme-agnostic (no [data-theme=\"dim\"]) after 77d-T1: {sel!r}"
+            )
             assert re.search(r"border-radius\s*:", decls), (
-                f"[data-theme=\"dim\"] :is(.settings-header, .avlist-header) "
-                f"@media 1024px block missing border-radius"
+                ":is(.settings-header, .avlist-header) @media 1024px block missing border-radius"
             )
             assert re.search(r"\bborder\s*:", decls), (
-                f"[data-theme=\"dim\"] :is(.settings-header, .avlist-header) "
-                f"@media 1024px block missing border"
+                ":is(.settings-header, .avlist-header) @media 1024px block missing border"
             )
 
     # ─── Guard 12 ────────────────────────────────────────────────────────────
@@ -493,4 +514,107 @@ class TestFluentMaterialsGuards:
         assert found_block, (
             "fluent-materials.css: regression anchor rule block not found after parsing "
             "(selector present but block is empty or malformed?)"
+        )
+
+    # ─── Guard 13 (77d-T3: IACVT completeness) ────────────────────────────────
+
+    # The 6 shell tokens consumed by the unscoped chrome top-bars (Rule 10/11/12/13a material
+    # + Rule 45/47 border). Each must exist in BOTH theme token blocks (dim + light).
+    SHELL_TOKENS = (
+        "--glass-shell-gradient",
+        "--glass-shell-fill",
+        "--glass-shell-saturate",
+        "--glass-shell-edge-top",
+        "--glass-shell-edge-bottom",
+        "--glass-shell-border",
+    )
+
+    def test_light_shell_tokens_complete(self):
+        """Every shell token consumed by the unscoped chrome top-bars must be defined in BOTH
+        the [data-theme="dim"] AND the [data-theme="light"] token block.
+
+        Protects CD-D2(a) IACVT completeness: 77d-T2 unscoped the shell application rules
+        (.search-bar / .settings-header / .avlist-header / .showcase-toolbar) so they run in
+        light too. If any consumed shell token lacks a light value, var(--glass-shell-*) in
+        light reverts to initial → the glass background disappears. Fails closed if a future
+        edit unscopes a shell rule (or adds a shell token) without a matching light value.
+        """
+        css = _strip_css_comments(self._css())
+        blocks = _parse_rule_blocks(css)
+
+        dim_decls = None
+        light_decls = None
+        for selector, declarations in blocks:
+            sel = selector.strip()
+            if sel == '[data-theme="dim"]':
+                dim_decls = declarations
+            elif sel == '[data-theme="light"]':
+                light_decls = declarations
+
+        assert dim_decls is not None, (
+            "fluent-materials.css: [data-theme=\"dim\"] token block not found"
+        )
+        assert light_decls is not None, (
+            "fluent-materials.css: [data-theme=\"light\"] token block not found — "
+            "77d-T2 light shell tokens missing → light chrome top-bars would IACVT"
+        )
+
+        missing_dim = [
+            t for t in self.SHELL_TOKENS
+            if not re.search(re.escape(t) + r"\s*:", dim_decls)
+        ]
+        missing_light = [
+            t for t in self.SHELL_TOKENS
+            if not re.search(re.escape(t) + r"\s*:", light_decls)
+        ]
+
+        assert not missing_dim, (
+            f"[data-theme=\"dim\"] token block missing shell token(s): {missing_dim}"
+        )
+        assert not missing_light, (
+            f"[data-theme=\"light\"] token block missing shell token(s): {missing_light} "
+            "(IACVT risk — CD-D2(a): each unscoped shell rule needs a light value)"
+        )
+
+    # ─── Guard 14 (77d-T3: S-2 role boundary) ─────────────────────────────────
+
+    # One representative application-rule marker per non-shell role. These four roles keep
+    # dim-only tokens (S-2); their application rules must stay dim-scoped. Caption and
+    # media-frame carry no backdrop-filter, so test_non_shell_backdrop_filter_dim_scoped
+    # cannot catch them — this guard covers all four via markers.
+    NON_SHELL_ROLE_MARKERS = {
+        "panel": ".help-card",
+        "caption": ".av-card-preview-footer",
+        "overlay": ".lightbox-content",
+        "media-frame": ".similar-slot",
+    }
+
+    def test_non_shell_roles_stay_dim_scoped(self):
+        """Panel / caption / overlay / media-frame application rules must stay [data-theme="dim"].
+
+        Protects S-2 / CD-D2(b): 77d only unscopes the SHELL role (chrome top-bars). The other
+        four material roles keep dim-only tokens, so their application rules must remain
+        dim-scoped — unscoping one without light tokens would IACVT the glass away in light.
+        """
+        css = _strip_css_comments(self._css())
+        blocks = _parse_rule_blocks(css)
+
+        violations = []
+        for role, marker in self.NON_SHELL_ROLE_MARKERS.items():
+            matched = [(sel, decls) for sel, decls in blocks if marker in sel]
+            assert matched, (
+                f"fluent-materials.css: {role} marker {marker!r} not found "
+                "(selector renamed? update NON_SHELL_ROLE_MARKERS)"
+            )
+            for sel, _decls in matched:
+                clean = re.sub(r"@media\s*\([^)]*\)\s*", "", sel).strip()
+                if '[data-theme="dim"]' not in clean:
+                    violations.append(
+                        f"  {role} rule {sel!r} (marker {marker}) is not dim-scoped — "
+                        "S-2 violation (non-shell roles must stay dim-only)"
+                    )
+
+        assert not violations, (
+            "fluent-materials.css: non-shell role rule unscoped from dim (S-2 / CD-D2(b)):\n"
+            + "\n".join(violations)
         )
