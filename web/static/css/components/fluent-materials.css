@@ -99,3 +99,76 @@
   --glass-edge-lowlight-mid:     color-mix(in oklch, black 16%, transparent);
   --glass-edge-lowlight-soft:    color-mix(in oklch, black 10%, transparent);
 }
+
+/* ==========================================================================
+ * A-T2: Mica canvas — dim-scoped surface application (CD-A3 / CD-A4)
+ *
+ * ALL rules below are [data-theme="dim"]-scoped.
+ * --mica-canvas is only defined inside [data-theme="dim"] (A-T1 token block).
+ * Any unscoped application in light would trigger IACVT → background: initial
+ * (transparent) → light body bg disappears. Iron rule: no unscoped canvas rules.
+ *
+ * Load order: fluent-materials.css is the last stylesheet site-wide (base.html
+ * L342, after {% block extra_css %}). Source order wins all same-specificity ties.
+ * ========================================================================== */
+
+/* Rule 1 — Body canvas (dim-scoped; duplicate-class specificity boost)
+ * Selector: [data-theme="dim"] body.fluent-canvas.fluent-canvas → (0,3,1)
+ * Ties the old theme.css:2369 [data-theme="dim"] body.fluent-canvas:not(.ds-page)
+ * rule at (0,3,1); source-order wins (this file loads last).
+ * NO :not(.ds-page) — intentionally covers showcase/design-system bodies (CD-A4).
+ * showcase/DS bodies carry .ds-page so the old :not(.ds-page) rule never hit them;
+ * this rule fills the gap. --mica-canvas value: see token-spec-77.md §1 / A-T1. */
+[data-theme="dim"] body.fluent-canvas.fluent-canvas {
+    background: var(--mica-canvas);
+    background-attachment: fixed;
+}
+
+/* Rule 2 — main-content transparent (dim-scoped)
+ * Overrides base.html inline <style> L213: .main-content { background-color: var(--surface-0); }
+ * specificity (0,1,0). Our rule (0,4,1) wins easily in dim; in light this rule
+ * does not exist (dim-scoped) so inline style stays active. */
+[data-theme="dim"] body.fluent-canvas.fluent-canvas .main-content {
+    background-color: transparent;
+}
+
+/* Rule 3 — Premium grain ::before (dim-scoped; reuses existing SVG from theme.css:2358)
+ * Source: theme.css L2362 body.fluent-canvas:not(.ds-page)::before
+ *   position: fixed; inset: 0; pointer-events: none; z-index: 0
+ *   SVG: fractalNoise baseFrequency="0.65" numOctaves="3" stitchTiles="stitch"
+ * Reused verbatim — same texture ensures light/dim grain consistency (Opus instruction #1).
+ * Override ONLY: scope to dim, opacity 0.025→0.03, add mix-blend-mode: soft-light.
+ * Specificity: (0,3,2) > light grain (0,2,2) — dim-scoped rule wins in dim;
+ * light-mode grain (theme.css:2358, unscoped) continues unaffected. */
+[data-theme="dim"] body.fluent-canvas.fluent-canvas::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+    opacity: 0.03;
+    mix-blend-mode: soft-light;
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* Rule 4 — Showcase container transparent (dim-scoped)
+ * showcase.css:1658 [data-theme="dim"] .showcase-container { background: radial-gradient(…) }
+ * specificity (0,2,0). Same selector here → source-order wins (this file loads last).
+ * Makes body Mica canvas visible through the showcase container in dim. */
+[data-theme="dim"] .showcase-container {
+    background: transparent;
+}
+
+/* Rule 5 — Suppress showcase container noise layer (dim-scoped; Opus Q1 → Option B)
+ * showcase.css:1895 .showcase-container::before has opacity:0.02, NO mix-blend-mode
+ * (unscoped, always active). When .showcase-container turns transparent (Rule 4),
+ * this ::before layer stacks on top of the body Mica grain (Rule 3: opacity 0.03
+ * soft-light). Two noise layers from different sources/blend-modes would read as
+ * a "hard" double-carpet noise — violating spec D3 "feel it, don't see it" and
+ * attempt-1's rejected texture feel.
+ * Single-grain-source principle (D1/D3): dim showcase grain comes exclusively from
+ * body Mica ::before. Suppress the container-level noise with display:none (preferred
+ * over opacity:0 — avoids unnecessary paint on this performance-sensitive page). */
+[data-theme="dim"] .showcase-container::before {
+    display: none;
+}
