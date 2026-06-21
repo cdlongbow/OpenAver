@@ -2564,6 +2564,40 @@ class TestTutorialExpandGuard:
                         f"{locale}.json missing or empty: tutorial.{key!r}"
 
 
+class TestTutorialSkipPersistsGuard:
+    """TASK-79-T7 (issue #63): 教學「跳過」必須視為看完並持久化。
+
+    bug 根因：skip() 呼叫 complete(false) → 不持久化 → 重進 /scanner 又彈。
+    修法：skip() 改走 complete(true)（持久化路徑，含 API 失敗的 localStorage fallback）。
+    三個 dismiss 入口（跳過 / X / 背景遮罩）共用 skip()，一改全到位。
+
+    Mutation 忠實度：把 skip() 改回 complete(false) 必須讓本守衛 RED。
+    """
+
+    def test_skip_persists_and_shares_entry(self):
+        js = Path("web/static/js/components/tutorial.js").read_text(encoding="utf-8")
+
+        # 抓 skip() 方法體（容忍空白）
+        m = re.search(r"\bskip\s*\(\s*\)\s*\{(.*?)\}", js, re.DOTALL)
+        assert m, "tutorial.js 找不到 skip() 方法"
+        body = m.group(1)
+
+        # 1a) bug pattern 消失：skip() 不再呼叫 complete(false)
+        assert not re.search(r"complete\(\s*false\s*\)", body), \
+            "skip() 不得呼叫 complete(false)（issue #63：跳過必須持久化，否則重進 /scanner 又彈）"
+
+        # 1b) 確有寫入動作：complete(true) 或 localStorage.setItem 或 POST /api/tutorial-completed
+        assert (
+            re.search(r"complete\(\s*true\s*\)", body)
+            or "localStorage.setItem" in body
+            or "/api/tutorial-completed" in body
+        ), "skip() 必須走持久化路徑（complete(true) / localStorage.setItem / POST /api/tutorial-completed 其一）"
+
+        # 2) 三個 dismiss 入口仍共用 skip()（tutorialSkip / tutorialClose / overlay 背景 click）
+        assert js.count("this.skip()") >= 3, \
+            "三個 dismiss 入口（跳過 / X / 背景遮罩）必須仍共用 this.skip()（≥3 處綁定）"
+
+
 class TestMissingEnrichConfirmGuard:
     """TASK-13 (0.7.6 hotfix): 守衛 Scanner 一鍵補完 > 500 confirm dialog 的實作"""
 
@@ -5131,9 +5165,13 @@ class TestJellyfinFrontend:
         # ---- 正斷言：四態 is-on（element-bound 到 segmented 區塊）----
         #   從 content 擷取 settings-form-row--external-manager 區塊後再斷言，
         #   確保 is-on 綁在外部管理器的 segmented button 而非其他地方（element-bound）
+        # 80a-T3：頁面 header 另有一個 .settings-sources-segmented[role=group]（server-mode 膠囊），
+        # 故先 anchor 到外部管理器 row 再抓 segmented，避免誤匹配 header 膠囊（regex 健化）。
+        _em_anchor = content.find("settings-form-row--external-manager")
+        assert _em_anchor != -1, "settings.html 缺少 settings-form-row--external-manager 區塊"
         seg_match = re.search(
             r'class="settings-sources-segmented" role="group".*?</div>',
-            content, re.DOTALL
+            content[_em_anchor:], re.DOTALL
         )
         assert seg_match, "settings.html 缺少 .settings-sources-segmented[role=group] 容器（外部管理器）"
         seg_block = seg_match.group(0)
@@ -12658,4 +12696,232 @@ class TestMobileSimilarDrillFallbackGuard:
         assert '_similarLastDrilledItem' in body, (
             "closeSimilarMode fallback 未保留 '_similarLastDrilledItem' snapshot（孤兒列 fallback）。\n"
             "_videos 也 miss（孤兒列 / demo）時需 snapshot 兜底，不可移除。"
+        )
+
+
+# ─── 80a-T3: Server Mode toggle + info banner frontend guards ───────────────
+
+SETTINGS_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "settings.css"
+
+
+class TestServerModeToggleGuard:
+    """80a-T3: settings.html + state-config.js server-mode toggle/banner 靜態守衛。
+
+    每個 assertion 都是 mutation-sensitive：刪除對應實作即 RED。
+    使用 BeautifulSoup DOM 解析（attribute 順序無關）+ substring 雙重策略，
+    鏡照既有 settings 守衛慣例（SETTINGS_HTML / SETTINGS_CONFIG_JS path 常數）。
+    """
+
+    def _html(self):
+        return SETTINGS_HTML.read_text(encoding="utf-8")
+
+    def _js(self):
+        return SETTINGS_CONFIG_JS.read_text(encoding="utf-8")
+
+    # ── HTML guards ────────────────────────────────────────────────────────────
+
+    def test_settings_root_has_data_lan_ip(self):
+        """#settings-components root div 含 data-lan-ip 屬性（傳 lanIp 到 Alpine）。
+        移除此屬性 → lanIp 永遠空字串，URL 顯示錯誤。"""
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(self._html(), "html.parser")
+        root = soup.find(id="settings-components")
+        assert root is not None, "settings.html 找不到 #settings-components"
+        assert root.has_attr("data-lan-ip"), \
+            "#settings-components 缺少 data-lan-ip 屬性（80a-T3 lanIp 傳入點）"
+
+    def test_settings_server_mode_segmented_in_header(self):
+        """header actions 內含 .settings-server-mode 包含 .settings-sources-segmented，
+        且有 2 個 button 分別呼叫 setServerMode(false) 和 setServerMode(true)。"""
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(self._html(), "html.parser")
+        wrapper = soup.find(class_="settings-server-mode")
+        assert wrapper is not None, \
+            "settings.html 缺少 .settings-server-mode wrapper（80a-T3 膠囊容器）"
+        segmented = wrapper.find(class_="settings-sources-segmented")
+        assert segmented is not None, \
+            ".settings-server-mode 缺少 .settings-sources-segmented（pill 複用）"
+        buttons = segmented.find_all("button")
+        assert len(buttons) == 2, \
+            f".settings-sources-segmented 應有 2 個 button，實際 {len(buttons)} 個"
+        click_attrs = [b.get("@click", "") for b in buttons]
+        assert any("setServerMode(false)" in a for a in click_attrs), \
+            "segmented 缺少 @click=\"setServerMode(false)\" button（單機態）"
+        assert any("setServerMode(true)" in a for a in click_attrs), \
+            "segmented 缺少 @click=\"setServerMode(true)\" button（伺服器態）"
+
+    def test_settings_server_info_banner_xshow_xcloak(self):
+        """恰好一個 .settings-server-info 元素，帶 x-show=\"serverMode\" 和 x-cloak（防 FOUC）。
+        移除 x-cloak → Alpine boot 前裸閃；移除 x-show → 橫條恆顯。"""
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(self._html(), "html.parser")
+        banners = soup.find_all(class_="settings-server-info")
+        assert len(banners) == 1, \
+            f"settings.html .settings-server-info 應恰好 1 個，實際 {len(banners)} 個"
+        banner = banners[0]
+        assert banner.get("x-show") == "serverMode", \
+            f".settings-server-info x-show 應為 'serverMode'，實際: {banner.get('x-show')!r}"
+        assert banner.has_attr("x-cloak"), \
+            ".settings-server-info 缺少 x-cloak（Alpine boot 前會 FOUC）"
+
+    def test_settings_server_info_warning_key(self):
+        """橫條內含 settings.server_info.warning i18n key 引用（警語行）。
+        移除此 key → 警語靜默，用戶不知安全風險。"""
+        html = self._html()
+        assert "settings.server_info.warning" in html, \
+            "settings.html 缺少 settings.server_info.warning i18n key 引用（警語行）"
+
+    def test_settings_server_info_copy_button(self):
+        """橫條內含 copyServerUrl() 呼叫（複製鈕 @click）。
+        移除 → 複製功能斷掉，用戶無法複製 URL。"""
+        html = self._html()
+        assert "copyServerUrl()" in html, \
+            "settings.html 缺少 copyServerUrl() 呼叫（複製鈕 @click）"
+
+    def test_settings_server_info_no_lan_ip_key(self):
+        """橫條含 settings.server_info.no_lan_ip i18n key（lanIp 為空時提示）。
+        移除 → lanIp=None 時橫條空白，用戶看不到說明。"""
+        html = self._html()
+        assert "settings.server_info.no_lan_ip" in html, \
+            "settings.html 缺少 settings.server_info.no_lan_ip i18n key（lanIp 空白提示）"
+
+    def test_settings_server_info_distinguishes_listener_down_from_no_ip(self):
+        """Codex P2：banner 須區分「listener 未啟動」(lanIp 在但 lanPort 缺) 與「取不到 IP」。
+        listener_down 分支須 lanIp-gated（`!serverUrl() && lanIp`），no_lan_ip 須 `!serverUrl() && !lanIp`。
+        若兩者合併回單一 `!serverUrl()` → autostart 失敗時誤顯「取不到 IP」誤導排查 → 此測 RED。"""
+        html = self._html()
+        assert "settings.server_info.listener_down" in html, \
+            "settings.html 缺少 settings.server_info.listener_down（listener 未啟動的專屬訊息）"
+        assert 'x-if="!serverUrl() && lanIp"' in html, \
+            "listener_down 分支須 gate 在 '!serverUrl() && lanIp'（lanIp 在但無 port）"
+        # Codex P2：抓不到 IP 但 port 已知 → 顯示帶 port 的訊息（用戶才湊得出 IP:port）；
+        # 連 port 都沒有才用純 no_lan_ip。兩支須各自 lanPort-gated。
+        assert "settings.server_info.no_lan_ip_with_port" in html, \
+            "settings.html 缺少 no_lan_ip_with_port（IP 抓不到但 lanPort 已知時顯示 port）"
+        assert 'x-if="!serverUrl() && !lanIp && lanPort"' in html, \
+            "no_lan_ip_with_port 分支須 gate 在 '!serverUrl() && !lanIp && lanPort'"
+        assert 'x-if="!serverUrl() && !lanIp && !lanPort"' in html, \
+            "no_lan_ip 分支須 gate 在 '!serverUrl() && !lanIp && !lanPort'（連 port 都沒有）"
+
+    # ── JS guards ──────────────────────────────────────────────────────────────
+
+    def test_state_config_server_mode_put_endpoint(self):
+        """state-config.js 含 PUT /api/config/general/server_mode endpoint。
+        移除或改路徑 → 後端收不到，config 不持久。"""
+        js = self._js()
+        assert "/api/config/general/server_mode" in js, \
+            "state-config.js 缺少 '/api/config/general/server_mode' PUT endpoint"
+
+    def test_state_config_server_url_uses_lan_port(self):
+        """serverUrl() 使用後端提供的 this.lanPort（非 window.location.port）。
+        T6c 起 dual-listener 後 LAN port ≠ 桌面 local_port，必須用後端回傳值。
+        回退至 window.location.port → 遠端裝置連到桌面 port 不是 LAN port。"""
+        js = self._js()
+        assert "this.lanPort" in js, \
+            "state-config.js serverUrl() 缺少 this.lanPort（80a-T6c：用後端 lan_port）"
+        assert "window.location.port" not in js, \
+            "state-config.js serverUrl() 不應再使用 window.location.port（已改用 lanPort）"
+
+    def test_state_config_lan_port_state_exists(self):
+        """state 含 lanPort: null（80a-T6c 新增 state，reload 後補 GET lan-port）。
+        移除 → serverUrl() 永遠 null，URL 橫條不顯示。"""
+        js = self._js()
+        assert "lanPort: null" in js, \
+            "state-config.js 缺少 'lanPort: null' state（80a-T6c）"
+
+    def test_state_config_set_server_mode_reads_lan_port(self):
+        """setServerMode() 成功分支讀 result.lan_port（後端回傳 LAN port）。
+        移除 → 切換成功後 lanPort 不更新，URL 橫條顯示舊值或 null。"""
+        js = self._js()
+        assert "result.lan_port" in js, \
+            "state-config.js setServerMode() 缺少 'result.lan_port'（80a-T6c：讀後端 lan_port）"
+
+    def test_state_config_set_server_mode_reads_lan_ip(self):
+        """setServerMode() 成功分支讀 result.lan_ip 並更新 this.lanIp。
+        移除 → 切換成功後 lanIp 不更新，serverUrl() 用舊值（或空字串 → null URL）。"""
+        js = self._js()
+        assert "result.lan_ip" in js, \
+            "state-config.js setServerMode() 缺少 'result.lan_ip'（gated get_lan_ip：由後端 toggle 回應提供）"
+        assert "this.lanIp = result.lan_ip" in js, \
+            "state-config.js setServerMode() 缺少 'this.lanIp = result.lan_ip'（lanIp 未從 toggle 回應更新）"
+
+    def test_state_config_load_config_fetches_lan_port(self):
+        """loadConfig() serverMode=true 時 GET /api/config/general/lan-port 補 lanPort。
+        移除 → reload 後 lanPort=null，URL 橫條消失（需重新 toggle 才恢復）。"""
+        js = self._js()
+        assert "/api/config/general/lan-port" in js, \
+            "state-config.js loadConfig() 缺少 '/api/config/general/lan-port' GET（80a-T6c）"
+
+    def test_state_config_load_config_reads_lan_ip_from_lan_port_endpoint(self):
+        """loadConfig() GET lan-port 分支讀 j.lan_ip 並更新 this.lanIp。
+        移除 → reload 後 lanIp 不更新（gated context：server_mode=true 時頁面 lan_ip 已空）。"""
+        js = self._js()
+        assert "j.lan_ip" in js, \
+            "state-config.js loadConfig() 缺少 'j.lan_ip'（lan-port GET 須同步更新 lanIp）"
+        assert "this.lanIp = j.lan_ip" in js, \
+            "state-config.js loadConfig() 缺少 'this.lanIp = j.lan_ip'（lanIp 未從 lan-port 回應更新）"
+
+    def test_state_config_reads_server_mode_with_nullish_coalesce(self):
+        """loadConfig() 用 ?? false 讀 config.general?.server_mode（CD#3 慣例）。
+        改成 || false → false 值會被吞（語意等同但守慣例）。"""
+        js = self._js()
+        assert "config.general?.server_mode ?? false" in js, \
+            "state-config.js loadConfig() 缺少 'config.general?.server_mode ?? false'"
+
+    def test_state_config_set_server_mode_failure_direction_aware(self):
+        """setServerMode() 失敗分支使用方向感知 toast（val ? toggle_failed : disable_failed）。
+
+        移除三元表達式或合併成同一 key：
+          - enable 失敗顯示「無法啟動」✓，disable 失敗仍顯「無法啟動」✗（語意錯誤）。
+        兩個 key 都必須存在，且須以 `val ?` ternary 選擇（mutation-sensitive）。
+        """
+        js = self._js()
+        assert "settings.server_info.disable_failed" in js, (
+            "state-config.js setServerMode() 失敗分支缺少 'settings.server_info.disable_failed'（80b：方向感知 toast）"
+        )
+        assert "settings.server_info.toggle_failed" in js, (
+            "state-config.js setServerMode() 失敗分支應保留 'settings.server_info.toggle_failed'（enable 失敗路徑）"
+        )
+        # Ternary pattern: val ? 'toggle_failed' : 'disable_failed'（或反序帶 ! 亦合法，
+        # 但實作固定 val ? toggle_failed : disable_failed，故字串比對足以 mutation-catch）
+        assert "val ? 'settings.server_info.toggle_failed' : 'settings.server_info.disable_failed'" in js, (
+            "state-config.js setServerMode() 失敗分支須以 ternary 按 val 選擇 key（80b：方向感知）"
+        )
+        # 遠端被拒（loopback 守衛）須給專屬 remote_only 訊息，而非通用「請稍後再試」
+        assert "remote_forbidden" in js and "settings.server_info.remote_only" in js, (
+            "state-config.js setServerMode() 失敗分支須對 reason==='remote_forbidden' 顯示 "
+            "'settings.server_info.remote_only'（遠端切換給專屬訊息，非『請稍後再試』）"
+        )
+
+    def test_state_config_set_server_mode_sends_boolean(self):
+        """setServerMode() body: JSON.stringify({ value: !!val })，確保送 boolean 不送 string。
+        T1 嚴格 bool gate，送字串會 400。"""
+        js = self._js()
+        assert "value: !!val" in js, \
+            "state-config.js setServerMode() 缺少 'value: !!val'（必須送 boolean，不可送字串）"
+
+    def test_set_server_mode_lan_ip_nullish_uses_null_not_stale(self):
+        """P2-2: setServerMode() enable 成功分支用 `result.lan_ip ?? null`，不用 `?? this.lanIp`。
+        用 `?? this.lanIp` → 後端返 null（IP 偵測失敗）時 banner 仍顯示舊 IP，指向失效 URL。
+        必須用 `?? null` 讓 serverUrl() 返 null，正確顯示 no_lan_ip/listener_down 提示。"""
+        js = self._js()
+        assert "result.lan_ip ?? null" in js, (
+            "state-config.js setServerMode() 須用 'result.lan_ip ?? null'（P2-2）；"
+            "不可用 '?? this.lanIp'（保留舊 IP 會在 IP 偵測失敗時顯示死連結）"
+        )
+        assert "result.lan_ip ?? this.lanIp" not in js, (
+            "state-config.js setServerMode() 不得用 'result.lan_ip ?? this.lanIp'（P2-2 stale IP bug）"
+        )
+
+    def test_load_config_lan_ip_nullish_uses_null_not_stale(self):
+        """P2-2: loadConfig() GET lan-port 分支用 `j.lan_ip ?? null`，不用 `?? this.lanIp`。
+        用 `?? this.lanIp` → 重載後 lan_ip=null（偵測失敗）時 banner 仍顯示舊 IP。
+        必須用 `?? null` 讓 serverUrl() 返 null 觸發正確的 no_lan_ip 提示路徑。"""
+        js = self._js()
+        assert "j.lan_ip ?? null" in js, (
+            "state-config.js loadConfig() 須用 'j.lan_ip ?? null'（P2-2）；"
+            "不可用 '?? this.lanIp'（保留舊 IP 會在 IP 偵測失敗時顯示死連結）"
+        )
+        assert "j.lan_ip ?? this.lanIp" not in js, (
+            "state-config.js loadConfig() 不得用 'j.lan_ip ?? this.lanIp'（P2-2 stale IP bug）"
         )

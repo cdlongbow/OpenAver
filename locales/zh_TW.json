@@ -273,6 +273,23 @@
       "switch_light": "切換至淺色模式",
       "locale_prefix": "語系"
     },
+    "mode": {
+      "label": "連線模式：單機或伺服器",
+      "local": "單機",
+      "server": "伺服器"
+    },
+    "server_info": {
+      "copy": "複製",
+      "copied": "已複製連線網址",
+      "warning": "同一區網（Wi-Fi / LAN）內的裝置皆可用上方網址直接連線本機，請於信任的網路環境下使用。外網存取請自行配置 VPN（如 Tailscale）。",
+      "no_lan_ip": "無法自動取得本機區網 IP，請於系統網路設定查看本機 IP 後手動連線。",
+      "no_lan_ip_with_port": "無法自動取得本機區網 IP，請於系統網路設定查看本機 IP，再以「該 IP:{port}」連線。",
+      "listener_down": "LAN 伺服器未啟動，請切回單機後重新開啟伺服器模式。",
+      "toggle_failed": "無法啟動 LAN 伺服器，請稍後再試。",
+      "disable_failed": "無法關閉 LAN 伺服器，請稍後再試。",
+      "remote_only": "伺服器模式只能在執行 OpenAver 的主機電腦上切換。",
+      "autostart_failed": "重新啟動後無法自動開啟 LAN 伺服器模式，請至設定重新開啟。"
+    },
     "section": {
       "search": "搜尋與刮削",
       "scraper_advanced": "進階刮削設定",
@@ -1089,6 +1106,30 @@
       "h6_db": "效能提示",
       "db_hint": "並行搜尋多個 metatube 來源時速度較慢，可在 metatube server 端改用 PostgreSQL 取代預設的 SQLite（屬 metatube server 設定，非 OpenAver 設定）",
       "crossref_picker": "用進階搜尋 picker 挑 metatube 單一來源 → 見「搜尋功能」卡"
+    },
+    "server_mode": {
+      "title": "伺服器模式 — 讓手機/平板連進來",
+      "h6_what": "這是什麼",
+      "what_single": "預設「單機」模式：只有這台電腦能用。",
+      "what_server": "切到「伺服器」模式：同一個 Wi-Fi / 區網內的手機、平板、別台電腦，可以用瀏覽器打開畫面上顯示的網址，瀏覽封面牆、線上看片、查番號。",
+      "what_where": "切換位置在「設定」頁右上角的「單機 ｜ 伺服器」膠囊。",
+      "h6_how": "怎麼用",
+      "how_url": "切到「伺服器」後，下方會出現一條連線網址（例如 <code>http://192.168.1.50:50123</code>）。",
+      "how_copy": "點「複製」把網址傳到手機，或用瀏覽器內建「傳送到其他裝置」，在手機瀏覽器打開即可。",
+      "how_off": "切回「單機」就完全關閉對外，區網裝置立刻連不到。",
+      "h6_security": "安全提醒",
+      "security_lan": "僅限信任的 Wi-Fi / 區網使用（本程式不設帳號密碼，LAN-only）。",
+      "security_vpn": "需要外網存取請自行配置 VPN（如 Tailscale）；本程式不開放外網。",
+      "h6_firewall": "第一次開啟會跳防火牆，請按「允許」",
+      "firewall_allow": "第一次切到「伺服器」時，Windows（或 macOS）會跳出防火牆詢問是否允許網路存取 → 請按「<strong>允許 / Allow</strong>」。按一次就好，系統會記住。",
+      "firewall_why": "這是因為要讓別台裝置連進來，作業系統需要你授權（與 Plex 等區網工具相同）。<strong>單機模式不會跳。</strong>",
+      "h6_recover": "不小心按了「取消 / 拒絕」怎麼救回",
+      "recover_win_intro": "Windows 救回步驟：",
+      "recover_win_1": "按 <code>Win + R</code>，輸入 <code>wf.msc</code> 後 Enter，開啟「Windows Defender 防火牆 進階安全性」。",
+      "recover_win_2": "左欄點「輸入規則 (Inbound Rules)」。",
+      "recover_win_3": "找「程式」是 <code>python.exe</code>（或名稱 Python / OpenAver）、「動作」為「封鎖 (Block)」的規則，通常有兩條（公用＋私人）。",
+      "recover_win_4": "右鍵刪除這幾條，重開 OpenAver，再切到「伺服器」並按「允許」。",
+      "recover_mac": "macOS 救回：系統設定 → 網路 → 防火牆 → 選項，找到本程式改成「允許傳入連線」。"
     },
     "troubleshooting": {
       "title": "疑難排解",

@@ -53,6 +53,11 @@ export function stateConfig() {
         // ===== i18n State =====
         locale: (window.__locale || 'zh-TW'),
 
+        // ===== Server Mode State (80a-T3) =====
+        serverMode: false,
+        lanIp: '',
+        lanPort: null,
+
         // ===== Dirty Check State =====
         savedState: null,
         savedOpenaiUseCustomModel: false,
@@ -307,6 +312,9 @@ export function stateConfig() {
                 this._gsapCtx = window.OpenAver.motion.createContext(this.$el);
             }
 
+            // 80a-T3: 讀 data-lan-ip attribute（T2 注入 template context）
+            this.lanIp = this.$el?.dataset?.lanIp || '';
+
             this.loadConfig().then(() => {
                 // B1: init scanner link state after config loaded
                 if (typeof this._initB1 === 'function') this._initB1();
@@ -377,6 +385,54 @@ export function stateConfig() {
                 }
             } catch (e) {
                 console.error('[i18n] cycleLocale error:', e);
+            }
+        },
+
+        // 80a-T3: Server Mode methods ─────────────────────────────────────────
+
+        serverUrl() {
+            if (!this.lanIp || !this.lanPort) return null;
+            return `http://${this.lanIp}:${this.lanPort}`;
+        },
+
+        async setServerMode(val) {
+            try {
+                const resp = await fetch('/api/config/general/server_mode', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ value: !!val })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    this.serverMode = !!val;
+                    this.lanPort = result.lan_port ?? null;
+                    this.lanIp = result.lan_ip ?? null;
+                } else {
+                    console.warn('[serverMode] setServerMode failed:', result.error);
+                    // 遠端被拒（loopback 守衛）給專屬訊息，不用「請稍後再試」（重試無用）
+                    const failKey = result.reason === 'remote_forbidden'
+                        ? 'settings.server_info.remote_only'
+                        : (val ? 'settings.server_info.toggle_failed' : 'settings.server_info.disable_failed');
+                    this.showToast(window.t(failKey), 'error');
+                }
+            } catch (e) {
+                console.warn('[serverMode] setServerMode error:', e);
+                this.showToast(window.t(val ? 'settings.server_info.toggle_failed' : 'settings.server_info.disable_failed'), 'error');
+            }
+        },
+
+        async copyServerUrl() {
+            if (!this.serverUrl()) return;
+            if (!navigator.clipboard?.writeText) {
+                this.showToast(window.t('settings.server_info.copy'), 'info');
+                return;
+            }
+            try {
+                await navigator.clipboard?.writeText(this.serverUrl());
+                this.showToast(window.t('settings.server_info.copied'), 'success');
+            } catch (e) {
+                console.warn('[serverMode] copyServerUrl: clipboard not available', e);
+                this.showToast(window.t('settings.server_info.copy'), 'info');
             }
         },
 
@@ -470,6 +526,19 @@ export function stateConfig() {
                     if (defaultPage === 'gallery') defaultPage = 'scanner';  // 向後兼容
                     this.form.defaultPage = defaultPage;
                     // sidebar_collapsed 已移除（由 Alpine $persist + localStorage 驅動）
+
+                    // 80a-T3: Server Mode（?? false：缺 key→false；不用 ||，守 CD#3 慣例）
+                    this.serverMode = config.general?.server_mode ?? false;
+                    if (this.serverMode) {
+                        try {
+                            const r = await fetch('/api/config/general/lan-port');
+                            const j = await r.json();
+                            this.lanPort = j.lan_port ?? null;
+                            this.lanIp = j.lan_ip ?? null;
+                        } catch (_e) { this.lanPort = null; }
+                    } else {
+                        this.lanPort = null;
+                    }
 
                     // Sources（61c-2）：讀 config.sources 段填入 unified scope。
                     // FIELD-NAME TRAP：後端用 display_name_key / display_name_raw；

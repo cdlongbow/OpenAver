@@ -1247,3 +1247,46 @@ class TestMigrationAdvancedSearchEnabled:
         # 磁碟也被寫回（覆寫舊 false 偏好）
         saved = _read_config(config_path)
         assert "advanced_search_enabled" not in saved
+
+
+# ============ TASK-80a-T1：GeneralConfig.server_mode schema ============
+
+class TestGeneralConfigServerMode:
+    """server_mode: bool = False 欄位 schema 測試（TASK-80a-T1）"""
+
+    def test_server_mode_default_false(self):
+        """GeneralConfig() 預設 server_mode is False"""
+        from core.config import GeneralConfig
+        cfg = GeneralConfig()
+        assert cfg.server_mode is False
+
+    def test_appconfig_server_mode_default_false(self):
+        """AppConfig().general.server_mode 預設 False"""
+        cfg = AppConfig()
+        assert cfg.general.server_mode is False
+
+    def test_missing_server_mode_key_loads_as_false(self, tmp_path, monkeypatch):
+        """舊 config.json 缺 general.server_mode key → load_config() 不報錯，.get 鏈視為 False"""
+        config_path = tmp_path / "config.json"
+        # 舊版 config 無 server_mode
+        _write_config(config_path, {"general": {"theme": "dark", "locale": "zh-TW"}})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        # .get 鏈天生 safe（缺 key 回 None / 預設 False）
+        assert result.get("general", {}).get("server_mode", False) is False
+
+    def test_server_mode_roundtrip(self, tmp_path, monkeypatch):
+        """server_mode=True 存入 config → load_config 後回讀仍為 True"""
+        config_path = tmp_path / "config.json"
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        cfg = AppConfig().model_dump()
+        cfg["general"]["server_mode"] = True
+        save_config(cfg)
+
+        reloaded = load_config()
+        assert reloaded["general"]["server_mode"] is True

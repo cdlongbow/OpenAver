@@ -6,6 +6,9 @@ from fastapi.testclient import TestClient
 from web.app import app
 from core import config as core_config
 
+# 註：LAN access gate（feature/80）的 TestClient loopback 預設 client patch 已上移
+# 至根 conftest（tests/conftest.py），使 unit 測試 isolation 跑也涵蓋。此處不重複。
+
 
 @pytest.fixture(autouse=True)
 def _isolate_config(tmp_path, monkeypatch):

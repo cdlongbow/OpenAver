@@ -254,7 +254,9 @@ class SpotlightTutorial {
     }
 
     skip() {
-        this.complete(false);
+        // 依 issue #63：跳過視為看完並持久化（含 API 失敗時的 localStorage fallback），
+        // 三個 dismiss 入口（跳過 / X / 背景遮罩）共用 skip()，一改全到位。
+        this.complete(true);
     }
 
     async complete(markComplete = true) {

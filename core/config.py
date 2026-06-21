@@ -145,6 +145,7 @@ class GeneralConfig(BaseModel):
     tutorial_completed: bool = False  # 新手引導是否已完成
     font_size: str = "md"  # 全站字體大小: xs, sm, md, lg, xl
     locale: Literal["zh-TW", "zh-CN", "ja", "en"] = "zh-TW"  # 介面語系
+    server_mode: bool = False  # LAN 伺服器模式開關（feature/80）
 
 
 class AppConfig(BaseModel):

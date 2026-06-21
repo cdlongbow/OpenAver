@@ -269,6 +269,20 @@
       "switch_light": "切换至浅色模式",
       "locale_prefix": "语言"
     },
+    "mode": {
+      "label": "连接模式：单机或服务器",
+      "local": "单机",
+      "server": "服务器"
+    },
+    "server_info": {
+      "copy": "复制",
+      "copied": "已复制连接网址",
+      "warning": "同一局域网（Wi-Fi / LAN）内的设备均可通过上方网址直接连接本机，请在受信任的网络环境下使用。如需外网访问，请自行配置 VPN（如 Tailscale）。",
+      "no_lan_ip": "无法自动获取本机局域网 IP，请在系统网络设置中查看本机 IP 后手动连接。",
+      "listener_down": "LAN 服务器未启动，请切换回单机模式后重新开启服务器模式。",
+      "toggle_failed": "无法启动 LAN 服务器，请稍后再试。",
+      "autostart_failed": "重新启动后无法自动开启 LAN 服务器模式，请前往设置重新开启。"
+    },
     "section": {
       "search": "搜索与刮削",
       "scraper_advanced": "高级刮削设置",
