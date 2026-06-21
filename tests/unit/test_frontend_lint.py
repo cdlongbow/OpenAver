@@ -2564,6 +2564,40 @@ class TestTutorialExpandGuard:
                         f"{locale}.json missing or empty: tutorial.{key!r}"
 
 
+class TestTutorialSkipPersistsGuard:
+    """TASK-79-T7 (issue #63): 教學「跳過」必須視為看完並持久化。
+
+    bug 根因：skip() 呼叫 complete(false) → 不持久化 → 重進 /scanner 又彈。
+    修法：skip() 改走 complete(true)（持久化路徑，含 API 失敗的 localStorage fallback）。
+    三個 dismiss 入口（跳過 / X / 背景遮罩）共用 skip()，一改全到位。
+
+    Mutation 忠實度：把 skip() 改回 complete(false) 必須讓本守衛 RED。
+    """
+
+    def test_skip_persists_and_shares_entry(self):
+        js = Path("web/static/js/components/tutorial.js").read_text(encoding="utf-8")
+
+        # 抓 skip() 方法體（容忍空白）
+        m = re.search(r"\bskip\s*\(\s*\)\s*\{(.*?)\}", js, re.DOTALL)
+        assert m, "tutorial.js 找不到 skip() 方法"
+        body = m.group(1)
+
+        # 1a) bug pattern 消失：skip() 不再呼叫 complete(false)
+        assert not re.search(r"complete\(\s*false\s*\)", body), \
+            "skip() 不得呼叫 complete(false)（issue #63：跳過必須持久化，否則重進 /scanner 又彈）"
+
+        # 1b) 確有寫入動作：complete(true) 或 localStorage.setItem 或 POST /api/tutorial-completed
+        assert (
+            re.search(r"complete\(\s*true\s*\)", body)
+            or "localStorage.setItem" in body
+            or "/api/tutorial-completed" in body
+        ), "skip() 必須走持久化路徑（complete(true) / localStorage.setItem / POST /api/tutorial-completed 其一）"
+
+        # 2) 三個 dismiss 入口仍共用 skip()（tutorialSkip / tutorialClose / overlay 背景 click）
+        assert js.count("this.skip()") >= 3, \
+            "三個 dismiss 入口（跳過 / X / 背景遮罩）必須仍共用 this.skip()（≥3 處綁定）"
+
+
 class TestMissingEnrichConfirmGuard:
     """TASK-13 (0.7.6 hotfix): 守衛 Scanner 一鍵補完 > 500 confirm dialog 的實作"""
 
