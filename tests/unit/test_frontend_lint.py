@@ -7883,6 +7883,7 @@ class TestSettingsPanelStructureGuard:
 # ─── TASK-62a-0: source pill 跨頁共用 component + bootstrap 注入 ───
 SOURCE_PILL_CSS         = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "components" / "source-pill.css"
 SETTINGS_CSS            = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "settings.css"
+HELP_CSS                = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "help.css"
 BASE_HTML               = Path(__file__).parent.parent.parent / "web" / "templates" / "base.html"
 ADV_SEARCH_BOOTSTRAP    = Path(__file__).parent.parent.parent / "web" / "templates" / "_advanced_search_bootstrap.html"
 
@@ -13216,3 +13217,80 @@ class TestMobileToolbarAutoCollapse:
                 if attr.startswith("@input") and "SearchChange" in (val if isinstance(val, str) else ""):
                     assert "toolbarOpen" not in val, \
                         f"@input live-filter 不可含 toolbarOpen 收合（打字途中收合破 UX，實得 {val!r}）"
+
+
+# ─── TASK-81a-T5: Settings + Help 窄螢幕破版 / 長字串溢出（3 點純 CSS 補丁）───
+class TestSettingsHelpMobilePatch:
+    """TASK-81a-T5: 3 個靜態守衛 — settings 外部管理器 segmented/hint（≤480 media）、
+    metatube URL code 溢出（base rule）、help hero-terminal curl 溢出（base rule）。
+
+    視覺「實際不溢出」由 owner 360px 真機 hard-gate（AC-6），此處只鎖 CSS 結構。
+    """
+
+    def _settings_css(self):
+        return SETTINGS_CSS.read_text(encoding="utf-8")
+
+    def _help_css(self):
+        return HELP_CSS.read_text(encoding="utf-8")
+
+    @staticmethod
+    def _media_480_block(css: str) -> str:
+        """切出 settings.css 的 `@media (max-width: 480px)` block 內容（含巢狀大括號平衡）。"""
+        m = re.search(r"@media\s*\(\s*max-width:\s*480px\s*\)\s*\{", css)
+        assert m, "settings.css 找不到 @media (max-width: 480px) block"
+        start = m.end()
+        depth = 1
+        i = start
+        while i < len(css) and depth > 0:
+            c = css[i]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+            i += 1
+        return css[start:i - 1]
+
+    @staticmethod
+    def _rule_body(css: str, selector_regex: str) -> str:
+        """回傳第一個匹配 selector 的規則 body（單層，不含巢狀）。"""
+        m = re.search(selector_regex + r"\s*\{([^}]*)\}", css)
+        assert m, f"找不到規則：{selector_regex}"
+        return m.group(1)
+
+    def test_segmented_flex_shrink_in_480_block(self):
+        """點 1a：≤480 block 內 .settings-sources-segmented 含 flex-shrink: 0（防被壓扁成直條）。"""
+        block = self._media_480_block(self._settings_css())
+        body = self._rule_body(
+            block, r"\.settings-form-row--external-manager\s+\.settings-sources-segmented"
+        )
+        assert re.search(r"flex-shrink:\s*0", body), \
+            "≤480 block 的 external-manager segmented 須含 flex-shrink: 0"
+
+    def test_hint_wraps_in_480_block(self):
+        """點 1b：≤480 block 內 external-manager .settings-hint 含 flex-basis: 100% + white-space: normal。"""
+        block = self._media_480_block(self._settings_css())
+        body = self._rule_body(
+            block, r"\.settings-form-row--external-manager\s+\.settings-hint"
+        )
+        assert re.search(r"flex-basis:\s*100%", body), \
+            "≤480 block 的 external-manager hint 須含 flex-basis: 100%（換到 segmented 下方獨佔一行）"
+        assert re.search(r"white-space:\s*normal", body), \
+            "≤480 block 的 external-manager hint 須含 white-space: normal"
+
+    def test_metatube_code_overflow(self):
+        """點 2：.settings-mt-connect-status code 含 word-break: break-all + overflow-wrap: anywhere。"""
+        body = self._rule_body(
+            self._settings_css(), r"\.settings-mt-connect-status\s+code"
+        )
+        assert re.search(r"word-break:\s*break-all", body), \
+            ".settings-mt-connect-status code 須含 word-break: break-all"
+        assert re.search(r"overflow-wrap:\s*anywhere", body), \
+            ".settings-mt-connect-status code 須含 overflow-wrap: anywhere"
+
+    def test_help_hero_terminal_overflow(self):
+        """點 3：.hero-terminal 含 overflow-x: auto + word-break: break-all（curl 不水平溢出）。"""
+        body = self._rule_body(self._help_css(), r"(?<![\w-])\.hero-terminal")
+        assert re.search(r"overflow-x:\s*auto", body), \
+            ".hero-terminal 須含 overflow-x: auto"
+        assert re.search(r"word-break:\s*break-all", body), \
+            ".hero-terminal 須含 word-break: break-all"

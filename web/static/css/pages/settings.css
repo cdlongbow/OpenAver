@@ -182,6 +182,20 @@
         gap: 8px;
         align-items: flex-start;
     }
+
+    /* 81-T5：外部媒體管理器 segmented 在 360px 不被壓扁（保 4 鈕水平），hint 整段換到下一列 */
+    #settings-components .settings-form-row--external-manager .settings-sources-segmented {
+        flex-shrink: 0;
+    }
+
+    #settings-components .settings-form-row--external-manager .settings-sources-segmented button {
+        white-space: nowrap; /* 每顆鈕文字不被拆字 */
+    }
+
+    #settings-components .settings-form-row--external-manager .settings-hint {
+        flex-basis: 100%;     /* 換到 segmented 下方獨佔一行 */
+        white-space: normal;  /* 保險：覆寫任何 nowrap，整段正常換行非直條 */
+    }
 }
 
 /* scroll-margin-top：sticky header 高度補償，避免標題被遮 */
@@ -721,6 +735,9 @@
     padding: 0.1rem 0.4rem;
     border-radius: var(--fluent-radius-sm);
     background: color-mix(in oklch, var(--surface-2) 60%, transparent);
+    /* 81-T5：長 URL（IP:port / domain）任意長度皆斷，不撐破卡片 */
+    word-break: break-all;
+    overflow-wrap: anywhere;
 }
 
 /* connected: tier hint */
