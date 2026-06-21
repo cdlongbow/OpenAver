@@ -25,7 +25,6 @@ from core.logger import get_logger
 from core.config import (
     AppConfig,
     load_config,
-    save_config,
     mutate_config,
     reset_config_file,
 )
@@ -62,7 +61,20 @@ def update_config(config: AppConfig) -> dict:
             detail={"error": "cap_exceeded", "max": MAX_ENABLED_SOURCES},
         )
     try:
-        save_config(config.model_dump())
+        payload = config.model_dump()
+        # server_mode is toggle-lifecycle state owned exclusively by
+        # PUT /api/config/general/server_mode (which calls lan_listener.start/stop
+        # atomically with the persist). A full-config save must NEVER overwrite the
+        # currently-persisted value — whether the incoming payload omits the field
+        # (Pydantic default → False) or contains a stale/incorrect value.
+        # Read the canonical persisted value inside mutate_config so the
+        # read-preserve-write is atomic under _config_write_lock.
+        def _write_preserving_server_mode(cfg: dict) -> None:
+            current_server_mode = cfg.get("general", {}).get("server_mode", False)
+            payload["general"]["server_mode"] = current_server_mode
+            cfg.update(payload)
+
+        mutate_config(_write_preserving_server_mode)
         _reset_translate_service()  # 重置翻譯服務，讓新配置生效
         return {"success": True, "message": "設定已儲存"}
     except Exception as e:

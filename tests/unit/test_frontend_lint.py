@@ -12868,3 +12868,29 @@ class TestServerModeToggleGuard:
         js = self._js()
         assert "value: !!val" in js, \
             "state-config.js setServerMode() 缺少 'value: !!val'（必須送 boolean，不可送字串）"
+
+    def test_set_server_mode_lan_ip_nullish_uses_null_not_stale(self):
+        """P2-2: setServerMode() enable 成功分支用 `result.lan_ip ?? null`，不用 `?? this.lanIp`。
+        用 `?? this.lanIp` → 後端返 null（IP 偵測失敗）時 banner 仍顯示舊 IP，指向失效 URL。
+        必須用 `?? null` 讓 serverUrl() 返 null，正確顯示 no_lan_ip/listener_down 提示。"""
+        js = self._js()
+        assert "result.lan_ip ?? null" in js, (
+            "state-config.js setServerMode() 須用 'result.lan_ip ?? null'（P2-2）；"
+            "不可用 '?? this.lanIp'（保留舊 IP 會在 IP 偵測失敗時顯示死連結）"
+        )
+        assert "result.lan_ip ?? this.lanIp" not in js, (
+            "state-config.js setServerMode() 不得用 'result.lan_ip ?? this.lanIp'（P2-2 stale IP bug）"
+        )
+
+    def test_load_config_lan_ip_nullish_uses_null_not_stale(self):
+        """P2-2: loadConfig() GET lan-port 分支用 `j.lan_ip ?? null`，不用 `?? this.lanIp`。
+        用 `?? this.lanIp` → 重載後 lan_ip=null（偵測失敗）時 banner 仍顯示舊 IP。
+        必須用 `?? null` 讓 serverUrl() 返 null 觸發正確的 no_lan_ip 提示路徑。"""
+        js = self._js()
+        assert "j.lan_ip ?? null" in js, (
+            "state-config.js loadConfig() 須用 'j.lan_ip ?? null'（P2-2）；"
+            "不可用 '?? this.lanIp'（保留舊 IP 會在 IP 偵測失敗時顯示死連結）"
+        )
+        assert "j.lan_ip ?? this.lanIp" not in js, (
+            "state-config.js loadConfig() 不得用 'j.lan_ip ?? this.lanIp'（P2-2 stale IP bug）"
+        )

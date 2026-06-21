@@ -377,11 +377,11 @@ class TestT4OffloadHousePattern:
 # 66b-T5：config 寫入序列化守衛
 # ============================================================
 
-# 唯一白名單：config.py::update_config 是 full-replace（client 送完整 AppConfig），
-# 已走 public locked+atomic save_config，非 unlocked-RMW 反模式 → 允許直接呼叫。
-# 其餘 router 一律不得裸呼 save_config：RMW 走 core.config.mutate_config（鎖內
+# 白名單（空）：config.py::update_config 改用 mutate_config（P2-1 修正：preserve server_mode），
+# 不再直接呼叫 save_config，故白名單清空。
+# 所有 router 一律不得裸呼 save_config：RMW 走 core.config.mutate_config（鎖內
 # load→mutate→save），delete 走 reset_config_file（鎖內 exists/unlink）。
-WHITELIST_SAVE_CONFIG: frozenset = frozenset({("config", "update_config")})
+WHITELIST_SAVE_CONFIG: frozenset = frozenset()
 
 
 def _find_save_config_callers(tree: ast.Module) -> list:
@@ -414,13 +414,12 @@ SAVE_CONFIG_SCAN_FILES = tuple(sorted(ROUTERS_DIR.glob("*.py")) + [_WEB_DIR / "a
 
 
 class TestConfigWriteSerializationGuard:
-    """66b-T5：web/routers/*.py + web/app.py 不得裸呼 save_config（除 update_config 白名單）。
+    """66b-T5：web/routers/*.py + web/app.py 不得裸呼 save_config（無白名單，一律禁止）。
 
     根據 CD-66b-1 / plan-66b T5：T1 把所有 config RMW caller 遷移到 mutate_config /
-    reset_config_file（core/config.py 內單一 _config_write_lock 序列化 + 原子寫）後，
-    唯一合法的直接 save_config 呼叫只剩 config.py::update_config（full-replace）。
-    其餘 router 或 web/app.py 若裸呼 save_config 做 RMW → 重新引入 lost-update 競態
-    → 守衛報錯（Codex P2：含 web/app.py get_common_context 的 locale 首寫）。
+    reset_config_file（core/config.py 內單一 _config_write_lock 序列化 + 原子寫）。
+    P2-1 修正後 config.py::update_config 亦改用 mutate_config（在鎖內 preserve server_mode），
+    故白名單清空：任何 router 或 web/app.py 裸呼 save_config 均為 RMW 競態 → 守衛報錯。
     """
 
     def test_no_bare_save_config_outside_whitelist(self):
@@ -438,18 +437,25 @@ class TestConfigWriteSerializationGuard:
         assert not violations, (
             "Routers must not call save_config() directly (RMW lost-update risk): "
             "use core.config.mutate_config() for RMW or reset_config_file() for delete. "
-            "Only config.py::update_config (full-replace) is whitelisted:\n"
+            "No whitelist entries — all callers must use the atomic mutate_config pattern:\n"
             + "\n".join(f"  {v}" for v in violations)
         )
 
-    def test_whitelisted_update_config_still_calls_save_config(self):
-        """白名單防腐：update_config 必須真的存在且真的呼叫 save_config（避免殭屍白名單）。"""
-        tree = ast.parse(
-            (ROUTERS_DIR / "config.py").read_text(encoding="utf-8"),
-            filename="config.py",
+    def test_update_config_uses_mutate_config_not_save_config(self):
+        """P2-1 守衛：update_config 必須用 mutate_config（preserve server_mode），不得裸呼 save_config。
+
+        P2-1 修正（config↔listener divergence）：update_config 改為在 mutate_config
+        critical section 內讀取現有 server_mode 後才寫入，確保 full-config save 不會
+        覆寫 toggle-lifecycle 持久化的 server_mode。若有人回退至 save_config，此守衛報錯。
+        """
+        src = (ROUTERS_DIR / "config.py").read_text(encoding="utf-8")
+        assert "mutate_config(_write_preserving_server_mode)" in src, (
+            "config.py::update_config 必須呼叫 mutate_config（_write_preserving_server_mode），"
+            "以保持 server_mode 的 toggle-lifecycle 所有權"
         )
+        tree = ast.parse(src, filename="config.py")
         callers = _find_save_config_callers(tree)
-        assert "update_config" in callers, (
-            "config.py::update_config 不再直接呼叫 save_config —— 白名單已過時，應清理 "
-            "WHITELIST_SAVE_CONFIG"
+        assert "update_config" not in callers, (
+            "config.py::update_config 不得直接呼叫 save_config —— 須透過 mutate_config "
+            "在鎖內 preserve 現有 server_mode（P2-1 修正）"
         )

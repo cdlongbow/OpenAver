@@ -2,6 +2,8 @@ import pytest
 import os
 import json
 from pathlib import Path
+from fastapi.testclient import TestClient
+from web.app import app
 
 class TestConfigAPI:
     """測試 web/routers/config.py 的 API 端點"""
@@ -238,3 +240,154 @@ class TestServerModeEndpoint:
 
         assert resp.status_code == 200
         assert resp.json()["success"] is True
+
+
+class TestFullConfigSavePreservesServerMode:
+    """P2-1: PUT /api/config（全量儲存）不得改寫 server_mode（toggle-lifecycle 所有權）
+
+    Divergence path（confirmed):
+      PUT /api/config accepts AppConfig body → Pydantic model_validates the incoming
+      general section.  If the payload's general.server_mode is False (Pydantic default
+      when the key is absent) or explicitly False, the old save_config() call would write
+      that value over a persisted True — leaving the LAN listener running but
+      general.server_mode=false in config.json (diverged).
+
+    Fix: update_config() now runs mutate_config(_write_preserving_server_mode) which
+    reads the currently-persisted server_mode under the write lock and forces it into the
+    payload before writing, regardless of what the incoming body says.
+    """
+
+    @pytest.fixture
+    def mock_config_path_with_server_mode_true(self, tmp_path, monkeypatch):
+        """Config pre-seeded with general.server_mode=true (listener "running")."""
+        config_path = tmp_path / "config.json"
+        default_path = tmp_path / "config.default.json"
+
+        config_data = {
+            "general": {
+                "locale": "zh-TW",
+                "theme": "light",
+                "sidebar_collapsed": False,
+                "tutorial_completed": False,
+                "font_size": "md",
+                "default_page": "search",
+                "server_mode": True,  # persisted True — listener is "running"
+            },
+            "translate": {
+                "enabled": False,
+                "provider": "ollama",
+                "batch_size": 10,
+                "ollama": {"url": "http://localhost:11434", "model": "qwen3:8b"},
+                "gemini": {"api_key": "", "model": "gemini-flash-lite-latest"},
+                "openai": {"base_url": "", "api_key": "", "model": "gpt-4o-mini",
+                           "use_custom_model": False},
+            },
+            "thumbnail_cache_enabled": False,
+        }
+        config_path.write_text(json.dumps(config_data))
+        default_path.write_text(json.dumps(config_data))
+
+        monkeypatch.setattr("core.config.CONFIG_PATH", config_path)
+        monkeypatch.setattr("core.config.CONFIG_DEFAULT_PATH", default_path)
+        monkeypatch.setattr("web.routers.config._reset_translate_service", lambda: None)
+
+        return config_path
+
+    def test_full_save_omitting_server_mode_preserves_true(
+        self, client, mock_config_path_with_server_mode_true
+    ):
+        """PUT /api/config whose general body OMITS server_mode must NOT reset it to False.
+
+        Simulates the frontend saveConfig() behaviour: it sends a full AppConfig body but
+        the general section only sets known form fields (default_page, theme) and does NOT
+        include server_mode.  The Pydantic default for missing server_mode is False —
+        without the preservation guard this would silently overwrite the persisted True
+        and diverge from lan_listener.is_running (still True).
+        """
+        config_path = mock_config_path_with_server_mode_true
+
+        # Build a minimal valid AppConfig payload.  general.server_mode is deliberately
+        # absent — Pydantic will default it to False.
+        payload = {
+            "general": {
+                "default_page": "search",
+                "theme": "dark",
+                # server_mode intentionally omitted → Pydantic default False
+            },
+            "scraper": {},
+            "search": {},
+            "source_links": {},
+            "translate": {
+                "enabled": False,
+                "provider": "ollama",
+                "batch_size": 10,
+                "ollama": {"url": "http://localhost:11434", "model": "qwen3:8b"},
+                "gemini": {"api_key": "", "model": "gemini-flash-lite-latest"},
+                "openai": {"base_url": "", "api_key": "", "model": "gpt-4o-mini",
+                           "use_custom_model": False},
+            },
+            "gallery": {},
+            "showcase": {},
+            "sources": [],
+            "thumbnail_cache_enabled": False,
+            "metatube": {},
+        }
+
+        resp = client.put("/api/config", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+
+        saved = json.loads(config_path.read_text())
+        assert saved.get("general", {}).get("server_mode") is True, (
+            "PUT /api/config must preserve the persisted server_mode=true; "
+            "omitting the field in the payload must not reset it to False "
+            "(would diverge from running LAN listener)"
+        )
+
+    def test_full_save_explicit_false_server_mode_still_preserves_true(
+        self, client, mock_config_path_with_server_mode_true
+    ):
+        """PUT /api/config with general.server_mode=false in the body must also be ignored.
+
+        A stale GET → full PUT round-trip from an old client (or any direct API call)
+        that explicitly sends server_mode=false must NOT overwrite the persisted True.
+        Only PUT /api/config/general/server_mode (the toggle endpoint) is allowed to
+        change this field.
+        """
+        config_path = mock_config_path_with_server_mode_true
+
+        payload = {
+            "general": {
+                "default_page": "search",
+                "theme": "light",
+                "server_mode": False,  # stale / incorrect — must be ignored
+            },
+            "scraper": {},
+            "search": {},
+            "source_links": {},
+            "translate": {
+                "enabled": False,
+                "provider": "ollama",
+                "batch_size": 10,
+                "ollama": {"url": "http://localhost:11434", "model": "qwen3:8b"},
+                "gemini": {"api_key": "", "model": "gemini-flash-lite-latest"},
+                "openai": {"base_url": "", "api_key": "", "model": "gpt-4o-mini",
+                           "use_custom_model": False},
+            },
+            "gallery": {},
+            "showcase": {},
+            "sources": [],
+            "thumbnail_cache_enabled": False,
+            "metatube": {},
+        }
+
+        resp = client.put("/api/config", json=payload)
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+        saved = json.loads(config_path.read_text())
+        assert saved.get("general", {}).get("server_mode") is True, (
+            "PUT /api/config with explicit server_mode=false in the body must be "
+            "ignored — server_mode is owned by the toggle lifecycle endpoint only"
+        )
