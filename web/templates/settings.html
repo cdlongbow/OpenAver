@@ -65,7 +65,7 @@
     <!-- Server Info Banner (80a-T3) — x-cloak 防 Alpine boot 前 FOUC；不加 CSS display:none（與 x-show 衝突） -->
     <div class="settings-server-info" x-show="serverMode" x-cloak>
         <div class="settings-server-info-url-row">
-            <template x-if="lanIp">
+            <template x-if="serverUrl()">
                 <div class="settings-server-info-row">
                     <span class="settings-server-url" x-text="serverUrl()"></span>
                     <button type="button"
@@ -75,7 +75,7 @@
                     </button>
                 </div>
             </template>
-            <template x-if="!lanIp">
+            <template x-if="!serverUrl()">
                 <div class="settings-server-no-ip" x-text="window.t('settings.server_info.no_lan_ip')"></div>
             </template>
         </div>

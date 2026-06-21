@@ -12794,12 +12794,36 @@ class TestServerModeToggleGuard:
         assert "/api/config/general/server_mode" in js, \
             "state-config.js 缺少 '/api/config/general/server_mode' PUT endpoint"
 
-    def test_state_config_server_url_uses_location_port(self):
-        """serverUrl() 使用 window.location.port 而非硬編碼 port。
-        改成硬編碼 → 遠端/桌面場景 port 不符。"""
+    def test_state_config_server_url_uses_lan_port(self):
+        """serverUrl() 使用後端提供的 this.lanPort（非 window.location.port）。
+        T6c 起 dual-listener 後 LAN port ≠ 桌面 local_port，必須用後端回傳值。
+        回退至 window.location.port → 遠端裝置連到桌面 port 不是 LAN port。"""
         js = self._js()
-        assert "window.location.port" in js, \
-            "state-config.js serverUrl() 缺少 window.location.port（不可硬編碼 port）"
+        assert "this.lanPort" in js, \
+            "state-config.js serverUrl() 缺少 this.lanPort（80a-T6c：用後端 lan_port）"
+        assert "window.location.port" not in js, \
+            "state-config.js serverUrl() 不應再使用 window.location.port（已改用 lanPort）"
+
+    def test_state_config_lan_port_state_exists(self):
+        """state 含 lanPort: null（80a-T6c 新增 state，reload 後補 GET lan-port）。
+        移除 → serverUrl() 永遠 null，URL 橫條不顯示。"""
+        js = self._js()
+        assert "lanPort: null" in js, \
+            "state-config.js 缺少 'lanPort: null' state（80a-T6c）"
+
+    def test_state_config_set_server_mode_reads_lan_port(self):
+        """setServerMode() 成功分支讀 result.lan_port（後端回傳 LAN port）。
+        移除 → 切換成功後 lanPort 不更新，URL 橫條顯示舊值或 null。"""
+        js = self._js()
+        assert "result.lan_port" in js, \
+            "state-config.js setServerMode() 缺少 'result.lan_port'（80a-T6c：讀後端 lan_port）"
+
+    def test_state_config_load_config_fetches_lan_port(self):
+        """loadConfig() serverMode=true 時 GET /api/config/general/lan-port 補 lanPort。
+        移除 → reload 後 lanPort=null，URL 橫條消失（需重新 toggle 才恢復）。"""
+        js = self._js()
+        assert "/api/config/general/lan-port" in js, \
+            "state-config.js loadConfig() 缺少 '/api/config/general/lan-port' GET（80a-T6c）"
 
     def test_state_config_reads_server_mode_with_nullish_coalesce(self):
         """loadConfig() 用 ?? false 讀 config.general?.server_mode（CD#3 慣例）。

@@ -56,6 +56,7 @@ export function stateConfig() {
         // ===== Server Mode State (80a-T3) =====
         serverMode: false,
         lanIp: '',
+        lanPort: null,
 
         // ===== Dirty Check State =====
         savedState: null,
@@ -390,7 +391,8 @@ export function stateConfig() {
         // 80a-T3: Server Mode methods ─────────────────────────────────────────
 
         serverUrl() {
-            return `http://${this.lanIp}:${window.location.port}`;
+            if (!this.lanIp || !this.lanPort) return null;
+            return `http://${this.lanIp}:${this.lanPort}`;
         },
 
         async setServerMode(val) {
@@ -403,15 +405,19 @@ export function stateConfig() {
                 const result = await resp.json();
                 if (result.success) {
                     this.serverMode = !!val;
+                    this.lanPort = result.lan_port ?? null;
                 } else {
                     console.warn('[serverMode] setServerMode failed:', result.error);
+                    this.showToast(window.t('settings.server_info.toggle_failed'), 'error');
                 }
             } catch (e) {
                 console.warn('[serverMode] setServerMode error:', e);
+                this.showToast(window.t('settings.server_info.toggle_failed'), 'error');
             }
         },
 
         async copyServerUrl() {
+            if (!this.serverUrl()) return;
             if (!navigator.clipboard?.writeText) {
                 this.showToast(window.t('settings.server_info.copy'), 'info');
                 return;
@@ -518,6 +524,15 @@ export function stateConfig() {
 
                     // 80a-T3: Server Mode（?? false：缺 key→false；不用 ||，守 CD#3 慣例）
                     this.serverMode = config.general?.server_mode ?? false;
+                    if (this.serverMode) {
+                        try {
+                            const r = await fetch('/api/config/general/lan-port');
+                            const j = await r.json();
+                            this.lanPort = j.lan_port ?? null;
+                        } catch (_e) { this.lanPort = null; }
+                    } else {
+                        this.lanPort = null;
+                    }
 
                     // Sources（61c-2）：讀 config.sources 段填入 unified scope。
                     // FIELD-NAME TRAP：後端用 display_name_key / display_name_raw；
