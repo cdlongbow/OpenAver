@@ -122,6 +122,19 @@ class TestCapabilitiesEndpoint:
         names = {t["name"] for t in data["tools"]}
         assert names == EXPECTED_TOOL_NAMES
 
+    def test_no_server_mode_toggle_exposed(self, client):
+        """AC-A7（TASK-80a-T5）：LAN 伺服器模式翻轉**不得**揭露給 AI agent。
+
+        server_mode 沿用既有 config 端點、本就無新 capability 條目；本守衛是回歸保險：
+        若日後有人把 server_mode 翻轉做成 agent tool（或揭露 config/general 寫入路徑），
+        agent 可能把機器切成對外開放 → 整份 capabilities 回應不得觸及 server_mode 或
+        config/general 寫入端點。整串序列化比對（涵蓋 tools / instructions / 任何欄位）。
+        """
+        import json
+        blob = json.dumps(client.get("/api/capabilities").json(), ensure_ascii=False).lower()
+        assert "server_mode" not in blob, "capabilities 不得揭露 server_mode 翻轉"
+        assert "/api/config/general" not in blob, "capabilities 不得揭露 config/general 寫入端點"
+
     def test_each_tool_has_required_fields(self, client):
         data = client.get("/api/capabilities").json()
         for tool in data["tools"]:
