@@ -1341,6 +1341,42 @@
     }
 }
 
+/* 81-T3 (US-1 / CD-1·CD-3, showcase 單頁)：行動工具列收合/展開 overlay。
+ * ≤480 下 .showcase-toolbar 預設收合（sticky→fixed 移出文件流，封面牆自動上補位、
+ * 不推擠 grid），點 navbar 搜尋 icon（翻轉 $store.ui.toolbarOpen → .mobile-toolbar-open）
+ * 後從 navbar(56px) 下方 slide-down + fade 滑出 overlay。透明 backdrop 接收外部點擊收合。
+ * Token 理由：duration 走 --fluent-duration-fast(167ms)、enter ease 走 --fluent-ease-decel
+ * (curveDecelerateMid，進場專用)；stylelint 禁字面秒數，必走 token。z 階層：navbar 50 <
+ * backdrop 85 < toolbar 90 < lightbox 1000。 */
+@media (max-width: 480px) {
+    .showcase-toolbar {
+        position: fixed;
+        top: 56px;
+        left: 0;
+        right: 0;
+        z-index: 90;
+        transform: translateY(-100%);
+        opacity: 0;
+        pointer-events: none;
+        transition: transform var(--fluent-duration-fast) var(--fluent-ease-decel),
+                    opacity var(--fluent-duration-fast) var(--fluent-ease-decel);
+    }
+
+    .showcase-toolbar.mobile-toolbar-open {
+        transform: translateY(0);
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    /* 透明全屏 backdrop（x-show 控制顯隱，點擊收合）：從 navbar 下緣起，不蓋 navbar icon */
+    .mobile-toolbar-backdrop {
+        position: fixed;
+        inset: 56px 0 0 0;
+        z-index: 85;
+        background: transparent;
+    }
+}
+
 /* ==================== Detail Table Mode ==================== */
 
 /* Table Wrapper */

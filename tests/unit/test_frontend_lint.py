@@ -13063,3 +13063,112 @@ class TestMobileToolbarToggle:
         binding = divs[0].get(":class", "")
         assert "mobile-toolbar-open" not in binding, \
             f".search-bar 不可綁 mobile-toolbar-open（search Spotlight 維持原樣，實得 {binding!r}）"
+
+
+class TestMobileToolbarCss:
+    """feature/81 T3（US-1 / CD-1·CD-3，**showcase 單頁**，owner 2026-06-22 拍板）：
+
+    showcase.css ≤480 工具列收合/展開 overlay + 透明 backdrop 的靜態守衛。
+    search 頁不在範圍（其 .search-bar 即 Spotlight 中央輸入，永遠可見）。
+
+    斷言：
+    - showcase.css @media (max-width:480px) 內 .showcase-toolbar 收合預設
+      （position:fixed + translateY(-100%) + pointer-events:none）。
+    - .showcase-toolbar.mobile-toolbar-open 展開態（translateY(0) + pointer-events:auto）。
+    - transition 走 token（var(--fluent-duration-fast)/--duration-fast），無字面秒數。
+    - showcase.html 有 div.mobile-toolbar-backdrop（x-show/@click 綁 store + x-cloak）。
+    - .mobile-toolbar-backdrop CSS：position:fixed + z-index:85；toolbar ≤480 z-index:90（85<90）。
+    """
+
+    def _css(self):
+        return SHOWCASE_CSS.read_text(encoding="utf-8")
+
+    def _480_block(self, css):
+        """擷取 ≤480 區塊中含 .showcase-toolbar 的 @media block（容忍巢狀無，平掃）。"""
+        # 找出所有 @media (max-width:480px){ ... } 區塊（簡單括號配對）
+        blocks = []
+        for m in re.finditer(r"@media[^{]*max-width:\s*480px[^{]*\{", css):
+            start = m.end()
+            depth = 1
+            i = start
+            while i < len(css) and depth > 0:
+                if css[i] == "{":
+                    depth += 1
+                elif css[i] == "}":
+                    depth -= 1
+                i += 1
+            blocks.append(css[start:i - 1])
+        return "\n".join(blocks)
+
+    def test_toolbar_collapsed_default(self):
+        """≤480 .showcase-toolbar 收合預設：fixed + translateY(-100%) + pointer-events:none。"""
+        block = self._480_block(self._css())
+        assert block, "showcase.css 須有 @media (max-width:480px) 區塊"
+        # 收合態須出現於同區塊
+        assert re.search(r"\.showcase-toolbar\b", block), \
+            "≤480 區塊缺 .showcase-toolbar 規則"
+        assert "position: fixed" in block or "position:fixed" in block, \
+            "≤480 .showcase-toolbar 須 position:fixed"
+        assert re.search(r"transform:\s*translateY\(-100%\)", block), \
+            "≤480 .showcase-toolbar 收合須 transform:translateY(-100%)"
+        assert re.search(r"pointer-events:\s*none", block), \
+            "≤480 .showcase-toolbar 收合須 pointer-events:none"
+
+    def test_toolbar_open_state(self):
+        """.showcase-toolbar.mobile-toolbar-open 展開：translateY(0) + pointer-events:auto。"""
+        block = self._480_block(self._css())
+        m = re.search(
+            r"\.showcase-toolbar\.mobile-toolbar-open\b[^{]*\{([^}]*)\}", block,
+        )
+        assert m, "≤480 區塊缺 .showcase-toolbar.mobile-toolbar-open 規則"
+        body = m.group(1)
+        assert re.search(r"transform:\s*translateY\(0\)", body), \
+            ".mobile-toolbar-open 須 transform:translateY(0)"
+        assert re.search(r"pointer-events:\s*auto", body), \
+            ".mobile-toolbar-open 須 pointer-events:auto"
+
+    def test_transition_uses_token_not_literal_seconds(self):
+        """toolbar transition 走 duration token，無字面秒數（stylelint 雙保險）。"""
+        block = self._480_block(self._css())
+        m = re.search(r"\.showcase-toolbar\b[^{]*\{([^}]*)\}", block)
+        assert m, "≤480 區塊缺 .showcase-toolbar 規則"
+        body = m.group(1)
+        trans = re.search(r"transition:[^;]*;", body)
+        assert trans, "≤480 .showcase-toolbar 須有 transition"
+        trans_val = trans.group(0)
+        assert ("var(--fluent-duration" in trans_val
+                or "var(--duration-fast" in trans_val), \
+            f"transition 須用 duration token（實得 {trans_val!r}）"
+        assert not re.search(r"\b0?\.\d+s\b", trans_val), \
+            f"transition 不可含字面秒數（實得 {trans_val!r}）"
+
+    def test_backdrop_css(self):
+        """.mobile-toolbar-backdrop CSS：position:fixed + z-index:85；toolbar ≤480 z-index:90。"""
+        css = self._css()
+        m = re.search(r"\.mobile-toolbar-backdrop\b[^{]*\{([^}]*)\}", css)
+        assert m, "showcase.css 缺 .mobile-toolbar-backdrop 規則"
+        body = m.group(1)
+        assert "position: fixed" in body or "position:fixed" in body, \
+            ".mobile-toolbar-backdrop 須 position:fixed"
+        assert re.search(r"z-index:\s*85\b", body), \
+            ".mobile-toolbar-backdrop 須 z-index:85"
+        # toolbar ≤480 須 z-index:90（85<90 階層）
+        block = self._480_block(css)
+        tm = re.search(r"\.showcase-toolbar\b[^{]*\{([^}]*)\}", block)
+        assert tm and re.search(r"z-index:\s*90\b", tm.group(1)), \
+            "≤480 .showcase-toolbar 須 z-index:90（backdrop 85 < toolbar 90）"
+
+    def test_backdrop_dom(self):
+        """showcase.html 有 div.mobile-toolbar-backdrop：x-show/@click 綁 store + x-cloak。"""
+        from bs4 import BeautifulSoup
+        html = SHOWCASE_HTML.read_text(encoding="utf-8")
+        divs = BeautifulSoup(html, "html.parser").select("div.mobile-toolbar-backdrop")
+        assert len(divs) == 1, \
+            f"showcase.html 須有且僅 1 個 div.mobile-toolbar-backdrop（實得 {len(divs)}）"
+        bd = divs[0]
+        assert bd.get("x-show", "") == "$store.ui.toolbarOpen", \
+            f"backdrop x-show 須為 $store.ui.toolbarOpen（實得 {bd.get('x-show')!r}）"
+        click = bd.get("@click", "")
+        assert "$store.ui.toolbarOpen" in click and "false" in click, \
+            f"backdrop @click 須將 $store.ui.toolbarOpen 設 false（實得 {click!r}）"
+        assert bd.has_attr("x-cloak"), "backdrop 須有 x-cloak"

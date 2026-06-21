@@ -247,6 +247,9 @@
             </div>
         </div>
 
+        <!-- 81-T3: 行動工具列透明 backdrop（≤480，點擊收合）。用 @click（非 @click.outside，避子元素 .stop 吃掉觸發）-->
+        <div class="mobile-toolbar-backdrop" x-show="$store.ui.toolbarOpen" @click="$store.ui.toolbarOpen = false" x-cloak></div>
+
         <!-- 影片模式：status bar + grid / table / list (CD-2: x-if 避免 Alpine 追蹤隱藏陣列 DOM) -->
         <template x-if="!showFavoriteActresses">
         <div>
