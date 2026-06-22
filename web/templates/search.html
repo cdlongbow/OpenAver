@@ -389,7 +389,9 @@
             <div class="av-card-full rotating-border-spotlight"
                  x-show="displayMode === 'detail'"
                  :class="{ 'active': shouldShowLocalBorder(current()) }">
-                <div class="av-card-full-cover">
+                <div class="av-card-full-cover"
+                     @touchstart.passive="_dtTouchStart($event)"
+                     @touchend.passive="_dtTouchEnd($event)">
                     <div class="av-card-full-cover-wrapper">
                         <img id="resultCover" x-ref="coverImg" class="av-card-full-cover-img"
                              x-show="!coverError && current().cover"

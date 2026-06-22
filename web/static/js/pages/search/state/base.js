@@ -134,6 +134,8 @@ export function searchStateBase() {
         _sgTouchStartX: null,
         _lbTouchStartX: null,
         _lbTouchStartY: null,
+        _dtTouchStartX: null,
+        _dtTouchStartY: null,
         _sgAnimating: false,
         _sgGeneration: 0,
 

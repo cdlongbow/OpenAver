@@ -3857,6 +3857,113 @@ class TestSearchSwipeGuard:
             "_lbTouchEnd 不可含 showFavoriteActresses（search 無此 state，加 gate 會靜默失效）"
 
 
+class TestDetailSwipeGuard:
+    """81c-T4: 守衛 search detail 封面區 swipe 掛載與 handler 契約。
+
+    靜態鎖死：search.html `.av-card-full-cover` 容器有 `@touchstart.passive` +
+    `@touchend.passive` 綁定（bs4），且**隔離**確認掛在封面區 `.av-card-full-cover`
+    而非整個 detail 卡 `.av-card-full`（避免誤掛 metadata 捲動區）；navigation.js
+    `_dtTouchEnd` handler 含 3 條短路/gate（`rescrapeOpen` / `sampleGalleryOpen` /
+    `displayMode`）、直呼 `navigate(1)` / `navigate(-1)`、`detectSwipe(` 呼叫、
+    threshold `50`、passive 不 `preventDefault`，且**負向**不含 `showFavoriteActresses`
+    （CD-3，detail 純導航不分流）、不含 `lightboxOpen` / `prevLightboxVideo` /
+    `nextLightboxVideo`（detail/燈箱隔離）。手勢真實行為由 owner 真機 hard-gate。
+    """
+
+    def _js(self):
+        return NAVIGATION_JS.read_text(encoding="utf-8")
+
+    def _dt_touch_end_block(self):
+        """抽出 _dtTouchEnd method 區塊（到區段結束標記為止）。"""
+        js = self._js()
+        start = js.index("_dtTouchEnd(e) {")
+        tail = js[start:]
+        # _dtTouchEnd 後緊接區段結束標記
+        end = tail.index("End Detail Cover Swipe")
+        return tail[:end]
+
+    def test_container_has_touch_bindings(self):
+        """search.html `.av-card-full-cover` 容器有 @touchstart.passive + @touchend.passive"""
+        from bs4 import BeautifulSoup
+        html = SEARCH_HTML.read_text(encoding="utf-8")
+        el = BeautifulSoup(html, "html.parser").select_one("div.av-card-full-cover")
+        assert el is not None, "search.html 缺少 .av-card-full-cover 容器"
+        attrs = el.attrs
+        assert ("@touchstart.passive" in attrs or "x-on:touchstart.passive" in attrs), \
+            ".av-card-full-cover 缺少 @touchstart.passive 綁定"
+        assert ("@touchend.passive" in attrs or "x-on:touchend.passive" in attrs), \
+            ".av-card-full-cover 缺少 @touchend.passive 綁定"
+        ts = attrs.get("@touchstart.passive") or attrs.get("x-on:touchstart.passive") or ""
+        te = attrs.get("@touchend.passive") or attrs.get("x-on:touchend.passive") or ""
+        assert "_dtTouchStart" in ts, "@touchstart.passive 未呼叫 _dtTouchStart"
+        assert "_dtTouchEnd" in te, "@touchend.passive 未呼叫 _dtTouchEnd"
+
+    def test_touch_bound_on_cover_not_full_card(self):
+        """隔離守衛：@touch* 掛在 .av-card-full-cover（封面區）而非 .av-card-full（含 metadata 捲動區）"""
+        from bs4 import BeautifulSoup
+        html = SEARCH_HTML.read_text(encoding="utf-8")
+        soup = BeautifulSoup(html, "html.parser")
+        # .av-card-full（整個 detail 卡，含 metadata 區）不可有 touch 綁定
+        full = soup.select_one("div.av-card-full")
+        assert full is not None, "search.html 缺少 .av-card-full 容器"
+        full_attrs = full.attrs
+        assert "@touchstart.passive" not in full_attrs and "x-on:touchstart.passive" not in full_attrs, \
+            ".av-card-full（整個 detail 卡）不應掛 @touchstart（會誤觸 metadata 捲動區）"
+        assert "@touchend.passive" not in full_attrs and "x-on:touchend.passive" not in full_attrs, \
+            ".av-card-full（整個 detail 卡）不應掛 @touchend（會誤觸 metadata 捲動區）"
+
+    def test_dt_touch_end_intercept_chain(self):
+        """_dtTouchEnd 含 3 條短路/gate（rescrape / sampleGallery / displayMode）"""
+        block = self._dt_touch_end_block()
+        for token in [
+            "rescrapeOpen",
+            "sampleGalleryOpen",
+            "displayMode",
+        ]:
+            assert token in block, f"_dtTouchEnd 缺少短路/gate：{token!r}"
+
+    def test_dt_touch_end_direct_dispatch(self):
+        """_dtTouchEnd 直呼 navigate(1) / navigate(-1)（CD-3 直呼，CD-4 方向）"""
+        block = self._dt_touch_end_block()
+        for token in [
+            "navigate(1)",
+            "navigate(-1)",
+        ]:
+            assert token in block, f"_dtTouchEnd 缺少 dispatch 字串：{token!r}"
+
+    def test_dt_touch_end_uses_detect_swipe_with_threshold(self):
+        """navigation.js import 並呼叫 detectSwipe，傳 threshold 50"""
+        js = self._js()
+        assert "import { detectSwipe } from '@/shared/swipe.js';" in js, \
+            "navigation.js 缺少 detectSwipe import"
+        block = self._dt_touch_end_block()
+        assert "detectSwipe(" in block, "_dtTouchEnd 未呼叫 detectSwipe"
+        assert "50" in block, "_dtTouchEnd 未傳 threshold 50"
+
+    def test_dt_touch_end_no_prevent_default(self):
+        """_dtTouchEnd 不呼叫 preventDefault（CD-2 passive）"""
+        block = self._dt_touch_end_block()
+        assert "preventDefault" not in block, \
+            "_dtTouchEnd 不可呼叫 preventDefault（passive 掛載）"
+
+    def test_dt_touch_end_no_actress_gate(self):
+        """負向守衛：_dtTouchEnd 不含 showFavoriteActresses（CD-3，detail 純導航不分流）"""
+        block = self._dt_touch_end_block()
+        assert "showFavoriteActresses" not in block, \
+            "_dtTouchEnd 不可含 showFavoriteActresses（detail 純導航不分流，CD-3）"
+
+    def test_dt_touch_end_no_lightbox_dispatch(self):
+        """負向守衛：_dtTouchEnd 不含 lightbox 字串（detail/燈箱隔離）"""
+        block = self._dt_touch_end_block()
+        for token in [
+            "lightboxOpen",
+            "prevLightboxVideo",
+            "nextLightboxVideo",
+        ]:
+            assert token not in block, \
+                f"_dtTouchEnd 不可含 {token!r}（detail/燈箱隔離，掛不同容器 / 不同 dispatch）"
+
+
 # ─── 49b-T4cd: Actress Photo Picker UI/Alpine/SSE 整合守衛 ──────────────────
 SHOWCASE_CSS_T4CD = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "showcase.css"
 
