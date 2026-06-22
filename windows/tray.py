@@ -130,6 +130,8 @@ class DesktopLifecycle:
         save_state: Callable[[dict], None],
         prompt: Callable[[], CloseDecision] | None = None,
         on_quit_cleanup: Callable[[], None] | None = None,
+        read_close_action: Callable[[], str] | None = None,
+        write_close_action: Callable[[str], None] | None = None,
     ) -> None:
         self.window = window
         self.jl_window = jl_window
@@ -137,6 +139,8 @@ class DesktopLifecycle:
         self.save_state = save_state
         self.prompt = prompt or (lambda: show_close_dialog(self.window))
         self.on_quit_cleanup = on_quit_cleanup
+        self.read_close_action = read_close_action
+        self.write_close_action = write_close_action
         self.tray = None
         self.tray_available = False
         self.quitting = False
@@ -153,14 +157,24 @@ class DesktopLifecycle:
             self.tray_available = bool(self.tray.start())
 
     def get_close_action(self) -> str:
+        if self.read_close_action is not None:
+            try:
+                action = self.read_close_action()
+            except Exception:
+                logger.warning("read_close_action failed; falling back to state", exc_info=True)
+                action = self.state.get("close_action", CLOSE_ASK)
+            return action if action in CLOSE_ACTIONS else CLOSE_ASK
         action = self.state.get("close_action", CLOSE_ASK)
         return action if action in CLOSE_ACTIONS else CLOSE_ASK
 
     def set_close_action(self, action: str) -> None:
         if action not in CLOSE_ACTIONS:
             raise ValueError("invalid close action")
-        self.state["close_action"] = action
-        self.save_state(self.state)
+        if self.write_close_action is not None:
+            self.write_close_action(action)
+        else:
+            self.state["close_action"] = action
+            self.save_state(self.state)
 
     def on_window_closing(self):
         """Return False to cancel PyWebView close, or None to allow exit."""

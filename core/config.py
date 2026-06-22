@@ -15,7 +15,7 @@ import threading
 from pathlib import Path
 from typing import Callable, Literal, Optional, List
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from core.logger import get_logger
 from core.source_config import SourceConfig, get_builtin_sources, get_manual_only_sources
@@ -146,6 +146,12 @@ class GeneralConfig(BaseModel):
     font_size: str = "md"  # 全站字體大小: xs, sm, md, lg, xl
     locale: Literal["zh-TW", "zh-CN", "ja", "en"] = "zh-TW"  # 介面語系
     server_mode: bool = False  # LAN 伺服器模式開關（feature/80）
+    close_action: Literal["ask", "tray", "exit"] = "ask"  # 視窗關閉行為（feature/82）
+
+    @field_validator("close_action", mode="before")
+    @classmethod
+    def _coerce_close_action(cls, v):
+        return v if v in ("ask", "tray", "exit") else "ask"
 
 
 class AppConfig(BaseModel):
@@ -412,6 +418,17 @@ def _load_config_unlocked() -> dict:
         # 時 Pydantic default 不會在 GET /api/config 補上 → 顯式補 False（作用於 raw_config 本身）。
         if 'thumbnail_cache_enabled' not in raw_config:
             raw_config['thumbnail_cache_enabled'] = False
+            need_save = True
+
+        # Additive migration（feature/82 T4）：general.close_action 補預設。
+        # load_config() return raw dict（不 model_validate），舊 config 缺此 key 時 Pydantic default
+        # 不補 → 顯式補 "ask"。general 段缺失或非 dict 時安全建立。
+        gen = raw_config.get('general')
+        if not isinstance(gen, dict):
+            gen = {}
+            raw_config['general'] = gen
+        if 'close_action' not in gen:
+            gen['close_action'] = 'ask'
             need_save = True
 
         # Save migrated config（已持鎖 → 用 unlocked 版避免自我死鎖）

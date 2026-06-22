@@ -31,23 +31,38 @@ def desktop():
     jl_window = MagicMock()
     tray = MagicMock()
     saved = []
+    # close_action store: injected dict-backed read/write (feature/82 T4)
+    close_action_store = {"value": CLOSE_ASK}
+    close_action_writes = []  # record each write for assertions
+
+    def _read_ca():
+        return close_action_store["value"]
+
+    def _write_ca(action):
+        close_action_store["value"] = action
+        close_action_writes.append(action)
+
     state = {
         "width": 1200,
         "height": 800,
         "x": None,
         "y": None,
         "maximized": False,
-        "close_action": CLOSE_ASK,
     }
-    lifecycle = DesktopLifecycle(window, jl_window, state, lambda value: saved.append(dict(value)))
+    lifecycle = DesktopLifecycle(
+        window, jl_window, state,
+        lambda value: saved.append(dict(value)),
+        read_close_action=_read_ca,
+        write_close_action=_write_ca,
+    )
     lifecycle.attach_tray(tray)
     tray.start.return_value = True
     lifecycle.start_tray()
-    return lifecycle, window, jl_window, tray, saved
+    return lifecycle, window, jl_window, tray, saved, close_action_store, close_action_writes
 
 
 def test_prompt_tray_remember_hides_and_cancels_close(desktop):
-    lifecycle, window, jl_window, tray, saved = desktop
+    lifecycle, window, jl_window, tray, saved, ca_store, ca_writes = desktop
     lifecycle.prompt = lambda: CloseDecision(CLOSE_TRAY, remember=True)
 
     assert lifecycle.on_window_closing() is False
@@ -55,23 +70,26 @@ def test_prompt_tray_remember_hides_and_cancels_close(desktop):
     jl_window.destroy.assert_not_called()
     tray.stop.assert_not_called()
     assert lifecycle.get_close_action() == CLOSE_TRAY
-    assert saved[-1]["close_action"] == CLOSE_TRAY
+    # close_action now written via injected write_close_action (not geometry saved[])
+    assert ca_store["value"] == CLOSE_TRAY
+    assert ca_writes[-1] == CLOSE_TRAY
 
 
 def test_prompt_cancel_keeps_window_open(desktop):
-    lifecycle, window, jl_window, tray, saved = desktop
+    lifecycle, window, jl_window, tray, saved, ca_store, ca_writes = desktop
     lifecycle.prompt = lambda: CloseDecision(CLOSE_CANCEL, remember=True)
 
     assert lifecycle.on_window_closing() is False
     window.hide.assert_not_called()
     jl_window.destroy.assert_not_called()
     assert lifecycle.get_close_action() == CLOSE_ASK
-    assert saved == []
+    assert ca_writes == []
 
 
 def test_remembered_tray_skips_prompt(desktop):
-    lifecycle, window, _jl_window, _tray, _saved = desktop
-    lifecycle.state["close_action"] = CLOSE_TRAY
+    lifecycle, window, _jl_window, _tray, _saved, ca_store, _ca_writes = desktop
+    # inject tray action directly into the store (injected path)
+    ca_store["value"] = CLOSE_TRAY
     lifecycle.prompt = MagicMock(side_effect=AssertionError("prompt must not run"))
 
     assert lifecycle.on_window_closing() is False
@@ -80,18 +98,19 @@ def test_remembered_tray_skips_prompt(desktop):
 
 
 def test_remembered_exit_stops_tray_and_allows_close(desktop):
-    lifecycle, _window, jl_window, tray, saved = desktop
-    lifecycle.state["close_action"] = CLOSE_EXIT
+    lifecycle, _window, jl_window, tray, saved, ca_store, _ca_writes = desktop
+    # inject exit action directly into the store (injected path)
+    ca_store["value"] = CLOSE_EXIT
 
     assert lifecycle.on_window_closing() is None
     assert lifecycle.quitting is True
     tray.stop.assert_called_once_with()
     jl_window.destroy.assert_called_once_with()
-    assert saved
+    assert saved  # geometry state is still saved on quit
 
 
 def test_tray_commands_open_change_preference_and_quit(desktop):
-    lifecycle, window, jl_window, tray, saved = desktop
+    lifecycle, window, jl_window, tray, saved, ca_store, ca_writes = desktop
 
     lifecycle.handle_tray_command(CMD_OPEN)
     window.show.assert_called_once_with()
@@ -102,7 +121,8 @@ def test_tray_commands_open_change_preference_and_quit(desktop):
     assert lifecycle.get_close_action() == CLOSE_EXIT
     lifecycle.handle_tray_command(CMD_CLOSE_ASK)
     assert lifecycle.get_close_action() == CLOSE_ASK
-    assert [item["close_action"] for item in saved[:3]] == [CLOSE_TRAY, CLOSE_EXIT, CLOSE_ASK]
+    # close_action writes go to injected store, not geometry saved[]
+    assert ca_writes[:3] == [CLOSE_TRAY, CLOSE_EXIT, CLOSE_ASK]
 
     lifecycle.handle_tray_command(CMD_QUIT)
     assert lifecycle.quitting is True
@@ -112,7 +132,7 @@ def test_tray_commands_open_change_preference_and_quit(desktop):
 
 
 def test_quit_cleanup_is_idempotent(desktop):
-    lifecycle, _window, jl_window, tray, _saved = desktop
+    lifecycle, _window, jl_window, tray, _saved, _ca_store, _ca_writes = desktop
     lifecycle.handle_tray_command(CMD_QUIT)
     lifecycle.shutdown_after_loop()
     assert tray.stop.call_count == 1
@@ -168,10 +188,11 @@ def test_tray_contract_supports_hover_single_and_double_click():
 
 
 def test_unavailable_tray_never_hides_window(desktop, monkeypatch):
-    lifecycle, window, _jl_window, tray, _saved = desktop
+    lifecycle, window, _jl_window, tray, _saved, ca_store, _ca_writes = desktop
     tray.start.return_value = False
     lifecycle.start_tray()
-    lifecycle.state["close_action"] = CLOSE_TRAY
+    # inject tray action directly into the injected store
+    ca_store["value"] = CLOSE_TRAY
     unavailable = MagicMock()
     monkeypatch.setattr("windows.tray.show_tray_unavailable", unavailable)
 
@@ -209,6 +230,47 @@ def test_common_controls_manifest_exists():
     """Manifest file must exist (content correctness is owner responsibility)."""
     manifest = Path(__file__).parents[2] / "windows" / "common-controls.manifest"
     assert manifest.exists(), f"common-controls.manifest not found at {manifest}"
+
+
+# ---------------------------------------------------------------------------
+# feature/82 T4: injected read/write close_action store tests
+# ---------------------------------------------------------------------------
+
+def test_injected_read_write_store_roundtrip():
+    """set_close_action writes via injected write_close_action; get_close_action reads via injected read_close_action."""
+    store = {"value": CLOSE_ASK}
+    window = MagicMock()
+    jl_window = MagicMock()
+    saved = []
+
+    lifecycle = DesktopLifecycle(
+        window, jl_window, {"width": 1200, "height": 800, "x": None, "y": None, "maximized": False},
+        lambda v: saved.append(dict(v)),
+        read_close_action=lambda: store["value"],
+        write_close_action=lambda a: store.__setitem__("value", a),
+    )
+
+    assert lifecycle.get_close_action() == CLOSE_ASK
+    lifecycle.set_close_action(CLOSE_TRAY)
+    assert store["value"] == CLOSE_TRAY
+    assert lifecycle.get_close_action() == CLOSE_TRAY
+    # geometry state saved[] not touched by set_close_action with injected write
+    assert saved == []
+
+
+def test_injected_read_invalid_value_coerced_to_ask():
+    """get_close_action coerces invalid stored value to CLOSE_ASK."""
+    store = {"value": "destroy-everything"}
+    window = MagicMock()
+
+    lifecycle = DesktopLifecycle(
+        window, MagicMock(), {"width": 1200, "height": 800, "x": None, "y": None, "maximized": False},
+        lambda v: None,
+        read_close_action=lambda: store["value"],
+        write_close_action=lambda a: None,
+    )
+
+    assert lifecycle.get_close_action() == CLOSE_ASK
 
 
 def test_standalone_registers_tray_on_win32():

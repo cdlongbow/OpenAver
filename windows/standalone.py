@@ -248,7 +248,11 @@ def main():
                 logger.info("請安裝 WebView2 後重新啟動")
                 sys.exit(0)
 
-    # 1. 尋找可用端口
+    # 1. 標記為 Windows 桌面 App（feature/82 T4：_is_windows_desktop() 讀此環境變數）
+    # 必須在任何 web.app import 之前設定，確保 get_common_context 能正確判斷。
+    os.environ["OPENAVER_STANDALONE"] = "1"
+
+    # 2. 尋找可用端口
     try:
         port = find_free_port(PORT, logger)
         logger.info(f"使用端口: {port}")
@@ -262,7 +266,7 @@ def main():
         )
         sys.exit(1)
 
-    # 2. 在背景 thread 啟動 FastAPI
+    # 3. 在背景 thread 啟動 FastAPI
     logger.info("啟動伺服器...")
     server_thread = threading.Thread(target=run_server, args=(port, debug_mode), daemon=True)
     server_thread.start()
@@ -349,12 +353,21 @@ def main():
     _app_state = {"quitting": False}
     lifecycle = None
     if sys.platform == 'win32':
+        from core.config import mutate_config
+
+        def _write_close_action(action: str) -> None:
+            def _mutator(cfg):
+                cfg.setdefault("general", {})["close_action"] = action
+            mutate_config(_mutator)
+
         lifecycle = DesktopLifecycle(
             window,
             jl_win,
             saved,
             window_state.save_state,
             on_quit_cleanup=lan_listener.shutdown,
+            read_close_action=lambda: load_config().get("general", {}).get("close_action", "ask"),
+            write_close_action=_write_close_action,
         )
         tray_icon = NativeTrayIcon(
             Path(APP_DIR) / "web" / "static" / "favicon.png",
