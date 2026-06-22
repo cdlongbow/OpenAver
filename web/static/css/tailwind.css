@@ -3689,6 +3689,9 @@
     --tw-font-weight: var(--font-weight-semibold);
     font-weight: var(--font-weight-semibold);
   }
+  .break-all {
+    word-break: break-all;
+  }
   .text-ellipsis {
     text-overflow: ellipsis;
   }
@@ -4957,6 +4960,8 @@ body {
   inset: 0;
   background: linear-gradient(to top, oklch(0% 0 0 / 0.7) 0%, oklch(0% 0 0 / 0.3) 50%, transparent 100%);
   display: flex;
+  flex-wrap: wrap;
+  align-content: flex-end;
   align-items: flex-end;
   justify-content: center;
   padding-bottom: 0.75rem;
@@ -5003,6 +5008,17 @@ body {
   }
   :is(#ds-gallery-components, .ds-gallery-composition) .btn-glass-circle {
     font-size: 1rem;
+  }
+}
+@media (min-width: 481px) and (max-width: 899px) {
+  :root {
+    --grid-action-btn-size: 32px;
+  }
+  :is(#ds-gallery-components, .ds-gallery-composition) .av-card-preview-overlay {
+    gap: 0.25rem;
+  }
+  :is(#ds-gallery-components, .ds-gallery-composition) .btn-glass-circle {
+    font-size: 0.9rem;
   }
 }
 :is(#ds-gallery-components, .ds-gallery-composition) .output-info {

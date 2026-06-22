@@ -1375,6 +1375,17 @@
     }
 }
 
+/* 81 (US-1 / CD-1, Codex P2 修正)：navbar 搜尋 icon 只在 ≤480px 顯示，與工具列收合 CSS 斷點對齊。
+ * base.html 的 .navbar-search-btn 僅有 lg:hidden（<1024 可見），但收合 overlay CSS 只在 ≤480；
+ * 若不收緊，481–1023px 會看到 icon 但點了無收合反應（spec §3.1：>480px 行為不變）→ 誤導控制。
+ * 此 page-scoped 規則（.navbar-search-btn 只在 showcase {% if page=='showcase' %} 下渲染）把 481+ 隱藏，
+ * 使「icon 可見區」＝「收合 UI 生效區」＝≤480，邊界一致。 */
+@media (min-width: 481px) {
+    .navbar-search-btn {
+        display: none;
+    }
+}
+
 /* ==================== Detail Table Mode ==================== */
 
 /* Table Wrapper */

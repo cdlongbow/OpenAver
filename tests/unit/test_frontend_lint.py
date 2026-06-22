@@ -335,6 +335,48 @@ class TestGridActionBtnSize:
         assert all(s <= 48 for s in sizes), \
             f"@media (max-width: 480px) 的 --grid-action-btn-size 未縮小（應 ≤48px）：{sizes}"
 
+    def test_tablet_media_shrinks_grid_action_btn_size(self):
+        """@media (min-width: 481px) and (max-width: 899px) 內把 --grid-action-btn-size 縮為 < 36px（Codex P1）。
+
+        US-10 把 481–899 改 4 欄後卡寬比 ≤480 的 3 欄更窄，overlay(absolute+overflow:hidden)
+        會把 36px 鈕 clip 截斷 → 此段需比 ≤480 的 36px 更小。
+        """
+        css = self._theme()
+        blocks = re.findall(
+            r"@media\s*\(\s*min-width:\s*481px\s*\)\s*and\s*\(\s*max-width:\s*899px\s*\)\s*\{(.*?)\n\}",
+            css,
+            re.DOTALL,
+        )
+        sizes = []
+        for block in blocks:
+            for val in re.findall(r"--grid-action-btn-size:\s*(\d+)px", block):
+                sizes.append(int(val))
+        assert sizes, \
+            "theme.css @media (min-width: 481px) and (max-width: 899px) 內未重宣告 --grid-action-btn-size（feature/81 Codex P1：tablet 4 欄需再縮）"
+        assert all(s < 36 for s in sizes), \
+            f"481–899px 的 --grid-action-btn-size 未比 ≤480(36px) 更小：{sizes}"
+
+    def test_overlay_wraps_not_clips(self):
+        """.av-card-preview-overlay 主規則含 flex-wrap: wrap（feature/81 Codex P1 根治：防裁切）。
+
+        單純縮尺寸無法讓單一 token 同時服務 481px(96px 卡) 與 899px(201px 卡)；窄卡放不下
+        第 3 鈕(enrich)時靠 flex-wrap 換行而非被 overflow:hidden 裁切。此守衛鎖「永不裁切」
+        機制——比『3 鈕在某尺寸恰好容納』更穩（任意鈕數/寬度皆不裁）。需搭 align-content
+        貼底避免多行上飄。
+        """
+        css = self._theme()
+        m = re.search(
+            r":is\(#ds-gallery-components,\s*\.ds-gallery-composition\)\s+\.av-card-preview-overlay\s*\{(.*?)\}",
+            css,
+            re.DOTALL,
+        )
+        assert m, "theme.css 找不到 :is(...) .av-card-preview-overlay 主規則"
+        rule = m.group(1)
+        assert re.search(r"flex-wrap:\s*wrap", rule), \
+            ".av-card-preview-overlay 主規則缺 flex-wrap: wrap（Codex P1 根治：窄卡第 3 鈕須換行不被裁切）"
+        assert re.search(r"align-content:\s*flex-end", rule), \
+            ".av-card-preview-overlay 缺 align-content: flex-end（多行鈕須貼底，不上飄）"
+
 
 SETTINGS_CSS_T76 = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "settings.css"
 THEME_TRANSITION_JS_T76 = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "settings" / "theme-transition.js"
@@ -13249,6 +13291,26 @@ class TestMobileToolbarCss:
         assert "$store.ui.toolbarOpen" in click and "false" in click, \
             f"backdrop @click 須將 $store.ui.toolbarOpen 設 false（實得 {click!r}）"
         assert bd.has_attr("x-cloak"), "backdrop 須有 x-cloak"
+
+    def test_navbar_search_btn_hidden_above_480(self):
+        """showcase.css 在 @media (min-width:481px) 把 .navbar-search-btn 隱藏（Codex P2）。
+
+        base.html 的 navbar 搜尋 icon 僅 lg:hidden（<1024 可見），但收合 overlay CSS 只在 ≤480；
+        若不收緊，481–1023px 會看到 icon 但點了無收合反應（誤導控制）。此守衛鎖定
+        「icon 可見區 = 收合 UI 生效區 = ≤480」的斷點一致性，防回退。
+        """
+        css = self._css()
+        blocks = re.findall(
+            r"@media\s*\(\s*min-width:\s*481px\s*\)\s*\{(.*?)\n\}",
+            css,
+            re.DOTALL,
+        )
+        hidden = any(
+            re.search(r"\.navbar-search-btn\b[^{}]*\{[^}]*display:\s*none", block)
+            for block in blocks
+        )
+        assert hidden, \
+            "showcase.css 須在 @media (min-width:481px) 將 .navbar-search-btn display:none（Codex P2：icon 斷點對齊 ≤480 收合 UI）"
 
 
 class TestMobileToolbarAutoCollapse:

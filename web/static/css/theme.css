@@ -1111,6 +1111,8 @@ body {
     inset: 0;
     background: linear-gradient(to top, oklch(0% 0 0 / 0.7) 0%, oklch(0% 0 0 / 0.3) 50%, transparent 100%);
     display: flex;
+    flex-wrap: wrap;          /* feature/81 Codex P1 根治：窄卡放不下時第 3 鈕(enrich)換行而非被 overflow:hidden 裁切 */
+    align-content: flex-end;  /* 多行時整組鈕貼底（單行時無作用），與 align-items:flex-end 一致不上飄 */
     align-items: flex-end;
     justify-content: center;
     padding-bottom: 0.75rem;
@@ -1173,6 +1175,29 @@ body {
 
     :is(#ds-gallery-components, .ds-gallery-composition) .btn-glass-circle {
         font-size: 1rem;  /* icon 隨鈕縮（桌面 1.25rem） */
+    }
+}
+
+/* ── 481–899px：tablet 4 欄（US-10）下 grid 圓鈕再縮一階（feature/81 Codex P1 修正）──────
+ * US-10 把 481–899 改 4 欄（showcase.css L281 / search.css），欄數從 ≤480 的 3 欄跳升，
+ * 卡寬反而比 ≤480 更窄：481px 4 欄 ≈(481−96)/4≈96px（vs ≤480 3 欄 ≈146px）。overlay 為
+ * position:absolute + overflow:hidden，36px 鈕在此被 clip 截斷（比溢出更糟）。故此段需比 ≤480
+ * 的 36px 更小 → 32px + gap 收到 0.25rem(4px)。數學（最窄 481px 96px 卡）：
+ *   2 鈕 32×2+4=68px ＜96 → 全段寬鬆；
+ *   3 鈕（含 enrich）32×3+8=104px，需卡寬≥104 即 vp≥512 → 481–512 含 enrich 仍極限偏緊
+ *   （enrich 為條件顯示，真機作用中 tablet 多 ≥600px，與 ≤480 三鈕同屬已記錄殘留，owner 真機 gate）。
+ * token 在 :root → search grid 同步跟進（CD-11 parity，不需改 search.css）。 */
+@media (min-width: 481px) and (max-width: 899px) {
+    :root {
+        --grid-action-btn-size: 32px;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition) .av-card-preview-overlay {
+        gap: 0.25rem;  /* 4 欄最窄卡（≈96px）容 3 鈕：理由見上方註記 */
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition) .btn-glass-circle {
+        font-size: 0.9rem;  /* icon 隨 32px 鈕縮（桌面 1.25rem / ≤480 1rem） */
     }
 }
 
