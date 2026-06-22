@@ -18,11 +18,13 @@
             <div class="settings-server-mode">
                 <div class="settings-sources-segmented" role="group" :aria-label="window.t('settings.mode.label')">
                     <button type="button"
+                            data-mode="local"
                             :class="{ 'is-on': !serverMode }"
                             @click="setServerMode(false)"
                             x-text="window.t('settings.mode.local')">
                     </button>
                     <button type="button"
+                            data-mode="server"
                             :class="{ 'is-on': serverMode }"
                             @click="setServerMode(true)"
                             x-text="window.t('settings.mode.server')">
