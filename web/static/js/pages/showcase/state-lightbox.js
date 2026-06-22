@@ -10,6 +10,7 @@
 
 import { _filteredVideos, _filteredActresses, _killLightboxTimelines, _NO_COVER_PLACEHOLDER } from '@/showcase/state-base.js';
 import { POSTER_CROP_MAX_W } from '@/shared/breakpoints.js';
+import { detectSwipe } from '@/shared/swipe.js';
 
 export function stateLightbox() {
     // 49b T4cd: Picker 動畫參數（T1 fix2 定案，2026-04-25）
@@ -40,6 +41,8 @@ export function stateLightbox() {
         sampleGalleryImages: [],
         sampleGalleryIndex: 0,
         _sgTouchStartX: null,
+        _lbTouchStartX: null,
+        _lbTouchStartY: null,
         _sgAnimating: false,            // C21 guard
         _sgGeneration: 0,               // stale callback 防護
 
@@ -421,6 +424,61 @@ export function stateLightbox() {
                 this.nextSampleGallery(); // swipe left → next
             } else {
                 this.prevSampleGallery(); // swipe right → prev
+            }
+        },
+
+        // ==================== Lightbox Swipe (81c-T2) ====================
+
+        _lbTouchStart(e) {
+            if (e.touches && e.touches.length > 0) {
+                this._lbTouchStartX = e.touches[0].clientX;
+                this._lbTouchStartY = e.touches[0].clientY;
+            }
+        },
+
+        _lbTouchEnd(e) {
+            if (this._lbTouchStartX === null) return;
+            var endX = e.changedTouches && e.changedTouches.length > 0
+                ? e.changedTouches[0].clientX
+                : null;
+            var endY = e.changedTouches && e.changedTouches.length > 0
+                ? e.changedTouches[0].clientY
+                : null;
+            if (endX === null || endY === null) {
+                this._lbTouchStartX = null;
+                this._lbTouchStartY = null;
+                return;
+            }
+            // CD-5 攔截短路串（比照 handleKeydown 優先序）
+            if (this.similarModeOpen || this.similarModeMobileOpen) {
+                this._lbTouchStartX = null; this._lbTouchStartY = null; return;
+            }
+            if (this.removeActressModalOpen) {
+                this._lbTouchStartX = null; this._lbTouchStartY = null; return;
+            }
+            if (this._pickerOpen) {
+                this._lbTouchStartX = null; this._lbTouchStartY = null; return;
+            }
+            if (this.rescrapeOpen) {
+                this._lbTouchStartX = null; this._lbTouchStartY = null; return;
+            }
+            if (this.deleteVideoModalOpen) {
+                this._lbTouchStartX = null; this._lbTouchStartY = null; return;
+            }
+            if (this.sampleGalleryOpen) {   // 劇照由 _sgTouchEnd 處理
+                this._lbTouchStartX = null; this._lbTouchStartY = null; return;
+            }
+            if (!this.lightboxOpen) {        // 燈箱沒開不換片
+                this._lbTouchStartX = null; this._lbTouchStartY = null; return;
+            }
+            var dir = detectSwipe(this._lbTouchStartX, this._lbTouchStartY, endX, endY, 50);
+            this._lbTouchStartX = null;
+            this._lbTouchStartY = null;
+            // CD-3 分流（CD-4 方向）
+            if (dir === 'left') {           // 左滑 → 下一
+                this.showFavoriteActresses ? this.nextActressLightbox() : this.nextLightboxVideo();
+            } else if (dir === 'right') {   // 右滑 → 上一
+                this.showFavoriteActresses ? this.prevActressLightbox() : this.prevLightboxVideo();
             }
         },
 
