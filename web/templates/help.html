@@ -69,7 +69,7 @@
                     <span class="terminal-prompt">$</span>
                     curl -s {{ base_url }}/api/capabilities
                     <button class="terminal-copy-btn" @click="copyCurlCommand()">
-                        <span x-show="!curlCopied">📋</span>
+                        <i class="bi bi-clipboard" x-show="!curlCopied"></i>
                         <span x-show="curlCopied">✓</span>
                     </button>
                 </div>
