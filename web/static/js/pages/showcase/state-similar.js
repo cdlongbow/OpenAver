@@ -1300,7 +1300,6 @@ export function stateSimilar() {
       if (this.similarModeAnimating) return;   // lock-before-await 防連點空窗
       if (!item) return;
       this.similarModeAnimating = true;
-      this._mobilePanelRunId++;
 
       const pickedCard = $event.currentTarget;
       const coverEl = this.$refs.mobilePanelCoverImg;
@@ -1329,22 +1328,23 @@ export function stateSimilar() {
       this._mobileFloatTweens.forEach(t => t && t.kill && t.kill());
       this._mobileFloatTweens = [];
 
-      const runId = this._mobilePanelRunId;
       const skip = window.BurstPicker && window.BurstPicker.shouldSkip(_MOBILE_PICKER_PARAMS);
       const oldOtherCards = oldCards.filter(c => c !== pickedCard);
 
-      // 83b-T1fix1: detach-before-swap（技術要點 3）。reactive similarResults swap +
-      // Alpine keyed x-for 會移除舊卡 DOM；若直接對原節點 playPickerExitAll，swap 後節點已脫離
-      // → 墜落動畫對「已移除（不可見）」節點跑 → 卡直接消失（非可見墜落，違反 spec AC-4）。
-      // 修法：swap 前把每張 oldOtherCard 凍結在當前 viewport rect、設 position:fixed、re-parent
-      // 到面板下（脫離 x-for 控制），再對 detached 節點跑 ExitAll，Promise resolve 後移除（清乾淨）。
-      // pickedCard 不 detach（FlipReplace 自建 fixed ghost、隱藏原節點，對原節點被移除免疫）。
+      // 83b-T1fix3: clone-based detach（Opus 裁決，推翻 T1fix1/2 的 re-parent 模型）。
+      // 驗證鏈：Alpine 3.15.12 keyed x-for reconcile 對 removed key 直接 raw Node.remove()，
+      // 無 parentElement===container 守衛 → re-parent 到 panelEl 的「原節點」一樣會被 Alpine 拔走
+      // → T1fix2 的可見淡出跑在已脫離 document 的孤兒上 → 不可見。
+      // 修法：不搬原節點，改 deep clone。每張 oldOtherCard 凍結在當前 viewport rect 後 cloneNode(true)，
+      // clone 加 .similar-mobile-card-detached + position:fixed + 凍結 rect，appendChild 到面板下。
+      // clone 非 Alpine-tracked → composite key churn 6 原節點都不影響 clone → 退場動畫完全脫離 Alpine 生命週期。
+      // 原 card 留在原位不動，Alpine swap 時自然 .remove() 它（正確、無害，clone 在同一 rect 接手）。
+      // pickedCard 不 clone（FlipReplace 自建 fixed ghost、隱藏原節點，對原節點被移除免疫）。
       //
-      // H1 順序鐵律：FlipReplace 必須在 detach loop 之前呼叫。playPickerFlipReplace 在 call 當下
-      // 同步讀 pickedCard 的 getBoundingClientRect()；若先 detach 5 張 sibling，grid
-      // （repeat(3,minmax(0,1fr)) + justify-items:center）會 reflow，pickedCard 塌進第一格 →
-      // ghost 從錯誤版位起飛。先建 FlipReplace ghost（讀真實 tapped rect、隱原節點），
-      // 之後 detach 其餘 5 張不影響已建好的 fixed ghost。
+      // H1 順序鐵律：FlipReplace 必須在 clone loop 之前呼叫。playPickerFlipReplace 在 call 當下
+      // 同步讀 pickedCard 的 getBoundingClientRect()；維持 FlipReplace-before-clone 既有順序即可
+      // （clone 不移除原節點 → grid 不 reflow，但保留順序以策安全）。
+      // 先建 FlipReplace ghost（讀真實 tapped rect、隱原節點），之後 clone 其餘 5 張不影響已建好的 fixed ghost。
       const flip = (window.BurstPicker && coverEl)
         ? window.BurstPicker.playPickerFlipReplace(pickedCard, coverEl, _MOBILE_PICKER_PARAMS)
         : Promise.resolve();
@@ -1354,15 +1354,34 @@ export function stateSimilar() {
       if (panelEl) {
         oldOtherCards.forEach(card => {
           const r = card.getBoundingClientRect();
-          card.classList.add('similar-mobile-card-detached');
-          card.style.position = 'fixed';
-          card.style.margin = '0';
-          card.style.top = r.top + 'px';
-          card.style.left = r.left + 'px';
-          card.style.width = r.width + 'px';
-          card.style.height = r.height + 'px';
-          panelEl.appendChild(card);   // re-parent 脫離 x-for；keyed diff 移除的是新建節點
-          detachedOldCards.push(card);
+          const clone = card.cloneNode(true);   // deep clone：非 Alpine-tracked，退場動畫脫離 keyed diff
+          // 83b-T1fix3-fix：cloneNode 連 Alpine directive 屬性（:src / @click）一起複製，
+          // appendChild 後 Alpine 的 MutationObserver 會 auto-init 這個 clone、evaluate `item.cover_url`，
+          // 但 clone 在 x-for scope 之外 → `item is not defined` 洪水錯誤 + 破壞 render。
+          // 故 strip 掉 clone（含子孫）所有 Alpine directive（x-* / : / @），讓它變純惰性 DOM 節點。
+          [clone, ...clone.querySelectorAll('*')].forEach(el => {
+            [...el.attributes].forEach(attr => {
+              const n = attr.name;
+              if (n.startsWith('x-') || n.startsWith(':') || n.startsWith('@')) {
+                el.removeAttribute(n);
+              }
+            });
+          });
+          // 保險：把 resolved cover src 顯式複製到 clone img（:src 被 strip 後仍顯示原圖）
+          const cloneImg = clone.querySelector('img');
+          const srcImg = card.querySelector('img');
+          if (cloneImg && srcImg) cloneImg.src = srcImg.src;
+          clone.classList.add('similar-mobile-card-detached');
+          clone.style.position = 'fixed';
+          clone.style.margin = '0';
+          clone.style.top = r.top + 'px';
+          clone.style.left = r.left + 'px';
+          clone.style.width = r.width + 'px';
+          clone.style.height = r.height + 'px';
+          clone.style.pointerEvents = 'none';
+          panelEl.appendChild(clone);   // clone 在 panel 動畫；原節點交給 Alpine swap 自然移除
+          detachedOldCards.push(clone);
+          gsap.set(card, { opacity: 0 });   // 原節點即將被 Alpine 移除，先隱避免 clone 接手前 1-frame 重疊
         });
       }
       const cleanupDetached = () => {
@@ -1398,6 +1417,12 @@ export function stateSimilar() {
       }).then(cleanupDetached, cleanupDetached);
 
       // reactive swap → 新卡 DOM
+      // _mobilePanelRunId 必須在 reactive swap 前一刻才 bump——card key 依賴它，提早 bump 會在
+      // await 期間觸發 keyed re-render 把 pickedCard 變 stale → FlipReplace no-op（83b-T1fix3-fix2）。
+      // 在 swap 同一 tick bump：await 全程 key 維持舊 runId（pickedCard 存活 → flip 正常飛 + 換封面），
+      // 此處 bump 後 6 張 key 全新 → Alpine 重建 6 張全新節點 → 全部 burst（issue-2「6 卡」修法保留）。
+      this._mobilePanelRunId++;
+      const runId = this._mobilePanelRunId;   // burst token：反映 swap 後的新世代
       this.similarResults = items;
       // 中央主圖 src 換成被點卡封面（drill 落點）。BurstPicker 在場時 playPickerFlipReplace
       // 已在 ghost 抵達時 swap coverImg.src（含 cache-bust），這裡再設會觸發第二次冗餘 fetch；

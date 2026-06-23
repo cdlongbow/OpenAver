@@ -1196,7 +1196,7 @@
             </div>
             <!-- 相似卡（從中央爆射；右半裁切；無文字） -->
             <div class="similar-mobile-cards">
-                <template x-for="item in similarResults" :key="item.video_id">
+                <template x-for="item in similarResults" :key="_mobilePanelRunId + '-' + item.video_id">
                     <div class="similar-mobile-burst-card"
                          @click="onMobileDrillClick(item, $event)">
                         <img :src="item.cover_url" alt="" aria-hidden="true">
