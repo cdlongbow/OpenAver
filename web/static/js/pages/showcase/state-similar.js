@@ -119,6 +119,9 @@ export function stateSimilar() {
     _mobileFloatTweens: [],           // 爆射後 float timeline sink（drill / close 時 kill）
     _mobileLastDrilledNumber: null,   // close 時 3-tier silent-switch 還原 lightbox 用
     _mobileLastDrilledItem: null,     // snapshot 被點卡資料（tier2/3 fallback；similarResults 已被替換時仍可取）
+    _mobileEnterTl: null,             // 83b-T3: in-flight 進場 ghost timeline（close 中途打斷時 kill）
+    _mobileEnterGhost: null,          // 83b-T3: in-flight 進場 ghost 節點（close 打斷時顯式 cleanup）
+    _mobileEnterResolve: null,        // 83b-T3: _openMobilePanel enter await resolver（close 打斷時直接解除，.kill() 不 fire onInterrupt）
 
     // 揭露給 Alpine template（x-for="anchor in SIMILAR_ANCHORS"）
     SIMILAR_ANCHORS,
@@ -1256,7 +1259,11 @@ export function stateSimilar() {
       this._mobileLastDrilledNumber = null;
       this._mobilePanelRunId++;
 
-      // 設中央主圖 src（FlipReplace 落點 + Burst 原點）
+      // 83b-T3：enter 前先讀 lightbox cover rect（panel .show 前才有效，否則面板遮住 lightbox）
+      const lightboxCoverEl = this.$refs && this.$refs.lightboxCoverImg;
+
+      // 設中央主圖 src（FlipReplace 落點 + Burst 原點；83b-T3 邊界：enter 前設 src，
+      // onComplete 後只 cleanup ghost，不依賴 onComplete 設 src 以支援中途中斷場景）
       const coverEl = this.$refs.mobilePanelCoverImg;
       if (coverEl) coverEl.src = this.currentLightboxVideo.cover_url || '';
 
@@ -1270,8 +1277,40 @@ export function stateSimilar() {
       const panelEl = document.querySelector('.similar-mobile-panel');
       if (panelEl) panelEl.classList.add('show');
 
-      // 等 x-for 渲染 6 卡 → collect → 爆射
+      // 等 x-for 渲染 6 卡 + layout flush（$nextTick 讓 mobilePanelCoverImg rect 有效）
       await this.$nextTick();
+
+      // 83b-T3：進場 ghost 飛行（similarModeAnimating 保持 true 直到飛行完成）
+      if (window.GhostFly && window.BurstPicker &&
+          !window.BurstPicker.shouldSkip(_MOBILE_PICKER_PARAMS) &&
+          lightboxCoverEl && coverEl) {
+        // P1-T3fix：把 enter timeline + ghost ref + await resolver 暫存於 state，供 closeMobilePanel
+        // 中途打斷時 kill + 顯式 cleanup + 解除本 await（防 enter onComplete 在 exit 飛行中誤還原
+        // mobileCoverEl opacity → ~333ms 雙圖）。GSAP 3 .kill() 不保證 fire onInterrupt，故
+        // closeMobilePanel 直接呼叫存下的 resolver（_mobileEnterResolve），不依賴 onInterrupt。
+        const self = this;
+        await new Promise(function (res) {
+          self._mobileEnterResolve = res;   // 供 closeMobilePanel 中途打斷時直接解除 await
+          self._mobileEnterTl = window.GhostFly.playMobilePanelEnter(lightboxCoverEl, coverEl, {
+            onGhostReady: function (ghost) { self._mobileEnterGhost = ghost; },
+            onComplete: function (ghost) {
+              self._mobileEnterTl = null;
+              self._mobileEnterGhost = null;
+              self._mobileEnterResolve = null;
+              // ghost === null：rect.width===0 或 src 空，直接繼續（src 已在 show 前設好）
+              if (ghost) {
+                // Correction A：到達後 cleanup ghost + 還原 coverImgEl + mobileCoverEl opacity
+                window.GhostFly.cleanupGhost(ghost, lightboxCoverEl, coverEl);
+              }
+              res();
+            }
+          });
+          // 同步路徑（gsap undefined / ghost null）：playMobilePanelEnter 已直接呼叫 onComplete →
+          // res() 已觸發，_mobileEnterTl / _mobileEnterResolve 為 null（onComplete 內清掉）。await 立即 resolve。
+        });
+      }
+      // PRM 降級 or GhostFly unavailable：直接顯示（src 已設，面板已 .show），無需額外動作
+
       const cards = [...document.querySelectorAll('.similar-mobile-burst-card')];
       const runId = this._mobilePanelRunId;
       if (window.BurstPicker && !window.BurstPicker.shouldSkip(_MOBILE_PICKER_PARAMS)) {
@@ -1486,10 +1525,11 @@ export function stateSimilar() {
     },
 
     /**
-     * closeMobilePanel — 點主圖 / ✕ / Esc 關面板。Core 無轉場（直隱）。
+     * closeMobilePanel — 點主圖 / ✕ / Esc 關面板。83b-T3 加 exit ghost 飛行（async）。
      * 絕對不呼叫 closeSimilarMode()（CD-4 / R3：桌面 close 在 similarCards={} 時 await playExit 永不 resolve → 凍結）。
+     * 呼叫方（handleKeydown Esc / matchMedia change / close button）fire-and-forget，不需 await。
      */
-    closeMobilePanel() {
+    async closeMobilePanel() {
       // kill float tweens（R5）
       this._mobileFloatTweens.forEach(t => t && t.kill && t.kill());
       this._mobileFloatTweens = [];
@@ -1503,7 +1543,40 @@ export function stateSimilar() {
       // 83b-T1fix1: 清掉仍在墜落的 detached fixed 舊卡（ExitAll Promise 尚未 resolve 時關面板），避免殘留 overlay
       document.querySelectorAll('.similar-mobile-card-detached').forEach(el => el.remove());
 
-      // 直隱面板（移 .show + flag false → lightbox trap 重新生效、焦點還原）
+      // P1-T3fix（中途中斷 race）：若 enter ghost 仍在飛，先 kill enter timeline + 顯式 cleanup
+      // enter ghost（GSAP 3 .kill() 不保證 fire onInterrupt，故不依賴 onInterrupt 還原 opacity），
+      // 在 exit 起飛「之前」同步還原 lightboxCoverImg + mobilePanelCoverImg opacity:1。
+      // 否則 enter onComplete 會在 exit 飛行中誤把 mobileCoverEl 還原 → ~333ms 雙圖。
+      if (this._mobileEnterTl) {
+        this._mobileEnterTl.kill();
+        this._mobileEnterTl = null;
+      }
+      if (this._mobileEnterGhost) {
+        const _lbCover = this.$refs && this.$refs.lightboxCoverImg;
+        const _mbCover = this.$refs && this.$refs.mobilePanelCoverImg;
+        if (window.GhostFly) {
+          window.GhostFly.cleanupGhost(this._mobileEnterGhost, _lbCover, _mbCover);
+        }
+        this._mobileEnterGhost = null;
+      }
+      // GSAP 3 .kill() 不 fire onInterrupt → 顯式解除 _openMobilePanel 的 enter await（防 async 懸掛）
+      if (this._mobileEnterResolve) {
+        const _res = this._mobileEnterResolve;
+        this._mobileEnterResolve = null;
+        _res();
+      }
+
+      // 83b-T3：退場 ghost 飛行（GhostFly available + 非 PRM → await 後才移 .show）
+      if (window.GhostFly && window.BurstPicker &&
+          !window.BurstPicker.shouldSkip(_MOBILE_PICKER_PARAMS)) {
+        const coverImgEl = this.$refs && this.$refs.lightboxCoverImg;
+        const mobileCoverEl = this.$refs && this.$refs.mobilePanelCoverImg;
+        await new Promise(function (res) {
+          window.GhostFly.playMobilePanelExit(mobileCoverEl, coverImgEl, { onComplete: res });
+        });
+      }
+
+      // exit 完成後（或 PRM 直接跳過）才隱藏面板（移 .show + flag false → lightbox trap 重新生效）
       const panelEl = document.querySelector('.similar-mobile-panel');
       if (panelEl) panelEl.classList.remove('show');
       this.similarModeMobileOpen = false;

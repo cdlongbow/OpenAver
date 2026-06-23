@@ -14942,3 +14942,223 @@ class TestMobileSimilarPanelContractGuard:
         assert "nextLightboxVideo" not in guard_block, (
             "handleKeydown similarModeMobileOpen block 含 nextLightboxVideo（箭頭不得切片，D10）"
         )
+
+
+# ============================================================================
+# TASK-83b-T3: Mobile Similar Panel Transition Guards（6 條）
+# 鎖住 T3 建立的封面飛行進 / 退場合約：helper 存在 / 不包裝禁區 / token 化 /
+# async closeMobilePanel / PRM 分支 / 桌面禁區 anchor 不被 mobile helper 引用。
+# ============================================================================
+
+_T3_GHOST_FLY_JS = (
+    Path(__file__).parent.parent.parent
+    / "web" / "static" / "js" / "shared" / "ghost-fly.js"
+)
+
+
+class TestMobilePanelT3Guards:
+    """TASK-83b-T3: 行動相似面板封面飛行進退場（6 條靜態守衛）。
+
+    每條 guard 均 mutation-detectable：刪除或改動對應實作即 RED。
+    """
+
+    @staticmethod
+    def _ghost_fly_js():
+        return _T3_GHOST_FLY_JS.read_text(encoding="utf-8")
+
+    @staticmethod
+    def _similar_js():
+        return _T2_SIMILAR_JS.read_text(encoding="utf-8")
+
+    @staticmethod
+    def _extract_function_body(js, func_pattern):
+        """大括號平衡法擷取函式體（reuse T2 pattern）。"""
+        m = re.search(func_pattern, js)
+        if not m:
+            return None
+        start = m.start()
+        try:
+            body_start = js.index('{', start)
+        except ValueError:
+            return None
+        depth = 0
+        for i, ch in enumerate(js[body_start:], body_start):
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    return js[body_start:i + 1]
+        return None
+
+    # ── 1. Helper functions exported ────────────────────────────────────────
+
+    def test_mobile_panel_enter_exit_functions_exported(self):
+        """ghost-fly.js 含 playMobilePanelEnter + playMobilePanelExit 函式定義，
+        且兩者均出現在 GhostFly export 物件中。"""
+        js = self._ghost_fly_js()
+        assert "playMobilePanelEnter" in js, \
+            "ghost-fly.js 缺 playMobilePanelEnter 函式（83b-T3 helper 未建立）"
+        assert "playMobilePanelExit" in js, \
+            "ghost-fly.js 缺 playMobilePanelExit 函式（83b-T3 helper 未建立）"
+        # 確認 export 在 GhostFly 物件中（兩者均以 property: function 形式 export）
+        assert re.search(r'playMobilePanelEnter\s*:\s*playMobilePanelEnter', js), \
+            "ghost-fly.js GhostFly export 物件缺 playMobilePanelEnter 屬性"
+        assert re.search(r'playMobilePanelExit\s*:\s*playMobilePanelExit', js), \
+            "ghost-fly.js GhostFly export 物件缺 playMobilePanelExit 屬性"
+
+    # ── 2. Enter uses createCoverGhost, not constellation wrapper ───────────
+
+    def test_mobile_enter_uses_create_cover_ghost_not_constellation(self):
+        """ghost-fly.js playMobilePanelEnter 函式體含 createCoverGhost，
+        且不含 play56cConstellationEnter（不包裝桌面禁區函式）。
+        comment 中的字串不算（去掉 // 和 /* */ comment 後才驗證）。"""
+        js = self._ghost_fly_js()
+        body = self._extract_function_body(js, r'function\s+playMobilePanelEnter\s*\(')
+        assert body is not None, \
+            "ghost-fly.js 找不到 playMobilePanelEnter 函式宣告"
+        assert "createCoverGhost" in body, \
+            "playMobilePanelEnter 函式體缺 createCoverGhost 呼叫（必須直接用 primitive，不可包裝桌面函式）"
+        # 去掉 comment 後再搜尋（comment 中可能有說明性文字提及禁區函式名）
+        body_no_comments = re.sub(r'//[^\n]*', '', body)
+        body_no_comments = re.sub(r'/\*.*?\*/', '', body_no_comments, flags=re.DOTALL)
+        assert "play56cConstellationEnter" not in body_no_comments, \
+            "playMobilePanelEnter 函式體（去注釋後）含 play56cConstellationEnter（禁區：不可包裝桌面函式）"
+
+    # ── 3. Transition tokenized（DURATION.medium + fluent ease strings）──────
+
+    def test_mobile_transition_tokenized(self):
+        """ghost-fly.js playMobilePanelEnter / playMobilePanelExit 均：
+        - 含 DURATION.medium（token 不硬編碼）
+        - 含 0.333（fallback 允許）
+        - enter 含 fluent-decel；exit 含 fluent-accel
+        - 函式體（排除 fallback 表達式後）不含裸 duration 數字 literal（如 duration: 0.333）
+
+        Correction B：0.333 只允許作為 || fallback，不得作為 duration: 的直接值。
+        """
+        js = self._ghost_fly_js()
+
+        enter_body = self._extract_function_body(js, r'function\s+playMobilePanelEnter\s*\(')
+        assert enter_body is not None, "ghost-fly.js 找不到 playMobilePanelEnter"
+        exit_body = self._extract_function_body(js, r'function\s+playMobilePanelExit\s*\(')
+        assert exit_body is not None, "ghost-fly.js 找不到 playMobilePanelExit"
+
+        for name, body in [("playMobilePanelEnter", enter_body), ("playMobilePanelExit", exit_body)]:
+            assert "DURATION.medium" in body, \
+                f"{name} 函式體缺 DURATION.medium（必須用 token，不可硬編碼 duration）"
+            assert "0.333" in body, \
+                f"{name} 函式體缺 0.333 fallback（token guard chain 要求 || 0.333 fallback）"
+
+        assert "fluent-decel" in enter_body, \
+            "playMobilePanelEnter 函式體缺 fluent-decel ease（禁用 power2.* 代換）"
+        assert "fluent-accel" in exit_body, \
+            "playMobilePanelExit 函式體缺 fluent-accel ease（禁用 power2.* 代換）"
+
+        # Correction B：排除 || 0.333 fallback 行後，不得有 duration: <數字> 裸值
+        # 方法：把 "|| 0.333" fallback 表達式置換掉，再搜尋 duration: 後接數字
+        for name, body in [("playMobilePanelEnter", enter_body), ("playMobilePanelExit", exit_body)]:
+            body_stripped = body.replace("|| 0.333", "").replace("|| 0.5", "")
+            # 搜尋 duration: 後緊接數字 literal（含小數）
+            assert not re.search(r'\bduration\s*:\s*\d+(\.\d+)?', body_stripped), \
+                (f"{name} 函式體含裸 duration 數字 literal（排除 fallback 後仍殘留）；"
+                 "必須用 dur 變數（來自 DURATION.medium || 0.333）")
+
+    # ── 4. closeMobilePanel is async ────────────────────────────────────────
+
+    def test_mobile_close_panel_is_async(self):
+        """state-similar.js closeMobilePanel 為 async 函式（exit ghost await 前提）。"""
+        js = self._similar_js()
+        assert re.search(r'async\s+closeMobilePanel\s*\(', js), \
+            "state-similar.js closeMobilePanel 不是 async 函式（83b-T3：exit ghost 需 async + await）"
+
+    # ── 5. PRM fallback branches exist ──────────────────────────────────────
+
+    def test_mobile_transition_prm_fallback(self):
+        """state-similar.js _openMobilePanel 函式體含 shouldSkip（PRM 閘），
+        且 enter ghost 飛行（playMobilePanelEnter）被 shouldSkip 閘控（!...shouldSkip 在呼叫前）；
+        closeMobilePanel 含 shouldSkip + playMobilePanelExit 被閘控。"""
+        js = self._similar_js()
+
+        open_body = self._extract_function_body(js, r'async\s+_openMobilePanel\s*\(')
+        assert open_body is not None, \
+            "state-similar.js 找不到 _openMobilePanel 函式宣告"
+        assert "shouldSkip" in open_body, \
+            "_openMobilePanel 函式體缺 shouldSkip（PRM 降級分支未實作）"
+        assert "mobilePanelCoverImg" in open_body, \
+            "_openMobilePanel 函式體缺 mobilePanelCoverImg（PRM 分支中央主圖 src 設定缺失）"
+        # Nit 強化：enter ghost 飛行必須被 PRM 閘控（!...shouldSkip(...) 出現在 playMobilePanelEnter 呼叫之前）
+        assert "playMobilePanelEnter" in open_body, \
+            "_openMobilePanel 函式體缺 playMobilePanelEnter 呼叫（enter 飛行未接線）"
+        open_no_comments = re.sub(r'//[^\n]*', '', open_body)
+        open_no_comments = re.sub(r'/\*.*?\*/', '', open_no_comments, flags=re.DOTALL)
+        m_neg = re.search(r'!\s*window\.BurstPicker\.shouldSkip', open_no_comments)
+        m_enter = re.search(r'playMobilePanelEnter', open_no_comments)
+        assert m_neg is not None, \
+            "_openMobilePanel 缺 !window.BurstPicker.shouldSkip 否定閘（enter 飛行未受 PRM 閘控）"
+        assert m_neg.start() < m_enter.start(), (
+            "_openMobilePanel 的 !shouldSkip 閘必須在 playMobilePanelEnter 呼叫之前"
+            "（否則 PRM 用戶仍會跑進場飛行）"
+        )
+
+        close_body = self._extract_function_body(js, r'async\s+closeMobilePanel\s*\(')
+        assert close_body is not None, \
+            "state-similar.js 找不到 async closeMobilePanel 函式宣告"
+        assert "shouldSkip" in close_body, \
+            "closeMobilePanel 函式體缺 shouldSkip（PRM 快捷隱藏路徑未實作）"
+        # exit ghost 飛行同樣被 PRM 閘控
+        assert "playMobilePanelExit" in close_body, \
+            "closeMobilePanel 函式體缺 playMobilePanelExit 呼叫（exit 飛行未接線）"
+        close_no_comments = re.sub(r'//[^\n]*', '', close_body)
+        close_no_comments = re.sub(r'/\*.*?\*/', '', close_no_comments, flags=re.DOTALL)
+        m_neg_c = re.search(r'!\s*window\.BurstPicker\.shouldSkip', close_no_comments)
+        m_exit = re.search(r'playMobilePanelExit', close_no_comments)
+        assert m_neg_c is not None and m_neg_c.start() < m_exit.start(), (
+            "closeMobilePanel 的 !shouldSkip 閘必須在 playMobilePanelExit 呼叫之前"
+            "（否則 PRM 用戶仍會跑退場飛行）"
+        )
+
+    # ── 5b. closeMobilePanel kills in-flight enter timeline (P1-T3fix) ───────
+
+    def test_mobile_close_kills_enter_timeline(self):
+        """state-similar.js closeMobilePanel 函式體在 playMobilePanelExit 之前 kill in-flight
+        enter timeline（_mobileEnterTl.kill()）+ 顯式 cleanup enter ghost（_mobileEnterGhost）。
+        P1-T3fix：防中途打斷時 enter onComplete 在 exit 飛行中誤還原 mobileCoverEl opacity → 雙圖。"""
+        js = self._similar_js()
+        close_body = self._extract_function_body(js, r'async\s+closeMobilePanel\s*\(')
+        assert close_body is not None, \
+            "state-similar.js 找不到 async closeMobilePanel 函式宣告"
+        close_no_comments = re.sub(r'//[^\n]*', '', close_body)
+        close_no_comments = re.sub(r'/\*.*?\*/', '', close_no_comments, flags=re.DOTALL)
+        # 必須 kill in-flight enter timeline
+        m_kill = re.search(r'_mobileEnterTl\s*\.\s*kill\s*\(', close_no_comments)
+        assert m_kill is not None, (
+            "closeMobilePanel 缺 _mobileEnterTl.kill()（P1-T3fix：未 kill in-flight 進場 timeline → "
+            "中途打斷雙圖）"
+        )
+        # 必須顯式 cleanup enter ghost（.kill() 不保證 fire onInterrupt，故不可只靠 timeline 自清）
+        assert "_mobileEnterGhost" in close_no_comments, (
+            "closeMobilePanel 缺 _mobileEnterGhost 顯式 cleanup（.kill() 不 fire onInterrupt → "
+            "enter ghost 殘留 + opacity 未還原）"
+        )
+        # kill 必須在 exit 飛行（playMobilePanelExit）之前
+        m_exit = re.search(r'playMobilePanelExit', close_no_comments)
+        assert m_exit is not None, "closeMobilePanel 缺 playMobilePanelExit"
+        assert m_kill.start() < m_exit.start(), (
+            "_mobileEnterTl.kill() 必須在 playMobilePanelExit 之前"
+            "（否則 enter ghost 仍在飛 → 與 exit ghost 雙圖）"
+        )
+
+    # ── 6. Desktop constellation anchor not in mobile enter ─────────────────
+
+    def test_desktop_constellation_byte_identical_anchor(self):
+        """ghost-fly.js 含 .similar-main-anchor（桌面 anchor lookup 未被移除）；
+        且 playMobilePanelEnter 函式體不含 .similar-main-anchor（禁區 anchor 不被 mobile helper 引用）。"""
+        js = self._ghost_fly_js()
+        assert ".similar-main-anchor" in js, \
+            "ghost-fly.js 缺 .similar-main-anchor（桌面 play56cConstellationEnter 被破壞或移除）"
+
+        enter_body = self._extract_function_body(js, r'function\s+playMobilePanelEnter\s*\(')
+        assert enter_body is not None, \
+            "ghost-fly.js 找不到 playMobilePanelEnter 函式宣告"
+        assert ".similar-main-anchor" not in enter_body, \
+            "playMobilePanelEnter 函式體含 .similar-main-anchor（禁區：桌面 DOM 不得出現在 mobile helper）"
