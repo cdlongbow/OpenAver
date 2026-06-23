@@ -1275,18 +1275,28 @@ export function stateSimilar() {
       const cards = [...document.querySelectorAll('.similar-mobile-burst-card')];
       const runId = this._mobilePanelRunId;
       if (window.BurstPicker && !window.BurstPicker.shouldSkip(_MOBILE_PICKER_PARAMS)) {
-        await window.BurstPicker.playPickerBurst(cards, coverEl, _MOBILE_PICKER_PARAMS, {
+        // P1-1: instant-mode playPickerBurst resolves on LAUNCH（tween 啟動即 resolve），
+        // 非卡片落定。鎖若在此立即釋放，arc 弧（arcDuration≈0.75s）仍飛行中，
+        // 第二次 drill 可在卡片移動中啟動。故 await 爆射 launch 後再等 arcDuration 才解鎖。
+        // 不等無限 float yoyo，只等 arc settle。
+        const burst = window.BurstPicker.playPickerBurst(cards, coverEl, _MOBILE_PICKER_PARAMS, {
           streamMode: 'instant',
           floatTimerSink: this._mobileFloatTweens,
           runId,
           getRunId: () => this._mobilePanelRunId,
         });
+        await Promise.resolve(burst).then(() =>
+          new Promise(res => gsap.delayedCall(_MOBILE_PICKER_PARAMS.arcDuration, res)));
       } else if (window.BurstPicker) {
-        // PRM：shouldSkip 內建瞬顯，仍呼叫以確保卡片 opacity:1 終態
+        // PRM：shouldSkip 內建瞬顯（無飛行），仍呼叫以確保卡片 opacity:1 終態；不加 arc 等待。
         await window.BurstPicker.playPickerBurst(cards, coverEl, _MOBILE_PICKER_PARAMS, { streamMode: 'instant' });
       }
 
-      this.similarModeAnimating = false;
+      // P1-2 對稱：只在自己仍是當前世代時才釋放鎖。若 arc 等待窗內 close→reopen 起了新 session
+      // （runId 已遞增、新 _openMobilePanel 持鎖），不可把新 session 的鎖釋放掉。
+      if (this._mobilePanelRunId === runId) {
+        this.similarModeAnimating = false;
+      }
     },
 
     /**
@@ -1300,6 +1310,10 @@ export function stateSimilar() {
       if (this.similarModeAnimating) return;   // lock-before-await 防連點空窗
       if (!item) return;
       this.similarModeAnimating = true;
+      // P1-2（Codex 二審）：fetch window 早期 session token。在 await 前捕獲世代；await 期間若
+      // close（closeMobilePanel bump runId）甚至 close→reopen 起新 session，sessionRunId 即落後。
+      // fetch/preload 後立即比對 → 防舊 drill 在重開的新 session 上 kill float / clone / swap / 啟動動畫。
+      const sessionRunId = this._mobilePanelRunId;
 
       const pickedCard = $event.currentTarget;
       const coverEl = this.$refs.mobilePanelCoverImg;
@@ -1312,15 +1326,18 @@ export function stateSimilar() {
       try {
         data = await this._fetchSimilarResults(item.number);
       } catch (_err) {
-        this.similarModeAnimating = false;   // _fetchSimilarResults 已 showToast；面板維持當前狀態
+        // _fetchSimilarResults 已 showToast。只在仍是當前世代才還原鎖（close 期間鎖屬新 session）。
+        if (this._mobilePanelRunId === sessionRunId) this.similarModeAnimating = false;
         return;
       }
       const items = data.results.slice(0, 6);   // CD-6
       await this._preloadImages(items.map(r => r.cover_url));
 
-      // stale-check：await 期間關面板 → 中止、不 commit
-      if (!this.similarModeMobileOpen) {
-        this.similarModeAnimating = false;
+      // stale-check（runId 世代，Codex 二審）：await(fetch/preload) 期間若 close（bump runId）或
+      // close→reopen（新 session 持鎖、similarModeMobileOpen 又變 true），sessionRunId 落後 → 中止，
+      // **不**碰新 session 的狀態（不 kill float / clone / swap），**不**還原 similarModeAnimating
+      // （close-only 時 closeMobilePanel 已設 false；reopen 時新 session 持有）。
+      if (this._mobilePanelRunId !== sessionRunId) {
         return;
       }
 
@@ -1434,7 +1451,7 @@ export function stateSimilar() {
       const newCards = [...document.querySelectorAll(
         '.similar-mobile-burst-card:not(.similar-mobile-card-detached)')]
         .filter(el => !oldCards.includes(el));
-      const burst = window.BurstPicker
+      const burstLaunch = window.BurstPicker
         ? window.BurstPicker.playPickerBurst(newCards, coverEl, _MOBILE_PICKER_PARAMS, {
             streamMode: 'instant',
             floatTimerSink: skip ? undefined : this._mobileFloatTweens,
@@ -1442,8 +1459,24 @@ export function stateSimilar() {
             getRunId: () => this._mobilePanelRunId,
           })
         : Promise.resolve();
+      // P1-1: instant-mode burst resolves on LAUNCH，非卡片落定。flip/exit 約 0.55/0.4s 先完成，
+      // 但新 6 卡 arc（arcDuration≈0.75s）仍飛行 → 鎖若此時釋放，第二次 drill 可在移動中卡片上啟動。
+      // 故把 burst 包成「launch 後再等 arcDuration」才算 settle。skip（PRM）路徑無飛行 → 不加等待。
+      const burstSettled = skip
+        ? Promise.resolve(burstLaunch)
+        : Promise.resolve(burstLaunch).then(() =>
+            new Promise(res => gsap.delayedCall(_MOBILE_PICKER_PARAMS.arcDuration, res)));
 
-      await Promise.all([flip, exit, burst]);
+      await Promise.all([flip, exit, burstSettled]);
+
+      // P1-2: 第二道 stale-check 用 runId 世代（非僅 open flag）。closeMobilePanel 會 bump
+      // _mobilePanelRunId；若 Promise.all 動畫窗內發生 close（甚至 close→reopen 起新 session），
+      // 本 drill 捕獲的 runId 即落後 → 必須中止 commit（否則會用舊 item 覆寫 closeMobilePanel 的還原，
+      // 或汙染重開後的新 session）。runId 不符時**不還原 similarModeAnimating**——鎖屬新 session
+      // （close-only 時 closeMobilePanel 已設 false；reopen 時新 _openMobilePanel 持有）。
+      if (this._mobilePanelRunId !== runId) {
+        return;
+      }
 
       // commit（onComplete 後）：3-tier silent-switch 還原底層 lightbox（裁決 2）
       this._mobileSilentSwitch(item);
@@ -1460,6 +1493,12 @@ export function stateSimilar() {
       // kill float tweens（R5）
       this._mobileFloatTweens.forEach(t => t && t.kill && t.kill());
       this._mobileFloatTweens = [];
+
+      // P1-2: bump runId 使任何 in-flight burst 失效。burst per-card onComplete（burst-picker.js）
+      // 以 getRunId() !== runId 為閘——關面板後 in-flight burst 的 onComplete 會讀到新 runId → 早退，
+      // 不在已清空/已關的面板上啟動 float tween（避免 leak）。亦與第二道 drill stale-check 協同：
+      // 重開面板取得全新 runId，不被舊 in-flight burst 汙染。
+      this._mobilePanelRunId++;
 
       // 83b-T1fix1: 清掉仍在墜落的 detached fixed 舊卡（ExitAll Promise 尚未 resolve 時關面板），避免殘留 overlay
       document.querySelectorAll('.similar-mobile-card-detached').forEach(el => el.remove());
