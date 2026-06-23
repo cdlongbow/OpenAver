@@ -5413,8 +5413,9 @@ class TestSearchCssHardcoded:
         # T11：在 L753 後插入 hero 規則（~14 行）：906→920。
         # T10（US-10）：poster-crop / coarse block 註解 +4 行（481–899 擴斷點）：920→924。
         # 83a-T3：在 L789 插入 modal-hug block（~21 行）：924→945。
+        # 83a-T3-fix P1：在 L810（T9-port 前）插入 lightbox overflow block（~12 行）：945→957。
         90: "drop-shadow rgba 0.3 — §2 例外（drop-shadow 跟封面去背形狀，非矩形 box-shadow 無法用 --fluent-shadow-* token）",
-        945: "var(--bg-card, rgba(0, 0, 0, 0.05)) fallback — defensive fallback，非硬編碼違規",
+        957: "var(--bg-card, rgba(0, 0, 0, 0.05)) fallback — defensive fallback，非硬編碼違規",
     }
 
     SIX_PX_ALLOWLIST = {
@@ -14498,6 +14499,17 @@ class TestLightboxModalHugContract:
             "state-lightbox.js 缺少 setProperty('--lb-cover-ar') 呼叫"
         )
 
+    def test_metadata_flex_distribution(self):
+        """83a-T3-fix P1: .lightbox-metadata 有 flex:1 1 auto + overflow-y:auto（metadata 自行捲，modal 不捲）"""
+        block = self._metadata_block(self._css())
+        assert block is not None, "showcase.css 找不到 .lightbox-metadata 規則"
+        assert re.search(r'flex\s*:\s*1\s+1\s+auto', block), (
+            ".lightbox-metadata 缺少 flex:1 1 auto（P1 fix：metadata 佔剩餘高度）"
+        )
+        assert re.search(r'overflow-y\s*:\s*auto', block), (
+            ".lightbox-metadata 缺少 overflow-y:auto（P1 fix：metadata 內部捲，modal 不捲）"
+        )
+
 
 class TestSearchLightboxModalHugContract:
     """83a-T3: 固化 search 頁 lightbox modal-hug 契約（7 條純加法守衛）
@@ -14621,4 +14633,21 @@ class TestSearchLightboxModalHugContract:
         )
         assert "setProperty('--lb-cover-ar'" in js, (
             "grid-mode.js 缺少 setProperty('--lb-cover-ar') 呼叫"
+        )
+
+    def _search_lightbox_content_block(self, css):
+        m = re.search(
+            r'\.search-container\s+\.lightbox-content\s*\{([^}]*)\}',
+            css, re.DOTALL
+        )
+        return m.group(1) if m else None
+
+    def test_s8_search_lightbox_content_overflow_hidden(self):
+        """83a-T3-fix P1: .search-container .lightbox-content 有 overflow-y:hidden（modal 不捲）"""
+        block = self._search_lightbox_content_block(self._css())
+        assert block is not None, (
+            "search.css 找不到 .search-container .lightbox-content 規則（P1 fix 缺失）"
+        )
+        assert re.search(r'overflow-y\s*:\s*hidden', block), (
+            ".search-container .lightbox-content 缺少 overflow-y:hidden（P1 fix：modal 整體不捲）"
         )

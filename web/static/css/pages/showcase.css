@@ -671,6 +671,13 @@
     min-height: min(58vh, 460px);
 }
 
+/* 83a-T3-fix P1: metadata 可變高 → modal 整體捲動修正。
+   :not(.similar-open) scope — similar-open 禁區保留 overflow-y:auto（需捲動）。
+   metadata 靠 flex:1 1 auto + min-height:0 + overflow-y:auto 自行消化剩餘高度。 */
+.lightbox-content:not(.similar-open) {
+    overflow-y: hidden;
+}
+
 /* 83a-T1fix1 M1+M2+M3: has-cover 時 aspect-box modal-hug 模型（全斷點適用）。
    修正 T1 的 flex-shrink letterbox bug（CDP 實測：cover box 1139×610 AR=1.869≠圖 AR 1.481
    → img object-fit:contain 只佔 903px → 左右各 118px 暗死白）。
@@ -757,11 +764,16 @@
 }
 
 /* Metadata Panel — 緊湊版（匹配原版 gallery） */
-/* 83a-T1 M4: 移除 max-width:600px，改 width:100% 對齊封面寬（modal shrink-to-fit 後即封面寬）。 */
+/* 83a-T1 M4: 移除 max-width:600px，改 width:100% 對齊封面寬（modal shrink-to-fit 後即封面寬）。
+   83a-T3-fix P1: flex:1 1 auto + min-height:0 讓 metadata 吃剩餘空間並自行捲動，
+   配合上方 .lightbox-content:not(.similar-open){overflow-y:hidden} 防 modal 整體捲動。 */
 .lightbox-metadata {
     padding: 0.5rem 0 0 0;
     width: 100%;
     border-top: 1px solid var(--stroke-subtle);
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
 }
 
 /* Header row: title + sample gallery button */

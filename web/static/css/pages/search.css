@@ -807,6 +807,18 @@
     object-fit: contain;
 }
 
+/* 83a-T3-fix P1: search 燈箱 metadata 可變高 → modal 捲動修正。
+   search 無 similar-open → 直接加 overflow-y:hidden，不需 :not(.similar-open) scope。
+   .lightbox-metadata flex 分配：吃剩餘高度並自行捲動（同 showcase）。 */
+.search-container .lightbox-content {
+    overflow-y: hidden;
+}
+.search-container .lightbox-metadata {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+}
+
 /* T9-port：≤480px search 影片燈箱封面貼合原圖比例（消 letterbox 死白）。
    判別子 .search-container 精準限 search 頁——showcase 頁根為 .showcase-container，零波及。
    容器 + img 皆 gate .has-cover（決策 ①）：search 無 similar-open、無「保低 specificity」顧慮；
