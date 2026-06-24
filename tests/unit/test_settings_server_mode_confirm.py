@@ -39,9 +39,23 @@ class TestServerModeConfirm:
         assert "cancelServerModeChange()" in content
 
     def test_i18n_keys_in_zh_tw(self):
-        """zh_TW.json 必須有 settings.server_mode_confirm 區塊"""
-        content = self._read_zh_tw()
-        assert "server_mode_confirm" in content
+        """zh_TW.json 必須有 server_mode_confirm 完整 key 組（含 on 變體）"""
+        data = json.loads(self._read_zh_tw())
+        block = data["settings"]["server_mode_confirm"]
+        for key in ("title", "title_on", "body_on", "body_off", "confirm", "confirm_on"):
+            assert key in block, f"missing key: {key}"
+
+    def test_modal_title_is_conditional_x_text(self):
+        """title 必須透過 x-text 條件渲染（on/off 各自有 key）"""
+        content = self._read_settings_html()
+        assert "server_mode_confirm.title_on" in content
+        assert "server_mode_confirm.title'" in content
+
+    def test_modal_confirm_button_is_conditional_x_text(self):
+        """confirm 按鈕必須透過 x-text 條件渲染（on/off 各自有 key）"""
+        content = self._read_settings_html()
+        assert "server_mode_confirm.confirm_on" in content
+        assert "server_mode_confirm.confirm'" in content
 
     def test_state_ui_has_confirm_state(self):
         """state-ui.js 必須有 serverModeConfirmOpen 和 serverModeConfirmValue"""

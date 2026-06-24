@@ -1221,7 +1221,9 @@
         <div class="modal-box fluent-modal-box">
             <h3 class="fluent-modal-title">
                 <i class="bi bi-wifi"></i>
-                {{ t('settings.server_mode_confirm.title') }}
+                <span x-text="serverModeConfirmValue
+                    ? window.t('settings.server_mode_confirm.title_on')
+                    : window.t('settings.server_mode_confirm.title')"></span>
             </h3>
             <p class="fluent-modal-body"
                x-text="serverModeConfirmValue
@@ -1231,9 +1233,10 @@
                 <button type="button" class="btn btn-ghost" @click="cancelServerModeChange()">
                     {{ t('common.action.cancel') }}
                 </button>
-                <button type="button" class="btn btn-primary" @click="confirmServerModeChange()">
-                    {{ t('settings.server_mode_confirm.confirm') }}
-                </button>
+                <button type="button" class="btn btn-primary" @click="confirmServerModeChange()"
+                        x-text="serverModeConfirmValue
+                            ? window.t('settings.server_mode_confirm.confirm_on')
+                            : window.t('settings.server_mode_confirm.confirm')"></button>
             </div>
         </div>
     </dialog>
