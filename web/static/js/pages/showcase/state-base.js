@@ -281,6 +281,8 @@ export function stateBase() {
             this.$watch('actressSearch', val => {
                 Alpine.store('ui').showcaseHasSearch = (this.search !== '' || val !== '')
             })
+            // T2 init sync: restoreState() 在 $watch 前執行，初始 search/actressSearch 不觸發 watcher
+            Alpine.store('ui').showcaseHasSearch = (this.search !== '' || this.actressSearch !== '')
         },
 
         clearSearch() {

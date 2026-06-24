@@ -90,3 +90,9 @@ class TestShowcaseHeaderSearchIcon:
         """state-base.js 必須有 $watch('actressSearch') 更新 showcaseHasSearch（mutation guard）"""
         content = self._read_state_base()
         assert "$watch('actressSearch'" in content or '$watch("actressSearch"' in content
+
+    def test_init_sync_showcase_has_search_after_watchers(self):
+        """init() 必須在 $watch 登記後有 init-time 同步賦值（restoreState 在 $watch 前執行）"""
+        content = self._read_state_base()
+        # 直接斷言 init sync 語句存在，防止只靠 $watch 而漏掉初始值路徑
+        assert "Alpine.store('ui').showcaseHasSearch = (this.search !== '' || this.actressSearch !== '')" in content
