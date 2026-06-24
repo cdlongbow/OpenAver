@@ -13135,7 +13135,7 @@ class TestServerModeToggleGuard:
     def test_settings_server_mode_segmented_in_header(self):
         """.settings-server-mode 在標題左 cluster（.settings-header-left）內，是 <h4> 的
         cluster-sibling，且含 .settings-sources-segmented + 2 個 button
-        （setServerMode(false)/setServerMode(true)）。
+        （requestServerModeChange(false)/requestServerModeChange(true)，T4 改為確認 modal）。
 
         81b-T1（CD-1）：膠囊從 .settings-header-actions 搬到 .settings-header-left。
         mutation：膠囊搬回 .settings-header-actions → 「不在 actions」斷言 RED；
@@ -13152,10 +13152,10 @@ class TestServerModeToggleGuard:
         assert len(buttons) == 2, \
             f".settings-sources-segmented 應有 2 個 button，實際 {len(buttons)} 個"
         click_attrs = [b.get("@click", "") for b in buttons]
-        assert any("setServerMode(false)" in a for a in click_attrs), \
-            "segmented 缺少 @click=\"setServerMode(false)\" button（單機態）"
-        assert any("setServerMode(true)" in a for a in click_attrs), \
-            "segmented 缺少 @click=\"setServerMode(true)\" button（伺服器態）"
+        assert any("requestServerModeChange(false)" in a for a in click_attrs), \
+            "segmented 缺少 @click=\"requestServerModeChange(false)\" button（單機態）"
+        assert any("requestServerModeChange(true)" in a for a in click_attrs), \
+            "segmented 缺少 @click=\"requestServerModeChange(true)\" button（伺服器態）"
         # 81b-T1（CD-1）：位置斷言 — 膠囊在標題左 cluster，h4 sibling，搬離 actions
         left = soup.find(class_="settings-header-left")
         assert left is not None, \
