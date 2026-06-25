@@ -1,36 +1,32 @@
 <!-- OpenAver: free open-source desktop GUI JAV metadata scraper & manager.
-No Docker, no CLI, one-line install (Windows/macOS), 8 built-in scrape sources
-(JavBus/Jav321/JavDB/DMM/D2Pass/HEYZO/FC2/AVSOX) plus optional Metatube federation (30+ providers),
-generates NFO + cover art (poster/fanart) for Jellyfin / Emby / Kodi,
-actress favorites with cross-language alias expansion, cross-language tag aliases,
-AI-operable REST API with capabilities manifest, 3,400+ tests, MIT license. -->
+No Docker, no CLI, one-line install (Windows/macOS). A cover-wall browser built for how
+this genre is actually browsed — navigate by cover + tag, actress as a first-class entity
+(profile cards, cup/age/height sort, cross-language alias). 8 built-in scrape sources
+(JavBus/Jav321/JavDB/DMM/D2Pass/HEYZO/FC2/AVSOX) plus optional Metatube federation (30+ providers).
+Optionally exports NFO + cover art (poster/fanart) to Jellyfin / Emby / Kodi.
+AI-operable REST API with capabilities manifest, 4,000+ tests, MIT license. -->
 
 <h1 align="center">OpenAver</h1>
 
 <p align="center">
-  <strong>No Docker, no command line — one-line install for Win/Mac, a full GUI JAV metadata manager the moment you open it.</strong><br>
-  8-source unified scraping · Actress favorites & alias management · Interactive collection browser · Jellyfin / Emby integration · An AI API that operates your library from a single prompt
+  <strong>No Docker, no command line — one-line install for Win/Mac, a full GUI JAV collection manager the moment you open it.</strong><br>
+  Cover-wall browsing · Actress profiles & cross-language aliases · 8-source unified scraping · AI API that runs your library from a single sentence
 </p>
 
-<p align="center"><em>
-  Open-source desktop GUI for JAV metadata — one-line install, 8 built-in scrape sources, actress favorites + alias system, Jellyfin/Emby/Kodi ready, AI-operable REST API.
-</em></p>
-
-![Python](https://img.shields.io/badge/Python-3.12-blue.svg)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)
-![License](https://img.shields.io/badge/License-MIT-yellow.svg)
-![Tests](https://github.com/slive777/OpenAver/actions/workflows/test.yml/badge.svg)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-0078D6.svg)
 ![GitHub Release](https://img.shields.io/github/v/release/slive777/OpenAver)
+![Downloads](https://img.shields.io/github/downloads/slive777/OpenAver/total?color=success)
+![Stars](https://img.shields.io/github/stars/slive777/OpenAver)
+![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Tests](https://img.shields.io/github/actions/workflow/status/slive777/OpenAver/test.yml?label=tests%204%2C000%2B)
 
 **English** | [繁體中文](README.md)
 
-> **OpenAver is a free, open-source desktop app (Windows/macOS, no Docker, no CLI) that scrapes JAV metadata from 8 sources and generates NFO files + cover art for Jellyfin, Emby, and Kodi — with actress collections, cross-language tag aliases, and a built-in REST API that lets AI agents operate your library.**
+> **This isn't just "a scraper that feeds metadata to Jellyfin."** OpenAver is where you actually live with your collection — its Showcase is built around **cover + tag** as the navigation axes, with a **dedicated actress-browsing mode** (profile cards, sort by cup size / age / height, cross-language alias system that collapses all of one person's stage names and post-retirement names into a single card). It's a browser purpose-built for the way a shelf full of IDs is actually browsed. Once you've scraped a title and want to throw it on the living-room media center, one click exports NFO + cover art for Jellyfin / Emby / Kodi — but that's optional downstream. Showcase is a complete browsing experience on its own.
 
-The core workflow spans three pages: 📋 Scan & build library → 🎬 Browse collection → 🔍 Per-ID scraping (advanced)
+Three pages form the core: 📋 Scan & build library → 🎬 Browse collection → 🔍 Per-ID scraping (advanced). **The default mode is read-only (searching and browsing never touch your files); only when you press "Organize" does OpenAver move files** — renaming or relocating your videos according to the rules you set, and nothing more. It never deletes.
 
 **100% local** — no data collection, no uploaded file info. Network requests are only used to scrape publicly available metadata.
-
-**✨ Highlights**: Search 8 sources in one query · Toggle and drag-reorder scrape sources freely · Actress favorites with auto profiles + alias-expanded search · Cross-language tag aliases — Chinese/Japanese/English synonyms auto-expand consistently across the search box, chips, and similar-video exploration · One-click NFO & cover fill from the web · Rule-based similar-video exploration (no model download, offline, millisecond response) · Operate your library in natural language with AI · Jellyfin / Emby cover auto-generation · 3,400+ automated tests
 
 ⚡ **[Live Demo → openaver.slive.uk](https://openaver.slive.uk/)**
 
@@ -42,8 +38,10 @@ The core workflow spans three pages: 📋 Scan & build library → 🎬 Browse c
 |------|---------|
 | **Platform** | Windows 10/11 · macOS (Apple Silicon M1–M4) |
 | **Install** | One-line command or ZIP install (**no Docker**); once installed, everything runs in the GUI — **no CLI** |
+| **Collection browsing** | Showcase cover wall + Lightbox: video mode (cover/tag navigation + similar exploration), actress mode (profile cards + cup/age/height sort + cross-language alias) |
+| **Multi-device access** | One-click server mode — phones and tablets on the same Wi-Fi can browse your collection in any browser (**instant, no restart, no setup**; single-machine by default, no external exposure) |
 | **Scrape sources** | 8 built-in (JavBus / Jav321 / JavDB / DMM / D2Pass / HEYZO / FC2 / AVSOX); advanced users can optionally federate **Metatube (30+ more providers)** |
-| **Media server output** | NFO + cover art (poster / fanart) for **Jellyfin / Emby / Kodi** |
+| **Media server output (optional)** | One-click NFO + cover art (poster / fanart) — export to **Jellyfin / Emby / Kodi** when you want to hook into a living-room media center |
 | **Actress collection** | Auto profiles + cross-language alias expansion + multi-source photo download |
 | **AI control** | Built-in REST API + capabilities manifest (Claude Code / Cursor / Perplexity and other AI agents operate it directly) |
 | **AI translation** | Ollama (local, free) / Gemini / OpenAI-compatible — your choice |
@@ -57,7 +55,7 @@ The core workflow spans three pages: 📋 Scan & build library → 🎬 Browse c
 | ![Search](docs/screenshots/home-en.png) | ![Actress](docs/screenshots/showcase-actress.png) |
 
 <details>
-<summary>More Screenshots</summary>
+<summary>More screenshots</summary>
 
 | Search Demo | Actress Gallery |
 |-------------|-----------------|
@@ -85,6 +83,8 @@ curl -fsSL https://raw.githubusercontent.com/slive777/OpenAver/main/install.sh |
 irm https://raw.githubusercontent.com/slive777/OpenAver/main/install.ps1 | iex
 ```
 
+> 💡 Don't want to open PowerShell? Download `OpenAver-Windows-Setup.bat` from [Releases](https://github.com/slive777/OpenAver/releases/latest) and double-click — it runs the same installer.
+
 The script automatically:
 - Detects your system architecture and downloads the latest release
 - Clears platform security restrictions (macOS quarantine / Windows Mark of the Web)
@@ -109,56 +109,54 @@ On first launch, a built-in setup wizard walks you through folder configuration 
 
 ## Features
 
-### 🔍 Search
-- **8-Source Unified Search**: One query simultaneously searches JavBus, Jav321, JavDB, DMM, D2Pass, HEYZO, FC2, and AVSOX — all sources at once.
-- **Detail View**: Cover, stills, actress, tags — all in one place, no tab-hopping.
-- **Smart Search**: Search by ID, actress name, series, or maker — results are matched against your local library and marked if already in your collection.
-- **Actress Features**: Searching a favorited actress automatically shows her profile card; results can be added to your collection directly.
-- **Version Detection**: Automatically identifies UC/LEAK/4K variants — no manual renaming needed.
-- **Local Batch Search**: Drag in video files or folders — automatically extracts IDs and batch-searches for metadata, covers, and stills.
-- **Advanced Re-Scrape**: For any title, change the ID and re-fetch from a specific source — preview the result card before deciding whether to overwrite.
+### 🎬 Showcase (Interactive Collection Browser)
 
-### 🎬 Showcase
-- **Video Mode**: Cover wall grid + detail Lightbox + search/filter/sort + stills browser — a full interactive collection viewer.
-- **Actress Mode**: Favorited actress grid + profile Lightbox + sort by cup size / age / height — one-click refresh to pull updated data.
-- **Visual Design**: GSAP animations + Fluent Design frosted-glass effects + Dark Mode, with SSR real-time rendering.
+**A media server navigates by title and folder. OpenAver navigates by cover, tag, and actress — because that's actually how this genre gets browsed.**
 
-### 📋 Scanner (local scan & metadata management)
-- **Scan & Build Library**: Scan local video folders, build a SQLite metadata database, automatically reads existing NFO files and covers.
-- **NFO & Cover Completion**: Detects missing NFO fields or files and fills them in from the web with one click.
-- **Scrape-Source Management**: Toggle each scrape source on/off and drag to reorder your preferred priority (want a particular site's covers? move it to the top) — changes take effect instantly; one click switches to "uncensored mode" to use uncensored sources only.
-- **Actress Alias Management**: Add and edit aliases live through the GUI (no editing config files or XML) — searches automatically expand to all of a person's stage names and post-retirement names.
-- **Tag Alias Management chip wall**: Manage cross-language synonyms in one place; the search box and Showcase chips auto-expand them at query time (Chinese/Japanese/English, e.g. "Maid＝メイド＝女僕").
-- **Subtitle Detection**: Automatically detects and moves subtitle files in the same folder when relocating videos.
-- **VR Filename Tag Preservation**: When organizing VR videos, automatically preserves the original filename's projection/stereo tags (e.g. `_180_LR`, `_3dh`, `mkx200`) so VR headset players (Skybox / DeoVR / HereSphere, etc.) detect the projection format correctly.
+- **Cover wall + Lightbox**: Browse your collection cover-first; click any cover to open a detail Lightbox with stills, tags, and actress info.
+- **Tag-based filtering and sorting**: Cover wall uses tag chips as navigation (Chinese/Japanese/English synonyms auto-expand); sort by date / ID / actress / maker / file size and more.
+- **Actress browsing mode**: Actresses are a first-class browsing axis — a cover wall of your favorited actresses plus a profile Lightbox (height, cup size, measurements, age, alias history), sortable by cup size / age / height / video count. Cross-language aliases collapse all of one person's stage names and post-retirement names into a single card.
+- **Similar exploration**: Tap the wand in the Lightbox → titles with a similar style orbit the main cover; tap any to "dive in" and keep exploring. Uses **tag IDF** weighting mixed with series, maker, and cast overlap to find like-minded titles via local computation — rule-based, not a behavioral recommendation algorithm. Offline, instant, no GPU, no model download required.
+- **Instant appearance after organizing**: Organize a title on the Search page and, if the target path is within your scanned folder, it's written to SQLite immediately and the cover flies into Showcase — no manual rescan needed.
+- **Browse on phone or tablet**: In Settings, flip to "Server" mode — any phone or tablet on the same Wi-Fi can open the URL in a browser and browse the same collection. Instant, no restart, nothing to install. Flip back to "Single-machine" to close external access. The entire UI is redesigned for touch and portrait screens, with left/right swipe to move between titles.
 
-### ⚡ Search → Showcase, Made Instant
-- **Same-Name NFO Skip**: If your favorites folder already has a `.nfo` next to the video, it's treated as organized and the scraper is skipped (avoids redundant external requests).
-- **Scanner Tracked-Folder Dropdown**: In Settings, "My Favorites Folder" can be picked directly from Scanner's already-tracked folders, with inline live status (✓ linked / ⚠ not in tracking scope).
-- **Instant DB Write + GhostFly Animation**: After organizing a title on the Search page, if the target path is within Scanner's tracking scope → it's written to SQLite immediately, and the cover flies from the source spot to the sidebar Showcase icon via a GhostFly animation — no manual rescan needed.
+### 🔍 Search (Scraping & Lookup)
+
+- **8-source unified search**: One query simultaneously hits JavBus, Jav321, JavDB, DMM, D2Pass, HEYZO, FC2, and AVSOX; results are automatically matched against your local library and flagged if already in your collection.
+- **Full detail view**: Cover, stills, cast, and tags in one place — no tab-hopping.
+- **Smart search**: Search by ID, actress name, series, or maker.
+- **Version detection**: Automatically identifies UC / LEAK / 4K variants — no manual renaming needed when organizing.
+- **Local batch search**: Drag in video files or a folder — IDs are extracted automatically and batch-searched for metadata, covers, and stills.
+- **Advanced re-scrape**: When an ID won't resolve or you want a different source, change the ID and re-fetch from a specific source, then preview the result card before deciding whether to overwrite.
+
+### 📋 Scanner (Library Building & Metadata Management)
+
+- **Scan & build library**: Scans your local video folders, builds a SQLite metadata database, and automatically imports any existing NFO files and covers.
+- **NFO / cover completion**: Detects missing NFO fields or files and fills them in from the web with one click — **new NFO / cover files are written next to the video** (in-place), the video itself is never touched. (NFO = an XML file placed beside your video that stores title, cast, tags, and cover for Jellyfin / Emby / Kodi to read.)
+- **Actress & tag alias management**: Add and edit aliases live through the GUI — no config files or XML editing. Search automatically expands Chinese/Japanese/English synonyms (e.g. "Maid＝メイド＝女僕") and all stage names and post-retirement names for the same person.
+- **Scrape-source management**: Toggle each source on/off and drag to reorder by preference (want a particular site's covers? move it to the top) — changes take effect instantly. One click switches to "uncensored mode" to use only uncensored sources.
+- **Subtitle & VR tag preservation**: When relocating videos, subtitle files in the same directory are detected and moved along. VR videos preserve the original filename's projection/stereo tags (e.g. `_180_LR`, `mkx200`) so VR players like Skybox / DeoVR / HereSphere detect the format correctly.
 
 ### 🌐 AI Translation
-- Translate Japanese titles into your UI locale (Traditional Chinese, Simplified Chinese, English) in one click — Japanese locale skips translation since titles are already in Japanese.
-- Supports **Ollama** (local GPU, free & unlimited), **Gemini Flash** (Google cloud, free tier available), and **OpenAI API Compatible** (OpenRouter, any compatible endpoint).
 
-### 🔍 Similar-Video Exploration
-- **No model download, no GPU, millisecond response, fully offline**: Uses multiple signals — tags, series, maker, year, cast — to surface videos with a similar style, all computed locally and usable offline. No need to download the hundreds of megabytes of models that image-similarity tools require.
-- **Star-Field Exploration Animation**: In the Showcase Lightbox, tap the wand button → 12 stars orbit the main cover, champagne-gold lines connecting them to the center → tap any star to "dive in" and make it the new center for endless exploration.
+- Translate Japanese titles into your UI locale (Traditional Chinese, Simplified Chinese, English) in one click — Japanese locale skips translation since titles are already in Japanese.
+- Supports **Ollama** (local GPU, free & unlimited), **Gemini Flash** (free tier available), and **OpenAI API Compatible** (OpenRouter, any compatible endpoint).
 
 ### ⚙️ Settings
-- **Multi-Language UI**: Traditional Chinese, Simplified Chinese, Japanese, English — instant switch.
-- **Path & Naming Rules**: Flexible output path configuration with `{suffix}` variable support.
-- **Favorites Folders**: Save frequently used folders for one-click batch loading.
-- **External Media-Manager Mode** (Default / Jellyfin / Emby / Kodi): scraping writes `{stem}-poster.jpg` + `{stem}-fanart.jpg`, NFO recognition fields, and auto-merges cd1/cd2 multipart. Poster + NFO work on all three; `{stem}-fanart` is read by Jellyfin/Kodi only — Emby does not recognize this fanart filename (backdrop won't show).
-- **Static HTML Export**: Generates a standalone HTML index file — viewable offline without a server.
 
-### 🔌 Scrape-Source Expansion: Metatube Federation (advanced, optional)
+- **Multi-language UI**: Traditional Chinese, Simplified Chinese, Japanese, English — instant switch.
+- **Path & naming rules**: Flexible output path configuration with `{suffix}` variable support.
+- **Favorites folders**: Save the **video folder paths** you use most often (not actress favorites) — one-click load and auto-search.
+- **External media manager mode (optional)**: Choose Jellyfin / Emby / Kodi, and scraping auto-generates correctly-named poster + fanart plus a compatible NFO — plug it into your living-room media center and it displays correctly right away. (Poster + NFO work on all three; `{stem}-fanart` is read by Jellyfin/Kodi only — Emby does not recognize this fanart filename.)
+- **Static HTML export**: Generates a standalone HTML index file you can browse offline without any server.
 
-The 8 built-in sources work out of the box, with no extra deployment required. If you want even more sources — or an extra layer of insurance for your library:
+### 🔌 Scrape-Source Expansion: Metatube Federation (Advanced, Optional)
 
-- **30+ more sources**: In advanced settings, connect your own self-hosted [Metatube](https://github.com/metatube-community/metatube-sdk-go) server and your scrape sources expand from the 8 built-ins to **30+ community-maintained providers**, strengthening coverage of uncensored and niche makers all at once.
-- **A decoupled fallback layer**: Metatube is an actively maintained open-source scrape-source layer. Once connected, it acts as a decoupled fallback so that even if a built-in source temporarily breaks, your enrichment pipeline keeps running independently through Metatube.
-- **Advanced and optional — it won't pollute the main path**: Metatube is self-hosted (Docker or binary) and aimed at advanced users. Leaving it disabled has zero impact on the default "no Docker, works out of the box" experience.
+The 8 built-in sources work out of the box — no extra deployment needed. If you want more sources, or an extra layer of insurance for your library:
+
+- **30+ additional sources**: In advanced settings, connect your self-hosted [Metatube](https://github.com/metatube-community/metatube-sdk-go) server to expand from 8 built-ins to **30+ community-maintained providers** — uncensored titles and niche makers covered in one step.
+- **A decoupled fallback layer**: Metatube is an actively maintained open-source scrape layer. Once connected, it acts independently, so even if a built-in source temporarily breaks, your enrichment pipeline keeps running through Metatube.
+- **Advanced and optional — doesn't touch the main path**: Metatube requires self-hosting (Docker or binary) and is aimed at advanced users. Leaving it disabled has zero impact on the default "no Docker, works out of the box" experience.
 
 ### 🤖 AI-Ready API
 
@@ -173,19 +171,16 @@ OpenAver ships a capabilities manifest — your AI agent reads it once and knows
 - **"Turn the video IDs in this article into an HTML page with covers."**
   <sub>Parse IDs → batch search → download covers → generate gallery HTML</sub>
 
-**Everyday operations work too:**
-
-- "Search SAME-123, PRED-456, IPZZ-789 for me" — multi-source aggregation
-- "Fill in the missing NFO in D:\av" — in-place enrichment, no rename, no move
-- "Which series did I download the most this year?" — SQL query on your collection
-
 No SDK. No docs to read. One curl, and your AI learns every endpoint:
 
 ```bash
 curl http://localhost:<port>/api/capabilities
 ```
 
-> The port and full URL are shown in the Settings page under "AI API".
+> The port and full URL are shown on the Settings page under "AI API".
+
+<details>
+<summary>Supported AI tools · Advanced usage · Power-user easter egg</summary>
 
 Works with any MCP / function-calling compatible AI tool:
 
@@ -195,7 +190,7 @@ Works with any MCP / function-calling compatible AI tool:
 | **IDE** | Cursor, GitHub Copilot in VS Code, Windsurf, Trae, etc. | Agent mode / MCP to call local API |
 | **Desktop App** | Codex App, Google Antigravity 2.0, Claude Cowork, OpenClaw | No dev environment needed, works out of the box |
 
-> 💡 **Recommended**: **Codex App (inline chat)** or **Google Antigravity 2.0 (artifact panel)** — both desktop apps display covers directly in your conversation flow. Easy to install, works out of the box.
+> 💡 Want covers to show up in the chat? **Codex App (inline chat)** or **Google Antigravity 2.0 (artifact panel)** both display covers directly in your conversation flow. Easy to install, works out of the box.
 
 > ⚡ **Small-model friendly**: The capabilities manifest is optimized for lightweight models — Gemini Flash / GPT mini / Claude Haiku can all operate every endpoint correctly.
 
@@ -203,43 +198,45 @@ Works with any MCP / function-calling compatible AI tool:
 
 > 🪄 **Power-user easter egg: auto-identify actresses in FC2 videos.** FC2 videos almost never have actress tags, but many feature familiar faces who later debuted in censored productions (Shirakami Sakura is a classic case). SQL pulls titles with an empty actress field → DeepFace (RetinaFace + ArcFace) matches against the Gfriends library → `POST /api/user-tags` writes the tags back. 50 lines of Python runs your whole library over a weekend; manually favorite the ones you like, and unidentified amateurs get auto-clustered into groups via DBSCAN for direct matching next time.
 
+</details>
+
 ---
 
 ## FAQ
 
+**How is OpenAver different from Jellyfin / Emby / Kodi?**
+They serve different roles. Jellyfin / Emby / Kodi are media servers for putting your videos on the living-room TV — organized by title and folder, one movie at a time. OpenAver is your personal ID collection room: browse by cover wall, branch out sideways by tag, dig deep by actress, search, organize, and explore similar titles, all in one place. They complement each other: once you want to throw a title onto the living-room media center, one click exports NFO + cover art for Jellyfin / Emby / Kodi.
+
 **Does OpenAver need Docker?**
-No. OpenAver is a desktop app installed with a single command on Windows / macOS — no Docker. Once installed, everything runs in the GUI, with no command line.
+No. OpenAver is a desktop app installed with a single command on Windows / macOS — no Docker, no CLI. Once installed, everything runs in the GUI.
 
 **Does OpenAver work on Mac?**
-Yes. It runs on Windows 10/11 and macOS (Apple Silicon M1–M4).
+Yes. Windows 10/11 and macOS (Apple Silicon M1–M4) both supported.
 
-**Can OpenAver keep running after I close its Windows window?**
-Yes. Clicking X lets you exit or minimize OpenAver to the system tray and remember that choice. The tray menu can reopen the window, change the close action, or exit completely. You can also adjust it later under Settings → System → On window close.
+**Will OpenAver move, rename, or delete my files?**
+The default mode is read-only — searching and browsing never touch your files, and scanning only reads. Files are moved or renamed **only** when you actively press "Organize," following the rules you've set. **OpenAver never deletes files.** If there's already a file at the target location with the same name, you'll be prompted before anything is overwritten. NFO and cover files are **added** next to the video (written in-place) — the video itself is never touched.
 
-**Which media servers does OpenAver support?**
-It generates standard NFO files + cover art (poster / fanart) that Jellyfin, Emby, and Kodi can read directly.
-
-**What is an NFO file?**
-An NFO is an XML file placed next to your video that records the title, cast, tags, cover, and more, so media servers like Jellyfin / Emby / Kodi can display your videos correctly. OpenAver generates them for you automatically.
-
-**Will OpenAver rename or move my files?**
-By default, scanning only "reads" your files — it never touches them. Files are renamed or moved only when you actively run "organize," following the rules you set, and NFO/cover completion is written in place without moving anything.
+**Can OpenAver keep running after I close its window on Windows?**
+Yes. Clicking X lets you choose to exit or minimize to the system tray, with a "don't ask again" option to remember your choice. Single- or double-click the OpenAver icon in the tray to reopen. You can also change this behavior later under Settings → System → On window close.
 
 **What if a built-in scraper source breaks?**
-The 8 built-in sources fall back on one another, so if one source is temporarily down you can still fill in from the others. Advanced users can additionally federate a self-hosted Metatube server for 30+ more sources — extra insurance for your library so a single failing source never stalls you.
+The 8 built-in sources fall back on each other — if one is temporarily down you can still fill in from the others. Advanced users can additionally connect a self-hosted Metatube server for 30+ more sources, giving your library an independent fallback pipeline.
 
-**A number won't scrape — what can I do?**
-Use "Advanced Re-Scrape": change the ID and re-fetch from a specific source, and preview the result card before deciding whether to overwrite.
+**Why can't JavLibrary be used for AI batch scraping?**
+Because OpenAver respects JavLibrary's site-wide Cloudflare human verification. Desktop users are real humans — when verification is needed or has expired, a real JavLibrary browser window pops up, you click through it once, and the app automatically retries and fills in the result. This is why JavLibrary (BETA) only supports manual, exact-ID lookup in the desktop app; it doesn't participate in batch or automated search, and it's not exposed to AI agents. The upside: long-tail IDs and community tags that even Metatube's 30+ sources don't cover become accessible — in a way that respects the site.
 
 **Can AI tools operate OpenAver?**
-Yes. With the built-in REST API + capabilities manifest, one `curl` teaches your AI every endpoint, and it can run multi-step workflows from a single prompt (see the AI-Ready API section above).
+Yes. The built-in REST API + capabilities manifest means one `curl` teaches your AI every endpoint, and it can run multi-step workflows from a single prompt (see AI-Ready API above).
 
 **Does OpenAver collect data or upload my local files?**
-No. It runs 100% locally and never collects or uploads any file info; network requests are only used to scrape publicly available metadata.
+No. 100% local — no data collection, no file uploads. Network requests are only used to scrape publicly available metadata.
 
 ---
 
 ## Developer Guide
+
+<details>
+<summary>Tech stack · Run from source · Directory structure · Building</summary>
 
 ### Tech Stack
 
@@ -247,17 +244,16 @@ No. It runs 100% locally and never collects or uploads any file info; network re
 |-------|-----------|
 | **Backend** | FastAPI (Python 3.12) |
 | **Frontend** | Jinja2 + DaisyUI + Tailwind CSS + Alpine.js 3.x + Fluent Design 2 |
-| **Animation** | GSAP 3.14+ with Motion Adapter (respects `prefers-reduced-motion`) |
+| **Animation** | GSAP 3.14+ + Motion Adapter (reduced-motion support) |
 | **Desktop Shell** | PyWebView (Windows / macOS) |
 | **Database** | SQLite (WAL mode) |
-| **Testing** | Pytest — 3,400+ tests |
+| **Testing** | Pytest (4,000+ tests) |
 
 ### Run from Source
 
-**Prerequisites**: Python 3.12 (matches the packaged build; other versions may work for venv development only, no guarantees), Chrome/Edge, [WebView2 Runtime](https://go.microsoft.com/fwlink/p/?LinkId=2124703) (Windows 10/VM)
+**Prerequisites**: Python 3.12 (matches the packaged build), Chrome/Edge, [WebView2 Runtime](https://go.microsoft.com/fwlink/p/?LinkId=2124703) (Windows 10/VM)
 
 ```bash
-# Clone + set up virtual environment + install dependencies
 git clone https://github.com/slive777/OpenAver.git
 cd OpenAver
 python3 -m venv venv
@@ -307,6 +303,8 @@ source venv/bin/activate
 python build.py          # Windows
 python build_macos.py    # macOS
 ```
+
+</details>
 
 ---
 
