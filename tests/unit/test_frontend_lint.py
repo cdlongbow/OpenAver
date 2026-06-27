@@ -9067,34 +9067,44 @@ class TestRescrapeVersionStateGuard:
 
     # ── CD-86-P2: javlib search 採用路徑同步 currentQuery ──
 
-    def test_javlib_single_version_search_syncs_current_query(self):
-        """CD-86-P2: rescrapeWithSource search+javlib 單版本採用路徑，在 _commitSearchResults 前
-        必須同步 currentQuery（對齊非 javlib 路徑：advancedSearch 設 currentQuery、:167 設 searchQuery）。
+    def test_javlib_single_version_search_falls_through_to_preview(self):
+        """86 修正（取代過時的 ..._syncs_current_query 守衛）：rescrapeWithSource 的單版本
+        分支（data.success）不再於 search 入口靜默 _commitSearchResults + closeRescrape
+        early-return，而是 fall through 進 preview 卡（rescrapeStep='preview'）。
 
-        element-bound：在 rescrapeWithSource 的 search 單版本分支（data.success）找
-        currentQuery 賦值，確認在同一 if(search) block 的 _commitSearchResults 呼叫之前。
-        mutation 驗證：移除補的同步 → RED。
+        為何過時：原守衛斷言「rescrapeWithSource 單版本 search 分支在 _commitSearchResults
+        前同步 currentQuery」。該 search-entry 早 return commit 已移除（單版本 search 一閃
+        就關被使用者回報「直接跳過」），採用改由 rescrapeConfirm 的 search 分支負責（query
+        同步由 test_javlib_confirm_search_syncs_current_query 涵蓋）。
+
+        element-bound：鎖定 data.success 分支區塊（到 not-found else 的 rescrapeNotFound=true
+        為止），斷言 (a) 進入 preview（rescrapeStep='preview'），(b) 該區塊不含
+        _commitSearchResults / closeRescrape（單版本不再於 rescrapeWithSource commit/關窗）。
+        mutation 驗證：把 _commitSearchResults + closeRescrape 早 return 加回 → RED。
         """
         src = self._rescrape()
-        # 鎖定 rescrapeWithSource 函式體中：
-        # rescrapeEntryPoint==='search' 的單版本分支（data.success block）
-        # 在 _commitSearchResults 呼叫之前必須出現 this.currentQuery = this.rescrapeNumber.trim()
-        # element-bound：先找 data.success 分支的 search 入口 context，再確認 currentQuery 賦值
+        # 取 rescrapeWithSource 內 data.success else-if 區塊（至 not-found else 的 rescrapeNotFound）
         m_ctx = re.search(
-            r"rescrapeWithSource\b.*?data\s*&&\s*data\.success.*?"
-            r"rescrapeEntryPoint\s*===\s*['\"]search['\"]"
-            r"(.*?)_commitSearchResults",
+            r"else\s+if\s*\(\s*data\s*&&\s*data\.success\s*\)\s*\{(.*?)this\.rescrapeNotFound\s*=\s*true",
             src, re.DOTALL,
         )
         assert m_ctx, (
-            "CD-86-P2 違規（rescrapeWithSource 單版本）：未在 data.success search 分支的 "
-            "_commitSearchResults 前找到 currentQuery 同步——"
-            "搜尋框 / compose 判斷 / session restore 會殘留舊 query"
+            "86 修正：未找到 rescrapeWithSource 的 data.success 單版本分支區塊"
         )
         block = m_ctx.group(1)
-        assert re.search(r"\bthis\.currentQuery\s*=", block), (
-            "CD-86-P2 違規（rescrapeWithSource 單版本）：_commitSearchResults 前缺少 "
-            "this.currentQuery = ... 賦值（對齊 advancedSearch :38 的同步語意）"
+        # (a) 單版本 fall through 進 preview
+        assert re.search(r"rescrapeStep\s*=\s*['\"]preview['\"]", block), (
+            "86 修正違規：data.success 單版本分支未進 preview（rescrapeStep='preview' 不可達）"
+        )
+        # (b) 不再於 rescrapeWithSource 單版本分支 commit / 關窗（已移交 rescrapeConfirm）
+        # 比對「呼叫」語法（含 ?. optional chain），避免誤判註解中提及的字串。
+        assert not re.search(r"_commitSearchResults\s*\??\.?\s*\(", block), (
+            "86 修正違規：data.success 單版本分支仍呼叫 _commitSearchResults——"
+            "search 單版本應 fall through 進 preview，採用由 rescrapeConfirm 負責"
+        )
+        assert not re.search(r"\bcloseRescrape\s*\(", block), (
+            "86 修正違規：data.success 單版本分支仍呼叫 closeRescrape early return——"
+            "search 單版本應 fall through 進 preview（一閃就關是回報的 bug）"
         )
 
     def test_javlib_confirm_search_syncs_current_query(self):
@@ -11936,6 +11946,43 @@ class TestSearchAutoSourcePill:
         )
         assert "rescrapeNumber =" in call, (
             f"search-auto-pill @click 缺 rescrapeNumber = 預填；call: {call!r}"
+        )
+
+    def test_auto_pill_xshow_contains_can_reopen_source_pick(self):
+        """自動膠囊 x-show 含 canReopenSourcePick()（CD-86-P2 修正：exact 結果頁再開入口）。
+
+        JavLibrary 採用後 searchQuery == currentQuery → isComposing() false，
+        需要 canReopenSourcePick() 讓 pill 在 exact 結果時常駐。
+        mutation：把 x-show 改回只 isComposing() → 此斷言紅。
+        """
+        call = self._auto_pill_call()
+        xshow_m = re.search(r'x-show=\\?["\']([^"\']*)', call)
+        assert xshow_m, f"search-auto-pill 呼叫缺 x-show binding；call: {call!r}"
+        assert "canReopenSourcePick()" in xshow_m.group(1), (
+            f"search-auto-pill x-show 缺 canReopenSourcePick()；x-show: {xshow_m.group(1)!r}"
+        )
+
+    def test_can_reopen_source_pick_defined_in_search_flow_js(self):
+        """search-flow.js 定義 canReopenSourcePick()，且包含 exact + pageState + searchQuery 三條件。
+
+        mutation：移除 method 或刪任一條件 → 此斷言紅。
+        """
+        js_path = (
+            SEARCH_HTML.parent.parent
+            / "static" / "js" / "pages" / "search" / "state" / "search-flow.js"
+        )
+        js = js_path.read_text(encoding="utf-8")
+        m = re.search(r"canReopenSourcePick\s*\(\s*\)\s*\{(.*?)\n    \},", js, re.DOTALL)
+        assert m, "search-flow.js 找不到 canReopenSourcePick() method 定義"
+        body = m.group(1)
+        assert "pageState" in body and "'result'" in body, (
+            f"canReopenSourcePick body 缺 pageState === 'result' 條件；body: {body!r}"
+        )
+        assert "'exact'" in body, (
+            f"canReopenSourcePick body 缺 currentMode === 'exact' 條件；body: {body!r}"
+        )
+        assert "searchQuery" in body, (
+            f"canReopenSourcePick body 缺 searchQuery 非空條件；body: {body!r}"
         )
 
 

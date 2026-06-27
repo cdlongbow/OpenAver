@@ -264,18 +264,11 @@ export function rescrapeState() {
                     this._rescrapeCommitSource = sourceId;
                     this.rescrapeStep = 'preview';
                 } else if (data && data.success) {
-                    // 單筆：依入口分流
-                    if (this.rescrapeEntryPoint === 'search') {
-                        // search 入口單版本：採用進結果關窗（不打 enrich-single）
-                        // 對齊 switch-source：strip success，不讓控制旗標流入 result row
-                        // CD-86-P2：同步 searchQuery / currentQuery（對齊非 javlib 路徑 :167 + advancedSearch :38）
-                        this.searchQuery = this.rescrapeNumber.trim();
-                        this.currentQuery = this.rescrapeNumber.trim();
-                        const { success: _s, ...row } = data;
-                        this._commitSearchResults?.({ data: [row], mode: 'exact', has_more: false, actress_profile: null });
-                        this.closeRescrape();
-                        return;
-                    }
+                    // 單版本：search / lightbox 共用 preview 邏輯（CD-86-8 對齊）。
+                    // 86 修正：search 單版本不再於此靜默 _commitSearchResults + closeRescrape
+                    // （一閃就關，使用者回報「直接跳過」），改 fall through 進 preview 卡（無切換器、
+                    // 有 T4「採用此版本」✓ 鈕，x-show="rescrapeEntryPoint==='search'"）。採用由
+                    // rescrapeConfirm 的 search 分支處理（已含 searchQuery/currentQuery 同步 + _commitSearchResults）。
                     // lightbox（現況）：74b US3：預覽膠囊顯示「實際刮到的源」+ 有碼/無碼上色。
                     // lightbox + auto 也會進 preview（無 early return）→ auto 時用後端
                     // 回傳的實際源（data._source）解析，否則顯示「自動」+藍 fallback、無法辨識
