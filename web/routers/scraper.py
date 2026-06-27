@@ -9,6 +9,7 @@ Scraper API 路由 - 單檔刮削
 import asyncio
 import json
 import os
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -22,7 +23,7 @@ from core.organizer import organize_file
 from core.path_utils import to_file_uri, uri_to_fs_path, coerce_to_file_uri
 from core.scraper import (
     search_jav, search_jav_single_source, strip_internal_nfo_keys,
-    search_javlib_versions, fetch_javlib_by_detail_url,
+    search_javlib_versions, fetch_javlib_by_detail_url, internal_nfo_carriers,
 )
 from core.source_config import validate_source_id
 from core.cf_transport import get_cf_transport, CfChallengeRequired, CfTransportUnavailable
@@ -35,6 +36,26 @@ from web.routers.notifications import emit_notification as _emit_notif
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api", tags=["scraper"])
+
+# SSRF 防護：confirm 階段的 detail_url 來自 client（不可信），會被丟給 CF transport
+# （standalone 真瀏覽器 fetch）。限定 scheme+netloc 精確等於 javlibrary origin，
+# 擋掉 169.254.169.254 / evil.com / www.javlibrary.com.evil.com 之類 prefix 繞過
+# （netloc 精確比對，非 startswith 字串）。preview candidates 的 url 是後端自產（可信），
+# 不在此驗證面（PR #89 Codex P3）。
+_JAVLIB_ORIGIN_PARSED = urlparse(JAVLIBRARY_ORIGIN)
+
+
+def _is_javlibrary_url(url: str) -> bool:
+    try:
+        p = urlparse(url)
+    except (ValueError, TypeError):
+        return False
+    # netloc 大小寫不敏感（RFC 3986 host）：lower 後比對，避免大寫合法 URL 被誤拒；
+    # scheme urlparse 已 lower。安全方向不變（netloc 仍精確等於 javlibrary host）。
+    return (
+        p.scheme == _JAVLIB_ORIGIN_PARSED.scheme
+        and p.netloc.lower() == _JAVLIB_ORIGIN_PARSED.netloc.lower()
+    )
 
 
 class ScrapeRequest(BaseModel):
@@ -274,6 +295,10 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
     try:
         scraper_data = None
         if request.source == 'javlibrary' and request.detail_url:
+            # SSRF guard：拒絕非 javlibrary origin 的 detail_url（不 fetch、不洩 URL）
+            if not _is_javlibrary_url(request.detail_url):
+                logger.warning("enrich_single: 拒絕非法 detail_url origin")
+                return {"success": False, "error": "detail_url 來源不合法"}
             try:
                 video = fetch_javlib_by_detail_url(request.detail_url, request.number)
             except CfChallengeRequired:
@@ -289,7 +314,10 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
                 return {"success": False, "cf_unavailable": True}
             if video is None:
                 return {"success": False, "error": "javlibrary 無法取得指定版本資料"}
+            # to_legacy_dict 省略 _summary/_rating 內部 carrier；補回以對齊既有 javlibrary
+            # 重刮的 NFO 輸出（search_jav 走 internal_nfo_carriers 注入同組，PR #89 Codex P2）
             scraper_data = video.to_legacy_dict()
+            scraper_data.update(internal_nfo_carriers(video))
         result = enrich_single(
             file_path=request.file_path,
             number=request.number,

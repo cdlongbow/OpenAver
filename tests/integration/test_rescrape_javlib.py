@@ -144,6 +144,9 @@ class TestEnrichSingleDetailUrl:
             "url": ".../javme3bu7e.html",
             "title": "新片",
         }
+        # P2：detail_url 路徑須補回 to_legacy_dict 省略的 _rating/_summary carrier
+        fake_video.rating = 4.5
+        fake_video.summary = "簡介內容"
 
         with patch('web.routers.scraper.fetch_javlib_by_detail_url',
                    return_value=fake_video) as mock_fetch, \
@@ -162,8 +165,69 @@ class TestEnrichSingleDetailUrl:
             "https://www.javlibrary.com/ja/javme3bu7e.html", "MIDV-010"
         )
         call_kwargs = mock_enrich.call_args.kwargs
-        # scraper_data 為選定版本 to_legacy_dict() 的結果（非 None、且為該 video 的值）
-        assert call_kwargs.get("scraper_data") == fake_video.to_legacy_dict.return_value
+        scraper_data = call_kwargs.get("scraper_data")
+        # scraper_data 為選定版本 to_legacy_dict() + 補回的內部 NFO carrier
+        assert scraper_data is not None
+        assert scraper_data["number"] == "MIDV-010"
+        # P2 mutation guard：_rating/_summary carrier 須補回且值取自 video（否則 NFO 評分掉）
+        assert scraper_data["_rating"] == 4.5
+        assert scraper_data["_summary"] == "簡介內容"
+
+    def test_enrich_single_rejects_non_javlibrary_detail_url(self, client):
+        """
+        P3 SSRF guard：source=javlibrary 但 detail_url 非 javlibrary origin
+        （內網 metadata endpoint / 任意外站 / prefix 繞過）→ success False，
+        且 fetch_javlib_by_detail_url 完全不被呼叫。
+        """
+        malicious_urls = [
+            "http://169.254.169.254/latest/meta-data/",
+            "https://evil.com/x.html",
+            "https://www.javlibrary.com.evil.com/ja/x.html",  # prefix 繞過
+            "http://www.javlibrary.com/ja/x.html",            # scheme 不符
+        ]
+        for bad_url in malicious_urls:
+            with patch('web.routers.scraper.fetch_javlib_by_detail_url') as mock_fetch, \
+                 patch('web.routers.scraper.enrich_single',
+                       return_value=_ok_enrich_result()) as mock_enrich:
+                resp = client.post("/api/enrich-single", json={
+                    "file_path": "file:///fake/MIDV-010.mp4",
+                    "number": "MIDV-010",
+                    "source": "javlibrary",
+                    "detail_url": bad_url,
+                    "mode": "refresh_full",
+                    "overwrite_existing": True,
+                })
+                assert resp.status_code == 200
+                assert resp.json()["success"] is False, f"應拒絕 {bad_url}"
+                mock_fetch.assert_not_called()  # 惡意 URL 絕不進 fetch
+                mock_enrich.assert_not_called()
+
+    def test_enrich_single_accepts_valid_javlibrary_detail_url(self, client):
+        """
+        P3：合法 javlibrary origin 的 detail_url → 正常進 fetch（origin guard 不誤殺）。
+        """
+        from core.scrapers.models import Video
+
+        fake_video = MagicMock(spec=Video)
+        fake_video.to_legacy_dict.return_value = {"number": "MIDV-010", "title": "新片"}
+        fake_video.rating = 3.0
+        fake_video.summary = ""
+
+        with patch('web.routers.scraper.fetch_javlib_by_detail_url',
+                   return_value=fake_video) as mock_fetch, \
+             patch('web.routers.scraper.enrich_single',
+                   return_value=_ok_enrich_result()):
+            resp = client.post("/api/enrich-single", json={
+                "file_path": "file:///fake/MIDV-010.mp4",
+                "number": "MIDV-010",
+                "source": "javlibrary",
+                "detail_url": "https://www.javlibrary.com/ja/?v=javme3bu7e",
+                "mode": "refresh_full",
+                "overwrite_existing": True,
+            })
+
+        assert resp.json()["success"] is True
+        mock_fetch.assert_called_once()
 
     def test_enrich_single_no_detail_url_unchanged(self, client):
         """
