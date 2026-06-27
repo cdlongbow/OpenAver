@@ -280,12 +280,14 @@ def _extract_all_detail_urls(html: str, num: str, base_lang_url: str) -> list[st
     """
     從搜尋結果頁收集所有與番號精確相符的 detail URL。
 
-    boundary-aware 比對（避免 MIDV-010 誤收 MIDV-100 等前綴鄰號）。
+    boundary-aware 比對（避免 MIDV-010 誤收 MIDV-100 等前綴鄰號，
+    或 AMIDV-010 / 1MIDV-010 等前置黏連號）。
     去重保序，無相符回 []（不 fallback links[0]）。
     """
     soup = BeautifulSoup(html, "html.parser")
     num_upper = num.upper()
-    pattern_str = re.escape(num_upper) + r'(?![0-9A-Za-z])'
+    # 前後皆需番號邊界：lookbehind 擋前置黏連（AMIDV-010），lookahead 擋後綴鄰號（MIDV-100）
+    pattern_str = r'(?<![0-9A-Za-z])' + re.escape(num_upper) + r'(?![0-9A-Za-z])'
     seen: set[str] = set()
     result: list[str] = []
     for el in soup.select(".video a"):

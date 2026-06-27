@@ -427,6 +427,15 @@ def test_extract_all_detail_urls_collects_all():
     urls3 = _extract_all_detail_urls(no_match_html, "MIDV-010", base)
     assert urls3 == [], f"無相符應回 []，got {urls3}"
 
+    # 前置黏連號濾掉（Gemini P1-A：lookbehind 擋 AMIDV-010 / 1MIDV-010）
+    prefix_glued_html = """\
+<html><body>
+  <div class="video"><a href="./javA.html" title="AMIDV-010 前置字母">AMIDV-010</a></div>
+  <div class="video"><a href="./javB.html" title="1MIDV-010 前置數字">1MIDV-010</a></div>
+</body></html>"""
+    urls4 = _extract_all_detail_urls(prefix_glued_html, "MIDV-010", base)
+    assert urls4 == [], f"前置黏連號（AMIDV-010/1MIDV-010）應被 lookbehind 濾掉，got {urls4}"
+
 
 def test_search_all_versions_multi():
     """
