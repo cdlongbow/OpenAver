@@ -295,7 +295,10 @@ def _extract_all_detail_urls(html: str, num: str, base_lang_url: str) -> list[st
         if not href:
             continue
         title_attr = el.get("title", "").upper()
-        if not re.search(pattern_str, title_attr):
+        text_attr = el.get_text().upper()
+        # 一致性（對齊 _extract_detail_url :255 的 text OR title）：title 或 link text
+        # 任一 boundary-match 即收。boundary regex 不變，仍嚴格擋鄰號/黏連，故多比對來源不引入 false positive。
+        if not (re.search(pattern_str, title_attr) or re.search(pattern_str, text_attr)):
             continue
         # 正規化相對路徑（同 _extract_detail_url :265-276）
         if href.startswith("http"):

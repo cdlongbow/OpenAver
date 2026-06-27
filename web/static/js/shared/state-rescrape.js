@@ -355,6 +355,7 @@ export function rescrapeState() {
          */
         async rescrapeConfirm() {
             if (this._rescraping) return;                            // 連點防護
+            if (this.rescrapeCfWaiting) return;                      // P2-2：CF 等待中不可重入（鏡射 rescrapeWithSource :161）
             this._rescraping = true;
             try {
                 if (this.rescrapeEntryPoint === 'search') {
@@ -407,6 +408,21 @@ export function rescrapeState() {
                     }),
                 });
                 const result = await resp.json();
+                // P2-2（Codex PR#89）：confirm 寫檔分支也接 CF——T2 後 javlibrary && detail_url 會走後端
+                // detail 重抓分支，若預覽→確認之間 CF session 過期，後端回 {cf_needed} / {cf_unavailable}
+                // （已 begin_solve）。鏡射 preview（rescrapeWithSource :203-211）：不接 → 卡在模糊「失敗」
+                // 且 CF flow 不啟動。cf_needed 啟動既有等待輪詢（_pollCfThenRetry 解完 CF 後重跑 preview，
+                // 使用者再按確認）——對不可逆寫檔，CF 後強制重新確認比靜默自動寫入更安全。
+                // 在判 success/失敗之前處理。順序對齊 preview（cf_needed 先、cf_unavailable 後）。
+                if (result.cf_needed) {
+                    this.rescrapeCfWaiting = true;
+                    this._pollCfThenRetry(this.rescrapeNumber.trim());
+                    return;
+                }
+                if (result.cf_unavailable) {
+                    this.showToast(window.t('showcase.rescrape.jl_desktop_only'), 'warning');
+                    return;
+                }
                 if (result.success) {
                     await this.refreshVideoData?.(this._rescrapeVideo);   // CD-62-5（showcase 有、search 無）
                     this.showToast(window.t('showcase.rescrape.success'), 'success');

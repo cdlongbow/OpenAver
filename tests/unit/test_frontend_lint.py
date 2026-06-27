@@ -11327,6 +11327,29 @@ class TestJavlibraryCfFlowT6Guard:
         assert cf_pos < notfound_pos, \
             "70-T6 違規：cf_needed check 必須在 rescrapeNotFound = true 之前"
 
+    # (5b) P2-2（Codex PR#89）：rescrapeConfirm lightbox 寫檔分支接 cf_needed / cf_unavailable
+    def test_rescrape_confirm_handles_cf(self):
+        """P2-2：rescrapeConfirm 的 lightbox 寫檔分支必須接 result.cf_needed / result.cf_unavailable。
+
+        T2 後 javlibrary && detail_url 走後端 detail 重抓分支，若預覽→確認間 CF session 過期，
+        後端回 {cf_needed} / {cf_unavailable}（已 begin_solve）。confirm 不接 → 卡在模糊「失敗」
+        且不啟動 CF 流程。element-bound：鎖定 rescrapeConfirm body（至 _pollCfThenRetry 定義前）。
+        mutation：拿掉 CF 接法 → RED。
+        """
+        import re as _re
+        js = _STATE_RESCRAPE_JS.read_text(encoding="utf-8")
+        m = _re.search(r"rescrapeConfirm\s*\(\s*\)\s*\{", js)
+        assert m is not None, "P2-2 違規：找不到 rescrapeConfirm() 定義"
+        # _pollCfThenRetry(number) 是其後的方法定義（call site 用 this.rescrapeNumber.trim() 不匹配）
+        end = js.index("_pollCfThenRetry(number)", m.start())
+        body = js[m.start():end]
+        assert "result.cf_unavailable" in body, (
+            "P2-2 違規：rescrapeConfirm lightbox 分支未接 result.cf_unavailable（CF session 過期靜默卡死）"
+        )
+        assert "result.cf_needed" in body, (
+            "P2-2 違規：rescrapeConfirm lightbox 分支未接 result.cf_needed（CF flow 不啟動）"
+        )
+
     # (6) closeRescrape 含 clearInterval（清 CF poll）
     def test_close_rescrape_clears_interval(self):
         js = _STATE_RESCRAPE_JS.read_text(encoding="utf-8")

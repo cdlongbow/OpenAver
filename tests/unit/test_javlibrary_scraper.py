@@ -436,6 +436,16 @@ def test_extract_all_detail_urls_collects_all():
     urls4 = _extract_all_detail_urls(prefix_glued_html, "MIDV-010", base)
     assert urls4 == [], f"前置黏連號（AMIDV-010/1MIDV-010）應被 lookbehind 濾掉，got {urls4}"
 
+    # P2-1 一致性：番號只在 link text（title 為空）也應收進（對齊 _extract_detail_url 的 text OR title）
+    # mutation：把 text 比對拿掉 → 此 case RED（urls5 變 []）
+    text_only_html = """\
+<html><body>
+  <div class="video"><a href="./javtextonly.html" title="">MIDV-010 タイトル空</a></div>
+</body></html>"""
+    urls5 = _extract_all_detail_urls(text_only_html, "MIDV-010", base)
+    assert urls5 == [f"{base}/javtextonly.html"], \
+        f"番號在 get_text()（title 空）應被收進（title-OR-text），got {urls5}"
+
 
 def test_search_all_versions_multi():
     """
