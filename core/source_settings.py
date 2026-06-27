@@ -81,6 +81,35 @@ def get_all_source_ids_ordered() -> list[str]:
     return [s.get('id') for s in all_sources if s.get('id') is not None]
 
 
+def get_switchable_source_ids_ordered() -> list[str]:
+    """回傳 ⟳ switch-source 可輪替的來源 id（依 config order 升冪）。
+
+    Filter 條件：type == 'builtin' AND manual_only is not True。
+    - 排除 javlibrary（manual_only=True, order=99）與 metatube:*（type='metatube'）。
+    - 不加 enabled gate（維持現有 ⟳ 集合語意：全列 8 個 builtin）。
+    - 依 config sources[].order 排序（使用者拖曳順序，UX bug D7 修正目標）。
+    Fallback：config 無此類條目時回 list(SOURCE_ORDER)（原行為，不 crash）。
+    """
+    from core.scrapers.utils import SOURCE_ORDER  # 本地 import 防 circular
+    config = load_config()
+    sources = config.get('sources', [])
+    if not isinstance(sources, list):
+        return list(SOURCE_ORDER)
+
+    switchable = [
+        s for s in sources
+        if isinstance(s, dict)
+        and s.get('type') == 'builtin'
+        and s.get('manual_only') is not True
+        and s.get('id') is not None
+    ]
+    if not switchable:
+        return list(SOURCE_ORDER)
+
+    switchable.sort(key=lambda s: s.get('order', 0))
+    return [s['id'] for s in switchable]
+
+
 def is_uncensored_mode_effective(config: dict) -> bool:
     """無碼模式是否生效（單一真理來源，CD-61-7b）。
 

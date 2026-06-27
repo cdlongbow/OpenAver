@@ -257,6 +257,71 @@ def test_all_sources_metatube_disabled_still_returned(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# get_switchable_source_ids_ordered  (TASK-85b-D7)
+# ---------------------------------------------------------------------------
+
+def test_switchable_respects_config_order(monkeypatch):
+    """⟳ 集合依 config sources[].order 排序（拖曳順序被尊重）——D7 修正核心。"""
+    _patch_config(monkeypatch, {
+        'sources': [
+            {'id': 'javbus', 'type': 'builtin', 'enabled': True, 'order': 2},
+            {'id': 'dmm', 'type': 'builtin', 'enabled': True, 'order': 0},
+            {'id': 'javdb', 'type': 'builtin', 'enabled': True, 'order': 1},
+        ]
+    })
+    assert source_settings.get_switchable_source_ids_ordered() == ['dmm', 'javdb', 'javbus']
+
+
+def test_switchable_excludes_manual_only(monkeypatch):
+    """javlibrary（manual_only=True）不在 ⟳ 集合。"""
+    _patch_config(monkeypatch, {
+        'sources': [
+            {'id': 'dmm', 'type': 'builtin', 'enabled': True, 'order': 0},
+            {'id': 'javlibrary', 'type': 'builtin', 'enabled': True, 'order': 1, 'manual_only': True},
+        ]
+    })
+    assert source_settings.get_switchable_source_ids_ordered() == ['dmm']
+
+
+def test_switchable_excludes_metatube(monkeypatch):
+    """metatube:* provider（type!='builtin'）不在 ⟳ 集合。"""
+    _patch_config(monkeypatch, {
+        'sources': [
+            {'id': 'dmm', 'type': 'builtin', 'enabled': True, 'order': 0},
+            {'id': 'metatube:javbus', 'type': 'metatube', 'enabled': True, 'order': 100},
+        ]
+    })
+    assert source_settings.get_switchable_source_ids_ordered() == ['dmm']
+
+
+def test_switchable_includes_disabled_builtin(monkeypatch):
+    """不加 enabled gate：停用的 builtin 仍列入（維持原 8-builtin ⟳ 語意）。"""
+    _patch_config(monkeypatch, {
+        'sources': [
+            {'id': 'dmm', 'type': 'builtin', 'enabled': True, 'order': 0},
+            {'id': 'avsox', 'type': 'builtin', 'enabled': False, 'order': 1},
+        ]
+    })
+    assert source_settings.get_switchable_source_ids_ordered() == ['dmm', 'avsox']
+
+
+def test_switchable_fallback_when_no_builtin(monkeypatch):
+    """config 無 builtin non-manual 條目 → fallback list(SOURCE_ORDER)。"""
+    from core.scrapers.utils import SOURCE_ORDER
+    _patch_config(monkeypatch, {'sources': [
+        {'id': 'metatube:x', 'type': 'metatube', 'enabled': True, 'order': 100},
+    ]})
+    assert source_settings.get_switchable_source_ids_ordered() == list(SOURCE_ORDER)
+
+
+def test_switchable_fallback_when_sources_missing(monkeypatch):
+    """缺 sources 段 → fallback list(SOURCE_ORDER)，不 crash。"""
+    from core.scrapers.utils import SOURCE_ORDER
+    _patch_config(monkeypatch, {'search': {}})
+    assert source_settings.get_switchable_source_ids_ordered() == list(SOURCE_ORDER)
+
+
+# ---------------------------------------------------------------------------
 # FUZZY_SEARCH_SOURCES constant  (TASK-65a-1)
 # ---------------------------------------------------------------------------
 

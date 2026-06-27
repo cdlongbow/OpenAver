@@ -228,6 +228,18 @@ class TestSearchSources:
         for source in data["order"]:
             assert source in source_ids
 
+    def test_sources_order_no_manual_only(self, client):
+        """測試 order 不含 manual_only（javlibrary）與 metatube provider（D7 守衛）
+
+        ⟳ switch-source 只輪替 builtin non-manual 來源；javlibrary 是
+        manual_only、metatube:* 是遠端 provider，皆不應出現在 order。
+        """
+        response = client.get("/api/search/sources")
+        data = response.json()
+
+        assert "javlibrary" not in data["order"]
+        assert not any(s.startswith("metatube:") for s in data["order"])
+
 
 # ============ SSE Stream 協議測試 ============
 

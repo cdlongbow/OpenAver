@@ -33,12 +33,12 @@ logger = get_logger(__name__)
 from core.database import VideoRepository, get_db_path as get_db_path, init_db
 from core.maker_mapping import load_prefix_mapping
 from core.source_config import validate_source_id
-from core.source_settings import is_uncensored_mode_effective
+from core.source_settings import get_switchable_source_ids_ordered, is_uncensored_mode_effective
 from core.scraper import (
     search_jav, smart_search, is_partial_number, is_number_format,
     is_prefix_only, search_partial, search_actress, strip_internal_nfo_keys
 )
-from core.scrapers.utils import SOURCE_ORDER, SOURCE_NAMES
+from core.scrapers.utils import SOURCE_NAMES
 
 router = APIRouter(prefix="/api", tags=["search"])
 
@@ -679,9 +679,12 @@ async def get_sources() -> dict:
         "avsox": "無碼片源",
     }
 
+    # ⟳ switch-source 可輪替來源（builtin non-manual，依 config 拖曳順序；D7 修正）
+    switchable_ids = get_switchable_source_ids_ordered()
+
     # 動態生成 sources 列表
     sources = [{"id": "auto", "name": "自動", "description": source_descriptions["auto"]}]
-    for source_id in SOURCE_ORDER:
+    for source_id in switchable_ids:
         sources.append({
             "id": source_id,
             "name": SOURCE_NAMES.get(source_id, source_id),
@@ -690,7 +693,7 @@ async def get_sources() -> dict:
 
     return {
         "sources": sources,
-        "order": SOURCE_ORDER  # 新增：來源優先順序
+        "order": switchable_ids  # 與 sources 同源 switchable_ids，保 order⊆sources 契約
     }
 
 
