@@ -77,13 +77,18 @@ def scrape_single(request: ScrapeRequest) -> dict:
             "error": "無法識別番號，請手動輸入"
         }
 
+    # 載入設定（需在 search_jav 之前，以便傳入 proxy_url）
+    config = load_config()
+    scraper_config = config.get('scraper', {})
+    _proxy_url = config.get('search', {}).get('proxy_url', '')
+
     # 優先使用前端傳來的 metadata
     if request.metadata:
         metadata = request.metadata
         metadata['number'] = number
     else:
         # 沒有 metadata 才重新搜尋
-        metadata = search_jav(number)
+        metadata = search_jav(number, proxy_url=_proxy_url)
         if not metadata:
             return {
                 "success": False,
@@ -92,10 +97,6 @@ def scrape_single(request: ScrapeRequest) -> dict:
         metadata['number'] = number
 
     logger.debug(f"[scraper] cover URL: {metadata.get('cover', 'NO COVER')}")
-
-    # 載入設定
-    config = load_config()
-    scraper_config = config.get('scraper', {})
 
     # 執行整理（scraper_config 已包含 suffix_keywords，organize_file 自行偵測）
     result = organize_file(file_path, metadata, scraper_config)
