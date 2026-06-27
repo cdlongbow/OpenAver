@@ -1489,6 +1489,7 @@ def generate_from_ids(body: GenerateFromIdsRequest):
     gallery_config = config.get('gallery', {})
     output_dir = gallery_config.get('output_dir', 'output')
     theme = config.get('general', {}).get('theme', 'light')
+    proxy_url = config.get('search', {}).get('proxy_url', '')
 
     # 查 DB
     try:
@@ -1523,7 +1524,7 @@ def generate_from_ids(body: GenerateFromIdsRequest):
         else:
             # DB miss → 即時 scrape
             try:
-                scrape_results = smart_search(num, limit=1, uncensored_mode=is_uncensored_mode_effective(config))
+                scrape_results = smart_search(num, limit=1, uncensored_mode=is_uncensored_mode_effective(config), proxy_url=proxy_url)
             except Exception as e:
                 logger.error('generate_from_ids: scrape %s failed: %s', num, e)
                 scrape_results = []

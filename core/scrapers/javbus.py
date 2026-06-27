@@ -256,6 +256,11 @@ class JavBusScraper(BaseScraper):
           第 1 頁：/search/{keyword}
           第 N 頁：/search/{keyword}/{N}
           前綴搜尋：上述 URL 後加 &type=1
+
+        注意：`&type=1` 是 JavBus 的原生非標準 path-suffix 格式（commit 35-T3
+        Playwright 實測確認），**不是** 標準 query string——勿「修正」成 `?type=1`。
+        且 `/search/` 端點現已回 404（JavBus 改版，見 core/scrapers/README.md），
+        此格式保留為原生格式供端點若復活時履約，目前 search_type=1 過濾實際不生效。
         """
         prefix = self._get_lang_prefix()
         base = f"{self.BASE_URL}{prefix}/search/{keyword}"
@@ -294,7 +299,7 @@ class JavBusScraper(BaseScraper):
         Args:
             keyword: 搜尋關鍵字或前綴
             page: 頁碼（從 1 開始）
-            search_type: 0=一般搜尋，1=前綴搜尋（&type=1）
+            search_type: 0=一般搜尋，1=前綴搜尋（&type=1，JavBus 原生格式）
 
         Returns:
             番號列表（list[str]）
@@ -344,6 +349,11 @@ class JavBusScraper(BaseScraper):
 
         Returns:
             Video 列表
+
+        注意：production pipeline（`core.scraper._javbus_keyword_search`）不呼叫此方法。
+        該路徑改用 `get_ids_from_search` 取 ID 列表後，以 ThreadPoolExecutor 平行呼叫
+        `search_jav`，速度更快。本方法是 BaseScraper 介面（@abstractmethod）的循序參考
+        實作，非 dead code、非 deprecated，但非主路徑——僅 smoke 測試與單元測試直呼。
         """
         try:
             ids = self.get_ids_from_search(keyword, page=page)

@@ -228,6 +228,43 @@ class TestSearchSources:
         for source in data["order"]:
             assert source in source_ids
 
+    def test_sources_order_no_manual_only(self, client):
+        """測試 order 不含 manual_only（javlibrary）與 metatube provider（D7 守衛）
+
+        ⟳ switch-source 只輪替 builtin non-manual 來源；javlibrary 是
+        manual_only、metatube:* 是遠端 provider，皆不應出現在 order。
+        """
+        response = client.get("/api/search/sources")
+        data = response.json()
+
+        assert "javlibrary" not in data["order"]
+        assert not any(s.startswith("metatube:") for s in data["order"])
+
+    def test_sources_order_full_set_under_partial_config(self, client):
+        """partial-builtin config（只含 3 row）下 order 仍回全 8 builtin（Codex P1 守衛）
+
+        _is_valid_sources 把 partial sources 段視為合法 idempotent、不補齊；route
+        不得因此縮小 ⟳ 可切換集合。order 應 backfill 至全 8 個 builtin 且 ⊆ sources。
+        """
+        from core.scrapers.utils import SOURCE_ORDER
+        partial_config = {
+            'sources': [
+                {'id': 'javbus', 'type': 'builtin', 'enabled': True, 'order': 1},
+                {'id': 'dmm', 'type': 'builtin', 'enabled': True, 'order': 0},
+                {'id': 'javdb', 'type': 'builtin', 'enabled': True, 'order': 2},
+            ]
+        }
+        with patch("core.source_settings.load_config", return_value=partial_config):
+            response = client.get("/api/search/sources")
+        data = response.json()
+
+        assert set(data["order"]) == set(SOURCE_ORDER)
+        # 前 3 依 config order
+        assert data["order"][:3] == ['dmm', 'javbus', 'javdb']
+        # order⊆sources 契約仍成立
+        source_ids = {s["id"] for s in data["sources"] if s["id"] != "auto"}
+        assert set(data["order"]).issubset(source_ids)
+
 
 # ============ SSE Stream 協議測試 ============
 

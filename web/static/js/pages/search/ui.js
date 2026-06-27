@@ -72,7 +72,7 @@ function getSourceOrder() {
 
 /**
  * 切換狀態結構（每個番號獨立）
- * key: 番號, value: { sourceIdx, variantIdx, cache: { source: [...variants] | [] | undefined } }
+ * key: 番號, value: { sourceIdx, cache: { source: [...result] | [] | undefined } }
  */
 const switchStateMap = new Map();
 
@@ -83,7 +83,6 @@ function getSwitchState(number) {
     if (!switchStateMap.has(number)) {
         switchStateMap.set(number, {
             sourceIdx: 0,
-            variantIdx: 0,
             cache: {}  // { 'javbus': [...], 'jav321': [], ... }
         });
     }
@@ -91,27 +90,16 @@ function getSwitchState(number) {
 }
 
 /**
- * 推進位置（同站下一版本 → 下一來源）
+ * 推進位置（切換到下一來源）
  * @returns {boolean} 是否切換了來源
  */
 function advancePosition(state) {
-    const currentSource = SOURCE_ORDER[state.sourceIdx];
-    const variants = state.cache[currentSource] || [];
-
-    // 同站有下一版本
-    if (state.variantIdx < variants.length - 1) {
-        state.variantIdx++;
-        return false;  // 未切換來源
-    }
-
-    // 切換到下一來源
     state.sourceIdx = (state.sourceIdx + 1) % SOURCE_ORDER.length;
-    state.variantIdx = 0;
-    return true;  // 切換了來源
+    return true;  // 永遠切換了來源
 }
 
 /**
- * 懶加載：確保指定來源已查詢過（支援多版本）
+ * 懶加載：確保指定來源已查詢過
  */
 async function ensureCached(state, number) {
     const source = SOURCE_ORDER[state.sourceIdx];
@@ -121,44 +109,13 @@ async function ensureCached(state, number) {
         return;
     }
 
-
     try {
         const resp = await fetch(`/api/search?q=${encodeURIComponent(number)}&mode=exact&source=${source}`);
         const json = await resp.json();
 
         if (json.success && json.data && json.data.length > 0) {
             const firstResult = json.data[0];
-            const allVariantIds = firstResult._all_variant_ids || [];
-            const firstVariantId = firstResult._variant_id;
-
-            if (allVariantIds.length <= 1) {
-                // 只有 1 個版本
-                state.cache[source] = [{ ...firstResult, _source: source }];
-            } else {
-                // 多版本：按 allVariantIds 順序獲取
-                const variants = [];
-
-                for (const variantId of allVariantIds) {
-                    if (variantId === firstVariantId) {
-                        // 已有的結果，直接使用
-                        variants.push({ ...firstResult, _source: source });
-                    } else {
-                        // 需要額外獲取
-                        try {
-                            const vResp = await fetch(`/api/search?q=${encodeURIComponent(number)}&variant_id=${encodeURIComponent(variantId)}`);
-                            const vJson = await vResp.json();
-                            if (vJson.success && vJson.data?.[0]) {
-                                variants.push({ ...vJson.data[0], _source: source });
-                            }
-                        } catch (e) {
-                            console.warn(`[SwitchSource] 獲取版本 ${variantId} 失敗:`, e);
-                        }
-                    }
-                }
-
-                state.cache[source] = variants.length > 0 ? variants : [{ ...firstResult, _source: source }];
-
-            }
+            state.cache[source] = [{ ...firstResult, _source: source }];
         } else {
             // 沒資料
             state.cache[source] = [];
@@ -206,7 +163,7 @@ async function switchSource(alpineContext, number) {
     const state = getSwitchState(number);
 
     // 記錄起始位置（用於檢測循環回起點）
-    const startPos = `${state.sourceIdx}:${state.variantIdx}`;
+    const startPos = `${state.sourceIdx}`;
 
     // Alpine reactive loading state
     alpineContext.isSwitchingSource = true;
@@ -221,7 +178,7 @@ async function switchSource(alpineContext, number) {
             const changedSource = advancePosition(state);
 
             // 檢查是否循環回起點
-            const currentPos = `${state.sourceIdx}:${state.variantIdx}`;
+            const currentPos = `${state.sourceIdx}`;
             if (currentPos === startPos) {
 
                 // Trigger shake animation via Alpine state
@@ -240,8 +197,8 @@ async function switchSource(alpineContext, number) {
             const variants = state.cache[source] || [];
 
             // 檢查是否有資料
-            if (variants.length > state.variantIdx) {
-                const variant = variants[state.variantIdx];
+            if (variants.length > 0) {
+                const variant = variants[0];
 
                 // 更新 Alpine state（Alpine template 自動反應）
                 if (alpineContext.searchResults.length > 0) {
@@ -316,7 +273,6 @@ function seedSwitchState(number, picked, result) {
     if (sourceIdx < 0) return;          // metatube / auto：跳過 seed
     const state = getSwitchState(number);
     state.sourceIdx = sourceIdx;
-    state.variantIdx = 0;
     state.cache[picked] = [{ ...result, _source: picked }];   // mirror ensureCached single-variant shape
 }
 

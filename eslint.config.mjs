@@ -373,6 +373,31 @@ export default [
           message:
             "closeSimilarMode 只能在 state-similar.js 定義（CD-56C-4 單一定義原則）。其他檔案可呼叫 this.closeSimilarMode()，但不可定義同名 method。",
         },
+        // ── spec-85 T3 variant 移除防回歸守衛（CD-85-3）────────────────
+        {
+          selector: "Identifier[name='variantIdx']",
+          message: "variantIdx（javbus variant 維度）已隨 spec-85 全棧移除。switch-source 只在 source 維度輪替，禁止重新引入 variant 維度。",
+        },
+        {
+          selector: "MemberExpression[property.name='_all_variant_ids']",
+          message: "_all_variant_ids 後端已不再填（spec-85 T1a），前端讀取是死碼，禁止重新引入。",
+        },
+        {
+          selector: "Literal[value='_all_variant_ids']",
+          message: "_all_variant_ids 後端已不再填（spec-85 T1a），前端讀取是死碼，禁止重新引入（bracket/字面量形式）。",
+        },
+        {
+          selector: "MemberExpression[property.name='_variant_id']",
+          message: "_variant_id（javbus variant 欄位）已隨 spec-85 移除，禁止重新引入。",
+        },
+        {
+          selector: "Literal[value='_variant_id']",
+          message: "_variant_id（javbus variant 欄位）已隨 spec-85 移除，禁止重新引入（bracket/字面量形式）。",
+        },
+        {
+          selector: "TemplateElement[value.cooked=/variant_id=/]",
+          message: "variant_id= fetch param 的 route 端已在 spec-85 T2 移除，前端不應再送此參數。",
+        },
       ],
     },
   },
