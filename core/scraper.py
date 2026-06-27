@@ -12,7 +12,7 @@ from core.config import load_config
 
 logger = get_logger(__name__)
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional, List, Dict, Any, Callable, Type
+from typing import Optional, List, Dict, Any, Callable
 
 # 引入新版爬蟲模組
 from core.scrapers import (
@@ -20,7 +20,7 @@ from core.scrapers import (
     FC2Scraper, AVSOXScraper,
     D2PassScraper, HEYZOScraper, DMMScraper,
     JavLibraryScraper,          # T3 新增
-    Video, ScraperConfig, BaseScraper
+    Video, ScraperConfig
 )
 from core.scrapers.utils import extract_number as _new_extract_number, FUZZY_SEARCH_SOURCES, normalize_number_impl
 from core.maker_mapping import get_maker_by_prefix
@@ -39,16 +39,6 @@ from core.metatube.errors import MetatubeUnavailable, MetatubeNotFound, Metatube
 
 MAX_WORKERS = 2
 REQUEST_DELAY = 0.3
-
-# 爬蟲優先順序
-# 角色降級（TASK-61a-3）：auto fan-out 已改讀 get_enabled_source_ids()，
-# explicit dispatch 已改用 SOURCE_TO_SCRAPER map。此常數目前已無呼叫者（dead），
-# 依 plan-61 61a-3 DoD 保留為 legacy/fallback 參照，不再是 search_jav() 的 routing 來源。
-SCRAPER_CLASSES: List[Type[BaseScraper]] = [
-    JavBusScraper, JAV321Scraper, JavDBScraper,
-    FC2Scraper, AVSOXScraper,
-    D2PassScraper, HEYZOScraper,
-]
 
 # JavBus 語系對應表（zh-CN 無簡中版，沿用繁中 zh-tw）
 _LOCALE_TO_JAVBUS = {"zh-TW": "zh-tw", "zh-CN": "zh-tw", "ja": "ja", "en": "en"}
@@ -721,54 +711,6 @@ def search_jav321_keyword(keyword: str, limit: int = 20, status_callback: Option
         status_callback('jav321', f'found:{len(results)}')
 
     return results
-
-
-def get_all_variant_ids(number: str) -> List[str]:
-    """獲取變體 ID"""
-    number = normalize_number(number)
-    variant_ids = []
-
-    try:
-        scraper = JavBusScraper(lang=_get_javbus_lang())
-        ids = scraper.get_ids_from_search(number, page=1, search_type=0)
-        if ids:
-            number_normalized = number.upper().replace('-', '')
-            for id in ids:
-                base_id = id.split('_')[0]
-                if base_id.upper().replace('-', '') == number_normalized:
-                    variant_ids.append(id)
-            variant_ids.sort(reverse=True)
-    except Exception as e:
-        logger.error('get_all_variant_ids failed: %s', e)
-
-    return variant_ids
-
-
-def _javbus_video_to_result(video: Video, base_number: str) -> dict:
-    """將 JavBus Video 物件轉換為統一的 result dict（快速路徑與 variant-hit 共用）。"""
-    result = video.to_legacy_dict()
-    result['number'] = base_number
-    if not result.get('maker'):
-        result['maker'] = get_maker_by_prefix(base_number)
-    result['_source'] = 'javbus'
-    result['_summary'] = video.summary
-    result['_rating'] = video.rating
-    return result
-
-
-def search_by_variant_id(variant_id: str, base_number: str) -> Optional[Dict[str, Any]]:
-    """搜索變體"""
-    try:
-        scraper = JavBusScraper(lang=_get_javbus_lang())
-        video = scraper._fetch_by_id(variant_id)
-        if video:
-            result = _javbus_video_to_result(video, base_number)
-            result['_variant_id'] = variant_id
-            result['_mode'] = 'exact'
-            return result
-    except Exception as e:
-        logger.error('search_by_variant_id failed: %s', e)
-    return None
 
 
 def _get_uncensored_sources(search_term: str) -> list[str]:
