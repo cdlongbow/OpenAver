@@ -325,7 +325,7 @@ def test_refresh_full_does_not_overwrite_user_tags():
             "source": "javbus",
         }
 
-        with patch("core.database.get_db_path", return_value=db_path), \
+        with patch("core.database.connection.get_db_path", return_value=db_path), \
              patch("core.enricher.VideoRepository", return_value=repo):
             enrich_single(
                 file_path=path_uri,
@@ -381,7 +381,7 @@ def test_write_nfo_passes_user_tags_to_generate_nfo():
             "label": "",
         }
 
-        with patch("core.database.get_db_path", return_value=db_path), \
+        with patch("core.database.connection.get_db_path", return_value=db_path), \
              patch("core.enricher.VideoRepository", return_value=repo):
             _write_nfo(
                 fs_path=video_path,

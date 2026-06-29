@@ -31,7 +31,7 @@ def showcase_config():
 @pytest.fixture
 def client(make_client, temp_db, showcase_config):
     return make_client(
-        ["core.database.get_db_path", "web.routers.showcase.get_db_path", "web.routers.showcase.load_config"],
+        ["core.database.connection.get_db_path", "web.routers.showcase.get_db_path", "web.routers.showcase.load_config"],
         mock_db_path=temp_db,
         config_override=showcase_config,
     )
@@ -1463,7 +1463,7 @@ class TestSampleImagesAPI:
     @pytest.fixture
     def client_media(self, make_client, populated_db_with_sample_images):
         return make_client(
-            ["core.database.get_db_path", "web.routers.showcase.get_db_path", "web.routers.showcase.load_config"],
+            ["core.database.connection.get_db_path", "web.routers.showcase.get_db_path", "web.routers.showcase.load_config"],
             mock_db_path=populated_db_with_sample_images,
             config_override={
                 "gallery": {

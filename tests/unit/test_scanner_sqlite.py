@@ -279,7 +279,7 @@ class TestScanToSqlite:
         # Mock get_db_path 指向臨時 DB，避免 scan_to_sqlite 步驟 4
         # 清理邏輯把真實 DB 中不在 temp_video_dir 的影片全部刪除
         mock_db = tmp_path / "test_default.db"
-        monkeypatch.setattr("core.database.get_db_path", lambda: mock_db)
+        monkeypatch.setattr("core.database.connection.get_db_path", lambda: mock_db)
 
         scanner = VideoScanner()
         result = scanner.scan_to_sqlite(str(temp_video_dir))
