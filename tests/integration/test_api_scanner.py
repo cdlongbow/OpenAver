@@ -1156,3 +1156,259 @@ class TestScanPruneThumbnailInvalidation:
         assert deleted_uri in called_args
         # 原樣 URI：未被再次包一層 to_file_uri（否則會變 file:////... 之類）
         assert to_file_uri(deleted_uri) not in called_args or to_file_uri(deleted_uri) == deleted_uri
+
+
+class TestGenerateReadonlyBridge:
+    """TASK-88c-T2 — generate_avlist readonly 分流 + SSE thread/queue 橋接 + 四數摘要。
+
+    mock patch target = web.routers.scanner.produce_source（T-2 import 落點）。
+    """
+
+    def _readonly_config(self, tmp_path, sources, proxy_url="http://proxy:8080"):
+        """組一份 config：sources 為 [(readonly, output_path 或 None), ...]。"""
+        output_dir = tmp_path / "html_out"
+        output_dir.mkdir(exist_ok=True)
+        directories = []
+        for i, (readonly, out) in enumerate(sources):
+            src_dir = tmp_path / f"src{i}"
+            src_dir.mkdir(exist_ok=True)
+            directories.append({
+                "path": str(src_dir),
+                "readonly": readonly,
+                "output_path": out if out is not None else "",
+            })
+        return {
+            "gallery": {
+                "directories": directories,
+                "output_dir": str(output_dir),
+                "path_mappings": {},
+                "min_size_mb": 0,
+            },
+            "search": {"proxy_url": proxy_url},
+            "general": {"theme": "light"},
+            "scraper": {"video_extensions": [".mp4"]},
+        }
+
+    def _result(self, tmp_path, **kw):
+        from core.readonly_producer import ProduceResult
+        out = str(tmp_path / "out")
+        return ProduceResult(source_path=str(tmp_path / "src0"), output_path=out, **kw)
+
+    # 1. 分流互斥（正向）：readonly → produce_source 呼叫一次，args + proxy_url kwarg 正確
+    def test_readonly_source_calls_produce_source_once(self, client, tmp_path, monkeypatch, mocker):
+        cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mock_ps = mocker.patch("web.routers.scanner.produce_source",
+                               return_value=self._result(tmp_path))
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        assert mock_ps.call_count == 1
+        call = mock_ps.call_args
+        src_arg = call.args[0]
+        assert src_arg.readonly is True
+        assert src_arg.path == str(tmp_path / "src0")
+        # config + repo 位置參數
+        assert call.args[1] is cfg
+        from core.database import VideoRepository
+        assert isinstance(call.args[2], VideoRepository)
+        # proxy_url kwarg 正確傳入
+        assert call.kwargs["proxy_url"] == "http://proxy:8080"
+        assert call.kwargs["should_abort"] is None
+
+    # 2. 分流互斥（反向）：非 readonly → produce_source 未被呼叫
+    def test_non_readonly_does_not_call_produce_source(self, client, tmp_path, monkeypatch, mocker):
+        cfg = self._readonly_config(tmp_path, [(False, "")])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mock_ps = mocker.patch("web.routers.scanner.produce_source")
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        mock_ps.assert_not_called()
+
+    # 3. SSE 逐片橋接：on_progress 連發 3 outcome → SSE 出 3 條對應 log；sentinel 後續下一來源
+    def test_sse_per_outcome_streaming(self, client, tmp_path, monkeypatch, mocker, parse_sse_events):
+        from core.readonly_producer import ProduceOutcome
+        cfg = self._readonly_config(tmp_path, [
+            (True, str(tmp_path / "out0")),
+            (True, str(tmp_path / "out1")),
+        ])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+
+        def side_effect(source, config, repo, *, proxy_url="", on_progress=None, should_abort=None):
+            from core.readonly_producer import ProduceResult
+            if source.path == str(tmp_path / "src0"):
+                on_progress(ProduceOutcome(source_uri="uri1", status="created", number="ABC-001"))
+                on_progress(ProduceOutcome(source_uri="uri2", status="skipped", number="ABC-002"))
+                on_progress(ProduceOutcome(source_uri="uri3", status="failed", number="ABC-003", error="生成失敗"))
+                return ProduceResult(source_path=source.path, output_path=source.output_path,
+                                     created=1, skipped=1, failed=1)
+            return ProduceResult(source_path=source.path, output_path=source.output_path)
+
+        mock_ps = mocker.patch("web.routers.scanner.produce_source", side_effect=side_effect)
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        events = parse_sse_events(resp.text)
+        msgs = [e.get("message", "") for e in events if e.get("type") == "log"]
+        assert any("✓ 生成" in m and "ABC-001" in m for m in msgs)
+        assert any("略過" in m and "ABC-002" in m for m in msgs)
+        assert any("✗ 失敗" in m and "ABC-003" in m for m in msgs)
+        # 第 2 來源也被處理（sentinel 後迴圈續跑）
+        assert mock_ps.call_count == 2
+
+    # 4. 四數摘要累計
+    def test_four_number_summary(self, client, tmp_path, monkeypatch, mocker, parse_sse_events):
+        cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.produce_source",
+                     return_value=self._result(tmp_path, created=2, skipped=1, no_scrape=1, failed=1))
+        resp = client.get("/api/gallery/generate")
+        events = parse_sse_events(resp.text)
+        done = [e for e in events if e.get("type") == "done"][-1]
+        rs = done["readonly_stats"]
+        assert rs["created"] == 2 and rs["skipped"] == 1
+        assert rs["no_scrape"] == 1 and rs["failed"] == 1
+        assert rs["sources"] == 1
+        # 該來源小結四數皆出現
+        msgs = [e.get("message", "") for e in events if e.get("type") == "log"]
+        assert any("新增 2" in m and "略過 1" in m and "刮不到 1" in m and "失敗 1" in m for m in msgs)
+
+    # 5. no_output_path 提示
+    def test_no_output_path_prompt(self, client, tmp_path, monkeypatch, mocker, parse_sse_events):
+        cfg = self._readonly_config(tmp_path, [(True, "")])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.produce_source",
+                     return_value=self._result(tmp_path, aborted_reason="no_output_path"))
+        resp = client.get("/api/gallery/generate")
+        events = parse_sse_events(resp.text)
+        msgs = [e.get("message", "") for e in events if e.get("type") == "log"]
+        assert any("請先設定輸出夾" in m for m in msgs)
+        done = [e for e in events if e.get("type") == "done"][-1]
+        rs = done["readonly_stats"]
+        assert rs["no_output"] == 1
+        assert rs["created"] == 0 and rs["skipped"] == 0
+        assert rs["no_scrape"] == 0 and rs["failed"] == 0
+        assert rs["sources"] == 0
+
+    # 6. CRITICAL：source-level 例外傳遞 + 續跑
+    def test_source_level_exception_continues(self, client, tmp_path, monkeypatch, mocker, parse_sse_events):
+        from core.readonly_producer import ProduceResult
+        cfg = self._readonly_config(tmp_path, [
+            (True, str(tmp_path / "out0")),
+            (True, str(tmp_path / "out1")),
+        ])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+
+        def side_effect(source, config, repo, *, proxy_url="", on_progress=None, should_abort=None):
+            if source.path == str(tmp_path / "src0"):
+                raise ValueError("boom (迴圈前 normalize/列檔/DB 逃出)")
+            return ProduceResult(source_path=source.path, output_path=source.output_path, created=3)
+
+        mock_ps = mocker.patch("web.routers.scanner.produce_source", side_effect=side_effect)
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        events = parse_sse_events(resp.text)
+        # error 事件（type=log, level=error）
+        errs = [e for e in events if e.get("type") == "log" and e.get("level") == "error"]
+        assert any("生成失敗" in e.get("message", "") for e in errs)
+        # source_errors 計數
+        done = [e for e in events if e.get("type") == "done"][-1]
+        assert done["readonly_stats"]["source_errors"] == 1
+        # 迴圈續跑：第二來源仍被呼叫 + 產出摘要
+        assert mock_ps.call_count == 2
+        assert done["readonly_stats"]["created"] == 3
+        assert done["readonly_stats"]["sources"] == 1
+
+    # 7. 跨 thread DB 寫入（回歸鎖，無 ProgrammingError）
+    def test_cross_thread_db_write(self, client, tmp_path, monkeypatch, mocker, parse_sse_events):
+        from core.database import init_db, VideoRepository, Video
+        from core.readonly_producer import ProduceResult
+        db_path = tmp_path / "test.db"
+        init_db(db_path)
+        mocker.patch("web.routers.scanner.get_db_path", return_value=db_path)
+        cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+
+        written_uri = to_file_uri(str(tmp_path / "src0" / "worker_written.mp4"))
+
+        def side_effect(source, config, repo, *, proxy_url="", on_progress=None, should_abort=None):
+            # 在 worker frame 用傳入的 repo 寫一筆（per-call 連線）
+            repo.upsert(Video(path=written_uri, number="WK-001", title="worker",
+                              mtime=1.0, nfo_mtime=0.0))
+            return ProduceResult(source_path=source.path, output_path=source.output_path, created=1)
+
+        mocker.patch("web.routers.scanner.produce_source", side_effect=side_effect)
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        events = parse_sse_events(resp.text)
+        assert [e for e in events if e.get("type") == "done"], "未收到 done event"
+        # 無 ProgrammingError → 寫入成功
+        check = VideoRepository(db_path)
+        assert written_uri in check.get_mtime_index()
+
+    # 8. deletion 安全（readonly continue 早於 deletion → 影片未被誤刪）
+    def test_readonly_video_not_deleted(self, client, tmp_path, monkeypatch, mocker, parse_sse_events):
+        from core.database import init_db, VideoRepository, Video
+        from core.readonly_producer import ProduceResult
+        db_path = tmp_path / "test.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+        src_dir = tmp_path / "src0"
+        src_dir.mkdir()
+        out_dir = tmp_path / "out0"
+        out_dir.mkdir()
+        # RED-able mutation guard：磁碟上放一個「真實但不匹配」的影片檔，讓 normal-scan
+        # 路徑（若 readonly 分流被移除）的 all_files 非空、繞過 :369 空目錄短路 → deletion
+        # 區塊會真的跑。current_paths 只含 other.mp4，DB 預置的 movie.mp4（在同夾下、
+        # 但不在磁碟）就會被 delete_by_paths prune → 移除分流時本測試 RED。
+        (src_dir / "other.mp4").write_bytes(b"x" * 4096)  # 真實檔，掃得到、非 DB 預置那筆
+        # readonly-source 影片：path=來源 URI（movie.mp4，磁碟上不存在），cover 在 output_path 下
+        vid_uri = to_file_uri(str(src_dir / "movie.mp4"))
+        cover_uri = to_file_uri(str(out_dir / "movie" / "movie.jpg"))
+        repo.upsert(Video(path=vid_uri, number="RO-001", title="唯讀影片",
+                          cover_path=cover_uri, mtime=1.0, nfo_mtime=0.0))
+        assert vid_uri in repo.get_mtime_index()
+
+        cfg = {
+            "gallery": {
+                "directories": [{"path": str(src_dir), "readonly": True, "output_path": str(out_dir)}],
+                "output_dir": str(tmp_path / "html_out"),
+                "path_mappings": {},
+                "min_size_mb": 0,
+            },
+            "search": {"proxy_url": ""},
+            "general": {"theme": "light"},
+            "scraper": {"video_extensions": [".mp4"]},
+        }
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.get_db_path", return_value=db_path)
+        # produce_source 空 result，不動 DB
+        mocker.patch("web.routers.scanner.produce_source",
+                     return_value=ProduceResult(source_path=str(src_dir), output_path=str(out_dir)))
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        events = parse_sse_events(resp.text)
+        assert [e for e in events if e.get("type") == "done"], "未收到 done event"
+        # 未被誤刪
+        assert vid_uri in repo.get_mtime_index(), "readonly 來源影片被誤刪（deletion 未被 continue 繞過）"
+
+    # 9. UNC readonly 來源 → 分流早於 normalize，produce_source 被呼叫
+    def test_unc_readonly_source_reaches_producer(self, client, tmp_path, monkeypatch, mocker):
+        from core.readonly_producer import ProduceResult
+        unc = r"\\server\share"
+        cfg = {
+            "gallery": {
+                "directories": [{"path": unc, "readonly": True, "output_path": str(tmp_path / "out0")}],
+                "output_dir": str(tmp_path / "html_out"),
+                "path_mappings": {},
+                "min_size_mb": 0,
+            },
+            "search": {"proxy_url": ""},
+            "general": {"theme": "light"},
+            "scraper": {"video_extensions": [".mp4"]},
+        }
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mock_ps = mocker.patch("web.routers.scanner.produce_source",
+                               return_value=ProduceResult(source_path=unc, output_path=str(tmp_path / "out0")))
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        assert mock_ps.call_count == 1
+        assert mock_ps.call_args.args[0].path == unc

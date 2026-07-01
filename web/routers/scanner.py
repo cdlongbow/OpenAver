@@ -21,6 +21,7 @@ import asyncio
 import base64
 import json
 import os
+import queue
 import sys
 import threading
 import time
@@ -41,6 +42,7 @@ from core.nfo_updater import check_cache_needs_update, update_videos_generator
 from core.database import VideoRepository, Video, init_db, get_db_path, migrate_json_to_sqlite
 from core.organizer import generate_jellyfin_images, HEADERS as _EMBED_HEADERS
 from core.config import load_config, iter_gallery_sources, get_gallery_source_paths
+from core.readonly_producer import produce_source
 from core import thumbnail_cache
 from core.scraper import smart_search
 from core.source_settings import is_uncensored_mode_effective
@@ -146,6 +148,110 @@ def _emit_long_path_warnings(logger_, long_paths: List[str]) -> None:
         logger_.warning(f"  {p}")
 
 
+# ---------------------------------------------------------------------------
+# TASK-88c-T2: readonly 來源分流 + SSE thread/queue 橋接 + 四數摘要
+# ---------------------------------------------------------------------------
+
+def _outcome_to_sse(o) -> dict:
+    """把 ProduceOutcome 轉一條 SSE log 行 dict（純函式）。
+
+    error 已是固定 "生成失敗"（producer 已 sanitize，:462）→ 直接轉發，
+    不再塞 server-side 細節。failed → warn，其餘 info。
+    """
+    label = {
+        "created": "✓ 生成",
+        "skipped": "略過",
+        "no_scrape": "刮不到",
+        "failed": "✗ 失敗",
+    }.get(o.status, o.status)
+    msg = f"  {label}: {o.number or o.source_uri}"
+    if o.status == "failed" and o.error:
+        msg += f"（{o.error}）"
+    return {"type": "log", "level": "warn" if o.status == "failed" else "info", "message": msg}
+
+
+def _accumulate_readonly(summary: dict, result) -> None:
+    """跨來源累計四數 + no_output（純函式，CD-88c-3）。
+
+    no_output_path → 只 no_output+1；其他非空 aborted_reason（not_readonly 防呆）
+    → 記 log 不計數；正常 → sources+1 並累加 created/skipped/no_scrape/failed。
+    """
+    if result.aborted_reason == "no_output_path":
+        summary["no_output"] += 1
+        return
+    if result.aborted_reason:
+        logger.info("唯讀來源略過（%s）: %s", result.aborted_reason, result.source_path)
+        return
+    summary["sources"] += 1
+    summary["created"] += result.created
+    summary["skipped"] += result.skipped
+    summary["no_scrape"] += result.no_scrape
+    summary["failed"] += result.failed
+
+
+def _yield_source_summary(result) -> Generator[str, None, None]:
+    """該來源小結（產生器）。no_output_path → 「請先設定輸出夾」提示（Acceptance #11）。"""
+    if result.aborted_reason == "no_output_path":
+        yield _sse_event({
+            "type": "log", "level": "warn",
+            "message": f"  {result.source_path}: 請先設定輸出夾，已略過",
+        })
+    elif not result.aborted_reason:
+        yield _sse_event({
+            "type": "log", "level": "info",
+            "message": (
+                f"  {result.source_path}: 新增 {result.created}／略過 {result.skipped}"
+                f"／刮不到 {result.no_scrape}／失敗 {result.failed}"
+            ),
+        })
+
+
+def _run_readonly_source(src, config, repo, proxy_url, summary) -> Generator[str, None, None]:
+    """在 daemon worker thread 跑 produce_source，drain 無界 queue 逐片 yield SSE。
+
+    worker 例外（含 produce_source 迴圈前的 normalize/列檔/DB 拋錯，未被 producer
+    內 try 包覆）顯式接手（CD-88c-1 / Codex P1），不靜默吞：box['error'] → 產生器
+    emit error SSE + source_errors+1 + 續下一來源。
+    """
+    q: "queue.Queue" = queue.Queue()  # 無界：worker 永不阻塞於 put，client 斷線 daemon 自然退出
+    _SENTINEL = object()
+    box: dict = {}
+
+    def _work():
+        try:
+            box['result'] = produce_source(
+                src, config, repo, proxy_url=proxy_url,
+                on_progress=q.put,
+                should_abort=None,
+            )
+        except Exception:
+            logger.exception("唯讀生成來源失敗: %s", src.path)
+            box['error'] = True
+        finally:
+            q.put(_SENTINEL)
+
+    t = threading.Thread(target=_work, daemon=True)
+    t.start()
+    yield _sse_event({"type": "log", "level": "info", "message": f"唯讀生成: {src.path}"})
+    while True:
+        item = q.get()
+        if item is _SENTINEL:
+            break
+        yield _sse_event(_outcome_to_sse(item))
+    t.join()
+    if box.get('error'):
+        summary["source_errors"] += 1
+        yield _sse_event({
+            "type": "log", "level": "error",
+            "message": f"  {src.path}: 生成失敗（來源無法存取或設定錯誤）",
+        })
+        return
+    result = box.get('result')
+    if result is not None:
+        _accumulate_readonly(summary, result)
+        yield from _yield_source_summary(result)
+
+
 def generate_avlist() -> Generator[str, None, None]:
     """產生影片列表（SSE 串流）- 使用 SQLite 儲存"""
 
@@ -211,9 +317,21 @@ def generate_avlist() -> Generator[str, None, None]:
         session_added_paths = []  # 追蹤本次新增/變更的影片路徑
         long_paths: list[str] = []  # a5: Windows 長路徑收集（只在 win32 填充）
 
+        # TASK-88c-T2: readonly 來源生成摘要（跨來源累計，迴圈前初始化避免清零）
+        proxy_url = config.get('search', {}).get('proxy_url', '')
+        readonly_summary = {
+            "created": 0, "skipped": 0, "no_scrape": 0, "failed": 0,
+            "no_output": 0, "sources": 0, "source_errors": 0,
+        }
+
         for idx, src in enumerate(iter_gallery_sources(gallery_config), 1):
             directory = src.path
             logger.info(f"[Gallery] 掃描: {directory}")
+
+            # TASK-88c-T2: readonly 來源分流（早於 normalize，UNC 主場景不被擋）
+            if src.readonly:
+                yield from _run_readonly_source(src, config, repo, proxy_url, readonly_summary)
+                continue
 
             # 轉換路徑格式 (Windows -> WSL)
             try:
@@ -451,6 +569,17 @@ def generate_avlist() -> Generator[str, None, None]:
 
         logger.info(f"[Gallery] 完成，新增 {total_inserted}，更新 {total_updated}，刪除 {total_deleted}")
 
+        # TASK-88c-T2: readonly 生成摘要 log 行（僅有 readonly 活動時輸出）
+        if readonly_summary["sources"] > 0 or readonly_summary["no_output"] > 0 or readonly_summary["source_errors"] > 0:
+            logger.info(
+                "唯讀生成完成: 新增 %d／略過 %d／刮不到 %d／失敗 %d"
+                "（%d 個來源；%d 個未設輸出夾；%d 個來源錯誤）",
+                readonly_summary["created"], readonly_summary["skipped"],
+                readonly_summary["no_scrape"], readonly_summary["failed"],
+                readonly_summary["sources"], readonly_summary["no_output"],
+                readonly_summary["source_errors"],
+            )
+
         # a5: 寫長路徑清單到 debug.log（helper 內部判斷空 list）
         _emit_long_path_warnings(logger, long_paths)
 
@@ -483,7 +612,8 @@ def generate_avlist() -> Generator[str, None, None]:
                 "inserted": total_inserted,
                 "updated": total_updated,
                 "deleted": total_deleted
-            }
+            },
+            "readonly_stats": readonly_summary  # TASK-88c-T2: 加法式新欄位
         })
 
     except Exception as e:
