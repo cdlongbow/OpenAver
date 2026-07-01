@@ -97,11 +97,14 @@ def scrape_single(request: ScrapeRequest) -> dict:
     # WSL/Linux 會拋 ValueError，而 UNC 正是 readonly 主場景）。
     _gallery_config = load_config().get('gallery', {})
     _path_mappings = _gallery_config.get('path_mappings', {})
-    _file_uri = to_file_uri(file_path, _path_mappings)
+    # coerce_to_file_uri：file_path 可能已是 DB canonical file:/// URI（鄰近寫入路徑
+    # 傳的就是 URI），直接 to_file_uri 會雙重包成 file:///file:/// 導致 guard 被繞過
+    # （Codex P1）。coerce 對「已是 URI」原樣回、對 FS path 才轉，兩端對稱處理。
+    _file_uri = coerce_to_file_uri(file_path, _path_mappings)
     for _s in iter_gallery_sources(_gallery_config):
         if not _s.readonly or not _s.path:
             continue
-        if is_path_under_dir(_file_uri, to_file_uri(_s.path, _path_mappings)):
+        if is_path_under_dir(_file_uri, coerce_to_file_uri(_s.path, _path_mappings)):
             return {
                 "success": False,
                 "error": "此來源路徑為唯讀（readonly），無法搬移或重新命名檔案。"

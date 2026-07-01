@@ -1412,3 +1412,32 @@ class TestGenerateReadonlyBridge:
         assert resp.status_code == 200
         assert mock_ps.call_count == 1
         assert mock_ps.call_args.args[0].path == unc
+
+    # 10. 88c-P2：來源級失敗 → 完成通知走 warn（非純 success）
+    def test_source_level_failure_completion_notif_is_warn(
+        self, client, tmp_path, monkeypatch, mocker, parse_sse_events
+    ):
+        """readonly 來源整源拋錯（source_errors>0）→ 最終完成通知必須是 warn/
+        scanner_done_with_errors，不可 success/scanner_done（Codex P2）。"""
+        cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.produce_source",
+                     side_effect=ValueError("boom（迴圈前逃出）"))
+        mock_notif = mocker.patch("web.routers.scanner._emit_notif")
+
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        # drain SSE 讓 generator 跑完（完成通知在 done 之前 emit）
+        parse_sse_events(resp.text)
+
+        # 完成通知（scanner_generate task_type，排除 scanner_started）
+        completion_calls = [
+            c for c in mock_notif.call_args_list
+            if c.kwargs.get("task_type") == "scanner_generate"
+            and c.args and c.args[1] != "notif.scanner_started"
+        ]
+        assert completion_calls, "未發出完成通知"
+        final = completion_calls[-1]
+        assert final.args[0] == "warn", f"完成通知應為 warn，實得 {final.args[0]}"
+        assert final.args[1] == "notif.scanner_done_with_errors"
+        assert "來源失敗" in final.kwargs.get("message", "")

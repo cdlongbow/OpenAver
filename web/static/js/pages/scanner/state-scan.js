@@ -779,7 +779,17 @@ export function stateScan() {
                             this.nfoUpdateVisible = false;
                         }
 
-                        this.showToast(`成功產生 ${data.video_count} 部影片列表`, 'success');
+                        // 88c-P2: 唯讀來源整源失敗（source_errors）時完成 toast 走 warn，
+                        // 不可純 success（後端完成通知已同步納入 source_errors）。
+                        const srcErrors = (data.readonly_stats && data.readonly_stats.source_errors) || 0;
+                        if (srcErrors > 0) {
+                            this.showToast(
+                                `完成 ${data.video_count} 部，但 ${srcErrors} 個唯讀來源失敗，詳細見日誌`,
+                                'warn'
+                            );
+                        } else {
+                            this.showToast(`成功產生 ${data.video_count} 部影片列表`, 'success');
+                        }
 
                         // a5: Windows 長路徑警告
                         if (data.long_paths && data.long_paths.length > 0) {

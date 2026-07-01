@@ -2894,6 +2894,25 @@ class TestLongPathWarning:
         assert "debug.log" in window, "scanner/state-scan.js long_paths toast missing: 'debug.log'"
 
 
+class TestReadonlySourceErrorToastGuard:
+    """88c-P2: scanner/state-scan.js done handler 的完成 toast 須依 source_errors 分流。
+
+    唯讀來源整源失敗（readonly_stats.source_errors > 0）時 toast 不可純 success，
+    須走 warn；後端完成通知已同步納入 source_errors（Codex P2）。
+    """
+
+    def test_done_toast_consults_source_errors(self):
+        js = SCANNER_SCAN_JS.read_text(encoding="utf-8")
+        assert "data.readonly_stats" in js and "source_errors" in js, \
+            "scanner/state-scan.js done toast 未 consult readonly_stats.source_errors"
+        # 完成 toast 區塊須有依 source_errors 分流的 warn 分支
+        idx = js.find("const srcErrors")
+        assert idx != -1, "scanner/state-scan.js 缺 srcErrors 分流變數"
+        window = js[idx:idx + 500]
+        assert "'warn'" in window or '"warn"' in window, \
+            "scanner/state-scan.js source_errors 分支缺 warn toast"
+
+
 class TestSearchFileJsSubtitleHelper:
     """48a T2 a2 — 前端 extractChineseTitle 同步套用 stripSubtitleMarkers helper（對齊 Python 端）"""
 

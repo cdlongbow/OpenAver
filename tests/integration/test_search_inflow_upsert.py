@@ -367,6 +367,37 @@ def test_scrape_single_readonly_message_descriptive(client):
     assert len(error) > 15  # 非單一 code，描述清楚
 
 
+# case 7: file_path 是 canonical file:/// URI（DB / 鄰近寫入路徑格式）在 readonly
+#          來源下 → guard 仍須觸發（Codex P1：to_file_uri 會雙重包 file:///file:///
+#          繞過 guard；coerce_to_file_uri 對已是 URI 原樣回才能命中）。
+def test_scrape_single_readonly_file_uri_input_blocks_organize(client):
+    from core.path_utils import to_file_uri
+    # DB canonical file:/// URI（drive-letter，真實 Windows/WSL 部署形態）。
+    # 舊碼 to_file_uri 對它再包一層 → file:///file:/// → guard 繞過（RED）；
+    # coerce_to_file_uri 對已是 URI 原樣回 → guard 命中（GREEN）。
+    src_path = "C:/ro_src"
+    file_uri = to_file_uri("C:/ro_src/ABC-001.mp4", {})  # 'file:///C:/ro_src/ABC-001.mp4'
+    with (
+        patch("web.routers.scraper.load_config",
+              return_value=_readonly_gallery_config(src_path)),
+        patch("web.routers.scraper.organize_file") as mock_org,
+        patch("web.routers.scraper.search_jav") as mock_search,
+        patch("core.scraper.extract_number", return_value="ABC-001") as mock_extract,
+    ):
+        resp = client.post(
+            "/api/scrape-single",
+            json=_scrape_body_no_metadata(file_uri, number=None),
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is False
+    assert "唯讀" in data["error"]
+    mock_org.assert_not_called()
+    mock_search.assert_not_called()
+    mock_extract.assert_not_called()
+
+
 # ─── B1 helpers ──────────────────────────────────────────────────────────────
 
 def _seed_old_card_b1(repo, old_uri: str, user_tags=None, created_at_str: str = None):
