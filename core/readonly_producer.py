@@ -357,8 +357,18 @@ def _resolve_movie_dir(
 # ---------------------------------------------------------------------------
 # TASK-89a-T4 (Codex #3): stale-asset cleanup — reconstruct the previous run's
 # basename from the DB row, then wipe that movie's own old singleton/extrafanart
-# files before the new ones are written, so re-scraping with a corrected title
-# overwrites in place instead of piling up `<old>.* + <new>.*` side by side.
+# files, so re-scraping with a corrected title overwrites in place instead of
+# piling up `<old>.* + <new>.*` side by side.
+#
+# T5 follow-up (Codex PR review P2): cleanup runs AFTER the corresponding new
+# asset has been written successfully, not before. Singletons (nfo/cover/
+# poster/fanart) are cleaned only once `generate_nfo` has already returned
+# True, and only the assets whose new write actually succeeded (has_cover/
+# has_poster/has_fanart) — so a partial failure (cover download false, or
+# generate_nfo raising) leaves the OLD assets on disk instead of deleting them
+# up front and then failing to produce replacements. Extrafanart is the
+# exception: it's non-critical and each run rewrites the whole set, so it is
+# still cleaned before its own download loop.
 # ---------------------------------------------------------------------------
 
 def _build_old_base(existing, source_fs_path: str, config: dict) -> str:
@@ -397,23 +407,71 @@ def _build_old_base(existing, source_fs_path: str, config: dict) -> str:
     return _build_basename(old_format_data, source_fs_path, config)
 
 
-def _clean_stale_assets(movie_dir: str, old_base: str) -> None:
-    """Delete this movie's own previous-run assets, anchored strictly on old_base.
+def _clean_stale_extrafanart(movie_dir: str) -> None:
+    """Delete this movie's own previous-run extrafanart samples (`fanart*.jpg`).
 
-    No-op (including the extrafanart glob) when old_base is '': first generation
-    has nothing to clean, and a new-dir allocation (output root moved) means the
-    old files physically live in a different, now-orphaned dir — cleaning THAT
-    dir is orphan GC (spec-89b.4 non-goal), out of scope here.
+    Called from `_write_movie_assets` BEFORE the extrafanart download loop,
+    whenever old_base is non-empty (caller's responsibility to gate — first
+    generation has nothing to clean). No old_base parameter is needed: the glob
+    is scoped to the fixed `extrafanart/` subdir and the `fanart*.jpg` pattern,
+    independent of basename. Safe to run pre-write because extrafanart is
+    non-critical (a missing sample degrades silently) and each run rewrites the
+    whole set from scratch — unlike the singleton assets below, there is no
+    "old cover/NFO now missing" failure mode to worry about here.
 
-    Deliberately narrow: exact filenames for the four singleton assets (extension
-    glob only for poster/fanart, defensive against a future non-.jpg format), and
-    a fixed `fanart*.jpg` glob for extrafanart (sample count can shrink between
-    runs independent of title). Never a bare `*.jpg`/`*.*` glob, never rmtree —
-    both would delete files the user placed in the same directory themselves.
-    Missing files are a no-op (unlink(missing_ok=True)); this must never raise
-    and abort the write that follows it.
+    Never a bare `*.jpg`/`*.*` glob, never rmtree — both would delete files the
+    user placed in the same directory themselves. Missing files are a no-op
+    (unlink(missing_ok=True)); this must never raise.
     """
-    if not old_base:
+    ef_dir = Path(movie_dir) / 'extrafanart'
+    if not ef_dir.is_dir():
+        return
+    for f in ef_dir.glob('fanart*.jpg'):
+        try:
+            f.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("[readonly_producer] stale extrafanart 清除失敗（略過）: %s", f)
+
+
+def _clean_stale_singletons(
+    movie_dir: str,
+    old_base: str,
+    new_base: str,
+    has_cover: bool,
+    has_poster: bool,
+    has_fanart: bool,
+) -> None:
+    """Delete this movie's own previous-run singleton assets (nfo/cover/poster/
+    fanart), anchored strictly on old_base.
+
+    Called from `_write_movie_assets` AFTER `generate_nfo` has already returned
+    True — i.e. only once the new NFO write actually succeeded. This is
+    deliberately post-write, not pre-write (T5 follow-up, Codex PR review P2):
+    cleaning before writing would delete the OLD assets even when the new write
+    fails partway (cover download false, or generate_nfo raising), leaving
+    neither the old nor the new assets on disk. Running it after means a failed
+    write always leaves the previous run's assets intact.
+
+    No-op when old_base is '' (first generation — nothing to clean) or
+    old_base == new_base (title unchanged — the new write already overwrote the
+    same-named file in place; deleting here would clobber what generate_nfo /
+    download_image / generate_jellyfin_images just wrote, since this runs after
+    the write completes).
+
+    Each asset is deleted only when this run's corresponding write actually
+    succeeded: `<old_base>.jpg` only when has_cover, `<old_base>-poster.*` only
+    when has_poster, `<old_base>-fanart.*` only when has_fanart. A transient
+    download/generation failure this run keeps the matching old file on disk
+    rather than leaving a hole. `<old_base>.nfo` is unconditional — this
+    function is only ever called once nfo_ok is already True.
+
+    Deliberately narrow: exact filenames for the singletons (extension glob
+    only for poster/fanart, defensive against a future non-.jpg format). Never
+    a bare `*.jpg`/`*.*` glob, never rmtree — both would delete files the user
+    placed in the same directory themselves. Missing files are a no-op
+    (unlink(missing_ok=True)); this must never raise.
+    """
+    if not old_base or old_base == new_base:
         return
     d = Path(movie_dir)
     # old_base comes from the scraped title and can legally contain glob
@@ -421,24 +479,20 @@ def _clean_stale_assets(movie_dir: str, old_base: str) -> None:
     # tags like "[Chinese Sub]"). Escape before globbing the poster/fanart
     # extension patterns, else Path.glob treats '[...]' as a char class and
     # silently misses the file (residual junk survives — a narrow Codex #3
-    # recurrence). The two singletons use literal joins, no escape needed.
+    # recurrence). The nfo/cover singletons use literal joins, no escape needed.
     esc = glob.escape(old_base)
-    targets = [d / f"{old_base}.nfo", d / f"{old_base}.jpg"]
-    targets.extend(d.glob(f"{esc}-poster.*"))
-    targets.extend(d.glob(f"{esc}-fanart.*"))
+    targets = [d / f"{old_base}.nfo"]
+    if has_cover:
+        targets.append(d / f"{old_base}.jpg")
+    if has_poster:
+        targets.extend(d.glob(f"{esc}-poster.*"))
+    if has_fanart:
+        targets.extend(d.glob(f"{esc}-fanart.*"))
     for target in targets:
         try:
             Path(target).unlink(missing_ok=True)
         except OSError:
             logger.warning("[readonly_producer] stale asset 清除失敗（略過）: %s", target)
-
-    ef_dir = d / 'extrafanart'
-    if ef_dir.is_dir():
-        for f in ef_dir.glob('fanart*.jpg'):
-            try:
-                f.unlink(missing_ok=True)
-            except OSError:
-                logger.warning("[readonly_producer] stale extrafanart 清除失敗（略過）: %s", f)
 
 
 # ---------------------------------------------------------------------------
@@ -458,17 +512,20 @@ def _write_movie_assets(
     Returns {'cover_fs': str, 'sample_fs': list[str]}.
     cover_fs is '' when cover download fails or meta['cover'] is empty.
 
-    old_base (TASK-89a-T4, Codex #3): when non-empty, this movie's own stale
-    assets from the PREVIOUS run (different title → different basename) are
-    deleted BEFORE any download/write below. This must run first — even when
-    old_base == the new basename (title unchanged) — so the sequence is always
-    "delete same-name old file → write new file", which degrades to a plain
-    overwrite rather than a delete-after-write race that could clobber what was
-    just written.
+    old_base (TASK-89a-T4, Codex #3; T5 follow-up, Codex PR review P2): when
+    non-empty, this movie's own stale assets from the PREVIOUS run (different
+    title → different basename) are deleted — but only AFTER the corresponding
+    new asset has been written successfully, and only when old_base differs
+    from this run's basename. Extrafanart (non-critical, whole set rewritten
+    every run) is cleaned before its own download loop. The singleton assets
+    (nfo/cover/poster/fanart) are cleaned only once generate_nfo has already
+    succeeded, and only the ones whose new write actually succeeded this run —
+    so a write that fails partway (cover download false, generate_nfo raising)
+    leaves the previous run's assets on disk instead of deleting them up front
+    and then failing to produce replacements.
     """
     os.makedirs(movie_dir, exist_ok=True)
-    _clean_stale_assets(movie_dir, old_base)
-    base = _build_basename(format_data, source_fs_path, config)
+    new_base = base = _build_basename(format_data, source_fs_path, config)
     base_stem = str(Path(movie_dir) / base)
 
     # 1) Cover: download from remote URL (C6 — always re-scrape, never read source image)
@@ -480,7 +537,12 @@ def _write_movie_assets(
     has_poster = imgs.get('poster', False)
     has_fanart = imgs.get('fanart', False)
 
-    # 3) extrafanart — gated only on config key; per-movie dir already exists (no create_folder)
+    # 3) extrafanart — gated only on config key; per-movie dir already exists (no create_folder).
+    # Stale samples from the previous run are cleaned first (whenever old_base is
+    # non-empty) regardless of this run's download_sample_images setting, so a
+    # re-scrape with samples toggled off still shrinks the old set to zero.
+    if old_base:
+        _clean_stale_extrafanart(movie_dir)
     sample_fs: list = []
     if config.get('download_sample_images'):
         ef_dir = Path(movie_dir) / 'extrafanart'
@@ -519,6 +581,11 @@ def _write_movie_assets(
     )
     if not nfo_ok:
         raise RuntimeError(f"NFO write failed: {nfo_fs}")
+
+    # Singleton stale-cleanup runs LAST, only after the new NFO write is confirmed
+    # (T5 follow-up, Codex PR review P2) — see docstring above for why this is
+    # post-write rather than pre-write.
+    _clean_stale_singletons(movie_dir, old_base, new_base, has_cover, has_poster, has_fanart)
     return {'cover_fs': cover_fs if has_cover else '', 'sample_fs': sample_fs}
 
 

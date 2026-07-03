@@ -840,7 +840,7 @@ class TestWriteMovieAssets:
 
 
 # ---------------------------------------------------------------------------
-# TASK-89a-T4 (Codex #3 / #4): _build_old_base + _clean_stale_assets
+# TASK-89a-T4 (Codex #3 / #4): _build_old_base + _clean_stale_extrafanart/_clean_stale_singletons
 # ---------------------------------------------------------------------------
 
 def _t4_existing(meta):
@@ -925,45 +925,18 @@ class TestBuildOldBase:
         assert old_base == expected == 'TEST-001 Old Title'
 
 
-class TestCleanStaleAssets:
-    """T4: _clean_stale_assets — precise, anchored deletion (no bare glob, no rmtree)."""
+class TestCleanStaleExtrafanart:
+    """T5 follow-up: _clean_stale_extrafanart — precise fanart*.jpg glob, no old_base."""
 
-    def test_empty_old_base_is_noop(self, tmp_path):
-        from core.readonly_producer import _clean_stale_assets
-
-        d = tmp_path / 'movie'
-        d.mkdir()
-        f = d / 'random.jpg'
-        f.write_bytes(b'x')
-        _clean_stale_assets(str(d), '')
-        assert f.exists()
-
-    def test_deletes_singleton_assets_only(self, tmp_path):
-        from core.readonly_producer import _clean_stale_assets
+    def test_noop_when_no_extrafanart_dir(self, tmp_path):
+        from core.readonly_producer import _clean_stale_extrafanart
 
         d = tmp_path / 'movie'
         d.mkdir()
-        old_base = 'TEST-001 Old'
-        for suffix in ('.nfo', '.jpg', '-poster.jpg', '-fanart.jpg'):
-            (d / f'{old_base}{suffix}').write_bytes(b'x')
-        keep = d / 'random.jpg'
-        keep.write_bytes(b'keep')
-
-        _clean_stale_assets(str(d), old_base)
-
-        for suffix in ('.nfo', '.jpg', '-poster.jpg', '-fanart.jpg'):
-            assert not (d / f'{old_base}{suffix}').exists(), f"{suffix} not cleaned"
-        assert keep.exists(), "user-placed file must not be deleted"
-
-    def test_missing_files_are_noop_no_raise(self, tmp_path):
-        from core.readonly_producer import _clean_stale_assets
-
-        d = tmp_path / 'movie'
-        d.mkdir()
-        _clean_stale_assets(str(d), 'NOTHING-EVER-WRITTEN')  # must not raise
+        _clean_stale_extrafanart(str(d))  # must not raise
 
     def test_extrafanart_glob_ignores_non_fanart_files(self, tmp_path):
-        from core.readonly_producer import _clean_stale_assets
+        from core.readonly_producer import _clean_stale_extrafanart
 
         d = tmp_path / 'movie'
         ef = d / 'extrafanart'
@@ -974,18 +947,104 @@ class TestCleanStaleAssets:
         custom = ef / 'custom.jpg'
         custom.write_bytes(b'keep')
 
-        _clean_stale_assets(str(d), 'TEST-001 X')
+        _clean_stale_extrafanart(str(d))
 
         assert not (ef / 'fanart1.jpg').exists()
         assert note.exists(), "non fanart*.jpg file in extrafanart must survive"
         assert custom.exists(), "non fanart*.jpg-named image must survive"
+
+
+class TestCleanStaleSingletons:
+    """T5 follow-up (Codex PR review P2): _clean_stale_singletons — anchored deletion,
+    gated on old_base != new_base and on each asset's this-run write success."""
+
+    def test_empty_old_base_is_noop(self, tmp_path):
+        from core.readonly_producer import _clean_stale_singletons
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        f = d / 'random.jpg'
+        f.write_bytes(b'x')
+        _clean_stale_singletons(str(d), '', 'NEW-BASE', True, True, True)
+        assert f.exists()
+
+    def test_old_base_equals_new_base_is_noop(self, tmp_path):
+        """Same basename → new write already overwrote the file in place;
+        cleaning here would clobber what was just written."""
+        from core.readonly_producer import _clean_stale_singletons
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        base = 'TEST-001 Same'
+        for suffix in ('.nfo', '.jpg', '-poster.jpg', '-fanart.jpg'):
+            (d / f'{base}{suffix}').write_bytes(b'NEW')
+
+        _clean_stale_singletons(str(d), base, base, True, True, True)
+
+        for suffix in ('.nfo', '.jpg', '-poster.jpg', '-fanart.jpg'):
+            assert (d / f'{base}{suffix}').exists(), f"{suffix} must survive (same base)"
+
+    def test_deletes_singleton_assets_when_all_flags_true(self, tmp_path):
+        from core.readonly_producer import _clean_stale_singletons
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'TEST-001 Old'
+        for suffix in ('.nfo', '.jpg', '-poster.jpg', '-fanart.jpg'):
+            (d / f'{old_base}{suffix}').write_bytes(b'x')
+        keep = d / 'random.jpg'
+        keep.write_bytes(b'keep')
+
+        _clean_stale_singletons(str(d), old_base, 'TEST-001 New', True, True, True)
+
+        for suffix in ('.nfo', '.jpg', '-poster.jpg', '-fanart.jpg'):
+            assert not (d / f'{old_base}{suffix}').exists(), f"{suffix} not cleaned"
+        assert keep.exists(), "user-placed file must not be deleted"
+
+    def test_has_cover_false_keeps_old_cover(self, tmp_path):
+        """Cover download failed this run → old cover must survive; nfo still
+        cleaned since generate_nfo already succeeded (function is only called
+        once nfo_ok is True)."""
+        from core.readonly_producer import _clean_stale_singletons
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'TEST-001 Old'
+        for suffix in ('.nfo', '.jpg'):
+            (d / f'{old_base}{suffix}').write_bytes(b'x')
+
+        _clean_stale_singletons(str(d), old_base, 'TEST-001 New', False, False, False)
+
+        assert not (d / f'{old_base}.nfo').exists(), "nfo must always be cleaned (nfo_ok guaranteed)"
+        assert (d / f'{old_base}.jpg').exists(), "old cover must survive when has_cover is False"
+
+    def test_has_poster_and_fanart_false_keeps_old_files(self, tmp_path):
+        from core.readonly_producer import _clean_stale_singletons
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'TEST-001 Old'
+        for suffix in ('-poster.jpg', '-fanart.jpg'):
+            (d / f'{old_base}{suffix}').write_bytes(b'x')
+
+        _clean_stale_singletons(str(d), old_base, 'TEST-001 New', True, False, False)
+
+        assert (d / f'{old_base}-poster.jpg').exists(), "old poster must survive when has_poster is False"
+        assert (d / f'{old_base}-fanart.jpg').exists(), "old fanart must survive when has_fanart is False"
+
+    def test_missing_files_are_noop_no_raise(self, tmp_path):
+        from core.readonly_producer import _clean_stale_singletons
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        _clean_stale_singletons(str(d), 'NOTHING-EVER-WRITTEN', 'NEW-BASE', True, True, True)  # must not raise
 
     def test_old_base_with_glob_metachars_is_escaped(self, tmp_path):
         """old_base from a scraped title may contain '[' ']' (e.g. '[Chinese Sub]').
         sanitize_filename keeps brackets, so the poster/fanart globs must
         glob.escape(old_base) or they silently miss the file (narrow Codex #3
         recurrence — residual poster/fanart junk survives)."""
-        from core.readonly_producer import _clean_stale_assets
+        from core.readonly_producer import _clean_stale_singletons
 
         d = tmp_path / 'movie'
         d.mkdir()
@@ -993,7 +1052,7 @@ class TestCleanStaleAssets:
         for suffix in ('.nfo', '.jpg', '-poster.jpg', '-fanart.jpg'):
             (d / f'{old_base}{suffix}').write_bytes(b'x')
 
-        _clean_stale_assets(str(d), old_base)
+        _clean_stale_singletons(str(d), old_base, 'STARS-123 New', True, True, True)
 
         for suffix in ('.nfo', '.jpg', '-poster.jpg', '-fanart.jpg'):
             assert not (d / f'{old_base}{suffix}').exists(), \
@@ -1001,11 +1060,12 @@ class TestCleanStaleAssets:
 
 
 class TestWriteMovieAssetsStaleCleanup:
-    """T4 integration: _write_movie_assets(old_base=...) round-trips against real files.
+    """T4/T5 integration: _write_movie_assets(old_base=...) round-trips against real files.
 
-    Covers DoD: title-drift (Codex #3 lock), extrafanart shrink, no-op-safe
-    (clean-before-write ordering), user-file protection, first-generation no-op,
-    reallocated-new-dir isolation.
+    Covers DoD: title-drift (Codex #3 lock), extrafanart shrink, same-base
+    overwrite-in-place (no pre-delete), user-file protection, first-generation
+    no-op, reallocated-new-dir isolation, and (T5 follow-up, Codex PR review P2)
+    partial-failure robustness — a failed write must leave the old assets intact.
     """
 
     def _config(self, **overrides):
@@ -1070,9 +1130,11 @@ class TestWriteMovieAssetsStaleCleanup:
         assert not (ef_dir / 'fanart1.jpg').exists()
         assert not (ef_dir / 'fanart2.jpg').exists()
 
-    def test_title_unchanged_clean_before_write_no_op_safe(self, tmp_path):
-        """old_base == new_base: clean must run BEFORE download so the sequence
-        degrades to a plain overwrite, never a delete-after-write race."""
+    def test_title_unchanged_overwrites_in_place_no_stale_delete(self, tmp_path):
+        """old_base == new_base: _clean_stale_singletons must be a no-op (T5
+        follow-up) — the same-named file is left for download_image/generate_nfo
+        to overwrite directly, never pre-deleted. Deleting first (old behavior)
+        would destroy the old asset even when the new write then fails partway."""
         from core.readonly_producer import _build_basename, _build_old_base, _format_data
 
         movie_dir = str(tmp_path / 'TEST-001')
@@ -1085,19 +1147,19 @@ class TestWriteMovieAssetsStaleCleanup:
         new_base = _build_basename(new_fd, '/src/TEST-001.mp4', config)
         assert old_base == new_base, "sanity: title unchanged → identical basename"
 
-        observed = {'cover_missing_when_download_called': None}
+        observed = {'cover_present_when_download_called': None}
 
         def recording_download(url, save_path, referer=''):
             if save_path.endswith('.jpg') and 'extrafanart' not in save_path:
-                observed['cover_missing_when_download_called'] = not Path(save_path).exists()
+                observed['cover_present_when_download_called'] = Path(save_path).exists()
             Path(save_path).parent.mkdir(parents=True, exist_ok=True)
             Path(save_path).write_bytes(b'NEW-COVER')
             return True
 
         _t4_write(movie_dir, meta, config, old_base=old_base, download_side_effect=recording_download)
 
-        assert observed['cover_missing_when_download_called'] is True, (
-            "stale same-name cover must be deleted BEFORE download_image runs"
+        assert observed['cover_present_when_download_called'] is True, (
+            "same-name old cover must NOT be pre-deleted — download_image overwrites it directly"
         )
         assert (Path(movie_dir) / f'{new_base}.jpg').read_bytes() == b'NEW-COVER'
 
@@ -1164,6 +1226,118 @@ class TestWriteMovieAssetsStaleCleanup:
         # new dir: only the new title's files, no cross-dir bleed of the old series
         assert (Path(new_dir) / 'TEST-001 Title B.nfo').exists()
         assert not (Path(new_dir) / 'TEST-001 Title A.nfo').exists()
+
+    # -----------------------------------------------------------------------
+    # T5 follow-up (Codex PR review P2): partial-failure robustness. Stale
+    # cleanup must run AFTER the corresponding new write succeeds, never
+    # before — a write that fails partway must leave the previous run's
+    # assets intact (neither old nor new would otherwise survive).
+    # -----------------------------------------------------------------------
+
+    def test_generate_nfo_failure_preserves_old_assets(self, tmp_path):
+        """generate_nfo returning False → _write_movie_assets raises, and the
+        OLD series (nfo/cover/poster/fanart) must all still be on disk — the
+        card keeps its previously-usable asset set rather than losing both."""
+        from core.readonly_producer import _build_old_base, _format_data, _write_movie_assets
+
+        movie_dir = str(tmp_path / 'TEST-001')
+        meta_a = dict(_T3_META, title='Title A')
+        meta_b = dict(_T3_META, title='Title B')
+        config = self._config()
+        _t4_write(movie_dir, meta_a, config)
+
+        d = Path(movie_dir)
+        for suffix in ('.nfo', '.jpg', '-poster.jpg', '-fanart.jpg'):
+            assert (d / f'TEST-001 Title A{suffix}').exists()
+
+        old_base = _build_old_base(_t4_existing(meta_a), '/src/TEST-001.mp4', config)
+        fd_b = _format_data(meta_b, '/src/TEST-001.mp4', config)
+
+        with patch('core.readonly_producer.download_image', side_effect=_t4_real_download), \
+             patch('core.readonly_producer.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
+             patch('core.readonly_producer.generate_nfo', return_value=False):
+            with pytest.raises(RuntimeError):
+                _write_movie_assets(movie_dir, meta_b, fd_b, '/src/TEST-001.mp4', config, old_base=old_base)
+
+        for suffix in ('.nfo', '.jpg', '-poster.jpg', '-fanart.jpg'):
+            assert (d / f'TEST-001 Title A{suffix}').exists(), \
+                f"old {suffix} must survive when generate_nfo fails"
+
+    def test_cover_download_failure_same_base_keeps_old_cover(self, tmp_path):
+        """old_base == new_base, cover download fails this run → old cover.jpg
+        must survive (download_image never got to overwrite it); NFO still
+        writes successfully and is NOT stale-cleaned (same base, no-op)."""
+        from core.readonly_producer import _build_old_base, _format_data, _write_movie_assets
+
+        movie_dir = str(tmp_path / 'TEST-001')
+        meta = dict(_T3_META, title='Same Title')
+        config = self._config()
+        _t4_write(movie_dir, meta, config)
+
+        d = Path(movie_dir)
+        base = 'TEST-001 Same Title'
+        assert (d / f'{base}.jpg').exists()
+        old_cover_bytes = (d / f'{base}.jpg').read_bytes()
+
+        old_base = _build_old_base(_t4_existing(meta), '/src/TEST-001.mp4', config)
+        assert old_base == base, "sanity: title unchanged → identical basename"
+        fd = _format_data(meta, '/src/TEST-001.mp4', config)
+
+        def failing_cover_download(url, save_path, referer=''):
+            if save_path.endswith('.jpg') and 'extrafanart' not in save_path:
+                return False
+            Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(save_path).write_bytes(b'FAKE-IMG')
+            return True
+
+        with patch('core.readonly_producer.download_image', side_effect=failing_cover_download), \
+             patch('core.readonly_producer.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
+             patch('core.readonly_producer.generate_nfo', side_effect=_t4_real_nfo):
+            assets = _write_movie_assets(movie_dir, meta, fd, '/src/TEST-001.mp4', config, old_base=old_base)
+
+        assert assets['cover_fs'] == '', "cover_fs must be '' when download fails"
+        assert (d / f'{base}.jpg').read_bytes() == old_cover_bytes, \
+            "old cover must survive a failed same-base download"
+        assert (d / f'{base}.nfo').exists(), "NFO must still write successfully"
+
+    def test_cover_download_failure_title_drift_keeps_old_cover_but_cleans_nfo(self, tmp_path):
+        """old_base != new_base, cover download fails this run → old cover
+        (<old_base>.jpg) must survive (has_cover False gates the delete), but
+        old NFO (<old_base>.nfo) IS cleaned since it always writes successfully
+        and old_base differs from new_base."""
+        from core.readonly_producer import _build_old_base, _format_data, _write_movie_assets
+
+        movie_dir = str(tmp_path / 'TEST-001')
+        meta_a = dict(_T3_META, title='Title A')
+        meta_b = dict(_T3_META, title='Title B')
+        config = self._config()
+        _t4_write(movie_dir, meta_a, config)
+
+        d = Path(movie_dir)
+        assert (d / 'TEST-001 Title A.jpg').exists()
+        assert (d / 'TEST-001 Title A.nfo').exists()
+
+        old_base = _build_old_base(_t4_existing(meta_a), '/src/TEST-001.mp4', config)
+        fd_b = _format_data(meta_b, '/src/TEST-001.mp4', config)
+
+        def failing_cover_download(url, save_path, referer=''):
+            if save_path.endswith('.jpg') and 'extrafanart' not in save_path:
+                return False
+            Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(save_path).write_bytes(b'FAKE-IMG')
+            return True
+
+        with patch('core.readonly_producer.download_image', side_effect=failing_cover_download), \
+             patch('core.readonly_producer.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
+             patch('core.readonly_producer.generate_nfo', side_effect=_t4_real_nfo):
+            assets = _write_movie_assets(movie_dir, meta_b, fd_b, '/src/TEST-001.mp4', config, old_base=old_base)
+
+        assert assets['cover_fs'] == ''
+        assert (d / 'TEST-001 Title A.jpg').exists(), \
+            "old cover must survive when has_cover is False (title drift)"
+        assert not (d / 'TEST-001 Title A.nfo').exists(), \
+            "old nfo must be cleaned (nfo_ok guaranteed, old_base != new_base)"
+        assert (d / 'TEST-001 Title B.nfo').exists()
 
 
 class TestUpsertDb:
