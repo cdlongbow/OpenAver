@@ -520,6 +520,137 @@ class TestResolveMovieDir:
 
         assert output_dir_uri == self._uri('ABC-123-2')
 
+    # -----------------------------------------------------------------
+    # TASK-89a-T5 (CD-89a-6 / Codex C3): mapped-output 定位.
+    # gotcha: CURRENT_ENV is value-imported into core.readonly_producer,
+    # so monkeypatch the USE site (core.readonly_producer.CURRENT_ENV),
+    # not core.path_utils.CURRENT_ENV (see TASK-89a-T5.md).
+    # -----------------------------------------------------------------
+
+    def test_mapped_output_wsl_with_mapping_reverses_fs_but_not_uri(self, monkeypatch):
+        """A main scenario: wsl + non-empty path_mappings + hit → returned fs Path is
+        reverse-mapped to the real local path, while the returned URI (stored back to
+        DB) stays the original forward-mapped existing.output_dir untouched."""
+        import core.readonly_producer as producer_module
+        from core.readonly_producer import _resolve_movie_dir
+
+        monkeypatch.setattr(producer_module, 'CURRENT_ENV', 'wsl')
+        mappings = {'/home/user/nas': '//NAS-SERVER/share'}
+        output_root_local = '/home/user/nas/lib'
+        output_uri = to_file_uri(output_root_local, mappings)
+        existing_uri = to_file_uri(str(Path(output_root_local, 'ABC-123')), mappings)
+        existing = self._existing(existing_uri)
+        repo = MagicMock()
+        repo.is_output_dir_taken.return_value = False
+        allocated: set = set()
+
+        with self._patch_exists(False):
+            movie_dir, output_dir_uri = _resolve_movie_dir(
+                repo, 'file:///src/ABC-123.mp4', existing,
+                output_root_local, output_uri, self._fd(), self.BASE_CONFIG,
+                allocated, mappings,
+            )
+
+        # fs Path reverse-mapped to the real local (WSL) path — writable target
+        assert str(movie_dir) == '/home/user/nas/lib/ABC-123'
+        # DB-stored URI stays the original forward-mapped canonical value
+        # (must NOT be reverse-mapped, else next-run is_path_under_dir mismatches)
+        assert output_dir_uri == existing_uri
+
+    def test_mapped_output_wsl_no_mapping_unchanged(self, monkeypatch):
+        """Degenerate combo 2/4: wsl but path_mappings empty → behavior unchanged
+        (regression lock for the non-mapped 88/89 scenarios)."""
+        import core.readonly_producer as producer_module
+        from core.readonly_producer import _resolve_movie_dir
+
+        monkeypatch.setattr(producer_module, 'CURRENT_ENV', 'wsl')
+        repo = MagicMock()
+        repo.is_output_dir_taken.return_value = False
+        existing_uri = self._uri('ABC-123')
+        existing = self._existing(existing_uri)
+        allocated: set = set()
+
+        with self._patch_exists(False):
+            movie_dir, output_dir_uri = _resolve_movie_dir(
+                repo, 'file:///src/ABC-123.mp4', existing,
+                self.OUTPUT_ROOT, self.OUTPUT_URI, self._fd(), self.BASE_CONFIG,
+                allocated, {},
+            )
+
+        assert str(movie_dir) == '/output/ABC-123'
+        assert output_dir_uri == existing_uri
+
+    def test_mapped_output_non_wsl_with_mapping_unchanged(self, monkeypatch):
+        """Degenerate combo 3/4: non-wsl env + non-empty path_mappings → no reverse
+        (symmetric with to_file_uri's forward mapping only firing in wsl)."""
+        import core.readonly_producer as producer_module
+        from core.readonly_producer import _resolve_movie_dir
+
+        monkeypatch.setattr(producer_module, 'CURRENT_ENV', 'windows')
+        mappings = {'/home/user/nas': '//NAS-SERVER/share'}
+        repo = MagicMock()
+        repo.is_output_dir_taken.return_value = False
+        existing_uri = self._uri('ABC-123')
+        existing = self._existing(existing_uri)
+        allocated: set = set()
+
+        with self._patch_exists(False):
+            movie_dir, output_dir_uri = _resolve_movie_dir(
+                repo, 'file:///src/ABC-123.mp4', existing,
+                self.OUTPUT_ROOT, self.OUTPUT_URI, self._fd(), self.BASE_CONFIG,
+                allocated, mappings,
+            )
+
+        assert str(movie_dir) == '/output/ABC-123'
+        assert output_dir_uri == existing_uri
+
+    def test_mapped_output_non_wsl_no_mapping_unchanged(self, monkeypatch):
+        """Degenerate combo 4/4: non-wsl env + empty path_mappings → no reverse
+        (baseline, both guard conditions false)."""
+        import core.readonly_producer as producer_module
+        from core.readonly_producer import _resolve_movie_dir
+
+        monkeypatch.setattr(producer_module, 'CURRENT_ENV', 'linux')
+        repo = MagicMock()
+        repo.is_output_dir_taken.return_value = False
+        existing_uri = self._uri('ABC-123')
+        existing = self._existing(existing_uri)
+        allocated: set = set()
+
+        with self._patch_exists(False):
+            movie_dir, output_dir_uri = _resolve_movie_dir(
+                repo, 'file:///src/ABC-123.mp4', existing,
+                self.OUTPUT_ROOT, self.OUTPUT_URI, self._fd(), self.BASE_CONFIG,
+                allocated, {},
+            )
+
+        assert str(movie_dir) == '/output/ABC-123'
+        assert output_dir_uri == existing_uri
+
+    def test_new_allocation_branch_not_reverse_mapped(self, monkeypatch):
+        """New-allocation branch never runs URI→fs reversal: candidate_fs is already a
+        native fs path built via output_root, not derived from an existing URI."""
+        import core.readonly_producer as producer_module
+        from core.readonly_producer import _resolve_movie_dir
+
+        monkeypatch.setattr(producer_module, 'CURRENT_ENV', 'wsl')
+        mappings = {'/home/user/nas': '//NAS-SERVER/share'}
+        output_root_local = '/home/user/nas/lib'
+        output_uri = to_file_uri(output_root_local, mappings)
+        repo = MagicMock()
+        repo.is_output_dir_taken.return_value = False
+        allocated: set = set()
+
+        with self._patch_exists(False):
+            movie_dir, output_dir_uri = _resolve_movie_dir(
+                repo, 'file:///src/ABC-123.mp4', None,
+                output_root_local, output_uri, self._fd('ABC-123'), self.BASE_CONFIG,
+                allocated, mappings,
+            )
+
+        assert str(movie_dir) == '/home/user/nas/lib/ABC-123'
+        assert output_dir_uri == to_file_uri(str(Path(output_root_local, 'ABC-123')), mappings)
+
 
 # ---------------------------------------------------------------------------
 # T-3 tests: _write_movie_assets, _upsert_db

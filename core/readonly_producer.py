@@ -32,7 +32,14 @@ from core.organizer import (
     truncate_title,
     truncate_to_chars,
 )
-from core.path_utils import is_path_under_dir, normalize_path, to_file_uri, uri_to_fs_path
+from core.path_utils import (
+    CURRENT_ENV,
+    is_path_under_dir,
+    normalize_path,
+    reverse_path_mapping,
+    to_file_uri,
+    uri_to_fs_path,
+)
 from core.scraper import extract_number, search_jav
 from core.video_extensions import get_video_extensions
 
@@ -312,8 +319,14 @@ def _resolve_movie_dir(
     """
     if existing and existing.output_dir and is_path_under_dir(existing.output_dir, output_uri):
         movie_dir_uri = existing.output_dir
-        # T5 落點：日後在此接 reverse_path_mapping（mapped-output 定位，CD-89a-6，本 task 不做）
+        # TASK-89a-T5 (CD-89a-6): mapped-output 定位。uri_to_fs_path 本身不反解
+        # path_mappings，WSL+UNC mapped 輸出根下會定位到錯誤的本機路徑，故在此
+        # targeted 反解。只反解回傳給呼叫端的 fs Path，不反解存回 DB 的 URI
+        # （movie_dir_uri 維持 existing.output_dir 原值），否則下一輪
+        # is_path_under_dir(existing.output_dir, output_uri) 比對會失準。
         movie_dir_fs = uri_to_fs_path(movie_dir_uri)
+        if CURRENT_ENV == 'wsl' and path_mappings:
+            movie_dir_fs = reverse_path_mapping(movie_dir_fs, path_mappings) or movie_dir_fs
         return Path(movie_dir_fs), movie_dir_uri
 
     parts = _folder_parts(format_data, config)

@@ -943,6 +943,50 @@ class TestDbUpsertCoverPath:
         mock_repo.get_by_path.assert_called_once()
 
 
+# ── 27b. TASK-89a-T5 (CD-89a-5 / Codex C2): output_dir 保留（鏡射 TestDbUpsertCoverPath）──
+
+class TestDbUpsertOutputDir:
+    """C2 端到端回歸鎖：enricher 補完/重刮不得洗掉 producer 寫入的 output_dir。"""
+
+    def test_c2_end_to_end_preserves_existing_output_dir(self):
+        """existing.output_dir 非空（producer row）→ _db_upsert 寫入的 Video.output_dir
+        必須等於原值（顯式保留，非僅依賴 T1 DB CASE-WHEN 兜底）。"""
+        from core.enricher import _db_upsert
+
+        captured = []
+        mock_repo = MagicMock()
+        mock_repo.upsert.side_effect = lambda v: captured.append(v)
+
+        existing_video = MagicMock()
+        existing_video.output_dir = to_file_uri("/output/lib/SONE-205")
+        existing_video.cover_path = ""
+        existing_video.user_tags = []
+        existing_video.sample_images = []
+        mock_repo.get_by_path.return_value = existing_video
+
+        meta = {"title": "T", "actresses": [], "maker": "S", "tags": [], "release_date": ""}
+        _db_upsert(mock_repo, "SONE-205", "/video/SONE-205.mp4", meta)
+
+        assert len(captured) == 1
+        assert captured[0].output_dir == to_file_uri("/output/lib/SONE-205")
+
+    def test_no_existing_row_output_dir_defaults_empty(self):
+        """existing is None（首次遇到此 path）→ output_dir 傳空字串，不炸，交由 T1
+        DB CASE-WHEN 兜底（行為與現況一致，不 regress）。"""
+        from core.enricher import _db_upsert
+
+        captured = []
+        mock_repo = MagicMock()
+        mock_repo.upsert.side_effect = lambda v: captured.append(v)
+        mock_repo.get_by_path.return_value = None
+
+        meta = {"title": "T", "actresses": [], "maker": "S", "tags": [], "release_date": ""}
+        _db_upsert(mock_repo, "SONE-205", "/video/SONE-205.mp4", meta)
+
+        assert len(captured) == 1
+        assert captured[0].output_dir == ""
+
+
 # ── 28. F2: has_subtitle 由 find_subtitle_files 決定 ────────────────────────────
 
 class TestHasSubtitleDetected:
