@@ -105,203 +105,59 @@ class TestListSourceVideos:
 
 
 # ---------------------------------------------------------------------------
-# _should_skip  (truth table — 4 cases)
+# _should_skip  (TASK-89b-T3: single attempted-index signal + force escape hatch)
 # ---------------------------------------------------------------------------
 
 class TestShouldSkip:
-    OUTPUT_URI = "file:///output"
-    COVER_URI = "file:///output/movie/cover.jpg"
     SOURCE_URI = "file:///src/a.mp4"
 
-    def test_no_row_returns_false(self):
-        """cover_index has no entry for source_uri → rebuild."""
+    def test_no_entry_returns_false(self):
+        """attempted_index has no key for source_uri → not skipped (never attempted)."""
         from core.readonly_producer import _should_skip
-        cover_index = {}
-        assert _should_skip(self.SOURCE_URI, self.OUTPUT_URI, cover_index, {}) is False
+        assert _should_skip(self.SOURCE_URI, {}) is False
 
-    def test_cover_under_output_but_file_missing_returns_false(self):
-        """cover is under output but file does not exist on disk → rebuild."""
+    def test_attempted_zero_returns_false(self):
+        """attempted_index has an explicit 0 value → not skipped (treated as never attempted)."""
         from core.readonly_producer import _should_skip
-        cover_index = {self.SOURCE_URI: self.COVER_URI}
+        attempted_index = {self.SOURCE_URI: 0}
+        assert _should_skip(self.SOURCE_URI, attempted_index) is False
 
-        with patch("core.readonly_producer.is_path_under_dir", return_value=True), \
-             patch("core.readonly_producer.uri_to_fs_path", return_value="/output/movie/cover.jpg"), \
-             patch("core.readonly_producer.Path") as mock_path_cls:
-            mock_path_inst = MagicMock()
-            mock_path_inst.exists.return_value = False
-            mock_path_cls.return_value = mock_path_inst
-            result = _should_skip(self.SOURCE_URI, self.OUTPUT_URI, cover_index, {})
-
-        assert result is False
-
-    def test_cover_not_under_output_returns_false(self):
-        """cover is not under this output_uri → rebuild."""
+    def test_attempted_positive_returns_true(self):
+        """attempted_index value > 0, force=False (default) → skip."""
         from core.readonly_producer import _should_skip
-        cover_index = {self.SOURCE_URI: "file:///other/cover.jpg"}
+        attempted_index = {self.SOURCE_URI: 1720000000.0}
+        assert _should_skip(self.SOURCE_URI, attempted_index) is True
 
-        with patch("core.readonly_producer.is_path_under_dir", return_value=False):
-            result = _should_skip(self.SOURCE_URI, self.OUTPUT_URI, cover_index, {})
-
-        assert result is False
-
-    def test_all_conditions_met_returns_true(self):
-        """cover under output AND file exists → skip."""
+    def test_attempted_positive_explicit_force_false_returns_true(self):
+        """Same as above but force explicitly passed False → skip (no behavior change)."""
         from core.readonly_producer import _should_skip
-        cover_index = {self.SOURCE_URI: self.COVER_URI}
+        attempted_index = {self.SOURCE_URI: 1720000000.0}
+        assert _should_skip(self.SOURCE_URI, attempted_index, force=False) is True
 
-        with patch("core.readonly_producer.is_path_under_dir", return_value=True), \
-             patch("core.readonly_producer.uri_to_fs_path", return_value="/output/movie/cover.jpg"), \
-             patch("core.readonly_producer.Path") as mock_path_cls:
-            mock_path_inst = MagicMock()
-            mock_path_inst.exists.return_value = True
-            mock_path_cls.return_value = mock_path_inst
-            result = _should_skip(self.SOURCE_URI, self.OUTPUT_URI, cover_index, {})
-
-        assert result is True
-
-    def test_mapped_cover_reverse_resolved_under_wsl_returns_true(self, tmp_path):
-        """Codex Finding 1 regression lock.
-
-        cover_path in cover_index is forward-mapped (as stored by _upsert_db via
-        to_file_uri(assets['cover_fs'], path_mappings)). Under CURRENT_ENV='wsl'
-        with path_mappings configured, _should_skip must reverse-map the cover
-        path back to the real local FS path before calling .exists() — mirroring
-        _resolve_movie_dir's reuse-branch pattern (TASK-89a-T5). Without the
-        reverse-map, uri_to_fs_path(cover) resolves to a UNC-style path that never
-        exists locally, so this test goes RED if the reverse-map call is removed.
-        """
+    def test_attempted_positive_but_force_true_returns_false(self):
+        """force=True overrides an attempted>0 entry → not skipped (manual re-scrape)."""
         from core.readonly_producer import _should_skip
+        attempted_index = {self.SOURCE_URI: 1720000000.0}
+        assert _should_skip(self.SOURCE_URI, attempted_index, force=True) is False
 
-        # Real local file that the forward-mapped URI should reverse-resolve to.
-        real_dir = tmp_path / "movie"
-        real_dir.mkdir()
-        real_cover = real_dir / "cover.jpg"
-        real_cover.write_bytes(b"x")
-
-        # cover_path as stored in DB: forward-mapped to a Windows-style UNC path.
-        mapped_cover_uri = "file://///server/share/movie/cover.jpg"
-        path_mappings = {"\\\\server\\share": str(tmp_path)}
-        cover_index = {self.SOURCE_URI: mapped_cover_uri}
-
-        with patch("core.readonly_producer.is_path_under_dir", return_value=True), \
-             patch("core.readonly_producer.CURRENT_ENV", "wsl"), \
-             patch(
-                 "core.readonly_producer.uri_to_fs_path",
-                 return_value="//server/share/movie/cover.jpg",
-             ), \
-             patch(
-                 "core.readonly_producer.reverse_path_mapping",
-                 return_value=str(real_cover),
-             ) as mock_reverse:
-            result = _should_skip(self.SOURCE_URI, self.OUTPUT_URI, cover_index, path_mappings)
-
-        mock_reverse.assert_called_once_with("//server/share/movie/cover.jpg", path_mappings)
-        assert result is True
-
-    def test_mapped_cover_without_reverse_map_would_return_false(self):
-        """Same mapped-cover scenario but simulating the pre-fix bug: if the
-        reverse-map step is skipped, .exists() is checked against the raw
-        (non-reversed) uri_to_fs_path output, which does not exist on disk →
-        False. This documents the exact failure mode Finding 1 reported
-        (incremental skip broken under WSL + path_mappings).
-        """
+    def test_no_entry_and_force_true_returns_false(self):
+        """force=True with no attempted_index entry at all → still not skipped."""
         from core.readonly_producer import _should_skip
+        assert _should_skip(self.SOURCE_URI, {}, force=True) is False
 
-        mapped_cover_uri = "file://///server/share/movie/cover.jpg"
-        path_mappings = {"\\\\server\\share": "/mnt/x"}
-        cover_index = {self.SOURCE_URI: mapped_cover_uri}
-
-        with patch("core.readonly_producer.is_path_under_dir", return_value=True), \
-             patch("core.readonly_producer.CURRENT_ENV", "wsl"), \
-             patch(
-                 "core.readonly_producer.uri_to_fs_path",
-                 return_value="//server/share/movie/cover.jpg",
-             ):
-            # No patch of reverse_path_mapping: real implementation runs and will
-            # not map this bogus UNC path to anything that exists on disk, so the
-            # unresolved raw path is used for .exists() — reproducing the bug.
-            result = _should_skip(self.SOURCE_URI, self.OUTPUT_URI, cover_index, path_mappings)
-
-        assert result is False
-
-    def test_no_path_mappings_or_non_wsl_behaves_as_before(self):
-        """Degenerate case: no path_mappings, or not on WSL → no reverse-map
-        attempted, behavior identical to pre-fix (plain uri_to_fs_path + exists).
-        """
+    def test_other_source_entries_do_not_affect_this_source(self):
+        """attempted_index carries other sources' entries → only this source_uri's
+        own value is consulted (dict lookup, not any-truthy-value-in-dict)."""
         from core.readonly_producer import _should_skip
-        cover_index = {self.SOURCE_URI: self.COVER_URI}
+        attempted_index = {"file:///src/other.mp4": 1720000000.0}
+        assert _should_skip(self.SOURCE_URI, attempted_index) is False
 
-        with patch("core.readonly_producer.is_path_under_dir", return_value=True), \
-             patch("core.readonly_producer.CURRENT_ENV", "windows"), \
-             patch("core.readonly_producer.uri_to_fs_path", return_value="/output/movie/cover.jpg"), \
-             patch("core.readonly_producer.reverse_path_mapping") as mock_reverse, \
-             patch("core.readonly_producer.Path") as mock_path_cls:
-            mock_path_inst = MagicMock()
-            mock_path_inst.exists.return_value = True
-            mock_path_cls.return_value = mock_path_inst
-            result = _should_skip(
-                self.SOURCE_URI, self.OUTPUT_URI, cover_index, {"\\\\server\\share": "/mnt/x"}
-            )
-
-        mock_reverse.assert_not_called()
-        assert result is True
-
-
-# ---------------------------------------------------------------------------
-# _build_cover_index
-# ---------------------------------------------------------------------------
-
-class TestBuildCoverIndex:
-    OUTPUT_URI = "file:///output"
-
-    def _make_repo(self, full_index: dict) -> MagicMock:
-        repo = MagicMock()
-        repo.get_cover_index.return_value = full_index
-        return repo
-
-    def test_filters_out_empty_cover(self):
-        from core.readonly_producer import _build_cover_index
-        repo = self._make_repo({
-            "file:///src/a.mp4": "",
-            "file:///src/b.mp4": "file:///output/b/cover.jpg",
-        })
-        with patch("core.readonly_producer.is_path_under_dir",
-                   side_effect=lambda c, o: c.startswith("file:///output")):
-            result = _build_cover_index(repo, self.OUTPUT_URI)
-
-        # empty cover must be excluded
-        assert "file:///src/a.mp4" not in result
-        assert "file:///src/b.mp4" in result
-
-    def test_filters_out_cover_not_under_output(self):
-        from core.readonly_producer import _build_cover_index
-        repo = self._make_repo({
-            "file:///src/a.mp4": "file:///other/cover.jpg",
-            "file:///src/b.mp4": "file:///output/b/cover.jpg",
-        })
-        with patch("core.readonly_producer.is_path_under_dir",
-                   side_effect=lambda c, o: c.startswith("file:///output")):
-            result = _build_cover_index(repo, self.OUTPUT_URI)
-
-        assert "file:///src/a.mp4" not in result
-        assert "file:///src/b.mp4" in result
-
-    def test_empty_db_returns_empty(self):
-        from core.readonly_producer import _build_cover_index
-        repo = self._make_repo({})
-        with patch("core.readonly_producer.is_path_under_dir", return_value=True):
-            result = _build_cover_index(repo, self.OUTPUT_URI)
-        assert result == {}
-
-    def test_null_cover_filtered(self):
-        """None cover_path must be treated as falsy and excluded."""
-        from core.readonly_producer import _build_cover_index
-        repo = self._make_repo({
-            "file:///src/a.mp4": None,
-        })
-        with patch("core.readonly_producer.is_path_under_dir", return_value=True):
-            result = _build_cover_index(repo, self.OUTPUT_URI)
-        assert result == {}
+    def test_negative_attempted_value_returns_false(self):
+        """Defensive: any non-positive attempted value (not just 0) is treated as
+        never-attempted — matches the `> 0` comparison verbatim."""
+        from core.readonly_producer import _should_skip
+        attempted_index = {self.SOURCE_URI: -1}
+        assert _should_skip(self.SOURCE_URI, attempted_index) is False
 
 
 # ---------------------------------------------------------------------------
@@ -1653,7 +1509,7 @@ class TestProduceSourceOffModeNeverAborts:
         config = _make_config()  # scraper_cfg={} → external_manager fallback 'off'
 
         with patch("core.readonly_producer._list_source_videos", return_value=[]) as mock_list, \
-             patch("core.readonly_producer._build_cover_index", return_value={}):
+             patch.object(repo, "get_attempted_index", return_value={}):
             result = produce_source(source, config, repo)
 
         assert result.aborted_reason != "no_output_path"
@@ -1687,7 +1543,7 @@ class TestProduceSourceVideoExtensions:
         config = _make_config(scraper_cfg={"video_extensions": ["mp4", ".m2ts", "CUSTOM"]})
 
         with patch("core.readonly_producer._list_source_videos", return_value=[]) as mock_list, \
-             patch("core.readonly_producer._build_cover_index", return_value={}), \
+             patch.object(repo, "get_attempted_index", return_value={}), \
              patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
              patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri):
             produce_source(source, config, repo)
@@ -1706,7 +1562,7 @@ class TestProduceSourceVideoExtensions:
         config = _make_config()  # empty scraper cfg
 
         with patch("core.readonly_producer._list_source_videos", return_value=[]) as mock_list, \
-             patch("core.readonly_producer._build_cover_index", return_value={}), \
+             patch.object(repo, "get_attempted_index", return_value={}), \
              patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
              patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri):
             produce_source(source, config, repo)
@@ -1727,7 +1583,7 @@ class TestProduceSourceNoneNumberGuard:
         files = [_make_file_info(path="/src/videos/nonnumber.mp4")]
 
         with patch("core.readonly_producer._list_source_videos", return_value=files), \
-             patch("core.readonly_producer._build_cover_index", return_value={}), \
+             patch.object(repo, "get_attempted_index", return_value={}), \
              patch("core.readonly_producer._should_skip", return_value=False), \
              patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
              patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
@@ -1753,7 +1609,7 @@ class TestProduceSourceNoneNumberGuard:
         files = [_make_file_info(path="/src/videos/nonnumber.mp4")]
 
         with patch("core.readonly_producer._list_source_videos", return_value=files), \
-             patch("core.readonly_producer._build_cover_index", return_value={}), \
+             patch.object(repo, "get_attempted_index", return_value={}), \
              patch("core.readonly_producer._should_skip", return_value=False), \
              patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
              patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
@@ -1777,7 +1633,7 @@ class TestProduceSourceNotFoundAttempted:
         files = files if files is not None else [_make_file_info(path="/src/videos/NOTFOUND-001.mp4")]
 
         with patch("core.readonly_producer._list_source_videos", return_value=files), \
-             patch("core.readonly_producer._build_cover_index", return_value={}), \
+             patch.object(repo, "get_attempted_index", return_value={}), \
              patch("core.readonly_producer._should_skip", return_value=False), \
              patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
              patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
@@ -1823,6 +1679,50 @@ class TestProduceSourceNotFoundAttempted:
 
         assert repo.insert_if_ignore.call_count == 2
         assert repo.update_scrape_attempted_at.call_count == 2
+
+
+class TestProduceSourceNotFoundSecondRunSkipped:
+    """TASK-89b-T3 DoD regression lock: a NOT-FOUND source (T2 marks
+    scrape_attempted_at on the placeholder row) must be skipped on the very
+    next produce_source call for the same file — real (unmocked) _should_skip
+    reads the real get_attempted_index() from a real temp DB, so search_jav
+    is never invoked a second time for it (CD-89b-3 cost-avoidance)."""
+
+    def test_second_produce_source_call_skips_without_calling_search_jav(self, temp_db):
+        from core.database import VideoRepository
+        from core.readonly_producer import produce_source
+
+        repo = VideoRepository(temp_db)
+        source = _make_source()
+        config = _make_config()
+        files = [_make_file_info(path="/src/videos/NOTFOUND-001.mp4")]
+
+        # Round 1: search_jav → None, T2 branch writes the placeholder row +
+        # marks scrape_attempted_at (real DB write, _should_skip not mocked).
+        with patch("core.readonly_producer._list_source_videos", return_value=files), \
+             patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
+             patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
+             patch("core.readonly_producer.extract_number", return_value="NOTFOUND-001"), \
+             patch("core.readonly_producer.search_jav", return_value=None) as mock_search_1:
+            result1 = produce_source(source, config, repo)
+
+        assert result1.no_scrape == 1
+        assert result1.skipped == 0
+        mock_search_1.assert_called_once()
+
+        # Round 2: attempted_index (real repo.get_attempted_index() read) now
+        # shows this source_uri as attempted>0 → real _should_skip returns
+        # True, loop continues before ever reaching search_jav.
+        with patch("core.readonly_producer._list_source_videos", return_value=files), \
+             patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
+             patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
+             patch("core.readonly_producer.extract_number", return_value="NOTFOUND-001"), \
+             patch("core.readonly_producer.search_jav") as mock_search_2:
+            result2 = produce_source(source, config, repo)
+
+        assert result2.skipped == 1
+        assert result2.no_scrape == 0
+        mock_search_2.assert_not_called()
 
 
 class TestProduceSourceNotFoundThenSuccessTitleOverwrite:
@@ -1875,7 +1775,7 @@ class TestProduceSourceMixedStats:
         repo.get_by_path.return_value = None
         config = _make_config()
 
-        def fake_should_skip(src_uri, output_uri, cover_index, path_mappings):
+        def fake_should_skip(src_uri, attempted_index, force=False):
             return "SKIP-001" in src_uri or "SKIP-002" in src_uri
 
         def fake_extract_number(basename):
@@ -1894,7 +1794,7 @@ class TestProduceSourceMixedStats:
         mock_movie_dir.__str__ = lambda self: "/output/dest/SUCCESS-001"
 
         with patch("core.readonly_producer._list_source_videos", return_value=self.FILES), \
-             patch("core.readonly_producer._build_cover_index", return_value={}), \
+             patch.object(repo, "get_attempted_index", return_value={}), \
              patch("core.readonly_producer._should_skip", side_effect=fake_should_skip), \
              patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
              patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
@@ -1942,7 +1842,7 @@ class TestProduceSourceOnProgress:
         received = []
 
         with patch("core.readonly_producer._list_source_videos", return_value=files), \
-             patch("core.readonly_producer._build_cover_index", return_value={}), \
+             patch.object(repo, "get_attempted_index", return_value={}), \
              patch("core.readonly_producer._should_skip", return_value=False), \
              patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
              patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
@@ -1976,7 +1876,7 @@ class TestProduceSourceShouldAbort:
             return call_count[0] >= 3  # abort on 3rd call (before 3rd file)
 
         with patch("core.readonly_producer._list_source_videos", return_value=files), \
-             patch("core.readonly_producer._build_cover_index", return_value={}), \
+             patch.object(repo, "get_attempted_index", return_value={}), \
              patch("core.readonly_producer._should_skip", return_value=False), \
              patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
              patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
@@ -2019,7 +1919,7 @@ class TestProduceSourceExceptionDoesNotAbort:
         mock_movie_dir.__str__ = lambda self: "/output/dest/X"
 
         with patch("core.readonly_producer._list_source_videos", return_value=files), \
-             patch("core.readonly_producer._build_cover_index", return_value={}), \
+             patch.object(repo, "get_attempted_index", return_value={}), \
              patch("core.readonly_producer._should_skip", return_value=False), \
              patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
              patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
@@ -2057,7 +1957,7 @@ class TestProduceSourceFailureContract:
         upsert_mock = MagicMock()
 
         with patch("core.readonly_producer._list_source_videos", return_value=files), \
-             patch("core.readonly_producer._build_cover_index", return_value={}), \
+             patch.object(repo, "get_attempted_index", return_value={}), \
              patch("core.readonly_producer._should_skip", return_value=False), \
              patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
              patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \

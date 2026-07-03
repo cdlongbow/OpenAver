@@ -615,26 +615,10 @@ class VideoRepository:
         finally:
             conn.close()
 
-    def get_cover_index(self) -> dict:
-        """取得 {path: cover_path} 索引，供唯讀 producer 增量比對（feature/88）。
-
-        Additive read-only method; does NOT change get_mtime_index() shape (CD-88b-2).
-        cover_path may be '' or None for rows without a cover — callers must handle both.
-        """
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
-        try:
-            cursor.execute("SELECT path, cover_path FROM videos")
-            rows = cursor.fetchall()
-            return {row[0]: row[1] for row in rows}
-        finally:
-            conn.close()
-
     def get_attempted_index(self) -> dict:
         """取得 {path: scrape_attempted_at} 索引，供 T3 `_should_skip` 冷啟動判斷用（TASK-89b-T1）。
 
-        Additive read-only method，鏡射 get_cover_index() shape。SELECT 不加 WHERE，
+        Additive read-only method，鏡射 get_mtime_index() shape。SELECT 不加 WHERE，
         含 scrape_attempted_at == 0 的 row（不過濾）——呼叫端用 `.get(path, 0) > 0`
         統一判斷「從未試過」（key 不存在或值為 0 皆視為未試過）。
         """

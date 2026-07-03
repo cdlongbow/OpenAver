@@ -554,12 +554,13 @@ def test_incremental_idempotent(tmp_path, monkeypatch, client, parse_sse_events)
 # TASK-89a-T4 (T3 carry-forward): real read-store overwrite.
 #
 # test_incremental_idempotent above never actually exercises the read-store /
-# stale-cleanup code path: on its second run all three `_should_skip` conditions
-# hold, so every file is skipped before `_resolve_movie_dir`/`_write_movie_assets`
-# ever run. This test constructs the narrower case the card calls for: delete
-# only the physical cover file (condition 3 fails → NOT skipped) while leaving
-# the DB row / output_dir alone, so the second run walks the real
-# read-and-reuse branch of `_resolve_movie_dir` and lands in
+# stale-cleanup code path: on its second run `_should_skip`'s attempted-index
+# check (TASK-89b-T3) holds for every file, so everything is skipped before
+# `_resolve_movie_dir`/`_write_movie_assets` ever run. This test constructs the
+# narrower case the card calls for: zero out `scrape_attempted_at` for the row
+# via `repo.update_scrape_attempted_at(src_uri, 0)` (simulating "never
+# attempted") while leaving the DB row's `output_dir` alone, so the second run
+# walks the real read-and-reuse branch of `_resolve_movie_dir` and lands in
 # `_write_movie_assets`'s stale-asset cleanup (TASK-89a-T4 / Codex #3) for real,
 # against the actual SSE endpoint + a real sqlite DB — not mocked internals.
 # ---------------------------------------------------------------------------
@@ -610,10 +611,11 @@ def _expected_basename(meta, source_fs_path, scraper_cfg):
 def test_real_readstore_overwrite_title_drift_and_extrafanart_shrink(
     tmp_path, monkeypatch, client, parse_sse_events
 ):
-    """Delete the cover file (bypass `_should_skip`) → re-scrape with a corrected
-    title + fewer samples → asserts the SECOND run truly walks the read-store
-    branch (same output_dir, not re-allocated) and TASK-89a-T4's stale cleanup
-    (old title-A series + shrunk extrafanart removed, only title-B series left).
+    """Zero out `scrape_attempted_at` (bypass `_should_skip`'s attempted-index
+    check) → re-scrape with a corrected title + fewer samples → asserts the
+    SECOND run truly walks the read-store branch (same output_dir, not
+    re-allocated) and TASK-89a-T4's stale cleanup (old title-A series + shrunk
+    extrafanart removed, only title-B series left).
     """
     numbers = ["JKL-030"]
     num = numbers[0]
@@ -663,9 +665,12 @@ def test_real_readstore_overwrite_title_drift_and_extrafanart_shrink(
     output_dir_before = row1.output_dir
     assert row1.title == meta_a["title"]
 
-    # --- Bypass `_should_skip`: delete ONLY the physical cover file (condition 3
-    # fails). DB row / output_dir are left completely untouched. ---
-    (movie_dir / f"{old_base}.jpg").unlink()
+    # --- Bypass `_should_skip`'s attempted-index check (TASK-89b-T3): zero out
+    # scrape_attempted_at for this row directly, simulating "never attempted".
+    # output_dir / all other DB fields are left completely untouched, and the
+    # cover file on disk is NOT deleted — the new skip model no longer looks
+    # at the filesystem at all. ---
+    repo.update_scrape_attempted_at(src_uri, 0)
 
     # --- Round 2: search_jav now returns a corrected title + fewer samples ---
     monkeypatch.setattr("core.readonly_producer.search_jav", _fake_search_jav_round2)
@@ -673,7 +678,7 @@ def test_real_readstore_overwrite_title_drift_and_extrafanart_shrink(
     stats2 = _done_event(events2)["readonly_stats"]
 
     # Proves the read-store branch (not the skip branch) was actually walked.
-    assert stats2["created"] == 1, "must NOT be skipped — cover file was removed"
+    assert stats2["created"] == 1, "must NOT be skipped — scrape_attempted_at was zeroed"
     assert stats2["skipped"] == 0
 
     row2 = repo.get_by_path(src_uri)

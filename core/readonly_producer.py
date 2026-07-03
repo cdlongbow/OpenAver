@@ -4,8 +4,11 @@ Pure backend module. NO API, NO UI, NO frontend. (feature/88b)
 
 Canonical Decisions enforced here:
   CD-88b-1: listing via fast_scan_directory only (CD-88b-1).
-  CD-88b-2: get_cover_index() is the additive read-only bulk query added to
-             VideoRepository; no shape change to get_mtime_index().
+  CD-88b-2 (superseded by TASK-89b-T3): the original incremental-skip design
+             read a bulk cover-path index and checked cover-file existence on
+             disk. TASK-89b-T3 replaced that with a pure DB signal —
+             VideoRepository.get_attempted_index() feeding _should_skip below
+             (see CD-89b-3) — with no shape change to get_mtime_index().
 """
 
 from __future__ import annotations
@@ -98,43 +101,24 @@ def _list_source_videos(source_path: str, extensions: set, min_size_bytes: int) 
     return fast_scan_directory(fs_dir, extensions, min_size_bytes)
 
 
-def _build_cover_index(repo, output_uri: str) -> dict:
-    """Return {source_uri: cover_path} filtered to rows where cover falls under output_uri.
+def _should_skip(source_uri: str, attempted_index: dict, force: bool = False) -> bool:
+    """TASK-89b-T3: single attempted-index skip predicate (replaces the B3/P2a
+    three-condition cover-on-disk check).
 
-    Calls repo.get_cover_index() (bulk, avoids N+1).
-    Empty / None cover entries are excluded here; _should_skip has a redundant guard.
+    Returns True (skip) when this source has already been attempted at least
+    once (attempted_index.get(source_uri, 0) > 0) and force is not set.
+    force=True unconditionally returns False (never skip), regardless of
+    attempted_index contents — the manual re-scrape escape hatch.
+
+    This trades the old cover-file self-heal behaviour (deleting a produced
+    cover on disk used to trigger an automatic rebuild on the next run) for a
+    pure cost-avoidance signal driven by scrape_attempted_at (CD-89b-3): once
+    a source has been attempted, it is never re-attempted automatically,
+    regardless of what happens to its output files on disk.
     """
-    full = repo.get_cover_index()  # {path: cover_path}
-    return {
-        p: c
-        for p, c in full.items()
-        if c and is_path_under_dir(c, output_uri)
-    }
-
-
-def _should_skip(source_uri: str, output_uri: str, cover_index: dict, path_mappings: dict) -> bool:
-    """B3/P2a three-condition skip predicate.
-
-    Returns True (skip) only when ALL of:
-      1. DB has a row for source_uri with a non-empty cover_path
-      2. cover_path falls under output_uri
-      3. The cover file actually exists on disk
-    Any condition missing → return False (rebuild).
-    """
-    cover = cover_index.get(source_uri)
-    if not cover:
-        return False                                        # no row / no cover → rebuild
-    if not is_path_under_dir(cover, output_uri):           # double-guard (cover_index already filtered)
+    if force:
         return False
-    # TASK-89a-T5 follow-up (Codex Finding 1): cover_path is stored forward-mapped
-    # (to_file_uri(assets['cover_fs'], path_mappings) in _upsert_db). uri_to_fs_path
-    # does not reverse path_mappings, so under WSL + UNC mapped outputs this would
-    # always resolve to a non-existent local path and defeat incremental skip.
-    # Targeted reverse-map here mirrors _resolve_movie_dir's reuse-branch pattern.
-    cover_fs = uri_to_fs_path(cover)
-    if CURRENT_ENV == 'wsl' and path_mappings:
-        cover_fs = reverse_path_mapping(cover_fs, path_mappings) or cover_fs
-    return Path(cover_fs).exists()                          # physical file must exist
+    return attempted_index.get(source_uri, 0) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -587,7 +571,7 @@ def _emit(on_progress, result, source_uri, status, movie_dir="", number="", erro
         on_progress(outcome)
 
 
-def produce_source(source, config, repo, *, proxy_url="", on_progress=None, should_abort=None) -> ProduceResult:
+def produce_source(source, config, repo, *, proxy_url="", on_progress=None, should_abort=None, force: bool = False) -> ProduceResult:
     """Orchestrate per-source readonly generation: guard → list → skip → scrape → write → upsert.
 
     Pure service layer. NO FastAPI, NO SSE, NO router. (CD-88b-8, §1.1)
@@ -614,7 +598,7 @@ def produce_source(source, config, repo, *, proxy_url="", on_progress=None, shou
     output_root = normalize_path(effective_output)
     output_uri = to_file_uri(output_root, path_mappings)
 
-    cover_index = _build_cover_index(repo, output_uri)
+    attempted_index = repo.get_attempted_index()
     allocated_this_run: set = set()
 
     files = _list_source_videos(source.path, get_video_extensions(config), _min_size_bytes(gallery))
@@ -625,7 +609,7 @@ def produce_source(source, config, repo, *, proxy_url="", on_progress=None, shou
 
         src_uri = to_file_uri(fi["path"], path_mappings)
 
-        if _should_skip(src_uri, output_uri, cover_index, path_mappings):
+        if _should_skip(src_uri, attempted_index, force):
             result.skipped += 1
             _emit(on_progress, result, src_uri, "skipped")
             continue
