@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
+from core import thumbnail_cache
 from core.config import _STEM_IMAGE_MODES
 from core.database import Video, get_db_path
 from core.gallery_scanner import fast_scan_directory
@@ -77,6 +78,7 @@ class ProduceResult:
     aborted_reason: str = ""
     outcomes: list = field(default_factory=list)  # List[ProduceOutcome]
     skipped_paths: list = field(default_factory=list)  # TASK-89b-T5: paths dropped by fast_scan_directory on_skip
+    pruned: int = 0  # TASK-89b-T6: DB rows deleted by the DB-row-only prune below
 
 
 # ---------------------------------------------------------------------------
@@ -665,5 +667,26 @@ def produce_source(source, config, repo, *, proxy_url="", on_progress=None, shou
             # (repo error policy) so raw exception text (paths, errno) never leaks.
             logger.exception("[readonly_producer] 生成失敗: %s", src_uri)
             _emit(on_progress, result, src_uri, "failed", number=number, error="生成失敗")
+
+    # TASK-89b-T6 (CD-89b-6): DB-row-only prune. Gate = reachable AND this-run
+    # list non-empty AND no skipped_paths. reachable is implicitly True here —
+    # the "unreachable" guard above already returned before this point, so any
+    # execution path reaching here has aborted_reason == "" (empty).
+    if files and not result.skipped_paths:
+        source_root_fs = uri_to_fs_path(source.path)
+        source_root_uri = to_file_uri(source_root_fs, path_mappings)
+        this_run_uris = {to_file_uri(fi["path"], path_mappings) for fi in files}
+        candidates = [
+            v.path for v in repo.get_all()
+            if is_path_under_dir(v.path, source_root_uri)
+            and (v.scrape_attempted_at > 0 or v.output_dir)
+            and v.path not in this_run_uris
+        ]
+        if candidates:
+            result.pruned = repo.delete_by_paths(candidates)
+            # thumbnail cache parity with the non-readonly branch (scanner.py
+            # :441-442) — see TASK-89b-T6 技術要點 6.5.
+            for p in candidates:
+                thumbnail_cache.invalidate(p)
 
     return result

@@ -6,6 +6,7 @@ All filesystem / DB access is mocked — zero real I/O unless explicitly noted
 import inspect
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -2188,3 +2189,193 @@ class TestProduceSourceFailureContract:
         result, _ = self._run_with_write_failure(OSError("[Errno 28] No space left on device: '/output/x'"))
         assert result.outcomes[0].error == "生成失敗"
         assert "Errno" not in result.outcomes[0].error
+
+
+# ---------------------------------------------------------------------------
+# T6 tests: DB-row-only prune (CD-89b-6)
+# ---------------------------------------------------------------------------
+
+class TestProduceSourcePrune:
+    """TASK-89b-T6 (CD-89b-6): prune candidate推導 at the tail of produce_source.
+
+    Gate = files (this-run list) non-empty AND result.skipped_paths empty
+    (reachable is implicitly True — the unreachable guard already returned
+    upstream). Candidates come from repo.get_all(), filtered to rows under
+    the source root, with scrape_attempted_at>0 or output_dir set, and not
+    present in this-run's URI set.
+    """
+
+    def _run(self, *, get_all_rows, this_run_files=None, on_skip_paths=None,
+              delete_return=None, source_path="/src/videos"):
+        from core.readonly_producer import produce_source
+
+        source = _make_source(path=source_path)
+        repo = MagicMock()
+        repo.get_attempted_index.return_value = {}
+        repo.get_all.return_value = get_all_rows
+        if delete_return is not None:
+            repo.delete_by_paths.side_effect = None
+            repo.delete_by_paths.return_value = delete_return
+        else:
+            repo.delete_by_paths.side_effect = lambda paths: len(paths)
+
+        config = _make_config()
+        files = this_run_files if this_run_files is not None else []
+
+        def fake_list_source_videos(src_path, extensions, min_size_bytes, on_skip=None):
+            if on_skip is not None and on_skip_paths:
+                for p in on_skip_paths:
+                    on_skip(p, OSError("unreadable"))
+            return files
+
+        with patch("core.readonly_producer._list_source_videos", side_effect=fake_list_source_videos), \
+             patch("core.readonly_producer._should_skip", return_value=True), \
+             patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
+             patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
+             patch("core.readonly_producer.thumbnail_cache") as mock_thumb:
+            result = produce_source(source, config, repo)
+        return result, repo, mock_thumb
+
+    # -- fixture rows shared across tests --
+    ROW_EXIST = SimpleNamespace(path="file:///src/videos/EXIST-001.mp4", scrape_attempted_at=1000.0, output_dir="")
+    ROW_GONE_ATTEMPTED = SimpleNamespace(path="file:///src/videos/GONE-001.mp4", scrape_attempted_at=1000.0, output_dir="")
+    ROW_GONE_PRODUCED = SimpleNamespace(path="file:///src/videos/PRODUCED-001.mp4", scrape_attempted_at=0, output_dir="/output/dest/x")
+    ROW_NEVER_ATTEMPTED = SimpleNamespace(path="file:///src/videos/NEVER-001.mp4", scrape_attempted_at=0, output_dir="")
+    ROW_OTHER_SOURCE = SimpleNamespace(path="file:///src/other/OTHER-001.mp4", scrape_attempted_at=1000.0, output_dir="x")
+
+    def test_cross_source_and_attempted_produced_filter(self):
+        """Only rows under this source's root, with attempted>0 or output_dir set,
+        and absent from this-run's file list, become prune candidates. Rows under a
+        different source root (ROW_OTHER_SOURCE) and rows that are neither attempted
+        nor produced (ROW_NEVER_ATTEMPTED) must survive."""
+        this_run_files = [_make_file_info(path="/src/videos/EXIST-001.mp4")]
+        get_all_rows = [
+            self.ROW_EXIST, self.ROW_GONE_ATTEMPTED, self.ROW_GONE_PRODUCED,
+            self.ROW_NEVER_ATTEMPTED, self.ROW_OTHER_SOURCE,
+        ]
+
+        result, repo, mock_thumb = self._run(get_all_rows=get_all_rows, this_run_files=this_run_files)
+
+        repo.delete_by_paths.assert_called_once()
+        deleted = repo.delete_by_paths.call_args[0][0]
+        assert set(deleted) == {self.ROW_GONE_ATTEMPTED.path, self.ROW_GONE_PRODUCED.path}
+        assert result.pruned == 2
+
+    def test_thumbnail_cache_invalidated_for_each_pruned_path(self):
+        this_run_files = [_make_file_info(path="/src/videos/EXIST-001.mp4")]
+        get_all_rows = [self.ROW_EXIST, self.ROW_GONE_ATTEMPTED, self.ROW_GONE_PRODUCED]
+
+        result, repo, mock_thumb = self._run(get_all_rows=get_all_rows, this_run_files=this_run_files)
+
+        assert mock_thumb.invalidate.call_count == 2
+        invalidated = {c.args[0] for c in mock_thumb.invalidate.call_args_list}
+        assert invalidated == {self.ROW_GONE_ATTEMPTED.path, self.ROW_GONE_PRODUCED.path}
+
+    def test_get_all_and_delete_by_paths_called_once_per_source(self):
+        """Boundary condition: prune runs once after the loop, not per-file (non-N+1)."""
+        this_run_files = [_make_file_info(path="/src/videos/EXIST-001.mp4")]
+        get_all_rows = [self.ROW_EXIST, self.ROW_GONE_ATTEMPTED]
+
+        result, repo, mock_thumb = self._run(get_all_rows=get_all_rows, this_run_files=this_run_files)
+
+        assert repo.get_all.call_count == 1
+        assert repo.delete_by_paths.call_count == 1
+
+    def test_gate_false_when_skipped_paths_nonempty_no_prune(self):
+        """partial-scan suppression: skipped_paths non-empty → zero DB/IO for prune,
+        even though candidates would otherwise exist."""
+        this_run_files = [_make_file_info(path="/src/videos/EXIST-001.mp4")]
+        get_all_rows = [self.ROW_EXIST, self.ROW_GONE_ATTEMPTED]
+
+        result, repo, mock_thumb = self._run(
+            get_all_rows=get_all_rows, this_run_files=this_run_files,
+            on_skip_paths=["/src/videos/broken_dir"],
+        )
+
+        repo.get_all.assert_not_called()
+        repo.delete_by_paths.assert_not_called()
+        mock_thumb.invalidate.assert_not_called()
+        assert result.pruned == 0
+        assert result.skipped_paths == ["/src/videos/broken_dir"]
+
+    def test_gate_false_when_files_empty_no_prune(self):
+        """Empty this-run list (e.g. truly empty source directory) → do not prune;
+        cannot distinguish 'genuinely emptied' from 'scan came back oddly empty'."""
+        get_all_rows = [self.ROW_GONE_ATTEMPTED]
+
+        result, repo, mock_thumb = self._run(get_all_rows=get_all_rows, this_run_files=[])
+
+        repo.get_all.assert_not_called()
+        repo.delete_by_paths.assert_not_called()
+        assert result.pruned == 0
+
+    def test_candidates_empty_skips_delete_by_paths_call(self):
+        """When no row qualifies as a candidate, delete_by_paths must not be invoked
+        at all (not called with an empty list)."""
+        this_run_files = [_make_file_info(path="/src/videos/EXIST-001.mp4")]
+        get_all_rows = [self.ROW_EXIST, self.ROW_NEVER_ATTEMPTED, self.ROW_OTHER_SOURCE]
+
+        result, repo, mock_thumb = self._run(get_all_rows=get_all_rows, this_run_files=this_run_files)
+
+        repo.get_all.assert_called_once()
+        repo.delete_by_paths.assert_not_called()
+        mock_thumb.invalidate.assert_not_called()
+
+    def test_should_abort_midloop_does_not_prune_untouched_files(self):
+        """Anti-misdelete lock (CD-89b-6 §2, 本次列表用 files 非 outcomes).
+
+        When should_abort breaks the loop mid-way, files that were enumerated but
+        never processed are STILL present on disk and STILL in the raw `files`
+        scan list — so their DB rows must NOT be pruned. If the prune derived its
+        this-run set from processed/emitted outcomes instead of `files`, those
+        untouched-but-present files would be misclassified as vanished and
+        deleted — silent data loss. The other prune tests can't catch this
+        because they patch _should_skip=True (every file gets emitted, so
+        outcomes == files); only a should_abort mid-loop break makes
+        outcomes ⊊ files. Mutating the prune to use processed items → this RED.
+        """
+        from core.readonly_producer import produce_source
+
+        source = _make_source(path="/src/videos")
+        repo = MagicMock()
+        repo.get_attempted_index.return_value = {}
+        # A, B, C all still exist on disk AND have (attempted) rows in the DB.
+        rows = [
+            SimpleNamespace(path="file:///src/videos/A-001.mp4", scrape_attempted_at=1000.0, output_dir=""),
+            SimpleNamespace(path="file:///src/videos/B-002.mp4", scrape_attempted_at=1000.0, output_dir=""),
+            SimpleNamespace(path="file:///src/videos/C-003.mp4", scrape_attempted_at=1000.0, output_dir=""),
+        ]
+        repo.get_all.return_value = rows
+        repo.delete_by_paths.side_effect = lambda paths: len(paths)
+
+        config = _make_config()
+        files = [
+            _make_file_info(path="/src/videos/A-001.mp4"),
+            _make_file_info(path="/src/videos/B-002.mp4"),
+            _make_file_info(path="/src/videos/C-003.mp4"),
+        ]
+
+        def fake_list_source_videos(src_path, extensions, min_size_bytes, on_skip=None):
+            return files
+
+        # should_abort is checked at the top of each iteration: let A through
+        # (call 1 → False), then break before B/C are ever touched (call 2 → True).
+        abort_calls = {"n": 0}
+
+        def fake_should_abort():
+            abort_calls["n"] += 1
+            return abort_calls["n"] > 1
+
+        with patch("core.readonly_producer._list_source_videos", side_effect=fake_list_source_videos), \
+             patch("core.readonly_producer._should_skip", return_value=True), \
+             patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
+             patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
+             patch("core.readonly_producer.thumbnail_cache") as mock_thumb:
+            result = produce_source(source, config, repo, should_abort=fake_should_abort)
+
+        # B and C were never processed but ARE in `files` → this_run_uris covers
+        # all three → zero candidates → zero deletion. No data loss on abort.
+        repo.delete_by_paths.assert_not_called()
+        mock_thumb.invalidate.assert_not_called()
+        assert result.pruned == 0
+        assert result.pruned == 0

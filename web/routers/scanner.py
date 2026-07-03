@@ -183,13 +183,18 @@ def _outcome_to_sse(o) -> dict:
 
 
 def _accumulate_readonly(summary: dict, result) -> None:
-    """跨來源累計四數 + no_output（純函式，CD-88c-3）。
+    """跨來源累計四數 + no_output/unreachable/partial/pruned（純函式，CD-88c-3 / TASK-89b-T6）。
 
-    no_output_path → 只 no_output+1；其他非空 aborted_reason（not_readonly 防呆）
-    → 記 log 不計數；正常 → sources+1 並累加 created/skipped/no_scrape/failed。
+    no_output_path → 只 no_output+1；unreachable → 只 unreachable+1（Finding-2 修復，
+    須插在通用 aborted_reason 分支之前，否則會被通用分支吃掉）；其他非空 aborted_reason
+    （not_readonly 防呆）→ 記 log 不計數；正常 → sources+1 並累加
+    created/skipped/no_scrape/failed/pruned，skipped_paths 非空另計 partial+1。
     """
     if result.aborted_reason == "no_output_path":
         summary["no_output"] += 1
+        return
+    if result.aborted_reason == "unreachable":
+        summary["unreachable"] += 1
         return
     if result.aborted_reason:
         logger.info("唯讀來源略過（%s）: %s", result.aborted_reason, result.source_path)
@@ -199,14 +204,28 @@ def _accumulate_readonly(summary: dict, result) -> None:
     summary["skipped"] += result.skipped
     summary["no_scrape"] += result.no_scrape
     summary["failed"] += result.failed
+    summary["pruned"] += result.pruned
+    if result.skipped_paths:
+        summary["partial"] += 1
 
 
 def _yield_source_summary(result) -> Generator[str, None, None]:
-    """該來源小結（產生器）。no_output_path → 「請先設定輸出夾」提示（Acceptance #11）。"""
+    """該來源小結（產生器）。
+
+    no_output_path → 「請先設定輸出夾」提示（Acceptance #11）。
+    unreachable → 「來源無法連線」warn 提示（TASK-89b-T6，Finding-2 修復）。
+    正常小結後，skipped_paths 非空時追加「已略過刪除偵測」warn（比照非 readonly
+    分支 :428-433 文案風格）。
+    """
     if result.aborted_reason == "no_output_path":
         yield _sse_event({
             "type": "log", "level": "warn",
             "message": f"  {result.source_path}: 請先設定輸出夾，已略過",
+        })
+    elif result.aborted_reason == "unreachable":
+        yield _sse_event({
+            "type": "log", "level": "warn",
+            "message": f"  {result.source_path}: 來源無法連線，已略過",
         })
     elif not result.aborted_reason:
         yield _sse_event({
@@ -216,6 +235,11 @@ def _yield_source_summary(result) -> Generator[str, None, None]:
                 f"／刮不到 {result.no_scrape}／失敗 {result.failed}"
             ),
         })
+        if result.skipped_paths:
+            yield _sse_event({
+                "type": "log", "level": "warn",
+                "message": f"  {result.source_path}: {len(result.skipped_paths)} 個路徑讀取失敗，已略過刪除偵測",
+            })
 
 
 def _run_readonly_source(src, config, repo, proxy_url, summary, reachable: bool = True) -> Generator[str, None, None]:
@@ -335,6 +359,7 @@ def generate_avlist() -> Generator[str, None, None]:
         readonly_summary = {
             "created": 0, "skipped": 0, "no_scrape": 0, "failed": 0,
             "no_output": 0, "sources": 0, "source_errors": 0,
+            "unreachable": 0, "partial": 0, "pruned": 0,
         }
 
         for idx, src in enumerate(iter_gallery_sources(gallery_config), 1):
@@ -594,14 +619,19 @@ def generate_avlist() -> Generator[str, None, None]:
         logger.info(f"[Gallery] 完成，新增 {total_inserted}，更新 {total_updated}，刪除 {total_deleted}")
 
         # TASK-88c-T2: readonly 生成摘要 log 行（僅有 readonly 活動時輸出）
-        if readonly_summary["sources"] > 0 or readonly_summary["no_output"] > 0 or readonly_summary["source_errors"] > 0:
+        # TASK-89b-T6: unreachable/partial 納入活躍度判斷，否則全 unreachable 的
+        # run 這行 log 完全不輸出，debug.log 事後排錯看不到這次唯讀掃描發生過什麼。
+        if (readonly_summary["sources"] > 0 or readonly_summary["no_output"] > 0
+                or readonly_summary["source_errors"] > 0 or readonly_summary["unreachable"] > 0
+                or readonly_summary["partial"] > 0):
             logger.info(
-                "唯讀生成完成: 新增 %d／略過 %d／刮不到 %d／失敗 %d"
-                "（%d 個來源；%d 個未設輸出夾；%d 個來源錯誤）",
+                "唯讀生成完成: 新增 %d／略過 %d／刮不到 %d／失敗 %d／清除 %d"
+                "（%d 個來源；%d 個未設輸出夾；%d 個來源錯誤；%d 個來源無法連線；%d 個來源部分讀取失敗）",
                 readonly_summary["created"], readonly_summary["skipped"],
-                readonly_summary["no_scrape"], readonly_summary["failed"],
+                readonly_summary["no_scrape"], readonly_summary["failed"], readonly_summary["pruned"],
                 readonly_summary["sources"], readonly_summary["no_output"],
-                readonly_summary["source_errors"],
+                readonly_summary["source_errors"], readonly_summary["unreachable"],
+                readonly_summary["partial"],
             )
 
         # a5: 寫長路徑清單到 debug.log（helper 內部判斷空 list）
@@ -618,9 +648,16 @@ def generate_avlist() -> Generator[str, None, None]:
         # 失敗原本只增 source_errors，完成通知沒納入 → 仍報成功，誤導）。
         # 個別影片失敗（readonly failed，例如 NFO 寫入失敗）同樣須讓完成通知走
         # warn（PR#91 ②）。no_scrape 是「線上查無 metadata」的正常情況，不計入。
+        # TASK-89b-T6（Codex Finding-2）：no_output/unreachable/partial 三者原本
+        # 被 _accumulate_readonly/_yield_source_summary 安靜吸收，完成通知未讀
+        # 它們 → 使用者看到 success，違反 spec §89b.3.3「警告並略過，不誤報成功」。
         _source_errors = readonly_summary["source_errors"]
         _readonly_failed = readonly_summary["failed"]
-        if scan_error_count > 0 or _source_errors > 0 or _readonly_failed > 0:
+        _readonly_no_output = readonly_summary["no_output"]
+        _readonly_unreachable = readonly_summary["unreachable"]
+        _readonly_partial = readonly_summary["partial"]
+        if (scan_error_count > 0 or _source_errors > 0 or _readonly_failed > 0
+                or _readonly_no_output > 0 or _readonly_unreachable > 0 or _readonly_partial > 0):
             _err_parts = []
             if scan_error_count > 0:
                 _err_parts.append(f"{scan_error_count} 部失敗")
@@ -628,6 +665,12 @@ def generate_avlist() -> Generator[str, None, None]:
                 _err_parts.append(f"{_source_errors} 個來源失敗")
             if _readonly_failed > 0:
                 _err_parts.append(f"{_readonly_failed} 部失敗")
+            if _readonly_no_output > 0:
+                _err_parts.append(f"{_readonly_no_output} 個來源未設輸出夾")
+            if _readonly_unreachable > 0:
+                _err_parts.append(f"{_readonly_unreachable} 個來源無法連線")
+            if _readonly_partial > 0:
+                _err_parts.append(f"{_readonly_partial} 個來源部分讀取失敗")
             _emit_notif(
                 "warn", "notif.scanner_done_with_errors",
                 message=f"完成 {len(all_videos)} 部，" + "、".join(_err_parts),
