@@ -532,7 +532,9 @@
       "output_path_placeholder": "本地媒體庫輸出夾路徑...",
       "output_prefix": "輸出:",
       "settings_link": "設定",
-      "copy_path": "複製路徑"
+      "copy_path": "複製路徑",
+      "cross_machine_hint": "strm 內寫的是這台看到的來源路徑。若播放的 Emby／Jellyfin／Kodi 在別台機器，請確認它也認得這串路徑，或到設定頁設路徑替換規則。",
+      "cross_machine_settings_link": "設定路徑替換"
     },
     "terminal": {
       "filter_all": "全部",

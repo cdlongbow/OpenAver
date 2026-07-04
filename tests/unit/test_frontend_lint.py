@@ -560,6 +560,17 @@ class TestStrmMappingGuard:
         assert "strmPathMappings" not in js, \
             "state-config.js 仍殘留 strmPathMappings dict passthrough，應改為 strmRules array 單一來源"
 
+    def test_scanner_html_has_cross_machine_hint(self):
+        """TASK-90a-T5: scanner.html 含跨機器提醒（media-server 風味 gate）+ 前往設定連結"""
+        html = SCANNER_HTML.read_text(encoding="utf-8")
+        assert "scanner.folder.cross_machine_hint" in html, \
+            "scanner.html missing 跨機器提醒文案 key"
+        assert "scanner.folder.cross_machine_settings_link" in html, \
+            "scanner.html missing 前往設定路徑替換連結 key"
+        # 提醒的風味 gate（off 隱藏、media-server 顯示）；與提醒同一 x-show 區塊
+        assert "['jellyfin', 'emby', 'kodi'].includes(config?.scraper?.external_manager)" in html, \
+            "scanner.html 跨機器提醒 missing media-server 風味 x-show gating"
+
 
 class TestBatchIntervalGuard:
     """T1(40b): 守衛 batch/translate checkInterval 具名 ref + cleanupForNavigation 明確清理"""

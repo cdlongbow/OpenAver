@@ -105,6 +105,18 @@
             </a>
         </div>
 
+        <!-- 跨機器路徑提醒（media-server 風味）：strm 內寫本機路徑，播放端在別機須認得，可到設定設路徑替換規則 -->
+        <div class="output-info"
+             x-show="['jellyfin', 'emby', 'kodi'].includes(config?.scraper?.external_manager)">
+            <div class="path">
+                <i class="bi bi-exclamation-triangle"></i>
+                {{ t('scanner.folder.cross_machine_hint') }}
+            </div>
+            <a href="/settings" class="settings-link">
+                <i class="bi bi-gear"></i> {{ t('scanner.folder.cross_machine_settings_link') }}
+            </a>
+        </div>
+
         <!-- Action Buttons -->
         <div class="action-section">
             <button class="btn-hero btn-hero-primary" id="btnGenerate"
