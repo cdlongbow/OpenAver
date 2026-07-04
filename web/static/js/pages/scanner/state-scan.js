@@ -1,11 +1,5 @@
 import { dirPath } from '@/shared/dir-path.js';
 
-function _detectReadonly(path) {
-    // UNC: \\server\share or //server/share → default readonly
-    // Use startsWith to avoid regex escaping pitfalls
-    return path.startsWith('\\\\') || path.startsWith('//');
-}
-
 export function stateScan() {
     return {
         dirPath,
@@ -26,6 +20,10 @@ export function stateScan() {
         folderSnapshot: null,
         pendingNavigationUrl: '',
         dirtyCheckModalOpen: false,
+
+        // ===== TASK-90b-T1: Readonly Confirm Modal =====
+        readonlyConfirmModalOpen: false,
+        readonlyConfirmTargetIdx: null,
 
         // ===== Drag-drop State =====
         dragCounter: 0,
@@ -445,7 +443,7 @@ export function stateScan() {
 
         addFolderPath(folderPath) {
             if (!this.directories.some(d => dirPath(d) === folderPath)) {
-                this.directories.push({ path: folderPath, readonly: _detectReadonly(folderPath), output_path: '' });
+                this.directories.push({ path: folderPath, readonly: false, output_path: '' });
                 this.configDirty = true;
             } else {
                 this.showToast(window.t('scanner.toast.folder_already_added'), 'warning');
@@ -470,7 +468,7 @@ export function stateScan() {
                 return;
             }
 
-            this.directories.push({ path: path, readonly: _detectReadonly(path), output_path: '' });
+            this.directories.push({ path: path, readonly: false, output_path: '' });
             this.configDirty = true;
             this.manualPath = '';
         },
@@ -501,6 +499,37 @@ export function stateScan() {
             e.preventDefault();
             this.dragCounter = 0;
             this.showDragOverlay = false;
+        },
+
+        // ===== TASK-90b-T1: Readonly Confirm Modal Actions =====
+        onReadonlyToggleClick(idx) {
+            const dir = this.directories[idx];
+            if (!dir) return;
+            if (dir.readonly) {
+                // 勾→未勾：不攔截，直接生效（Non-Goal 明定不加確認）
+                dir.readonly = false;
+                this.configDirty = true;
+            } else {
+                // 未勾→勾：不立即改 dir.readonly，開 modal
+                this.readonlyConfirmTargetIdx = idx;
+                this.readonlyConfirmModalOpen = true;
+            }
+        },
+
+        readonlyConfirmAccept() {
+            if (this.readonlyConfirmTargetIdx == null || !this.directories[this.readonlyConfirmTargetIdx]) {
+                this.readonlyConfirmModalOpen = false;
+                return;
+            }
+            this.directories[this.readonlyConfirmTargetIdx].readonly = true;
+            this.configDirty = true;
+            this.readonlyConfirmModalOpen = false;
+            this.readonlyConfirmTargetIdx = null;
+        },
+
+        readonlyConfirmCancel() {
+            this.readonlyConfirmModalOpen = false;
+            this.readonlyConfirmTargetIdx = null;
         },
 
         // ===== Dirty Check Modal Actions =====

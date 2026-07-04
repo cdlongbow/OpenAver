@@ -572,6 +572,98 @@ class TestStrmMappingGuard:
             "scanner.html 跨機器提醒 missing media-server 風味 x-show gating"
 
 
+class TestReadonlyConfirmGuard:
+    """TASK-90b-T1: 唯讀 checkbox 確認 modal 骨架 + 攔截邏輯 結構守衛（string-contains 靜態守衛）"""
+
+    def _html(self):
+        return SCANNER_HTML.read_text(encoding="utf-8")
+
+    def _js(self):
+        return SCANNER_SCAN_JS.read_text(encoding="utf-8")
+
+    def test_scanner_html_checkbox_intercepted(self):
+        """checkbox 已從 x-model 雙向綁定改為 :checked 單向綁定 + @click.prevent 攔截"""
+        html = self._html()
+        assert ':checked="dir.readonly"' in html, \
+            "scanner.html missing :checked=\"dir.readonly\"（單向綁定，避免勾選閃爍）"
+        assert "@click.prevent=\"onReadonlyToggleClick(idx" in html, \
+            "scanner.html missing @click.prevent=\"onReadonlyToggleClick(idx...)\"（checkbox click 攔截）"
+        assert 'x-model="dir.readonly"' not in html, \
+            "scanner.html 仍殘留 x-model=\"dir.readonly\"（應已改為單向 :checked 綁定）"
+
+    def test_scanner_html_has_confirm_modal(self):
+        """新 modal dialog 存在，含確認/取消按鈕綁定"""
+        html = self._html()
+        assert "'modal-open': readonlyConfirmModalOpen" in html, \
+            "scanner.html missing readonlyConfirmModalOpen modal dialog"
+        assert '@click="readonlyConfirmAccept()"' in html, \
+            "scanner.html missing readonlyConfirmAccept() @click 綁定"
+        assert '@click="readonlyConfirmCancel()"' in html, \
+            "scanner.html missing readonlyConfirmCancel() @click 綁定"
+
+    def test_scanner_html_esc_chain_includes_readonly_confirm(self):
+        """:19 Esc 鏈含新 modal 的 cancel"""
+        html = self._html()
+        assert "readonlyConfirmModalOpen && readonlyConfirmCancel()" in html, \
+            "scanner.html Esc 鏈 missing readonlyConfirmModalOpen && readonlyConfirmCancel()"
+
+    def test_scanner_html_i18n_keys_referenced(self):
+        """scanner.html 引用新 i18n key（title/cancel/confirm + body keys）"""
+        html = self._html()
+        for key in [
+            "scanner.readonly_confirm_modal.title",
+            "scanner.readonly_confirm_modal.cancel",
+            "scanner.readonly_confirm_modal.confirm",
+            "scanner.readonly_confirm_modal.intro",
+            "scanner.readonly_confirm_modal.output_hint_offline",
+            "scanner.readonly_confirm_modal.output_hint_media_server",
+            "scanner.readonly_confirm_modal.nas_hint",
+        ]:
+            assert key in html, f"scanner.html missing i18n key 引用: {key!r}"
+
+    def test_state_scan_js_no_detect_readonly(self):
+        """_detectReadonly() 已整支移除（含函式宣告與消費者），不留死碼"""
+        js = self._js()
+        assert "_detectReadonly" not in js, \
+            "state-scan.js 仍殘留 _detectReadonly（應整支移除，含消費者）"
+
+    def test_state_scan_js_new_folders_readonly_false(self):
+        """addFolderPath/addManualPath 新增資料夾一律 readonly: false"""
+        js = self._js()
+        assert js.count("readonly: false") >= 2, \
+            "state-scan.js addFolderPath/addManualPath 應各自 push readonly: false（字面值，非函式呼叫）"
+
+    def test_state_scan_js_has_confirm_state_and_methods(self):
+        """新狀態與方法名齊全"""
+        js = self._js()
+        for expected in [
+            "readonlyConfirmModalOpen",
+            "readonlyConfirmTargetIdx",
+            "onReadonlyToggleClick",
+            "readonlyConfirmCancel",
+            "readonlyConfirmAccept",
+        ]:
+            assert expected in js, f"state-scan.js missing: {expected!r}"
+
+    def test_zh_tw_json_has_readonly_confirm_modal(self):
+        """locales/zh_TW.json 含 scanner.readonly_confirm_modal 節點與必要 key"""
+        zh_tw_path = Path(__file__).parent.parent.parent / "locales" / "zh_TW.json"
+        data = json.loads(zh_tw_path.read_text(encoding="utf-8"))
+        modal = data.get("scanner", {}).get("readonly_confirm_modal")
+        assert modal is not None, "locales/zh_TW.json missing scanner.readonly_confirm_modal 節點"
+        for key in ["title", "cancel", "confirm", "intro",
+                    "output_hint_offline", "output_hint_media_server", "nas_hint"]:
+            assert key in modal, f"scanner.readonly_confirm_modal missing key: {key!r}"
+
+    def test_no_flavor_wording_in_readonly_confirm_modal(self):
+        """文案不得出現「風味」二字（i18n.md 白話用詞規則）"""
+        zh_tw_path = Path(__file__).parent.parent.parent / "locales" / "zh_TW.json"
+        data = json.loads(zh_tw_path.read_text(encoding="utf-8"))
+        modal = data.get("scanner", {}).get("readonly_confirm_modal", {})
+        for key, text in modal.items():
+            assert "風味" not in text, f"scanner.readonly_confirm_modal.{key} 不得含「風味」二字: {text!r}"
+
+
 class TestBatchIntervalGuard:
     """T1(40b): 守衛 batch/translate checkInterval 具名 ref + cleanupForNavigation 明確清理"""
 
@@ -16111,10 +16203,14 @@ class TestDirReadonlyUIGuard:
         return (self._ROOT / "web" / "static" / "js" / "pages" / "scanner" / "state-scan.js").read_text(encoding="utf-8")
 
     def test_scanner_html_readonly_checkbox(self):
-        """scanner.html 含 x-model="dir.readonly"（唯讀 checkbox 綁定）"""
+        """scanner.html 含 :checked="dir.readonly"（唯讀 checkbox 綁定）
+
+        TASK-90b-T1: 改為單向 :checked 綁定 + @click.prevent 攔截（經確認 modal
+        才真正生效），不再是雙向 x-model（見 TestReadonlyConfirmGuard）。
+        """
         html = self._scanner_html()
-        assert 'x-model="dir.readonly"' in html, \
-            'scanner.html 缺 x-model="dir.readonly" — 唯讀 checkbox 未加'
+        assert ':checked="dir.readonly"' in html, \
+            'scanner.html 缺 :checked="dir.readonly" — 唯讀 checkbox 未加'
 
     def test_scanner_html_output_path_input(self):
         """scanner.html 含 x-model="dir.output_path"（輸出夾 input 綁定）"""

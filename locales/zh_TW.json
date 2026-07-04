@@ -664,6 +664,15 @@
       "discard": "放棄變更",
       "save": "儲存並離開"
     },
+    "readonly_confirm_modal": {
+      "title": "設為唯讀來源？",
+      "cancel": "取消",
+      "confirm": "確認設為唯讀",
+      "intro": "唯讀來源代表 OpenAver 不會改動這個資料夾裡的任何檔案（不搬移、不改名、不寫入 NFO 或封面），改為在輸出夾另外生成一份本地媒體庫（每片一資料夾：NFO＋封面）供 OpenAver 自己瀏覽與播放。適合塞滿影片的唯讀網盤、NAS 分享、SMB 掛載等不可寫入的位置。若你只是本機一般收藏、資料夾可正常寫入，就不需要勾這個。",
+      "output_hint_offline": "目前為預設模式，產物會自動落在 App 內建的固定本地夾，不需要另外指定輸出夾。",
+      "output_hint_media_server": "目前為 Emby·Jellyfin·Kodi 模式，確認後會展開輸出夾欄位，讓您指定本地可寫入的輸出位置。",
+      "nas_hint": "想餵給 NAS 上的 Emby／Jellyfin／Kodi？預設模式只生成 OpenAver 自己瀏覽用的本地庫、不會產生 .strm 捷徑檔。若你要讓媒體伺服器掃這批片，請先到「設定」把模式切到 Emby·Jellyfin·Kodi 模式。"
+    },
     "clear_cache_modal": {
       "title": "清除影片快取",
       "body_prefix": "此操作將刪除所有已快取的影片元數據（共",
