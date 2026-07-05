@@ -209,3 +209,112 @@ def test_cloud_sources_use_primary_name_only(client):
         assert name_arg == "alice", (
             f"雲端 scraper '{src_arg}' 收到 '{name_arg}'，應只收到 'alice'（primary/URL param）"
         )
+
+
+# ---------------------------------------------------------------------------
+# TASK-91-T2a #6,#7,#8: WSL + UNC path_mappings 反解回歸測試
+# ---------------------------------------------------------------------------
+
+class TestActressPathMappingsReverse:
+    """list_photo_candidates / actress_crop / set_actress_photo(local_crop) 三站台
+    在 WSL + UNC path_mappings 環境下必須反解成真正能 open() 的本機路徑，而不是
+    留下裸 uri_to_fs_path() 產生的映射端 UNC 字串。
+    """
+
+    _MAPPINGS = {"/home/user/nas": "//NAS/share"}
+
+    def test_list_photo_candidates_crop_url_reverse_maps_wsl_unc(self, client, monkeypatch):
+        import core.path_utils as path_utils
+
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+        monkeypatch.setattr(
+            "web.routers.actress.load_config",
+            lambda: {"gallery": {"path_mappings": self._MAPPINGS}},
+        )
+
+        mock_actress = _make_mock_actress("alice")
+        mock_video = _make_mock_video(
+            path="file:///home/user/media/video.mp4",
+            cover_path="file://///NAS/share/cover.jpg",
+        )
+
+        with patch('web.routers.actress.ActressRepository') as mock_actress_repo_cls, \
+             patch('web.routers.actress.init_db'), \
+             patch('web.routers.actress._fetch_single_source', return_value=None), \
+             patch('web.routers.actress._get_random_videos_with_covers', return_value=[mock_video]):
+            mock_actress_repo_cls.return_value.get_by_name.return_value = mock_actress
+
+            response = client.get("/api/actresses/alice/photo-candidates")
+            assert response.status_code == 200
+
+        events = _parse_sse(response.text)
+        candidate = next(
+            data for (event, data) in events
+            if event == "candidate" and data.get("source") == "local_crop"
+        )
+        assert "/home/user/nas/cover.jpg" in candidate["thumb_url"], (
+            f"crop_url 應反解為本機路徑，實際: {candidate['thumb_url']}"
+        )
+        assert "//NAS/share/cover.jpg" not in candidate["thumb_url"], (
+            f"crop_url 不應殘留裸 UNC 映射端字串，實際: {candidate['thumb_url']}"
+        )
+
+    def test_actress_crop_reverse_maps_wsl_unc(self, client, monkeypatch):
+        import core.path_utils as path_utils
+
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+        monkeypatch.setattr(
+            "web.routers.actress.load_config",
+            lambda: {"gallery": {"path_mappings": self._MAPPINGS}},
+        )
+
+        with patch('web.routers.actress.init_db'), \
+             patch('web.routers.actress.VideoRepository') as mock_video_repo_cls, \
+             patch('web.routers.actress.crop_video_cover', return_value=b"fakejpeg") as mock_crop:
+            mock_video_repo_cls.return_value.is_known_cover_path.return_value = True
+
+            response = client.get(
+                "/api/actresses/actress-crop",
+                params={"path": "//NAS/share/cover.jpg", "spec": "v1"},
+            )
+            assert response.status_code == 200
+
+        called_check_path = mock_video_repo_cls.return_value.is_known_cover_path.call_args[0][0]
+        assert called_check_path == "/home/user/nas/cover.jpg", (
+            f"is_known_cover_path 應以反解後的本機路徑呼叫，實際: {called_check_path}"
+        )
+        mock_crop.assert_called_once_with("/home/user/nas/cover.jpg", "v1")
+
+    def test_set_actress_photo_local_crop_reverse_maps_wsl_unc(self, client, monkeypatch):
+        import core.path_utils as path_utils
+
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+        monkeypatch.setattr(
+            "web.routers.actress.load_config",
+            lambda: {"gallery": {"path_mappings": self._MAPPINGS}},
+        )
+
+        mock_actress = _make_mock_actress("alice")
+        video_uri = "file:///home/user/media/video.mp4"
+        mock_video = _make_mock_video(path=video_uri, cover_path="file://///NAS/share/cover.jpg")
+
+        with patch('web.routers.actress.ActressRepository') as mock_actress_repo_cls, \
+             patch('web.routers.actress.init_db'), \
+             patch('web.routers.actress.VideoRepository') as mock_video_repo_cls, \
+             patch('web.routers.actress.crop_video_cover', return_value=b"fakejpeg") as mock_crop, \
+             patch('web.routers.actress._write_actress_photo'):
+            mock_actress_repo_cls.return_value.get_by_name.return_value = mock_actress
+            mock_actress_repo_cls.return_value.save = MagicMock()
+            mock_video_repo_cls.return_value.get_videos_by_actress.return_value = [mock_video]
+
+            response = client.post(
+                "/api/actresses/alice/photo",
+                json={"source": "local_crop", "video_path": video_uri, "crop_spec": "v1"},
+            )
+            assert response.status_code == 200
+
+        mock_crop.assert_called_once()
+        called_cover_path = mock_crop.call_args[0][0]
+        assert called_cover_path == "/home/user/nas/cover.jpg", (
+            f"crop_video_cover 應以反解後的本機路徑呼叫，實際: {called_cover_path}"
+        )

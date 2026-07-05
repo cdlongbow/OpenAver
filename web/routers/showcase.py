@@ -12,7 +12,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
 from core.database import VideoRepository, get_db_path, init_db
-from core.path_utils import is_path_under_dir, uri_to_fs_path, coerce_to_file_uri
+from core.path_utils import is_path_under_dir, uri_to_local_fs_path, coerce_to_file_uri
 from core.logger import get_logger
 from core.config import load_config, get_gallery_source_paths
 from core.readonly_source import is_path_readonly, readonly_source_prefixes, writable_source_prefixes
@@ -28,13 +28,13 @@ def _serialize_video(v, path_mappings: dict, enabled: bool = False, readonly_pre
 
     feature/71 T4：thumbnail_cache_enabled 開關決定 cover_url 走 thumb / image 分支。
     - enabled  → cover_url 指向 T3 /api/gallery/thumb?path=<quote(v.path)>（thumb key = video path）
-    - disabled → 維持現狀 /api/gallery/image?path=<quote(uri_to_fs_path(v.cover_path))>（字節不變）
+    - disabled → 維持現狀 /api/gallery/image?path=<quote(uri_to_local_fs_path(v.cover_path, path_mappings))>（字節不變）
     cover_full_url 恆原圖（不受 flag 影響），供 T6 燈箱 blur-up 上層淡入用。
     """
     cover_url = ""
     cover_full_url = ""
     if v.cover_path:
-        original_url = f"/api/gallery/image?path={quote(uri_to_fs_path(v.cover_path), safe='')}"
+        original_url = f"/api/gallery/image?path={quote(uri_to_local_fs_path(v.cover_path, path_mappings), safe='')}"
         cover_full_url = original_url
         if enabled:
             cover_url = f"/api/gallery/thumb?path={quote(v.path, safe='')}"
@@ -43,7 +43,7 @@ def _serialize_video(v, path_mappings: dict, enabled: bool = False, readonly_pre
 
     sample_urls = []
     for img_uri in (v.sample_images or []):
-        local_path = uri_to_fs_path(img_uri)
+        local_path = uri_to_local_fs_path(img_uri, path_mappings)
         sample_urls.append(f"/api/gallery/image?path={quote(local_path, safe='')}")
 
     return {

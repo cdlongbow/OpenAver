@@ -1536,3 +1536,58 @@ class TestSampleImagesAPI:
         for url in video1["sample_images"]:
             assert url.startswith("/api/gallery/image?path="), f"期望 /api/gallery/image?path=... 格式，實際: {url}"
             assert "fanart" in url
+
+
+class TestSerializeVideoPathMappingsReverse:
+    """TASK-91-T2a #1,#2: `_serialize_video` 的 cover_full_url / sample_images URL
+    在 WSL + UNC path_mappings 環境下必須反解成真正能 open() 的本機路徑，
+    而不是留下裸 uri_to_fs_path() 產生的映射端 UNC 字串（get_image 端沒有第二次反解機會）。
+    """
+
+    @pytest.fixture
+    def wsl_video(self):
+        from core.database import Video
+        return Video(
+            path="file://///NAS/share/video.mp4",
+            number="TEST-001",
+            title="WSL UNC Video",
+            cover_path="file://///NAS/share/cover.jpg",
+            sample_images=["file://///NAS/share/sample1.jpg"],
+        )
+
+    def test_cover_full_url_reverse_maps_wsl_unc(self, wsl_video, monkeypatch):
+        import core.path_utils as path_utils
+        from urllib.parse import unquote
+        from web.routers.showcase import _serialize_video
+
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+        mappings = {"/home/user/nas": "//NAS/share"}
+
+        result = _serialize_video(wsl_video, mappings, enabled=False)
+        decoded = unquote(result["cover_full_url"])
+
+        assert "/home/user/nas/cover.jpg" in decoded, (
+            f"cover_full_url 應反解為本機路徑，實際: {decoded}"
+        )
+        assert "//NAS/share/cover.jpg" not in decoded, (
+            f"cover_full_url 不應殘留裸 UNC 映射端字串，實際: {decoded}"
+        )
+
+    def test_sample_images_url_reverse_maps_wsl_unc(self, wsl_video, monkeypatch):
+        import core.path_utils as path_utils
+        from urllib.parse import unquote
+        from web.routers.showcase import _serialize_video
+
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+        mappings = {"/home/user/nas": "//NAS/share"}
+
+        result = _serialize_video(wsl_video, mappings, enabled=False)
+
+        assert len(result["sample_images"]) == 1
+        sample_url = unquote(result["sample_images"][0])
+        assert "/home/user/nas/sample1.jpg" in sample_url, (
+            f"sample_images URL 應反解為本機路徑，實際: {sample_url}"
+        )
+        assert "//NAS/share/sample1.jpg" not in sample_url, (
+            f"sample_images URL 不應殘留裸 UNC 映射端字串，實際: {sample_url}"
+        )
