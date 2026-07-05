@@ -859,7 +859,8 @@
     },
     "enrich": {
       "success": "補資料完成",
-      "failed": "補資料失敗，請稍後再試"
+      "failed": "補資料失敗，請稍後再試",
+      "readonly_tooltip": "此片由唯讀來源產生，更新請至掃描頁重新產生"
     },
     "video": {
       "delete": "從收藏移除",

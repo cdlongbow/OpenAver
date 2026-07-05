@@ -16273,3 +16273,184 @@ class TestOutputPathVisibilityGuard:
         # forbidden：fail-open 寫法（undefined !== 'off' 為 true → off 未載入前也會顯示）
         assert "!== 'off'" not in xshow, \
             f".folder-item-output x-show 不可用 fail-open 的 !== 'off'，實際: {xshow!r}"
+
+
+class TestReadonlyDisabledStateGuard:
+    """TASK-90c-T3 — 唯讀來源片四寫入入口停用態鏡像守衛（element-bound）。
+
+    ①缺圖卡 enrich / ②燈箱補資料 / ③補劇照 / ④齒輪 進階重刮 皆須綁
+    :disabled（含 is_readonly_source + !! 布林強制）、:class（is-readonly-disabled）、
+    導引 tooltip（含 readonly_tooltip）；讀取類（播放/開資料夾/探索相似）不得綁 readonly。
+    """
+
+    _ROOT = Path(__file__).parent.parent.parent
+
+    def _html(self):
+        return SHOWCASE_HTML.read_text(encoding="utf-8")
+
+    def _css(self):
+        return SHOWCASE_CSS.read_text(encoding="utf-8")
+
+    def _btn_by_click(self, html, click_expr):
+        """element-bound：以唯一 @click 表達式定位 <button ...> 開標籤（多行 DOTALL）。"""
+        m = re.search(
+            r'<button\b[^>]*' + re.escape(click_expr) + r'[^>]*>',
+            html, re.DOTALL,
+        )
+        return m.group(0) if m else None
+
+    def _btn_by_class(self, html, cls):
+        m = re.search(
+            r'<button\b[^>]*class="[^"]*' + re.escape(cls) + r'[^"]*"[^>]*>',
+            html, re.DOTALL,
+        )
+        return m.group(0) if m else None
+
+    @staticmethod
+    def _attr(tag, attr):
+        """抽取 tag 中某屬性（含 : 前綴 Alpine bind）的值字串。"""
+        m = re.search(
+            re.escape(attr) + r'\s*=\s*"([^"]*)"',
+            tag, re.DOTALL,
+        )
+        return m.group(1) if m else None
+
+    def test_grid_enrich_btn_readonly_disabled(self):
+        """① 缺圖卡 enrich（enrichVideo(video)）綁 readonly disabled + class + title 導引"""
+        html = self._html()
+        tag = self._btn_by_click(html, "enrichVideo(video)")
+        assert tag is not None, "showcase.html 找不到 缺圖卡 enrichVideo(video) 按鈕"
+        disabled = self._attr(tag, ":disabled")
+        assert disabled is not None, "① 缺圖卡 enrich 缺 :disabled binding"
+        assert "is_readonly_source" in disabled, \
+            f"① :disabled 應 OR-combine is_readonly_source，實際: {disabled!r}"
+        assert disabled.startswith("!!") or "=== true" in disabled, \
+            f"① :disabled 缺布林強制（!! 或 === true），實際: {disabled!r}"
+        assert "_enriching" in disabled, \
+            f"① :disabled 應保留既有 _enriching，實際: {disabled!r}"
+        cls = self._attr(tag, ":class")
+        assert cls is not None and "is-readonly-disabled" in cls, \
+            f"① :class 應含 is-readonly-disabled，實際: {cls!r}"
+        title = self._attr(tag, ":title")
+        assert title is not None and "readonly_tooltip" in title, \
+            f"① :title 應三元切換含 readonly_tooltip，實際: {title!r}"
+
+    def test_lightbox_enrich_btn_readonly_disabled(self):
+        """② 燈箱補資料（enrichVideo(currentLightboxVideo)）綁 readonly + class + data-tooltip"""
+        html = self._html()
+        tag = self._btn_by_click(html, "enrichVideo(currentLightboxVideo)")
+        assert tag is not None, "showcase.html 找不到 燈箱 enrichVideo(currentLightboxVideo) 按鈕"
+        disabled = self._attr(tag, ":disabled")
+        assert disabled is not None, "② 燈箱補資料 缺 :disabled binding"
+        assert "currentLightboxVideo?.is_readonly_source" in disabled, \
+            f"② :disabled 應含 currentLightboxVideo?.is_readonly_source，實際: {disabled!r}"
+        assert disabled.startswith("!!") or "=== true" in disabled, \
+            f"② :disabled 缺布林強制，實際: {disabled!r}"
+        assert "_enriching" in disabled, \
+            f"② :disabled 應保留既有 _enriching，實際: {disabled!r}"
+        cls = self._attr(tag, ":class")
+        assert cls is not None and "is-readonly-disabled" in cls, \
+            f"② :class 應含 is-readonly-disabled，實際: {cls!r}"
+        tooltip = self._attr(tag, ":data-tooltip")
+        assert tooltip is not None and "readonly_tooltip" in tooltip, \
+            f"② :data-tooltip 應三元含 readonly_tooltip（Jinja 靜態需改 Alpine 綁定），實際: {tooltip!r}"
+
+    def test_fetch_samples_btn_readonly_disabled(self):
+        """③ 補劇照 :disabled 同含 is_readonly_source 與 _fetchSamplesFailed（保留既有）"""
+        html = self._html()
+        tag = self._btn_by_class(html, "fetch-samples-btn")
+        assert tag is not None, "showcase.html 找不到 fetch-samples-btn"
+        disabled = self._attr(tag, ":disabled")
+        assert disabled is not None, "③ 補劇照 缺 :disabled binding"
+        assert "is_readonly_source" in disabled, \
+            f"③ :disabled 應 OR-combine is_readonly_source，實際: {disabled!r}"
+        assert "_fetchSamplesFailed" in disabled, \
+            f"③ :disabled 必須保留 _fetchSamplesFailed（否則 TestFetchSamplesButton 回歸），實際: {disabled!r}"
+        assert disabled.startswith("!!") or "=== true" in disabled, \
+            f"③ :disabled 缺布林強制，實際: {disabled!r}"
+        cls = self._attr(tag, ":class")
+        assert cls is not None and "is-readonly-disabled" in cls, \
+            f"③ :class 應含 is-readonly-disabled，實際: {cls!r}"
+        # N1: fetch-samples-bt 無 .lb-action-btn[data-tooltip]::after 樣式泡泡 → 導引改用 native :title（disabled 仍渲染）
+        title = self._attr(tag, ":title")
+        assert title is not None and "readonly_tooltip" in title, \
+            f"③ 導引須走 native :title 含 readonly_tooltip（:data-tooltip 於此鈕不渲染），實際: {title!r}"
+        aria = self._attr(tag, ":aria-label")
+        assert aria is not None and "readonly_tooltip" in aria, \
+            f"③ 須補 :aria-label 含 readonly_tooltip（原無 aria-label，SR 使用者需要），實際: {aria!r}"
+
+    def test_rescrape_gear_readonly_disabled(self):
+        """④ 齒輪進階重刮（lb-rescrape-gear）新增 readonly disabled + class + tooltip 三元"""
+        html = self._html()
+        tag = self._btn_by_class(html, "lb-rescrape-gear")
+        assert tag is not None, "showcase.html 找不到 lb-rescrape-gear"
+        disabled = self._attr(tag, ":disabled")
+        assert disabled is not None, "④ 齒輪 缺 :disabled binding（本 task 新增）"
+        assert "currentLightboxVideo?.is_readonly_source" in disabled, \
+            f"④ :disabled 應綁 currentLightboxVideo?.is_readonly_source，實際: {disabled!r}"
+        assert disabled.startswith("!!") or "=== true" in disabled, \
+            f"④ :disabled 缺布林強制，實際: {disabled!r}"
+        cls = self._attr(tag, ":class")
+        assert cls is not None and "is-readonly-disabled" in cls, \
+            f"④ :class 應含 is-readonly-disabled，實際: {cls!r}"
+        # N1: 齒輪 :data-tooltip 泡泡（entry_tooltip）pre-T3 已死 → 導引走 native :title（disabled 仍渲染）
+        title = self._attr(tag, ":title")
+        assert title is not None and "readonly_tooltip" in title, \
+            f"④ 導引須走 native :title 含 readonly_tooltip，實際: {title!r}"
+
+    def test_readonly_disabled_visual_no_line_through(self):
+        """.is-readonly-disabled 含 cursor: not-allowed + opacity，且無 line-through/text-decoration"""
+        css = self._css()
+        m = re.search(
+            r'\.is-readonly-disabled\b[^{]*\{([^}]*)\}',
+            css, re.DOTALL,
+        )
+        assert m is not None, "showcase.css 缺 .is-readonly-disabled class"
+        body = m.group(1)
+        assert "cursor:" in body and "not-allowed" in body, \
+            f".is-readonly-disabled 應含 cursor: not-allowed，實際: {body!r}"
+        assert "opacity" in body, \
+            f".is-readonly-disabled 應含 opacity（停用淺色），實際: {body!r}"
+        # 跨整條 rule 群組（含 :hover）不得出現刪除線
+        block_start = m.start()
+        block_region = css[block_start:block_start + 600]
+        assert "line-through" not in block_region, \
+            ".is-readonly-disabled 不應含 line-through（spec：無刪除線）"
+        assert "text-decoration" not in block_region, \
+            ".is-readonly-disabled 不應含 text-decoration（spec：無刪除線）"
+
+    def test_rescrape_gear_hover_gated_not_disabled(self):
+        """N2: 齒輪 :hover 規則須 :not(:disabled)-gated（readonly=disabled 不 match → 無 hover 反饋回歸）"""
+        css = self._css()
+        # 齒輪 hover 規則須帶 :not(:disabled)；且不得殘留未 gate 的裸 :hover
+        assert re.search(
+            r'\.lightbox-metadata\s+\.lb-rescrape-gear:not\(:disabled\):hover\b',
+            css,
+        ), ".lightbox-metadata .lb-rescrape-gear:hover 應改為 :not(:disabled):hover（否則 disabled 齒輪仍變色）"
+        assert not re.search(
+            r'\.lightbox-metadata\s+\.lb-rescrape-gear:hover\b',
+            css,
+        ), "不應殘留未 gate 的 .lb-rescrape-gear:hover（specificity 會蓋過 .is-readonly-disabled）"
+
+    def test_read_type_buttons_not_readonly_disabled(self):
+        """讀取類（播放/開資料夾/探索相似）不得綁 is_readonly_source（防誤傷）"""
+        html = self._html()
+        for click_expr in [
+            "playVideo(video.path)",
+            "openLocal(video.path)",
+            "playVideo(currentLightboxVideo?.path)",
+            "openLocal(currentLightboxVideo?.path)",
+            "openSimilarMode()",
+        ]:
+            tag = self._btn_by_click(html, click_expr)
+            assert tag is not None, f"showcase.html 找不到讀取類按鈕: {click_expr}"
+            assert "is_readonly_source" not in tag, \
+                f"讀取類按鈕 {click_expr} 不應綁 is_readonly_source（讀取不受唯讀影響）"
+
+    def test_readonly_tooltip_i18n_key_zh_tw(self):
+        """zh_TW showcase.enrich.readonly_tooltip 存在且非空（zh_TW only，無四語 parity 斷言）"""
+        data = json.loads(
+            (self._ROOT / "locales" / "zh_TW.json").read_text(encoding="utf-8")
+        )
+        val = data.get("showcase", {}).get("enrich", {}).get("readonly_tooltip")
+        assert val, "zh_TW.json 缺 showcase.enrich.readonly_tooltip（或為空）"

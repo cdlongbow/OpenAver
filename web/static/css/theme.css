@@ -1145,7 +1145,7 @@ body {
     box-shadow: 0 4px 12px oklch(0% 0 0 / 0.3);
 }
 
-:is(#ds-gallery-components, .ds-gallery-composition) .btn-glass-circle:hover {
+:is(#ds-gallery-components, .ds-gallery-composition) .btn-glass-circle:not(:disabled):hover {
     background: rgba(255, 255, 255, 0.3);
     border-color: rgba(255, 255, 255, 0.6);
     transform: scale(1.08);
