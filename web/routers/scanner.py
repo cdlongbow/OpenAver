@@ -44,6 +44,7 @@ from core.database import VideoRepository, Video, init_db, get_db_path, migrate_
 from core.organizer import generate_jellyfin_images, HEADERS as _EMBED_HEADERS
 from core.config import load_config, iter_gallery_sources, get_gallery_source_paths
 from core.readonly_producer import produce_source, resolve_output_root
+from core.generate_state import mark_generate_active, mark_generate_done
 from core import thumbnail_cache
 from core.scraper import smart_search
 from core.source_settings import is_uncensored_mode_effective
@@ -780,6 +781,9 @@ async def generate(request: Request):
     （那是 T3），此處只負責建立 + 正確設置 + 生命週期收尾。
     """
     cancel_event = threading.Event()
+    # Finding 2 guard：以 cancel_event 為唯一 token 登記「產生進行中」，讓設定頁
+    # 切換媒體伺服器模式在 generate 仍跑時被擋（避免 purge 後背景 producer 補回卡）。
+    mark_generate_active(cancel_event)
 
     async def _watch_disconnect() -> None:
         try:
@@ -792,6 +796,11 @@ async def generate(request: Request):
             # 正常完成路徑：外層 BackgroundTask 收尾時會 cancel 這個 task，
             # 屬預期流程，非錯誤。
             raise
+        finally:
+            # 兩條路徑皆會走到：斷線 → watcher return → finally；正常完成 →
+            # _cleanup_watcher cancel → CancelledError → finally。故此處清 token
+            # 可靠涵蓋 normal + disconnect，不會讓「產生中」旗標永久卡住（切換被永久擋）。
+            mark_generate_done(cancel_event)
 
     watcher_task = asyncio.create_task(_watch_disconnect())
 
@@ -802,6 +811,10 @@ async def generate(request: Request):
         # send() 拋 OSError→ClientDisconnect 時會在 await background 之前就
         # 往上拋，本 background 不會被執行；但斷線路徑的 watcher 已自行偵測到
         # 斷線並 return（task 自然結束），故兩條路徑皆無 dangling task。
+        # 正常完成路徑一定走到這裡：即使 watcher task 還沒真正跑過就被 cancel
+        # （其 finally 因而不執行），這裡也保證清掉「產生中」token（idempotent），
+        # 不讓正常完成後旗標殘留把 mode-switch 永久擋住。斷線路徑靠 watcher finally。
+        mark_generate_done(cancel_event)
         watcher_task.cancel()
         try:
             await watcher_task

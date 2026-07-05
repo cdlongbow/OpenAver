@@ -35,6 +35,7 @@ from core.config import (
 from core.database import VideoRepository, get_db_path, init_db
 from core import thumbnail_cache
 from core.path_utils import is_path_under_dir, coerce_to_file_uri, uri_to_fs_path
+from core.generate_state import is_generate_in_progress
 from core.readonly_producer import _write_strm
 from core.source_config import MAX_ENABLED_SOURCES
 from core.translate_service import LANGUAGE_PROMPTS
@@ -279,6 +280,16 @@ def switch_external_manager(request: SwitchExternalManagerRequest) -> dict:
     註：保持同步 def —— body 走 DB + config 檔案 I/O，依 async-offload 守衛須在
     Starlette threadpool 執行，不可改 async def 卡 event loop。
     """
+    # Finding 2 guard：產生（generate SSE）進行中就拒絕切換——否則背景 producer
+    # 會在 purge 刪卡後繼續 _upsert_db 補回離線來源卡，破壞「切模式就清乾淨」契約。
+    # 前端據 reason 顯示「產生進行中，請稍後再切換」。零 DB/config 變更即早退。
+    if is_generate_in_progress():
+        return {
+            "success": False,
+            "reason": "generate_in_progress",
+            "error": "產生進行中，請稍後再切換模式。",
+        }
+
     # Step 1：讀 config 枚舉 offline_sources（唯讀，config 鎖外）
     gallery = load_config().get("gallery", {})
     mappings = gallery.get("path_mappings", {})

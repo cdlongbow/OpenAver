@@ -511,7 +511,11 @@ export function stateConfig() {
                     this.scannerDirectories = writable;
                 } else {
                     console.warn('[switchMode] confirmSwitchMode failed:', result.error);
-                    this.showToast(window.t('settings.switch_mode_confirm.failed'), 'error');
+                    // Finding 2：產生進行中被擋 → 專屬提示指路（比照 setServerMode 依 reason 分流）。
+                    const failKey = result.reason === 'generate_in_progress'
+                        ? 'settings.switch_mode_confirm.generate_in_progress'
+                        : 'settings.switch_mode_confirm.failed';
+                    this.showToast(window.t(failKey), 'error');
                 }
             } catch (e) {
                 console.warn('[switchMode] confirmSwitchMode error:', e);
@@ -538,10 +542,14 @@ export function stateConfig() {
                         'success'
                     );
                 } else {
+                    // 使用者已確認、新映射也已落盤，但既有 .strm 未改寫 → 明確 toast，
+                    // 否則使用者誤以為「改規則即改寫」已發生（Codex P2）。可再存一次觸發重試。
                     console.warn('[rewriteStrm] confirmRewriteStrm failed:', result.error);
+                    this.showToast(window.t('settings.scraper.strm_mapping.rewrite_failed'), 'error');
                 }
             } catch (e) {
                 console.warn('[rewriteStrm] confirmRewriteStrm error:', e);
+                this.showToast(window.t('settings.scraper.strm_mapping.rewrite_failed'), 'error');
             }
             this.pendingRewriteCount = 0;
         },
@@ -916,12 +924,19 @@ export function stateConfig() {
                         try {
                             const dryResp = await fetch('/api/config/rewrite-strm?dry_run=true', { method: 'POST' });
                             const dryResult = await dryResp.json();
-                            if (dryResult.success && dryResult.count > 0) {
-                                this.pendingRewriteCount = dryResult.count;
-                                this.rewriteStrmConfirmOpen = true;
+                            if (dryResult.success) {
+                                if (dryResult.count > 0) {
+                                    this.pendingRewriteCount = dryResult.count;
+                                    this.rewriteStrmConfirmOpen = true;
+                                }
+                            } else {
+                                // 規則已落盤但無法檢查既有 .strm → 明確告知（否則使用者不知道改寫流程沒啟動）。
+                                console.warn('[rewriteStrm] dry-run failed:', dryResult.error);
+                                this.showToast(window.t('settings.scraper.strm_mapping.rewrite_failed'), 'error');
                             }
                         } catch (e) {
                             console.warn('[rewriteStrm] dry-run failed:', e);
+                            this.showToast(window.t('settings.scraper.strm_mapping.rewrite_failed'), 'error');
                         }
                     }
                 } else {

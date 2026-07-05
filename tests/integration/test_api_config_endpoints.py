@@ -563,6 +563,28 @@ class TestSwitchExternalManagerEndpoint:
         assert dirs[0]["path"] == "file:///D:/writable_src"
         assert cfg["scraper"]["external_manager"] == "jellyfin"
 
+    def test_refuses_when_generate_in_progress(self, client, env, monkeypatch):
+        """Finding 2：generate 進行中切換 → success:False + reason，零 DB/config 變更。"""
+        env.write_config([
+            {"path": "file:///D:/ro_src", "readonly": True},
+        ], external_manager="off")
+        env.set_videos(["file:///D:/ro_src/B/B.strm"])
+        # 產生進行中
+        monkeypatch.setattr("web.routers.config.is_generate_in_progress", lambda: True)
+
+        resp = client.post("/api/config/switch-external-manager",
+                           json={"external_manager": "jellyfin"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is False
+        assert body["reason"] == "generate_in_progress"
+        # 早退：零 DB 刪除、config 未變（external_manager 仍 off、離線來源仍在）
+        assert env.repo.delete_calls == []
+        cfg = env.read_config()
+        assert cfg["scraper"]["external_manager"] == "off"
+        assert len(cfg["gallery"]["directories"]) == 1
+
     def test_no_offline_only_persists_external_manager(self, client, env):
         """無離線來源：delete_by_paths([]) 回 0，僅落盤 external_manager，removed_sources:0。"""
         env.write_config([

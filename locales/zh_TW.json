@@ -328,6 +328,7 @@
       "cancel": "取消",
       "confirm": "確認切換並移除",
       "failed": "切換模式失敗，請稍後再試。",
+      "generate_in_progress": "產生進行中，請等產生完成後再切換模式。",
       "mode_off": "預設模式",
       "mode_media": "Emby·Jellyfin·Kodi 模式"
     },
@@ -417,7 +418,8 @@
           "cancel": "先不改寫",
           "confirm": "立即改寫"
         },
-        "rewrite_done": "已改寫 {count} 個 .strm 檔"
+        "rewrite_done": "已改寫 {count} 個 .strm 檔",
+        "rewrite_failed": "改寫既有 .strm 失敗，路徑規則已儲存但既有檔尚未更新；請稍後再儲存一次重試。"
       }
     },
     "gallery": {

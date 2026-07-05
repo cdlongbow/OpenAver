@@ -13986,6 +13986,19 @@ class TestExternalManagerSwitchModeGuard:
         assert "savedState = JSON.parse" not in body, \
             "confirmSwitchMode 不應整份 re-snapshot savedState（須單 key 同步）"
 
+    def test_confirm_generate_in_progress_specific_toast(self):
+        """Finding 2：confirmSwitchMode 失敗時依 reason 分流——generate_in_progress
+        顯示專屬提示 key（非只泛用 failed），指路使用者等產生完成。"""
+        import re
+        js = self._js()
+        m = re.search(r"confirmSwitchMode\s*\([^)]*\)\s*\{.*?\n        \},", js, re.DOTALL)
+        assert m, "state-config.js 找不到 confirmSwitchMode 方法體"
+        body = m.group(0)
+        assert "generate_in_progress" in body, \
+            "confirmSwitchMode 失敗分流缺 generate_in_progress reason 判斷"
+        assert "settings.switch_mode_confirm.generate_in_progress" in body, \
+            "confirmSwitchMode 缺 generate_in_progress 專屬 toast i18n key"
+
     # ── i18n: zh_TW only ────────────────────────────────────────────────────────
 
     def test_zh_tw_switch_mode_confirm_keys(self):
@@ -13995,7 +14008,7 @@ class TestExternalManagerSwitchModeGuard:
         data = json.loads((LOCALES_ROOT / "zh_TW.json").read_text(encoding="utf-8"))
         node = data.get("settings", {}).get("switch_mode_confirm")
         assert node is not None, "zh_TW.json 缺 settings.switch_mode_confirm 節點"
-        for key in ("title", "body", "cancel", "confirm"):
+        for key in ("title", "body", "cancel", "confirm", "generate_in_progress"):
             assert node.get(key), f"zh_TW.json settings.switch_mode_confirm.{key} 缺或空"
         assert "{mode}" in node["body"] and "{count}" in node["body"], \
             "settings.switch_mode_confirm.body 缺 {mode}/{count} 插值"
@@ -16685,13 +16698,19 @@ class TestRewriteStrmConfirmGuard:
         js = self._js()
         idx = js.find("async confirmRewriteStrm()")
         assert idx != -1, "state-config.js missing async confirmRewriteStrm()"
-        block = js[idx:idx + 700]
+        # 界定到方法尾（cancelRewriteStrm 起）——涵蓋 success/else/catch 三分支，避免固定字元窗截斷。
+        end = js.find("cancelRewriteStrm()", idx)
+        block = js[idx:end if end != -1 else idx + 1200]
         assert "'/api/config/rewrite-strm'" in block, \
             "confirmRewriteStrm missing 實際改寫端點呼叫（無 dry_run）"
         assert "settings.scraper.strm_mapping.rewrite_done" in block, \
             "confirmRewriteStrm missing rewrite_done toast i18n key"
         assert "result.rewritten" in block, \
             "confirmRewriteStrm toast 應帶端點回的精確 rewritten 數"
+        # Codex P2：改寫失敗（success:false 或 throw）不可靜默——須 error toast，
+        # 否則使用者誤以為「改規則即改寫」已發生（新映射已落盤但既有 .strm 未更新）。
+        assert block.count("settings.scraper.strm_mapping.rewrite_failed") >= 2, \
+            "confirmRewriteStrm 的 success:false 與 catch 兩分支都須發 rewrite_failed error toast"
 
     def test_zh_tw_json_has_rewrite_keys(self):
         """locales/zh_TW.json 含 rewrite_confirm 節點 + rewrite_done（只驗 zh_TW，無 4-locale parity）。"""
@@ -16705,6 +16724,7 @@ class TestRewriteStrmConfirmGuard:
         assert "{count}" in confirm["body"], "rewrite_confirm.body 應含 {count} 插值"
         assert "rewrite_done" in strm, "zh_TW.json missing strm_mapping.rewrite_done"
         assert "{count}" in strm["rewrite_done"], "rewrite_done 應含 {count} 插值"
+        assert strm.get("rewrite_failed"), "zh_TW.json missing strm_mapping.rewrite_failed（改寫失敗 toast）"
 
     def test_no_flavor_wording_in_rewrite_keys(self):
         """文案不得出現「風味」二字（i18n.md 白話用詞規則）。"""
