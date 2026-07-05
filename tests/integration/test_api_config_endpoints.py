@@ -461,3 +461,224 @@ class TestDeleteConfigStopsLanListener:
 
         assert resp.status_code == 200
         assert len(stop_called) == 1, "stop() must always be called on reset (idempotent)"
+
+
+class TestSwitchExternalManagerEndpoint:
+    """POST /api/config/switch-external-manager 端點測試（TASK-90c-T4）
+
+    破壞性重設：切換全域 external_manager 時原子刪除離線（唯讀）來源的 DB 卡 +
+    移除離線 config 條目 + 設新 external_manager。零檔案系統刪除。含可自癒失敗契約。
+
+    測試以真 config.json（CONFIG_PATH monkeypatch）讓 mutate_config 真的 RMW，
+    DB 側 mock（呼叫處 binding web.routers.config.VideoRepository），縮圖 spy。
+    """
+
+    class _FakeRepo:
+        """有狀態的假 VideoRepository：delete 真的從內部清單移除，供收斂測試。"""
+        def __init__(self, paths):
+            self._paths = list(paths)
+            self.delete_calls = []
+
+        def get_all(self):
+            import types
+            return [types.SimpleNamespace(path=p) for p in self._paths]
+
+        def delete_by_paths(self, paths):
+            self.delete_calls.append(list(paths))
+            if not paths:  # 對齊真實 delete_by_paths :669 早退
+                return 0
+            deleted = [p for p in paths if p in self._paths]
+            for p in deleted:
+                self._paths.remove(p)
+            return len(deleted)
+
+    @pytest.fixture
+    def env(self, tmp_path, monkeypatch):
+        import types
+        config_path = tmp_path / "config.json"
+        default_path = tmp_path / "config.default.json"
+        default_path.write_text(json.dumps({"general": {}}))
+
+        monkeypatch.setattr("core.config.CONFIG_PATH", config_path)
+        monkeypatch.setattr("core.config.CONFIG_DEFAULT_PATH", default_path)
+        monkeypatch.setattr("web.routers.config._reset_translate_service", lambda: None)
+
+        # DB 依賴：避免碰真實 DB（get_db_path/init_db no-op），VideoRepository 回共享 fake
+        monkeypatch.setattr("web.routers.config.get_db_path", lambda: tmp_path / "videos.db")
+        monkeypatch.setattr("web.routers.config.init_db", lambda *a, **k: None)
+
+        holder = types.SimpleNamespace(repo=None, invalidated=[], config_path=config_path)
+        monkeypatch.setattr("web.routers.config.VideoRepository", lambda *a, **k: holder.repo)
+
+        # 縮圖 spy（best-effort）
+        fake_tc = types.SimpleNamespace(invalidate=lambda p: holder.invalidated.append(p))
+        monkeypatch.setattr("web.routers.config.thumbnail_cache", fake_tc)
+
+        def write_config(directories, external_manager="off", path_mappings=None):
+            gallery = {"directories": directories}
+            if path_mappings:
+                gallery["path_mappings"] = path_mappings
+            config_path.write_text(json.dumps({
+                "gallery": gallery,
+                "scraper": {"external_manager": external_manager},
+            }))
+
+        def set_videos(paths):
+            holder.repo = TestSwitchExternalManagerEndpoint._FakeRepo(paths)
+
+        holder.write_config = write_config
+        holder.set_videos = set_videos
+        holder.read_config = lambda: json.loads(config_path.read_text())
+        return holder
+
+    def test_mixed_only_offline_deleted(self, client, env):
+        """混合可寫 + 離線：只刪離線卡，可寫 config 條目 + 卡零影響。"""
+        env.write_config([
+            {"path": "file:///D:/writable_src", "readonly": False},
+            {"path": "file:///D:/ro_src", "readonly": True},
+        ], external_manager="off")
+        env.set_videos([
+            "file:///D:/writable_src/A/A.strm",
+            "file:///D:/ro_src/B/B.strm",
+        ])
+
+        resp = client.post("/api/config/switch-external-manager",
+                           json={"external_manager": "jellyfin"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["removed_sources"] == 1
+        assert body["deleted_cards"] == 1
+        assert body["external_manager"] == "jellyfin"
+
+        # delete_by_paths 只收到離線來源下的卡
+        assert env.repo.delete_calls == [["file:///D:/ro_src/B/B.strm"]]
+        # 縮圖只對離線卡失效
+        assert env.invalidated == ["file:///D:/ro_src/B/B.strm"]
+
+        cfg = env.read_config()
+        dirs = cfg["gallery"]["directories"]
+        assert len(dirs) == 1
+        assert dirs[0]["path"] == "file:///D:/writable_src"
+        assert cfg["scraper"]["external_manager"] == "jellyfin"
+
+    def test_no_offline_only_persists_external_manager(self, client, env):
+        """無離線來源：delete_by_paths([]) 回 0，僅落盤 external_manager，removed_sources:0。"""
+        env.write_config([
+            {"path": "file:///D:/writable_src", "readonly": False},
+        ], external_manager="off")
+        env.set_videos(["file:///D:/writable_src/A/A.strm"])
+
+        resp = client.post("/api/config/switch-external-manager",
+                           json={"external_manager": "emby"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["removed_sources"] == 0
+        assert body["deleted_cards"] == 0
+        assert body["external_manager"] == "emby"
+
+        assert env.repo.delete_calls == [[]]  # 空 list 呼叫、回 0
+        assert env.invalidated == []
+
+        cfg = env.read_config()
+        dirs = cfg["gallery"]["directories"]
+        assert len(dirs) == 1
+        assert dirs[0]["path"] == "file:///D:/writable_src"
+        assert cfg["scraper"]["external_manager"] == "emby"
+
+    def test_file_uri_prefix_boundary(self, client, env):
+        """file:/// 前綴命中：離線來源 file:///D:/ro_src，卡在其下 → 命中，兄弟前綴不誤中。"""
+        env.write_config([
+            {"path": "file:///D:/ro_src", "readonly": True},
+        ], external_manager="off")
+        env.set_videos([
+            "file:///D:/ro_src/ABC-001/ABC-001.strm",  # 命中
+            "file:///D:/ro_src2/XYZ/XYZ.strm",          # 兄弟前綴，不得誤中
+        ])
+
+        resp = client.post("/api/config/switch-external-manager",
+                           json={"external_manager": "kodi"})
+
+        assert resp.status_code == 200
+        assert env.repo.delete_calls == [["file:///D:/ro_src/ABC-001/ABC-001.strm"]]
+        assert resp.json()["deleted_cards"] == 1
+
+    def test_unc_prefix_boundary_no_valueerror(self, client, env):
+        """UNC 前綴邊界（唯讀主場景）：離線來源 \\\\nas\\media，卡落其下命中且不拋 ValueError。"""
+        from core.path_utils import coerce_to_file_uri
+        card = coerce_to_file_uri(r"\\nas\media\ABC-001\ABC-001.strm")
+        env.write_config([
+            {"path": r"\\nas\media", "readonly": True},
+        ], external_manager="off")
+        env.set_videos([card])
+
+        resp = client.post("/api/config/switch-external-manager",
+                           json={"external_manager": "jellyfin"})
+
+        assert resp.status_code == 200  # 無 ValueError
+        assert resp.json()["deleted_cards"] == 1
+        assert env.repo.delete_calls == [[card]]
+
+    def test_failure_contract_then_convergence(self, client, env):
+        """失敗契約：mutate_config 拋錯 → success:False，卡已刪但離線仍在 config +
+        external_manager 未變；重觸發 → delete no-op + config 落盤成功（收斂）。"""
+        from unittest.mock import patch
+        env.write_config([
+            {"path": "file:///D:/writable_src", "readonly": False},
+            {"path": "file:///D:/ro_src", "readonly": True},
+        ], external_manager="off")
+        env.set_videos([
+            "file:///D:/writable_src/A/A.strm",
+            "file:///D:/ro_src/B/B.strm",
+        ])
+
+        # 第一次：mutate_config 拋錯
+        with patch("web.routers.config.mutate_config", side_effect=RuntimeError("boom")):
+            resp1 = client.post("/api/config/switch-external-manager",
+                                json={"external_manager": "jellyfin"})
+
+        assert resp1.status_code == 200
+        assert resp1.json()["success"] is False
+        assert "error" in resp1.json()
+        # 卡已刪（delete_by_paths 收到離線卡）
+        assert env.repo.delete_calls == [["file:///D:/ro_src/B/B.strm"]]
+        # config 未變：離線來源仍在，external_manager 仍 off
+        cfg1 = env.read_config()
+        paths1 = [d["path"] for d in cfg1["gallery"]["directories"]]
+        assert "file:///D:/ro_src" in paths1
+        assert cfg1["scraper"]["external_manager"] == "off"
+
+        # 第二次（不 patch）：離線卡已缺席 → delete no-op 回 0；config 這次落盤成功
+        resp2 = client.post("/api/config/switch-external-manager",
+                            json={"external_manager": "jellyfin"})
+
+        assert resp2.status_code == 200
+        assert resp2.json()["success"] is True
+        assert resp2.json()["deleted_cards"] == 0  # 已缺席 → no-op
+        # 第二次的 delete 收到空 list（重算已無離線卡）
+        assert env.repo.delete_calls[-1] == []
+        cfg2 = env.read_config()
+        paths2 = [d["path"] for d in cfg2["gallery"]["directories"]]
+        assert "file:///D:/ro_src" not in paths2  # 離線條目已移除
+        assert "file:///D:/writable_src" in paths2  # 可寫保留
+        assert cfg2["scraper"]["external_manager"] == "jellyfin"
+
+    def test_invalid_literal_returns_422_no_side_effect(self, client, env):
+        """Literal-422：非法 external_manager → 422，端點體未執行、delete_by_paths 未呼叫、config 零變更。"""
+        env.write_config([
+            {"path": "file:///D:/ro_src", "readonly": True},
+        ], external_manager="off")
+        env.set_videos(["file:///D:/ro_src/B/B.strm"])
+
+        resp = client.post("/api/config/switch-external-manager",
+                           json={"external_manager": "invalid_mode"})
+
+        assert resp.status_code == 422
+        assert env.repo.delete_calls == []  # 端點體未執行
+        cfg = env.read_config()
+        # config 零變更
+        assert [d["path"] for d in cfg["gallery"]["directories"]] == ["file:///D:/ro_src"]
+        assert cfg["scraper"]["external_manager"] == "off"

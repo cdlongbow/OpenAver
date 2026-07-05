@@ -18,6 +18,7 @@
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, StrictBool, StrictStr
+from typing import Literal
 import asyncio
 import httpx
 import threading
@@ -28,7 +29,11 @@ from core.config import (
     load_config,
     mutate_config,
     reset_config_file,
+    iter_gallery_sources,
 )
+from core.database import VideoRepository, get_db_path, init_db
+from core import thumbnail_cache
+from core.path_utils import is_path_under_dir, coerce_to_file_uri
 from core.source_config import MAX_ENABLED_SOURCES
 from core.translate_service import LANGUAGE_PROMPTS
 
@@ -246,6 +251,83 @@ def get_lan_port() -> dict:
     return {
         "lan_port": lan_listener.lan_port if running else None,
         "lan_ip": get_lan_ip(),  # 獨立於 running：null 僅在 IP 真的無法偵測時
+    }
+
+
+class SwitchExternalManagerRequest(BaseModel):
+    # 值域必須與 core.config.ScraperConfig.external_manager 完全一致（四值）。
+    # 用 Literal-typed model（不收裸 str）：mutator 直接把 body 值寫進 raw dict
+    # （不經 AppConfig model_validate），若收裸 str 非法值會靜默落盤。FastAPI 對
+    # 非法 Literal 值自動回 422（gotchas-backend「Literal 守不到純 str 入口」72d）。
+    external_manager: Literal["off", "jellyfin", "emby", "kodi"]
+
+
+@router.post("/config/switch-external-manager")
+def switch_external_manager(request: SwitchExternalManagerRequest) -> dict:
+    """切換全域 external_manager，並破壞性重設離線（唯讀）來源（spec §90b(iv) 真理來源）。
+
+    server-side 原子完成：枚舉離線來源的 DB 卡 → delete_by_paths 刪除 + 縮圖失效 →
+    mutate_config 原子移除離線 config 條目 + 設新 external_manager。零檔案系統刪除。
+
+    ⚠️ 破壞性、不可逆：永久刪除離線來源的 DB video row（連同 user_tags）。DB 刪除與
+    config 寫入無分散式交易，刻意採「先 DB 刪、後 config 落盤」的可自癒失敗序（非假
+    rollback）——若 config 落盤失敗，卡已刪、離線來源仍在 config，重觸發時 delete_by_paths
+    對已缺席 path no-op、重試 mutate_config 收斂成功。
+
+    註：保持同步 def —— body 走 DB + config 檔案 I/O，依 async-offload 守衛須在
+    Starlette threadpool 執行，不可改 async def 卡 event loop。
+    """
+    # Step 1：讀 config 枚舉 offline_sources（唯讀，config 鎖外）
+    gallery = load_config().get("gallery", {})
+    mappings = gallery.get("path_mappings", {})
+    offline_sources = [s for s in iter_gallery_sources(gallery) if s.readonly and s.path]
+
+    # Step 2：枚舉待刪 DB 卡（無 `not in current_paths` gate —— 無條件清該離線來源全部卡）
+    db_path = get_db_path()
+    init_db(db_path)
+    repo = VideoRepository(db_path)
+    deleted_paths = [
+        v.path
+        for v in repo.get_all()
+        if any(
+            is_path_under_dir(v.path, coerce_to_file_uri(s.path, mappings))
+            for s in offline_sources
+        )
+    ]
+
+    # Step 3：DB 刪除（單 DELETE IN + commit，原子；空 list 回 0 安全）+ 縮圖失效
+    deleted_cards = repo.delete_by_paths(deleted_paths)
+    for p in deleted_paths:
+        try:
+            thumbnail_cache.invalidate(p)
+        except Exception:  # noqa: BLE001 — best-effort：縮圖失效失敗不阻斷主流程
+            logger.exception("thumbnail_cache.invalidate failed (non-fatal): %s", p)
+
+    # Step 4：mutate_config 原子改 config（移除離線條目 + 設 external_manager）
+    # 先 DB 後 config：若此步拋錯 → 卡已刪、離線來源仍在 config → 回 success:False
+    # （可自癒殘留，重觸發收斂）。不照抄 server_mode 的 rollback（DB 刪除不可逆）。
+    def _mutator(cfg: dict) -> None:
+        gal = cfg.setdefault("gallery", {})
+        dirs = gal.get("directories", []) or []
+        # 保留非 readonly 條目：dict 看 readonly 旗標；bare str 永遠非 readonly（保留）
+        gal["directories"] = [
+            d for d in dirs
+            if not (isinstance(d, dict) and d.get("readonly") is True)
+        ]
+        cfg.setdefault("scraper", {})["external_manager"] = request.external_manager
+
+    try:
+        mutate_config(_mutator)
+    except Exception as e:  # noqa: BLE001
+        logger.error("switch_external_manager config 落盤失敗（卡已刪、離線仍在 config，可自癒）: %s", e)
+        return {"success": False, "error": "無法儲存媒體伺服器模式設定"}
+
+    # Step 6：回傳（Step 5 = 零檔案系統刪除，全程未 rmtree/unlink/os.remove）
+    return {
+        "success": True,
+        "removed_sources": len(offline_sources),
+        "deleted_cards": deleted_cards,
+        "external_manager": request.external_manager,
     }
 
 
