@@ -1440,6 +1440,105 @@ class TestMappedDriveWhitelist:
         )
 
 
+class TestMappedDriveWhitelistWslUncSymmetry:
+    """TASK-91-T2b（Opus 加測）：WSL + UNC path_mappings 環境下白名單對稱性
+    end-to-end 驗證。
+
+    - get_image：T2a 呼叫端（showcase/similar/motion_lab）反解後會產生
+      `?path=<反解後本機路徑>` 這種請求，config directories 存的是同一份本機路徑
+      （native `/home/user/nas` 形式）——這條路徑本來就該直接命中白名單，證明
+      T2a 的反解不會製造白名單誤殺。
+    - get_video：T2b #12 修正後，`local_path = uri_to_local_fs_path(path, ...)`
+      反解成本機路徑，`to_file_uri(local_path, path_mappings)` 再正向重新映射回
+      mapped-namespace request_uri，跟 `_dir_candidate_forms` 比對仍需命中 → 200/206。
+    """
+
+    @pytest.fixture
+    def image_client(self):
+        from web.app import app
+        from fastapi.testclient import TestClient
+        return TestClient(app)
+
+    @pytest.fixture
+    def video_client(self):
+        from web.app import app
+        from fastapi.testclient import TestClient
+        return TestClient(app)
+
+    def _clear_cache(self):
+        import web.routers.scanner as _scanner
+        _scanner._dir_forms_cache.clear()
+
+    def test_get_image_reverse_mapped_native_path_passes_whitelist(
+        self, image_client, tmp_path, monkeypatch
+    ):
+        """get_image：請求 `?path=<反解後本機路徑>`（T2a 呼叫端 WSL+UNC 反解後產生的
+        形式），config directories 也是同一份本機路徑 → 200（非 403）。"""
+        import core.path_utils as path_utils
+        self._clear_cache()
+
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+
+        local_dir = tmp_path / "home_user_nas"
+        local_dir.mkdir(parents=True, exist_ok=True)
+        cover = local_dir / "x.jpg"
+        cover.write_bytes(b'\xff\xd8\xff' + b'\x00' * 100)
+
+        mappings = {str(local_dir): "//NAS/share"}
+
+        def mock_load_config():
+            return {
+                "gallery": {
+                    "directories": [str(local_dir)],
+                    "path_mappings": mappings,
+                }
+            }
+        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+
+        response = image_client.get(f"/api/gallery/image?path={str(cover)}")
+        assert response.status_code == 200, (
+            "反解後的本機路徑（跟 config directories 同一份格式）應直接命中白名單，"
+            f"實際: {response.status_code}"
+        )
+
+    def test_get_video_mapped_unc_uri_reverse_maps_and_passes_whitelist(
+        self, video_client, tmp_path, monkeypatch
+    ):
+        """get_video：請求 `?path=file://///NAS/share/x.mp4`（mapped-namespace URI）。
+        TASK-91-T2b #12 修正後：local_path 反解成本機路徑（真實檔案在此），
+        request_uri 用同一份 path_mappings 正向重新映射回 mapped-namespace，
+        跟 `_dir_candidate_forms`（也用同一份 path_mappings 產生）比對仍命中 → 200/206。
+        """
+        import core.path_utils as path_utils
+        self._clear_cache()
+
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+
+        local_dir = tmp_path / "home_user_nas"
+        local_dir.mkdir(parents=True, exist_ok=True)
+        video = local_dir / "x.mp4"
+        video.write_bytes(b'\x00' * 1000)
+
+        mappings = {str(local_dir): "//NAS/share"}
+
+        def mock_load_config():
+            return {
+                "scraper": {"video_extensions": [".mp4"]},
+                "gallery": {
+                    "directories": [str(local_dir)],
+                    "path_mappings": mappings,
+                },
+            }
+        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.scanner.os.path.getsize", lambda p: 1000)
+
+        response = video_client.get("/api/gallery/video?path=file://///NAS/share/x.mp4")
+        assert response.status_code in (200, 206), (
+            "反解 → 正向重新映射對稱性應保住白名單比對，不應 403/404，"
+            f"實際: {response.status_code}"
+        )
+
+
 class TestSampleImagesAPI:
     """sample_images 欄位 — Showcase API integration 測試"""
 
