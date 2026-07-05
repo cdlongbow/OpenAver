@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.5] - 2026-07-05
+
+本版主軸：**唯讀來源生成媒體伺服器庫（media-server 風味）+ 跨機器路徑映射 + 唯讀寫入全面封鎖**（feature/90，spec-90 §90a/§90b/§90c）——承接 0.11.3/0.11.4 的唯讀產生庫，這版把「餵給 Emby／Jellyfin／Kodi」這條路走通：唯讀來源除了生成 OpenAver 自己瀏覽的本地庫，還多吐每片一個 `.strm` 捷徑檔給媒體伺服器掃描播放。針對「OpenAver 在這台、媒體伺服器在 NAS／別台」的跨機器情境，新增「播放端路徑替換」規則，把 `.strm` 裡的影片路徑翻成播放端看得懂的路徑；改了規則，既有 `.strm` 一鍵同步改寫。同時把唯讀來源的「零寫入」承諾補到滴水不漏：勾唯讀有破壞性確認、四個會寫回的入口在唯讀產生片上全部停用並導引、切換媒體伺服器模式時清乾淨舊唯讀來源的媒體卡（只清庫、不刪你輸出夾的檔）、產生中途斷線也乾淨收尾。
+
+### Added
+#### 🎯 媒體伺服器風味（.strm）+ 跨機器路徑映射
+- **唯讀來源可生成 `.strm` 媒體庫給 Emby／Jellyfin／Kodi**：Settings 把模式切到 Emby／Jellyfin／Kodi 後，對唯讀來源「產生」時，除了每片一夾的 NFO＋封面，還多產一個單行 `.strm`（無 BOM）指向雲端／唯讀硬碟上的原始影片。把輸出夾指向 NAS 上一個可寫位置，媒體伺服器就能掃這批片、經 `.strm` 串流播放，而唯讀來源一個 bit 都沒被寫。
+- **跨機器「播放端路徑替換」**：當播放的媒體伺服器在別台機器、看到同一顆硬碟的路徑跟 OpenAver 不一樣（例如 OpenAver 上是 `Z:\115`、NAS 上是 `/volume1/115`），到 Settings 加一條映射規則，`.strm` 內就會寫成播放端看得懂的路徑。跨命名空間比對（Windows 顯示 vs WSL 原生皆可對上），播放端路徑原樣寫入不做正規化。
+- **改規則即同步改寫既有 `.strm`**：改／加／刪一條映射規則並儲存後，跳「將改寫 N 個 `.strm`」輕量確認（N 為精確計數），確認即依新規則一次改寫所有既有 `.strm`（只覆寫那一行純文字，不動 NFO／封面／DB／影片檔）；刪光規則則還原成本機路徑。OpenAver 自身播放不受影響（從 DB 串流原檔）。
+
+#### 🎯 唯讀寫入封鎖 + 破壞性操作確認
+- **勾「唯讀」跳確認**：在 Scanner 把來源勾唯讀時跳確認彈窗，白話說明唯讀代表什麼、輸出夾放哪、跨機器怎麼餵媒體伺服器；確認後才真的勾上，媒體伺服器模式下同時展開「輸出到」欄位。
+- **唯讀產生片四個寫入入口停用**：對「由唯讀來源產生」的片，封面牆補圖 icon、燈箱「補資料」「補劇照」、齒輪「進階重刮」四個會寫回的入口全部停用（淺色、不可點、hover 導引「更新請至掃描頁重新產生」），播放／開資料夾／探索相似等唯讀操作照常。後端三個補資料端點也一律拒絕唯讀來源、來源零寫入。
+
+### Changed
+- **切換媒體伺服器模式會清掉舊唯讀來源的媒體卡**：在有唯讀來源時切換模式，跳破壞性確認（正確待移除數 + 白話後果 + 多分頁提醒）；確認後移除那些唯讀來源與其媒體卡，之後重新加入即可在新模式重建。**只清 DB 卡，你輸出夾裡的檔案一個都不刪**；可寫來源與其卡完全不受影響（巢狀在唯讀夾下的可寫來源也精準保留）。
+- **部署文案清晰化**：把「輸出夾（產出放哪、要可寫、通常在 NAS）」與「播放端路徑替換（影片路徑跨機對應）」兩個容易混淆的欄位講清楚、界線分明；切換彈窗用詞與 checkbox 統一為「唯讀來源」；三模式一律並列「Emby／Jellyfin／Kodi」。Help 新增「唯讀來源 + 讓 Emby／Jellyfin／Kodi 掃到片（跨機器部署）」區塊，把整條部署流程用步驟講通（痛點常在事後播不出才回查，Help 是唯一會回來找的地方）。
+
+### Fixed
+- **產生中途斷線乾淨收尾**：產生過程中關分頁／重整／中斷 SSE，後端在下一個檢查點停手、不跑完整來源，尾段仍跳 HTML 產生與完成通知、保留必要收尾（媒體伺服器快取重置），正常跑完零回歸。
+- **產生進行中擋切換模式**：一個分頁在產生時，另一分頁切換模式會被擋下並提示「產生進行中，請等產生完成後再切換模式」，避免背景 producer 在清卡後又把卡補回去。
+- **切換模式彈窗矛盾修正**：唯讀確認彈窗的「請先去設定切模式」提示改為只在預設模式顯示，不再出現「已在 Emby／Jellyfin／Kodi 模式卻又叫你去切」的自相矛盾。
+
+### Internal
+- 新增 `scraper.strm_path_mappings` 設定（加法式遷移補預設）；`core/readonly_producer.py` 加 `.strm` 產出 + `_apply_path_mapping`（file:/// URI 空間比對、最長前綴勝、remote 端 verbatim 不正規化）；`core/readonly_source.py` 抽唯讀判定純資料流層（scraper guard 與 showcase payload `is_readonly_source` 共用）；`core/generate_state.py` 產生進行中登記表（雙 clear-hook 生命週期）。
+- 破壞性端點：`POST /api/config/switch-external-manager`（枚舉離線來源 DB 卡 → delete_by_paths + 縮圖失效 → mutate_config 原子移除離線條目 + 設新模式；先 DB 後 config 可自癒失敗序；巢狀可寫來源從刪除集扣除；髒來源路徑 coerce 容錯 skip 不 500）、`POST /api/config/rewrite-strm`（dry-run 精確計數 + best-effort 就地改寫、壞列 skip 不阻斷整批）。兩端點皆使用者觸發維護操作、不揭露 capabilities。
+- 前端：唯讀 checkbox 攔截式確認（`:checked` 單向綁定 + `@click.prevent`，非 x-model）、破壞性切換流程（element-bound 綁定 + isDirty 不誤判 + 三處狀態同步）、唯讀產生片四入口 native disabled、strm 映射編輯器 + 範本回顯。
+- Gemini 整支 branch 二審 triage：switch 端點髒路徑 coerce 容錯（mirror 既有唯讀判定 guard）、`strmChanged` 補 optional chaining（config.scraper undefined 防崩存檔）；其餘 findings triage 為誤報或已知接受殘留。
+
+### 測試
+- 全套 pytest **5309 passed, 2 skipped**（unit + integration，排除 smoke／e2e，較 0.11.4 的 5171 +138：strm 產出/單行無 BOM/off 不產 strm + 路徑映射三類+邊界/跨命名空間+尾分隔符 + rewrite 端點多片/刪規則還原/off no-op/只動 strm/dry-run 計數 + switch 端點 purge 全契約/巢狀可寫扣除/髒路徑容錯 + 唯讀 enrich guard 三端點+混合批 + SSE 斷線生命週期/尾段 abort + 前端停用態/確認彈窗/切換流程守衛）＋ `ruff check .` 綠 ＋ `npm run lint`（eslint + stylelint）綠。
+- 來源金絲雀：**7 源 PASS + 1 SKIP**（javbus／jav321／heyzo／d2pass／avsox／javdb／dmm 全 PASS；fc2 unreachable/no probe → SKIP 非 fail，pre-merge live 健康檢查）。
+- E2E 真機驗收（CDP + 檔案驗證）：6 大硬閘門全過——strm 規範（單行/無 BOM/正確路徑）、唯讀零寫入（來源逐位元不變）、映射改寫 ≥3 檔抽查 + 刪規則還原、四寫入入口停用態 + tooltip、破壞性切換 purge（零檔案刪除）、產生中擋切換（兩分頁 toast）。
+- Codex PR review（90c 二審 Finding 2/3）+ Opus 審核（purge 巢狀誤刪 / rewrite 壞列容錯）+ Gemini 整支 branch 二審皆已 triage 修正。
+
 ## [0.11.4] - 2026-07-04
 
 本版主軸：**唯讀產生庫「地基」+ 掃描頁「試過」提醒 UX + 來源刪檔清死卡**（feature/89，spec-89 §89a/§89b）——承接 0.11.3 的 off 風味唯讀產生庫，先把「OpenAver 生成的片」變成**一等公民**：系統記住每部片生成在哪個資料夾、這份記憶不被其他操作洗掉，於是重新產生／強制重刮回到同一資料夾原地更新，不再每次多長一個重複垃圾夾（沒封面的片也記得住位置）。站在這塊地基上，再修掃描頁三個惱人問題：已刮過／已生成的片不再被「缺資料」嘮叨、刮不到的片試過一次就跳過不再每次重打、唯讀網盤掉線時明確警告而非靜默報成功，並在來源端刪檔後清掉庫裡對應的死卡（**只清 DB、不動你輸出夾裡的檔案**）。89a 地基多半使用者無感，但讓 89b 與後續 feature/90 全部乾淨。
