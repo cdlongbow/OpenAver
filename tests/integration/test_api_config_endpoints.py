@@ -989,8 +989,18 @@ class TestRewriteStrmEndpoint:
         改映射後既有 strm 永不改寫。直接測 module 函式，精準鎖住反解邏輯。
         """
         import types
+        import core.path_utils as path_utils_module
         from core.path_utils import to_file_uri
         from web.routers import config as config_module
+
+        # 環境無關關鍵：to_file_uri() 的 mapping 分支、_collect_strm_targets 的
+        # reverse-map guard 都各自讀自己模組的 CURRENT_ENV 全域（import 時值拷貝，
+        # 非同一個 binding）。兩處都要釘成 'wsl' 才能在純 Linux CI 上重現「WSL+UNC
+        # mapped 輸出根」情境；只 patch 其中一個在本機 WSL 剛好巧合過（core.path_utils.
+        # CURRENT_ENV 本來就是 'wsl'），但在 Linux runner 上 to_file_uri 會退回
+        # fallback 分支、URI 裡不含 "NAS"，前置斷言就先炸。
+        monkeypatch.setattr(path_utils_module, "CURRENT_ENV", "wsl")
+        monkeypatch.setattr(config_module, "CURRENT_ENV", "wsl")
 
         # 本機實際寫檔位置（producer 真正落地處）
         lib = tmp_path / "library"
@@ -1009,7 +1019,6 @@ class TestRewriteStrmEndpoint:
             output_dir=mapped_output_uri,
         )
         repo = TestRewriteStrmEndpoint._FakeRepo([v])
-        monkeypatch.setattr(config_module, "CURRENT_ENV", "wsl")
 
         # 有映射 → 反解回本機、glob 命中
         assert len(config_module._collect_strm_targets(repo, mappings)) == 1
