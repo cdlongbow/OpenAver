@@ -15,6 +15,7 @@ from core.database import VideoRepository, get_db_path, init_db
 from core.path_utils import is_path_under_dir, uri_to_fs_path, coerce_to_file_uri
 from core.logger import get_logger
 from core.config import load_config, get_gallery_source_paths
+from core.readonly_source import is_path_readonly, readonly_source_prefixes
 from core import thumbnail_cache
 
 logger = get_logger(__name__)
@@ -22,7 +23,7 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api/showcase", tags=["showcase"])
 
 
-def _serialize_video(v, path_mappings: dict, enabled: bool = False) -> dict:
+def _serialize_video(v, path_mappings: dict, enabled: bool = False, readonly_prefixes: list = None) -> dict:
     """將 Video ORM 物件序列化為前端 JSON dict（列表端點與單筆端點共用）。
 
     feature/71 T4：thumbnail_cache_enabled 開關決定 cover_url 走 thumb / image 分支。
@@ -66,6 +67,9 @@ def _serialize_video(v, path_mappings: dict, enabled: bool = False) -> dict:
         "user_tags": v.user_tags or [],              # list[str]，空時回空 list
         "has_cover": bool(v.cover_path),             # DB 初判（不做 IO）
         "has_nfo": (v.nfo_mtime or 0) > 0,          # 對齊 41a nfo_mtime 寫入契約，防禦 NULL
+        "is_readonly_source": is_path_readonly(     # 後端算：片落在唯讀來源前綴下→True（前端不判路徑）
+            coerce_to_file_uri(v.path, path_mappings), readonly_prefixes or []
+        ),
     }
 
 
@@ -107,12 +111,15 @@ def get_videos():
         # 只取「當前設定資料夾」底下的記錄（DB 保留全部當 cache）
         config = load_config()
         configured_dir_uris, path_mappings = _get_configured_dirs(config)
+        # 唯讀來源前綴集：每 request 算一次（迴圈外），逐片只跑純比對（避免 N+1 config 解析，CD-90b-9）
+        readonly_prefixes = readonly_source_prefixes(config.get('gallery', {}), path_mappings)
 
         all_videos = [v for v in repo.get_all()
                       if any(is_path_under_dir(v.path, uri) for uri in configured_dir_uris)]
 
         thumb_enabled = config.get('thumbnail_cache_enabled', False)
-        videos_json = [_serialize_video(v, path_mappings, thumb_enabled) for v in all_videos]
+        videos_json = [_serialize_video(v, path_mappings, thumb_enabled, readonly_prefixes)
+                       for v in all_videos]
 
         return JSONResponse({
             "success": True,
@@ -143,6 +150,7 @@ def get_video(path: str = Query(..., description="file:/// URI")):
 
         config = load_config()
         configured_dir_uris, path_mappings = _get_configured_dirs(config)
+        readonly_prefixes = readonly_source_prefixes(config.get('gallery', {}), path_mappings)
 
         if not any(is_path_under_dir(path, uri) for uri in configured_dir_uris):
             return JSONResponse({"success": False, "error": "video not found"}, status_code=404)
@@ -152,7 +160,8 @@ def get_video(path: str = Query(..., description="file:/// URI")):
             return JSONResponse({"success": False, "error": "video not found"}, status_code=404)
 
         thumb_enabled = config.get('thumbnail_cache_enabled', False)
-        return JSONResponse({"success": True, "video": _serialize_video(v, path_mappings, thumb_enabled)})
+        return JSONResponse({"success": True,
+                             "video": _serialize_video(v, path_mappings, thumb_enabled, readonly_prefixes)})
 
     except Exception as e:
         logger.error("取得單筆影片失敗: %s", e)

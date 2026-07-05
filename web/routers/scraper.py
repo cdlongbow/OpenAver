@@ -20,7 +20,7 @@ from core.database import VideoRepository
 from core.db_inflow import try_inflow_upsert
 from core.enricher import enrich_single, fetch_samples_only, resolve_nfo_cover_paths
 from core.organizer import organize_file
-from core.path_utils import to_file_uri, uri_to_fs_path, coerce_to_file_uri, is_path_under_dir
+from core.path_utils import to_file_uri, uri_to_fs_path, coerce_to_file_uri
 from core.scraper import (
     search_jav, search_jav_single_source, strip_internal_nfo_keys,
     search_javlib_versions, fetch_javlib_by_detail_url, internal_nfo_carriers,
@@ -29,7 +29,8 @@ from core.source_config import validate_source_id
 from core.cf_transport import get_cf_transport, CfChallengeRequired, CfTransportUnavailable
 from core.scrapers.javlibrary import JAVLIBRARY_ORIGIN
 from core.logger import get_logger
-from core.config import load_config, iter_gallery_sources
+from core.config import load_config
+from core.readonly_source import is_path_readonly, readonly_source_prefixes
 from core import thumbnail_cache
 from web.routers.notifications import emit_notification as _emit_notif
 
@@ -86,16 +87,13 @@ def _readonly_source_error(file_path: str) -> Optional[dict]:
     """
     _gallery_config = load_config().get('gallery', {})
     _path_mappings = _gallery_config.get('path_mappings', {})
-    _file_uri = coerce_to_file_uri(file_path, _path_mappings)
-    for _s in iter_gallery_sources(_gallery_config):
-        if not _s.readonly or not _s.path:
-            continue
-        if is_path_under_dir(_file_uri, coerce_to_file_uri(_s.path, _path_mappings)):
-            return {
-                "success": False,
-                "error": "此來源路徑為唯讀（readonly），無法搬移或重新命名檔案。"
-                         "請改用掃描頁『產生』生成本地媒體庫，或確認你對此路徑有寫入權限。",
-            }
+    _prefixes = readonly_source_prefixes(_gallery_config, _path_mappings)
+    if is_path_readonly(coerce_to_file_uri(file_path, _path_mappings), _prefixes):
+        return {
+            "success": False,
+            "error": "此來源路徑為唯讀（readonly），無法搬移或重新命名檔案。"
+                     "請改用掃描頁『產生』生成本地媒體庫，或確認你對此路徑有寫入權限。",
+        }
     return None
 
 
