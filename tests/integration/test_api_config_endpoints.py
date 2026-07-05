@@ -1062,6 +1062,42 @@ class TestRewriteStrmEndpoint:
         repo2 = TestRewriteStrmEndpoint._FakeRepo([v])
         assert len(config_module._collect_strm_targets(repo2, {})) == 0
 
+    def test_mapped_source_path_reverse_mapped_for_rewrite(self, tmp_path, monkeypatch):
+        """PR#93 二審 P2：source path（v.path）在 WSL+gallery.path_mappings 下也存映射端 URI，
+        _collect_strm_targets 須把它反解回原掃描路徑再傳 _write_strm——否則改寫拿映射端 UNC
+        去比對 strm_path_mappings（本機前綴=原掃描路徑）對不上 → 改寫內容 ≠ 初次生成內容。
+        """
+        import types
+        import core.path_utils as path_utils_module
+        from core.path_utils import to_file_uri
+        from web.routers import config as config_module
+
+        monkeypatch.setattr(path_utils_module, "CURRENT_ENV", "wsl")
+        monkeypatch.setattr(config_module, "CURRENT_ENV", "wsl")
+
+        lib = tmp_path / "library"
+        movie = lib / "ABC-001"
+        movie.mkdir(parents=True)
+        (movie / "ABC-001.strm").write_text("x", encoding="utf-8")
+
+        src_root = tmp_path / "nas-mount"          # 原始掃描根（本機）
+        src_fs = src_root / "ABC-001" / "ABC-001.mp4"
+        # gallery.path_mappings：本機 lib + src_root 各映射遠端 UNC（producer 存 v.path/output_dir 用）
+        mappings = {str(lib): "//NAS/share/lib", str(src_root): "//NAS/share/src"}
+        v = types.SimpleNamespace(
+            path=to_file_uri(str(src_fs), mappings),        # 映射端 URI（producer src_uri 存法）
+            output_dir=to_file_uri(str(movie), mappings),
+        )
+        assert "NAS" in v.path  # 前置：v.path 真的存成映射端
+
+        targets = config_module._collect_strm_targets(
+            TestRewriteStrmEndpoint._FakeRepo([v]), mappings)
+        assert len(targets) == 1
+        _, source_fs_path = targets[0]
+        # 關鍵：source path 反解回原掃描本機路徑（供 strm_path_mappings 比對），非映射端 UNC
+        assert source_fs_path == str(src_fs)
+        assert "NAS" not in source_fs_path
+
     def test_dry_run_off_mode_returns_count_zero(self, client, env):
         """off 模式 dry_run → count 0（自守，不 glob）。"""
         env.write_config(external_manager="off", with_mapping=True)

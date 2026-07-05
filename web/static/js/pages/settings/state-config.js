@@ -810,11 +810,13 @@ export function stateConfig() {
                     suffix_keywords: this.form.suffixKeywords,
                     external_manager: this.form.externalManager,
                     download_sample_images: this.form.downloadSampleImages,
-                    // strm 路徑映射：array → dict；空 local 行丟棄，local/remote 皆 trim（去貼上殘留空白）
+                    // strm 路徑映射：array → dict；local/remote 皆 trim（去貼上殘留空白）。
+                    // 兩欄都非空才存（PR #93 P2）：半填規則 {local: ""}（如按範本「填入左欄」
+                    // 後未填播放端就存）會讓後端把前綴剝掉只剩後綴、破壞 strm 內容 → 丟棄。
                     strm_path_mappings: Object.fromEntries(
                         this.form.strmRules
-                            .filter(r => r.local.trim())
-                            .map(r => [r.local.trim(), (r.remote || '').trim()])
+                            .filter(r => r.local.trim() && (r.remote || '').trim())
+                            .map(r => [r.local.trim(), r.remote.trim()])
                     ),
                 };
 

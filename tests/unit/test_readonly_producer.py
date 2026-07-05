@@ -2587,6 +2587,18 @@ class TestApplyPathMapping:
         out = _apply_path_mapping('/mnt/z/115/x.mp4', {'/mnt/z/115': '/volume1'})
         assert out == '/volume1/x.mp4'
 
+    def test_empty_remote_rule_skipped_not_prefix_stripped(self):
+        """PR #93 P2：半填規則 remote='' 不得把 local 前綴剝掉只剩後綴 → skip、source 原樣回。"""
+        from core.readonly_producer import _apply_path_mapping
+        assert _apply_path_mapping('Z:\\115\\x.mp4', {'Z:\\115': ''}) == 'Z:\\115\\x.mp4'
+        assert _apply_path_mapping('Z:\\115\\x.mp4', {'Z:\\115': '   '}) == 'Z:\\115\\x.mp4'
+
+    def test_empty_remote_skipped_but_valid_rule_still_applies(self):
+        """混合：空 remote 規則 skip，同批有效規則照常套（不因半填列污染整批）。"""
+        from core.readonly_producer import _apply_path_mapping
+        out = _apply_path_mapping('Z:\\115\\x.mp4', {'Z:\\other': '', 'Z:\\115': '/vol'})
+        assert out == '/vol/x.mp4'
+
     def test_prefix_equals_whole_string_matches(self):
         from core.readonly_producer import _apply_path_mapping
         assert _apply_path_mapping('Z:\\115', {'Z:\\115': '/vol'}) == '/vol'

@@ -547,6 +547,12 @@ def _apply_path_mapping(source_fs_path: str, mappings: dict) -> str:
     su = to_file_uri(source_fs_path)  # converge source → file:/// URI (host-independent, no raise)
     matched = []
     for local_prefix, remote_prefix in mappings.items():
+        # remote 空的半填規則 skip（PR #93 P2 縱深防禦）：remote='' 會讓下方
+        # `remote.rstrip() + su[len(lu):]` 把 local 前綴剝掉只剩後綴（如 /movie.mp4）、
+        # 破壞 strm 內容。前端已過濾不存半填規則，此處防手改 config.json。只擋空字串；
+        # 非字串 remote 仍照舊流到 rstrip 拋 TypeError → _write_strm best-effort 接（契約不變）。
+        if isinstance(remote_prefix, str) and not remote_prefix.strip():
+            continue
         lu = to_file_uri(local_prefix).rstrip('/')  # converge + strip trailing sep (P2); URI is always '/'
         if su == lu or (su.startswith(lu) and su[len(lu):len(lu) + 1] == '/'):
             matched.append((lu, remote_prefix))

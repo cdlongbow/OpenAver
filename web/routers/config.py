@@ -408,7 +408,14 @@ def _collect_strm_targets(repo, path_mappings: dict) -> list:
             continue
         if strm is None:
             continue
-        targets.append((strm, uri_to_fs_path(v.path)))
+        # source path 也要走同一套 reverse-map（PR #93 二審 P2）：v.path 在 WSL+gallery
+        # path_mappings 下同樣存映射端 URI，但 _write_strm 的 strm_path_mappings（播放端重寫）
+        # 本機前綴 = 原始掃描路徑。若只 uri_to_fs_path 得映射端 //NAS/... 會對不上 strm 規則
+        # → 改寫內容 ≠ 初次生成內容（掉了播放端映射）。反解回原掃描路徑，令改寫 == 生成。
+        source_fs_path = uri_to_fs_path(v.path)
+        if CURRENT_ENV == 'wsl' and path_mappings:
+            source_fs_path = reverse_path_mapping(source_fs_path, path_mappings) or source_fs_path
+        targets.append((strm, source_fs_path))
     return targets
 
 
