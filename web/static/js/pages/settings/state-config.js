@@ -941,6 +941,10 @@ export function stateConfig() {
                             this.showToast(window.t('settings.scraper.strm_mapping.rewrite_failed'), 'error');
                         }
                     }
+                } else if (result.reason === 'generate_in_progress_strm_mapping') {
+                    // PR #93 五審三次 P2：掃描/產生進行中改到 strm 播放映射被後端擋下。
+                    // 直接顯示後端訊息（非「儲存失敗」誤導前綴）——這是「稍後再試」而非錯誤。
+                    this.showToast(result.error, 'warning');
                 } else {
                     this.showToast('儲存失敗: ' + result.error, 'error');
                 }

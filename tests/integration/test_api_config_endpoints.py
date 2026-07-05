@@ -76,6 +76,51 @@ class TestConfigAPI:
         # config 檔未被覆寫
         assert json.loads(mock_config_path.read_text()) == {"general": {"theme": "dark"}}
 
+    def test_update_config_refused_strm_mapping_change_during_generate(
+        self, client, mock_config_path, monkeypatch
+    ):
+        """PR #93 五審三次 P2：掃描/產生進行中，改到 strm 播放映射的整份存檔被擋 →
+        reason generate_in_progress_strm_mapping、config 零覆寫（防後續產出 stale .strm）。"""
+        mock_config_path.write_text('{"scraper": {"strm_path_mappings": {"/a": "/b"}}}')
+        monkeypatch.setattr("web.routers.config.is_generate_in_progress", lambda: True)
+
+        # payload 全預設 → strm_path_mappings={} ≠ 持久化的 {"/a":"/b"} → 判定「有動到映射」
+        resp = client.put("/api/config", json={})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is False
+        assert body["reason"] == "generate_in_progress_strm_mapping"
+        # 映射未被 payload 的 {} 覆寫（gate 在 mutate_config 前擋下；load_config 的良性
+        # migration 正規化不影響 strm_path_mappings 值本身）
+        persisted = json.loads(mock_config_path.read_text())
+        assert persisted["scraper"]["strm_path_mappings"] == {"/a": "/b"}
+
+    def test_update_config_allowed_when_strm_mapping_unchanged_during_generate(
+        self, client, mock_config_path, monkeypatch
+    ):
+        """精準 gate：映射未變（payload {} == 持久化 {}）→ 即使 generate 進行中也放行
+        （只擋真的動到映射的存檔，不影響改主題/檔名等）。"""
+        mock_config_path.write_text('{"general": {"theme": "dark"}}')
+        monkeypatch.setattr("web.routers.config.is_generate_in_progress", lambda: True)
+
+        resp = client.put("/api/config", json={})
+
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+    def test_update_config_allows_strm_mapping_change_when_no_generate(
+        self, client, mock_config_path, monkeypatch
+    ):
+        """無 generate 進行 → 改映射照存（gate 只在掃描中生效）。"""
+        mock_config_path.write_text('{"scraper": {"strm_path_mappings": {"/a": "/b"}}}')
+        monkeypatch.setattr("web.routers.config.is_generate_in_progress", lambda: False)
+
+        resp = client.put("/api/config", json={})
+
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
     def test_update_config_releases_config_save_window(self, client, mock_config_path):
         """P2-e：正常儲存後該 request 的 token 必被 finally 釋放（下次 switch 可開始）。"""
         import core.generate_state as gs
@@ -979,6 +1024,23 @@ class TestRewriteStrmEndpoint:
         resp = client.post("/api/config/rewrite-strm")
 
         assert resp.json() == {"success": True, "rewritten": 0}
+        assert e1["strm"].read_text(encoding="utf-8") == "UNTOUCHED"
+
+    def test_rewrite_refused_during_generate(self, client, env, monkeypatch):
+        """PR #93 五審三次 P2：掃描/產生進行中 → rewrite-strm 拒絕（含 dry_run），零檔案寫入。
+        producer 正用 generate 起始舊快照續產出，rewrite 與其併行會 stale/重複寫。"""
+        env.write_config(external_manager="jellyfin", with_mapping=True)
+        v1, _, e1 = env.make_movie("ABC-001", strm_content="UNTOUCHED")
+        env.set_videos([v1])
+        monkeypatch.setattr("web.routers.config.is_generate_in_progress", lambda: True)
+
+        real = client.post("/api/config/rewrite-strm")
+        assert real.json()["success"] is False
+        assert real.json()["reason"] == "generate_in_progress"
+        dry = client.post("/api/config/rewrite-strm?dry_run=true")
+        assert dry.json()["success"] is False
+        assert dry.json()["reason"] == "generate_in_progress"
+        # 全程零改寫
         assert e1["strm"].read_text(encoding="utf-8") == "UNTOUCHED"
 
     def test_no_existing_strm_skipped_not_created(self, client, env):

@@ -565,7 +565,7 @@ def _apply_path_mapping(source_fs_path: str, mappings: dict) -> str:
     return remote_prefix.rstrip('/\\') + su[len(lu):]
 
 
-def _write_strm(base_stem: str, source_fs_path: str, config: dict) -> bool:
+def _write_strm(base_stem: str, source_fs_path: str, config: dict, strm_mappings: dict = None) -> bool:
     """Write a single-line ``<base_stem>.strm`` pointing at the source video (best-effort).
 
     Content = _apply_path_mapping(source_fs_path, mappings) written as one UTF-8
@@ -574,10 +574,21 @@ def _write_strm(base_stem: str, source_fs_path: str, config: dict) -> bool:
     CD-90a-6).
 
     config is the scraper section (produce_source passes scraper_cfg at call site);
-    the mapping table is read SAME-LEVEL — ``config.get('strm_path_mappings', {})``,
+    the mapping table defaults to a SAME-LEVEL read — ``config.get('strm_path_mappings', {})``,
     NOT via a nested ``config.get('scraper', ...)`` (that would always yield {} and
     silently disable mappings). This mirrors line ~580's same-level
     ``config.get('external_manager', 'off')`` read.
+
+    strm_mappings (PR #93 五審四次 P2, option C): when provided (not None), it OVERRIDES
+    ``config['strm_path_mappings']`` — produce_source passes a FRESH per-file read so the
+    generate path uses the current mapping, not the run-start frozen snapshot. This closes
+    the disconnect-tail residual: the SSE watcher clears the generate token the instant it
+    detects a disconnect, but the producer thread only checks should_abort at each per-file
+    checkpoint, so it can finish ONE more file's _write_strm after the token is gone → in that
+    window another tab's settings save could land a new mapping (the strm-mapping gate no
+    longer sees an in-flight generate) and that last file would otherwise write with the STALE
+    frozen mapping and never self-heal. A fresh read makes even that last file use the current
+    mapping. None preserves the legacy read (rewrite_strm + unit tests pass config verbatim).
 
     Best-effort (spec-90 §90a.2.2): strm is an EXTRA product for external media
     servers, not an OpenAver-required asset. A write failure logs a warning and
@@ -593,7 +604,7 @@ def _write_strm(base_stem: str, source_fs_path: str, config: dict) -> bool:
         # TypeError. best-effort's promise (§90a.2.2: strm never fails the movie)
         # must hold even then — catch broadly, warn, return False. Any masked bug
         # still surfaces via the warning log.
-        mappings = config.get('strm_path_mappings', {})
+        mappings = strm_mappings if strm_mappings is not None else config.get('strm_path_mappings', {})
         mapped = _apply_path_mapping(source_fs_path, mappings)
         with open(strm_fs, 'w', encoding='utf-8') as f:
             f.write(mapped)
@@ -614,6 +625,7 @@ def _write_movie_assets(
     source_fs_path: str,
     config: dict,
     old_base: str = '',
+    strm_mappings: dict = None,
 ) -> dict:
     """Write nfo + cover + -poster/-fanart + extrafanart to movie_dir.
 
@@ -695,7 +707,7 @@ def _write_movie_assets(
     # media-server → no strm. best-effort: a write failure returns False and
     # feeds has_strm gating below (transient failure keeps the old strm).
     has_strm = (
-        _write_strm(base_stem, source_fs_path, config)
+        _write_strm(base_stem, source_fs_path, config, strm_mappings=strm_mappings)
         if external_manager in ('jellyfin', 'emby', 'kodi')
         else False
     )
@@ -766,11 +778,22 @@ def _emit(on_progress, result, source_uri, status, movie_dir="", number="", erro
         on_progress(outcome)
 
 
-def produce_source(source, config, repo, *, proxy_url="", on_progress=None, should_abort=None, force: bool = False, reachable: bool = True) -> ProduceResult:
+def produce_source(source, config, repo, *, proxy_url="", on_progress=None, should_abort=None, force: bool = False, reachable: bool = True, strm_mappings_getter=None) -> ProduceResult:
     """Orchestrate per-source readonly generation: guard → list → skip → scrape → write → upsert.
 
     Pure service layer. NO FastAPI, NO SSE, NO router. (CD-88b-8, §1.1)
     Caller (88c) injects on_progress/should_abort for SSE streaming.
+
+    strm_mappings_getter (PR #93 五審四次 P2, option C): optional 0-arg callable returning the
+    CURRENT strm_path_mappings dict, read fresh per file. The SSE generate path injects one that
+    re-reads config from disk so the strm sidecar uses the live mapping, not the run-start frozen
+    snapshot — closing the disconnect-tail residual (watcher clears the generate token the instant
+    it detects a disconnect, but the producer only checks should_abort at each per-file checkpoint,
+    so it can finish one more file's _write_strm after the token is gone; in that window another tab
+    could land a new mapping and this last file would otherwise write with the stale frozen value,
+    never self-healing). None (default) → the frozen config mapping is used, so every existing
+    caller/test is behaviourally unchanged and no config re-read happens. Only consulted for
+    media-server flavours (off writes no strm).
     """
     result = ProduceResult(source_path=source.path, output_path=source.output_path or "")
 
@@ -841,7 +864,22 @@ def produce_source(source, config, repo, *, proxy_url="", on_progress=None, shou
                 fd, scraper_cfg, allocated_this_run, path_mappings,
             )
             old_base = _build_old_base(existing, fi["path"], scraper_cfg)  # T4: '' when no prior row/title/number
-            assets = _write_movie_assets(str(movie_dir), meta, fd, fi["path"], scraper_cfg, old_base=old_base)
+            # PR #93 五審四次 P2 (option C)：media-server 模式下，每片寫 .strm 前用注入的 getter
+            # 重讀 fresh strm_path_mappings（非 generate 起始凍結值）。封死斷線尾巴殘留——watcher
+            # 偵測到斷線即清 generate token，但 producer 每片 checkpoint 才看 should_abort，會多做
+            # 完當下這片；此時另一分頁可能已存新映射（gate 見不到在飛 generate 而放行），該片若用
+            # 凍結舊映射落檔則永久 stale。fresh 讀讓最後一片也用當前映射。getter=None（既有呼叫/
+            # 測試）→ 回退凍結 config、零 config 重讀、行為不變；off 模式不讀（不寫 strm）。
+            fresh_strm_mappings = (
+                strm_mappings_getter()
+                if strm_mappings_getter is not None
+                and scraper_cfg.get("external_manager") in _STEM_IMAGE_MODES
+                else None
+            )
+            assets = _write_movie_assets(
+                str(movie_dir), meta, fd, fi["path"], scraper_cfg,
+                old_base=old_base, strm_mappings=fresh_strm_mappings,
+            )
             _upsert_db(repo, src_uri, fi, meta, assets, path_mappings, output_dir_uri)
             result.created += 1
             _emit(on_progress, result, src_uri, "created", str(movie_dir), number)

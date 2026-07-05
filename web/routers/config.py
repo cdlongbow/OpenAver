@@ -35,7 +35,13 @@ from core.config import (
 from core.database import VideoRepository, get_db_path, init_db
 from core import thumbnail_cache
 from core.path_utils import uri_to_fs_path, reverse_path_mapping, CURRENT_ENV
-from core.generate_state import try_begin_switch, end_switch, try_begin_config_save, end_config_save
+from core.generate_state import (
+    try_begin_switch,
+    end_switch,
+    try_begin_config_save,
+    end_config_save,
+    is_generate_in_progress,
+)
 from core.readonly_source import is_path_readonly, _canonical_source_prefix
 from core.readonly_producer import _write_strm
 from core.source_config import MAX_ENABLED_SOURCES
@@ -77,6 +83,20 @@ def update_config(config: AppConfig) -> dict:
     # 非交錯，任何 mutex 都擋不到），靠切模式破壞性 confirm 的「其他分頁請重整」提示兜底；
     # 次秒級、可自癒（重 generate 重建卡）、無資料損毀。
     # 只擋整份存檔；update_general_field 只寫單一 general 欄位、不碰 directories → 不納入。
+    # PR #93 五審三次 P2（owner 拍板：精準 gate）：掃描/產生進行中，禁止「有動到 strm 播放
+    # 映射」的整份存檔。generate 起始時把 config 凍結一場沿用（scanner.generate_avlist 一次
+    # load_config → produce_source 全程用該快照），若中途改 scraper.strm_path_mappings 存檔，
+    # 該次 generate 之後才產出的 .strm 仍用舊映射，且無任何東西會再自動重寫它們（rewrite 只修
+    # 當下已在 DB 的片）→ 靜默半修、永久指錯播放端路徑。精準只擋「真的動到映射」的存檔：
+    # is_generate_in_progress() 短路後才 load_config diff，改主題/檔名等其他設定不受影響。
+    # 點對點檢查（非全互斥），微秒級殘留窗口同 P2-e 已知限制等級（generate 若在 check 與
+    # mutate_config 間隙才起跑，屬同類可接受殘留；掃描本就秒級以上、幾乎不觸發）。
+    if is_generate_in_progress() and (
+        config.scraper.strm_path_mappings
+        != load_config().get("scraper", {}).get("strm_path_mappings", {})
+    ):
+        return {"success": False, "reason": "generate_in_progress_strm_mapping",
+                "error": "掃描／產生進行中，請完成後再修改媒體伺服器播放路徑映射。"}
     save_token = object()  # 每 request 唯一身份 token（比照 generate 的 _active_tokens）
     reason = try_begin_config_save(save_token)
     if reason is not None:
@@ -463,6 +483,13 @@ def rewrite_strm(dry_run: bool = False) -> dict:
     的 config 實參＝scraper 區塊（它同層讀 strm_path_mappings），不可傳 full config。
     """
     key = "count" if dry_run else "rewritten"
+    # PR #93 五審三次 P2：掃描/產生進行中拒絕改寫。producer 正用 generate 起始的舊 config
+    # 快照續產出，此時 rewrite 與其併行 → 兩者對同一片可能各寫一次、且 rewrite 修不到 generate
+    # 之後才產出的片 → stale。與 update_config 的映射 gate 成對（存檔擋掉即不會觸發自動改寫，
+    # 此處再擋獨立/直接呼叫，防禦縱深）。dry_run 也擋，讓前端 heads-up 階段就明確拒絕。
+    if is_generate_in_progress():
+        return {"success": False, "reason": "generate_in_progress",
+                "error": "掃描／產生進行中，請完成後再改寫 .strm。"}
     try:
         cfg = load_config()
         scraper_cfg = cfg.get('scraper', {})

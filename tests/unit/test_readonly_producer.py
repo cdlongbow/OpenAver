@@ -2289,7 +2289,7 @@ class TestProduceSourceExceptionDoesNotAbort:
 
         call_count = [0]
 
-        def fake_write(movie_dir, meta_arg, fd_arg, src_path, cfg, old_base=''):
+        def fake_write(movie_dir, meta_arg, fd_arg, src_path, cfg, old_base='', strm_mappings=None):
             call_count[0] += 1
             if call_count[0] == 2:
                 raise OSError("disk full")
@@ -2693,6 +2693,41 @@ class TestWriteStrm:
         assert ok is True
         assert Path(base_stem + '.strm').read_text(encoding='utf-8') == '/volume1/movie/clip.mp4'
 
+    # --- PR #93 五審四次 P2 (option C)：strm_mappings 覆寫參數 ---
+
+    def test_strm_mappings_override_wins_over_config(self, tmp_path):
+        """strm_mappings 非 None → 覆寫 config['strm_path_mappings']（producer 傳 fresh 讀，
+        使斷線尾巴那片用當前映射而非 generate 起始凍結值）。"""
+        from core.readonly_producer import _write_strm
+        base_stem = str(tmp_path / 'TEST-001')
+        config = {'strm_path_mappings': {'Z:\\115': '/OLD'}}  # 凍結舊值
+        ok = _write_strm(base_stem, 'Z:\\115\\x.mp4', config,
+                         strm_mappings={'Z:\\115': '/NEW'})  # fresh 覆寫
+        assert ok is True
+        content = Path(base_stem + '.strm').read_text(encoding='utf-8')
+        assert content == '/NEW/x.mp4'
+        assert 'OLD' not in content
+
+    def test_strm_mappings_none_uses_config_legacy(self, tmp_path):
+        """strm_mappings=None（預設）→ 沿用 config 讀（rewrite_strm / 既有呼叫不受影響）。"""
+        from core.readonly_producer import _write_strm
+        base_stem = str(tmp_path / 'TEST-001')
+        config = {'strm_path_mappings': {'Z:\\115': '/volume1'}}
+        ok = _write_strm(base_stem, 'Z:\\115\\x.mp4', config, strm_mappings=None)
+        assert ok is True
+        assert Path(base_stem + '.strm').read_text(encoding='utf-8') == '/volume1/x.mp4'
+
+    def test_empty_override_writes_raw_not_config_mapping(self, tmp_path):
+        """strm_mappings={} 是有效覆寫（非 None）→ 用空映射（寫原始路徑），不回退 config。"""
+        from core.readonly_producer import _write_strm
+        base_stem = str(tmp_path / 'TEST-001')
+        config = {'strm_path_mappings': {'Z:\\115': '/SHOULD-NOT-APPLY'}}
+        ok = _write_strm(base_stem, 'Z:\\115\\x.mp4', config, strm_mappings={})
+        assert ok is True
+        content = Path(base_stem + '.strm').read_text(encoding='utf-8')
+        assert content == 'Z:\\115\\x.mp4'
+        assert 'SHOULD-NOT-APPLY' not in content
+
     def test_write_failure_is_best_effort_returns_false(self, tmp_path):
         """open() raising → warning logged, returns False, does NOT raise."""
         from core.readonly_producer import _write_strm
@@ -2858,12 +2893,14 @@ def _e2e_search_jav_factory():
     return fake_search_jav
 
 
-def _e2e_run_produce_source(source_dir, output_dir, config, filenames):
+def _e2e_run_produce_source(source_dir, output_dir, config, filenames, strm_mappings_getter=None):
     """Run the REAL produce_source against real source files in source_dir.
 
     Returns (result, repo). repo is a MagicMock whose .upsert captured the Video
     rows. _list_source_videos is patched to return file_info dicts for the real
     files (so _write_movie_assets/_write_strm run against the real source paths).
+
+    strm_mappings_getter forwarded to produce_source (PR #93 五審四次 P2, option C).
     """
     from core.readonly_producer import produce_source
 
@@ -2888,7 +2925,7 @@ def _e2e_run_produce_source(source_dir, output_dir, config, filenames):
          patch('core.readonly_producer.download_image', side_effect=_t4_real_download), \
          patch('core.readonly_producer.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
          patch('core.readonly_producer.generate_nfo', side_effect=_t4_real_nfo):
-        result = produce_source(source, config, repo)
+        result = produce_source(source, config, repo, strm_mappings_getter=strm_mappings_getter)
     return result, repo
 
 
@@ -2988,6 +3025,44 @@ class TestProduceSourceMediaServerStrmE2E:
         # NOT normalized (CD-90a-6: bare Unix target survives on any host).
         expected = {f'/volume1/{fn}' for fn in self.FILENAMES}
         assert contents == expected, f"mapped strm contents {contents} != {expected}"
+
+    # -- PR #93 五審四次 P2 (option C): fresh strm mapping getter per file ---------
+
+    def test_option_c_getter_supplies_fresh_mapping_over_frozen(self, tmp_path):
+        """凍結 config 帶舊映射、getter 回新映射 → .strm 用新映射（斷線尾巴那片不 stale）。"""
+        source_dir, output_dir = self._setup_source(tmp_path)
+        config = _make_config(scraper_cfg=dict(
+            _T3_BASE_CONFIG,
+            external_manager='jellyfin',
+            strm_path_mappings={str(source_dir): '/OLD-FROZEN'},  # generate 起始凍結值
+        ))
+        fresh_getter = lambda: {str(source_dir): '/NEW-FRESH'}  # noqa: E731 — 測試用簡短 getter
+
+        result, _repo = _e2e_run_produce_source(
+            source_dir, output_dir, config, self.FILENAMES, strm_mappings_getter=fresh_getter)
+
+        assert result.created == 2
+        contents = {d.glob('*.strm').__next__().read_text(encoding='utf-8')
+                    for d in _movie_dirs(output_dir)}
+        assert contents == {f'/NEW-FRESH/{fn}' for fn in self.FILENAMES}, contents
+        assert all('OLD-FROZEN' not in c for c in contents)
+
+    def test_option_c_no_getter_uses_frozen_config_mapping(self, tmp_path):
+        """getter=None（既有呼叫/rewrite/測試）→ 用凍結 config 映射、不重讀 config、行為不變。"""
+        source_dir, output_dir = self._setup_source(tmp_path)
+        config = _make_config(scraper_cfg=dict(
+            _T3_BASE_CONFIG,
+            external_manager='jellyfin',
+            strm_path_mappings={str(source_dir): '/FROZEN-ONLY'},
+        ))
+
+        result, _repo = _e2e_run_produce_source(
+            source_dir, output_dir, config, self.FILENAMES)  # 無 getter
+
+        assert result.created == 2
+        contents = {d.glob('*.strm').__next__().read_text(encoding='utf-8')
+                    for d in _movie_dirs(output_dir)}
+        assert contents == {f'/FROZEN-ONLY/{fn}' for fn in self.FILENAMES}, contents
 
     # -- Acceptance 7: zero writes into the read-only source dir ------------------
 

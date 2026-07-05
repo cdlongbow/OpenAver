@@ -244,12 +244,15 @@ def _yield_source_summary(result) -> Generator[str, None, None]:
             })
 
 
-def _run_readonly_source(src, config, repo, proxy_url, summary, reachable: bool = True, should_abort: Optional[Callable[[], bool]] = None) -> Generator[str, None, None]:
+def _run_readonly_source(src, config, repo, proxy_url, summary, reachable: bool = True, should_abort: Optional[Callable[[], bool]] = None, strm_mappings_getter: Optional[Callable[[], dict]] = None) -> Generator[str, None, None]:
     """在 daemon worker thread 跑 produce_source，drain 無界 queue 逐片 yield SSE。
 
     worker 例外（含 produce_source 迴圈前的 normalize/列檔/DB 拋錯，未被 producer
     內 try 包覆）顯式接手（CD-88c-1 / Codex P1），不靜默吞：box['error'] → 產生器
     emit error SSE + source_errors+1 + 續下一來源。
+
+    strm_mappings_getter（PR #93 五審四次 P2, option C）：注入 produce_source，讓 media-server
+    模式每片重讀 fresh strm 映射，封死斷線尾巴那片用凍結舊映射落檔的殘留。
     """
     q: "queue.Queue" = queue.Queue()  # 無界：worker 永不阻塞於 put，client 斷線 daemon 自然退出
     _SENTINEL = object()
@@ -262,6 +265,7 @@ def _run_readonly_source(src, config, repo, proxy_url, summary, reachable: bool 
                 on_progress=q.put,
                 should_abort=should_abort,
                 reachable=reachable,
+                strm_mappings_getter=strm_mappings_getter,
             )
         except Exception:
             logger.exception("唯讀生成來源失敗: %s", src.path)
@@ -381,7 +385,14 @@ def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Genera
                 # 檢查）。src.path 是 config 原始輸入，不套 reverse_path_mapping
                 # （比照 :353/:96 既定作法，見 TASK-89b-T5 現況分析 #5）。
                 reachable = os.path.exists(uri_to_fs_path(src.path))
-                yield from _run_readonly_source(src, config, repo, proxy_url, readonly_summary, reachable, should_abort=should_abort)
+                # PR #93 五審四次 P2 (option C)：注入 fresh strm 映射 getter。config 是 :303
+                # 一次載入的凍結快照；load_config() 無 lru_cache、每次讀 disk（同 :1275 prewarm
+                # pattern），故 getter 拿到的是「當下磁碟上的」映射 → 斷線尾巴那片也用當前映射。
+                yield from _run_readonly_source(
+                    src, config, repo, proxy_url, readonly_summary, reachable,
+                    should_abort=should_abort,
+                    strm_mappings_getter=lambda: load_config().get('scraper', {}).get('strm_path_mappings', {}),
+                )
                 continue
 
             # 轉換路徑格式 (Windows -> WSL)。directory 可能是 FS 路徑或 file:/// URI
