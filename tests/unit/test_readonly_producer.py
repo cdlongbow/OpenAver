@@ -2289,7 +2289,7 @@ class TestProduceSourceExceptionDoesNotAbort:
 
         call_count = [0]
 
-        def fake_write(movie_dir, meta_arg, fd_arg, src_path, cfg, old_base='', strm_mappings=None):
+        def fake_write(movie_dir, meta_arg, fd_arg, src_path, cfg, old_base='', strm_mappings_getter=None):
             call_count[0] += 1
             if call_count[0] == 2:
                 raise OSError("disk full")
@@ -2767,6 +2767,38 @@ class TestWriteMovieAssetsStrm:
         config = dict(_T3_BASE_CONFIG, external_manager='off')
         _t4_write(movie_dir, meta, config)
         assert not (Path(movie_dir) / 'TEST-001 Title A.strm').exists()
+
+    def test_getter_evaluated_after_nfo_at_write_time(self, tmp_path):
+        """五審五次 Codex：strm_mappings_getter 在 NFO 等資產寫完後、_write_strm 前一刻才求值
+        （非片處理開頭 snapshot）。否則求值後、封面/NFO 寫檔期間存的新映射會被漏掉。"""
+        from core.readonly_producer import _format_data, _write_movie_assets
+        movie_dir = str(tmp_path / 'TEST-001')
+        meta = dict(_T3_META, title='Title A')
+        config = dict(_T3_BASE_CONFIG, external_manager='jellyfin',
+                      strm_path_mappings={'/src': '/FROZEN'})
+        fd = _format_data(meta, '/src/TEST-001.mp4', config)
+
+        order = []
+
+        def rec_nfo(*a, **k):
+            order.append('nfo')
+            return _t4_real_nfo(*a, **k)
+
+        def getter():
+            order.append('getter')
+            return {'/src': '/FRESH'}
+
+        with patch('core.readonly_producer.download_image', side_effect=_t4_real_download), \
+             patch('core.readonly_producer.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
+             patch('core.readonly_producer.generate_nfo', side_effect=rec_nfo):
+            _write_movie_assets(movie_dir, meta, fd, '/src/TEST-001.mp4', config,
+                                strm_mappings_getter=getter)
+
+        # getter 在 nfo 之後才被呼叫（求值延到 _write_strm 前一刻）
+        assert order == ['nfo', 'getter'], order
+        # 且 .strm 用 getter 的 fresh 映射，非 config 凍結值
+        strm = Path(movie_dir) / 'TEST-001 Title A.strm'
+        assert strm.read_text(encoding='utf-8') == '/FRESH/TEST-001.mp4'
 
 
 class TestCleanStaleStrm:

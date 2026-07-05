@@ -625,7 +625,7 @@ def _write_movie_assets(
     source_fs_path: str,
     config: dict,
     old_base: str = '',
-    strm_mappings: dict = None,
+    strm_mappings_getter=None,
 ) -> dict:
     """Write nfo + cover + -poster/-fanart + extrafanart to movie_dir.
 
@@ -706,8 +706,14 @@ def _write_movie_assets(
     # 5) strm sidecar — media-server flavours only (TASK-90a-T3). off / non
     # media-server → no strm. best-effort: a write failure returns False and
     # feeds has_strm gating below (transient failure keeps the old strm).
+    # strm_mappings_getter 在此（_write_strm 前一刻、封面/NFO 都寫完後）才求值，讓斷線尾巴那片
+    # 用「真正落 .strm 那一刻」的映射而非片處理開頭的 snapshot（五審五次 Codex）。短路：只在
+    # media-server 分支求值（off 不寫 strm），getter=None → None → _write_strm 回退凍結 config。
     has_strm = (
-        _write_strm(base_stem, source_fs_path, config, strm_mappings=strm_mappings)
+        _write_strm(
+            base_stem, source_fs_path, config,
+            strm_mappings=(strm_mappings_getter() if strm_mappings_getter is not None else None),
+        )
         if external_manager in ('jellyfin', 'emby', 'kodi')
         else False
     )
@@ -864,21 +870,16 @@ def produce_source(source, config, repo, *, proxy_url="", on_progress=None, shou
                 fd, scraper_cfg, allocated_this_run, path_mappings,
             )
             old_base = _build_old_base(existing, fi["path"], scraper_cfg)  # T4: '' when no prior row/title/number
-            # PR #93 五審四次 P2 (option C)：media-server 模式下，每片寫 .strm 前用注入的 getter
-            # 重讀 fresh strm_path_mappings（非 generate 起始凍結值）。封死斷線尾巴殘留——watcher
-            # 偵測到斷線即清 generate token，但 producer 每片 checkpoint 才看 should_abort，會多做
-            # 完當下這片；此時另一分頁可能已存新映射（gate 見不到在飛 generate 而放行），該片若用
-            # 凍結舊映射落檔則永久 stale。fresh 讀讓最後一片也用當前映射。getter=None（既有呼叫/
-            # 測試）→ 回退凍結 config、零 config 重讀、行為不變；off 模式不讀（不寫 strm）。
-            fresh_strm_mappings = (
-                strm_mappings_getter()
-                if strm_mappings_getter is not None
-                and scraper_cfg.get("external_manager") in _STEM_IMAGE_MODES
-                else None
-            )
+            # PR #93 五審四次 P2 (option C)：media-server 模式下，每片用注入的 getter 重讀 fresh
+            # strm_path_mappings（非 generate 起始凍結值）。封死斷線尾巴殘留——watcher 偵測到斷線
+            # 即清 generate token，但 producer 每片 checkpoint 才看 should_abort，會多做完當下這片；
+            # 此時另一分頁可能已存新映射（gate 見不到在飛 generate 而放行），該片若用凍結舊映射落檔則
+            # 永久 stale。傳 getter callable（非此刻 snapshot）往下，讓 _write_movie_assets 在
+            # _write_strm 前一刻才求值（五審五次 Codex：snapshot 在此求值後、封面/NFO 等寫檔仍需時間，
+            # 期間存的新映射會被漏掉）。getter=None（既有呼叫/測試）→ 回退凍結 config、零重讀、行為不變。
             assets = _write_movie_assets(
                 str(movie_dir), meta, fd, fi["path"], scraper_cfg,
-                old_base=old_base, strm_mappings=fresh_strm_mappings,
+                old_base=old_base, strm_mappings_getter=strm_mappings_getter,
             )
             _upsert_db(repo, src_uri, fi, meta, assets, path_mappings, output_dir_uri)
             result.created += 1
