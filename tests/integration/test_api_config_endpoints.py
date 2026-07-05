@@ -637,8 +637,8 @@ class TestSwitchExternalManagerEndpoint:
             {"path": "file:///D:/ro_src", "readonly": True},
         ], external_manager="off")
         env.set_videos(["file:///D:/ro_src/B/B.strm"])
-        # 產生進行中 → try_begin_switch 回 False（generate token 已登記）
-        monkeypatch.setattr("web.routers.config.try_begin_switch", lambda: False)
+        # 產生進行中 → try_begin_switch 回 'generate_in_progress'（generate token 已登記）
+        monkeypatch.setattr("web.routers.config.try_begin_switch", lambda: "generate_in_progress")
 
         resp = client.post("/api/config/switch-external-manager",
                            json={"external_manager": "jellyfin"})
@@ -648,6 +648,27 @@ class TestSwitchExternalManagerEndpoint:
         assert body["success"] is False
         assert body["reason"] == "generate_in_progress"
         # 早退：零 DB 刪除、config 未變（external_manager 仍 off、離線來源仍在）
+        assert env.repo.delete_calls == []
+        cfg = env.read_config()
+        assert cfg["scraper"]["external_manager"] == "off"
+        assert len(cfg["gallery"]["directories"]) == 1
+
+    def test_refuses_when_another_switch_in_progress(self, client, env, monkeypatch):
+        """PR #93 P2：另一個 switch 已持窗口 → 第二個回 reason=switch_in_progress、零變更。"""
+        env.write_config([
+            {"path": "file:///D:/ro_src", "readonly": True},
+        ], external_manager="off")
+        env.set_videos(["file:///D:/ro_src/B/B.strm"])
+        monkeypatch.setattr("web.routers.config.try_begin_switch", lambda: "switch_in_progress")
+
+        resp = client.post("/api/config/switch-external-manager",
+                           json={"external_manager": "jellyfin"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is False
+        assert body["reason"] == "switch_in_progress"
+        # 早退：零 DB 刪除、config 未變
         assert env.repo.delete_calls == []
         cfg = env.read_config()
         assert cfg["scraper"]["external_manager"] == "off"

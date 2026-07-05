@@ -281,17 +281,19 @@ def switch_external_manager(request: SwitchExternalManagerRequest) -> dict:
     註：保持同步 def —— body 走 DB + config 檔案 I/O，依 async-offload 守衛須在
     Starlette threadpool 執行，不可改 async def 卡 event loop。
     """
-    # Finding 2 + PR #93 P1 雙向互斥 guard：try_begin_switch 原子地
-    #   (a) 若已有 generate 在飛 → 回 False，拒絕切換（原 forward guard，前端據 reason 顯示
-    #       「產生進行中，請稍後再切換」，零 DB/config 變更即早退）；
-    #   (b) 否則佔住 _switch_active 整個 purge 窗口 → 期間新 generate 掛號被 try_mark_generate_active
-    #       拒絕，杜絕「切模式進行中才開始的 generate 把剛 purge 的卡 _upsert 補回」的反向 race。
-    # 成功佔住後必須 end_switch()（finally 保證，含各失敗 return 路徑）。
-    if not try_begin_switch():
+    # Finding 2 + PR #93 P1/P2 雙向互斥 + switch 序列化 guard：try_begin_switch 原子地
+    #   (a) generate 在飛 → 'generate_in_progress'（原 forward guard，前端顯示「產生進行中」）；
+    #   (b) 另一個 switch 已持窗口 → 'switch_in_progress'（PR #93 P2：否則第二個 switch 也進、
+    #       第一個 end_switch() 會在第二個窗口中把 _switch_active 清掉 → generate 趁隙補回卡）；
+    #   (c) 否則回 None、佔住 _switch_active 整個 purge 窗口 → 期間新 generate 掛號被
+    #       try_mark_generate_active 拒絕，杜絕反向 race。成功佔住後必 end_switch()（finally 保證）。
+    reason = try_begin_switch()
+    if reason is not None:
         return {
             "success": False,
-            "reason": "generate_in_progress",
-            "error": "產生進行中，請稍後再切換模式。",
+            "reason": reason,
+            "error": "產生進行中，請稍後再切換模式。" if reason == "generate_in_progress"
+            else "另一個切換正在進行中，請稍後再試。",
         }
     try:
         return _switch_external_manager_locked(request)

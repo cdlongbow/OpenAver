@@ -59,19 +59,26 @@ def try_mark_generate_active(token) -> bool:
         return True
 
 
-def try_begin_switch() -> bool:
-    """Atomically begin a switch UNLESS a generate is already in-flight.
+def try_begin_switch():
+    """Atomically begin a switch UNLESS a generate OR another switch is in-flight.
 
-    Returns False (caller must refuse the switch → generate_in_progress) when any
-    generate token is active (the original forward guard). On True the switch owns
-    the exclusion window until `end_switch()`; new generates are refused meanwhile.
+    Returns None on success (switch owns the exclusion window until `end_switch()`;
+    new generates are refused meanwhile). Otherwise returns a refusal-reason string
+    the caller surfaces to the frontend:
+    - 'generate_in_progress' — a generate SSE is registered (original forward guard).
+    - 'switch_in_progress'   — another switch already holds the window (PR #93 P2):
+      without this, a 2nd overlapping switch would enter, and the 1st's `end_switch()`
+      would clear `_switch_active` mid-2nd-window → a generate could slip in and
+      re-upsert purged rows. Switches must serialise, not just exclude generates.
     """
     global _switch_active
     with _lock:
         if _active_tokens:
-            return False
+            return 'generate_in_progress'
+        if _switch_active:
+            return 'switch_in_progress'
         _switch_active = True
-        return True
+        return None
 
 
 def end_switch() -> None:
