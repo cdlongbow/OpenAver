@@ -515,6 +515,155 @@ SETTINGS_UI_JS        = Path(__file__).parent.parent.parent / "web" / "static" /
 SEARCH_FILE_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "file.js"
 
 
+class TestStrmMappingGuard:
+    """TASK-90a-T4: strm 路徑映射 CRUD 編輯器結構守衛（string-contains 靜態守衛）"""
+
+    def _settings(self):
+        return SETTINGS_HTML.read_text(encoding="utf-8")
+
+    def _config_js(self):
+        return SETTINGS_CONFIG_JS.read_text(encoding="utf-8")
+
+    def test_settings_html_has_editor(self):
+        """settings.html 含 strmRules x-for row 編輯器 + 兩欄 x-model + media-server 風味 gating"""
+        html = self._settings()
+        assert 'x-for="(rule, idx) in form.strmRules"' in html, \
+            "settings.html missing strmRules x-for row 編輯器"
+        assert 'x-model="rule.local"' in html, \
+            "settings.html missing x-model=\"rule.local\"（本機前綴欄）"
+        assert 'x-model="rule.remote"' in html, \
+            "settings.html missing x-model=\"rule.remote\"（播放端前綴欄）"
+        # 風味 gating：至少含一個 media-server 值（jellyfin）於 x-show
+        assert "['jellyfin','emby','kodi'].includes(form.externalManager)" in html, \
+            "settings.html missing media-server 風味 x-show gating（jellyfin/emby/kodi）"
+        assert '@click="addStrmRule()"' in html, \
+            "settings.html missing 新增規則 @click=\"addStrmRule()\""
+        assert '@click="removeStrmRule(idx)"' in html, \
+            "settings.html missing 刪除 @click=\"removeStrmRule(idx)\""
+
+    def test_config_js_has_methods_and_conversion(self):
+        """state-config.js 含 addStrmRule/removeStrmRule + array→dict Object.fromEntries 寫入"""
+        js = self._config_js()
+        assert "addStrmRule()" in js, "state-config.js missing addStrmRule()"
+        assert "removeStrmRule(idx)" in js, "state-config.js missing removeStrmRule(idx)"
+        # array→dict 序列化錨點
+        assert "Object.fromEntries(" in js, \
+            "state-config.js missing array→dict Object.fromEntries 轉換"
+        assert "strm_path_mappings:" in js, \
+            "state-config.js missing strm_path_mappings 寫入 payload"
+        # 範本回顯 getter
+        assert "strmTemplateDirs" in js, "state-config.js missing strmTemplateDirs getter"
+
+    def test_config_js_no_dict_passthrough(self):
+        """已移除 form.strmPathMappings dict 雙來源（避免 load/save 雙來源 dirty 混淆）"""
+        js = self._config_js()
+        assert "strmPathMappings" not in js, \
+            "state-config.js 仍殘留 strmPathMappings dict passthrough，應改為 strmRules array 單一來源"
+
+    def test_scanner_html_has_cross_machine_hint(self):
+        """TASK-90a-T5: scanner.html 含跨機器提醒（media-server 風味 gate）+ 前往設定連結"""
+        html = SCANNER_HTML.read_text(encoding="utf-8")
+        assert "scanner.folder.cross_machine_hint" in html, \
+            "scanner.html missing 跨機器提醒文案 key"
+        assert "scanner.folder.cross_machine_settings_link" in html, \
+            "scanner.html missing 前往設定路徑替換連結 key"
+        # 提醒的風味 gate（off 隱藏、media-server 顯示）；與提醒同一 x-show 區塊
+        assert "['jellyfin', 'emby', 'kodi'].includes(config?.scraper?.external_manager)" in html, \
+            "scanner.html 跨機器提醒 missing media-server 風味 x-show gating"
+
+
+class TestReadonlyConfirmGuard:
+    """TASK-90b-T1: 唯讀 checkbox 確認 modal 骨架 + 攔截邏輯 結構守衛（string-contains 靜態守衛）"""
+
+    def _html(self):
+        return SCANNER_HTML.read_text(encoding="utf-8")
+
+    def _js(self):
+        return SCANNER_SCAN_JS.read_text(encoding="utf-8")
+
+    def test_scanner_html_checkbox_intercepted(self):
+        """checkbox 已從 x-model 雙向綁定改為 :checked 單向綁定 + @click.prevent 攔截"""
+        html = self._html()
+        assert ':checked="dir.readonly"' in html, \
+            "scanner.html missing :checked=\"dir.readonly\"（單向綁定，避免勾選閃爍）"
+        assert "@click.prevent=\"onReadonlyToggleClick(idx" in html, \
+            "scanner.html missing @click.prevent=\"onReadonlyToggleClick(idx...)\"（checkbox click 攔截）"
+        assert 'x-model="dir.readonly"' not in html, \
+            "scanner.html 仍殘留 x-model=\"dir.readonly\"（應已改為單向 :checked 綁定）"
+
+    def test_scanner_html_has_confirm_modal(self):
+        """新 modal dialog 存在，含確認/取消按鈕綁定"""
+        html = self._html()
+        assert "'modal-open': readonlyConfirmModalOpen" in html, \
+            "scanner.html missing readonlyConfirmModalOpen modal dialog"
+        assert '@click="readonlyConfirmAccept()"' in html, \
+            "scanner.html missing readonlyConfirmAccept() @click 綁定"
+        assert '@click="readonlyConfirmCancel()"' in html, \
+            "scanner.html missing readonlyConfirmCancel() @click 綁定"
+
+    def test_scanner_html_esc_chain_includes_readonly_confirm(self):
+        """:19 Esc 鏈含新 modal 的 cancel"""
+        html = self._html()
+        assert "readonlyConfirmModalOpen && readonlyConfirmCancel()" in html, \
+            "scanner.html Esc 鏈 missing readonlyConfirmModalOpen && readonlyConfirmCancel()"
+
+    def test_scanner_html_i18n_keys_referenced(self):
+        """scanner.html 引用新 i18n key（title/cancel/confirm + body keys）"""
+        html = self._html()
+        for key in [
+            "scanner.readonly_confirm_modal.title",
+            "scanner.readonly_confirm_modal.cancel",
+            "scanner.readonly_confirm_modal.confirm",
+            "scanner.readonly_confirm_modal.intro",
+            "scanner.readonly_confirm_modal.output_hint_offline",
+            "scanner.readonly_confirm_modal.output_hint_media_server",
+            "scanner.readonly_confirm_modal.nas_hint",
+        ]:
+            assert key in html, f"scanner.html missing i18n key 引用: {key!r}"
+
+    def test_state_scan_js_no_detect_readonly(self):
+        """_detectReadonly() 已整支移除（含函式宣告與消費者），不留死碼"""
+        js = self._js()
+        assert "_detectReadonly" not in js, \
+            "state-scan.js 仍殘留 _detectReadonly（應整支移除，含消費者）"
+
+    def test_state_scan_js_new_folders_readonly_false(self):
+        """addFolderPath/addManualPath 新增資料夾一律 readonly: false"""
+        js = self._js()
+        assert js.count("readonly: false") >= 2, \
+            "state-scan.js addFolderPath/addManualPath 應各自 push readonly: false（字面值，非函式呼叫）"
+
+    def test_state_scan_js_has_confirm_state_and_methods(self):
+        """新狀態與方法名齊全"""
+        js = self._js()
+        for expected in [
+            "readonlyConfirmModalOpen",
+            "readonlyConfirmTargetIdx",
+            "onReadonlyToggleClick",
+            "readonlyConfirmCancel",
+            "readonlyConfirmAccept",
+        ]:
+            assert expected in js, f"state-scan.js missing: {expected!r}"
+
+    def test_zh_tw_json_has_readonly_confirm_modal(self):
+        """locales/zh_TW.json 含 scanner.readonly_confirm_modal 節點與必要 key"""
+        zh_tw_path = Path(__file__).parent.parent.parent / "locales" / "zh_TW.json"
+        data = json.loads(zh_tw_path.read_text(encoding="utf-8"))
+        modal = data.get("scanner", {}).get("readonly_confirm_modal")
+        assert modal is not None, "locales/zh_TW.json missing scanner.readonly_confirm_modal 節點"
+        for key in ["title", "cancel", "confirm", "intro",
+                    "output_hint_offline", "output_hint_media_server", "nas_hint"]:
+            assert key in modal, f"scanner.readonly_confirm_modal missing key: {key!r}"
+
+    def test_no_flavor_wording_in_readonly_confirm_modal(self):
+        """文案不得出現「風味」二字（i18n.md 白話用詞規則）"""
+        zh_tw_path = Path(__file__).parent.parent.parent / "locales" / "zh_TW.json"
+        data = json.loads(zh_tw_path.read_text(encoding="utf-8"))
+        modal = data.get("scanner", {}).get("readonly_confirm_modal", {})
+        for key, text in modal.items():
+            assert "風味" not in text, f"scanner.readonly_confirm_modal.{key} 不得含「風味」二字: {text!r}"
+
+
 class TestBatchIntervalGuard:
     """T1(40b): 守衛 batch/translate checkInterval 具名 ref + cleanupForNavigation 明確清理"""
 
@@ -5777,8 +5926,11 @@ class TestJellyfinFrontend:
         for val in ('off', 'jellyfin', 'emby', 'kodi'):
             assert f"'is-on': form.externalManager === '{val}'" in seg_block, \
                 f"settings.html segmented 缺少 externalManager === '{val}' 的 is-on binding"
-            assert f"@click=\"form.externalManager = '{val}'\"" in seg_block, \
-                f"settings.html segmented 缺少 @click 設 externalManager = '{val}'"
+            # 90c-T5：@click 從靜默 form.externalManager='x' 改為攔截式 requestExternalManagerChange('x')
+            assert f"@click=\"requestExternalManagerChange('{val}')\"" in seg_block, \
+                f"settings.html segmented 缺少 @click=\"requestExternalManagerChange('{val}')\"（90c-T5 攔截）"
+            assert f"@click=\"form.externalManager = '{val}'\"" not in seg_block, \
+                f"settings.html segmented 不應殘留舊 @click 直寫 form.externalManager='{val}'（90c-T5 已改攔截）"
 
         # ---- 正斷言：四段 hint x-show（trailing） ----
         for val in ('off', 'jellyfin', 'emby', 'kodi'):
@@ -13702,6 +13854,167 @@ class TestMobileSimilarDrillFallbackGuard:
         )
 
 
+# ─── 90c-T5: external_manager switch-mode destructive confirm frontend guards ─
+
+class TestExternalManagerSwitchModeGuard:
+    """90c-T5: settings.html + state-config.js 全域模式切換破壞性 confirm 靜態守衛。
+
+    四顆 external_manager segmented button 改攔截式 requestExternalManagerChange；
+    有離線來源時跳破壞性 confirm modal → 確認呼叫 T4 endpoint → 三處同步。
+    每個 assertion mutation-sensitive；element-bound（anchor external-manager row）。
+    """
+
+    def _html(self):
+        return SETTINGS_HTML.read_text(encoding="utf-8")
+
+    def _js(self):
+        return SETTINGS_CONFIG_JS.read_text(encoding="utf-8")
+
+    def _seg_block(self):
+        """anchor 到 settings-form-row--external-manager 再抓其 segmented 容器
+        （settings.html 有 ≥3 個 settings-sources-segmented、其中 header 膠囊也帶
+        role=group，故不可全文 substring — element-bound）。"""
+        import re
+        content = self._html()
+        anchor = content.find("settings-form-row--external-manager")
+        assert anchor != -1, "settings.html 缺少 settings-form-row--external-manager 區塊"
+        m = re.search(
+            r'class="settings-sources-segmented" role="group".*?</div>',
+            content[anchor:], re.DOTALL,
+        )
+        assert m, "settings.html 缺少 .settings-sources-segmented[role=group]（外部管理器）"
+        return m.group(0)
+
+    # ── HTML: segmented buttons 改攔截式 ────────────────────────────────────────
+
+    def test_segmented_buttons_call_request_method(self):
+        """四顆 button @click 呼叫 requestExternalManagerChange('x')，不再直寫 form。"""
+        seg = self._seg_block()
+        for val in ("off", "jellyfin", "emby", "kodi"):
+            assert f"@click=\"requestExternalManagerChange('{val}')\"" in seg, \
+                f"segmented 缺少 @click=\"requestExternalManagerChange('{val}')\""
+            assert f"@click=\"form.externalManager = '{val}'\"" not in seg, \
+                f"segmented 不應殘留舊 @click 直寫 form.externalManager='{val}'"
+
+    # ── HTML: confirm modal ─────────────────────────────────────────────────────
+
+    def test_switch_mode_confirm_modal_exists(self):
+        """存在 switch-mode confirm <dialog>：btn-error（破壞性語氣）+ modal-open 綁定 +
+        Esc 鏈 + confirmSwitchMode/cancelSwitchMode 呼叫 + {mode}/{count} 插值 body +
+        CD-90b-11a 多分頁提醒句 + 不含「風味」。"""
+        from bs4 import BeautifulSoup
+        html = self._html()
+        soup = BeautifulSoup(html, "html.parser")
+        dialog = None
+        for d in soup.find_all("dialog"):
+            if "switchModeConfirmOpen" in (d.get(":class") or ""):
+                dialog = d
+                break
+        assert dialog is not None, \
+            "settings.html 缺少 switch-mode confirm <dialog>（:class 綁 switchModeConfirmOpen）"
+        block = str(dialog)
+        # modal-open 綁定
+        assert "modal-open" in (dialog.get(":class") or ""), \
+            "switch-mode dialog :class 缺 'modal-open': switchModeConfirmOpen"
+        # 破壞性語氣：btn-error 確認鈕
+        assert "btn-error" in block, \
+            "switch-mode modal 缺 btn-error 確認鈕（破壞性語氣，CD-90b-13）"
+        assert "btn-primary" not in block, \
+            "switch-mode modal 不應用 btn-primary（破壞性須 btn-error）"
+        # Esc 鏈（modal 級）— 讀 attr 值（避免 BS4 re-serialize 把 && → &amp;&amp;）
+        esc = dialog.get("@keydown.escape.window", "")
+        assert "switchModeConfirmOpen" in esc and "cancelSwitchMode()" in esc, \
+            "switch-mode modal 缺 @keydown.escape.window Esc 鏈"
+        # confirm / cancel 呼叫
+        assert "confirmSwitchMode()" in block, "switch-mode modal 缺 confirmSwitchMode() 呼叫"
+        assert "cancelSwitchMode()" in block, "switch-mode modal 缺 cancelSwitchMode() 呼叫"
+        # {mode}/{count} 插值 body（走 i18n key）
+        assert "settings.switch_mode_confirm.body" in block, \
+            "switch-mode modal 缺 settings.switch_mode_confirm.body i18n 引用"
+        assert "pendingOfflineCount" in block, \
+            "switch-mode modal body 缺 count: pendingOfflineCount 插值"
+        # 不出現「風味」
+        assert "風味" not in block, "switch-mode modal 不應出現「風味」（白話模式名）"
+
+    # ── JS: 三方法 + stub ───────────────────────────────────────────────────────
+
+    def test_state_config_defines_methods_and_stubs(self):
+        """state-config.js 定義 3 方法 + 3 stub（皆在既有 factory 內，無新 init()）。"""
+        js = self._js()
+        for name in ("requestExternalManagerChange", "confirmSwitchMode", "cancelSwitchMode"):
+            assert name in js, f"state-config.js 缺少方法 {name}"
+        for stub in ("switchModeConfirmOpen", "pendingExternalManager", "pendingOfflineCount"):
+            assert stub in js, f"state-config.js 缺少 data stub {stub}"
+
+    def test_request_method_realtime_fetch_and_guard(self):
+        """requestExternalManagerChange 即時 fetch /api/config（非快取）+ 同值 guard return。"""
+        import re
+        js = self._js()
+        m = re.search(
+            r"requestExternalManagerChange\s*\([^)]*\)\s*\{.*?\n        \},",
+            js, re.DOTALL,
+        )
+        assert m, "state-config.js 找不到 requestExternalManagerChange 方法體"
+        body = m.group(0)
+        assert "this.form.externalManager === val" in body, \
+            "requestExternalManagerChange 缺同值 guard return"
+        assert "fetch('/api/config')" in body, \
+            "requestExternalManagerChange 缺即時 fetch('/api/config')（CD-90b-11 ②）"
+        assert "readonly === true" in body, \
+            "requestExternalManagerChange 缺 readonly 離線來源枚舉"
+
+    def test_confirm_syncs_three_places_single_key_savedstate(self):
+        """confirmSwitchMode 同步三處：form.externalManager + savedState.externalManager（單 key）
+        + scannerDirectories 回填；不得整份 re-snapshot savedState。"""
+        import re
+        js = self._js()
+        m = re.search(
+            r"confirmSwitchMode\s*\([^)]*\)\s*\{.*?\n        \},",
+            js, re.DOTALL,
+        )
+        assert m, "state-config.js 找不到 confirmSwitchMode 方法體"
+        body = m.group(0)
+        assert "switch-external-manager" in body, \
+            "confirmSwitchMode 缺 POST /api/config/switch-external-manager"
+        assert "this.form.externalManager = val" in body, \
+            "confirmSwitchMode 缺 form.externalManager 同步"
+        assert "this.savedState.externalManager = val" in body, \
+            "confirmSwitchMode 缺 savedState.externalManager 單 key 同步"
+        assert "this.scannerDirectories" in body, \
+            "confirmSwitchMode 缺 scannerDirectories 回填"
+        # 負守衛：不可整份 re-snapshot（會清掉其他未存 form dirty 態）
+        assert "savedState = JSON.parse" not in body, \
+            "confirmSwitchMode 不應整份 re-snapshot savedState（須單 key 同步）"
+
+    def test_confirm_generate_in_progress_specific_toast(self):
+        """Finding 2：confirmSwitchMode 失敗時依 reason 分流——generate_in_progress
+        顯示專屬提示 key（非只泛用 failed），指路使用者等產生完成。"""
+        import re
+        js = self._js()
+        m = re.search(r"confirmSwitchMode\s*\([^)]*\)\s*\{.*?\n        \},", js, re.DOTALL)
+        assert m, "state-config.js 找不到 confirmSwitchMode 方法體"
+        body = m.group(0)
+        assert "generate_in_progress" in body, \
+            "confirmSwitchMode 失敗分流缺 generate_in_progress reason 判斷"
+        assert "settings.switch_mode_confirm.generate_in_progress" in body, \
+            "confirmSwitchMode 缺 generate_in_progress 專屬 toast i18n key"
+
+    # ── i18n: zh_TW only ────────────────────────────────────────────────────────
+
+    def test_zh_tw_switch_mode_confirm_keys(self):
+        """zh_TW.json 含 settings.switch_mode_confirm.{title,body,cancel,confirm}，body 非空
+        且含 {mode}/{count} 插值（zh_TW only，不做四語 parity）。"""
+        import json
+        data = json.loads((LOCALES_ROOT / "zh_TW.json").read_text(encoding="utf-8"))
+        node = data.get("settings", {}).get("switch_mode_confirm")
+        assert node is not None, "zh_TW.json 缺 settings.switch_mode_confirm 節點"
+        for key in ("title", "body", "cancel", "confirm", "generate_in_progress"):
+            assert node.get(key), f"zh_TW.json settings.switch_mode_confirm.{key} 缺或空"
+        assert "{mode}" in node["body"] and "{count}" in node["body"], \
+            "settings.switch_mode_confirm.body 缺 {mode}/{count} 插值"
+        assert "風味" not in node["body"], "switch_mode_confirm.body 不應出現「風味」"
+
+
 # ─── 80a-T3: Server Mode toggle + info banner frontend guards ───────────────
 
 SETTINGS_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "settings.css"
@@ -16054,10 +16367,14 @@ class TestDirReadonlyUIGuard:
         return (self._ROOT / "web" / "static" / "js" / "pages" / "scanner" / "state-scan.js").read_text(encoding="utf-8")
 
     def test_scanner_html_readonly_checkbox(self):
-        """scanner.html 含 x-model="dir.readonly"（唯讀 checkbox 綁定）"""
+        """scanner.html 含 :checked="dir.readonly"（唯讀 checkbox 綁定）
+
+        TASK-90b-T1: 改為單向 :checked 綁定 + @click.prevent 攔截（經確認 modal
+        才真正生效），不再是雙向 x-model（見 TestReadonlyConfirmGuard）。
+        """
         html = self._scanner_html()
-        assert 'x-model="dir.readonly"' in html, \
-            'scanner.html 缺 x-model="dir.readonly" — 唯讀 checkbox 未加'
+        assert ':checked="dir.readonly"' in html, \
+            'scanner.html 缺 :checked="dir.readonly" — 唯讀 checkbox 未加'
 
     def test_scanner_html_output_path_input(self):
         """scanner.html 含 x-model="dir.output_path"（輸出夾 input 綁定）"""
@@ -16120,3 +16437,301 @@ class TestOutputPathVisibilityGuard:
         # forbidden：fail-open 寫法（undefined !== 'off' 為 true → off 未載入前也會顯示）
         assert "!== 'off'" not in xshow, \
             f".folder-item-output x-show 不可用 fail-open 的 !== 'off'，實際: {xshow!r}"
+
+
+class TestReadonlyDisabledStateGuard:
+    """TASK-90c-T3 — 唯讀來源片四寫入入口停用態鏡像守衛（element-bound）。
+
+    ①缺圖卡 enrich / ②燈箱補資料 / ③補劇照 / ④齒輪 進階重刮 皆須綁
+    :disabled（含 is_readonly_source + !! 布林強制）、:class（is-readonly-disabled）、
+    導引 tooltip（含 readonly_tooltip）；讀取類（播放/開資料夾/探索相似）不得綁 readonly。
+    """
+
+    _ROOT = Path(__file__).parent.parent.parent
+
+    def _html(self):
+        return SHOWCASE_HTML.read_text(encoding="utf-8")
+
+    def _css(self):
+        return SHOWCASE_CSS.read_text(encoding="utf-8")
+
+    def _btn_by_click(self, html, click_expr):
+        """element-bound：以唯一 @click 表達式定位 <button ...> 開標籤（多行 DOTALL）。"""
+        m = re.search(
+            r'<button\b[^>]*' + re.escape(click_expr) + r'[^>]*>',
+            html, re.DOTALL,
+        )
+        return m.group(0) if m else None
+
+    def _btn_by_class(self, html, cls):
+        m = re.search(
+            r'<button\b[^>]*class="[^"]*' + re.escape(cls) + r'[^"]*"[^>]*>',
+            html, re.DOTALL,
+        )
+        return m.group(0) if m else None
+
+    @staticmethod
+    def _attr(tag, attr):
+        """抽取 tag 中某屬性（含 : 前綴 Alpine bind）的值字串。"""
+        m = re.search(
+            re.escape(attr) + r'\s*=\s*"([^"]*)"',
+            tag, re.DOTALL,
+        )
+        return m.group(1) if m else None
+
+    def test_grid_enrich_btn_readonly_disabled(self):
+        """① 缺圖卡 enrich（enrichVideo(video)）綁 readonly disabled + class + title 導引"""
+        html = self._html()
+        tag = self._btn_by_click(html, "enrichVideo(video)")
+        assert tag is not None, "showcase.html 找不到 缺圖卡 enrichVideo(video) 按鈕"
+        disabled = self._attr(tag, ":disabled")
+        assert disabled is not None, "① 缺圖卡 enrich 缺 :disabled binding"
+        assert "is_readonly_source" in disabled, \
+            f"① :disabled 應 OR-combine is_readonly_source，實際: {disabled!r}"
+        assert disabled.startswith("!!") or "=== true" in disabled, \
+            f"① :disabled 缺布林強制（!! 或 === true），實際: {disabled!r}"
+        assert "_enriching" in disabled, \
+            f"① :disabled 應保留既有 _enriching，實際: {disabled!r}"
+        cls = self._attr(tag, ":class")
+        assert cls is not None and "is-readonly-disabled" in cls, \
+            f"① :class 應含 is-readonly-disabled，實際: {cls!r}"
+        title = self._attr(tag, ":title")
+        assert title is not None and "readonly_tooltip" in title, \
+            f"① :title 應三元切換含 readonly_tooltip，實際: {title!r}"
+
+    def test_lightbox_enrich_btn_readonly_disabled(self):
+        """② 燈箱補資料（enrichVideo(currentLightboxVideo)）綁 readonly + class + data-tooltip"""
+        html = self._html()
+        tag = self._btn_by_click(html, "enrichVideo(currentLightboxVideo)")
+        assert tag is not None, "showcase.html 找不到 燈箱 enrichVideo(currentLightboxVideo) 按鈕"
+        disabled = self._attr(tag, ":disabled")
+        assert disabled is not None, "② 燈箱補資料 缺 :disabled binding"
+        assert "currentLightboxVideo?.is_readonly_source" in disabled, \
+            f"② :disabled 應含 currentLightboxVideo?.is_readonly_source，實際: {disabled!r}"
+        assert disabled.startswith("!!") or "=== true" in disabled, \
+            f"② :disabled 缺布林強制，實際: {disabled!r}"
+        assert "_enriching" in disabled, \
+            f"② :disabled 應保留既有 _enriching，實際: {disabled!r}"
+        cls = self._attr(tag, ":class")
+        assert cls is not None and "is-readonly-disabled" in cls, \
+            f"② :class 應含 is-readonly-disabled，實際: {cls!r}"
+        tooltip = self._attr(tag, ":data-tooltip")
+        assert tooltip is not None and "readonly_tooltip" in tooltip, \
+            f"② :data-tooltip 應三元含 readonly_tooltip（Jinja 靜態需改 Alpine 綁定），實際: {tooltip!r}"
+
+    def test_fetch_samples_btn_readonly_disabled(self):
+        """③ 補劇照 :disabled 同含 is_readonly_source 與 _fetchSamplesFailed（保留既有）"""
+        html = self._html()
+        tag = self._btn_by_class(html, "fetch-samples-btn")
+        assert tag is not None, "showcase.html 找不到 fetch-samples-btn"
+        disabled = self._attr(tag, ":disabled")
+        assert disabled is not None, "③ 補劇照 缺 :disabled binding"
+        assert "is_readonly_source" in disabled, \
+            f"③ :disabled 應 OR-combine is_readonly_source，實際: {disabled!r}"
+        assert "_fetchSamplesFailed" in disabled, \
+            f"③ :disabled 必須保留 _fetchSamplesFailed（否則 TestFetchSamplesButton 回歸），實際: {disabled!r}"
+        assert disabled.startswith("!!") or "=== true" in disabled, \
+            f"③ :disabled 缺布林強制，實際: {disabled!r}"
+        cls = self._attr(tag, ":class")
+        assert cls is not None and "is-readonly-disabled" in cls, \
+            f"③ :class 應含 is-readonly-disabled，實際: {cls!r}"
+        # N1: fetch-samples-bt 無 .lb-action-btn[data-tooltip]::after 樣式泡泡 → 導引改用 native :title（disabled 仍渲染）
+        title = self._attr(tag, ":title")
+        assert title is not None and "readonly_tooltip" in title, \
+            f"③ 導引須走 native :title 含 readonly_tooltip（:data-tooltip 於此鈕不渲染），實際: {title!r}"
+        aria = self._attr(tag, ":aria-label")
+        assert aria is not None and "readonly_tooltip" in aria, \
+            f"③ 須補 :aria-label 含 readonly_tooltip（原無 aria-label，SR 使用者需要），實際: {aria!r}"
+
+    def test_rescrape_gear_readonly_disabled(self):
+        """④ 齒輪進階重刮（lb-rescrape-gear）新增 readonly disabled + class + tooltip 三元"""
+        html = self._html()
+        tag = self._btn_by_class(html, "lb-rescrape-gear")
+        assert tag is not None, "showcase.html 找不到 lb-rescrape-gear"
+        disabled = self._attr(tag, ":disabled")
+        assert disabled is not None, "④ 齒輪 缺 :disabled binding（本 task 新增）"
+        assert "currentLightboxVideo?.is_readonly_source" in disabled, \
+            f"④ :disabled 應綁 currentLightboxVideo?.is_readonly_source，實際: {disabled!r}"
+        assert disabled.startswith("!!") or "=== true" in disabled, \
+            f"④ :disabled 缺布林強制，實際: {disabled!r}"
+        cls = self._attr(tag, ":class")
+        assert cls is not None and "is-readonly-disabled" in cls, \
+            f"④ :class 應含 is-readonly-disabled，實際: {cls!r}"
+        # N1: 齒輪 :data-tooltip 泡泡（entry_tooltip）pre-T3 已死 → 導引走 native :title（disabled 仍渲染）
+        title = self._attr(tag, ":title")
+        assert title is not None and "readonly_tooltip" in title, \
+            f"④ 導引須走 native :title 含 readonly_tooltip，實際: {title!r}"
+
+    def test_readonly_disabled_visual_no_line_through(self):
+        """.is-readonly-disabled 含 cursor: not-allowed + opacity，且無 line-through/text-decoration"""
+        css = self._css()
+        m = re.search(
+            r'\.is-readonly-disabled\b[^{]*\{([^}]*)\}',
+            css, re.DOTALL,
+        )
+        assert m is not None, "showcase.css 缺 .is-readonly-disabled class"
+        body = m.group(1)
+        assert "cursor:" in body and "not-allowed" in body, \
+            f".is-readonly-disabled 應含 cursor: not-allowed，實際: {body!r}"
+        assert "opacity" in body, \
+            f".is-readonly-disabled 應含 opacity（停用淺色），實際: {body!r}"
+        # 跨整條 rule 群組（含 :hover）不得出現刪除線
+        block_start = m.start()
+        block_region = css[block_start:block_start + 600]
+        assert "line-through" not in block_region, \
+            ".is-readonly-disabled 不應含 line-through（spec：無刪除線）"
+        assert "text-decoration" not in block_region, \
+            ".is-readonly-disabled 不應含 text-decoration（spec：無刪除線）"
+
+    def test_rescrape_gear_hover_gated_not_disabled(self):
+        """N2: 齒輪 :hover 規則須 :not(:disabled)-gated（readonly=disabled 不 match → 無 hover 反饋回歸）"""
+        css = self._css()
+        # 齒輪 hover 規則須帶 :not(:disabled)；且不得殘留未 gate 的裸 :hover
+        assert re.search(
+            r'\.lightbox-metadata\s+\.lb-rescrape-gear:not\(:disabled\):hover\b',
+            css,
+        ), ".lightbox-metadata .lb-rescrape-gear:hover 應改為 :not(:disabled):hover（否則 disabled 齒輪仍變色）"
+        assert not re.search(
+            r'\.lightbox-metadata\s+\.lb-rescrape-gear:hover\b',
+            css,
+        ), "不應殘留未 gate 的 .lb-rescrape-gear:hover（specificity 會蓋過 .is-readonly-disabled）"
+
+    def test_read_type_buttons_not_readonly_disabled(self):
+        """讀取類（播放/開資料夾/探索相似）不得綁 is_readonly_source（防誤傷）"""
+        html = self._html()
+        for click_expr in [
+            "playVideo(video.path)",
+            "openLocal(video.path)",
+            "playVideo(currentLightboxVideo?.path)",
+            "openLocal(currentLightboxVideo?.path)",
+            "openSimilarMode()",
+        ]:
+            tag = self._btn_by_click(html, click_expr)
+            assert tag is not None, f"showcase.html 找不到讀取類按鈕: {click_expr}"
+            assert "is_readonly_source" not in tag, \
+                f"讀取類按鈕 {click_expr} 不應綁 is_readonly_source（讀取不受唯讀影響）"
+
+    def test_readonly_tooltip_i18n_key_zh_tw(self):
+        """zh_TW showcase.enrich.readonly_tooltip 存在且非空（zh_TW only，無四語 parity 斷言）"""
+        data = json.loads(
+            (self._ROOT / "locales" / "zh_TW.json").read_text(encoding="utf-8")
+        )
+        val = data.get("showcase", {}).get("enrich", {}).get("readonly_tooltip")
+        assert val, "zh_TW.json 缺 showcase.enrich.readonly_tooltip（或為空）"
+
+
+class TestRewriteStrmConfirmGuard:
+    """TASK-90c-T6: strm 改寫存後鉤 + heads-up confirm modal 結構守衛（element-bound）"""
+
+    def _html(self):
+        return SETTINGS_HTML.read_text(encoding="utf-8")
+
+    def _js(self):
+        return SETTINGS_CONFIG_JS.read_text(encoding="utf-8")
+
+    def test_settings_html_has_rewrite_confirm_modal(self):
+        """confirm modal dialog 存在，含確認/取消 @click 綁定。"""
+        html = self._html()
+        assert "'modal-open': rewriteStrmConfirmOpen" in html, \
+            "settings.html missing rewriteStrmConfirmOpen modal dialog"
+        assert '@click="confirmRewriteStrm()"' in html, \
+            "settings.html missing confirmRewriteStrm() @click 綁定"
+        assert '@click="cancelRewriteStrm()"' in html, \
+            "settings.html missing cancelRewriteStrm() @click 綁定"
+
+    def test_settings_html_rewrite_esc_chain(self):
+        """Esc 鏈含新 modal 的 cancel。"""
+        html = self._html()
+        assert "rewriteStrmConfirmOpen && cancelRewriteStrm()" in html, \
+            "settings.html Esc 鏈 missing rewriteStrmConfirmOpen && cancelRewriteStrm()"
+
+    def test_settings_html_rewrite_headsup_tone(self):
+        """heads-up 語氣：確認鈕用 btn-primary（非破壞性），不得綁 btn-error。"""
+        html = self._html()
+        assert 'class="btn btn-primary" @click="confirmRewriteStrm()"' in html, \
+            "settings.html rewrite confirm 鈕應為 btn-primary（heads-up 非破壞性）"
+        assert 'btn-error" @click="confirmRewriteStrm()"' not in html, \
+            "settings.html rewrite confirm 鈕不得用 btn-error（非破壞性操作）"
+
+    def test_settings_html_rewrite_i18n_body_with_count(self):
+        """body 綁對 i18n key 且帶 {count} 插值。"""
+        html = self._html()
+        assert "settings.scraper.strm_mapping.rewrite_confirm.body" in html, \
+            "settings.html missing rewrite_confirm.body i18n key 引用"
+        # body 插值 count（element-bound：body key 與 count: pendingRewriteCount 同一 x-text 表達式）
+        idx = html.find("settings.scraper.strm_mapping.rewrite_confirm.body")
+        assert "pendingRewriteCount" in html[idx:idx + 200], \
+            "settings.html rewrite_confirm.body x-text missing count: pendingRewriteCount 插值"
+        for key in ["title", "cancel", "confirm"]:
+            assert f"settings.scraper.strm_mapping.rewrite_confirm.{key}" in html, \
+                f"settings.html missing rewrite_confirm.{key} i18n key 引用"
+
+    def test_config_js_stubs_declared(self):
+        """新狀態先在 x-data 宣告 stub（Alpine 3 未宣告屬性 ReferenceError）。"""
+        js = self._js()
+        assert "rewriteStrmConfirmOpen: false" in js, \
+            "state-config.js missing rewriteStrmConfirmOpen stub 宣告"
+        assert "pendingRewriteCount: 0" in js, \
+            "state-config.js missing pendingRewriteCount stub 宣告"
+
+    def test_config_js_methods_present(self):
+        """confirm/cancel 方法齊全。"""
+        js = self._js()
+        assert "confirmRewriteStrm()" in js, "state-config.js missing confirmRewriteStrm()"
+        assert "cancelRewriteStrm()" in js, "state-config.js missing cancelRewriteStrm()"
+
+    def test_config_js_saveconfig_hook_condition(self):
+        """saveConfig 存後鉤：media-server && 映射變更 → dry-run 計數（element-bound）。"""
+        js = self._js()
+        # dry-run 端點呼叫
+        assert "/api/config/rewrite-strm?dry_run=true" in js, \
+            "state-config.js missing dry-run 計數呼叫"
+        # 條件：映射實際變更（strmChanged）
+        assert "prevStrmMappings" in js, \
+            "state-config.js missing prevStrmMappings 存前快照（映射變更判定）"
+        # 條件：media-server gate
+        assert "['jellyfin', 'emby', 'kodi'].includes(this.form.externalManager)" in js, \
+            "state-config.js saveConfig 鉤 missing media-server 模式 gate"
+
+    def test_config_js_confirm_calls_real_endpoint_and_toast(self):
+        """confirmRewriteStrm 呼叫實際端點 + rewrite_done toast（帶 rewritten）。"""
+        js = self._js()
+        idx = js.find("async confirmRewriteStrm()")
+        assert idx != -1, "state-config.js missing async confirmRewriteStrm()"
+        # 界定到方法尾（cancelRewriteStrm 起）——涵蓋 success/else/catch 三分支，避免固定字元窗截斷。
+        end = js.find("cancelRewriteStrm()", idx)
+        block = js[idx:end if end != -1 else idx + 1200]
+        assert "'/api/config/rewrite-strm'" in block, \
+            "confirmRewriteStrm missing 實際改寫端點呼叫（無 dry_run）"
+        assert "settings.scraper.strm_mapping.rewrite_done" in block, \
+            "confirmRewriteStrm missing rewrite_done toast i18n key"
+        assert "result.rewritten" in block, \
+            "confirmRewriteStrm toast 應帶端點回的精確 rewritten 數"
+        # Codex P2：改寫失敗（success:false 或 throw）不可靜默——須 error toast，
+        # 否則使用者誤以為「改規則即改寫」已發生（新映射已落盤但既有 .strm 未更新）。
+        assert block.count("settings.scraper.strm_mapping.rewrite_failed") >= 2, \
+            "confirmRewriteStrm 的 success:false 與 catch 兩分支都須發 rewrite_failed error toast"
+
+    def test_zh_tw_json_has_rewrite_keys(self):
+        """locales/zh_TW.json 含 rewrite_confirm 節點 + rewrite_done（只驗 zh_TW，無 4-locale parity）。"""
+        zh_tw_path = Path(__file__).parent.parent.parent / "locales" / "zh_TW.json"
+        data = json.loads(zh_tw_path.read_text(encoding="utf-8"))
+        strm = data.get("settings", {}).get("scraper", {}).get("strm_mapping", {})
+        confirm = strm.get("rewrite_confirm")
+        assert confirm is not None, "zh_TW.json missing settings.scraper.strm_mapping.rewrite_confirm 節點"
+        for key in ["title", "body", "cancel", "confirm"]:
+            assert key in confirm, f"rewrite_confirm missing key: {key!r}"
+        assert "{count}" in confirm["body"], "rewrite_confirm.body 應含 {count} 插值"
+        assert "rewrite_done" in strm, "zh_TW.json missing strm_mapping.rewrite_done"
+        assert "{count}" in strm["rewrite_done"], "rewrite_done 應含 {count} 插值"
+        assert strm.get("rewrite_failed"), "zh_TW.json missing strm_mapping.rewrite_failed（改寫失敗 toast）"
+
+    def test_no_flavor_wording_in_rewrite_keys(self):
+        """文案不得出現「風味」二字（i18n.md 白話用詞規則）。"""
+        zh_tw_path = Path(__file__).parent.parent.parent / "locales" / "zh_TW.json"
+        data = json.loads(zh_tw_path.read_text(encoding="utf-8"))
+        strm = data.get("settings", {}).get("scraper", {}).get("strm_mapping", {})
+        confirm = strm.get("rewrite_confirm", {})
+        for key, text in confirm.items():
+            assert "風味" not in text, f"rewrite_confirm.{key} 不得含「風味」: {text!r}"
+        assert "風味" not in strm.get("rewrite_done", ""), "rewrite_done 不得含「風味」"

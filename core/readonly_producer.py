@@ -440,6 +440,7 @@ def _clean_stale_singletons(
     has_cover: bool,
     has_poster: bool,
     has_fanart: bool,
+    has_strm: bool = False,
 ) -> None:
     """Delete this movie's own previous-run singleton assets (nfo/cover/poster/
     fanart), anchored strictly on old_base.
@@ -460,7 +461,8 @@ def _clean_stale_singletons(
 
     Each asset is deleted only when this run's corresponding write actually
     succeeded: `<old_base>.jpg` only when has_cover, `<old_base>-poster.*` only
-    when has_poster, `<old_base>-fanart.*` only when has_fanart. A transient
+    when has_poster, `<old_base>-fanart.*` only when has_fanart, `<old_base>.strm`
+    only when has_strm (TASK-90a-T3, media-server flavour). A transient
     download/generation failure this run keeps the matching old file on disk
     rather than leaving a hole. `<old_base>.nfo` is unconditional — this
     function is only ever called once nfo_ok is already True.
@@ -484,6 +486,14 @@ def _clean_stale_singletons(
     targets = [d / f"{old_base}.nfo"]
     if has_cover:
         targets.append(d / f"{old_base}.jpg")
+    # strm is a media-server flavour extra (TASK-90a-T3): exact filename, no glob
+    # (literal join like nfo/cover, no glob.escape needed). Only cleaned when this
+    # run actually re-wrote the strm (has_strm) — a transient strm write failure
+    # keeps the old <old_base>.strm rather than orphaning it, symmetric with
+    # has_cover/has_poster/has_fanart gating. Prevents a title-drift double
+    # library entry in Emby/Jellyfin (<old>.strm + <new>.strm side by side).
+    if has_strm:
+        targets.append(d / f"{old_base}.strm")
     if has_poster:
         targets.extend(d.glob(f"{esc}-poster.*"))
     if has_fanart:
@@ -493,6 +503,115 @@ def _clean_stale_singletons(
             Path(target).unlink(missing_ok=True)
         except OSError:
             logger.warning("[readonly_producer] stale asset 清除失敗（略過）: %s", target)
+
+
+# ---------------------------------------------------------------------------
+# TASK-90a-T3: media-server .strm sidecar (CD-90a-2 / CD-90a-6)
+# ---------------------------------------------------------------------------
+
+def _apply_path_mapping(source_fs_path: str, mappings: dict) -> str:
+    """Rewrite a source FS-path prefix to the playback-side namespace.
+
+    strm files are consumed by an external media server (Emby/Jellyfin/Kodi) that
+    may see the same physical storage under a DIFFERENT mount path than OpenAver's
+    host (e.g. OpenAver on Windows sees ``Z:\\115\\x.mp4`` while the media server
+    on the NAS sees ``/volume1/movie/x.mp4``). mappings maps ``local_prefix ->
+    remote_prefix``; the matched prefix is swapped and the remainder appended.
+
+    Matching is done in ``file:///`` URI space: both source and each local_prefix
+    are converged via ``to_file_uri`` (host-independent, never raises, no
+    percent-encoding in this codebase). This fixes two Codex findings:
+
+    - P1 (cross-namespace silent miss): a Windows-display prefix ``C:\\115`` in
+      config now matches a WSL-native source ``/mnt/c/115/x.mp4`` (both converge
+      to ``file:///C:/115``). Raw-string compare would have silently missed and
+      emitted the un-mapped source path.
+    - P2 (trailing separator): a local_prefix with a trailing separator
+      (``/mnt/z/115/``) no longer misses — the URI form is rstrip'd of ``/``.
+
+    A rule matches when the source URI equals the (trailing-slash-stripped) local
+    URI OR the char immediately after it is ``/`` (URIs always use forward-slash,
+    so no OS branch). This stops ``file:///Z:/1150/a`` from wrongly matching a
+    ``file:///Z:/115`` rule. When several rules match, the LONGEST local URI wins
+    (deterministic, independent of dict insertion order). Empty mappings or no
+    match returns source_fs_path unchanged (v1 backward compat).
+
+    CD-90a-6: only source/local_prefix are converged (for MATCHING). The remote
+    result is written VERBATIM and is NEVER normalized — it is a foreign playback
+    namespace (a bare Unix ``/volume1/...`` fed to to_windows_path on a Windows
+    host raises). We only rstrip trailing separators off remote_prefix for join
+    hygiene; the appended remainder is taken from the URI (always forward-slash).
+    """
+    if not mappings:
+        return source_fs_path
+    su = to_file_uri(source_fs_path)  # converge source → file:/// URI (host-independent, no raise)
+    matched = []
+    for local_prefix, remote_prefix in mappings.items():
+        # remote 空的半填規則 skip（PR #93 P2 縱深防禦）：remote='' 會讓下方
+        # `remote.rstrip() + su[len(lu):]` 把 local 前綴剝掉只剩後綴（如 /movie.mp4）、
+        # 破壞 strm 內容。前端已過濾不存半填規則，此處防手改 config.json。只擋空字串；
+        # 非字串 remote 仍照舊流到 rstrip 拋 TypeError → _write_strm best-effort 接（契約不變）。
+        if isinstance(remote_prefix, str) and not remote_prefix.strip():
+            continue
+        lu = to_file_uri(local_prefix).rstrip('/')  # converge + strip trailing sep (P2); URI is always '/'
+        if su == lu or (su.startswith(lu) and su[len(lu):len(lu) + 1] == '/'):
+            matched.append((lu, remote_prefix))
+    if not matched:
+        return source_fs_path
+    lu, remote_prefix = max(matched, key=lambda kv: len(kv[0]))
+    # path-contract-ok: remote 為播放端命名空間、verbatim 寫入不 normalize；僅去尾分隔符做
+    # join 衛生（remainder 由 URI 取、恆前導 '/'）。source/local 收斂到 file:/// URI 供比對修
+    # Codex P1（跨命名空間 C:\ ↔ /mnt/c/ 靜默失效）+ P2（尾分隔符）。
+    return remote_prefix.rstrip('/\\') + su[len(lu):]
+
+
+def _write_strm(base_stem: str, source_fs_path: str, config: dict, strm_mappings: dict = None) -> bool:
+    """Write a single-line ``<base_stem>.strm`` pointing at the source video (best-effort).
+
+    Content = _apply_path_mapping(source_fs_path, mappings) written as one UTF-8
+    line, no BOM. The REMOTE side is written verbatim / never normalized; matching
+    converges source+local_prefix to file:/// URI space (see _apply_path_mapping /
+    CD-90a-6).
+
+    config is the scraper section (produce_source passes scraper_cfg at call site);
+    the mapping table defaults to a SAME-LEVEL read — ``config.get('strm_path_mappings', {})``,
+    NOT via a nested ``config.get('scraper', ...)`` (that would always yield {} and
+    silently disable mappings). This mirrors line ~580's same-level
+    ``config.get('external_manager', 'off')`` read.
+
+    strm_mappings (PR #93 五審四次 P2, option C): when provided (not None), it OVERRIDES
+    ``config['strm_path_mappings']`` — produce_source passes a FRESH per-file read so the
+    generate path uses the current mapping, not the run-start frozen snapshot. This closes
+    the disconnect-tail residual: the SSE watcher clears the generate token the instant it
+    detects a disconnect, but the producer thread only checks should_abort at each per-file
+    checkpoint, so it can finish ONE more file's _write_strm after the token is gone → in that
+    window another tab's settings save could land a new mapping (the strm-mapping gate no
+    longer sees an in-flight generate) and that last file would otherwise write with the STALE
+    frozen mapping and never self-heal. A fresh read makes even that last file use the current
+    mapping. None preserves the legacy read (rewrite_strm + unit tests pass config verbatim).
+
+    Best-effort (spec-90 §90a.2.2): strm is an EXTRA product for external media
+    servers, not an OpenAver-required asset. A write failure logs a warning and
+    returns False — it never raises, never marks the whole movie failed (unlike
+    NFO, which is OpenAver's own required metadata). Returns True on success; the
+    bool also feeds _clean_stale_singletons' has_strm gating.
+    """
+    strm_fs = base_stem + '.strm'
+    try:
+        # mapping + write both inside try: raw config is NOT model_validated on the
+        # read path (_load_config_unlocked returns raw dict), so a hand-edited
+        # config.json with non-str mapping values could make _apply_path_mapping
+        # TypeError. best-effort's promise (§90a.2.2: strm never fails the movie)
+        # must hold even then — catch broadly, warn, return False. Any masked bug
+        # still surfaces via the warning log.
+        mappings = strm_mappings if strm_mappings is not None else config.get('strm_path_mappings', {})
+        mapped = _apply_path_mapping(source_fs_path, mappings)
+        with open(strm_fs, 'w', encoding='utf-8') as f:
+            f.write(mapped)
+        return True
+    except Exception as e:  # noqa: BLE001 — best-effort auxiliary artifact, must never propagate
+        logger.warning("[readonly_producer] strm 寫入失敗（略過，best-effort）: %s (%s)", strm_fs, e)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +625,7 @@ def _write_movie_assets(
     source_fs_path: str,
     config: dict,
     old_base: str = '',
+    strm_mappings_getter=None,
 ) -> dict:
     """Write nfo + cover + -poster/-fanart + extrafanart to movie_dir.
 
@@ -559,6 +679,7 @@ def _write_movie_assets(
     # claims a movie was generated when the NFO is missing ("每片成功生成後寫一筆").
     # Cover/poster/fanart stay best-effort: a missing cover is acceptable per C6
     # (cold title with no image) and self-heals on the next incremental run.
+    external_manager = config.get('external_manager', 'off')
     nfo_fs = base_stem + '.nfo'
     nfo_ok = generate_nfo(
         number=meta['number'],
@@ -577,15 +698,30 @@ def _write_movie_assets(
         label=meta.get('label', ''),
         summary=meta.get('_summary', ''),
         rating=meta.get('_rating'),
-        external_manager=config.get('external_manager', 'off'),
+        external_manager=external_manager,
     )
     if not nfo_ok:
         raise RuntimeError(f"NFO write failed: {nfo_fs}")
 
+    # 5) strm sidecar — media-server flavours only (TASK-90a-T3). off / non
+    # media-server → no strm. best-effort: a write failure returns False and
+    # feeds has_strm gating below (transient failure keeps the old strm).
+    # strm_mappings_getter 在此（_write_strm 前一刻、封面/NFO 都寫完後）才求值，讓斷線尾巴那片
+    # 用「真正落 .strm 那一刻」的映射而非片處理開頭的 snapshot（五審五次 Codex）。短路：只在
+    # media-server 分支求值（off 不寫 strm），getter=None → None → _write_strm 回退凍結 config。
+    has_strm = (
+        _write_strm(
+            base_stem, source_fs_path, config,
+            strm_mappings=(strm_mappings_getter() if strm_mappings_getter is not None else None),
+        )
+        if external_manager in ('jellyfin', 'emby', 'kodi')
+        else False
+    )
+
     # Singleton stale-cleanup runs LAST, only after the new NFO write is confirmed
     # (T5 follow-up, Codex PR review P2) — see docstring above for why this is
     # post-write rather than pre-write.
-    _clean_stale_singletons(movie_dir, old_base, new_base, has_cover, has_poster, has_fanart)
+    _clean_stale_singletons(movie_dir, old_base, new_base, has_cover, has_poster, has_fanart, has_strm)
     return {'cover_fs': cover_fs if has_cover else '', 'sample_fs': sample_fs}
 
 
@@ -648,11 +784,22 @@ def _emit(on_progress, result, source_uri, status, movie_dir="", number="", erro
         on_progress(outcome)
 
 
-def produce_source(source, config, repo, *, proxy_url="", on_progress=None, should_abort=None, force: bool = False, reachable: bool = True) -> ProduceResult:
+def produce_source(source, config, repo, *, proxy_url="", on_progress=None, should_abort=None, force: bool = False, reachable: bool = True, strm_mappings_getter=None) -> ProduceResult:
     """Orchestrate per-source readonly generation: guard → list → skip → scrape → write → upsert.
 
     Pure service layer. NO FastAPI, NO SSE, NO router. (CD-88b-8, §1.1)
     Caller (88c) injects on_progress/should_abort for SSE streaming.
+
+    strm_mappings_getter (PR #93 五審四次 P2, option C): optional 0-arg callable returning the
+    CURRENT strm_path_mappings dict, read fresh per file. The SSE generate path injects one that
+    re-reads config from disk so the strm sidecar uses the live mapping, not the run-start frozen
+    snapshot — closing the disconnect-tail residual (watcher clears the generate token the instant
+    it detects a disconnect, but the producer only checks should_abort at each per-file checkpoint,
+    so it can finish one more file's _write_strm after the token is gone; in that window another tab
+    could land a new mapping and this last file would otherwise write with the stale frozen value,
+    never self-healing). None (default) → the frozen config mapping is used, so every existing
+    caller/test is behaviourally unchanged and no config re-read happens. Only consulted for
+    media-server flavours (off writes no strm).
     """
     result = ProduceResult(source_path=source.path, output_path=source.output_path or "")
 
@@ -723,7 +870,17 @@ def produce_source(source, config, repo, *, proxy_url="", on_progress=None, shou
                 fd, scraper_cfg, allocated_this_run, path_mappings,
             )
             old_base = _build_old_base(existing, fi["path"], scraper_cfg)  # T4: '' when no prior row/title/number
-            assets = _write_movie_assets(str(movie_dir), meta, fd, fi["path"], scraper_cfg, old_base=old_base)
+            # PR #93 五審四次 P2 (option C)：media-server 模式下，每片用注入的 getter 重讀 fresh
+            # strm_path_mappings（非 generate 起始凍結值）。封死斷線尾巴殘留——watcher 偵測到斷線
+            # 即清 generate token，但 producer 每片 checkpoint 才看 should_abort，會多做完當下這片；
+            # 此時另一分頁可能已存新映射（gate 見不到在飛 generate 而放行），該片若用凍結舊映射落檔則
+            # 永久 stale。傳 getter callable（非此刻 snapshot）往下，讓 _write_movie_assets 在
+            # _write_strm 前一刻才求值（五審五次 Codex：snapshot 在此求值後、封面/NFO 等寫檔仍需時間，
+            # 期間存的新映射會被漏掉）。getter=None（既有呼叫/測試）→ 回退凍結 config、零重讀、行為不變。
+            assets = _write_movie_assets(
+                str(movie_dir), meta, fd, fi["path"], scraper_cfg,
+                old_base=old_base, strm_mappings_getter=strm_mappings_getter,
+            )
             _upsert_db(repo, src_uri, fi, meta, assets, path_mappings, output_dir_uri)
             result.created += 1
             _emit(on_progress, result, src_uri, "created", str(movie_dir), number)

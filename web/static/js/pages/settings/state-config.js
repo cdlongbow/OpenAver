@@ -33,6 +33,7 @@ export function stateConfig() {
             suffixKeywords: [],
             externalManager: 'off',
             downloadSampleImages: false,
+            strmRules: [],   // strm 路徑映射編輯狀態（array of {local, remote}）；load/save 兩端與 dict 對稱轉換
 
             // Gallery
             avlistMode: 'image',
@@ -58,6 +59,17 @@ export function stateConfig() {
         serverMode: false,
         lanIp: '',
         lanPort: null,
+
+        // ===== 全域模式切換破壞性 confirm State (90c-T5) =====
+        switchModeConfirmOpen: false,
+        pendingExternalManager: null,
+        pendingOfflineCount: 0,
+        _pendingWritableDirs: null,
+
+        // ===== strm 改寫確認 State (90c-T6) =====
+        // 存規則後：若映射變更 && media-server && 有既有 strm → heads-up 確認再改寫既有 .strm
+        rewriteStrmConfirmOpen: false,
+        pendingRewriteCount: 0,
 
         // ===== Dirty Check State =====
         savedState: null,
@@ -443,6 +455,110 @@ export function stateConfig() {
             }
         },
 
+        // 90c-T5: 全域模式切換破壞性 confirm ─────────────────────────────────────
+        // 攔截 external_manager segmented button：即時 fetch 判離線來源 → 有則跳破壞性
+        // confirm（消費 T4 POST /api/config/switch-external-manager）→ 成功後同步三處。
+        async requestExternalManagerChange(val) {
+            if (this.form.externalManager === val) return;  // 同值 no-op（不 fetch、不彈窗）
+            let dirs;
+            try {
+                // 即時 fetch（非快取）：settings 頁 scannerDirectories 只是一次性快照、
+                // 無 resync；讀快照會漏觸發本該跳的破壞性 confirm（CD-90b-11 ②）。
+                const resp = await fetch('/api/config');
+                const result = await resp.json();
+                dirs = (result.data && result.data.gallery && result.data.gallery.directories) || [];
+            } catch (e) {
+                // 保守：fetch 失敗不切換（不 fail-open，避免漏 purge）
+                console.warn('[switchMode] requestExternalManagerChange fetch failed:', e);
+                return;
+            }
+            const offline = dirs.filter(d => d && d.readonly === true);
+            const writable = dirs.filter(d => !(d && d.readonly === true));
+            if (offline.length > 0) {
+                // 有離線來源 → 開破壞性 confirm；先不寫 form（按鈕 is-on 仍指舊值＝天然停舊值）
+                this.pendingExternalManager = val;
+                this.pendingOfflineCount = offline.length;
+                this._pendingWritableDirs = writable;
+                this.switchModeConfirmOpen = true;
+            } else {
+                // 無離線來源 → 靜默切換（既有行為，隨後照常按儲存落盤，不呼叫 endpoint）
+                this.form.externalManager = val;
+            }
+        },
+        async confirmSwitchMode() {
+            const val = this.pendingExternalManager;  // capture before clearing（防 await 期間覆蓋）
+            this.switchModeConfirmOpen = false;
+            this.pendingExternalManager = null;
+            this.pendingOfflineCount = 0;
+            const writable = this._pendingWritableDirs;
+            this._pendingWritableDirs = null;
+            try {
+                const resp = await fetch('/api/config/switch-external-manager', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ external_manager: val })
+                });
+                const result = await resp.json();
+                if (result.success === true) {
+                    // 同步三處（缺一則前後端不一致，CD-90b-11 / Codex P3）：
+                    // ① form.externalManager
+                    this.form.externalManager = val;
+                    // ② savedState 單 key（externalManager 在 form 內 → 不同步會令 isDirty 誤判；
+                    //    只改這一 key，不整份 re-snapshot，保留其他未存 form 編輯的 dirty 態）
+                    if (this.savedState) this.savedState.externalManager = val;
+                    // ③ 回填 scannerDirectories（非 readonly 子集跨 purge 不變 → 免二次 fetch），
+                    //    使 strmTemplateDirs 不再列已 purge 離線來源、無需重載
+                    this.scannerDirectories = writable;
+                } else {
+                    console.warn('[switchMode] confirmSwitchMode failed:', result.error);
+                    // Finding 2：產生進行中被擋 → 專屬提示指路（比照 setServerMode 依 reason 分流）。
+                    const failKey = result.reason === 'generate_in_progress'
+                        ? 'settings.switch_mode_confirm.generate_in_progress'
+                        : 'settings.switch_mode_confirm.failed';
+                    this.showToast(window.t(failKey), 'error');
+                }
+            } catch (e) {
+                console.warn('[switchMode] confirmSwitchMode error:', e);
+                this.showToast(window.t('settings.switch_mode_confirm.failed'), 'error');
+            }
+        },
+        cancelSwitchMode() {
+            // 未寫 form → 按鈕自然停舊值、零變更（endpoint 未被呼叫）
+            this.switchModeConfirmOpen = false;
+            this.pendingExternalManager = null;
+            this.pendingOfflineCount = 0;
+            this._pendingWritableDirs = null;
+        },
+
+        // 90c-T6: 確認 → 呼叫端點實際改寫既有 .strm，toast 顯示端點回的精確 rewritten 數。
+        async confirmRewriteStrm() {
+            this.rewriteStrmConfirmOpen = false;
+            try {
+                const resp = await fetch('/api/config/rewrite-strm', { method: 'POST' });
+                const result = await resp.json();
+                if (result.success) {
+                    this.showToast(
+                        window.t('settings.scraper.strm_mapping.rewrite_done', { count: result.rewritten }),
+                        'success'
+                    );
+                } else {
+                    // 使用者已確認、新映射也已落盤，但既有 .strm 未改寫 → 明確 toast，
+                    // 否則使用者誤以為「改規則即改寫」已發生（Codex P2）。可再存一次觸發重試。
+                    console.warn('[rewriteStrm] confirmRewriteStrm failed:', result.error);
+                    this.showToast(window.t('settings.scraper.strm_mapping.rewrite_failed'), 'error');
+                }
+            } catch (e) {
+                console.warn('[rewriteStrm] confirmRewriteStrm error:', e);
+                this.showToast(window.t('settings.scraper.strm_mapping.rewrite_failed'), 'error');
+            }
+            this.pendingRewriteCount = 0;
+        },
+        // 取消：規則已存（PUT 已落盤），僅不改寫既有 strm；清狀態即可。
+        cancelRewriteStrm() {
+            this.rewriteStrmConfirmOpen = false;
+            this.pendingRewriteCount = 0;
+        },
+
         async copyServerUrl() {
             if (!this.serverUrl()) return;
             if (!navigator.clipboard?.writeText) {
@@ -528,6 +644,9 @@ export function stateConfig() {
                     this.form.suffixKeywords = config.scraper?.suffix_keywords || ['-cd1', '-cd2', '-4k', '-uc'];
                     this.form.externalManager = config.scraper?.external_manager || 'off';
                     this.form.downloadSampleImages = config.scraper?.download_sample_images || false;
+                    // strm 路徑映射：dict → array（唯一編輯狀態）
+                    this.form.strmRules = Object.entries(config.scraper?.strm_path_mappings || {})
+                        .map(([local, remote]) => ({ local, remote }));
 
                     // Gallery
                     this.form.avlistMode = config.gallery?.default_mode || 'image';
@@ -667,6 +786,9 @@ export function stateConfig() {
                 // 71-T5: 存檔前的「已持久化」縮圖快取狀態（authoritative：剛從 server GET 的 config.json）。
                 // 用來在 PUT 成功後判定「這次儲存是否剛把它從關打開」→ 才觸發背景 prewarm。
                 const prevThumbEnabled = config.thumbnail_cache_enabled === true;
+                // 90c-T6: 存前「已持久化」的 strm 映射（authoritative：剛 GET 的 config.json）。
+                // PUT 成功後與新映射比對，判定「這次儲存是否改動了路徑規則」→ 才提示改寫既有 strm。
+                const prevStrmMappings = JSON.stringify(config.scraper?.strm_path_mappings || {});
 
                 // 更新 scraper
                 const folderLayers = [
@@ -688,6 +810,14 @@ export function stateConfig() {
                     suffix_keywords: this.form.suffixKeywords,
                     external_manager: this.form.externalManager,
                     download_sample_images: this.form.downloadSampleImages,
+                    // strm 路徑映射：array → dict；local/remote 皆 trim（去貼上殘留空白）。
+                    // 兩欄都非空才存（PR #93 P2）：半填規則 {local: ""}（如按範本「填入左欄」
+                    // 後未填播放端就存）會讓後端把前綴剝掉只剩後綴、破壞 strm 內容 → 丟棄。
+                    strm_path_mappings: Object.fromEntries(
+                        this.form.strmRules
+                            .filter(r => r.local.trim() && (r.remote || '').trim())
+                            .map(r => [r.local.trim(), r.remote.trim()])
+                    ),
                 };
 
                 // 更新 search
@@ -787,6 +917,34 @@ export function stateConfig() {
                     if (prevThumbEnabled && this.form.thumbnailCacheEnabled === false) {
                         this._triggerThumbClear();
                     }
+                    // 90c-T6: strm 路徑規則「實際變更」且為 media-server 模式 → dry-run 計數；
+                    // 有既有 .strm（count>0）才跳 heads-up 確認。off 模式 / 無映射變更 / 無產出片
+                    //（count==0）→ 不提示（規則已存，僅未改寫既有 strm）。
+                    const strmChanged =
+                        prevStrmMappings !== JSON.stringify(config.scraper?.strm_path_mappings || {});
+                    if (strmChanged && ['jellyfin', 'emby', 'kodi'].includes(this.form.externalManager)) {
+                        try {
+                            const dryResp = await fetch('/api/config/rewrite-strm?dry_run=true', { method: 'POST' });
+                            const dryResult = await dryResp.json();
+                            if (dryResult.success) {
+                                if (dryResult.count > 0) {
+                                    this.pendingRewriteCount = dryResult.count;
+                                    this.rewriteStrmConfirmOpen = true;
+                                }
+                            } else {
+                                // 規則已落盤但無法檢查既有 .strm → 明確告知（否則使用者不知道改寫流程沒啟動）。
+                                console.warn('[rewriteStrm] dry-run failed:', dryResult.error);
+                                this.showToast(window.t('settings.scraper.strm_mapping.rewrite_failed'), 'error');
+                            }
+                        } catch (e) {
+                            console.warn('[rewriteStrm] dry-run failed:', e);
+                            this.showToast(window.t('settings.scraper.strm_mapping.rewrite_failed'), 'error');
+                        }
+                    }
+                } else if (result.reason === 'generate_in_progress_strm_mapping') {
+                    // PR #93 五審三次 P2：掃描/產生進行中改到 strm 播放映射被後端擋下。
+                    // 直接顯示後端訊息（非「儲存失敗」誤導前綴）——這是「稍後再試」而非錯誤。
+                    this.showToast(result.error, 'warning');
                 } else {
                     this.showToast('儲存失敗: ' + result.error, 'error');
                 }
@@ -938,6 +1096,37 @@ export function stateConfig() {
 
         removeSuffix(idx) {
             this.form.suffixKeywords.splice(idx, 1);
+        },
+
+        // ═══════════════════════════════════════════════════════════════
+        // strm 路徑映射（spec 90a）— array 短狀態編輯器，dict 於 load/save 對稱轉換
+        // ═══════════════════════════════════════════════════════════════
+
+        // 範本回顯：唯讀 media-server 來源的掃描路徑（顯示形，可預填左欄）。
+        // scannerDirectories 由 state-ui.js _initB1() 載入；dirPath / window.pathToDisplay 為既有共用純函式。
+        get strmTemplateDirs() {
+            return (this.scannerDirectories || [])
+                .filter(d => d && d.readonly === true)
+                .map(d => window.pathToDisplay(this.dirPath(d)))
+                .filter(p => p);
+        },
+
+        addStrmRule() {
+            this.form.strmRules.push({ local: '', remote: '' });
+        },
+
+        removeStrmRule(idx) {
+            this.form.strmRules.splice(idx, 1);
+        },
+
+        // 範本「填入左欄」：填最近的空 local 行，否則 push 新行
+        useTemplate(pathStr) {
+            const empty = this.form.strmRules.find(r => !r.local.trim());
+            if (empty) {
+                empty.local = pathStr;
+            } else {
+                this.form.strmRules.push({ local: pathStr, remote: '' });
+            }
         },
 
         // ═══════════════════════════════════════════════════════════════

@@ -899,7 +899,7 @@
                 box-shadow var(--duration-fast) var(--ease-out);
 }
 
-.lb-action-btn:hover {
+.lb-action-btn:not(:disabled):hover {
     background: rgba(255,255,255,0.3);
     border-color: rgba(255,255,255,0.6);
     transform: scale(1.08);
@@ -1371,7 +1371,7 @@ body.similar-mobile-active [data-picker-ghost] {
                 border-color var(--fluent-duration-fast) var(--fluent-ease-standard);
 }
 
-.lightbox-metadata .lb-rescrape-gear:hover {
+.lightbox-metadata .lb-rescrape-gear:not(:disabled):hover {
     color: var(--accent);
     background: var(--surface-1);
     border-color: var(--stroke-subtle);
@@ -2367,6 +2367,13 @@ body.sidebar-collapsed .showcase-footer {
 
 .fetch-samples-btn:disabled {
     filter: grayscale(1);
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* TASK-90c-T3: 唯讀來源片寫入鈕停用態（四鈕共用）— 淺色 + not-allowed，無刪除線。
+   hover 無反饋改由各鈕 base :hover 規則的 :not(:disabled) gating 達成（readonly=disabled 不 match）。 */
+.is-readonly-disabled {
     opacity: 0.45;
     cursor: not-allowed;
 }

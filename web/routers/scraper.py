@@ -20,7 +20,7 @@ from core.database import VideoRepository
 from core.db_inflow import try_inflow_upsert
 from core.enricher import enrich_single, fetch_samples_only, resolve_nfo_cover_paths
 from core.organizer import organize_file
-from core.path_utils import to_file_uri, uri_to_fs_path, coerce_to_file_uri, is_path_under_dir
+from core.path_utils import to_file_uri, uri_to_fs_path, coerce_to_file_uri
 from core.scraper import (
     search_jav, search_jav_single_source, strip_internal_nfo_keys,
     search_javlib_versions, fetch_javlib_by_detail_url, internal_nfo_carriers,
@@ -29,7 +29,8 @@ from core.source_config import validate_source_id
 from core.cf_transport import get_cf_transport, CfChallengeRequired, CfTransportUnavailable
 from core.scrapers.javlibrary import JAVLIBRARY_ORIGIN
 from core.logger import get_logger
-from core.config import load_config, iter_gallery_sources
+from core.config import load_config
+from core.readonly_source import is_path_readonly, readonly_source_prefixes, writable_source_prefixes
 from core import thumbnail_cache
 from web.routers.notifications import emit_notification as _emit_notif
 
@@ -75,6 +76,35 @@ class ScrapeResponse(BaseModel):
     nfo_path: Optional[str] = None
 
 
+# 唯讀來源 guard 的錯誤訊息（單一真理來源；sync helper 與 batch async loop 共用）。
+_READONLY_SOURCE_ERROR_MSG = (
+    "此來源路徑為唯讀（readonly），無法搬移或重新命名檔案。"
+    "請改用掃描頁『產生』生成本地媒體庫，或確認你對此路徑有寫入權限。"
+)
+
+
+def _readonly_source_error(file_path: str) -> Optional[dict]:
+    """唯讀來源 guard：只依 file_path 判斷所屬來源是否唯讀（readonly）。
+
+    是 → 回既有錯誤形狀 plain dict（不搬檔、不刮削、不寫任何 sidecar）；否則回 None。
+    兩端一律用 UNC-tolerant coerce_to_file_uri，不做原生路徑正規化（Codex P2：對 UNC 在
+    WSL/Linux 會拋 ValueError，而 UNC 正是 readonly 主場景）。coerce_to_file_uri 對「已是
+    DB canonical file:/// URI」原樣回、對 FS path 才轉，避免 to_file_uri 雙重包成
+    file:///file:/// 繞過 guard（Codex P1）。helper 自己讀 config（每次呼叫重判，安全側）。
+
+    ⚠️ 本 helper 內含 load_config()（阻塞 I/O），僅可用於 sync 端點（threadpool）；async
+    路由（如 batch_enrich）須改為「入口一次載入 config → readonly_source_prefixes 算一次
+    → 逐項 is_path_readonly 純比對」，勿在 event loop 上裸呼叫本 helper（async-offload 守衛）。
+    """
+    _gallery_config = load_config().get('gallery', {})
+    _path_mappings = _gallery_config.get('path_mappings', {})
+    _prefixes = readonly_source_prefixes(_gallery_config, _path_mappings)
+    _writable = writable_source_prefixes(_gallery_config, _path_mappings)
+    if is_path_readonly(coerce_to_file_uri(file_path, _path_mappings), _prefixes, _writable):
+        return {"success": False, "error": _READONLY_SOURCE_ERROR_MSG}
+    return None
+
+
 @router.post("/scrape-single")
 def scrape_single(request: ScrapeRequest) -> dict:
     """
@@ -92,24 +122,10 @@ def scrape_single(request: ScrapeRequest) -> dict:
 
     # U7 readonly guard：只依 file_path 判斷所屬來源是否唯讀（readonly）。
     # 是 → 不搬檔、不刮削、不解析番號，回既有錯誤形狀 plain dict。
-    # 必須在 extract_number / search_jav / organize_file 之前（Codex P1）；
-    # 兩端一律用 UNC-tolerant to_file_uri，不做原生路徑正規化（Codex P2：對 UNC 在
-    # WSL/Linux 會拋 ValueError，而 UNC 正是 readonly 主場景）。
-    _gallery_config = load_config().get('gallery', {})
-    _path_mappings = _gallery_config.get('path_mappings', {})
-    # coerce_to_file_uri：file_path 可能已是 DB canonical file:/// URI（鄰近寫入路徑
-    # 傳的就是 URI），直接 to_file_uri 會雙重包成 file:///file:/// 導致 guard 被繞過
-    # （Codex P1）。coerce 對「已是 URI」原樣回、對 FS path 才轉，兩端對稱處理。
-    _file_uri = coerce_to_file_uri(file_path, _path_mappings)
-    for _s in iter_gallery_sources(_gallery_config):
-        if not _s.readonly or not _s.path:
-            continue
-        if is_path_under_dir(_file_uri, coerce_to_file_uri(_s.path, _path_mappings)):
-            return {
-                "success": False,
-                "error": "此來源路徑為唯讀（readonly），無法搬移或重新命名檔案。"
-                         "請改用掃描頁『產生』生成本地媒體庫，或確認你對此路徑有寫入權限。",
-            }
+    # 必須在 extract_number / search_jav / organize_file 之前（Codex P1）。
+    _err = _readonly_source_error(file_path)
+    if _err:
+        return _err
 
     # 如果沒有提供番號，嘗試從檔名提取
     if not number:
@@ -282,6 +298,12 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
     search_cfg = config.get("search", {})
     proxy_url = search_cfg.get("proxy_url", "")
 
+    # 90c-T1 唯讀來源 guard：唯讀來源片不得 enrich 寫檔。須在 refresh_full 預檢
+    # （resolve_nfo_cover_paths / os.path.exists）之前——預檢對唯讀掛載可能拋錯。
+    _err = _readonly_source_error(request.file_path)
+    if _err:
+        return _err
+
     # CD-62-4 分裂陷阱智慧防呆：refresh_full + overwrite=false 時，若這組設定不會寫出任何
     # sidecar（NFO/cover）卻仍 _db_upsert，就是純分裂。一個 sidecar「會寫」需 write 旗標開 + 檔案缺
     # （此分支 overwrite 已為 false，既有檔不覆寫）。兩者皆不會寫 → 擋；任一會寫則放行（quick-enrich
@@ -379,6 +401,11 @@ def fetch_samples_endpoint(req: FetchSamplesRequest) -> dict:
     search_cfg = config.get("search", {})
     proxy_url = search_cfg.get("proxy_url", "")
 
+    # 90c-T1 唯讀來源 guard：唯讀來源片不得補劇照寫檔（early-return，先於 DB/uri work）。
+    _err = _readonly_source_error(req.file_path)
+    if _err:
+        return _err
+
     folder_uri_prefix = to_file_uri(os.path.dirname(uri_to_fs_path(req.file_path))) + "/"
     repo = VideoRepository()
     count = repo.count_videos_in_folder(folder_uri_prefix)
@@ -407,6 +434,14 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
     config = await asyncio.to_thread(load_config)
     search_cfg = config.get("search", {})
     proxy_url = search_cfg.get("proxy_url", "")
+
+    # 90c-T1 唯讀 guard（async-safe）：config 已於上方 to_thread 載入，這裡從既載入的
+    # config 算一次唯讀前綴集（純比對、無 I/O），逐項用 is_path_readonly 純比對——不可在
+    # async event loop 上裸呼叫含 load_config 的 _readonly_source_error（async-offload 守衛）。
+    _ro_gallery = config.get("gallery", {})
+    _ro_mappings = _ro_gallery.get("path_mappings", {})
+    _ro_prefixes = readonly_source_prefixes(_ro_gallery, _ro_mappings)
+    _ro_writable = writable_source_prefixes(_ro_gallery, _ro_mappings)
 
     # 去重（按 file_path）
     seen_paths: set = set()
@@ -446,6 +481,14 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
 
                 # progress 事件
                 yield f"data: {json.dumps({'type': 'progress', 'current': idx, 'total': total, 'number': item.number})}\n\n"
+
+                # 90c-T1 逐項唯讀 guard：唯讀來源片 yield result-item(success:False) +
+                # failed_count+=1 + continue（不 raise、不逐項 _emit_notif——批次層才發通知）。
+                # 混合批中可寫項照常 enrich，整批不中斷（spec-90 §90b(iii) 驗收 2）。
+                if is_path_readonly(coerce_to_file_uri(item.file_path, _ro_mappings), _ro_prefixes, _ro_writable):
+                    failed_count += 1
+                    yield f"data: {json.dumps({'type': 'result-item', 'number': item.number, 'file_path': item.file_path, 'success': False, 'error': _READONLY_SOURCE_ERROR_MSG})}\n\n"
+                    continue
 
                 try:
                     loop = asyncio.get_running_loop()

@@ -2289,7 +2289,7 @@ class TestProduceSourceExceptionDoesNotAbort:
 
         call_count = [0]
 
-        def fake_write(movie_dir, meta_arg, fd_arg, src_path, cfg, old_base=''):
+        def fake_write(movie_dir, meta_arg, fd_arg, src_path, cfg, old_base='', strm_mappings_getter=None):
             call_count[0] += 1
             if call_count[0] == 2:
                 raise OSError("disk full")
@@ -2553,3 +2553,614 @@ class TestProduceSourcePrune:
         mock_thumb.invalidate.assert_not_called()
         assert result.pruned == 0
         assert result.pruned == 0
+
+
+# ---------------------------------------------------------------------------
+# TASK-90a-T3: _apply_path_mapping + _write_strm + stale strm cleanup
+# ---------------------------------------------------------------------------
+
+class TestApplyPathMapping:
+    """file:/// URI-space prefix-swap: boundary-anchored, longest-match,
+    order-independent. source+local_prefix converge via to_file_uri for MATCHING
+    (Codex P1/P2 fix); remote result written verbatim, never normalized (CD-90a-6)."""
+
+    def test_empty_mappings_returns_original(self):
+        from core.readonly_producer import _apply_path_mapping
+        assert _apply_path_mapping('Z:\\115\\x.mp4', {}) == 'Z:\\115\\x.mp4'
+
+    def test_no_match_returns_original(self):
+        from core.readonly_producer import _apply_path_mapping
+        assert _apply_path_mapping('D:\\other\\x.mp4', {'Z:\\115': '/vol'}) == 'D:\\other\\x.mp4'
+
+    def test_boundary_guard_no_false_match_on_longer_dir(self):
+        """Z:\\1150\\a.mp4 must NOT match a Z:\\115 rule (0 is not a separator)."""
+        from core.readonly_producer import _apply_path_mapping
+        assert _apply_path_mapping('Z:\\1150\\a.mp4', {'Z:\\115': '/vol'}) == 'Z:\\1150\\a.mp4'
+
+    def test_single_match_windows_separator(self):
+        from core.readonly_producer import _apply_path_mapping
+        out = _apply_path_mapping('Z:\\115\\x.mp4', {'Z:\\115': '/volume1/movie'})
+        assert out == '/volume1/movie/x.mp4'  # remainder from URI space (forward-slash)
+
+    def test_single_match_unix_separator(self):
+        from core.readonly_producer import _apply_path_mapping
+        out = _apply_path_mapping('/mnt/z/115/x.mp4', {'/mnt/z/115': '/volume1'})
+        assert out == '/volume1/x.mp4'
+
+    def test_empty_remote_rule_skipped_not_prefix_stripped(self):
+        """PR #93 P2：半填規則 remote='' 不得把 local 前綴剝掉只剩後綴 → skip、source 原樣回。"""
+        from core.readonly_producer import _apply_path_mapping
+        assert _apply_path_mapping('Z:\\115\\x.mp4', {'Z:\\115': ''}) == 'Z:\\115\\x.mp4'
+        assert _apply_path_mapping('Z:\\115\\x.mp4', {'Z:\\115': '   '}) == 'Z:\\115\\x.mp4'
+
+    def test_empty_remote_skipped_but_valid_rule_still_applies(self):
+        """混合：空 remote 規則 skip，同批有效規則照常套（不因半填列污染整批）。"""
+        from core.readonly_producer import _apply_path_mapping
+        out = _apply_path_mapping('Z:\\115\\x.mp4', {'Z:\\other': '', 'Z:\\115': '/vol'})
+        assert out == '/vol/x.mp4'
+
+    def test_prefix_equals_whole_string_matches(self):
+        from core.readonly_producer import _apply_path_mapping
+        assert _apply_path_mapping('Z:\\115', {'Z:\\115': '/vol'}) == '/vol'
+
+    def test_nested_longest_prefix_wins(self):
+        from core.readonly_producer import _apply_path_mapping
+        mappings = {'Z:\\115': '/a', 'Z:\\115\\成人': '/b'}
+        assert _apply_path_mapping('Z:\\115\\成人\\x.mp4', mappings) == '/b/x.mp4'
+
+    def test_longest_match_independent_of_insertion_order(self):
+        """Same content dict built in both orders → identical output (deterministic)."""
+        from core.readonly_producer import _apply_path_mapping
+        forward = {'Z:\\115': '/a', 'Z:\\115\\成人': '/b'}
+        reverse = {'Z:\\115\\成人': '/b', 'Z:\\115': '/a'}
+        p = 'Z:\\115\\成人\\x.mp4'
+        assert _apply_path_mapping(p, forward) == _apply_path_mapping(p, reverse) == '/b/x.mp4'
+
+    def test_foreign_unix_target_not_normalized_or_raised(self):
+        """Mapped output is a bare Unix path (/volume1/...): returned verbatim,
+        no path_utils call, no ValueError even on a Windows-style source."""
+        from core.readonly_producer import _apply_path_mapping
+        out = _apply_path_mapping('Z:\\115\\x.mp4', {'Z:\\115': '/volume1/movie'})
+        assert out.startswith('/volume1/movie')
+
+    def test_trailing_separator_in_local_prefix_still_matches(self):
+        """Codex P2: a local_prefix carrying a trailing separator ('/mnt/z/115/')
+        must still match — the URI form is rstrip'd of '/'. Raw-string compare
+        would have missed (source lacks the doubled sep) and returned unchanged."""
+        from core.readonly_producer import _apply_path_mapping
+        out = _apply_path_mapping('/mnt/z/115/x.mp4', {'/mnt/z/115/': '/vol'})
+        assert out == '/vol/x.mp4'
+
+    def test_cross_namespace_windows_prefix_matches_wsl_source(self):
+        """Codex P1: a Windows-DISPLAY prefix ('C:\\115', as pathToDisplay prefills)
+        must match a WSL-NATIVE source ('/mnt/c/115/x.mp4') — both converge to
+        file:///C:/115 in URI space. Raw-string compare would have silently missed
+        and written the un-mapped source. Host-independent (green on Linux CI + WSL:
+        to_file_uri's /mnt & drive-letter branches are not env-gated)."""
+        from core.readonly_producer import _apply_path_mapping
+        out = _apply_path_mapping('/mnt/c/115/x.mp4', {'C:\\115': '/volume1'})
+        assert out == '/volume1/x.mp4'
+
+
+class TestWriteStrm:
+    """_write_strm: media-server sidecar, single-line utf-8 no-BOM, best-effort,
+    same-level strm_path_mappings read."""
+
+    def test_writes_mapped_content_single_line_no_bom(self, tmp_path):
+        from core.readonly_producer import _write_strm
+        base_stem = str(tmp_path / 'TEST-001 Title')
+        config = {'strm_path_mappings': {'Z:\\115': '/volume1/movie'}}
+        ok = _write_strm(base_stem, 'Z:\\115\\x.mp4', config)
+        assert ok is True
+        strm = Path(base_stem + '.strm')
+        assert strm.exists()
+        raw = strm.read_bytes()
+        assert not raw.startswith(b'\xef\xbb\xbf'), "must not write a UTF-8 BOM"
+        content = strm.read_text(encoding='utf-8')
+        assert not content.startswith('﻿')
+        assert '\n' not in content, "strm must be a single line"
+        assert content == '/volume1/movie/x.mp4'
+
+    def test_empty_mappings_writes_raw_source_path(self, tmp_path):
+        from core.readonly_producer import _write_strm
+        base_stem = str(tmp_path / 'TEST-001')
+        ok = _write_strm(base_stem, 'Z:\\115\\x.mp4', {})
+        assert ok is True
+        assert Path(base_stem + '.strm').read_text(encoding='utf-8') == 'Z:\\115\\x.mp4'
+
+    def test_mappings_read_same_level_not_via_scraper(self, tmp_path):
+        """Regression: mapping table must be read from config['strm_path_mappings']
+        directly, NOT config['scraper']['strm_path_mappings'] (which is always {}
+        because config already IS the scraper section)."""
+        from core.readonly_producer import _write_strm
+        base_stem = str(tmp_path / 'TEST-001')
+        # A nested 'scraper' key must be ignored; the top-level mapping applies.
+        config = {
+            'strm_path_mappings': {'Z:\\115': '/volume1'},
+            'scraper': {'strm_path_mappings': {'Z:\\115': '/WRONG'}},
+        }
+        _write_strm(base_stem, 'Z:\\115\\x.mp4', config)
+        content = Path(base_stem + '.strm').read_text(encoding='utf-8')
+        assert content == '/volume1/x.mp4'
+        assert 'WRONG' not in content
+
+    def test_foreign_target_written_verbatim(self, tmp_path):
+        """Bare Unix mapped target on any host → written as-is, function returns True."""
+        from core.readonly_producer import _write_strm
+        base_stem = str(tmp_path / 'TEST-001')
+        config = {'strm_path_mappings': {'Z:\\115': '/volume1/movie'}}
+        ok = _write_strm(base_stem, 'Z:\\115\\clip.mp4', config)
+        assert ok is True
+        assert Path(base_stem + '.strm').read_text(encoding='utf-8') == '/volume1/movie/clip.mp4'
+
+    # --- PR #93 五審四次 P2 (option C)：strm_mappings 覆寫參數 ---
+
+    def test_strm_mappings_override_wins_over_config(self, tmp_path):
+        """strm_mappings 非 None → 覆寫 config['strm_path_mappings']（producer 傳 fresh 讀，
+        使斷線尾巴那片用當前映射而非 generate 起始凍結值）。"""
+        from core.readonly_producer import _write_strm
+        base_stem = str(tmp_path / 'TEST-001')
+        config = {'strm_path_mappings': {'Z:\\115': '/OLD'}}  # 凍結舊值
+        ok = _write_strm(base_stem, 'Z:\\115\\x.mp4', config,
+                         strm_mappings={'Z:\\115': '/NEW'})  # fresh 覆寫
+        assert ok is True
+        content = Path(base_stem + '.strm').read_text(encoding='utf-8')
+        assert content == '/NEW/x.mp4'
+        assert 'OLD' not in content
+
+    def test_strm_mappings_none_uses_config_legacy(self, tmp_path):
+        """strm_mappings=None（預設）→ 沿用 config 讀（rewrite_strm / 既有呼叫不受影響）。"""
+        from core.readonly_producer import _write_strm
+        base_stem = str(tmp_path / 'TEST-001')
+        config = {'strm_path_mappings': {'Z:\\115': '/volume1'}}
+        ok = _write_strm(base_stem, 'Z:\\115\\x.mp4', config, strm_mappings=None)
+        assert ok is True
+        assert Path(base_stem + '.strm').read_text(encoding='utf-8') == '/volume1/x.mp4'
+
+    def test_empty_override_writes_raw_not_config_mapping(self, tmp_path):
+        """strm_mappings={} 是有效覆寫（非 None）→ 用空映射（寫原始路徑），不回退 config。"""
+        from core.readonly_producer import _write_strm
+        base_stem = str(tmp_path / 'TEST-001')
+        config = {'strm_path_mappings': {'Z:\\115': '/SHOULD-NOT-APPLY'}}
+        ok = _write_strm(base_stem, 'Z:\\115\\x.mp4', config, strm_mappings={})
+        assert ok is True
+        content = Path(base_stem + '.strm').read_text(encoding='utf-8')
+        assert content == 'Z:\\115\\x.mp4'
+        assert 'SHOULD-NOT-APPLY' not in content
+
+    def test_write_failure_is_best_effort_returns_false(self, tmp_path):
+        """open() raising → warning logged, returns False, does NOT raise."""
+        from core.readonly_producer import _write_strm
+        base_stem = str(tmp_path / 'TEST-001')
+        with patch('core.readonly_producer.open', side_effect=OSError('disk full'), create=True):
+            ok = _write_strm(base_stem, 'Z:\\115\\x.mp4', {})
+        assert ok is False
+        assert not Path(base_stem + '.strm').exists()
+
+    def test_non_str_mapping_value_is_best_effort_not_raise(self, tmp_path):
+        """raw config (not model_validated) with a non-str mapping value must not
+        escape best-effort: _apply_path_mapping TypeError is caught, returns False,
+        never raises (NIT-1 — mapping call moved inside try + broad catch)."""
+        from core.readonly_producer import _write_strm
+        base_stem = str(tmp_path / 'TEST-001')
+        # hand-edited config.json could carry a non-str value; None → str concat TypeError
+        ok = _write_strm(base_stem, 'Z:\\115\\x.mp4', {'strm_path_mappings': {'Z:\\115': None}})
+        assert ok is False
+
+
+class TestWriteMovieAssetsStrm:
+    """_write_movie_assets strm fork: written for media-server flavours, skipped for off."""
+
+    def test_media_server_flavour_writes_strm(self, tmp_path):
+        movie_dir = str(tmp_path / 'TEST-001')
+        meta = dict(_T3_META, title='Title A')
+        config = dict(_T3_BASE_CONFIG, external_manager='jellyfin',
+                      strm_path_mappings={'/src': '/volume1'})
+        _t4_write(movie_dir, meta, config)
+        strm = Path(movie_dir) / 'TEST-001 Title A.strm'
+        assert strm.exists()
+        assert strm.read_text(encoding='utf-8') == '/volume1/TEST-001.mp4'
+
+    def test_off_flavour_writes_no_strm(self, tmp_path):
+        movie_dir = str(tmp_path / 'TEST-001')
+        meta = dict(_T3_META, title='Title A')
+        config = dict(_T3_BASE_CONFIG, external_manager='off')
+        _t4_write(movie_dir, meta, config)
+        assert not (Path(movie_dir) / 'TEST-001 Title A.strm').exists()
+
+    def test_getter_evaluated_after_nfo_at_write_time(self, tmp_path):
+        """五審五次 Codex：strm_mappings_getter 在 NFO 等資產寫完後、_write_strm 前一刻才求值
+        （非片處理開頭 snapshot）。否則求值後、封面/NFO 寫檔期間存的新映射會被漏掉。"""
+        from core.readonly_producer import _format_data, _write_movie_assets
+        movie_dir = str(tmp_path / 'TEST-001')
+        meta = dict(_T3_META, title='Title A')
+        config = dict(_T3_BASE_CONFIG, external_manager='jellyfin',
+                      strm_path_mappings={'/src': '/FROZEN'})
+        fd = _format_data(meta, '/src/TEST-001.mp4', config)
+
+        order = []
+
+        def rec_nfo(*a, **k):
+            order.append('nfo')
+            return _t4_real_nfo(*a, **k)
+
+        def getter():
+            order.append('getter')
+            return {'/src': '/FRESH'}
+
+        with patch('core.readonly_producer.download_image', side_effect=_t4_real_download), \
+             patch('core.readonly_producer.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
+             patch('core.readonly_producer.generate_nfo', side_effect=rec_nfo):
+            _write_movie_assets(movie_dir, meta, fd, '/src/TEST-001.mp4', config,
+                                strm_mappings_getter=getter)
+
+        # getter 在 nfo 之後才被呼叫（求值延到 _write_strm 前一刻）
+        assert order == ['nfo', 'getter'], order
+        # 且 .strm 用 getter 的 fresh 映射，非 config 凍結值
+        strm = Path(movie_dir) / 'TEST-001 Title A.strm'
+        assert strm.read_text(encoding='utf-8') == '/FRESH/TEST-001.mp4'
+
+
+class TestCleanStaleStrm:
+    """Stale strm cleanup: title-drift removes <old_base>.strm only when has_strm."""
+
+    def test_has_strm_true_removes_old_strm(self, tmp_path):
+        from core.readonly_producer import _clean_stale_singletons
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'TEST-001 Old'
+        (d / f'{old_base}.nfo').write_bytes(b'x')
+        (d / f'{old_base}.strm').write_bytes(b'/vol/old.mp4')
+        _clean_stale_singletons(str(d), old_base, 'TEST-001 New', False, False, False, True)
+        assert not (d / f'{old_base}.strm').exists(), "stale strm must be cleaned on title drift"
+
+    def test_has_strm_false_keeps_old_strm(self, tmp_path):
+        """strm write failed this run (has_strm False) → old strm must survive."""
+        from core.readonly_producer import _clean_stale_singletons
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'TEST-001 Old'
+        (d / f'{old_base}.nfo').write_bytes(b'x')
+        (d / f'{old_base}.strm').write_bytes(b'/vol/old.mp4')
+        _clean_stale_singletons(str(d), old_base, 'TEST-001 New', False, False, False, False)
+        assert (d / f'{old_base}.strm').exists(), "old strm must survive when has_strm is False"
+
+    def test_default_has_strm_is_false(self, tmp_path):
+        """6-arg call (legacy) → strm never touched (backward compat)."""
+        from core.readonly_producer import _clean_stale_singletons
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'TEST-001 Old'
+        (d / f'{old_base}.nfo').write_bytes(b'x')
+        (d / f'{old_base}.strm').write_bytes(b'/vol/old.mp4')
+        _clean_stale_singletons(str(d), old_base, 'TEST-001 New', False, False, False)
+        assert (d / f'{old_base}.strm').exists()
+
+
+class TestWriteMovieAssetsStrmDrift:
+    """Integration: title drift under a media-server flavour removes the old strm
+    and leaves only the new one (Emby double-entry prevention)."""
+
+    def test_title_drift_removes_old_strm_keeps_new(self, tmp_path):
+        from core.readonly_producer import _build_old_base
+        movie_dir = str(tmp_path / 'TEST-001')
+        config = dict(_T3_BASE_CONFIG, external_manager='emby',
+                      strm_path_mappings={'/src': '/volume1'})
+        meta_a = dict(_T3_META, title='Title A')
+        meta_b = dict(_T3_META, title='Title B')
+
+        _t4_write(movie_dir, meta_a, config)
+        d = Path(movie_dir)
+        assert (d / 'TEST-001 Title A.strm').exists()
+
+        old_base = _build_old_base(_t4_existing(meta_a), '/src/TEST-001.mp4', config)
+        _t4_write(movie_dir, meta_b, config, old_base=old_base)
+
+        assert not (d / 'TEST-001 Title A.strm').exists(), "old strm must be removed on title drift"
+        assert (d / 'TEST-001 Title B.strm').exists(), "new strm must be present"
+
+    def test_strm_write_failure_preserves_old_strm(self, tmp_path):
+        """When _write_strm returns False this run, has_strm gating keeps the old strm."""
+        from core.readonly_producer import _build_old_base, _format_data, _write_movie_assets
+        movie_dir = str(tmp_path / 'TEST-001')
+        config = dict(_T3_BASE_CONFIG, external_manager='kodi',
+                      strm_path_mappings={'/src': '/volume1'})
+        meta_a = dict(_T3_META, title='Title A')
+        meta_b = dict(_T3_META, title='Title B')
+
+        _t4_write(movie_dir, meta_a, config)
+        d = Path(movie_dir)
+        assert (d / 'TEST-001 Title A.strm').exists()
+
+        old_base = _build_old_base(_t4_existing(meta_a), '/src/TEST-001.mp4', config)
+        fd_b = _format_data(meta_b, '/src/TEST-001.mp4', config)
+        with patch('core.readonly_producer.download_image', side_effect=_t4_real_download), \
+             patch('core.readonly_producer.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
+             patch('core.readonly_producer.generate_nfo', side_effect=_t4_real_nfo), \
+             patch('core.readonly_producer._write_strm', return_value=False):
+            _write_movie_assets(movie_dir, meta_b, fd_b, '/src/TEST-001.mp4', config, old_base=old_base)
+
+        assert (d / 'TEST-001 Title A.strm').exists(), \
+            "old strm must survive when this run's strm write failed (has_strm False)"
+
+
+# ---------------------------------------------------------------------------
+# TASK-90a-T6: media-server strm 整合驗收 (spec-90 §90a.4 acceptance 1/2/7 + regression)
+#
+# End-to-end through the REAL produce_source path: real main loop, real
+# _resolve_movie_dir (folder allocation), real _write_movie_assets + _write_strm
+# (real file writes), real _upsert_db (captured via repo.upsert), real to_file_uri /
+# extract_number / _format_data. Only the external scrape (search_jav) and image I/O
+# (download_image / generate_jellyfin_images / generate_nfo) are mocked — the same
+# boundary every existing e2e test uses. _list_source_videos is patched to return
+# file_info dicts pointing at REAL files under the tmp source dir, so the zero-write
+# acceptance (7) is still real: the true _write_movie_assets(fi["path"], ...) runs
+# against the real source path.
+#
+# Acceptance 3 (Emby/Jellyfin live scan) is inherently manual — see the TASK card's
+# manual checklist; it has no pure-automation form here.
+# ---------------------------------------------------------------------------
+
+
+def _e2e_search_jav_factory():
+    """Return a search_jav stub yielding per-number meta (cover + 1 sample)."""
+    def fake_search_jav(number, source="auto", proxy_url=""):
+        return {
+            'number': number,
+            'title': f'Title {number}',
+            'cover': f'https://example.com/{number}/cover.jpg',
+            'actors': ['Actress A'],
+            'tags': ['tag1'],
+            'date': '2024-01-01',
+            'maker': 'Maker',
+            'director': 'Director',
+            'series': 'Series',
+            'label': 'Label',
+            'sample_images': [f'https://example.com/{number}/s1.jpg'],
+            'duration': 120,
+            '_summary': 'summary',
+            '_rating': 8.0,
+            'url': f'https://example.com/{number}',
+        }
+    return fake_search_jav
+
+
+def _e2e_run_produce_source(source_dir, output_dir, config, filenames, strm_mappings_getter=None):
+    """Run the REAL produce_source against real source files in source_dir.
+
+    Returns (result, repo). repo is a MagicMock whose .upsert captured the Video
+    rows. _list_source_videos is patched to return file_info dicts for the real
+    files (so _write_movie_assets/_write_strm run against the real source paths).
+
+    strm_mappings_getter forwarded to produce_source (PR #93 五審四次 P2, option C).
+    """
+    from core.readonly_producer import produce_source
+
+    source = _make_source(
+        readonly=True,
+        output_path=str(output_dir),
+        path=str(source_dir),
+    )
+    repo = MagicMock()
+    repo.get_attempted_index.return_value = {}
+    repo.get_by_path.return_value = None
+    repo.is_output_dir_taken.return_value = False  # else _resolve_movie_dir loops forever
+    repo.get_all.return_value = []
+
+    files = [
+        {'path': str(source_dir / fn), 'size': 1_000_000, 'mtime': 1.0, 'nfo_mtime': 0.0}
+        for fn in filenames
+    ]
+
+    with patch('core.readonly_producer._list_source_videos', return_value=files), \
+         patch('core.readonly_producer.search_jav', side_effect=_e2e_search_jav_factory()), \
+         patch('core.readonly_producer.download_image', side_effect=_t4_real_download), \
+         patch('core.readonly_producer.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
+         patch('core.readonly_producer.generate_nfo', side_effect=_t4_real_nfo):
+        result = produce_source(source, config, repo, strm_mappings_getter=strm_mappings_getter)
+    return result, repo
+
+
+def _snapshot_dir(root: Path) -> set:
+    """Set of every path (files + dirs) under root, for before/after comparison."""
+    return {str(p) for p in root.rglob('*')}
+
+
+def _movie_dirs(output_dir: Path) -> list:
+    """The per-movie asset folders (parents of each written .nfo).
+
+    The producer nests each movie under folder layers (e.g. output/<num>/<num>/),
+    so the leaf asset folder is the parent of the .nfo, not an immediate subdir.
+    """
+    return sorted({p.parent for p in output_dir.rglob('*.nfo')})
+
+
+class TestProduceSourceMediaServerStrmE2E:
+    """spec-90 §90a.4 acceptance 1/2/7 + regression, end-to-end through produce_source."""
+
+    FILENAMES = ['SSIS-001.mp4', 'MIDE-002.mp4']
+
+    def _setup_source(self, tmp_path):
+        """Create a real read-only source dir with two real video files."""
+        source_dir = tmp_path / 'readonly-src'
+        source_dir.mkdir()
+        for fn in self.FILENAMES:
+            (source_dir / fn).write_bytes(b'FAKE-VIDEO-BYTES')
+        output_dir = tmp_path / 'output'
+        output_dir.mkdir()
+        return source_dir, output_dir
+
+    # -- Acceptance 1: every movie folder has strm + nfo + cover ------------------
+
+    def test_acceptance1_each_movie_dir_has_strm_nfo_cover(self, tmp_path):
+        source_dir, output_dir = self._setup_source(tmp_path)
+        config = _make_config(scraper_cfg=dict(_T3_BASE_CONFIG, external_manager='jellyfin'))
+
+        result, _repo = _e2e_run_produce_source(source_dir, output_dir, config, self.FILENAMES)
+
+        assert result.created == 2, f"expected 2 created, got {result.created} (failed={result.failed})"
+        dirs = _movie_dirs(output_dir)
+        assert len(dirs) == 2, f"expected 2 movie folders, got {[d.name for d in dirs]}"
+        for d in dirs:
+            strms = list(d.glob('*.strm'))
+            nfos = list(d.glob('*.nfo'))
+            covers = list(d.glob('*.jpg'))  # base .jpg + -poster.jpg + -fanart.jpg
+            assert len(strms) == 1, f"{d.name}: expected exactly 1 .strm, got {strms}"
+            assert len(nfos) == 1, f"{d.name}: expected exactly 1 .nfo, got {nfos}"
+            assert any(c.name.endswith('-poster.jpg') for c in covers), f"{d.name}: no poster"
+            assert any(c.name.endswith('-fanart.jpg') for c in covers), f"{d.name}: no fanart"
+            # the base cover (neither poster nor fanart) is present too
+            assert any(
+                not c.name.endswith('-poster.jpg') and not c.name.endswith('-fanart.jpg')
+                for c in covers
+            ), f"{d.name}: no base cover .jpg"
+
+    # -- Acceptance 2: strm content = mapped path (raw when no rule) --------------
+
+    def test_acceptance2_strm_content_no_mapping_is_raw_source_path(self, tmp_path):
+        source_dir, output_dir = self._setup_source(tmp_path)
+        # jellyfin flavour, NO mapping rule → strm = the raw source FS path.
+        config = _make_config(scraper_cfg=dict(_T3_BASE_CONFIG, external_manager='jellyfin'))
+
+        result, _repo = _e2e_run_produce_source(source_dir, output_dir, config, self.FILENAMES)
+
+        assert result.created == 2
+        strm_contents = {}
+        for d in _movie_dirs(output_dir):
+            strm = d.glob('*.strm').__next__()
+            raw = strm.read_bytes()
+            assert not raw.startswith(b'\xef\xbb\xbf'), "strm must not have a UTF-8 BOM"
+            content = strm.read_text(encoding='utf-8')
+            assert '\n' not in content, "strm must be a single line"
+            strm_contents[d.name] = content
+        # each strm points at the real source file's raw path (unchanged, un-normalized)
+        expected = {str(source_dir / fn) for fn in self.FILENAMES}
+        assert set(strm_contents.values()) == expected, (
+            f"strm contents {strm_contents} must equal raw source paths {expected}"
+        )
+
+    def test_acceptance2_strm_content_with_mapping_is_prefix_swapped(self, tmp_path):
+        source_dir, output_dir = self._setup_source(tmp_path)
+        # A mapping rule: local source root → playback-side /volume1 prefix.
+        config = _make_config(scraper_cfg=dict(
+            _T3_BASE_CONFIG,
+            external_manager='jellyfin',
+            strm_path_mappings={str(source_dir): '/volume1'},
+        ))
+
+        result, _repo = _e2e_run_produce_source(source_dir, output_dir, config, self.FILENAMES)
+
+        assert result.created == 2
+        contents = {d.glob('*.strm').__next__().read_text(encoding='utf-8')
+                    for d in _movie_dirs(output_dir)}
+        # prefix str(source_dir) swapped for /volume1, remainder appended verbatim,
+        # NOT normalized (CD-90a-6: bare Unix target survives on any host).
+        expected = {f'/volume1/{fn}' for fn in self.FILENAMES}
+        assert contents == expected, f"mapped strm contents {contents} != {expected}"
+
+    # -- PR #93 五審四次 P2 (option C): fresh strm mapping getter per file ---------
+
+    def test_option_c_getter_supplies_fresh_mapping_over_frozen(self, tmp_path):
+        """凍結 config 帶舊映射、getter 回新映射 → .strm 用新映射（斷線尾巴那片不 stale）。"""
+        source_dir, output_dir = self._setup_source(tmp_path)
+        config = _make_config(scraper_cfg=dict(
+            _T3_BASE_CONFIG,
+            external_manager='jellyfin',
+            strm_path_mappings={str(source_dir): '/OLD-FROZEN'},  # generate 起始凍結值
+        ))
+        fresh_getter = lambda: {str(source_dir): '/NEW-FRESH'}  # noqa: E731 — 測試用簡短 getter
+
+        result, _repo = _e2e_run_produce_source(
+            source_dir, output_dir, config, self.FILENAMES, strm_mappings_getter=fresh_getter)
+
+        assert result.created == 2
+        contents = {d.glob('*.strm').__next__().read_text(encoding='utf-8')
+                    for d in _movie_dirs(output_dir)}
+        assert contents == {f'/NEW-FRESH/{fn}' for fn in self.FILENAMES}, contents
+        assert all('OLD-FROZEN' not in c for c in contents)
+
+    def test_option_c_no_getter_uses_frozen_config_mapping(self, tmp_path):
+        """getter=None（既有呼叫/rewrite/測試）→ 用凍結 config 映射、不重讀 config、行為不變。"""
+        source_dir, output_dir = self._setup_source(tmp_path)
+        config = _make_config(scraper_cfg=dict(
+            _T3_BASE_CONFIG,
+            external_manager='jellyfin',
+            strm_path_mappings={str(source_dir): '/FROZEN-ONLY'},
+        ))
+
+        result, _repo = _e2e_run_produce_source(
+            source_dir, output_dir, config, self.FILENAMES)  # 無 getter
+
+        assert result.created == 2
+        contents = {d.glob('*.strm').__next__().read_text(encoding='utf-8')
+                    for d in _movie_dirs(output_dir)}
+        assert contents == {f'/FROZEN-ONLY/{fn}' for fn in self.FILENAMES}, contents
+
+    # -- Acceptance 7: zero writes into the read-only source dir ------------------
+
+    def test_acceptance7_readonly_source_zero_writes(self, tmp_path):
+        source_dir, output_dir = self._setup_source(tmp_path)
+        config = _make_config(scraper_cfg=dict(
+            _T3_BASE_CONFIG,
+            external_manager='jellyfin',
+            strm_path_mappings={str(source_dir): '/volume1'},
+        ))
+
+        before = _snapshot_dir(source_dir)
+        result, _repo = _e2e_run_produce_source(source_dir, output_dir, config, self.FILENAMES)
+        after = _snapshot_dir(source_dir)
+
+        assert result.created == 2, "sanity: run must actually produce (else zero-write is vacuous)"
+        assert before == after, (
+            f"read-only source dir was modified: added={after - before}, removed={before - after}"
+        )
+        # and the output actually got written (proves the run wrote SOMEWHERE, just not source)
+        assert _movie_dirs(output_dir), "output dir empty — run did not write assets anywhere"
+
+    # -- Regression: DB path = source path, strm does not touch streaming key -----
+
+    def test_regression_upsert_path_is_source_uri_not_output_or_strm(self, tmp_path):
+        source_dir, output_dir = self._setup_source(tmp_path)
+        config = _make_config(scraper_cfg=dict(
+            _T3_BASE_CONFIG,
+            external_manager='jellyfin',
+            strm_path_mappings={str(source_dir): '/volume1'},
+        ))
+
+        result, repo = _e2e_run_produce_source(source_dir, output_dir, config, self.FILENAMES)
+
+        assert result.created == 2
+        upserted = [call.args[0] for call in repo.upsert.call_args_list]
+        assert len(upserted) == 2, f"expected 2 upserts, got {len(upserted)}"
+        upserted_paths = {v.path for v in upserted}
+        # streaming key = the SOURCE file URI (spec §90a.2.2), never the output folder
+        # or the strm's mapped /volume1 target.
+        expected_paths = {to_file_uri(str(source_dir / fn)) for fn in self.FILENAMES}
+        assert upserted_paths == expected_paths, (
+            f"DB path {upserted_paths} must equal source URIs {expected_paths}"
+        )
+        for v in upserted:
+            assert str(output_dir) not in v.path, "DB path must not point into the output folder"
+            assert '/volume1' not in v.path, "DB path must not be the strm's mapped playback path"
+            # output_dir column DOES record where it was produced (that's fine, separate field)
+            assert v.output_dir, "output_dir column should be recorded (non-empty file:/// URI)"
+
+    # -- off comparison: media-server-only, off flavour writes NO strm -----------
+
+    def test_off_flavour_produces_no_strm(self, tmp_path):
+        source_dir, output_dir = self._setup_source(tmp_path)
+        config = _make_config(scraper_cfg=dict(_T3_BASE_CONFIG, external_manager='off'))
+
+        # off flavour's resolve_output_root ignores output_path and returns the fixed
+        # App lib root; patch it to the tmp output dir so the test never pollutes the
+        # real lib folder (resolve_output_root has its own dedicated tests).
+        with patch('core.readonly_producer.resolve_output_root', return_value=str(output_dir)):
+            result, _repo = _e2e_run_produce_source(source_dir, output_dir, config, self.FILENAMES)
+
+        assert result.created == 2, f"off run must still produce (created={result.created})"
+        dirs = _movie_dirs(output_dir)
+        assert len(dirs) == 2
+        for d in dirs:
+            assert not list(d.glob('*.strm')), f"off flavour must not write a .strm in {d.name}"
+            # but the off assets are still there (nfo + cover) — strm is the only delta
+            assert list(d.glob('*.nfo')), f"off flavour still writes nfo in {d.name}"

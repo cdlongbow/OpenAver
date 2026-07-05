@@ -16,7 +16,7 @@
      @dragleave.document="handleDragLeave($event)"
      @dragover.document.prevent
      @drop.document.prevent="handleDrop($event)"
-     @keydown.escape.window="dirtyCheckModalOpen && dirtyCheckCancel(); missingConfirmModalOpen && cancelLargeMissingEnrich(); deleteAliasGroupModalOpen && cancelDeleteAliasGroupModal(); deleteTagAliasGroupModalOpen && cancelDeleteTagAliasGroupModal(); copyFailModalOpen && closeCopyFailModal();">
+     @keydown.escape.window="dirtyCheckModalOpen && dirtyCheckCancel(); missingConfirmModalOpen && cancelLargeMissingEnrich(); deleteAliasGroupModalOpen && cancelDeleteAliasGroupModal(); deleteTagAliasGroupModalOpen && cancelDeleteTagAliasGroupModal(); copyFailModalOpen && closeCopyFailModal(); readonlyConfirmModalOpen && readonlyConfirmCancel();">
     <!-- Drag Overlay (must be inside x-data scope) -->
     <div class="drag-overlay" id="dragOverlay" x-show="showDragOverlay" x-transition.opacity>
         <div class="drag-overlay-content">
@@ -73,7 +73,8 @@
                         <div class="folder-item">
                             <label class="flex items-center gap-1">
                                 <input type="checkbox" class="toggle toggle-primary toggle-sm"
-                                       x-model="dir.readonly">
+                                       :checked="dir.readonly"
+                                       @click.prevent="onReadonlyToggleClick(idx)">
                                 <span>{{ t('scanner.folder.readonly_label') }}</span>
                             </label>
                             <i class="bi bi-folder folder-icon"></i>
@@ -102,6 +103,18 @@
             </div>
             <a href="/settings" class="settings-link">
                 <i class="bi bi-gear"></i> {{ t('scanner.folder.settings_link') }}
+            </a>
+        </div>
+
+        <!-- 跨機器路徑提醒（media-server 風味）：strm 內寫本機路徑，播放端在別機須認得，可到設定設路徑替換規則 -->
+        <div class="output-info"
+             x-show="['jellyfin', 'emby', 'kodi'].includes(config?.scraper?.external_manager)">
+            <div class="path">
+                <i class="bi bi-exclamation-triangle"></i>
+                {{ t('scanner.folder.cross_machine_hint') }}
+            </div>
+            <a href="/settings" class="settings-link">
+                <i class="bi bi-gear"></i> {{ t('scanner.folder.cross_machine_settings_link') }}
             </a>
         </div>
 
@@ -567,6 +580,40 @@
                 </button>
                 <button type="button" class="btn btn-primary" @click="dirtyCheckSave()">
                     {{ t('scanner.dirty_modal.save') }}
+                </button>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- TASK-90b-T1: Readonly Confirm Modal -->
+    <dialog class="modal fluent-modal"
+            :class="{ 'modal-open': readonlyConfirmModalOpen }"
+            @click.self="readonlyConfirmCancel()">
+        <div class="modal-box fluent-modal-box">
+            <h3 class="fluent-modal-title">
+                <i class="bi bi-exclamation-triangle"></i> {{ t('scanner.readonly_confirm_modal.title') }}
+            </h3>
+            <p class="fluent-modal-body">
+                {{ t('scanner.readonly_confirm_modal.intro') }}
+            </p>
+            <p class="fluent-modal-body"
+               x-show="['jellyfin', 'emby', 'kodi'].includes(config?.scraper?.external_manager)">
+                {{ t('scanner.readonly_confirm_modal.output_hint_media_server') }}
+            </p>
+            <p class="fluent-modal-body"
+               x-show="!['jellyfin', 'emby', 'kodi'].includes(config?.scraper?.external_manager)">
+                {{ t('scanner.readonly_confirm_modal.output_hint_offline') }}
+            </p>
+            <p class="fluent-modal-body"
+               x-show="!['jellyfin', 'emby', 'kodi'].includes(config?.scraper?.external_manager)">
+                {{ t('scanner.readonly_confirm_modal.nas_hint') }}
+            </p>
+            <div class="modal-action fluent-modal-actions">
+                <button type="button" class="btn btn-ghost" @click="readonlyConfirmCancel()">
+                    {{ t('scanner.readonly_confirm_modal.cancel') }}
+                </button>
+                <button type="button" class="btn btn-primary" @click="readonlyConfirmAccept()">
+                    {{ t('scanner.readonly_confirm_modal.confirm') }}
                 </button>
             </div>
         </div>
