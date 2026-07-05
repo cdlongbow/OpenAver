@@ -66,6 +66,11 @@ export function stateConfig() {
         pendingOfflineCount: 0,
         _pendingWritableDirs: null,
 
+        // ===== strm 改寫確認 State (90c-T6) =====
+        // 存規則後：若映射變更 && media-server && 有既有 strm → heads-up 確認再改寫既有 .strm
+        rewriteStrmConfirmOpen: false,
+        pendingRewriteCount: 0,
+
         // ===== Dirty Check State =====
         savedState: null,
         savedOpenaiUseCustomModel: false,
@@ -521,6 +526,31 @@ export function stateConfig() {
             this._pendingWritableDirs = null;
         },
 
+        // 90c-T6: 確認 → 呼叫端點實際改寫既有 .strm，toast 顯示端點回的精確 rewritten 數。
+        async confirmRewriteStrm() {
+            this.rewriteStrmConfirmOpen = false;
+            try {
+                const resp = await fetch('/api/config/rewrite-strm', { method: 'POST' });
+                const result = await resp.json();
+                if (result.success) {
+                    this.showToast(
+                        window.t('settings.scraper.strm_mapping.rewrite_done', { count: result.rewritten }),
+                        'success'
+                    );
+                } else {
+                    console.warn('[rewriteStrm] confirmRewriteStrm failed:', result.error);
+                }
+            } catch (e) {
+                console.warn('[rewriteStrm] confirmRewriteStrm error:', e);
+            }
+            this.pendingRewriteCount = 0;
+        },
+        // 取消：規則已存（PUT 已落盤），僅不改寫既有 strm；清狀態即可。
+        cancelRewriteStrm() {
+            this.rewriteStrmConfirmOpen = false;
+            this.pendingRewriteCount = 0;
+        },
+
         async copyServerUrl() {
             if (!this.serverUrl()) return;
             if (!navigator.clipboard?.writeText) {
@@ -748,6 +778,9 @@ export function stateConfig() {
                 // 71-T5: 存檔前的「已持久化」縮圖快取狀態（authoritative：剛從 server GET 的 config.json）。
                 // 用來在 PUT 成功後判定「這次儲存是否剛把它從關打開」→ 才觸發背景 prewarm。
                 const prevThumbEnabled = config.thumbnail_cache_enabled === true;
+                // 90c-T6: 存前「已持久化」的 strm 映射（authoritative：剛 GET 的 config.json）。
+                // PUT 成功後與新映射比對，判定「這次儲存是否改動了路徑規則」→ 才提示改寫既有 strm。
+                const prevStrmMappings = JSON.stringify(config.scraper?.strm_path_mappings || {});
 
                 // 更新 scraper
                 const folderLayers = [
@@ -873,6 +906,23 @@ export function stateConfig() {
                     // 自身不 POST clear，統一收斂於此（與 prewarm 對稱）。
                     if (prevThumbEnabled && this.form.thumbnailCacheEnabled === false) {
                         this._triggerThumbClear();
+                    }
+                    // 90c-T6: strm 路徑規則「實際變更」且為 media-server 模式 → dry-run 計數；
+                    // 有既有 .strm（count>0）才跳 heads-up 確認。off 模式 / 無映射變更 / 無產出片
+                    //（count==0）→ 不提示（規則已存，僅未改寫既有 strm）。
+                    const strmChanged =
+                        prevStrmMappings !== JSON.stringify(config.scraper.strm_path_mappings || {});
+                    if (strmChanged && ['jellyfin', 'emby', 'kodi'].includes(this.form.externalManager)) {
+                        try {
+                            const dryResp = await fetch('/api/config/rewrite-strm?dry_run=true', { method: 'POST' });
+                            const dryResult = await dryResp.json();
+                            if (dryResult.success && dryResult.count > 0) {
+                                this.pendingRewriteCount = dryResult.count;
+                                this.rewriteStrmConfirmOpen = true;
+                            }
+                        } catch (e) {
+                            console.warn('[rewriteStrm] dry-run failed:', e);
+                        }
                     }
                 } else {
                     this.showToast('儲存失敗: ' + result.error, 'error');

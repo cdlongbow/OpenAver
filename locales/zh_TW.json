@@ -410,7 +410,14 @@
         "add_rule": "新增規則",
         "remove": "刪除規則",
         "template_hint": "以下為唯讀來源的本機掃描路徑參考範本，請對齊產生時實際掃到的路徑前綴（WSL 等環境顯示形可能有落差）：",
-        "template_use": "填入左欄"
+        "template_use": "填入左欄",
+        "rewrite_confirm": {
+          "title": "改寫既有 .strm 檔",
+          "body": "路徑規則已變更，將依新規則改寫 {count} 個既有 .strm 檔（你的影片檔案不會被動到）。",
+          "cancel": "先不改寫",
+          "confirm": "立即改寫"
+        },
+        "rewrite_done": "已改寫 {count} 個 .strm 檔"
       }
     },
     "gallery": {

@@ -19,6 +19,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, StrictBool, StrictStr
 from typing import Literal
+from pathlib import Path
 import asyncio
 import httpx
 import threading
@@ -33,7 +34,8 @@ from core.config import (
 )
 from core.database import VideoRepository, get_db_path, init_db
 from core import thumbnail_cache
-from core.path_utils import is_path_under_dir, coerce_to_file_uri
+from core.path_utils import is_path_under_dir, coerce_to_file_uri, uri_to_fs_path
+from core.readonly_producer import _write_strm
 from core.source_config import MAX_ENABLED_SOURCES
 from core.translate_service import LANGUAGE_PROMPTS
 
@@ -329,6 +331,71 @@ def switch_external_manager(request: SwitchExternalManagerRequest) -> dict:
         "deleted_cards": deleted_cards,
         "external_manager": request.external_manager,
     }
+
+
+def _collect_strm_targets(repo) -> list:
+    """枚舉「已產出且夾內有既有 .strm」的片，回 [(strm_path: Path, source_fs_path: str)]。
+
+    dry_run 與實際改寫共用此函式 → 「哪些片有 strm」的判定完全一致，保證
+    count（dry_run）== rewritten（實際，除非個別片 best-effort 寫失敗）。
+
+    - filter `output_dir` 非空（''＝未產出的骨架 row，不入枚舉）。
+    - 用 glob 定位既有 .strm（非 _build_old_base 重建，Codex P1）：`_resolve_movie_dir`
+      保證一夾一片，`<output_dir>/*.strm` 至多命中一個 → 用磁碟實際檔名的 stem，對
+      config 漂移（同次改 filename_format）免疫；無既有 strm → skip 不新建。
+    """
+    targets = []
+    for v in repo.get_all():
+        if not v.output_dir:
+            continue
+        strm = next(Path(uri_to_fs_path(v.output_dir)).glob('*.strm'), None)
+        if strm is None:
+            continue
+        targets.append((strm, uri_to_fs_path(v.path)))
+    return targets
+
+
+@router.post("/config/rewrite-strm")
+def rewrite_strm(dry_run: bool = False) -> dict:
+    """就地改寫使用者媒體庫既有 .strm（依當前 strm_path_mappings 重套播放端路徑）。
+
+    spec §90a.3/§90a.4 驗收 5（CD-90a-7）：改路徑規則 → 既有全部 .strm 立即同步新映射
+    （消除 stale-strm bug）。**只覆寫一行純文字**，不刪檔、不動 nfo/封面、不改 DB path、
+    不重刮。
+
+    - `dry_run=true`：只枚舉+glob 計數（供前端 heads-up N），零檔案寫入 → `{success, count}`。
+    - `dry_run=false`（預設）：實際 `_write_strm` 覆寫 → `{success, rewritten}`。
+    - off 模式自守（external_manager == 'off'）：直接回 0，不 enumerate/glob/寫檔
+      （off 風味產出片本就無 .strm）。
+
+    同步 def（DB + 檔案 I/O 走 threadpool，比照 switch_external_manager）。`_write_strm`
+    的 config 實參＝scraper 區塊（它同層讀 strm_path_mappings），不可傳 full config。
+    """
+    key = "count" if dry_run else "rewritten"
+    try:
+        cfg = load_config()
+        scraper_cfg = cfg.get('scraper', {})
+        # off-mode 自守（防禦縱深；主 gate 在前端）
+        if scraper_cfg.get('external_manager', 'off') == 'off':
+            return {"success": True, key: 0}
+
+        db_path = get_db_path()
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+        targets = _collect_strm_targets(repo)
+
+        if dry_run:
+            return {"success": True, "count": len(targets)}
+
+        rewritten = 0
+        for strm, source_fs_path in targets:
+            # str(strm)[:-5] 去 '.strm' → base_stem；用磁碟實際檔名（Codex P1 免疫）
+            if _write_strm(str(strm)[:-5], source_fs_path, scraper_cfg):
+                rewritten += 1
+        return {"success": True, "rewritten": rewritten}
+    except Exception as e:  # noqa: BLE001 — 端點層例外收斂為 success:False（比照 config.py 慣例）
+        logger.error("rewrite_strm 失敗: %s", e)
+        return {"success": False, "error": "改寫 strm 失敗"}
 
 
 @router.get("/version")

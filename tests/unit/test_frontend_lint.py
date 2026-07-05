@@ -16605,3 +16605,113 @@ class TestReadonlyDisabledStateGuard:
         )
         val = data.get("showcase", {}).get("enrich", {}).get("readonly_tooltip")
         assert val, "zh_TW.json 缺 showcase.enrich.readonly_tooltip（或為空）"
+
+
+class TestRewriteStrmConfirmGuard:
+    """TASK-90c-T6: strm 改寫存後鉤 + heads-up confirm modal 結構守衛（element-bound）"""
+
+    def _html(self):
+        return SETTINGS_HTML.read_text(encoding="utf-8")
+
+    def _js(self):
+        return SETTINGS_CONFIG_JS.read_text(encoding="utf-8")
+
+    def test_settings_html_has_rewrite_confirm_modal(self):
+        """confirm modal dialog 存在，含確認/取消 @click 綁定。"""
+        html = self._html()
+        assert "'modal-open': rewriteStrmConfirmOpen" in html, \
+            "settings.html missing rewriteStrmConfirmOpen modal dialog"
+        assert '@click="confirmRewriteStrm()"' in html, \
+            "settings.html missing confirmRewriteStrm() @click 綁定"
+        assert '@click="cancelRewriteStrm()"' in html, \
+            "settings.html missing cancelRewriteStrm() @click 綁定"
+
+    def test_settings_html_rewrite_esc_chain(self):
+        """Esc 鏈含新 modal 的 cancel。"""
+        html = self._html()
+        assert "rewriteStrmConfirmOpen && cancelRewriteStrm()" in html, \
+            "settings.html Esc 鏈 missing rewriteStrmConfirmOpen && cancelRewriteStrm()"
+
+    def test_settings_html_rewrite_headsup_tone(self):
+        """heads-up 語氣：確認鈕用 btn-primary（非破壞性），不得綁 btn-error。"""
+        html = self._html()
+        assert 'class="btn btn-primary" @click="confirmRewriteStrm()"' in html, \
+            "settings.html rewrite confirm 鈕應為 btn-primary（heads-up 非破壞性）"
+        assert 'btn-error" @click="confirmRewriteStrm()"' not in html, \
+            "settings.html rewrite confirm 鈕不得用 btn-error（非破壞性操作）"
+
+    def test_settings_html_rewrite_i18n_body_with_count(self):
+        """body 綁對 i18n key 且帶 {count} 插值。"""
+        html = self._html()
+        assert "settings.scraper.strm_mapping.rewrite_confirm.body" in html, \
+            "settings.html missing rewrite_confirm.body i18n key 引用"
+        # body 插值 count（element-bound：body key 與 count: pendingRewriteCount 同一 x-text 表達式）
+        idx = html.find("settings.scraper.strm_mapping.rewrite_confirm.body")
+        assert "pendingRewriteCount" in html[idx:idx + 200], \
+            "settings.html rewrite_confirm.body x-text missing count: pendingRewriteCount 插值"
+        for key in ["title", "cancel", "confirm"]:
+            assert f"settings.scraper.strm_mapping.rewrite_confirm.{key}" in html, \
+                f"settings.html missing rewrite_confirm.{key} i18n key 引用"
+
+    def test_config_js_stubs_declared(self):
+        """新狀態先在 x-data 宣告 stub（Alpine 3 未宣告屬性 ReferenceError）。"""
+        js = self._js()
+        assert "rewriteStrmConfirmOpen: false" in js, \
+            "state-config.js missing rewriteStrmConfirmOpen stub 宣告"
+        assert "pendingRewriteCount: 0" in js, \
+            "state-config.js missing pendingRewriteCount stub 宣告"
+
+    def test_config_js_methods_present(self):
+        """confirm/cancel 方法齊全。"""
+        js = self._js()
+        assert "confirmRewriteStrm()" in js, "state-config.js missing confirmRewriteStrm()"
+        assert "cancelRewriteStrm()" in js, "state-config.js missing cancelRewriteStrm()"
+
+    def test_config_js_saveconfig_hook_condition(self):
+        """saveConfig 存後鉤：media-server && 映射變更 → dry-run 計數（element-bound）。"""
+        js = self._js()
+        # dry-run 端點呼叫
+        assert "/api/config/rewrite-strm?dry_run=true" in js, \
+            "state-config.js missing dry-run 計數呼叫"
+        # 條件：映射實際變更（strmChanged）
+        assert "prevStrmMappings" in js, \
+            "state-config.js missing prevStrmMappings 存前快照（映射變更判定）"
+        # 條件：media-server gate
+        assert "['jellyfin', 'emby', 'kodi'].includes(this.form.externalManager)" in js, \
+            "state-config.js saveConfig 鉤 missing media-server 模式 gate"
+
+    def test_config_js_confirm_calls_real_endpoint_and_toast(self):
+        """confirmRewriteStrm 呼叫實際端點 + rewrite_done toast（帶 rewritten）。"""
+        js = self._js()
+        idx = js.find("async confirmRewriteStrm()")
+        assert idx != -1, "state-config.js missing async confirmRewriteStrm()"
+        block = js[idx:idx + 700]
+        assert "'/api/config/rewrite-strm'" in block, \
+            "confirmRewriteStrm missing 實際改寫端點呼叫（無 dry_run）"
+        assert "settings.scraper.strm_mapping.rewrite_done" in block, \
+            "confirmRewriteStrm missing rewrite_done toast i18n key"
+        assert "result.rewritten" in block, \
+            "confirmRewriteStrm toast 應帶端點回的精確 rewritten 數"
+
+    def test_zh_tw_json_has_rewrite_keys(self):
+        """locales/zh_TW.json 含 rewrite_confirm 節點 + rewrite_done（只驗 zh_TW，無 4-locale parity）。"""
+        zh_tw_path = Path(__file__).parent.parent.parent / "locales" / "zh_TW.json"
+        data = json.loads(zh_tw_path.read_text(encoding="utf-8"))
+        strm = data.get("settings", {}).get("scraper", {}).get("strm_mapping", {})
+        confirm = strm.get("rewrite_confirm")
+        assert confirm is not None, "zh_TW.json missing settings.scraper.strm_mapping.rewrite_confirm 節點"
+        for key in ["title", "body", "cancel", "confirm"]:
+            assert key in confirm, f"rewrite_confirm missing key: {key!r}"
+        assert "{count}" in confirm["body"], "rewrite_confirm.body 應含 {count} 插值"
+        assert "rewrite_done" in strm, "zh_TW.json missing strm_mapping.rewrite_done"
+        assert "{count}" in strm["rewrite_done"], "rewrite_done 應含 {count} 插值"
+
+    def test_no_flavor_wording_in_rewrite_keys(self):
+        """文案不得出現「風味」二字（i18n.md 白話用詞規則）。"""
+        zh_tw_path = Path(__file__).parent.parent.parent / "locales" / "zh_TW.json"
+        data = json.loads(zh_tw_path.read_text(encoding="utf-8"))
+        strm = data.get("settings", {}).get("scraper", {}).get("strm_mapping", {})
+        confirm = strm.get("rewrite_confirm", {})
+        for key, text in confirm.items():
+            assert "風味" not in text, f"rewrite_confirm.{key} 不得含「風味」: {text!r}"
+        assert "風味" not in strm.get("rewrite_done", ""), "rewrite_done 不得含「風味」"

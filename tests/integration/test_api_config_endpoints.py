@@ -682,3 +682,257 @@ class TestSwitchExternalManagerEndpoint:
         # config 零變更
         assert [d["path"] for d in cfg["gallery"]["directories"]] == ["file:///D:/ro_src"]
         assert cfg["scraper"]["external_manager"] == "off"
+
+
+class TestRewriteStrmEndpoint:
+    """POST /api/config/rewrite-strm 端點測試（TASK-90c-T6）
+
+    改路徑規則 → 就地改寫使用者媒體庫既有 .strm（依當前 strm_path_mappings 重套播放端
+    路徑）。只覆寫一行純文字，不刪檔、不動 nfo/封面、不改 DB path、不重刮。
+
+    真 config.json（CONFIG_PATH monkeypatch）供端點讀當前 scraper 設定；DB 側 mock
+    （呼叫處 binding web.routers.config.VideoRepository）；.strm/.nfo/封面 為真 temp 檔
+    （不 mock _write_strm，讀回檔案斷言單行/無 BOM/映射正確）。
+    """
+
+    class _FakeRepo:
+        """假 VideoRepository：get_all 回設定的片；upsert 為 spy（斷言不被呼叫）。"""
+        def __init__(self, videos):
+            self._videos = list(videos)
+            self.upsert_calls = []
+
+        def get_all(self):
+            return list(self._videos)
+
+        def upsert(self, v):
+            self.upsert_calls.append(v)
+
+    @pytest.fixture
+    def env(self, tmp_path, monkeypatch):
+        import types
+        from core.path_utils import to_file_uri
+
+        config_path = tmp_path / "config.json"
+        default_path = tmp_path / "config.default.json"
+        default_path.write_text(json.dumps({"general": {}}))
+
+        monkeypatch.setattr("core.config.CONFIG_PATH", config_path)
+        monkeypatch.setattr("core.config.CONFIG_DEFAULT_PATH", default_path)
+        monkeypatch.setattr("web.routers.config._reset_translate_service", lambda: None)
+        monkeypatch.setattr("web.routers.config.get_db_path", lambda: tmp_path / "videos.db")
+        monkeypatch.setattr("web.routers.config.init_db", lambda *a, **k: None)
+
+        src_root = tmp_path / "src"      # 映射本機前綴
+        lib_root = tmp_path / "library"  # 輸出媒體庫
+        src_root.mkdir()
+        lib_root.mkdir()
+        remote_prefix = "/volume1/movies"
+
+        holder = types.SimpleNamespace(
+            repo=None, config_path=config_path,
+            src_root=src_root, remote_prefix=remote_prefix,
+        )
+        monkeypatch.setattr("web.routers.config.VideoRepository", lambda *a, **k: holder.repo)
+
+        def write_config(external_manager="jellyfin", with_mapping=True, filename_format="{num}"):
+            mappings = {str(src_root): remote_prefix} if with_mapping else {}
+            config_path.write_text(json.dumps({
+                "scraper": {
+                    "external_manager": external_manager,
+                    "strm_path_mappings": mappings,
+                    "filename_format": filename_format,
+                },
+            }))
+
+        def make_movie(name, strm_stem=None, strm_content="OLD-CONTENT",
+                       with_nfo=False, with_cover=False):
+            """建一個單片夾，內含既有 .strm（可選 nfo/封面）。回 (video_ns, movie_dir)。"""
+            movie_dir = lib_root / name
+            movie_dir.mkdir()
+            source_fs = src_root / name / f"{name}.mp4"
+            extras = {}
+            if strm_stem is None:
+                strm_stem = name
+            strm = movie_dir / f"{strm_stem}.strm"
+            strm.write_text(strm_content, encoding="utf-8")
+            extras["strm"] = strm
+            if with_nfo:
+                nfo = movie_dir / f"{name}.nfo"
+                nfo.write_text("<movie>original</movie>", encoding="utf-8")
+                extras["nfo"] = nfo
+            if with_cover:
+                cover = movie_dir / f"{name}.jpg"
+                cover.write_bytes(b"\xff\xd8\xff-fake-jpeg")
+                extras["cover"] = cover
+            v = types.SimpleNamespace(
+                path=to_file_uri(str(source_fs)),
+                output_dir=to_file_uri(str(movie_dir)),
+            )
+            return v, movie_dir, extras
+
+        def make_empty_movie(name):
+            """已產出（output_dir 非空）但夾內無 .strm。"""
+            movie_dir = lib_root / name
+            movie_dir.mkdir()
+            source_fs = src_root / name / f"{name}.mp4"
+            v = types.SimpleNamespace(
+                path=to_file_uri(str(source_fs)),
+                output_dir=to_file_uri(str(movie_dir)),
+            )
+            return v, movie_dir
+
+        def make_unproduced(name):
+            """未產出骨架 row：output_dir 空。"""
+            source_fs = src_root / name / f"{name}.mp4"
+            return types.SimpleNamespace(path=to_file_uri(str(source_fs)), output_dir="")
+
+        def set_videos(videos):
+            holder.repo = TestRewriteStrmEndpoint._FakeRepo(videos)
+
+        holder.write_config = write_config
+        holder.make_movie = make_movie
+        holder.make_empty_movie = make_empty_movie
+        holder.make_unproduced = make_unproduced
+        holder.set_videos = set_videos
+        holder.expected_mapped = lambda name: f"{remote_prefix}/{name}/{name}.mp4"
+        return holder
+
+    def test_multi_video_rewrite_correct(self, client, env):
+        """多片改寫：各自 .strm 內容為新映射路徑、單行、無 BOM、rewritten 計數正確。"""
+        env.write_config(external_manager="jellyfin", with_mapping=True)
+        v1, _, e1 = env.make_movie("ABC-001")
+        v2, _, e2 = env.make_movie("XYZ-999")
+        env.set_videos([v1, v2])
+
+        resp = client.post("/api/config/rewrite-strm")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["rewritten"] == 2
+        for name, extras in [("ABC-001", e1), ("XYZ-999", e2)]:
+            raw = extras["strm"].read_bytes()
+            assert not raw.startswith(b"\xef\xbb\xbf")   # 無 BOM
+            text = raw.decode("utf-8")
+            assert "\n" not in text                       # 單行
+            assert text == env.expected_mapped(name)      # 正確映射後路徑
+
+    def test_delete_rule_restores_local_native_path(self, client, env):
+        """刪光規則（空 mappings）→ .strm 還原為本機原生來源路徑。"""
+        env.write_config(external_manager="jellyfin", with_mapping=False)
+        v1, _, e1 = env.make_movie("ABC-001")
+        env.set_videos([v1])
+
+        resp = client.post("/api/config/rewrite-strm")
+
+        assert resp.json()["rewritten"] == 1
+        from core.path_utils import uri_to_fs_path
+        assert e1["strm"].read_text(encoding="utf-8") == uri_to_fs_path(v1.path)
+
+    def test_off_mode_no_op_no_writes(self, client, env):
+        """off 模式端點自守 → rewritten 0、零檔案寫入（.strm 內容不變）。"""
+        env.write_config(external_manager="off", with_mapping=True)
+        v1, _, e1 = env.make_movie("ABC-001", strm_content="UNTOUCHED")
+        env.set_videos([v1])
+
+        resp = client.post("/api/config/rewrite-strm")
+
+        assert resp.json() == {"success": True, "rewritten": 0}
+        assert e1["strm"].read_text(encoding="utf-8") == "UNTOUCHED"
+
+    def test_no_existing_strm_skipped_not_created(self, client, env):
+        """output_dir 非空但無既有 .strm → skip、不新建、不計入 rewritten。"""
+        env.write_config(external_manager="jellyfin", with_mapping=True)
+        v_has, _, e1 = env.make_movie("ABC-001")
+        v_empty, empty_dir = env.make_empty_movie("NO-STRM")
+        env.set_videos([v_has, v_empty])
+
+        resp = client.post("/api/config/rewrite-strm")
+
+        assert resp.json()["rewritten"] == 1               # 只算有 strm 的那片
+        assert list(empty_dir.glob("*.strm")) == []        # 不新建
+
+    def test_unproduced_row_not_enumerated(self, client, env):
+        """output_dir 空（未產出骨架 row）→ 不入枚舉、不觸及。"""
+        env.write_config(external_manager="jellyfin", with_mapping=True)
+        v_has, _, e1 = env.make_movie("ABC-001")
+        v_none = env.make_unproduced("SKELETON")
+        env.set_videos([v_has, v_none])
+
+        resp = client.post("/api/config/rewrite-strm")
+
+        assert resp.json()["rewritten"] == 1
+
+    def test_codex_p1_filename_format_and_mapping_both_changed(self, client, env):
+        """Codex P1：同次改 strm_path_mappings + filename_format → 仍 glob 命中磁碟既有
+        .strm（不依當前 filename_format 重建）→ 改寫該既有檔、不新增第二份、不 miss。"""
+        # 磁碟上的既有 strm stem 與當前 filename_format 完全不符（模擬舊 config 產生）
+        env.write_config(external_manager="jellyfin", with_mapping=True,
+                         filename_format="{num}-{title}-{actor}")
+        v1, movie_dir, e1 = env.make_movie("ABC-001", strm_stem="LEGACY-OLD-NAME")
+        env.set_videos([v1])
+
+        resp = client.post("/api/config/rewrite-strm")
+
+        assert resp.json()["rewritten"] == 1
+        strms = list(movie_dir.glob("*.strm"))
+        assert len(strms) == 1                              # 仍只有一個 .strm（不新增第二份）
+        assert strms[0].name == "LEGACY-OLD-NAME.strm"      # 改寫的是既有檔
+        assert strms[0].read_text(encoding="utf-8") == env.expected_mapped("ABC-001")
+
+    def test_only_strm_touched_nfo_cover_db_untouched(self, client, env):
+        """只動 .strm：nfo/封面 mtime+內容不變、repo.upsert 未呼叫、DB path 不變。"""
+        env.write_config(external_manager="jellyfin", with_mapping=True)
+        v1, _, extras = env.make_movie("ABC-001", with_nfo=True, with_cover=True)
+        env.set_videos([v1])
+        nfo, cover = extras["nfo"], extras["cover"]
+        nfo_mtime, cover_mtime = nfo.stat().st_mtime, cover.stat().st_mtime
+        nfo_bytes, cover_bytes = nfo.read_bytes(), cover.read_bytes()
+        orig_path = v1.path
+
+        resp = client.post("/api/config/rewrite-strm")
+
+        assert resp.json()["rewritten"] == 1
+        assert nfo.read_bytes() == nfo_bytes
+        assert cover.read_bytes() == cover_bytes
+        assert nfo.stat().st_mtime == nfo_mtime
+        assert cover.stat().st_mtime == cover_mtime
+        assert env.repo.upsert_calls == []                 # DB 未寫
+        assert v1.path == orig_path                         # DB path 不變
+
+    def test_dry_run_counts_and_writes_nothing(self, client, env):
+        """dry_run=true → 回精確 count、零檔案寫入（.strm 內容不變）。"""
+        env.write_config(external_manager="jellyfin", with_mapping=True)
+        v1, _, e1 = env.make_movie("ABC-001", strm_content="UNTOUCHED-DRY")
+        v2, _, e2 = env.make_movie("XYZ-999", strm_content="UNTOUCHED-DRY2")
+        env.set_videos([v1, v2])
+
+        resp = client.post("/api/config/rewrite-strm?dry_run=true")
+
+        body = resp.json()
+        assert body == {"success": True, "count": 2}
+        assert e1["strm"].read_text(encoding="utf-8") == "UNTOUCHED-DRY"
+        assert e2["strm"].read_text(encoding="utf-8") == "UNTOUCHED-DRY2"
+
+    def test_dry_run_count_equals_real_rewritten(self, client, env):
+        """dry_run count == 實際 rewritten（共用 _collect_strm_targets 判定）。"""
+        env.write_config(external_manager="jellyfin", with_mapping=True)
+        v1, _, _ = env.make_movie("ABC-001")
+        v_empty, _ = env.make_empty_movie("NO-STRM")
+        env.set_videos([v1, v_empty])
+
+        dry = client.post("/api/config/rewrite-strm?dry_run=true").json()
+        # 重建 repo（get_all 消費同一 list，dry-run 未改狀態，可重用）
+        real = client.post("/api/config/rewrite-strm").json()
+
+        assert dry["count"] == real["rewritten"] == 1
+
+    def test_dry_run_off_mode_returns_count_zero(self, client, env):
+        """off 模式 dry_run → count 0（自守，不 glob）。"""
+        env.write_config(external_manager="off", with_mapping=True)
+        v1, _, _ = env.make_movie("ABC-001")
+        env.set_videos([v1])
+
+        resp = client.post("/api/config/rewrite-strm?dry_run=true")
+
+        assert resp.json() == {"success": True, "count": 0}

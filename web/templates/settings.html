@@ -1311,6 +1311,29 @@
         </div>
     </dialog>
 
+    <!-- 90c-T6: strm 改寫確認 Confirm Modal（heads-up 語氣、非破壞性 → btn-primary 非 btn-error） -->
+    <dialog class="modal fluent-modal"
+            :class="{ 'modal-open': rewriteStrmConfirmOpen }"
+            @click.self="cancelRewriteStrm()"
+            @keydown.escape.window="rewriteStrmConfirmOpen && cancelRewriteStrm()">
+        <div class="modal-box fluent-modal-box">
+            <h3 class="fluent-modal-title">
+                <i class="bi bi-arrow-repeat"></i>
+                <span x-text="window.t('settings.scraper.strm_mapping.rewrite_confirm.title')"></span>
+            </h3>
+            <p class="fluent-modal-body"
+               x-text="window.t('settings.scraper.strm_mapping.rewrite_confirm.body', {
+                   count: pendingRewriteCount
+               })"></p>
+            <div class="modal-action fluent-modal-actions">
+                <button type="button" class="btn btn-ghost" @click="cancelRewriteStrm()"
+                        x-text="window.t('settings.scraper.strm_mapping.rewrite_confirm.cancel')"></button>
+                <button type="button" class="btn btn-primary" @click="confirmRewriteStrm()"
+                        x-text="window.t('settings.scraper.strm_mapping.rewrite_confirm.confirm')"></button>
+            </div>
+        </div>
+    </dialog>
+
 <!-- Toast 容器（Alpine controlled）-->
 <div class="toast toast-end toast-top z-[9999]" x-show="_toast.visible" x-cloak x-transition>
     <div class="alert" :class="`alert-${_toast.type}`">
