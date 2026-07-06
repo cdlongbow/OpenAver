@@ -5637,8 +5637,9 @@ class TestSearchCssHardcoded:
         # fix/T5：在 L27 插入 .spotlight-search .btn-icon block（5 行）：90→95、988→993。
         # onboarding：在 L361 後插入 .empty-explainer block（30 行，查/動說明）：993→1023（95 在插入點上方不變）。
         # 92a-T3：在 L24 slot 區把 1-line comment→4-line + 新增 .search-auto-pill block（net +10 行，皆在 95/1023 上方）：95→105、1023→1033。
+        # 92a-T4：在 empty-explainer 區（~L395）加 .explainer-icon rule（+6 行，在 105 下方、1033 上方）：1033→1039（105 不變）。
         105: "drop-shadow rgba 0.3 — §2 例外（drop-shadow 跟封面去背形狀，非矩形 box-shadow 無法用 --fluent-shadow-* token）",
-        1033: "var(--bg-card, rgba(0, 0, 0, 0.05)) fallback — defensive fallback，非硬編碼違規",
+        1039: "var(--bg-card, rgba(0, 0, 0, 0.05)) fallback — defensive fallback，非硬編碼違規",
     }
 
     SIX_PX_ALLOWLIST = {
@@ -5648,9 +5649,10 @@ class TestSearchCssHardcoded:
         # fix/T5：在 L27 插入 .spotlight-search .btn-icon block（5 行）：308→313、607→612、662→667。
         # onboarding：在 L361 後插入 .empty-explainer block（30 行）：612→642、667→697（313 在插入點上方不變）。
         # 92a-T3：slot 區 net +10 行（皆在 313/642/697 上方）：313→323、642→652、697→707。
+        # 92a-T4：empty-explainer 區 +6 行（在 323 下方、642/697 上方）：652→658、707→713（323 不變）。
         323: "row inline btn optical 6px — T2.2 加 optical 註記（btn-sm 12px padding 對 row inline 太寬）",
-        652: ".batch-progress-bar height: 6px — intrinsic dimension（非 §4 spacing）",
-        707: "chip optical 6px — T2.2 加 optical 註記（對齊 showcase .lb-tag-add-btn）",
+        658: ".batch-progress-bar height: 6px — intrinsic dimension（非 §4 spacing）",
+        713: "chip optical 6px — T2.2 加 optical 註記（對齊 showcase .lb-tag-add-btn）",
     }
 
     def _scan(self, regex: str, allowlist=None):

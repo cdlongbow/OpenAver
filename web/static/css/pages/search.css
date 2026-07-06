@@ -393,6 +393,12 @@
     margin-top: 0.3em;
 }
 
+/* 92a-T4: explainer 內嵌整理 icon — success 綠對齊實際整理鈕（U-B2）。token 不硬編。 */
+.empty-explainer-line .explainer-icon {
+    color: var(--color-success);
+    margin-left: 0.2em;
+}
+
 @media (max-width: 480px) {
     .empty-explainer {
         max-width: 100%;
