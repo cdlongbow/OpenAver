@@ -67,11 +67,25 @@ _DB_KEY_SINK_METHODS = {
 # 0-based 位置索引（direct-call 情形；asyncio.to_thread 間接呼叫時，真正引數位置整體
 # 往後位移 1，因 to_thread(fn, *args) 的 args[0] 是 fn 本身）
 WRAPPER_SINK_NAMES = {"_db_upsert", "_db_upsert_samples_only", "_check_cover_path"}
-_WRAPPER_PATH_ARG_INDEX = {
-    "_db_upsert": 2,                 # _db_upsert(repo, number, fs_path, meta, ...)
-    "_db_upsert_samples_only": 1,    # _db_upsert_samples_only(repo, fs_path, sample_images)
-    "_check_cover_path": 0,          # _check_cover_path(fs_path)
+# 各 wrapper「路徑實參」在其呼叫式中的 0-based 位置索引 + 參數名（direct-call 情形；
+# asyncio.to_thread 間接呼叫時，真正引數位置整體往後位移 1，因 to_thread(fn, *args) 的
+# args[0] 是 fn 本身）。參數名用於支援 keyword 傳參 callsite（`_db_upsert(..., fs_path=x)`）。
+_WRAPPER_PATH_ARG = {
+    "_db_upsert": (2, "fs_path"),                # _db_upsert(repo, number, fs_path, meta, ...)
+    "_db_upsert_samples_only": (1, "fs_path"),   # _db_upsert_samples_only(repo, fs_path, sample_images)
+    "_check_cover_path": (0, "fs_path"),         # _check_cover_path(fs_path)
 }
+
+
+def _extract_wrapper_arg(node_args, node_keywords, idx, param_name, offset=0):
+    """依位置（含 offset）或 keyword 名稱取出 wrapper 呼叫式中的路徑實參節點；
+    兩者皆未命中回傳 None（呼叫端視為無法判定，跳過該 callsite）。"""
+    if idx is not None and (offset + idx) < len(node_args):
+        return node_args[offset + idx]
+    for kw in node_keywords:
+        if kw.arg == param_name:
+            return kw.value
+    return None
 
 
 def _is_primitive_sink_call(node: ast.AST) -> bool:
@@ -153,9 +167,10 @@ def _find_assign_target_name(funcdef: ast.AST, call_node: ast.Call):
     return None
 
 
-def _find_assign_lineno_for_name(funcdef: ast.AST, name: str):
-    """在 funcdef 內找出 `name = ...`（單一 Name target）的賦值語句 lineno（保守取最後一次
-    賦值，貼近『就近』語意；非真正資料流分析，單函式內不跨跳）。"""
+def _find_assign_lineno_for_name(funcdef: ast.AST, name: str, before_lineno: int):
+    """在 funcdef 內找出 lineno < before_lineno 的最近一次 `name = ...`（單一 Name target）
+    賦值語句 lineno（reaching-definition 近似：只取 sink 之前的賦值，避免 sink 之後的同名
+    重賦值遮蔽/誤扯 marker 判斷；非真正資料流分析，單函式內不跨跳）。"""
     lineno = None
     for node in ast.walk(funcdef):
         if (
@@ -163,6 +178,8 @@ def _find_assign_lineno_for_name(funcdef: ast.AST, name: str):
             and len(node.targets) == 1
             and isinstance(node.targets[0], ast.Name)
             and node.targets[0].id == name
+            and node.lineno < before_lineno
+            and (lineno is None or node.lineno > lineno)
         ):
             lineno = node.lineno
     return lineno
@@ -170,11 +187,11 @@ def _find_assign_lineno_for_name(funcdef: ast.AST, name: str):
 
 def _has_marker_two_layer(source_lines: list[str], sink_lineno: int, arg_node, funcdef: ast.AST) -> bool:
     """⭐ Opus 裁決兩層 OR：① sink 命中行/上一行；② 若路徑實參是同函式區域變數 →
-    該變數賦值行/上一行。任一層命中即豁免。"""
+    該變數「sink 之前最近一次」賦值行/上一行。任一層命中即豁免。"""
     if _has_marker(source_lines, sink_lineno):
         return True
     if isinstance(arg_node, ast.Name):
-        assign_lineno = _find_assign_lineno_for_name(funcdef, arg_node.id)
+        assign_lineno = _find_assign_lineno_for_name(funcdef, arg_node.id, sink_lineno)
         if assign_lineno is not None and _has_marker(source_lines, assign_lineno):
             return True
     return False
@@ -276,14 +293,14 @@ def _scan_source(source: str, filename: str = "<test>") -> list[str]:
 
             if _is_wrapper_direct_call(node):
                 wrapper_name = node.func.id
-                idx = _WRAPPER_PATH_ARG_INDEX.get(wrapper_name)
-                if idx is not None and idx < len(node.args):
-                    arg_node = node.args[idx]
+                idx, param_name = _WRAPPER_PATH_ARG.get(wrapper_name, (None, None))
+                arg_node = _extract_wrapper_arg(node.args, node.keywords, idx, param_name)
             elif _is_asyncio_to_thread_wrapper_call(node):
                 wrapper_name = node.args[0].id
-                idx = _WRAPPER_PATH_ARG_INDEX.get(wrapper_name)
-                if idx is not None and (1 + idx) < len(node.args):
-                    arg_node = node.args[1 + idx]
+                idx, param_name = _WRAPPER_PATH_ARG.get(wrapper_name, (None, None))
+                # to_thread(fn, *args, **kwargs) 的 keywords 直接 forward 給 fn，
+                # 故 keyword 查找用 node.keywords（不需 offset）；位置引數需 offset=1。
+                arg_node = _extract_wrapper_arg(node.args, node.keywords, idx, param_name, offset=1)
 
             if arg_node is None:
                 continue
@@ -479,5 +496,73 @@ def test_guard_ignores_non_sink_use():
         "    path_uri = to_file_uri(fs_path)\n"
         "    if path_uri == other:\n"
         "        return path_uri\n"
+    )
+    assert _scan_source(source) == []
+
+
+# --- reaching-definition 近似（Fix 1）：sink 之前/之後同名重賦值不應互相干擾 ---
+
+
+def test_guard_reaching_def_earlier_unmarked_sink_not_hidden_by_later_marked_reassign():
+    """較早的真 violation（unmarked sink）不應被較晚同名變數的 marked 重賦值遮蔽
+    （false negative 回歸鎖：修前 `_find_assign_lineno_for_name` 取『全函式最後一次賦值』，
+    會誤把此處 sink 的賦值行判定成後面那個 marked 重賦值行）。"""
+    source = (
+        "def bad():\n"
+        "    fs_path_for_db = uri_to_local_fs_path(uri, path_mappings)\n"
+        "    _db_upsert(repo, number, fs_path_for_db, meta)\n"
+        "    fs_path_for_db = other()  # db-ns-ok: unrelated later reassign\n"
+    )
+    assert _scan_source(source) != []
+
+
+def test_guard_reaching_def_earlier_marked_assign_not_falsely_flagged_by_later_unmarked_reassign():
+    """較早的合法賦值（marked）供較早的 sink 使用，不應被較晚同名變數的 unmarked 重賦值
+    拖累而誤報（false positive 回歸鎖：修前取『全函式最後一次賦值』會誤把 sink 對應到
+    後面那個沒有 marker 的重賦值行）。"""
+    source = (
+        "def ok():\n"
+        "    fs_path_for_db = uri_to_local_fs_path(uri, path_mappings)  # db-ns-ok: mapped\n"
+        "    _db_upsert(repo, number, fs_path_for_db, meta)\n"
+        "    fs_path_for_db = other()\n"
+    )
+    assert _scan_source(source) == []
+
+
+# --- wrapper callsite keyword 傳參（Fix 2）：位置引數之外也要支援 keyword ---
+
+
+def test_guard_catches_planted_violation_wrapper_direct_call_keyword_arg():
+    source = (
+        "def bad():\n"
+        "    bad_var = uri_to_local_fs_path(uri, path_mappings)\n"
+        "    _db_upsert(repo, number, fs_path=bad_var, meta=meta)\n"
+    )
+    assert _scan_source(source) != []
+
+
+def test_guard_catches_planted_violation_asyncio_to_thread_keyword_arg():
+    source = (
+        "async def bad():\n"
+        "    bad_var = uri_to_local_fs_path(uri, path_mappings)\n"
+        "    allowed = await asyncio.to_thread(_check_cover_path, fs_path=bad_var)\n"
+    )
+    assert _scan_source(source) != []
+
+
+def test_guard_wrapper_direct_call_keyword_arg_marker_exempts():
+    source = (
+        "def ok():\n"
+        "    # db-ns-ok: reason\n"
+        "    _db_upsert(repo, number, fs_path=fs_path_for_db, meta=meta)\n"
+    )
+    assert _scan_source(source) == []
+
+
+def test_guard_asyncio_to_thread_keyword_arg_marker_exempts():
+    source = (
+        "async def ok():\n"
+        "    # db-ns-ok: reason\n"
+        "    allowed = await asyncio.to_thread(_check_cover_path, fs_path=fs_path_for_db)\n"
     )
     assert _scan_source(source) == []
