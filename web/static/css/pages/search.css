@@ -659,6 +659,21 @@
     }
 }
 
+/* 92a-T5 fix (Codex P2): 992–1024px sidebar 仍可見（base.html @min-width:992px .sidebar display:flex，
+   main-content margin-left:var(--sidebar-width)），而 tray fixed left:0 會被 fixed sidebar（200px/collapsed 60px,
+   z-1000）蓋住左緣、與 main-content 不對齊（窄桌面視窗版位回歸）。此區間把 tray 左緣對齊 main-content（sidebar 寬）；
+   ≤991.98px sidebar 隱藏、此 min-width:992px 區間不 match → 回上方 base 的 left:0 全寬（source order 後者勝，
+   collapsed 規則 specificity 更高恆勝）。 */
+@media (min-width: 992px) and (max-width: 1024px) {
+    .file-list-section.organize-tray {
+        left: var(--sidebar-width);
+    }
+
+    body.sidebar-collapsed .file-list-section.organize-tray {
+        left: var(--sidebar-collapsed-width);
+    }
+}
+
 /* Mobile 額外調整 */
 @media (max-width: 767.98px) {
     .av-card-full-cover-wrapper .nav-btn {
