@@ -667,6 +667,11 @@
 @media (min-width: 992px) and (max-width: 1024px) {
     .file-list-section.organize-tray {
         left: var(--sidebar-width);
+        /* 解除 over-constraint（Codex PR P2）：base .file-list-section width:100% + tray
+           right:0 + 此處 left 三者皆非 auto → CSS 2.1 §10.3.7 忽略 right、寬撐 100vw 從
+           sidebar 起算溢出右緣。width:auto 讓 right:0 生效 → 寬=viewport-left，對齊
+           main-content。低 specificity 亦覆 collapsed 變體（其僅覆寫 left）。 */
+        width: auto;
     }
 
     body.sidebar-collapsed .file-list-section.organize-tray {

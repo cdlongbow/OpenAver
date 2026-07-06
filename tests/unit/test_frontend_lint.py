@@ -5641,7 +5641,8 @@ class TestSearchCssHardcoded:
         # 92a-T5：.file-list-header sticky（~L264，+8 行）+ ≤1024px .file-list-section fixed tray + :has padding（~L636，+23 行）；1039 在兩者下方 +8+23=+31：1039→1070（105 在 264 上方不變）。
         # 92a-T5 Codex-P2 fix：@992–1024px tray left offset block（~L662，+15 行，在 105 下方、1070 上方）：1070→1085。
         105: "drop-shadow rgba 0.3 — §2 例外（drop-shadow 跟封面去背形狀，非矩形 box-shadow 無法用 --fluent-shadow-* token）",
-        1085: "var(--bg-card, rgba(0, 0, 0, 0.05)) fallback — defensive fallback，非硬編碼違規",
+        # 92a-T5 Codex-PR-P2 fix：992–1024px band 對 .organize-tray 加 width:auto（+5 行，在 105 下方、1085 上方）：1085→1090。
+        1090: "var(--bg-card, rgba(0, 0, 0, 0.05)) fallback — defensive fallback，非硬編碼違規",
     }
 
     SIX_PX_ALLOWLIST = {
@@ -5656,8 +5657,9 @@ class TestSearchCssHardcoded:
         #         658/713 在兩插入點下方 +8+23=+31：658→689、713→744。
         # 92a-T5 Codex-P2 fix：@992–1024px tray left offset block +15 行（~L662，在 331 下方、689/744 上方）：689→704、744→759。
         331: "row inline btn optical 6px — T2.2 加 optical 註記（btn-sm 12px padding 對 row inline 太寬）",
-        704: ".batch-progress-bar height: 6px — intrinsic dimension（非 §4 spacing）",
-        759: "chip optical 6px — T2.2 加 optical 註記（對齊 showcase .lb-tag-add-btn）",
+        # 92a-T5 Codex-PR-P2 fix：992–1024px band 加 width:auto（+5 行，在 331 下方、704/759 上方）：704→709、759→764。
+        709: ".batch-progress-bar height: 6px — intrinsic dimension（非 §4 spacing）",
+        764: "chip optical 6px — T2.2 加 optical 註記（對齊 showcase .lb-tag-add-btn）",
     }
 
     def _scan(self, regex: str, allowlist=None):
