@@ -89,6 +89,23 @@ GRAPH_RATING_HTML = """\
 </body></html>
 """
 
+# Detail page with JSON-LD as a real {"@graph": [...]} dict wrapper form
+GRAPH_DICT_RATING_HTML = """\
+<html><body>
+<h1>FC2-1723984</h1>
+<h1>テストタイトル</h1>
+<div class="col-8">テスト賣家</div>
+<a data-fancybox="gallery" href="//pics.example.com/cover.jpg">
+  <img src="//pics.example.com/thumb.jpg">
+</a>
+<div class="col des">グラフ dict 形式の説明文。</div>
+<p class="card-text">
+  <a href="/tag/amateur">アマチュア</a>
+</p>
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite"},{"@type":"Movie","aggregateRating":{"@type":"AggregateRating","ratingValue":"3.8","bestRating":"5"}}]}</script>
+</body></html>
+"""
+
 # Detail page with broken JSON-LD
 BROKEN_JSONLD_HTML = """\
 <html><body>
@@ -211,6 +228,12 @@ class TestRating:
         video = run_search(scraper, GRAPH_RATING_HTML)
         assert video is not None
         assert video.rating == 3.0
+
+    def test_rating_from_graph_dict_jsonld(self, scraper):
+        # 真實 {"@graph": [...]} dict 包裹形狀（非頂層 list）
+        video = run_search(scraper, GRAPH_DICT_RATING_HTML)
+        assert video is not None
+        assert video.rating == 3.8
 
     def test_rating_none_when_no_jsonld(self, scraper):
         video = run_search(scraper, FULL_FIELDS_HTML)

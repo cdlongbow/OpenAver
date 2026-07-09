@@ -109,8 +109,17 @@ class FC2Scraper(BaseScraper):
         for script in scripts:
             try:
                 data = json.loads(script)
-                # JSON-LD 可能是單一物件（dict）或陣列/@graph（list）
-                nodes = data if isinstance(data, list) else [data]
+                # JSON-LD 可能是：單一物件（dict）、頂層陣列（list）、
+                # 或 {"@graph": [...]} 包裹（常見於多節點 JSON-LD）
+                if isinstance(data, list):
+                    nodes = data
+                elif isinstance(data, dict):
+                    graph = data.get("@graph")
+                    # 同時把頂層 dict 與其 @graph 子節點都納入候選，
+                    # 涵蓋 aggregateRating 掛在 wrapper 或 @graph 內的兩種真實形狀
+                    nodes = [data] + (graph if isinstance(graph, list) else [])
+                else:
+                    nodes = []
                 for node in nodes:
                     if isinstance(node, dict) and "aggregateRating" in node:
                         return float(node["aggregateRating"]["ratingValue"])

@@ -157,7 +157,7 @@ class DMMScraper(BaseScraper):
         try:
             payload = {
                 'query': self.GENRES_PROBE_QUERY,
-                'variables': {'contentId': content_id}
+                'variables': {'id': content_id}
             }
             resp = self._session.post(self.API_URL, json=payload, timeout=5)
 
@@ -211,7 +211,7 @@ class DMMScraper(BaseScraper):
         try:
             payload = {
                 'query': self.SAMPLE_IMAGES_PROBE_QUERY,
-                'variables': {'contentId': content_id}
+                'variables': {'id': content_id}
             }
             resp = self._session.post(self.API_URL, json=payload, timeout=5)
 
@@ -525,7 +525,7 @@ class DMMScraper(BaseScraper):
         try:
             payload = {
                 'query': self.DETAIL_QUERY,
-                'variables': {'contentId': content_id}
+                'variables': {'id': content_id}
             }
 
             response = self._session.post(
