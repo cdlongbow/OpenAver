@@ -516,6 +516,7 @@ class DMMScraper(BaseScraper):
                 label=label,
                 series=series,
                 sample_images=sample_images,
+                summary=item.get('description', ''),
             )
 
             return video

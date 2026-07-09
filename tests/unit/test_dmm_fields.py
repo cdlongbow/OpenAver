@@ -233,3 +233,36 @@ class TestDMMScraperNewFields:
                             sample_images_return=[])
         assert video is not None
         assert video.sample_images == []
+
+    # ------------------------------------------------------------------
+    # summary (description) edge cases — TASK-93-T1
+    # ------------------------------------------------------------------
+
+    def test_summary_present(self, dmm_scraper):
+        """description 存在且非空 → video.summary == 原文"""
+        video = self._fetch(dmm_scraper, DMM_DETAIL_RESPONSE_FULL)
+        assert video is not None
+        assert video.summary == "テスト"
+
+    def test_summary_key_missing(self, dmm_scraper):
+        """description key 不存在 → video.summary == ''（不 raise）"""
+        content = {**DMM_DETAIL_RESPONSE_FULL["data"]["ppvContent"]}
+        content.pop("description", None)
+        data = {"data": {"ppvContent": content}}
+        video = self._fetch(dmm_scraper, data)
+        assert video is not None
+        assert video.summary == ""
+
+    def test_summary_empty_string(self, dmm_scraper):
+        """description 為空字串 → video.summary == ''"""
+        data = {
+            "data": {
+                "ppvContent": {
+                    **DMM_DETAIL_RESPONSE_FULL["data"]["ppvContent"],
+                    "description": "",
+                }
+            }
+        }
+        video = self._fetch(dmm_scraper, data)
+        assert video is not None
+        assert video.summary == ""
