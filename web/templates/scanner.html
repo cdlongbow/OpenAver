@@ -169,6 +169,47 @@
                 </button>
             </div>
         </div>
+
+        <!-- TASK-94-T4/T8: 逐片補資料進度卡（header 之後、log 之上，CD-94-8 修正 §2 落點）
+             兩格版位：左待命格（前一片命中封面，停駐至下一片命中才飛）+ 右當前卡（番號/狀態/來源/badge）。 -->
+        <div class="enrich-card" x-show="state === 'enriching' && currentCard" x-cloak>
+            <!-- TASK-94-T8 / Codex T8-plan P1：左待命格容器恆渲染、固定尺寸、不掛 x-show（x-show 只放內層 img）。
+                 容器隨整張 .enrich-card 一起渲染/隱藏，run 期間恆在，rect 跨換片穩定 —— 免 $nextTick，
+                 且同一 SSE chunk 內連兩命中也不因 Alpine patch 時序退化成 0×0（同 T5 race 教訓但更徹底）。 -->
+            <div class="enrich-ondeck" x-ref="enrichOnDeckCover">
+                <img :src="onDeckCard?.coverSrc" x-show="onDeckCard" alt="">
+            </div>
+            <div class="enrich-card-info">
+                <span class="enrich-card-number" x-text="currentCard?.number"></span>
+                <span class="enrich-card-source" x-show="currentCard?.source" x-text="currentCard?.source"></span>
+                <span class="enrich-card-status" x-show="currentCard?.status === 'searching'">
+                    <span class="loading loading-spinner loading-xs"></span>
+                    <span x-text="window.t('scanner.stats.missing_enrich_card_searching')"></span>
+                </span>
+                <!-- TASK-94-T8：hit 不再放大封面（封面歸左待命格），改 ✓ glyph，避免雙封面 -->
+                <span class="enrich-card-status enrich-card-status-neutral" x-show="currentCard?.status === 'hit'">
+                    <span class="enrich-card-glyph">✓</span>
+                </span>
+                <span class="enrich-card-status enrich-card-status-neutral" x-show="currentCard?.status === 'no_cover'">
+                    <span class="enrich-card-glyph">✓</span>
+                    <span x-text="window.t('scanner.stats.missing_enrich_card_no_cover')"></span>
+                </span>
+                <span class="enrich-card-status enrich-card-status-accent" x-show="currentCard?.status === 'not_found'">
+                    <span class="enrich-card-glyph">⊘</span>
+                    <span x-text="window.t('scanner.stats.missing_enrich_card_not_found')"></span>
+                </span>
+                <span class="enrich-card-status enrich-card-status-error" x-show="currentCard?.status === 'error'">
+                    <span class="enrich-card-glyph">⚠</span>
+                    <span x-text="window.t('scanner.stats.missing_enrich_card_error')"></span>
+                </span>
+                <span class="enrich-card-status enrich-card-status-neutral" x-show="currentCard?.status === 'readonly'">
+                    <span class="enrich-card-glyph">⤿</span>
+                    <span x-text="window.t('scanner.stats.missing_enrich_card_readonly')"></span>
+                </span>
+            </div>
+            <span class="enrich-card-badge" x-show="enrichBadgeCount > 0" x-text="enrichBadgeCount"></span>
+        </div>
+
         <div class="progress-mini">
             <div class="bar" id="progressBar" x-bind:style="{ width: progressPercent + '%' }"></div>
         </div>

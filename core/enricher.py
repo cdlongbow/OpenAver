@@ -35,6 +35,7 @@ class EnrichResult:
     fields_filled: List[str]
     source_used: str
     error: Optional[str]
+    reason: Optional[str] = None
 
 
 def _nfo_to_meta(root: ET.Element) -> dict:
@@ -355,10 +356,12 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
 
     if not number:
         _empty.error = "缺少番號"
+        _empty.reason = "error"
         return _empty
 
     if mode not in VALID_MODES:
         _empty.error = f"不支援的 mode: {mode}（合法值：fill_missing, db_to_sidecar, refresh_full）"
+        _empty.reason = "error"
         return _empty
 
     try:
@@ -369,6 +372,7 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
 
     if not os.path.exists(fs_path):
         _empty.error = "檔案不存在"
+        _empty.reason = "error"
         return _empty
 
     repo = VideoRepository()
@@ -383,6 +387,7 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
         if not scraper_data:
             repo.update_scrape_attempted_at(to_file_uri(fs_path_for_db), time.time())  # db-ns-ok: fs_path_for_db, DB round-trip value, no reverse mapping applied
             _empty.error = f"找不到 {number} 的資料"
+            _empty.reason = "not_found"
             return _empty
         meta = _scraper_to_meta(scraper_data)
         source_used = scraper_data.get("source", "scraper") or "scraper"
@@ -392,6 +397,7 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
         videos = db_hits.get(number, [])
         if not videos:
             _empty.error = f"DB 中找不到 {number} 的資料"
+            _empty.reason = "not_found"
             return _empty
         meta = _video_to_meta(videos[0])
         source_used = "db"
@@ -419,6 +425,7 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
             if not scraper_data:
                 repo.update_scrape_attempted_at(to_file_uri(fs_path_for_db), time.time())  # db-ns-ok: fs_path_for_db, DB round-trip value, no reverse mapping applied
                 _empty.error = f"找不到 {number} 的資料"
+                _empty.reason = "not_found"
                 return _empty
             supplement = _scraper_to_meta(scraper_data)
             meta, fields_filled = _merge_meta(meta, supplement)
@@ -467,6 +474,7 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
             )
         except PermissionError:
             _empty.error = "NFO 寫入失敗，請確認目錄寫入權限"
+            _empty.reason = "error"
             return _empty
     else:
         # off 模式：維持原寫序（NFO 先、cover 後），行為 byte-identical
@@ -483,6 +491,7 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
             )
         except PermissionError:
             _empty.error = "NFO 寫入失敗，請確認目錄寫入權限"
+            _empty.reason = "error"
             return _empty
 
         cover_written = _write_cover(
@@ -531,6 +540,32 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
             if conn:
                 conn.close()
 
+    # reason=hit 必須是「前端 /thumb 真的服務得到」。/thumb（scanner.py get_thumb）
+    # 有兩道 gate，兩道都過才服務得到，reason=hit 必須同時鏡射：
+    #   gate 1（scanner.py:1276-1277）：DB cover_path 非空，否則 404。
+    #   gate 2（scanner.py:1290/1300/1332-1333）：cache miss 或 disabled 時要讀
+    #     實體封面檔（uri_to_local_fs_path 反解後 generate / fallback FileResponse），
+    #     檔不在 → 404。（cache hit 於 :1263 直接 serve WebP 不碰實體檔，見下方 false-negative）
+    # 故不能只查 DB cover_path 非空（只鏡射 gate 1，Codex PR #98 P2）：DB 有記
+    # cover_path、但該實體封面檔已被刪/移／path_mapping 失效解不到時，/thumb 於
+    # cache miss/disabled 會 404 → 飛入破圖，卻誤計 hit。
+    # 亦不能用磁碟 sidecar 真相（Path(fs_path).with_suffix('.jpg')）判：磁碟有 .jpg
+    # 但 DB cover_path 空（散落 sidecar 未入 DB／db·nfo-sourced 命中跳過 :514
+    # _db_upsert）會漏 gate 1（Codex P1，v0.11.9）。故重讀 DB 最終 cover_path，
+    # 並用 /thumb 同一組解析（uri_to_local_fs_path + 同 path_mappings）確認實體檔存在。
+    # 此重讀在所有寫檔 + _db_upsert + nfo_mtime UPDATE 之後（同步、已 commit），
+    # 故看到的是最終 DB 狀態。
+    # 已知並接受的 false-negative（安全方向）：cache hit（stale WebP 已快取）但實體
+    # 封面檔已刪時，/thumb 仍能從快取 serve（:1263），此處卻判 no_cover。代價是「服務
+    # 得到的封面不飛入」（不破圖）；反向 false-positive（判 hit 卻 404 破圖）代價更高，
+    # 故偏保守。
+    # db-ns-ok: fs_path_for_db, DB round-trip key（同 :437 path_uri）
+    final_row = repo.get_by_path(to_file_uri(fs_path_for_db))
+    cover_uri = final_row.cover_path if final_row else ''
+    has_servable_cover = bool(cover_uri) and os.path.exists(
+        uri_to_local_fs_path(cover_uri, path_mappings)
+    )
+
     return EnrichResult(
         success=True,
         nfo_written=nfo_written,
@@ -539,6 +574,7 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
         fields_filled=fields_filled,
         source_used=source_used,
         error=None,
+        reason=("hit" if has_servable_cover else "no_cover"),
     )
 
 

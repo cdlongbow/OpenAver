@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.9] - 2026-07-10
+
+本版主軸：**掃描頁「補資料」升級成逐片「工人在幹活」進度卡 + 命中封面飛入圖書館**（feature/94，spec-94 G1–G7）——把掃描頁「補資料」（batch-enrich SSE）從一個乾計數器 + 終端 log，升級成逐片可視的進度卡：每片輪到時即顯示「番號 · 搜尋中…」，結果回來後切到對應結局（命中／命中無封面／查無／失敗／唯讀跳過）；**命中且有可服務封面時，真封面從進度卡飛進側邊欄「瀏覽」**（＝我的圖書館），落地帶 scale/glow + 微光，進度卡上累計 badge。承接 spec-92 D 項「入庫飛入抽成共用元件（`GhostFly.playInboundFly`）、scanner 接線留未來」——本 branch 就是那個未來，**直接複用該共用入口、不新增動畫 primitive**。後端極小擴充（`EnrichResult.reason` 欄位 + SSE `result-item` 帶 reason），**刻意不碰核心 `search_jav`、零 schema/DB 變更**。
+
+### Added
+#### 🎬 掃描頁補資料逐片進度卡 + 命中封面飛入
+- **逐片「工人在幹活」進度卡**：補資料時，進度區顯示「目前這片」的可視卡（番號從一開始就在，不等結果），取代乾計數器；五態可辨識——`搜尋中…`／命中封面浮現／`補到資料（無封面）`（文字非破圖）／`查無`（琥珀安靜一閃換片）／`失敗`（進 log）／`跳過（唯讀）`。**命中大聲、落空安靜**：只有真的補到可服務封面才飛入 + badge + 微光，其餘小 glyph 一閃就換片、不搶注意力。
+- **命中封面飛入圖書館（兩格待命位 + 延後飛）**：進度卡分兩格——左「待命格」停駐前一片命中封面、右格顯示目前搜尋中；命中封面先進待命格停一個搜尋週期（不一出現就飛），**下一片命中時**前一片才飛向側邊欄「瀏覽」入口（複用 spec-92 `playInboundFly`），run 結束時 flush 最後一片；落地 scale/glow + 側邊欄微光；進度卡上累計 badge（本次 run 補到資料片數，run 後淡出，不做持久紅點）。延後飛用真實補資料節奏當 dwell，讓每顆封面看得清；待命格容器恆渲染固定尺寸，飛入起點 rect 恆有效、免時序 race。
+- **手機／減少動態不靜默**：窄螢幕（側邊欄隱藏）逐片反饋交給本就可見的進度卡 + badge，收尾用既有 run-end summary toast（不做 per-item toast，避免批次刷屏）；減少動態下命中僅微光、不播飛行。
+
+### Internal
+- 後端只加「scraper parse → `EnrichResult.reason`」+ SSE `result-item` 帶 reason（`reason` ∈ hit／no_cover／not_found／error／readonly；normal 站台靠 `asdict` 自動流出、唯讀/例外站台字面補）；**`search_jav` 零改動**（`git diff` 該檔為空）。前端命中封面 URL 由 `file_path` 自組 `/api/gallery/thumb`，後端不吐 `cover_url`。`GET /api/capabilities` 的 batch_enrich `result_item` output_schema 同步補 `reason`。
+- **獨立 sonnet review 抓到並修復一個 bulk race（P1）**：bulk 下片 A 命中排了飛入後，片 B 的 progress 於同一同步 SSE chunk 覆寫進度卡狀態會隱藏片 A 的命中封面 img（rect=0），使片 A 的 `$nextTick` 讀到退化不飛。修法：飛入起點 `x-ref` 從會隱藏的 `<img>` 移到固定尺寸、恆渲染的容器 div，rect 跨換片穩定。
+- **Codex PR review P1**：`reason=hit` 原用「cover.jpg 磁碟真相」判，但前端命中封面走 `/api/gallery/thumb`，而 `/thumb` 硬性要求 DB `cover_path` 非空、不 fallback 磁碟 sidecar。兩者判準不同 → 「磁碟有 .jpg 但 DB cover_path 空」（掃描後才丟封面／db·nfo-sourced 命中跳過 `_db_upsert`）時卡片顯示 hit、`/thumb` 404 破圖、且該片仍留 missing_cover 清單。修：`reason=hit` 改為鏡射 `/thumb` 的 gate——所有寫檔完成後重讀 DB 最終狀態，`cover_path` 有值才 hit（散落 sidecar 未入 DB → 誠實回報 no_cover、不飛、不破圖）。含 P3 stale wording 併修。
+- **Codex PR #98 review P2**：上條只鏡射了 `/thumb` 第一道 gate（DB `cover_path` 非空）。但 `/thumb` cache miss/disabled 時還有第二道——要讀**實體封面檔**（`uri_to_local_fs_path` 反解後 generate／fallback），檔不在 → 404。故「DB 有記 `cover_path`、但實體封面檔已被刪/移／path_mapping 失效」時仍會誤判 hit → 飛入破圖。修：`reason=hit` 改為**同時**要求 DB `cover_path` 有值 **且**用 `/thumb` 同一解析確認實體檔存在（第三個互補回歸鎖固化；stale-WebP-cache 的 false-negative 是安全方向＝不破圖，已知接受）。
+
+### 測試
+- 全套 pytest **5521 passed, 2 skipped**（unit + integration，排除 smoke／e2e，較 0.11.8 的 5498 +23：reason 映射邊界〔hit/no_cover 依「/thumb 可服務真相＝DB cover_path 有值 + 實體檔存在」分流、not_found/error 各分支〕+ 三個互補 mutation-verified 回歸鎖〔擋「cover_written alone」+ 擋「退回磁碟真相」+ 擋「只鏡射 DB gate 漏實體檔」〕+ result-item 三站台 SSE reason 契約 + /thumb 時序鎖）＋ `ruff check .` 綠 ＋ `npm run lint`（eslint + stylelint）綠。
+- 來源金絲雀：**8 源全 PASS**（javbus／jav321／heyzo／d2pass／avsox／fc2／javdb／dmm，dmm 經 JP proxy live）。
+- Gemini 3.1 Pro 整支 branch 第二意見：本輪未取得有效審查——agy headless 落入 apply-patch 假審模式（已知失敗態，見 AI_COLLABORATION 註記），已清理工作區殘留、確認 committed code 零污染；correctness 由 Codex auto-review（P1 已修）+ 獨立 sonnet review（P1 已修）覆蓋。
+- 視覺 hard-gate：進度卡五態 + 命中飛入節奏 + badge + 手機 fallback 由 owner 真機驗收。
+
 ## [0.11.8] - 2026-07-09
 
 本版主軸：**各刮削來源的評分/簡介補進 NFO（NFO-only，服務媒體伺服器用戶）+ 燈箱中繼資訊美化**（feature/93，spec-93 A/B）——把各來源網站**已提供**的「評分/簡介」在刮削時一併抓出、寫進該片 NFO 的 `<rating>`/`<plot>`，純粹服務透過 OpenAver 唯讀產生庫 + `.strm` 餵 Jellyfin/Emby/Kodi 的用戶（那些媒體伺服器把 `<rating>`/`<plot>` 當顯示格，現在這些格不再是空的）。**OpenAver 自身介面刻意不顯示、不進 DB、不翻譯**——延續既有 US7「NFO-only」契約，owner 判斷評分擠高分帶區辨力低、簡介是行銷文案，對自身瀏覽低價值，顯示外包給 Jellyfin。另獨立做燈箱中繼資訊的視覺層次美化。零 API/schema/DB 變更。

@@ -228,6 +228,12 @@ export function stateScan() {
                             this._enrichAbortController.abort();
                             this._enrichAbortController = null;
                         }
+                        // TASK-94 Codex P1：離頁時清最後一片 flush dwell timer，避免 timer 事後
+                        // 觸發 finalize（checkMissing fetch / state 變更）clobber 已離頁狀態。
+                        if (this._flushTimer) {
+                            clearTimeout(this._flushTimer);
+                            this._flushTimer = null;
+                        }
                     }
                 });
             }
