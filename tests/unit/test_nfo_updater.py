@@ -112,6 +112,33 @@ class TestNeedsUpdateNewFields:
         for field in ('director', 'duration'):
             assert field not in missing
 
+
+class TestNeedsUpdateNeverNagsPlotRating:
+    """TASK-93-T8 / D11 #2 回歸鎖：評分/簡介只寫 NFO、絕不列入 scanner 缺料提醒。
+
+    T1–T7 讓各來源開始填 rating/plot 後，needs_update() 仍不得把 plot/rating
+    當缺料（否則掃描頁會對「本就沒評分/簡介」的片永久嘮叨）。plot/rating 是
+    NFO-only carrier、從不進 info dict，故結構上不可能被 nag——本測試把此契約
+    顯式鎖死，防未來有人於 needs_update() 誤加 plot/rating 檢查。"""
+
+    # 有其他缺料時，missing 仍不含 plot/rating
+    def test_plot_rating_absent_from_missing_when_other_fields_missing(self):
+        info = make_base_info(maker='')
+        need, missing = needs_update(info, has_nfo=True)
+        assert need is True
+        assert 'maker' in missing
+        assert 'plot' not in missing
+        assert 'rating' not in missing
+
+    # 全有值 → 完全不需更新，plot/rating 自然不在 missing
+    def test_plot_rating_absent_when_all_present(self):
+        info = make_base_info()
+        need, missing = needs_update(info, has_nfo=True)
+        assert need is False
+        assert missing == []
+        assert 'plot' not in missing
+        assert 'rating' not in missing
+
     # 補充：has_nfo=False → early return，不管欄位
     def test_no_nfo_returns_empty(self):
         info = make_base_info(director='')
