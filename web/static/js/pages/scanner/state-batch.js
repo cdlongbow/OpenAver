@@ -18,6 +18,8 @@ export function stateBatch() {
         enrichBadgeCount: 0,
         // ===== TASK-94-T8: 兩格待命位 + 延後飛 =====
         onDeckCard: null,           // {number, coverSrc} | null — 左待命格停駐的前一片命中封面
+        _onDeckParkedAt: 0,         // TASK-94 Codex P1：onDeckCard park 時的 performance.now()，供最後一片 flush dwell 判斷
+        _flushTimer: null,          // TASK-94 Codex P1：最後一片補足 dwell 的 setTimeout handle（cleanup/run-start 清）
 
         // ===== T10: Missing Pill Computed =====
         get missingPillLabel() {
@@ -79,6 +81,8 @@ export function stateBatch() {
             this.enrichBadgeCount = 0;
             this.currentCard = null;
             this.onDeckCard = null;  // TASK-94-T8：run 開始 reset 待命格
+            this._onDeckParkedAt = 0;
+            this._clearFlushTimer();  // TASK-94 Codex P1：清掉上一個 run 殘留的 flush dwell timer
             this.progressStatus = window.t('scanner.stats.missing_enrich_loading');
             this.progressCurrent = 0;
             this.progressTotal = this.missingItems.length;
@@ -188,6 +192,7 @@ export function stateBatch() {
                                         }
                                         // 本片接手待命格；首次命中（onDeckCard 原為 null）不飛，僅塞待命格
                                         this.onDeckCard = { number: event.number, coverSrc: this.currentCard.coverSrc };
+                                        this._onDeckParkedAt = performance.now();  // TASK-94 Codex P1：記 park 時間，供最後一片 flush dwell 判斷
                                     }
                                 }
                                 if (event.success) {
@@ -232,26 +237,46 @@ export function stateBatch() {
 
                 // All batches complete
                 localStorage.removeItem('avlist_enrich_pending');
-                // TASK-94-T8：run 結束 flush 最後一片 — 必須在 state='done' 之前
-                // （待命格 x-show 綁 state==='enriching'，先 hide 會 rect 0 退化不飛）
-                if (this.onDeckCard) {
-                    this._flyOnDeck();
+                // TASK-94-T8 / Codex P1：最後一片 flush 前補足可感知 dwell。
+                // result-item(last) 與 done 常在同一 SSE chunk、client 同步處理（中間無
+                // await reader.read() paint 邊界），若立即 _flyOnDeck 則最後封面「沒被 paint
+                // 進左待命格就飛走」。以 performance.now() 記 park 時間，不足 MIN 則保持卡片
+                // 可見（state 維持 'enriching'）用 setTimeout 補足後再飛＋收尾。
+                // 飛用顯式 coverSrc（timer 觸發時 onDeckCard 可能已被清），故先 capture。
+                const MIN_ONDECK_DWELL_MS = 550;
+                const lastCover = this.onDeckCard ? this.onDeckCard.coverSrc : null;
+                const finalizeRun = () => {
+                    if (lastCover) {
+                        this._flyCover(lastCover);  // 待命格容器恆渲染（state 仍 'enriching'）→ rect 有效
+                    }
+                    this.state = 'done';
+                    this.onDeckCard = null;
+                    this.currentCard = null;
+                    this.enrichBadgeCount = 0;
+                    this.progressStatus = window.t('scanner.stats.missing_enrich_done');
+                    const summary = this.missingEnrichFailed > 0
+                        ? window.t('scanner.stats.missing_enrich_toast_mixed', { success: this.missingEnrichSuccess, failed: this.missingEnrichFailed })
+                        : window.t('scanner.stats.missing_enrich_toast_success', { success: this.missingEnrichSuccess });
+                    this.showToast(summary, this.missingEnrichFailed > 0 ? 'warn' : 'success');
+                    this.flushLogs();
+                    this.checkMissing();
+                };
+                const parkedElapsed = this._onDeckParkedAt ? (performance.now() - this._onDeckParkedAt) : Infinity;
+                if (lastCover && parkedElapsed < MIN_ONDECK_DWELL_MS) {
+                    // dwell 不足：保持最後封面可見，補足剩餘時間後 finalize（timer 由 cleanup/run-start 清）
+                    this._clearFlushTimer();
+                    this._flushTimer = setTimeout(() => {
+                        this._flushTimer = null;
+                        finalizeRun();
+                    }, MIN_ONDECK_DWELL_MS - parkedElapsed);
+                } else {
+                    finalizeRun();
                 }
-                this.state = 'done';
-                this.onDeckCard = null;
-                this.currentCard = null;
-                this.enrichBadgeCount = 0;
-                this.progressStatus = window.t('scanner.stats.missing_enrich_done');
-                const summary = this.missingEnrichFailed > 0
-                    ? window.t('scanner.stats.missing_enrich_toast_mixed', { success: this.missingEnrichSuccess, failed: this.missingEnrichFailed })
-                    : window.t('scanner.stats.missing_enrich_toast_success', { success: this.missingEnrichSuccess });
-                this.showToast(summary, this.missingEnrichFailed > 0 ? 'warn' : 'success');
-                this.flushLogs();
-                this.checkMissing();
 
             } catch (e) {
                 if (e.name === 'AbortError') return;
                 console.error('runMissingEnrich error:', e);
+                this._clearFlushTimer();  // TASK-94 Codex P1：防禦性清 flush timer（正常路徑 timer 只在 try 尾排程）
                 this.state = 'error';
                 this.currentCard = null;
                 this.onDeckCard = null;  // TASK-94-T8：error 路徑不殘留待命封面
@@ -278,12 +303,17 @@ export function stateBatch() {
         },
 
         // TASK-94-T8：飛出目前停在左待命格的封面（呼叫前必須先確認 this.onDeckCard 存在）。
-        // fromEl 讀恆渲染固定尺寸容器（enrichOnDeckCover，非內層 img）、coverSrc 顯式讀 onDeckCard（不讀 img.src）
-        // → rect 與 coverSrc 皆與 Alpine reactive patch 時序無關，免 $nextTick（Codex T8-plan P1）。
         _flyOnDeck() {
+            this._flyCover(this.onDeckCard.coverSrc);
+        },
+
+        // TASK-94-T8 / Codex P1：以顯式 coverSrc 飛出左待命格封面（不讀 onDeckCard，故最後一片
+        // flush timer 觸發時即使 onDeckCard 已被清仍能飛正確封面）。fromEl 讀恆渲染固定尺寸容器
+        // （enrichOnDeckCover，非內層 img）→ rect 與 coverSrc 皆與 Alpine reactive patch 時序無關，
+        // 免 $nextTick（Codex T8-plan P1）。
+        _flyCover(coverSrc) {
             const fromEl = this.$refs.enrichOnDeckCover;
             const toEl = document.getElementById('sidebar-showcase-link');
-            const coverSrc = this.onDeckCard.coverSrc;
             if (window.GhostFly && typeof window.GhostFly.playInboundFly === 'function') {
                 window.GhostFly.playInboundFly({
                     fromEl, coverSrc, toEl,
@@ -293,6 +323,14 @@ export function stateBatch() {
                 });
             } else {
                 this._pulseShowcaseLink(toEl);
+            }
+        },
+
+        // TASK-94 Codex P1：清最後一片 flush dwell timer（run 開始 / 離頁 cleanup / 錯誤路徑呼叫，冪等）。
+        _clearFlushTimer() {
+            if (this._flushTimer) {
+                clearTimeout(this._flushTimer);
+                this._flushTimer = null;
             }
         },
 
