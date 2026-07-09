@@ -175,7 +175,25 @@ export function stateBatch() {
                                     if (status === 'hit') {
                                         this.currentCard.coverSrc = `/api/gallery/thumb?path=${encodeURIComponent(event.file_path)}&t=${Date.now()}`;
                                     }
-                                    // TODO T5: reason==='hit' && (nfo_written||cover_written) → $nextTick 後 playInboundFly
+                                    // TASK-94-T5：hit 且這輪真補了東西（CD-94-5）才飛，hit 但 no-op 不飛
+                                    if (status === 'hit' && (event.nfo_written || event.cover_written)) {
+                                        const coverSrc = this.currentCard.coverSrc;
+                                        // CD-94-9：$nextTick 交棒 DOM-flush 後才讀 fromEl rect，否則 x-show 封面 img 尚未 patch、rect=0 → 退化不飛
+                                        this.$nextTick(() => {
+                                            const fromEl = this.$refs.enrichCardCover;
+                                            const toEl = document.getElementById('sidebar-showcase-link');
+                                            if (window.GhostFly && typeof window.GhostFly.playInboundFly === 'function') {
+                                                window.GhostFly.playInboundFly({
+                                                    fromEl, coverSrc, toEl,
+                                                    hold: 0, duration: 0.45,  // CD-94-9 bulk 變體
+                                                    onLanding: () => this._pulseShowcaseLink(toEl),
+                                                    // CD-94-13：不傳 fallback.toastFn（批次數百片 showToast 單槽會刷屏＋蓋真錯誤）
+                                                });
+                                            } else {
+                                                this._pulseShowcaseLink(toEl);
+                                            }
+                                        });
+                                    }
                                 }
                                 if (event.success) {
                                     this.missingEnrichSuccess++;
@@ -253,6 +271,14 @@ export function stateBatch() {
                 case 'readonly': return 'readonly';
                 default: return success ? 'hit' : 'error';
             }
+        },
+
+        // TASK-94-T5：落地微光，比照 search/state/batch.js:97-102（純 class toggle，不跨頁 import）
+        _pulseShowcaseLink(toEl) {
+            if (!toEl) return;
+            toEl.classList.remove('pulse-once');
+            void toEl.offsetWidth; // force reflow
+            toEl.classList.add('pulse-once');
         },
 
         resumeMissingEnrich() {
