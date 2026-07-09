@@ -163,17 +163,21 @@
         border-color var(--fluent-duration-fast) var(--fluent-ease-standard);
 }
 
-/* 封面容器：固定 CSS 尺寸（T5 $nextTick 當下 rect 即有效，免等 img load，比例對齊 --poster-crop-ratio ≈0.71） */
-.enrich-card-cover {
+/* TASK-94-T8：左待命格 — 固定 CSS 尺寸、恆渲染（不可 display:none，fromEl rect 恆有效是延後飛的關鍵，
+   Codex T8-plan P1）。比例對齊 --poster-crop-ratio ≈0.71，尺寸沿用前代 .enrich-card-cover 40×56。
+   首片命中前為保留空框：極淡虛線示意「找到的封面會停這」，走既有 --stroke-subtle token 不硬編色。 */
+.enrich-ondeck {
     flex: 0 0 40px;
     width: 40px;
     height: 56px;
     border-radius: var(--fluent-radius-sm);
     overflow: hidden;
     background: color-mix(in oklch, var(--color-base-content) 6%, transparent);
+    border: 1px dashed var(--stroke-subtle);
+    box-sizing: border-box;
 }
 
-.enrich-card-cover img {
+.enrich-ondeck img {
     width: 100%;
     height: 100%;
     object-fit: cover;
@@ -244,6 +248,16 @@
     border-radius: var(--radius-pill);
     background: var(--color-primary);
     color: var(--color-primary-content);
+}
+
+/* TASK-94-T8：窄螢幕退化 — 飛入動畫 desktop-only（sidebar 隱藏時 playInboundFly 自行 rect-check 退化），
+   待命格在窄螢幕縮小、逐片反饋改靠右卡文字 + badge（不隱藏，維持恆渲染 contract） */
+@media (max-width: 480px) {
+    .enrich-ondeck {
+        flex: 0 0 32px;
+        width: 32px;
+        height: 45px;
+    }
 }
 
 /* Progress Bar */

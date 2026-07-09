@@ -16,6 +16,8 @@ export function stateBatch() {
         // ===== TASK-94-T3: Scanner Enrich Fly 進度卡 + badge =====
         currentCard: null,          // {number, status, source, reason, coverSrc} | null
         enrichBadgeCount: 0,
+        // ===== TASK-94-T8: 兩格待命位 + 延後飛 =====
+        onDeckCard: null,           // {number, coverSrc} | null — 左待命格停駐的前一片命中封面
 
         // ===== T10: Missing Pill Computed =====
         get missingPillLabel() {
@@ -76,6 +78,7 @@ export function stateBatch() {
             this.missingEnrichFailed = 0;
             this.enrichBadgeCount = 0;
             this.currentCard = null;
+            this.onDeckCard = null;  // TASK-94-T8：run 開始 reset 待命格
             this.progressStatus = window.t('scanner.stats.missing_enrich_loading');
             this.progressCurrent = 0;
             this.progressTotal = this.missingItems.length;
@@ -110,6 +113,7 @@ export function stateBatch() {
                         this.flushLogs();
                         this.state = 'error';
                         this.currentCard = null;
+                        this.onDeckCard = null;  // TASK-94-T8：error 路徑不殘留待命封面
                         // Save remaining
                         localStorage.setItem('avlist_enrich_pending', JSON.stringify(items.slice(this.missingEnrichOffset)));
                         this.showToast(window.t('scanner.stats.missing_enrich_disconnect'), 'error');
@@ -122,6 +126,7 @@ export function stateBatch() {
                         this.flushLogs();
                         this.state = 'error';
                         this.currentCard = null;
+                        this.onDeckCard = null;  // TASK-94-T8：error 路徑不殘留待命封面
                         localStorage.setItem('avlist_enrich_pending', JSON.stringify(items.slice(this.missingEnrichOffset)));
                         this.showToast(window.t('scanner.stats.missing_enrich_error'), 'error');
                         return;
@@ -175,24 +180,14 @@ export function stateBatch() {
                                     if (status === 'hit') {
                                         this.currentCard.coverSrc = `/api/gallery/thumb?path=${encodeURIComponent(event.file_path)}&t=${Date.now()}`;
                                     }
-                                    // TASK-94-T5：hit 且這輪真補了東西（CD-94-5）才飛，hit 但 no-op 不飛
+                                    // TASK-94-T8：延後飛 — hit 且這輪真補了東西（CD-94-5）才進待命位；hit 但 no-op 不動待命格
                                     if (status === 'hit' && (event.nfo_written || event.cover_written)) {
-                                        const coverSrc = this.currentCard.coverSrc;
-                                        // CD-94-9：$nextTick 交棒 DOM-flush 後才讀 fromEl rect，否則 x-show 封面 img 尚未 patch、rect=0 → 退化不飛
-                                        this.$nextTick(() => {
-                                            const fromEl = this.$refs.enrichCardCover;
-                                            const toEl = document.getElementById('sidebar-showcase-link');
-                                            if (window.GhostFly && typeof window.GhostFly.playInboundFly === 'function') {
-                                                window.GhostFly.playInboundFly({
-                                                    fromEl, coverSrc, toEl,
-                                                    hold: 0, duration: 0.45,  // CD-94-9 bulk 變體
-                                                    onLanding: () => this._pulseShowcaseLink(toEl),
-                                                    // CD-94-13：不傳 fallback.toastFn（批次數百片 showToast 單槽會刷屏＋蓋真錯誤）
-                                                });
-                                            } else {
-                                                this._pulseShowcaseLink(toEl);
-                                            }
-                                        });
+                                        // 前一片待命格存在 → 先飛前一片（容器恆渲染、rect 恆有效，免 $nextTick，Codex T8-plan P1）
+                                        if (this.onDeckCard) {
+                                            this._flyOnDeck();
+                                        }
+                                        // 本片接手待命格；首次命中（onDeckCard 原為 null）不飛，僅塞待命格
+                                        this.onDeckCard = { number: event.number, coverSrc: this.currentCard.coverSrc };
                                     }
                                 }
                                 if (event.success) {
@@ -213,6 +208,7 @@ export function stateBatch() {
                                 this.flushLogs();
                                 this.state = 'error';
                                 this.currentCard = null;
+                                this.onDeckCard = null;  // TASK-94-T8：error 路徑不殘留待命封面
                                 localStorage.setItem('avlist_enrich_pending', JSON.stringify(items.slice(this.missingEnrichOffset)));
                                 this.showToast(window.t('scanner.stats.missing_enrich_stream_error'), 'error');
                                 return;
@@ -224,6 +220,7 @@ export function stateBatch() {
                     if (!batchDone) {
                         this.state = 'error';
                         this.currentCard = null;
+                        this.onDeckCard = null;  // TASK-94-T8：error 路徑不殘留待命封面
                         localStorage.setItem('avlist_enrich_pending', JSON.stringify(items.slice(this.missingEnrichOffset)));
                         this.showToast(window.t('scanner.stats.missing_enrich_disconnect'), 'error');
                         return;
@@ -235,7 +232,13 @@ export function stateBatch() {
 
                 // All batches complete
                 localStorage.removeItem('avlist_enrich_pending');
+                // TASK-94-T8：run 結束 flush 最後一片 — 必須在 state='done' 之前
+                // （待命格 x-show 綁 state==='enriching'，先 hide 會 rect 0 退化不飛）
+                if (this.onDeckCard) {
+                    this._flyOnDeck();
+                }
                 this.state = 'done';
+                this.onDeckCard = null;
                 this.currentCard = null;
                 this.enrichBadgeCount = 0;
                 this.progressStatus = window.t('scanner.stats.missing_enrich_done');
@@ -251,6 +254,7 @@ export function stateBatch() {
                 console.error('runMissingEnrich error:', e);
                 this.state = 'error';
                 this.currentCard = null;
+                this.onDeckCard = null;  // TASK-94-T8：error 路徑不殘留待命封面
                 localStorage.setItem('avlist_enrich_pending', JSON.stringify(items.slice(this.missingEnrichOffset)));
                 this.showToast(window.t('scanner.stats.missing_enrich_interrupted'), 'error');
             } finally {
@@ -270,6 +274,25 @@ export function stateBatch() {
                 case 'error': return 'error';
                 case 'readonly': return 'readonly';
                 default: return success ? 'hit' : 'error';
+            }
+        },
+
+        // TASK-94-T8：飛出目前停在左待命格的封面（呼叫前必須先確認 this.onDeckCard 存在）。
+        // fromEl 讀恆渲染固定尺寸容器（enrichOnDeckCover，非內層 img）、coverSrc 顯式讀 onDeckCard（不讀 img.src）
+        // → rect 與 coverSrc 皆與 Alpine reactive patch 時序無關，免 $nextTick（Codex T8-plan P1）。
+        _flyOnDeck() {
+            const fromEl = this.$refs.enrichOnDeckCover;
+            const toEl = document.getElementById('sidebar-showcase-link');
+            const coverSrc = this.onDeckCard.coverSrc;
+            if (window.GhostFly && typeof window.GhostFly.playInboundFly === 'function') {
+                window.GhostFly.playInboundFly({
+                    fromEl, coverSrc, toEl,
+                    hold: 0, duration: 0.45,  // CD-94-9 bulk 變體
+                    onLanding: () => this._pulseShowcaseLink(toEl),
+                    // CD-94-13：不傳 fallback.toastFn（批次數百片 showToast 單槽會刷屏＋蓋真錯誤）
+                });
+            } else {
+                this._pulseShowcaseLink(toEl);
             }
         },
 

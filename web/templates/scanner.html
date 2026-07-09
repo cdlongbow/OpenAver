@@ -170,16 +170,14 @@
             </div>
         </div>
 
-        <!-- TASK-94-T4: 逐片補資料進度卡（header 之後、log 之上，CD-94-8 修正 §2 落點） -->
+        <!-- TASK-94-T4/T8: 逐片補資料進度卡（header 之後、log 之上，CD-94-8 修正 §2 落點）
+             兩格版位：左待命格（前一片命中封面，停駐至下一片命中才飛）+ 右當前卡（番號/狀態/來源/badge）。 -->
         <div class="enrich-card" x-show="state === 'enriching' && currentCard" x-cloak>
-            <!-- x-ref 落容器 div（非 x-show 的 img）：容器固定尺寸、run 期間恆渲染，
-                 rect 跨換片穩定——避免 bulk 下「片A hit 排了 $nextTick，片B progress 於同
-                 一 SSE chunk 覆寫 currentCard.status='searching' 隱藏 img → A 的 $nextTick
-                 讀到 rect=0 退化不飛」的 race（獨立 review P1）。coverSrc 已以 const 捕捉、
-                 createCoverGhost 只吃 fromRect+coverSrc，故容器供 rect 無副作用。 -->
-            <div class="enrich-card-cover" x-ref="enrichCardCover">
-                <img :src="currentCard?.coverSrc"
-                     x-show="currentCard?.status === 'hit'" alt="">
+            <!-- TASK-94-T8 / Codex T8-plan P1：左待命格容器恆渲染、固定尺寸、不掛 x-show（x-show 只放內層 img）。
+                 容器隨整張 .enrich-card 一起渲染/隱藏，run 期間恆在，rect 跨換片穩定 —— 免 $nextTick，
+                 且同一 SSE chunk 內連兩命中也不因 Alpine patch 時序退化成 0×0（同 T5 race 教訓但更徹底）。 -->
+            <div class="enrich-ondeck" x-ref="enrichOnDeckCover">
+                <img :src="onDeckCard?.coverSrc" x-show="onDeckCard" alt="">
             </div>
             <div class="enrich-card-info">
                 <span class="enrich-card-number" x-text="currentCard?.number"></span>
@@ -187,6 +185,10 @@
                 <span class="enrich-card-status" x-show="currentCard?.status === 'searching'">
                     <span class="loading loading-spinner loading-xs"></span>
                     <span x-text="window.t('scanner.stats.missing_enrich_card_searching')"></span>
+                </span>
+                <!-- TASK-94-T8：hit 不再放大封面（封面歸左待命格），改 ✓ glyph，避免雙封面 -->
+                <span class="enrich-card-status enrich-card-status-neutral" x-show="currentCard?.status === 'hit'">
+                    <span class="enrich-card-glyph">✓</span>
                 </span>
                 <span class="enrich-card-status enrich-card-status-neutral" x-show="currentCard?.status === 'no_cover'">
                     <span class="enrich-card-glyph">✓</span>
