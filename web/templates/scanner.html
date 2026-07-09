@@ -169,6 +169,40 @@
                 </button>
             </div>
         </div>
+
+        <!-- TASK-94-T4: 逐片補資料進度卡（header 之後、log 之上，CD-94-8 修正 §2 落點） -->
+        <div class="enrich-card" x-show="state === 'enriching' && currentCard" x-cloak>
+            <div class="enrich-card-cover">
+                <img x-ref="enrichCardCover" :src="currentCard?.coverSrc"
+                     x-show="currentCard?.status === 'hit'" alt="">
+            </div>
+            <div class="enrich-card-info">
+                <span class="enrich-card-number" x-text="currentCard?.number"></span>
+                <span class="enrich-card-source" x-show="currentCard?.source" x-text="currentCard?.source"></span>
+                <span class="enrich-card-status" x-show="currentCard?.status === 'searching'">
+                    <span class="loading loading-spinner loading-xs"></span>
+                    <span x-text="window.t('scanner.stats.missing_enrich_card_searching')"></span>
+                </span>
+                <span class="enrich-card-status enrich-card-status-neutral" x-show="currentCard?.status === 'no_cover'">
+                    <span class="enrich-card-glyph">✓</span>
+                    <span x-text="window.t('scanner.stats.missing_enrich_card_no_cover')"></span>
+                </span>
+                <span class="enrich-card-status enrich-card-status-accent" x-show="currentCard?.status === 'not_found'">
+                    <span class="enrich-card-glyph">⊘</span>
+                    <span x-text="window.t('scanner.stats.missing_enrich_card_not_found')"></span>
+                </span>
+                <span class="enrich-card-status enrich-card-status-error" x-show="currentCard?.status === 'error'">
+                    <span class="enrich-card-glyph">⚠</span>
+                    <span x-text="window.t('scanner.stats.missing_enrich_card_error')"></span>
+                </span>
+                <span class="enrich-card-status enrich-card-status-neutral" x-show="currentCard?.status === 'readonly'">
+                    <span class="enrich-card-glyph">⤿</span>
+                    <span x-text="window.t('scanner.stats.missing_enrich_card_readonly')"></span>
+                </span>
+            </div>
+            <span class="enrich-card-badge" x-show="enrichBadgeCount > 0" x-text="enrichBadgeCount"></span>
+        </div>
+
         <div class="progress-mini">
             <div class="bar" id="progressBar" x-bind:style="{ width: progressPercent + '%' }"></div>
         </div>
