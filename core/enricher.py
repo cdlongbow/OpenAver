@@ -35,6 +35,7 @@ class EnrichResult:
     fields_filled: List[str]
     source_used: str
     error: Optional[str]
+    reason: Optional[str] = None
 
 
 def _nfo_to_meta(root: ET.Element) -> dict:
@@ -355,10 +356,12 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
 
     if not number:
         _empty.error = "缺少番號"
+        _empty.reason = "error"
         return _empty
 
     if mode not in VALID_MODES:
         _empty.error = f"不支援的 mode: {mode}（合法值：fill_missing, db_to_sidecar, refresh_full）"
+        _empty.reason = "error"
         return _empty
 
     try:
@@ -369,6 +372,7 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
 
     if not os.path.exists(fs_path):
         _empty.error = "檔案不存在"
+        _empty.reason = "error"
         return _empty
 
     repo = VideoRepository()
@@ -383,6 +387,7 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
         if not scraper_data:
             repo.update_scrape_attempted_at(to_file_uri(fs_path_for_db), time.time())  # db-ns-ok: fs_path_for_db, DB round-trip value, no reverse mapping applied
             _empty.error = f"找不到 {number} 的資料"
+            _empty.reason = "not_found"
             return _empty
         meta = _scraper_to_meta(scraper_data)
         source_used = scraper_data.get("source", "scraper") or "scraper"
@@ -392,6 +397,7 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
         videos = db_hits.get(number, [])
         if not videos:
             _empty.error = f"DB 中找不到 {number} 的資料"
+            _empty.reason = "not_found"
             return _empty
         meta = _video_to_meta(videos[0])
         source_used = "db"
@@ -419,6 +425,7 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
             if not scraper_data:
                 repo.update_scrape_attempted_at(to_file_uri(fs_path_for_db), time.time())  # db-ns-ok: fs_path_for_db, DB round-trip value, no reverse mapping applied
                 _empty.error = f"找不到 {number} 的資料"
+                _empty.reason = "not_found"
                 return _empty
             supplement = _scraper_to_meta(scraper_data)
             meta, fields_filled = _merge_meta(meta, supplement)
@@ -467,6 +474,7 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
             )
         except PermissionError:
             _empty.error = "NFO 寫入失敗，請確認目錄寫入權限"
+            _empty.reason = "error"
             return _empty
     else:
         # off 模式：維持原寫序（NFO 先、cover 後），行為 byte-identical
@@ -483,6 +491,7 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
             )
         except PermissionError:
             _empty.error = "NFO 寫入失敗，請確認目錄寫入權限"
+            _empty.reason = "error"
             return _empty
 
         cover_written = _write_cover(
@@ -531,6 +540,11 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
             if conn:
                 conn.close()
 
+    # reason 分流用「cover.jpg 磁碟真相」，不用 cover_written（Codex P1 回歸鎖 / CD-94-2）：
+    # cover_written=False 不代表沒有封面，也可能是 _write_cover 對既存檔案 skip
+    # （overwrite_existing=False 命中「本輪只補 NFO、封面本就在」的主路徑）。
+    has_cover = os.path.exists(str(Path(fs_path).with_suffix(".jpg")))
+
     return EnrichResult(
         success=True,
         nfo_written=nfo_written,
@@ -539,6 +553,7 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
         fields_filled=fields_filled,
         source_used=source_used,
         error=None,
+        reason=("hit" if has_cover else "no_cover"),
     )
 
 
