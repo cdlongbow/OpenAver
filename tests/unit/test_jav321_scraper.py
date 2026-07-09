@@ -389,6 +389,18 @@ class TestRatingSummary:
         assert video is not None
         assert video.summary == "これはテスト説明文です。"
 
+    def test_summary_skips_empty_col_placeholder_real_fixture(self, scraper):
+        # Codex PR #97 re-review：真實 jav321 頁在真正描述前有一個「空的」
+        # .col-md-12 佔位（見 fixture），舊 select_one 停在空佔位 → summary 恆空。
+        # 用真實 fixture 鎖死：須跳過空佔位、抓到真正的描述文字。
+        with open("tests/fixtures/scrapers/jav321_MIDV-018.html", encoding="utf-8") as f:
+            html = f.read()
+        with patch("core.scrapers.jav321.post_html", return_value=html):
+            video = scraper.search("MIDV-018")
+        assert video is not None
+        assert video.summary.startswith("女流AV監督・長崎みなみ")
+        assert video.rating == 4.5  # 同 fixture 的 平均評価: 4.5（順帶回歸）
+
 
 class TestNoRatingSummary:
     """既有 fixture（無 平均評価 / 描述）→ rating is None、summary == '' 無回歸"""

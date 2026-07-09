@@ -156,9 +156,18 @@ class JAV321Scraper(BaseScraper):
                             if m:
                                 rating = float(m.group(1))
 
-            # 簡介（metatube summary fallback selector .panel-body .row .col-md-12）
-            desc_elem = soup.select_one('.panel-body .row .col-md-12')
-            summary = desc_elem.get_text(strip=True) if desc_elem else ''
+            # 簡介：主 panel-body 內第一個「非空」的 .row .col-md-12。
+            # jav321 詳情頁在真正描述之前常有一個空的 .col-md-12 佔位（見 fixtures
+            # jav321_MIDV-018/SONE-103），select_one 會停在空佔位 → summary 恆空；
+            # 故 scope 到主 panel-body（避開後續 thumbnail panel）取第一個非空文字。
+            summary = ''
+            main_panel = soup.select_one('.panel-body')
+            if main_panel:
+                for cand in main_panel.select('.row .col-md-12'):
+                    text = cand.get_text(strip=True)
+                    if text:
+                        summary = text
+                        break
 
             # sample_images：跳過封面（href 結尾 /0）
             sample_images = []
