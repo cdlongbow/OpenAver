@@ -72,6 +72,34 @@ PS_COVER_DETAIL_HTML = """\
 </body></html>
 """
 
+# ============================================================
+# Inline HTML — 評分 panel（TASK-93-T7）
+# ============================================================
+
+RATING_SEARCH_HTML = """\
+<html><body>
+<div class="movie-list">
+  <div class="item">
+    <div class="video-title"><strong>SONE-103</strong></div>
+    <a href="/v/Ww9zN8"></a>
+  </div>
+</div>
+</body></html>
+"""
+
+RATING_DETAIL_HTML = """\
+<html><body>
+<h2 class="title is-4">SONE-103 テストタイトル</h2>
+<div class="video-cover">
+  <img src="https://pics.example.com/covers/rating.jpg">
+</div>
+<div class="panel-block">
+  <strong>評分:</strong>
+  <div class="value">4.46分, 由2124人評価</div>
+</div>
+</body></html>
+"""
+
 
 # ============================================================
 # Helper
@@ -189,3 +217,34 @@ class TestJavdbTags:
 
         # 層 3：含穩定錨點 tag
         assert "戲劇" in video.tags
+
+
+class TestJavdbRating:
+    """評分解析（TASK-93-T7 / D8）：`([0-9.]+)\\s*分` 由 `分` 錨定"""
+
+    def test_rating_parsed_from_panel(self, scraper):
+        """
+        評分 panel `.value` = `4.46分, 由2124人評価` → video.rating == 4.46。
+        關鍵：`分` 錨定，`由2124人` 的 2124 後接 `人` 不誤命中。
+        """
+        video = run_search(scraper, RATING_SEARCH_HTML, RATING_DETAIL_HTML)
+        assert video is not None
+        assert video.rating == 4.46
+        # 明確驗證未誤抓 2124（人數而非評分）
+        assert video.rating != 2124
+
+    def test_rating_none_when_no_panel(self, scraper):
+        """
+        無評分 panel 的 detail（PS_COVER_DETAIL_HTML）→ video.rating is None，不 raise。
+        （既有 javdb_SONE-103.html fixture 本身含真實評分 panel，故另用 inline 無評分頁。）
+        """
+        video = run_search(scraper, PS_COVER_SEARCH_HTML, PS_COVER_DETAIL_HTML)
+        assert video is not None
+        assert video.rating is None
+
+    def test_rating_from_real_fixture(self, scraper):
+        """真實 javdb_SONE-103.html fixture 含 `4.46分, 由2105人評價` → rating == 4.46（非 2105）"""
+        video = run_search(scraper, SEARCH_HTML, DETAIL_HTML)
+        assert video is not None
+        assert video.rating == 4.46
+        assert video.rating != 2105

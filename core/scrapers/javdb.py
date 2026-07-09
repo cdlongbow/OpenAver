@@ -1,4 +1,5 @@
 """JavDB 爬蟲"""
+import re
 from typing import Optional
 
 from core.logger import get_logger
@@ -125,6 +126,7 @@ class JavDBScraper(BaseScraper):
             maker = ''
             actresses = []
             tags = []
+            rating: Optional[float] = None
 
             for panel in soup.select('.panel-block'):
                 label = panel.select_one('strong')
@@ -173,6 +175,12 @@ class JavDBScraper(BaseScraper):
                     tag_elems = panel.select('a')
                     tags = [t.text.strip() for t in tag_elems if t.text.strip()]
 
+                # 評分（D8：0–5 真實用戶評分，`分` 錨定；javdb 無簡介）
+                if '評分' in label_text and value:
+                    m = re.search(r'([0-9.]+)\s*分', value.text)
+                    if m:
+                        rating = float(m.group(1))
+
             if not title and not cover_url:
                 return None
 
@@ -188,6 +196,7 @@ class JavDBScraper(BaseScraper):
                 maker=maker,
                 cover_url=cover_url,
                 tags=tags,
+                rating=rating,
                 source=self.source_name,
                 detail_url=detail_url,
             )
