@@ -129,6 +129,7 @@ class JAV321Scraper(BaseScraper):
             maker = ''
             duration: Optional[int] = None
             series = ''
+            rating: Optional[float] = None
 
             col9 = soup.select_one('.col-md-9')
             if col9:
@@ -147,6 +148,17 @@ class JAV321Scraper(BaseScraper):
                     elif label == 'シリーズ':
                         a_tag = _find_next_a_before_next_b(b)
                         series = a_tag.get_text(strip=True) if a_tag else ''
+                    elif label == '平均評価':
+                        # D5：live 是文字「平均評価: N.N」(0–5)，直接讀、勿 ÷10
+                        sibling = b.next_sibling
+                        if sibling:
+                            m = re.search(r'([0-9.]+)', str(sibling))
+                            if m:
+                                rating = float(m.group(1))
+
+            # 簡介（metatube summary fallback selector .panel-body .row .col-md-12）
+            desc_elem = soup.select_one('.panel-body .row .col-md-12')
+            summary = desc_elem.get_text(strip=True) if desc_elem else ''
 
             # sample_images：跳過封面（href 結尾 /0）
             sample_images = []
@@ -178,6 +190,8 @@ class JAV321Scraper(BaseScraper):
                 duration=duration,
                 series=series,
                 sample_images=sample_images,
+                rating=rating,
+                summary=summary,
             )
 
             rate_limit(self.config.delay)
