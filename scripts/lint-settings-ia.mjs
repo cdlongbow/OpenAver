@@ -3,9 +3,11 @@
  * lint-settings-ia.mjs — IA 位置回歸鎖（95b-T4，zero-dep）
  *
  * 鎖死 settings.html「列表生成」兩層 IA 分層（CD-95b-1/3/4）：
- *   - 顯示模式（avlistMode）必在「離線 HTML 匯出」摺疊容器內（G-B3，僅影響匯出）
+ *   - 顯示模式 / 輸出目錄 / 輸出檔名（avlistMode/OutputDir/OutputFilename）必在
+ *     「離線 HTML 匯出」摺疊容器內（G-B3 顯示模式僅影響匯出、G-B5 輸出目錄/檔名為匯出專用）
  *   - 最小尺寸 / 排序 / 順序 / 每頁（avlistMinSize/Sort/Order/ItemsPerPage）
  *     必在摺疊外（G-B2/G-B4，閘門與雙棲顯示預設留外層）
+ *   → 三內四外 = 全 7 form id 皆鎖位（防搬回常顯區的靜默回歸）
  *
  * 手段：DOM ancestry。錨定摺疊容器 `<div x-show="galleryExport" ...>`，
  * 以 div-only 平衡計數求其真正閉合位（void element 非 div、不影響 div 巢狀，
@@ -29,7 +31,7 @@ const HTML_PATH = process.argv[2]
 const FLAG = 'galleryExport';
 const CONTAINER_OPEN = `x-show="${FLAG}"`;
 const CLOSE_COMMENT = `<!-- /collapsible-content ${FLAG} -->`;
-const MUST_BE_INSIDE = ['avlistMode'];
+const MUST_BE_INSIDE = ['avlistMode', 'avlistOutputDir', 'avlistOutputFilename'];
 const MUST_BE_OUTSIDE = ['avlistMinSize', 'avlistSort', 'avlistOrder', 'avlistItemsPerPage'];
 
 function fail(msg) {
@@ -101,10 +103,10 @@ function idIndex(id) {
   return idx;
 }
 
-// 〔a〕顯示模式在摺疊內
+// 〔a〕顯示模式 / 輸出目錄 / 輸出檔名在摺疊內（皆離線匯出專用，G-B3/G-B5）
 for (const id of MUST_BE_INSIDE) {
   if (!inSpan(idIndex(id))) {
-    fail(`id="${id}" 應在離線匯出摺疊內（G-B3：顯示模式僅影響匯出）——實際在摺疊外`);
+    fail(`id="${id}" 應在離線匯出摺疊內（G-B3/G-B5：顯示模式/輸出目錄/檔名皆離線匯出專用）——實際在摺疊外`);
   }
 }
 
