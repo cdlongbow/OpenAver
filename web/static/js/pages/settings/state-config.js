@@ -812,16 +812,45 @@ export function stateConfig() {
                 const folderExcluded = new Set(
                     this.formatVariables.filter(v => v.folder_ok === false).map(v => v.name)
                 );
-                const folderLayers = normalizeFolderLayers(
+                let folderLayers = normalizeFolderLayers(
                     this.form.folderLayerList.map(l => l.value.trim()),
                     folderExcluded
                 );
+                // Codex PR #99 第二個 P2 fix — 空層 materialize：organizer.py（:914-919）
+                // create_folder=true 下若 folder_layers 為空，會 fallback 用 folder_format
+                // 拆層、預設 '{num}'。這裡把同一語意在存檔前顯性做掉（folderLayers=['{num}']），
+                // 讓 payload 的 folder_layers / folder_format 保持一致、不再依賴後端的隱形 fallback，
+                // 也讓下面的 form 回寫（reconcile）有一個非空值可比對/顯示。
+                if (folderLayers.length === 0) {
+                    folderLayers = ['{num}'];
+                }
+                // 把 payload 用的正規化/materialize 後 folderLayers 回寫可見 form（與 loadConfig
+                // :622-638 的 rawLayers→normalizeFolderLayers→folderLayerList pattern 對稱）。
+                // 不回寫會讓 saveConfig 存進 config.json 的值（folder_layers）與使用者仍看到的
+                // form.folderLayerList 不同步：
+                //   - {suffix} 案：手打 `{maker}{suffix}` 存成 `{maker}`，form 卻還顯示原字串。
+                //   - 空層案：清空層存成 `{num}`，form 卻顯示空/無層。
+                // 兩案都會讓 savedState（下面於 PUT 成功後從 form 複製）與實際持久化值分岔，
+                // dirty=false 但 display≠persisted，要到 reload 才追上。
+                // 僅在值序列真的不同才寫回：常見案（乾淨多層、無 {suffix}、非空）不重建
+                // chip editor，避免無謂 destroy/remount 造成閃爍或打斷編輯焦點。
+                const currentLayerValues = this.form.folderLayerList.map(l => l.value.trim());
+                if (JSON.stringify(folderLayers) !== JSON.stringify(currentLayerValues)) {
+                    // x-for :key="layer.id"（settings.html:859）換一批新 id 才會讓 Alpine teardown
+                    // 舊 chip-editor host、重新掛載 mountLayerEditor（naming.ready 已 true → 掛載時
+                    // 立即以新值 self-hydrate，同 loadConfig 側 pattern，見 :637-638 註解）。先
+                    // destroy 現有 layerEditors 並清空 naming.layerEditors，避免殘留舊 id 的無主
+                    // ChipEditor 實例（不 destroy 的話 naming.layerEditors 會跟 DOM 脫鉤）。
+                    for (const ed of Object.values(naming.layerEditors)) ed.destroy();
+                    naming.layerEditors = {};
+                    this.form.folderLayerList = folderLayers.map(v => ({ id: naming.layerSeq++, value: v }));
+                }
 
                 config.scraper = {
                     ...config.scraper,
                     create_folder: this.form.createFolder,
                     folder_layers: folderLayers,
-                    folder_format: folderLayers.join('/') || '{num}',
+                    folder_format: folderLayers.join('/'),
                     filename_format: this.form.filenameFormat,
                     max_title_length: this.form.maxTitleLength,
                     max_filename_length: this.form.maxFilenameLength,
