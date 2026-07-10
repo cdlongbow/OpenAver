@@ -90,20 +90,6 @@
         max-width: none;
     }
 
-    /* 2. Folder Layers Row - 垂直堆疊 */
-    #settings-components .folder-layers-row {
-        flex-direction: column;
-        gap: 8px; /* §4 layout 8pt — 對齊 .settings-form-row gap (L72) */
-    }
-
-    #settings-components .folder-separator {
-        display: none; /* 垂直排列時不需要 / 符號 */
-    }
-
-    #settings-components .folder-layer-group {
-        width: 100%;
-    }
-
     /* 4. 雙 Select 橫排佈局 - 強制垂直 */
     #settings-components .sort-row {
         flex-direction: column !important;
@@ -124,27 +110,6 @@
 
 /* Small Mobile: 480px 以下 */
 @media (max-width: 480px) {
-    /* 3. Variable Input Group - 小螢幕改為可換行，避免欄位高度異常 */
-    #settings-components .variable-input-group {
-        flex-wrap: wrap;
-        align-items: center;
-    }
-
-    /* 輸入框/下拉可縮，避免擠壓造成溢出 */
-    #settings-components .variable-input-group > .input,
-    #settings-components .variable-input-group > .select {
-        flex: 1 1 12rem;
-        min-width: 0;
-    }
-
-    /* 按鈕保持自然寬度，避免像 sample.png 那樣變成超高全寬按鈕 */
-    #settings-components .variable-input-group > .btn,
-    #settings-components .variable-input-group > .btn-variable {
-        width: auto;
-        flex: 0 0 auto;
-        white-space: nowrap;
-    }
-
     /* 5. Input Group Inline - 縮小 number input */
     #settings-components .input-group-inline .input {
         width: 80px;
