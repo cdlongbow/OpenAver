@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.10] - 2026-07-10
+
+本版主軸：**設定頁「命名區」膠囊化 + 「列表生成」兩層 IA 重排**（feature/95，Part A spec-95a／Part B spec-95b，兩個獨立部分）——把設定頁兩塊長期是「純文字輸入框 + 一長串控制項」的區域，改成更好懂、更難出錯的形態：命名區（資料夾層級／檔名格式）從手打 `{token}` 字串改成「原子變數膠囊（pill）+ 字面文字自由混排」的視覺化編輯器；列表生成設定拆成「日常常用（外層常駐）」+「離線 HTML 匯出（摺疊進階）」兩層。後端零 schema／DB 變更（僅 format-variables SSOT 端點加情境旗標）。
+
+### Added
+#### 🏷️ 命名區膠囊化（Part A）
+- **資料夾層級／檔名格式改膠囊編輯器**：每個變數（番號／女優／片商／標題／後綴…）以原子「膠囊」呈現，不再是手打 `{num}` 這種容易打錯的字串；膠囊間可自由插入字面分隔符（`[` `]` `-` `_` 等）。變數選單一鍵插入、膠囊整顆刪除（× 或 Backspace 邊界原子刪，不留 `{titl` 半截），貼上時已知變數自動 tokenize、未知 `{foo}` 保留字面。複用既有 source-pill 視覺（999px accent），與 8+30 來源膠囊一致；IME 組字 / Enter guard 不誤送。
+- **資料夾層級改動態清單 + 硬上限 3 層**：可「新增一層／移除此層」，最多 3 層（第 4 層 add 鈕灰化）；載入 >3 層的舊設定自動正規化為前 3 層（保後端有效層、棄第 4 層以上死資料，先 slice 再剝 `{suffix}`）。層順序以穩定 id keying，移除中間層不錯置。
+- **`{suffix}` 情境隔離**：後綴變數只在「檔名格式」可用、資料夾層級選單不出現（`folder_ok` 情境旗標，由 format-variables SSOT 端點下發，前後端不再各自硬編變數清單）。
+
+#### 🗂️ 列表生成設定兩層 IA（Part B）
+- **sec-gallery 拆兩層**：外層常駐＝日常會調的（排序／順序／每頁數量／最小影片尺寸）；摺疊進階層＝只有匯出離線 HTML 才需要的（顯示模式／輸出目錄／輸出檔名），預設收合。
+- **揭露文案克制化**：排序／順序／每頁加「也是你瀏覽頁（Showcase）的預設」揭露；最小尺寸 hint 改寫成「掃描／入庫閾值 — 0 = 不過濾；小於此不入庫（決定你看得到哪些片）」；離線匯出層加 Windows 本機檢視說明條（含 `file://` 成因，材質克制不搶眼）。
+
+### Changed
+- 「進階刮削設定」內的命名區改用膠囊編輯器（取代純文字輸入框）；預覽區改以 `x-text` 渲染（移除舊手動 regex escape，天然防 XSS）。
+- 列表生成設定 state 旗標 `galleryAdvanced` → `galleryExport` rename（語意更準）。
+
+### Fixed
+- **冷模組快取下檔名格式膠囊編輯器持續空白**（95a-T8）：使用者首次開 app／清快取後首載時，「檔案命名格式」膠囊編輯器有時完全空白（存的格式沒渲染成膠囊）。成因是 `loadConfig` 靠單一 `$nextTick` 排的一次性 hydrate callback 在冷模組載入時序下不觸發，而該編輯器又早 mount 過了 ready-gate（資料夾層走 `x-for` 自載、不受影響）。改用 reactive `x-effect` + 響應式就緒旗標 + one-shot 收斂補載，繞過不可靠的單發 `$nextTick`（暖快取本就正常，故只在首次冷載可見）。
+
+### Internal
+- format-variables 抽成單一真理來源端點（`/api/config/format-variables`）+ `folder_ok` 情境旗標；補「format-variables ⊆ organizer 消費」契約守衛（pytest）。
+- 膠囊 tokenizer（`tokenize` / `serializeTokens`）抽成純函式 + node:test round-trip 守衛（`serialize(tokenize(s)) === s`，與 whitelist 無關）；ChipEditor 為非受控 widget，`naming` closure 存參考不進 Alpine x-data（避免 contentEditable 響應式追蹤導致游標跳）。
+- 命名區 ESLint 守衛（膠囊 label brace-strip／禁 raw key）+ orphan 清理 + `/design-system` 同步；列表生成 IA 加 zero-dep lint script（`scripts/lint-settings-ia.mjs` 串 `npm run lint:html`，DOM-ancestry 守 export 控制項必在摺疊內）。
+- 命名區新增 i18n key 只寫 `zh_TW`（其餘三語留空靠 fallback，milestone 補譯——已知缺 16 key warning）。
+- Codex PR review：95a P1（`{suffix}` 資料夾主動移除 + 前 3 層正規化「先 slice 再剝」順序）、95b P2（IA 守衛補鎖 `avlistOutputDir`／`Filename` 在摺疊內）皆已修。
+
+### 測試
+- 全套 pytest **5523 passed, 2 skipped**（unit + integration，排除 smoke／e2e）＋ `ruff check .` 綠 ＋ `npm run lint`（eslint + stylelint + lint-settings-ia）綠。
+- 來源金絲雀：**8 源全 PASS**（javbus／jav321／heyzo／d2pass／avsox／fc2／javdb／dmm）。
+- Gemini 3.1 Pro 整支 branch 第二意見：Part A（命名膠囊）**Approved**（讚 SSOT／closure 隔離 contentEditable／純函式 tokenize／slice-before-filter 順序／x-text 天然防 XSS；4 條 advisory 皆低 severity 或 future-note、無 P1）；Part B 本輪 agy 落入 sandbox 對話式 fallback 未取得有效審查（已知失敗態），correctness 由 per-task Sonnet review + Codex PR review 覆蓋。
+- **95a-T8 冷載修復由 coordinator CDP 實測驗收**（`cacheDisabled` 冷載 3/3 正確 hydrate、暖載／folder 零回歸、編輯游標不跳、reset 重新 hydrate）。
+- E2E-95 runbook 全跑：Part A（A1–A11）+ Part B（B0–B7）全 PASS（A0 即本版修復的 bug）。
+- 視覺 hard-gate：命名膠囊觀感／兩層 IA 可掃讀性／Windows 說明條材質克制由 owner 真機驗收。
+
 ## [0.11.9] - 2026-07-10
 
 本版主軸：**掃描頁「補資料」升級成逐片「工人在幹活」進度卡 + 命中封面飛入圖書館**（feature/94，spec-94 G1–G7）——把掃描頁「補資料」（batch-enrich SSE）從一個乾計數器 + 終端 log，升級成逐片可視的進度卡：每片輪到時即顯示「番號 · 搜尋中…」，結果回來後切到對應結局（命中／命中無封面／查無／失敗／唯讀跳過）；**命中且有可服務封面時，真封面從進度卡飛進側邊欄「瀏覽」**（＝我的圖書館），落地帶 scale/glow + 微光，進度卡上累計 badge。承接 spec-92 D 項「入庫飛入抽成共用元件（`GhostFly.playInboundFly`）、scanner 接線留未來」——本 branch 就是那個未來，**直接複用該共用入口、不新增動畫 primitive**。後端極小擴充（`EnrichResult.reason` 欄位 + SSE `result-item` 帶 reason），**刻意不碰核心 `search_jav`、零 schema/DB 變更**。
