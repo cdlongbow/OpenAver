@@ -1202,3 +1202,94 @@ html.theme-transition-active::view-transition-new(root) {
     bottom: 1rem;
   }
 }
+
+/* ═══════════ 命名區膠囊編輯器（feature/95 Part A）═══════════
+ * ChipEditor 非受控 contentEditable widget（chip-editor.js）。膠囊視覺沿用
+ * components/source-pill.css（CD-95a-5 / D-A7），此處只做 in-flow inline adapt
+ * （縮小 padding、baseline 對齊、× 刪除鈕）+ 容器樣式，全用專案 token。 */
+
+#settings-components .chip-editor {
+    min-height: 42px;
+    padding: 0.4rem 0.6rem;
+    line-height: 2.2;
+    background: color-mix(in oklch, var(--color-base-200) 70%, transparent);
+    border: 1px solid var(--stroke-default);
+    border-radius: var(--radius-lg);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    cursor: text;
+    outline: none;
+    transition: border-color var(--fluent-duration-fast) var(--fluent-ease-standard),
+                box-shadow var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+
+#settings-components .chip-editor:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px color-mix(in oklch, var(--accent) 55%, transparent);
+}
+
+#settings-components .chip-editor:empty::before {
+    content: attr(data-placeholder);
+    color: var(--text-secondary);
+    opacity: 0.65;
+    pointer-events: none;
+}
+
+#settings-components .chip-editor[aria-disabled="true"] {
+    opacity: 0.5;
+    pointer-events: none;
+    background: color-mix(in oklch, var(--color-base-200) 40%, transparent);
+}
+
+/* Inline adapt of .source-pill for in-flow contentEditable use. */
+#settings-components .source-pill--chip {
+    padding: 0.05rem 0.2rem 0.05rem 0.55rem;
+    gap: 0.15rem;
+    margin: 0 1px;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    vertical-align: 1px;
+    white-space: nowrap;
+}
+
+/* Keep a subtle lift on hover but drop the translateY (caret math stays stable in text flow). */
+#settings-components .source-pill--chip:hover {
+    transform: none;
+    box-shadow: var(--fluent-shadow-2);
+}
+
+#settings-components .source-pill--chip .chip-x {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1rem;
+    height: 1rem;
+    padding: 0;
+    font-size: 0.95rem;
+    line-height: 1;
+    color: color-mix(in oklch, var(--text-primary) 55%, transparent);
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: color var(--fluent-duration-fast) var(--fluent-ease-standard),
+                background var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+
+#settings-components .source-pill--chip .chip-x:hover {
+    color: var(--text-primary);
+    background: color-mix(in oklch, var(--color-base-content) 12%, transparent);
+}
+
+/* Drag-insertion caret between chips. */
+#settings-components .chip-editor .drop-marker {
+    display: inline-block;
+    width: 2px;
+    height: 1.05em;
+    margin: 0 1px;
+    vertical-align: -3px;
+    background: var(--accent);
+    border-radius: var(--radius-sm);
+}
