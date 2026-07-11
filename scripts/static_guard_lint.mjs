@@ -1849,13 +1849,34 @@ const RULES = [
   })),
 
   // ---- [TestOutputPathVisibilityGuard] scanner.html .folder-item-output x-show 白名單顯隱
-  // （pure-96d，tag-scan class-tag single，CD-96d-7 負守衛：本卡最高風險列，scanner.html 唯一 fail-open 守衛）----
+  // （pure-96d，scope 綁定 x-show 屬性值本身（非整個 tag），CD-96d-7 負守衛：本卡最高風險列，
+  // scanner.html 唯一 fail-open 守衛。bound to x-show value (Codex 96d P1 fix)：原 tag-scan
+  // 掃整個開頭 tag，required 字串移到 x-show 以外的屬性也會誤判綠燈（fail-open exploit）；
+  // 改用 capture-group scope 只在 x-show="..." 的值內比對，逐字對齊 pytest div.get("x-show","")；
+  // token-aware class match (Codex 96d P2 fix)：class 比對改用 buildTagWithClassRegex 同款
+  // (?<![\w-])…(?![\w-]) token 邊界，逐字對齊 pytest soup.find(class_=...) 的 token 語意
+  // （非 exact-equality），避免該 div 未來多掛第二個 class 時 pytest 綠燈但 lint 誤判 scope-not-found；
+  // attribute-name boundary via \s not \b (Codex 96d P1 fix round-3)：\b 是 word-boundary 不是
+  // HTML 屬性名邊界，`-` 是 non-word char，會讓 \bx-show= 誤配到 data-x-show= 裡的 x-show=、
+  // \bclass= 誤配到 data-class= 裡的 class=（真正的 x-show/class 屬性已被改名移除仍誤判綠燈，
+  // fail-open）；改用 \s（屬性名前必為空白/換行/縮排分隔符，data- 前綴屬性前只有 `-` 沒有空白）----
   {
-    file: 'web/templates/scanner.html', kind: 'tag-scan', mode: 'class-tag',
-    tagName: 'div', className: 'folder-item-output',
-    required: ["dir.readonly", "['jellyfin', 'emby', 'kodi'].includes(config?.scraper?.external_manager)"],
-    forbidden: ["!== 'off'"],
-    note: '[TestOutputPathVisibilityGuard] test_folder_item_output_xshow_gated_by_external_manager_whitelist — .folder-item-output x-show fail-closed 白名單 required + fail-open forbidden（CD-96d-7）',
+    file: 'web/templates/scanner.html', kind: 'required-string',
+    pattern: 'dir.readonly',
+    scope: /<div\b(?=[^>]*\sclass="[^"]*(?<![\w-])folder-item-output(?![\w-])[^"]*")[^>]*?\sx-show="([^"]*)"/,
+    note: '[TestOutputPathVisibilityGuard] test_folder_item_output_xshow_gated_by_external_manager_whitelist — bound to x-show value (Codex 96d P1 fix)：fail-closed 白名單 required（CD-96d-7）',
+  },
+  {
+    file: 'web/templates/scanner.html', kind: 'required-string',
+    pattern: "['jellyfin', 'emby', 'kodi'].includes(config?.scraper?.external_manager)",
+    scope: /<div\b(?=[^>]*\sclass="[^"]*(?<![\w-])folder-item-output(?![\w-])[^"]*")[^>]*?\sx-show="([^"]*)"/,
+    note: '[TestOutputPathVisibilityGuard] test_folder_item_output_xshow_gated_by_external_manager_whitelist — bound to x-show value (Codex 96d P1 fix)：fail-closed 白名單 required（CD-96d-7）',
+  },
+  {
+    file: 'web/templates/scanner.html', kind: 'forbidden-string',
+    pattern: "!== 'off'",
+    scope: /<div\b(?=[^>]*\sclass="[^"]*(?<![\w-])folder-item-output(?![\w-])[^"]*")[^>]*?\sx-show="([^"]*)"/,
+    note: '[TestOutputPathVisibilityGuard] test_folder_item_output_xshow_gated_by_external_manager_whitelist — bound to x-show value (Codex 96d P1 fix)：fail-open forbidden（CD-96d-7）',
   },
 
   // ---- [TestReadonlyDisabledStateGuard] showcase.html 唯讀來源片四寫入入口停用態鏡像（element-bound tag-scan）

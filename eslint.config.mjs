@@ -160,15 +160,21 @@ const SEL_LONGPRESS_IDENT = {
 
 // ── 96d-T1（TestSimilarStageGuard::test_no_clip_selector_in_js）：SEL_CLIP_BAN selector A
 // —— .clip- selector 字面字串搭配 closest/matches/querySelector(All) 全 repo 禁令，
-// universal（9/10 group，跳過 Group 5 = pages/motion-lab/constellation-host.js 白名單目錄）──
+// universal（9/10 group，跳過 Group 5 = pages/motion-lab/constellation-host.js 單一檔案白名單，
+// 非整個 pages/motion-lab/ 目錄——該目錄目前唯一檔案就是 constellation-host.js，故現況等效，
+// 但若日後在 pages/motion-lab/ 底下新增其他 JS 檔，該新檔會落入 Group 6 catch-all 而被此規則
+// 攔截（fail-closed，過嚴），屆時須把 SEL_CLIP_BAN 排除範圍手動擴充到新檔，comment/code 才會
+// 重新對齊原 pytest 的整目錄 rglob 排除語意。Codex 96d P3 fix：comment/message 修正為誠實描述
+// 單一檔案例外，不動 files/ignores/selector 本身（避免 flat-config replace-trap + 誤用
+// constellation-host 專屬 selector 到假設中的其他檔案）──
 const SEL_CLIP_BAN = {
   selector: [
     // test_no_clip_selector_in_js（TestSimilarStageGuard）：closest/matches/querySelector(All) 搭配
-    // .clip- selector 字面字串，全 repo（除 pages/motion-lab/ 子目錄）
+    // .clip- selector 字面字串，全 repo（除 Group 5 單一檔案 constellation-host.js 白名單）
     "CallExpression[callee.property.name=/^(?:closest|matches|querySelector|querySelectorAll)$/][arguments.0.value=/\\.clip-/]",
   ].join(', '),
   message:
-    "TestSimilarStageGuard（96d-T1）：.clip- selector 已於 57c-T4/T5 rename 為 .similar-stage，禁止在 closest/matches/querySelector(All) 使用（pages/motion-lab/ 的 .clip-lab-* sandbox 白名單除外，該目錄檔案不吃此規則）。",
+    "TestSimilarStageGuard（96d-T1）：.clip- selector 已於 57c-T4/T5 rename 為 .similar-stage，禁止在 closest/matches/querySelector(All) 使用（pages/motion-lab/constellation-host.js 單一檔案的 .clip-lab-* sandbox 白名單除外，該檔不吃此規則；同目錄下其他檔案仍受此規則約束）。",
 };
 
 // ── 96d-T1（TestSimilarStageGuard::test_no_clip_alpine_methods_in_showcase_and_similar）：
