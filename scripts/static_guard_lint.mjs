@@ -2106,22 +2106,42 @@ const RULES = [
   },
   {
     file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: 'noOutput > 0',
-    scope: /const\s+srcErrors[\s\S]*?if\s*\(srcErrors\s*>\s*0[\s\S]{0,300}/,
+    // Codex PR review（96e 替代網）：原 pytest 是 idx=js.find("const srcErrors") 起算
+    // 1200-char window，window 內再 find "if (srcErrors > 0" 取 300-char cond_window。
+    // 舊 [\s\S]*? 在兩 anchor 間無上限，若未來條件搬到 1200 字外 pytest 會 RED
+    // 而 lint 仍 GREEN（fail-open）。改 {0,1168}：1200 扣掉 "const srcErrors"（15
+    // 字）與 "if (srcErrors > 0"（17 字）字面長度；trailing 同理 300−17=283（pytest cond_window 自條件起算含 needle）。gap 量詞必須 lazy `{0,1168}?`——pytest window.find() 鎖「第一個」if 命中，greedy 會鎖窗內最後一個、兩條件並存時 fail-open（Codex 二審）。忠實對齊原窗語意（§11 fail-closed）。
+    scope: /const\s+srcErrors[\s\S]{0,1168}?if\s*\(srcErrors\s*>\s*0[\s\S]{0,283}/,
     note: '[TestReadonlySourceErrorToastGuard] test_done_toast_consults_no_output_unreachable_partial — warn 判斷條件納入 noOutput',
   },
   {
     file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: 'unreachable > 0',
-    scope: /const\s+srcErrors[\s\S]*?if\s*\(srcErrors\s*>\s*0[\s\S]{0,300}/,
+    // Codex PR review（96e 替代網）：原 pytest 是 idx=js.find("const srcErrors") 起算
+    // 1200-char window，window 內再 find "if (srcErrors > 0" 取 300-char cond_window。
+    // 舊 [\s\S]*? 在兩 anchor 間無上限，若未來條件搬到 1200 字外 pytest 會 RED
+    // 而 lint 仍 GREEN（fail-open）。改 {0,1168}：1200 扣掉 "const srcErrors"（15
+    // 字）與 "if (srcErrors > 0"（17 字）字面長度；trailing 同理 300−17=283（pytest cond_window 自條件起算含 needle）。gap 量詞必須 lazy `{0,1168}?`——pytest window.find() 鎖「第一個」if 命中，greedy 會鎖窗內最後一個、兩條件並存時 fail-open（Codex 二審）。忠實對齊原窗語意（§11 fail-closed）。
+    scope: /const\s+srcErrors[\s\S]{0,1168}?if\s*\(srcErrors\s*>\s*0[\s\S]{0,283}/,
     note: '[TestReadonlySourceErrorToastGuard] test_done_toast_consults_no_output_unreachable_partial — warn 判斷條件納入 unreachable',
   },
   {
     file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: 'partial > 0',
-    scope: /const\s+srcErrors[\s\S]*?if\s*\(srcErrors\s*>\s*0[\s\S]{0,300}/,
+    // Codex PR review（96e 替代網）：原 pytest 是 idx=js.find("const srcErrors") 起算
+    // 1200-char window，window 內再 find "if (srcErrors > 0" 取 300-char cond_window。
+    // 舊 [\s\S]*? 在兩 anchor 間無上限，若未來條件搬到 1200 字外 pytest 會 RED
+    // 而 lint 仍 GREEN（fail-open）。改 {0,1168}：1200 扣掉 "const srcErrors"（15
+    // 字）與 "if (srcErrors > 0"（17 字）字面長度；trailing 同理 300−17=283（pytest cond_window 自條件起算含 needle）。gap 量詞必須 lazy `{0,1168}?`——pytest window.find() 鎖「第一個」if 命中，greedy 會鎖窗內最後一個、兩條件並存時 fail-open（Codex 二審）。忠實對齊原窗語意（§11 fail-closed）。
+    scope: /const\s+srcErrors[\s\S]{0,1168}?if\s*\(srcErrors\s*>\s*0[\s\S]{0,283}/,
     note: '[TestReadonlySourceErrorToastGuard] test_done_toast_consults_no_output_unreachable_partial — warn 判斷條件納入 partial',
   },
   {
     file: 'web/static/js/pages/scanner/state-scan.js', kind: 'forbidden-string', pattern: 'pruned > 0',
-    scope: /const\s+srcErrors[\s\S]*?if\s*\(srcErrors\s*>\s*0[\s\S]{0,300}/,
+    // Codex PR review（96e 替代網）：原 pytest 是 idx=js.find("const srcErrors") 起算
+    // 1200-char window，window 內再 find "if (srcErrors > 0" 取 300-char cond_window。
+    // 舊 [\s\S]*? 在兩 anchor 間無上限，若未來條件搬到 1200 字外 pytest 會 RED
+    // 而 lint 仍 GREEN（fail-open）。改 {0,1168}：1200 扣掉 "const srcErrors"（15
+    // 字）與 "if (srcErrors > 0"（17 字）字面長度；trailing 同理 300−17=283（pytest cond_window 自條件起算含 needle）。gap 量詞必須 lazy `{0,1168}?`——pytest window.find() 鎖「第一個」if 命中，greedy 會鎖窗內最後一個、兩條件並存時 fail-open（Codex 二審）。忠實對齊原窗語意（§11 fail-closed）。
+    scope: /const\s+srcErrors[\s\S]{0,1168}?if\s*\(srcErrors\s*>\s*0[\s\S]{0,283}/,
     note: '[TestReadonlySourceErrorToastGuard] test_done_toast_consults_no_output_unreachable_partial — pruned 非警告，不可誤納入 warn 判斷',
   },
 
@@ -2152,9 +2172,15 @@ const RULES = [
     note: '[TestMotionLabStateGuard] test_motion_lab_html_contains — motion-lab-state.js script tag 存在',
   },
   {
-    file: 'web/templates/motion_lab.html', kind: 'forbidden-string', pattern: 'defer',
-    scope: /<script[^>]*motion-lab-state\.js[^>]*>/,
-    note: '[TestMotionLabStateGuard] test_motion_lab_html_contains — motion-lab-state.js script tag 不可帶 defer（§11 gotcha #1：element-scoped，非 whole-file）',
+    // Codex PR review（96e 替代網）：原 pytest 對「所有」匹配 motion-lab-state.js 的
+    // script tag 逐一（for tag in tags）禁 defer；舊寫法用 scope（RegExp.exec 只取
+    // 第一個匹配）只驗第一個 tag，若日後出現第二個同 src tag 帶 defer 會漏過
+    // （fail-open）。改 forbidden-string 雙 lookahead（無 scope）：pattern 本身表達
+    // 「任何 script tag 同時含 motion-lab-state.js 與 defer」＝ RED，whole-text scan
+    // 天然涵蓋所有出現點，不限首個。
+    file: 'web/templates/motion_lab.html', kind: 'forbidden-string',
+    pattern: /<script(?=[^>]*\bdefer\b)(?=[^>]*motion-lab-state\.js)[^>]*>/,
+    note: '[TestMotionLabStateGuard] test_motion_lab_html_contains — 任一 motion-lab-state.js script tag 皆不可帶 defer（whole-text scan，涵蓋所有出現點）',
   },
   { file: 'web/static/js/pages/motion-lab-state.js', kind: 'required-string', pattern: 'function motionLabPage()', note: '[TestMotionLabStateGuard] test_motion_lab_state_js_contains' },
   { file: 'web/static/js/pages/motion-lab-state.js', kind: 'required-string', pattern: 'init()', note: '[TestMotionLabStateGuard] test_motion_lab_state_js_contains' },
