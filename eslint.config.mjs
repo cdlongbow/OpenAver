@@ -187,6 +187,24 @@ const SEL_CLIP_METHOD_IDENT = {
     "TestSimilarStageGuard（96d-T1）：已退役 *Clip* Alpine method 識別字（57c-T4/T5 rename 為 *Similar*），state-similar.js 禁止重新引入。",
 };
 
+// ── 96e-T3（TestVideoPlaybackGuard〔a〕，CD-96-15 鎖定）：SEL_NO_WINDOW_OPEN_PATH
+// （universal，全部 10 個 group）── 來源 pytest regex `window\.open\s*\(\s*path\s*,`：
+// window.open( 呼叫、第一參數是裸 identifier `path`、且後面接逗號（第二參數存在）。
+// esquery `arguments.length>1` 語法已 scratch 實證支援（見 TASK-96e-T3.md 記錄）：
+//   - window.open(path, '_blank') → fire（RED，符合 pytest 原意）
+//   - window.open(path)（單參數、無逗號）→ 不 fire（GREEN，與 pytest 一致，非省略版本）
+//   - window.open(url, '_blank')（非 path 變數名）→ 不 fire（GREEN，不誤殺 result-card.js/
+//     state-videos.js 既有合法 window.open(url,...) / window.open('/api/gallery/player?...', ...)）
+// pytest 掃描範圍原是 pages/ + components/（不含 shared/），比照既有 universal selector
+// （SEL_WINDOW_CONFIRM/SEL_NO_UNLOAD_LISTENER）加進全部 10 群：Group 4/5/7（shared/ 三檔）
+// 技術上超出原範圍，但同 CD-96e-6「寧嚴不寬」，live grep 確認這 3 檔零 window.open( 用法，零風險。
+const SEL_NO_WINDOW_OPEN_PATH = {
+  selector:
+    "CallExpression[callee.object.name='window'][callee.property.name='open'][arguments.0.name='path'][arguments.length>1]",
+  message:
+    "TestVideoPlaybackGuard（96e-T3，CD-96-15〔a〕）：window.open(path, ...) 直接開路徑會被瀏覽器阻擋 file:/// URI。改走 /api/gallery/player?path= 代理播放。",
+};
+
 export default [
   // ── 全域基礎設定 ──────────────────────────────────────────────
   {
@@ -268,6 +286,7 @@ export default [
         SEL_TRACKED_EVENTSOURCE,
         SEL_LONGPRESS_IDENT,
         SEL_CLIP_BAN,
+        SEL_NO_WINDOW_OPEN_PATH,
       ],
     },
   },
@@ -299,6 +318,7 @@ export default [
         SEL_NULLISH_PERPAGE,
         SEL_LONGPRESS_IDENT,
         SEL_CLIP_BAN,
+        SEL_NO_WINDOW_OPEN_PATH,
       ],
     },
   },
@@ -321,6 +341,7 @@ export default [
         SEL_NULLISH_PERPAGE,
         SEL_LONGPRESS_IDENT,
         SEL_CLIP_BAN,
+        SEL_NO_WINDOW_OPEN_PATH,
       ],
     },
   },
@@ -368,6 +389,7 @@ export default [
         SEL_NULLISH_PERPAGE,
         SEL_LONGPRESS_IDENT,
         SEL_CLIP_BAN,
+        SEL_NO_WINDOW_OPEN_PATH,
       ],
     },
   },
@@ -453,6 +475,7 @@ export default [
         SEL_NO_ERR_IN_ALERT,
         SEL_NULLISH_PERPAGE,
         SEL_LONGPRESS_IDENT,
+        SEL_NO_WINDOW_OPEN_PATH,
       ],
     },
   },
@@ -484,6 +507,7 @@ export default [
         SEL_LONGPRESS_IDENT,
         SEL_CLIP_BAN,
         SEL_CLIP_METHOD_IDENT,
+        SEL_NO_WINDOW_OPEN_PATH,
       ],
     },
   },
@@ -562,6 +586,7 @@ export default [
         SEL_GRID_ROTATION,
         SEL_LONGPRESS_IDENT,
         SEL_CLIP_BAN,
+        SEL_NO_WINDOW_OPEN_PATH,
       ],
     },
   },
@@ -634,6 +659,7 @@ export default [
         SEL_NULLISH_PERPAGE,
         SEL_LONGPRESS_IDENT,
         SEL_CLIP_BAN,
+        SEL_NO_WINDOW_OPEN_PATH,
       ],
     },
   },
@@ -667,6 +693,7 @@ export default [
         SEL_TRACKED_EVENTSOURCE,
         SEL_LONGPRESS_IDENT,
         SEL_CLIP_BAN,
+        SEL_NO_WINDOW_OPEN_PATH,
       ],
     },
   },
@@ -755,6 +782,7 @@ export default [
         SEL_NULLISH_PERPAGE,
         SEL_LONGPRESS_IDENT,
         SEL_CLIP_BAN,
+        SEL_NO_WINDOW_OPEN_PATH,
       ],
     },
   },

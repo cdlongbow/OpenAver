@@ -2205,6 +2205,89 @@ const RULES = [
     scope: { anchor: /closeLightbox\s*\(\s*\)\s*\{/, window: 2000 },
     note: '[TestFetchSamplesButton] test_core_js_contains — closeLightbox() 須 reset _fetchSamplesFailed = {}（2000-char window）',
   },
+
+  // ── 96e-T3（TestNoAlertInSearchJs）：clipboard availability guard ──────────
+  // Opus 裁決 1：plan 草案 SEL_CLIPBOARD_OPTIONAL_CHAIN（eslint per-node ban）會在
+  // 4/5 現行合法檔（guard-if / 三元條件形式，呼叫本身非 optional）立即 RED，否決。
+  // 改走 static_guard_lint：scanner/state-scan.js 兩處呼叫點 guard count:2（required-string）
+  // + 全 web/static/js 檔級 pairing（paired-string，新 kind）。
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string',
+    pattern: 'navigator.clipboard?.writeText', count: 2,
+    note: '[TestNoAlertInSearchJs] test_scanner_clipboard_has_availability_guard — scanner/state-scan.js 需 ≥2 處 guard（copyLogs L1053 附近 + copyOutputPath L720 附近）',
+  },
+  {
+    file: { dir: 'web/static/js', ext: ['.js'], recursive: true }, kind: 'paired-string',
+    ifPresent: 'navigator.clipboard.writeText', thenRequire: 'navigator.clipboard?.writeText',
+    note: '[TestNoAlertInSearchJs] test_all_clipboard_writetext_files_have_availability_guard — 全 web/static/js 任何用 navigator.clipboard.writeText 的檔案須同檔含 ?. guard 形式',
+  },
+
+  // ── 96e-T3（TestSimilarSlotGsapGuard）：GSAP width literal 守衛（9 條） ─────
+  // Opus 裁決 2：plan 草案 SEL_GSAP_WIDTH_LITERAL（AST width property ban）會擴大涵蓋範圍
+  // （禁一切數字 width literal，非原 pytest 只防特定歷史迴歸值）+ eslint 無法表達正向必須
+  // 存在斷言（POSTER_CROP_RATIO/SLOT_W/MAIN_W/width: 107），否決。全走 static_guard_lint。
+  {
+    file: 'web/static/js/shared/constellation/animations.js', kind: 'forbidden-string', pattern: 'width: 120',
+    note: '[TestSimilarSlotGsapGuard] test_animations_no_width_120_literal',
+  },
+  {
+    file: 'web/static/js/shared/constellation/animations.js', kind: 'forbidden-string', pattern: 'width: 200',
+    note: '[TestSimilarSlotGsapGuard] test_animations_no_width_200_literal',
+  },
+  {
+    file: 'web/static/js/shared/constellation/animations.js', kind: 'required-string', pattern: 'POSTER_CROP_RATIO',
+    note: '[TestSimilarSlotGsapGuard] test_animations_has_poster_crop_ratio_const',
+  },
+  {
+    file: 'web/static/js/shared/constellation/animations.js', kind: 'required-string', pattern: 'SLOT_W',
+    note: '[TestSimilarSlotGsapGuard] test_animations_has_slot_w_const',
+  },
+  {
+    file: 'web/static/js/shared/constellation/animations.js', kind: 'required-string', pattern: 'MAIN_W',
+    note: '[TestSimilarSlotGsapGuard] test_animations_has_main_w_const',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'forbidden-string', pattern: 'width: 120',
+    note: '[TestSimilarSlotGsapGuard] test_state_similar_no_width_120',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string', pattern: 'width: 107',
+    note: '[TestSimilarSlotGsapGuard] test_state_similar_has_width_107',
+  },
+  {
+    file: 'web/static/js/pages/motion-lab/constellation-host.js', kind: 'forbidden-string', pattern: 'width: 120',
+    note: '[TestSimilarSlotGsapGuard] test_constellation_host_no_width_120',
+  },
+  {
+    file: 'web/static/js/pages/motion-lab/constellation-host.js', kind: 'required-string', pattern: 'width: 107',
+    note: '[TestSimilarSlotGsapGuard] test_constellation_host_has_width_107',
+  },
+
+  // ── 96e-T3（TestVideoPlaybackGuard〔b〕）：3 個 .py 檔硬編影片副檔名 set 禁令 ──
+  {
+    file: 'core/gallery_scanner.py', kind: 'forbidden-string',
+    pattern: /=\s*\{[^}]*'\.mp4'[^}:]*'\.avi'[^}:]*\}/s,
+    note: '[TestVideoPlaybackGuard] test_no_hardcoded_video_extensions_in_modules — gallery_scanner.py 不可硬編影片副檔名 set（須 import core.video_extensions SSOT）',
+  },
+  {
+    file: 'web/routers/scanner.py', kind: 'forbidden-string',
+    pattern: /=\s*\{[^}]*'\.mp4'[^}:]*'\.avi'[^}:]*\}/s,
+    note: '[TestVideoPlaybackGuard] test_no_hardcoded_video_extensions_in_modules — scanner.py 不可硬編影片副檔名 set',
+  },
+  {
+    file: 'windows/pywebview_api.py', kind: 'forbidden-string',
+    pattern: /=\s*\{[^}]*'\.mp4'[^}:]*'\.avi'[^}:]*\}/s,
+    note: '[TestVideoPlaybackGuard] test_no_hardcoded_video_extensions_in_modules — pywebview_api.py 不可硬編影片副檔名 set',
+  },
+
+  // ── 96e-T3（TestVideoPlaybackGuard，Opus 自裁納入）：state-videos.js JS 半邊 ────
+  // plan CD-96e-5 三分法漏列的第四半邊（test_video_api_files_contain 的
+  // '/api/gallery/player' in state-videos.js 斷言）——不補則 T5 整刪
+  // test_video_api_files_contain 時會靜默失網，故本卡納入。
+  {
+    file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: '/api/gallery/player',
+    note: '[TestVideoPlaybackGuard] test_video_api_files_contain（JS 半邊，plan CD-96e-5 三分法未明列，96e-T3 研究補洞）',
+  },
 ];
 
 // ---- helpers ----
@@ -2321,8 +2404,25 @@ function evalRule(rule, text, fileLabel) {
       throw new Error(
         'file-absent rule 不應進入 evalRule/readTarget 通用路徑——main loop 需在讀檔前攔截（見 main 迴圈頂部特殊分支）',
       );
+    case 'paired-string':
+      evalPairedString(rule, text, fileLabel);
+      break;
     default:
       throw new Error('kind not implemented: ' + rule.kind);
+  }
+}
+
+// ---- paired-string（96e-T3 新 kind，第 9 個）----
+// 若 file 含 ifPresent，則同 file 必含 thenRequire（否則 err）；
+// ifPresent 不存在時直接跳過（無此 API 使用，非違規，vacuous pass）。
+// 用途：TestNoAlertInSearchJs::test_all_clipboard_writetext_files_have_availability_guard
+// 「用了就必須有 guard」的檔級 pairing 語意（非 AST 分支、非跨檔）——required-string/
+// forbidden-string 的 dir-scan 變體只能對每個匹配檔套用同一個無條件 pattern，無法表達
+// 「pattern A 存在時才要求 pattern B」的條件式，故新增此 kind（CD-96e-3 授權擴 dispatcher）。
+function evalPairedString(rule, text, fileLabel) {
+  if (!matches(text, rule.ifPresent)) return;
+  if (!matches(text, rule.thenRequire)) {
+    err(`${rule.note} — ${fileLabel}: 含 ${patternLabel(rule.ifPresent)} 但缺 ${patternLabel(rule.thenRequire)}`);
   }
 }
 
@@ -2742,4 +2842,4 @@ for (const rule of RULES) {
 if (hadError) {
   process.exit(1);
 }
-console.log(`✓ static_guard_lint: ${RULES.length} 條規則全數通過（required-string/forbidden-string/dup-id/structure-count/tag-scan/inline-style-token/order）`);
+console.log(`✓ static_guard_lint: ${RULES.length} 條規則全數通過（required-string/forbidden-string/dup-id/structure-count/tag-scan/inline-style-token/order/paired-string）`);
