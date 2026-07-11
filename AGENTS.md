@@ -78,30 +78,39 @@
 
 ### Out of scope (handled by automated tooling)
 
-> **v0.11.11 (feature/96 test-deflation)**: static string/structure existence checks on
-> HTML/JS/CSS/Python-literals are the lint layer's job, enforced in CI (`lint-frontend`
-> job = `npm run lint` + `npm test` + `ruff check .`). DO NOT spend review attention
-> re-verifying them, and DO NOT request pytest tests for them. If a guard of this class
-> is missing, the finding is "add a lint rule", not a code-review blocker.
+> **v0.11.11 (feature/96 test-deflation)**: For ordinary product-code PRs, do NOT redo the
+> mechanical checks that unchanged lint rules already cover, and trust the author's
+> lint/test summary. This exemption does NOT apply to changes to the lint/test
+> infrastructure itself, to guard migration or deletion, or to coverage/exhaustiveness
+> claims. Those must be reviewed statically for target set, scope, first-vs-all match,
+> count/order, positive/negative polarity, anchor-absent behavior, and granularity
+> equivalence with the guard they replace — still without running lint or tests.
+>
+> When a guard is genuinely missing, adding a lint rule is the fix, not a pytest string
+> test — but a missing guard does NOT by itself lower severity. An actual product defect
+> it would have caught is graded by product impact regardless of whether automation exists.
 
-The lint layer (all wired into `npm run lint`):
+The lint layer. CI `lint-frontend` runs three phases: `npm run lint` (eslint + stylelint +
+the four `.mjs` guards below), then `npm test` (node structural/unit tests), then
+`ruff check .`. Counts below are indicative only — the live config/script is the source
+of truth:
 
-- **`scripts/static_guard_lint.mjs`** — table-driven static guard engine, ~886 rules,
-  9 kinds (`required-string` / `forbidden-string` / `dup-id` / `structure-count` /
-  `tag-scan` / `inline-style-token` / `order` / `file-absent` / `paired-string`), with
-  scoped matching (anchor-missing = fail-closed RED, brace-balanced method-body windows,
-  comment stripping). Covers HTML templates (which eslint cannot parse), JS string
-  fingerprints, and Python hardcoded-literal bans. This is the default home for any
-  "string X must (not) appear in file Y" guard — including the former pytest guards for
-  inline handlers, inline `style=display:none`, native-dialog strings, and clipboard
-  optional-chaining, all migrated here.
-- **`scripts/css-guard.mjs`** — 41 CSS-block rules (Fluent token families, poster-crop,
+- **`scripts/static_guard_lint.mjs`** — table-driven static guard engine (kinds:
+  `required-string` / `forbidden-string` / `dup-id` / `structure-count` / `tag-scan` /
+  `inline-style-token` / `order` / `file-absent` / `paired-string`), with scoped matching
+  (anchor-missing = fail-closed RED, brace-balanced method-body windows, comment
+  stripping). Covers HTML templates (which eslint cannot parse), JS string fingerprints,
+  and Python hardcoded-literal bans. This is the default home for any "string X must (not)
+  appear in file Y" guard — including the former pytest guards for inline handlers, inline
+  `style=display:none`, native-dialog strings, and clipboard optional-chaining, all
+  migrated here.
+- **`scripts/css-guard.mjs`** — CSS-block rules (Fluent token families, poster-crop,
   z-index cross-file ordering, vt-anchor, selector scoping, whole-text property scans).
 - **`scripts/i18n_lint.mjs`** — used-but-missing i18n keys (RED), 4-locale parity (warn),
   orphan keys (warn), forbidden words in translations (「推薦」「風味」, RED).
 - **`scripts/lint-settings-ia.mjs`** — settings.html IA layering (DOM-ancestry lock).
-- **ESLint** (`eslint.config.mjs`, flat config, 11 `no-restricted-syntax` groups,
-  **17 `SEL_*` constants** — `SEL_SHOW_MODAL`, `SEL_TRACKED_EVENTSOURCE`, `SEL_CLIP_BAN`,
+- **ESLint** (`eslint.config.mjs`, flat config; `no-restricted-syntax` groups + `SEL_*`
+  selector constants — `SEL_SHOW_MODAL`, `SEL_TRACKED_EVENTSOURCE`, `SEL_CLIP_BAN`,
   `SEL_NO_WINDOW_OPEN_PATH`, etc.): anything expressed in the live config is out of review
   scope — consult the config, not a duplicate list here. Scope caveats that ARE still
   review territory: `no-console` covers **search pages only** (`console.error`/`warn`
@@ -112,17 +121,20 @@ The lint layer (all wired into `npm run lint`):
   `F`, `E722`, `B` (incl. `B904`/`B905`/`B023`), `T201`, `S110`/`S112`.
 
 **Still enforced by pytest** (deliberate KEEPs — flag these in review if violated):
-- **`tests/unit/frontend_contracts/`** (6 files) — true cross-file / cross-language
-  contracts: API route pairing, layout/lifecycle/animation contracts, and code-shape
-  guards (method-body ordering, call-counts, brace-scoped semantics) that string-scan
-  lint cannot faithfully express.
+- **`tests/unit/frontend_contracts/`** — true cross-file / cross-language contracts: API
+  route pairing, layout/lifecycle/animation contracts, and code-shape guards (method-body
+  ordering, call-counts, brace-scoped semantics) that string-scan lint cannot faithfully
+  express.
 - **`[lint-guard: pytest-justified]`-tagged classes** in `tests/unit/test_frontend_lint.py`
   (each tag states its reason), incl. `TestPathContract` — the path_utils contract
   (manual `file:///` strip/construct bans; Python source semantics ruff cannot express).
 - The remaining untagged classes in `test_frontend_lint.py` are the **E2E-block**
-  (~52 classes guarding user journeys — swipe/keyboard/lightbox/actress flows). They stay
-  as pytest until a future E2E branch replaces them with browser journeys; do not request
-  their migration to lint, and do not add new classes to this bucket.
+  (user-journey guards — swipe/keyboard/lightbox/actress flows). They stay as pytest until
+  a future E2E branch replaces them with browser journeys; do not request their migration
+  to lint, and do not add new classes to this bucket.
+
+Only read a KEEP test when the changed hunk touches the contract's producer, consumer, or
+the contract test itself — do not routinely sweep all KEEPs.
 
 (Anything outside the lint layer's expressed rules — formatting, dead code not caught by
 ruff `F`, logic — is still in code-review scope.)

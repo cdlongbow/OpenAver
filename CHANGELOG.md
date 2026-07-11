@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.12] - 2026-07-12
+
+本版主軸：**javdb 在 released 版復活 — 打包 metadata 修復 + 打包產物 runtime 驗證守衛**（feature/97，spec-97／plan-97，T1–T5）。**這是 0.11.10 之後第一個實際面向用戶的 GitHub release**（0.11.11 為純內部 test-deflation 里程碑、不單獨發版）。使用者唯一可感知的變化：**released 版（Windows/macOS ZIP）指定 javdb 來源搜尋，行為終於與開發環境一致**——能命中就命中，真的查無才回「無結果」。
+
+根因已實證（非推理）：`build.py`／`build_macos.py` 打包瘦身刪除**所有 `*.dist-info`**；`curl_cffi` 的 `__init__` 在 **import 當下**讀自己的 package metadata（`importlib.metadata`），dist-info 不在 → 拋 `PackageNotFoundError`（`ImportError` 子類）→ 被 `core/scrapers/javdb.py` 的 `except ImportError` **靜默吞掉** → `CURL_CFFI_AVAILABLE=False` → 之後每次 javdb 搜尋在第一行就 `return None`、**零 HTTP 請求、零 log**。8 源金絲雀／全套 pytest／smoke 全在 dev venv 跑（dist-info 完好），永遠測不到 packaged 環境的斷裂——所以「測試全綠 → 出貨 → 用戶回報壞的」這條路一直沒被堵。**歷來所有 released Windows/macOS 版的 javdb 從第一天就不能用**（不是先前假設的 CF ban——released 版根本沒發過 HTTP）。
+
+### Fixed
+- **javdb released 版永遠「無結果」**：打包不再剝除 `.dist-info`，curl_cffi 在產物內能正常 import，javdb 恢復可用（owner 真機 2026-07-12 實證：補 dist-info + 重啟後搜 DLDSS-491 命中）。全保留 dist-info 壓縮代價僅 ~0.3MB（Windows ZIP 34.8 → 35.1MB，遠低於 48MB 上限）。
+
+### Added
+#### 🛡️ 打包產物 runtime 驗證守衛（制度化，堵死 dev-only 測試盲區）
+- **`scripts/verify_artifact_imports.py`**：用**產物自帶的 Python** 全量 import site-packages 每個頂層套件，任一 fail → build fail。stdlib-only（跑在尚未驗證的 embedded python 上）、layout 無關（`sys.path` 探測，不寫死 Windows `Lib/` vs macOS `lib/pythonX.Y/`）。這正是「dev venv 測全綠、released curl_cffi import 就炸」盲區的守衛本體——刪掉任一套件的 dist-info 或整包，守衛必紅。
+- **`scripts/audit_build_artifact.py` 加 dist-info 靜態檢查**（廉價第一道，掃 ZIP 不 import，兩平台皆查）：(a) curl_cffi 套件在但其 `*.dist-info/METADATA` 缺 → hard-fail（點名真兇）；(b) 大規模零 dist-info → hard-fail（防未來全刪回歸）。靜態不取代真 import（「檔案都在，跑起來才知道壞」）。
+- **CI `build.yml` 重排**：新增 `verify-windows`（windows-latest）job 下載 Windows ZIP、用產物自帶 `python.exe` 跑 import sweep（Windows ZIP 是 ubuntu cross-build，build 機跑不了 win embedded python）；macOS build job 內就地跑 audit + sweep。**Release 上傳 gate 在 verify 之後**（守衛綠才發版）；macOS 首次掛上 audit（`--max-mb 60`，因 mac baseline 49MB、uvloop 為合法依賴，不照搬 Windows 48）。
+
+### Changed
+- **javdb 兩條靜默失敗路徑補診斷 log**（零行為變更，只加可觀測性）：curl_cffi 不可用 → 首次搜尋 log 一次 warning（含原始例外，一次性不刷屏）；HTTP 非 200 → log status code。排查本 bug 最貴的成本就是「零 log」——連「有沒有發請求」都要靠猜。
+
+### 測試
+- 全套 pytest **4995 passed, 1 skipped**（unit + integration，排除 smoke／e2e，較 0.11.11 的 4985 +10：dist-info 靜態檢查 7 案例〔curl_cffi 缺 metadata／大規模零 dist-info／mac 皆 hard-fail，含 mutation〕+ javdb 診斷 log 3 案例〔warning 一次含例外／None 容錯不 NameError／非 200 status code，含 mutation〕）＋ `ruff check .` 綠 ＋ `npm run lint` 綠。
+- 產物守衛 mutation 實證（對本機 Windows 產物、WSL interop 跑產物自帶 python.exe）：正常 GREEN；刪 curl_cffi dist-info → `PackageNotFoundError` exit 1（本次事故的自動化重演）；刪整包 → 依賴鏈全列 exit 1；還原 → GREEN。audit 真 fixture：新 build GREEN、歷史壞 ZIP（v0.11.10，零 dist-info）RED。
+- 來源金絲雀：**7 源 PASS + fc2 SKIP**（unreachable／no probe，站方連線問題非 parser 回歸，advisory；**javdb 本身金絲雀 PASS**——parser 一直健康，壞的是打包）。
+- 每 task 獨立 Sonnet structured review（T2/T3/T4/T5 findings 皆修：產物守衛 scanned==0 假綠守衛／audit if-no-files-found／CI YAML semantics／javdb test importorskip）。CI dispatch dry-run + Codex PR review 為 push 後最終網。
+
 ## [0.11.11] - 2026-07-12
 
 本版主軸：**前端靜態守衛 pytest → lint 全面遷移（test-deflation）**（feature/96，5 plan 96a–96e／3 PR `0.11.11ab`→`0.11.11cd`→`0.11.11`）——**純內部工程里程碑：零產品碼、對使用者完全隱形、不單獨發 GitHub release**（下一個面向用戶的 0.11.12 才是 0.11.10 後第一個實際 release）。north-star（owner 拍板）：**能用 lint 機械處理的，就不該進 pytest、也不該耗 Codex 審**——把 `tests/unit/test_frontend_lint.py` 裡「讀原始碼做字串/結構斷言」的前端靜態守衛搬回它們該去的工具層（eslint／stylelint／node `.mjs` lint 腳本），並止血讓它不再長回來。收益不是測試數字，是把機械式字串存在檢查移出 AI review 的注意力預算。
