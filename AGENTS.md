@@ -78,43 +78,66 @@
 
 ### Out of scope (handled by automated tooling)
 
-The following are enforced by `eslint.config.mjs` / `stylelint.config.js` within their
-configured file scopes — DO NOT flag in code review (file an eslint/stylelint config
-issue if a rule is missing or if scope needs broadening):
+> **v0.11.11 (feature/96 test-deflation)**: static string/structure existence checks on
+> HTML/JS/CSS/Python-literals are the lint layer's job, enforced in CI (`lint-frontend`
+> job = `npm run lint` + `npm test` + `ruff check .`). DO NOT spend review attention
+> re-verifying them, and DO NOT request pytest tests for them. If a guard of this class
+> is missing, the finding is "add a lint rule", not a code-review blocker.
 
-**ESLint** (base scope `web/static/js/**/*.js` unless noted):
-- `no-alert` — no `alert()` / `confirm()` / `prompt()` anywhere in JS (global scope)
-- `no-console` — **search pages only** (`web/static/js/pages/search/**/*.js`); `console.error` and `console.warn` are allowed; all other JS directories are NOT covered
-- `no-restricted-syntax` `window.confirm` — no `window.confirm()` anywhere in JS (global scope)
-- `no-restricted-syntax` `document.createElement` — **state mixins only** (`web/static/js/pages/**/state/**/*.js`); allowed in component files outside `state/` (e.g. ghost-fly.js, tutorial.js)
-- `no-restricted-syntax` `showModal()` — **search state only** (`web/static/js/pages/search/state/**/*.js`); other page state dirs are NOT covered
+The lint layer (all wired into `npm run lint`):
 
-**Stylelint** (`web/static/css/**/*.css`, excluding `tailwind.css` and `design-system.css`):
-- `color-no-hex` — no hex color values; use design token `var(--...)` instead
-- `declaration-property-value-disallowed-list` — no bare `0.Xs` durations in `transition`; no `blur(Npx)` literals in `filter`/`backdrop-filter`; no `rgba(N...)` in `box-shadow`; no `Npx` literals in `border-radius`
-- `selector-disallowed-list` — no `:is(...manual-input...)` selector patterns
+- **`scripts/static_guard_lint.mjs`** — table-driven static guard engine, ~886 rules,
+  9 kinds (`required-string` / `forbidden-string` / `dup-id` / `structure-count` /
+  `tag-scan` / `inline-style-token` / `order` / `file-absent` / `paired-string`), with
+  scoped matching (anchor-missing = fail-closed RED, brace-balanced method-body windows,
+  comment stripping). Covers HTML templates (which eslint cannot parse), JS string
+  fingerprints, and Python hardcoded-literal bans. This is the default home for any
+  "string X must (not) appear in file Y" guard — including the former pytest guards for
+  inline handlers, inline `style=display:none`, native-dialog strings, and clipboard
+  optional-chaining, all migrated here.
+- **`scripts/css-guard.mjs`** — 41 CSS-block rules (Fluent token families, poster-crop,
+  z-index cross-file ordering, vt-anchor, selector scoping, whole-text property scans).
+- **`scripts/i18n_lint.mjs`** — used-but-missing i18n keys (RED), 4-locale parity (warn),
+  orphan keys (warn), forbidden words in translations (「推薦」「風味」, RED).
+- **`scripts/lint-settings-ia.mjs`** — settings.html IA layering (DOM-ancestry lock).
+- **ESLint** (`eslint.config.mjs`, flat config, 11 `no-restricted-syntax` groups,
+  **17 `SEL_*` constants** — `SEL_SHOW_MODAL`, `SEL_TRACKED_EVENTSOURCE`, `SEL_CLIP_BAN`,
+  `SEL_NO_WINDOW_OPEN_PATH`, etc.): anything expressed in the live config is out of review
+  scope — consult the config, not a duplicate list here. Scope caveats that ARE still
+  review territory: `no-console` covers **search pages only** (`console.error`/`warn`
+  allowed); `document.createElement` ban covers **state mixins only**.
+- **Stylelint** (`web/static/css/**/*.css`, excluding `tailwind.css`/`design-system.css`):
+  `color-no-hex`, bare duration/blur/radius/box-shadow literal bans, selector disallow list.
+- **Ruff** (Python — `core/`, `web/`, `windows/` + root scripts; `tests/` excluded):
+  `F`, `E722`, `B` (incl. `B904`/`B905`/`B023`), `T201`, `S110`/`S112`.
 
-**Ruff** (Python — `core/`, `web/`, `windows/` + root build/dev scripts; config in `pyproject.toml`, `tests/` excluded; runs in CI `lint-frontend` job):
-- `F` (Pyflakes) — unused imports (`F401`), unused variables (`F841`), undefined names; safe-autofixed
-- `E722` — no bare `except:`
-- `B` (flake8-bugbear) — incl. `raise ... from` inside except (`B904`), `zip()` without `strict=` (`B905`), loop-variable-capturing closures (`B023`)
-- `T201` — no stray `print()` (per-file-ignored only for the 4 scraper/gallery `__main__` entries + `build.py`/`build_macos.py`)
-- `S110` / `S112` — silent `try/except/pass` / `try/except/continue` must carry a `# noqa` with a reason
+**Still enforced by pytest** (deliberate KEEPs — flag these in review if violated):
+- **`tests/unit/frontend_contracts/`** (6 files) — true cross-file / cross-language
+  contracts: API route pairing, layout/lifecycle/animation contracts, and code-shape
+  guards (method-body ordering, call-counts, brace-scoped semantics) that string-scan
+  lint cannot faithfully express.
+- **`[lint-guard: pytest-justified]`-tagged classes** in `tests/unit/test_frontend_lint.py`
+  (each tag states its reason), incl. `TestPathContract` — the path_utils contract
+  (manual `file:///` strip/construct bans; Python source semantics ruff cannot express).
+- The remaining untagged classes in `test_frontend_lint.py` are the **E2E-block**
+  (~52 classes guarding user journeys — swipe/keyboard/lightbox/actress flows). They stay
+  as pytest until a future E2E branch replaces them with browser journeys; do not request
+  their migration to lint, and do not add new classes to this bucket.
 
-**Still enforced by pytest** (NOT by lint — flag these in review if violated):
-- HTML template inline handlers (`onclick=` etc.) — `TestNoVanillaHandlers` (HTML scan, eslint does not parse `.html`)
-- HTML template `style="...display:none..."` combined with `x-show` — `TestNoInlineStyleDisplay` (HTML scan)
-- Specific Chinese `confirm()` strings in `settings/state-config.js` — `TestSettingsResetConfigNoNativeConfirm` (string fingerprint guard; `no-alert` cannot constrain string content)
-- Specific Chinese `confirm()` strings in `scanner/state-alias.js` — `TestScannerDeleteAliasGroupNoNativeConfirm` test1 (same reason)
-- Alpine state contracts (modal open class, method names, escape ladder in HTML) — `TestNoDuplicateNativeDialog` test2, `TestScannerDeleteAliasGroupNoNativeConfirm` test2/test3 (cross-language contract)
-- `navigator.clipboard?.writeText` optional-chaining guard pattern — `TestNoAlertInSearchJs` clipboard tests (guard count/presence, not expressible in eslint)
-- path_utils contract (no manual `file:///` strip/construct, no shadow path helpers) — `TestPathContract` (scans `core/`/`web/`/`windows/`/`tests/`; these are path-API contracts ruff cannot express)
-
-(Anything outside this list — including `console.log` outside search pages, `createElement` outside `state/` dirs, formatting, and dead code not caught by ruff `F` — is still in code-review scope unless explicitly added to the lint config.)
+(Anything outside the lint layer's expressed rules — formatting, dead code not caught by
+ruff `F`, logic — is still in code-review scope.)
 
 ### Test bloat policy
 
-DO NOT request new pytest tests for issues that fit eslint/stylelint scope.
+DO NOT request new pytest tests for anything the lint layer can express.
 If a regression of this class arises, the fix is:
-- Add an eslint/stylelint rule to the existing config, OR
-- If the rule cannot be expressed in eslint/stylelint (cross-file/cross-language contract), add a dedicated lint script and wire it into `npm run lint` or pre-merge — NOT a new TestNoXxx pytest class.
+- a new rule row in `scripts/static_guard_lint.mjs` (the engine already exists — adding a
+  rule is a table entry, not a new script), or `css-guard.mjs` / `i18n_lint.mjs` / eslint /
+  stylelint for their domains — NOT a new TestNoXxx pytest class.
+- New string-literal assertions in `tests/**` must carry an inline
+  `# [lint-guard: pytest-justified <reason> | migrate → <tool>]` tag; pre-merge SA-pre-6
+  flags untagged ones as BLOCKER.
+- When migrating a guard to lint, port it at the **same scan granularity** as the original
+  (whole-file / element-scoped / attribute-value / method-body window) and prefer
+  fail-closed over fail-open — 7 scope-narrowing regressions of exactly this kind were
+  caught by review during feature/96.
