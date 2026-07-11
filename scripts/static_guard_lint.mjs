@@ -34,6 +34,11 @@
  * scope anchor 找不到＝獨立錯誤（不可誤判為 pattern 缺席／forbidden 通過）；
  * brace-balanced 到檔案結尾仍未平衡＝視同 anchor 找不到，明確報錯。
  *
+ * `rule.stripLineComments: true`（96e-T2，Opus 裁決 1）：套用在 resolveScope 抽出的
+ * scopedText 上，逐行以 `(?<!:)//.*$` 剝除行內/整行 `//` 注釋後才做 pattern 比對
+ * （byte-for-byte port pytest `TestCoverCacheBustGuard._strip_line_comments`，lookbehind
+ * 保護 `https://` 不被誤砍）。防止「target 字串移進行內注釋」造成 fail-open false-pass。
+ *
  * `file` 欄支援單檔路徑字串，或 `{dir, ext: string[], recursive?: boolean, exclude?: string[]}`
  * 目錄變體。預設非遞迴（複刻 pytest `glob("*.html")` 排除子目錄語意，NoVanillaHandlers
  * 需要）；`recursive: true` 為 `rglob` 語意（NoInlineStyleDisplay 需要，含子目錄如
@@ -1984,6 +1989,394 @@ const RULES = [
   // 可用 required-string + RWS-scope（見上 3 列同一 scope）+ count: 2 忠實表達的替代方案，供未來重新裁決參考，
   // 但本次遵照裁決不採納）。故該 pytest 方法本身（含已被上方 3 列覆蓋的前 3 段斷言）仍不可整刪——pytest 是以方法
   // 為刪除單位、非以 assert 為單位，T5 需處理此細節。
+
+  // ==== 96e-T2：MIGRATE 組建網（TASK-96e-T2.md，10 live pytest class，只建網不刪 pytest）====
+
+  // ---- [TestSwipeHelperGuard] web/static/js/shared/swipe.js（全 WF） ----
+  {
+    file: 'web/static/js/shared/swipe.js', kind: 'required-string',
+    pattern: /export\s+function\s+detectSwipe\s*\(\s*startX\s*,\s*startY\s*,\s*endX\s*,\s*endY\s*,\s*threshold\s*\)/,
+    note: '[TestSwipeHelperGuard] test_detect_swipe_signature — 五參數簽名',
+  },
+  { file: 'web/static/js/shared/swipe.js', kind: 'required-string', pattern: 'Math.abs(dX) > Math.abs(dY)', note: '[TestSwipeHelperGuard] test_axis_discrimination_present' },
+  { file: 'web/static/js/shared/swipe.js', kind: 'required-string', pattern: 'Math.abs(dX) > threshold', note: '[TestSwipeHelperGuard] test_threshold_from_param_not_hardcoded — threshold 由參數傳入' },
+  { file: 'web/static/js/shared/swipe.js', kind: 'forbidden-string', pattern: 'Math.abs(dX) > 50', note: '[TestSwipeHelperGuard] test_threshold_from_param_not_hardcoded — 不可寫死 50' },
+  { file: 'web/static/js/shared/swipe.js', kind: 'required-string', pattern: "'left'", note: '[TestSwipeHelperGuard] test_direction_strings_present' },
+  { file: 'web/static/js/shared/swipe.js', kind: 'required-string', pattern: "'right'", note: '[TestSwipeHelperGuard] test_direction_strings_present' },
+
+  // ---- [TestCoverCacheBustGuard] state-lightbox.js refreshVideoData()（method-body brace-balanced，
+  // stripLineComments: true — Opus 裁決 1：擴 dispatcher，不接受「target 移進行內注釋」fail-open）----
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: /data\.video\.cover_url\s*=\s*[^;\n]*\+\s*['"]&t=/,
+    scope: { anchor: /async\s+refreshVideoData\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[TestCoverCacheBustGuard] test_cover_url_has_cache_bust — cover_url cache-bust（stripLineComments 防注釋混淆 false-pass）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: /data\.video\.cover_full_url\s*=\s*[^;\n]*\+\s*['"]&t=/,
+    scope: { anchor: /async\s+refreshVideoData\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[TestCoverCacheBustGuard] test_cover_full_url_has_cache_bust — cover_full_url cache-bust（stripLineComments 防注釋混淆 false-pass）',
+  },
+
+  // ---- [TestSearchFileJsSubtitleHelper] web/static/js/pages/search/file.js ----
+  { file: 'web/static/js/pages/search/file.js', kind: 'required-string', pattern: 'function stripSubtitleMarkers(', note: '[TestSearchFileJsSubtitleHelper] test_file_js_contains' },
+  { file: 'web/static/js/pages/search/file.js', kind: 'required-string', pattern: '_SUBTITLE_BRACKETS', note: '[TestSearchFileJsSubtitleHelper] test_file_js_contains' },
+  { file: 'web/static/js/pages/search/file.js', kind: 'required-string', pattern: '_SUBTITLE_TEXT_MARKERS', note: '[TestSearchFileJsSubtitleHelper] test_file_js_contains' },
+  { file: 'web/static/js/pages/search/file.js', kind: 'forbidden-string', pattern: '/^中文字幕\\s*/', note: '[TestSearchFileJsSubtitleHelper] test_file_js_contains — 殘缺舊 regex 不可回歸' },
+  {
+    file: 'web/static/js/pages/search/file.js', kind: 'required-string', pattern: 'stripSubtitleMarkers(name)',
+    scope: { anchor: /function\s+extractChineseTitle\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[TestSearchFileJsSubtitleHelper] test_extract_chinese_title_uses_strip_helper',
+  },
+  {
+    file: 'web/static/js/pages/search/file.js', kind: 'forbidden-string', pattern: 'name.replace(/^中文字幕',
+    scope: { anchor: /function\s+extractChineseTitle\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[TestSearchFileJsSubtitleHelper] test_extract_chinese_title_uses_strip_helper — 不可回歸內嵌殘缺 regex',
+  },
+
+  // ---- [TestLongPathWarning] web/static/js/pages/scanner/state-scan.js（WF + WIN(500)） ----
+  { file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: 'long_paths', note: '[TestLongPathWarning] test_scanner_js_long_path_warning' },
+  { file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: 'showToast', note: '[TestLongPathWarning] test_scanner_js_long_path_warning' },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', anyOf: true, pattern: ["'warn'", '"warn"'],
+    scope: { anchor: /long_paths/, window: 500 },
+    note: '[TestLongPathWarning] test_scanner_js_long_path_warning — warn toast type（500-char window）',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: '6000',
+    scope: { anchor: /long_paths/, window: 500 },
+    note: '[TestLongPathWarning] test_scanner_js_long_path_warning — toast duration',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: '260',
+    scope: { anchor: /long_paths/, window: 500 },
+    note: '[TestLongPathWarning] test_scanner_js_long_path_warning — 260 字元門檻',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: 'debug.log',
+    scope: { anchor: /long_paths/, window: 500 },
+    note: '[TestLongPathWarning] test_scanner_js_long_path_warning — debug.log 引導字串',
+  },
+
+  // ---- [TestReadonlySourceErrorToastGuard] web/static/js/pages/scanner/state-scan.js（WF + WIN×2 + 複合窄 scope）----
+  { file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: 'data.readonly_stats', note: '[TestReadonlySourceErrorToastGuard] test_done_toast_consults_source_errors' },
+  { file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: 'source_errors', note: '[TestReadonlySourceErrorToastGuard] test_done_toast_consults_source_errors' },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', anyOf: true, pattern: ["'warn'", '"warn"'],
+    scope: { anchor: /const srcErrors/, window: 1300 },
+    note: '[TestReadonlySourceErrorToastGuard] test_done_toast_consults_source_errors + test_done_toast_consults_per_video_failed（共用 warn 斷言，1300-char window）',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: '.failed',
+    scope: { anchor: /const srcErrors/, window: 1300 },
+    note: '[TestReadonlySourceErrorToastGuard] test_done_toast_consults_per_video_failed',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: 'const noOutput',
+    scope: { anchor: /const srcErrors/, window: 1200 },
+    note: '[TestReadonlySourceErrorToastGuard] test_done_toast_consults_no_output_unreachable_partial',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: '.no_output',
+    scope: { anchor: /const srcErrors/, window: 1200 },
+    note: '[TestReadonlySourceErrorToastGuard] test_done_toast_consults_no_output_unreachable_partial',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: 'const unreachable',
+    scope: { anchor: /const srcErrors/, window: 1200 },
+    note: '[TestReadonlySourceErrorToastGuard] test_done_toast_consults_no_output_unreachable_partial',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: '.unreachable',
+    scope: { anchor: /const srcErrors/, window: 1200 },
+    note: '[TestReadonlySourceErrorToastGuard] test_done_toast_consults_no_output_unreachable_partial',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: 'const partial',
+    scope: { anchor: /const srcErrors/, window: 1200 },
+    note: '[TestReadonlySourceErrorToastGuard] test_done_toast_consults_no_output_unreachable_partial',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: '.partial',
+    scope: { anchor: /const srcErrors/, window: 1200 },
+    note: '[TestReadonlySourceErrorToastGuard] test_done_toast_consults_no_output_unreachable_partial',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: 'noOutput > 0',
+    // Codex PR review（96e 替代網）：原 pytest 是 idx=js.find("const srcErrors") 起算
+    // 1200-char window，window 內再 find "if (srcErrors > 0" 取 300-char cond_window。
+    // 舊 [\s\S]*? 在兩 anchor 間無上限，若未來條件搬到 1200 字外 pytest 會 RED
+    // 而 lint 仍 GREEN（fail-open）。改 {0,1168}：1200 扣掉 "const srcErrors"（15
+    // 字）與 "if (srcErrors > 0"（17 字）字面長度；trailing 同理 300−17=283（pytest cond_window 自條件起算含 needle）。gap 量詞必須 lazy `{0,1168}?`——pytest window.find() 鎖「第一個」if 命中，greedy 會鎖窗內最後一個、兩條件並存時 fail-open（Codex 二審）。忠實對齊原窗語意（§11 fail-closed）。
+    scope: /const\s+srcErrors[\s\S]{0,1168}?if\s*\(srcErrors\s*>\s*0[\s\S]{0,283}/,
+    note: '[TestReadonlySourceErrorToastGuard] test_done_toast_consults_no_output_unreachable_partial — warn 判斷條件納入 noOutput',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: 'unreachable > 0',
+    // Codex PR review（96e 替代網）：原 pytest 是 idx=js.find("const srcErrors") 起算
+    // 1200-char window，window 內再 find "if (srcErrors > 0" 取 300-char cond_window。
+    // 舊 [\s\S]*? 在兩 anchor 間無上限，若未來條件搬到 1200 字外 pytest 會 RED
+    // 而 lint 仍 GREEN（fail-open）。改 {0,1168}：1200 扣掉 "const srcErrors"（15
+    // 字）與 "if (srcErrors > 0"（17 字）字面長度；trailing 同理 300−17=283（pytest cond_window 自條件起算含 needle）。gap 量詞必須 lazy `{0,1168}?`——pytest window.find() 鎖「第一個」if 命中，greedy 會鎖窗內最後一個、兩條件並存時 fail-open（Codex 二審）。忠實對齊原窗語意（§11 fail-closed）。
+    scope: /const\s+srcErrors[\s\S]{0,1168}?if\s*\(srcErrors\s*>\s*0[\s\S]{0,283}/,
+    note: '[TestReadonlySourceErrorToastGuard] test_done_toast_consults_no_output_unreachable_partial — warn 判斷條件納入 unreachable',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: 'partial > 0',
+    // Codex PR review（96e 替代網）：原 pytest 是 idx=js.find("const srcErrors") 起算
+    // 1200-char window，window 內再 find "if (srcErrors > 0" 取 300-char cond_window。
+    // 舊 [\s\S]*? 在兩 anchor 間無上限，若未來條件搬到 1200 字外 pytest 會 RED
+    // 而 lint 仍 GREEN（fail-open）。改 {0,1168}：1200 扣掉 "const srcErrors"（15
+    // 字）與 "if (srcErrors > 0"（17 字）字面長度；trailing 同理 300−17=283（pytest cond_window 自條件起算含 needle）。gap 量詞必須 lazy `{0,1168}?`——pytest window.find() 鎖「第一個」if 命中，greedy 會鎖窗內最後一個、兩條件並存時 fail-open（Codex 二審）。忠實對齊原窗語意（§11 fail-closed）。
+    scope: /const\s+srcErrors[\s\S]{0,1168}?if\s*\(srcErrors\s*>\s*0[\s\S]{0,283}/,
+    note: '[TestReadonlySourceErrorToastGuard] test_done_toast_consults_no_output_unreachable_partial — warn 判斷條件納入 partial',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'forbidden-string', pattern: 'pruned > 0',
+    // Codex PR review（96e 替代網）：原 pytest 是 idx=js.find("const srcErrors") 起算
+    // 1200-char window，window 內再 find "if (srcErrors > 0" 取 300-char cond_window。
+    // 舊 [\s\S]*? 在兩 anchor 間無上限，若未來條件搬到 1200 字外 pytest 會 RED
+    // 而 lint 仍 GREEN（fail-open）。改 {0,1168}：1200 扣掉 "const srcErrors"（15
+    // 字）與 "if (srcErrors > 0"（17 字）字面長度；trailing 同理 300−17=283（pytest cond_window 自條件起算含 needle）。gap 量詞必須 lazy `{0,1168}?`——pytest window.find() 鎖「第一個」if 命中，greedy 會鎖窗內最後一個、兩條件並存時 fail-open（Codex 二審）。忠實對齊原窗語意（§11 fail-closed）。
+    scope: /const\s+srcErrors[\s\S]{0,1168}?if\s*\(srcErrors\s*>\s*0[\s\S]{0,283}/,
+    note: '[TestReadonlySourceErrorToastGuard] test_done_toast_consults_no_output_unreachable_partial — pruned 非警告，不可誤納入 warn 判斷',
+  },
+
+  // ---- [TestScannerCopyFailModal] state-scan.js + scanner.html（全 WF） ----
+  { file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: 'openCopyFailModal', note: '[TestScannerCopyFailModal] test_scanner_copy_fail_modal_contains' },
+  { file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: 'closeCopyFailModal', note: '[TestScannerCopyFailModal] test_scanner_copy_fail_modal_contains' },
+  { file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: 'copyFailModalOpen', note: '[TestScannerCopyFailModal] test_scanner_copy_fail_modal_contains' },
+  { file: 'web/templates/scanner.html', kind: 'required-string', pattern: 'copy_fail_modal.title', note: '[TestScannerCopyFailModal] test_scanner_copy_fail_modal_contains' },
+  { file: 'web/templates/scanner.html', kind: 'required-string', pattern: 'copy-fail-pre', note: '[TestScannerCopyFailModal] test_scanner_copy_fail_modal_contains' },
+  { file: 'web/templates/scanner.html', kind: 'required-string', pattern: 'copyFailModalOpen && closeCopyFailModal', note: '[TestScannerCopyFailModal] test_scanner_copy_fail_modal_contains' },
+
+  // ---- [TestPageLifecycleGuard] base.html + 4 頁 __registerPage（live 是 4 頁，非 plan-96e 文字寫的 3 頁）----
+  { file: 'web/templates/base.html', kind: 'required-string', pattern: 'page-lifecycle.js', note: '[TestPageLifecycleGuard] test_base_html_loads_page_lifecycle' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: '__registerPage', note: '[TestPageLifecycleGuard] test_settings_js_calls_register_page' },
+  { file: 'web/static/js/pages/search/main.js', kind: 'required-string', pattern: '__registerPage', note: '[TestPageLifecycleGuard] test_search_main_js_calls_register_page' },
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string', pattern: '__registerPage', note: '[TestPageLifecycleGuard] test_showcase_core_calls_register_page' },
+  { file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: '__registerPage', note: '[TestPageLifecycleGuard] test_scanner_html_calls_register_page（方法名誤導，實讀 .js）' },
+
+  // ---- [TestMotionLabStateGuard] motion_lab.html + motion-lab-state.js（WF ×4 + EL ×1，§11 gotcha #1）----
+  { file: 'web/templates/motion_lab.html', kind: 'required-string', pattern: 'x-data="motionLabPage"', note: '[TestMotionLabStateGuard] test_motion_lab_html_contains' },
+  { file: 'web/templates/motion_lab.html', kind: 'required-string', pattern: 'motion-lab-state.js', note: '[TestMotionLabStateGuard] test_motion_lab_html_contains' },
+  {
+    file: 'web/templates/motion_lab.html', kind: 'forbidden-string', pattern: /x-data="[^"]{100,}"/,
+    note: '[TestMotionLabStateGuard] test_motion_lab_html_contains — 無巨型 inline x-data 物件（39b-T1 已抽離至 JS）',
+  },
+  {
+    file: 'web/templates/motion_lab.html', kind: 'required-string', pattern: /<script[^>]*motion-lab-state\.js[^>]*>/,
+    note: '[TestMotionLabStateGuard] test_motion_lab_html_contains — motion-lab-state.js script tag 存在',
+  },
+  {
+    // Codex PR review（96e 替代網）：原 pytest 對「所有」匹配 motion-lab-state.js 的
+    // script tag 逐一（for tag in tags）禁 defer；舊寫法用 scope（RegExp.exec 只取
+    // 第一個匹配）只驗第一個 tag，若日後出現第二個同 src tag 帶 defer 會漏過
+    // （fail-open）。改 forbidden-string 雙 lookahead（無 scope）：pattern 本身表達
+    // 「任何 script tag 同時含 motion-lab-state.js 與 defer」＝ RED，whole-text scan
+    // 天然涵蓋所有出現點，不限首個。
+    file: 'web/templates/motion_lab.html', kind: 'forbidden-string',
+    pattern: /<script(?=[^>]*\bdefer\b)(?=[^>]*motion-lab-state\.js)[^>]*>/,
+    note: '[TestMotionLabStateGuard] test_motion_lab_html_contains — 任一 motion-lab-state.js script tag 皆不可帶 defer（whole-text scan，涵蓋所有出現點）',
+  },
+  { file: 'web/static/js/pages/motion-lab-state.js', kind: 'required-string', pattern: 'function motionLabPage()', note: '[TestMotionLabStateGuard] test_motion_lab_state_js_contains' },
+  { file: 'web/static/js/pages/motion-lab-state.js', kind: 'required-string', pattern: 'init()', note: '[TestMotionLabStateGuard] test_motion_lab_state_js_contains' },
+  { file: 'web/static/js/pages/motion-lab-state.js', kind: 'required-string', pattern: 'destroy()', note: '[TestMotionLabStateGuard] test_motion_lab_state_js_contains' },
+
+  // ---- [TestScannerStateGuard] scanner.html（只建 subtest 1，subtest 2 test_scanner_no_inline_script
+  // 極性衝突 + per-match 行數計數無對應 kind，維持不建網、pytest-justified 殘餘——Opus 裁決 2）----
+  { file: 'web/templates/scanner.html', kind: 'required-string', pattern: 'pre_alpine_module', note: '[TestScannerStateGuard] test_scanner_html_has_pre_alpine_module_block' },
+  { file: 'web/templates/scanner.html', kind: 'required-string', pattern: 'scanner/main.js', note: '[TestScannerStateGuard] test_scanner_html_has_pre_alpine_module_block' },
+
+  // ---- [TestFetchSamplesButton] showcase.html test_html_contains（HTML-attr 半邊）
+  // + test_core_js_contains（Opus 裁決 3：內部機制歸屬 96e，字串 pin 到實際所在檔）----
+  {
+    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
+    tagName: 'button', className: 'fetch-samples-btn',
+    required: ['x-show=', 'sample_images', '@click=', 'fetchSamples', ':disabled=', '_fetchSamplesFailed'],
+    note: '[TestFetchSamplesButton] test_html_contains — fetch-samples-btn 開標籤必要屬性',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string', anyOf: true, pattern: [/^!!/, '=== true'],
+    scope: /<button\b(?=[^>]*class="[^"]*(?<![\w-])fetch-samples-btn(?![\w-])[^"]*")[^>]*:disabled=["']([^"']+)["'][^>]*>/,
+    note: '[TestFetchSamplesButton] test_html_contains — :disabled boolean coercion（!! 開頭或 === true，§11 gotcha #1 AV capture-group scope）',
+  },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'x-text=', note: '[TestFetchSamplesButton] test_html_contains（pytest 原斷言 or-html 恆等 WF，照抄行為）' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'showcase.samples.fetch_btn', note: '[TestFetchSamplesButton] test_html_contains' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'bi bi-cloud-download', note: '[TestFetchSamplesButton] test_html_contains' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '_fetchSamplesLoading', note: '[TestFetchSamplesButton] test_html_contains' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'showcase.samples.fetching', note: '[TestFetchSamplesButton] test_html_contains' },
+  {
+    file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: '☁',
+    scope: /<button\b(?=[^>]*class="[^"]*(?<![\w-])fetch-samples-btn(?![\w-])[^"]*")[^>]*>[\s\S]*?<\/button>/,
+    note: '[TestFetchSamplesButton] test_html_contains — btn_region 內不可含 ☁ emoji（element-region-scoped）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string', pattern: /_fetchSamplesLoading\s*:/,
+    note: '[TestFetchSamplesButton] test_core_js_contains — state 初始化（pin 到實際所在檔 state-actress.js，pytest 原是雙檔串接 in 判斷）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string', pattern: /_fetchSamplesFailed\s*:/,
+    note: '[TestFetchSamplesButton] test_core_js_contains — state 初始化（pin 到實際所在檔 state-actress.js）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'fetchSamples',
+    note: '[TestFetchSamplesButton] test_core_js_contains — fetchSamples method（pin 到實際所在檔 state-lightbox.js）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '_fetchSamplesFailed = {}',
+    scope: { anchor: /closeLightbox\s*\(\s*\)\s*\{/, window: 2000 },
+    note: '[TestFetchSamplesButton] test_core_js_contains — closeLightbox() 須 reset _fetchSamplesFailed = {}（2000-char window）',
+  },
+
+  // ── 96e-T3（TestNoAlertInSearchJs）：clipboard availability guard ──────────
+  // Opus 裁決 1：plan 草案 SEL_CLIPBOARD_OPTIONAL_CHAIN（eslint per-node ban）會在
+  // 4/5 現行合法檔（guard-if / 三元條件形式，呼叫本身非 optional）立即 RED，否決。
+  // 改走 static_guard_lint：scanner/state-scan.js 兩處呼叫點 guard count:2（required-string）
+  // + 全 web/static/js 檔級 pairing（paired-string，新 kind）。
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string',
+    pattern: 'navigator.clipboard?.writeText', count: 2,
+    note: '[TestNoAlertInSearchJs] test_scanner_clipboard_has_availability_guard — scanner/state-scan.js 需 ≥2 處 guard（copyLogs L1053 附近 + copyOutputPath L720 附近）',
+  },
+  {
+    file: { dir: 'web/static/js', ext: ['.js'], recursive: true }, kind: 'paired-string',
+    ifPresent: 'navigator.clipboard.writeText', thenRequire: 'navigator.clipboard?.writeText',
+    note: '[TestNoAlertInSearchJs] test_all_clipboard_writetext_files_have_availability_guard — 全 web/static/js 任何用 navigator.clipboard.writeText 的檔案須同檔含 ?. guard 形式',
+  },
+
+  // ── 96e-T3（TestSimilarSlotGsapGuard）：GSAP width literal 守衛（9 條） ─────
+  // Opus 裁決 2：plan 草案 SEL_GSAP_WIDTH_LITERAL（AST width property ban）會擴大涵蓋範圍
+  // （禁一切數字 width literal，非原 pytest 只防特定歷史迴歸值）+ eslint 無法表達正向必須
+  // 存在斷言（POSTER_CROP_RATIO/SLOT_W/MAIN_W/width: 107），否決。全走 static_guard_lint。
+  {
+    file: 'web/static/js/shared/constellation/animations.js', kind: 'forbidden-string', pattern: 'width: 120',
+    note: '[TestSimilarSlotGsapGuard] test_animations_no_width_120_literal',
+  },
+  {
+    file: 'web/static/js/shared/constellation/animations.js', kind: 'forbidden-string', pattern: 'width: 200',
+    note: '[TestSimilarSlotGsapGuard] test_animations_no_width_200_literal',
+  },
+  {
+    file: 'web/static/js/shared/constellation/animations.js', kind: 'required-string', pattern: 'POSTER_CROP_RATIO',
+    note: '[TestSimilarSlotGsapGuard] test_animations_has_poster_crop_ratio_const',
+  },
+  {
+    file: 'web/static/js/shared/constellation/animations.js', kind: 'required-string', pattern: 'SLOT_W',
+    note: '[TestSimilarSlotGsapGuard] test_animations_has_slot_w_const',
+  },
+  {
+    file: 'web/static/js/shared/constellation/animations.js', kind: 'required-string', pattern: 'MAIN_W',
+    note: '[TestSimilarSlotGsapGuard] test_animations_has_main_w_const',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'forbidden-string', pattern: 'width: 120',
+    note: '[TestSimilarSlotGsapGuard] test_state_similar_no_width_120',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string', pattern: 'width: 107',
+    note: '[TestSimilarSlotGsapGuard] test_state_similar_has_width_107',
+  },
+  {
+    file: 'web/static/js/pages/motion-lab/constellation-host.js', kind: 'forbidden-string', pattern: 'width: 120',
+    note: '[TestSimilarSlotGsapGuard] test_constellation_host_no_width_120',
+  },
+  {
+    file: 'web/static/js/pages/motion-lab/constellation-host.js', kind: 'required-string', pattern: 'width: 107',
+    note: '[TestSimilarSlotGsapGuard] test_constellation_host_has_width_107',
+  },
+
+  // ── 96e-T3（TestVideoPlaybackGuard〔b〕）：3 個 .py 檔硬編影片副檔名 set 禁令 ──
+  {
+    file: 'core/gallery_scanner.py', kind: 'forbidden-string',
+    pattern: /=\s*\{[^}]*'\.mp4'[^}:]*'\.avi'[^}:]*\}/s,
+    note: '[TestVideoPlaybackGuard] test_no_hardcoded_video_extensions_in_modules — gallery_scanner.py 不可硬編影片副檔名 set（須 import core.video_extensions SSOT）',
+  },
+  {
+    file: 'web/routers/scanner.py', kind: 'forbidden-string',
+    pattern: /=\s*\{[^}]*'\.mp4'[^}:]*'\.avi'[^}:]*\}/s,
+    note: '[TestVideoPlaybackGuard] test_no_hardcoded_video_extensions_in_modules — scanner.py 不可硬編影片副檔名 set',
+  },
+  {
+    file: 'windows/pywebview_api.py', kind: 'forbidden-string',
+    pattern: /=\s*\{[^}]*'\.mp4'[^}:]*'\.avi'[^}:]*\}/s,
+    note: '[TestVideoPlaybackGuard] test_no_hardcoded_video_extensions_in_modules — pywebview_api.py 不可硬編影片副檔名 set',
+  },
+
+  // ── 96e-T3（TestVideoPlaybackGuard，Opus 自裁納入）：state-videos.js JS 半邊 ────
+  // plan CD-96e-5 三分法漏列的第四半邊（test_video_api_files_contain 的
+  // '/api/gallery/player' in state-videos.js 斷言）——不補則 T5 整刪
+  // test_video_api_files_contain 時會靜默失網，故本卡納入。
+  {
+    file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: '/api/gallery/player',
+    note: '[TestVideoPlaybackGuard] test_video_api_files_contain（JS 半邊，plan CD-96e-5 三分法未明列，96e-T3 研究補洞）',
+  },
+
+  // ── 96e-T4：TestPageTransitionDomGuard / TestPageTransitionSettingsScopeGuard /
+  // TestT4FooterStructure 三個混合 class 的 template/JS 半邊（CSS 半邊已由 96c
+  // css-guard CG-XP-03/04/05 承接）。只建網，不刪 pytest（T5 兩半邊皆綠後整刪）。────
+
+  // A1 — base.html <main id="main-content"> + <nav id="sidebar">（whole-file，正向，合併一條）
+  {
+    file: 'web/templates/base.html', kind: 'required-string',
+    pattern: ['id="main-content"', 'id="sidebar"'],
+    note: '[TestPageTransitionDomGuard] test_base_html_main_content_id + test_base_html_sidebar_id',
+  },
+  // A2 — head-region 內 pagereveal/pageswap/skipTransition（head-scoped，正向）
+  {
+    file: 'web/templates/base.html', kind: 'required-string',
+    pattern: ['pagereveal', 'pageswap', 'skipTransition'],
+    scope: /[\s\S]*?(?=<\/head>)/,
+    note: '[TestPageTransitionDomGuard] test_base_html_showcase_skip_script_in_head — head-scoped 三 token',
+  },
+  // A3 — 含 skipTransition 的 <script> 開標籤不可帶 module/defer/async（element-bound，負向 ×4）
+  {
+    file: 'web/templates/base.html', kind: 'forbidden-string',
+    pattern: ['type="module"', "type='module'", 'defer', 'async'],
+    scope: /(<script\b[^>]*>)(?:(?!<\/script>)[\s\S])*?skipTransition/,
+    note: '[TestPageTransitionDomGuard] test_base_html_showcase_skip_script_in_head — VT head-script 負向（CD-96-20c，required-string-only port 會漏此負向斷言）',
+  },
+
+  // B — theme-transition.js class lifecycle（whole-file，正向 ×3）
+  {
+    file: 'web/static/js/pages/settings/theme-transition.js', kind: 'required-string',
+    pattern: ["classList.add('theme-transition-active')", 'transition.finished', "classList.remove('theme-transition-active')"],
+    note: '[TestPageTransitionSettingsScopeGuard] test_theme_transition_js_class_lifecycle',
+  },
+
+  // C1 — showcase.html footer 結構/快捷鍵/pager 17 個字串（whole-file，正向）
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: [
+      'class="showcase-footer"', 'class="footer-left"', 'class="footer-center"', 'class="footer-right"',
+      'bi-film', 'bi-person-circle', '<kbd>A</kbd>', '<kbd>S</kbd>', '<kbd>ESC</kbd>', '<kbd>←</kbd>', '<kbd>→</kbd>',
+      'class="footer-pager"', 'x-show="!showFavoriteActresses && totalPages > 1"',
+      'prevPage()', 'nextPage()', 'x-ref="pageSelectFooter"', 'class="pager-current"', 'openPagePicker',
+    ],
+    note: '[TestT4FooterStructure] test_showcase_html_contains — footer 結構/快捷鍵/pager 存在',
+  },
+  // C2 — 舊 class="showcase-status-bar" 不應殘留（whole-file，負向）
+  {
+    file: 'web/templates/showcase.html', kind: 'forbidden-string',
+    pattern: 'class="showcase-status-bar"',
+    note: '[TestT4FooterStructure] test_showcase_html_contains — 舊 status-bar class 不應殘留',
+  },
+  // C3 — showcase-footer 開標籤不可含 x-data（element-bound，負向）
+  {
+    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
+    tagName: 'div', className: 'showcase-footer',
+    forbidden: ['x-data'],
+    note: '[TestT4FooterStructure] test_showcase_html_contains — showcase-footer 開標籤不可含 x-data（§11 gotcha 1/3：element-bound + class-token 邊界，用既有 buildTagWithClassRegex）',
+  },
+  // C4 — state-videos.js 含 openPagePicker + showPicker（whole-file，正向，跨檔）
+  {
+    file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string',
+    pattern: ['openPagePicker', 'showPicker'],
+    note: '[TestT4FooterStructure] test_showcase_html_contains — core.js openPagePicker 用 showPicker 實作',
+  },
 ];
 
 // ---- helpers ----
@@ -2100,14 +2493,53 @@ function evalRule(rule, text, fileLabel) {
       throw new Error(
         'file-absent rule 不應進入 evalRule/readTarget 通用路徑——main loop 需在讀檔前攔截（見 main 迴圈頂部特殊分支）',
       );
+    case 'paired-string':
+      evalPairedString(rule, text, fileLabel);
+      break;
     default:
       throw new Error('kind not implemented: ' + rule.kind);
   }
 }
 
+// ---- paired-string（96e-T3 新 kind，第 9 個）----
+// 若 file 含 ifPresent，則同 file 必含 thenRequire（否則 err）；
+// ifPresent 不存在時直接跳過（無此 API 使用，非違規，vacuous pass）。
+// 用途：TestNoAlertInSearchJs::test_all_clipboard_writetext_files_have_availability_guard
+// 「用了就必須有 guard」的檔級 pairing 語意（非 AST 分支、非跨檔）——required-string/
+// forbidden-string 的 dir-scan 變體只能對每個匹配檔套用同一個無條件 pattern，無法表達
+// 「pattern A 存在時才要求 pattern B」的條件式，故新增此 kind（CD-96e-3 授權擴 dispatcher）。
+function evalPairedString(rule, text, fileLabel) {
+  if (!matches(text, rule.ifPresent)) return;
+  if (!matches(text, rule.thenRequire)) {
+    err(`${rule.note} — ${fileLabel}: 含 ${patternLabel(rule.ifPresent)} 但缺 ${patternLabel(rule.thenRequire)}`);
+  }
+}
+
+// stripLineComments（96e-T2，Opus 裁決 1）：byte-for-byte port pytest
+// TestCoverCacheBustGuard._strip_line_comments —— 逐行以 (?<!:)//.*$ 剝除 `//` 注釋
+// （lookbehind 保護 `https://` 等不被誤砍，單斜線 `/api` 不觸發）。套用在 resolveScope
+// 抽出的 scopedText 上（scope 缺席時等同套用在全檔文字上），供 rule.stripLineComments:
+// true 選用，防止「target 字串移進行內注釋」的 false-pass fail-open。
+function stripLineComments(body) {
+  return body
+    .split('\n')
+    .map((line) => line.replace(/(?<!:)\/\/.*$/, ''))
+    .join('\n');
+}
+
 // scope 三種形式：單一 RegExp（T1）/ {anchor, window}（固定字元數視窗）/
 // {anchor, braceBalanced}（大括號平衡方法體抽取，port Python _extract_method_body）。
+// 外層 wrapper：resolveScopeRaw 算出 scopedText 後，若 rule.stripLineComments 為 true
+// 則再套 stripLineComments（96e-T2 dispatcher 擴充，Opus 裁決 1）。
 function resolveScope(rule, text, fileLabel) {
+  const result = resolveScopeRaw(rule, text, fileLabel);
+  if (result.ok && rule.stripLineComments) {
+    return { scopedText: stripLineComments(result.scopedText), ok: true };
+  }
+  return result;
+}
+
+function resolveScopeRaw(rule, text, fileLabel) {
   if (!rule.scope) return { scopedText: text, ok: true };
   if (rule.scope instanceof RegExp) {
     const m = rule.scope.exec(text);
@@ -2499,4 +2931,4 @@ for (const rule of RULES) {
 if (hadError) {
   process.exit(1);
 }
-console.log(`✓ static_guard_lint: ${RULES.length} 條規則全數通過（required-string/forbidden-string/dup-id/structure-count/tag-scan/inline-style-token/order）`);
+console.log(`✓ static_guard_lint: ${RULES.length} 條規則全數通過（required-string/forbidden-string/dup-id/structure-count/tag-scan/inline-style-token/order/paired-string）`);

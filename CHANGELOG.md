@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.11] - 2026-07-12
+
+本版主軸：**前端靜態守衛 pytest → lint 全面遷移（test-deflation）**（feature/96，5 plan 96a–96e／3 PR `0.11.11ab`→`0.11.11cd`→`0.11.11`）——**純內部工程里程碑：零產品碼、對使用者完全隱形、不單獨發 GitHub release**（下一個面向用戶的 0.11.12 才是 0.11.10 後第一個實際 release）。north-star（owner 拍板）：**能用 lint 機械處理的，就不該進 pytest、也不該耗 Codex 審**——把 `tests/unit/test_frontend_lint.py` 裡「讀原始碼做字串/結構斷言」的前端靜態守衛搬回它們該去的工具層（eslint／stylelint／node `.mjs` lint 腳本），並止血讓它不再長回來。收益不是測試數字，是把機械式字串存在檢查移出 AI review 的注意力預算。
+
+### Internal
+#### 🧹 test-deflation 成果
+- **`test_frontend_lint.py` 16,749 行/214 class → 5,041 行/59 class（−70%）**。殘留組成全數記帳：E2E-block 52 class（替代網＝旅程測試，待未來 E2E branch）+ slim-residual 4 class（pytest-justified 極性/scope 語意，逐一標籤）+ 混合殘餘；**8,000 行過渡上限達標**（4,000 完成上限待 E2E branch 適用）。
+- **KEEP-justified 36 class relocate 進 `tests/unit/frontend_contracts/`**（7 檔 4,148 行）：跨檔 contract／method-body ordering／call-count／brace-scope 等 node 字串檢查不忠實的真守衛，純搬移零行為變更（pure-move gate：collect test-id 差集空 + byte-for-byte 驗證），明文排除行數棘輪計量。
+#### 🛠️ 新 lint 基建（全掛 `npm run lint`，自動進 CI）
+- **`scripts/i18n_lint.mjs`**（96a）：i18n key 存在性／四語 parity（warn）／禁詞（「推薦」「風味」）。
+- **`scripts/static_guard_lint.mjs`**（96b 建、96d/96e 擴）：表驅動靜態守衛引擎，**886 rule／9 kind**（required/forbidden-string、dup-id、structure-count、tag-scan、inline-style-token、order、file-absent、paired-string〔檔含 A 必含 B〕）+ scope 機制（anchor 缺席 fail-closed、braceBalanced method-body 計數、stripLineComments 注釋剝除）。
+- **`scripts/css-guard.mjs`**（96c）：41 CSS-block rule（fluent-materials／poster-crop／z-index 跨檔序／vt-anchor／selector-scope 等）+ stylelint 接線。
+- **eslint 新 `SEL_*` 家族**：showModal／tracked-eventsource／longpress／clip-ban／window.open(path) 等 no-restricted-syntax，逐一追加進全部 flat-config 群（防 scoped-group replace trap）。
+- **P0 止血**：pre-merge SA-pre-6 改 content-based lint-guard 偵測（掃斷言內容非 class 名，未標 `[lint-guard:*]` 即 BLOCKER）+ `test_frontend_lint.py` 行數硬上限。
+#### 🔬 遷移品質方法論（本 branch 最貴的教訓，已固化進 plan-context gotcha）
+- **每條遷移 mutation 驗證**：先建網 → 故意破壞 target 必 RED／還原必 GREEN → 才刪 pytest；刪除 commit 附「被刪 class → 替代網 rule」對照表（96e-T5 由獨立 review 50/50 逐條對帳）。
+- **Codex 累計抓 7 條「替代網比原 pytest 弱」（scope-narrowing fail-open）全數修復**：element-bound 屬性值未綁值／`\b` 誤當屬性名邊界／class token 非 token 比對／whole-text 掃描被 property-scoped 弱化／複合 scope 漏 1200-char 窗上限／greedy 量詞偏離 find-first 語意／單 match 漏 multi-tag。通則固化：**遷移前記下原 pytest 掃描粒度，替代網必須同粒度，寧 fail-closed 不 fail-open**；mutation 必含 wrong-location 負向案。
+- 遷移過程亦修正一個原 pytest 既有錨定 bug（VT head-script 守衛誤鎖無關 script tag，獨立 review 重演證實後改鎖真正 timing-critical script）。
+
+### 測試
+- 全套 pytest **4985 passed, 1 skipped**（unit + integration，排除 smoke／e2e，較 0.11.10 的 5523 淨 −538：被刪守衛已由 lint 層 886+41 rule 等價承接，覆蓋面不減、Codex/pytest 注意力預算下降）＋ `ruff check .` 綠 ＋ `npm run lint`（eslint + stylelint + css-guard + static_guard_lint + i18n_lint + lint-settings-ia）綠 ＋ `npm test`（node:test 28）綠。
+- 來源金絲雀：**7 源 PASS + fc2 SKIP**（unreachable／no probe，站方連線問題非 parser 回歸，advisory 記錄）。
+- Codex PR review：PR-1 P2×1（eslint persistence.js group 補 selector）、PR-2 P1/P2/P3×4（scope-narrowing）、PR-3 前置審 P1×2+P2×1（1200 窗上限＋lazy 量詞＋multi-tag defer）皆修復並 mutation 證明（修前 GREEN=缺口證實 → 修後 RED）。
+
 ## [0.11.10] - 2026-07-10
 
 本版主軸：**設定頁「命名區」膠囊化 + 「列表生成」兩層 IA 重排**（feature/95，Part A spec-95a／Part B spec-95b，兩個獨立部分）——把設定頁兩塊長期是「純文字輸入框 + 一長串控制項」的區域，改成更好懂、更難出錯的形態：命名區（資料夾層級／檔名格式）從手打 `{token}` 字串改成「原子變數膠囊（pill）+ 字面文字自由混排」的視覺化編輯器；列表生成設定拆成「日常常用（外層常駐）」+「離線 HTML 匯出（摺疊進階）」兩層。後端零 schema／DB 變更（僅 format-variables SSOT 端點加情境旗標）。
@@ -187,54 +211,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - E2E 真機驗收（CDP + 檔案驗證）：6 大硬閘門全過——strm 規範（單行/無 BOM/正確路徑）、唯讀零寫入（來源逐位元不變）、映射改寫 ≥3 檔抽查 + 刪規則還原、四寫入入口停用態 + tooltip、破壞性切換 purge（零檔案刪除）、產生中擋切換（兩分頁 toast）。
 - Codex PR review（90c 二審 Finding 2/3 + PR #93 一審 P2×2〔巢狀可寫 override 唯讀判定、mapped output_dir reverse-map〕 + PR #93 二審 P1+P2×2：巢狀歸屬改「最具體〔最長匹配〕前綴勝」修回上一輪「可寫一律壓唯讀」對反向巢狀〔可寫父+唯讀子〕的回歸〔showcase/scraper/purge 共用同一 is_path_readonly〕、切模式 purge 改雙向互斥〔try_begin_switch 佔全窗口 + generate 掛號 try_mark_generate_active 檢查，杜絕切模式進行中才開始的 generate 把剛 purge 的卡補回〕 + PR #93 三審 P2×2：strm 改寫時 source path 也走 reverse-map〔補上一輪只反解 output_dir 的漏網，WSL+gallery.path_mappings 下改寫內容 == 初次生成內容〕、半填映射規則丟棄〔remote 空的規則前端不存 + 後端 _apply_path_mapping skip，避免前綴被剝只剩後綴破壞 strm〕 + PR #93 四審 P2×1：switch 也序列化〔try_begin_switch 補檢查 _switch_active，第二個重疊 switch 回 switch_in_progress 拒絕，否則第一個 end_switch 會在第二個窗口中清旗標讓 generate 趁隙補回卡〕 + 主動對抗性自審 P1×1：整份設定儲存也讓開 switch 窗口〔update_config 在 is_switch_in_progress 時拒絕，防另一分頁帶舊 directories 快照把剛 purge 的離線來源條目寫回 config；次秒級窗口〕 + PR #93 五審 P2×2：〔P2-f〕唯讀來源前綴改走 `to_file_uri(uri_to_fs_path(path), mappings)` canonical 化〔取代 coerce_to_file_uri 對 file:/// URI 型來源原樣回不套 mapping 的漏——producer 存 DB row 是 mapped 命名空間，URI 型來源前綴對不上 → 唯讀 guard/showcase 旗標/switch purge 全 miss；config.py `_safe_prefixes` 併入共用同一 helper 杜絕重複實作漂移〕、〔P2-e〕整份儲存↔切換改真互斥〔取代上一輪 is_switch_in_progress preflight 的 TOCTOU：存檔可在 switch 開始前通過檢查、卻在 switch 做完後才落盤 → lost-update。改 update_config 持 config-save 窗口、try_begin_switch 見窗口即拒絕，兩者同一 _lock 原子不交錯；owner 拍板互斥鎖，殘留「切換已全做完後才到的舊快照存檔」記為已知限制、靠破壞性 confirm『其他分頁請重整』提示兜底。五審二次 Codex：窗口旗標從 bool 改 **token-set**〔比照 generate 的 _active_tokens〕——bool 版下兩個重疊存檔第一個結束就把共享旗標清掉、第二個仍在寫窗口內 switch 就能進場，race 重新暴露；per-token add/discard 讓第一個結束不清掉第二個窗口，switch 續擋到最後一個存檔結束〕 + PR #93 五審三次 P2×1：〔strm 映射 vs generate〕掃描/產生進行中 gate 掉「有動到 scraper.strm_path_mappings」的整份存檔與 rewrite-strm〔generate 起始把 config 凍結一場沿用，中途改映射存檔 → 該次 generate 之後才產出的 .strm 仍用舊映射且無自動重寫 → 靜默半修永久指錯；owner 拍板精準 gate：is_generate_in_progress 短路後才 diff，只擋真動到映射的存檔、改主題/檔名等不受影響，rewrite-strm 端點同擋含 dry_run，前端顯示 warning toast『掃描完成後再改』〕 + PR #93 五審四次 P2×1：〔strm 映射斷線尾巴殘留〕gate 只看 is_generate_in_progress，但 SSE watcher 偵測到斷線即清 generate token，producer 每片 checkpoint 才看 should_abort → token 清空後仍會多做完當下這片、此時另一分頁可存新映射 → 那片用凍結舊映射落檔且不自癒〔比 P1 殘留嚴重：不像 switch race 下次 generate 自癒〕；owner 拍板 option C：produce_source 注入 strm_mappings_getter，media-server 模式每片寫 .strm 前重讀 fresh 映射〔scanner 注入 load_config().scraper.strm_path_mappings，無 lru_cache 每次讀 disk〕，讓斷線尾巴那片也用當前映射；getter=None 回退凍結 config，既有呼叫/rewrite/測試零行為變更〕 + PR #93 五審五次 P2×1：〔getter 求值時機〕getter 原在 produce_source 片處理開頭 snapshot，但 _write_movie_assets 接著下載封面/生成圖/寫 NFO 才輪到 _write_strm、期間存的新映射會被漏掉 → 改傳 getter callable 往下、在 _write_strm 前一刻才求值（封面/NFO 都寫完後）。殘留降至「getter() 回傳→open() 寫檔」微秒級 GIL 排程窗口，與 generate_state.py 既記錄之 owner-accepted 殘留同類（徹底封死需 option A 綁 token 生命週期至 worker 真停手，已評估否決：跨檔重構+token 洩漏風險比原 bug 更糟）〕）+ Opus 審核（purge 巢狀誤刪 / rewrite 壞列容錯）+ Gemini 整支 branch 二審皆已 triage 修正。
 
-## [0.11.4] - 2026-07-04
-
-本版主軸：**唯讀產生庫「地基」+ 掃描頁「試過」提醒 UX + 來源刪檔清死卡**（feature/89，spec-89 §89a/§89b）——承接 0.11.3 的 off 風味唯讀產生庫，先把「OpenAver 生成的片」變成**一等公民**：系統記住每部片生成在哪個資料夾、這份記憶不被其他操作洗掉，於是重新產生／強制重刮回到同一資料夾原地更新，不再每次多長一個重複垃圾夾（沒封面的片也記得住位置）。站在這塊地基上，再修掃描頁三個惱人問題：已刮過／已生成的片不再被「缺資料」嘮叨、刮不到的片試過一次就跳過不再每次重打、唯讀網盤掉線時明確警告而非靜默報成功，並在來源端刪檔後清掉庫裡對應的死卡（**只清 DB、不動你輸出夾裡的檔案**）。89a 地基多半使用者無感，但讓 89b 與後續 feature/90 全部乾淨。
-
-### Added
-#### 🎯 生成片一等公民身分 + 記住輸出夾（89a 地基）
-- **重新產生／強制重刮不再長重複夾**：新增 `videos.output_dir` 欄位記住每部片生成的資料夾（同時作為「這是 OpenAver 生成的」可靠標記）——之後重刮回到同一夾原地更新。無封面的片也記得住位置。
-- **off 風味輸出夾免設定**：唯讀來源「預設／自瀏覽」風味的產物固定落在 App 自管位置 `output/lib/<來源名>`（比照縮圖、女優封面的慣例），畫面上不再顯示輸出夾欄位、也不會發生「忘設輸出夾→產生 0 片」。給媒體伺服器（Emby/Jellyfin/Kodi）用的風味才可指定任意輸出夾（供後續 feature/90）。
-- **同一部片多格式各自有夾**：`.mp4` + `.mkv` 落入不同資料夾、不互相覆蓋。
-
-#### 🎯 掃描頁「試過」記憶（89b）
-- **試過／已生成的片不再被嘮叨**：新增 `scrape_attempted_at`「試過」記憶，任何被實際刮過一次（含成功、天生沒封面、查無資料）或 off 已生成的片，都不再出現在底部「缺資料」提示；提示只留給真的還沒處理的片。
-- **刮不到的片只試一次**：查無資料的片試過後自動跳過、不再每次重刮（除非強制或改名），仍以檔名顯示在封面牆讓你自行改番號重刮／補封面／留著。
-
-### Changed
-- **原地覆蓋精準清殘檔**：重刮同片時，若標題被片商修正（`{番號} {標題}` 檔名改變），舊標題的殘檔會被精準清除、不再越堆越多（只清本片系列檔、不動你自己放進資料夾的檔）。
-- **兩顆「缺資料」藥丸文案去重疊**：「NFO 欄位不全」（已刮過只是資料不全）與「缺 NFO 檔案／缺封面檔案」（本體缺件）一眼可辨。
-
-### Fixed
-- **唯讀網盤掉線不再誤報成功**：唯讀來源掛載掉線／讀取中途出錯時明確警告並略過（scanner 頁完成 toast、通知中心、完成通知三處都走警告），絕不在資訊不完整時亂清庫。
-- **`output_dir` 身分不被補完／重刮洗掉**：`upsert`／`upsert_batch`／enricher 對 producer row 補完或重刮不再弄丟它的位置記憶（否則預設批次補完會例行性洗掉、身分與記位失效）。
-- **WSL＋UNC mapped 輸出根定位正確**：`output_dir`／封面落地判斷走 targeted reverse-map，跨機器路徑映射下拿到真實本機路徑。
-- **off 固定夾封面可經 image proxy 讀取**：`resolve_output_root` 共用 helper 讓 off 固定輸出夾同步進 `/api/gallery/image` 白名單（否則剛生成的封面／劇照經 proxy 一律 404、OpenAver 自己看不到圖）。
-- **producer／「試過」markers 不被重掃或整理搬移洗掉**：`output_dir`／`scrape_attempted_at` 在 `upsert`／`upsert_batch`／`repath` 三處都加「incoming 空／0 則保留既有」保護，避免一般來源「查無資料」的片在資料夾重掃或整理搬移（rename→repath）時被 default 值覆寫、tried 歸零後又跑回「缺資料」提示。
-- **重刮寫到一半失敗不再兩頭空**：舊資產清除從「寫新資產之前清」改為「寫成功之後才清、且只清替換已寫成的」——若封面下載失敗或 NFO 寫入失敗，該片先前可用的封面／NFO **保留不動**（同名直接覆寫不預刪、改標題才清舊系列且各資產只在新檔寫成時才刪舊檔），不會清掉舊的卻又沒補上新的。
-
-### Removed
-- **來源刪檔清庫裡死卡**：在網盤／NAS 刪了某片後，下次對該來源產生時（**確認來源可達、清單完整且非空**的前提下）清掉庫裡對應的死卡。**預設只清 DB 卡、零檔案系統刪除**（你輸出夾裡的 nfo／封面／資料夾不動）。partial-scan（部分路徑讀取失敗）或空列表時整源不清（保守優先，寧可留死卡也不誤刪活著的片）。
-- **拔除無狀態重算夾機制**：刪掉舊的跑時 cover-owners map／hash 尾碼消歧（`_build_owners` 等）改由 DB 存值 + increment 分配；連帶移除失去唯一呼叫者的 `cover_index` 死碼鏈。
-
-### Internal
-- DB schema 加法遷移 `output_dir TEXT DEFAULT ''` + `scrape_attempted_at REAL DEFAULT 0`（含一次性 backfill：已有封面／NFO／已生成的舊片自動視為「試過」；舊庫升級不需重建、不報錯）；新增 `get_attempted_index`／`update_scrape_attempted_at`／`insert_if_ignore`／`is_output_dir_taken` repo 方法。
-- `resolve_output_root(source, config)` 單一真理 helper（off 固定 / media-server 設定），三 call site（producer output_root、`no_output` guard、image 白名單）共用。
-- `_should_skip` 改單一 `attempted` 信號 + `force` 強制重刮參數（僅函式層 plumbing，UI 觸發點為 follow-on）。**行為變化**：移除磁碟 cover 檢查後，外部誤刪輸出夾封面不再自動 self-heal 重建（省成本優先，folder 正確性交給記憶輸出夾地基）。
-- 唯讀來源 reachability guard + partial-scan `skipped_paths` 訊號；DB-row-only prune 的「本次列表」用原始掃描清單（非已處理集合），避免把「存在但被 skip」的片誤判消失而刪卡；prune 一併與非唯讀分支對等 invalidate 縮圖快取；完成通知 `no_output`／`unreachable`／`partial` 五步映射打通（per-source warn SSE + 計數 + completion warn-gate + scanner 頁 toast）。
-
-### 測試
-- 全套 pytest **5171 passed, 2 skipped**（unit + integration，排除 smoke／e2e，較 0.11.3 的 5031 +140：89a output_dir 欄位/upsert 對稱保護/佔用查詢 + output_dir/scrape_attempted_at upsert/upsert_batch/repath 三處對稱保護 + stale-clean 寫成功後才清（NFO/cover 失敗保留舊資產） + resolve_output_root 真值表/來源名確定性短碼/image 白名單含 off 根 + 夾位讀存 idempotent/B1/B2/increment + stale title-drift 精準清 + mapped-output 定位/enrich 保留 + 89b scrape_attempted_at 遷移/backfill〔含 output_dir 反推 mutation 鎖〕/三寫入點標記/`_should_skip` skip 矩陣+force + missing-check 排除 produced/tried + reachability/partial 三訊號矩陣 + DB-row-only prune〔跨來源隔離·partial 抑制·只刪 DB 不動檔·should_abort 尾巴防誤刪 mutation 鎖·不誤報成功三情境〕）＋ `ruff check .` 綠 ＋ `npm run lint`（eslint + stylelint）綠。
-- 來源金絲雀：**8 源全 PASS**（javbus／jav321／heyzo／d2pass／avsox／fc2／javdb／dmm，pre-merge live 健康檢查）。
-
-## 0.11.x 系列 (v0.11.0 ~ v0.11.3, 2026-06-27 ~ 2026-07-01)
+## 0.11.x 系列 (v0.11.0 ~ v0.11.4, 2026-06-27 ~ 2026-07-04)
 
 - **v0.11.0**：JavBus 過度泛用清償 + exact 番號搜尋改優先序 cascade（feature/85）——直接搜番號改為依你拖曳的來源優先順序逐一查詢（cascade，命中即回），JavBus 不再無視優先序搶先短路；DMM proxy 透傳修復、前綴搜尋 `type` 參數修正；拔除已死的 JavBus variant（同番號多版本）探查死碼。
 - **v0.11.1**：JavLibrary 同番號多版本手動切換（feature/86）——搜尋框直搜／燈箱換來源／結果卡替換來源三入口皆可看封面手動挑撞號版本（游標預設停最新發行日），桌面 standalone 限定（需 CF transport）。
 - **v0.11.2**：`core/database.py` 模組化拆分（feature/87）——2,152 行單檔拆成 `core/database/` 套件（六個領域子模組 + 永久 re-export facade），消除 `AliasRepository`／`TagAliasRepository` 鏡像重複碼（共用泛型基類），零行為／API／schema 變更。
 - **v0.11.3**：唯讀來源生成本地媒體庫「off 風味」首發（feature/88）——scanner 來源可勾「唯讀」＋設輸出夾，來源零寫入下生成每片一資料夾的本地庫（NFO + 封面 + 劇照）並直接寫進 DB，供 OpenAver 自身瀏覽／串流播放雲端原檔；給 Emby/Jellyfin/Kodi 的 media-server（`.strm`）風味延後至下一版（feature/89）。
 
-測試數 4735 → 5031。
+- **v0.11.4**：唯讀產生庫「地基」+ 掃描頁「試過」記憶 + 來源刪檔清死卡（feature/89）——生成片記住輸出夾（`videos.output_dir`）重刮原地更新不長重複夾、off 風味固定輸出夾免設定；試過／已生成的片不再被「缺資料」嘮叨、刮不到只試一次；唯讀網盤掉線明確警告不誤報成功；來源刪檔後 DB-row-only 清死卡（零檔案刪除）。
+
+測試數 4735 → 5171。
 
 ## 0.10.x 系列 (v0.10.0 ~ v0.10.11, 2026-06-18 ~ 2026-06-24)
 
