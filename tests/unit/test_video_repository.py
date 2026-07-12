@@ -1,6 +1,7 @@
 """測試 VideoRepository 類別"""
 import pytest
 import json
+from unittest.mock import patch
 
 from core.database import (
     Video,
@@ -760,3 +761,169 @@ class TestMigrateJsonToSqlite:
 
         assert result['skipped'] == 1
         assert result['migrated'] == 0
+
+
+class TestNfoMtimeRepathAuthoritative:
+    """TASK-showcase-nfo-mtime: repath 各分支 nfo_mtime 權威值寫穿驗證（含 anti-stale 反向案）。
+
+    Codex High 裁決（見 feature/97-javdb-packaging-fix/showcase-nfo-mtime-inflow/
+    TASK-showcase-nfo-mtime.md「方案取捨」）：nfo_mtime=0 是「已確認無 NFO」的合法值，
+    與 output_dir=''/scrape_attempted_at=0 的「無資訊、保留舊值」語意不同 —— DB 層
+    不加 0-guard，plain overwrite（照傳入值寫，包含 0）即為正確行為。本測試組
+    分別覆蓋 upsert / 正常 UPDATE / 碰撞 merge 三分支，並含 anti-stale 探針
+    （證明「若誤加 0-guard」會被這裡的斷言抓到）。
+    """
+
+    # ── upsert 分支（old_uri None，或 old 不在 DB → 委派 upsert）──────────────
+
+    def test_repath_upsert_branch_writes_positive_nfo_mtime(self, temp_db):
+        """old_uri=None → 委派 upsert；incoming nfo_mtime>0 應照寫。"""
+        repo = VideoRepository(temp_db)
+        new_uri = to_file_uri("/video_upsert_pos.mp4")
+        video = Video(path=new_uri, title="新片", nfo_mtime=555.0)
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.repath(None, new_uri, video)
+
+        row = repo.get_by_path(new_uri)
+        assert row is not None
+        assert row.nfo_mtime == 555.0
+
+    def test_repath_upsert_branch_writes_zero_nfo_mtime(self, temp_db):
+        """old_uri=None → 委派 upsert；incoming nfo_mtime=0（無 NFO）應照寫 0，非保留守衛。"""
+        repo = VideoRepository(temp_db)
+        new_uri = to_file_uri("/video_upsert_zero.mp4")
+        video = Video(path=new_uri, title="新片", nfo_mtime=0.0)
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.repath(None, new_uri, video)
+
+        row = repo.get_by_path(new_uri)
+        assert row is not None
+        assert row.nfo_mtime == 0.0
+
+    def test_upsert_on_conflict_anti_stale_zero_overwrites_existing(self, temp_db):
+        """upsert() ON CONFLICT(path) DO UPDATE 分支 anti-stale 探針（負向 DoD 守衛）：
+        同一 path 已有 nfo_mtime>0 的 row，再次 upsert 帶 incoming nfo_mtime=0
+        （確認無 NFO）→ DB 必須被覆蓋為 0，不得保留舊正值。
+
+        此分支正是 upsert() 已對 output_dir/scrape_attempted_at 掛 CASE-WHEN-0 守衛之處，
+        是未來最可能被誤加 nfo_mtime 0-guard 的位置。既有「upsert branch」測試只走
+        INSERT（new_uri 不預存），從不觸發 ON CONFLICT UPDATE，故補此案堵住守衛缺口。
+        MUTATION：若在 upsert() ON CONFLICT 加 nfo_mtime CASE-WHEN-0 守衛，本測試必 RED。"""
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/video_upsert_conflict_zero.mp4")
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.upsert(Video(path=path, title="舊片", nfo_mtime=888.0))
+        # 確認前置：ON CONFLICT 分支需 path 已存在且 nfo_mtime>0
+        pre = repo.get_by_path(path)
+        assert pre is not None and pre.nfo_mtime == 888.0
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.upsert(Video(path=path, title="新掃描-無NFO", nfo_mtime=0.0))
+
+        row = repo.get_by_path(path)
+        assert row is not None
+        assert row.nfo_mtime == 0.0, (
+            f"upsert ON CONFLICT 分支：incoming nfo_mtime=0 應覆蓋舊正值 888.0，"
+            f"不得殘留，實際: {row.nfo_mtime!r}"
+        )
+
+    def test_repath_old_not_in_db_branch_writes_authoritative_nfo_mtime(self, temp_db):
+        """old_uri 不在 DB（純 search 無前置 Scanner）→ 委派 upsert；nfo_mtime 照傳入值寫。"""
+        repo = VideoRepository(temp_db)
+        old_uri = to_file_uri("/nonexistent_old_nfo.mp4")
+        new_uri = to_file_uri("/video_old_not_in_db.mp4")
+        video = Video(path=new_uri, title="新片", nfo_mtime=777.0)
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.repath(old_uri, new_uri, video)
+
+        row = repo.get_by_path(new_uri)
+        assert row is not None
+        assert row.nfo_mtime == 777.0
+
+    # ── 正常 UPDATE 分支（old 在 DB、new 不在）──────────────────────────────
+
+    def test_repath_normal_update_writes_new_positive_nfo_mtime(self, temp_db):
+        """pre-existing row nfo_mtime>0；repath 傳入新的正值 → row 更新為新值。"""
+        repo = VideoRepository(temp_db)
+        old_uri = to_file_uri("/old_normal_pos.mp4")
+        new_uri = to_file_uri("/new_normal_pos.mp4")
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.upsert(Video(path=old_uri, title="舊片", nfo_mtime=100.0))
+
+        new_video = Video(path=new_uri, title="新片", nfo_mtime=200.0)
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.repath(old_uri, new_uri, new_video)
+
+        row = repo.get_by_path(new_uri)
+        assert row is not None
+        assert row.nfo_mtime == 200.0
+
+    def test_repath_normal_update_anti_stale_zero_incoming_does_not_retain_old_value(self, temp_db):
+        """anti-stale 反向案（Codex 指定探針）：pre-existing row nfo_mtime>0；
+        repath 到新路徑且 incoming nfo_mtime=0（新路徑確實無 NFO）→ 結果必須為 0，
+        不得殘留舊 mtime 假稱 has_nfo=true。這正是揭穿「0-guard」矛盾方案的斷言：
+        若 production 錯誤加上『incoming=0 時保留既有值』的 CASE-WHEN 守衛，
+        本測試會 RED（見 mutation check）。"""
+        repo = VideoRepository(temp_db)
+        old_uri = to_file_uri("/old_anti_stale.mp4")
+        new_uri = to_file_uri("/new_anti_stale.mp4")
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.upsert(Video(path=old_uri, title="舊片", nfo_mtime=999.0))
+
+        new_video = Video(path=new_uri, title="新片-無NFO", nfo_mtime=0.0)
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.repath(old_uri, new_uri, new_video)
+
+        row = repo.get_by_path(new_uri)
+        assert row is not None
+        assert row.nfo_mtime == 0.0, (
+            f"anti-stale: 新路徑無 NFO 時 nfo_mtime 必須為 0，不得殘留舊值 999.0，"
+            f"實際: {row.nfo_mtime!r}"
+        )
+
+    # ── 碰撞 delete-merge 分支（new 已存在）──────────────────────────────────
+
+    def test_repath_collision_merge_incoming_wins_positive(self, temp_db):
+        """碰撞 merge：incoming nfo_mtime 為權威值，覆蓋 new_row 既有值。"""
+        repo = VideoRepository(temp_db)
+        old_uri = to_file_uri("/old_collision_pos.mp4")
+        new_uri = to_file_uri("/new_collision_pos.mp4")
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.upsert(Video(path=old_uri, title="舊片", nfo_mtime=111.0))
+            repo.upsert(Video(path=new_uri, title="既有新路徑片", nfo_mtime=222.0))
+
+        collision_video = Video(path=new_uri, title="掃描新值", nfo_mtime=333.0)
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.repath(old_uri, new_uri, collision_video)
+
+        row = repo.get_by_path(new_uri)
+        assert row is not None
+        assert row.nfo_mtime == 333.0
+
+    def test_repath_collision_merge_incoming_wins_zero(self, temp_db):
+        """碰撞 merge：incoming nfo_mtime=0（確認無 NFO）同樣照寫，覆蓋既有正值。
+        0 是合法權威值、非「未提供」，anti-stale 精神延伸到碰撞分支。"""
+        repo = VideoRepository(temp_db)
+        old_uri = to_file_uri("/old_collision_zero.mp4")
+        new_uri = to_file_uri("/new_collision_zero.mp4")
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.upsert(Video(path=old_uri, title="舊片", nfo_mtime=444.0))
+            repo.upsert(Video(path=new_uri, title="既有新路徑片", nfo_mtime=555.0))
+
+        collision_video = Video(path=new_uri, title="掃描新值-無NFO", nfo_mtime=0.0)
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.repath(old_uri, new_uri, collision_video)
+
+        row = repo.get_by_path(new_uri)
+        assert row is not None
+        assert row.nfo_mtime == 0.0, (
+            f"碰撞 merge 分支 nfo_mtime=0 應照寫（合法權威值），實際: {row.nfo_mtime!r}"
+        )
