@@ -31,10 +31,7 @@ N2 無 NFO 落磁碟 → DB nfo_mtime == 0（誠實回報無 NFO，非回歸）
 
 from __future__ import annotations
 
-import json
 import sqlite3
-import tempfile
-from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -512,29 +509,35 @@ def test_u9_collision_rollback_via_real_repath(tmp_path):
     _seed_video(repo, old_uri, user_tags=["看過"])
     _seed_video(repo, new_uri, user_tags=["A"])
 
-    # 直接模擬 DB 層：conn.commit 時拋錯以觸發 rollback 路徑
+    # 注入 commit 失敗以觸發 repath collision 分支的 rollback 路徑。
+    # 真 sqlite3.Connection.commit 是唯讀 C 屬性，無法直接賦值 monkeypatch
+    # （`conn.commit = ...` 會拋 AttributeError）；改包一層 proxy 覆寫 commit，
+    # 其餘屬性（cursor/rollback/close…）委派真連線。每個 proxy 自帶 commit 計數，
+    # 只有 collision 分支的寫入連線會 commit → 其第一次 commit 觸發注入的失敗。
     real_get_connection = repo._get_connection
 
-    call_count = [0]
+    class _FailFirstCommitConn:
+        def __init__(self, real):
+            self._real = real
+            self._commits = 0
+
+        def commit(self):
+            self._commits += 1
+            if self._commits == 1:
+                # 不預先 rollback：讓 repath 自己的 except 走 conn.rollback()（待驗行為本體）
+                raise sqlite3.OperationalError("Simulated commit failure")
+            return self._real.commit()
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
 
     def failing_get_connection():
-        conn = real_get_connection()
-        original_commit = conn.commit
-
-        def patched_commit():
-            call_count[0] += 1
-            if call_count[0] == 1:
-                # 第一次 commit → 讓 DELETE 成功但 INSERT 失敗
-                conn.rollback()
-                raise sqlite3.OperationalError("Simulated commit failure")
-            return original_commit()
-
-        conn.commit = patched_commit
-        return conn
+        return _FailFirstCommitConn(real_get_connection())
 
     with patch.object(repo, "_get_connection", failing_get_connection):
         with patch("core.similar.ranker_cache.SimilarRankerCache"):
-            try:
+            # collision 分支 commit 失敗 → repath 應 rollback 後如實 re-raise
+            with pytest.raises(sqlite3.OperationalError, match="Simulated commit failure"):
                 repo.repath(old_uri, new_uri, Video(
                     path=new_uri, number="ABC-001", title="Fail",
                     original_title="", actresses=[], maker="", director="",
@@ -542,12 +545,13 @@ def test_u9_collision_rollback_via_real_repath(tmp_path):
                     sample_images=[], duration=None, size_bytes=0,
                     cover_path="", release_date="", mtime=0.0, nfo_mtime=0.0,
                 ))
-            except Exception:
-                pass
 
-    # rollback 後 old row 應仍在
+    # rollback 生效：old row 應存活（DELETE 被撤銷），new row 內容不被 merge 覆寫
     assert repo.get_by_path(old_uri) is not None, \
         "rollback 後 old row 應存活（不雙失）"
+    new_row = repo.get_by_path(new_uri)
+    assert new_row is not None and new_row.user_tags == ["A"], \
+        f"rollback 後 new row 應保留原內容 ['A']，實際: {new_row.user_tags if new_row else None!r}"
 
 
 # ─── U10: old-not-in-DB（純 Search，無前置 Scanner）───────────────────────
