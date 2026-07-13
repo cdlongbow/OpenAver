@@ -291,7 +291,7 @@ export function stateBase() {
             Alpine.store('ui').showcaseHasSearch = (this.search !== '' || this.actressSearch !== '')
 
             // 98b-T4：換片 reset 遮罩（結構性涵蓋四條換片路徑——皆最終改 currentLightboxVideo）。
-            // A 片開遮罩翻 auto → 不關直接換 B → 舊片未提交態不落 B 的 DB（_maskVideoPath guard + 此 reset）。
+            // A 片開遮罩翻 auto → 不關直接換 B → 舊片未提交態不落 B 的 DB（_maskSession guard + 此 reset）。
             this.$watch('currentLightboxVideo?.path', () => { if (this._maskVisible) this._resetMask(); })
         },
 

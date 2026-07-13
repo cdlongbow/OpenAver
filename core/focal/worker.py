@@ -76,6 +76,21 @@ class FocalWorker:
         self._thread = None
 
     def submit(self, kind, id, fs_path, ratio, commit):
+        # Known limitation (Codex delta review, low-risk): `key` has no DB
+        # namespace. If two different db_path scans ever ran concurrently in
+        # the same process against the same URI, the later submit()'s
+        # latest-wins overwrite would drop the earlier one's `commit`
+        # closure -- its detection result would silently never land in its
+        # own DB. Not reachable today: every production caller
+        # (core/focal_trigger.py -> web/routers/scanner.py,
+        # core/gallery_scanner.py's live scan_directory path, core/enricher.py,
+        # web/routers/scraper.py) resolves `db_path` from the single
+        # process-wide `get_db_path()` default, so there is only ever one
+        # active DB per process. `gallery_scanner.scan_to_sqlite(db_path=...)`
+        # accepts an arbitrary db_path but has no production caller (test-only
+        # today). If a future feature adds concurrent multi-DB scanning
+        # against this same singleton worker, `key` must be widened to
+        # `(db_path_namespace, kind, id)`.
         key = (kind, id)
         job = _Job(key, fs_path, ratio, commit)
         with self._lock:
