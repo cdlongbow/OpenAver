@@ -12,6 +12,7 @@ import { _filteredVideos, _filteredActresses, _killLightboxTimelines, _NO_COVER_
 import { POSTER_CROP_MAX_W } from '@/shared/breakpoints.js';
 import { detectSwipe } from '@/shared/swipe.js';
 import { waitForMount } from '@/shared/dom-timing.js';
+import { focalObjectPosition } from '@/shared/focal.js';
 
 export function stateLightbox() {
     // 49b T4cd: Picker 動畫參數（T1 fix2 定案，2026-04-25）
@@ -50,6 +51,13 @@ export function stateLightbox() {
         currentLightboxVideo: null,
 
         _lbFullLoaded: false,           // 71-T6 blur-up：原圖（cover_full_url）@load 後翻 true → overlay opacity 淡入
+
+        // 98b-T4：焦點裁切遮罩 toggle（Alpine 短狀態，單一提交生命週期 CD-98b-8）。
+        // _maskVideoPath 記開啟當下的片 path → closeMask commit 前 guard，防換片洩漏。
+        _maskVisible: false,            // 遮罩 overlay 是否顯示
+        _maskMode: 'default',           // 'default'（窗貼右）| 'auto'（窗對焦點），開啟時以當前片 crop_mode 初始化
+        _maskVideoPath: null,           // 開啟遮罩當下的片 path（commit guard）
+        _maskDetecting: false,          // force-detect 進行中（spinner）
 
         _videoChipsExpanded: false,     // 影片 tag chips +N 展開（T4 使用）
 
@@ -282,6 +290,7 @@ export function stateLightbox() {
             }
 
             this.addingLbTag = false;    // 關閉 lightbox 時重置 user tag 輸入框
+            this._resetMask();           // 98b-T4：關燈箱丟棄未提交遮罩態（不 commit）
             this._fetchSamplesFailed = {};
 
             // ★ C11: fly-back — 必須在 generation++ / lightboxOpen = false 之前捕獲
@@ -710,6 +719,107 @@ export function stateLightbox() {
                 // 不是卡片，關閉 lightbox
                 this.closeLightbox();
             }
+        },
+
+        // ==================== 焦點裁切遮罩 toggle (98b-T4) ====================
+        // Alpine 短狀態；亮窗滑動用 CSS transition on transform（宣告式，非 GSAP）。
+        // 生命週期三態對稱：openMask（記 _maskVideoPath）↔ closeMask（guard 相符才 commit）
+        // ↔ _resetMask（換片 / 關燈箱 丟棄未提交態）。
+
+        openMask() {
+            if (!this.currentLightboxVideo?.path) return;
+            this._maskMode = this.currentLightboxVideo.crop_mode || 'auto';
+            this._maskVideoPath = this.currentLightboxVideo.path;
+            this._maskVisible = true;
+        },
+
+        // 翻頁 default ⇄ auto；翻到 auto 但 auto_focal 空（gate 漏判片）→ 同步 force-detect。
+        async toggleMaskMode() {
+            this._maskMode = this._maskMode === 'default' ? 'auto' : 'default';
+            if (this._maskMode === 'auto' && this.currentLightboxVideo && !this.currentLightboxVideo.auto_focal) {
+                const targetVideo = this.currentLightboxVideo;
+                this._maskDetecting = true;
+                try {
+                    const resp = await fetch('/api/showcase/video/detect-focal', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ path: targetVideo.path }),
+                    });
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const data = await resp.json();
+                    if (data.success) {
+                        // 同參考寫回 → 焦點窗即時重畫（grid 卡也重算 focalObjectPosition）
+                        targetVideo.auto_focal = data.auto_focal;
+                    } else {
+                        throw new Error(data.error || 'API failed');
+                    }
+                } catch (e) {
+                    // 失敗不崩：spinner 收起、窗退回貼右（auto_focal 仍空 → focalObjectPosition null）
+                    this.showToast(window.t('showcase.lightbox.mask_detect_failed'), 'error');
+                } finally {
+                    this._maskDetecting = false;
+                }
+            }
+        },
+
+        // 主動關遮罩：僅當 guard 相符（未在 await 期間換片）才 commit crop_mode 到 DB + 同參考。
+        async closeMask() {
+            if (this._maskVideoPath === this.currentLightboxVideo?.path) {
+                const targetVideo = this.currentLightboxVideo;
+                const mode = this._maskMode;
+                try {
+                    const resp = await fetch('/api/showcase/video/crop-mode', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ path: targetVideo.path, mode }),
+                    });
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const data = await resp.json();
+                    if (data.success) {
+                        targetVideo.crop_mode = mode;   // 同參考 → grid 卡 reactive 重算
+                    } else {
+                        throw new Error(data.error || 'API failed');
+                    }
+                } catch (e) {
+                    this.showToast(window.t('showcase.lightbox.mask_save_failed'), 'error');
+                }
+            }
+            this._maskVisible = false;
+        },
+
+        // 換片 / 關燈箱：丟棄未提交態（不 commit，不把前片 _maskMode 帶到下一片）。
+        _resetMask() {
+            this._maskVisible = false;
+        },
+
+        // 亮窗幾何：讀 CSS var --poster-crop-ratio（非硬編）+ focalObjectPosition 解焦點 x%。
+        // 回傳 inline style 字串（width/height + transform translateX）供 template :style 綁定。
+        // 亮窗以外由 CSS box-shadow spotlight 壓暗；transform 換模式時 CSS transition 左右滑動。
+        _maskWindowStyle() {
+            const el = this.$refs.lightboxCoverFull;
+            // C17/#10：圖 render 前 rect=0 → 不畫（naturalWidth 未就緒）
+            if (!el || !el.naturalWidth) return '';
+            const rect = el.getBoundingClientRect();
+            const W = rect.width;
+            const H = rect.height;
+            if (!W || !H) return '';
+            const r = parseFloat(getComputedStyle(el).getPropertyValue('--poster-crop-ratio'));
+            if (!Number.isFinite(r) || r <= 0) return '';
+            const winW = Math.min(W, H * r);
+            let left;
+            if (this._maskMode === 'auto') {
+                const pos = focalObjectPosition({ crop_mode: 'auto', auto_focal: this.currentLightboxVideo?.auto_focal });
+                if (pos) {
+                    const xPct = parseFloat(pos);            // "38.20% center" → 38.20
+                    left = (xPct / 100) * W - winW / 2;      // 窗中心對焦點
+                } else {
+                    left = W - winW;                          // deadzone / 畸形 / null → 貼右（退化）
+                }
+            } else {
+                left = W - winW;                              // default → 貼右
+            }
+            left = Math.max(0, Math.min(left, W - winW));     // clamp 進 [0, W-winW]
+            return `width:${winW}px; height:${H}px; transform:translateX(${left}px);`;
         },
 
         // ==================== User Tags in Lightbox (T4) ====================

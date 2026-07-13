@@ -697,6 +697,20 @@
                                  alt=""
                                  aria-hidden="true">
 
+                            <!-- 98b-T4：焦點裁切遮罩 overlay（亮窗＝小格保留區；窗外 box-shadow spotlight 壓暗；
+                                 點窗 default 貼右 ⇄ auto 對焦點，亮窗左右滑動；點窗外關閉存 crop_mode）。 -->
+                            <div class="lb-mask-overlay"
+                                 x-show="_maskVisible"
+                                 x-transition.opacity
+                                 @click.self="closeMask()">
+                                <div class="lb-mask-window"
+                                     :style="_maskWindowStyle()"
+                                     @click="toggleMaskMode()"></div>
+                                <div class="lb-mask-spinner" x-show="_maskDetecting" aria-hidden="true">
+                                    <i class="bi bi-arrow-clockwise spin"></i>
+                                </div>
+                            </div>
+
                             <!-- 56c-T3fix: Sparkle burst overlay（10 顆四角星，ring 分佈在封面區） -->
                             <div class="sparkle-burst"
                                  x-show="!showFavoriteActresses"
@@ -762,6 +776,14 @@
                                     <span x-text="t('showcase.samples.fetch_btn')"></span>
                                 </button>
                                 <span x-show="_fetchSamplesLoading" x-text="t('showcase.samples.fetching')"></span>
+                                <!-- 98b-T4：焦點裁切遮罩 toggle（低調圓鈕，styled-like .lb-action-btn 但更小）-->
+                                <button class="lb-mask-btn"
+                                        x-show="!!currentLightboxVideo?.path"
+                                        @click="openMask()"
+                                        :title="t('showcase.lightbox.mask_toggle')"
+                                        :aria-label="t('showcase.lightbox.mask_toggle')">
+                                    <i class="bi bi-person-bounding-box" aria-hidden="true"></i>
+                                </button>
                             </div>
                             <!-- Row 2: Original Title (showcase only) -->
                             <div class="lb-otitle"
