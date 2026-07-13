@@ -1,9 +1,18 @@
-"""core.focal — face-aware focal-point detection (TASK-98a-T1).
+"""core.focal — face-aware focal-point detection (TASK-98a-T1, T3).
 
 Public surface:
     detect_focal(fs_path, ratio, work_width) -> (x_ratio, y_ratio) | None
     crop_image_position(img, ratio, pos) -> PIL.Image
+    requires_face_detection(number, maker="") -> bool
+    gate_verdict(number, maker="") -> (bool, str)
 """
 from .detector import WORK_WIDTH, crop_image_position, detect_focal
+from .gate import gate_verdict, requires_face_detection
 
-__all__ = ["WORK_WIDTH", "crop_image_position", "detect_focal"]
+__all__ = [
+    "WORK_WIDTH",
+    "crop_image_position",
+    "detect_focal",
+    "requires_face_detection",
+    "gate_verdict",
+]
