@@ -1235,6 +1235,35 @@ class VideoRepository:
         finally:
             conn.close()
 
+    def update_manual_focal(self, path: str, focal: str) -> bool:
+        """原子寫入使用者手動指定的焦點座標（99a-T1a mutator，CD-2）。
+
+        同一 UPDATE 內把 crop_mode 蓋為 'manual'，代表「使用者手動存過」——與
+        update_auto_focal（背景/預覽偵測寫入，不動 crop_mode）語意分離。刻意不碰
+        focal_attempted_at：手動存入的 auto_focal 恆非空字串（mutator 呼叫方已用
+        parse_focal 擋掉空字串/非法輸入），get_empty_focal_candidates 的
+        `auto_focal = ''` 篩選天然排除 manual row，不需要額外蓋章。
+
+        Args:
+            path: 影片路徑（DB key，file:/// URI 格式）
+            focal: 正規化後的焦點座標字串（如 '0.5000,0.4000'）
+
+        Returns:
+            bool: 是否成功更新（path 不存在 → False，不拋例外、不新建 row）
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE videos SET auto_focal = ?, crop_mode = 'manual', "
+                "updated_at = CURRENT_TIMESTAMP WHERE path = ?",
+                (focal, path)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
     def update_sample_images(self, path: str, sample_images: List[str]) -> bool:
         """只更新 sample_images 欄位（§b1 scanner cleanup + §b3 fetch-samples 使用）"""
         conn = self._get_connection()

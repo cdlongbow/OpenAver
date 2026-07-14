@@ -1,12 +1,16 @@
 """
-test_showcase_focal_endpoints.py — 98b-T4 兩個 POST endpoint（TDD-lite）
+test_showcase_focal_endpoints.py — 98b-T4 / 99a-T1a 兩個 POST endpoint（TDD-lite）
 
-- POST /api/showcase/video/crop-mode  {path, mode}
-- POST /api/showcase/video/detect-focal {path}
+- POST /api/showcase/video/detect-focal {path}   — 純預覽，**不寫 DB**（99a T1a）
+- POST /api/showcase/video/focal {path, focal}   — 原子 mutator，存 auto_focal +
+  crop_mode='manual'（99a T1a，取代已刪除的 /crop-mode）
 
 **detect_focal 一律 mock（spy），絕不真跑 pigo。** 核心回歸鎖（Codex P0）：
 detect_focal 收到的永遠是 row.cover_path 反解的封面 fs（.jpg），
 絕非 body path（影片 .mp4 URI）。mutation「改回開 body path」必 RED。
+
+`/api/showcase/video/crop-mode` 端點已於 99a-T1a 移除（見本檔
+`TestCropModeRouteRemoved` 回歸鎖）。
 """
 
 import pytest
@@ -80,42 +84,17 @@ def _patch_db_and_config(mocker, setup, config=None):
     mocker.patch("web.routers.showcase.load_config", return_value=config or setup["config"])
 
 
-# ============ crop-mode ============
+# ============ crop-mode route removed（99a-T1a 回歸鎖）============
 
-class TestCropModeEndpoint:
-    def test_valid_mode_updates_db(self, client, focal_endpoint_setup, mocker):
-        _patch_db_and_config(mocker, focal_endpoint_setup)
-        spy = mocker.patch(
-            "web.routers.showcase.VideoRepository.update_crop_mode",
-            return_value=True,
-        )
-        resp = client.post("/api/showcase/video/crop-mode",
-                           json={"path": focal_endpoint_setup["video_uri"], "mode": "auto"})
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        spy.assert_called_once_with(focal_endpoint_setup["video_uri"], "auto")
-
-    def test_valid_mode_persists(self, client, focal_endpoint_setup, mocker):
-        """整合：真的寫進 DB（不 mock repo），crop_mode 由 default → auto。"""
+class TestCropModeRouteRemoved:
+    def test_crop_mode_route_returns_404(self, client, focal_endpoint_setup, mocker):
+        """`/video/crop-mode` 端點已刪除（99a-T1a）——任何 body 都應 404（路由不存在），
+        不是被端點邏輯拒絕。回歸鎖：防止未來不慎把端點加回去。
+        mutation：把路由復活 → 此測試變 GREEN，證明測試真的在守。"""
         _patch_db_and_config(mocker, focal_endpoint_setup)
         resp = client.post("/api/showcase/video/crop-mode",
                            json={"path": focal_endpoint_setup["video_uri"], "mode": "auto"})
-        assert resp.status_code == 200
-        repo = VideoRepository(focal_endpoint_setup["db_path"])
-        assert repo.get_by_path(focal_endpoint_setup["video_uri"]).crop_mode == "auto"
-
-    def test_invalid_mode_rejected_repo_untouched(self, client, focal_endpoint_setup, mocker):
-        _patch_db_and_config(mocker, focal_endpoint_setup)
-        spy = mocker.patch(
-            "web.routers.showcase.VideoRepository.update_crop_mode",
-            return_value=True,
-        )
-        resp = client.post("/api/showcase/video/crop-mode",
-                           json={"path": focal_endpoint_setup["video_uri"], "mode": "foo"})
-        assert resp.status_code == 400
-        assert resp.json()["success"] is False
-        assert resp.json()["error"]   # 固定中文字串（非空）
-        spy.assert_not_called()
+        assert resp.status_code == 404
 
 
 # ============ detect-focal ============
@@ -141,13 +120,19 @@ class TestDetectFocalEndpoint:
         assert not called_path.endswith(".mp4")
         assert "SONE-001.mp4" not in called_path
 
-    def test_detect_persists_auto_focal(self, client, focal_endpoint_setup, mocker):
+    def test_detect_does_not_persist_auto_focal(self, client, focal_endpoint_setup, mocker):
+        """99a-T1a：/detect-focal 改純預覽，不寫 DB。mutation 驗證——若把
+        repo.update_auto_focal(...) 加回去，此測試必須變 RED。"""
         _patch_db_and_config(mocker, focal_endpoint_setup)
         mocker.patch("web.routers.showcase.detect_focal", return_value=(0.42, 0.5))
-        client.post("/api/showcase/video/detect-focal",
+        before = VideoRepository(focal_endpoint_setup["db_path"]).get_by_path(
+            focal_endpoint_setup["video_uri"]).auto_focal
+        resp = client.post("/api/showcase/video/detect-focal",
                     json={"path": focal_endpoint_setup["video_uri"]})
+        assert resp.status_code == 200
+        assert resp.json()["auto_focal"] == "0.4200,0.5000"  # 回傳值仍是偵測結果（供前端預覽）
         repo = VideoRepository(focal_endpoint_setup["db_path"])
-        assert repo.get_by_path(focal_endpoint_setup["video_uri"]).auto_focal == "0.4200,0.5000"
+        assert repo.get_by_path(focal_endpoint_setup["video_uri"]).auto_focal == before
 
     def test_non_db_path_404_no_detect(self, client, focal_endpoint_setup, mocker):
         _patch_db_and_config(mocker, focal_endpoint_setup)
@@ -158,8 +143,9 @@ class TestDetectFocalEndpoint:
         assert resp.json()["success"] is False
         spy.assert_not_called()
 
-    def test_readonly_source_rejected(self, client, focal_endpoint_setup, mocker):
-        """來源標 readonly → 拒（唯讀無法寫回，force-detect 無意義）。"""
+    def test_readonly_source_in_scope_allowed(self, client, focal_endpoint_setup, mocker):
+        """99a-T1a：來源標 readonly 但 in-scope → 放行（200，正常跑偵測）。
+        取代舊的「唯讀→403」行為——偵測不寫 DB，不需要可寫權限（D4/CD-7）。"""
         ro_config = {
             "gallery": {
                 "directories": [{"path": focal_endpoint_setup["video_dir"],
@@ -171,9 +157,9 @@ class TestDetectFocalEndpoint:
         spy = mocker.patch("web.routers.showcase.detect_focal", return_value=(0.4, 0.5))
         resp = client.post("/api/showcase/video/detect-focal",
                            json={"path": focal_endpoint_setup["video_uri"]})
-        assert resp.status_code == 403
-        assert resp.json()["success"] is False
-        spy.assert_not_called()
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        spy.assert_called_once()
 
     def test_out_of_scope_rejected(self, client, focal_endpoint_setup, mocker, tmp_path):
         """configured dir 不含影片所在夾 → scope 外 → 拒。"""
@@ -203,8 +189,8 @@ class TestDetectFocalEndpoint:
         assert resp.json()["error"]
         spy.assert_not_called()
 
-    def test_no_face_saves_empty_string(self, client, focal_endpoint_setup, mocker):
-        """detect_focal 回 None（無臉）→ auto_focal='' 存回、不崩。"""
+    def test_no_face_returns_empty_string(self, client, focal_endpoint_setup, mocker):
+        """detect_focal 回 None（無臉）→ auto_focal='' 回傳、不崩（99a-T1a：不再存回 DB）。"""
         _patch_db_and_config(mocker, focal_endpoint_setup)
         mocker.patch("web.routers.showcase.detect_focal", return_value=None)
         resp = client.post("/api/showcase/video/detect-focal",
@@ -212,5 +198,101 @@ class TestDetectFocalEndpoint:
         assert resp.status_code == 200
         assert resp.json()["success"] is True
         assert resp.json()["auto_focal"] == ""
+
+
+# ============ /video/focal mutator（99a-T1a）============
+
+class TestManualFocalEndpoint:
+    def test_valid_focal_atomic_write(self, client, focal_endpoint_setup, mocker):
+        """成功後 auto_focal 與 crop_mode='manual' 同時反映在 DB（單一 UPDATE 原子寫）。"""
+        _patch_db_and_config(mocker, focal_endpoint_setup)
+        resp = client.post("/api/showcase/video/focal",
+                           json={"path": focal_endpoint_setup["video_uri"], "focal": "0.3,0.6"})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
         repo = VideoRepository(focal_endpoint_setup["db_path"])
-        assert repo.get_by_path(focal_endpoint_setup["video_uri"]).auto_focal == ""
+        result = repo.get_by_path(focal_endpoint_setup["video_uri"])
+        assert result.auto_focal == "0.3000,0.6000"   # 正規化（format_focal(parse_focal(...))）
+        assert result.crop_mode == "manual"
+
+    def test_path_not_in_db_404_no_write(self, client, focal_endpoint_setup, mocker, tmp_path):
+        """path 不存在於 DB → 404（不是 500，不新建 row）。"""
+        _patch_db_and_config(mocker, focal_endpoint_setup)
+        bogus = to_file_uri(str(tmp_path / "not-in-db.mp4"), {})
+        resp = client.post("/api/showcase/video/focal",
+                           json={"path": bogus, "focal": "0.3,0.6"})
+        assert resp.status_code == 404
+        assert resp.json()["success"] is False
+        repo = VideoRepository(focal_endpoint_setup["db_path"])
+        assert repo.get_by_path(bogus) is None
+
+    def test_invalid_focal_format_400_db_untouched(self, client, focal_endpoint_setup, mocker):
+        """非法 focal 格式 → 400 固定字串、DB 完全不碰（連 get_by_path 都不需呼叫，
+        格式驗證在 scope 檢查之前）。"""
+        _patch_db_and_config(mocker, focal_endpoint_setup)
+        spy = mocker.patch("web.routers.showcase.VideoRepository.get_by_path")
+        resp = client.post("/api/showcase/video/focal",
+                           json={"path": focal_endpoint_setup["video_uri"], "focal": "abc"})
+        assert resp.status_code == 400
+        assert resp.json()["success"] is False
+        assert resp.json()["error"]
+        spy.assert_not_called()
+
+    def test_invalid_focal_empty_string_400(self, client, focal_endpoint_setup, mocker):
+        """空字串焦點 → 400（手動存的 focal 不可為空，不同於 detect 的「無臉」語意）。"""
+        _patch_db_and_config(mocker, focal_endpoint_setup)
+        resp = client.post("/api/showcase/video/focal",
+                           json={"path": focal_endpoint_setup["video_uri"], "focal": ""})
+        assert resp.status_code == 400
+
+    def test_invalid_focal_out_of_range_400(self, client, focal_endpoint_setup, mocker):
+        """超出 [0,1] 範圍 → 400。"""
+        _patch_db_and_config(mocker, focal_endpoint_setup)
+        resp = client.post("/api/showcase/video/focal",
+                           json={"path": focal_endpoint_setup["video_uri"], "focal": "1.5,0.5"})
+        assert resp.status_code == 400
+
+    def test_out_of_scope_403_db_unchanged(self, client, focal_endpoint_setup, mocker, tmp_path):
+        """path 存在但 out-of-scope（不在任何 configured dir 下）→ 403、DB 不變。
+
+        mutation 驗證（Codex P1-1）：拔掉 scope guard 後 out-of-scope 也能寫入
+        → 必須變 RED。"""
+        other_dir = tmp_path / "elsewhere"
+        other_dir.mkdir()
+        oos_config = {
+            "gallery": {
+                "directories": [{"path": str(other_dir), "readonly": False, "output_path": ""}],
+                "path_mappings": {},
+            },
+        }
+        _patch_db_and_config(mocker, focal_endpoint_setup, config=oos_config)
+        before = VideoRepository(focal_endpoint_setup["db_path"]).get_by_path(
+            focal_endpoint_setup["video_uri"])
+        resp = client.post("/api/showcase/video/focal",
+                           json={"path": focal_endpoint_setup["video_uri"], "focal": "0.3,0.6"})
+        assert resp.status_code == 403
+        assert resp.json()["success"] is False
+        after = VideoRepository(focal_endpoint_setup["db_path"]).get_by_path(
+            focal_endpoint_setup["video_uri"])
+        assert after.auto_focal == before.auto_focal
+        assert after.crop_mode == before.crop_mode
+
+    def test_readonly_source_in_scope_allowed_write(self, client, focal_endpoint_setup, mocker):
+        """path 存在、in-scope、來源標記 readonly → 仍放行寫入（D4/CD-7，刻意與 98b
+        舊行為分歧：唯讀不擋手動存）。"""
+        ro_config = {
+            "gallery": {
+                "directories": [{"path": focal_endpoint_setup["video_dir"],
+                                 "readonly": True, "output_path": ""}],
+                "path_mappings": {},
+            },
+        }
+        _patch_db_and_config(mocker, focal_endpoint_setup, config=ro_config)
+        resp = client.post("/api/showcase/video/focal",
+                           json={"path": focal_endpoint_setup["video_uri"], "focal": "0.3,0.6"})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        repo = VideoRepository(focal_endpoint_setup["db_path"])
+        result = repo.get_by_path(focal_endpoint_setup["video_uri"])
+        assert result.auto_focal == "0.3000,0.6000"
+        assert result.crop_mode == "manual"

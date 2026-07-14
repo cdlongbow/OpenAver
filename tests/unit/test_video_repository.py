@@ -1162,7 +1162,8 @@ class TestFocalPreserveOnConflict:
 
 
 class TestFocalMutators:
-    """VideoRepository.update_auto_focal / update_crop_mode round-trip（CD-98a-6 mutator）"""
+    """VideoRepository.update_auto_focal / update_crop_mode / update_manual_focal
+    round-trip（CD-98a-6 mutator；update_manual_focal 為 99a-T1a 新增）"""
 
     def test_update_auto_focal_roundtrip(self, temp_db):
         repo = VideoRepository(temp_db)
@@ -1220,6 +1221,40 @@ class TestFocalMutators:
     def test_update_crop_mode_missing_path_returns_false(self, temp_db):
         repo = VideoRepository(temp_db)
         assert repo.update_crop_mode(to_file_uri("/focal_mutator_nonexistent2.mp4"), 'default') is False
+
+    def test_update_manual_focal_roundtrip(self, temp_db):
+        """單一 UPDATE 原子寫兩欄：auto_focal 與 crop_mode='manual' 同時反映（99a-T1a）。"""
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/focal_mutator_manual_focal.mp4")
+        repo.upsert(Video(path=path, title="片", crop_mode="default"))
+
+        assert repo.update_manual_focal(path, '0.3000,0.6000') is True
+
+        result = repo.get_by_path(path)
+        assert result is not None
+        assert result.auto_focal == '0.3000,0.6000'
+        assert result.crop_mode == 'manual'
+
+    def test_update_manual_focal_missing_path_returns_false(self, temp_db):
+        repo = VideoRepository(temp_db)
+        assert repo.update_manual_focal(
+            to_file_uri("/focal_mutator_manual_nonexistent.mp4"), '0.3000,0.6000'
+        ) is False
+
+    def test_update_manual_focal_does_not_touch_focal_attempted_at(self, temp_db):
+        """契約：update_manual_focal 不碰 focal_attempted_at（與 update_auto_focal 不同，
+        手動存的 auto_focal 恆非空字串，天然被 get_empty_focal_candidates 排除）。"""
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/focal_mutator_manual_no_attempted_at.mp4")
+        repo.upsert(Video(path=path, title="片"))
+        assert repo.get_by_path(path).focal_attempted_at is None
+
+        assert repo.update_manual_focal(path, '0.3000,0.6000') is True
+
+        result = repo.get_by_path(path)
+        assert result.auto_focal == '0.3000,0.6000'
+        assert result.crop_mode == 'manual'
+        assert result.focal_attempted_at is None
 
 
 class TestGetEmptyFocalCandidates:
