@@ -46,12 +46,20 @@ export function stateActress() {
         // --- helpers in return {} ---
 
         // 44a: helper — 更新 actressLightboxIndex + currentLightboxActress 一致性
+        // 100b-T2a（§B-1c，裁決2）：video→actress 橋接的主要收斂點——本函式是
+        // openActressLightbox()/prevActressLightbox()/nextActressLightbox() 三者共用的賦值
+        // helper，涵蓋 actress→actress 切換與 video-grid→actress-grid 首次開啟兩種情境。
+        // x-if="currentLightboxActress"（showcase.html）可能由 false 翻 true（重新掛載）——
+        // reset 必須排在賦值 currentLightboxActress **之前**同步呼叫（gotchas-frontend §8b：
+        // $watch 姊妹 watcher 是非同步 effect flush，對掛載那一幀擋不住）。
         _setActressLightboxIndex(idx) {
+            this._resetMask();
             this.actressLightboxIndex = idx;
             this.currentLightboxActress = (idx >= 0 && idx < _filteredActresses.length)
                 ? _filteredActresses[idx] : null;
             this.currentLightboxVideo = null;    // 互斥：清除影片
             this._actressChipsExpanded = { aliases: false, info: false };
+            this._refreshActressPhotoLoaded();   // §B-2b：切換/開啟女優皆走此函式，唯一呼叫點
         },
 
         // 44b: 精準匹配 helpers

@@ -20,7 +20,7 @@
                                 <div class="lb-mask-window"
                                      x-show="_maskVisible && !_maskDetecting"
                                      :style="_maskWinStyle"
-                                     :class="{'lb-mask-window--dragging': _maskDragging}"
+                                     :class="{'lb-mask-window--dragging': _maskDragging, 'lb-mask-window--frozen': _maskFrozen}"
                                      @pointerdown="_maskDragStart($event)"></div>
                                 <!-- 99a-T5：detect 期間星空等待迴圈（start/stop 可控 repeat:-1，
                                      非 .sparkle-burst 的 0.4s 一次性）。PRM 時 openMask 不觸發 GSAP，

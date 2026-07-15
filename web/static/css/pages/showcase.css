@@ -1027,6 +1027,13 @@
     cursor: grabbing;
 }
 
+/* 100b-T2a（CD-2 凍結模式）：女優圖無可拖曳空間時，cursor 明確表達「這張圖沒有可調空間」，
+ * 不與可拖曳態的 grab 混淆。軸向 hover affordance（ew-resize/ns-resize）歸 T5，本規則只鎖
+ * 凍結模式這個窄範圍。 */
+.lb-mask-window--frozen {
+    cursor: default;
+}
+
 .lb-mask-spinner {
     position: absolute;
     top: 50%;

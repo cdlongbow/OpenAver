@@ -585,20 +585,19 @@
                                 <i class="bi bi-person-circle" style="font-size:4rem; opacity:0.3"></i>
                             </div>
 
-                            <!-- 100b-T1 →【T2 待辦】遮罩 DOM 的第二次 include（女優分支）刻意**不在 T1 落地**。
-                                 T1 曾實作並經 CDP 實測推翻（2026-07-16）：本分支一旦有 .lb-mask-overlay，
-                                 video→actress 切換（← 鍵 / prevLightboxVideo）會讓它閃現一幀（~16ms）——
-                                 x-if 重新掛載女優分支時讀到的 _maskVisible 尚未歸零（state-base.js 的
-                                 $watch 是非同步 effect flush，來不及），新元素以 display:block 掛出、
-                                 帶 2×2px 窗殘影，下一幀才隱藏。實測 2/2 重現。
-                                 🔴 T2（§B-1c）必須「第二個 include ＋ 同步 reset」一起落地：reset 要排在
-                                 _setActressLightboxIndex() 賦值 currentLightboxActress **之前**同步呼叫，
-                                 光靠 $watch 姊妹 watcher 擋不住掛載那一幀（feedback_order_over_flag_guards：
-                                 先用排序讓它不可能發生，不要加旗標補救）。 -->
+                            <!-- 100b-T2a（§B-1a/§B-1c）：遮罩 DOM 第二次 include（女優分支）。
+                                 T1 曾試著先做這個 include、被 CDP 實測推翻（2026-07-16，2/2 重現閃現）；
+                                 T2a 已同批補上「賦值前同步 _resetMask()」（見 state-actress.js
+                                 _setActressLightboxIndex()／state-lightbox.js prevLightboxVideo()／
+                                 nextLightboxVideo() 三處，gotchas-frontend §8b），兩者必須同批落地
+                                 才安全，故此刻才 include。 -->
+                            {% include '_macros/focal_mask.html' %}
+
                             <div class="cover-actions"
-                                 :data-picker-open="_pickerOpen">
+                                 :data-picker-open="_pickerOpen"
+                                 :class="{'cover-actions--focal-edit': _maskVisible}">
                                 <button class="lb-action-btn"
-                                        x-show="actressLightboxSource === 'grid'"
+                                        x-show="actressLightboxSource === 'grid' && !_maskVisible"
                                         @click.stop="searchActressFilms(currentLightboxActress?.name, $el)"
                                         :disabled="_ghostFlyInFlight"
                                         :class="{ 'opacity-50 cursor-not-allowed': _ghostFlyInFlight }"
@@ -607,7 +606,7 @@
                                     <i class="bi bi-camera-reels"></i>
                                 </button>
                                 <button class="lb-action-btn lb-action-btn--danger"
-                                        x-show="showFavoriteActresses"
+                                        x-show="showFavoriteActresses && !_maskVisible"
                                         @click.stop="openRemoveActressModal()"
                                         :data-tooltip="t('showcase.actress.remove')"
                                         :aria-label="t('showcase.actress.remove')">
@@ -615,11 +614,38 @@
                                 </button>
                                 <!-- 換照片按鈕（49b T4cd）-->
                                 <button class="lb-action-btn"
-                                        x-show="currentLightboxActress?.is_favorite"
+                                        x-show="currentLightboxActress?.is_favorite && !_maskVisible"
                                         @click.stop="openActressPicker()"
                                         :data-tooltip="t('showcase.actress.change_photo')"
                                         :aria-label="t('showcase.actress.change_photo')">
                                     <i class="bi bi-arrow-clockwise" :class="{ spin: _pickerLoading }"></i>
+                                </button>
+                                <!-- 100b-T2a（§B-1d，spec §4-5）：女優 focal icon——不照抄影片版
+                                     .lb-mask-btn 的位置（.lb-header 行末），照抄行為：放進
+                                     .cover-actions、與其他 action 鈕同 gate 隱藏，鏡射 .lb-action-btn。
+                                     photo_url 存在 + _actressPhotoLoaded 就緒才顯示（§B-2b lifecycle）。 -->
+                                <button class="lb-action-btn"
+                                        x-show="!_maskVisible && !!currentLightboxActress?.photo_url && _actressPhotoLoaded"
+                                        @click="openMask()"
+                                        :data-tooltip="t('showcase.lightbox.mask_toggle')"
+                                        :aria-label="t('showcase.lightbox.mask_toggle')">
+                                    <i class="bi bi-person-bounding-box"></i>
+                                </button>
+                                <!-- 100b-T2a：✓/✗ 鏡射影片版（:754-767），複用既有 5 個
+                                     showcase.lightbox.mask_* i18n key（裁決4，不新增 key）。 -->
+                                <button class="lb-action-btn lb-action-btn--success"
+                                        x-show="_maskVisible && !_maskDetecting"
+                                        @click.stop="confirmMask()"
+                                        :data-tooltip="t('showcase.lightbox.mask_confirm')"
+                                        :aria-label="t('showcase.lightbox.mask_confirm')">
+                                    <i class="bi bi-check-lg"></i>
+                                </button>
+                                <button class="lb-action-btn lb-action-btn--danger"
+                                        x-show="_maskVisible && !_maskDetecting"
+                                        @click.stop="cancelMask()"
+                                        :data-tooltip="t('showcase.lightbox.mask_cancel')"
+                                        :aria-label="t('showcase.lightbox.mask_cancel')">
+                                    <i class="bi bi-x-lg"></i>
                                 </button>
                             </div>
                         </div>

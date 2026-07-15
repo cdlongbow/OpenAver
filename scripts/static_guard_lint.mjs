@@ -179,6 +179,52 @@ const RULES = [
     note: '[TestMaskToggleGuard] _computeMaskWinStyle 不得硬編 2/3 比例（讀 CSS var）',
   },
 
+  // ---- [TestMaskToggleGuard] 100b-T2a：CD-2 凍結模式 + Y 軸套用 + mask-geometry.js 遷移補網 ----
+  {
+    // 🔴 T2a review BLOCKER 回歸鎖：detect resolve 後**必須把偵測到的 y 套用到 _maskFocalY**。
+    // 原 T1 碼只寫 `this._maskFocalX = parsed.x`（全檔零處寫 parsed.y）——對女優窄圖
+    // （a < 0.75 → _maskAxis==='y'）＝按 focal icon、星空跑完、窗原地不動，偵測到的臉被靜默
+    // 丟棄，直接打掉 spec §3.7-5（fixture narrow_face_top.jpg 700×1050 的 dy=0.31 正是此 case）。
+    // 這是「全綠但功能不可用」型缺陷（feedback_guards_cant_prove_usable）：無此鎖則該行被刪
+    // 也沒有任何守衛會叫。node:test 摸不到本檔（importmap alias，plain Node 無法 import），
+    // 故以 lint scope 規則承擔；CDP checklist 另有 §3.7-5 的真機驗收（守衛只證「寫入點存在」，
+    // 證不出「窗真的跟著臉走」）。
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: 'this._maskFocalY = parsed.y;',
+    scope: { anchor: /async\s+openMask\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 100b-T2a：openMask detect resolve 必須套用偵測到的 Y 軸焦點（CD-2 軸向分流，窄圖女優的自動對焦全靠這行）',
+  },
+  {
+    // CD-2 明文要求「凍結模式的『不掛 pointerdown 或 handler 內 no-op』二擇一，需在實作時
+    // 定案並寫測試鎖住」。定案＝handler 內 early-return（@pointerdown 綁定維持無條件，因其
+    // 字面存在性另有 required 規則錨在 partial 上）。此鎖是該決策的唯一機械守衛：
+    // node:test 摸不到 state-lightbox.js（importmap alias，plain Node 無法 import），
+    // 純函式層的 computeMaskAxis 只算得出 frozen 布林、驗不到「消費端真的據此 no-op」。
+    // 鎖整串（含 `return;`）而非裸 `_maskFrozen`——後者在同 scope 內若有別的引用會 fail-open。
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: 'if (this._maskFrozen) return;',
+    scope: { anchor: /_maskDragStart\s*\(\s*evt\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 100b-T2a：CD-2 凍結模式——無可拖餘裕時 _maskDragStart 必須 no-op（不進拖曳、不掛 document listener）',
+  },
+  // 🔴 遷移粒度守則（CLAUDE.md）：`Math.min(W, H*r)` / `Math.min(H, W/r)` 的幾何數學原本天然
+  // 落在 _computeMaskWinStyle 那 4 條 scope 規則的掃描範圍內；100b-T2a 把它搬到
+  // shared/mask-geometry.js（可測試性 + G1 單一 writer）後，該檔一度是零規則覆蓋的新盲區——
+  // 未來若有人在 computeMaskWinGeometry() 內誤植字面比例（把參數 r 改寫死 0.75），原本的
+  // 「比例必須讀 CSS var、不得硬編」契約會靜默失守。替代網須同粒度、寧 fail-closed 不 fail-open：
+  // 比例一律走參數 r，本檔不得出現任何字面比例常數。
+  {
+    file: 'web/static/js/shared/mask-geometry.js', kind: 'forbidden-string', pattern: '0.71',
+    note: '[TestMaskToggleGuard] 100b-T2a：mask-geometry.js 不得硬編影片比例 0.71（一律走參數 r，由呼叫端讀 CSS var）',
+  },
+  {
+    file: 'web/static/js/shared/mask-geometry.js', kind: 'forbidden-string', pattern: '0.75',
+    note: '[TestMaskToggleGuard] 100b-T2a：mask-geometry.js 不得硬編女優比例 0.75（一律走參數 r，由呼叫端讀 CSS var）',
+  },
+  {
+    file: 'web/static/js/shared/mask-geometry.js', kind: 'forbidden-string', pattern: /2\s*\/\s*3/,
+    note: '[TestMaskToggleGuard] 100b-T2a：mask-geometry.js 不得硬編 2/3 比例（同 _computeMaskWinStyle 的既有禁令，遷移後同粒度補網）',
+  },
+
   // ---- [TestMaskToggleGuard] 99a-T4：T3 新互動（force-detect 預覽 + 左右拖曳 + ✓/✗）回填守衛 ----
   // §1 拖曳 wiring（4）：.lb-mask-window 起手綁定 + 函式定義存在 + 退役 toggle handler 兩檔 forbidden。
   {
