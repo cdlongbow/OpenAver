@@ -881,14 +881,19 @@ export function stateSimilar() {
       const img = document.createElement('img');
       img.className = 'similar-main-static';
       img.src = src || '';
-      // 98b-T3 I-c：首建時 currentLightboxVideo == 查詢片 A（similar mode 尚未 drill），focal 正確。
-      this.applyFocalToImg(img, this.currentLightboxVideo);
       img.alt = '';
       img.setAttribute('aria-hidden', 'true');
       // codex P1-2: 取代已移除的 .similar-main-overlay click handler。
       // closeSimilarMode 會 .remove() 此 element，listener 隨 GC 一起清。
       img.addEventListener('click', (e) => this.onSimilarMainImgClick(e));
+      // Codex PR#107 P2: append 必須在 applyFocalToImg 之前——applyCellFocal 對已快取的封面走
+      // el.complete && el.naturalWidth 同步分支，當場 getComputedStyle 讀 --poster-crop-ratio；
+      // 該變數掛在 :root（theme.css），detached element 沒有 inheritance chain 連到 :root，
+      // getComputedStyle 回空字串 → parseFloat NaN → computeAndApply 誤判「無比例」清掉
+      // objectPosition。用時序排除（先連接 DOM 再套用），不加旗標繞過。
       stageInner.appendChild(img);
+      // 98b-T3 I-c：首建時 currentLightboxVideo == 查詢片 A（similar mode 尚未 drill），focal 正確。
+      this.applyFocalToImg(img, this.currentLightboxVideo);
       return img;
     },
 

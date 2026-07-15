@@ -1196,6 +1196,21 @@ const RULES = [
   { file: 'web/templates/motion_lab.html', kind: 'forbidden-string', pattern: 'slot-icon-overlay', note: '[TestSimilarStageGuard] test_no_slot_icon_overlay_in_templates (motion_lab.html)' },
   { file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: /\b(?:on|play|build|calc|destroy|init|open|close)Clip[A-Z]/, note: '[TestSimilarStageGuard] test_no_clip_alpine_methods_in_showcase_and_similar — showcase.html 半邊（state-similar.js 半邊由 eslint SEL_CLIP_METHOD_IDENT 覆蓋，Group 5b）' },
 
+  // ---- [TestSimilarMainStaticFocalOrder] Codex PR#107 P2：_buildSimilarMainStatic 內
+  //   stageInner.appendChild(img) 必須在 applyFocalToImg(img, ...) 之前——applyCellFocal 對
+  //   已快取封面走同步分支，當場 getComputedStyle 讀 --poster-crop-ratio（:root 變數），
+  //   detached element 讀不到 inherited custom property（回空字串 → parseFloat NaN），
+  //   會誤清 objectPosition。時序修法，非旗標繞過。 ----
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'order',
+    scope: { anchor: /(?:^|\n)\s*_buildSimilarMainStatic\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    items: [
+      { pattern: /stageInner\.appendChild\(img\)/ },
+      { pattern: /this\.applyFocalToImg\(img,\s*this\.currentLightboxVideo\)/ },
+    ],
+    note: '[TestSimilarMainStaticFocalOrder] appendChild(img) 必須在 applyFocalToImg(img, ...) 之前（避免 detached element getComputedStyle 讀不到 --poster-crop-ratio）',
+  },
+
   // ---- [TestRescrapeEntryGuard] showcase ⚙ gear 唯一進階重刮入口（62b-1 → 74b US4 → 74c-T1/T3）----
   {
     file: 'web/templates/showcase.html', kind: 'required-string',

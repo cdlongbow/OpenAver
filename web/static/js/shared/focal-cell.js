@@ -29,7 +29,14 @@ function computeAndApply(el, video) {
 }
 
 /**
- * @param {HTMLImageElement|null} el 小格 <img>（grid / similar slot / mobile drill 三站共用）
+ * ⚠️ 前置條件：`el` 必須**已連接 DOM**（Codex PR#107 P2）。computeAndApply 讀的
+ * `--poster-crop-ratio` 掛在 `:root`，detached element 沒有連到 `:root` 的 inheritance
+ * chain → `getComputedStyle` 回空字串 → `parseFloat` NaN → 誤判「無比例」清掉 objectPosition。
+ * 已快取的封面尤其危險：`.src=` 後 `el.complete && el.naturalWidth` **同步**即為真（實測
+ * complete=true/naturalWidth=1），當場走同步分支、不經 load 事件，所以連「等 load 時已 append
+ * 了」的僥倖都沒有。imperative 建 img 時務必 `appendChild` 後再呼叫本函式。
+ *
+ * @param {HTMLImageElement|null} el 小格 <img>（grid / similar slot / mobile drill 三站共用）；須已 in-DOM
  * @param {{crop_mode: string, auto_focal: string}|null|undefined} video
  */
 export function applyCellFocal(el, video) {
