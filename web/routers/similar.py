@@ -75,7 +75,7 @@ def _compute_similar_covers(video_id: int, limit: int) -> dict:
     results_videos = ranker.rank(target, top_k=limit)
 
     # Codex PR#105 P2 修復：ranker.rank() 可能回 SimilarRankerCache 快取的 Video 物件（非
-    # fresh DB row）。update_auto_focal()/update_crop_mode() 刻意不 invalidate 整個 ranker
+    # fresh DB row）。update_auto_focal()/update_manual_focal() 刻意不 invalidate 整個 ranker
     # cache（焦點/裁切模式是純顯示欄位、不影響排序特徵，比照 upsert/delete invalidate 代價
     # 不對稱），改為此處批次 fresh 覆蓋，避免卡片顯示 stale 焦點/裁切模式。
     focal_crop_map = repo.get_focal_crop_map([v.path for v in results_videos])

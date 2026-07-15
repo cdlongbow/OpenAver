@@ -4,6 +4,7 @@ All filesystem / DB access is mocked — zero real I/O unless explicitly noted
 (T-3 DB tests use the temp_db fixture for a real SQLite write path).
 """
 import inspect
+import os
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -3164,3 +3165,279 @@ class TestProduceSourceMediaServerStrmE2E:
             assert not list(d.glob('*.strm')), f"off flavour must not write a .strm in {d.name}"
             # but the off assets are still there (nfo + cover) — strm is the only delta
             assert list(d.glob('*.nfo')), f"off flavour still writes nfo in {d.name}"
+
+
+# ---------------------------------------------------------------------------
+# TASK-99b-T1: post-loop bulk focal pass (CD-99b-1/2/7/8, spec §3.10)
+#
+# Real sqlite temp DB (CD-99b-6, no repo mock) + real produce_source loop
+# (real file writes for cover/nfo via the same _t4_real_* stubs as the T6
+# media-server e2e suite above). Only maybe_submit_video_focal is faked
+# (fire-and-forget collection, per TASK-99b-T1 card) — requires_face_detection
+# and get_empty_focal_candidates run for real against the real DB.
+# ---------------------------------------------------------------------------
+
+
+def _focal_setup_source(tmp_path, filenames):
+    """Create a real read-only source dir with real (empty-content) video files."""
+    source_dir = tmp_path / 'focal-src'
+    source_dir.mkdir()
+    for fn in filenames:
+        (source_dir / fn).write_bytes(b'FAKE-VIDEO-BYTES')
+    output_dir = tmp_path / 'focal-output'
+    output_dir.mkdir()
+    return source_dir, output_dir
+
+
+def _focal_run_produce_source(source_dir, output_dir, repo, filenames, *, should_abort=None):
+    """Run the REAL produce_source against a REAL VideoRepository(temp_db).
+
+    Mirrors _e2e_run_produce_source (T6 suite) but takes a real repo instance
+    instead of a MagicMock, so get_empty_focal_candidates / get_by_path /
+    get_all all hit the real temp DB — required by CD-99b-6 for the focal
+    pass under test.
+    """
+    from core.readonly_producer import produce_source
+
+    source = _make_source(readonly=True, output_path=str(output_dir), path=str(source_dir))
+    files = [
+        {'path': str(source_dir / fn), 'size': 1_000_000, 'mtime': 1.0, 'nfo_mtime': 0.0}
+        for fn in filenames
+    ]
+    config = _make_config(scraper_cfg=dict(_T3_BASE_CONFIG))
+
+    with patch('core.readonly_producer._list_source_videos', return_value=files), \
+         patch('core.readonly_producer.search_jav', side_effect=_e2e_search_jav_factory()), \
+         patch('core.readonly_producer.download_image', side_effect=_t4_real_download), \
+         patch('core.readonly_producer.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
+         patch('core.readonly_producer.generate_nfo', side_effect=_t4_real_nfo):
+        result = produce_source(source, config, repo, should_abort=should_abort)
+    return result
+
+
+class TestProduceSourceFocalTrigger:
+    """TASK-99b-T1 DoD ①③④⑤⑦⑧⑨ (DoD ② has its own class below — needs a
+    pre-seeded skipped row, different setup shape than a fresh e2e run)."""
+
+    def test_new_uncensored_file_submitted_with_correct_args(self, tmp_path, temp_db):
+        """DoD ①: a newly-produced no-mosaic file (SIRO-* → shirouto/amateur gate
+        True) is picked up by the post-loop bulk pass and submitted with the
+        right (number, maker, path_uri, cover_fs, db_path) — not just 'submitted
+        with anything'."""
+        from core.database import VideoRepository
+        from core.path_utils import to_file_uri
+
+        source_dir, output_dir = _focal_setup_source(tmp_path, ['SIRO-001.mp4'])
+        repo = VideoRepository(temp_db)
+
+        with patch('core.readonly_producer.maybe_submit_video_focal') as mock_submit:
+            result = _focal_run_produce_source(source_dir, output_dir, repo, ['SIRO-001.mp4'])
+
+        assert result.created == 1
+        mock_submit.assert_called_once()
+        args, kwargs = mock_submit.call_args
+        number, maker, path_uri, cover_fs = args
+        assert number == 'SIRO-001'
+        assert maker == 'Maker'
+        assert path_uri == to_file_uri(str(source_dir / 'SIRO-001.mp4'))
+        assert cover_fs, "cover_fs must not be empty — a cover was actually downloaded"
+        assert kwargs.get('db_path') == repo.db_path  # DoD ⑧
+
+    def test_censored_file_not_submitted(self, tmp_path, temp_db):
+        """DoD ③: a censored number (SSIS-*, non-whitelisted maker) is an empty-focal
+        candidate too (auto_focal just written as '') but requires_face_detection
+        gates it out — zero submit calls."""
+        from core.database import VideoRepository
+
+        source_dir, output_dir = _focal_setup_source(tmp_path, ['SSIS-002.mp4'])
+        repo = VideoRepository(temp_db)
+
+        with patch('core.readonly_producer.maybe_submit_video_focal') as mock_submit:
+            result = _focal_run_produce_source(source_dir, output_dir, repo, ['SSIS-002.mp4'])
+
+        assert result.created == 1
+        mock_submit.assert_not_called()
+
+    def test_cover_already_on_disk_when_submit_is_called(self, tmp_path, temp_db):
+        """DoD ④ (順序陷阱鎖): by the time maybe_submit_video_focal is invoked, the
+        produced cover file must already exist on disk — proving the pass truly
+        runs AFTER the per-file loop (assets already written), not mid-loop
+        before _write_movie_assets. A hook mis-placed before asset-writing would
+        still 'not raise' (maybe_submit_video_focal is mocked here) but the
+        real-file assertion below is what actually pins the ordering."""
+        from core.database import VideoRepository
+
+        source_dir, output_dir = _focal_setup_source(tmp_path, ['SIRO-003.mp4'])
+        repo = VideoRepository(temp_db)
+
+        with patch('core.readonly_producer.maybe_submit_video_focal') as mock_submit:
+            result = _focal_run_produce_source(source_dir, output_dir, repo, ['SIRO-003.mp4'])
+
+        assert result.created == 1
+        mock_submit.assert_called_once()
+        cover_fs = mock_submit.call_args[0][3]
+        assert cover_fs and os.path.exists(cover_fs), (
+            "cover file must already be on disk when the focal pass submits — "
+            "proves post-loop placement, not just 'no exception was raised'"
+        )
+
+    def test_abort_midloop_zero_submits_and_candidates_never_queried(self, tmp_path, temp_db):
+        """DoD ⑤: should_abort flips True after the 2nd file → the ENTIRE bulk
+        focal pass is skipped for this run — not just 'nothing submitted'.
+        Asserting only submit-call-count==0 would pass even if a broken
+        implementation still queried candidates (e.g. none matched the gate by
+        coincidence); this test also spies get_empty_focal_candidates itself
+        (card's 'may 1 fikang' warning) to close that hole. Prune must still run
+        despite the abort (CD-99b-8: gate focal only, never `return`)."""
+        from core.database import VideoRepository
+
+        filenames = ['SIRO-010.mp4', 'SIRO-011.mp4', 'SIRO-012.mp4']
+        source_dir, output_dir = _focal_setup_source(tmp_path, filenames)
+        repo = VideoRepository(temp_db)
+        # Spy (not stub) get_all / get_empty_focal_candidates so the real
+        # prune / candidate-query behaviour is unchanged but call counts are
+        # observable.
+        real_get_all = repo.get_all
+        real_get_candidates = repo.get_empty_focal_candidates
+        get_all_spy = MagicMock(side_effect=real_get_all)
+        get_candidates_spy = MagicMock(side_effect=real_get_candidates)
+        repo.get_all = get_all_spy
+        repo.get_empty_focal_candidates = get_candidates_spy
+
+        call_count = [0]
+
+        def abort_after_two():
+            call_count[0] += 1
+            return call_count[0] > 2  # let files 1 and 2 through, break before file 3
+
+        with patch('core.readonly_producer.maybe_submit_video_focal') as mock_submit:
+            result = _focal_run_produce_source(
+                source_dir, output_dir, repo, filenames, should_abort=abort_after_two)
+
+        assert result.created == 2, "sanity: abort happened mid-loop, not before any work"
+        mock_submit.assert_not_called()
+        get_candidates_spy.assert_not_called()  # bulk query itself must not run once aborted
+        get_all_spy.assert_called_once()  # prune must still run despite the focal-pass abort
+
+    def test_abort_mid_candidate_loop_stops_after_first_submit(self, tmp_path, temp_db):
+        """Codex P1 (CD-99b-8 二次修): should_abort flips True only AFTER the
+        bulk query has started and the FIRST candidate has already been
+        submitted — the loop-top gate (not just the :912 entry gate) must stop
+        the remaining candidates from being submitted. Without a per-iteration
+        check, a cancel that lands mid-candidate-loop (candidates can reach the
+        thousands, each iteration costs an os.path.exists syscall against a
+        possibly-slow readonly mount) would still queue everything after the
+        point of cancellation into the single-threaded FIFO focal worker."""
+        from core.database import VideoRepository
+
+        filenames = ['SIRO-050.mp4', 'SIRO-051.mp4', 'SIRO-052.mp4']
+        source_dir, output_dir = _focal_setup_source(tmp_path, filenames)
+        repo = VideoRepository(temp_db)
+
+        call_count = [0]
+
+        def abort_after_first_candidate():
+            call_count[0] += 1
+            # Calls 1-3: per-file loop (all 3 files processed, not aborted).
+            # Call 4: post-loop entry gate (:912, not aborted — bulk query runs).
+            # Call 5: top of candidate-loop iteration 1 (not aborted — 1st
+            # candidate gets submitted). Call 6+: abort flips True, so the
+            # candidate-loop-top gate breaks before candidate 2 is submitted.
+            return call_count[0] > 5
+
+        with patch('core.readonly_producer.maybe_submit_video_focal') as mock_submit:
+            result = _focal_run_produce_source(
+                source_dir, output_dir, repo, filenames, should_abort=abort_after_first_candidate)
+
+        assert result.created == 3, "sanity: all 3 files processed before the candidate loop is reached"
+        assert mock_submit.call_count == 1, (
+            "only the first candidate may be submitted — the candidate-loop-top "
+            "gate must stop the remaining 2 once should_abort flips True mid-loop"
+        )
+
+    def test_get_empty_focal_candidates_exception_does_not_abort_generation(self, tmp_path, temp_db):
+        """DoD ⑦: bulk-query failure is a pure side-effect failure — result.created
+        must be unaffected, only a logger.warning(exc_info=True) is left behind."""
+        from core.database import VideoRepository
+
+        source_dir, output_dir = _focal_setup_source(tmp_path, ['SIRO-020.mp4'])
+        repo = VideoRepository(temp_db)
+        repo.get_empty_focal_candidates = MagicMock(side_effect=RuntimeError("boom"))
+
+        with patch('core.readonly_producer.maybe_submit_video_focal') as mock_submit, \
+             patch('core.readonly_producer.logger') as mock_logger:
+            result = _focal_run_produce_source(source_dir, output_dir, repo, ['SIRO-020.mp4'])
+
+        assert result.created == 1, "focal bulk-query failure must not affect the generation result"
+        mock_submit.assert_not_called()
+        mock_logger.warning.assert_called_once()
+        assert mock_logger.warning.call_args.kwargs.get('exc_info') is True
+
+    def test_this_run_uris_share_namespace_with_upsert_key(self, tmp_path, temp_db):
+        """DoD ⑨: the URI the focal pass computes from `files` (this_run_uris) must
+        be the exact same key _upsert_db wrote the row under — otherwise the
+        bulk query would silently miss every candidate while looking perfectly
+        fine (namespace-mismatch bug class, HANDOFF §3.2)."""
+        from core.database import VideoRepository
+        from core.path_utils import to_file_uri
+
+        source_dir, output_dir = _focal_setup_source(tmp_path, ['SIRO-030.mp4'])
+        repo = VideoRepository(temp_db)
+
+        with patch('core.readonly_producer.maybe_submit_video_focal') as mock_submit:
+            result = _focal_run_produce_source(source_dir, output_dir, repo, ['SIRO-030.mp4'])
+
+        assert result.created == 1
+        expected_uri = to_file_uri(str(source_dir / 'SIRO-030.mp4'))
+        row = repo.get_by_path(expected_uri)
+        assert row is not None, "produce_source's upsert key must match the focal pass's own URI derivation"
+        # The real assertion for CD-99b-6/HANDOFF §3.2: get_empty_focal_candidates
+        # actually FOUND this row via the focal pass's own URI derivation (not
+        # just that _upsert_db wrote it under expected_uri — a namespace
+        # mismatch between the two would leave the row present but the bulk
+        # query would silently return zero candidates for it).
+        mock_submit.assert_called_once()
+        assert mock_submit.call_args[0][2] == expected_uri
+
+
+class TestProduceSourceFocalTriggerBulkGate:
+    """TASK-99b-T1 DoD ② (CD-99b-2): the bulk gate must catch EXISTING rows that
+    _should_skip lets through (already scraped, still empty-focal, never
+    detected) — not just rows freshly upserted this run. This is the whole
+    reason a per-item hook is insufficient (0.12's existing readonly libraries
+    are all `skipped`, never `created`)."""
+
+    def test_should_skip_row_still_gets_submitted_by_bulk_pass(self, tmp_path, temp_db):
+        from core.database import VideoRepository, Video
+        from core.path_utils import to_file_uri
+
+        filenames = ['SIRO-040.mp4']
+        source_dir, output_dir = _focal_setup_source(tmp_path, filenames)
+        video_uri = to_file_uri(str(source_dir / 'SIRO-040.mp4'))
+
+        # Real cover file so maybe_submit_video_focal's own os.path.exists guard
+        # (irrelevant here since it's mocked, but keeps the fixture realistic)
+        # would pass if it were the real function.
+        cover_path = output_dir / 'SIRO-040-cover.jpg'
+        cover_path.write_bytes(b'FAKE-IMG')
+        cover_uri = to_file_uri(str(cover_path))
+
+        repo = VideoRepository(temp_db)
+        repo.upsert(Video(
+            path=video_uri, number='SIRO-040', maker='Maker', title='Existing',
+            cover_path=cover_uri, scrape_attempted_at=1000.0,
+        ))
+        # auto_focal='' and focal_attempted_at is NULL by dataclass default —
+        # exactly the "existing readonly library, never focal-attempted" shape.
+
+        # No _should_skip patch on purpose: the seeded scrape_attempted_at above
+        # makes the REAL attempted_index path skip this row, so the natural skip
+        # (and its URI derivation) is exercised rather than assumed.
+        with patch('core.readonly_producer.maybe_submit_video_focal') as mock_submit:
+            result = _focal_run_produce_source(source_dir, output_dir, repo, filenames)
+
+        assert result.skipped == 1, "sanity: the per-file loop really did skip it (not created)"
+        mock_submit.assert_called_once()
+        args = mock_submit.call_args[0]
+        assert args[0] == 'SIRO-040'
+        assert args[2] == video_uri

@@ -12,7 +12,7 @@ import { _filteredVideos, _filteredActresses, _killLightboxTimelines, _NO_COVER_
 import { POSTER_CROP_MAX_W } from '@/shared/breakpoints.js';
 import { detectSwipe } from '@/shared/swipe.js';
 import { waitForMount } from '@/shared/dom-timing.js';
-import { focalObjectPosition } from '@/shared/focal.js';
+import { parseFocal, clampMaskWinLeft } from '@/shared/focal.js';
 
 export function stateLightbox() {
     // 49b T4cd: Picker 動畫參數（T1 fix2 定案，2026-04-25）
@@ -52,17 +52,45 @@ export function stateLightbox() {
 
         _lbFullLoaded: false,           // 71-T6 blur-up：原圖（cover_full_url）@load 後翻 true → overlay opacity 淡入
 
-        // 98b-T4：焦點裁切遮罩 toggle（Alpine 短狀態，單一提交生命週期 CD-98b-8）。
-        // 98b P2 fix（Codex）：_maskSession 為單調遞增 session id，取代原本以 path 比對的
-        // guard——path 比對在「同片重開」等邊界不夠精確，session id 才是唯一真理來源。
-        // openMask()/_resetMask() 遞增；toggleMaskMode/closeMask 在 await 前捕捉、await 後
-        // 比對，不符即代表已換片/關燈箱，跳過該次 await 後的共用 UI 狀態寫入。
+        // 99a-T3：焦點裁切遮罩 — 一律 force-detect 預覽 + 左右拖曳微調 + ✓/✗ 提交（Alpine 短狀態，
+        // 單一提交生命週期 CD-98b-8 沿用）。98b 的 default⇄auto toggle 已整條移除（見 CHANGELOG）。
+        // _maskSession 為單調遞增 session id（98b P2 fix 沿用，Codex）：openMask()/_resetMask() 遞增，
+        // confirmMask()/_maskDragStart() 的 pointermove 在 await/事件前捕捉、之後比對，不符即代表
+        // 已換片/關燈箱，跳過該次的共用 UI 狀態寫入。
         _maskVisible: false,            // 遮罩 overlay 是否顯示
-        _maskMode: 'default',           // 'default'（窗貼右）| 'auto'（窗對焦點），開啟時以當前片 crop_mode 初始化
         _maskSession: 0,                // 單調遞增 session id（openMask/_resetMask 遞增）
         _maskDetecting: false,          // force-detect 進行中（spinner）
-        _maskWinStyle: '',              // 98b-T6：亮窗幾何 reactive data（openMask/toggle 同步 imperative 算，非量測-in-binding）
-        _maskResizeHandler: null,       // 98b-T6：開遮罩時綁 window resize 重算，close/reset 時解
+        // 98b-T6：亮窗幾何 reactive data（openMask/drag 同步 imperative 算，非量測-in-binding）。
+        // 99a-T5：型別恆為 object（非 string）——headless self-verify 實測抓到：Alpine `:style`
+        // 綁 STRING 值時走 `el.setAttribute('style', ...)` 整串覆寫（Alpine 內部 `Xn()`），會把
+        // `x-show` 剛設的 inline `display:none` 一併洗掉；`x-show` 本身又會快取「上次算出的布林值」，
+        // 布林值沒變就不重跑 show/hide（Alpine 內部 x-show 的 `f===l` 短路），兩者疊加＝窗子在
+        // `_maskDetecting` 為真期間仍卡在 `display:block`（baseline flash 不會消失，一路卡到
+        // detect resolve）。物件值改走 `el.style.setProperty(key, val)` 逐屬性設值（Alpine 內部
+        // `Yn()`），不觸碰 `display`，與 x-show 互不干擾。永遠回傳/賦值 object，不可再退回 string。
+        _maskWinStyle: {},
+        _maskResizeHandler: null,       // 98b-T6：開遮罩時綁 window resize 重算，teardown/reset 時解
+        // 99a-T3：手動焦點編輯狀態。_maskFocalX 恆為具體數字（geometry 已知後）——僅在 openMask
+        // 幾何尚未解出的極短暫態為 null（見 openMask 內註解，Opus correction B）。
+        _maskFocalX: null,
+        // Codex PR#107 第二輪 P2：使用者開遮罩當下觀察到的 cover_path（server 端 DB-key
+        // file:/// URI 原樣值，由 /detect-focal 回應帶回，非前端反解/推算）。null＝尚未
+        // 從 server 取得任何值（openMask 起手重置、或本次 detect 連 JSON body 都沒拿到，
+        // 見 openMask 內 try/catch 註解）——confirmMask 见 null 一律 fail-closed 拒存，
+        // 不送 POST，避免用「猜的」cover_path 打穿 compare-and-store 守衛的保護意圖。
+        _maskExpectedCoverPath: null,
+        _maskDragging: false,           // 拖曳中（停用 CSS transition，跟手不打架，見 showcase.css）
+        _maskDragMoveHandler: null,     // document pointermove listener 參照（成對 add/remove）
+        _maskDragUpHandler: null,       // document pointerup/pointercancel listener 參照（成對 add/remove）
+        // 99a-T5：detect-first 重新設計——force-detect 先跑完（星空等待動畫佔位），偵測完成
+        // （成功或失敗皆算）才揭露可拖曳的 .lb-mask-window（gate 見 openMask/_computeMaskWinStyle
+        // 呼叫點與 showcase.html x-show="_maskVisible && !_maskDetecting"）。拖曳入口只在 detect
+        // 已 resolve 後才存在，「detect 還沒回來但已經可以拖」的時間窗在結構上不再存在——原本
+        // 99a-T3 為了防這個 race 而加的「使用者已手動調整」旗標因此整條移除（不留殭屍旗標；
+        // 舊識別字已由 static_guard_lint.mjs forbidden-string 鎖住不得復活）。
+        _maskWaitTl: null,              // 99a-T5：星空等待動畫 handle（{tl,burst,stars}），detect
+                                         // 期間播放；openMask 啟動，finally/_resetMask/_maskTeardown
+                                         // 三處對稱停止（_maskStopWaitAnim helper，idempotent）。
 
         _videoChipsExpanded: false,     // 影片 tag chips +N 展開（T4 使用）
 
@@ -726,126 +754,275 @@ export function stateLightbox() {
             }
         },
 
-        // ==================== 焦點裁切遮罩 toggle (98b-T4) ====================
-        // Alpine 短狀態；亮窗滑動用 CSS transition on transform（宣告式，非 GSAP）。
-        // 生命週期三態對稱：openMask（遞增 _maskSession）↔ closeMask（session 相符才 commit）
-        // ↔ _resetMask（換片 / 關燈箱 遞增 session、丟棄未提交態）。
+        // ==================== 焦點裁切遮罩 — force-detect + 拖曳 + ✓/✗ (99a-T3) ====================
+        // Alpine 短狀態；亮窗滑動用 CSS transition on transform（宣告式，非 GSAP），拖曳中停用
+        // （見 showcase.css .lb-mask-window--dragging，跟手不打架）。
+        // 生命週期對稱：openMask（遞增 _maskSession，內建 force-detect）↔ confirmMask/cancelMask
+        // （經共用 _maskTeardown 收尾）↔ _resetMask（換片 / 關燈箱，遞增 session、丟棄未提交態）。
 
-        openMask() {
+        async openMask() {
             if (this._maskVisible) return;   // 98b-T6：re-entry guard——按鈕在遮罩開啟時仍可見，
-                                             // 再點不重複裝 resize listener / 不重置 _maskMode（防洩漏）。
+                                             // 再點不重複裝 resize listener。
             if (!this.currentLightboxVideo?.path) return;
             // 98b-T6 防线：圖未就緒不開（按鈕也 gate _lbFullLoaded，此為 defense-in-depth）。
             if (!this._lbFullLoaded) return;
-            this._maskMode = this.currentLightboxVideo.crop_mode || 'auto';
-            // 98b-T6 根因修：**同步**算幾何、存 reactive data _maskWinStyle，先設幾何再顯示。
-            // 量測目標是恆可見、開遮罩時已 layout 的 cover（.lb-full），非 overlay → 無需 defer；
-            // 且本頁 Alpine $nextTick 不可靠（實測 callback 不 fire），deferred compute 會留空窗。
-            // 避免把量測放進 :style binding（抓到暫態尺寸後永不重算＝原 T4 bug）。
+
+            // 99a-T3：_maskFocalX 暫時設 null（幾何尚未解出的極短暫態，見 state 宣告處註解）。
+            // _computeMaskWinStyle 讀到 null 即貼右裁基準（D2）——99a-T5：此值只作為「detect
+            // 失敗/無臉」時的終值 fallback，不會先畫出來再滑走（.lb-mask-window 在 _maskDetecting
+            // 為真時不渲染，見 showcase.html x-show）。
+            this._maskFocalX = null;
+            // Codex PR#107 第二輪 P2：新 session 起手先清舊 token，防止「這次 detect 連
+            // JSON body 都沒拿到」時沿用上一支影片/上一個 session 殘留的 cover_path
+            // 誤配到這支影片（confirmMask 的 fail-closed 判斷才有意義）。
+            this._maskExpectedCoverPath = null;
             const s = this._computeMaskWinStyle();
             if (!s) {
                 // 幾何算不出（rect=0 / naturalWidth=0）→ 不開、不留「全灰無窗」死態，toast 提示。
                 this.showToast(window.t('showcase.lightbox.mask_detect_failed'), 'error');
                 return;
             }
+            // Opus correction B：幾何一旦解出，_maskFocalX 收斂為具體數字（右裁基準 x），不留 null
+            // 終態——_computeMaskWinStyle 的 getComputedStyle/--poster-crop-ratio 讀取受 static guard
+            // 錨定在該函式本體內（不可抽成共用 helper），此處小段重算幾何是該限制下的刻意重複，
+            // 非隨手複製；`s` 成功即代表 el/rect/r 皆已驗證合法，這裡不需再驗一次。
+            const el = this.$refs.lightboxCoverFull;
+            const rect = el.getBoundingClientRect();
+            const r = parseFloat(getComputedStyle(el).getPropertyValue('--poster-crop-ratio'));
+            const winW = Math.min(rect.width, rect.height * r);
+            this._maskFocalX = (rect.width - winW / 2) / rect.width;
+
             this._maskSession++;         // 98b P2 fix：新開 session，讓任何舊 session 的 await 後寫入失效
             this._maskDetecting = false; // 98b P2 fix(二)：清舊 session 遺留的偵測態——舊 detect await 的
                                          // finally 因 session 不符會**跳過**清 spinner，若不在此重置，新遮罩
                                          // 會頂著卡死的 spinner（Codex）。新 session 起手一律非偵測中。
-            this._maskWinStyle = s;      // 先設幾何
-            this._maskVisible = true;    // 再顯示（無空窗閃）
-            // 開啟期間 window resize 重算（開時綁、close/reset 時解，lifecycle 對稱）。
-            this._maskResizeHandler = () => {
-                if (this._maskVisible) this._maskWinStyle = this._computeMaskWinStyle();
-            };
-            window.addEventListener('resize', this._maskResizeHandler);
-        },
+            this._maskWinStyle = s;      // 先設幾何（右裁基準，detect resolve 前 / 無臉時的 fallback 終值）
 
-        // 翻頁 default ⇄ auto；翻到 auto 但 auto_focal 空（gate 漏判片）→ 同步 force-detect。
-        async toggleMaskMode() {
-            const session = this._maskSession;   // 98b P2 fix：await 前捕捉當下 session（Codex P2）
-            this._maskMode = this._maskMode === 'default' ? 'auto' : 'default';
-            if (this._maskMode === 'auto' && this.currentLightboxVideo && !this.currentLightboxVideo.auto_focal) {
-                const targetVideo = this.currentLightboxVideo;
-                this._maskDetecting = true;
-                try {
-                    const resp = await fetch('/api/showcase/video/detect-focal', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ path: targetVideo.path }),
-                    });
-                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    const data = await resp.json();
-                    if (data.success) {
-                        // 同參考寫回 targetVideo 本身安全（綁定物件而非共用 UI 狀態）→ 焦點窗即時重畫
-                        // （grid 卡也重算 focalObjectPosition）。即使已換片/關燈箱（session 不符）仍保留
-                        // 成功偵測結果，不因 gate 把已偵測到的 auto_focal 丟掉。
-                        targetVideo.auto_focal = data.auto_focal;
-                    } else {
-                        throw new Error(data.error || 'API failed');
-                    }
-                } catch (e) {
-                    // 98b P2 fix：session 不符代表已換片/關燈箱，這次失敗已不屬於當前畫面，不再彈舊片的錯誤 toast。
-                    if (session === this._maskSession) {
-                        this.showToast(window.t('showcase.lightbox.mask_detect_failed'), 'error');
-                    }
-                } finally {
-                    // 98b P2 fix：只在仍為同一 session 才收自己的 spinner，防誤關別片（B）正在跑的 spinner。
-                    if (session === this._maskSession) {
-                        this._maskDetecting = false;
-                    }
-                }
-            }
-            // 98b-T6：mode 翻轉（＋ detect-focal 回填 auto_focal）後**同步**重算窗幾何（cover 已 layout、
-            // 不用 $nextTick）。寬高不變、只 translateX 變 → :style 的 CSS transition:transform 觸發左右滑動。
-            // 98b P2 fix：session 不符代表已換片/關燈箱，不得用當前（別片）DOM 覆蓋別片的窗幾何（Codex P2）。
-            if (session === this._maskSession) {
-                this._maskWinStyle = this._computeMaskWinStyle();
-            }
-        },
-
-        // 主動關遮罩：僅當 session 相符（未在 await 期間換片/關燈箱）才 commit crop_mode 到 DB + 同參考。
-        async closeMask() {
-            // 98b P2 fix（Codex）：session id 取代原本的 path 比對——path 比對在「同片重開」邊界
-            // 不夠精確；session 由 openMask/_resetMask 單調遞增，await 前捕捉、await 後比對，不符
-            // 即代表已換片/關燈箱（A 存檔期間切到 B 開 B 遮罩），跳過該次 await 後的共用 UI 狀態寫入，
-            // 不誤關 B 的遮罩。await 前無任何 await 已發生，commit 目標（targetVideo）恆為當下片，
-            // 故不需要額外的 pre-await guard。
-            if (!this.currentLightboxVideo?.path) return;   // null-safety：對齊原 path-guard 的 null 行為（燈箱已關/換片途中 → 不 commit、不 teardown）。
+            // D1（CD-1）：一律 force-detect，僅預覽、不寫 DB。偵測完成後若有臉，_maskFocalX 更新為
+            // 偵測 x；無臉則維持右裁基準不變。99a-T5：.lb-mask-window 在 _maskDetecting 為真時不
+            // 渲染（showcase.html x-show="_maskVisible && !_maskDetecting"），故偵測完成翻 false
+            // 那一刻起才第一次畫出來，畫出來就已是終值——不再有「先貼右裁基準再滑到偵測位置」的
+            // 過渡態，拖曳入口（@pointerdown）在 detect 完成前也不存在，Bug 1 的 race 結構性消失。
             const session = this._maskSession;
             const targetVideo = this.currentLightboxVideo;
-            const mode = this._maskMode;
-            try {
-                const resp = await fetch('/api/showcase/video/crop-mode', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ path: targetVideo.path, mode }),
-                });
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                const data = await resp.json();
-                if (data.success) {
-                    targetVideo.crop_mode = mode;   // 同參考 → grid 卡 reactive 重算
-                } else {
-                    throw new Error(data.error || 'API failed');
-                }
-            } catch (e) {
-                if (session === this._maskSession) {
-                    this.showToast(window.t('showcase.lightbox.mask_save_failed'), 'error');
+            // 99a-T5（headless self-verify 實測抓到，非理論推測）：_maskDetecting 必須先翻 true，
+            // 才能設 _maskVisible=true——Alpine 的 x-show reactive effect 對每次同步賦值都立即
+            // 重新求值（非批次到下個 microtask 才跑），若順序顛倒（先 _maskVisible=true，
+            // _maskDetecting 還停在上面剛重置的 false），x-show="_maskVisible && !_maskDetecting"
+            // 會在兩行賦值之間的中繼態被評估為 true，短暫畫出「貼右裁基準」的窗（baseline
+            // flash），違反本卡「畫出來就已是終值」的核心承諾。實測：START-525 這支影片 100%
+            // 重現（baseline 144.30px ≠ 最終偵測值 0px，flash 全程持續到 detect resolve 為止）。
+            this._maskDetecting = true;
+            this._maskVisible = true;    // 再顯示 overlay（此刻 _maskDetecting 已是 true，無空窗閃）
+            // 開啟期間 window resize 重算（開時綁、teardown/reset 時解，lifecycle 對稱）。
+            // 99a-T5：`|| this._maskWinStyle` fallback——_computeMaskWinStyle 失敗時回傳 null，
+            // 不可讓 null 流進 :style 綁定（見 _maskWinStyle 宣告處註解），保留前一次的合法幾何。
+            this._maskResizeHandler = () => {
+                if (this._maskVisible) this._maskWinStyle = this._computeMaskWinStyle() || this._maskWinStyle;
+            };
+            window.addEventListener('resize', this._maskResizeHandler);
+
+            // 99a-T5：星空等待動畫（detect 期間佔位）。單一入口——只在這裡啟動；停止見下方
+            // finally（正常結束）與 _resetMask/_maskTeardown（中斷路徑），_maskStopWaitAnim 對稱。
+            // C23 per-callsite PRM guard（比照 state-similar.js isPRM pattern）：PRM 為真時整段
+            // 跳過 GSAP，唯一等待指示回退成 .lb-mask-spinner（純 CSS animation，PRM blanket 規則
+            // 保證仍渲染不轉，不留死白）。
+            const isPRM = !!(window.OpenAver && window.OpenAver.prefersReducedMotion);
+            if (!isPRM) {
+                const coverEl = this.$refs.lightboxCoverFull && this.$refs.lightboxCoverFull.closest('.lightbox-cover');
+                if (coverEl && window.GhostFly && window.GhostFly.playFocalDetectWait) {
+                    this._maskWaitTl = window.GhostFly.playFocalDetectWait(coverEl);
                 }
             }
-            // 只有仍是同一 session（未切走/關燈箱）才收 overlay + 解 resize listener；切到 B 時
-            // _resetMask 已處理 A 的 visibility 與 A 的舊 handler，且 B 的 openMask 已裝新 handler
-            // → A 的舊回應不得 clobber。
-            if (session === this._maskSession) {
-                this._maskVisible = false;
-                if (this._maskResizeHandler) {
-                    window.removeEventListener('resize', this._maskResizeHandler);
-                    this._maskResizeHandler = null;
+
+            try {
+                const resp = await fetch('/api/showcase/video/detect-focal', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: targetVideo.path }),
+                });
+                // Codex PR#107 第二輪 P2：先嘗試解 body 拿 cover_path，不管 resp.ok——
+                // server 在成功偵測與「找到 row 但封面檔缺失」兩個分支都帶 cover_path
+                // （見 web/routers/showcase.py detect_video_focal），拖到下面 !resp.ok
+                // 才 throw 會漏接後者。真正的網路層失敗（fetch reject / body 非 JSON）
+                // 才會讓 data 維持 null，此時 _maskExpectedCoverPath 停在 openMask 起手
+                // 清空的 null，confirmMask 見 null 一律 fail-closed 拒存（不可用猜的值）。
+                let data = null;
+                try { data = await resp.json(); } catch (_jsonErr) { data = null; }
+                if (data && typeof data.cover_path === 'string' && session === this._maskSession) {
+                    this._maskExpectedCoverPath = data.cover_path;
+                }
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                if (!data || !data.success) throw new Error((data && data.error) || 'API failed');
+                if (session === this._maskSession) {
+                    const parsed = parseFocal(data.auto_focal);   // '' / 畸形 → null，維持右裁基準
+                    if (parsed) {
+                        this._maskFocalX = parsed.x;
+                        // 99a-T5：|| fallback 同 resize handler——null 不可流進 :style 綁定。
+                        this._maskWinStyle = this._computeMaskWinStyle() || this._maskWinStyle;
+                    }
+                    // else：無臉——_maskFocalX 維持右裁基準（openMask 起手已算好），不動它。
+                }
+            } catch (e) {
+                // 偵測失敗只 toast，_maskFocalX 維持右裁基準，不讓 UI 卡在半套態。
+                if (session === this._maskSession) {
+                    this.showToast(window.t('showcase.lightbox.mask_detect_failed'), 'error');
+                }
+            } finally {
+                // session guard 同時包住 _maskDetecting 與停星空動畫：若這期間已被 _resetMask
+                // 中斷（換片/關燈箱），_resetMask 早已呼叫過 _maskStopWaitAnim 並清空
+                // this._maskWaitTl；此處若不 session-gate，會誤殺「新 session 剛啟動的星空」
+                // （見本 task 的「等待期間快速連續開關」邊界案例）。
+                if (session === this._maskSession) {
+                    this._maskDetecting = false;
+                    this._maskStopWaitAnim();   // 成功/失敗皆算「正常結束」，對稱停止
                 }
             }
         },
 
-        // 換片 / 關燈箱：丟棄未提交態（不 commit，不把前片 _maskMode 帶到下一片）。
+        // 拖曳起手（pointerdown，同步非 async）：drag-start 當下一次性讀取 W/H/winW，全程不在
+        // pointermove 內呼叫 getBoundingClientRect（效能 + 98b-T6 量測-in-binding gotcha 同型陷阱）。
+        _maskDragStart(evt) {
+            if (!this._maskVisible) return;
+            // 再入防線（自查補強）：拖曳進行中若再來一個 pointerdown（如觸控第二指落在窗上），
+            // 直接忽略——否則會覆寫 _maskDragMoveHandler/_maskDragUpHandler 參考，讓第一組
+            // document listener 永遠移不掉（洩漏 + 並發 stale 寫入）。
+            if (this._maskDragging) return;
+            const el = this.$refs.lightboxCoverFull;
+            if (!el || !el.naturalWidth) return;
+            const rect = el.getBoundingClientRect();
+            const W = rect.width;
+            const H = rect.height;
+            if (!W || !H) return;
+            const r = parseFloat(getComputedStyle(el).getPropertyValue('--poster-crop-ratio'));
+            if (!Number.isFinite(r) || r <= 0) return;
+            const winW = Math.min(W, H * r);
+            const startClientX = evt.clientX;
+            // 起手左緣必須與「視覺上看到的窗位置」一致＝比照 _computeMaskWinStyle 一樣 clamp
+            // （99a Gemini P2）。raw _maskFocalX 貼邊時（臉在封面極左/極右）未鉗的 startLeft 會
+            // 落在 [0, W-winW] 外，窗子停在邊界但拖曳從界外起算 → 反向拖曳有死區、不跟手。
+            const startLeft = clampMaskWinLeft(
+                (this._maskFocalX !== null && this._maskFocalX !== undefined)
+                    ? this._maskFocalX * W - winW / 2
+                    : W - winW,
+                W,
+                winW,
+            );
+            const session = this._maskSession;   // 拖曳中途換片/關燈箱防線（雙保險，見下）
+
+            this._maskDragging = true;
+
+            const onMove = (e) => {
+                // 防禦性早退：正常路徑 _resetMask 已同步移除本 listener，此處只防「移除時序」邊界。
+                if (session !== this._maskSession) return;
+                e.preventDefault();
+                const dx = e.clientX - startClientX;
+                const left = clampMaskWinLeft(startLeft + dx, W, winW);   // clamp 進封面邊界
+                this._maskFocalX = (left + winW / 2) / W;
+                // 99a-T5：恆 object（同 _computeMaskWinStyle，見 _maskWinStyle 宣告處註解）。
+                this._maskWinStyle = { width: `${winW}px`, height: `${H}px`, transform: `translateX(${left}px)` };
+            };
+            const onUp = () => {
+                if (session === this._maskSession) this._maskDragging = false;
+                this._maskRemoveDragListeners();
+            };
+            this._maskDragMoveHandler = onMove;
+            this._maskDragUpHandler = onUp;
+            document.addEventListener('pointermove', onMove, { passive: false });
+            document.addEventListener('pointerup', onUp);
+            document.addEventListener('pointercancel', onUp);
+            evt.preventDefault();
+        },
+
+        // 成對移除 document 上的拖曳 listener：pointerup/pointercancel 正常路徑會自呼叫；
+        // _maskTeardown/_resetMask 異常路徑（拖曳中途換片/關燈箱、確認/取消）兜底，防洩漏。
+        _maskRemoveDragListeners() {
+            if (this._maskDragMoveHandler) {
+                document.removeEventListener('pointermove', this._maskDragMoveHandler);
+                this._maskDragMoveHandler = null;
+            }
+            if (this._maskDragUpHandler) {
+                document.removeEventListener('pointerup', this._maskDragUpHandler);
+                document.removeEventListener('pointercancel', this._maskDragUpHandler);
+                this._maskDragUpHandler = null;
+            }
+        },
+
+        // ✓ 確認：存手動焦點 → POST /video/focal，同參考 mutate targetVideo（lightbox + grid 即時對臉）。
+        async confirmMask() {
+            // _maskFocalX null 只應發生在極短暫態（geometry 尚未解出）；openMask 一旦幾何解出即收斂
+            // 為具體值（correction B），此處 null-guard 純防禦（幾何失敗 / path 遺失等異常態才會觸發）。
+            if (this._maskFocalX === null || this._maskFocalX === undefined || !this.currentLightboxVideo?.path) {
+                this._maskTeardown();
+                return;
+            }
+            // Codex PR#107 第二輪 P2 fail-closed guard：從未拿到 server 端 cover_path
+            // token（openMask 的 /detect-focal 連 JSON body 都沒解析成功，例如純網路層
+            // 失敗）→ 拒絕送出，不可用猜的 cover_path 打穿 compare-and-store 守衛的保護
+            // 意圖（寧可這次存不進、逼使用者重開遮罩，也不可能誤配錯封面）。
+            if (this._maskExpectedCoverPath === null || this._maskExpectedCoverPath === undefined) {
+                this.showToast(window.t('showcase.lightbox.mask_save_failed'), 'error');
+                this._maskTeardown();
+                return;
+            }
+            const session = this._maskSession;
+            const targetVideo = this.currentLightboxVideo;
+            const focal = `${this._maskFocalX.toFixed(4)},0.5000`;   // y 恆 0.5（render 只用 X，spec §3.3）
+            try {
+                const resp = await fetch('/api/showcase/video/focal', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        path: targetVideo.path,
+                        focal,
+                        // Codex PR#107 第二輪 P2：原樣帶回 openMask 期間 server 給的 cover_path，
+                        // 讓 update_manual_focal 的 compare-and-store 守衛比對「使用者觀察當下」
+                        // 與「存檔當下」的封面是否一致，擋掉 rescan/rescrape 換封面的 race。
+                        expected_cover_path: this._maskExpectedCoverPath,
+                    }),
+                });
+                const data = await resp.json().catch(() => null);
+                if (resp.status === 409) {
+                    // 封面已變更（compare-and-store 守衛擋下）：與一般失敗分開給更明確的提示。
+                    if (session === this._maskSession) {
+                        this.showToast(window.t('showcase.lightbox.mask_cover_changed'), 'error');
+                    }
+                    return;
+                }
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                if (!data || !data.success) throw new Error((data && data.error) || 'API failed');
+                targetVideo.auto_focal = data.auto_focal;   // 同參考 → lightbox + grid 立即重算（T2 applyCellFocal $watch 接手）
+                targetVideo.crop_mode = 'manual';
+            } catch (e) {
+                if (session === this._maskSession) {
+                    this.showToast(window.t('showcase.lightbox.mask_save_failed'), 'error');   // 沿用既有 key
+                }
+            } finally {
+                if (session === this._maskSession) this._maskTeardown();
+            }
+        },
+
+        // ✗ 取消：純同步收尾，不寫 DB——force-detect 本就沒寫，✗ 天然無殘留（CD-2）。
+        cancelMask() {
+            this._maskTeardown();
+        },
+
+        // confirmMask/cancelMask 共用收尾：收 overlay + 解 resize listener + 解拖曳 listener。
+        _maskTeardown() {
+            this._maskVisible = false;
+            this._maskDragging = false;
+            if (this._maskResizeHandler) {
+                window.removeEventListener('resize', this._maskResizeHandler);
+                this._maskResizeHandler = null;
+            }
+            this._maskRemoveDragListeners();   // 防禦性：理論上 pointerup 已先清，這裡再保險一次。
+            // 99a-T5：防禦性再保險——理論上 confirmMask/cancelMask 觸發時 detect 早已 resolve
+            // （✓/✗ 只在 _maskDetecting===false 才可見/可點），星空動畫應該已由 openMask 的
+            // finally 停過；比照上面 _maskRemoveDragListeners 的「再保險一次」寫法補一次 kill。
+            this._maskStopWaitAnim();
+        },
+
+        // 換片 / 關燈箱：丟棄未提交態（不 commit，不把前片焦點帶到下一片）。
         _resetMask() {
             // 98b P2 fix：換片/關燈箱一律使舊 session 失效（即使當下沒開新遮罩），
             // 讓仍在途的舊 await 回應之後必被 session gate 擋下，不依賴 _maskVisible 的
@@ -853,42 +1030,59 @@ export function stateLightbox() {
             this._maskSession++;
             this._maskDetecting = false; // 98b P2 fix(二)：invalidate 時清偵測態，防舊 detect 的 spinner 漏進下個 session（Codex）
             this._maskVisible = false;
-            this._maskWinStyle = '';     // 98b-T6：清窗幾何避免殘留閃（下次 open 同步重算覆蓋）
+            this._maskWinStyle = {};     // 98b-T6：清窗幾何避免殘留閃（下次 open 同步重算覆蓋）。
+                                          // 99a-T5：恆 object，不可退回 '' string（見宣告處註解）。
+            this._maskFocalX = null;     // 99a-T3：清 component-state 焦點，防下一片沿用上一片的拖曳結果
+            this._maskExpectedCoverPath = null;   // Codex PR#107 P2：防下一片沿用上一片的 cover token
+            this._maskDragging = false;  // 99a-T3：防拖曳中途換片，dragging class 卡死在 true
+            this._maskRemoveDragListeners();   // 99a-T3：拖曳中途換片/關燈箱兜底，移除 document listener
+            this._maskStopWaitAnim();    // 99a-T5：detect 期間中斷（換片/關燈箱/ESC）對稱停星空動畫，
+                                          // 防「舊 session 星空還在跑、新 session 又疊一份」
             if (this._maskResizeHandler) {
                 window.removeEventListener('resize', this._maskResizeHandler);
                 this._maskResizeHandler = null;
             }
         },
 
-        // 亮窗幾何：讀 CSS var --poster-crop-ratio（非硬編）+ focalObjectPosition 解焦點 x%。
-        // 回傳 inline style 字串（width/height + transform translateX）供 template :style 綁定。
-        // 亮窗以外由 CSS box-shadow spotlight 壓暗；transform 換模式時 CSS transition 左右滑動。
-        // 98b-T6：純 compute（原 _maskWindowStyle 邏輯不變），由 openMask/toggleMaskMode/resize imperative 呼叫。
+        // 99a-T5：星空等待動畫對稱停止 helper——openMask finally（正常結束，session-gated）、
+        // _resetMask（中斷：換片/關燈箱/ESC）、_maskTeardown（防禦性再保險）三處對稱呼叫。
+        // idempotent：this._maskWaitTl 已 null 時安全 no-op（GhostFly.stopFocalDetectWait 內部
+        // 亦對 null handle 安全 no-op，belt-and-suspenders）。
+        _maskStopWaitAnim() {
+            if (this._maskWaitTl && window.GhostFly && window.GhostFly.stopFocalDetectWait) {
+                window.GhostFly.stopFocalDetectWait(this._maskWaitTl);
+            }
+            this._maskWaitTl = null;
+        },
+
+        // 亮窗幾何：讀 CSS var --poster-crop-ratio（非硬編）+ _maskFocalX 解焦點 x（component state，
+        // 非 video.auto_focal——編輯態顯示真實落點，不套 focalObjectPosition 的 deadzone）。
+        // 回傳 inline style OBJECT（width/height + transform translateX）供 template :style 綁定
+        // （99a-T5：不可回傳 string，見 _maskWinStyle 宣告處註解——string 值會被 Alpine `:style`
+        // 整串覆寫 style attribute，洗掉 x-show 設的 display:none）。失敗（rect=0 / ratio 讀不到）
+        // 回傳 null，呼叫端（openMask）以 `if (!s)` 判斷；resize handler 呼叫端已知 null 會 fallback
+        // 保留前值（見 openMask 內 _maskResizeHandler 定義）。
+        // 亮窗以外由 CSS box-shadow spotlight 壓暗；transform 變化時 CSS transition 左右滑動（拖曳中停用，見 showcase.css）。
+        // 98b-T6：純 compute（原 _maskWindowStyle 邏輯不變），由 openMask/drag/resize imperative 呼叫。
         _computeMaskWinStyle() {
             const el = this.$refs.lightboxCoverFull;
             // C17/#10：圖 render 前 rect=0 → 不畫（naturalWidth 未就緒）
-            if (!el || !el.naturalWidth) return '';
+            if (!el || !el.naturalWidth) return null;
             const rect = el.getBoundingClientRect();
             const W = rect.width;
             const H = rect.height;
-            if (!W || !H) return '';
+            if (!W || !H) return null;
             const r = parseFloat(getComputedStyle(el).getPropertyValue('--poster-crop-ratio'));
-            if (!Number.isFinite(r) || r <= 0) return '';
+            if (!Number.isFinite(r) || r <= 0) return null;
             const winW = Math.min(W, H * r);
             let left;
-            if (this._maskMode === 'auto') {
-                const pos = focalObjectPosition({ crop_mode: 'auto', auto_focal: this.currentLightboxVideo?.auto_focal });
-                if (pos) {
-                    const xPct = parseFloat(pos);            // "38.20% center" → 38.20
-                    left = (xPct / 100) * W - winW / 2;      // 窗中心對焦點
-                } else {
-                    left = W - winW;                          // deadzone / 畸形 / null → 貼右（退化）
-                }
+            if (this._maskFocalX !== null && this._maskFocalX !== undefined) {
+                left = this._maskFocalX * W - winW / 2;   // 窗中心對焦點，raw x，不套 deadzone（編輯顯示真實落點）
             } else {
-                left = W - winW;                              // default → 貼右
+                left = W - winW;                          // 無焦點（尚未偵測完成/偵測不到臉）→ 右裁基準（D2）
             }
-            left = Math.max(0, Math.min(left, W - winW));     // clamp 進 [0, W-winW]
-            return `width:${winW}px; height:${H}px; transform:translateX(${left}px);`;
+            left = clampMaskWinLeft(left, W, winW);           // clamp 進 [0, W-winW]
+            return { width: `${winW}px`, height: `${H}px`, transform: `translateX(${left}px)` };
         },
 
         // ==================== User Tags in Lightbox (T4) ====================

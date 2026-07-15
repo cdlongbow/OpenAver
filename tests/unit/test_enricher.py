@@ -2450,9 +2450,16 @@ class TestEnrichFocalTrigger:
 
 
 class TestEnrichPreserveCropModeE2E:
-    """重刮路徑 preserve-on-conflict 端到端：先設 crop_mode='default' → 重刮 → 仍 default。"""
+    """重刮路徑 preserve-on-conflict 端到端：先設 crop_mode='default' → metadata-only
+    重刮（不換封面）→ 仍 default。
 
-    def test_rescrape_preserves_user_crop_mode(self, tmp_path):
+    write_cover=False（99a-T1b）：這條測的是 CD-10（`_db_upsert`→`upsert()` 的
+    preserve-on-conflict CASE）端到端，需與 CD-4（`core/enricher.py` 的
+    `reset_focal_to_auto`，只在 cover_written=True 才觸發、無條件把 crop_mode 降回
+    'auto'）隔開，否則兩個機制的職責會疊在同一斷言上、測不出各自的邊界。cover_written=True
+    的情境已由 `TestEnrichFocalReset` 覆蓋。"""
+
+    def test_rescrape_preserves_user_crop_mode(self, tmp_path, seed_crop_mode):
         from unittest.mock import patch
         from core.database import init_db, VideoRepository, Video
         from core.path_utils import to_file_uri, uri_to_fs_path
@@ -2469,7 +2476,7 @@ class TestEnrichPreserveCropModeE2E:
         with patch("core.similar.ranker_cache.SimilarRankerCache"):
             repo.upsert(Video(path=db_key, number="SIRO-1234", title="Old", maker="SOD"))
         # 使用者選了 default（非 auto）
-        assert repo.update_crop_mode(db_key, "default") is True
+        assert seed_crop_mode(repo, db_key, "default") is True
 
         scraper_data = {
             "number": "SIRO-1234", "title": "New", "actors": [],
@@ -2489,10 +2496,255 @@ class TestEnrichPreserveCropModeE2E:
             from core.enricher import enrich_single
             enrich_single(
                 file_path=file_path, number="SIRO-1234", mode="refresh_full",
-                write_nfo=False, write_cover=True, write_extrafanart=False,
+                write_nfo=False, write_cover=False, write_extrafanart=False,
             )
 
         row = repo.get_by_path(db_key)
         assert row is not None
         assert row.crop_mode == "default", f"重刮不應回退 crop_mode，得 {row.crop_mode!r}"
         assert row.title == "New", "重刮應更新非 preserve 欄位（title）"
+
+
+class TestEnrichFocalReset:
+    """99a-T1b CD-4：重刮實際寫入新封面時同步作廢手動焦點。
+
+    `reset_focal_to_auto` + `maybe_submit_video_focal` 必須一起被 `if cover_written:`
+    包住、reset 在 submit 之前——三個 mutation 鎖：
+    - hoist reset 出 `if cover_written:` → cover_written=False 也清 manual → RED
+      （`test_cover_written_false_preserves_manual`）。
+    - reset/submit 順序對調 → submit 呼叫當下 crop_mode 仍是 manual → RED
+      （`test_cover_written_true_reset_happens_before_submit`）。
+    """
+
+    _SCRAPER_DATA = {
+        "number": "PLACEHOLDER", "title": "New", "actors": [],
+        "cover": "http://example.com/cover.jpg", "date": "2024-01-01",
+        "maker": "SOD", "director": "", "series": "", "label": "",
+        "tags": [], "sample_images": [], "source": "javbus",
+    }
+
+    def _seed_manual(self, tmp_path, db_name, number, video_name):
+        from unittest.mock import patch
+        from core.database import init_db, VideoRepository, Video
+        from core.path_utils import to_file_uri, uri_to_fs_path
+
+        db_file = tmp_path / db_name
+        init_db(db_file)
+        repo = VideoRepository(db_path=db_file)
+
+        video_file = tmp_path / video_name
+        video_file.write_bytes(b"x")
+        file_path = str(video_file)
+        db_key = to_file_uri(uri_to_fs_path(file_path))
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.upsert(Video(path=db_key, number=number, title="Old", maker="SOD"))
+        assert repo.update_manual_focal(db_key, "0.3000,0.6000", '') is True
+        return repo, file_path, db_key
+
+    def test_cover_written_true_reset_happens_before_submit(self, tmp_path):
+        """cover_written=True：reset 必須在 submit 之前落地——用 side_effect 在 submit
+        呼叫當下讀 DB 現況，若順序對調（submit 先跑）會讀到仍是 manual 的 stale 值。"""
+        from unittest.mock import patch
+        repo, file_path, db_key = self._seed_manual(
+            tmp_path, "focal_reset_order.db", "SIRO-2001", "SIRO-2001.mp4"
+        )
+
+        captured = {}
+
+        def _capture_submit(number, maker, video_path_uri, cover_fs, *, cover_path_uri, db_path=None):
+            row = repo.get_by_path(video_path_uri)
+            captured["crop_mode_at_submit"] = row.crop_mode
+            captured["auto_focal_at_submit"] = row.auto_focal
+
+        scraper_data = dict(self._SCRAPER_DATA, number="SIRO-2001")
+        with (
+            patch("core.enricher.VideoRepository", return_value=repo),
+            patch("core.enricher.search_jav", return_value=scraper_data),
+            patch("core.enricher.generate_nfo", return_value=True),
+            patch("core.enricher.download_image", return_value=True),
+            patch("core.enricher.find_subtitle_files", return_value=[]),
+            patch("core.enricher.maybe_submit_video_focal", side_effect=_capture_submit),
+            patch("core.similar.ranker_cache.SimilarRankerCache"),
+        ):
+            from core.enricher import enrich_single
+            enrich_single(
+                file_path=file_path, number="SIRO-2001", mode="refresh_full",
+                write_nfo=False, write_cover=True, write_extrafanart=False,
+                overwrite_existing=True,
+            )
+
+        assert captured, "cover_written=True 時 maybe_submit_video_focal 必須被呼叫"
+        assert captured["crop_mode_at_submit"] == "auto", "reset 必須在 submit 之前落地"
+        assert captured["auto_focal_at_submit"] == ""
+
+        row = repo.get_by_path(db_key)
+        assert row.crop_mode == "auto"
+        assert row.auto_focal == ""
+
+    def test_cover_written_false_preserves_manual(self, tmp_path):
+        """cover_written=False（write_cover=False，只重寫 NFO、未覆蓋既有封面）→ 完全
+        不進 reset/submit 分支，manual 原樣保留。"""
+        from unittest.mock import patch
+        repo, file_path, db_key = self._seed_manual(
+            tmp_path, "focal_reset_cover_false.db", "SIRO-2002", "SIRO-2002.mp4"
+        )
+
+        scraper_data = dict(self._SCRAPER_DATA, number="SIRO-2002")
+        with (
+            patch("core.enricher.VideoRepository", return_value=repo),
+            patch("core.enricher.search_jav", return_value=scraper_data),
+            patch("core.enricher.generate_nfo", return_value=True),
+            patch("core.enricher.download_image", return_value=True),
+            patch("core.enricher.find_subtitle_files", return_value=[]),
+            patch("core.enricher.maybe_submit_video_focal") as mock_submit,
+            patch("core.similar.ranker_cache.SimilarRankerCache"),
+        ):
+            from core.enricher import enrich_single
+            enrich_single(
+                file_path=file_path, number="SIRO-2002", mode="refresh_full",
+                write_nfo=False, write_cover=False, write_extrafanart=False,
+                overwrite_existing=True,
+            )
+
+        mock_submit.assert_not_called()
+        row = repo.get_by_path(db_key)
+        assert row is not None
+        assert row.crop_mode == "manual", "沒換圖，manual 必須原樣保留"
+        assert row.auto_focal == "0.3000,0.6000"
+
+
+# ── 99b-T2 DoD ④: caller #4（enricher）namespace 真 DB 鎖 ───────────────────
+
+class TestEnrichFocalCoverPathUriNamespace:
+    """cover_path_uri 傳給 maybe_submit_video_focal 的值必須實際等於 _db_upsert
+    剛寫入 DB 的 cover_path（同一運算式 to_file_uri(local_cover, path_mappings)
+    作用在同一變數，CD-99b-5「低風險」評級由 code identity 保證，仍須真 DB 鎖驗證，
+    非只憑「程式碼看起來一樣」免驗）。
+
+    download_image 的 side_effect 必須真的把檔案寫到 local_cover 路徑——
+    `_db_upsert` 的 `cover_uri` 計算是 `if local_cover_path and
+    os.path.exists(local_cover_path)`（:624），若 mock 只回傳 True 不寫實體檔，
+    `_db_upsert` 會落 else 分支保留 DB 既有 cover_path（此處為空字串），造成假陽性
+    ——測試看起來測了「同源」，實際上驗的是兩個空字串巧合相等。
+    """
+
+    def _write_fake_cover(self, url, path):
+        from pathlib import Path
+        Path(path).write_bytes(b"x")
+        return True
+
+    def test_cover_path_uri_matches_db_cover_path_with_nonempty_mappings(self, tmp_path):
+        """DoD ④ 核心：cover_path_uri == DB 剛寫入的 cover_path，commit 命中非 0 列。
+        mutation：故意傳反解後的 FS path 當 cover_path_uri → 真 DB 下 update_auto_focal
+        影響 0 列 → RED（見 test_cover_path_uri_reversed_fs_path_causes_commit_miss）。
+        WSL 綠≠CI 綠：mapping 實際轉換的斷言 gate 進 if CURRENT_ENV == 'wsl'。"""
+        from unittest.mock import patch
+        from core.database import init_db, VideoRepository, Video
+        from core.path_utils import CURRENT_ENV, to_file_uri, uri_to_fs_path
+
+        db_file = tmp_path / "focal_cd99b_enricher_namespace.db"
+        init_db(db_file)
+        repo = VideoRepository(db_path=db_file)
+
+        video_file = tmp_path / "SIRO-3001.mp4"
+        video_file.write_bytes(b"x")
+        file_path = str(video_file)
+        db_key = to_file_uri(uri_to_fs_path(file_path))
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.upsert(Video(path=db_key, number="SIRO-3001", title="Old", maker="SOD"))
+
+        # 非空 path_mappings（WSL 環境下對 to_file_uri 有實際轉換效果，gotchas-backend #11）
+        path_mappings = {str(tmp_path): "Z:/lib"}
+
+        scraper_data = dict(TestEnrichFocalReset._SCRAPER_DATA, number="SIRO-3001")
+        captured = {}
+
+        def _capture_submit(number, maker, video_path_uri, cover_fs, *, cover_path_uri, db_path=None):
+            captured["cover_path_uri"] = cover_path_uri
+
+        with (
+            patch("core.enricher.VideoRepository", return_value=repo),
+            patch("core.enricher.search_jav", return_value=scraper_data),
+            patch("core.enricher.generate_nfo", return_value=True),
+            patch("core.enricher.download_image", side_effect=self._write_fake_cover),
+            patch("core.enricher.find_subtitle_files", return_value=[]),
+            patch("core.enricher.maybe_submit_video_focal", side_effect=_capture_submit),
+            patch("core.similar.ranker_cache.SimilarRankerCache"),
+        ):
+            from core.enricher import enrich_single
+            enrich_single(
+                file_path=file_path, number="SIRO-3001", mode="refresh_full",
+                write_nfo=False, write_cover=True, write_extrafanart=False,
+                overwrite_existing=True, path_mappings=path_mappings,
+            )
+
+        assert captured, "cover_written=True 時 maybe_submit_video_focal 必須被呼叫"
+        row = repo.get_by_path(db_key)
+        assert row is not None
+
+        if CURRENT_ENV == 'wsl':
+            # WSL 環境：確認 mapping 真的生效（非 trivial identity）
+            assert captured["cover_path_uri"] != to_file_uri(str(video_file.with_suffix(".jpg")), {}), \
+                "path_mappings 應實際轉換 URI，否則非有效非空情境"
+
+        # 平台無關核心契約：cover_path_uri 實際等於 DB 剛寫入的 cover_path（同源）
+        assert captured["cover_path_uri"] == row.cover_path, (
+            f"cover_path_uri({captured['cover_path_uri']!r}) 應等於 DB cover_path"
+            f"({row.cover_path!r})，否則 namespace 對不上，commit 會 silent-miss"
+        )
+
+        # commit 命中非 0 列（真 DB mutation 驗證核心契約）
+        assert repo.update_auto_focal(db_key, "0.5,0.5", captured["cover_path_uri"]) is True
+
+    def test_cover_path_uri_reversed_fs_path_causes_commit_miss(self, tmp_path):
+        """namespace 守衛效力自證：若誤傳反解後的 FS path（而非 DB-key URI）當
+        expected_cover_path，真 DB 下 update_auto_focal 必須影響 0 列。"""
+        from unittest.mock import patch
+        from core.database import init_db, VideoRepository, Video
+        from core.path_utils import to_file_uri, uri_to_fs_path, uri_to_local_fs_path
+
+        db_file = tmp_path / "focal_cd99b_enricher_namespace_mutation.db"
+        init_db(db_file)
+        repo = VideoRepository(db_path=db_file)
+
+        video_file = tmp_path / "SIRO-3002.mp4"
+        video_file.write_bytes(b"x")
+        file_path = str(video_file)
+        db_key = to_file_uri(uri_to_fs_path(file_path))
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.upsert(Video(path=db_key, number="SIRO-3002", title="Old", maker="SOD"))
+
+        path_mappings = {str(tmp_path): "Z:/lib"}
+        scraper_data = dict(TestEnrichFocalReset._SCRAPER_DATA, number="SIRO-3002")
+        captured = {}
+
+        def _capture_submit(number, maker, video_path_uri, cover_fs, *, cover_path_uri, db_path=None):
+            captured["cover_path_uri"] = cover_path_uri
+
+        with (
+            patch("core.enricher.VideoRepository", return_value=repo),
+            patch("core.enricher.search_jav", return_value=scraper_data),
+            patch("core.enricher.generate_nfo", return_value=True),
+            patch("core.enricher.download_image", side_effect=self._write_fake_cover),
+            patch("core.enricher.find_subtitle_files", return_value=[]),
+            patch("core.enricher.maybe_submit_video_focal", side_effect=_capture_submit),
+            patch("core.similar.ranker_cache.SimilarRankerCache"),
+        ):
+            from core.enricher import enrich_single
+            enrich_single(
+                file_path=file_path, number="SIRO-3002", mode="refresh_full",
+                write_nfo=False, write_cover=True, write_extrafanart=False,
+                overwrite_existing=True, path_mappings=path_mappings,
+            )
+
+        # 故意用反解後的 FS path 當 expected（模擬「誤傳」的 mutation）
+        wrong_expected = uri_to_local_fs_path(captured["cover_path_uri"], path_mappings)
+        assert wrong_expected != captured["cover_path_uri"], (
+            "測試前提：反解後的 FS path 必須與 DB-key URI 不同字串，否則此 mutation "
+            "測試無意義（若這條 assert 失敗，代表本機環境的 to_file_uri/uri_to_local_fs_path "
+            "在此路徑下是 no-op，需換一組會實際轉換的 path_mappings）"
+        )
+        assert repo.update_auto_focal(db_key, "0.6,0.6", wrong_expected) is False

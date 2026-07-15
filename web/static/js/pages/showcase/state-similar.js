@@ -43,7 +43,7 @@ import {
 } from '@/shared/constellation/animations.js';
 import { BreathingManager } from '@/shared/constellation/breathing.js';
 import { waitForMount } from '@/shared/dom-timing.js';
-import { focalObjectPosition } from '@/shared/focal.js';
+import { applyCellFocal } from '@/shared/focal-cell.js';
 
 // T6 (CD-T6-1)：hover corridor half-width（與 motion-lab host 同值 40px）
 const HOVER_DISTANCE = 40;
@@ -865,12 +865,14 @@ export function stateSimilar() {
      * @click.stop 防冒泡的責任由 play button 的 Alpine handler 負責（已在 template）。
      */
     /**
-     * 98b-T3: 把 focal object-position 套到 imperative 寫 src 的可見封面 img。
-     * 與每個 `.src=` 成對呼叫；`|| ''` 清舊 inline（換片 A→B 若 B 回 null 須還原 baseline，
-     * 不可殘留 A 的 objectPosition）。item 為 null/undefined 時 focalObjectPosition 優雅回 null。
+     * 98b-T3 / 99a-T2: 把 focal object-position 套到 imperative 寫 src 的可見封面 img。
+     * 與每個 `.src=` 成對呼叫（函式名/簽章不變，維持 6 個既有呼叫處零改動）；內部改走
+     * applyCellFocal（load-gated + expected-src guard + aspect-aware 公式，見 focal-cell.js）
+     * 取代舊的同步 focalObjectPosition 呼叫——這 6 個呼叫處都緊跟在 `.src=` 賦值後，
+     * naturalWidth 此刻多半還是 0（decode 未完成），需要 load-gate 才能算對 aspect。
      */
     applyFocalToImg(el, item) {
-      if (el) el.style.objectPosition = focalObjectPosition(item) || '';
+      applyCellFocal(el, item);
     },
 
     _buildSimilarMainStatic(src) {
@@ -879,14 +881,19 @@ export function stateSimilar() {
       const img = document.createElement('img');
       img.className = 'similar-main-static';
       img.src = src || '';
-      // 98b-T3 I-c：首建時 currentLightboxVideo == 查詢片 A（similar mode 尚未 drill），focal 正確。
-      this.applyFocalToImg(img, this.currentLightboxVideo);
       img.alt = '';
       img.setAttribute('aria-hidden', 'true');
       // codex P1-2: 取代已移除的 .similar-main-overlay click handler。
       // closeSimilarMode 會 .remove() 此 element，listener 隨 GC 一起清。
       img.addEventListener('click', (e) => this.onSimilarMainImgClick(e));
+      // Codex PR#107 P2: append 必須在 applyFocalToImg 之前——applyCellFocal 對已快取的封面走
+      // el.complete && el.naturalWidth 同步分支，當場 getComputedStyle 讀 --poster-crop-ratio；
+      // 該變數掛在 :root（theme.css），detached element 沒有 inheritance chain 連到 :root，
+      // getComputedStyle 回空字串 → parseFloat NaN → computeAndApply 誤判「無比例」清掉
+      // objectPosition。用時序排除（先連接 DOM 再套用），不加旗標繞過。
       stageInner.appendChild(img);
+      // 98b-T3 I-c：首建時 currentLightboxVideo == 查詢片 A（similar mode 尚未 drill），focal 正確。
+      this.applyFocalToImg(img, this.currentLightboxVideo);
       return img;
     },
 

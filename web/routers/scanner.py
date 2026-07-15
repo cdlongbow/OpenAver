@@ -530,12 +530,24 @@ def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Genera
                 # 「重掃一次自動補焦既有庫」形同虛設。current_paths 是本目錄本次掃到
                 # 的完整 DB-key URI 集合（:457-458 同一套 to_file_uri(path,
                 # path_mappings) 推導），bulk 查詢，不另建 URI、不 N+1。
-                if current_paths:
+                #
+                # TASK-99b-T1（CD-99b-8 sibling 併修）：fresh 查一次 should_abort()——
+                # 中途取消時本段之前無任何中止檢查，若不擋，取消後仍會把整目錄的空
+                # 焦點候選塞進單執行緒 FIFO worker（每 job ~3s），與
+                # readonly_producer.produce_source 的同型洞同批修。只 gate 這段
+                # focal pass，不影響上面的 upsert 與下面的完成通知。
+                if current_paths and not (should_abort and should_abort()):
                     focal_candidates = repo.get_empty_focal_candidates(list(current_paths))
                     for c_path, c_number, c_maker, c_cover_path in focal_candidates:
+                        # Codex P1（CD-99b-8 二次修）：:539 入口 gate 只擋「取消已在
+                        # 迴圈開始前發生」；候選數可達數千、每圈一次 os.path.exists，
+                        # 迴圈本身可能跑到秒級，取消也可能落在迴圈中途。此處每圈
+                        # fresh 查一次，與入口 gate 防同一種傷害、只是取消落點不同。
+                        if should_abort and should_abort():
+                            break
                         if requires_face_detection(c_number, c_maker):
                             cover_fs = uri_to_local_fs_path(c_cover_path, path_mappings)
-                            maybe_submit_video_focal(c_number, c_maker, c_path, cover_fs, db_path=repo.db_path)
+                            maybe_submit_video_focal(c_number, c_maker, c_path, cover_fs, db_path=repo.db_path, cover_path_uri=c_cover_path)
 
                 logger.info(f"[Gallery] {directory}: {len(all_files)} 個檔案，快取命中 {cache_hits}")
 

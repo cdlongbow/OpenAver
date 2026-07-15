@@ -90,3 +90,32 @@ def samples_dir():
     return Path(__file__).parent.parent / 'samples'
 
 
+# ============ Focal / crop_mode 測試 seed helper（99a-T7：retire update_crop_mode）====
+
+@pytest.fixture
+def seed_crop_mode():
+    """Test-only seed helper：一條 explicit UPDATE 直接寫 crop_mode 欄位，鏡射
+    VideoRepository 端已刪除的同名 mutator（那個一行方法：不碰其他欄位，鏡射
+    update_user_tags）——production 已無呼叫端（plan-99a §B.3 拍板 RETIRE），只剩測試
+    需要「準備一筆 crop_mode 已是非預設值的 row」這個前置狀態，不該為了測試 seed 需求
+    讓已收斂的 mutator 介面再長出一個方法。放在根 conftest（跨 tests/unit 與
+    tests/integration 共用），避免三處各自 copy-paste 同一條 UPDATE。
+
+    Usage: `seed_crop_mode(repo, path, 'default')` — repo 為任一 VideoRepository 實例，
+    直接用 repo.db_path 開連線寫入，回傳值鏡射原 mutator（rowcount > 0 → True）。
+    """
+    def _seed(repo, path: str, mode: str) -> bool:
+        from core.database import get_connection
+        conn = get_connection(repo.db_path)
+        try:
+            cursor = conn.execute(
+                "UPDATE videos SET crop_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE path = ?",
+                (mode, path),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+    return _seed
+
+

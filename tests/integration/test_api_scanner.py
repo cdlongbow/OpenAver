@@ -2134,11 +2134,16 @@ class TestGenerateAvlistShouldAbortTopLevel:
         mock_html = mocker.patch("web.routers.scanner.HTMLGenerator")
         mock_notif = mocker.patch("web.routers.scanner._emit_notif")
 
-        # 呼叫序列（1 dir / 1 file）：outer #1、inner #2、orphan gate #3、
-        # HTML gate #4、terminal #5。trigger_after=4 → 前 4 次 False（迴圈跑完、
-        # orphan/HTML gate 都通過），第 5 次（terminal fresh 檢查）才 True。
-        # single-snapshot 版本此情境會誤發 success；fresh 版本應改發 cancelled。
-        fake_should_abort = self._counting_should_abort(trigger_after=4)
+        # 呼叫序列（1 dir / 1 file）：outer #1、inner #2、focal-pass entry gate #3
+        # （TASK-99b-T1 sibling 併修新增）、focal-candidate-loop-top gate #4
+        # （Codex P1 二次修新增——ABC-001 被 get_empty_focal_candidates 撈出、
+        # 迴圈確實執行一圈，只是 requires_face_detection 擋在 submit 前，故
+        # 候選迴圈頂端的 fresh should_abort() 檢查仍會被呼叫一次）、orphan
+        # gate #5、HTML gate #6、terminal #7。trigger_after=6 → 前 6 次 False
+        # （迴圈跑完、focal-pass entry/candidate-loop/orphan/HTML gate 都通過），
+        # 第 7 次（terminal fresh 檢查）才 True。single-snapshot 版本此情境會
+        # 誤發 success；fresh 版本應改發 cancelled。
+        fake_should_abort = self._counting_should_abort(trigger_after=6)
 
         events = list(generate_avlist(should_abort=fake_should_abort))
 
@@ -2226,7 +2231,10 @@ class TestGenerateAvlistFocalTrigger:
     maybe_submit_video_focal` 只驗接線與 gate，不真跑 pigo。
     """
 
-    def _run(self, tmp_path, num, maker="", seed_auto_focal=None, seed_unchanged=False):
+    def _run(self, tmp_path, num, maker="", seed_auto_focal=None, seed_unchanged=False,
+             should_abort=None, extra_nums=None):
+        """extra_nums: 額外的無碼候選番號列表（都用同一個 maker，全部視為新檔案，
+        全部 requires_face_detection=True）。單檔既有 caller 不傳此參數，行為不變。"""
         import types
         from unittest.mock import patch, MagicMock
         from core.database import init_db, VideoRepository, Video
@@ -2247,7 +2255,7 @@ class TestGenerateAvlistFocalTrigger:
         if seed_auto_focal is not None:
             with patch("core.similar.ranker_cache.SimilarRankerCache"):
                 repo.upsert(Video(path=path_uri, number=num, maker=maker, cover_path=cover_uri))
-            repo.update_auto_focal(path_uri, seed_auto_focal)
+            repo.update_auto_focal(path_uri, seed_auto_focal, cover_uri)
         elif seed_unchanged:
             # Codex PR#105 P2 回歸釘：既有列 mtime 與本次掃描一致（111）→ 不進
             # needs_scan/videos_to_upsert，auto_focal 維持 dataclass 預設空字串。
@@ -2264,6 +2272,28 @@ class TestGenerateAvlistFocalTrigger:
         info.maker = maker
         info.title = "T"
 
+        fast_scan_files = [{"path": video_fs, "mtime": 111, "nfo_mtime": 0}]
+        scan_file_infos = {video_fs: info}
+
+        # TASK-99a: 支援多候選（focal 迴圈中途 abort 測試需要 >= 2 個候選才能
+        # 觀察「第 1 個 submit 之後、第 2 個未 submit」）。
+        for extra_num in (extra_nums or []):
+            extra_video_fs = str(scan_dir / f"{extra_num}.mp4")
+            extra_cover_fs = scan_dir / f"{extra_num}.jpg"
+            extra_cover_fs.write_bytes(b"x")
+            extra_path_uri = to_file_uri(extra_video_fs)
+            extra_cover_uri = to_file_uri(str(extra_cover_fs))
+
+            extra_info = VideoInfo()
+            extra_info.num = extra_num
+            extra_info.path = extra_path_uri
+            extra_info.img = extra_cover_uri
+            extra_info.maker = maker
+            extra_info.title = "T"
+
+            fast_scan_files.append({"path": extra_video_fs, "mtime": 111, "nfo_mtime": 0})
+            scan_file_infos[extra_video_fs] = extra_info
+
         config = {
             "gallery": {
                 "directories": [str(scan_dir)], "output_dir": "output",
@@ -2276,7 +2306,12 @@ class TestGenerateAvlistFocalTrigger:
         }
         src = types.SimpleNamespace(path=str(scan_dir), readonly=False)
         mock_scanner = MagicMock()
-        mock_scanner.scan_file.return_value = info
+        if extra_nums:
+            mock_scanner.scan_file.side_effect = (
+                lambda video_path, base_path=None: scan_file_infos[video_path]
+            )
+        else:
+            mock_scanner.scan_file.return_value = info
 
         with (
             patch("web.routers.scanner.load_config", return_value=config),
@@ -2284,8 +2319,7 @@ class TestGenerateAvlistFocalTrigger:
             patch("web.routers.scanner.iter_gallery_sources", return_value=[src]),
             patch("web.routers.scanner.get_db_path", return_value=db_file),
             patch("web.routers.scanner.VideoScanner", return_value=mock_scanner),
-            patch("web.routers.scanner.fast_scan_directory",
-                  return_value=[{"path": video_fs, "mtime": 111, "nfo_mtime": 0}]),
+            patch("web.routers.scanner.fast_scan_directory", return_value=fast_scan_files),
             patch("web.routers.scanner.HTMLGenerator"),
             patch("web.routers.scanner._run_sample_images_cleanup_pass", return_value=0),
             patch("web.routers.scanner.check_cache_needs_update",
@@ -2295,7 +2329,7 @@ class TestGenerateAvlistFocalTrigger:
             patch("web.routers.scanner.maybe_submit_video_focal") as mock_submit,
         ):
             from web.routers.scanner import generate_avlist
-            list(generate_avlist())
+            list(generate_avlist(should_abort=should_abort))
         return mock_submit
 
     def test_uncensored_empty_focal_submits(self, tmp_path):
@@ -2321,3 +2355,59 @@ class TestGenerateAvlistFocalTrigger:
         mock_submit.assert_called_once()
         args = mock_submit.call_args[0]
         assert args[0] == "SIRO-1234"
+
+    def test_should_abort_before_focal_pass_zero_submits(self, tmp_path):
+        """TASK-99b-T1 DoD ⑥ (CD-99b-8 sibling): should_abort() flips True right
+        before the :533 focal pass (after the single needs_scan file has already
+        been scanned/upserted) → the focal pass itself must be skipped entirely,
+        zero maybe_submit_video_focal calls — mirrors the readonly_producer
+        abort gate, just on the router's inline (non-readonly) scan path.
+        mutation: drop the newly-added `and not (should_abort and should_abort())`
+        gate → this test goes RED (submit fires despite the fresh abort signal)."""
+        call_count = [0]
+
+        def abort_after_two():
+            call_count[0] += 1
+            return call_count[0] > 2  # let the source-level + per-file checks through once each
+
+        mock_submit = self._run(tmp_path, "SIRO-1234", should_abort=abort_after_two)
+        mock_submit.assert_not_called()
+
+    def test_abort_mid_candidate_loop_stops_remaining_submits(self, tmp_path):
+        """Codex P1（:546 focal-candidate-loop-top gate）行為鎖：3 個無碼候選
+        （SIRO-1234/2345/3456，全新檔案、全 requires_face_detection=True），
+        should_abort 在第 1 個候選 submit 之後、第 2 個候選的迴圈頂端檢查才翻
+        True → 迴圈必須 break，第 2、3 個候選都不能被 submit。
+
+        呼叫序列（實測，traceback instrumented probe，3 needs_scan 檔）：
+          #1 :377 outer source-level gate
+          #2-4 :502 per-file gate（needs_scan 3 檔各一次）
+          #5 :539 focal-pass entry gate
+          #6 :546 candidate-loop-top gate（candidate 1 = SIRO-1234）→ False → submit
+          #7 :546 candidate-loop-top gate（candidate 2 = SIRO-2345）→ True → break
+          （candidate 3 = SIRO-3456 的迴圈頂端因 break 完全不會被檢查）
+          #8-10 :571 尾段 _is_aborted()（orphan/HTML/terminal gate）
+        trigger_after=6 → 前 6 次 False、第 7 次 True，恰好落在 candidate 2 的
+        迴圈頂端檢查。
+
+        mutation：拔掉 web/routers/scanner.py 的 `if should_abort and
+        should_abort(): break`（:546 那段）→ 此測試必 RED，因為迴圈不再中途
+        停止，candidate 2、3 都會被 submit（call_count 變 3，不是 1）。
+        """
+        call_count = [0]
+
+        def abort_after_first_submit():
+            call_count[0] += 1
+            return call_count[0] > 6
+
+        mock_submit = self._run(
+            tmp_path, "SIRO-1234",
+            extra_nums=["SIRO-2345", "SIRO-3456"],
+            should_abort=abort_after_first_submit,
+        )
+
+        assert mock_submit.call_count == 1, (
+            f"迴圈中途 abort 應只 submit 第 1 個候選，實得 {mock_submit.call_count} 次: "
+            f"{mock_submit.call_args_list}"
+        )
+        assert mock_submit.call_args[0][0] == "SIRO-1234"

@@ -93,7 +93,7 @@ const RULES = [
     note: '[TestShowcaseMetadataGuard] series searchFromMetadata call (grid panel or lightbox, OR)',
   },
 
-  // ---- [TestMaskToggleGuard] 98b-T4：遮罩 toggle 綁定 / 生命週期 guard / no-硬編-ratio / endpoint URL ----
+  // ---- [TestMaskToggleGuard] 98b-T4 起家、99a-T3 沿用：遮罩綁定 / 生命週期 guard / no-硬編-ratio / endpoint URL ----
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '@click="openMask', note: '[TestMaskToggleGuard] mask toggle icon button 綁 openMask' },
   // 98b P2 fix（Codex）：commit/re-check guard 由 path 比對（_maskVideoPath/sessionPath）
   // 升級為單調遞增 session id（_maskSession）——path 比對在「同片重開」邊界不夠精確。
@@ -119,22 +119,31 @@ const RULES = [
     scope: { anchor: /_resetMask\s*\(\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] _resetMask 清 _maskDetecting（invalidate 時防偵測態漏進下個 session，Codex P2）',
   },
+  // 99a-T3：原本錨定 `async toggleMaskMode()` / `async closeMask()` 的兩條 session-recheck 規則
+  // 因該兩函式整條移除而 anchor-not-found（引擎不變式：硬錯，阻斷 npm run lint）。改錨定承接
+  // 相同語意的新函式——toggleMaskMode 的「翻頁後 session recheck」併入 openMask 自身的
+  // force-detect await；closeMask 的「async 存檔前後 session recheck」由 confirmMask 承接。
   {
     file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'session === this._maskSession',
-    scope: { anchor: /async\s+toggleMaskMode\s*\(\s*\)\s*\{/, braceBalanced: true },
-    note: '[TestMaskToggleGuard] toggleMaskMode await 後 session re-check（不誤動已切走的別片 UI，Codex P2）',
+    scope: { anchor: /async\s+openMask\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] openMask force-detect await 後 session re-check（不誤動已切走的別片 UI；99a-T3 承接原 toggleMaskMode 語意）',
   },
   {
     file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'session === this._maskSession',
-    scope: { anchor: /async\s+closeMask\s*\(\s*\)\s*\{/, braceBalanced: true },
-    note: '[TestMaskToggleGuard] closeMask await 後 session re-check（不誤關新片遮罩，Codex P2）',
+    scope: { anchor: /async\s+confirmMask\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] confirmMask await 後 session re-check（不誤存已切走的別片；99a-T3 承接原 closeMask 語意）',
   },
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: '_maskVideoPath', note: '[TestMaskToggleGuard] 舊 path-based guard 變數不得復活（已由 _maskSession 取代，Codex P2）' },
   // 98b-T6：亮窗幾何改 reactive data（imperative $nextTick 算），禁量測-in-binding 復活。
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: ':style="_maskWinStyle"', note: '[TestMaskToggleGuard] .lb-mask-window 綁 reactive data _maskWinStyle（非量測-in-binding）' },
   { file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: '_maskWindowStyle()', note: '[TestMaskToggleGuard] 禁 :style 內呼叫量測方法（stale 幾何反模式 98b-T6）' },
   { file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string', pattern: "$watch('currentLightboxVideo?.path'", note: '[TestMaskToggleGuard] 換片 _resetMask 視覺防線（CD-98b-8，防遮罩畫到下一片）' },
-  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '/api/showcase/video/crop-mode', note: '[TestMaskToggleGuard] crop-mode endpoint fetch URL' },
+  // 99a-T1a 已刪除 /crop-mode 路由；99a-T3 移除前端這條 fetch 呼叫（closeMask 整條拆掉，改
+  // confirmMask 打 /video/focal）。TASK-99a-T1a 原文把「這條 required-string 規則的正式替換」
+  // 定在 99a-T4，但 99a-T3 task card 的 Opus correction A 覆核後裁定：required-string 規則若
+  // 原樣留著，字串消失後會軟性 RED（pattern 缺席，非 anchor 錯——不阻斷 npm run lint，但整套
+  // lint 會帶著一條「已知會紅」的規則跑，不符 `npm run lint` 全綠的收工標準）。故 T3 移除本條
+  // （非留給 T4），T4 仍照原計畫新增拖曳/V-X/gating-class 三條全新斷言。
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '/api/showcase/video/detect-focal', note: '[TestMaskToggleGuard] detect-focal endpoint fetch URL' },
   {
     file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'getComputedStyle',
@@ -152,9 +161,181 @@ const RULES = [
     note: '[TestMaskToggleGuard] _computeMaskWinStyle 不得硬編 0.71（比例讀 CSS var）',
   },
   {
+    // 99a Gemini P2 回歸鎖：拖曳起手的 startLeft 必須 clamp（否則臉貼邊時窗子停在界內、
+    // 拖曳從界外起算＝死區）。刻意鎖「const startLeft = clampMaskWinLeft(」整串而非裸的
+    // Math.max/Math.min——後者在 _maskDragStart 的 brace scope 內另有 onMove 也在用，
+    // 會 fail-open（拔掉起手 clamp 仍綠）。
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: 'const startLeft = clampMaskWinLeft(',
+    scope: { anchor: /_maskDragStart\s*\(\s*evt\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 99a：_maskDragStart 起手 startLeft 須經 clampMaskWinLeft 鉗進封面邊界',
+  },
+  {
     file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: /2\s*\/\s*3/,
     scope: { anchor: /_computeMaskWinStyle\s*\(\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] _computeMaskWinStyle 不得硬編 2/3 比例（讀 CSS var）',
+  },
+
+  // ---- [TestMaskToggleGuard] 99a-T4：T3 新互動（force-detect 預覽 + 左右拖曳 + ✓/✗）回填守衛 ----
+  // §1 拖曳 wiring（4）：.lb-mask-window 起手綁定 + 函式定義存在 + 退役 toggle handler 兩檔 forbidden。
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: '@pointerdown="_maskDragStart($event)"',
+    note: '[TestMaskToggleGuard] 99a-T4：.lb-mask-window 綁新拖曳起手（取代 98b @click="toggleMaskMode()"）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: 'toggleMaskMode',
+    note: '[TestMaskToggleGuard] 99a-T4：退役 toggle handler 不得復活（thorough-cleanup lock）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: '_maskDragStart(evt) {',
+    note: '[TestMaskToggleGuard] 99a-T4：拖曳起手函式定義存在',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: 'toggleMaskMode',
+    note: '[TestMaskToggleGuard] 99a-T4：退役 toggle handler 不得復活（thorough-cleanup lock）',
+  },
+
+  // §2 退役識別字 forbidden-string（3，比照既有 _maskVideoPath 先例 :136）：_maskMode/closeMask
+  // 全域零殘留，本 task 補鎖住這個「巧合乾淨」的狀態，防未來以舊名復活。
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: '_maskMode',
+    note: '[TestMaskToggleGuard] 99a-T4：退役 default⇄auto toggle 狀態不得復活（thorough-cleanup lock）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: 'closeMask',
+    note: '[TestMaskToggleGuard] 99a-T4：退役「點窗外隱式存」函式不得以舊名復活（confirmMask/cancelMask 已取代）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: 'closeMask',
+    note: '[TestMaskToggleGuard] 99a-T4：overlay @click.self 不得指回舊 closeMask（現為 cancelMask）',
+  },
+
+  // §3 拖曳 listener 對稱 add/remove（6，scope-anchored——flat required-string 驗不出「掛在對的
+  // 函式、解在對的函式」，見 TASK-99a-T4 技術要點 §3 的「錯位置」反例）。
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: "document.addEventListener('pointermove'",
+    scope: { anchor: /_maskDragStart\s*\(\s*evt\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 99a-T4：_maskDragStart 掛 pointermove（拖曳跟手核心）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: "document.addEventListener('pointerup'",
+    scope: { anchor: /_maskDragStart\s*\(\s*evt\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 99a-T4：_maskDragStart 掛 pointerup（放開結束拖曳）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: "document.addEventListener('pointercancel'",
+    scope: { anchor: /_maskDragStart\s*\(\s*evt\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 99a-T4：_maskDragStart 掛 pointercancel（系統中斷手勢時仍收尾，防洩漏）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: "document.removeEventListener('pointermove'",
+    scope: { anchor: /_maskRemoveDragListeners\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 99a-T4：_maskRemoveDragListeners 對稱移除 pointermove（防洩漏）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: "document.removeEventListener('pointerup'",
+    scope: { anchor: /_maskRemoveDragListeners\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 99a-T4：_maskRemoveDragListeners 對稱移除 pointerup（防洩漏）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: "document.removeEventListener('pointercancel'",
+    scope: { anchor: /_maskRemoveDragListeners\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 99a-T4：_maskRemoveDragListeners 對稱移除 pointercancel（防洩漏）',
+  },
+
+  // §4 V/X handler + gating class（8：5 + 3 顆原按鈕 gate）
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string', pattern: '@click.stop="confirmMask()"',
+    note: '[TestMaskToggleGuard] 99a-T4：✓ 鈕綁 confirmMask（CD-6 就地佔 .cover-actions）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string', pattern: '@click.stop="cancelMask()"',
+    note: '[TestMaskToggleGuard] 99a-T4：✗ 鈕綁 cancelMask',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string', pattern: '@click.self="cancelMask()"',
+    note: '[TestMaskToggleGuard] 99a-T4：overlay 點窗外 = ✗（owner 定案，非 closeMask）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'cancelMask() {',
+    note: '[TestMaskToggleGuard] 99a-T4：cancelMask 函式定義存在',
+  },
+  // confirmMask 定義本身已被既有規則（:131-135，scope anchor `async confirmMask()`）transitively
+  // 鎖住——若函式被砍/改名，該既有規則的 anchor-not-found 會直接硬錯，不需要本 task 重複加一條。
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: ":class=\"{'cover-actions--focal-edit': _maskVisible}\"",
+    note: '[TestMaskToggleGuard] 99a-T4：.cover-actions 容器 focal-edit gating class 綁定（CD-6，桌面 hover-only 常顯解法）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'x-show="!_maskVisible" @click="playVideo(',
+    note: '[TestMaskToggleGuard] 99a-T4：play 鈕編輯中暫隱（CD-6）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'x-show="!_maskVisible" @click="openLocal(',
+    note: '[TestMaskToggleGuard] 99a-T4：開資料夾鈕編輯中暫隱（CD-6）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'x-show="(!currentLightboxVideo?.has_cover || !currentLightboxVideo?.has_nfo) && !_maskVisible"',
+    note: '[TestMaskToggleGuard] 99a-T4：補缺鈕編輯中暫隱（CD-6，錨完整值防 has_cover/has_nfo 條件被誤刪只剩 !_maskVisible）',
+  },
+
+  // ---- [TestMaskToggleGuard] 99a-T5：detect-first 重新設計（Bug 1 修法）+ 星空等待動畫 lifecycle ----
+  // 舊 race 旗標退役（比照既有 _maskVideoPath/_maskMode/closeMask 先例 :136/193/197/201）。
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: '_maskUserAdjusted', note: '[TestMaskToggleGuard] 99a-T5：detect-first 重新設計後 race 在結構上不可能，舊自查補強旗標不得復活（thorough-cleanup lock）' },
+
+  // 新 gating 條件字面存在（.lb-mask-window + ✓ + ✗ 三處，count-based 確保三處都改到，防未來
+  // 重構把其中一處漏改回舊的單旗標 x-show="_maskVisible"）。
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'x-show="_maskVisible && !_maskDetecting"', count: 3, note: '[TestMaskToggleGuard] 99a-T5：.lb-mask-window + ✓ + ✗ 三處收窄 gating（detect 完成才可拖/可提交），count=3 鎖住三處都改到' },
+
+  // 星空等待動畫函式定義存在（ghost-fly.js）+ callsite（state-lightbox.js openMask，唯一啟動點）。
+  { file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string', pattern: 'function playFocalDetectWait', note: '[TestMaskToggleGuard] 99a-T5：ghost-fly.js 定義星空等待迴圈動畫（start）' },
+  { file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string', pattern: 'function stopFocalDetectWait', note: '[TestMaskToggleGuard] 99a-T5：ghost-fly.js 定義星空等待動畫停止（stop）' },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'playFocalDetectWait',
+    scope: { anchor: /async\s+openMask\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 99a-T5：openMask 啟動星空等待動畫（單一入口）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'prefersReducedMotion',
+    scope: { anchor: /async\s+openMask\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 99a-T5：openMask 啟動星空動畫前 PRM guard（C23 per-callsite，比照 state-similar.js isPRM pattern）',
+  },
+
+  // _maskStopWaitAnim 對稱停止 helper：定義存在 + 內部呼叫 GhostFly.stopFocalDetectWait +
+  // 三個生命週期端點（openMask finally / _resetMask / _maskTeardown）都呼叫它（比照既有
+  // _maskRemoveDragListeners 的「定義一次、多處對稱呼叫」寫法）。
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '_maskStopWaitAnim() {', note: '[TestMaskToggleGuard] 99a-T5：星空等待動畫對稱停止 helper 函式定義存在' },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'stopFocalDetectWait',
+    scope: { anchor: /_maskStopWaitAnim\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 99a-T5：_maskStopWaitAnim 呼叫 GhostFly.stopFocalDetectWait',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '_maskStopWaitAnim()',
+    scope: { anchor: /async\s+openMask\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 99a-T5：openMask finally 呼叫 _maskStopWaitAnim（正常結束路徑，session-gated）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '_maskStopWaitAnim()',
+    scope: { anchor: /_resetMask\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 99a-T5：_resetMask 呼叫 _maskStopWaitAnim（換片/關燈箱/ESC 中斷路徑）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '_maskStopWaitAnim()',
+    scope: { anchor: /_maskTeardown\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 99a-T5：_maskTeardown 防禦性再保險呼叫 _maskStopWaitAnim（比照 _maskRemoveDragListeners 先例）',
   },
 
   // ---- [TestSearchLightboxMetadataGuard] search.html：5 個 required ----
@@ -1014,6 +1195,21 @@ const RULES = [
   { file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: 'slot-icon-overlay', note: '[TestSimilarStageGuard] test_no_slot_icon_overlay_in_templates (showcase.html)' },
   { file: 'web/templates/motion_lab.html', kind: 'forbidden-string', pattern: 'slot-icon-overlay', note: '[TestSimilarStageGuard] test_no_slot_icon_overlay_in_templates (motion_lab.html)' },
   { file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: /\b(?:on|play|build|calc|destroy|init|open|close)Clip[A-Z]/, note: '[TestSimilarStageGuard] test_no_clip_alpine_methods_in_showcase_and_similar — showcase.html 半邊（state-similar.js 半邊由 eslint SEL_CLIP_METHOD_IDENT 覆蓋，Group 5b）' },
+
+  // ---- [TestSimilarMainStaticFocalOrder] Codex PR#107 P2：_buildSimilarMainStatic 內
+  //   stageInner.appendChild(img) 必須在 applyFocalToImg(img, ...) 之前——applyCellFocal 對
+  //   已快取封面走同步分支，當場 getComputedStyle 讀 --poster-crop-ratio（:root 變數），
+  //   detached element 讀不到 inherited custom property（回空字串 → parseFloat NaN），
+  //   會誤清 objectPosition。時序修法，非旗標繞過。 ----
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'order',
+    scope: { anchor: /(?:^|\n)\s*_buildSimilarMainStatic\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    items: [
+      { pattern: /stageInner\.appendChild\(img\)/ },
+      { pattern: /this\.applyFocalToImg\(img,\s*this\.currentLightboxVideo\)/ },
+    ],
+    note: '[TestSimilarMainStaticFocalOrder] appendChild(img) 必須在 applyFocalToImg(img, ...) 之前（避免 detached element getComputedStyle 讀不到 --poster-crop-ratio）',
+  },
 
   // ---- [TestRescrapeEntryGuard] showcase ⚙ gear 唯一進階重刮入口（62b-1 → 74b US4 → 74c-T1/T3）----
   {
@@ -2446,15 +2642,26 @@ const RULES = [
   // north-star：template `:style` 綁定字面 / imperative helper 存在性是靜態字串契約 → lint 不進 pytest。
   // no-`!important` 不變式（inline 必勝前提）由 css-guard.mjs CG-FOCAL-01 守（object-position 半邊）。
 
-  // -- Binding existence：三個 focal-aware template 站的 :style 綁定字面必存在 --
-  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'focalStyle(video)', note: '[TestFocalRenderGuard] F1 grid img :style binding' },
-  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'focalStyle(_getSlotItem', note: '[TestFocalRenderGuard] F2 similar desktop slot img :style binding' },
-  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'focalStyle(item)', note: '[TestFocalRenderGuard] F4 similar mobile burst img :style binding' },
+  // -- Binding existence（99a-T2：:style="focalStyle(...)" → @load="applyCellFocal(...)" load-gated
+  //    imperative wiring；98b-T6 姊妹案例，reactive :style 不會因 load 事件重跑，見 TASK-99a-T2 §4）--
+  // 錨定完整 @load="..." 屬性值（非裸 applyCellFocal(...) 子字串）：F1/F4 的裸呼叫式也出現在
+  // 同 tag 的 x-init $watch callback body 內（() => applyCellFocal(...)），若只認裸子字串，刪掉
+  // @load 的 applyCellFocal 仍會被 $watch body 命中而假綠（偵測力洩漏）。錨 @load=" 前綴 + 完整值
+  // 才唯一。F2 無 $watch，其 (anchor.id) 參數形已唯一，但一併錨 @load=" 前綴保持一致。
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '@load="video._imgLoaded = true; applyCellFocal($el, video)"', note: '[TestFocalRenderGuard] F1 grid img @load applyCellFocal wiring（錨完整 @load 值，防 $watch body 假綠）' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '@load="applyCellFocal($el, _getSlotItem(anchor.id))"', note: '[TestFocalRenderGuard] F2 similar desktop slot img @load applyCellFocal wiring' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '@load="applyCellFocal($el, item)"', note: '[TestFocalRenderGuard] F4 similar mobile burst img @load applyCellFocal wiring（錨完整 @load 值，防 $watch body 假綠）' },
+  // -- $watch existence：grid / mobile 兩站（穩定物件參考）需 auto_focal + crop_mode 即時重套；
+  //    similar 桌面 slot 故意不加（x-for scope 只有 anchor，無穩定 video/item 可 $watch，見 §3 F2） --
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: "$watch('video.auto_focal'", note: '[TestFocalRenderGuard] F1 grid x-init $watch(video.auto_focal) 即時重套' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: "$watch('video.crop_mode'", note: '[TestFocalRenderGuard] F1 grid x-init $watch(video.crop_mode) 即時重套' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: "$watch('item.auto_focal'", note: '[TestFocalRenderGuard] F4 mobile drill x-init $watch(item.auto_focal) 即時重套' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: "$watch('item.crop_mode'", note: '[TestFocalRenderGuard] F4 mobile drill x-init $watch(item.crop_mode) 即時重套' },
 
-  // -- Helper existence：兩 state 模組各 import focal.js + 定義各自 helper --
-  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: "'@/shared/focal.js'", note: '[TestFocalRenderGuard] state-videos.js imports focal.js' },
-  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: 'focalStyle', note: '[TestFocalRenderGuard] state-videos.js focalStyle helper（供 F1/F2/F4 template）' },
-  { file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string', pattern: "'@/shared/focal.js'", note: '[TestFocalRenderGuard] state-similar.js imports focal.js' },
+  // -- Helper existence：state-videos.js / state-similar.js 皆改 import focal-cell.js（applyCellFocal）--
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: "'@/shared/focal-cell.js'", note: '[TestFocalRenderGuard] state-videos.js imports focal-cell.js' },
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: 'applyCellFocal', note: '[TestFocalRenderGuard] state-videos.js 揭露 applyCellFocal 供 template 呼叫' },
+  { file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string', pattern: "'@/shared/focal-cell.js'", note: '[TestFocalRenderGuard] state-similar.js imports focal-cell.js' },
   { file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string', pattern: 'applyFocalToImg', note: '[TestFocalRenderGuard] state-similar.js applyFocalToImg helper' },
 
   // -- Imperative pairing：state-similar.js applyFocalToImg 出現 >=7 次（helper def 1 + I-a…I-e/I-g 六個 .src= 成對）--

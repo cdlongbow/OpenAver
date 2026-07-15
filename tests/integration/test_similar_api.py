@@ -356,12 +356,16 @@ class TestSimilarCoversAPI:
         assert "auto_focal" not in qv
         assert "crop_mode" not in qv
 
-    def test_focal_fields_reflect_fresh_db_after_cached_ranker(self, client_with_corpus, db_with_corpus):
-        """Codex PR#105 P2：SimilarRankerCache 已建好後，update_auto_focal()/update_crop_mode()
-        不 invalidate 整個 ranker cache（焦點/裁切模式是顯示欄位、不影響排序特徵，比照
+    def test_focal_fields_reflect_fresh_db_after_cached_ranker(
+        self, client_with_corpus, db_with_corpus, seed_crop_mode
+    ):
+        """Codex PR#105 P2：SimilarRankerCache 已建好後，寫 auto_focal/crop_mode 不
+        invalidate 整個 ranker cache（焦點/裁切模式是顯示欄位、不影響排序特徵，比照
         upsert/delete invalidate 代價不對稱）。similar-covers 端點改用 fresh DB 值覆蓋
         ranker 快取 Video 物件的 auto_focal/crop_mode，驗證卡片不會停留在 warmup 當下的
-        stale 值。
+        stale 值。crop_mode 這欄用 conftest 的 test-only `seed_crop_mode` 直接寫 DB
+        （production 已無獨立的 update_crop_mode mutator，見 99a-T7 retire），只為模擬
+        「DB 已 commit 但未 invalidate cache」這個前置狀態，不代表真實寫入路徑。
         """
         client, target_id, target_number = client_with_corpus
         db_path, _, _ = db_with_corpus
@@ -373,12 +377,12 @@ class TestSimilarCoversAPI:
         assert victim["auto_focal"] == ""       # baseline：_make_video 未設 auto_focal
         assert victim["crop_mode"] == "auto"     # Video dataclass 預設值
 
-        # 直接寫 DB（模擬 update_auto_focal/update_crop_mode 已 commit，但未 invalidate
-        # ranker cache，鏡射 web/routers/showcase.py 的 crop-mode / detect-focal 端點）
+        # 直接寫 DB（模擬 focal 欄位已 commit，但未 invalidate ranker cache，鏡射
+        # web/routers/showcase.py 的 crop-mode / detect-focal 端點）
         repo = VideoRepository(db_path)
         victim_video = repo.get_by_id(victim["video_id"])
-        assert repo.update_auto_focal(victim_video.path, "0.6000,0.3000")
-        assert repo.update_crop_mode(victim_video.path, "default")
+        assert repo.update_auto_focal(victim_video.path, "0.6000,0.3000", victim_video.cover_path)
+        assert seed_crop_mode(repo, victim_video.path, "default")
 
         resp_after = client.get(f"/api/similar-covers/by-number/{target_number}")
         results_after = resp_after.json()["results"]

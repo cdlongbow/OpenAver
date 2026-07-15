@@ -155,7 +155,9 @@ class ActressRepository:
             conn.close()
 
     def update_crop_mode(self, name: str, mode: str) -> bool:
-        """安全更新 crop_mode 欄位（不碰其他欄位，CD-98a-6 mutator，鏡射 VideoRepository.update_crop_mode）。
+        """安全更新 crop_mode 欄位（不碰其他欄位，CD-98a-6 mutator，鏡射 update_user_tags 的
+        單欄安全更新範本——VideoRepository 端同名方法已於 99a-T7 retire，此方法屬不同
+        feature（女優照片 / 98d），與影片 focal 無關，不受影響）。
 
         Args:
             name: 女優名稱（DB key）

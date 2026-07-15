@@ -7,17 +7,15 @@
  */
 
 import { _videos, _filteredVideos, _nameToGroup, _tagToGroup, _setVideos, _setFilteredVideos } from '@/showcase/state-base.js';
-import { focalObjectPosition } from '@/shared/focal.js';
+import { applyCellFocal } from '@/shared/focal-cell.js';
 
 export function stateVideos() {
     return {
 
-        // --- 98b-T3: focal object-position（無碼片直式對臉；null → 退 CSS baseline right center）---
-        // merge 後對整個 showcase scope 可見，供 F1 grid / F2 similar slot / F4 mobile burst 三站 :style 共用。
-        focalStyle(video) {
-            const op = focalObjectPosition(video);
-            return op ? `object-position:${op}` : '';
-        },
+        // --- 99a-T2: 揭露 applyCellFocal 供 F1 grid template @load / $watch 呼叫（load-gated，
+        // aspect-aware object-position；取代舊 focalStyle 的 reactive :style binding，見 98b-T6 姊妹
+        // gotcha：naturalWidth 在 decode 完成前恆為 0，reactive binding 不會因 load 事件重跑）---
+        applyCellFocal,
 
         // --- API 呼叫 ---
         async fetchVideos() {
