@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.12.2] - 2026-07-16
 
-本版主軸：**女優照片可以自己上傳了 + 女優也能對焦**（feature/100，spec-100／plan-100a＋100b）。之前女優牆的照片只能靠系統自動抓（線上圖庫或本機影片封面），想換成自己喜歡的照片得摸到資料夾手動塞檔案；而且女優頭像一律置中裁切，偶爾裁的位置不理想也沒辦法調整。這版把兩塊補齊。
+本版主軸：**女優照片可以自己上傳了 + 女優也能對焦**（feature/100，spec-100／plan-100a＋100b＋100c）。之前女優牆的照片只能靠系統自動抓（線上圖庫或本機影片封面），想換成自己喜歡的照片得摸到資料夾手動塞檔案；而且女優頭像一律置中裁切，偶爾裁的位置不理想也沒辦法調整。這版把兩塊補齊，並在收尾時把對焦互動簡化成與影片一致（只在照片夠寬時才出現對焦鈕、只可左右拖）。
 
 ### Added
 #### 📤 女優照片可以自己上傳
@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 已知限制
 - **桌面手動換檔（自己把圖丟進 `output/Gfriends` 資料夾）不會自動清掉既有的對焦設定**：如果這位女優之前用對焦鈕存過焦點位置，之後又手動把資料夾裡的照片換掉，舊的焦點位置會繼續套用在新照片上，可能會裁到不理想的地方。**逃生口**：再上傳一次照片，或是再按一次對焦鈕重新設定一次，兩者都會蓋掉舊的焦點。
+
+### 測試
+- 全套 pytest **5289 passed, 1 skipped**（unit + integration，排除 smoke／e2e）＋ `ruff check .` 綠 ＋ `npm run lint` 綠（eslint／stylelint／`static_guard_lint` **1007** 條）＋ `npm test`（node:test **112**）。
+- **對焦互動於 100c 收尾定案**（女優對焦鈕只在照片橫向可拖幅度 ≥20% 時出現、只左右拖、Y 軸整條移除）：CD-11「不得復活」forbidden 守衛對 `computeMaskAxis`／`_maskFocalY`／`translateY`／牆格 Y 軸 object-position 輸出各自 mutation 單獨紅→還原綠；零行為變更以 headless CDP 冷載實測（全 22 位女優恰 5 位顯示對焦鈕；editor／render 兩側刪碼前後行為逐項一致；影片路徑零回歸）。
+- **上傳點擊路徑**另以 CDP 實測：`x-show="_focalIconVisible()"` 五條件在依序切換 22 位女優全程無 staleness（method 無條件讀 5 旗標避開 `&&` 短路漏訂閱）。
+- 來源金絲雀：**7 源 PASS + heyzo FAIL**（0 healthy／回空內容，疑站方改版或連線問題；**與本版 diff 無關**——本版零 scraper 改動，advisory 已記待查）。
+- 每 task 獨立 Sonnet review ＋ Codex PR review（100a 三條換圖失敗語意）＋ Codex 本地 review（100b／100c）皆修並 mutation／CDP 證明。
+- **i18n 三語（zh_CN／en／ja）本版新增 key 暫留空**、靠 fallback 顯示 zh_TW（正確翻譯歸 milestone）。
 
 ## [0.12.1] - 2026-07-15
 
