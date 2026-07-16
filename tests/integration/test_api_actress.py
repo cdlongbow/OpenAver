@@ -5,6 +5,7 @@ test_api_actress.py — 女優 API 整合測試
 外部依賴（orchestrator + requests）全部 mock。
 """
 
+import os
 import time
 
 import pytest
@@ -779,6 +780,109 @@ class TestSetActressPhoto:
 
         assert resp.status_code == 500
         assert resp.json()["error"] == "crop_failed"
+
+    # ---- 🔴 PR#108 Codex 二審 P2-B：清舊檔失敗不可拖垮已成功的換圖 ----
+
+    def test_set_actress_photo_local_crop_old_file_cleanup_permission_error_still_succeeds(
+        self, client, tmp_db, tmp_path,
+    ):
+        """舊 sibling 檔（不同副檔名）unlink 拋 PermissionError（模擬 Windows 縮圖/防毒鎖檔）
+        時，換圖仍必須成功（200 + photo_url/photo_source），因為此時新圖已由 os.replace
+        落地、_pre_invalidate_focal 也已清完舊焦點——清舊殘檔失敗不該讓已成功的換圖回 500。
+
+        mutation：把 `_write_actress_photo` 清舊檔迴圈的 try/except 拿掉（改回裸
+        `old.unlink(missing_ok=True)`）→ 本測試必紅（PermissionError 逸出成 500）。
+        """
+        from core.organizer import sanitize_filename
+
+        self._save_actress(client)
+        video_path, cover_path = self._save_video_with_cover(tmp_path)
+        video_uri = f"file://{video_path}"
+        fake_jpeg = b"\xff\xd8\xff\xe0FAKE_CROP_JPEG"
+
+        gfriends = tmp_path / "gfriends"
+        gfriends.mkdir(parents=True, exist_ok=True)
+        # 舊照片：不同副檔名（.png），會落入清舊檔迴圈（old != dest）
+        old_path = gfriends / f"{sanitize_filename(ACTRESS_NAME)}.png"
+        old_path.write_bytes(b"OLD_PNG_BYTES")
+
+        real_unlink = Path.unlink
+
+        def fake_unlink(self_path, *a, **kw):
+            if self_path == old_path:
+                raise PermissionError("locked by AV scanner")
+            return real_unlink(self_path, *a, **kw)
+
+        with patch("web.routers.actress.crop_video_cover", return_value=fake_jpeg), \
+             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
+             patch.object(Path, "unlink", fake_unlink):
+            resp = client.post(
+                f"/api/actresses/{ACTRESS_NAME}/photo",
+                json={"source": "local_crop", "video_path": video_uri},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "photo_url" in data
+        assert data["photo_source"] == "local_crop"
+        # 新圖確實落地（清舊檔失敗不阻擋新圖寫入）
+        written = list(gfriends.glob("*.jpg"))
+        assert len(written) == 1
+        assert written[0].read_bytes() == fake_jpeg
+        # 舊殘檔仍在（unlink 失敗，未被清掉）
+        assert old_path.exists()
+
+        # DB photo_source 真的持久化（非跳過收尾直接 500）
+        from core.database import ActressRepository
+        actress = ActressRepository().get_by_name(ACTRESS_NAME)
+        assert actress.photo_source == "local_crop"
+
+    def test_set_actress_photo_local_crop_write_failure_returns_json_500(
+        self, client, tmp_db, tmp_path,
+    ):
+        """`_write_actress_photo` 本身寫入失敗（非清舊檔失敗，如 os.replace 拋例外）時，
+        local_crop 分支必須有外層 try/except 接住並回固定中文 JSON 500（比照
+        upload_actress_photo :898-902），不可讓例外逸出成 Starlette 預設的裸文字
+        "Internal Server Error"。
+
+        mutation：把 local_crop 呼叫 `_write_actress_photo` 那段的外層 try/except
+        拿掉（改回裸呼叫）→ 例外直接逸出，TestClient（raise_server_exceptions=True
+        預設）會讓本測試在 client.post() 當場拋例外而非拿到 500 response，本測試必紅。
+        """
+        self._save_actress(client)
+        video_path, cover_path = self._save_video_with_cover(tmp_path)
+        video_uri = f"file://{video_path}"
+        fake_jpeg = b"\xff\xd8\xff\xe0FAKE_CROP_JPEG"
+
+        gfriends = tmp_path / "gfriends"
+        gfriends.mkdir(parents=True, exist_ok=True)
+
+        # 🔴 os.replace 是模組級共用函式（非 web.routers.actress 私有 binding）——local_crop
+        # 分支中途會呼叫 load_config()，若該次觸發 core/config.py 的 default-config
+        # 落地寫入也會經過 os.replace，全域無差別 side_effect 會連它一起炸掉（假紅，
+        # 與本測試想模擬的「_write_actress_photo 寫入失敗」無關）。改成只在目的地落在
+        # gfriends 目錄內時才炸，其餘呼叫走真實 os.replace。
+        real_replace = os.replace
+
+        def fake_replace(src, dst, *a, **kw):
+            if str(gfriends) in str(dst):
+                raise OSError("disk full")
+            return real_replace(src, dst, *a, **kw)
+
+        with patch("web.routers.actress.crop_video_cover", return_value=fake_jpeg), \
+             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
+             patch("web.routers.actress.os.replace", side_effect=fake_replace):
+            resp = client.post(
+                f"/api/actresses/{ACTRESS_NAME}/photo",
+                json={"source": "local_crop", "video_path": video_uri},
+            )
+
+        assert resp.status_code == 500
+        assert resp.headers["content-type"].startswith("application/json")
+        assert resp.json()["error"] == _SET_PHOTO_ERR_FAILED
+        assert "disk full" not in resp.text   # 細節只進 log，不外洩
 
     def test_set_actress_photo_download_failed(self, client):
         """download_actress_photo 回 False 時回 500 download_failed"""
@@ -1771,6 +1875,54 @@ class TestUploadActressPhoto:
         # 🔴 承重斷言：舊照片還在，且 bytes 一個位元都沒變
         assert old_path.exists(), "寫檔失敗卻把舊照片刪了 —— spec §3.3 的失敗矩陣不成立"
         assert old_path.read_bytes() == old_bytes
+
+    # ---- 🔴 PR#108 Codex 二審 P2-B：清舊檔失敗不可拖垮已成功的換圖 ----
+
+    def test_upload_photo_old_file_cleanup_permission_error_still_succeeds(self, client, tmp_path):
+        """舊 sibling 檔（不同副檔名）unlink 拋 PermissionError（模擬 Windows 縮圖/防毒
+        鎖檔）時，上傳仍必須成功（200 + photo_url/photo_source），因為新圖已由
+        os.replace 落地——清舊殘檔失敗不該讓已成功的上傳回 500。
+
+        mutation：把 `_write_actress_photo` 清舊檔迴圈的 try/except 拿掉（改回裸
+        `old.unlink(missing_ok=True)`）→ 本測試必紅（PermissionError 逸出成 500）。
+        """
+        from core.organizer import sanitize_filename
+
+        self._save_actress(client)
+        gfriends = tmp_path / "gfriends"
+        gfriends.mkdir(parents=True, exist_ok=True)
+        # 舊照片：不同副檔名（.jpg），上傳 PNG 後會落入清舊檔迴圈（old != dest）
+        old_path = gfriends / f"{sanitize_filename(ACTRESS_NAME)}.jpg"
+        old_path.write_bytes(self._make_jpeg_bytes())
+
+        real_unlink = Path.unlink
+
+        def fake_unlink(self_path, *a, **kw):
+            if self_path == old_path:
+                raise PermissionError("locked by AV scanner")
+            return real_unlink(self_path, *a, **kw)
+
+        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
+             patch.object(Path, "unlink", fake_unlink):
+            resp = client.post(
+                f"/api/actresses/{ACTRESS_NAME}/photo/upload",
+                files={"file": ("new.png", self._make_png_bytes(), "image/png")},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "photo_url" in data
+        assert data["photo_source"] == "upload"
+        # 新圖確實落地
+        written = list(gfriends.glob("*.png"))
+        assert len(written) == 1
+        # 舊殘檔仍在（unlink 失敗，未被清掉）
+        assert old_path.exists()
+
+        from core.database import ActressRepository
+        actress = ActressRepository().get_by_name(ACTRESS_NAME)
+        assert actress.photo_source == "upload"
 
 
 # ---------------------------------------------------------------------------

@@ -3141,6 +3141,26 @@ const RULES = [
   // -- Imperative pairing：BurstPicker 鏡射來源卡 objectPosition（focal-agnostic，只搬呈現）--
   { file: 'web/static/js/shared/burst-picker.js', kind: 'required-string', pattern: 'coverImg.style.objectPosition = selectedImg.style.objectPosition', note: '[TestFocalRenderGuard] I-f burst-picker.js 正常動畫 objectPosition 鏡射' },
   { file: 'web/static/js/shared/burst-picker.js', kind: 'required-string', pattern: '_covImg.style.objectPosition = _selImg.style.objectPosition', note: '[TestFocalRenderGuard] I-f burst-picker.js reduced-motion objectPosition 鏡射' },
+
+  // ==== PR#108 Codex 二審 P2-A：picker 開啟時擋女優切換（防張冠李戴）====
+  // prevActressLightbox()/nextActressLightbox() 是鍵盤 ArrowLeft/Right 女優分支
+  // （handleKeydown）與 .lightbox-nav-prev/-next @click 的共同 chokepoint；手機 swipe
+  // 已在 _lbTouchEnd 對 _pickerOpen 做同語意 pure-block guard（獨立、非本規則涵蓋範圍）。
+  // scope-anchored（braceBalanced）鎖住 guard 存在於「這兩個函式本體內」，而非全檔任意處
+  // 出現同一字面字串——防未來重構把 guard 搬去別的、不涵蓋鍵盤/點擊路徑的地方卻讓 flat
+  // required-string 誤判通過。
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: 'if (this._pickerOpen) return;',
+    scope: { anchor: /prevActressLightbox\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[P2-A pickerOpen-guard] PR#108 二審：prevActressLightbox() 起手擋 picker 開啟時的女優切換（張冠李戴防護）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: 'if (this._pickerOpen) return;',
+    scope: { anchor: /nextActressLightbox\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[P2-A pickerOpen-guard] PR#108 二審：nextActressLightbox() 起手擋 picker 開啟時的女優切換（張冠李戴防護）',
+  },
 ];
 
 // ---- helpers ----

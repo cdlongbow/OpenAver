@@ -542,9 +542,22 @@ def _write_actress_photo(name: str, crop_bytes: bytes, ext: str = ".jpg") -> Non
     # 那句話是假的。改成寫入成功後才清掉「其他副檔名」的殘檔（dest 本身除外），
     # 該承諾才成立：寫檔失敗 → 舊圖原封不動。
     # 成功路徑行為不變（最終仍只留 dest 一個檔），故既有 caller 不受影響。
+    # 🔴 PR#108 Codex P2-B：清舊檔的每一支 unlink 各自包 try/except（不只吞
+    # FileNotFoundError 的 missing_ok，還要吞 PermissionError 等）。Windows
+    # 縮圖快取／防毒即時掃描持有舊副檔名檔的 handle 時 unlink 會拋
+    # PermissionError；此時新圖已由上面的 os.replace 成功落地、_pre_invalidate_focal
+    # 也已清完舊焦點——若讓例外往上拋，呼叫端會回 500，但新圖其實已經換好、只是
+    # 清舊殘檔失敗，屬於 core/actress_photo.py:166-175 download_actress_photo 既有
+    # warn-and-continue 缺的雙胞胎（該處已修，本函式當時漏補）。log 後繼續下一個
+    # sibling 檔，不中斷、不上拋。
     for old in GFRIENDS_DIR.glob(f"{safe}.*"):
         if old != dest:
-            old.unlink(missing_ok=True)
+            try:
+                old.unlink()
+            except Exception as e:
+                logger.warning(
+                    "[actress] 清舊照片檔失敗 path=%s err=%s", old, e,
+                )
 
 
 async def _pre_invalidate_focal(repo: ActressRepository, name: str, *, ctx: str, err_msg: str):
@@ -764,7 +777,16 @@ async def set_actress_photo(name: str, req: SetActressPhotoRequest):
         if err:
             return err
         # glob 刪舊副檔名 + 寫入
-        await asyncio.to_thread(_write_actress_photo, name, crop_bytes)
+        # 🔴 PR#108 Codex P2-B：比照 upload_actress_photo（:898-902）補外層 try/except——
+        # local_crop 分支原本完全沒有，_write_actress_photo 內部例外（含清舊檔殘留的
+        # PermissionError 等）會逸出成未捕捉例外、FastAPI 回裸文字 500，而非本檔統一的
+        # 錯誤信封格式。錯誤信封對齊：照片家族一律裸 dict `{"error": ...}`（非 upload
+        # 端點也用同一 _SET_PHOTO_ERR_FAILED 固定中文，與 CD-8 一致）。
+        try:
+            await asyncio.to_thread(_write_actress_photo, name, crop_bytes)
+        except Exception:
+            logger.exception("[actress] set_photo local_crop 寫檔失敗 name=%s", name)
+            return JSONResponse(status_code=500, content={"error": _SET_PHOTO_ERR_FAILED})
 
     # 更新 photo_source + 回傳（CD-7）
     err = await _persist_photo_source(
