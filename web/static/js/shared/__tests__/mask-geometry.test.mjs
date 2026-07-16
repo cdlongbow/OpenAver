@@ -1,8 +1,9 @@
-// mask-geometry.test.mjs — CD-2 軸向/凍結判定 + G1 亮窗幾何 object-form 回歸鎖（100b-T2a）。
+// mask-geometry.test.mjs — CD-2 軸向/凍結判定 + G1 亮窗幾何 object-form 回歸鎖（100b-T2a）
+// + CD-7 門檻純函式回歸鎖（100c-T1）。
 // 零新依賴：Node 內建 node:test + node:assert/strict（純函式，無 DOM stub 需求）。
 // 跑：npm test（glob 涵蓋本檔，package.json:13）。
 //
-// 守的三件事：
+// 守的四件事：
 //   (a) CD-2 軸向選擇：寬圖(a>r)→'x'、窄圖(a<r)→'y'（mutation：把比較反向 → 必 RED）
 //   (b) CD-2 凍結模式：Math.max(dragExtentX, dragExtentY) < 2 **CSS px 空間**判定。
 //       🔴 「px 空間」是硬需求不是實作細節——女優圖 height:60vh（plan §B-5），H 隨視窗變，
@@ -11,15 +12,17 @@
 //   (c) G1：computeMaskWinGeometry 回傳**型別為 object 非 string**——99a-T5 事故本體
 //       （`:style` 綁字串 → setAttribute('style') 整串覆寫 → 抹掉 x-show 的 display:none →
 //       x-show 快取短路不自我修復 → 948 條全綠、功能完全不可用）。兩個軸向分支各鎖一次。
+//   (d) CD-7：computeMaskDragRoom 門檻判定——四類分支、真實邊界值的「在／不在門檻內」
+//       歸屬、尺度無關、非有限值 fail-closed（不可回 NaN）。詳見下方「CD-7 門檻」一節。
 //
 // state-lightbox.js 為何不直接測：該檔用 `@/showcase/...` importmap alias（只有瀏覽器的
-// base.html importmap 認得），plain Node 無法 import；故 CD-2/G1 的承重幾何抽至
+// base.html importmap 認得），plain Node 無法 import；故 CD-2/G1/CD-7 的承重幾何抽至
 // shared/mask-geometry.js（只用相對路徑 import），本檔直接驗純函式。
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { computeMaskAxis, computeMaskWinGeometry } = await import('../mask-geometry.js');
+const { computeMaskAxis, computeMaskWinGeometry, computeMaskDragRoom, MASK_MIN_DRAG_ROOM } = await import('../mask-geometry.js');
 
 const R_ACTRESS = 0.75;   // --actress-crop-ratio（女優 3/4 置中窗，CD-3）
 const R_POSTER = 0.71;    // --poster-crop-ratio（影片右裁，CD-3——本檔只用於「video 恆 x 軸」對照）
@@ -171,4 +174,71 @@ test('B-4〔clamp 軸無關〕y 軸 focalY=1（臉貼最下）→ top 鉗進 [0,
 test('B-4〔clamp 軸無關〕x 軸 focalX=1（臉貼最右）→ left 鉗進 [0, W-winW] 上界（既有行為對照）', () => {
   const s = computeMaskWinGeometry(1000, 600, R_ACTRESS, 'x', 1, 0.5);
   assert.equal(s.transform, 'translateX(550px)', 'left 鉗進 W-winW=550');
+});
+
+// ── CD-7 門檻：computeMaskDragRoom ───────────────────────────────────────────
+
+test('computeMaskDragRoom〔a < r 窄圖〕明里つむぎ a=0.7087 vs r=0.75 → 0（X 軸零溢出）', () => {
+  assert.equal(computeMaskDragRoom(0.7087, R_ACTRESS), 0);
+});
+
+test('computeMaskDragRoom〔a === r 精準相等〕a=0.75 vs r=0.75 → 恆 0（不落入除法路徑算出殘值）', () => {
+  assert.equal(computeMaskDragRoom(0.75, R_ACTRESS), 0, 'mutation：把 <= 改成 < → a===r 時會落入 1-r/a=0 的除法路徑，數值仍為 0 但分支覆蓋消失');
+});
+
+test('computeMaskDragRoom〔a > r 寬圖〕a=1.0 vs r=0.75 → 1 - r/a = 0.25（數值斷言，容浮點誤差）', () => {
+  const result = computeMaskDragRoom(1.0, R_ACTRESS);
+  assert.ok(Math.abs(result - 0.25) < 1e-6, `預期 ≈0.25，實得 ${result}`);
+});
+
+test('🔴 computeMaskDragRoom〔非有限值 fail-closed〕a=NaN/Infinity、r=NaN/0/-1 → 皆回傳 0，明確排除 NaN', () => {
+  // DoD 1：不可只斷言 `=== 0`——0 和 NaN 在寬鬆比較下容易混淆，需顯式 assert.ok(!Number.isNaN(result))。
+  for (const [a, r, label] of [
+    [NaN, R_ACTRESS, 'a=NaN'],
+    [Infinity, R_ACTRESS, 'a=Infinity'],
+    [-Infinity, R_ACTRESS, 'a=-Infinity'],
+    [1.0, NaN, 'r=NaN'],
+    [1.0, 0, 'r=0'],
+    [1.0, -1, 'r=-1'],
+  ]) {
+    const result = computeMaskDragRoom(a, r);
+    assert.ok(!Number.isNaN(result), `${label}：result 不可為 NaN，實得 ${result}`);
+    assert.equal(result, 0, `${label}：fail-closed 必回 0`);
+  }
+});
+
+test('computeMaskDragRoom〔邊界真實值 + 門檻歸屬〕明里つむぎ a=0.7087 → 0（窄圖零溢出，遠低於門檻）', () => {
+  const result = computeMaskDragRoom(0.7087, R_ACTRESS);
+  assert.ok(Math.abs(result - 0) < 1e-6);
+  assert.ok(result < MASK_MIN_DRAG_ROOM, '窄圖零溢出，不在門檻內');
+});
+
+test('computeMaskDragRoom〔邊界真實值 + 門檻歸屬〕gfriends a=0.8261 → ≈0.0921，斷言 < MASK_MIN_DRAG_ROOM（不在門檻內）', () => {
+  const result = computeMaskDragRoom(0.8261, R_ACTRESS);
+  assert.ok(Math.abs(result - 0.0921) < 1e-4, `預期 ≈0.0921，實得 ${result}`);
+  // 🔴 門檻歸屬必須直接 import MASK_MIN_DRAG_ROOM 比較，不可硬編 0.20 字面
+  // （否則 DoD 4 的 mutation：0.20→0.05 測不出——這條斷言在 mutation 下會單獨翻面 RED）。
+  assert.ok(result < MASK_MIN_DRAG_ROOM, 'gfriends 不在門檻內（0.0921 < 0.20）');
+});
+
+test('computeMaskDragRoom〔邊界真實值 + 門檻歸屬〕方形 a=1.0 → 0.25，斷言 >= MASK_MIN_DRAG_ROOM（在門檻內）', () => {
+  const result = computeMaskDragRoom(1.0, R_ACTRESS);
+  assert.ok(Math.abs(result - 0.25) < 1e-6);
+  assert.ok(result >= MASK_MIN_DRAG_ROOM, '方形在門檻內（0.25 >= 0.20）');
+});
+
+test('computeMaskDragRoom〔邊界真實值 + 門檻歸屬〕二葉エマ a=1.4986 → ≈0.4995，斷言 >= MASK_MIN_DRAG_ROOM（在門檻內）', () => {
+  const result = computeMaskDragRoom(1.4986, R_ACTRESS);
+  assert.ok(Math.abs(result - 0.4995) < 1e-4, `預期 ≈0.4995，實得 ${result}`);
+  assert.ok(result >= MASK_MIN_DRAG_ROOM, '二葉エマ在門檻內（0.4995 >= 0.20）');
+});
+
+test('computeMaskDragRoom〔尺度無關〕同一 a 由不同 (W,H) 絕對值算出 → 回傳值相同（CD-7 承重）', () => {
+  const aFromSmall = 1000 / 600;   // ≈1.6667
+  const aFromLarge = 2000 / 1200;  // 同比值，不同絕對像素
+  assert.equal(aFromSmall, aFromLarge, '兩組 (W,H) 算出相同比值（前提）');
+
+  const resultSmall = computeMaskDragRoom(aFromSmall, R_ACTRESS);
+  const resultLarge = computeMaskDragRoom(aFromLarge, R_ACTRESS);
+  assert.equal(resultSmall, resultLarge, '🔴 同一 a 不同絕對 W/H 來源 → drag room 必須相同（尺度無關，簽名吃 a 的結構保證）');
 });

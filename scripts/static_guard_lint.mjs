@@ -594,7 +594,7 @@ const RULES = [
   // 傳 --actress-crop-ratio（CD-3）。count:3 涵蓋 @load 呼叫本身 + 兩個 $watch callback 內
   // 各自呼叫一次，缺一即代表接線不全（例如漏改成不帶 ratioVar 的 2-arg 呼叫，會誤用
   // 預設 --poster-crop-ratio）。
-  // Codex 本地 review 修正（Fix C）：pattern 錨完整引數列（含結尾 'auto')）,比照 :2972-2976
+  // Codex 本地 review 修正（Fix C）：pattern 錨完整引數列（含結尾 'auto')）,比照 :2997-3003
   // 「錨完整 @load 值」慣例——只認到 '--actress-crop-ratio' 這一段會被舊 3-arg 呼叫（缺
   // axisMode，退回吃預設 'x'，女優小格會靜默丟失 Y 軸修正）假綠放行，證不出第 4 引數還在。
   {
