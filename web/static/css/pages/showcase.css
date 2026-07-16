@@ -335,7 +335,12 @@
        cover 填滿僅輕裁上下、無 letterbox），覆蓋 hero 既有 contain（L2342）。
        selector 帶 :is(#id,…) scope → (1,4,0) 勝 theme.css 基準 (1,0,1)；showcase 的 ds-gallery-composition
        在 .showcase-container 祖先 → 用後代 :is(…) .showcase-grid（與 L313 同 pattern）。
-       hero 在女優收藏模式不存在（showFavoriteActresses gate），故只影響 video-mode grid。 */
+       hero 在女優收藏模式不存在（showFavoriteActresses gate），故只影響 video-mode grid。
+       🔴 100b（plan-100b §A ⚠️，theme.css 另有 --actress-crop-ratio: 0.75 供女優收藏牆/燈箱編輯用）：
+       這裡刻意**不**改用 --actress-crop-ratio。此 hero 卡是「video-mode grid 裡精準匹配到的女優卡」，
+       要跟同一列的一般影片卡對齊裁窗、不然這一格會比鄰卡窄/高造成 row 錯位；影片卡用的是
+       --poster-crop-ratio，故 hero 卡也必須用同一個值才能對齊，跟「女優本人是不是 3/4 比例」無關。
+       範圍外、本 plan 不動這行，純補這條註解防下個人以為是漏改。 */
     :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid .av-card-preview.hero-card .av-card-preview-img {
         aspect-ratio: var(--poster-crop-ratio, 0.71);
         height: auto;
@@ -1019,6 +1024,19 @@
     cursor: grab;
 }
 
+/* 100b-T5（§D，Gemini 2026-07-15 建議，採納）：軸向 cursor affordance——桌面 only，不可作為
+ * 軸向的唯一提示（手機無 cursor；正確性一律靠 CD-2 幾何自動選軸+凍結判定）。modifier class
+ * 由 Alpine :class 綁 _maskAxis（比照上面 --dragging 的寫法，見 _macros/focal_mask.html）。
+ * 宣告順序刻意排在 --dragging/--frozen 之前：兩者是互斥的即時態，同為單一 class 選擇器
+ * （同 specificity），靠 source order 決勝負，必須留在後面才會贏過本規則。 */
+.lb-mask-window--axis-x {
+    cursor: ew-resize;
+}
+
+.lb-mask-window--axis-y {
+    cursor: ns-resize;
+}
+
 /* 99a-T3：拖曳中停用 transition——連續 1:1 跟手，套著 transition 會有橡皮筋延遲感，
  * 不符 spec §3.3「拖曳即時預覽」。拖曳結束（_maskDragging=false）恢復，讓 force-detect
  * 完成後「滑到偵測位置」的效果繼續享受這條 transition。 */
@@ -1028,8 +1046,8 @@
 }
 
 /* 100b-T2a（CD-2 凍結模式）：女優圖無可拖曳空間時，cursor 明確表達「這張圖沒有可調空間」，
- * 不與可拖曳態的 grab 混淆。軸向 hover affordance（ew-resize/ns-resize）歸 T5，本規則只鎖
- * 凍結模式這個窄範圍。 */
+ * 不與可拖曳態的 grab 混淆。軸向 hover affordance（見上方 --axis-x/--axis-y，100b-T5 已補）
+ * 不適用凍結態，本規則只鎖凍結模式這個窄範圍。 */
 .lb-mask-window--frozen {
     cursor: default;
 }

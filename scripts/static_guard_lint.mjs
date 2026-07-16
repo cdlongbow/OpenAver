@@ -584,6 +584,81 @@ const RULES = [
     note: '[TestMaskToggleGuard] 100b-T4：女優牆格 x-init watcher 鎖 crop_mode（DoD②-a：換照片後回置中裁）',
   },
 
+  // ---- [TestMaskToggleGuard] 100b-T5：收尾守衛（CD-5，§D）----
+
+  // T2a 裁決 3 留給本 task：既有 4 條 _computeMaskWinStyle scope rule（getComputedStyle
+  // required／--poster-crop-ratio required／0.71 forbidden／2/3 forbidden，:151-180）只鎖住
+  // 影片那一半的字面字串。--actress-crop-ratio 的正向鎖原本不存在——若有人把三元式的 actress
+  // 分支砍掉（例如「清理」成恆讀 --poster-crop-ratio），既有 4 條規則全數維持綠燈（它們只驗
+  // --poster-crop-ratio 存在／0.71 不存在，證不出 actress 分支還在），女優遮罩會在 T2a 已修好
+  // 的地方靜默退化回 NaN 幾何。鏡射既有 :157-160 required 規則，同一 anchor、同一 scope。
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '--actress-crop-ratio',
+    scope: { anchor: /_computeMaskWinStyle\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 100b-T5：_computeMaskWinStyle 讀 --actress-crop-ratio（CD-3 正向鎖，鏡射既有 --poster-crop-ratio required）',
+  },
+
+  // CD-1：女優不得裸讀 --poster-crop-ratio、不得在 state-actress.js 內另起一套 _mask* 平行實作
+  // （走同一組 _mask* 函式 + axis 參數，不複製）。全檔掃描，不需 scope——state-actress.js 今天
+  // 對兩者皆零出現（已查），本規則純屬回歸鎖，防未來有人「順手」在這裡加女優專用的遮罩/比例邏輯。
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'forbidden-string', pattern: '--poster-crop-ratio',
+    note: '[TestMaskToggleGuard] 100b-T5：CD-1／CD-3——state-actress.js 不得裸讀 --poster-crop-ratio（女優比例走 _maskTarget()/computeAndApply 既有 dispatch，不得繞過）',
+  },
+  {
+    // 🔴 本規則為何不誤中 state-actress.js 既有的 `this._resetMask()` / `this._refreshActressPhotoLoaded()`
+    // ——精確機制（別寫成「因為大寫 M」或「因為沒底線前綴」，那兩種說法都不準）：
+    //   pattern `_mask` 是 **case-sensitive 子字串**比對，要求「底線**緊接**小寫 m」。
+    //   `_resetMask` 拆開是 `_` + `reset` + `Mask` → 唯一的底線後面接的是 `r`；
+    //   `_refreshActressPhotoLoaded` 同理（底線後接 `r`）。**兩者都有底線前綴，只是底線後不是 m。**
+    //   ⇒ 命中的只會是 `_maskAxis` / `_maskFocalX` / `_maskKind` 這種 `_mask*` 識別字家族**本身**
+    //   被定義或參照——那正是 CD-1 要擋的「平行實作」訊號。
+    // ⚠️ 邊界很窄：若日後有人在本檔寫 `this._maskVisible` 之類的**讀取**（非平行實作），也會紅。
+    //   那是刻意的 fail-closed——女優的遮罩狀態一律走 state-lightbox.js 的共用 `_mask*`，
+    //   state-actress.js 不該直接碰它們（CD-1：不複製到 state-actress.js）。
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'forbidden-string', pattern: '_mask',
+    note: '[TestMaskToggleGuard] 100b-T5：CD-1——state-actress.js 不得出現 _mask* 平行實作或直接碰 _mask* 狀態（呼叫 this._resetMask() 這類共用方法不受影響：底線後接 r 非 m，見上方註解的精確機制）',
+  },
+
+  // v3 已砍 compare token 機制（CD-9：無 409），_maskExpectedFp 是 v2 殘留識別字，全檔零出現
+  // （已查）。防它以「還原相容性」之類理由復活——一旦復活即代表有人試圖繞過 CD-9 的三桶錯誤
+  // 分流，重新做回 fingerprint-based CAS。
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: '_maskExpectedFp',
+    note: '[TestMaskToggleGuard] 100b-T5：v2 殘留識別字 _maskExpectedFp 不得復活（v3 無 token，CD-9/§B-1b 明訂）',
+  },
+
+  // spec §3.7-7「零偵測成本」：_uploadActressPhoto 已有同型規則（100b-T2b，:457-459）；
+  // _onPickerSelect（換候選）是另一個不該觸發偵測的入口，同一責任、同一 scope 寫法，
+  // T2b 當時刻意留給本 task（TASK-100b-T2.md 裁決 3）。
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: 'detect-focal',
+    scope: { anchor: /async\s+_onPickerSelect\s*\(\s*candidate\s*,\s*i\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 100b-T5：spec §3.7-7 零偵測成本——_onPickerSelect scope 內不得出現 detect-focal',
+  },
+
+  // 軸向 cursor affordance（§D，Gemini 建議）：加 .lb-mask-window--axis-y modifier class 由
+  // Alpine :class 綁 _maskAxis（比照既有 --dragging/--frozen 寫法），CSS 旁加 ns-resize 覆寫。
+  // 全 repo 今天無 ew-resize/ns-resize 用例（已查）——鎖住 wiring 兩端，防止只改一邊就悄悄失效。
+  {
+    file: 'web/templates/_macros/focal_mask.html', kind: 'required-string',
+    pattern: "'lb-mask-window--axis-y': _maskAxis === 'y'",
+    note: '[TestMaskToggleGuard] 100b-T5：.lb-mask-window 綁軸向 modifier class（桌面 only affordance，非唯一提示，正確性仍靠 CD-2 幾何）',
+  },
+  {
+    // scope-anchored（非裸 required-string）：本檔 :1044 附近既有一句 T2a 留下的規劃註解字面
+    // 提到「ew-resize/ns-resize」，裸的 required-string 會被那句註解假綠掉（本 branch 已踩過
+    // 三次的 fail-open 形狀）。錨定實際 CSS rule block，只在該 block 內斷言，防同檔註解誤蓋。
+    file: 'web/static/css/pages/showcase.css', kind: 'required-string', pattern: 'ns-resize',
+    scope: { anchor: /\.lb-mask-window--axis-y\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 100b-T5：.lb-mask-window--axis-y 的 cursor: ns-resize 覆寫存在（軸向拖曳提示，scope 錨定防同檔規劃註解假綠）',
+  },
+  {
+    file: 'web/static/css/pages/showcase.css', kind: 'required-string', pattern: 'ew-resize',
+    scope: { anchor: /\.lb-mask-window--axis-x\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 100b-T5：.lb-mask-window--axis-x 的 cursor: ew-resize 覆寫存在（軸向拖曳提示，scope 錨定防同檔規劃註解假綠）',
+  },
+
   // ---- [TestSearchLightboxMetadataGuard] search.html：5 個 required ----
   { file: 'web/templates/search.html', kind: 'required-string', pattern: 'currentLightboxVideo()?.director', note: '[TestSearchLightboxMetadataGuard] lightbox field' },
   { file: 'web/templates/search.html', kind: 'required-string', pattern: 'currentLightboxVideo()?.duration', note: '[TestSearchLightboxMetadataGuard] lightbox field' },
