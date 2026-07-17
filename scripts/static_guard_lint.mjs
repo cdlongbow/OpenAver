@@ -394,6 +394,18 @@ const RULES = [
     note: '[TestMaskToggleGuard] Codex PR review P2：_maskStartSettle 的 canAnimate gate 連 this._maskWaitTl，缺 wait handle 時退瞬現而非解構 null 拋錯',
   },
   {
+    // 101b-T5：步驟③原本無條件寫 `this._maskWinStyle = g0;`（全幅）——hasFace 時 g0 是
+    // 收斂起點（步驟⑥的 proxy tween 會覆寫），但 !hasFace 沒有任何後續步驟收斂，等於
+    // 讓「沒找到臉」永久停在全幅，遮罩對使用者隱形（scrim 無可暗化區域），違反 spec
+    // §4.2「沒找到臉→亮窗直接以基準位置淡入，不收斂」。修法：
+    // `hasFace ? g0 : (this._computeMaskWinStyle() || this._maskWinStyle)`（與既有 PRM
+    // fallback 分支 :1380 呼叫同一個 _computeMaskWinStyle()，CD-8 的直接編碼）。
+    // 鎖 `hasFace ? g0` 字面，防止未來被誤還原成單行 `this._maskWinStyle = g0;`。
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'hasFace ? g0',
+    scope: { anchor: /_maskStartSettle\s*\(\s*hasFace\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 101b-T5：_maskStartSettle 步驟③ no-face 落基準幾何（hasFace ? g0 : _computeMaskWinStyle()），不永久停在全幅',
+  },
+  {
     file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '_maskStopWaitAnim()',
     scope: { anchor: /_resetMask\s*\(\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 99a-T5：_resetMask 呼叫 _maskStopWaitAnim（換片/關燈箱/ESC 中斷路徑）',

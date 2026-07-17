@@ -1383,11 +1383,16 @@ export function stateLightbox() {
                 return;
             }
 
-            // ③ 全幅，同步寫在 x-show 翻真之前（CD-4a 核心不變式）。
-            this._maskWinStyle = g0;
+            // ③ 全幅，同步寫在 x-show 翻真之前（CD-4a 核心不變式）——但這只是 hasFace（收斂）
+            // 路徑的起點約定：no-face 沒有步驟⑥掛收斂 tween，寫「全幅」給它既非「起點」也非
+            // spec §4.2 要求的「終點」（基準）。101b-T5：hasFace 分支一字不動（g0），!hasFace
+            // 直接落基準幾何（與既有 PRM fallback 分支 :1380 呼叫同一個 _computeMaskWinStyle()）
+            // ——CD-8「找到／沒找到的差別＝收斂 vs 不收斂，只此一項」的直接編碼。
+            this._maskWinStyle = hasFace ? g0 : (this._computeMaskWinStyle() || this._maskWinStyle);
             // ④ 必須晚於 ② 的 gate（CD-4c：早於它＝動畫層不可用時永久卡 true）。
             this._maskSettling = true;
-            // ⑤ x-show 此刻才放行；首次 paint 讀到 g0＝全幅。
+            // ⑤ x-show 此刻才放行；首次 paint 讀到步驟③寫入的值——hasFace＝全幅（g0，收斂起點）、
+            //    no-face＝基準（右裁/置中，直接落定不收斂，spec §4.2）。
             this._maskDetecting = false;
 
             // ⑥ 交棒星空（CD-4b，不 clearProps）+ 建立單一 timeline（overlap 由 timeline 保證）。

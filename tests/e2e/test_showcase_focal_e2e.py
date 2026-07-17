@@ -70,6 +70,21 @@ PROBE_TAIL_FRAMES = 3         # idle（!detecting && !settling）後再多取幾
 # 同值，只因 baseline_focal != final_focal 就會通過舊的單一篩選條件，證不出任何事）。
 MIN_CROP_ROOM = 0.20
 
+# 101b-T5：no-face 落點測試專用常數。
+# `_maskFocalX` 對 video 分支恆為右裁基準（openMask 起手一次性解出並凍結，見
+# state-lightbox.js:976-977），對應窗恆貼右緣（`left = W - winW` 已是 clamp 上界）——
+# 這代表 no-face 窗的 translateX 恆等於「可拖裁切餘裕」本身（cover_w - width），與
+# `test_hit_test_and_detect_first_render` 的 MIN_CROP_ROOM 語意一致，此處另訂常數只因
+# 門檻表達方式不同（width 對 coverW 的比例上限，非裁切餘裕比例下限）。
+NO_FACE_MAX_WIDTH_RATIO = 0.8   # width 應 < 0.8×coverW，證明有明顯裁切餘裕（scrim 有面積可見）
+NO_FACE_SETTLE_TIMEOUT_MS = 4_000
+NO_FACE_DRAG_STEP_PX = 15.0
+# 跟手容差：真實瀏覽器事件（CDP dispatch）與 clamp 邊界都可能引入 1-2px 誤差，此門檻只
+# 用來排除「跳變」（修前 bug 的症狀：起手視覺位置＝全幅，第一次 pointermove 觸發的
+# `computeMaskWinGeometry` 立即算出正確終值，位移量與滑鼠實際移動量無關、可達數十至
+# 上百 px），非用來要求逐 px 精確跟手。
+NO_FACE_DRAG_TOLERANCE_PX = 6.0
+
 # 101b-T3（CD-4a 首幀全幅的判準）：首個 paint 幀「已收斂比例」的容忍上限。
 #
 # 🔴 為何不是 ε=0.5px（plan §C-2 原寫的值，實測推翻）：GSAP ticker 的**第一次 tick 必然
@@ -799,3 +814,270 @@ def test_confirm_saves_and_cancel_saves_nothing(page: Page, base_url: str) -> No
         f"從未送達 server），實際：{body['video']['crop_mode']}——若不是 'auto'，代表"
         f"page.route() 攔截失效、請求真的打穿了 server，需要立即調查。"
     )
+
+
+# ── no-face 落點：窗應落基準幾何（非全幅），DoD①②（TASK-101b-T5） ─────────────
+
+def _read_mask_window_measurements(page: Page) -> dict:
+    """讀 `.lb-mask-window` 實際 computed style（width/transform）+ 地面真相
+    （`_computeMaskWinStyle()`）+ `_mask*` flags，供 no-face 落點斷言與拖曳過程中的
+    即時量測共用（101b-T5，比照既有 `_get_hit_test_rects` 的「單一 evaluate 取全部值」
+    寫法，避免逐項往返 IPC 造成量測時間點不一致）。
+    """
+    return page.evaluate(
+        """() => {
+            const root = document.querySelector('%s');
+            const data = window.Alpine && Alpine.$data(root);
+            if (!data) return { error: 'no-alpine-data' };
+            const win = document.querySelector('.lb-mask-window');
+            let width = null, transform = null;
+            if (win) {
+                const cs = getComputedStyle(win);
+                width = cs.width;
+                transform = cs.transform;
+            }
+            const imgEl = typeof data._maskTarget === 'function' ? data._maskTarget().imgEl : null;
+            const coverWidth = imgEl ? imgEl.getBoundingClientRect().width : null;
+            const groundTruth = typeof data._computeMaskWinStyle === 'function'
+                ? data._computeMaskWinStyle() : null;
+            return {
+                width: width, transform: transform, coverWidth: coverWidth,
+                groundTruth: groundTruth,
+                maskVisible: !!data._maskVisible,
+                maskSettling: !!data._maskSettling,
+                maskDetecting: !!data._maskDetecting,
+            };
+        }"""
+        % ALPINE_ROOT_SELECTOR
+    )
+
+
+def test_no_face_settles_to_baseline_geometry(page: Page, base_url: str) -> None:
+    """
+    TASK-101b-T5：`_maskStartSettle` 步驟③ no-face（沒找到臉／偵測失敗）分支落點修復驗證。
+
+    修前 bug：該分支一律寫 `this._maskWinStyle = g0`（全幅收斂起點），但 no-face 沒有
+    步驟⑥的 proxy tween 收斂它 → 窗**永久停在全幅**——全幅時窗外可暗化寬度為 0，
+    `box-shadow` scrim 無可暗化區域，遮罩對使用者**隱形**，違反 spec §4.2「沒找到臉→
+    亮窗直接以基準位置淡入，不收斂」。
+
+    用 `page.route` 攔截 `POST /api/showcase/video/detect-focal`，回 200 但
+    `auto_focal: ''`（→ `parseFocal('')` 回 `null` → `sawFace` 恆 `false`，見
+    `state-lightbox.js:1062`）——確定性觸發 no-face 分支，不依賴真實素材是否恰好無臉
+    可測。🔴 用 `expect_response` 等 `fulfill()` 真正跑完（既有 gotcha，同
+    `test_confirm_saves_and_cancel_saves_nothing`：`expect_request` 只保證請求已發出，
+    不保證我們的 handler 已跑完 `fulfill()`，競態下可能落到真 DB／真 pigo 呼叫）。
+
+    斷言①（DoD①）：no-face 窗最終 `width` < 0.8×coverW（有明顯裁切餘裕，非全幅——
+                    `width < coverW` 本身即證明 scrim 有面積可見）、`translateX` > 0
+                    （右裁，非全幅的 0），且等於 `_computeMaskWinStyle()` 地面真相
+                    （容差 0.5px/1px，比照既有 `test_hit_test_and_detect_first_render`
+                    斷言 2c 的容差慣例）。
+    斷言②（DoD②，次要症狀）：真實 `pointerdown→pointermove→pointerup` 序列
+                    （`page.mouse`，非函式呼叫模擬——繞過真實 hit-test 判定）在 no-face
+                    窗上拖曳，過程中 `_maskVisible` 全程為 `true`（未誤觸
+                    `.lb-mask-overlay` 的 `@click.self="cancelMask()"`），且窗跟手
+                    移動、無「跳變」（第一次 `pointermove` 的位移量應與滑鼠位移相稱，
+                    非離散跳到別處——修前 bug 的「起手視覺位置＝全幅」會讓第一次 move
+                    因 `computeMaskWinGeometry` 即時寫入正確終值而產生一次與滑鼠位移量
+                    無關的大跳動）。
+    """
+    videos = _fetch_cover_videos(page, base_url)
+    if not videos:
+        pytest.skip("找不到任何有封面的影片，跳過 no-face 落點 e2e")
+
+    def _handle_no_face_route(route: Route) -> None:
+        request: Request = route.request
+        try:
+            payload = request.post_data_json or {}
+        except Exception:
+            payload = {}
+        path = payload.get("path", "")
+        # cover_path 只需為字串（confirmMask 前置條件之一，本測試不按 ✓，值本身不影響
+        # 任何斷言）；直接回傳前端傳來的 path（本就是合法 file:/// DB-key URI），不手動
+        # 建構 file:///（違反 CLAUDE.md 路徑契約、test_no_manual_uri_construct 會紅）。
+        # auto_focal 空字串 → parseFocal('') 回 null → sawFace 恆 false。
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"success": True, "cover_path": path, "auto_focal": ""}),
+        )
+
+    counters = {"scanned": 0, "open_failed": 0, "route_error": 0, "no_room": 0, "settle_timeout": 0}
+    found = None
+    page.route("**/api/showcase/video/detect-focal", _handle_no_face_route)
+    try:
+        for v in videos[:MAX_CANDIDATES]:
+            path = v["path"]
+            counters["scanned"] += 1
+            if not _open_lightbox_for(page, base_url, path):
+                counters["open_failed"] += 1
+                continue
+
+            try:
+                with page.expect_response(
+                    lambda r: r.request.method == "POST" and "/api/showcase/video/detect-focal" in r.url,
+                    timeout=DETECT_TIMEOUT_MS,
+                ):
+                    page.locator(".lb-mask-btn").click()
+            except PlaywrightTimeoutError:
+                counters["route_error"] += 1
+                _cancel_mask_if_open(page)
+                continue
+
+            _wait_detect_resolved(page)
+            try:
+                # 等 settling timeline 也跑完（星空/spinner 淡出＋窗 opacity 淡入），
+                # 幾何本身在 _maskDetecting 翻 false 那一刻已是終值（同步賦值，見
+                # _maskStartSettle 步驟③），這裡只是確保量測落在穩定態、非過渡中繼幀。
+                page.wait_for_function(
+                    """() => {
+                        const root = document.querySelector('%s');
+                        const data = window.Alpine && Alpine.$data(root);
+                        return !!(data && data._maskDetecting === false && data._maskSettling === false);
+                    }""" % ALPINE_ROOT_SELECTOR,
+                    timeout=NO_FACE_SETTLE_TIMEOUT_MS,
+                )
+            except PlaywrightTimeoutError:
+                counters["settle_timeout"] += 1
+                _cancel_mask_if_open(page)
+                continue
+
+            m = _read_mask_window_measurements(page)
+            if m.get("error") or not m.get("groundTruth") or not m.get("coverWidth"):
+                counters["route_error"] += 1
+                _cancel_mask_if_open(page)
+                continue
+
+            actual_w = _parse_width(m)
+            actual_tx = _parse_translate_x(m.get("transform"))
+            cover_w = m["coverWidth"]
+            if actual_w is None or actual_tx is None:
+                counters["route_error"] += 1
+                _cancel_mask_if_open(page)
+                continue
+
+            # 🔴 候選篩選必須用「地面真相」（_computeMaskWinStyle()，純函式，只吃
+            # el/rect/r/_maskFocalX——no-face 時 _maskFocalX 全程未被 detect 回應改動，
+            # 見 state-lightbox.js:1062，故此值與本 task 要修的 bug 完全解耦），不可用
+            # `actual_w`（受 bug 影響的觀察值）篩選：若用 actual_w，mutation 還原成
+            # `= g0` 後**每一支影片**的 actual_w 都會等於 coverW（bug 本身就是全域性的、
+            # 非個別影片幾何造成），篩選迴圈會把全部候選判定為「裁切餘裕不足」而
+            # pytest.skip()，讓「必紅」的 mutation 驗證假綠成 skip——地面真相不受
+            # bug 影響，篩的是「這支影片本身的長寬比是否退化（a<=r）」，與 bug 正交。
+            gt_w_candidate = _parse_width(m.get("groundTruth"))
+            if gt_w_candidate is None:
+                counters["route_error"] += 1
+                _cancel_mask_if_open(page)
+                continue
+
+            if gt_w_candidate >= NO_FACE_MAX_WIDTH_RATIO * cover_w:
+                counters["no_room"] += 1
+                _cancel_mask_if_open(page)
+                continue
+
+            found = {
+                "path": path, "measurement": m,
+                "actual_w": actual_w, "actual_tx": actual_tx, "cover_w": cover_w,
+            }
+            break
+
+        if found is None:
+            pytest.skip(
+                f"窮舉 {counters['scanned']} 部候選影片找不到合格樣本（no-face 落點 e2e）："
+                f"open_failed={counters['open_failed']}, route_error={counters['route_error']}, "
+                f"settle_timeout={counters['settle_timeout']}, no_room={counters['no_room']}"
+                f"（裁切餘裕不足，width >= {NO_FACE_MAX_WIDTH_RATIO}×coverW），跳過 e2e"
+            )
+
+        try:
+            m = found["measurement"]
+            actual_w = found["actual_w"]
+            actual_tx = found["actual_tx"]
+            cover_w = found["cover_w"]
+            gt = m["groundTruth"]
+            gt_w = _parse_width(gt)
+            gt_tx = _parse_translate_x(gt.get("transform"))
+            assert gt_w is not None and gt_tx is not None, (
+                f"groundTruth（_computeMaskWinStyle()）無法解出 width/transform：{gt}"
+            )
+
+            # --- 斷言①a：width < 0.8×coverW（有明顯裁切餘裕，非全幅——scrim 有面積可見） ---
+            assert actual_w < NO_FACE_MAX_WIDTH_RATIO * cover_w, (
+                f"no-face 窗應落基準（有明顯裁切餘裕），實際 width={actual_w:.2f}px "
+                f"應 < {NO_FACE_MAX_WIDTH_RATIO}×coverW={cover_w:.2f}px"
+                "（若相等或接近 coverW，代表窗停在全幅，遮罩對使用者隱形——bug 復發）"
+            )
+
+            # --- 斷言①b：translateX > 0（右裁，非全幅的 0） ---
+            assert actual_tx > 0, (
+                f"no-face 窗應右裁（translateX > 0），實際 translateX={actual_tx:.2f}px"
+                "（0 代表窗貼左緣＝全幅或未裁切，bug 復發）"
+            )
+
+            # --- 斷言①c：等於地面真相（_computeMaskWinStyle()），容差比照既有斷言 2c ---
+            assert abs(actual_w - gt_w) < 0.5, (
+                f"no-face 窗 width 應等於 _computeMaskWinStyle() 地面真相，"
+                f"實際 {actual_w:.2f}px，地面真相 {gt_w:.2f}px"
+            )
+            assert abs(actual_tx - gt_tx) < 1.0, (
+                f"no-face 窗 translateX 應等於 _computeMaskWinStyle() 地面真相，"
+                f"實際 {actual_tx:.2f}px，地面真相 {gt_tx:.2f}px"
+            )
+
+            # --- 斷言②：拖曳不誤觸「點外取消」，且跟手無跳變（真實 pointer 事件序列） ---
+            rects = _get_hit_test_rects(page)
+            window_r = rects["win"]
+            assert window_r, "no-face 窗 rect 缺失，遮罩可能已提前關閉"
+            cx = window_r["x"] + window_r["width"] / 2
+            cy = window_r["y"] + window_r["height"] / 2
+
+            page.mouse.move(cx, cy)
+            page.mouse.down()
+            try:
+                # video 分支的基準恆貼右緣（_maskFocalX = openMask 起手一次性解出的右裁
+                # 常數，見 state-lightbox.js:976-977），故 translateX 已是 clamp 上界——
+                # 唯一有效可拖方向是往左，且步距不可超過現有 translateX 的安全比例，
+                # 避免撞左緣 clamp 讓「跟手」量測失真。
+                step = min(NO_FACE_DRAG_STEP_PX, actual_tx / 3) if actual_tx > 0 else NO_FACE_DRAG_STEP_PX
+                assert step > 0.5, f"可拖裁切餘裕過小，無法可靠量測跟手（actual_tx={actual_tx:.2f}px）"
+
+                page.mouse.move(cx - step, cy)
+                after_move1 = _read_mask_window_measurements(page)
+                tx1 = _parse_translate_x(after_move1.get("transform"))
+                assert tx1 is not None, f"拖曳第一次 move 後 transform 無法解出：{after_move1}"
+                delta1 = actual_tx - tx1
+                assert abs(delta1 - step) < NO_FACE_DRAG_TOLERANCE_PX, (
+                    f"拖曳第一次 pointermove 應跟手（位移量與滑鼠位移相稱），"
+                    f"滑鼠位移 {step:.1f}px，窗實際位移 {delta1:.1f}px"
+                    "（差異過大＝跳變，代表起手視覺位置與拖曳起點不一致，次要症狀復發）"
+                )
+                assert bool(after_move1.get("maskVisible")), (
+                    "拖曳第一次 move 後遮罩不應被關閉（_maskVisible 應仍 true）"
+                )
+
+                page.mouse.move(cx - step * 2, cy)
+                after_move2 = _read_mask_window_measurements(page)
+                tx2 = _parse_translate_x(after_move2.get("transform"))
+                assert tx2 is not None, f"拖曳第二次 move 後 transform 無法解出：{after_move2}"
+                delta2 = tx1 - tx2
+                assert abs(delta2 - step) < NO_FACE_DRAG_TOLERANCE_PX, (
+                    f"拖曳第二次 pointermove 應持續跟手，"
+                    f"預期再位移 {step:.1f}px，窗實際位移 {delta2:.1f}px"
+                )
+                assert bool(after_move2.get("maskVisible")), (
+                    "拖曳第二次 move 後遮罩不應被關閉（_maskVisible 應仍 true）"
+                )
+            finally:
+                page.mouse.up()
+
+            after_up = _read_mask_window_measurements(page)
+            assert bool(after_up.get("maskVisible")), (
+                "拖曳完（pointerup）後遮罩不應被關閉（_maskVisible 應仍 true）——次要症狀："
+                "全幅窗被拖曳時起手位置與視覺不一致，可能讓 pointerup 落在跳變後的窗外"
+                "觸發 .lb-mask-overlay 的 @click.self=\"cancelMask()\""
+            )
+        finally:
+            _cancel_mask_if_open(page)
+    finally:
+        page.unroute("**/api/showcase/video/detect-focal", _handle_no_face_route)
