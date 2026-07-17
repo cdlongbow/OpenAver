@@ -1362,9 +1362,17 @@ export function stateLightbox() {
             // ② gate（CD-11a fail-closed 幾何 + CD-4c 動畫層可用性，同一個 fallback 分支）。
             const g0 = computeMaskSettleGeometry(W, H, r, this._maskFocalX, 0);
             const isPRM = !!(window.OpenAver && window.OpenAver.prefersReducedMotion);
+            // 🔴 Codex PR review P2 修正：canAnimate 必須連 gate `this._maskWaitTl`——
+            // wait handle 是 :1386 handoffFocalDetectWait(this._maskWaitTl) 交棒的前提，
+            // 缺它（burst/star DOM 不在場，即使 gsap 存在）_maskWaitTl 恆為 null，
+            // handoffFocalDetectWait(null) 回 null，解構 `{ stars, burst }` 會拋
+            // TypeError，此時 _maskSettling 已設 true 卻無 cleanup，卡死 spinner/遮罩。
+            // gate 掉後走既有 fallback 分支（瞬現、_maskStopWaitAnim 對 null 安全 no-op），
+            // 不是 belt-and-suspenders 式 null-safe 解構——單一決策點，結構上不可能再拿到 null。
             const canAnimate = !isPRM
                 && typeof gsap !== 'undefined'
-                && window.GhostFly && typeof window.GhostFly.handoffFocalDetectWait === 'function';
+                && window.GhostFly && typeof window.GhostFly.handoffFocalDetectWait === 'function'
+                && this._maskWaitTl;
             if (!g0 || !canAnimate) {
                 // 既有 :1043 原路——不得用已知無效的 W/H/r 重算終值（那組值已知不合法，
                 // computeMaskSettleGeometry 才會回 null）；合法 fallback 恆存在（openMask

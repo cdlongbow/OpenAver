@@ -501,12 +501,27 @@ def test_hit_test_and_detect_first_render(page: Page, base_url: str) -> None:
             f"coverWidth={cover_w:.2f}px, finalWinW={final_win_w:.2f}px, threshold={threshold:.2f}px"
         )
 
-        # --- 斷言 2c：收斂終值 == 偵測終值（地面真相） ---
+        # --- 斷言 2c：收斂終值 == 偵測終值（地面真相）——width 與 transform 都要比 ---
+        # Codex PR review P1 修正：`winW = min(W, H*r)` 不吃 focalX（見 _parse_translate_x
+        # 註解），故只比 width 時，proxy 若停在**錯的** focalX（非基準、也非正確終值）仍會
+        # 因 width 數學相等而通過——錯的終值 X 整條溜過。追加 translateX 比對（容差比照
+        # 2d 的 1.0px），兩者都要等於地面真相才判定「收斂到正確終值」。
         last = post[-1]
         assert last["winWidth"] is not None, f"末幀 winWidth 缺失：{last}"
         assert abs(last["winWidth"] - final_win_w) < 0.5, (
             f"收斂終值應等於偵測終值（地面真相），實際 last winWidth={last['winWidth']:.2f}px, "
             f"ground truth={final_win_w:.2f}px"
+        )
+        final_win_tx = _parse_translate_x(gt.get("transform"))
+        last_tx = _parse_translate_x(last.get("transform"))
+        assert final_win_tx is not None and last_tx is not None, (
+            f"末幀或地面真相的 transform 無法解出 translateX：last={last.get('transform')!r}, "
+            f"ground_truth={gt.get('transform')!r}"
+        )
+        assert abs(last_tx - final_win_tx) < 1.0, (
+            f"收斂終值的 transform 應等於偵測終值（地面真相），實際 last translateX={last_tx:.2f}px, "
+            f"ground truth translateX={final_win_tx:.2f}px（winWidth 相符不足以證明終值正確，"
+            f"因 winW 不吃 focalX）"
         )
 
         # --- 斷言 2d：全程無一幀「同時」width 與 transform 都等於基準幾何（baseline flash

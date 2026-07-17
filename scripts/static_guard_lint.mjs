@@ -383,6 +383,17 @@ const RULES = [
     note: '[TestMaskToggleGuard] 101b-T2（CD-4c）：_maskStartSettle 的 canAnimate gate 含 PRM 檢查（C23 per-callsite）',
   },
   {
+    // Codex PR review P2 修正：canAnimate gate 必須連 `this._maskWaitTl`，缺席時
+    // handoffFocalDetectWait(null) 解構會拋 TypeError、卡死 settling 狀態。
+    // 🔴 pattern 必須鎖**連接形式** `&& this._maskWaitTl`，不可只鎖裸識別字
+    //    `_maskWaitTl`——同一 scope 內 :1386 有 `handoffFocalDetectWait(this._maskWaitTl)`
+    //    呼叫，裸鎖會被那行**恆滿足** ⇒ gate 本身被拿掉仍綠（fail-open，與 :369-373
+    //    handoffFocalDetectWait 呼叫式那條抓到的同型陷阱）。
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '&& this._maskWaitTl',
+    scope: { anchor: /_maskStartSettle\s*\(\s*hasFace\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] Codex PR review P2：_maskStartSettle 的 canAnimate gate 連 this._maskWaitTl，缺 wait handle 時退瞬現而非解構 null 拋錯',
+  },
+  {
     file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '_maskStopWaitAnim()',
     scope: { anchor: /_resetMask\s*\(\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 99a-T5：_resetMask 呼叫 _maskStopWaitAnim（換片/關燈箱/ESC 中斷路徑）',
