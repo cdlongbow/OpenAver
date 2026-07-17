@@ -516,6 +516,21 @@ const RULES = [
     scope: { anchor: /if\s*\(!resp\.ok\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100b-T2b：_uploadActressPhoto 失敗分支（!resp.ok）不得關 picker（spec §3.1+§C 刻意分歧，非漏改）',
   },
+  // [TestPickerLeakGuard] 101b-T4：影片/搜尋模式下經 hero-card 開啟女優燈箱、開了換照片
+  // picker 卻不關、直接按左右箭頭切片這條路徑上 _pickerOpen 永遠停在 true 的洩漏（spec
+  // §4.6／plan-101b §C／CD-13）。排序而非旗標：兩函式開頭關閉殘留 picker，讓壞狀態不可能。
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: 'if (this._pickerOpen) this._closePicker();',
+    scope: { anchor: /prevLightboxVideo\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestPickerLeakGuard] 101b-T4：prevLightboxVideo 開頭關閉殘留 picker（spec §4.6，排序而非旗標）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: 'if (this._pickerOpen) this._closePicker();',
+    scope: { anchor: /nextLightboxVideo\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestPickerLeakGuard] 101b-T4：nextLightboxVideo 開頭關閉殘留 picker（spec §4.6，排序而非旗標）',
+  },
   // spec §3.7-7「零偵測成本」：上傳流程全程不得呼叫 detect-focal（by-construction，本
   // 規則把它機械鎖住——「不做某事」測試鎖不到，只有守衛鎖得到）。
   {

@@ -664,6 +664,11 @@ export function stateLightbox() {
             var lbEl = document.querySelector('.showcase-lightbox');
             if (lbEl) lbEl.classList.remove('gsap-animating');
 
+            // 101b-T4: 影片箭頭導覽時若換照片 picker 仍開著（hero-card → picker → 箭頭
+            // 這條路徑，見 showcase.html:1091-1108 既有註解），排序讓壞狀態不可能發生——
+            // 用 sync 的 _closePicker() 而非 async _cancelPicker()，不製造多一拍等待。
+            if (this._pickerOpen) this._closePicker();
+
             // 44b: -1 sentinel — already at leftmost, do not move
             if (this.lightboxIndex === -1) return;
 
@@ -729,6 +734,11 @@ export function stateLightbox() {
             this._lightboxAnimating = false;
             var lbEl = document.querySelector('.showcase-lightbox');
             if (lbEl) lbEl.classList.remove('gsap-animating');
+
+            // 101b-T4: 影片箭頭導覽時若換照片 picker 仍開著（hero-card → picker → 箭頭
+            // 這條路徑，見 showcase.html:1091-1108 既有註解），排序讓壞狀態不可能發生——
+            // 用 sync 的 _closePicker() 而非 async _cancelPicker()，不製造多一拍等待。
+            if (this._pickerOpen) this._closePicker();
 
             // 44b: from -1 (hero card) → jump to first video
             if (this.lightboxIndex === -1) {
