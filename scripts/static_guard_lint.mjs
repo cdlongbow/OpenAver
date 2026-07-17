@@ -446,6 +446,18 @@ const RULES = [
   { file: 'web/static/css/pages/showcase.css', kind: 'required-string', pattern: '.lb-mask-window--settling',
     note: '[TestMaskToggleGuard] 101b-T3（CD-5/C21）：--settling class 停用 transition 規則存在' },
 
+  // 101b-T6：修 spinner 靜止不轉——CDP 像素驗證證實根因是 <i class="bi spin"> 預設
+  // display:inline（Bootstrap Icons 只把 .bi::before 偽元素設 inline-block），CSS transform
+  // 對 non-replaced inline box 不產生視覺效果，animation 確實在跑（computed transform 逐
+  // frame 變化）卻視覺靜止——這正是前兩次修法都沒解到、CDP 只量 computed transform 會被騙的
+  // 病灶。只鎖 animation 字串仍可能假綠（拿掉 display:inline-block 那行，animation 字串仍在，
+  // 但視覺照樣不轉）——兩條都鎖，anchor scope 到 .lb-mask-spinner .bi.spin 規則本體，
+  // braceBalanced 防止改到其他規則的同名字串。
+  { file: 'web/static/css/pages/showcase.css', kind: 'required-string',
+    pattern: ['display: inline-block;', 'animation: spin 1s linear infinite !important;'],
+    scope: { anchor: /\.lb-mask-spinner \.bi\.spin\s*\{/, braceBalanced: true },
+    note: '[TestMaskSpinnerRotateGuard] 101b-T6：.lb-mask-spinner .bi.spin 真正修復需 display:inline-block（承重，讓 inline icon 變可 transform 的盒子）+ animation !important（蓋過 PRM blanket，owner 訴求「不存在靜態模式」）兩條並存，缺一視覺仍不轉' },
+
   // ---- Codex 本地 review 修正（Fix A）：_actressPhotoLoaded 不該被 _maskTeardown 清掉 ----
   // 病灶：_maskTeardown 原本會把此旗標設回 false，但 confirmMask/cancelMask → _maskTeardown
   // 之後沒有任何路徑會把它重新判定回真值（URL 未變的已載入 img 不會重觸發 @load）——focal

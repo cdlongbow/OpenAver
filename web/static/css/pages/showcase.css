@@ -1067,7 +1067,14 @@
  * 的 repeat:-1 loop，佔位 force-detect ~3.0-3.3s 不定長等待（見 ghost-fly.js
  * playFocalDetectWait/stopFocalDetectWait）。PRM 時 openMask 完全不觸發 GSAP，本容器維持
  * CSS 預設 opacity:0（連同 .sparkle-star 各自預設 opacity:0）不可見，.lb-mask-spinner 是
- * PRM 下唯一等待指示（純 CSS animation，PRM blanket 規則保證仍渲染不轉，不留死白）。
+ * PRM 下唯一等待指示。101b-T6 修正 stale 說法：這裡曾誤寫「PRM blanket 規則保證仍渲染不轉」
+ * ——實際上不分 PRM/非 PRM 皆不轉，根因是 .lb-mask-spinner 內 .bi.spin（<i> 元素本身）預設
+ * display:inline（Bootstrap Icons 只把 .bi::before 偽元素設 inline-block，沒動 .bi 本身），
+ * CSS transform 對 non-replaced inline box 不產生視覺效果（W3C transforms spec）——animation
+ * 確實在跑（computed transform 逐 frame 變化），但視覺上靜止，曾兩度騙過只量 computed
+ * transform 的 CDP 驗證。真正修復見下方 .lb-mask-spinner .bi.spin 規則：display:inline-block
+ * 讓它變成可 transform 的盒子，animation !important 蓋過 PRM blanket（theme.css
+ * `*{animation-duration:0.01ms !important}`）——owner 訴求「不存在靜態模式」，PRM 下也要轉。
  * z-index 與 spinner 同層（3）——純視覺、pointer-events:none，不需要跟 ✓/✗ 按鈕比大小
  * （見上方 .cover-actions--focal-edit z-index 契約說明）。顆數/尺寸刻意比 .sparkle-burst
  * （10 顆）少（5 顆，sm/md only）——owner 取向偏克制材質，等待動效份量比一次性慶祝 burst 更輕。 */
@@ -3146,6 +3153,19 @@ body.sidebar-collapsed .showcase-footer {
 .bi.spin,
 .picker-refresh-btn i.spin {
     animation: spin 1s linear infinite;
+}
+
+/* 101b-T6：.lb-mask-spinner .bi.spin 修復——CDP 像素驗證證實前兩次修法（PRM 例外 / 無條件
+ * !important）都沒解到真正病灶：<i class="bi spin"> 預設 display:inline（Bootstrap Icons
+ * 只把 .bi::before 偽元素設 inline-block，沒動 .bi 本身），CSS transform 對 non-replaced
+ * inline box 不產生視覺效果（W3C transforms spec）——animation 確實在跑（computed transform
+ * 逐 frame 變化，這正是曾騙過 CDP「量 computed transform 判定在轉」驗證法的原因），但視覺上
+ * 靜止。display:inline-block 才是承重修復：讓它變成可 transform 的盒子。animation 加
+ * !important 蓋過 theme.css PRM blanket（`*{animation-duration:0.01ms !important}`）——
+ * owner 訴求「不存在靜態模式」，PRM 下也要轉，不只是「不留死白」。 */
+.lb-mask-spinner .bi.spin {
+    display: inline-block;
+    animation: spin 1s linear infinite !important;
 }
 
 /* ==================== Phase 50 T5 §6 5 檢查點 — DaisyUI Component Override ==================== */
