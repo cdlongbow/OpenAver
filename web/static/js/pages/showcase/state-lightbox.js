@@ -259,10 +259,13 @@ export function stateLightbox() {
         },
 
         // 101d-T1：影片焦點 icon 顯示 gate（CD-4）。語意旗標 method——只在畫面真的以 poster 裁切
-        // 呈現時才顯示 icon（今天＝窄螢幕，讀 reactive _isNarrow）。x-show 必帶 () 呼叫（漏括號求值
-        // 的是 function 物件、恆 truthy → 桌面 gate 失效、icon 照樣出現）。未來「完整/poster 模式」
-        // toggle landed 後只改此 body 為 `return this._isNarrow || this._userPosterModeOn`，不動
-        // icon x-show、不動任何呼叫端（plan-101d CD-4，spec §7.2 Non-Goal #14）。
+        // 呈現時才顯示 icon（今天＝窄螢幕，讀 reactive _isNarrow）。x-show 以 () 呼叫，理由是比照
+        // _focalIconVisible() 慣例／可讀性／未來相容性——**保留括號**。⚠️ 但別把「漏括號」當 runtime
+        // bug：Alpine 3 對 x-show **尾端**求值為 function 者會 auto-invoke（101d-T1 CDP 實測），故
+        // `A && B && _posterModeActive` 在當前版本其實等效帶括號、非 gate 失效（見 gotchas-frontend
+        // 「Alpine methods 必須加 ()」節精確化）。未來「完整/poster 模式」toggle landed 後只改此 body
+        // 為 `return this._isNarrow || this._userPosterModeOn`，不動 icon x-show、不動任何呼叫端
+        // （plan-101d CD-4，spec §7.2 Non-Goal #14）。
         // 影片 gate 與女優 _focalIconVisible() 的 per-image 門檻刻意不同（影片只 ≤899px 裁、女優牆
         // 全寬度都裁，plan-101d §2.2）——此不對稱是有原則的，勿「對齊」成同一套。
         _posterModeActive() {
@@ -933,7 +936,7 @@ export function stateLightbox() {
                 identity: this.currentLightboxVideo?.path,
                 ratio: '--poster-crop-ratio',
                 detectEndpoint: '/api/showcase/video/detect-focal',
-                focalEndpoint: '/api/showcase/video/focal',
+                focalEndpoint: '/api/showcase/video/save-focal',
                 focalBody: (focal) => ({
                     path: this.currentLightboxVideo?.path,
                     focal,
@@ -1188,7 +1191,7 @@ export function stateLightbox() {
             }
         },
 
-        // ✓ 確認：存手動焦點 → POST /video/focal，同參考 mutate targetVideo（lightbox + grid 即時對臉）。
+        // ✓ 確認：存手動焦點 → POST /video/save-focal，同參考 mutate targetVideo（lightbox + grid 即時對臉）。
         async confirmMask() {
             // _maskFocalX null 只應發生在極短暫態（geometry 尚未解出）；openMask 一旦幾何解出即收斂
             // 為具體值（correction B），此處 null-guard 純防禦（幾何失敗 / identity 遺失等異常態才會觸發）。

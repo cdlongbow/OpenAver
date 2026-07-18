@@ -155,6 +155,11 @@ const RULES = [
   // lint 會帶著一條「已知會紅」的規則跑，不符 `npm run lint` 全綠的收工標準）。故 T3 移除本條
   // （非留給 T4），T4 仍照原計畫新增拖曳/V-X/gating-class 三條全新斷言。
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '/api/showcase/video/detect-focal', note: '[TestMaskToggleGuard] detect-focal endpoint fetch URL' },
+  // [lint-guard 101d-T3] 影片對焦存檔端點不得復名為 `/api/showcase/video/focal`——該路徑「video/ 緊接 focal」
+  // 像影片廣告 beacon，會被 ad/privacy 過濾清單（uBlock/AdGuard/Brave/Pi-hole）在瀏覽器端 net::ERR_FAILED
+  // 秒殺，✓ 存檔請求根本到不了 server（2026-07-18 owner 實測 + CDP/Network 診斷）。正名 video/save-focal。
+  // 註：`video/detect-focal`/`video/save-focal` 皆不含子字串 `video/focal`（video/ 後非恰為 focal）→ 不誤觸。
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: '/api/showcase/video/focal', note: '[lint-guard 101d-T3] 影片對焦存檔端點禁復名 video/focal（撞廣告過濾清單），用 video/save-focal' },
   {
     file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'getComputedStyle',
     scope: { anchor: /_computeMaskWinStyle\s*\(\s*\)\s*\{/, braceBalanced: true },

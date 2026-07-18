@@ -11,9 +11,9 @@ TASK-99a-T5.md 修的兩個 P1 bug：
   2. detect-first：.lb-mask-window 在偵測期間不渲染；resolve 後第一幀為全幅，隨後單調
      收斂到偵測終值，全程無一幀等於基準幾何（101b-T2 CD-2/CD-4a：全幅→收斂→終值，
      取代舊有「resolve 後第一幀即終值」的無過渡態契約）。
-  3. ✓ 確實呼叫 confirmMask()，觸發正確 payload 的 POST /api/showcase/video/focal，
+  3. ✓ 確實呼叫 confirmMask()，觸發正確 payload 的 POST /api/showcase/video/save-focal，
      且前端把回應正確套用到 client state（crop_mode 變 manual）。
-  4. ✗ 什麼都不存（無 /video/focal request，crop_mode 不變）。
+  4. ✗ 什麼都不存（無 /video/save-focal request，crop_mode 不變）。
 
 無封面影片 / app 不可達 / 找不到合適候選 → pytest.skip()（不 FAIL，e2e 對缺環境用戶不可假紅）。
 
@@ -28,7 +28,7 @@ e2e fixture 指揮一個「已經在跑、我們不擁有」的 server 改用別
 偵測到不一致，木已成舟。
 
 本版改用 Playwright request interception（`page.route`）在瀏覽器網路層攔截
-`POST /api/showcase/video/focal`：斷言 payload（`path` + canonical `"x.xxxx,y.xxxx"` 4dp
+`POST /api/showcase/video/save-focal`：斷言 payload（`path` + canonical `"x.xxxx,y.xxxx"` 4dp
 格式、y 固定 0.5000）完全正確後，直接用 mocked 200 response `route.fulfill()`——請求**從不
 離開瀏覽器**，不可能觸及任何 DB（無論是本地 get_db_path() 還是被重用 server 背後的
 任一檔案）。這在結構上排除了整個「port 8001 服務不明 DB」的風險類別，不需要 DB 身分
@@ -36,7 +36,7 @@ e2e fixture 指揮一個「已經在跑、我們不擁有」的 server 改用別
 
 **為什麼這樣測仍然有牙齒（不是 gutted）**：persistence 本身已由整合層驗證
 （`tests/integration/test_showcase_focal_endpoints.py::TestManualFocalEndpoint` 證明
-`/video/focal` 原子寫入 auto_focal + crop_mode='manual'、out-of-scope → 403 且 DB 不變等
+`/video/save-focal` 原子寫入 auto_focal + crop_mode='manual'、out-of-scope → 403 且 DB 不變等
 server-side 行為）。e2e 這層獨一無二、integration 測試無法涵蓋的是**瀏覽器端的接線**——
 99a-T5 修的兩個 P1（z-index 疊層攔截 ✓/✗ 點擊、detect-first 二次跳動）都是「事件有沒有
 真的從 DOM 走到 confirmMask() 並打出正確 payload」這一類，跟 payload 送達後 DB 有沒有
@@ -619,8 +619,8 @@ def test_hit_test_and_detect_first_render(page: Page, base_url: str) -> None:
 
 def test_confirm_saves_and_cancel_saves_nothing(page: Page, base_url: str) -> None:
     """
-    斷言 4（✗ 不存）：真實 click ✗ → 無 /video/focal request，crop_mode 不變。
-    斷言 3（✓ 確實存）：真實 click ✓ → POST /api/showcase/video/focal 真的以正確 payload
+    斷言 4（✗ 不存）：真實 click ✗ → 無 /video/save-focal request，crop_mode 不變。
+    斷言 3（✓ 確實存）：真實 click ✓ → POST /api/showcase/video/save-focal 真的以正確 payload
                          觸發，且前端把回應正確套用到 client state（crop_mode 變 manual）。
 
     斷言 3 的請求用 `page.route()` 攔截並以 mocked 200 response `fulfill()`——請求
@@ -657,7 +657,7 @@ def test_confirm_saves_and_cancel_saves_nothing(page: Page, base_url: str) -> No
     focal_requests = []
 
     def _record(req):
-        if req.method == "POST" and "/api/showcase/video/focal" in req.url:
+        if req.method == "POST" and "/api/showcase/video/save-focal" in req.url:
             focal_requests.append(req.url)
 
     page.on("request", _record)
@@ -673,7 +673,7 @@ def test_confirm_saves_and_cancel_saves_nothing(page: Page, base_url: str) -> No
         page.remove_listener("request", _record)
 
     assert not focal_requests, (
-        f"✗ 點擊後不應有 /video/focal request，實際攔到：{focal_requests}"
+        f"✗ 點擊後不應有 /video/save-focal request，實際攔到：{focal_requests}"
     )
 
     resp = page.request.get(f"{base_url}/api/showcase/video", params={"path": video_path})
@@ -704,7 +704,7 @@ def test_confirm_saves_and_cancel_saves_nothing(page: Page, base_url: str) -> No
             body=json.dumps({"success": True, "auto_focal": mocked_auto_focal}),
         )
 
-    page.route("**/api/showcase/video/focal", _handle_focal_route)
+    page.route("**/api/showcase/video/save-focal", _handle_focal_route)
     try:
         page.locator(".lb-mask-btn").click()
         _wait_detect_resolved(page)
@@ -728,11 +728,11 @@ def test_confirm_saves_and_cancel_saves_nothing(page: Page, base_url: str) -> No
         # 只有 handler 真正跑完、呼叫過 fulfill() 之後才可能有 response 事件，用它才能
         # 結構性保證「with 區塊結束時 handler 必已執行完」，徹底關掉這個 race。
         with page.expect_response(
-            lambda r: r.request.method == "POST" and "/api/showcase/video/focal" in r.url,
+            lambda r: r.request.method == "POST" and "/api/showcase/video/save-focal" in r.url,
             timeout=5_000,
         ) as resp_info:
             page.mouse.click(cx, cy)
-        assert resp_info.value is not None, "✓ 點擊後應觸發 POST /api/showcase/video/focal"
+        assert resp_info.value is not None, "✓ 點擊後應觸發 POST /api/showcase/video/save-focal"
         assert resp_info.value.status == 200, (
             f"mocked route 應回 200，實際：{resp_info.value.status}"
             "（非 200 代表 fulfill 未如預期執行，或請求真的打穿到別處）"
@@ -799,7 +799,7 @@ def test_confirm_saves_and_cancel_saves_nothing(page: Page, base_url: str) -> No
             f"期望 {focal_value!r}，實際 {lb_state!r}"
         )
     finally:
-        page.unroute("**/api/showcase/video/focal", _handle_focal_route)
+        page.unroute("**/api/showcase/video/save-focal", _handle_focal_route)
         _cancel_mask_if_open(page)
 
     # ── 結構性保證的收尾驗證：真實 server DB 應完全未被寫入 ──

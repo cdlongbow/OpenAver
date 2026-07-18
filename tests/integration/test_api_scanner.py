@@ -794,7 +794,7 @@ class TestPosterBakeStructuralLocks:
 
     def test_manual_focal_save_does_not_rebake_poster(self, tmp_path, monkeypatch, mocker, client):
         """DoD⑥ spec §3.7-4 fire-and-forget 正向鎖：先烤一次記下 bytes + st_mtime_ns，
-        經 POST /api/showcase/video/focal 存入不同焦點（確認 200 + DB 真的寫入 manual
+        經 POST /api/showcase/video/save-focal 存入不同焦點（確認 200 + DB 真的寫入 manual
         值），poster bytes 與 mtime 逐一比對完全未變。
 
         不需要插 time.sleep（TASK-101a-T3.md 現況分析第 5 節：mtime tick 粒度 ~3.8ms，
@@ -836,7 +836,7 @@ class TestPosterBakeStructuralLocks:
             "gallery": {"directories": [{"path": to_file_uri(str(tmp_path)), "readonly": False, "output_path": ""}],
                         "path_mappings": {}}})
 
-        resp = client.post("/api/showcase/video/focal",
+        resp = client.post("/api/showcase/video/save-focal",
                             json={"path": video_uri, "focal": "0.1000,0.9000",
                                   "expected_cover_path": cover_uri})
         assert resp.status_code == 200

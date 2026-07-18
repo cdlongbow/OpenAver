@@ -274,10 +274,17 @@ export function stateBase() {
             // gate。門檻 reuse POSTER_CROP_MAX_W（CD-1，不裸寫 899）。_isNarrow 宣告在 state-lightbox.js，
             // 經 mergeState 合併為同一 reactive 屬性（見該檔 _isNarrow 註解）。缺 matchMedia 的嵌入
             // 環境無 listener 可掛也無妨（那類環境本就寬螢幕桌面、非 ≤899 目標情境）。
+            // 🔴 101d P1（Codex 2026-07-18）：本 init 是 async，listener 註冊在多個 await
+            // （fetchVideos/loadAliasMap/loadTagAliasMap）之後；而 _isNarrow 的初值是在 component
+            // 建立（factory）當下取樣的。若載入期間視窗跨過 899（例如桌面開頁、載入中縮到窄），該
+            // change 事件落在 listener 尚未存在時 → 永久遺失、_isNarrow 卡舊值直到下次跨界 resize。
+            // 修法：addEventListener 後立刻用 mq.matches 重新同步一次（與 addEventListener 同步相鄰、
+            // 無 await 夾在中間 → 零殘留窗）。
             if (typeof window.matchMedia === 'function') {
                 this._narrowMq = window.matchMedia('(max-width: ' + POSTER_CROP_MAX_W + 'px)');
                 this._narrowHandler = (e) => { this._isNarrow = e.matches; };
                 this._narrowMq.addEventListener('change', this._narrowHandler);
+                this._isNarrow = this._narrowMq.matches;   // re-sync：補回 factory 初值到本行之間的跨界事件
             }
 
             // T1: Mobile scroll-to-collapse — 往下滾超過 50px（相對 toolbar 展開當下 Y）自動收合（≤480px，搜尋空白時）
