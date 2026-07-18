@@ -93,6 +93,13 @@ const RULES = [
     note: '[TestShowcaseMetadataGuard] series searchFromMetadata call (grid panel or lightbox, OR)',
   },
 
+  // ---- [lint-guard 101d-T2] 焦點適用邊界就地註解不得被順手刪（spec-101 §7.3-2 要求就地註解；plan-101d §5.2/§5.3）----
+  // 錨四處「刻意不同/刻意不接」設計意圖註解的唯一關鍵句。刪任一句即紅（mutation 自驗）。
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'per-image 門檻刻意不同', note: '[lint-guard 101d-T2] 影片 gate≠女優 gate 就地註解（plan-101d §2.2）' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '與影片 _posterModeActive() 刻意不同', note: '[lint-guard 101d-T2] 女優側反向指引註解（plan-101d §2.2）' },
+  { file: 'web/static/css/pages/showcase.css', kind: 'required-string', pattern: '相似卡刻意固定右裁（桌面', note: '[lint-guard 101d-T2] 桌面 similar 卡固定右裁註解（plan-101d §5.3）' },
+  { file: 'web/static/css/pages/showcase.css', kind: 'required-string', pattern: '相似卡刻意固定右裁（手機 burst', note: '[lint-guard 101d-T2] 手機 burst similar 卡固定右裁註解（plan-101d §5.3）' },
+
   // ---- [TestMaskToggleGuard] 98b-T4 起家、99a-T3 沿用：遮罩綁定 / 生命週期 guard / no-硬編-ratio / endpoint URL ----
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '@click="openMask', note: '[TestMaskToggleGuard] mask toggle icon button 綁 openMask' },
   // 98b P2 fix（Codex）：commit/re-check guard 由 path 比對（_maskVideoPath/sessionPath）
