@@ -1139,6 +1139,23 @@ export function stateLightbox() {
             if (!Number.isFinite(r) || r <= 0) return;
             const winW = Math.min(W, H * r);
             const startClientX = evt.clientX;
+            // 101b-T2 P2（Codex PR review）：拖曳接管「收斂中」的窗——_maskStopSettleAnim() 已 kill
+            // timeline，但 _maskFocalX 仍是偵測終值，而視覺上的窗還停在收斂中的**中間**幾何（settle
+            // onUpdate 每 tick 寫 _maskWinStyle 的內插值：中間寬度 + 中間中心 focal_t）。若直接用終值
+            // 算 startLeft，首次 pointermove 會把窗從當前可見中心瞬跳到終值中心（X snap）。修法：交棒
+            // 當下把 _maskFocalX 同步成「當前可見窗的中心焦點」（從 _maskWinStyle 反解），讓終寬窗以
+            // **當前中心**落定——中心不跳、只有寬度收到終值（WYSIWYG 必需：存的裁窗恆為終比例），
+            // 再從那裡跟手。非收斂態時可見窗中心本就 == _maskFocalX（同一 computeMaskWinGeometry
+            // writer），此步為 no-op。解析失敗（_maskWinStyle 尚未成幾何）→ 保留 _maskFocalX（防禦）。
+            const curWin = this._maskWinStyle;
+            if (curWin && typeof curWin.width === 'string' && typeof curWin.transform === 'string') {
+                const curWinW = parseFloat(curWin.width);
+                const curLeftMatch = /translateX\(\s*(-?[\d.]+)px\s*\)/.exec(curWin.transform);
+                const curLeft = curLeftMatch ? parseFloat(curLeftMatch[1]) : NaN;
+                if (Number.isFinite(curWinW) && Number.isFinite(curLeft)) {
+                    this._maskFocalX = (curLeft + curWinW / 2) / W;
+                }
+            }
             // 起手左緣必須與「視覺上看到的窗位置」一致＝比照 _computeMaskWinStyle 一樣 clamp
             // （99a Gemini P2）。raw _maskFocalX 貼邊時未鉗的 start 值會落在邊界外，窗子停在
             // 邊界但拖曳從界外起算 → 反向拖曳有死區、不跟手。clampMaskWinLeft 是數學軸無關的純量
