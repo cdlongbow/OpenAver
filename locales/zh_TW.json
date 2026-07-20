@@ -214,7 +214,10 @@
       "not_found": "找不到 {number} 的資料",
       "search_failed": "搜尋失敗",
       "connection_error": "連線錯誤，請稍後再試",
-      "already_organized": "已整理"
+      "already_organized": "已整理",
+      "initial_count": "0 個檔案",
+      "initial_search_all": "搜尋全部",
+      "initial_translate_all": "翻譯全部"
     },
     "toast": {
       "no_searchable_files": "沒有需要搜尋的檔案",
@@ -805,6 +808,11 @@
       "confirm": "{message}確定要離開嗎？"
     }
   },
+  "scraper": {
+    "page_title": "刮削器",
+    "heading": "JAV 刮削器",
+    "body": "刮削功能開發中..."
+  },
   "notif": {
     "title": "通知",
     "clear_all": "全部清空",
@@ -832,6 +840,12 @@
   },
   "showcase": {
     "page_title": "影片瀏覽",
+    "state": {
+      "loading": "載入影片列表中...",
+      "empty": "尚未產生影片列表",
+      "generate_action": "產生列表",
+      "retry": "重試"
+    },
     "error": {
       "server_error": "伺服器錯誤 ({status})",
       "load_failed": "載入失敗",
@@ -1399,5 +1413,10 @@
     "step6_content": "命名格式、AI 翻譯、視覺策略都在 Settings 裡<br>玩透了再來",
     "step7_title": "📖 說明手冊",
     "step7_content": "隨時回來重看就好<br>Help 頁也有功能詳解與 AI agent 指令"
+  },
+  "updater": {
+    "page_title": "更新器",
+    "heading": "NFO 更新器",
+    "body": "更新功能開發中..."
   }
 }

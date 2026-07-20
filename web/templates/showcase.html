@@ -22,16 +22,16 @@
     <!-- Loading State (初始顯示) -->
     <div class="state-page" x-cloak x-show="!showFavoriteActresses && loading && videoCount === 0">
         <i class="bi bi-hourglass-split state-page-icon"></i>
-        <p class="state-page-text">載入影片列表中...</p>
+        <p class="state-page-text">{{ t('showcase.state.loading') }}</p>
     </div>
 
     <!-- Empty State (API 回傳空資料時) -->
     <div class="state-page" x-cloak x-show="!showFavoriteActresses && !loading && !error && videoCount === 0">
         <i class="bi bi-collection-play state-page-icon"></i>
-        <p class="state-page-text">尚未產生影片列表</p>
+        <p class="state-page-text">{{ t('showcase.state.empty') }}</p>
         <div class="empty-actions">
             <a href="/scanner" class="btn btn-outline btn-primary btn-sm">
-                <i class="bi bi-plus-circle"></i> 產生列表
+                <i class="bi bi-plus-circle"></i> {{ t('showcase.state.generate_action') }}
             </a>
         </div>
     </div>
@@ -42,7 +42,7 @@
         <p class="state-page-text" x-text="error"></p>
         <div class="empty-actions">
             <button class="btn btn-outline btn-primary btn-sm" @click="retry()">
-                <i class="bi bi-arrow-clockwise"></i> 重試
+                <i class="bi bi-arrow-clockwise"></i> {{ t('showcase.state.retry') }}
             </button>
         </div>
     </div>
