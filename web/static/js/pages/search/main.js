@@ -8,14 +8,7 @@ import { searchStateFileList }    from '@/search/state/file-list.js';
 import { searchStateGridMode }    from '@/search/state/grid-mode.js';
 import { searchStateAdvancedPicker } from '@/search/state/advanced-picker.js';
 import { rescrapeState }           from '@/shared/state-rescrape.js';
-
-function mergeState(...parts) {
-    const target = {};
-    for (const part of parts) {
-        Object.defineProperties(target, Object.getOwnPropertyDescriptors(part));
-    }
-    return target;
-}
+import { mergeState }              from '@/shared/merge-state.js';
 
 function searchPage() {
     return mergeState(

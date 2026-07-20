@@ -2,14 +2,7 @@ import { stateScan }  from '@/scanner/state-scan.js';
 import { stateBatch } from '@/scanner/state-batch.js';
 import { stateAlias } from '@/scanner/state-alias.js';
 import { stateTagAlias } from '@/scanner/state-tag-alias.js';
-
-function mergeState(...parts) {
-    const target = {};
-    for (const part of parts) {
-        Object.defineProperties(target, Object.getOwnPropertyDescriptors(part));
-    }
-    return target;
-}
+import { mergeState } from '@/shared/merge-state.js';
 
 // PyWebView 拖曳橋接（從 scanner.js L1528–L1542 搬移）
 window.handleFolderDrop = function (folderPaths) {

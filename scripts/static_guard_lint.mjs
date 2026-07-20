@@ -1358,6 +1358,26 @@ const RULES = [
     pattern: `export function ${fn}`,
     note: `[TestSettingsESMGuard] ${file} exports ${fn}`,
   })),
+  // ---- [TestMergeStateSharedGuard] T3：mergeState() 收斂進 shared/merge-state.js ----
+  // 合併邏輯本體（descriptor-preserving merge）現在只有 1 份實作，斷言集中在此檔案，
+  // 不再逐頁驗證函式體字面。但只驗這裡會產生假綠（shared 對、某頁忘了 import），
+  // 故 4 個 main.js 各自新增「import 自 @/shared/merge-state.js」的存在性斷言（見各頁區塊），
+  // 兩層斷言合起來才是完整的 pure-move gate（同 CD-10 假綠防護模式）。
+  {
+    // ⚠ 鎖「整條運算式」而非 Object.getOwnPropertyDescriptors / Object.defineProperties
+    // 兩個字面各自存在——後者是整檔 substring 比對，而本檔 docblock 剛好把這兩個名字
+    // 都寫進散文裡，導致連 Object.assign 這種普通回歸都測不出來（T3 review 實測假綠）。
+    // 改鎖含 target/part 的完整呼叫式後，換 API（assign）與換參數順序兩類 mutation 皆轉紅；
+    // `^[ \t]*` 開頭使 docblock 行（必有 `*` 前綴）不可能誤命中。
+    file: 'web/static/js/shared/merge-state.js', kind: 'required-string',
+    pattern: /^[ \t]*Object\.defineProperties\(target, Object\.getOwnPropertyDescriptors\(part\)\);[ \t]*$/m,
+    note: '[TestMergeStateSharedGuard] test_merge_state_uses_descriptor_preserving_merge — descriptor 合併運算式整條鎖定（非字面各自存在，防 docblock 假綠）',
+  },
+  {
+    file: 'web/static/js/shared/merge-state.js', kind: 'required-string',
+    pattern: 'export function mergeState',
+    note: '[TestMergeStateSharedGuard] test_merge_state_is_named_export — 四頁皆用具名 import，非 default export',
+  },
   { file: 'web/static/js/pages/settings/main.js', kind: 'required-string', pattern: 'alpine:init', note: '[TestSettingsESMGuard] test_main_js_exists_and_has_alpine_init' },
   { file: 'web/static/js/pages/settings/main.js', kind: 'required-string', pattern: "Alpine.data('settings',", note: '[TestSettingsESMGuard] test_main_js_registers_settings_name (required half)' },
   { file: 'web/static/js/pages/settings/main.js', kind: 'forbidden-string', pattern: "Alpine.data('settingsPage'", note: '[TestSettingsESMGuard] test_main_js_registers_settings_name (forbidden half)' },
@@ -1384,7 +1404,7 @@ const RULES = [
     note: "[TestSettingsESMGuard] test_no_settings_page_alpine_data_in_js — pages/**/*.js 遞迴不可殘留",
   },
   { file: 'web/static/js/pages/settings/main.js', kind: 'forbidden-string', pattern: 'settingsPage', note: '[TestSettingsESMGuard] test_main_js_no_settingspage_reference — main.js 全檔不含 settingsPage 字面（比 Alpine.data 那條更廣，2 條各自照抄）' },
-  { file: 'web/static/js/pages/settings/main.js', kind: 'required-string', pattern: 'getOwnPropertyDescriptors', note: '[TestSettingsESMGuard] test_main_js_uses_descriptor_merge (required half)' },
+  { file: 'web/static/js/pages/settings/main.js', kind: 'required-string', pattern: "from '@/shared/merge-state.js'", note: '[TestSettingsESMGuard] test_main_js_imports_merge_state — T3 搬移後：驗 import 自共用模組（合併邏輯本體驗證移到 shared/merge-state.js 的 descriptor-merge 斷言，見該檔規則）' },
   { file: 'web/static/js/pages/settings/main.js', kind: 'forbidden-string', pattern: '...stateConfig()', note: '[TestSettingsESMGuard] test_main_js_uses_descriptor_merge (forbidden half — 只驗 1/3 factory 的 spread，弱於 scanner/showcase/search 頁，故意不補強成一致，CD-96-9)' },
   { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'get isDirty()', note: '[TestSettingsESMGuard] test_state_config_has_getter_isDirty — isDirty 須為 getter 非 plain prop（settings 頁獨有斷言）' },
 
@@ -1403,9 +1423,9 @@ const RULES = [
   { file: 'web/static/js/pages/scanner/main.js', kind: 'forbidden-string', pattern: "Alpine.data('scannerPage'", note: '[TestScannerESMGuard] test_main_js_registers_scanner_name (forbidden half)' },
   { file: 'web/static/js/pages/scanner/main.js', kind: 'required-string', pattern: '@/scanner/', note: '[TestScannerESMGuard] test_main_js_uses_importmap_alias' },
   {
-    file: 'web/static/js/pages/scanner/main.js', kind: 'required-string', anyOf: true,
-    pattern: ['getOwnPropertyDescriptors', 'defineProperties'],
-    note: '[TestScannerESMGuard] test_main_js_has_descriptor_merge — OR（非 AND，與 settings 頁只有 required 半邊不同）',
+    file: 'web/static/js/pages/scanner/main.js', kind: 'required-string',
+    pattern: "from '@/shared/merge-state.js'",
+    note: '[TestScannerESMGuard] test_main_js_imports_merge_state — T3 搬移後：驗 import 自共用模組（合併邏輯本體驗證移到 shared/merge-state.js 的 descriptor-merge 斷言，見該檔規則）',
   },
   ...['stateScan()', 'stateBatch()', 'stateAlias()'].map((fn) => ({
     file: 'web/static/js/pages/scanner/main.js', kind: 'forbidden-string', pattern: `...${fn}`,
@@ -1473,9 +1493,9 @@ const RULES = [
   { file: 'web/static/js/pages/showcase/main.js', kind: 'forbidden-string', pattern: ["Alpine.data('showcaseState'", 'Alpine.data("showcaseState"'], note: '[TestShowcaseESMGuard] test_main_js_registers_showcase_name (forbidden half, 雙引號變體亦禁)' },
   { file: 'web/static/js/pages/showcase/main.js', kind: 'required-string', pattern: '@/showcase/', note: '[TestShowcaseESMGuard] test_main_js_uses_importmap_alias' },
   {
-    file: 'web/static/js/pages/showcase/main.js', kind: 'required-string', anyOf: true,
-    pattern: ['getOwnPropertyDescriptors', 'defineProperties'],
-    note: '[TestShowcaseESMGuard] test_main_js_has_descriptor_merge — OR',
+    file: 'web/static/js/pages/showcase/main.js', kind: 'required-string',
+    pattern: "from '@/shared/merge-state.js'",
+    note: '[TestShowcaseESMGuard] test_main_js_imports_merge_state — T3 搬移後：驗 import 自共用模組（合併邏輯本體驗證移到 shared/merge-state.js 的 descriptor-merge 斷言，見該檔規則）',
   },
   ...['stateBase()', 'stateVideos()', 'stateActress()', 'stateLightbox()'].map((fn) => ({
     file: 'web/static/js/pages/showcase/main.js', kind: 'forbidden-string', pattern: `...${fn}`,
@@ -1550,8 +1570,7 @@ const RULES = [
     note: '[TestSearchESMGuard] test_main_js_registers_search_page_name — search 元件名從未改過，required-only，無 forbidden 半邊',
   },
   { file: 'web/static/js/pages/search/main.js', kind: 'required-string', pattern: '@/search/state/', note: '[TestSearchESMGuard] test_main_js_uses_importmap_alias — 用 @/search/ alias 接 state/ 子路徑，非第 7 個 alias' },
-  { file: 'web/static/js/pages/search/main.js', kind: 'required-string', pattern: 'Object.getOwnPropertyDescriptors', note: '[TestSearchESMGuard] test_main_js_uses_merge_state_not_spread — AND 半邊 1/2（與 settings/scanner/showcase 頁「OR 或未檢查」不同，search 是唯一 AND 兩者皆要）' },
-  { file: 'web/static/js/pages/search/main.js', kind: 'required-string', pattern: 'Object.defineProperties', note: '[TestSearchESMGuard] test_main_js_uses_merge_state_not_spread — AND 半邊 2/2' },
+  { file: 'web/static/js/pages/search/main.js', kind: 'required-string', pattern: "from '@/shared/merge-state.js'", note: '[TestSearchESMGuard] test_main_js_imports_merge_state — T3 搬移後：驗 import 自共用模組（合併邏輯本體驗證移到 shared/merge-state.js 的 descriptor-merge 斷言，見該檔規則）' },
   { file: 'web/static/js/pages/search/main.js', kind: 'forbidden-string', pattern: '...searchStateBase()', note: '[TestSearchESMGuard] test_main_js_uses_merge_state_not_spread — 只驗 1/8 factory 的 spread（同 settings 頁弱範圍，忠實照抄不補強）' },
   ...['base.js', 'persistence.js', 'search-flow.js', 'navigation.js', 'batch.js', 'result-card.js', 'file-list.js', 'grid-mode.js'].map((file) => ({
     file: `web/static/js/pages/search/state/${file}`, kind: 'forbidden-string', pattern: 'window.SearchStateMixin_',
