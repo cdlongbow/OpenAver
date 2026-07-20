@@ -280,124 +280,159 @@ export function searchStateFileList() {
         const setFileListSignal = this._getAbortSignal('setFileList');  // T4.3
         var hasNfoMap = {};
         try {
-            const resp = await fetch('/api/search/filter-files', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ paths }),
-                signal: setFileListSignal
-            });
-            const result = await resp.json();
+            try {
+                const resp = await fetch('/api/search/filter-files', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ paths }),
+                    signal: setFileListSignal
+                });
+                const result = await resp.json();
 
-            if (result.success) {
-                if (result.total_rejected > 0) {
-                    const { extension, size, not_found } = result.rejected;
-                    let msg = window.t('search.filelist.filtered_count', { count: result.total_rejected });
-                    const details = [];
-                    if (extension > 0) details.push(window.t('search.filelist.rejected_extension', { count: extension }));
-                    if (size > 0) details.push(window.t('search.filelist.rejected_size', { count: size }));
-                    if (not_found > 0) details.push(window.t('search.filelist.rejected_not_found', { count: not_found }));
-                    if (details.length > 0) msg += `（${details.join('、')}）`;
+                if (result.success) {
+                    if (result.total_rejected > 0) {
+                        const { extension, size, not_found } = result.rejected;
+                        let msg = window.t('search.filelist.filtered_count', { count: result.total_rejected });
+                        const details = [];
+                        if (extension > 0) details.push(window.t('search.filelist.rejected_extension', { count: extension }));
+                        if (size > 0) details.push(window.t('search.filelist.rejected_size', { count: size }));
+                        if (not_found > 0) details.push(window.t('search.filelist.rejected_not_found', { count: not_found }));
+                        if (details.length > 0) msg += `（${details.join('、')}）`;
 
-                    // T6b: 後端過濾提示（info 類型）
-                    this.showToast(msg, 'info');
+                        // T6b: 後端過濾提示（info 類型）
+                        this.showToast(msg, 'info');
+                    }
+                    paths = result.files.map(f => f.path);
+                    result.files.forEach(f => { hasNfoMap[f.path] = !!f.has_nfo; });
                 }
-                paths = result.files.map(f => f.path);
-                result.files.forEach(f => { hasNfoMap[f.path] = !!f.has_nfo; });
+            } catch (err) {
+                if (err.name === 'AbortError') return;  // T4.3: 新搜尋取代，靜默退出
+                console.error('Filter API error:', err);
             }
-        } catch (err) {
-            if (err.name === 'AbortError') return;  // T4.3: 新搜尋取代，靜默退出
-            console.error('Filter API error:', err);
-        } finally {
-            this._clearAbort('setFileList', setFileListSignal);  // T4.3: 操作完成清除 registry（比對 signal 避免刪掉新請求）
-        }
 
-        // 使用後端 API 批次解析所有檔名
-        const filenames = paths.map(p => p.split(/[/\\]/).pop());
-        const parseResults = await window.SearchFile.parseFilenames(filenames);
+            // 使用後端 API 批次解析所有檔名
+            const filenames = paths.map(p => p.split(/[/\\]/).pop());
+            let parseResults;
+            let parseFailed = false;
+            try {
+                // T5 P1 fix: 傳入 setFileListSignal——filter 階段的 abort 必須貫穿到 parse 階段，
+                // 否則 A 的 parse 不會被 B 取代而在事後 resolve 時覆蓋 B 已建好的 fileList
+                // （last-return-wins clobber）。
+                parseResults = await window.SearchFile.parseFilenames(filenames, { signal: setFileListSignal });
+            } catch (err) {
+                if (err.name === 'AbortError') return;   // 與上半段一致的既有語意：
+                                                          // 舊請求被新一輪取代，靜默退出，不算「API 不可用」
+                parseFailed = true;
+                parseResults = filenames.map(f => ({ filename: f, number: null, has_subtitle: false }));
+                this.showToast(window.t('search.error.number_parse_unavailable'), 'error');
+            }
 
-        // 前端過濾：檢查能否提取番號
-        const validIndices = [];
-        let noNumberCount = 0;
+            // 前端過濾：檢查能否提取番號
+            const validIndices = [];
+            let noNumberCount = 0;
 
-        for (let i = 0; i < paths.length; i++) {
-            const result = parseResults[i];
-            if (result && result.number !== null) {
-                validIndices.push(i);
+            if (parseFailed) {
+                // CD-4b：API 不可用時，全部 index 視為 valid，不套用「無法識別番號」過濾——
+                // filtered_no_number 的語意是「後端已回應、這些檔真的沒有番號」；API 根本沒回應時
+                // 套用這套過濾是誤導。此時只該出現 number_parse_unavailable 這一個 toast，不得雙 toast。
+                for (let i = 0; i < paths.length; i++) validIndices.push(i);
             } else {
-                noNumberCount++;
+                for (let i = 0; i < paths.length; i++) {
+                    const result = parseResults[i];
+                    if (result && result.number !== null) {
+                        validIndices.push(i);
+                    } else {
+                        noNumberCount++;
+                    }
+                }
+                // T6b: 前端過濾提示（warning 類型）——既有程式碼，不動
+                if (noNumberCount > 0) {
+                    const msg = window.t('search.filelist.filtered_no_number', { count: noNumberCount });
+                    this.showToast(msg, 'warning');
+                }
             }
-        }
 
-        // T6b: 前端過濾提示（warning 類型）
-        if (noNumberCount > 0) {
-            const msg = window.t('search.filelist.filtered_no_number', { count: noNumberCount });
-            this.showToast(msg, 'warning');
-        }
-
-        // 檢查空列表
-        if (validIndices.length === 0) {
-            this.showToast(window.t('search.toast.no_valid_files'), 'warning');
-            return;
-        }
-
-        // 構建 fileList
-        this.fileList = validIndices.map(i => {
-            const path = paths[i];
-            const filename = filenames[i];
-            const result = parseResults[i];
-            return {
-                path: path,
-                filename: filename,
-                number: result.number,
-                hasSubtitle: result.has_subtitle,
-                suffixes: window.SearchFile.detectSuffixes(
-                    filename,
-                    this.appConfig?.scraper?.suffix_keywords || []
-                ),
-                chineseTitle: window.SearchFile.extractChineseTitle(filename, result.number),
-                searchResults: [],
-                hasMoreResults: false,
-                searched: false,
-                has_nfo: hasNfoMap[path] || false,
-                user_tags: []
-            };
-        });
-        this.currentFileIndex = 0;
-        this.listMode = 'file';
-        this.displayMode = 'detail';
-
-        // 重置批次狀態
-        const batch = this.batchState;
-        batch.isProcessing = false;
-        batch.isPaused = false;
-        batch.total = 0;
-        batch.processed = 0;
-        batch.success = 0;
-        batch.failed = 0;
-
-        if (this.fileList.length > 0) {
-            if (this.fileList[0].number) {
-                this.searchQuery = this.fileList[0].number;
+            // 檢查空列表。正常路徑 validIndices 全空＝所有檔案都認不出番號；parseFailed 分支
+            // validIndices 恆為全量，只有 paths 本身就空（filter-files 已全數濾掉）時才會落到這裡，
+            // 此時 number_parse_unavailable toast 已顯示過，不再補 no_valid_files（避免雙 toast）。
+            if (validIndices.length === 0) {
+                if (!parseFailed) {
+                    this.showToast(window.t('search.toast.no_valid_files'), 'warning');
+                }
+                return;
             }
-            await this.switchToFile(0, 'first', true);
+
+            // 構建 fileList
+            this.fileList = validIndices.map(i => {
+                const path = paths[i];
+                const filename = filenames[i];
+                const result = parseResults[i];
+                return {
+                    path: path,
+                    filename: filename,
+                    number: result.number,
+                    hasSubtitle: result.has_subtitle,
+                    suffixes: window.SearchFile.detectSuffixes(
+                        filename,
+                        this.appConfig?.scraper?.suffix_keywords || []
+                    ),
+                    chineseTitle: window.SearchFile.extractChineseTitle(filename, result.number),
+                    searchResults: [],
+                    hasMoreResults: false,
+                    searched: false,
+                    has_nfo: hasNfoMap[path] || false,
+                    user_tags: []
+                };
+            });
+            this.currentFileIndex = 0;
+            this.listMode = 'file';
+            this.displayMode = 'detail';
+
+            // 重置批次狀態
+            const batch = this.batchState;
+            batch.isProcessing = false;
+            batch.isPaused = false;
+            batch.total = 0;
+            batch.processed = 0;
+            batch.success = 0;
+            batch.failed = 0;
+
+            if (this.fileList.length > 0) {
+                if (this.fileList[0].number) {
+                    this.searchQuery = this.fileList[0].number;
+                }
+                await this.switchToFile(0, 'first', true);
+            }
+        } finally {
+            // T5 P1 fix: clear 移到函式最外層——涵蓋 filter + parse 全流程；比對 signal
+            // 避免 A 的 finally 誤刪 B 已建立的新 controller。
+            this._clearAbort('setFileList', setFileListSignal);  // T4.3: 操作完成清除 registry（比對 signal 避免刪掉新請求）
         }
     },
 
-    handleFileDrop(files) {
+    handleFileDrop(files) {                    // 維持同步，main.js:56 的 listener 契約不變
         if (!files || files.length === 0) return;
+        this._resolveAndSearchDroppedFile(files[0]);   // fire-and-forget，不 await
+    },
 
-        const file = files[0];
-        const filename = file.name;
-        const number = window.SearchFile.extractNumber(filename);
-
-        if (!number) {
-            this.errorText = window.t('search.error.number_not_recognized');  // T6c: Alpine state
+    async _resolveAndSearchDroppedFile(file) {
+        const signal = this._getAbortSignal('handleFileDrop');   // 同 setFileList:280／loadFavorite:436 的既有機制
+        try {
+            const [r] = await window.SearchFile.parseFilenames([file.name], { signal });
+            if (!r?.number) {
+                this.errorText = window.t('search.error.number_not_recognized');  // T6c: 沿用既有 key
+                this.pageState = 'error';
+                return;
+            }
+            this.searchQuery = r.number;
+            this.doSearch(r.number);
+        } catch (err) {
+            if (err.name === 'AbortError') return;   // 舊請求被新拖曳取代，靜默退出——必要不是裝飾
+            this.errorText = window.t('search.error.number_parse_unavailable');   // 新 key
             this.pageState = 'error';
-            return;
+        } finally {
+            this._clearAbort('handleFileDrop', signal);   // 比對 signal，避免刪掉新請求的 controller
         }
-
-        this.searchQuery = number;
-        this.doSearch(number);
     },
 
     async addFiles() {

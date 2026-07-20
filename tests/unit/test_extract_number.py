@@ -226,3 +226,45 @@ class TestExtractNumberGalleryScannerRegressionGuard:
         """VideoScanner: tutorial-123.mp4 → ""（8 字母 word-guard 維持）"""
         scanner = VideoScanner()
         assert scanner.find_num_from_filename("tutorial-123.mp4") == ""
+
+
+class TestExtractNumberSpecSection2Coverage:
+    """
+    TASK-103-T5 DoD #1：spec §2 明列的格式（日期式/底線式/方括號/Tokyo Hot/123ABC）
+    在刪除前端 extractNumber 後，這是唯一還能證明「後端 9-pattern 權威版涵蓋
+    這些格式」的地方——JS 側 4-pattern 簡化版本來就沒實作這幾種，只有 Python
+    側測試能證明 spec §2 的承諾成立。
+    """
+
+    def test_date_format_123456_01(self):
+        """123456-01.mp4 → 123456-01（日期式，spec §2 明列格式）"""
+        assert extract_number("123456-01.mp4") == "123456-01"
+
+    def test_underscore_format_123456_01(self):
+        """123456_01.mp4 → 123456_01（底線式，spec §2 明列格式）"""
+        assert extract_number("123456_01.mp4") == "123456_01"
+
+    def test_bracket_format_abc_123(self):
+        """[ABC-123].mp4 → ABC-123（方括號式，spec §2 明列格式）"""
+        assert extract_number("[ABC-123].mp4") == "ABC-123"
+
+    def test_tokyo_hot_n0762_bare_filename(self):
+        """n0762.mp4 → N0762（Tokyo Hot，裸檔名版；既有 :39-42 測的是含標題雜訊的變體，非同一斷言）"""
+        assert extract_number("n0762.mp4") == "N0762"
+
+    def test_mixed_digit_letter_prefix_123abc_456(self):
+        """123ABC-456.mp4 → ABC-456（數字前綴+字母+編號，spec §2 明列格式）
+
+        ⚠ 鎖的是**實際行為**而非理想值：patterns[5]（`[A-Za-z]{1,7}-\\d{3,5}`）先於
+        patterns[8]（`\\d{3}[A-Za-z]{3,4}-?\\d{3,4}`）比對，`re.search` 在字串中段
+        命中子串 `ABC-456` 即 return，3 位數字前綴被丟棄（真實案例：
+        `529STCV-152.mp4` → `STCV-152`）。這是 extract_number **既有**的 pattern
+        precedence 缺陷（T5 未改動 core/scrapers/utils.py），已列 TASK-103-T5
+        residual 待另開 task 評估——修 precedence 會動到 CD-6 的
+        `1sdms00808 → SDMS-00808` 邊界（見 :188），不可在 T5 順手改。
+
+        T5 的承諾仍成立：舊前端 extractNumber 對本格式回 `None`（4 pattern 皆因
+        `\\b` 邊界不匹配，2026-07-20 實測），改走後端後至少解得出 ABC-456，
+        且拖曳與貼上結果一致——這才是 spec §2 第 2 條的驗收標的。
+        """
+        assert extract_number("123ABC-456.mp4") == "ABC-456"
