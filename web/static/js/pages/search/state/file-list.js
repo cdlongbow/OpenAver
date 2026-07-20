@@ -278,6 +278,10 @@ export function searchStateFileList() {
     async setFileList(paths) {
         // 呼叫過濾 API
         const setFileListSignal = this._getAbortSignal('setFileList');  // T4.3
+        // Codex PR#112 P2(第2輪): file-list 替換＝新狀態世代，作廢任何 pending
+        // 拖檔解析／進行中搜尋的 async continuation（重用 doSearch/cancelSearch
+        // 的 requestId 機制，見 search-flow.js:106/602）
+        this.requestId++;
         var hasNfoMap = {};
         try {
             try {

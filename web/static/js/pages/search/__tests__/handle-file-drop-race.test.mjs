@@ -215,3 +215,70 @@ test('Codex P2 對照（happy path）：拖檔 parse 期間 requestId 未變 →
   assert.equal(fakeThis.searchQuery, 'DROP-001');
   assert.deepEqual(doSearchCalls, ['DROP-001'], 'doSearch 應被拖檔 continuation 呼叫一次');
 });
+
+// Codex PR#112 review 第 2 輪 P2：拖檔 parse pending 期間，使用者改走「載入我的最愛」等
+// file-list 替換操作（setFileList，loadFavorite/addFiles/addFolder 共用出口）。這條路徑
+// 既不 bump requestId、也不共用 handleFileDrop 的 abort registry key（不同 key，互相
+// abort 不到），上面 CD-11/requestId 那組測試都堵不住這個洞——setFileList 必須自己在
+// 同步段 bump this.requestId，讓 _resolveAndSearchDroppedFile 既有的
+// `capturedRequestId !== this.requestId` 檢查連帶失效這條 stale continuation。
+
+test('Codex P2(第2輪): 拖檔 parse pending 期間 setFileList 替換清單（模擬 loadFavorite）→ 拖檔的 stale continuation 不得覆蓋新清單', async () => {
+  const dropCalls = [];
+  const favCalls = [];
+  // 拖檔與 setFileList 共用同一個 window.SearchFile.parseFilenames，用 filenames 內容區分
+  // 「這通是拖檔的呼叫」還是「這通是 setFileList 的呼叫」，讓拖檔那次刻意晚 resolve。
+  window.SearchFile = {
+    parseFilenames: (filenames) => {
+      const entry = { filenames };
+      const promise = new Promise((resolve) => { entry.resolve = resolve; });
+      if (filenames[0] === 'DROP-001.mp4') {
+        dropCalls.push(entry);
+      } else {
+        favCalls.push(entry);
+      }
+      return promise;
+    },
+    detectSuffixes: () => [],
+    extractChineseTitle: () => null,
+  };
+  window.t = (key) => key;
+  // filter-files 端點：success:false → setFileList 保留原始 paths，直接走到 parseFilenames。
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ success: false }) });
+
+  const doSearchCalls = [];
+  const fakeThis = makeFakeThis({
+    doSearch(q) { doSearchCalls.push(q); },
+    showToast() {},
+    switchToFile: async () => {},   // 隔離掉真 EventSource，非本測試焦點
+    _resetCoverState() {},
+  });
+
+  // 1. 拖檔 A：parse 還 pending（capturedRequestId 捕獲的是 bump 前的 requestId）
+  searchStateFileList().handleFileDrop.call(fakeThis, [{ name: 'DROP-001.mp4' }]);
+  assert.equal(dropCalls.length, 1, '拖檔應觸發一次 parseFilenames 呼叫');
+
+  // 2. 使用者改按「我的最愛」→ setFileList 清單替換（loadFavorite/addFiles/addFolder 共用出口）
+  const pSetFileList = fakeThis.setFileList(['/fav/FAV-001.mp4']);
+  await flush();
+  assert.equal(favCalls.length, 1, 'setFileList 應觸發一次 parseFilenames 呼叫（與拖檔那次分開計數）');
+
+  // setFileList 的 parse 先回應，正常建出 favorites 清單
+  favCalls[0].resolve([{ filename: 'FAV-001.mp4', number: 'FAV-001', has_subtitle: false }]);
+  await flush();
+  await pSetFileList;
+
+  assert.equal(fakeThis.fileList.length, 1, 'setFileList 應正常建出清單');
+  assert.equal(fakeThis.fileList[0].path, '/fav/FAV-001.mp4', 'fileList 應是 favorites 的內容');
+  assert.equal(fakeThis.searchQuery, 'FAV-001', 'searchQuery 應是 setFileList 寫入的 FAV-001');
+
+  // 3. 拖檔 A 的 parse 這時才姍姍來遲 resolve（stale continuation）
+  dropCalls[0].resolve([{ filename: 'DROP-001.mp4', number: 'DROP-001', has_subtitle: false }]);
+  await flush();
+
+  assert.equal(fakeThis.fileList.length, 1, 'stale 拖檔 continuation 不得清空/覆蓋 setFileList 剛建好的清單');
+  assert.equal(fakeThis.fileList[0].path, '/fav/FAV-001.mp4', 'fileList 仍應是 favorites，不被拖檔覆蓋');
+  assert.notEqual(fakeThis.searchQuery, 'DROP-001', 'stale 拖檔 continuation 不得把 searchQuery 改回 DROP-001');
+  assert.equal(fakeThis.searchQuery, 'FAV-001', 'searchQuery 應維持 setFileList 寫入的 FAV-001');
+  assert.deepEqual(doSearchCalls, [], 'stale 拖檔 continuation 不得呼叫 doSearch（會拿 stale 番號清掉剛載入的清單）');
+});
