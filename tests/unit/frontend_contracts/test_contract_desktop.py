@@ -28,16 +28,22 @@ class TestOpenLocalGuard:
     """確認 openLocal() 綁定和 open_folder() API 的結構完整性（T5a / T5b / T4）"""
 
     def _assert_openlocal_wired(self):
-        """兩頁各自 import 且掛載 openLocal（CD-10 假綠防護，見 TASK-103-T4）。
+        """兩頁各自 import 且掛載 openLocal（CD-10 假綠防護，見 TASK-103-T4；
+        具名 import 綁定 anchor 為 Codex PR review P2 補強，見 TASK-103-T4 二審）。
 
         不可用整檔 substring 找 `openLocal`（模板呼叫、殘留註解都會誤中）；
         掛載檢查用整行 anchor `^\\s*openLocal,\\s*$`，刻意排除 import 那一行
         （其內容不同不會誤中）與任何提及 openLocal 字樣的註解（不會單獨成行）。
+        import 綁定檢查同樣用整行 anchor（`^\\s*import\\s*\\{\\s*openLocal\\s*\\}\\s*from\\s*'...'`），
+        防止改成 `import openLocal from '@/shared/open-local.js'`（default import，
+        shared 模組無 default export）時仍被舊版整檔 substring 判定為綠（Codex P2）。
         """
         for js_file in _OPEN_LOCAL_PAGE_FILES:
             content = js_file.read_text(encoding='utf-8')
             assert "from '@/shared/open-local.js'" in content, \
                 f"{js_file.name} 未 import shared/open-local.js（T4/CD-10）"
+            assert re.search(r"^\s*import\s*\{\s*openLocal\s*\}\s*from\s*'@/shared/open-local\.js';", content, re.MULTILINE), \
+                f"{js_file.name} 未具名 import openLocal（需 `import {{ openLocal }} from '@/shared/open-local.js'`，非 default import，T4/CD-10）"
             assert re.search(r'^\s*openLocal,\s*$', content, re.MULTILINE), \
                 f"{js_file.name} 未掛載 openLocal（缺少 shorthand property 行，T4/CD-10）"
 
