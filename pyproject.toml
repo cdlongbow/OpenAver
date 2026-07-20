@@ -3,7 +3,10 @@ target-version = "py312"
 exclude = ["venv", "tools", "tests"]
 
 [tool.ruff.lint]
-select = ["E722", "F", "B", "T201", "S110", "S112"]
+select = ["E722", "F", "B", "T201", "S110", "S112", "TID"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"logging.getLogger".msg = "改用 from core.logger import get_logger（見 CLAUDE.md Logger 規則）"
 
 [tool.ruff.lint.per-file-ignores]
 "core/scrapers/avsox.py" = ["T201"]
@@ -14,3 +17,4 @@ select = ["E722", "F", "B", "T201", "S110", "S112"]
 "build_macos.py" = ["T201"]
 "scripts/audit_build_artifact.py" = ["T201"]  # CLI build 工具，print 為正常輸出（同 build.py）
 "scripts/verify_artifact_imports.py" = ["T201"]  # 產物 import sweep 守衛，print 即輸出（跑在 embedded python，stdlib-only）
+"core/logger.py" = ["TID251"]  # 本模組即 get_logger 的實作，合法直呼 logging.getLogger
