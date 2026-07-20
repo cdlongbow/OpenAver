@@ -15,14 +15,7 @@ import { stateLightbox } from '@/showcase/state-lightbox.js';
 import { stateSimilar }  from '@/showcase/state-similar.js';
 import { stateDelete }   from '@/showcase/state-delete.js';
 import { rescrapeState } from '@/shared/state-rescrape.js';
-
-function mergeState(...parts) {
-    const target = {};
-    for (const part of parts) {
-        Object.defineProperties(target, Object.getOwnPropertyDescriptors(part));
-    }
-    return target;
-}
+import { mergeState } from '@/shared/merge-state.js';
 
 window.showcaseState = function() {
     return mergeState(

@@ -6,33 +6,6 @@
 // === 檔名處理工具函數 ===
 
 /**
- * 檢查檔名是否包含字幕標記
- * [API FALLBACK] 當 /api/parse-filename 失敗時使用（網路錯誤/server 故障）
- */
-function checkSubtitle(filename) {
-    if (!filename) return false;
-    const upper = filename.toUpperCase();
-
-    const patterns = ['-C', '_C'];
-    for (const p of patterns) {
-        const idx = upper.indexOf(p);
-        if (idx !== -1) {
-            const nextIdx = idx + p.length;
-            if (nextIdx >= upper.length || !/[A-Z0-9]/i.test(upper[nextIdx])) {
-                return true;
-            }
-        }
-    }
-
-    const chinesePatterns = ['中文字幕', '字幕', '中字', '[中字]', '【中字】'];
-    for (const p of chinesePatterns) {
-        if (filename.includes(p)) return true;
-    }
-
-    return false;
-}
-
-/**
  * 檢查文字是否包含中文
  */
 function hasChinese(text) {
@@ -67,7 +40,9 @@ function cleanSourceSuffix(text) {
 }
 
 // 字幕 pattern 常數（對齊 Python core/scrapers/utils.py::_SUBTITLE_PATTERNS_*）
+// eslint-disable-next-line local/no-cjk-literal -- [cjk-exempt: stripSubtitleMarkers 用字幕標記比對資料，非 UI copy，現役路徑（file-list.js:357）]
 const _SUBTITLE_BRACKETS = ['[中文字幕]', '【中文字幕】', '[中字]', '【中字】'];
+// eslint-disable-next-line local/no-cjk-literal -- [cjk-exempt: stripSubtitleMarkers 用字幕標記比對資料，非 UI copy，現役路徑（file-list.js:357）]
 const _SUBTITLE_TEXT_MARKERS = ['中文字幕', '中字', '字幕'];  // 長 pattern 先
 
 /**
@@ -136,63 +111,23 @@ function extractChineseTitle(filename, number, actors = []) {
 }
 
 /**
- * 從檔名提取番號
- * [API FALLBACK] 當 /api/parse-filename 失敗時使用（網路錯誤/server 故障）
- * 主要路徑應優先呼叫後端 API
- */
-function extractNumber(filename) {
-    const basename = filename.split(/[/\\]/).pop().replace(/\.[^.]+$/, '');
-
-    const patterns = [
-        /\b(FC2-PPV)-(\d{5,7})\b/i,          // FC2-PPV-1234567（優先）
-        /\b([A-Z]+\d+-\d+)\b/i,              // T28-103 混合格式（字母+數字-數字）
-        /\b([A-Z]{1,7})-(\d{3,5})\b/i,       // SONE-205（支援單字母）
-        /\b([A-Z]{2,7})(\d{3,5})\b/i,        // IPTD927（無連字號需 2+ 字母避免誤判）
-    ];
-
-    for (const pattern of patterns) {
-        const match = basename.match(pattern);
-        if (match) {
-            const prefix = match[1].toUpperCase();
-            // FC2-PPV 特殊處理
-            if (prefix === 'FC2-PPV') return `FC2-PPV-${match[2]}`;
-            // 混合格式已包含完整番號
-            if (pattern === patterns[1]) return prefix;
-            // 其他格式需組合
-            return `${prefix}-${match[2]}`;
-        }
-    }
-    return null;
-}
-
-/**
- * 批次解析檔名（呼叫後端 API）
+ * 批次解析檔名（呼叫後端 API，唯一權威來源——不再有前端本地 fallback）
  * @param {string[]} filenames - 檔名列表
+ * @param {{signal?: AbortSignal}} [options] - fetch 選項（signal 供呼叫端取消 in-flight 請求）
  * @returns {Promise<Array<{filename: string, number: string|null, has_subtitle: boolean}>>}
  */
-async function parseFilenames(filenames) {
-    try {
-        const response = await fetch('/api/parse-filename', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ filenames })
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-
-        const data = await response.json();
-        return data.results;
-    } catch (error) {
-        console.warn('[parseFilenames] API 失敗，使用本地解析:', error.message);
-        // Fallback 到本地解析
-        return filenames.map(filename => ({
-            filename,
-            number: extractNumber(filename),
-            has_subtitle: checkSubtitle(filename)
-        }));
+async function parseFilenames(filenames, { signal } = {}) {
+    const response = await fetch('/api/parse-filename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filenames }),
+        signal
+    });
+    if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
     }
+    const data = await response.json();
+    return data.results;
 }
 
 /**
@@ -246,12 +181,10 @@ async function scrapeFile(file, metadata) {
 // === 暴露介面 ===
 window.SearchFile = {
     // Utility functions (still needed by Alpine methods)
-    checkSubtitle,
     hasChinese,
     cleanSourceSuffix,
     stripSubtitleMarkers,
     extractChineseTitle,
-    extractNumber,
     formatNumber,
     parseFilenames,
     scrapeFile,

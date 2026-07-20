@@ -1324,13 +1324,18 @@ const RULES = [
   { file: 'web/templates/base.html', kind: 'forbidden-string', pattern: '<script defer src="/static/js/shared/ghost-fly.js">', note: '[TestImportMapGuard] test_ghost_fly_script_tag_is_module (forbidden half — 舊 tag 殘留防呆)' },
 
   // ---- [TestESMExportGuard] 5 個 shared/components 共用工具：export + window bridge + base.html script tag ----
+  // motion-adapter.js 不在 requiresExport 名單：103-T1 刪除唯一的
+  // `export { motion as MotionAdapter };`（死碼——全庫零 `import { MotionAdapter }`
+  // 消費端，該檔以 <script type="module" src="...">「入口模組」形式載入，非被
+  // import 消費）；window bridge（window.OpenAver.motion）與 base.html script tag
+  // 檢查不受影響、仍是所有現役呼叫端的存取路徑。
   ...[
-    ['web/static/js/shared/burst-picker.js', 'window.BurstPicker', '/static/js/shared/burst-picker.js'],
-    ['web/static/js/components/motion-adapter.js', 'window.OpenAver.motion', '/static/js/components/motion-adapter.js'],
-    ['web/static/js/components/page-lifecycle.js', 'window.__registerPage', '/static/js/components/page-lifecycle.js'],
-    ['web/static/js/components/motion-prefs.js', 'window.OpenAver', '/static/js/components/motion-prefs.js'],
-  ].flatMap(([file, bridge, scriptPath]) => ([
-    { file, kind: 'required-string', pattern: 'export', note: `[TestESMExportGuard] ${file} export` },
+    ['web/static/js/shared/burst-picker.js', 'window.BurstPicker', '/static/js/shared/burst-picker.js', true],
+    ['web/static/js/components/motion-adapter.js', 'window.OpenAver.motion', '/static/js/components/motion-adapter.js', false],
+    ['web/static/js/components/page-lifecycle.js', 'window.__registerPage', '/static/js/components/page-lifecycle.js', true],
+    ['web/static/js/components/motion-prefs.js', 'window.OpenAver', '/static/js/components/motion-prefs.js', true],
+  ].flatMap(([file, bridge, scriptPath, requiresExport]) => ([
+    ...(requiresExport ? [{ file, kind: 'required-string', pattern: 'export', note: `[TestESMExportGuard] ${file} export` }] : []),
     { file, kind: 'required-string', pattern: bridge, note: `[TestESMExportGuard] ${file} window bridge (${bridge})` },
     { file: 'web/templates/base.html', kind: 'required-string', pattern: `type="module" src="${scriptPath}"`, note: `[TestESMExportGuard] base.html ${scriptPath} script tag is module` },
     { file: 'web/templates/base.html', kind: 'forbidden-string', pattern: `<script defer src="${scriptPath}">`, note: `[TestESMExportGuard] base.html ${scriptPath} no residual defer tag` },
@@ -1353,6 +1358,33 @@ const RULES = [
     pattern: `export function ${fn}`,
     note: `[TestSettingsESMGuard] ${file} exports ${fn}`,
   })),
+  // ---- [TestMergeStateSharedGuard] T3：mergeState() 收斂進 shared/merge-state.js ----
+  // 合併邏輯本體（descriptor-preserving merge）現在只有 1 份實作，斷言集中在此檔案，
+  // 不再逐頁驗證函式體字面。但只驗這裡會產生假綠（shared 對、某頁沒接上），
+  // 故 4 個 main.js 各自新增兩條行首 anchored 斷言（見各頁區塊）：
+  //   ① 具名 import 綁定 `import { mergeState } from '@/shared/merge-state.js'`
+  //      ——只比對 module 路徑字串會放行 default import（shared 無 default export，
+  //        瀏覽器在模組實例化階段就 SyntaxError，但 lint 全盲）。
+  //   ② 實際呼叫 `mergeState(` ——只驗 import 存在會放行「保留 import 但改用
+  //      Object.assign 組裝」，那會靜默丟失 getter/setter descriptor，
+  //      正是 mergeState 存在要防的 bug，且 runtime 不報錯。
+  // 兩處皆為 Codex PR review P2 補強（原僅路徑 substring）。三層斷言
+  //（shared 本體運算式 + 具名 import + 呼叫）合起來才是完整的 pure-move gate（CD-10）。
+  {
+    // ⚠ 鎖「整條運算式」而非 Object.getOwnPropertyDescriptors / Object.defineProperties
+    // 兩個字面各自存在——後者是整檔 substring 比對，而本檔 docblock 剛好把這兩個名字
+    // 都寫進散文裡，導致連 Object.assign 這種普通回歸都測不出來（T3 review 實測假綠）。
+    // 改鎖含 target/part 的完整呼叫式後，換 API（assign）與換參數順序兩類 mutation 皆轉紅；
+    // `^[ \t]*` 開頭使 docblock 行（必有 `*` 前綴）不可能誤命中。
+    file: 'web/static/js/shared/merge-state.js', kind: 'required-string',
+    pattern: /^[ \t]*Object\.defineProperties\(target, Object\.getOwnPropertyDescriptors\(part\)\);[ \t]*$/m,
+    note: '[TestMergeStateSharedGuard] test_merge_state_uses_descriptor_preserving_merge — descriptor 合併運算式整條鎖定（非字面各自存在，防 docblock 假綠）',
+  },
+  {
+    file: 'web/static/js/shared/merge-state.js', kind: 'required-string',
+    pattern: 'export function mergeState',
+    note: '[TestMergeStateSharedGuard] test_merge_state_is_named_export — 四頁皆用具名 import，非 default export',
+  },
   { file: 'web/static/js/pages/settings/main.js', kind: 'required-string', pattern: 'alpine:init', note: '[TestSettingsESMGuard] test_main_js_exists_and_has_alpine_init' },
   { file: 'web/static/js/pages/settings/main.js', kind: 'required-string', pattern: "Alpine.data('settings',", note: '[TestSettingsESMGuard] test_main_js_registers_settings_name (required half)' },
   { file: 'web/static/js/pages/settings/main.js', kind: 'forbidden-string', pattern: "Alpine.data('settingsPage'", note: '[TestSettingsESMGuard] test_main_js_registers_settings_name (forbidden half)' },
@@ -1379,7 +1411,16 @@ const RULES = [
     note: "[TestSettingsESMGuard] test_no_settings_page_alpine_data_in_js — pages/**/*.js 遞迴不可殘留",
   },
   { file: 'web/static/js/pages/settings/main.js', kind: 'forbidden-string', pattern: 'settingsPage', note: '[TestSettingsESMGuard] test_main_js_no_settingspage_reference — main.js 全檔不含 settingsPage 字面（比 Alpine.data 那條更廣，2 條各自照抄）' },
-  { file: 'web/static/js/pages/settings/main.js', kind: 'required-string', pattern: 'getOwnPropertyDescriptors', note: '[TestSettingsESMGuard] test_main_js_uses_descriptor_merge (required half)' },
+  {
+    file: 'web/static/js/pages/settings/main.js', kind: 'required-string',
+    pattern: /^[ \t]*import[ \t]*\{[ \t]*mergeState[ \t]*\}[ \t]*from[ \t]*'@\/shared\/merge-state\.js';/m,
+    note: '[TestSettingsESMGuard] test_main_js_imports_merge_state — 具名 import 綁定（防 default import 假綠，Codex P2）',
+  },
+  {
+    file: 'web/static/js/pages/settings/main.js', kind: 'required-string',
+    pattern: /^[ \t]*Alpine\.data\('settings',[ \t]*\(\)[ \t]*=>[ \t]*mergeState\(/m,
+    note: '[TestSettingsESMGuard] test_main_js_calls_merge_state — 實際呼叫 mergeState(...)，非 Object.assign 等替代品（防 descriptor 丟失假綠，Codex P2）',
+  },
   { file: 'web/static/js/pages/settings/main.js', kind: 'forbidden-string', pattern: '...stateConfig()', note: '[TestSettingsESMGuard] test_main_js_uses_descriptor_merge (forbidden half — 只驗 1/3 factory 的 spread，弱於 scanner/showcase/search 頁，故意不補強成一致，CD-96-9)' },
   { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'get isDirty()', note: '[TestSettingsESMGuard] test_state_config_has_getter_isDirty — isDirty 須為 getter 非 plain prop（settings 頁獨有斷言）' },
 
@@ -1398,9 +1439,14 @@ const RULES = [
   { file: 'web/static/js/pages/scanner/main.js', kind: 'forbidden-string', pattern: "Alpine.data('scannerPage'", note: '[TestScannerESMGuard] test_main_js_registers_scanner_name (forbidden half)' },
   { file: 'web/static/js/pages/scanner/main.js', kind: 'required-string', pattern: '@/scanner/', note: '[TestScannerESMGuard] test_main_js_uses_importmap_alias' },
   {
-    file: 'web/static/js/pages/scanner/main.js', kind: 'required-string', anyOf: true,
-    pattern: ['getOwnPropertyDescriptors', 'defineProperties'],
-    note: '[TestScannerESMGuard] test_main_js_has_descriptor_merge — OR（非 AND，與 settings 頁只有 required 半邊不同）',
+    file: 'web/static/js/pages/scanner/main.js', kind: 'required-string',
+    pattern: /^[ \t]*import[ \t]*\{[ \t]*mergeState[ \t]*\}[ \t]*from[ \t]*'@\/shared\/merge-state\.js';/m,
+    note: '[TestScannerESMGuard] test_main_js_imports_merge_state — 具名 import 綁定（防 default import 假綠，Codex P2）',
+  },
+  {
+    file: 'web/static/js/pages/scanner/main.js', kind: 'required-string',
+    pattern: /^[ \t]*Alpine\.data\('scanner',[ \t]*\(\)[ \t]*=>[ \t]*mergeState\(/m,
+    note: '[TestScannerESMGuard] test_main_js_calls_merge_state — 實際呼叫 mergeState(...)，非 Object.assign 等替代品（防 descriptor 丟失假綠，Codex P2）',
   },
   ...['stateScan()', 'stateBatch()', 'stateAlias()'].map((fn) => ({
     file: 'web/static/js/pages/scanner/main.js', kind: 'forbidden-string', pattern: `...${fn}`,
@@ -1468,9 +1514,14 @@ const RULES = [
   { file: 'web/static/js/pages/showcase/main.js', kind: 'forbidden-string', pattern: ["Alpine.data('showcaseState'", 'Alpine.data("showcaseState"'], note: '[TestShowcaseESMGuard] test_main_js_registers_showcase_name (forbidden half, 雙引號變體亦禁)' },
   { file: 'web/static/js/pages/showcase/main.js', kind: 'required-string', pattern: '@/showcase/', note: '[TestShowcaseESMGuard] test_main_js_uses_importmap_alias' },
   {
-    file: 'web/static/js/pages/showcase/main.js', kind: 'required-string', anyOf: true,
-    pattern: ['getOwnPropertyDescriptors', 'defineProperties'],
-    note: '[TestShowcaseESMGuard] test_main_js_has_descriptor_merge — OR',
+    file: 'web/static/js/pages/showcase/main.js', kind: 'required-string',
+    pattern: /^[ \t]*import[ \t]*\{[ \t]*mergeState[ \t]*\}[ \t]*from[ \t]*'@\/shared\/merge-state\.js';/m,
+    note: '[TestShowcaseESMGuard] test_main_js_imports_merge_state — 具名 import 綁定（防 default import 假綠，Codex P2）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/main.js', kind: 'required-string',
+    pattern: /^[ \t]*return[ \t]*mergeState\(/m,
+    note: '[TestShowcaseESMGuard] test_main_js_calls_merge_state — 實際呼叫 mergeState(...)，非 Object.assign 等替代品（防 descriptor 丟失假綠，Codex P2）',
   },
   ...['stateBase()', 'stateVideos()', 'stateActress()', 'stateLightbox()'].map((fn) => ({
     file: 'web/static/js/pages/showcase/main.js', kind: 'forbidden-string', pattern: `...${fn}`,
@@ -1545,8 +1596,16 @@ const RULES = [
     note: '[TestSearchESMGuard] test_main_js_registers_search_page_name — search 元件名從未改過，required-only，無 forbidden 半邊',
   },
   { file: 'web/static/js/pages/search/main.js', kind: 'required-string', pattern: '@/search/state/', note: '[TestSearchESMGuard] test_main_js_uses_importmap_alias — 用 @/search/ alias 接 state/ 子路徑，非第 7 個 alias' },
-  { file: 'web/static/js/pages/search/main.js', kind: 'required-string', pattern: 'Object.getOwnPropertyDescriptors', note: '[TestSearchESMGuard] test_main_js_uses_merge_state_not_spread — AND 半邊 1/2（與 settings/scanner/showcase 頁「OR 或未檢查」不同，search 是唯一 AND 兩者皆要）' },
-  { file: 'web/static/js/pages/search/main.js', kind: 'required-string', pattern: 'Object.defineProperties', note: '[TestSearchESMGuard] test_main_js_uses_merge_state_not_spread — AND 半邊 2/2' },
+  {
+    file: 'web/static/js/pages/search/main.js', kind: 'required-string',
+    pattern: /^[ \t]*import[ \t]*\{[ \t]*mergeState[ \t]*\}[ \t]*from[ \t]*'@\/shared\/merge-state\.js';/m,
+    note: '[TestSearchESMGuard] test_main_js_imports_merge_state — 具名 import 綁定（防 default import 假綠，Codex P2）',
+  },
+  {
+    file: 'web/static/js/pages/search/main.js', kind: 'required-string',
+    pattern: /^[ \t]*return[ \t]*mergeState\(/m,
+    note: '[TestSearchESMGuard] test_main_js_calls_merge_state — 實際呼叫 mergeState(...)，非 Object.assign 等替代品（防 descriptor 丟失假綠，Codex P2）',
+  },
   { file: 'web/static/js/pages/search/main.js', kind: 'forbidden-string', pattern: '...searchStateBase()', note: '[TestSearchESMGuard] test_main_js_uses_merge_state_not_spread — 只驗 1/8 factory 的 spread（同 settings 頁弱範圍，忠實照抄不補強）' },
   ...['base.js', 'persistence.js', 'search-flow.js', 'navigation.js', 'batch.js', 'result-card.js', 'file-list.js', 'grid-mode.js'].map((file) => ({
     file: `web/static/js/pages/search/state/${file}`, kind: 'forbidden-string', pattern: 'window.SearchStateMixin_',
@@ -2920,15 +2979,22 @@ const RULES = [
     scope: { anchor: /long_paths/, window: 500 },
     note: '[TestLongPathWarning] test_scanner_js_long_path_warning — toast duration',
   },
+  // 103-T6：文案本體隨 i18n 收斂搬進 locales/zh_TW.json，守衛同步改錨到新家（遷移粒度守則：
+  // 守衛跟著被守的內容走，不在 JS 側留字面誘餌註解——那會讓規則永遠綠、失去 load-bearing 性）。
   {
-    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: '260',
-    scope: { anchor: /long_paths/, window: 500 },
-    note: '[TestLongPathWarning] test_scanner_js_long_path_warning — 260 字元門檻',
+    file: 'locales/zh_TW.json', kind: 'required-string', pattern: '260',
+    scope: { anchor: /"long_paths_warning"/, window: 160 },
+    note: '[TestLongPathWarning] test_scanner_js_long_path_warning — 260 字元門檻（103-T6 起錨在 i18n 文案）',
   },
   {
-    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: 'debug.log',
+    file: 'locales/zh_TW.json', kind: 'required-string', pattern: 'debug.log',
+    scope: { anchor: /"long_paths_warning"/, window: 160 },
+    note: '[TestLongPathWarning] test_scanner_js_long_path_warning — debug.log 引導字串（103-T6 起錨在 i18n 文案）',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: 'scanner.toast.long_paths_warning',
     scope: { anchor: /long_paths/, window: 500 },
-    note: '[TestLongPathWarning] test_scanner_js_long_path_warning — debug.log 引導字串',
+    note: '[TestLongPathWarning] 103-T6：JS 側須確實呼叫該 i18n key（接線檢查，防「文案在 JSON 但沒人用」假綠）',
   },
 
   // ---- [TestReadonlySourceErrorToastGuard] web/static/js/pages/scanner/state-scan.js（WF + WIN×2 + 複合窄 scope）----
@@ -2936,8 +3002,8 @@ const RULES = [
   { file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: 'source_errors', note: '[TestReadonlySourceErrorToastGuard] test_done_toast_consults_source_errors' },
   {
     file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', anyOf: true, pattern: ["'warn'", '"warn"'],
-    scope: { anchor: /const srcErrors/, window: 1300 },
-    note: '[TestReadonlySourceErrorToastGuard] test_done_toast_consults_source_errors + test_done_toast_consults_per_video_failed（共用 warn 斷言，1300-char window）',
+    scope: { anchor: /const srcErrors/, window: 1600 },
+    note: "[TestReadonlySourceErrorToastGuard] test_done_toast_consults_source_errors + test_done_toast_consults_per_video_failed（共用 warn 斷言）。103-T6：文案搬 i18n 後 window.t() 呼叫較原字面長，'warn' 由 1300 外推到 1485，window 1300→1600。實測 anchor 後兩個 'warn' 落在 1485／2022，1600 只涵蓋第一個——刪掉真正的 'warn' 仍會 RED，未因放寬而假綠。",
   },
   {
     file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: '.failed',

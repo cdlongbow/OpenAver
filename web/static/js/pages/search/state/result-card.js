@@ -2,6 +2,8 @@
  * SearchState - Result Card Mixin
  * 包含：結果卡片顯示、編輯、翻譯、標籤、本地狀態
  */
+import { openLocal } from '@/shared/open-local.js';
+
 export function searchStateResultCard() {
     return {
     // ===== T1c: Result Card Computed =====
@@ -162,7 +164,7 @@ export function searchStateResultCard() {
             }
 
             if (!currentResult || !currentResult.title || !this.hasJapanese(currentResult.title)) {
-                throw new Error('當前片無需翻譯');
+                throw new Error(window.t('search.error.no_translation_needed'));
             }
 
             const result = await this.translateWithOllama(currentResult.title, 'translate', currentResult);
@@ -174,7 +176,7 @@ export function searchStateResultCard() {
                 currentResult.translated_title = result.result;
                 this.saveState();
             } else {
-                throw new Error(result.error || '翻譯失敗');
+                throw new Error(result.error || window.t('search.error.translate_failed_generic'));
             }
 
             return;  // Gemini 模式結束
@@ -208,7 +210,7 @@ export function searchStateResultCard() {
         }
 
         if (batch.length === 0) {
-            throw new Error('無需翻譯的日文標題');
+            throw new Error(window.t('search.error.no_japanese_title'));
         }
 
         if (this.listMode !== 'file') {
@@ -366,42 +368,7 @@ export function searchStateResultCard() {
 
     // ===== T1c: Local Badge =====
 
-    openLocal(path) {
-        if (!path) return;
-
-        // 1. 擷取資料夾路徑
-        const lastSlash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
-        const folder = lastSlash >= 0 ? path.substring(0, lastSlash) : path;
-        const displayPath = pathToDisplay(folder);
-
-        // 2. 複製到剪貼簿
-        // T3.7 fix: guard against undefined navigator.clipboard (HTTP / older WebView)
-        // sync property access 在 clipboard undefined 時會 TypeError，.catch 不會跑。
-        const clipboardOk = navigator.clipboard?.writeText
-            ? navigator.clipboard.writeText(displayPath).then(() => true).catch(() => false)
-            : Promise.resolve(false);
-
-        // 3. PyWebView 桌面模式：額外開啟資料夾
-        if (window.pywebview?.api?.open_folder) {
-            window.pywebview.api.open_folder(path)
-                .then(async (opened) => {
-                    const ok = await clipboardOk;
-                    if (opened) {
-                        this.showToast(ok ? '已開啟資料夾（路徑已複製）' : '已開啟資料夾', 'success');
-                    } else {
-                        this.showToast(ok ? '已複製: ' + displayPath : '開啟資料夾失敗', ok ? 'success' : 'error');
-                    }
-                })
-                .catch(async () => {
-                    const ok = await clipboardOk;
-                    this.showToast(ok ? '已複製: ' + displayPath : '開啟資料夾失敗', ok ? 'success' : 'error');
-                });
-        } else {
-            clipboardOk.then(ok => {
-                this.showToast(ok ? '已複製: ' + displayPath : '複製失敗', ok ? 'success' : 'error');
-            });
-        }
-    },
+    openLocal,
 
     // ===== T18c: Source Link =====
 
@@ -411,7 +378,7 @@ export function searchStateResultCard() {
         if (window.pywebview?.api?.open_url) {
             window.pywebview.api.open_url(url).then(ok => {
                 if (ok) {
-                    this.showToast('已開啟瀏覽器', 'success');
+                    this.showToast(window.t('search.toast.browser_opened'), 'success');
                 } else {
                     window.open(url, '_blank', 'noopener,noreferrer');
                 }
@@ -460,7 +427,7 @@ export function searchStateResultCard() {
                     if (this._coverRequestId !== requestId) return;
                     if (this._coverRetried && !this.coverError) {
                         this._coverRetried = false;
-                        this.coverError = '封面載入失敗';
+                        this.coverError = window.t('search.cover.load_failed');
                     }
                 }, 5000);
                 return;
@@ -470,7 +437,7 @@ export function searchStateResultCard() {
         // PHASE 2: Second failure (retry also failed)
         this._clearTimer('coverRetry');
         this._coverRetried = false;
-        this.coverError = '封面載入失敗';
+        this.coverError = window.t('search.cover.load_failed');
     },
 
     // ===== V1d: Source Switching =====

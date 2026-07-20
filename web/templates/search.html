@@ -9,7 +9,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="search-container ds-page" x-data="searchPage" @keydown.window="handleKeydown($event)">
+<div class="search-container ds-page" x-data="searchPage" @keydown.window="handleKeydown($event)" @wheel="handleWheel($event)">
     <!-- 拖拽覆蓋層（必須在 x-data scope 內） -->
     <div class="drag-overlay" id="dragOverlay" :class="{ active: dragActive }">
         <div class="drag-overlay-content">
@@ -358,7 +358,7 @@
 
                 <!-- 單行日誌 -->
                 <div class="progress-log" x-text="progressLog">
-                    搜尋中...
+                    {{ t('search.button.searching') }}
                 </div>
 
                 <!-- 詳情進度條 -->
@@ -372,7 +372,7 @@
         <!-- 錯誤狀態 -->
         <div id="errorState" class="state-page error w-full" x-show="pageState === 'error'" x-cloak>
             <i class="bi bi-exclamation-triangle state-page-icon"></i>
-            <p class="state-page-text error-text" id="errorMessage" x-text="errorText || window.t('search.filelist.search_failed')">搜尋失敗</p>
+            <p class="state-page-text error-text" id="errorMessage" x-text="errorText || window.t('search.filelist.search_failed')">{{ t('search.filelist.search_failed') }}</p>
             <small class="state-page-hint">{{ t('search.error.hint') }}</small>
             <!-- 多檔案模式導航 -->
             <div class="error-nav" x-show="fileList.length > 1" id="errorNav">
@@ -659,7 +659,7 @@
                         </div>
                     </div>
                     <!-- Progress log -->
-                    <div class="staging-progress-log" x-text="progressLog">搜尋中...</div>
+                    <div class="staging-progress-log" x-text="progressLog">{{ t('search.button.searching') }}</div>
                 </div>
 
             <!-- T2a: Grid Mode（封面牆） -->
@@ -795,7 +795,7 @@
                  :class="{ 'organize-tray': listMode === 'file' && fileList.length > 0 }"
                  x-show="(listMode === 'file' && fileList.length > 0) || (listMode === 'search' && searchResults.length > 0)">
                 <div class="file-list-header">
-                    <span class="file-count" id="fileCountText" x-text="fileCountText()">0 個檔案</span>
+                    <span class="file-count" id="fileCountText" x-text="fileCountText()">{{ t('search.filelist.initial_count') }}</span>
                     <div class="join">
                         <button class="btn btn-sm btn-outline btn-primary join-item" id="btnSearchAll" type="button"
                             x-show="listMode === 'file'"
@@ -803,7 +803,7 @@
                             :disabled="searchAllDisabled()"
                             title="{{ t('search.filelist.search_all_title') }}">
                             <i :class="searchAllButtonIcon()"></i>
-                            <span x-text="searchAllButtonText()">搜尋全部</span>
+                            <span x-text="searchAllButtonText()">{{ t('search.filelist.initial_search_all') }}</span>
                         </button>
                         <button class="btn btn-sm btn-primary join-item"
                             x-show="listMode === 'search'"
@@ -811,7 +811,7 @@
                             :disabled="translateAllDisabled()"
                             title="{{ t('search.filelist.translate_all_title') }}">
                             <i :class="translateAllButtonIcon()"></i>
-                            <span x-text="translateAllButtonText()">翻譯全部</span>
+                            <span x-text="translateAllButtonText()">{{ t('search.filelist.initial_translate_all') }}</span>
                         </button>
                         <button class="btn btn-sm btn-success join-item" id="btnScrapeAll" type="button"
                             x-show="listMode === 'file'"
