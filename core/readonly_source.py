@@ -1,8 +1,15 @@
 """
 唯讀來源判定 — 純資料流層（無 IO、無 load_config、無 UI 文案）。
 
-供 (a) scraper `_readonly_source_error`（單檔端點 guard）與 (b) showcase video
+供 (a) scraper `_readonly_source_error`（現僅 `scrape-single` 用——該端點語意是
+搬移/改名來源檔案，唯讀來源無法安全支援，維持一律拒絕）與 (b) showcase video
 payload 的 `is_readonly_source` 旗標共用同一段比對邏輯（CD-90b-9 Codex 修正）。
+
+P3 grok-review（pre-merge 2026-07-21）：TASK-104-T3 起，`enrich-single`／
+`fetch-samples`／`batch-enrich` 的唯讀項不再「一律不寫」——已改道
+`core.readonly_producer._produce_one` 落 output_dir（見 `resolve_owning_output_root`
+/ `resolve_ingest_plan`）。本模組的 `is_path_readonly` 判定邏輯本身不變，仍是
+「該路徑是否屬唯讀來源」的單一真理源；變的只是各呼叫端對「是」的處理方式。
 
 模組定位：leaf-consumer，同時 import `iter_gallery_sources`（core.config）+
 `coerce_to_file_uri`/`is_path_under_dir`（core.path_utils）。config 與 path_utils

@@ -78,11 +78,18 @@ _READONLY_SOURCE_ERROR_MSG = (
 def _readonly_source_error(file_path: str) -> Optional[dict]:
     """唯讀來源 guard：只依 file_path 判斷所屬來源是否唯讀（readonly）。
 
-    是 → 回既有錯誤形狀 plain dict（不搬檔、不刮削、不寫任何 sidecar）；否則回 None。
-    兩端一律用 UNC-tolerant coerce_to_file_uri，不做原生路徑正規化（Codex P2：對 UNC 在
-    WSL/Linux 會拋 ValueError，而 UNC 正是 readonly 主場景）。coerce_to_file_uri 對「已是
-    DB canonical file:/// URI」原樣回、對 FS path 才轉，避免 to_file_uri 雙重包成
-    file:///file:/// 繞過 guard（Codex P1）。helper 自己讀 config（每次呼叫重判，安全側）。
+    P3 grok-review（pre-merge 2026-07-21）：TASK-104-T3 之後，`enrich-single`／
+    `fetch-samples`／`batch-enrich` 的唯讀項已不再走「拒絕」——改道 `_produce_one`
+    落 output_dir（見 `resolve_owning_output_root`/`resolve_ingest_plan`）。本
+    helper 現僅供 **`scrape-single`** 使用，該端點語意是「搬移/改名來源檔案」，
+    唯讀來源本就無法安全支援，維持一律拒絕、不寫任何 sidecar。
+
+    是 → 回既有錯誤形狀 plain dict（scrape-single 不搬檔、不刮削、不寫任何 sidecar）；
+    否則回 None。兩端一律用 UNC-tolerant coerce_to_file_uri，不做原生路徑正規化
+    （Codex P2：對 UNC 在 WSL/Linux 會拋 ValueError，而 UNC 正是 readonly 主場景）。
+    coerce_to_file_uri 對「已是 DB canonical file:/// URI」原樣回、對 FS path 才轉，
+    避免 to_file_uri 雙重包成 file:///file:/// 繞過 guard（Codex P1）。helper 自己讀
+    config（每次呼叫重判，安全側）。
 
     ⚠️ 本 helper 內含 load_config()（阻塞 I/O），僅可用於 sync 端點（threadpool）；async
     路由（如 batch_enrich）須改為「入口一次載入 config → readonly_source_prefixes 算一次

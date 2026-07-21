@@ -1613,6 +1613,148 @@ class TestUpsertDb:
         assert v.scrape_attempted_at > 0
 
 
+class TestUpsertDbFullModeExistingPreservation:
+    """P1/P2 grok-review (pre-merge 2026-07-21): full mode's `existing` param
+    mirrors core.enricher._db_upsert's PRESERVATION PATTERN — when THIS run's
+    assets are empty, fall back to the existing DB row instead of clobbering it.
+    Covers a full-mode RE-ENTRY of an already-produced video (gear rescrape /
+    放大鏡 ingest / batch-enrich — all `assets_mode='full'`, and ingest/rescrape
+    always pass `meta['sample_images']==[]` per CD-104-3, so `assets['sample_fs']`
+    is always `[]` too on that path).
+
+    MUTATION LOCK: reverting either preservation branch back to the old
+    unconditional read (`assets['cover_fs']`/`assets['sample_fs']` verbatim,
+    ignoring `existing`) turns the corresponding test below RED."""
+
+    SOURCE_URI = 'file:///src/TEST-001.mp4'
+    OUTPUT_DIR_URI = 'file:///output/TEST-001'
+
+    def _repo(self, temp_db):
+        from core.database import VideoRepository
+        return VideoRepository(temp_db)
+
+    def _seed_existing(self, repo, cover_path='', sample_images=None):
+        from core.database import Video
+        repo.upsert(Video(
+            path=self.SOURCE_URI, number='TEST-001', title='Existing Title',
+            cover_path=cover_path, sample_images=sample_images or [],
+            output_dir=self.OUTPUT_DIR_URI,
+        ))
+
+    # ── Finding #1 (P1): sample_images preserved on empty sample_fs ─────────
+
+    def test_preserves_existing_sample_images_when_sample_fs_empty(self, temp_db):
+        from core.readonly_producer import _upsert_db
+
+        repo = self._repo(temp_db)
+        old_samples = ['file:///output/TEST-001/extrafanart/fanart1.jpg',
+                       'file:///output/TEST-001/extrafanart/fanart2.jpg']
+        self._seed_existing(repo, sample_images=old_samples)
+        existing = repo.get_by_path(self.SOURCE_URI)
+
+        assets = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            self.OUTPUT_DIR_URI, existing=existing,
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.sample_images == old_samples, (
+            "full-mode re-entry with no new samples must preserve existing sample_images"
+        )
+
+    def test_new_sample_fs_still_overwrites_existing(self, temp_db):
+        """Sanity: preservation only kicks in when THIS run's sample_fs is empty —
+        a genuine new sample write still replaces the DB value (no regression)."""
+        from core.readonly_producer import _upsert_db
+        from core.path_utils import to_file_uri
+
+        repo = self._repo(temp_db)
+        self._seed_existing(repo, sample_images=['file:///old/fanart1.jpg'])
+        existing = repo.get_by_path(self.SOURCE_URI)
+
+        new_sample_fs = ['/output/TEST-001/extrafanart/fanart1.jpg']
+        assets = {'cover_fs': '', 'sample_fs': new_sample_fs, 'nfo_mtime': _T3_NFO_MTIME}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            self.OUTPUT_DIR_URI, existing=existing,
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.sample_images == [to_file_uri(new_sample_fs[0], None)]
+
+    def test_no_existing_row_sample_fs_empty_stores_empty_list(self, temp_db):
+        """NEW video (existing=None) — no regression: empty sample_fs still
+        stores [], never resurrects data from nowhere."""
+        from core.readonly_producer import _upsert_db
+
+        repo = self._repo(temp_db)
+        assets = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            self.OUTPUT_DIR_URI, existing=None,
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.sample_images == []
+
+    # ── Finding #2 (P2): cover_path preserved on empty cover_fs ─────────────
+
+    def test_preserves_existing_cover_path_when_cover_fs_empty(self, temp_db):
+        from core.readonly_producer import _upsert_db
+
+        repo = self._repo(temp_db)
+        self._seed_existing(repo, cover_path='file:///output/TEST-001/TEST-001.jpg')
+        existing = repo.get_by_path(self.SOURCE_URI)
+
+        assets = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            self.OUTPUT_DIR_URI, existing=existing,
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.cover_path == 'file:///output/TEST-001/TEST-001.jpg', (
+            "cover_strategy ('none',) / failed download must not clear an existing cover"
+        )
+
+    def test_new_cover_fs_still_overwrites_existing(self, tmp_path, temp_db):
+        """Sanity: a successful new cover write still replaces the DB value
+        (matches test_gear_rescrape_overwrites_cover_with_candidate_and_title's
+        contract — preservation only kicks in on EMPTY cover_fs)."""
+        from core.readonly_producer import _upsert_db
+        from core.path_utils import to_file_uri
+
+        repo = self._repo(temp_db)
+        self._seed_existing(repo, cover_path='file:///output/TEST-001/old.jpg')
+        existing = repo.get_by_path(self.SOURCE_URI)
+
+        new_cover_fs = str(tmp_path / 'output' / 'TEST-001' / 'TEST-001.jpg')
+        assets = {'cover_fs': new_cover_fs, 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            self.OUTPUT_DIR_URI, existing=existing,
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.cover_path == to_file_uri(new_cover_fs, None)
+
+    def test_no_existing_row_cover_fs_empty_stores_empty_string(self, temp_db):
+        """NEW video (existing=None) — no regression: empty cover_fs still
+        stores '', never resurrects data from nowhere."""
+        from core.readonly_producer import _upsert_db
+
+        repo = self._repo(temp_db)
+        assets = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            self.OUTPUT_DIR_URI, existing=None,
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.cover_path == ''
+
+
 # ---------------------------------------------------------------------------
 # T-4 tests: _emit helper + produce_source orchestrator
 # ---------------------------------------------------------------------------
@@ -3838,6 +3980,92 @@ class TestAssetsModeSamplesOnly:
 
         mock_clean_ef.assert_not_called()
         mock_clean_singletons.assert_not_called()
+
+
+class TestWriteMovieAssetsFullModeReentryPreservesExtrafanart:
+    """P1 grok-review (pre-merge 2026-07-21): a full-mode RE-ENTRY of an
+    already-produced video (gear rescrape / 放大鏡 ingest / batch-enrich, all
+    `assets_mode='full'`) must NOT wipe extrafanart/ samples fetched by an
+    earlier 補劇照 (`assets_mode='samples_only'`) call. Full-mode ingest/rescrape
+    always pass `meta['sample_images'] == []` (CD-104-3: samples are
+    intentionally left empty on ingest/rescrape, fetched on-demand only via
+    samples_only) — so old_base is non-empty (an already-produced video always
+    has a prior row) while this run itself has nothing to write into
+    extrafanart/. A bare `if old_base:` extrafanart-clean would therefore
+    delete the dir with nothing to replace it, destroying prior 補劇照 output.
+
+    MUTATION LOCK: reverting the `and meta.get('sample_images')` guard on the
+    `if old_base:` line back to a bare `if old_base:` turns
+    test_full_mode_reentry_preserves_extrafanart_on_disk RED (files deleted)."""
+
+    def _samples_only_seed(self, movie_dir, config):
+        """Seed extrafanart/ the way a prior 補劇照 call would (samples_only mode)."""
+        from core.readonly_producer import _write_movie_assets
+
+        meta_samples = dict(_T3_META, sample_images=['http://x/1.jpg', 'http://x/2.jpg'])
+        with patch('core.readonly_producer.download_image', side_effect=_t4_real_download):
+            _write_movie_assets(
+                movie_dir, meta_samples, _t3_format_data(config=config), '/src/TEST-001.mp4', config,
+                cover_strategy=('none',), assets_mode='samples_only',
+            )
+
+    def test_full_mode_reentry_preserves_extrafanart_on_disk(self, tmp_path):
+        from core.readonly_producer import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'TEST-001')
+        config = dict(_T3_BASE_CONFIG)
+        self._samples_only_seed(movie_dir, config)
+
+        ef_dir = Path(movie_dir) / 'extrafanart'
+        assert (ef_dir / 'fanart1.jpg').exists()
+        assert (ef_dir / 'fanart2.jpg').exists()
+
+        # full-mode RE-ENTRY: meta['sample_images'] always [] on ingest/rescrape
+        # (CD-104-3); old_base non-empty because this video was already produced.
+        meta_full = dict(_T3_META, sample_images=[])
+        fd = _t3_format_data(config=config)
+        with patch('core.readonly_producer.download_image', side_effect=_t4_real_download), \
+             patch('core.readonly_producer.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
+             patch('core.readonly_producer.generate_nfo', side_effect=_t4_real_nfo):
+            _write_movie_assets(
+                movie_dir, meta_full, fd, '/src/TEST-001.mp4', config,
+                cover_strategy=('download', 'http://x/cover.jpg'), assets_mode='full',
+                old_base='TEST-001 Test Movie Title',
+            )
+
+        assert (ef_dir / 'fanart1.jpg').exists(), "full-mode re-entry must not wipe existing samples"
+        assert (ef_dir / 'fanart2.jpg').exists(), "full-mode re-entry must not wipe existing samples"
+
+    def test_full_mode_run_with_own_samples_still_cleans_and_rewrites(self, tmp_path):
+        """Sanity: the guard only SKIPS the clean when this run has nothing new —
+        a hypothetical future full-mode caller that DOES carry sample_images still
+        gets correct clean+rewrite (old set of 3 shrinks to the new set of 1)."""
+        from core.readonly_producer import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'TEST-001')
+        config = dict(_T3_BASE_CONFIG)
+        self._samples_only_seed(movie_dir, config)
+        ef_dir = Path(movie_dir) / 'extrafanart'
+        (ef_dir / 'fanart3.jpg').write_bytes(b'STALE')  # pretend a 3rd stale sample exists
+
+        meta_full = dict(_T3_META, sample_images=['http://x/only-one.jpg'])
+        config_dl = dict(config, download_sample_images=True)
+        fd = _t3_format_data(config=config_dl)
+        with patch('core.readonly_producer.download_image', side_effect=_t4_real_download), \
+             patch('core.readonly_producer.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
+             patch('core.readonly_producer.generate_nfo', side_effect=_t4_real_nfo):
+            assets = _write_movie_assets(
+                movie_dir, meta_full, fd, '/src/TEST-001.mp4', config_dl,
+                cover_strategy=('download', 'http://x/cover.jpg'), assets_mode='full',
+                old_base='TEST-001 Test Movie Title',
+            )
+
+        # old set of 3 shrinks to the new set of 1 — fanart1.jpg is REWRITTEN
+        # with the new sample's content (not the stale one); fanart2/3 are gone.
+        assert not (ef_dir / 'fanart2.jpg').exists()
+        assert not (ef_dir / 'fanart3.jpg').exists()
+        assert (ef_dir / 'fanart1.jpg').read_bytes() == b'FAKE-IMG'  # _t4_real_download's payload
+        assert len(assets['sample_fs']) == 1
 
 
 class TestUpsertDbSamplesOnly:

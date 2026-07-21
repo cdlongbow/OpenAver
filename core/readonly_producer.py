@@ -748,14 +748,26 @@ def _write_movie_assets(
     non-empty, this movie's own stale assets from the PREVIOUS run (different
     title → different basename) are deleted — but only AFTER the corresponding
     new asset has been written successfully, and only when old_base differs
-    from this run's basename. Extrafanart (non-critical, whole set rewritten
-    every run) is cleaned before its own download loop. The singleton assets
-    (nfo/cover/poster/fanart) are cleaned only once generate_nfo has already
-    succeeded, and only the ones whose new write actually succeeded this run —
-    so a write that fails partway (cover download false, generate_nfo raising)
-    leaves the previous run's assets on disk instead of deleting them up front
-    and then failing to produce replacements. (samples_only never reaches this
-    cleanup — see above.)
+    from this run's basename. The singleton assets (nfo/cover/poster/fanart)
+    are cleaned only once generate_nfo has already succeeded, and only the
+    ones whose new write actually succeeded this run — so a write that fails
+    partway (cover download false, generate_nfo raising) leaves the previous
+    run's assets on disk instead of deleting them up front and then failing
+    to produce replacements. (samples_only never reaches this cleanup — see
+    above.)
+
+    Extrafanart is now managed EXCLUSIVELY by the samples_only (補劇照) path
+    (P1 grok-review, pre-merge 2026-07-21): full mode only cleans+rewrites the
+    extrafanart dir when THIS run itself carries new sample_images to write
+    (``old_base and meta.get('sample_images')``) — full-mode ingest/rescrape
+    callers always pass ``meta['sample_images'] == []`` (CD-104-3), so on a
+    FULL-mode re-entry of an already-produced video (gear rescrape / 放大鏡
+    ingest / batch-enrich) this branch is skipped and previously-fetched
+    samples on disk survive untouched. A bare ``if old_base:`` would delete
+    the extrafanart dir on every full-mode re-entry even though full mode
+    never repopulates it, silently wiping 補劇照 output for any video that
+    gets re-produced. Any hypothetical future caller that DOES pass full-mode
+    samples still gets correct clean+rewrite semantics.
     """
     os.makedirs(movie_dir, exist_ok=True)
 
@@ -798,7 +810,13 @@ def _write_movie_assets(
     # Stale samples from the previous run are cleaned first (whenever old_base is
     # non-empty) regardless of this run's download_sample_images setting, so a
     # re-scrape with samples toggled off still shrinks the old set to zero.
-    if old_base:
+    # P1 grok-review (pre-merge 2026-07-21): gated additionally on
+    # meta.get('sample_images') — see docstring's "Extrafanart is now managed
+    # EXCLUSIVELY by samples_only" note. Without this, a full-mode RE-ENTRY of
+    # an already-produced video (old_base non-empty) with meta['sample_images']
+    # always [] (ingest/rescrape, CD-104-3) would delete extrafanart/ and never
+    # repopulate it — destroying samples fetched by an earlier 補劇照 call.
+    if old_base and meta.get('sample_images'):
         _clean_stale_extrafanart(movie_dir)
     sample_fs: list = []
     if config.get('download_sample_images'):
@@ -877,6 +895,7 @@ def _upsert_db(
     path_mappings: dict,
     output_dir: str,
     assets_mode: str = 'full',
+    existing=None,
 ) -> None:
     """Manually construct Video and upsert to repo (CD-88b-7).
 
@@ -888,6 +907,27 @@ def _upsert_db(
     look like a no-op and silently keep it ''). nfo_mtime (TASK-104-T1 /
     CD-104-4) is the real write mtime threaded in via assets['nfo_mtime'] —
     _write_movie_assets only returns that key in full mode, matching this branch.
+
+    existing (P1/P2 grok-review, pre-merge 2026-07-21): the caller's own
+    ``repo.get_by_path(source_uri)`` result (``_produce_one`` already reads this
+    once and threads it through — same object T4's old_base reconstruction
+    uses). Mirrors ``core.enricher._db_upsert``'s PRESERVATION PATTERN
+    (enricher.py:~627-646) for full mode:
+      - cover_path: when THIS run produced no cover (``assets['cover_fs']``
+        empty — cover_strategy ``('none',)`` or a failed download), fall back
+        to ``existing.cover_path`` instead of clobbering the DB to ''. Full
+        mode only WRITES a new cover_fs when it actually has one to write
+        (see _write_movie_assets); an empty cover_fs is not evidence the old
+        cover is gone from disk.
+      - sample_images: full-mode ingest/rescrape callers always pass
+        ``meta['sample_images'] == []`` (CD-104-3) so ``assets['sample_fs']``
+        is always ``[]`` too — on a RE-ENTRY of an already-produced video
+        (gear rescrape / 放大鏡 ingest / batch-enrich), this must NOT wipe
+        sample_images fetched by an earlier 補劇照 (samples_only) call.
+        ``existing`` is None for a brand-new video, so the no-existing-row
+        matrix still gets ``sample_images=[]`` (no regression).
+    Both preservations only apply in ``full`` mode — ``samples_only`` already
+    has its own symmetric skip-when-empty guard below.
 
     samples_only mode (TASK-104-T1 / CD-104-1): does NOT construct/upsert a full
     Video row — a supplemental-samples fetch must never touch cover_path/
@@ -915,6 +955,16 @@ def _upsert_db(
             )
         return
 
+    if assets['sample_fs']:
+        sample_imgs = [to_file_uri(p, path_mappings) for p in assets['sample_fs']]
+    else:
+        sample_imgs = existing.sample_images if existing else []
+
+    if assets['cover_fs']:
+        cover_uri = to_file_uri(assets['cover_fs'], path_mappings)
+    else:
+        cover_uri = existing.cover_path if existing else ''
+
     v = Video(
         path=source_uri,
         number=meta['number'],
@@ -925,10 +975,10 @@ def _upsert_db(
         series=meta.get('series') or None,
         label=meta.get('label', ''),
         tags=meta.get('tags', []),
-        sample_images=[to_file_uri(p, path_mappings) for p in assets['sample_fs']],
+        sample_images=sample_imgs,
         duration=meta.get('duration'),
         size_bytes=file_info['size'],
-        cover_path=to_file_uri(assets['cover_fs'], path_mappings) if assets['cover_fs'] else '',
+        cover_path=cover_uri,
         output_dir=output_dir,
         release_date=meta.get('date', ''),
         mtime=file_info['mtime'],
@@ -1203,7 +1253,10 @@ def _produce_one(
     _write_movie_assets already take (matches produce_source's call site).
     existing is the caller's own repo.get_by_path(source_uri) result (read ONCE
     by the caller, not here) — T4's old_base reconstruction and T3's
-    read-and-reuse movie-dir logic both consume it.
+    read-and-reuse movie-dir logic both consume it, and it is now also passed
+    through to ``_upsert_db`` (P2 grok-review) so a full-mode RE-ENTRY of an
+    already-produced video preserves existing cover_path/sample_images instead
+    of clobbering them when this run's assets are empty.
 
     source is accepted (not currently read in this body) for parity with the
     CD-104-1 contract and for T2/T3 callers that will need it (e.g. resolving
@@ -1225,7 +1278,10 @@ def _produce_one(
         cover_strategy=cover_strategy, assets_mode=assets_mode,
         old_base=old_base, strm_mappings_getter=strm_mappings_getter,
     )
-    _upsert_db(repo, src_uri, file_info, meta, assets, path_mappings, output_dir_uri, assets_mode=assets_mode)
+    _upsert_db(
+        repo, src_uri, file_info, meta, assets, path_mappings, output_dir_uri,
+        assets_mode=assets_mode, existing=existing,
+    )
     return movie_dir, assets
 
 

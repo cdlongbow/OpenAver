@@ -1794,6 +1794,160 @@ class TestReadonlyRoutingE2E:
         for relpath, before_stat in nfo_snapshot_before.items():
             assert after[relpath] == before_stat, f"{relpath} 被 samples_only 動到了"
 
+    # ── P1/P2 grok-review：full-mode 再入（gear rescrape）不得清空既有樣張(磁碟+DB) ──
+
+    def test_full_mode_reentry_preserves_samples_disk_and_db(self, tmp_path, client, mocker, monkeypatch):
+        """ingest → 補劇照(samples_only，磁碟+DB 都有樣張) → gear rescrape
+        (assets_mode='full'，resolve_ingest_plan 的 rescrape 分支 meta['sample_images']
+        恆為 []，CD-104-3) — 樣張必須在磁碟(extrafanart/)與 DB(sample_images) 都存活，
+        不可被第三步的 full-mode 再入清空（P1 finding）。"""
+        from core.path_utils import to_file_uri, uri_to_local_fs_path
+        from core.scrapers.models import Video
+
+        src = tmp_path / "src"
+        src.mkdir()
+        video = src / "PR-001.mp4"
+        video.write_bytes(b"FAKE-VIDEO")
+
+        db_path = self._init_db(tmp_path)
+        config = _e2e_off_config(src)
+        self._wire(mocker, monkeypatch, config, db_path)
+        canonical = to_file_uri(str(video))
+
+        # Step 1: ingest — 建出 movie_dir + 初版封面。
+        mocker.patch(
+            "core.readonly_producer.search_jav",
+            return_value={
+                "number": "PR-001", "title": "T", "cover": "http://x/c.jpg",
+                "actors": [], "tags": [], "date": "", "maker": "", "sample_images": [],
+            },
+        )
+        mocker.patch(
+            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+        )
+        resp1 = client.post("/api/enrich-single", json={
+            "file_path": canonical, "number": "PR-001", "readonly_action": "ingest",
+        })
+        assert resp1.json()["success"] is True
+
+        # Step 2: 補劇照 — DB sample_images + 磁碟 extrafanart/ 都落地 2 張。
+        mocker.patch(
+            "web.routers.scraper.search_jav",
+            return_value={
+                "number": "PR-001",
+                "sample_images": ["http://x/s1.jpg", "http://x/s2.jpg"],
+            },
+        )
+        resp_samples = client.post("/api/scraper/fetch-samples", json={
+            "file_path": canonical, "number": "PR-001",
+        })
+        assert resp_samples.json()["success"] is True
+        assert resp_samples.json()["extrafanart_written"] == 2
+
+        repo = self._repo(db_path)
+        row = repo.get_by_path(canonical)
+        assert len(row.sample_images) == 2
+        movie_dir = Path(uri_to_local_fs_path(row.output_dir, {}))
+        ef_dir = movie_dir / "extrafanart"
+        assert len(list(ef_dir.glob("*.jpg"))) == 2
+
+        # Step 3: gear rescrape（撞號選版）— full-mode RE-ENTRY，本輪 meta 無劇照。
+        fake_video = MagicMock(spec=Video)
+        fake_video.to_legacy_dict.return_value = {
+            "number": "PR-001", "title": "Rescraped Title", "cover": "http://x/new.jpg",
+            "actors": [], "tags": [], "date": "", "maker": "", "source": "javlibrary",
+            "url": "https://www.javlibrary.com/ja/?v=pr001", "director": "",
+            "duration": None, "label": "", "series": "", "sample_images": [],
+        }
+        fake_video.rating = None
+        fake_video.summary = ""
+        mocker.patch("web.routers.scraper.fetch_javlib_by_detail_url", return_value=fake_video)
+
+        resp2 = client.post("/api/enrich-single", json={
+            "file_path": canonical, "number": "PR-001",
+            "readonly_action": "rescrape", "source": "javlibrary",
+            "detail_url": "https://www.javlibrary.com/ja/?v=pr001",
+        })
+        assert resp2.json()["success"] is True
+
+        row2 = repo.get_by_path(canonical)
+        assert len(row2.sample_images) == 2, "full-mode 再入不得清空 DB sample_images"
+        assert row2.sample_images == row.sample_images
+        assert len(list(ef_dir.glob("*.jpg"))) == 2, "full-mode 再入不得清空磁碟 extrafanart"
+
+    # ── P2 grok-review：full-mode 再入候選封面為空 → 不得清空既有 DB cover_path ────
+
+    def test_full_mode_reentry_empty_candidate_cover_preserves_db_cover_path(
+        self, tmp_path, client, mocker, monkeypatch,
+    ):
+        """gear rescrape 候選封面為空（cover_strategy=('none',)）— DB cover_path
+        必須保留既有值，不可被清成 ''（P2 finding：破圖 + 放大鏡誤重現）。"""
+        from core.path_utils import to_file_uri, uri_to_local_fs_path
+        from core.scrapers.models import Video
+
+        src = tmp_path / "src"
+        src.mkdir()
+        video = src / "PC-001.mp4"
+        video.write_bytes(b"FAKE-VIDEO")
+
+        db_path = self._init_db(tmp_path)
+        config = _e2e_off_config(src)
+        self._wire(mocker, monkeypatch, config, db_path)
+        canonical = to_file_uri(str(video))
+
+        # Step 1: ingest — 建出既有封面。
+        mocker.patch(
+            "core.readonly_producer.search_jav",
+            return_value={
+                "number": "PC-001", "title": "T", "cover": "http://x/c.jpg",
+                "actors": [], "tags": [], "date": "", "maker": "", "sample_images": [],
+            },
+        )
+        mocker.patch(
+            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+        )
+        resp1 = client.post("/api/enrich-single", json={
+            "file_path": canonical, "number": "PC-001", "readonly_action": "ingest",
+        })
+        assert resp1.json()["success"] is True
+
+        repo = self._repo(db_path)
+        row = repo.get_by_path(canonical)
+        assert row.cover_path
+
+        # Step 2: gear rescrape — 候選版本 cover 為空字串 → resolve_ingest_plan 的
+        # rescrape 分支給 ('none',)，_write_movie_assets 不寫封面、cover_fs=''。
+        fake_video = MagicMock(spec=Video)
+        fake_video.to_legacy_dict.return_value = {
+            "number": "PC-001", "title": "Candidate No Cover", "cover": "",
+            "actors": [], "tags": [], "date": "", "maker": "", "source": "javlibrary",
+            "url": "https://www.javlibrary.com/ja/?v=pc001", "director": "",
+            "duration": None, "label": "", "series": "", "sample_images": [],
+        }
+        fake_video.rating = None
+        fake_video.summary = ""
+        mocker.patch("web.routers.scraper.fetch_javlib_by_detail_url", return_value=fake_video)
+        mock_download = mocker.patch(
+            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+        )
+
+        resp2 = client.post("/api/enrich-single", json={
+            "file_path": canonical, "number": "PC-001",
+            "readonly_action": "rescrape", "source": "javlibrary",
+            "detail_url": "https://www.javlibrary.com/ja/?v=pc001",
+        })
+        assert resp2.json()["success"] is True
+        mock_download.assert_not_called()  # ('none',) 分支不下載
+
+        row2 = repo.get_by_path(canonical)
+        assert row2.cover_path == row.cover_path, (
+            "候選封面為空時 DB cover_path 必須保留既有值，不可清成 ''"
+        )
+        assert row2.cover_path != "", "破圖回歸：DB cover_path 被清空"
+        # 磁碟上原本的封面檔案也仍在（沒被清 stale-singleton 誤刪）
+        movie_dir = Path(uri_to_local_fs_path(row.output_dir, {}))
+        assert list(movie_dir.glob("*.jpg")), "既有封面檔仍應留在磁碟上"
+
     # ── batch-enrich 唯讀項改道 ingest（router-level：驗 offload 結構 + 呼叫序）───
 
     def test_batch_enrich_mixed_readonly_routes_via_executor(self, client, mocker):
