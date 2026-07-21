@@ -1592,8 +1592,13 @@ class TestReadonlyRoutingE2E:
         assert row.title == "Ingest Title"  # _strip_num_prefixes 剝掉 [IN-001]
         assert row.output_dir  # 落 output_dir（非來源旁）
         movie_dir = uri_to_local_fs_path(row.output_dir, {})
-        cover_fs = list(Path(movie_dir).glob("*.jpg"))
+        # movie_dir 內有封面 + 衍生 -poster/-fanart 三個 .jpg；glob 順序 filesystem-
+        # dependent（本機 vs CI runner 不同），須明確排除 poster/fanart 只取主封面，
+        # 否則 cover_fs[0] 可能是 -poster.jpg（CI flaky，比照 :1637 gear 測既有寫法）。
+        cover_fs = [p for p in Path(movie_dir).glob("*.jpg")
+                    if "-poster" not in p.name and "-fanart" not in p.name]
         assert cover_fs, "應有封面落 output_dir（copy 自本地）"
+        assert len(cover_fs) == 1
         assert cover_fs[0].read_bytes() == b"LOCAL-COVER-BYTES"  # copy 非 download
 
     # ── gear rescrape：撞號候選遠端封面覆蓋舊本地封面（雜湊驗新封面 + NFO title） ──
