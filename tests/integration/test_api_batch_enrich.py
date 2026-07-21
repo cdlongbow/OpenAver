@@ -582,6 +582,56 @@ class TestBatchEnrichReadonlyGuard:
         done = [e for e in events if e["type"] == "done"][0]
         assert done["summary"] == {"total": 2, "success": 1, "failed": 1}
 
+    # FIX P2-A (P2 parity closeout): the batch readonly not-found branch must
+    # mirror bulk readonly_producer.py:1559-1561's bookkeeping — insert_if_ignore
+    # (stub row) THEN update_scrape_attempted_at (a bare UPDATE...WHERE path=?
+    # that silently no-ops without the stub row existing first). This branch
+    # already canonicalizes reason to 'not_found' (asserted above) — only the
+    # DB bookkeeping is new here.
+    def test_readonly_item_no_scrape_marks_scrape_attempted_at(self, client, mocker):
+        from core.path_utils import coerce_to_file_uri
+
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=self._readonly_config(),
+        )
+        mocker.patch(
+            "web.routers.scraper.enrich_single", return_value=_ok_result()
+        )
+        _mock_owning, _mock_plan, mock_produce, mock_repo = self._mock_readonly_routing(
+            mocker, plan_return=(None, ("none",)),
+        )
+
+        response = client.post("/api/batch-enrich", json={
+            "items": [{"file_path": "/tmp/ro_src/RO-001.mp4", "number": "RO-001"}],
+            "mode": "refresh_full",
+        })
+
+        events = parse_sse(response.text)
+        result_items = [e for e in events if e["type"] == "result-item"]
+        assert result_items[0]["success"] is False
+        assert result_items[0]["reason"] == "not_found"
+        mock_produce.assert_not_called()
+
+        repo_instance = mock_repo.return_value
+        repo_instance.insert_if_ignore.assert_called_once()
+        repo_instance.update_scrape_attempted_at.assert_called_once()
+
+        # Stub-row-before-update ordering (same trap as enrich-single: missing
+        # stub row → update_scrape_attempted_at silently no-ops).
+        call_names = [c[0] for c in repo_instance.method_calls]
+        assert call_names.index("insert_if_ignore") < call_names.index("update_scrape_attempted_at")
+
+        stub_video = repo_instance.insert_if_ignore.call_args.args[0]
+        canonical = coerce_to_file_uri("/tmp/ro_src/RO-001.mp4", {})
+        assert stub_video.path == canonical
+        assert stub_video.number == "RO-001"
+        assert stub_video.title == "RO-001.mp4"
+
+        attempted_args = repo_instance.update_scrape_attempted_at.call_args.args
+        assert attempted_args[0] == canonical
+        assert attempted_args[1] > 0
+
     # Codex PR#113 one-pass alignment (2026-07-21): the batch readonly result-item
     # now spreads an actual asdict(EnrichResult(...)) into the SSE envelope, so its
     # shape is structurally guaranteed on success AND every failure branch.

@@ -1112,6 +1112,35 @@ class VideoRepository:
         finally:
             conn.close()
 
+    def set_output_dir_if_empty(self, path: str, output_dir: str) -> bool:
+        """安全設定 output_dir 欄位，僅在既有值為空時寫入（P2-B parity closeout）。
+
+        鏡射 update_scrape_attempted_at() 的單欄安全更新範本。用途：samples_only
+        補劇照這類「不建構完整 Video row」的呼叫路徑，仍需要讓一個尚未被完整 ingest
+        過的 row 記到 output_dir（供後續完整 ingest 依賴），但絕不能覆蓋掉已經存在
+        的真實 output_dir（idempotent — 重跑 samples-only 不可清掉既有值）。
+
+        Args:
+            path: 影片路徑（DB key，file:/// URI 格式）
+            output_dir: 新的 output_dir 值（file:/// URI 格式）
+
+        Returns:
+            bool: 是否成功寫入（path 不存在，或既有 output_dir 已非空 → False，
+                  不拋例外、不新建 row）
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE videos SET output_dir = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE path = ? AND (output_dir IS NULL OR output_dir = '')",
+                (output_dir, path)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
     def update_scrape_attempted_at(self, path: str, ts: float) -> bool:
         """安全更新 scrape_attempted_at 欄位（不碰其他欄位）（TASK-89b-T1）。
 

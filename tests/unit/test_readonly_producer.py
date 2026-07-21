@@ -869,6 +869,32 @@ class TestWriteMovieAssets:
         assert captured['has_poster'] is True
         assert captured['has_fanart'] is True
 
+    def test_generate_nfo_receives_original_title(self, tmp_path):
+        """FIX#3: the produced OUTPUT NFO must keep originaltitle — non-readonly
+        enricher.py already passes it through (generate_nfo call at :198)."""
+        from core.readonly_producer import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        meta = dict(_T3_META, original_title='日本語タイトル')
+        fd = _t3_format_data(meta=meta)
+        config = dict(_T3_BASE_CONFIG)
+        captured: dict = {}
+
+        def capture_nfo(**kwargs):
+            captured.update(kwargs)
+            return _t3_generate_nfo_side_effect(**kwargs)
+
+        with patch('core.readonly_producer.download_image', return_value=True), \
+             patch('core.readonly_producer.generate_jellyfin_images',
+                   return_value={'poster': True, 'fanart': True}), \
+             patch('core.readonly_producer.generate_nfo', side_effect=capture_nfo):
+            _write_movie_assets(
+                movie_dir, meta, fd, '/src/TEST-001.mp4', config,
+                cover_strategy=_cover_strategy_for(meta),
+            )
+
+        assert captured.get('original_title') == '日本語タイトル'
+
     def test_nfo_write_failure_raises(self, tmp_path):
         """generate_nfo returns False (write failed) → _write_movie_assets raises.
 
@@ -1612,6 +1638,22 @@ class TestUpsertDb:
         v = repo.get_by_path(self.SOURCE_URI)
         assert v.scrape_attempted_at > 0
 
+    def test_original_title_written_from_meta(self, temp_db):
+        """FIX#3: original_title must round-trip from meta into the DB row —
+        the non-readonly path (core.enricher) already does this
+        (_nfo_to_meta:65 / upsert:652); readonly_producer previously dropped
+        it entirely (zero occurrences), silently wiping the field."""
+        from core.readonly_producer import _upsert_db
+
+        repo = self._repo(temp_db)
+        meta = dict(_T3_META, original_title='日本語タイトル')
+        assets = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
+
+        _upsert_db(repo, self.SOURCE_URI, _T3_FILE_INFO, meta, assets, None, self.OUTPUT_DIR_URI)
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.original_title == '日本語タイトル'
+
 
 class TestUpsertDbFullModeExistingPreservation:
     """P1/P2 grok-review (pre-merge 2026-07-21): full mode's `existing` param
@@ -1753,6 +1795,115 @@ class TestUpsertDbFullModeExistingPreservation:
 
         v = repo.get_by_path(self.SOURCE_URI)
         assert v.cover_path == ''
+
+    # ── FIX#3 (P2 parity closeout): original_title preserve-if-empty ────────
+
+    def test_preserves_existing_original_title_when_meta_empty(self, temp_db):
+        """A re-scrape whose source returned no original_title must not wipe
+        an existing DB value — mirrors the cover_path/sample_images
+        preserve-if-empty pattern above."""
+        from core.readonly_producer import _upsert_db
+        from core.database import Video
+
+        repo = self._repo(temp_db)
+        repo.upsert(Video(
+            path=self.SOURCE_URI, number='TEST-001', title='Existing Title',
+            original_title='既存の原題', output_dir=self.OUTPUT_DIR_URI,
+        ))
+        existing = repo.get_by_path(self.SOURCE_URI)
+
+        meta = dict(_T3_META, original_title='')
+        assets = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, meta, assets, None,
+            self.OUTPUT_DIR_URI, existing=existing,
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.original_title == '既存の原題'
+
+    def test_produce_one_preserves_original_title_in_nfo_and_db_when_rescrape_empty(self, temp_db, tmp_path):
+        """FIX P1 (Codex PR#113 round-6): a re-produce whose meta has an EMPTY
+        original_title must preserve the existing value in BOTH the on-disk output
+        NFO's <originaltitle> AND the DB row. The round-5 fix preserved it only in
+        _upsert_db, so _write_movie_assets→generate_nfo still wrote <originaltitle>
+        as '' → on-disk data loss + NFO/DB drift. This drives the FULL _produce_one
+        path with REAL generate_nfo and asserts the written file itself.
+
+        MUTATION LOCK: removing the `meta['original_title'] = existing.original_title`
+        synthesis in _produce_one turns the NFO assertion below RED (DB stays green
+        via _upsert_db's own preserve — which is exactly why the NFO assertion is
+        the load-bearing one here)."""
+        import xml.etree.ElementTree as ET
+        from core.readonly_producer import _produce_one
+        from core.database import Video
+        from core.path_utils import to_file_uri
+
+        repo = self._repo(temp_db)
+        file_info = {'path': '/src/TEST-001.mp4', 'size': 1234567890, 'mtime': 1704067200.0}
+        src_uri = to_file_uri(file_info['path'], {})
+        repo.upsert(Video(
+            path=src_uri, number='TEST-001', title='Existing Title',
+            original_title='既存の原題',
+        ))
+        existing = repo.get_by_path(src_uri)
+
+        meta = dict(_T3_META, original_title='')  # re-scrape source returned no original_title
+        output_root = str(tmp_path / 'output')
+        movie_dir, _assets = _produce_one(
+            repo, None, _T3_BASE_CONFIG,
+            file_info=file_info, meta=meta, cover_strategy=('none',),
+            assets_mode='full', existing=existing,
+            output_root=output_root, output_uri=to_file_uri(output_root, {}),
+            allocated_this_run=set(), path_mappings={},
+        )
+
+        # DB row preserved
+        assert repo.get_by_path(src_uri).original_title == '既存の原題'
+        # On-disk output NFO preserved (the actual P1 — must not be clobbered to '')
+        nfo_files = list(Path(movie_dir).glob('*.nfo'))
+        assert len(nfo_files) == 1, f"expected exactly one NFO, got {nfo_files}"
+        root = ET.parse(nfo_files[0]).getroot()
+        assert root.findtext('originaltitle') == '既存の原題'
+
+    def test_new_original_title_still_overwrites_existing(self, temp_db):
+        """Sanity: preservation only kicks in when THIS run's meta has no
+        original_title — a genuine new value still replaces the DB value."""
+        from core.readonly_producer import _upsert_db
+        from core.database import Video
+
+        repo = self._repo(temp_db)
+        repo.upsert(Video(
+            path=self.SOURCE_URI, number='TEST-001', title='Existing Title',
+            original_title='古い原題', output_dir=self.OUTPUT_DIR_URI,
+        ))
+        existing = repo.get_by_path(self.SOURCE_URI)
+
+        meta = dict(_T3_META, original_title='新しい原題')
+        assets = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, meta, assets, None,
+            self.OUTPUT_DIR_URI, existing=existing,
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.original_title == '新しい原題'
+
+    def test_no_existing_row_original_title_empty_stores_empty_string(self, temp_db):
+        """NEW video (existing=None) — no regression: empty original_title
+        still stores '', never resurrects data from nowhere."""
+        from core.readonly_producer import _upsert_db
+
+        repo = self._repo(temp_db)
+        meta = dict(_T3_META, original_title='')
+        assets = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, meta, assets, None,
+            self.OUTPUT_DIR_URI, existing=None,
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.original_title == ''
 
 
 # ---------------------------------------------------------------------------
@@ -4460,6 +4611,74 @@ class TestUpsertDbSamplesOnly:
         assert v.title == 'Existing Title'
         assert len(v.sample_images) == 1
 
+    # ── FIX P2-B: samples_only must still persist output_dir ────────────────
+
+    def test_persists_output_dir_when_existing_output_dir_empty(self, temp_db):
+        """P2-B: a samples-only supplemental fetch must still record
+        output_dir for a row that doesn't have one yet — otherwise a later
+        full ingest can't rely on it being set (reference: full-mode sets
+        output_dir=output_dir at _upsert_db:1093)."""
+        from core.database import Video, VideoRepository
+        from core.readonly_producer import _upsert_db
+
+        repo = VideoRepository(temp_db)
+        repo.upsert(Video(
+            path=self.SOURCE_URI, number='TEST-001', title='Existing Title',
+            output_dir='',
+        ))
+
+        assets = {'sample_fs': ['/output/TEST-001/extrafanart/fanart1.jpg']}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            'file:///output/TEST-001', assets_mode='samples_only',
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.output_dir == 'file:///output/TEST-001'
+
+    def test_does_not_clobber_existing_nonempty_output_dir(self, temp_db):
+        """P2-B: idempotency — re-running a samples-only fetch must never
+        overwrite an already-recorded real output_dir, even when called with
+        a different output_dir value."""
+        from core.database import Video, VideoRepository
+        from core.readonly_producer import _upsert_db
+
+        repo = VideoRepository(temp_db)
+        repo.upsert(Video(
+            path=self.SOURCE_URI, number='TEST-001', title='Existing Title',
+            output_dir='file:///output/REAL-DIR',
+        ))
+
+        assets = {'sample_fs': ['/output/TEST-001/extrafanart/fanart1.jpg']}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            'file:///output/TEST-001', assets_mode='samples_only',
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.output_dir == 'file:///output/REAL-DIR'
+
+    def test_empty_output_dir_param_does_not_write(self, temp_db):
+        """Guard: output_dir='' (caller has no known dir yet) must not
+        attempt a write — matches the `if output_dir:` guard."""
+        from core.database import Video, VideoRepository
+        from core.readonly_producer import _upsert_db
+
+        repo = VideoRepository(temp_db)
+        repo.upsert(Video(
+            path=self.SOURCE_URI, number='TEST-001', title='Existing Title',
+            output_dir='',
+        ))
+
+        assets = {'sample_fs': ['/output/TEST-001/extrafanart/fanart1.jpg']}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            '', assets_mode='samples_only',
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.output_dir == ''
+
 
 class TestNfoMtimePositiveAndMutationLock:
     """CD-104-4: full-mode produce writes a REAL nfo_mtime (>0), not the old
@@ -4657,6 +4876,7 @@ class TestNfoToProducerMeta:
         xml = """<?xml version="1.0" encoding="utf-8"?>
 <movie>
   <title>[ABC-123]My Title</title>
+  <originaltitle>元のタイトル</originaltitle>
   <num>ABC-123</num>
   <studio>MakerCo</studio>
   <label>LabelCo</label>
@@ -4678,12 +4898,13 @@ class TestNfoToProducerMeta:
         meta = _nfo_to_producer_meta(root, fallback_number='FALLBACK-000')
 
         assert set(meta.keys()) == {
-            'number', 'title', 'actors', 'tags', 'date', 'maker', 'director',
-            'series', 'label', 'duration', 'url', '_summary', '_rating',
-            'cover', 'sample_images',
+            'number', 'title', 'original_title', 'actors', 'tags', 'date',
+            'maker', 'director', 'series', 'label', 'duration', 'url',
+            '_summary', '_rating', 'cover', 'sample_images',
         }
         assert meta['number'] == 'ABC-123'
         assert meta['title'] == 'My Title'
+        assert meta['original_title'] == '元のタイトル'
         assert meta['actors'] == ['Actress A', 'Actress B']
         assert meta['tags'] == ['Tag1', 'Tag2']
         assert meta['date'] == '2024-05-01'
@@ -4697,6 +4918,25 @@ class TestNfoToProducerMeta:
         assert meta['_rating'] == pytest.approx(4.2)
         assert meta['cover'] == ''
         assert meta['sample_images'] == []
+
+    # ── FIX#3: original_title extraction (P2 parity closeout) ───────────────
+
+    def test_original_title_extracted_from_originaltitle_tag(self):
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root(
+            '<movie><num>ABC-123</num><title>English Title</title>'
+            '<originaltitle>日本語タイトル</originaltitle></movie>'
+        )
+        meta = _nfo_to_producer_meta(root, fallback_number='X')
+        assert meta['original_title'] == '日本語タイトル'
+
+    def test_original_title_empty_string_when_tag_absent(self):
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root('<movie><num>ABC-123</num><title>Only Title</title></movie>')
+        meta = _nfo_to_producer_meta(root, fallback_number='X')
+        assert meta['original_title'] == ''
 
     def test_number_fallback_when_num_and_uniqueid_absent(self):
         from core.readonly_producer import _nfo_to_producer_meta
@@ -4936,6 +5176,24 @@ class TestNfoToProducerMetaRoundTrip:
         _, root = parse_nfo(str(nfo_path))
         meta = _nfo_to_producer_meta(root, fallback_number='RTX-003')
         assert meta['_rating'] == pytest.approx(3.7)
+
+    def test_round_trip_original_title_survives(self, tmp_path):
+        """FIX#3: generate_nfo(original_title=...) -> _nfo_to_producer_meta
+        must round-trip the originaltitle tag, same as title/actors/etc."""
+        from core.nfo_updater import parse_nfo
+        from core.organizer import generate_nfo
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        nfo_path = tmp_path / 'RTX-004.nfo'
+        ok = generate_nfo(
+            number='RTX-004', title='English Title',
+            original_title='日本語タイトル', output_path=str(nfo_path),
+        )
+        assert ok
+
+        _, root = parse_nfo(str(nfo_path))
+        meta = _nfo_to_producer_meta(root, fallback_number='RTX-004')
+        assert meta['original_title'] == '日本語タイトル'
 
 
 # ---------------------------------------------------------------------------

@@ -476,6 +476,57 @@ class TestEnrichSingleReadonlyGuard:
         assert data["error"]
         mock_produce.assert_not_called()
 
+    # FIX P2-A / FIX#4 (P2 parity closeout): a readonly not-found enrich-single
+    # attempt must mirror the non-readonly path's bookkeeping — non-readonly
+    # core.enricher.py:391/429 marks scrape_attempted_at on not-found; bulk
+    # readonly_producer.py:1559-1561 does insert_if_ignore THEN
+    # update_scrape_attempted_at (stub row created first — update_scrape_
+    # attempted_at is a bare UPDATE...WHERE path=? that silently no-ops on a
+    # missing row). Also: reason must be 'not_found' (matches batch sibling
+    # and core.enricher.py:393/431), not the generic 'error'.
+    def test_readonly_no_meta_marks_scrape_attempted_and_reason_not_found(self, client, mocker):
+        from core.path_utils import coerce_to_file_uri
+
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=_readonly_gallery_config("/tmp/ro_src"),
+        )
+        mock_owning, mock_plan, mock_produce, mock_repo = self._mock_routing(
+            mocker, meta=None, cover_strategy=("none",),
+        )
+        mock_plan.return_value = (None, ("none",))
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/tmp/ro_src/ABC-001.mp4",
+            "number": "ABC-001",
+        })
+
+        data = response.json()
+        assert data["success"] is False
+        assert data["reason"] == "not_found"
+        mock_produce.assert_not_called()
+
+        repo_instance = mock_repo.return_value
+        repo_instance.insert_if_ignore.assert_called_once()
+        repo_instance.update_scrape_attempted_at.assert_called_once()
+
+        # Stub-row-before-update ordering: insert_if_ignore MUST happen before
+        # update_scrape_attempted_at, else a first-touch file (no existing DB
+        # row) gets no bookkeeping at all (update silently no-ops on a
+        # missing row).
+        call_names = [c[0] for c in repo_instance.method_calls]
+        assert call_names.index("insert_if_ignore") < call_names.index("update_scrape_attempted_at")
+
+        stub_video = repo_instance.insert_if_ignore.call_args.args[0]
+        canonical = coerce_to_file_uri("/tmp/ro_src/ABC-001.mp4", {})
+        assert stub_video.path == canonical
+        assert stub_video.number == "ABC-001"
+        assert stub_video.title == "ABC-001.mp4"
+
+        attempted_args = repo_instance.update_scrape_attempted_at.call_args.args
+        assert attempted_args[0] == canonical
+        assert attempted_args[1] > 0
+
     # case 4: 非唯讀來源零回歸 → 走既有路徑，enrich_single 照常被呼叫（byte-identical）
     def test_non_readonly_passes_through(self, client, mocker):
         mocker.patch(

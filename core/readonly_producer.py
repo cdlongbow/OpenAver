@@ -946,6 +946,7 @@ def _write_movie_assets(
     nfo_ok = generate_nfo(
         number=meta['number'],
         title=meta['title'],
+        original_title=meta.get('original_title', ''),
         actors=meta.get('actors', []),
         tags=meta.get('tags', []),
         date=meta.get('date', ''),
@@ -1064,6 +1065,13 @@ def _upsert_db(
             repo.update_sample_images(
                 source_uri, [to_file_uri(p, path_mappings) for p in assets['sample_fs']]
             )
+        # FIX P2-B (P2 parity closeout): a samples-only supplemental fetch must
+        # still record output_dir on a row that doesn't have one yet — otherwise
+        # a later full ingest can't rely on it being set. Idempotent: never
+        # clobbers an already-non-empty output_dir (set_output_dir_if_empty's
+        # WHERE clause).
+        if output_dir:
+            repo.set_output_dir_if_empty(source_uri, output_dir)
         return
 
     if assets['sample_fs']:
@@ -1080,6 +1088,7 @@ def _upsert_db(
         path=source_uri,
         number=meta['number'],
         title=meta['title'],
+        original_title=meta.get('original_title') or (existing.original_title if existing else ''),
         actresses=meta.get('actors', []),
         maker=meta.get('maker', ''),
         director=meta.get('director', ''),
@@ -1153,6 +1162,7 @@ def _nfo_to_producer_meta(root: ET.Element, fallback_number: str) -> dict:
 
     raw_title = _text('title')
     title = _strip_num_prefixes(raw_title, number) if raw_title else raw_title
+    original_title = _text('originaltitle')
 
     # any-depth `.//actor/name` — mirrors VideoScanner.parse_nfo (gallery_scanner.py:345)
     # EXACTLY. A direct-children-only `root.findall('actor')` would silently return []
@@ -1210,6 +1220,7 @@ def _nfo_to_producer_meta(root: ET.Element, fallback_number: str) -> dict:
     return {
         'number': number,
         'title': title,
+        'original_title': original_title,
         'actors': actors,
         'tags': tags,
         'date': date,
@@ -1434,6 +1445,18 @@ def _produce_one(
         fd, config, allocated_this_run, path_mappings,
     )
     old_base = _build_old_base(existing, file_info["path"], config)  # '' when no prior row/title/number
+    # FIX P1 (Codex PR#113 round-6, 2026-07-21): synthesize the EFFECTIVE
+    # original_title ONCE, before writing any asset, so the output NFO
+    # (_write_movie_assets→generate_nfo) and the DB row (_upsert_db) consume the
+    # SAME value. A re-scrape whose source returns an empty original_title must
+    # NOT clobber the on-disk NFO's <originaltitle> to '' while the DB keeps the
+    # old value — that split (preserve in _upsert_db only) was on-disk data loss
+    # + NFO/DB drift. Mirrors the cover_path/sample_images preserve-if-empty
+    # contract. Full-mode only in effect (samples_only writes no NFO), but the
+    # mutation is harmless there. _upsert_db keeps its own preserve as a defensive
+    # net for any direct caller, but after this line meta already carries the truth.
+    if not meta.get('original_title') and existing and existing.original_title:
+        meta['original_title'] = existing.original_title
     # PR #93 五審四次 P2 (option C): media-server 模式下用注入的 getter 讓
     # _write_movie_assets 在真正落 .strm 那一刻才重讀 fresh strm_path_mappings
     # （見 _write_movie_assets 內部該段落的完整解釋）。strm_mappings_getter=None

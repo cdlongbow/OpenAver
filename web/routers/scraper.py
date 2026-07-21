@@ -9,6 +9,7 @@ Scraper API 路由 - 單檔刮削
 import asyncio
 import json
 import os
+import time
 from dataclasses import asdict
 from urllib.parse import urlparse
 
@@ -17,7 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Literal, Optional
 
-from core.database import VideoRepository
+from core.database import Video, VideoRepository
 from core.db_inflow import try_inflow_upsert
 from core.focal_trigger import maybe_submit_video_focal
 from core.enricher import EnrichResult, enrich_single, fetch_samples_only, resolve_nfo_cover_paths
@@ -486,10 +487,25 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
                 javbus_lang=request.javbus_lang,
             )
             if not meta:
+                # FIX P2-A / FIX#4 (P2 parity closeout): mirror non-readonly
+                # core.enricher.py:391/429's not-found bookkeeping — mark
+                # scrape_attempted_at so this file isn't rescanned/rescraped
+                # forever. TRAP: update_scrape_attempted_at is a bare
+                # UPDATE...WHERE path=? that silently no-ops without a row —
+                # insert_if_ignore MUST run first to create the stub row
+                # (mirrors bulk readonly_producer.py:1559-1561 byte-for-byte).
+                # reason='not_found' (not 'error') matches the batch sibling
+                # (:1003) and non-readonly enricher.py:393/431.
+                repo = VideoRepository()
+                repo.insert_if_ignore(Video(
+                    path=canonical, number=request.number,
+                    title=os.path.basename(fs_path),
+                ))
+                repo.update_scrape_attempted_at(canonical, time.time())
                 return asdict(EnrichResult(
                     success=False, nfo_written=False, cover_written=False,
                     extrafanart_written=0, fields_filled=[], source_used="",
-                    error="找不到可用的番號資料", reason="error",
+                    error="找不到可用的番號資料", reason="not_found",
                 ))
             repo = VideoRepository()
             existing = repo.get_by_path(canonical)
@@ -879,6 +895,18 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                             action='ingest', proxy_url=proxy_url, source=es, javbus_lang=el,
                         )
                         if not meta:
+                            # FIX P2-A (P2 parity closeout): same not-found
+                            # bookkeeping as enrich_single_endpoint's readonly
+                            # branch (see that branch's comment for the
+                            # insert_if_ignore-before-update_scrape_attempted_at
+                            # trap). This branch already canonicalizes 'no_scrape'
+                            # → reason='not_found' below (:1003) — no change there.
+                            stub_repo = VideoRepository()
+                            stub_repo.insert_if_ignore(Video(
+                                path=uri, number=itm.number,
+                                title=os.path.basename(fs_path),
+                            ))
+                            stub_repo.update_scrape_attempted_at(uri, time.time())
                             return ('no_scrape', "找不到可用的番號資料")
                         repo = VideoRepository()
                         existing = repo.get_by_path(uri)
