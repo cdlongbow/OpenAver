@@ -182,9 +182,14 @@ class TestResultItemReadonlyStationReason:
         assert len(result_items) == 1
         assert result_items[0]["success"] is True
         assert result_items[0]["file_path"] == "/tmp/ro_src/RO-001.mp4"
-        # 改道成功 result-item 手組自 _do_readonly 的 'ok' 分支，不含 reason/source_used
-        # （非 asdict(EnrichResult)，兩者不同源——見本 class docstring）
-        assert "reason" not in result_items[0]
+        # 改道成功 result-item 手組自 _do_readonly 的 'ok' 分支（非 asdict(EnrichResult)，
+        # 兩者不同源——見本 class docstring）。source_used 這組概念不適用於唯讀改道
+        # （沒有 search_jav source 可回）。reason 則自 Codex PR#113 P2 #2 起補上、鏡射
+        # 非唯讀 EnrichResult.reason 語意（hit/no_cover）——此 mock 的 cover_strategy=
+        # ('none',) + assets['cover_fs']='' → no_cover（不然 state-batch.js
+        # _resolveCardStatus 的 success-implies-'hit' 預設會誤報成 hit，見
+        # web/static/js/pages/scanner/state-batch.js:300）。
+        assert result_items[0]["reason"] == "no_cover"
         assert "source_used" not in result_items[0]
         mock_produce.assert_called_once()
         assert mock_produce.call_args.kwargs["assets_mode"] == "full"

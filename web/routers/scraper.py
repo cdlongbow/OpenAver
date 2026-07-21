@@ -724,11 +724,20 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                         # here means _write_movie_assets already wrote the NFO
                         # successfully (it raises otherwise, caught above as 'error').
                         assets = payload or {}
+                        cover_written = bool(assets.get('cover_fs'))
+                        # Codex PR#113 P2 #2: mirror non-readonly EnrichResult.reason
+                        # semantics (core/enricher.py:603) so state-batch.js
+                        # _resolveCardStatus doesn't fall back to its
+                        # success-implies-'hit' default (:300) — an NFO-only
+                        # ingest (no cover) would otherwise be misreported as
+                        # 'hit', causing the frontend to build a /api/gallery/thumb
+                        # URL for a cover that was never written.
                         result_item = {
                             'type': 'result-item', 'number': item.number, 'file_path': item.file_path,
                             'success': True,
                             'nfo_written': True,
-                            'cover_written': bool(assets.get('cover_fs')),
+                            'cover_written': cover_written,
+                            'reason': 'hit' if cover_written else 'no_cover',
                         }
                         yield f"data: {json.dumps(result_item)}\n\n"
                     else:

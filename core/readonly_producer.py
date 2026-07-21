@@ -1488,11 +1488,15 @@ def produce_source(source, config, repo, *, proxy_url="", on_progress=None, shou
             continue
 
         number = extract_number(os.path.basename(fi["path"]))  # Optional[str]
-        if not number:  # None guard (Codex P2b): search_jav(None) crashes
-            result.no_scrape += 1
-            _emit(on_progress, result, src_uri, "no_scrape")
-            continue
 
+        # Codex PR#113 P2 #1: the old `if not number: continue` bailed BEFORE
+        # resolve_ingest_plan ever got a chance to read an adjacent NFO's
+        # <num>/<id>/<uniqueid> — a curated file whose FILENAME has no
+        # extractable number but whose sidecar NFO does was wrongly no_scrape'd.
+        # resolve_ingest_plan already guards this: its scrape branch is
+        # `search_jav(number, ...) if number else None`, so number=None never
+        # reaches search_jav — safe to always call it.
+        #
         # CD-104-3a (TASK-104-T2): metadata + cover two-axis decision — .nfo
         # sidecar (zero network) / local cover file win over search_jav /
         # download when present (ingest intent, local-first). Falls straight
@@ -1502,9 +1506,14 @@ def produce_source(source, config, repo, *, proxy_url="", on_progress=None, shou
         meta, cover_strategy = resolve_ingest_plan(
             fi["path"], number, scraper_cfg, action='ingest', proxy_url=proxy_url,
         )
-        if not meta:
-            repo.insert_if_ignore(Video(path=src_uri, number=number, title=os.path.basename(fi["path"])))
-            repo.update_scrape_attempted_at(src_uri, time.time())
+        if not meta or not meta.get('number'):
+            # Only stub+record-attempt when a filename number exists (matches
+            # the old `if not number` branch's behavior byte-for-byte for the
+            # no-number-no-NFO case — no DB row for a file we can't identify
+            # at all).
+            if number:
+                repo.insert_if_ignore(Video(path=src_uri, number=number, title=os.path.basename(fi["path"])))
+                repo.update_scrape_attempted_at(src_uri, time.time())
             result.no_scrape += 1
             _emit(on_progress, result, src_uri, "no_scrape")
             continue

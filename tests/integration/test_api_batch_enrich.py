@@ -492,6 +492,11 @@ class TestBatchEnrichReadonlyGuard:
         assert result_items[0]["success"] is True
         assert result_items[0]["nfo_written"] is True
         assert result_items[0]["cover_written"] is True
+        # Codex PR#113 P2 #2: reason must mirror non-readonly EnrichResult
+        # semantics (core/enricher.py:603) — a cover-bearing success is 'hit',
+        # matching state-batch.js _resolveCardStatus's explicit 'hit' case
+        # (not its success-implies-'hit' default fallback, :300).
+        assert result_items[0]["reason"] == "hit"
 
     def test_readonly_batch_success_item_cover_written_false_when_no_cover(self, client, mocker):
         """cover_written must be False, not just truthy-omitted, when
@@ -528,6 +533,11 @@ class TestBatchEnrichReadonlyGuard:
         assert result_items[0]["success"] is True
         assert result_items[0]["nfo_written"] is True
         assert result_items[0]["cover_written"] is False
+        # Codex PR#113 P2 #2: an NFO-only ingest (no cover) success must carry
+        # reason='no_cover', NOT be left to state-batch.js's success-implies-'hit'
+        # default fallback (:300) — that default would wrongly build a
+        # /api/gallery/thumb URL for a cover that was never written.
+        assert result_items[0]["reason"] == "no_cover"
 
     def test_readonly_item_no_scrape_still_fails_batch_continues(self, client, mocker):
         """唯讀項改道但找不到可用番號資料（resolve_ingest_plan 回 meta=None）→

@@ -2305,6 +2305,108 @@ class TestProduceSourceNoneNumberGuard:
         assert result.outcomes[0].status == "no_scrape"
 
 
+class TestProduceSourceSidecarNfoBypassesFilenameNumberBail:
+    """Codex PR#113 P2 #1: a curated file whose FILENAME has no extractable
+    number but whose adjacent .nfo sidecar carries <num>/<id>/<uniqueid> must
+    still ingest — the old `if not number: continue` bailed BEFORE
+    resolve_ingest_plan ever got a chance to read the NFO. MUTATION LOCK:
+    reverting to that early bail must turn test_nfo_number_ingests_despite_no_filename_number
+    RED (result.created goes 1 -> 0, result.no_scrape goes 0 -> 1)."""
+
+    def test_nfo_number_ingests_despite_no_filename_number(self, tmp_path):
+        """(a) no filename number + valid NFO with <num> -> INGESTS (created==1,
+        no_scrape==0), zero network (search_jav never called)."""
+        from core.readonly_producer import produce_source
+
+        source_dir = tmp_path / 'src'
+        source_dir.mkdir()
+        output_dir = tmp_path / 'output'
+        output_dir.mkdir()
+        video = source_dir / 'nonumber.mp4'  # extract_number(basename) -> None
+        video.write_bytes(b'FAKE-VIDEO-BYTES')
+        nfo = video.with_suffix('.nfo')
+        nfo.write_text('<movie><num>SIDECAR-001</num><title>T</title></movie>', encoding='utf-8')
+
+        source = _make_source(readonly=True, output_path=str(output_dir), path=str(source_dir))
+        config = _make_config()
+        repo = MagicMock()
+        repo.get_attempted_index.return_value = {}
+        repo.get_by_path.return_value = None
+        repo.is_output_dir_taken.return_value = False
+        repo.get_all.return_value = []
+
+        files = [{'path': str(video), 'size': 1_000_000, 'mtime': 1.0, 'nfo_mtime': 0.0}]
+
+        with patch('core.readonly_producer._list_source_videos', return_value=files), \
+             patch('core.readonly_producer.search_jav') as mock_search:
+            result = produce_source(source, config, repo)
+
+        mock_search.assert_not_called()
+        assert result.no_scrape == 0, f"expected 0 no_scrape, got {result.no_scrape} (created={result.created})"
+        assert result.created == 1, f"expected NFO-driven ingest, got created={result.created}"
+        repo.upsert.assert_called_once()
+        upserted = repo.upsert.call_args[0][0]
+        assert upserted.number == 'SIDECAR-001'
+
+    def test_no_filename_number_no_nfo_no_scrape_and_no_stub(self):
+        """(b) no filename number + no NFO -> no_scrape, and (unlike the
+        has-number case) NO stub row is created — matches the OLD `if not
+        number` branch's behavior byte-for-byte (regression, same assertions
+        as TestProduceSourceNoneNumberGuard)."""
+        from core.readonly_producer import produce_source
+
+        source = _make_source()
+        repo = MagicMock()
+        config = _make_config()
+        files = [_make_file_info(path="/src/videos/nonumber.mp4")]
+
+        with patch("core.readonly_producer._list_source_videos", return_value=files), \
+             patch.object(repo, "get_attempted_index", return_value={}), \
+             patch("core.readonly_producer._should_skip", return_value=False), \
+             patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
+             patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
+             patch("core.readonly_producer.extract_number", return_value=None), \
+             patch("core.readonly_producer.search_jav") as mock_search:
+            result = produce_source(source, config, repo)
+
+        mock_search.assert_not_called()
+        assert result.no_scrape == 1
+        assert result.created == 0
+        repo.insert_if_ignore.assert_not_called()
+        repo.update_scrape_attempted_at.assert_not_called()
+        repo.upsert.assert_not_called()
+
+    def test_has_number_no_metadata_still_stubs(self):
+        """(c) has a filename number but resolve_ingest_plan yields no usable
+        meta (no NFO, search_jav -> None) -> no_scrape + stub row + attempted
+        marked (regression: unchanged from pre-fix behavior for this case)."""
+        from core.readonly_producer import produce_source
+        from core.database import Video
+
+        source = _make_source()
+        repo = MagicMock()
+        repo.insert_if_ignore.return_value = True
+        config = _make_config()
+        files = [_make_file_info(path="/src/videos/NOTFOUND-001.mp4")]
+
+        with patch("core.readonly_producer._list_source_videos", return_value=files), \
+             patch.object(repo, "get_attempted_index", return_value={}), \
+             patch("core.readonly_producer._should_skip", return_value=False), \
+             patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
+             patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
+             patch("core.readonly_producer.extract_number", return_value="NOTFOUND-001"), \
+             patch("core.readonly_producer.search_jav", return_value=None):
+            result = produce_source(source, config, repo)
+
+        assert result.no_scrape == 1
+        assert result.created == 0
+        repo.insert_if_ignore.assert_called_once()
+        inserted = repo.insert_if_ignore.call_args[0][0]
+        assert isinstance(inserted, Video)
+        assert inserted.number == "NOTFOUND-001"
+        repo.update_scrape_attempted_at.assert_called_once()
+
+
 class TestProduceSourceNotFoundAttempted:
     """89b-T2: produce_source NOT-FOUND branch (search_jav→None, :637-641) writes a
     minimal placeholder row (insert_if_ignore) + marks scrape_attempted_at
