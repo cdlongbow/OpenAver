@@ -9,7 +9,6 @@ Scraper API 路由 - 單檔刮削
 import asyncio
 import json
 import os
-import time
 from dataclasses import asdict
 from urllib.parse import urlparse
 
@@ -18,10 +17,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Literal, Optional
 
-from core.database import Video, VideoRepository
+from core.database import VideoRepository
 from core.db_inflow import try_inflow_upsert
 from core.focal_trigger import maybe_submit_video_focal
-from core.enricher import EnrichResult, enrich_single, fetch_samples_only, resolve_nfo_cover_paths
+from core.enricher import enrich_single, fetch_samples_only, resolve_nfo_cover_paths
 from core.enrich_contract import apply_cover_preserve, compute_has_servable_cover, cover_uri_is_servable, enrich_success
 from core.organizer import organize_file
 from core.path_utils import to_file_uri, uri_to_fs_path, uri_to_local_fs_path, coerce_to_file_uri
@@ -35,7 +34,10 @@ from core.scrapers.javlibrary import JAVLIBRARY_ORIGIN
 from core.logger import get_logger
 from core.config import load_config
 from core.readonly_source import is_path_readonly, readonly_source_prefixes, writable_source_prefixes
-from core.readonly_producer import resolve_owning_output_root, resolve_ingest_plan, _produce_one
+from core.readonly_producer import (
+    resolve_owning_output_root, resolve_ingest_plan, _produce_one,
+    _readonly_stub_not_found, _readonly_enrich_failure,
+)
 from core import thumbnail_cache
 from web.routers.notifications import emit_notification as _emit_notif
 
@@ -449,12 +451,7 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
         # EnrichResult rather than silently doing a full ingest/rescrape instead
         # (this branch otherwise ignores request.mode entirely).
         if request.mode == 'db_to_sidecar':
-            return asdict(EnrichResult(
-                success=False, nfo_written=False, cover_written=False,
-                extrafanart_written=0, fields_filled=[], source_used='',
-                error=_READONLY_DB_TO_SIDECAR_ERROR_MSG,
-                reason='error',
-            ))
+            return asdict(_readonly_enrich_failure(_READONLY_DB_TO_SIDECAR_ERROR_MSG, 'error'))
         # P1 revert + reject (round-3 review 2026-07-21): readonly produce is
         # holistic (a library entry always has an NFO) — write_nfo=false is
         # rejected the same way db_to_sidecar is above, rather than threading
@@ -462,18 +459,9 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
         # _READONLY_NO_NFO_ERROR_MSG). The frontend never sends
         # write_nfo=false, so this is zero UI impact.
         if not request.write_nfo:
-            return asdict(EnrichResult(
-                success=False, nfo_written=False, cover_written=False,
-                extrafanart_written=0, fields_filled=[], source_used='',
-                error=_READONLY_NO_NFO_ERROR_MSG,
-                reason='error',
-            ))
+            return asdict(_readonly_enrich_failure(_READONLY_NO_NFO_ERROR_MSG, 'error'))
         if not output_root:
-            return asdict(EnrichResult(
-                success=False, nfo_written=False, cover_written=False,
-                extrafanart_written=0, fields_filled=[], source_used="",
-                error="未設定媒體庫輸出路徑", reason="error",
-            ))
+            return asdict(_readonly_enrich_failure("未設定媒體庫輸出路徑", "error"))
         try:
             action = request.readonly_action or 'ingest'
             scraper_data = None
@@ -498,16 +486,8 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
                 # reason='not_found' (not 'error') matches the batch sibling
                 # (:1003) and non-readonly enricher.py:393/431.
                 repo = VideoRepository()
-                repo.insert_if_ignore(Video(
-                    path=canonical, number=request.number,
-                    title=os.path.basename(fs_path),
-                ))
-                repo.update_scrape_attempted_at(canonical, time.time())
-                return asdict(EnrichResult(
-                    success=False, nfo_written=False, cover_written=False,
-                    extrafanart_written=0, fields_filled=[], source_used="",
-                    error="找不到可用的番號資料", reason="not_found",
-                ))
+                _readonly_stub_not_found(repo, canonical, request.number, fs_path)
+                return asdict(_readonly_enrich_failure("找不到可用的番號資料", "not_found"))
             repo = VideoRepository()
             existing = repo.get_by_path(canonical)
             # Codex PR#113 P2#3（round 2，owner-confirmed 全面對齊；round 6 修正）：
@@ -587,11 +567,7 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
             ))
         except Exception:
             logger.exception("enrich_single_endpoint readonly 改道失敗")
-            return asdict(EnrichResult(
-                success=False, nfo_written=False, cover_written=False,
-                extrafanart_written=0, fields_filled=[], source_used="",
-                error="enrich 處理失敗，請查閱日誌", reason="error",
-            ))
+            return asdict(_readonly_enrich_failure("enrich 處理失敗，請查閱日誌", "error"))
 
     # CD-62-4 分裂陷阱智慧防呆：refresh_full + overwrite=false 時，若這組設定不會寫出任何
     # sidecar（NFO/cover）卻仍 _db_upsert，就是純分裂。一個 sidecar「會寫」需 write 旗標開 + 檔案缺
@@ -706,11 +682,7 @@ def fetch_samples_endpoint(req: FetchSamplesRequest) -> dict:
         # cover_written are always False here (samples-only never touches NFO or
         # cover), fields_filled is always [] (no metadata merge happens).
         if not output_root:
-            return asdict(EnrichResult(
-                success=False, nfo_written=False, cover_written=False,
-                extrafanart_written=0, fields_filled=[], source_used="",
-                error="未設定媒體庫輸出路徑", reason="error",
-            ))
+            return asdict(_readonly_enrich_failure("未設定媒體庫輸出路徑", "error"))
         try:
             meta = search_jav(req.number, source="auto", proxy_url=proxy_url)
             # P2 review round 3 (FIX#2/FIX#3): mirror core.enricher.fetch_samples_only
@@ -724,11 +696,7 @@ def fetch_samples_endpoint(req: FetchSamplesRequest) -> dict:
             # The old `not meta or not meta.get(...)` conflated both into one
             # success=True branch, silently swallowing total search failures.
             if not meta:
-                return asdict(EnrichResult(
-                    success=False, nfo_written=False, cover_written=False,
-                    extrafanart_written=0, fields_filled=[], source_used="",
-                    error=f"找不到 {req.number} 的資料", reason=None,
-                ))
+                return asdict(_readonly_enrich_failure(f"找不到 {req.number} 的資料"))
             if not meta.get("sample_images"):
                 return asdict(enrich_success(
                     nfo_written=False, cover_written=False,
@@ -771,11 +739,7 @@ def fetch_samples_endpoint(req: FetchSamplesRequest) -> dict:
             # top-level exception boundary of its own — stays the dataclass
             # default None on every path), so this router-level catch-all
             # matches with reason=None too (FIX#2 field-for-field parity).
-            return asdict(EnrichResult(
-                success=False, nfo_written=False, cover_written=False,
-                extrafanart_written=0, fields_filled=[], source_used="",
-                error="fetch_samples 處理失敗，請查閱日誌", reason=None,
-            ))
+            return asdict(_readonly_enrich_failure("fetch_samples 處理失敗，請查閱日誌"))
 
     # uri-no-reverse: comparison-only (DB LIKE prefix), inner kept bare per TASK-91-T3 inner/outer analysis
     folder_uri_prefix = to_file_uri(os.path.dirname(uri_to_fs_path(req.file_path)), path_mappings) + "/"
@@ -904,11 +868,7 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                             # trap). This branch already canonicalizes 'no_scrape'
                             # → reason='not_found' below (:1003) — no change there.
                             stub_repo = VideoRepository()
-                            stub_repo.insert_if_ignore(Video(
-                                path=uri, number=itm.number,
-                                title=os.path.basename(fs_path),
-                            ))
-                            stub_repo.update_scrape_attempted_at(uri, time.time())
+                            _readonly_stub_not_found(stub_repo, uri, itm.number, fs_path)
                             return ('no_scrape', "找不到可用的番號資料")
                         repo = VideoRepository()
                         existing = repo.get_by_path(uri)
@@ -1032,11 +992,7 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                         reason = 'not_found' if status == 'no_scrape' else 'error'
                         result_item = {
                             'type': 'result-item', 'number': item.number, 'file_path': item.file_path,
-                            **asdict(EnrichResult(
-                                success=False, nfo_written=False, cover_written=False,
-                                extrafanart_written=0, fields_filled=[], source_used='',
-                                error=payload or '生成失敗', reason=reason,
-                            )),
+                            **asdict(_readonly_enrich_failure(payload or '生成失敗', reason)),
                         }
                         yield f"data: {json.dumps(result_item)}\n\n"
                     continue
