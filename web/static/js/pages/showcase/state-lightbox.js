@@ -1648,6 +1648,7 @@ export function stateLightbox() {
                         write_nfo: true,
                         write_cover: true,
                         overwrite_existing: false,
+                        readonly_action: 'ingest',
                     }),
                 });
                 const result = await resp.json();

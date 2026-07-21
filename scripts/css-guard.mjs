@@ -1128,33 +1128,11 @@ const RULES = [
   // B 組 = handoff receiver own-half（net+tag；整-class delete defer→96d，CD-96-12）。
   // C 組 = §B standalone 檔（CG-SB-01/02 整檔 delete；CG-SB-03 切 CSS 半邊）。忠實 port（CD-96c-2）。
 
-  // CG-RO-01 ← TestReadonlyDisabledStateGuard CSS 半邊（showcase.css；正向 + 負守衛）
-  {
-    id: 'CG-RO-01',
-    file: 'pages/showcase.css',
-    kind: 'fn',
-    check(ctx) {
-      // .is-readonly-disabled block：cursor: not-allowed + opacity（用 raw，鏡射 pytest _css()）
-      const m = ctx.raw.match(/\.is-readonly-disabled\b[^{]*\{([^}]*)\}/s);
-      if (!m) ctx.fail('CG-RO-01: showcase.css 缺 .is-readonly-disabled class');
-      else {
-        const body = m[1];
-        if (!(body.includes('cursor:') && body.includes('not-allowed'))) ctx.fail('CG-RO-01: .is-readonly-disabled 應含 cursor: not-allowed');
-        if (!body.includes('opacity')) ctx.fail('CG-RO-01: .is-readonly-disabled 應含 opacity（停用淺色）');
-        // 負守衛：block 起點後 600 字元 region（含 :hover 群組）不得出現刪除線
-        const region = ctx.raw.slice(m.index, m.index + 600);
-        if (region.includes('line-through')) ctx.fail('CG-RO-01: .is-readonly-disabled 不應含 line-through（spec：無刪除線）');
-        if (region.includes('text-decoration')) ctx.fail('CG-RO-01: .is-readonly-disabled 不應含 text-decoration（spec：無刪除線）');
-      }
-      // 齒輪 hover gating：須 :not(:disabled):hover，不得殘留未 gate 的裸 :hover
-      if (!/\.lightbox-metadata\s+\.lb-rescrape-gear:not\(:disabled\):hover\b/.test(ctx.raw)) {
-        ctx.fail('CG-RO-01: .lb-rescrape-gear:hover 應改為 :not(:disabled):hover（否則 disabled 齒輪仍變色）');
-      }
-      if (/\.lightbox-metadata\s+\.lb-rescrape-gear:hover\b/.test(ctx.raw)) {
-        ctx.fail('CG-RO-01: 不應殘留未 gate 的 .lb-rescrape-gear:hover（specificity 會蓋過 .is-readonly-disabled）');
-      }
-    },
-  },
+  // CG-RO-01（TestReadonlyDisabledStateGuard CSS 半邊）已隨 TASK-104-T4 移除——四鈕唯讀停用態
+  // 整套拔除（HTML 半邊見 static_guard_lint.mjs、JS payload 半邊見 web/routers/showcase.py），
+  // .is-readonly-disabled class 定義本身已從 showcase.css 刪除、.lb-rescrape-gear:not(:disabled):hover
+  // 簡化回 :hover（gear 已無任何 :disabled 綁定，:not(:disabled) 恆真、為死權重）。整條規則（含正向
+  // opacity/cursor 斷言與負向 hover-gating 斷言）皆針對此已死功能，無其他可留用部分，故整條移除。
 
   // CG-RO-02 ← TestDmmProxyRequiredGuard CSS 半邊（source-pill.css；opacity + hover no-lift）
   {

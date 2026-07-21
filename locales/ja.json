@@ -611,7 +611,6 @@
       "missing_enrich_card_no_cover": "情報のみ（カバーなし）",
       "missing_enrich_card_not_found": "見つかりません",
       "missing_enrich_card_error": "失敗",
-      "missing_enrich_card_readonly": "スキップ（読み取り専用）",
       "missing_enrich_toast_success": "補完完了！{success} 本成功",
       "missing_enrich_toast_mixed": "補完完了！{success} 本成功、{failed} 本失敗",
       "missing_enrich_batch_fail": "バッチ補完失敗 ({status}): {error}",
@@ -866,8 +865,7 @@
     },
     "enrich": {
       "success": "情報補完が完了しました",
-      "failed": "情報補完に失敗しました。後ほど再試行してください",
-      "readonly_tooltip": "この作品は読み取り専用ソースから生成されています。更新するにはスキャンページで再生成してください"
+      "failed": "情報補完に失敗しました。後ほど再試行してください"
     },
     "video": {
       "delete": "コレクションから削除",

@@ -680,7 +680,6 @@
       "missing_enrich_card_no_cover": "補到資料（無封面）",
       "missing_enrich_card_not_found": "查無",
       "missing_enrich_card_error": "失敗",
-      "missing_enrich_card_readonly": "跳過（唯讀）",
       "missing_enrich_toast_success": "補完完成！{success} 部成功",
       "missing_enrich_toast_mixed": "補完完成！{success} 部成功，{failed} 部失敗",
       "missing_enrich_batch_fail": "批次補完失敗 ({status}): {error}",
@@ -1003,8 +1002,7 @@
     },
     "enrich": {
       "success": "補資料完成",
-      "failed": "補資料失敗，請稍後再試",
-      "readonly_tooltip": "此片由唯讀來源產生，更新請至掃描頁重新產生"
+      "failed": "補資料失敗，請稍後再試"
     },
     "video": {
       "delete": "從收藏移除",

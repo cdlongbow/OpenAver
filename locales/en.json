@@ -611,7 +611,6 @@
       "missing_enrich_card_no_cover": "Data only (no cover)",
       "missing_enrich_card_not_found": "Not found",
       "missing_enrich_card_error": "Failed",
-      "missing_enrich_card_readonly": "Skipped (read-only)",
       "missing_enrich_toast_success": "Enrich complete! {success} succeeded",
       "missing_enrich_toast_mixed": "Enrich complete! {success} succeeded, {failed} failed",
       "missing_enrich_batch_fail": "Batch enrich failed ({status}): {error}",
@@ -866,8 +865,7 @@
     },
     "enrich": {
       "success": "Enriched successfully",
-      "failed": "Enrich failed, please try again",
-      "readonly_tooltip": "This title was generated from a read-only source; to update it, regenerate on the Scanner page"
+      "failed": "Enrich failed, please try again"
     },
     "video": {
       "delete": "Remove from Collection",
