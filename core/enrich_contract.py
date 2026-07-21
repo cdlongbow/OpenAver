@@ -37,6 +37,18 @@ def cover_uri_is_servable(cover_uri, path_mappings) -> bool:
     return bool(cover_uri) and os.path.exists(uri_to_local_fs_path(cover_uri, path_mappings))
 
 
+def should_preserve_cover(write_cover, overwrite_existing, cover_exists) -> bool:
+    """純政策：這次是否「不寫封面、保留既有」。cover_exists 由呼叫端各自算
+    （非唯讀 with_suffix('.jpg') 來源旁；唯讀 cover_uri_is_servable 走 DB
+    cover_path + path-mapping）——政策共用、封面定位各異（spec §5 末項）。"""
+    return (not write_cover) or (cover_exists and not overwrite_existing)
+
+
+def apply_cover_preserve(strategy, write_cover, overwrite_existing, cover_exists):
+    """gate→strategy 接線：命中保留 → ('none',)（不產出檔案）；否則原 strategy。"""
+    return ('none',) if should_preserve_cover(write_cover, overwrite_existing, cover_exists) else strategy
+
+
 def compute_has_servable_cover(repo, path_uri, path_mappings) -> bool:
     """寫完 + commit 後重讀 DB 最終 cover_path，再確認實體封面檔是否服務得到。
 

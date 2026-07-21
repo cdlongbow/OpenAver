@@ -11,7 +11,7 @@ from typing import List, Optional
 
 from core.config import _STEM_IMAGE_MODES
 from core.database import Video, VideoRepository, get_connection
-from core.enrich_contract import EnrichResult, compute_has_servable_cover
+from core.enrich_contract import EnrichResult, compute_has_servable_cover, should_preserve_cover
 from core.focal_trigger import maybe_submit_video_focal
 from core.logger import get_logger
 from core.nfo_updater import parse_nfo
@@ -219,13 +219,11 @@ def _write_cover(
     write_cover: bool,
     overwrite_existing: bool,
 ) -> bool:
-    if not write_cover:
-        return False
     if not cover_url:
         return False
 
     cover_path = str(Path(fs_path).with_suffix(".jpg"))
-    if os.path.exists(cover_path) and not overwrite_existing:
+    if should_preserve_cover(write_cover, overwrite_existing, os.path.exists(cover_path)):
         return False
 
     return download_image(cover_url, cover_path)

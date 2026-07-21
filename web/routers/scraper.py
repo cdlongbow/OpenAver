@@ -22,7 +22,7 @@ from core.database import Video, VideoRepository
 from core.db_inflow import try_inflow_upsert
 from core.focal_trigger import maybe_submit_video_focal
 from core.enricher import EnrichResult, enrich_single, fetch_samples_only, resolve_nfo_cover_paths
-from core.enrich_contract import compute_has_servable_cover
+from core.enrich_contract import apply_cover_preserve, compute_has_servable_cover, cover_uri_is_servable
 from core.organizer import organize_file
 from core.path_utils import to_file_uri, uri_to_fs_path, uri_to_local_fs_path, coerce_to_file_uri
 from core.scraper import (
@@ -523,14 +523,12 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
             # 封面檔已被刪除或路徑對應後在磁碟上不存在，這樣仍會誤判「已有封面」
             # 而跳過重建，留下一張壞掉/消失的圖。改為額外要求檔案實際存在於磁碟，
             # 與 _write_cover 的 os.path.exists(cover_path) 判斷真正一致。
-            had_cover = bool(existing and existing.cover_path) and os.path.exists(
-                uri_to_local_fs_path(existing.cover_path, path_mappings)
+            had_cover = cover_uri_is_servable(
+                existing.cover_path if existing else "", path_mappings
             )
-            preserve_cover = (not request.write_cover) or (
-                request.mode == 'fill_missing' and not request.overwrite_existing and had_cover
+            cover_strategy = apply_cover_preserve(
+                cover_strategy, request.write_cover, request.overwrite_existing, had_cover
             )
-            if preserve_cover:
-                cover_strategy = ('none',)
             file_info = {
                 "path": fs_path,
                 "size": existing.size_bytes if existing else os.path.getsize(fs_path),
@@ -922,14 +920,12 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                         # BatchEnrichRequest 沒有 per-item mode/write_cover/
                         # overwrite_existing 覆寫欄位（BatchEnrichItem 只帶 file_path/
                         # number/source/javbus_lang），一律用整批 request 的值。
-                        had_cover = bool(existing and existing.cover_path) and os.path.exists(
-                            uri_to_local_fs_path(existing.cover_path, _ro_mappings)
+                        had_cover = cover_uri_is_servable(
+                            existing.cover_path if existing else "", _ro_mappings
                         )
-                        preserve_cover = (not request.write_cover) or (
-                            request.mode == 'fill_missing' and not request.overwrite_existing and had_cover
+                        cs = apply_cover_preserve(
+                            cs, request.write_cover, request.overwrite_existing, had_cover
                         )
-                        if preserve_cover:
-                            cs = ('none',)
                         file_info = {
                             "path": fs_path,
                             "size": existing.size_bytes if existing else os.path.getsize(fs_path),

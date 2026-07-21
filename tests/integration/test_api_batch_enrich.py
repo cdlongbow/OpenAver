@@ -886,12 +886,15 @@ class TestBatchEnrichReadonlyCoverPreserveGate:
         assert mock_produce.call_args.kwargs["cover_strategy"] == ("none",)
 
     def test_refresh_full_writes_regardless_of_had_cover(self, client, mocker):
-        """batch 預設 mode=refresh_full（BatchEnrichRequest 預設值）→ 不 preserve，
-        即使既有 cover_path 存在（回歸鎖：不得被 P2#3 誤擋）。"""
+        """refresh_full + overwrite_existing=True → 寫（不 preserve），即使既有
+        cover_path 存在（回歸鎖：不得被 P2#3 誤擋）。feature/105 AC4 後 refresh_full
+        的保留政策綁 overwrite_existing（mode-agnostic）：refresh_full+overwrite=False
+        現改為「保留」（前端不可達——batch 恆送 fill_missing，見 state-batch.js:108），
+        故此回歸鎖須顯式送 overwrite_existing=True 走真實覆蓋路徑。"""
         mocker.patch("web.routers.scraper.load_config", return_value=self._readonly_config())
         mock_produce, _, _ = self._mock_routing(mocker, existing_cover_path="file:///out/old.jpg")
 
-        response = self._post(client, mode="refresh_full")
+        response = self._post(client, mode="refresh_full", overwrite_existing=True)
 
         result_items = [e for e in parse_sse(response.text) if e["type"] == "result-item"]
         assert result_items[0]["success"] is True
@@ -903,6 +906,31 @@ class TestBatchEnrichReadonlyCoverPreserveGate:
         mock_produce, _, _ = self._mock_routing(mocker, existing_cover_path="file:///out/old.jpg")
 
         response = self._post(client, mode="refresh_full", write_cover=False)
+
+        result_items = [e for e in parse_sse(response.text) if e["type"] == "result-item"]
+        assert result_items[0]["success"] is True
+        assert mock_produce.call_args.kwargs["cover_strategy"] == ("none",)
+
+    # ── feature/105 T2 AC4 delta（batch 側，鏡射 test_api_enrich.py 同名）：移除唯讀
+    # mode=='fill_missing' 顯式閘後，唯讀保留政策與非唯讀 core.enricher._write_cover
+    # 完全 mode-agnostic 對齊。refresh_full + overwrite=false + 既有可服務封面 → 保留
+    # （改前 mode 閘 False 會靜默覆蓋）。前端不可達（batch 恆送 fill_missing，見
+    # state-batch.js:108），latent-safety 對齊。MUTATION SELF-CHECK：把 mode 閘加回
+    # （preserve = (not write_cover) or (mode=='fill_missing' and not overwrite and
+    # had_cover)）會讓本測試 RED（cover_strategy 變回 ('download', ...)）。────────
+    def test_refresh_full_no_overwrite_existing_cover_preserves_mode_agnostic(
+        self, client, mocker,
+    ):
+        """AC4：batch refresh_full + overwrite=false + 既有封面（磁碟檔在）→ preserve
+        （('none',)），與 enricher _write_cover 同輸入
+        should_preserve_cover(write_cover=True, overwrite=False, cover_exists=True)
+        =True 一致。"""
+        mocker.patch("web.routers.scraper.load_config", return_value=self._readonly_config())
+        mock_produce, _, _ = self._mock_routing(
+            mocker, existing_cover_path="file:///out/old.jpg", cover_file_exists=True,
+        )
+
+        response = self._post(client, mode="refresh_full", overwrite_existing=False)
 
         result_items = [e for e in parse_sse(response.text) if e["type"] == "result-item"]
         assert result_items[0]["success"] is True

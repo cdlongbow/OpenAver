@@ -10,7 +10,12 @@ Bug 1 (feature/105) 四組正交邊界：
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from core.enrich_contract import cover_uri_is_servable, compute_has_servable_cover
+from core.enrich_contract import (
+    apply_cover_preserve,
+    compute_has_servable_cover,
+    cover_uri_is_servable,
+    should_preserve_cover,
+)
 
 
 # ── cover_uri_is_servable ────────────────────────────────────────────────────
@@ -83,3 +88,53 @@ class TestComputeHasServableCover:
         repo = self._repo("file:///out/x.jpg")
         compute_has_servable_cover(repo, "file:///the/canonical/key.mp4", {})
         repo.get_by_path.assert_called_once_with("file:///the/canonical/key.mp4")
+
+
+# ── should_preserve_cover ────────────────────────────────────────────────────
+
+class TestShouldPreserveCover:
+    """純政策 predicate：write_cover × overwrite_existing × cover_exists 三布林正交。
+    mode 維度已移除（AC4 mode-agnostic）。4 組有效組合（write_cover=False 吸收
+    overwrite/exists 兩維，故 4 組非 8 組）。"""
+
+    def test_not_write_cover_always_preserves(self):
+        """write_cover=False → 恆保留（吸收 overwrite/exists 兩維）。"""
+        assert should_preserve_cover(False, False, False) is True
+        assert should_preserve_cover(False, False, True) is True
+        assert should_preserve_cover(False, True, False) is True
+        assert should_preserve_cover(False, True, True) is True
+
+    def test_write_cover_existing_no_overwrite_preserves(self):
+        """有封面 + 不覆蓋 → 保留。"""
+        assert should_preserve_cover(True, False, True) is True
+
+    def test_write_cover_existing_overwrite_writes(self):
+        """有封面 + 覆蓋 → 寫（不保留）。"""
+        assert should_preserve_cover(True, True, True) is False
+
+    def test_write_cover_no_existing_writes(self):
+        """無封面 → 寫（不保留，不論 overwrite）。"""
+        assert should_preserve_cover(True, False, False) is False
+        assert should_preserve_cover(True, True, False) is False
+
+
+# ── apply_cover_preserve ─────────────────────────────────────────────────────
+
+class TestApplyCoverPreserve:
+    def test_preserve_returns_none_strategy(self):
+        """命中保留 → ('none',)，覆蓋掉原 strategy。"""
+        assert apply_cover_preserve(
+            ("download", "http://x/new.jpg"), False, False, False
+        ) == ("none",)
+        assert apply_cover_preserve(
+            ("download", "http://x/new.jpg"), True, False, True
+        ) == ("none",)
+
+    def test_not_preserve_passes_strategy_through(self):
+        """不保留 → 原 strategy 原樣穿透。"""
+        assert apply_cover_preserve(
+            ("download", "http://x/new.jpg"), True, True, True
+        ) == ("download", "http://x/new.jpg")
+        assert apply_cover_preserve(
+            ("download", "http://x/new.jpg"), True, False, False
+        ) == ("download", "http://x/new.jpg")

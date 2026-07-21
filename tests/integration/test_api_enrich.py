@@ -720,6 +720,29 @@ class TestEnrichSingleReadonlyCoverPreserveGate:
         assert response.json()["success"] is True
         assert mock_produce.call_args.kwargs["cover_strategy"] == ("none",)
 
+    # ── feature/105 T2 AC4 delta：移除唯讀 mode=='fill_missing' 顯式閘後，唯讀保留
+    # 政策與非唯讀 core.enricher._write_cover 完全 mode-agnostic 對齊。refresh_full
+    # + overwrite=false + 既有可服務封面 → 保留（改前 mode 閘 False 會靜默覆蓋）。
+    # MUTATION SELF-CHECK：把 mode 閘加回（preserve = (not write_cover) or
+    # (request.mode == 'fill_missing' and not overwrite and had_cover)）會讓本測試
+    # RED（cover_strategy 變回 ('download', ...)）——已於實作時驗證。─────────────
+    def test_refresh_full_no_overwrite_existing_cover_preserves_mode_agnostic(
+        self, client, mocker,
+    ):
+        """AC4：refresh_full + overwrite=false + 既有封面（磁碟檔在）→ preserve
+        （('none',)），與 enricher _write_cover 同輸入
+        should_preserve_cover(write_cover=True, overwrite=False, cover_exists=True)
+        =True 一致。"""
+        mocker.patch("web.routers.scraper.load_config", return_value=_readonly_gallery_config("/tmp/ro_src"))
+        mock_produce, _, _ = self._mock_routing(
+            mocker, existing_cover_path="file:///out/old.jpg", cover_file_exists=True,
+        )
+
+        response = self._post(client, mode="refresh_full", overwrite_existing=False)
+
+        assert response.json()["success"] is True
+        assert mock_produce.call_args.kwargs["cover_strategy"] == ("none",)
+
     # ── P2 review round 3 (FIX#1): reason reflects a SERVABLE cover, not just
     # this-call cover_written ────────────────────────────────────────────────
 
@@ -2351,6 +2374,8 @@ class TestReadonlyRoutingE2E:
             "source": "javlibrary",
             "detail_url": "https://www.javlibrary.com/ja/?v=abcxyz",
             "mode": "refresh_full",
+            # overwrite_existing:True 對齊真實齒輪重刮（state-rescrape.js:404）；feature/105 AC4 後 refresh_full 保留政策綁 overwrite_existing
+            "overwrite_existing": True,
         })
         assert resp2.json()["success"] is True
 
