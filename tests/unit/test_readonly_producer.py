@@ -1830,10 +1830,10 @@ class TestUpsertDbFullModeExistingPreservation:
         as '' → on-disk data loss + NFO/DB drift. This drives the FULL _produce_one
         path with REAL generate_nfo and asserts the written file itself.
 
-        MUTATION LOCK: removing the `meta['original_title'] = existing.original_title`
-        synthesis in _produce_one turns the NFO assertion below RED (DB stays green
-        via _upsert_db's own preserve — which is exactly why the NFO assertion is
-        the load-bearing one here)."""
+        MUTATION LOCK: removing the `meta['original_title'] = effective_original_title(...)`
+        helper call (the synthesis in _produce_one) turns the NFO assertion below RED
+        (DB stays green via _upsert_db's own effective_original_title call — which is
+        exactly why the NFO assertion is the load-bearing one here)."""
         import xml.etree.ElementTree as ET
         from core.readonly_producer import _produce_one
         from core.database import Video

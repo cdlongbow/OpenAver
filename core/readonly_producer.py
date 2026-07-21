@@ -26,6 +26,7 @@ from typing import Callable, Optional
 from core import thumbnail_cache
 from core.config import _STEM_IMAGE_MODES, iter_gallery_sources
 from core.database import Video, get_db_path
+from core.enrich_contract import effective_original_title
 from core.focal import requires_face_detection
 from core.focal_trigger import maybe_submit_video_focal
 from core.gallery_scanner import IMAGE_EXTENSIONS, VideoScanner, fast_scan_directory
@@ -1088,7 +1089,7 @@ def _upsert_db(
         path=source_uri,
         number=meta['number'],
         title=meta['title'],
-        original_title=meta.get('original_title') or (existing.original_title if existing else ''),
+        original_title=effective_original_title(meta, existing),
         actresses=meta.get('actors', []),
         maker=meta.get('maker', ''),
         director=meta.get('director', ''),
@@ -1445,18 +1446,18 @@ def _produce_one(
         fd, config, allocated_this_run, path_mappings,
     )
     old_base = _build_old_base(existing, file_info["path"], config)  # '' when no prior row/title/number
-    # FIX P1 (Codex PR#113 round-6, 2026-07-21): synthesize the EFFECTIVE
-    # original_title ONCE, before writing any asset, so the output NFO
+    # FIX P1 (Codex PR#113 round-6, 2026-07-21; feature/105 T3: extracted to
+    # effective_original_title helper): synthesize the EFFECTIVE original_title
+    # ONCE, before writing any asset, so the output NFO
     # (_write_movie_assets→generate_nfo) and the DB row (_upsert_db) consume the
     # SAME value. A re-scrape whose source returns an empty original_title must
     # NOT clobber the on-disk NFO's <originaltitle> to '' while the DB keeps the
     # old value — that split (preserve in _upsert_db only) was on-disk data loss
     # + NFO/DB drift. Mirrors the cover_path/sample_images preserve-if-empty
     # contract. Full-mode only in effect (samples_only writes no NFO), but the
-    # mutation is harmless there. _upsert_db keeps its own preserve as a defensive
+    # mutation is harmless there. _upsert_db calls the same helper as a defensive
     # net for any direct caller, but after this line meta already carries the truth.
-    if not meta.get('original_title') and existing and existing.original_title:
-        meta['original_title'] = existing.original_title
+    meta['original_title'] = effective_original_title(meta, existing)
     # PR #93 五審四次 P2 (option C): media-server 模式下用注入的 getter 讓
     # _write_movie_assets 在真正落 .strm 那一刻才重讀 fresh strm_path_mappings
     # （見 _write_movie_assets 內部該段落的完整解釋）。strm_mappings_getter=None

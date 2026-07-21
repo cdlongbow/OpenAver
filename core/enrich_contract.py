@@ -49,6 +49,13 @@ def apply_cover_preserve(strategy, write_cover, overwrite_existing, cover_exists
     return ('none',) if should_preserve_cover(write_cover, overwrite_existing, cover_exists) else strategy
 
 
+def effective_original_title(meta, existing) -> str:
+    """重刮回空原文標題時保留 DB 既有值。meta 有非空 original_title → 用之；
+    否則回退 existing.original_title（existing 為 None → '')。唯一 preserve 邏輯，
+    非唯讀 enricher 與唯讀 producer 皆呼叫此份（方案 A：唯一 preserve 在 helper）。"""
+    return meta.get('original_title') or (existing.original_title if existing else '')
+
+
 def compute_has_servable_cover(repo, path_uri, path_mappings) -> bool:
     """寫完 + commit 後重讀 DB 最終 cover_path，再確認實體封面檔是否服務得到。
 

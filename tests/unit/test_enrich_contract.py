@@ -14,6 +14,7 @@ from core.enrich_contract import (
     apply_cover_preserve,
     compute_has_servable_cover,
     cover_uri_is_servable,
+    effective_original_title,
     should_preserve_cover,
 )
 
@@ -88,6 +89,34 @@ class TestComputeHasServableCover:
         repo = self._repo("file:///out/x.jpg")
         compute_has_servable_cover(repo, "file:///the/canonical/key.mp4", {})
         repo.get_by_path.assert_called_once_with("file:///the/canonical/key.mp4")
+
+
+# ── effective_original_title ─────────────────────────────────────────────────
+
+class TestEffectiveOriginalTitle:
+    """重刮回空原文標題時保留 DB 既有值（唯一 preserve 邏輯，方案 A）。3 邊界：
+    1. meta 有非空值 → 用 meta（新值仍覆蓋既有）
+    2. meta 空/缺 key + existing 有值 → 保留 existing（Bug 2 修正）
+    3. meta 空/缺 key + existing=None → ''
+    """
+
+    def test_meta_has_value_uses_meta(self):
+        """meta 有非空 original_title → 用之（即使 existing 也有值仍覆蓋）。"""
+        existing = SimpleNamespace(original_title='既存')
+        assert effective_original_title({'original_title': '新原題'}, existing) == '新原題'
+        assert effective_original_title({'original_title': '新原題'}, None) == '新原題'
+
+    def test_meta_empty_or_missing_falls_back_to_existing(self):
+        """meta 空 '' 或缺 key + existing 有值 → 保留 existing（Bug 2 修正）。"""
+        existing = SimpleNamespace(original_title='既存')
+        assert effective_original_title({'original_title': ''}, existing) == '既存'
+        assert effective_original_title({}, existing) == '既存'
+
+    def test_both_empty_or_no_existing_returns_empty(self):
+        """meta 空/缺 + existing=None（或 existing 也空）→ ''。"""
+        assert effective_original_title({'original_title': ''}, None) == ''
+        assert effective_original_title({}, None) == ''
+        assert effective_original_title({'original_title': ''}, SimpleNamespace(original_title='')) == ''
 
 
 # ── should_preserve_cover ────────────────────────────────────────────────────

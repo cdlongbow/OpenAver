@@ -3161,3 +3161,78 @@ class TestReadonlyRoutingE2E:
                 f"round-trip 不變式破了: fs_path={fs_path!r} pm={pm!r} canonical={canonical!r} -> "
                 f"{round_tripped_fs!r} -> {to_file_uri(round_tripped_fs, pm)!r}"
             )
+
+
+# ── AC3 (feature/105 Bug 2): 非唯讀 refresh_full 重刮回空 → 保留既有原文標題 ─────
+
+class TestEnrichSinglePreservesOriginalTitle:
+    """AC3 (feature/105 T3, Bug 2): a non-readonly `refresh_full` re-scrape whose
+    source returned an EMPTY original_title must NOT clobber the existing value —
+    BOTH the written NFO <originaltitle> AND the DB row must preserve it.
+
+    Drives the REAL enrich_single with a REAL VideoRepository(temp db) + REAL
+    generate_nfo (only search_jav is mocked). Before the fix, both were cleared to
+    '' (the injection line `meta['original_title'] = effective_original_title(...)`
+    is the load-bearing preserve — remove it and this test goes RED)."""
+
+    def _scraper_data_without_original_title(self, number="TEST-001"):
+        # 重刮這次來源未回傳 original_title（key 缺 → _scraper_to_meta 落 ''）
+        return {
+            "number": number,
+            "title": "新しいタイトル",
+            "actors": ["女優A"],
+            "cover": "",
+            "date": "2024-01-01",
+            "maker": "SOD",
+            "director": "監督",
+            "series": "シリーズ",
+            "label": "LABEL",
+            "tags": ["タグ"],
+            "sample_images": [],
+            "duration": 120,
+            "url": "https://www.javbus.com/TEST-001",
+        }
+
+    def test_refresh_full_empty_rescrape_preserves_original_title_in_nfo_and_db(
+        self, tmp_path, mocker
+    ):
+        import xml.etree.ElementTree as ET
+        from core.database import init_db, VideoRepository, Video
+        from core.enricher import enrich_single
+        from core.path_utils import to_file_uri
+
+        db_path = tmp_path / "ac3.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+
+        video_file = tmp_path / "TEST-001.mp4"
+        video_file.write_bytes(b"\x00")
+        path_uri = to_file_uri(str(video_file))
+
+        # 既有 DB row 帶非空 original_title（對應 NFO 也將被寫）
+        repo.upsert(Video(
+            path=path_uri, number="TEST-001", title="既存タイトル",
+            original_title="既存の原題",
+        ))
+
+        # enrich_single 內部 new VideoRepository() → 指向同一 temp DB
+        mocker.patch("core.enricher.VideoRepository", return_value=repo)
+        mocker.patch(
+            "core.enricher.search_jav",
+            return_value=self._scraper_data_without_original_title(),
+        )
+
+        result = enrich_single(
+            file_path=path_uri, number="TEST-001", mode="refresh_full",
+            write_nfo=True, write_cover=False, write_extrafanart=False,
+        )
+        assert result.success, result.error
+
+        # DB row 保留既有原文標題
+        assert repo.get_by_path(path_uri).original_title == "既存の原題"
+
+        # 寫出的 NFO <originaltitle> 保留既有原文標題（改前皆清成 ''）
+        nfo_file = video_file.with_suffix(".nfo")
+        assert nfo_file.exists(), "NFO 應被寫出"
+        root = ET.parse(nfo_file).getroot()
+        assert root.findtext("originaltitle") == "既存の原題"

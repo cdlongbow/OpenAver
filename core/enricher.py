@@ -11,7 +11,12 @@ from typing import List, Optional
 
 from core.config import _STEM_IMAGE_MODES
 from core.database import Video, VideoRepository, get_connection
-from core.enrich_contract import EnrichResult, compute_has_servable_cover, should_preserve_cover
+from core.enrich_contract import (
+    EnrichResult,
+    compute_has_servable_cover,
+    effective_original_title,
+    should_preserve_cover,
+)
 from core.focal_trigger import maybe_submit_video_focal
 from core.logger import get_logger
 from core.nfo_updater import parse_nfo
@@ -430,6 +435,12 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
     path_uri = to_file_uri(fs_path_for_db)  # db-ns-ok: fs_path_for_db, DB round-trip value, no reverse mapping applied
     existing_record = repo.get_by_path(path_uri)
     preserved_user_tags = existing_record.user_tags if existing_record else []
+
+    # Bug 2 (feature/105): synthesize the EFFECTIVE original_title ONCE, before any
+    # write branch, so both _write_nfo (<originaltitle>) and _db_upsert consume the
+    # same preserved value. A refresh_full re-scrape returning an empty original_title
+    # must NOT clobber the existing DB/NFO value (mirrors user_tags/cover preserve).
+    meta['original_title'] = effective_original_title(meta, existing_record)
 
     cover_url = meta.get("cover_url", "")
 
