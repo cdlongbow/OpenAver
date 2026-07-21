@@ -9,6 +9,8 @@ Scraper API 路由 - 單檔刮削
 import asyncio
 import json
 import os
+import time
+from dataclasses import asdict
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException
@@ -16,10 +18,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Literal, Optional
 
-from core.database import VideoRepository
+from core.database import Video, VideoRepository
 from core.db_inflow import try_inflow_upsert
 from core.focal_trigger import maybe_submit_video_focal
-from core.enricher import enrich_single, fetch_samples_only, resolve_nfo_cover_paths
+from core.enricher import EnrichResult, enrich_single, fetch_samples_only, resolve_nfo_cover_paths
 from core.organizer import organize_file
 from core.path_utils import to_file_uri, uri_to_fs_path, uri_to_local_fs_path, coerce_to_file_uri
 from core.scraper import (
@@ -32,6 +34,7 @@ from core.scrapers.javlibrary import JAVLIBRARY_ORIGIN
 from core.logger import get_logger
 from core.config import load_config
 from core.readonly_source import is_path_readonly, readonly_source_prefixes, writable_source_prefixes
+from core.readonly_producer import resolve_owning_output_root, resolve_ingest_plan, _produce_one
 from core import thumbnail_cache
 from web.routers.notifications import emit_notification as _emit_notif
 
@@ -73,15 +76,44 @@ _READONLY_SOURCE_ERROR_MSG = (
     "請改用掃描頁『產生』生成本地媒體庫，或確認你對此路徑有寫入權限。"
 )
 
+# P2 review round 3 (FIX#4)：readonly 來源 + mode='db_to_sidecar' 的拒絕訊息（單一
+# 真理來源；enrich-single 與 batch 的 _do_readonly 共用）。db_to_sidecar 意指「把 DB
+# 現有 metadata 寫回來源 sidecar NFO、不刮網」——唯讀來源零寫入牆下，來源 sidecar 本來
+# 就不可寫；output_dir 的 NFO 又是產生流程自動管理，故此 mode 對唯讀來源無意義。
+_READONLY_DB_TO_SIDECAR_ERROR_MSG = (
+    "唯讀來源不支援 db_to_sidecar（產物 NFO 由產生流程自動管理，來源零寫入）"
+)
+
+# P1 revert + reject (round-3 review 2026-07-21，owner-confirmed)：Codex PR#113
+# round-3 threaded a write_nfo=false skip-NFO gate into the readonly produce
+# path — that was a P1 data-loss (a title-changing rescrape with
+# write_nfo=False skipped writing the new NFO while stale-cleanup still
+# unlinked the old one, losing the NFO while the DB kept a stale nfo_mtime
+# claiming it exists). Readonly produce is HOLISTIC — a library entry always
+# has an NFO — so write_nfo=false is rejected here exactly like
+# db_to_sidecar above (both are granular flags the holistic produce model
+# doesn't support), instead of threading a skip flag down into
+# _produce_one/_write_movie_assets.
+_READONLY_NO_NFO_ERROR_MSG = (
+    "唯讀來源產生一律含 NFO（holistic 產物），不支援 write_nfo=false"
+)
+
 
 def _readonly_source_error(file_path: str) -> Optional[dict]:
     """唯讀來源 guard：只依 file_path 判斷所屬來源是否唯讀（readonly）。
 
-    是 → 回既有錯誤形狀 plain dict（不搬檔、不刮削、不寫任何 sidecar）；否則回 None。
-    兩端一律用 UNC-tolerant coerce_to_file_uri，不做原生路徑正規化（Codex P2：對 UNC 在
-    WSL/Linux 會拋 ValueError，而 UNC 正是 readonly 主場景）。coerce_to_file_uri 對「已是
-    DB canonical file:/// URI」原樣回、對 FS path 才轉，避免 to_file_uri 雙重包成
-    file:///file:/// 繞過 guard（Codex P1）。helper 自己讀 config（每次呼叫重判，安全側）。
+    P3 grok-review（pre-merge 2026-07-21）：TASK-104-T3 之後，`enrich-single`／
+    `fetch-samples`／`batch-enrich` 的唯讀項已不再走「拒絕」——改道 `_produce_one`
+    落 output_dir（見 `resolve_owning_output_root`/`resolve_ingest_plan`）。本
+    helper 現僅供 **`scrape-single`** 使用，該端點語意是「搬移/改名來源檔案」，
+    唯讀來源本就無法安全支援，維持一律拒絕、不寫任何 sidecar。
+
+    是 → 回既有錯誤形狀 plain dict（scrape-single 不搬檔、不刮削、不寫任何 sidecar）；
+    否則回 None。兩端一律用 UNC-tolerant coerce_to_file_uri，不做原生路徑正規化
+    （Codex P2：對 UNC 在 WSL/Linux 會拋 ValueError，而 UNC 正是 readonly 主場景）。
+    coerce_to_file_uri 對「已是 DB canonical file:/// URI」原樣回、對 FS path 才轉，
+    避免 to_file_uri 雙重包成 file:///file:/// 繞過 guard（Codex P1）。helper 自己讀
+    config（每次呼叫重判，安全側）。
 
     ⚠️ 本 helper 內含 load_config()（阻塞 I/O），僅可用於 sync 端點（threadpool）；async
     路由（如 batch_enrich）須改為「入口一次載入 config → readonly_source_prefixes 算一次
@@ -95,6 +127,19 @@ def _readonly_source_error(file_path: str) -> Optional[dict]:
     if is_path_readonly(coerce_to_file_uri(file_path, _path_mappings), _prefixes, _writable):
         return {"success": False, "error": _READONLY_SOURCE_ERROR_MSG}
     return None
+
+
+# Codex PR#113 P4 one-pass alignment (2026-07-21): readonly ingest/rescrape
+# writes the whole meta wholesale (no _merge_meta partial-diff concept the
+# way non-readonly enrich_single has), so there is no equivalent "fields the
+# scrape supplemented" diff to report. Listing the non-empty top-level
+# metadata keys is a reasonable "what got written" summary for the
+# fields_filled slot of the EnrichResult shape.
+_READONLY_FIELDS_FILLED_KEYS = ('title', 'actors', 'tags', 'date', 'maker', 'director', 'series', 'label')
+
+
+def _readonly_fields_filled(meta: dict) -> List[str]:
+    return [k for k in _READONLY_FIELDS_FILLED_KEYS if meta.get(k)]
 
 
 @router.post("/scrape-single")
@@ -247,6 +292,13 @@ class EnrichRequest(BaseModel):
     source: Optional[str] = None
     javbus_lang: Optional[str] = None
     detail_url: Optional[str] = None
+    # TASK-104-T3 (CD-104-5): readonly-source intent — 'ingest' (放大鏡, local-first)
+    # or 'rescrape' (gear, always-remote). MUST stay optional: existing non-readonly
+    # / batch / integration callers never send it and must not 422 (Codex P1-2).
+    # Non-readonly files ignore this field entirely (byte-identical); a readonly
+    # file with it omitted defaults to 'ingest' (safe default — never force a
+    # remote overwrite without an explicit gear action).
+    readonly_action: Optional[Literal['rescrape', 'ingest']] = None
 
 
 class BatchEnrichItem(BaseModel):
@@ -323,6 +375,46 @@ def rescrape_preview_endpoint(request: RescrapePreviewRequest) -> dict:
         return {"success": False, "error": "預覽搜尋失敗，請查閱日誌"}
 
 
+def _javlib_candidate_scraper_data(request: "EnrichRequest"):
+    """Fetch a javlibrary detail_url candidate for the readonly gear-rescrape
+    branch (TASK-104-T3). Reuses the exact SSRF guard + CfChallengeRequired/
+    CfTransportUnavailable handling as `enrich_single_endpoint`'s own (non-
+    readonly) detail_url block below — deliberately NOT shared/called from
+    there, to keep that inline block byte-identical (zero risk to
+    tests/integration/test_rescrape_javlib.py's existing coverage, which is
+    outside this task's file allowlist).
+
+    Returns `(scraper_data, error_response)`: on any guard-trip/failure,
+    `error_response` is the exact structured dict the endpoint must return
+    verbatim (never raise — CD-104-10 lifecycle symmetry); on success
+    `scraper_data` is the `to_legacy_dict()` + `internal_nfo_carriers()` merge
+    and `error_response` is None.
+    """
+    if not _is_javlibrary_url(request.detail_url):
+        logger.warning("enrich_single: 拒絕非法 detail_url origin")
+        return None, {"success": False, "error": "detail_url 來源不合法"}
+    try:
+        video = fetch_javlib_by_detail_url(request.detail_url, request.number)
+    except CfChallengeRequired:
+        t = get_cf_transport()
+        if t:
+            try:
+                t.begin_solve(JAVLIBRARY_ORIGIN, 'javlibrary')
+            except Exception:
+                logger.exception("enrich_single: begin_solve 失敗，回 cf_unavailable")
+                return None, {"success": False, "cf_unavailable": True}
+        return None, {"success": False, "cf_needed": True}
+    except CfTransportUnavailable:
+        return None, {"success": False, "cf_unavailable": True}
+    if video is None:
+        return None, {"success": False, "error": "javlibrary 無法取得指定版本資料"}
+    # to_legacy_dict 省略 _summary/_rating 內部 carrier；補回以對齊既有 javlibrary
+    # 重刮的 NFO 輸出（search_jav 走 internal_nfo_carriers 注入同組，PR #89 Codex P2）
+    scraper_data = video.to_legacy_dict()
+    scraper_data.update(internal_nfo_carriers(video))
+    return scraper_data, None
+
+
 @router.post("/enrich-single")
 def enrich_single_endpoint(request: EnrichRequest) -> dict:
     config = load_config()
@@ -332,11 +424,179 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
     # enrich_single 共用一次算好的同一組值（避免重複 .get() chain）。
     path_mappings = config.get("gallery", {}).get("path_mappings", {})
 
-    # 90c-T1 唯讀來源 guard：唯讀來源片不得 enrich 寫檔。須在 refresh_full 預檢
-    # （resolve_nfo_cover_paths / os.path.exists）之前——預檢對唯讀掛載可能拋錯。
-    _err = _readonly_source_error(request.file_path)
-    if _err:
-        return _err
+    # TASK-104-T3 (CD-104-5)：唯讀來源片不再一律拒絕——改道 output_dir。
+    # resolve_owning_output_root 依 canonical URI 找最內層唯讀來源（尊重 writable
+    # override）；None → 非唯讀，落到下方既有 400-guard + enrich_single 路徑
+    # （byte-identical，零改動）。找到 → 早 return，絕不 fall-through 到 400-guard
+    # （resolve_nfo_cover_paths 對唯讀路徑推 source-adjacent 路徑沒有意義，CD-104-10）。
+    canonical = coerce_to_file_uri(request.file_path, path_mappings)  # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
+    owning = resolve_owning_output_root(canonical, config)
+    if owning is not None:
+        source, output_root, output_uri = owning
+        # Codex PR#113 one-pass alignment (2026-07-21): readonly branch now returns
+        # the ACTUAL EnrichResult dataclass shape (asdict'd) on every path — success
+        # AND failure — so the frontend badge/fly-in UI keyed off nfo_written/
+        # cover_written/fields_filled/source_used/reason gets the same contract
+        # whether the file came from a writable or readonly source (closes the
+        # whole class of partial-shape divergences Codex peeled off one at a time).
+        # P2 review round 3 (FIX#4): mode='db_to_sidecar' means "write current DB
+        # metadata to the SOURCE sidecar NFO, no scrape" — for a readonly source
+        # the source sidecar cannot be written at all (zero-write wall), and the
+        # output_dir NFO is auto-managed by the produce flow (resolve_ingest_plan/
+        # _produce_one), so this mode has no meaningful readonly behaviour. Reject
+        # early — before resolve_ingest_plan/_produce_one — with a clean, full-shape
+        # EnrichResult rather than silently doing a full ingest/rescrape instead
+        # (this branch otherwise ignores request.mode entirely).
+        if request.mode == 'db_to_sidecar':
+            return asdict(EnrichResult(
+                success=False, nfo_written=False, cover_written=False,
+                extrafanart_written=0, fields_filled=[], source_used='',
+                error=_READONLY_DB_TO_SIDECAR_ERROR_MSG,
+                reason='error',
+            ))
+        # P1 revert + reject (round-3 review 2026-07-21): readonly produce is
+        # holistic (a library entry always has an NFO) — write_nfo=false is
+        # rejected the same way db_to_sidecar is above, rather than threading
+        # a skip-NFO flag down into resolve_ingest_plan/_produce_one (see
+        # _READONLY_NO_NFO_ERROR_MSG). The frontend never sends
+        # write_nfo=false, so this is zero UI impact.
+        if not request.write_nfo:
+            return asdict(EnrichResult(
+                success=False, nfo_written=False, cover_written=False,
+                extrafanart_written=0, fields_filled=[], source_used='',
+                error=_READONLY_NO_NFO_ERROR_MSG,
+                reason='error',
+            ))
+        if not output_root:
+            return asdict(EnrichResult(
+                success=False, nfo_written=False, cover_written=False,
+                extrafanart_written=0, fields_filled=[], source_used="",
+                error="未設定媒體庫輸出路徑", reason="error",
+            ))
+        try:
+            action = request.readonly_action or 'ingest'
+            scraper_data = None
+            if action == 'rescrape' and request.source == 'javlibrary' and request.detail_url:
+                scraper_data, _cand_err = _javlib_candidate_scraper_data(request)
+                if _cand_err:
+                    return _cand_err
+            fs_path = uri_to_local_fs_path(request.file_path, path_mappings)
+            meta, cover_strategy = resolve_ingest_plan(
+                fs_path, request.number, config.get("scraper", {}),
+                action=action, proxy_url=proxy_url, scraper_data=scraper_data, source=request.source,
+                javbus_lang=request.javbus_lang,
+            )
+            if not meta:
+                # FIX P2-A / FIX#4 (P2 parity closeout): mirror non-readonly
+                # core.enricher.py:391/429's not-found bookkeeping — mark
+                # scrape_attempted_at so this file isn't rescanned/rescraped
+                # forever. TRAP: update_scrape_attempted_at is a bare
+                # UPDATE...WHERE path=? that silently no-ops without a row —
+                # insert_if_ignore MUST run first to create the stub row
+                # (mirrors bulk readonly_producer.py:1559-1561 byte-for-byte).
+                # reason='not_found' (not 'error') matches the batch sibling
+                # (:1003) and non-readonly enricher.py:393/431.
+                repo = VideoRepository()
+                repo.insert_if_ignore(Video(
+                    path=canonical, number=request.number,
+                    title=os.path.basename(fs_path),
+                ))
+                repo.update_scrape_attempted_at(canonical, time.time())
+                return asdict(EnrichResult(
+                    success=False, nfo_written=False, cover_written=False,
+                    extrafanart_written=0, fields_filled=[], source_used="",
+                    error="找不到可用的番號資料", reason="not_found",
+                ))
+            repo = VideoRepository()
+            existing = repo.get_by_path(canonical)
+            # Codex PR#113 P2#3（round 2，owner-confirmed 全面對齊；round 6 修正）：
+            # readonly enrich 對齊非唯讀 core.enricher._write_cover 的 skip 語意
+            # （os.path.exists(cover) and not overwrite_existing）——fill_missing
+            # （放大鏡在「已有封面、缺 NFO」的片上點，見 state-lightbox.js:1634-1650）
+            # 或 write_cover=false 時只補 NFO，絕不動既有封面（output_dir 的封面檔與
+            # DB cover_path 皆保留）。refresh_full（gear 一律送 mode='refresh_full'
+            # +overwrite_existing=true，見 state-rescrape.js:404/408；或放大鏡在無
+            # 封面片上點）不受此擋，維持既有「一律寫」行為。
+            # round 6 fix（Codex PR#113 round-6，P2，found in 2 readonly branches）：
+            # had_cover 只看 DB `existing.cover_path` 不夠——DB row 可能殘留、輸出
+            # 封面檔已被刪除或路徑對應後在磁碟上不存在，這樣仍會誤判「已有封面」
+            # 而跳過重建，留下一張壞掉/消失的圖。改為額外要求檔案實際存在於磁碟，
+            # 與 _write_cover 的 os.path.exists(cover_path) 判斷真正一致。
+            had_cover = bool(existing and existing.cover_path) and os.path.exists(
+                uri_to_local_fs_path(existing.cover_path, path_mappings)
+            )
+            preserve_cover = (not request.write_cover) or (
+                request.mode == 'fill_missing' and not request.overwrite_existing and had_cover
+            )
+            if preserve_cover:
+                cover_strategy = ('none',)
+            file_info = {
+                "path": fs_path,
+                "size": existing.size_bytes if existing else os.path.getsize(fs_path),
+                "mtime": existing.mtime if existing else os.path.getmtime(fs_path),
+            }
+            # _produce_one now returns (movie_dir, assets). NFO is always written
+            # (P1 revert, round-3 review 2026-07-21 — write_nfo=false is rejected
+            # above, before this point is ever reached). cover_written reflects
+            # whether the cover step actually produced a file (cover_strategy=
+            # ('none',) or a failed copy/download both leave assets['cover_fs'] == '').
+            _, assets = _produce_one(
+                repo, source, config.get("scraper", {}), file_info=file_info,
+                meta=meta, cover_strategy=cover_strategy, assets_mode='full',
+                existing=existing, output_root=output_root, output_uri=output_uri,
+                allocated_this_run=set(), path_mappings=path_mappings,
+            )
+            thumbnail_cache.invalidate(canonical)
+            cover_written = bool(assets.get('cover_fs'))
+            # Codex PR#113 P2 review round 3: `reason` must reflect whether a
+            # SERVABLE cover exists, not just whether THIS call wrote one —
+            # mirrors core.enricher.enrich_single's own decoupling (enricher.py
+            # :589-604, has_servable_cover based on a final DB+disk re-check).
+            # A fill_missing/overwrite=false pass on a video that already has a
+            # cover hits preserve_cover=True → cover_strategy=('none',) →
+            # cover_written=False, but the EXISTING cover (DB row, re-read
+            # above into `existing`) is still fully servable — reason must stay
+            # 'hit' or the scanner fly-in/badge (state-batch.js keys off
+            # status==='hit') wrongly suppresses for a preserve-cover pass.
+            has_servable_cover = bool(assets.get('cover_fs')) or bool(existing and existing.cover_path)
+            # Codex PR#113 P2#4（round 2）：對齊 core.enricher.enrich_single:528-547
+            # ——只在「本次實際寫入新封面內容」時才作廢舊手動焦點、再排新的背景偵測。
+            # preserve_cover=True 時 cover_strategy=('none',) 不產出檔案，
+            # assets['cover_fs'] 恆為空 → cover_written 恆 False，此塊不進、既有
+            # manual 焦點原樣保留（與 enricher 的 cover_written 閘門語意一致）。
+            if cover_written:
+                try:
+                    focal_repo = VideoRepository()  # 致命細節 1：不可重用上面的 repo 變數
+                    focal_repo.reset_focal_to_auto(canonical)
+                    maybe_submit_video_focal(
+                        meta['number'],
+                        meta.get('maker'),
+                        canonical,
+                        assets['cover_fs'],
+                        cover_path_uri=to_file_uri(assets['cover_fs'], path_mappings),
+                    )
+                except Exception:
+                    logger.warning("readonly enrich focal 排程失敗（不影響改道結果）", exc_info=True)
+            return asdict(EnrichResult(
+                success=True,
+                # NFO is always written on a successful readonly produce (P1
+                # revert, round-3 review 2026-07-21) — write_nfo=false never
+                # reaches here (rejected above).
+                nfo_written=True,
+                cover_written=cover_written,
+                extrafanart_written=len(assets.get('sample_fs', [])),
+                fields_filled=_readonly_fields_filled(meta),
+                source_used=meta.get('source', ''),
+                error=None,
+                reason='hit' if has_servable_cover else 'no_cover',
+            ))
+        except Exception:
+            logger.exception("enrich_single_endpoint readonly 改道失敗")
+            return asdict(EnrichResult(
+                success=False, nfo_written=False, cover_written=False,
+                extrafanart_written=0, fields_filled=[], source_used="",
+                error="enrich 處理失敗，請查閱日誌", reason="error",
+            ))
 
     # CD-62-4 分裂陷阱智慧防呆：refresh_full + overwrite=false 時，若這組設定不會寫出任何
     # sidecar（NFO/cover）卻仍 _db_upsert，就是純分裂。一個 sidecar「會寫」需 write 旗標開 + 檔案缺
@@ -418,7 +678,6 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
         # double-encode 砍錯 hash（PR #60 Codex P2）。
         if result.success:
             thumbnail_cache.invalidate(coerce_to_file_uri(request.file_path))  # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
-        from dataclasses import asdict
         return asdict(result)
     except Exception:
         logger.exception("enrich_single_endpoint 失敗")
@@ -439,10 +698,89 @@ def fetch_samples_endpoint(req: FetchSamplesRequest) -> dict:
     # 見 TASK-91-T3.md 站台5 inner/outer 分析結論）。
     path_mappings = config.get("gallery", {}).get("path_mappings", {})
 
-    # 90c-T1 唯讀來源 guard：唯讀來源片不得補劇照寫檔（early-return，先於 DB/uri work）。
-    _err = _readonly_source_error(req.file_path)
-    if _err:
-        return _err
+    # TASK-104-T3 (CD-104-5)：唯讀來源片改道 output_dir，僅補劇照（samples_only）。
+    # 不走 resolve_ingest_plan——它會強制清空 sample_images（ingest/rescrape 皆不含
+    # 劇照），故直接用 search_jav 取劇照 URL 列表。None → 非唯讀，落到下方既有
+    # multi-video guard + fetch_samples_only 路徑（byte-identical）。
+    canonical = coerce_to_file_uri(req.file_path, path_mappings)  # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
+    owning = resolve_owning_output_root(canonical, config)
+    if owning is not None:
+        source, output_root, output_uri = owning
+        # Codex PR#113 one-pass alignment (2026-07-21): mirror core.enricher.
+        # fetch_samples_only's own EnrichResult field-for-field — nfo_written/
+        # cover_written are always False here (samples-only never touches NFO or
+        # cover), fields_filled is always [] (no metadata merge happens).
+        if not output_root:
+            return asdict(EnrichResult(
+                success=False, nfo_written=False, cover_written=False,
+                extrafanart_written=0, fields_filled=[], source_used="",
+                error="未設定媒體庫輸出路徑", reason="error",
+            ))
+        try:
+            meta = search_jav(req.number, source="auto", proxy_url=proxy_url)
+            # P2 review round 3 (FIX#2/FIX#3): mirror core.enricher.fetch_samples_only
+            # field-for-field. That function NEVER sets `reason` (EnrichResult's
+            # dataclass default, None, on every path — success, file-not-found,
+            # meta-not-found alike) and distinguishes a TOTAL search failure
+            # (search_jav found nothing at all, enricher.py:715-718 → success=False
+            # + error) from "found metadata but it has no sample_images to
+            # download" (not an error — meta.get("sample_images", []) just
+            # defaults to [], nothing to write, success=True/extrafanart_written=0).
+            # The old `not meta or not meta.get(...)` conflated both into one
+            # success=True branch, silently swallowing total search failures.
+            if not meta:
+                return asdict(EnrichResult(
+                    success=False, nfo_written=False, cover_written=False,
+                    extrafanart_written=0, fields_filled=[], source_used="",
+                    error=f"找不到 {req.number} 的資料", reason=None,
+                ))
+            if not meta.get("sample_images"):
+                return asdict(EnrichResult(
+                    success=True, nfo_written=False, cover_written=False,
+                    extrafanart_written=0, fields_filled=[],
+                    source_used=meta.get('source', ''),
+                    error=None, reason=None,
+                ))
+            fs_path = uri_to_local_fs_path(req.file_path, path_mappings)
+            repo = VideoRepository()
+            existing = repo.get_by_path(canonical)
+            file_info = {
+                "path": fs_path,
+                "size": existing.size_bytes if existing else os.path.getsize(fs_path),
+                "mtime": existing.mtime if existing else os.path.getmtime(fs_path),
+            }
+            # P2 review (2026-07-21): report the ACTUALLY-downloaded count, not the
+            # requested one — `len(meta["sample_images"])` used to be returned
+            # verbatim regardless of how many downloads actually succeeded, so a
+            # partial/total download failure still reported full success.
+            # `assets['sample_fs']` (from _produce_one's new (movie_dir, assets)
+            # return) only contains the files `_write_movie_assets` actually wrote
+            # — the same source `_upsert_db` uses to (conditionally) update
+            # sample_images, so this count and the DB state can never disagree.
+            _, assets = _produce_one(
+                repo, source, config.get("scraper", {}), file_info=file_info,
+                meta=meta, cover_strategy=('none',), assets_mode='samples_only',
+                existing=existing, output_root=output_root, output_uri=output_uri,
+                allocated_this_run=set(), path_mappings=path_mappings,
+            )
+            written = len(assets.get('sample_fs', []))
+            return asdict(EnrichResult(
+                success=True, nfo_written=False, cover_written=False,
+                extrafanart_written=written, fields_filled=[],
+                source_used=meta.get('source', ''), error=None,
+                reason=None,
+            ))
+        except Exception:
+            logger.exception("fetch_samples_endpoint readonly 改道失敗")
+            # fetch_samples_only never sets reason='error' either (it has no
+            # top-level exception boundary of its own — stays the dataclass
+            # default None on every path), so this router-level catch-all
+            # matches with reason=None too (FIX#2 field-for-field parity).
+            return asdict(EnrichResult(
+                success=False, nfo_written=False, cover_written=False,
+                extrafanart_written=0, fields_filled=[], source_used="",
+                error="fetch_samples 處理失敗，請查閱日誌", reason=None,
+            ))
 
     # uri-no-reverse: comparison-only (DB LIKE prefix), inner kept bare per TASK-91-T3 inner/outer analysis
     folder_uri_prefix = to_file_uri(os.path.dirname(uri_to_fs_path(req.file_path)), path_mappings) + "/"
@@ -458,7 +796,6 @@ def fetch_samples_endpoint(req: FetchSamplesRequest) -> dict:
             proxy_url=proxy_url,
             path_mappings=path_mappings,
         )
-        from dataclasses import asdict
         return asdict(result)
     except Exception:
         logger.exception("fetch_samples_endpoint 失敗")
@@ -522,13 +859,195 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                 # progress 事件
                 yield f"data: {json.dumps({'type': 'progress', 'current': idx, 'total': total, 'number': item.number})}\n\n"
 
-                # 90c-T1 逐項唯讀 guard：唯讀來源片 yield result-item(success:False) +
-                # failed_count+=1 + continue（不 raise、不逐項 _emit_notif——批次層才發通知）。
-                # 混合批中可寫項照常 enrich，整批不中斷（spec-90 §90b(iii) 驗收 2）。
+                # TASK-104-T3 (CD-104-5)：唯讀項不再拒絕，改道 output_dir（action 固定
+                # 'ingest'——batch 語意是補缺、非撞號選版；撞號選版走單片 enrich-single
+                # gear rescrape，見 CD-104-5 P1-b）。混合批中可寫項照常 enrich，整批不中斷
+                # （spec-90 §90b(iii) 驗收 2）。`_produce_one`/`resolve_ingest_plan` 是阻塞
+                # I/O（寫檔、可能刮網）→ 須比照既有 :557-574 offload 慣例包進
+                # run_in_executor，不可在 event loop 上裸呼叫（async-offload 守衛）。
+                # item/canonical 用預設參數綁定，避免 for-loop 變數 late-binding
+                # （同既有 :559 lambda 慣例）。
                 # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
-                if is_path_readonly(coerce_to_file_uri(item.file_path, _ro_mappings), _ro_prefixes, _ro_writable):
-                    failed_count += 1
-                    yield f"data: {json.dumps({'type': 'result-item', 'number': item.number, 'file_path': item.file_path, 'success': False, 'error': _READONLY_SOURCE_ERROR_MSG, 'reason': 'readonly'})}\n\n"
+                canonical = coerce_to_file_uri(item.file_path, _ro_mappings)
+                if is_path_readonly(canonical, _ro_prefixes, _ro_writable):
+                    def _do_readonly(itm=item, uri=canonical, es=effective_source, el=effective_lang):
+                        # P2 review round 3 (FIX#4): same db_to_sidecar rejection as
+                        # enrich_single_endpoint's readonly branch (see that branch's
+                        # comment) — placed before resolve_owning_output_root so it
+                        # short-circuits regardless of output_dir configuration.
+                        # BatchEnrichRequest has no per-item mode override, so this
+                        # is checked once against the whole-batch `request.mode`.
+                        if request.mode == 'db_to_sidecar':
+                            return ('db_to_sidecar', _READONLY_DB_TO_SIDECAR_ERROR_MSG)
+                        # P1 revert + reject (round-3 review 2026-07-21): same
+                        # write_nfo=false rejection as enrich_single_endpoint's
+                        # readonly branch (see _READONLY_NO_NFO_ERROR_MSG) — readonly
+                        # produce is holistic, no per-item override exists.
+                        if not request.write_nfo:
+                            return ('no_nfo', _READONLY_NO_NFO_ERROR_MSG)
+                        owning = resolve_owning_output_root(uri, config)
+                        if owning is None:
+                            return ('skip', None)  # 理論不達（上面 is_path_readonly 已判真）
+                        ro_source, out_root, out_uri = owning
+                        if not out_root:
+                            return ('error', "未設定媒體庫輸出路徑")
+                        fs_path = uri_to_local_fs_path(itm.file_path, _ro_mappings)
+                        # P2 fix (round-3 review 2026-07-21): thread the caller's own
+                        # effective_source/effective_lang into the ingest scrape-
+                        # fallback instead of leaving resolve_ingest_plan's source/
+                        # javbus_lang at their None defaults (which silently forced
+                        # every no-valid-NFO batch item through source="auto").
+                        meta, cs = resolve_ingest_plan(
+                            fs_path, itm.number, config.get("scraper", {}),
+                            action='ingest', proxy_url=proxy_url, source=es, javbus_lang=el,
+                        )
+                        if not meta:
+                            # FIX P2-A (P2 parity closeout): same not-found
+                            # bookkeeping as enrich_single_endpoint's readonly
+                            # branch (see that branch's comment for the
+                            # insert_if_ignore-before-update_scrape_attempted_at
+                            # trap). This branch already canonicalizes 'no_scrape'
+                            # → reason='not_found' below (:1003) — no change there.
+                            stub_repo = VideoRepository()
+                            stub_repo.insert_if_ignore(Video(
+                                path=uri, number=itm.number,
+                                title=os.path.basename(fs_path),
+                            ))
+                            stub_repo.update_scrape_attempted_at(uri, time.time())
+                            return ('no_scrape', "找不到可用的番號資料")
+                        repo = VideoRepository()
+                        existing = repo.get_by_path(uri)
+                        # Codex PR#113 P2#3（round 2，owner-confirmed 全面對齊；round 6
+                        # 修正）：batch readonly 對齊 enrich_single_endpoint 同一段
+                        # cover-preserve gate（見該處註解，含 round-6 fix 說明）。
+                        # BatchEnrichRequest 沒有 per-item mode/write_cover/
+                        # overwrite_existing 覆寫欄位（BatchEnrichItem 只帶 file_path/
+                        # number/source/javbus_lang），一律用整批 request 的值。
+                        had_cover = bool(existing and existing.cover_path) and os.path.exists(
+                            uri_to_local_fs_path(existing.cover_path, _ro_mappings)
+                        )
+                        preserve_cover = (not request.write_cover) or (
+                            request.mode == 'fill_missing' and not request.overwrite_existing and had_cover
+                        )
+                        if preserve_cover:
+                            cs = ('none',)
+                        file_info = {
+                            "path": fs_path,
+                            "size": existing.size_bytes if existing else os.path.getsize(fs_path),
+                            "mtime": existing.mtime if existing else os.path.getmtime(fs_path),
+                        }
+                        try:
+                            # _produce_one now returns (movie_dir, assets) — payload
+                            # (P3 review 2026-07-21) carries assets back out of the
+                            # executor so the 'ok' branch below can surface the full
+                            # EnrichResult shape (Codex PR#113 one-pass alignment) on
+                            # the result-item, same as the non-readonly EnrichResult
+                            # shape the frontend (state-batch.js) already keys its
+                            # badge/fly-in animation off of. NFO is always written
+                            # (P1 revert, round-3 review 2026-07-21 — write_nfo=false
+                            # is rejected above, before this point is ever reached).
+                            _, assets = _produce_one(
+                                repo, ro_source, config.get("scraper", {}), file_info=file_info, meta=meta,
+                                cover_strategy=cs, assets_mode='full', existing=existing,
+                                output_root=out_root, output_uri=out_uri,
+                                allocated_this_run=set(), path_mappings=_ro_mappings,
+                            )
+                        except Exception:
+                            logger.exception("batch_enrich readonly item %s 失敗", itm.number)
+                            return ('error', "生成失敗")
+                        # Codex PR#113 P2#4（round 2）：對齊 enrich-single / core.enricher
+                        # ——只在本次「實際寫入新封面內容」時才 reset+re-submit focal。留在
+                        # executor 執行緒內完成（run_in_executor 已離開 event loop）——
+                        # reset_focal_to_auto 是阻塞 DB 寫、maybe_submit_video_focal 內部
+                        # 亦有阻塞 DB 讀，不可搬回外層 async 裸呼叫（async-offload 守衛）。
+                        if assets.get('cover_fs'):
+                            try:
+                                focal_repo = VideoRepository()  # 致命細節 1：不可重用上面的 repo
+                                focal_repo.reset_focal_to_auto(uri)
+                                maybe_submit_video_focal(
+                                    meta['number'],
+                                    meta.get('maker'),
+                                    uri,
+                                    assets['cover_fs'],
+                                    cover_path_uri=to_file_uri(assets['cover_fs'], _ro_mappings),
+                                )
+                            except Exception:
+                                logger.warning(
+                                    "batch_enrich readonly item %s focal 排程失敗（不影響結果）",
+                                    itm.number, exc_info=True,
+                                )
+                        # had_cover carried out in payload (not just used for the
+                        # preserve_cover gate above) — the 'ok' branch outside this
+                        # closure needs it to compute has_servable_cover for `reason`
+                        # (P2 review round 3), and `existing` itself is local to this
+                        # executor closure / not accessible after run_in_executor returns.
+                        return ('ok', (assets, meta, had_cover))
+
+                    loop = asyncio.get_running_loop()
+                    status, payload = await loop.run_in_executor(None, _do_readonly)
+                    if status == 'ok':
+                        success_count += 1
+                        thumbnail_cache.invalidate(canonical)
+                        # nfo_written=True unconditionally: assets_mode='full' reaching
+                        # here means _write_movie_assets ran to completion (it raises
+                        # otherwise, caught above as 'error'), and the NFO write is
+                        # always attempted now (P1 revert, round-3 review 2026-07-21 —
+                        # write_nfo=false is rejected above, before this point).
+                        assets, item_meta, had_cover = payload or ({}, {}, False)
+                        cover_written = bool(assets.get('cover_fs'))
+                        # Codex PR#113 P2 #2: mirror non-readonly EnrichResult.reason
+                        # semantics (core/enricher.py:603) so state-batch.js
+                        # _resolveCardStatus doesn't fall back to its
+                        # success-implies-'hit' default (:300) — an NFO-only
+                        # ingest (no cover) would otherwise be misreported as
+                        # 'hit', causing the frontend to build a /api/gallery/thumb
+                        # URL for a cover that was never written.
+                        # P2 review round 3: `reason` must reflect a SERVABLE cover
+                        # (this-call write OR an existing DB row cover_path), not
+                        # just this-call cover_written — same has_servable_cover
+                        # decoupling as enrich-single (see that branch's comment) /
+                        # core.enricher.enrich_single (enricher.py:589-604). had_cover
+                        # was computed inside the executor closure (before _produce_one
+                        # ran) from the pre-write DB row and carried out via payload
+                        # (preserve-cover means that row's cover_path is untouched by
+                        # this call, so it's still what's servable now).
+                        has_servable_cover = cover_written or had_cover
+                        result_item = {
+                            'type': 'result-item', 'number': item.number, 'file_path': item.file_path,
+                            **asdict(EnrichResult(
+                                success=True,
+                                nfo_written=True,
+                                cover_written=cover_written,
+                                extrafanart_written=len(assets.get('sample_fs', [])),
+                                fields_filled=_readonly_fields_filled(item_meta),
+                                source_used=item_meta.get('source', ''),
+                                error=None,
+                                reason='hit' if has_servable_cover else 'no_cover',
+                            )),
+                        }
+                        yield f"data: {json.dumps(result_item)}\n\n"
+                    else:
+                        failed_count += 1
+                        # P2 review round 3 (FIX#5): canonicalize `reason` — only
+                        # 'hit'/'no_cover'/'not_found'/'error' are ever emitted, never
+                        # a raw internal status string. 'no_scrape' → 'not_found'
+                        # (mirrors core.enricher's own not_found reason value for the
+                        # same "couldn't find any data" condition — Codex PR#113
+                        # one-pass alignment); every other non-'ok' status ('error',
+                        # 'db_to_sidecar' [FIX#4], and the theoretically-unreachable
+                        # 'skip') collapses to 'error' — previously `reason = status`
+                        # would have leaked 'skip' verbatim if that dead path were
+                        # ever somehow hit.
+                        reason = 'not_found' if status == 'no_scrape' else 'error'
+                        result_item = {
+                            'type': 'result-item', 'number': item.number, 'file_path': item.file_path,
+                            **asdict(EnrichResult(
+                                success=False, nfo_written=False, cover_written=False,
+                                extrafanart_written=0, fields_filled=[], source_used='',
+                                error=payload or '生成失敗', reason=reason,
+                            )),
+                        }
+                        yield f"data: {json.dumps(result_item)}\n\n"
                     continue
 
                 try:
@@ -572,7 +1091,6 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                             path_mappings=_ro_mappings,
                         ),
                     )
-                    from dataclasses import asdict
                     result_dict = asdict(result)
                     if result.success:
                         success_count += 1

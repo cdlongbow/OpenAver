@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.6] - 2026-07-21
+
+本版讓「唯讀來源」（通常是雲端分享盤）變聰明了：如果那個盤本身已經是整理好的媒體庫（影片旁邊就附了 `.nfo` 和封面圖），OpenAver 會**直接讀用它現成的資料**，不再無視它、傻傻地重新上網刮一次——更快、更省流量、也更準（撞號抓錯的問題在已整理的庫直接消失）。同時，唯讀來源的片現在也能用放大鏡補料、齒輪重刮、補劇照，而且產物一律落在獨立輸出夾，**絕不會寫回你的唯讀盤**。
+
+### Added
+#### 📀 唯讀來源就地取用本地資料（不再無腦重刮）
+- 產生列表時，來源影片旁若有 `.nfo`，直接讀它寫入資料庫（片名／番號／女優／片商／標籤／日期…），**完全不連網**；旁邊有封面圖就複製一份進輸出夾使用。三種常見情況（有 NFO 有封面／只有 NFO／只有封面）各自最省地處理。
+- 即使檔名被改成片名、抽不出番號，只要 NFO 裡有番號（`<num>`／`<uniqueid>`）一樣能就地建立（番號以 NFO 為準）——整理好的庫常把檔名改成片名，這類片不再被跳過。
+- 已整理成 Jellyfin/Emby 格式（`-poster.jpg` + `-fanart.jpg`）的來源，那兩張圖會**原樣複製**進輸出夾、不重新裁生，完整保留你 curate 的海報與背景圖（只有缺的那張才由封面補生）。
+- 沒有任何附檔的裸片，才照舊上網刮（行為不變）。
+- 對「已在別處整理好、只想在 OpenAver 裡瀏覽」的雲盤庫特別有感：秒建、不重複下載、用你自己 curate 的正確資料。
+
+#### 🔓 唯讀來源的片也能補料／重刮／補劇照
+- 以前唯讀來源的片，放大鏡、齒輪（進階重刮）、補劇照三顆按鈕是鎖住的；本版全部解禁。
+- 所有寫入一律導向獨立輸出夾，**來源盤零寫入**（承重牆不變）。齒輪重刮撞號時可手動挑版本（沿用既有 JavLibrary 切換）。
+
+### Fixed
+- 刪掉本地產生的封面後，可用齒輪重刮補回（不再整批略過）。
+- 修正某些第三方 NFO 把女優寫成巢狀結構時、就地取用會漏掉女優的問題。
+- 補劇照回報的張數改為「實際下載成功」的數量（非「嘗試」數）；一張都沒抓到時不會清空既有紀錄。
+- 批次補料對唯讀片成功後，掃描頁卡片狀態與封面動畫會正確更新（不再誤顯示成「沒變動」）；只有 NFO、沒封面的片會標為「無封面」而非硬拉一張不存在的縮圖（破圖）。
+- 唯讀片按放大鏡「補缺」（缺 NFO、封面還在）不再重寫既有封面（只補缺的那份），封面真的被換掉時（齒輪重刮換新圖）才自動重跑對焦——與非唯讀完全一致。
+- 修正舊版（0.11.x）唯讀來源產生的媒體庫，升級後**每部片都誤顯示放大鏡（補缺）圖示**的問題：那些片的資料其實完整（NFO 早已寫進輸出夾），只是舊版把資料庫的 NFO 時間戳記記成 0，讓介面誤判「缺 NFO」。本版升級時**自動回填**正確時間戳（依封面旁的同名 `.nfo` 實際時間），圖示即消失；只補值不刪值、找不到 `.nfo` 的片保持原狀。
+- 唯讀片刮不到資料時，不再每次掃描／批次補料都被重複端出來要求重刮——比照非唯讀，標記為「已嘗試過」。
+- 修正唯讀來源就地取用時，NFO 裡的**原文標題**（originaltitle）被漏讀、且重刮時會被清空的問題（現在正確保留，刮不到新值也不會覆蓋既有值）。
+- 修正「補劇照」若是某部片的第一個動作時，之後正式重建會另配一個 `NUMBER-2` 目錄、導致劇照跟 NFO／封面被拆到兩個資料夾的問題。
+- 修正唯讀片若封面圖檔已被刪除（但資料庫仍記著），按放大鏡「補缺」時會誤判「已有封面」而跳過、留下破圖的問題——現在會實際檢查磁碟上封面在不在，不在就重建（與非唯讀 `_write_cover` 一致）。
+
+### Internal
+- 抽出單片產生的共用核心：bulk 產生／放大鏡／齒輪／補劇照四條路共用同一套 resolve→write→upsert，杜絕目錄邏輯漂移與孤兒夾。
+- 封面來源三態策略（複製本地／不下載／遠端下載）＋ metadata 與封面來源解耦；`nfo_mtime` 改實寫值。舊庫殘留的 `nfo_mtime=0`（pre-T1／0.11.x）由 app 啟動時一次性 `backfill_readonly_nfo_mtime` 回填（`cover_path` 旁同名 `.nfo` 的 stat mtime）——冪等、只補不刪、不進 per-request `init_db`。
+- 唯讀端點從「拒絕」改「改道 output_dir」，語意走明確 `readonly_action` 欄位（非唯讀端完全忽略、byte-identical）。
+- 前端 `is_readonly_source` 欄位與相關死碼（批次 readonly 狀態卡、i18n key、zombie CSS＋守衛）連根移除，配 lint 負向守衛防回流。
+
+### 測試
+- 全套 pytest **5523 passed, 1 skipped**（unit + integration，排除 smoke／e2e）＋ `ruff check .` 綠 ＋ `npm run lint` 綠（static_guard_lint／css-guard／cjk_guard）＋ `npm test`（node:test **219**，含四鈕 readonly_action intent 3 支）＋ readonly-route offload 正向守衛。
+- 來源金絲雀：**8 源全 PASS**（javbus／jav321／heyzo／d2pass／avsox／fc2／javdb／dmm，pre-merge live）。
+- **CDP 真機驗收**（headless Playwright 真 click、D:\123 唯讀來源）：① 生成列表就地 ingest 封面 hash-match copy（零網路）＋巢狀女優正確歸檔 ② 放大鏡真 click→ingest 零網路 ③ 補劇照 samples_only 只落劇照、nfo／封面 hash 不變、回實寫數 ④ 放大鏡／齒輪／補劇照四鈕唯讀解禁可點 ⑤ 來源零寫入。
+- 每 task 獨立 Sonnet review ＋ Codex plan review（5×P1）＋ Codex diff review（P1 巢狀 actor／2×P2 劇照數・batch 欄位，皆已修）＋ grok 整支 branch 第二意見（提 5、採納 3、假陽性 1、by-design 1；**增量 2**＝抓到四層 review 都漏的 data-loss：唯讀片先補劇照、之後齒輪重刮／放大鏡會清掉既有劇照〔磁碟+DB〕；封面重刮失敗會把 DB cover_path 清空破圖——兩者已修，改比照 enricher 保留既有值）＋ Codex GitHub PR review 兩輪（第一輪 2×P2：檔名無番號但 NFO 有番號的片被跳過、批次唯讀無封面片缺 reason 硬拉破圖縮圖；第二輪 2×P2：唯讀 fill_missing 重寫既有封面／換封面後對焦不重跑；第三輪 owner 判定為「唯讀平行實作不鏡射 enrich 合約」的連環 bug、拍板一次完整對齊：三個唯讀端點一律回傳完整 EnrichResult 形狀、認 write_nfo 旗標、reason 依實際可用封面判定、fetch-samples 形狀與 fetch_samples_only 逐欄對齊、db_to_sidecar 明確拒絕——皆對齊非唯讀行為，owner 確認後修；第四輪撤回第三輪過度對齊的 write_nfo skip-gate（會造成標題變更 rescrape 刪舊 NFO 但跳過寫新 NFO 的 data-loss）改「唯讀一律寫 NFO＋明確拒絕 write_nfo=false」，並補齊 ingest／rescrape 兩條 scrape fallback 都 thread caller 的 source／javbus_lang）＋ owner 真機回報修正（Jellyfin 格式 curated `-poster` 被重畫丟棄→改原樣複製）；第五輪 owner 拍板「窮舉盤點一次收口」——除 Codex 兩 P2（not-found 未標 scrape_attempted_at＋stub row／samples-only 未記 output_dir 致 NUMBER-2 孤兒夾）外，盤點自查再抓兩條同族（original_title 從未鏡射被靜默清空、enrich-single not-found reason 應為 not_found），一次修完並排除 6 條 by-design 假分歧；第六輪 P1（pre-push 本機審抓到）：第五輪的 original_title 空值保留只做在 DB 層，NFO 寫入仍會清空 `<originaltitle>`（磁碟資料遺失＋NFO/DB 不一致），改在 `_produce_one` 寫資產前合成 effective 值讓 NFO／DB 共用同一份 meta；第七輪（owner 定調最後一輪）2×P2：唯讀封面保留只看 DB `cover_path`、不查磁碟——輸出封面被刪除時 fill_missing 放大鏡誤判「已有封面」跳過重建留破圖，改為額外 `os.path.exists` 檢查、與非唯讀 `_write_cover:236` 真正一致（enrich-single＋batch 兩處）。
+- 本版新增 i18n key 只寫 zh_TW（其餘三語留空靠回退）。
+
 ## [0.12.5] - 2026-07-20
 
 本版是一次「技術債清償」（feature/103）：把散在程式各處、只能靠人腦自律維持的東西收斂乾淨，並替每一筆清償補上一道機械守衛，讓債長不回來。**絕大部分對使用者完全隱形**，實際會被看見的只有下面三件事。

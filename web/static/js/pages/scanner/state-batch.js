@@ -200,7 +200,7 @@ export function stateBatch() {
                                 } else {
                                     this.missingEnrichFailed++;
                                 }
-                                // log reason-gate（U-2）：only error 記詳情，not_found/readonly 安靜不記
+                                // log reason-gate（U-2）：only error 記詳情，not_found 安靜不記
                                 if (event.reason === 'error') {
                                     this.addLog('error', window.t('scanner.stats.missing_enrich_item_failed', { number: event.number || '', error: event.error || '' }));
                                 }
@@ -297,7 +297,6 @@ export function stateBatch() {
                 case 'no_cover': return 'no_cover';
                 case 'not_found': return 'not_found';
                 case 'error': return 'error';
-                case 'readonly': return 'readonly';
                 default: return success ? 'hit' : 'error';
             }
         },

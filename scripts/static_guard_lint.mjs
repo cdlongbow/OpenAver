@@ -1907,9 +1907,9 @@ const RULES = [
     note: '[TestRescrapeEntryGuard] test_gear_tooltip_uses_i18n_key — ⚙ 用 i18n key，不硬編碼',
   },
   {
-    file: 'web/templates/showcase.html', kind: 'required-string', pattern: /:aria-label="[^"]*entry_tooltip/,
+    file: 'web/templates/showcase.html', kind: 'required-string', pattern: /[\s:]aria-label="[^"]*entry_tooltip/,
     scope: /<button\b[^>]*?\bclass="lb-rescrape-gear".*?<\/button>/s,
-    note: '[TestRescrapeEntryGuard] test_gear_tooltip_uses_i18n_key — ⚙ 缺 :aria-label（可及性）',
+    note: '[TASK-104-T4] test_gear_tooltip_uses_i18n_key — ⚙ 缺 aria-label（可及性）；104-T4 移除 readonly 三元後改靜態 Jinja 屬性（原僅接受 Alpine `:aria-label` 動態綁定，拓寬比對前綴涵蓋兩種形式）。round-3 P3：改用 `[\\s:]` 前綴取代 `\\b`（`-` 也是 word-boundary，`\\baria-label` 會誤過 `data-aria-label`）',
   },
   { file: 'web/static/js/shared/long-press.js', kind: 'file-absent', note: '[TestRescrapeEntryGuard] test_long_press_helper_retired — 74c-T3：long-press.js 已刪除，不得再存在' },
   { file: 'web/static/js/pages/showcase/main.js', kind: 'forbidden-string', pattern: "from '@/shared/long-press.js'", note: '[TestRescrapeEntryGuard] test_main_js_imports_and_merges_long_press — showcase main.js 已移除 long-press import' },
@@ -2813,63 +2813,18 @@ const RULES = [
     note: '[TestOutputPathVisibilityGuard] test_folder_item_output_xshow_gated_by_external_manager_whitelist — bound to x-show value (Codex 96d P1 fix)：fail-open forbidden（CD-96d-7）',
   },
 
-  // ---- [TestReadonlyDisabledStateGuard] showcase.html 唯讀來源片四寫入入口停用態鏡像（element-bound tag-scan）
-  // （cross-plan：CSS 半邊 96c CG-RO-01 已綠、i18n 半邊 96a 已綠，皆不必補；96d 只建 HTML 半邊；CD-96d-7 負守衛）----
+  // ---- [TASK-104-T4] showcase.html 唯讀四鈕解禁：舊 96d readonly-disabled 鏡像正向守衛（element-bound
+  // tag-scan，原 [TestReadonlyDisabledStateGuard]）已隨 104-T4 解禁四鈕整段移除——is_readonly_source /
+  // is-readonly-disabled / readonly_tooltip 三者皆從 showcase.html 拔除，正向 required 規則會恆紅，故砍除
+  // 整組（含冗餘的讀取類負守衛子陣列，已被下方 CD-104-10 全檔負向規則涵蓋）。CSS 半邊 CG-RO-01
+  // （scripts/css-guard.mjs）已同步整條移除——.is-readonly-disabled class 定義本身也已從
+  // showcase.css 刪除（拔除要徹底，見該檔 CG-RO-01 移除註記）。
+  // ---- [CD-104-10] showcase.html 全檔負向守衛：is_readonly_source 零殘留（防四鈕 copy-paste 漏改復活）----
   {
-    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
-    tagPattern: /<button\b[^>]*enrichVideo\(video\)[^>]*>/,
-    required: [
-      /:disabled="[^"]*is_readonly_source[^"]*"/,
-      /:disabled="[^"]*_enriching[^"]*"/,
-      /:class="[^"]*is-readonly-disabled[^"]*"/,
-      /:title="[^"]*readonly_tooltip[^"]*"/,
-    ],
-    requiredAnyOf: [/:disabled="!!/, /:disabled="[^"]*=== true/],
-    note: '[TestReadonlyDisabledStateGuard] test_grid_enrich_btn_readonly_disabled — ① 缺圖卡 enrich 按鈕 readonly disabled 鏡像',
+    file: 'web/templates/showcase.html', kind: 'forbidden-string',
+    pattern: 'is_readonly_source',
+    note: '[TASK-104-T4] test_showcase_html_no_is_readonly_source — 唯讀四鈕已解禁，is_readonly_source 欄位/綁定不得殘留（CD-104-10 全檔負向守衛）',
   },
-  {
-    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
-    tagPattern: /<button\b[^>]*enrichVideo\(currentLightboxVideo\)[^>]*>/,
-    required: [
-      /:disabled="[^"]*currentLightboxVideo\?\.is_readonly_source[^"]*"/,
-      /:disabled="[^"]*_enriching[^"]*"/,
-      /:class="[^"]*is-readonly-disabled[^"]*"/,
-      /:data-tooltip="[^"]*readonly_tooltip[^"]*"/,
-    ],
-    requiredAnyOf: [/:disabled="!!/, /:disabled="[^"]*=== true/],
-    note: '[TestReadonlyDisabledStateGuard] test_lightbox_enrich_btn_readonly_disabled — ② 燈箱補資料按鈕 readonly disabled 鏡像',
-  },
-  {
-    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
-    tagName: 'button', className: 'fetch-samples-btn',
-    required: [
-      /:disabled="[^"]*is_readonly_source[^"]*"/,
-      /:disabled="[^"]*_fetchSamplesFailed[^"]*"/,
-      /:class="[^"]*is-readonly-disabled[^"]*"/,
-      /:title="[^"]*readonly_tooltip[^"]*"/,
-      /:aria-label="[^"]*readonly_tooltip[^"]*"/,
-    ],
-    requiredAnyOf: [/:disabled="!!/, /:disabled="[^"]*=== true/],
-    note: '[TestReadonlyDisabledStateGuard] test_fetch_samples_btn_readonly_disabled — ③ 補劇照按鈕 readonly disabled 鏡像',
-  },
-  {
-    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
-    tagName: 'button', className: 'lb-rescrape-gear',
-    required: [
-      /:disabled="[^"]*currentLightboxVideo\?\.is_readonly_source[^"]*"/,
-      /:class="[^"]*is-readonly-disabled[^"]*"/,
-      /:title="[^"]*readonly_tooltip[^"]*"/,
-    ],
-    requiredAnyOf: [/:disabled="!!/, /:disabled="[^"]*=== true/],
-    note: '[TestReadonlyDisabledStateGuard] test_rescrape_gear_readonly_disabled — ④ 齒輪進階重刮 readonly disabled 鏡像',
-  },
-  ...['playVideo(video.path)', 'openLocal(video.path)', 'playVideo(currentLightboxVideo?.path)',
-      'openLocal(currentLightboxVideo?.path)', 'openSimilarMode()'].map((expr) => ({
-    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
-    tagPattern: new RegExp(`<button\\b[^>]*${escapeRegExp(expr)}[^>]*>`),
-    forbidden: ['is_readonly_source'],
-    note: `[TestReadonlyDisabledStateGuard] test_read_type_buttons_not_readonly_disabled — 讀取類按鈕不得綁 is_readonly_source（CD-96d-7 負守衛）: ${expr}`,
-  })),
 
   // ---- [TestRewriteStrmConfirmGuard] settings.html rewrite 確認 modal 骨架 + tone + state-config.js
   // saveConfig media-server 存後鉤 + confirmRewriteStrm 實際端點呼叫（cross-plan：96a i18n+風味 半邊不建；

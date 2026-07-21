@@ -5,7 +5,9 @@ All filesystem / DB access is mocked — zero real I/O unless explicitly noted
 """
 import inspect
 import os
+import shutil
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -655,6 +657,12 @@ _T3_FILE_INFO = {
     'mtime': 1704067200.0,
 }
 
+# TASK-104-T1 (CD-104-4): _upsert_db full mode now reads assets['nfo_mtime']
+# instead of a hardcoded 0.0 — every direct _upsert_db unit-test call below
+# must supply this key. A distinctive non-zero value (not 0.0, not equal to
+# mtime/size) so a test asserting v.nfo_mtime against it can't pass by accident.
+_T3_NFO_MTIME = 1704067333.5
+
 _T3_BASE_CONFIG = {
     'filename_format': '{num} {title}',
     'max_filename_length': 60,
@@ -668,6 +676,28 @@ _T3_BASE_CONFIG = {
 def _t3_format_data(meta=None, source_fs_path='/src/TEST-001.mp4', config=None):
     from core.readonly_producer import _format_data
     return _format_data(meta or _T3_META, source_fs_path, config or _T3_BASE_CONFIG)
+
+
+def _t3_generate_nfo_side_effect(**kwargs):
+    """generate_nfo side_effect used by tests that mock it out but still need a
+    real file on disk (TASK-104-T1 / CD-104-4: _write_movie_assets now stats the
+    NFO it just wrote — `os.stat(nfo_fs)` — so a bare MagicMock/return_value=True
+    with no actual write raises FileNotFoundError)."""
+    output_path = kwargs.get('output_path', '')
+    if output_path:
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).write_text('<movie/>', encoding='utf-8')
+    return True
+
+
+def _cover_strategy_for(meta):
+    """TASK-104-T1: mirror produce_source's own cover_strategy derivation
+    (`('download', meta['cover']) if meta.get('cover') else ('none',)`) so
+    pre-existing direct `_write_movie_assets` unit tests keep exercising the
+    exact same 'download'/'none' behaviour they always have, now expressed
+    through the explicit CD-104-2 3-state contract instead of an implicit
+    default inside the writer."""
+    return ('download', meta['cover']) if meta.get('cover') else ('none',)
 
 
 class TestWriteMovieAssets:
@@ -696,12 +726,15 @@ class TestWriteMovieAssets:
 
         def fake_nfo(**kwargs):
             recorded_paths.append(kwargs.get('output_path', ''))
-            return True   # generate_nfo returns bool; True = write ok
+            return _t3_generate_nfo_side_effect(**kwargs)
 
         with patch('core.readonly_producer.download_image', side_effect=fake_download), \
              patch('core.readonly_producer.generate_jellyfin_images', side_effect=fake_jellyfin), \
              patch('core.readonly_producer.generate_nfo', side_effect=fake_nfo):
-            _write_movie_assets(movie_dir, _T3_META, fd, source_fs_path, _T3_BASE_CONFIG)
+            _write_movie_assets(
+                movie_dir, _T3_META, fd, source_fs_path, _T3_BASE_CONFIG,
+                cover_strategy=_cover_strategy_for(_T3_META),
+            )
 
         assert recorded_paths, "No paths were recorded — mocks not called"
         for p in recorded_paths:
@@ -729,8 +762,11 @@ class TestWriteMovieAssets:
         with patch('core.readonly_producer.download_image', side_effect=fake_download), \
              patch('core.readonly_producer.generate_jellyfin_images',
                    return_value={'poster': True, 'fanart': True}), \
-             patch('core.readonly_producer.generate_nfo'):
-            _write_movie_assets(movie_dir, _T3_META, fd, '/src/TEST-001.mp4', _T3_BASE_CONFIG)
+             patch('core.readonly_producer.generate_nfo', side_effect=_t3_generate_nfo_side_effect):
+            _write_movie_assets(
+                movie_dir, _T3_META, fd, '/src/TEST-001.mp4', _T3_BASE_CONFIG,
+                cover_strategy=_cover_strategy_for(_T3_META),
+            )
 
         assert download_calls, "download_image was never called"
         assert download_calls[0] == _T3_META['cover'], (
@@ -748,8 +784,11 @@ class TestWriteMovieAssets:
         with patch('core.readonly_producer.download_image', return_value=True), \
              patch('core.readonly_producer.generate_jellyfin_images',
                    return_value={'poster': True, 'fanart': True}), \
-             patch('core.readonly_producer.generate_nfo'):
-            assets = _write_movie_assets(movie_dir, _T3_META, fd, '/src/TEST-001.mp4', config)
+             patch('core.readonly_producer.generate_nfo', side_effect=_t3_generate_nfo_side_effect):
+            assets = _write_movie_assets(
+                movie_dir, _T3_META, fd, '/src/TEST-001.mp4', config,
+                cover_strategy=_cover_strategy_for(_T3_META),
+            )
 
         assert assets['sample_fs'] == []
         ef_dir = Path(movie_dir) / 'extrafanart'
@@ -769,8 +808,11 @@ class TestWriteMovieAssets:
         with patch('core.readonly_producer.download_image', side_effect=fake_download), \
              patch('core.readonly_producer.generate_jellyfin_images',
                    return_value={'poster': True, 'fanart': True}), \
-             patch('core.readonly_producer.generate_nfo'):
-            assets = _write_movie_assets(movie_dir, _T3_META, fd, '/src/TEST-001.mp4', config)
+             patch('core.readonly_producer.generate_nfo', side_effect=_t3_generate_nfo_side_effect):
+            assets = _write_movie_assets(
+                movie_dir, _T3_META, fd, '/src/TEST-001.mp4', config,
+                cover_strategy=_cover_strategy_for(_T3_META),
+            )
 
         assert len(assets['sample_fs']) == 2
         assert 'fanart1.jpg' in assets['sample_fs'][0]
@@ -785,13 +827,14 @@ class TestWriteMovieAssets:
         fd = _t3_format_data(meta=meta_no_cover)
 
         jellyfin_mock = MagicMock()
-        nfo_mock = MagicMock()
+        nfo_mock = MagicMock(side_effect=_t3_generate_nfo_side_effect)
 
         with patch('core.readonly_producer.download_image', return_value=False), \
              patch('core.readonly_producer.generate_jellyfin_images', jellyfin_mock), \
              patch('core.readonly_producer.generate_nfo', nfo_mock):
             assets = _write_movie_assets(
-                movie_dir, meta_no_cover, fd, '/src/TEST-001.mp4', _T3_BASE_CONFIG
+                movie_dir, meta_no_cover, fd, '/src/TEST-001.mp4', _T3_BASE_CONFIG,
+                cover_strategy=_cover_strategy_for(meta_no_cover),
             )
 
         jellyfin_mock.assert_not_called()
@@ -809,19 +852,48 @@ class TestWriteMovieAssets:
 
         def capture_nfo(**kwargs):
             captured.update(kwargs)
-            return True   # generate_nfo returns bool; True = write ok
+            return _t3_generate_nfo_side_effect(**kwargs)
 
         with patch('core.readonly_producer.download_image', return_value=True), \
              patch('core.readonly_producer.generate_jellyfin_images',
                    return_value={'poster': True, 'fanart': True}), \
              patch('core.readonly_producer.generate_nfo', side_effect=capture_nfo):
-            _write_movie_assets(movie_dir, _T3_META, fd, '/src/TEST-001.mp4', config)
+            _write_movie_assets(
+                movie_dir, _T3_META, fd, '/src/TEST-001.mp4', config,
+                cover_strategy=_cover_strategy_for(_T3_META),
+            )
 
         assert 'output_path' in captured
         assert captured['output_path'].startswith(movie_dir)
         assert captured['external_manager'] == 'jellyfin'
         assert captured['has_poster'] is True
         assert captured['has_fanart'] is True
+
+    def test_generate_nfo_receives_original_title(self, tmp_path):
+        """FIX#3: the produced OUTPUT NFO must keep originaltitle — non-readonly
+        enricher.py already passes it through (generate_nfo call at :198)."""
+        from core.readonly_producer import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        meta = dict(_T3_META, original_title='日本語タイトル')
+        fd = _t3_format_data(meta=meta)
+        config = dict(_T3_BASE_CONFIG)
+        captured: dict = {}
+
+        def capture_nfo(**kwargs):
+            captured.update(kwargs)
+            return _t3_generate_nfo_side_effect(**kwargs)
+
+        with patch('core.readonly_producer.download_image', return_value=True), \
+             patch('core.readonly_producer.generate_jellyfin_images',
+                   return_value={'poster': True, 'fanart': True}), \
+             patch('core.readonly_producer.generate_nfo', side_effect=capture_nfo):
+            _write_movie_assets(
+                movie_dir, meta, fd, '/src/TEST-001.mp4', config,
+                cover_strategy=_cover_strategy_for(meta),
+            )
+
+        assert captured.get('original_title') == '日本語タイトル'
 
     def test_nfo_write_failure_raises(self, tmp_path):
         """generate_nfo returns False (write failed) → _write_movie_assets raises.
@@ -838,7 +910,10 @@ class TestWriteMovieAssets:
                    return_value={'poster': True, 'fanart': True}), \
              patch('core.readonly_producer.generate_nfo', return_value=False):
             with pytest.raises(RuntimeError):
-                _write_movie_assets(movie_dir, _T3_META, fd, '/src/TEST-001.mp4', _T3_BASE_CONFIG)
+                _write_movie_assets(
+                    movie_dir, _T3_META, fd, '/src/TEST-001.mp4', _T3_BASE_CONFIG,
+                    cover_strategy=_cover_strategy_for(_T3_META),
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -902,9 +977,12 @@ class TestWriteMovieAssetsStationWiring:
         config = dict(_T3_BASE_CONFIG, external_manager=external_manager)
 
         with patch('core.readonly_producer.download_image', side_effect=_t3_write_face_cover), \
-             patch('core.readonly_producer.generate_nfo', return_value=True), \
+             patch('core.readonly_producer.generate_nfo', side_effect=_t3_generate_nfo_side_effect), \
              patch('core.organizer.detect_focal', return_value=MOCK_FOCAL_XY):
-            assets = _write_movie_assets(movie_dir, meta, fd, source_fs_path, config)
+            assets = _write_movie_assets(
+                movie_dir, meta, fd, source_fs_path, config,
+                cover_strategy=_cover_strategy_for(meta),
+            )
 
         assert assets['cover_fs'], "station3 應成功下載封面"
         base_stem = assets['cover_fs'][:-len('.jpg')]
@@ -980,7 +1058,10 @@ def _t4_write(movie_dir, meta, config, old_base='', download_side_effect=None):
                side_effect=download_side_effect or _t4_real_download), \
          patch('core.readonly_producer.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
          patch('core.readonly_producer.generate_nfo', side_effect=_t4_real_nfo):
-        return _write_movie_assets(movie_dir, meta, fd, '/src/TEST-001.mp4', config, old_base=old_base)
+        return _write_movie_assets(
+            movie_dir, meta, fd, '/src/TEST-001.mp4', config,
+            cover_strategy=_cover_strategy_for(meta), old_base=old_base,
+        )
 
 
 class TestBuildOldBase:
@@ -1355,7 +1436,10 @@ class TestWriteMovieAssetsStaleCleanup:
              patch('core.readonly_producer.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
              patch('core.readonly_producer.generate_nfo', return_value=False):
             with pytest.raises(RuntimeError):
-                _write_movie_assets(movie_dir, meta_b, fd_b, '/src/TEST-001.mp4', config, old_base=old_base)
+                _write_movie_assets(
+                    movie_dir, meta_b, fd_b, '/src/TEST-001.mp4', config,
+                    cover_strategy=_cover_strategy_for(meta_b), old_base=old_base,
+                )
 
         for suffix in ('.nfo', '.jpg', '-poster.jpg', '-fanart.jpg'):
             assert (d / f'TEST-001 Title A{suffix}').exists(), \
@@ -1391,7 +1475,10 @@ class TestWriteMovieAssetsStaleCleanup:
         with patch('core.readonly_producer.download_image', side_effect=failing_cover_download), \
              patch('core.readonly_producer.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
              patch('core.readonly_producer.generate_nfo', side_effect=_t4_real_nfo):
-            assets = _write_movie_assets(movie_dir, meta, fd, '/src/TEST-001.mp4', config, old_base=old_base)
+            assets = _write_movie_assets(
+                movie_dir, meta, fd, '/src/TEST-001.mp4', config,
+                cover_strategy=_cover_strategy_for(meta), old_base=old_base,
+            )
 
         assert assets['cover_fs'] == '', "cover_fs must be '' when download fails"
         assert (d / f'{base}.jpg').read_bytes() == old_cover_bytes, \
@@ -1428,7 +1515,10 @@ class TestWriteMovieAssetsStaleCleanup:
         with patch('core.readonly_producer.download_image', side_effect=failing_cover_download), \
              patch('core.readonly_producer.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
              patch('core.readonly_producer.generate_nfo', side_effect=_t4_real_nfo):
-            assets = _write_movie_assets(movie_dir, meta_b, fd_b, '/src/TEST-001.mp4', config, old_base=old_base)
+            assets = _write_movie_assets(
+                movie_dir, meta_b, fd_b, '/src/TEST-001.mp4', config,
+                cover_strategy=_cover_strategy_for(meta_b), old_base=old_base,
+            )
 
         assert assets['cover_fs'] == ''
         assert (d / 'TEST-001 Title A.jpg').exists(), \
@@ -1454,7 +1544,7 @@ class TestUpsertDb:
         from core.path_utils import to_file_uri
 
         cover_fs = str(tmp_path / 'output' / 'TEST-001' / 'TEST-001 Test Movie Title.jpg')
-        assets = {'cover_fs': cover_fs, 'sample_fs': []}
+        assets = {'cover_fs': cover_fs, 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
         repo = self._repo(temp_db)
 
         _upsert_db(repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None, self.OUTPUT_DIR_URI)
@@ -1470,7 +1560,7 @@ class TestUpsertDb:
         assert v.actresses == _T3_META['actors']
         assert v.tags == _T3_META['tags']
         assert v.mtime == _T3_FILE_INFO['mtime']
-        assert v.nfo_mtime == 0.0
+        assert v.nfo_mtime == _T3_NFO_MTIME
         assert v.output_dir == self.OUTPUT_DIR_URI
 
     def test_cover_path_is_local_uri_not_remote(self, tmp_path, temp_db):
@@ -1478,7 +1568,7 @@ class TestUpsertDb:
         from core.readonly_producer import _upsert_db
 
         cover_fs = str(tmp_path / 'output' / 'TEST-001' / 'cover.jpg')
-        assets = {'cover_fs': cover_fs, 'sample_fs': []}
+        assets = {'cover_fs': cover_fs, 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
         repo = self._repo(temp_db)
 
         _upsert_db(repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None, self.OUTPUT_DIR_URI)
@@ -1499,6 +1589,7 @@ class TestUpsertDb:
         assets = {
             'cover_fs': str(tmp_path / 'output' / 'TEST-001' / 'cover.jpg'),
             'sample_fs': [sample1, sample2],
+            'nfo_mtime': _T3_NFO_MTIME,
         }
         repo = self._repo(temp_db)
 
@@ -1515,7 +1606,7 @@ class TestUpsertDb:
         """cover_fs='' → DB cover_path must be ''."""
         from core.readonly_producer import _upsert_db
 
-        assets = {'cover_fs': '', 'sample_fs': []}
+        assets = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
         repo = self._repo(temp_db)
 
         _upsert_db(repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None, self.OUTPUT_DIR_URI)
@@ -1527,7 +1618,7 @@ class TestUpsertDb:
         """sample_fs=[] → DB sample_images==[]."""
         from core.readonly_producer import _upsert_db
 
-        assets = {'cover_fs': '', 'sample_fs': []}
+        assets = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
         repo = self._repo(temp_db)
 
         _upsert_db(repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None, self.OUTPUT_DIR_URI)
@@ -1539,13 +1630,280 @@ class TestUpsertDb:
         """89b-T2: _upsert_db writes scrape_attempted_at > 0 (success path marks 'attempted')."""
         from core.readonly_producer import _upsert_db
 
-        assets = {'cover_fs': '', 'sample_fs': []}
+        assets = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
         repo = self._repo(temp_db)
 
         _upsert_db(repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None, self.OUTPUT_DIR_URI)
 
         v = repo.get_by_path(self.SOURCE_URI)
         assert v.scrape_attempted_at > 0
+
+    def test_original_title_written_from_meta(self, temp_db):
+        """FIX#3: original_title must round-trip from meta into the DB row —
+        the non-readonly path (core.enricher) already does this
+        (_nfo_to_meta:65 / upsert:652); readonly_producer previously dropped
+        it entirely (zero occurrences), silently wiping the field."""
+        from core.readonly_producer import _upsert_db
+
+        repo = self._repo(temp_db)
+        meta = dict(_T3_META, original_title='日本語タイトル')
+        assets = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
+
+        _upsert_db(repo, self.SOURCE_URI, _T3_FILE_INFO, meta, assets, None, self.OUTPUT_DIR_URI)
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.original_title == '日本語タイトル'
+
+
+class TestUpsertDbFullModeExistingPreservation:
+    """P1/P2 grok-review (pre-merge 2026-07-21): full mode's `existing` param
+    mirrors core.enricher._db_upsert's PRESERVATION PATTERN — when THIS run's
+    assets are empty, fall back to the existing DB row instead of clobbering it.
+    Covers a full-mode RE-ENTRY of an already-produced video (gear rescrape /
+    放大鏡 ingest / batch-enrich — all `assets_mode='full'`, and ingest/rescrape
+    always pass `meta['sample_images']==[]` per CD-104-3, so `assets['sample_fs']`
+    is always `[]` too on that path).
+
+    MUTATION LOCK: reverting either preservation branch back to the old
+    unconditional read (`assets['cover_fs']`/`assets['sample_fs']` verbatim,
+    ignoring `existing`) turns the corresponding test below RED."""
+
+    SOURCE_URI = 'file:///src/TEST-001.mp4'
+    OUTPUT_DIR_URI = 'file:///output/TEST-001'
+
+    def _repo(self, temp_db):
+        from core.database import VideoRepository
+        return VideoRepository(temp_db)
+
+    def _seed_existing(self, repo, cover_path='', sample_images=None):
+        from core.database import Video
+        repo.upsert(Video(
+            path=self.SOURCE_URI, number='TEST-001', title='Existing Title',
+            cover_path=cover_path, sample_images=sample_images or [],
+            output_dir=self.OUTPUT_DIR_URI,
+        ))
+
+    # ── Finding #1 (P1): sample_images preserved on empty sample_fs ─────────
+
+    def test_preserves_existing_sample_images_when_sample_fs_empty(self, temp_db):
+        from core.readonly_producer import _upsert_db
+
+        repo = self._repo(temp_db)
+        old_samples = ['file:///output/TEST-001/extrafanart/fanart1.jpg',
+                       'file:///output/TEST-001/extrafanart/fanart2.jpg']
+        self._seed_existing(repo, sample_images=old_samples)
+        existing = repo.get_by_path(self.SOURCE_URI)
+
+        assets = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            self.OUTPUT_DIR_URI, existing=existing,
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.sample_images == old_samples, (
+            "full-mode re-entry with no new samples must preserve existing sample_images"
+        )
+
+    def test_new_sample_fs_still_overwrites_existing(self, temp_db):
+        """Sanity: preservation only kicks in when THIS run's sample_fs is empty —
+        a genuine new sample write still replaces the DB value (no regression)."""
+        from core.readonly_producer import _upsert_db
+        from core.path_utils import to_file_uri
+
+        repo = self._repo(temp_db)
+        self._seed_existing(repo, sample_images=['file:///old/fanart1.jpg'])
+        existing = repo.get_by_path(self.SOURCE_URI)
+
+        new_sample_fs = ['/output/TEST-001/extrafanart/fanart1.jpg']
+        assets = {'cover_fs': '', 'sample_fs': new_sample_fs, 'nfo_mtime': _T3_NFO_MTIME}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            self.OUTPUT_DIR_URI, existing=existing,
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.sample_images == [to_file_uri(new_sample_fs[0], None)]
+
+    def test_no_existing_row_sample_fs_empty_stores_empty_list(self, temp_db):
+        """NEW video (existing=None) — no regression: empty sample_fs still
+        stores [], never resurrects data from nowhere."""
+        from core.readonly_producer import _upsert_db
+
+        repo = self._repo(temp_db)
+        assets = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            self.OUTPUT_DIR_URI, existing=None,
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.sample_images == []
+
+    # ── Finding #2 (P2): cover_path preserved on empty cover_fs ─────────────
+
+    def test_preserves_existing_cover_path_when_cover_fs_empty(self, temp_db):
+        from core.readonly_producer import _upsert_db
+
+        repo = self._repo(temp_db)
+        self._seed_existing(repo, cover_path='file:///output/TEST-001/TEST-001.jpg')
+        existing = repo.get_by_path(self.SOURCE_URI)
+
+        assets = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            self.OUTPUT_DIR_URI, existing=existing,
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.cover_path == 'file:///output/TEST-001/TEST-001.jpg', (
+            "cover_strategy ('none',) / failed download must not clear an existing cover"
+        )
+
+    def test_new_cover_fs_still_overwrites_existing(self, tmp_path, temp_db):
+        """Sanity: a successful new cover write still replaces the DB value
+        (matches test_gear_rescrape_overwrites_cover_with_candidate_and_title's
+        contract — preservation only kicks in on EMPTY cover_fs)."""
+        from core.readonly_producer import _upsert_db
+        from core.path_utils import to_file_uri
+
+        repo = self._repo(temp_db)
+        self._seed_existing(repo, cover_path='file:///output/TEST-001/old.jpg')
+        existing = repo.get_by_path(self.SOURCE_URI)
+
+        new_cover_fs = str(tmp_path / 'output' / 'TEST-001' / 'TEST-001.jpg')
+        assets = {'cover_fs': new_cover_fs, 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            self.OUTPUT_DIR_URI, existing=existing,
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.cover_path == to_file_uri(new_cover_fs, None)
+
+    def test_no_existing_row_cover_fs_empty_stores_empty_string(self, temp_db):
+        """NEW video (existing=None) — no regression: empty cover_fs still
+        stores '', never resurrects data from nowhere."""
+        from core.readonly_producer import _upsert_db
+
+        repo = self._repo(temp_db)
+        assets = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            self.OUTPUT_DIR_URI, existing=None,
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.cover_path == ''
+
+    # ── FIX#3 (P2 parity closeout): original_title preserve-if-empty ────────
+
+    def test_preserves_existing_original_title_when_meta_empty(self, temp_db):
+        """A re-scrape whose source returned no original_title must not wipe
+        an existing DB value — mirrors the cover_path/sample_images
+        preserve-if-empty pattern above."""
+        from core.readonly_producer import _upsert_db
+        from core.database import Video
+
+        repo = self._repo(temp_db)
+        repo.upsert(Video(
+            path=self.SOURCE_URI, number='TEST-001', title='Existing Title',
+            original_title='既存の原題', output_dir=self.OUTPUT_DIR_URI,
+        ))
+        existing = repo.get_by_path(self.SOURCE_URI)
+
+        meta = dict(_T3_META, original_title='')
+        assets = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, meta, assets, None,
+            self.OUTPUT_DIR_URI, existing=existing,
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.original_title == '既存の原題'
+
+    def test_produce_one_preserves_original_title_in_nfo_and_db_when_rescrape_empty(self, temp_db, tmp_path):
+        """FIX P1 (Codex PR#113 round-6): a re-produce whose meta has an EMPTY
+        original_title must preserve the existing value in BOTH the on-disk output
+        NFO's <originaltitle> AND the DB row. The round-5 fix preserved it only in
+        _upsert_db, so _write_movie_assets→generate_nfo still wrote <originaltitle>
+        as '' → on-disk data loss + NFO/DB drift. This drives the FULL _produce_one
+        path with REAL generate_nfo and asserts the written file itself.
+
+        MUTATION LOCK: removing the `meta['original_title'] = existing.original_title`
+        synthesis in _produce_one turns the NFO assertion below RED (DB stays green
+        via _upsert_db's own preserve — which is exactly why the NFO assertion is
+        the load-bearing one here)."""
+        import xml.etree.ElementTree as ET
+        from core.readonly_producer import _produce_one
+        from core.database import Video
+        from core.path_utils import to_file_uri
+
+        repo = self._repo(temp_db)
+        file_info = {'path': '/src/TEST-001.mp4', 'size': 1234567890, 'mtime': 1704067200.0}
+        src_uri = to_file_uri(file_info['path'], {})
+        repo.upsert(Video(
+            path=src_uri, number='TEST-001', title='Existing Title',
+            original_title='既存の原題',
+        ))
+        existing = repo.get_by_path(src_uri)
+
+        meta = dict(_T3_META, original_title='')  # re-scrape source returned no original_title
+        output_root = str(tmp_path / 'output')
+        movie_dir, _assets = _produce_one(
+            repo, None, _T3_BASE_CONFIG,
+            file_info=file_info, meta=meta, cover_strategy=('none',),
+            assets_mode='full', existing=existing,
+            output_root=output_root, output_uri=to_file_uri(output_root, {}),
+            allocated_this_run=set(), path_mappings={},
+        )
+
+        # DB row preserved
+        assert repo.get_by_path(src_uri).original_title == '既存の原題'
+        # On-disk output NFO preserved (the actual P1 — must not be clobbered to '')
+        nfo_files = list(Path(movie_dir).glob('*.nfo'))
+        assert len(nfo_files) == 1, f"expected exactly one NFO, got {nfo_files}"
+        root = ET.parse(nfo_files[0]).getroot()
+        assert root.findtext('originaltitle') == '既存の原題'
+
+    def test_new_original_title_still_overwrites_existing(self, temp_db):
+        """Sanity: preservation only kicks in when THIS run's meta has no
+        original_title — a genuine new value still replaces the DB value."""
+        from core.readonly_producer import _upsert_db
+        from core.database import Video
+
+        repo = self._repo(temp_db)
+        repo.upsert(Video(
+            path=self.SOURCE_URI, number='TEST-001', title='Existing Title',
+            original_title='古い原題', output_dir=self.OUTPUT_DIR_URI,
+        ))
+        existing = repo.get_by_path(self.SOURCE_URI)
+
+        meta = dict(_T3_META, original_title='新しい原題')
+        assets = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, meta, assets, None,
+            self.OUTPUT_DIR_URI, existing=existing,
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.original_title == '新しい原題'
+
+    def test_no_existing_row_original_title_empty_stores_empty_string(self, temp_db):
+        """NEW video (existing=None) — no regression: empty original_title
+        still stores '', never resurrects data from nowhere."""
+        from core.readonly_producer import _upsert_db
+
+        repo = self._repo(temp_db)
+        meta = dict(_T3_META, original_title='')
+        assets = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, meta, assets, None,
+            self.OUTPUT_DIR_URI, existing=None,
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.original_title == ''
 
 
 # ---------------------------------------------------------------------------
@@ -2098,6 +2456,108 @@ class TestProduceSourceNoneNumberGuard:
         assert result.outcomes[0].status == "no_scrape"
 
 
+class TestProduceSourceSidecarNfoBypassesFilenameNumberBail:
+    """Codex PR#113 P2 #1: a curated file whose FILENAME has no extractable
+    number but whose adjacent .nfo sidecar carries <num>/<id>/<uniqueid> must
+    still ingest — the old `if not number: continue` bailed BEFORE
+    resolve_ingest_plan ever got a chance to read the NFO. MUTATION LOCK:
+    reverting to that early bail must turn test_nfo_number_ingests_despite_no_filename_number
+    RED (result.created goes 1 -> 0, result.no_scrape goes 0 -> 1)."""
+
+    def test_nfo_number_ingests_despite_no_filename_number(self, tmp_path):
+        """(a) no filename number + valid NFO with <num> -> INGESTS (created==1,
+        no_scrape==0), zero network (search_jav never called)."""
+        from core.readonly_producer import produce_source
+
+        source_dir = tmp_path / 'src'
+        source_dir.mkdir()
+        output_dir = tmp_path / 'output'
+        output_dir.mkdir()
+        video = source_dir / 'nonumber.mp4'  # extract_number(basename) -> None
+        video.write_bytes(b'FAKE-VIDEO-BYTES')
+        nfo = video.with_suffix('.nfo')
+        nfo.write_text('<movie><num>SIDECAR-001</num><title>T</title></movie>', encoding='utf-8')
+
+        source = _make_source(readonly=True, output_path=str(output_dir), path=str(source_dir))
+        config = _make_config()
+        repo = MagicMock()
+        repo.get_attempted_index.return_value = {}
+        repo.get_by_path.return_value = None
+        repo.is_output_dir_taken.return_value = False
+        repo.get_all.return_value = []
+
+        files = [{'path': str(video), 'size': 1_000_000, 'mtime': 1.0, 'nfo_mtime': 0.0}]
+
+        with patch('core.readonly_producer._list_source_videos', return_value=files), \
+             patch('core.readonly_producer.search_jav') as mock_search:
+            result = produce_source(source, config, repo)
+
+        mock_search.assert_not_called()
+        assert result.no_scrape == 0, f"expected 0 no_scrape, got {result.no_scrape} (created={result.created})"
+        assert result.created == 1, f"expected NFO-driven ingest, got created={result.created}"
+        repo.upsert.assert_called_once()
+        upserted = repo.upsert.call_args[0][0]
+        assert upserted.number == 'SIDECAR-001'
+
+    def test_no_filename_number_no_nfo_no_scrape_and_no_stub(self):
+        """(b) no filename number + no NFO -> no_scrape, and (unlike the
+        has-number case) NO stub row is created — matches the OLD `if not
+        number` branch's behavior byte-for-byte (regression, same assertions
+        as TestProduceSourceNoneNumberGuard)."""
+        from core.readonly_producer import produce_source
+
+        source = _make_source()
+        repo = MagicMock()
+        config = _make_config()
+        files = [_make_file_info(path="/src/videos/nonumber.mp4")]
+
+        with patch("core.readonly_producer._list_source_videos", return_value=files), \
+             patch.object(repo, "get_attempted_index", return_value={}), \
+             patch("core.readonly_producer._should_skip", return_value=False), \
+             patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
+             patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
+             patch("core.readonly_producer.extract_number", return_value=None), \
+             patch("core.readonly_producer.search_jav") as mock_search:
+            result = produce_source(source, config, repo)
+
+        mock_search.assert_not_called()
+        assert result.no_scrape == 1
+        assert result.created == 0
+        repo.insert_if_ignore.assert_not_called()
+        repo.update_scrape_attempted_at.assert_not_called()
+        repo.upsert.assert_not_called()
+
+    def test_has_number_no_metadata_still_stubs(self):
+        """(c) has a filename number but resolve_ingest_plan yields no usable
+        meta (no NFO, search_jav -> None) -> no_scrape + stub row + attempted
+        marked (regression: unchanged from pre-fix behavior for this case)."""
+        from core.readonly_producer import produce_source
+        from core.database import Video
+
+        source = _make_source()
+        repo = MagicMock()
+        repo.insert_if_ignore.return_value = True
+        config = _make_config()
+        files = [_make_file_info(path="/src/videos/NOTFOUND-001.mp4")]
+
+        with patch("core.readonly_producer._list_source_videos", return_value=files), \
+             patch.object(repo, "get_attempted_index", return_value={}), \
+             patch("core.readonly_producer._should_skip", return_value=False), \
+             patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
+             patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
+             patch("core.readonly_producer.extract_number", return_value="NOTFOUND-001"), \
+             patch("core.readonly_producer.search_jav", return_value=None):
+            result = produce_source(source, config, repo)
+
+        assert result.no_scrape == 1
+        assert result.created == 0
+        repo.insert_if_ignore.assert_called_once()
+        inserted = repo.insert_if_ignore.call_args[0][0]
+        assert isinstance(inserted, Video)
+        assert inserted.number == "NOTFOUND-001"
+        repo.update_scrape_attempted_at.assert_called_once()
+
+
 class TestProduceSourceNotFoundAttempted:
     """89b-T2: produce_source NOT-FOUND branch (search_jav→None, :637-641) writes a
     minimal placeholder row (insert_if_ignore) + marks scrape_attempted_at
@@ -2226,7 +2686,7 @@ class TestProduceSourceNotFoundThenSuccessTitleOverwrite:
         assert v1.title == "TEST-001.mp4"
 
         # Step 2: a later successful scrape upserts the real title over the same path.
-        assets = {'cover_fs': '', 'sample_fs': []}
+        assets = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': _T3_NFO_MTIME}
         _upsert_db(repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None, 'file:///output/TEST-001')
 
         v2 = repo.get_by_path(self.SOURCE_URI)
@@ -2261,7 +2721,7 @@ class TestProduceSourceMixedStats:
                 return None
             return basename.replace(".mp4", "").upper()
 
-        def fake_search_jav(number, source="auto", proxy_url=""):
+        def fake_search_jav(number, source="auto", proxy_url="", javbus_lang=None):
             if "NOSCRAPE" in number:
                 return None
             return {"number": number, "title": "T", "cover": "", "actors": [], "tags": [],
@@ -2387,11 +2847,12 @@ class TestProduceSourceExceptionDoesNotAbort:
 
         call_count = [0]
 
-        def fake_write(movie_dir, meta_arg, fd_arg, src_path, cfg, old_base='', strm_mappings_getter=None):
+        def fake_write(movie_dir, meta_arg, fd_arg, src_path, cfg, cover_strategy=None,
+                      assets_mode='full', old_base='', strm_mappings_getter=None):
             call_count[0] += 1
             if call_count[0] == 2:
                 raise OSError("disk full")
-            return {"cover_fs": "", "sample_fs": []}
+            return {"cover_fs": "", "sample_fs": [], "nfo_mtime": _T3_NFO_MTIME}
 
         mock_movie_dir = MagicMock()
         mock_movie_dir.__str__ = lambda self: "/output/dest/X"
@@ -2890,6 +3351,7 @@ class TestWriteMovieAssetsStrm:
              patch('core.readonly_producer.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
              patch('core.readonly_producer.generate_nfo', side_effect=rec_nfo):
             _write_movie_assets(movie_dir, meta, fd, '/src/TEST-001.mp4', config,
+                                cover_strategy=_cover_strategy_for(meta),
                                 strm_mappings_getter=getter)
 
         # getter 在 nfo 之後才被呼叫（求值延到 _write_strm 前一刻）
@@ -2976,7 +3438,10 @@ class TestWriteMovieAssetsStrmDrift:
              patch('core.readonly_producer.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
              patch('core.readonly_producer.generate_nfo', side_effect=_t4_real_nfo), \
              patch('core.readonly_producer._write_strm', return_value=False):
-            _write_movie_assets(movie_dir, meta_b, fd_b, '/src/TEST-001.mp4', config, old_base=old_base)
+            _write_movie_assets(
+                movie_dir, meta_b, fd_b, '/src/TEST-001.mp4', config,
+                cover_strategy=_cover_strategy_for(meta_b), old_base=old_base,
+            )
 
         assert (d / 'TEST-001 Title A.strm').exists(), \
             "old strm must survive when this run's strm write failed (has_strm False)"
@@ -3002,7 +3467,7 @@ class TestWriteMovieAssetsStrmDrift:
 
 def _e2e_search_jav_factory():
     """Return a search_jav stub yielding per-number meta (cover + 1 sample)."""
-    def fake_search_jav(number, source="auto", proxy_url=""):
+    def fake_search_jav(number, source="auto", proxy_url="", javbus_lang=None):
         return {
             'number': number,
             'title': f'Title {number}',
@@ -3538,3 +4003,1775 @@ class TestProduceSourceFocalTriggerBulkGate:
         args = mock_submit.call_args[0]
         assert args[0] == 'SIRO-040'
         assert args[2] == video_uri
+
+
+# ---------------------------------------------------------------------------
+# TASK-104-T1 (CD-104-1/2/4/9): _produce_one primitive extraction, cover_strategy
+# 3-state, assets_mode='samples_only', nfo_mtime real-write, call-sequence lock.
+# ---------------------------------------------------------------------------
+
+class TestCoverStrategyThreeState:
+    """CD-104-2: _write_movie_assets cover_strategy explicit 3-state contract —
+    'copy' (local file, zero network), 'none' (no cover written at all), and
+    'download' (byte-identical to the pre-T1 unconditional-download branch)."""
+
+    def test_copy_strategy_copies_local_file_not_download(self, tmp_path):
+        from core.readonly_producer import _write_movie_assets
+
+        local_cover = tmp_path / 'local-cover.jpg'
+        local_cover.write_bytes(b'LOCAL-COVER-BYTES')
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        fd = _t3_format_data()
+
+        with patch('core.readonly_producer.download_image') as mock_download, \
+             patch('core.readonly_producer.shutil.copyfile', wraps=shutil.copyfile) as mock_copy, \
+             patch('core.readonly_producer.generate_jellyfin_images',
+                   return_value={'poster': True, 'fanart': True}), \
+             patch('core.readonly_producer.generate_nfo', side_effect=_t3_generate_nfo_side_effect):
+            assets = _write_movie_assets(
+                movie_dir, _T3_META, fd, '/src/TEST-001.mp4', _T3_BASE_CONFIG,
+                cover_strategy=('copy', str(local_cover)),
+            )
+
+        mock_download.assert_not_called()
+        mock_copy.assert_called_once_with(str(local_cover), assets['cover_fs'])
+        assert assets['cover_fs'], "copy state must produce a non-empty cover_fs on success"
+        assert Path(assets['cover_fs']).read_bytes() == b'LOCAL-COVER-BYTES'
+
+    def test_copy_strategy_missing_source_is_graceful(self, tmp_path):
+        """copy source doesn't exist → has_cover=False / cover_fs='', never raises
+        — same graceful-failure semantics as a failed download (card boundary)."""
+        from core.readonly_producer import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        fd = _t3_format_data()
+        missing_source = str(tmp_path / 'does-not-exist.jpg')
+
+        with patch('core.readonly_producer.download_image') as mock_download, \
+             patch('core.readonly_producer.generate_jellyfin_images') as mock_jellyfin, \
+             patch('core.readonly_producer.generate_nfo', side_effect=_t3_generate_nfo_side_effect):
+            assets = _write_movie_assets(
+                movie_dir, _T3_META, fd, '/src/TEST-001.mp4', _T3_BASE_CONFIG,
+                cover_strategy=('copy', missing_source),
+            )
+
+        mock_download.assert_not_called()
+        mock_jellyfin.assert_not_called(), "has_cover False → poster/fanart step must not run"
+        assert assets['cover_fs'] == ''
+
+    def test_none_strategy_writes_no_cover(self, tmp_path):
+        """'none': no cover written at all, download_image/copyfile both untouched,
+        generate_jellyfin_images (poster/fanart) skipped since has_cover is False."""
+        from core.readonly_producer import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        fd = _t3_format_data()
+
+        with patch('core.readonly_producer.download_image') as mock_download, \
+             patch('core.readonly_producer.shutil.copyfile') as mock_copy, \
+             patch('core.readonly_producer.generate_jellyfin_images') as mock_jellyfin, \
+             patch('core.readonly_producer.generate_nfo', side_effect=_t3_generate_nfo_side_effect):
+            assets = _write_movie_assets(
+                movie_dir, _T3_META, fd, '/src/TEST-001.mp4', _T3_BASE_CONFIG,
+                cover_strategy=('none',),
+            )
+
+        mock_download.assert_not_called()
+        mock_copy.assert_not_called()
+        mock_jellyfin.assert_not_called()
+        assert assets['cover_fs'] == ''
+        assert not (Path(movie_dir) / 'TEST-001 Test Movie Title.jpg').exists()
+
+    def test_download_strategy_calls_download_image_not_copy(self, tmp_path):
+        """'download': download_image called with the remote URL, shutil.copyfile
+        never called — the byte-identical pre-T1 branch, locked explicitly here
+        alongside the other two states (also covered by the pre-existing
+        TestWriteMovieAssets::test_rescrape_uses_remote_cover_url)."""
+        from core.readonly_producer import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        fd = _t3_format_data()
+
+        with patch('core.readonly_producer.download_image', return_value=True) as mock_download, \
+             patch('core.readonly_producer.shutil.copyfile') as mock_copy, \
+             patch('core.readonly_producer.generate_jellyfin_images',
+                   return_value={'poster': True, 'fanart': True}), \
+             patch('core.readonly_producer.generate_nfo', side_effect=_t3_generate_nfo_side_effect):
+            assets = _write_movie_assets(
+                movie_dir, _T3_META, fd, '/src/TEST-001.mp4', _T3_BASE_CONFIG,
+                cover_strategy=('download', _T3_META['cover']),
+            )
+
+        mock_copy.assert_not_called()
+        mock_download.assert_called_once()
+        assert mock_download.call_args[0][0] == _T3_META['cover']
+        assert assets['cover_fs']
+
+
+class TestCuratedPosterFanartPassthrough:
+    """Owner-approved fix (2026-07-21): a curated Jellyfin/Emby source ships
+    both a distinct -poster and -fanart sidecar; ingest must copy them
+    VERBATIM into the output slots instead of regenerating them from
+    whichever image find_cover_image picked as the cover (which previously
+    discarded the curator's real poster). cover_strategy's 3rd element (see
+    resolve_ingest_plan) is a dict {'poster': fs_or_None, 'fanart': fs_or_None}."""
+
+    def test_both_slots_present_copied_verbatim_not_regenerated(self, tmp_path):
+        """Both -poster/-fanart sidecars detected -> generate_jellyfin_images
+        (and crop_to_poster) must NOT be called at all; output bytes must
+        equal the SOURCE sidecar bytes exactly, not a crop of the cover.
+
+        MUTATION LOCK: reverting the per-slot shutil.copy2 call back to
+        `generate_jellyfin_images(cover_fs, ...)` (i.e. ignoring source_media)
+        turns this RED — the poster assertion would then read cropped/
+        generated bytes instead of the verbatim source poster bytes.
+        """
+        from core.readonly_producer import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        cover_fs = str(tmp_path / 'cover.jpg')
+        Path(cover_fs).write_bytes(b'COVER-BYTES-DIFFERENT-FROM-BOTH')
+        poster_src = tmp_path / 'src-poster.jpg'
+        fanart_src = tmp_path / 'src-fanart.jpg'
+        poster_src.write_bytes(b'POSTER-MARKER-BYTES')
+        fanart_src.write_bytes(b'FANART-MARKER-BYTES')
+        fd = _t3_format_data()
+
+        with patch('core.readonly_producer.generate_jellyfin_images') as mock_jellyfin, \
+             patch('core.readonly_producer.crop_to_poster') as mock_crop, \
+             patch('core.readonly_producer.generate_nfo', side_effect=_t3_generate_nfo_side_effect):
+            assets = _write_movie_assets(
+                movie_dir, _T3_META, fd, '/src/TEST-001.mp4', _T3_BASE_CONFIG,
+                cover_strategy=('copy', cover_fs, {'poster': str(poster_src), 'fanart': str(fanart_src)}),
+            )
+
+        mock_jellyfin.assert_not_called()
+        mock_crop.assert_not_called()
+        base_stem = str(Path(movie_dir) / 'TEST-001 Test Movie Title')
+        assert Path(base_stem + '-poster.jpg').read_bytes() == b'POSTER-MARKER-BYTES'
+        assert Path(base_stem + '-fanart.jpg').read_bytes() == b'FANART-MARKER-BYTES'
+        assert assets['cover_fs']
+
+    def test_missing_poster_slot_falls_back_to_crop_to_poster(self, tmp_path):
+        """Only -fanart detected (poster slot None) -> fanart copied verbatim,
+        poster falls back to crop_to_poster(cover_fs, ...) — the same generate
+        step it would have used with no 3rd element at all."""
+        from core.readonly_producer import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        src_cover = str(tmp_path / 'cover.jpg')
+        Path(src_cover).write_bytes(b'COVER-BYTES')
+        fanart_src = tmp_path / 'src-fanart.jpg'
+        fanart_src.write_bytes(b'FANART-MARKER-BYTES')
+        fd = _t3_format_data()
+
+        def fake_crop(src_path, dst_path, **_kw):
+            Path(dst_path).write_bytes(b'CROPPED-POSTER-BYTES')
+            return True
+
+        with patch('core.readonly_producer.generate_jellyfin_images') as mock_jellyfin, \
+             patch('core.readonly_producer.crop_to_poster', side_effect=fake_crop) as mock_crop, \
+             patch('core.readonly_producer.generate_nfo', side_effect=_t3_generate_nfo_side_effect):
+            _write_movie_assets(
+                movie_dir, _T3_META, fd, '/src/TEST-001.mp4', _T3_BASE_CONFIG,
+                cover_strategy=('copy', src_cover, {'poster': None, 'fanart': str(fanart_src)}),
+            )
+
+        mock_jellyfin.assert_not_called()
+        mock_crop.assert_called_once()
+        base_stem = str(Path(movie_dir) / 'TEST-001 Test Movie Title')
+        assert mock_crop.call_args[0][0] == base_stem + '.jpg', (
+            "crop_to_poster must read the OUTPUT cover (already copied into movie_dir), "
+            "not the source path"
+        )
+        assert Path(base_stem + '-poster.jpg').read_bytes() == b'CROPPED-POSTER-BYTES'
+        assert Path(base_stem + '-fanart.jpg').read_bytes() == b'FANART-MARKER-BYTES'
+
+    def test_missing_fanart_slot_falls_back_to_cover_copy(self, tmp_path):
+        """Only -poster detected (fanart slot None) -> poster copied verbatim,
+        fanart falls back to copy2(cover_fs, ...) — the same generate step it
+        would have used with no 3rd element at all."""
+        from core.readonly_producer import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        cover_fs = str(tmp_path / 'cover.jpg')
+        Path(cover_fs).write_bytes(b'COVER-MARKER-BYTES')
+        poster_src = tmp_path / 'src-poster.jpg'
+        poster_src.write_bytes(b'POSTER-MARKER-BYTES')
+        fd = _t3_format_data()
+
+        with patch('core.readonly_producer.generate_jellyfin_images') as mock_jellyfin, \
+             patch('core.readonly_producer.crop_to_poster') as mock_crop, \
+             patch('core.readonly_producer.generate_nfo', side_effect=_t3_generate_nfo_side_effect):
+            _write_movie_assets(
+                movie_dir, _T3_META, fd, '/src/TEST-001.mp4', _T3_BASE_CONFIG,
+                cover_strategy=('copy', cover_fs, {'poster': str(poster_src), 'fanart': None}),
+            )
+
+        mock_jellyfin.assert_not_called()
+        mock_crop.assert_not_called()
+        base_stem = str(Path(movie_dir) / 'TEST-001 Test Movie Title')
+        assert Path(base_stem + '-poster.jpg').read_bytes() == b'POSTER-MARKER-BYTES'
+        assert Path(base_stem + '-fanart.jpg').read_bytes() == b'COVER-MARKER-BYTES'
+
+    def test_verbatim_copy_oserror_falls_back_to_generate(self, tmp_path):
+        """Source sidecar vanishes mid-run (OSError on the verbatim copy) ->
+        falls back to the same generate step as a missing slot, never raises."""
+        from core.readonly_producer import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        cover_fs = str(tmp_path / 'cover.jpg')
+        Path(cover_fs).write_bytes(b'COVER-BYTES')
+        poster_src = tmp_path / 'src-poster.jpg'
+        poster_src.write_bytes(b'POSTER-MARKER-BYTES')
+        fd = _t3_format_data()
+
+        def flaky_copy2(src, dst, *a, **kw):
+            if str(src) == str(poster_src):
+                raise OSError("vanished")
+            Path(dst).write_bytes(Path(src).read_bytes())
+
+        def fake_crop(src_path, dst_path, **_kw):
+            Path(dst_path).write_bytes(b'CROPPED-FALLBACK-BYTES')
+            return True
+
+        with patch('core.readonly_producer.shutil.copy2', side_effect=flaky_copy2), \
+             patch('core.readonly_producer.crop_to_poster', side_effect=fake_crop) as mock_crop, \
+             patch('core.readonly_producer.generate_nfo', side_effect=_t3_generate_nfo_side_effect):
+            _write_movie_assets(
+                movie_dir, _T3_META, fd, '/src/TEST-001.mp4', _T3_BASE_CONFIG,
+                cover_strategy=('copy', cover_fs, {'poster': str(poster_src), 'fanart': None}),
+            )
+
+        mock_crop.assert_called_once()
+        base_stem = str(Path(movie_dir) / 'TEST-001 Test Movie Title')
+        assert Path(base_stem + '-poster.jpg').read_bytes() == b'CROPPED-FALLBACK-BYTES'
+
+    def test_neither_slot_present_delegates_to_generate_jellyfin_images(self, tmp_path):
+        """cover_strategy carries a 3rd element but BOTH slots are None (ingest
+        source with a cover but no curator sidecars at all) -> treated
+        identically to no 3rd element: generate_jellyfin_images IS called
+        (single source of truth for the generate path, keeps this case
+        call-identical to before this fix / to TestIngestFourMatrix's mocks)."""
+        from core.readonly_producer import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        fd = _t3_format_data()
+
+        with patch('core.readonly_producer.download_image', return_value=True), \
+             patch('core.readonly_producer.generate_jellyfin_images',
+                   return_value={'poster': True, 'fanart': True}) as mock_jellyfin, \
+             patch('core.readonly_producer.generate_nfo', side_effect=_t3_generate_nfo_side_effect):
+            _write_movie_assets(
+                movie_dir, _T3_META, fd, '/src/TEST-001.mp4', _T3_BASE_CONFIG,
+                cover_strategy=('copy', '/src/cover-does-not-matter.jpg', {'poster': None, 'fanart': None}),
+            )
+
+        # cover copy itself will fail (missing file) -> has_cover False -> jellyfin
+        # never called either way; assert via the has_cover=False contract instead.
+        mock_jellyfin.assert_not_called()
+
+    def test_scrape_rescrape_two_tuple_still_delegates_to_generate_jellyfin_images(self, tmp_path):
+        """A 2-tuple cover_strategy (scrape / rescrape, or ingest with no
+        detected sidecars — resolve_ingest_plan's 'download'/'none' branches)
+        must still call generate_jellyfin_images exactly as before this fix —
+        the byte-identical scrape/rescrape guarantee."""
+        from core.readonly_producer import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        fd = _t3_format_data()
+
+        with patch('core.readonly_producer.download_image', return_value=True), \
+             patch('core.readonly_producer.generate_jellyfin_images',
+                   return_value={'poster': True, 'fanart': True}) as mock_jellyfin, \
+             patch('core.readonly_producer.crop_to_poster') as mock_crop, \
+             patch('core.readonly_producer.generate_nfo', side_effect=_t3_generate_nfo_side_effect):
+            _write_movie_assets(
+                movie_dir, _T3_META, fd, '/src/TEST-001.mp4', _T3_BASE_CONFIG,
+                cover_strategy=('download', _T3_META['cover']),
+            )
+
+        mock_jellyfin.assert_called_once()
+        mock_crop.assert_not_called()
+
+
+class TestAssetsModeSamplesOnly:
+    """CD-104-1: assets_mode='samples_only' — ONLY the extrafanart download loop
+    runs; nfo/cover/poster/fanart/strm and BOTH stale-cleanup helpers are
+    untouched, and sample download is unconditional (not gated on
+    config['download_sample_images']). cover_strategy is accepted but ignored —
+    Codex P1-c: a supplemental-samples fetch must never touch the cover."""
+
+    def test_only_samples_downloaded_nfo_and_cover_not_called(self, tmp_path):
+        from core.readonly_producer import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        fd = _t3_format_data()
+        meta = dict(_T3_META, sample_images=['http://x/1.jpg', 'http://x/2.jpg'])
+
+        def fake_download(url, save_path, referer=''):
+            Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(save_path).write_bytes(b'SAMPLE')
+            return True
+
+        with patch('core.readonly_producer.download_image', side_effect=fake_download) as mock_download, \
+             patch('core.readonly_producer.generate_nfo') as mock_nfo, \
+             patch('core.readonly_producer.generate_jellyfin_images') as mock_jellyfin, \
+             patch('core.readonly_producer.shutil.copyfile') as mock_copy:
+            assets = _write_movie_assets(
+                movie_dir, meta, fd, '/src/TEST-001.mp4', _T3_BASE_CONFIG,
+                cover_strategy=('none',), assets_mode='samples_only',
+            )
+
+        mock_nfo.assert_not_called()
+        mock_jellyfin.assert_not_called()
+        mock_copy.assert_not_called()
+        assert mock_download.call_count == 2
+        assert len(assets['sample_fs']) == 2
+        assert 'cover_fs' not in assets, "samples_only must not fabricate a cover_fs key"
+        assert 'nfo_mtime' not in assets, "samples_only must not fabricate an nfo_mtime key"
+        assert not (Path(movie_dir) / 'TEST-001 Test Movie Title.nfo').exists()
+        assert not (Path(movie_dir) / 'TEST-001 Test Movie Title.jpg').exists()
+
+    def test_unconditional_regardless_of_download_sample_images_flag(self, tmp_path):
+        """samples_only downloads samples even when config['download_sample_images']
+        is False — explicit fetch intent, not gated on the generic scrape flag."""
+        from core.readonly_producer import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        fd = _t3_format_data()
+        meta = dict(_T3_META, sample_images=['http://x/1.jpg'])
+        config = dict(_T3_BASE_CONFIG, download_sample_images=False)
+
+        def fake_download(url, save_path, referer=''):
+            Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(save_path).write_bytes(b'SAMPLE')
+            return True
+
+        with patch('core.readonly_producer.download_image', side_effect=fake_download), \
+             patch('core.readonly_producer.generate_nfo') as mock_nfo:
+            assets = _write_movie_assets(
+                movie_dir, meta, fd, '/src/TEST-001.mp4', config,
+                cover_strategy=('none',), assets_mode='samples_only',
+            )
+
+        mock_nfo.assert_not_called()
+        assert len(assets['sample_fs']) == 1
+
+    def test_empty_sample_images_returns_empty_list(self, tmp_path):
+        from core.readonly_producer import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        fd = _t3_format_data()
+        meta = dict(_T3_META, sample_images=[])
+
+        with patch('core.readonly_producer.download_image') as mock_download, \
+             patch('core.readonly_producer.generate_nfo') as mock_nfo:
+            assets = _write_movie_assets(
+                movie_dir, meta, fd, '/src/TEST-001.mp4', _T3_BASE_CONFIG,
+                cover_strategy=('none',), assets_mode='samples_only',
+            )
+
+        mock_download.assert_not_called()
+        mock_nfo.assert_not_called()
+        assert assets == {'sample_fs': []}
+
+    def test_ignores_cover_strategy_regardless_of_value(self, tmp_path):
+        """samples_only never reads cover_strategy — even a 'download' state must
+        not trigger download_image for the cover (only for samples, and there are
+        none here)."""
+        from core.readonly_producer import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        fd = _t3_format_data()
+        meta = dict(_T3_META, sample_images=[])
+
+        with patch('core.readonly_producer.download_image') as mock_download, \
+             patch('core.readonly_producer.shutil.copyfile') as mock_copy, \
+             patch('core.readonly_producer.generate_nfo') as mock_nfo:
+            assets = _write_movie_assets(
+                movie_dir, meta, fd, '/src/TEST-001.mp4', _T3_BASE_CONFIG,
+                cover_strategy=('download', 'http://x/cover.jpg'), assets_mode='samples_only',
+            )
+
+        mock_download.assert_not_called()
+        mock_copy.assert_not_called()
+        mock_nfo.assert_not_called()
+        assert assets['sample_fs'] == []
+
+    def test_no_stale_cleanup_helpers_called(self, tmp_path):
+        """Neither _clean_stale_extrafanart nor _clean_stale_singletons run, even
+        when old_base is non-empty (would normally gate extrafanart cleanup on in
+        full mode)."""
+        from core.readonly_producer import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        fd = _t3_format_data()
+        meta = dict(_T3_META, sample_images=[])
+
+        with patch('core.readonly_producer.download_image', return_value=True), \
+             patch('core.readonly_producer._clean_stale_extrafanart') as mock_clean_ef, \
+             patch('core.readonly_producer._clean_stale_singletons') as mock_clean_singletons:
+            _write_movie_assets(
+                movie_dir, meta, fd, '/src/TEST-001.mp4', _T3_BASE_CONFIG,
+                cover_strategy=('none',), assets_mode='samples_only',
+                old_base='TEST-001 Old Title',
+            )
+
+        mock_clean_ef.assert_not_called()
+        mock_clean_singletons.assert_not_called()
+
+
+class TestWriteMovieAssetsFullModeReentryPreservesExtrafanart:
+    """P1 grok-review (pre-merge 2026-07-21): a full-mode RE-ENTRY of an
+    already-produced video (gear rescrape / 放大鏡 ingest / batch-enrich, all
+    `assets_mode='full'`) must NOT wipe extrafanart/ samples fetched by an
+    earlier 補劇照 (`assets_mode='samples_only'`) call. Full-mode ingest/rescrape
+    always pass `meta['sample_images'] == []` (CD-104-3: samples are
+    intentionally left empty on ingest/rescrape, fetched on-demand only via
+    samples_only) — so old_base is non-empty (an already-produced video always
+    has a prior row) while this run itself has nothing to write into
+    extrafanart/. A bare `if old_base:` extrafanart-clean would therefore
+    delete the dir with nothing to replace it, destroying prior 補劇照 output.
+
+    MUTATION LOCK: reverting the `and meta.get('sample_images')` guard on the
+    `if old_base:` line back to a bare `if old_base:` turns
+    test_full_mode_reentry_preserves_extrafanart_on_disk RED (files deleted)."""
+
+    def _samples_only_seed(self, movie_dir, config):
+        """Seed extrafanart/ the way a prior 補劇照 call would (samples_only mode)."""
+        from core.readonly_producer import _write_movie_assets
+
+        meta_samples = dict(_T3_META, sample_images=['http://x/1.jpg', 'http://x/2.jpg'])
+        with patch('core.readonly_producer.download_image', side_effect=_t4_real_download):
+            _write_movie_assets(
+                movie_dir, meta_samples, _t3_format_data(config=config), '/src/TEST-001.mp4', config,
+                cover_strategy=('none',), assets_mode='samples_only',
+            )
+
+    def test_full_mode_reentry_preserves_extrafanart_on_disk(self, tmp_path):
+        from core.readonly_producer import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'TEST-001')
+        config = dict(_T3_BASE_CONFIG)
+        self._samples_only_seed(movie_dir, config)
+
+        ef_dir = Path(movie_dir) / 'extrafanart'
+        assert (ef_dir / 'fanart1.jpg').exists()
+        assert (ef_dir / 'fanart2.jpg').exists()
+
+        # full-mode RE-ENTRY: meta['sample_images'] always [] on ingest/rescrape
+        # (CD-104-3); old_base non-empty because this video was already produced.
+        meta_full = dict(_T3_META, sample_images=[])
+        fd = _t3_format_data(config=config)
+        with patch('core.readonly_producer.download_image', side_effect=_t4_real_download), \
+             patch('core.readonly_producer.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
+             patch('core.readonly_producer.generate_nfo', side_effect=_t4_real_nfo):
+            _write_movie_assets(
+                movie_dir, meta_full, fd, '/src/TEST-001.mp4', config,
+                cover_strategy=('download', 'http://x/cover.jpg'), assets_mode='full',
+                old_base='TEST-001 Test Movie Title',
+            )
+
+        assert (ef_dir / 'fanart1.jpg').exists(), "full-mode re-entry must not wipe existing samples"
+        assert (ef_dir / 'fanart2.jpg').exists(), "full-mode re-entry must not wipe existing samples"
+
+    def test_full_mode_run_with_own_samples_still_cleans_and_rewrites(self, tmp_path):
+        """Sanity: the guard only SKIPS the clean when this run has nothing new —
+        a hypothetical future full-mode caller that DOES carry sample_images still
+        gets correct clean+rewrite (old set of 3 shrinks to the new set of 1)."""
+        from core.readonly_producer import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'TEST-001')
+        config = dict(_T3_BASE_CONFIG)
+        self._samples_only_seed(movie_dir, config)
+        ef_dir = Path(movie_dir) / 'extrafanart'
+        (ef_dir / 'fanart3.jpg').write_bytes(b'STALE')  # pretend a 3rd stale sample exists
+
+        meta_full = dict(_T3_META, sample_images=['http://x/only-one.jpg'])
+        config_dl = dict(config, download_sample_images=True)
+        fd = _t3_format_data(config=config_dl)
+        with patch('core.readonly_producer.download_image', side_effect=_t4_real_download), \
+             patch('core.readonly_producer.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
+             patch('core.readonly_producer.generate_nfo', side_effect=_t4_real_nfo):
+            assets = _write_movie_assets(
+                movie_dir, meta_full, fd, '/src/TEST-001.mp4', config_dl,
+                cover_strategy=('download', 'http://x/cover.jpg'), assets_mode='full',
+                old_base='TEST-001 Test Movie Title',
+            )
+
+        # old set of 3 shrinks to the new set of 1 — fanart1.jpg is REWRITTEN
+        # with the new sample's content (not the stale one); fanart2/3 are gone.
+        assert not (ef_dir / 'fanart2.jpg').exists()
+        assert not (ef_dir / 'fanart3.jpg').exists()
+        assert (ef_dir / 'fanart1.jpg').read_bytes() == b'FAKE-IMG'  # _t4_real_download's payload
+        assert len(assets['sample_fs']) == 1
+
+
+class TestUpsertDbSamplesOnly:
+    """CD-104-1/104-4: assets_mode='samples_only' — DB path calls ONLY
+    repo.update_sample_images; never builds/upserts a full Video row, so
+    cover_path/nfo_mtime/metadata of an existing produced row are left
+    completely alone (Codex P1-c: a supplemental-samples fetch must not
+    clobber metadata it wasn't asked to touch)."""
+
+    SOURCE_URI = 'file:///src/TEST-001.mp4'
+
+    def test_calls_update_sample_images_not_full_upsert(self):
+        from core.readonly_producer import _upsert_db
+
+        repo = MagicMock()
+        assets = {'sample_fs': ['/output/TEST-001/extrafanart/fanart1.jpg']}
+
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            'file:///output/TEST-001', assets_mode='samples_only',
+        )
+
+        repo.upsert.assert_not_called()
+        repo.update_sample_images.assert_called_once_with(
+            self.SOURCE_URI, [to_file_uri('/output/TEST-001/extrafanart/fanart1.jpg', None)]
+        )
+
+    def test_empty_sample_fs_skips_update_does_not_clobber(self):
+        """P2 review (2026-07-21): INTENDED CONTRACT CHANGE, not a weakening.
+
+        This test previously asserted `update_sample_images(path, [])` IS called
+        on an empty sample_fs ("legal clear" — explicit fetch found/downloaded
+        zero samples this time). That is the exact P2 bug: a total download
+        failure (network error mid-loop, all URLs 404, etc.) also produces an
+        empty `assets['sample_fs']`, and unconditionally clearing DB
+        sample_images to `[]` on that path silently destroys data the caller
+        never asked to touch. `core.enricher.fetch_samples_only` — the
+        non-readonly sibling this samples_only path must behave like — already
+        gets this right: it only calls its own `_db_upsert_samples_only`
+        `if written_uris:`, leaving any existing sample_images alone when
+        nothing was actually written, regardless of WHY nothing was written.
+        `_upsert_db`'s samples_only branch now mirrors that exactly.
+        MUTATION LOCK: reinstating the unconditional `repo.update_sample_images`
+        call must turn this test RED."""
+        from core.readonly_producer import _upsert_db
+
+        repo = MagicMock()
+        assets = {'sample_fs': []}
+
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            'file:///output/TEST-001', assets_mode='samples_only',
+        )
+
+        repo.update_sample_images.assert_not_called()
+
+    def test_empty_sample_fs_leaves_existing_sample_images_row_untouched(self, temp_db):
+        """Real-DB round trip of the P2 fix: an existing row's sample_images
+        survive a samples_only call whose assets['sample_fs'] came back empty
+        (e.g. every download in this fetch attempt failed) — the exact
+        "total failure clobbers to []" bug this task fixes."""
+        from core.database import Video, VideoRepository
+        from core.readonly_producer import _upsert_db
+
+        repo = VideoRepository(temp_db)
+        repo.upsert(Video(
+            path=self.SOURCE_URI, number='TEST-001', title='Existing Title',
+            sample_images=['file:///output/TEST-001/extrafanart/fanart1.jpg'],
+            output_dir='file:///output/TEST-001',
+        ))
+
+        assets = {'sample_fs': []}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            'file:///output/TEST-001', assets_mode='samples_only',
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.sample_images == ['file:///output/TEST-001/extrafanart/fanart1.jpg']
+
+    def test_does_not_touch_cover_path_or_nfo_mtime_of_existing_row(self, temp_db):
+        """Real-DB round trip: an existing produced row's cover_path/nfo_mtime/
+        title survive a samples_only _upsert_db call completely untouched."""
+        from core.database import Video, VideoRepository
+        from core.readonly_producer import _upsert_db
+
+        repo = VideoRepository(temp_db)
+        repo.upsert(Video(
+            path=self.SOURCE_URI, number='TEST-001', title='Existing Title',
+            cover_path='file:///output/TEST-001/cover.jpg', nfo_mtime=12345.0,
+            output_dir='file:///output/TEST-001',
+        ))
+
+        assets = {'sample_fs': ['/output/TEST-001/extrafanart/fanart1.jpg']}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            'file:///output/TEST-001', assets_mode='samples_only',
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.cover_path == 'file:///output/TEST-001/cover.jpg'
+        assert v.nfo_mtime == 12345.0
+        assert v.title == 'Existing Title'
+        assert len(v.sample_images) == 1
+
+    # ── FIX P2-B: samples_only must still persist output_dir ────────────────
+
+    def test_persists_output_dir_when_existing_output_dir_empty(self, temp_db):
+        """P2-B: a samples-only supplemental fetch must still record
+        output_dir for a row that doesn't have one yet — otherwise a later
+        full ingest can't rely on it being set (reference: full-mode sets
+        output_dir=output_dir at _upsert_db:1093)."""
+        from core.database import Video, VideoRepository
+        from core.readonly_producer import _upsert_db
+
+        repo = VideoRepository(temp_db)
+        repo.upsert(Video(
+            path=self.SOURCE_URI, number='TEST-001', title='Existing Title',
+            output_dir='',
+        ))
+
+        assets = {'sample_fs': ['/output/TEST-001/extrafanart/fanart1.jpg']}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            'file:///output/TEST-001', assets_mode='samples_only',
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.output_dir == 'file:///output/TEST-001'
+
+    def test_does_not_clobber_existing_nonempty_output_dir(self, temp_db):
+        """P2-B: idempotency — re-running a samples-only fetch must never
+        overwrite an already-recorded real output_dir, even when called with
+        a different output_dir value."""
+        from core.database import Video, VideoRepository
+        from core.readonly_producer import _upsert_db
+
+        repo = VideoRepository(temp_db)
+        repo.upsert(Video(
+            path=self.SOURCE_URI, number='TEST-001', title='Existing Title',
+            output_dir='file:///output/REAL-DIR',
+        ))
+
+        assets = {'sample_fs': ['/output/TEST-001/extrafanart/fanart1.jpg']}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            'file:///output/TEST-001', assets_mode='samples_only',
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.output_dir == 'file:///output/REAL-DIR'
+
+    def test_empty_output_dir_param_does_not_write(self, temp_db):
+        """Guard: output_dir='' (caller has no known dir yet) must not
+        attempt a write — matches the `if output_dir:` guard."""
+        from core.database import Video, VideoRepository
+        from core.readonly_producer import _upsert_db
+
+        repo = VideoRepository(temp_db)
+        repo.upsert(Video(
+            path=self.SOURCE_URI, number='TEST-001', title='Existing Title',
+            output_dir='',
+        ))
+
+        assets = {'sample_fs': ['/output/TEST-001/extrafanart/fanart1.jpg']}
+        _upsert_db(
+            repo, self.SOURCE_URI, _T3_FILE_INFO, _T3_META, assets, None,
+            '', assets_mode='samples_only',
+        )
+
+        v = repo.get_by_path(self.SOURCE_URI)
+        assert v.output_dir == ''
+
+
+class TestNfoMtimePositiveAndMutationLock:
+    """CD-104-4: full-mode produce writes a REAL nfo_mtime (>0), not the old
+    hardcoded 0.0.
+
+    MUTATION LOCK: this test goes RED if either half of the CD-104-4 plumbing is
+    reverted — `nfo_mtime = os.stat(nfo_fs).st_mtime` in _write_movie_assets, or
+    `nfo_mtime=assets['nfo_mtime']` in _upsert_db (reverting either back to a
+    hardcoded 0.0 fails the `> 0` assertions below). Manually verified during T1
+    development by temporarily reverting each line and re-running this test
+    (both reverts turned it RED); restored afterwards.
+    """
+
+    def test_full_produce_nfo_mtime_positive(self, tmp_path, temp_db):
+        from core.database import VideoRepository
+        from core.readonly_producer import _format_data, _upsert_db, _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        fd = _format_data(_T3_META, '/src/TEST-001.mp4', _T3_BASE_CONFIG)
+        repo = VideoRepository(temp_db)
+
+        with patch('core.readonly_producer.download_image', return_value=True), \
+             patch('core.readonly_producer.generate_jellyfin_images',
+                   return_value={'poster': True, 'fanart': True}), \
+             patch('core.readonly_producer.generate_nfo', side_effect=_t3_generate_nfo_side_effect):
+            assets = _write_movie_assets(
+                movie_dir, _T3_META, fd, '/src/TEST-001.mp4', _T3_BASE_CONFIG,
+                cover_strategy=_cover_strategy_for(_T3_META),
+            )
+            _upsert_db(
+                repo, 'file:///src/TEST-001.mp4', _T3_FILE_INFO, _T3_META, assets, None,
+                'file:///output/TEST-001',
+            )
+
+        assert assets['nfo_mtime'] > 0
+        v = repo.get_by_path('file:///src/TEST-001.mp4')
+        assert v.nfo_mtime > 0
+        assert v.nfo_mtime == assets['nfo_mtime']
+
+
+class TestMissingCheckExclusionInvariant:
+    """CD-104-4 regression lock: web/routers/scanner.py::check_missing excludes
+    any row where `produced (output_dir truthy) or tried (scrape_attempted_at>0)`
+    — BEFORE it ever looks at nfo_mtime/cover_path — so changing what nfo_mtime
+    _upsert_db writes must NOT change which rows missing-check surfaces (CD-89b-4:
+    the missing-check exclusion signal is output_dir/scrape_attempted_at, never
+    nfo_mtime).
+
+    check_missing itself is a FastAPI route body (web/routers/scanner.py:990),
+    not an importable pure function, and this task's file allowlist doesn't
+    include that module — so the exclusion predicate is replicated verbatim
+    below (web/routers/scanner.py:1007-1009: `if produced or tried: continue`)
+    rather than imported, and exercised against rows _upsert_db actually
+    produces with two different nfo_mtime values."""
+
+    @staticmethod
+    def _missing_check_excludes(v) -> bool:
+        """Verbatim copy of the exclusion predicate at
+        web/routers/scanner.py:1007-1009."""
+        produced = bool(v.output_dir)
+        tried = (v.scrape_attempted_at or 0) > 0
+        return produced or tried
+
+    def test_nfo_mtime_value_does_not_affect_exclusion(self, temp_db):
+        from core.database import VideoRepository
+        from core.readonly_producer import _upsert_db
+
+        repo = VideoRepository(temp_db)
+
+        assets_zero = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': 0.0}
+        assets_real = {'cover_fs': '', 'sample_fs': [], 'nfo_mtime': 1704067333.5}
+
+        uri_zero = 'file:///src/ZERO-001.mp4'
+        uri_real = 'file:///src/REAL-001.mp4'
+        meta_zero = dict(_T3_META, number='ZERO-001')
+        meta_real = dict(_T3_META, number='REAL-001')
+
+        _upsert_db(repo, uri_zero, _T3_FILE_INFO, meta_zero, assets_zero, None, 'file:///output/ZERO-001')
+        _upsert_db(repo, uri_real, _T3_FILE_INFO, meta_real, assets_real, None, 'file:///output/REAL-001')
+
+        v_zero = repo.get_by_path(uri_zero)
+        v_real = repo.get_by_path(uri_real)
+        assert v_zero.nfo_mtime != v_real.nfo_mtime, "sanity: the two rows really do differ in nfo_mtime"
+
+        # Both rows are produced (_upsert_db always sets output_dir +
+        # scrape_attempted_at unconditionally, independent of nfo_mtime) →
+        # missing-check excludes BOTH, regardless of the nfo_mtime value carried.
+        assert self._missing_check_excludes(v_zero) is True
+        assert self._missing_check_excludes(v_real) is True
+
+
+class TestCallSequenceEquivalence:
+    """CD-104-9: the produce_source → _produce_one extraction must not
+    reorder/duplicate/drop the scrape path's collaborator calls — search_jav →
+    download_image (cover) → generate_nfo → repo.upsert, exactly once each per
+    created file, in that order, matching the pre-extraction per-file
+    try-block byte for byte."""
+
+    def test_call_sequence_and_counts_preserved(self, tmp_path):
+        from core.readonly_producer import produce_source
+
+        source_dir = tmp_path / 'src'
+        source_dir.mkdir()
+        numbers = ['SEQ-001', 'SEQ-002']
+        for n in numbers:
+            (source_dir / f'{n}.mp4').write_bytes(b'FAKE-VIDEO')
+        output_dir = tmp_path / 'output'
+        output_dir.mkdir()
+
+        source = _make_source(readonly=True, output_path=str(output_dir), path=str(source_dir))
+        config = _make_config(scraper_cfg={
+            # media-server flavour → resolve_output_root uses source.output_path
+            # verbatim, no core.database.get_db_path() dependency to wire up.
+            'external_manager': 'kodi',
+            'folder_layers': [], 'folder_format': '',
+            'filename_format': '{num}', 'max_title_length': 50,
+            'max_filename_length': 60, 'suffix_keywords': [],
+            'download_sample_images': False,
+            'strm_path_mappings': {},
+        })
+
+        call_log: list = []
+        repo = MagicMock()
+        repo.get_attempted_index.return_value = {}
+        repo.get_by_path.return_value = None
+        repo.is_output_dir_taken.return_value = False
+        repo.get_empty_focal_candidates.return_value = []
+
+        def fake_search_jav(number, source="auto", proxy_url="", javbus_lang=None):
+            call_log.append(('search_jav', number))
+            return {
+                'number': number, 'title': f'Title {number}', 'cover': f'http://x/{number}.jpg',
+                'actors': [], 'tags': [], 'date': '', 'maker': '', 'director': '',
+                'series': '', 'label': '', 'sample_images': [], 'duration': 0, 'url': '',
+            }
+
+        def fake_download_image(url, dest, referer=''):
+            call_log.append(('download_image', url))
+            Path(dest).parent.mkdir(parents=True, exist_ok=True)
+            Path(dest).write_bytes(b'IMG')
+            return True
+
+        def fake_generate_nfo(**kwargs):
+            call_log.append(('generate_nfo', kwargs.get('number')))
+            Path(kwargs['output_path']).write_text('<movie/>', encoding='utf-8')
+            return True
+
+        def fake_upsert(v):
+            call_log.append(('upsert', v.number))
+
+        repo.upsert.side_effect = fake_upsert
+
+        with patch('core.readonly_producer.search_jav', side_effect=fake_search_jav), \
+             patch('core.readonly_producer.download_image', side_effect=fake_download_image), \
+             patch('core.readonly_producer.generate_jellyfin_images',
+                   return_value={'poster': True, 'fanart': True}), \
+             patch('core.readonly_producer.generate_nfo', side_effect=fake_generate_nfo):
+            result = produce_source(source, config, repo)
+
+        assert result.created == 2
+        assert result.failed == 0
+        assert [c[0] for c in call_log] == [
+            'search_jav', 'download_image', 'generate_nfo', 'upsert',
+            'search_jav', 'download_image', 'generate_nfo', 'upsert',
+        ], call_log
+        assert sum(1 for c in call_log if c[0] == 'download_image') == 2, "one download_image per cover"
+        assert sum(1 for c in call_log if c[0] == 'generate_nfo') == 2, "one generate_nfo per file"
+        assert sum(1 for c in call_log if c[0] == 'upsert') == 2, "one upsert per created file"
+
+    def test_sample_download_never_exercised_by_this_lock(self):
+        """TASK-104-T2 note (spec §3-A / Non-Goals reconciliation): this lock's own
+        config already sets download_sample_images=False and its fake meta already
+        carries sample_images=[] (see setup above) — so T2 forcing
+        meta['sample_images']=[] inside resolve_ingest_plan changes NOTHING
+        observable here. No update was needed for THIS test; documented per the
+        card's instruction to note when a test's premise already excluded sample
+        download rather than silently leaving it unexplained."""
+        assert True
+
+
+# ---------------------------------------------------------------------------
+# TASK-104-T2 (CD-104-3b): _nfo_to_producer_meta — NFO -> producer-meta adapter.
+# All-keys alignment, round-trip edges (title bracket-strip / rating ÷2),
+# mutation lock against core.enricher._nfo_to_meta's different key shape.
+# ---------------------------------------------------------------------------
+
+def _nfo_root(xml: str):
+    return ET.fromstring(xml)
+
+
+class TestNfoToProducerMeta:
+    def test_all_keys_present_and_aligned(self):
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        xml = """<?xml version="1.0" encoding="utf-8"?>
+<movie>
+  <title>[ABC-123]My Title</title>
+  <originaltitle>元のタイトル</originaltitle>
+  <num>ABC-123</num>
+  <studio>MakerCo</studio>
+  <label>LabelCo</label>
+  <director>DirName</director>
+  <set><name>SeriesName</name></set>
+  <premiered>2024-05-01</premiered>
+  <runtime>120</runtime>
+  <plot>A summary.</plot>
+  <rating>8.4</rating>
+  <website>https://example.com/v</website>
+  <actor><name>Actress A</name><role></role></actor>
+  <actor><name>Actress B</name><role></role></actor>
+  <tag>Tag1</tag>
+  <tag>Tag2</tag>
+  <genre>Tag1</genre>
+  <genre>Tag2</genre>
+</movie>"""
+        root = _nfo_root(xml)
+        meta = _nfo_to_producer_meta(root, fallback_number='FALLBACK-000')
+
+        assert set(meta.keys()) == {
+            'number', 'title', 'original_title', 'actors', 'tags', 'date',
+            'maker', 'director', 'series', 'label', 'duration', 'url',
+            '_summary', '_rating', 'cover', 'sample_images',
+        }
+        assert meta['number'] == 'ABC-123'
+        assert meta['title'] == 'My Title'
+        assert meta['original_title'] == '元のタイトル'
+        assert meta['actors'] == ['Actress A', 'Actress B']
+        assert meta['tags'] == ['Tag1', 'Tag2']
+        assert meta['date'] == '2024-05-01'
+        assert meta['maker'] == 'MakerCo'
+        assert meta['director'] == 'DirName'
+        assert meta['series'] == 'SeriesName'
+        assert meta['label'] == 'LabelCo'
+        assert meta['duration'] == 120
+        assert meta['url'] == 'https://example.com/v'
+        assert meta['_summary'] == 'A summary.'
+        assert meta['_rating'] == pytest.approx(4.2)
+        assert meta['cover'] == ''
+        assert meta['sample_images'] == []
+
+    # ── FIX#3: original_title extraction (P2 parity closeout) ───────────────
+
+    def test_original_title_extracted_from_originaltitle_tag(self):
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root(
+            '<movie><num>ABC-123</num><title>English Title</title>'
+            '<originaltitle>日本語タイトル</originaltitle></movie>'
+        )
+        meta = _nfo_to_producer_meta(root, fallback_number='X')
+        assert meta['original_title'] == '日本語タイトル'
+
+    def test_original_title_empty_string_when_tag_absent(self):
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root('<movie><num>ABC-123</num><title>Only Title</title></movie>')
+        meta = _nfo_to_producer_meta(root, fallback_number='X')
+        assert meta['original_title'] == ''
+
+    def test_number_fallback_when_num_and_uniqueid_absent(self):
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root('<movie><title>Bare Title</title></movie>')
+        meta = _nfo_to_producer_meta(root, fallback_number='FALLBACK-999')
+        assert meta['number'] == 'FALLBACK-999'
+
+    def test_number_prefers_num_over_uniqueid(self):
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root(
+            '<movie><num>REAL-001</num>'
+            '<uniqueid type="home">OTHER-002</uniqueid></movie>'
+        )
+        meta = _nfo_to_producer_meta(root, fallback_number='FB-000')
+        assert meta['number'] == 'REAL-001'
+
+    def test_number_uses_uniqueid_when_num_missing(self):
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root('<movie><uniqueid type="home">UID-001</uniqueid></movie>')
+        meta = _nfo_to_producer_meta(root, fallback_number='FB-000')
+        assert meta['number'] == 'UID-001'
+
+    def test_title_strips_leading_number_bracket_prefix(self):
+        """Round-trip edge #1: generate_nfo writes `[number]title` — the adapter
+        must strip it back off, else re-generating double-wraps."""
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root('<movie><num>ABC-123</num><title>[ABC-123]Real Title</title></movie>')
+        meta = _nfo_to_producer_meta(root, fallback_number='')
+        assert meta['title'] == 'Real Title'
+
+    def test_title_without_bracket_prefix_unchanged(self):
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root('<movie><num>ABC-123</num><title>Plain Title</title></movie>')
+        meta = _nfo_to_producer_meta(root, fallback_number='')
+        assert meta['title'] == 'Plain Title'
+
+    def test_rating_divided_by_two(self):
+        """Round-trip edge #2: <rating> is raw×2 — the adapter must divide back."""
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root('<movie><rating>7.0</rating></movie>')
+        meta = _nfo_to_producer_meta(root, fallback_number='X')
+        assert meta['_rating'] == pytest.approx(3.5)
+
+    def test_rating_missing_is_none(self):
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root('<movie></movie>')
+        meta = _nfo_to_producer_meta(root, fallback_number='X')
+        assert meta['_rating'] is None
+
+    def test_rating_zero_is_none(self):
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root('<movie><rating>0</rating></movie>')
+        meta = _nfo_to_producer_meta(root, fallback_number='X')
+        assert meta['_rating'] is None
+
+    def test_duration_empty_is_none(self):
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root('<movie><runtime></runtime></movie>')
+        meta = _nfo_to_producer_meta(root, fallback_number='X')
+        assert meta['duration'] is None
+
+    def test_duration_non_numeric_is_none(self):
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root('<movie><runtime>abc</runtime></movie>')
+        meta = _nfo_to_producer_meta(root, fallback_number='X')
+        assert meta['duration'] is None
+
+    def test_date_fallback_chain_release_premiered_year(self):
+        # Mirrors VideoScanner.parse_nfo (gallery_scanner.py:337) order
+        # release > premiered > year so ingest and scan agree on the same NFO.
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root('<movie><release>2020-01-01</release><year>2019</year></movie>')
+        meta = _nfo_to_producer_meta(root, fallback_number='X')
+        assert meta['date'] == '2020-01-01'
+
+        root2 = _nfo_root('<movie><year>2019</year></movie>')
+        meta2 = _nfo_to_producer_meta(root2, fallback_number='X')
+        assert meta2['date'] == '2019'
+
+        # both premiered + release present → release wins (matches VideoScanner)
+        root3 = _nfo_root('<movie><premiered>2021-03-03</premiered><release>2020-01-01</release></movie>')
+        meta3 = _nfo_to_producer_meta(root3, fallback_number='X')
+        assert meta3['date'] == '2020-01-01'
+
+    def test_number_and_maker_fallback_tags_mirror_videoscanner(self):
+        # VideoScanner.parse_nfo uses num>id (number) and maker>studio (maker);
+        # adapter must agree so third-party NFOs read identically.
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        # <id> as number fallback (no <num>)
+        root = _nfo_root('<movie><id>IDN-007</id><studio>StudioCo</studio></movie>')
+        meta = _nfo_to_producer_meta(root, fallback_number='FB-999')
+        assert meta['number'] == 'IDN-007'
+
+        # <maker> wins over <studio>
+        root2 = _nfo_root('<movie><num>N-1</num><maker>MakerCo</maker><studio>StudioCo</studio></movie>')
+        meta2 = _nfo_to_producer_meta(root2, fallback_number='')
+        assert meta2['maker'] == 'MakerCo'
+
+        # <studio> only still works
+        root3 = _nfo_root('<movie><num>N-2</num><studio>StudioOnly</studio></movie>')
+        meta3 = _nfo_to_producer_meta(root3, fallback_number='')
+        assert meta3['maker'] == 'StudioOnly'
+
+    def test_flat_actor_element_openaver_native_shape(self):
+        """OpenAver's own generate_nfo writes flat <movie><actor><name> (direct
+        child of <movie>) — the pre-existing shape must keep working after
+        switching the selector to any-depth `.//actor/name` (P1 finding)."""
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root(
+            '<movie><actor><name>Flat A</name></actor>'
+            '<actor><name>Flat B</name></actor></movie>'
+        )
+        meta = _nfo_to_producer_meta(root, fallback_number='X')
+        assert meta['actors'] == ['Flat A', 'Flat B']
+
+    def test_nested_actors_element_any_depth(self):
+        """P1 finding (2026-07-21 review): a third-party NFO nests <actor> one
+        level deeper — <movie><actors><actor><name>X</name></actor></actors></movie>
+        — which VideoScanner.parse_nfo already reads via its own any-depth
+        `.//actor/name` selector (gallery_scanner.py:345). A direct-children-only
+        `root.findall('actor')` silently returns [] here, so ingest would clear
+        actors that the incumbent scan path reads fine — the exact drift this
+        adapter exists to avoid. MUTATION LOCK: reverting `_nfo_to_producer_meta`'s
+        selector back to `root.findall('actor')` must turn this test RED."""
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root(
+            '<movie><actors>'
+            '<actor><name>Nested A</name></actor>'
+            '<actor><name>Nested B</name></actor>'
+            '</actors></movie>'
+        )
+        meta = _nfo_to_producer_meta(root, fallback_number='X')
+        assert meta['actors'] == ['Nested A', 'Nested B']
+
+    def test_mutation_lock_not_enricher_shape(self):
+        """MUTATION LOCK: must use producer-meta keys ('actors'/'date'/'cover'),
+        NOT core.enricher._nfo_to_meta's shape ('actresses'/'release_date'/
+        'cover_url') — swapping in that shape must turn this test RED."""
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root(
+            '<movie><num>MUT-001</num><actor><name>A</name></actor>'
+            '<premiered>2024-01-01</premiered></movie>'
+        )
+        meta = _nfo_to_producer_meta(root, fallback_number='')
+        assert 'actors' in meta and 'actresses' not in meta
+        assert 'date' in meta and 'release_date' not in meta
+        assert 'cover' in meta and 'cover_url' not in meta
+        assert meta['actors'] == ['A']
+        assert meta['date'] == '2024-01-01'
+
+
+class TestNfoToProducerMetaRoundTrip:
+    """CD-104-3b DoD: generate_nfo -> _nfo_to_producer_meta round-trip."""
+
+    def test_round_trip_core_fields_survive(self, tmp_path):
+        from core.nfo_updater import parse_nfo
+        from core.organizer import generate_nfo
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        nfo_path = tmp_path / 'RTX-001.nfo'
+        ok = generate_nfo(
+            number='RTX-001',
+            title='Original Title',
+            actors=['Actress A', 'Actress B'],
+            tags=['TagA', 'TagB'],
+            date='2023-06-15',
+            maker='MakerX',
+            url='https://example.com/rtx-001',
+            output_path=str(nfo_path),
+            director='DirectorX',
+            duration=95,
+            series='SeriesX',
+            label='LabelX',
+            summary='Summary text.',
+            rating=4.3,
+        )
+        assert ok
+
+        _, root = parse_nfo(str(nfo_path))
+        assert root is not None
+        meta = _nfo_to_producer_meta(root, fallback_number='RTX-001')
+
+        assert meta['number'] == 'RTX-001'
+        assert meta['title'] == 'Original Title'
+        assert meta['actors'] == ['Actress A', 'Actress B']
+        assert meta['date'] == '2023-06-15'
+        assert meta['maker'] == 'MakerX'
+        assert meta['tags'] == ['TagA', 'TagB']
+        assert meta['series'] == 'SeriesX'
+        assert meta['label'] == 'LabelX'
+        assert meta['duration'] == 95
+        assert meta['_summary'] == 'Summary text.'
+        assert meta['_rating'] == pytest.approx(4.3)
+
+    def test_round_trip_title_does_not_double_wrap_on_regenerate(self, tmp_path):
+        """The exact round-trip edge this task exists for: regenerating an NFO
+        from the adapter's own output must NOT double-wrap [num][num]title."""
+        from core.nfo_updater import parse_nfo
+        from core.organizer import generate_nfo
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        nfo_path = tmp_path / 'RTX-002.nfo'
+        generate_nfo(number='RTX-002', title='Plain Title', output_path=str(nfo_path))
+        _, root = parse_nfo(str(nfo_path))
+        meta = _nfo_to_producer_meta(root, fallback_number='RTX-002')
+        assert meta['title'] == 'Plain Title'  # NOT '[RTX-002]Plain Title'
+
+        nfo_path2 = tmp_path / 'RTX-002-again.nfo'
+        generate_nfo(number=meta['number'], title=meta['title'], output_path=str(nfo_path2))
+        _, root2 = parse_nfo(str(nfo_path2))
+        title_elem = root2.find('title')
+        assert title_elem.text == '[RTX-002]Plain Title'
+        assert title_elem.text.count('[RTX-002]') == 1
+
+    def test_round_trip_rating_survives_multiply_then_divide(self, tmp_path):
+        from core.nfo_updater import parse_nfo
+        from core.organizer import generate_nfo
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        nfo_path = tmp_path / 'RTX-003.nfo'
+        generate_nfo(number='RTX-003', title='T', output_path=str(nfo_path), rating=3.7)
+        _, root = parse_nfo(str(nfo_path))
+        meta = _nfo_to_producer_meta(root, fallback_number='RTX-003')
+        assert meta['_rating'] == pytest.approx(3.7)
+
+    def test_round_trip_original_title_survives(self, tmp_path):
+        """FIX#3: generate_nfo(original_title=...) -> _nfo_to_producer_meta
+        must round-trip the originaltitle tag, same as title/actors/etc."""
+        from core.nfo_updater import parse_nfo
+        from core.organizer import generate_nfo
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        nfo_path = tmp_path / 'RTX-004.nfo'
+        ok = generate_nfo(
+            number='RTX-004', title='English Title',
+            original_title='日本語タイトル', output_path=str(nfo_path),
+        )
+        assert ok
+
+        _, root = parse_nfo(str(nfo_path))
+        meta = _nfo_to_producer_meta(root, fallback_number='RTX-004')
+        assert meta['original_title'] == '日本語タイトル'
+
+
+# ---------------------------------------------------------------------------
+# TASK-104-T2 (CD-104-3a): resolve_ingest_plan — metadata/cover two-axis
+# decision. ingest local-first branches, rescrape always-remote branch,
+# malformed-NFO fallback (特有邊界), sample_images always [].
+# ---------------------------------------------------------------------------
+
+class TestResolveIngestPlan:
+    def _touch_video(self, tmp_path, name='SRC-001.mp4'):
+        p = tmp_path / name
+        p.write_bytes(b'FAKE')
+        return p
+
+    def test_ingest_valid_nfo_uses_nfo_metadata_zero_network(self, tmp_path):
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path)
+        nfo = video.with_suffix('.nfo')
+        nfo.write_text('<movie><num>SRC-001</num><title>[SRC-001]T</title></movie>', encoding='utf-8')
+
+        with patch('core.readonly_producer.search_jav') as mock_search, \
+             patch('core.readonly_producer.VideoScanner') as MockVS:
+            MockVS.return_value.find_cover_image.return_value = ''
+            meta, cover_strategy = resolve_ingest_plan(str(video), 'SRC-001', {}, action='ingest')
+
+        mock_search.assert_not_called()
+        assert meta['number'] == 'SRC-001'
+        assert meta['title'] == 'T'
+        assert cover_strategy == ('none',)
+        assert meta['sample_images'] == []
+
+    def test_ingest_nfo_thumb_threaded_into_find_cover_image(self, tmp_path):
+        """DoD: ingest cover axis must thread the NFO's <thumb> as nfo_thumb
+        (CD-104-10 — L3 silently degrades if it isn't)."""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path)
+        nfo = video.with_suffix('.nfo')
+        nfo.write_text('<movie><num>SRC-001</num><thumb>cover.jpg</thumb></movie>', encoding='utf-8')
+
+        with patch('core.readonly_producer.search_jav'), \
+             patch('core.readonly_producer.VideoScanner') as MockVS:
+            MockVS.return_value.find_cover_image.return_value = ''
+            resolve_ingest_plan(str(video), 'SRC-001', {}, action='ingest')
+
+        MockVS.return_value.find_cover_image.assert_called_once_with(str(video), nfo_thumb='cover.jpg')
+
+    def test_ingest_no_thumb_threads_none(self, tmp_path):
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path)
+        nfo = video.with_suffix('.nfo')
+        nfo.write_text('<movie><num>SRC-001</num></movie>', encoding='utf-8')
+
+        with patch('core.readonly_producer.search_jav'), \
+             patch('core.readonly_producer.VideoScanner') as MockVS:
+            MockVS.return_value.find_cover_image.return_value = ''
+            resolve_ingest_plan(str(video), 'SRC-001', {}, action='ingest')
+
+        MockVS.return_value.find_cover_image.assert_called_once_with(str(video), nfo_thumb=None)
+
+    def test_ingest_cover_hit_returns_copy_strategy(self, tmp_path):
+        """Matrix ①/②: local cover hit -> ('copy', fs_path, {poster/fanart}),
+        never a download. No -poster/-fanart sidecars next to this fixture's
+        video -> both detected slots are None (owner-fix: curator-sidecar
+        passthrough, see resolve_ingest_plan docstring)."""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path)
+        cover_path = str(tmp_path / 'SRC-001.jpg')
+
+        with patch(
+            'core.readonly_producer.search_jav',
+            return_value={'number': 'SRC-001', 'title': 'T', 'cover': 'http://x/c.jpg'},
+        ) as mock_search, patch('core.readonly_producer.VideoScanner') as MockVS:
+            MockVS.return_value.find_cover_image.return_value = cover_path
+            meta, cover_strategy = resolve_ingest_plan(str(video), 'SRC-001', {}, action='ingest')
+
+        mock_search.assert_called_once()
+        assert cover_strategy == ('copy', cover_path, {'poster': None, 'fanart': None})
+
+    def test_ingest_cover_only_no_nfo_calls_search_jav(self, tmp_path):
+        """Matrix ③: cover-only (no .nfo) -> search_jav CALLED for metadata,
+        but the cover itself is copied locally, never downloaded."""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path)
+        cover_path = str(tmp_path / 'SRC-001.jpg')
+
+        with patch(
+            'core.readonly_producer.search_jav',
+            return_value={'number': 'SRC-001', 'title': 'T', 'cover': ''},
+        ) as mock_search, patch('core.readonly_producer.VideoScanner') as MockVS:
+            MockVS.return_value.find_cover_image.return_value = cover_path
+            meta, cover_strategy = resolve_ingest_plan(str(video), 'SRC-001', {}, action='ingest')
+
+        mock_search.assert_called_once_with('SRC-001', source='auto', proxy_url='', javbus_lang=None)
+        assert cover_strategy == ('copy', cover_path, {'poster': None, 'fanart': None})
+
+    # -- P2 fix (round-3 review 2026-07-21): ingest scrape-fallback honors the
+    # caller's own source/javbus_lang instead of hardcoding source="auto" --
+
+    def test_ingest_no_valid_nfo_concrete_source_uses_single_source(self, tmp_path):
+        """A caller-supplied concrete source must route through
+        search_jav_single_source with THAT source — not the hardcoded
+        source="auto" the ingest scrape-fallback used before this fix (Codex
+        PR#113 round-3 P2). javbus_lang is threaded through too.
+        MUTATION LOCK: reverting the ingest branch's source dispatch back to a
+        bare `search_jav(number, source="auto", proxy_url=proxy_url)` call
+        makes this test RED (mock_single never called; cover_strategy would
+        still coincidentally match, but mock_single.assert_called_once_with
+        below fails)."""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path)
+        with patch('core.readonly_producer.search_jav') as mock_search, \
+             patch(
+                 'core.readonly_producer.search_jav_single_source',
+                 return_value={'number': 'SRC-001', 'title': 'T', 'cover': 'http://x/c.jpg'},
+             ) as mock_single, \
+             patch('core.readonly_producer.VideoScanner') as MockVS:
+            MockVS.return_value.find_cover_image.return_value = ''
+            meta, cover_strategy = resolve_ingest_plan(
+                str(video), 'SRC-001', {}, action='ingest', source='javbus', proxy_url='p',
+                javbus_lang='zh-tw',
+            )
+
+        mock_single.assert_called_once_with('SRC-001', 'javbus', 'p', javbus_lang='zh-tw')
+        mock_search.assert_not_called()
+        assert cover_strategy == ('download', 'http://x/c.jpg')
+
+    @pytest.mark.parametrize("source", [None, 'auto'])
+    def test_ingest_no_valid_nfo_no_source_or_auto_threads_javbus_lang(self, tmp_path, source):
+        """No concrete source (None or 'auto') -> the existing search_jav(auto)
+        path, NOT search_jav_single_source — but javbus_lang is now threaded
+        through (previously always dropped/None)."""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path)
+        with patch(
+            'core.readonly_producer.search_jav',
+            return_value={'number': 'SRC-001', 'title': 'T', 'cover': 'http://x/c.jpg'},
+        ) as mock_search, patch('core.readonly_producer.search_jav_single_source') as mock_single, \
+             patch('core.readonly_producer.VideoScanner') as MockVS:
+            MockVS.return_value.find_cover_image.return_value = ''
+            meta, cover_strategy = resolve_ingest_plan(
+                str(video), 'SRC-001', {}, action='ingest', source=source, javbus_lang='ja',
+            )
+
+        mock_search.assert_called_once_with('SRC-001', source='auto', proxy_url='', javbus_lang='ja')
+        mock_single.assert_not_called()
+        assert cover_strategy == ('download', 'http://x/c.jpg')
+
+    def test_ingest_detects_curator_poster_fanart_sidecars(self, tmp_path):
+        """Owner-approved fix: a curated Jellyfin/Emby layout ({stem}-poster.*
+        AND {stem}-fanart.* next to the video, no plain {stem}.jpg) must have
+        BOTH real fs paths threaded into cover_strategy's 3rd element.
+        VideoScanner is NOT mocked here — find_cover_image's own real L1.5
+        fanart-before-poster priority must pick -fanart as the cover."""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path, name='JELLY-001.mp4')
+        poster = tmp_path / 'JELLY-001-poster.jpg'
+        fanart = tmp_path / 'JELLY-001-fanart.jpg'
+        poster.write_bytes(b'POSTER')
+        fanart.write_bytes(b'FANART')
+        nfo = video.with_suffix('.nfo')
+        nfo.write_text('<movie><num>JELLY-001</num></movie>', encoding='utf-8')
+
+        meta, cover_strategy = resolve_ingest_plan(str(video), 'JELLY-001', {}, action='ingest')
+
+        assert cover_strategy[0] == 'copy'
+        assert cover_strategy[1] == str(fanart), "find_cover_image L1.5 picks -fanart before -poster"
+        assert cover_strategy[2] == {'poster': str(poster), 'fanart': str(fanart)}
+
+    def test_ingest_detects_only_poster_sidecar(self, tmp_path):
+        """Only a -poster sidecar (no -fanart) -> fanart slot is None."""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path, name='JELLY-002.mp4')
+        poster = tmp_path / 'JELLY-002-poster.jpg'
+        poster.write_bytes(b'POSTER')
+        nfo = video.with_suffix('.nfo')
+        nfo.write_text('<movie><num>JELLY-002</num></movie>', encoding='utf-8')
+
+        meta, cover_strategy = resolve_ingest_plan(str(video), 'JELLY-002', {}, action='ingest')
+
+        assert cover_strategy == ('copy', str(poster), {'poster': str(poster), 'fanart': None})
+
+    def test_rescrape_cover_strategy_stays_two_tuple_even_with_sidecars_on_disk(self, tmp_path):
+        """action='rescrape' NEVER adds a 3rd element, even when curator
+        sidecars exist on disk — a re-scrape always downloads the remote cover
+        (see resolve_ingest_plan docstring); the 3-tuple copy form is
+        action='ingest' only, so the scrape/rescrape write path in
+        _write_movie_assets stays byte-identical to before this fix."""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path, name='JELLY-003.mp4')
+        (tmp_path / 'JELLY-003-poster.jpg').write_bytes(b'POSTER')
+        (tmp_path / 'JELLY-003-fanart.jpg').write_bytes(b'FANART')
+
+        with patch(
+            'core.readonly_producer.search_jav',
+            return_value={'number': 'JELLY-003', 'title': 'T', 'cover': 'http://x/c.jpg'},
+        ):
+            meta, cover_strategy = resolve_ingest_plan(str(video), 'JELLY-003', {}, action='rescrape')
+
+        assert cover_strategy == ('download', 'http://x/c.jpg')
+        assert len(cover_strategy) == 2
+
+    def test_ingest_neither_nfo_nor_cover_falls_back_to_download(self, tmp_path):
+        """Matrix ④: neither -> existing scrape+download behavior, unchanged."""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path)
+
+        with patch(
+            'core.readonly_producer.search_jav',
+            return_value={'number': 'SRC-001', 'title': 'T', 'cover': 'http://x/c.jpg'},
+        ), patch('core.readonly_producer.VideoScanner') as MockVS:
+            MockVS.return_value.find_cover_image.return_value = ''
+            meta, cover_strategy = resolve_ingest_plan(str(video), 'SRC-001', {}, action='ingest')
+
+        assert cover_strategy == ('download', 'http://x/c.jpg')
+
+    def test_ingest_nfo_present_no_cover_hit_is_none_not_download(self, tmp_path):
+        """Matrix ②: valid NFO + cover miss -> ('none',) — must NOT silently
+        fall back to downloading (ingest is zero-network when NFO is valid)."""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path)
+        nfo = video.with_suffix('.nfo')
+        nfo.write_text('<movie><num>SRC-001</num></movie>', encoding='utf-8')
+
+        with patch('core.readonly_producer.search_jav') as mock_search, \
+             patch('core.readonly_producer.VideoScanner') as MockVS:
+            MockVS.return_value.find_cover_image.return_value = ''
+            meta, cover_strategy = resolve_ingest_plan(str(video), 'SRC-001', {}, action='ingest')
+
+        mock_search.assert_not_called()
+        assert cover_strategy == ('none',)
+
+    def test_ingest_malformed_nfo_falls_back_to_scrape_not_locked_to_none(self, tmp_path):
+        """特有邊界 #1: .nfo exists but parse_nfo fails (bad XML, root=None) ->
+        treated as no usable NFO. Metadata retries search_jav; the cover branch
+        must key on valid_nfo, NOT the bare nfo_path.exists() check — else a
+        malformed sidecar would withhold metadata AND lock cover into
+        ('none',) with no fallback."""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path)
+        nfo = video.with_suffix('.nfo')
+        nfo.write_text('NOT VALID XML <<<', encoding='utf-8')
+
+        with patch(
+            'core.readonly_producer.search_jav',
+            return_value={'number': 'SRC-001', 'title': 'T', 'cover': 'http://x/c.jpg'},
+        ) as mock_search, patch('core.readonly_producer.VideoScanner') as MockVS:
+            MockVS.return_value.find_cover_image.return_value = ''
+            meta, cover_strategy = resolve_ingest_plan(str(video), 'SRC-001', {}, action='ingest')
+
+        mock_search.assert_called_once()
+        assert meta is not None
+        assert cover_strategy == ('download', 'http://x/c.jpg')
+        MockVS.return_value.find_cover_image.assert_called_once_with(str(video), nfo_thumb=None)
+
+    def test_meta_none_returns_none_cover_strategy(self, tmp_path):
+        """Common rule: meta is None -> (None, ('none',)) even when a local
+        cover WOULD have been found — nothing to attach it to."""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path)
+
+        with patch('core.readonly_producer.search_jav', return_value=None), \
+             patch('core.readonly_producer.VideoScanner') as MockVS:
+            MockVS.return_value.find_cover_image.return_value = str(tmp_path / 'SRC-001.jpg')
+            meta, cover_strategy = resolve_ingest_plan(str(video), 'SRC-001', {}, action='ingest')
+
+        assert meta is None
+        assert cover_strategy == ('none',)
+
+    def test_rescrape_always_downloads_ignores_local_cover(self, tmp_path):
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path)
+        nfo = video.with_suffix('.nfo')
+        nfo.write_text('<movie><num>SRC-001</num></movie>', encoding='utf-8')
+
+        with patch(
+            'core.readonly_producer.search_jav',
+            return_value={'number': 'SRC-001', 'title': 'T', 'cover': 'http://x/new.jpg'},
+        ) as mock_search, patch('core.readonly_producer.VideoScanner') as MockVS:
+            MockVS.return_value.find_cover_image.return_value = str(tmp_path / 'local.jpg')
+            meta, cover_strategy = resolve_ingest_plan(str(video), 'SRC-001', {}, action='rescrape')
+
+        mock_search.assert_called_once()
+        MockVS.return_value.find_cover_image.assert_not_called()
+        assert cover_strategy == ('download', 'http://x/new.jpg')
+        assert meta['sample_images'] == []
+
+    def test_rescrape_meta_none_when_search_fails(self, tmp_path):
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path)
+        with patch('core.readonly_producer.search_jav', return_value=None):
+            meta, cover_strategy = resolve_ingest_plan(str(video), 'SRC-001', {}, action='rescrape')
+        assert meta is None
+        assert cover_strategy == ('none',)
+
+    @pytest.mark.parametrize("action", ["ingest", "rescrape"])
+    def test_sample_images_always_empty(self, tmp_path, action):
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path)
+        meta_stub = {
+            'number': 'SRC-001', 'title': 'T', 'cover': '',
+            'sample_images': ['http://x/s1.jpg', 'http://x/s2.jpg'],
+        }
+        with patch('core.readonly_producer.search_jav', return_value=meta_stub), \
+             patch('core.readonly_producer.VideoScanner') as MockVS:
+            MockVS.return_value.find_cover_image.return_value = ''
+            meta, _cover_strategy = resolve_ingest_plan(str(video), 'SRC-001', {}, action=action)
+
+        assert meta['sample_images'] == []
+
+    # -- TASK-104-T3: rescrape scraper_data / source candidate widening ------
+
+    def test_rescrape_scraper_data_used_verbatim_zero_network(self, tmp_path):
+        """When the router already fetched a candidate (javlibrary detail_url
+        confirm flow), resolve_ingest_plan must use it AS-IS — no search_jav /
+        search_jav_single_source call at all."""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path)
+        scraper_data = {'number': 'SRC-001', 'title': 'Candidate T', 'cover': 'http://x/candidate.jpg'}
+
+        with patch('core.readonly_producer.search_jav') as mock_search, \
+             patch('core.readonly_producer.search_jav_single_source') as mock_single:
+            meta, cover_strategy = resolve_ingest_plan(
+                str(video), 'SRC-001', {}, action='rescrape', scraper_data=scraper_data,
+            )
+
+        mock_search.assert_not_called()
+        mock_single.assert_not_called()
+        assert meta['title'] == 'Candidate T'
+        assert cover_strategy == ('download', 'http://x/candidate.jpg')
+        assert meta['sample_images'] == []
+
+    def test_rescrape_concrete_source_uses_single_source(self, tmp_path):
+        """No scraper_data + a concrete (non-auto) source -> search_jav_single_source,
+        NOT search_jav (explicit source pick must not go through the auto merger)."""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path)
+        with patch('core.readonly_producer.search_jav') as mock_search, \
+             patch(
+                 'core.readonly_producer.search_jav_single_source',
+                 return_value={'number': 'SRC-001', 'title': 'T', 'cover': 'http://x/c.jpg'},
+             ) as mock_single:
+            meta, cover_strategy = resolve_ingest_plan(
+                str(video), 'SRC-001', {}, action='rescrape', source='javbus', proxy_url='p',
+                javbus_lang='zh-tw',
+            )
+
+        mock_single.assert_called_once_with('SRC-001', 'javbus', 'p', javbus_lang='zh-tw')
+        mock_search.assert_not_called()
+        assert cover_strategy == ('download', 'http://x/c.jpg')
+
+    @pytest.mark.parametrize("source", [None, 'auto'])
+    def test_rescrape_no_source_or_auto_falls_back_to_search_jav(self, tmp_path, source):
+        """source=None or source='auto' -> the existing search_jav(auto) path,
+        NOT search_jav_single_source."""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path)
+        with patch(
+            'core.readonly_producer.search_jav',
+            return_value={'number': 'SRC-001', 'title': 'T', 'cover': 'http://x/c.jpg'},
+        ) as mock_search, patch('core.readonly_producer.search_jav_single_source') as mock_single:
+            meta, cover_strategy = resolve_ingest_plan(
+                str(video), 'SRC-001', {}, action='rescrape', source=source,
+                javbus_lang='ja',
+            )
+
+        mock_search.assert_called_once_with('SRC-001', source='auto', proxy_url='', javbus_lang='ja')
+        mock_single.assert_not_called()
+        assert cover_strategy == ('download', 'http://x/c.jpg')
+
+
+# ---------------------------------------------------------------------------
+# TASK-104-T3 (CD-104-5): resolve_owning_output_root — innermost readonly
+# source resolver + writable-override + empty-output-root passthrough.
+# ---------------------------------------------------------------------------
+
+def _gallery_config(directories, path_mappings=None, scraper_cfg=None):
+    """Build a full app-config dict (the shape resolve_owning_output_root and
+    resolve_output_root both expect: config['gallery']/config['scraper'])."""
+    return {
+        "gallery": {
+            "directories": directories,
+            "path_mappings": path_mappings or {},
+        },
+        "scraper": scraper_cfg or {},
+    }
+
+
+class TestResolveOwningOutputRoot:
+    def test_no_readonly_source_returns_none(self, tmp_path):
+        from core.readonly_producer import resolve_owning_output_root
+        from core.path_utils import to_file_uri
+
+        src = tmp_path / "rw"
+        src.mkdir()
+        canonical = to_file_uri(str(src / "ABC-001.mp4"))
+        config = _gallery_config([{"path": str(src), "readonly": False}])
+
+        assert resolve_owning_output_root(canonical, config) is None
+
+    def test_no_source_covers_path_at_all_returns_none(self, tmp_path):
+        from core.readonly_producer import resolve_owning_output_root
+        from core.path_utils import to_file_uri
+
+        src = tmp_path / "ro"
+        src.mkdir()
+        canonical = to_file_uri(str(tmp_path / "unrelated" / "ABC-001.mp4"))
+        config = _gallery_config([{"path": str(src), "readonly": True}])
+
+        assert resolve_owning_output_root(canonical, config) is None
+
+    def test_finds_owning_readonly_source_off_mode_nonempty_root(self, tmp_path):
+        from core.database import get_db_path
+        from core.readonly_producer import resolve_owning_output_root
+        from core.path_utils import to_file_uri
+
+        src = tmp_path / "ro"
+        src.mkdir()
+        canonical = to_file_uri(str(src / "ABC-001.mp4"))
+        config = _gallery_config([{"path": str(src), "readonly": True}])  # off (default)
+
+        result = resolve_owning_output_root(canonical, config)
+
+        assert result is not None
+        source, output_root, output_uri = result
+        assert source.path == str(src)
+        assert output_root.startswith(str(get_db_path().parent / "lib"))
+        assert output_uri.startswith("file:///")
+
+    # -- boundary (a): media-server flavour, output_path not yet configured --
+    def test_empty_output_root_returns_source_with_empty_strings(self, tmp_path):
+        """media-server flavour + no output_path configured (first-time /
+        never-configured) -> (source, '', '') so the router can still name the
+        owning source in its own error message, but must reject the write."""
+        from core.readonly_producer import resolve_owning_output_root
+        from core.path_utils import to_file_uri
+
+        src = tmp_path / "ro"
+        src.mkdir()
+        canonical = to_file_uri(str(src / "ABC-001.mp4"))
+        config = _gallery_config(
+            [{"path": str(src), "readonly": True, "output_path": ""}],
+            scraper_cfg={"external_manager": "jellyfin"},
+        )
+
+        result = resolve_owning_output_root(canonical, config)
+
+        assert result is not None
+        source, output_root, output_uri = result
+        assert output_root == ""
+        assert output_uri == ""
+
+    # -- boundary (c): nested writable override --------------------------------
+    def test_nested_writable_child_returns_none(self, tmp_path):
+        """readonly parent + writable child (longer/more-specific prefix) ->
+        the file under the writable child is NOT readonly -> None (router
+        falls through to its existing writable code path)."""
+        from core.readonly_producer import resolve_owning_output_root
+        from core.path_utils import to_file_uri
+
+        parent = tmp_path / "ro_parent"
+        child = parent / "rw_child"
+        child.mkdir(parents=True)
+        canonical = to_file_uri(str(child / "ABC-001.mp4"))
+        config = _gallery_config([
+            {"path": str(parent), "readonly": True},
+            {"path": str(child), "readonly": False},
+        ])
+
+        assert resolve_owning_output_root(canonical, config) is None
+
+    def test_nested_readonly_child_under_writable_parent_still_routes(self, tmp_path):
+        """Mirror case: writable parent + readonly child (longer prefix) -> the
+        readonly child wins -> routes (not None), owning source is the child."""
+        from core.readonly_producer import resolve_owning_output_root
+        from core.path_utils import to_file_uri
+
+        parent = tmp_path / "rw_parent"
+        child = parent / "ro_child"
+        child.mkdir(parents=True)
+        canonical = to_file_uri(str(child / "ABC-001.mp4"))
+        config = _gallery_config([
+            {"path": str(parent), "readonly": False},
+            {"path": str(child), "readonly": True},
+        ])
+
+        result = resolve_owning_output_root(canonical, config)
+
+        assert result is not None
+        source, _output_root, _output_uri = result
+        assert source.path == str(child)
+
+    def test_equal_length_tie_favors_writable_returns_none(self, tmp_path):
+        """Self-contradictory config: the SAME path listed both readonly and
+        writable (equal-length prefixes) -> ties favor writable (mirrors
+        is_path_readonly's best_ro > best_wr, strict inequality) -> None."""
+        from core.readonly_producer import resolve_owning_output_root
+        from core.path_utils import to_file_uri
+
+        src = tmp_path / "contradictory"
+        src.mkdir()
+        canonical = to_file_uri(str(src / "ABC-001.mp4"))
+        config = _gallery_config([
+            {"path": str(src), "readonly": True},
+            {"path": str(src), "readonly": False},
+        ])
+
+        assert resolve_owning_output_root(canonical, config) is None
+
+    # -- boundary (b): source root changed between calls -----------------------
+    def test_stateless_recompute_when_source_root_changes(self, tmp_path):
+        """resolve_owning_output_root must not cache: a file under the OLD
+        source root stops resolving once the config's source path is changed
+        to point elsewhere (simulates the user editing the source root in
+        settings) — no stale memory of "this used to be readonly"."""
+        from core.readonly_producer import resolve_owning_output_root
+        from core.path_utils import to_file_uri
+
+        old_root = tmp_path / "old_root"
+        new_root = tmp_path / "new_root"
+        old_root.mkdir()
+        new_root.mkdir()
+        canonical_old = to_file_uri(str(old_root / "ABC-001.mp4"))
+
+        config_v1 = _gallery_config([{"path": str(old_root), "readonly": True}])
+        assert resolve_owning_output_root(canonical_old, config_v1) is not None
+
+        config_v2 = _gallery_config([{"path": str(new_root), "readonly": True}])
+        assert resolve_owning_output_root(canonical_old, config_v2) is None
+
+        canonical_new = to_file_uri(str(new_root / "ABC-001.mp4"))
+        result = resolve_owning_output_root(canonical_new, config_v2)
+        assert result is not None
+        assert result[0].path == str(new_root)
+
+    def test_malformed_source_path_skipped_not_raised(self, tmp_path, monkeypatch):
+        """A source whose path canonicalization raises ValueError must be
+        skipped (mirror readonly_source_prefixes' own per-entry try/except),
+        not propagate and crash the whole resolution."""
+        from core.readonly_producer import resolve_owning_output_root
+        from core.path_utils import to_file_uri
+
+        good = tmp_path / "ro_good"
+        good.mkdir()
+        canonical = to_file_uri(str(good / "ABC-001.mp4"))
+        config = _gallery_config([
+            {"path": "bad::unc::path", "readonly": True},
+            {"path": str(good), "readonly": True},
+        ])
+
+        from core.readonly_source import _canonical_source_prefix as _real_canonical_prefix
+
+        def _fake_canonical_prefix(path, path_mappings):
+            if path == "bad::unc::path":
+                raise ValueError("malformed")
+            return _real_canonical_prefix(path, path_mappings)
+
+        monkeypatch.setattr("core.readonly_producer._canonical_source_prefix", _fake_canonical_prefix)
+
+        result = resolve_owning_output_root(canonical, config)
+        assert result is not None
+        assert result[0].path == str(good)

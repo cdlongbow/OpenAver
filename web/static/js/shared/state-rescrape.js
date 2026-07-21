@@ -405,6 +405,7 @@ export function rescrapeState() {
                         write_nfo: true,
                         write_cover: true,
                         detail_url: this.rescrapePreview?.url || null,  // CD-86-13: 取 .url 非 .detail_url
+                        readonly_action: 'rescrape',                    // T4: 無條件送（非唯讀端後端忽略，CD-104-5）
                     }),
                 });
                 const result = await resp.json();

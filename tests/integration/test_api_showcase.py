@@ -446,10 +446,16 @@ class TestShowcaseVideoSingle:
             )
 
 
-# ============ is_readonly_source Tests (90c-T2) ============
+# ============ is_readonly_source field removed Tests (TASK-104-T4) ============
+# 90c-T2 引入的 is_readonly_source 欄位曾用來 disable 唯讀來源片的四顆寫入按鈕
+# （放大鏡×2/補劇照/齒輪）；TASK-104-T4 解禁四鈕（唯讀改道 output_dir，見 T3），
+# 該欄位在前端零消費者 → 連同 _serialize_video 的 readonly_prefixes/writable_prefixes
+# plumbing 一併移除（非 weakening，欄位已死；見 plan-104.md CD-104-5/T4）。
+# 以下沿用原 fixture（ro_setup 唯讀來源 / mixed_setup 唯讀+可寫混合），斷言方向反轉為
+# 「payload 不再帶這個 key」。
 
-class TestShowcaseIsReadonlySource:
-    """測試 GET /api/showcase/videos / video payload 帶 is_readonly_source（後端算，前端不判路徑）。"""
+class TestShowcaseIsReadonlySourceRemoved:
+    """測試 GET /api/showcase/videos / video payload 不再帶 is_readonly_source（TASK-104-T4）。"""
 
     def _make_config(self, directories):
         return {
@@ -508,47 +514,37 @@ class TestShowcaseIsReadonlySource:
         return {"db_path": db_path, "v_ro": v_ro, "v_rw": v_rw,
                 "ro_dir": ro_dir, "config": config}
 
-    def test_field_present_and_bool(self, client, ro_setup, mocker):
-        """每片 payload 都帶 is_readonly_source 布林欄位（非 undefined）。"""
+    def test_field_absent_readonly_source(self, client, ro_setup, mocker):
+        """唯讀來源片 payload 不含 is_readonly_source key（TASK-104-T4 拔除）。"""
         mocker.patch("web.routers.showcase.get_db_path", return_value=ro_setup["db_path"])
         mocker.patch("web.routers.showcase.load_config", return_value=ro_setup["config"])
 
         data = client.get("/api/showcase/videos").json()
         assert len(data["videos"]) == 2
         for video in data["videos"]:
-            assert "is_readonly_source" in video
-            assert isinstance(video["is_readonly_source"], bool)
+            assert "is_readonly_source" not in video
 
-    def test_readonly_source_videos_true(self, client, ro_setup, mocker):
-        """唯讀來源片 → is_readonly_source is True（嚴格）。"""
-        mocker.patch("web.routers.showcase.get_db_path", return_value=ro_setup["db_path"])
-        mocker.patch("web.routers.showcase.load_config", return_value=ro_setup["config"])
-
-        data = client.get("/api/showcase/videos").json()
-        for video in data["videos"]:
-            assert video["is_readonly_source"] is True
-
-    def test_writable_source_videos_false(self, client, showcase_setup, mocker):
-        """既有 showcase_setup（裸 str 來源 → readonly=False）→ 每片 is_readonly_source is False。"""
+    def test_field_absent_writable_source(self, client, showcase_setup, mocker):
+        """既有 showcase_setup（裸 str 來源）payload 亦不含 is_readonly_source key。"""
         mocker.patch("web.routers.showcase.get_db_path", return_value=showcase_setup["db_path"])
         mocker.patch("web.routers.showcase.load_config", return_value=showcase_setup["config"])
 
         data = client.get("/api/showcase/videos").json()
         assert len(data["videos"]) == 2
         for video in data["videos"]:
-            assert video["is_readonly_source"] is False
+            assert "is_readonly_source" not in video
 
-    def test_mixed_per_video_correct(self, client, mixed_setup, mocker):
-        """混合來源：唯讀夾片 True、可寫夾片 False（逐片按所屬來源判）。"""
+    def test_field_absent_mixed_source(self, client, mixed_setup, mocker):
+        """混合來源（唯讀+可寫）逐片 payload 皆不含 is_readonly_source key。"""
         mocker.patch("web.routers.showcase.get_db_path", return_value=mixed_setup["db_path"])
         mocker.patch("web.routers.showcase.load_config", return_value=mixed_setup["config"])
 
         videos = {v["path"]: v for v in client.get("/api/showcase/videos").json()["videos"]}
-        assert videos[mixed_setup["v_ro"]]["is_readonly_source"] is True
-        assert videos[mixed_setup["v_rw"]]["is_readonly_source"] is False
+        assert "is_readonly_source" not in videos[mixed_setup["v_ro"]]
+        assert "is_readonly_source" not in videos[mixed_setup["v_rw"]]
 
-    def test_single_endpoint_consistent_with_list(self, client, ro_setup, mocker):
-        """單筆端點 payload is_readonly_source 值與列表端點一致。"""
+    def test_single_endpoint_field_absent(self, client, ro_setup, mocker):
+        """單筆端點 payload 同樣不含 is_readonly_source key（與列表端點一致）。"""
         mocker.patch("web.routers.showcase.get_db_path", return_value=ro_setup["db_path"])
         mocker.patch("web.routers.showcase.load_config", return_value=ro_setup["config"])
 
@@ -557,7 +553,8 @@ class TestShowcaseIsReadonlySource:
             if v["path"] == ro_setup["v1"]
         )
         single_video = client.get(f"/api/showcase/video?path={ro_setup['v1']}").json()["video"]
-        assert list_video["is_readonly_source"] == single_video["is_readonly_source"] is True
+        assert "is_readonly_source" not in list_video
+        assert "is_readonly_source" not in single_video
 
 
 # ============ Thumbnail cache cover_url switch Tests (T4) ============

@@ -16,22 +16,26 @@ from __future__ import annotations
 import glob
 import hashlib
 import os
+import shutil
 import time
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
 from core import thumbnail_cache
-from core.config import _STEM_IMAGE_MODES
+from core.config import _STEM_IMAGE_MODES, iter_gallery_sources
 from core.database import Video, get_db_path
 from core.focal import requires_face_detection
 from core.focal_trigger import maybe_submit_video_focal
-from core.gallery_scanner import fast_scan_directory
+from core.gallery_scanner import IMAGE_EXTENSIONS, VideoScanner, fast_scan_directory
 from core.logger import get_logger
+from core.nfo_updater import parse_nfo
 from core.organizer import (
     _detect_suffixes,
     _detect_vr_cluster,
     _strip_num_prefixes,
+    crop_to_poster,
     download_image,
     format_string,
     generate_jellyfin_images,
@@ -49,7 +53,8 @@ from core.path_utils import (
     uri_to_fs_path,
     uri_to_local_fs_path,
 )
-from core.scraper import extract_number, search_jav
+from core.readonly_source import _canonical_source_prefix
+from core.scraper import extract_number, search_jav, search_jav_single_source
 from core.video_extensions import get_video_extensions
 
 logger = get_logger(__name__)
@@ -195,6 +200,84 @@ def resolve_output_root(source, config: dict) -> str:
         name = _derive_source_name(source.path)
         return str(get_db_path().parent / "lib" / name)
     return source.output_path
+
+
+def resolve_owning_output_root(canonical_uri: str, config: dict) -> Optional[tuple]:
+    """Find the innermost readonly gallery source that owns ``canonical_uri`` and
+    resolve its effective output root (CD-104-5).
+
+    Returns ``(source, output_root, output_uri)`` where ``source`` is the
+    ``DirectoryConfig`` (needed downstream by ``_produce_one``), ``output_root``
+    is a native FS path string (``normalize_path()``-d), and ``output_uri`` is
+    its ``file:///`` form. Returns ``None`` when no readonly source owns the
+    path — the router's signal to fall through to its existing (non-readonly)
+    sidecar-write code path unchanged.
+
+    Longest-canonical-prefix-wins, mirroring ``is_path_readonly``'s nested-
+    source semantics (readonly_source.py) exactly — but resolving to the WHICH
+    source (an object), not just a boolean:
+    - Enumerate readonly sources (``iter_gallery_sources`` + ``.readonly``),
+      canonicalize each with ``_canonical_source_prefix`` (same mapped
+      namespace as DB rows), keep the longest prefix that contains
+      ``canonical_uri``.
+    - No readonly source contains it → ``None`` (not readonly at all).
+    - A writable source's prefix ALSO contains it and is >= as long (ties go to
+      writable, matching ``is_path_readonly``'s ``best_ro > best_wr`` — a
+      strictly-longer readonly prefix wins) → ``None`` (a nested writable
+      override; the file is actually writable, not readonly — do not route).
+    - Otherwise resolve via ``resolve_output_root(source, config)``. An empty
+      result (media-server flavour with no configured ``output_path``) is
+      returned as ``(source, '', '')`` rather than ``None`` — the caller still
+      knows WHICH source owns the file (for its own "未設定輸出路徑" error
+      message) but has to reject the write itself, since an empty root cannot
+      be normalize_path()'d/to_file_uri()'d meaningfully.
+
+    Malformed source paths (``_canonical_source_prefix`` raising ``ValueError``,
+    e.g. bad UNC forms) are skipped for that one source (mirrors
+    ``readonly_source_prefixes``/``writable_source_prefixes``'s own per-entry
+    ``except ValueError: continue`` — one dirty config entry must not sink the
+    whole resolution).
+    """
+    gallery = config.get("gallery", {})
+    path_mappings = gallery.get("path_mappings", {})
+
+    best_source = None
+    best_ro_len = -1
+    for src in iter_gallery_sources(gallery):
+        if not src.readonly or not src.path:
+            continue
+        try:
+            prefix = _canonical_source_prefix(src.path, path_mappings)
+        except ValueError:
+            continue
+        if is_path_under_dir(canonical_uri, prefix) and len(prefix) > best_ro_len:
+            best_ro_len = len(prefix)
+            best_source = src
+
+    if best_source is None:
+        return None
+
+    best_wr_len = -1
+    for src in iter_gallery_sources(gallery):
+        if src.readonly or not src.path:
+            continue
+        try:
+            prefix = _canonical_source_prefix(src.path, path_mappings)
+        except ValueError:
+            continue
+        if is_path_under_dir(canonical_uri, prefix) and len(prefix) > best_wr_len:
+            best_wr_len = len(prefix)
+
+    if best_wr_len >= best_ro_len:
+        return None  # writable override (or a tie — config self-contradiction, favor writable)
+
+    effective = resolve_output_root(best_source, config)
+    if not (effective or "").strip():
+        return (best_source, '', '')
+
+    output_root = normalize_path(effective)
+    output_uri = to_file_uri(output_root, path_mappings)
+    return (best_source, output_root, output_uri)
 
 
 # ---------------------------------------------------------------------------
@@ -621,52 +704,223 @@ def _write_strm(base_stem: str, source_fs_path: str, config: dict, strm_mappings
 # T-3: write off-flavor assets + DB upsert (plan §5.2 / §6)
 # ---------------------------------------------------------------------------
 
+def _write_media_images(
+    cover_fs: str, base_stem: str, meta: dict, source_media: Optional[dict]
+) -> tuple[bool, bool]:
+    """Write ``-poster``/``-fanart`` images for one movie. Returns
+    ``(has_poster, has_fanart)``.
+
+    ``source_media is None`` (scrape/rescrape, or ingest with no detected
+    curator sidecars): delegates to ``generate_jellyfin_images`` EXACTLY as
+    before this fix — the ONE source of truth for the "generate from cover"
+    path (fanart = copy2(cover); poster = crop_to_poster(cover)) — byte-
+    identical for every caller that doesn't carry a 3rd cover_strategy
+    element (CD scrape/rescrape byte-identity guarantee).
+
+    ``source_media`` is a dict (ingest, curator sidecars detected — see
+    ``resolve_ingest_plan``'s cover-axis docstring): each slot is handled
+    independently.
+      - A detected sidecar (``source_media['poster']`` / ``['fanart']`` not
+        None) is copied VERBATIM via ``shutil.copy2`` — byte-identical to the
+        source, no crop/focal. An ``OSError`` (source vanished mid-run) falls
+        back to the SAME generate step the slot would have used had no
+        sidecar been detected at all.
+      - A missing slot (``None``) always falls back to that generate step —
+        this is the pre-fix behaviour for that slot, unchanged.
+    """
+    number = meta['number']
+    maker = meta.get('maker', '')
+
+    if source_media is None:
+        imgs = generate_jellyfin_images(cover_fs, base_stem, number=number, maker=maker)
+        return imgs.get('poster', False), imgs.get('fanart', False)
+
+    fanart_path = base_stem + '-fanart.jpg'
+    poster_path = base_stem + '-poster.jpg'
+
+    # fanart: verbatim copy of curator sidecar, else generate (copy2 of cover
+    # — matches generate_jellyfin_images's own fanart step byte-for-byte).
+    src_fanart = source_media.get('fanart')
+    has_fanart = False
+    if src_fanart:
+        try:
+            shutil.copy2(src_fanart, fanart_path)
+            has_fanart = True
+        except Exception as e:  # noqa: BLE001 — mirror generate_jellyfin_images' broad catch; any copy failure falls through to generate
+            logger.warning(f"[!] ingest fanart 原樣複製失敗，改由封面生成: {e}")
+            src_fanart = None  # fall through to generate below
+    if not src_fanart:
+        try:
+            shutil.copy2(cover_fs, fanart_path)
+            has_fanart = True
+        except Exception as e:
+            logger.warning(f"[!] generate_jellyfin_images fanart 複製失敗: {e}")
+            has_fanart = False
+
+    # poster: verbatim copy of curator sidecar, else generate (crop_to_poster
+    # of cover — matches generate_jellyfin_images's own poster step).
+    src_poster = source_media.get('poster')
+    has_poster = False
+    if src_poster:
+        try:
+            shutil.copy2(src_poster, poster_path)
+            has_poster = True
+        except Exception as e:  # noqa: BLE001 — mirror generate path's broad catch; any copy failure falls through to crop_to_poster
+            logger.warning(f"[!] ingest poster 原樣複製失敗，改由封面裁生: {e}")
+            src_poster = None  # fall through to generate below
+    if not src_poster:
+        has_poster = crop_to_poster(cover_fs, poster_path, number=number, maker=maker)
+
+    return has_poster, has_fanart
+
+
 def _write_movie_assets(
     movie_dir: str,
     meta: dict,
     format_data: dict,
     source_fs_path: str,
     config: dict,
+    cover_strategy,
+    assets_mode: str = 'full',
     old_base: str = '',
     strm_mappings_getter=None,
 ) -> dict:
     """Write nfo + cover + -poster/-fanart + extrafanart to movie_dir.
 
-    Returns {'cover_fs': str, 'sample_fs': list[str]}.
-    cover_fs is '' when cover download fails or meta['cover'] is empty.
+    full mode (default) returns {'cover_fs': str, 'sample_fs': list[str],
+    'nfo_mtime': float}. cover_fs is '' when the cover step produces no file (see
+    cover_strategy below). nfo_mtime (TASK-104-T1 / CD-104-4) is the real
+    os.stat().st_mtime of the NFO just written — generate_nfo has already raised
+    on failure by the time this is read, so the file is guaranteed to exist.
+
+    Codex PR#113 round-3 (2026-07-21) added a `write_nfo` gate here that let a
+    readonly produce skip the NFO write. REVERTED (owner-confirmed, round-3
+    review): that gate was a P1 data-loss — a title-changing rescrape with
+    write_nfo=False would skip writing `<new_base>.nfo` while
+    `_clean_stale_singletons` still unlinked the OLD `<old_base>.nfo`, losing
+    the NFO entirely while the DB kept a stale nfo_mtime claiming it exists.
+    Readonly produce is a HOLISTIC operation (a library entry always has an
+    NFO) — the router now rejects write_nfo=false for readonly up front (see
+    `_READONLY_NO_NFO_ERROR_MSG` in web/routers/scraper.py) instead of
+    threading a skip flag down here. The NFO is therefore always written,
+    unconditionally, exactly like every other produce caller.
+
+    samples_only mode (TASK-104-T1 / CD-104-1) returns ONLY {'sample_fs':
+    list[str]} — downloads meta['sample_images'] into movie_dir/extrafanart
+    UNCONDITIONALLY (NOT gated on config['download_sample_images']: an explicit
+    supplemental-fetch call means "yes, get samples") and touches NOTHING else —
+    no nfo/cover/poster/fanart/strm, no _clean_stale_extrafanart, no
+    _clean_stale_singletons. Keeps a "fetch more samples" action from ever
+    clobbering metadata/cover it wasn't asked to touch (Codex P1-c).
+
+    cover_strategy (TASK-104-T1 / CD-104-2) replaces the old binary
+    "None=download" rule with an explicit 3-state tuple:
+      ('copy', local_fs_path) — copy a LOCAL file already on disk into cover_fs
+        (ingest, T2: zero network). Copy failure (missing/unreadable source) →
+        has_cover=False, same graceful-failure semantics as a failed download —
+        never raises.
+      ('none',) — do not write a cover at all (ingest has a .nfo but no cover
+        image; must NOT silently fall back to downloading).
+      ('download', remote_url) — has_cover = bool(remote_url) and
+        download_image(remote_url, cover_fs); byte-identical to the pre-T1
+        unconditional-download branch (scrape / gear rescrape, C6).
+    poster/fanart: generate_jellyfin_images(...) runs whenever has_cover is
+    True AND cover_strategy carries no 3rd element (scrape/rescrape, or ingest
+    with no detected curator sidecars) — byte-identical to the pre-fix
+    behaviour. When cover_strategy is the 3-tuple ingest-copy form (see
+    resolve_ingest_plan docstring), each detected `{stem}-poster`/`{stem}
+    -fanart` sidecar is copied VERBATIM into the output slot instead of being
+    regenerated from the cover; a slot with no detected sidecar still falls
+    back to the generate step. See `_write_media_images` below.
 
     old_base (TASK-89a-T4, Codex #3; T5 follow-up, Codex PR review P2): when
     non-empty, this movie's own stale assets from the PREVIOUS run (different
     title → different basename) are deleted — but only AFTER the corresponding
     new asset has been written successfully, and only when old_base differs
-    from this run's basename. Extrafanart (non-critical, whole set rewritten
-    every run) is cleaned before its own download loop. The singleton assets
-    (nfo/cover/poster/fanart) are cleaned only once generate_nfo has already
-    succeeded, and only the ones whose new write actually succeeded this run —
-    so a write that fails partway (cover download false, generate_nfo raising)
-    leaves the previous run's assets on disk instead of deleting them up front
-    and then failing to produce replacements.
+    from this run's basename. The singleton assets (nfo/cover/poster/fanart)
+    are cleaned only once generate_nfo has already succeeded, and only the
+    ones whose new write actually succeeded this run — so a write that fails
+    partway (cover download false, generate_nfo raising) leaves the previous
+    run's assets on disk instead of deleting them up front and then failing
+    to produce replacements. (samples_only never reaches this cleanup — see
+    above.)
+
+    Extrafanart is now managed EXCLUSIVELY by the samples_only (補劇照) path
+    (P1 grok-review, pre-merge 2026-07-21): full mode only cleans+rewrites the
+    extrafanart dir when THIS run itself carries new sample_images to write
+    (``old_base and meta.get('sample_images')``) — full-mode ingest/rescrape
+    callers always pass ``meta['sample_images'] == []`` (CD-104-3), so on a
+    FULL-mode re-entry of an already-produced video (gear rescrape / 放大鏡
+    ingest / batch-enrich) this branch is skipped and previously-fetched
+    samples on disk survive untouched. A bare ``if old_base:`` would delete
+    the extrafanart dir on every full-mode re-entry even though full mode
+    never repopulates it, silently wiping 補劇照 output for any video that
+    gets re-produced. Any hypothetical future caller that DOES pass full-mode
+    samples still gets correct clean+rewrite semantics.
     """
     os.makedirs(movie_dir, exist_ok=True)
+
+    if assets_mode == 'samples_only':
+        ef_dir = Path(movie_dir) / 'extrafanart'
+        os.makedirs(ef_dir, exist_ok=True)
+        sample_fs: list = []
+        for i, url in enumerate(meta.get('sample_images', []), 1):
+            dest = str(ef_dir / f'fanart{i}.jpg')
+            if download_image(url, dest):
+                sample_fs.append(dest)
+        return {'sample_fs': sample_fs}
+
     new_base = base = _build_basename(format_data, source_fs_path, config)
     base_stem = str(Path(movie_dir) / base)
 
-    # 1) Cover: download from remote URL (C6 — always re-scrape, never read source image)
+    # 1) Cover: 3-state strategy (CD-104-2) — see docstring above.
     cover_fs = base_stem + '.jpg'
-    has_cover = bool(meta.get('cover')) and download_image(meta['cover'], cover_fs)
+    strategy_kind = cover_strategy[0]
+    if strategy_kind == 'copy':
+        try:
+            shutil.copyfile(cover_strategy[1], cover_fs)
+            has_cover = True
+        except OSError:
+            has_cover = False
+    elif strategy_kind == 'none':
+        has_cover = False
+    else:  # 'download' — byte-identical to the pre-T1 unconditional branch (C6)
+        remote_url = cover_strategy[1]
+        has_cover = bool(remote_url) and download_image(remote_url, cover_fs)
 
     # 2) poster/fanart (off mode also produces these — Acceptance #6)
-    imgs = generate_jellyfin_images(
-        cover_fs, base_stem, number=meta['number'], maker=meta.get('maker', '')
-    ) if has_cover else {}
-    has_poster = imgs.get('poster', False)
-    has_fanart = imgs.get('fanart', False)
+    if has_cover:
+        raw_source_media = (
+            cover_strategy[2]
+            if strategy_kind == 'copy' and len(cover_strategy) > 2
+            else None
+        )
+        # An ingest source with neither a -poster nor a -fanart sidecar detected
+        # (both slots None) is treated identically to "no 3rd element at all" —
+        # falls through to the single generate_jellyfin_images source of truth
+        # below, keeping that path (and every test that mocks
+        # generate_jellyfin_images directly, e.g. TestIngestFourMatrix) byte-
+        # /call-identical to before this fix.
+        source_media = (
+            raw_source_media
+            if raw_source_media and (raw_source_media.get('poster') or raw_source_media.get('fanart'))
+            else None
+        )
+        has_poster, has_fanart = _write_media_images(cover_fs, base_stem, meta, source_media)
+    else:
+        has_poster = has_fanart = False
 
     # 3) extrafanart — gated only on config key; per-movie dir already exists (no create_folder).
     # Stale samples from the previous run are cleaned first (whenever old_base is
     # non-empty) regardless of this run's download_sample_images setting, so a
     # re-scrape with samples toggled off still shrinks the old set to zero.
-    if old_base:
+    # P1 grok-review (pre-merge 2026-07-21): gated additionally on
+    # meta.get('sample_images') — see docstring's "Extrafanart is now managed
+    # EXCLUSIVELY by samples_only" note. Without this, a full-mode RE-ENTRY of
+    # an already-produced video (old_base non-empty) with meta['sample_images']
+    # always [] (ingest/rescrape, CD-104-3) would delete extrafanart/ and never
+    # repopulate it — destroying samples fetched by an earlier 補劇照 call.
+    if old_base and meta.get('sample_images'):
         _clean_stale_extrafanart(movie_dir)
     sample_fs: list = []
     if config.get('download_sample_images'):
@@ -684,11 +938,15 @@ def _write_movie_assets(
     # claims a movie was generated when the NFO is missing ("每片成功生成後寫一筆").
     # Cover/poster/fanart stay best-effort: a missing cover is acceptable per C6
     # (cold title with no image) and self-heals on the next incremental run.
+    # Always written (P1 revert, round-3 review 2026-07-21) — see the
+    # write_nfo paragraph in this function's docstring for why a skip-NFO
+    # gate is never reintroduced here.
     external_manager = config.get('external_manager', 'off')
     nfo_fs = base_stem + '.nfo'
     nfo_ok = generate_nfo(
         number=meta['number'],
         title=meta['title'],
+        original_title=meta.get('original_title', ''),
         actors=meta.get('actors', []),
         tags=meta.get('tags', []),
         date=meta.get('date', ''),
@@ -707,6 +965,12 @@ def _write_movie_assets(
     )
     if not nfo_ok:
         raise RuntimeError(f"NFO write failed: {nfo_fs}")
+    # CD-104-4 (TASK-104-T1): real write mtime, not a hardcoded 0.0 — nfo_ok is
+    # True here so the file is guaranteed to exist (generate_nfo already raised
+    # above otherwise). MUTATION LOCK: replacing this stat with a hardcoded 0.0
+    # is caught by test_readonly_producer.py::TestUpsertDbAssetsMode's
+    # nfo_mtime-positive test (see that file for the mutation-lock comment).
+    nfo_mtime = os.stat(nfo_fs).st_mtime
 
     # 5) strm sidecar — media-server flavours only (TASK-90a-T3). off / non
     # media-server → no strm. best-effort: a write failure returns False and
@@ -727,7 +991,7 @@ def _write_movie_assets(
     # (T5 follow-up, Codex PR review P2) — see docstring above for why this is
     # post-write rather than pre-write.
     _clean_stale_singletons(movie_dir, old_base, new_base, has_cover, has_poster, has_fanart, has_strm)
-    return {'cover_fs': cover_fs if has_cover else '', 'sample_fs': sample_fs}
+    return {'cover_fs': cover_fs if has_cover else '', 'sample_fs': sample_fs, 'nfo_mtime': nfo_mtime}
 
 
 def _upsert_db(
@@ -738,37 +1002,475 @@ def _upsert_db(
     assets: dict,
     path_mappings: dict,
     output_dir: str,
+    assets_mode: str = 'full',
+    existing=None,
 ) -> None:
     """Manually construct Video and upsert to repo (CD-88b-7).
 
-    path = source_uri (streaming key).
-    cover_path / sample_images = local output URIs (via to_file_uri).
-    user_tags intentionally omitted → upsert preserves existing DB value.
-    output_dir MUST be a non-empty file:/// URI (TASK-89a-T1's upsert CASE-WHEN
-    treats '' as "leave existing value alone" — passing '' here would make the
-    very first write for a video look like a no-op and silently keep it '').
+    full mode (default): path = source_uri (streaming key). cover_path /
+    sample_images = local output URIs (via to_file_uri). user_tags intentionally
+    omitted → upsert preserves existing DB value. output_dir MUST be a non-empty
+    file:/// URI (TASK-89a-T1's upsert CASE-WHEN treats '' as "leave existing
+    value alone" — passing '' here would make the very first write for a video
+    look like a no-op and silently keep it ''). nfo_mtime (TASK-104-T1 /
+    CD-104-4) is the real write mtime threaded in via assets['nfo_mtime'] —
+    _write_movie_assets only returns that key in full mode, matching this branch.
+
+    existing (P1/P2 grok-review, pre-merge 2026-07-21): the caller's own
+    ``repo.get_by_path(source_uri)`` result (``_produce_one`` already reads this
+    once and threads it through — same object T4's old_base reconstruction
+    uses). Mirrors ``core.enricher._db_upsert``'s PRESERVATION PATTERN
+    (enricher.py:~627-646) for full mode:
+      - cover_path: when THIS run produced no cover (``assets['cover_fs']``
+        empty — cover_strategy ``('none',)`` or a failed download), fall back
+        to ``existing.cover_path`` instead of clobbering the DB to ''. Full
+        mode only WRITES a new cover_fs when it actually has one to write
+        (see _write_movie_assets); an empty cover_fs is not evidence the old
+        cover is gone from disk.
+      - sample_images: full-mode ingest/rescrape callers always pass
+        ``meta['sample_images'] == []`` (CD-104-3) so ``assets['sample_fs']``
+        is always ``[]`` too — on a RE-ENTRY of an already-produced video
+        (gear rescrape / 放大鏡 ingest / batch-enrich), this must NOT wipe
+        sample_images fetched by an earlier 補劇照 (samples_only) call.
+        ``existing`` is None for a brand-new video, so the no-existing-row
+        matrix still gets ``sample_images=[]`` (no regression).
+    Both preservations only apply in ``full`` mode — ``samples_only`` already
+    has its own symmetric skip-when-empty guard below. (A Codex PR#113 round-3
+    `write_nfo` skip-gate briefly made ``assets['nfo_mtime']`` optional too and
+    added a matching fallback here — REVERTED, round-3 review: the gate itself
+    was a P1 data-loss and readonly produce always writes the NFO now, so
+    ``assets['nfo_mtime']`` is unconditionally present.)
+
+    samples_only mode (TASK-104-T1 / CD-104-1): does NOT construct/upsert a full
+    Video row — a supplemental-samples fetch must never touch cover_path/
+    nfo_mtime/metadata (Codex P1-c symmetry with _write_movie_assets). Only
+    sample_images is updated, via the dedicated repo.update_sample_images (same
+    DB path the existing fetch-samples feature already uses).
+
+    P2 review (2026-07-21): `repo.update_sample_images` is skipped entirely when
+    `assets['sample_fs']` is empty — matching `core.enricher.fetch_samples_only`'s
+    OWN zero-download behaviour byte for byte (that function only calls its
+    `_db_upsert_samples_only` `if written_uris:`, leaving any existing DB
+    `sample_images` untouched when nothing was actually downloaded, regardless of
+    whether zero downloads happened because the scraper returned no sample URLs
+    at all or because every download attempt failed). Previously this branch
+    called `update_sample_images(source_uri, [])` unconditionally, which cleared
+    a video's existing sample_images to `[]` on a total download failure —
+    silently destroying data the caller never asked to touch. Do NOT revert to
+    the unconditional call: that is the exact bug this task fixes, not a
+    simplification.
     """
+    if assets_mode == 'samples_only':
+        if assets['sample_fs']:
+            repo.update_sample_images(
+                source_uri, [to_file_uri(p, path_mappings) for p in assets['sample_fs']]
+            )
+        # FIX P2-B (P2 parity closeout): a samples-only supplemental fetch must
+        # still record output_dir on a row that doesn't have one yet — otherwise
+        # a later full ingest can't rely on it being set. Idempotent: never
+        # clobbers an already-non-empty output_dir (set_output_dir_if_empty's
+        # WHERE clause).
+        if output_dir:
+            repo.set_output_dir_if_empty(source_uri, output_dir)
+        return
+
+    if assets['sample_fs']:
+        sample_imgs = [to_file_uri(p, path_mappings) for p in assets['sample_fs']]
+    else:
+        sample_imgs = existing.sample_images if existing else []
+
+    if assets['cover_fs']:
+        cover_uri = to_file_uri(assets['cover_fs'], path_mappings)
+    else:
+        cover_uri = existing.cover_path if existing else ''
+
     v = Video(
         path=source_uri,
         number=meta['number'],
         title=meta['title'],
+        original_title=meta.get('original_title') or (existing.original_title if existing else ''),
         actresses=meta.get('actors', []),
         maker=meta.get('maker', ''),
         director=meta.get('director', ''),
         series=meta.get('series') or None,
         label=meta.get('label', ''),
         tags=meta.get('tags', []),
-        sample_images=[to_file_uri(p, path_mappings) for p in assets['sample_fs']],
+        sample_images=sample_imgs,
         duration=meta.get('duration'),
         size_bytes=file_info['size'],
-        cover_path=to_file_uri(assets['cover_fs'], path_mappings) if assets['cover_fs'] else '',
+        cover_path=cover_uri,
         output_dir=output_dir,
         release_date=meta.get('date', ''),
         mtime=file_info['mtime'],
-        nfo_mtime=0.0,
+        nfo_mtime=assets['nfo_mtime'],
         scrape_attempted_at=time.time(),
     )
     repo.upsert(v)
+
+
+# ---------------------------------------------------------------------------
+# TASK-104-T2 (CD-104-3 / CD-104-3a / CD-104-3b): NFO → producer-meta adapter +
+# resolve_ingest_plan (the metadata/cover two-axis decision the ingest/rescrape
+# gear needs). Both are pure functions — no I/O beyond the caller-supplied
+# root / src_fs_path — so the per-file produce_source loop below can call them
+# directly without adding a new resource-lifecycle concern.
+# ---------------------------------------------------------------------------
+
+def _nfo_to_producer_meta(root: ET.Element, fallback_number: str) -> dict:
+    """Reverse-map a parsed NFO `<movie>` root into producer-meta shape (CD-104-3b).
+
+    Mirrors VideoScanner.parse_nfo's (gallery_scanner.py:303) tag-extraction
+    robustness — multi-tag date fallback, genre/tag merge-with-dedup, set/name
+    — but OUTPUTS producer-meta keys (number/title/actors/tags/date/maker/
+    director/series/label/duration/url/_summary/_rating/cover/sample_images),
+    matching what `_write_movie_assets`/`generate_nfo`/`_upsert_db` already
+    consume (this module, :625/:790). Do NOT reuse `core.enricher._nfo_to_meta`
+    — its actresses/release_date/cover_url shape silently drops fields at the
+    writer/upsert boundary (card note).
+
+    Two round-trip edges reversing `generate_nfo` (core/organizer.py:597):
+      - title: generate_nfo writes `[number]display` — strip that prefix back
+        off via `_strip_num_prefixes`, else re-generating double-wraps to
+        `[num][num]…`.
+      - _rating: `<rating>` is written as raw×2 (organizer.py:674) — divide
+        back by 2 here; empty/non-numeric/<=0 → None (never resurrects a
+        rating that generate_nfo never actually wrote).
+
+    `number` falls back to `fallback_number` (caller's `extract_number
+    (basename)`) when the NFO has neither a non-empty `<num>` nor `<uniqueid>`.
+    `cover`/`sample_images` are always '' / [] here — ingest cover is decided
+    by `resolve_ingest_plan`'s own cover axis (cover_strategy), not this meta
+    dict; samples are never bulk-fetched (see `resolve_ingest_plan` docstring).
+    """
+    def _text(tag: str) -> str:
+        elem = root.find(tag)
+        return (elem.text or '').strip() if elem is not None else ''
+
+    # number/maker/date fallback chains mirror VideoScanner.parse_nfo
+    # (gallery_scanner.py:323/330/337) EXACTLY so ingest reads a third-party
+    # NFO identically to OpenAver's incumbent scan reader (no ingest-vs-scan
+    # date/maker drift). `uniqueid` kept as an extra tail fallback (generate_nfo
+    # always writes it; harmless for OpenAver NFOs where <num> already wins).
+    number = ''
+    for tag in ('num', 'id', 'uniqueid'):
+        elem = root.find(tag)
+        if elem is not None and elem.text and elem.text.strip():
+            number = elem.text.strip()
+            break
+    if not number:
+        number = fallback_number or ''
+
+    raw_title = _text('title')
+    title = _strip_num_prefixes(raw_title, number) if raw_title else raw_title
+    original_title = _text('originaltitle')
+
+    # any-depth `.//actor/name` — mirrors VideoScanner.parse_nfo (gallery_scanner.py:345)
+    # EXACTLY. A direct-children-only `root.findall('actor')` would silently return []
+    # for a third-party NFO shaped `<movie><actors><actor><name>X</name></actor></actors></movie>`
+    # (actors nested one level deeper than OpenAver's own flat `<movie><actor>` shape) —
+    # VideoScanner would still read the actor via the scan path, but ingest would clear it
+    # (P1 finding, 2026-07-21 review). MUTATION LOCK: reverting to `root.findall('actor')`
+    # must turn test_nested_actors_element_any_depth RED (test_readonly_producer.py).
+    actors = [
+        (elem.text or '').strip()
+        for elem in root.findall('.//actor/name')
+        if elem.text
+    ]
+
+    # genre/tag merge-with-dedup, mirroring VideoScanner.parse_nfo:350-358
+    # (genre first, then any <tag> not already present).
+    tags: list = []
+    for genre_elem in root.findall('genre'):
+        if genre_elem.text:
+            t = genre_elem.text.strip()
+            if t not in tags:
+                tags.append(t)
+    for tag_elem in root.findall('tag'):
+        if tag_elem.text:
+            t = tag_elem.text.strip()
+            if t not in tags:
+                tags.append(t)
+
+    date = _text('release') or _text('premiered') or _text('year')
+
+    set_elem = root.find('set')
+    series = ''
+    if set_elem is not None:
+        n_elem = set_elem.find('name')
+        series = (n_elem.text or '').strip() if n_elem is not None else ''
+
+    runtime_text = _text('runtime')
+    duration: Optional[int] = None
+    if runtime_text:
+        try:
+            duration = int(runtime_text)
+        except ValueError:
+            duration = None
+
+    rating_text = _text('rating')
+    rating_val: Optional[float] = None
+    if rating_text:
+        try:
+            r = float(rating_text)
+            if r > 0:
+                rating_val = r / 2
+        except ValueError:
+            rating_val = None
+
+    return {
+        'number': number,
+        'title': title,
+        'original_title': original_title,
+        'actors': actors,
+        'tags': tags,
+        'date': date,
+        'maker': _text('maker') or _text('studio'),
+        'director': _text('director'),
+        'series': series,
+        'label': _text('label'),
+        'duration': duration,
+        'url': _text('website'),
+        '_summary': _text('plot'),
+        '_rating': rating_val,
+        'cover': '',
+        'sample_images': [],
+    }
+
+
+def resolve_ingest_plan(
+    src_fs_path: str,
+    number: Optional[str],
+    config: dict,
+    *,
+    action: str = 'ingest',
+    proxy_url: str = '',
+    scraper_data: Optional[dict] = None,
+    source: Optional[str] = None,
+    javbus_lang: Optional[str] = None,
+) -> tuple:
+    """Metadata + cover two-axis decision for one source file (CD-104-3a).
+
+    `config` is scraper_cfg (matches produce_source's own call-site
+    convention). Returns `(meta, cover_strategy)`; `meta` is None when nothing
+    usable was found — the caller falls to its own no_scrape stub, matching
+    the pre-T2 "search_jav returns None" contract byte for byte.
+
+    action='ingest' (bulk loop / 放大鏡): metadata prefers a valid sidecar NFO
+    (zero network, via `_nfo_to_producer_meta`) over `search_jav`; cover
+    prefers a LOCAL file (`VideoScanner.find_cover_image`, with the NFO's
+    `<thumb>` threaded in as `nfo_thumb` when the NFO is valid) over a remote
+    download — local-first, ingest intent (CD-104-10: nfo_thumb must be
+    threaded or L3 silently degrades). When there is no usable NFO, the
+    scrape-fallback (P2 fix, round-3 review 2026-07-21) honors the caller's own
+    `source`/`javbus_lang` instead of hardcoding `source="auto"` — mirrors the
+    rescrape branch's own dispatch just below: a concrete `source` (not
+    None/'auto') routes through `search_jav_single_source`; otherwise falls
+    back to `search_jav(source='auto', ...)`. Both dispatch cases thread
+    `javbus_lang` through.
+
+    action='rescrape' (gear; T3 wires the caller): metadata and cover are
+    ALWAYS remote — a re-scrape means "get the current upstream truth", never
+    reusing whatever's already on disk (a stale local cover must not survive a
+    deliberate re-scrape). `scraper_data` (TASK-104-T3), when given, is used
+    verbatim as the metadata (already-fetched detail_url/candidate-version
+    payload from the router's javlibrary confirm flow — matches
+    `to_legacy_dict()` + `internal_nfo_carriers()` shape) and no network call is
+    made here. Without `scraper_data`: a concrete `source` (not None/'auto')
+    routes through `search_jav_single_source` (explicit source pick, mirrors
+    `rescrape_preview_endpoint`'s own branching); otherwise falls back to
+    `search_jav(source='auto', ...)`.
+
+    A `parse_nfo()` failure (bad XML → root=None) is treated as "no usable
+    NFO": `nfo_thumb=None`, metadata falls to `search_jav`, and the cover
+    `('none',)` branch below keys on `valid_nfo` (root is not None) — NEVER on
+    the bare `nfo_path.exists()` check. Keying on file-exists alone would let
+    a malformed sidecar both withhold metadata AND lock the cover into
+    `('none',)` with no download fallback (card's 特有邊界 #1).
+
+    Common (both actions): before returning, `sample_images` is always forced
+    to `[]` — neither ingest nor rescrape bulk-fetches sample images (spec
+    §3-A / Non-Goals; samples are on-demand only, via the separate case-C
+    `assets_mode='samples_only'` path). When `meta` is None, the computed
+    cover_strategy is discarded and `('none',)` is returned instead — nothing
+    to copy/download without any metadata to attach it to.
+
+    Curated -poster/-fanart passthrough (owner-approved fix, 2026-07-21):
+    action='ingest' only, when the cover strategy resolves to the local-copy
+    form (`('copy', cover_fs)`), the 3rd element is appended as
+    `('copy', cover_fs, {'poster': poster_fs, 'fanart': fanart_fs})` — the
+    source directory's OWN `{stem}-poster.*` / `{stem}-fanart.*` sidecars
+    (curated Jellyfin/Emby libraries ship both, distinct portrait/landscape
+    images), each `None` when absent. `_write_movie_assets` copies these
+    VERBATIM into the output `-poster`/`-fanart` slots instead of regenerating
+    them from whichever single image `find_cover_image` picked as the cover
+    (which previously discarded the curator's real poster — see plan-104
+    cover axis notes). `('none',)` is left untouched (no local cover at all →
+    nothing to copy). `action='rescrape'` never adds this 3rd element —
+    cover_strategy stays a 2-tuple there, so the scrape/rescrape write path
+    (`source_media is None` in `_write_movie_assets`) stays byte-identical to
+    before this fix.
+    """
+    nfo_path = Path(src_fs_path).with_suffix('.nfo')
+    root = None
+    if nfo_path.exists():
+        _, root = parse_nfo(str(nfo_path))
+    valid_nfo = root is not None
+
+    if action == 'ingest':
+        if valid_nfo:
+            meta = _nfo_to_producer_meta(root, fallback_number=number)
+            # Codex PR#113 one-pass alignment (2026-07-21): _nfo_to_producer_meta
+            # carries no 'source' key at all — the readonly endpoints derive
+            # EnrichResult.source_used from meta.get('source', ''), so an NFO-
+            # sourced ingest must explicitly mark itself 'nfo' (mirrors
+            # core.enricher's own source_used='nfo' for its NFO-read branch)
+            # or it would silently report '' instead.
+            meta['source'] = 'nfo'
+        elif not number:
+            meta = None
+        # P2 fix (round-3 review 2026-07-21): honor the caller's own source/
+        # javbus_lang instead of hardcoding source="auto" — mirrors the
+        # rescrape branch's dispatch below.
+        elif source and source not in (None, 'auto'):
+            meta = search_jav_single_source(number, source, proxy_url, javbus_lang=javbus_lang)
+        else:
+            meta = search_jav(number, source="auto", proxy_url=proxy_url, javbus_lang=javbus_lang)
+
+        nfo_thumb = root.findtext('thumb') if valid_nfo else None
+        cover_fs = VideoScanner().find_cover_image(src_fs_path, nfo_thumb=nfo_thumb)
+        if cover_fs:
+            src_dir = Path(src_fs_path).parent
+            stem = Path(src_fs_path).stem
+            poster_fs = next(
+                (str(p) for ext in IMAGE_EXTENSIONS
+                 if (p := src_dir / f"{stem}-poster{ext}").exists()),
+                None,
+            )
+            fanart_fs = next(
+                (str(p) for ext in IMAGE_EXTENSIONS
+                 if (p := src_dir / f"{stem}-fanart{ext}").exists()),
+                None,
+            )
+            cover_strategy = ('copy', cover_fs, {'poster': poster_fs, 'fanart': fanart_fs})
+        elif valid_nfo:
+            cover_strategy = ('none',)
+        else:
+            cover_strategy = ('download', meta['cover']) if meta and meta.get('cover') else ('none',)
+    else:  # 'rescrape'
+        if scraper_data:
+            meta = scraper_data
+        elif source and source not in (None, 'auto'):
+            meta = search_jav_single_source(number, source, proxy_url, javbus_lang=javbus_lang) if number else None
+        else:
+            meta = search_jav(number, source="auto", proxy_url=proxy_url, javbus_lang=javbus_lang) if number else None
+        cover_strategy = ('download', meta['cover']) if meta and meta.get('cover') else ('none',)
+
+    if meta is None:
+        return None, ('none',)
+    meta['sample_images'] = []
+    return meta, cover_strategy
+
+
+# ---------------------------------------------------------------------------
+# TASK-104-T1 (CD-104-1): single-file produce primitive — extracted from
+# produce_source's per-file try-block so ingest/rescrape/samples-only callers
+# (T2/T3: readonly gear/放大鏡/補劇照 endpoints) can reuse the SAME
+# resolve→write→upsert pipeline instead of a second, driftable copy. Landing
+# in the SAME movie_dir every time (via _resolve_movie_dir's read-and-reuse) is
+# what keeps every one of those callers from ever orphaning/overwriting a
+# sibling's assets.
+#
+# Deliberately excludes: _emit / the try-except wrapper / result counters
+# (orchestrator bookkeeping) and the skip check / extract_number / search_jav
+# (scrape-decision concerns) — all of those stay in produce_source's loop (and,
+# later, the readonly endpoints' own orchestration).
+# ---------------------------------------------------------------------------
+
+def _produce_one(
+    repo,
+    source,
+    config,
+    *,
+    file_info: dict,
+    meta: dict,
+    cover_strategy,
+    assets_mode: str = 'full',
+    existing,
+    output_root: str,
+    output_uri: str,
+    allocated_this_run: set,
+    path_mappings: dict,
+    strm_mappings_getter=None,
+) -> tuple[Path, dict]:
+    """Resolve movie_dir, write assets, upsert DB for ONE file. Returns
+    ``(movie_dir, assets)`` (contract change, P2 review 2026-07-21 — was a
+    bare ``movie_dir`` Path; every caller must now unpack the tuple).
+
+    ``assets`` is the dict `_write_movie_assets` returned (``{'cover_fs',
+    'sample_fs', 'nfo_mtime'}`` in full mode / ``{'sample_fs'}`` in
+    samples_only mode) — the shared enabler for two router-level bugs:
+      - fetch-samples was reporting the REQUESTED sample count instead of the
+        ACTUALLY-downloaded one (`len(assets['sample_fs'])` is ground truth;
+        `_write_movie_assets` only appends successfully-downloaded files to
+        `sample_fs`, so a partial/total download failure no longer over-reports).
+      - batch/enrich-single readonly success responses carried no
+        nfo_written/cover_written for the frontend — callers can now derive
+        `cover_written = bool(assets.get('cover_fs'))` (nfo_written is
+        unconditionally True on a successful return in full mode:
+        `_write_movie_assets` raises before returning if the NFO write itself
+        fails, so reaching here always means the NFO was written).
+
+    config here is scraper_cfg — the same section _resolve_movie_dir /
+    _write_movie_assets already take (matches produce_source's call site).
+    existing is the caller's own repo.get_by_path(source_uri) result (read ONCE
+    by the caller, not here) — T4's old_base reconstruction and T3's
+    read-and-reuse movie-dir logic both consume it, and it is now also passed
+    through to ``_upsert_db`` (P2 grok-review) so a full-mode RE-ENTRY of an
+    already-produced video preserves existing cover_path/sample_images instead
+    of clobbering them when this run's assets are empty.
+
+    source is accepted (not currently read in this body) for parity with the
+    CD-104-1 contract and for T2/T3 callers that will need it (e.g. resolving
+    ingest vs. rescrape intent upstream of this primitive).
+
+    A Codex PR#113 round-3 `write_nfo` param that threaded a skip-NFO flag
+    down to `_write_movie_assets` was REVERTED (P1 data-loss, round-3 review
+    2026-07-21) — every caller, including the readonly router endpoints,
+    always writes the NFO now.
+    """
+    src_uri = to_file_uri(file_info["path"], path_mappings)
+    fd = _format_data(meta, file_info["path"], config)
+    movie_dir, output_dir_uri = _resolve_movie_dir(
+        repo, src_uri, existing, output_root, output_uri,
+        fd, config, allocated_this_run, path_mappings,
+    )
+    old_base = _build_old_base(existing, file_info["path"], config)  # '' when no prior row/title/number
+    # FIX P1 (Codex PR#113 round-6, 2026-07-21): synthesize the EFFECTIVE
+    # original_title ONCE, before writing any asset, so the output NFO
+    # (_write_movie_assets→generate_nfo) and the DB row (_upsert_db) consume the
+    # SAME value. A re-scrape whose source returns an empty original_title must
+    # NOT clobber the on-disk NFO's <originaltitle> to '' while the DB keeps the
+    # old value — that split (preserve in _upsert_db only) was on-disk data loss
+    # + NFO/DB drift. Mirrors the cover_path/sample_images preserve-if-empty
+    # contract. Full-mode only in effect (samples_only writes no NFO), but the
+    # mutation is harmless there. _upsert_db keeps its own preserve as a defensive
+    # net for any direct caller, but after this line meta already carries the truth.
+    if not meta.get('original_title') and existing and existing.original_title:
+        meta['original_title'] = existing.original_title
+    # PR #93 五審四次 P2 (option C): media-server 模式下用注入的 getter 讓
+    # _write_movie_assets 在真正落 .strm 那一刻才重讀 fresh strm_path_mappings
+    # （見 _write_movie_assets 內部該段落的完整解釋）。strm_mappings_getter=None
+    # （既有呼叫）→ 回退凍結 config、零重讀、行為不變。
+    assets = _write_movie_assets(
+        str(movie_dir), meta, fd, file_info["path"], config,
+        cover_strategy=cover_strategy, assets_mode=assets_mode,
+        old_base=old_base, strm_mappings_getter=strm_mappings_getter,
+    )
+    _upsert_db(
+        repo, src_uri, file_info, meta, assets, path_mappings, output_dir_uri,
+        assets_mode=assets_mode, existing=existing,
+    )
+    return movie_dir, assets
 
 
 # ---------------------------------------------------------------------------
@@ -854,39 +1556,45 @@ def produce_source(source, config, repo, *, proxy_url="", on_progress=None, shou
             continue
 
         number = extract_number(os.path.basename(fi["path"]))  # Optional[str]
-        if not number:  # None guard (Codex P2b): search_jav(None) crashes
-            result.no_scrape += 1
-            _emit(on_progress, result, src_uri, "no_scrape")
-            continue
 
-        meta = search_jav(number, source="auto", proxy_url=proxy_url)
-        if not meta:
-            repo.insert_if_ignore(Video(path=src_uri, number=number, title=os.path.basename(fi["path"])))
-            repo.update_scrape_attempted_at(src_uri, time.time())
+        # Codex PR#113 P2 #1: the old `if not number: continue` bailed BEFORE
+        # resolve_ingest_plan ever got a chance to read an adjacent NFO's
+        # <num>/<id>/<uniqueid> — a curated file whose FILENAME has no
+        # extractable number but whose sidecar NFO does was wrongly no_scrape'd.
+        # resolve_ingest_plan already guards this: its scrape branch is
+        # `search_jav(number, ...) if number else None`, so number=None never
+        # reaches search_jav — safe to always call it.
+        #
+        # CD-104-3a (TASK-104-T2): metadata + cover two-axis decision — .nfo
+        # sidecar (zero network) / local cover file win over search_jav /
+        # download when present (ingest intent, local-first). Falls straight
+        # to the pre-T2 scrape-everything behavior when neither sidecar nor
+        # local cover exists (CD-104-2's 3-state cover_strategy tuple lives
+        # inside resolve_ingest_plan now, not inline here).
+        meta, cover_strategy = resolve_ingest_plan(
+            fi["path"], number, scraper_cfg, action='ingest', proxy_url=proxy_url,
+        )
+        if not meta or not meta.get('number'):
+            # Only stub+record-attempt when a filename number exists (matches
+            # the old `if not number` branch's behavior byte-for-byte for the
+            # no-number-no-NFO case — no DB row for a file we can't identify
+            # at all).
+            if number:
+                repo.insert_if_ignore(Video(path=src_uri, number=number, title=os.path.basename(fi["path"])))
+                repo.update_scrape_attempted_at(src_uri, time.time())
             result.no_scrape += 1
             _emit(on_progress, result, src_uri, "no_scrape")
             continue
 
         try:
-            fd = _format_data(meta, fi["path"], scraper_cfg)
             existing = repo.get_by_path(src_uri)  # T3: read once; T4 reuses title/actresses/maker/release_date
-            movie_dir, output_dir_uri = _resolve_movie_dir(
-                repo, src_uri, existing, output_root, output_uri,
-                fd, scraper_cfg, allocated_this_run, path_mappings,
+            movie_dir, _assets = _produce_one(  # _produce_one now returns (movie_dir, assets) — this loop only needs movie_dir
+                repo, source, scraper_cfg,
+                file_info=fi, meta=meta, cover_strategy=cover_strategy, assets_mode='full',
+                existing=existing, output_root=output_root, output_uri=output_uri,
+                allocated_this_run=allocated_this_run, path_mappings=path_mappings,
+                strm_mappings_getter=strm_mappings_getter,
             )
-            old_base = _build_old_base(existing, fi["path"], scraper_cfg)  # T4: '' when no prior row/title/number
-            # PR #93 五審四次 P2 (option C)：media-server 模式下，每片用注入的 getter 重讀 fresh
-            # strm_path_mappings（非 generate 起始凍結值）。封死斷線尾巴殘留——watcher 偵測到斷線
-            # 即清 generate token，但 producer 每片 checkpoint 才看 should_abort，會多做完當下這片；
-            # 此時另一分頁可能已存新映射（gate 見不到在飛 generate 而放行），該片若用凍結舊映射落檔則
-            # 永久 stale。傳 getter callable（非此刻 snapshot）往下，讓 _write_movie_assets 在
-            # _write_strm 前一刻才求值（五審五次 Codex：snapshot 在此求值後、封面/NFO 等寫檔仍需時間，
-            # 期間存的新映射會被漏掉）。getter=None（既有呼叫/測試）→ 回退凍結 config、零重讀、行為不變。
-            assets = _write_movie_assets(
-                str(movie_dir), meta, fd, fi["path"], scraper_cfg,
-                old_base=old_base, strm_mappings_getter=strm_mappings_getter,
-            )
-            _upsert_db(repo, src_uri, fi, meta, assets, path_mappings, output_dir_uri)
             result.created += 1
             _emit(on_progress, result, src_uri, "created", str(movie_dir), number)
         except Exception:

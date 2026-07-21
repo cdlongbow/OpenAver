@@ -202,10 +202,6 @@
                     <span class="enrich-card-glyph">⚠</span>
                     <span x-text="window.t('scanner.stats.missing_enrich_card_error')"></span>
                 </span>
-                <span class="enrich-card-status enrich-card-status-neutral" x-show="currentCard?.status === 'readonly'">
-                    <span class="enrich-card-glyph">⤿</span>
-                    <span x-text="window.t('scanner.stats.missing_enrich_card_readonly')"></span>
-                </span>
             </div>
             <span class="enrich-card-badge" x-show="enrichBadgeCount > 0" x-text="enrichBadgeCount"></span>
         </div>
