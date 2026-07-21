@@ -27,6 +27,34 @@ class EnrichResult:
     reason: Optional[str] = None
 
 
+def enrich_success(*, nfo_written, cover_written, extrafanart_written,
+                   fields_filled, source_used,
+                   has_servable_cover=None, reason=None) -> EnrichResult:
+    """成功 EnrichResult 建構器（feature/105，CD-105-7）。
+
+    六個成功構造（enricher tail / fetch_samples_only / 唯讀 enrich-single /
+    唯讀 samples ×2 / batch 唯讀）物理共用此份，消除「成功回報 shape 漏鏡射」漂移。
+
+    reason 派生單一住此：`has_servable_cover is not None`（有封面站）→ 派生
+    'hit'/'no_cover'（覆蓋 reason 參數）；為 None（samples 站）→ 用顯式 reason 參數。
+    `success=True`／`error=None` 恆定。其餘欄位（nfo_written / extrafanart_written /
+    fields_filled / source_used）builder 不計算，原樣塞入——刻意差異全由呼叫端實參表達
+    （CD-105-6-4：不開第二套函式）。keyword-only 避免位置錯位。
+    """
+    if has_servable_cover is not None:
+        reason = "hit" if has_servable_cover else "no_cover"
+    return EnrichResult(
+        success=True,
+        error=None,
+        nfo_written=nfo_written,
+        cover_written=cover_written,
+        extrafanart_written=extrafanart_written,
+        fields_filled=fields_filled,
+        source_used=source_used,
+        reason=reason,
+    )
+
+
 def cover_uri_is_servable(cover_uri, path_mappings) -> bool:
     """封面 URI 是否「前端 /thumb 真的服務得到」的最小磁碟真相原子。
 

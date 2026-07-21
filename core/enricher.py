@@ -15,6 +15,7 @@ from core.enrich_contract import (
     EnrichResult,
     compute_has_servable_cover,
     effective_original_title,
+    enrich_success,
     should_preserve_cover,
 )
 from core.focal_trigger import maybe_submit_video_focal
@@ -576,15 +577,13 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
         repo, to_file_uri(fs_path_for_db), path_mappings
     )
 
-    return EnrichResult(
-        success=True,
+    return enrich_success(
         nfo_written=nfo_written,
         cover_written=cover_written,
         extrafanart_written=extrafanart_written,
         fields_filled=fields_filled,
         source_used=source_used,
-        error=None,
-        reason=("hit" if has_servable_cover else "no_cover"),
+        has_servable_cover=has_servable_cover,
     )
 
 
@@ -710,14 +709,13 @@ def fetch_samples_only(
         _db_upsert_samples_only(repo, fs_path_for_db, written_uris)
 
     logger.info("[fetch_samples_only] %s: %d samples downloaded", number, len(written_uris))
-    return EnrichResult(
-        success=True,
+    return enrich_success(
         nfo_written=False,
         cover_written=False,
         extrafanart_written=len(written_uris),
         fields_filled=[],
         source_used=meta.get("source", ""),
-        error=None,
+        reason=None,
     )
 
 

@@ -11,10 +11,12 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from core.enrich_contract import (
+    EnrichResult,
     apply_cover_preserve,
     compute_has_servable_cover,
     cover_uri_is_servable,
     effective_original_title,
+    enrich_success,
     should_preserve_cover,
 )
 
@@ -145,6 +147,69 @@ class TestShouldPreserveCover:
         """無封面 → 寫（不保留，不論 overwrite）。"""
         assert should_preserve_cover(True, False, False) is False
         assert should_preserve_cover(True, True, False) is False
+
+
+# ── enrich_success ───────────────────────────────────────────────────────────
+
+class TestEnrichSuccess:
+    """成功建構器（feature/105 T4，CD-105-7）：reason 派生單一住 builder 內。
+    has_servable_cover（None/True/False）× reason（None/顯式）正交三態；
+    has_servable_cover is not None 時派生值覆蓋 reason 參數（派生優先）。
+    """
+
+    def _base_kwargs(self):
+        return dict(
+            nfo_written=True,
+            cover_written=False,
+            extrafanart_written=3,
+            fields_filled=['title', 'actors'],
+            source_used='javdb',
+        )
+
+    def test_has_servable_cover_true_derives_hit(self):
+        r = enrich_success(**self._base_kwargs(), has_servable_cover=True)
+        assert r.reason == 'hit'
+
+    def test_has_servable_cover_false_derives_no_cover(self):
+        r = enrich_success(**self._base_kwargs(), has_servable_cover=False)
+        assert r.reason == 'no_cover'
+
+    def test_no_cover_arg_and_reason_none_stays_none(self):
+        """samples 站：不傳 has_servable_cover + reason=None（顯式）→ None。"""
+        r = enrich_success(**self._base_kwargs(), reason=None)
+        assert r.reason is None
+
+    def test_no_cover_arg_reason_passthrough(self):
+        """has_servable_cover=None + 顯式 reason → 原樣穿透（走 else 分支）。"""
+        r = enrich_success(**self._base_kwargs(), reason='foo')
+        assert r.reason == 'foo'
+
+    def test_derivation_overrides_reason_param(self):
+        """衝突優先：has_servable_cover=True + reason='no_cover' → 'hit'（派生覆蓋參數）。"""
+        r = enrich_success(**self._base_kwargs(), has_servable_cover=True, reason='no_cover')
+        assert r.reason == 'hit'
+
+    def test_eight_fields_correct(self):
+        """success/error 恆定，其餘 6 欄位原樣塞入（含 fields_filled 原樣）。"""
+        fields = ['title', 'actors']
+        r = enrich_success(
+            nfo_written=False,
+            cover_written=True,
+            extrafanart_written=5,
+            fields_filled=fields,
+            source_used='avsox',
+            has_servable_cover=None,
+            reason=None,
+        )
+        assert isinstance(r, EnrichResult)
+        assert r.success is True
+        assert r.error is None
+        assert r.nfo_written is False
+        assert r.cover_written is True
+        assert r.extrafanart_written == 5
+        assert r.fields_filled == fields
+        assert r.source_used == 'avsox'
+        assert r.reason is None
 
 
 # ── apply_cover_preserve ─────────────────────────────────────────────────────

@@ -22,7 +22,7 @@ from core.database import Video, VideoRepository
 from core.db_inflow import try_inflow_upsert
 from core.focal_trigger import maybe_submit_video_focal
 from core.enricher import EnrichResult, enrich_single, fetch_samples_only, resolve_nfo_cover_paths
-from core.enrich_contract import apply_cover_preserve, compute_has_servable_cover, cover_uri_is_servable
+from core.enrich_contract import apply_cover_preserve, compute_has_servable_cover, cover_uri_is_servable, enrich_success
 from core.organizer import organize_file
 from core.path_utils import to_file_uri, uri_to_fs_path, uri_to_local_fs_path, coerce_to_file_uri
 from core.scraper import (
@@ -574,8 +574,7 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
                     )
                 except Exception:
                     logger.warning("readonly enrich focal 排程失敗（不影響改道結果）", exc_info=True)
-            return asdict(EnrichResult(
-                success=True,
+            return asdict(enrich_success(
                 # NFO is always written on a successful readonly produce (P1
                 # revert, round-3 review 2026-07-21) — write_nfo=false never
                 # reaches here (rejected above).
@@ -584,8 +583,7 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
                 extrafanart_written=len(assets.get('sample_fs', [])),
                 fields_filled=_readonly_fields_filled(meta),
                 source_used=meta.get('source', ''),
-                error=None,
-                reason='hit' if has_servable_cover else 'no_cover',
+                has_servable_cover=has_servable_cover,
             ))
         except Exception:
             logger.exception("enrich_single_endpoint readonly 改道失敗")
@@ -732,11 +730,11 @@ def fetch_samples_endpoint(req: FetchSamplesRequest) -> dict:
                     error=f"找不到 {req.number} 的資料", reason=None,
                 ))
             if not meta.get("sample_images"):
-                return asdict(EnrichResult(
-                    success=True, nfo_written=False, cover_written=False,
+                return asdict(enrich_success(
+                    nfo_written=False, cover_written=False,
                     extrafanart_written=0, fields_filled=[],
                     source_used=meta.get('source', ''),
-                    error=None, reason=None,
+                    reason=None,
                 ))
             fs_path = uri_to_local_fs_path(req.file_path, path_mappings)
             repo = VideoRepository()
@@ -761,10 +759,10 @@ def fetch_samples_endpoint(req: FetchSamplesRequest) -> dict:
                 allocated_this_run=set(), path_mappings=path_mappings,
             )
             written = len(assets.get('sample_fs', []))
-            return asdict(EnrichResult(
-                success=True, nfo_written=False, cover_written=False,
+            return asdict(enrich_success(
+                nfo_written=False, cover_written=False,
                 extrafanart_written=written, fields_filled=[],
-                source_used=meta.get('source', ''), error=None,
+                source_used=meta.get('source', ''),
                 reason=None,
             ))
         except Exception:
@@ -1009,15 +1007,13 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                         cover_written = bool(assets.get('cover_fs'))
                         result_item = {
                             'type': 'result-item', 'number': item.number, 'file_path': item.file_path,
-                            **asdict(EnrichResult(
-                                success=True,
+                            **asdict(enrich_success(
                                 nfo_written=True,
                                 cover_written=cover_written,
                                 extrafanart_written=len(assets.get('sample_fs', [])),
                                 fields_filled=_readonly_fields_filled(item_meta),
                                 source_used=item_meta.get('source', ''),
-                                error=None,
-                                reason='hit' if has_servable_cover else 'no_cover',
+                                has_servable_cover=has_servable_cover,
                             )),
                         }
                         yield f"data: {json.dumps(result_item)}\n\n"
