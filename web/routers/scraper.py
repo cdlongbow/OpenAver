@@ -942,7 +942,17 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                         status, payload = await loop.run_in_executor(None, _do_readonly)
                         if status == 'ok':
                             success_count += 1
-                            thumbnail_cache.invalidate(canonical)
+                            # PR#114 P2: 縮圖失效是 best-effort cleanup（檔案 unlink 可拋
+                            # OSError）——比照上方 focal 排程各自 try/except 吞掉，不可讓其
+                            # 失敗被外層 except 捕獲，否則同一成功項會 success+failed 雙記
+                            # 且被誤報成失敗（done 匯總 success+failed > total）。
+                            try:
+                                thumbnail_cache.invalidate(canonical)
+                            except Exception:
+                                logger.warning(
+                                    "batch_enrich item %s 縮圖失效失敗（不影響結果）",
+                                    item.number, exc_info=True,
+                                )
                             # nfo_written=True unconditionally: assets_mode='full' reaching
                             # here means _write_movie_assets ran to completion (it raises
                             # otherwise, caught above as 'error'), and the NFO write is
@@ -1055,7 +1065,15 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                         # feature/71 T8: 換封面成功 → 失效舊縮圖（廉價同步 unlink，不需 offload）。
                         # item.file_path 已是 DB file:/// URI → 冪等 coerce，不可 double-encode
                         # （同 enrich-single，PR #60 Codex P2）。
-                        thumbnail_cache.invalidate(coerce_to_file_uri(item.file_path))  # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
+                        # PR#114 P2: unlink 可拋 OSError → best-effort try/except 吞掉，避免被
+                        # 外層 except 捕獲導致同一成功項 success+failed 雙記 + 誤報失敗。
+                        try:
+                            thumbnail_cache.invalidate(coerce_to_file_uri(item.file_path))  # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
+                        except Exception:
+                            logger.warning(
+                                "batch_enrich item %s 縮圖失效失敗（不影響結果）",
+                                item.number, exc_info=True,
+                            )
                     else:
                         failed_count += 1
                     yield f"data: {json.dumps({'type': 'result-item', 'number': item.number, 'file_path': item.file_path, **result_dict})}\n\n"

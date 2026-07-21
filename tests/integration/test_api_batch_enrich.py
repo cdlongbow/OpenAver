@@ -1096,6 +1096,45 @@ class TestBatchEnrichReadonlyCoverPreserveGate:
         mock_repo.return_value.reset_focal_to_auto.assert_not_called()
         mock_focal.assert_not_called()
 
+    # ── PR#114 P2: 唯讀成功項的 thumbnail_cache.invalidate 是 best-effort cleanup
+    # （檔案 unlink 可拋 OSError）。其失敗不得把成功項打成失敗、也不得讓外層 except
+    # 再 failed_count+=1 造成同一項 success+failed 雙記（done 匯總 success+failed >
+    # total）。故障注入型測試 ──
+    def test_thumbnail_invalidate_oserror_does_not_double_count_or_fail_item(
+        self, client, mocker,
+    ):
+        """唯讀成功項的縮圖失效拋 OSError → 不得雙記、不得誤報失敗。修前（invalidate
+        未包 best-effort try/except）：外層 except 捕獲 → failed_count+=1，同項既
+        success 又 failed → done 匯總 success=1, failed=1, total=1（success+failed=2
+        > total），且該項被 yield 成失敗。MUTATION LOCK：拿掉 ok 分支對 invalidate
+        外包的 best-effort try/except → 本測試 RED。"""
+        mocker.patch("web.routers.scraper.load_config", return_value=self._readonly_config())
+        # 既有 servable cover → refresh_full 仍寫（cover_written True），
+        # has_servable_cover=True → reason 'hit'（成功項的正常 reason）。
+        self._mock_routing(
+            mocker,
+            existing_cover_path="file:///out/ro_src-x/RO-001/RO-001.jpg",
+        )
+        inval_spy = mocker.patch(
+            "web.routers.scraper.thumbnail_cache.invalidate",
+            side_effect=OSError("disk gone"),
+        )
+
+        response = self._post(client, mode="refresh_full")
+
+        events = parse_sse(response.text)
+        inval_spy.assert_called_once()  # 確有觸發到（否則測試無效）
+        done = [e for e in events if e["type"] == "done"][0]["summary"]
+        # 無雙記：success + failed 精確等於 total（修前為 2 > 1）。
+        assert done["total"] == 1
+        assert done["success"] + done["failed"] == done["total"]
+        assert done["success"] == 1 and done["failed"] == 0
+        # 成功項不因 cleanup 失敗被誤報成失敗。
+        result_items = [e for e in events if e["type"] == "result-item"]
+        assert len(result_items) == 1
+        assert result_items[0]["success"] is True
+        assert result_items[0]["reason"] == "hit"
+
 
 # ── P2 review round 3 (FIX#4/FIX#5): readonly + mode='db_to_sidecar' clean
 # rejection, + canonical `reason` on the batch failure result-item ─────────────
@@ -1289,3 +1328,31 @@ class TestBatchEnrichThumbnailInvalidation:
         assert response.status_code == 200
         called = [c.args[0] for c in inval_spy.call_args_list]
         assert called == ["file:///nas/dup.mp4"]
+
+    def test_invalidate_oserror_does_not_double_count_or_fail_item(self, client, mocker):
+        """PR#114 P2（可寫路徑孿生）：enrich 成功後的 thumbnail_cache.invalidate
+        拋 OSError → best-effort try/except 吞掉；不得讓外層 except 再 failed_count+=1
+        造成同一成功項 success+failed 雙記、也不得誤報失敗。MUTATION LOCK：拿掉可寫
+        分支 invalidate 外包的 best-effort try/except → 本測試 RED（done 回 success=1,
+        failed=1, total=1，且該項 success=False）。"""
+        mocker.patch("web.routers.scraper.enrich_single", return_value=_ok_result())
+        inval_spy = mocker.patch(
+            "web.routers.scraper.thumbnail_cache.invalidate",
+            side_effect=OSError("disk gone"),
+        )
+
+        response = client.post("/api/batch-enrich", json={
+            "items": [{"file_path": "file:///nas/ok.mp4", "number": "IPZ-154"}],
+            "mode": "refresh_full",
+        })
+
+        assert response.status_code == 200
+        inval_spy.assert_called_once()
+        events = parse_sse(response.text)
+        done = [e for e in events if e["type"] == "done"][0]["summary"]
+        assert done["total"] == 1
+        assert done["success"] + done["failed"] == done["total"]
+        assert done["success"] == 1 and done["failed"] == 0
+        result_items = [e for e in events if e["type"] == "result-item"]
+        assert len(result_items) == 1
+        assert result_items[0]["success"] is True
