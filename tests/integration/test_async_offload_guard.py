@@ -369,6 +369,22 @@ class TestT4OffloadHousePattern:
     def test_batch_enrich_load_config_offloaded(self):
         assert "await asyncio.to_thread(load_config)" in self._src("scraper.py")
 
+    def test_batch_enrich_readonly_route_offloaded(self):
+        """TASK-104-T3/T5：batch-enrich 唯讀項改道（resolve_owning_output_root →
+        resolve_ingest_plan → _produce_one，皆阻塞 I/O）須包在 nested sync helper
+        `_do_readonly` 內、經 `run_in_executor` offload，不可在 async event_generator
+        直接 body 裸跑。AST 主守衛（test_no_bare_blocking_in_async_routes）會抓「inline
+        進直接 body」的回退，但「移除 executor 改 bare-call nested def」是 AST 掃描盲區
+        （nested def 名不在偵測清單）→ 此正向 substring 鎖補位。"""
+        src = self._src("scraper.py")
+        assert "def _do_readonly(" in src, (
+            "batch-enrich 唯讀改道須抽 nested sync helper `_do_readonly` 承載阻塞 I/O"
+        )
+        assert "run_in_executor(None, _do_readonly)" in src, (
+            "`_do_readonly` 必須經 loop.run_in_executor offload —— 不可在 event_generator "
+            "直接 body 呼叫（會卡 event loop）"
+        )
+
     def test_translate_routes_load_config_offloaded(self):
         assert "await asyncio.to_thread(load_config)" in self._src("translate.py")
 
