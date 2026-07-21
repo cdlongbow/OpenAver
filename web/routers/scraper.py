@@ -32,6 +32,7 @@ from core.scrapers.javlibrary import JAVLIBRARY_ORIGIN
 from core.logger import get_logger
 from core.config import load_config
 from core.readonly_source import is_path_readonly, readonly_source_prefixes, writable_source_prefixes
+from core.readonly_producer import resolve_owning_output_root, resolve_ingest_plan, _produce_one
 from core import thumbnail_cache
 from web.routers.notifications import emit_notification as _emit_notif
 
@@ -247,6 +248,13 @@ class EnrichRequest(BaseModel):
     source: Optional[str] = None
     javbus_lang: Optional[str] = None
     detail_url: Optional[str] = None
+    # TASK-104-T3 (CD-104-5): readonly-source intent — 'ingest' (放大鏡, local-first)
+    # or 'rescrape' (gear, always-remote). MUST stay optional: existing non-readonly
+    # / batch / integration callers never send it and must not 422 (Codex P1-2).
+    # Non-readonly files ignore this field entirely (byte-identical); a readonly
+    # file with it omitted defaults to 'ingest' (safe default — never force a
+    # remote overwrite without an explicit gear action).
+    readonly_action: Optional[Literal['rescrape', 'ingest']] = None
 
 
 class BatchEnrichItem(BaseModel):
@@ -323,6 +331,46 @@ def rescrape_preview_endpoint(request: RescrapePreviewRequest) -> dict:
         return {"success": False, "error": "預覽搜尋失敗，請查閱日誌"}
 
 
+def _javlib_candidate_scraper_data(request: "EnrichRequest"):
+    """Fetch a javlibrary detail_url candidate for the readonly gear-rescrape
+    branch (TASK-104-T3). Reuses the exact SSRF guard + CfChallengeRequired/
+    CfTransportUnavailable handling as `enrich_single_endpoint`'s own (non-
+    readonly) detail_url block below — deliberately NOT shared/called from
+    there, to keep that inline block byte-identical (zero risk to
+    tests/integration/test_rescrape_javlib.py's existing coverage, which is
+    outside this task's file allowlist).
+
+    Returns `(scraper_data, error_response)`: on any guard-trip/failure,
+    `error_response` is the exact structured dict the endpoint must return
+    verbatim (never raise — CD-104-10 lifecycle symmetry); on success
+    `scraper_data` is the `to_legacy_dict()` + `internal_nfo_carriers()` merge
+    and `error_response` is None.
+    """
+    if not _is_javlibrary_url(request.detail_url):
+        logger.warning("enrich_single: 拒絕非法 detail_url origin")
+        return None, {"success": False, "error": "detail_url 來源不合法"}
+    try:
+        video = fetch_javlib_by_detail_url(request.detail_url, request.number)
+    except CfChallengeRequired:
+        t = get_cf_transport()
+        if t:
+            try:
+                t.begin_solve(JAVLIBRARY_ORIGIN, 'javlibrary')
+            except Exception:
+                logger.exception("enrich_single: begin_solve 失敗，回 cf_unavailable")
+                return None, {"success": False, "cf_unavailable": True}
+        return None, {"success": False, "cf_needed": True}
+    except CfTransportUnavailable:
+        return None, {"success": False, "cf_unavailable": True}
+    if video is None:
+        return None, {"success": False, "error": "javlibrary 無法取得指定版本資料"}
+    # to_legacy_dict 省略 _summary/_rating 內部 carrier；補回以對齊既有 javlibrary
+    # 重刮的 NFO 輸出（search_jav 走 internal_nfo_carriers 注入同組，PR #89 Codex P2）
+    scraper_data = video.to_legacy_dict()
+    scraper_data.update(internal_nfo_carriers(video))
+    return scraper_data, None
+
+
 @router.post("/enrich-single")
 def enrich_single_endpoint(request: EnrichRequest) -> dict:
     config = load_config()
@@ -332,11 +380,49 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
     # enrich_single 共用一次算好的同一組值（避免重複 .get() chain）。
     path_mappings = config.get("gallery", {}).get("path_mappings", {})
 
-    # 90c-T1 唯讀來源 guard：唯讀來源片不得 enrich 寫檔。須在 refresh_full 預檢
-    # （resolve_nfo_cover_paths / os.path.exists）之前——預檢對唯讀掛載可能拋錯。
-    _err = _readonly_source_error(request.file_path)
-    if _err:
-        return _err
+    # TASK-104-T3 (CD-104-5)：唯讀來源片不再一律拒絕——改道 output_dir。
+    # resolve_owning_output_root 依 canonical URI 找最內層唯讀來源（尊重 writable
+    # override）；None → 非唯讀，落到下方既有 400-guard + enrich_single 路徑
+    # （byte-identical，零改動）。找到 → 早 return，絕不 fall-through 到 400-guard
+    # （resolve_nfo_cover_paths 對唯讀路徑推 source-adjacent 路徑沒有意義，CD-104-10）。
+    canonical = coerce_to_file_uri(request.file_path, path_mappings)  # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
+    owning = resolve_owning_output_root(canonical, config)
+    if owning is not None:
+        source, output_root, output_uri = owning
+        if not output_root:
+            return {"success": False, "error": "未設定媒體庫輸出路徑"}
+        try:
+            action = request.readonly_action or 'ingest'
+            scraper_data = None
+            if action == 'rescrape' and request.source == 'javlibrary' and request.detail_url:
+                scraper_data, _cand_err = _javlib_candidate_scraper_data(request)
+                if _cand_err:
+                    return _cand_err
+            fs_path = uri_to_local_fs_path(request.file_path, path_mappings)
+            meta, cover_strategy = resolve_ingest_plan(
+                fs_path, request.number, config.get("scraper", {}),
+                action=action, proxy_url=proxy_url, scraper_data=scraper_data, source=request.source,
+            )
+            if not meta:
+                return {"success": False, "error": "找不到可用的番號資料"}
+            repo = VideoRepository()
+            existing = repo.get_by_path(canonical)
+            file_info = {
+                "path": fs_path,
+                "size": existing.size_bytes if existing else os.path.getsize(fs_path),
+                "mtime": existing.mtime if existing else os.path.getmtime(fs_path),
+            }
+            _produce_one(
+                repo, source, config.get("scraper", {}), file_info=file_info,
+                meta=meta, cover_strategy=cover_strategy, assets_mode='full',
+                existing=existing, output_root=output_root, output_uri=output_uri,
+                allocated_this_run=set(), path_mappings=path_mappings,
+            )
+            thumbnail_cache.invalidate(canonical)
+            return {"success": True}
+        except Exception:
+            logger.exception("enrich_single_endpoint readonly 改道失敗")
+            return {"success": False, "error": "enrich 處理失敗，請查閱日誌"}
 
     # CD-62-4 分裂陷阱智慧防呆：refresh_full + overwrite=false 時，若這組設定不會寫出任何
     # sidecar（NFO/cover）卻仍 _db_upsert，就是純分裂。一個 sidecar「會寫」需 write 旗標開 + 檔案缺
@@ -439,10 +525,38 @@ def fetch_samples_endpoint(req: FetchSamplesRequest) -> dict:
     # 見 TASK-91-T3.md 站台5 inner/outer 分析結論）。
     path_mappings = config.get("gallery", {}).get("path_mappings", {})
 
-    # 90c-T1 唯讀來源 guard：唯讀來源片不得補劇照寫檔（early-return，先於 DB/uri work）。
-    _err = _readonly_source_error(req.file_path)
-    if _err:
-        return _err
+    # TASK-104-T3 (CD-104-5)：唯讀來源片改道 output_dir，僅補劇照（samples_only）。
+    # 不走 resolve_ingest_plan——它會強制清空 sample_images（ingest/rescrape 皆不含
+    # 劇照），故直接用 search_jav 取劇照 URL 列表。None → 非唯讀，落到下方既有
+    # multi-video guard + fetch_samples_only 路徑（byte-identical）。
+    canonical = coerce_to_file_uri(req.file_path, path_mappings)  # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
+    owning = resolve_owning_output_root(canonical, config)
+    if owning is not None:
+        source, output_root, output_uri = owning
+        if not output_root:
+            return {"success": False, "error": "未設定媒體庫輸出路徑", "extrafanart_written": 0}
+        try:
+            meta = search_jav(req.number, source="auto", proxy_url=proxy_url)
+            if not meta or not meta.get("sample_images"):
+                return {"success": True, "extrafanart_written": 0}
+            fs_path = uri_to_local_fs_path(req.file_path, path_mappings)
+            repo = VideoRepository()
+            existing = repo.get_by_path(canonical)
+            file_info = {
+                "path": fs_path,
+                "size": existing.size_bytes if existing else os.path.getsize(fs_path),
+                "mtime": existing.mtime if existing else os.path.getmtime(fs_path),
+            }
+            _produce_one(
+                repo, source, config.get("scraper", {}), file_info=file_info,
+                meta=meta, cover_strategy=('none',), assets_mode='samples_only',
+                existing=existing, output_root=output_root, output_uri=output_uri,
+                allocated_this_run=set(), path_mappings=path_mappings,
+            )
+            return {"success": True, "extrafanart_written": len(meta["sample_images"])}
+        except Exception:
+            logger.exception("fetch_samples_endpoint readonly 改道失敗")
+            return {"success": False, "error": "fetch_samples 處理失敗，請查閱日誌", "extrafanart_written": 0}
 
     # uri-no-reverse: comparison-only (DB LIKE prefix), inner kept bare per TASK-91-T3 inner/outer analysis
     folder_uri_prefix = to_file_uri(os.path.dirname(uri_to_fs_path(req.file_path)), path_mappings) + "/"
@@ -522,13 +636,59 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                 # progress 事件
                 yield f"data: {json.dumps({'type': 'progress', 'current': idx, 'total': total, 'number': item.number})}\n\n"
 
-                # 90c-T1 逐項唯讀 guard：唯讀來源片 yield result-item(success:False) +
-                # failed_count+=1 + continue（不 raise、不逐項 _emit_notif——批次層才發通知）。
-                # 混合批中可寫項照常 enrich，整批不中斷（spec-90 §90b(iii) 驗收 2）。
+                # TASK-104-T3 (CD-104-5)：唯讀項不再拒絕，改道 output_dir（action 固定
+                # 'ingest'——batch 語意是補缺、非撞號選版；撞號選版走單片 enrich-single
+                # gear rescrape，見 CD-104-5 P1-b）。混合批中可寫項照常 enrich，整批不中斷
+                # （spec-90 §90b(iii) 驗收 2）。`_produce_one`/`resolve_ingest_plan` 是阻塞
+                # I/O（寫檔、可能刮網）→ 須比照既有 :557-574 offload 慣例包進
+                # run_in_executor，不可在 event loop 上裸呼叫（async-offload 守衛）。
+                # item/canonical 用預設參數綁定，避免 for-loop 變數 late-binding
+                # （同既有 :559 lambda 慣例）。
                 # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
-                if is_path_readonly(coerce_to_file_uri(item.file_path, _ro_mappings), _ro_prefixes, _ro_writable):
-                    failed_count += 1
-                    yield f"data: {json.dumps({'type': 'result-item', 'number': item.number, 'file_path': item.file_path, 'success': False, 'error': _READONLY_SOURCE_ERROR_MSG, 'reason': 'readonly'})}\n\n"
+                canonical = coerce_to_file_uri(item.file_path, _ro_mappings)
+                if is_path_readonly(canonical, _ro_prefixes, _ro_writable):
+                    def _do_readonly(itm=item, uri=canonical):
+                        owning = resolve_owning_output_root(uri, config)
+                        if owning is None:
+                            return ('skip', None)  # 理論不達（上面 is_path_readonly 已判真）
+                        ro_source, out_root, out_uri = owning
+                        if not out_root:
+                            return ('error', "未設定媒體庫輸出路徑")
+                        fs_path = uri_to_local_fs_path(itm.file_path, _ro_mappings)
+                        meta, cs = resolve_ingest_plan(
+                            fs_path, itm.number, config.get("scraper", {}),
+                            action='ingest', proxy_url=proxy_url,
+                        )
+                        if not meta:
+                            return ('no_scrape', "找不到可用的番號資料")
+                        repo = VideoRepository()
+                        existing = repo.get_by_path(uri)
+                        file_info = {
+                            "path": fs_path,
+                            "size": existing.size_bytes if existing else os.path.getsize(fs_path),
+                            "mtime": existing.mtime if existing else os.path.getmtime(fs_path),
+                        }
+                        try:
+                            _produce_one(
+                                repo, ro_source, config.get("scraper", {}), file_info=file_info, meta=meta,
+                                cover_strategy=cs, assets_mode='full', existing=existing,
+                                output_root=out_root, output_uri=out_uri,
+                                allocated_this_run=set(), path_mappings=_ro_mappings,
+                            )
+                        except Exception:
+                            logger.exception("batch_enrich readonly item %s 失敗", itm.number)
+                            return ('error', "生成失敗")
+                        return ('ok', None)
+
+                    loop = asyncio.get_running_loop()
+                    status, err = await loop.run_in_executor(None, _do_readonly)
+                    if status == 'ok':
+                        success_count += 1
+                        thumbnail_cache.invalidate(canonical)
+                        yield f"data: {json.dumps({'type': 'result-item', 'number': item.number, 'file_path': item.file_path, 'success': True})}\n\n"
+                    else:
+                        failed_count += 1
+                        yield f"data: {json.dumps({'type': 'result-item', 'number': item.number, 'file_path': item.file_path, 'success': False, 'error': err or '生成失敗', 'reason': status})}\n\n"
                     continue
 
                 try:

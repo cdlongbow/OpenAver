@@ -4,6 +4,11 @@ test_api_enrich.py - POST /api/enrich-single 端點整合測試
 使用 FastAPI TestClient + mocker，mock core 層函數。
 """
 
+import hashlib
+import json
+import os
+from pathlib import Path
+
 import pytest
 from unittest.mock import patch, MagicMock
 from dataclasses import dataclass, field
@@ -256,14 +261,14 @@ class TestEnrichSingleEndpoint:
         assert data.get("source_used") == "javbus"
 
 
-# ── TASK-90c-T1: enrich-single 唯讀來源 guard ────────────────────────────────
+# ── TASK-104-T3 (CD-104-5): enrich-single 唯讀來源改道 output_dir ────────────
 #
-# guard 抽成模組級 helper `_readonly_source_error(file_path)`，插在 enrich-single
-# 的 `config = load_config()` 後、refresh_full 預檢（resolve_nfo_cover_paths /
-# os.path.exists）之前。唯讀 → success:False + 唯讀 error，下游
-# resolve_nfo_cover_paths / enrich_single 皆 assert_not_called。
-# 鏡像 scrape_single guard 既有 case 1/3/4/7（load_config patch 呼叫處 binding，
-# iter_gallery_sources 用 real）。
+# 唯讀來源片不再一律拒絕：`resolve_owning_output_root` 依 canonical URI 找最內層
+# 唯讀來源；找到 → 走 `resolve_ingest_plan` + `_produce_one`（router-level 測試
+# patch 這三者 + `VideoRepository`，鏡像既有 `enrich_single`/`resolve_nfo_cover_paths`
+# patch 慣例，CD-104-10）；None（非唯讀）→ 落既有 400-guard + `enrich_single` 路徑，
+# byte-identical。深度整合測試（真檔案雜湊/DB row/來源零寫入）見
+# `TestReadonlyRoutingE2E`（本檔案尾端）。
 
 
 def _readonly_gallery_config(path, path_mappings=None, readonly=True):
@@ -277,10 +282,37 @@ def _readonly_gallery_config(path, path_mappings=None, readonly=True):
     }
 
 
-class TestEnrichSingleReadonlyGuard:
-    """唯讀來源片透過 enrich-single 無法觸發寫檔（correctness 地板）。"""
+def _owning_stub(path="/tmp/ro_src", output_root="/out/ro_src-abcdef", output_uri="file:///out/ro_src-abcdef"):
+    """`resolve_owning_output_root` 的成功回傳 stub：(source, output_root, output_uri)。"""
+    source = MagicMock()
+    source.path = path
+    return (source, output_root, output_uri)
 
-    # case 1: 唯讀來源 → 擋（refresh_full 讓 resolve_nfo_cover_paths 有意義）
+
+class TestEnrichSingleReadonlyGuard:
+    """唯讀來源片透過 enrich-single 改道 output_dir（TASK-104-T3，不再拒絕）。"""
+
+    def _mock_routing(self, mocker, meta=None, cover_strategy=('none',), existing="__default__"):
+        mock_owning = mocker.patch(
+            "web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub()
+        )
+        mock_plan = mocker.patch(
+            "web.routers.scraper.resolve_ingest_plan",
+            return_value=(meta if meta is not None else {"number": "ABC-001", "title": "T", "cover": ""}, cover_strategy),
+        )
+        mock_produce = mocker.patch("web.routers.scraper._produce_one")
+        mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
+        # existing=None (explicit) → 落 os.path.getsize/getmtime fallback（不在此測試組覆蓋，
+        # 真檔案雜湊/落盤驗證交給 TestReadonlyRoutingE2E）；預設給一個 non-None stub，避免
+        # 對不存在的假路徑觸發真實 stat（FileNotFoundError）。
+        mock_repo.return_value.get_by_path.return_value = (
+            MagicMock(size_bytes=1000, mtime=1.0) if existing == "__default__" else existing
+        )
+        return mock_owning, mock_plan, mock_produce, mock_repo
+
+    # case 1（歷史命名保留；TASK-104-T3 改寫為「改道」斷言，不可為保綠而還原新碼，
+    # CD-104-10）：唯讀來源片 → 產出成功，絕不落到既有 400-guard（refresh_full 分裂
+    # 防呆對唯讀無意義）或舊版 enrich_single。
     def test_readonly_blocks_enrich(self, client, mocker):
         mocker.patch(
             "web.routers.scraper.load_config",
@@ -288,6 +320,11 @@ class TestEnrichSingleReadonlyGuard:
         )
         mock_resolve = mocker.patch("web.routers.scraper.resolve_nfo_cover_paths")
         mock_enrich = mocker.patch("web.routers.scraper.enrich_single")
+        mock_owning, mock_plan, mock_produce, mock_repo = self._mock_routing(
+            mocker,
+            meta={"number": "ABC-001", "title": "T", "cover": "http://x/c.jpg"},
+            cover_strategy=("download", "http://x/c.jpg"),
+        )
 
         response = client.post("/api/enrich-single", json={
             "file_path": "/tmp/ro_src/ABC-001.mp4",
@@ -297,60 +334,108 @@ class TestEnrichSingleReadonlyGuard:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["success"] is False
-        assert "唯讀" in data["error"]
-        # guard 早於 refresh_full 預檢與 enrich_single
+        assert data["success"] is True
+        mock_owning.assert_called_once()
+        mock_plan.assert_called_once()
+        # readonly_action 未帶 → 預設 'ingest'（安全預設）
+        assert mock_plan.call_args.kwargs["action"] == "ingest"
+        mock_produce.assert_called_once()
+        assert mock_produce.call_args.kwargs["assets_mode"] == "full"
+        # 唯讀分支早 return，絕不 fall-through 到既有 400-guard / 舊 enrich_single 路徑
         mock_resolve.assert_not_called()
         mock_enrich.assert_not_called()
 
-    # case 3: UNC 唯讀來源 → guard 不拋 ValueError（Codex P2）
-    def test_readonly_unc_no_valueerror(self, client, mocker):
+    # readonly_action='rescrape' 明確帶 → resolve_ingest_plan 收到 action='rescrape'
+    def test_readonly_explicit_rescrape_action_passed_through(self, client, mocker):
         mocker.patch(
             "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config(r"\\server\share"),
+            return_value=_readonly_gallery_config("/tmp/ro_src"),
         )
-        mock_resolve = mocker.patch("web.routers.scraper.resolve_nfo_cover_paths")
-        mock_enrich = mocker.patch("web.routers.scraper.enrich_single")
+        _, mock_plan, mock_produce, _ = self._mock_routing(
+            mocker,
+            meta={"number": "ABC-001", "title": "Candidate", "cover": "http://x/new.jpg"},
+            cover_strategy=("download", "http://x/new.jpg"),
+        )
 
         response = client.post("/api/enrich-single", json={
-            "file_path": r"\\server\share\ABC-001.mp4",
+            "file_path": "/tmp/ro_src/ABC-001.mp4",
             "number": "ABC-001",
-            "mode": "refresh_full",
+            "readonly_action": "rescrape",
         })
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is False
-        assert "唯讀" in data["error"]
-        mock_resolve.assert_not_called()
-        mock_enrich.assert_not_called()
+        assert response.json()["success"] is True
+        assert mock_plan.call_args.kwargs["action"] == "rescrape"
+        mock_produce.assert_called_once()
 
-    # case 7: canonical file:/// URI 輸入（enrich 主要真實輸入形態）→ 仍命中
-    def test_readonly_file_uri_input_blocks(self, client, mocker):
-        from core.path_utils import to_file_uri
-        file_uri = to_file_uri("C:/ro_src/ABC-001.mp4", {})
+    # 未設定媒體庫輸出路徑（media-server flavour 空 output_path）→ 結構化錯誤，不寫
+    def test_readonly_empty_output_root_returns_error_no_write(self, client, mocker):
         mocker.patch(
             "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("C:/ro_src"),
+            return_value=_readonly_gallery_config("/tmp/ro_src"),
         )
-        mock_resolve = mocker.patch("web.routers.scraper.resolve_nfo_cover_paths")
-        mock_enrich = mocker.patch("web.routers.scraper.enrich_single")
+        mocker.patch(
+            "web.routers.scraper.resolve_owning_output_root",
+            return_value=_owning_stub(output_root="", output_uri=""),
+        )
+        mock_plan = mocker.patch("web.routers.scraper.resolve_ingest_plan")
+        mock_produce = mocker.patch("web.routers.scraper._produce_one")
 
         response = client.post("/api/enrich-single", json={
-            "file_path": file_uri,
+            "file_path": "/tmp/ro_src/ABC-001.mp4",
             "number": "ABC-001",
-            "mode": "refresh_full",
         })
 
-        assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
-        assert "唯讀" in data["error"]
-        mock_resolve.assert_not_called()
-        mock_enrich.assert_not_called()
+        assert "輸出路徑" in data["error"]
+        mock_plan.assert_not_called()
+        mock_produce.assert_not_called()
 
-    # case 4: 非唯讀來源零回歸 → 走既有路徑，enrich_single 照常被呼叫
+    # resolve_ingest_plan 找不到可用資料（meta=None）→ 結構化錯誤，不 raise
+    def test_readonly_no_meta_returns_error(self, client, mocker):
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=_readonly_gallery_config("/tmp/ro_src"),
+        )
+        mock_owning, mock_plan, mock_produce, _ = self._mock_routing(
+            mocker, meta=None, cover_strategy=("none",),
+        )
+        mock_plan.return_value = (None, ("none",))
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/tmp/ro_src/ABC-001.mp4",
+            "number": "ABC-001",
+        })
+
+        data = response.json()
+        assert data["success"] is False
+        assert data["error"]
+        mock_produce.assert_not_called()
+
+    # case 4: 非唯讀來源零回歸 → 走既有路徑，enrich_single 照常被呼叫（byte-identical）
     def test_non_readonly_passes_through(self, client, mocker):
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=_readonly_gallery_config("/tmp/rw_src", readonly=False),
+        )
+        mock_enrich = mocker.patch(
+            "web.routers.scraper.enrich_single", return_value=_ok_result()
+        )
+        mock_produce = mocker.patch("web.routers.scraper._produce_one")
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/tmp/rw_src/ABC-001.mp4",
+            "number": "ABC-001",
+            "mode": "fill_missing",
+        })
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        mock_enrich.assert_called_once()
+        mock_produce.assert_not_called()
+
+    # 相容鎖：非唯讀 + 完全不帶 readonly_action → 不 422、byte-identical
+    def test_non_readonly_without_readonly_action_field_still_succeeds(self, client, mocker):
         mocker.patch(
             "web.routers.scraper.load_config",
             return_value=_readonly_gallery_config("/tmp/rw_src", readonly=False),
@@ -362,18 +447,40 @@ class TestEnrichSingleReadonlyGuard:
         response = client.post("/api/enrich-single", json={
             "file_path": "/tmp/rw_src/ABC-001.mp4",
             "number": "ABC-001",
-            "mode": "fill_missing",
         })
 
         assert response.status_code == 200
         assert response.json()["success"] is True
         mock_enrich.assert_called_once()
 
+    # 非唯讀 + 明確帶 readonly_action（任一值）→ 仍完全忽略，byte-identical
+    @pytest.mark.parametrize("action", ["ingest", "rescrape"])
+    def test_non_readonly_ignores_readonly_action(self, client, mocker, action):
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=_readonly_gallery_config("/tmp/rw_src", readonly=False),
+        )
+        mock_enrich = mocker.patch(
+            "web.routers.scraper.enrich_single", return_value=_ok_result()
+        )
+        mock_owning = mocker.patch(
+            "web.routers.scraper.resolve_owning_output_root", return_value=None
+        )
 
-# ── TASK-90c-T1: fetch-samples 唯讀來源 guard（此端點新增專屬測試組）─────────────
-#
-# guard 插在 fetch-samples 函式開頭（config = load_config() 後、DB/uri work 前）。
-# 唯讀 → success:False + 唯讀，fetch_samples_only assert_not_called。
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/tmp/rw_src/ABC-001.mp4",
+            "number": "ABC-001",
+            "readonly_action": action,
+        })
+
+        assert response.json()["success"] is True
+        mock_enrich.assert_called_once()
+        # resolve_owning_output_root 仍被呼叫判斷（回 None）——分支邏輯本身不吃 action，
+        # 但 action 完全不影響非唯讀路徑的下游呼叫（enrich_single 仍是唯一寫入者）。
+        mock_owning.assert_called_once()
+
+
+# ── TASK-104-T3 (CD-104-5): fetch-samples 唯讀來源改道 output_dir（samples_only）──
 
 
 class TestFetchSamplesReadonlyGuard:
@@ -386,13 +493,23 @@ class TestFetchSamplesReadonlyGuard:
         defaults.update(kwargs)
         return EnrichResult(**defaults)
 
-    # 唯讀 → 擋，fetch_samples_only 未被呼叫
+    # case 1（歷史命名保留；TASK-104-T3 改寫）：唯讀 → 改道，search_jav 找到劇照
+    # → samples_only 落 output_dir，不再拒絕。
     def test_readonly_blocks_fetch_samples(self, client, mocker):
         mocker.patch(
             "web.routers.scraper.load_config",
             return_value=_readonly_gallery_config("/tmp/ro_src"),
         )
+        mocker.patch(
+            "web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub()
+        )
+        mock_search = mocker.patch(
+            "web.routers.scraper.search_jav",
+            return_value={"number": "ABC-001", "sample_images": ["http://x/s1.jpg", "http://x/s2.jpg"]},
+        )
         mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
+        mock_repo.return_value.get_by_path.return_value = MagicMock(size_bytes=1000, mtime=1.0)
+        mock_produce = mocker.patch("web.routers.scraper._produce_one")
         mock_fetch = mocker.patch("web.routers.scraper.fetch_samples_only")
 
         response = client.post("/api/scraper/fetch-samples", json={
@@ -402,55 +519,61 @@ class TestFetchSamplesReadonlyGuard:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["success"] is False
-        assert "唯讀" in data["error"]
+        assert data["success"] is True
+        assert data["extrafanart_written"] == 2
+        mock_search.assert_called_once()
+        mock_produce.assert_called_once()
+        assert mock_produce.call_args.kwargs["assets_mode"] == "samples_only"
+        assert mock_produce.call_args.kwargs["cover_strategy"] == ("none",)
+        # 唯讀分支不用舊版 samples_only helper（改走 resolve_ingest_plan 的姊妹路徑）
         mock_fetch.assert_not_called()
-        # guard 早於 DB 查詢
-        mock_repo.return_value.count_videos_in_folder.assert_not_called()
 
-    # UNC 唯讀 → guard 不拋 ValueError
-    def test_readonly_unc_no_valueerror(self, client, mocker):
+    # 無劇照可補（search_jav 回 None 或無 sample_images）→ 非錯誤，extrafanart_written=0
+    def test_readonly_no_samples_found_is_not_an_error(self, client, mocker):
         mocker.patch(
             "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config(r"\\server\share"),
+            return_value=_readonly_gallery_config("/tmp/ro_src"),
         )
-        mocker.patch("web.routers.scraper.VideoRepository")
-        mock_fetch = mocker.patch("web.routers.scraper.fetch_samples_only")
+        mocker.patch(
+            "web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub()
+        )
+        mocker.patch("web.routers.scraper.search_jav", return_value=None)
+        mock_produce = mocker.patch("web.routers.scraper._produce_one")
 
         response = client.post("/api/scraper/fetch-samples", json={
-            "file_path": r"\\server\share\ABC-001.mp4",
+            "file_path": "/tmp/ro_src/ABC-001.mp4",
             "number": "ABC-001",
         })
 
-        assert response.status_code == 200
         data = response.json()
-        assert data["success"] is False
-        assert "唯讀" in data["error"]
-        mock_fetch.assert_not_called()
+        assert data["success"] is True
+        assert data["extrafanart_written"] == 0
+        mock_produce.assert_not_called()
 
-    # canonical file:/// 輸入 → 仍命中
-    def test_readonly_file_uri_input_blocks(self, client, mocker):
-        from core.path_utils import to_file_uri
-        file_uri = to_file_uri("C:/ro_src/ABC-001.mp4", {})
+    # 未設定媒體庫輸出路徑 → 結構化錯誤，不寫
+    def test_readonly_empty_output_root_returns_error(self, client, mocker):
         mocker.patch(
             "web.routers.scraper.load_config",
-            return_value=_readonly_gallery_config("C:/ro_src"),
+            return_value=_readonly_gallery_config("/tmp/ro_src"),
         )
-        mocker.patch("web.routers.scraper.VideoRepository")
-        mock_fetch = mocker.patch("web.routers.scraper.fetch_samples_only")
+        mocker.patch(
+            "web.routers.scraper.resolve_owning_output_root",
+            return_value=_owning_stub(output_root="", output_uri=""),
+        )
+        mock_search = mocker.patch("web.routers.scraper.search_jav")
 
         response = client.post("/api/scraper/fetch-samples", json={
-            "file_path": file_uri,
+            "file_path": "/tmp/ro_src/ABC-001.mp4",
             "number": "ABC-001",
         })
 
-        assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
-        assert "唯讀" in data["error"]
-        mock_fetch.assert_not_called()
+        assert "輸出路徑" in data["error"]
+        assert data["extrafanart_written"] == 0
+        mock_search.assert_not_called()
 
-    # 非唯讀零回歸 → 走既有路徑，fetch_samples_only 被呼叫
+    # 非唯讀零回歸 → 走既有路徑，fetch_samples_only 被呼叫（byte-identical）
     def test_non_readonly_passes_through(self, client, mocker):
         mocker.patch(
             "web.routers.scraper.load_config",
@@ -461,6 +584,7 @@ class TestFetchSamplesReadonlyGuard:
         mock_fetch = mocker.patch(
             "web.routers.scraper.fetch_samples_only", return_value=self._ok_samples()
         )
+        mock_produce = mocker.patch("web.routers.scraper._produce_one")
 
         response = client.post("/api/scraper/fetch-samples", json={
             "file_path": "/tmp/rw_src/ABC-001.mp4",
@@ -470,6 +594,7 @@ class TestFetchSamplesReadonlyGuard:
         assert response.status_code == 200
         assert response.json()["success"] is True
         mock_fetch.assert_called_once()
+        mock_produce.assert_not_called()
 
 
 # ── F4: enrich endpoint 從 config["search"] 取 proxy_url ─────
@@ -1179,3 +1304,465 @@ class TestFetchSamplesFolderPrefixPathMappingReverse:
             f"UNC 輸入下 path_mappings 不應影響結果: {captured_prefixes!r}"
         )
         assert captured_prefixes["with_mapping"] == "file://///NAS/share/dir/"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TASK-104-T3 (CD-104-5/9): 深度端對端整合 — 真檔案 + 真 DB，經 TestClient 打真實
+# 端點，只 mock 外部邊界（search_jav / download_image / generate_jellyfin_images，
+# 落點 core.readonly_producer.*，比照 tests/integration/test_readonly_offflavor_e2e.py
+# 既有慣例）。generate_nfo 刻意保留真實（非 mock）——輸出 NFO 的 <title> 才是
+# genuine 產物，能真正驗「候選版本 title 落地」而非 mock 斷言呼叫參數。
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _e2e_off_config(src_path):
+    return {
+        "gallery": {
+            "directories": [{"path": str(src_path), "readonly": True}],
+            "path_mappings": {},
+        },
+        "scraper": {
+            "external_manager": "off",
+            "folder_layers": [],
+            "folder_format": "",
+            "filename_format": "{num}",
+            "max_title_length": 50,
+            "max_filename_length": 60,
+            "suffix_keywords": [],
+        },
+        "search": {"proxy_url": ""},
+    }
+
+
+def _e2e_snapshot(root):
+    snap = {}
+    for dirpath, _dirs, files in os.walk(root):
+        for f in files:
+            fp = Path(dirpath) / f
+            st = fp.stat()
+            digest = hashlib.sha256(fp.read_bytes()).hexdigest()
+            snap[str(fp.relative_to(root))] = (st.st_size, st.st_mtime_ns, digest, st.st_ino)
+    return snap
+
+
+def _e2e_fake_generate_jellyfin_images(cover_fs, base_stem, **_kw):
+    Path(base_stem + "-poster.jpg").write_bytes(b"POSTER")
+    Path(base_stem + "-fanart.jpg").write_bytes(b"FANART")
+    return {"poster": True, "fanart": True}
+
+
+def _e2e_download_writes_url_bytes(url, dest):
+    """side_effect for download_image: content is a deterministic function of the
+    URL itself, so two downloads of two different URLs are trivially distinguishable
+    by hash (used to prove a gear-rescrape cover overwrite actually happened)."""
+    p = Path(dest)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(f"COVER-BYTES:{url}".encode())
+    return True
+
+
+class TestReadonlyRoutingE2E:
+    """TASK-104-T3 DoD 逐條：放大鏡 ingest / gear rescrape 撞號覆蓋 / 補劇照
+    samples_only / batch-enrich 唯讀項改道 / 被刪封面復原 / URI round-trip。"""
+
+    def _wire(self, mocker, monkeypatch, config, db_path):
+        from core.database import VideoRepository as RealRepo
+
+        mocker.patch("web.routers.scraper.load_config", return_value=config)
+        monkeypatch.setattr("core.readonly_producer.get_db_path", lambda: db_path)
+        mocker.patch(
+            "web.routers.scraper.VideoRepository",
+            side_effect=lambda *a, **kw: RealRepo(db_path),
+        )
+        mocker.patch(
+            "core.readonly_producer.generate_jellyfin_images",
+            side_effect=_e2e_fake_generate_jellyfin_images,
+        )
+
+    def _init_db(self, tmp_path):
+        from core.database import init_db
+        db_path = tmp_path / "db" / "test.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        init_db(db_path)
+        return db_path
+
+    def _repo(self, db_path):
+        from core.database import VideoRepository
+        return VideoRepository(db_path)
+
+    # ── 放大鏡 ingest：有 .nfo + 本地封面 → 零網路、落 output_dir、來源零寫入 ────
+
+    def test_magnifier_ingest_local_first_zero_source_write(self, tmp_path, client, mocker, monkeypatch):
+        from core.path_utils import to_file_uri, uri_to_local_fs_path
+
+        src = tmp_path / "src"
+        src.mkdir()
+        video = src / "IN-001.mp4"
+        video.write_bytes(b"FAKE-VIDEO")
+        (src / "IN-001.nfo").write_text(
+            "<movie><num>IN-001</num><title>[IN-001]Ingest Title</title></movie>",
+            encoding="utf-8",
+        )
+        (src / "IN-001.jpg").write_bytes(b"LOCAL-COVER-BYTES")  # L1 same-stem cover hit
+
+        db_path = self._init_db(tmp_path)
+        config = _e2e_off_config(src)
+        self._wire(mocker, monkeypatch, config, db_path)
+        mock_search = mocker.patch("core.readonly_producer.search_jav")
+        mock_download = mocker.patch("core.readonly_producer.download_image")
+
+        before = _e2e_snapshot(src)
+
+        canonical = to_file_uri(str(video))
+        response = client.post("/api/enrich-single", json={
+            "file_path": canonical,
+            "number": "IN-001",
+            "readonly_action": "ingest",
+        })
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        # ingest 有效 NFO + 本地封面命中 → 零網路（既不搜也不下載）
+        mock_search.assert_not_called()
+        mock_download.assert_not_called()
+
+        # 來源 tree 零寫入（CD-104-9：內容雜湊 + stat metadata 前後相同）
+        assert _e2e_snapshot(src) == before
+
+        repo = self._repo(db_path)
+        row = repo.get_by_path(canonical)
+        assert row is not None
+        assert row.title == "Ingest Title"  # _strip_num_prefixes 剝掉 [IN-001]
+        assert row.output_dir  # 落 output_dir（非來源旁）
+        movie_dir = uri_to_local_fs_path(row.output_dir, {})
+        cover_fs = list(Path(movie_dir).glob("*.jpg"))
+        assert cover_fs, "應有封面落 output_dir（copy 自本地）"
+        assert cover_fs[0].read_bytes() == b"LOCAL-COVER-BYTES"  # copy 非 download
+
+    # ── gear rescrape：撞號候選遠端封面覆蓋舊本地封面（雜湊驗新封面 + NFO title） ──
+
+    def test_gear_rescrape_overwrites_cover_with_candidate_and_title(self, tmp_path, client, mocker, monkeypatch):
+        from core.path_utils import to_file_uri, uri_to_local_fs_path
+        from core.scrapers.models import Video
+
+        src = tmp_path / "src"
+        src.mkdir()
+        video = src / "RG-001.mp4"
+        video.write_bytes(b"FAKE-VIDEO")
+        # 無 .nfo / 無本地封面 → 第一次 ingest 走 search_jav+download（建出初版 movie_dir）
+
+        db_path = self._init_db(tmp_path)
+        config = _e2e_off_config(src)
+        self._wire(mocker, monkeypatch, config, db_path)
+        canonical = to_file_uri(str(video))
+
+        # 第一次呼叫（ingest）：建出「舊」封面，之後被 gear rescrape 覆蓋
+        mocker.patch(
+            "core.readonly_producer.search_jav",
+            return_value={
+                "number": "RG-001", "title": "Old Title",
+                "cover": "http://x/old.jpg", "actors": [], "tags": [],
+                "date": "", "maker": "", "sample_images": [],
+            },
+        )
+        mocker.patch(
+            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+        )
+        resp1 = client.post("/api/enrich-single", json={
+            "file_path": canonical, "number": "RG-001", "readonly_action": "ingest",
+        })
+        assert resp1.json()["success"] is True
+
+        repo = self._repo(db_path)
+        row_before = repo.get_by_path(canonical)
+        movie_dir = uri_to_local_fs_path(row_before.output_dir, {})
+        old_cover_files = list(Path(movie_dir).glob("*.jpg"))
+        old_cover_files = [p for p in old_cover_files if "-poster" not in p.name and "-fanart" not in p.name]
+        assert len(old_cover_files) == 1
+        old_cover_path = old_cover_files[0]
+        old_hash = hashlib.sha256(old_cover_path.read_bytes()).hexdigest()
+        assert old_cover_path.read_bytes() == b"COVER-BYTES:http://x/old.jpg"
+
+        # 第二次呼叫（gear rescrape）：撞號候選 → 遠端覆蓋，NEVER 沿用舊本地封面
+        fake_video = MagicMock(spec=Video)
+        fake_video.to_legacy_dict.return_value = {
+            "number": "RG-001", "title": "Candidate Title",
+            "cover": "http://x/new.jpg", "actors": [], "tags": [],
+            "date": "", "maker": "", "source": "javlibrary",
+            "url": "https://www.javlibrary.com/ja/?v=abcxyz",
+            "director": "", "duration": None, "label": "", "series": "",
+            "sample_images": [],
+        }
+        fake_video.rating = None
+        fake_video.summary = ""
+        mocker.patch("web.routers.scraper.fetch_javlib_by_detail_url", return_value=fake_video)
+
+        resp2 = client.post("/api/enrich-single", json={
+            "file_path": canonical, "number": "RG-001",
+            "readonly_action": "rescrape",
+            "source": "javlibrary",
+            "detail_url": "https://www.javlibrary.com/ja/?v=abcxyz",
+            "mode": "refresh_full",
+        })
+        assert resp2.json()["success"] is True
+
+        new_cover_path = old_cover_path  # 同一 movie_dir、同一 basename → 同路徑覆寫
+        assert new_cover_path.exists()
+        new_hash = hashlib.sha256(new_cover_path.read_bytes()).hexdigest()
+        assert new_hash != old_hash, "gear rescrape 必須覆蓋舊封面（雜湊須變）"
+        assert new_cover_path.read_bytes() == b"COVER-BYTES:http://x/new.jpg"
+
+        nfo_path = Path(movie_dir) / "RG-001.nfo"
+        assert nfo_path.exists()
+        nfo_text = nfo_path.read_text(encoding="utf-8")
+        assert "Candidate Title" in nfo_text
+        assert "Old Title" not in nfo_text
+
+    # ── 「被刪封面」case：output_dir 封面被刪 → gear rescrape → 復原 ─────────────
+
+    def test_gear_rescrape_restores_deleted_output_cover(self, tmp_path, client, mocker, monkeypatch):
+        from core.path_utils import to_file_uri, uri_to_local_fs_path
+        from core.scrapers.models import Video
+
+        src = tmp_path / "src"
+        src.mkdir()
+        video = src / "DL-001.mp4"
+        video.write_bytes(b"FAKE-VIDEO")
+
+        db_path = self._init_db(tmp_path)
+        config = _e2e_off_config(src)
+        self._wire(mocker, monkeypatch, config, db_path)
+        canonical = to_file_uri(str(video))
+
+        mocker.patch(
+            "core.readonly_producer.search_jav",
+            return_value={
+                "number": "DL-001", "title": "T", "cover": "http://x/c.jpg",
+                "actors": [], "tags": [], "date": "", "maker": "", "sample_images": [],
+            },
+        )
+        mocker.patch(
+            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+        )
+        resp1 = client.post("/api/enrich-single", json={
+            "file_path": canonical, "number": "DL-001", "readonly_action": "ingest",
+        })
+        assert resp1.json()["success"] is True
+
+        repo = self._repo(db_path)
+        row = repo.get_by_path(canonical)
+        movie_dir = uri_to_local_fs_path(row.output_dir, {})
+        cover_path = Path(movie_dir) / "DL-001.jpg"
+        assert cover_path.exists()
+        cover_path.unlink()  # 模擬使用者手動刪除 output_dir 封面
+        assert not cover_path.exists()
+
+        fake_video = MagicMock(spec=Video)
+        fake_video.to_legacy_dict.return_value = {
+            "number": "DL-001", "title": "Restored", "cover": "http://x/restored.jpg",
+            "actors": [], "tags": [], "date": "", "maker": "", "source": "javlibrary",
+            "url": "https://www.javlibrary.com/ja/?v=restored", "director": "",
+            "duration": None, "label": "", "series": "", "sample_images": [],
+        }
+        fake_video.rating = None
+        fake_video.summary = ""
+        mocker.patch("web.routers.scraper.fetch_javlib_by_detail_url", return_value=fake_video)
+
+        resp2 = client.post("/api/enrich-single", json={
+            "file_path": canonical, "number": "DL-001",
+            "readonly_action": "rescrape", "source": "javlibrary",
+            "detail_url": "https://www.javlibrary.com/ja/?v=restored",
+        })
+        assert resp2.json()["success"] is True
+        assert cover_path.exists(), "gear rescrape 須復原被刪的 output_dir 封面"
+        assert cover_path.read_bytes() == b"COVER-BYTES:http://x/restored.jpg"
+
+    # ── 補劇照唯讀：只劇照落 output_dir，nfo/封面 stat+雜湊未變 ─────────────────
+
+    def test_fetch_samples_readonly_only_touches_extrafanart(self, tmp_path, client, mocker, monkeypatch):
+        from core.path_utils import to_file_uri, uri_to_local_fs_path
+
+        src = tmp_path / "src"
+        src.mkdir()
+        video = src / "SM-001.mp4"
+        video.write_bytes(b"FAKE-VIDEO")
+
+        db_path = self._init_db(tmp_path)
+        config = _e2e_off_config(src)
+        self._wire(mocker, monkeypatch, config, db_path)
+        canonical = to_file_uri(str(video))
+
+        mocker.patch(
+            "core.readonly_producer.search_jav",
+            return_value={
+                "number": "SM-001", "title": "T", "cover": "http://x/c.jpg",
+                "actors": [], "tags": [], "date": "", "maker": "", "sample_images": [],
+            },
+        )
+        mocker.patch(
+            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+        )
+        resp1 = client.post("/api/enrich-single", json={
+            "file_path": canonical, "number": "SM-001", "readonly_action": "ingest",
+        })
+        assert resp1.json()["success"] is True
+
+        repo = self._repo(db_path)
+        row = repo.get_by_path(canonical)
+        movie_dir = Path(uri_to_local_fs_path(row.output_dir, {}))
+        nfo_snapshot_before = _e2e_snapshot(movie_dir)
+
+        # fetch-samples 走 web.routers.scraper.search_jav（獨立呼叫點，非 resolve_ingest_plan）
+        mocker.patch(
+            "web.routers.scraper.search_jav",
+            return_value={
+                "number": "SM-001",
+                "sample_images": ["http://x/s1.jpg", "http://x/s2.jpg"],
+            },
+        )
+
+        resp2 = client.post("/api/scraper/fetch-samples", json={
+            "file_path": canonical, "number": "SM-001",
+        })
+        data2 = resp2.json()
+        assert data2["success"] is True
+        assert data2["extrafanart_written"] == 2
+
+        ef_dir = movie_dir / "extrafanart"
+        ef_files = sorted(ef_dir.glob("*.jpg")) if ef_dir.exists() else []
+        assert len(ef_files) == 2
+
+        # nfo + 封面 + poster/fanart 的 stat+雜湊完全不變（samples_only 不得碰它們）
+        after = _e2e_snapshot(movie_dir)
+        for relpath, before_stat in nfo_snapshot_before.items():
+            assert after[relpath] == before_stat, f"{relpath} 被 samples_only 動到了"
+
+    # ── batch-enrich 唯讀項改道 ingest（router-level：驗 offload 結構 + 呼叫序）───
+
+    def test_batch_enrich_mixed_readonly_routes_via_executor(self, client, mocker):
+        """混合批（1 唯讀 + 1 可寫）：唯讀項不再拒絕，經 run_in_executor offload
+        呼叫 resolve_owning_output_root → resolve_ingest_plan → _produce_one；
+        可寫項照常 enrich_single；整批不中斷。"""
+        config = {
+            "gallery": {
+                "directories": [{"path": "/tmp/ro_src", "readonly": True}],
+                "path_mappings": {},
+            },
+            "search": {}, "scraper": {},
+        }
+        mocker.patch("web.routers.scraper.load_config", return_value=config)
+        source_stub = MagicMock()
+        source_stub.path = "/tmp/ro_src"
+        mocker.patch(
+            "web.routers.scraper.resolve_owning_output_root",
+            return_value=(source_stub, "/out/ro_src-x", "file:///out/ro_src-x"),
+        )
+        mock_plan = mocker.patch(
+            "web.routers.scraper.resolve_ingest_plan",
+            return_value=({"number": "RO-001", "title": "T", "cover": ""}, ("none",)),
+        )
+        mock_produce = mocker.patch("web.routers.scraper._produce_one")
+        mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
+        mock_repo.return_value.get_by_path.return_value = MagicMock(size_bytes=10, mtime=1.0)
+        mock_enrich = mocker.patch(
+            "web.routers.scraper.enrich_single", return_value=_ok_result()
+        )
+
+        response = client.post("/api/batch-enrich", json={
+            "items": [
+                {"file_path": "/tmp/ro_src/RO-001.mp4", "number": "RO-001"},
+                {"file_path": "/tmp/rw/RW-002.mp4", "number": "RW-002"},
+            ],
+            "mode": "refresh_full",
+        })
+
+        assert response.status_code == 200
+        events = [
+            json.loads(line[6:])
+            for line in response.text.strip().split("\n") if line.startswith("data: ")
+        ]
+        result_items = [e for e in events if e["type"] == "result-item"]
+        by_number = {e["number"]: e for e in result_items}
+
+        # 唯讀項：不再拒絕，改道成功
+        assert by_number["RO-001"]["success"] is True
+        mock_plan.assert_called_once()
+        assert mock_plan.call_args.kwargs["action"] == "ingest"
+        mock_produce.assert_called_once()
+        assert mock_produce.call_args.kwargs["assets_mode"] == "full"
+        # 可寫項：照常走既有 enrich_single 路徑
+        assert by_number["RW-002"]["success"] is True
+        mock_enrich.assert_called_once()
+
+        done = [e for e in events if e["type"] == "done"][0]
+        assert done["summary"] == {"total": 2, "success": 2, "failed": 0}
+
+    def test_batch_enrich_readonly_item_no_scrape_when_no_nfo_and_search_fails(self, client, mocker):
+        """唯讀項無 .nfo 且 search_jav 回 None → no_scrape，failed_count+=1，
+        不中斷整批（另一唯讀項 stub 省略；此測試聚焦單一唯讀項失敗語意）。"""
+        config = {
+            "gallery": {
+                "directories": [{"path": "/tmp/ro_src", "readonly": True}],
+                "path_mappings": {},
+            },
+            "search": {}, "scraper": {},
+        }
+        mocker.patch("web.routers.scraper.load_config", return_value=config)
+        source_stub = MagicMock()
+        source_stub.path = "/tmp/ro_src"
+        mocker.patch(
+            "web.routers.scraper.resolve_owning_output_root",
+            return_value=(source_stub, "/out/ro_src-x", "file:///out/ro_src-x"),
+        )
+        mocker.patch(
+            "web.routers.scraper.resolve_ingest_plan", return_value=(None, ("none",)),
+        )
+        mock_produce = mocker.patch("web.routers.scraper._produce_one")
+
+        response = client.post("/api/batch-enrich", json={
+            "items": [{"file_path": "/tmp/ro_src/NS-001.mp4", "number": "NS-001"}],
+            "mode": "refresh_full",
+        })
+
+        events = [
+            json.loads(line[6:])
+            for line in response.text.strip().split("\n") if line.startswith("data: ")
+        ]
+        result_items = [e for e in events if e["type"] == "result-item"]
+        assert result_items[0]["success"] is False
+        assert result_items[0]["reason"] == "no_scrape"
+        mock_produce.assert_not_called()
+
+    # ── URI round-trip 不變式：to_file_uri(uri_to_local_fs_path(u, pm), pm) == u ──
+
+    def test_uri_round_trip_invariant(self, monkeypatch):
+        """_produce_one 內 `src_uri = to_file_uri(file_info['path'], path_mappings)`
+        必須與呼叫端傳入的 canonical URI（`existing = repo.get_by_path(canonical)` 用的
+        同一個值）一致，否則 upsert 開新 row / 與既有 row 錯位（卡片「特有邊界」#1）。
+        canonical 一律取自 `to_file_uri(fs_path, pm)` 的真實輸出（而非手寫字面 URI ——
+        `to_file_uri` 對純 POSIX 絕對路徑的斜線數是它自己的既有行為，不是本 task 的
+        契約，手寫字面值會誤測到與本 task 無關的既有行為）。
+
+        含 WSL+path_mappings 的映射命名空間案例（第三案）——這正是 T3 review nit：
+        唯讀來源常掛在映射過的 NAS 路徑，round-trip 若在映射分支破掉，_produce_one
+        會用映射後 URI upsert、卻與 get_by_path(canonical) 讀的 row 錯位。映射分支只在
+        CURRENT_ENV=='wsl' 且 path_mappings 非空時啟用，故需 monkeypatch。"""
+        from core import path_utils
+        from core.path_utils import to_file_uri, uri_to_local_fs_path
+
+        # (fs_path, path_mappings, wsl_env) — wsl_env 才啟用 to_file_uri 映射分支
+        cases = [
+            ("/tmp/ro_src/ABC-001.mp4", {}, False),
+            (r"\\NAS\share\ABC-001.mp4", {}, False),
+            ("/home/user/nas/dir/ABC-001.mp4", _WSL_UNC_MAPPINGS, True),
+        ]
+        for fs_path, pm, wsl_env in cases:
+            monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl" if wsl_env else path_utils.CURRENT_ENV)
+            canonical = to_file_uri(fs_path, pm)
+            if wsl_env:
+                # 映射確有生效（canonical 落映射命名空間，非原生本機路徑）
+                assert canonical.startswith("file://///NAS/share/"), canonical
+            round_tripped_fs = uri_to_local_fs_path(canonical, pm)
+            assert to_file_uri(round_tripped_fs, pm) == canonical, (
+                f"round-trip 不變式破了: fs_path={fs_path!r} pm={pm!r} canonical={canonical!r} -> "
+                f"{round_tripped_fs!r} -> {to_file_uri(round_tripped_fs, pm)!r}"
+            )

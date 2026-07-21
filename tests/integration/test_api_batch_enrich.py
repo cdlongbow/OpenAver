@@ -6,7 +6,7 @@ test_api_batch_enrich.py - POST /api/batch-enrich 端點整合測試（SSE Strea
 
 import json
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
 
 # ── helper ───────────────────────────────────────────────────────────────────
@@ -338,10 +338,22 @@ class TestBatchEnrich:
 
 
 class TestBatchEnrichReadonlyGuard:
-    """TASK-90c-T1：batch 逐項唯讀 guard。混合批（1 唯讀 + 1 可寫）→ 唯讀項
-    yield result-item(success:False, 唯讀) + failed_count+=1 + continue（不 raise、
-    不逐項 _emit_notif）；可寫項照常 enrich。load_config patch 呼叫處 binding，
-    batch 走 await asyncio.to_thread(load_config) 仍生效；iter_gallery_sources 用 real。"""
+    """TASK-104-T3（CD-104-5，前身 TASK-90c-T1 的「一律拒絕」guard）：batch 逐項唯讀
+    不再拒絕——改道 output_dir，action 固定 'ingest'（batch 語意＝補缺、非撞號選版），
+    經 `run_in_executor` offload（async-offload 守衛）。混合批（1 唯讀 + 1 可寫）→
+    唯讀項改道成功（success:True，經 `resolve_owning_output_root` →
+    `resolve_ingest_plan` → `_produce_one`）、可寫項照常走既有 `enrich_single`；
+    整批不中斷。load_config patch 呼叫處 binding，batch 走
+    await asyncio.to_thread(load_config) 仍生效；iter_gallery_sources 用 real。
+
+    Mock 邊界：`resolve_owning_output_root`/`resolve_ingest_plan`/`_produce_one`/
+    `VideoRepository`（router-level，比照 test_api_enrich.py 的
+    `TestReadonlyRoutingE2E` 慣例）——唯讀項用假路徑（不落真實 FS），若不 mock這三者
+    會落到真實 `core.readonly_producer.search_jav`（真連外站）；本檔案其餘測試向來
+    只 mock 使用端 `web.routers.scraper.*`，故沿用同一層級 mock，不下探到
+    `core.readonly_producer.*`（那層的行為已有 test_readonly_producer.py /
+    test_api_enrich.py::TestReadonlyRoutingE2E 覆蓋，此檔只驗證 router 的
+    dispatch/offload/SSE 契約）。"""
 
     @pytest.fixture(autouse=True)
     def _stub_search_jav(self, mocker):
@@ -360,7 +372,28 @@ class TestBatchEnrichReadonlyGuard:
             "scraper": {},
         }
 
-    def test_mixed_batch_readonly_skipped_writable_enriched(self, client, mocker):
+    def _mock_readonly_routing(self, mocker, plan_return=None, produce_side_effect=None):
+        source_stub = MagicMock()
+        source_stub.path = "/tmp/ro_src"
+        mock_owning = mocker.patch(
+            "web.routers.scraper.resolve_owning_output_root",
+            return_value=(source_stub, "/out/ro_src-x", "file:///out/ro_src-x"),
+        )
+        mock_plan = mocker.patch(
+            "web.routers.scraper.resolve_ingest_plan",
+            return_value=plan_return
+            if plan_return is not None
+            else ({"number": "RO-001", "title": "T", "cover": ""}, ("none",)),
+        )
+        mock_produce = mocker.patch(
+            "web.routers.scraper._produce_one", side_effect=produce_side_effect,
+        )
+        mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
+        mock_repo.return_value.get_by_path.return_value = MagicMock(size_bytes=10, mtime=1.0)
+        return mock_owning, mock_plan, mock_produce, mock_repo
+
+    def test_mixed_batch_readonly_routes_writable_enriched(self, client, mocker):
+        """唯讀項不再拒絕：改道成功（success:True），可寫項照常 enrich，整批不中斷。"""
         mocker.patch(
             "web.routers.scraper.load_config",
             return_value=self._readonly_config(),
@@ -369,6 +402,7 @@ class TestBatchEnrichReadonlyGuard:
             "web.routers.scraper.enrich_single", return_value=_ok_result()
         )
         emit_spy = mocker.patch("web.routers.scraper._emit_notif")
+        _mock_owning, mock_plan, mock_produce, _mock_repo = self._mock_readonly_routing(mocker)
 
         response = client.post("/api/batch-enrich", json={
             "items": [
@@ -384,22 +418,61 @@ class TestBatchEnrichReadonlyGuard:
         assert len(result_items) == 2
 
         by_number = {e["number"]: e for e in result_items}
-        # 唯讀項：success False + 唯讀 error
-        assert by_number["RO-001"]["success"] is False
-        assert "唯讀" in by_number["RO-001"]["error"]
+        # 唯讀項：不再拒絕，改道成功
+        assert by_number["RO-001"]["success"] is True
         assert by_number["RO-001"]["file_path"] == "/tmp/ro_src/RO-001.mp4"
         # 可寫項：照常 enrich 成功
         assert by_number["RW-002"]["success"] is True
 
-        # enrich_single 只被可寫項呼叫一次（唯讀項在到達前 continue）
+        # 唯讀項經 resolve_ingest_plan(action='ingest') → _produce_one(assets_mode='full')
+        mock_plan.assert_called_once()
+        assert mock_plan.call_args.kwargs["action"] == "ingest"
+        mock_produce.assert_called_once()
+        assert mock_produce.call_args.kwargs["assets_mode"] == "full"
+
+        # enrich_single 只被可寫項呼叫一次（唯讀項改走 resolve_ingest_plan/_produce_one）
         assert mock_enrich.call_count == 1
 
-        # done summary 計數對稱
+        # done summary 計數對稱（兩項皆成功）
+        done = [e for e in events if e["type"] == "done"][0]
+        assert done["summary"] == {"total": 2, "success": 2, "failed": 0}
+
+        # _emit_notif 只在批次層呼叫（started + done），唯讀項不逐項發 notif
+        assert emit_spy.call_count == 2
+
+    def test_readonly_item_no_scrape_still_fails_batch_continues(self, client, mocker):
+        """唯讀項改道但找不到可用番號資料（resolve_ingest_plan 回 meta=None）→
+        仍是失敗結果（reason='no_scrape'），可寫項不受影響，整批不中斷。"""
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=self._readonly_config(),
+        )
+        mocker.patch(
+            "web.routers.scraper.enrich_single", return_value=_ok_result()
+        )
+        _mock_owning, _mock_plan, mock_produce, _mock_repo = self._mock_readonly_routing(
+            mocker, plan_return=(None, ("none",)),
+        )
+
+        response = client.post("/api/batch-enrich", json={
+            "items": [
+                {"file_path": "/tmp/ro_src/RO-001.mp4", "number": "RO-001"},
+                {"file_path": "/tmp/rw/RW-002.mp4", "number": "RW-002"},
+            ],
+            "mode": "refresh_full",
+        })
+
+        events = parse_sse(response.text)
+        result_items = [e for e in events if e["type"] == "result-item"]
+        by_number = {e["number"]: e for e in result_items}
+
+        assert by_number["RO-001"]["success"] is False
+        assert by_number["RO-001"]["reason"] == "no_scrape"
+        mock_produce.assert_not_called()
+        assert by_number["RW-002"]["success"] is True
+
         done = [e for e in events if e["type"] == "done"][0]
         assert done["summary"] == {"total": 2, "success": 1, "failed": 1}
-
-        # _emit_notif 只在批次層呼叫（started + done_with_errors），唯讀項不逐項發 notif
-        assert emit_spy.call_count == 2
 
 
 class TestBatchEnrichThumbnailInvalidation:

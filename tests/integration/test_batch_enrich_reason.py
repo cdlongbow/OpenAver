@@ -112,7 +112,17 @@ class TestResultItemNormalStationReason:
         assert result_items[0]["reason"] == "not_found"
 
 
-# ── 站台〔b〕唯讀 guard：reason == 'readonly' ────────────────────────────────
+# ── 站台〔b〕唯讀改道：TASK-104-T3（CD-104-5）前身「唯讀 guard：reason=='readonly'」──
+#
+# 唯讀項不再是一個會被拒絕的獨立「站台」——它現在改道 `resolve_owning_output_root`
+# → `resolve_ingest_plan` → `_produce_one`（router-level mock，同 test_api_enrich.py
+# 的 TestReadonlyRoutingE2E 慣例，避免真連 core.readonly_producer.search_jav 外站）。
+# 成功改道時的 result-item 是手組 dict `{'type':..., 'number':..., 'file_path':...,
+# 'success': True}`（scraper.py 的 `_do_readonly` 'ok' 分支）——**不含** `reason` /
+# `source_used` 欄位（與站台〔a〕`asdict(EnrichResult)` 不同源，非同一個 dataclass），
+# 這是本 task 對三站台 reason 契約的既有事實變動，非疏漏。失敗分支（no_scrape/
+# error/skip）仍帶 `reason`，維持原本「reason 契約」對失敗語意的覆蓋。
+
 
 class TestResultItemReadonlyStationReason:
     def _readonly_config(self):
@@ -125,12 +135,63 @@ class TestResultItemReadonlyStationReason:
             "scraper": {},
         }
 
+    def _mock_readonly_routing(self, mocker, plan_return=None):
+        from unittest.mock import MagicMock
+        source_stub = MagicMock()
+        source_stub.path = "/tmp/ro_src"
+        mocker.patch(
+            "web.routers.scraper.resolve_owning_output_root",
+            return_value=(source_stub, "/out/ro_src-x", "file:///out/ro_src-x"),
+        )
+        mocker.patch(
+            "web.routers.scraper.resolve_ingest_plan",
+            return_value=plan_return
+            if plan_return is not None
+            else ({"number": "RO-001", "title": "T", "cover": ""}, ("none",)),
+        )
+        mock_produce = mocker.patch("web.routers.scraper._produce_one")
+        mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
+        mock_repo.return_value.get_by_path.return_value = MagicMock(size_bytes=10, mtime=1.0)
+        return mock_produce
+
+    # 歷史命名保留（TASK-104-T3 改寫，CD-104-10：不可為保綠而還原新碼）：唯讀項
+    # 改道成功 → success:True，不再是 reason:'readonly' 的拒絕結果；enrich_single
+    # 仍不被呼叫（唯讀路徑走 resolve_ingest_plan/_produce_one，非 enrich_single）。
     def test_readonly_item_reason_readonly(self, client, mocker):
         mocker.patch(
             "web.routers.scraper.load_config",
             return_value=self._readonly_config(),
         )
         mock_enrich = mocker.patch("web.routers.scraper.enrich_single")
+        mock_produce = self._mock_readonly_routing(mocker)
+
+        response = client.post("/api/batch-enrich", json={
+            "items": [{"file_path": "/tmp/ro_src/RO-001.mp4", "number": "RO-001"}],
+            "mode": "refresh_full",
+        })
+
+        assert response.status_code == 200
+        result_items = [e for e in parse_sse(response.text) if e["type"] == "result-item"]
+        assert len(result_items) == 1
+        assert result_items[0]["success"] is True
+        assert result_items[0]["file_path"] == "/tmp/ro_src/RO-001.mp4"
+        # 改道成功 result-item 手組自 _do_readonly 的 'ok' 分支，不含 reason/source_used
+        # （非 asdict(EnrichResult)，兩者不同源——見本 class docstring）
+        assert "reason" not in result_items[0]
+        assert "source_used" not in result_items[0]
+        mock_produce.assert_called_once()
+        assert mock_produce.call_args.kwargs["assets_mode"] == "full"
+        # 唯讀項改走 resolve_ingest_plan/_produce_one，不觸及 enrich_single
+        mock_enrich.assert_not_called()
+
+    # 失敗分支仍帶 reason（此處 'no_scrape'）——站台〔b〕reason 契約在失敗語意上維持成立。
+    def test_readonly_item_no_scrape_reason_no_scrape(self, client, mocker):
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=self._readonly_config(),
+        )
+        mock_enrich = mocker.patch("web.routers.scraper.enrich_single")
+        mock_produce = self._mock_readonly_routing(mocker, plan_return=(None, ("none",)))
 
         response = client.post("/api/batch-enrich", json={
             "items": [{"file_path": "/tmp/ro_src/RO-001.mp4", "number": "RO-001"}],
@@ -141,10 +202,8 @@ class TestResultItemReadonlyStationReason:
         result_items = [e for e in parse_sse(response.text) if e["type"] == "result-item"]
         assert len(result_items) == 1
         assert result_items[0]["success"] is False
-        assert result_items[0]["reason"] == "readonly"
-        # 唯讀站台不含 source_used（前端唯讀態不需徽章，CD-94-4 邊界）
-        assert "source_used" not in result_items[0]
-        # 唯讀項在到達 enrich_single 前 continue，不應被呼叫
+        assert result_items[0]["reason"] == "no_scrape"
+        mock_produce.assert_not_called()
         mock_enrich.assert_not_called()
 
 

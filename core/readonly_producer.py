@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from core import thumbnail_cache
-from core.config import _STEM_IMAGE_MODES
+from core.config import _STEM_IMAGE_MODES, iter_gallery_sources
 from core.database import Video, get_db_path
 from core.focal import requires_face_detection
 from core.focal_trigger import maybe_submit_video_focal
@@ -52,7 +52,8 @@ from core.path_utils import (
     uri_to_fs_path,
     uri_to_local_fs_path,
 )
-from core.scraper import extract_number, search_jav
+from core.readonly_source import _canonical_source_prefix
+from core.scraper import extract_number, search_jav, search_jav_single_source
 from core.video_extensions import get_video_extensions
 
 logger = get_logger(__name__)
@@ -198,6 +199,84 @@ def resolve_output_root(source, config: dict) -> str:
         name = _derive_source_name(source.path)
         return str(get_db_path().parent / "lib" / name)
     return source.output_path
+
+
+def resolve_owning_output_root(canonical_uri: str, config: dict) -> Optional[tuple]:
+    """Find the innermost readonly gallery source that owns ``canonical_uri`` and
+    resolve its effective output root (CD-104-5).
+
+    Returns ``(source, output_root, output_uri)`` where ``source`` is the
+    ``DirectoryConfig`` (needed downstream by ``_produce_one``), ``output_root``
+    is a native FS path string (``normalize_path()``-d), and ``output_uri`` is
+    its ``file:///`` form. Returns ``None`` when no readonly source owns the
+    path — the router's signal to fall through to its existing (non-readonly)
+    sidecar-write code path unchanged.
+
+    Longest-canonical-prefix-wins, mirroring ``is_path_readonly``'s nested-
+    source semantics (readonly_source.py) exactly — but resolving to the WHICH
+    source (an object), not just a boolean:
+    - Enumerate readonly sources (``iter_gallery_sources`` + ``.readonly``),
+      canonicalize each with ``_canonical_source_prefix`` (same mapped
+      namespace as DB rows), keep the longest prefix that contains
+      ``canonical_uri``.
+    - No readonly source contains it → ``None`` (not readonly at all).
+    - A writable source's prefix ALSO contains it and is >= as long (ties go to
+      writable, matching ``is_path_readonly``'s ``best_ro > best_wr`` — a
+      strictly-longer readonly prefix wins) → ``None`` (a nested writable
+      override; the file is actually writable, not readonly — do not route).
+    - Otherwise resolve via ``resolve_output_root(source, config)``. An empty
+      result (media-server flavour with no configured ``output_path``) is
+      returned as ``(source, '', '')`` rather than ``None`` — the caller still
+      knows WHICH source owns the file (for its own "未設定輸出路徑" error
+      message) but has to reject the write itself, since an empty root cannot
+      be normalize_path()'d/to_file_uri()'d meaningfully.
+
+    Malformed source paths (``_canonical_source_prefix`` raising ``ValueError``,
+    e.g. bad UNC forms) are skipped for that one source (mirrors
+    ``readonly_source_prefixes``/``writable_source_prefixes``'s own per-entry
+    ``except ValueError: continue`` — one dirty config entry must not sink the
+    whole resolution).
+    """
+    gallery = config.get("gallery", {})
+    path_mappings = gallery.get("path_mappings", {})
+
+    best_source = None
+    best_ro_len = -1
+    for src in iter_gallery_sources(gallery):
+        if not src.readonly or not src.path:
+            continue
+        try:
+            prefix = _canonical_source_prefix(src.path, path_mappings)
+        except ValueError:
+            continue
+        if is_path_under_dir(canonical_uri, prefix) and len(prefix) > best_ro_len:
+            best_ro_len = len(prefix)
+            best_source = src
+
+    if best_source is None:
+        return None
+
+    best_wr_len = -1
+    for src in iter_gallery_sources(gallery):
+        if src.readonly or not src.path:
+            continue
+        try:
+            prefix = _canonical_source_prefix(src.path, path_mappings)
+        except ValueError:
+            continue
+        if is_path_under_dir(canonical_uri, prefix) and len(prefix) > best_wr_len:
+            best_wr_len = len(prefix)
+
+    if best_wr_len >= best_ro_len:
+        return None  # writable override (or a tie — config self-contradiction, favor writable)
+
+    effective = resolve_output_root(best_source, config)
+    if not (effective or "").strip():
+        return (best_source, '', '')
+
+    output_root = normalize_path(effective)
+    output_uri = to_file_uri(output_root, path_mappings)
+    return (best_source, output_root, output_uri)
 
 
 # ---------------------------------------------------------------------------
@@ -973,6 +1052,8 @@ def resolve_ingest_plan(
     *,
     action: str = 'ingest',
     proxy_url: str = '',
+    scraper_data: Optional[dict] = None,
+    source: Optional[str] = None,
 ) -> tuple:
     """Metadata + cover two-axis decision for one source file (CD-104-3a).
 
@@ -989,10 +1070,16 @@ def resolve_ingest_plan(
     threaded or L3 silently degrades).
 
     action='rescrape' (gear; T3 wires the caller): metadata and cover are
-    ALWAYS remote (T3 will widen the metadata call with scraper_data/
-    detail_url candidates) — a re-scrape means "get the current upstream
-    truth", never reusing whatever's already on disk (a stale local cover must
-    not survive a deliberate re-scrape).
+    ALWAYS remote — a re-scrape means "get the current upstream truth", never
+    reusing whatever's already on disk (a stale local cover must not survive a
+    deliberate re-scrape). `scraper_data` (TASK-104-T3), when given, is used
+    verbatim as the metadata (already-fetched detail_url/candidate-version
+    payload from the router's javlibrary confirm flow — matches
+    `to_legacy_dict()` + `internal_nfo_carriers()` shape) and no network call is
+    made here. Without `scraper_data`: a concrete `source` (not None/'auto')
+    routes through `search_jav_single_source` (explicit source pick, mirrors
+    `rescrape_preview_endpoint`'s own branching); otherwise falls back to
+    `search_jav(source='auto', ...)`.
 
     A `parse_nfo()` failure (bad XML → root=None) is treated as "no usable
     NFO": `nfo_thumb=None`, metadata falls to `search_jav`, and the cover
@@ -1029,7 +1116,12 @@ def resolve_ingest_plan(
         else:
             cover_strategy = ('download', meta['cover']) if meta and meta.get('cover') else ('none',)
     else:  # 'rescrape'
-        meta = search_jav(number, source="auto", proxy_url=proxy_url) if number else None
+        if scraper_data:
+            meta = scraper_data
+        elif source and source not in (None, 'auto'):
+            meta = search_jav_single_source(number, source, proxy_url) if number else None
+        else:
+            meta = search_jav(number, source="auto", proxy_url=proxy_url) if number else None
         cover_strategy = ('download', meta['cover']) if meta and meta.get('cover') else ('none',)
 
     if meta is None:

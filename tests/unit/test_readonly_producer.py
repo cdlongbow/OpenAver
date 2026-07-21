@@ -4559,3 +4559,257 @@ class TestResolveIngestPlan:
             meta, _cover_strategy = resolve_ingest_plan(str(video), 'SRC-001', {}, action=action)
 
         assert meta['sample_images'] == []
+
+    # -- TASK-104-T3: rescrape scraper_data / source candidate widening ------
+
+    def test_rescrape_scraper_data_used_verbatim_zero_network(self, tmp_path):
+        """When the router already fetched a candidate (javlibrary detail_url
+        confirm flow), resolve_ingest_plan must use it AS-IS — no search_jav /
+        search_jav_single_source call at all."""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path)
+        scraper_data = {'number': 'SRC-001', 'title': 'Candidate T', 'cover': 'http://x/candidate.jpg'}
+
+        with patch('core.readonly_producer.search_jav') as mock_search, \
+             patch('core.readonly_producer.search_jav_single_source') as mock_single:
+            meta, cover_strategy = resolve_ingest_plan(
+                str(video), 'SRC-001', {}, action='rescrape', scraper_data=scraper_data,
+            )
+
+        mock_search.assert_not_called()
+        mock_single.assert_not_called()
+        assert meta['title'] == 'Candidate T'
+        assert cover_strategy == ('download', 'http://x/candidate.jpg')
+        assert meta['sample_images'] == []
+
+    def test_rescrape_concrete_source_uses_single_source(self, tmp_path):
+        """No scraper_data + a concrete (non-auto) source -> search_jav_single_source,
+        NOT search_jav (explicit source pick must not go through the auto merger)."""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path)
+        with patch('core.readonly_producer.search_jav') as mock_search, \
+             patch(
+                 'core.readonly_producer.search_jav_single_source',
+                 return_value={'number': 'SRC-001', 'title': 'T', 'cover': 'http://x/c.jpg'},
+             ) as mock_single:
+            meta, cover_strategy = resolve_ingest_plan(
+                str(video), 'SRC-001', {}, action='rescrape', source='javbus', proxy_url='p',
+            )
+
+        mock_single.assert_called_once_with('SRC-001', 'javbus', 'p')
+        mock_search.assert_not_called()
+        assert cover_strategy == ('download', 'http://x/c.jpg')
+
+    @pytest.mark.parametrize("source", [None, 'auto'])
+    def test_rescrape_no_source_or_auto_falls_back_to_search_jav(self, tmp_path, source):
+        """source=None or source='auto' -> the existing search_jav(auto) path,
+        NOT search_jav_single_source."""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path)
+        with patch(
+            'core.readonly_producer.search_jav',
+            return_value={'number': 'SRC-001', 'title': 'T', 'cover': 'http://x/c.jpg'},
+        ) as mock_search, patch('core.readonly_producer.search_jav_single_source') as mock_single:
+            meta, cover_strategy = resolve_ingest_plan(
+                str(video), 'SRC-001', {}, action='rescrape', source=source,
+            )
+
+        mock_search.assert_called_once_with('SRC-001', source='auto', proxy_url='')
+        mock_single.assert_not_called()
+        assert cover_strategy == ('download', 'http://x/c.jpg')
+
+
+# ---------------------------------------------------------------------------
+# TASK-104-T3 (CD-104-5): resolve_owning_output_root — innermost readonly
+# source resolver + writable-override + empty-output-root passthrough.
+# ---------------------------------------------------------------------------
+
+def _gallery_config(directories, path_mappings=None, scraper_cfg=None):
+    """Build a full app-config dict (the shape resolve_owning_output_root and
+    resolve_output_root both expect: config['gallery']/config['scraper'])."""
+    return {
+        "gallery": {
+            "directories": directories,
+            "path_mappings": path_mappings or {},
+        },
+        "scraper": scraper_cfg or {},
+    }
+
+
+class TestResolveOwningOutputRoot:
+    def test_no_readonly_source_returns_none(self, tmp_path):
+        from core.readonly_producer import resolve_owning_output_root
+        from core.path_utils import to_file_uri
+
+        src = tmp_path / "rw"
+        src.mkdir()
+        canonical = to_file_uri(str(src / "ABC-001.mp4"))
+        config = _gallery_config([{"path": str(src), "readonly": False}])
+
+        assert resolve_owning_output_root(canonical, config) is None
+
+    def test_no_source_covers_path_at_all_returns_none(self, tmp_path):
+        from core.readonly_producer import resolve_owning_output_root
+        from core.path_utils import to_file_uri
+
+        src = tmp_path / "ro"
+        src.mkdir()
+        canonical = to_file_uri(str(tmp_path / "unrelated" / "ABC-001.mp4"))
+        config = _gallery_config([{"path": str(src), "readonly": True}])
+
+        assert resolve_owning_output_root(canonical, config) is None
+
+    def test_finds_owning_readonly_source_off_mode_nonempty_root(self, tmp_path):
+        from core.database import get_db_path
+        from core.readonly_producer import resolve_owning_output_root
+        from core.path_utils import to_file_uri
+
+        src = tmp_path / "ro"
+        src.mkdir()
+        canonical = to_file_uri(str(src / "ABC-001.mp4"))
+        config = _gallery_config([{"path": str(src), "readonly": True}])  # off (default)
+
+        result = resolve_owning_output_root(canonical, config)
+
+        assert result is not None
+        source, output_root, output_uri = result
+        assert source.path == str(src)
+        assert output_root.startswith(str(get_db_path().parent / "lib"))
+        assert output_uri.startswith("file:///")
+
+    # -- boundary (a): media-server flavour, output_path not yet configured --
+    def test_empty_output_root_returns_source_with_empty_strings(self, tmp_path):
+        """media-server flavour + no output_path configured (first-time /
+        never-configured) -> (source, '', '') so the router can still name the
+        owning source in its own error message, but must reject the write."""
+        from core.readonly_producer import resolve_owning_output_root
+        from core.path_utils import to_file_uri
+
+        src = tmp_path / "ro"
+        src.mkdir()
+        canonical = to_file_uri(str(src / "ABC-001.mp4"))
+        config = _gallery_config(
+            [{"path": str(src), "readonly": True, "output_path": ""}],
+            scraper_cfg={"external_manager": "jellyfin"},
+        )
+
+        result = resolve_owning_output_root(canonical, config)
+
+        assert result is not None
+        source, output_root, output_uri = result
+        assert output_root == ""
+        assert output_uri == ""
+
+    # -- boundary (c): nested writable override --------------------------------
+    def test_nested_writable_child_returns_none(self, tmp_path):
+        """readonly parent + writable child (longer/more-specific prefix) ->
+        the file under the writable child is NOT readonly -> None (router
+        falls through to its existing writable code path)."""
+        from core.readonly_producer import resolve_owning_output_root
+        from core.path_utils import to_file_uri
+
+        parent = tmp_path / "ro_parent"
+        child = parent / "rw_child"
+        child.mkdir(parents=True)
+        canonical = to_file_uri(str(child / "ABC-001.mp4"))
+        config = _gallery_config([
+            {"path": str(parent), "readonly": True},
+            {"path": str(child), "readonly": False},
+        ])
+
+        assert resolve_owning_output_root(canonical, config) is None
+
+    def test_nested_readonly_child_under_writable_parent_still_routes(self, tmp_path):
+        """Mirror case: writable parent + readonly child (longer prefix) -> the
+        readonly child wins -> routes (not None), owning source is the child."""
+        from core.readonly_producer import resolve_owning_output_root
+        from core.path_utils import to_file_uri
+
+        parent = tmp_path / "rw_parent"
+        child = parent / "ro_child"
+        child.mkdir(parents=True)
+        canonical = to_file_uri(str(child / "ABC-001.mp4"))
+        config = _gallery_config([
+            {"path": str(parent), "readonly": False},
+            {"path": str(child), "readonly": True},
+        ])
+
+        result = resolve_owning_output_root(canonical, config)
+
+        assert result is not None
+        source, _output_root, _output_uri = result
+        assert source.path == str(child)
+
+    def test_equal_length_tie_favors_writable_returns_none(self, tmp_path):
+        """Self-contradictory config: the SAME path listed both readonly and
+        writable (equal-length prefixes) -> ties favor writable (mirrors
+        is_path_readonly's best_ro > best_wr, strict inequality) -> None."""
+        from core.readonly_producer import resolve_owning_output_root
+        from core.path_utils import to_file_uri
+
+        src = tmp_path / "contradictory"
+        src.mkdir()
+        canonical = to_file_uri(str(src / "ABC-001.mp4"))
+        config = _gallery_config([
+            {"path": str(src), "readonly": True},
+            {"path": str(src), "readonly": False},
+        ])
+
+        assert resolve_owning_output_root(canonical, config) is None
+
+    # -- boundary (b): source root changed between calls -----------------------
+    def test_stateless_recompute_when_source_root_changes(self, tmp_path):
+        """resolve_owning_output_root must not cache: a file under the OLD
+        source root stops resolving once the config's source path is changed
+        to point elsewhere (simulates the user editing the source root in
+        settings) — no stale memory of "this used to be readonly"."""
+        from core.readonly_producer import resolve_owning_output_root
+        from core.path_utils import to_file_uri
+
+        old_root = tmp_path / "old_root"
+        new_root = tmp_path / "new_root"
+        old_root.mkdir()
+        new_root.mkdir()
+        canonical_old = to_file_uri(str(old_root / "ABC-001.mp4"))
+
+        config_v1 = _gallery_config([{"path": str(old_root), "readonly": True}])
+        assert resolve_owning_output_root(canonical_old, config_v1) is not None
+
+        config_v2 = _gallery_config([{"path": str(new_root), "readonly": True}])
+        assert resolve_owning_output_root(canonical_old, config_v2) is None
+
+        canonical_new = to_file_uri(str(new_root / "ABC-001.mp4"))
+        result = resolve_owning_output_root(canonical_new, config_v2)
+        assert result is not None
+        assert result[0].path == str(new_root)
+
+    def test_malformed_source_path_skipped_not_raised(self, tmp_path, monkeypatch):
+        """A source whose path canonicalization raises ValueError must be
+        skipped (mirror readonly_source_prefixes' own per-entry try/except),
+        not propagate and crash the whole resolution."""
+        from core.readonly_producer import resolve_owning_output_root
+        from core.path_utils import to_file_uri
+
+        good = tmp_path / "ro_good"
+        good.mkdir()
+        canonical = to_file_uri(str(good / "ABC-001.mp4"))
+        config = _gallery_config([
+            {"path": "bad::unc::path", "readonly": True},
+            {"path": str(good), "readonly": True},
+        ])
+
+        from core.readonly_source import _canonical_source_prefix as _real_canonical_prefix
+
+        def _fake_canonical_prefix(path, path_mappings):
+            if path == "bad::unc::path":
+                raise ValueError("malformed")
+            return _real_canonical_prefix(path, path_mappings)
+
+        monkeypatch.setattr("core.readonly_producer._canonical_source_prefix", _fake_canonical_prefix)
+
+        result = resolve_owning_output_root(canonical, config)
+        assert result is not None
+        assert result[0].path == str(good)
