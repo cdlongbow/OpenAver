@@ -148,6 +148,10 @@ def _tree(py_file: pathlib.Path) -> ast.Module:
     return _TREE_CACHE[key]
 
 
+# [lint-guard: pytest-justified] Python-AST 源碼語意守衛（cross-file enrich_contract 契約）：
+# 斷言 AST 節點形狀 / detector 函式在 parsed Python 片段上的行為，非 html/js/css 靜態
+# 字串存在檢查，eslint/static_guard 無法表達（pre-merge SA-pre-6 例外清單「Python-AST
+# 源碼語意守衛」）。
 class TestPositiveContractLocks:
     """正向鎖：每個 target body 必含指定共用 helper 的 Call（消除手抄第②層）。"""
 
@@ -255,6 +259,10 @@ NEGATIVE_FINGERPRINTS = [
 ]
 
 
+# [lint-guard: pytest-justified] Python-AST 源碼語意守衛（cross-file enrich_contract 契約）：
+# 斷言 AST 節點形狀 / detector 函式在 parsed Python 片段上的行為，非 html/js/css 靜態
+# 字串存在檢查，eslint/static_guard 無法表達（pre-merge SA-pre-6 例外清單「Python-AST
+# 源碼語意守衛」）。
 class TestNegativeMirrorLocks:
     """負向鎖：target body 內不得殘留四類舊 mirror 手抄指紋。"""
 
@@ -274,6 +282,10 @@ class TestNegativeMirrorLocks:
         )
 
 
+# [lint-guard: pytest-justified] Python-AST 源碼語意守衛（cross-file enrich_contract 契約）：
+# 斷言 AST 節點形狀 / detector 函式在 parsed Python 片段上的行為，非 html/js/css 靜態
+# 字串存在檢查，eslint/static_guard 無法表達（pre-merge SA-pre-6 例外清單「Python-AST
+# 源碼語意守衛」）。
 class TestFalsePositiveGuards:
     """反證：GREEN 狀態下守衛不誤傷 961 Tuple-target 與非-target plain meta.get。"""
 
@@ -318,6 +330,10 @@ class TestFalsePositiveGuards:
         )
 
 
+# [lint-guard: pytest-justified] Python-AST 源碼語意守衛（cross-file enrich_contract 契約）：
+# 斷言 AST 節點形狀 / detector 函式在 parsed Python 片段上的行為，非 html/js/css 靜態
+# 字串存在檢查，eslint/static_guard 無法表達（pre-merge SA-pre-6 例外清單「Python-AST
+# 源碼語意守衛」）。
 class TestNegativeDetectorSensitivity:
     """負向鎖 detector 敏感度（防近空殼假綠）：直接餵 AST 片段，斷言四個 detector
     對 canonical mirror 形狀**命中**、對正確碼**放行**。這把「守衛真的鎖得住」的
@@ -369,6 +385,10 @@ class TestNegativeDetectorSensitivity:
             for n in ast.walk(ast.parse('t = meta.get("original_title", "")')))
 
 
+# [lint-guard: pytest-justified] Python-AST 源碼語意守衛（cross-file enrich_contract 契約）：
+# 斷言 AST 節點形狀 / detector 函式在 parsed Python 片段上的行為，非 html/js/css 靜態
+# 字串存在檢查，eslint/static_guard 無法表達（pre-merge SA-pre-6 例外清單「Python-AST
+# 源碼語意守衛」）。
 class TestWhitelistAntiRot:
     """白名單防腐（比照先例 test_whitelist_entries_exist）：
     每個 named target 必須能在對應檔 AST 定位，否則守衛指向殭屍函式、恆綠假通過。
