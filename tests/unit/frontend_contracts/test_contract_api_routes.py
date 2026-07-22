@@ -136,6 +136,32 @@ class TestEditModeCanEditFileGuard:
             assert expected in html, f"search.html missing: {expected!r}"
 
 
+class TestDateGatingGuard:
+    """TASK-106-T7: 發售日欄位特例——唯讀 span 與原生 date picker 的互補閘。
+    唯讀 span 顯示 = 不可編輯 或 已有日期；picker 顯示 = file 模式 且 無日期。
+    兩閘引用 canEditFile()（定義於 base.js），是跨檔 Alpine binding contract，
+    非單純字串存在檢查，static_guard_lint 無法表達此跨檔語意。
+    """
+
+    def _html(self):
+        return SEARCH_HTML.read_text(encoding="utf-8")
+
+    def test_search_html_date_span_and_picker_complementary_gating(self):
+        """search.html date info-cell 的唯讀 span 與 date picker gating 為互補閘：
+        span `x-show="!canEditFile() || current().date"`（不可編輯或已有日期都唯讀），
+        picker `x-show="canEditFile() && !current().date"`（file 模式且無日期才出日曆）。
+        """
+        # [lint-guard: pytest-justified] 同 TestEditModeCanEditFileGuard 理由：
+        # canEditFile() 定義於 base.js、search.html 引用之，是跨檔 Alpine binding contract，
+        # 不是單純字串存在檢查，static_guard_lint 無法表達此跨檔語意。
+        html = self._html()
+        for expected in [
+            "!canEditFile() || current().date",
+            "canEditFile() && !current().date",
+        ]:
+            assert expected in html, f"search.html missing: {expected!r}"
+
+
 class TestShowcaseAliasGuard:
     """T5 (45-actress-alias): Frontend Guard — alias injection guard (method folded)"""
 

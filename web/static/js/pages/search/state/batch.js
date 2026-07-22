@@ -2,8 +2,6 @@
  * SearchState - Batch Mixin
  * 包含：批次操作（searchAll, scrapeAll, scrapeSingle）
  */
-import { toDateInputValue } from './result-card.js';
-
 // T4: 追蹤正在批次翻譯的片索引（從 core.js 搬移）
 const batchTranslatingIndices = new Set();
 
@@ -37,13 +35,12 @@ async function translateBatchHelper(titles) {
 }
 
 // CD-106-5/CD-106-8: 純函式，讀 per-file selectedCandidateIndex（未設 fallback 0）
-// P2 fix: date 欄位透過 toDateInputValue 正規化，確保「整理送出」與 date input 顯示值一致
-// （input 對非 YYYY-MM-DD 值顯示空白，但 model 仍留原始非法值；不正規化會把非法日期寫進 NFO）。
-// 展開順序：spread 在前、date 覆寫在後才會生效；cand 可能為 undefined（degenerate case）時
-// `cand?.date ?? ''` → ''、`{...undefined}` → {} 均安全。
+// T7: date 隨候選 raw 直通，不再正規化——picker 產生的已是合法 YYYY-MM-DD、scraper 契約
+// 亦 YYYY-MM-DD（models.py:20），且新設計中有日期走唯讀 raw span、無日期才出 picker，
+// 唯讀 span 顯示即整理送出值（顯示＝整理一致）。cand 為 undefined 時 `{...undefined}` → {} 安全。
 export function buildOrganizeMetadata(file) {
     const cand = file.searchResults[file.selectedCandidateIndex ?? 0];
-    return { ...cand, date: toDateInputValue(cand?.date ?? '') };
+    return { ...cand };
 }
 
 export function searchStateBatch() {

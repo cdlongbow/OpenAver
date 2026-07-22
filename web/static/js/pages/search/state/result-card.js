@@ -10,19 +10,6 @@ export function parseActorsInput(str) {
     return str.split(/[、，,]/).map(s => s.trim()).filter(Boolean);
 }
 
-// TASK-106-T4 CD-106-4/CD-106-8: 純函式，module-level named export（非 this.-bound method）
-// 正規化 current().date 給原生 <input type="date"> 用：合法 YYYY-MM-DD 直通，其餘（含 null/undefined/非標準格式）回 ''。
-export function toDateInputValue(raw) {
-    if (typeof raw !== 'string') return '';
-    const trimmed = raw.trim();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return '';
-    // 日曆合法性 round-trip：2024-02-31 / 0000-00-00 / 2020-13-01 等格式對但日期不存在的值，
-    // 原生 date input 會顯示空白；此處也回 '' 讓「整理送出」與顯示一致（Codex PR#115 round3 P2）。
-    const dt = new Date(trimmed + 'T00:00:00Z');
-    if (isNaN(dt.getTime()) || dt.toISOString().slice(0, 10) !== trimmed) return '';
-    return trimmed;
-}
-
 export function searchStateResultCard() {
     return {
     // ===== T1c: Result Card Computed =====
@@ -34,12 +21,6 @@ export function searchStateResultCard() {
         }
         return this.searchResults[this.currentIndex] || {};
     },
-
-    // TASK-106-T4: module-level 純函式（見檔案頂層 export），template `:value` 表達式
-    // 需要以 bare identifier 呼叫 → 沿用 openLocal（:408）同一手法，作為 shorthand property
-    // 掛進 mixin 物件，讓 Alpine 的 with()-scope 求值能解析到它（module 頂層宣告本身
-    // 不在 Alpine expression 的作用域鏈內）。
-    toDateInputValue,
 
     // 改為 method（原為 getter）
     hasSubtitle() {
