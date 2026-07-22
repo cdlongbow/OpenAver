@@ -243,9 +243,10 @@ export function searchStateNavigation() {
      * @param {KeyboardEvent} event - 鍵盤事件
      */
     handleKeydown(event) {
-        // 忽略在搜尋框內的按鍵
-        const queryInput = this.$refs.searchQuery;
-        if (document.activeElement === queryInput) return;
+        // 忽略焦點在可編輯欄位時的按鍵（搜尋框／標題·中文·演員編輯 input·textarea／date input／番號 input）——
+        // 箭頭鍵須留給游標移動，不可冒泡觸發候選/檔切換（否則會連帶 _resetPendingEdits() 清掉未確認編輯）。
+        const ae = document.activeElement;
+        if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT' || ae.isContentEditable)) return;
 
         // rescrape 彈窗開啟時鎖所有快捷鍵（番號 input 可編輯，箭頭鍵須留給游標；
         // Escape 由 _rescrape_modal 的 @keydown.escape.window 自理，不在此重複關閉）
