@@ -497,7 +497,7 @@
                         <div class="info-value-with-actions" id="titleContainer" x-show="!editingTitle">
                             <span class="info-value" id="resultTitle" x-text="current().title || '-'">-</span>
                             <div class="av-card-full-footer-actions">
-                                <button id="editTitleBtn" class="info-icon-btn" @click="startEditTitle()" title="{{ t('search.action.edit_title') }}">
+                                <button id="editTitleBtn" class="info-icon-btn" x-show="canEditFile()" @click="startEditTitle()" title="{{ t('search.action.edit_title') }}">
                                     <i :class="current()._titleEdited ? 'bi bi-pencil-fill text-success' : 'bi bi-pencil text-muted'"></i>
                                 </button>
                                 <button id="translateBtn" class="info-icon-btn"
@@ -534,7 +534,7 @@
                         <div class="info-value-with-actions" id="chineseTitleContainer" x-show="!editingChineseTitle">
                             <span class="info-value text-success" id="resultChineseTitle" x-text="chineseTitleText()">-</span>
                             <div class="av-card-full-footer-actions">
-                                <button id="editChineseTitleBtn" class="info-icon-btn" @click="startEditChineseTitle()" title="{{ t('search.action.edit_chinese_title') }}">
+                                <button id="editChineseTitleBtn" class="info-icon-btn" x-show="canEditFile()" @click="startEditChineseTitle()" title="{{ t('search.action.edit_chinese_title') }}">
                                     <i :class="current()._chineseTitleEdited ? 'bi bi-pencil-fill text-success' : 'bi bi-pencil text-muted'"></i>
                                 </button>
                             </div>
@@ -617,7 +617,7 @@
                                 </span>
                             </template>
                             <!-- 新增標籤按鈕：僅 file 模式且有路徑才顯示 -->
-                            <button x-show="!addingTag && listMode === 'file' && !!fileList[currentFileIndex]?.path" @click="showAddTagInput()" class="btn btn-sm tag-add-btn" title="{{ t('search.action.add_tag') }}">+</button>
+                            <button x-show="!addingTag && canEditFile()" @click="showAddTagInput()" class="btn btn-sm tag-add-btn" title="{{ t('search.action.add_tag') }}">+</button>
                             <!-- 新增標籤輸入框 -->
                             <span x-show="addingTag" class="tag-input-wrapper">
                                 <input type="text" x-ref="tagInput" x-model="newTagValue"

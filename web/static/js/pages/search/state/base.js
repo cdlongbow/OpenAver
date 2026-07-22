@@ -210,6 +210,8 @@ export function searchStateBase() {
             return this.searchResults.slice(this.currentIndex + 1).some(r => !r._failed) || this.hasMoreResults;
         },
 
+        canEditFile() { return this.listMode === 'file' && !!this.fileList[this.currentFileIndex]?.path; },
+
         hasVisiblePrev() {
             if (this.lightboxIndex === -1) return false;  // 已在 actress photo 最左
             if (this.lightboxIndex === 0) return !!this.actressProfile;  // 可跳到 actress
