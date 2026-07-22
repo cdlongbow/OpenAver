@@ -1,0 +1,203 @@
+// TASK-106 Option C Part 1: confirmEditTitle/confirmEditChineseTitle/confirmEditActors
+// identity guard —— 本次重構的唯一權威保證。
+//
+// 根因（見 task 交付說明）：buffered edits（editingX flag + editedXValue buffer）
+// 必須在「displayed candidate 已經換了」時被丟棄，唯一正確訊號是 current() 候選物件的
+// 參照本身，不是任何呼叫端「猜」何時該 reset。confirmEditX 開頭一律先比對
+// this.current() 是否仍是開編輯當下（startEditX）捕獲的同一個物件參照
+// （this._editSourceCandidate）；不同就不寫、關掉 editingX、直接 return——不管是
+// navigate/switchToFile/scrapeAll loop/grid/lightbox 或任何未來新增的路徑移動的 current()，
+// 一律結構性擋下。
+//
+// 移除 guard（或比錯欄位）→ 本檔案第一組 3 個測試應轉紅（B 被誤寫）。
+//
+// result-card.js 用瀏覽器 importmap 別名 `@/shared/...`，plain `node --test`
+// 需掛 alias-loader resolve hook 才能 import（同 confirm-edit-actors-fetch-spy.test.mjs）。
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { register } from 'node:module';
+
+globalThis.window = globalThis;
+globalThis.window.t = (key) => key;
+
+register(new URL('./alias-loader.mjs', import.meta.url), import.meta.url);
+const { searchStateResultCard } = await import('../state/result-card.js');
+
+function makeFakeThis(overrides = {}) {
+    return {
+        ...searchStateResultCard(),
+        saveState: () => {},
+        ...overrides,
+    };
+}
+
+// ==================== 核心：candidate 已換 → 不寫、editingX 關閉、不 saveState ====================
+
+test('confirmEditActors: current() 已換到別的候選（B）→ B.actors 不被寫入，editingActors 關閉，不 saveState', () => {
+    const A = { number: 'A-001', actors: ['原始女優'] };
+    const B = { number: 'B-002', actors: ['B原始女優'] };
+    let saveCalls = 0;
+
+    const fakeThis = makeFakeThis({
+        editingActors: true,
+        editedActorsValue: '亂寫的女優',
+        _editSourceCandidate: A,   // startEditActors 開編輯時捕獲的是 A
+        current: () => B,          // 但呼叫 confirm 時 current() 已經是 B（被別的路徑換走）
+        saveState: () => { saveCalls++; },
+    });
+
+    searchStateResultCard().confirmEditActors.call(fakeThis);
+
+    assert.deepEqual(B.actors, ['B原始女優'], 'B.actors 不應被 stale 編輯寫入');
+    assert.equal(fakeThis.editingActors, false, '即使 guard 擋下寫入，仍應關閉編輯態（UI 不留在編輯模式）');
+    assert.equal(saveCalls, 0, 'guard 擋下時不應呼叫 saveState');
+});
+
+test('confirmEditTitle: current() 已換到別的候選（B）→ B.title 不被寫入，editingTitle 關閉，不 saveState', () => {
+    const A = { number: 'A-001', title: 'A 原始標題' };
+    const B = { number: 'B-002', title: 'B 原始標題' };
+    let saveCalls = 0;
+
+    const fakeThis = makeFakeThis({
+        editingTitle: true,
+        editedTitleValue: '亂寫的標題',
+        _editSourceCandidate: A,
+        current: () => B,
+        saveState: () => { saveCalls++; },
+    });
+
+    searchStateResultCard().confirmEditTitle.call(fakeThis);
+
+    assert.equal(B.title, 'B 原始標題', 'B.title 不應被 stale 編輯寫入');
+    assert.equal(B._titleEdited, undefined, 'B 不應被標記 _titleEdited');
+    assert.equal(fakeThis.editingTitle, false, '即使 guard 擋下寫入，仍應關閉編輯態');
+    assert.equal(saveCalls, 0, 'guard 擋下時不應呼叫 saveState');
+});
+
+test('confirmEditChineseTitle: current() 已換到別的候選（B）→ B.translated_title 不被寫入，editingChineseTitle 關閉，不 saveState', () => {
+    const A = { number: 'A-001', translated_title: 'A 原始中文標題' };
+    const B = { number: 'B-002', translated_title: 'B 原始中文標題' };
+    let saveCalls = 0;
+
+    const fakeThis = makeFakeThis({
+        editingChineseTitle: true,
+        editedChineseTitleValue: '亂寫的中文標題',
+        _editSourceCandidate: A,
+        current: () => B,
+        saveState: () => { saveCalls++; },
+    });
+
+    searchStateResultCard().confirmEditChineseTitle.call(fakeThis);
+
+    assert.equal(B.translated_title, 'B 原始中文標題', 'B.translated_title 不應被 stale 編輯寫入');
+    assert.equal(B._chineseTitleEdited, undefined, 'B 不應被標記 _chineseTitleEdited');
+    assert.equal(fakeThis.editingChineseTitle, false, '即使 guard 擋下寫入，仍應關閉編輯態');
+    assert.equal(saveCalls, 0, 'guard 擋下時不應呼叫 saveState');
+});
+
+// ==================== 對照組：candidate 未換 → 正常寫入（guard 不誤擋合法確認） ====================
+
+test('confirmEditActors: current() 仍是開編輯當下的同一物件 → 正常寫入 + saveState', () => {
+    const A = { number: 'A-001', actors: ['原始女優'] };
+    let saveCalls = 0;
+
+    const fakeThis = makeFakeThis({
+        editingActors: true,
+        editedActorsValue: '新女優一, 新女優二',
+        _editSourceCandidate: A,
+        current: () => A,
+        saveState: () => { saveCalls++; },
+    });
+
+    searchStateResultCard().confirmEditActors.call(fakeThis);
+
+    assert.deepEqual(A.actors, ['新女優一', '新女優二'], 'candidate 未換時應正常寫入');
+    assert.equal(fakeThis.editingActors, false);
+    assert.equal(saveCalls, 1, 'candidate 未換時應呼叫一次 saveState');
+});
+
+test('confirmEditTitle: current() 仍是開編輯當下的同一物件 → 正常寫入 + saveState', () => {
+    const A = { number: 'A-001', title: '原始標題' };
+    let saveCalls = 0;
+
+    const fakeThis = makeFakeThis({
+        editingTitle: true,
+        editedTitleValue: '  新標題  ',
+        _editSourceCandidate: A,
+        current: () => A,
+        saveState: () => { saveCalls++; },
+    });
+
+    searchStateResultCard().confirmEditTitle.call(fakeThis);
+
+    assert.equal(A.title, '新標題', 'candidate 未換時應正常寫入（trim 後）');
+    assert.equal(A._titleEdited, true);
+    assert.equal(fakeThis.editingTitle, false);
+    assert.equal(saveCalls, 1);
+});
+
+test('confirmEditChineseTitle: current() 仍是開編輯當下的同一物件 → 正常寫入 + saveState', () => {
+    const A = { number: 'A-001', translated_title: '原始中文標題' };
+    let saveCalls = 0;
+
+    const fakeThis = makeFakeThis({
+        editingChineseTitle: true,
+        editedChineseTitleValue: '  新中文標題  ',
+        _editSourceCandidate: A,
+        current: () => A,
+        saveState: () => { saveCalls++; },
+    });
+
+    searchStateResultCard().confirmEditChineseTitle.call(fakeThis);
+
+    assert.equal(A.translated_title, '新中文標題', 'candidate 未換時應正常寫入（trim 後）');
+    assert.equal(A._chineseTitleEdited, true);
+    assert.equal(fakeThis.editingChineseTitle, false);
+    assert.equal(saveCalls, 1);
+});
+
+// ==================== startEditX 捕獲 _editSourceCandidate ====================
+
+test('startEditActors: 應捕獲 this.current() 到 _editSourceCandidate（供後續 confirm 比對）', () => {
+    const A = { number: 'A-001', actors: ['女優'] };
+    const fakeThis = makeFakeThis({
+        current: () => A,
+        $nextTick: (fn) => {}, // 不執行，僅避免 undefined 呼叫炸掉（無 DOM/$refs 環境）
+        $refs: {},
+    });
+
+    searchStateResultCard().startEditActors.call(fakeThis);
+
+    assert.equal(fakeThis._editSourceCandidate, A, 'startEditActors 應把 this.current() 存進 _editSourceCandidate');
+    assert.equal(fakeThis.editingActors, true);
+});
+
+test('startEditTitle: 應捕獲 this.current() 到 _editSourceCandidate', () => {
+    const A = { number: 'A-001', title: '標題' };
+    const fakeThis = makeFakeThis({
+        current: () => A,
+        $nextTick: (fn) => {},
+        $refs: {},
+    });
+
+    searchStateResultCard().startEditTitle.call(fakeThis);
+
+    assert.equal(fakeThis._editSourceCandidate, A);
+    assert.equal(fakeThis.editingTitle, true);
+});
+
+test('startEditChineseTitle: 應捕獲 this.current() 到 _editSourceCandidate', () => {
+    const A = { number: 'A-001', translated_title: '中文標題' };
+    const fakeThis = makeFakeThis({
+        current: () => A,
+        chineseTitleText: () => 'x',
+        $nextTick: (fn) => {},
+        $refs: {},
+    });
+
+    searchStateResultCard().startEditChineseTitle.call(fakeThis);
+
+    assert.equal(fakeThis._editSourceCandidate, A);
+    assert.equal(fakeThis.editingChineseTitle, true);
+});

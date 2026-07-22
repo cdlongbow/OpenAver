@@ -117,6 +117,37 @@ export function searchStatePersistence() {
         this.$watch('currentIndex', debouncedSave);
         this.$watch('fileList', debouncedSave);
         this.$watch('listMode', debouncedSave);
+
+        // TASK-106 Option C Part 2: current() 候選改變時清未確認的編輯 buffer（UX 便利層，
+        // 非唯一保證——唯一保證是 result-card.js confirmEditX 開頭的 identity guard，
+        // 這裡漏觸發/晚一拍也不會寫壞資料，只是編輯框多留一拍才關）。
+        //
+        // 刻意不寫 `this.$watch('current()', cb)`：經 context7 查證 Alpine 官方文件
+        // （https://alpinejs.dev/magics/watch「Deep watching」段，範例 `$watch('foo', cb)`
+        // 在 `foo.bar = 'bob'` 時仍會觸發）與原始碼（Alpine.watch() 內部對回傳值跑
+        // `JSON.stringify(value)` 逼自己深度讀遍 value 底下每個屬性以建立 granular
+        // 依賴）— 兩者一致證實 $watch 對「回傳一個物件/陣列」的表達式一律深度追蹤其
+        // 全部巢狀屬性，不是只認參照是否改變。current() 回傳的候選物件含 title/actors/
+        // date 等可變欄位，若直接 watch 它，本檔既有的候選內部直寫（checkLocalStatus 寫
+        // _localStatus、translateWithAI 寫 translated_title、date input @change 寫
+        // current().date、甚至 confirmEditTitle 自己寫 c.title）全部會誤觸發本 watcher，
+        // 在使用者輸入到一半時把編輯框關掉——正是本次要修的過度觸發那類 bug。
+        //
+        // 改用只讀 primitives 的複合表達式：候選在 fileList/searchResults 陣列裡的「位置」
+        // 由 currentFileIndex/currentIndex/listMode 三個數字/字串決定，「候選清單被整批替換」
+        // 用清單長度變化偵測（重新搜尋/重刮通常筆數不同）。JSON.stringify 對純 primitives
+        // 陣列不會再往下巢狀追蹤，故打字/候選內部直寫不會誤觸發；只在候選真的換位/換檔/
+        // 換模式/清單被替換時才觸發。（已知邊界：同 index、同 mode、剛好同長度的清單被整批
+        // 替換不會觸發本 watcher——但 current() 此時回傳的已是新陣列裡的新物件參照，
+        // confirmEditX 的 identity guard 仍會擋下寫入，不會寫壞資料，只是編輯框慢一拍才關。）
+        this.$watch(() => [
+            this.currentFileIndex,
+            this.currentIndex,
+            this.listMode,
+            (this.listMode === 'file'
+                ? this.fileList[this.currentFileIndex]?.searchResults
+                : this.searchResults)?.length ?? 0,
+        ], () => this._resetPendingEdits());
     }
     };
 }

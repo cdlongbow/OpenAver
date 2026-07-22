@@ -76,6 +76,12 @@ export function searchStateBase() {
         editedChineseTitleValue: '',
         editingActors: false,
         editedActorsValue: '',
+        // TASK-106 Option C Part 1: 編輯開啟當下捕獲的候選物件參照（identity guard）。
+        // confirmEditTitle/confirmEditChineseTitle/confirmEditActors 開頭都拿 this.current()
+        // 與此欄位比對，不同即代表 current() 已換到別的候選/檔——不管是被 navigate/switchToFile/
+        // scrapeAll/grid/lightbox 或任何未來新增的路徑移動的，一律擋下寫入。這是本重構的唯一
+        // 權威保證（見 persistence.js setupAutoSave 的 $watch，那層只是 UX 便利、非保證）。
+        _editSourceCandidate: null,
         addingTag: false,
         newTagValue: '',
         coverError: '',

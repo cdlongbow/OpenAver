@@ -1,13 +1,24 @@
-// TASK-106-T5 CD-106-6: _resetPendingEdits() + B1 no-op gating + switchToFile 共存
+// TASK-106 Option C: _resetPendingEdits() 存在但呼叫端已改為單一入口
 //
-// 三層測試（見 TASK-106-T5.md「Test Strategy」/「現況分析」逐行 trace）：
-// 1. _resetPendingEdits() 本身：零 DOM，直接 .call(fakeThis)。
-// 2. B1 no-op 守衛：navigate() 兩條 no-op return 分支（第一檔第一候選按 ←／
-//    末檔末候選按 →）已逐行確認 return 前不碰 document/gsap/Image/$nextTick，
-//    可零 stub 直接呼叫真實 navigate。
-// 3. switchToFile 共存：T2' snapshot（:12-14，離開檔 selectedCandidateIndex）與
-//    T5 reset（:16 後）同一次呼叫中都要發生，選 `!file.number` 分支（最小 stub）
-//    驗證兩個效果都落地。
+// 舊版（T5 CD-106-6）：navigate()/switchToFile() 各自在「確定要換候選/檔」的分支主動呼叫
+// _resetPendingEdits()，靠呼叫端手動判斷「什麼時候該呼叫」——結果 both over-applied（no-op
+// 重選也誤清）與 under-applied（scrapeAll loop / grid / lightbox 繞過、3 處 search 完成的
+// reset 漏了 editingActors）。
+//
+// Option C 改為身份制：
+// - 唯一權威保證：result-card.js confirmEditTitle/confirmEditChineseTitle/confirmEditActors
+//   開頭的 identity guard（current() !== 開編輯當下捕獲的 _editSourceCandidate 就不寫）。
+//   見 confirm-edit-identity-guard.test.mjs。
+// - UX 便利層：persistence.js setupAutoSave 內單一 `$watch`，偵測到候選位置改變
+//   （currentFileIndex/currentIndex/listMode/清單長度）就呼叫 _resetPendingEdits() 清 UI flag。
+//
+// 本檔測試：
+// 1. _resetPendingEdits() 本身：零 DOM，直接 .call(fakeThis)，仍是三個 flag 一起清空、
+//    editedXValue buffer 不受影響（純函式行為不變，只是呼叫端變了）。
+// 2. 迴歸守衛：navigate()（不論真的換候選或 no-op 邊界分支）與 switchToFile() 都不再
+//    「自己」動 editingX——這是這次重構移除散落呼叫的直接後果。若未來有人把
+//    `this._resetPendingEdits()` 加回 navigate()/switchToFile() 內部（重蹈覆轍），
+//    這裡的斷言會轉紅（因為呼叫後 editingActors 會被清成 false，而非維持測試設的 true）。
 //
 // navigation.js 匯入瀏覽器 importmap 別名 `@/shared/...`，需掛 alias-loader.mjs
 // resolve hook 才能動態 import（同 build-organize-metadata.test.mjs 慣例）。
@@ -46,15 +57,15 @@ test('_resetPendingEdits: 三個 editingX 皆 true → call 後皆 false；edite
     assert.equal(fakeThis.editedActorsValue, 'pending actors');
 });
 
-// ==================== Tier 2: B1 no-op 守衛（零 stub，真實 navigate） ====================
+// ==================== Tier 2: 迴歸守衛 —— navigate() 不再自己碰 editingX ====================
 
-test('navigate(-1): 第一檔第一候選（no-op return :64）→ editingActors 仍 true（reset 未觸發）', async () => {
+test('navigate(-1): 第一檔第一候選（no-op return）→ editingActors 仍 true（本來就不該碰）', async () => {
     const fakeThis = {
         ...searchStateNavigation(),
         sampleGalleryOpen: false,
         currentIndex: 0,
         searchResults: [{ number: 'ABC-001' }],
-        currentFileIndex: 0, // 不 >0 → 落 :64 純 return，不呼叫 switchToFile
+        currentFileIndex: 0, // 不 >0 → 落純 return，不呼叫 switchToFile
         fileList: [{ path: '/a/x1.mp4' }],
         editingTitle: false,
         editingChineseTitle: false,
@@ -66,7 +77,7 @@ test('navigate(-1): 第一檔第一候選（no-op return :64）→ editingActors
     assert.equal(fakeThis.editingActors, true, 'no-op return 不得清掉未確認的編輯');
 });
 
-test('navigate(+1): 末檔末候選、無更多結果（no-op return :84）→ editingActors 仍 true（reset 未觸發）', async () => {
+test('navigate(+1): 末檔末候選、無更多結果（no-op return）→ editingActors 仍 true（本來就不該碰）', async () => {
     const fakeThis = {
         ...searchStateNavigation(),
         sampleGalleryOpen: false,
@@ -85,14 +96,43 @@ test('navigate(+1): 末檔末候選、無更多結果（no-op return :84）→ e
     assert.equal(fakeThis.editingActors, true, 'no-op return 不得清掉未確認的編輯');
 });
 
-// ==================== Tier 3: switchToFile 共存（T2' snapshot + T5 reset） ====================
+test('navigate(-1): 真的換到上一個候選（正常範圍內導航）→ editingActors 仍 true（navigate 自己不再碰，交給 $watch）', async () => {
+    // 迴歸守衛核心案例：這是舊版「真的換候選」會主動呼叫 _resetPendingEdits() 的分支。
+    // Option C 後 navigate() 本身完全不碰 editingX——若未來把呼叫加回這個分支，
+    // 本斷言會轉紅（editingActors 變 false）。
+    // 正常範圍內導航分支會碰 document.querySelector（GSAP interrupt + slide-in 動畫）與
+    // this.$nextTick，Node 測試環境無 DOM/Alpine，最小 stub 隔離掉（與本測試主張的
+    // editingActors 迴歸守衛無關）。
+    globalThis.document = { querySelector: () => null };
+    const fakeThis = {
+        ...searchStateNavigation(),
+        sampleGalleryOpen: false,
+        currentIndex: 1,
+        searchResults: [{ number: 'ABC-001' }, { number: 'ABC-002' }],
+        currentFileIndex: 0,
+        fileList: [{ path: '/a/x1.mp4' }],
+        editingTitle: false,
+        editingChineseTitle: false,
+        editingActors: true,
+        _resetCoverState: () => {},
+        preloadImages: () => {},
+        $nextTick: (fn) => {},
+    };
 
-test('switchToFile: 離開檔 selectedCandidateIndex 被 snapshot 且 editingActors 同時被 reset（不互相覆蓋）', async () => {
+    await searchStateNavigation().navigate.call(fakeThis, -1);
+
+    assert.equal(fakeThis.currentIndex, 0, 'sanity check: 候選真的換了');
+    assert.equal(fakeThis.editingActors, true, 'navigate() 換候選的分支不再自己呼叫 _resetPendingEdits');
+});
+
+// ==================== Tier 3: 迴歸守衛 —— switchToFile() 不再自己碰 editingX ====================
+
+test('switchToFile: 真的切檔（!file.number 早退分支）→ editingActors 仍 true（switchToFile 自己不再碰，交給 $watch）', async () => {
     window.t = (key) => key;
 
     const fakeThis = {
         ...searchStateFileList(),
-        ...searchStateNavigation(), // switchToFile 跨 mixin 呼叫 _resetPendingEdits（同 _resetCoverState 慣例）
+        ...searchStateNavigation(), // 僅供 _resetPendingEdits 型別存在，非本測試呼叫對象
         _resetCoverState: () => {},
         listMode: 'file',
         currentFileIndex: 0,
@@ -108,11 +148,13 @@ test('switchToFile: 離開檔 selectedCandidateIndex 被 snapshot 且 editingAct
 
     await searchStateFileList().switchToFile.call(fakeThis, 1, 'first', false);
 
-    // T2' snapshot（:12-14）：離開檔（index 0）的 selectedCandidateIndex 被寫成離開前的 currentIndex
+    // T2' snapshot：離開檔（index 0）的 selectedCandidateIndex 被寫成離開前的 currentIndex
+    // （這部分邏輯本次未動，仍應成立）
     assert.equal(fakeThis.fileList[0].selectedCandidateIndex, 2, 'T2\' snapshot 應寫入離開檔的 selectedCandidateIndex');
 
-    // T5 reset（:16 後）：三個編輯 buffer 同時被清空
-    assert.equal(fakeThis.editingTitle, false);
-    assert.equal(fakeThis.editingChineseTitle, false);
-    assert.equal(fakeThis.editingActors, false, 'switchToFile 真的切檔應觸發 _resetPendingEdits');
+    // Option C 迴歸守衛：switchToFile() 換檔本身不再直接清 editingX——若未來把
+    // this._resetPendingEdits() 呼叫加回 switchToFile 內部，這裡會轉紅。
+    assert.equal(fakeThis.editingTitle, true, 'switchToFile 換檔不再自己呼叫 _resetPendingEdits');
+    assert.equal(fakeThis.editingChineseTitle, true, 'switchToFile 換檔不再自己呼叫 _resetPendingEdits');
+    assert.equal(fakeThis.editingActors, true, 'switchToFile 換檔不再自己呼叫 _resetPendingEdits');
 });

@@ -42,11 +42,15 @@ export function searchStateNavigation() {
     },
 
     /**
-     * TASK-106-T5 CD-106-6：重置未確認的編輯 buffer（純狀態，不碰 DOM）。
-     * 呼叫端負責判斷「什麼時候該呼叫」——只在確定要換候選/檔的分支呼叫
-     * （navigate `:96` 正常同檔導覽、switchToFile 實際切檔），絕不放函式入口
-     * （B1 BLOCKER：navigate 有兩條 no-op return 分支，放函式入口會在邊界
-     * 按鍵/滾輪/滑動時靜默清掉使用者未確認的編輯）。
+     * TASK-106 Option C Part 2/3：重置未確認的編輯 buffer（純狀態，不碰 DOM）。
+     * 不再由呼叫端散落各處主動呼叫（舊版 navigate/switchToFile/search-flow/advanced-picker
+     * 各自呼叫的方式既 over-applied——no-op 重選也會誤清編輯——又 under-applied——scrapeAll
+     * loop、grid/lightbox 切候選都繞過，且 3 處 search 完成的 reset 漏了 editingActors）。
+     * 現在唯一呼叫端是 persistence.js setupAutoSave 的 `$watch`（候選位置真的改變才觸發，
+     * 見該檔案註解）。真正的資料安全保證不是這個方法本身，是 result-card.js
+     * confirmEditTitle/confirmEditChineseTitle/confirmEditActors 開頭的 identity guard
+     * （current() !== 開編輯當下捕獲的候選參照就擋下寫入）——本方法只清 UI flag，
+     * 慢觸發/漏觸發都不會寫壞資料。
      * 比照 result-card.js 既有 cancelEditX 慣例，只清 editingX，不清 editedXValue。
      */
     _resetPendingEdits() {
@@ -109,9 +113,9 @@ export function searchStateNavigation() {
             // State change（Alpine re-render）
             this.currentIndex = newIndex;
 
-            // TASK-106-T5 CD-106-6: 候選真的換了才 reset 編輯 buffer（B1 BLOCKER：
-            // 不可放函式入口，見上方 _resetPendingEdits 註解）
-            this._resetPendingEdits();
+            // TASK-106 Option C：編輯 buffer 的 reset 不再由這裡主動呼叫，改由
+            // persistence.js setupAutoSave 的 `$watch` 在偵測到候選位置改變時觸發
+            // （見該檔案 + _resetPendingEdits 註解）。
 
             // U8b: reset cover state on navigation
             this._resetCoverState();
@@ -244,7 +248,8 @@ export function searchStateNavigation() {
      */
     handleKeydown(event) {
         // 忽略焦點在可編輯欄位時的按鍵（搜尋框／標題·中文·演員編輯 input·textarea／date input／番號 input）——
-        // 箭頭鍵須留給游標移動，不可冒泡觸發候選/檔切換（否則會連帶 _resetPendingEdits() 清掉未確認編輯）。
+        // 箭頭鍵須留給游標移動，不可冒泡觸發候選/檔切換（否則候選位置改變會連帶觸發
+        // persistence.js 的 $watch → _resetPendingEdits() 清掉未確認編輯）。
         const ae = document.activeElement;
         if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT' || ae.isContentEditable)) return;
 

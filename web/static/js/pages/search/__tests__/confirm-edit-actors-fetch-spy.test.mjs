@@ -10,6 +10,12 @@
 //
 // result-card.js 用瀏覽器 importmap 別名 `@/shared/...`，plain `node --test`
 // 需掛 alias-loader resolve hook才能 import 本檔（同 parse-actors-input.test.mjs）。
+//
+// TASK-106 Option C Part 1: confirmEditActors 開頭新增 identity guard
+// （this.current() !== this._editSourceCandidate 就早退不寫）。本檔測試的是
+// 「正常確認寫入」路徑，fakeThis 必須把 _editSourceCandidate 設成與 current() 相同的
+// candidate 參照才能通過 guard——guard 本身的 RED case 見
+// confirm-edit-identity-guard.test.mjs。
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,6 +37,7 @@ test('confirmEditActors: 全程不呼叫 fetch（deferred，AC5），且 current
     ...searchStateResultCard(),
     editedActorsValue: '橋本ありな，蒼井そら',
     editingActors: true,
+    _editSourceCandidate: candidate, // TASK-106 Option C: 通過 confirmEditActors 的 identity guard
     current: () => candidate,
     saveState: () => { savedCalls++; },
   };

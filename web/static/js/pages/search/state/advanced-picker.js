@@ -86,9 +86,10 @@ export function searchStateAdvancedPicker() {
             this.pageState = 'result';
             this.preloadImages(1, 5);
             this._searchSnapshot = null;
+            // TASK-106 Option C: editingTitle/editingChineseTitle 不再在這裡手動歸零——
+            // 上面 currentIndex/searchResults 已改寫，persistence.js 的 $watch 會偵測到
+            // 候選改變並呼叫 _resetPendingEdits()（連 editingActors 一起清，舊版這裡漏了）。
             this._resetCoverState();
-            this.editingTitle = false;
-            this.editingChineseTitle = false;
             this.addingTag = false;
         },
 

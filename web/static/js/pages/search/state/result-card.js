@@ -115,6 +115,8 @@ export function searchStateResultCard() {
         const c = this.current();
         this.editedTitleValue = c.title || '';
         this.editingTitle = true;
+        // TASK-106 Option C Part 1: 捕獲編輯開啟當下的候選物件參照，供 confirmEditTitle 比對。
+        this._editSourceCandidate = c;
         this.$nextTick(() => {
             this.$refs.titleInput?.focus();
             this.$refs.titleInput?.select();
@@ -122,8 +124,15 @@ export function searchStateResultCard() {
     },
 
     confirmEditTitle() {
-        const newValue = this.editedTitleValue.trim();
+        // TASK-106 Option C Part 1（唯一權威保證）：current() 已換到別的候選/檔（不論是
+        // navigate/switchToFile/scrapeAll/grid/lightbox 或任何未來路徑造成的）就擋下寫入，
+        // 不寫錯候選。必須在任何寫入之前、最先執行。
         const c = this.current();
+        if (c !== this._editSourceCandidate) {
+            this.editingTitle = false;
+            return;
+        }
+        const newValue = this.editedTitleValue.trim();
         c.title = newValue;
         c._titleEdited = true;
         this.editingTitle = false;
@@ -135,8 +144,11 @@ export function searchStateResultCard() {
     },
 
     startEditChineseTitle() {
+        const c = this.current();
         this.editedChineseTitleValue = this.chineseTitleText() || '';
         this.editingChineseTitle = true;
+        // TASK-106 Option C Part 1: 捕獲編輯開啟當下的候選物件參照，供 confirmEditChineseTitle 比對。
+        this._editSourceCandidate = c;
         this.$nextTick(() => {
             this.$refs.chineseTitleInput?.focus();
             this.$refs.chineseTitleInput?.select();
@@ -144,8 +156,13 @@ export function searchStateResultCard() {
     },
 
     confirmEditChineseTitle() {
-        const newValue = this.editedChineseTitleValue.trim();
+        // TASK-106 Option C Part 1（唯一權威保證）：見 confirmEditTitle 同段註解。
         const c = this.current();
+        if (c !== this._editSourceCandidate) {
+            this.editingChineseTitle = false;
+            return;
+        }
+        const newValue = this.editedChineseTitleValue.trim();
         c.translated_title = newValue;
         c._chineseTitleEdited = true;
         this.editingChineseTitle = false;
@@ -162,6 +179,8 @@ export function searchStateResultCard() {
         const c = this.current();
         this.editedActorsValue = (c.actors || []).join(', ');
         this.editingActors = true;
+        // TASK-106 Option C Part 1: 捕獲編輯開啟當下的候選物件參照，供 confirmEditActors 比對。
+        this._editSourceCandidate = c;
         this.$nextTick(() => {
             this.$refs.actorsInput?.focus();
             this.$refs.actorsInput?.select();
@@ -169,7 +188,12 @@ export function searchStateResultCard() {
     },
 
     confirmEditActors() {
+        // TASK-106 Option C Part 1（唯一權威保證）：見 confirmEditTitle 同段註解。
         const c = this.current();
+        if (c !== this._editSourceCandidate) {
+            this.editingActors = false;
+            return;
+        }
         c.actors = parseActorsInput(this.editedActorsValue);
         this.editingActors = false;
         this.saveState();

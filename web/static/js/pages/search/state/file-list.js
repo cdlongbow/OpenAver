@@ -15,10 +15,9 @@ export function searchStateFileList() {
 
         this.currentFileIndex = index;
 
-        // TASK-106-T5 CD-106-6: 檔真的換了才 reset 編輯 buffer（無條件安全——
-        // switchToFile 過了 :10 合法 index 檢查後必定是真的切檔，見 T5 task card
-        // 「現況分析」的 removeFile/enterNumber 同數字 index 場景分析）
-        this._resetPendingEdits();
+        // TASK-106 Option C：編輯 buffer 的 reset 不再由這裡主動呼叫，改由
+        // persistence.js setupAutoSave 的 `$watch` 在偵測到候選位置改變時觸發
+        // （見該檔案 + navigation.js _resetPendingEdits 註解）。
 
         const file = this.fileList[index];
 
@@ -267,10 +266,15 @@ export function searchStateFileList() {
     removeFile(index) {
         if (index < 0 || index >= this.fileList.length) return;
 
-        // Codex P1 fix（回歸自 294a2f52 106-T5）: 移除的是不是正在檢視的檔，splice 前先記錄——
-        // splice 完 currentFileIndex 只是被重新指到同一個檔（未移除 currentFileIndex 的情況），
-        // 該檔的候選/編輯狀態沒變，不算「真的換檔」；只有移除的正是目前檔時，currentFileIndex
-        // 才會落到別的檔，才需要真的 switchToFile。
+        // Codex P1 fix（回歸自 294a2f52 106-T5，TASK-106 Option C 後重新定調）: 移除的是不是
+        // 正在檢視的檔，splice 前先記錄——splice 完 currentFileIndex 只是被重新指到同一個檔
+        // （未移除 currentFileIndex 的情況），目前顯示的候選沒變，不算「真的換檔」，不需要
+        // switchToFile 重新顯示。只有移除的正是目前檔時，currentFileIndex 才會落到別的檔，
+        // 才需要真的 switchToFile 換到鄰檔並播放對應動畫。
+        // 注意：這個 gate 現在純粹是顯示/重繪最佳化——switchToFile 會把候選重設回 position
+        // 'first'（index 0），無條件呼叫會讓使用者正在看的候選被跳走；不再是編輯安全考量
+        // （candidate identity guard 見 result-card.js confirmEditX，$watch 見 persistence.js，
+        // 兩者都不依賴這個 gate 是否存在）。
         const removingCurrent = index === this.currentFileIndex;
 
         this.fileList.splice(index, 1);
@@ -287,9 +291,10 @@ export function searchStateFileList() {
         }
 
         if (removingCurrent) {
-            // 只有正在檢視的檔被移除才真的切到鄰檔重新顯示——switchToFile 會呼叫
-            // _resetPendingEdits()（T5 CD-106-6）。移除的是別的檔時，目前檢視的檔/候選
-            // 不變，跳過 switchToFile 以免無條件觸發的 reset 誤清使用者未確認的編輯。
+            // 只有正在檢視的檔被移除才真的切到鄰檔重新顯示。移除的是別的檔時，目前檢視的
+            // 檔/候選不變，跳過 switchToFile 以免無謂把顯示跳回候選 0（純顯示最佳化，
+            // 見上方 removingCurrent 註解——編輯安全已由 identity guard 結構性保證，
+            // 與這個分支是否執行無關）。
             this.switchToFile(this.currentFileIndex, 'first', false);
         }
         this.saveState();
