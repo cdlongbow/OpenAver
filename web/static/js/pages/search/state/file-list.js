@@ -267,6 +267,12 @@ export function searchStateFileList() {
     removeFile(index) {
         if (index < 0 || index >= this.fileList.length) return;
 
+        // Codex P1 fix（回歸自 294a2f52 106-T5）: 移除的是不是正在檢視的檔，splice 前先記錄——
+        // splice 完 currentFileIndex 只是被重新指到同一個檔（未移除 currentFileIndex 的情況），
+        // 該檔的候選/編輯狀態沒變，不算「真的換檔」；只有移除的正是目前檔時，currentFileIndex
+        // 才會落到別的檔，才需要真的 switchToFile。
+        const removingCurrent = index === this.currentFileIndex;
+
         this.fileList.splice(index, 1);
 
         if (this.fileList.length === 0) {
@@ -280,7 +286,10 @@ export function searchStateFileList() {
             this.currentFileIndex--;
         }
 
-        if (this.fileList.length > 0) {
+        if (removingCurrent) {
+            // 只有正在檢視的檔被移除才真的切到鄰檔重新顯示——switchToFile 會呼叫
+            // _resetPendingEdits()（T5 CD-106-6）。移除的是別的檔時，目前檢視的檔/候選
+            // 不變，跳過 switchToFile 以免無條件觸發的 reset 誤清使用者未確認的編輯。
             this.switchToFile(this.currentFileIndex, 'first', false);
         }
         this.saveState();
