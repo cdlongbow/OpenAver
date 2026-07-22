@@ -108,6 +108,34 @@ class TestUserTagsApiGuard:
             assert val, f"{locale_file} missing: search.error.tag_api_failed key"
 
 
+class TestEditModeCanEditFileGuard:
+    """PR#115 Codex P2: editingX 單獨判斷會讓 file 模式殘留的編輯 flag 洩漏進 keyword/advanced
+    唯讀模式（例如 file 模式開始編輯後又跑關鍵字搜尋，不經 T5 的 navigate/switchToFile reset）。
+    修法：edit div 一律加 `&& canEditFile()`、display div 加 `!(editingX && canEditFile())`
+    互補閘，確保 display/edit 恆有且僅有一個可見。
+    """
+
+    def _html(self):
+        return SEARCH_HTML.read_text(encoding="utf-8")
+
+    def test_search_html_edit_divs_gated_by_can_edit_file(self):
+        """search.html 三個編輯欄位（標題／中文標題／演員）的編輯 div 皆以 canEditFile() 為
+        exact-complement 閘（非單純字串存在檢查——這是「editingX flag 與 file-mode 閘的
+        AND 語意」跨檔 Alpine binding contract，canEditFile() 定義在 base.js，
+        static_guard_lint 無法表達此語意）。
+        """
+        # [lint-guard: pytest-justified] 同 TestUserTagsApiGuard.test_search_html_contains 理由：
+        # canEditFile() 定義於 base.js、search.html 引用之，是跨檔 Alpine binding contract，
+        # 不是單純字串存在檢查，static_guard_lint 無法表達此跨檔語意。
+        html = self._html()
+        for expected in [
+            "editingTitle && canEditFile()",
+            "editingChineseTitle && canEditFile()",
+            "editingActors && canEditFile()",
+        ]:
+            assert expected in html, f"search.html missing: {expected!r}"
+
+
 class TestShowcaseAliasGuard:
     """T5 (45-actress-alias): Frontend Guard — alias injection guard (method folded)"""
 

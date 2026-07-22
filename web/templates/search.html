@@ -494,7 +494,7 @@
                     <div class="av-card-full-footer-content">
                         <span class="info-label">{{ t('search.label.title') }}</span>
                         <!-- 顯示模式 -->
-                        <div class="info-value-with-actions" id="titleContainer" x-show="!editingTitle">
+                        <div class="info-value-with-actions" id="titleContainer" x-show="!(editingTitle && canEditFile())">
                             <span class="info-value" id="resultTitle" x-text="current().title || '-'">-</span>
                             <div class="av-card-full-footer-actions">
                                 <button id="editTitleBtn" class="info-icon-btn" x-show="canEditFile()" @click="startEditTitle()" title="{{ t('search.action.edit_title') }}">
@@ -510,7 +510,7 @@
                             </div>
                         </div>
                         <!-- 編輯模式 -->
-                        <div class="info-value-with-actions" x-show="editingTitle" x-cloak>
+                        <div class="info-value-with-actions" x-show="editingTitle && canEditFile()" x-cloak>
                             <textarea x-ref="titleInput" x-model="editedTitleValue"
                                       @keydown.enter.prevent="confirmEditTitle()"
                                       @keydown.escape="cancelEditTitle()"
@@ -531,7 +531,7 @@
                          x-show="hasChineseTitle()">
                         <span class="info-label" id="chineseTitleLabel" x-text="chineseTitleLabel()">{{ t('search.label.chinese_title') }}</span>
                         <!-- 顯示模式 -->
-                        <div class="info-value-with-actions" id="chineseTitleContainer" x-show="!editingChineseTitle">
+                        <div class="info-value-with-actions" id="chineseTitleContainer" x-show="!(editingChineseTitle && canEditFile())">
                             <span class="info-value text-success" id="resultChineseTitle" x-text="chineseTitleText()">-</span>
                             <div class="av-card-full-footer-actions">
                                 <button id="editChineseTitleBtn" class="info-icon-btn" x-show="canEditFile()" @click="startEditChineseTitle()" title="{{ t('search.action.edit_chinese_title') }}">
@@ -540,7 +540,7 @@
                             </div>
                         </div>
                         <!-- 編輯模式 -->
-                        <div class="info-value-with-actions" x-show="editingChineseTitle" x-cloak>
+                        <div class="info-value-with-actions" x-show="editingChineseTitle && canEditFile()" x-cloak>
                             <textarea x-ref="chineseTitleInput" x-model="editedChineseTitleValue"
                                       @keydown.enter.prevent="confirmEditChineseTitle()"
                                       @keydown.escape="cancelEditChineseTitle()"
@@ -589,7 +589,7 @@
                     <div class="info-row">
                         <span class="info-label">{{ t('search.label.actor') }}</span>
                         <!-- 顯示模式 -->
-                        <div class="info-value-with-actions" id="actorsContainer" x-show="!editingActors">
+                        <div class="info-value-with-actions" id="actorsContainer" x-show="!(editingActors && canEditFile())">
                             <span class="info-value" id="resultActors" x-text="(current().actors || []).join(', ') || '-'">-</span>
                             <div class="av-card-full-footer-actions">
                                 <button id="editActorsBtn" class="info-icon-btn" x-show="canEditFile()" @click="startEditActors()" title="{{ t('search.action.edit_actors') }}">
@@ -598,7 +598,7 @@
                             </div>
                         </div>
                         <!-- 編輯模式 -->
-                        <div class="info-value-with-actions" x-show="editingActors" x-cloak>
+                        <div class="info-value-with-actions" x-show="editingActors && canEditFile()" x-cloak>
                             <input type="text" x-ref="actorsInput" x-model="editedActorsValue"
                                    @keydown.enter="confirmEditActors()"
                                    @keydown.escape="cancelEditActors()"
