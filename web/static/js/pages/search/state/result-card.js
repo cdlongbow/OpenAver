@@ -4,6 +4,12 @@
  */
 import { openLocal } from '@/shared/open-local.js';
 
+// TASK-106-T3 CD-106-8: 純函式，module-level named export（非 this.-bound method）
+// 三分隔符 `、`/`，`（U+FF0C 全形逗號）/`,`，對齊 core/scrapers/actress/wiki_ja.py:108 先例。
+export function parseActorsInput(str) {
+    return str.split(/[、，,]/).map(s => s.trim()).filter(Boolean);
+}
+
 export function searchStateResultCard() {
     return {
     // ===== T1c: Result Card Computed =====
@@ -90,6 +96,9 @@ export function searchStateResultCard() {
         const c = this.current();
         this.editedTitleValue = c.title || '';
         this.editingTitle = true;
+        // TASK-106 Option C Part 1: 捕獲編輯開啟當下的候選物件參照，供 confirmEditTitle 比對。
+        // Codex PR#115 P2: 用 title 專屬欄位，不與 chineseTitle/actors 共用（見 base.js 註解）。
+        this._editSourceTitle = c;
         this.$nextTick(() => {
             this.$refs.titleInput?.focus();
             this.$refs.titleInput?.select();
@@ -97,8 +106,15 @@ export function searchStateResultCard() {
     },
 
     confirmEditTitle() {
-        const newValue = this.editedTitleValue.trim();
+        // TASK-106 Option C Part 1（唯一權威保證）：current() 已換到別的候選/檔（不論是
+        // navigate/switchToFile/scrapeAll/grid/lightbox 或任何未來路徑造成的）就擋下寫入，
+        // 不寫錯候選。必須在任何寫入之前、最先執行。
         const c = this.current();
+        if (c !== this._editSourceTitle) {
+            this.editingTitle = false;
+            return;
+        }
+        const newValue = this.editedTitleValue.trim();
         c.title = newValue;
         c._titleEdited = true;
         this.editingTitle = false;
@@ -110,8 +126,12 @@ export function searchStateResultCard() {
     },
 
     startEditChineseTitle() {
+        const c = this.current();
         this.editedChineseTitleValue = this.chineseTitleText() || '';
         this.editingChineseTitle = true;
+        // TASK-106 Option C Part 1: 捕獲編輯開啟當下的候選物件參照，供 confirmEditChineseTitle 比對。
+        // Codex PR#115 P2: 用 chineseTitle 專屬欄位，不與 title/actors 共用（見 base.js 註解）。
+        this._editSourceChineseTitle = c;
         this.$nextTick(() => {
             this.$refs.chineseTitleInput?.focus();
             this.$refs.chineseTitleInput?.select();
@@ -119,8 +139,13 @@ export function searchStateResultCard() {
     },
 
     confirmEditChineseTitle() {
-        const newValue = this.editedChineseTitleValue.trim();
+        // TASK-106 Option C Part 1（唯一權威保證）：見 confirmEditTitle 同段註解。
         const c = this.current();
+        if (c !== this._editSourceChineseTitle) {
+            this.editingChineseTitle = false;
+            return;
+        }
+        const newValue = this.editedChineseTitleValue.trim();
         c.translated_title = newValue;
         c._chineseTitleEdited = true;
         this.editingChineseTitle = false;
@@ -129,6 +154,54 @@ export function searchStateResultCard() {
 
     cancelEditChineseTitle() {
         this.editingChineseTitle = false;
+    },
+
+    // ===== T3: Actor Edit Methods =====
+
+    startEditActors() {
+        const c = this.current();
+        this.editedActorsValue = (c.actors || []).join(', ');
+        this.editingActors = true;
+        // TASK-106 Option C Part 1: 捕獲編輯開啟當下的候選物件參照，供 confirmEditActors 比對。
+        // Codex PR#115 P2: 用 actors 專屬欄位，不與 title/chineseTitle 共用（見 base.js 註解）。
+        this._editSourceActors = c;
+        this.$nextTick(() => {
+            this.$refs.actorsInput?.focus();
+            this.$refs.actorsInput?.select();
+        });
+    },
+
+    confirmEditActors() {
+        // TASK-106 Option C Part 1（唯一權威保證）：見 confirmEditTitle 同段註解。
+        const c = this.current();
+        if (c !== this._editSourceActors) {
+            this.editingActors = false;
+            return;
+        }
+        c.actors = parseActorsInput(this.editedActorsValue);
+        this.editingActors = false;
+        this.saveState();
+    },
+
+    cancelEditActors() {
+        this.editingActors = false;
+    },
+
+    // ===== T7: Date Edit Methods =====
+
+    startEditDate() {
+        // TASK-106 Codex PR#116 P2: 打開原生日曆當下捕獲候選物件參照，供 confirmEditDate 比對，
+        // 防「選日期期間候選被換（背景批次/換源/切檔）→ 寫錯候選」。掛 date input @focus。
+        this._editSourceDate = this.current();
+    },
+
+    confirmEditDate(value) {
+        // TASK-106 Codex PR#116 P2（與 confirmEditTitle 同源的 identity guard）：current() 已換到
+        // 別的候選/檔就擋下寫入、不寫錯候選。必須在寫入前最先執行。掛 date input @change。
+        const c = this.current();
+        if (c !== this._editSourceDate) return;   // fail-closed：候選變了（含未捕獲 null）就丟棄不寫
+        c.date = value;
+        this.saveState();
     },
 
     // ===== T1c: Translate =====

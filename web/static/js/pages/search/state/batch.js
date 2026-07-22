@@ -2,7 +2,6 @@
  * SearchState - Batch Mixin
  * 包含：批次操作（searchAll, scrapeAll, scrapeSingle）
  */
-
 // T4: 追蹤正在批次翻譯的片索引（從 core.js 搬移）
 const batchTranslatingIndices = new Set();
 
@@ -33,6 +32,15 @@ async function translateBatchHelper(titles) {
         console.error('[Progressive] 批次翻譯失敗:', error);
         return [];
     }
+}
+
+// CD-106-5/CD-106-8: 純函式，讀 per-file selectedCandidateIndex（未設 fallback 0）
+// T7: date 隨候選 raw 直通，不再正規化——picker 產生的已是合法 YYYY-MM-DD、scraper 契約
+// 亦 YYYY-MM-DD（models.py:20），且新設計中有日期走唯讀 raw span、無日期才出 picker，
+// 唯讀 span 顯示即整理送出值（顯示＝整理一致）。cand 為 undefined 時 `{...undefined}` → {} 安全。
+export function buildOrganizeMetadata(file) {
+    const cand = file.searchResults[file.selectedCandidateIndex ?? 0];
+    return { ...cand };
 }
 
 export function searchStateBatch() {
@@ -350,6 +358,11 @@ export function searchStateBatch() {
     },
 
     async scrapeAll() {
+        // CD-106-5 snapshot 點 (2)：整理觸發時存目前檢視檔的候選 index（迴圈前，僅一次）
+        if (this.listMode === 'file' && this.fileList[this.currentFileIndex]) {
+            this.fileList[this.currentFileIndex].selectedCandidateIndex = this.currentIndex;
+        }
+
         const scrapableFiles = this.fileList.filter(f =>
             f.searched && f.searchResults && f.searchResults.length > 0 && !f.scraped
         );
@@ -382,10 +395,14 @@ export function searchStateBatch() {
 
             this.currentFileIndex = index;
             this.searchResults = file.searchResults;
-            this.currentIndex = 0;
+            // Codex PR#115 P3：顯示要與「實際整理的候選」一致，避免批次時卡片顯示第一個來源、
+            // 後端卻整理另一個來源（buildOrganizeMetadata 用 selectedCandidateIndex）。界限保護
+            // 防越界（selectedCandidateIndex 在 T2' loadMore 硬關＋fresh-baseline 後恆在界內，
+            // 此 clamp 為防禦性；scrapableFiles 已濾掉空 searchResults，length ≥ 1）。
+            this.currentIndex = Math.min(file.selectedCandidateIndex ?? 0, file.searchResults.length - 1);
             this._resetCoverState();
 
-            const metadata = { ...file.searchResults[0] };
+            const metadata = { ...buildOrganizeMetadata(file) };
 
             // Set per-file scraping status
             file.isScraping = true;
@@ -478,7 +495,13 @@ export function searchStateBatch() {
             return;
         }
 
-        const metadata = { ...file.searchResults[0] };
+        // CD-106-5 snapshot 點 (2)：LOAD-BEARING — 用 this.currentFileIndex（目前檢視檔），
+        // 絕不是參數 index（per-row @click.stop 不會先切到該 row，index 可能是別的檔）
+        if (this.listMode === 'file' && this.fileList[this.currentFileIndex]) {
+            this.fileList[this.currentFileIndex].selectedCandidateIndex = this.currentIndex;
+        }
+
+        const metadata = { ...buildOrganizeMetadata(file) };
 
         file.isScraping = true;
         file.scrapeStatus = null;

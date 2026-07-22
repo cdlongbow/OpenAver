@@ -28,6 +28,9 @@ function makeFakeThis(overrides = {}) {
     // switchToFile()（number:null 分支）呼叫的既有 _resetCoverState() 依賴 Alpine 注入的
     // this.$nextTick，Node 測試環境沒有 Alpine——不測 _resetCoverState 本身（非本卡範圍），
     // 用 no-op 隔離掉，避免與 CD-4b 邏輯無關的 TypeError 污染斷言。
+    // TASK-106 Option C: switchToFile 不再呼叫 this._resetPendingEdits()（改由
+    // persistence.js setupAutoSave 的 $watch 統一處理，見 reset-pending-edits.test.mjs），
+    // 故本檔不再需要 _resetPendingEdits no-op 隔離 stub。
     { _resetCoverState() {} },
     overrides,
   );

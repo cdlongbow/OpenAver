@@ -74,6 +74,31 @@ export function searchStateBase() {
         editedTitleValue: '',
         editingChineseTitle: false,
         editedChineseTitleValue: '',
+        editingActors: false,
+        editedActorsValue: '',
+        // TASK-106 Option C Part 1: 編輯開啟當下捕獲的候選物件參照（identity guard）。
+        // confirmEditTitle/confirmEditChineseTitle/confirmEditActors 開頭都拿 this.current()
+        // 與各自欄位比對，不同即代表 current() 已換到別的候選/檔——不管是被 navigate/switchToFile/
+        // scrapeAll/grid/lightbox 或任何未來新增的路徑移動的，一律擋下寫入。這是本重構的唯一
+        // 權威保證（見 persistence.js setupAutoSave 的 $watch，那層只是 UX 便利、非保證）。
+        //
+        // Codex PR#115 P2 fix：三個欄位獨立，不共用單一 `_editSourceCandidate`——title/
+        // chinese/actor 三個 editingX 各自獨立、可同時開啟；若共用一個欄位，後開啟的編輯器
+        // 會覆蓋先開啟者捕獲的來源，讓先開啟者的 guard 誤判「候選未換」而把已經 stale 的
+        // 內容寫進後開啟者當下的候選（data pollution）。
+        _editSourceTitle: null,
+        _editSourceChineseTitle: null,
+        _editSourceActors: null,
+        // TASK-106 Codex PR#116 P2: date picker 的 stale-candidate 身分守衛捕獲欄位（與
+        // title/chineseTitle/actors 同源 pattern，見上方 Codex PR#115 P2 段落理由）。
+        _editSourceDate: null,
+        // TASK-106 Codex PR#116 P2: 候選「原地替換」計數器（換源 / switch-source 流程）。
+        // 換源時整顆替換 current() 候選物件（arr[idx] = variant），但 path / currentIndex /
+        // listMode / length 全都不變 → pendingEditWatchKey 前四段字串不變 → _resetPendingEdits
+        // 不觸發 → stale 編輯框留著。此計數器在每個原地替換點遞增，pendingEditWatchKey 併入尾段，
+        // 讓哨兵偵測到「同 path/index/length 但候選被換掉」→ 關掉 stale 編輯框。
+        // 短暫 UI 訊號（同 editingX 性質）：不寫進 saveState / snapshot / restoreState（不持久化）。
+        _candidateReplaceSeq: 0,
         addingTag: false,
         newTagValue: '',
         coverError: '',
@@ -205,10 +230,12 @@ export function searchStateBase() {
         canGoNext() {
             if (this.listMode === 'file') {
                 const hasNextVisible = this.searchResults.slice(this.currentIndex + 1).some(r => !r._failed);
-                return hasNextVisible || this.hasMoreResults || this.currentFileIndex < this.fileList.length - 1;
+                return hasNextVisible || this.currentFileIndex < this.fileList.length - 1;
             }
             return this.searchResults.slice(this.currentIndex + 1).some(r => !r._failed) || this.hasMoreResults;
         },
+
+        canEditFile() { return this.listMode === 'file' && !!this.fileList[this.currentFileIndex]?.path; },
 
         hasVisiblePrev() {
             if (this.lightboxIndex === -1) return false;  // 已在 actress photo 最左

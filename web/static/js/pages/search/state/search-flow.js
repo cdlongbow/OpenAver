@@ -414,10 +414,10 @@ export function searchStateSearchFlow() {
                         this.preloadImages(1, 5);
                         this.listMode = 'search';
                         this._searchSnapshot = null; // Fix 2: 清空 snapshot（搜尋成功）
-                        // Reset edit states
+                        // TASK-106 Option C: editingTitle/editingChineseTitle 不再在這裡手動歸零
+                        // ——currentIndex/searchResults 上面已改寫，persistence.js 的 $watch 會偵測到
+                        // 候選改變並呼叫 _resetPendingEdits()（連 editingActors 一起清，舊版這裡漏了）。
                         this._resetCoverState();
-                        this.editingTitle = false;
-                        this.editingChineseTitle = false;
                         this.addingTag = false;
                     } else {
                         this._searchSnapshot = null; // Fix 2: 清空 snapshot（搜尋失敗）
@@ -536,10 +536,9 @@ export function searchStateSearchFlow() {
                 this.preloadImages(1, 5);
                 this.listMode = 'search';
                 this._searchSnapshot = null; // Fix 2: 清空 snapshot（搜尋成功）
-                // Reset edit states
+                // TASK-106 Option C: editingTitle/editingChineseTitle 不再在這裡手動歸零——
+                // 同上 doSearch SSE 成功分支註解，改由 persistence.js 的 $watch 統一處理。
                 this._resetCoverState();
-                this.editingTitle = false;
-                this.editingChineseTitle = false;
                 this.addingTag = false;
             } else {
                 this._searchSnapshot = null; // Fix 2: 清空 snapshot（搜尋失敗）

@@ -42,6 +42,24 @@ export function searchStateNavigation() {
     },
 
     /**
+     * TASK-106 Option C Part 2/3：重置未確認的編輯 buffer（純狀態，不碰 DOM）。
+     * 不再由呼叫端散落各處主動呼叫（舊版 navigate/switchToFile/search-flow/advanced-picker
+     * 各自呼叫的方式既 over-applied——no-op 重選也會誤清編輯——又 under-applied——scrapeAll
+     * loop、grid/lightbox 切候選都繞過，且 3 處 search 完成的 reset 漏了 editingActors）。
+     * 現在唯一呼叫端是 persistence.js setupAutoSave 的 `$watch`（候選位置真的改變才觸發，
+     * 見該檔案註解）。真正的資料安全保證不是這個方法本身，是 result-card.js
+     * confirmEditTitle/confirmEditChineseTitle/confirmEditActors 開頭的 identity guard
+     * （current() !== 開編輯當下捕獲的候選參照就擋下寫入）——本方法只清 UI flag，
+     * 慢觸發/漏觸發都不會寫壞資料。
+     * 比照 result-card.js 既有 cancelEditX 慣例，只清 editingX，不清 editedXValue。
+     */
+    _resetPendingEdits() {
+        this.editingTitle = false;
+        this.editingChineseTitle = false;
+        this.editingActors = false;
+    },
+
+    /**
      * 導航到相對位置
      * @param {number} delta - 偏移量（-1 = 上一個，1 = 下一個）
      */
@@ -66,7 +84,7 @@ export function searchStateNavigation() {
 
         // 往右且到最後一個
         if (delta > 0 && newIndex >= this.searchResults.length) {
-            if (this.hasMoreResults && !this.isLoadingMore) {
+            if (this.hasMoreResults && !this.isLoadingMore && this.listMode !== 'file') {
                 const result = await this.loadMore('detail');
                 if (!result || result.loadedCount === 0) return;
                 // C17 state-first：先改 index，再 $nextTick 播動畫
@@ -94,6 +112,10 @@ export function searchStateNavigation() {
 
             // State change（Alpine re-render）
             this.currentIndex = newIndex;
+
+            // TASK-106 Option C：編輯 buffer 的 reset 不再由這裡主動呼叫，改由
+            // persistence.js setupAutoSave 的 `$watch` 在偵測到候選位置改變時觸發
+            // （見該檔案 + _resetPendingEdits 註解）。
 
             // U8b: reset cover state on navigation
             this._resetCoverState();
@@ -160,6 +182,7 @@ export function searchStateNavigation() {
      * @returns {{ loadedCount: number, oldLength: number }|null}
      */
     async loadMore(trigger = 'detail') {
+        if (this.listMode === 'file') return null;
         if (this.isLoadingMore || !this.hasMoreResults || !this.currentQuery) return null;
 
         this.isLoadingMore = true;
@@ -224,9 +247,11 @@ export function searchStateNavigation() {
      * @param {KeyboardEvent} event - 鍵盤事件
      */
     handleKeydown(event) {
-        // 忽略在搜尋框內的按鍵
-        const queryInput = this.$refs.searchQuery;
-        if (document.activeElement === queryInput) return;
+        // 忽略焦點在可編輯欄位時的按鍵（搜尋框／標題·中文·演員編輯 input·textarea／date input／番號 input）——
+        // 箭頭鍵須留給游標移動，不可冒泡觸發候選/檔切換（否則候選位置改變會連帶觸發
+        // persistence.js 的 $watch → _resetPendingEdits() 清掉未確認編輯）。
+        const ae = document.activeElement;
+        if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT' || ae.isContentEditable)) return;
 
         // rescrape 彈窗開啟時鎖所有快捷鍵（番號 input 可編輯，箭頭鍵須留給游標；
         // Escape 由 _rescrape_modal 的 @keydown.escape.window 自理，不在此重複關閉）

@@ -9,7 +9,16 @@ export function searchStateFileList() {
     async switchToFile(index, position = 'first', showFullLoading = false) {
         if (index < 0 || index >= this.fileList.length) return;
 
+        if (this.listMode === 'file' && this.fileList[this.currentFileIndex]) {
+            this.fileList[this.currentFileIndex].selectedCandidateIndex = this.currentIndex;
+        }
+
         this.currentFileIndex = index;
+
+        // TASK-106 Option C：編輯 buffer 的 reset 不再由這裡主動呼叫，改由
+        // persistence.js setupAutoSave 的 `$watch` 在偵測到候選位置改變時觸發
+        // （見該檔案 + navigation.js _resetPendingEdits 註解）。
+
         const file = this.fileList[index];
 
         if (!file.number) {
@@ -97,6 +106,7 @@ export function searchStateFileList() {
                             this.searchResults = data.data;
                             this.hasMoreResults = file.hasMoreResults;
                             this.currentIndex = position === 'last' ? this.searchResults.length - 1 : 0;
+                            file.selectedCandidateIndex = this.currentIndex;
                             this._resetCoverState();
 
                             // T4: File search 後查詢本地狀態
@@ -256,6 +266,17 @@ export function searchStateFileList() {
     removeFile(index) {
         if (index < 0 || index >= this.fileList.length) return;
 
+        // Codex P1 fix（回歸自 294a2f52 106-T5，TASK-106 Option C 後重新定調）: 移除的是不是
+        // 正在檢視的檔，splice 前先記錄——splice 完 currentFileIndex 只是被重新指到同一個檔
+        // （未移除 currentFileIndex 的情況），目前顯示的候選沒變，不算「真的換檔」，不需要
+        // switchToFile 重新顯示。只有移除的正是目前檔時，currentFileIndex 才會落到別的檔，
+        // 才需要真的 switchToFile 換到鄰檔並播放對應動畫。
+        // 注意：這個 gate 現在純粹是顯示/重繪最佳化——switchToFile 會把候選重設回 position
+        // 'first'（index 0），無條件呼叫會讓使用者正在看的候選被跳走；不再是編輯安全考量
+        // （candidate identity guard 見 result-card.js confirmEditX，$watch 見 persistence.js，
+        // 兩者都不依賴這個 gate 是否存在）。
+        const removingCurrent = index === this.currentFileIndex;
+
         this.fileList.splice(index, 1);
 
         if (this.fileList.length === 0) {
@@ -269,7 +290,11 @@ export function searchStateFileList() {
             this.currentFileIndex--;
         }
 
-        if (this.fileList.length > 0) {
+        if (removingCurrent) {
+            // 只有正在檢視的檔被移除才真的切到鄰檔重新顯示。移除的是別的檔時，目前檢視的
+            // 檔/候選不變，跳過 switchToFile 以免無謂把顯示跳回候選 0（純顯示最佳化，
+            // 見上方 removingCurrent 註解——編輯安全已由 identity guard 結構性保證，
+            // 與這個分支是否執行無關）。
             this.switchToFile(this.currentFileIndex, 'first', false);
         }
         this.saveState();
@@ -388,7 +413,8 @@ export function searchStateFileList() {
                     hasMoreResults: false,
                     searched: false,
                     has_nfo: hasNfoMap[path] || false,
-                    user_tags: []
+                    user_tags: [],
+                    selectedCandidateIndex: 0,
                 };
             });
             this.currentFileIndex = 0;

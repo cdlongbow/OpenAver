@@ -79,10 +79,16 @@ class TestUserTagsApiGuard:
 
     def test_search_html_contains(self):
         """search.html 含 user-tags 守衛 + currentUserTags()"""
+        # [lint-guard: pytest-justified] tags+「+」按鈕的 file-mode 閘是跨檔 Alpine binding
+        # contract（search.html 引用 canEditFile()，定義在 base.js）——非單純字串存在檢查，
+        # static_guard_lint 無法表達跨檔語意；canEditFile 的 file+path 邏輯另由 node:test 守。
         html = self._html()
         for expected in [
-            "listMode === \'file\'",
-            "fileList[currentFileIndex]?.path",
+            # 106-T1 CD-106-1/AC12：tags+ 的 file-mode/path 閘從 inline 三 conjunct
+            # (listMode==='file' && fileList[currentFileIndex]?.path) 收斂進 canEditFile()
+            # computed（base.js）；canEditFile 的 file+path 語意由 can-edit-file.test.mjs
+            # node:test 守。此處守 tags+「+」按鈕仍走 file-mode 閘（!addingTag 保留避免加標籤時重複）。
+            "!addingTag && canEditFile()",
             "currentUserTags()",
         ]:
             assert expected in html, f"search.html missing: {expected!r}"
@@ -100,6 +106,87 @@ class TestUserTagsApiGuard:
             data = self._locale(locale_file)
             val = self._get_nested(data, "search.error.tag_api_failed")
             assert val, f"{locale_file} missing: search.error.tag_api_failed key"
+
+
+class TestEditModeCanEditFileGuard:
+    """PR#115 Codex P2: editingX 單獨判斷會讓 file 模式殘留的編輯 flag 洩漏進 keyword/advanced
+    唯讀模式（例如 file 模式開始編輯後又跑關鍵字搜尋，不經 T5 的 navigate/switchToFile reset）。
+    修法：edit div 一律加 `&& canEditFile()`、display div 加 `!(editingX && canEditFile())`
+    互補閘，確保 display/edit 恆有且僅有一個可見。
+    """
+
+    def _html(self):
+        return SEARCH_HTML.read_text(encoding="utf-8")
+
+    def test_search_html_edit_divs_gated_by_can_edit_file(self):
+        """search.html 三個編輯欄位（標題／中文標題／演員）的編輯 div 皆以 canEditFile() 為
+        exact-complement 閘（非單純字串存在檢查——這是「editingX flag 與 file-mode 閘的
+        AND 語意」跨檔 Alpine binding contract，canEditFile() 定義在 base.js，
+        static_guard_lint 無法表達此語意）。
+        """
+        # [lint-guard: pytest-justified] 同 TestUserTagsApiGuard.test_search_html_contains 理由：
+        # canEditFile() 定義於 base.js、search.html 引用之，是跨檔 Alpine binding contract，
+        # 不是單純字串存在檢查，static_guard_lint 無法表達此跨檔語意。
+        html = self._html()
+        for expected in [
+            "editingTitle && canEditFile()",
+            "editingChineseTitle && canEditFile()",
+            "editingActors && canEditFile()",
+        ]:
+            assert expected in html, f"search.html missing: {expected!r}"
+
+
+class TestDateGatingGuard:
+    """TASK-106-T7: 發售日欄位特例——唯讀 span 與原生 date picker 的互補閘。
+    唯讀 span 顯示 = 不可編輯 或 已有日期；picker 顯示 = file 模式 且 無日期。
+    兩閘引用 canEditFile()（定義於 base.js），是跨檔 Alpine binding contract，
+    非單純字串存在檢查，static_guard_lint 無法表達此跨檔語意。
+    """
+
+    def _html(self):
+        return SEARCH_HTML.read_text(encoding="utf-8")
+
+    def test_search_html_date_span_and_picker_complementary_gating(self):
+        """search.html date info-cell 的唯讀 span 與 date picker gating 為互補閘：
+        span `x-show="!canEditFile() || current().date"`（不可編輯或已有日期都唯讀），
+        picker `x-show="canEditFile() && !current().date"`（file 模式且無日期才出日曆）。
+        """
+        # [lint-guard: pytest-justified] 同 TestEditModeCanEditFileGuard 理由：
+        # canEditFile() 定義於 base.js、search.html 引用之，是跨檔 Alpine binding contract，
+        # 不是單純字串存在檢查，static_guard_lint 無法表達此跨檔語意。
+        # 另 Codex PR#116 P1：picker 為單一持久 DOM 節點（x-show 只切 display），
+        # 需 `:value="current().date || ''"` 反應性重設 DOM .value，防切候選殘留上一候選日期
+        # （T7 型「拔 :value 造成殘值→畫面有日期但 model 空」回歸）。
+        html = self._html()
+        for expected in [
+            "!canEditFile() || current().date",
+            "canEditFile() && !current().date",
+            ":value=\"current().date || ''\"",
+        ]:
+            assert expected in html, f"search.html missing: {expected!r}"
+
+    def test_search_html_date_input_wired_to_identity_guarded_methods(self):
+        """Codex PR#116 P2: date picker 是四個可編輯欄位中唯一原本沒有 stale-candidate 身分
+        守衛的——@change 直寫 `current().date = ...` 在事件當下才 re-resolve current()，若打開
+        日曆到選好日期之間候選被換掉（背景批次/換源/切檔）會把日期寫進錯的候選。
+
+        鎖定 date input 必須改走 result-card.js 的 startEditDate()/confirmEditDate()（與
+        title/chineseTitle/actors 同源 identity-guard pattern），防未來改回直寫 current().date
+        的回歸。這是 search.html ↔ result-card.js 的跨檔 Alpine binding contract（方法是否被
+        定義、guard 邏輯是否正確由對應的 .mjs 單元測試覆蓋），非單純字串存在檢查，
+        static_guard_lint 無法表達此跨檔語意。
+        """
+        # [lint-guard: pytest-justified] 同 class docstring 理由：canEditFile() 系列已在本
+        # class 建立先例——跨檔 Alpine binding contract 用 pytest 鎖，不是前端靜態字串存在檢查。
+        html = self._html()
+        for expected in [
+            '@focus="startEditDate()"',
+            '@change="confirmEditDate($event.target.value)"',
+        ]:
+            assert expected in html, f"search.html missing: {expected!r}"
+        assert "current().date = $event.target.value" not in html, (
+            "date input 不應退回直寫 current().date（繞過身分守衛，見 Codex PR#116 P2）"
+        )
 
 
 class TestShowcaseAliasGuard:
