@@ -6,10 +6,14 @@ export function searchStateFileList() {
     return {
     // ===== T1d: File Methods =====
 
-    async switchToFile(index, position = 'first', showFullLoading = false) {
+    async switchToFile(index, position = 'first', showFullLoading = false, skipPersist = false) {
         if (index < 0 || index >= this.fileList.length) return;
 
-        if (this.listMode === 'file' && this.fileList[this.currentFileIndex]) {
+        // skipPersist（P2-T5，spec 功能 C）：removeFile 移除當前檔後 currentFileIndex 已被重指
+        // 鄰檔、但 currentIndex 仍是外出檔的值——此時持久化會把外出檔候選 index 寫進鄰檔（汙染）。
+        // 外出檔已 splice、無須也不該保存其候選 index，故該路徑傳 skipPersist=true 跳過此寫入。
+        // 正常左右導航維持預設 false（照常持久化外出檔候選），行為零變化。
+        if (!skipPersist && this.listMode === 'file' && this.fileList[this.currentFileIndex]) {
             this.fileList[this.currentFileIndex].selectedCandidateIndex = this.currentIndex;
         }
 
@@ -295,7 +299,8 @@ export function searchStateFileList() {
             // 檔/候選不變，跳過 switchToFile 以免無謂把顯示跳回候選 0（純顯示最佳化，
             // 見上方 removingCurrent 註解——編輯安全已由 identity guard 結構性保證，
             // 與這個分支是否執行無關）。
-            this.switchToFile(this.currentFileIndex, 'first', false);
+            // skipPersist=true：外出檔已 splice，不得把其 currentIndex 汙染進鄰檔（P2-T5）
+            this.switchToFile(this.currentFileIndex, 'first', false, true);
         }
         this.saveState();
     },
