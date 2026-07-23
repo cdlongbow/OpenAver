@@ -26,13 +26,25 @@ export function helpPage() {
         },
 
         async saveAutoCheckUpdate() {
+            // x-model 已先把 autoCheckUpdate 翻到 desired；PUT 失敗必須還原本地狀態，
+            // 否則 UI 顯示「關」但 config 仍「開」→ 下次啟動仍自動查 GitHub，違反 opt-out
+            // （比照 settings state-config.js setServerMode 的 success-then-commit / fail-revert）。
+            const desired = this.autoCheckUpdate;
             try {
-                await fetch('/api/config/general/auto_check_update', {
+                const resp = await fetch('/api/config/general/auto_check_update', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ value: this.autoCheckUpdate }),
+                    body: JSON.stringify({ value: desired }),
                 });
-            } catch (e) { /* 靜默；toggle 已即時反映本地狀態 */ }
+                const result = await resp.json();
+                if (!result.success) {
+                    this.autoCheckUpdate = !desired;  // 還原，UI 不與持久化背離
+                    this.showToast(window.t('help.hero.auto_check_save_failed'), 'error');
+                }
+            } catch (e) {
+                this.autoCheckUpdate = !desired;  // 還原（離線/HTTP 錯）
+                this.showToast(window.t('help.hero.auto_check_save_failed'), 'error');
+            }
         },
 
         async loadVersion() {

@@ -1081,6 +1081,7 @@
       "update_available_suffix": "可用",
       "up_to_date": "已是最新版本",
       "auto_check_toggle": "啟動時檢查更新",
+      "auto_check_save_failed": "設定儲存失敗，請稍後再試",
       "ai_instruction": "貼給 AI agent 就能操作 OpenAver",
       "ai_hint_unsupported": "不適用網頁版聊天",
       "ai_tools": "支援：Claude Code · Cursor · Codex 等 AI agent"

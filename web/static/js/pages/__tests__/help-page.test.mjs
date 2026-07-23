@@ -105,3 +105,27 @@ test('saveAutoCheckUpdate: off → body {"value":false}', async () => {
   assert.equal(put.method, 'PUT');
   assert.equal(put.body, JSON.stringify({ value: false }));
 });
+
+// Codex Phase-1 P2：PUT 失敗（success:false 或 throw）不得讓 UI 與 config 背離。
+// x-model 已把 autoCheckUpdate 翻到 desired；失敗須還原 + 顯示 toast，否則使用者關掉
+// 開關卻沒存進去，下次啟動仍自動查 GitHub（違反 opt-out AC-A4）。
+test('saveAutoCheckUpdate: PUT 回 success:false → 還原本地狀態 + 顯示 toast', async () => {
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ success: false }) });
+  const toasts = [];
+  // 使用者原本 on，x-model 翻成 off（desired=false）；PUT 失敗應還原回 on
+  const fakeThis = { ...helpPage(), autoCheckUpdate: false, showToast: (m, t) => toasts.push({ m, t }) };
+  await fakeThis.saveAutoCheckUpdate();
+  assert.equal(fakeThis.autoCheckUpdate, true, 'PUT 失敗應還原 autoCheckUpdate（!desired），UI 不與持久化背離');
+  assert.equal(toasts.length, 1, '應顯示一則失敗 toast');
+  assert.equal(toasts[0].t, 'error');
+});
+
+test('saveAutoCheckUpdate: PUT throw（離線）→ 還原本地狀態 + 顯示 toast', async () => {
+  globalThis.fetch = async () => { throw new Error('offline'); };
+  const toasts = [];
+  const fakeThis = { ...helpPage(), autoCheckUpdate: true, showToast: (m, t) => toasts.push({ m, t }) };
+  await fakeThis.saveAutoCheckUpdate();
+  assert.equal(fakeThis.autoCheckUpdate, false, 'throw 亦應還原（!desired）');
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].t, 'error');
+});
