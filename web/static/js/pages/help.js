@@ -1,5 +1,5 @@
 // Help 頁面 Alpine.js 元件
-function helpPage() {
+export function helpPage() {
     return {
         // State
         appVersion: '',
@@ -13,11 +13,26 @@ function helpPage() {
         showUpdateModal: false,
         isDefaultPath: true,
         updateLoading: false,
+        autoCheckUpdate: false,
+        _isDesktop: false,
         _toast: { message: '', type: 'info', visible: false },
         _toastTimer: null,
 
         init() {
             this.loadVersion();
+            this._isDesktop = this.$el.dataset.isDesktop === 'true';
+            this.autoCheckUpdate = this.$el.dataset.autoCheckUpdate === 'true';
+            if (this._isDesktop && this.autoCheckUpdate) this.checkUpdate();
+        },
+
+        async saveAutoCheckUpdate() {
+            try {
+                await fetch('/api/config/general/auto_check_update', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ value: this.autoCheckUpdate }),
+                });
+            } catch (e) { /* 靜默；toggle 已即時反映本地狀態 */ }
         },
 
         async loadVersion() {
