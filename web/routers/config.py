@@ -206,6 +206,12 @@ def update_general_field(field: str, request: GeneralFieldRequest, raw_request: 
         if field == "server_mode" and not isinstance(request.value, bool):
             raise HTTPException(status_code=400, detail="server_mode 必須為布林值")
 
+        # auto_check_update 布林語意欄位擋字串 truthy 反轉（Codex P2），比照 server_mode：
+        # 字串 "false" 是 truthy，若落盤 lifespan `not "false"`=False 會誤判 gate 通過、
+        # help data-attr 也誤算 true → 使用者關閉卻被當開啟。非 bool → 400。
+        if field == "auto_check_update" and not isinstance(request.value, bool):
+            raise HTTPException(status_code=400, detail="auto_check_update 必須為布林值")
+
         # server_mode 是主機決定，遠端連入的客人不得切換（spec「遠端自鎖不防護」的更乾淨版本）。
         # 僅允許 loopback 來源切換；fail-closed：client None → 視為非 loopback → 拒絕。
         # 不信任 X-Forwarded-For，純用 TCP 對端 raw_request.client.host。
