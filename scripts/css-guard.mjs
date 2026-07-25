@@ -95,6 +95,24 @@ function flattenRuleBlocks(blocks) {
   return out;
 }
 
+// flattenRuleBlocks 的帶-上下文版（108-T5fix2）：額外累積祖先 at-rule 條件鏈，讓白名單型負向規則
+// 能問「這條規則在哪個 @media 底下」。條件 = at-rule prelude 去掉開頭關鍵字後 trim
+//（`@media (min-width: 900px) and (max-width: 1099px)` → `(min-width: 900px) and (max-width: 1099px)`）。
+// top-level 規則 media=[]；巢狀 @media 之規則 media.length>1 → 白名單一律不認（fail-closed）。
+function flattenWithMedia(blocks, media = []) {
+  const out = [];
+  for (const { selector, declarations } of blocks) {
+    const sel = selector.trim();
+    if (sel.startsWith('@')) {
+      const cond = sel.replace(/^@[\w-]+/, '').trim();
+      out.push(...flattenWithMedia(parseRuleBlocks(declarations), [...media, cond]));
+    } else {
+      out.push({ media, selector, declarations });
+    }
+  }
+  return out;
+}
+
 // @media (min-width:1024px) body 抽取（CG-FLU-09/10 11b；用 ctx.raw，鏡射 pytest css_raw）。
 // parseRuleBlocks 對 @media wrapper 只回一個 depth-0 block，故需先 regex 抽 body 再 re-parse。
 function extractDesktopMediaBodies(raw) {
@@ -1824,7 +1842,10 @@ const RULES = [
   //    用 comma-split exact-part 比對 → 天生排除後代選擇器（`.showcase-grid .av-card…`）與 z-index
   //    sibling 規則（`.showcase-status-bar, .showcase-grid, …`：宣告 position/z-index，無寬度屬性）。 ══
 
-  // CG-GRID-ALIGN ← 108-T6 G5：正向斷點存在表 + 雙向負向（actress-only / showcase-only）分歧禁令
+  // CG-GRID-ALIGN ← 108-T6 G5，108-T5fix2 改寫：≤899 共用 co-listed + ≥900 女優階梯/影片斷點雙白名單。
+  // 契約變更史：T6 版鎖「女優與影片同欄同寬」（spec-108 AC-C1）；T5fix1 推翻該標的——≥900px 影片切橫式
+  // fanart、女優恆為直式 0.75，同寬 ⇒ 女優列高 1.77 倍（1920px 實測列距 284 vs 502）。新契約＝
+  // 「≤899 同欄同寬（比例相近）／≥900 各走各的斷點、女優欄數 ≥ 影片欄數」。
   {
     id: 'CG-GRID-ALIGN',
     file: 'pages/showcase.css',
@@ -1878,48 +1899,7 @@ const RULES = [
       const hasCoListedAnchor = (blocks, anchorRe) => blocks.some(
         ({ selector, declarations }) => isCoListed(selector) && anchorRe.test(declarations),
       );
-
-      // ── (A) 正向存在表：base + 5 欄數斷點 + T1 gutter。斷點條件 hard-code（^…$ 錨定＝字面比對，
-      //    條件被改則抽不到 @media body → 判缺）。base cond=null → 只看 top-level 非-@media 規則。──
-      const COLS = /grid-template-columns\s*:/;
-      const GUTTER = /margin-inline\s*:/;
-      const REQUIRED = [
-        { label: 'base grid（top-level 非-@media）', cond: null, anchor: COLS, prop: 'grid-template-columns' },
-        { label: '@media (min-width: 1500px) → 5 欄', cond: /^\s*\(\s*min-width\s*:\s*1500px\s*\)\s*$/, anchor: COLS, prop: 'grid-template-columns' },
-        { label: '@media (min-width: 1100px) and (max-width: 1499px) → 4 欄', cond: /^\s*\(\s*min-width\s*:\s*1100px\s*\)\s+and\s+\(\s*max-width\s*:\s*1499px\s*\)\s*$/, anchor: COLS, prop: 'grid-template-columns' },
-        { label: '@media (min-width: 900px) and (max-width: 1099px) → 3 欄', cond: /^\s*\(\s*min-width\s*:\s*900px\s*\)\s+and\s+\(\s*max-width\s*:\s*1099px\s*\)\s*$/, anchor: COLS, prop: 'grid-template-columns' },
-        { label: '@media (min-width: 481px) and (max-width: 899px) → 4 欄', cond: MIN481_MAX899, anchor: COLS, prop: 'grid-template-columns' },
-        { label: '@media (max-width: 480px) → 3 欄', cond: MW480, anchor: COLS, prop: 'grid-template-columns' },
-        { label: 'T1 行動 gutter @media (max-width: 899px)', cond: MW899, anchor: GUTTER, prop: 'margin-inline' },
-      ];
-      for (const { label, cond, anchor, prop } of REQUIRED) {
-        let ok;
-        if (cond === null) {
-          // base：ctx.blocks 未展平，@media wrapper 的 selector 以 @ 開頭 → 濾掉只留真 top-level 規則
-          const topLevel = ctx.blocks.filter(({ selector }) => !selector.trim().startsWith('@'));
-          ok = hasCoListedAnchor(topLevel, anchor);
-        } else {
-          // 斷點：抽符合錨定條件的 @media body（可能多個同條件 block，如兩個 max-width:899），
-          // 各自 parseRuleBlocks 內層規則後找 co-listed + 錨屬性
-          const bodies = extractMediaBodies(ctx.text, cond);
-          ok = bodies.some((body) => hasCoListedAnchor(parseRuleBlocks(body), anchor));
-        }
-        if (!ok) {
-          ctx.fail(
-            `CG-GRID-ALIGN [lint-guard:108-T6]: 缺少 canonical 斷點「${label}」的 co-listed `
-              + `.showcase-grid, .actress-grid 規則（須宣告 ${prop}）—— base+5 斷點+T1 為固定功能契約；`
-              + `整塊被刪 / 斷點條件被改 / 某斷點拿掉 .actress-grid 皆違反 AC-C1「女優卡與影片卡同寬」。`
-              + `若確為有意重構斷點，請同步更新本守衛的期望表`,
-          );
-        }
-      }
-
-      // ── (B)(C) 負向：需含 @media 內巢狀規則 → flatten 成「真實 style rule」清單再逐條檢查
-      //    （原只掃 ctx.blocks 頂層看不到 @media 內的 actress-only override，fail-open）。──
-      const flatBlocks = flattenRuleBlocks(ctx.blocks);
-
-      // 負向（load-bearing）：.actress-grid 若單獨出現（selector 未同時含 .showcase-grid），
-      // 該規則不得宣告任何寬度決定屬性 — 一旦出現即代表女優 grid 悄悄脫離共用寬度系統。
+      // 「寬度決定屬性」清單（108-T6 原表逐字保留）：任一出現即代表該規則在決定卡片寬度。
       // 逐屬性用 (行首|`;`|`{`|空白) + 屬性名 + 可選空白 + `:` 錨定，避免 padding 誤配 padding-inline
       // 之類的前綴子字串（`\s*:` 要求屬性名後直接接冒號，中間不可再有 `-xxx`）。
       const forbiddenWidthProps = [
@@ -1945,42 +1925,178 @@ const RULES = [
         'max-inline-size',
         'box-sizing',
       ];
-      // 「宣告了哪個寬度決定屬性」共用小工具（回傳命中的 prop 名或 null）。
-      const declaredWidthProp = (declarations) => forbiddenWidthProps.find(
+      // 108-T5fix2：回傳**全部**命中的屬性（舊版 .find() 只回第一個），白名單需判「命中集合 ⊆ {grid-template-columns}」。
+      const declaredWidthProps = (declarations) => forbiddenWidthProps.filter(
         (prop) => new RegExp(`(^|[;{]|\\s)${escapeRegExp(prop)}\\s*:`).test(declarations),
-      ) || null;
+      );
 
-      // (B) 負向（load-bearing）：最終 subject 是 .actress-grid 的規則（含 scoped / 附加 class 變體），
-      // 若**未**與 .showcase-grid 併列卻宣告任一寬度決定屬性 → 女優 grid 悄悄脫離共用寬度系統。
-      // 用最終 subject 判定 → 只認「真的以 .actress-grid 為目標」的規則，不誤傷 `.actress-grid .foo` 後代規則。
-      for (const { selector, declarations } of flatBlocks) {
-        if (!selHasSubject(selector, 'actress-grid')) continue; // 只看以 .actress-grid 為目標的規則
-        if (selHasSubject(selector, 'showcase-grid')) continue; // 已與 showcase 併列 → 合規
-        const prop = declaredWidthProp(declarations);
-        if (prop) {
+      // ── 期望表（鏡射 showcase.css，108-T5fix1 定版）───────────────────────────
+      // 共用區間（≤899px）：影片走直式 poster 0.71 ≈ 女優 0.75 → 同寬即同高 → **必須 co-listed**。
+      const COLS = /grid-template-columns\s*:/;
+      const GUTTER = /margin-inline\s*:/;
+      const SHARED = [
+        { label: 'base grid（top-level 非-@media）', cond: null, anchor: COLS, prop: 'grid-template-columns' },
+        { label: '@media (min-width: 481px) and (max-width: 899px) → 4 欄（共用）', cond: MIN481_MAX899, anchor: COLS, prop: 'grid-template-columns' },
+        { label: '@media (max-width: 480px) → 3 欄（共用）', cond: MW480, anchor: COLS, prop: 'grid-template-columns' },
+        { label: 'T1 行動 gutter @media (max-width: 899px)', cond: MW899, anchor: GUTTER, prop: 'margin-inline' },
+      ];
+      // ≥900px：影片切橫式 fanart（~3:2）、女優恆為直式 0.75 → 同寬會讓女優列高 1.77 倍。
+      // 故女優改走**專屬 5 段階梯**（列高/密度對齊），影片維持自己的三段（showcase-only）。
+      // 條件以 ^…$ 字面錨定 + 驗欄數值 → 斷點漂移（1350→1400）或欄數漂移（6→5）皆報紅。
+      const LADDER = [
+        { cond: /^\s*\(\s*min-width\s*:\s*1850px\s*\)\s*$/, cols: 7, label: '(min-width: 1850px) → 7 欄' },
+        { cond: /^\s*\(\s*min-width\s*:\s*1600px\s*\)\s+and\s+\(\s*max-width\s*:\s*1849px\s*\)\s*$/, cols: 6, label: '(min-width: 1600px) and (max-width: 1849px) → 6 欄' },
+        { cond: /^\s*\(\s*min-width\s*:\s*1350px\s*\)\s+and\s+\(\s*max-width\s*:\s*1599px\s*\)\s*$/, cols: 5, label: '(min-width: 1350px) and (max-width: 1599px) → 5 欄' },
+        { cond: /^\s*\(\s*min-width\s*:\s*1100px\s*\)\s+and\s+\(\s*max-width\s*:\s*1349px\s*\)\s*$/, cols: 4, label: '(min-width: 1100px) and (max-width: 1349px) → 4 欄' },
+        { cond: /^\s*\(\s*min-width\s*:\s*900px\s*\)\s+and\s+\(\s*max-width\s*:\s*1099px\s*\)\s*$/, cols: 3, label: '(min-width: 900px) and (max-width: 1099px) → 3 欄' },
+      ];
+      const VIDEO = [
+        { cond: /^\s*\(\s*min-width\s*:\s*1500px\s*\)\s*$/, cols: 5, label: '(min-width: 1500px) → 5 欄' },
+        { cond: /^\s*\(\s*min-width\s*:\s*1100px\s*\)\s+and\s+\(\s*max-width\s*:\s*1499px\s*\)\s*$/, cols: 4, label: '(min-width: 1100px) and (max-width: 1499px) → 4 欄' },
+        { cond: /^\s*\(\s*min-width\s*:\s*900px\s*\)\s+and\s+\(\s*max-width\s*:\s*1099px\s*\)\s*$/, cols: 3, label: '(min-width: 900px) and (max-width: 1099px) → 3 欄' },
+      ];
+      const FIX = '若確為有意重構斷點，請同步更新本守衛的 SHARED / LADDER / VIDEO 期望表';
+      // exact selector 判定：stripNested 後字面等於單一 class（擋 sidebar-state 前綴 `body.sidebar-collapsed .actress-grid`
+      // 與 co-listed 回退；未來若真要 scoped 變體，改守衛而非放行 — fail-closed）。
+      const isExactly = (selector, cls) => stripNested(selector).trim() === `.${cls}`;
+      // 同一 media 條件可能有多個 block（本檔 900-1099 現有兩個：影片區一個、女優階梯區一個）→ 一律掃全部。
+      const rulesUnder = (cond) => extractMediaBodies(ctx.text, cond).flatMap((body) => parseRuleBlocks(body));
+      // Codex T5fix2 三審 P1：同一 rule 內可重複宣告同 property（cascade 取最後者），故不能只問
+      // 「有沒有出現正確值」→ 抽出**全部** grid-template-columns 宣告值，白名單要求「恰好一次且該值正確」。
+      const colsDecls = (declarations) => [
+        ...declarations.matchAll(/(?:^|[;{]|\s)grid-template-columns\s*:\s*([^;}]*)/g),
+      ].map((m) => m[1].trim());
+      const colsValueRe = (n) => new RegExp(`^repeat\\(\\s*${n}\\s*,\\s*1fr\\s*\\)$`);
+      // 回傳 null=合格，否則回傳失敗原因字串
+      const colsFault = (declarations, n) => {
+        const decls = colsDecls(declarations);
+        if (decls.length !== 1) {
+          return `宣告了 ${decls.length} 次 grid-template-columns（同 rule 內重複宣告時 cascade 取最後者 \`${decls[decls.length - 1] || ''}\`，`
+            + `「其中一次正確」不代表生效的那次正確）—— 每條規則只允許宣告一次`;
+        }
+        if (!colsValueRe(n).test(decls[0])) return `欄數不符（實際 \`${decls[0]}\`，應為 repeat(${n}, 1fr)）`;
+        return null;
+      };
+
+      // ── (A) 正向・共用區間（≤899）必須 co-listed ──
+      for (const { label, cond, anchor, prop } of SHARED) {
+        let ok;
+        if (cond === null) {
+          // base：ctx.blocks 未展平，@media wrapper 的 selector 以 @ 開頭 → 濾掉只留真 top-level 規則
+          const topLevel = ctx.blocks.filter(({ selector }) => !selector.trim().startsWith('@'));
+          ok = hasCoListedAnchor(topLevel, anchor);
+        } else {
+          ok = extractMediaBodies(ctx.text, cond).some((body) => hasCoListedAnchor(parseRuleBlocks(body), anchor));
+        }
+        if (!ok) {
           ctx.fail(
-            `CG-GRID-ALIGN [lint-guard:108-T6]: .actress-grid 單獨規則（未與 .showcase-grid 併列）`
-              + `宣告寬度決定屬性 \`${prop}\`，違反 AC-C1「女優卡與影片卡同寬」不變式 — `
-              + `selector=${selector.replace(/\s+/g, ' ').trim()}`,
+            `CG-GRID-ALIGN [lint-guard:108-T5fix2]: 共用區間缺少「${label}」的 co-listed `
+              + `.showcase-grid, .actress-grid 規則（須宣告 ${prop}）—— ≤899px 影片走直式 poster 0.71 `
+              + `≈ 女優 0.75，同寬即同高，兩者必須同欄同寬；整塊被刪 / 斷點條件被改 / 拿掉 .actress-grid 皆違反。${FIX}`,
           );
         }
       }
 
-      // (C) 對稱負向（Codex 二審 P1 + 四審 P2）：反過來也鎖——最終 subject 是 .showcase-grid 的規則
-      // （含 `.showcase-container .showcase-grid.compact` 這類 parent scope / state class 變體），
-      // 若宣告任一寬度決定屬性卻**未**同時併列 .actress-grid，女優 grid 會在該情境悄悄脫鉤
-      // （正向存在表只鎖 canonical 斷點，攔不到 non-canonical / scoped 的 showcase-only 覆寫）。
-      // 用最終 subject 判定 → 天生排除後代選擇器（`.showcase-grid .av-card…` 最終 subject 非 grid）
-      // 與 z-index sibling（其 grid 段最終 subject 雖是 grid，但不宣告寬度屬性 → declaredWidthProp=null）。
-      for (const { selector, declarations } of flatBlocks) {
-        if (!selHasSubject(selector, 'showcase-grid')) continue; // 只看以 .showcase-grid 為目標的規則
-        if (selHasSubject(selector, 'actress-grid')) continue; // 已併列 → 合規
-        const prop = declaredWidthProp(declarations);
-        if (prop) {
+      // ── (B) 正向・女優 ≥900 五段階梯（條件字面 + 欄數 + exact selector）──
+      for (const { cond, cols, label } of LADDER) {
+        const hits = rulesUnder(cond).filter(({ selector }) => selHasSubject(selector, 'actress-grid'));
+        if (!hits.length) {
           ctx.fail(
-            `CG-GRID-ALIGN [lint-guard:108-T6]: .showcase-grid 規則宣告寬度決定屬性 \`${prop}\` `
-              + `卻未與 .actress-grid 併列 — 女優 grid 會在此情境脫鉤（違反 AC-C1「同寬」；`
-              + `含 scoped/state 變體，非只 base+5 斷點） — selector=${selector.replace(/\s+/g, ' ').trim()}`,
+            `CG-GRID-ALIGN [lint-guard:108-T5fix2]: 女優階梯缺少 ${label} 的 .actress-grid 規則 —— `
+              + `≥900px 女優以專屬 5 段階梯對齊「列高/密度」（非卡寬），少一段即回到 T5 的過大卡片。${FIX}`,
+          );
+          continue;
+        }
+        const exact = hits.filter(({ selector }) => isExactly(selector, 'actress-grid'));
+        if (!exact.length) {
+          ctx.fail(
+            `CG-GRID-ALIGN [lint-guard:108-T5fix2]: 女優階梯 ${label} 的 selector 必須 exact \`.actress-grid\` —— `
+              + `禁 sidebar-state 前綴（owner 2026-07-25 拍板：斷點 sidebar-state agnostic，側欄展開變小是全站既有性質、`
+              + `女優/影片一起縮）、禁 co-listed 回退（那是 T5 的同欄同寬）。實際 selector=`
+              + `${hits.map(({ selector }) => selector.replace(/\s+/g, ' ').trim()).join(' / ')}`,
+          );
+        } else if (exact.length > 1) {
+          // Codex T5fix2 二審 P1：只驗「至少一條對」會被同 media 的第二條錯欄數 override 繞過
+          //（cascade 取後者）→ 改為 canonical media 下 exact grid 規則**恰好一條**。
+          ctx.fail(
+            `CG-GRID-ALIGN [lint-guard:108-T5fix2]: 女優階梯 ${label} 有 ${exact.length} 條 .actress-grid 規則 —— `
+              + `同一斷點只允許一條（多條時 cascade 取最後者，「至少一條欄數對」不代表實際生效的那條對）。${FIX}`,
+          );
+        } else {
+          const fault = colsFault(exact[0].declarations, cols);
+          if (fault) ctx.fail(`CG-GRID-ALIGN [lint-guard:108-T5fix2]: 女優階梯 ${label} ${fault}。${FIX}`);
+        }
+      }
+
+      // ── (C) 正向・影片 ≥900 三段維持 showcase-only（不得再 co-listed = 不得回退 T5）──
+      for (const { cond, cols, label } of VIDEO) {
+        const hits = rulesUnder(cond).filter(({ selector }) => selHasSubject(selector, 'showcase-grid'));
+        if (!hits.length) {
+          ctx.fail(`CG-GRID-ALIGN [lint-guard:108-T5fix2]: 影片 grid 缺少 ${label} 的 .showcase-grid 規則。${FIX}`);
+          continue;
+        }
+        const coListed = hits.filter(({ selector }) => isCoListed(selector));
+        if (coListed.length) {
+          ctx.fail(
+            `CG-GRID-ALIGN [lint-guard:108-T5fix2]: 影片斷點 ${label} 不得與 .actress-grid 併列 —— `
+              + `≥900px 影片是橫式 fanart、女優是直式 0.75，同寬會讓女優列高 1.77 倍（正是 T5 被推翻的原因）。${FIX}`,
+          );
+        } else if (hits.length > 1) {
+          ctx.fail(
+            `CG-GRID-ALIGN [lint-guard:108-T5fix2]: 影片斷點 ${label} 有 ${hits.length} 條 .showcase-grid 規則 —— `
+              + `同一斷點只允許一條（多條時 cascade 取最後者）。${FIX}`,
+          );
+        } else {
+          const fault = colsFault(hits[0].declarations, cols);
+          if (fault) ctx.fail(`CG-GRID-ALIGN [lint-guard:108-T5fix2]: 影片斷點 ${label} ${fault}。${FIX}`);
+        }
+      }
+
+      // ── (D) 負向・白名單制：任何宣告「寬度決定屬性」的 grid 容器規則，必須落在上述三張表之一 ──
+      //    （舊版 108-T6 是「actress-only / showcase-only 一律禁止」，會擋住 T5fix1 的階梯本身；
+      //      改為精確白名單後，既保留「不得悄悄脫鉤」的原意圖，又能鎖住 sidebar-state 分岔與屬性種類。）
+      //    需要 media 上下文 → flattenWithMedia（top-level media=[]；巢狀 @media 條件鏈 >1 一律不在白名單）。
+      // Codex T5fix2 二審 P1：白名單放行的每一條規則，其欄數值也必須等於該 media 的期望值
+      //（否則「合法 media + exact selector + 只宣告 columns」的第二條 override 會整條溜過）。
+      const tableEntry = (media, table) => (media.length === 1
+        ? table.find(({ cond }) => cond.test(media[0])) || null
+        : null);
+      const isSharedMedia = (media) => media.length === 0
+        || (media.length === 1 && [MIN481_MAX899, MW480, MW899].some((re) => re.test(media[0])));
+      for (const { media, selector, declarations } of flattenWithMedia(ctx.blocks)) {
+        const onActress = selHasSubject(selector, 'actress-grid');
+        const onShowcase = selHasSubject(selector, 'showcase-grid');
+        if (!onActress && !onShowcase) continue;
+        const props = declaredWidthProps(declarations);
+        if (!props.length) continue;
+        const where = `selector=${selector.replace(/\s+/g, ' ').trim()}${media.length ? ` @media ${media.join(' / ')}` : '（top-level）'}`;
+        const onlyCols = props.length === 1 && props[0] === 'grid-template-columns';
+        if (onActress && onShowcase) {
+          // co-listed：只允許出現在共用區間（base / 481-899 / ≤480 / T1 gutter）
+          if (!isSharedMedia(media)) {
+            ctx.fail(
+              `CG-GRID-ALIGN [lint-guard:108-T5fix2]: co-listed .showcase-grid, .actress-grid 規則宣告寬度決定屬性 `
+                + `\`${props.join(', ')}\`，但不在共用區間（≤899px / base）—— ≥900px 兩者刻意分家。${FIX} — ${where}`,
+            );
+          }
+        } else if (onActress) {
+          const entry = tableEntry(media, LADDER);
+          if (!(onlyCols && entry && isExactly(selector, 'actress-grid') && colsFault(declarations, entry.cols) === null)) {
+            ctx.fail(
+              `CG-GRID-ALIGN [lint-guard:108-T5fix2]: .actress-grid 單獨規則宣告寬度決定屬性 \`${props.join(', ')}\` `
+                + `卻不在女優階梯白名單 —— 只允許「五段階梯條件之一 + exact \`.actress-grid\` + grid-template-columns 恰好宣告一次且欄數等於該段期望值 + 只宣告 `
+                + `grid-template-columns」（gap/padding/max-width 須續由 co-listed base 提供，否則卡寬算式與影片脫鉤；`
+                + `sidebar-state 前綴一律禁止）。${FIX} — ${where}`,
+            );
+          }
+        } else if (!(() => {
+          const entry = tableEntry(media, VIDEO);
+          return onlyCols && entry && isExactly(selector, 'showcase-grid') && colsFault(declarations, entry.cols) === null;
+        })()) {
+          ctx.fail(
+            `CG-GRID-ALIGN [lint-guard:108-T5fix2]: .showcase-grid 單獨規則宣告寬度決定屬性 \`${props.join(', ')}\` `
+              + `卻不在影片斷點白名單（三段 ≥900 條件 + exact \`.showcase-grid\` + grid-template-columns 恰好宣告一次且欄數等於該段期望值）—— `
+              + `共用區間的寬度屬性必須 co-listed，否則女優在該情境悄悄脫鉤。${FIX} — ${where}`,
           );
         }
       }

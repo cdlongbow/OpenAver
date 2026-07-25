@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.12.10] - 2026-07-24
 
-本版是一次 showcase（影片瀏覽牆）的行動裝置體驗優化（feature/108），三件小事，全是純前端呈現：手機上封面吃滿寬度、觸控時封面上不再擠一排操作 icon、女優牆的卡片大小終於跟影片牆一致。桌面體驗完全不變。
+本版是一次 showcase（影片瀏覽牆）呈現優化（feature/108），三件小事，全是純前端呈現：手機上封面吃滿寬度、觸控時封面上不再擠一排操作 icon、女優牆卡片大小不再「乎大乎小」。前兩件是行動裝置專屬、桌面完全不變；第三件跨所有寬度（桌面的女優牆會變成一列更多張）。
 
 ### Changed
 #### 📱 手機上封面吃滿寬度
@@ -19,13 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 「開資料夾」鈕在**純觸控裝置**（手機、平板、LAN 端瀏覽器）上一併收起——那裡它只能把一段別人桌面的路徑複製到剪貼簿、開不了遠端資料夾，是個按了沒用的鈕。接了滑鼠／觸控板的二合一裝置（有 hover 能力）照常顯示可用。
 - **搜尋結果牆一併統一**：搜尋頁的結果卡在觸控裝置上同樣不再壓操作 icon（封面更完整）；詳情／開資料夾／收藏等動作點卡片進 lightbox 後照常可用，只多一步。桌面 hover 行為不變。
 
-#### 🎬 女優牆卡片大小對齊影片牆
-- 以前女優牆用的是「跟著寬度流動」的欄數、影片牆用固定斷點，導致同一個視窗寬度下兩者卡片大小不一致（窄視窗女優偏大、寬螢幕女優偏小、切換模式會「乎大乎小」）。本版讓女優牆改用與影片牆完全相同的欄數系統，每個寬度下女優卡與影片卡同欄同寬，切換兩模式大小穩定。女優卡的直式比例（3:4）與臉部對焦維持不變。
+#### 🎬 女優牆卡片大小不再「乎大乎小」
+- 以前女優牆用的是「跟著寬度流動」的欄數、影片牆用固定斷點，導致同一個視窗寬度下兩者卡片大小的關係不固定（窄視窗女優偏大、寬螢幕女優偏小、切換模式會「乎大乎小」）。本版改為**兩段式對齊**：
+  - **手機／平板（≤899px）**：女優牆與影片牆**同欄同寬**——這個尺寸下影片封面本來就是直式裁切，比例與女優照相近，同寬就等於同高，兩種模式切換時完全一致。
+  - **桌面（≥900px）**：影片封面在這個尺寸會切成**橫式**劇照，女優照永遠是直式，硬要同寬會讓女優卡高度變成影片卡的近兩倍（一個螢幕只剩一列半）。所以女優牆改用**自己的一組欄數階梯**（900→3、1100→4、1350→5、1600→6、1850→7 欄），對齊的是「一列的高度／看得到幾列」而不是卡片寬度。1920px 全螢幕下女優 7 欄、影片 5 欄，密度相當。
+- 結果：**每個視窗寬度下，女優卡都不會比影片卡大**，且大小關係固定可預期（不再隨寬度飄移）。女優卡的直式比例（3:4）與臉部對焦維持不變。
+- 側欄展開時卡片會變小是全站原本就有的行為（影片牆一樣），女優牆與影片牆一起縮，本版不另做處理。
 
 ### 測試
 - 全套 pytest **5640 passed, 1 skipped**（unit + integration，排除 smoke／e2e，與 main 同數＝純前端零回歸）＋ `ruff check .` 綠 ＋ `npm run lint` 綠（**css-guard 49**／**static_guard 1044**／cjk clean）＋ `npm test`（node:test 287）。
-- **CDP 觸控＋桌面雙態驗收全綠**（Opus 驅動 headless Playwright，CDP touch emulation）：① 留白 ≤480／481-899 兩 grid 皆 12px 對稱、桌面零變化、全寬度無水平捲動 ② 觸控影片/女優卡 overlay 隱藏、點封面開燈箱、破圖卡例外常駐、桌面 hover 零變化、lightbox cover-actions 未誤殺 ③ folder 純觸控隱藏／桌面顯示（any-hover:none 判別式坐實）④ 女優欄數=影片欄數五斷點（3/4/3/4/5）、同寬卡片、影片零變化、女優比例 0.75 維持 ⑤（T7）`CSS.forcePseudoState(['hover'])` 強制合成 hover：any-hover:none 下影片/女優 overlay opacity 0（女優 pointer-events none）、破圖卡例外保留 1、桌面 any-hover:hover 仍 1（零回歸）。
-- **機械守衛**（sonnet 實作、Opus 獨立 mutation 逐條單獨紅驗）：G1-G4（CG-TOUCH-01/02/03 + static_guard G4）鎖觸控 overlay 移除／破圖卡例外／folder any-hover 閘／marker 唯一性；G5（CG-GRID-ALIGN）鎖女優 grid 寬度決定因子與影片同源（正向 hard-code 斷點存在表 + 雙向 final-subject 負向 + stripNested CSS-aware selector 解析 + comment fail-open 檢查）；CG-TOUCH-04（T7）鎖純觸控 overlay 壓制。
+- **CDP 觸控＋桌面雙態驗收全綠**（Opus 驅動 headless Playwright，CDP touch emulation）：① 留白 ≤480／481-899 兩 grid 皆 12px 對稱、桌面零變化、全寬度無水平捲動 ② 觸控影片/女優卡 overlay 隱藏、點封面開燈箱、破圖卡例外常駐、桌面 hover 零變化、lightbox cover-actions 未誤殺 ③ folder 純觸控隱藏／桌面顯示（any-hover:none 判別式坐實）④ 女優欄數（≤899 與影片同欄 3/4；≥900 專屬階梯 3/4/5/6/7）、影片零變化、女優比例 0.75 維持 ⑤（T7）`CSS.forcePseudoState(['hover'])` 強制合成 hover：any-hover:none 下影片/女優 overlay opacity 0（女優 pointer-events none）、破圖卡例外保留 1、桌面 any-hover:hover 仍 1（零回歸）。
+- **機械守衛**（sonnet 實作、Opus 獨立 mutation 逐條單獨紅驗）：G1-G4（CG-TOUCH-01/02/03 + static_guard G4）鎖觸控 overlay 移除／破圖卡例外／folder any-hover 閘／marker 唯一性；G5（CG-GRID-ALIGN，**T5fix2 改寫版**）鎖兩段式契約——共用區間（base／481-899／≤480／T1 gutter）必須 co-listed、女優 ≥900 五段階梯（media 條件字面錨定 + 欄數值 + selector 必須 exact `.actress-grid` + 只准宣告 `grid-template-columns`，機械化「不做 sidebar-state 分岔」的拍板）、影片 ≥900 三段維持 showcase-only（加回併列＝回退即紅），其餘宣告寬度屬性者一律紅（白名單制 fail-closed）；沿用 stripNested CSS-aware selector 解析 + final-subject 判定 + comment fail-open 檢查，**12 條 mutation 逐條單獨紅驗**（共用脫鉤／gutter 拆開／斷點漂移／欄數漂移／sidebar-state 前綴／多宣告 gap／回退併列／top-level actress-only／**同 media 第二條 override／另開同條件 @media 覆寫／影片同斷點 override／同一 rule 內重複宣告 property**——後四條為 Codex 二・三審抓到的 cascade 繞過族，修法＝canonical media 下 grid 規則恰好一條 + 該 property 恰好宣告一次且值正確）。CG-TOUCH-04（T7）鎖純觸控 overlay 壓制。
 - CSS 打字（T1/T2/T3/T5）由 grok -p 分擔、Opus CDP oracle + sonnet#3 review 把關；守衛（T4/T6/T7）留 sonnet／Opus + Opus mutation。
 - **Pre-merge 跨廠牌 3-reviewer holistic branch panel**：Opus 4.8（high）LGTM；**codex 5.6-terra 增量抓到 P2**（純觸控 iOS/Android 合成 sticky-hover 仍會冒 overlay icon，違 AC-B1/B7）→ 開 T7 硬化收；grok-4.5 一跑回 LGTM 卻**漏抓該 P2**、且自稱「已查證 browser synthesis of :hover」（審 pre-T7 狀態、假查證＝false reassurance），另一跑 hang／0 輸出——提0/採0/增量0，零信號實錘，計分卡續記候補可砍。另 G5 守衛經 codex 五輪 review 逐層補 fail-open（@media 巢狀／單斷點移除／整塊刪／scoped selector／CSS-aware 解析），皆 Opus 獨立 mutation 驗。
 - 本版 **UI 呈現優化、零新增 i18n key**（純 CSS／隱藏既有元素／欄數調整，無新文案）。功能最終視覺數值（12px 手感）與 sticky-hover 真機行為留 owner 真機 hard-gate。
