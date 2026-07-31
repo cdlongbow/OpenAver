@@ -233,9 +233,9 @@ def _run_readonly_batch(client, mocker, *, plan_meta, os_exists, existing_cover_
     故 item 檔須在 RO_DIR 下。"""
     mocker.patch("web.routers.scraper.load_config", return_value=_readonly_gallery_config(RO_DIR))
     mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub(RO_DIR))
-    mocker.patch("web.routers.scraper.resolve_ingest_plan",
+    mocker.patch("core.readonly_producer.resolve_ingest_plan",
                  return_value=(plan_meta, ("download", COVER_URL)))
-    mocker.patch("web.routers.scraper._produce_one",
+    mocker.patch("core.readonly_producer._produce_one",
                  return_value=(Path("/out/ro/ABC-001"),
                                {"cover_fs": produce_cover_fs, "sample_fs": [], "nfo_mtime": 1.0}))
     mock_repo = mocker.patch("web.routers.scraper.VideoRepository")

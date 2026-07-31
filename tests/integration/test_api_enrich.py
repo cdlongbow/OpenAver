@@ -3049,13 +3049,13 @@ class TestReadonlyRoutingE2E:
             return_value=(source_stub, "/out/ro_src-x", "file:///out/ro_src-x"),
         )
         mock_plan = mocker.patch(
-            "web.routers.scraper.resolve_ingest_plan",
+            "core.readonly_producer.resolve_ingest_plan",
             return_value=({"number": "RO-001", "title": "T", "cover": ""}, ("none",)),
         )
         # _produce_one now returns (movie_dir, assets) — tuple default so the
         # router's `_, assets = _produce_one(...)` unpack succeeds.
         mock_produce = mocker.patch(
-            "web.routers.scraper._produce_one",
+            "core.readonly_producer._produce_one",
             return_value=(Path("/out/ro_src-x/RO-001"), {"cover_fs": "", "sample_fs": [], "nfo_mtime": 1.0}),
         )
         mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
@@ -3113,9 +3113,9 @@ class TestReadonlyRoutingE2E:
             return_value=(source_stub, "/out/ro_src-x", "file:///out/ro_src-x"),
         )
         mocker.patch(
-            "web.routers.scraper.resolve_ingest_plan", return_value=(None, ("none",)),
+            "core.readonly_producer.resolve_ingest_plan", return_value=(None, ("none",)),
         )
-        mock_produce = mocker.patch("web.routers.scraper._produce_one")
+        mock_produce = mocker.patch("core.readonly_producer._produce_one")
 
         response = client.post("/api/batch-enrich", json={
             "items": [{"file_path": "/tmp/ro_src/NS-001.mp4", "number": "NS-001"}],

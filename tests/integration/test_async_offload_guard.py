@@ -33,6 +33,11 @@ BLOCKING_FUNC_NAMES = frozenset({
     "load_config", "save_config",
     # Sync HTTP（metatube）
     "MetatubeHttpClient", "list_providers", "_verify_token_canary",
+    # feature/109 CD-109-7：batch 唯讀項的產出核心公開入口——必須留在同步 nested
+    # FunctionDef（_do_readonly）內經 run_in_executor offload；若被挪進 event_generator
+    # 的 async body 直接呼叫，此守衛會抓到（_collect_direct_calls 下潛 AsyncFunctionDef
+    # 但停在同步 FunctionDef，見該檔案 :70-94）。
+    "enrich_one_readonly",
 })
 
 # Attribute-call 後綴（接在任意物件後 .exists() / .stat() / .iterdir() / .save()）
