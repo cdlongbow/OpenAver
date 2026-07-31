@@ -21,7 +21,7 @@ from core.database import VideoRepository
 from core.db_inflow import try_inflow_upsert
 from core.focal_trigger import maybe_submit_video_focal
 from core.enricher import enrich_single, fetch_samples_only, resolve_nfo_cover_paths
-from core.enrich_contract import enrich_success
+from core.enrich_contract import enrich_success, should_preserve_cover
 from core.organizer import organize_file
 from core.path_utils import to_file_uri, uri_to_fs_path, uri_to_local_fs_path, coerce_to_file_uri
 from core.scraper import (
@@ -487,7 +487,9 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
     if request.mode == "refresh_full" and not request.overwrite_existing:
         nfo_path, cover_path = resolve_nfo_cover_paths(request.file_path, path_mappings)
         will_write_nfo = request.write_nfo and not os.path.exists(nfo_path)
-        will_write_cover = request.write_cover and not os.path.exists(cover_path)
+        will_write_cover = not should_preserve_cover(
+            request.write_cover, request.overwrite_existing, os.path.exists(cover_path)
+        )
         # 72d-P2A：外部圖寫出機會也是合法的寫出路徑（72b-T6 加入 external_manager 後守衛未同步）
         external_manager = config.get("scraper", {}).get("external_manager", "off")
         if external_manager != "off":
