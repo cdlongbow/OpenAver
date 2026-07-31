@@ -19,9 +19,9 @@ from typing import List, Literal, Optional
 
 from core.database import VideoRepository
 from core.db_inflow import try_inflow_upsert
-from core.focal_trigger import maybe_submit_video_focal, schedule_focal_after_cover_write
+from core.focal_trigger import maybe_submit_video_focal
 from core.enricher import enrich_single, fetch_samples_only, resolve_nfo_cover_paths
-from core.enrich_contract import apply_cover_preserve, compute_has_servable_cover, cover_uri_is_servable, enrich_success
+from core.enrich_contract import enrich_success
 from core.organizer import organize_file
 from core.path_utils import to_file_uri, uri_to_fs_path, uri_to_local_fs_path, coerce_to_file_uri
 from core.scraper import (
@@ -35,8 +35,8 @@ from core.logger import get_logger
 from core.config import load_config
 from core.readonly_source import is_path_readonly, readonly_source_prefixes, writable_source_prefixes
 from core.readonly_producer import (
-    resolve_owning_output_root, resolve_ingest_plan, _produce_one,
-    _readonly_stub_not_found, _readonly_enrich_failure,
+    resolve_owning_output_root, _produce_one,
+    _readonly_enrich_failure,
     enrich_one_readonly, ReadonlyProduceError,
 )
 from core import thumbnail_cache
@@ -131,19 +131,6 @@ def _readonly_source_error(file_path: str) -> Optional[dict]:
     if is_path_readonly(coerce_to_file_uri(file_path, _path_mappings), _prefixes, _writable):
         return {"success": False, "error": _READONLY_SOURCE_ERROR_MSG}
     return None
-
-
-# Codex PR#113 P4 one-pass alignment (2026-07-21): readonly ingest/rescrape
-# writes the whole meta wholesale (no _merge_meta partial-diff concept the
-# way non-readonly enrich_single has), so there is no equivalent "fields the
-# scrape supplemented" diff to report. Listing the non-empty top-level
-# metadata keys is a reasonable "what got written" summary for the
-# fields_filled slot of the EnrichResult shape.
-_READONLY_FIELDS_FILLED_KEYS = ('title', 'actors', 'tags', 'date', 'maker', 'director', 'series', 'label')
-
-
-def _readonly_fields_filled(meta: dict) -> List[str]:
-    return [k for k in _READONLY_FIELDS_FILLED_KEYS if meta.get(k)]
 
 
 @router.post("/scrape-single")
