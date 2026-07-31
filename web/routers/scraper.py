@@ -37,6 +37,7 @@ from core.readonly_source import is_path_readonly, readonly_source_prefixes, wri
 from core.readonly_producer import (
     resolve_owning_output_root, resolve_ingest_plan, _produce_one,
     _readonly_stub_not_found, _readonly_enrich_failure,
+    enrich_one_readonly,
 )
 from core import thumbnail_cache
 from web.routers.notifications import emit_notification as _emit_notif
@@ -469,99 +470,21 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
                 scraper_data, _cand_err = _javlib_candidate_scraper_data(request)
                 if _cand_err:
                     return _cand_err
-            fs_path = uri_to_local_fs_path(request.file_path, path_mappings)
-            meta, cover_strategy = resolve_ingest_plan(
-                fs_path, request.number, config.get("scraper", {}),
-                action=action, proxy_url=proxy_url, scraper_data=scraper_data, source=request.source,
-                javbus_lang=request.javbus_lang,
+            # TASK-109-T2: 產出核心（URI→FS 轉換到組 EnrichResult 為止）薄搬移進
+            # core.readonly_producer.enrich_one_readonly；caller 只保留三個刻意
+            # 缺口——javlib 預抓（上面已做）、reject guard + output_dir 解析
+            # （上方已做）、縮圖失效（下方 thumbnail_cache.invalidate，C4）。
+            result = enrich_one_readonly(
+                repo_factory=VideoRepository, ro_source=source, output_root=output_root,
+                output_uri=output_uri, canonical=canonical, file_path=request.file_path,
+                number=request.number, scraper_cfg=config.get("scraper", {}),
+                path_mappings=path_mappings, action=action, proxy_url=proxy_url,
+                scraper_data=scraper_data, scrape_source=request.source,
+                javbus_lang=request.javbus_lang, write_cover=request.write_cover,
+                overwrite_existing=request.overwrite_existing,
             )
-            if not meta:
-                # FIX P2-A / FIX#4 (P2 parity closeout): mirror non-readonly
-                # core.enricher.py:391/429's not-found bookkeeping — mark
-                # scrape_attempted_at so this file isn't rescanned/rescraped
-                # forever. TRAP: update_scrape_attempted_at is a bare
-                # UPDATE...WHERE path=? that silently no-ops without a row —
-                # insert_if_ignore MUST run first to create the stub row
-                # (mirrors bulk readonly_producer.py:1559-1561 byte-for-byte).
-                # reason='not_found' (not 'error') matches the batch sibling
-                # (:1003) and non-readonly enricher.py:393/431.
-                repo = VideoRepository()
-                _readonly_stub_not_found(repo, canonical, request.number, fs_path)
-                return asdict(_readonly_enrich_failure("找不到可用的番號資料", "not_found"))
-            repo = VideoRepository()
-            existing = repo.get_by_path(canonical)
-            # Codex PR#113 P2#3（round 2，owner-confirmed 全面對齊；round 6 修正）：
-            # readonly enrich 對齊非唯讀 core.enricher._write_cover 的 skip 語意
-            # （os.path.exists(cover) and not overwrite_existing）——fill_missing
-            # （放大鏡在「已有封面、缺 NFO」的片上點，見 state-lightbox.js:1634-1650）
-            # 或 write_cover=false 時只補 NFO，絕不動既有封面（output_dir 的封面檔與
-            # DB cover_path 皆保留）。refresh_full（gear 一律送 mode='refresh_full'
-            # +overwrite_existing=true，見 state-rescrape.js:404/408；或放大鏡在無
-            # 封面片上點）不受此擋，維持既有「一律寫」行為。
-            # round 6 fix（Codex PR#113 round-6，P2，found in 2 readonly branches）：
-            # had_cover 只看 DB `existing.cover_path` 不夠——DB row 可能殘留、輸出
-            # 封面檔已被刪除或路徑對應後在磁碟上不存在，這樣仍會誤判「已有封面」
-            # 而跳過重建，留下一張壞掉/消失的圖。改為額外要求檔案實際存在於磁碟，
-            # 與 _write_cover 的 os.path.exists(cover_path) 判斷真正一致。
-            had_cover = cover_uri_is_servable(
-                existing.cover_path if existing else "", path_mappings
-            )
-            cover_strategy = apply_cover_preserve(
-                cover_strategy, request.write_cover, request.overwrite_existing, had_cover
-            )
-            file_info = {
-                "path": fs_path,
-                "size": existing.size_bytes if existing else os.path.getsize(fs_path),
-                "mtime": existing.mtime if existing else os.path.getmtime(fs_path),
-            }
-            # _produce_one now returns (movie_dir, assets). NFO is always written
-            # (P1 revert, round-3 review 2026-07-21 — write_nfo=false is rejected
-            # above, before this point is ever reached). cover_written reflects
-            # whether the cover step actually produced a file (cover_strategy=
-            # ('none',) or a failed copy/download both leave assets['cover_fs'] == '').
-            _, assets = _produce_one(
-                repo, source, config.get("scraper", {}), file_info=file_info,
-                meta=meta, cover_strategy=cover_strategy, assets_mode='full',
-                existing=existing, output_root=output_root, output_uri=output_uri,
-                allocated_this_run=set(), path_mappings=path_mappings,
-            )
-            thumbnail_cache.invalidate(canonical)
-            cover_written = bool(assets.get('cover_fs'))
-            # Bug 1 fix (feature/105): `reason` must reflect whether a SERVABLE
-            # cover exists — DB has cover_path AND the physical file is on disk —
-            # not just whether the DB row has a cover_path. _produce_one已同步
-            # upsert（寫檔+_db_upsert）於上，故此處重讀 DB 最終 cover_path + 磁碟
-            # 複驗，與 core.enricher.enrich_single 共用同一個 compute_has_servable_cover
-            # 原子（消除唯讀漏磁碟複驗的破圖 false-positive）。key=canonical，與
-            # 上方 existing = repo.get_by_path(canonical) 及 _produce_one 的 upsert
-            # key 同一命名空間。
-            has_servable_cover = compute_has_servable_cover(repo, canonical, path_mappings)
-            # Codex PR#113 P2#4（round 2）：對齊 core.enricher.enrich_single:528-547
-            # ——只在「本次實際寫入新封面內容」時才作廢舊手動焦點、再排新的背景偵測。
-            # preserve_cover=True 時 cover_strategy=('none',) 不產出檔案，
-            # assets['cover_fs'] 恆為空 → cover_written 恆 False，此塊不進、既有
-            # manual 焦點原樣保留（與 enricher 的 cover_written 閘門語意一致）。
-            if cover_written:
-                try:
-                    focal_repo = VideoRepository()  # 致命細節 1：不可重用上面的 repo 變數
-                    # TASK-105-T6: reset+submit 收斂至共用 helper。
-                    schedule_focal_after_cover_write(
-                        focal_repo, canonical, meta['number'], meta.get('maker'),
-                        assets['cover_fs'], path_mappings,
-                    )
-                except Exception:
-                    logger.warning("readonly enrich focal 排程失敗（不影響改道結果）", exc_info=True)
-            return asdict(enrich_success(
-                # NFO is always written on a successful readonly produce (P1
-                # revert, round-3 review 2026-07-21) — write_nfo=false never
-                # reaches here (rejected above).
-                nfo_written=True,
-                cover_written=cover_written,
-                extrafanart_written=len(assets.get('sample_fs', [])),
-                fields_filled=_readonly_fields_filled(meta),
-                source_used=meta.get('source', ''),
-                has_servable_cover=has_servable_cover,
-            ))
+            thumbnail_cache.invalidate(canonical)      # C4：留 caller，維持在外層 try 之內、無自己的 try
+            return asdict(result)
         except Exception:
             logger.exception("enrich_single_endpoint readonly 改道失敗")
             return asdict(_readonly_enrich_failure("enrich 處理失敗，請查閱日誌", "error"))
