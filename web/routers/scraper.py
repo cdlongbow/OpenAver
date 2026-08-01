@@ -19,9 +19,9 @@ from typing import List, Literal, Optional
 
 from core.database import VideoRepository
 from core.db_inflow import try_inflow_upsert
-from core.focal_trigger import maybe_submit_video_focal, schedule_focal_after_cover_write
+from core.focal_trigger import maybe_submit_video_focal
 from core.enricher import enrich_single, fetch_samples_only, resolve_nfo_cover_paths
-from core.enrich_contract import apply_cover_preserve, compute_has_servable_cover, cover_uri_is_servable, enrich_success
+from core.enrich_contract import enrich_success, should_preserve_cover
 from core.organizer import organize_file
 from core.path_utils import to_file_uri, uri_to_fs_path, uri_to_local_fs_path, coerce_to_file_uri
 from core.scraper import (
@@ -35,8 +35,9 @@ from core.logger import get_logger
 from core.config import load_config
 from core.readonly_source import is_path_readonly, readonly_source_prefixes, writable_source_prefixes
 from core.readonly_producer import (
-    resolve_owning_output_root, resolve_ingest_plan, _produce_one,
-    _readonly_stub_not_found, _readonly_enrich_failure,
+    resolve_owning_output_root, _produce_one,
+    _readonly_enrich_failure,
+    enrich_one_readonly, ReadonlyProduceError,
 )
 from core import thumbnail_cache
 from web.routers.notifications import emit_notification as _emit_notif
@@ -130,19 +131,6 @@ def _readonly_source_error(file_path: str) -> Optional[dict]:
     if is_path_readonly(coerce_to_file_uri(file_path, _path_mappings), _prefixes, _writable):
         return {"success": False, "error": _READONLY_SOURCE_ERROR_MSG}
     return None
-
-
-# Codex PR#113 P4 one-pass alignment (2026-07-21): readonly ingest/rescrape
-# writes the whole meta wholesale (no _merge_meta partial-diff concept the
-# way non-readonly enrich_single has), so there is no equivalent "fields the
-# scrape supplemented" diff to report. Listing the non-empty top-level
-# metadata keys is a reasonable "what got written" summary for the
-# fields_filled slot of the EnrichResult shape.
-_READONLY_FIELDS_FILLED_KEYS = ('title', 'actors', 'tags', 'date', 'maker', 'director', 'series', 'label')
-
-
-def _readonly_fields_filled(meta: dict) -> List[str]:
-    return [k for k in _READONLY_FIELDS_FILLED_KEYS if meta.get(k)]
 
 
 @router.post("/scrape-single")
@@ -469,99 +457,26 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
                 scraper_data, _cand_err = _javlib_candidate_scraper_data(request)
                 if _cand_err:
                     return _cand_err
-            fs_path = uri_to_local_fs_path(request.file_path, path_mappings)
-            meta, cover_strategy = resolve_ingest_plan(
-                fs_path, request.number, config.get("scraper", {}),
-                action=action, proxy_url=proxy_url, scraper_data=scraper_data, source=request.source,
-                javbus_lang=request.javbus_lang,
+            # TASK-109-T2: 產出核心（URI→FS 轉換到組 EnrichResult 為止）薄搬移進
+            # core.readonly_producer.enrich_one_readonly；caller 只保留三個刻意
+            # 缺口——javlib 預抓（上面已做）、reject guard + output_dir 解析
+            # （上方已做）、縮圖失效（C4）。Codex PR review P1 修正：縮圖失效
+            # 改用 after_produce 回呼注入，觸發時點回到 entry 內部 step 8/9
+            # 之間（對應改前 scraper.py:528），修掉「_produce_one 成功但
+            # step 10 compute_has_servable_cover 拋錯時漏 invalidate」的
+            # 回歸——決定要不要失效／失效什麼仍在這裡（caller），entry 只給
+            # 觸發時點；不包 try，維持在外層 try 之內、失敗即整個請求變錯誤。
+            result = enrich_one_readonly(
+                repo_factory=VideoRepository, ro_source=source, output_root=output_root,
+                output_uri=output_uri, canonical=canonical, file_path=request.file_path,
+                number=request.number, scraper_cfg=config.get("scraper", {}),
+                path_mappings=path_mappings, action=action, proxy_url=proxy_url,
+                scraper_data=scraper_data, scrape_source=request.source,
+                javbus_lang=request.javbus_lang, write_cover=request.write_cover,
+                overwrite_existing=request.overwrite_existing,
+                after_produce=lambda: thumbnail_cache.invalidate(canonical),
             )
-            if not meta:
-                # FIX P2-A / FIX#4 (P2 parity closeout): mirror non-readonly
-                # core.enricher.py:391/429's not-found bookkeeping — mark
-                # scrape_attempted_at so this file isn't rescanned/rescraped
-                # forever. TRAP: update_scrape_attempted_at is a bare
-                # UPDATE...WHERE path=? that silently no-ops without a row —
-                # insert_if_ignore MUST run first to create the stub row
-                # (mirrors bulk readonly_producer.py:1559-1561 byte-for-byte).
-                # reason='not_found' (not 'error') matches the batch sibling
-                # (:1003) and non-readonly enricher.py:393/431.
-                repo = VideoRepository()
-                _readonly_stub_not_found(repo, canonical, request.number, fs_path)
-                return asdict(_readonly_enrich_failure("找不到可用的番號資料", "not_found"))
-            repo = VideoRepository()
-            existing = repo.get_by_path(canonical)
-            # Codex PR#113 P2#3（round 2，owner-confirmed 全面對齊；round 6 修正）：
-            # readonly enrich 對齊非唯讀 core.enricher._write_cover 的 skip 語意
-            # （os.path.exists(cover) and not overwrite_existing）——fill_missing
-            # （放大鏡在「已有封面、缺 NFO」的片上點，見 state-lightbox.js:1634-1650）
-            # 或 write_cover=false 時只補 NFO，絕不動既有封面（output_dir 的封面檔與
-            # DB cover_path 皆保留）。refresh_full（gear 一律送 mode='refresh_full'
-            # +overwrite_existing=true，見 state-rescrape.js:404/408；或放大鏡在無
-            # 封面片上點）不受此擋，維持既有「一律寫」行為。
-            # round 6 fix（Codex PR#113 round-6，P2，found in 2 readonly branches）：
-            # had_cover 只看 DB `existing.cover_path` 不夠——DB row 可能殘留、輸出
-            # 封面檔已被刪除或路徑對應後在磁碟上不存在，這樣仍會誤判「已有封面」
-            # 而跳過重建，留下一張壞掉/消失的圖。改為額外要求檔案實際存在於磁碟，
-            # 與 _write_cover 的 os.path.exists(cover_path) 判斷真正一致。
-            had_cover = cover_uri_is_servable(
-                existing.cover_path if existing else "", path_mappings
-            )
-            cover_strategy = apply_cover_preserve(
-                cover_strategy, request.write_cover, request.overwrite_existing, had_cover
-            )
-            file_info = {
-                "path": fs_path,
-                "size": existing.size_bytes if existing else os.path.getsize(fs_path),
-                "mtime": existing.mtime if existing else os.path.getmtime(fs_path),
-            }
-            # _produce_one now returns (movie_dir, assets). NFO is always written
-            # (P1 revert, round-3 review 2026-07-21 — write_nfo=false is rejected
-            # above, before this point is ever reached). cover_written reflects
-            # whether the cover step actually produced a file (cover_strategy=
-            # ('none',) or a failed copy/download both leave assets['cover_fs'] == '').
-            _, assets = _produce_one(
-                repo, source, config.get("scraper", {}), file_info=file_info,
-                meta=meta, cover_strategy=cover_strategy, assets_mode='full',
-                existing=existing, output_root=output_root, output_uri=output_uri,
-                allocated_this_run=set(), path_mappings=path_mappings,
-            )
-            thumbnail_cache.invalidate(canonical)
-            cover_written = bool(assets.get('cover_fs'))
-            # Bug 1 fix (feature/105): `reason` must reflect whether a SERVABLE
-            # cover exists — DB has cover_path AND the physical file is on disk —
-            # not just whether the DB row has a cover_path. _produce_one已同步
-            # upsert（寫檔+_db_upsert）於上，故此處重讀 DB 最終 cover_path + 磁碟
-            # 複驗，與 core.enricher.enrich_single 共用同一個 compute_has_servable_cover
-            # 原子（消除唯讀漏磁碟複驗的破圖 false-positive）。key=canonical，與
-            # 上方 existing = repo.get_by_path(canonical) 及 _produce_one 的 upsert
-            # key 同一命名空間。
-            has_servable_cover = compute_has_servable_cover(repo, canonical, path_mappings)
-            # Codex PR#113 P2#4（round 2）：對齊 core.enricher.enrich_single:528-547
-            # ——只在「本次實際寫入新封面內容」時才作廢舊手動焦點、再排新的背景偵測。
-            # preserve_cover=True 時 cover_strategy=('none',) 不產出檔案，
-            # assets['cover_fs'] 恆為空 → cover_written 恆 False，此塊不進、既有
-            # manual 焦點原樣保留（與 enricher 的 cover_written 閘門語意一致）。
-            if cover_written:
-                try:
-                    focal_repo = VideoRepository()  # 致命細節 1：不可重用上面的 repo 變數
-                    # TASK-105-T6: reset+submit 收斂至共用 helper。
-                    schedule_focal_after_cover_write(
-                        focal_repo, canonical, meta['number'], meta.get('maker'),
-                        assets['cover_fs'], path_mappings,
-                    )
-                except Exception:
-                    logger.warning("readonly enrich focal 排程失敗（不影響改道結果）", exc_info=True)
-            return asdict(enrich_success(
-                # NFO is always written on a successful readonly produce (P1
-                # revert, round-3 review 2026-07-21) — write_nfo=false never
-                # reaches here (rejected above).
-                nfo_written=True,
-                cover_written=cover_written,
-                extrafanart_written=len(assets.get('sample_fs', [])),
-                fields_filled=_readonly_fields_filled(meta),
-                source_used=meta.get('source', ''),
-                has_servable_cover=has_servable_cover,
-            ))
+            return asdict(result)
         except Exception:
             logger.exception("enrich_single_endpoint readonly 改道失敗")
             return asdict(_readonly_enrich_failure("enrich 處理失敗，請查閱日誌", "error"))
@@ -577,7 +492,9 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
     if request.mode == "refresh_full" and not request.overwrite_existing:
         nfo_path, cover_path = resolve_nfo_cover_paths(request.file_path, path_mappings)
         will_write_nfo = request.write_nfo and not os.path.exists(nfo_path)
-        will_write_cover = request.write_cover and not os.path.exists(cover_path)
+        will_write_cover = not should_preserve_cover(
+            request.write_cover, request.overwrite_existing, os.path.exists(cover_path)
+        )
         # 72d-P2A：外部圖寫出機會也是合法的寫出路徑（72b-T6 加入 external_manager 後守衛未同步）
         external_manager = config.get("scraper", {}).get("external_manager", "off")
         if external_manager != "off":
@@ -847,95 +764,42 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                         ro_source, out_root, out_uri = owning
                         if not out_root:
                             return ('error', "未設定媒體庫輸出路徑")
-                        fs_path = uri_to_local_fs_path(itm.file_path, _ro_mappings)
-                        # P2 fix (round-3 review 2026-07-21): thread the caller's own
-                        # effective_source/effective_lang into the ingest scrape-
-                        # fallback instead of leaving resolve_ingest_plan's source/
-                        # javbus_lang at their None defaults (which silently forced
-                        # every no-valid-NFO batch item through source="auto").
-                        meta, cs = resolve_ingest_plan(
-                            fs_path, itm.number, config.get("scraper", {}),
-                            action='ingest', proxy_url=proxy_url, source=es, javbus_lang=el,
-                        )
-                        if not meta:
-                            # FIX P2-A (P2 parity closeout): same not-found
-                            # bookkeeping as enrich_single_endpoint's readonly
-                            # branch (see that branch's comment for the
-                            # insert_if_ignore-before-update_scrape_attempted_at
-                            # trap). This branch already canonicalizes 'no_scrape'
-                            # → reason='not_found' below (:1003) — no change there.
-                            stub_repo = VideoRepository()
-                            _readonly_stub_not_found(stub_repo, uri, itm.number, fs_path)
-                            return ('no_scrape', "找不到可用的番號資料")
-                        repo = VideoRepository()
-                        existing = repo.get_by_path(uri)
-                        # Codex PR#113 P2#3（round 2，owner-confirmed 全面對齊；round 6
-                        # 修正）：batch readonly 對齊 enrich_single_endpoint 同一段
-                        # cover-preserve gate（見該處註解，含 round-6 fix 說明）。
-                        # BatchEnrichRequest 沒有 per-item mode/write_cover/
-                        # overwrite_existing 覆寫欄位（BatchEnrichItem 只帶 file_path/
-                        # number/source/javbus_lang），一律用整批 request 的值。
-                        had_cover = cover_uri_is_servable(
-                            existing.cover_path if existing else "", _ro_mappings
-                        )
-                        cs = apply_cover_preserve(
-                            cs, request.write_cover, request.overwrite_existing, had_cover
-                        )
-                        file_info = {
-                            "path": fs_path,
-                            "size": existing.size_bytes if existing else os.path.getsize(fs_path),
-                            "mtime": existing.mtime if existing else os.path.getmtime(fs_path),
-                        }
+                        # TASK-109-T3: 產出核心（URI→FS 轉換到組 EnrichResult 為止）薄搬移進
+                        # core.readonly_producer.enrich_one_readonly；closure 只保留三個刻意
+                        # 缺口——reject guard + output_dir 解析（上方已做，C3）、javlib 預抓
+                        # （batch 語意固定補缺，scraper_data=None，C1）、縮圖失效（async 段
+                        # thumbnail_cache.invalidate，C4，留 caller）。除了 `enrich_one_readonly`
+                        # 產出核心本身那一步（entry 內部 `_produce_one` 窄 try）之外的任何例外
+                        # （resolve_ingest_plan／repo_factory()／_readonly_stub_not_found 等）
+                        # 一律穿透，不在此捕捉（CD-109-8 C2 typed 邊界）。
+                        # 刻意不傳 after_produce（Codex PR review P1）：batch 改前就是「先算完
+                        # has_servable_cover 才 invalidate」，本來就沒有單片那個回歸；batch 的
+                        # invalidate 留在下方 async 段、自帶 try/except（PR#114 P2 防
+                        # success+failed 雙記），與 after_produce 的觸發時點無關，不要動它。
+                        # focal_before_cover_recheck=True（pre-merge Phase 1 codex 5.6-terra
+                        # P2）：batch 改前的既有順序是 focal 排程先於最終封面重讀
+                        # （scraper.py:899-938，改前 main 67ebb620），與單片相反（單片
+                        # compute 先，見 entry docstring 該參數段）。不傳＝預設 False 會悄悄
+                        # 套用單片順序，翻轉這條既有行為——顯式傳 True 找回來。
                         try:
-                            # _produce_one now returns (movie_dir, assets) — payload
-                            # (P3 review 2026-07-21) carries assets back out of the
-                            # executor so the 'ok' branch below can surface the full
-                            # EnrichResult shape (Codex PR#113 one-pass alignment) on
-                            # the result-item, same as the non-readonly EnrichResult
-                            # shape the frontend (state-batch.js) already keys its
-                            # badge/fly-in animation off of. NFO is always written
-                            # (P1 revert, round-3 review 2026-07-21 — write_nfo=false
-                            # is rejected above, before this point is ever reached).
-                            _, assets = _produce_one(
-                                repo, ro_source, config.get("scraper", {}), file_info=file_info, meta=meta,
-                                cover_strategy=cs, assets_mode='full', existing=existing,
-                                output_root=out_root, output_uri=out_uri,
-                                allocated_this_run=set(), path_mappings=_ro_mappings,
+                            result = enrich_one_readonly(
+                                repo_factory=VideoRepository, ro_source=ro_source, output_root=out_root,
+                                output_uri=out_uri, canonical=uri, file_path=itm.file_path,
+                                number=itm.number, scraper_cfg=config.get("scraper", {}),
+                                path_mappings=_ro_mappings, action='ingest', proxy_url=proxy_url,
+                                scraper_data=None, scrape_source=es, javbus_lang=el,
+                                write_cover=request.write_cover, overwrite_existing=request.overwrite_existing,
+                                focal_before_cover_recheck=True,
                             )
-                        except Exception:
+                        except ReadonlyProduceError:
                             logger.exception("batch_enrich readonly item %s 失敗", itm.number)
                             return ('error', "生成失敗")
-                        # Codex PR#113 P2#4（round 2）：對齊 enrich-single / core.enricher
-                        # ——只在本次「實際寫入新封面內容」時才 reset+re-submit focal。留在
-                        # executor 執行緒內完成（run_in_executor 已離開 event loop）——
-                        # reset_focal_to_auto 是阻塞 DB 寫、maybe_submit_video_focal 內部
-                        # 亦有阻塞 DB 讀，不可搬回外層 async 裸呼叫（async-offload 守衛）。
-                        if assets.get('cover_fs'):
-                            try:
-                                focal_repo = VideoRepository()  # 致命細節 1：不可重用上面的 repo
-                                # TASK-105-T6: reset+submit 收斂至共用 helper。
-                                schedule_focal_after_cover_write(
-                                    focal_repo, uri, meta['number'], meta.get('maker'),
-                                    assets['cover_fs'], _ro_mappings,
-                                )
-                            except Exception:
-                                logger.warning(
-                                    "batch_enrich readonly item %s focal 排程失敗（不影響結果）",
-                                    itm.number, exc_info=True,
-                                )
-                        # Bug 1 fix (feature/105): has_servable_cover MUST re-read
-                        # the final DB row + disk-verify (shared compute_has_servable_cover
-                        # atom, same as core.enricher.enrich_single). The DB read
-                        # (repo.get_by_path) is a BLOCKING sqlite call — it MUST stay
-                        # inside this executor closure (already off the event loop);
-                        # doing it in the async 'ok' branch below would block the loop.
-                        # _produce_one already upserted synchronously above, so this
-                        # reads the produced/preserved cover_path. key=uri (=canonical),
-                        # same namespace as existing = repo.get_by_path(uri) and
-                        # _produce_one's upsert key. Carried out via payload since
-                        # `repo`/`existing` are local to this closure.
-                        has_servable_cover = compute_has_servable_cover(repo, uri, _ro_mappings)
-                        return ('ok', (assets, meta, has_servable_cover))
+                        if not result.success:
+                            # 唯一可能回 success=False 的情況是 entry 內的 not-found 分支
+                            # （resolve_ingest_plan 找不到可用番號資料）；result.error 即
+                            # entry 回的 "找不到可用的番號資料"，與改前 :792 逐字相同。
+                            return ('no_scrape', result.error)
+                        return ('ok', result)
 
                     try:
                         loop = asyncio.get_running_loop()
@@ -943,9 +807,9 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                         if status == 'ok':
                             success_count += 1
                             # PR#114 P2: 縮圖失效是 best-effort cleanup（檔案 unlink 可拋
-                            # OSError）——比照上方 focal 排程各自 try/except 吞掉，不可讓其
-                            # 失敗被外層 except 捕獲，否則同一成功項會 success+failed 雙記
-                            # 且被誤報成失敗（done 匯總 success+failed > total）。
+                            # OSError）——失敗不可讓外層 except 捕獲，否則同一成功項會
+                            # success+failed 雙記、done 匯總 success+failed > total（誤報
+                            # 成失敗）。故各自 try/except 吞掉，不影響主結果。
                             try:
                                 thumbnail_cache.invalidate(canonical)
                             except Exception:
@@ -953,33 +817,17 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                                     "batch_enrich item %s 縮圖失效失敗（不影響結果）",
                                     item.number, exc_info=True,
                                 )
-                            # nfo_written=True unconditionally: assets_mode='full' reaching
-                            # here means _write_movie_assets ran to completion (it raises
-                            # otherwise, caught above as 'error'), and the NFO write is
-                            # always attempted now (P1 revert, round-3 review 2026-07-21 —
-                            # write_nfo=false is rejected above, before this point).
-                            # has_servable_cover was computed INSIDE the executor closure
-                            # (compute_has_servable_cover: final DB re-read + disk verify,
-                            # Bug 1 fix feature/105) and carried out via payload — the DB
-                            # read is blocking and must not run in this async context.
-                            # reason mirrors non-readonly EnrichResult semantics
-                            # (core/enricher.py) so state-batch.js _resolveCardStatus
-                            # doesn't fall back to its success-implies-'hit' default —
-                            # an NFO-only ingest (no servable cover) reports 'no_cover',
-                            # so the frontend never builds a /api/gallery/thumb URL for a
-                            # cover that isn't servable.
-                            assets, item_meta, has_servable_cover = payload or ({}, {}, False)
-                            cover_written = bool(assets.get('cover_fs'))
+                            # feature/109 T3: closure 呼叫的共用入口
+                            # `enrich_one_readonly` 已回傳完整的 `EnrichResult`（payload
+                            # 本身），不再需要在此手動重建 enrich_success(...)——直接
+                            # asdict(payload) 即與改前逐欄位相同（nfo_written=True
+                            # unconditionally、has_servable_cover 由入口內部最終 DB
+                            # 重讀+磁碟複驗算出、reason 沿用 core/enricher.py 的
+                            # 'hit'/'no_cover' 語意，state-batch.js _resolveCardStatus
+                            # 讀到的形狀不變）。
                             result_item = {
                                 'type': 'result-item', 'number': item.number, 'file_path': item.file_path,
-                                **asdict(enrich_success(
-                                    nfo_written=True,
-                                    cover_written=cover_written,
-                                    extrafanart_written=len(assets.get('sample_fs', [])),
-                                    fields_filled=_readonly_fields_filled(item_meta),
-                                    source_used=item_meta.get('source', ''),
-                                    has_servable_cover=has_servable_cover,
-                                )),
+                                **asdict(payload),
                             }
                             yield f"data: {json.dumps(result_item)}\n\n"
                         else:
@@ -1002,11 +850,12 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                             yield f"data: {json.dumps(result_item)}\n\n"
                     except Exception:
                         # TASK-105-T9（BUG，PR#113 round 8 Codex thread `Sn2qv`）：唯讀分支
-                        # 補齊與可寫路徑（:1045 對應 except）同層的 per-item 隔離。narrow
-                        # try（:889，護 _produce_one）與 focal try（:914）之外的任何
-                        # in-executor 例外（如 resolve_ingest_plan）改前會經 await（原
-                        # :941）重拋、直上批次層 try（:803）→ raise → 整批 SSE 崩潰。此
-                        # except 把該唯讀項隔離成一筆失敗結果項，同批其他項照常完成。
+                        # 補齊與可寫路徑同層的 per-item 隔離——這層 except 不是多餘的第二層
+                        # try，是專門補這個洞的。feature/109 T3：closure 內的邊界現在是
+                        # `except ReadonlyProduceError`（只認 enrich_one_readonly 產出步驟
+                        # 失敗 → 回「生成失敗」）；除此之外的任何 in-executor 例外（含入口
+                        # 內前段的 resolve_ingest_plan 等）一律穿透 closure、經 await 重拋，
+                        # 落到這層——把該唯讀項隔離成一筆失敗結果項，同批其他項照常完成。
                         # except Exception（非 BaseException）：asyncio.CancelledError
                         # 需正確上傳，不得被吞成假失敗項。
                         logger.exception("batch_enrich readonly item %s 失敗", item.number)

@@ -26,9 +26,16 @@ from typing import Callable, Optional
 from core import thumbnail_cache
 from core.config import _STEM_IMAGE_MODES, iter_gallery_sources
 from core.database import Video, get_db_path
-from core.enrich_contract import EnrichResult, effective_original_title
+from core.enrich_contract import (
+    EnrichResult,
+    apply_cover_preserve,
+    compute_has_servable_cover,
+    cover_uri_is_servable,
+    effective_original_title,
+    enrich_success,
+)
 from core.focal import requires_face_detection
-from core.focal_trigger import maybe_submit_video_focal
+from core.focal_trigger import maybe_submit_video_focal, schedule_focal_after_cover_write
 from core.gallery_scanner import IMAGE_EXTENSIONS, VideoScanner, fast_scan_directory
 from core.logger import get_logger
 from core.nfo_updater import parse_nfo
@@ -1501,6 +1508,240 @@ def _readonly_enrich_failure(error, reason=None) -> EnrichResult:
         success=False, nfo_written=False, cover_written=False,
         extrafanart_written=0, fields_filled=[], source_used='',
         error=error, reason=reason,
+    )
+
+
+# ---------------------------------------------------------------------------
+# TASK-109-T2 (CD-109-1/2/5/8): single public readonly-enrich entry point —
+# the "produce core" (URI→FS through EnrichResult) shared by the enrich-single
+# router caller (this task) and, from T3, the batch `_do_readonly` caller.
+# Codex PR#113 one-pass alignment (2026-07-21): readonly branch now returns
+# the ACTUAL EnrichResult dataclass shape (asdict'd by the caller) on every
+# path — success AND failure — so the frontend badge/fly-in UI keyed off
+# nfo_written/cover_written/fields_filled/source_used/reason gets the same
+# contract whether the file came from a writable or readonly source.
+# ---------------------------------------------------------------------------
+
+# Codex PR#113 P4 one-pass alignment (2026-07-21): readonly ingest/rescrape
+# writes the whole meta wholesale (no _merge_meta partial-diff concept the
+# way non-readonly core.enricher's single-file entry has), so there is no
+# equivalent "fields the scrape supplemented" diff to report. Listing the non-empty top-level
+# metadata keys is a reasonable "what got written" summary for the
+# fields_filled slot of the EnrichResult shape.
+_READONLY_FIELDS_FILLED_KEYS = ('title', 'actors', 'tags', 'date', 'maker', 'director', 'series', 'label')
+
+
+def _readonly_fields_filled(meta: dict) -> list:
+    return [k for k in _READONLY_FIELDS_FILLED_KEYS if meta.get(k)]
+
+
+class ReadonlyProduceError(Exception):
+    """`_produce_one` 例外的 typed wrapper（見 `enrich_one_readonly` step 8）。
+
+    T2 只負責定義它並在 entry 內轉拋（`raise ReadonlyProduceError(...) from exc`，
+    保留原始例外的 `from exc` chain 供 debug）；batch 側（T3）捕它的行為不在本
+    task 範圍。單片 caller 的外層 `except Exception` 本來就會捕到它 → 回「enrich
+    處理失敗，請查閱日誌」，與改前一致（改前 `_produce_one` 例外本來就落外層）。
+    """
+
+
+def enrich_one_readonly(
+    *,
+    repo_factory,            # Callable[[], repo]；caller 傳入自己的 VideoRepository binding
+    ro_source,                # resolve_owning_output_root 回傳的來源物件（_produce_one 的 source 參數）
+    output_root: str,
+    output_uri: str,
+    canonical: str,           # DB-key URI（caller 已算好）
+    file_path: str,           # 原始 request.file_path（未轉 FS）
+    number,                   # request.number
+    scraper_cfg: dict,        # config.get("scraper", {})
+    path_mappings: dict,
+    action: str = 'ingest',
+    proxy_url: str = '',
+    scraper_data: Optional[dict] = None,   # C1：javlib 預抓結果，單片專用
+    scrape_source=None,       # request.source → resolve_ingest_plan(source=)
+    javbus_lang=None,
+    write_cover: bool,
+    overwrite_existing: bool,
+    after_produce: Optional[Callable[[], None]] = None,
+    focal_before_cover_recheck: bool = False,
+) -> EnrichResult:
+    """單片/批次唯讀 enrich 共用的「產出核心」——薄搬移自
+    `web/routers/scraper.py` 單片 enrich 端點（POST /enrich-single）的唯讀分支
+    （`:472-564`，PR#113 八輪 review 定案的行為，逐行搬移、順序原封不動）。
+
+    刻意排除、留給 caller 的三個缺口（CD-109-8 C1/C3/C4）：javlib 預抓
+    （rescrape + javlibrary + detail_url 才觸發，request 專屬）、
+    `resolve_owning_output_root` 解析 + 三個 reject guard（早退語意屬端點
+    而非產出核心）、`thumbnail_cache.invalidate`（獨立衍生快取，與產出核心
+    無資料依賴，見 T2 card「已知的微幅順序位移」）。
+
+    `after_produce`（Codex PR review P1 修正）：決定要不要失效、失效什麼、
+    失敗算不算錯誤，全都還在 caller 手上——entry 只提供「_produce_one 剛
+    成功」這個觸發時點（緊接 step 8 之後、step 9 `cover_written` 計算之前，
+    對應改前 `scraper.py:528` 那行 invalidate 的位置）。entry 本身不包
+    try/except：呼叫失敗會直接穿透到 entry 的外層 caller try，與改前單片
+    的裸露 invalidate 語意一致。單片 caller 傳
+    `after_produce=lambda: thumbnail_cache.invalidate(canonical)`；batch
+    caller 不傳（batch 的 invalidate 維持在自己的 async 段、自帶
+    try/except，PR#114 P2 防 success+failed 雙記，語意與此缺口無關，見
+    T3 的 C4 保留）。
+
+    `repo_factory` 而非內部 `VideoRepository()`：現行碼在三個不同時點各自
+    `VideoRepository()` 新建實例（樁列用／主 repo／focal_repo），且既有
+    32 處測試對 `web.routers.scraper.VideoRepository` 下 patch——entry 收
+    callable，caller 在呼叫點傳入自己的（可能已被 patch 的）module-global
+    binding，三個新建點原樣保留為三次 `repo_factory()` 呼叫。
+
+    `focal_before_cover_recheck`（pre-merge Phase 1 codex 5.6-terra P2）：**不是**
+    mode flag 分岔內部行為，是「兩個 caller 改前就相反的既有順序」的參數化表達
+    （CD-109-8 C1/C3/C4 之外、CD-109-2「兩邊的差異一律走參數」的第四個缺口）。
+    改前（main 67ebb620）單片 `scraper.py:522-553` 是 compute_has_servable_cover
+    （step 10）先於 focal 排程（step 11）；batch `scraper.py:899-938` 是 focal
+    先於 compute_has_servable_cover。搬進本 entry 後預設值只反映了單片那一種
+    順序，batch 側被悄悄翻轉——本參數把這條既有差異找回來：`False`（預設）＝
+    單片順序（compute 先），單片 caller 不傳；`True`＝batch 順序（focal 先），
+    batch caller 顯式傳入。刻意不 normalize 成同一順序：兩個方向都會改變一條
+    「_produce_one 成功寫出新封面、但緊接著 compute_has_servable_cover 拋錯」
+    時的可觀察錯誤路徑——把 batch 改成單片順序，會讓 batch 在該情境下漏做
+    focal 排程（reset_focal_to_auto + 背景偵測，改前 batch 不會漏）；反過來把
+    單片改成 batch 順序，會讓單片在該情境下**多做**一次
+    `reset_focal_to_auto`，把使用者手動設定的焦點座標重置成 auto——這是更糟
+    的方向（毀使用者意圖），故不可選它當統一方向。兩個區塊（step 10 的
+    compute 呼叫、step 11 的 `if cover_written:` focal 區塊）本身的內容不因
+    這個旗標而改變，只有先後順序被此旗標決定。
+    """
+    # step 1
+    fs_path = uri_to_local_fs_path(file_path, path_mappings)
+    # step 2
+    meta, cover_strategy = resolve_ingest_plan(
+        fs_path, number, scraper_cfg,
+        action=action, proxy_url=proxy_url, scraper_data=scraper_data, source=scrape_source,
+        javbus_lang=javbus_lang,
+    )
+    if not meta:
+        # FIX P2-A / FIX#4 (P2 parity closeout): mirror non-readonly
+        # core.enricher.py:391/429's not-found bookkeeping — mark
+        # scrape_attempted_at so this file isn't rescanned/rescraped
+        # forever. TRAP: update_scrape_attempted_at is a bare
+        # UPDATE...WHERE path=? that silently no-ops without a row —
+        # insert_if_ignore MUST run first to create the stub row
+        # (mirrors bulk readonly_producer.py:1559-1561 byte-for-byte).
+        # reason='not_found' (not 'error') matches the batch sibling
+        # and non-readonly enricher.py:393/431.
+        # step 3
+        repo = repo_factory()
+        _readonly_stub_not_found(repo, canonical, number, fs_path)
+        return _readonly_enrich_failure("找不到可用的番號資料", "not_found")
+    # step 4
+    repo = repo_factory()
+    existing = repo.get_by_path(canonical)
+    # Codex PR#113 P2#3（round 2，owner-confirmed 全面對齊；round 6 修正）：
+    # readonly enrich 對齊非唯讀 core.enricher._write_cover 的 skip 語意
+    # （os.path.exists(cover) and not overwrite_existing）——fill_missing
+    # （放大鏡在「已有封面、缺 NFO」的片上點，見 state-lightbox.js:1634-1650）
+    # 或 write_cover=false 時只補 NFO，絕不動既有封面（output_dir 的封面檔與
+    # DB cover_path 皆保留）。refresh_full（gear 一律送 mode='refresh_full'
+    # +overwrite_existing=true，見 state-rescrape.js:404/408；或放大鏡在無
+    # 封面片上點）不受此擋，維持既有「一律寫」行為。
+    # round 6 fix（Codex PR#113 round-6，P2，found in 2 readonly branches）：
+    # had_cover 只看 DB `existing.cover_path` 不夠——DB row 可能殘留、輸出
+    # 封面檔已被刪除或路徑對應後在磁碟上不存在，這樣仍會誤判「已有封面」
+    # 而跳過重建，留下一張壞掉/消失的圖。改為額外要求檔案實際存在於磁碟，
+    # 與 _write_cover 的 os.path.exists(cover_path) 判斷真正一致。
+    # step 5
+    had_cover = cover_uri_is_servable(
+        existing.cover_path if existing else "", path_mappings
+    )
+    # step 6
+    cover_strategy = apply_cover_preserve(
+        cover_strategy, write_cover, overwrite_existing, had_cover
+    )
+    # step 7
+    file_info = {
+        "path": fs_path,
+        "size": existing.size_bytes if existing else os.path.getsize(fs_path),
+        "mtime": existing.mtime if existing else os.path.getmtime(fs_path),
+    }
+    # step 8 — C2 typed 邊界：只包這一個呼叫，前後任何步驟都不得進這個 try。
+    # _produce_one now returns (movie_dir, assets). NFO is always written
+    # (P1 revert, round-3 review 2026-07-21 — write_nfo=false is rejected by
+    # the caller before this entry is ever invoked). cover_written reflects
+    # whether the cover step actually produced a file (cover_strategy=
+    # ('none',) or a failed copy/download both leave assets['cover_fs'] == '').
+    try:
+        _, assets = _produce_one(
+            repo, ro_source, scraper_cfg, file_info=file_info,
+            meta=meta, cover_strategy=cover_strategy, assets_mode='full',
+            existing=existing, output_root=output_root, output_uri=output_uri,
+            allocated_this_run=set(), path_mappings=path_mappings,
+        )
+    except Exception as exc:
+        raise ReadonlyProduceError("readonly _produce_one 失敗") from exc
+    # Codex PR review P1：對應改前 scraper.py:528 invalidate 的位置——
+    # _produce_one 剛成功寫出 NFO/封面、DB cover_path 已更新，此時觸發縮圖
+    # 失效，即使後面 step 10 compute_has_servable_cover 拋錯也不漏做（改前
+    # 單片就是先 invalidate 再算 has_servable_cover）。不包 try：failure
+    # 語意交給 caller（見上方 docstring）。
+    if after_produce is not None:
+        after_produce()
+    # step 9
+    cover_written = bool(assets.get('cover_fs'))
+    # Bug 1 fix (feature/105): `reason` must reflect whether a SERVABLE
+    # cover exists — DB has cover_path AND the physical file is on disk —
+    # not just whether the DB row has a cover_path. _produce_one已同步
+    # upsert（寫檔+_db_upsert）於上，故此處重讀 DB 最終 cover_path + 磁碟
+    # 複驗，與 core.enricher 非唯讀單片入口共用同一個 compute_has_servable_cover
+    # 原子（消除唯讀漏磁碟複驗的破圖 false-positive）。key=canonical，與
+    # 上方 existing = repo.get_by_path(canonical) 及 _produce_one 的 upsert
+    # key 同一命名空間。
+    # step 10 / step 11 — pre-merge Phase 1 codex 5.6-terra P2：兩者的先後由
+    # `focal_before_cover_recheck` 決定（見上方 docstring 該參數段）。
+    #
+    # 重複的取捨：**只重複 step 10 那一行 compute 呼叫，focal 區塊維持單一份**。
+    # ① 不用共用 nested function 包起來重排——`test_enrich_contract_structure.py`
+    #    的 `TestPositiveContractLocks` 只掃本函式 body 的直接子節點 `ast.Call`
+    #    （不下探 nested `FunctionDef`），包起來會讓 compute_has_servable_cover /
+    #    schedule_focal_after_cover_write 從「直接呼叫」消失、觸發正向鎖 false positive。
+    # ② 也不用 if/else 各放一份完整區塊——那會讓 focal 的 10 行（含
+    #    `repo_factory()` 必須是新實例、try/except 吞掉、cover_written 閘門）
+    #    存在兩份，正是本 branch 要消滅的「同一段邏輯兩份、改一份漏一份」形狀，
+    #    且正向鎖只要求名稱出現一次、抓不到只改其中一份的漂移。
+    # 故改為「一行 compute 重複兩次、focal 單一份」：漂移面從 10 行縮到 1 行，
+    # 且兩個名稱仍都是 body 的直接子節點呼叫，正向鎖照常成立。
+    # step 10（單片順序：compute 先）——只在單片方向執行
+    if not focal_before_cover_recheck:
+        has_servable_cover = compute_has_servable_cover(repo, canonical, path_mappings)
+    # Codex PR#113 P2#4（round 2）：對齊 core.enricher 非唯讀單片入口:528-547
+    # ——只在「本次實際寫入新封面內容」時才作廢舊手動焦點、再排新的背景偵測。
+    # preserve_cover=True 時 cover_strategy=('none',) 不產出檔案，
+    # assets['cover_fs'] 恆為空 → cover_written 恆 False，此塊不進、既有
+    # manual 焦點原樣保留（與 enricher 的 cover_written 閘門語意一致）。
+    # step 11 — focal 區塊**只有這一份**（見上方 step 10/11 註解的重複權衡）
+    if cover_written:
+        try:
+            focal_repo = repo_factory()  # 致命細節 1：不可重用上面的 repo 變數
+            # TASK-105-T6: reset+submit 收斂至共用 helper。
+            schedule_focal_after_cover_write(
+                focal_repo, canonical, meta['number'], meta.get('maker'),
+                assets['cover_fs'], path_mappings,
+            )
+        except Exception:
+            logger.warning("readonly enrich focal 排程失敗（不影響改道結果）", exc_info=True)
+    # step 10（batch 順序：focal 先、compute 後）——只在 batch 方向執行
+    if focal_before_cover_recheck:
+        has_servable_cover = compute_has_servable_cover(repo, canonical, path_mappings)
+    # step 12
+    return enrich_success(
+        # NFO is always written on a successful readonly produce (P1
+        # revert, round-3 review 2026-07-21) — write_nfo=false never
+        # reaches here (rejected by the caller before this entry runs).
+        nfo_written=True,
+        cover_written=cover_written,
+        extrafanart_written=len(assets.get('sample_fs', [])),
+        fields_filled=_readonly_fields_filled(meta),
+        source_used=meta.get('source', ''),
+        has_servable_cover=has_servable_cover,
     )
 
 

@@ -1,27 +1,40 @@
-"""唯讀/非唯讀第②層「寫後記帳+回報」收斂終態的跨檔 AST 結構守衛（feature/105 T7）。
+"""唯讀/非唯讀第②層「寫後記帳+回報」收斂終態的跨檔 AST 結構守衛（feature/105 T7，
+v0.13 TASK-109-T6 翻面）。
 
 [pytest-justified: cross-file Python AST contract, feature/91/66 先例]
 
-把 T1–T6 收斂後的「一份實作」最終狀態用機械閘鎖死，防止 enricher 未來一長新
-欄位就再手抄一份唯讀拷貝（PR#113 八輪 churn 的根因）：
+把「一份實作」最終狀態用機械閘鎖死，防止未來一長新欄位就再手抄一份拷貝
+（PR#113 八輪 churn 的根因）。TASK-109（T2/T3）把單片／batch 唯讀分支的第②層
+邏輯收斂進 `core.readonly_producer.enrich_one_readonly` 公開入口後，本檔的鎖
+跟著翻面——鎖的是「呼叫方走公開入口」而非「兩份拷貝各自手抄同一組 helper」：
 
-  1. **正向鎖**：對明列的 production target 函式（P1–P7），斷言其 named
-     FunctionDef body 內含對應 `core.enrich_contract` / `core.focal_trigger`
-     helper 的 `ast.Call`（消除手抄的第②層邏輯）。
-  2. **負向鎖**：對同一批 target body，以 AST 節點形狀（非字串 regex）斷言
-     四類舊 mirror 手抄指紋不復生。
+  1. **正向鎖**（`POSITIVE_LOCKS`）：對明列的 production target 函式
+     （P1–P6、P8），斷言其 named FunctionDef body 內含對應 helper / 公開入口
+     的 `ast.Call`。P4（`enrich_single_endpoint`）/P6（`_do_readonly`）鎖的是
+     單一入口 `enrich_one_readonly`；P8 鎖該入口自身必須呼叫五支收斂後的
+     共用 helper（原 P4/P6/P7 的目的搬家至此，不是消失）。
+  2. **負向鎖**：
+     a. `TestNegativeMirrorLocks`：對 `NEGATIVE_SCAN_TARGETS`（與
+        `POSITIVE_LOCKS` 解耦的自有清單，CD-109-9）逐一斷言四類舊 mirror
+        手抄指紋不復生。
+     b. `TestNegativeForbiddenPrimitiveCalls`：`enrich_single_endpoint` /
+        `_do_readonly` 的 body 不得直接呼叫已收斂進 `enrich_one_readonly`
+        的私有 primitive——先解析 import alias binding（module-level ∪
+        target 函式自身含巢狀 scope 的 `ast.ImportFrom`）再掃 `ast.Call`，
+        防止 function-local `import … as x` 繞過（CD-109-4/10）。
   3. **白名單防腐**：每個 named target 必須能 AST 定位，避免改名後恆綠假通過。
 
 掃描粒度＝named `FunctionDef`/`AsyncFunctionDef` 的「直接 body」（遞迴但**停在
 巢狀 def**，比照先例 `test_async_offload_guard.py::_collect_direct_calls`）：
-`event_generator` 收集 Call 時停在 nested `_do_readonly`，故 P6 的四支阻塞
-helper 不會污染 P7、P7 只鎖 event_generator 自身的 `enrich_success`。
+`event_generator` 收集 Call 時停在 nested `_do_readonly`，兩者的直接呼叫集合
+互不污染。
 
 為何 pytest 不是 lint（CLAUDE.md「Lint 守衛規則」north-star）：本守衛驗的是
-「某個 Python 函式的源碼語意（AST 節點形狀）」——CLAUDE.md 判斷原則明列此類走
-pytest（C 類）。它 walk named FunctionDef 的 `ast.Call`/`ast.Assign`/`ast.BoolOp`
-節點形狀，非 `"name" in source` 字面掃描，故 eslint/static_guard 無法表達、
-亦不觸 SA-pre-6 的 html/js/css content-based 偵測。
+「某個 Python 函式的源碼語意（AST 節點形狀 / import binding）」——CLAUDE.md
+判斷原則明列此類走 pytest（C 類）。它 walk named FunctionDef 的
+`ast.Call`/`ast.Assign`/`ast.BoolOp`/`ast.ImportFrom` 節點形狀，非
+`"name" in source` 字面掃描，故 eslint/static_guard 無法表達、亦不觸
+SA-pre-6 的 html/js/css content-based 偵測。
 """
 import ast
 import pathlib
@@ -31,6 +44,7 @@ import pytest
 REPO_ROOT = pathlib.Path(__file__).parents[2]
 ENRICHER_PY = REPO_ROOT / "core" / "enricher.py"
 SCRAPER_PY = REPO_ROOT / "web" / "routers" / "scraper.py"
+READONLY_PRODUCER_PY = REPO_ROOT / "core" / "readonly_producer.py"
 
 
 # ============================================================
@@ -96,8 +110,39 @@ def _direct_call_names(func_node) -> set:
     }
 
 
+def _collect_import_aliases(import_nodes, forbidden: set) -> dict:
+    """從一批 `ast.ImportFrom` 節點收集「指向 forbidden 原始名稱」的本地名稱綁定。
+
+    回傳 {本地名稱（asname 或 name）: 原始名稱}。用於先解析 import alias binding
+    再去掃 `ast.Call`——`from mod import x as y` 之後 body 內 `y(...)` 呼叫的
+    `_call_name` 只會是 `y`，不解 alias 就掃不到真正指向 `x` 的呼叫。
+    """
+    aliases = {}
+    for node in import_nodes:
+        for alias in node.names:
+            if alias.name in forbidden:
+                aliases[alias.asname or alias.name] = alias.name
+    return aliases
+
+
+def _module_level_import_froms(tree: ast.Module) -> list:
+    """只收 module 最外層（非任何函式/類別內）的 `ast.ImportFrom`。"""
+    return [n for n in tree.body if isinstance(n, ast.ImportFrom)]
+
+
+def _all_import_froms_in_func(func_node) -> list:
+    """target 函式自身（含其巢狀 scope，`ast.walk` 全下潛）內所有 `ast.ImportFrom`。
+
+    刻意不比照 `_direct_nodes` 停在巢狀 def——function-local alias import 可能
+    寫在任何深度，收集階段要抓全，掃 Call 階段才用 `_direct_nodes` 的 body 粒度
+    （見 TASK-109-T6 §3「必須先解析 import alias binding 再掃呼叫」）。
+    """
+    return [n for n in ast.walk(func_node) if isinstance(n, ast.ImportFrom)]
+
+
 # ============================================================
-# 正向鎖清單（HEAD 51d33ca3 實測，權威見 TASK-105-T7 現況分析表）
+# 正向鎖清單（HEAD 7a8289d9 實測，v0.13 TASK-109-T6 翻面，權威見 TASK-105-T7
+# 現況分析表 + TASK-109-T6 現況分析表）
 # ============================================================
 # (檔案, 函式名, {必含 helper Call})
 POSITIVE_LOCKS = [
@@ -112,31 +157,56 @@ POSITIVE_LOCKS = [
     (ENRICHER_PY, "_write_cover", {"should_preserve_cover"}),
     # P3
     (ENRICHER_PY, "fetch_samples_only", {"enrich_success"}),
-    # P4
-    (SCRAPER_PY, "enrich_single_endpoint", {
+    # P4 — v0.13 翻面（TASK-109-T2）：enrich_single_endpoint 的唯讀分支不再手抄
+    # 五支 helper，改呼叫公開入口 enrich_one_readonly；原「不得手抄第②層」的
+    # 目的沒有消失，搬到 P8 鎖 enrich_one_readonly 自身。**不得改回鎖 helper
+    # 名單**——那五支呼叫現在活在 core/readonly_producer.py，此函式看不到。
+    (SCRAPER_PY, "enrich_single_endpoint", {"enrich_one_readonly"}),
+    # P5
+    (SCRAPER_PY, "fetch_samples_endpoint", {"enrich_success"}),
+    # P6 — v0.13 翻面（TASK-109-T3）：同 P4，_do_readonly closure 改呼叫公開
+    # 入口，四支阻塞 helper 的呼叫搬進 enrich_one_readonly（P8）。**不得改回**
+    # 鎖 helper 名單，理由同 P4。
+    (SCRAPER_PY, "_do_readonly", {"enrich_one_readonly"}),
+    # P7 移除（TASK-109-T3）：event_generator 的 batch 唯讀成功分支不再手抄
+    # enrich_success(...)，改為 asdict(payload)（payload 即 enrich_one_readonly
+    # 已回傳好的 EnrichResult）。**不得加回這條正向鎖**——已無共用 helper 可鎖。
+    # event_generator 本身仍留在 NEGATIVE_SCAN_TARGETS（CD-109-9①，見下）。
+    # P8 — 新增（TASK-109-T6）：五支 helper 呼叫搬家後的新家。P4/P6 移除的目的
+    # 在此重新鎖住——enrich_one_readonly 必須親自呼叫這五支，不得再手抄。
+    (READONLY_PRODUCER_PY, "enrich_one_readonly", {
         "cover_uri_is_servable",
         "apply_cover_preserve",
         "compute_has_servable_cover",
         "enrich_success",
-        "schedule_focal_after_cover_write",  # focal 站 B（AC7）
+        "schedule_focal_after_cover_write",
     }),
-    # P5
-    (SCRAPER_PY, "fetch_samples_endpoint", {"enrich_success"}),
-    # P6 — nested：只鎖自身 body 的四支阻塞 helper，**不含** enrich_success
-    #      （enrich_success 在 event_generator/P7，非 _do_readonly）
-    (SCRAPER_PY, "_do_readonly", {
-        "cover_uri_is_servable",
-        "apply_cover_preserve",
-        "compute_has_servable_cover",
-        "schedule_focal_after_cover_write",  # focal 站 C（AC7）
-    }),
-    # P7 — nested async：batch 唯讀成功 result dict 專屬（在 _do_readonly 返回後的
-    #      async context，收集停在 nested def 故不含 P6 四支）
-    (SCRAPER_PY, "event_generator", {"enrich_success"}),
 ]
 
-# 白名單防腐：所有 named target（去重）
-ALL_TARGETS = [(f, n) for f, n, _ in POSITIVE_LOCKS]
+# CD-109-9（硬要求）：與 POSITIVE_LOCKS 解耦的自有明列清單，不由 POSITIVE_LOCKS
+# 推導——避免「從 POSITIVE_LOCKS 拿掉一個 target」同時讓它悄悄掉出負向指紋／
+# 白名單防腐的掃描集合（覆蓋靜默收縮的 fail-open）。
+NEGATIVE_SCAN_TARGETS = [
+    (ENRICHER_PY, "enrich_single"),
+    (ENRICHER_PY, "_write_cover"),
+    (ENRICHER_PY, "fetch_samples_only"),
+    (SCRAPER_PY, "enrich_single_endpoint"),
+    (SCRAPER_PY, "fetch_samples_endpoint"),
+    (SCRAPER_PY, "_do_readonly"),
+    (SCRAPER_PY, "event_generator"),                # 失去正向鎖（P7 移除），但仍須留在負向掃描集合
+    (READONLY_PRODUCER_PY, "enrich_one_readonly"),  # 新家：邏輯搬家了，鎖也要跟著搬
+]
+
+# 白名單防腐 / 負向指紋：所有 named target（去重）
+ALL_TARGETS = NEGATIVE_SCAN_TARGETS
+
+
+def test_every_positive_target_is_negative_scanned():
+    """一致性守衛（fail-closed）：所有正向鎖 target 必須是負向掃描集合的子集，
+    防未來有人加正向鎖卻忘了同步加進 NEGATIVE_SCAN_TARGETS（CD-109-9）。
+    """
+    assert {(f, n) for f, n, _ in POSITIVE_LOCKS} <= set(NEGATIVE_SCAN_TARGETS)
+
 
 _TREE_CACHE: dict = {}
 
@@ -151,7 +221,9 @@ def _tree(py_file: pathlib.Path) -> ast.Module:
 # [lint-guard: pytest-justified] Python-AST 源碼語意守衛（cross-file enrich_contract 契約）：
 # 斷言 AST 節點形狀 / detector 函式在 parsed Python 片段上的行為，非 html/js/css 靜態
 # 字串存在檢查，eslint/static_guard 無法表達（pre-merge SA-pre-6 例外清單「Python-AST
-# 源碼語意守衛」）。
+# 源碼語意守衛」）。v0.13 TASK-109-T6：P4/P6 改鎖公開入口 enrich_one_readonly、
+# P7 移除、新增 P8 鎖該入口自身的五支 helper（POSITIVE_LOCKS 翻面，理由見各條目
+# inline 註解）。
 class TestPositiveContractLocks:
     """正向鎖：每個 target body 必含指定共用 helper 的 Call（消除手抄第②層）。"""
 
@@ -262,7 +334,9 @@ NEGATIVE_FINGERPRINTS = [
 # [lint-guard: pytest-justified] Python-AST 源碼語意守衛（cross-file enrich_contract 契約）：
 # 斷言 AST 節點形狀 / detector 函式在 parsed Python 片段上的行為，非 html/js/css 靜態
 # 字串存在檢查，eslint/static_guard 無法表達（pre-merge SA-pre-6 例外清單「Python-AST
-# 源碼語意守衛」）。
+# 源碼語意守衛」）。v0.13 TASK-109-T6：掃描集合改讀 NEGATIVE_SCAN_TARGETS——與
+# POSITIVE_LOCKS 解耦的自有清單（CD-109-9），不再由 POSITIVE_LOCKS 推導，避免
+# 正向鎖被拿掉時覆蓋跟著靜默收縮。
 class TestNegativeMirrorLocks:
     """負向鎖：target body 內不得殘留四類舊 mirror 手抄指紋。"""
 
@@ -282,35 +356,92 @@ class TestNegativeMirrorLocks:
         )
 
 
+# 負向鎖 body 粒度掃描的禁用私有 primitive 名單（TASK-109-T6 §3）：這些已收斂進
+# enrich_one_readonly（P8）的呼叫，不得再被 enrich_single_endpoint / _do_readonly
+# 這兩個公開入口 caller 直接呼叫（呼叫方必須走 enrich_one_readonly，不得繞過）。
+# **刻意不含** should_preserve_cover —— TASK-109-T5 讓 enrich_single_endpoint 合法
+# 呼叫它（refresh_full + overwrite_existing=false 的分裂防呆封面政策，:490），列入
+# 會誤殺。
+FORBIDDEN_PRIVATE_PRIMITIVES = frozenset({
+    "_produce_one",
+    "resolve_ingest_plan",
+    "_readonly_stub_not_found",
+    "cover_uri_is_servable",
+    "apply_cover_preserve",
+    "compute_has_servable_cover",
+    "schedule_focal_after_cover_write",
+})
+
+FORBIDDEN_PRIMITIVE_TARGETS = [
+    (SCRAPER_PY, "enrich_single_endpoint"),
+    (SCRAPER_PY, "_do_readonly"),
+]
+
+
+# [lint-guard: pytest-justified] Python-AST 源碼語意守衛（cross-file enrich_contract 契約）：
+# 斷言 AST 節點形狀 / import alias binding 在 parsed Python 原始碼上的行為，非
+# html/js/css 靜態字串存在檢查，eslint/static_guard 無法表達（pre-merge SA-pre-6
+# 例外清單「Python-AST 源碼語意守衛」）。新增於 v0.13 TASK-109-T6：先解析 import
+# alias binding（module-level ∪ target 函式自身含巢狀 scope 的 ast.ImportFrom）
+# 聯集成本地名稱集合，再掃 target body 的 ast.Call——防止 function-local
+# `import … as x` 繞過只讀 module-level 的掃描。
+class TestNegativeForbiddenPrimitiveCalls:
+    """負向鎖（body 粒度 + import alias 解析）：`enrich_single_endpoint` /
+    `_do_readonly` 的 body 不得直接呼叫已收斂進 `enrich_one_readonly` 的私有
+    primitive——呼叫方必須走公開入口，不得繞過（CD-109-4／CD-109-10）。
+    """
+
+    @pytest.mark.parametrize("py_file, func_name", FORBIDDEN_PRIMITIVE_TARGETS,
+                             ids=[n for _, n in FORBIDDEN_PRIMITIVE_TARGETS])
+    def test_target_does_not_call_forbidden_primitives(self, py_file, func_name):
+        tree = _tree(py_file)
+        func = _find_func(tree, func_name)
+        assert func is not None, f"{py_file.name}:{func_name} 定位不到（白名單防腐應先報）"
+
+        module_aliases = _collect_import_aliases(
+            _module_level_import_froms(tree), FORBIDDEN_PRIVATE_PRIMITIVES)
+        local_aliases = _collect_import_aliases(
+            _all_import_froms_in_func(func), FORBIDDEN_PRIVATE_PRIMITIVES)
+        banned_local_names = set(module_aliases) | set(local_aliases)
+
+        # 三條繞過路徑都要擋（fail-closed）：
+        #   ① 裸名直呼 `resolve_ingest_plan(...)`（module-level `from … import`）
+        #   ② alias `from … import _produce_one as produce` 後呼叫 `produce(...)`
+        #      ——不論 alias 綁在 module-level 還是 target 函式自身的巢狀 scope
+        #   ③ **module 屬性存取** `readonly_producer.resolve_ingest_plan(...)`
+        #      （`from core import readonly_producer`）——`_call_name` 對
+        #      `ast.Attribute` 回 `.attr`，但這條**不會**出現在 import alias 綁定
+        #      集合裡，故必須額外用原始名稱直接比對，否則存在真實繞過路徑。
+        called = {_call_name(n) for n in _direct_nodes(func) if isinstance(n, ast.Call)}
+        called.discard(None)
+        violations = sorted(called & (banned_local_names | set(FORBIDDEN_PRIVATE_PRIMITIVES)))
+        assert not violations, (
+            f"{py_file.name}:{func_name}() 直接呼叫已收斂進 enrich_one_readonly 的"
+            f" 私有 primitive: {violations} —— 應改走 enrich_one_readonly 公開入口，"
+            f"不得繞過（本地名稱綁定: {sorted(banned_local_names)}）"
+        )
+
+
 # [lint-guard: pytest-justified] Python-AST 源碼語意守衛（cross-file enrich_contract 契約）：
 # 斷言 AST 節點形狀 / detector 函式在 parsed Python 片段上的行為，非 html/js/css 靜態
 # 字串存在檢查，eslint/static_guard 無法表達（pre-merge SA-pre-6 例外清單「Python-AST
-# 源碼語意守衛」）。
+# 源碼語意守衛」）。v0.13 TASK-109-T6：刪除 test_961_tuple_target_not_flagged
+# （其錨定的 production 碼已被 T3 合法移除）；覆蓋同一 detector 行為的合成孿生
+# 測試移至 TestNegativeDetectorSensitivity::test_fp1_passes_961_tuple_and_correct_call，
+# 不隨 production 重構腐爛。
 class TestFalsePositiveGuards:
-    """反證：GREEN 狀態下守衛不誤傷 961 Tuple-target 與非-target plain meta.get。"""
+    """反證：GREEN 狀態下守衛不誤傷非-target plain meta.get。
 
-    def test_961_tuple_target_not_flagged(self):
-        """scraper.py:961 `assets, item_meta, has_servable_cover = payload or ({}, {}, False)`
-        是 Tuple-target 的正確碼（T2「用參數表達刻意差異」），負向鎖指紋1 不得命中。
-        """
-        eg = _find_func(_tree(SCRAPER_PY), "event_generator")
-        assert eg is not None
-        tuple_assigns = [
-            n for n in _direct_nodes(eg)
-            if isinstance(n, ast.Assign)
-            and len(n.targets) == 1 and isinstance(n.targets[0], ast.Tuple)
-            and any(isinstance(e, ast.Name) and e.id == "has_servable_cover"
-                    for e in n.targets[0].elts)
-        ]
-        assert tuple_assigns, (
-            "應能在 event_generator 定位到 961 的 Tuple-target has_servable_cover 解包"
-            "（找不到代表掃描函式錯或該碼已移除，需複查 T7 設計）"
-        )
-        for a in tuple_assigns:
-            assert not _is_mirror_cover_assign(a), (
-                "961 Tuple-target `payload or (…)` 被指紋1 誤報為 BLOCKER —— "
-                "指紋1 的『單一 bare Name target + 兩 Name operand』排除失效"
-            )
+    v0.13 TASK-109-T6：原本這裡還有 test_961_tuple_target_not_flagged，錨定
+    scraper.py:961 的 Tuple-target `has_servable_cover` 解包（T2「用參數表達刻意
+    差異」的正確碼）。T3 把該行 production 碼合法移除後錨點不復存在，遂刪除本體。
+    刪除不是 fail-open——它驗的 detector 行為（指紋1 不得誤報 Tuple-target）已有
+    不依賴 production 碼的孿生測試覆蓋：
+    `TestNegativeDetectorSensitivity::test_fp1_passes_961_tuple_and_correct_call`
+    直接餵合成片段 `a, b, has_servable_cover = payload or ({}, {}, False)` 斷言
+    `not _is_mirror_cover_assign(...)`，且不隨 production 重構腐爛（M9 mutation
+    自驗：破壞 `_is_mirror_cover_assign` 的 Tuple-target 排除邏輯 → 該孿生測試紅）。
+    """
 
     def test_plain_meta_get_original_title_not_in_targets(self):
         """三處 plain `meta.get("original_title","")` 皆在非-target 函式
@@ -388,7 +519,9 @@ class TestNegativeDetectorSensitivity:
 # [lint-guard: pytest-justified] Python-AST 源碼語意守衛（cross-file enrich_contract 契約）：
 # 斷言 AST 節點形狀 / detector 函式在 parsed Python 片段上的行為，非 html/js/css 靜態
 # 字串存在檢查，eslint/static_guard 無法表達（pre-merge SA-pre-6 例外清單「Python-AST
-# 源碼語意守衛」）。
+# 源碼語意守衛」）。v0.13 TASK-109-T6：ALL_TARGETS = NEGATIVE_SCAN_TARGETS（已與
+# POSITIVE_LOCKS 解耦的自有清單），本 class 因此掃描 8 個 target（含新家
+# enrich_one_readonly 與失去正向鎖但仍受掃描的 event_generator）。
 class TestWhitelistAntiRot:
     """白名單防腐（比照先例 test_whitelist_entries_exist）：
     每個 named target 必須能在對應檔 AST 定位，否則守衛指向殭屍函式、恆綠假通過。

@@ -146,7 +146,7 @@ class TestResultItemReadonlyStationReason:
             return_value=(source_stub, "/out/ro_src-x", "file:///out/ro_src-x"),
         )
         mocker.patch(
-            "web.routers.scraper.resolve_ingest_plan",
+            "core.readonly_producer.resolve_ingest_plan",
             return_value=plan_return
             if plan_return is not None
             else ({"number": "RO-001", "title": "T", "cover": ""}, ("none",)),
@@ -154,7 +154,7 @@ class TestResultItemReadonlyStationReason:
         # _produce_one now returns (movie_dir, assets) — tuple default so the
         # router's `_, assets = _produce_one(...)` unpack succeeds.
         mock_produce = mocker.patch(
-            "web.routers.scraper._produce_one",
+            "core.readonly_producer._produce_one",
             return_value=(Path("/out/ro_src-x/RO-001"), {"cover_fs": "", "sample_fs": [], "nfo_mtime": 1.0}),
         )
         mock_repo = mocker.patch("web.routers.scraper.VideoRepository")

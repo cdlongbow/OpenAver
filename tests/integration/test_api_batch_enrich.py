@@ -382,7 +382,7 @@ class TestBatchEnrichReadonlyGuard:
             return_value=(source_stub, "/out/ro_src-x", "file:///out/ro_src-x"),
         )
         mock_plan = mocker.patch(
-            "web.routers.scraper.resolve_ingest_plan",
+            "core.readonly_producer.resolve_ingest_plan",
             return_value=plan_return
             if plan_return is not None
             else ({"number": "RO-001", "title": "T", "cover": ""}, ("none",)),
@@ -391,7 +391,7 @@ class TestBatchEnrichReadonlyGuard:
         # (only used when produce_side_effect is None) keeps the router's
         # `_, assets = _produce_one(...)` unpack from raising on a bare MagicMock.
         mock_produce = mocker.patch(
-            "web.routers.scraper._produce_one",
+            "core.readonly_producer._produce_one",
             side_effect=produce_side_effect,
             return_value=(Path("/out/ro_src-x/RO-001"), {"cover_fs": "", "sample_fs": [], "nfo_mtime": 1.0}),
         )
@@ -473,11 +473,11 @@ class TestBatchEnrichReadonlyGuard:
             return_value=(source_stub, "/out/ro_src-x", "file:///out/ro_src-x"),
         )
         mocker.patch(
-            "web.routers.scraper.resolve_ingest_plan",
+            "core.readonly_producer.resolve_ingest_plan",
             return_value=({"number": "RO-001", "title": "T", "cover": ""}, ("none",)),
         )
         mocker.patch(
-            "web.routers.scraper._produce_one",
+            "core.readonly_producer._produce_one",
             return_value=(
                 Path("/out/ro_src-x/RO-001"),
                 {"cover_fs": "/out/ro_src-x/RO-001/RO-001.jpg", "sample_fs": [], "nfo_mtime": 1.0},
@@ -517,11 +517,11 @@ class TestBatchEnrichReadonlyGuard:
             return_value=(source_stub, "/out/ro_src-x", "file:///out/ro_src-x"),
         )
         mocker.patch(
-            "web.routers.scraper.resolve_ingest_plan",
+            "core.readonly_producer.resolve_ingest_plan",
             return_value=({"number": "RO-001", "title": "T", "cover": ""}, ("none",)),
         )
         mocker.patch(
-            "web.routers.scraper._produce_one",
+            "core.readonly_producer._produce_one",
             return_value=(Path("/out/ro_src-x/RO-001"), {"cover_fs": "", "sample_fs": [], "nfo_mtime": 1.0}),
         )
         mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
@@ -773,7 +773,7 @@ class TestBatchEnrichReadonlyGuard:
             return ({"number": number, "title": "T", "cover": ""}, ("none",))
 
         mocker.patch(
-            "web.routers.scraper.resolve_ingest_plan",
+            "core.readonly_producer.resolve_ingest_plan",
             side_effect=_plan_side_effect,
         )
 
@@ -804,6 +804,113 @@ class TestBatchEnrichReadonlyGuard:
         done_events = [e for e in events if e["type"] == "done"]
         assert len(done_events) == 1
         assert done_events[0]["summary"] == {"total": 3, "success": 2, "failed": 1}
+
+    # TASK-109-T3（CD-109-3③ AC4）：共用入口 `enrich_one_readonly` 收斂後，唯讀
+    # produce 序列整個住進入口——本測試證明「入口內部拋出非 ReadonlyProduceError
+    # 例外」時，batch 端仍能把該片隔離成一筆失敗結果項、同批其他片（唯讀成功片 +
+    # 可寫片）照常完成。只驗隔離語意與計數，不驗文案（文案分流由下面兩條 AC2①/②
+    # 各自驗）——與上面 `test_readonly_item_resolve_plan_raises_isolated_batch_continues`
+    # 底層是同一個故障注入點（resolve_ingest_plan），但那條只驗 reason=='error'，
+    # 這條額外驗 done 的 success+failed==total 不變式，是獨立測試函式（Opus 裁決，
+    # 不合併，見 TASK-109-T3.md Test Strategy）。
+    def test_readonly_entry_internal_exception_isolated_batch_continues(self, client, mocker):
+        """AC4：共用入口內部拋出非 ReadonlyProduceError 例外 → 該片隔離成一筆失敗
+        結果項，同批其他片（唯讀成功片 + 可寫片）仍完成，done 匯總
+        success+failed == total。不斷言文案。"""
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=self._readonly_config(),
+        )
+        mocker.patch("web.routers.scraper.enrich_single", return_value=_ok_result())
+        self._mock_readonly_routing(mocker)
+
+        def _plan_side_effect(fs_path, number, *args, **kwargs):
+            if number == "RO-FAIL":
+                raise RuntimeError("boom inside enrich_one_readonly entry")
+            return ({"number": number, "title": "T", "cover": ""}, ("none",))
+
+        mocker.patch(
+            "core.readonly_producer.resolve_ingest_plan",
+            side_effect=_plan_side_effect,
+        )
+
+        response = client.post("/api/batch-enrich", json={
+            "items": [
+                {"file_path": "/tmp/ro_src/RO-FAIL.mp4", "number": "RO-FAIL"},
+                {"file_path": "/tmp/rw/RW-OK.mp4", "number": "RW-OK"},
+                {"file_path": "/tmp/ro_src/RO-OK.mp4", "number": "RO-OK"},
+            ],
+            "mode": "refresh_full",
+        })
+
+        assert response.status_code == 200
+        events = parse_sse(response.text)
+        by_number = {e["number"]: e for e in events if e["type"] == "result-item"}
+
+        assert by_number["RO-FAIL"]["success"] is False
+        assert by_number["RW-OK"]["success"] is True
+        assert by_number["RO-OK"]["success"] is True
+
+        done_events = [e for e in events if e["type"] == "done"]
+        assert len(done_events) == 1
+        summary = done_events[0]["summary"]
+        assert summary["total"] == 3
+        assert summary["success"] + summary["failed"] == summary["total"]
+
+    # TASK-109-T3（CD-109-8 C2 typed 邊界，AC2-錯誤文案分流①）：entry 內
+    # `_produce_one`（C2 typed try 唯一保護的那一步）拋例外 → closure 捕到
+    # `ReadonlyProduceError` → result-item 的 error 欄位確切等於「生成失敗」。
+    def test_readonly_produce_one_raises_error_item_shows_generic_failure_text(self, client, mocker):
+        """AC2①：_produce_one 失敗 → result-item 的 error 欄位確切等於「生成失敗」
+        （逐字比對，文案錯位即 RED）。"""
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=self._readonly_config(),
+        )
+        mocker.patch("web.routers.scraper.enrich_single", return_value=_ok_result())
+        self._mock_readonly_routing(mocker, produce_side_effect=RuntimeError("boom in _produce_one"))
+
+        response = client.post("/api/batch-enrich", json={
+            "items": [{"file_path": "/tmp/ro_src/RO-001.mp4", "number": "RO-001"}],
+            "mode": "refresh_full",
+        })
+
+        result_items = [e for e in parse_sse(response.text) if e["type"] == "result-item"]
+        assert result_items[0]["success"] is False
+        # [lint-guard: pytest-justified] C2 typed 邊界的 _produce_one 失敗文案，
+        # runtime API 回應契約（SSE result-item.error 逐字比對），lint 無法表達。
+        assert result_items[0]["error"] == "生成失敗"
+
+    # TASK-109-T3（CD-109-8 C2 typed 邊界，AC2-錯誤文案分流②）：entry 內前段
+    # （resolve_ingest_plan，非 typed try 保護範圍）拋例外 → 穿透 closure（非
+    # ReadonlyProduceError，closure 不捕）→ 穿透 await → 落到 per-item 外層
+    # except Exception → result-item 的 error 欄位確切等於「enrich 處理失敗，
+    # 請查閱日誌」。
+    def test_readonly_resolve_ingest_plan_raises_falls_through_to_generic_failure_text(self, client, mocker):
+        """AC2②：入口內前段（resolve_ingest_plan）失敗 → 穿透到 per-item fallback，
+        result-item 的 error 欄位確切等於「enrich 處理失敗，請查閱日誌」（逐字比對，
+        文案錯位即 RED）。"""
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=self._readonly_config(),
+        )
+        mocker.patch("web.routers.scraper.enrich_single", return_value=_ok_result())
+        self._mock_readonly_routing(mocker)
+        mocker.patch(
+            "core.readonly_producer.resolve_ingest_plan",
+            side_effect=RuntimeError("boom in resolve_ingest_plan"),
+        )
+
+        response = client.post("/api/batch-enrich", json={
+            "items": [{"file_path": "/tmp/ro_src/RO-001.mp4", "number": "RO-001"}],
+            "mode": "refresh_full",
+        })
+
+        result_items = [e for e in parse_sse(response.text) if e["type"] == "result-item"]
+        assert result_items[0]["success"] is False
+        # [lint-guard: pytest-justified] resolve_ingest_plan 例外穿透到 per-item
+        # 外層 fallback 的通用失敗文案，runtime API 回應契約，lint 無法表達。
+        assert result_items[0]["error"] == "enrich 處理失敗，請查閱日誌"
 
 
 class TestBatchEnrichReadonlyCoverPreserveGate:
@@ -837,14 +944,14 @@ class TestBatchEnrichReadonlyCoverPreserveGate:
             return_value=(source_stub, "/out/ro_src-x", "file:///out/ro_src-x"),
         )
         mocker.patch(
-            "web.routers.scraper.resolve_ingest_plan",
+            "core.readonly_producer.resolve_ingest_plan",
             return_value=(
                 {"number": "RO-001", "title": "T", "maker": "M", "cover": "http://x/new.jpg"},
                 plan_cover_strategy,
             ),
         )
         mock_produce = mocker.patch(
-            "web.routers.scraper._produce_one",
+            "core.readonly_producer._produce_one",
             return_value=(
                 Path("/out/ro_src-x/RO-001"),
                 {"cover_fs": produce_cover_fs, "sample_fs": [], "nfo_mtime": 1.0},
@@ -1135,6 +1242,84 @@ class TestBatchEnrichReadonlyCoverPreserveGate:
         assert result_items[0]["success"] is True
         assert result_items[0]["reason"] == "hit"
 
+    # Codex PR review P1 的孿生（刻意的不對稱）：單片側新增了 `after_produce`
+    # 回呼讓 entry 在 _produce_one 成功後、compute_has_servable_cover 之前
+    # 就觸發 thumbnail_cache.invalidate（修單片的「step 10 拋錯漏
+    # invalidate」回歸）。batch 側 `_do_readonly` closure **刻意不傳**
+    # after_produce——batch 改前就是「先算完 has_servable_cover 才
+    # invalidate」，本來就沒有這個回歸；batch 的 invalidate 留在下方 async
+    # 段（'ok' 分支）、自帶 try/except（PR#114 P2 防 success+failed 雙記，
+    # 見上一個測試）。若 compute_has_servable_cover 這一步拋錯，closure 內
+    # 沒有任何 except 攔它 → 例外穿透、經 await 重拋，落到 batch 迴圈的
+    # 外層 `except Exception`，該片變成一筆失敗結果項，thumbnail_cache.
+    # invalidate 完全不會被呼叫（因為從未進入 'ok' 分支）——這是刻意保留的
+    # 行為，別看到 after_produce 就順手也給 batch 傳，那會讓失敗片的
+    # invalidate 呼叫落在「還沒判定為成功」的時間點，語意不對。
+    def test_step10_error_does_not_invalidate_thumbnail_cache_batch_asymmetry(
+        self, client, mocker,
+    ):
+        mocker.patch("web.routers.scraper.load_config", return_value=self._readonly_config())
+        self._mock_routing(
+            mocker,
+            existing_cover_path="file:///out/ro_src-x/RO-001/RO-001.jpg",
+        )
+        mocker.patch(
+            "core.readonly_producer.compute_has_servable_cover",
+            side_effect=RuntimeError("boom"),
+        )
+        inval_spy = mocker.patch("web.routers.scraper.thumbnail_cache.invalidate")
+
+        response = self._post(client, mode="refresh_full")
+
+        events = parse_sse(response.text)
+        result_items = [e for e in events if e["type"] == "result-item"]
+        assert len(result_items) == 1
+        assert result_items[0]["success"] is False
+
+        done = [e for e in events if e["type"] == "done"][0]["summary"]
+        assert done["failed"] == 1
+        assert done["success"] == 0
+
+        inval_spy.assert_not_called()
+
+    # pre-merge Phase 1 codex 5.6-terra P2：batch 側 focal 排程與最終封面重讀
+    # 的相對順序在收斂進 `enrich_one_readonly` 時被翻轉——batch 改前
+    # （main 67ebb620 :899-938）的既有順序是 focal 排程先於
+    # compute_has_servable_cover，與單片（:522-553，compute 先）相反。entry
+    # 用 `focal_before_cover_recheck=True` 找回 batch 這條既有順序（見
+    # core.readonly_producer.enrich_one_readonly docstring 該參數段）。本測試
+    # 鎖住「focal 早於最終封面重讀」這個改前就有的順序：本次確實寫出新封面
+    # （assets['cover_fs'] 非空）但緊接著 compute_has_servable_cover 拋錯 →
+    # focal（reset_focal_to_auto + maybe_submit_video_focal）必須已經跑完，
+    # 該片仍記為一筆失敗結果項（per-item 隔離不變，鏡射上一測試）。MUTATION
+    # LOCK：把 batch caller 的 focal_before_cover_recheck=True 拿掉（悄悄落回
+    # 單片順序）會讓本測試 RED（focal 兩函式都不會被呼叫）。
+    def test_step10_error_still_schedules_focal_batch_asymmetry(self, client, mocker):
+        mocker.patch("web.routers.scraper.load_config", return_value=self._readonly_config())
+        mock_produce, mock_repo, mock_focal = self._mock_routing(
+            mocker,
+            existing_cover_path="",
+            produce_cover_fs="/out/ro_src-x/RO-001/RO-001.jpg",
+        )
+        mocker.patch(
+            "core.readonly_producer.compute_has_servable_cover",
+            side_effect=RuntimeError("boom"),
+        )
+
+        response = self._post(client, mode="refresh_full")
+
+        events = parse_sse(response.text)
+        result_items = [e for e in events if e["type"] == "result-item"]
+        assert len(result_items) == 1
+        assert result_items[0]["success"] is False
+
+        done = [e for e in events if e["type"] == "done"][0]["summary"]
+        assert done["failed"] == 1
+        assert done["success"] == 0
+
+        mock_repo.return_value.reset_focal_to_auto.assert_called_once()
+        mock_focal.assert_called_once()
+
 
 # ── P2 review round 3 (FIX#4/FIX#5): readonly + mode='db_to_sidecar' clean
 # rejection, + canonical `reason` on the batch failure result-item ─────────────
@@ -1163,8 +1348,8 @@ class TestBatchEnrichReadonlyDbToSidecarRejection:
             return_value=self._readonly_config(),
         )
         mock_owning = mocker.patch("web.routers.scraper.resolve_owning_output_root")
-        mock_plan = mocker.patch("web.routers.scraper.resolve_ingest_plan")
-        mock_produce = mocker.patch("web.routers.scraper._produce_one")
+        mock_plan = mocker.patch("core.readonly_producer.resolve_ingest_plan")
+        mock_produce = mocker.patch("core.readonly_producer._produce_one")
 
         response = client.post("/api/batch-enrich", json={
             "items": [{"file_path": "/tmp/ro_src/RO-001.mp4", "number": "RO-001"}],
@@ -1219,8 +1404,8 @@ class TestBatchEnrichReadonlyNoNfoRejection:
             return_value=self._readonly_config(),
         )
         mock_owning = mocker.patch("web.routers.scraper.resolve_owning_output_root")
-        mock_plan = mocker.patch("web.routers.scraper.resolve_ingest_plan")
-        mock_produce = mocker.patch("web.routers.scraper._produce_one")
+        mock_plan = mocker.patch("core.readonly_producer.resolve_ingest_plan")
+        mock_produce = mocker.patch("core.readonly_producer._produce_one")
 
         response = client.post("/api/batch-enrich", json={
             "items": [{"file_path": "/tmp/ro_src/RO-001.mp4", "number": "RO-001"}],

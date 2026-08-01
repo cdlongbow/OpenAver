@@ -5880,3 +5880,144 @@ class TestReadonlyEnrichFailure:
 
         result = _readonly_enrich_failure("m", "error")
         assert result.reason == "error"
+
+
+# ---------------------------------------------------------------------------
+# TASK-109-T2 (AC7): enrich_one_readonly — the public entry point, callable
+# directly without going through HTTP. `resolve_ingest_plan` / `_produce_one` /
+# `compute_has_servable_cover` are mocked (patched at their core.readonly_producer
+# module-global binding — the module IS the definition site here, unlike the
+# router's use-site patches); `apply_cover_preserve` / `cover_uri_is_servable` /
+# `enrich_success` run for real (thin contract helpers, same pattern as
+# test_readonly_enrich_contract_parity.py's runner C).
+# ---------------------------------------------------------------------------
+
+class TestEnrichOneReadonlyEntryPoint:
+    def _base_kwargs(self, repo_factory, **overrides):
+        kwargs = dict(
+            repo_factory=repo_factory,
+            ro_source=SimpleNamespace(name="ro_src"),
+            output_root="/out",
+            output_uri="file:///out",
+            canonical="file:///src/videos/ABC-001.mp4",
+            file_path="file:///src/videos/ABC-001.mp4",
+            number="ABC-001",
+            scraper_cfg={},
+            path_mappings={},
+            action="ingest",
+            proxy_url="",
+            scraper_data=None,
+            scrape_source=None,
+            javbus_lang=None,
+            write_cover=True,
+            overwrite_existing=False,
+        )
+        kwargs.update(overrides)
+        return kwargs
+
+    def _existing_stub(self, cover_path=""):
+        return SimpleNamespace(size_bytes=123, mtime=456.0, cover_path=cover_path)
+
+    def test_success_with_servable_cover(self):
+        from core.readonly_producer import enrich_one_readonly
+
+        repo = MagicMock()
+        repo.get_by_path.return_value = self._existing_stub()
+        repo_factory = MagicMock(return_value=repo)
+        meta = {"number": "ABC-001", "title": "T", "maker": "M", "cover": ""}
+
+        with patch("core.readonly_producer.resolve_ingest_plan",
+                   return_value=(meta, ("download", "http://x/new.jpg"))) as mock_plan, \
+             patch("core.readonly_producer._produce_one",
+                   return_value=(Path("/out/ABC-001"),
+                                 {"cover_fs": "/out/ABC-001/ABC-001.jpg", "sample_fs": [], "nfo_mtime": 1.0})) as mock_produce, \
+             patch("core.readonly_producer.compute_has_servable_cover", return_value=True) as mock_has_cover:
+            result = enrich_one_readonly(**self._base_kwargs(repo_factory))
+
+        mock_plan.assert_called_once()
+        mock_produce.assert_called_once()
+        mock_has_cover.assert_called_once()
+        assert result.success is True
+        # [lint-guard: pytest-justified] EnrichResult.reason 的確切文案值
+        # （"hit"/"no_cover"/"not_found" 是 core/router 共用的 runtime 回傳
+        # 契約，前端與 batch 分流都靠這個字面值），lint 無法表達。
+        assert result.reason == "hit"
+        assert result.nfo_written is True
+        assert result.cover_written is True
+        # main repo + focal repo (cover_written=True triggers a 2nd, INDEPENDENT
+        # repo_factory() call — "致命細節 1", never a reuse of the main repo var)
+        assert repo_factory.call_count == 2
+
+    def test_success_without_servable_cover(self):
+        from core.readonly_producer import enrich_one_readonly
+
+        repo = MagicMock()
+        repo.get_by_path.return_value = self._existing_stub()
+        repo_factory = MagicMock(return_value=repo)
+        meta = {"number": "ABC-001", "title": "T", "maker": "M", "cover": ""}
+
+        with patch("core.readonly_producer.resolve_ingest_plan",
+                   return_value=(meta, ("none",))), \
+             patch("core.readonly_producer._produce_one",
+                   return_value=(Path("/out/ABC-001"),
+                                 {"cover_fs": "", "sample_fs": [], "nfo_mtime": 1.0})), \
+             patch("core.readonly_producer.compute_has_servable_cover", return_value=False):
+            result = enrich_one_readonly(**self._base_kwargs(repo_factory))
+
+        assert result.success is True
+        # [lint-guard: pytest-justified] EnrichResult.reason 確切文案值，同上
+        # ——公開入口的 runtime 回傳契約，lint 無法表達。
+        assert result.reason == "no_cover"
+        assert result.cover_written is False
+        # cover_written=False → no focal repo built, only the main repo call
+        assert repo_factory.call_count == 1
+
+    def test_not_found_stub_ordering(self):
+        """meta=None → stub 樁列 + not_found failure；'insert_if_ignore' must be
+        called before 'update_scrape_attempted_at' on the SAME mock repo
+        (mock_calls order), mirroring _readonly_stub_not_found's own contract."""
+        from core.readonly_producer import enrich_one_readonly
+
+        repo = MagicMock()
+        repo_factory = MagicMock(return_value=repo)
+
+        with patch("core.readonly_producer.resolve_ingest_plan",
+                   return_value=(None, ("none",))) as mock_plan, \
+             patch("core.readonly_producer._produce_one") as mock_produce:
+            result = enrich_one_readonly(**self._base_kwargs(repo_factory))
+
+        mock_produce.assert_not_called()
+        assert result.success is False
+        # [lint-guard: pytest-justified] 唯讀 not-found 的 EnrichResult.reason/
+        # error 確切文案，跨 core/router 的 runtime 回傳契約，lint 無法表達。
+        assert result.reason == "not_found"
+        assert result.error == "找不到可用的番號資料"
+
+        # [lint-guard: pytest-justified] mock_calls 的方法名字面值 + 呼叫順序，
+        # 驗的是 _readonly_stub_not_found 對同一 mock repo 的呼叫順序契約
+        # （insert_if_ignore 必先於 update_scrape_attempted_at），非 lint 可掃的
+        # 靜態字串存在檢查，屬 runtime 呼叫序列斷言。
+        call_names = [c[0] for c in repo.mock_calls]
+        assert "insert_if_ignore" in call_names
+        assert "update_scrape_attempted_at" in call_names
+        assert call_names.index("insert_if_ignore") < call_names.index("update_scrape_attempted_at")
+
+    def test_produce_one_exception_raises_readonly_produce_error(self):
+        """C2 typed 邊界：_produce_one 拋例外 → entry 拋 ReadonlyProduceError
+        （不是回傳 EnrichResult）——batch 側捕它的行為是 T3 範圍，本測試只驗
+        entry 本身的轉拋契約。"""
+        from core.readonly_producer import ReadonlyProduceError, enrich_one_readonly
+
+        repo = MagicMock()
+        repo.get_by_path.return_value = self._existing_stub()
+        repo_factory = MagicMock(return_value=repo)
+        meta = {"number": "ABC-001", "title": "T", "maker": "M", "cover": ""}
+
+        with patch("core.readonly_producer.resolve_ingest_plan",
+                   return_value=(meta, ("download", "http://x/new.jpg"))), \
+             patch("core.readonly_producer._produce_one",
+                   side_effect=RuntimeError("boom")):
+            with pytest.raises(ReadonlyProduceError) as exc_info:
+                enrich_one_readonly(**self._base_kwargs(repo_factory))
+
+        assert isinstance(exc_info.value.__cause__, RuntimeError)

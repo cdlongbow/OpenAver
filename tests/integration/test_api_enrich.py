@@ -297,7 +297,7 @@ class TestEnrichSingleReadonlyGuard:
             "web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub()
         )
         mock_plan = mocker.patch(
-            "web.routers.scraper.resolve_ingest_plan",
+            "core.readonly_producer.resolve_ingest_plan",
             return_value=(meta if meta is not None else {"number": "ABC-001", "title": "T", "cover": ""}, cover_strategy),
         )
         # _produce_one now returns (movie_dir, assets) — CD-104-5 P2 review
@@ -306,7 +306,7 @@ class TestEnrichSingleReadonlyGuard:
         # this collaborator needs an explicit tuple default. cover_fs non-empty
         # by default so tests that don't care land on cover_written=True.
         mock_produce = mocker.patch(
-            "web.routers.scraper._produce_one",
+            "core.readonly_producer._produce_one",
             return_value=(Path("/out/ro_src-abcdef/ABC-001"), {"cover_fs": "/out/ro_src-abcdef/ABC-001/ABC-001.jpg", "sample_fs": [], "nfo_mtime": 1.0}),
         )
         mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
@@ -441,8 +441,8 @@ class TestEnrichSingleReadonlyGuard:
             "web.routers.scraper.resolve_owning_output_root",
             return_value=_owning_stub(output_root="", output_uri=""),
         )
-        mock_plan = mocker.patch("web.routers.scraper.resolve_ingest_plan")
-        mock_produce = mocker.patch("web.routers.scraper._produce_one")
+        mock_plan = mocker.patch("core.readonly_producer.resolve_ingest_plan")
+        mock_produce = mocker.patch("core.readonly_producer._produce_one")
 
         response = client.post("/api/enrich-single", json={
             "file_path": "/tmp/ro_src/ABC-001.mp4",
@@ -527,6 +527,52 @@ class TestEnrichSingleReadonlyGuard:
         assert attempted_args[0] == canonical
         assert attempted_args[1] > 0
 
+    # Codex PR review P1（本 branch 引入的回歸）：_produce_one 已成功寫出
+    # NFO/新封面、DB cover_path 已更新，但緊接著 step 10
+    # compute_has_servable_cover 拋錯 → 例外穿透 entry、落 router 外層
+    # except，回「enrich 處理失敗，請查閱日誌」。改前（main 67ebb620）單片
+    # 是 _produce_one → invalidate → compute_has_servable_cover → focal，
+    # 故舊版即使最後一步炸掉也已清掉縮圖；本 branch 把 invalidate 移到
+    # entry 回傳「之後」曾一度漏掉這個時點 → 舊 WebP 縮圖被 /thumb 的
+    # cache-hit 路徑無限期 serve、不會自癒。修法：entry 新增 after_produce
+    # 回呼，caller 在 _produce_one 成功後、compute_has_servable_cover 之前
+    # 就觸發 invalidate（見 core.readonly_producer.enrich_one_readonly）。
+    # MUTATION LOCK：把 entry 內 `if after_produce is not None:
+    # after_produce()` 那行註解掉，本測試的 invalidate 斷言必紅。
+    def test_readonly_step10_error_still_invalidates_thumbnail_cache(self, client, mocker):
+        from core.path_utils import coerce_to_file_uri
+
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=_readonly_gallery_config("/tmp/ro_src"),
+        )
+        self._mock_routing(
+            mocker,
+            meta={"number": "ABC-001", "title": "T", "cover": "http://x/c.jpg"},
+            cover_strategy=("download", "http://x/c.jpg"),
+        )
+        mocker.patch(
+            "core.readonly_producer.compute_has_servable_cover",
+            side_effect=RuntimeError("boom"),
+        )
+        mock_invalidate = mocker.patch("web.routers.scraper.thumbnail_cache.invalidate")
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/tmp/ro_src/ABC-001.mp4",
+            "number": "ABC-001",
+        })
+
+        data = response.json()
+        assert data["success"] is False
+        # [lint-guard: pytest-justified] step10 例外穿透 router 外層 fallback 後
+        # 的 error/reason 欄位，enrich-single 回應 JSON 的 runtime API 契約（兩條
+        # 同屬本次故障注入分流的逐字比對），lint 無法表達。
+        assert data["error"] == "enrich 處理失敗，請查閱日誌"
+        assert data["reason"] == "error"
+
+        canonical = coerce_to_file_uri("/tmp/ro_src/ABC-001.mp4", {})
+        mock_invalidate.assert_called_once_with(canonical)
+
     # case 4: 非唯讀來源零回歸 → 走既有路徑，enrich_single 照常被呼叫（byte-identical）
     def test_non_readonly_passes_through(self, client, mocker):
         mocker.patch(
@@ -536,7 +582,7 @@ class TestEnrichSingleReadonlyGuard:
         mock_enrich = mocker.patch(
             "web.routers.scraper.enrich_single", return_value=_ok_result()
         )
-        mock_produce = mocker.patch("web.routers.scraper._produce_one")
+        mock_produce = mocker.patch("core.readonly_producer._produce_one")
 
         response = client.post("/api/enrich-single", json={
             "file_path": "/tmp/rw_src/ABC-001.mp4",
@@ -611,14 +657,14 @@ class TestEnrichSingleReadonlyCoverPreserveGate:
     ):
         mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
         mocker.patch(
-            "web.routers.scraper.resolve_ingest_plan",
+            "core.readonly_producer.resolve_ingest_plan",
             return_value=(
                 {"number": "ABC-001", "title": "T", "maker": "M", "cover": "http://x/new.jpg"},
                 plan_cover_strategy,
             ),
         )
         mock_produce = mocker.patch(
-            "web.routers.scraper._produce_one",
+            "core.readonly_producer._produce_one",
             return_value=(
                 Path("/out/ro_src-abcdef/ABC-001"),
                 {"cover_fs": produce_cover_fs, "sample_fs": [], "nfo_mtime": 1.0},
@@ -875,6 +921,36 @@ class TestEnrichSingleReadonlyCoverPreserveGate:
         mock_repo.return_value.reset_focal_to_auto.assert_not_called()
         mock_focal.assert_not_called()
 
+    # pre-merge Phase 1 codex 5.6-terra P2 的孿生（單片方向的回歸鎖，鏡射
+    # test_api_batch_enrich.py::test_step10_error_still_schedules_focal_batch_asymmetry）：
+    # 單片改前（main 67ebb620 :522-553）的既有順序是 compute_has_servable_cover
+    # 先於 focal 排程，與 batch 相反。`enrich_one_readonly` 的
+    # `focal_before_cover_recheck` 預設 False＝單片這條既有順序，單片 caller
+    # 不傳。本測試鎖住「compute 拋錯時 focal 完全不該被呼叫」——若被悄悄改成
+    # batch 的順序（focal 先），單片會在這個情境下多做一次
+    # reset_focal_to_auto，把使用者手動設定的焦點座標重置成 auto（毀使用者
+    # 意圖，見 entry docstring）。MUTATION LOCK：把單片 caller 的預設值改成
+    # True（或把 entry 預設值改成 True）會讓本測試 RED（focal 兩函式都會被
+    # 呼叫）。
+    def test_readonly_step10_error_does_not_schedule_focal(self, client, mocker):
+        mocker.patch("web.routers.scraper.load_config", return_value=_readonly_gallery_config("/tmp/ro_src"))
+        cover_fs = "/out/ro_src-abcdef/ABC-001/ABC-001.jpg"
+        mock_produce, mock_repo, mock_focal = self._mock_routing(
+            mocker, existing_cover_path="", produce_cover_fs=cover_fs,
+        )
+        mocker.patch(
+            "core.readonly_producer.compute_has_servable_cover",
+            side_effect=RuntimeError("boom"),
+        )
+
+        response = self._post(client, mode="refresh_full")
+
+        data = response.json()
+        assert data["success"] is False
+
+        mock_repo.return_value.reset_focal_to_auto.assert_not_called()
+        mock_focal.assert_not_called()
+
 
 # ── P2 review round 3 (FIX#4): readonly + mode='db_to_sidecar' clean rejection ──
 # db_to_sidecar means "write current DB metadata to the SOURCE sidecar NFO, no
@@ -895,8 +971,8 @@ class TestEnrichSingleReadonlyDbToSidecarRejection:
             return_value=_readonly_gallery_config("/tmp/ro_src"),
         )
         mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
-        mock_plan = mocker.patch("web.routers.scraper.resolve_ingest_plan")
-        mock_produce = mocker.patch("web.routers.scraper._produce_one")
+        mock_plan = mocker.patch("core.readonly_producer.resolve_ingest_plan")
+        mock_produce = mocker.patch("core.readonly_producer._produce_one")
 
         response = client.post("/api/enrich-single", json={
             "file_path": "/tmp/ro_src/ABC-001.mp4",
@@ -938,8 +1014,8 @@ class TestEnrichSingleReadonlyNoNfoRejection:
             return_value=_readonly_gallery_config("/tmp/ro_src"),
         )
         mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
-        mock_plan = mocker.patch("web.routers.scraper.resolve_ingest_plan")
-        mock_produce = mocker.patch("web.routers.scraper._produce_one")
+        mock_plan = mocker.patch("core.readonly_producer.resolve_ingest_plan")
+        mock_produce = mocker.patch("core.readonly_producer._produce_one")
 
         response = client.post("/api/enrich-single", json={
             "file_path": "/tmp/ro_src/ABC-001.mp4",
@@ -1244,11 +1320,11 @@ class TestReadonlyEnrichResultShapeParity:
         )
         mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
         mocker.patch(
-            "web.routers.scraper.resolve_ingest_plan",
+            "core.readonly_producer.resolve_ingest_plan",
             return_value=({"number": "ABC-001", "title": "T", "cover": ""}, ("none",)),
         )
         mocker.patch(
-            "web.routers.scraper._produce_one",
+            "core.readonly_producer._produce_one",
             return_value=(Path("/out/ro_src-abcdef/ABC-001"),
                           {"cover_fs": "", "sample_fs": [], "nfo_mtime": 1.0}),
         )
@@ -1289,7 +1365,7 @@ class TestReadonlyEnrichResultShapeParity:
             return_value=_readonly_gallery_config("/tmp/ro_src"),
         )
         mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
-        mocker.patch("web.routers.scraper.resolve_ingest_plan", return_value=(None, ("none",)))
+        mocker.patch("core.readonly_producer.resolve_ingest_plan", return_value=(None, ("none",)))
 
         response = client.post("/api/enrich-single", json={
             "file_path": "/tmp/ro_src/ABC-001.mp4",
@@ -1307,7 +1383,7 @@ class TestReadonlyEnrichResultShapeParity:
         )
         mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
         mocker.patch(
-            "web.routers.scraper.resolve_ingest_plan",
+            "core.readonly_producer.resolve_ingest_plan",
             side_effect=RuntimeError("boom"),
         )
 
@@ -1438,7 +1514,7 @@ class TestReadonlyEnrichResultShapeParity:
         )
         mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
         mocker.patch(
-            "web.routers.scraper.resolve_ingest_plan",
+            "core.readonly_producer.resolve_ingest_plan",
             return_value=(
                 {
                     "number": "ABC-001", "title": "T", "cover": "",
@@ -1449,7 +1525,7 @@ class TestReadonlyEnrichResultShapeParity:
             ),
         )
         mocker.patch(
-            "web.routers.scraper._produce_one",
+            "core.readonly_producer._produce_one",
             return_value=(Path("/out/ro_src-abcdef/ABC-001"),
                           {"cover_fs": "", "sample_fs": [], "nfo_mtime": 1.0}),
         )
@@ -3049,13 +3125,13 @@ class TestReadonlyRoutingE2E:
             return_value=(source_stub, "/out/ro_src-x", "file:///out/ro_src-x"),
         )
         mock_plan = mocker.patch(
-            "web.routers.scraper.resolve_ingest_plan",
+            "core.readonly_producer.resolve_ingest_plan",
             return_value=({"number": "RO-001", "title": "T", "cover": ""}, ("none",)),
         )
         # _produce_one now returns (movie_dir, assets) — tuple default so the
         # router's `_, assets = _produce_one(...)` unpack succeeds.
         mock_produce = mocker.patch(
-            "web.routers.scraper._produce_one",
+            "core.readonly_producer._produce_one",
             return_value=(Path("/out/ro_src-x/RO-001"), {"cover_fs": "", "sample_fs": [], "nfo_mtime": 1.0}),
         )
         mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
@@ -3113,9 +3189,9 @@ class TestReadonlyRoutingE2E:
             return_value=(source_stub, "/out/ro_src-x", "file:///out/ro_src-x"),
         )
         mocker.patch(
-            "web.routers.scraper.resolve_ingest_plan", return_value=(None, ("none",)),
+            "core.readonly_producer.resolve_ingest_plan", return_value=(None, ("none",)),
         )
-        mock_produce = mocker.patch("web.routers.scraper._produce_one")
+        mock_produce = mocker.patch("core.readonly_producer._produce_one")
 
         response = client.post("/api/batch-enrich", json={
             "items": [{"file_path": "/tmp/ro_src/NS-001.mp4", "number": "NS-001"}],
