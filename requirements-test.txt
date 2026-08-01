@@ -12,3 +12,4 @@ pytest-cov==7.1.0  # US4 cov-floor (scripts/run_cov.sh)
 pytest-playwright==0.7.2  # e2e testing
 PyYAML==6.0.3  # CI workflow guard (test_ci_workflow_guard.py uses yaml.safe_load)
 ruff==0.15.17  # pinned exact: ruff gates PRs in CI; upstream auto-upgrade can silently change rule verdicts
+import-linter==2.13  # pinned exact: CI 用它擋 PR（core ⇏ web 分層契約），上游升版可能改變契約判定
