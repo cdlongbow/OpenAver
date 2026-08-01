@@ -460,7 +460,12 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
             # TASK-109-T2: 產出核心（URI→FS 轉換到組 EnrichResult 為止）薄搬移進
             # core.readonly_producer.enrich_one_readonly；caller 只保留三個刻意
             # 缺口——javlib 預抓（上面已做）、reject guard + output_dir 解析
-            # （上方已做）、縮圖失效（下方 thumbnail_cache.invalidate，C4）。
+            # （上方已做）、縮圖失效（C4）。Codex PR review P1 修正：縮圖失效
+            # 改用 after_produce 回呼注入，觸發時點回到 entry 內部 step 8/9
+            # 之間（對應改前 scraper.py:528），修掉「_produce_one 成功但
+            # step 10 compute_has_servable_cover 拋錯時漏 invalidate」的
+            # 回歸——決定要不要失效／失效什麼仍在這裡（caller），entry 只給
+            # 觸發時點；不包 try，維持在外層 try 之內、失敗即整個請求變錯誤。
             result = enrich_one_readonly(
                 repo_factory=VideoRepository, ro_source=source, output_root=output_root,
                 output_uri=output_uri, canonical=canonical, file_path=request.file_path,
@@ -469,8 +474,8 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
                 scraper_data=scraper_data, scrape_source=request.source,
                 javbus_lang=request.javbus_lang, write_cover=request.write_cover,
                 overwrite_existing=request.overwrite_existing,
+                after_produce=lambda: thumbnail_cache.invalidate(canonical),
             )
-            thumbnail_cache.invalidate(canonical)      # C4：留 caller，維持在外層 try 之內、無自己的 try
             return asdict(result)
         except Exception:
             logger.exception("enrich_single_endpoint readonly 改道失敗")
@@ -767,6 +772,10 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                         # 產出核心本身那一步（entry 內部 `_produce_one` 窄 try）之外的任何例外
                         # （resolve_ingest_plan／repo_factory()／_readonly_stub_not_found 等）
                         # 一律穿透，不在此捕捉（CD-109-8 C2 typed 邊界）。
+                        # 刻意不傳 after_produce（Codex PR review P1）：batch 改前就是「先算完
+                        # has_servable_cover 才 invalidate」，本來就沒有單片那個回歸；batch 的
+                        # invalidate 留在下方 async 段、自帶 try/except（PR#114 P2 防
+                        # success+failed 雙記），與 after_produce 的觸發時點無關，不要動它。
                         try:
                             result = enrich_one_readonly(
                                 repo_factory=VideoRepository, ro_source=ro_source, output_root=out_root,

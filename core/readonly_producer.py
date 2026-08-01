@@ -1563,6 +1563,7 @@ def enrich_one_readonly(
     javbus_lang=None,
     write_cover: bool,
     overwrite_existing: bool,
+    after_produce: Optional[Callable[[], None]] = None,
 ) -> EnrichResult:
     """單片/批次唯讀 enrich 共用的「產出核心」——薄搬移自
     `web/routers/scraper.py` 單片 enrich 端點（POST /enrich-single）的唯讀分支
@@ -1573,6 +1574,17 @@ def enrich_one_readonly(
     `resolve_owning_output_root` 解析 + 三個 reject guard（早退語意屬端點
     而非產出核心）、`thumbnail_cache.invalidate`（獨立衍生快取，與產出核心
     無資料依賴，見 T2 card「已知的微幅順序位移」）。
+
+    `after_produce`（Codex PR review P1 修正）：決定要不要失效、失效什麼、
+    失敗算不算錯誤，全都還在 caller 手上——entry 只提供「_produce_one 剛
+    成功」這個觸發時點（緊接 step 8 之後、step 9 `cover_written` 計算之前，
+    對應改前 `scraper.py:528` 那行 invalidate 的位置）。entry 本身不包
+    try/except：呼叫失敗會直接穿透到 entry 的外層 caller try，與改前單片
+    的裸露 invalidate 語意一致。單片 caller 傳
+    `after_produce=lambda: thumbnail_cache.invalidate(canonical)`；batch
+    caller 不傳（batch 的 invalidate 維持在自己的 async 段、自帶
+    try/except，PR#114 P2 防 success+failed 雙記，語意與此缺口無關，見
+    T3 的 C4 保留）。
 
     `repo_factory` 而非內部 `VideoRepository()`：現行碼在三個不同時點各自
     `VideoRepository()` 新建實例（樁列用／主 repo／focal_repo），且既有
@@ -1647,6 +1659,13 @@ def enrich_one_readonly(
         )
     except Exception as exc:
         raise ReadonlyProduceError("readonly _produce_one 失敗") from exc
+    # Codex PR review P1：對應改前 scraper.py:528 invalidate 的位置——
+    # _produce_one 剛成功寫出 NFO/封面、DB cover_path 已更新，此時觸發縮圖
+    # 失效，即使後面 step 10 compute_has_servable_cover 拋錯也不漏做（改前
+    # 單片就是先 invalidate 再算 has_servable_cover）。不包 try：failure
+    # 語意交給 caller（見上方 docstring）。
+    if after_produce is not None:
+        after_produce()
     # step 9
     cover_written = bool(assets.get('cover_fs'))
     # Bug 1 fix (feature/105): `reason` must reflect whether a SERVABLE

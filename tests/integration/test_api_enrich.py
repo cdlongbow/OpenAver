@@ -527,6 +527,49 @@ class TestEnrichSingleReadonlyGuard:
         assert attempted_args[0] == canonical
         assert attempted_args[1] > 0
 
+    # Codex PR review P1（本 branch 引入的回歸）：_produce_one 已成功寫出
+    # NFO/新封面、DB cover_path 已更新，但緊接著 step 10
+    # compute_has_servable_cover 拋錯 → 例外穿透 entry、落 router 外層
+    # except，回「enrich 處理失敗，請查閱日誌」。改前（main 67ebb620）單片
+    # 是 _produce_one → invalidate → compute_has_servable_cover → focal，
+    # 故舊版即使最後一步炸掉也已清掉縮圖；本 branch 把 invalidate 移到
+    # entry 回傳「之後」曾一度漏掉這個時點 → 舊 WebP 縮圖被 /thumb 的
+    # cache-hit 路徑無限期 serve、不會自癒。修法：entry 新增 after_produce
+    # 回呼，caller 在 _produce_one 成功後、compute_has_servable_cover 之前
+    # 就觸發 invalidate（見 core.readonly_producer.enrich_one_readonly）。
+    # MUTATION LOCK：把 entry 內 `if after_produce is not None:
+    # after_produce()` 那行註解掉，本測試的 invalidate 斷言必紅。
+    def test_readonly_step10_error_still_invalidates_thumbnail_cache(self, client, mocker):
+        from core.path_utils import coerce_to_file_uri
+
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=_readonly_gallery_config("/tmp/ro_src"),
+        )
+        self._mock_routing(
+            mocker,
+            meta={"number": "ABC-001", "title": "T", "cover": "http://x/c.jpg"},
+            cover_strategy=("download", "http://x/c.jpg"),
+        )
+        mocker.patch(
+            "core.readonly_producer.compute_has_servable_cover",
+            side_effect=RuntimeError("boom"),
+        )
+        mock_invalidate = mocker.patch("web.routers.scraper.thumbnail_cache.invalidate")
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/tmp/ro_src/ABC-001.mp4",
+            "number": "ABC-001",
+        })
+
+        data = response.json()
+        assert data["success"] is False
+        assert data["error"] == "enrich 處理失敗，請查閱日誌"
+        assert data["reason"] == "error"
+
+        canonical = coerce_to_file_uri("/tmp/ro_src/ABC-001.mp4", {})
+        mock_invalidate.assert_called_once_with(canonical)
+
     # case 4: 非唯讀來源零回歸 → 走既有路徑，enrich_single 照常被呼叫（byte-identical）
     def test_non_readonly_passes_through(self, client, mocker):
         mocker.patch(

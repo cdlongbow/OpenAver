@@ -1238,6 +1238,46 @@ class TestBatchEnrichReadonlyCoverPreserveGate:
         assert result_items[0]["success"] is True
         assert result_items[0]["reason"] == "hit"
 
+    # Codex PR review P1 的孿生（刻意的不對稱）：單片側新增了 `after_produce`
+    # 回呼讓 entry 在 _produce_one 成功後、compute_has_servable_cover 之前
+    # 就觸發 thumbnail_cache.invalidate（修單片的「step 10 拋錯漏
+    # invalidate」回歸）。batch 側 `_do_readonly` closure **刻意不傳**
+    # after_produce——batch 改前就是「先算完 has_servable_cover 才
+    # invalidate」，本來就沒有這個回歸；batch 的 invalidate 留在下方 async
+    # 段（'ok' 分支）、自帶 try/except（PR#114 P2 防 success+failed 雙記，
+    # 見上一個測試）。若 compute_has_servable_cover 這一步拋錯，closure 內
+    # 沒有任何 except 攔它 → 例外穿透、經 await 重拋，落到 batch 迴圈的
+    # 外層 `except Exception`，該片變成一筆失敗結果項，thumbnail_cache.
+    # invalidate 完全不會被呼叫（因為從未進入 'ok' 分支）——這是刻意保留的
+    # 行為，別看到 after_produce 就順手也給 batch 傳，那會讓失敗片的
+    # invalidate 呼叫落在「還沒判定為成功」的時間點，語意不對。
+    def test_step10_error_does_not_invalidate_thumbnail_cache_batch_asymmetry(
+        self, client, mocker,
+    ):
+        mocker.patch("web.routers.scraper.load_config", return_value=self._readonly_config())
+        self._mock_routing(
+            mocker,
+            existing_cover_path="file:///out/ro_src-x/RO-001/RO-001.jpg",
+        )
+        mocker.patch(
+            "core.readonly_producer.compute_has_servable_cover",
+            side_effect=RuntimeError("boom"),
+        )
+        inval_spy = mocker.patch("web.routers.scraper.thumbnail_cache.invalidate")
+
+        response = self._post(client, mode="refresh_full")
+
+        events = parse_sse(response.text)
+        result_items = [e for e in events if e["type"] == "result-item"]
+        assert len(result_items) == 1
+        assert result_items[0]["success"] is False
+
+        done = [e for e in events if e["type"] == "done"][0]["summary"]
+        assert done["failed"] == 1
+        assert done["success"] == 0
+
+        inval_spy.assert_not_called()
+
 
 # ── P2 review round 3 (FIX#4/FIX#5): readonly + mode='db_to_sidecar' clean
 # rejection, + canonical `reason` on the batch failure result-item ─────────────
