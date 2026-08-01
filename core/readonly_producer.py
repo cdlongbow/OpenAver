@@ -1564,6 +1564,7 @@ def enrich_one_readonly(
     write_cover: bool,
     overwrite_existing: bool,
     after_produce: Optional[Callable[[], None]] = None,
+    focal_before_cover_recheck: bool = False,
 ) -> EnrichResult:
     """單片/批次唯讀 enrich 共用的「產出核心」——薄搬移自
     `web/routers/scraper.py` 單片 enrich 端點（POST /enrich-single）的唯讀分支
@@ -1591,6 +1592,24 @@ def enrich_one_readonly(
     32 處測試對 `web.routers.scraper.VideoRepository` 下 patch——entry 收
     callable，caller 在呼叫點傳入自己的（可能已被 patch 的）module-global
     binding，三個新建點原樣保留為三次 `repo_factory()` 呼叫。
+
+    `focal_before_cover_recheck`（pre-merge Phase 1 codex 5.6-terra P2）：**不是**
+    mode flag 分岔內部行為，是「兩個 caller 改前就相反的既有順序」的參數化表達
+    （CD-109-8 C1/C3/C4 之外、CD-109-2「兩邊的差異一律走參數」的第四個缺口）。
+    改前（main 67ebb620）單片 `scraper.py:522-553` 是 compute_has_servable_cover
+    （step 10）先於 focal 排程（step 11）；batch `scraper.py:899-938` 是 focal
+    先於 compute_has_servable_cover。搬進本 entry 後預設值只反映了單片那一種
+    順序，batch 側被悄悄翻轉——本參數把這條既有差異找回來：`False`（預設）＝
+    單片順序（compute 先），單片 caller 不傳；`True`＝batch 順序（focal 先），
+    batch caller 顯式傳入。刻意不 normalize 成同一順序：兩個方向都會改變一條
+    「_produce_one 成功寫出新封面、但緊接著 compute_has_servable_cover 拋錯」
+    時的可觀察錯誤路徑——把 batch 改成單片順序，會讓 batch 在該情境下漏做
+    focal 排程（reset_focal_to_auto + 背景偵測，改前 batch 不會漏）；反過來把
+    單片改成 batch 順序，會讓單片在該情境下**多做**一次
+    `reset_focal_to_auto`，把使用者手動設定的焦點座標重置成 auto——這是更糟
+    的方向（毀使用者意圖），故不可選它當統一方向。兩個區塊（step 10 的
+    compute 呼叫、step 11 的 `if cover_written:` focal 區塊）本身的內容不因
+    這個旗標而改變，只有先後順序被此旗標決定。
     """
     # step 1
     fs_path = uri_to_local_fs_path(file_path, path_mappings)
@@ -1676,14 +1695,29 @@ def enrich_one_readonly(
     # 原子（消除唯讀漏磁碟複驗的破圖 false-positive）。key=canonical，與
     # 上方 existing = repo.get_by_path(canonical) 及 _produce_one 的 upsert
     # key 同一命名空間。
-    # step 10
-    has_servable_cover = compute_has_servable_cover(repo, canonical, path_mappings)
+    # step 10 / step 11 — pre-merge Phase 1 codex 5.6-terra P2：兩者的先後由
+    # `focal_before_cover_recheck` 決定（見上方 docstring 該參數段）。
+    #
+    # 重複的取捨：**只重複 step 10 那一行 compute 呼叫，focal 區塊維持單一份**。
+    # ① 不用共用 nested function 包起來重排——`test_enrich_contract_structure.py`
+    #    的 `TestPositiveContractLocks` 只掃本函式 body 的直接子節點 `ast.Call`
+    #    （不下探 nested `FunctionDef`），包起來會讓 compute_has_servable_cover /
+    #    schedule_focal_after_cover_write 從「直接呼叫」消失、觸發正向鎖 false positive。
+    # ② 也不用 if/else 各放一份完整區塊——那會讓 focal 的 10 行（含
+    #    `repo_factory()` 必須是新實例、try/except 吞掉、cover_written 閘門）
+    #    存在兩份，正是本 branch 要消滅的「同一段邏輯兩份、改一份漏一份」形狀，
+    #    且正向鎖只要求名稱出現一次、抓不到只改其中一份的漂移。
+    # 故改為「一行 compute 重複兩次、focal 單一份」：漂移面從 10 行縮到 1 行，
+    # 且兩個名稱仍都是 body 的直接子節點呼叫，正向鎖照常成立。
+    # step 10（單片順序：compute 先）——只在單片方向執行
+    if not focal_before_cover_recheck:
+        has_servable_cover = compute_has_servable_cover(repo, canonical, path_mappings)
     # Codex PR#113 P2#4（round 2）：對齊 core.enricher 非唯讀單片入口:528-547
     # ——只在「本次實際寫入新封面內容」時才作廢舊手動焦點、再排新的背景偵測。
     # preserve_cover=True 時 cover_strategy=('none',) 不產出檔案，
     # assets['cover_fs'] 恆為空 → cover_written 恆 False，此塊不進、既有
     # manual 焦點原樣保留（與 enricher 的 cover_written 閘門語意一致）。
-    # step 11
+    # step 11 — focal 區塊**只有這一份**（見上方 step 10/11 註解的重複權衡）
     if cover_written:
         try:
             focal_repo = repo_factory()  # 致命細節 1：不可重用上面的 repo 變數
@@ -1694,6 +1728,9 @@ def enrich_one_readonly(
             )
         except Exception:
             logger.warning("readonly enrich focal 排程失敗（不影響改道結果）", exc_info=True)
+    # step 10（batch 順序：focal 先、compute 後）——只在 batch 方向執行
+    if focal_before_cover_recheck:
+        has_servable_cover = compute_has_servable_cover(repo, canonical, path_mappings)
     # step 12
     return enrich_success(
         # NFO is always written on a successful readonly produce (P1

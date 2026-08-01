@@ -579,7 +579,7 @@ class TestEnrichSingleReadonlyGuard:
         mock_enrich = mocker.patch(
             "web.routers.scraper.enrich_single", return_value=_ok_result()
         )
-        mock_produce = mocker.patch("web.routers.scraper._produce_one")
+        mock_produce = mocker.patch("core.readonly_producer._produce_one")
 
         response = client.post("/api/enrich-single", json={
             "file_path": "/tmp/rw_src/ABC-001.mp4",
@@ -918,6 +918,36 @@ class TestEnrichSingleReadonlyCoverPreserveGate:
         mock_repo.return_value.reset_focal_to_auto.assert_not_called()
         mock_focal.assert_not_called()
 
+    # pre-merge Phase 1 codex 5.6-terra P2 的孿生（單片方向的回歸鎖，鏡射
+    # test_api_batch_enrich.py::test_step10_error_still_schedules_focal_batch_asymmetry）：
+    # 單片改前（main 67ebb620 :522-553）的既有順序是 compute_has_servable_cover
+    # 先於 focal 排程，與 batch 相反。`enrich_one_readonly` 的
+    # `focal_before_cover_recheck` 預設 False＝單片這條既有順序，單片 caller
+    # 不傳。本測試鎖住「compute 拋錯時 focal 完全不該被呼叫」——若被悄悄改成
+    # batch 的順序（focal 先），單片會在這個情境下多做一次
+    # reset_focal_to_auto，把使用者手動設定的焦點座標重置成 auto（毀使用者
+    # 意圖，見 entry docstring）。MUTATION LOCK：把單片 caller 的預設值改成
+    # True（或把 entry 預設值改成 True）會讓本測試 RED（focal 兩函式都會被
+    # 呼叫）。
+    def test_readonly_step10_error_does_not_schedule_focal(self, client, mocker):
+        mocker.patch("web.routers.scraper.load_config", return_value=_readonly_gallery_config("/tmp/ro_src"))
+        cover_fs = "/out/ro_src-abcdef/ABC-001/ABC-001.jpg"
+        mock_produce, mock_repo, mock_focal = self._mock_routing(
+            mocker, existing_cover_path="", produce_cover_fs=cover_fs,
+        )
+        mocker.patch(
+            "core.readonly_producer.compute_has_servable_cover",
+            side_effect=RuntimeError("boom"),
+        )
+
+        response = self._post(client, mode="refresh_full")
+
+        data = response.json()
+        assert data["success"] is False
+
+        mock_repo.return_value.reset_focal_to_auto.assert_not_called()
+        mock_focal.assert_not_called()
+
 
 # ── P2 review round 3 (FIX#4): readonly + mode='db_to_sidecar' clean rejection ──
 # db_to_sidecar means "write current DB metadata to the SOURCE sidecar NFO, no
@@ -939,7 +969,7 @@ class TestEnrichSingleReadonlyDbToSidecarRejection:
         )
         mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
         mock_plan = mocker.patch("core.readonly_producer.resolve_ingest_plan")
-        mock_produce = mocker.patch("web.routers.scraper._produce_one")
+        mock_produce = mocker.patch("core.readonly_producer._produce_one")
 
         response = client.post("/api/enrich-single", json={
             "file_path": "/tmp/ro_src/ABC-001.mp4",
@@ -982,7 +1012,7 @@ class TestEnrichSingleReadonlyNoNfoRejection:
         )
         mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
         mock_plan = mocker.patch("core.readonly_producer.resolve_ingest_plan")
-        mock_produce = mocker.patch("web.routers.scraper._produce_one")
+        mock_produce = mocker.patch("core.readonly_producer._produce_one")
 
         response = client.post("/api/enrich-single", json={
             "file_path": "/tmp/ro_src/ABC-001.mp4",

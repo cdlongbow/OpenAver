@@ -776,6 +776,11 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                         # has_servable_cover 才 invalidate」，本來就沒有單片那個回歸；batch 的
                         # invalidate 留在下方 async 段、自帶 try/except（PR#114 P2 防
                         # success+failed 雙記），與 after_produce 的觸發時點無關，不要動它。
+                        # focal_before_cover_recheck=True（pre-merge Phase 1 codex 5.6-terra
+                        # P2）：batch 改前的既有順序是 focal 排程先於最終封面重讀
+                        # （scraper.py:899-938，改前 main 67ebb620），與單片相反（單片
+                        # compute 先，見 entry docstring 該參數段）。不傳＝預設 False 會悄悄
+                        # 套用單片順序，翻轉這條既有行為——顯式傳 True 找回來。
                         try:
                             result = enrich_one_readonly(
                                 repo_factory=VideoRepository, ro_source=ro_source, output_root=out_root,
@@ -784,6 +789,7 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                                 path_mappings=_ro_mappings, action='ingest', proxy_url=proxy_url,
                                 scraper_data=None, scrape_source=es, javbus_lang=el,
                                 write_cover=request.write_cover, overwrite_existing=request.overwrite_existing,
+                                focal_before_cover_recheck=True,
                             )
                         except ReadonlyProduceError:
                             logger.exception("batch_enrich readonly item %s 失敗", itm.number)

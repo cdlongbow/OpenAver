@@ -1278,6 +1278,44 @@ class TestBatchEnrichReadonlyCoverPreserveGate:
 
         inval_spy.assert_not_called()
 
+    # pre-merge Phase 1 codex 5.6-terra P2：batch 側 focal 排程與最終封面重讀
+    # 的相對順序在收斂進 `enrich_one_readonly` 時被翻轉——batch 改前
+    # （main 67ebb620 :899-938）的既有順序是 focal 排程先於
+    # compute_has_servable_cover，與單片（:522-553，compute 先）相反。entry
+    # 用 `focal_before_cover_recheck=True` 找回 batch 這條既有順序（見
+    # core.readonly_producer.enrich_one_readonly docstring 該參數段）。本測試
+    # 鎖住「focal 早於最終封面重讀」這個改前就有的順序：本次確實寫出新封面
+    # （assets['cover_fs'] 非空）但緊接著 compute_has_servable_cover 拋錯 →
+    # focal（reset_focal_to_auto + maybe_submit_video_focal）必須已經跑完，
+    # 該片仍記為一筆失敗結果項（per-item 隔離不變，鏡射上一測試）。MUTATION
+    # LOCK：把 batch caller 的 focal_before_cover_recheck=True 拿掉（悄悄落回
+    # 單片順序）會讓本測試 RED（focal 兩函式都不會被呼叫）。
+    def test_step10_error_still_schedules_focal_batch_asymmetry(self, client, mocker):
+        mocker.patch("web.routers.scraper.load_config", return_value=self._readonly_config())
+        mock_produce, mock_repo, mock_focal = self._mock_routing(
+            mocker,
+            existing_cover_path="",
+            produce_cover_fs="/out/ro_src-x/RO-001/RO-001.jpg",
+        )
+        mocker.patch(
+            "core.readonly_producer.compute_has_servable_cover",
+            side_effect=RuntimeError("boom"),
+        )
+
+        response = self._post(client, mode="refresh_full")
+
+        events = parse_sse(response.text)
+        result_items = [e for e in events if e["type"] == "result-item"]
+        assert len(result_items) == 1
+        assert result_items[0]["success"] is False
+
+        done = [e for e in events if e["type"] == "done"][0]["summary"]
+        assert done["failed"] == 1
+        assert done["success"] == 0
+
+        mock_repo.return_value.reset_focal_to_auto.assert_called_once()
+        mock_focal.assert_called_once()
+
 
 # ── P2 review round 3 (FIX#4/FIX#5): readonly + mode='db_to_sidecar' clean
 # rejection, + canonical `reason` on the batch failure result-item ─────────────
@@ -1307,7 +1345,7 @@ class TestBatchEnrichReadonlyDbToSidecarRejection:
         )
         mock_owning = mocker.patch("web.routers.scraper.resolve_owning_output_root")
         mock_plan = mocker.patch("core.readonly_producer.resolve_ingest_plan")
-        mock_produce = mocker.patch("web.routers.scraper._produce_one")
+        mock_produce = mocker.patch("core.readonly_producer._produce_one")
 
         response = client.post("/api/batch-enrich", json={
             "items": [{"file_path": "/tmp/ro_src/RO-001.mp4", "number": "RO-001"}],
@@ -1363,7 +1401,7 @@ class TestBatchEnrichReadonlyNoNfoRejection:
         )
         mock_owning = mocker.patch("web.routers.scraper.resolve_owning_output_root")
         mock_plan = mocker.patch("core.readonly_producer.resolve_ingest_plan")
-        mock_produce = mocker.patch("web.routers.scraper._produce_one")
+        mock_produce = mocker.patch("core.readonly_producer._produce_one")
 
         response = client.post("/api/batch-enrich", json={
             "items": [{"file_path": "/tmp/ro_src/RO-001.mp4", "number": "RO-001"}],
