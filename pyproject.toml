@@ -20,4 +20,5 @@ max-complexity = 30
 "build_macos.py" = ["T201"]
 "scripts/audit_build_artifact.py" = ["T201"]  # CLI build 工具，print 為正常輸出（同 build.py）
 "scripts/verify_artifact_imports.py" = ["T201"]  # 產物 import sweep 守衛，print 即輸出（跑在 embedded python，stdlib-only）
+"scripts/py_function_size_lint.py" = ["T201"]  # 規模閘守衛，print 即輸出（比照 audit_build_artifact.py／verify_artifact_imports.py）
 "core/logger.py" = ["TID251"]  # 本模組即 get_logger 的實作，合法直呼 logging.getLogger
