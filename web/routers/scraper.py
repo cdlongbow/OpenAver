@@ -35,8 +35,8 @@ from core.logger import get_logger
 from core.config import load_config
 from core.readonly_source import is_path_readonly, readonly_source_prefixes, writable_source_prefixes
 from core.readonly_producer import (
-    resolve_owning_output_root, _produce_one,
-    _readonly_enrich_failure,
+    resolve_owning_output_root, _produce_one,  # noqa: PLC2701 — fetch_samples_endpoint 合法把 _produce_one 當 primitive 用，109 已收斂單片/批次兩處；剩這條待未來升格公開名
+    _readonly_enrich_failure,  # noqa: PLC2701 — enrich 端點群需要與 producer 內部共用同一套「唯讀失敗」錯誤形狀建構器，確保所有唯讀相關錯誤 response 的欄位與語意一致，避免 router 層各自兜出不同形狀的錯誤 dict
     enrich_one_readonly, ReadonlyProduceError,
 )
 from core import thumbnail_cache

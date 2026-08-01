@@ -483,6 +483,6 @@ def update_videos_generator(
             }
             stats['failed'] += 1
 
-    return stats
+    return stats  # noqa: B901 — 已知可疑：此 generator 型別註記／docstring 承諾回傳 stats，但唯一呼叫端（web/routers/scanner.py 的 for 迴圈消費）從未接住 StopIteration.value，stats 實質為死碼；不在本 Phase 修（CD-110a-5／CD-110a-10 零產品碼改動），已列入 plan-110a 附錄 A-3 backlog 另案評估
 
 

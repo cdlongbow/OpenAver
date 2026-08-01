@@ -38,7 +38,7 @@ from core.config import load_config
 from core.scrapers.actress.orchestrator import (
     get_cached_profile,
     get_actress_profile,
-    _compute_age_from_birth as _compute_age,
+    _compute_age_from_birth as _compute_age,  # noqa: PLC2701 — actress router 的回應組裝（_actress_to_response）需要即時算年齡，直接借用 orchestrator 內部同一套生日換算邏輯，避免在 router 層重寫一份容易漂移的年齡計算；尚未升格為公開名
 )
 from core.logger import get_logger
 

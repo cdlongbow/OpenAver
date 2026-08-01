@@ -33,8 +33,8 @@ from bs4 import BeautifulSoup
 
 from core.cf_transport import CfChallengeRequired, CfTransportUnavailable
 from core.scrapers.javlibrary import (
-    _is_age_gate,
-    _is_cf_challenge,
+    _is_age_gate,  # noqa: PLC2701 — core/scrapers/javlibrary.py 模組 docstring 已明文設計為 module-level、供 windows/cf_transport_impl.py 直接 import（"T4 的 windows/cf_transport_impl.py 可直接 from core.scrapers.javlibrary import"），是刻意設計的跨模組共用判斷式，非意外洩漏
+    _is_cf_challenge,  # noqa: PLC2701 — 同上（core/scrapers/javlibrary.py:15 docstring 明文設計）：cf challenge 偵測與 age gate 偵測共用同一套 HTML 判斷邏輯，PyWebView transport 層需要重用而非重寫一份
 )
 from core.logger import get_logger
 

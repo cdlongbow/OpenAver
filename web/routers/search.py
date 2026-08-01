@@ -401,7 +401,7 @@ def _fetch_actress_profile_with_db(top_actor: str, makers: list) -> Optional[dic
         profile dict（前端 actressProfile），或 None（查無資料）
     """
     from core.database import ActressRepository, AliasRepository, init_db
-    from web.routers.actress import _actress_to_response  # 共用 serializer，避免重複邏輯
+    from web.routers.actress import _actress_to_response  # noqa: PLC2701 — 共用 serializer，避免重複邏輯：DB-hit 分支需要與 actress router 用同一份序列化，維持兩處回應欄位一致
 
     init_db()
     repo = ActressRepository()
@@ -428,7 +428,7 @@ def _fetch_actress_profile_with_db(top_actor: str, makers: list) -> Optional[dic
     if profile:
         profile["is_favorite"] = False
         # 補齊前端需要的頂層欄位（orchestrator legacy flat shape 缺 aliases/tags 等）
-        from web.routers.actress import _flatten_aliases
+        from web.routers.actress import _flatten_aliases  # noqa: PLC2701 — orchestrator legacy flat shape 缺 aliases 欄位，需要借用 actress router 同一套別名扁平化補齊，理由同 web/routers/actress_alias.py:26（同一私有名的另一個呼叫點）
         text = profile.get("text") or {}
         profile["aliases"] = _flatten_aliases(text.get("aliases"))
         profile["tags"] = text.get("tags") or []

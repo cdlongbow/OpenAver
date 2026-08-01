@@ -3,7 +3,8 @@ target-version = "py312"
 exclude = ["venv", "tools", "tests"]
 
 [tool.ruff.lint]
-select = ["E722", "F", "B", "T201", "S110", "S112", "TID", "C901"]
+select = ["E722", "F", "B", "T201", "S110", "S112", "TID", "C901", "PLC2701"]
+preview = true
 
 [tool.ruff.lint.mccabe]
 max-complexity = 30
