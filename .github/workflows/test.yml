@@ -77,3 +77,12 @@ jobs:
 
       - name: Run ruff
         run: ruff check .
+
+      - name: Install import-linter
+        run: pip install import-linter==2.13  # keep in sync with requirements-test.txt pin
+
+      - name: Run import-linter
+        run: lint-imports
+
+      - name: Run function-size lint
+        run: python scripts/py_function_size_lint.py

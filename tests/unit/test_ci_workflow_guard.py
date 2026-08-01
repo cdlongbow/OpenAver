@@ -53,25 +53,37 @@ def test_lint_frontend_is_independent(workflow):
     assert "needs" not in workflow["jobs"]["lint-frontend"], "lint-frontend 不應依賴其他 job（平行擋 PR）"
 
 
-def test_ci_ruff_pin_matches_requirements(workflow):
-    """CI 的 ruff pin 必須與 requirements-test.txt 一致——
+@pytest.mark.parametrize(
+    "tool",
+    [
+        pytest.param("ruff", id="ruff"),
+        pytest.param("import-linter", id="import-linter"),
+    ],
+)
+def test_ci_ruff_pin_matches_requirements(workflow, tool):
+    """CI 的 <tool> pin 必須與 requirements-test.txt 一致——
 
     pip `-c` constraints 無法消費含 extras 的 requirements-test.txt（uvicorn[standard]
-    → pip 拒絕），故 ruff 版本必須在兩處各寫一次（CI step + requirements）。本守衛把
-    這個「兩處重複」鎖成 single source of truth：任一漂移即 RED，防 upstream ruff
+    → pip 拒絕），故版本必須在兩處各寫一次（CI step + requirements）。本守衛把
+    這個「兩處重複」鎖成 single source of truth：任一漂移即 RED，防 upstream 套件
     自動升級或人為忘記同步在 repo 無改動下讓 CI 轉紅。
+
+    TASK-110a-T5：本測試現以 `tool` 參數化，同時涵蓋 `ruff` 與 `import-linter`
+    兩個被「requirements-test.txt + CI step」各釘一次版本的工具；node 名稱保留
+    `test_ci_ruff_pin_matches_requirements`（不改名，AC7 逐字指名此 node）。
     """
-    req_match = re.search(r"^ruff==(\S+)", _REQUIREMENTS.read_text(encoding="utf-8"), re.MULTILINE)
-    assert req_match, "requirements-test.txt 缺 `ruff==<version>` 精確 pin（lint 是 PR gate，需鎖版本）"
+    pattern = re.escape(tool) + r"==(\S+)"
+    req_match = re.search(rf"^{pattern}", _REQUIREMENTS.read_text(encoding="utf-8"), re.MULTILINE)
+    assert req_match, f"requirements-test.txt 缺 `{tool}==<version>` 精確 pin（lint 是 PR gate，需鎖版本）"
     req_version = req_match.group(1).split("#")[0].strip()
 
     runs = " ".join(_run_commands(workflow["jobs"]["lint-frontend"]))
-    ci_match = re.search(r"ruff==(\S+)", runs)
-    assert ci_match, "CI lint-frontend 未以 `ruff==<version>` 精確 pin 安裝 ruff（避免版本漂移）"
+    ci_match = re.search(pattern, runs)
+    assert ci_match, f"CI lint-frontend 未以 `{tool}==<version>` 精確 pin 安裝 {tool}（避免版本漂移）"
     ci_version = ci_match.group(1).split("#")[0].strip()
 
     assert ci_version == req_version, (
-        f"CI ruff pin（{ci_version}）與 requirements-test.txt（{req_version}）不一致；"
+        f"CI {tool} pin（{ci_version}）與 requirements-test.txt（{req_version}）不一致；"
         "兩處必須同步（single source of truth）"
     )
 
