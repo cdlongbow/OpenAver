@@ -297,7 +297,7 @@ def _run_readonly_source(src, config, repo, proxy_url, summary, reachable: bool 
         yield from _yield_source_summary(result)
 
 
-def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Generator[str, None, None]:
+def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Generator[str, None, None]:  # noqa: C901 — avlist SSE 生成主流程；109 已判定為「列 backlog、現在別搬」（60–100 處測試 patch target 焊死該函式，拆分成本由測試面而非邏輯面決定）
     """產生影片列表（SSE 串流）- 使用 SQLite 儲存"""
 
     try:

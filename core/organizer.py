@@ -790,7 +790,7 @@ def find_subtitle_files(video_path: str) -> List[str]:
     return results
 
 
-def organize_file(
+def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在其中加 containment 防線，加的是「呼叫一個新的小函式」，不得讓本函式本身更複雜（見 plan-110b）
     file_path: str,
     metadata: Dict[str, Any],
     config: Dict[str, Any]

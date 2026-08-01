@@ -43,7 +43,7 @@ class JAV321Scraper(BaseScraper):
     def _get_source_name(self) -> str:
         return "jav321"
 
-    def search(self, number: str) -> Optional[Video]:
+    def search(self, number: str) -> Optional[Video]:  # noqa: C901 — 單一 scraper 的逐欄位 HTML 解析（標題/封面/女優/tag/日期…），是同一批 scraper 共有的形狀（非本函式特有債），跨 scraper 的解析器重構不在本 Phase 範圍
         """
         搜尋影片資訊
 

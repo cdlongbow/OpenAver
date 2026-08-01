@@ -338,7 +338,7 @@ class VideoRepository:
                 seen.append(t)
         return seen
 
-    def repath(self, old_uri: str | None, new_uri: str, video: Video) -> None:
+    def repath(self, old_uri: str | None, new_uri: str, video: Video) -> None:  # noqa: C901 — docstring 已明列四個互斥分支（self-no-op／正常 UPDATE／碰撞 delete-merge／old-not-in-DB），拆分會打散同一顆 SQL 語意單元到多個函式，可讀性不會變好
         """將 DB 中 old_uri 那筆重新對應到 new_uri，保留 id / created_at。
 
         四分支：
