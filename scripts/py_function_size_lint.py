@@ -218,8 +218,22 @@ class _QualnameVisitor(ast.NodeVisitor):
         self._stack.pop()
 
 
-def _iter_py_files() -> list[Path]:
-    """Walk SCAN_ROOTS under ROOT, excluding EXCLUDED_DIRS, returning .py files.
+def _iter_py_files() -> tuple[list[Path], list[str]]:
+    """Walk SCAN_ROOTS under ROOT, excluding EXCLUDED_DIRS.
+
+    Returns (files, root_errors). `root_errors` is non-empty when a declared
+    scan root is missing or is the wrong kind of thing.
+
+    Every entry in SCAN_ROOTS MUST exist and match its declared shape
+    (``*.py`` entries are single files, everything else is a directory).
+    A missing root is a hard error, never a silent skip: if `core/` were
+    renamed or a build entry moved, silently walking the remaining roots
+    would still report PASS while the gate had quietly stopped covering the
+    range it claims to cover. The `not all_files` false-green guard in
+    main() does NOT catch this — it only fires when *every* root vanishes.
+    (Nor can we rely on the anti-rot check catching it: that only fires when
+    the vanished root happens to contain EXEMPTIONS entries, which is luck,
+    not a guarantee — and the blind spot migrates as the list shrinks.)
 
     Symlinks are not followed (os.walk default followlinks=False, left
     unset deliberately) to avoid infinite recursion / cross-directory
@@ -230,13 +244,25 @@ def _iter_py_files() -> list[Path]:
     introduced, add an os.path.realpath()-based dedupe.
     """
     files: list[Path] = []
+    root_errors: list[str] = []
     for root_entry in SCAN_ROOTS:
         root_path = ROOT / root_entry
-        if root_path.is_file():
-            if root_path.suffix == ".py":
+        if root_entry.endswith(".py"):
+            if not root_path.is_file():
+                root_errors.append(
+                    f"[MISSING SCAN ROOT] {root_entry} 不存在或不是檔案（預期為單檔掃描根）。"
+                    " 掃描範圍已與 SCAN_ROOTS 宣稱的不符——請修正路徑，或在確認該範圍不再需要"
+                    " 涵蓋後從 SCAN_ROOTS 移除該項。"
+                )
+            else:
                 files.append(root_path)
             continue
         if not root_path.is_dir():
+            root_errors.append(
+                f"[MISSING SCAN ROOT] {root_entry}/ 不存在或不是目錄（預期為目錄掃描根）。"
+                " 掃描範圍已與 SCAN_ROOTS 宣稱的不符——請修正路徑，或在確認該範圍不再需要"
+                " 涵蓋後從 SCAN_ROOTS 移除該項。"
+            )
             continue
         for dirpath, dirnames, filenames in os.walk(root_path):
             # In-place filter of dirnames so os.walk never descends into
@@ -247,7 +273,7 @@ def _iter_py_files() -> list[Path]:
             for name in filenames:
                 if name.endswith(".py"):
                     files.append(Path(dirpath) / name)
-    return files
+    return files, root_errors
 
 
 def _scan(files: list[Path]) -> tuple[list[_FunctionRecord], list[tuple[str, str]]]:
@@ -286,7 +312,16 @@ def main() -> int:
     # count actual files walked, not just files with functions, so an
     # edge case of "found files but they're all empty" still counts
     # correctly below.
-    all_files = _iter_py_files()
+    all_files, root_errors = _iter_py_files()
+    if root_errors:
+        # Fail before scanning: a shrunken scan range makes every downstream
+        # number (function count, violations, anti-rot verdicts) a statement
+        # about a smaller repo than the one we claim to be gating.
+        for msg in sorted(root_errors):
+            print(msg)
+        print(f"FAIL: {len(root_errors)} missing scan roots")
+        return 1
+
     if not all_files:
         print(
             "[FAIL] 0 .py files scanned under "
@@ -308,19 +343,39 @@ def main() -> int:
         by_key.setdefault((rec.rel_path, rec.qualname), []).append(rec)
 
     violations: list[tuple[str, int, str, int]] = []  # (rel_path, lineno, qualname, size)
+    duplicate_errors: list[tuple[str, str, str]] = []  # (rel_path, qualname, message)
     # Sort by key (rel_path, qualname) before iterating: by_key is built in
     # os.walk traversal order, which is not guaranteed stable across
-    # machines/filesystems. Every printed line (WARNING here, violations
+    # machines/filesystems. Every printed line (duplicates here, violations
     # and anti-rot errors below) must be deterministic regardless of scan
     # order, so CI output doesn't flap between runs.
     for key in sorted(by_key):
         rel_path, qualname = key
         recs = by_key[key]
         if len(recs) > 1:
-            print(
-                f"[WARNING] {rel_path}:{qualname} 有 {len(recs)} 個同名定義，"
-                "豁免/違規判定套用到全部"
-            )
+            # Fail-closed on an ambiguous key. This used to be a warning that
+            # then applied one exemption to ALL same-named definitions, which
+            # was a straight bypass: adding a second 300-line `organize_file`
+            # to a module that already has `organize_file` exempted inherited
+            # the exemption and reported PASS. Both anti-rot checks were blind
+            # to it too — GHOST needs the key to be absent, and STALE requires
+            # *every* record under the key to be within the threshold, so the
+            # original oversized function kept the exemption "live".
+            # The exemption list is keyed by (path, qualified name); if that
+            # key is not unique the data model itself is broken, so ambiguity
+            # must be an error rather than something we guess our way through.
+            # Zero occurrences repo-wide today, and no @overload / conditional
+            # (if-else, try-except) same-name definitions exist in the scanned
+            # range — so this costs nothing now. If @overload is ever adopted,
+            # teach this check to skip overload stubs rather than reverting it.
+            duplicate_errors.append((
+                rel_path,
+                qualname,
+                f"[DUPLICATE DEFINITION] {rel_path}:{qualname} 有 {len(recs)} 個同名定義"
+                f"（行 {', '.join(str(r.lineno) for r in sorted(recs, key=lambda r: r.lineno))}）。"
+                " 豁免清單以 (檔案, qualified name) 為鍵，同名會讓該鍵無法指向唯一函式、"
+                "使豁免被誤套到另一個函式上。請將其中一個改名以消除歧義。",
+            ))
         exempt = key in EXEMPTIONS
         for rec in recs:
             if rec.size > MAX_LINES and not exempt:
@@ -353,6 +408,10 @@ def main() -> int:
     for rel_path, lineno, qualname, size in violations:
         print(f"{rel_path}:{lineno} {qualname} ({size} 行) > {MAX_LINES}")
 
+    duplicate_errors.sort(key=lambda e: (e[0], e[1]))
+    for _rel_path, _qualname, msg in duplicate_errors:
+        print(msg)
+
     anti_rot_errors.sort(key=lambda e: (e[0], e[1]))
     for _rel_path, _qualname, msg in anti_rot_errors:
         print(msg)
@@ -360,10 +419,11 @@ def main() -> int:
     for rel_path, message in sorted(parse_errors):
         print(f"[PARSE ERROR] {rel_path}: {message}")
 
-    if parse_errors or violations or anti_rot_errors:
+    if parse_errors or violations or anti_rot_errors or duplicate_errors:
         print(
             f"FAIL: {len(violations)} violations, {len(anti_rot_errors)} stale/ghost "
-            f"exemptions, {len(parse_errors)} parse errors"
+            f"exemptions, {len(duplicate_errors)} duplicate definitions, "
+            f"{len(parse_errors)} parse errors"
         )
         return 1
 
