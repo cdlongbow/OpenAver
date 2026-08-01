@@ -564,6 +564,9 @@ class TestEnrichSingleReadonlyGuard:
 
         data = response.json()
         assert data["success"] is False
+        # [lint-guard: pytest-justified] step10 例外穿透 router 外層 fallback 後
+        # 的 error/reason 欄位，enrich-single 回應 JSON 的 runtime API 契約（兩條
+        # 同屬本次故障注入分流的逐字比對），lint 無法表達。
         assert data["error"] == "enrich 處理失敗，請查閱日誌"
         assert data["reason"] == "error"
 

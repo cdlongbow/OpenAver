@@ -877,6 +877,8 @@ class TestBatchEnrichReadonlyGuard:
 
         result_items = [e for e in parse_sse(response.text) if e["type"] == "result-item"]
         assert result_items[0]["success"] is False
+        # [lint-guard: pytest-justified] C2 typed 邊界的 _produce_one 失敗文案，
+        # runtime API 回應契約（SSE result-item.error 逐字比對），lint 無法表達。
         assert result_items[0]["error"] == "生成失敗"
 
     # TASK-109-T3（CD-109-8 C2 typed 邊界，AC2-錯誤文案分流②）：entry 內前段
@@ -906,6 +908,8 @@ class TestBatchEnrichReadonlyGuard:
 
         result_items = [e for e in parse_sse(response.text) if e["type"] == "result-item"]
         assert result_items[0]["success"] is False
+        # [lint-guard: pytest-justified] resolve_ingest_plan 例外穿透到 per-item
+        # 外層 fallback 的通用失敗文案，runtime API 回應契約，lint 無法表達。
         assert result_items[0]["error"] == "enrich 處理失敗，請查閱日誌"
 
 

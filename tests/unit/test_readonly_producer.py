@@ -5938,6 +5938,9 @@ class TestEnrichOneReadonlyEntryPoint:
         mock_produce.assert_called_once()
         mock_has_cover.assert_called_once()
         assert result.success is True
+        # [lint-guard: pytest-justified] EnrichResult.reason 的確切文案值
+        # （"hit"/"no_cover"/"not_found" 是 core/router 共用的 runtime 回傳
+        # 契約，前端與 batch 分流都靠這個字面值），lint 無法表達。
         assert result.reason == "hit"
         assert result.nfo_written is True
         assert result.cover_written is True
@@ -5962,6 +5965,8 @@ class TestEnrichOneReadonlyEntryPoint:
             result = enrich_one_readonly(**self._base_kwargs(repo_factory))
 
         assert result.success is True
+        # [lint-guard: pytest-justified] EnrichResult.reason 確切文案值，同上
+        # ——公開入口的 runtime 回傳契約，lint 無法表達。
         assert result.reason == "no_cover"
         assert result.cover_written is False
         # cover_written=False → no focal repo built, only the main repo call
@@ -5983,9 +5988,15 @@ class TestEnrichOneReadonlyEntryPoint:
 
         mock_produce.assert_not_called()
         assert result.success is False
+        # [lint-guard: pytest-justified] 唯讀 not-found 的 EnrichResult.reason/
+        # error 確切文案，跨 core/router 的 runtime 回傳契約，lint 無法表達。
         assert result.reason == "not_found"
         assert result.error == "找不到可用的番號資料"
 
+        # [lint-guard: pytest-justified] mock_calls 的方法名字面值 + 呼叫順序，
+        # 驗的是 _readonly_stub_not_found 對同一 mock repo 的呼叫順序契約
+        # （insert_if_ignore 必先於 update_scrape_attempted_at），非 lint 可掃的
+        # 靜態字串存在檢查，屬 runtime 呼叫序列斷言。
         call_names = [c[0] for c in repo.mock_calls]
         assert "insert_if_ignore" in call_names
         assert "update_scrape_attempted_at" in call_names
