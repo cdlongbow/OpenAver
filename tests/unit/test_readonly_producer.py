@@ -3730,6 +3730,224 @@ class TestProduceSourceMediaServerStrmE2E:
 
 
 # ---------------------------------------------------------------------------
+# TASK-110b-T5 (CD-110b-2/CD-110b-8): containment checkpoint wired into
+# _write_movie_assets from _produce_one's output_root. End-to-end through the
+# REAL produce_source pipeline (real tmp filesystem, real _resolve_movie_dir/
+# _write_movie_assets — nothing about the containment path itself is mocked)
+# so a rejection is proven by an actual before/after directory snapshot diff,
+# not by asserting an exception was raised (feedback_reproduce_over_reasoning).
+# ---------------------------------------------------------------------------
+
+class TestWriteMovieAssetsContainment:
+    """Scraped metadata containing '..' in the folder_layers template (`parts`)
+    must never let movie_dir land outside output_root — this is case 1 (multi-
+    layer actor escape) below, end-to-end through produce_source's REAL
+    _resolve_movie_dir allocate loop AND the real containment checkpoint
+    (which lives in _produce_one, right after _resolve_movie_dir returns —
+    see TestProduceOneContainmentCheckpoint below for why it is NOT inside
+    _write_movie_assets: that function has exactly one production caller,
+    _produce_one, so checking at that call site is production-equivalent and
+    needs no new parameter on _write_movie_assets at all).
+
+    Case 2 (F2: the leaf itself, sanitize_filename(format_data['number']))
+    is deliberately tested SEPARATELY (TestProduceOneContainmentCheckpoint
+    below), by patching _resolve_movie_dir to directly return an escaping
+    movie_dir, rather than through produce_source's real allocate loop: a
+    leaf-only '..' with empty folder_layers always resolves (via realpath, at
+    OS-syscall time) to output_root's own parent — which, for any real
+    configured output root, reliably already exists — so
+    _resolve_movie_dir's PRE-EXISTING candidate_fs.exists() collision-retry
+    silently deflects it into a harmless literal `..-2` sibling folder INSIDE
+    output_root before ever producing a movie_dir that would trip the
+    checkpoint (empirically confirmed: running that exact metadata/config
+    combo through produce_source yields `created=1`, not a rejection — no
+    real escape occurs in that configuration). That self-healing is real but
+    incidental (it depends on collision-retry behaviour this task must not
+    touch or rely on) — it must not be mistaken for this task's containment
+    guarantee. Patching _resolve_movie_dir's return value directly proves F2's
+    "leaf is already inside movie_dir, one checkpoint suffices" holds even
+    with nothing upstream offering any protection at all (e.g. a future
+    refactor of _resolve_movie_dir's collision logic, or the read-and-reuse
+    branch, whose own existing is_path_under_dir gate is a DIFFERENT,
+    already-landed mechanism) — it locks the checkpoint itself, independent
+    of whether any particular escape vector can survive the allocate loop.
+
+    workspace/l1/l2/output gives two levels of headroom above output_dir, so
+    case 1's 2-level-then-descend escape lands inside `workspace` — the
+    region snapshotted here for containment — instead of splattering the real
+    pytest tmp root above it.
+    """
+
+    FILENAME = 'ABC-001.mp4'
+
+    def _setup(self, tmp_path):
+        workspace = tmp_path / 'ws'
+        source_dir = workspace / 'readonly-src'
+        source_dir.mkdir(parents=True)
+        (source_dir / self.FILENAME).write_bytes(b'FAKE-VIDEO-BYTES')
+        output_dir = workspace / 'l1' / 'l2' / 'output'
+        output_dir.mkdir(parents=True)
+        return workspace, source_dir, output_dir
+
+    def _run(self, tmp_path, meta_overrides, scraper_overrides=None):
+        workspace, source_dir, output_dir = self._setup(tmp_path)
+        config = _make_config(scraper_cfg=dict(
+            _T3_BASE_CONFIG, external_manager='jellyfin',
+            **(scraper_overrides or {}),
+        ))
+        source = _make_source(readonly=True, output_path=str(output_dir), path=str(source_dir))
+        repo = MagicMock()
+        repo.get_attempted_index.return_value = {}
+        repo.get_by_path.return_value = None
+        repo.is_output_dir_taken.return_value = False
+        repo.get_all.return_value = []
+        files = [{'path': str(source_dir / self.FILENAME), 'size': 1_000_000, 'mtime': 1.0, 'nfo_mtime': 0.0}]
+
+        def fake_search_jav(number, source="auto", proxy_url="", javbus_lang=None):
+            meta = {
+                'number': number,
+                'title': 'Normal Title',
+                'cover': 'https://example.com/cover.jpg',
+                'actors': ['Actress A'],
+                'tags': [], 'date': '2024-01-01', 'maker': 'Maker',
+                'director': '', 'series': '', 'label': '',
+                'sample_images': [], 'duration': 120,
+                '_summary': '', '_rating': None, 'url': '',
+            }
+            meta.update(meta_overrides)
+            return meta
+
+        workspace_before = _snapshot_dir(workspace)
+        source_before = _snapshot_dir(source_dir)
+
+        from core.readonly_producer import produce_source
+        with patch('core.readonly_producer._list_source_videos', return_value=files), \
+             patch('core.readonly_producer.search_jav', side_effect=fake_search_jav), \
+             patch('core.readonly_producer.download_image', side_effect=_t4_real_download), \
+             patch('core.readonly_producer.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
+             patch('core.readonly_producer.generate_nfo', side_effect=_t4_real_nfo):
+            result = produce_source(source, config, repo)
+
+        workspace_after = _snapshot_dir(workspace)
+        source_after = _snapshot_dir(source_dir)
+        return result, repo, output_dir, workspace_before, workspace_after, source_before, source_after
+
+    def test_multi_layer_actor_escape_rejected_zero_writes_outside_root(self, tmp_path):
+        """Case 1: actors=['..', '..'] behind a 2-layer folder_layers template
+        (both layers resolve to actors[0] via format_string's {actor} token) —
+        the allocate branch's `parts` carries the escape."""
+        result, repo, output_dir, ws_before, ws_after, src_before, src_after = self._run(
+            tmp_path,
+            meta_overrides={'actors': ['..', '..']},
+            scraper_overrides={'folder_layers': ['{actor}', '{actor}']},
+        )
+
+        assert result.created == 0, "escaping metadata must not be counted as created"
+        assert result.failed == 1, "rejection must be a single-file failure, not an abort"
+        new_paths = ws_after - ws_before
+        outside_output = {p for p in new_paths if not p.startswith(str(output_dir))}
+        assert outside_output == set(), f"escaped writes outside output_root: {outside_output}"
+        assert src_before == src_after, "read-only source dir must not be written to"
+        repo.upsert.assert_not_called()
+
+    def test_normal_metadata_with_dot_in_title_still_produces(self, tmp_path):
+        """Negative control: a legit title containing a single '.' (not '..')
+        must not false-positive the containment checkpoint."""
+        result, repo, output_dir, ws_before, ws_after, src_before, src_after = self._run(
+            tmp_path,
+            meta_overrides={'title': 'Vol. 2 Special Edition'},
+        )
+
+        assert result.created == 1, f"expected 1 created, got {result.created} (failed={result.failed})"
+        dirs = _movie_dirs(output_dir)
+        assert len(dirs) == 1
+        assert src_before == src_after, "read-only source dir must not be written to"
+        repo.upsert.assert_called_once()
+
+
+class TestProduceOneContainmentCheckpoint:
+    """TASK-110b-T5 (CD-110b-2/CD-110b-8): the containment checkpoint lives in
+    _produce_one — right after _resolve_movie_dir returns, before
+    _write_movie_assets is ever called — NOT inside _write_movie_assets
+    itself. Rationale (Opus ruling, post-implementation review):
+
+    - output_root is already in _produce_one's own scope → checking here
+      needs zero new parameters anywhere.
+    - The check is UNCONDITIONAL, not behind a defaulted kwarg. An earlier
+      draft added `output_root: Optional[str] = None` to _write_movie_assets
+      and skipped the check when the caller didn't pass it — that is a
+      fail-open shape (forget to pass it, the whole guard vanishes), which is
+      exactly what 110a Codex round-1 flagged and fail-closed'd for the scale
+      gates (commit 7514b736). This Phase's guards must not have a "didn't
+      pass it" escape hatch.
+    - _write_movie_assets has exactly ONE production caller — _produce_one
+      itself (grep-confirmed: only this call site and the 37 direct unit-test
+      calls elsewhere in this file exist) — so checking at this call site is
+      production-EQUIVALENT to checking inside the callee, while leaving
+      _write_movie_assets's signature, and all 37 of those direct test call
+      sites, completely untouched.
+
+    Case 2 here (F2, TASK-110b-T1): a leaf-only escape — movie_dir landing
+    exactly one level above output_root, the shape sanitize_filename(number)
+    == '..' with empty folder_layers would produce inside _resolve_movie_dir
+    — is tested by directly patching _resolve_movie_dir's return value and
+    calling _produce_one, rather than by driving produce_source's real
+    allocate loop with a literal number='..' (see the docstring on
+    TestWriteMovieAssetsContainment above for the full explanation of why
+    that loop's own PRE-EXISTING candidate_fs.exists() collision-retry
+    incidentally self-heals that exact metadata shape into a harmless
+    `..-2` folder INSIDE output_root before any movie_dir escaping it is ever
+    produced). Patching the return value directly locks the checkpoint
+    itself, independent of whether any particular upstream escape vector
+    happens to survive _resolve_movie_dir's own logic.
+    """
+
+    def test_resolve_movie_dir_escape_rejected_zero_writes_outside_root(self, tmp_path):
+        from core.readonly_producer import _produce_one
+
+        workspace = tmp_path / 'ws'
+        source_dir = workspace / 'readonly-src'
+        source_dir.mkdir(parents=True)
+        source_fs_path = str(source_dir / 'ABC-001.mp4')
+        Path(source_fs_path).write_bytes(b'FAKE-VIDEO-BYTES')
+        output_root = workspace / 'output'
+        output_root.mkdir(parents=True)
+
+        # Sibling of output_root, unambiguously outside it — as if
+        # _resolve_movie_dir had handed back an already-escaped candidate
+        # (e.g. the F2 leaf='..' shape, or any future escape vector).
+        escaping_movie_dir = workspace / 'ESCAPED-SIBLING'
+        meta = dict(_T3_META, number='ABC-001')
+        file_info = {'path': source_fs_path, 'size': 1_000_000, 'mtime': 1.0}
+        repo = MagicMock()
+
+        ws_before = _snapshot_dir(workspace)
+        src_before = _snapshot_dir(source_dir)
+
+        with patch('core.readonly_producer._resolve_movie_dir',
+                   return_value=(escaping_movie_dir, 'file:///whatever-db-uri')), \
+             patch('core.readonly_producer._write_movie_assets') as mock_write:
+            with pytest.raises(RuntimeError):
+                _produce_one(
+                    repo, MagicMock(), dict(_T3_BASE_CONFIG, external_manager='jellyfin'),
+                    file_info=file_info, meta=meta, cover_strategy=_cover_strategy_for(meta),
+                    assets_mode='full', existing=None,
+                    output_root=str(output_root), output_uri=to_file_uri(str(output_root), {}),
+                    allocated_this_run=set(), path_mappings={},
+                )
+
+        ws_after = _snapshot_dir(workspace)
+        src_after = _snapshot_dir(source_dir)
+        assert ws_after == ws_before, (
+            f"escaping call must create nothing at all: added={ws_after - ws_before}"
+        )
+        assert not escaping_movie_dir.exists(), "escaping movie_dir must not be created"
+        assert src_before == src_after, "read-only source dir must not be written to"
+        mock_write.assert_not_called()  # rejected before the write step is ever reached
+        repo.upsert.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # TASK-99b-T1: post-loop bulk focal pass (CD-99b-1/2/7/8, spec §3.10)
 #
 # Real sqlite temp DB (CD-99b-6, no repo mock) + real produce_source loop

@@ -557,6 +557,17 @@ def is_fs_path_under_dir(fs_path: str, root_fs_path: str) -> bool:
         往外炸，本函式**刻意不吞它**：那是呼叫端契約違反（型別標註已寫明 str），
         大聲炸比靜默回 False 更容易查。T4/T5 的接線端不要以為「所有例外都被這裡
         擋掉了」。
+
+        **空字串 root 的語意（刻意不擋，讀者必看）**：`root_fs_path=''` 會經
+        `os.path.realpath('')` 解析成**當前工作目錄（CWD）**，比對照常進行、不報錯。
+        這對「root 真的就是 CWD」的呼叫端是**正確**行為——例：`organize_file` 的
+        `original_dir = os.path.dirname(file_path)`，當 `file_path` 是不含目錄的
+        相對檔名時 `original_dir` 就是 `''`，而該檔確實位於 CWD。
+        反過來，若某個呼叫端的空 root 意思是「**尚未設定**輸出根目錄」，那它**必須
+        自己在上游擋掉**，不能指望本函式把空字串當成拒絕——本函式無從分辨這兩種
+        語意。`core/readonly_producer.py` 即屬後者，已有三道上游 guard
+        （`web/routers/scraper.py` 的單片與批次入口、`produce_source` 本身）確保
+        空 `output_root` 永遠到不了這裡。
     """
     try:
         root_real = os.path.realpath(root_fs_path)

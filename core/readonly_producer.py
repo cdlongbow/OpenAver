@@ -54,6 +54,7 @@ from core.organizer import (
 )
 from core.path_utils import (
     CURRENT_ENV,
+    is_fs_path_under_dir,
     is_path_under_dir,
     normalize_path,
     reverse_path_mapping,
@@ -1452,6 +1453,34 @@ def _produce_one(
         repo, src_uri, existing, output_root, output_uri,
         fd, config, allocated_this_run, path_mappings,
     )
+    # TASK-110b-T5 (CD-110b-2/CD-110b-8): containment checkpoint — checked
+    # HERE (the _resolve_movie_dir call site), not inside _write_movie_assets,
+    # and unconditionally (no defaulted "skip if not passed" kwarg): fail-closed
+    # is this Phase's whole point (see 110a Codex round-1 / commit 7514b736 —
+    # a guard with a bypassable default is exactly the shape that round
+    # fail-closed'd). output_root is already in this function's own scope, so
+    # checking here needs zero new parameters anywhere. _write_movie_assets has
+    # exactly ONE production caller — this one (grep-confirmed) — so checking
+    # at this call site is production-equivalent to checking inside the callee,
+    # while leaving _write_movie_assets's signature (and its 35 direct
+    # unit-test call sites elsewhere in this file) completely untouched. Both
+    # _resolve_movie_dir return branches (read-and-reuse from the DB and
+    # freshly-allocated from scraped metadata) are covered — this checks the
+    # SAME final `movie_dir` either branch produced — and it runs before
+    # _build_old_base/effective_original_title do any further work, before
+    # _write_movie_assets's first os.makedirs, before _upsert_db, and before
+    # any cache invalidation (all of which happen later in this function or
+    # its caller). F2 (TASK-110b-T1): the allocate branch's leaf
+    # (sanitize_filename(format_data['number'])) is already folded into
+    # _resolve_movie_dir's candidate_fs before it ever returns, so this single
+    # check on movie_dir is sufficient — no second leaf-only checkpoint needed.
+    # MUTATION LOCK: deleting this block must turn
+    # TestWriteMovieAssetsContainment.test_multi_layer_actor_escape_rejected_zero_writes_outside_root
+    # and TestProduceOneContainmentCheckpoint's test RED, while
+    # TestWriteMovieAssetsContainment.test_normal_metadata_with_dot_in_title_still_produces
+    # stays GREEN (test_readonly_producer.py).
+    if not is_fs_path_under_dir(str(movie_dir), output_root):
+        raise RuntimeError(f"movie_dir 超出 output_root 範圍: {movie_dir}")
     old_base = _build_old_base(existing, file_info["path"], config)  # '' when no prior row/title/number
     # FIX P1 (Codex PR#113 round-6, 2026-07-21; feature/105 T3: extracted to
     # effective_original_title helper): synthesize the EFFECTIVE original_title
