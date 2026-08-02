@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1] - 未發布
+
+> 本節隨 `feature/110-governance-and-security` 逐 task 累積，pre-merge 時補齊其餘條目與發布日期。
+
+### Changed
+#### ⚠️ 開發模式啟動命令改為只綁本機（行為變更）
+- `run.sh` 與 README／CONTRIBUTING 教的開發啟動命令，從 `--host 0.0.0.0`（監聽所有網路介面）改為 `--host 127.0.0.1`（只有本機連得到），與 `SECURITY.md` 一直以來寫的「預設綁定 `127.0.0.1:8000`」對齊——先前是文件與實際行為不一致。
+- **誰會受影響**：只有在 Linux 上用 `run.sh` 啟動、並且靠它讓手機或其他電腦連進來的人。**Windows／macOS 桌面版不受影響**（本來就只綁本機）。
+- **要繼續從其他裝置連進來，請用設定頁右上角的「單機 ｜ 伺服器」膠囊切到「伺服器」**——那是本來就有、而且預設在「單機」的正式開關；切過去才會額外監聽區網介面。這個改動只是不再讓開發用的啟動命令繞過那個開關。
+
 ## [0.13.0] - 2026-08-01
 
 本版是一次純內部收斂（feature/109）：把唯讀來源「單片刮削」與「批次補料」兩處各約 40 行、幾乎一模一樣的產出邏輯（決定要沿用本地資料還是重新刮削、實際寫檔、失敗時回什麼形狀）收斂成單一入口、兩邊共用。**對使用者完全無感、零行為變更**——這版不新增功能，純粹是把「同一條規則要記得改兩個地方」的維護債消掉。
