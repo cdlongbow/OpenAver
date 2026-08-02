@@ -3437,6 +3437,47 @@ const RULES = [
     scope: /<button class="lb-action-btn js-open-folder"[\s\S]*?<\/button>/,
     note: '[lint-guard:108-T4] G4c-neg：燈箱 .js-open-folder 按鈕不得混進 play/enrich 的 handler 或圖示（誤搬 class 的反向鎖）',
   },
+
+  // §CI／110a-P1（Codex PR #122 round-2）：ruff / import-linter CI pin 雙真理 parity 守衛
+  // （cross-file-equal，比照 :753-770 actress-crop-ratio parity 的形狀）。requirements-test.txt
+  // 與 .github/workflows/test.yml 的 lint-frontend job 各自獨立釘一次版本號（pip `-c`
+  // constraints 無法消費含 extras 的 requirements-test.txt，故版本必須兩處各寫一次），無任何
+  // 機制強制同步——任一邊升級忘記改另一邊即靜默漂移。原本以 pytest 參數化測試
+  // （test_ci_ruff_pin_matches_requirements[ruff]／[import-linter]）鎖此 parity；Codex 指出
+  // north-star「能用 lint 機械處理的不該進 pytest」，故遷移於此、砍掉對應 pytest
+  // （見 tests/unit/test_ci_workflow_guard.py 頂部說明）。
+  //
+  // 🔴 兩條都必須帶 `compare: 'string'`。cross-file-equal 預設走 parseFloat（原始用途是比
+  // 0.75 這種單一比例值），對版本號這種**多段字面**是錯的：實測
+  // parseFloat('0.15.17') === parseFloat('0.15.18') === 0.15，第二個點之後整段被丟掉 →
+  // ruff 的 patch 漂移完全抓不到（正是本守衛要防的場景）。不可改用「pattern 只擷取
+  // minor.patch 讓 capture 只剩一個點」的繞法——那會把 **major 漂移**變成假綠
+  // （0.15.17 與 1.15.17 都擷到 15.17）。
+  //
+  // 兩側行尾都有註解（requirements-test.txt 是 `# pinned exact: ...`，test.yml 是
+  // `# keep in sync with requirements-test.txt pin`），pattern 用 `(?:#.*)?$`（m flag）把
+  // 註解排除在 capture 之外，否則兩邊擷到的字串不同會假紅。
+  // pattern 無匹配 → evalCrossFileEqual 既有的 fail-closed err（不 vacuous-pass）。
+  {
+    kind: 'cross-file-equal',
+    label: 'ruff CI pin parity',
+    compare: 'string',
+    sources: [
+      { file: 'requirements-test.txt', pattern: /^ruff==(\S+?)\s*(?:#.*)?$/m },
+      { file: '.github/workflows/test.yml', pattern: /pip install ruff==(\S+?)\s*(?:#.*)?$/m },
+    ],
+    note: '[lint-guard:110a-P1] Codex PR #122 round-2：requirements-test.txt 與 CI lint-frontend step 各釘一次 ruff 版本，無強制同步機制，此守衛鎖一致（single source of truth；任一邊漂移即紅。原 pytest test_ci_ruff_pin_matches_requirements[ruff] 已遷移於此）',
+  },
+  {
+    kind: 'cross-file-equal',
+    label: 'import-linter CI pin parity',
+    compare: 'string',
+    sources: [
+      { file: 'requirements-test.txt', pattern: /^import-linter==(\S+?)\s*(?:#.*)?$/m },
+      { file: '.github/workflows/test.yml', pattern: /pip install import-linter==(\S+?)\s*(?:#.*)?$/m },
+    ],
+    note: '[lint-guard:110a-P1] Codex PR #122 round-2：requirements-test.txt 與 CI lint-frontend step 各釘一次 import-linter 版本，無強制同步機制，此守衛鎖一致（single source of truth；任一邊漂移即紅。原 pytest test_ci_ruff_pin_matches_requirements[import-linter] 已遷移於此）',
+  },
 ];
 
 // ---- helpers ----
@@ -3985,7 +4026,20 @@ function evalCrossFileEqual(rule) {
       err(`${rule.note} — ${src.file}: pattern ${patternLabel(src.pattern)} 無匹配（常數被改名/刪除？fail-closed）`);
       return;
     }
-    seen.push({ file: src.file, value: parseFloat(m[1]), raw: m[1] });
+    // 預設 parseFloat（101c-T1 原始用途：比 0.75 這種單一比例值，兩邊字面可能是
+    // 0.75 vs .75 vs 0.750，數值相等才是對的語意）。
+    // `compare: 'string'`（Codex PR #122 round-2 新增，opt-in、預設行為零改變）：
+    // 拿來比**版本號這種多段字面**時 parseFloat 是錯的——實測
+    // parseFloat('0.15.17') === parseFloat('0.15.18') === 0.15，第二個點之後整段被丟掉，
+    // patch 漂移完全看不見（正是 pin parity 守衛要防的場景卻抓不到）。
+    // 曾考慮的繞法「pattern 只擷取 minor.patch 讓 capture 只剩一個點」更糟：那會讓
+    // **major 漂移**變成假綠（0.15.17 與 1.15.17 都擷到 15.17）。所以正解是讓引擎支援
+    // 字面比對，而不是把 pattern 扭曲成能餵給 parseFloat 的形狀。
+    seen.push({
+      file: src.file,
+      value: rule.compare === 'string' ? m[1] : parseFloat(m[1]),
+      raw: m[1],
+    });
   }
   const first = seen[0].value;
   if (!seen.every((s) => s.value === first)) {

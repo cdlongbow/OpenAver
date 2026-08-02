@@ -3,6 +3,13 @@
 防止 `.github/workflows/test.yml` 的 lint-frontend job 被靜默移除——lint 守衛
 （eslint + stylelint + ruff）必須在 CI 跑才 load-bearing（翻 reference_ci_no_eslint
 前提）。解析 YAML 後檢查語意，不依賴 attribute 順序。
+
+pin-drift parity 守衛（requirements-test.txt 與 CI lint-frontend step 的 ruff /
+import-linter 版本一致性）已於 Codex PR #122 round-2 P1 遷移到
+`scripts/static_guard_lint.mjs` 的 `cross-file-equal` rule（label `ruff CI pin
+parity` / `import-linter CI pin parity`）——這類跨檔字面比對可用 lint 機械處理，
+north-star 規定不該留在 pytest。原本的 `test_ci_ruff_pin_matches_requirements`
+參數化測試已移除，並非守衛消失。
 """
 
 import re
@@ -51,41 +58,6 @@ def test_lint_frontend_runs_npm_lint_and_ruff(workflow):
 def test_lint_frontend_is_independent(workflow):
     """lint-frontend 與 test 平行（無 needs），任一紅各自擋 PR。"""
     assert "needs" not in workflow["jobs"]["lint-frontend"], "lint-frontend 不應依賴其他 job（平行擋 PR）"
-
-
-@pytest.mark.parametrize(
-    "tool",
-    [
-        pytest.param("ruff", id="ruff"),
-        pytest.param("import-linter", id="import-linter"),
-    ],
-)
-def test_ci_ruff_pin_matches_requirements(workflow, tool):
-    """CI 的 <tool> pin 必須與 requirements-test.txt 一致——
-
-    pip `-c` constraints 無法消費含 extras 的 requirements-test.txt（uvicorn[standard]
-    → pip 拒絕），故版本必須在兩處各寫一次（CI step + requirements）。本守衛把
-    這個「兩處重複」鎖成 single source of truth：任一漂移即 RED，防 upstream 套件
-    自動升級或人為忘記同步在 repo 無改動下讓 CI 轉紅。
-
-    TASK-110a-T5：本測試現以 `tool` 參數化，同時涵蓋 `ruff` 與 `import-linter`
-    兩個被「requirements-test.txt + CI step」各釘一次版本的工具；node 名稱保留
-    `test_ci_ruff_pin_matches_requirements`（不改名，AC7 逐字指名此 node）。
-    """
-    pattern = re.escape(tool) + r"==(\S+)"
-    req_match = re.search(rf"^{pattern}", _REQUIREMENTS.read_text(encoding="utf-8"), re.MULTILINE)
-    assert req_match, f"requirements-test.txt 缺 `{tool}==<version>` 精確 pin（lint 是 PR gate，需鎖版本）"
-    req_version = req_match.group(1).split("#")[0].strip()
-
-    runs = " ".join(_run_commands(workflow["jobs"]["lint-frontend"]))
-    ci_match = re.search(pattern, runs)
-    assert ci_match, f"CI lint-frontend 未以 `{tool}==<version>` 精確 pin 安裝 {tool}（避免版本漂移）"
-    ci_version = ci_match.group(1).split("#")[0].strip()
-
-    assert ci_version == req_version, (
-        f"CI {tool} pin（{ci_version}）與 requirements-test.txt（{req_version}）不一致；"
-        "兩處必須同步（single source of truth）"
-    )
 
 
 # ── exact-pin 守衛（TASK-79-T6）─────────────────────────────────────────────
