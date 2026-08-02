@@ -3,7 +3,23 @@ target-version = "py312"
 exclude = ["venv", "tools", "tests"]
 
 [tool.ruff.lint]
-select = ["E722", "F", "B", "T201", "S110", "S112", "TID"]
+select = ["E722", "F", "B", "T201", "S110", "S112", "TID", "C901", "PLC2701"]
+# preview 是 PLC2701（跨模組 import 私有成員）的必要條件——ruff 沒有 per-rule 的
+# preview 開關，只能全域開。
+# ⚠️ 副作用（pre-merge SA-pre-9 P2-2，實測而非推測）：開了之後，上面 select 裡的
+# **前綴**會一併吃到該前綴底下的 preview 規則——實測多出 B043 / B901 / B903 /
+# B909 / TID254 / TID255。這不是理論：B901 當下就命中 core/nfo_updater.py:486，
+# 已具名 suppression 處理。
+# 因此**精確 pin ruff 版本是這條設定的配套、不是可選項**：上游升版若新增或改動
+# 任一 preview 規則的判定，會在本 repo 零改動的情況下讓 CI 轉紅。
+# 防線＝requirements-test.txt 的 `ruff==0.15.17` 精確 pin
+#       + tests/unit/test_ci_workflow_guard.py::test_ci_ruff_pin_matches_requirements
+#         的 pin-drift 守衛（已參數化涵蓋 ruff 與 import-linter 兩者）。
+# 動這一行之前先確認那兩道防線還在。
+preview = true
+
+[tool.ruff.lint.mccabe]
+max-complexity = 30
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "logging.getLogger".msg = "改用 from core.logger import get_logger（見 CLAUDE.md Logger 規則）"
@@ -17,4 +33,21 @@ select = ["E722", "F", "B", "T201", "S110", "S112", "TID"]
 "build_macos.py" = ["T201"]
 "scripts/audit_build_artifact.py" = ["T201"]  # CLI build 工具，print 為正常輸出（同 build.py）
 "scripts/verify_artifact_imports.py" = ["T201"]  # 產物 import sweep 守衛，print 即輸出（跑在 embedded python，stdlib-only）
+"scripts/py_function_size_lint.py" = ["T201"]  # 規模閘守衛，print 即輸出（比照 audit_build_artifact.py／verify_artifact_imports.py）
 "core/logger.py" = ["TID251"]  # 本模組即 get_logger 的實作，合法直呼 logging.getLogger
+
+# ── 分層契約（import-linter，CLI: lint-imports；跑在 CI 的 lint-frontend job）──
+[tool.importlinter]
+root_packages = ["core", "web"]
+
+[[tool.importlinter.contracts]]
+name = "core must not import web"
+type = "forbidden"
+source_modules = ["core"]
+forbidden_modules = ["web"]
+
+# 這裡刻意只有一條契約。**沒有**鎖 web.routers ⇏ core.database——那條實測會 BROKEN、
+# 擋死 12 個 router 檔（actress／actress_alias／collection／config／motion_lab／scanner／
+# scraper／search／showcase／similar／tag_alias／tags），等同強迫一次全站 service 化重構；
+# 該重構範圍已於 109 討論中被否決（根因不在分層，投資 2/3 會打在不受益的位置）。
+# 是刻意不鎖、不是漏寫。理由見 feature/110-governance-and-security/spec-110a.md §2.1 / D1。

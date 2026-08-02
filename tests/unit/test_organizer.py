@@ -4252,3 +4252,130 @@ class TestOrganizeFileStationWiring:
 
     def test_station1_fixture_b(self, tmp_path):
         self._run_station1(tmp_path, "b", self._FIXTURE_B)
+
+
+# ============ containment 防線測試（TASK-110b-T4） ============
+
+class TestOrganizeContainment:
+    """
+    organize_file() containment 防線測試 — 阻擋 metadata（actors 等）帶 '..' 逃出
+    original_dir，同時確認不誤殺含 '.' 的合法片名（CD-110b-2／CD-110b-8）。
+    """
+
+    def test_actors_dotdot_escape_blocked(self, tmp_path):
+        """
+        actors 三個 ".."（3 層資料夾格式）→ target_dir 逃出 original_dir。
+        必須：result['error'] 非空、不寫任何檔案、原始檔仍在原位、逃逸目標無新檔案。
+        （feedback_reproduce_over_reasoning：斷言檔案系統實際狀態，不只斷言回傳值）
+        """
+        src = tmp_path / "SONE-205.mp4"
+        src.write_bytes(b"original content")
+
+        config = _make_config(tmp_path)
+        config["create_folder"] = True
+        config["folder_layers"] = ["{actor}", "{actor}", "{actor}"]
+        metadata = _make_metadata()
+        metadata["actors"] = ["..", "..", ".."]
+
+        escape_target = tmp_path.parent.parent.parent
+        escaped_file = escape_target / "[SONE-205] Test Title.mp4"
+
+        before = sorted(p.name for p in tmp_path.iterdir())
+
+        result = organize_file(str(src), metadata, config)
+
+        assert result["success"] is False
+        assert result["error"], "應回傳非空錯誤訊息"
+        # 無半完成狀態：拒絕路徑的 result 欄位必須與正常失敗分支一致
+        assert result["new_folder"] is None, "拒絕時不應已記下 new_folder"
+        assert result["cover_path"] is None
+        assert result["nfo_path"] is None
+
+        # 原始檔仍在原位，未被搬走
+        assert src.exists(), "原始檔案不應被移動或刪除"
+        assert src.read_bytes() == b"original content"
+
+        # 逃逸目標位置不存在任何新檔案（重現定案，不用推理）
+        assert not escaped_file.exists(), "逃逸目標不應出現新檔案"
+
+        # original_dir 內容未變（沒有半完成的資料夾/檔案殘留）
+        after = sorted(p.name for p in tmp_path.iterdir())
+        assert before == after, "original_dir 內容不應因拒絕而改變"
+
+    def test_cross_drive_mocked_rejected(self, tmp_path):
+        """
+        跨 drive 情境：mock is_fs_path_under_dir 直接回 False（模擬 commonpath
+        ValueError fail-closed 後的結果），即使檔名/actors 完全正常也必須拒絕。
+        """
+        src = tmp_path / "SONE-205.mp4"
+        src.write_bytes(b"original content")
+
+        config = _make_config(tmp_path)
+        metadata = _make_metadata()
+
+        with patch("core.organizer.is_fs_path_under_dir", return_value=False):
+            result = organize_file(str(src), metadata, config)
+
+        assert result["success"] is False
+        assert result["error"], "跨 drive 應回傳非空錯誤訊息"
+        assert src.exists(), "原始檔案不應被移動"
+        # 無半完成狀態（同 test_actors_dotdot_escape_blocked）
+        assert result["new_folder"] is None, "拒絕時不應已記下 new_folder"
+        assert result["cover_path"] is None
+        assert result["nfo_path"] is None
+
+    def test_dotted_title_not_misfired(self, tmp_path):
+        """
+        合法片名含 '.'（如 'Vol.2'）不應被 containment 檢查誤殺，資料夾層也含 '.'。
+        """
+        src = tmp_path / "SONE-205.mp4"
+        src.write_bytes(b"original content")
+
+        config = _make_config(tmp_path)
+        config["create_folder"] = True
+        config["folder_layers"] = ["{title}"]
+        metadata = _make_metadata(title="Vol.2")
+
+        result = organize_file(str(src), metadata, config)
+
+        assert result["success"] is True, f"不應誤殺合法片名：{result.get('error')}"
+        target_dir = tmp_path / "Vol.2"
+        assert target_dir.is_dir()
+        assert (target_dir / "[SONE-205] Vol.2.mp4").exists()
+        assert not src.exists(), "原始檔應已被搬移"
+
+    def test_sanitized_slash_dotdot_not_misfired(self, tmp_path):
+        """
+        'A/../B' 型輸入會被 sanitize_filename 清成 'A .. B'（斜線變空白，非路徑分隔），
+        不應被 containment 檢查誤殺。
+        """
+        src = tmp_path / "SONE-205.mp4"
+        src.write_bytes(b"original content")
+
+        config = _make_config(tmp_path)
+        metadata = _make_metadata(title="A/../B")
+
+        result = organize_file(str(src), metadata, config)
+
+        assert result["success"] is True, f"不應誤殺合法輸入：{result.get('error')}"
+        assert "A .. B" in result["new_filename"]
+        assert not src.exists(), "原始檔應已被搬移"
+
+    def test_create_folder_false_containment_passthrough(self, tmp_path):
+        """
+        create_folder=False 時 target_dir == original_dir，containment 檢查恆通過，
+        不應影響既有正常整理行為。
+        """
+        src = tmp_path / "SONE-205.mp4"
+        src.write_bytes(b"original content")
+
+        config = _make_config(tmp_path)  # create_folder=False（既有預設）
+        metadata = _make_metadata()
+
+        result = organize_file(str(src), metadata, config)
+
+        assert result["success"] is True, f"organize 失敗：{result.get('error')}"
+        assert result["error"] is None
+        target = tmp_path / "[SONE-205] Test Title.mp4"
+        assert target.exists()
+        assert not src.exists()

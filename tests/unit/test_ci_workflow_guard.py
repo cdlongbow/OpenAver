@@ -3,10 +3,48 @@
 防止 `.github/workflows/test.yml` 的 lint-frontend job 被靜默移除——lint 守衛
 （eslint + stylelint + ruff）必須在 CI 跑才 load-bearing（翻 reference_ci_no_eslint
 前提）。解析 YAML 後檢查語意，不依賴 attribute 順序。
+
+pin-drift parity 守衛（requirements-test.txt 與 CI lint-frontend step 的 ruff /
+import-linter 版本一致性）留在 pytest（TASK-110b-T9，回退 Codex PR #122
+round-2 把它遷去 lint 的方向；round-5 補強命令級解析）：本守衛須終結兩層語法，
+`yaml.safe_load` 與命令級解析各自負責一層。
+
+YAML 層：只取 lint-frontend job 底下各 step 的 `run` scalar **值**，區分
+`run:` 這個 mapping key 與同檔案裡的註解、`name:`、`if:` 或其他 key。
+static_guard_lint 是原始位元組流的 regex 引擎，做不到這件事——PR #122
+round-2→4 已用真引擎逐輪實測：每一種 regex 近似要嘛留下假綠（pin 漂移到
+註解或其他欄位仍判過），要嘛製造假紅（合法的 `run: |` 區塊寫法或加 flag
+被誤判紅）。`yaml.safe_load` 終結的是這一層，不是全部。
+
+shell 層：YAML parse 只把 `run: |` block scalar 讀成一段**字串**，字串內文
+是 shell script——裡面的 `#` 是 shell 註解、不是 YAML 註解，YAML parser
+不會（也不該）替你濾掉；同一個 scalar 也可能有多次 `pip install`，實際生效
+的是最後裝的那個。round-2→4 的守衛把所有 run scalar `" ".join()` 後直接
+`re.search` 抓第一個版本，於是「`pip install ruff` 下方留一行
+`# legacy: pip install ruff==0.15.17`」這種形狀被誤判成有釘版（round-5，
+Codex 對 staged T9 的 P1）。`_pip_installs()` 補上 shell 層：併行接續、逐行剝
+shell 註解、依 `&&`/`||`/`;`/`|` 切命令段、略過 `do`/`then`/`sudo` 這類段首
+前綴，然後回傳**全部**（非僅第一個）安裝，而不是只回傳第一個版本。
+
+**關鍵是「認不得就明講認不得」，不是「認得越多越好」**（round-6，Codex 對
+staged T9 的 P1）：一個解析器永遠會有不認得的安裝寫法，而「不認得」只有在
+它是**唯一**安裝時才安全地變成 RED——前面若已有一個合法 pin，不認得的後續
+安裝就直接消失在視野外 ＝ 假綠，正是這一連串 round 要消滅的形狀本身。所以
+`_pip_installs()` 回傳兩個欄位：可完整辨識的安裝（`versions`）與**提到該
+工具、看起來在安裝、但無法完整辨識**的命令段（`unparsed`），後者非空即 RED。
+
+**封掉的假綠**：pin 只存在於註解（YAML 層或 shell 層皆然）、pin 在別的 key
+／別的 job、同一 job 內多次安裝只看第一次、夾帶一次未釘版安裝覆蓋掉釘版、
+把安裝藏進單行 `for … ; do … ; done`、用解析器不認得的安裝器（`uv` /
+`poetry` / 包裝腳本）覆蓋掉釘版。
+**看不見的**：安裝命令完全不提工具名字時（`bash scripts/setup.sh` 內部去裝）
+——靜態讀 workflow 的任何做法都偵測不到，那是這個做法本身的邊界。
+這裡不宣稱「終結整個語法家族」：那正是 round-2→5 每一輪都在犯的錯。
 """
 
 import re
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 import yaml
@@ -26,6 +64,147 @@ def workflow():
 def _run_commands(job: dict) -> list[str]:
     """收集 job 內所有 step 的 `run` 字串（block scalar 多行也含）。"""
     return [step["run"] for step in job.get("steps", []) if isinstance(step, dict) and "run" in step]
+
+
+# `[\d.]*` 而非 `\d*`：`pip3.12` / `python3.12 -m pip` 是真實會出現的寫法
+# （round-6，Codex 具名指出）。認不得它們不是「安全的 RED」——見 _pip_installs 的
+# fail-closed 說明。
+_PIP_CMD_RE = re.compile(r"^pip[\d.]*$")
+_PYTHON_CMD_RE = re.compile(r"^python[\d.]*$")
+
+# 命令段開頭可被略過的 shell 前綴：控制流關鍵字與不改變「這段在跑什麼」的包裝命令。
+# 少了它，`for i in 1; do pip install ruff; done` 會被切成 `for i in 1` / `do pip install
+# ruff` / `done`，第二段的 tokens[0] 是 `do` → 整段被丟掉（連 None 都不記）＝**假綠**：
+# CI 真的會跑那次未釘版安裝、覆蓋掉先前的釘版，守衛卻看不見（round-5 review 實測）。
+_SHELL_PREFIX_TOKENS = frozenset({"then", "do", "else", "elif", "!", "time", "sudo", "command", "exec"})
+
+# 判定「這段像不像在裝東西」用的動詞（pip/uv/poetry/pipx 共通）。只在**未能完整辨識**
+# 的命令段上使用，用來決定要不要 fail-closed，不用來解析版本。
+_INSTALL_VERBS = frozenset({"install", "add"})
+
+
+class _Installs(NamedTuple):
+    """`versions`：每一次**可完整辨識**的安裝（版本字串，或 None＝未釘版）。
+    `unparsed`：提到該 tool、看起來在安裝、但**無法完整辨識**的命令段原文。
+
+    兩者必須一起看。只看 `versions` 正是 round-6 被指出的假綠：前面有一個合法
+    pin、後面跟一個解析器不認得的安裝命令時，`versions` 只有那個合法 pin，四道
+    斷言全過，但 CI 實際跑的是後面那個。
+    """
+
+    versions: list[str | None]
+    unparsed: list[str]
+
+
+# 外層要剝掉的引號與 shell grouping 標點。`ruff)` / `` ruff` `` / `$(pip` 這些形狀若不剝，
+# 名字比對就對不上——而它們**明確提到了 tool**，屬於必須被 unparsed 收下的可疑命令，
+# 不是文件聲明的「命令完全沒提 tool」那條不可見邊界（round-7，Codex 具名 `(pip install ruff)`）。
+_SHELL_WRAPPER_CHARS = "'\"()`{}$"
+
+
+def _norm_pkg_name(arg: str) -> str:
+    """參數 → 正規化套件名（比照本檔既有 `_direct_pkgs()`）。
+
+    先剝外層引號與 shell grouping 標點：`'ruff==9.9.9'` 會正規化成 `'ruff`
+    （round-6 實測的假綠之一）、`(pip install ruff)` 的 `ruff)` 會正規化成
+    `ruff)`（round-7 實測的假綠），兩者都因為名字對不上而整段消失。
+    """
+    stripped = arg.strip(_SHELL_WRAPPER_CHARS)
+    return re.split(r"[=<>!~\[]", stripped, maxsplit=1)[0].strip().lower().replace("_", "-")
+
+
+def _logical_lines(run: str) -> list[str]:
+    """把 shell 行接續（行尾 `\\`）併成邏輯行後再回傳。
+
+    不併的話 `pip install \\` / `  ruff==9.9.9` 會被拆成「無參數的 pip install」
+    與「不含 install 動詞的裸 spec」，兩段都不會被記錄 → 前面若有合法 pin 就是
+    假綠（round-6）。
+    """
+    lines: list[str] = []
+    buf = ""
+    for raw in run.splitlines():
+        stripped = raw.rstrip()
+        if stripped.endswith("\\"):
+            buf += stripped[:-1] + " "
+            continue
+        lines.append(buf + raw)
+        buf = ""
+    if buf:
+        lines.append(buf)
+    return lines
+
+
+def _pip_installs(job: dict, tool: str) -> _Installs:
+    """從 job 全部 run scalar 辨識**每一次**安裝 `tool` 的命令。
+
+    回傳 `_Installs(versions, unparsed)`——**兩個欄位必須一起檢查**，理由見
+    `_Installs` 的 docstring。
+
+    解析步驟：
+
+    1. 逐個 run scalar → 先併行接續（`_logical_lines`）→ 逐行剝 shell 註解
+       （`#` 之後，於任何其他處理前）
+    2. 每行依 `&&` / `||` / `;` / `|` 切成命令段，逐段判斷
+    3. 段首略過 `_SHELL_PREFIX_TOKENS`（`do` / `then` / `sudo` …），否則單行
+       控制流會把命令藏起來
+    4. 完整辨識：開頭是 `pip[X.Y] install` 或 `python[X.Y] -m pip install`
+       → 逐參數用 `_norm_pkg_name()` 比名字，命中則 `==` 有記版本、無記 `None`
+    5. **無法完整辨識但可疑者一律 fail-closed**：該段沒被 4 認出來，卻同時
+       (a) 有 `_INSTALL_VERBS` 裡的動詞、(b) 某個參數正規化後就是 `tool`
+       → 原文進 `unparsed`。`uv pip install ruff`、`poetry add ruff`、subshell
+       （`(pip install ruff)` / `$(…)` / backtick）、任何包裝腳本都落在這裡。
+       **subshell 形式刻意不解析、只 fail-closed**：猜它在裝什麼比直說「認不得」
+       更危險，而 fail-closed 的成本只是要求作者把寫法補進本函式。
+
+    round-6（Codex 對 staged T9 的 P1）：前一版把「解析器不認得的安裝寫法」
+    寫成「一律往 RED 方向失效」——**那只在該命令是唯一安裝時成立**。前面若
+    已經有一個合法 pin，`versions` 就有值、四道斷言全過，而 CI 實際跑的是
+    後面那個不認得的安裝 ＝ 假綠，正是本輪要消滅的形狀本身。所以規則不是
+    「認得越多越好」，而是**認不得就明講認不得**（步驟 5），讓「job 內所有
+    安裝都受檢」這句話真的成立。
+
+    **仍然看不見的東西**（誠實邊界，不宣稱終結）：安裝命令若完全不提 `tool`
+    的名字——例如 `bash scripts/setup.sh` 或 `curl … | sh` 內部去裝——靜態讀
+    workflow 的任何做法都偵測不到。這不是本函式的缺口，是「讀 YAML」這個
+    做法的邊界；真要防得靠 CI 執行期回報實際版本。
+    """
+    versions: list[str | None] = []
+    unparsed: list[str] = []
+    for run in _run_commands(job):
+        for raw_line in _logical_lines(run):
+            line = raw_line.split("#", 1)[0]
+            if not line.strip():
+                continue
+            for segment in re.split(r"&&|\|\||;|\|", line):
+                tokens = segment.split()
+                while tokens and tokens[0] in _SHELL_PREFIX_TOKENS:
+                    tokens = tokens[1:]
+                if not tokens:
+                    continue
+                if _PIP_CMD_RE.match(tokens[0]) and len(tokens) >= 2 and tokens[1] == "install":
+                    args = tokens[2:]
+                elif (
+                    _PYTHON_CMD_RE.match(tokens[0])
+                    and len(tokens) >= 4
+                    and tokens[1] == "-m"
+                    and tokens[2] == "pip"
+                    and tokens[3] == "install"
+                ):
+                    args = tokens[4:]
+                else:
+                    # 未完整辨識：只要「像在裝東西」且「提到這個 tool」就 fail-closed。
+                    # `ruff check .` 提到 tool 但無安裝動詞 → 不誤報。
+                    if _INSTALL_VERBS.intersection(tokens) and any(
+                        _norm_pkg_name(t) == tool for t in tokens
+                    ):
+                        unparsed.append(segment.strip())
+                    continue
+                for arg in args:
+                    if _norm_pkg_name(arg) != tool:
+                        continue
+                    spec = arg.strip("'\"")
+                    versions.append(spec.split("==", 1)[1].strip() if "==" in spec else None)
+    return _Installs(versions=versions, unparsed=unparsed)
 
 
 def test_test_job_still_present(workflow):
@@ -53,27 +232,237 @@ def test_lint_frontend_is_independent(workflow):
     assert "needs" not in workflow["jobs"]["lint-frontend"], "lint-frontend 不應依賴其他 job（平行擋 PR）"
 
 
-def test_ci_ruff_pin_matches_requirements(workflow):
-    """CI 的 ruff pin 必須與 requirements-test.txt 一致——
+# [lint-guard: pytest-justified 需 YAML 語意＋命令級解析（只取 lint-frontend job 的
+# run scalar 值，並在 shell 層逐行辨識真正的 pip install 命令）——static_guard_lint
+# 是 raw-text regex 引擎：YAML 層分不出 run: key 與註解/name:/if:/block-scalar 內文，
+# shell 層更分不出 block scalar 內文裡的 shell 註解、多次 pip install、未釘版安裝，
+# 也無從表達「這段我認不得，所以 fail-closed」這個判斷；PR #122 round-2→6 實證每種
+# regex 近似都留假綠或製造假紅 | migrate → 無（除非 lint 端同時引入 YAML parser 與
+# shell 命令解析）]
+@pytest.mark.parametrize(
+    "tool",
+    [
+        pytest.param("ruff", id="ruff"),
+        pytest.param("import-linter", id="import-linter"),
+    ],
+)
+def test_ci_ruff_pin_matches_requirements(workflow, tool):
+    """CI 的 <tool> pin 必須與 requirements-test.txt 一致——
 
     pip `-c` constraints 無法消費含 extras 的 requirements-test.txt（uvicorn[standard]
-    → pip 拒絕），故 ruff 版本必須在兩處各寫一次（CI step + requirements）。本守衛把
-    這個「兩處重複」鎖成 single source of truth：任一漂移即 RED，防 upstream ruff
+    → pip 拒絕），故版本必須在兩處各寫一次（CI step + requirements）。本守衛把
+    這個「兩處重複」鎖成 single source of truth：任一漂移即 RED，防 upstream 套件
     自動升級或人為忘記同步在 repo 無改動下讓 CI 轉紅。
+
+    TASK-110a-T5：本測試現以 `tool` 參數化，同時涵蓋 `ruff` 與 `import-linter`
+    兩個被「requirements-test.txt + CI step」各釘一次版本的工具；node 名稱保留
+    `test_ci_ruff_pin_matches_requirements`（不改名，AC7 逐字指名此 node）。
+
+    round-5：改用 `_pip_installs()` 取得 lint-frontend job 內**全部**命中的
+    pip install（不是只取第一個 `re.search`），依序做四道 fail-closed 斷言。
     """
-    req_match = re.search(r"^ruff==(\S+)", _REQUIREMENTS.read_text(encoding="utf-8"), re.MULTILINE)
-    assert req_match, "requirements-test.txt 缺 `ruff==<version>` 精確 pin（lint 是 PR gate，需鎖版本）"
+    pattern = re.escape(tool) + r"==(\S+)"
+    req_match = re.search(rf"^{pattern}", _REQUIREMENTS.read_text(encoding="utf-8"), re.MULTILINE)
+    assert req_match, f"requirements-test.txt 缺 `{tool}==<version>` 精確 pin（lint 是 PR gate，需鎖版本）"
     req_version = req_match.group(1).split("#")[0].strip()
 
-    runs = " ".join(_run_commands(workflow["jobs"]["lint-frontend"]))
-    ci_match = re.search(r"ruff==(\S+)", runs)
-    assert ci_match, "CI lint-frontend 未以 `ruff==<version>` 精確 pin 安裝 ruff（避免版本漂移）"
-    ci_version = ci_match.group(1).split("#")[0].strip()
+    installs = _pip_installs(workflow["jobs"]["lint-frontend"], tool)
+    assert not installs.unparsed, (
+        f"CI lint-frontend 有提到 {tool} 且看起來在安裝、但本守衛無法完整辨識的命令："
+        f"{installs.unparsed}。fail-closed：無法辨識就不能宣稱「所有安裝都受檢」"
+        f"（有先前的合法 pin 時這正是假綠的來源）。請把該寫法補進 `_pip_installs()`，不要放寬斷言"
+    )
+    versions = installs.versions
+    assert versions, (
+        f"CI lint-frontend 未偵測到任何 `pip install {tool}`（未以 `{tool}==<version>` 精確 pin 安裝）"
+    )
+    assert None not in versions, (
+        f"CI lint-frontend 含未釘版的 `pip install {tool}`（無 `==`），會覆蓋掉先前的釘版安裝："
+        f"實際命中序列 {versions}"
+    )
+    distinct_versions = set(versions)
+    assert len(distinct_versions) == 1, (
+        f"CI lint-frontend 同一 job 內有多個不同的 {tool} 釘版 {sorted(distinct_versions)}，"
+        f"後裝的會覆蓋先裝的：實際命中序列 {versions}"
+    )
+    ci_version = versions[0]
 
     assert ci_version == req_version, (
-        f"CI ruff pin（{ci_version}）與 requirements-test.txt（{req_version}）不一致；"
+        f"CI {tool} pin（{ci_version}）與 requirements-test.txt（{req_version}）不一致；"
         "兩處必須同步（single source of truth）"
     )
+
+
+@pytest.mark.parametrize(
+    "run_scalar, tool, expected_versions, expected_unparsed",
+    [
+        pytest.param(
+            "pip install ruff\n# legacy: pip install ruff==0.15.17\n",
+            "ruff",
+            [None],
+            [],
+            id="shell-comment-is-not-a-command",
+        ),
+        pytest.param(
+            "pip install ruff==0.15.17\npip install ruff==9.9.9\n",
+            "ruff",
+            ["0.15.17", "9.9.9"],
+            [],
+            id="two-different-pinned-versions",
+        ),
+        pytest.param(
+            "pip install ruff==0.15.17\npip install ruff\n",
+            "ruff",
+            ["0.15.17", None],
+            [],
+            id="pinned-then-unpinned-overrides",
+        ),
+        pytest.param(
+            "pip install ruff==0.15.17\n",
+            "ruff",
+            ["0.15.17"],
+            [],
+            id="legal-single-pinned-install",
+        ),
+        pytest.param(
+            "pip install -q ruff==0.15.17\n",
+            "ruff",
+            ["0.15.17"],
+            [],
+            id="legal-with-flag",
+        ),
+        pytest.param(
+            "pip install ruff==0.15.17  # keep in sync with requirements-test.txt pin\n",
+            "ruff",
+            ["0.15.17"],
+            [],
+            id="legal-trailing-comment",
+        ),
+        pytest.param(
+            "pip install import-linter==2.13\n",
+            "ruff",
+            [],
+            [],
+            id="different-package-yields-empty",
+        ),
+        # 這格專門鎖「剝 shell 註解」那一行：拿掉它，誘餌 `ruff==9.9.9` 會被當成第二個
+        # 參數 → 命中序列變 ['0.15.17', '9.9.9'] → 假紅。上面 shell-comment-is-not-a-command
+        # 與 legal-trailing-comment 兩格都靠 `tokens[0] != 'pip'` 就過關，鎖不到這行
+        # （round-5 review 實測：把剝註解那行拿掉，全檔 32 支照樣全綠）。
+        pytest.param(
+            "pip install ruff==0.15.17  # decoy: ruff==9.9.9\n",
+            "ruff",
+            ["0.15.17"],
+            [],
+            id="trailing-comment-decoy-must-not-be-parsed-as-arg",
+        ),
+        # 單行控制流：`do` 開頭的段若不略過，整段被丟掉（連 None 都不記）＝假綠，
+        # 而 CI 實際會跑那次未釘版安裝並覆蓋釘版（round-5 review 找到的 BLOCKER）。
+        pytest.param(
+            "pip install ruff==0.15.17\nfor i in 1; do pip install ruff; done\n",
+            "ruff",
+            ["0.15.17", None],
+            [],
+            id="unpinned-hidden-in-shell-loop",
+        ),
+        pytest.param(
+            'pip install ruff==0.15.17\nif [ "$X" = "1" ]; then pip install ruff==9.9.9; fi\n',
+            "ruff",
+            ["0.15.17", "9.9.9"],
+            [],
+            id="drifted-pin-hidden-in-shell-conditional",
+        ),
+        # ── round-6：合法 pin 在前、解析器不認得的安裝在後 ＝ 假綠的通用形狀 ──
+        # 這五格全部要能看見「後面那次安裝」，不論是靠擴大辨識（前四格）還是靠
+        # fail-closed（最後一格）。少任何一格，四道斷言都會在「versions 只剩合法
+        # pin」的情況下全過（Codex round-6 具名的 P1）。
+        pytest.param(
+            "pip install ruff==0.15.17\npip3.12 install ruff\n",
+            "ruff",
+            ["0.15.17", None],
+            [],
+            id="dotted-pip-interpreter-is-recognized",
+        ),
+        pytest.param(
+            "pip install ruff==0.15.17\npython3.12 -m pip install ruff==9.9.9\n",
+            "ruff",
+            ["0.15.17", "9.9.9"],
+            [],
+            id="dotted-python-m-pip-is-recognized",
+        ),
+        pytest.param(
+            "pip install ruff==0.15.17\npip install \\\n  ruff==9.9.9\n",
+            "ruff",
+            ["0.15.17", "9.9.9"],
+            [],
+            id="line-continuation-is-joined",
+        ),
+        pytest.param(
+            "pip install ruff==0.15.17\npip install 'ruff==9.9.9'\n",
+            "ruff",
+            ["0.15.17", "9.9.9"],
+            [],
+            id="quoted-spec-is-unwrapped",
+        ),
+        pytest.param(
+            "pip install ruff==0.15.17\nuv pip install ruff\n",
+            "ruff",
+            ["0.15.17"],
+            ["uv pip install ruff"],
+            id="unknown-installer-fails-closed",
+        ),
+        pytest.param(
+            "pip install ruff==0.15.17\npoetry add ruff\n",
+            "ruff",
+            ["0.15.17"],
+            ["poetry add ruff"],
+            id="unknown-installer-verb-add-fails-closed",
+        ),
+        # 反向：提到 tool 但不是安裝的命令不得被誤判成 unparsed，否則真 workflow
+        # 的 `ruff check .` 會讓守衛永遠紅（fail-closed 不等於見字就紅）。
+        pytest.param(
+            "ruff check .\n",
+            "ruff",
+            [],
+            [],
+            id="non-install-mention-is-not-suspicious",
+        ),
+        # ── round-7：shell grouping 標點讓名字對不上 → 連 unparsed 都收不到 ──
+        # `(pip install ruff)` 的 token 是 `ruff)`，round-6 版本既不記 versions 也不記
+        # unparsed，前面的合法 pin 就讓整支綠 ＝ 假綠（Codex round-7 具名）。
+        pytest.param(
+            "pip install ruff==0.15.17\n(pip install ruff)\n",
+            "ruff",
+            ["0.15.17"],
+            ["(pip install ruff)"],
+            id="subshell-paren-fails-closed",
+        ),
+        # 未釘版才鎖得住剝標點那行：帶 `==` 的 spec 會被 `[=<>!~\[]` 切割順便把尾括號
+        # 丟掉，即使不剝標點也對得上名字（實測），那種格子驗不到任何東西。
+        pytest.param(
+            "pip install ruff==0.15.17\n$(pip install ruff)\n",
+            "ruff",
+            ["0.15.17"],
+            ["$(pip install ruff)"],
+            id="command-substitution-fails-closed",
+        ),
+    ],
+)
+def test_pip_installs_command_level_parsing(run_scalar, tool, expected_versions, expected_unparsed):
+    """`_pip_installs()` 表驅動邊界形狀（round-5 建立、round-6 擴充）——鎖住命令級
+    解析，防止下一個人無聲弱化回「join 全部 run scalar 後 `re.search` 抓第一個」。
+
+    輸入是 job 內單一 step 的 `run` scalar 字串（`yaml.safe_load` 解析 `run: |`
+    block scalar 後得到的就是這種多行字串），走真正的呼叫路徑
+    `_pip_installs(job, tool)`，不是重新實作一份解析邏輯來比對。
+
+    每格同時斷言 `versions` 與 `unparsed`：只驗前者的話，round-6 那類「合法 pin
+    在前、不認得的安裝在後」會全部看起來正常。
+    """
+    job = {"steps": [{"run": run_scalar}]}
+    installs = _pip_installs(job, tool)
+    assert installs.versions == expected_versions
+    assert installs.unparsed == expected_unparsed
 
 
 # ── exact-pin 守衛（TASK-79-T6）─────────────────────────────────────────────

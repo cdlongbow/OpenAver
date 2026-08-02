@@ -4,11 +4,16 @@
 支援環境：Windows / WSL / Linux / Mac
 支援輸入格式：Windows 本地、WSL 網路路徑、Unix 路徑
 """
+import os
 import platform
 import re
 import unicodedata
 from typing import Optional
 from urllib.parse import unquote
+
+from core.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def detect_environment() -> str:
@@ -510,6 +515,89 @@ def is_path_under_dir(path: str, dir_uri: str) -> bool:
         return True
     prefix = dir_uri if dir_uri.endswith('/') else dir_uri + '/'
     return path.startswith(prefix)
+
+
+def is_fs_path_under_dir(fs_path: str, root_fs_path: str) -> bool:
+    """
+    判斷原生 FS path 是否在指定根目錄底下（CD-110b-4 五步鏈）。
+
+    與 is_path_under_dir(path, dir_uri) 的職責分界：
+    - is_path_under_dir：吃 file:/// URI，純字串前綴比對，不解析 `..`、不解析
+      symlink，唯一呼叫端 core/readonly_producer.py:418。
+    - is_fs_path_under_dir（本函式）：吃原生 FS path（非 URI），先用
+      os.path.realpath 解析 `..` 與 symlink 再比對，供整理流程的寫入錨點
+      （target_dir / target_path）共用。
+
+    兩者不得互相取代：硬套 URI 版要在呼叫端各做一次 URI 往返，等於正規化疊加；
+    本函式也不得再串接 normalize_path() / to_file_uri()，只做下列這一條鏈。
+
+    演算法（一步都不能省）：
+        1. root_real = os.path.realpath(root_fs_path)
+           realpath 已含 abspath；strict 保持預設 False——root_fs_path 對應的
+           target_dir 在檢查當下本來就可能尚未建立。
+        2. target_real = os.path.realpath(fs_path)
+        3. 兩端各過 os.path.normcase（Windows 路徑大小寫不對稱）。
+        4. os.path.commonpath([root_n, target_n]) == root_n → 在底下
+           （相等視為在底下：root == target 回 True）。
+        5. 例外一律 fail-closed：ValueError（跨 drive／混絕對相對）或 OSError
+           （WinFsp/rclone 掛載點等）都記錄實際例外內容後回 False，不吞例外
+           放行。
+
+    Args:
+        fs_path: 待檢查的原生 FS path（非 URI）。
+        root_fs_path: 根目錄的原生 FS path（非 URI）。
+
+    Returns:
+        fs_path 是否等於或位於 root_fs_path 底下；**路徑解析類**例外（ValueError /
+        OSError）一律回 False。
+
+    Note:
+        **fail-closed 的範圍只涵蓋 ValueError 與 OSError。** 呼叫端須自行保證兩個
+        參數都是 str（非 None）——傳 None 會讓 os.path.realpath 拋 TypeError 直接
+        往外炸，本函式**刻意不吞它**：那是呼叫端契約違反（型別標註已寫明 str），
+        大聲炸比靜默回 False 更容易查。T4/T5 的接線端不要以為「所有例外都被這裡
+        擋掉了」。
+
+        **空字串 root 的語意（刻意不擋，讀者必看）**：`root_fs_path=''` 會經
+        `os.path.realpath('')` 解析成**當前工作目錄（CWD）**，比對照常進行、不報錯。
+        這對「root 真的就是 CWD」的呼叫端是**正確**行為——例：`organize_file` 的
+        `original_dir = os.path.dirname(file_path)`，當 `file_path` 是不含目錄的
+        相對檔名時 `original_dir` 就是 `''`，而該檔確實位於 CWD。
+        反過來，若某個呼叫端的空 root 意思是「**尚未設定**輸出根目錄」，那它**必須
+        自己在上游擋掉**，不能指望本函式把空字串當成拒絕——本函式無從分辨這兩種
+        語意。`core/readonly_producer.py` 即屬後者，已有三道上游 guard
+        （`web/routers/scraper.py` 的單片與批次入口、`produce_source` 本身）確保
+        空 `output_root` 永遠到不了這裡。
+
+        **本檢查不防 TOCTOU（pre-merge SA-pre-9，刻意不治）**：它回答的是「檢查當下
+        這條路徑在不在 root 底下」，不保證「呼叫端稍後真的寫入時仍是同一個目錄」。
+        若有並行程序在檢查通過後、`makedirs`／`move` 之前把目標換成指向 root 外的
+        symlink，寫入會跟著出去。**這在本專案宣告的威脅模型之外**——攻擊者是被刮削
+        的網站（能力邊界＝往 HTTP 回應塞字串），不是本機並行程序；AGENTS.md 明載
+        預設模型不含敵意的已認證 LAN 使用者，而能在本機任意建 symlink 的攻擊者根本
+        不需要繞這道檢查、直接寫檔就好。真要關這個窗需要 `O_NOFOLLOW` + `openat`
+        系列的 dirfd 相對操作，Windows（本專案主平台）無等價語意。
+        詳見 `plan-110b.md` 附錄 A 的 B9。
+    """
+    try:
+        root_real = os.path.realpath(root_fs_path)
+        target_real = os.path.realpath(fs_path)
+        root_n = os.path.normcase(root_real)
+        target_n = os.path.normcase(target_real)
+        return os.path.commonpath([root_n, target_n]) == root_n
+    except ValueError as e:
+        logger.warning(
+            f"is_fs_path_under_dir: commonpath 比對失敗（可能跨 drive）— "
+            f"fs_path={fs_path!r}, root_fs_path={root_fs_path!r}, error={e}"
+        )
+        return False
+    except OSError as e:
+        logger.warning(
+            f"is_fs_path_under_dir: realpath 解析失敗（可能掛載點異常）— "
+            f"fs_path={fs_path!r}, root_fs_path={root_fs_path!r}, error={e}"
+        )
+        return False
+
 
 def coerce_to_file_uri(value: str, path_mappings: dict = None) -> str:
     """Idempotent file URI 轉換：value 可能是 FS path 或已是 file:/// URI。

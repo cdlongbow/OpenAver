@@ -10,6 +10,11 @@ test_path_utils.py - 跨平台路徑轉換單元測試
 - expand_env_vars(): 環境變數展開
 """
 
+import logging
+import ntpath
+import os
+import types
+
 import pytest
 from unittest.mock import patch, mock_open
 
@@ -1343,3 +1348,190 @@ class TestUriToLocalFsPath:
         result = path_utils.uri_to_local_fs_path(uri, mappings)
         assert result == '/nas/movie.mp4'
         assert result != path_utils.uri_to_fs_path(uri)
+
+
+# ============ TestIsFsPathUnderDir ============
+
+class _PartialOsPathProxy:
+    """局部覆寫版 os.path proxy，供 is_fs_path_under_dir 的 mock 測試使用。
+
+    只覆寫傳入的函式名稱，其餘屬性一律轉呼叫真正的 os.path——這樣即使
+    mutation 自驗換掉實作內部呼叫的函式名稱（例如 realpath 換成 normpath），
+    proxy 仍能正常運作、不會因為「這個假物件根本沒有這個屬性」炸出不相干的
+    AttributeError，掩蓋掉本來該看到的語意層級紅/綠。
+
+    指派對象是 path_utils 模組自己的 `os` 名稱（見各測試的 monkeypatch.setattr(
+    path_utils, 'os', ...)），不是真正全域的 os 模組本身——直接改真 os.path
+    的函式會連 pytest 自己組 traceback 用到的路徑解析都一併打壞，一旦這條測試
+    在 mutation 驗證中真的斷言失敗，會變成 INTERNALERROR 而不是乾淨的紅。
+    """
+
+    def __init__(self, **overrides):
+        self._overrides = overrides
+
+    def __getattr__(self, name):
+        if name in self._overrides:
+            return self._overrides[name]
+        return getattr(os.path, name)
+
+
+class TestIsFsPathUnderDir:
+    """測試 is_fs_path_under_dir(fs_path, root_fs_path) —— 原生 FS path containment
+    checker，走 CD-110b-4 的五步鏈（realpath 兩端 → normcase 兩端 → commonpath == root
+    → 例外 fail-closed）。
+
+    與既有 is_path_under_dir(path, dir_uri) 的職責分界：
+    - is_path_under_dir：吃 file:/// URI，純字串前綴比對，不解析 ..、不解析 symlink，
+      唯一呼叫端 core/readonly_producer.py:418，本 task 零改動。
+    - is_fs_path_under_dir：吃原生 FS path，先 realpath 解析 .. 與 symlink 再比對，
+      供 T4/T5 兩個新寫入錨點共用。兩者不得互相取代（互套會造成正規化疊加）。
+    """
+
+    def test_normal_subdirectory(self, tmp_path):
+        """案例 1：正常子目錄 root/a/b vs root → True（happy path）"""
+        root = tmp_path / "root"
+        target = root / "a" / "b"
+        target.mkdir(parents=True)
+        assert path_utils.is_fs_path_under_dir(str(target), str(root)) is True
+
+    def test_parent_traversal_escapes_root(self, tmp_path):
+        """案例 2（核心）：root/../.. vs root → False。
+
+        CD-110b-4 實測反例：os.path.commonpath(['/base/videos',
+        '/base/videos/../../..']) 會回傳 '/base/videos'，若未先 realpath 就比對，
+        逃逸路徑會被誤判為「在 root 底下」。
+        """
+        root = tmp_path / "root"
+        root.mkdir()
+        target = str(root / ".." / "..")
+        assert path_utils.is_fs_path_under_dir(target, str(root)) is False
+
+    def test_mixed_dotdot_traversal_escapes_root(self, tmp_path):
+        """案例 3：root/child/../.. vs root → False（多層混合 .. 仍需擋下）"""
+        root = tmp_path / "root"
+        root.mkdir()
+        target = str(root / "child" / ".." / "..")
+        assert path_utils.is_fs_path_under_dir(target, str(root)) is False
+
+    def test_root_itself_is_under_root(self, tmp_path):
+        """案例 4：root 自身 vs root → True（create_folder=False 的既有路徑會走到這）"""
+        root = tmp_path / "root"
+        root.mkdir()
+        assert path_utils.is_fs_path_under_dir(str(root), str(root)) is True
+
+    def test_dotted_filename_not_misidentified_as_traversal(self, tmp_path):
+        """案例 5：含 . 的合法名稱（Vol.2、A.B.C）vs root → True（不誤殺——防線是
+        realpath 解析後比對，不是對 '..' 做黑名單字串比對）"""
+        root = tmp_path / "root"
+        target = root / "Vol.2" / "A.B.C"
+        target.mkdir(parents=True)
+        assert path_utils.is_fs_path_under_dir(str(target), str(root)) is True
+
+    def test_symlink_escaping_root_is_rejected(self, tmp_path):
+        """案例 6（核心）：symlink 指向 root 外部 → False。
+
+        鎖住「為什麼一定要用 realpath 而不是 normpath」——normpath 只做詞法正規化，
+        不會 follow symlink，會讓這條逃逸路徑被誤判為在 root 底下。
+        """
+        root = tmp_path / "root"
+        root.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        link = root / "escape_link"
+        link.symlink_to(outside, target_is_directory=True)
+        assert path_utils.is_fs_path_under_dir(str(link), str(root)) is False
+
+    def test_not_yet_created_target_path(self, tmp_path):
+        """案例 7：目標路徑尚不存在（root/not/created/yet）→ True。
+
+        鎖住 os.path.realpath 的預設 strict=False 語意——target_dir 在檢查時本來就
+        還沒建立，若誤傳 strict=True 會對不存在路徑拋 OSError，導致整個整理功能
+        fail-closed 壞掉。
+        """
+        root = tmp_path / "root"
+        root.mkdir()
+        target = root / "not" / "created" / "yet"
+        assert path_utils.is_fs_path_under_dir(str(target), str(root)) is True
+
+    def test_cross_drive_value_error_fails_closed_and_logs(self, monkeypatch, caplog):
+        """案例 8：跨 drive（mock commonpath 拋 ValueError）→ False 且有 warning 記錄。
+
+        monkeypatch 目標是 path_utils 自己的 `os` 名稱（獨立 namespace），不動
+        真正的全域 os 模組——理由同案例 10：避免萬一斷言失敗時，pytest 組
+        traceback 用到被打壞的真 os.path 而炸成 INTERNALERROR。
+        """
+
+        def _raise_value_error(*args, **kwargs):
+            raise ValueError("path is on mount 'C:', start on mount 'D:'")
+
+        fake_os = types.SimpleNamespace(path=_PartialOsPathProxy(commonpath=_raise_value_error))
+        monkeypatch.setattr(path_utils, 'os', fake_os)
+        with caplog.at_level(logging.WARNING):
+            result = path_utils.is_fs_path_under_dir(r'D:\y', r'C:\x')
+        assert result is False
+        assert any(record.levelname == 'WARNING' for record in caplog.records)
+
+    def test_realpath_oserror_fails_closed_and_logs(self, monkeypatch, caplog):
+        """案例 9：realpath 拋 OSError（mock，如 WinFsp/rclone 掛載點）→ False 且有
+        warning 記錄。monkeypatch 範圍同案例 8，只換掉 path_utils 自己的 `os` 名稱。
+        """
+
+        def _raise_os_error(*args, **kwargs):
+            raise OSError("mocked mount point failure")
+
+        fake_os = types.SimpleNamespace(path=_PartialOsPathProxy(realpath=_raise_os_error))
+        monkeypatch.setattr(path_utils, 'os', fake_os)
+        with caplog.at_level(logging.WARNING):
+            result = path_utils.is_fs_path_under_dir('/root/target', '/root')
+        assert result is False
+        assert any(record.levelname == 'WARNING' for record in caplog.records)
+
+    def test_windows_case_insensitive_match(self, monkeypatch):
+        """案例 10：Windows 大小寫（C:\\Foo vs c:\\foo\\bar）→ True（不因大小寫誤殺，
+        BE-PATH-01 #9）。
+
+        realpath 用 ntpath.realpath mock（在非 Windows 平台上不做 symlink 解析，
+        僅保留字面大小寫，足以模擬 Windows API 回傳的原始 casing）。commonpath
+        刻意用**純字面、不做大小寫容錯**的簡化版取代 ntpath.commonpath 真品——
+        CPython 的 ntpath.commonpath 內部本來就會自行 lower() 兩端做比對，直接
+        拿它來 mock 會蓋掉「我們自己有沒有呼叫 os.path.normcase」這件事，讓 M3
+        mutation（拿掉 normcase）測不出來。用這個不容錯版本，大小寫是否一致就
+        完全取決於我們自己的 normcase 呼叫。
+
+        注意：monkeypatch 的目標是 path_utils 模組自己的 `os` 名稱（一個獨立
+        namespace 物件），**不是**真正的全域 os 模組——直接改真 os.path.realpath
+        會連 pytest 自身組 traceback 用的路徑解析都一併打壞，一旦這條測試在
+        mutation 驗證中真的斷言失敗，會變成 INTERNALERROR 而不是乾淨的紅，
+        掩蓋了本來要看到的訊號。
+        """
+
+        def _case_sensitive_commonpath(paths):
+            split_paths = [p.split('\\') for p in paths]
+            common = []
+            for parts in zip(*split_paths):
+                if len(set(parts)) != 1:
+                    break
+                common.append(parts[0])
+            return '\\'.join(common)
+
+        fake_os = types.SimpleNamespace(path=_PartialOsPathProxy(
+            realpath=ntpath.realpath,
+            normcase=ntpath.normcase,
+            commonpath=_case_sensitive_commonpath,
+        ))
+        monkeypatch.setattr(path_utils, 'os', fake_os)
+        assert path_utils.is_fs_path_under_dir(r'c:\foo\bar', r'C:\Foo') is True
+
+    def test_prefix_collision_not_bare_startswith(self, tmp_path):
+        """案例 11：前綴碰撞 /base/media2 vs /base/media → False。
+
+        鎖住「不是裸 startswith」——is_path_under_dir 的既有 docstring 說明它存在
+        就是為了擋 E:/media 誤匹配 E:/media2，這裡驗證新 helper 用 commonpath
+        天然不誤判，且有測試守住（未來若被「優化」成 startswith 要有東西變紅）。
+        """
+        base = tmp_path / "base"
+        media = base / "media"
+        media2 = base / "media2"
+        media.mkdir(parents=True)
+        media2.mkdir(parents=True)
+        assert path_utils.is_fs_path_under_dir(str(media2), str(media)) is False

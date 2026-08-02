@@ -199,7 +199,7 @@ class AppConfig(BaseModel):
 
 # ============ 載入 / 儲存 ============
 
-def _load_config_unlocked() -> dict:
+def _load_config_unlocked() -> dict:  # noqa: C901 — config 遷移主流程；每加一個設定欄位的向後相容 migration 就得在此多開一支分支，這是它存在的理由而非缺陷；收斂設計已列 backlog（見 OpenAver架構評估-回應.md §七）
     """載入設定（含 migration / first-init），**不取鎖** —— caller 須已持有 _config_write_lock。
 
     migration 的寫回必須走 _save_config_unlocked（同樣不取鎖），否則在已持鎖的

@@ -42,8 +42,8 @@ from core.generate_state import (
     end_config_save,
     is_generate_in_progress,
 )
-from core.readonly_source import is_path_readonly, _canonical_source_prefix
-from core.readonly_producer import _write_strm
+from core.readonly_source import is_path_readonly, _canonical_source_prefix  # noqa: PLC2701 — purge 端點（_switch_external_manager_locked）需要跟 readonly_source 內部判斷唯讀來源用同一套路徑正規化，避免重複實作對同一髒路徑判定漂移（呼叫點 config.py:362 的既有行內註解已寫明「杜絕重複實作漂移」）
+from core.readonly_producer import _write_strm  # noqa: PLC2701 — .strm 重寫端點直接呼叫 producer 內部的單片寫入 primitive，比對 _produce_one 已收斂的單片/批次雙呼叫點模式（109），避免在 router 層重寫一份 .strm 寫入邏輯
 from core.source_config import MAX_ENABLED_SOURCES
 from core.translate_service import LANGUAGE_PROMPTS
 

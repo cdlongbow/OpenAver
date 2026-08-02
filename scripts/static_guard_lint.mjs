@@ -3380,6 +3380,26 @@ const RULES = [
     note: '[lint-guard 107-P1-T3] help.js script tag 禁顯式 defer（module 已隱式 defer）— 遷自 test_frontend_lint.py',
   },
 
+  // ---- [lint-guard:110b-T6] help.js：/api/trigger-update 三層護欄的自訂 header ----
+  // 端點（web/app.py trigger_update）要求 X-OpenAver-Desktop-Action header 存在
+  // 才放行（CD-110b-5 ③）。這個 header 一旦被誰「清理」掉，桌面版更新按鈕會
+  // 靜默壞掉（回 403，使用者只看到 toast 錯誤）——純 JS 字面字串存在性，走 lint
+  // 不走 pytest（CLAUDE.md「Lint 守衛規則」north-star）。
+  // P2-2 fix（Codex PR #122）：原本是 whole-file required-string，只證明字面字串「在
+  // 檔案某處存在」，不證明它真的在 confirmUpdate() 的 fetch 呼叫裡——把它搬進同檔案
+  // 的註解、常數、或無關 method 都能維持全綠，但桌面更新會靜默 403。改用既有的
+  // {anchor, braceBalanced} scope 機制（見本檔開頭 §scope 三形式）把掃描範圍收斂到
+  // confirmUpdate() 的大括號平衡方法體，並加開 stripLineComments（同 §「rule.stripLineComments」
+  // 段落）防止字面字串被搬進方法體內的行內註解仍判線過。兩者都是本檔既有的表驅動能力，
+  // 沿用形狀、非新發明機制。
+  {
+    file: 'web/static/js/pages/help.js', kind: 'required-string',
+    pattern: 'X-OpenAver-Desktop-Action',
+    scope: { anchor: /async\s+confirmUpdate\s*\(\s*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 110b-T6] confirmUpdate() fetch 帶自訂 header，防 /api/trigger-update 護欄靜默失效（P2-2：錨定 method body + 剝註解，防字面移出 fetch 仍全綠）',
+  },
+
   // ---- [lint-guard:108-T4] G4：js-open-folder marker 只在兩顆 folder 按鈕上（T3 鎖）----
   // 108-T3 把「隱藏 folder 按鈕」的判斷全部收斂到 CSS 的 .js-open-folder marker（G3，
   // css-guard.mjs CG-TOUCH-03）；若這個 class 被誤搬到 play/enrich 鈕、或多加了第三個，
@@ -3965,7 +3985,7 @@ function evalCrossFileEqual(rule) {
       err(`${rule.note} — ${src.file}: pattern ${patternLabel(src.pattern)} 無匹配（常數被改名/刪除？fail-closed）`);
       return;
     }
-    seen.push({ file: src.file, value: parseFloat(m[1]), raw: m[1] });
+    seen.push({ file: src.file, value: parseFloat(m[1]), raw: m[1] }); // 地雷：預設 parseFloat 會把 0.15.17 截成 0.15，多段字面（如版本號）不可用本 kind
   }
   const first = seen[0].value;
   if (!seen.every((s) => s.value === first)) {

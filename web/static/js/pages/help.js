@@ -124,7 +124,10 @@ export function helpPage() {
         async confirmUpdate() {
             this.updateLoading = true;
             try {
-                const resp = await fetch('/api/trigger-update', { method: 'POST' });
+                const resp = await fetch('/api/trigger-update', {
+                    method: 'POST',
+                    headers: { 'X-OpenAver-Desktop-Action': 'trigger-update' },
+                });
                 if (resp.ok) {
                     this._showHelpToast(window.t('help.update_modal.toast_success'));
                 } else {

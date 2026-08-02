@@ -3,7 +3,9 @@ OpenAver Web GUI - FastAPI Application
 """
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 import asyncio
+import ipaddress
 import os
 import re
 import subprocess
@@ -163,7 +165,7 @@ from web.routers import diagnostics as diagnostics_router
 # Module-level imports for startup_reconnect / _fire_probe so that
 # patch("web.app.startup_reconnect") / patch("web.app._fire_probe") target the
 # correct use-site binding (TASK-63e-1; function-local import would defeat patch).
-from web.routers.settings_metatube import startup_reconnect, _fire_probe  # noqa: E402
+from web.routers.settings_metatube import startup_reconnect, _fire_probe  # noqa: E402, PLC2701 — 既有註解（TASK-63e-1）已明講：module-level import 是為了讓 patch("web.app._fire_probe") 打中呼叫端 binding，函式內 import 會讓 patch 失效；_fire_probe 是 metatube 重連探測的內部 primitive，尚未升格為公開 API
 app.include_router(search_router.router)
 app.include_router(config_router.router)
 app.include_router(scraper_router.router)
@@ -232,6 +234,55 @@ async def lan_access_gate(request: Request, call_next):
     if _lan_access_allowed(client_host, server_mode):
         return await call_next(request)
     return PlainTextResponse("Forbidden", status_code=403)
+
+
+def _is_loopback_host(host):
+    """判斷 `host` 是否為本機（`/api/trigger-update` 三層護欄 CD-110b-5 用）。
+
+    與 `_LOOPBACK_HOSTS`（:204）的關係：`_LOOPBACK_HOSTS` 是 middleware 的**短路
+    名單**，只收兩個精確字面值，回答的是「要不要跳過讀 config」——這裡**不動它**。
+    本函式回答的是另一個問題：「這個 client／Origin host 是不是本機」，用
+    `ipaddress.is_loopback` 額外涵蓋 `127.0.0.0/8` 其餘位址、IPv4-mapped IPv6
+    （`::ffff:127.0.0.1`），並加收 `localhost` 字面（純位址比對會漏它）。兩者
+    判斷的集合都只可能來自本機，所以本函式是 `_LOOPBACK_HOSTS` 的**嚴格超集**，
+    超集不製造安全缺口；反過來若本函式比 `_LOOPBACK_HOSTS` 更窄，才會出現
+    「middleware 放行但端點誤拒」的桌面自鎖風險。
+    """
+    if not host:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    # IPv4-mapped IPv6（`::ffff:127.0.0.1`）必須先解回 IPv4 才判得對：
+    # 實測 `ipaddress.ip_address('::ffff:127.0.0.1').is_loopback` 是 **False**
+    # （`is_loopback` 只認 `::1`）。dual-stack socket 上的 uvicorn 有機會把本機
+    # 連線的 peer 回報成這個形式，不解就會把桌面版自己鎖在門外——那是 plan-110b
+    # §4 風險表列為「最嚴重」的那一條。解回 IPv4 後 `127.0.0.1` 正常判 True。
+    mapped = getattr(addr, "ipv4_mapped", None)
+    if mapped is not None:
+        addr = mapped
+    return addr.is_loopback
+
+
+def _is_loopback_origin(origin):
+    """`Origin` header 是否解析出 loopback hostname（判 host 不判 port，CD-110b-5）。
+
+    用 `urlparse` 取 `hostname`；`null`、malformed（`http://`、`not-a-url`）解析出的
+    `hostname` 為 `None`／空字串，一律 fail-closed 回 False（不得當成「沒有 Origin」
+    放行——「沒有 Origin」是呼叫端看 `origin is None` 另行判斷，不歸本函式管）。
+
+    `urlparse` 本身也可能拋 `ValueError`（實測：未閉合的 IPv6 字面值
+    `http://[::1` → `Invalid IPv6 URL`）。不接的話會變成未處理例外 → 500，
+    既非 fail-closed 的 403、也把「被擋下」與「伺服器壞了」混在一起。一律接住回 False。
+    """
+    try:
+        hostname = urlparse(origin).hostname
+    except ValueError:
+        return False
+    return bool(hostname) and _is_loopback_host(hostname)
 
 
 # ============ 輔助函數 ============
@@ -520,9 +571,46 @@ async def get_install_context():
 
 
 @app.post("/api/trigger-update")
-async def trigger_update():
-    """開啟外部終端視窗執行安裝 TUI（僅 desktop App，不揭露給 AI agent）。"""
+async def trigger_update(request: Request):
+    """開啟外部終端視窗執行安裝 TUI（僅 desktop App，不揭露給 AI agent）。
+
+    三層護欄（CD-110b-5，缺一不可）防範 ① 任何網站用 auto-submit `<form>` 觸發的
+    CSRF ② `server_mode` 開啟時同網段裝置觸發桌面主機執行安裝腳本的 LAN 暴露面：
+    ① 硬條件：desktop **且** loopback client（兩者皆須成立；同時關掉 server_mode
+       的 LAN 暴露面）
+    ② Origin 存在時只接受 loopback origin（判 host 不判 port）；不存在時不得因此
+       放行，仍受①約束（PyWebView 可能不送 Origin）
+    ③ 自訂 header `X-OpenAver-Desktop-Action` 存在（只檢查存在、不比對值——比對值
+       不增加安全性，卻多一個日後改文案就破功的耦合點）
+    四個檢查全部在 `subprocess.Popen` 之前：403 路徑零副作用。
+    """
+    client = request.client
+    client_host = client.host if client else None
+    origin = request.headers.get("origin")
+    # 四個檢查對外一律回同一段文案（不讓外部探測出是哪一層擋的），但**對內記 log**：
+    # plan-110b §4 把「護欄把桌面版自己鎖在門外」列為最嚴重風險，而那個情境在真機
+    # 上只會看到一個 toast 錯誤。log 這一行是 owner 真機 hard-gate 失敗時唯一的
+    # 分診依據——沒有它就得靠猜是哪一層。
+    denied = None
     if not (_is_windows_desktop() or _is_mac_desktop()):
+        denied = "not-desktop"
+    elif not _is_loopback_host(client_host):
+        denied = "non-loopback-client"
+    elif origin is not None and not _is_loopback_origin(origin):
+        # 註：`origin` 為空字串（header 存在但值為空）會走進這裡並被拒。這是刻意的
+        # fail-closed，且合規瀏覽器不會產生該情境——同源 POST 若送 Origin 必為真實
+        # origin 值，跨站沙箱情境送的是字面 `"null"` 而非空字串。
+        denied = "non-loopback-origin"
+    elif "X-OpenAver-Desktop-Action" not in request.headers:
+        denied = "missing-desktop-action-header"
+    if denied:
+        # client_host／origin 是外部可控值。標準 HTTP 下 header 值不能含裸 CR/LF
+        # （framing 層就會拒），所以換行式 log 偽造走不到這裡；但未消毒的外部輸入
+        # 進 log 仍值得設上界——截斷成本近乎零，診斷用途也不需要長字串。
+        logger.warning(
+            "trigger-update 拒絕：layer=%s client_host=%.64s origin=%.128s",
+            denied, str(client_host), str(origin),
+        )
         raise HTTPException(status_code=403, detail="此功能僅限桌面應用程式使用")
     try:
         if sys.platform == "win32":

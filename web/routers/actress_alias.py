@@ -23,7 +23,7 @@ from pydantic import BaseModel, field_validator
 from core.database import AliasRepository, init_db
 from core.scrapers.actress.orchestrator import get_actress_profile
 from core.logger import get_logger
-from web.routers.actress import _flatten_aliases
+from web.routers.actress import _flatten_aliases  # noqa: PLC2701 — alias 建議端點需要與 actress.py 回應組裝共用同一份「別名扁平化」邏輯，避免兩處各自維護導致格式漂移；_flatten_aliases 目前仍是 actress router 的內部 helper，尚未抽到共用模組
 
 logger = get_logger(__name__)
 

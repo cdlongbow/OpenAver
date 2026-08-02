@@ -301,7 +301,7 @@ def _download_one_package(
     return after - before
 
 
-def download_and_install_packages(python_dir: Path):
+def download_and_install_packages(python_dir: Path):  # noqa: C901 — Windows wheel 兩階段下載 + manifest-based extract 是同一次 build 的單一狀態機（Phase 1／Phase 2／機制 3 manifest-based extract，見 docstring），拆分會讓 phase 之間的隱含依賴（cache/manifest）更難追蹤，非本 Phase 治理範圍（build 工具鏈）
     """下載 Windows wheel 並解壓到 site-packages（allowlist + manifest-based extract）
 
     兩階段下載策略：

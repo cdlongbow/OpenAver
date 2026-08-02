@@ -11,7 +11,7 @@
 ### Server 啟動
 
 ```bash
-source venv/bin/activate && uvicorn web.app:app --host 0.0.0.0 --port 8000
+source venv/bin/activate && uvicorn web.app:app --host 127.0.0.1 --port 8000
 ```
 
 ### Playwright MCP Server 選擇
@@ -548,7 +548,7 @@ N/A — locale 切換、Dark/Light mode、tutorial 文案驗收均為 browser-on
 
 ```bash
 # Dev server 已啟動
-source venv/bin/activate && uvicorn web.app:app --host 0.0.0.0 --port 8000
+source venv/bin/activate && uvicorn web.app:app --host 127.0.0.1 --port 8000
 
 # （A3/A5 用）準備 disposable fixture 番號（確認 DB 內存在或可覆蓋）
 FIXTURE_NUM="SONE-205"  # 換成實際有資料的番號（A1-A5 共用，務必在同一 shell session 執行）

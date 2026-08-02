@@ -53,7 +53,7 @@ if echo "$RESPONSE" | grep -q "translations"; then
     echo "  ✅ 批次翻譯 API 正常 (成功 $COUNT/2)"
 else
     echo "  ⚠️ 批次翻譯 API 未響應（伺服器可能未啟動）"
-    echo "  提示：請先執行 uvicorn web.app:app --host 0.0.0.0 --port 8000"
+    echo "  提示：請先執行 uvicorn web.app:app --host 127.0.0.1 --port 8000"
 fi
 
 # 【4/4】運行 pytest
