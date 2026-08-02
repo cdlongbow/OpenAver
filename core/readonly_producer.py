@@ -1474,6 +1474,29 @@ def _produce_one(
     # (sanitize_filename(format_data['number'])) is already folded into
     # _resolve_movie_dir's candidate_fs before it ever returns, so this single
     # check on movie_dir is sufficient — no second leaf-only checkpoint needed.
+    #
+    # ⚠️ WHAT THIS CHECK DOES **NOT** COVER, AND WHY THAT IS CURRENTLY SAFE
+    # (pre-merge SA-pre-9 P2-1 — the paragraph above only argued the *directory*
+    # leaf, so spell the *filename* leaf out too rather than leave it implied):
+    # _write_movie_assets builds every asset path as
+    #   base_stem = str(Path(movie_dir) / _build_basename(format_data, ...))   (:882-883)
+    # and that basename is ALSO metadata-derived ({title}/{actor}/...). It is NOT
+    # re-checked here. It is safe today only because _build_basename ultimately
+    # returns through organizer.format_string, whose last line is
+    # sanitize_filename(...) — and sanitize_filename's illegal_chars contains BOTH
+    # '/' and '\\', so the basename can never carry a path separator. Worst case
+    # (whole field == '..') yields str(Path(movie_dir) / '..') + '.jpg' ==
+    # 'movie_dir/...jpg' — a file named '...jpg' INSIDE movie_dir, not an escape.
+    # **This is a load-bearing dependency on sanitize_filename's illegal_chars.**
+    # If anyone ever relaxes that list (or routes a basename around format_string),
+    # this checkpoint stops being sufficient. Named backlog B8 in plan-110b.
+    #
+    # Why not just add a second check on base_stem: it is computed INSIDE
+    # _write_movie_assets, so checking it would need output_root passed into that
+    # function — which is the defaulted-kwarg fail-open shape this task already
+    # rejected once — or a duplicate _build_basename call here, which can silently
+    # drift from the real one. Documented dependency beats either.
+    #
     # MUTATION LOCK: deleting this block must turn
     # TestWriteMovieAssetsContainment.test_multi_layer_actor_escape_rejected_zero_writes_outside_root
     # and TestProduceOneContainmentCheckpoint's test RED, while

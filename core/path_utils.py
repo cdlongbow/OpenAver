@@ -568,6 +568,16 @@ def is_fs_path_under_dir(fs_path: str, root_fs_path: str) -> bool:
         語意。`core/readonly_producer.py` 即屬後者，已有三道上游 guard
         （`web/routers/scraper.py` 的單片與批次入口、`produce_source` 本身）確保
         空 `output_root` 永遠到不了這裡。
+
+        **本檢查不防 TOCTOU（pre-merge SA-pre-9，刻意不治）**：它回答的是「檢查當下
+        這條路徑在不在 root 底下」，不保證「呼叫端稍後真的寫入時仍是同一個目錄」。
+        若有並行程序在檢查通過後、`makedirs`／`move` 之前把目標換成指向 root 外的
+        symlink，寫入會跟著出去。**這在本專案宣告的威脅模型之外**——攻擊者是被刮削
+        的網站（能力邊界＝往 HTTP 回應塞字串），不是本機並行程序；AGENTS.md 明載
+        預設模型不含敵意的已認證 LAN 使用者，而能在本機任意建 symlink 的攻擊者根本
+        不需要繞這道檢查、直接寫檔就好。真要關這個窗需要 `O_NOFOLLOW` + `openat`
+        系列的 dirfd 相對操作，Windows（本專案主平台）無等價語意。
+        詳見 `plan-110b.md` 附錄 A 的 B9。
     """
     try:
         root_real = os.path.realpath(root_fs_path)

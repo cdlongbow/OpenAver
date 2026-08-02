@@ -4,6 +4,18 @@ exclude = ["venv", "tools", "tests"]
 
 [tool.ruff.lint]
 select = ["E722", "F", "B", "T201", "S110", "S112", "TID", "C901", "PLC2701"]
+# preview 是 PLC2701（跨模組 import 私有成員）的必要條件——ruff 沒有 per-rule 的
+# preview 開關，只能全域開。
+# ⚠️ 副作用（pre-merge SA-pre-9 P2-2，實測而非推測）：開了之後，上面 select 裡的
+# **前綴**會一併吃到該前綴底下的 preview 規則——實測多出 B043 / B901 / B903 /
+# B909 / TID254 / TID255。這不是理論：B901 當下就命中 core/nfo_updater.py:486，
+# 已具名 suppression 處理。
+# 因此**精確 pin ruff 版本是這條設定的配套、不是可選項**：上游升版若新增或改動
+# 任一 preview 規則的判定，會在本 repo 零改動的情況下讓 CI 轉紅。
+# 防線＝requirements-test.txt 的 `ruff==0.15.17` 精確 pin
+#       + tests/unit/test_ci_workflow_guard.py::test_ci_ruff_pin_matches_requirements
+#         的 pin-drift 守衛（已參數化涵蓋 ruff 與 import-linter 兩者）。
+# 動這一行之前先確認那兩道防線還在。
 preview = true
 
 [tool.ruff.lint.mccabe]
