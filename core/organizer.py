@@ -14,7 +14,7 @@ from PIL import Image
 from typing import Optional, Dict, Any, List, Tuple
 
 from core.config import _STEM_IMAGE_MODES
-from core.path_utils import normalize_path
+from core.path_utils import normalize_path, is_fs_path_under_dir
 from core.scrapers.utils import has_chinese, check_subtitle, strip_subtitle_markers, normalize_number_impl
 from core.focal import requires_face_detection, detect_focal
 from core.logger import get_logger
@@ -790,6 +790,26 @@ def find_subtitle_files(video_path: str) -> List[str]:
     return results
 
 
+def _containment_error(candidate_fs_path: str, root_fs_path: str) -> Optional[str]:
+    """
+    整理流程的寫入錨點防線（CD-110b-8 抽出的小函式，供 organize_file 呼叫兩次）。
+
+    包住 T3 的 is_fs_path_under_dir：candidate_fs_path／root_fs_path 原樣傳入，
+    不得先 normalize_path()（正規化疊加，BE-PATH-01 #1）。
+
+    Args:
+        candidate_fs_path: 待檢查的寫入目標（target_dir 或 target_path），原生 FS path。
+        root_fs_path: 允許範圍的根目錄（organize_file 的 original_dir），原生 FS path。
+
+    Returns:
+        None 表示在範圍內（放行）；否則回傳硬編碼繁中錯誤訊息，
+        比照 organize_file 既有錯誤分支（result['error'] + return result，不 raise）。
+    """
+    if is_fs_path_under_dir(candidate_fs_path, root_fs_path):
+        return None
+    return '目標路徑超出允許範圍，請確認命名格式設定'
+
+
 def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在其中加 containment 防線，加的是「呼叫一個新的小函式」，不得讓本函式本身更複雜（見 plan-110b）
     file_path: str,
     metadata: Dict[str, Any],
@@ -1016,6 +1036,10 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
     try:
         # 建立資料夾
         if config.get('create_folder', True):
+            containment_error = _containment_error(target_dir, original_dir)
+            if containment_error:
+                result['error'] = containment_error
+                return result
             try:
                 os.makedirs(target_dir, exist_ok=True)
             except PermissionError:
@@ -1025,6 +1049,10 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
 
         # 移動並重命名檔案
         if file_path != target_path:
+            containment_error = _containment_error(target_path, original_dir)
+            if containment_error:
+                result['error'] = containment_error
+                return result
             if os.path.exists(target_path):
                 result['success'] = False
                 result['duplicate'] = True
