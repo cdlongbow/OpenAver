@@ -3380,6 +3380,17 @@ const RULES = [
     note: '[lint-guard 107-P1-T3] help.js script tag 禁顯式 defer（module 已隱式 defer）— 遷自 test_frontend_lint.py',
   },
 
+  // ---- [lint-guard:110b-T6] help.js：/api/trigger-update 三層護欄的自訂 header ----
+  // 端點（web/app.py trigger_update）要求 X-OpenAver-Desktop-Action header 存在
+  // 才放行（CD-110b-5 ③）。這個 header 一旦被誰「清理」掉，桌面版更新按鈕會
+  // 靜默壞掉（回 403，使用者只看到 toast 錯誤）——純 JS 字面字串存在性，走 lint
+  // 不走 pytest（CLAUDE.md「Lint 守衛規則」north-star）。
+  {
+    file: 'web/static/js/pages/help.js', kind: 'required-string',
+    pattern: 'X-OpenAver-Desktop-Action',
+    note: '[lint-guard 110b-T6] confirmUpdate() fetch 帶自訂 header，防 /api/trigger-update 護欄靜默失效',
+  },
+
   // ---- [lint-guard:108-T4] G4：js-open-folder marker 只在兩顆 folder 按鈕上（T3 鎖）----
   // 108-T3 把「隱藏 folder 按鈕」的判斷全部收斂到 CSS 的 .js-open-folder marker（G3，
   // css-guard.mjs CG-TOUCH-03）；若這個 class 被誤搬到 play/enrich 鈕、或多加了第三個，
