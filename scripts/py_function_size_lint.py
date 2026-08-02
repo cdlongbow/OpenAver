@@ -31,6 +31,31 @@ Why this guard exists (spec-110a §2.3, CD-110a-3, CD-110a-4):
     run (see _GHOST/_STALE below) and must be fixed by deleting the entry,
     not editing the number.
 
+    Codex PR #122 P2-1: the two checks above did NOT stop an *already*
+    exempt function from growing without limit — the anti-rot check only
+    rejects a GHOST (missing) or STALE (dropped to <= MAX_LINES) entry, so
+    an exempt function could balloon from 351 to 359 lines (as happened to
+    ``organize_file`` in this very branch's T4) and every run would still
+    print PASS. So each EXEMPTIONS value now also carries a `baseline`: the
+    function's measured size at the moment it was grandfathered in. A THIRD
+    check enforces `size <= baseline` for every exempt function on every
+    run (see "EXEMPTION BASELINE EXCEEDED" below) — an exemption freezes a
+    function at its current size, it does not licence unlimited future
+    growth. Shrinking below baseline is always fine (that just makes the
+    STALE check fire sooner, once it crosses MAX_LINES).
+
+    Known, accepted gap (not fixed here — do not build a signature/hash
+    mechanism for it, see plan-110a CD-110a-3 ②): a *newly* oversized
+    function can still be added straight into EXEMPTIONS with a baseline
+    at whatever size it already is, immediately bypassing MAX_LINES. This
+    is not mechanically closeable without also policing "why was this
+    entry added" (a judgment call, not a measurement) — the mitigation is
+    social/procedural: adding an EXEMPTIONS entry requires touching this
+    file, which is a visible, single-purpose diff line any reviewer (human
+    or Codex) can challenge on its own. What baseline DOES close off is the
+    much quieter failure mode: an *already*-exempt function silently
+    growing further without anyone having to touch this file at all.
+
 Usage:
     python scripts/py_function_size_lint.py
 
@@ -63,7 +88,7 @@ SCAN_ROOTS = ["core", "web", "windows", "scripts", "build.py", "build_macos.py"]
 # still excluded, e.g. core/tests/ or web/tests/).
 EXCLUDED_DIRS = {"tests", "venv", "tools", "__pycache__", ".git"}
 
-# EXEMPTIONS: dict[(relative_path, qualified_name)] -> reason string.
+# EXEMPTIONS: dict[(relative_path, qualified_name)] -> (baseline, reason).
 #
 # qualified_name convention: '.'-joined stack of every enclosing
 # FunctionDef/AsyncFunctionDef/ClassDef name (class scopes ARE pushed onto
@@ -74,74 +99,101 @@ EXCLUDED_DIRS = {"tests", "venv", "tools", "__pycache__", ".git"}
 # different classes, at the cost of not matching the shorthand names used
 # in prose/spec tables (which is why the table below documents both).
 #
+# `baseline` (Codex PR #122 P2-1): the function's measured size
+# (end_lineno - lineno + 1) at the moment this entry was grandfathered in
+# (all 14 baselines below were captured by actually running this script
+# against the repo at HEAD of feature/110-governance-and-security on
+# 2026-08-02 — see the "size > baseline" check in main() for what this
+# enforces). This is a ratchet, not a target: an exempt function is allowed
+# to sit at or shrink below its baseline forever, but growing past it is a
+# violation just like exceeding MAX_LINES is for a non-exempt function.
+# Bumping a baseline UP is a real, reviewable decision (it means "this
+# function is allowed to be even bigger than it already was") and must be
+# accompanied by an updated reason string explaining why — never bump the
+# number silently to make CI green again.
+#
 # 14 entries, reasons transcribed verbatim from spec-110a §2.3 /
 # TASK-110a-T2 (Codex plan review P1-1 already settled these; not
 # re-litigated per task):
-EXEMPTIONS: dict[tuple[str, str], str] = {
+EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
     ("core/gallery_generator.py", "HTMLGenerator._get_css"): (
+        1039,
         "純 CSS 字面值（AST 上是單一 return '''...''' 語句），拆函式只是把同一坨字串搬到"
-        "另一個 Python 函式，不會降低任何複雜度；正解是抽成靜態 .css 檔由前端載入，而非拆函式。"
+        "另一個 Python 函式，不會降低任何複雜度；正解是抽成靜態 .css 檔由前端載入，而非拆函式。",
     ),
     ("core/gallery_generator.py", "HTMLGenerator._get_javascript"): (
-        "同上，純 JS 字面值；正解是抽成靜態 .js 檔由前端載入，而非拆函式。"
+        604,
+        "同上，純 JS 字面值；正解是抽成靜態 .js 檔由前端載入，而非拆函式。",
     ),
     ("web/routers/scanner.py", "generate_avlist"): (
+        500,
         "avlist SSE 生成主流程；109 已判定為「列 backlog、現在別搬」（60–100 處測試 patch "
-        "target 焊死該函式，拆分成本由測試面而非邏輯面決定，與既有 C901 noqa 理由一致）。"
+        "target 焊死該函式，拆分成本由測試面而非邏輯面決定，與既有 C901 noqa 理由一致）。",
     ),
     ("core/organizer.py", "organize_file"): (
+        359,
         "整理主流程；Phase 2（110b）會在其中加 containment 防線，加的是「呼叫一個新的小函式」，"
-        "不得讓本函式本身更複雜（見 plan-110b，與既有 C901 noqa 理由一致）。"
+        "不得讓本函式本身更複雜（見 plan-110b，與既有 C901 noqa 理由一致）。",
     ),
     ("core/config.py", "_load_config_unlocked"): (
+        304,
         "config 遷移主流程，每加一個設定欄位都得改它；收斂設計已列 backlog"
-        "（OpenAver架構評估-回應.md §七）。"
+        "（OpenAver架構評估-回應.md §七）。",
     ),
     ("web/routers/scraper.py", "batch_enrich_endpoint"): (
+        279,
         "批次 enrich SSE 端點主流程（含 90c-T1 唯讀 guard 的 async-safe 前置計算 + 去重 + SSE "
         "response 組裝），本體大部分行數其實是巢狀的 event_generator（見下一條）；縮小 "
         "event_generator 會連帶縮小這條，目前不獨立拆分是避免把單一 request 生命週期的狀態"
-        "（去重清單、唯讀前綴集）打散到多個函式增加傳遞開銷。"
+        "（去重清單、唯讀前綴集）打散到多個函式增加傳遞開銷。",
     ),
     ("web/routers/scraper.py", "batch_enrich_endpoint.event_generator"): (
+        250,
         "SSE 逐筆處理迴圈：per-item try/except、開始/進度/結束通知 emit、success/failed 計數，"
         "這是單一 SSE session 的完整生命週期；拆分會把 success_count/failed_count/去重後清單"
-        "等跨語句共享狀態打散到多個函式，可讀性不會變好。"
+        "等跨語句共享狀態打散到多個函式，可讀性不會變好。",
     ),
     ("core/enricher.py", "enrich_single"): (
+        249,
         "單片 enrich 主流程，含多個 write_* flag（nfo/cover/extrafanart/overwrite_existing/"
         "external_manager）的正交組合分支，是核心編排函式；已標記 ranker-invalidate-ok，flag "
-        "組合邏輯搬到別處會打散單一事務語意。"
+        "組合邏輯搬到別處會打散單一事務語意。",
     ),
     ("core/database/video.py", "VideoRepository.repath"): (
+        230,
         "docstring 已明列四個互斥分支（self-no-op／正常 UPDATE／碰撞 delete-merge／"
         "old-not-in-DB），拆分會打散同一顆 SQL 語意單元到多個函式，可讀性不會變好"
-        "（與既有 C901 noqa 理由一致）。"
+        "（與既有 C901 noqa 理由一致）。",
     ),
     ("windows/tray.py", "NativeTrayIcon._run_windows"): (
+        223,
         "Windows tray icon 的 Win32 message loop，直接呼叫 ctypes.windll.user32/shell32，是"
         "單一 OS-level event loop 狀態機；拆分會把 win32 handle 的生命週期打散到多個函式，"
-        "難以追蹤資源釋放順序。"
+        "難以追蹤資源釋放順序。",
     ),
     ("core/readonly_producer.py", "_write_movie_assets"): (
+        218,
         "109 剛落地的唯讀單片產出主流程，寫入 nfo/cover/poster/fanart 等多個資產，需要維持"
-        "同一次 I/O 序列的可推理性（部分失敗時的處置順序）；剛穩定，暫不再拆避免二次擾動。"
+        "同一次 I/O 序列的可推理性（部分失敗時的處置順序）；剛穩定，暫不再拆避免二次擾動。",
     ),
     ("build.py", "download_and_install_packages"): (
+        204,
         "Windows wheel 兩階段下載 + manifest-based extract 是同一次 build 的單一狀態機"
         "（Phase 1／Phase 2／機制 3 manifest-based extract），拆分會讓 phase 之間的隱含依賴"
         "（cache/manifest）更難追蹤，非本 Phase 治理範圍（build 工具鏈，與既有 C901 noqa "
-        "理由一致）。"
+        "理由一致）。",
     ),
     ("core/database/connection.py", "init_db"): (
+        203,
         "資料庫 schema 初始化主流程，逐表 CREATE TABLE/CREATE INDEX 語句序列，schema 仍在"
         "演進中；拆成多個小函式不會降低本質複雜度，只會增加呼叫層次與跨函式的 cursor/conn "
-        "傳遞。"
+        "傳遞。",
     ),
     ("windows/standalone.py", "main"): (
+        202,
         "CLI 進入點主流程：debug flag 解析 → logging setup → 設定載入 → server bootstrap → "
         "lifecycle wiring，是單一啟動序列，各步驟間有嚴格順序依賴，拆分會打散初始化順序、"
-        "增加跨函式傳遞已初始化物件的成本。"
+        "增加跨函式傳遞已初始化物件的成本。",
     ),
 }
 
@@ -343,6 +395,9 @@ def main() -> int:
         by_key.setdefault((rec.rel_path, rec.qualname), []).append(rec)
 
     violations: list[tuple[str, int, str, int]] = []  # (rel_path, lineno, qualname, size)
+    # (rel_path, lineno, qualname, size, baseline) — exempt function grew past
+    # its grandfathered baseline (Codex PR #122 P2-1, see EXEMPTIONS docstring).
+    baseline_violations: list[tuple[str, int, str, int, int]] = []
     duplicate_errors: list[tuple[str, str, str]] = []  # (rel_path, qualname, message)
     # Sort by key (rel_path, qualname) before iterating: by_key is built in
     # os.walk traversal order, which is not guaranteed stable across
@@ -378,8 +433,20 @@ def main() -> int:
             ))
         exempt = key in EXEMPTIONS
         for rec in recs:
-            if rec.size > MAX_LINES and not exempt:
-                violations.append((rel_path, rec.lineno, qualname, rec.size))
+            if not exempt:
+                if rec.size > MAX_LINES:
+                    violations.append((rel_path, rec.lineno, qualname, rec.size))
+                continue
+            # Exempt: MAX_LINES no longer applies, but the grandfathered
+            # baseline still does — an exemption freezes a function at its
+            # current size, it is not a licence to keep growing (Codex PR
+            # #122 P2-1). This is a THIRD, independent verdict alongside the
+            # non-exempt MAX_LINES check above and the GHOST/STALE anti-rot
+            # checks below: none of them alone catch "still over MAX_LINES,
+            # still a real function, but bigger than when it was exempted".
+            baseline, _reason = EXEMPTIONS[key]
+            if rec.size > baseline:
+                baseline_violations.append((rel_path, rec.lineno, qualname, rec.size, baseline))
 
     anti_rot_errors: list[tuple[str, str, str]] = []  # (rel_path, qualname, message)
     for key in sorted(EXEMPTIONS):
@@ -408,6 +475,14 @@ def main() -> int:
     for rel_path, lineno, qualname, size in violations:
         print(f"{rel_path}:{lineno} {qualname} ({size} 行) > {MAX_LINES}")
 
+    baseline_violations.sort(key=lambda v: (v[0], v[1], v[2]))
+    for rel_path, lineno, qualname, size, baseline in baseline_violations:
+        print(
+            f"[EXEMPTION BASELINE EXCEEDED] {rel_path}:{lineno} {qualname} 這條豁免的基準是 "
+            f"{baseline} 行，現在 {size} 行——豁免不代表可以無限長大，把它縮回 {baseline} 行"
+            "以內，或在 EXEMPTIONS 裡明確調高基準並補充理由。"
+        )
+
     duplicate_errors.sort(key=lambda e: (e[0], e[1]))
     for _rel_path, _qualname, msg in duplicate_errors:
         print(msg)
@@ -419,11 +494,11 @@ def main() -> int:
     for rel_path, message in sorted(parse_errors):
         print(f"[PARSE ERROR] {rel_path}: {message}")
 
-    if parse_errors or violations or anti_rot_errors or duplicate_errors:
+    if parse_errors or violations or baseline_violations or anti_rot_errors or duplicate_errors:
         print(
-            f"FAIL: {len(violations)} violations, {len(anti_rot_errors)} stale/ghost "
-            f"exemptions, {len(duplicate_errors)} duplicate definitions, "
-            f"{len(parse_errors)} parse errors"
+            f"FAIL: {len(violations)} violations, {len(baseline_violations)} exemption "
+            f"baseline exceeded, {len(anti_rot_errors)} stale/ghost exemptions, "
+            f"{len(duplicate_errors)} duplicate definitions, {len(parse_errors)} parse errors"
         )
         return 1
 
