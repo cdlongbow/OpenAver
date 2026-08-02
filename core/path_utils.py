@@ -4,11 +4,16 @@
 支援環境：Windows / WSL / Linux / Mac
 支援輸入格式：Windows 本地、WSL 網路路徑、Unix 路徑
 """
+import os
 import platform
 import re
 import unicodedata
 from typing import Optional
 from urllib.parse import unquote
+
+from core.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def detect_environment() -> str:
@@ -510,6 +515,68 @@ def is_path_under_dir(path: str, dir_uri: str) -> bool:
         return True
     prefix = dir_uri if dir_uri.endswith('/') else dir_uri + '/'
     return path.startswith(prefix)
+
+
+def is_fs_path_under_dir(fs_path: str, root_fs_path: str) -> bool:
+    """
+    判斷原生 FS path 是否在指定根目錄底下（CD-110b-4 五步鏈）。
+
+    與 is_path_under_dir(path, dir_uri) 的職責分界：
+    - is_path_under_dir：吃 file:/// URI，純字串前綴比對，不解析 `..`、不解析
+      symlink，唯一呼叫端 core/readonly_producer.py:418。
+    - is_fs_path_under_dir（本函式）：吃原生 FS path（非 URI），先用
+      os.path.realpath 解析 `..` 與 symlink 再比對，供整理流程的寫入錨點
+      （target_dir / target_path）共用。
+
+    兩者不得互相取代：硬套 URI 版要在呼叫端各做一次 URI 往返，等於正規化疊加；
+    本函式也不得再串接 normalize_path() / to_file_uri()，只做下列這一條鏈。
+
+    演算法（一步都不能省）：
+        1. root_real = os.path.realpath(root_fs_path)
+           realpath 已含 abspath；strict 保持預設 False——root_fs_path 對應的
+           target_dir 在檢查當下本來就可能尚未建立。
+        2. target_real = os.path.realpath(fs_path)
+        3. 兩端各過 os.path.normcase（Windows 路徑大小寫不對稱）。
+        4. os.path.commonpath([root_n, target_n]) == root_n → 在底下
+           （相等視為在底下：root == target 回 True）。
+        5. 例外一律 fail-closed：ValueError（跨 drive／混絕對相對）或 OSError
+           （WinFsp/rclone 掛載點等）都記錄實際例外內容後回 False，不吞例外
+           放行。
+
+    Args:
+        fs_path: 待檢查的原生 FS path（非 URI）。
+        root_fs_path: 根目錄的原生 FS path（非 URI）。
+
+    Returns:
+        fs_path 是否等於或位於 root_fs_path 底下；**路徑解析類**例外（ValueError /
+        OSError）一律回 False。
+
+    Note:
+        **fail-closed 的範圍只涵蓋 ValueError 與 OSError。** 呼叫端須自行保證兩個
+        參數都是 str（非 None）——傳 None 會讓 os.path.realpath 拋 TypeError 直接
+        往外炸，本函式**刻意不吞它**：那是呼叫端契約違反（型別標註已寫明 str），
+        大聲炸比靜默回 False 更容易查。T4/T5 的接線端不要以為「所有例外都被這裡
+        擋掉了」。
+    """
+    try:
+        root_real = os.path.realpath(root_fs_path)
+        target_real = os.path.realpath(fs_path)
+        root_n = os.path.normcase(root_real)
+        target_n = os.path.normcase(target_real)
+        return os.path.commonpath([root_n, target_n]) == root_n
+    except ValueError as e:
+        logger.warning(
+            f"is_fs_path_under_dir: commonpath 比對失敗（可能跨 drive）— "
+            f"fs_path={fs_path!r}, root_fs_path={root_fs_path!r}, error={e}"
+        )
+        return False
+    except OSError as e:
+        logger.warning(
+            f"is_fs_path_under_dir: realpath 解析失敗（可能掛載點異常）— "
+            f"fs_path={fs_path!r}, root_fs_path={root_fs_path!r}, error={e}"
+        )
+        return False
+
 
 def coerce_to_file_uri(value: str, path_mappings: dict = None) -> str:
     """Idempotent file URI 轉換：value 可能是 FS path 或已是 file:/// URI。
