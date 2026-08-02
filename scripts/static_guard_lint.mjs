@@ -3457,14 +3457,27 @@ const RULES = [
   // 兩側行尾都有註解（requirements-test.txt 是 `# pinned exact: ...`，test.yml 是
   // `# keep in sync with requirements-test.txt pin`），pattern 用 `(?:#.*)?$`（m flag）把
   // 註解排除在 capture 之外，否則兩邊擷到的字串不同會假紅。
-  // pattern 無匹配 → evalCrossFileEqual 既有的 fail-closed err（不 vacuous-pass）。
+  // 🔴 workflow 側必須帶 `scope`（Codex PR #122 round-3 P1）。不 scope 的話 pattern 掃全檔，
+  // 語意就從「**lint-frontend 這個 gate** 用的是釘版安裝」退化成「這個 YAML 檔某處提到過
+  // 釘版安裝」——把 lint-frontend 的步驟改成不釘版的 `pip install ruff`、同時讓另一個 job
+  // （或一行註解）留著 `pip install ruff==0.15.17`，parity 照樣綠，而真正擋 PR 的那個 gate
+  // 已在跑未釘版的 ruff。被取代的 pytest 是 `workflow["jobs"]["lint-frontend"]` 的 run 指令，
+  // 本 scope 就是把那個粒度還原（AGENTS.md「port at the same scan granularity」）。
+  // pattern 無匹配 → evalCrossFileEqual 既有的 fail-closed err（不 vacuous-pass）；
+  // scope anchor 無匹配（job 被改名/刪除）→ resolveScopeRaw 的 fail-closed err。
   {
     kind: 'cross-file-equal',
     label: 'ruff CI pin parity',
     compare: 'string',
     sources: [
       { file: 'requirements-test.txt', pattern: /^ruff==(\S+?)\s*(?:#.*)?$/m },
-      { file: '.github/workflows/test.yml', pattern: /pip install ruff==(\S+?)\s*(?:#.*)?$/m },
+      {
+        file: '.github/workflows/test.yml',
+        // scope 到 lint-frontend job 區塊（見下方 🔴 說明）：從 `  lint-frontend:` 起、
+        // 一路吃到下一個同縮排 job key 之前（`(?!  \S)` 逐行否定前瞻，不是貪婪到檔尾）。
+        scope: /^ {2}lint-frontend:(?:\n(?! {2}\S).*)*/m,
+        pattern: /pip install ruff==(\S+?)\s*(?:#.*)?$/m,
+      },
     ],
     note: '[lint-guard:110a-P1] Codex PR #122 round-2：requirements-test.txt 與 CI lint-frontend step 各釘一次 ruff 版本，無強制同步機制，此守衛鎖一致（single source of truth；任一邊漂移即紅。原 pytest test_ci_ruff_pin_matches_requirements[ruff] 已遷移於此）',
   },
@@ -3474,7 +3487,11 @@ const RULES = [
     compare: 'string',
     sources: [
       { file: 'requirements-test.txt', pattern: /^import-linter==(\S+?)\s*(?:#.*)?$/m },
-      { file: '.github/workflows/test.yml', pattern: /pip install import-linter==(\S+?)\s*(?:#.*)?$/m },
+      {
+        file: '.github/workflows/test.yml',
+        scope: /^ {2}lint-frontend:(?:\n(?! {2}\S).*)*/m,
+        pattern: /pip install import-linter==(\S+?)\s*(?:#.*)?$/m,
+      },
     ],
     note: '[lint-guard:110a-P1] Codex PR #122 round-2：requirements-test.txt 與 CI lint-frontend step 各釘一次 import-linter 版本，無強制同步機制，此守衛鎖一致（single source of truth；任一邊漂移即紅。原 pytest test_ci_ruff_pin_matches_requirements[import-linter] 已遷移於此）',
   },
@@ -4014,6 +4031,17 @@ function evalCrossFileEqual(rule) {
     if (text === null) {
       err(`${rule.note} — ${src.file}: 檔案不存在或無法讀取`);
       return;
+    }
+    // per-source `scope`（Codex PR #122 round-3 P1）：把 pattern 的搜尋範圍先收斂到
+    // 檔內某個區塊，再 exec。沒有它的話 pattern 一律掃全檔——對「某個 job / 某個區塊
+    // **內**必須有某個值」這種語意是 fail-open：把該值從目標區塊移走、只要檔案其他地方
+    // （另一個 job、甚至一行註解）還有同樣字面，守衛照樣綠。
+    // 沿用 resolveScopeRaw 的既有語意（RegExp → 取 capture group 1，無則整段 match；
+    // 無匹配 → err + fail-closed），不另造一套 scope 規則。
+    if (src.scope) {
+      const scoped = resolveScopeRaw({ scope: src.scope, note: rule.note }, text, src.file);
+      if (!scoped.ok) return; // err 已由 resolveScopeRaw 回報
+      text = scoped.scopedText;
     }
     // CSS 來源：比對前剝除 block comment，避免 m-flag `^` 匹配註解內停用的宣告行造成假綠
     // （correct-by-default：ratio parity 永遠不該匹配 CSS 註解內容）。Python 來源不套——其
