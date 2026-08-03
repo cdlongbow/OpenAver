@@ -394,6 +394,7 @@ class TestJellyfinCheck:
         check_result = {'need_update': 5, 'items': [{'cover_path': f'/a/{i}.jpg', 'base_stem': f'/a/{i}', 'number': f'SONE-{i:03d}'} for i in range(5)]}
 
         with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
+             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'jellyfin'}}), \
              patch('web.routers.scanner.VideoRepository', return_value=mock_repo), \
              patch('web.routers.scanner.check_jellyfin_images_needed', return_value=check_result):
             response = client.get('/api/gallery/jellyfin-check')
@@ -414,6 +415,7 @@ class TestJellyfinCheck:
         check_result = {'need_update': 0, 'items': []}
 
         with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
+             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'jellyfin'}}), \
              patch('web.routers.scanner.VideoRepository', return_value=mock_repo), \
              patch('web.routers.scanner.check_jellyfin_images_needed', return_value=check_result):
             response = client.get('/api/gallery/jellyfin-check')
@@ -433,6 +435,7 @@ class TestJellyfinCheck:
         mock_repo = MagicMock()
 
         with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
+             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'jellyfin'}}), \
              patch('web.routers.scanner.VideoRepository', return_value=mock_repo), \
              patch('web.routers.scanner.check_jellyfin_images_needed', side_effect=RuntimeError('IO error')):
             response = client.get('/api/gallery/jellyfin-check')
@@ -497,7 +500,14 @@ class TestJellyfinCheck:
     # ---- T3(40c): TTL 快取相關測試 ----
 
     def test_jellyfin_check_cache_hit(self, client, monkeypatch):
-        """TTL 內命中快取，check_jellyfin_images_needed 不被呼叫"""
+        """TTL 內命中快取，check_jellyfin_images_needed 不被呼叫
+
+        Codex PR#122 P2-a 修復後，gate 排在快取讀取之前（併入同一支 threadpool
+        helper `_check_jellyfin_needed`），故快取命中前仍會先查 external_manager。
+        顯性設為 media-server flavour（jellyfin），才能單獨測到「快取命中」這條
+        路徑本身，而不是被預設 'off' 的 gate 提早短路（那是另一條測試的範圍，見
+        TestJellyfinExternalManagerGate）。
+        """
         import time
         import web.routers.scanner as scanner_mod
         from unittest.mock import MagicMock, patch
@@ -512,6 +522,7 @@ class TestJellyfinCheck:
         mock_check = MagicMock()
 
         with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
+             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'jellyfin'}}), \
              patch('web.routers.scanner.check_jellyfin_images_needed', mock_check):
             response = client.get('/api/gallery/jellyfin-check')
 
@@ -539,6 +550,7 @@ class TestJellyfinCheck:
         new_result = {'need_update': 99, 'items': []}
 
         with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
+             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'jellyfin'}}), \
              patch('web.routers.scanner.VideoRepository', return_value=mock_repo), \
              patch('web.routers.scanner.check_jellyfin_images_needed', return_value=new_result) as mock_check:
             response = client.get('/api/gallery/jellyfin-check')
@@ -550,7 +562,12 @@ class TestJellyfinCheck:
         mock_check.assert_called_once()
 
     def test_jellyfin_check_no_db_no_cache_write(self, client, monkeypatch):
-        """DB 不存在時 early-return，不更新快取"""
+        """DB 不存在時 early-return，不更新快取
+
+        意圖是測「DB 不存在」這條路徑本身（非 external_manager gate），故 mock config 顯性
+        設為 media-server flavour（jellyfin）——否則預設 'off' 會讓 CD-111-2 gate 提早短路，
+        兩條路徑（gate vs DB-not-exists）疊在一起就測不出 DB-not-exists 分支真正的行為。
+        """
         import web.routers.scanner as scanner_mod
         from unittest.mock import MagicMock, patch
 
@@ -561,7 +578,8 @@ class TestJellyfinCheck:
         monkeypatch.setattr(scanner_mod, '_jellyfin_cache_result', None)
         monkeypatch.setattr(scanner_mod, '_jellyfin_cache_time', 0)
 
-        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path):
+        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
+             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'jellyfin'}}):
             response = client.get('/api/gallery/jellyfin-check')
 
         assert response.status_code == 200
@@ -591,6 +609,318 @@ class TestJellyfinCheck:
         # T3(40c) Codex fix 後應有 4 處：
         #   clear_cache + generate_jellyfin_images_stream + generate_avlist(done) + generate_avlist(except)
         assert scanner_src.count('_jellyfin_cache_result = None') >= 4
+
+
+class TestJellyfinExternalManagerGate:
+    """Codex PR#122 P2 回歸：/jellyfin-check、/jellyfin-update 必須看 external_manager，
+    off 模式下直接回零項、不得呼叫底層 check/generate（spec-111 CD-111-2 停產 -poster/
+    -fanart 白名單一致）。反向鎖確保 gate 不是「永遠回零」的空實作。
+    """
+
+    @pytest.fixture(autouse=True)
+    def reset_jellyfin_cache(self):
+        import web.routers.scanner as scanner_mod
+        scanner_mod._jellyfin_cache_result = None
+        scanner_mod._jellyfin_cache_time = 0
+        yield
+        scanner_mod._jellyfin_cache_result = None
+        scanner_mod._jellyfin_cache_time = 0
+
+    def test_jellyfin_check_off_mode_gate_short_circuits(self, client, monkeypatch):
+        """off 模式：/jellyfin-check 回 need_update=0，且底層 check_jellyfin_images_needed
+        未被呼叫（證明是 gate 擋掉，不是剛好沒東西要補）。"""
+        from unittest.mock import MagicMock, patch
+
+        mock_db_path = MagicMock()
+        mock_db_path.exists.return_value = True
+        mock_check = MagicMock(return_value={'need_update': 7, 'items': [{'x': 1}]})
+
+        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
+             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'off'}}), \
+             patch('web.routers.scanner.check_jellyfin_images_needed', mock_check):
+            response = client.get('/api/gallery/jellyfin-check')
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data['success'] is True
+        assert data['data']['need_update'] == 0
+        mock_check.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "scraper_config",
+        [
+            pytest.param({'external_manager': None}, id="none"),
+            pytest.param({}, id="missing_key"),
+            pytest.param({'external_manager': 'Jellyfin'}, id="wrong_case"),
+            # Codex PR#123 round-4：這格原本是 'jellyfin_emby'（id=unknown_legacy_value），
+            # 與 test_readonly_producer.py 剛移除的那個 parametrize 同根因——本測試 mock 掉
+            # load_config()，直接注入該值；但真實 load_config() 會先被 Fix-72d migration
+            # （core/config.py:364-367）改寫成 'jellyfin'，所以那是 production 不可達狀態。
+            # 換成 'plex'：真正未知、不被任何 migration 攔截、會原樣流到 gate 的值。
+            # migration → jellyfin → 產圖的正向鏈路由 test_readonly_producer.py::
+            # TestExternalManagerMigrationToImageProduction 負責，不在本測試範圍。
+            pytest.param({'external_manager': 'plex'}, id="unknown_value"),
+        ],
+    )
+    def test_jellyfin_check_fail_closed_on_malformed_external_manager(
+        self, client, monkeypatch, scraper_config
+    ):
+        """BE-CONFIG-03：external_manager 是純 str dict 讀取、不經 Pydantic Literal 驗證，
+        手改過的 config.json 都可能帶非法值進來。白名單寫法（`not in
+        STEM_IMAGE_MODES`）必須讓 None、缺 key、大小寫不符、未知值都 fail-closed 回
+        0，而不是意外放行（若寫成 `== 'off'` 只擋字面 off，這些值會漏網）。
+
+        四格都是 **production 真實可達**的狀態——沒有任何一格會被 load_config() 的
+        migration 提前攔截（唯一的 Fix-72d migration 只逐字比對 'jellyfin_emby'）。"""
+        from unittest.mock import MagicMock, patch
+
+        mock_db_path = MagicMock()
+        mock_db_path.exists.return_value = True
+        mock_check = MagicMock(return_value={'need_update': 7, 'items': [{'x': 1}]})
+
+        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
+             patch('web.routers.scanner.load_config', return_value={'scraper': scraper_config}), \
+             patch('web.routers.scanner.check_jellyfin_images_needed', mock_check):
+            response = client.get('/api/gallery/jellyfin-check')
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data['success'] is True
+        assert data['data']['need_update'] == 0
+        mock_check.assert_not_called()
+
+    def test_jellyfin_update_off_mode_gate_short_circuits(self, client, monkeypatch, parse_sse_events):
+        """off 模式：/jellyfin-update SSE 回 done + updated=0，且 generate_jellyfin_images
+        未被呼叫（證明是 gate 擋掉，不是剛好零項）。"""
+        from unittest.mock import MagicMock, patch
+
+        mock_db_path = MagicMock()
+        mock_db_path.exists.return_value = True
+        mock_generate = MagicMock(return_value={'poster': True, 'fanart': True})
+
+        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
+             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'off'}}), \
+             patch('web.routers.scanner.generate_jellyfin_images', mock_generate):
+            response = client.get('/api/gallery/jellyfin-update')
+
+        assert response.status_code == 200
+        events = parse_sse_events(response.text)
+        done_events = [e for e in events if e.get('type') == 'done']
+        assert len(done_events) == 1, f"應恰好一個 done 事件: {events}"
+        assert done_events[0]['updated'] == 0
+        mock_generate.assert_not_called()
+
+    def test_jellyfin_endpoints_run_normally_under_media_server_flavour(self, client, monkeypatch, parse_sse_events):
+        """反向鎖：media-server flavour（jellyfin）下兩支端點照常運作——沒有這條，
+        gate 寫成「永遠回零」也會全綠。"""
+        from unittest.mock import MagicMock, patch
+
+        mock_db_path = MagicMock()
+        mock_db_path.exists.return_value = True
+        mock_repo = MagicMock()
+        check_result = {'need_update': 3, 'items': [
+            {'cover_path': '/a/1.jpg', 'base_stem': '/a/1', 'number': 'ABC-001', 'maker': 'M'}
+        ]}
+
+        # /jellyfin-check：check_jellyfin_images_needed 確實被呼叫
+        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
+             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'jellyfin'}}), \
+             patch('web.routers.scanner.VideoRepository', return_value=mock_repo), \
+             patch('web.routers.scanner.check_jellyfin_images_needed', return_value=check_result) as mock_check:
+            response = client.get('/api/gallery/jellyfin-check')
+
+        assert response.status_code == 200
+        assert response.json()['data']['need_update'] == 3
+        mock_check.assert_called_once()
+
+        # /jellyfin-update：generate_jellyfin_images 確實被呼叫
+        mock_generate = MagicMock(return_value={'poster': True, 'fanart': True})
+        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
+             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'kodi'}}), \
+             patch('web.routers.scanner.VideoRepository', return_value=mock_repo), \
+             patch('web.routers.scanner.check_jellyfin_images_needed', return_value=check_result), \
+             patch('web.routers.scanner.generate_jellyfin_images', mock_generate):
+            response = client.get('/api/gallery/jellyfin-update')
+
+        assert response.status_code == 200
+        events = parse_sse_events(response.text)
+        done_events = [e for e in events if e.get('type') == 'done']
+        assert len(done_events) == 1
+        mock_generate.assert_called_once()
+
+    def test_jellyfin_check_ttl_cache_does_not_bypass_gate(self, client, monkeypatch):
+        """Codex PR#122 P2-a 回歸鎖：TTL 快取不得繞過 external_manager gate。
+
+        時序：media-server 模式先呼叫一次讓 60s TTL 快取寫入正數 → 設定切成 off
+        → 60 秒窗內再呼叫 → 必須回 0（而非快取裡的舊正數），否則就是 gate 被
+        TTL 快取繞過（修前：async body 在呼叫 _check_jellyfin_needed 之前先查
+        快取，命中直接回傳，根本不會走到 gate），違反 AC8。
+        """
+        from unittest.mock import MagicMock, patch
+
+        mock_db_path = MagicMock()
+        mock_db_path.exists.return_value = True
+        mock_repo = MagicMock()
+        check_result = {'need_update': 9, 'items': [{'x': 1}]}
+
+        config_sequence = [
+            {'scraper': {'external_manager': 'jellyfin'}},
+            {'scraper': {'external_manager': 'off'}},
+        ]
+
+        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
+             patch('web.routers.scanner.load_config', side_effect=config_sequence), \
+             patch('web.routers.scanner.VideoRepository', return_value=mock_repo), \
+             patch('web.routers.scanner.check_jellyfin_images_needed', return_value=check_result):
+            first = client.get('/api/gallery/jellyfin-check')
+            second = client.get('/api/gallery/jellyfin-check')
+
+        assert first.status_code == 200
+        assert first.json()['data']['need_update'] == 9, "media-server 模式應寫入快取的正數"
+
+        assert second.status_code == 200
+        assert second.json()['data']['need_update'] == 0, (
+            "設定切成 off 後即使仍在 60s TTL 窗內，也必須回 0（gate 排在快取檢查之前）"
+        )
+
+    def test_jellyfin_update_mid_batch_gate_flip_truncates_remaining_items(
+        self, client, monkeypatch, parse_sse_events
+    ):
+        """Codex PR#122 P2-b 回歸鎖：批次跑到一半使用者把 external_manager 切成
+        off 時，剩餘項目不得繼續產圖（TOCTOU 洞：修前只在迴圈開頭 gate 一次）。
+
+        3 個待補項目，load_config 的 side_effect 序列讓「第 2 筆重讀」時已切回
+        off：預期只有第 1 筆被 generate_jellyfin_images 處理，第 2、3 筆被截斷。
+        """
+        from unittest.mock import MagicMock, patch
+
+        mock_db_path = MagicMock()
+        mock_db_path.exists.return_value = True
+        mock_repo = MagicMock()
+        check_result = {'need_update': 3, 'items': [
+            {'cover_path': f'/a/{i}.jpg', 'base_stem': f'/a/{i}', 'number': f'ABC-00{i}', 'maker': 'M'}
+            for i in range(1, 4)
+        ]}
+        mock_generate = MagicMock(return_value={'poster': True, 'fanart': True})
+
+        # 呼叫序：① 進入函式時的初次 gate/items 讀取 ②③④ 逐筆重讀（item1/2/3）。
+        # item1 重讀仍是 jellyfin（照常處理）、item2 重讀切成 off（中止）。多墊
+        # 幾筆 off 防禦「重讀次數算法跟預期不同」時 side_effect 用盡拋
+        # StopIteration，讓失敗訊息更好懂（call_count 斷言，而非 side effect 例外）。
+        config_sequence = (
+            [{'scraper': {'external_manager': 'jellyfin'}}] * 2
+            + [{'scraper': {'external_manager': 'off'}}] * 5
+        )
+
+        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
+             patch('web.routers.scanner.load_config', side_effect=config_sequence), \
+             patch('web.routers.scanner.VideoRepository', return_value=mock_repo), \
+             patch('web.routers.scanner.check_jellyfin_images_needed', return_value=check_result), \
+             patch('web.routers.scanner.generate_jellyfin_images', mock_generate):
+            response = client.get('/api/gallery/jellyfin-update')
+
+        assert response.status_code == 200
+        assert mock_generate.call_count == 1, (
+            f"設定中途切回 off 後應中止剩餘項目，實際呼叫次數: {mock_generate.call_count}"
+        )
+
+        events = parse_sse_events(response.text)
+        done_events = [e for e in events if e.get('type') == 'done']
+        assert len(done_events) == 1, f"應恰好一個 done 事件: {events}"
+        assert done_events[0]['updated'] == 1, "done 事件應回報已實際完成的筆數，而非原始 total"
+
+    def test_jellyfin_update_completes_all_items_when_gate_stays_open(
+        self, client, monkeypatch, parse_sse_events
+    ):
+        """反向鎖：media-server flavour 全程不變時，多筆項目應完整跑完——沒有這條，
+        把「逐筆重讀後中止」寫成「處理完第一筆後永遠中止」也會在上面的截斷測試
+        全綠（該測試的 call_count==1 對「永遠中止」這種壞實作是假陽性）。
+        """
+        from unittest.mock import MagicMock, patch
+
+        mock_db_path = MagicMock()
+        mock_db_path.exists.return_value = True
+        mock_repo = MagicMock()
+        check_result = {'need_update': 3, 'items': [
+            {'cover_path': f'/b/{i}.jpg', 'base_stem': f'/b/{i}', 'number': f'XYZ-00{i}', 'maker': 'M'}
+            for i in range(1, 4)
+        ]}
+        mock_generate = MagicMock(return_value={'poster': True, 'fanart': True})
+
+        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
+             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'jellyfin'}}), \
+             patch('web.routers.scanner.VideoRepository', return_value=mock_repo), \
+             patch('web.routers.scanner.check_jellyfin_images_needed', return_value=check_result), \
+             patch('web.routers.scanner.generate_jellyfin_images', mock_generate):
+            response = client.get('/api/gallery/jellyfin-update')
+
+        assert response.status_code == 200
+        assert mock_generate.call_count == 3, "gate 全程開放時所有項目都應被處理"
+
+        events = parse_sse_events(response.text)
+        done_events = [e for e in events if e.get('type') == 'done']
+        assert len(done_events) == 1
+        assert done_events[0]['updated'] == 3
+
+    def test_jellyfin_update_off_mode_gate_precedes_db_check_when_db_missing(
+        self, client, monkeypatch, parse_sse_events, tmp_path
+    ):
+        """Codex PR#123 P2 回歸鎖：external_manager gate 必須排在 get_db_path() 之前。
+
+        情境：全新安裝／還沒產生過列表（資料庫不存在）且 external_manager='off'。
+        修前的順序是先呼叫 get_db_path()（副作用：mkdir 建立 output/ 資料夾，見
+        core/database/connection.py:15-22）、再檢查資料庫是否存在並回 error，gate
+        根本走不到；等於「off 時零寫入」的 AC8 承諾被破：明明該直接回 done +
+        updated=0，卻先動了磁碟又回 error。這裡直接鎖住「gate 之前零副作用」：
+        get_db_path 完全不該被呼叫。
+
+        Codex PR#123 round-3 P2②-a（BE-TEST-01 #11）：原本這裡是裸
+        `MagicMock()`，沒有設 `return_value`。正常路徑（gate 生效）下
+        `assert_not_called()` 綠燈，看起來無害；但 mutation 自驗把 gate 停用時，
+        `get_db_path()` 真的被呼叫，回傳一個 auto-spec 的子 mock，其 repr
+        （`<MagicMock name='mock()' id=...>`）被當成檔名寫進 repo 根目錄產生一個
+        4096 bytes 的空 SQLite 檔（曾被誤 commit）。改為顯式 `return_value` 指向
+        `tmp_path` 下一個不存在的檔案，即使 mutation 情境下被呼叫到，下游頂多在
+        pytest 自動清理的 tmp_path 留下痕跡，不會再碰到 repo 根目錄；
+        `assert_not_called()` 的斷言力道不變（驗的是「有沒有被呼叫」，與
+        `return_value` 無關）。
+        """
+        from unittest.mock import MagicMock, patch
+
+        mock_get_db_path = MagicMock(return_value=tmp_path / 'nonexistent_gate_test.db')
+
+        with patch('web.routers.scanner.get_db_path', mock_get_db_path), \
+             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'off'}}):
+            response = client.get('/api/gallery/jellyfin-update')
+
+        assert response.status_code == 200
+        events = parse_sse_events(response.text)
+        done_events = [e for e in events if e.get('type') == 'done']
+        error_events = [e for e in events if e.get('type') == 'error']
+        assert len(done_events) == 1, f"應收到 done 事件而非 error: {events}"
+        assert done_events[0]['updated'] == 0
+        assert error_events == [], f"off 模式不應出現 error 事件: {events}"
+        mock_get_db_path.assert_not_called()
+
+    def test_jellyfin_update_media_server_flavour_still_errors_when_db_missing(
+        self, client, monkeypatch, parse_sse_events
+    ):
+        """反向鎖：media-server flavour（gate 不擋）+ 資料庫不存在時，仍應收到既有的
+        error 事件——證明搬移 gate 順序沒有把「DB 不存在」檢查整個弄丟。"""
+        from unittest.mock import MagicMock, patch
+
+        mock_db_path = MagicMock()
+        mock_db_path.exists.return_value = False
+
+        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
+             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'jellyfin'}}):
+            response = client.get('/api/gallery/jellyfin-update')
+
+        assert response.status_code == 200
+        events = parse_sse_events(response.text)
+        error_events = [e for e in events if e.get('type') == 'error']
+        assert len(error_events) == 1, f"應收到 error 事件: {events}"
+        assert '資料庫不存在' in error_events[0]['message']
 
 
 _STATION4_FOCAL_FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "actress_photos"
@@ -667,7 +997,7 @@ class TestJellyfinUpdateStationWiring:
         ])
 
         monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {"gallery": {"path_mappings": {}}})
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {"scraper": {"external_manager": "jellyfin"}, "gallery": {"path_mappings": {}}})
 
         with patch("core.organizer.detect_focal", return_value=MOCK_FOCAL_XY):
             events = list(generate_jellyfin_images_stream())
@@ -758,7 +1088,7 @@ class TestPosterBakeStructuralLocks:
         before = repo.get_by_path(video_uri)
 
         monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {"gallery": {"path_mappings": {}}})
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {"scraper": {"external_manager": "jellyfin"}, "gallery": {"path_mappings": {}}})
 
         with patch("core.organizer.detect_focal", return_value=MOCK_FOCAL_XY):
             events = list(generate_jellyfin_images_stream())
@@ -785,7 +1115,7 @@ class TestPosterBakeStructuralLocks:
         )
 
         monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {"gallery": {"path_mappings": {}}})
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {"scraper": {"external_manager": "jellyfin"}, "gallery": {"path_mappings": {}}})
 
         with patch("core.organizer.detect_focal", return_value=MOCK_FOCAL_XY):
             events = list(generate_jellyfin_images_stream())
@@ -826,7 +1156,7 @@ class TestPosterBakeStructuralLocks:
         )
 
         monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {"gallery": {"path_mappings": {}}})
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {"scraper": {"external_manager": "jellyfin"}, "gallery": {"path_mappings": {}}})
 
         with patch("core.organizer.detect_focal", return_value=MOCK_FOCAL_XY):
             events = list(generate_jellyfin_images_stream())  # 先烤一次

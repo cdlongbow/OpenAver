@@ -9,7 +9,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import List, Optional
 
-from core.config import _STEM_IMAGE_MODES
+from core.config import STEM_IMAGE_MODES
 from core.database import Video, VideoRepository, get_connection
 from core.enrich_contract import (
     EnrichResult,
@@ -265,7 +265,7 @@ def _write_external_images(
     stem = str(cover_path.with_suffix(""))  # 去副檔名的完整路徑前綴
 
     # 依模式決定目標路徑（jellyfin / emby 與 kodi 均使用 stem 長格式）
-    if external_manager in _STEM_IMAGE_MODES:
+    if external_manager in STEM_IMAGE_MODES:
         poster_path = Path(stem + "-poster.jpg")
         fanart_path = Path(stem + "-fanart.jpg")
     else:

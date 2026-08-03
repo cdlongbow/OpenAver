@@ -90,3 +90,8 @@ models/
 .coverage.*
 htmlcov/
 coverage.xml
+
+# 測試 mutation 自驗時，裸 MagicMock() 的 repr 可能被當成檔名寫進 repo 根
+# （見 feature/AI_COLLABORATION/gotchas-backend.md BE-TEST-01 #11）
+<MagicMock*
+<Mock*

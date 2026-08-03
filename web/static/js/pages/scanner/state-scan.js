@@ -381,7 +381,7 @@ export function stateScan() {
         // ===== T6d: Jellyfin Image Check =====
         async checkJellyfinImages() {
             // 正向白名單（fail-closed）：config 未載入 / 載入失敗 / 缺 external_manager 時
-            // 一律不補圖（對應後端 _STEM_IMAGE_MODES）。勿改回 === 'off'（undefined 會 fail-open）。
+            // 一律不補圖（對應後端 STEM_IMAGE_MODES）。勿改回 === 'off'（undefined 會 fail-open）。
             if (!['jellyfin', 'emby', 'kodi'].includes(this.config?.scraper?.external_manager)) return;
 
             // T2(40c): 取消上一次未完成的請求（防重複點擊）
@@ -1007,7 +1007,14 @@ export function stateScan() {
                         this.eventSource = null;
                         this.state = 'done';
                         this.progressStatus = data.message || window.t('scanner.stats.status_done');
-                        this.progressCurrent = this.progressTotal;
+                        // TASK-111 P2-b 後續（codex delta review）：done 不再必然代表「全數完成」——
+                        // 批次跑到一半若把 external_manager 切成 off，後端會在下一部片 break 並送
+                        // done(updated=已完成筆數)。這裡若無條件補滿 progressTotal，UI 會顯示 3/3
+                        // 「補齊完成」，與後端訊息「已補齊 1 部」矛盾。正常跑完時 updated === total，
+                        // 兩種情形共用同一條路徑，不需要分歧的文案。
+                        this.progressCurrent = (typeof data.updated === 'number')
+                            ? data.updated
+                            : this.progressTotal;
 
                         localStorage.setItem('avlist_generating', 'false');
                         localStorage.setItem('avlist_last_status', data.message || window.t('scanner.stats.status_done'));

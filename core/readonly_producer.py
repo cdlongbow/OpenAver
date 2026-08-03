@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from core import thumbnail_cache
-from core.config import _STEM_IMAGE_MODES, iter_gallery_sources
+from core.config import STEM_IMAGE_MODES, iter_gallery_sources, normalize_external_manager
 from core.database import Video, get_db_path
 from core.enrich_contract import (
     EnrichResult,
@@ -194,7 +194,7 @@ def resolve_output_root(source, config: dict) -> str:
     Reads the GLOBAL flavour (config['scraper']['external_manager']), not a
     per-source field (CD-89a-2: flavour is global).
 
-    - off (or any value not in _STEM_IMAGE_MODES) → fixed App-managed folder
+    - off (or any value not in STEM_IMAGE_MODES) → fixed App-managed folder
       ``output/lib/<derived-source-name>`` (native FS path string, NOT passed
       through to_file_uri — callers normalize_path()/to_file_uri() it themselves,
       matching the existing ``source.output_path`` convention so call sites need
@@ -205,7 +205,7 @@ def resolve_output_root(source, config: dict) -> str:
       empty-string guards unchanged).
     """
     external_manager = config.get("scraper", {}).get("external_manager", "off")
-    if external_manager not in _STEM_IMAGE_MODES:
+    if external_manager not in STEM_IMAGE_MODES:
         name = _derive_source_name(source.path)
         return str(get_db_path().parent / "lib" / name)
     return source.output_path
@@ -834,13 +834,13 @@ def _write_movie_assets(
         download_image(remote_url, cover_fs); byte-identical to the pre-T1
         unconditional-download branch (scrape / gear rescrape, C6).
     poster/fanart: generate_jellyfin_images(...) runs whenever has_cover is
-    True AND cover_strategy carries no 3rd element (scrape/rescrape, or ingest
-    with no detected curator sidecars) — byte-identical to the pre-fix
-    behaviour. When cover_strategy is the 3-tuple ingest-copy form (see
-    resolve_ingest_plan docstring), each detected `{stem}-poster`/`{stem}
-    -fanart` sidecar is copied VERBATIM into the output slot instead of being
-    regenerated from the cover; a slot with no detected sidecar still falls
-    back to the generate step. See `_write_media_images` below.
+    True AND external_manager in STEM_IMAGE_MODES (CD-111-2) AND cover_strategy
+    carries no 3rd element (scrape/rescrape, or ingest with no detected curator
+    sidecars). When cover_strategy is the 3-tuple ingest-copy form (see
+    resolve_ingest_plan docstring), each detected `{stem}-poster`/`{stem}-fanart`
+    sidecar is copied VERBATIM into the output slot instead of being regenerated
+    from the cover; a slot with no detected sidecar still falls back to the
+    generate step. See `_write_media_images` below.
 
     old_base (TASK-89a-T4, Codex #3; T5 follow-up, Codex PR review P2): when
     non-empty, this movie's own stale assets from the PREVIOUS run (different
@@ -897,8 +897,9 @@ def _write_movie_assets(
         remote_url = cover_strategy[1]
         has_cover = bool(remote_url) and download_image(remote_url, cover_fs)
 
-    # 2) poster/fanart (off mode also produces these — Acceptance #6)
-    if has_cover:
+    # 2) poster/fanart — media-server flavours only (CD-111-2 fail-closed whitelist); off produces none, matching non-readonly parity.
+    external_manager = normalize_external_manager(config.get('external_manager', 'off'))
+    if has_cover and external_manager in STEM_IMAGE_MODES:
         raw_source_media = (
             cover_strategy[2]
             if strategy_kind == 'copy' and len(cover_strategy) > 2
@@ -950,7 +951,6 @@ def _write_movie_assets(
     # Always written (P1 revert, round-3 review 2026-07-21) — see the
     # write_nfo paragraph in this function's docstring for why a skip-NFO
     # gate is never reintroduced here.
-    external_manager = config.get('external_manager', 'off')
     nfo_fs = base_stem + '.nfo'
     nfo_ok = generate_nfo(
         number=meta['number'],
@@ -992,7 +992,7 @@ def _write_movie_assets(
             base_stem, source_fs_path, config,
             strm_mappings=(strm_mappings_getter() if strm_mappings_getter is not None else None),
         )
-        if external_manager in ('jellyfin', 'emby', 'kodi')
+        if external_manager in STEM_IMAGE_MODES
         else False
     )
 

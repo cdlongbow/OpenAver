@@ -44,7 +44,7 @@ from core.database import VideoRepository, Video, init_db, get_db_path, migrate_
 from core.focal import requires_face_detection
 from core.focal_trigger import maybe_submit_video_focal
 from core.organizer import generate_jellyfin_images, HEADERS as _EMBED_HEADERS
-from core.config import load_config, iter_gallery_sources, get_gallery_source_paths
+from core.config import load_config, iter_gallery_sources, get_gallery_source_paths, STEM_IMAGE_MODES
 from core.readonly_producer import produce_source, resolve_output_root
 from core.generate_state import try_mark_generate_active, mark_generate_done
 from core import thumbnail_cache
@@ -1683,6 +1683,21 @@ def generate_jellyfin_images_stream() -> Generator[str, None, None]:
     global _jellyfin_cache_result, _jellyfin_cache_time
 
     try:
+        # Codex PR#123 P2：gate 必須排在 get_db_path() 之前——get_db_path() 內部會
+        # mkdir 建立 output/ 資料夾（core/database/connection.py:15-22），是有副作用
+        # 的磁碟操作。若先呼叫 get_db_path() 再判斷 gate，會導致「external_manager=
+        # off 且資料庫不存在」（全新安裝／還沒產生過列表）這個情境下：gate 根本走
+        # 不到，先建了 output/ 資料夾、又回傳 error 而非 spec-111 AC8 承諾的
+        # done + updated:0（off 時零寫入），且與 _check_jellyfin_needed() 的順序
+        # 不對稱。config 只讀一次，下面 path_mappings 沿用同一個 config。
+        config = load_config()
+        external_manager = config.get('scraper', {}).get('external_manager', 'off')
+        if external_manager not in STEM_IMAGE_MODES:
+            _jellyfin_cache_result = None
+            _jellyfin_cache_time = 0
+            yield _sse_event({"type": "done", "message": "沒有需要補齊的影片", "updated": 0})
+            return
+
         db_path = get_db_path()
 
         if not db_path.exists():
@@ -1690,7 +1705,7 @@ def generate_jellyfin_images_stream() -> Generator[str, None, None]:
             return
 
         repo = VideoRepository(db_path)
-        path_mappings = load_config().get('gallery', {}).get('path_mappings', {})
+        path_mappings = config.get('gallery', {}).get('path_mappings', {})
         result = check_jellyfin_images_needed(repo, path_mappings)
         items = result['items']
         total = len(items)
@@ -1703,7 +1718,18 @@ def generate_jellyfin_images_stream() -> Generator[str, None, None]:
 
         yield _sse_event({"type": "log", "level": "info", "message": f"需補齊 {total} 部影片的圖片..."})
 
+        completed = 0
         for i, item in enumerate(items, 1):
+            # Codex PR#122 P2-b：開頭 gate 一次不夠——批次跑到一半使用者可能把
+            # external_manager 切成 off（或非白名單），剩餘項目仍會繼續產生
+            # poster/fanart，違反 AC8 的 TOCTOU 洞。每筆重讀成本可忽略（產一張圖
+            # 含人臉偵測＋裁切＋寫檔，遠比讀一次 config 貴），故逐筆重讀而非只在
+            # 進入迴圈前讀一次。命中就中止，沿用既有 done 事件形狀回報已完成筆數。
+            current_config = load_config()
+            current_external_manager = current_config.get('scraper', {}).get('external_manager', 'off')
+            if current_external_manager not in STEM_IMAGE_MODES:
+                break
+
             cover = item['cover_path']
             num = item['number']
             stem = item['base_stem']
@@ -1727,10 +1753,16 @@ def generate_jellyfin_images_stream() -> Generator[str, None, None]:
             else:
                 yield _sse_event({"type": "log", "level": "warn", "message": f"{num} poster 裁切失敗"})
 
+            completed += 1
+
         # T3(40c): 清空快取，讓下次 check 反映最新圖片狀態
         _jellyfin_cache_result = None
         _jellyfin_cache_time = 0
-        yield _sse_event({"type": "done", "message": f"完成！已補齊 {total} 部影片的圖片"})
+        yield _sse_event({
+            "type": "done",
+            "message": f"完成！已補齊 {completed} 部影片的圖片",
+            "updated": completed,
+        })
 
     except Exception as e:
         logger.error("產生 Jellyfin 圖片失敗: %s", e)
@@ -1738,40 +1770,54 @@ def generate_jellyfin_images_stream() -> Generator[str, None, None]:
 
 
 def _check_jellyfin_needed() -> dict | None:
-    """Threadpool helper: get_db_path + check DB existence + open repo + run jellyfin check.
+    """Threadpool helper: gate → TTL 快取命中 → get_db_path + check DB existence +
+    open repo + run jellyfin check.
+
+    spec-111 CD-111-2 gate：external_manager 不在 STEM_IMAGE_MODES 白名單（含 off）時，
+    直接回傳零項，不產生 -poster/-fanart（fail-closed 正向白名單，不用 != 'off'）。
+
+    Codex PR#122 P2-a：gate **必須**排在 TTL 快取讀取之前——快取只是「省重算」的
+    優化，不能繞過「off 時回零項」的產品邊界。時序漏洞（修前）：media-server 模式
+    呼叫一次把快取寫成正數 → 60 秒內把設定切成 off → 再呼叫 → 舊實作在 async body
+    先查快取命中直接回傳，根本不會進到這支 gate，回傳舊的非零值，違反 AC8。
+    現在快取讀寫也併入本 helper（threadpool 內執行），async 端不再碰快取狀態。
 
     Returns None if DB does not exist (caller handles as need_update=0 early return).
-    Returns the result dict from check_jellyfin_images_needed otherwise.
+    Returns the result dict (from cache or freshly computed) otherwise.
     """
+    global _jellyfin_cache_result, _jellyfin_cache_time
+
+    config = load_config()
+    external_manager = config.get('scraper', {}).get('external_manager', 'off')
+    if external_manager not in STEM_IMAGE_MODES:
+        return {'need_update': 0, 'items': []}
+
+    # T3(40c): TTL 快取命中（gate 通過之後才查，見上方 docstring）
+    if _jellyfin_cache_result is not None and time.time() - _jellyfin_cache_time < 60:
+        return _jellyfin_cache_result
+
     db_path = get_db_path()
     if not db_path.exists():
         return None
     repo = VideoRepository(db_path)
-    path_mappings = load_config().get('gallery', {}).get('path_mappings', {})
-    return check_jellyfin_images_needed(repo, path_mappings)
+    path_mappings = config.get('gallery', {}).get('path_mappings', {})
+    result = check_jellyfin_images_needed(repo, path_mappings)
+
+    # T3(40c): 更新快取
+    _jellyfin_cache_result = result
+    _jellyfin_cache_time = time.time()
+
+    return result
 
 
 @router.get("/jellyfin-check")
 async def jellyfin_image_check():
     """檢查多少影片需要補齊 Jellyfin 圖片"""
-    global _jellyfin_cache_result, _jellyfin_cache_time
     try:
-        # T3(40c): TTL 快取命中（純記憶體，命中時 zero-threadpool）
-        # T4b(66): get_db_path（含 mkdir）+ db_path.exists() + repo 全併入
-        # _check_jellyfin_needed helper 移出 loop，故 DB 偵測現在排在 TTL 快取之後。
-        # 副作用：DB 在 60s TTL 窗內被刪除時，warm cache 會回舊值而非 0
-        # （pathological，無 workflow 觸發）；屬刻意取捨。
-        if _jellyfin_cache_result is not None and time.time() - _jellyfin_cache_time < 60:
-            return {"success": True, "data": {"need_update": _jellyfin_cache_result['need_update']}}
-
         result = await asyncio.to_thread(_check_jellyfin_needed)
 
         if result is None:
             return {"success": True, "data": {"need_update": 0}}
-
-        # T3(40c): 更新快取
-        _jellyfin_cache_result = result
-        _jellyfin_cache_time = time.time()
 
         return {"success": True, "data": {"need_update": result['need_update']}}
     except Exception as e:
