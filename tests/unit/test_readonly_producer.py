@@ -3811,6 +3811,29 @@ class TestProduceSourceMediaServerStrmE2E:
         # and the output actually got written (proves the run wrote SOMEWHERE, just not source)
         assert _movie_dirs(output_dir), "output dir empty — run did not write assets anywhere"
 
+    def test_acceptance7_off_mode_readonly_source_zero_writes(self, tmp_path):
+        """AC7 的 off 風味：與本 class 名的 media-server/strm 主題不同（off 模式不寫
+        .strm），放在這裡是為了複用 `_setup_source` 與 `FILENAMES`（⚖️ Opus 裁決 Q2，
+        TASK-111-T4 塊 A）。"""
+        source_dir, output_dir = self._setup_source(tmp_path)
+        config = _make_config(scraper_cfg=dict(_T3_BASE_CONFIG, external_manager='off'))
+
+        # off flavour's resolve_output_root ignores output_path and returns the fixed
+        # App lib root; patch it to the tmp output dir so the test never pollutes the
+        # real lib folder (resolve_output_root has its own dedicated tests) — same
+        # pattern as test_off_flavour_produces_no_strm below.
+        with patch('core.readonly_producer.resolve_output_root', return_value=str(output_dir)):
+            before = _snapshot_dir(source_dir)
+            result, _repo = _e2e_run_produce_source(source_dir, output_dir, config, self.FILENAMES)
+            after = _snapshot_dir(source_dir)
+
+        assert result.created == 2, "sanity: run must actually produce (else zero-write is vacuous)"
+        assert before == after, (
+            f"read-only source dir was modified: added={after - before}, removed={before - after}"
+        )
+        # and the output actually got written (proves the run wrote SOMEWHERE, just not source)
+        assert _movie_dirs(output_dir), "output dir empty — run did not write assets anywhere"
+
     # -- Regression: DB path = source path, strm does not touch streaming key -----
 
     def test_regression_upsert_path_is_source_uri_not_output_or_strm(self, tmp_path):
