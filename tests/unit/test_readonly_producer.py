@@ -987,9 +987,14 @@ class TestWriteMovieAssetsStationWiring:
         assert assets['cover_fs'], "station3 應成功下載封面"
         base_stem = assets['cover_fs'][:-len('.jpg')]
         poster_path = Path(base_stem + '-poster.jpg')
-        assert poster_path.exists(), "station3 應產生 poster"
-        expected = _t3_oracle_poster_bytes(MOCK_FOCAL_XY)
-        assert poster_path.read_bytes() == expected, "station3 poster 應對準焦點（獨立 oracle 比對）"
+        fanart_path = Path(base_stem + '-fanart.jpg')
+        if external_manager == 'off':
+            assert not poster_path.exists(), "off 模式不應產生 poster（TASK-111）"
+            assert not fanart_path.exists(), "off 模式不應產生 fanart（TASK-111）"
+        else:
+            assert poster_path.exists(), "station3 應產生 poster"
+            expected = _t3_oracle_poster_bytes(MOCK_FOCAL_XY)
+            assert poster_path.read_bytes() == expected, "station3 poster 應對準焦點（獨立 oracle 比對）"
 
     def test_station3_fixture_a(self, tmp_path):
         self._run_station3(tmp_path, "a", self._FIXTURE_A)
@@ -1000,9 +1005,10 @@ class TestWriteMovieAssetsStationWiring:
     # -----------------------------------------------------------------
     # TASK-101a-T3 DoD①（Opus 拍板，非選配）：off/emby/kodi 唯讀產生庫三路
     # 各補一個 fixture-A-only 真跑案例（不 mock crop_to_poster/generate_
-    # jellyfin_images），斷言 poster bytes 皆等於同一個獨立 oracle——結構論證
-    # （readonly_producer.py:659 的呼叫對四路無條件）在此被實測釘死，不只是
-    # 「現在為真」，未來若有人在某一路加分支跳過烤圖，這裡會紅。
+    # jellyfin_images）。TASK-111 之後三路不再同向：emby/kodi 仍斷言 poster
+    # bytes 對準同一個獨立 oracle（結構論證——呼叫對這兩路無條件，未來若有人
+    # 加分支跳過烤圖，這裡會紅）；off 斷言 poster/fanart 皆不產生（spec-111
+    # §2.1 的 gate，見 `_run_station3` 內的分流）。
     # -----------------------------------------------------------------
 
     def test_station3_off_fixture_a(self, tmp_path):

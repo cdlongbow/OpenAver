@@ -258,7 +258,8 @@ class TestOffFlavorHappyPath:
         return numbers, src, output, db_path
 
     def test_per_movie_assets_and_no_strm(self, tmp_path, monkeypatch, client, parse_sse_events):
-        """#5/#6: each movie → subdir with .nfo + cover + -poster + -fanart + extrafanart; NO .strm."""
+        """#5/#6: each movie → subdir with .nfo + cover; NO -poster/-fanart (TASK-111 §2.1
+        gate — off mode no longer produces them) + NO extrafanart; NO .strm."""
         numbers, src, output, db_path = self._setup(tmp_path, monkeypatch)
         _run_generate(client, parse_sse_events)
 
@@ -267,8 +268,8 @@ class TestOffFlavorHappyPath:
             assert movie_dir.is_dir(), f"missing movie dir for {num}"
             assert (movie_dir / f"{num}.nfo").exists(), f"missing nfo {num}"
             assert (movie_dir / f"{num}.jpg").exists(), f"missing cover {num}"
-            assert (movie_dir / f"{num}-poster.jpg").exists(), f"missing poster {num}"
-            assert (movie_dir / f"{num}-fanart.jpg").exists(), f"missing fanart {num}"
+            assert not (movie_dir / f"{num}-poster.jpg").exists(), f"unexpected poster {num}"
+            assert not (movie_dir / f"{num}-fanart.jpg").exists(), f"unexpected fanart {num}"
             # TASK-104-T2 (spec §3-A / Non-Goals, intended change — NOT a
             # weakening): bulk produce no longer downloads sample images even
             # when download_sample_images=True — resolve_ingest_plan forces
@@ -621,20 +622,33 @@ def _make_curated_jellyfin_source(
     return d
 
 
-class TestIngestCuratedPosterFanartPassthrough:
-    """Owner-approved fix: ingest copies curator -poster/-fanart sidecars
-    VERBATIM instead of regenerating them from whichever image
-    find_cover_image happened to pick as the cover."""
+class TestOffModeIngestPosterFanartSuppressed:
+    """TASK-111 (spec-111 §2.1): in off mode, ingest never produces
+    `-poster`/`-fanart` — regardless of whether the source carries its own
+    curated sidecars, a same-name cover, or neither.
 
-    def test_jellyfin_source_poster_and_fanart_copied_verbatim(
+    This class used to lock an owner-approved fix: ingest copies curator
+    `-poster`/`-fanart` sidecars VERBATIM instead of regenerating them from
+    whichever image `find_cover_image` picked as the cover. That verbatim-copy
+    mechanism itself is unaffected by TASK-111 and still has full unit-level
+    coverage (every branch: both sidecars present, poster-only fallback to
+    `crop_to_poster`, fanart-only fallback to cover copy, and mid-copy
+    `OSError`) at
+    `tests/unit/test_readonly_producer.py::TestCuratedPosterFanartPassthrough`
+    (kodi config — untouched by the off-mode gate). The integration-level
+    (real SSE endpoint + real ingest scan) coverage this class used to provide
+    for that mechanism is restored, on a media-server flavour, by a new class
+    added under T3."""
+
+    def test_jellyfin_source_poster_and_fanart_not_produced(
         self, tmp_path, monkeypatch, client, parse_sse_events,
     ):
         """No same-name `{num}.jpg` → find_cover_image's L1.5 fallback picks
         `-fanart` as the cover (fanart-before-poster priority, gallery_scanner.py
-        find_cover_image). Output `.jpg` (cover) must equal the source fanart
-        bytes; output `-poster.jpg` must equal the source POSTER bytes verbatim
-        (NOT a crop of the fanart — this is the bug being fixed); output
-        `-fanart.jpg` must equal the source fanart bytes verbatim."""
+        find_cover_image) — that part of the pipeline is unchanged. But off
+        mode's step-2 gate (TASK-111) short-circuits before the source's
+        curated `-poster`/`-fanart` sidecars would ever be copied, so neither
+        file is produced at all."""
         num = "JELLY-001"
         src = _make_curated_jellyfin_source(tmp_path / "src", "movies", num, with_nfo=True)
         db_path = tmp_path / "test.db"
@@ -648,17 +662,19 @@ class TestIngestCuratedPosterFanartPassthrough:
         assert (movie_dir / f"{num}.jpg").read_bytes() == _FANART_MARKER_BYTES, (
             "cover must come from find_cover_image's existing -fanart-first priority"
         )
-        assert (movie_dir / f"{num}-poster.jpg").read_bytes() == _POSTER_MARKER_BYTES, (
-            "poster must be the source's OWN curated poster, verbatim — not a crop of the cover"
+        assert not (movie_dir / f"{num}-poster.jpg").exists(), (
+            "off mode must not copy the source's curated poster sidecar"
         )
-        assert (movie_dir / f"{num}-fanart.jpg").read_bytes() == _FANART_MARKER_BYTES
+        assert not (movie_dir / f"{num}-fanart.jpg").exists(), (
+            "off mode must not copy the source's curated fanart sidecar"
+        )
 
-    def test_same_name_cover_plus_poster_and_fanart_all_verbatim(
+    def test_same_name_cover_plus_poster_and_fanart_not_produced(
         self, tmp_path, monkeypatch, client, parse_sse_events,
     ):
         """Same-name `{num}.jpg` present too → it wins as the cover (L1 beats
-        L1.5), but `-poster`/`-fanart` still come from their OWN sidecars,
-        verbatim — independent of which image became the cover."""
+        L1.5, unchanged), but off mode still never produces `-poster`/
+        `-fanart` — independent of which image became the cover."""
         num = "JELLY-002"
         src = _make_curated_jellyfin_source(
             tmp_path / "src", "movies", num, with_nfo=True, same_name_cover=True,
@@ -672,16 +688,18 @@ class TestIngestCuratedPosterFanartPassthrough:
 
         movie_dir = _off_root(src, db_path) / num
         assert (movie_dir / f"{num}.jpg").read_bytes() == _SAME_NAME_COVER_MARKER_BYTES
-        assert (movie_dir / f"{num}-poster.jpg").read_bytes() == _POSTER_MARKER_BYTES
-        assert (movie_dir / f"{num}-fanart.jpg").read_bytes() == _FANART_MARKER_BYTES
+        assert not (movie_dir / f"{num}-poster.jpg").exists()
+        assert not (movie_dir / f"{num}-fanart.jpg").exists()
 
-    def test_only_same_name_cover_no_sidecars_still_generates(
+    def test_only_same_name_cover_no_sidecars_not_generated(
         self, tmp_path, monkeypatch, client, parse_sse_events,
     ):
-        """No regression: a source with ONLY a same-name cover (no -poster/
-        -fanart sidecars at all) still gets poster/fanart GENERATED via
+        """A source with ONLY a same-name cover (no -poster/-fanart sidecars
+        at all) used to still get poster/fanart GENERATED via
         generate_jellyfin_images (mocked in _wire to write _FAKE_IMG_BYTES) —
-        exactly the pre-fix behaviour, untouched by this fix."""
+        the pre-TASK-111 fallback path. Off mode's step-2 gate now suppresses
+        that fallback too: this is the off-mode cell of the flavour matrix
+        whose media-server cell (fallback DOES trigger) T3 adds separately."""
         num = "JELLY-003"
         src = _make_ingest_source(tmp_path / "src", "movies", num, with_nfo=True, with_cover=True)
         db_path = tmp_path / "test.db"
@@ -693,8 +711,8 @@ class TestIngestCuratedPosterFanartPassthrough:
 
         movie_dir = _off_root(src, db_path) / num
         assert (movie_dir / f"{num}.jpg").read_bytes() == _FAKE_COVER_BYTES
-        assert (movie_dir / f"{num}-poster.jpg").read_bytes() == _FAKE_IMG_BYTES
-        assert (movie_dir / f"{num}-fanart.jpg").read_bytes() == _FAKE_IMG_BYTES
+        assert not (movie_dir / f"{num}-poster.jpg").exists()
+        assert not (movie_dir / f"{num}-fanart.jpg").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -951,8 +969,9 @@ def test_real_readstore_overwrite_title_drift_and_extrafanart_shrink(
     movie_dir = output / num
     assert (movie_dir / f"{old_base}.nfo").exists()
     assert (movie_dir / f"{old_base}.jpg").exists()
-    assert (movie_dir / f"{old_base}-poster.jpg").exists()
-    assert (movie_dir / f"{old_base}-fanart.jpg").exists()
+    # TASK-111 (spec-111 §2.1): off mode no longer produces -poster/-fanart.
+    assert not (movie_dir / f"{old_base}-poster.jpg").exists()
+    assert not (movie_dir / f"{old_base}-fanart.jpg").exists()
     # TASK-104-T2 (intended change, NOT a weakening): resolve_ingest_plan
     # forces sample_images=[] — bulk produce never populates extrafanart,
     # even with download_sample_images=True and a 3-sample search_jav return.
@@ -991,12 +1010,18 @@ def test_real_readstore_overwrite_title_drift_and_extrafanart_shrink(
     # TASK-89a-T4: old title-A series fully gone, only title-B series remains.
     assert not (movie_dir / f"{old_base}.nfo").exists(), "stale title-A nfo survived"
     assert not (movie_dir / f"{old_base}.jpg").exists(), "stale title-A cover survived"
+    # TASK-111: these two poster/fanart lines are still literally true, but the
+    # reason has shifted — off mode never produces title-A's poster/fanart in
+    # the first place (round 1, above), so there is nothing left for
+    # `_clean_stale_singletons` to actually clean here; this is no longer
+    # evidence that cleanup ran.
     assert not (movie_dir / f"{old_base}-poster.jpg").exists(), "stale title-A poster survived"
     assert not (movie_dir / f"{old_base}-fanart.jpg").exists(), "stale title-A fanart survived"
     assert (movie_dir / f"{new_base}.nfo").exists()
     assert (movie_dir / f"{new_base}.jpg").exists()
-    assert (movie_dir / f"{new_base}-poster.jpg").exists()
-    assert (movie_dir / f"{new_base}-fanart.jpg").exists()
+    # TASK-111 (spec-111 §2.1): off mode no longer produces -poster/-fanart.
+    assert not (movie_dir / f"{new_base}-poster.jpg").exists()
+    assert not (movie_dir / f"{new_base}-fanart.jpg").exists()
 
     # TASK-104-T2 (intended change, NOT a weakening): extrafanart stays empty
     # across both rounds — bulk produce never downloads samples post-T2, so
