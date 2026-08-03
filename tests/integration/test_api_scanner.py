@@ -852,6 +852,55 @@ class TestJellyfinExternalManagerGate:
         assert len(done_events) == 1
         assert done_events[0]['updated'] == 3
 
+    def test_jellyfin_update_off_mode_gate_precedes_db_check_when_db_missing(
+        self, client, monkeypatch, parse_sse_events
+    ):
+        """Codex PR#123 P2 回歸鎖：external_manager gate 必須排在 get_db_path() 之前。
+
+        情境：全新安裝／還沒產生過列表（資料庫不存在）且 external_manager='off'。
+        修前的順序是先呼叫 get_db_path()（副作用：mkdir 建立 output/ 資料夾，見
+        core/database/connection.py:15-22）、再檢查資料庫是否存在並回 error，gate
+        根本走不到；等於「off 時零寫入」的 AC8 承諾被破：明明該直接回 done +
+        updated=0，卻先動了磁碟又回 error。這裡直接鎖住「gate 之前零副作用」：
+        get_db_path 完全不該被呼叫。
+        """
+        from unittest.mock import MagicMock, patch
+
+        mock_get_db_path = MagicMock()
+
+        with patch('web.routers.scanner.get_db_path', mock_get_db_path), \
+             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'off'}}):
+            response = client.get('/api/gallery/jellyfin-update')
+
+        assert response.status_code == 200
+        events = parse_sse_events(response.text)
+        done_events = [e for e in events if e.get('type') == 'done']
+        error_events = [e for e in events if e.get('type') == 'error']
+        assert len(done_events) == 1, f"應收到 done 事件而非 error: {events}"
+        assert done_events[0]['updated'] == 0
+        assert error_events == [], f"off 模式不應出現 error 事件: {events}"
+        mock_get_db_path.assert_not_called()
+
+    def test_jellyfin_update_media_server_flavour_still_errors_when_db_missing(
+        self, client, monkeypatch, parse_sse_events
+    ):
+        """反向鎖：media-server flavour（gate 不擋）+ 資料庫不存在時，仍應收到既有的
+        error 事件——證明搬移 gate 順序沒有把「DB 不存在」檢查整個弄丟。"""
+        from unittest.mock import MagicMock, patch
+
+        mock_db_path = MagicMock()
+        mock_db_path.exists.return_value = False
+
+        with patch('web.routers.scanner.get_db_path', return_value=mock_db_path), \
+             patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'jellyfin'}}):
+            response = client.get('/api/gallery/jellyfin-update')
+
+        assert response.status_code == 200
+        events = parse_sse_events(response.text)
+        error_events = [e for e in events if e.get('type') == 'error']
+        assert len(error_events) == 1, f"應收到 error 事件: {events}"
+        assert '資料庫不存在' in error_events[0]['message']
+
 
 _STATION4_FOCAL_FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "actress_photos"
 

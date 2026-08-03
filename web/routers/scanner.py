@@ -1683,18 +1683,25 @@ def generate_jellyfin_images_stream() -> Generator[str, None, None]:
     global _jellyfin_cache_result, _jellyfin_cache_time
 
     try:
-        db_path = get_db_path()
-
-        if not db_path.exists():
-            yield _sse_event({"type": "error", "message": "資料庫不存在，請先產生列表"})
-            return
-
+        # Codex PR#123 P2：gate 必須排在 get_db_path() 之前——get_db_path() 內部會
+        # mkdir 建立 output/ 資料夾（core/database/connection.py:15-22），是有副作用
+        # 的磁碟操作。若先呼叫 get_db_path() 再判斷 gate，會導致「external_manager=
+        # off 且資料庫不存在」（全新安裝／還沒產生過列表）這個情境下：gate 根本走
+        # 不到，先建了 output/ 資料夾、又回傳 error 而非 spec-111 AC8 承諾的
+        # done + updated:0（off 時零寫入），且與 _check_jellyfin_needed() 的順序
+        # 不對稱。config 只讀一次，下面 path_mappings 沿用同一個 config。
         config = load_config()
         external_manager = config.get('scraper', {}).get('external_manager', 'off')
         if external_manager not in STEM_IMAGE_MODES:
             _jellyfin_cache_result = None
             _jellyfin_cache_time = 0
             yield _sse_event({"type": "done", "message": "沒有需要補齊的影片", "updated": 0})
+            return
+
+        db_path = get_db_path()
+
+        if not db_path.exists():
+            yield _sse_event({"type": "error", "message": "資料庫不存在，請先產生列表"})
             return
 
         repo = VideoRepository(db_path)

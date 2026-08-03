@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 若某部片在升級後**改了標題**再重刮，同一個資料夾裡會同時留著舊標題的那兩張殘留圖，情況同上。
 
 ### 測試
-- 全套 pytest **5752 passed, 1 skipped**（v0.13.1 為 5729；本版新增 23 支）。`ruff check .`、`lint-imports`、函式規模閘、`npm run lint`、`npm test`（287）全綠。
+- 全套 pytest **5754 passed, 1 skipped**（v0.13.1 為 5729；本版新增 25 支）。`ruff check .`、`lint-imports`、函式規模閘、`npm run lint`、`npm test`（287）全綠。
 - 新增測試涵蓋：四格矩陣（唯讀 × 關閉／三種媒體伺服器風味各一格）、NFO 圖片標籤不留懸空引用（含無封面邊界）、ingest 自帶圖片不被複製、來源磁碟零寫入、以及補齊端點的 fail-closed 邊界（設定值為空／缺欄位／大小寫不符／未知舊值一律當成「關閉」）。
 - **每一支新測試都做了 mutation 自驗**：把改動還原後確認該測試單獨轉紅，反向鎖（媒體伺服器情境）維持綠——避免寫出「永遠會過」的空殼測試。
 - **真機驗收**：在隔離環境真起服務、真產出一份「關閉」模式的唯讀庫，用瀏覽器逐項確認 spec 點名的 7 個介面（封面牆／片單卡片／燈箱／縮圖／焦點裁切／相似探索／匯出 HTML）全部顯示正常、147 筆請求零錯誤、零 console error。並確認兩種模式的產物各自落在正確的輸出夾。
