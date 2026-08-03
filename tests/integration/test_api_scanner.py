@@ -652,16 +652,26 @@ class TestJellyfinExternalManagerGate:
             pytest.param({'external_manager': None}, id="none"),
             pytest.param({}, id="missing_key"),
             pytest.param({'external_manager': 'Jellyfin'}, id="wrong_case"),
-            pytest.param({'external_manager': 'jellyfin_emby'}, id="unknown_legacy_value"),
+            # Codex PR#123 round-4：這格原本是 'jellyfin_emby'（id=unknown_legacy_value），
+            # 與 test_readonly_producer.py 剛移除的那個 parametrize 同根因——本測試 mock 掉
+            # load_config()，直接注入該值；但真實 load_config() 會先被 Fix-72d migration
+            # （core/config.py:364-367）改寫成 'jellyfin'，所以那是 production 不可達狀態。
+            # 換成 'plex'：真正未知、不被任何 migration 攔截、會原樣流到 gate 的值。
+            # migration → jellyfin → 產圖的正向鏈路由 test_readonly_producer.py::
+            # TestExternalManagerMigrationToImageProduction 負責，不在本測試範圍。
+            pytest.param({'external_manager': 'plex'}, id="unknown_value"),
         ],
     )
     def test_jellyfin_check_fail_closed_on_malformed_external_manager(
         self, client, monkeypatch, scraper_config
     ):
         """BE-CONFIG-03：external_manager 是純 str dict 讀取、不經 Pydantic Literal 驗證，
-        手改過的 config.json 或舊版遺留值都可能帶非法值進來。白名單寫法（`not in
-        STEM_IMAGE_MODES`）必須讓 None、缺 key、大小寫不符、未知舊值都 fail-closed 回
-        0，而不是意外放行（若寫成 `== 'off'` 只擋字面 off，這些值會漏網）。"""
+        手改過的 config.json 都可能帶非法值進來。白名單寫法（`not in
+        STEM_IMAGE_MODES`）必須讓 None、缺 key、大小寫不符、未知值都 fail-closed 回
+        0，而不是意外放行（若寫成 `== 'off'` 只擋字面 off，這些值會漏網）。
+
+        四格都是 **production 真實可達**的狀態——沒有任何一格會被 load_config() 的
+        migration 提前攔截（唯一的 Fix-72d migration 只逐字比對 'jellyfin_emby'）。"""
         from unittest.mock import MagicMock, patch
 
         mock_db_path = MagicMock()
@@ -853,7 +863,7 @@ class TestJellyfinExternalManagerGate:
         assert done_events[0]['updated'] == 3
 
     def test_jellyfin_update_off_mode_gate_precedes_db_check_when_db_missing(
-        self, client, monkeypatch, parse_sse_events
+        self, client, monkeypatch, parse_sse_events, tmp_path
     ):
         """Codex PR#123 P2 回歸鎖：external_manager gate 必須排在 get_db_path() 之前。
 
@@ -863,10 +873,21 @@ class TestJellyfinExternalManagerGate:
         根本走不到；等於「off 時零寫入」的 AC8 承諾被破：明明該直接回 done +
         updated=0，卻先動了磁碟又回 error。這裡直接鎖住「gate 之前零副作用」：
         get_db_path 完全不該被呼叫。
+
+        Codex PR#123 round-3 P2②-a（BE-TEST-01 #11）：原本這裡是裸
+        `MagicMock()`，沒有設 `return_value`。正常路徑（gate 生效）下
+        `assert_not_called()` 綠燈，看起來無害；但 mutation 自驗把 gate 停用時，
+        `get_db_path()` 真的被呼叫，回傳一個 auto-spec 的子 mock，其 repr
+        （`<MagicMock name='mock()' id=...>`）被當成檔名寫進 repo 根目錄產生一個
+        4096 bytes 的空 SQLite 檔（曾被誤 commit）。改為顯式 `return_value` 指向
+        `tmp_path` 下一個不存在的檔案，即使 mutation 情境下被呼叫到，下游頂多在
+        pytest 自動清理的 tmp_path 留下痕跡，不會再碰到 repo 根目錄；
+        `assert_not_called()` 的斷言力道不變（驗的是「有沒有被呼叫」，與
+        `return_value` 無關）。
         """
         from unittest.mock import MagicMock, patch
 
-        mock_get_db_path = MagicMock()
+        mock_get_db_path = MagicMock(return_value=tmp_path / 'nonexistent_gate_test.db')
 
         with patch('web.routers.scanner.get_db_path', mock_get_db_path), \
              patch('web.routers.scanner.load_config', return_value={'scraper': {'external_manager': 'off'}}):

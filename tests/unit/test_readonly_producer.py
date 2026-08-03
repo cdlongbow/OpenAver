@@ -4,6 +4,7 @@ All filesystem / DB access is mocked — zero real I/O unless explicitly noted
 (T-3 DB tests use the temp_db fixture for a real SQLite write path).
 """
 import inspect
+import json
 import os
 import shutil
 import time
@@ -1046,7 +1047,7 @@ class TestOffModeNfoTagFallback:
 # 沒過 Pydantic model_validate）。CD-111-2 的正向白名單（`in STEM_IMAGE_MODES`）
 # 已正確擋掉畸形值的 poster/fanart，但同一個原始值接著被傳進 generate_nfo
 # （core/organizer.py），該處用的是負向 `!= 'off'`——'Jellyfin'（大小寫）/None/
-# 'plex'（未知值）/'jellyfin_emby'（廢棄舊值）這類值會被圖片 gate 擋下，卻仍讓
+# 'plex'（未知值）這類值會被圖片 gate 擋下，卻仍讓
 # NFO 寫入 <lockdata>/<uniqueid type="num">/<sorttitle>/<country>/<language> 五個
 # 媒體管理器專用欄位——只 fail-closed 了一半。Opus 裁決：core/config.py 新增
 # normalize_external_manager() 公開函式，readonly_producer 在讀 config 值時就地
@@ -1063,10 +1064,34 @@ class TestExternalManagerNormalization:
 
     _BASE = 'TEST-001 Test Movie Title'
 
+    # Codex PR#123 round-3 P2①-a：'jellyfin_emby' 曾經是本 parametrize 的第四個案例
+    # （id='deprecated-value'），已移除——它是假覆蓋，不是真實可達的畸形值。
+    #
+    # 為什麼移除：core/config.py:364-367 的 Fix-72d migration（
+    # `if s.get('external_manager') == 'jellyfin_emby': s['external_manager'] = 'jellyfin'`）
+    # 會在 load_config() 內部把這個舊值逐字改寫成 'jellyfin'。生產環境中，config
+    # 只要經過 load_config()（唯一合法讀取路徑），'jellyfin_emby' 就永遠不可能帶著
+    # 原值抵達 normalize_external_manager()——它在更早的一步就被攔截掉了。
+    #
+    # 本測試的 helper（_write_and_read_nfo → _write_movie_assets）直接手搭 config
+    # dict 餵入，完全繞過 load_config()，等於在測「一個生產環境不存在的輸入狀態」。
+    # 斷言方向本身沒錯（該值確實會被 fail-closed），但它鎖住的行為在真實路徑上永遠
+    # 不會被觸發，屬於空覆蓋——留著只會誤導未來的人以為這裡驗證了 migration 行為。
+    #
+    # 剩下三個值（'Jellyfin' 大小寫不符 / None / 'plex' 未知值）都不受任何 migration
+    # 攔截（migration 只逐字比對 'jellyfin_emby'），是真實可達的畸形狀態，繼續保留。
+    #
+    # migration 行為本身已由 tests/unit/test_core_config.py::TestMigrationExternalManager
+    # ::test_legacy_jellyfin_emby_migrates_to_jellyfin 驗證；「migration 後的值是否
+    # 正確流進圖片產出」則由本檔案下方
+    # TestExternalManagerMigrationToImageProduction 補上（Codex PR#123 round-3 P2①-b）。
+    #
+    # ⚠️ 若未來要「補回」'jellyfin_emby' 到這個 parametrize：先確認 Fix-72d migration
+    # 是否被移除或改寫，否則這裡加回去就是重蹈假覆蓋覆轍。
     @pytest.mark.parametrize(
         'malformed_value',
-        ['Jellyfin', None, 'plex', 'jellyfin_emby'],
-        ids=['case-mismatch', 'none-value', 'unknown-value', 'deprecated-value'],
+        ['Jellyfin', None, 'plex'],
+        ids=['case-mismatch', 'none-value', 'unknown-value'],
     )
     def test_malformed_value_fails_closed_on_both_image_and_nfo(self, tmp_path, malformed_value):
         config = dict(_T3_BASE_CONFIG, external_manager=malformed_value)
@@ -1085,6 +1110,65 @@ class TestExternalManagerNormalization:
         assert root.find('lockdata') is None, (
             f"<lockdata> must NOT be present for malformed external_manager={malformed_value!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Codex PR#123 round-3 P2①-b（Opus 裁決：TASK-111-T6.md「⚖️ Opus 裁決」段選項 2）。
+#
+# 現有覆蓋各鎖了半段：test_core_config.py::test_legacy_jellyfin_emby_migrates_to_jellyfin
+# 只驗 load_config() 把 'jellyfin_emby' 改寫成 'jellyfin'（config 值本身）；
+# TestOffModeAssetMatrix::test_jellyfin_mode_all_four_files_present 只驗手搭
+# external_manager='jellyfin' 的 config 能正確產出四檔。兩者中間「migration 後的
+# 值真的流進圖片產出」這條線從未被接起來過——本測試補這個缺口，**不重造**上述任一
+# 半段已驗過的斷言。
+# ---------------------------------------------------------------------------
+
+class TestExternalManagerMigrationToImageProduction:
+    """串接真實 load_config() 的 jellyfin_emby → jellyfin migration，並確認該值
+    流進 _write_movie_assets 後正確產出 -poster/-fanart（媒體伺服器風味的正向鏡像，
+    對照 TestExternalManagerNormalization 的畸形值 fail-closed 負向鎖）。"""
+
+    _BASE = 'TEST-001 Test Movie Title'
+
+    def test_legacy_jellyfin_emby_config_migrates_and_produces_images(self, tmp_path, monkeypatch):
+        import core.config as core_config
+        from core.config import load_config
+
+        # config 檔獨立放在 tmp_path 底下的子目錄，與下面 movie_dir 分開，避免
+        # 兩者互相干擾；同時確認 need_save 寫回的是這個 tmp 檔，不是使用者的
+        # web/config.json（monkeypatch 慣例照抄 test_core_config.py）。
+        config_dir = tmp_path / 'config_root'
+        config_dir.mkdir()
+        config_path = config_dir / 'config.json'
+        config_path.write_text(
+            '{"scraper": {"external_manager": "jellyfin_emby"}}', encoding='utf-8'
+        )
+        monkeypatch.setattr(core_config, 'CONFIG_PATH', config_path)
+        monkeypatch.setattr(core_config, 'CONFIG_DEFAULT_PATH', config_dir / 'config.default.json')
+
+        # ① 真實 load_config()（不 mock），驗 migration 本身——這段
+        # test_core_config.py::test_legacy_jellyfin_emby_migrates_to_jellyfin 已經
+        # 驗過，這裡只是取用其結果作為下一步的輸入，不重複斷言細節。
+        result = load_config()
+        assert result['scraper']['external_manager'] == 'jellyfin'
+
+        # need_save 寫回的必須是 tmp_path 下的檔，不是真實 web/config.json。
+        assert config_path.exists()
+        written = json.loads(config_path.read_text(encoding='utf-8'))
+        assert written['scraper']['external_manager'] == 'jellyfin'
+
+        # ② 把 migration 後的值餵進 _write_movie_assets（媒體伺服器風味 fixture
+        # 搭法，沿用 _t4_write——它直接把 movie_dir 當 output_path 傳給
+        # _write_movie_assets，不經 resolve_output_root，不會踩 off 風味那個
+        # 「寫進真實 output/lib/」的陷阱），斷言正向：該值就該產圖。
+        movie_dir = tmp_path / 'movie'
+        config = dict(_T3_BASE_CONFIG, external_manager=result['scraper']['external_manager'])
+        _t4_write(str(movie_dir), _T3_META, config)
+
+        for suffix in ('-poster.jpg', '-fanart.jpg'):
+            assert (movie_dir / f'{self._BASE}{suffix}').exists(), (
+                f"{suffix} must exist: migrated 'jellyfin' value must still produce images"
+            )
 
 
 # ---------------------------------------------------------------------------

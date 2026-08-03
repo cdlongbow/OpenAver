@@ -45,11 +45,15 @@ def normalize_external_manager(value) -> str:
     """把未驗證的 external_manager 收斂成合法四態之一（'off' 或 STEM_IMAGE_MODES 之一）。
 
     load_config() 回傳的是 raw dict、不過 Pydantic model_validate（BE-CONFIG-03），
-    所以手改過的 config.json、舊版遺留值（如 'jellyfin_emby'）、大小寫不符
-    （'Jellyfin'）、None 都可能流到下游。合法值恰好是 {'off'} ∪ STEM_IMAGE_MODES，
+    所以手改過的 config.json 可能帶進大小寫不符（'Jellyfin'）、未知值（'plex'）、
+    None 或空值，全都會原樣流到下游。合法值恰好是 {'off'} ∪ STEM_IMAGE_MODES，
     故「不在白名單內一律當 off」不會誤殺任何合法值——fail-closed 方向與
     CD-111-2（poster/fanart 正向白名單）一致，讓 generate_nfo 的媒體管理器
     專用欄位（lockdata/uniqueid/sorttitle/country/language）跟圖片 gate 同步收斂。
+
+    ⚠️ 廢棄舊值 'jellyfin_emby' **不會**走到這裡——它在 load_config() 內部就被
+    Fix-72d migration（:364-367）逐字改寫成 'jellyfin'，是合法的媒體伺服器風味、
+    本來就該產圖。別把它當成本函式要收斂的畸形值（Codex PR#123 round-3 踩過）。
     """
     return value if value in STEM_IMAGE_MODES else 'off'
 
