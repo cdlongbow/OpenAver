@@ -1001,7 +1001,7 @@ class TestOffModeNfoTagFallback:
             )
 
         # BE-TEST-01 #1: patch 使用端 core.readonly_producer.generate_jellyfin_images
-        # （已於上方 with 區塊完成），off 不在 _STEM_IMAGE_MODES 白名單，此處必須未被呼叫。
+        # （已於上方 with 區塊完成），off 不在 STEM_IMAGE_MODES 白名單，此處必須未被呼叫。
         jellyfin_mock.assert_not_called()
         nfo_path = Path(movie_dir) / f'{self._BASE}.nfo'
         return movie_dir, ET.parse(nfo_path).getroot()
@@ -4528,7 +4528,7 @@ class TestCuratedPosterFanartPassthrough:
         """TASK-111-T3 群組 5（ingest sidecar，off 分支）: same 3-tuple
         cover_strategy wiring as test_both_slots_present_copied_verbatim_not_
         regenerated above, but external_manager='off' — TASK-111's step-2 gate
-        (has_cover and external_manager in _STEM_IMAGE_MODES) must suppress the
+        (has_cover and external_manager in STEM_IMAGE_MODES) must suppress the
         verbatim-copy mechanism entirely, so neither curated sidecar is copied
         into the output slot at all. This is the off-mode cell of the same
         mechanism the sibling tests in this class cover on kodi config; T2's

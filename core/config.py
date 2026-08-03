@@ -38,7 +38,7 @@ _config_write_lock = threading.Lock()
 
 
 # 外部管理器模式共用常數（organizer / enricher 引用）
-_STEM_IMAGE_MODES = ('jellyfin', 'emby', 'kodi')
+STEM_IMAGE_MODES = ('jellyfin', 'emby', 'kodi')
 
 
 # ============ Pydantic Schema ============

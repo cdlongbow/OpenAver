@@ -44,7 +44,7 @@ from core.database import VideoRepository, Video, init_db, get_db_path, migrate_
 from core.focal import requires_face_detection
 from core.focal_trigger import maybe_submit_video_focal
 from core.organizer import generate_jellyfin_images, HEADERS as _EMBED_HEADERS
-from core.config import load_config, iter_gallery_sources, get_gallery_source_paths
+from core.config import load_config, iter_gallery_sources, get_gallery_source_paths, STEM_IMAGE_MODES
 from core.readonly_producer import produce_source, resolve_output_root
 from core.generate_state import try_mark_generate_active, mark_generate_done
 from core import thumbnail_cache
@@ -1689,8 +1689,16 @@ def generate_jellyfin_images_stream() -> Generator[str, None, None]:
             yield _sse_event({"type": "error", "message": "資料庫不存在，請先產生列表"})
             return
 
+        config = load_config()
+        external_manager = config.get('scraper', {}).get('external_manager', 'off')
+        if external_manager not in STEM_IMAGE_MODES:
+            _jellyfin_cache_result = None
+            _jellyfin_cache_time = 0
+            yield _sse_event({"type": "done", "message": "沒有需要補齊的影片", "updated": 0})
+            return
+
         repo = VideoRepository(db_path)
-        path_mappings = load_config().get('gallery', {}).get('path_mappings', {})
+        path_mappings = config.get('gallery', {}).get('path_mappings', {})
         result = check_jellyfin_images_needed(repo, path_mappings)
         items = result['items']
         total = len(items)
@@ -1740,14 +1748,21 @@ def generate_jellyfin_images_stream() -> Generator[str, None, None]:
 def _check_jellyfin_needed() -> dict | None:
     """Threadpool helper: get_db_path + check DB existence + open repo + run jellyfin check.
 
+    spec-111 CD-111-2 gate：external_manager 不在 STEM_IMAGE_MODES 白名單（含 off）時，
+    直接回傳零項，不產生 -poster/-fanart（fail-closed 正向白名單，不用 != 'off'）。
     Returns None if DB does not exist (caller handles as need_update=0 early return).
     Returns the result dict from check_jellyfin_images_needed otherwise.
     """
+    config = load_config()
+    external_manager = config.get('scraper', {}).get('external_manager', 'off')
+    if external_manager not in STEM_IMAGE_MODES:
+        return {'need_update': 0, 'items': []}
+
     db_path = get_db_path()
     if not db_path.exists():
         return None
     repo = VideoRepository(db_path)
-    path_mappings = load_config().get('gallery', {}).get('path_mappings', {})
+    path_mappings = config.get('gallery', {}).get('path_mappings', {})
     return check_jellyfin_images_needed(repo, path_mappings)
 
 

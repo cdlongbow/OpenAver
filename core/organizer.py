@@ -13,7 +13,7 @@ from pathlib import Path
 from PIL import Image
 from typing import Optional, Dict, Any, List, Tuple
 
-from core.config import _STEM_IMAGE_MODES
+from core.config import STEM_IMAGE_MODES
 from core.path_utils import normalize_path, is_fs_path_under_dir
 from core.scrapers.utils import has_chinese, check_subtitle, strip_subtitle_markers, normalize_number_impl
 from core.focal import requires_face_detection, detect_focal
@@ -1086,7 +1086,7 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
         # Kodi 在所有資料夾 layout 下均識別此命名，無需 per-folder 偵測。
         if ext_mode != 'off' and result.get('cover_path'):
             cover_jpg = result['cover_path']
-            if ext_mode in _STEM_IMAGE_MODES:
+            if ext_mode in STEM_IMAGE_MODES:
                 # 兩種模式均使用 stem 長格式（collision-free，Kodi 正典）
                 fanart_path = os.path.join(target_dir, filename_base + '-fanart.jpg')
                 poster_path = os.path.join(target_dir, filename_base + '-poster.jpg')
