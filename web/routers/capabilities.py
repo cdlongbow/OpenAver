@@ -722,6 +722,9 @@ _TOOLS: list[dict] = [
         "description": (
             "檢查本地收藏中有多少影片缺少外部媒體管理器 poster/fanart 圖片，回傳待更新數量。"
             " update 操作（批次產生圖片）為 SSE 串流，不適合 AI 直接呼叫，需透過 UI 操作。"
+            " 注意：設定中 external_manager 為 off（或任何非 jellyfin/emby/kodi 的值）時，"
+            "一律回傳 0，代表「此模式下功能已關閉」，不代表「圖片已經補齊」，請勿因此回報"
+            "使用者已無待處理項目。"
         ),
         "method": "GET",
         "path": "/api/gallery/jellyfin-check",
