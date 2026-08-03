@@ -1042,6 +1042,52 @@ class TestOffModeNfoTagFallback:
 
 
 # ---------------------------------------------------------------------------
+# Codex PR#123 P2: external_manager 是 load_config() 的未驗證原始值（BE-CONFIG-03,
+# 沒過 Pydantic model_validate）。CD-111-2 的正向白名單（`in STEM_IMAGE_MODES`）
+# 已正確擋掉畸形值的 poster/fanart，但同一個原始值接著被傳進 generate_nfo
+# （core/organizer.py），該處用的是負向 `!= 'off'`——'Jellyfin'（大小寫）/None/
+# 'plex'（未知值）/'jellyfin_emby'（廢棄舊值）這類值會被圖片 gate 擋下，卻仍讓
+# NFO 寫入 <lockdata>/<uniqueid type="num">/<sorttitle>/<country>/<language> 五個
+# 媒體管理器專用欄位——只 fail-closed 了一半。Opus 裁決：core/config.py 新增
+# normalize_external_manager() 公開函式，readonly_producer 在讀 config 值時就地
+# 收斂，讓兩個下游 gate（poster/fanart 的正向白名單 + generate_nfo 的負向判斷）
+# 吃到同一個已收斂值，同步 fail-closed。
+# ---------------------------------------------------------------------------
+
+class TestExternalManagerNormalization:
+    """畸形 external_manager 必須同時使 poster/fanart 缺席 AND NFO 無 <lockdata>
+    ——只驗其中一項驗不出「只擋圖片沒擋 NFO」的半套 fail-open（PR#123 P2 原始
+    bug 的確切形狀）。重用 TestOffModeNfoTagFallback._write_and_read_nfo（不
+    mock generate_nfo，真跑 core.organizer.generate_nfo 才能解析出真實 tag/
+    區塊內容）。"""
+
+    _BASE = 'TEST-001 Test Movie Title'
+
+    @pytest.mark.parametrize(
+        'malformed_value',
+        ['Jellyfin', None, 'plex', 'jellyfin_emby'],
+        ids=['case-mismatch', 'none-value', 'unknown-value', 'deprecated-value'],
+    )
+    def test_malformed_value_fails_closed_on_both_image_and_nfo(self, tmp_path, malformed_value):
+        config = dict(_T3_BASE_CONFIG, external_manager=malformed_value)
+        helper = TestOffModeNfoTagFallback()
+        movie_dir, root = helper._write_and_read_nfo(tmp_path, _T3_META, config)
+
+        # ① 圖片 gate：poster/fanart 都不應存在（CD-111-2 正向白名單已保證，這裡
+        # 只是連帶確認 helper 內建的 jellyfin_mock.assert_not_called() 之外的落地檔案）。
+        for suffix in ('-poster.jpg', '-fanart.jpg'):
+            assert not (Path(movie_dir) / f'{self._BASE}{suffix}').exists(), (
+                f"{suffix} must NOT exist for malformed external_manager={malformed_value!r}"
+            )
+
+        # ② NFO gate：本 PR 修的正是這一半——修前 generate_nfo 用 `!= 'off'`，
+        # 畸形值會被誤判為「媒體管理器模式」而寫入 <lockdata> 等五欄位。
+        assert root.find('lockdata') is None, (
+            f"<lockdata> must NOT be present for malformed external_manager={malformed_value!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # TASK-101a-T2 DoD①④：站3接線——真跑 _write_movie_assets()，generate_jellyfin_images
 # 不 mock（既有測試全部 mock 掉它；本測試是唯一不 mock 它的）。
 # ---------------------------------------------------------------------------

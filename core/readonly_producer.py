@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from core import thumbnail_cache
-from core.config import STEM_IMAGE_MODES, iter_gallery_sources
+from core.config import STEM_IMAGE_MODES, iter_gallery_sources, normalize_external_manager
 from core.database import Video, get_db_path
 from core.enrich_contract import (
     EnrichResult,
@@ -898,7 +898,7 @@ def _write_movie_assets(
         has_cover = bool(remote_url) and download_image(remote_url, cover_fs)
 
     # 2) poster/fanart — media-server flavours only (CD-111-2 fail-closed whitelist); off produces none, matching non-readonly parity.
-    external_manager = config.get('external_manager', 'off')
+    external_manager = normalize_external_manager(config.get('external_manager', 'off'))
     if has_cover and external_manager in STEM_IMAGE_MODES:
         raw_source_media = (
             cover_strategy[2]
