@@ -59,7 +59,7 @@ class HEYZOScraper(BaseScraper):
 
     def _extract_json_ld(self, html_content: bytes) -> Optional[dict]:
         """
-        從 HTML 中提取 application/ld+json 內容。
+        從 HTML 中提取 application/ld+json 內容（Path A：靜態 script tag）。
 
         Returns:
             解析後的 dict，找不到或解析失敗返回 None
@@ -78,22 +78,120 @@ class HEYZOScraper(BaseScraper):
             logger.debug(f"HEYZO JSON-LD parse error: {e}")
         return None
 
+    def _extract_js_var_block(self, html_text: str, var_name: str) -> Optional[str]:
+        """
+        從 `var <var_name> = { ... };`（分號可有可無）文字中，用 brace-matching
+        取出配對完整的 `{...}` 區塊原始文字（尚未 json.loads）。
+
+        對雙引號字串內容做跳脫（忽略字串內的 `{`/`}`、處理 `\\"` escape），
+        避免巢狀物件或文字欄位裡的符號打亂配對。找不到變數宣告或 brace 不配對
+        時回傳 None。
+        """
+        pattern = re.compile(r'var\s+' + re.escape(var_name) + r'\s*=\s*\{')
+        m = pattern.search(html_text)
+        if not m:
+            return None
+
+        start = m.end() - 1  # 指向開頭的 '{'
+        depth = 0
+        in_string = False
+        i = start
+        n = len(html_text)
+        while i < n:
+            c = html_text[i]
+            if in_string:
+                if c == '\\':
+                    i += 2
+                    continue
+                if c == '"':
+                    in_string = False
+                i += 1
+                continue
+            if c == '"':
+                in_string = True
+            elif c == '{':
+                depth += 1
+            elif c == '}':
+                depth -= 1
+                if depth == 0:
+                    return html_text[start:i + 1]
+            i += 1
+        return None
+
+    def _extract_js_movie_object(self, html_text: str) -> Optional[dict]:
+        """
+        Path B：站方把 JSON-LD 從靜態輸出改成 `window load` 時 JS 動態組裝
+        （`var person` / `var aggregateRating` / `var movie_obj`）。從純文字
+        原始碼中重建等價的 movie dict。
+
+        `movie_obj` 裡 `"actor":person` / `"aggregateRating":aggregateRating`
+        是 JS 變數參照（不是合法 JSON），需先把這兩個變數各自的內容抓出來，
+        再把 movie_obj 文字裡緊接在 `:` 之後、以 `,`/`}` 結尾的裸 token
+        替換成對應的 json.dumps 結果，才能 json.loads。
+
+        任何步驟失敗（找不到 / JSON 解析失敗）一律回 None，維持 fail-safe。
+        """
+        try:
+            person_block = self._extract_js_var_block(html_text, 'person')
+            agg_block = self._extract_js_var_block(html_text, 'aggregateRating')
+            movie_block = self._extract_js_var_block(html_text, 'movie_obj')
+            if not movie_block:
+                return None
+
+            person_dict = {}
+            if person_block:
+                try:
+                    person_dict = json.loads(person_block)
+                except json.JSONDecodeError:
+                    person_dict = {}
+
+            agg_dict = {}
+            if agg_block:
+                try:
+                    agg_dict = json.loads(agg_block)
+                except json.JSONDecodeError:
+                    agg_dict = {}
+
+            movie_text = movie_block
+            movie_text = re.sub(
+                r':\s*\bperson\b\s*(?=[,}])', ': ' + json.dumps(person_dict), movie_text
+            )
+            movie_text = re.sub(
+                r':\s*\baggregateRating\b\s*(?=[,}])', ': ' + json.dumps(agg_dict), movie_text
+            )
+
+            data = json.loads(movie_text)
+            if isinstance(data, dict) and data.get('@type') == 'Movie':
+                return data
+        except Exception as e:
+            logger.debug(f"HEYZO JS movie_obj parse error: {e}")
+        return None
+
     def _extract_table_data(self, html_content: bytes) -> dict:
         """
         從 HTML table.movieInfo 提取補充資料。
 
         Returns:
-            dict with keys: 'series', 'tags', 'duration', 'sample_images'
+            dict with keys: 'series', 'tags', 'duration', 'sample_images',
+            'actresses', 'date'
         """
-        result = {'series': '', 'tags': [], 'duration': None, 'sample_images': []}
+        result = {
+            'series': '', 'tags': [], 'duration': None, 'sample_images': [],
+            'actresses': [], 'date': '',
+        }
         try:
             html = etree.fromstring(html_content, etree.HTMLParser())
 
-            # Series
-            series = html.xpath(
-                '//table[@class="movieInfo"]//tr/td[contains(text(),"Series")]/following-sibling::td[1]/text()'
+            # Series（值現在可能被 <a> 包住（有連結的 series），也可能是純文字
+            # placeholder（"-----"）；讀整格文字（.//text()）而非只讀直接 text
+            # node，否則 <a> 包住的值會被漏接，抽出全空字串）
+            series_nodes = html.xpath(
+                '//table[@class="movieInfo"]//tr/td[contains(text(),"Series")]/following-sibling::td[1]'
             )
-            series_text = series[0].strip() if series else ''
+            series_text = ''
+            if series_nodes:
+                raw = ''.join(series_nodes[0].xpath('.//text()')).replace('\xa0', ' ')
+                series_text = ' '.join(raw.split())
             # Filter out placeholder values like "-----" or "---"
             if series_text and all(c == '-' for c in series_text):
                 series_text = ''
@@ -104,6 +202,30 @@ class HEYZOScraper(BaseScraper):
                 '//table[@class="movieInfo"]//tr/td[contains(text(),"Type")]/following-sibling::td[1]//a/text()'
             )
             result['tags'] = [t.strip() for t in tags if t.strip()]
+
+            # Actress(es)（支援多個 <a>；文字含大量 \t\n 與 \xa0，需正規化後再判空）
+            actress_nodes = html.xpath(
+                '//table[@class="movieInfo"]//tr/td[contains(text(),"Actress")]'
+                '/following-sibling::td[1]//a/text()'
+            )
+            actresses = []
+            for name in actress_nodes:
+                cleaned = name.replace('\xa0', ' ').strip()
+                if cleaned:
+                    actresses.append(cleaned)
+            result['actresses'] = actresses
+
+            # Released（可能是單一日期、日期區間「start ～ end」、"Coming Soon !!"
+            # 或空白；一律取 leading date，抽不到就回空字串，不 raise）
+            released = html.xpath(
+                '//table[@class="movieInfo"]//tr/td[contains(text(),"Released")]/following-sibling::td[1]'
+            )
+            if released:
+                released_text = released[0].xpath('string(.)')
+                released_text = released_text.replace('\xa0', ' ').strip()
+                date_match = re.match(r'^(\d{4}-\d{2}-\d{2})', released_text)
+                if date_match:
+                    result['date'] = date_match.group(1)
 
             # Duration（從 JS 變數 heyzo.duration 提取 "full":"HH:MM:SS"）
             html_text = html_content.decode('utf-8', errors='replace')
@@ -158,30 +280,29 @@ class HEYZOScraper(BaseScraper):
                 logger.debug(f"HEYZO EN page: HTTP {resp.status_code} for {heyzo_num}")
                 return None
 
+            # Step 1b: JSON-LD 擷取（Path A 靜態 script tag 優先，Path B JS
+            # 動態組裝 fallback；BE-SCRAPER-04：站方會在兩者間 toggle，
+            # 兩路徑必須並存，不可只留其一）
             json_ld = self._extract_json_ld(resp.content)
             if not json_ld:
+                logger.debug(
+                    f"HEYZO: static ld+json not found for {heyzo_num}, "
+                    f"trying JS movie_obj fallback"
+                )
+                html_text = resp.content.decode('utf-8', errors='replace')
+                json_ld = self._extract_js_movie_object(html_text)
+            if not json_ld:
+                logger.warning(
+                    f"HEYZO: page format changed for {heyzo_num} — "
+                    f"neither static ld+json tag nor `var movie_obj` JS block "
+                    f"found/parseable (not a 404 / network issue)"
+                )
                 return None
 
             # Step 2: 解析 JSON-LD
             title = json_ld.get('name', '')
             if not title:
                 return None
-
-            # 女優（JSON-LD actor 可能是 dict 或 list）
-            actor_data = json_ld.get('actor')
-            actress_names = []
-            if isinstance(actor_data, dict):
-                name = actor_data.get('name', '')
-                if name:
-                    actress_names = [name]
-            elif isinstance(actor_data, list):
-                actress_names = [a.get('name', '') for a in actor_data if a.get('name')]
-
-            actresses = [Actress(name=name) for name in actress_names if name]
-
-            # 日期（dateCreated 格式：2015-01-17T00:00:00+09:00）
-            date_created = json_ld.get('dateCreated', '')
-            date = date_created[:10] if date_created else ''
 
             # 封面（image 格式：//www.heyzo.com/...）
             image = json_ld.get('image', '')
@@ -195,9 +316,11 @@ class HEYZOScraper(BaseScraper):
             # 簡介（JSON-LD description，缺欄位回退空字串）
             summary = json_ld.get('description') or ''
 
-            # Step 3: 從同一 EN page 的 HTML table 取 tags、series
-            # （EN page 已取得，不需額外請求 JA page；XPath 使用英文 header）
+            # Step 3: 從同一 EN page 的 HTML table 取 tags、series、女優、發行日
+            # （女優/發行日不再吃 JSON-LD，改吃 table——比 JS 動態組裝的
+            # JSON-LD 更可信，見 task 說明）
             table_data = self._extract_table_data(resp.content)
+            actresses = [Actress(name=name) for name in table_data['actresses']]
 
             rate_limit(self.config.delay)
 
@@ -205,7 +328,7 @@ class HEYZOScraper(BaseScraper):
                 number=f"HEYZO-{heyzo_num}",
                 title=title,
                 actresses=actresses,
-                date=date,
+                date=table_data['date'],
                 maker='HEYZO',
                 cover_url=cover_url,
                 tags=table_data['tags'],
