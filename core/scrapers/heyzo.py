@@ -152,12 +152,24 @@ class HEYZOScraper(BaseScraper):
                 except json.JSONDecodeError:
                     agg_dict = {}
 
+            # ⚠ replacement 一律用 lambda，不可用字串。re.sub 的字串 replacement 是
+            # template，會解析反斜線轉義：json.dumps 對非 ASCII 產出的 `\uXXXX` 會直接
+            # 拋 `re.error: bad escape \u`，而值內的 `\\` 會被還原成 `\` 生出非法 JSON
+            # ——兩者都被下方 except 吞掉、Path B 回 None，等於整個來源再次靜默查無。
+            # lambda replacement 不做 template 解析，原樣插入。
+            person_json = json.dumps(person_dict)
+            agg_json = json.dumps(agg_dict)
+
             movie_text = movie_block
             movie_text = re.sub(
-                r':\s*\bperson\b\s*(?=[,}])', ': ' + json.dumps(person_dict), movie_text
+                r':\s*\bperson\b\s*(?=[,}])',
+                lambda _m: ': ' + person_json,
+                movie_text,
             )
             movie_text = re.sub(
-                r':\s*\baggregateRating\b\s*(?=[,}])', ': ' + json.dumps(agg_dict), movie_text
+                r':\s*\baggregateRating\b\s*(?=[,}])',
+                lambda _m: ': ' + agg_json,
+                movie_text,
             )
 
             data = json.loads(movie_text)

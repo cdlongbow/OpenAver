@@ -517,6 +517,32 @@ class TestJSFallbackBoundaries:
         assert len(video.actresses) == 1
         assert video.actresses[0].name == "Miku Ohashi"
 
+    def test_non_ascii_var_value_survives_substitution(self, scraper):
+        """變數值含非 ASCII → 不得因 re.sub replacement template 解析 `\\uXXXX` 而整條炸掉。
+
+        Regression（grok pre-merge review）：`re.sub(pat, ': ' + json.dumps(d), text)` 的
+        replacement 是 template，json.dumps 對非 ASCII 產出的 `\\uXXXX` 會讓 re 拋
+        `re.error: bad escape \\u`，被 except 吞掉 → Path B 回 None → 整個來源查無。
+        站方目前把 person.name 留空所以踩不到，但那是站方的實作細節、不是我方保證。
+        """
+        html_text = HEYZO_0783_TEXT.replace('"name":""', '"name":"あいうえお"', 1)
+        assert '"name":"あいうえお"' in html_text
+
+        data = scraper._extract_js_movie_object(html_text)
+        assert data is not None, "非 ASCII 變數值不應讓 Path B 整條失敗"
+        assert data.get("actor", {}).get("name") == "あいうえお"
+
+    def test_backslash_in_var_value_survives_substitution(self, scraper):
+        """變數值含反斜線 → replacement template 會把 `\\\\` 還原成 `\\`，產出非法 JSON。
+
+        比非 ASCII 更陰險：不拋 re.error，而是靜默生出壞 JSON 讓 json.loads 失敗。
+        """
+        html_text = HEYZO_0783_TEXT.replace('"name":""', r'"name":"back\\slash"', 1)
+
+        data = scraper._extract_js_movie_object(html_text)
+        assert data is not None, "含反斜線的變數值不應讓 Path B 整條失敗"
+        assert data.get("actor", {}).get("name") == "back\\slash"
+
     def test_aggregate_rating_var_missing_rating_and_votes_none(self, scraper):
         """邊界 4：aggregateRating 變數缺失 → 用 {} 頂替，rating/votes 皆為 None，不 raise"""
         html_text = _remove_aggregate_rating_var(HEYZO_0783_TEXT)
