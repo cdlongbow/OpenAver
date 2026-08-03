@@ -135,11 +135,20 @@ def _make_source_dir(base: Path, name: str, numbers: list[str]) -> Path:
     return d
 
 
-def _make_config(sources: list[dict], html_out: Path, download_samples: bool = False) -> dict:
+def _make_config(
+    sources: list[dict], html_out: Path, download_samples: bool = False,
+    external_manager: str = "off",
+) -> dict:
     """Build a readonly + off-flavor gallery config with the given sources.
 
     Each `sources` element: {"path": str, "output_path": str, "readonly": bool}.
     folder_layers=[] → per-movie subdir is the movie leaf directly under output_root.
+
+    external_manager (TASK-111-T3): defaults to "off" (this file's original,
+    only-ever value) — pass "jellyfin"/"emby"/"kodi" to build a media-server
+    flavour config (needed by the group-6 verbatim-passthrough integration
+    test, which must NOT hit the off-flavor gate). All 12 existing call sites
+    omit this arg and keep their literal "off" behaviour unchanged.
     """
     return {
         "gallery": {
@@ -150,7 +159,7 @@ def _make_config(sources: list[dict], html_out: Path, download_samples: bool = F
             "output_filename": "gallery_output.html",
         },
         "scraper": {
-            "external_manager": "off",
+            "external_manager": external_manager,
             "folder_layers": [],
             "folder_format": "",
             "filename_format": "{num}",
@@ -713,6 +722,63 @@ class TestOffModeIngestPosterFanartSuppressed:
         assert (movie_dir / f"{num}.jpg").read_bytes() == _FAKE_COVER_BYTES
         assert not (movie_dir / f"{num}-poster.jpg").exists()
         assert not (movie_dir / f"{num}-fanart.jpg").exists()
+
+
+# ---------------------------------------------------------------------------
+# TASK-111-T3 群組 6 (Opus 裁決承接項)：media-server flavour 整合層 verbatim
+# passthrough — T2 把 TestOffModeIngestPosterFanartSuppressed 翻面成「off 模式
+# 不複製 curator sidecar」之後，「curator sidecar 逐位元組 verbatim 複製」這個
+# owner-approved fix 在整合層級（真實 SSE 端點 + 真實 resolve_ingest_plan 偵測）
+# 失去了覆蓋（單元層級仍有 TestCuratedPosterFanartPassthrough 完整覆蓋，但那是
+# 繞過 HTTP/SSE 直呼 _write_movie_assets）。這個 class 用 jellyfin flavour 補回
+# 那一格。media-server flavour 下 resolve_output_root 直接回傳 source.output_path
+# 原樣（見 core/readonly_producer.py resolve_output_root docstring），與 off
+# flavour 的固定 output/lib/<name> 根不同 — 因此這裡的 movie_dir 用本測試自建的
+# output_path 算，不能沿用 _off_root helper（那個只鏡射 off 分支）。
+# ---------------------------------------------------------------------------
+
+class TestIngestCuratedPosterFanartVerbatimMediaServer:
+    """Opus 裁決（TASK-111-T3.md 現況分析 #6）：jellyfin/kodi 任一即可，機制與
+    哪個 media-server flavour 無關——這裡選 jellyfin。斷言 sidecar bytes 逐位
+    元組等於 _POSTER_MARKER_BYTES/_FANART_MARKER_BYTES（不是 _wire 裡
+    _fake_generate_jellyfin_images 寫的 _FAKE_IMG_BYTES）+ generate_jellyfin_
+    images 未被呼叫，證明走的是 verbatim 複製而非重新裁切生成。"""
+
+    def test_jellyfin_curated_sidecars_copied_verbatim_not_regenerated(
+        self, tmp_path, monkeypatch, client, parse_sse_events,
+    ):
+        num = "JELLY-VERB-001"
+        src = _make_curated_jellyfin_source(tmp_path / "src", "movies", num, with_nfo=True)
+        out_dir = tmp_path / "jellyfin_out"
+        out_dir.mkdir()
+        db_path = tmp_path / "test.db"
+        config = _make_config(
+            [{"path": str(src), "output_path": str(out_dir), "readonly": True}],
+            tmp_path / "htmlout",
+            external_manager="jellyfin",
+        )
+        _wire(monkeypatch, config, db_path)
+        # BE-TEST-01 #1: patch 使用端 core.readonly_producer.generate_jellyfin_images
+        # (NOT core.organizer.*) — layered on top of _wire's monkeypatch.setattr,
+        # mirroring TestIngestFourMatrix._run_case's existing double-mock idiom, so
+        # this `with patch(...)` block additionally gets call-tracking for
+        # assert_not_called() below.
+        with patch(
+            "core.readonly_producer.generate_jellyfin_images",
+            side_effect=_fake_generate_jellyfin_images,
+        ) as mock_jellyfin:
+            _run_generate(client, parse_sse_events)
+
+        movie_dir = out_dir / num
+        assert (movie_dir / f"{num}-poster.jpg").read_bytes() == _POSTER_MARKER_BYTES, (
+            "poster must be the curator's own sidecar bytes (verbatim copy), "
+            "not a regenerated crop"
+        )
+        assert (movie_dir / f"{num}-fanart.jpg").read_bytes() == _FANART_MARKER_BYTES, (
+            "fanart must be the curator's own sidecar bytes (verbatim copy), not "
+            "the _FAKE_IMG_BYTES generate_jellyfin_images would have written"
+        )
+        mock_jellyfin.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

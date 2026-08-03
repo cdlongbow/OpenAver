@@ -917,6 +917,131 @@ class TestWriteMovieAssets:
 
 
 # ---------------------------------------------------------------------------
+# TASK-111-T3 群組 1/2 (spec-111 §5 AC1/AC2)：off/jellyfin/emby/kodi 的四檔案矩陣。
+# 複用 _t4_write（module-level helper，定義於下方 :1058-1070 一帶——此處先用，
+# Python 只在呼叫時才解析函式體，模組載入順序無影響）+ TestCleanStaleSingletons
+# 的「四後綴迴圈」斷言 idiom，但套用在真跑 _write_movie_assets 之後的輸出目錄上
+# （而不是像 TestCleanStaleSingletons 那樣預先手建假檔案——那是在測清理函式，
+# 這裡是在測 writer 本身，task card「現況分析」已澄清兩者不可互相複用 fixture）。
+# ---------------------------------------------------------------------------
+
+class TestOffModeAssetMatrix:
+    """AC1（off 無 poster/fanart，同名 .jpg + .nfo 都在）與 AC2（jellyfin/emby/
+    kodi 三個 flavour 四檔皆在，各自獨立方法——plan 明文不 parametrize）。"""
+
+    _BASE = 'TEST-001 Test Movie Title'
+
+    def test_off_mode_no_poster_fanart_has_nfo_and_cover(self, tmp_path):
+        movie_dir = tmp_path / 'movie'
+        config = dict(_T3_BASE_CONFIG, external_manager='off')
+        _t4_write(str(movie_dir), _T3_META, config)
+
+        for suffix in ('.nfo', '.jpg'):
+            assert (movie_dir / f'{self._BASE}{suffix}').exists(), f"{suffix} must exist (AC1)"
+        for suffix in ('-poster.jpg', '-fanart.jpg'):
+            assert not (movie_dir / f'{self._BASE}{suffix}').exists(), (
+                f"{suffix} must NOT exist in off mode (AC1)"
+            )
+
+    def test_jellyfin_mode_all_four_files_present(self, tmp_path):
+        movie_dir = tmp_path / 'movie'
+        config = dict(_T3_BASE_CONFIG, external_manager='jellyfin')
+        _t4_write(str(movie_dir), _T3_META, config)
+
+        for suffix in ('.nfo', '.jpg', '-poster.jpg', '-fanart.jpg'):
+            assert (movie_dir / f'{self._BASE}{suffix}').exists(), f"{suffix} must exist (AC2, jellyfin)"
+
+    def test_emby_mode_all_four_files_present(self, tmp_path):
+        movie_dir = tmp_path / 'movie'
+        config = dict(_T3_BASE_CONFIG, external_manager='emby')
+        _t4_write(str(movie_dir), _T3_META, config)
+
+        for suffix in ('.nfo', '.jpg', '-poster.jpg', '-fanart.jpg'):
+            assert (movie_dir / f'{self._BASE}{suffix}').exists(), f"{suffix} must exist (AC2, emby)"
+
+    def test_kodi_mode_all_four_files_present(self, tmp_path):
+        movie_dir = tmp_path / 'movie'
+        config = dict(_T3_BASE_CONFIG, external_manager='kodi')
+        _t4_write(str(movie_dir), _T3_META, config)
+
+        for suffix in ('.nfo', '.jpg', '-poster.jpg', '-fanart.jpg'):
+            assert (movie_dir / f'{self._BASE}{suffix}').exists(), f"{suffix} must exist (AC2, kodi)"
+
+
+# ---------------------------------------------------------------------------
+# TASK-111-T3 群組 3/4 (spec-111 §5 AC4 + 邊界)：off 模式 NFO 的 <poster>/<thumb>/
+# <fanart> 字面退回同名封面。刻意不 mock generate_nfo（core.organizer.generate_nfo
+# 真的執行）——test_generate_nfo_params 的 side_effect 只寫死 <movie/>，解析不出
+# 真實 tag，這裡需要真實文字內容才能驗證 Opus 裁決要求的三件事。
+# ---------------------------------------------------------------------------
+
+class TestOffModeNfoTagFallback:
+    """Opus 裁決（TASK-111-T3.md）：第 3 組必須同時斷言① tag 字面等於
+    {basename}.jpg ② tag 指向的檔案存在 ③ generate_jellyfin_images 未被呼叫——
+    只驗②是白鎖（gate mutation 後 off 又會產生 -poster/-fanart，檔案依然存在，
+    ②單獨不具 mutation 敏感度）。第 4 組（無封面）只驗字面，不驗存在性（AC4
+    邊界：spec-111 §4.1 具名 backlog，接受懸空引用）。"""
+
+    _BASE = 'TEST-001 Test Movie Title'
+
+    def _write_and_read_nfo(self, tmp_path, meta, config):
+        from core.readonly_producer import _format_data, _write_movie_assets
+
+        movie_dir = str(tmp_path / 'movie')
+        fd = _format_data(meta, '/src/TEST-001.mp4', config)
+        jellyfin_mock = MagicMock()
+
+        with patch('core.readonly_producer.download_image', side_effect=_t4_real_download), \
+             patch('core.readonly_producer.generate_jellyfin_images', jellyfin_mock):
+            # generate_nfo 不 patch — core.organizer.generate_nfo 真的執行，
+            # 才能解析出真實 <poster>/<thumb>/<fanart> tag 內容。
+            _write_movie_assets(
+                movie_dir, meta, fd, '/src/TEST-001.mp4', config,
+                cover_strategy=_cover_strategy_for(meta),
+            )
+
+        # BE-TEST-01 #1: patch 使用端 core.readonly_producer.generate_jellyfin_images
+        # （已於上方 with 區塊完成），off 不在 _STEM_IMAGE_MODES 白名單，此處必須未被呼叫。
+        jellyfin_mock.assert_not_called()
+        nfo_path = Path(movie_dir) / f'{self._BASE}.nfo'
+        return movie_dir, ET.parse(nfo_path).getroot()
+
+    def test_off_with_cover_tags_fallback_and_files_exist(self, tmp_path):
+        """AC4：off + 有封面 → 三個 tag 字面都等於 {basename}.jpg，且都指向
+        實際存在的檔案（同名 .jpg）。"""
+        config = dict(_T3_BASE_CONFIG, external_manager='off')
+        movie_dir, root = self._write_and_read_nfo(tmp_path, _T3_META, config)
+
+        expected_tag = f'{self._BASE}.jpg'
+        poster_tag = root.findtext('poster')
+        thumb_tag = root.findtext('thumb')
+        fanart_tag = root.findtext('fanart')
+
+        # ① tag 字面斷言 — mutation 敏感源：gate 還原後 has_poster=True，這裡會變成
+        # '{basename}-poster.jpg'，立刻不等於 expected_tag。
+        assert poster_tag == expected_tag, "AC4: <poster> must fall back to same-name cover in off mode"
+        assert thumb_tag == expected_tag, "AC4: <thumb> is always same-name (has_poster/has_fanart 無關)"
+        assert fanart_tag == expected_tag, "AC4: <fanart> must fall back to same-name cover in off mode"
+
+        # ② tag 指向的檔案實際存在 — 單獨不具 mutation 敏感度，必須與①並存（Opus 裁決）。
+        for tag_value in (poster_tag, thumb_tag, fanart_tag):
+            assert (Path(movie_dir) / tag_value).exists(), f"tag {tag_value!r} must point to an existing file"
+
+    def test_off_no_cover_tags_fallback_to_same_name_literal(self, tmp_path):
+        """AC4 邊界：off + 無封面（cover_strategy=('none',) via meta['cover']=''）
+        → 三個 tag 字面仍等於 {basename}.jpg——與改動前完全一致的既有限制
+        （spec-111 §4.1），不驗證檔案存在性（該邊界本來就接受懸空引用）。"""
+        config = dict(_T3_BASE_CONFIG, external_manager='off')
+        meta_no_cover = dict(_T3_META, cover='')
+        _movie_dir, root = self._write_and_read_nfo(tmp_path, meta_no_cover, config)
+
+        expected_tag = f'{self._BASE}.jpg'
+        assert root.findtext('poster') == expected_tag
+        assert root.findtext('thumb') == expected_tag
+        assert root.findtext('fanart') == expected_tag
+
+
+# ---------------------------------------------------------------------------
 # TASK-101a-T2 DoD①④：站3接線——真跑 _write_movie_assets()，generate_jellyfin_images
 # 不 mock（既有測試全部 mock 掉它；本測試是唯一不 mock 它的）。
 # ---------------------------------------------------------------------------
@@ -4375,6 +4500,52 @@ class TestCuratedPosterFanartPassthrough:
         assert Path(base_stem + '-poster.jpg').read_bytes() == b'POSTER-MARKER-BYTES'
         assert Path(base_stem + '-fanart.jpg').read_bytes() == b'FANART-MARKER-BYTES'
         assert assets['cover_fs']
+
+    def test_off_mode_curated_sidecars_not_copied(self, tmp_path):
+        """TASK-111-T3 群組 5（ingest sidecar，off 分支）: same 3-tuple
+        cover_strategy wiring as test_both_slots_present_copied_verbatim_not_
+        regenerated above, but external_manager='off' — TASK-111's step-2 gate
+        (has_cover and external_manager in _STEM_IMAGE_MODES) must suppress the
+        verbatim-copy mechanism entirely, so neither curated sidecar is copied
+        into the output slot at all. This is the off-mode cell of the same
+        mechanism the sibling tests in this class cover on kodi config; T2's
+        integration-level TestOffModeIngestPosterFanartSuppressed already
+        covers the real-ingest-scan path — this is the direct
+        _write_movie_assets unit-level path.
+
+        MUTATION LOCK: reverting the step-2 gate back to `if has_cover:` makes
+        this RED — the curated sidecars would be copied verbatim again.
+        """
+        from core.readonly_producer import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        cover_fs = str(tmp_path / 'cover.jpg')
+        Path(cover_fs).write_bytes(b'COVER-BYTES-DIFFERENT-FROM-BOTH')
+        poster_src = tmp_path / 'src-poster.jpg'
+        fanart_src = tmp_path / 'src-fanart.jpg'
+        poster_src.write_bytes(b'POSTER-MARKER-BYTES')
+        fanart_src.write_bytes(b'FANART-MARKER-BYTES')
+        fd = _t3_format_data()
+        config = dict(_T3_BASE_CONFIG, external_manager='off')
+
+        with patch('core.readonly_producer.generate_jellyfin_images') as mock_jellyfin, \
+             patch('core.readonly_producer.crop_to_poster') as mock_crop, \
+             patch('core.readonly_producer.generate_nfo', side_effect=_t3_generate_nfo_side_effect):
+            assets = _write_movie_assets(
+                movie_dir, _T3_META, fd, '/src/TEST-001.mp4', config,
+                cover_strategy=('copy', cover_fs, {'poster': str(poster_src), 'fanart': str(fanart_src)}),
+            )
+
+        mock_jellyfin.assert_not_called()
+        mock_crop.assert_not_called()
+        base_stem = str(Path(movie_dir) / 'TEST-001 Test Movie Title')
+        assert not Path(base_stem + '-poster.jpg').exists(), (
+            "off mode must not copy the curated poster sidecar (TASK-111)"
+        )
+        assert not Path(base_stem + '-fanart.jpg').exists(), (
+            "off mode must not copy the curated fanart sidecar (TASK-111)"
+        )
+        assert assets['cover_fs'], "cover copy itself is unaffected by the off-mode poster/fanart gate"
 
     def test_missing_poster_slot_falls_back_to_crop_to_poster(self, tmp_path):
         """Only -fanart detected (poster slot None) -> fanart copied verbatim,
