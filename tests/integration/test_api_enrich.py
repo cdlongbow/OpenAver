@@ -1923,11 +1923,14 @@ class TestEnrichRefreshFullOverwriteGuardRealFlavourResolution:
         """建真實磁碟狀態＋真實 file:/// URI，打 /api/enrich-single，
         不 mock resolve_nfo_cover_paths / os.path.exists。
 
-        `external_manager == "off"` 時只受 `canonical_cover` 控制（off 的
-        正典位置是同名 `.jpg`，off 不檢查 poster/fanart）；媒體伺服器
-        flavour 受 `poster`/`fanart` 控制（正典位置是 `-fanart.jpg`）。
+        正典封面命名跟 `resolve_cover_target`（`core/cover_layout.py:134`）
+        同一套判準：`external_manager in STEM_IMAGE_MODES`（jellyfin/emby/
+        kodi）才用 `-fanart.jpg`（受 `poster`/`fanart` 控制）；`off` **與
+        非法值**（如 "plex"，fail-closed）都用同名 `.jpg`（受
+        `canonical_cover` 控制）。
         """
         from core.path_utils import to_file_uri
+        from core.config import STEM_IMAGE_MODES
 
         root = tmp_path / subdir
         root.mkdir()
@@ -1935,14 +1938,14 @@ class TestEnrichRefreshFullOverwriteGuardRealFlavourResolution:
         video.write_bytes(b"FAKE-VIDEO")
         if nfo:
             (root / "SONE-205.nfo").write_text("<movie/>", encoding="utf-8")
-        if external_manager == "off":
-            if canonical_cover:
-                self._write_jpeg(root / "SONE-205.jpg")
-        else:
+        if external_manager in STEM_IMAGE_MODES:
             if fanart:
                 self._write_jpeg(root / "SONE-205-fanart.jpg")
             if poster:
                 self._write_jpeg(root / "SONE-205-poster.jpg")
+        else:
+            if canonical_cover:
+                self._write_jpeg(root / "SONE-205.jpg")
 
         mocker.patch(
             "web.routers.scraper.load_config",
@@ -2042,6 +2045,44 @@ class TestEnrichRefreshFullOverwriteGuardRealFlavourResolution:
         )
         assert resp_off.status_code == 200, resp_off.text
         mock_off.assert_called_once()
+
+    # ── ⑤：非法 external_manager 值 → 400（Codex PR review P1 回歸鎖） ──
+
+    def test_scenario5_illegal_external_manager_value_400_matches_off(
+        self, tmp_path, client, mocker
+    ):
+        """Codex 對 feature/112b PR review 提的 P1（**pre-existing bug，早於
+        112**——`web/routers/scraper.py:507` 的 `external_manager != "off"`
+        判準可由 `git log -L 505,510:web/routers/scraper.py` 溯至 72d-P2A，
+        不是本 branch 引入的回歸；修法是正向白名單）：
+
+        `external_manager="plex"`（不在 `STEM_IMAGE_MODES` 白名單內的非法
+        值）+ NFO 存在 + 同名 `.jpg` 已存在（非法值下 `resolve_cover_target`
+        fail-closed 回同名，`core/cover_layout.py:134`）+ poster/fanart 缺
+        → 三個 `will_write_*` 皆應為 False：`will_write_nfo`／
+        `will_write_cover` 因 NFO／同名封面已存在且 `overwrite_existing=
+        False` 為 False；`will_write_external` 因 `_write_external_images`
+        對非白名單值是 no-op（`core/enricher.py:270`，回
+        `{"poster": False, "fanart": False}`，零檔案寫出）也應為 False
+        → 400，與 `off` 同一磁碟狀態的結論一致（皆 400）。
+
+        修法前：guard 用 `external_manager != "off"` 當「外部圖有機會寫出」
+        的 proxy，`"plex" != "off"` 為真，guard 誤信會寫而放行 200——但
+        NFO／封面／外部圖實際上都不寫，卻仍可能 DB upsert，正是這道 guard
+        要擋的磁碟／DB 分裂。"""
+        resp_plex, mock_plex = self._run(
+            tmp_path, client, mocker, "plex", "plex",
+            nfo=True, canonical_cover=True,
+        )
+        assert resp_plex.status_code == 400, resp_plex.text
+        mock_plex.assert_not_called()
+
+        resp_off, mock_off = self._run(
+            tmp_path, client, mocker, "off", "off",
+            nfo=True, canonical_cover=True,
+        )
+        assert resp_off.status_code == 400, resp_off.text
+        mock_off.assert_not_called()
 
 
 class TestEnrichSingleThumbnailInvalidation:
