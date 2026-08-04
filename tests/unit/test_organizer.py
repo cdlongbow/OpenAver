@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 from PIL import Image
 
-from core.organizer import _detect_suffixes, format_string, organize_file, crop_to_poster, generate_nfo, extract_chinese_title, download_image, truncate_to_chars, truncate_title, _detect_vr_cluster, _is_multipart_kw, _poster_window_ratio
+from core.organizer import _detect_suffixes, format_string, organize_file, crop_to_poster, generate_nfo, extract_chinese_title, download_image, truncate_to_chars, truncate_title, _detect_vr_cluster, _is_multipart_kw, _poster_window_ratio, generate_jellyfin_images
 from core.focal import requires_face_detection
 from core.scrapers.utils import normalize_number_impl
 from tests.conftest import MOCK_FOCAL_XY
@@ -861,6 +861,88 @@ class TestCropToPoster:
         with Image.open(dst) as img:
             w, h = img.size
         assert (w, h) == (380, 538), f"直向圖片應直接複製（不裁切），實際尺寸: {w}×{h}"
+
+
+class TestGenerateJellyfinImagesSameFileShortCircuit:
+    """P0-2c（TASK-112-T2c）：generate_jellyfin_images 的 copy2(cover, fanart) 在
+    src==dst（cover_path 本身就是 `<stem>-fanart.jpg`）時必須視為成功、不得走 except
+    分支、不得留下假警告。"""
+
+    def test_fanart_same_file_reports_success_no_copy(self, tmp_path, caplog):
+        base_stem = str(tmp_path / "ABC-123")
+        cover = base_stem + "-fanart.jpg"
+        _make_test_image(tmp_path, 800, 538, "ABC-123-fanart.jpg")
+
+        before_bytes = Path(cover).read_bytes()
+        before_mtime = Path(cover).stat().st_mtime
+
+        with caplog.at_level("WARNING"):
+            result = generate_jellyfin_images(cover, base_stem)
+
+        assert result["fanart"] is True
+        assert result["fanart_path"] == base_stem + "-fanart.jpg"
+        assert "複製失敗" not in caplog.text
+
+        # 來源檔完全未被觸碰
+        assert Path(cover).read_bytes() == before_bytes
+        assert Path(cover).stat().st_mtime == before_mtime
+
+    def test_fanart_different_file_still_copies_normally(self, tmp_path):
+        """反向鎖：cover != fanart 的正常情境仍照常複製，短路沒有誤殺正常路徑。"""
+        base_stem = str(tmp_path / "XYZ-999")
+        cover = str(_make_test_image(tmp_path, 800, 538, "cover.jpg"))
+
+        result = generate_jellyfin_images(cover, base_stem)
+
+        fanart_path = base_stem + "-fanart.jpg"
+        assert result["fanart"] is True
+        assert result["fanart_path"] == fanart_path
+        assert Path(fanart_path).exists()
+        assert Path(fanart_path).read_bytes() == Path(cover).read_bytes()
+
+
+class TestGenerateJellyfinImagesPosterSameFileShortCircuit:
+    """P0-2d（TASK-112-T2c，最重要格）：crop_to_poster(cover, poster) 在 src==dst
+    （cover_path 本身就是 `<stem>-poster.jpg`，外部庫 MDCX/Javinizer 常見情境）時必須
+    視為成功且完全不執行裁切——絕不可就地覆寫使用者原檔（prd.md 技術決策 #6 承重牆）。
+    """
+
+    def test_poster_same_file_reports_success_no_inplace_crop(self, tmp_path):
+        base_stem = str(tmp_path / "ABC-123")
+        cover = base_stem + "-poster.jpg"
+        # 800x538 橫向，若真的被裁切，尺寸會變成 379x538（見卡片 repro 記錄）
+        _make_test_image(tmp_path, 800, 538, "ABC-123-poster.jpg")
+
+        before_bytes = Path(cover).read_bytes()
+        before_mtime = Path(cover).stat().st_mtime
+        with Image.open(cover) as img:
+            before_size = img.size
+
+        result = generate_jellyfin_images(cover, base_stem)
+
+        assert result["poster"] is True
+        assert result["poster_path"] == base_stem + "-poster.jpg"
+
+        # ① bytes 完全不變 ② mtime 完全不變 ③ 尺寸完全不變
+        assert Path(cover).read_bytes() == before_bytes
+        assert Path(cover).stat().st_mtime == before_mtime
+        with Image.open(cover) as img:
+            after_size = img.size
+        assert after_size == before_size == (800, 538)
+
+    def test_poster_different_file_still_crops_normally(self, tmp_path):
+        """反向鎖：cover != poster 的正常情境仍照常裁切產出，短路沒有誤殺正常路徑。"""
+        base_stem = str(tmp_path / "XYZ-999")
+        cover = str(_make_test_image(tmp_path, 800, 538, "cover.jpg"))
+
+        result = generate_jellyfin_images(cover, base_stem)
+
+        poster_path = base_stem + "-poster.jpg"
+        assert result["poster"] is True
+        assert result["poster_path"] == poster_path
+        with Image.open(poster_path) as img:
+            w, h = img.size
+        assert (w, h) == (379, 538), f"正常路徑應照常裁切為 379×538，實際: {w}×{h}"
 
 
 # ============ crop_to_poster 焦點化測試 (TASK-101a-T1) ============

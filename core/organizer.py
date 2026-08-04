@@ -542,22 +542,40 @@ def generate_jellyfin_images(cover_path: str, base_stem: str, number: str = '', 
     Args:
         cover_path: 封面圖片的完整檔案系統路徑
         base_stem: 目標檔名 stem（不含副檔名，已移除 -poster/-fanart 後綴）
+
+    同檔短路（CD-112-8 / feature/112 T2c）——**兩個 slot 的語意不同，不可收攏成同一個分支**：
+    - `cover_path == fanart_path`：這張**內容已經對了**（fanart 本來就是封面的完整複製），
+      視為成功且不執行 `copy2`。不加這道短路的話 `SameFileError` 會被 broad except 吞成
+      `fanart=False`，回報一行假的「複製失敗」。
+    - `cover_path == poster_path`：這張**本來就是 poster**，不該再裁一次，視為成功且
+      **絕不執行 `crop_to_poster`**。不加這道短路的話 `crop_to_poster` 會**就地覆寫使用者
+      的原檔**（實測 800×538 → 379×538、md5 改變，而回傳值仍是 `poster: True`），
+      直接違反 prd.md 技術決策 #6 承重牆「衍生產物不回寫原檔」。
+      可達路徑：外部庫某片只有 `<stem>-poster.jpg` → `find_cover_image` L1 miss、L1.5
+      命中 `-poster`（`core/gallery_scanner.py:499`）→ DB `cover_path` 指向該檔。
     """
     result = {'fanart': False, 'poster': False}
 
     fanart_path = base_stem + '-fanart.jpg'
     poster_path = base_stem + '-poster.jpg'
 
-    # fanart = 原圖複製
-    try:
-        shutil.copy2(cover_path, fanart_path)
+    # fanart = 原圖複製；src==dst 代表內容已經對了，視為成功且不執行複製
+    if cover_path == fanart_path:
         result['fanart'] = True
         result['fanart_path'] = fanart_path
-    except Exception as e:
-        logger.warning(f"[!] generate_jellyfin_images fanart 複製失敗: {e}")
+    else:
+        try:
+            shutil.copy2(cover_path, fanart_path)
+            result['fanart'] = True
+            result['fanart_path'] = fanart_path
+        except Exception as e:
+            logger.warning(f"[!] generate_jellyfin_images fanart 複製失敗: {e}")
 
-    # poster = 裁切
-    if crop_to_poster(cover_path, poster_path, number=number, maker=maker):
+    # poster = 裁切；src==dst 代表這張本來就是 poster，不該再裁一次（絕不可就地寫）
+    if cover_path == poster_path:
+        result['poster'] = True
+        result['poster_path'] = poster_path
+    elif crop_to_poster(cover_path, poster_path, number=number, maker=maker):
         result['poster'] = True
         result['poster_path'] = poster_path
 
