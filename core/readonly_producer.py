@@ -815,10 +815,30 @@ def _write_cover_copy(src: str, dst: str) -> bool:
     ``SameFileError`` is a race backstop for "still-distinct-at-preflight,
     same-by-copy-time" and MUST stay ahead of ``except OSError`` since it
     subclasses it.
+
+    Codex PR#125 P2 (2026-08-05): the ``is_same`` branch additionally requires
+    ``dst`` to still be on disk. ``same_target_verdict``'s ``src == dst`` cell
+    answers by string comparison alone with zero I/O — it is the ONE cell of the
+    five that can return ``(True, True)`` for a path that does not exist (its own
+    docstring names this residual and says it "**必須重新評估**" once T3 makes
+    string equality the readonly hot path — this is that re-evaluation). The
+    other six ``same_target_verdict`` call sites re-confirm ``dst`` a few lines
+    earlier; this one does not — ``src`` comes from ``cover_strategy[1]``, whose
+    ``.exists()`` check happened back in ``resolve_ingest_plan`` several I/O hops
+    away, so an external delete in between lands here as a **false success**:
+    ``has_cover=True`` → poster/fanart "generated" → NFO writes dangling
+    ``<thumb>``/``<fanart>`` and the DB records a cover that is not there
+    (AC5b/AC7 violation). Reported false success is the categorically worse
+    outcome under CD-112-8, so this call site pays one ``os.path.exists``.
+    The check is deliberately HERE and not inside ``same_target_verdict``:
+    ``os.path.exists`` also returns False on permission errors, which would flip
+    a legitimately-True verdict for the other six call sites (that argument is
+    verbatim in ``cover_layout.same_target_verdict``'s residual note). It is a
+    no-op for the ``samefile``-alias cell, which already proved both paths stat.
     """
     is_same, certain = same_target_verdict(src, dst)
     if is_same:
-        return certain
+        return certain and os.path.exists(dst)
     try:
         shutil.copyfile(src, dst)
         return True

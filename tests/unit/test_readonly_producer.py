@@ -995,6 +995,76 @@ class TestWriteMovieAssets:
             "fanart (== cover_fs here) must exist on disk"
         )
 
+    def test_copy_strategy_same_target_missing_dst_is_not_success(self, tmp_path):
+        """Codex PR#125 P2（2026-08-05）：同檔捷徑不得把「檔案已經不在了」報成成功。
+
+        姊妹測試 `test_copy_strategy_same_target_preflight_regression` 鎖的是
+        「同檔存在 → 必須宣稱成功」；本測試鎖**反向**：同一條 `src == dst` 捷徑，
+        當那個檔案在 `resolve_ingest_plan` 偵測之後、`_write_cover_copy` 執行之前
+        被外部刪除時，**不得**回報 `has_cover=True`。
+
+        為什麼這條不是既有 residual：`same_target_verdict` 的五格真值表裡，
+        `src == dst` 是唯一一格純字串比較、零 I/O 的——它的 docstring 自己把
+        「不驗存在性」列為具名 residual，並寫明「T3 讓唯讀正典變成 `-fanart.jpg`
+        之後（字串相等成為常態路徑），這一條必須重新評估」。另外六個
+        `same_target_verdict` 呼叫點都在幾行前重新確認過 `dst`；`_write_cover_copy`
+        沒有——它的 `src` 來自 `cover_strategy[1]`，那個 `.exists()` 發生在
+        `resolve_ingest_plan`、隔了好幾個 I/O hop。T3 §H-5 的六點稽核用
+        `grep "same_target_verdict("` 做，**只找得到已經有保護的點**；本函式是
+        red-team 在那次稽核之後才加的第 7 個呼叫點（commit `2338c62d`）。
+
+        假成功的傳導後果（CD-112-8 判定為比「假失敗」更糟的那一類）：
+        `has_cover=True` → 第 2 段照跑 poster/fanart → `generate_nfo` 收到
+        `has_fanart=True` 寫出懸空 `<thumb>`/`<fanart>` → DB 記一個不存在的
+        `cover_path`（違反 AC5b/AC7）。
+
+        斷言：
+        ① `assets['cover_fs']` 為空字串（不得回傳幻影路徑）
+        ② `-poster` / `-fanart` 都沒有被產生（第 2 段被 has_cover 正確擋下）
+        ③ 磁碟上仍然沒有那個封面檔（本測試自己沒有把它變出來）
+
+        Mutation 自驗（可逆 Edit，驗完改回）：把 `_write_cover_copy` 的
+        `return certain and os.path.exists(dst)` 改回 `return certain`
+        → 本測試單獨轉紅（cover_fs 非空 + poster/fanart 被產生），
+        姊妹測試 `..._preflight_regression` 維持綠（形狀正確：正向鎖不該一起紅）。
+        """
+        from core.readonly_producer import _build_basename, _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-CD1127')
+        os.makedirs(movie_dir, exist_ok=True)
+        source_fs_path = '/src/TEST-CD1127.mp4'
+        meta = dict(_T3_META, number='TEST-CD1127', maker='Test Maker')
+        fd = _t3_format_data(meta=meta, source_fs_path=source_fs_path)
+        config = dict(_T3_BASE_CONFIG, external_manager='jellyfin')
+
+        base = _build_basename(fd, source_fs_path, config)
+        base_stem = str(Path(movie_dir) / base)
+
+        # 與姊妹測試同一個佈局，唯一差別：那張 curator -fanart.jpg 已經不在了
+        # （模擬 resolve_ingest_plan 偵測到之後被外部程序刪除/改名）。
+        # resolve_cover_target 第③步在 jellyfin 風味下仍會算出同一個 -fanart
+        # 路徑 → src == dst 字串相等，走的正是那條零 I/O 的捷徑。
+        curator_fanart = base_stem + '-fanart.jpg'
+        assert not Path(curator_fanart).exists(), "前提：受測檔案一開始就不存在"
+
+        with patch('core.readonly_producer.generate_nfo', side_effect=_t3_generate_nfo_side_effect), \
+             patch('core.organizer.detect_focal', return_value=MOCK_FOCAL_XY):
+            assets = _write_movie_assets(
+                movie_dir, meta, fd, source_fs_path, config,
+                cover_strategy=('copy', curator_fanart),
+            )
+
+        assert assets['cover_fs'] == '', (
+            "封面檔已不在磁碟上，cover_fs 必須是空字串——回傳幻影路徑會讓 DB "
+            "記一個不存在的 cover_path（AC5b）"
+        )
+        assert not Path(base_stem + '-poster.jpg').exists(), (
+            "has_cover 必須為 False，第 2 段的 poster 產生不得執行"
+        )
+        assert not Path(curator_fanart).exists(), (
+            "-fanart 不得憑空出現——它一開始就不存在，本次也沒有任何來源可複製"
+        )
+
 
 # ---------------------------------------------------------------------------
 # TASK-111-T3 群組 1/2 (spec-111 §5 AC1/AC2)：off/jellyfin/emby/kodi 的四檔案矩陣。
