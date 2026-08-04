@@ -543,38 +543,59 @@ def generate_jellyfin_images(cover_path: str, base_stem: str, number: str = '', 
         cover_path: 封面圖片的完整檔案系統路徑
         base_stem: 目標檔名 stem（不含副檔名，已移除 -poster/-fanart 後綴）
 
-    同檔短路（CD-112-8 / feature/112 T2c，Codex PR review P1 補強為 inode 別名感知）
-    ——**兩個 slot 的語意不同，不可收攏成同一個分支**。判斷用 `cover_layout.is_same_target`
-    （字串相等 **或** `os.path.samefile`，見該函式 docstring 的 fail-closed 理由）：
-    - `cover_path` 與 `fanart_path` 是同一份檔案（字串相等，或 hardlink／symlink 等
-      inode 別名）：這張**內容已經對了**（fanart 本來就是封面的完整複製），視為成功
-      且不執行 `copy2`。不加這道短路的話字串相等會被 `SameFileError` 吞成
-      `fanart=False`、回報一行假的「複製失敗」；inode 別名（`cover_path != fanart_path`
-      但同 inode）不加的話一樣會踩到 `SameFileError`（實測重現）。
-    - `cover_path` 與 `poster_path` 是同一份檔案（字串相等，或 hardlink／symlink 等
-      inode 別名）：這張**本來就是 poster**，不該再裁一次，視為成功且**絕不執行
-      `crop_to_poster`**。不加這道短路的話 `crop_to_poster` 會**就地覆寫使用者的原檔**
-      （實測 800×538 → 379×538、md5 改變，而回傳值仍是 `poster: True`），直接違反
-      prd.md 技術決策 #6 承重牆「衍生產物不回寫原檔」——字串相等與 inode 別名兩種
-      情境皆已實測重現。
-      可達路徑：外部庫某片只有 `<stem>-poster.jpg` → `find_cover_image` L1 miss、L1.5
-      命中 `-poster`（`core/gallery_scanner.py:499`）→ DB `cover_path` 指向該檔；
+    同檔情境（CD-112-8 / feature/112 T2c；Codex PR review 三輪 P1 逐步收斂而成）
+    ——**兩個 slot 都必須先用 `cover_layout.is_same_target()` preflight，
+    絕不可只靠底層函式自己的同檔偵測**：
+
+    - **共同的 preflight（`is_same_target`）**：字串相等 **或** `os.path.samefile`；
+      **未知 `OSError`（權限被拒／網路磁碟逾時／短暫 I/O 錯誤）時 fail-closed 回
+      `True`**，寧可少產一張衍生圖也不冒毀損原檔的險（理由見該函式 docstring）。
+
+    - **fanart（`copy2`）**：preflight 之外**另加** `except shutil.SameFileError`，
+      承接「preflight 通過之後、`copy2` 執行之前才變成同檔」的 race。
+      ⚠️ **`SameFileError` 不能取代 preflight**（Codex PR review 第三輪 P1，已實測
+      重現）：`shutil.copyfile` 靠 `shutil._samefile()` 判同檔，而後者
+      （`/usr/lib/python3.12/shutil.py:214`）把 `os.path.samefile` 的**任何
+      `OSError` 吞掉並回傳 `False`** → `copyfile` 照常往下走、以 `'wb'` 開啟 dst
+      → **截斷共用的 inode**。實測：hardlink 別名 + `samefile` 拋 `PermissionError`
+      → 封面 **7427 bytes → 0 bytes**，而回傳值仍是 `fanart: True`。
+      也就是說 `SameFileError` 只保護「`samefile()` 成功辨識出同檔」那一種情況，
+      未知錯誤下它完全不會被觸發。
+
+    - **poster（`crop_to_poster`）**：只有 preflight，**沒有** race backstop——
+      `crop_to_poster` 不是單純複製，是**讀了就地裁切存檔**，不會拋「動作前失敗」
+      的訊號；src/dst 同檔時它會直接把裁切結果寫回同一個檔案（實測
+      800×538 → 379×538、md5 改變），沒有事後補救的可能，直接違反 prd.md
+      技術決策 #6 承重牆「衍生產物不回寫原檔」。
+      可達路徑：外部庫某片只有 `<stem>-poster.jpg` → `find_cover_image` L1 miss、
+      L1.5 命中 `-poster`（`core/gallery_scanner.py:499`）→ DB `cover_path` 指向該檔；
       或外部庫工具（MDCX/Javinizer 等）把 `<stem>-poster.jpg` 建成 `<stem>.jpg` 的
       hardlink／symlink，DB `cover_path` 仍指向 `<stem>.jpg`，字串因此不相等。
+
+    **兩側的差別只在 race backstop，不在 preflight**：`copy2` 有「動作前失敗」的
+    訊號可以補接，`crop_to_poster` 沒有。**不要把任一側的 preflight 拿掉**——
+    本函式在 review 過程中曾經把 fanart 的 preflight 拔掉、只留 `SameFileError`，
+    當場被上面那條 0-byte 毀損打回。
     """
     result = {'fanart': False, 'poster': False}
 
     fanart_path = base_stem + '-fanart.jpg'
     poster_path = base_stem + '-poster.jpg'
 
-    # fanart = 原圖複製；src/dst 同檔（字串相等或 inode 別名）代表內容已經對了，
-    # 視為成功且不執行複製
+    # fanart = 原圖複製。preflight（is_same_target）不可省——shutil 內部的
+    # _samefile() 會把 os.path.samefile 的未知 OSError 吞成 False 並照常寫入，
+    # 對同 inode 別名會截斷原檔（見上方 docstring「同檔情境」段落的實測）。
+    # SameFileError 只是 preflight 之後才變成同檔的 race backstop，不是替代品；
+    # 它繼承 OSError/Exception，必須排在 except Exception 之前才不會被吃掉。
     if is_same_target(cover_path, fanart_path):
         result['fanart'] = True
         result['fanart_path'] = fanart_path
     else:
         try:
             shutil.copy2(cover_path, fanart_path)
+            result['fanart'] = True
+            result['fanart_path'] = fanart_path
+        except shutil.SameFileError:
             result['fanart'] = True
             result['fanart_path'] = fanart_path
         except Exception as e:

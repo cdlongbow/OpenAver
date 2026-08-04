@@ -1058,6 +1058,69 @@ class TestGenerateJellyfinImagesPosterSameFileShortCircuit:
         assert after_size == before_size == (800, 538)
 
 
+class TestGenerateJellyfinImagesSamefileUnknownErrorNeverDestroysOriginal:
+    """Codex PR review 第三輪 P1（2026-08-04）：**`SameFileError` 不能取代 preflight**。
+
+    背景：review 過程中曾把 fanart 側的 `is_same_target` preflight 拿掉，改成
+    「直接 `copy2`，用 `except shutil.SameFileError` 承接同檔」。那個簡化看起來
+    更乾淨（無預先探測 → 無 TOCTOU），但**只在 `os.path.samefile()` 成功辨識出
+    同檔時才成立**。
+
+    `shutil.copyfile` 是靠 `shutil._samefile()` 判同檔，而後者
+    （`/usr/lib/python3.12/shutil.py:214`）對 `os.path.samefile` 的**任何 `OSError`
+    一律吞掉並回傳 `False`**——於是 `copyfile` 認為「不同檔」照常往下走，以 `'wb'`
+    開啟 dst。dst 若是 src 的 hardlink／symlink，那一開就**截斷了共用的 inode**，
+    接著從已被清空的 src 複製 0 bytes。
+
+    實測（本測試即該重現的固化版）：hardlink 別名 + `samefile` 拋
+    `PermissionError` → 封面 **7427 bytes → 0 bytes**，而回傳值仍是 `fanart: True`。
+    **比 poster 側的就地裁切更嚴重——那是尺寸變小，這是整份資料歸零。**
+
+    因此 fanart 側必須保留 `is_same_target` preflight（它對未知 `OSError`
+    fail-closed 回 True，寧可少產一張衍生圖也不寫），`SameFileError` 只是
+    preflight 之後才變成同檔的 race backstop。
+
+    mutation 判準：把 fanart 的 `if is_same_target(...)` preflight 拿掉、只留
+    `try/except SameFileError` → **本支須單獨轉紅**（其他別名鎖因為 `samefile`
+    正常運作而仍會綠——那正是它們抓不到這條的原因）。
+    """
+
+    def _make_cover_with_hardlinked_fanart(self, tmp_path):
+        cover = tmp_path / 'ABC-123.jpg'
+        Image.new('RGB', (800, 538), (9, 9, 9)).save(str(cover))
+        fanart = tmp_path / 'ABC-123-fanart.jpg'
+        os.link(str(cover), str(fanart))
+        return cover, fanart
+
+    def test_samefile_unknown_oserror_must_not_truncate_shared_inode(
+        self, tmp_path, monkeypatch
+    ):
+        """`samefile` 拋未知 OSError 時，同 inode 的封面原檔不得被截斷。"""
+        cover, fanart = self._make_cover_with_hardlinked_fanart(tmp_path)
+        before_bytes = cover.read_bytes()
+        before_size = len(before_bytes)
+        assert before_size > 0
+        assert os.path.samefile(str(cover), str(fanart))
+
+        def _raise_permission(*args, **kwargs):
+            raise PermissionError('simulated network share / permission error')
+
+        monkeypatch.setattr(os.path, 'samefile', _raise_permission)
+
+        generate_jellyfin_images(
+            str(cover), str(tmp_path / 'ABC-123'), number='ABC-123'
+        )
+
+        after_bytes = cover.read_bytes()
+        assert len(after_bytes) == before_size, (
+            f'封面原檔被截斷：{before_size} bytes -> {len(after_bytes)} bytes。'
+            'shutil._samefile 吞掉 samefile 的 OSError 回 False，copyfile 因此以 '
+            "'wb' 開啟同 inode 的 dst 而清空原檔——fanart 側的 is_same_target "
+            'preflight 不可省略。'
+        )
+        assert after_bytes == before_bytes
+
+
 class TestGenerateJellyfinImagesSamefileRaceDoesNotFabricateSuccess:
     """Codex PR review 第二輪 P1（2026-08-04）端到端防線：`is_same_target` 的
     TOCTOU race 真正的後果不在 `cover_layout.py` 單元層級，而在這裡——若
