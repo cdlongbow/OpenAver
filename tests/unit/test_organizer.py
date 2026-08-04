@@ -4,6 +4,7 @@ T1e Tests — Fix-1 版本標記測試
 """
 import io
 import json
+import os
 import pytest
 from pathlib import Path
 from unittest.mock import patch
@@ -797,6 +798,27 @@ def _make_test_image(tmp_path, width, height, name="cover.jpg"):
     return img_path
 
 
+def _make_alias_or_skip(link_type: str, real_path: str, alias_path: str) -> None:
+    """在 real_path 之外，於 alias_path 建立指向同一份檔案的 hardlink／symlink。
+
+    Codex PR review P1（feature/112a-T2c）：`cover_path`（DB 路徑映射）與
+    `poster_path` / `fanart_path`（lexical stem 拼出）之間沒有「不得
+    symlink／hardlink」的保證，字串不相等但可能是同一個 inode。這裡動態
+    （非 `pytest.mark.skipif`）建立別名——只在當前平台/檔案系統真的無法建立
+    時才 skip（例如 Windows CI 缺 symlink 權限），確保能建立的環境（本機
+    Linux/WSL）一定會真的跑到鎖，不會被誤判性地靜態跳過。
+    """
+    try:
+        if link_type == "hardlink":
+            os.link(real_path, alias_path)
+        elif link_type == "symlink":
+            os.symlink(real_path, alias_path)
+        else:
+            raise ValueError(f"unknown link_type: {link_type}")
+    except (OSError, NotImplementedError) as e:
+        pytest.skip(f"{link_type} 在當前環境無法建立，略過: {e}")
+
+
 def _mock_download_image_write_jpeg(url, save_path, referer=''):
     """Mock download_image：寫出一個 800x538 JPEG 到 save_path（標準橫向封面尺寸）"""
     img = Image.new("RGB", (800, 538), color=(200, 100, 50))
@@ -900,6 +922,41 @@ class TestGenerateJellyfinImagesSameFileShortCircuit:
         assert Path(fanart_path).exists()
         assert Path(fanart_path).read_bytes() == Path(cover).read_bytes()
 
+    def test_fanart_hardlink_alias_reports_success_no_samefileerror_warning(self, tmp_path, caplog):
+        """Codex PR review P1：cover_path 字串不等於 fanart_path，但兩者是同一個
+        inode（hardlink）——不加別名感知的話 shutil.copy2 會拋 SameFileError，
+        被 broad except 吞成假的「複製失敗」（實測重現）。"""
+        base_stem = str(tmp_path / "ABC-123")
+        cover = str(_make_test_image(tmp_path, 800, 538, "ABC-123.jpg"))
+        fanart_path = base_stem + "-fanart.jpg"
+        _make_alias_or_skip("hardlink", cover, fanart_path)
+
+        assert cover != fanart_path, "測試前提：字串必須不相等，否則沒有測到別名感知"
+
+        with caplog.at_level("WARNING"):
+            result = generate_jellyfin_images(cover, base_stem)
+
+        assert result["fanart"] is True
+        assert result["fanart_path"] == fanart_path
+        assert "複製失敗" not in caplog.text
+
+    def test_fanart_symlink_alias_reports_success_no_samefileerror_warning(self, tmp_path, caplog):
+        """同上，但別名關係是 symlink 而非 hardlink——os.path.exists / samefile
+        對兩者的行為不同（symlink 需 follow），必須各自驗證。"""
+        base_stem = str(tmp_path / "ABC-123")
+        cover = str(_make_test_image(tmp_path, 800, 538, "ABC-123.jpg"))
+        fanart_path = base_stem + "-fanart.jpg"
+        _make_alias_or_skip("symlink", cover, fanart_path)
+
+        assert cover != fanart_path, "測試前提：字串必須不相等，否則沒有測到別名感知"
+
+        with caplog.at_level("WARNING"):
+            result = generate_jellyfin_images(cover, base_stem)
+
+        assert result["fanart"] is True
+        assert result["fanart_path"] == fanart_path
+        assert "複製失敗" not in caplog.text
+
 
 class TestGenerateJellyfinImagesPosterSameFileShortCircuit:
     """P0-2d（TASK-112-T2c，最重要格）：crop_to_poster(cover, poster) 在 src==dst
@@ -943,6 +1000,102 @@ class TestGenerateJellyfinImagesPosterSameFileShortCircuit:
         with Image.open(poster_path) as img:
             w, h = img.size
         assert (w, h) == (379, 538), f"正常路徑應照常裁切為 379×538，實際: {w}×{h}"
+
+    def test_poster_hardlink_alias_reports_success_no_inplace_crop(self, tmp_path):
+        """Codex PR review P1（已由 Opus 實測重現）：cover_path 字串不等於
+        poster_path，但兩者是同一個 inode（hardlink，MDCX/Javinizer 外部庫常見
+        佈局）——不加別名感知的話 crop_to_poster 會就地覆寫原檔（800×538 → 379×538）。
+        """
+        base_stem = str(tmp_path / "ABC-123")
+        cover = str(_make_test_image(tmp_path, 800, 538, "ABC-123.jpg"))
+        poster_path = base_stem + "-poster.jpg"
+        _make_alias_or_skip("hardlink", cover, poster_path)
+
+        assert cover != poster_path, "測試前提：字串必須不相等，否則沒有測到別名感知"
+
+        before_bytes = Path(cover).read_bytes()
+        before_mtime = Path(cover).stat().st_mtime
+        with Image.open(cover) as img:
+            before_size = img.size
+
+        result = generate_jellyfin_images(cover, base_stem)
+
+        assert result["poster"] is True
+        assert result["poster_path"] == poster_path
+
+        # ① bytes 完全不變 ② mtime 完全不變 ③ 尺寸完全不變（hardlink 下驗 cover
+        # 端等同驗 poster 端，因為是同一個 inode）
+        assert Path(cover).read_bytes() == before_bytes
+        assert Path(cover).stat().st_mtime == before_mtime
+        with Image.open(cover) as img:
+            after_size = img.size
+        assert after_size == before_size == (800, 538)
+
+    def test_poster_symlink_alias_reports_success_no_inplace_crop(self, tmp_path):
+        """同上，但別名關係是 symlink 而非 hardlink——os.path.exists / samefile
+        對兩者的行為不同（symlink 需 follow 才能 stat 到目標），必須各自驗證。"""
+        base_stem = str(tmp_path / "ABC-123")
+        cover = str(_make_test_image(tmp_path, 800, 538, "ABC-123.jpg"))
+        poster_path = base_stem + "-poster.jpg"
+        _make_alias_or_skip("symlink", cover, poster_path)
+
+        assert cover != poster_path, "測試前提：字串必須不相等，否則沒有測到別名感知"
+
+        before_bytes = Path(cover).read_bytes()
+        before_mtime = Path(cover).stat().st_mtime
+        with Image.open(cover) as img:
+            before_size = img.size
+
+        result = generate_jellyfin_images(cover, base_stem)
+
+        assert result["poster"] is True
+        assert result["poster_path"] == poster_path
+
+        assert Path(cover).read_bytes() == before_bytes
+        assert Path(cover).stat().st_mtime == before_mtime
+        with Image.open(cover) as img:
+            after_size = img.size
+        assert after_size == before_size == (800, 538)
+
+
+class TestGenerateJellyfinImagesSamefileRaceDoesNotFabricateSuccess:
+    """Codex PR review 第二輪 P1（2026-08-04）端到端防線：`is_same_target` 的
+    TOCTOU race 真正的後果不在 `cover_layout.py` 單元層級，而在這裡——若
+    `is_same_target` 誤把「dst 已消失」判成「同一檔」而回 True，
+    `generate_jellyfin_images` 會走短路分支，回報 `poster`/`fanart` 為 True，
+    但實際上 `poster_path` / `fanart_path` 從未被建立，等於重新製造 NFO 懸空
+    引用。這支測試 monkeypatch `os.path.samefile` 讓它一律拋
+    `FileNotFoundError`（模擬「檢查當下 dst 消失」這條 race），並確保
+    `poster_path`／`fanart_path` 事前確實不存在，直接呼叫
+    `generate_jellyfin_images` 驗證：只要回報 True，磁碟上就必須真的有那個
+    檔案；不得出現「回報 True 但檔案不存在」這個組合（要嘛正常產出、要嘛
+    誠實回報 False）。"""
+
+    def test_samefile_filenotfounderror_never_reports_true_without_file(
+        self, tmp_path, monkeypatch
+    ):
+        base_stem = str(tmp_path / "ABC-123")
+        cover = str(_make_test_image(tmp_path, 800, 538, "cover.jpg"))
+        fanart_path = base_stem + "-fanart.jpg"
+        poster_path = base_stem + "-poster.jpg"
+        assert not Path(fanart_path).exists()
+        assert not Path(poster_path).exists()
+
+        def _raise(*args, **kwargs):
+            raise FileNotFoundError("simulated race: dst vanished mid-check")
+
+        monkeypatch.setattr(os.path, "samefile", _raise)
+
+        result = generate_jellyfin_images(cover, base_stem)
+
+        if result.get("fanart") is True:
+            assert Path(fanart_path).exists(), (
+                "回報 fanart=True 但目的檔不存在——NFO 懸空引用"
+            )
+        if result.get("poster") is True:
+            assert Path(poster_path).exists(), (
+                "回報 poster=True 但目的檔不存在——NFO 懸空引用"
+            )
 
 
 # ============ crop_to_poster 焦點化測試 (TASK-101a-T1) ============

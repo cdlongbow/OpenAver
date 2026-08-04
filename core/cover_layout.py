@@ -104,3 +104,69 @@ def nfo_image_flag(base_stem: str, suffix: str, wrote_this_run: bool) -> bool:
     當成過期檔案刪掉。
     """
     return wrote_this_run or os.path.exists(base_stem + suffix + COVER_EXT)
+
+
+def is_same_target(src: str, dst: str) -> bool:
+    """判斷 src / dst 是否指向磁碟上同一份檔案（字串相等，或 inode 別名）。
+
+    Codex PR review P1（feature/112a-T2c，2026-08-04）：`generate_jellyfin_images`
+    的同檔短路原本只比對字串相等，但 `cover_path`（DB 路徑映射）與
+    `poster_path` / `fanart_path`（lexical stem 拼出）之間**沒有「不得
+    symlink／hardlink」的保證**。外部庫工具（MDCX/Javinizer 等）常把
+    `<stem>-poster.jpg` 建成 `<stem>.jpg` 的 hardlink 或 symlink——此時字串
+    不等但兩個路徑是同一個 inode，`crop_to_poster` 會**就地覆寫使用者的封面
+    原檔**（實測 800×538 → 379×538，md5 改變），直接違反 prd.md 技術決策 #6
+    承重牆「衍生產物不回寫原檔」。CD-112-8 原文即為「路徑相等**或**
+    `os.path.samefile`」，本函式是把原文落實成單一真理來源（CD-112-1），
+    供 `organizer.py`（本 PR）、`enricher.py:294`、`readonly_producer.py:763`
+    （T3）共三處呼叫。
+
+    **fail-closed，但只對「未知」錯誤**：`os.path.samefile` 在權限被拒、或部分
+    網路磁碟／Windows 共用資源上會拋 `OSError` 子類（實測 `PermissionError`
+    可重現：對父目錄 `chmod 0o000` 後 `os.path.samefile` 直接拋出，不是回傳
+    False）。這類**未知**例外拋出時**視為同一檔**（回傳 `True`，呼叫端因此
+    跳過寫入）——兩個方向的後果不對稱：誤判「不同檔」而照常寫入，最壞情況是
+    **就地毀損使用者原檔（不可逆）**；誤判「同一檔」而跳過寫入，最壞情況只是
+    **少產一張衍生圖（可由齒輪重刮／掃描頁批次補齊救回）**。不確定時一律選
+    代價小的那邊。
+
+    **`FileNotFoundError` 是唯一的例外，獨立分流、不落入上面的 fail-closed**：
+    `dst` 通常是尚未產生的衍生檔（`-poster.jpg` / `-fanart.jpg`），這是最常見
+    的情況，`samefile` 對不存在的路徑（`src` 或 `dst` 任一邊）一律拋
+    `FileNotFoundError`——這是「沒有可被覆寫的同一檔」，不是「不確定」，回傳
+    `False` 讓正常產圖流程繼續。**這個分流本身就是本函式修過一次的 TOCTOU
+    洞**：舊版先呼叫 `os.path.exists(dst)` 判斷要不要進 `samefile`，但
+    `exists()` 回傳與 `samefile()` 執行之間存在檔案可被外部程序刪除的窗口——
+    `exists()` 剛好回 `True`，`dst` 隨即被刪，`samefile` 才拋出
+    `FileNotFoundError`，卻被舊版的 `except OSError` 一併吞成 `True`，讓呼叫端
+    誤報「已產圖」而目的檔實際不存在，等於重新製造 NFO 懸空引用（Codex PR
+    review 第二輪 P1，2026-08-04）。現在的寫法**不再先 `exists()` 探測**，直接
+    呼叫 `samefile`，`FileNotFoundError` 由專屬的 `except` 分支承接、與其他
+    `OSError` 分開判——沒有「探測」與「使用」分成兩步的時間窗，這條 race 在
+    結構上不存在了。**broken symlink**（`os.path.lexists` 為 True 但目標不
+    存在）在這裡的行為與「檔案不存在」一致：`samefile` 對 broken symlink 會
+    follow 到不存在的目標並拋 `FileNotFoundError`，同樣走「視為不同檔、照常
+    寫入」這條路——這是安全的，因為 broken symlink 底下沒有真正的檔案內容
+    可以被誤判成 `src` 的別名。
+
+    `st_ino` 在 Windows／FAT32／部分網路磁碟上可能不可靠（不支援 file id 的
+    檔案系統上恆為 0），導致把兩個實際不同的檔案誤判成「同一檔」。但這個
+    誤判方向一樣落在 fail-closed 那一側（結果等同上面的 fail-closed 例外
+    路徑）——後果只是少產一張衍生圖，可接受，不是資料毀損。
+
+    ⚠️ **刻意接受的殘留邊界**：未知 `OSError`（權限被拒、網路磁碟逾時等）時
+    fail-closed 回 `True`，但此時 `dst` 是否真的存在、內容是否真的與 `src`
+    相同——**都無法確定**。呼叫端可能因此回報「已產圖」而該檔實際不存在（例如
+    磁碟在 `samefile` 呼叫當下恰好斷線）。這不是被解決的問題，是相對於「誤判
+    不同檔、就地毀損原檔」這個不可逆後果，刻意選擇的較輕代價（可由使用者手動
+    重新整理／批次補齊救回）。要徹底排除，需要呼叫端在跳過寫入後另外驗證
+    `dst` 確實存在且內容正確，本函式的職責只到「同檔判斷」為止，不做這件事。
+    """
+    if src == dst:
+        return True
+    try:
+        return os.path.samefile(src, dst)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True

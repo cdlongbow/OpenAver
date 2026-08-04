@@ -14,7 +14,7 @@ from PIL import Image
 from typing import Optional, Dict, Any, List, Tuple
 
 from core.config import STEM_IMAGE_MODES
-from core.cover_layout import resolve_cover_target
+from core.cover_layout import resolve_cover_target, is_same_target
 from core.path_utils import normalize_path, is_fs_path_under_dir
 from core.scrapers.utils import has_chinese, check_subtitle, strip_subtitle_markers, normalize_number_impl
 from core.focal import requires_face_detection, detect_focal
@@ -543,24 +543,33 @@ def generate_jellyfin_images(cover_path: str, base_stem: str, number: str = '', 
         cover_path: 封面圖片的完整檔案系統路徑
         base_stem: 目標檔名 stem（不含副檔名，已移除 -poster/-fanart 後綴）
 
-    同檔短路（CD-112-8 / feature/112 T2c）——**兩個 slot 的語意不同，不可收攏成同一個分支**：
-    - `cover_path == fanart_path`：這張**內容已經對了**（fanart 本來就是封面的完整複製），
-      視為成功且不執行 `copy2`。不加這道短路的話 `SameFileError` 會被 broad except 吞成
-      `fanart=False`，回報一行假的「複製失敗」。
-    - `cover_path == poster_path`：這張**本來就是 poster**，不該再裁一次，視為成功且
-      **絕不執行 `crop_to_poster`**。不加這道短路的話 `crop_to_poster` 會**就地覆寫使用者
-      的原檔**（實測 800×538 → 379×538、md5 改變，而回傳值仍是 `poster: True`），
-      直接違反 prd.md 技術決策 #6 承重牆「衍生產物不回寫原檔」。
+    同檔短路（CD-112-8 / feature/112 T2c，Codex PR review P1 補強為 inode 別名感知）
+    ——**兩個 slot 的語意不同，不可收攏成同一個分支**。判斷用 `cover_layout.is_same_target`
+    （字串相等 **或** `os.path.samefile`，見該函式 docstring 的 fail-closed 理由）：
+    - `cover_path` 與 `fanart_path` 是同一份檔案（字串相等，或 hardlink／symlink 等
+      inode 別名）：這張**內容已經對了**（fanart 本來就是封面的完整複製），視為成功
+      且不執行 `copy2`。不加這道短路的話字串相等會被 `SameFileError` 吞成
+      `fanart=False`、回報一行假的「複製失敗」；inode 別名（`cover_path != fanart_path`
+      但同 inode）不加的話一樣會踩到 `SameFileError`（實測重現）。
+    - `cover_path` 與 `poster_path` 是同一份檔案（字串相等，或 hardlink／symlink 等
+      inode 別名）：這張**本來就是 poster**，不該再裁一次，視為成功且**絕不執行
+      `crop_to_poster`**。不加這道短路的話 `crop_to_poster` 會**就地覆寫使用者的原檔**
+      （實測 800×538 → 379×538、md5 改變，而回傳值仍是 `poster: True`），直接違反
+      prd.md 技術決策 #6 承重牆「衍生產物不回寫原檔」——字串相等與 inode 別名兩種
+      情境皆已實測重現。
       可達路徑：外部庫某片只有 `<stem>-poster.jpg` → `find_cover_image` L1 miss、L1.5
-      命中 `-poster`（`core/gallery_scanner.py:499`）→ DB `cover_path` 指向該檔。
+      命中 `-poster`（`core/gallery_scanner.py:499`）→ DB `cover_path` 指向該檔；
+      或外部庫工具（MDCX/Javinizer 等）把 `<stem>-poster.jpg` 建成 `<stem>.jpg` 的
+      hardlink／symlink，DB `cover_path` 仍指向 `<stem>.jpg`，字串因此不相等。
     """
     result = {'fanart': False, 'poster': False}
 
     fanart_path = base_stem + '-fanart.jpg'
     poster_path = base_stem + '-poster.jpg'
 
-    # fanart = 原圖複製；src==dst 代表內容已經對了，視為成功且不執行複製
-    if cover_path == fanart_path:
+    # fanart = 原圖複製；src/dst 同檔（字串相等或 inode 別名）代表內容已經對了，
+    # 視為成功且不執行複製
+    if is_same_target(cover_path, fanart_path):
         result['fanart'] = True
         result['fanart_path'] = fanart_path
     else:
@@ -571,8 +580,9 @@ def generate_jellyfin_images(cover_path: str, base_stem: str, number: str = '', 
         except Exception as e:
             logger.warning(f"[!] generate_jellyfin_images fanart 複製失敗: {e}")
 
-    # poster = 裁切；src==dst 代表這張本來就是 poster，不該再裁一次（絕不可就地寫）
-    if cover_path == poster_path:
+    # poster = 裁切；src/dst 同檔（字串相等或 inode 別名）代表這張本來就是 poster，
+    # 不該再裁一次（絕不可就地寫）
+    if is_same_target(cover_path, poster_path):
         result['poster'] = True
         result['poster_path'] = poster_path
     elif crop_to_poster(cover_path, poster_path, number=number, maker=maker):

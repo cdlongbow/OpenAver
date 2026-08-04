@@ -19,6 +19,7 @@ from core.cover_layout import (
     COVER_EXT,
     cover_base_stem,
     cover_candidates,
+    is_same_target,
     nfo_image_flag,
     resolve_cover_target,
 )
@@ -212,3 +213,115 @@ class TestNfoImageFlag:
     def test_wrote_false_disk_missing_returns_false(self, tmp_path):
         base_stem = str(tmp_path / 'ABC-123')
         assert nfo_image_flag(base_stem, '-fanart', False) is False
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# is_same_target — Codex PR review P1（feature/112a-T2c，2026-08-04）
+# CD-112-8 原文「路徑相等或 os.path.samefile」的落地，補回被 TASK-112-T2c 裁決 3
+# 錯誤收窄掉的 inode 別名感知
+# ──────────────────────────────────────────────────────────────────────────
+
+class TestIsSameTarget:
+    def test_string_equal_returns_true(self, tmp_path):
+        p = str(tmp_path / 'a.jpg')
+        assert is_same_target(p, p) is True
+
+    def test_different_unrelated_files_returns_false(self, tmp_path):
+        a = tmp_path / 'a.jpg'
+        b = tmp_path / 'b.jpg'
+        a.write_bytes(b'aaa')
+        b.write_bytes(b'bbb')
+        assert is_same_target(str(a), str(b)) is False
+
+    def test_dst_not_exists_returns_false(self, tmp_path):
+        """最常見的情境：dst 是尚未產生的衍生檔，直接呼叫 samefile 會拋
+        FileNotFoundError——這裡驗證專屬的 except FileNotFoundError 分支接住它，
+        正常回 False（不同檔，照常寫入）而不是誤落入 fail-closed 回 True。"""
+        src = tmp_path / 'cover.jpg'
+        src.write_bytes(b'x')
+        dst = tmp_path / 'ABC-123-poster.jpg'
+        assert not dst.exists()
+        assert is_same_target(str(src), str(dst)) is False
+
+    def test_hardlink_alias_returns_true(self, tmp_path):
+        src = tmp_path / 'cover.jpg'
+        src.write_bytes(b'x')
+        dst = tmp_path / 'ABC-123-poster.jpg'
+        try:
+            os.link(str(src), str(dst))
+        except OSError as e:
+            pytest.skip(f"hardlink 在當前環境無法建立: {e}")
+        assert str(src) != str(dst)
+        assert is_same_target(str(src), str(dst)) is True
+
+    def test_symlink_alias_returns_true(self, tmp_path):
+        src = tmp_path / 'cover.jpg'
+        src.write_bytes(b'x')
+        dst = tmp_path / 'ABC-123-poster.jpg'
+        try:
+            os.symlink(str(src), str(dst))
+        except OSError as e:
+            pytest.skip(f"symlink 在當前環境無法建立: {e}")
+        assert str(src) != str(dst)
+        assert is_same_target(str(src), str(dst)) is True
+
+    def test_broken_symlink_returns_false(self, tmp_path):
+        """dst 是指向不存在目標的 broken symlink：samefile 對它 follow 後同樣拋
+        FileNotFoundError，被專屬的 except FileNotFoundError 分支接住，視為不同檔
+        （照常寫入），而不是誤判成 src 的別名——底下沒有真正的檔案內容可以被誤判。"""
+        src = tmp_path / 'cover.jpg'
+        src.write_bytes(b'x')
+        dst = tmp_path / 'ABC-123-poster.jpg'
+        missing_target = tmp_path / 'does-not-exist.jpg'
+        try:
+            os.symlink(str(missing_target), str(dst))
+        except OSError as e:
+            pytest.skip(f"symlink 在當前環境無法建立: {e}")
+        assert os.path.lexists(str(dst)) and not os.path.exists(str(dst))
+        assert is_same_target(str(src), str(dst)) is False
+
+    def test_samefile_raises_fails_closed_to_true(self, tmp_path, monkeypatch):
+        """fail-closed 決策：samefile 拋出例外（權限被拒／race／網路磁碟等）時
+        視為同一檔（回傳 True，呼叫端跳過寫入）——因為誤判「不同檔」而照常寫入
+        最壞情況是就地毀損使用者原檔（不可逆），誤判「同一檔」而跳過寫入最壞
+        情況只是少產一張衍生圖（可補救）。這裡用 monkeypatch 確定性地模擬
+        samefile 拋例外（真實 PermissionError 已用 chmod 手動重現過，但那條路徑
+        在 CI 上不可移植，這裡改用 monkeypatch 讓測試確定性可重跑）。"""
+        src = tmp_path / 'cover.jpg'
+        dst = tmp_path / 'ABC-123-poster.jpg'
+        src.write_bytes(b'x')
+        dst.write_bytes(b'y')
+
+        def _raise(*args, **kwargs):
+            raise PermissionError("simulated permission denied")
+
+        monkeypatch.setattr(os.path, 'samefile', _raise)
+        assert is_same_target(str(src), str(dst)) is True
+
+    def test_samefile_filenotfounderror_returns_false_not_fail_closed(
+        self, tmp_path, monkeypatch
+    ):
+        """Codex PR review 第二輪 P1（2026-08-04）：這支直接、確定性地釘住
+        `FileNotFoundError` 這個**分類規則**本身——與上面 `test_dst_not_exists_
+        returns_false` / `test_broken_symlink_returns_false` 驗的是不同層次。
+        那兩支驗的是「特定實體情境」（dst 從一開始就不存在／broken symlink），
+        走到 `samefile` 時剛好拋出 `FileNotFoundError`；這一支不管實體上 src/dst
+        是否存在，直接 monkeypatch `os.path.samefile` 強制拋出
+        `FileNotFoundError`，驗證的是「不論成因為何，`FileNotFoundError` 一律
+        分流回 False，不落入 `except OSError: return True` 的 fail-closed」這條
+        規則本身——這正是舊版 `os.path.exists(dst)` 前置檢查 + 廣義
+        `except OSError` 會漏接的 race：`exists()` 回 True 之後、`samefile()`
+        呼叫之前 dst 被外部程序刪除，導致 `samefile` 拋 `FileNotFoundError`，
+        舊版會被 `except OSError` 吞掉、誤回 True（回報已產圖但檔案不存在，
+        重新製造 NFO 懸空引用）。src/dst 在這裡都刻意造成存在的正常檔案，
+        證明回 False 完全是因為分類規則命中，不是因為它們本來就不存在。"""
+        src = tmp_path / 'cover.jpg'
+        dst = tmp_path / 'ABC-123-poster.jpg'
+        src.write_bytes(b'x')
+        dst.write_bytes(b'y')
+
+        def _raise(*args, **kwargs):
+            raise FileNotFoundError("simulated race: dst removed mid-check")
+
+        monkeypatch.setattr(os.path, 'samefile', _raise)
+        assert is_same_target(str(src), str(dst)) is False
