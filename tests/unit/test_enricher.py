@@ -3460,3 +3460,91 @@ class TestWriteExternalImagesPreflightSamefileGuard:
             "certain=False，不得宣稱成功"
         )
         assert not poster.exists(), "fail-closed 不動作，不應寫出 poster"
+
+
+class TestResolveNfoCoverPathsFlavourCoverage:
+    """TASK-112b-T6b DoD-2（PR1 residual 的關閉）：`resolve_nfo_cover_paths`
+    （`core/enricher.py:730`）在 T3 翻面後改呼叫**真實** `resolve_cover_target`
+    三步規則，不再是 stub。既有 `TestResolveNfoCoverPathsMappingReverse`
+    （`:2185`，2 支）只鎖路徑映射反解、**不變化 `external_manager`**，翻面後
+    對「flavour 是否正確接線」零鑑別力（plan-112b.md §8.1 第 2 點具名
+    residual）。
+
+    同一個 `file_path` × `{off, jellyfin, emby, kodi, 非法值}` ×
+    `{磁碟上無圖(neither), 只有同名(same_name_only), 只有 fanart(fanart_only)}`
+    共 15 格，逐格斷言 `cover_path`；`nfo_path` 那一半只用
+    `with_suffix('.nfo')`，與 flavour 完全正交——這條反向鎖（Opus 追加要求
+    #3 / plan §8.3 DoD-2）與 15 格一起跑，也另外用一支獨立測試把它單獨列出來。
+
+    白名單語意沿用 `core.config.STEM_IMAGE_MODES = ('jellyfin', 'emby',
+    'kodi')`（`BE-CONFIG-03`），不自建字面值清單去判斷「新建時要不要走
+    fanart」——`_FLAVOURS` 只是本測試挑的樣本，不是白名單本身。
+    """
+
+    _FLAVOURS = ["off", "jellyfin", "emby", "kodi", "plex"]  # "plex"＝非法值（不在白名單）
+    _DISK_STATES = ["neither", "same_name_only", "fanart_only"]
+
+    def _make_disk(self, video_path, state):
+        """依 state 在 video_path 同層造出對應候選檔案，回傳 (same, fanart) 兩個 Path。"""
+        same = video_path.with_suffix(".jpg")
+        fanart = Path(str(video_path.with_suffix("")) + "-fanart.jpg")
+        if state == "same_name_only":
+            same.write_bytes(b"SAME-COVER")
+        elif state == "fanart_only":
+            fanart.write_bytes(b"FANART-COVER")
+        return same, fanart
+
+    @pytest.mark.parametrize("external_manager", _FLAVOURS)
+    @pytest.mark.parametrize("disk_state", _DISK_STATES)
+    def test_15_cells_cover_path_flavour_coverage(self, tmp_path, external_manager, disk_state):
+        from core.config import STEM_IMAGE_MODES
+        from core.enricher import resolve_nfo_cover_paths
+
+        video_path = tmp_path / "SONE-205.mp4"
+        video_path.write_bytes(b"FAKE-VIDEO")
+        same, fanart = self._make_disk(video_path, disk_state)
+
+        nfo_path, cover_path = resolve_nfo_cover_paths(
+            str(video_path), None, external_manager
+        )
+
+        # 反向鎖（Opus 追加要求 #3）：nfo_path 只依 file_path 決定，與
+        # external_manager 完全正交——15 格逐格都要驗這條，不能只驗一次。
+        assert nfo_path == str(video_path.with_suffix(".nfo")), (
+            f"nfo_path 不得受 flavour（{external_manager!r}）影響，"
+            f"實際: {nfo_path!r}"
+        )
+
+        if disk_state == "same_name_only":
+            expected_cover = str(same)
+        elif disk_state == "fanart_only":
+            expected_cover = str(fanart)
+        else:  # "neither"：磁碟兩候選皆無 → 依 flavour 新建，白名單 fail-closed
+            expected_cover = (
+                str(fanart) if external_manager in STEM_IMAGE_MODES else str(same)
+            )
+        assert cover_path == expected_cover, (
+            f"flavour={external_manager!r} disk_state={disk_state!r} 預期 "
+            f"cover_path={expected_cover!r}，實際={cover_path!r}"
+        )
+
+    def test_nfo_path_unaffected_by_flavour_reverse_lock(self, tmp_path):
+        """反向鎖獨立測試（Opus 追加要求 #3 / plan §8.3 DoD-2 明列「不能少」）：
+        同一 file_path、同一磁碟狀態，nfo_path 在全部 5 種 flavour 下逐字相同
+        ——它是「flavour 只影響封面那一半」的唯一機械證據。少了它，
+        `resolve_nfo_cover_paths` 的另一半就沒有任何東西擋住未來有人把
+        flavour 也接進 nfo_path 的推導。"""
+        from core.enricher import resolve_nfo_cover_paths
+
+        video_path = tmp_path / "SONE-205.mp4"
+        video_path.write_bytes(b"FAKE-VIDEO")
+        self._make_disk(video_path, "fanart_only")
+
+        nfo_paths = {
+            flavour: resolve_nfo_cover_paths(str(video_path), None, flavour)[0]
+            for flavour in self._FLAVOURS
+        }
+        assert len(set(nfo_paths.values())) == 1, (
+            f"nfo_path 必須在所有 flavour 下逐字相同，實際: {nfo_paths}"
+        )
+        assert next(iter(nfo_paths.values())) == str(video_path.with_suffix(".nfo"))
