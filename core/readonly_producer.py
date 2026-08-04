@@ -25,7 +25,7 @@ from typing import Callable, Optional
 
 from core import thumbnail_cache
 from core.config import STEM_IMAGE_MODES, iter_gallery_sources, normalize_external_manager
-from core.cover_layout import resolve_cover_target
+from core.cover_layout import nfo_image_flag, resolve_cover_target, same_target_verdict
 from core.database import Video, get_db_path
 from core.enrich_contract import (
     EnrichResult,
@@ -760,12 +760,18 @@ def _write_media_images(
             logger.warning(f"[!] ingest fanart 原樣複製失敗，改由封面生成: {e}")
             src_fanart = None  # fall through to generate below
     if not src_fanart:
-        try:
-            shutil.copy2(cover_fs, fanart_path)
-            has_fanart = True
-        except Exception as e:
-            logger.warning(f"[!] generate_jellyfin_images fanart 複製失敗: {e}")
-            has_fanart = False
+        is_same, certain = same_target_verdict(cover_fs, fanart_path)
+        if is_same:
+            has_fanart = certain
+        else:
+            try:
+                shutil.copy2(cover_fs, fanart_path)
+                has_fanart = True
+            except shutil.SameFileError:
+                has_fanart = True
+            except Exception as e:
+                logger.warning(f"[!] generate_jellyfin_images fanart 複製失敗: {e}")
+                has_fanart = False
 
     # poster: verbatim copy of curator sidecar, else generate (crop_to_poster
     # of cover — matches generate_jellyfin_images's own poster step).
@@ -779,7 +785,11 @@ def _write_media_images(
             logger.warning(f"[!] ingest poster 原樣複製失敗，改由封面裁生: {e}")
             src_poster = None  # fall through to generate below
     if not src_poster:
-        has_poster = crop_to_poster(cover_fs, poster_path, number=number, maker=maker)
+        is_same, certain = same_target_verdict(cover_fs, poster_path)
+        if is_same:
+            has_poster = certain
+        else:
+            has_poster = crop_to_poster(cover_fs, poster_path, number=number, maker=maker)
 
     return has_poster, has_fanart
 
@@ -963,8 +973,8 @@ def _write_movie_assets(
         maker=meta.get('maker', ''),
         url=meta.get('url', ''),
         output_path=nfo_fs,
-        has_poster=has_poster,
-        has_fanart=has_fanart,
+        has_poster=nfo_image_flag(base_stem, '-poster', has_poster),
+        has_fanart=nfo_image_flag(base_stem, '-fanart', has_fanart),
         director=meta.get('director', ''),
         duration=meta.get('duration'),
         series=meta.get('series', ''),
@@ -1304,21 +1314,34 @@ def resolve_ingest_plan(
     cover_strategy is discarded and `('none',)` is returned instead — nothing
     to copy/download without any metadata to attach it to.
 
-    Curated -poster/-fanart passthrough (owner-approved fix, 2026-07-21):
+    Curated -poster/-fanart passthrough (owner-approved fix, 2026-07-21;
+    cover-source upgrade corrected per CD-112-7, T3/feature-112b — see below):
     action='ingest' only, when the cover strategy resolves to the local-copy
-    form (`('copy', cover_fs)`), the 3rd element is appended as
-    `('copy', cover_fs, {'poster': poster_fs, 'fanart': fanart_fs})` — the
-    source directory's OWN `{stem}-poster.*` / `{stem}-fanart.*` sidecars
-    (curated Jellyfin/Emby libraries ship both, distinct portrait/landscape
-    images), each `None` when absent. `_write_movie_assets` copies these
-    VERBATIM into the output `-poster`/`-fanart` slots instead of regenerating
-    them from whichever single image `find_cover_image` picked as the cover
-    (which previously discarded the curator's real poster — see plan-104
-    cover axis notes). `('none',)` is left untouched (no local cover at all →
-    nothing to copy). `action='rescrape'` never adds this 3rd element —
-    cover_strategy stays a 2-tuple there, so the scrape/rescrape write path
-    (`source_media is None` in `_write_movie_assets`) stays byte-identical to
-    before this fix.
+    form, the source directory's OWN `{stem}-poster.*` / `{stem}-fanart.*`
+    sidecars are detected (curated Jellyfin/Emby libraries ship both,
+    distinct portrait/landscape images from whatever `find_cover_image`
+    picked as the cover). `poster_fs` is threaded through as the 3rd
+    element's `'poster'` slot for verbatim copy by `_write_movie_assets`
+    (never regenerated from the cover — see plan-104 cover axis notes). The
+    3rd element's `'fanart'` slot is ALWAYS `None` (CD-112-7's second half) —
+    but for media-server flavours, when `fanart_fs` IS detected, it is NOT
+    discarded: the 2nd tuple element (cover SOURCE) is upgraded from
+    `cover_fs` to `fanart_fs` instead (CD-112-7's first half, the part missed
+    in this fix's initial pass). Why: under the post-112 stem layout the
+    canonical cover position for media-server flavours IS `-fanart.jpg`
+    (CD-112-3), so the single `shutil.copyfile(cover_strategy[1], cover_fs)`
+    cover-write step then simultaneously satisfies "canonical cover" AND
+    "fanart verbatim" — no second writer needed to fight over the same
+    destination file; `_write_media_images`'s fanart generate branch copying
+    that same file onto itself is a no-op protected by ⑧'s
+    `same_target_verdict` preflight. Off/unknown flavour (positive
+    whitelist, not `!= 'off'`) keeps `cover_fs` untouched — AC2 requires
+    off's `{b}.jpg` output stay byte-identical to whatever `find_cover_image`
+    picked, never silently swapped to the curator fanart. `('none',)` is left
+    untouched (no local cover at all → nothing to copy). `action='rescrape'`
+    never adds this 3rd element — cover_strategy stays a 2-tuple there, so
+    the scrape/rescrape write path (`source_media is None` in
+    `_write_movie_assets`) stays byte-identical to before this fix.
     """
     nfo_path = Path(src_fs_path).with_suffix('.nfo')
     root = None
@@ -1361,7 +1384,42 @@ def resolve_ingest_plan(
                  if (p := src_dir / f"{stem}-fanart{ext}").exists()),
                 None,
             )
-            cover_strategy = ('copy', cover_fs, {'poster': poster_fs, 'fanart': fanart_fs})
+            # CD-112-7 (T3, feature/112b; corrected per Opus review — the first
+            # half of CD-112-7 was missed in the initial pass): media-server
+            # flavours only, when a curator -fanart sidecar IS detected, the
+            # cover SOURCE itself is upgraded to that fanart file (2nd tuple
+            # element), not just left as whatever find_cover_image picked.
+            # Why: under the post-112 stem layout the canonical cover position
+            # for media-server flavours IS <stem>-fanart.jpg (CD-112-3), so
+            # routing the curator's own fanart through as the cover source
+            # means the single copy in _write_movie_assets's cover step
+            # (`shutil.copyfile(cover_strategy[1], cover_fs)`) simultaneously
+            # satisfies "canonical cover" AND "fanart verbatim" — no second
+            # writer needed to fight over the same destination file. Without
+            # this, a curated library with all three of {stem}.jpg/-poster/
+            # -fanart present has find_cover_image's L1 pick the SAME-NAME
+            # .jpg (not the fanart) as cover_fs, and the curator's real
+            # fanart would be silently discarded entirely — violating AC5
+            # ("curator sidecar 情境的正確承諾是逐位元組保留 curator 原檔") and
+            # AC5b (DB cover_path must point at that curator fanart). The 3rd
+            # element's 'fanart' slot STAYS None regardless (CD-112-7's
+            # second half, unchanged): once the cover source above IS the
+            # curator fanart, _write_media_images's generate branch
+            # (`copy2(cover_fs, fanart_path)`) writing that same file onto
+            # itself IS the desired verbatim copy — protected by ⑧'s
+            # same_target_verdict preflight (same-file → no-op, no second
+            # passthrough slot required).
+            # ⚠️ Flavour gate is NOT optional: off/unknown flavour must keep
+            # cover_fs untouched — AC2 requires off's output `{b}.jpg` content
+            # stay byte-identical to whatever find_cover_image picked, not
+            # silently swap to the curator fanart. Positive whitelist
+            # (BE-CONFIG-03): `external_manager in STEM_IMAGE_MODES`, not
+            # `!= 'off'` — illegal values fail-closed to `cover_fs`.
+            external_manager = normalize_external_manager(config.get('external_manager', 'off'))
+            curator_cover_source = (
+                fanart_fs if fanart_fs and external_manager in STEM_IMAGE_MODES else cover_fs
+            )
+            cover_strategy = ('copy', curator_cover_source, {'poster': poster_fs, 'fanart': None})
         elif valid_nfo:
             cover_strategy = ('none',)
         else:

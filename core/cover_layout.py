@@ -1,16 +1,14 @@
 """cover_layout.py — 封面正典位置解析的單一真理來源（feature/112，CD-112-1）。
 
-依賴 `os`（`os.path` 純字串運算 + `os.path.exists`）＋ `core.logger`。
+依賴 `os`（`os.path` 純字串運算 + `os.path.exists`）＋ `core.logger` ＋
+`core.config.STEM_IMAGE_MODES`。
 **為什麼有 logger**（T1 卡當時判「不需要」，pre-merge Stage 1 gemini P3-1 推翻）：
 本模組原本全是無失敗路徑的純函式，照 `core/enrich_contract.py` 的先例不設 logger；
 但 `same_target_verdict` 加入之後模組**有了吞例外的分支**（fail-closed 的 `except OSError`），
 那正是 `core/path_utils.py` 之所以有 logger 的同一個判準。吞了不記＝靜默吞噬。
-**不 import** `core.config`
-（`STEM_IMAGE_MODES`）——本模組目前只有 `resolve_cover_target` 的 stub 版本，本體
-無條件回傳同名候選，不會用到白名單常數；T3（PR2）把 stub 換成三步規則時才會加這行
-import（Opus 裁決：本 PR 若 import 未使用的名稱，會被 `pyproject.toml` 的 ruff
-`select`（含 `"F"`，涵蓋 F401 unused-import）判為錯誤，與 DoD「`ruff check .` 全綠」
-直接衝突）。**不 import** `core.path_utils`。
+**T3（112b）起 import `core.config.STEM_IMAGE_MODES`**（此前 T1 stub 階段不 import，
+理由見下方——`resolve_cover_target` 現在是三步規則本體，第③步要用它做正向白名單判斷，
+不再是 unused import）。**不 import** `core.path_utils`。
 
 為什麼用 `os.path` 純字串運算、**不違反** CLAUDE.md 的 `path_utils` 規則：
 CLAUDE.md 的路徑處理禁止清單針對的是**跨 Zone 的路徑格式轉換**——手動 strip/建構
@@ -34,11 +32,14 @@ CD-112-9）本來就在 `path_utils.py` 之外用 `os.path.splitext` + 字串切
 （重新推導會製造鏡像漂移，正是 feature/105／111 已經踩過、CD-112-9 意圖根除的
 那一類 bug 的成因）。
 
-**本 PR（PR1 ＝ 112a）的範圍**：**五個公開函式**（`cover_base_stem` /
+**PR1（112a）的範圍**：**五個公開函式**（`cover_base_stem` /
 `cover_candidates` / `resolve_cover_target` / `nfo_image_flag` /
-`same_target_verdict`）全部落地，但 **`resolve_cover_target` 是 stub**——本體無條件
-回傳同名候選，不檢查磁碟、不檢查 `external_manager`。三步規則（真正的解析政策）是
-T3（PR2，feature/112b）的範圍。
+`same_target_verdict`）全部落地，但當時 **`resolve_cover_target` 是 stub**——本體
+無條件回傳同名候選，不檢查磁碟、不檢查 `external_manager`。
+
+**T3（PR2，feature/112b）已把 stub 換成三步規則本體**：① 同名候選存在 → 沿用
+② fanart 候選存在 → 沿用 ③ 皆無 → `external_manager in STEM_IMAGE_MODES` ? fanart
+候選 : 同名候選（正向白名單，非法值 fail-closed 落到同名）。
 
 六個產出端推導點**已在本 PR 的 T2b 全部換成呼叫 `resolve_cover_target`**（純代換：
 stub 恆回同名 `.jpg`，逐字等價）；`scanner.py` 的 `_cover_base_stem` 已在 T2c 刪除
@@ -48,28 +49,27 @@ stub 恆回同名 `.jpg`，逐字等價）；`scanner.py` 的 `_cover_base_stem`
 > 過期敘述（單一真理來源的模組不該對自己的現況說謊），已更正。
 
 **`same_target_verdict` 的交棒清單（CD-112-8 說「所有」，此處是窮舉，勿再只列 3 處）**
-——全庫 `copy2(cover, *)` / `crop_to_poster(cover, *)` 共 **7 處**，目前只有前 2 處受保護：
+——全庫 `copy2(cover, *)` / `crop_to_poster(cover, *)` 原有 **7 處**，T3（112b）之後
+**6 處全部受保護、第 7 處（內聯實作）已消滅**：
 
 | 位置 | 動作 | 狀態 |
 |---|---|---|
-| `core/organizer.py:608` | `copy2` → fanart | ✅ 本 PR 已保護（preflight ＋ `SameFileError` backstop）|
-| `core/organizer.py:624` | `crop_to_poster` → poster | ✅ 本 PR 已保護（只有 preflight）|
-| `core/enricher.py:296` | `copy2` → fanart | ⬜ T3 |
-| `core/enricher.py:306` | `crop_to_poster` → poster | ⬜ T3（**原清單漏列**）|
-| `core/readonly_producer.py:764` | `copy2` → fanart | ⬜ T3 |
-| `core/readonly_producer.py:782` | `crop_to_poster` → poster | ⬜ T3（**原清單漏列**）|
-| `core/organizer.py:1165/1171` | `organize_file` 的**第三份內聯實作** | ⬜ T3（**任何清單都沒列過**）|
+| `core/organizer.py:608` | `copy2` → fanart | ✅ PR1 已保護（preflight ＋ `SameFileError` backstop）|
+| `core/organizer.py:624` | `crop_to_poster` → poster | ✅ PR1 已保護（只有 preflight）|
+| `core/enricher.py:300` | `copy2` → fanart | ✅ T3 已保護（preflight ＋ `SameFileError` backstop）|
+| `core/enricher.py:316` | `crop_to_poster` → poster | ✅ T3 已保護（只有 preflight）|
+| `core/readonly_producer.py:768` | `copy2` → fanart | ✅ T3 已保護（preflight ＋ `SameFileError` backstop）|
+| `core/readonly_producer.py:792` | `crop_to_poster` → poster | ✅ T3 已保護（只有 preflight）|
+| `core/organizer.py::organize_file` 的**第三份內聯實作** | 已改為呼叫 `generate_jellyfin_images` | ✅ T3 已消滅（不再是獨立實作，同檔保護 100% 繼承自上面兩列）|
 
-> ⚠️ **`organizer.py:1165` 是 T3 的具名地雷**：`cover_jpg` 現在來自
-> `resolve_cover_target`（`:1145`），而 `fanart_path` 仍由 `filename_base` 字面拼
-> （`:1156`）。T3 翻面後媒體伺服器模式下兩者**字串相等** → `copy2` 拋
-> `SameFileError` → 被既有 broad except 吞成「Fanart 複製失敗」，**原封不動重建
-> T2c 剛修掉的那個 bug**。plan §1.2 對這個內聯區塊的結論「用 `filename_base`，同樣
-> 安全」只對「反向推導」成立，對同檔別名不成立。
+`generate_jellyfin_images` 的呼叫端因此從 2 處變 3 處：`web/routers/scanner.py`
+（既有）、`core/readonly_producer.py::_write_media_images`（既有）、
+`core/organizer.py::organize_file`（T3 新增，見下方）。
 """
 
 import os
 
+from core.config import STEM_IMAGE_MODES
 from core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -114,15 +114,24 @@ def cover_candidates(base_stem: str) -> tuple[str, str]:
 def resolve_cover_target(base_stem: str, external_manager: str) -> str:
     """本次封面應該寫到哪 / 記帳該指哪（spec §2.1.1）。
 
-    **本 PR（T1）是 stub**：無條件回傳 `base_stem + COVER_EXT`，不檢查磁碟、不檢查
-    `external_manager`（該參數本 PR 完全不會被讀取，但簽名必須與最終版一致，
-    T3 只換函式本體、不改呼叫端簽名）。
+    三步規則（CD-112-3／CD-112-3b，T3 落地）：
+    ① `<base_stem>.jpg`（同名候選）已存在 → 沿用
+    ② `<base_stem>-fanart.jpg`（fanart 候選）已存在 → 沿用
+    ③ 皆無 → 依 flavour 新建：`external_manager in STEM_IMAGE_MODES` ? fanart 候選 : 同名候選
 
-    PR2（112b）會把本體換成三步規則；在此之前刻意維持改動前行為，讓 T2b 的代換可證明為零行為變更。
-    三步規則細節（T3 才落地，本 PR 不實作）：① 同名已存在 → 沿用 ② fanart 已存在 → 沿用
-    ③ 皆無 → external_manager in STEM_IMAGE_MODES ? fanart : 同名。
+    ①→② 的順序必須與 `find_cover_image` 的 L1 > L1.5 同序（CD-112-3），兩者都用
+    `cover_candidates` 的回傳順序，不自行重排。
+
+    ③ 用**正向白名單**（`BE-CONFIG-03`）：`external_manager` 在這條路徑上是純
+    `str`，不經 Pydantic `Literal` 驗證。非法值／大小寫不符／`None` 一律
+    fail-closed 落到「同名」（＝改動前行為），**不得寫成 `!= 'off'`**。
     """
-    return base_stem + COVER_EXT
+    same, fanart = cover_candidates(base_stem)
+    if os.path.exists(same):
+        return same
+    if os.path.exists(fanart):
+        return fanart
+    return fanart if external_manager in STEM_IMAGE_MODES else same
 
 
 def nfo_image_flag(base_stem: str, suffix: str, wrote_this_run: bool) -> bool:

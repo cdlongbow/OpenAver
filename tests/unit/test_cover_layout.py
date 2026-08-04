@@ -1,20 +1,21 @@
-"""TASK-112-T1: `core/cover_layout.py` 四個公開函式的落地測試。
+"""TASK-112-T1/T3: `core/cover_layout.py` 五個公開函式的落地測試。
 
-⚠️ **範圍警語**：`resolve_cover_target` 本 PR 是 stub（無條件回 `<stem>.jpg`），本檔
-只鎖「stub 契約」——不論 `external_manager`、不論磁碟狀態皆恆回同名候選，且
-`os.path.exists` 從未被呼叫。**20 格差異化真值表（真正的三步規則）在 T3（PR2，
-feature/112b），這裡刻意不測、也測不出來**——本檔的 stub 測試涵蓋 28 個
-parametrize case（7 個 `external_manager` 值 × 4 種磁碟狀態，DoD 下限為 20）
-只是為了證明「真的無條件」而非「巧合結果一樣」，不是提前驗收 T3 的行為。
+`resolve_cover_target` 自 T3（PR2，feature/112b）起是三步規則本體（CD-112-3／
+CD-112-3b，§6.4）：① `<stem>.jpg` 存在 → 沿用 ② `<stem>-fanart.jpg` 存在 → 沿用
+③ 皆無 → `external_manager in STEM_IMAGE_MODES` ? fanart 候選 : 同名候選（正向
+白名單，非法值 fail-closed）。三步規則下①②兩步必須呼叫 `os.path.exists`——
+`TestResolveCoverTargetThreeStepRule` 鎖的是這個真值表本身，共 28 個 parametrize
+case（7 個 `external_manager` 值 × 4 種磁碟狀態）＋另補 `None` 一格。
 
-`cover_base_stem` / `cover_candidates` / `nfo_image_flag` 三者是最終版，本檔的測試
-即為正式驗收（非 stub 契約）。
+`cover_base_stem` / `cover_candidates` / `nfo_image_flag` / `same_target_verdict`
+四者是最終版，本檔的測試即為正式驗收。
 """
 
 import os
 
 import pytest
 
+from core.config import STEM_IMAGE_MODES
 from core.cover_layout import (
     COVER_EXT,
     cover_base_stem,
@@ -146,9 +147,11 @@ class TestCoverCandidates:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# resolve_cover_target — stub 契約：7 個 external_manager 值
-#   × {兩候選皆無, 只有同名, 只有 fanart, 兩者皆在} = 28 格，恆回 <stem>.jpg
-#   且 os.path.exists 從未被呼叫（monkeypatch 佐證，非巧合結果）
+# resolve_cover_target — 三步規則本體（T3，CD-112-3／CD-112-3b）：7 個
+#   external_manager 值 × {兩候選皆無, 只有同名, 只有 fanart, 兩者皆在} = 28 格，
+#   ＋另補 external_manager=None（neither 態）一格。①②兩步必須呼叫
+#   os.path.exists（透過 cover_candidates 給的兩個候選路徑）——與 T1 的 stub
+#   「零 I/O」契約互斥，故不再用 monkeypatch 擋 os.path.exists。
 # ──────────────────────────────────────────────────────────────────────────
 
 _EXTERNAL_MANAGERS = ['off', 'jellyfin', 'emby', 'kodi', 'plex', '', 'JELLYFIN']
@@ -161,7 +164,7 @@ _DISK_STATES = [
 
 
 def _make_disk_state(tmp_path, base_stem, state):
-    """依 state 在 tmp_path 底下造出對應候選檔案（stub 不應該去讀它們）。"""
+    """依 state 在 tmp_path 底下造出對應候選檔案。"""
     same = base_stem + '.jpg'
     fanart = base_stem + '-fanart.jpg'
     if state in ('same_name_only', 'both'):
@@ -170,23 +173,61 @@ def _make_disk_state(tmp_path, base_stem, state):
         open(fanart, 'w').close()
 
 
-class TestResolveCoverTargetStubContract:
+def _expected_target(base_stem, external_manager, disk_state):
+    """依三步規則（§6.4）逐格推算預期值，供下面的 parametrize 案例比對。
+
+    ①同名候選存在 / ④both（同名也存在，① 優先）→ 同名；②只有 fanart 候選存在
+    → fanart；③兩者皆無 → 依 flavour 新建（白名單內 → fanart，否則 fail-closed
+    回同名）。順序必須是「先看磁碟狀態，磁碟已決定就不看 external_manager」——
+    這正是 CD-112-3 的防彈跳鎖（`both` 態不論 flavour 一律回同名）。
+    """
+    same = base_stem + '.jpg'
+    fanart = base_stem + '-fanart.jpg'
+    if disk_state in ('same_name_only', 'both'):
+        return same
+    if disk_state == 'fanart_only':
+        return fanart
+    # disk_state == 'neither'：③ 依 flavour 新建，正向白名單、非法值 fail-closed
+    return fanart if external_manager in STEM_IMAGE_MODES else same
+
+
+class TestResolveCoverTargetThreeStepRule:
+    """鎖三步規則（CD-112-3／CD-112-3b，§6.4）本體，取代 T1 的 stub 契約測試。
+
+    原本這裡鎖的是「stub 恆回同名、且 os.path.exists 從未被呼叫」——T3 把
+    `resolve_cover_target` 從 stub 換成三步規則之後，①②兩步必須呼叫
+    `os.path.exists`（透過 `cover_candidates` 給的兩個候選路徑），舊有的
+    `_boom` monkeypatch 守衛與新規格互斥，因此整支改寫（class 改名，不再叫
+    `StubContract`）。沿用既有的 `_EXTERNAL_MANAGERS` / `_DISK_STATES` 兩條軸
+    與 `_make_disk_state` helper——三步規則需要的磁碟狀態建檔邏輯與 stub 版本
+    相同，不重寫。
+    """
+
     @pytest.mark.parametrize('external_manager', _EXTERNAL_MANAGERS)
     @pytest.mark.parametrize('disk_state', _DISK_STATES)
-    def test_stub_always_returns_same_name_candidate(
-        self, tmp_path, monkeypatch, external_manager, disk_state
+    def test_three_step_rule_28_cells(
+        self, tmp_path, external_manager, disk_state
     ):
         base_stem = str(tmp_path / 'ABC-123')
         _make_disk_state(tmp_path, base_stem, disk_state)
 
-        def _boom(_path):
-            raise AssertionError(
-                'resolve_cover_target stub must not call os.path.exists'
-            )
-
-        monkeypatch.setattr(os.path, 'exists', _boom)
-
         result = resolve_cover_target(base_stem, external_manager)
+
+        assert result == _expected_target(base_stem, external_manager, disk_state)
+
+    def test_none_external_manager_neither_state_fails_closed_to_same_name(
+        self, tmp_path
+    ):
+        """補 `None` 一格（config 缺 key 時的實際型別，既有軸沒有）。
+
+        `neither` 態下 `external_manager=None` 不在 `STEM_IMAGE_MODES` 白名單內，
+        必須 fail-closed 落到「同名」——與 `plex`/`''`/`JELLYFIN` 三個非法值在
+        `neither` 態的結論一致（那三格已由上面的 28 格參數化案例涵蓋）。
+        """
+        base_stem = str(tmp_path / 'ABC-123')
+        _make_disk_state(tmp_path, base_stem, 'neither')
+
+        result = resolve_cover_target(base_stem, None)
 
         assert result == base_stem + '.jpg'
 
