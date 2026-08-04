@@ -3014,3 +3014,69 @@ class TestGenerateAvlistFocalTrigger:
             f"{mock_submit.call_args_list}"
         )
         assert mock_submit.call_args[0][0] == "SIRO-1234"
+
+
+class TestJellyfinFanartCoverSelfHealRoundTrip:
+    """TASK-112-T2c 端到端回歸鎖：DB `cover_path` 指向 `<stem>-fanart.jpg` 的片
+    （外部庫掃描 find_cover_image L1.5 命中即如此）。P0-2c 修好後，
+    /jellyfin-update 補齊該片時不應留下誤導性的「fanart 複製失敗」SSE 警告
+    （fanart == cover 本來就是同一個檔案，內容已經對了），且補完後再
+    /jellyfin-check 一次必須回 0（poster 已補齊，fanart 本來就存在）。
+
+    真跑（不 mock check_jellyfin_images_needed / generate_jellyfin_images），
+    仿 TestJellyfinUpdateStationWiring._run_station4 的手法：真 DB row +
+    真封面檔 + external_manager='jellyfin'（不能是 'off'，會被 CD-111-2 gate 擋掉）。
+    """
+
+    @pytest.fixture(autouse=True)
+    def reset_jellyfin_cache(self):
+        import web.routers.scanner as scanner_mod
+        scanner_mod._jellyfin_cache_result = None
+        scanner_mod._jellyfin_cache_time = 0
+        yield
+        scanner_mod._jellyfin_cache_result = None
+        scanner_mod._jellyfin_cache_time = 0
+
+    def test_update_then_check_returns_zero_no_false_warning(self, client, tmp_path, monkeypatch):
+        from PIL import Image
+        from core.database import init_db, VideoRepository, Video
+        from web.routers.scanner import generate_jellyfin_images_stream
+
+        movie_dir = tmp_path / "ABC-123"
+        movie_dir.mkdir()
+        # cover_path 本身就是 -fanart.jpg（外部庫掃描 L1.5 命中情境），沒有另一張獨立封面
+        cover = movie_dir / "ABC-123-fanart.jpg"
+        Image.new("RGB", (800, 538), color=(128, 64, 32)).save(str(cover), "JPEG")
+
+        db_path = tmp_path / "t.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+        video_uri = to_file_uri(str(movie_dir / "ABC-123.mp4"))
+        cover_uri = to_file_uri(str(cover))
+        repo.upsert_batch([
+            Video(path=video_uri, mtime=1.0, number="ABC-123", maker="Test Maker",
+                  cover_path=cover_uri),
+        ])
+
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
+        monkeypatch.setattr(
+            "web.routers.scanner.load_config",
+            lambda: {"scraper": {"external_manager": "jellyfin"}, "gallery": {"path_mappings": {}}},
+        )
+
+        events = list(generate_jellyfin_images_stream())
+        assert any('"type": "done"' in e for e in events), f"SSE 應完成: {events}"
+        assert not any("fanart 複製失敗" in e for e in events), (
+            f"fanart == cover 時不應誤報「fanart 複製失敗」: {events}"
+        )
+
+        poster_path = movie_dir / "ABC-123-poster.jpg"
+        assert poster_path.exists(), "poster 應已補齊"
+
+        response = client.get("/api/gallery/jellyfin-check")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["need_update"] == 0, (
+            f"補齊後再 check 一次必須回 0，實得: {data}"
+        )

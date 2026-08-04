@@ -36,6 +36,7 @@ from fastapi.responses import StreamingResponse, HTMLResponse, Response, FileRes
 from starlette.background import BackgroundTask
 
 from core.gallery_scanner import VideoScanner, fast_scan_directory, VideoInfo, _run_sample_images_cleanup_pass  # noqa: PLC2701 — scanner 的 rescan 端點需要在特定時機主動觸發 gallery_scanner 內部的樣本圖清理 pass（該 pass 平常只在 scanner 自身流程內被呼叫），避免把整段清理邏輯複製一份到 router 層
+from core.cover_layout import cover_base_stem
 from core.video_extensions import get_proxy_extensions, get_video_extensions
 from core.gallery_generator import HTMLGenerator
 from core.path_utils import to_file_uri, is_path_under_dir, uri_to_fs_path, coerce_to_file_uri, uri_to_local_fs_path
@@ -1645,16 +1646,6 @@ def get_actress_stats(name: str = Query(..., description="女優名稱")):
 
 # === Jellyfin 圖片批次補齊 ===
 
-def _cover_base_stem(cover_fs: str) -> str:
-    """從封面路徑取得 base stem，移除 -poster / -fanart 後綴避免重複"""
-    stem = os.path.splitext(cover_fs)[0]
-    for suffix in ('-poster', '-fanart'):
-        if stem.endswith(suffix):
-            stem = stem[:-len(suffix)]
-            break
-    return stem
-
-
 def check_jellyfin_images_needed(repo: VideoRepository, path_mappings: dict = None) -> dict:
     """檢查 DB 中有多少影片缺少 poster/fanart"""
     videos = repo.get_all()
@@ -1665,7 +1656,7 @@ def check_jellyfin_images_needed(repo: VideoRepository, path_mappings: dict = No
         cover_fs = uri_to_local_fs_path(v.cover_path, path_mappings)
         if not os.path.exists(cover_fs):
             continue
-        base_stem = _cover_base_stem(cover_fs)
+        base_stem = cover_base_stem(cover_fs)
         poster = base_stem + '-poster.jpg'
         fanart = base_stem + '-fanart.jpg'
         if not os.path.exists(poster) or not os.path.exists(fanart):

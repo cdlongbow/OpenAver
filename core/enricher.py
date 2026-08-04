@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from core.config import STEM_IMAGE_MODES
+from core.cover_layout import resolve_cover_target
 from core.database import Video, VideoRepository, get_connection
 from core.enrich_contract import (
     EnrichResult,
@@ -224,6 +225,7 @@ def _write_cover(
     cover_url: str,
     write_cover: bool,
     overwrite_existing: bool,
+    external_manager: str = "off",
 ) -> bool:
     # write_cover=False 先短路，避免對「不寫封面」的片多做一次 os.path.exists
     # （逐位元組對齊 T2 前行為）；exists/overwrite 保留判斷仍走共用 should_preserve_cover。
@@ -232,7 +234,7 @@ def _write_cover(
     if not cover_url:
         return False
 
-    cover_path = str(Path(fs_path).with_suffix(".jpg"))
+    cover_path = resolve_cover_target(str(Path(fs_path).with_suffix("")), external_manager)
     if should_preserve_cover(write_cover, overwrite_existing, os.path.exists(cover_path)):
         return False
 
@@ -261,7 +263,7 @@ def _write_external_images(
     if external_manager == "off":
         return {"poster": False, "fanart": False}
 
-    cover_path = Path(fs_path).with_suffix(".jpg")
+    cover_path = Path(resolve_cover_target(str(Path(fs_path).with_suffix("")), external_manager))
     stem = str(cover_path.with_suffix(""))  # 去副檔名的完整路徑前綴
 
     # 依模式決定目標路徑（jellyfin / emby 與 kodi 均使用 stem 長格式）
@@ -460,7 +462,7 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
             fs_path=fs_path,
             cover_url=cover_url,
             write_cover=write_cover,
-            overwrite_existing=overwrite_existing,
+            overwrite_existing=overwrite_existing, external_manager=external_manager,  # 兩個 kwarg 刻意併行：enrich_single 的規模閘 baseline(249) 零頭寸，拆成兩行會直接超標（CD-112-13）
         )
         imgs = _write_external_images(
             fs_path=fs_path,
@@ -523,7 +525,7 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
     # DB upsert 在寫檔後執行，才能知道本地封面路徑
     # db_to_sidecar 不打 scraper 也不更新 DB（metadata 不變）
     if mode in ("refresh_full", "fill_missing") and source_used not in ("db", "nfo", ""):
-        local_cover = str(Path(fs_path).with_suffix(".jpg")) if cover_written else ""
+        local_cover = resolve_cover_target(str(Path(fs_path).with_suffix("")), external_manager) if cover_written else ""
         nfo_path = Path(fs_path).with_suffix(".nfo")
         nfo_mtime = nfo_path.stat().st_mtime if nfo_path.exists() else 0.0
         # wrapper callsite decision point; helper itself: enforced at callsites
@@ -715,7 +717,7 @@ def fetch_samples_only(
     )
 
 
-def resolve_nfo_cover_paths(file_path: str, path_mappings: dict = None) -> tuple:
+def resolve_nfo_cover_paths(file_path: str, path_mappings: dict = None, external_manager: str = "off") -> tuple:
     """由影片 file_path 推導目標 NFO / cover 的 FS 路徑。
 
     復用 enrich_single / _write_nfo / _write_cover 的同一套路徑邏輯：
@@ -727,11 +729,18 @@ def resolve_nfo_cover_paths(file_path: str, path_mappings: dict = None) -> tuple
     （web/routers/scraper.py enrich_single_endpoint）靠本函數判斷檔案是否已存在。
     若 writer 改了 cover 命名（poster.jpg / .png / fanart 等）或 fs_path 推導，
     本函數要一起改，否則守衛會悄悄檢查錯路徑（false-allow 重現分裂 / false-block 打爆缺封面 quick-enrich）。
+
+    external_manager 預設 `"off"` 只是參數預設值（呼叫端未傳時的 fallback）——本函式的
+    唯一呼叫端 `web/routers/scraper.py`（refresh_full + overwrite_existing=false 分裂守衛）
+    已在 T2c pre-merge P2-5 改為傳入真值。**在 `resolve_cover_target` 仍是 T1 stub 的
+    現況下傳真值是無行為差異的**（stub 完全不讀這個參數），這裡提前接線只是讓 T3
+    三步規則落地時零呼叫端改動即可生效，避免留一段「簽名已加、呼叫端仍傳預設值」
+    的窗口期看起來像已接線卻沒有。
     """
     try:
         fs_path = uri_to_local_fs_path(file_path, path_mappings)
     except Exception:
         fs_path = file_path
     nfo_path = str(Path(fs_path).with_suffix(".nfo"))
-    cover_path = str(Path(fs_path).with_suffix(".jpg"))
+    cover_path = resolve_cover_target(str(Path(fs_path).with_suffix("")), external_manager)
     return nfo_path, cover_path

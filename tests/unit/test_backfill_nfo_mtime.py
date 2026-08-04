@@ -116,3 +116,32 @@ class TestBackfillReadonlyNfoMtime:
         assert second == 0
         row = repo.get_by_path(video_uri)
         assert row.nfo_mtime == healed_mtime
+
+
+class TestBackfillReadonlyNfoMtimeFanartCover:
+    """P0-1（TASK-112-T2c）：cover_path 指向 `<stem>-fanart.jpg` 時，NFO 推導不得再用
+    `Path(cover_fs).with_suffix('.nfo')`（會推出永不存在的 `<stem>-fanart.nfo`），
+    必須用 `cover_base_stem(cover_fs) + '.nfo'` 剝掉 -fanart 後綴才能找到真正的 `<stem>.nfo`。
+    """
+
+    def test_heals_row_with_fanart_cover(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+
+        # 外部庫掃描情境：DB cover_path 記成 -fanart.jpg（find_cover_image L1.5 命中）
+        cover_fs = tmp_path / "TEST-006-fanart.jpg"
+        cover_fs.write_bytes(b"fake-jpg")
+        nfo_fs = tmp_path / "TEST-006.nfo"
+        nfo_fs.write_text("<movie></movie>")
+
+        cover_uri = to_file_uri(str(cover_fs), {})
+        video_uri = to_file_uri(str(tmp_path / "TEST-006.mp4"), {})
+        repo.upsert(_make_video(video_uri, cover_path=cover_uri, nfo_mtime=0.0))
+
+        healed = backfill_readonly_nfo_mtime(db_path=db_path, path_mappings={})
+
+        assert healed == 1
+        row = repo.get_by_path(video_uri)
+        assert row.nfo_mtime == nfo_fs.stat().st_mtime
+        assert row.nfo_mtime > 0

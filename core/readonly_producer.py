@@ -25,6 +25,7 @@ from typing import Callable, Optional
 
 from core import thumbnail_cache
 from core.config import STEM_IMAGE_MODES, iter_gallery_sources, normalize_external_manager
+from core.cover_layout import resolve_cover_target
 from core.database import Video, get_db_path
 from core.enrich_contract import (
     EnrichResult,
@@ -883,7 +884,8 @@ def _write_movie_assets(
     base_stem = str(Path(movie_dir) / base)
 
     # 1) Cover: 3-state strategy (CD-104-2) — see docstring above.
-    cover_fs = base_stem + '.jpg'
+    external_manager = normalize_external_manager(config.get('external_manager', 'off'))
+    cover_fs = resolve_cover_target(base_stem, external_manager)
     strategy_kind = cover_strategy[0]
     if strategy_kind == 'copy':
         try:
@@ -898,7 +900,6 @@ def _write_movie_assets(
         has_cover = bool(remote_url) and download_image(remote_url, cover_fs)
 
     # 2) poster/fanart — media-server flavours only (CD-111-2 fail-closed whitelist); off produces none, matching non-readonly parity.
-    external_manager = normalize_external_manager(config.get('external_manager', 'off'))
     if has_cover and external_manager in STEM_IMAGE_MODES:
         raw_source_media = (
             cover_strategy[2]

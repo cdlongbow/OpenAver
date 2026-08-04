@@ -14,6 +14,7 @@ from PIL import Image
 from typing import Optional, Dict, Any, List, Tuple
 
 from core.config import STEM_IMAGE_MODES
+from core.cover_layout import resolve_cover_target, same_target_verdict
 from core.path_utils import normalize_path, is_fs_path_under_dir
 from core.scrapers.utils import has_chinese, check_subtitle, strip_subtitle_markers, normalize_number_impl
 from core.focal import requires_face_detection, detect_focal
@@ -541,22 +542,86 @@ def generate_jellyfin_images(cover_path: str, base_stem: str, number: str = '', 
     Args:
         cover_path: 封面圖片的完整檔案系統路徑
         base_stem: 目標檔名 stem（不含副檔名，已移除 -poster/-fanart 後綴）
+
+    同檔情境（CD-112-8 / feature/112 T2c；Codex PR review 三輪 P1 逐步收斂而成）
+    ——**兩個 slot 都必須先用 `cover_layout.same_target_verdict()` preflight，
+    絕不可只靠底層函式自己的同檔偵測**：
+
+    - **共同的 preflight（`same_target_verdict`）**：字串相等 **或**
+      `os.path.samefile`；回傳 `(is_same, certain)` 雙訊號（Stage 2 review P1，
+      2026-08-04，推翻前身 `is_same_target` 單一布林設計）——`is_same` 決定
+      要不要跳過寫入，`certain` 決定能不能把這格宣稱成功。**未知 `OSError`
+      （權限被拒／網路磁碟逾時／短暫 I/O 錯誤）時 `is_same=True, certain=False`**：
+      寧可少產一張衍生圖也不冒毀損原檔的險，但同時**不得謊報成功**——`result[...]`
+      必須落在 `certain`，不能不分青紅皂白地落在 `is_same`（理由見該函式
+      docstring：混成同一個布林時，未知錯誤會被 `readonly_producer.py` 轉成
+      `generate_nfo(has_poster=True, ...)`，NFO 寫出指向不存在檔案的懸空 tag；
+      `_clean_stale_singletons` 也會因此把舊檔當「已被新檔取代」而刪掉，兩者
+      同時發生就是「新的沒產出、舊的被砍」的洞）。
+
+    - **fanart（`copy2`）**：preflight 判定「不同檔」之後**另加**
+      `except shutil.SameFileError`，承接「preflight 通過之後、`copy2` 執行之前
+      才變成同檔」的 race。
+      ⚠️ **`SameFileError` 不能取代 preflight**（Codex PR review 第三輪 P1，已實測
+      重現）：`shutil.copyfile` 靠 `shutil._samefile()` 判同檔，而後者
+      （`/usr/lib/python3.12/shutil.py:214`）把 `os.path.samefile` 的**任何
+      `OSError` 吞掉並回傳 `False`** → `copyfile` 照常往下走、以 `'wb'` 開啟 dst
+      → **截斷共用的 inode**。實測：hardlink 別名 + `samefile` 拋 `PermissionError`
+      → 封面 **7427 bytes → 0 bytes**，而回傳值仍是 `fanart: True`。
+      也就是說 `SameFileError` 只保護「`samefile()` 成功辨識出同檔」那一種情況，
+      未知錯誤下它完全不會被觸發。
+
+    - **poster（`crop_to_poster`）**：只有 preflight，**沒有** race backstop——
+      `crop_to_poster` 不是單純複製，是**讀了就地裁切存檔**，不會拋「動作前失敗」
+      的訊號；src/dst 同檔時它會直接把裁切結果寫回同一個檔案（實測
+      800×538 → 379×538、md5 改變），沒有事後補救的可能，直接違反 prd.md
+      技術決策 #6 承重牆「衍生產物不回寫原檔」。
+      可達路徑：外部庫某片只有 `<stem>-poster.jpg` → `find_cover_image` L1 miss、
+      L1.5 命中 `-poster`（`core/gallery_scanner.py:499`）→ DB `cover_path` 指向該檔；
+      或外部庫工具（MDCX/Javinizer 等）把 `<stem>-poster.jpg` 建成 `<stem>.jpg` 的
+      hardlink／symlink，DB `cover_path` 仍指向 `<stem>.jpg`，字串因此不相等。
+
+    **兩側的差別只在 race backstop，不在 preflight**：`copy2` 有「動作前失敗」的
+    訊號可以補接，`crop_to_poster` 沒有。**不要把任一側的 preflight 拿掉**——
+    本函式在 review 過程中曾經把 fanart 的 preflight 拔掉、只留 `SameFileError`，
+    當場被上面那條 0-byte 毀損打回。
     """
     result = {'fanart': False, 'poster': False}
 
     fanart_path = base_stem + '-fanart.jpg'
     poster_path = base_stem + '-poster.jpg'
 
-    # fanart = 原圖複製
-    try:
-        shutil.copy2(cover_path, fanart_path)
-        result['fanart'] = True
-        result['fanart_path'] = fanart_path
-    except Exception as e:
-        logger.warning(f"[!] generate_jellyfin_images fanart 複製失敗: {e}")
+    # fanart = 原圖複製。preflight（same_target_verdict）不可省——shutil 內部的
+    # _samefile() 會把 os.path.samefile 的未知 OSError 吞成 False 並照常寫入，
+    # 對同 inode 別名會截斷原檔（見上方 docstring「同檔情境」段落的實測）。
+    # SameFileError 只是 preflight 之後才變成同檔的 race backstop，不是替代品；
+    # 它繼承 OSError/Exception，必須排在 except Exception 之前才不會被吃掉。
+    is_same, certain = same_target_verdict(cover_path, fanart_path)
+    if is_same:
+        # 只有確定同檔（certain=True）才敢宣稱成功；未知 OSError 之下 is_same
+        # 仍是 True（跳過寫入），但 certain=False，result['fanart'] 老實回 False。
+        result['fanart'] = certain
+        if certain:
+            result['fanart_path'] = fanart_path
+    else:
+        try:
+            shutil.copy2(cover_path, fanart_path)
+            result['fanart'] = True
+            result['fanart_path'] = fanart_path
+        except shutil.SameFileError:
+            result['fanart'] = True
+            result['fanart_path'] = fanart_path
+        except Exception as e:
+            logger.warning(f"[!] generate_jellyfin_images fanart 複製失敗: {e}")
 
-    # poster = 裁切
-    if crop_to_poster(cover_path, poster_path, number=number, maker=maker):
+    # poster = 裁切；src/dst 同檔（字串相等或 inode 別名）代表這張本來就是 poster，
+    # 不該再裁一次（絕不可就地寫）
+    is_same, certain = same_target_verdict(cover_path, poster_path)
+    if is_same:
+        result['poster'] = certain
+        if certain:
+            result['poster_path'] = poster_path
+    elif crop_to_poster(cover_path, poster_path, number=number, maker=maker):
         result['poster'] = True
         result['poster_path'] = poster_path
 
@@ -1077,7 +1142,7 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
         # 下載封面（檔名跟隨影片命名）
         img_url = metadata.get('cover', '')
         if img_url:
-            cover_path = os.path.join(target_dir, filename_base + '.jpg')
+            cover_path = resolve_cover_target(os.path.join(target_dir, filename_base), ext_mode)
             if download_image(img_url, cover_path):
                 result['cover_path'] = cover_path
 

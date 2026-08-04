@@ -490,13 +490,20 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
     # 故不得計入「保證會寫 sidecar」；補劇照請用 /api/scraper/fetch-samples（Codex PR#47 round-2 P2）。
     # 在 try 之前 raise，避免被下方 except Exception 吞成籠統 200。
     if request.mode == "refresh_full" and not request.overwrite_existing:
-        nfo_path, cover_path = resolve_nfo_cover_paths(request.file_path, path_mappings)
+        # 72d-P2A：外部圖寫出機會也是合法的寫出路徑（72b-T6 加入 external_manager 後守衛未同步）
+        # P2-5（feature/112a Stage 2 review）：resolve_nfo_cover_paths 的 external_manager
+        # 參數 T3 之前是 stub（resolve_cover_target 不讀它），但提前於此傳真值——
+        # 一來讓 T3 三步規則落地時零呼叫端改動即可生效，二來避免留一段「簽名已加、
+        # 呼叫端仍傳預設值」的窗口期看起來像已接線。上移到 resolve_nfo_cover_paths
+        # 呼叫之前，純屬計算順序調整，不改變下面既有邏輯。
+        external_manager = config.get("scraper", {}).get("external_manager", "off")
+        nfo_path, cover_path = resolve_nfo_cover_paths(
+            request.file_path, path_mappings, external_manager
+        )
         will_write_nfo = request.write_nfo and not os.path.exists(nfo_path)
         will_write_cover = not should_preserve_cover(
             request.write_cover, request.overwrite_existing, os.path.exists(cover_path)
         )
-        # 72d-P2A：外部圖寫出機會也是合法的寫出路徑（72b-T6 加入 external_manager 後守衛未同步）
-        external_manager = config.get("scraper", {}).get("external_manager", "off")
         if external_manager != "off":
             stem = os.path.splitext(uri_to_local_fs_path(request.file_path, path_mappings))[0]
             poster_path = stem + "-poster.jpg"
