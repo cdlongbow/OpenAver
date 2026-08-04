@@ -1140,6 +1140,75 @@ class TestContractTableB_Enricher:
                axes=("off", "none", False))
 
     # ------------------------------------------------------------------
+    # B-off-2（pre-merge Stage 2 P1，補真格子）：既有 {stem}-fanart.jpg
+    # （無同名 .jpg），off flavour，ovw=False
+    # ------------------------------------------------------------------
+    def test_B_off_2_existing_fanart_only_preserves_no_second_download(self, tmp_path, seed_crop_mode):
+        """B-off-2（pre-merge Stage 2 P1 補格）｜off／既有 `{stem}-fanart.jpg`
+        （無同名 `.jpg`）／ovw=False。
+
+        這一格鎖的是 `resolve_cover_target` 第②步**刻意不看 flavour**這個設計
+        （spec §2.1.1「既有片沿用它現在的位置」，見 AC2 加註）：`KNOWN_UNCOVERED`
+        原本以「`resolve_cover_target` 在 off 恆回同名 `.jpg`」為由把 off ×
+        全部既有封面狀態整組排除——**該理由對這個磁碟佈局是假的**，第①②步完全
+        不讀 `external_manager`，只有第③步（兩候選皆不存在時的新建）才看
+        flavour。off 在這個佈局下與 jellyfin（見 B-jf-4）走的是同一條 preserve
+        路徑，差別只在 `_write_external_images` 的 off 早退不補 poster。
+
+        實測（不是推理）：`resolve_cover_target(base_stem, 'off')` 在
+        `-fanart.jpg` 存在、同名 `.jpg` 不存在時回傳 `-fanart.jpg`（第②步命中）
+        → preserve gate 命中 → 零下載（`mock_get.call_count == 0`）、不寫第二份
+        底圖、既有 `-fanart.jpg` bytes 原樣不動、DB `cover_path` 維持 pre_stage
+        種的空字串（`cover_written=False` → `_db_upsert` 的 `local_cover_path`
+        恆空）、`crop_mode` 不被重置。
+
+        NFO 三 tag 的懸空邊界（AC7 具名邊界③）：off 分支的
+        `_write_external_images` 對 `external_manager == 'off'` 直接早退回
+        `{"poster": False, "fanart": False}`（enricher.py:262-264，不管磁碟上
+        是否已有 `-fanart.jpg`）→ `has_poster=has_fanart=False` →
+        `generate_nfo` 三個 tag 全部退回指向 `{stem}.jpg`——**該檔並不存在**，
+        三 tag 皆懸空。這是已知且刻意接受的邊界（見 AC7 加註），不是本格要修的
+        對象；本格斷言的是這個懸空的**實際字面值**，不是「不應該懸空」。"""
+        number = "BOFF2-001"
+        fanart_bytes_box: dict = {}
+
+        def _stage(repo, video_dir, db_key, number_):
+            stem = number_
+            fanart = video_dir / f"{stem}-fanart.jpg"
+            _write_jpeg(fanart, color=(40, 41, 42))
+            fanart_bytes_box["pre_stage"] = fanart.read_bytes()
+            repo.upsert(Video(path=db_key, number=number_, title="Old", maker="OldMaker",
+                               cover_path=""))
+            assert seed_crop_mode(repo, db_key, "manual") is True
+
+        ctx = self._run(tmp_path, "b_off_2", external_manager="off", number=number,
+                         pre_stage=_stage)
+        stem = ctx.video_file.stem
+        fanart = ctx.video_dir / f"{stem}-fanart.jpg"
+        assert ctx.mock_get.call_count == 0, (
+            "resolve_cover_target 第②步不看 flavour，off 也認得既有 -fanart.jpg → preserve 命中，不下載"
+        )
+        assert fanart.exists()
+        assert fanart.read_bytes() == fanart_bytes_box["pre_stage"], "既有 fanart 內容不被覆寫（沿用）"
+        assert not (ctx.video_dir / f"{stem}.jpg").exists(), "不寫第二份底圖（沿用既有 fanart 當 canonical）"
+        assert not (ctx.video_dir / f"{stem}-poster.jpg").exists(), (
+            "off 分支的 _write_external_images 早退，不裁 poster（與 jellyfin 版 B-jf-4 刻意相反）"
+        )
+        nfo = ctx.video_dir / f"{stem}.nfo"
+        # has_poster=has_fanart=False（off 早退，不看磁碟）→ 三 tag 全退回
+        # {stem}.jpg，且該檔不存在——刻意接受的懸空邊界（AC7 具名邊界③）。
+        tags = _assert_nfo_tags_exist(nfo, {"poster": False, "thumb": False, "fanart": False})
+        assert tags["poster"] == tags["thumb"] == tags["fanart"] == f"{stem}.jpg", (
+            "off 早退 → has_poster=has_fanart=False → 三 tag 退回同名 .jpg 字面值（該檔不存在）"
+        )
+        row = ctx.repo.get_by_path(ctx.db_key)
+        assert row.cover_path == "", "DB 不變（維持 pre_stage 種的空字串，本次未寫入新封面）"
+        assert row.crop_mode == "manual", "cover_written=False → 不重置焦點"
+
+    _register(TABLE_B_CELLS, "B-off-2", flips_after_t3=True, truth_table_ref="off-not-in-table",
+               axes=("off", "fanart_layout", False))
+
+    # ------------------------------------------------------------------
     # B-jf-1 / B-emby-1 / B-kodi-1 (Table1#1 + membership 回歸)
     # ------------------------------------------------------------------
     def _assert_cell1(self, tmp_path, name, manager, number, overwrite_existing=False):
@@ -1477,16 +1546,27 @@ def _b_known_uncovered(cell_id: str, axes: tuple, reason: str):
     TABLE_B_KNOWN_UNCOVERED_AXES.add(axes)
 
 
-# off：同表 A 理由，§0.3 legend「off 不入表」——resolve_cover_target 在 off 恆回
-# 同名 .jpg，衍生圖 off no-op，改動前後逐位元組相同，B-off-1 已覆蓋此機制。
+# off：§0.3 legend「off 不入表」——但排除清單不得建立在「resolve_cover_target
+# 在 off 恆回同名 .jpg」這個假前提上（⚠️ T9 erratum，pre-merge Stage 2 P1：
+# 該句為假。三步規則第①②步完全不讀 external_manager，只有第③步——兩候選皆
+# 不存在時的新建——才依 flavour 分流。off 與 jellyfin/emby/kodi 在①②步走的是
+# 同一段程式碼，差別僅在第③步新建落點、以及 _write_external_images 的 off
+# 早退不補 poster/fanart。`fanart_layout`／`ovw=False` 這格已由 B-off-2
+# 實測覆蓋、移出本清單；其餘 off 組合維持未涵蓋，理由改寫如下）。
 for _cover in _TABLE_B_C_COVER_STATES:
     for _ovw in (False, True):
         if _cover == "none" and _ovw is False:
             continue  # B-off-1
+        if _cover == "fanart_layout" and _ovw is False:
+            continue  # B-off-2（pre-merge Stage 2 P1 補格）
         _b_known_uncovered(
             f"B-off-{_cover}-{_ovw}", ("off", _cover, _ovw),
-            "off 模式全域不入表（plan-112 §0.3 legend），機制已由 B-off-1 驗證，"
-            "理由同表 A 對應條目。",
+            "off 模式除 B-off-1／B-off-2 已實測覆蓋的兩格外，其餘既有封面狀態 × "
+            "overwrite 組合未逐格驗證。resolve_cover_target 第①②步（同名／既有 "
+            "fanart 沿用）不讀 flavour，機制已由 B-off-1（無既有封面 → 第③步新建）"
+            "與 B-off-2（既有 -fanart.jpg → 第②步沿用）代表性覆蓋；同名 .jpg 既有"
+            "（含缺衍生圖／ovw=True 等組合）走的是同一段第①步程式碼，理由同表 A "
+            "對應條目，未另立格子。",
         )
 
 # jellyfin：ovw=True 的其餘既有封面狀態（除 same_name_full，已由 B-jf-5 覆蓋）。
