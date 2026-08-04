@@ -14,6 +14,7 @@ from PIL import Image
 from typing import Optional, Dict, Any, List, Tuple
 
 from core.config import STEM_IMAGE_MODES
+from core.cover_layout import resolve_cover_target
 from core.path_utils import normalize_path, is_fs_path_under_dir
 from core.scrapers.utils import has_chinese, check_subtitle, strip_subtitle_markers, normalize_number_impl
 from core.focal import requires_face_detection, detect_focal
@@ -1077,7 +1078,7 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
         # 下載封面（檔名跟隨影片命名）
         img_url = metadata.get('cover', '')
         if img_url:
-            cover_path = os.path.join(target_dir, filename_base + '.jpg')
+            cover_path = resolve_cover_target(os.path.join(target_dir, filename_base), ext_mode)
             if download_image(img_url, cover_path):
                 result['cover_path'] = cover_path
 
