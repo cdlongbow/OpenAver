@@ -14,7 +14,7 @@ from PIL import Image
 from typing import Optional, Dict, Any, List, Tuple
 
 from core.config import STEM_IMAGE_MODES
-from core.cover_layout import resolve_cover_target, is_same_target
+from core.cover_layout import resolve_cover_target, same_target_verdict
 from core.path_utils import normalize_path, is_fs_path_under_dir
 from core.scrapers.utils import has_chinese, check_subtitle, strip_subtitle_markers, normalize_number_impl
 from core.focal import requires_face_detection, detect_focal
@@ -544,15 +544,24 @@ def generate_jellyfin_images(cover_path: str, base_stem: str, number: str = '', 
         base_stem: 目標檔名 stem（不含副檔名，已移除 -poster/-fanart 後綴）
 
     同檔情境（CD-112-8 / feature/112 T2c；Codex PR review 三輪 P1 逐步收斂而成）
-    ——**兩個 slot 都必須先用 `cover_layout.is_same_target()` preflight，
+    ——**兩個 slot 都必須先用 `cover_layout.same_target_verdict()` preflight，
     絕不可只靠底層函式自己的同檔偵測**：
 
-    - **共同的 preflight（`is_same_target`）**：字串相等 **或** `os.path.samefile`；
-      **未知 `OSError`（權限被拒／網路磁碟逾時／短暫 I/O 錯誤）時 fail-closed 回
-      `True`**，寧可少產一張衍生圖也不冒毀損原檔的險（理由見該函式 docstring）。
+    - **共同的 preflight（`same_target_verdict`）**：字串相等 **或**
+      `os.path.samefile`；回傳 `(is_same, certain)` 雙訊號（Stage 2 review P1，
+      2026-08-04，推翻前身 `is_same_target` 單一布林設計）——`is_same` 決定
+      要不要跳過寫入，`certain` 決定能不能把這格宣稱成功。**未知 `OSError`
+      （權限被拒／網路磁碟逾時／短暫 I/O 錯誤）時 `is_same=True, certain=False`**：
+      寧可少產一張衍生圖也不冒毀損原檔的險，但同時**不得謊報成功**——`result[...]`
+      必須落在 `certain`，不能不分青紅皂白地落在 `is_same`（理由見該函式
+      docstring：混成同一個布林時，未知錯誤會被 `readonly_producer.py` 轉成
+      `generate_nfo(has_poster=True, ...)`，NFO 寫出指向不存在檔案的懸空 tag；
+      `_clean_stale_singletons` 也會因此把舊檔當「已被新檔取代」而刪掉，兩者
+      同時發生就是「新的沒產出、舊的被砍」的洞）。
 
-    - **fanart（`copy2`）**：preflight 之外**另加** `except shutil.SameFileError`，
-      承接「preflight 通過之後、`copy2` 執行之前才變成同檔」的 race。
+    - **fanart（`copy2`）**：preflight 判定「不同檔」之後**另加**
+      `except shutil.SameFileError`，承接「preflight 通過之後、`copy2` 執行之前
+      才變成同檔」的 race。
       ⚠️ **`SameFileError` 不能取代 preflight**（Codex PR review 第三輪 P1，已實測
       重現）：`shutil.copyfile` 靠 `shutil._samefile()` 判同檔，而後者
       （`/usr/lib/python3.12/shutil.py:214`）把 `os.path.samefile` 的**任何
@@ -582,14 +591,18 @@ def generate_jellyfin_images(cover_path: str, base_stem: str, number: str = '', 
     fanart_path = base_stem + '-fanart.jpg'
     poster_path = base_stem + '-poster.jpg'
 
-    # fanart = 原圖複製。preflight（is_same_target）不可省——shutil 內部的
+    # fanart = 原圖複製。preflight（same_target_verdict）不可省——shutil 內部的
     # _samefile() 會把 os.path.samefile 的未知 OSError 吞成 False 並照常寫入，
     # 對同 inode 別名會截斷原檔（見上方 docstring「同檔情境」段落的實測）。
     # SameFileError 只是 preflight 之後才變成同檔的 race backstop，不是替代品；
     # 它繼承 OSError/Exception，必須排在 except Exception 之前才不會被吃掉。
-    if is_same_target(cover_path, fanart_path):
-        result['fanart'] = True
-        result['fanart_path'] = fanart_path
+    is_same, certain = same_target_verdict(cover_path, fanart_path)
+    if is_same:
+        # 只有確定同檔（certain=True）才敢宣稱成功；未知 OSError 之下 is_same
+        # 仍是 True（跳過寫入），但 certain=False，result['fanart'] 老實回 False。
+        result['fanart'] = certain
+        if certain:
+            result['fanart_path'] = fanart_path
     else:
         try:
             shutil.copy2(cover_path, fanart_path)
@@ -603,9 +616,11 @@ def generate_jellyfin_images(cover_path: str, base_stem: str, number: str = '', 
 
     # poster = 裁切；src/dst 同檔（字串相等或 inode 別名）代表這張本來就是 poster，
     # 不該再裁一次（絕不可就地寫）
-    if is_same_target(cover_path, poster_path):
-        result['poster'] = True
-        result['poster_path'] = poster_path
+    is_same, certain = same_target_verdict(cover_path, poster_path)
+    if is_same:
+        result['poster'] = certain
+        if certain:
+            result['poster_path'] = poster_path
     elif crop_to_poster(cover_path, poster_path, number=number, maker=maker):
         result['poster'] = True
         result['poster_path'] = poster_path

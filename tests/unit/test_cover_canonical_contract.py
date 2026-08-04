@@ -563,12 +563,15 @@ class TestContractTableA_Readonly:
         T3-T6 後：不變（CD-112-15：唯讀不補衍生圖，永遠不變，反向鎖）。"""
         number = "AJF4-001"
         basename = f"{number} {self._TITLE}"
+        # P2-3（pre-merge Stage 2 review）：既有封面內容必須是操作**之前**就固定
+        # 下來的常數，不能事後才從磁碟讀一次拿來跟自己比（那是恆真的空殼斷言）。
+        cover_bytes_pre_stage = _jpeg_bytes(color=(1, 2, 3))
 
         def _stage(repo, output_root, canonical, number):
             movie_dir = output_root / basename
             movie_dir.mkdir(parents=True)
             cover = movie_dir / f"{basename}.jpg"
-            _write_jpeg(cover, color=(1, 2, 3))
+            cover.write_bytes(cover_bytes_pre_stage)
             _write_jpeg(movie_dir / f"{basename}-poster.jpg", color=(4, 5, 6))
             _write_jpeg(movie_dir / f"{basename}-fanart.jpg", color=(7, 8, 9))
             repo.upsert(Video(
@@ -583,10 +586,9 @@ class TestContractTableA_Readonly:
         )
         movie_dir = self._movie_dir_for(ctx.repo, ctx.canonical)
         cover = movie_dir / f"{basename}.jpg"
-        cover_bytes_before = cover.read_bytes()
         row = ctx.repo.get_by_path(ctx.canonical)
         assert row.cover_path == to_file_uri(str(cover)), "DB cover_path 不變"
-        assert cover.read_bytes() == cover_bytes_before, "既有封面內容不被覆寫（不下載）"
+        assert cover.read_bytes() == cover_bytes_pre_stage, "既有封面內容不被覆寫（不下載）"
         nfo = movie_dir / f"{basename}.nfo"
         tags = _assert_nfo_tags_exist(nfo, {"poster": True, "thumb": True, "fanart": True})
         assert tags["poster"] == tags["thumb"] == tags["fanart"] == f"{basename}.jpg"
@@ -805,12 +807,15 @@ class TestContractTableA_Readonly:
         T3-T6 後：不變。"""
         number = "AJF8-001"
         basename = f"{number} {self._TITLE}"
+        # P2-3（pre-merge Stage 2 review）：同 A-jf-4，改成操作前固定的常數，
+        # 不再事後讀檔跟自己比。
+        cover_png_bytes_pre_stage = _jpeg_bytes(color=(5, 5, 5))
 
         def _stage(repo, output_root, canonical, number_):
             movie_dir = output_root / basename
             movie_dir.mkdir(parents=True)
             cover_png = movie_dir / f"{basename}.png"
-            _write_jpeg(cover_png, color=(5, 5, 5))  # 內容不重要，副檔名才是重點
+            cover_png.write_bytes(cover_png_bytes_pre_stage)  # 內容不重要，副檔名才是重點
             repo.upsert(Video(
                 path=canonical, number=number, title=self._TITLE,
                 output_dir=to_file_uri(str(movie_dir)),
@@ -824,9 +829,8 @@ class TestContractTableA_Readonly:
         )
         movie_dir = self._movie_dir_for(ctx.repo, ctx.canonical)
         cover_png = movie_dir / f"{basename}.png"
-        cover_png_bytes_before = cover_png.read_bytes()
         assert not (movie_dir / f"{basename}.jpg").exists(), "不下載新的 .jpg"
-        assert cover_png.read_bytes() == cover_png_bytes_before
+        assert cover_png.read_bytes() == cover_png_bytes_pre_stage
         # cover_written=False → has_poster=has_fanart=False → 三個 tag 全退回
         # {basename}.jpg——但實際封面是 {basename}.png，該 .jpg 從未存在過，
         # 三 tag 皆懸空（與 A-jf-6a/6b 同一種「retreat 到不存在的檔名」形狀，
@@ -904,34 +908,56 @@ for _cover in _TABLE_A_COVER_STATES:
             "overwrite 組合與 A-off-1 同構，已由該基線格驗證此機制。",
         )
 
-# jellyfin：既有封面族的 overwrite=True 組合（除 A-jf-7 本身）—— A-jf-7 已覆蓋
-# 「既有 same_name_full + ovw=True」；其餘既有封面狀態 × ovw=True 的行為與
-# A-jf-7 同一套 preserve-gate 判斷式（should_preserve_cover 只看 write_cover/
-# overwrite_existing/cover_exists 三個布林，不看封面副檔名或衍生圖完整度），
-# 差異只在「cover_exists」這個單一布林的來源，A-jf-7/A-jf-8 兩格已分別驗過
-# cover_exists=True（same_name_full）與 cover_exists=True（range_out，任意
-# 副檔名皆 servable）兩種代表性來源，缺衍生圖/fanart_layout 對 gate 判斷式
-# 本身無額外分支，故不再窮舉。
-for _mgr in ("jellyfin", "emby", "kodi"):
+# P2-2（pre-merge Stage 2 review）：以下排除清單改用**硬編碼字面值**（照表
+# B／C 的形狀），不再用 `_already_covered = any(v["axes"] == ... for v in
+# TABLE_A_CELLS.values())` 動態查表。動態查表版本的問題：它會把「這格是否已
+# 被 `_register` 登記」當成「是否要納入 known-uncovered」的判斷依據——一旦
+# 某個 `_register(...)` 呼叫被意外刪掉，這個迴圈會自動把騰出來的格子吸收進
+# `TABLE_A_KNOWN_UNCOVERED_AXES`，`test_registry_complete_manager_x_cover_
+# state_x_overwrite` 因此恆綠、抓不到任何被刪掉的格子（已實測：刪
+# `A-jf-7` 的 `_register`，四支 registry 守衛仍全綠）。改成字面值排除清單之
+# 後，被刪掉的格子既不在 TABLE_A_CELLS、也不會被這裡的硬編碼字面值吸收進
+# known-uncovered，`missing` 集合會真的出現該格、守衛因此轉紅。
+
+# jellyfin：ovw=False 的六個既有封面狀態全部由 A-jf-1／A-jf-4／A-jf-5／
+# A-jf-6a／A-jf-6b／A-jf-8 逐格明式驗證（見上方各自的 _register 呼叫），故
+# ovw=False 這個分支完全不進本迴圈——它們的完整性單靠「有沒有被 _register
+# 登記」判定，不需要、也不該被 known-uncovered 補位。
+# ovw=True 只有 same_name_full 由 A-jf-7 驗過；其餘既有封面狀態 × ovw=True
+# 的行為與 A-jf-7 同一套 preserve-gate 判斷式（should_preserve_cover 只看
+# write_cover/overwrite_existing/cover_exists 三個布林，不看封面副檔名或
+# 衍生圖完整度），差異只在「cover_exists」這個單一布林的來源，A-jf-7/A-jf-8
+# 兩格已分別驗過 cover_exists=True（same_name_full）與 cover_exists=True
+# （range_out，任意副檔名皆 servable）兩種代表性來源，缺衍生圖/fanart_layout
+# 對 gate 判斷式本身無額外分支，故不再窮舉。
+for _cover in _TABLE_A_COVER_STATES:
+    if _cover == "same_name_full":
+        continue  # A-jf-7（jellyfin, same_name_full, True, none）
+    _known_uncovered(
+        f"A-jf-{_cover}-True", ("jellyfin", _cover, True, "none"),
+        "should_preserve_cover(write_cover, overwrite_existing, cover_exists) "
+        "只是三個布林的純函式，不分支封面副檔名/衍生圖完整度；A-jf-7"
+        "（same_name_full, ovw=True）與 A-jf-8（range_out, ovw=False, "
+        "servable-regardless-of-ext）已代表性驗過 cover_exists 的兩種來源，"
+        "其餘既有封面狀態 × overwrite 組合對 gate 判斷式本身無新分支，"
+        "等價於這兩格之一，只差 fixture 的封面副檔名/衍生圖完整度。",
+    )
+
+# emby/kodi：只有「既有封面=無、ovw=False」由 A-emby-1／A-kodi-1 的 membership
+# 回歸格驗證；其餘既有封面狀態 × overwrite 組合與 jellyfin 版（A-jf-1~8）
+# 走同一段程式碼，只差 external_manager 常數，等價不再窮舉。
+for _mgr in ("emby", "kodi"):
     for _cover in _TABLE_A_COVER_STATES:
         for _ovw in (False, True):
-            _cell_key = f"A-{_mgr}-{_cover}-{_ovw}"
-            _already_covered = any(
-                v["axes"] == (_mgr, _cover, _ovw, "none")
-                for v in TABLE_A_CELLS.values()
-            )
-            if _already_covered:
-                continue
-            if _mgr == "jellyfin" and _cover == "none" and _ovw is False:
-                continue  # curator 四格覆蓋，非 known-uncovered
+            if _cover == "none" and _ovw is False:
+                continue  # A-emby-1 / A-kodi-1
             _known_uncovered(
-                _cell_key, (_mgr, _cover, _ovw, "none"),
+                f"A-{_mgr}-{_cover}-{_ovw}", (_mgr, _cover, _ovw, "none"),
                 "should_preserve_cover(write_cover, overwrite_existing, cover_exists) "
-                "只是三個布林的純函式，不分支封面副檔名/衍生圖完整度；A-jf-7"
-                "（same_name_full, ovw=True）與 A-jf-8（range_out, ovw=False, "
-                "servable-regardless-of-ext）已代表性驗過 cover_exists 的兩種來源，"
-                "其餘既有封面狀態 × overwrite 組合對 gate 判斷式本身無新分支，"
-                "等價於這兩格之一，只差 fixture 的封面副檔名/衍生圖完整度。",
+                "只是三個布林的純函式，不分支封面副檔名/衍生圖完整度，也不讀 "
+                "external_manager 的具體值；jellyfin 版（A-jf-1~8）已窮舉這些 "
+                "gate 分支，emby/kodi 版是同一段程式碼，等價不再窮舉。membership "
+                "本身已由 A-emby-1/A-kodi-1 驗證。",
             )
 
 # curator 軸：emby/kodi 的 curator 組合——curator 偵測/verbatim-copy 機制

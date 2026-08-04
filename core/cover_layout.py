@@ -1,6 +1,11 @@
 """cover_layout.py — 封面正典位置解析的單一真理來源（feature/112，CD-112-1）。
 
-依賴僅 `os`（`os.path` 純字串運算 + `os.path.exists`）。**不 import** `core.config`
+依賴 `os`（`os.path` 純字串運算 + `os.path.exists`）＋ `core.logger`。
+**為什麼有 logger**（T1 卡當時判「不需要」，pre-merge Stage 1 gemini P3-1 推翻）：
+本模組原本全是無失敗路徑的純函式，照 `core/enrich_contract.py` 的先例不設 logger；
+但 `same_target_verdict` 加入之後模組**有了吞例外的分支**（fail-closed 的 `except OSError`），
+那正是 `core/path_utils.py` 之所以有 logger 的同一個判準。吞了不記＝靜默吞噬。
+**不 import** `core.config`
 （`STEM_IMAGE_MODES`）——本模組目前只有 `resolve_cover_target` 的 stub 版本，本體
 無條件回傳同名候選，不會用到白名單常數；T3（PR2）把 stub 換成三步規則時才會加這行
 import（Opus 裁決：本 PR 若 import 未使用的名稱，會被 `pyproject.toml` 的 ruff
@@ -29,15 +34,45 @@ CD-112-9）本來就在 `path_utils.py` 之外用 `os.path.splitext` + 字串切
 （重新推導會製造鏡像漂移，正是 feature/105／111 已經踩過、CD-112-9 意圖根除的
 那一類 bug 的成因）。
 
-**本 PR（T1）的範圍**：四個公開函式全部落地，但 `resolve_cover_target` 是 **stub**
-——本體無條件回傳同名候選，不檢查磁碟、不檢查 `external_manager`。三步規則（真正
-的解析政策）是 T3（PR2，feature/112b）的範圍。**零呼叫端改動**——本檔與
-`tests/unit/test_cover_layout.py` 是本 PR 唯二新增的檔案，既有的六個推導點
-（`scanner.py`、`migrate.py`、`enricher.py`、`organizer.py`、`readonly_producer.py`）
-維持原樣，換掉它們是 T2b／T2c 的範圍。
+**本 PR（PR1 ＝ 112a）的範圍**：**五個公開函式**（`cover_base_stem` /
+`cover_candidates` / `resolve_cover_target` / `nfo_image_flag` /
+`same_target_verdict`）全部落地，但 **`resolve_cover_target` 是 stub**——本體無條件
+回傳同名候選，不檢查磁碟、不檢查 `external_manager`。三步規則（真正的解析政策）是
+T3（PR2，feature/112b）的範圍。
+
+六個產出端推導點**已在本 PR 的 T2b 全部換成呼叫 `resolve_cover_target`**（純代換：
+stub 恆回同名 `.jpg`，逐字等價）；`scanner.py` 的 `_cover_base_stem` 已在 T2c 刪除
+並改 import 本模組的 `cover_base_stem`。
+> ⚠️ 本段在 T1 當下寫的是「四個公開函式／零呼叫端改動」——那是 T1 那一個 commit
+> 的事實，但同一支 PR 的 T2b/T2c 之後就不再成立。pre-merge Stage 2 review 抓到這份
+> 過期敘述（單一真理來源的模組不該對自己的現況說謊），已更正。
+
+**`same_target_verdict` 的交棒清單（CD-112-8 說「所有」，此處是窮舉，勿再只列 3 處）**
+——全庫 `copy2(cover, *)` / `crop_to_poster(cover, *)` 共 **7 處**，目前只有前 2 處受保護：
+
+| 位置 | 動作 | 狀態 |
+|---|---|---|
+| `core/organizer.py:608` | `copy2` → fanart | ✅ 本 PR 已保護（preflight ＋ `SameFileError` backstop）|
+| `core/organizer.py:624` | `crop_to_poster` → poster | ✅ 本 PR 已保護（只有 preflight）|
+| `core/enricher.py:296` | `copy2` → fanart | ⬜ T3 |
+| `core/enricher.py:306` | `crop_to_poster` → poster | ⬜ T3（**原清單漏列**）|
+| `core/readonly_producer.py:764` | `copy2` → fanart | ⬜ T3 |
+| `core/readonly_producer.py:782` | `crop_to_poster` → poster | ⬜ T3（**原清單漏列**）|
+| `core/organizer.py:1165/1171` | `organize_file` 的**第三份內聯實作** | ⬜ T3（**任何清單都沒列過**）|
+
+> ⚠️ **`organizer.py:1165` 是 T3 的具名地雷**：`cover_jpg` 現在來自
+> `resolve_cover_target`（`:1145`），而 `fanart_path` 仍由 `filename_base` 字面拼
+> （`:1156`）。T3 翻面後媒體伺服器模式下兩者**字串相等** → `copy2` 拋
+> `SameFileError` → 被既有 broad except 吞成「Fanart 複製失敗」，**原封不動重建
+> T2c 剛修掉的那個 bug**。plan §1.2 對這個內聯區塊的結論「用 `filename_base`，同樣
+> 安全」只對「反向推導」成立，對同檔別名不成立。
 """
 
 import os
+
+from core.logger import get_logger
+
+logger = get_logger(__name__)
 
 COVER_EXT = '.jpg'
 
@@ -106,42 +141,74 @@ def nfo_image_flag(base_stem: str, suffix: str, wrote_this_run: bool) -> bool:
     return wrote_this_run or os.path.exists(base_stem + suffix + COVER_EXT)
 
 
-def is_same_target(src: str, dst: str) -> bool:
-    """判斷 src / dst 是否指向磁碟上同一份檔案（字串相等，或 inode 別名）。
+def same_target_verdict(src: str, dst: str) -> tuple[bool, bool]:
+    """判斷 src / dst 是否指向磁碟上同一份檔案，回傳 `(is_same, certain)` 雙訊號。
 
-    Codex PR review P1（feature/112a-T2c，2026-08-04）：`generate_jellyfin_images`
-    的同檔短路原本只比對字串相等，但 `cover_path`（DB 路徑映射）與
-    `poster_path` / `fanart_path`（lexical stem 拼出）之間**沒有「不得
-    symlink／hardlink」的保證**。外部庫工具（MDCX/Javinizer 等）常把
-    `<stem>-poster.jpg` 建成 `<stem>.jpg` 的 hardlink 或 symlink——此時字串
-    不等但兩個路徑是同一個 inode，`crop_to_poster` 會**就地覆寫使用者的封面
-    原檔**（實測 800×538 → 379×538，md5 改變），直接違反 prd.md 技術決策 #6
-    承重牆「衍生產物不回寫原檔」。CD-112-8 原文即為「路徑相等**或**
-    `os.path.samefile`」，本函式是把原文落實成單一真理來源（CD-112-1），
+    Stage 2 review P1（feature/112a pre-merge，2026-08-04，推翻前身 `is_same_target`
+    的單一布林設計）：**「要不要寫」與「能不能宣稱成功」是兩件事，不能共用同一個
+    布林**。舊版 `is_same_target` 對未知 `OSError` fail-closed 回 `True`，呼叫端
+    （`generate_jellyfin_images`）看到 `True` 就同時做兩件事——跳過寫入**且**把
+    `result['poster']` / `result['fanart']` 設成 `True`。跳過寫入是對的（安全側，
+    見下方 fail-closed 理由不變）；但宣稱成功是假的——目的檔案實際上完全沒有被
+    建立。這個假成功會沿著呼叫鏈往下傳導、造成兩個具體後果：
+    1. `core/readonly_producer.py` 唯讀路徑把 `result['poster']`/`result['fanart']`
+       轉成 `generate_nfo(has_poster=..., has_fanart=...)` 的旗標——NFO 因此寫出
+       指向**不存在**檔案的 image tag（懸空引用，正是 CD-112-16／AC7 要消滅的
+       那一類）。
+    2. `_clean_stale_singletons` 在標題漂移時，看到「本次已產圖」就刪掉磁碟上
+       舊的 `-poster.jpg`/`-fanart.jpg`，而新檔案實際沒有被寫出——形成一個洞，
+       違反該函式 docstring 的明文承諾：「A transient download/generation
+       failure this run keeps the matching old file on disk rather than
+       leaving a hole」。
+
+    因此把單一布林拆成 `(is_same, certain)`：
+    - `is_same`：呼叫端要不要跳過寫入（safety 訊號，決定「動不動作」）。
+    - `certain`：這個 `is_same` 判斷有多確定，只有 `certain=True` 時呼叫端才
+      可以把 `is_same` 直接當「成功」回報（honesty 訊號，決定「敢不敢宣稱」）。
+
+    五格真值表（唯一權威，呼叫端不得自創其他組合）：
+
+    | 情境 | `(is_same, certain)` | 呼叫端行為 |
+    |---|---|---|
+    | `src == dst` | `(True, True)` | 不寫、宣稱成功 |
+    | `samefile` 回 `True`（hardlink/symlink 別名）| `(True, True)` | 不寫、宣稱成功 |
+    | `samefile` 回 `False` | `(False, True)` | 照常寫 |
+    | `FileNotFoundError` | `(False, True)` | 照常寫（沒有可被覆寫的同一檔）|
+    | 其他 `OSError`（未知）| `(True, False)` | **不寫**（安全不變）、**不得宣稱成功** |
+
+    只有最後一格的 `certain` 是 `False`；其餘四格都「確定」——包括 `is_same=True`
+    的前兩格，因為它們的「同一檔」判斷有實證依據（字串相等或 `samefile` 明確
+    回答），不確定的只有「未知 `OSError` 底下 dst 究竟長什麼樣」這一件事。
+
     供 `organizer.py`（本 PR）、`enricher.py:294`、`readonly_producer.py:763`
-    （T3）共三處呼叫。
+    （T3）共三處呼叫，是 CD-112-8「路徑相等或 `os.path.samefile`」原文的單一
+    真理來源實作（CD-112-1）。外部庫工具（MDCX/Javinizer 等）常把
+    `<stem>-poster.jpg` 建成 `<stem>.jpg` 的 hardlink 或 symlink——此時字串不等
+    但兩個路徑是同一個 inode，若不攔下，`crop_to_poster` 會**就地覆寫使用者的
+    封面原檔**（實測 800×538 → 379×538，md5 改變），直接違反 prd.md 技術決策
+    #6 承重牆「衍生產物不回寫原檔」。
 
     **fail-closed，但只對「未知」錯誤**：`os.path.samefile` 在權限被拒、或部分
     網路磁碟／Windows 共用資源上會拋 `OSError` 子類（實測 `PermissionError`
     可重現：對父目錄 `chmod 0o000` 後 `os.path.samefile` 直接拋出，不是回傳
-    False）。這類**未知**例外拋出時**視為同一檔**（回傳 `True`，呼叫端因此
-    跳過寫入）——兩個方向的後果不對稱：誤判「不同檔」而照常寫入，最壞情況是
-    **就地毀損使用者原檔（不可逆）**；誤判「同一檔」而跳過寫入，最壞情況只是
-    **少產一張衍生圖（可由齒輪重刮／掃描頁批次補齊救回）**。不確定時一律選
-    代價小的那邊。
+    False）。這類**未知**例外拋出時 `is_same` 回 `True`（呼叫端因此跳過寫入）
+    ——兩個方向的後果不對稱：誤判「不同檔」而照常寫入，最壞情況是**就地毀損
+    使用者原檔（不可逆）**；跳過寫入，最壞情況只是**少產一張衍生圖（可由齒輪
+    重刮／掃描頁批次補齊救回）**。不確定時一律選代價小的那邊——但這條路徑
+    現在同時回 `certain=False`，呼叫端不再能把「代價小的那邊」誤報成「成功」。
 
     **`FileNotFoundError` 是唯一的例外，獨立分流、不落入上面的 fail-closed**：
     `dst` 通常是尚未產生的衍生檔（`-poster.jpg` / `-fanart.jpg`），這是最常見
     的情況，`samefile` 對不存在的路徑（`src` 或 `dst` 任一邊）一律拋
     `FileNotFoundError`——這是「沒有可被覆寫的同一檔」，不是「不確定」，回傳
-    `False` 讓正常產圖流程繼續。**這個分流本身就是本函式修過一次的 TOCTOU
-    洞**：舊版先呼叫 `os.path.exists(dst)` 判斷要不要進 `samefile`，但
+    `(False, True)` 讓正常產圖流程繼續。**這個分流本身就是本函式修過一次的
+    TOCTOU 洞**：舊版先呼叫 `os.path.exists(dst)` 判斷要不要進 `samefile`，但
     `exists()` 回傳與 `samefile()` 執行之間存在檔案可被外部程序刪除的窗口——
     `exists()` 剛好回 `True`，`dst` 隨即被刪，`samefile` 才拋出
-    `FileNotFoundError`，卻被舊版的 `except OSError` 一併吞成 `True`，讓呼叫端
-    誤報「已產圖」而目的檔實際不存在，等於重新製造 NFO 懸空引用（Codex PR
-    review 第二輪 P1，2026-08-04）。現在的寫法**不再先 `exists()` 探測**，直接
-    呼叫 `samefile`，`FileNotFoundError` 由專屬的 `except` 分支承接、與其他
+    `FileNotFoundError`，卻被舊版的 `except OSError` 一併吞成「同一檔」，讓
+    呼叫端誤報「已產圖」而目的檔實際不存在，等於重新製造 NFO 懸空引用（Codex
+    PR review 第二輪 P1，2026-08-04）。現在的寫法**不再先 `exists()` 探測**，
+    直接呼叫 `samefile`，`FileNotFoundError` 由專屬的 `except` 分支承接、與其他
     `OSError` 分開判——沒有「探測」與「使用」分成兩步的時間窗，這條 race 在
     結構上不存在了。**broken symlink**（`os.path.lexists` 為 True 但目標不
     存在）在這裡的行為與「檔案不存在」一致：`samefile` 對 broken symlink 會
@@ -155,18 +222,41 @@ def is_same_target(src: str, dst: str) -> bool:
     路徑）——後果只是少產一張衍生圖，可接受，不是資料毀損。
 
     ⚠️ **刻意接受的殘留邊界**：未知 `OSError`（權限被拒、網路磁碟逾時等）時
-    fail-closed 回 `True`，但此時 `dst` 是否真的存在、內容是否真的與 `src`
-    相同——**都無法確定**。呼叫端可能因此回報「已產圖」而該檔實際不存在（例如
-    磁碟在 `samefile` 呼叫當下恰好斷線）。這不是被解決的問題，是相對於「誤判
-    不同檔、就地毀損原檔」這個不可逆後果，刻意選擇的較輕代價（可由使用者手動
-    重新整理／批次補齊救回）。要徹底排除，需要呼叫端在跳過寫入後另外驗證
-    `dst` 確實存在且內容正確，本函式的職責只到「同檔判斷」為止，不做這件事。
+    `is_same=True, certain=False`，呼叫端跳過寫入且不得宣稱成功——但此時 `dst`
+    是否真的存在、內容是否真的與 `src` 相同，**都無法確定**，函式本身也不知道。
+    呼叫端因此老實回報「未產圖」，使用者需要手動重新整理／批次補齊來救回這一張。
+    這不是被解決的問題，是相對於「誤判不同檔、就地毀損原檔」這個不可逆後果，
+    刻意選擇的較輕代價。要徹底排除，需要呼叫端在跳過寫入後另外驗證 `dst` 確實
+    存在且內容正確，本函式的職責只到「同檔判斷」為止，不做這件事。**但
+    fail-closed 這一路必須留下日誌**（pre-merge Stage 1 gemini P3-1）：改動前
+    這類硬性 I/O 錯誤（不合法路徑、`NotADirectoryError`、WinError 123…）會在
+    `copy2` 階段炸出、被呼叫端的 `except Exception` 記成「複製失敗」；改為
+    preflight 之後它們被本函式攔下，若不記錄就是**靜默吞噬**（雖然不再回報
+    假成功，但沒有日誌線索照樣難查）。
+
+    ⚠️ **`src == dst` 這條捷徑不驗存在性**（Stage 1 gemini P2，具名 residual）：
+    兩個路徑字面相同時它們**定義上就是同一個目標**，但該檔可能根本不存在
+    （例如呼叫端檢查存在性之後、真正動作之前被外部程序刪除）。此時呼叫端會
+    回報「已產圖」而檔案不在。今天的唯一後果是 scanner 批次少吐一行警告
+    （`generate_jellyfin_images_stream` 只拿它決定要不要 warn）；唯讀路徑
+    pre-T3 的 `cover_fs` 與 `fanart_path` 字串永不相等，到不了這條分支。
+    **刻意不在此加存在性檢查**：權限錯誤時 `os.path.exists` 會回 False，
+    把一個正確的 True 翻成 False → 在 T3 的新佈局下讓 NFO tag 退回 fallback
+    → 反而製造懸空引用。**T3 讓唯讀正典變成 `-fanart.jpg` 之後（字串相等成為
+    常態路徑），這一條必須重新評估。**
     """
     if src == dst:
-        return True
+        return True, True
     try:
-        return os.path.samefile(src, dst)
+        return os.path.samefile(src, dst), True
     except FileNotFoundError:
-        return False
-    except OSError:
-        return True
+        return False, True
+    except OSError as e:
+        # fail-closed：不寫入，但 certain=False——不得讓呼叫端把這格宣稱成功。
+        # 必須記錄——這條路徑會把「目標路徑根本不可寫」這類硬錯誤變成靜默的
+        # 「未產圖」，不記就查不到。
+        logger.warning(
+            "same_target_verdict 無法判定同檔，fail-closed 跳過寫入且不宣稱成功 "
+            "(src=%s, dst=%s): %s", src, dst, e
+        )
+        return True, False

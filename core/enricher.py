@@ -730,9 +730,12 @@ def resolve_nfo_cover_paths(file_path: str, path_mappings: dict = None, external
     若 writer 改了 cover 命名（poster.jpg / .png / fanart 等）或 fs_path 推導，
     本函數要一起改，否則守衛會悄悄檢查錯路徑（false-allow 重現分裂 / false-block 打爆缺封面 quick-enrich）。
 
-    external_manager 預設 `"off"` 是**尚未接線的佔位**，不是「這條路徑就是 off」的政策決定
-    ——本函式目前唯一的呼叫端 `web/routers/scraper.py:493` 尚未傳入真值（TASK-112-T2b 範圍
-    只加簽名，不動呼叫端），真值改由呼叫端傳入的接線工作留給 TASK-112-T6b。
+    external_manager 預設 `"off"` 只是參數預設值（呼叫端未傳時的 fallback）——本函式的
+    唯一呼叫端 `web/routers/scraper.py`（refresh_full + overwrite_existing=false 分裂守衛）
+    已在 T2c pre-merge P2-5 改為傳入真值。**在 `resolve_cover_target` 仍是 T1 stub 的
+    現況下傳真值是無行為差異的**（stub 完全不讀這個參數），這裡提前接線只是讓 T3
+    三步規則落地時零呼叫端改動即可生效，避免留一段「簽名已加、呼叫端仍傳預設值」
+    的窗口期看起來像已接線卻沒有。
     """
     try:
         fs_path = uri_to_local_fs_path(file_path, path_mappings)
