@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 
+from core.cover_layout import cover_base_stem
 from core.logger import get_logger
 
 from . import connection
@@ -120,7 +121,7 @@ def backfill_readonly_nfo_mtime(db_path=None, path_mappings=None) -> int:
         for video_path, cover_path in rows:
             try:
                 cover_fs = uri_to_local_fs_path(cover_path, path_mappings)
-                nfo_path = Path(cover_fs).with_suffix('.nfo')
+                nfo_path = Path(cover_base_stem(cover_fs) + '.nfo')
                 if not nfo_path.exists():
                     continue
                 nfo_mtime = nfo_path.stat().st_mtime
