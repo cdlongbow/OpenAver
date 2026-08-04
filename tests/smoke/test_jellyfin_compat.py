@@ -191,6 +191,35 @@ def jellyfin_env(tmp_path_factory):
     make_solid_jpg(cd2cover_dir / "MIX-789-cd2-poster.jpg", color=(90, 90, 90))
     make_solid_jpg(cd2cover_dir / "MIX-789-cd2-fanart.jpg", color=(90, 90, 90))
 
+    # 4. newlayout/GHI-012/ ─────────────────────────────────────────────
+    # TASK-112b-T7（DoD-8／AC9）：112 之後 OpenAver 自己新產生的片，正典封面
+    # 直接落在 `-fanart.jpg`，磁碟上**沒有**獨立的同名 `.jpg`——只有
+    # `-poster.jpg` + `-fanart.jpg` 兩張衍生圖。舊三棵樹（single/stack/
+    # cd2cover）擺的「同名 + poster + fanart」三件套是**外部既有庫**的合法
+    # 佈局（AC9 靠它），本樹補上 112 之後新產生片的佈局，兩者都要能在
+    # Jellyfin 正常顯示封面/縮圖，缺一不可，**不刪除舊三棵樹**。
+    newlayout_dir = media_root / "newlayout" / "GHI-012"
+    newlayout_dir.mkdir(parents=True, exist_ok=True)
+    mp4_ghi = newlayout_dir / "GHI-012.mp4"
+    nfo_ghi = newlayout_dir / "GHI-012.nfo"
+    make_tiny_mp4(mp4_ghi)
+    make_solid_jpg(newlayout_dir / "GHI-012-poster.jpg", color=(160, 80, 40))
+    make_solid_jpg(newlayout_dir / "GHI-012-fanart.jpg", color=(80, 160, 40))
+    # 刻意不擺 GHI-012.jpg（裸 stem 同名封面）——這正是本樹要覆蓋的新佈局。
+    ok = generate_nfo(
+        number="GHI-012",
+        title="POC NewLayout Title",
+        external_manager="jellyfin",
+        has_poster=True,
+        has_fanart=True,
+        output_path=str(nfo_ghi),
+        summary="POC plot summary for harness assertion.",
+        date="2024-01-15",
+        maker="POC Studio",
+    )
+    if not ok:
+        pytest.skip("generate_nfo failed for GHI-012")
+
     # ── Docker lifecycle ───────────────────────────────────────────────────
 
     # Clean up any leftover container/volumes from a previous run
@@ -607,4 +636,58 @@ class TestJellyfinCompat:
                 part_count = len(detail.get("MediaSources", []))
         assert part_count == 2, (
             f"Expected PartCount==2 for MIX-789, got {part_count}"
+        )
+
+    def test_f_newlayout_no_bare_stem_cover_shows_images(self, jellyfin_env):
+        """
+        TASK-112b-T7（DoD-8／AC9）：GHI-012 只有 `-poster.jpg`/`-fanart.jpg`，
+        磁碟上**沒有**同名 `.jpg`（112 之後 OpenAver 自己新產生片的佈局）。
+        Jellyfin 仍必須正常吐出封面（Primary）與縮圖（BackdropImageTags），
+        不得破圖或空白——這是 AC9「新佈局片在媒體伺服器正常顯示」的 smoke 驗證。
+        """
+        base_url, headers, user_id = jellyfin_env
+        resp = requests.get(
+            f"{base_url}/Users/{user_id}/Items",
+            params={
+                "IncludeItemTypes": "Movie",
+                "Recursive": "true",
+                "Fields": "ProviderIds",
+                "EnableImages": "true",
+            },
+            headers=headers,
+            timeout=15,
+        )
+        items = resp.json()["Items"]
+
+        ghi = next(
+            (
+                i
+                for i in items
+                if i.get("ProviderIds", {}).get("num") == "GHI-012"
+            ),
+            None,
+        )
+        if ghi is None:
+            ghi = next(
+                (
+                    i
+                    for i in items
+                    if "GHI" in i.get("Name", "").upper()
+                    or "poc newlayout" in i.get("Name", "").lower()
+                ),
+                None,
+            )
+        assert ghi is not None, (
+            f"GHI-012 not found in items: {[i.get('Name') for i in items]}"
+        )
+
+        assert ghi.get("ProviderIds", {}).get("num") == "GHI-012", (
+            f"ProviderIds.num mismatch: {ghi.get('ProviderIds')}"
+        )
+        assert "Primary" in (ghi.get("ImageTags") or {}), (
+            f"No Primary image despite no bare-stem cover file: {ghi.get('ImageTags')}"
+        )
+        assert len(ghi.get("BackdropImageTags") or []) > 0, (
+            f"No BackdropImageTags despite no bare-stem cover file: "
+            f"{ghi.get('BackdropImageTags')}"
         )
