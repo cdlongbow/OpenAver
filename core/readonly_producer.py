@@ -794,6 +794,40 @@ def _write_media_images(
     return has_poster, has_fanart
 
 
+def _write_cover_copy(src: str, dst: str) -> bool:
+    """``cover_strategy == ('copy', src)`` cover write. Returns whether ``dst``
+    now holds a valid cover.
+
+    Pre-existing bug found by red-team during 112b pre-merge (2026-08-04):
+    when the readonly source's output root sits inside the source tree AND
+    ``movie_dir``/``base`` land back on the source directory/stem, ``src``
+    and ``dst`` (``resolve_cover_target``'s canonical position) can be the
+    SAME file. This was already reachable pre-112; CD-112-7 (curator
+    ``-fanart`` promoted to cover source when no same-stem cover exists)
+    opened a second path into it. Bare ``shutil.copyfile`` raises
+    ``SameFileError`` (an ``OSError`` subclass) in that case, which the old
+    bare ``except OSError:`` swallowed into ``has_cover=False`` — skipping
+    ALL of poster/fanart generation and writing an empty DB ``cover_path``
+    even though the cover is sitting right there on disk, intact (violates
+    AC5b). Same ``same_target_verdict`` preflight shape as
+    ``generate_jellyfin_images`` (CD-112b-1): ``certain`` — not a bare
+    ``True`` — drives the return value (CD-112-8 safety/honesty split);
+    ``SameFileError`` is a race backstop for "still-distinct-at-preflight,
+    same-by-copy-time" and MUST stay ahead of ``except OSError`` since it
+    subclasses it.
+    """
+    is_same, certain = same_target_verdict(src, dst)
+    if is_same:
+        return certain
+    try:
+        shutil.copyfile(src, dst)
+        return True
+    except shutil.SameFileError:
+        return True
+    except OSError:
+        return False
+
+
 def _write_movie_assets(
     movie_dir: str,
     meta: dict,
@@ -898,11 +932,7 @@ def _write_movie_assets(
     cover_fs = resolve_cover_target(base_stem, external_manager)
     strategy_kind = cover_strategy[0]
     if strategy_kind == 'copy':
-        try:
-            shutil.copyfile(cover_strategy[1], cover_fs)
-            has_cover = True
-        except OSError:
-            has_cover = False
+        has_cover = _write_cover_copy(cover_strategy[1], cover_fs)
     elif strategy_kind == 'none':
         has_cover = False
     else:  # 'download' — byte-identical to the pre-T1 unconditional branch (C6)

@@ -916,6 +916,85 @@ class TestWriteMovieAssets:
                     cover_strategy=_cover_strategy_for(_T3_META),
                 )
 
+    def test_copy_strategy_same_target_preflight_regression(self, tmp_path):
+        """Red-team finding, pre-merge 112b (2026-08-04): 「1) Cover」copy 分支
+        原本只有裸 `except OSError:`，`cover_strategy[1]`（copy 來源）與
+        `resolve_cover_target()` 算出的 `cover_fs`（正典寫入位置）可能是同一個
+        檔案——`shutil.copyfile` 對同檔拋 `SameFileError`（`OSError` 子類），被
+        裸 except 吞成 `has_cover=False`，導致 poster/fanart 整段被跳過、DB
+        `cover_path` 回空字串，而磁碟上那張封面內容完好無損（使用者看到破圖）。
+
+        這條路徑 pre-112 就已可達；本 branch 的 CD-112-7（curator `-fanart`
+        升格為封面來源）多開了一條路——來源只有同 stem 的 `-fanart.jpg`、沒有
+        同名 `.jpg` 時，`resolve_cover_target` 的三步規則②會直接把「已存在的
+        `-fanart` 候選」選為 cover_fs，與 copy 來源字面相同。
+
+        修法：`_write_cover_copy`（照抄 `generate_jellyfin_images` 的
+        `same_target_verdict` preflight 形狀，CD-112b-1）。本測試重現該情境：
+        movie_dir 內只放一張 `<base>-fanart.jpg`（無同名 `.jpg`），
+        cover_strategy=('copy', 那張 fanart 檔) —— resolve_cover_target 因此
+        回傳同一個路徑。
+
+        斷言：
+        ① has_cover 為 True → assets['cover_fs'] 非空
+        ② 該封面檔案 bytes 與操作前的基準值一致（BE-TEST-10：基準在操作前取）
+        ③ poster/fanart 衍生圖確實被產生（證明第 2 段不再因 has_cover=False 被跳過）
+
+        Mutation 自驗（可逆 Edit，驗完已改回）：把 `_write_cover_copy` 內的
+        `same_target_verdict` preflight拿掉、只留裸
+        `try: shutil.copyfile(...) / except OSError: has_cover = False`
+        （即還原成 bug 版本）→ 本測試單獨轉紅（AssertionError：cover_fs 為空 /
+        poster 或 fanart 未產生），其餘測試不受影響。
+        """
+        from core.readonly_producer import _build_basename, _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-CD1127')
+        os.makedirs(movie_dir, exist_ok=True)
+        source_fs_path = '/src/TEST-CD1127.mp4'
+        meta = dict(_T3_META, number='TEST-CD1127', maker='Test Maker')
+        fd = _t3_format_data(meta=meta, source_fs_path=source_fs_path)
+        config = dict(_T3_BASE_CONFIG, external_manager='jellyfin')
+
+        base = _build_basename(fd, source_fs_path, config)
+        base_stem = str(Path(movie_dir) / base)
+
+        # Curator sidecar: ONLY a same-stem -fanart.jpg exists, no same-name
+        # .jpg — resolve_cover_target's 3-step rule ② picks this existing
+        # -fanart candidate as cover_fs, which is exactly the file being
+        # copied FROM (CD-112-7's newly-opened path into the pre-existing bug).
+        fixture_path = _T3_FOCAL_FIXTURES_DIR / "wide_offcenter_face.jpg"
+        curator_fanart = base_stem + '-fanart.jpg'
+        Path(curator_fanart).write_bytes(fixture_path.read_bytes())
+        # Baseline taken BEFORE the operation under test (BE-TEST-10).
+        baseline_bytes = Path(curator_fanart).read_bytes()
+
+        with patch('core.readonly_producer.generate_nfo', side_effect=_t3_generate_nfo_side_effect), \
+             patch('core.organizer.detect_focal', return_value=MOCK_FOCAL_XY):
+            assets = _write_movie_assets(
+                movie_dir, meta, fd, source_fs_path, config,
+                cover_strategy=('copy', curator_fanart),
+            )
+
+        assert assets['cover_fs'] != '', (
+            "cover_fs must not be empty — SameFileError must not be swallowed "
+            "into has_cover=False"
+        )
+        assert assets['cover_fs'] == curator_fanart, (
+            "cover_fs should resolve back to the same file that was already there"
+        )
+        assert Path(curator_fanart).read_bytes() == baseline_bytes, (
+            "cover file bytes must be untouched by the same-file copy attempt"
+        )
+
+        poster_path = Path(base_stem + '-poster.jpg')
+        fanart_path = Path(base_stem + '-fanart.jpg')
+        assert poster_path.exists(), (
+            "poster must be generated — has_cover=True must not skip section 2"
+        )
+        assert fanart_path.exists(), (
+            "fanart (== cover_fs here) must exist on disk"
+        )
+
 
 # ---------------------------------------------------------------------------
 # TASK-111-T3 群組 1/2 (spec-111 §5 AC1/AC2)：off/jellyfin/emby/kodi 的四檔案矩陣。
