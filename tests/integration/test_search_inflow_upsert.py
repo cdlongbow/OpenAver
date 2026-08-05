@@ -1150,3 +1150,112 @@ def test_focal_wire_not_called_when_failed(client):
     assert resp.status_code == 200
     assert resp.json()["db_sync_status"] == "failed"
     mock_focal.assert_not_called()
+
+
+# ─── T4：organizer 路徑 DB 記帳直接鎖（真理表 Table 1 #7） ────────────────
+#
+# 上面的 I2（test_b1_repath_no_dead_card_jellyfin）與
+# test_focal_read_back_external_manager_mode_real_fixture 都用
+# `patch("web.routers.scraper.organize_file", return_value={...})` 把
+# organize_file 本體整個 mock 掉——resolve_cover_target／⑨ 完全不會被執行，
+# 兩者驗的是別的東西（B1 死卡邏輯／read-back 對齊），與封面正典位置正交
+# （TASK-112b-T4.md §A-3）。本測試不 mock organize_file，真跑
+# organize_file() + try_inflow_upsert()，才會真的踩到
+# resolve_cover_target → find_cover_image 的往返鏈（§B-2）。
+#
+# patch 組合逐字複製契約表 C `_run`（tests/unit/test_cover_canonical_contract.py
+# :1473-1509）：`core.organizer.requests.get` 是 download_image 的網路邊界；
+# `core.db_inflow.VideoRepository` 必須 patch（BE-TEST-07：`get_db_path()`
+# 硬編碼 repo-root、不讀 config，漏了這行測試會真的寫進專案
+# `output/openaver.db`，§D #4 最高風險項）。
+
+def test_organize_file_db_cover_path_hits_fanart_jellyfin(tmp_path, temp_config_path):
+    """T4：organize_file() + try_inflow_upsert() 真串接（不 mock organize_file）——
+    真理表 Table 1 #7：jellyfin 首次整理，DB 記帳由重掃磁碟命中 `-fanart.jpg`。
+    # 真理表 Table 1 #7
+    """
+    import io as _io
+    import json as _json
+    from unittest.mock import patch as _patch
+    from PIL import Image as _Image
+    from core import config as core_config
+    from core.database import init_db, VideoRepository
+    from core.path_utils import to_file_uri
+
+    def _mock_requests_get_jpeg():
+        """真 JPEG（>1000 bytes，通過 download_image 的長度檢查）供 crop_to_poster
+        對真實內容裁切。`b"fake"` 會讓 crop_to_poster 靜默回 False、poster 斷言
+        測不到東西（TASK-112b-T4.md §D #2）。
+
+        刻意在本檔內聯而非 import 契約表的同名 helper——那個檔案的檔頭明講
+        「本檔案私有，不進 conftest：只有本檔案用」，跨檔 import 會讓 T7 改寫
+        契約表時連帶打到這裡。
+        """
+        buf = _io.BytesIO()
+        _Image.new("RGB", (800, 538), color=(200, 100, 50)).save(buf, "JPEG")
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.content = buf.getvalue()
+        return resp
+
+    library_dir = tmp_path / "t4_library"
+    library_dir.mkdir()
+    video_file = library_dir / "SONE-205-SOURCE.mp4"
+    video_file.write_bytes(b"video-bytes")
+
+    cfg = core_config.AppConfig().model_dump()
+    cfg["gallery"]["directories"] = [str(library_dir)]
+    temp_config_path.write_text(_json.dumps(cfg), encoding="utf-8")
+
+    db_file = tmp_path / "t4_organizer_db_inflow.db"
+    init_db(db_file)
+    repo = VideoRepository(db_path=db_file)
+
+    metadata = {
+        "number": "SONE-205", "title": "T4 DB Inflow Title", "actors": ["Actress T4"],
+        "tags": ["tag1"], "date": "2024-01-01", "maker": "T4Maker",
+        "cover": "http://example.com/cover.jpg",
+    }
+    organize_config = {
+        "create_folder": False,
+        "filename_format": "{num} {title}",
+        "max_title_length": 50,
+        "max_filename_length": 60,
+        "suffix_keywords": [],
+        "external_manager": "jellyfin",
+        "download_sample_images": False,
+    }
+
+    with (
+        _patch("core.organizer.requests.get", return_value=_mock_requests_get_jpeg()),
+        _patch("core.db_inflow.VideoRepository", return_value=repo),
+    ):
+        from core.organizer import organize_file
+        from core.db_inflow import try_inflow_upsert
+
+        organize_result = organize_file(str(video_file), metadata, organize_config)
+        assert organize_result["success"] is True, organize_result
+        new_path = organize_result["new_filename"]
+        inflow_status = try_inflow_upsert(new_path)
+
+    assert inflow_status == "synced", (
+        "not_linked 代表 fixture 的 gallery.directories 沒真的覆蓋到 tmp_path "
+        "目標目錄，DB 斷言會恆為『沒有這筆記錄』——這是 fixture 設定錯誤，不能"
+        "靜默通過"
+    )
+
+    basename = "SONE-205 T4 DB Inflow Title"
+    fanart_file = library_dir / f"{basename}-fanart.jpg"
+    assert fanart_file.exists(), f"organize_file 應產出 -fanart.jpg：{fanart_file}"
+    assert not (library_dir / f"{basename}.jpg").exists(), (
+        "裸 stem 同名封面不應出現（真理表 Table 1 #7）"
+    )
+
+    new_uri = to_file_uri(new_path)
+    row = repo.get_by_path(new_uri)
+    assert row is not None, "try_inflow_upsert 應已把這支影片寫進 DB"
+    assert row.cover_path == to_file_uri(str(fanart_file)), (
+        "DB cover_path 應由 try_inflow_upsert 重掃磁碟命中 -fanart.jpg"
+        f"（find_cover_image L1 miss、L1.5 命中，CD-112-6 不改優先序），"
+        f"實際：{row.cover_path!r}"
+    )

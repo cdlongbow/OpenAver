@@ -1823,6 +1823,137 @@ class TestExternalManagerImageNaming:
         assert result.get("poster_path") is None, "無 cover → 不應產 poster"
 
 
+def _extract_nfo_tag_value(nfo_text: str, tag: str) -> str:
+    """從 NFO 字串取出指定 tag 的內容值（不含目錄的檔名字串）。T4 用。"""
+    import re
+    m = re.search(rf'<{tag}>(.*?)</{tag}>', nfo_text)
+    assert m is not None, f"NFO 缺少 <{tag}> tag：\n{nfo_text}"
+    return m.group(1)
+
+
+class TestTable1Row7DirectLock:
+    """T4：⑨（CD-112b-2）的直接鎖＝真理表 Table 1 #7。
+
+    organize_file() + 媒體伺服器 flavour → ① result['cover_path'] 本身指向
+    `-fanart.jpg` ② NFO 的 <thumb>/<fanart>/<poster> 三個 tag 值各自組成路徑
+    後 `.exists()` 必須為真（不只比字串，避免測不到懸空引用或交叉污染）
+    ③ 裸 stem 同名封面 `{filename_base}.jpg` 不存在（AC1 的直接反面）。
+    # 真理表 Table 1 #7
+    """
+
+    def _assert_row7(self, tmp_path, flavour, number):
+        src = tmp_path / f"{number}.mp4"
+        src.write_bytes(b"fake mp4")
+
+        config = _make_ext_config(flavour)
+        metadata = _make_ext_metadata(number=number)
+
+        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
+            result = organize_file(str(src), metadata, config)
+
+        assert result["success"] is True, f"organize 失敗（{flavour}）: {result.get('error')}"
+
+        # filename_base 從 result['new_filename'] 剝副檔名取得，不從 cover_path
+        # 反推（cover_path 此時已是 `{filename_base}-fanart.jpg`，用 .stem 會多
+        # 剝出 `-fanart` 尾巴，重蹈 CD-112b-3 推翻掉的反向推導錯誤）。
+        filename_base = Path(result["new_filename"]).stem
+        target_dir = Path(result["nfo_path"]).parent
+
+        # ① result['cover_path'] 本身指向 -fanart.jpg
+        assert Path(result["cover_path"]).name == f"{filename_base}-fanart.jpg", (
+            f"[{flavour}] cover_path 應直接指向 -fanart.jpg，實際：{result['cover_path']}"
+        )
+
+        # ② NFO 三 tag 各自組出路徑後必須實際存在（不只比字串）
+        nfo_text = Path(result["nfo_path"]).read_text(encoding="utf-8")
+        for tag in ("thumb", "fanart", "poster"):
+            tag_value = _extract_nfo_tag_value(nfo_text, tag)
+            tag_path = target_dir / tag_value
+            assert tag_path.exists(), f"[{flavour}] <{tag}> 指向的檔案應實際存在：{tag_path}"
+
+        # ③ 裸 stem 同名封面不存在（AC1 的直接反面）
+        bare_cover = target_dir / f"{filename_base}.jpg"
+        assert not bare_cover.exists(), f"[{flavour}] 裸 stem 封面不應出現：{bare_cover}"
+
+    def test_organize_jellyfin_nfo_tags_point_to_existing_files(self, tmp_path):
+        """jellyfin：⑨ 直接鎖。# 真理表 Table 1 #7"""
+        self._assert_row7(tmp_path, "jellyfin", "SONE-205")
+
+    def test_organize_emby_nfo_tags_point_to_existing_files(self, tmp_path):
+        """emby（membership guard）：⑨ 直接鎖。# 真理表 Table 1 #7"""
+        self._assert_row7(tmp_path, "emby", "SONE-206")
+
+    def test_organize_kodi_nfo_tags_point_to_existing_files(self, tmp_path):
+        """kodi（membership guard）：⑨ 直接鎖。# 真理表 Table 1 #7"""
+        self._assert_row7(tmp_path, "kodi", "SONE-207")
+
+
+class TestAC5ByteLockOrganizeFile:
+    """T4：AC5 位元組鎖——媒體伺服器模式產生的 `-fanart.jpg`，內容與同情境
+    off 模式產生的 `{stem}.jpg` 完全相同（取基準法，見 T4 卡 §C）；
+    `-poster.jpg` 裁切輸出 bytes 不受輸入路徑名稱影響。
+    # 真理表 Table 1 #7 ／ plan-112b.md §4 AC5
+    """
+
+    def test_jellyfin_fanart_bytes_match_off_cover_bytes(self, tmp_path):
+        """jellyfin 的 -fanart.jpg bytes == off 模式同名封面 bytes（逐位元組）。
+
+        取基準法：off 那次呼叫本身就是基準來源，讀出後立即存成變數
+        （BE-TEST-10）；jellyfin 呼叫用不同 number（避免撞名，§D #6），off
+        跑完的檔案不會被 jellyfin 那次覆寫或污染。
+        """
+        # off 基準：先跑，立即讀出 bytes 存成變數
+        src_off = tmp_path / "SONE-205.mp4"
+        src_off.write_bytes(b"fake mp4 off")
+        off_config = _make_ext_config("off")
+        off_metadata = _make_ext_metadata(number="SONE-205")
+        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
+            off_result = organize_file(str(src_off), off_metadata, off_config)
+        assert off_result["success"] is True, off_result.get("error")
+        off_cover_bytes = Path(off_result["cover_path"]).read_bytes()
+
+        # jellyfin 被測操作：不同 number 避免撞名
+        src_jf = tmp_path / "SONE-206.mp4"
+        src_jf.write_bytes(b"fake mp4 jf")
+        jf_config = _make_ext_config("jellyfin")
+        jf_metadata = _make_ext_metadata(number="SONE-206")
+        with patch("core.organizer.download_image", side_effect=_mock_download_image_write_jpeg):
+            jf_result = organize_file(str(src_jf), jf_metadata, jf_config)
+        assert jf_result["success"] is True, jf_result.get("error")
+        jf_fanart_bytes = Path(jf_result["fanart_path"]).read_bytes()
+
+        assert jf_fanart_bytes == off_cover_bytes, (
+            "jellyfin -fanart.jpg 內容應與 off 模式同情境同名封面逐位元組相同（AC5）"
+        )
+
+    def test_poster_crop_output_unaffected_by_input_path_name(self, tmp_path):
+        """crop_to_poster 輸出只受輸入內容影響，不受輸入檔名/路徑影響（AC5 poster 邊界）。
+
+        同一份來源 bytes 分別存成「同名封面」與「fanart 封面」兩種檔名，各自
+        crop_to_poster 一次，斷言輸出逐位元組相同——直接證明裁切輸出不受
+        `resolve_cover_target` 選中的檔名影響，只受內容影響。
+        """
+        source_holder = tmp_path / "_source.jpg"
+        img = Image.new("RGB", (800, 538), color=(200, 100, 50))
+        img.save(str(source_holder), "JPEG")
+        source_bytes = source_holder.read_bytes()
+
+        cover_a = tmp_path / "SONE-205.jpg"           # 模擬同名封面命名（off 情境）
+        cover_b = tmp_path / "SONE-205-fanart.jpg"     # 模擬 fanart 封面命名（jellyfin 情境）
+        cover_a.write_bytes(source_bytes)
+        cover_b.write_bytes(source_bytes)
+
+        dst1 = tmp_path / "dst1-poster.jpg"
+        dst2 = tmp_path / "dst2-poster.jpg"
+
+        assert crop_to_poster(str(cover_a), str(dst1), number="SONE-205", maker="S1") is True
+        assert crop_to_poster(str(cover_b), str(dst2), number="SONE-205", maker="S1") is True
+
+        assert dst1.read_bytes() == dst2.read_bytes(), (
+            "裁切輸出應只受輸入內容影響，不受輸入檔名影響"
+        )
+
+
 class TestExternalManagerNfoF3:
     """T4：NFO F3 欄位跟隨 external_manager 模式"""
 

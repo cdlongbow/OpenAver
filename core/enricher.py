@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from core.config import STEM_IMAGE_MODES
-from core.cover_layout import resolve_cover_target
+from core.cover_layout import resolve_cover_target, same_target_verdict
 from core.database import Video, VideoRepository, get_connection
 from core.enrich_contract import (
     EnrichResult,
@@ -263,13 +263,13 @@ def _write_external_images(
     if external_manager == "off":
         return {"poster": False, "fanart": False}
 
-    cover_path = Path(resolve_cover_target(str(Path(fs_path).with_suffix("")), external_manager))
-    stem = str(cover_path.with_suffix(""))  # 去副檔名的完整路徑前綴
+    base_stem = str(Path(fs_path).with_suffix(""))  # 影片 stem，CD-112b-3：不從封面路徑反推
+    cover_path = Path(resolve_cover_target(base_stem, external_manager))
 
     # 依模式決定目標路徑（jellyfin / emby 與 kodi 均使用 stem 長格式）
     if external_manager in STEM_IMAGE_MODES:
-        poster_path = Path(stem + "-poster.jpg")
-        fanart_path = Path(stem + "-fanart.jpg")
+        poster_path = Path(base_stem + "-poster.jpg")
+        fanart_path = Path(base_stem + "-fanart.jpg")
     else:
         # 未知 external_manager 值：不產圖、不崩（防呆）
         return {"poster": False, "fanart": False}
@@ -292,20 +292,30 @@ def _write_external_images(
     if fanart_path.exists() and not overwrite_existing:
         fanart_ok = True  # 存在即算 True，NFO tag 對得上磁碟現況
     else:
-        try:
-            shutil.copy2(str(cover_path), str(fanart_path))
-            fanart_ok = True
-        except Exception as e:
-            logger.warning("_write_external_images fanart 複製失敗 (%s): %s", fs_path, e)
+        is_same, certain = same_target_verdict(str(cover_path), str(fanart_path))
+        if is_same:
+            fanart_ok = certain
+        else:
+            try:
+                shutil.copy2(str(cover_path), str(fanart_path))
+                fanart_ok = True
+            except shutil.SameFileError:
+                fanart_ok = True
+            except Exception as e:
+                logger.warning("_write_external_images fanart 複製失敗 (%s): %s", fs_path, e)
 
     # poster = 裁切
     if poster_path.exists() and not overwrite_existing:
         poster_ok = True  # 同上
     else:
-        try:
-            poster_ok = crop_to_poster(str(cover_path), str(poster_path), number=number, maker=maker)
-        except Exception as e:
-            logger.warning("_write_external_images poster 裁切失敗 (%s): %s", fs_path, e)
+        is_same, certain = same_target_verdict(str(cover_path), str(poster_path))
+        if is_same:
+            poster_ok = certain
+        else:
+            try:
+                poster_ok = crop_to_poster(str(cover_path), str(poster_path), number=number, maker=maker)
+            except Exception as e:
+                logger.warning("_write_external_images poster 裁切失敗 (%s): %s", fs_path, e)
 
     return {"poster": poster_ok, "fanart": fanart_ok}
 

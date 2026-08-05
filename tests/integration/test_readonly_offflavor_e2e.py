@@ -742,7 +742,19 @@ class TestIngestCuratedPosterFanartVerbatimMediaServer:
     哪個 media-server flavour 無關——這裡選 jellyfin。斷言 sidecar bytes 逐位
     元組等於 _POSTER_MARKER_BYTES/_FANART_MARKER_BYTES（不是 _wire 裡
     _fake_generate_jellyfin_images 寫的 _FAKE_IMG_BYTES）+ generate_jellyfin_
-    images 未被呼叫，證明走的是 verbatim 複製而非重新裁切生成。"""
+    images 未被呼叫，證明走的是 verbatim 複製而非重新裁切生成。
+
+    T6 語意重寫（TASK-112b-T6.md §A-2 / plan-112b.md §7.3 DoD-10）：這支測試在
+    112 翻面之後**繼續是綠燈**（`BE-TEST-11` 第六次命中）——原因是這個 fixture
+    （`_make_curated_jellyfin_source(..., with_nfo=True)`，不傳 `same_name_cover`）
+    源目錄裡沒有同名 `{num}.jpg`，`find_cover_image` 本來就走 L1.5 命中 `-fanart`，
+    CD-112-7 前半句（封面來源升格）在這個 fixture 上是無操作的空翻。但 verbatim
+    保證的**落點**已經改變：翻面前是「curator sidecar 被複製到一個獨立位置
+    （`{num}.jpg`）」；翻面後正典封面本身落在 `-fanart.jpg`，`-poster.jpg` 與
+    `-fanart.jpg` 是輸出夾裡**僅有**的兩張圖，不再有第三張獨立同名封面——
+    verbatim 保證變成「sidecar 就是正典封面」，不是「sidecar 被複製了一份」。
+    新增兩條斷言把這個新語意焊死：① 輸出夾沒有獨立的 `{num}.jpg`（AC5b）
+    ② DB `cover_path` 指向 `-fanart.jpg`（AC5b 的 DB 記帳半句）。"""
 
     def test_jellyfin_curated_sidecars_copied_verbatim_not_regenerated(
         self, tmp_path, monkeypatch, client, parse_sse_events,
@@ -779,6 +791,112 @@ class TestIngestCuratedPosterFanartVerbatimMediaServer:
             "the _FAKE_IMG_BYTES generate_jellyfin_images would have written"
         )
         mock_jellyfin.assert_not_called()
+
+        # 真理表 Table 2 #2（AC5b，新語意）：verbatim 保證的落點是「正典封面本身
+        # 就是 curator -fanart」，不是「curator -fanart 被複製到另一個獨立檔」——
+        # 沒有第三張同名封面。
+        assert not (movie_dir / f"{num}.jpg").exists(), (
+            "no independent same-name cover — the canonical cover IS -fanart.jpg"
+        )
+        # AC5b 的 DB 記帳半句：DB cover_path 指向 -fanart.jpg。
+        repo = VideoRepository(str(db_path))
+        src_uri = to_file_uri(str(src / f"{num}.mp4"), {})
+        v = repo.get_by_path(src_uri)
+        assert v is not None, f"no DB row for {num}"
+        assert v.cover_path.endswith(f"{num}-fanart.jpg"), (
+            f"DB cover_path must point at the -fanart canonical cover, got {v.cover_path!r}"
+        )
+
+
+class TestH10CuratorSameNameConflictUpgrade:
+    """Opus 追加要求 #3（TASK-112b-T6.md，T3 review 追加、plan 原文沒有）：CD-112-7
+    前半句（封面來源升格）的守衛缺口——`test_cover_canonical_contract.py` 的
+    curator fixture 從不擺同名封面（`BE-TEST-11` §H-10），升格前後結果剛好相同，
+    測不出這個差異。這裡用 `_make_curated_jellyfin_source(..., same_name_cover=True)`
+    擺三張**互異**的圖（同名封面=A、curator fanart=B、curator poster=C，
+    `_SAME_NAME_COVER_MARKER_BYTES`/`_FANART_MARKER_BYTES`/`_POSTER_MARKER_BYTES`
+    三者各自不同 bytes），成對驗證：
+    - **正向**（jellyfin）：cover 來源必須升格為 curator fanart（B），不是
+      `find_cover_image` L1 選中的同名封面（A）。
+    - **反向**（off，AC2）：flavour 閘門不是裝飾——off 模式必須維持 A，不升格。
+    mutation：把 `resolve_ingest_plan` 的 `curator_cover_source` 改回恆等於
+    `cover_fs`（即刪掉升格邏輯）→ 正向這支單獨轉紅（`-fanart.jpg` 變成 A 的內容，
+    不是 B），off 那支維持綠。"""
+
+    def test_jellyfin_upgrades_cover_source_to_curator_fanart(
+        self, tmp_path, monkeypatch, client, parse_sse_events,
+    ):
+        num = "H10-001"
+        src = _make_curated_jellyfin_source(
+            tmp_path / "src", "movies", num, with_nfo=True, same_name_cover=True,
+        )
+        out_dir = tmp_path / "jellyfin_out"
+        out_dir.mkdir()
+        db_path = tmp_path / "test.db"
+        config = _make_config(
+            [{"path": str(src), "output_path": str(out_dir), "readonly": True}],
+            tmp_path / "htmlout",
+            external_manager="jellyfin",
+        )
+        _wire(monkeypatch, config, db_path)
+        with patch(
+            "core.readonly_producer.generate_jellyfin_images",
+            side_effect=_fake_generate_jellyfin_images,
+        ) as mock_jellyfin:
+            _run_generate(client, parse_sse_events)
+
+        movie_dir = out_dir / num
+        assert (movie_dir / f"{num}-fanart.jpg").read_bytes() == _FANART_MARKER_BYTES, (
+            "cover source must be upgraded to the curator's -fanart sidecar (B), "
+            "not the same-name cover (A) find_cover_image's L1 would otherwise pick"
+        )
+        assert (movie_dir / f"{num}-poster.jpg").read_bytes() == _POSTER_MARKER_BYTES, (
+            "poster must be the curator's own -poster sidecar (C), verbatim"
+        )
+        assert not (movie_dir / f"{num}.jpg").exists(), "no independent same-name cover (AC5b)"
+        mock_jellyfin.assert_not_called()
+
+        repo = VideoRepository(str(db_path))
+        src_uri = to_file_uri(str(src / f"{num}.mp4"), {})
+        v = repo.get_by_path(src_uri)
+        assert v is not None, f"no DB row for {num}"
+        assert v.cover_path.endswith(f"{num}-fanart.jpg"), (
+            f"DB cover_path must point at the -fanart canonical cover, got {v.cover_path!r}"
+        )
+
+    def test_off_flavour_keeps_same_name_cover_not_upgraded(
+        self, tmp_path, monkeypatch, client, parse_sse_events,
+    ):
+        """反向鎖（AC2）：同一組三色 fixture，off flavour 下 cover 來源升格閘門
+        不成立——輸出必須是同名封面 A（不是 curator fanart B），且不產生
+        poster/fanart（TASK-111 既有 gate）。"""
+        num = "H10-002"
+        src = _make_curated_jellyfin_source(
+            tmp_path / "src", "movies", num, with_nfo=True, same_name_cover=True,
+        )
+        db_path = tmp_path / "test.db"
+        config = _make_config(
+            [{"path": str(src), "output_path": "", "readonly": True}],
+            tmp_path / "htmlout",
+            external_manager="off",
+        )
+        _wire(monkeypatch, config, db_path)
+        _run_generate(client, parse_sse_events)
+
+        movie_dir = _off_root(src, db_path) / num
+        assert (movie_dir / f"{num}.jpg").read_bytes() == _SAME_NAME_COVER_MARKER_BYTES, (
+            "off flavour must NOT upgrade the cover source — same-name cover (A) stays"
+        )
+        assert not (movie_dir / f"{num}-poster.jpg").exists()
+        assert not (movie_dir / f"{num}-fanart.jpg").exists()
+
+        repo = VideoRepository(str(db_path))
+        src_uri = to_file_uri(str(src / f"{num}.mp4"), {})
+        v = repo.get_by_path(src_uri)
+        assert v is not None, f"no DB row for {num}"
+        assert v.cover_path.endswith(f"{num}.jpg") and "-fanart" not in v.cover_path, (
+            f"DB cover_path must point at the same-name cover, got {v.cover_path!r}"
+        )
 
 
 # ---------------------------------------------------------------------------

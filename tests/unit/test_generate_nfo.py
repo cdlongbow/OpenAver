@@ -133,10 +133,17 @@ class TestJellyfinMode:
         assert "<poster>ABC-123-poster.jpg</poster>" in nfo
         assert "<fanart>ABC-123-fanart.jpg</fanart>" in nfo
 
-    def test_thumb_always_stem_jellyfin(self, tmp_path):
-        """jellyfin → <thumb> 仍是 {stem}.jpg（CD-12）"""
-        nfo = _read_nfo(tmp_path, external_manager="jellyfin")
-        assert "<thumb>ABC-123.jpg</thumb>" in nfo
+    def test_thumb_follows_fanart_tag_jellyfin(self, tmp_path):
+        """jellyfin + has_fanart=True → <thumb> 指向 {stem}-fanart.jpg（不是裸 stem）。
+
+        T3/CD-112-5：`<thumb>` 改用既有 `fanart_tag` 變數（`core/organizer.py:755`），
+        `has_fanart=True` 時指向 `-fanart.jpg`。原本這支測試不傳 `has_fanart`
+        （預設 False），斷言值在翻面前後逐字相同、對翻面沒有鑑別力（T3 §H-7 已確認）；
+        本支顯式傳 `has_fanart=True` 才第一次真正踩到 ② 的翻面路徑。
+        # 真理表 Table 1 #7
+        """
+        nfo = _read_nfo(tmp_path, external_manager="jellyfin", has_fanart=True)
+        assert "<thumb>ABC-123-fanart.jpg</thumb>" in nfo
 
     def test_f3_before_home_uniqueid(self, tmp_path):
         """jellyfin → F3 欄位在 <uniqueid type="home"> 之前"""
@@ -188,10 +195,17 @@ class TestKodiMode:
         assert "<fanart>ABC-123.jpg</fanart>" in nfo
         assert "<fanart>fanart.jpg</fanart>" not in nfo
 
-    def test_thumb_still_stem_kodi(self, tmp_path):
-        """kodi → <thumb> 仍是 {stem}.jpg（CD-12）"""
-        nfo = _read_nfo(tmp_path, external_manager="kodi")
-        assert "<thumb>ABC-123.jpg</thumb>" in nfo
+    def test_thumb_follows_fanart_tag_kodi(self, tmp_path):
+        """kodi + has_fanart=True → <thumb> 指向 {stem}-fanart.jpg（不是裸 stem）。
+
+        T3/CD-112-5：`<thumb>` 改用既有 `fanart_tag` 變數（`core/organizer.py:755`），
+        `has_fanart=True` 時指向 `-fanart.jpg`。原本這支測試不傳 `has_fanart`
+        （預設 False），斷言值在翻面前後逐字相同、對翻面沒有鑑別力（T3 §H-7 已確認）；
+        本支顯式傳 `has_fanart=True` 才第一次真正踩到 ② 的翻面路徑。
+        # 真理表 Table 1 #7
+        """
+        nfo = _read_nfo(tmp_path, external_manager="kodi", has_fanart=True)
+        assert "<thumb>ABC-123-fanart.jpg</thumb>" in nfo
 
     def test_kodi_sorttitle_is_display_title(self, tmp_path):
         """kodi → <sorttitle> = [number]title"""

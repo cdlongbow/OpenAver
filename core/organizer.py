@@ -752,7 +752,7 @@ def generate_nfo(
   {runtime_tag}
   {director_tag}
   <poster>{poster_tag}</poster>
-  <thumb>{html.escape(basename)}.jpg</thumb>
+  <thumb>{fanart_tag}</thumb>
   <fanart>{fanart_tag}</fanart>
 '''
 
@@ -1149,27 +1149,16 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
         # 外部管理器模式：依 ext_mode 決定 poster/fanart 命名規則（ext_mode 已在早偵測層定義）
         # jellyfin/emby 與 kodi 均使用 stem 長格式（{stem}-poster.jpg / {stem}-fanart.jpg），
         # Kodi 在所有資料夾 layout 下均識別此命名，無需 per-folder 偵測。
-        if ext_mode != 'off' and result.get('cover_path'):
+        if ext_mode in STEM_IMAGE_MODES and result.get('cover_path'):
             cover_jpg = result['cover_path']
-            if ext_mode in STEM_IMAGE_MODES:
-                # 兩種模式均使用 stem 長格式（collision-free，Kodi 正典）
-                fanart_path = os.path.join(target_dir, filename_base + '-fanart.jpg')
-                poster_path = os.path.join(target_dir, filename_base + '-poster.jpg')
-            else:
-                # 未知值防禦：不產圖
-                fanart_path = None
-                poster_path = None
-            if fanart_path:
-                # fanart = 原圖複製
-                try:
-                    shutil.copy2(cover_jpg, fanart_path)
-                    result['fanart_path'] = fanart_path
-                except Exception as e:
-                    logger.warning(f"[!] Fanart 複製失敗: {e}")
-            if poster_path:
-                # poster = 裁切
-                if crop_to_poster(cover_jpg, poster_path, number=number, maker=metadata.get('maker', '')):
-                    result['poster_path'] = poster_path
+            imgs = generate_jellyfin_images(
+                cover_jpg, os.path.join(target_dir, filename_base),
+                number=number, maker=metadata.get('maker', ''),
+            )
+            if imgs.get('fanart_path'):
+                result['fanart_path'] = imgs['fanart_path']
+            if imgs.get('poster_path'):
+                result['poster_path'] = imgs['poster_path']
 
         # extrafanart 下載（download_sample_images 控制，需 create_folder=True 才有 per-video 目錄）
         # create_folder=False 時多片共用同一資料夾，fanart1.jpg 會互相覆蓋，故禁用

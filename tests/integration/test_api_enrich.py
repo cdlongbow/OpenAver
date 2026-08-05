@@ -1898,6 +1898,193 @@ class TestEnrichRefreshFullOverwriteGuard:
         mock_enrich.assert_not_called()
 
 
+class TestEnrichRefreshFullOverwriteGuardRealFlavourResolution:
+    """TASK-112b-T6b DoD-1：refresh_full+ovw=false 400 防呆四格，走**真實**
+    resolve_nfo_cover_paths → resolve_cover_target 三步規則（不 mock），對照
+    真磁碟狀態下 off flavour 的對應格。
+
+    上方 `TestEnrichRefreshFullOverwriteGuard`（10 支）完全 mock
+    `resolve_nfo_cover_paths`（固定回傳 `/video/SONE-205.jpg`），從未真正
+    經過 `resolve_cover_target` 的三步規則——對「封面正典位置翻面」（T3）
+    本身**零鑑別力**，它們鎖的是 router 自己「給定 nfo_path/cover_path 之後
+    的判斷算術」，那一層 mock resolver 是合法的接縫（見 TASK-112b-T6b.md
+    §F-3）。本 class 補上缺的那一層：真實 `tmp_path` 磁碟狀態 → 真實
+    `resolve_cover_target` → 真實 400/放行判斷，不取代上面 10 支。
+    """
+
+    def _write_jpeg(self, path):
+        from PIL import Image
+        Image.new("RGB", (48, 48), color=(20, 40, 60)).save(str(path), "JPEG", quality=85)
+
+    def _run(
+        self, tmp_path, client, mocker, subdir, external_manager,
+        *, nfo=True, canonical_cover=True, poster=True, fanart=True,
+    ):
+        """建真實磁碟狀態＋真實 file:/// URI，打 /api/enrich-single，
+        不 mock resolve_nfo_cover_paths / os.path.exists。
+
+        正典封面命名跟 `resolve_cover_target`（`core/cover_layout.py:134`）
+        同一套判準：`external_manager in STEM_IMAGE_MODES`（jellyfin/emby/
+        kodi）才用 `-fanart.jpg`（受 `poster`/`fanart` 控制）；`off` **與
+        非法值**（如 "plex"，fail-closed）都用同名 `.jpg`（受
+        `canonical_cover` 控制）。
+        """
+        from core.path_utils import to_file_uri
+        from core.config import STEM_IMAGE_MODES
+
+        root = tmp_path / subdir
+        root.mkdir()
+        video = root / "SONE-205.mp4"
+        video.write_bytes(b"FAKE-VIDEO")
+        if nfo:
+            (root / "SONE-205.nfo").write_text("<movie/>", encoding="utf-8")
+        if external_manager in STEM_IMAGE_MODES:
+            if fanart:
+                self._write_jpeg(root / "SONE-205-fanart.jpg")
+            if poster:
+                self._write_jpeg(root / "SONE-205-poster.jpg")
+        else:
+            if canonical_cover:
+                self._write_jpeg(root / "SONE-205.jpg")
+
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value={"scraper": {"external_manager": external_manager}, "search": {}},
+        )
+        mock_enrich = mocker.patch(
+            "web.routers.scraper.enrich_single", return_value=_ok_result()
+        )
+        file_uri = to_file_uri(str(video))
+        response = client.post("/api/enrich-single", json={
+            "file_path": file_uri,
+            "number": "SONE-205",
+            "mode": "refresh_full",
+            "overwrite_existing": False,
+        })
+        return response, mock_enrich
+
+    # ── ①：正典封面存在 + 外部圖（poster/fanart）皆齊 + NFO 存在 → 400 ──
+
+    def test_scenario1_canonical_cover_full_set_nfo_present_400_matches_off(
+        self, tmp_path, client, mocker
+    ):
+        """jellyfin：正典 `-fanart.jpg` 存在＋poster/fanart 皆齊＋NFO 存在
+        → 三個 will_write_* 皆 False → 400。
+        off：正典同名 `.jpg` 存在＋NFO 存在 → will_write_nfo/will_write_cover
+        皆 False，will_write_external 恆 False（off 不檢查外部圖）→ 同樣 400。
+        兩者結論一致（皆 400）。"""
+        resp_jf, mock_jf = self._run(
+            tmp_path, client, mocker, "jf", "jellyfin",
+            nfo=True, poster=True, fanart=True,
+        )
+        assert resp_jf.status_code == 400, resp_jf.text
+        mock_jf.assert_not_called()
+
+        resp_off, mock_off = self._run(
+            tmp_path, client, mocker, "off", "off",
+            nfo=True, canonical_cover=True,
+        )
+        assert resp_off.status_code == 400, resp_off.text
+        mock_off.assert_not_called()
+
+    # ── ②：缺 -poster.jpg → 放行（media-server flavour 專屬格） ─────────
+
+    def test_scenario2_missing_poster_passes_jellyfin_only(self, tmp_path, client, mocker):
+        """jellyfin：正典 `-fanart.jpg` 存在＋NFO 存在，但 `-poster.jpg` 缺
+        → `will_write_external = cover_exists_on_disk and (not poster_exists
+        or not fanart_exists)` = `True and (True or False)` = True → 放行。
+
+        `off` flavour **沒有這一格**（`:507` 的 `external_manager != "off"`
+        恆假，off 從不檢查 poster/fanart 是否存在）——比較對象因此不是「off
+        同一格」，而是「media-server flavour 缺一張外部圖必須放行」這條語意
+        本身（TASK-112b-T6b.md 現況分析表格②列）。"""
+        resp_jf, mock_jf = self._run(
+            tmp_path, client, mocker, "jf", "jellyfin",
+            nfo=True, poster=False, fanart=True,
+        )
+        assert resp_jf.status_code == 200, resp_jf.text
+        mock_jf.assert_called_once()
+
+    # ── ③：缺 NFO → 放行 ────────────────────────────────────────────
+
+    def test_scenario3_missing_nfo_passes_matches_off(self, tmp_path, client, mocker):
+        """jellyfin／off：NFO 缺 → `will_write_nfo=True` → 立即放行，
+        不論封面/外部圖狀態。兩者結論一致（皆放行）。"""
+        resp_jf, mock_jf = self._run(
+            tmp_path, client, mocker, "jf", "jellyfin",
+            nfo=False, poster=True, fanart=True,
+        )
+        assert resp_jf.status_code == 200, resp_jf.text
+        mock_jf.assert_called_once()
+
+        resp_off, mock_off = self._run(
+            tmp_path, client, mocker, "off", "off",
+            nfo=False, canonical_cover=True,
+        )
+        assert resp_off.status_code == 200, resp_off.text
+        mock_off.assert_called_once()
+
+    # ── ④：完全無封面 → 放行 ──────────────────────────────────────────
+
+    def test_scenario4_no_cover_at_all_passes_matches_off(self, tmp_path, client, mocker):
+        """jellyfin：同名／`-fanart` 皆缺 → `resolve_cover_target` 第③步
+        依 flavour 新建 `-fanart.jpg`（不存在的新路徑）→
+        `exists(cover_path)=False` → `will_write_cover=True` → 放行。
+        off：同名封面缺 → 第③步 fail-closed 新建同名 `.jpg`（同樣不存在）
+        → `will_write_cover=True` → 放行。兩者結論一致（皆放行）。"""
+        resp_jf, mock_jf = self._run(
+            tmp_path, client, mocker, "jf", "jellyfin",
+            nfo=True, poster=False, fanart=False,
+        )
+        assert resp_jf.status_code == 200, resp_jf.text
+        mock_jf.assert_called_once()
+
+        resp_off, mock_off = self._run(
+            tmp_path, client, mocker, "off", "off",
+            nfo=True, canonical_cover=False,
+        )
+        assert resp_off.status_code == 200, resp_off.text
+        mock_off.assert_called_once()
+
+    # ── ⑤：非法 external_manager 值 → 400（Codex PR review P1 回歸鎖） ──
+
+    def test_scenario5_illegal_external_manager_value_400_matches_off(
+        self, tmp_path, client, mocker
+    ):
+        """Codex 對 feature/112b PR review 提的 P1（**pre-existing bug，早於
+        112**——`web/routers/scraper.py:507` 的 `external_manager != "off"`
+        判準可由 `git log -L 505,510:web/routers/scraper.py` 溯至 72d-P2A，
+        不是本 branch 引入的回歸；修法是正向白名單）：
+
+        `external_manager="plex"`（不在 `STEM_IMAGE_MODES` 白名單內的非法
+        值）+ NFO 存在 + 同名 `.jpg` 已存在（非法值下 `resolve_cover_target`
+        fail-closed 回同名，`core/cover_layout.py:134`）+ poster/fanart 缺
+        → 三個 `will_write_*` 皆應為 False：`will_write_nfo`／
+        `will_write_cover` 因 NFO／同名封面已存在且 `overwrite_existing=
+        False` 為 False；`will_write_external` 因 `_write_external_images`
+        對非白名單值是 no-op（`core/enricher.py:270`，回
+        `{"poster": False, "fanart": False}`，零檔案寫出）也應為 False
+        → 400，與 `off` 同一磁碟狀態的結論一致（皆 400）。
+
+        修法前：guard 用 `external_manager != "off"` 當「外部圖有機會寫出」
+        的 proxy，`"plex" != "off"` 為真，guard 誤信會寫而放行 200——但
+        NFO／封面／外部圖實際上都不寫，卻仍可能 DB upsert，正是這道 guard
+        要擋的磁碟／DB 分裂。"""
+        resp_plex, mock_plex = self._run(
+            tmp_path, client, mocker, "plex", "plex",
+            nfo=True, canonical_cover=True,
+        )
+        assert resp_plex.status_code == 400, resp_plex.text
+        mock_plex.assert_not_called()
+
+        resp_off, mock_off = self._run(
+            tmp_path, client, mocker, "off", "off",
+            nfo=True, canonical_cover=True,
+        )
+        assert resp_off.status_code == 400, resp_off.text
+        mock_off.assert_not_called()
+
+
 class TestEnrichSingleThumbnailInvalidation:
     """feature/71 T8 邊界3/4/6：enrich/rescrape 成功 → invalidate 用 canonical key；失敗不呼叫。
 

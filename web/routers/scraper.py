@@ -32,7 +32,7 @@ from core.source_config import validate_source_id
 from core.cf_transport import get_cf_transport, CfChallengeRequired, CfTransportUnavailable
 from core.scrapers.javlibrary import JAVLIBRARY_ORIGIN
 from core.logger import get_logger
-from core.config import load_config
+from core.config import load_config, STEM_IMAGE_MODES
 from core.readonly_source import is_path_readonly, readonly_source_prefixes, writable_source_prefixes
 from core.readonly_producer import (
     resolve_owning_output_root, _produce_one,  # noqa: PLC2701 — fetch_samples_endpoint 合法把 _produce_one 當 primitive 用，109 已收斂單片/批次兩處；剩這條待未來升格公開名
@@ -504,7 +504,14 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
         will_write_cover = not should_preserve_cover(
             request.write_cover, request.overwrite_existing, os.path.exists(cover_path)
         )
-        if external_manager != "off":
+        # Codex PR review P1（pre-existing，早於 112）：guard 必須與實際寫出者
+        # （core/enricher.py::_write_external_images 的 STEM_IMAGE_MODES 白名單，
+        # core/enricher.py:270）同一套判準，不能用 `!= "off"` 當 proxy——非法值
+        # （如 "plex"）不在白名單內，_write_external_images 對它是 no-op（回
+        # {"poster": False, "fanart": False}，零檔案寫出），但 `!= "off"` 仍判真，
+        # 導致 guard 誤信「有機會寫出」而放行，實際卻磁碟／DB 兩頭都不寫，正是
+        # 這道 guard 要擋的分裂（BE-CONFIG-03：正向白名單，fail-closed）。
+        if external_manager in STEM_IMAGE_MODES:
             stem = os.path.splitext(uri_to_local_fs_path(request.file_path, path_mappings))[0]
             poster_path = stem + "-poster.jpg"
             fanart_path = stem + "-fanart.jpg"

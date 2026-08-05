@@ -25,7 +25,7 @@ from typing import Callable, Optional
 
 from core import thumbnail_cache
 from core.config import STEM_IMAGE_MODES, iter_gallery_sources, normalize_external_manager
-from core.cover_layout import resolve_cover_target
+from core.cover_layout import nfo_image_flag, resolve_cover_target, same_target_verdict
 from core.database import Video, get_db_path
 from core.enrich_contract import (
     EnrichResult,
@@ -714,6 +714,83 @@ def _write_strm(base_stem: str, source_fs_path: str, config: dict, strm_mappings
 # T-3: write off-flavor assets + DB upsert (plan §5.2 / §6)
 # ---------------------------------------------------------------------------
 
+def _copy_curator_sidecar(src: str, dst: str, slot: str) -> Optional[bool]:
+    """Curator ``-poster``/``-fanart`` sidecar → the matching output slot,
+    VERBATIM. The single preflight-owning choke point for that copy — both
+    slots in ``_write_media_images`` go through here, neither calls
+    ``shutil.copy2`` on a sidecar itself.
+
+    Tri-state return (there are genuinely three outcomes, and collapsing any
+    two of them is what produced the bug below):
+
+    | 回傳 | 意思 | 呼叫端 |
+    |---|---|---|
+    | ``True``  | ``dst`` 現在持有 curator 原檔的內容 | 記 has_*=True，**不 generate** |
+    | ``False`` | 同一檔但無法確認（未知 ``OSError``）| 記 has_*=False，**不 generate**（fail-closed）|
+    | ``None``  | 沒複製成功、也沒有 curator 原檔會被蓋掉 | **落回 generate 分支** |
+
+    Codex PR#125 round-2 P1 (2026-08-05) — why the preflight is here at all:
+    when the readonly source's output root resolves back onto the source movie
+    directory AND the basename lands on the source stem, ``src`` and ``dst``
+    are the SAME file (the curator's own sidecar IS the output slot). The old
+    code copied first and asked later: ``shutil.copy2`` raised
+    ``SameFileError``, the broad ``except`` swallowed it into "copy failed",
+    and the slot fell through to the generate branch — whose own
+    ``same_target_verdict`` preflight compares ``cover_fs`` vs ``dst``, a
+    DIFFERENT pair that is legitimately "not the same file". So
+    ``crop_to_poster(cover_fs, poster_path)`` cropped the machine cover
+    straight over the curator's hand-picked portrait poster (reproduced:
+    379×538 blue → a crop of the 800×538 red cover, md5 changed). OpenAver's
+    own UI cannot show this — ``find_cover_image``'s L1.5 prefers ``-fanart``
+    — so the damage lands entirely on the Jellyfin/Emby/Kodi side, i.e. the
+    exact surface AC5's curator boundary ("**逐位元組保留 curator 原檔**") and
+    prd.md 技術決策 #6 ("衍生產物不回寫原檔") exist to protect. It is also a
+    REGRESSION of this branch, not a pre-existing bug: before ``_write_cover_copy``
+    learned the same-target case (commit 2338c62d/a552f674) the cover step
+    itself returned ``has_cover=False`` here and ``_write_media_images`` was
+    never reached.
+
+    Why the sidecar copy needs the preflight and not just a ``SameFileError``
+    catch: ``shutil.copyfile``'s internal ``_samefile`` swallows ``OSError``
+    and returns ``False``, so on a filesystem where ``os.path.samefile`` raises
+    (permission denied / some network shares — the case ``same_target_verdict``
+    was built for) ``copy2`` proceeds to open the destination ``'wb'`` and
+    truncates the very file it is reading from. That is the identical
+    corruption CD-112-8 already fenced off at the six ``cover → dst`` write
+    sites; the sidecar copies are ``sidecar → dst`` and were therefore
+    invisible to that inventory's own ``copy2(cover, *)`` grep (see
+    ``core.cover_layout``'s 交棒清單, rows ⑨/⑩).
+
+    ``is_same and certain`` still re-confirms ``dst`` on disk for the same
+    reason ``_write_cover_copy`` does (Codex PR#125 round-1 P2): the
+    ``src == dst`` cell of ``same_target_verdict`` answers by string comparison
+    with zero I/O, and ``src`` here comes from ``resolve_ingest_plan``'s
+    ``.exists()`` several I/O hops away. A sidecar that vanished in between is
+    NOT a passthrough to report as success — but there is also no curator file
+    left to clobber, so that case returns ``None`` (regenerate) rather than
+    ``False``.
+    """
+    is_same, certain = same_target_verdict(src, dst)
+    if is_same:
+        if not certain:
+            logger.warning(
+                f"[!] ingest {slot} 無法確認是否為同一檔（fail-closed，不覆寫、不宣稱成功）: {dst}"
+            )
+            return False
+        # 同一檔＝curator 原檔已經就在輸出位置上，本身就是 verbatim passthrough。
+        return True if os.path.exists(dst) else None
+    try:
+        shutil.copy2(src, dst)
+        return True
+    except shutil.SameFileError:
+        # preflight 之後、copy 之前才變成同一檔（別名 race）的 backstop；必須排在
+        # 下面的寬 except 之前（SameFileError 是 OSError 子類）。
+        return True
+    except Exception as e:  # noqa: BLE001 — mirror the generate path's broad catch; any copy failure falls through to generate
+        logger.warning(f"[!] ingest {slot} 原樣複製失敗，改由封面重建: {e}")
+        return None
+
+
 def _write_media_images(
     cover_fs: str, base_stem: str, meta: dict, source_media: Optional[dict]
 ) -> tuple[bool, bool]:
@@ -731,10 +808,15 @@ def _write_media_images(
     ``resolve_ingest_plan``'s cover-axis docstring): each slot is handled
     independently.
       - A detected sidecar (``source_media['poster']`` / ``['fanart']`` not
-        None) is copied VERBATIM via ``shutil.copy2`` — byte-identical to the
-        source, no crop/focal. An ``OSError`` (source vanished mid-run) falls
-        back to the SAME generate step the slot would have used had no
-        sidecar been detected at all.
+        None) is copied VERBATIM via ``_copy_curator_sidecar`` (preflight +
+        ``shutil.copy2``) — byte-identical to the source, no crop/focal. An
+        ``OSError`` (source vanished mid-run) falls back to the SAME generate
+        step the slot would have used had no sidecar been detected at all.
+        When the sidecar IS the output slot (collocated curator library — see
+        ``_copy_curator_sidecar``'s Codex round-2 P1 note) the copy is a no-op
+        that reports success: it must NOT fall through to generate, because
+        the generate branch's own preflight compares ``cover_fs`` vs the slot
+        — a different pair — and would crop the cover over the curator's file.
       - A missing slot (``None``) always falls back to that generate step —
         this is the pre-fix behaviour for that slot, unchanged.
     """
@@ -751,37 +833,118 @@ def _write_media_images(
     # fanart: verbatim copy of curator sidecar, else generate (copy2 of cover
     # — matches generate_jellyfin_images's own fanart step byte-for-byte).
     src_fanart = source_media.get('fanart')
-    has_fanart = False
-    if src_fanart:
-        try:
-            shutil.copy2(src_fanart, fanart_path)
-            has_fanart = True
-        except Exception as e:  # noqa: BLE001 — mirror generate_jellyfin_images' broad catch; any copy failure falls through to generate
-            logger.warning(f"[!] ingest fanart 原樣複製失敗，改由封面生成: {e}")
-            src_fanart = None  # fall through to generate below
-    if not src_fanart:
-        try:
-            shutil.copy2(cover_fs, fanart_path)
-            has_fanart = True
-        except Exception as e:
-            logger.warning(f"[!] generate_jellyfin_images fanart 複製失敗: {e}")
-            has_fanart = False
+    has_fanart = _copy_curator_sidecar(src_fanart, fanart_path, 'fanart') if src_fanart else None
+    if has_fanart is None:
+        is_same, certain = same_target_verdict(cover_fs, fanart_path)
+        if is_same:
+            has_fanart = certain
+        else:
+            try:
+                shutil.copy2(cover_fs, fanart_path)
+                has_fanart = True
+            except shutil.SameFileError:
+                has_fanart = True
+            except Exception as e:
+                logger.warning(f"[!] generate_jellyfin_images fanart 複製失敗: {e}")
+                has_fanart = False
 
     # poster: verbatim copy of curator sidecar, else generate (crop_to_poster
     # of cover — matches generate_jellyfin_images's own poster step).
     src_poster = source_media.get('poster')
-    has_poster = False
-    if src_poster:
-        try:
-            shutil.copy2(src_poster, poster_path)
-            has_poster = True
-        except Exception as e:  # noqa: BLE001 — mirror generate path's broad catch; any copy failure falls through to crop_to_poster
-            logger.warning(f"[!] ingest poster 原樣複製失敗，改由封面裁生: {e}")
-            src_poster = None  # fall through to generate below
-    if not src_poster:
-        has_poster = crop_to_poster(cover_fs, poster_path, number=number, maker=maker)
+    has_poster = _copy_curator_sidecar(src_poster, poster_path, 'poster') if src_poster else None
+    if has_poster is None:
+        is_same, certain = same_target_verdict(cover_fs, poster_path)
+        if is_same:
+            has_poster = certain
+        else:
+            has_poster = crop_to_poster(cover_fs, poster_path, number=number, maker=maker)
 
     return has_poster, has_fanart
+
+
+def _write_cover_copy(src: str, dst: str) -> bool:
+    """``cover_strategy == ('copy', src)`` cover write. Returns whether ``dst``
+    now holds a valid cover.
+
+    Pre-existing bug found by red-team during 112b pre-merge (2026-08-04):
+    when the readonly source's output root sits inside the source tree AND
+    ``movie_dir``/``base`` land back on the source directory/stem, ``src``
+    and ``dst`` (``resolve_cover_target``'s canonical position) can be the
+    SAME file. This was already reachable pre-112; CD-112-7 (curator
+    ``-fanart`` promoted to cover source when no same-stem cover exists)
+    opened a second path into it. Bare ``shutil.copyfile`` raises
+    ``SameFileError`` (an ``OSError`` subclass) in that case, which the old
+    bare ``except OSError:`` swallowed into ``has_cover=False`` — skipping
+    ALL of poster/fanart generation and writing an empty DB ``cover_path``
+    even though the cover is sitting right there on disk, intact (violates
+    AC5b). Same ``same_target_verdict`` preflight shape as
+    ``generate_jellyfin_images`` (CD-112b-1): ``certain`` — not a bare
+    ``True`` — drives the return value (CD-112-8 safety/honesty split);
+    ``SameFileError`` is a race backstop for "still-distinct-at-preflight,
+    same-by-copy-time" and MUST stay ahead of ``except OSError`` since it
+    subclasses it.
+
+    Codex PR#125 P2 (2026-08-05): the ``is_same`` branch additionally requires
+    ``dst`` to still be on disk. ``same_target_verdict``'s ``src == dst`` cell
+    answers by string comparison alone with zero I/O — it is the ONE cell of the
+    five that can return ``(True, True)`` for a path that does not exist (its own
+    docstring names this residual and says it "**必須重新評估**" once T3 makes
+    string equality the readonly hot path — this is that re-evaluation). The
+    other six ``same_target_verdict`` call sites re-confirm ``dst`` a few lines
+    earlier; this one does not — ``src`` comes from ``cover_strategy[1]``, whose
+    ``.exists()`` check happened back in ``resolve_ingest_plan`` several I/O hops
+    away, so an external delete in between lands here as a **false success**:
+    ``has_cover=True`` → poster/fanart "generated" → NFO writes dangling
+    ``<thumb>``/``<fanart>`` and the DB records a cover that is not there
+    (AC5b/AC7 violation). Reported false success is the categorically worse
+    outcome under CD-112-8, so this call site pays one ``os.path.exists``.
+    The check is deliberately HERE and not inside ``same_target_verdict``:
+    ``os.path.exists`` also returns False on permission errors, which would flip
+    a legitimately-True verdict for the other six call sites (that argument is
+    verbatim in ``cover_layout.same_target_verdict``'s residual note). It is a
+    no-op for the ``samefile``-alias cell, which already proved both paths stat.
+    """
+    is_same, certain = same_target_verdict(src, dst)
+    if is_same:
+        return certain and os.path.exists(dst)
+    if os.path.exists(dst):
+        # Collision policy (Codex PR#125 round-3 P1, 2026-08-05): ``dst`` already
+        # holds a cover, so NEVER overwrite it — report the existing file as the
+        # cover and write nothing.
+        #
+        # Why this is required, not merely nice: in a collocated layout (output
+        # root resolving back onto the source movie directory) a curator library
+        # carrying BOTH ``{stem}.jpg`` and ``{stem}-fanart.jpg`` makes the two
+        # halves of the flip disagree. ``find_cover_image``'s L1 picks the plain
+        # same-stem cover, so CD-112-7 promotes the curator ``-fanart`` to the
+        # copy SOURCE; meanwhile ``resolve_cover_target``'s step ① sees that same
+        # ``{stem}.jpg`` already on disk and returns it as the TARGET. Result:
+        # ``copyfile(curator -fanart → curator {stem}.jpg)`` permanently destroys
+        # the second curator original (reproduced: 800×538 red → 1200×675 blue,
+        # md5 becomes the fanart's). That is a straight breach of prd.md 技術決策
+        # #6 承重牆「衍生產物不回寫原檔」, and it is a REGRESSION of this branch —
+        # ``curator_cover_source`` (the promotion) landed in c4bb5508/T3; before
+        # it, source and target were the same file and the copy was a no-op.
+        #
+        # Blast radius is confined to ingest: ``('copy', …)`` has exactly ONE
+        # producer (the ingest branch of ``resolve_ingest_plan``), whose contract
+        # is local-first / reuse-first — "有 .nfo／封面就地 ingest 零網路". A
+        # deliberate overwrite still has its escape hatch: the gear re-scrape
+        # emits ``('download', url)``, which goes through ``download_image`` and
+        # never reaches this function.
+        #
+        # ``resolve_cover_target`` only ever returns an ALREADY-EXISTING path via
+        # its steps ① / ② — i.e. exactly "a cover is already sitting at a
+        # canonical position". Reusing it is the same 沿用 semantics those two
+        # steps encode; overwriting it would contradict them.
+        return True
+    try:
+        shutil.copyfile(src, dst)
+        return True
+    except shutil.SameFileError:
+        return True
+    except OSError:
+        return False
 
 
 def _write_movie_assets(
@@ -888,11 +1051,7 @@ def _write_movie_assets(
     cover_fs = resolve_cover_target(base_stem, external_manager)
     strategy_kind = cover_strategy[0]
     if strategy_kind == 'copy':
-        try:
-            shutil.copyfile(cover_strategy[1], cover_fs)
-            has_cover = True
-        except OSError:
-            has_cover = False
+        has_cover = _write_cover_copy(cover_strategy[1], cover_fs)
     elif strategy_kind == 'none':
         has_cover = False
     else:  # 'download' — byte-identical to the pre-T1 unconditional branch (C6)
@@ -963,8 +1122,8 @@ def _write_movie_assets(
         maker=meta.get('maker', ''),
         url=meta.get('url', ''),
         output_path=nfo_fs,
-        has_poster=has_poster,
-        has_fanart=has_fanart,
+        has_poster=nfo_image_flag(base_stem, '-poster', has_poster),
+        has_fanart=nfo_image_flag(base_stem, '-fanart', has_fanart),
         director=meta.get('director', ''),
         duration=meta.get('duration'),
         series=meta.get('series', ''),
@@ -1304,21 +1463,34 @@ def resolve_ingest_plan(
     cover_strategy is discarded and `('none',)` is returned instead — nothing
     to copy/download without any metadata to attach it to.
 
-    Curated -poster/-fanart passthrough (owner-approved fix, 2026-07-21):
+    Curated -poster/-fanart passthrough (owner-approved fix, 2026-07-21;
+    cover-source upgrade corrected per CD-112-7, T3/feature-112b — see below):
     action='ingest' only, when the cover strategy resolves to the local-copy
-    form (`('copy', cover_fs)`), the 3rd element is appended as
-    `('copy', cover_fs, {'poster': poster_fs, 'fanart': fanart_fs})` — the
-    source directory's OWN `{stem}-poster.*` / `{stem}-fanart.*` sidecars
-    (curated Jellyfin/Emby libraries ship both, distinct portrait/landscape
-    images), each `None` when absent. `_write_movie_assets` copies these
-    VERBATIM into the output `-poster`/`-fanart` slots instead of regenerating
-    them from whichever single image `find_cover_image` picked as the cover
-    (which previously discarded the curator's real poster — see plan-104
-    cover axis notes). `('none',)` is left untouched (no local cover at all →
-    nothing to copy). `action='rescrape'` never adds this 3rd element —
-    cover_strategy stays a 2-tuple there, so the scrape/rescrape write path
-    (`source_media is None` in `_write_movie_assets`) stays byte-identical to
-    before this fix.
+    form, the source directory's OWN `{stem}-poster.*` / `{stem}-fanart.*`
+    sidecars are detected (curated Jellyfin/Emby libraries ship both,
+    distinct portrait/landscape images from whatever `find_cover_image`
+    picked as the cover). `poster_fs` is threaded through as the 3rd
+    element's `'poster'` slot for verbatim copy by `_write_movie_assets`
+    (never regenerated from the cover — see plan-104 cover axis notes). The
+    3rd element's `'fanart'` slot is ALWAYS `None` (CD-112-7's second half) —
+    but for media-server flavours, when `fanart_fs` IS detected, it is NOT
+    discarded: the 2nd tuple element (cover SOURCE) is upgraded from
+    `cover_fs` to `fanart_fs` instead (CD-112-7's first half, the part missed
+    in this fix's initial pass). Why: under the post-112 stem layout the
+    canonical cover position for media-server flavours IS `-fanart.jpg`
+    (CD-112-3), so the single `shutil.copyfile(cover_strategy[1], cover_fs)`
+    cover-write step then simultaneously satisfies "canonical cover" AND
+    "fanart verbatim" — no second writer needed to fight over the same
+    destination file; `_write_media_images`'s fanart generate branch copying
+    that same file onto itself is a no-op protected by ⑧'s
+    `same_target_verdict` preflight. Off/unknown flavour (positive
+    whitelist, not `!= 'off'`) keeps `cover_fs` untouched — AC2 requires
+    off's `{b}.jpg` output stay byte-identical to whatever `find_cover_image`
+    picked, never silently swapped to the curator fanart. `('none',)` is left
+    untouched (no local cover at all → nothing to copy). `action='rescrape'`
+    never adds this 3rd element — cover_strategy stays a 2-tuple there, so
+    the scrape/rescrape write path (`source_media is None` in
+    `_write_movie_assets`) stays byte-identical to before this fix.
     """
     nfo_path = Path(src_fs_path).with_suffix('.nfo')
     root = None
@@ -1361,7 +1533,53 @@ def resolve_ingest_plan(
                  if (p := src_dir / f"{stem}-fanart{ext}").exists()),
                 None,
             )
-            cover_strategy = ('copy', cover_fs, {'poster': poster_fs, 'fanart': fanart_fs})
+            # CD-112-7 (T3, feature/112b; corrected per Opus review — the first
+            # half of CD-112-7 was missed in the initial pass): media-server
+            # flavours only, when a curator -fanart sidecar IS detected, the
+            # cover SOURCE itself is upgraded to that fanart file (2nd tuple
+            # element), not just left as whatever find_cover_image picked.
+            # Why: under the post-112 stem layout the canonical cover position
+            # for media-server flavours IS <stem>-fanart.jpg (CD-112-3), so
+            # routing the curator's own fanart through as the cover source
+            # means the single copy in _write_movie_assets's cover step
+            # (`shutil.copyfile(cover_strategy[1], cover_fs)`) simultaneously
+            # satisfies "canonical cover" AND "fanart verbatim" — no second
+            # writer needed to fight over the same destination file. Without
+            # this, a curated library with all three of {stem}.jpg/-poster/
+            # -fanart present has find_cover_image's L1 pick the SAME-NAME
+            # .jpg (not the fanart) as cover_fs, and the curator's real
+            # fanart would be silently discarded entirely — violating AC5
+            # ("curator sidecar 情境的正確承諾是逐位元組保留 curator 原檔") and
+            # AC5b (DB cover_path must point at that curator fanart).
+            #
+            # CD-112-7 second half, REVISED (Codex PR#125 round-3 P1, 2026-08-05).
+            # The 'fanart' slot used to be hardcoded None, on the premise that
+            # "once the cover source IS the curator fanart, the generate branch's
+            # `copy2(cover_fs, fanart_path)` writes that file onto itself, so no
+            # passthrough slot is needed". **That premise is false whenever
+            # `cover_fs` is not the fanart path** — and it is not, in a collocated
+            # layout that ALREADY has a same-stem plain cover: `resolve_cover_target`
+            # step ① returns the existing `{stem}.jpg`, so the generate branch
+            # copies that same-name cover straight OVER the curator's `-fanart`,
+            # destroying a second curator original (prd.md 技術決策 #6). Same shape
+            # as the pre-merge Stage 2 P1 — a decision resting on a premise that
+            # does not always hold. Declaring every sidecar that actually exists
+            # removes the premise entirely; `_copy_curator_sidecar` then covers
+            # both layouts:
+            #   • normal (fresh output dir): src=curator fanart, dst={base}-fanart
+            #     → verbatim copy. Byte-identical outcome to the old path.
+            #   • collocated: src == dst → same-file passthrough, original kept.
+            # ⚠️ Flavour gate is NOT optional: off/unknown flavour must keep
+            # cover_fs untouched — AC2 requires off's output `{b}.jpg` content
+            # stay byte-identical to whatever find_cover_image picked, not
+            # silently swap to the curator fanart. Positive whitelist
+            # (BE-CONFIG-03): `external_manager in STEM_IMAGE_MODES`, not
+            # `!= 'off'` — illegal values fail-closed to `cover_fs`.
+            external_manager = normalize_external_manager(config.get('external_manager', 'off'))
+            curator_cover_source = (
+                fanart_fs if fanart_fs and external_manager in STEM_IMAGE_MODES else cover_fs
+            )
+            cover_strategy = ('copy', curator_cover_source, {'poster': poster_fs, 'fanart': fanart_fs})
         elif valid_nfo:
             cover_strategy = ('none',)
         else:

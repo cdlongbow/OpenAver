@@ -9,6 +9,7 @@ import os
 import pytest
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import List, Optional
 from unittest.mock import patch, MagicMock, call
 
@@ -2841,3 +2842,709 @@ class TestEnrichSingleStationWiring:
 
     def test_station2_fixture_b(self, tmp_path):
         self._run_station2(tmp_path, "b", self._FIXTURE_B)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 112b-T5：真理表 Table 1 #2/#3/#4/#4b/#5/#6 直接鎖 ＋ ⑤⑥⑦ 專屬守衛 ＋ AC5/AC6/AC8
+#
+# 對齊 feature/112-cover-canonical-position/TASK-112b-T5.md。fixture 三條件
+# （task card §C／Opus 追加要求 #2，形狀照抄
+# tests/unit/test_cover_canonical_contract.py:1016-1033 的 `_seed_bare_tracked_row`
+# ——讀它、照著寫，**不 import**，該檔案頭明文「本檔案私有」）：
+#   1. DB 種一筆 tracked row（key 存在，`cover_path` 依情境需要顯式帶入，見各
+#      測試 docstring）
+#   2. 留白 `_FILL_MISSING_REQUIRED` 欄位 → `_missing_fields` 非空 →
+#      `search_jav` 真的被呼叫 → `source_used` 落在 scraper 值 → `_db_upsert`
+#      閘門為 True（不留白會讓 DB 斷言變成零訊號的空頭支票，本卡 §A-2 追出的
+#      `source_used` 陷阱，比 `BE-DATA-07` 更上游）
+#   3. `search_jav` mock 回非空 meta（含 cover URL）
+# 每一支 DB 測試額外斷言 `ctx.mock_search.called`（Opus 追加要求 #3：fixture
+# 沒設對就炸，不是靜默恆真）。
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _t5_write_jpeg(path, size=(300, 200), color=(128, 64, 32)) -> None:
+    """真 JPEG（PIL）。假 bytes（`b"fake"`）會讓 crop_to_poster 靜默回 False，
+    poster 斷言測不到東西（§E 假綠風險 #1）。"""
+    from PIL import Image
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", size, color=color).save(str(path), "JPEG", quality=95)
+
+
+def _t5_jpeg_bytes(size=(300, 200), color=(200, 100, 50)) -> bytes:
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", size, color=color).save(buf, "JPEG", quality=95)
+    return buf.getvalue()
+
+
+def _t5_download_image_side_effect(content: bytes):
+    """供 `patch("core.enricher.download_image", side_effect=...)`：真的把
+    bytes 寫進 save_path 並回 True，讓後續 crop_to_poster／位元組斷言吃得到
+    真實內容。**patch target 必須是 `core.enricher.download_image`**（值匯入
+    到 enricher 模組命名空間，patch `core.organizer.download_image` 對它無效，
+    §E 假綠風險 #4）。"""
+    def _side_effect(url, save_path, referer=""):
+        Path(save_path).write_bytes(content)
+        return True
+    return _side_effect
+
+
+def _t5_read_nfo_tags(nfo_path) -> dict:
+    from xml.etree import ElementTree as ET
+    root = ET.parse(str(nfo_path)).getroot()
+    return {
+        "poster": root.findtext("poster") or "",
+        "thumb": root.findtext("thumb") or "",
+        "fanart": root.findtext("fanart") or "",
+    }
+
+
+def _t5_assert_nfo_tags_exist(nfo_path, expect_exists: dict) -> dict:
+    """讀 NFO 三個 tag，逐一斷言其指向的檔案在 NFO 所在目錄下是否存在
+    （只驗『指得到』不驗『字面值』的呼叫端另外自行比對字面值，§E 假綠風險 #3：
+    只驗存在不驗字面值/只驗字面值不驗存在都不夠）。"""
+    tags = _t5_read_nfo_tags(nfo_path)
+    nfo_dir = Path(nfo_path).parent
+    for key, expected in expect_exists.items():
+        target = nfo_dir / tags[key]
+        actual = target.exists()
+        assert actual == expected, (
+            f"NFO <{key}> = {tags[key]!r}（{target}），exists()={actual}，預期 {expected}"
+        )
+    return tags
+
+
+def _t5_scraper_data(number):
+    return {
+        "number": number, "title": "T5 Scraper Title", "actors": ["T5 Actress"],
+        "cover": "http://example.com/t5-cover.jpg", "date": "2024-05-01",
+        "maker": "T5Maker", "director": "T5 Dir", "series": "T5 Series",
+        "label": "T5Lab", "tags": ["t5tag"], "sample_images": [],
+        "source": "javbus",
+    }
+
+
+def _t5_seed_tracked_row(repo, db_key, number, cover_path=""):
+    """DB 已追蹤此片（key 存在）——**不是**「DB 裡沒有這片」。`_merge_meta`
+    的 cover_url 合併判斷（`core/enricher.py:146`，`merged.get("cover_url")
+    == ""`）在 key 不存在時恆假，會讓 scraper 的封面 URL 永遠合併不進去
+    （`BE-DATA-07`）。其餘 `_FILL_MISSING_REQUIRED` 欄位（title/actresses/
+    maker/director/series/label/tags/release_date）全部靠 `Video` dataclass
+    預設值留白 → `_missing_fields` 保證非空 → `search_jav` 保證被呼叫 →
+    `source_used` 落在 scraper 值 → `_db_upsert` 閘門為 True（Opus 追加
+    要求 #2）。`cover_path` 依情境需要顯式帶入：留空＝DB 尚未追蹤任何既有
+    封面（沿用 test_cover_canonical_contract.py B-jf-4 的理由：避免磁碟上
+    孤兒檔案的 URI 干擾 cover_url 合併判斷）；帶入既有檔案的 URI＝這片已被
+    追蹤過同一張封面（用於「DB cover_path 不變」的非平凡驗證，見各測試
+    docstring）。"""
+    from core.database import Video
+    repo.upsert(Video(path=db_key, number=number, cover_path=cover_path))
+
+
+def _t5_run(tmp_path, db_name, *, number, external_manager, video_name=None,
+            overwrite_existing=False, pre_stage=None, download_content=None,
+            capture=None):
+    """T5 共用 fixture 骨架：真 DB + patch `VideoRepository` 綁 tmp db
+    （`BE-TEST-07`：`get_db_path()` 硬編碼 repo-root、`temp_config_path` 對它
+    無效）+ 真 `search_jav` mock（非空 meta）+ patch `core.enricher.download_image`
+    真的落地寫檔（不需要另外 mock `requests.get`：`crop_to_poster` 純讀本地
+    檔案，沒有網路呼叫，見 task card §B 讀碼）。"""
+    from core.database import init_db, VideoRepository
+    from core.path_utils import to_file_uri as _to_file_uri, uri_to_fs_path
+
+    if capture is None:
+        capture = {}
+
+    video_dir = tmp_path / f"{db_name}_video"
+    video_dir.mkdir()
+    video_file = video_dir / (video_name or f"{number}.mp4")
+    video_file.write_bytes(b"video-bytes")
+    file_path = str(video_file)
+    db_key = _to_file_uri(uri_to_fs_path(file_path))
+
+    db_file = tmp_path / f"{db_name}.db"
+    init_db(db_file)
+    repo = VideoRepository(db_path=db_file)
+
+    if pre_stage is not None:
+        pre_stage(repo, video_dir, db_key, number, capture)
+
+    scraper_data = _t5_scraper_data(number)
+    content = download_content if download_content is not None else _t5_jpeg_bytes()
+    with (
+        patch("core.enricher.VideoRepository", return_value=repo),
+        patch("core.enricher.search_jav", return_value=scraper_data) as mock_search,
+        patch("core.enricher.download_image",
+              side_effect=_t5_download_image_side_effect(content)) as mock_download,
+    ):
+        from core.enricher import enrich_single
+        result = enrich_single(
+            file_path=file_path, number=number, mode="fill_missing",
+            write_nfo=True, write_cover=True, write_extrafanart=False,
+            overwrite_existing=overwrite_existing, external_manager=external_manager,
+        )
+    return SimpleNamespace(
+        result=result, repo=repo, db_key=db_key, video_dir=video_dir,
+        video_file=video_file, mock_search=mock_search, mock_download=mock_download,
+        capture=capture,
+    )
+
+
+class TestTable1Row2ExistingFullPreservedAC6:
+    """真理表 Table 1 #2（AC8 + AC1b-1）＋ AC6：jellyfin + 既有 `{stem}.jpg`
+    完整（含衍生圖）+ ovw=False → `download_image` 零呼叫、DB cover_path 與
+    crop_mode/auto_focal 操作前後完全相同；既有封面 bytes/mtime 完全不變
+    （AC6，`BE-TEST-10`：基準值在操作**之前**取得）。"""
+
+    def test_preserve_no_download_db_and_focal_unchanged(self, tmp_path, seed_crop_mode):
+        number = "T5ROW2-001"
+
+        def _stage(repo, video_dir, db_key, number_, capture):
+            stem = number_
+            cover = video_dir / f"{stem}.jpg"
+            _t5_write_jpeg(cover, color=(11, 12, 13))
+            _t5_write_jpeg(video_dir / f"{stem}-poster.jpg", color=(21, 22, 23))
+            _t5_write_jpeg(video_dir / f"{stem}-fanart.jpg", color=(31, 32, 33))
+            cover_uri = to_file_uri(str(cover))
+            _t5_seed_tracked_row(repo, db_key, number_, cover_path=cover_uri)
+            assert seed_crop_mode(repo, db_key, "manual") is True
+            capture["cover_uri"] = cover_uri
+            capture["before_bytes"] = cover.read_bytes()
+            capture["before_mtime"] = cover.stat().st_mtime
+
+        ctx = _t5_run(tmp_path, "t5_row2", external_manager="jellyfin", number=number,
+                       pre_stage=_stage)
+        assert ctx.mock_search.called, (
+            "fixture 沒逼出 search_jav → _db_upsert 不會執行 → 下面的 DB 斷言恆空"
+        )
+
+        stem = ctx.video_file.stem
+        cover = ctx.video_dir / f"{stem}.jpg"
+        poster = ctx.video_dir / f"{stem}-poster.jpg"
+        fanart = ctx.video_dir / f"{stem}-fanart.jpg"
+
+        ctx.mock_download.assert_not_called()  # AC8：preserve 命中 → 零下載
+
+        # AC6：既有封面 bytes/mtime 操作前後完全相同（基準值在操作之前取得）
+        assert cover.read_bytes() == ctx.capture["before_bytes"]
+        assert cover.stat().st_mtime == ctx.capture["before_mtime"]
+
+        # 衍生圖 gate 是磁碟真相，既有衍生圖原樣算數（不重生）
+        assert poster.exists() and fanart.exists()
+
+        nfo = ctx.video_dir / f"{stem}.nfo"
+        tags = _t5_assert_nfo_tags_exist(nfo, {"poster": True, "thumb": True, "fanart": True})
+        assert tags["poster"] == f"{stem}-poster.jpg"
+        # <thumb> 改用既有 fanart_tag 變數（CD-112-5，core/organizer.py:755），
+        # has_fanart=True 時字面值恆為 {stem}-fanart.jpg——與「正典封面仍是
+        # {stem}.jpg」正交，不是「thumb 沿用 canonical cover 位置」（實測更正
+        # task card §D 表格原先「== {stem}.jpg」的預測，見 T5 §F 記錄）。
+        assert tags["thumb"] == f"{stem}-fanart.jpg"
+        assert tags["fanart"] == f"{stem}-fanart.jpg"
+
+        row = ctx.repo.get_by_path(ctx.db_key)
+        assert row.cover_path == ctx.capture["cover_uri"], "DB cover_path 操作前後完全相同"  # 真理表 Table 1 #2
+        assert row.crop_mode == "manual", "AC1b-1：crop_mode 操作前後完全相同"
+        assert row.auto_focal == ""
+
+
+class TestTable1Row3ExistingMissingDerivativesBackfilled:
+    """真理表 Table 1 #3（AC1b-1 衍生圖邊界）：jellyfin + 既有 `{stem}.jpg`
+    但**缺衍生圖** + ovw=False → cover 本身仍 preserve（零下載），但衍生圖
+    gate 是磁碟真相（`cover_path.exists()`，`core/enricher.py:280-303`），
+    與 preserve 無關 → **會補**。這格證明 AC1b-1 的承諾是「不動正典封面」
+    而不是「不寫任何檔」。"""
+
+    def test_derivatives_backfilled_cover_preserved(self, tmp_path, seed_crop_mode):
+        number = "T5ROW3-001"
+
+        def _stage(repo, video_dir, db_key, number_, capture):
+            stem = number_
+            cover = video_dir / f"{stem}.jpg"
+            _t5_write_jpeg(cover, color=(41, 42, 43))
+            cover_uri = to_file_uri(str(cover))
+            _t5_seed_tracked_row(repo, db_key, number_, cover_path=cover_uri)
+            assert seed_crop_mode(repo, db_key, "manual") is True
+            capture["cover_uri"] = cover_uri
+            capture["before_bytes"] = cover.read_bytes()
+
+        ctx = _t5_run(tmp_path, "t5_row3", external_manager="jellyfin", number=number,
+                       pre_stage=_stage)
+        assert ctx.mock_search.called, (
+            "fixture 沒逼出 search_jav → _db_upsert 不會執行 → 下面的 DB 斷言恆空"
+        )
+
+        stem = ctx.video_file.stem
+        cover = ctx.video_dir / f"{stem}.jpg"
+        poster = ctx.video_dir / f"{stem}-poster.jpg"
+        fanart = ctx.video_dir / f"{stem}-fanart.jpg"
+
+        ctx.mock_download.assert_not_called()  # cover 本身仍走 preserve
+        assert cover.read_bytes() == ctx.capture["before_bytes"]
+        assert poster.exists() and fanart.exists(), "衍生圖 gate 看磁碟 cover_path.exists()，會補"  # 真理表 Table 1 #3
+
+        nfo = ctx.video_dir / f"{stem}.nfo"
+        tags = _t5_assert_nfo_tags_exist(nfo, {"poster": True, "thumb": True, "fanart": True})
+        assert tags["poster"] == f"{stem}-poster.jpg"
+        # <thumb> = fanart_tag（CD-112-5），has_fanart=True → 恆 {stem}-fanart.jpg
+        assert tags["thumb"] == f"{stem}-fanart.jpg"
+        assert tags["fanart"] == f"{stem}-fanart.jpg"
+
+        row = ctx.repo.get_by_path(ctx.db_key)
+        assert row.cover_path == ctx.capture["cover_uri"], "DB cover_path 不變"
+        assert row.crop_mode == "manual", "焦點不清"
+        assert row.auto_focal == ""
+
+
+class TestTable1Row4ExistingFanartOnlyNotOverwritten:
+    """真理表 Table 1 #4（差異最大格）：jellyfin + 既有 `{stem}-fanart.jpg`
+    （**無**同名 `.jpg`）+ ovw=False → `resolve_cover_target` 第②步認得
+    fanart 候選 → 不下載、不寫第二份底圖、DB 不變、焦點不清、三 tag 皆指
+    得到。**T3 之前這裡會下載出第二份 `{stem}.jpg`**（改動前後差異最大的
+    一格，見 task card §B「#4」）。
+
+    DB `cover_path` 刻意留空（不指向這張磁碟上既有的孤兒 fanart）——理由
+    照抄 `test_cover_canonical_contract.py::test_B_jf_4_...` 的 docstring：
+    避免其 URI 干擾 `_merge_meta` 的 cover_url 合併判斷。"""
+
+    def test_fanart_layout_preserved_no_second_cover(self, tmp_path, seed_crop_mode):
+        number = "T5ROW4-001"
+
+        def _stage(repo, video_dir, db_key, number_, capture):
+            stem = number_
+            fanart = video_dir / f"{stem}-fanart.jpg"
+            _t5_write_jpeg(fanart, color=(51, 52, 53))
+            _t5_seed_tracked_row(repo, db_key, number_, cover_path="")
+            assert seed_crop_mode(repo, db_key, "manual") is True
+            capture["before_bytes"] = fanart.read_bytes()
+
+        ctx = _t5_run(tmp_path, "t5_row4", external_manager="jellyfin", number=number,
+                       pre_stage=_stage)
+        assert ctx.mock_search.called, (
+            "fixture 沒逼出 search_jav → _db_upsert 不會執行 → 下面的 DB 斷言恆空"
+        )
+
+        stem = ctx.video_file.stem
+        cover = ctx.video_dir / f"{stem}.jpg"
+        fanart = ctx.video_dir / f"{stem}-fanart.jpg"
+        poster = ctx.video_dir / f"{stem}-poster.jpg"
+
+        ctx.mock_download.assert_not_called()  # 真理表 Table 1 #4：preserve 命中，① 是→否
+        assert not cover.exists(), "不應多寫出第二份 {stem}.jpg 底圖"
+        assert fanart.read_bytes() == ctx.capture["before_bytes"], "既有 fanart 不被觸碰"
+        assert poster.exists(), "衍生圖 gate 是磁碟真相，poster 仍會補（沿用既有 fanart 當來源）"
+
+        nfo = ctx.video_dir / f"{stem}.nfo"
+        tags = _t5_assert_nfo_tags_exist(nfo, {"poster": True, "thumb": True, "fanart": True})
+        assert tags["poster"] == f"{stem}-poster.jpg"
+        assert tags["thumb"] == f"{stem}-fanart.jpg"
+        assert tags["fanart"] == f"{stem}-fanart.jpg"
+
+        row = ctx.repo.get_by_path(ctx.db_key)
+        assert row.cover_path == "", "DB cover_path 不變"
+        assert row.crop_mode == "manual", "cover_written=False → 不清焦點"
+        assert row.auto_focal == ""
+
+
+class TestTable1Row4bExistingFanartOnlyOverwritten:
+    """真理表 Table 1 #4b（PR1 期間補入）：jellyfin + 既有 `{stem}-fanart.jpg`
+    + **ovw=True**（齒輪重刮）→ 封面覆寫回 `-fanart.jpg`（`resolve_cover_target`
+    第②步命中仍是同一個檔）、fanart 走 ⑥ preflight 同檔保護
+    （`same_target_verdict` 的 `src == dst` 字串相等短路）→ `fanart_ok=True`，
+    NFO 兩 tag 指得到。
+
+    DB `cover_path` 這格的「不變」是**重算後剛好相同**，不是「保留舊值」
+    （task card §B「#4b」）——fixture 因此把 DB 既有值刻意設成與「重算後的值」
+    相同（模擬這片已被追蹤過同一張封面），才能驗到「不變」而不是巧合。
+
+    crop_mode 被重置為 `auto`——**鎖的是改動前就有的行為（CD-112-14），不是
+    112 的承諾**（R8，Opus 追加要求 #5）：`cover_written=True` 時
+    `schedule_focal_after_cover_write` 無條件觸發，本 branch 一行都沒改這條
+    規則。測試方法名稱刻意不用 `preserves_focal` 這種會被誤讀成承諾的字眼。
+    """
+
+    def test_overwrite_true_rewrites_same_fanart_legacy_focal_reset_cd_112_14(
+        self, tmp_path, seed_crop_mode
+    ):
+        number = "T5ROW4B-001"
+        old_content = (61, 62, 63)
+        new_content = (200, 201, 202)
+
+        def _stage(repo, video_dir, db_key, number_, capture):
+            stem = number_
+            fanart = video_dir / f"{stem}-fanart.jpg"
+            _t5_write_jpeg(fanart, color=old_content)
+            cover_uri = to_file_uri(str(fanart))
+            _t5_seed_tracked_row(repo, db_key, number_, cover_path=cover_uri)
+            assert seed_crop_mode(repo, db_key, "manual") is True
+            capture["cover_uri"] = cover_uri
+
+        ctx = _t5_run(tmp_path, "t5_row4b", external_manager="jellyfin", number=number,
+                       overwrite_existing=True, pre_stage=_stage,
+                       download_content=_t5_jpeg_bytes(color=new_content))
+        assert ctx.mock_search.called, (
+            "fixture 沒逼出 search_jav → _db_upsert 不會執行 → 下面的 DB 斷言恆空"
+        )
+
+        stem = ctx.video_file.stem
+        fanart = ctx.video_dir / f"{stem}-fanart.jpg"
+        cover = ctx.video_dir / f"{stem}.jpg"
+
+        ctx.mock_download.assert_called_once()  # ovw=True → 不 preserve → 真的覆寫，① 恆是
+        assert not cover.exists(), "正典仍是 fanart，不應多出同名 .jpg"
+        assert fanart.read_bytes() == _t5_jpeg_bytes(color=new_content), "覆寫成新下載內容"
+
+        nfo = ctx.video_dir / f"{stem}.nfo"
+        tags = _t5_assert_nfo_tags_exist(nfo, {"poster": True, "thumb": True, "fanart": True})
+        assert tags["poster"] == f"{stem}-poster.jpg"
+        assert tags["thumb"] == f"{stem}-fanart.jpg"
+        assert tags["fanart"] == f"{stem}-fanart.jpg"
+
+        row = ctx.repo.get_by_path(ctx.db_key)
+        assert row.cover_path == ctx.capture["cover_uri"], (
+            "DB cover_path 值不變——重算後剛好相同，不是保留舊值（見 task card §B「#4b」）"
+        )  # 真理表 Table 1 #4b
+        assert row.crop_mode == "auto", (
+            "cover_written=True → 無條件 reset。這是改動前就有的行為（CD-112-14），"
+            "不是 112 的承諾（R8）"
+        )
+        assert row.auto_focal == ""
+
+
+class TestTable1Row5ExistingFullOverwritten:
+    """真理表 Table 1 #5（AC1b-2 核心）：jellyfin + 既有 `{stem}.jpg` +
+    **ovw=True** → 覆寫回同一個檔名、DB cover_path 字面值不變（重算後相同）、
+    crop_mode 被重置。**焦點重置鎖的是改動前就有的行為（CD-112-14），不是
+    112 的承諾**（R8，Opus 追加要求 #5）——測試方法名稱刻意不用
+    `preserves_focal` 這種會被誤讀成承諾的字眼。"""
+
+    def test_overwrite_true_rewrites_same_name_legacy_focal_reset_cd_112_14(
+        self, tmp_path, seed_crop_mode
+    ):
+        number = "T5ROW5-001"
+        old_content = (71, 72, 73)
+        new_content = (210, 211, 212)
+
+        def _stage(repo, video_dir, db_key, number_, capture):
+            stem = number_
+            cover = video_dir / f"{stem}.jpg"
+            _t5_write_jpeg(cover, color=old_content)
+            cover_uri = to_file_uri(str(cover))
+            _t5_seed_tracked_row(repo, db_key, number_, cover_path=cover_uri)
+            assert seed_crop_mode(repo, db_key, "manual") is True
+            capture["cover_uri"] = cover_uri
+
+        ctx = _t5_run(tmp_path, "t5_row5", external_manager="jellyfin", number=number,
+                       overwrite_existing=True, pre_stage=_stage,
+                       download_content=_t5_jpeg_bytes(color=new_content))
+        assert ctx.mock_search.called, (
+            "fixture 沒逼出 search_jav → _db_upsert 不會執行 → 下面的 DB 斷言恆空"
+        )
+
+        stem = ctx.video_file.stem
+        cover = ctx.video_dir / f"{stem}.jpg"
+
+        ctx.mock_download.assert_called_once()
+        assert cover.read_bytes() == _t5_jpeg_bytes(color=new_content), "覆寫回同一個檔名，內容是新下載的圖"  # 真理表 Table 1 #5
+
+        nfo = ctx.video_dir / f"{stem}.nfo"
+        tags = _t5_assert_nfo_tags_exist(nfo, {"poster": True, "thumb": True, "fanart": True})
+        assert tags["poster"] == f"{stem}-poster.jpg"
+        # <thumb> = fanart_tag（CD-112-5），has_fanart=True → 恆 {stem}-fanart.jpg
+        assert tags["thumb"] == f"{stem}-fanart.jpg"
+        assert tags["fanart"] == f"{stem}-fanart.jpg"
+
+        row = ctx.repo.get_by_path(ctx.db_key)
+        assert row.cover_path == ctx.capture["cover_uri"], "DB cover_path 字面值不變（同一路徑）"
+        assert row.crop_mode == "auto", (
+            "cover_written=True → 無條件 reset（既有行為，非 112 承諾，R8）"
+        )
+        assert row.auto_focal == ""
+
+
+class TestTable1Row6RangeOutExtensionStillDownloads:
+    """真理表 Table 1 #6（認定範圍外）：jellyfin + 既有 `{stem}.png` +
+    ovw=False → preserve 判斷只探 `.jpg` 家族（CD-112-3b）→ `.png` 不算
+    「已有封面」→ 下載，但落在 `-fanart.jpg`（不是 `{stem}.jpg`）。**「是否
+    重新產生」不變、「產到哪」變**（plan-112b.md §3.3 第一條，不得寫成逐
+    位元組相同）。"""
+
+    def test_png_not_recognized_downloads_to_fanart(self, tmp_path, seed_crop_mode):
+        number = "T5ROW6-001"
+        new_content = (220, 221, 222)
+
+        def _stage(repo, video_dir, db_key, number_, capture):
+            stem = number_
+            cover_png = video_dir / f"{stem}.png"
+            _t5_write_jpeg(cover_png, color=(81, 82, 83))
+            cover_uri = to_file_uri(str(cover_png))
+            _t5_seed_tracked_row(repo, db_key, number_, cover_path=cover_uri)
+            assert seed_crop_mode(repo, db_key, "manual") is True
+
+        ctx = _t5_run(tmp_path, "t5_row6", external_manager="jellyfin", number=number,
+                       pre_stage=_stage, download_content=_t5_jpeg_bytes(color=new_content))
+        assert ctx.mock_search.called, (
+            "fixture 沒逼出 search_jav → _db_upsert 不會執行 → 下面的 DB 斷言恆空"
+        )
+
+        stem = ctx.video_file.stem
+        cover_png = ctx.video_dir / f"{stem}.png"
+        cover_jpg = ctx.video_dir / f"{stem}.jpg"
+        fanart = ctx.video_dir / f"{stem}-fanart.jpg"
+
+        ctx.mock_download.assert_called_once()  # 真理表 Table 1 #6：① 下載=是
+        assert not cover_jpg.exists(), "canonical 是 -fanart.jpg，不是 {stem}.jpg"
+        assert fanart.exists(), "② 位置=-fanart"
+        assert fanart.read_bytes() == _t5_jpeg_bytes(color=new_content)
+        assert cover_png.exists(), ".png 原檔不被清理"
+
+        nfo = ctx.video_dir / f"{stem}.nfo"
+        tags = _t5_assert_nfo_tags_exist(nfo, {"poster": True, "thumb": True, "fanart": True})
+        assert tags["poster"] == f"{stem}-poster.jpg"
+        assert tags["thumb"] == f"{stem}-fanart.jpg"
+        assert tags["fanart"] == f"{stem}-fanart.jpg"
+
+        row = ctx.repo.get_by_path(ctx.db_key)
+        expected_cover_uri = to_file_uri(str(fanart))
+        assert row.cover_path == expected_cover_uri, "③ 記帳=改變（指向新的 -fanart.jpg）"
+        assert row.crop_mode == "auto", "④ 焦點重置"
+
+
+class TestWriteExternalImagesStemDerivationDirectLock:
+    """CD-112b-3 直接鎖：`_write_external_images` 用**影片 stem**組
+    poster/fanart 路徑，不從 `cover_path` 反向推導。
+
+    **fixture 必須讓 `resolve_cover_target` 走第①步（同名候選命中），不是
+    第③步（flavour 新建）**——這是本卡 Opus 回合追出的精確邊界（`BE-TEST-11`
+    在本卡的第五次命中）：`cover_base_stem` 與 `Path(fs_path).with_suffix("")`
+    兩種推導方式**只在第①步命中時分歧**。若磁碟全空、resolve 走第③步新建
+    fanart 候選（`base_stem + "-fanart.jpg"`），`cover_base_stem` 反推該值時
+    剝一次 `-fanart` 尾碼**剛好還原回 `base_stem`**，與 fs 路徑推導結果逐字
+    相同——此時兩種推導方式數學上等價，mutation 測不出分歧（已實測驗證，
+    見下方 class docstring 的 mutation 記錄）。
+
+    真正會分歧的情境（CD-112b-3 原文 plan-112b.md §2.5 唯一舉的例子）：
+    影片檔名 `my-fanart.mp4` **且磁碟上已有同名封面 `my-fanart.jpg`**
+    （非空、first-time-generation）→ `resolve_cover_target` 第①步命中，回傳
+    `.../my-fanart.jpg`；`cover_base_stem(".../my-fanart.jpg")` 剝 `.jpg` →
+    `my-fanart` → 剝一次尾端 `-fanart` → **誤剝成 `my`**（把檔名本身自帶的
+    `-fanart` 尾碼當成後綴標記剝掉），而 `Path(fs_path).with_suffix("")`
+    正確給出 `my-fanart`。**只有這個情境的 fixture 才踩得到 CD-112b-3 否決
+    `cover_base_stem` 的理由**，本卡因此把既有 fixture（磁碟全空、走第③步）
+    改成「既有同名封面存在、走第①步」。
+
+    正確作法（無論磁碟空或有同名封面）衍生圖仍落在
+    `my-fanart-poster.jpg` / `my-fanart-fanart.jpg`（＝改動前行為，不是
+    `my-poster.jpg`）。"""
+
+    def test_video_named_like_fanart_suffix_no_double_suffix(self, tmp_path):
+        number = "MYFAN-001"
+
+        def _stage(repo, video_dir, db_key, number_, capture):
+            # 既有同名封面 my-fanart.jpg（真 JPEG，非 b"fake"）→ 逼
+            # resolve_cover_target 走第①步命中，才能讓 cover_base_stem 與
+            # fs-derived base_stem 兩種推導方式產生分歧（見 class docstring）。
+            cover = video_dir / "my-fanart.jpg"
+            _t5_write_jpeg(cover, color=(101, 102, 103))
+            _t5_seed_tracked_row(repo, db_key, number_, cover_path=to_file_uri(str(cover)))
+
+        ctx = _t5_run(tmp_path, "t5_cd112b3", external_manager="jellyfin", number=number,
+                      video_name="my-fanart.mp4", pre_stage=_stage)
+        assert ctx.mock_search.called, (
+            "fixture 沒逼出 search_jav → _db_upsert 不會執行"
+        )
+
+        video_dir = ctx.video_dir
+        # resolve_cover_target 第①步命中同名 → canonical 仍是 my-fanart.jpg
+        # （preserve 命中，零下載）；⑤ 鎖的是「poster/fanart 路徑用 fs stem
+        # 直接組」，與 canonical 本身是不是 fanart 佈局正交。
+        cover = video_dir / "my-fanart.jpg"
+        fanart = video_dir / "my-fanart-fanart.jpg"
+        poster = video_dir / "my-fanart-poster.jpg"
+        # cover_base_stem(".../my-fanart.jpg") 誤剝成 ".../my"（見 class
+        # docstring）→ 若走反向推導，poster 會落在錯誤的 "my-poster.jpg"，
+        # fanart_path 則會與 cover_path 字串相等（"my-fanart.jpg"）觸發同檔
+        # 短路而完全不產生 my-fanart-fanart.jpg。
+        bogus_poster = video_dir / "my-poster.jpg"
+
+        assert cover.exists(), "既有同名封面 preserve 命中，canonical 不變"
+        ctx.mock_download.assert_not_called()
+        assert fanart.exists(), "衍生 fanart 落在 my-fanart-fanart.jpg（fs stem 直接組）"
+        assert poster.exists(), "衍生 poster 落在 my-fanart-poster.jpg（fs stem 直接組）"
+        assert not bogus_poster.exists(), (
+            "不得走 cover_base_stem 反向推導誤剝成 my → my-poster.jpg"
+        )
+
+        nfo = video_dir / "my-fanart.nfo"
+        tags = _t5_assert_nfo_tags_exist(nfo, {"poster": True, "thumb": True, "fanart": True})
+        assert tags["poster"] == "my-fanart-poster.jpg"
+        assert tags["thumb"] == "my-fanart-fanart.jpg"
+        assert tags["fanart"] == "my-fanart-fanart.jpg"
+
+
+class TestEnricherAC5ByteLock:
+    """AC5（enricher 路徑）：媒體伺服器產生的 `-fanart.jpg`，內容與同情境
+    off 模式產生的同名封面逐位元組一致（首次產生，Table 1 #1 情境，取基準法
+    參考 T4 的做法：同一份 mock 下載內容分別跑 off／jellyfin 兩次，比對落地
+    檔案的 bytes）。"""
+
+    def test_jellyfin_fanart_bytes_match_off_mode_cover_bytes(self, tmp_path):
+        content = _t5_jpeg_bytes(color=(9, 8, 7))
+
+        def _stage(repo, video_dir, db_key, number_, capture):
+            _t5_seed_tracked_row(repo, db_key, number_, cover_path="")
+
+        off_ctx = _t5_run(tmp_path, "t5_ac5_off", external_manager="off",
+                           number="AC5OFF-001", pre_stage=_stage, download_content=content)
+        jf_ctx = _t5_run(tmp_path, "t5_ac5_jf", external_manager="jellyfin",
+                          number="AC5JF-001", pre_stage=_stage, download_content=content)
+
+        assert off_ctx.mock_search.called and jf_ctx.mock_search.called
+
+        off_cover = off_ctx.video_dir / f"{off_ctx.video_file.stem}.jpg"
+        jf_fanart = jf_ctx.video_dir / f"{jf_ctx.video_file.stem}-fanart.jpg"
+        assert off_cover.exists() and jf_fanart.exists()
+        assert jf_fanart.read_bytes() == off_cover.read_bytes() == content
+
+
+class TestWriteExternalImagesPreflightSamefileGuard:
+    """⑥⑦ 專屬守衛（Opus 追加要求 #1）：`same_target_verdict` 對未知
+    `OSError` 的 fail-closed 承諾——preflight 真正承重的是 `os.path.samefile`
+    拋出未知例外那一格，**不是** `src == dst` 的字串相等短路（那格從不呼叫
+    `os.path.samefile`，本卡實測 `core/cover_layout.py:257-258` 的
+    `if src == dst: return True, True` 在呼叫 `os.path.samefile` 之前就
+    已短路）。監控 `os.path.samefile` 拋錯：
+
+    - **fanart（⑥）**：`cover_path == fanart_path`（字串相等，#4b 常態
+      路徑）→ unmutated code 完全不受 monkeypatch 影響（string-equal 短路），
+      維持安全；mutation 拿掉 preflight 三行後，`shutil.copy2` 內部
+      `shutil._samefile()` 才會真的呼叫 `os.path.samefile` → patch 生效 →
+      誤判「不同檔」→ `copyfile` 用 `'wb'` 開啟同一個檔案 → 截斷（T3 §D
+      實測 7427→0 bytes 仍報成功）。
+    - **poster（⑦）**：`poster_path` 字串永不等於 `cover_path`，
+      `same_target_verdict` 一定會呼叫 `os.path.samefile` → patch 直接命中
+      未知 `OSError` 分支 → `(True, False)` → fail-closed，`poster_ok`
+      老實回 `False`（**unmutated code 即可驗到**，不需要靠 mutation）。
+    """
+
+    def test_samefile_oserror_fails_closed_no_corruption(self, tmp_path, monkeypatch):
+        video = tmp_path / "T5PF-001.mp4"
+        video.write_bytes(b"video")
+        stem = str(video.with_suffix(""))
+        fanart = Path(stem + "-fanart.jpg")
+        _t5_write_jpeg(fanart, color=(9, 9, 9))
+        before_bytes = fanart.read_bytes()
+        poster = Path(stem + "-poster.jpg")
+
+        def _raise(a, b):
+            raise OSError("boom（模擬權限被拒／網路磁碟逾時）")
+
+        monkeypatch.setattr(os.path, "samefile", _raise)
+
+        from core.enricher import _write_external_images
+        result = _write_external_images(
+            str(video), "jellyfin", True, number="T5PF-001", maker="TestMaker",
+        )
+
+        assert fanart.read_bytes() == before_bytes, (
+            "-fanart.jpg 的 bytes 不得被清空/改動（基準值在操作之前取得，BE-TEST-10）"
+        )
+        # fanart：cover_path == fanart_path（字串相等）→ same_target_verdict 在
+        # 呼叫 os.path.samefile 之前就已 `src == dst` 短路回 (True, True)，
+        # 完全不受本測試的 monkeypatch 影響——unmutated code 正確回 True（安全，
+        # 沒有觸碰檔案）。這正是本卡實測更正 Opus 追加要求 #1 原始描述的地方：
+        # 真正被 samefile 拋錯打中的是 poster 那一側，不是 fanart。
+        assert result["fanart"] is True, "字串相等短路，不受 samefile patch 影響（unmutated 安全）"
+        assert result["poster"] is False, (
+            "poster_path 字串永不等於 cover_path，samefile 拋錯 → fail-closed，"
+            "certain=False，不得宣稱成功"
+        )
+        assert not poster.exists(), "fail-closed 不動作，不應寫出 poster"
+
+
+class TestResolveNfoCoverPathsFlavourCoverage:
+    """TASK-112b-T6b DoD-2（PR1 residual 的關閉）：`resolve_nfo_cover_paths`
+    （`core/enricher.py:730`）在 T3 翻面後改呼叫**真實** `resolve_cover_target`
+    三步規則，不再是 stub。既有 `TestResolveNfoCoverPathsMappingReverse`
+    （`:2185`，2 支）只鎖路徑映射反解、**不變化 `external_manager`**，翻面後
+    對「flavour 是否正確接線」零鑑別力（plan-112b.md §8.1 第 2 點具名
+    residual）。
+
+    同一個 `file_path` × `{off, jellyfin, emby, kodi, 非法值}` ×
+    `{磁碟上無圖(neither), 只有同名(same_name_only), 只有 fanart(fanart_only)}`
+    共 15 格，逐格斷言 `cover_path`；`nfo_path` 那一半只用
+    `with_suffix('.nfo')`，與 flavour 完全正交——這條反向鎖（Opus 追加要求
+    #3 / plan §8.3 DoD-2）與 15 格一起跑，也另外用一支獨立測試把它單獨列出來。
+
+    白名單語意沿用 `core.config.STEM_IMAGE_MODES = ('jellyfin', 'emby',
+    'kodi')`（`BE-CONFIG-03`），不自建字面值清單去判斷「新建時要不要走
+    fanart」——`_FLAVOURS` 只是本測試挑的樣本，不是白名單本身。
+    """
+
+    _FLAVOURS = ["off", "jellyfin", "emby", "kodi", "plex"]  # "plex"＝非法值（不在白名單）
+    _DISK_STATES = ["neither", "same_name_only", "fanart_only"]
+
+    def _make_disk(self, video_path, state):
+        """依 state 在 video_path 同層造出對應候選檔案，回傳 (same, fanart) 兩個 Path。"""
+        same = video_path.with_suffix(".jpg")
+        fanart = Path(str(video_path.with_suffix("")) + "-fanart.jpg")
+        if state == "same_name_only":
+            same.write_bytes(b"SAME-COVER")
+        elif state == "fanart_only":
+            fanart.write_bytes(b"FANART-COVER")
+        return same, fanart
+
+    @pytest.mark.parametrize("external_manager", _FLAVOURS)
+    @pytest.mark.parametrize("disk_state", _DISK_STATES)
+    def test_15_cells_cover_path_flavour_coverage(self, tmp_path, external_manager, disk_state):
+        from core.config import STEM_IMAGE_MODES
+        from core.enricher import resolve_nfo_cover_paths
+
+        video_path = tmp_path / "SONE-205.mp4"
+        video_path.write_bytes(b"FAKE-VIDEO")
+        same, fanart = self._make_disk(video_path, disk_state)
+
+        nfo_path, cover_path = resolve_nfo_cover_paths(
+            str(video_path), None, external_manager
+        )
+
+        # 反向鎖（Opus 追加要求 #3）：nfo_path 只依 file_path 決定，與
+        # external_manager 完全正交——15 格逐格都要驗這條，不能只驗一次。
+        assert nfo_path == str(video_path.with_suffix(".nfo")), (
+            f"nfo_path 不得受 flavour（{external_manager!r}）影響，"
+            f"實際: {nfo_path!r}"
+        )
+
+        if disk_state == "same_name_only":
+            expected_cover = str(same)
+        elif disk_state == "fanart_only":
+            expected_cover = str(fanart)
+        else:  # "neither"：磁碟兩候選皆無 → 依 flavour 新建，白名單 fail-closed
+            expected_cover = (
+                str(fanart) if external_manager in STEM_IMAGE_MODES else str(same)
+            )
+        assert cover_path == expected_cover, (
+            f"flavour={external_manager!r} disk_state={disk_state!r} 預期 "
+            f"cover_path={expected_cover!r}，實際={cover_path!r}"
+        )
+
+    def test_nfo_path_unaffected_by_flavour_reverse_lock(self, tmp_path):
+        """反向鎖獨立測試（Opus 追加要求 #3 / plan §8.3 DoD-2 明列「不能少」）：
+        同一 file_path、同一磁碟狀態，nfo_path 在全部 5 種 flavour 下逐字相同
+        ——它是「flavour 只影響封面那一半」的唯一機械證據。少了它，
+        `resolve_nfo_cover_paths` 的另一半就沒有任何東西擋住未來有人把
+        flavour 也接進 nfo_path 的推導。"""
+        from core.enricher import resolve_nfo_cover_paths
+
+        video_path = tmp_path / "SONE-205.mp4"
+        video_path.write_bytes(b"FAKE-VIDEO")
+        self._make_disk(video_path, "fanart_only")
+
+        nfo_paths = {
+            flavour: resolve_nfo_cover_paths(str(video_path), None, flavour)[0]
+            for flavour in self._FLAVOURS
+        }
+        assert len(set(nfo_paths.values())) == 1, (
+            f"nfo_path 必須在所有 flavour 下逐字相同，實際: {nfo_paths}"
+        )
+        assert next(iter(nfo_paths.values())) == str(video_path.with_suffix(".nfo"))
