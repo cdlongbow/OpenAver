@@ -43,13 +43,31 @@ def _nfo_to_meta(root: ET.Element) -> dict:
         elem = root.find(tag)
         return (elem.text or "").strip() if elem is not None else ""
 
+    # any-depth `.//actor/name`, mirrors VideoScanner.parse_nfo (gallery_scanner.py:345)
+    # / readonly_producer._nfo_to_producer_meta (:1343-1347) EXACTLY — a direct
+    # children-only `root.findall("actor")` silently misses third-party NFOs shaped
+    # `<movie><actors><actor><name>X</name></actor></actors></movie>`.
     actors = [
         (n.text or "").strip()
-        for a in root.findall("actor")
-        for n in [a.find("name")]
-        if n is not None and n.text
+        for n in root.findall(".//actor/name")
+        if n.text
     ]
-    tags = [(e.text or "").strip() for e in root.findall("tag") if e.text]
+
+    # genre/tag merge-with-dedup, mirrors readonly_producer._nfo_to_producer_meta
+    # (:1351-1361) — genre first, then any <tag> not already present (both loops
+    # dedup; see task card Opus 補充 2 for the B/C genre-genre divergence).
+    tags: List[str] = []
+    for genre_elem in root.findall("genre"):
+        if genre_elem.text:
+            t = genre_elem.text.strip()
+            if t not in tags:
+                tags.append(t)
+    for tag_elem in root.findall("tag"):
+        if tag_elem.text:
+            t = tag_elem.text.strip()
+            if t not in tags:
+                tags.append(t)
+
     set_elem = root.find("set")
     series = ""
     if set_elem is not None:
@@ -63,12 +81,12 @@ def _nfo_to_meta(root: ET.Element) -> dict:
         "title": _text("title"),
         "original_title": _text("originaltitle"),
         "actresses": actors,
-        "maker": _text("studio"),
+        "maker": _text("maker") or _text("studio"),
         "director": _text("director"),
         "series": series,
         "label": _text("label"),
         "tags": tags,
-        "release_date": _text("premiered"),
+        "release_date": _text("release") or _text("premiered") or _text("year"),
         "duration": duration,
         "cover_url": "",
         "url": _text("website"),
