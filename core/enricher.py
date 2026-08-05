@@ -21,6 +21,14 @@ from core.enrich_contract import (
 )
 from core.focal_trigger import schedule_focal_after_cover_write
 from core.logger import get_logger
+from core.nfo_read import (
+    nfo_actor_names,
+    nfo_first_text,
+    nfo_merged_tags,
+    nfo_runtime_minutes,
+    nfo_series_name,
+    nfo_text,
+)
 from core.nfo_updater import parse_nfo
 from core.organizer import crop_to_poster, download_image, find_subtitle_files, generate_nfo
 from core.path_utils import to_file_uri, uri_to_fs_path, uri_to_local_fs_path
@@ -39,57 +47,19 @@ _FILL_MISSING_REQUIRED = ["title", "actresses", "maker", "director", "series", "
 
 
 def _nfo_to_meta(root: ET.Element) -> dict:
-    def _text(tag: str) -> str:
-        elem = root.find(tag)
-        return (elem.text or "").strip() if elem is not None else ""
-
-    # any-depth `.//actor/name`, mirrors VideoScanner.parse_nfo (gallery_scanner.py:345)
-    # / readonly_producer._nfo_to_producer_meta (:1343-1347) EXACTLY — a direct
-    # children-only `root.findall("actor")` silently misses third-party NFOs shaped
-    # `<movie><actors><actor><name>X</name></actor></actors></movie>`.
-    actors = [
-        (n.text or "").strip()
-        for n in root.findall(".//actor/name")
-        if n.text
-    ]
-
-    # genre/tag merge-with-dedup, mirrors readonly_producer._nfo_to_producer_meta
-    # (:1351-1361) — genre first, then any <tag> not already present (both loops
-    # dedup; see task card Opus 補充 2 for the B/C genre-genre divergence).
-    tags: List[str] = []
-    for genre_elem in root.findall("genre"):
-        if genre_elem.text:
-            t = genre_elem.text.strip()
-            if t not in tags:
-                tags.append(t)
-    for tag_elem in root.findall("tag"):
-        if tag_elem.text:
-            t = tag_elem.text.strip()
-            if t not in tags:
-                tags.append(t)
-
-    set_name_elem = root.find("set/name")
-    series = (set_name_elem.text or "").strip() if set_name_elem is not None else ""
-
-    runtime_text = _text("runtime")
-    try:
-        duration = int(runtime_text)
-    except ValueError:
-        duration = None
-
     return {
-        "title": _text("title"),
-        "original_title": _text("originaltitle"),
-        "actresses": actors,
-        "maker": _text("maker") or _text("studio"),
-        "director": _text("director"),
-        "series": series,
-        "label": _text("label"),
-        "tags": tags,
-        "release_date": _text("release") or _text("premiered") or _text("year"),
-        "duration": duration,
+        "title": nfo_text(root, "title"),
+        "original_title": nfo_text(root, "originaltitle"),
+        "actresses": nfo_actor_names(root),
+        "maker": nfo_first_text(root, ("maker", "studio")),
+        "director": nfo_text(root, "director"),
+        "series": nfo_series_name(root),
+        "label": nfo_text(root, "label"),
+        "tags": nfo_merged_tags(root),
+        "release_date": nfo_first_text(root, ("release", "premiered", "year")),
+        "duration": nfo_runtime_minutes(root),
         "cover_url": "",
-        "url": _text("website"),
+        "url": nfo_text(root, "website"),
     }
 
 
