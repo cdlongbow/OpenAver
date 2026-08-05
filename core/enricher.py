@@ -75,7 +75,10 @@ def _nfo_to_meta(root: ET.Element) -> dict:
         series = (n_elem.text or "").strip() if n_elem is not None else ""
 
     runtime_text = _text("runtime")
-    duration = int(runtime_text) if runtime_text.isdigit() else None
+    try:
+        duration = int(runtime_text)
+    except ValueError:
+        duration = None
 
     return {
         "title": _text("title"),

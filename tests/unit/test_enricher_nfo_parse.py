@@ -208,6 +208,62 @@ class TestEndToEndBaselineAndVariants:
         assert nfo_path.read_bytes() == before
 
 
+class TestNfoToMetaDuration:
+    """TASK-113a-T1b：`_nfo_to_meta` 的 `duration` 讀取對齊 B/C 的
+    `try: int(...) except ValueError: None` 轉型失敗處理策略（取代原本的
+    `.isdigit()` 前置守門）。
+
+    邊界表六格（task card + Opus 審核結論裁決 2）：唯一真正的行為變更格是
+    `"-5"`（修正前 `None` → 修正後 `-5`）；其餘五格在修正前後同值，屬於
+    「`.isdigit()` 與 `int()` 恰好同意」的回歸釘選，不是本次改動新開放的行為。
+    mutation 自驗（把該行還原成 `.isdigit()` 前置守門）時，**只有 `"-5"` 那支
+    預期轉紅**，其餘五支預期維持綠——這是設計如此，不是測試沒鑑別力。
+    """
+
+    def test_runtime_plain_digits(self):
+        """`"120"` → 120。修正前後同值（回歸釘選，非行為變更釘選）。"""
+        root = ET.fromstring("<movie><runtime>120</runtime></movie>")
+        meta = _nfo_to_meta(root)
+        assert meta["duration"] == 120
+
+    def test_runtime_surrounding_whitespace(self):
+        """`" 120 "` → 120。`_text()`（`:42-44`）本身已 `.strip()`，修正前後同值
+        （回歸釘選，非行為變更釘選；還原 mutation 時預期維持綠——見 Opus 審核
+        結論裁決 1，不得為了讓本支轉紅而改寫斷言方式繞過 `_text()`）。"""
+        root = ET.fromstring("<movie><runtime> 120 </runtime></movie>")
+        meta = _nfo_to_meta(root)
+        assert meta["duration"] == 120
+
+    def test_runtime_negative_is_now_accepted(self):
+        """`"-5"` → -5。**唯一真正的行為變更格**：修正前 `"-5".isdigit()` 為
+        `False`（負號不算數字字元）→ `None`；修正後 `int("-5")` 合法 → `-5`
+        （CD-113a-4 接受的相容性擴張）。mutation 還原後，本支預期轉紅。"""
+        root = ET.fromstring("<movie><runtime>-5</runtime></movie>")
+        meta = _nfo_to_meta(root)
+        assert meta["duration"] == -5
+
+    def test_runtime_non_numeric_string(self):
+        """`"abc"` → None。修正前後同值（回歸釘選，非行為變更釘選）。"""
+        root = ET.fromstring("<movie><runtime>abc</runtime></movie>")
+        meta = _nfo_to_meta(root)
+        assert meta["duration"] is None
+
+    def test_runtime_empty_string(self):
+        """`""`（找不到 tag，`_text()` 回空字串）→ None。`int("")` 拋
+        `ValueError` 被同一個 `except` 接住，修正前後同值（回歸釘選，非行為
+        變更釘選）。"""
+        root = ET.fromstring("<movie></movie>")
+        meta = _nfo_to_meta(root)
+        assert meta["duration"] is None
+
+    def test_runtime_decimal_string(self):
+        """`"12.5"` → None。`int("12.5")` 拋 `ValueError`，修正前後同值
+        （回歸釘選，非行為變更釘選；不是本 task 新開放的格）。"""
+        root = ET.fromstring("<movie><runtime>12.5</runtime></movie>")
+        meta = _nfo_to_meta(root)
+        assert meta["duration"] is None
+
+
 class TestDbHitDoesNotCallNfoToMeta:
     """反向測試：DB 命中時完全不進 NFO 讀取分支，_nfo_to_meta 不應被呼叫。"""
 
