@@ -67,11 +67,17 @@ def nfo_first_text(root: ET.Element, tags: tuple[str, ...]) -> str:
 
 
 def nfo_actor_names(root: ET.Element) -> list[str]:
-    """Any-depth `.//actor/name` actor names, stripped; nodes with `.text`
-    falsy (`None` or `''`) are dropped. A whitespace-only `.text` (e.g.
-    `'   '`) is truthy in Python and is NOT filtered — it survives as `''`
-    after strip. This is a pre-existing quirk shared by all three callers
-    being replaced, not a new decision made here.
+    """Any-depth `.//actor/name` actor names, stripped; a name whose stripped
+    text is empty (missing `.text`, `''`, or whitespace-only such as `'   '`)
+    is filtered out and does NOT appear in the result.
+
+    Codex PR review P1 fix (TASK-113a-T4): previously a whitespace-only
+    `.text` was truthy in Python and survived filtering, ending up as `''`
+    in the returned list. A non-empty list containing only `''` reads as
+    "actresses present" to `_missing_fields` (`core/enricher.py`), so a
+    third-party NFO with a blank `<name>` silently suppressed a scrape that
+    should have run. Blank text is not data, so it is now filtered the same
+    way a missing/`None` `.text` already was.
 
     Any-depth lookup matters because a direct-children-only
     `root.findall('actor')` silently returns `[]` for a third-party NFO
@@ -84,15 +90,26 @@ def nfo_actor_names(root: ET.Element) -> list[str]:
     `test_nested_actors_element_any_depth` RED (`test_readonly_producer.py`).
     """
     return [
-        (n.text or "").strip()
+        stripped
         for n in root.findall(".//actor/name")
-        if n.text
+        if (stripped := (n.text or "").strip())
     ]
 
 
 def nfo_merged_tags(root: ET.Element) -> list[str]:
     """`<genre>` tags first, then `<tag>` tags, order-preserving dedup across
     BOTH loops (a `<tag>` value already seen as a `<genre>` is skipped too).
+    A tag whose stripped text is empty (missing `.text`, `''`, or
+    whitespace-only such as `'   '`) is filtered out and does NOT appear in
+    the result.
+
+    Codex PR review P1 fix (TASK-113a-T4): previously a whitespace-only
+    `.text` was truthy in Python and survived filtering, ending up as `''`
+    in the returned list. A non-empty list containing only `''` reads as
+    "tags present" to `_missing_fields` (`core/enricher.py`), so a
+    third-party NFO with a blank `<genre>`/`<tag>` silently suppressed a
+    scrape that should have run. Blank text is not data, so it is now
+    filtered the same way a missing/`None` `.text` already was.
 
     Replaces three independently hand-written genre/tag merge loops. Prior to
     T1c, `VideoScanner.parse_nfo`'s genre loop did not dedup among genres
@@ -101,15 +118,13 @@ def nfo_merged_tags(root: ET.Element) -> list[str]:
     """
     tags: list[str] = []
     for genre_elem in root.findall("genre"):
-        if genre_elem.text:
-            t = genre_elem.text.strip()
-            if t not in tags:
-                tags.append(t)
+        t = (genre_elem.text or "").strip()
+        if t and t not in tags:
+            tags.append(t)
     for tag_elem in root.findall("tag"):
-        if tag_elem.text:
-            t = tag_elem.text.strip()
-            if t not in tags:
-                tags.append(t)
+        t = (tag_elem.text or "").strip()
+        if t and t not in tags:
+            tags.append(t)
     return tags
 
 

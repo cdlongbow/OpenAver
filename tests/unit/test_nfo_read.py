@@ -99,6 +99,31 @@ class TestNfoActorNames:
         )
         assert nfo_actor_names(root) == ["Real"]
 
+    def test_whitespace_only_flat_actor_name_is_filtered(self):
+        """TASK-113a-T4 (Codex PR review P1): a flat `<actor><name>   </name>
+        </actor>` is whitespace-only, not data, and must not survive as
+        `''`."""
+        root = _root("<movie><actor><name>   </name></actor></movie>")
+        assert nfo_actor_names(root) == []
+
+    def test_whitespace_only_nested_actor_name_is_filtered(self):
+        """TASK-113a-T4 (Codex PR review P1): same as the flat case but via
+        the any-depth `<actors><actor><name>` shape — this is the exact
+        regression Codex flagged (T1a made this silently non-empty)."""
+        root = _root(
+            "<movie><actors><actor><name>   </name></actor></actors></movie>"
+        )
+        assert nfo_actor_names(root) == []
+
+    def test_mixed_real_and_whitespace_keeps_only_real(self):
+        """TASK-113a-T4: a real name alongside a whitespace-only one keeps
+        only the real value (no trailing blank entry)."""
+        root = _root(
+            "<movie><actor><name>A</name></actor>"
+            "<actor><name>   </name></actor></movie>"
+        )
+        assert nfo_actor_names(root) == ["A"]
+
 
 # ── nfo_merged_tags ──────────────────────────────────────────────────────
 
@@ -120,6 +145,20 @@ class TestNfoMergedTags:
             "<movie><genre>G1</genre><tag>G1</tag><tag>T1</tag></movie>"
         )
         assert nfo_merged_tags(root) == ["G1", "T1"]
+
+    def test_whitespace_only_genre_and_tag_filtered(self):
+        """TASK-113a-T4 (Codex PR review P1): whitespace-only `<genre>` and
+        `<tag>` values are not data and must not survive as `''`."""
+        root = _root("<movie><genre>   </genre><tag>   </tag></movie>")
+        assert nfo_merged_tags(root) == []
+
+    def test_mixed_real_and_whitespace_genre_keeps_only_real(self):
+        """TASK-113a-T4: a real genre alongside a whitespace-only genre keeps
+        only the real value."""
+        root = _root(
+            "<movie><genre>  G1  </genre><genre>   </genre></movie>"
+        )
+        assert nfo_merged_tags(root) == ["G1"]
 
 
 # ── nfo_series_name ──────────────────────────────────────────────────────

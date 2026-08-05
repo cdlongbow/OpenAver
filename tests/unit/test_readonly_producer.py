@@ -6578,6 +6578,24 @@ class TestNfoToProducerMeta:
         assert meta['actors'] == ['A']
         assert meta['date'] == '2024-01-01'
 
+    def test_nested_blank_actor_name_filtered_to_empty_list(self):
+        """TASK-113a-T4 (Codex PR review P1)：巢狀空白 actor name 不是資料，
+        不應以 [''] 姿態流入 generate_nfo（core/organizer.py:759-782 會無條件
+        寫出 <actor><name></name></actor>）或 _upsert_db
+        （readonly_producer.py:1261-1266 直接建 Video()）——這條路徑沒有
+        B（VideoScanner.parse_nfo）那層 split+filter 清洗
+        （core/database/video.py:50-52），是唯一會把空值寫進使用者
+        NFO／DB 的 side。"""
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root(
+            '<movie><actors>'
+            '<actor><name>   </name></actor>'
+            '</actors></movie>'
+        )
+        meta = _nfo_to_producer_meta(root, fallback_number='X')
+        assert meta['actors'] == []
+
 
 class TestNfoToProducerMetaRoundTrip:
     """CD-104-3b DoD: generate_nfo -> _nfo_to_producer_meta round-trip."""

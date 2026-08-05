@@ -264,6 +264,57 @@ class TestNfoToMetaDuration:
         assert meta["duration"] is None
 
 
+class TestBlankActorOrGenreTriggersScrape:
+    """TASK-113a-T4 (Codex PR review P1)：巢狀空白 actor / 空白 genre 不是資料，
+    修正前 `nfo_actor_names`/`nfo_merged_tags` 會讓它們以 `['']`（非空 list）
+    姿態流入 `_missing_fields`，被誤判為「已具備」而不觸發刮削——這是本 branch
+    （T1a）新增的回歸。修正後應正常判缺、觸發刮削。
+
+    刻意不透過既有 `_run_fill_missing`（它預設讓 `search_jav` 回傳
+    `MagicMock()`，truthy 會讓 `_scraper_to_meta` 吃到假資料繼續往下跑）；
+    這裡改用 `search_jav` 回傳 `None`，只驗證「有無觸發刮削」本身，同時
+    完整重現 `enrich_single(mode='fill_missing')` 對真實 tmp_path .nfo 檔案
+    的解析路徑。"""
+
+    def _run_and_assert_scrape_triggered(self, tmp_path, number, nfo_xml):
+        mp4_path, _nfo_path = _write_pair(tmp_path, number, nfo_xml)
+
+        with (
+            patch("core.enricher.VideoRepository") as mock_repo_cls,
+            patch("core.enricher.search_jav", return_value=None) as mock_search,
+            patch("core.enricher.download_image", return_value=True),
+            patch(
+                "core.enricher._nfo_to_meta", wraps=enricher_module._nfo_to_meta
+            ) as spy_nfo_to_meta,
+        ):
+            mock_repo = MagicMock()
+            mock_repo_cls.return_value = mock_repo
+            mock_repo.get_by_path.return_value = None
+            mock_repo.get_by_numbers.return_value = {}
+
+            enrich_single(
+                file_path=str(mp4_path),
+                number=number,
+                mode="fill_missing",
+            )
+
+        mock_search.assert_called_once()
+        spy_nfo_to_meta.assert_called_once()
+
+    def test_nested_blank_actor_name_triggers_scrape(self, tmp_path):
+        """baseline 的唯一 <actor> 換成巢狀空白 name。"""
+        nfo_xml = _BASELINE_NFO.replace(
+            "<actor><name>Actress A</name></actor>",
+            "<actors><actor><name>   </name></actor></actors>",
+        )
+        self._run_and_assert_scrape_triggered(tmp_path, "T113A-T4-ACTOR", nfo_xml)
+
+    def test_blank_genre_triggers_scrape(self, tmp_path):
+        """baseline 的唯一 <tag> 換成空白 <genre>。"""
+        nfo_xml = _BASELINE_NFO.replace("<tag>TagA</tag>", "<genre>   </genre>")
+        self._run_and_assert_scrape_triggered(tmp_path, "T113A-T4-GENRE", nfo_xml)
+
+
 class TestDbHitDoesNotCallNfoToMeta:
     """反向測試：DB 命中時完全不進 NFO 讀取分支，_nfo_to_meta 不應被呼叫。"""
 
