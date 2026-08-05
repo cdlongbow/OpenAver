@@ -49,18 +49,42 @@ stub 恆回同名 `.jpg`，逐字等價）；`scanner.py` 的 `_cover_base_stem`
 > 過期敘述（單一真理來源的模組不該對自己的現況說謊），已更正。
 
 **`same_target_verdict` 的交棒清單（CD-112-8 說「所有」，此處是窮舉，勿再只列 3 處）**
-——全庫 `copy2(cover, *)` / `crop_to_poster(cover, *)` 原有 **7 處**，T3（112b）之後
-**6 處全部受保護、第 7 處（內聯實作）已消滅**：
+
+⚠️ **清單的判準是「寫入 stem 級衍生圖位置的每一個寫入點」，不是「以 cover 為來源的
+寫入點」。** T3 當初的稽核用 `grep "copy2(cover, *)" / "crop_to_poster(cover, *)"` 做，
+因此只數到 **7 處**，而 curator sidecar 的兩處 `copy2(sidecar, dst)` 寫的是**同樣那兩個
+目的檔**、來源不同——結構上對那個 grep 隱形，直到 Codex PR#125 round-2 P1 才浮出來
+（2026-08-05）。凡是新增「往 `<stem>-poster.jpg` / `<stem>-fanart.jpg` / 正典封面位置
+寫入」的程式碼，**不論來源是誰**，都必須進這張表；`tests/unit/test_cover_write_site_inventory.py`
+是這張表的機械對帳（新增任何寫入點都會轉紅，逼人回來看這一段）。
 
 | 位置 | 動作 | 狀態 |
 |---|---|---|
-| `core/organizer.py:608` | `copy2` → fanart | ✅ PR1 已保護（preflight ＋ `SameFileError` backstop）|
-| `core/organizer.py:624` | `crop_to_poster` → poster | ✅ PR1 已保護（只有 preflight）|
-| `core/enricher.py:300` | `copy2` → fanart | ✅ T3 已保護（preflight ＋ `SameFileError` backstop）|
-| `core/enricher.py:316` | `crop_to_poster` → poster | ✅ T3 已保護（只有 preflight）|
-| `core/readonly_producer.py:768` | `copy2` → fanart | ✅ T3 已保護（preflight ＋ `SameFileError` backstop）|
-| `core/readonly_producer.py:792` | `crop_to_poster` → poster | ✅ T3 已保護（只有 preflight）|
-| `core/organizer.py::organize_file` 的**第三份內聯實作** | 已改為呼叫 `generate_jellyfin_images` | ✅ T3 已消滅（不再是獨立實作，同檔保護 100% 繼承自上面兩列）|
+| ① `core/organizer.py:608` | `copy2` cover → fanart | ✅ PR1 已保護（preflight ＋ `SameFileError` backstop）|
+| ② `core/organizer.py:624` | `crop_to_poster` cover → poster | ✅ PR1 已保護（只有 preflight）|
+| ③ `core/enricher.py:300` | `copy2` cover → fanart | ✅ T3 已保護（preflight ＋ `SameFileError` backstop）|
+| ④ `core/enricher.py:316` | `crop_to_poster` cover → poster | ✅ T3 已保護（只有 preflight）|
+| ⑤ `core/readonly_producer.py::_write_media_images` | `copy2` cover → fanart | ✅ T3 已保護（preflight ＋ `SameFileError` backstop）|
+| ⑥ `core/readonly_producer.py::_write_media_images` | `crop_to_poster` cover → poster | ✅ T3 已保護（只有 preflight）|
+| ⑦ `core/organizer.py::organize_file` 的**第三份內聯實作** | 已改為呼叫 `generate_jellyfin_images` | ✅ T3 已消滅（不再是獨立實作，同檔保護 100% 繼承自 ①②）|
+| ⑧ `core/readonly_producer.py::_write_cover_copy` | `copyfile` 來源封面 → 正典封面位置 | ✅ pre-merge red-team 補（2338c62d）＋ round-1 P2 加 `exists(dst)`（a552f674）＋ round-3 P1 加 collision policy：**`dst` 已存在一律不覆寫**|
+
+**collision policy（Codex PR#125 round-3 P1，2026-08-05）**：同檔判斷擋得住「src 與 dst
+是同一個檔」，擋不住「src 與 dst 是**兩個不同的 curator 原檔**」。collocated 佈局
+（輸出根落回來源目錄）下，來源同時有 `{stem}.jpg` 與 `{stem}-fanart.jpg` 時，
+`find_cover_image` L1 挑同名 → CD-112-7 把 `-fanart` 升格為複製**來源**，而
+`resolve_cover_target` 第①步看到同名檔已存在 → 把它當**目標**，兩邊各對一半、
+互相覆寫。修法分兩層：
+- **⑧ 層**：`dst` 已存在就沿用、零寫入（與第①②步的「沿用」語意同源；`('copy', …)`
+  全庫只有 ingest 一個生產者，齒輪重刮走 `('download', …)` 不經過這裡）。
+- **來源層**：`resolve_ingest_plan` 的第三元素改為**宣告所有存在的 sidecar**
+  （`'fanart'` 不再恆 `None`）——原本那個 `None` 的前提是「`cover_fs` 會等於 fanart
+  路徑」，在上述佈局下為假。
+| ⑨ `core/readonly_producer.py::_copy_curator_sidecar` | `copy2` curator **sidecar** → fanart | ✅ round-2 P1 已保護（preflight ＋ `SameFileError` backstop；兩個 slot 共用同一個 choke point）|
+| ⑩ 同上 | `copy2` curator **sidecar** → poster | ✅ 同 ⑨（不再各自 `copy2`）|
+
+（`core/organizer.py:506` 的 `copy2` 在 `crop_to_poster` **內部**——「已是直向、無需
+裁切」的葉節點分支，它的保護 100% 繼承自呼叫端 ②④⑥ 的 preflight，不是獨立寫入點。）
 
 `generate_jellyfin_images` 的呼叫端因此從 2 處變 3 處：`web/routers/scanner.py`
 （既有）、`core/readonly_producer.py::_write_media_images`（既有）、

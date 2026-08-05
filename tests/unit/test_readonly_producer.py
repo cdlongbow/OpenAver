@@ -5352,8 +5352,15 @@ class TestCuratorFourCellsMediaServer:
             "AC10: readonly ingest must never write into the source directory"
         )
 
+        # CD-112-7 第二半於 Codex PR#125 round-3 P1 修訂：存在的 curator sidecar
+        # 一律宣告在第三元素（原本 'fanart' 恆 None，前提是「cover_fs 會等於
+        # fanart 路徑」——collocated ＋ 已有同名封面時該前提為假，generate 分支
+        # 會把同名封面複製到 curator fanart 上。見 TestCollocatedCuratorCoverCollision）。
+        # 本格的四條**行為**斷言（poster verbatim／fanart verbatim／輸出無重複
+        # 封面／cover_fs 指向 -fanart）修訂前後逐字不變。
         assert cover_strategy[2] == {
-            'poster': str(src_dir / f'{num}-poster.jpg'), 'fanart': None,
+            'poster': str(src_dir / f'{num}-poster.jpg'),
+            'fanart': str(src_dir / f'{num}-fanart.jpg'),
         }
         assert Path(base_stem + '-poster.jpg').read_bytes() == (src_dir / f'{num}-poster.jpg').read_bytes(), (
             "poster must be the curator's own sidecar verbatim, not a crop of the cover"
@@ -5442,11 +5449,266 @@ class TestWriteMediaImagesFanartPreflightSamefileGuard:
 
 
 # ---------------------------------------------------------------------------
+# Codex PR#125 round-2 P1（2026-08-05）：curator sidecar 與輸出 slot **是同一個
+# 檔**（唯讀來源的輸出根落回來源片目錄、且 basename 落回來源 stem）。舊碼先
+# copy2 再說 → `SameFileError` 被寬 except 吞成「複製失敗」→ 落回 generate 分支，
+# 而那個分支比的是 `cover_fs` vs slot（**另一對**，正當地「不同檔」）→
+# `crop_to_poster` 把機器封面裁在使用者親手挑的直式海報上。
+#
+# 傷害面：OpenAver 自己的畫面看不出來（`find_cover_image` L1.5 先撿 `-fanart`），
+# 100% 落在 Jellyfin/Emby/Kodi——正是 AC5 curator 邊界「逐位元組保留 curator
+# 原檔」與 prd.md 技術決策 #6「衍生產物不回寫原檔」要保護的那個表面。
+#
+# 這是**本 branch 的回歸**而非既有 bug：`_write_cover_copy` 學會同檔情境
+# （2338c62d / a552f674）之前，封面步驟在這個佈局下回 `has_cover=False`，
+# `_write_media_images` 根本到不了。
+# ---------------------------------------------------------------------------
+
+class TestCollocatedCuratorSidecarPassthrough:
+    """curator sidecar 就是輸出 slot 本身 → 視為「已經 verbatim 到位」的成功
+    passthrough，不得落回 generate。"""
+
+    def _collocated_config(self):
+        # filename_format='{num}' 讓 _build_basename 產出的 base 等於來源檔 stem，
+        # 加上 movie_dir == src_dir，poster_path 才會與 curator sidecar 同路徑。
+        return dict(_T3_BASE_CONFIG, external_manager='jellyfin', filename_format='{num}')
+
+    def test_poster_sidecar_collocated_with_output_is_preserved(self, tmp_path):
+        """端到端（真跑 resolve_ingest_plan → _write_movie_assets，真
+        crop_to_poster）：輸出目錄 == 來源目錄、base == 來源 stem →
+        curator `-poster.jpg` 必須逐位元組原封不動。
+
+        MUTATION LOCK：把 `_copy_curator_sidecar` 的 `is_same` 分支拿掉（讓它
+        直接 `shutil.copy2` 再靠寬 except 吞 `SameFileError` 回 None）→ 本測試
+        單獨轉紅（poster 變成灰色封面的裁切產物）。
+        """
+        from core.readonly_producer import _build_basename, _format_data, _write_movie_assets, resolve_ingest_plan
+
+        num = 'COLLOC-A'
+        config = self._collocated_config()
+        src_dir = tmp_path / num
+        src_dir.mkdir()
+        video = src_dir / f'{num}.mp4'
+        video.write_bytes(b'FAKE-VIDEO')
+        (src_dir / f'{num}.nfo').write_text(
+            f'<movie><num>{num}</num><title>{num} Title</title></movie>', encoding='utf-8',
+        )
+        _t6_make_jpeg(src_dir / f'{num}.jpg', _T6_GREY)
+        _t6_make_jpeg(src_dir / f'{num}-poster.jpg', _T6_MAGENTA, size=(379, 538))
+        # 基準值在被測操作之前取得（BE-TEST-10）
+        poster_before = (src_dir / f'{num}-poster.jpg').read_bytes()
+
+        meta, cover_strategy = resolve_ingest_plan(str(video), num, config, action='ingest')
+        fd = _format_data(meta, str(video), config)
+        base = _build_basename(fd, str(video), config)
+        assert base == num, "sanity: 這個 fixture 的前提就是 base 落回來源 stem"
+        base_stem = str(src_dir / base)
+        assert cover_strategy[2]['poster'] == str(src_dir / f'{num}-poster.jpg')
+
+        with patch('core.readonly_producer.generate_nfo', side_effect=_t3_generate_nfo_side_effect):
+            _write_movie_assets(
+                str(src_dir), meta, fd, str(video), config, cover_strategy=cover_strategy,
+            )
+
+        assert (src_dir / f'{num}-poster.jpg').read_bytes() == poster_before, (
+            "curator 親手挑的直式海報不得被 crop_to_poster 就地覆寫"
+            "（AC5 curator 邊界＝逐位元組保留原檔；prd.md 技術決策 #6 承重牆）"
+        )
+        assert Path(base_stem + '-poster.jpg').exists()
+
+    def test_fanart_sidecar_collocated_with_output_is_preserved(self, tmp_path):
+        """poster 側的對稱格，直接打 `_write_media_images`（該函式的 fanart slot
+        是公開契約的一部分，洞的形狀與 poster 側逐字相同）。
+
+        ⚠️ 本測試寫成時，生產路徑恆傳 `'fanart': None`（CD-112-7 舊的後半句），
+        所以這一格**只能**直接餵 `_write_media_images`。round-3 P1 之後
+        `resolve_ingest_plan` 已改為宣告所有存在的 sidecar（`'fanart': fanart_fs`），
+        端到端的覆蓋改由 `TestCollocatedCuratorCoverCollision` 負責；本格保留為
+        **函式層的直接鎖**（同一個洞的兩層守衛，不重複）。
+
+        MUTATION LOCK：同上，`_copy_curator_sidecar` 的 `is_same` 分支拿掉 →
+        fanart 被封面內容覆蓋，本測試單獨轉紅。
+        """
+        from core.readonly_producer import _write_media_images
+
+        base_stem = str(tmp_path / 'COLLOC-B')
+        cover_fs = base_stem + '.jpg'
+        fanart_path = base_stem + '-fanart.jpg'
+        _t6_make_jpeg(Path(cover_fs), _T6_GREY)
+        _t6_make_jpeg(Path(fanart_path), _T6_BLUE, size=(1000, 562))
+        fanart_before = Path(fanart_path).read_bytes()
+
+        has_poster, has_fanart = _write_media_images(
+            cover_fs, base_stem, _T3_META, source_media={'poster': None, 'fanart': fanart_path},
+        )
+
+        assert Path(fanart_path).read_bytes() == fanart_before, (
+            "curator -fanart 不得被封面內容覆寫"
+        )
+        assert has_fanart is True, "同檔＝已經 verbatim 到位，要如實回報成功"
+        assert has_poster is True, "poster 側不受影響（正常走 crop_to_poster）"
+
+    def test_collocated_sidecar_samefile_oserror_fails_closed(self, tmp_path):
+        """為什麼 sidecar 側需要 preflight，而不是「catch `SameFileError` 就好」：
+        `shutil.copyfile` 內部的 `_samefile` **把 `OSError` 吞掉當成 False**，
+        所以在 `os.path.samefile` 會拋例外的檔案系統上（權限被拒／部分網路
+        磁碟——正是 `same_target_verdict` 存在的理由），`copy2` 會照樣以 `'wb'`
+        開啟目的檔、把它正在讀的那個檔清空。
+
+        MUTATION LOCK（三個，形狀已實測）：
+        ① preflight 整段拿掉 → `copy2` 把 hardlink 的目的檔清空 → 轉紅。
+        ② `not certain` 分支的 `return False` 改成 `return None`（落回
+           generate）→ 真的 `crop_to_poster` 把封面裁在同一個 inode 上 → 轉紅。
+           ⚠️ 這一格**只有在 `samefile` 對 sidecar 那一對拋、對 cover 那一對
+           正常**時才驗得到（兩對都拋的話，generate 分支自己的 fail-closed 會
+           把結果遮成一樣，mutation 變無感——BE-TEST-11）。
+        ③ `crop_to_poster` 不 mock，讓毀損是**真的**發生在真檔案上，斷言才有牙。
+        """
+        from core.readonly_producer import _write_media_images
+
+        # sidecar 與目的檔的**字串不同、inode 相同**（hardlink）——MDCX/Javinizer
+        # 把 `-poster.jpg` 做成別處檔案的 hardlink 就是這個形狀，也是
+        # `same_target_verdict` 當初的存在理由。
+        src_dir = tmp_path / 'src'
+        src_dir.mkdir()
+        src_poster = str(src_dir / 'COLLOC-C-poster.jpg')
+
+        base_stem = str(tmp_path / 'COLLOC-C')
+        cover_fs = base_stem + '.jpg'
+        poster_path = base_stem + '-poster.jpg'
+        _t6_make_jpeg(Path(cover_fs), _T6_GREY)
+        _t6_make_jpeg(Path(poster_path), _T6_MAGENTA, size=(379, 538))
+        os.link(poster_path, src_poster)
+        poster_before = Path(poster_path).read_bytes()
+
+        real_samefile = os.path.samefile
+
+        def _raise_for_sidecar_only(a, b):
+            # 只有「sidecar ↔ 目的檔」那一對拋（模擬 sidecar 落在權限被拒／
+            # 逾時的網路磁碟）；cover ↔ 目的檔那一對照常回答。
+            if src_poster in (a, b):
+                raise OSError("boom（模擬權限被拒／網路磁碟逾時）")
+            return real_samefile(a, b)
+
+        monkey = patch.object(os.path, 'samefile', _raise_for_sidecar_only)
+        monkey.start()
+        try:
+            has_poster, _ = _write_media_images(
+                cover_fs, base_stem, _T3_META,
+                source_media={'poster': src_poster, 'fanart': None},
+            )
+        finally:
+            monkey.stop()
+
+        assert Path(poster_path).read_bytes() == poster_before, (
+            "未知 OSError → fail-closed，既有 curator 檔不得被清空/改動"
+            "（基準值在操作之前取得，BE-TEST-10）"
+        )
+        assert has_poster is False, "不確定就不得宣稱成功（CD-112-8 安全／誠實分離）"
+
+    def test_vanished_sidecar_string_equal_still_regenerates(self, tmp_path):
+        """`src == dst` 但檔案其實已經不在（`same_target_verdict` 的 `src == dst`
+        那一格是純字串比較、零 I/O）→ 沒有 curator 原檔會被蓋掉，**應該**落回
+        generate 把 slot 補出來，而不是回報一個不存在的 passthrough。
+
+        MUTATION LOCK：把 `_copy_curator_sidecar` 裡的
+        `True if os.path.exists(dst) else None` 改成裸 `True` → 本測試轉紅
+        （poster 檔不存在卻 has_poster=True，就是 a552f674 修掉的那種假成功）。
+        """
+        from core.readonly_producer import _write_media_images
+
+        base_stem = str(tmp_path / 'COLLOC-D')
+        cover_fs = base_stem + '.jpg'
+        poster_path = base_stem + '-poster.jpg'
+        _t6_make_jpeg(Path(cover_fs), _T6_GREY)
+        assert not Path(poster_path).exists()
+
+        has_poster, _ = _write_media_images(
+            cover_fs, base_stem, _T3_META,
+            source_media={'poster': poster_path, 'fanart': None},
+        )
+
+        assert Path(poster_path).exists(), "sidecar 已消失 → 該落回 generate 產出 poster"
+        assert has_poster is True
+
+
+# ---------------------------------------------------------------------------
 # TASK-112b-T6 §C-10（DoD-11，R9）：curator -fanart 內容是 PNG（副檔名仍是
 # .jpg，MDCX/Javinizer 常見）→ CD-112-7 讓這張圖升格成正典封面，OpenAver
 # 自己也要讀得到——驗正常出圖（PIL 開得起來、輸出合法 JPEG）與焦點裁切
 # （座標平移邏輯與正常 JPEG 來源一致，用獨立 oracle 比對，不是推理）。
 # ---------------------------------------------------------------------------
+
+class TestCollocatedCuratorCoverCollision:
+    """Codex PR#125 round-3 P1：collocated 佈局下，封面**主**複製不得覆寫
+    curator 的另一張原檔。
+
+    情境：來源同時有 `{stem}.jpg` 與 `{stem}-fanart.jpg`（**兩張都是 curator
+    原檔、內容不同**），輸出根落回來源目錄。此時翻面的兩半會互相打架——
+    `find_cover_image` 的 L1 挑到同名封面，於是 CD-112-7 把 curator `-fanart`
+    升格為複製**來源**；而 `resolve_cover_target` 的第①步看到同名封面已經在
+    磁碟上，就把它當成**目標**回傳。兩者不同檔 → `copyfile(fanart → 同名)`
+    把第二張 curator 原檔永久毀掉（實測 800×538 紅 → 1200×675 藍，md5 變成
+    fanart 的）。
+
+    這是**本 branch 的回歸**而非既有債：`curator_cover_source`（那個升格）由
+    `c4bb5508`（112b-T3）引入；在它之前來源與目標是同一個檔、複製是 no-op。
+
+    Collision policy：`_write_cover_copy` 在 `dst` 已存在時一律不覆寫、直接把
+    既有檔當封面回報成功。這與 `resolve_cover_target` 第①②步的「**沿用**」
+    語意一致——那兩步只在「正典位置已經有封面」時才回傳既有路徑。
+    `('copy', …)` 全庫只有一個生產者（ingest 分支），而 ingest 的契約本來就是
+    local-first / reuse-first；刻意覆寫的逃生口（齒輪重刮）走
+    `('download', url)` → `download_image`，永遠不經過本函式。
+
+    MUTATION LOCK：拿掉 `_write_cover_copy` 的 `if os.path.exists(dst): return True`
+    → 本測試單獨轉紅（同名封面 md5 變成 fanart 的），其餘測試維持綠。
+    """
+
+    def test_curator_same_name_cover_is_not_overwritten_by_promoted_fanart(self, tmp_path):
+        from core.readonly_producer import _build_basename, _format_data, _write_movie_assets, resolve_ingest_plan
+
+        num = 'COLLIDE-A'
+        config = dict(_T3_BASE_CONFIG, external_manager='jellyfin', filename_format='{num}')
+        src_dir = tmp_path / num
+        src_dir.mkdir()
+        video = src_dir / f'{num}.mp4'
+        video.write_bytes(b'FAKE-VIDEO')
+        (src_dir / f'{num}.nfo').write_text(
+            f'<movie><num>{num}</num><title>{num} Title</title></movie>', encoding='utf-8',
+        )
+        # 兩張 curator 原檔，內容刻意不同（顏色 + 尺寸都不同才看得出誰蓋了誰）
+        _t6_make_jpeg(src_dir / f'{num}.jpg', _T6_GREY, size=(800, 538))
+        _t6_make_jpeg(src_dir / f'{num}-fanart.jpg', _T6_MAGENTA, size=(1200, 675))
+        # 基準值在被測操作之前取得（BE-TEST-10）
+        same_before = (src_dir / f'{num}.jpg').read_bytes()
+        fanart_before = (src_dir / f'{num}-fanart.jpg').read_bytes()
+        assert same_before != fanart_before, "sanity: 兩張原檔內容必須不同"
+
+        meta, cover_strategy = resolve_ingest_plan(str(video), num, config, action='ingest')
+        assert cover_strategy[1] == str(src_dir / f'{num}-fanart.jpg'), (
+            "sanity: CD-112-7 應把 curator -fanart 升格為複製來源"
+        )
+        fd = _format_data(meta, str(video), config)
+        base = _build_basename(fd, str(video), config)
+        assert base == num, "sanity: 這個 fixture 的前提就是 base 落回來源 stem"
+
+        with patch('core.readonly_producer.generate_nfo', side_effect=_t3_generate_nfo_side_effect):
+            assets = _write_movie_assets(
+                str(src_dir), meta, fd, str(video), config, cover_strategy=cover_strategy,
+            )
+
+        assert (src_dir / f'{num}.jpg').read_bytes() == same_before, (
+            "curator 的同名封面原檔不得被升格後的 -fanart 覆寫"
+            "（prd.md 技術決策 #6 承重牆：衍生產物不回寫原檔）"
+        )
+        assert (src_dir / f'{num}-fanart.jpg').read_bytes() == fanart_before, (
+            "curator 的 -fanart 原檔同樣不得被動到"
+        )
+        assert assets['cover_fs'] == str(src_dir / f'{num}.jpg'), (
+            "resolver 第①步選中的既有同名封面就是正典，記帳要指向它"
+        )
+
 
 class TestCuratorFanartPngContentNamedAsJpg:
     def test_png_in_jpg_curator_fanart_crops_correctly_with_focal(self, tmp_path):
@@ -6586,7 +6848,10 @@ class TestResolveIngestPlan:
         # 註：config={} → external_manager 正規化為 'off' → CD-112-7 前半句（cover
         # 來源升格）的白名單閘門不成立，cover_strategy[1] 仍等於 find_cover_image
         # 經 L1.5 挑中的 fanart_fs（與升格邏輯無關），這行本身不需要改。
-        assert cover_strategy[2] == {'poster': str(poster), 'fanart': None}
+        # CD-112-7 第二半於 Codex PR#125 round-3 P1 修訂：存在的 curator sidecar
+        # 一律宣告（原本 'fanart' 恆 None 的前提「cover_fs 會等於 fanart 路徑」
+        # 在 collocated ＋ 已有同名封面時為假）。
+        assert cover_strategy[2] == {'poster': str(poster), 'fanart': str(fanart)}
 
     def test_ingest_detects_only_poster_sidecar(self, tmp_path):
         """Only a -poster sidecar (no -fanart) -> fanart slot is None."""
