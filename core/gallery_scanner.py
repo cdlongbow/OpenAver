@@ -322,21 +322,21 @@ class VideoScanner:
             # 番號
             for tag in ['num', 'id']:
                 elem = root.find(tag)
-                if elem is not None and elem.text:
+                if elem is not None and elem.text and elem.text.strip():
                     info.num = elem.text.strip()
                     break
 
             # 片商
             for tag in ['maker', 'studio']:
                 elem = root.find(tag)
-                if elem is not None and elem.text:
+                if elem is not None and elem.text and elem.text.strip():
                     info.maker = elem.text.strip()
                     break
 
             # 日期
             for tag in ['release', 'premiered', 'year']:
                 elem = root.find(tag)
-                if elem is not None and elem.text:
+                if elem is not None and elem.text and elem.text.strip():
                     info.date = elem.text.strip()
                     break
 
@@ -351,7 +351,9 @@ class VideoScanner:
             genres = []
             for genre_elem in root.findall('genre'):
                 if genre_elem.text:
-                    genres.append(genre_elem.text.strip())
+                    t = genre_elem.text.strip()
+                    if t not in genres:
+                        genres.append(t)
             for tag_elem in root.findall('tag'):
                 if tag_elem.text and tag_elem.text.strip() not in genres:
                     genres.append(tag_elem.text.strip())

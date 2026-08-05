@@ -1362,11 +1362,8 @@ def _nfo_to_producer_meta(root: ET.Element, fallback_number: str) -> dict:
 
     date = _text('release') or _text('premiered') or _text('year')
 
-    set_elem = root.find('set')
-    series = ''
-    if set_elem is not None:
-        n_elem = set_elem.find('name')
-        series = (n_elem.text or '').strip() if n_elem is not None else ''
+    set_name_elem = root.find('set/name')
+    series = (set_name_elem.text or '').strip() if set_name_elem is not None else ''
 
     runtime_text = _text('runtime')
     duration: Optional[int] = None

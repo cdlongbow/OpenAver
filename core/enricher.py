@@ -68,11 +68,8 @@ def _nfo_to_meta(root: ET.Element) -> dict:
             if t not in tags:
                 tags.append(t)
 
-    set_elem = root.find("set")
-    series = ""
-    if set_elem is not None:
-        n_elem = set_elem.find("name")
-        series = (n_elem.text or "").strip() if n_elem is not None else ""
+    set_name_elem = root.find("set/name")
+    series = (set_name_elem.text or "").strip() if set_name_elem is not None else ""
 
     runtime_text = _text("runtime")
     try:
