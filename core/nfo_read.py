@@ -16,6 +16,10 @@ Declared coupling (§1.4, NOT part of this task's replacement scope):
 `nfo_actor_names` here (different responsibility — write-time dedup vs.
 read-time extraction) but if the any-depth rule in `nfo_actor_names` ever
 changes, `add_actor` must be reviewed for drift.
+
+Companion module: `core.nfo_stat` (F-5, filesystem `.nfo` mtime) is named
+symmetrically but deliberately not merged — orthogonal failure domains
+(`ET.ParseError` here vs. `OSError` there).
 """
 
 from __future__ import annotations

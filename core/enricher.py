@@ -29,6 +29,7 @@ from core.nfo_read import (
     nfo_series_name,
     nfo_text,
 )
+from core.nfo_stat import NFO_MTIME_FILL_MISSING, NFO_MTIME_REFRESH, nfo_mtime_or_none
 from core.nfo_updater import parse_nfo
 from core.organizer import crop_to_poster, download_image, find_subtitle_files, generate_nfo
 from core.path_utils import to_file_uri, uri_to_fs_path, uri_to_local_fs_path
@@ -40,6 +41,16 @@ VALID_MODES = {"fill_missing", "db_to_sidecar", "refresh_full"}
 
 
 _FILL_MISSING_REQUIRED = ["title", "actresses", "maker", "director", "series", "label", "tags", "release_date"]
+
+
+def _reraise_nfo_stat_error(e: OSError) -> None:
+    """S3/S4's on_error callback: let a stat failure propagate to each call
+    site's own `try/except OSError`, which already logs the "nfo_mtime stat
+    失敗" warning below — re-raising avoids duplicating that message in the
+    callback (Opus BLOCKER fix, plan-113b v8: `.exists()` restored at both
+    call sites, primitive only takes over the `.stat()` call itself).
+    """
+    raise e
 
 
 # EnrichResult 定義已遷入 core.enrich_contract（中性合約模組），此處 re-export
@@ -527,11 +538,13 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
         nfo_path = Path(fs_path).with_suffix(".nfo")
         # TASK-113b-T1: TOCTOU 對齊 S4 既有失敗語意——.exists() 判定後檔案在 .stat()
         # 前消失（OSError）視為「沒有值」，記 warning，不讓整個 enrich_single 炸掉。
+        _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
         try:
-            nfo_mtime = nfo_path.stat().st_mtime if nfo_path.exists() else 0.0
+            _mt = nfo_mtime_or_none(nfo_path, on_error=_reraise_nfo_stat_error) if nfo_path.exists() else None
         except OSError as e:
             logger.warning("nfo_mtime stat 失敗 (%s): %s", number, e)
-            nfo_mtime = 0.0
+            _mt = None
+        nfo_mtime = _mt if _mt is not None else 0.0
         # wrapper callsite decision point; helper itself: enforced at callsites
         # db-ns-ok: fs_path_for_db passed through to _db_upsert's internal primitive sink
         _db_upsert(repo, number, fs_path_for_db, meta, local_cover_path=local_cover,
@@ -588,12 +601,15 @@ def _sync_nfo_mtime(  # ranker-invalidate-ok: (SET 的是 nfo_mtime，不是 cor
        263，而豁免基準只准減不准增。baseline 維持 249 不下修，把餘裕留給 T2。
     """
     nfo_path = Path(fs_path).with_suffix(".nfo")
+    _NFO_MTIME_POLICY = NFO_MTIME_FILL_MISSING
     if not nfo_path.exists():
         return
     try:
-        nfo_mt = nfo_path.stat().st_mtime
+        nfo_mt = nfo_mtime_or_none(nfo_path, on_error=_reraise_nfo_stat_error)
     except OSError as e:
         logger.warning("nfo_mtime stat 失敗 (%s): %s", number, e)
+        return
+    if nfo_mt is None:
         return
 
     conn = None

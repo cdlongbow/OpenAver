@@ -27,6 +27,7 @@ from core.nfo_read import (
     nfo_series_name,
     nfo_text,
 )
+from core.nfo_stat import NFO_MTIME_REFRESH, nfo_mtime_or_none
 from core.nfo_utils import sanitize_nfo_bytes
 from core.path_utils import normalize_path, to_file_uri, uri_to_fs_path, uri_to_local_fs_path
 from core.video_extensions import DEFAULT_VIDEO_EXTENSIONS, ZERO_SIZE_EXTENSIONS
@@ -141,10 +142,13 @@ def fast_scan_directory(
 
                             if ext == '.nfo':
                                 # 記錄 NFO 的 mtime
-                                try:
-                                    dir_nfos[stem] = entry.stat().st_mtime
-                                except OSError as e:
-                                    _safe_on_skip(entry.path, e)
+                                _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
+                                mt = nfo_mtime_or_none(
+                                    entry,
+                                    on_error=lambda e, entry=entry: _safe_on_skip(entry.path, e),
+                                )
+                                if mt is not None:
+                                    dir_nfos[stem] = mt
                             elif ext in extensions:
                                 stat = entry.stat()
                                 if min_size_bytes <= 0 or ext in ZERO_SIZE_EXTENSIONS or stat.st_size >= min_size_bytes:

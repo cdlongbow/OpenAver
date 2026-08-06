@@ -47,6 +47,7 @@ from core.nfo_read import (
     nfo_series_name,
     nfo_text,
 )
+from core.nfo_stat import NFO_MTIME_REFRESH, nfo_mtime_or_none
 from core.nfo_updater import parse_nfo
 from core.organizer import (
     _detect_suffixes,
@@ -955,6 +956,18 @@ def _write_cover_copy(src: str, dst: str) -> bool:
         return False
 
 
+def _reraise_nfo_stat_error(e: OSError) -> None:
+    """S6's on_error callback (CD-113b-5, 不得變體): the `.nfo` just written by
+    this same call must exist — a stat failure here means a real filesystem
+    problem, not "no NFO". Re-raise so it propagates exactly like the
+    unguarded `os.stat()` call it replaces (whole produce fails loudly,
+    never gets silently recorded as nfo_mtime=0). Deliberately NOT shared
+    with `core.database.migrate._reraise_stat_error` — same shape, different
+    module, different caller intent (plan-113b CD-113b-5 / Opus 裁決 1).
+    """
+    raise e
+
+
 def _write_movie_assets(
     movie_dir: str,
     meta: dict,
@@ -1147,7 +1160,8 @@ def _write_movie_assets(
     # above otherwise). MUTATION LOCK: replacing this stat with a hardcoded 0.0
     # is caught by test_readonly_producer.py::TestUpsertDbAssetsMode's
     # nfo_mtime-positive test (see that file for the mutation-lock comment).
-    nfo_mtime = os.stat(nfo_fs).st_mtime
+    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
+    nfo_mtime = nfo_mtime_or_none(Path(nfo_fs), on_error=_reraise_nfo_stat_error)
 
     # 5) strm sidecar — media-server flavours only (TASK-90a-T3). off / non
     # media-server → no strm. best-effort: a write failure returns False and
