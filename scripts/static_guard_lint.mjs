@@ -3475,8 +3475,13 @@ const RULES = [
   {
     file: { dir: 'web/static/js/pages/showcase', ext: ['.js'], recursive: true },
     kind: 'forbidden-string',
-    pattern: "'warn'",
-    note: "[lint-guard:113d-T4] showcase toast type 不得使用 'warn' 字面（CSS 只有 alert-warning；toastType 唯一合法拼寫是 'warning'）",
+    // JS 字串值 'warn' 逐字比對，quote 風格中立（'warn' / "warn" / `warn` 都要抓）。
+    // backreference 鎖「同一款引號包住恰好 warn 四個字」：
+    // - 不誤抓 console.warn( / logger.warn(（warn 前是 `.` 不是引號）
+    // - 不誤抓 'warning'（warn 後緊接的是 i 不是同款引號，backreference 對不上）
+    // （Codex PR review P2：原本只鎖單引號字面，"warn"/`warn` 逃過此守衛）
+    pattern: /(['"`])warn\1/,
+    note: "[lint-guard:113d-T4] showcase toast type 不得使用 warn 字面（任何引號風格；CSS 只有 alert-warning；toastType 唯一合法拼寫是 'warning'）",
   },
 ];
 
