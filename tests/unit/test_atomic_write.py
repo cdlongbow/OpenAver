@@ -5,6 +5,7 @@ any existing tests/ file. Everything new for T1 — the primitive's own
 six-cell matrix and the `thumbnail_cache.generate()` call-site regression
 lock that plugs the "no os.replace failure coverage" gap — lives here.
 """
+import errno
 import os
 import tempfile
 from pathlib import Path
@@ -170,6 +171,35 @@ class TestAtomicWritePrimitive:
                 f.write("x")
 
         assert call_order == ["fdopen_close", "os_replace"]
+
+    def test_fdopen_failure_closes_fd_and_leaves_no_temp_leftover(self, tmp_path):
+        """Codex PR review P2：mkstemp 回傳的 fd 在 `os.fdopen()` 接管它之前完全
+        由 `atomic_write` 擁有——若呼叫端傳了無效的 mode/encoding 組合
+        （`mode="wb"` 又給 `encoding="utf-8"`，真實會被 `ValueError` 拒絕），
+        `os.fdopen` 在接管前就拋例外，外層 `with` 從未成立，fd 不會被 with 關閉。
+        斷言必須是「真的關了」——`os.fstat(fd)` 拋 `OSError`/`EBADF`——不是只斷言
+        「有拋例外」，否則測不出 fd 洩漏（實測見本卡回報：修正前 fd 在例外後仍可
+        `os.fstat` 成功）。"""
+        dest = tmp_path / "out.txt"
+        captured = {}
+
+        def bad_fdopen(fd, *args, **kwargs):
+            captured["fd"] = fd
+            raise ValueError("binary mode doesn't take an encoding argument")
+
+        with patch("core.atomic_write.os.fdopen", side_effect=bad_fdopen):
+            with pytest.raises(ValueError):
+                with atomic_write(dest, mode="wb", encoding="utf-8"):
+                    pass  # pragma: no cover — fdopen 失敗於 with 成立前，永遠不會進來
+
+        assert "fd" in captured, "os.fdopen 從未被呼叫，測試沒有測到目標路徑"
+        with pytest.raises(OSError) as excinfo:
+            os.fstat(captured["fd"])
+        assert excinfo.value.errno == errno.EBADF
+
+        assert not dest.exists()
+        leftovers = list(tmp_path.iterdir())
+        assert leftovers == []
 
     def test_suffix_param_used_for_temp_file(self, tmp_path):
         dest = tmp_path / "out.jpg"

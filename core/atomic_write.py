@@ -50,7 +50,19 @@ def atomic_write(
     fd, tmp = tempfile.mkstemp(dir=dest.parent, suffix=suffix)
     tmp = Path(tmp)
     try:
-        with os.fdopen(fd, mode, encoding=encoding) as f:
+        # 🔴 os.fdopen 自己包一層 try（Codex PR review P2）：mkstemp 回傳的 fd
+        # 在這一行之前完全由這個函式擁有；若呼叫端傳了無效的 mode/encoding 組合
+        # （例如 mode="wb" 又給 encoding="utf-8"），fdopen 會在「接管 fd」之前
+        # 就拋 ValueError——此時外層的 `with` 從未成立，fd 不會被 with 關閉。
+        # 若讓這個例外直接落進下面的 except，只會 unlink(tmp)，fd 仍開著：
+        # 重複觸發會耗盡 fd（Windows 上開著的 handle 還會擋 unlink，temp 檔留底）。
+        # 明確在這裡關閉 fd、原樣重拋，讓 fd 的生命週期不論哪條路徑都有人收尾。
+        try:
+            f = os.fdopen(fd, mode, encoding=encoding)
+        except BaseException:
+            os.close(fd)
+            raise
+        with f:
             yield f
         # fd 已由上面的 with 關閉 → 安全 replace（Windows file-lock 前提）
         os.replace(tmp, dest)
