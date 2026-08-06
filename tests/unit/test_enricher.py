@@ -2617,6 +2617,346 @@ class TestEnrichFocalReset:
         assert row.auto_focal == "0.3000,0.6000"
 
 
+# ── TASK-113b-T1：S3/S4 nfo_mtime TOCTOU 例外對齊 ────────────────────────────
+
+class TestNfoMtimeS3S4ExceptionAlignment:
+    """S3（`:527-528`，走刮削路徑寫 DB 時的 nfo_mtime stat）原本裸 `.stat()`，
+    TOCTOU 視窗內 NFO 消失會讓整個 enrich_single 直接炸掉；S4（`:549-565`，
+    fill-missing 路徑的獨立 nfo_mtime UPDATE）已有 `except Exception`，但範圍過寬
+    （把 stat 與 DB 連線/寫入的失敗混在一起）。
+
+    TASK-113b-T1：S3 的 `.stat()` 失敗映射為 `0.0`（沿用既有「NFO 不存在」語意，
+    仍照樣呼叫 `_db_upsert`）；S4 的 stat 失敗整段跳過 UPDATE（不得折成 `0.0`
+    再寫，DB 段 `except Exception` 的範圍不變）。兩處都要記 warning。
+
+    裁決 1（Opus Step 2）：測試 1／7 的故障注入須 class 級同時 patch `Path.exists`
+    （目標 `.nfo` 路徑回 True）與 `Path.stat`（目標路徑拋 `OSError`），非目標路徑
+    一律委派原始方法——`Path.exists()` 內部就是呼叫 `self.stat()`，只 patch
+    `Path.stat` 會讓 `.exists()` 連帶回 False（ENOENT 類）或重拋（EACCES 類），
+    兩者都測不到被測分支；`Path` 有 `__slots__`，只能 class 級 patch。
+    裁決 2：測試 3 用 `patch("core.enricher._db_upsert", wraps=...)` 斷言 S3 傳入的
+    `nfo_mtime` kwarg（而非只看最終 DB 值——S4 是 S3 的 fill-missing 補網，只驗
+    最終值測不出「S3 stat 提前」這類 mutation）。
+    裁決 3：測試 4／6／7 的 S4 分支用「seed 一筆完整 DB row」建立（`path`/`number`
+    對上、`_missing_fields` 八欄全非空），不用「完整 baseline NFO」——DB row 一旦
+    存在，`:409` 的 `get_by_numbers` 會先命中，NFO 內容根本不會被讀到；且只有
+    DB row 存在，S4 的 `UPDATE ... WHERE path = ?` 才有列可打。
+    """
+
+    _COMPLETE_KWARGS = dict(
+        title="Old Title", original_title="Old Title",
+        actresses=["女優A"], maker="SOD", director="監督A",
+        series="シリーズA", label="LABEL", tags=["タグ"],
+        release_date="2024-01-01", duration=120,
+        cover_path="https://example.com/cover.jpg",
+    )
+
+    def _seed_env(self, tmp_path, db_name, number, video_name):
+        """建立真 sqlite DB 檔（非 :memory:，理由見 TASK-113b-T1.md「現況分析 C」）
+        + repo + 一支真實影片檔，回傳 (repo, file_path, nfo_file, db_key)。"""
+        from core.database import init_db, VideoRepository
+        from core.path_utils import to_file_uri, uri_to_fs_path
+
+        db_file = tmp_path / db_name
+        init_db(db_file)
+        repo = VideoRepository(db_path=db_file)
+
+        video_file = tmp_path / video_name
+        video_file.write_bytes(b"x")
+        file_path = str(video_file)
+        nfo_file = video_file.with_suffix(".nfo")
+        db_key = to_file_uri(uri_to_fs_path(file_path))
+        return repo, file_path, nfo_file, db_key
+
+    def _seed_complete_row(self, repo, db_key, number, nfo_mtime):
+        """seed 一筆完整（`_missing_fields` 八欄全非空）DB row，`nfo_mtime` 用 raw
+        UPDATE 顯式覆寫（`Video` dataclass 預設 0.0，upsert() 走一般路徑寫不出
+        NULL；比照 conftest.seed_crop_mode 手法直接開連線 UPDATE）。
+        BE-ENV-02：seed 一個不可能相等的舊值（如 12345.0）取代 time.sleep 撐 mtime 差異。
+        """
+        from core.database import Video, get_connection
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.upsert(Video(path=db_key, number=number, **self._COMPLETE_KWARGS))
+
+        conn = get_connection(repo.db_path)
+        try:
+            conn.execute(
+                "UPDATE videos SET nfo_mtime = ? WHERE path = ?",
+                (nfo_mtime, db_key),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _toctou_context(self, target_path_str):
+        """class 級 patch `Path.exists`（目標路徑回 True）＋ `Path.stat`（目標路徑
+        拋 `OSError`），非目標路徑一律委派原始方法（裁決 1）。回傳可直接 `with` 的
+        `ExitStack`。"""
+        from contextlib import ExitStack
+
+        orig_exists = Path.exists
+        orig_stat = Path.stat
+
+        def fake_exists(self_, *a, **kw):
+            if str(self_) == target_path_str:
+                return True
+            return orig_exists(self_, *a, **kw)
+
+        def fake_stat(self_, *a, **kw):
+            if str(self_) == target_path_str:
+                # 訊息文字刻意不含 "stat" 字面（避免洩漏進 caplog 的 "stat" 關鍵字
+                # 斷言，讓斷言只認生產碼 warning 訊息本身有沒有講 "stat"，不是認
+                # 例外字串本身）。
+                raise OSError("injected TOCTOU disappearance (test)")
+            return orig_stat(self_, *a, **kw)
+
+        stack = ExitStack()
+        stack.enter_context(patch("pathlib.Path.exists", new=fake_exists))
+        stack.enter_context(patch("pathlib.Path.stat", new=fake_stat))
+        return stack
+
+    # ── 測試 1（plan #1）：NFO「存在」但 stat() 拋 OSError → S3（走刮削）────────
+
+    def test_1_s3_stat_oserror_maps_to_zero_and_warns(self, tmp_path, caplog):
+        import logging as _logging
+
+        repo, file_path, nfo_file, db_key = self._seed_env(
+            tmp_path, "s3_stat_error.db", "SIRO-3001", "SIRO-3001.mp4"
+        )
+        target = str(nfo_file)
+
+        scraper_data = {
+            "number": "SIRO-3001", "title": "New", "actors": ["女優B"],
+            "cover": "http://example.com/cover.jpg", "date": "2024-01-01",
+            "maker": "SOD", "director": "監督B", "series": "シリーズB", "label": "LABEL",
+            "tags": ["タグ"], "sample_images": [], "source": "javbus",
+        }
+        with (
+            patch("core.enricher.VideoRepository", return_value=repo),
+            patch("core.enricher.search_jav", return_value=scraper_data) as mock_search,
+            patch("core.enricher.find_subtitle_files", return_value=[]),
+            patch("core.similar.ranker_cache.SimilarRankerCache"),
+            self._toctou_context(target),
+            caplog.at_level(_logging.WARNING, logger="OpenAver.core.enricher"),
+        ):
+            from core.enricher import enrich_single
+            result = enrich_single(
+                file_path=file_path, number="SIRO-3001", mode="fill_missing",
+                write_nfo=False, write_cover=False, write_extrafanart=False,
+            )
+
+        mock_search.assert_called_once()
+        assert result.success is True
+
+        row = repo.get_by_path(db_key)
+        assert row is not None
+        assert row.nfo_mtime == 0.0, f"stat 失敗應映射為 0.0，得 {row.nfo_mtime!r}"
+        # 用 "stat" 關鍵字而非鬆散的 "nfo_mtime" OR 判斷：S4 既有的 DB 失敗 warning
+        # （"nfo_mtime 更新失敗 (%s): %s"）也含 "nfo_mtime" 子字串，鬆散斷言在測試 7
+        # 會對未修的舊碼假綠（見測試 7 同一理由的註解）。
+        assert any("stat" in r.message for r in caplog.records), "S3 stat 失敗必須記 warning"
+
+    # ── 測試 3（plan #3）：起初無 .nfo → enrich 真寫出 NFO → S3 傳給 _db_upsert 的
+    # nfo_mtime 等於新檔 st_mtime（裁決 2：斷言傳入值，不只看最終 DB 值）────────
+
+    def test_3_s3_passes_new_nfo_stmtime_to_db_upsert(self, tmp_path):
+        from core.enricher import _db_upsert as _orig_db_upsert
+
+        repo, file_path, nfo_file, db_key = self._seed_env(
+            tmp_path, "s3_real_write.db", "SIRO-3003", "SIRO-3003.mp4"
+        )
+        assert not nfo_file.exists(), "測試 3 前提：一開始不應有 .nfo 檔"
+
+        scraper_data = {
+            "number": "SIRO-3003", "title": "New", "actors": ["女優C"],
+            "cover": "http://example.com/cover.jpg", "date": "2024-01-01",
+            "maker": "SOD", "director": "監督C", "series": "シリーズC", "label": "LABEL",
+            "tags": ["タグ"], "sample_images": [], "source": "javbus",
+        }
+        with (
+            patch("core.enricher.VideoRepository", return_value=repo),
+            patch("core.enricher.search_jav", return_value=scraper_data) as mock_search,
+            patch("core.enricher.find_subtitle_files", return_value=[]),
+            patch("core.enricher._db_upsert", wraps=_orig_db_upsert) as mock_db_upsert,
+            patch("core.similar.ranker_cache.SimilarRankerCache"),
+        ):
+            from core.enricher import enrich_single
+            result = enrich_single(
+                file_path=file_path, number="SIRO-3003", mode="fill_missing",
+                write_nfo=True, write_cover=False, write_extrafanart=False,
+            )
+
+        mock_search.assert_called_once()
+        assert result.success is True
+        assert nfo_file.exists(), "測試 3 前提：enrich 過程要真的寫出 NFO（不 mock generate_nfo）"
+        real_mtime = nfo_file.stat().st_mtime
+
+        mock_db_upsert.assert_called_once()
+        assert mock_db_upsert.call_args.kwargs["nfo_mtime"] == real_mtime, (
+            "S3 傳給 _db_upsert 的 nfo_mtime 必須等於新寫出 .nfo 檔的 st_mtime"
+        )
+        assert mock_db_upsert.call_args.kwargs["nfo_mtime"] != 0.0
+
+        row = repo.get_by_path(db_key)
+        assert row is not None
+        assert row.nfo_mtime == real_mtime
+
+    # ── 測試 4（plan #4）：NFO 存在且 DB nfo_mtime 為 NULL → S4 補值（回歸釘選）──
+
+    def test_4_s4_fills_null_nfo_mtime(self, tmp_path):
+        repo, file_path, nfo_file, db_key = self._seed_env(
+            tmp_path, "s4_fill_null.db", "SIRO-3004", "SIRO-3004.mp4"
+        )
+        self._seed_complete_row(repo, db_key, "SIRO-3004", nfo_mtime=None)
+        nfo_file.write_bytes(b"<movie></movie>")
+
+        with (
+            patch("core.enricher.VideoRepository", return_value=repo),
+            patch("core.enricher.search_jav") as mock_search,
+            patch("core.enricher.find_subtitle_files", return_value=[]),
+            patch("core.similar.ranker_cache.SimilarRankerCache"),
+        ):
+            from core.enricher import enrich_single
+            result = enrich_single(
+                file_path=file_path, number="SIRO-3004", mode="fill_missing",
+                write_nfo=False, write_cover=False, write_extrafanart=False,
+            )
+
+        mock_search.assert_not_called()
+        assert result.success is True
+        assert result.source_used == "db", "測試 4 前提：完整 DB row，不應落到刮削分支"
+
+        expected_mtime = nfo_file.stat().st_mtime
+        row = repo.get_by_path(db_key)
+        assert row is not None
+        assert row.nfo_mtime == expected_mtime
+        assert row.nfo_mtime not in (0, 0.0, None)
+
+    # ── 測試 5（plan #5）：NFO 存在且 DB 已有非 0 值 + 走刮削路徑 → S3 無條件覆寫
+    # （回歸釘選；BE-ENV-02：seed 12345.0 不可能相等的舊值）───────────────────
+
+    def test_5_s3_unconditionally_overwrites_existing_value(self, tmp_path):
+        from core.database import Video, get_connection
+
+        repo, file_path, nfo_file, db_key = self._seed_env(
+            tmp_path, "s3_overwrite.db", "SIRO-3005", "SIRO-3005.mp4"
+        )
+        # 缺 director 欄位觸發刮削（不是裁決 3 的「完整 DB row」場景——這支測試要
+        # 走 S3，不是 S4）
+        incomplete_kwargs = dict(self._COMPLETE_KWARGS)
+        incomplete_kwargs["director"] = ""
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.upsert(Video(path=db_key, number="SIRO-3005", **incomplete_kwargs))
+        conn = get_connection(repo.db_path)
+        try:
+            conn.execute("UPDATE videos SET nfo_mtime = ? WHERE path = ?", (12345.0, db_key))
+            conn.commit()
+        finally:
+            conn.close()
+
+        scraper_data = {
+            "number": "SIRO-3005", "title": "New", "actors": ["女優D"],
+            "cover": "http://example.com/cover.jpg", "date": "2024-01-01",
+            "maker": "SOD", "director": "監督D", "series": "シリーズD", "label": "LABEL",
+            "tags": ["タグ"], "sample_images": [], "source": "javbus",
+        }
+        with (
+            patch("core.enricher.VideoRepository", return_value=repo),
+            patch("core.enricher.search_jav", return_value=scraper_data) as mock_search,
+            patch("core.enricher.find_subtitle_files", return_value=[]),
+            patch("core.similar.ranker_cache.SimilarRankerCache"),
+        ):
+            from core.enricher import enrich_single
+            result = enrich_single(
+                file_path=file_path, number="SIRO-3005", mode="fill_missing",
+                write_nfo=True, write_cover=False, write_extrafanart=False,
+            )
+
+        mock_search.assert_called_once()
+        assert result.success is True
+        assert nfo_file.exists()
+        real_mtime = nfo_file.stat().st_mtime
+
+        row = repo.get_by_path(db_key)
+        assert row is not None
+        assert row.nfo_mtime == real_mtime
+        assert row.nfo_mtime != 12345.0, "S3 無條件覆寫語意不變，12345.0 不應殘留"
+
+    # ── 測試 6（plan #6）：NFO 存在且 DB 已有非 0 值 + 不走刮削 → S4 guard 擋下
+    # （回歸釘選）──────────────────────────────────────────────────────────────
+
+    def test_6_s4_guard_skips_nonzero_existing_value(self, tmp_path):
+        repo, file_path, nfo_file, db_key = self._seed_env(
+            tmp_path, "s4_guard_skip.db", "SIRO-3006", "SIRO-3006.mp4"
+        )
+        self._seed_complete_row(repo, db_key, "SIRO-3006", nfo_mtime=12345.0)
+        nfo_file.write_bytes(b"<movie></movie>")
+
+        with (
+            patch("core.enricher.VideoRepository", return_value=repo),
+            patch("core.enricher.search_jav") as mock_search,
+            patch("core.enricher.find_subtitle_files", return_value=[]),
+            patch("core.similar.ranker_cache.SimilarRankerCache"),
+        ):
+            from core.enricher import enrich_single
+            result = enrich_single(
+                file_path=file_path, number="SIRO-3006", mode="fill_missing",
+                write_nfo=False, write_cover=False, write_extrafanart=False,
+            )
+
+        mock_search.assert_not_called()
+        assert result.success is True
+        assert result.source_used == "db", "測試 6 前提：完整 DB row，不應落到刮削分支"
+
+        row = repo.get_by_path(db_key)
+        assert row is not None
+        assert row.nfo_mtime == 12345.0, "非 0 舊值不應被 fill-missing guard 覆寫"
+
+    # ── 測試 7（plan #7）：不走刮削 + DB nfo_mtime 為 NULL + stat() 拋 OSError →
+    # S4 整段跳過（不得折成 0.0）────────────────────────────────────────────────
+
+    def test_7_s4_stat_oserror_does_not_fold_null_to_zero(self, tmp_path, caplog):
+        import logging as _logging
+
+        repo, file_path, nfo_file, db_key = self._seed_env(
+            tmp_path, "s4_stat_error.db", "SIRO-3007", "SIRO-3007.mp4"
+        )
+        self._seed_complete_row(repo, db_key, "SIRO-3007", nfo_mtime=None)
+        target = str(nfo_file)
+
+        with (
+            patch("core.enricher.VideoRepository", return_value=repo),
+            patch("core.enricher.search_jav") as mock_search,
+            patch("core.enricher.find_subtitle_files", return_value=[]),
+            patch("core.similar.ranker_cache.SimilarRankerCache"),
+            self._toctou_context(target),
+            caplog.at_level(_logging.WARNING, logger="OpenAver.core.enricher"),
+        ):
+            from core.enricher import enrich_single
+            result = enrich_single(
+                file_path=file_path, number="SIRO-3007", mode="fill_missing",
+                write_nfo=False, write_cover=False, write_extrafanart=False,
+            )
+
+        mock_search.assert_not_called()
+        assert result.success is True
+
+        row = repo.get_by_path(db_key)
+        assert row is not None
+        assert row.nfo_mtime is None, (
+            f"stat 失敗必須整段跳過 UPDATE，NULL 不可被折成 0.0，得 {row.nfo_mtime!r}"
+        )
+        # 用 "stat" 關鍵字而非鬆散的 "nfo_mtime" OR 判斷：未修的舊碼 S4 用同一個
+        # except Exception 吞掉 stat 失敗，warning 文字是既有的 DB 失敗訊息
+        # （"nfo_mtime 更新失敗 (%s): %s"，同樣含 "nfo_mtime" 子字串但不含 "stat"）——
+        # 只斷言 "nfo_mtime" 會在舊碼上也命中，測不出 T1 把 stat 失敗獨立成專屬
+        # warning 這件事（NULL 不折成 0.0 這件事本身舊碼「碰巧」已經正確，S4 這裡
+        # 是「把 stat 失敗來源與 DB 失敗來源分開處理」的例外面對齊，不是行為修復；
+        # 用 "stat" 關鍵字鎖住「有沒有專屬 stat warning」才是這支測試真正在守的事）。
+        assert any("stat" in r.message for r in caplog.records), "S4 stat 失敗必須記 warning"
+
+
 # ── 99b-T2 DoD ④: caller #4（enricher）namespace 真 DB 鎖 ───────────────────
 
 class TestEnrichFocalCoverPathUriNamespace:
