@@ -19,6 +19,15 @@ from core.focal import requires_face_detection
 from core.focal_trigger import maybe_submit_video_focal
 from core.logger import get_logger
 from core.maker_mapping import load_name_mapping, load_prefix_mapping
+from core.nfo_read import (
+    nfo_actor_names,
+    nfo_first_text,
+    nfo_merged_tags,
+    nfo_runtime_minutes,
+    nfo_series_name,
+    nfo_text,
+)
+from core.nfo_stat import NFO_MTIME_REFRESH, nfo_mtime_or_none
 from core.nfo_utils import sanitize_nfo_bytes
 from core.path_utils import normalize_path, to_file_uri, uri_to_fs_path, uri_to_local_fs_path
 from core.video_extensions import DEFAULT_VIDEO_EXTENSIONS, ZERO_SIZE_EXTENSIONS
@@ -133,10 +142,13 @@ def fast_scan_directory(
 
                             if ext == '.nfo':
                                 # 記錄 NFO 的 mtime
-                                try:
-                                    dir_nfos[stem] = entry.stat().st_mtime
-                                except OSError as e:
-                                    _safe_on_skip(entry.path, e)
+                                _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
+                                mt = nfo_mtime_or_none(
+                                    entry,
+                                    on_error=lambda e, entry=entry: _safe_on_skip(entry.path, e),
+                                )
+                                if mt is not None:
+                                    dir_nfos[stem] = mt
                             elif ext in extensions:
                                 stat = entry.stat()
                                 if min_size_bytes <= 0 or ext in ZERO_SIZE_EXTENSIONS or stat.st_size >= min_size_bytes:
@@ -310,52 +322,25 @@ class VideoScanner:
             info = VideoInfo()
 
             # 標題
-            title_elem = root.find('title')
-            if title_elem is not None and title_elem.text:
-                info.title = title_elem.text.strip()
+            info.title = nfo_text(root, 'title')
 
             # 原始標題
-            originaltitle_elem = root.find('originaltitle')
-            if originaltitle_elem is not None and originaltitle_elem.text:
-                info.originaltitle = originaltitle_elem.text.strip()
+            info.originaltitle = nfo_text(root, 'originaltitle')
 
             # 番號
-            for tag in ['num', 'id']:
-                elem = root.find(tag)
-                if elem is not None and elem.text:
-                    info.num = elem.text.strip()
-                    break
+            info.num = nfo_first_text(root, ('num', 'id'))
 
             # 片商
-            for tag in ['maker', 'studio']:
-                elem = root.find(tag)
-                if elem is not None and elem.text:
-                    info.maker = elem.text.strip()
-                    break
+            info.maker = nfo_first_text(root, ('maker', 'studio'))
 
             # 日期
-            for tag in ['release', 'premiered', 'year']:
-                elem = root.find(tag)
-                if elem is not None and elem.text:
-                    info.date = elem.text.strip()
-                    break
+            info.date = nfo_first_text(root, ('release', 'premiered', 'year'))
 
             # 演員
-            actors = []
-            for actor_elem in root.findall('.//actor/name'):
-                if actor_elem.text:
-                    actors.append(actor_elem.text.strip())
-            info.actor = ','.join(actors)
+            info.actor = ','.join(nfo_actor_names(root))
 
             # 類型/標籤
-            genres = []
-            for genre_elem in root.findall('genre'):
-                if genre_elem.text:
-                    genres.append(genre_elem.text.strip())
-            for tag_elem in root.findall('tag'):
-                if tag_elem.text and tag_elem.text.strip() not in genres:
-                    genres.append(tag_elem.text.strip())
-            info.genre = ','.join(genres)
+            info.genre = ','.join(nfo_merged_tags(root))
 
             # 用戶自訂標籤
             user_tags = []
@@ -365,32 +350,19 @@ class VideoScanner:
             info.user_tags = user_tags
 
             # 時長 (runtime)
-            runtime_elem = root.find('runtime')
-            if runtime_elem is not None and runtime_elem.text:
-                try:
-                    info.duration = int(runtime_elem.text.strip())
-                except ValueError:
-                    info.duration = None
+            info.duration = nfo_runtime_minutes(root)
 
             # 導演
-            director_elem = root.find('director')
-            if director_elem is not None and director_elem.text:
-                info.director = director_elem.text.strip()
+            info.director = nfo_text(root, 'director')
 
             # 系列 (set/name)
-            set_name_elem = root.find('set/name')
-            if set_name_elem is not None and set_name_elem.text:
-                info.series = set_name_elem.text.strip()
+            info.series = nfo_series_name(root)
 
             # 廠牌/標籤 (label)
-            label_elem = root.find('label')
-            if label_elem is not None and label_elem.text:
-                info.label = label_elem.text.strip()
+            info.label = nfo_text(root, 'label')
 
             # <thumb> 元素（相對路徑/絕對路徑/URL，供 find_cover_image L3 使用）
-            thumb_elem = root.find('thumb')
-            if thumb_elem is not None and thumb_elem.text:
-                info.nfo_thumb = thumb_elem.text.strip()
+            info.nfo_thumb = nfo_text(root, 'thumb') or None
 
             return info
 

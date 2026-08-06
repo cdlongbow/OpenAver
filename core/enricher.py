@@ -21,6 +21,15 @@ from core.enrich_contract import (
 )
 from core.focal_trigger import schedule_focal_after_cover_write
 from core.logger import get_logger
+from core.nfo_read import (
+    nfo_actor_names,
+    nfo_first_text,
+    nfo_merged_tags,
+    nfo_runtime_minutes,
+    nfo_series_name,
+    nfo_text,
+)
+from core.nfo_stat import NFO_MTIME_FILL_MISSING, NFO_MTIME_REFRESH, nfo_mtime_or_none
 from core.nfo_updater import parse_nfo
 from core.organizer import crop_to_poster, download_image, find_subtitle_files, generate_nfo
 from core.path_utils import to_file_uri, uri_to_fs_path, uri_to_local_fs_path
@@ -34,44 +43,34 @@ VALID_MODES = {"fill_missing", "db_to_sidecar", "refresh_full"}
 _FILL_MISSING_REQUIRED = ["title", "actresses", "maker", "director", "series", "label", "tags", "release_date"]
 
 
+def _reraise_nfo_stat_error(e: OSError) -> None:
+    """S3/S4's on_error callback: let a stat failure propagate to each call
+    site's own `try/except OSError`, which already logs the "nfo_mtime stat
+    失敗" warning below — re-raising avoids duplicating that message in the
+    callback (Opus BLOCKER fix, plan-113b v8: `.exists()` restored at both
+    call sites, primitive only takes over the `.stat()` call itself).
+    """
+    raise e
+
+
 # EnrichResult 定義已遷入 core.enrich_contract（中性合約模組），此處 re-export
 # 保持全庫既有 `from core.enricher import EnrichResult` 匯入零改動（feature/105）。
 
 
 def _nfo_to_meta(root: ET.Element) -> dict:
-    def _text(tag: str) -> str:
-        elem = root.find(tag)
-        return (elem.text or "").strip() if elem is not None else ""
-
-    actors = [
-        (n.text or "").strip()
-        for a in root.findall("actor")
-        for n in [a.find("name")]
-        if n is not None and n.text
-    ]
-    tags = [(e.text or "").strip() for e in root.findall("tag") if e.text]
-    set_elem = root.find("set")
-    series = ""
-    if set_elem is not None:
-        n_elem = set_elem.find("name")
-        series = (n_elem.text or "").strip() if n_elem is not None else ""
-
-    runtime_text = _text("runtime")
-    duration = int(runtime_text) if runtime_text.isdigit() else None
-
     return {
-        "title": _text("title"),
-        "original_title": _text("originaltitle"),
-        "actresses": actors,
-        "maker": _text("studio"),
-        "director": _text("director"),
-        "series": series,
-        "label": _text("label"),
-        "tags": tags,
-        "release_date": _text("premiered"),
-        "duration": duration,
+        "title": nfo_text(root, "title"),
+        "original_title": nfo_text(root, "originaltitle"),
+        "actresses": nfo_actor_names(root),
+        "maker": nfo_first_text(root, ("maker", "studio")),
+        "director": nfo_text(root, "director"),
+        "series": nfo_series_name(root),
+        "label": nfo_text(root, "label"),
+        "tags": nfo_merged_tags(root),
+        "release_date": nfo_first_text(root, ("release", "premiered", "year")),
+        "duration": nfo_runtime_minutes(root),
         "cover_url": "",
-        "url": _text("website"),
+        "url": nfo_text(root, "website"),
     }
 
 
@@ -537,7 +536,15 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
     if mode in ("refresh_full", "fill_missing") and source_used not in ("db", "nfo", ""):
         local_cover = resolve_cover_target(str(Path(fs_path).with_suffix("")), external_manager) if cover_written else ""
         nfo_path = Path(fs_path).with_suffix(".nfo")
-        nfo_mtime = nfo_path.stat().st_mtime if nfo_path.exists() else 0.0
+        # TASK-113b-T1: TOCTOU 對齊 S4 既有失敗語意——.exists() 判定後檔案在 .stat()
+        # 前消失（OSError）視為「沒有值」，記 warning，不讓整個 enrich_single 炸掉。
+        _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
+        try:
+            _mt = nfo_mtime_or_none(nfo_path, on_error=_reraise_nfo_stat_error) if nfo_path.exists() else None
+        except OSError as e:
+            logger.warning("nfo_mtime stat 失敗 (%s): %s", number, e)
+            _mt = None
+        nfo_mtime = _mt if _mt is not None else 0.0
         # wrapper callsite decision point; helper itself: enforced at callsites
         # db-ns-ok: fs_path_for_db passed through to _db_upsert's internal primitive sink
         _db_upsert(repo, number, fs_path_for_db, meta, local_cover_path=local_cover,
@@ -556,25 +563,7 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
                 repo, path_uri, number, meta.get("maker"), local_cover, path_mappings
             )
 
-    # nfo_mtime 獨立更新：不論 mode/source，只要 NFO 存在就同步 DB
-    # 避免 analysis 永遠視為 missing_nfo
-    nfo_path = Path(fs_path).with_suffix(".nfo")
-    if nfo_path.exists():
-        conn = None
-        try:
-            path_uri = to_file_uri(fs_path_for_db)  # db-ns-ok: fs_path_for_db, DB round-trip value, no reverse mapping applied
-            nfo_mt = nfo_path.stat().st_mtime
-            conn = get_connection(repo.db_path)
-            conn.execute(
-                "UPDATE videos SET nfo_mtime = ? WHERE path = ? AND (nfo_mtime IS NULL OR nfo_mtime = 0)",
-                (nfo_mt, path_uri),
-            )
-            conn.commit()
-        except Exception as e:
-            logger.warning("nfo_mtime 更新失敗 (%s): %s", number, e)
-        finally:
-            if conn:
-                conn.close()
+    _sync_nfo_mtime(repo, fs_path, fs_path_for_db, number)
 
     # reason=hit 的「/thumb 兩道 gate + 磁碟複驗 + false-negative 取捨」完整理由已
     # 遷入 core.enrich_contract.compute_has_servable_cover 的 docstring（feature/105，
@@ -593,6 +582,50 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
         source_used=source_used,
         has_servable_cover=has_servable_cover,
     )
+
+
+def _sync_nfo_mtime(  # ranker-invalidate-ok: (SET 的是 nfo_mtime，不是 corpus 欄位；本標記隨這段 SQL 從 enrich_single 一起搬過來，理由不變)
+    repo: VideoRepository, fs_path: str, fs_path_for_db: str, number: str
+) -> None:
+    """nfo_mtime 獨立更新（S4）：不論 mode/source，只要 NFO 存在就同步 DB，避免 analysis
+    永遠視為 missing_nfo。覆寫語意為 fill-missing（`WHERE … AND (nfo_mtime IS NULL OR
+    nfo_mtime = 0)`），與 enrich_single 內 S3 的無條件覆寫刻意不同（plan-113b CD-113b-3）。
+
+    TASK-113b-T1 的兩件事：
+    ① stat 的失敗來源與 DB 的失敗來源分開——stat 失敗（TOCTOU：`.exists()` 判定後檔案
+       消失）視為「沒有值」，**整段跳過 UPDATE**（等同現況「NFO 不存在」的處置；
+       **不得折成 0.0 再寫**，那會把原本 NULL 的列改成 0.0）。DB 連線／寫入的例外面
+       （`except Exception` + warning + `finally: conn.close()`）原封不動保留。
+    ② 從 enrich_single 原地抽出：**純搬移、零行為變更**，換得規模閘淨負（實測
+       249 → 237 行）——本 task 在 enrich_single 內新增 S3 的例外保護會讓它長大到
+       263，而豁免基準只准減不准增。baseline 維持 249 不下修，把餘裕留給 T2。
+    """
+    nfo_path = Path(fs_path).with_suffix(".nfo")
+    _NFO_MTIME_POLICY = NFO_MTIME_FILL_MISSING
+    if not nfo_path.exists():
+        return
+    try:
+        nfo_mt = nfo_mtime_or_none(nfo_path, on_error=_reraise_nfo_stat_error)
+    except OSError as e:
+        logger.warning("nfo_mtime stat 失敗 (%s): %s", number, e)
+        return
+    if nfo_mt is None:
+        return
+
+    conn = None
+    try:
+        path_uri = to_file_uri(fs_path_for_db)  # db-ns-ok: fs_path_for_db, DB round-trip value, no reverse mapping applied
+        conn = get_connection(repo.db_path)
+        conn.execute(
+            "UPDATE videos SET nfo_mtime = ? WHERE path = ? AND (nfo_mtime IS NULL OR nfo_mtime = 0)",
+            (nfo_mt, path_uri),
+        )
+        conn.commit()
+    except Exception as e:
+        logger.warning("nfo_mtime 更新失敗 (%s): %s", number, e)
+    finally:
+        if conn:
+            conn.close()
 
 
 def _db_upsert(

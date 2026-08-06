@@ -152,6 +152,30 @@ scrapers/
 **NFO 檔案工具函數**
 - `sanitize_nfo_bytes(raw)` — 修正 NFO 中非法的 bare `&`，使 malformed XML 可被正常解析。在 bytes 層級操作，保留 CDATA 區塊原封不動。
 
+### `nfo_read.py`
+**NFO 欄位定位的韌性規則（單一所有權，spec-113 F-1）**
+- 原本 `enricher._nfo_to_meta`、`gallery_scanner.VideoScanner.parse_nfo`、`readonly_producer._nfo_to_producer_meta` 三份各自實作「同一個欄位可能長成哪幾種樣子」，且韌性程度互不相同（第三方 NFO 的巢狀 actor / `<maker>` / `<release>` 讀不到 → 被誤判為缺漏 → 被刮削覆寫）。
+- `nfo_text(root, tag)` — 讀單一 tag 的 text，strip 後回傳；tag 不存在／`.text is None`／全空白統一回 `''`。
+- `nfo_first_text(root, tags)` — 依序試多個 tag 名，回傳第一個 strip 後非空的值（**全空白視為沒有**，不會吃掉後面合法的候選）。
+- `nfo_actor_names()` — 扁平 `<actor>` 與巢狀 `<actors><actor><name>` 皆讀得到（any-depth），strip 後過濾空字串。
+- `nfo_merged_tags()` — 合併 `<tag>` 與 `<genre>`，保序去重、過濾空白。
+- `nfo_series_name()` / `nfo_runtime_minutes()` — `<set>` 系列名（掃到第一個有 `<name>` 的）／`<runtime>` 轉整數（容忍前後空白）。
+- **不在這裡**：欄位缺漏怎麼判、要不要觸發刮削、寫回誰的資料結構——那是三個呼叫端各自的決策。
+
+### `nfo_stat.py`
+**`.nfo` 修改時間讀取的例外語意（單一所有權，spec-113 F-5）**
+- 原本全庫**六處**各自手寫「stat 已選定的 sidecar `.nfo` 拿 mtime」，配了**五種**不同例外處理（`OSError` ×2、`Exception` ×1、逐列 `continue` ×1、**完全無保護 ×2**）——無保護的那兩處會讓「確認檔案存在」與「真的去讀」之間的競態炸掉整次操作。
+- `nfo_mtime_or_none(target, *, on_error)` — `target` duck-type 成任何有 `.stat()` 的東西（`Path` 或 `os.DirEntry`，讓已經持有 DirEntry 的 `os.scandir()` 呼叫端不必重 stat）。**只吃 `OSError`**，其餘例外一律往外拋（那是呼叫端的 bug）；`on_error` 自己拋的例外原樣傳出，這是呼叫端 opt-in「重拋」語意的方式。
+- **不在這裡**：sidecar 路徑怎麼定位、既有值該不該被覆寫、結果怎麼寫進 DB——全留在呼叫端。
+- 覆寫語意（`NFO_MTIME_REFRESH` / `NFO_MTIME_ON_UPSERT` / `NFO_MTIME_FILL_MISSING`）**刻意不收斂**，但改為呼叫端**具名可見**，不再靠函式預設值繼承。
+
+### `atomic_write.py`
+**原子寫入 primitive（單一所有權，spec-113 F-2）**
+- `atomic_write(dest, *, mode, encoding, suffix)` — context manager：在 `dest.parent` 建唯一暫存檔（`mkstemp`）→ yield 檔案物件 → 關檔 → `os.replace` 換上去；**兩條失敗路徑（寫入中例外／replace 失敗）都會清掉暫存檔**再往外拋。
+- 收斂了四處手寫實作：`config.py`（設定檔）、`thumbnail_cache.py`（縮圖）、`actress_photo.py`（下載女優照片）、`web/routers/actress.py`（上傳裁切照片）。
+- **刻意不在這裡**：上鎖、刪同名舊檔、把失敗轉成 `False`、決定 `dest` 在哪——全部留在呼叫端。清舊檔一律排在 `os.replace` 成功**之後**（`os.replace` 在 Windows 不保證成功，見 `gotchas-backend.md` BE-ENV-01）。
+- ⚠️ 模組內對 `os.replace` / `tempfile.mkstemp` **必須用屬性存取**（禁 `from os import replace`），否則測試端 `patch("core.atomic_write.os.replace")` 會失效——由 `tests/unit/test_atomic_write_boundary_guard.py` 的 AST 守衛鎖住。
+
 ### `logger.py`
 **統一日誌模組**
 - `setup_logging(log_dir, console_level)` — 初始化日誌系統（由 `standalone.py` 呼叫一次），設定 RotatingFileHandler（10MB × 5 份）與 Console Handler。

@@ -12,10 +12,8 @@
 
 import asyncio
 import json
-import os
 import random
 import re
-import tempfile
 from io import BytesIO
 from typing import Optional, List
 from urllib.parse import quote
@@ -24,6 +22,7 @@ from fastapi import APIRouter, UploadFile, File, Query
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from PIL import Image
+from core.atomic_write import atomic_write
 from core.maker_mapping import load_prefix_mapping
 
 from core.database import ActressRepository, AliasRepository, VideoRepository, Actress, init_db
@@ -557,18 +556,11 @@ def _write_actress_photo(name: str, crop_bytes: bytes, ext: str = ".jpg") -> Non
     """
     safe = sanitize_filename(name)
     GFRIENDS_DIR.mkdir(parents=True, exist_ok=True)
+    # dest.parent 恆等於 GFRIENDS_DIR（安全用 dest 而非另傳 dir=GFRIENDS_DIR）：
+    # 見 TASK-113d-T1.md「Q-5」段的恆等證明（safe 不含路徑分隔符 + ext 固定白名單）。
     dest = GFRIENDS_DIR / f"{safe}{ext}"
-    fd, tmp = tempfile.mkstemp(dir=GFRIENDS_DIR, suffix=ext)
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(crop_bytes)
-        os.replace(tmp, dest)
-    except Exception:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    with atomic_write(dest, suffix=ext) as f:
+        f.write(crop_bytes)
     # 🔴 清舊檔必須在 os.replace 成功「之後」（TASK-100a-T2 review finding）：
     # 原本是先 glob 刪光 {safe}.* 再寫入 → 寫檔失敗時舊照片已經沒了，使用者的
     # 照片直接消失。而 spec-100 §3.3 的失敗矩陣（CD-4 pre-invalidate 的整個賣點）

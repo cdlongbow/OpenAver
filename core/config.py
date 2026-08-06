@@ -9,14 +9,13 @@ core/config.py — 設定載入 / 儲存 / 遷移邏輯
 """
 
 import json
-import os
-import tempfile
 import threading
 from pathlib import Path
 from typing import Callable, Dict, Literal, Optional, List
 
 from pydantic import BaseModel, Field, field_validator
 
+from core.atomic_write import atomic_write
 from core.logger import get_logger
 from core.source_config import SourceConfig, get_builtin_sources, get_manual_only_sources
 from core.video_extensions import DEFAULT_VIDEO_EXTENSIONS
@@ -531,23 +530,13 @@ def load_config() -> dict:
 def _save_config_unlocked(config: dict) -> None:
     """原子寫 config.json，**不取鎖** —— caller 須已持有 _config_write_lock。
 
-    tempfile.mkstemp 在 CONFIG_PATH 同目錄（同卷）建臨時檔 → fd 寫完關閉後
-    os.replace（POSIX/Windows 皆原子）。任何例外都清掉 temp 殘檔後 re-raise，
-    避免半寫的 *.tmp 殘留。fd 必須在 os.replace 前關閉（Windows file-lock）。
+    原子寫本體委派 core.atomic_write.atomic_write()（TASK-113d-T1 起的單一
+    所有權：同目錄 mkstemp → 關 fd → os.replace → 任何失敗清 temp 並讓原例外
+    往上傳）。本函式保留的部分：不取鎖（由 caller 持 _config_write_lock）、
+    text mode + encoding='utf-8'、以及「例外一路往上拋」的失敗語意。
     """
-    fd, tmp = tempfile.mkstemp(dir=CONFIG_PATH.parent, suffix='.tmp')
-    try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
-        # fd 已由 with 區塊關閉 → 安全 replace
-        os.replace(tmp, CONFIG_PATH)
-    except Exception:
-        # 清掉殘留 temp（best-effort）後 re-raise
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    with atomic_write(CONFIG_PATH, mode='w', encoding='utf-8') as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
 
 
 def save_config(config: dict) -> None:

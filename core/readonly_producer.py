@@ -39,6 +39,15 @@ from core.focal import requires_face_detection
 from core.focal_trigger import maybe_submit_video_focal, schedule_focal_after_cover_write
 from core.gallery_scanner import IMAGE_EXTENSIONS, VideoScanner, fast_scan_directory
 from core.logger import get_logger
+from core.nfo_read import (
+    nfo_actor_names,
+    nfo_first_text,
+    nfo_merged_tags,
+    nfo_runtime_minutes,
+    nfo_series_name,
+    nfo_text,
+)
+from core.nfo_stat import NFO_MTIME_REFRESH, nfo_mtime_or_none
 from core.nfo_updater import parse_nfo
 from core.organizer import (
     _detect_suffixes,
@@ -947,6 +956,18 @@ def _write_cover_copy(src: str, dst: str) -> bool:
         return False
 
 
+def _reraise_nfo_stat_error(e: OSError) -> None:
+    """S6's on_error callback (CD-113b-5, 不得變體): the `.nfo` just written by
+    this same call must exist — a stat failure here means a real filesystem
+    problem, not "no NFO". Re-raise so it propagates exactly like the
+    unguarded `os.stat()` call it replaces (whole produce fails loudly,
+    never gets silently recorded as nfo_mtime=0). Deliberately NOT shared
+    with `core.database.migrate._reraise_stat_error` — same shape, different
+    module, different caller intent (plan-113b CD-113b-5 / Opus 裁決 1).
+    """
+    raise e
+
+
 def _write_movie_assets(
     movie_dir: str,
     meta: dict,
@@ -1139,7 +1160,8 @@ def _write_movie_assets(
     # above otherwise). MUTATION LOCK: replacing this stat with a hardcoded 0.0
     # is caught by test_readonly_producer.py::TestUpsertDbAssetsMode's
     # nfo_mtime-positive test (see that file for the mutation-lock comment).
-    nfo_mtime = os.stat(nfo_fs).st_mtime
+    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
+    nfo_mtime = nfo_mtime_or_none(Path(nfo_fs), on_error=_reraise_nfo_stat_error)
 
     # 5) strm sidecar — media-server flavours only (TASK-90a-T3). off / non
     # media-server → no strm. best-effort: a write failure returns False and
@@ -1288,14 +1310,21 @@ def _upsert_db(
 def _nfo_to_producer_meta(root: ET.Element, fallback_number: str) -> dict:
     """Reverse-map a parsed NFO `<movie>` root into producer-meta shape (CD-104-3b).
 
-    Mirrors VideoScanner.parse_nfo's (gallery_scanner.py:303) tag-extraction
-    robustness — multi-tag date fallback, genre/tag merge-with-dedup, set/name
-    — but OUTPUTS producer-meta keys (number/title/actors/tags/date/maker/
+    Tag-extraction resilience (multi-tag date fallback, genre/tag merge-with-
+    dedup, any-depth actor lookup, set/name series lookup) is no longer a
+    hand-written mirror of `VideoScanner.parse_nfo` (gallery_scanner.py:303) —
+    T1c aligned the two on blank-semantics (fallback loops) and series
+    path-lookup (CD-113a-8 caught the two remaining divergences), and
+    TASK-113a-T2 then collapsed both implementations into the single shared
+    layer in `core/nfo_read.py`. This function only shapes those primitives
+    into producer-meta OUTPUT keys (number/title/actors/tags/date/maker/
     director/series/label/duration/url/_summary/_rating/cover/sample_images),
     matching what `_write_movie_assets`/`generate_nfo`/`_upsert_db` already
     consume (this module, :625/:790). Do NOT reuse `core.enricher._nfo_to_meta`
     — its actresses/release_date/cover_url shape silently drops fields at the
-    writer/upsert boundary (card note).
+    writer/upsert boundary (card note); the tag-extraction resilience rules
+    themselves are now shared via `core.nfo_read`, so there is no hand-written
+    duplicate of them left in this function to drift.
 
     Two round-trip edges reversing `generate_nfo` (core/organizer.py:597):
       - title: generate_nfo writes `[number]display` — strip that prefix back
@@ -1311,72 +1340,28 @@ def _nfo_to_producer_meta(root: ET.Element, fallback_number: str) -> dict:
     by `resolve_ingest_plan`'s own cover axis (cover_strategy), not this meta
     dict; samples are never bulk-fetched (see `resolve_ingest_plan` docstring).
     """
-    def _text(tag: str) -> str:
-        elem = root.find(tag)
-        return (elem.text or '').strip() if elem is not None else ''
+    # Chain content is this caller's declared strategy (spec-113 §2.5): `uniqueid`
+    # is kept as an extra tail fallback that VideoScanner.parse_nfo deliberately
+    # does NOT have — generate_nfo always writes it, and it is harmless for
+    # OpenAver's own NFOs where `<num>` already wins. `fallback_number` is the
+    # caller's `extract_number(basename)`, used only when the NFO carries none.
+    number = nfo_first_text(root, ('num', 'id', 'uniqueid')) or fallback_number or ''
 
-    # number/maker/date fallback chains mirror VideoScanner.parse_nfo
-    # (gallery_scanner.py:323/330/337) EXACTLY so ingest reads a third-party
-    # NFO identically to OpenAver's incumbent scan reader (no ingest-vs-scan
-    # date/maker drift). `uniqueid` kept as an extra tail fallback (generate_nfo
-    # always writes it; harmless for OpenAver NFOs where <num> already wins).
-    number = ''
-    for tag in ('num', 'id', 'uniqueid'):
-        elem = root.find(tag)
-        if elem is not None and elem.text and elem.text.strip():
-            number = elem.text.strip()
-            break
-    if not number:
-        number = fallback_number or ''
-
-    raw_title = _text('title')
+    raw_title = nfo_text(root, 'title')
     title = _strip_num_prefixes(raw_title, number) if raw_title else raw_title
-    original_title = _text('originaltitle')
+    original_title = nfo_text(root, 'originaltitle')
 
-    # any-depth `.//actor/name` — mirrors VideoScanner.parse_nfo (gallery_scanner.py:345)
-    # EXACTLY. A direct-children-only `root.findall('actor')` would silently return []
-    # for a third-party NFO shaped `<movie><actors><actor><name>X</name></actor></actors></movie>`
-    # (actors nested one level deeper than OpenAver's own flat `<movie><actor>` shape) —
-    # VideoScanner would still read the actor via the scan path, but ingest would clear it
-    # (P1 finding, 2026-07-21 review). MUTATION LOCK: reverting to `root.findall('actor')`
-    # must turn test_nested_actors_element_any_depth RED (test_readonly_producer.py).
-    actors = [
-        (elem.text or '').strip()
-        for elem in root.findall('.//actor/name')
-        if elem.text
-    ]
+    actors = nfo_actor_names(root)
 
-    # genre/tag merge-with-dedup, mirroring VideoScanner.parse_nfo:350-358
-    # (genre first, then any <tag> not already present).
-    tags: list = []
-    for genre_elem in root.findall('genre'):
-        if genre_elem.text:
-            t = genre_elem.text.strip()
-            if t not in tags:
-                tags.append(t)
-    for tag_elem in root.findall('tag'):
-        if tag_elem.text:
-            t = tag_elem.text.strip()
-            if t not in tags:
-                tags.append(t)
+    tags = nfo_merged_tags(root)
 
-    date = _text('release') or _text('premiered') or _text('year')
+    date = nfo_first_text(root, ('release', 'premiered', 'year'))
 
-    set_elem = root.find('set')
-    series = ''
-    if set_elem is not None:
-        n_elem = set_elem.find('name')
-        series = (n_elem.text or '').strip() if n_elem is not None else ''
+    series = nfo_series_name(root)
 
-    runtime_text = _text('runtime')
-    duration: Optional[int] = None
-    if runtime_text:
-        try:
-            duration = int(runtime_text)
-        except ValueError:
-            duration = None
+    duration = nfo_runtime_minutes(root)
 
-    rating_text = _text('rating')
+    rating_text = nfo_text(root, 'rating')
     rating_val: Optional[float] = None
     if rating_text:
         try:
@@ -1393,13 +1378,13 @@ def _nfo_to_producer_meta(root: ET.Element, fallback_number: str) -> dict:
         'actors': actors,
         'tags': tags,
         'date': date,
-        'maker': _text('maker') or _text('studio'),
-        'director': _text('director'),
+        'maker': nfo_first_text(root, ('maker', 'studio')),
+        'director': nfo_text(root, 'director'),
         'series': series,
-        'label': _text('label'),
+        'label': nfo_text(root, 'label'),
         'duration': duration,
-        'url': _text('website'),
-        '_summary': _text('plot'),
+        'url': nfo_text(root, 'website'),
+        '_summary': nfo_text(root, 'plot'),
         '_rating': rating_val,
         'cover': '',
         'sample_images': [],

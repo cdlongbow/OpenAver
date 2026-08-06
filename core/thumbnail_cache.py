@@ -12,13 +12,13 @@
 import hashlib
 import os
 import shutil
-import tempfile
 import threading
 from pathlib import Path
 from typing import Iterator, Optional, Tuple
 
 from PIL import Image
 
+from core.atomic_write import atomic_write
 from core.database import get_db_path
 from core.logger import get_logger
 from core.path_utils import uri_to_local_fs_path
@@ -69,13 +69,14 @@ def generate(cover_fs_path: str, dst: Path) -> bool:
     """從封面 fs path 產出寬 THUMB_WIDTH 的 WebP 縮圖，原子寫到 dst。
 
     成功回 True；損圖/讀取失敗/save 失敗 → logger.warning 後回 False（不拋，D6）。
-    原子寫鏡像 core/config.py:_save_config_unlocked（同目錄 tempfile + os.replace，
-    fd 先關再 replace；任何例外清 temp 殘檔）。
+    原子寫委派 core.atomic_write.atomic_write()（TASK-113d-T1 起的單一所有權）。
+    本函式保留的部分：per-thumb 鎖、`dst.parent` 的 mkdir、以及「任何失敗一律
+    logger.warning 後回 False」的失敗語意——primitive 只負責原子換檔本體，
+    失敗時把原例外往上拋，由下面的 except 轉成 False。
     """
     # 整個「讀 cover → 處理 → 原子寫」包進 per-thumb 鎖內，與 invalidate 的 unlink
     # 序列化（Codex round-2 P1 修法 A）。失敗回 False 的語義不變，只是被鎖包住。
     with _lock_for_thumb(dst):
-        tmp = None
         try:
             with Image.open(cover_fs_path) as img:
                 img = img.convert("RGB")  # 去 alpha/CMYK，WebP 友善
@@ -85,20 +86,11 @@ def generate(cover_fs_path: str, dst: Path) -> bool:
                     img = img.resize((THUMB_WIDTH, new_h), Image.LANCZOS)
 
                 dst.parent.mkdir(parents=True, exist_ok=True)
-                fd, tmp = tempfile.mkstemp(dir=dst.parent, suffix=".tmp")
-                # fd 必須在 os.replace 前關閉（Windows file-lock）
-                with os.fdopen(fd, "wb") as f:
+                with atomic_write(dst) as f:
                     img.save(f, "WEBP", quality=THUMB_QUALITY, method=THUMB_METHOD)
-                os.replace(tmp, dst)
-                tmp = None
             return True
         except Exception as e:
             logger.warning("thumbnail generate failed: cover=%s err=%s", cover_fs_path, e)
-            if tmp is not None:
-                try:
-                    os.unlink(tmp)
-                except OSError:
-                    pass
             return False
 
 

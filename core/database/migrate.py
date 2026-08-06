@@ -4,11 +4,22 @@ from pathlib import Path
 
 from core.cover_layout import cover_base_stem
 from core.logger import get_logger
+from core.nfo_stat import NFO_MTIME_FILL_MISSING, nfo_mtime_or_none
 
 from . import connection
 from .video import Video, VideoRepository
 
 logger = get_logger(__name__)
+
+
+def _reraise_stat_error(e: OSError) -> None:
+    """S5's on_error callback: let a TOCTOU stat failure (NFO existed at the
+    `.exists()` check but is gone/unreadable by `.stat()`) propagate to the
+    existing `except Exception` in `backfill_readonly_nfo_mtime`, which
+    already logs a warning for that row — re-raising avoids duplicating that
+    message in the callback (plan-113b v7 / Opus 裁決 1).
+    """
+    raise e
 
 
 def migrate_json_to_sqlite(json_path: Path, db_path: Path = None,
@@ -124,7 +135,10 @@ def backfill_readonly_nfo_mtime(db_path=None, path_mappings=None) -> int:
                 nfo_path = Path(cover_base_stem(cover_fs) + '.nfo')
                 if not nfo_path.exists():
                     continue
-                nfo_mtime = nfo_path.stat().st_mtime
+                _NFO_MTIME_POLICY = NFO_MTIME_FILL_MISSING
+                nfo_mtime = nfo_mtime_or_none(nfo_path, on_error=_reraise_stat_error)
+                if nfo_mtime is None:
+                    continue
                 cursor.execute(
                     "UPDATE videos SET nfo_mtime = ? WHERE path = ?",
                     (nfo_mtime, video_path),

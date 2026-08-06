@@ -12,10 +12,21 @@ from core.config import load_config, get_gallery_source_paths
 from core.database import Video, VideoRepository
 from core.gallery_scanner import VideoScanner
 from core.logger import get_logger
+from core.nfo_stat import NFO_MTIME_ON_UPSERT, nfo_mtime_or_none
 from core.path_utils import to_file_uri
 from core.settings_link import find_matched_directory
 
 logger = get_logger(__name__)
+
+
+def _reraise_stat_error(e: OSError) -> None:
+    """S2's on_error callback: let a stat failure propagate to the existing
+    `except OSError` in `try_inflow_upsert`, which already logs the warning
+    below — re-raising avoids duplicating that message in the callback
+    (Opus BLOCKER fix, plan-113b v8: `.exists()` restored, primitive only
+    takes over the `.stat()` call itself).
+    """
+    raise e
 
 
 def _overlay_scraped_metadata(video_info, scraped_metadata: dict) -> None:
@@ -167,10 +178,11 @@ def try_inflow_upsert(
         # 需自行 stat 剛整理好的 NFO，否則 showcase 會誤判該片缺 NFO（🔍 icon）。
         # 只在 NFO 實際存在時才寫入真 st_mtime；不存在（如 multipart/cd2 外部模式
         # organizer skip NFO）維持 0，誠實回報無 NFO。stat() 失敗保卡不拋例外。
+        _NFO_MTIME_POLICY = NFO_MTIME_ON_UPSERT
         try:
             nfo_path = Path(target_file_path).with_suffix('.nfo')
             if nfo_path.exists():
-                video.nfo_mtime = nfo_path.stat().st_mtime
+                video.nfo_mtime = nfo_mtime_or_none(nfo_path, on_error=_reraise_stat_error)
         except OSError:
             logger.warning(
                 "try_inflow_upsert: stat NFO 失敗，%r，nfo_mtime 維持 0",
