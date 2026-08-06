@@ -1679,7 +1679,7 @@ export function stateLightbox() {
                     await this.refreshVideoData(video);
                     this.showToast(window.t('showcase.samples.success'), 'success');
                 } else if (data.error === 'multi_video_folder') {
-                    this.showToast(window.t('showcase.samples.multi_video_error'), 'warn');
+                    this.showToast(window.t('showcase.samples.multi_video_error'), 'warning');
                 } else {
                     this.showToast(window.t('showcase.samples.fetch_failed'), 'error');
                     this._fetchSamplesFailed[video.path] = true;

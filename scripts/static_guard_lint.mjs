@@ -3437,6 +3437,47 @@ const RULES = [
     scope: /<button class="lb-action-btn js-open-folder"[\s\S]*?<\/button>/,
     note: '[lint-guard:108-T4] G4c-neg：燈箱 .js-open-folder 按鈕不得混進 play/enrich 的 handler 或圖示（誤搬 class 的反向鎖）',
   },
+
+  // ---- [lint-guard:113d-T4] showcase toast 語意修正（四鍵 lookup map，禁動態拼接）----
+  // showcase.html:1484/1485 原本是二元判斷（error : success），'info'/'warning' 落到
+  // else → 綠色打勾/裸樣式（spec §4.4）。改成 static lookup map 而非 `alert-${type}`
+  // 動態拼接是刻意的（CD-113d-6）：Tailwind 官方明文列動態拼接為反模式，本庫其餘四頁
+  // 的動態拼接現在能動純屬僥倖（靠別的檔案剛好有完整字面字串被掃進編譯產物）。
+  // class map／icon map 兩條鎖的是「每個 class 與它對應的條件」，不是「四個字串存在」
+  // ——單純字串存在性測不出 warning 被錯映成 info 這種對應錯誤（Codex plan review P2）。
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: [
+      "'alert-success': toastType === 'success'",
+      "'alert-error':   toastType === 'error'",
+      "'alert-warning': toastType === 'warning'",
+      "'alert-info':    toastType === 'info'",
+    ],
+    scope: /<div class="alert fluent-toast"[\s\S]*?<\/div>/,
+    note: '[lint-guard:113d-T4] showcase toast class map 四鍵逐字對應（鎖住每個 class 與它的條件，不是字串存在性）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: [
+      "'bi-check-circle':         toastType === 'success'",
+      "'bi-exclamation-circle':   toastType === 'error'",
+      "'bi-exclamation-triangle': toastType === 'warning'",
+      "'bi-info-circle':          toastType === 'info'",
+    ],
+    scope: /<div class="alert fluent-toast"[\s\S]*?<\/div>/,
+    note: '[lint-guard:113d-T4] showcase toast icon map 四鍵逐字對應',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'forbidden-string',
+    pattern: 'alert-${',
+    note: '[lint-guard:113d-T4] showcase toast 禁止動態拼接 class（`` `alert-${type}` ``；Tailwind 官方反模式，purge 會靜默漏掉未以完整字面出現的 class）',
+  },
+  {
+    file: { dir: 'web/static/js/pages/showcase', ext: ['.js'], recursive: true },
+    kind: 'forbidden-string',
+    pattern: "'warn'",
+    note: "[lint-guard:113d-T4] showcase toast type 不得使用 'warn' 字面（CSS 只有 alert-warning；toastType 唯一合法拼寫是 'warning'）",
+  },
 ];
 
 // ---- helpers ----
