@@ -874,7 +874,7 @@ class TestSetActressPhoto:
         with patch("web.routers.actress.crop_video_cover", return_value=fake_jpeg), \
              patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
              patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch("web.routers.actress.os.replace", side_effect=fake_replace):
+             patch("core.atomic_write.os.replace", side_effect=fake_replace):
             resp = client.post(
                 f"/api/actresses/{ACTRESS_NAME}/photo",
                 json={"source": "local_crop", "video_path": video_uri},
@@ -1991,7 +1991,7 @@ class TestUploadActressPhoto:
         # 讓寫入階段炸掉（模擬磁碟寫入失敗），且是在 clear_focal 成功「之後」
         with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
              patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch("web.routers.actress.os.replace", side_effect=OSError("disk full")):
+             patch("core.atomic_write.os.replace", side_effect=OSError("disk full")):
             resp = client.post(
                 f"/api/actresses/{ACTRESS_NAME}/photo/upload",
                 files={"file": ("new.png", self._make_png_bytes(), "image/png")},
@@ -2422,7 +2422,7 @@ class TestWriteActressPhoto:
 
         gfriends = tmp_path / "gfriends"
         with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
-             patch("web.routers.actress.os.replace", side_effect=OSError("boom")):
+             patch("core.atomic_write.os.replace", side_effect=OSError("boom")):
             with pytest.raises(OSError):
                 _write_actress_photo("Err Name", b"DATA")
 
