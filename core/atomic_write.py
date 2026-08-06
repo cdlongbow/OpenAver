@@ -1,7 +1,9 @@
 """atomic_write.py — 共用、無狀態的原子寫檔 primitive（CD-113d-1/2）。
 
 收斂 core.config / core.thumbnail_cache / web.routers.actress 三處各自手寫的
-「同目錄 mkstemp → 拿到開著的 fh → 關 fd → os.replace → 例外時清 temp」骨架。
+「同目錄 mkstemp → 拿到開著的 fh → 關 fd → os.replace → 例外時清 temp」骨架
+（core.actress_photo 的第四處在 T2 一併接進來——它原本用固定可預測的 temp 檔名，
+換成本 primitive 的 mkstemp 才順帶修掉同一位女優並發下載互撞暫存檔，CD-113d-4）。
 只做這一件事：鎖策略、成功後清舊 sibling 檔、失敗語意（拋例外 vs 回 False）、
 dest 在哪，全部留給呼叫端決定（spec §2.5 / D-8）。
 """
@@ -52,10 +54,18 @@ def atomic_write(
             yield f
         # fd 已由上面的 with 關閉 → 安全 replace（Windows file-lock 前提）
         os.replace(tmp, dest)
-    except Exception:
+    except BaseException:
         # 路徑 1：區塊內使用者程式碼拋例外；路徑 2：os.replace 自己拋例外
         # （BE-ENV-01：Windows 防毒/縮圖快取會擋，不是必成功）。
         # 兩條路徑都落在這個 except，行為一致：清 temp、不動 dest、原例外往上傳。
+        #
+        # 🔴 必須是 BaseException 而非 Exception（Stage 2 pre-merge review P2）：
+        # KeyboardInterrupt / SystemExit 不是 Exception 的子類。這不是形式主義——
+        # T2 為了改用本 primitive，把 actress_photo.download_actress_photo 原本的
+        # `finally: tmp.unlink()`（finally 對 BaseException 照樣執行）整段刪掉；
+        # 只收 Exception 就等於在 Ctrl-C 這條路上比修改前更差，而且 mkstemp 的隨機
+        # 檔名不被該函式的 `{safe_name}.*` 清舊檔 glob 命中 → 沒有任何程式碼會再碰它。
+        # 裸 `raise` 原樣重拋，呼叫端的例外／回 False 語意完全不變。
         try:
             tmp.unlink(missing_ok=True)
         except OSError:

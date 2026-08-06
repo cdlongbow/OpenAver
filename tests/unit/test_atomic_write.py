@@ -53,6 +53,45 @@ class TestAtomicWritePrimitive:
         leftovers = [p for p in tmp_path.iterdir() if p != dest]
         assert leftovers == []
 
+    @pytest.mark.parametrize("exc_type", [KeyboardInterrupt, SystemExit])
+    def test_base_exception_inside_block_cleans_temp(self, tmp_path, exc_type):
+        """Ctrl-C / sys.exit() mid-write must not leave a temp file behind.
+
+        `KeyboardInterrupt` and `SystemExit` derive from `BaseException`, not
+        `Exception`, so a cleanup branch that catches only `Exception` lets the
+        `mkstemp` file survive. This is not hypothetical bookkeeping: T2 deleted
+        `core.actress_photo.download_actress_photo`'s `finally: tmp.unlink()`
+        (which *did* run for `BaseException`) in favour of this primitive, and
+        the surviving temp's random `mkstemp` name does **not** match that
+        function's `{safe_name}.*` sibling-cleanup glob — so nothing would ever
+        remove it. Found by Stage 2 pre-merge review (codex 5.6-terra, P2).
+        """
+        dest = tmp_path / "out.txt"
+        dest.write_text("original")
+
+        with pytest.raises(exc_type):
+            with atomic_write(dest, mode="w") as f:
+                f.write("partial")
+                raise exc_type()
+
+        assert dest.read_text() == "original"
+        leftovers = [p for p in tmp_path.iterdir() if p != dest]
+        assert leftovers == []
+
+    @pytest.mark.parametrize("exc_type", [KeyboardInterrupt, SystemExit])
+    def test_base_exception_from_os_replace_cleans_temp(self, tmp_path, exc_type):
+        """Same contract on the second failure path (`os.replace` itself)."""
+        dest = tmp_path / "out.txt"
+
+        with patch("core.atomic_write.os.replace", side_effect=exc_type()):
+            with pytest.raises(exc_type):
+                with atomic_write(dest, mode="w") as f:
+                    f.write("data")
+
+        assert not dest.exists()
+        leftovers = list(tmp_path.iterdir())
+        assert leftovers == []
+
     def test_os_replace_failure_propagates_and_cleans_temp(self, tmp_path):
         dest = tmp_path / "out.txt"
 
