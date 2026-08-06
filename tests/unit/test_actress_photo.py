@@ -448,7 +448,7 @@ def test_download_actress_photo_replace_failure_preserves_old(gfriends_dir):
     mock_resp.content = b"new_data"
 
     with patch("core.actress_photo.requests.get", return_value=mock_resp), \
-         patch("core.actress_photo.os.replace", side_effect=PermissionError("被防毒鎖住")):
+         patch("core.atomic_write.os.replace", side_effect=PermissionError("被防毒鎖住")):
         result = download_actress_photo("田中美久", "https://www.graphis.ne.jp/photo.jpg", "graphis")
 
     assert result is False
@@ -476,6 +476,109 @@ def test_download_actress_photo_success_overwrites_old(gfriends_dir):
     new_file = gfriends_dir / "田中美久.png"
     assert new_file.exists()
     assert new_file.read_bytes() == b"new_png_data"
+
+
+# ===================================================================
+# TASK-113d-T2: A4 固定 temp 檔名 → mkstemp（CD-113d-4 行為變更）
+# ===================================================================
+
+def test_download_actress_photo_sequential_calls_use_distinct_temp_names(gfriends_dir):
+    """確定性測試（不開真執行緒，比照 test_api_actress.py:2376 手法）：spy
+    core.atomic_write.tempfile.mkstemp，序列呼叫兩次 download_actress_photo，
+    斷言兩次產生的 temp 路徑不同——這是 CD-113d-4 行為變更的本體展示：
+    mkstemp 唯一命名取代固定 .download.tmp 之後，並發下載不再互撞同一個 temp 檔。"""
+    import tempfile as _tempfile
+    real_mkstemp = _tempfile.mkstemp
+    seen = []
+
+    def spy_mkstemp(*args, **kwargs):
+        fd, path = real_mkstemp(*args, **kwargs)
+        seen.append(path)
+        return fd, path
+
+    mock_resp = make_mock_response(status_code=200, content_type="image/jpeg")
+    with patch("core.atomic_write.tempfile.mkstemp", side_effect=spy_mkstemp), \
+         patch("core.actress_photo.requests.get", return_value=mock_resp):
+        download_actress_photo("同名女優", "https://raw.githubusercontent.com/a.jpg", "gfriends")
+        download_actress_photo("同名女優", "https://raw.githubusercontent.com/b.jpg", "gfriends")
+
+    assert len(seen) == 2, "兩次下載都應該呼叫一次 mkstemp"
+    assert seen[0] != seen[1], "兩個 temp 路徑必須不同（mkstemp 唯一性保證）"
+
+
+def test_download_actress_photo_write_failure_leaves_no_temp(gfriends_dir):
+    """寫入 tmp 階段（atomic_write 區塊內）拋例外 → temp 已清、目錄不留任何檔案
+    （首次下載無舊檔情境；GFRIENDS_DIR.mkdir 在 try 之前已無條件執行，故目錄必存在，
+    不需要 fail-open 的 if-exists 判斷）。"""
+    mock_resp = make_mock_response(status_code=200, content_type="image/jpeg")
+    with patch("core.actress_photo.requests.get", return_value=mock_resp), \
+         patch("core.atomic_write.os.fdopen", side_effect=OSError("disk full")):
+        result = download_actress_photo("寫入失敗女優", "https://raw.githubusercontent.com/a.jpg", "gfriends")
+
+    assert result is False
+    assert gfriends_dir.exists()
+    assert list(gfriends_dir.glob("*")) == []
+
+
+def test_download_actress_photo_atomic_write_suffix_uses_content_type_ext(gfriends_dir):
+    """URL 猜測 ext（.png）與 Content-Type 判定 ext（.webp）不一致時，傳給
+    atomic_write（進而傳給 mkstemp）的 suffix 必須是 Content-Type 修正後的值，
+    不是 URL 猜測的初始值——鎖住陷阱清單第 2 條：atomic_write() 呼叫點必須在
+    ct_ext 判斷之後。"""
+    import tempfile as _tempfile
+    real_mkstemp = _tempfile.mkstemp
+    seen_suffixes = []
+
+    def spy_mkstemp(*args, **kwargs):
+        seen_suffixes.append(kwargs.get("suffix"))
+        return real_mkstemp(*args, **kwargs)
+
+    mock_resp = make_mock_response(status_code=200, content_type="image/webp")
+    with patch("core.atomic_write.tempfile.mkstemp", side_effect=spy_mkstemp), \
+         patch("core.actress_photo.requests.get", return_value=mock_resp):
+        result = download_actress_photo("後綴女優", "https://raw.githubusercontent.com/photo.png", "gfriends")
+
+    assert result is True
+    assert seen_suffixes == [".webp"]
+
+
+def test_download_actress_photo_temp_dir_matches_gfriends_dir(gfriends_dir):
+    """mkstemp 的 dir kwarg 必須等於 GFRIENDS_DIR（同目錄才能保證 os.replace
+    不跨檔案系統，比照 T1 測試 #5 的守法）。"""
+    import tempfile as _tempfile
+    real_mkstemp = _tempfile.mkstemp
+    seen_dirs = []
+
+    def spy_mkstemp(*args, **kwargs):
+        seen_dirs.append(kwargs.get("dir"))
+        return real_mkstemp(*args, **kwargs)
+
+    mock_resp = make_mock_response(status_code=200, content_type="image/jpeg")
+    with patch("core.atomic_write.tempfile.mkstemp", side_effect=spy_mkstemp), \
+         patch("core.actress_photo.requests.get", return_value=mock_resp):
+        result = download_actress_photo("目錄女優", "https://raw.githubusercontent.com/photo.jpg", "gfriends")
+
+    assert result is True
+    assert seen_dirs == [gfriends_dir]
+
+
+def test_download_actress_photo_replace_failure_no_old_file_stays_absent(gfriends_dir):
+    """首次下載（無舊檔）+ os.replace 失敗 → final_path 依然不存在，回 False。
+    這與既有 Codex P1 回歸鎖（test_download_actress_photo_replace_failure_preserves_old）
+    不同：那條測的是「有舊檔」情境（保留舊檔），本條測的是「無舊檔」情境
+    （不產生半成品新檔），先前沒有顯式測試覆蓋。"""
+    mock_resp = make_mock_response(status_code=200, content_type="image/jpeg")
+    with patch("core.actress_photo.requests.get", return_value=mock_resp), \
+         patch("core.atomic_write.os.replace", side_effect=PermissionError("被防毒鎖住")):
+        result = download_actress_photo("首次失敗女優", "https://raw.githubusercontent.com/photo.jpg", "gfriends")
+
+    assert result is False
+    final_path = gfriends_dir / "首次失敗女優.jpg"
+    assert not final_path.exists()
+    # 不只「沒有半成品」，也不得留下 temp 殘檔（primitive 的 os.replace 失敗路徑
+    # 必須清 temp）。目錄由 GFRIENDS_DIR.mkdir 無條件建立，故可無條件斷言。
+    assert gfriends_dir.exists()
+    assert list(gfriends_dir.glob("*")) == []
 
 
 # ===================================================================

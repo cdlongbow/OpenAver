@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 from collections import OrderedDict
 
+from core.atomic_write import atomic_write
 from core.logger import get_logger
 from core.organizer import sanitize_filename
 
@@ -118,7 +119,6 @@ def download_actress_photo(name: str, photo_url: str, photo_source: str) -> bool
         ext = ".jpg"
 
     final_path = GFRIENDS_DIR / f"{safe_name}{ext}"
-    tmp_path = GFRIENDS_DIR / f".{safe_name}{ext}.download.tmp"
 
     try:
         headers = _HEADERS.copy()
@@ -145,16 +145,17 @@ def download_actress_photo(name: str, photo_url: str, photo_source: str) -> bool
                 ext = ".jpg"
             final_path = GFRIENDS_DIR / f"{safe_name}{ext}"
 
-        # 3. 寫入 tmp
-        tmp_path = GFRIENDS_DIR / f".{safe_name}{ext}.download.tmp"
-        tmp_path.write_bytes(resp.content)
-
-        # 4. atomic replace（先安裝新圖）
-        os.replace(tmp_path, final_path)
+        # 3-4. 原子寫入委派 core.atomic_write（TASK-113d-T2）。mkstemp 唯一命名取代
+        # 原本固定的 `.{safe}{ext}.download.tmp`：固定檔名讓同一位女優的兩個下載請求
+        # 寫同一個 temp 檔互撞（CD-113d-4）。temp 的清理也一併交給 primitive——原本
+        # 的 `finally: if tmp.exists(): unlink()` 因此整段移除，語意等價（成功路徑上
+        # temp 已被 replace 搬走，那個 finally 永遠是 no-op）。
+        with atomic_write(final_path, suffix=ext) as f:
+            f.write(resp.content)
 
         # 5. 🔴 replace 成功「之後」才刪其他副檔名的舊檔（final_path 除外）。
         # 順序是承重的（spec-100 §3.3 + Codex P1）：原本是「先刪舊檔 → os.replace」，
-        # 若 replace 拋例外，舊檔已經沒了、finally 又清掉 tmp → **新舊照片全部消失**，
+        # 若 replace 拋例外，舊檔已經沒了、temp 又被清掉 → **新舊照片全部消失**，
         # 違反 §3.3 失敗矩陣「寫檔失敗仍保留舊圖、最壞只退回置中裁」的硬保證。
         # 這不是理論上的極端 case：Windows 上防毒即時掃描／檔案總管縮圖快取持有
         # final_path 的 handle 就會讓 os.replace 拋 PermissionError，而 Windows 桌面
@@ -180,15 +181,6 @@ def download_actress_photo(name: str, photo_url: str, photo_source: str) -> bool
     except Exception as e:
         logger.warning("[actress_photo] 下載例外 (%s): %s", name, e)
         return False
-    finally:
-        try:
-            if tmp_path.exists():
-                tmp_path.unlink()
-        except Exception as e:
-            logger.debug(
-                "[actress_photo] tmp 清理失敗 path=%s err=%s",
-                tmp_path, e,
-            )
 
 
 def get_local_photo_path(name: str) -> Optional[Path]:
@@ -197,7 +189,8 @@ def get_local_photo_path(name: str) -> Optional[Path]:
 
     正常情況 `{safe}.*` 只會有一個檔（寫入端 os.replace 後即清掉其他副檔名的殘檔）。
     但清舊檔可能失敗（Windows 縮圖快取／防毒鎖住舊檔 → PermissionError → 寫入端
-    warn-and-continue，見 :166-175 與 web/routers/actress.py 的 _write_actress_photo）
+    warn-and-continue，見 download_actress_photo 的清舊檔迴圈與 web/routers/actress.py
+    的 _write_actress_photo）
     ⇒ 目錄同時存在新舊兩個 `{safe}.*`。
 
     🔴 PR#108 Codex 三審 P2：此時**不可**回 `matches[0]`。`Path.glob` 不排序、回的是
