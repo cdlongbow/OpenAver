@@ -131,7 +131,8 @@
         <div class="pv-cover">
           {# CD-62-14 #8：cover 必走 /api/proxy-image?url=encodeURIComponent(...)，
              禁直連遠端 URL、禁 DB-only gallery image 端點。內聯建構。 #}
-          <img :src="rescrapePreview && ('/api/proxy-image?url=' + encodeURIComponent(rescrapePreview.preview_cover_url || rescrapePreview.cover))"
+          <img :src="rescrapePreview && ('/api/proxy-image?url=' + encodeURIComponent(resolveRescrapeCoverUrl()))"
+               @error="handleRescrapePreviewError($event)"
                :alt="rescrapePreview && rescrapePreview.number">
           {# 86-T4: 版本切換器 ‹ › 鈕（CD-86-7 D5；swipe 不做 CD-86-15） #}
           <button type="button" class="rescrape-ver-btn rescrape-ver-prev"

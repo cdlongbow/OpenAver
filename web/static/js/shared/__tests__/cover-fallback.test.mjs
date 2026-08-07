@@ -1,4 +1,4 @@
-// TASK-113c-T7: preview_cover_url 破圖 fallback 補上 error-time 重試（Codex PR#128
+// TASK-113c-T7/T8: preview_cover_url 破圖 fallback 補上 error-time 重試（Codex PR#128
 // round-3 P2）。三個顯示點（detail / hero lightbox / grid card）共用的兩顆純函式：
 // resolveResultCoverUrl（決定這次要顯示 preview 還是 cover，回傳原始 URL，裁決 2：
 // proxy 包裹留在呼叫點，不在這裡）與 shouldFallbackToCover（決定這次失敗要不要觸發
@@ -19,9 +19,9 @@ globalThis.window.t = (key) => key;
 // plain `node --test` 不認得這個別名——比照既有
 // pages/search/__tests__/confirm-edit-identity-guard.test.mjs 的先例，用同一顆
 // alias-loader.mjs（scope 僅本測試檔的 module graph，不動 package.json）。
-register(new URL('../../__tests__/alias-loader.mjs', import.meta.url), import.meta.url);
-const { resolveResultCoverUrl, shouldFallbackToCover, isStaleCoverError } = await import('../result-card.js');
-const { clearPreviewFailedFlags } = await import('../persistence.js');
+register(new URL('../../pages/search/__tests__/alias-loader.mjs', import.meta.url), import.meta.url);
+const { resolveResultCoverUrl, shouldFallbackToCover, isStaleCoverError } = await import('../cover-fallback.js');
+const { clearPreviewFailedFlags } = await import('../../pages/search/state/persistence.js');
 
 // ===== resolveResultCoverUrl =====
 

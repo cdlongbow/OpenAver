@@ -6,7 +6,7 @@ import { POSTER_CROP_MAX_W } from '@/shared/breakpoints.js';
 import { detectSwipe } from '@/shared/swipe.js';
 // TASK-113c-T7: preview 失敗時決定要不要改試 cover（同一顆純函式供 hero/grid 共用，
 // 見 result-card.js 頂部 export，裁決 2：純函式回傳原始 URL，proxy 包裹留在呼叫點）。
-import { isStaleCoverError, shouldFallbackToCover } from './result-card.js';
+import { isStaleCoverError, shouldFallbackToCover } from '@/shared/cover-fallback.js';
 
 export function searchStateGridMode() {
     return {
