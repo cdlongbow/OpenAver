@@ -1306,6 +1306,61 @@ class TestProxyImageSSRF:
         finally:
             metatube_state.disconnect()
 
+    # ---- Codex PR#128 round-2 P3：巢狀抓取目標 ----
+
+    @pytest.mark.parametrize("nested", [
+        'http://127.0.0.1:6379/',                       # 同機 Redis
+        'http://192.168.1.1/admin.png',                 # 同網段設備
+        'http://169.254.169.254/latest/meta-data',      # 雲端 metadata
+        'http://[::1]/x.png',                           # IPv6 loopback
+        'http://nas/photo.jpg',                         # 裸內網名
+    ])
+    def test_metatube_nested_url_to_private_target_is_rejected(self, client, nested):
+        """path 過關的 metatube URL，若 `?url=` 指向非公開位址 → 403，且不發請求。
+
+        metatube 的 `/v1/images/` 端點會**自己去抓** `?url=` 那個目標，外層白名單
+        看不到那一層——與 T2 修 redirect 的理由同一條。被橋接的具體情境是
+        「metatube 綁 loopback ＋ OpenAver 開區網」：此時區網客戶端能透過我們
+        構到只有本機構得到的服務。
+
+        `mock_get.assert_not_called()` 是重點：必須在**發出請求之前**就拒絕。
+        """
+        from urllib.parse import quote
+        from core.metatube.state import metatube_state
+        metatube_state.connect('http://127.0.0.1:8900', '', [])
+        try:
+            url = (f'http://127.0.0.1:8900/v1/images/primary/FANZA/ssis-001'
+                   f'?url={quote(nested, safe="")}&ratio=0&quality=100')
+            with patch('web.routers.search.requests.get') as mock_get:
+                response = client.get('/api/proxy-image', params={'url': url})
+            assert response.status_code == 403
+            mock_get.assert_not_called()
+        finally:
+            metatube_state.disconnect()
+
+    def test_metatube_nested_url_to_public_cdn_is_permitted(self, client):
+        """正向對照：巢狀目標是公開圖床時必須放行——否則破圖修復本身就失效了。
+
+        沒有這一格，上面那組「全部 403」用一個 `return False` 就能造假。
+        用的是實跑 metatube 產出的真實 provider 圖床 URL。
+        """
+        from urllib.parse import quote
+        from core.metatube.state import metatube_state
+        metatube_state.connect('http://127.0.0.1:8900', '', [])
+        try:
+            nested = 'https://my.cdn.tokyo-hot.com/media/n1749/jacket/n1749.jpg'
+            url = (f'http://127.0.0.1:8900/v1/images/primary/TOKYO-HOT/n1749'
+                   f'?url={quote(nested, safe="")}&ratio=0&quality=100')
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.content = b'x'
+            mock_resp.headers = {'Content-Type': 'image/jpeg'}
+            with patch('web.routers.search.requests.get', return_value=mock_resp):
+                response = client.get('/api/proxy-image', params={'url': url})
+            assert response.status_code == 200
+        finally:
+            metatube_state.disconnect()
+
     @pytest.mark.parametrize("good_path", [
         '/v1/images/primary/FANZA/ssis-001',
         '/v1/images/thumb/TOKYO-HOT/n1234',

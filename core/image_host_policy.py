@@ -16,8 +16,9 @@ this module only declares hosts, it does not evaluate URLs.
 """
 from __future__ import annotations
 
+import ipaddress
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 
 @dataclass(frozen=True, slots=True)
@@ -319,3 +320,76 @@ def proxy_dynamic_hosts() -> tuple[ImageHost, ...]:
             port=port,
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# 巢狀抓取目標（Codex PR#128 round-2 P3）
+# ---------------------------------------------------------------------------
+# metatube 的 `/v1/images/...` 端點吃一個 `?url=` 參數，**由它自己去抓那個 URL**。
+# 也就是說外層白名單放行的那個 URL，內層還藏著第二個抓取目標，而外層檢查看不到它。
+# 這與 T2 修 redirect 的理由是同一條：「白名單只驗它看得到的那一層」。
+#
+# 實測過的兩件事決定了這裡該做多少（2026-08-07，對真實 metatube 量的）：
+#   ① metatube 的 `/v1/images/` **不需要 token**（無 Authorization header 照回 200）
+#      → 構得到 metatube 的人本來就有這個能力，我們沒有放大它
+#   ② 餵非圖片目標回 `500 {"error":"image: unknown format"}`
+#      → 拿不到任意資料，只有能解碼成圖片的東西會回來
+# 所以這不是讀取型 SSRF。真正被橋接的只剩一種設定：**metatube 綁 loopback、
+# 而 OpenAver 開了區網** —— 此時我們的代理讓區網構得到只有本機構得到的服務。
+# 因此判準只針對那件事：**巢狀目標不得是非公開位址**。不做簽章（見下方殘留）。
+_PREVIEW_QUERY_KEYS = frozenset({"url", "ratio", "quality"})
+
+
+def _is_public_http_target(raw: str) -> bool:
+    """這個巢狀 URL 指向公開網際網路上的位址嗎？（保守：判不出來就 False）"""
+    try:
+        parsed = urlparse(raw)
+    except Exception:
+        return False
+    if (parsed.scheme or "").lower() not in ("http", "https"):
+        return False          # file: / gopher: / data: 一律拒
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        # 不是 IP 字面值 → 主機名。無點的裸名（`nas`、`router`、`localhost`）
+        # 只可能是內網名稱，公開 CDN 一定帶點。
+        return "." in host and host != "localhost"
+    mapped = getattr(addr, "ipv4_mapped", None)
+    if mapped is not None:
+        addr = mapped         # `::ffff:127.0.0.1` 不解回 IPv4 會判錯（同 web/app.py:264）
+    return addr.is_global
+
+
+def nested_preview_target_allowed(query: str) -> bool:
+    """metatube 圖片端點的 query 是不是我們自己那種形狀、且巢狀目標是公開位址。
+
+    只認 `url` / `ratio` / `quality` 三個 key（`_build_preview_cover_url()` 產出的
+    形狀），且必須恰有一個 `url`。多餘的 key 一律拒——不是因為它們危險，而是
+    「只放行我們自己會產生的形狀」比「列舉危險的 key」可證偽得多（同 T3a 的
+    path 閘門從黑名單改成正向字元集的理由）。
+
+    **明示殘留**：解析成私有位址的**公開網域名**（DNS rebinding）擋不掉，因為這裡
+    不做 DNS 解析（解了也有 TOCTOU）。真正airtight 的做法是簽章預覽 URL
+    （HMAC over the full URL），成本是跨 mapper／router 的新契約 + 一個 secret，
+    不在本 branch 範圍。目前這條的實際暴露面見上方註解 ①②。
+    """
+    if not query:
+        # 沒有 query ＝ 沒有巢狀目標。這是合法形狀：實測 metatube 不帶 `?url=`
+        # 時會自己從它的 DB 查出封面並回 200，此時第二層抓取根本不存在，
+        # 本閘門無事可管。擋它只會誤殺，換不到任何安全。
+        return True
+    try:
+        pairs = parse_qsl(query, keep_blank_values=True, strict_parsing=False)
+    except Exception:
+        return False
+    if any(key not in _PREVIEW_QUERY_KEYS for key, _ in pairs):
+        return False
+    targets = [value for key, value in pairs if key == "url"]
+    if not targets:
+        return True           # 只有 ratio/quality，同樣沒有巢狀目標
+    if len(targets) != 1:
+        return False          # 兩個 url ＝ 夾帶，交給 metatube 挑等於交給攻擊者挑
+    return _is_public_http_target(targets[0])

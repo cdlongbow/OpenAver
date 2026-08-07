@@ -75,7 +75,7 @@ EXC_NAMES = frozenset({
 })
 
 
-def _is_tainted_expr(node: ast.AST, aliases: dict[str, bool] | None = None) -> bool:
+def _is_tainted_expr(node: ast.AST, aliases: frozenset[str] | set[str] | None = None) -> bool:
     """這個運算式會不會把原始 URL 的內容帶出來？
 
     涵蓋四種寫法：裸名 `url`、屬性 `self._base_url`、f-string 內插
@@ -88,11 +88,11 @@ def _is_tainted_expr(node: ast.AST, aliases: dict[str, bool] | None = None) -> b
     `url = redact_metatube_url(url)`，`url` 這個名字仍然算髒。fail-closed，
     且與加入別名追蹤前的行為完全一致（零既有綠燈回歸）。修法是換個名字。
     """
-    aliases = aliases or {}
+    aliases = aliases or frozenset()
     if isinstance(node, ast.Name):
-        return node.id in TAINTED_NAMES or aliases.get(node.id, False)
+        return node.id in TAINTED_NAMES or node.id in aliases
     if isinstance(node, ast.Attribute):
-        return node.attr in TAINTED_NAMES or aliases.get(node.attr, False)
+        return node.attr in TAINTED_NAMES or node.attr in aliases
     if isinstance(node, ast.JoinedStr):  # f-string
         return any(
             _is_tainted_expr(v.value, aliases)
@@ -153,33 +153,52 @@ def _child_scopes(scope: ast.AST):
         stack.extend(ast.iter_child_nodes(node))
 
 
-def _resolve_aliases(scope: ast.AST, inherited: dict[str, bool]) -> dict[str, bool]:
-    """算出本作用域內每個被指派的名字乾不乾淨（繼承外層結果）。
+def _resolve_aliases(scope: ast.AST, inherited: frozenset[str]) -> frozenset[str]:
+    """算出本作用域內哪些名字被污染（繼承外層結果）。回傳的是**受污染名字的集合**。
 
     **flow-insensitive**：先把整個作用域的指派收齊再定案，不管文字順序。
     因此「log 呼叫寫在污染指派之前」也照樣抓得到——過近似的方向是安全的那一邊。
 
-    **fixpoint**：`a = self._base_url; b = a; c = b` 這種鏈，單趟會因為
-    走訪順序而漏掉後段，跑到不動點為止才收斂。
+    **單調（monotone）**：這是本函式的核心不變式，也是 Codex PR#128 round-2 P2 的
+    修正重點。第一版把每個名字算成一個可正可反的 `bool`，於是
+
+        target = self._base_url            # → True
+        target = redact_metatube_url(target)   # → False
+
+    兩條指派會讓同一個 key 在 True/False 之間**永遠來回**，`changed` 兩邊都被拉起，
+    `while changed:` 不收斂＝**掛死整個 pytest run**（比答錯更糟：沒有結果可看）。
+
+    改成單調 lattice 後結構上不可能震盪：狀態只有「不在集合」→「在集合」單向一次，
+    redactor 的結果**不貢獻污染，但也洗不掉已有的污染**。因此上面那組被判成
+    tainted（fail-closed）——同一個名字既承接過原始 URL 又承接過 redacted 值時，
+    我們不去猜哪一次先發生，一律當髒；修法是換個名字。這與既有的
+    「拼字命中 `TAINTED_NAMES` 是洗不掉的下限」是同一條原則。
+
+    迴圈另加**上界** `len(assigns) + 1`：單調性已經保證收斂，這個上界只是讓
+    「未來有人把 lattice 改回可雙向」從**掛死**變成**一條指名的紅**。
     """
-    aliases = dict(inherited)
+    tainted = set(inherited)
     assigns = [
         n for n in _own_nodes(scope)
         if isinstance(n, ast.Assign) and len(n.targets) == 1
     ]
-    changed = True
-    while changed:
+    for _ in range(len(assigns) + 1):
         changed = False
         for node in assigns:
             key = _assign_key(node.targets[0])
-            if key is None:
-                continue
-            clean = _is_redactor_call(node.value)
-            state = False if clean else _is_tainted_expr(node.value, aliases)
-            if aliases.get(key) != state:
-                aliases[key] = state
+            if key is None or key in tainted:
+                continue                       # 已髒就不再看＝單調的實作面保證
+            if _is_redactor_call(node.value):
+                continue                       # redactor 結果不貢獻污染
+            if _is_tainted_expr(node.value, tainted):
+                tainted.add(key)
                 changed = True
-    return aliases
+        if not changed:
+            return frozenset(tainted)
+    raise AssertionError(                      # 單調時不可達；可達＝有人破壞了不變式
+        f"別名解析在 {len(assigns) + 1} 輪內未收斂——lattice 不再是單調的。"
+        f"見 _resolve_aliases docstring：狀態只准單向 False→True。"
+    )
 
 
 def _is_log_call(node: ast.Call) -> bool:
@@ -197,7 +216,7 @@ def _is_exception_call(node: ast.Call) -> bool:
     return node.func.id in EXC_NAMES or node.func.id.endswith(EXC_SUFFIX)
 
 
-def _scan_scope(scope: ast.AST, inherited: dict[str, bool], out: list) -> None:
+def _scan_scope(scope: ast.AST, inherited: frozenset[str], out: list) -> None:
     aliases = _resolve_aliases(scope, inherited)
     for node in _own_nodes(scope):
         if not isinstance(node, ast.Call):
@@ -220,7 +239,7 @@ def _scan_scope(scope: ast.AST, inherited: dict[str, bool], out: list) -> None:
 def _violations(path: pathlib.Path) -> list[tuple[int, str]]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     out: list[tuple[int, str]] = []
-    _scan_scope(tree, {}, out)
+    _scan_scope(tree, frozenset(), out)
     return sorted(out)   # _own_nodes 是 LIFO 走訪，排序讓行號可讀且結果穩定
 
 
@@ -276,6 +295,14 @@ _RED_SNIPPETS = [
     ('log 呼叫寫在污染指派之前（flow-insensitive 要照抓）',
      'def f():\n    logger.info("%s", t)\n    t = self._base_url'),
     ('改名後進例外訊息', 'tgt = url\nraise MetatubeError(f"failed {tgt}")'),
+    # Codex PR#128 round-2 P2：同名 key 同時承接髒值與 redacted 值。
+    # 第一版在這裡**無窮迴圈掛死**；單調化後判 tainted（fail-closed）。
+    ('同名 key 先髒後 redacted（震盪形狀）',
+     'target = self._base_url\ntarget = redact_metatube_url(target)\n'
+     'logger.info("%s", target)'),
+    ('同名 key 先 redacted 後髒（震盪形狀的反序）',
+     'target = redact_metatube_url(url)\ntarget = self._base_url\n'
+     'logger.info("%s", target)'),
 ]
 
 _GREEN_SNIPPETS = [
@@ -310,6 +337,30 @@ def test_guard_does_not_overreach(label, src, tmp_path):
     f = tmp_path / "m.py"
     f.write_text(src, encoding="utf-8")
     assert _violations(f) == [], f"{label}：誤報"
+
+
+def test_alias_resolution_terminates_on_conflicting_assignments(tmp_path):
+    """同一個 key 同時被指派髒值與 redacted 值 → 必須**收斂**，且判 tainted。
+
+    這條鎖的是 Codex PR#128 round-2 P2：第一版的 lattice 允許 True↔False 雙向
+    轉移，這個形狀會讓 `while changed:` 永遠跑下去——**掛死整個 pytest run**。
+    掛死比答錯更難診斷（沒有 traceback、沒有失敗清單，只有一個不會結束的 job），
+    所以這裡驗的不只是「答案對不對」，而是「它會不會回來」。
+
+    `_resolve_aliases` 現在有 `len(assigns) + 1` 的上界，任何未來把單調性弄壞的
+    修改都會撞上 AssertionError 而不是靜靜地轉圈。
+    """
+    src = (
+        "target = self._base_url\n"
+        "target = redact_metatube_url(target)\n"
+        "logger.info('%s', target)\n"          # :3
+    )
+    f = tmp_path / "m.py"
+    f.write_text(src, encoding="utf-8")
+    # 若單調性被破壞，這一行不會回來（而不是斷言失敗）——這正是本測試的重點
+    assert _violations(f) == [(3, "logger")], (
+        "同名 key 兩種來源時必須 fail-closed 判髒：不去猜哪一次指派先發生"
+    )
 
 
 def test_alias_scope_does_not_leak_across_functions(tmp_path):

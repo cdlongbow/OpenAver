@@ -31,7 +31,11 @@ from core.video_extensions import ZERO_SIZE_EXTENSIONS, get_video_extensions
 logger = get_logger(__name__)
 
 from core.database import VideoRepository, get_db_path as get_db_path, init_db
-from core.image_host_policy import proxy_dynamic_hosts, proxy_rules
+from core.image_host_policy import (
+    nested_preview_target_allowed,
+    proxy_dynamic_hosts,
+    proxy_rules,
+)
 from core.maker_mapping import load_prefix_mapping
 from core.source_config import validate_source_id
 from core.source_settings import get_switchable_source_ids_ordered, is_uncensored_mode_effective
@@ -147,6 +151,15 @@ def _is_allowed_image_url(url: str) -> bool:
         ):
             logger.warning(
                 "proxy_image 拒絕: host=%s scheme=%s 原因=path 不在白名單",
+                host, parsed.scheme,
+            )
+            return False
+        # metatube 的 /v1/images/ 端點會**自己去抓** `?url=` 指的那個目標，
+        # 外層白名單看不到它（同 T2 修 redirect 的理由）。判準的所有權在
+        # registry，不在這裡（Codex PR#128 round-2 P3）。
+        if entry.path_prefix and not nested_preview_target_allowed(parsed.query):
+            logger.warning(
+                "proxy_image 拒絕: host=%s scheme=%s 原因=巢狀目標不在白名單",
                 host, parsed.scheme,
             )
             return False

@@ -8,10 +8,13 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
+import pytest
+
 from core.image_host_policy import (
     IMAGE_HOSTS,
     ImageHost,
     download_hosts_for,
+    nested_preview_target_allowed,
     proxy_dynamic_hosts,
     proxy_rules,
 )
@@ -319,3 +322,75 @@ def test_proxy_dynamic_hosts_malformed_port_in_base_url_yields_no_entry():
         with patch("core.metatube.state.metatube_state.connected_base_url",
                    return_value=bad):
             assert proxy_dynamic_hosts() == (), bad
+
+
+# ---------------------------------------------------------------------------
+# 巢狀抓取目標（Codex PR#128 round-2 P3）
+# ---------------------------------------------------------------------------
+# metatube 的 /v1/images/ 端點會**自己去抓** `?url=` 指的目標，外層白名單看不到
+# 那一層。這組鎖的是「哪些巢狀目標可以放行」——判準的單一所有者在 registry。
+
+_REAL_PREVIEW_QUERY = (
+    "url=https%3A%2F%2Fmy.cdn.tokyo-hot.com%2Fmedia%2Fn1749%2Fjacket%2Fn1749.jpg"
+    "&ratio=0&quality=100"
+)
+
+_NESTED_ALLOW = [
+    ("真實 preview URL 的 query（實跑 metatube 產出的那一份，不可誤殺）",
+     _REAL_PREVIEW_QUERY),
+    ("公開 http 圖床（並非只放行 https——provider 圖床不保證 https）",
+     "url=http%3A%2F%2Fcdn.example.com%2Fa.jpg&ratio=0&quality=100"),
+    ("key 順序不同", "quality=100&url=https%3A%2F%2Fcdn.example.com%2Fa.jpg&ratio=0"),
+    # 實測：metatube 不帶 `?url=` 時自己從 DB 查封面並回 200（878KB）。
+    # 這兩個形狀**沒有巢狀抓取**，本閘門無事可管——擋它們只會誤殺 T3a 的正向對照。
+    ("空 query（無巢狀目標）", ""),
+    ("只有 ratio/quality（無巢狀目標）", "ratio=0&quality=100"),
+]
+
+_NESTED_DENY = [
+    ("loopback", "url=http%3A%2F%2F127.0.0.1%3A6379%2F&ratio=0&quality=100"),
+    ("127.0.0.0/8 其餘位址", "url=http%3A%2F%2F127.5.5.5%2Fx.png&ratio=0&quality=100"),
+    ("私有網段", "url=http%3A%2F%2F192.168.1.1%2Fadmin.png&ratio=0&quality=100"),
+    ("私有網段 10/8", "url=http%3A%2F%2F10.0.0.5%3A8080%2Fx.png&ratio=0&quality=100"),
+    ("IPv6 loopback", "url=http%3A%2F%2F%5B%3A%3A1%5D%2Fx.png&ratio=0&quality=100"),
+    # `ipaddress.ip_address('::ffff:127.0.0.1').is_loopback` 是 False——不解回
+    # IPv4 就會漏掉（同 web/app.py:264 的教訓）
+    ("IPv4-mapped IPv6",
+     "url=http%3A%2F%2F%5B%3A%3Affff%3A127.0.0.1%5D%2Fx.png&ratio=0&quality=100"),
+    ("link-local（雲端 metadata 服務的經典目標）",
+     "url=http%3A%2F%2F169.254.169.254%2Flatest%2Fmeta-data&ratio=0&quality=100"),
+    ("裸內網主機名（公開 CDN 一定帶點）",
+     "url=http%3A%2F%2Fnas%2Fphoto.jpg&ratio=0&quality=100"),
+    ("localhost 字面", "url=http%3A%2F%2Flocalhost%3A8080%2Fx.png&ratio=0&quality=100"),
+    ("file scheme", "url=file%3A%2F%2F%2Fetc%2Fpasswd&ratio=0&quality=100"),
+    ("data scheme", "url=data%3Atext%2Fplain%2Chi&ratio=0&quality=100"),
+    # 只放行「我們自己會產生的形狀」比列舉危險 key 可證偽（同 T3a 正向字元集）
+    ("多餘的 key", _REAL_PREVIEW_QUERY + "&evil=1"),
+    ("兩個 url（第二個夾帶內網目標）",
+     _REAL_PREVIEW_QUERY + "&url=http%3A%2F%2F127.0.0.1%2F"),
+]
+
+
+@pytest.mark.parametrize("label,query", _NESTED_ALLOW, ids=[c[0] for c in _NESTED_ALLOW])
+def test_nested_preview_target_allowed_accepts_real_shapes(label, query):
+    """正向那半：誤殺會讓破圖修復本身失效，所以第一條餵的是實跑產出的真 query。"""
+    assert nested_preview_target_allowed(query) is True, label
+
+
+@pytest.mark.parametrize("label,query", _NESTED_DENY, ids=[c[0] for c in _NESTED_DENY])
+def test_nested_preview_target_rejects_non_public_targets(label, query):
+    """反向那半：擋的是「metatube 綁 loopback ＋ OpenAver 開區網」那條橋。"""
+    assert nested_preview_target_allowed(query) is False, label
+
+
+def test_nested_preview_target_residual_dns_name_resolving_private_is_not_covered():
+    """**明示殘留**：解析成私有位址的公開網域名擋不掉（這裡不做 DNS 解析）。
+
+    寫成一條會過的測試而不是留在註解裡，是為了讓這個缺口**被宣告**——
+    哪天有人補了 DNS 檢查（或改成簽章預覽 URL），這條會轉紅並指向該重寫的地方。
+    """
+    q = "url=https%3A%2F%2Finternal.example.com%2Fx.png&ratio=0&quality=100"
+    assert nested_preview_target_allowed(q) is True, (
+        "若這條轉紅，代表已經加了 DNS 解析或簽章——請更新本測試與 "
+        "nested_preview_target_allowed() 的殘留說明"
+    )
