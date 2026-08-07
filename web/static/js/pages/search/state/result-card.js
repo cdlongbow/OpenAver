@@ -64,8 +64,11 @@ export function searchStateResultCard() {
 
     coverUrl() {
         const c = this.current();
-        if (!c.cover) return '';
-        return `/api/proxy-image?url=${encodeURIComponent(c.cover)}`;
+        // TASK-113c-T3b: preview_cover_url 優先（破圖修復），FE-JS-01：|| 對空字串
+        // fallback 回 cover 是本任務要的行為（preview_cover_url 恆為字串，非 null/undefined）
+        const cover = c.preview_cover_url || c.cover;
+        if (!cover) return '';
+        return `/api/proxy-image?url=${encodeURIComponent(cover)}`;
     },
 
     canTranslate() {

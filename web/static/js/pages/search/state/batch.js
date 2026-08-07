@@ -38,9 +38,13 @@ async function translateBatchHelper(titles) {
 // T7: date 隨候選 raw 直通，不再正規化——picker 產生的已是合法 YYYY-MM-DD、scraper 契約
 // 亦 YYYY-MM-DD（models.py:20），且新設計中有日期走唯讀 raw span、無日期才出 picker，
 // 唯讀 span 顯示即整理送出值（顯示＝整理一致）。cand 為 undefined 時 `{...undefined}` → {} 安全。
+// TASK-113c-T3b: preview_cover_url 只對顯示有意義（會隨 metatube 連線狀態失效），
+// 不能落磁碟。剝除後才送 /api/scrape-single——不接受「反正後端只讀 cover」當理由，
+// 那是 fail-open by accident（card 明文）。
 export function buildOrganizeMetadata(file) {
     const cand = file.searchResults[file.selectedCandidateIndex ?? 0];
-    return { ...cand };
+    const { preview_cover_url, ...metadata } = { ...cand };
+    return metadata;
 }
 
 export function searchStateBatch() {
@@ -60,14 +64,18 @@ export function searchStateBatch() {
     _dbSyncCoverSrc(file, fromEl) {
         // 封面身份永遠綁被整理那片自己的 metadata（CD-92b-1）；
         // 只有該片缺 cover 時才 fallback 到起點元素 src / 目前顯示片封面。
-        const ownCover = file?.searchResults?.[0]?.cover;
+        // TASK-113c-T3b: preview_cover_url 恆為字串（Video 欄位預設 ""），空字串
+        // fallback 回 cover 正是要的行為（FE-JS-01，用 || 不用 ??）。
+        const own = file?.searchResults?.[0];
+        const ownCover = own?.preview_cover_url || own?.cover;
         if (ownCover) {
             return `/api/proxy-image?url=${encodeURIComponent(ownCover)}`;
         }
         if (fromEl && fromEl.tagName === 'IMG' && fromEl.src) {
             return fromEl.src;
         }
-        const cover = this.current()?.cover || '';
+        const c = this.current();
+        const cover = c?.preview_cover_url || c?.cover || '';
         return cover ? `/api/proxy-image?url=${encodeURIComponent(cover)}` : '';
     },
 

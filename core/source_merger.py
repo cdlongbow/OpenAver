@@ -62,6 +62,21 @@ def _first_non_empty(videos: list[Video], field: str, none_sentinel: bool):
     return None
 
 
+def _first_non_empty_video(videos: list[Video], field: str, none_sentinel: bool) -> Optional[Video]:
+    """從已排序的 videos 中取第一個該欄非空的 **Video 物件本身**；全空回 None。
+
+    CD-113c-12：preview_cover_url 必須跟著 cover_url 的勝出候選走，不能各自
+    `_first_non_empty` ——那會讓 cover 取候選 A、preview 取候選 B，畫面上顯示
+    別片的預覽圖卻看不出來。本函式回傳「決勝的那個候選物件」，caller 再從
+    同一個候選一次複製 cover_url 與 preview_cover_url 兩個欄位。
+    """
+    for video in videos:
+        value = getattr(video, field)
+        if not _is_empty(value, none_sentinel):
+            return video
+    return None
+
+
 def merge_results(
     candidates: dict[str, Video],
     user_order: list[str],
@@ -98,11 +113,25 @@ def merge_results(
             if fallback is not None:
                 updates[field] = fallback
 
-    # 封面欄位：依 user_order 找第一個該欄非空（各欄獨立解析，可來自不同來源）
+    # 封面欄位：cover_url 依 user_order 找第一個該欄非空的候選（=「勝出候選」）。
+    # preview_cover_url 必須從**同一個**勝出候選複製，不可各自 _first_non_empty
+    # （CD-113c-12，同源綁定；否則 cover 取候選 A、preview 取候選 B＝顯示別片預覽圖）。
+    # 勝出候選沒有 preview 時明確覆寫為空字串，不得沿用 text_source 或其他候選的值。
     cover_ordered = _ordered_candidates(candidates, user_order)
-    for field in ('cover_url', 'sample_images'):
-        value = _first_non_empty(cover_ordered, field, none_sentinel=False)
-        if value is not None:
-            updates[field] = value
+    cover_winner = _first_non_empty_video(cover_ordered, 'cover_url', none_sentinel=False)
+    if cover_winner is not None:
+        updates['cover_url'] = cover_winner.cover_url
+        updates['preview_cover_url'] = cover_winner.preview_cover_url
+    elif text_source.preview_cover_url:
+        # 沒有任何候選有 cover_url ⇒ 沒有封面可預覽。**明確清空**，不讓 preview
+        # 從 text_source 漏過來。今天漏不出來只因為 mapper 的
+        # `_build_preview_cover_url()` 在 cover 空時回 ''——但那是**別的模組**的
+        # 不變式，merger 不該隱性依賴它（那正是 CD-113c-12 要消滅的形狀）。
+        updates['preview_cover_url'] = ''
+
+    # sample_images 維持獨立 _first_non_empty（CD-113c-12 不適用於此欄，各自獨立解析）
+    sample_images_value = _first_non_empty(cover_ordered, 'sample_images', none_sentinel=False)
+    if sample_images_value is not None:
+        updates['sample_images'] = sample_images_value
 
     return text_source.model_copy(update=updates) if updates else text_source

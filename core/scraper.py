@@ -157,6 +157,9 @@ class _MetatubeShim:
     def __init__(self, provider: str, base_url: str, token: str) -> None:
         self.source = f'metatube:{provider}'
         self._provider = provider
+        # TASK-113c-T3b：把已經傳進來的 base_url 存起來，供 map_movie_info() 出生時
+        # 綁定 preview_cover_url 用（不新增 metatube_state 讀取點，值已在建構子參數裡）。
+        self._base_url = base_url
         self._client = MetatubeHttpClient(base_url, token)
 
     def search(self, number: str) -> 'Video | None':
@@ -168,7 +171,7 @@ class _MetatubeShim:
             info = self._client.get_info(self._provider, picked['id'])
             if not info:
                 return None
-            video = map_movie_info(info)
+            video = map_movie_info(info, base_url=self._base_url)
             # routing 期 success → mark available（lazy liveness）
             metatube_state.mark_available(self.source)
             return video

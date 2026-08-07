@@ -1,5 +1,6 @@
 """metatube → Video mapper（spec §5.2）"""
 import re
+from urllib.parse import quote, urlencode
 
 from core.logger import get_logger
 from core.scrapers.models import Actress, Video
@@ -15,10 +16,33 @@ _FC2_NOISE_RE = re.compile(
 )
 
 
-def map_movie_info(info: dict) -> Video:
+def _build_preview_cover_url(base_url: str, provider: str, number: str, cover_url: str) -> str:
+    """metatube 預覽端點 URL（CD-113c-4／12／13）。
+
+    base_url 或 cover_url 任一空 → ''（沒有可預覽的東西）。
+    provider／number 若含 `quote(safe="")` 需要轉義的字元（非 ASCII／保留字）
+    → ''，不組出一個上線會被 T3a `_SAFE_PATH_SEGMENT` 擋下的 URL——讓前端
+    `preview_cover_url || cover` 的 fallback 自然接手，而不是讓使用者看到
+    一張穩定 403 的圖。T3a 的允許字元集與 `quote()` 的預設 safe 集合定義
+    相同（RFC 3986 unreserved），故「轉義前後是否相等」是判斷「會不會被
+    T3a 擋下」的精確 predicate，不是近似值（Opus 審核裁決 4）。
+    """
+    if not base_url or not cover_url:
+        return ""
+    provider_enc = quote(provider, safe="")
+    number_enc = quote(number, safe="")
+    if provider_enc != provider or number_enc != number:
+        return ""
+    query = urlencode({"url": cover_url, "ratio": 0, "quality": 100})
+    return f"{base_url.rstrip('/')}/v1/images/primary/{provider_enc}/{number_enc}?{query}"
+
+
+def map_movie_info(info: dict, base_url: str = "") -> Video:
     """metatube MovieInfo dict → OpenAver Video（spec §5.2 完整映射）
 
     全程 info.get() 容缺：search 精簡結果欠缺欄位時不 raise。
+    base_url：這次呼叫實際打的 metatube 伺服器（見 core/scraper.py 的
+    _MetatubeShim），用來出生時就綁定 preview_cover_url（CD-113c-4／12／13）。
     """
     provider = info.get("provider", "")
     number = info.get("number", "")
@@ -42,6 +66,9 @@ def map_movie_info(info: dict) -> Video:
     # summary 清理
     summary = clean_metatube_summary(provider, info.get("summary") or "")
 
+    cover_url = info.get("cover_url", "")
+    preview_cover_url = _build_preview_cover_url(base_url, provider, number, cover_url)
+
     return Video(
         number=number,
         title=info.get("title", ""),
@@ -51,7 +78,8 @@ def map_movie_info(info: dict) -> Video:
         series=info.get("series", ""),
         actresses=actresses,
         date=date,
-        cover_url=info.get("cover_url", ""),
+        cover_url=cover_url,
+        preview_cover_url=preview_cover_url,
         tags=info.get("genres") or [],
         detail_url=info.get("homepage", ""),
         duration=runtime,

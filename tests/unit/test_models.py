@@ -174,11 +174,11 @@ def test_to_legacy_dict_excludes_summary():
 
 
 def test_to_legacy_dict_key_set_unchanged():
-    """14 鍵固定集合不因 summary 欄新增而改變"""
+    """15 鍵固定集合（TASK-113c-T3b 新增 preview_cover_url，授權來源 spec §5.4 v7-2）"""
     v = Video(number="TEST-001")
     expected_keys = {
         "number", "title", "actors", "date", "maker", "cover",
-        "tags", "source", "url", "director", "duration",
+        "preview_cover_url", "tags", "source", "url", "director", "duration",
         "label", "series", "sample_images",
     }
     assert set(v.to_legacy_dict().keys()) == expected_keys

@@ -216,6 +216,29 @@ class TestExplicitDispatch:
 
         assert result is None
 
+    def test_explicit_source_passthrough_preserves_preview_cover_url(self, monkeypatch):
+        """TASK-113c-T3b DoD-2③：source != 'auto' 單一來源直通不走 merge_results()，
+        preview_cover_url 與 cover_url 皆原封不動流到 to_legacy_dict()（不因繞過 merger
+        而被清空）"""
+        mock_state = _mock_state(avail_map={'metatube:FANZA': True})
+        monkeypatch.setattr("core.scraper.metatube_state", mock_state)
+
+        mt_video = Video(
+            number="ABF-001",
+            source="metatube:FANZA",
+            cover_url="https://img.fanza.com/cover.jpg",
+            preview_cover_url="http://mt:8080/v1/images/primary/FANZA/ABF-001?url=x&ratio=0&quality=100",
+        )
+
+        with patch("core.scraper._MetatubeShim.search", return_value=mt_video):
+            result = search_jav("ABF-001", source='metatube:FANZA')
+
+        assert result is not None
+        assert result['cover'] == "https://img.fanza.com/cover.jpg"
+        assert result['preview_cover_url'] == (
+            "http://mt:8080/v1/images/primary/FANZA/ABF-001?url=x&ratio=0&quality=100"
+        )
+
 
 # ===========================================================================
 # 4. _MetatubeShim error handling

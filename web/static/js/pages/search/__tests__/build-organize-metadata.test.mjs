@@ -69,6 +69,23 @@ test('buildOrganizeMetadata: date 缺席 → 無 date key（不再正規化為�
   assert.deepEqual(buildOrganizeMetadata(file), { number: 'ABC-001' });
 });
 
+// TASK-113c-T3b DoD-4：preview_cover_url 只對顯示有意義（會隨 metatube 連線狀態失效），
+// 不可被 buildOrganizeMetadata 送進 /api/scrape-single 落磁碟（不接受「反正後端只讀 cover」
+// 當理由——那是 fail-open by accident，card 明文）。
+test('buildOrganizeMetadata: 剝除 preview_cover_url，不送 /api/scrape-single', () => {
+  const file = {
+    searchResults: [{
+      number: 'ABC-001',
+      cover: 'http://example/cover.jpg',
+      preview_cover_url: 'http://mt:8080/v1/images/primary/FANZA/ABC-001?url=x',
+    }],
+  };
+
+  const result = buildOrganizeMetadata(file);
+  assert.deepEqual(result, { number: 'ABC-001', cover: 'http://example/cover.jpg' });
+  assert.ok(!('preview_cover_url' in result), 'preview_cover_url 不應出現在送出的 metadata');
+});
+
 test('loadMore: listMode="file" → 立即回傳 null、不呼叫 fetch（CD-106-5 P1-#2 順修 pre-existing bug）', async () => {
   let fetchCalls = 0;
   globalThis.fetch = async () => { fetchCalls++; return { ok: true, json: async () => ({}) }; };

@@ -2,6 +2,16 @@
  * SearchState - Search Flow Mixin
  * 包含：搜尋流程（doSearch, fallbackSearch, cancelSearch, handleSearchStatus）
  */
+
+// TASK-113c-T3b（本任務唯一決定「staging 卡片預覽能不能生效」的賦值運算式，見
+// TASK-113c-T3b.md 顯示點對帳表 #9）：preview_cover_url 優先，空字串 fallback
+// 回 cover（FE-JS-01：|| 對空字串 fallback 正是本任務要的行為，preview_cover_url
+// 恆為字串、非 null/undefined，用 ?? 反而會把空字串誤當「有效值」）。
+// 抽成 module-level 純函式（CD-106-8 先例），供 node:test 直接覆蓋，不需模擬 SSE。
+export function resolveStagingCoverUrl(item) {
+    return item?.preview_cover_url || item?.cover || '';
+}
+
 export function searchStateSearchFlow() {
     return {
     // ===== Methods =====
@@ -230,7 +240,7 @@ export function searchStateSearchFlow() {
                         this.streamBuffer.push({ slot, data: item });
 
                         // U3: 更新 staging display state（C16 裝飾性）
-                        this.stagingCover = item.cover || '';
+                        this.stagingCover = resolveStagingCoverUrl(item);
                         this.stagingNumber = item.number || '';
                         this.stagingReceivedCount++;
 
