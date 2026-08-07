@@ -2,11 +2,12 @@
 Unit tests for core/actress_photo.py
 Tests cover: download, rescrape, exception handling, HTTP errors, delete, special chars
 """
+import logging
 import os
 
 import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, ANY
 
 import core.actress_photo as actress_photo
 from core.actress_photo import (
@@ -401,6 +402,33 @@ def test_download_actress_photo_rejects_bad_scheme(gfriends_dir):
         result = download_actress_photo("テスト女優", "file:///etc/passwd", "graphis")
     assert result is False
     mock_get.assert_not_called()
+
+
+def test_download_actress_photo_redirect_not_followed(gfriends_dir, caplog):
+    """白名單內 host 回 302 指向內網 → return False，get 帶 allow_redirects=False"""
+    photo_url = "https://www.graphis.ne.jp/photo.jpg"
+    mock_resp = make_mock_response(status_code=302)
+    mock_resp.headers = {"Location": "http://127.0.0.1/evil", "Content-Type": "text/html"}
+
+    with caplog.at_level(logging.WARNING, logger="OpenAver.core.actress_photo"):
+        with patch(
+            "core.actress_photo.requests.get", return_value=mock_resp
+        ) as mock_get:
+            result = download_actress_photo("テスト女優", photo_url, "graphis")
+
+    assert result is False
+    mock_get.assert_called_once_with(
+        photo_url, headers=ANY, timeout=15, allow_redirects=False
+    )
+    assert any(
+        "www.graphis.ne.jp" in r.getMessage()
+        and "302" in r.getMessage()
+        and "127.0.0.1" in r.getMessage()
+        for r in caplog.records
+    ), f"expected 3xx warning with host/status/Location host, got: {caplog.text!r}"
+    # MUST NOT：完整 Location URL、也不走既有「下載失敗 HTTP」那條（含完整 photo_url）
+    assert "http://127.0.0.1/evil" not in caplog.text
+    assert "下載失敗，HTTP" not in caplog.text
 
 
 # ===================================================================

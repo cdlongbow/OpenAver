@@ -10,6 +10,11 @@ export function parseActorsInput(str) {
     return str.split(/[、，,]/).map(s => s.trim()).filter(Boolean);
 }
 
+// TASK-113c-T8：三顆純函式已搬至 shared/cover-fallback.js（單一所有者）。
+// 刻意**不 re-export**——re-export 等於留第二條取得同一個決策的路徑，
+// 與本 branch 的主張相反。各 consumer 一律直接 import 那個唯一所有者。
+import { resolveResultCoverUrl, shouldFallbackToCover } from '@/shared/cover-fallback.js';
+
 export function searchStateResultCard() {
     return {
     // ===== T1c: Result Card Computed =====
@@ -62,10 +67,20 @@ export function searchStateResultCard() {
         return c.translated_title || this.chineseTitle() || '-';
     },
 
+    // TASK-113c-T7：模板（hero lightbox / grid card）呼叫的 Alpine 方法包裝，
+    // 委派給純函式 resolveResultCoverUrl（module-level export，見上方）。
+    // 契約：回傳「原始圖片 URL」，proxy 包裹留在各呼叫點（裁決 2）。
+    resolveCoverUrl(result) {
+        return resolveResultCoverUrl(result);
+    },
+
     coverUrl() {
         const c = this.current();
-        if (!c.cover) return '';
-        return `/api/proxy-image?url=${encodeURIComponent(c.cover)}`;
+        // TASK-113c-T3b/T7: preview_cover_url 優先（破圖修復），_previewFailed 為 true
+        // 時改用 cover（見 resolveResultCoverUrl）。proxy 包裹仍在此呼叫點處理（裁決 2）。
+        const cover = this.resolveCoverUrl(c);
+        if (!cover) return '';
+        return `/api/proxy-image?url=${encodeURIComponent(cover)}`;
     },
 
     canTranslate() {
@@ -475,6 +490,16 @@ export function searchStateResultCard() {
 
     // ===== T1c: Cover Error =====
 
+    // TASK-113c-T7: preview 失敗且有 cover fallback 時（shouldFallbackToCover）跳過
+    // PHASE 1 的 cache-bust 重試、直接改試 cover——對「host 不在白名單→403」這個失敗
+    // 模式，cache-bust 本來就無效。
+    //
+    // **請求數不變式（實測值，非估算）**：fallback 只多送一個請求（preview 那一發），
+    // cover 這一棒保有它原本的預算。CDP 實測 2026-08-07：
+    //   cover 成功 → preview(403) + cover(200) = **2**
+    //   cover 也失敗 → preview(403) + cover(403) + cover&_t=(403) = **3**，然後 latch
+    // 三個都停在 PHASE 2 的 placeholder，沒有迴圈。卡片初版 DoD 寫「一律 ≤2」是錯的
+    // ——那個數字沒把 cover 自己既有的重試預算算進去。
     handleCoverError() {
         const img = this.$refs.coverImg;
         if (!img) return;
@@ -482,6 +507,25 @@ export function searchStateResultCard() {
         // No cover URL → stale @error from previous cover, ignore
         const expected = this.coverUrl();
         if (!expected) return;
+
+        // Preview 失敗、cover fallback 可用 → 改試 cover（見上方函式註解）
+        const c = this.current();
+        if (shouldFallbackToCover(c)) {
+            const attrSrc = img.getAttribute('src') || '';
+            if (attrSrc !== expected) {
+                return; // Stale @error from previous cover
+            }
+
+            // 只做「換一個 URL 重載」這一件事，**不**碰 _coverRetried、不另起計時器：
+            // cover 這一棒是第一次載入，理應保有它原本的重試預算（PHASE 1 的
+            // cache-bust + 5 秒計時），由既有機制接手就好。實測（CDP，2026-08-07）：
+            // 早期版本在這裡複製了一份 `_coverRetried = true` ＋ 5 秒計時器，結果
+            // ① 它沒有抑制到 PHASE 1（cover 失敗時 _coverRetried 實測仍是 false）
+            // ② 反而讓「cover 是大圖、載超過 5 秒」被提前宣告失敗。
+            c._previewFailed = true;
+            img.src = this.coverUrl();
+            return;
+        }
 
         // PHASE 1: First failure — getAttribute stale guard
         if (!this._coverRetried) {

@@ -387,3 +387,48 @@ def test_probe_all_single_provider_progress():
                   on_progress=lambda d, t: progress_calls.append((d, t)))
 
     assert progress_calls == [(1, 1)]
+
+
+# ============================================================
+# 憑證不得進 probe 的 log（Codex PR review 三審 P1）
+# ============================================================
+
+def test_probe_all_log_does_not_leak_userinfo(caplog):
+    """`probe_all()` 的 info log 記的是 redacted target，不是原始 base_url。"""
+    import logging
+
+    from core.metatube.probe import probe_all
+
+    secret_url = 'http://admin:S3cr3tPass@10.0.0.5:8900'
+    with caplog.at_level(logging.INFO, logger='OpenAver.core.metatube.probe'):
+        with patch('core.metatube.probe.MetatubeHttpClient') as mock_cls:
+            mock_cls.return_value.get_info.return_value = {'number': 'X'}
+            probe_all(secret_url, '', MetatubeConnectionState(), ['FANZA'])
+
+    assert 'probe_all: probing' in caplog.text   # 正向：這條 log 真的跑到了
+    assert '10.0.0.5:8900' in caplog.text
+    for secret in ('S3cr3tPass', 'admin@'):
+        assert secret not in caplog.text, f"probe_all log 洩漏 {secret!r}"
+
+
+def test_probe_provider_exception_log_does_not_leak_userinfo(caplog):
+    """`probe_provider()` 把 `exc` 直接 `%s` 進 log——它的乾淨度**取決於例外訊息本身**。
+
+    這支刻意**獨立於** client 層的鎖：即使有人日後在別處重新用完整 URL 組
+    `MetatubeError` 的訊息，這一層仍會紅。不靠「上游修好了就會傳播下來」。
+    """
+    import logging
+
+    from core.metatube.errors import MetatubeAuthError
+    from core.metatube.probe import probe_provider
+
+    client = MagicMock()
+    client.get_info.side_effect = MetatubeAuthError(
+        'Authentication failed for 10.0.0.5:8900/v1/movies/FANZA/X (HTTP 401)'
+    )
+    with caplog.at_level(logging.DEBUG, logger='OpenAver.core.metatube.probe'):
+        probe_provider(client, 'FANZA')
+
+    assert '10.0.0.5:8900' in caplog.text
+    for secret in ('S3cr3tPass', 'admin@'):
+        assert secret not in caplog.text

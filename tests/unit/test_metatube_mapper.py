@@ -1,4 +1,6 @@
 """test_metatube_mapper.py - metatube mapper + clean_metatube_summary 邊界測試"""
+import json
+
 import pytest
 from core.scrapers.models import Actress
 
@@ -200,6 +202,130 @@ def test_map_actors_none():
     assert video.actresses == []
 
 
+# ============ TASK-113c-T3b: preview_cover_url（CD-113c-4／12／13） ============
+
+def test_map_movie_info_binds_preview_cover_url_from_base_url():
+    """base_url 顯式傳入 → preview_cover_url 出生時就綁定（DoD-1）"""
+    from core.metatube.mapper import map_movie_info
+    info = _full_info()
+    video = map_movie_info(info, base_url="http://192.168.1.100:8080")
+    assert video.preview_cover_url != ""
+    assert video.preview_cover_url.startswith("http://192.168.1.100:8080/v1/images/primary/FANZA/SONE-205?")
+    assert video.cover_url == "https://img.fanza.com/cover.jpg"
+
+
+def test_map_movie_info_no_base_url_yields_empty_preview():
+    """未傳 base_url（預設 ""）→ preview_cover_url 空字串，cover_url 不受影響（DoD-1）"""
+    from core.metatube.mapper import map_movie_info
+    info = _full_info()
+    video = map_movie_info(info)
+    assert video.preview_cover_url == ""
+    assert video.cover_url == "https://img.fanza.com/cover.jpg"
+
+
+def test_preview_cover_url_empty_when_cover_url_missing():
+    """cover_url 本身空 → 即使有 base_url，preview_cover_url 仍為空（沒有可預覽的東西）"""
+    from core.metatube.mapper import map_movie_info
+    info = _full_info()
+    info["cover_url"] = ""
+    video = map_movie_info(info, base_url="http://192.168.1.100:8080")
+    assert video.preview_cover_url == ""
+
+
+def test_preview_cover_url_ratio_zero_quality_100():
+    """組出的 URL 帶 ratio=0 與 quality=100（DoD-7）"""
+    from urllib.parse import urlparse, parse_qs
+    from core.metatube.mapper import map_movie_info
+    info = _full_info()
+    video = map_movie_info(info, base_url="http://192.168.1.100:8080")
+    parsed = urlparse(video.preview_cover_url)
+    qs = parse_qs(parsed.query)
+    assert qs["ratio"] == ["0"]
+    assert qs["quality"] == ["100"]
+
+
+def test_preview_cover_url_query_encoding_no_ampersand_pollution():
+    """cover_url 帶 ?token=...&expires=... → 組出的 URL 解析後 url 參數逐字元等於原始
+    cover_url，且 ratio／quality 各恰好出現一次（CD-113c-13，DoD-8①）"""
+    from urllib.parse import urlparse, parse_qs
+    from core.metatube.mapper import map_movie_info
+    info = _full_info()
+    original_cover_url = "https://img.fanza.com/cover.jpg?token=abc&expires=123"
+    info["cover_url"] = original_cover_url
+    video = map_movie_info(info, base_url="http://192.168.1.100:8080")
+    parsed = urlparse(video.preview_cover_url)
+    qs = parse_qs(parsed.query)
+    assert qs["url"] == [original_cover_url]
+    assert len(qs["ratio"]) == 1
+    assert len(qs["quality"]) == 1
+
+
+def test_preview_cover_url_allows_safe_hyphenated_provider():
+    """provider/number 含連字號（如 tokyo-hot）等安全字元 → 不轉義、直通（DoD-8②）"""
+    from core.metatube.mapper import map_movie_info
+    info = _full_info()
+    info["provider"] = "tokyo-hot"
+    info["number"] = "n1234"
+    video = map_movie_info(info, base_url="http://192.168.1.100:8080")
+    assert "/v1/images/primary/tokyo-hot/n1234?" in video.preview_cover_url
+
+
+def test_preview_cover_url_empty_when_provider_needs_escaping():
+    """provider 含 quote(safe="") 需要轉義的字元（此處用空白）→ 回空字串，
+    不產生一個上線會被 T3a `_SAFE_PATH_SEGMENT` 擋下的 URL（設計問題 3／DoD-8③）"""
+    from core.metatube.mapper import map_movie_info
+    info = _full_info()
+    info["provider"] = "FAN ZA"
+    video = map_movie_info(info, base_url="http://192.168.1.100:8080")
+    assert video.preview_cover_url == ""
+
+
+def test_preview_cover_url_empty_when_number_needs_escaping():
+    """number 含需要轉義的字元（斜線）→ 回空字串（設計問題 3／DoD-8③）"""
+    from core.metatube.mapper import map_movie_info
+    info = _full_info()
+    info["number"] = "SONE/205"
+    video = map_movie_info(info, base_url="http://192.168.1.100:8080")
+    assert video.preview_cover_url == ""
+
+
+def test_preview_cover_url_implies_cover_url_nonempty():
+    """不變式：preview_cover_url 非空 ⟹ cover_url 非空。
+
+    這條不變式是 web/templates/search.html detail 面板三個 x-show 閘門仍能用
+    `current().cover` 判斷「有沒有東西可顯示」的唯一理由——這三個閘門 T3b
+    刻意不改（TASK-113c-T3b.md DoD-5：detail 面板模板本身不需改，:src 已改用
+    coverUrl() 優先 preview_cover_url）：
+      - :412 `x-show="!coverError && current().cover"`（img 本身是否顯示）
+      - :418 `x-show="!coverError && current().cover && !_coverLoaded"`（loading shimmer）
+      - :429 `x-show="!coverError && !current().cover"`（「無封面」placeholder，反向）
+
+    若這條不變式被打破（例如未來讓 preview_cover_url 可以在 cover_url 空時仍
+    產生值），這三個閘門會用「沒有 cover」的判斷去藏一張其實存在的 preview
+    圖——detail 面板封面會靜默消失，而 `:src="coverUrl()"` 端完全沒有錯誤可看
+    （coverUrl() 本身不會拋例外，只是永遠不會被渲染出來）。
+
+    本測試窮舉：一般案例／cover_url 本身空／T3a 接縫降級（provider、number 各自
+    需要轉義）／有無 base_url，逐一驗證 implication，不是單一案例的巧合。
+    """
+    from core.metatube.mapper import map_movie_info
+
+    scenarios = [
+        dict(_full_info()),
+        {**_full_info(), "cover_url": ""},
+        {**_full_info(), "provider": "FAN ZA"},   # T3a 接縫降級（設計問題 3）
+        {**_full_info(), "number": "SONE/205"},   # T3a 接縫降級（設計問題 3）
+    ]
+    for info in scenarios:
+        for base_url in ("", "http://192.168.1.100:8080"):
+            video = map_movie_info(info, base_url=base_url)
+            if video.preview_cover_url:
+                assert video.cover_url, (
+                    f"preview_cover_url 非空但 cover_url 為空（違反不變式）："
+                    f"info={info!r} base_url={base_url!r}"
+                )
+
+
 # ============ clean_metatube_summary 邊界測試 ============
 
 def test_clean_fc2_base64_truncated():
@@ -306,3 +432,72 @@ def test_clean_fc2ppvdb_is_fc2_family():
     result = clean_metatube_summary("FC2PPVDB", raw)
     assert "B" * 50 not in result
     assert "FC2PPVDB簡介" in result
+
+
+# ============================================================
+# Codex PR review P1（2026-08-07）：base_url 的機密不得進 preview URL
+# ============================================================
+
+# ⚠️ 參數名不可叫 `base_url`——`pytest-base-url`（pytest-playwright 的依賴）註冊了
+# 一個同名的 session-scoped fixture，parametrize 撞名會 ScopeMismatch 整組 ERROR。
+@pytest.mark.parametrize("unsafe_base_url,why", [
+    ("http://user:password@127.0.0.1:8900", "userinfo（帳號+密碼）"),
+    ("https://user:password@example.com", "userinfo，公網 host"),
+    ("http://user@127.0.0.1:8900", "只有 username"),
+    ("http://127.0.0.1:8900?x=1", "base_url 帶 query"),
+    ("http://127.0.0.1:8900#frag", "base_url 帶 fragment"),
+])
+def test_preview_cover_url_empty_for_unsafe_base_url(unsafe_base_url, why):
+    """`validate_metatube_url()` **從不檢查 userinfo**（只看 scheme/hostname/port），
+    所以 `https://user:pass@host` 通得過設定。而 preview 欄位會進 `/api/search`
+    的 JSON 回應、再被前端當成 `/api/proxy-image?url=...` 真的送出去——帳密會
+    落在瀏覽器網址列、devtools 與瀏覽紀錄。
+
+    處置是**回空字串**而不是靜默剝掉帳密：剝掉會讓「預覽打不通」變成難以診斷
+    的失敗，而回空字串會讓既有的 `preview_cover_url || cover` fallback 接手。
+    真正的連線路徑（`MetatubeHttpClient`）拿到的仍是完整 base_url，反向代理的
+    Basic Auth 不受影響（metatube 自己只認 Bearer）。
+
+    query/fragment 一起擋是同一個 guard 順手修掉的功能 bug——字串內插會把路徑
+    塞進原本的 query 裡（`http://h:9/?x=1/v1/images/...`），URL 從頭就是壞的。
+    """
+    from core.metatube.mapper import _build_preview_cover_url
+
+    out = _build_preview_cover_url(unsafe_base_url, "FANZA", "ssis-001", "https://cdn.example/c.jpg")
+    assert out == "", f"{why} 的 base_url 必須不產 preview URL，實得：{out!r}"
+
+
+def test_preview_cover_url_still_built_for_base_url_with_path():
+    """不得矯枉過正：反向代理下的 `http://host:9/sub/path` 是**合法**設定，
+    必須照常組出 preview URL（裁決 3 的 path 前綴接續行為）。
+
+    沒有這一格，上面那組「全部回空」用 `return ""` 就能造假。
+    """
+    from core.metatube.mapper import _build_preview_cover_url
+
+    out = _build_preview_cover_url(
+        "http://127.0.0.1:8900/metatube", "FANZA", "ssis-001", "https://cdn.example/c.jpg"
+    )
+    assert out.startswith("http://127.0.0.1:8900/metatube/v1/images/primary/FANZA/ssis-001?")
+
+
+def test_to_legacy_dict_preview_never_carries_userinfo():
+    """回歸鎖：走完整 `map_movie_info()` → `to_legacy_dict()` 序列化鏈，
+    確認送給瀏覽器的那個 dict 裡不可能出現帳密。
+
+    鎖在序列化端而不只是 builder 端，因為 P1 的實際傷害發生在「這個 dict 被
+    json 出去」那一刻——builder 之後若有人再加一層推導，這支仍然守得住。
+    """
+    from core.metatube.mapper import map_movie_info
+
+    info = {
+        "provider": "FANZA",
+        "number": "ssis-001",
+        "cover_url": "https://cdn.example/c.jpg",
+    }
+    video = map_movie_info(info, base_url="http://leakuser:leakpass@127.0.0.1:8900")
+    legacy = video.to_legacy_dict()
+    assert legacy["preview_cover_url"] == ""
+    blob = json.dumps(legacy, ensure_ascii=False)
+    for secret in ("leakuser", "leakpass", "@127.0.0.1"):
+        assert secret not in blob, f"序列化輸出洩漏 {secret!r}"

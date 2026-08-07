@@ -9,7 +9,7 @@ House style: unittest.mock (MagicMock), plain assert, pytest fixtures.
 import json
 import pytest
 import requests
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from core.metatube.errors import (
     MetatubeUnavailable,
@@ -503,3 +503,81 @@ class TestRedirectBlocking:
         client._session.get = MagicMock(return_value=resp)
         with pytest.raises(MetatubeProtocolError):
             client.get_info("FANZA", "1stars00141")
+
+
+# ============================================================
+# 憑證不得進 log／例外訊息（Codex PR review 三審 P1 的**根因**層）
+# ============================================================
+
+_SECRET_URL = "http://admin:S3cr3tPass@10.0.0.5:8900"
+_SECRETS = ("S3cr3tPass", "admin@", "tok_ABC123")
+
+
+def _client_with_secret_url():
+    from core.metatube.client import MetatubeHttpClient
+    return MetatubeHttpClient(_SECRET_URL, "tok_ABC123")
+
+
+@pytest.mark.parametrize("status,exc_type", [
+    (401, MetatubeAuthError),
+    (404, MetatubeNotFound),
+    (418, MetatubeClientError),
+    (302, MetatubeProtocolError),
+    (500, MetatubeUnavailable),
+])
+def test_error_messages_never_embed_credentials(status, exc_type):
+    """**這支是整組修正的核心鎖。**
+
+    修正前 `_get_data()` 用 `f"{self._base_url}{path}"` 組**每一個** `MetatubeError`
+    的訊息，於是任何下游 `logger.exception(...)` / `logger.X("%s", exc)` 都會洩漏
+    userinfo——`probe.py`、`core/scraper.py::_MetatubeShim`、`settings_metatube.py`
+    全是這種形狀。逐個 log 點修永遠修不完，所以鎖在訊息**生成**的源頭。
+
+    正向＋負向配對：同時斷言 host 有出現（證明訊息確實帶了可診斷的位置資訊，
+    而不是被整段抽空造成的假綠）。
+    """
+    c = _client_with_secret_url()
+    resp = MagicMock()
+    resp.status_code = status
+    with patch.object(c._session, "get", return_value=resp):
+        with pytest.raises(exc_type) as ei:
+            c._get_data("/v1/movies/FANZA/SSIS-001", None)
+    msg = str(ei.value)
+    assert "10.0.0.5:8900" in msg
+    for secret in _SECRETS:
+        assert secret not in msg, f"HTTP {status} 的例外訊息洩漏 {secret!r}：{msg}"
+
+
+def test_invalid_json_error_message_never_embeds_credentials():
+    c = _client_with_secret_url()
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.side_effect = ValueError("bad json")
+    with patch.object(c._session, "get", return_value=resp):
+        with pytest.raises(MetatubeProtocolError) as ei:
+            c._get_data("/v1/providers", None)
+    msg = str(ei.value)
+    assert "10.0.0.5:8900" in msg
+    for secret in _SECRETS:
+        assert secret not in msg
+
+
+def test_request_logs_never_leak_credentials(caplog):
+    """`_get_data()` 的 GET debug log 與 unavailable warning 兩條都要乾淨。
+
+    前者**每一次請求**都會記，後者在伺服器連不上時記——都是高頻路徑。
+    """
+    import logging
+
+    c = _client_with_secret_url()
+    with caplog.at_level(logging.DEBUG, logger="OpenAver.core.metatube.client"):
+        with patch.object(c._session, "get",
+                          side_effect=requests.ConnectionError("boom")):
+            with pytest.raises(MetatubeUnavailable):
+                c._get_data("/v1/providers", None)
+
+    assert "metatube GET" in caplog.text          # 正向：debug 這條真的跑到了
+    assert "metatube unavailable" in caplog.text  # 正向：warning 這條也是
+    assert "10.0.0.5:8900" in caplog.text
+    for secret in _SECRETS:
+        assert secret not in caplog.text, f"client log 洩漏 {secret!r}"

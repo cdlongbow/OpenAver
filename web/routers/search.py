@@ -31,6 +31,11 @@ from core.video_extensions import ZERO_SIZE_EXTENSIONS, get_video_extensions
 logger = get_logger(__name__)
 
 from core.database import VideoRepository, get_db_path as get_db_path, init_db
+from core.image_host_policy import (
+    nested_preview_target_allowed,
+    proxy_dynamic_hosts,
+    proxy_rules,
+)
 from core.maker_mapping import load_prefix_mapping
 from core.source_config import validate_source_id
 from core.source_settings import get_switchable_source_ids_ordered, is_uncensored_mode_effective
@@ -45,54 +50,125 @@ router = APIRouter(prefix="/api", tags=["search"])
 # 載入片商前綴對照表（啟動時一次性載入）
 _MAKER_MAPPING = load_prefix_mapping()
 
-# SSRF allowlist — 含子域 endswith 比對（host == root or host.endswith("." + root)）
-_ALLOWED_IMAGE_ROOT_DOMAINS = {
-    "javbus.com",
-    "jav321.com",
-    "heyzo.com",
-    "caribbeancom.com",
-    "1pondo.tv",
-    "10musume.com",
-    "avsox.click",
-    "avsox.monster",
-    "avsox.website",
-    "javten.com",
-    "fc2.com",  # FC2 圖床（contents-thumbnail2 / live-storage / storage<NNN>.contents 數字子域）
-    "jdbstatic.com",  # JavDB CDN root (c0/c1/c2 numbered subdomains)
-}
-# SSRF allowlist — exact match，不允子域（CD-60-1：CDN / 女優照片固定 host 嚴格匹配）
-_ALLOWED_IMAGE_EXACT_HOSTS = {
-    "pics.dmm.co.jp",
-    "awsimgsrc.dmm.co.jp",
-    "www.dmm.co.jp",
-    "javdb.com",
-    "cdn.jsdelivr.net",
-    "upload.wikimedia.org",
-    # Graphis / Minnano 完整變體（對齊 core/actress_photo.py PHOTO_HOST_WHITELIST）
-    "data.graphis.ne.jp",
-    "www.graphis.ne.jp",
-    "graphis.ne.jp",
-    "www.minnano-av.com",
-    "minnano-av.com",
-    "file.netcdn.space",  # AVSOX 圖床（caribbean / 1pondo / heyzo 封面 CDN）
-}
+
+# 動態條目（metatube 圖片端點）path 的合法字元集。刻意**不含 `%`**——理由見
+# `_path_prefix_allowed()` docstring。
+_SAFE_PATH_SEGMENT = re.compile(r"^[A-Za-z0-9._~-]+$")
+
+
+def _path_prefix_allowed(path: str, prefix: str) -> bool:
+    """動態條目的 path 閘門：前綴相符 ＋ 其後每一段都在**正向允許清單**內。
+
+    CD-113c-11 要的是「無法判定的形狀一律 fail-closed」。本函式的前一版是
+    **列舉違規編碼**（`%2e`/`%2f` 解碼後比對 `.`／`..`），review 實測打穿五種：
+    `%252e%252e`（雙重編碼）、`%c0%ae`／`..%c0%af`（overlong UTF-8）、`..;`
+    （matrix parameter）、`%00`。每補一種就多一條規則，而下一種永遠在清單外——
+    這是列舉黑名單的結構性失敗，不是漏想幾個。
+
+    改成**列舉合法形狀**：前綴之後的每一段必須是 `[A-Za-z0-9._~-]+`，且不得是
+    `.`／`..`。`%` 完全不在字元集裡，所以**所有**百分比編碼把戲（不論幾層、
+    什麼編碼）在解碼之前就出局，不需要我們去猜對面伺服器怎麼正規化。
+
+    代價（已知 residual）：provider／番號若真的需要百分比編碼（非 ASCII），
+    那一片的**預覽**會 403 破圖。這是刻意接受的降級——它不是安全洞，而且 T2
+    的 403 log 會指名 `原因=path 不在白名單`，真的發生時查得到。
+    """
+    if not path.startswith(prefix):
+        return False
+    rest = path[len(prefix):]
+    for segment in rest.split("/"):
+        if segment in ("", ".", ".."):
+            return False
+        if not _SAFE_PATH_SEGMENT.match(segment):
+            return False
+    return True
+
+
+def _effective_port(parsed) -> int | None:
+    """Default-port normalisation: missing port → 443 (https) / 80 (else).
+
+    BE-SEC-01 family: `parsed.port` RAISES ValueError for a malformed port
+    (out of 0-65535, or non-numeric — `urlparse()` itself accepts those and
+    only `.port` blows up). Returning None instead of propagating keeps this
+    a fail-closed 403 rather than an unhandled 500.
+    """
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    return port or (443 if parsed.scheme == "https" else 80)
 
 
 def _is_allowed_image_url(url: str) -> bool:
+    # BE-SEC-01: single try/except-wrapped urlparse; reuse `parsed` everywhere
+    # below (including path / port checks). Never re-parse without try/except.
     try:
         parsed = urlparse(url)
     except Exception:
         return False
-    if parsed.scheme != "https":
-        return False
     host = (parsed.hostname or "").lower()
     if not host:
+        logger.warning(
+            "proxy_image 拒絕: host=%s scheme=%s 原因=host 不在名單",
+            host, parsed.scheme,
+        )
         return False
-    if host in _ALLOWED_IMAGE_EXACT_HOSTS:
+
+    # Branch 1: static registry (proxy_rules) — still forces https.
+    # Host match first, then this branch's own scheme rule (設計問題 4).
+    exact_hosts, root_domains = proxy_rules()
+    if host in exact_hosts or any(
+        host == root or host.endswith("." + root) for root in root_domains
+    ):
+        if parsed.scheme != "https":
+            logger.warning(
+                "proxy_image 拒絕: host=%s scheme=%s 原因=scheme 不符",
+                host, parsed.scheme,
+            )
+            return False
         return True
-    for root in _ALLOWED_IMAGE_ROOT_DOMAINS:
-        if host == root or host.endswith("." + root):
-            return True
+
+    # Branch 2: dynamic entries (currently: connected metatube only).
+    # Scheme / port / path_prefix come from the entry itself (裁決 1 / 3).
+    for entry in proxy_dynamic_hosts():
+        if host != entry.host:
+            continue
+        if parsed.scheme not in entry.schemes:
+            logger.warning(
+                "proxy_image 拒絕: host=%s scheme=%s 原因=scheme 不符",
+                host, parsed.scheme,
+            )
+            return False
+        if entry.port is not None and _effective_port(parsed) != entry.port:
+            # _effective_port() 回 None（畸形 port）也落在這裡＝fail-closed
+            logger.warning(
+                "proxy_image 拒絕: host=%s scheme=%s 原因=port 不符",
+                host, parsed.scheme,
+            )
+            return False
+        if entry.path_prefix and not _path_prefix_allowed(
+            parsed.path, entry.path_prefix
+        ):
+            logger.warning(
+                "proxy_image 拒絕: host=%s scheme=%s 原因=path 不在白名單",
+                host, parsed.scheme,
+            )
+            return False
+        # metatube 的 /v1/images/ 端點會**自己去抓** `?url=` 指的那個目標，
+        # 外層白名單看不到它（同 T2 修 redirect 的理由）。判準的所有權在
+        # registry，不在這裡（Codex PR#128 round-2 P3）。
+        if entry.path_prefix and not nested_preview_target_allowed(parsed.query):
+            logger.warning(
+                "proxy_image 拒絕: host=%s scheme=%s 原因=巢狀目標不在白名單",
+                host, parsed.scheme,
+            )
+            return False
+        return True
+
+    logger.warning(
+        "proxy_image 拒絕: host=%s scheme=%s 原因=host 不在名單",
+        host, parsed.scheme,
+    )
     return False
 
 
@@ -118,8 +194,21 @@ def proxy_image(url: str = Query(..., description="圖片 URL")):
             'Referer': referer,
         }
 
-        resp = requests.get(url, headers=headers, timeout=10)
-        if resp.status_code == 200:
+        # SSRF guard: 不跟隨 redirect（CD-113c-7）。白名單只驗原始 URL，
+        # 若對方 30x 到內網，跟隨會繞過驗證。照抄 core/metatube/client.py。
+        resp = requests.get(url, headers=headers, timeout=10, allow_redirects=False)
+        if 300 <= resp.status_code < 400:
+            location = resp.headers.get("Location", "")
+            try:
+                loc_host = urlparse(location).hostname or "<unparseable>"
+            except Exception:
+                loc_host = "<unparseable>"
+            req_host = urlparse(url).hostname or ""
+            logger.warning(
+                "proxy_image 拒絕 3xx: host=%s status=%s location_host=%s",
+                req_host, resp.status_code, loc_host,
+            )
+        elif resp.status_code == 200:
             content_type = resp.headers.get('Content-Type', 'image/jpeg')
             return Response(
                 content=resp.content,
@@ -127,7 +216,14 @@ def proxy_image(url: str = Query(..., description="圖片 URL")):
                 headers={"Cache-Control": "public, max-age=86400"},
             )
     except Exception:
-        logger.exception("proxy_image failed: %s", url)
+        # CD-113c-8 的同一條原則（圖片 URL 常帶簽名／token，不記完整 URL）套用到
+        # 例外路徑：原本這行記的是**完整 url**——含 query 的 token，以及 T3b 之後
+        # 可能出現的 metatube base_url userinfo（Codex PR review P1 的相鄰洩漏點，
+        # 由 review subagent 實測指出）。改記 host + path，保留診斷價值、去掉機密。
+        _p = urlparse(url)
+        logger.exception(
+            "proxy_image failed: host=%s path=%s", _p.hostname, _p.path
+        )
 
     # 返回空圖片
     return Response(content=b'', media_type='image/jpeg', status_code=404)

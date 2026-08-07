@@ -31,6 +31,7 @@ from typing import Callable
 from core.logger import get_logger
 from core.metatube.client import MetatubeHttpClient  # patch target: core.metatube.probe.MetatubeHttpClient
 from core.metatube.errors import MetatubeError
+from core.metatube.validation import redact_metatube_url
 from core.metatube.state import MetatubeConnectionState
 
 logger = get_logger(__name__)
@@ -158,7 +159,7 @@ def probe_all(
     if total == 0:
         return results
 
-    logger.info('probe_all: probing %d providers via %s', total, base_url)
+    logger.info('probe_all: probing %d providers via %s', total, redact_metatube_url(base_url))
 
     def _worker(name: str) -> tuple[str, bool]:
         """Worker: create own client, run probe_provider, return (name, result)."""

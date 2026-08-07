@@ -216,6 +216,29 @@ class TestExplicitDispatch:
 
         assert result is None
 
+    def test_explicit_source_passthrough_preserves_preview_cover_url(self, monkeypatch):
+        """TASK-113c-T3b DoD-2③：source != 'auto' 單一來源直通不走 merge_results()，
+        preview_cover_url 與 cover_url 皆原封不動流到 to_legacy_dict()（不因繞過 merger
+        而被清空）"""
+        mock_state = _mock_state(avail_map={'metatube:FANZA': True})
+        monkeypatch.setattr("core.scraper.metatube_state", mock_state)
+
+        mt_video = Video(
+            number="ABF-001",
+            source="metatube:FANZA",
+            cover_url="https://img.fanza.com/cover.jpg",
+            preview_cover_url="http://mt:8080/v1/images/primary/FANZA/ABF-001?url=x&ratio=0&quality=100",
+        )
+
+        with patch("core.scraper._MetatubeShim.search", return_value=mt_video):
+            result = search_jav("ABF-001", source='metatube:FANZA')
+
+        assert result is not None
+        assert result['cover'] == "https://img.fanza.com/cover.jpg"
+        assert result['preview_cover_url'] == (
+            "http://mt:8080/v1/images/primary/FANZA/ABF-001?url=x&ratio=0&quality=100"
+        )
+
 
 # ===========================================================================
 # 4. _MetatubeShim error handling
@@ -509,3 +532,31 @@ class TestScannerAutoConverage:
 
         mock_ss.assert_called()
         assert any(r.get('_source') == 'metatube:FANZA' for r in results)
+
+
+def test_metatube_shim_exception_log_does_not_leak_credentials(caplog):
+    """`_MetatubeShim.search()` 的 `logger.exception` 會把整個 traceback（含例外訊息）
+    寫進 log——而這條路徑跑在**一般搜尋**上，不是只有管理員操作的 connect/probe。
+
+    它的乾淨度來自 client 層例外訊息已 redacted（Codex 三審 P1 的根因修正）。
+    這支獨立鎖在**這一層**：不靠「上游修好了就會傳播下來」，任何人日後在別處
+    重新用完整 URL 組訊息，這裡就會紅。
+    """
+    import logging
+
+    from core.metatube.errors import MetatubeProtocolError
+    from core.scraper import _MetatubeShim
+
+    shim = _MetatubeShim('FANZA', 'http://admin:S3cr3tPass@10.0.0.5:8900', 'tok_ABC123')
+    with caplog.at_level(logging.ERROR, logger='OpenAver.core.scraper'):
+        with patch.object(
+            shim._client, 'search',
+            side_effect=MetatubeProtocolError(
+                'Response from 10.0.0.5:8900/v1/movies/FANZA/X is not a JSON object'
+            ),
+        ):
+            shim.search('SSIS-001')
+
+    assert 'metatube shim' in caplog.text  # 正向：這條 log 真的跑到了
+    for secret in ('S3cr3tPass', 'admin@', 'tok_ABC123'):
+        assert secret not in caplog.text, f"shim exception log 洩漏 {secret!r}"

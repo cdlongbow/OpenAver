@@ -198,6 +198,60 @@ def test_cover_skips_empty_source_in_user_order():
     assert merged.cover_url == "http://jav321/cover.jpg"
 
 
+# ---------------------------------------------------------------------------
+# preview_cover_url 同源綁定（TASK-113c-T3b, CD-113c-12）
+# ---------------------------------------------------------------------------
+
+def test_preview_cover_url_follows_cover_winner_when_metatube():
+    """①文字勝者非 metatube、封面勝者是 metatube → preview 有值且對得上封面勝者。
+
+    user_order=['metatube:FANZA', 'javbus']；metatube:FANZA 兩者皆有 →
+    cover_url 與 preview_cover_url 都必須來自 metatube:FANZA（同一候選）。
+    """
+    javbus = _v("javbus", title="JB Title", cover_url="http://javbus/cover.jpg",
+                preview_cover_url="")
+    metatube = _v("metatube:FANZA", title="", cover_url="http://mt/cover.jpg",
+                   preview_cover_url="http://mt:8080/v1/images/primary/FANZA/X?url=y")
+    merged = merge_results({"javbus": javbus, "metatube:FANZA": metatube},
+                           user_order=["metatube:FANZA", "javbus"])
+    assert merged.cover_url == "http://mt/cover.jpg"
+    assert merged.preview_cover_url == "http://mt:8080/v1/images/primary/FANZA/X?url=y"
+
+
+def test_preview_cover_url_empty_when_cover_winner_not_metatube():
+    """②封面勝者不是 metatube，即使**其他**候選有 preview → preview 仍必須空，
+    不得沿用非勝出候選的值（同源綁定的核心防呆：不可逐欄位各自 _first_non_empty）。
+
+    user_order=['javbus', 'metatube:FANZA']；javbus 是 cover 勝者（無 preview），
+    metatube:FANZA 雖有 preview 但不是勝出候選 → merged.preview_cover_url 必須為空。
+    """
+    javbus = _v("javbus", title="JB Title", cover_url="http://javbus/cover.jpg",
+                preview_cover_url="")
+    metatube = _v("metatube:FANZA", title="", cover_url="http://mt/cover.jpg",
+                   preview_cover_url="http://mt:8080/v1/images/primary/FANZA/X?url=y")
+    merged = merge_results({"javbus": javbus, "metatube:FANZA": metatube},
+                           user_order=["javbus", "metatube:FANZA"])
+    assert merged.cover_url == "http://javbus/cover.jpg"
+    assert merged.preview_cover_url == ""
+
+
+def test_preview_cover_url_text_source_value_does_not_leak_when_cover_winner_differs():
+    """同源綁定的第二種洩漏路徑：text_source（整包贏的來源）自己有 preview_cover_url，
+    但 cover 的勝出候選是**另一個**來源時，merged 不能沿用 text_source 自己的 preview。
+
+    user_order=['metatube:FANZA', 'javbus']；metatube:FANZA 是 text_source 但沒有
+    cover_url（跳過），javbus 是 cover 勝者（無 preview）→ merged.preview_cover_url
+    必須為空，不可誤用 text_source 的 preview_cover_url 預設值以外的殘留。
+    """
+    metatube_no_cover = _v("metatube:FANZA", title="", cover_url="",
+                            preview_cover_url="")
+    javbus = _v("javbus", title="JB Title", cover_url="http://javbus/cover.jpg",
+                preview_cover_url="")
+    merged = merge_results({"javbus": javbus, "metatube:FANZA": metatube_no_cover},
+                           user_order=["metatube:FANZA", "javbus"])
+    assert merged.cover_url == "http://javbus/cover.jpg"
+    assert merged.preview_cover_url == ""
+
 
 # ---------------------------------------------------------------------------
 # Fallbacks / edge cases
@@ -229,3 +283,25 @@ def test_empty_candidates_returns_none():
     assert merge_results({}, user_order=["javbus"]) is None
 
 
+
+
+def test_preview_cover_url_cleared_when_no_candidate_has_cover():
+    """③`cover_winner is None`（**沒有任何候選有 cover_url**）→ preview 必須被明確清空。
+
+    這是 T3b review 的 P2：該分支原本不寫 `updates['preview_cover_url']`，於是結果
+    會**繼承 text_source 自己的 preview**。今天漏不出來，只因為 mapper 的
+    `_build_preview_cover_url()` 在 cover 空時回 ''——但那是**別的模組**的不變式。
+    merger 隱性依賴它，正是 CD-113c-12 要消滅的形狀。
+
+    本測試刻意**繞過 mapper**、直接建一個違反該不變式的 `Video`（有 preview、無
+    cover），確認 merger 這一層自己守得住，而不是靠上游剛好沒送出這種值。
+    """
+    leaky = _v("metatube:FANZA", title="MT Title", cover_url="",
+               preview_cover_url="http://mt:8080/v1/images/primary/FANZA/X?url=y")
+    other = _v("javbus", title="", cover_url="", preview_cover_url="")
+    merged = merge_results({"metatube:FANZA": leaky, "javbus": other},
+                           user_order=["metatube:FANZA", "javbus"])
+    assert merged.cover_url == ""
+    assert merged.preview_cover_url == "", (
+        "沒有任何候選有封面時 preview 必須清空，不得從 text_source 漏出"
+    )

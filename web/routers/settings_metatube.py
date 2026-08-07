@@ -19,7 +19,7 @@ from core.metatube.client import MetatubeHttpClient
 from core.metatube.errors import MetatubeAuthError, MetatubeError
 from core.metatube.probe import METATUBE_PROBE_CANARIES, probe_all
 from core.metatube.state import metatube_state as state
-from core.metatube.validation import validate_metatube_url
+from core.metatube.validation import redact_metatube_url, validate_metatube_url
 from core.source_config import build_metatube_sources
 
 logger = get_logger(__name__)
@@ -179,7 +179,10 @@ def startup_reconnect(config: dict) -> tuple[list[str], int] | None:
         try:
             providers = MetatubeHttpClient(url, token).list_providers()
         except MetatubeError:
-            logger.warning("startup_reconnect: list_providers failed for url=%r", url)
+            logger.warning(
+                "startup_reconnect: list_providers failed for target=%s",
+                redact_metatube_url(url),
+            )
             return None
 
         # Token canary (Codex P1) — same semantics as connect endpoint
@@ -199,7 +202,10 @@ def startup_reconnect(config: dict) -> tuple[list[str], int] | None:
         # Reconnect runtime state — capture the generation set under state's lock
         names = list(providers.keys())
         gen = state.connect(url, token, names)
-        logger.info("startup_reconnect: reconnected to %r with %d providers", url, len(names))
+        logger.info(
+            "startup_reconnect: reconnected to %s with %d providers",
+            redact_metatube_url(url), len(names),
+        )
         return names, gen
 
 
@@ -263,7 +269,10 @@ def _connect_sync_impl(url: str, token: str, allow_lan: bool) -> dict:
     try:
         providers = MetatubeHttpClient(url, token).list_providers()
     except MetatubeError:
-        logger.exception("metatube connect: list_providers failed for url=%r", url)
+        logger.exception(
+            "metatube connect: list_providers failed for target=%s",
+            redact_metatube_url(url),
+        )
         return {
             "ok": False,
             "error": "無法連線到 metatube server，請確認 URL 與 token",

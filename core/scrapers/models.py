@@ -20,6 +20,7 @@ class Video(BaseModel):
     date: str = Field(default="", description="發行日期 (YYYY-MM-DD)")
     maker: str = Field(default="", description="片商名稱")
     cover_url: str = Field(default="", description="封面圖片 URL")
+    preview_cover_url: str = Field(default="", description="metatube 預覽用封面 URL（不裁圖，僅顯示用，CD-113c-4）")
     tags: list[str] = Field(default_factory=list, description="標籤/類別")
     source: str = Field(default="", description="資料來源 (javbus/jav321/javdb)")
     detail_url: str = Field(default="", description="詳情頁 URL")
@@ -46,6 +47,7 @@ class Video(BaseModel):
             'date': self.date,
             'maker': normalize_maker_name(self.maker),
             'cover': self.cover_url,
+            'preview_cover_url': self.preview_cover_url,
             'tags': self.tags,
             'source': self.source,
             'url': self.detail_url,

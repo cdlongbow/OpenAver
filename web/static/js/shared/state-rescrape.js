@@ -21,10 +21,40 @@
  */
 
 import { pathToDisplay } from '@/components/path-utils.js';
+// TASK-113c-T8：預覽封面的 error-time fallback。決策的單一所有者在 shared/，
+// 因為本檔（shared/）不能 import pages/——見 TASK-113c-T8「技術要點」。
+import {
+    isStaleCoverError,
+    resolveResultCoverUrl,
+    shouldFallbackToCover,
+} from '@/shared/cover-fallback.js';
 
 export function rescrapeState() {
     return {
         // ── 彈窗狀態（平鋪，對齊 partial 綁定 + mockup） ──
+        // ── TASK-113c-T8：預覽封面 error-time fallback ──
+        // metatube 斷線後 preview_cover_url 立即 403，但同一筆 rescrapePreview 裡的
+        // cover 常常還能用。彈窗原本連 @error 都沒有＝失敗就停在破圖。
+        // 與 search 頁三個顯示點共用同一組純函式（單一決策所有權）。
+
+        /** 預覽圖要顯示哪個 URL（原始 URL；proxy 包裹留在 partial，CD-62-14 #8）。 */
+        resolveRescrapeCoverUrl() {
+            return resolveResultCoverUrl(this.rescrapePreview);
+        },
+
+        /** 預覽圖載入失敗 → 若還有 cover 可退就退一次。 */
+        handleRescrapePreviewError(event) {
+            const preview = this.rescrapePreview;
+            if (!preview) return;
+            // stale guard：彈窗的 <img> 跨候選重用（切版本 / 換來源都只換 rescrapePreview
+            // 的內容）。遲到的失敗事件若寫到新的那一筆上，那一筆會停在 cover。
+            const actualSrc = (event && event.target && event.target.getAttribute('src')) || '';
+            if (isStaleCoverError(actualSrc, resolveResultCoverUrl(preview))) return;
+            if (shouldFallbackToCover(preview)) preview._previewFailed = true;
+            // 兩者皆失敗：維持既有外觀（彈窗本來就沒有錯誤 placeholder）。
+            // 新增錯誤 UI 是 UX 決定，不在本 task（T8 Non-goals）。
+        },
+
         rescrapeOpen: false,
         rescrapeStep: 'pick',              // 'pick' | 'preview'
         rescrapeEntryPoint: 'lightbox',    // 'lightbox' | 'search' | 'switch-source'
@@ -365,8 +395,13 @@ export function rescrapeState() {
                     // CD-86-P2：同步 searchQuery / currentQuery（對齊非 javlib 路徑 :167 + advancedSearch :38）
                     this.searchQuery = this.rescrapeNumber.trim();
                     this.currentQuery = this.rescrapeNumber.trim();
-                    // strip preview-only extras（success/sourceName/sourceCensored）不讓其流入 result row
-                    const { success: _s, sourceName: _sn, sourceCensored: _sc, ...adopted } = this.rescrapePreview;
+                    // strip preview-only extras（success/sourceName/sourceCensored）不讓其流入 result row。
+                    // T8 P1（Codex PR#128 round-4）：`_previewFailed` 也必須剝除——它是**彈窗這一次
+                    // 顯示**的暫態旗標（rescrapePreview 依 CD-62-2 是 transient），不是資料。
+                    // 漏剝的話：彈窗裡預覽失敗過一次 → 採用後那一筆 result 帶著旗標進 searchResults
+                    // → saveState() 持久化 → 即使 metatube 已恢復，那一筆仍永遠停在 cover。
+                    const { success: _s, sourceName: _sn, sourceCensored: _sc,
+                            _previewFailed: _pf, ...adopted } = this.rescrapePreview;
                     this._commitSearchResults?.({ data: [adopted], mode: 'exact', has_more: false, actress_profile: null });
                     this.closeRescrape();
                     return;
@@ -382,7 +417,10 @@ export function rescrapeState() {
                         || t.idx < 0 || t.idx >= t.arr.length
                         || (t.arr[t.idx] && t.arr[t.idx].number !== t.number);
                     if (!stale) {
-                        const { success: _s, sourceName: _sn, sourceCensored: _sc, ...variant } = this.rescrapePreview;
+                        // T8 P1：同上剝除 `_previewFailed`（本分支還顯式 saveState()，
+                        // 漏剝會直接寫進 sessionStorage）。
+                        const { success: _s, sourceName: _sn, sourceCensored: _sc,
+                                _previewFailed: _pf, ...variant } = this.rescrapePreview;
                         t.arr[t.idx] = variant;                          // in-place 替換選定版本
                         this._candidateReplaceSeq++;                     // 訊號給 pendingEditWatchKey 偵測原地替換 → 觸發哨兵關 stale 編輯框（PR#116 P2）
                         this._resetCoverState?.();

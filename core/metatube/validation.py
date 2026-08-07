@@ -140,3 +140,39 @@ def validate_metatube_url(url: str, allow_lan: bool = False) -> str | None:
 
     # Step 7: all resolved addresses passed
     return None
+
+
+def redact_metatube_url(url: str) -> str:
+    """把 metatube URL 縮成**可安全寫進 log／例外訊息**的識別字串（`host` 或 `host:port`）。
+
+    為什麼需要單一所有者（Codex PR review 三輪同根因，2026-08-07）：
+    `validate_metatube_url()` 只看 scheme／hostname／port，**從不檢查 userinfo**，
+    所以使用者可以把 `http://user:pass@host` 設成 base_url 並通過設定。同一個值
+    連續三輪從不同出口漏出去——先是 API 回應的 `preview_cover_url`、再是
+    `/status` 的欄位、再是 server log。共通點是每個出口各自決定「要記什麼」，
+    而沒有一個地方能指著說「渲染規則寫在這裡」。
+
+    這支就是那個地方。**任何要把 metatube 連線目標寫進 log 或例外訊息的地方，
+    一律走這支**，不要自己 `urlparse` 也不要直接內插原字串。
+
+    - 保留 host（診斷「打的是哪一台」必要）與 port（同機多實例時必要）
+    - 丟掉 scheme／userinfo／path／query／fragment
+    - `.port` 對畸形 port 會拋 `ValueError`（`urlparse()` 本身不會）——這裡接住，
+      與 `web/routers/search.py::_effective_port()` 同一個 BE-SEC-01 家族的坑
+    - 解析不出 host 時回 `<unparseable>`，**不回退成原字串**（回退等於在最需要
+      保護的畸形輸入上放棄保護）
+    """
+    if not url:
+        return "<empty>"
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return "<unparseable>"
+    host = parsed.hostname
+    if not host:
+        return "<unparseable>"
+    try:
+        port = parsed.port
+    except ValueError:
+        return host
+    return f"{host}:{port}" if port else host

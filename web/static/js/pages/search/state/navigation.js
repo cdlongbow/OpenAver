@@ -34,9 +34,12 @@ export function searchStateNavigation() {
      */
     preloadImages(startIndex, count = 5) {
         for (let i = startIndex; i < Math.min(startIndex + count, this.searchResults.length); i++) {
-            if (this.searchResults[i]?.cover) {
+            // TASK-113c-T3b: preview_cover_url 優先（破圖修復），FE-JS-01 || fallback
+            const result = this.searchResults[i];
+            const cover = result?.preview_cover_url || result?.cover;
+            if (cover) {
                 const img = new Image();
-                img.src = `/api/proxy-image?url=${encodeURIComponent(this.searchResults[i].cover)}`;
+                img.src = `/api/proxy-image?url=${encodeURIComponent(cover)}`;
             }
         }
     },

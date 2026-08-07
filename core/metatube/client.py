@@ -25,6 +25,7 @@ import urllib.parse
 import requests
 
 from core.logger import get_logger
+from core.metatube.validation import redact_metatube_url
 from core.metatube.errors import (
     MetatubeAuthError,
     MetatubeClientError,
@@ -57,6 +58,10 @@ class MetatubeHttpClient:
 
     def __init__(self, base_url: str, token: str | None = None, timeout: int = 20) -> None:
         self._base_url = base_url.rstrip("/")
+        # log／例外訊息**一律**用這個，絕不內插 self._base_url（Codex 三審 P1 根因：
+        # 原本每一個 MetatubeError 的訊息都是用完整 url 組的，於是任何下游
+        # `logger.exception(...)` 都會洩漏 userinfo——修 log 點修不完，要修在源頭）。
+        self._log_target = redact_metatube_url(base_url)
         self._timeout = timeout
         self._session = requests.Session()
         self._session.headers.update({
@@ -181,14 +186,16 @@ class MetatubeHttpClient:
             MetatubeProtocolError: 3xx redirect (SSRF guard), or 200 + invalid JSON / missing 'data' key
         """
         url = f"{self._base_url}{path}"
-        logger.debug("metatube GET %s params=%s", url, params)
+        # `where` 是這個函式裡唯一准許出現在 log／例外訊息的位置識別字串。
+        where = f"{self._log_target}{path}"
+        logger.debug("metatube GET %s", where)
 
         try:
             resp = self._session.get(
                 url, params=params, timeout=self._timeout, allow_redirects=False
             )
         except requests.RequestException as exc:
-            logger.warning("metatube unavailable: %s — %s", url, type(exc).__name__)
+            logger.warning("metatube unavailable: %s — %s", where, type(exc).__name__)
             raise MetatubeUnavailable("Network error reaching metatube server") from exc
 
         status = resp.status_code
@@ -198,30 +205,30 @@ class MetatubeHttpClient:
         # hosts that validate_metatube_url() never saw. Reject instead of following.
         if 300 <= status < 400:
             raise MetatubeProtocolError(
-                f"Unexpected redirect from {url} (HTTP {status}); "
+                f"Unexpected redirect from {where} (HTTP {status}); "
                 "redirects are not allowed (SSRF guard)."
             )
         if status == 401:
-            raise MetatubeAuthError(f"Authentication failed for {url} (HTTP 401)")
+            raise MetatubeAuthError(f"Authentication failed for {where} (HTTP 401)")
         if status == 404:
-            raise MetatubeNotFound(f"Not found: {url} (HTTP 404)")
+            raise MetatubeNotFound(f"Not found: {where} (HTTP 404)")
         if 400 <= status < 500:
-            raise MetatubeClientError(f"Client error for {url} (HTTP {status})")
+            raise MetatubeClientError(f"Client error for {where} (HTTP {status})")
         if 500 <= status < 600:
-            raise MetatubeUnavailable(f"Server error for {url} (HTTP {status})")
+            raise MetatubeUnavailable(f"Server error for {where} (HTTP {status})")
 
         # --- status 200: parse JSON envelope ---
         try:
             body = resp.json()
         except (json.JSONDecodeError, ValueError) as exc:
             raise MetatubeProtocolError(
-                f"Invalid JSON from {url}: {exc}"
+                f"Invalid JSON from {where}: {exc}"
             ) from exc
 
         # Envelope must be a JSON object (dict); list/scalar bodies are protocol errors
         if not isinstance(body, dict):
             raise MetatubeProtocolError(
-                f"Response from {url} is not a JSON object (got {type(body).__name__}). "
+                f"Response from {where} is not a JSON object (got {type(body).__name__}). "
                 f"Expected {{\"data\": ...}} envelope."
             )
 
@@ -230,7 +237,7 @@ class MetatubeHttpClient:
         data = body.get("data", sentinel)
         if data is sentinel:
             raise MetatubeProtocolError(
-                f"Response from {url} missing 'data' key. "
+                f"Response from {where} missing 'data' key. "
                 f"Body keys: {list(body.keys())}"
             )
 

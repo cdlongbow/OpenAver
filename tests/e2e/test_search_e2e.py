@@ -56,9 +56,16 @@ def _wait_for_detail(page: Page) -> None:
 def test_detail_new_fields(page: Page, base_url: str) -> None:
     """
     E2E-1：精準搜尋 JUR-688，驗證 Detail 模式的 director / duration / label / series
-    欄位列（.info-row）可見且值非空。
+    欄位格可見且值非空。
 
     JUR-688（ハプニングバーNTR）確認有導演、片長、發行商、系列四個欄位。
+
+    ⚠️ 容器 class 分兩種，**不可統一寫 `.info-row`**：v0.10.2（`8503e332` TASK-75b-T1
+    「metadata 雙欄重排」）把短值欄位搬進 `.info-grid-pair > .info-cell`，長值欄位
+    才留在 `.info-row`。本測試原本四格全寫 `.info-row`，於是「片長」「發行商」兩格
+    自 v0.10.2 起結構上不可能命中 —— 橫跨 v0.10 / v0.11 / v0.12 / v0.13 四個 minor
+    版一直恆紅而沒人發現（e2e 不進 CI）。
+    改動的是選擇器，不是產品：那兩個欄位在瀏覽器裡一直顯示正常。
     """
     _do_search(page, base_url, "JUR-688")
     _wait_for_result(page)
@@ -67,17 +74,17 @@ def test_detail_new_fields(page: Page, base_url: str) -> None:
     # 等待 Alpine 渲染穩定
     page.wait_for_timeout(500)
 
-    # 各欄位 label 與對應的 info-row
+    # 各欄位 label 與對應的容器（長值獨行 .info-row / 短值雙欄 .info-cell，見 docstring）
     fields = [
-        ("導演",  ".info-row:has(.info-label:text('導演'))"),
-        ("片長",  ".info-row:has(.info-label:text('片長'))"),
-        ("發行商", ".info-row:has(.info-label:text('發行商'))"),
-        ("系列",  ".info-row:has(.info-label:text('系列'))"),
+        ("導演",  ".info-row:has(.info-label:text('導演'))"),     # search.html:625
+        ("片長",  ".info-cell:has(.info-label:text('片長'))"),    # search.html:573
+        ("發行商", ".info-cell:has(.info-label:text('發行商'))"),   # search.html:584
+        ("系列",  ".info-row:has(.info-label:text('系列'))"),     # search.html:620
     ]
 
     for label, selector in fields:
         row = page.locator(selector)
-        assert row.is_visible(), f"欄位「{label}」的 info-row 應可見（x-show 條件成立）"
+        assert row.is_visible(), f"欄位「{label}」應可見（x-show 條件成立）"
 
         value_text = row.locator(".info-value").inner_text().strip()
         assert value_text, f"欄位「{label}」的值不應為空，實際：{value_text!r}"

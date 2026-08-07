@@ -176,6 +176,16 @@ scrapers/
 - **刻意不在這裡**：上鎖、刪同名舊檔、把失敗轉成 `False`、決定 `dest` 在哪——全部留在呼叫端。清舊檔一律排在 `os.replace` 成功**之後**（`os.replace` 在 Windows 不保證成功，見 `gotchas-backend.md` BE-ENV-01）。
 - ⚠️ 模組內對 `os.replace` / `tempfile.mkstemp` **必須用屬性存取**（禁 `from os import replace`），否則測試端 `patch("core.atomic_write.os.replace")` 會失效——由 `tests/unit/test_atomic_write_boundary_guard.py` 的 AST 守衛鎖住。
 
+### `image_host_policy.py`
+**圖片來源 host 放行政策 registry（單一所有權，spec-113 F-6）**
+- `IMAGE_HOSTS: tuple[ImageHost, ...]` — 宣告式清單，每筆宣告 `host` / `match`（`exact` | `root`）/ `schemes` / `consumers`（`download` | `proxy`）/ `photo_source` / `path_prefix` / `port`。
+- `download_hosts_for(photo_source)` — 女優照片下載端的允許 host 集合；未知 source 回空 set（fail-closed）。
+- `proxy_rules()` — `/api/proxy-image` 的 `(exact_hosts, root_domains)`。
+- `proxy_dynamic_hosts()` — **動態**條目（目前只有「使用者當下連著的那台 metatube」），值取自 `core/metatube/state.py::connected_base_url()`，**每次呼叫重算不快取**，所以 disconnect 立即撤銷放行。
+- **兩端的允許集合刻意不相等**：下載端是 exact-only、允許 http、綁 `photo_source`；proxy 端強制 https、有 root-domain 邊界比對。registry 的價值是讓「不相等」變成**被宣告的**，不是把它們統一（合併會失去 source 綁定、放寬 scheme、把 `github.com` 這類下載來源擴大成 proxy 可任意抓取的目標）。
+- **刻意不在這裡**：URL 解析與 scheme／port／path 的實際判斷——那些留在兩個消費端（`core/actress_photo.py::validate_photo_url()` 與 `web/routers/search.py::_is_allowed_image_url()`）。registry 只宣告，不執行。
+- ⚠️ 兩個消費端**不得再自行宣告 domain-shaped 字面容器**——由 `tests/unit/test_image_host_policy_boundary_guard.py` 的 AST 守衛鎖住（含全庫「禁止分開讀 `metatube_state.is_connected` / `.base_url`」的原子存取禁令）。
+
 ### `logger.py`
 **統一日誌模組**
 - `setup_logging(log_dir, console_level)` — 初始化日誌系統（由 `standalone.py` 呼叫一次），設定 RotatingFileHandler（10MB × 5 份）與 Console Handler。

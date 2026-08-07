@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from collections import OrderedDict
 
 from core.atomic_write import atomic_write
+from core.image_host_policy import download_hosts_for
 from core.logger import get_logger
 from core.organizer import sanitize_filename
 
@@ -46,28 +47,6 @@ REFERER_MAP: dict[str, str] = {
     "minnano": "https://www.minnano-av.com/",
 }
 
-# photo_source → 允許的 host 白名單
-PHOTO_HOST_WHITELIST: dict[str, set] = {
-    "graphis": {
-        "www.graphis.ne.jp",
-        "graphis.ne.jp",
-        "data.graphis.ne.jp",
-    },
-    "gfriends": {
-        "cdn.jsdelivr.net",
-        "raw.githubusercontent.com",
-        "github.com",
-    },
-    "wiki": {
-        "upload.wikimedia.org",
-        "ja.wikipedia.org",
-    },
-    "minnano": {
-        "www.minnano-av.com",
-        "minnano-av.com",
-    },
-}
-
 
 def validate_photo_url(photo_url: str, photo_source: str) -> bool:
     """
@@ -85,7 +64,7 @@ def validate_photo_url(photo_url: str, photo_source: str) -> bool:
         return False
     if parsed.scheme not in ("http", "https"):
         return False
-    allowed = PHOTO_HOST_WHITELIST.get(photo_source, set())
+    allowed = download_hosts_for(photo_source)
     return parsed.hostname in allowed
 
 
@@ -127,7 +106,25 @@ def download_actress_photo(name: str, photo_url: str, photo_source: str) -> bool
             headers["Referer"] = referer
 
         # 1. 下載到 tmp
-        resp = requests.get(photo_url, headers=headers, timeout=15)
+        # SSRF guard: 不跟隨 redirect（CD-113c-7）。白名單只驗原始 URL，
+        # 若對方 30x 到內網，跟隨會繞過驗證。照抄 core/metatube/client.py。
+        resp = requests.get(
+            photo_url, headers=headers, timeout=15, allow_redirects=False
+        )
+
+        # 3xx 獨立分支：記 host-only log 後 return False，不走下方帶完整 URL 的失敗 log
+        if 300 <= resp.status_code < 400:
+            location = resp.headers.get("Location", "")
+            try:
+                loc_host = urlparse(location).hostname or "<unparseable>"
+            except Exception:
+                loc_host = "<unparseable>"
+            req_host = urlparse(photo_url).hostname or ""
+            logger.warning(
+                "[actress_photo] 拒絕 3xx: host=%s status=%s location_host=%s",
+                req_host, resp.status_code, loc_host,
+            )
+            return False
 
         if resp.status_code != 200:
             logger.warning("[actress_photo] 下載失敗，HTTP %s：%s", resp.status_code, photo_url)
