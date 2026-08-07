@@ -40,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 守衛總量三桶棘輪 **11,291 行，與上一版持平**（本版淨變化 0 行——唯一動到的是 `static_guard_lint.mjs` 一條既有規則的內容替換，非新增）。
 - **Codex PR review 對同一個根因連開三輪**，三條都成立、全數採納：`preview_cover_url` 洩漏帳密 → `/status` 回應洩漏帳密 → server log 洩漏帳密。第三輪沒有只修它點名的兩處——窮舉後發現根因在 `core/metatube/client.py` 把完整網址烤進**每一個**例外訊息，於是任何下游 `logger.exception` 都會漏，逐點修不完。改為新增 `redact_metatube_url()` 作為「連線目標怎麼呈現」的單一所有者，共修 11 處，並配一支 AST 守衛禁止再把原始網址餵進 log 或例外建構子。
 - 內部 review 另抓到三條 BLOCKER（都在 commit 前修掉）：動態條目只綁 hostname 不綁 port（＝放行 loopback 上任意 port）、畸形 port 讓安全檢查拋例外變成 500 而非 fail-closed 的 403、路徑閘門用「列舉違規編碼」的黑名單寫法被 `%252e%252e`／overlong UTF-8／matrix parameter 打穿五類——最後一條改為正向字元允許清單，`%` 根本不在字元集裡。
+- **合併前補跑一輪 e2e ＋ 真機驗證**。破圖修復本體**已在真機驗到**（本機 metatube 連得上）：同一張封面直連圖床經圖片代理 **403**、改走 `preview_cover_url` **200 image/jpeg 4.6MB**，detail 面板與燈箱都真的把圖畫出來；沒有 metatube 的 fallback 路徑（8 筆 javbus 結果）**8 載入 / 0 破圖**。v0.13.5 那條 showcase toast 顏色修正的人工驗收也一併做掉（藍色 info ＋ 黃色 warning ＋ 成功/錯誤外觀逐字不變，三項全過）。
+- **順帶修掉一支恆紅了四個 minor 版的 e2e**：`test_detail_new_fields` 的四個欄位選擇器全寫 `.info-row`，但「片長」「發行商」兩格自 **v0.10.2** 的 metadata 雙欄重排起就搬進了 `.info-cell`，選擇器結構上不可能命中。**不是回歸**——在不含本 branch 的 `main` 上單獨重跑同樣紅、且那兩個欄位在瀏覽器裡一直顯示正常。e2e 不進 CI 所以四個版沒人發現。只改測試檔、產品碼零改動。
+- **一條明示接受的 residual**：換到 metatube provider 後**劇照**仍破圖（與封面同根因，T3b 只替封面做了分離欄位）。**純顯示問題**——劇照下載走伺服器端直連、不經圖片代理，實測照樣正確落地；且該 provider 的劇照上游本來就只有 160×90。因此本版對外只宣稱「換來源預覽**封面**不再破圖」。
 - **`/simplify` 跳過**（針對性安全 patch + 守衛，非 exploratory 新碼；已由三輪 Codex + 五輪內部 review 覆蓋）。
 
 ## [0.13.5] - 2026-08-06
