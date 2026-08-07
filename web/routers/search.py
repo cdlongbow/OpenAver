@@ -31,6 +31,7 @@ from core.video_extensions import ZERO_SIZE_EXTENSIONS, get_video_extensions
 logger = get_logger(__name__)
 
 from core.database import VideoRepository, get_db_path as get_db_path, init_db
+from core.image_host_policy import proxy_rules
 from core.maker_mapping import load_prefix_mapping
 from core.source_config import validate_source_id
 from core.source_settings import get_switchable_source_ids_ordered, is_uncensored_mode_effective
@@ -45,38 +46,6 @@ router = APIRouter(prefix="/api", tags=["search"])
 # 載入片商前綴對照表（啟動時一次性載入）
 _MAKER_MAPPING = load_prefix_mapping()
 
-# SSRF allowlist — 含子域 endswith 比對（host == root or host.endswith("." + root)）
-_ALLOWED_IMAGE_ROOT_DOMAINS = {
-    "javbus.com",
-    "jav321.com",
-    "heyzo.com",
-    "caribbeancom.com",
-    "1pondo.tv",
-    "10musume.com",
-    "avsox.click",
-    "avsox.monster",
-    "avsox.website",
-    "javten.com",
-    "fc2.com",  # FC2 圖床（contents-thumbnail2 / live-storage / storage<NNN>.contents 數字子域）
-    "jdbstatic.com",  # JavDB CDN root (c0/c1/c2 numbered subdomains)
-}
-# SSRF allowlist — exact match，不允子域（CD-60-1：CDN / 女優照片固定 host 嚴格匹配）
-_ALLOWED_IMAGE_EXACT_HOSTS = {
-    "pics.dmm.co.jp",
-    "awsimgsrc.dmm.co.jp",
-    "www.dmm.co.jp",
-    "javdb.com",
-    "cdn.jsdelivr.net",
-    "upload.wikimedia.org",
-    # Graphis / Minnano 完整變體（對齊 core/actress_photo.py PHOTO_HOST_WHITELIST）
-    "data.graphis.ne.jp",
-    "www.graphis.ne.jp",
-    "graphis.ne.jp",
-    "www.minnano-av.com",
-    "minnano-av.com",
-    "file.netcdn.space",  # AVSOX 圖床（caribbean / 1pondo / heyzo 封面 CDN）
-}
-
 
 def _is_allowed_image_url(url: str) -> bool:
     try:
@@ -88,9 +57,10 @@ def _is_allowed_image_url(url: str) -> bool:
     host = (parsed.hostname or "").lower()
     if not host:
         return False
-    if host in _ALLOWED_IMAGE_EXACT_HOSTS:
+    exact_hosts, root_domains = proxy_rules()
+    if host in exact_hosts:
         return True
-    for root in _ALLOWED_IMAGE_ROOT_DOMAINS:
+    for root in root_domains:
         if host == root or host.endswith("." + root):
             return True
     return False

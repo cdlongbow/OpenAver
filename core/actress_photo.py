@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from collections import OrderedDict
 
 from core.atomic_write import atomic_write
+from core.image_host_policy import download_hosts_for
 from core.logger import get_logger
 from core.organizer import sanitize_filename
 
@@ -46,28 +47,6 @@ REFERER_MAP: dict[str, str] = {
     "minnano": "https://www.minnano-av.com/",
 }
 
-# photo_source → 允許的 host 白名單
-PHOTO_HOST_WHITELIST: dict[str, set] = {
-    "graphis": {
-        "www.graphis.ne.jp",
-        "graphis.ne.jp",
-        "data.graphis.ne.jp",
-    },
-    "gfriends": {
-        "cdn.jsdelivr.net",
-        "raw.githubusercontent.com",
-        "github.com",
-    },
-    "wiki": {
-        "upload.wikimedia.org",
-        "ja.wikipedia.org",
-    },
-    "minnano": {
-        "www.minnano-av.com",
-        "minnano-av.com",
-    },
-}
-
 
 def validate_photo_url(photo_url: str, photo_source: str) -> bool:
     """
@@ -85,7 +64,7 @@ def validate_photo_url(photo_url: str, photo_source: str) -> bool:
         return False
     if parsed.scheme not in ("http", "https"):
         return False
-    allowed = PHOTO_HOST_WHITELIST.get(photo_source, set())
+    allowed = download_hosts_for(photo_source)
     return parsed.hostname in allowed
 
 
