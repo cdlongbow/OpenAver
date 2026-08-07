@@ -295,9 +295,10 @@ def test_status_dict_shape():
     """status_dict() returns all required keys."""
     s = MetatubeConnectionState()
     d = s.status_dict()
-    assert set(d.keys()) == {"connected", "base_url", "probe_done", "probe_progress", "providers"}
+    # base_url 已於 Codex 二審 P1 移除（憑證外洩：validator 不擋 userinfo、
+    # server_mode 下同網段可讀）。key-set 全等斷言在此同時擔任「不得回歸」的鎖。
+    assert set(d.keys()) == {"connected", "probe_done", "probe_progress", "providers"}
     assert isinstance(d["connected"], bool)
-    assert d["base_url"] is None  # not connected
     assert isinstance(d["probe_done"], bool)
     assert isinstance(d["probe_progress"], int)
     assert isinstance(d["providers"], list)
@@ -310,7 +311,7 @@ def test_status_dict_after_connect_reflects_providers():
     d = s.status_dict()
 
     assert d["connected"] is True
-    assert d["base_url"] == 'http://host'
+    assert "base_url" not in d  # Codex 二審 P1：連線後也不得回傳 base_url
     # providers list has entries for FANZA and HEYZO
     provider_ids = {p["id"] for p in d["providers"]}
     assert 'metatube:FANZA' in provider_ids
@@ -601,3 +602,41 @@ def test_connected_base_url_atomic_no_race(state):
         assert state.connected_base_url() == 'http://127.0.0.1:8900'
     finally:
         MetatubeConnectionState.is_connected = real_is_connected
+
+
+def test_status_dict_never_leaks_userinfo_credentials():
+    """回歸鎖（Codex PR review 二審 P1，2026-08-07）。
+
+    `validate_metatube_url()` 只看 scheme／hostname／port，**從不檢查 userinfo**，
+    所以 `http://user:pass@host` 是通得過設定的。而 `status_dict()` 就是
+    `GET /api/settings/metatube/status` 的完整回應——`general.server_mode` 開啟時
+    區網任何裝置都能直接 GET 到它，沒有額外身份驗證（`web/app.py` 的
+    `lan_access_gate` 只判 loopback 或 server_mode）。
+
+    這支鎖的是**序列化後的整包**而不只是「有沒有 base_url 這個 key」：未來若有人
+    以別的欄位名把連線目標放回去，這裡一樣會紅。
+    """
+    import json
+
+    s = MetatubeConnectionState()
+    s.connect('http://leakuser:leakpass@10.0.0.5:8900', 'tok', ['FANZA'])
+    blob = json.dumps(s.status_dict(), ensure_ascii=False)
+    for secret in ('leakuser', 'leakpass', '10.0.0.5', '@'):
+        assert secret not in blob, f"status_dict() 洩漏 {secret!r}：{blob}"
+
+
+def test_connect_log_does_not_leak_userinfo(caplog):
+    """`connect()` 的 debug log 不得記完整 base_url（Codex 三審 P1）。
+
+    正向＋負向配對：光斷言「不含帳密」在 caplog 沒抓到任何 record 時**永遠成立**，
+    所以同時斷言 host 有被記到——那證明這條 log 真的跑到了。
+    """
+    import logging
+
+    s = MetatubeConnectionState()
+    with caplog.at_level(logging.DEBUG, logger='OpenAver.core.metatube.state'):
+        s.connect('http://admin:S3cr3tPass@10.0.0.5:8900', 'tok_ABC123', ['FANZA'])
+
+    assert '10.0.0.5:8900' in caplog.text          # 正向：log 真的有記，且保留診斷用的 host
+    for secret in ('S3cr3tPass', 'admin', 'tok_ABC123'):
+        assert secret not in caplog.text, f"connect log 洩漏 {secret!r}"

@@ -225,3 +225,30 @@ class TestPortValidation:
         # 1.1.1.1 is a public IP literal — no DNS resolution needed; passes without allow_lan
         result = validate_metatube_url("http://1.1.1.1:8900")
         assert result is None, f"Valid public IP+port should pass, got: {result!r}"
+
+
+# ============================================================
+# redact_metatube_url —— log／例外訊息的單一渲染所有者
+# （Codex PR review 三輪同根因，2026-08-07）
+# ============================================================
+
+@pytest.mark.parametrize("raw,expected", [
+    ("http://admin:S3cr3tPass@10.0.0.5:8900", "10.0.0.5:8900"),  # userinfo 丟掉、host:port 保留
+    ("https://u:p@example.com", "example.com"),                  # 預設 port 不加後綴
+    ("http://127.0.0.1:8900", "127.0.0.1:8900"),
+    ("http://host/p?token=secret#frag", "host"),                 # path/query/fragment 全丟
+    ("http://127.0.0.1:99999/x?token=s", "127.0.0.1"),           # 畸形 port：.port 拋 ValueError → 只回 host
+    ("", "<empty>"),
+    ("not a url", "<unparseable>"),                              # 解析不出 host **不得**回退成原字串
+])
+def test_redact_metatube_url(raw, expected):
+    from core.metatube.validation import redact_metatube_url
+    assert redact_metatube_url(raw) == expected
+
+
+def test_redact_metatube_url_never_returns_input_on_garbage():
+    """畸形輸入時**不回退成原字串**——那等於在最需要保護的輸入上放棄保護。"""
+    from core.metatube.validation import redact_metatube_url
+    garbage = "user:pass@@@not-a-url"
+    out = redact_metatube_url(garbage)
+    assert "pass" not in out and out != garbage

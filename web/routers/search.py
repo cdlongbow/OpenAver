@@ -203,7 +203,14 @@ def proxy_image(url: str = Query(..., description="圖片 URL")):
                 headers={"Cache-Control": "public, max-age=86400"},
             )
     except Exception:
-        logger.exception("proxy_image failed: %s", url)
+        # CD-113c-8 的同一條原則（圖片 URL 常帶簽名／token，不記完整 URL）套用到
+        # 例外路徑：原本這行記的是**完整 url**——含 query 的 token，以及 T3b 之後
+        # 可能出現的 metatube base_url userinfo（Codex PR review P1 的相鄰洩漏點，
+        # 由 review subagent 實測指出）。改記 host + path，保留診斷價值、去掉機密。
+        _p = urlparse(url)
+        logger.exception(
+            "proxy_image failed: host=%s path=%s", _p.hostname, _p.path
+        )
 
     # 返回空圖片
     return Response(content=b'', media_type='image/jpeg', status_code=404)

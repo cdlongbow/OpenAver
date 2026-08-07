@@ -1252,6 +1252,28 @@ class TestProxyImageSSRF:
         finally:
             metatube_state.disconnect()
 
+    def test_proxy_image_exception_log_does_not_leak_query_or_userinfo(self, client, caplog):
+        """例外路徑的 log 不得記完整 URL（Codex PR review P1 的相鄰洩漏點）。
+
+        CD-113c-8 的理由是「圖片 URL 常帶簽名／token」，T2 據此讓 403 與 3xx 兩條
+        路徑只記 host。但同一個函式的 `except` 分支原本是
+        `logger.exception("proxy_image failed: %s", url)`——記的是**完整 url**，
+        含 query 的 token；T3b 之後 metatube base_url 的 userinfo 也會流經這裡。
+        現在改記 host + path。
+        """
+        url = 'https://pics.dmm.co.jp/mono/movie/x/xpl.jpg?token=secret123&sig=abc'
+        with caplog.at_level(logging.ERROR, logger='OpenAver.web.routers.search'):
+            with patch('web.routers.search.requests.get',
+                       side_effect=RuntimeError('boom')):
+                response = client.get('/api/proxy-image', params={'url': url})
+
+        assert response.status_code == 404
+        assert 'secret123' not in caplog.text
+        assert 'sig=abc' not in caplog.text
+        # 仍保留診斷價值：host 與 path 要記得到
+        assert 'pics.dmm.co.jp' in caplog.text
+        assert '/mono/movie/x/xpl.jpg' in caplog.text
+
     @pytest.mark.parametrize("evil_path", [
         '/v1/images/%252e%252e/db',       # 雙重百分比編碼
         '/v1/images/%252e%252e%252fdb',   # 雙重編碼 + 編碼斜線

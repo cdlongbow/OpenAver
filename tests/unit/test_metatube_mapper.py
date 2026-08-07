@@ -1,4 +1,6 @@
 """test_metatube_mapper.py - metatube mapper + clean_metatube_summary 邊界測試"""
+import json
+
 import pytest
 from core.scrapers.models import Actress
 
@@ -430,3 +432,72 @@ def test_clean_fc2ppvdb_is_fc2_family():
     result = clean_metatube_summary("FC2PPVDB", raw)
     assert "B" * 50 not in result
     assert "FC2PPVDB簡介" in result
+
+
+# ============================================================
+# Codex PR review P1（2026-08-07）：base_url 的機密不得進 preview URL
+# ============================================================
+
+# ⚠️ 參數名不可叫 `base_url`——`pytest-base-url`（pytest-playwright 的依賴）註冊了
+# 一個同名的 session-scoped fixture，parametrize 撞名會 ScopeMismatch 整組 ERROR。
+@pytest.mark.parametrize("unsafe_base_url,why", [
+    ("http://user:password@127.0.0.1:8900", "userinfo（帳號+密碼）"),
+    ("https://user:password@example.com", "userinfo，公網 host"),
+    ("http://user@127.0.0.1:8900", "只有 username"),
+    ("http://127.0.0.1:8900?x=1", "base_url 帶 query"),
+    ("http://127.0.0.1:8900#frag", "base_url 帶 fragment"),
+])
+def test_preview_cover_url_empty_for_unsafe_base_url(unsafe_base_url, why):
+    """`validate_metatube_url()` **從不檢查 userinfo**（只看 scheme/hostname/port），
+    所以 `https://user:pass@host` 通得過設定。而 preview 欄位會進 `/api/search`
+    的 JSON 回應、再被前端當成 `/api/proxy-image?url=...` 真的送出去——帳密會
+    落在瀏覽器網址列、devtools 與瀏覽紀錄。
+
+    處置是**回空字串**而不是靜默剝掉帳密：剝掉會讓「預覽打不通」變成難以診斷
+    的失敗，而回空字串會讓既有的 `preview_cover_url || cover` fallback 接手。
+    真正的連線路徑（`MetatubeHttpClient`）拿到的仍是完整 base_url，反向代理的
+    Basic Auth 不受影響（metatube 自己只認 Bearer）。
+
+    query/fragment 一起擋是同一個 guard 順手修掉的功能 bug——字串內插會把路徑
+    塞進原本的 query 裡（`http://h:9/?x=1/v1/images/...`），URL 從頭就是壞的。
+    """
+    from core.metatube.mapper import _build_preview_cover_url
+
+    out = _build_preview_cover_url(unsafe_base_url, "FANZA", "ssis-001", "https://cdn.example/c.jpg")
+    assert out == "", f"{why} 的 base_url 必須不產 preview URL，實得：{out!r}"
+
+
+def test_preview_cover_url_still_built_for_base_url_with_path():
+    """不得矯枉過正：反向代理下的 `http://host:9/sub/path` 是**合法**設定，
+    必須照常組出 preview URL（裁決 3 的 path 前綴接續行為）。
+
+    沒有這一格，上面那組「全部回空」用 `return ""` 就能造假。
+    """
+    from core.metatube.mapper import _build_preview_cover_url
+
+    out = _build_preview_cover_url(
+        "http://127.0.0.1:8900/metatube", "FANZA", "ssis-001", "https://cdn.example/c.jpg"
+    )
+    assert out.startswith("http://127.0.0.1:8900/metatube/v1/images/primary/FANZA/ssis-001?")
+
+
+def test_to_legacy_dict_preview_never_carries_userinfo():
+    """回歸鎖：走完整 `map_movie_info()` → `to_legacy_dict()` 序列化鏈，
+    確認送給瀏覽器的那個 dict 裡不可能出現帳密。
+
+    鎖在序列化端而不只是 builder 端，因為 P1 的實際傷害發生在「這個 dict 被
+    json 出去」那一刻——builder 之後若有人再加一層推導，這支仍然守得住。
+    """
+    from core.metatube.mapper import map_movie_info
+
+    info = {
+        "provider": "FANZA",
+        "number": "ssis-001",
+        "cover_url": "https://cdn.example/c.jpg",
+    }
+    video = map_movie_info(info, base_url="http://leakuser:leakpass@127.0.0.1:8900")
+    legacy = video.to_legacy_dict()
+    assert legacy["preview_cover_url"] == ""
+    blob = json.dumps(legacy, ensure_ascii=False)
+    for secret in ("leakuser", "leakpass", "@127.0.0.1"):
+        assert secret not in blob, f"序列化輸出洩漏 {secret!r}"

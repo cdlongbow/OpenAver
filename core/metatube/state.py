@@ -24,6 +24,7 @@ Usage:
 import threading
 
 from core.logger import get_logger
+from core.metatube.validation import redact_metatube_url
 
 logger = get_logger(__name__)
 
@@ -83,8 +84,8 @@ class MetatubeConnectionState:
             self._generation += 1
             gen = self._generation  # capture while lock held — atomic with the bump
         logger.debug(
-            'MetatubeConnectionState.connect: base_url=%r providers=%r',
-            base_url, provider_names,
+            'MetatubeConnectionState.connect: target=%s providers=%r',
+            redact_metatube_url(base_url), provider_names,
         )
         return gen
 
@@ -262,12 +263,26 @@ class MetatubeConnectionState:
     def status_dict(self) -> dict:
         """Return a snapshot dict for the /status endpoint (CD-63b-2).
 
-        Keys: connected, base_url, probe_done, probe_progress, providers.
+        Keys: connected, probe_done, probe_progress, providers.
+
+        **`base_url` 刻意不在裡面**（Codex PR review 二審 P1，2026-08-07）：
+        `validate_metatube_url()` 從不檢查 userinfo，所以使用者設定的 base_url
+        可以是 `http://user:pass@host`；而本 dict 是 `GET /api/settings/metatube/
+        status` 的完整回應，`general.server_mode` 開啟時**同網段任何裝置**都能
+        直接 GET 到它——那就是憑證外洩，不只是本機攻擊面。
+
+        窮舉確認**零 consumer**：前端兩個讀取點（`state-config.js` 的
+        `hydrateMetatubeStatus()` 與 `startProbePolling()`）只取 `connected` /
+        `providers` / `probe_done` / `probe_progress`；設定頁 URL 輸入框的值來自
+        `/api/config` 的 `config.metatube.url`，不是這裡；capabilities 未揭露本端點。
+
+        **不改成「回傳消毒後的 hostname」**：沒有任何 consumer 需要它，而那仍會
+        把 metatube 部署位置回應給每一台打得到這支 API 的裝置。沒有讀者的欄位，
+        正確的處置是刪掉而不是消毒。
         """
         with self._lock:
             return {
                 "connected": self.connected,       # runtime, NOT config
-                "base_url": self.base_url,
                 "probe_done": self._probe_done,
                 "probe_progress": self._probe_progress,
                 "providers": [
