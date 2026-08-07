@@ -17,6 +17,7 @@ this module only declares hosts, it does not evaluate URLs.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,10 +27,14 @@ class ImageHost:
     schemes: tuple[str, ...]
     consumers: tuple[str, ...]  # "download" | "proxy" (any non-empty subset)
     photo_source: str | None  # download consumer only; proxy-only → None
+    # T3a: optional constraints for dynamic (and future) entries. Static rows
+    # keep defaults — path_prefix/port None means "no extra check".
+    path_prefix: str | None = None
+    port: int | None = None
 
 
-# Static translation of the two pre-T1 whitelists (zero behavior change).
-# Dynamic entries (metatube) and new hosts (cf.javfree.me) are later tasks.
+# Static translation of the two pre-T1 whitelists (+ T3a cf.javfree.me).
+# Dynamic metatube entries come from proxy_dynamic_hosts(), not this tuple.
 IMAGE_HOSTS: tuple[ImageHost, ...] = (
     # ---- download + proxy (shared exact hosts; schemes upper-bound) ----
     ImageHost(
@@ -224,6 +229,14 @@ IMAGE_HOSTS: tuple[ImageHost, ...] = (
         consumers=("proxy",),
         photo_source=None,
     ),
+    # ---- T3a: sole §1.4-enumerated new host (exact CDN subdomain only) ----
+    ImageHost(
+        host="cf.javfree.me",
+        match="exact",
+        schemes=("https",),
+        consumers=("proxy",),
+        photo_source=None,
+    ),
 )
 
 
@@ -257,3 +270,52 @@ def proxy_rules() -> tuple[frozenset[str], tuple[str, ...]]:
         elif entry.match == "root":
             roots.append(entry.host)
     return frozenset(exact), tuple(roots)
+
+
+def proxy_dynamic_hosts() -> tuple[ImageHost, ...]:
+    """Dynamic proxy-only entries whose value comes from live connection
+    state (currently: the connected metatube server, if any).
+
+    Recomputed on every call — no caching — so a mid-request disconnect
+    immediately withdraws the entry (plan §5 residual-6: intentional).
+    Empty tuple when connected_base_url() is None (never connected /
+    connect() called with an empty base_url / after disconnect()).
+    """
+    # Local import keeps module import graph free of state-side effects at
+    # import time; registry is the only allowed consumer of this accessor.
+    from core.metatube.state import metatube_state
+
+    base = metatube_state.connected_base_url()
+    if not base:
+        return ()
+    try:
+        parsed = urlparse(base)
+    except Exception:
+        return ()
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return ()
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in ("http", "https"):
+        return ()
+    # `.port` raises ValueError on a malformed port even when urlparse()
+    # succeeded (BE-SEC-01 family). A base_url we cannot pin to a port must
+    # not become an entry at all — fail-closed beats "any port on that host".
+    try:
+        port = parsed.port or (443 if scheme == "https" else 80)
+    except ValueError:
+        return ()
+    base_path = parsed.path or ""
+    # 裁決 3: reverse-proxy base_url may carry a path prefix.
+    path_prefix = base_path.rstrip("/") + "/v1/images/"
+    return (
+        ImageHost(
+            host=host,
+            match="exact",
+            schemes=(scheme,),
+            consumers=("proxy",),
+            photo_source=None,
+            path_prefix=path_prefix,
+            port=port,
+        ),
+    )

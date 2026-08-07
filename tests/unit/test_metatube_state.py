@@ -542,3 +542,62 @@ def test_probe_snapshot_names_stripped_prefix(state):
     names, _gen, _url, _token = state.probe_snapshot()
     assert 'metatube:FANZA' not in names
     assert 'FANZA' in names
+
+
+# ===========================================================================
+# TASK-113c-T3a: connected_base_url() — atomic (connected + base_url)
+# ===========================================================================
+
+def test_connected_base_url_happy_path(state):
+    """Connected with non-empty base_url → returns that base_url."""
+    state.connect('http://127.0.0.1:8900', 'tok', ['FANZA'])
+    assert state.connected_base_url() == 'http://127.0.0.1:8900'
+
+
+def test_connected_base_url_never_connected_returns_none(state):
+    """Fresh state (never connect) → None."""
+    assert state.connected_base_url() is None
+
+
+def test_connected_base_url_connect_with_empty_base_url_returns_none(state):
+    """connect() with empty base_url leaves connected=True but value is useless → None."""
+    state.connect('', 'tok', ['FANZA'])
+    assert state.is_connected is True
+    assert state.base_url == ''
+    assert state.connected_base_url() is None
+
+
+def test_connected_base_url_after_disconnect_returns_none(state):
+    """After disconnect() → None (connected=False, base_url=None)."""
+    state.connect('http://127.0.0.1:8900', 'tok', ['FANZA'])
+    state.disconnect()
+    assert state.connected_base_url() is None
+
+
+def test_connected_base_url_atomic_no_race(state):
+    """Structurally-green under correct impl: hooks is_connected to disconnect mid-read.
+
+    Correct connected_base_url() reads connected + base_url under a single _lock
+    and never calls is_connected, so the hook never fires and the base_url is
+    returned.  A two-step 'if is_connected: return base_url' impl would fire the
+    hook, disconnect, and either return None or a stale host — that mutation
+    must turn this test red (DoD-1a / BE-TEST-05 mirror shape).
+    """
+    state.connect('http://127.0.0.1:8900', 'tok', ['FANZA'])
+
+    real_is_connected = MetatubeConnectionState.is_connected
+
+    def _hook(_self):
+        # Property getter: return True then immediately disconnect so a
+        # subsequent unlocked base_url read would observe None.
+        result = real_is_connected.fget(_self)
+        if result:
+            _self.disconnect()
+        return result
+
+    # Patch the property on the class so any is_connected access is hooked.
+    MetatubeConnectionState.is_connected = property(_hook)
+    try:
+        assert state.connected_base_url() == 'http://127.0.0.1:8900'
+    finally:
+        MetatubeConnectionState.is_connected = real_is_connected

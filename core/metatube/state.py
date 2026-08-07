@@ -207,6 +207,24 @@ class MetatubeConnectionState:
             token = self.token or ""
             return names, gen, base_url, token
 
+    def connected_base_url(self) -> str | None:
+        """Atomically return base_url only when currently connected.
+
+        Single `_lock` acquisition so a concurrent connect/disconnect cannot
+        interleave between a connected-check and a base_url read (CD-113c-6c;
+        same race shape as probe_snapshot / CD-66b-3).
+
+        Returns None when not connected, or when base_url is empty/None
+        (connect() does not validate non-empty base_url).
+        """
+        with self._lock:
+            if not self.connected:
+                return None
+            base = self.base_url
+            if not base:
+                return None
+            return base
+
     # ------------------------------------------------------------------
     # Read-only properties
     # ------------------------------------------------------------------

@@ -1164,6 +1164,215 @@ class TestProxyImageSSRF:
         ), f"expected 403 warning with host + reason, got: {caplog.text!r}"
         assert 'secret123' not in caplog.text
 
+    # ---- TASK-113c-T3a: metatube dynamic + path/dot-segment + cf.javfree.me ----
+
+    def test_proxy_image_unclosed_ipv6_returns_403_not_500(self, client):
+        """BE-SEC-01: http://[::1 unclosed IPv6 → 403, never 500."""
+        url = 'http://[::1'
+        with patch('web.routers.search.requests.get') as mock_get:
+            response = client.get('/api/proxy-image', params={'url': url})
+        assert response.status_code == 403
+        mock_get.assert_not_called()
+
+    def test_metatube_dot_segment_literal_dotdot_rejected(self, client):
+        """§1.7(a) row1: /v1/images/../db → 403, no request."""
+        from core.metatube.state import metatube_state
+        metatube_state.connect('http://127.0.0.1:8900', '', [])
+        try:
+            url = 'http://127.0.0.1:8900/v1/images/../db'
+            with patch('web.routers.search.requests.get') as mock_get:
+                response = client.get('/api/proxy-image', params={'url': url})
+            assert response.status_code == 403
+            mock_get.assert_not_called()
+        finally:
+            metatube_state.disconnect()
+
+    def test_metatube_dot_segment_literal_dot_dotdot_rejected(self, client):
+        """§1.7(a) row2: /v1/images/./../db → 403, no request."""
+        from core.metatube.state import metatube_state
+        metatube_state.connect('http://127.0.0.1:8900', '', [])
+        try:
+            url = 'http://127.0.0.1:8900/v1/images/./../db'
+            with patch('web.routers.search.requests.get') as mock_get:
+                response = client.get('/api/proxy-image', params={'url': url})
+            assert response.status_code == 403
+            mock_get.assert_not_called()
+        finally:
+            metatube_state.disconnect()
+
+    def test_metatube_dot_segment_percent_encoded_lower_rejected(self, client):
+        """§1.7(a) row3: /v1/images/%2e%2e/db → 403, no request."""
+        from core.metatube.state import metatube_state
+        metatube_state.connect('http://127.0.0.1:8900', '', [])
+        try:
+            url = 'http://127.0.0.1:8900/v1/images/%2e%2e/db'
+            with patch('web.routers.search.requests.get') as mock_get:
+                response = client.get('/api/proxy-image', params={'url': url})
+            assert response.status_code == 403
+            mock_get.assert_not_called()
+        finally:
+            metatube_state.disconnect()
+
+    def test_metatube_dot_segment_percent_encoded_upper_slash_rejected(self, client):
+        """§1.7(a) row4: /v1/images/%2E%2E%2Fdb → 403, no request."""
+        from core.metatube.state import metatube_state
+        metatube_state.connect('http://127.0.0.1:8900', '', [])
+        try:
+            url = 'http://127.0.0.1:8900/v1/images/%2E%2E%2Fdb'
+            with patch('web.routers.search.requests.get') as mock_get:
+                response = client.get('/api/proxy-image', params={'url': url})
+            assert response.status_code == 403
+            mock_get.assert_not_called()
+        finally:
+            metatube_state.disconnect()
+
+    def test_metatube_non_images_path_rejected(self, client):
+        """AC5b: connected metatube /v1/db/version → 403 (path_prefix)."""
+        from core.metatube.state import metatube_state
+        metatube_state.connect('http://127.0.0.1:8900', '', [])
+        try:
+            url = 'http://127.0.0.1:8900/v1/db/version'
+            with patch('web.routers.search.requests.get') as mock_get:
+                response = client.get('/api/proxy-image', params={'url': url})
+            assert response.status_code == 403
+            mock_get.assert_not_called()
+        finally:
+            metatube_state.disconnect()
+
+    def test_metatube_same_host_different_port_rejected(self, client):
+        """裁決 1: connected :8900, request :6379/v1/images/... → 403."""
+        from core.metatube.state import metatube_state
+        metatube_state.connect('http://127.0.0.1:8900', '', [])
+        try:
+            url = 'http://127.0.0.1:6379/v1/images/primary/x/y'
+            with patch('web.routers.search.requests.get') as mock_get:
+                response = client.get('/api/proxy-image', params={'url': url})
+            assert response.status_code == 403
+            mock_get.assert_not_called()
+        finally:
+            metatube_state.disconnect()
+
+    @pytest.mark.parametrize("evil_path", [
+        '/v1/images/%252e%252e/db',       # 雙重百分比編碼
+        '/v1/images/%252e%252e%252fdb',   # 雙重編碼 + 編碼斜線
+        '/v1/images/..%c0%afdb',          # overlong UTF-8 斜線（IIS 類）
+        '/v1/images/%c0%ae%c0%ae/db',     # overlong UTF-8 句點
+        '/v1/images/..;/db',              # matrix parameter（Tomcat 類）
+        '/v1/images/%00../db',            # NUL byte
+        '/v1/images/..%2f..%2fdb',        # 編碼斜線
+        '/v1/images/x%5c..%5cdb',         # 反斜線
+        '/v1/images//x',                  # 空段
+        '/v1/images/....//db',            # 四點
+    ])
+    def test_metatube_path_allowlist_blocks_exotic_encodings(self, client, evil_path):
+        """path 閘門是**正向字元允許清單**，不是列舉違規編碼。
+
+        來歷：T3a review 對「列舉 `%2e`/`%2f` 解碼後比對 `.`／`..`」那一版打穿
+        五種（雙重編碼 / overlong UTF-8 ×2 / matrix parameter / NUL），每種都
+        route-level 實測回 200 並把 payload 原樣送上 wire。改成 `[A-Za-z0-9._~-]+`
+        正向清單後，`%` 根本不在字元集裡——所有百分比編碼把戲在解碼前就出局，
+        不必猜對面伺服器怎麼正規化（CD-113c-11「無法判定一律 fail-closed」）。
+        """
+        from core.metatube.state import metatube_state
+        metatube_state.connect('http://127.0.0.1:8900', '', [])
+        try:
+            url = f'http://127.0.0.1:8900{evil_path}'
+            with patch('web.routers.search.requests.get') as mock_get:
+                response = client.get('/api/proxy-image', params={'url': url})
+            assert response.status_code == 403
+            mock_get.assert_not_called()
+        finally:
+            metatube_state.disconnect()
+
+    @pytest.mark.parametrize("good_path", [
+        '/v1/images/primary/FANZA/ssis-001',
+        '/v1/images/thumb/TOKYO-HOT/n1234',
+        '/v1/images/backdrop/P_v2/abc_123.jpg',
+    ])
+    def test_metatube_path_allowlist_permits_real_image_paths(self, client, good_path):
+        """正向對照：允許清單不能嚴到把真實的 metatube 圖片路徑也擋掉。
+
+        沒有這一組，上面那組「全部 403」用一個 `return False` 就能造假。
+        """
+        from core.metatube.state import metatube_state
+        metatube_state.connect('http://127.0.0.1:8900', '', [])
+        try:
+            url = f'http://127.0.0.1:8900{good_path}'
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.content = b'x'
+            mock_resp.headers = {'Content-Type': 'image/jpeg'}
+            with patch('web.routers.search.requests.get', return_value=mock_resp):
+                response = client.get('/api/proxy-image', params={'url': url})
+            assert response.status_code == 200
+        finally:
+            metatube_state.disconnect()
+
+    @pytest.mark.parametrize("bad_port_url", [
+        'http://127.0.0.1:99999/v1/images/primary/x/y',   # 超出 0-65535
+        'http://127.0.0.1:abc/v1/images/primary/x/y',     # 非數字
+        'http://127.0.0.1:-1/v1/images/primary/x/y',      # 負數
+    ])
+    def test_metatube_malformed_port_is_403_not_500(self, client, bad_port_url):
+        """BE-SEC-01 家族：`urlparse()` 成功但 `.port` 拋 ValueError。
+
+        這是 T3a review 實測抓到的 BLOCKER——port 比對引入了第二個「解析
+        成功但取值會炸」的點，而 `_is_allowed_image_url()` 的 try/except 只
+        包住 `urlparse()` 本身。未修前這三筆是**未處理例外 → 500**，不是
+        fail-closed 的 403。必須 metatube 連著才觸發（host 要先命中動態條目）。
+        """
+        from core.metatube.state import metatube_state
+        metatube_state.connect('http://127.0.0.1:8900', '', [])
+        try:
+            with patch('web.routers.search.requests.get') as mock_get:
+                response = client.get('/api/proxy-image', params={'url': bad_port_url})
+            assert response.status_code == 403
+            mock_get.assert_not_called()
+        finally:
+            metatube_state.disconnect()
+
+    def test_metatube_images_path_allowed(self, client):
+        """Connected metatube /v1/images/... matching host+port+scheme → 200."""
+        from core.metatube.state import metatube_state
+        metatube_state.connect('http://127.0.0.1:8900', '', [])
+        try:
+            url = 'http://127.0.0.1:8900/v1/images/primary/x/y'
+            with patch(
+                'web.routers.search.requests.get',
+                return_value=self._make_mock_response(),
+            ) as mock_get:
+                response = client.get('/api/proxy-image', params={'url': url})
+            assert response.status_code == 200
+            mock_get.assert_called_once()
+        finally:
+            metatube_state.disconnect()
+
+    def test_allow_cf_javfree_me_exact_host(self, client):
+        """cf.javfree.me exact host → 200."""
+        url = 'https://cf.javfree.me/HLIC/abc.jpg'
+        with patch(
+            'web.routers.search.requests.get',
+            return_value=self._make_mock_response(),
+        ) as mock_get:
+            response = client.get('/api/proxy-image', params={'url': url})
+        assert response.status_code == 200
+        mock_get.assert_called_once()
+
+    def test_cf_javfree_me_lookalike_subdomain_rejected(self, client):
+        """evil.cf.javfree.me and cf.javfree.me.evil.com → 403 (exact only)."""
+        with patch('web.routers.search.requests.get') as mock_get:
+            r1 = client.get(
+                '/api/proxy-image',
+                params={'url': 'https://evil.cf.javfree.me/x.jpg'},
+            )
+            r2 = client.get(
+                '/api/proxy-image',
+                params={'url': 'https://cf.javfree.me.evil.com/x.jpg'},
+            )
+        assert r1.status_code == 403
+        assert r2.status_code == 403
+        mock_get.assert_not_called()
+
 
 # ============ since 日期過濾 ============
 

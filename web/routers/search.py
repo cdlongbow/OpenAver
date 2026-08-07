@@ -31,7 +31,7 @@ from core.video_extensions import ZERO_SIZE_EXTENSIONS, get_video_extensions
 logger = get_logger(__name__)
 
 from core.database import VideoRepository, get_db_path as get_db_path, init_db
-from core.image_host_policy import proxy_rules
+from core.image_host_policy import proxy_dynamic_hosts, proxy_rules
 from core.maker_mapping import load_prefix_mapping
 from core.source_config import validate_source_id
 from core.source_settings import get_switchable_source_ids_ordered, is_uncensored_mode_effective
@@ -47,31 +47,111 @@ router = APIRouter(prefix="/api", tags=["search"])
 _MAKER_MAPPING = load_prefix_mapping()
 
 
+# 動態條目（metatube 圖片端點）path 的合法字元集。刻意**不含 `%`**——理由見
+# `_path_prefix_allowed()` docstring。
+_SAFE_PATH_SEGMENT = re.compile(r"^[A-Za-z0-9._~-]+$")
+
+
+def _path_prefix_allowed(path: str, prefix: str) -> bool:
+    """動態條目的 path 閘門：前綴相符 ＋ 其後每一段都在**正向允許清單**內。
+
+    CD-113c-11 要的是「無法判定的形狀一律 fail-closed」。本函式的前一版是
+    **列舉違規編碼**（`%2e`/`%2f` 解碼後比對 `.`／`..`），review 實測打穿五種：
+    `%252e%252e`（雙重編碼）、`%c0%ae`／`..%c0%af`（overlong UTF-8）、`..;`
+    （matrix parameter）、`%00`。每補一種就多一條規則，而下一種永遠在清單外——
+    這是列舉黑名單的結構性失敗，不是漏想幾個。
+
+    改成**列舉合法形狀**：前綴之後的每一段必須是 `[A-Za-z0-9._~-]+`，且不得是
+    `.`／`..`。`%` 完全不在字元集裡，所以**所有**百分比編碼把戲（不論幾層、
+    什麼編碼）在解碼之前就出局，不需要我們去猜對面伺服器怎麼正規化。
+
+    代價（已知 residual）：provider／番號若真的需要百分比編碼（非 ASCII），
+    那一片的**預覽**會 403 破圖。這是刻意接受的降級——它不是安全洞，而且 T2
+    的 403 log 會指名 `原因=path 不在白名單`，真的發生時查得到。
+    """
+    if not path.startswith(prefix):
+        return False
+    rest = path[len(prefix):]
+    for segment in rest.split("/"):
+        if segment in ("", ".", ".."):
+            return False
+        if not _SAFE_PATH_SEGMENT.match(segment):
+            return False
+    return True
+
+
+def _effective_port(parsed) -> int | None:
+    """Default-port normalisation: missing port → 443 (https) / 80 (else).
+
+    BE-SEC-01 family: `parsed.port` RAISES ValueError for a malformed port
+    (out of 0-65535, or non-numeric — `urlparse()` itself accepts those and
+    only `.port` blows up). Returning None instead of propagating keeps this
+    a fail-closed 403 rather than an unhandled 500.
+    """
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    return port or (443 if parsed.scheme == "https" else 80)
+
+
 def _is_allowed_image_url(url: str) -> bool:
+    # BE-SEC-01: single try/except-wrapped urlparse; reuse `parsed` everywhere
+    # below (including path / port checks). Never re-parse without try/except.
     try:
         parsed = urlparse(url)
     except Exception:
         return False
     host = (parsed.hostname or "").lower()
-    if parsed.scheme != "https":
-        # CD-113c-8：403 拒絕路徑必須記 host + scheme + 原因，不記完整 query
-        logger.warning(
-            "proxy_image 拒絕: host=%s scheme=%s 原因=scheme 不符",
-            host, parsed.scheme,
-        )
-        return False
     if not host:
         logger.warning(
             "proxy_image 拒絕: host=%s scheme=%s 原因=host 不在名單",
             host, parsed.scheme,
         )
         return False
+
+    # Branch 1: static registry (proxy_rules) — still forces https.
+    # Host match first, then this branch's own scheme rule (設計問題 4).
     exact_hosts, root_domains = proxy_rules()
-    if host in exact_hosts:
+    if host in exact_hosts or any(
+        host == root or host.endswith("." + root) for root in root_domains
+    ):
+        if parsed.scheme != "https":
+            logger.warning(
+                "proxy_image 拒絕: host=%s scheme=%s 原因=scheme 不符",
+                host, parsed.scheme,
+            )
+            return False
         return True
-    for root in root_domains:
-        if host == root or host.endswith("." + root):
-            return True
+
+    # Branch 2: dynamic entries (currently: connected metatube only).
+    # Scheme / port / path_prefix come from the entry itself (裁決 1 / 3).
+    for entry in proxy_dynamic_hosts():
+        if host != entry.host:
+            continue
+        if parsed.scheme not in entry.schemes:
+            logger.warning(
+                "proxy_image 拒絕: host=%s scheme=%s 原因=scheme 不符",
+                host, parsed.scheme,
+            )
+            return False
+        if entry.port is not None and _effective_port(parsed) != entry.port:
+            # _effective_port() 回 None（畸形 port）也落在這裡＝fail-closed
+            logger.warning(
+                "proxy_image 拒絕: host=%s scheme=%s 原因=port 不符",
+                host, parsed.scheme,
+            )
+            return False
+        if entry.path_prefix and not _path_prefix_allowed(
+            parsed.path, entry.path_prefix
+        ):
+            logger.warning(
+                "proxy_image 拒絕: host=%s scheme=%s 原因=path 不在白名單",
+                host, parsed.scheme,
+            )
+            return False
+        return True
+
     logger.warning(
         "proxy_image 拒絕: host=%s scheme=%s 原因=host 不在名單",
         host, parsed.scheme,
