@@ -16,6 +16,25 @@
 **掃描範圍刻意窄**（只有實際持有 metatube 連線目標的那幾個檔）：泛掃全庫的
 「變數叫 url 就不准進 log」會在無數不相干的地方誤報——那是 CD-113c-14 撤回全庫
 domain-literal 帳本時已經走過一次的判準（帳本的代價由每個不相干的 PR 支付）。
+
+## 別名追蹤（Codex PR#128 P2）
+
+第一版只比對**拼字**（名字是不是 `url`／`base_url`／`_base_url`），於是
+`target = self._base_url` 後面 `logger.warning("%s", target)` 就通得過——
+一次 routine rename 就繞過了守衛想擋的那件事本身。現在會追指派：
+
+- 追 `name = ...` 與 `self.attr = ...`；跑到不動點，所以 `a = X; b = a; c = b` 整條鏈都算髒
+- **RHS 是 `redact_metatube_url(...)` → LHS 乾淨**。沒有這一條，`client.py` 真正在用的
+  `_log_target` / `where` 會整批誤報——那才是會讓人把守衛刪掉的那種紅
+- 別名表**逐作用域**計算、只往內繼承，不橫向外溢（見
+  `test_alias_scope_does_not_leak_across_functions`）
+- flow-insensitive：log 呼叫寫在污染指派之前照樣抓（過近似往安全的那邊）
+
+**明示殘留**（認不出來就不動，不猜）：tuple unpack、subscript、walrus、`AugAssign`
+的指派目標不追蹤；decorator／參數預設值等「在外層作用域求值」的子節點按所在
+`_SCOPE_NODES` 歸屬，未做 `_enclosing_evaluated_children()` 那套精算（本 4 檔無此形狀）。
+拼字命中 `TAINTED_NAMES` 是洗不掉的下限——`url = redact_metatube_url(url)` 之後
+`url` 仍算髒，fail-closed，修法是換名字。
 """
 from __future__ import annotations
 
@@ -40,6 +59,14 @@ TAINTED_NAMES = frozenset({"url", "base_url", "_base_url"})
 
 LOG_METHODS = frozenset({"debug", "info", "warning", "error", "exception", "critical"})
 
+# 唯一能把污染洗掉的出口。指派的 RHS 是它的呼叫 → LHS 乾淨。
+_REDACTOR_NAME = "redact_metatube_url"
+
+# Python 的獨立作用域節點。別名只在自己那層 + 往內繼承，不橫向外溢——
+# 否則 A 函式裡的 `where = redact_metatube_url(...)` 會把 B 函式裡
+# 同名的 `where = self._base_url` 洗白，而且結果隨 AST 走訪順序飄。
+_SCOPE_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
 # 例外類別名：訊息會被下游 `logger.exception` / `%s` 印出來，等同 log 表面。
 EXC_SUFFIX = "Error"
 EXC_NAMES = frozenset({
@@ -48,26 +75,111 @@ EXC_NAMES = frozenset({
 })
 
 
-def _is_tainted_expr(node: ast.AST) -> bool:
+def _is_tainted_expr(node: ast.AST, aliases: dict[str, bool] | None = None) -> bool:
     """這個運算式會不會把原始 URL 的內容帶出來？
 
-    涵蓋三種寫法：裸名 `url`、屬性 `self._base_url`、以及 f-string 內插
-    （`f"{self._base_url}{path}"` 這種——第三輪的根因正是這一形狀）。
+    涵蓋四種寫法：裸名 `url`、屬性 `self._base_url`、f-string 內插
+    （`f"{self._base_url}{path}"` 這種——第三輪的根因正是這一形狀），以及
+    **改名後的暫存變數**（`target = self._base_url` 之後的 `target`，由
+    `aliases` 提供，見 `_resolve_aliases`）。
     **不涵蓋**經過 `redact_metatube_url(...)` 的呼叫結果，那正是允許的出口。
+
+    拼字命中 `TAINTED_NAMES` 是**洗不掉的下限**：即使有人寫
+    `url = redact_metatube_url(url)`，`url` 這個名字仍然算髒。fail-closed，
+    且與加入別名追蹤前的行為完全一致（零既有綠燈回歸）。修法是換個名字。
     """
+    aliases = aliases or {}
     if isinstance(node, ast.Name):
-        return node.id in TAINTED_NAMES
+        return node.id in TAINTED_NAMES or aliases.get(node.id, False)
     if isinstance(node, ast.Attribute):
-        return node.attr in TAINTED_NAMES
+        return node.attr in TAINTED_NAMES or aliases.get(node.attr, False)
     if isinstance(node, ast.JoinedStr):  # f-string
         return any(
-            _is_tainted_expr(v.value)
+            _is_tainted_expr(v.value, aliases)
             for v in node.values
             if isinstance(v, ast.FormattedValue)
         )
     if isinstance(node, ast.BinOp):  # "a" + url
-        return _is_tainted_expr(node.left) or _is_tainted_expr(node.right)
+        return _is_tainted_expr(node.left, aliases) or _is_tainted_expr(node.right, aliases)
     return False
+
+
+def _is_redactor_call(node: ast.AST) -> bool:
+    """RHS 是 `redact_metatube_url(...)`（或 `mod.redact_metatube_url(...)`）？"""
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id == _REDACTOR_NAME
+    if isinstance(func, ast.Attribute):
+        return func.attr == _REDACTOR_NAME
+    return False
+
+
+def _assign_key(target: ast.AST) -> str | None:
+    """只認 `name = ...` 與 `self.attr = ...`。
+
+    tuple unpack／subscript／walrus／AugAssign 一律回 None ＝ 不追蹤。
+    「認不出來就不動」而不是猜——猜錯的方向是誤報，誤報會讓人把守衛刪掉
+    （同 CD-113c-14 撤回全庫帳本的判準）。這些形狀是明示的殘留，不是遺漏：
+    真的有人用 tuple unpack 搬 URL 時，本守衛看不到。
+    """
+    if isinstance(target, ast.Name):
+        return target.id
+    if isinstance(target, ast.Attribute):
+        return target.attr
+    return None
+
+
+def _own_nodes(scope: ast.AST):
+    """scope 自己那一層的所有節點——**不穿透**巢狀 def/class/lambda。"""
+    stack = list(ast.iter_child_nodes(scope))
+    while stack:
+        node = stack.pop()
+        yield node
+        if isinstance(node, _SCOPE_NODES):
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+
+
+def _child_scopes(scope: ast.AST):
+    """scope 內最近一層的巢狀作用域節點。"""
+    stack = list(ast.iter_child_nodes(scope))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, _SCOPE_NODES):
+            yield node
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+
+
+def _resolve_aliases(scope: ast.AST, inherited: dict[str, bool]) -> dict[str, bool]:
+    """算出本作用域內每個被指派的名字乾不乾淨（繼承外層結果）。
+
+    **flow-insensitive**：先把整個作用域的指派收齊再定案，不管文字順序。
+    因此「log 呼叫寫在污染指派之前」也照樣抓得到——過近似的方向是安全的那一邊。
+
+    **fixpoint**：`a = self._base_url; b = a; c = b` 這種鏈，單趟會因為
+    走訪順序而漏掉後段，跑到不動點為止才收斂。
+    """
+    aliases = dict(inherited)
+    assigns = [
+        n for n in _own_nodes(scope)
+        if isinstance(n, ast.Assign) and len(n.targets) == 1
+    ]
+    changed = True
+    while changed:
+        changed = False
+        for node in assigns:
+            key = _assign_key(node.targets[0])
+            if key is None:
+                continue
+            clean = _is_redactor_call(node.value)
+            state = False if clean else _is_tainted_expr(node.value, aliases)
+            if aliases.get(key) != state:
+                aliases[key] = state
+                changed = True
+    return aliases
 
 
 def _is_log_call(node: ast.Call) -> bool:
@@ -85,10 +197,9 @@ def _is_exception_call(node: ast.Call) -> bool:
     return node.func.id in EXC_NAMES or node.func.id.endswith(EXC_SUFFIX)
 
 
-def _violations(path: pathlib.Path) -> list[tuple[int, str]]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    out: list[tuple[int, str]] = []
-    for node in ast.walk(tree):
+def _scan_scope(scope: ast.AST, inherited: dict[str, bool], out: list) -> None:
+    aliases = _resolve_aliases(scope, inherited)
+    for node in _own_nodes(scope):
         if not isinstance(node, ast.Call):
             continue
         if _is_log_call(node):
@@ -99,10 +210,18 @@ def _violations(path: pathlib.Path) -> list[tuple[int, str]]:
             continue
         args = list(node.args) + [kw.value for kw in node.keywords]
         for arg in args:
-            if _is_tainted_expr(arg):
+            if _is_tainted_expr(arg, aliases):
                 out.append((node.lineno, kind))
                 break
-    return out
+    for child in _child_scopes(scope):
+        _scan_scope(child, aliases, out)
+
+
+def _violations(path: pathlib.Path) -> list[tuple[int, str]]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    out: list[tuple[int, str]] = []
+    _scan_scope(tree, {}, out)
+    return sorted(out)   # _own_nodes 是 LIFO 走訪，排序讓行號可讀且結果穩定
 
 
 @pytest.mark.parametrize("rel", WATCHED_FILES)
@@ -147,6 +266,16 @@ _RED_SNIPPETS = [
     ('原始 url 進例外訊息', 'raise MetatubeAuthError(f"auth failed for {url}")'),
     ('字串相加', 'logger.info("at " + url)'),
     ('keyword 引數', 'logger.info("x", extra=url)'),
+    # ---- Codex PR#128 P2：改名暫存變數（一次 routine refactor 就能繞過拼字比對）----
+    ('一跳改名', 'target = self._base_url\nlogger.warning("%s", target)'),
+    ('多跳改名鏈', 'a = self._base_url\nb = a\nc = b\nlogger.info(c)'),
+    ('改名後才進 f-string', 'tgt = self._base_url\nlogger.debug(f"GET {tgt}{path}")'),
+    ('屬性改名（self.x = self._base_url 鏡像形狀）',
+     'class C:\n    def m(self):\n        self._cached = self._base_url\n'
+     '        logger.debug("GET %s", self._cached)'),
+    ('log 呼叫寫在污染指派之前（flow-insensitive 要照抓）',
+     'def f():\n    logger.info("%s", t)\n    t = self._base_url'),
+    ('改名後進例外訊息', 'tgt = url\nraise MetatubeError(f"failed {tgt}")'),
 ]
 
 _GREEN_SNIPPETS = [
@@ -155,6 +284,16 @@ _GREEN_SNIPPETS = [
     ('不相干的變數', 'logger.info("count=%s", total)'),
     ('redacted 變數', 'logger.debug("GET %s", where)'),
     ('非 logger 物件的同名方法', 'tracker.warning(url)'),
+    # ---- 別名追蹤**不得**誤傷的形狀（負向那半；client.py 現況就是前兩條）----
+    ('redactor 結果改名（client.py 的 _log_target 形狀）',
+     'target = redact_metatube_url(url)\nlogger.warning("%s", target)'),
+    ('redactor 結果多跳改名', 'a = redact_metatube_url(base_url)\nb = a\nlogger.info(b)'),
+    ('redactor 結果改名後進 f-string（client.py 的 where 形狀）',
+     'tgt = redact_metatube_url(base_url)\nlogger.debug(f"GET {tgt}{path}")'),
+    ('不相干變數改名（不能因為存在別的指派就誤傷）',
+     'count = total\nlogger.info("n=%s", count)'),
+    ('同名變數在不同函式：一邊乾淨不得洗白另一邊的髒（此處驗乾淨那邊）',
+     'def a():\n    w = redact_metatube_url(url)\n    logger.info("%s", w)'),
 ]
 
 
@@ -171,3 +310,28 @@ def test_guard_does_not_overreach(label, src, tmp_path):
     f = tmp_path / "m.py"
     f.write_text(src, encoding="utf-8")
     assert _violations(f) == [], f"{label}：誤報"
+
+
+def test_alias_scope_does_not_leak_across_functions(tmp_path):
+    """兩個函式用**同一個變數名**，一邊乾淨一邊髒——只能紅髒的那一邊。
+
+    這條鎖的是別名追蹤最容易寫錯的地方：若別名表做成整檔共用一份，
+    `safe()` 裡的 `w = redact_metatube_url(...)` 會把 `leaky()` 裡的
+    `w = self._base_url` 洗白（或反過來誤傷），而且結果隨 AST 走訪順序飄——
+    「有紅」不等於「紅對地方」，所以這裡驗的是**幾條、在第幾行**。
+    """
+    src = (
+        "def safe():\n"
+        "    w = redact_metatube_url(base_url)\n"
+        "    logger.info('%s', w)\n"          # :3 —— 不得紅
+        "\n"
+        "def leaky():\n"
+        "    w = self._base_url\n"
+        "    logger.info('%s', w)\n"          # :7 —— 必須紅
+    )
+    f = tmp_path / "m.py"
+    f.write_text(src, encoding="utf-8")
+    assert _violations(f) == [(7, "logger")], (
+        "應該只紅 leaky() 那一行（:7）；若連 :3 一起紅＝別名表外溢誤傷，"
+        "若完全不紅＝乾淨那邊把髒的洗白了"
+    )
