@@ -106,7 +106,25 @@ def download_actress_photo(name: str, photo_url: str, photo_source: str) -> bool
             headers["Referer"] = referer
 
         # 1. 下載到 tmp
-        resp = requests.get(photo_url, headers=headers, timeout=15)
+        # SSRF guard: 不跟隨 redirect（CD-113c-7）。白名單只驗原始 URL，
+        # 若對方 30x 到內網，跟隨會繞過驗證。照抄 core/metatube/client.py。
+        resp = requests.get(
+            photo_url, headers=headers, timeout=15, allow_redirects=False
+        )
+
+        # 3xx 獨立分支：記 host-only log 後 return False，不走下方帶完整 URL 的失敗 log
+        if 300 <= resp.status_code < 400:
+            location = resp.headers.get("Location", "")
+            try:
+                loc_host = urlparse(location).hostname or "<unparseable>"
+            except Exception:
+                loc_host = "<unparseable>"
+            req_host = urlparse(photo_url).hostname or ""
+            logger.warning(
+                "[actress_photo] 拒絕 3xx: host=%s status=%s location_host=%s",
+                req_host, resp.status_code, loc_host,
+            )
+            return False
 
         if resp.status_code != 200:
             logger.warning("[actress_photo] 下載失敗，HTTP %s：%s", resp.status_code, photo_url)

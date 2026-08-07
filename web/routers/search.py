@@ -52,10 +52,19 @@ def _is_allowed_image_url(url: str) -> bool:
         parsed = urlparse(url)
     except Exception:
         return False
-    if parsed.scheme != "https":
-        return False
     host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https":
+        # CD-113c-8：403 拒絕路徑必須記 host + scheme + 原因，不記完整 query
+        logger.warning(
+            "proxy_image 拒絕: host=%s scheme=%s 原因=scheme 不符",
+            host, parsed.scheme,
+        )
+        return False
     if not host:
+        logger.warning(
+            "proxy_image 拒絕: host=%s scheme=%s 原因=host 不在名單",
+            host, parsed.scheme,
+        )
         return False
     exact_hosts, root_domains = proxy_rules()
     if host in exact_hosts:
@@ -63,6 +72,10 @@ def _is_allowed_image_url(url: str) -> bool:
     for root in root_domains:
         if host == root or host.endswith("." + root):
             return True
+    logger.warning(
+        "proxy_image 拒絕: host=%s scheme=%s 原因=host 不在名單",
+        host, parsed.scheme,
+    )
     return False
 
 
@@ -88,8 +101,21 @@ def proxy_image(url: str = Query(..., description="圖片 URL")):
             'Referer': referer,
         }
 
-        resp = requests.get(url, headers=headers, timeout=10)
-        if resp.status_code == 200:
+        # SSRF guard: 不跟隨 redirect（CD-113c-7）。白名單只驗原始 URL，
+        # 若對方 30x 到內網，跟隨會繞過驗證。照抄 core/metatube/client.py。
+        resp = requests.get(url, headers=headers, timeout=10, allow_redirects=False)
+        if 300 <= resp.status_code < 400:
+            location = resp.headers.get("Location", "")
+            try:
+                loc_host = urlparse(location).hostname or "<unparseable>"
+            except Exception:
+                loc_host = "<unparseable>"
+            req_host = urlparse(url).hostname or ""
+            logger.warning(
+                "proxy_image 拒絕 3xx: host=%s status=%s location_host=%s",
+                req_host, resp.status_code, loc_host,
+            )
+        elif resp.status_code == 200:
             content_type = resp.headers.get('Content-Type', 'image/jpeg')
             return Response(
                 content=resp.content,

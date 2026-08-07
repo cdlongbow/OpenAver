@@ -4,10 +4,11 @@ test_api_search.py - 搜尋 API 整合測試
 使用 mocker.patch Mock 爬蟲回應，驗證搜尋 API 行為。
 """
 
+import logging
 import pytest
 import json
 from pathlib import Path
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock, call, ANY
 
 
 def load_fixture(filename: str) -> dict:
@@ -1115,6 +1116,53 @@ class TestProxyImageSSRF:
             response = client.get('/api/proxy-image', params={'url': url})
         assert response.status_code == 403
         mock_get.assert_not_called()
+
+    # ---- TASK-113c-T2: redirect 不跟隨 ＋ 403 log ----
+
+    def test_ssrf_redirect_not_followed(self, client, caplog):
+        """白名單內 host 回 302 指向內網 → 不跟隨、回非 200，且 get 帶 allow_redirects=False"""
+        url = 'https://pics.dmm.co.jp/mono/movie/adult/sone103/sone103pl.jpg'
+        mock_resp = MagicMock()
+        mock_resp.status_code = 302
+        mock_resp.content = b''
+        mock_resp.headers = {'Location': 'http://127.0.0.1/evil', 'Content-Type': 'text/html'}
+
+        with caplog.at_level(logging.WARNING, logger='OpenAver.web.routers.search'):
+            with patch(
+                'web.routers.search.requests.get', return_value=mock_resp
+            ) as mock_get:
+                response = client.get('/api/proxy-image', params={'url': url})
+
+        assert response.status_code != 200
+        mock_get.assert_called_once_with(
+            url, headers=ANY, timeout=10, allow_redirects=False
+        )
+        # 3xx 分支獨立 log：原始 host、status、Location host-only
+        assert any(
+            'pics.dmm.co.jp' in r.getMessage()
+            and '302' in r.getMessage()
+            and '127.0.0.1' in r.getMessage()
+            for r in caplog.records
+        ), f"expected 3xx warning with host/status/Location host, got: {caplog.text!r}"
+        # MUST NOT：完整 Location URL（含 path）
+        assert 'http://127.0.0.1/evil' not in caplog.text
+
+    def test_ssrf_403_logs_host_without_query(self, client, caplog):
+        """403 拒絕路徑記 host/scheme/原因，且不洩漏 query 中的 token"""
+        url = 'https://evil.com/image.jpg?token=secret123'
+
+        with caplog.at_level(logging.WARNING, logger='OpenAver.web.routers.search'):
+            with patch('web.routers.search.requests.get') as mock_get:
+                response = client.get('/api/proxy-image', params={'url': url})
+
+        assert response.status_code == 403
+        mock_get.assert_not_called()
+        assert any(
+            'evil.com' in r.getMessage()
+            and 'host 不在名單' in r.getMessage()
+            for r in caplog.records
+        ), f"expected 403 warning with host + reason, got: {caplog.text!r}"
+        assert 'secret123' not in caplog.text
 
 
 # ============ since 日期過濾 ============
