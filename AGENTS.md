@@ -1,5 +1,53 @@
 # OpenAver - Codex Review Guidelines
 
+## Product context and severity calibration
+
+OpenAver is a **single-user, LAN-only desktop application** for managing a personal
+video library. The user is also the operator. There is no multi-tenancy, no account
+system, and **no hostile authenticated LAN user in the default threat model**;
+external access is delegated to the user's Tailscale / Cloudflare Zero Trust rather
+than built in.
+
+Almost all metadata here — covers, NFO contents, sample images, focal coordinates — is
+**cheaply recoverable**: by re-scraping, by recomputing, or by re-entering one small
+adjustment. Grade severity by **recovery cost**, not by whether data is technically
+"regenerable", and not by whether a defect exists in the abstract.
+
+- **P0** — irreversibly destroys something the user cannot get back: the **video files
+  themselves** (rename / move / delete / content overwrite), or **user-authored metadata
+  with no external source and no automatic reconstruction** — custom tags, aliases,
+  primary names. (A settings toggle is user-authored but trivially reset; not P0.)
+- **P1** — **silent × batch × unattributable**: wrong data written across many items, no
+  notification, the screen looks normal, and afterwards the user cannot tell which items
+  were touched. Recovery cost scales with library size. Also: **leaked secrets or
+  credentials**.
+- **P2** — user-visible and wrong, but **single-item, visible at the time, and fixed by
+  re-scraping or re-running**. Or a real weakening of a security boundary that the stated
+  threat model actually covers.
+- **P3** — everything else: internal consistency, theoretical edge cases requiring input a
+  real user cannot produce, **a guard's completeness against additional bypasses (false
+  negatives)** — narrowly, see the two-mode rule under "Out of scope" — and cosmetics.
+
+**Explicitly NOT P0/P1 on their own**: covers, NFO contents, sample images, focal
+coordinates. Overwriting them for a single title the user is looking at is an
+inconvenience, not a loss. **The same overwrite applied silently across a batch IS P1** —
+severity comes from the silence and the scale, not from the file type.
+
+**Conversely, never stop at the surface of a finding.** A predicate that reads like a
+trivial boolean edge case may reach `shutil.move()` on the user's video file — that is
+P0. **Trace to the final sink (which file / which DB row / which flow) before assigning
+severity.**
+
+An issue requiring an attacker capability outside the stated threat model is P3
+regardless of how severe the consequence would be if triggered. Say so explicitly
+rather than omitting it.
+
+### Reporting volume
+
+Report **all blockers (P0/P1)**, plus at most **three** non-blocking suggestions per
+round, ordered by blast radius. If items fell below the cut, say how many and in one
+line what category — do not expand them.
+
 ## Review guidelines
 
 ### Review stages and scope
@@ -34,7 +82,7 @@
 - No SQL injection — all database queries must use parameterized statements.
 - No unvalidated user input used directly in file system operations (`open()`, `Path()`, `os.path`).
 - No hardcoded secrets, API keys, passwords, or tokens in source code.
-- **SSRF is best-effort, NOT a default blocker.** OpenAver's default threat model is a personal, LAN-only tool; external access is delegated to the user's Tailscale / Cloudflare Zero Trust rather than built in (see `feature/epic-synology.md` "存取控制與威脅模型"). The default model does not include a hostile authenticated LAN user; residual browser-origin risks (DNS rebinding / malicious webpages) are handled as defense-in-depth, not merge blockers. Review missing SSRF hardening in **new** backend URL-fetching code as a suggestion/P3, not P0/P1, and do not block a PR solely on absent SSRF guards.
+- **SSRF is best-effort, NOT a default blocker.** Per the threat model stated at the top of this file, the default model does not include a hostile authenticated LAN user; residual browser-origin risks (DNS rebinding / malicious webpages) are handled as defense-in-depth, not merge blockers. Review missing SSRF hardening in **new** backend URL-fetching code as a suggestion/P3, not P0/P1, and do not block a PR solely on absent SSRF guards.
   - Existing mitigations (private-IP rejection, no-redirect-follow, image-host allowlist, LAN opt-in) should not be casually removed or weakened.
   - Still flag clear regressions in already-hardened endpoints, unauthenticated arbitrary-request proxy behavior, or code that contradicts a feature's own stated security contract.
 
@@ -46,7 +94,11 @@
   - `f"file:///{...}"` (manual URI construction)
   - `replace('/', '\\')` for path conversion
   - `startswith('file:///')` + manual handling
-- If you see any of these patterns, flag as P0.
+- These patterns are already enforced mechanically by `TestPathContract` in
+  `tests/unit/test_frontend_lint.py` (4 guards, scanning every `.py` under
+  `core/ web/ windows/ tests/`). **Do not re-run that check by hand, and do not assign a
+  severity by pattern match** — if a violation reaches review at all, grade it by the
+  product impact of what the wrong path actually writes to.
 
 ### Alpine.js
 
@@ -78,13 +130,39 @@
 
 ### Out of scope (handled by automated tooling)
 
-> **v0.11.11 (feature/96 test-deflation)**: For ordinary product-code PRs, do NOT redo the
+> **v0.11.11 (test-deflation)**: For ordinary product-code PRs, do NOT redo the
 > mechanical checks that unchanged lint rules already cover, and trust the author's
-> lint/test summary. This exemption does NOT apply to changes to the lint/test
-> infrastructure itself, to guard migration or deletion, or to coverage/exhaustiveness
-> claims. Those must be reviewed statically for target set, scope, first-vs-all match,
-> count/order, positive/negative polarity, anchor-absent behavior, and granularity
-> equivalence with the guard they replace — still without running lint or tests.
+> lint/test summary.
+>
+> **Guards and tests are reviewed in two separate modes. Do not conflate them.**
+>
+> 1. **Guard migration or deletion — reviewed strictly.** If a guard is replaced or removed
+>    and the replacement catches strictly less than the original, that is a **silent loss of
+>    coverage**, i.e. a regression. Check target set, scope, first-vs-all match, count/order,
+>    positive/negative polarity, anchor-absent behaviour, and granularity equivalence with
+>    the guard it replaces — still without running lint or tests. Grade by the product impact
+>    of what is **no longer caught**.
+>
+> 2. **Guard absolute strength — always P3, never a merge blocker.** "This guard can be
+>    bypassed by renaming a variable"; "this guard does not recognise `.format()`". A
+>    bypassable guard is strictly better than no guard, and completeness against an
+>    open-ended language is not achievable. Report it once as a suggestion and move on — do
+>    **not** re-raise the same guard file across rounds. Empirically, three guards in this
+>    repository were escalated this way and none was won by continued patching; two were
+>    resolved by reverting and one by replacing the mechanism.
+>
+>    **"Absolute strength" means *only* additional false-negative bypasses.** It does **not**
+>    cover, and the P3-never-block rule does **not** apply to:
+>    - **loss of existing coverage** (that is mode 1 above — a regression),
+>    - **false positives on valid code** (the guard blocks legitimate work),
+>    - **crashes, hangs, or altered test execution** (one intermediate version of a guard in
+>      this repository hung the entire pytest run — no traceback, no failure list, just a job
+>      that never ended).
+>
+>    Those three are **defects in the change itself**, not strength findings. Report them as
+>    such; they block regardless of P-level, because they break the development loop. When
+>    the defect was introduced by this same change, **reverting is the expected resolution** —
+>    do not iterate forward on it.
 >
 > When a guard is genuinely missing, adding a lint rule is the fix, not a pytest string
 > test — but a missing guard does NOT by itself lower severity. An actual product defect
@@ -152,4 +230,4 @@ If a regression of this class arises, the fix is:
 - When migrating a guard to lint, port it at the **same scan granularity** as the original
   (whole-file / element-scoped / attribute-value / method-body window) and prefer
   fail-closed over fail-open — 7 scope-narrowing regressions of exactly this kind were
-  caught by review during feature/96.
+  caught by review during the v0.11.11 test-deflation.
