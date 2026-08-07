@@ -569,7 +569,7 @@ _TOOLS: list[dict] = [
     },
     {
         "name": "proxy_image",
-        "description": "代理下載遠端圖片 — 解決 Cloudflare / 防盜鏈問題。搜尋結果的 cover 和 sample_images URL 是遠端直連，AI agent 直接 curl 會被擋。必須透過此端點下載。URL 必須屬於 SSRF 白名單域名（scraper 圖片來源 javbus / dmm / javdb / jav321 等，以及女優圖片 cdn.jsdelivr.net / upload.wikimedia.org / graphis.ne.jp / minnano-av.com），scheme 須為 https。非白名單 host 一律回 403。",
+        "description": "代理下載遠端圖片 — 解決 Cloudflare / 防盜鏈問題。搜尋結果的 cover 和 sample_images URL 是遠端直連，AI agent 直接 curl 會被擋。必須透過此端點下載。URL 必須屬於 SSRF 白名單域名（scraper 圖片來源 javbus / dmm / javdb / jav321 等，以及女優圖片 cdn.jsdelivr.net / upload.wikimedia.org / graphis.ne.jp / minnano-av.com），外部圖床一律須為 https。另：若使用者目前**已連線** metatube，該台伺服器的圖片端點（path 必須以 /v1/images/ 開頭）亦放行，scheme 依其設定的 base_url（LAN 自架可能是 http）；未連線時該放行即消失。非白名單 host、非法 path、或跟隨 redirect 的來源一律回 403/404。",
         "method": "GET",
         "path": "/api/proxy-image",
         "input_schema": {
