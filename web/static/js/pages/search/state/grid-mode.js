@@ -4,6 +4,9 @@
  */
 import { POSTER_CROP_MAX_W } from '@/shared/breakpoints.js';
 import { detectSwipe } from '@/shared/swipe.js';
+// TASK-113c-T7: preview 失敗時決定要不要改試 cover（同一顆純函式供 hero/grid 共用，
+// 見 result-card.js 頂部 export，裁決 2：純函式回傳原始 URL，proxy 包裹留在呼叫點）。
+import { isStaleCoverError, shouldFallbackToCover } from './result-card.js';
 
 export function searchStateGridMode() {
     return {
@@ -540,10 +543,46 @@ export function searchStateGridMode() {
 
     /**
      * 標記 Grid 圖片載入失敗
+     * TASK-113c-T7: preview 失敗且有可用的 cover fallback 時只設 result._previewFailed，
+     * 不進 _gridImageErrors（Alpine 重渲染 :src 改用 cover）；兩者皆失敗才進
+     * _gridImageErrors（既有行為，:781 x-show 隱藏該圖）。
      * @param {number} index - 卡片索引
+     * @param {object} result - 該卡片對應的候選物件
      */
-    markImageError(index) {
+    markImageError(index, result) {
+        if (shouldFallbackToCover(result)) {
+            result._previewFailed = true;
+            return;
+        }
         this._gridImageErrors = new Set([...this._gridImageErrors, index]);
+    },
+
+    /**
+     * Hero Lightbox 圖片載入失敗
+     * TASK-113c-T7: preview 失敗且有可用的 cover fallback 時只設 result._previewFailed
+     * （Alpine 重渲染 :src 改用 cover，見 search.html hero lightbox :src）；兩者皆失敗才
+     * latch 既有的 _heroLightboxImageError（既有行為，placeholder 顯示）。
+     */
+    handleHeroLightboxError(event) {
+        // 女優燈箱：沿用既有行為，本 task 不碰女優那半邊（TASK-113c-T7 裁決 1）。
+        if (this.actressLightboxMode && this.actressLightboxMode()) {
+            this._heroLightboxImageError = true;
+            return;
+        }
+        const video = this.currentLightboxVideo();
+        // stale guard（Sonnet review P2）：燈箱 <img> 單一元素跨候選重用，使用者按
+        // 上/下一張時，前一張還在飛的請求可能晚一步失敗。此時 currentLightboxVideo()
+        // 已經是**新的**那一筆——沒有這道 guard 會把 _previewFailed 寫到無辜的候選上，
+        // 而它是持久旗標（不像舊的頁面層 _heroLightboxImageError 切走就重置），
+        // 那一筆會整個 session 停在 cover。src 對不上 → 這發 error 不描述當前這張，
+        // 直接忽略（Alpine 已經把 :src 換成新的了，新的失敗會再送一發對得上的）。
+        const actualSrc = event?.target?.getAttribute?.('src') || '';
+        if (isStaleCoverError(actualSrc, this.resolveCoverUrl(video))) return;
+        if (shouldFallbackToCover(video)) {
+            video._previewFailed = true;
+            return;
+        }
+        this._heroLightboxImageError = true;
     },
 
     // ==================== T8: Sample Gallery Methods ====================

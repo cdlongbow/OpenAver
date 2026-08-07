@@ -227,30 +227,47 @@ class TestCoverStateGuard:
 
     RESULT_CARD_JS = PROJECT_ROOT / "web/static/js/pages/search/state/result-card.js"
 
+    @staticmethod
+    def _method_body(content: str, name: str) -> str:
+        """取出方法的**真實主體**（從 `name(` 到同縮排的 `\n    },`）。
+
+        原本下面三支 handleCoverError 守衛用「起點 + 800 字元」當方法體。那是個脆弱的
+        proxy，兩個方向都會騙人：
+          - **假紅**：在方法開頭加一段註解，就會把後段的 token 擠出視窗——113c-T7 實際
+            踩到（`_coverRequestId` 明明還在方法裡，只是落到第 800 字元之後；當時真實
+            方法體是 2141 字元）。
+          - **假綠**：方法變短時視窗會吃進**下一個方法**的內容，用鄰居的 token 冒充。
+        改成抓真主體後兩個方向都封掉。（同一 class 內 `_resetCoverState` 的 500 字元
+        視窗有同樣的脆弱性，但目前判定正確、不在本次修正範圍，刻意不動。）
+        """
+        idx = content.index(name + "(")
+        end = content.index("\n    },", idx) + len("\n    },")
+        return content[idx:end]
+
     def test_cover_error_has_get_attribute_guard(self):
         """result-card.js 的 handleCoverError 內含 getAttribute"""
         content = self.RESULT_CARD_JS.read_text(encoding='utf-8')
-        match = re.search(r'handleCoverError\s*\(', content)
-        assert match, "result-card.js 缺少 handleCoverError 方法定義"
-        method_body = content[match.start():match.start() + 800]
+        assert 'handleCoverError(' in content, \
+            "result-card.js 缺少 handleCoverError 方法定義"
+        method_body = self._method_body(content, 'handleCoverError')
         assert 'getAttribute' in method_body, \
             "handleCoverError 缺少 getAttribute — Phase 1 stale guard 必須用 getAttribute('src') 比對"
 
     def test_cover_error_has_cover_url_comparison(self):
         """result-card.js 的 handleCoverError 內含 coverUrl"""
         content = self.RESULT_CARD_JS.read_text(encoding='utf-8')
-        match = re.search(r'handleCoverError\s*\(', content)
-        assert match, "result-card.js 缺少 handleCoverError 方法定義"
-        method_body = content[match.start():match.start() + 800]
+        assert 'handleCoverError(' in content, \
+            "result-card.js 缺少 handleCoverError 方法定義"
+        method_body = self._method_body(content, 'handleCoverError')
         assert 'coverUrl' in method_body, \
             "handleCoverError 缺少 coverUrl — Phase 1 stale guard 必須與 coverUrl() 比對"
 
     def test_cover_error_has_request_id_guard(self):
         """result-card.js 的 handleCoverError 內含 _coverRequestId"""
         content = self.RESULT_CARD_JS.read_text(encoding='utf-8')
-        match = re.search(r'handleCoverError\s*\(', content)
-        assert match, "result-card.js 缺少 handleCoverError 方法定義"
-        method_body = content[match.start():match.start() + 800]
+        assert 'handleCoverError(' in content, \
+            "result-card.js 缺少 handleCoverError 方法定義"
+        method_body = self._method_body(content, 'handleCoverError')
         assert '_coverRequestId' in method_body, \
             "handleCoverError 缺少 _coverRequestId — Phase 2 timer 競態守衛必須檢查 request ID"
 
@@ -299,9 +316,12 @@ class TestCoverStateGuard:
     def test_cover_error_guards_empty_cover_url(self):
         """result-card.js 的 handleCoverError 在 _coverRetried 之前有 coverUrl 空值 early return"""
         content = self.RESULT_CARD_JS.read_text(encoding='utf-8')
-        match = re.search(r'handleCoverError\s*\(', content)
-        assert match, "result-card.js 缺少 handleCoverError 方法定義"
-        method_body = content[match.start():match.start() + 800]
+        assert 'handleCoverError(' in content, \
+            "result-card.js 缺少 handleCoverError 方法定義"
+        # 與上面三支同一把量尺（見 _method_body docstring）。ordering 型守衛用固定
+        # 字元視窗尤其危險：只要有一邊的 token 落在視窗外，`find()` 回 -1，
+        # `-1 < retried_pos` 恆真——**斷言會靜默退化成永遠成立**。
+        method_body = self._method_body(content, 'handleCoverError')
         # coverUrl() 取值必須在 _coverRetried check 之前
         cover_url_pos = method_body.find('coverUrl')
         retried_pos = method_body.find('_coverRetried')

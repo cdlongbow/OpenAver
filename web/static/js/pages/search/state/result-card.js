@@ -10,6 +10,39 @@ export function parseActorsInput(str) {
     return str.split(/[、，,]/).map(s => s.trim()).filter(Boolean);
 }
 
+// TASK-113c-T7（Opus 審核裁決 2）：回傳「原始圖片 URL」，不是 proxy URL——proxy 包裹
+// 留在各呼叫點自行處理（與既有 search-flow.js::resolveStagingCoverUrl 契約一致）。
+// 契約：`_previewFailed` 為 truthy → 只用 cover（preview 已知失敗，不再嘗試）；
+// 否則沿用既有 `preview_cover_url || cover` 優先序（FE-JS-01：|| 對空字串 fallback 是
+// 刻意行為，preview_cover_url 恆為字串，非 null/undefined）。
+export function resolveResultCoverUrl(result) {
+    if (!result) return '';
+    if (result._previewFailed) return result.cover || '';
+    return result.preview_cover_url || result.cover || '';
+}
+
+// TASK-113c-T7：決定「這次 preview 失敗要不要觸發 cover fallback」。
+// 只有「還沒 fallback 過」且「preview/cover 都存在且不同」才值得換——已經在用 cover
+// （_previewFailed 已 true）、沒有 cover 可退、或 preview 跟 cover 根本是同一個 URL，
+// 都應該落回既有 PHASE 1/2 行為（cache-bust 重試／直接 latch）。
+// TASK-113c-T7（Sonnet review P2）：這一發 `@error` 是不是「已經切走的那一張」遲到的？
+// 燈箱／detail 的 `<img>` 都是**單一元素跨候選重用**，使用者按下一張時，上一張還在飛的
+// 請求失敗後才回來。舊碼寫的是頁面層 boolean（切走即被重置，寫錯了也無害）；本 task 改
+// 寫的是**跟著資料走的持久旗標** `_previewFailed`——寫到錯的候選上，那一筆會整個 session
+// 停在 cover、明明 preview 是好的。所以持久旗標必須配 stale guard。
+// `expectedRawUrl` 為空（如女優燈箱無影片）→ 不判 stale，交給呼叫端既有分支處理。
+export function isStaleCoverError(actualSrc, expectedRawUrl) {
+    if (!expectedRawUrl || !actualSrc) return false;
+    return actualSrc !== `/api/proxy-image?url=${encodeURIComponent(expectedRawUrl)}`;
+}
+
+export function shouldFallbackToCover(result) {
+    if (!result || result._previewFailed) return false;
+    const preview = result.preview_cover_url;
+    const cover = result.cover;
+    return !!preview && !!cover && preview !== cover;
+}
+
 export function searchStateResultCard() {
     return {
     // ===== T1c: Result Card Computed =====
@@ -62,11 +95,18 @@ export function searchStateResultCard() {
         return c.translated_title || this.chineseTitle() || '-';
     },
 
+    // TASK-113c-T7：模板（hero lightbox / grid card）呼叫的 Alpine 方法包裝，
+    // 委派給純函式 resolveResultCoverUrl（module-level export，見上方）。
+    // 契約：回傳「原始圖片 URL」，proxy 包裹留在各呼叫點（裁決 2）。
+    resolveCoverUrl(result) {
+        return resolveResultCoverUrl(result);
+    },
+
     coverUrl() {
         const c = this.current();
-        // TASK-113c-T3b: preview_cover_url 優先（破圖修復），FE-JS-01：|| 對空字串
-        // fallback 回 cover 是本任務要的行為（preview_cover_url 恆為字串，非 null/undefined）
-        const cover = c.preview_cover_url || c.cover;
+        // TASK-113c-T3b/T7: preview_cover_url 優先（破圖修復），_previewFailed 為 true
+        // 時改用 cover（見 resolveResultCoverUrl）。proxy 包裹仍在此呼叫點處理（裁決 2）。
+        const cover = this.resolveCoverUrl(c);
         if (!cover) return '';
         return `/api/proxy-image?url=${encodeURIComponent(cover)}`;
     },
@@ -478,6 +518,16 @@ export function searchStateResultCard() {
 
     // ===== T1c: Cover Error =====
 
+    // TASK-113c-T7: preview 失敗且有 cover fallback 時（shouldFallbackToCover）跳過
+    // PHASE 1 的 cache-bust 重試、直接改試 cover——對「host 不在白名單→403」這個失敗
+    // 模式，cache-bust 本來就無效。
+    //
+    // **請求數不變式（實測值，非估算）**：fallback 只多送一個請求（preview 那一發），
+    // cover 這一棒保有它原本的預算。CDP 實測 2026-08-07：
+    //   cover 成功 → preview(403) + cover(200) = **2**
+    //   cover 也失敗 → preview(403) + cover(403) + cover&_t=(403) = **3**，然後 latch
+    // 三個都停在 PHASE 2 的 placeholder，沒有迴圈。卡片初版 DoD 寫「一律 ≤2」是錯的
+    // ——那個數字沒把 cover 自己既有的重試預算算進去。
     handleCoverError() {
         const img = this.$refs.coverImg;
         if (!img) return;
@@ -485,6 +535,25 @@ export function searchStateResultCard() {
         // No cover URL → stale @error from previous cover, ignore
         const expected = this.coverUrl();
         if (!expected) return;
+
+        // Preview 失敗、cover fallback 可用 → 改試 cover（見上方函式註解）
+        const c = this.current();
+        if (shouldFallbackToCover(c)) {
+            const attrSrc = img.getAttribute('src') || '';
+            if (attrSrc !== expected) {
+                return; // Stale @error from previous cover
+            }
+
+            // 只做「換一個 URL 重載」這一件事，**不**碰 _coverRetried、不另起計時器：
+            // cover 這一棒是第一次載入，理應保有它原本的重試預算（PHASE 1 的
+            // cache-bust + 5 秒計時），由既有機制接手就好。實測（CDP，2026-08-07）：
+            // 早期版本在這裡複製了一份 `_coverRetried = true` ＋ 5 秒計時器，結果
+            // ① 它沒有抑制到 PHASE 1（cover 失敗時 _coverRetried 實測仍是 false）
+            // ② 反而讓「cover 是大圖、載超過 5 秒」被提前宣告失敗。
+            c._previewFailed = true;
+            img.src = this.coverUrl();
+            return;
+        }
 
         // PHASE 1: First failure — getAttribute stale guard
         if (!this._coverRetried) {

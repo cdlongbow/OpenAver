@@ -34,6 +34,25 @@ export function pendingEditWatchKey(s) {
     return `${fileKey}\0${s.currentIndex}\0${s.listMode}\0${results?.length ?? 0}\0${s._candidateReplaceSeq ?? 0}`;
 }
 
+// TASK-113c-T7（Opus 審核裁決 3）：狀態還原流程（下方 searchStatePersistence 內的
+// state-restore 方法）的 _previewFailed 清除邏輯抽成 module-level 純函式，供 node:test
+// 直接呼叫——測「清除函式本身」（輸入帶 `_previewFailed:true` 的物件陣列 → 輸出不帶），
+// 不是「狀態還原跑完之後某個時間點是乾淨的」（後者測不出時序）。呼叫方必須在把資料指派
+// 進 Alpine state 之前呼叫本函式，否則首幀會用殘留的 _previewFailed=true 渲成 cover，
+// 下一幀才翻回 preview——多一個請求，畫面會閃一下換圖。
+//
+// 就地清除（不建新陣列/新物件）：results 若已是 sessionStorage 解析出的原始物件，
+// 呼叫方緊接著才把它們指派進 Alpine state，此時 mutate 原物件、原陣列參照不變是安全的、
+// 成本也最低。非陣列輸入（undefined/null，例如 saved JSON 缺 searchResults 鍵）原樣
+// 回傳，不炸。
+export function clearPreviewFailedFlags(results) {
+    if (!Array.isArray(results)) return results;
+    results.forEach((r) => {
+        if (r && r._previewFailed) delete r._previewFailed;
+    });
+    return results;
+}
+
 export function searchStatePersistence() {
     return {
     // ===== State Persistence =====
@@ -43,6 +62,14 @@ export function searchStatePersistence() {
 
         try {
             const state = JSON.parse(saved);
+
+            // TASK-113c-T7 裁決3: 清除殘留 _previewFailed，必須在指派進 Alpine state
+            // 之前完成（見上方 clearPreviewFailedFlags 註解）。
+            clearPreviewFailedFlags(state.searchResults);
+            if (Array.isArray(state.fileList)) {
+                state.fileList.forEach((file) => clearPreviewFailedFlags(file?.searchResults));
+            }
+
             this.searchResults = state.searchResults || [];
             this.currentIndex = state.currentIndex || 0;
             this.currentQuery = state.currentQuery || '';
