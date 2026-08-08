@@ -41,13 +41,22 @@
                     <span x-text="window.t('settings.access_auth.label')"></span>
                 </label>
                 <div class="settings-access-auth-pin-row" x-show="accessAuthEnabled" x-cloak>
-                    <span class="settings-access-auth-pin-label"
-                          x-text="window.t('settings.access_auth.pin_label')"></span>
+                    <span class="settings-access-auth-pin-prefix"
+                          x-text="window.t('settings.access_auth.pin_prefix')"></span>
+                    {# T7fix: 可見文字只留「密碼」，長度與字元集由四格欄位本身表達。
+                       完整說明搬到 aria-label／title——原本那個 <span> 沒有 for/id
+                       關聯，螢幕閱讀器讀不到欄位名稱，搬過去是淨改善。
+                       autocapitalize=off 是必要的，不是保險：比對區分大小寫，手機
+                       鍵盤自動大寫首字母會讓 abcd 變 Abcd。 #}
                     <input class="settings-access-auth-pin-input"
                            :type="accessAuthPinVisible ? 'text' : 'password'"
-                           inputmode="numeric"
                            maxlength="4"
                            autocomplete="off"
+                           autocapitalize="off"
+                           autocorrect="off"
+                           spellcheck="false"
+                           :aria-label="window.t('settings.access_auth.pin_label')"
+                           :title="window.t('settings.access_auth.pin_label')"
                            x-model="accessAuthPin"
                            :disabled="!serverMode || accessAuthSaving">
                     <button type="button"
@@ -61,13 +70,13 @@
                 </div>
                 <button type="button"
                         class="settings-access-auth-save-btn btn btn-sm btn-outline"
-                        :disabled="!serverMode || accessAuthSaving || (accessAuthEnabled && !/^\d{4}$/.test(accessAuthPin))"
+                        :disabled="!serverMode || accessAuthSaving || (accessAuthEnabled && !/^[0-9A-Za-z]{4}$/.test(accessAuthPin))"
                         @click="saveAccessAuth()">
                     <span x-show="accessAuthSaving" class="loading loading-spinner loading-sm"></span>
                     <template x-if="!accessAuthSaving">
                         <i class="bi bi-check-lg"></i>
                     </template>
-                    <span x-text="accessAuthSaving ? '' : ' ' + window.t('settings.action.save')"></span>
+                    <span x-text="accessAuthSaving ? '' : ' ' + window.t('settings.access_auth.save')"></span>
                 </button>
             </div>
             <!-- 81b-T1: 連線資訊 inline 區塊（ip:port + 複製 icon + ? popover）；

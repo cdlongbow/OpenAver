@@ -48,14 +48,22 @@
   </svg>
   {# deliberately NOT type=password: that summons the browser's password-manager
      UI (autofill chip / "save password?" prompt), which outs this page as a
-     login form and breaks the disguise; it can also silently override
-     inputmode="numeric" on some mobile browsers. Do not "fix" this back.
+     login form and breaks the disguise. Do not "fix" this back.
+
+     autocapitalize=off is load-bearing, not cosmetic (T7fix): the PIN is 4
+     ASCII alphanumerics and the comparison is case-sensitive, so a phone
+     keyboard auto-capitalising the first letter silently turns "abcd" into
+     "Abcd" and the owner never gets in — on a page that shows no error by
+     design. There is deliberately no inputmode: forcing the numeric keypad
+     would make an alphanumeric PIN untypeable on a phone.
+
      Written as a Jinja comment on purpose, never a raw HTML comment tag —
      this page is server-rendered and a raw HTML comment survives into the
      response body, where "view source" would hand a curious visitor this
      exact explanation. A Jinja comment is stripped before the response is
      ever sent, so it can only ever be read by someone reading this file. #}
-  <input id="v" inputmode="numeric" maxlength="4" autocomplete="off" autofocus>
+  <input id="v" maxlength="4" autocomplete="off" autocapitalize="off"
+         autocorrect="off" spellcheck="false" autofocus>
 </div>
 <script>
 (function () {

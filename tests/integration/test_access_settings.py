@@ -219,6 +219,23 @@ class TestPutPinFormat:
         assert r.json() == {"success": True}
         assert access_auth.get_auth_settings(True)["pin"] == "0042"
 
+    def test_c1b_alphanumeric_pin_accepted(self, loopback_client):
+        """T7fix：密碼放寬成 4 位英數（大小寫保留，不折疊）。"""
+        r = loopback_client.put(
+            SETTINGS_PATH, json={"enabled": True, "pin": "aB92"}
+        )
+        assert r.status_code == 200
+        assert access_auth.get_auth_settings(True)["pin"] == "aB92"
+
+    def test_c1c_fullwidth_pin_stored_as_ascii(self, loopback_client):
+        """T7fix：中文輸入法全形模式打出的密碼，存進去必須已折成半形——
+        否則使用者用手機（輸入法關著）打同一組字，永遠對不上。"""
+        r = loopback_client.put(
+            SETTINGS_PATH, json={"enabled": True, "pin": "ａＢ９２"}
+        )
+        assert r.status_code == 200
+        assert access_auth.get_auth_settings(True)["pin"] == "aB92"
+
     def test_c2_whitespace_rejected_no_write(self, loopback_client):
         access_auth.set_auth(True, "1111")
         before = access_auth.get_auth_settings(True)
@@ -229,7 +246,7 @@ class TestPutPinFormat:
         assert r.json() == {
             "success": False,
             "reason": "invalid_pin",
-            "error": "PIN 必須是 4 位數字",
+            "error": "密碼必須是 4 位英文或數字",
         }
         assert access_auth.get_auth_settings(True) == before
 

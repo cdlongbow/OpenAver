@@ -25,6 +25,7 @@ import secrets
 import sqlite3
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass
 from typing import Optional
 
@@ -50,10 +51,12 @@ CREATE TABLE IF NOT EXISTS access_tickets (
 )
 """
 
-# ASCII-only 4-digit check. Deliberately NOT `str.isdigit()` / `\d` — both
-# accept Unicode `Nd`-category digits (e.g. Devanagari "१२३४"), which would
-# let a non-ASCII "PIN" through format validation.
-_PIN_PATTERN = re.compile(r"[0-9]{4}")
+# Exactly 4 ASCII alphanumerics, case-sensitive. Deliberately NOT `\w`
+# (adds `_` and, under `re.UNICODE`, every Unicode letter/digit) and NOT
+# `str.isalnum()` (accepts CJK ideographs, Devanagari digits, …): anything
+# the owner can type on the desktop but cannot reliably reproduce on the
+# phone keypad is a self-inflicted lockout on a page that shows no error.
+_PIN_PATTERN = re.compile(r"[0-9A-Za-z]{4}")
 
 _LOCKOUT_THRESHOLD = 5
 _BASE_LOCKOUT_SECONDS = 60.0
@@ -96,13 +99,29 @@ def _connect() -> sqlite3.Connection:
     return get_connection(get_db_path())
 
 
-def _is_valid_pin_format(candidate: object) -> bool:
-    """Exactly 4 ASCII digits. Never raises — any non-str input is simply
-    not a match (attempt_pin's `candidate` is typed `object` because T3
-    hands it a raw JSON value of unknown type)."""
+def _canonical_pin(candidate: object) -> Optional[str]:
+    """The canonical form to store and to compare, or `None` if `candidate`
+    is not a well-formed PIN. Never raises — any non-str input simply
+    yields `None` (attempt_pin's `candidate` is typed `object` because T3
+    hands it a raw JSON value of unknown type).
+
+    NFKC-folded first. A CJK IME in wide mode emits full-width characters
+    ("１２３４" U+FF11…, "ａｂｃｄ" U+FF41…) that look identical to their ASCII
+    twins but are different code points. Without folding, a PIN set on the
+    desktop with the IME on would never match the same PIN typed on a phone
+    with the IME off — and the gate page deliberately shows no error, so the
+    owner would get a silent, undiagnosable lockout. Folding is applied on
+    both the write path and the verify path, so the two always agree.
+    """
     if not isinstance(candidate, str):
-        return False
-    return _PIN_PATTERN.fullmatch(candidate) is not None
+        return None
+    folded = unicodedata.normalize("NFKC", candidate)
+    return folded if _PIN_PATTERN.fullmatch(folded) else None
+
+
+def _is_valid_pin_format(candidate: object) -> bool:
+    """Format-only predicate over `_canonical_pin`."""
+    return _canonical_pin(candidate) is not None
 
 
 def _lockout_duration_seconds(consecutive_failures: int) -> float:
@@ -215,8 +234,9 @@ def attempt_pin(candidate: object) -> Optional[str]:
             # freeze the escalation ladder at the first 60s tier forever.
             _lockout_started_at = None
 
-        if _is_valid_pin_format(candidate):
-            matched = hmac.compare_digest(candidate.encode("utf-8"), snap.pin.encode("utf-8"))
+        canonical = _canonical_pin(candidate)
+        if canonical is not None:
+            matched = hmac.compare_digest(canonical.encode("utf-8"), snap.pin.encode("utf-8"))
         else:
             matched = False
 
@@ -282,9 +302,12 @@ def set_auth(enabled: bool, pin: str) -> None:
     immediately un-stick a family member who got locked out, instead of
     making them wait out the escalation ladder (up to an hour).
     """
-    if enabled and not _is_valid_pin_format(pin):
-        raise ValueError("pin must be exactly 4 ASCII digits")
-    stored_pin = pin if enabled else ""
+    canonical = _canonical_pin(pin)
+    if enabled and canonical is None:
+        raise ValueError("pin must be exactly 4 ASCII alphanumerics")
+    # Store the NFKC-folded form, never the raw input: what goes in the DB
+    # is what the verify path will compare against.
+    stored_pin = canonical if enabled else ""
 
     global _snapshot, _consecutive_failures, _lockout_started_at
     with _lock:

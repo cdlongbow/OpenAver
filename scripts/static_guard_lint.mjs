@@ -3486,7 +3486,7 @@ const RULES = [
 
   // ---- [lint-guard:114a-T2] access_gate.html 偽裝頁靜態結構契約 ----
   // 偽裝頁必須是零外部資源、不透露品牌、無按鈕/label 的獨立文件（spec §2.3、
-  // TASK-114a-T2 決策清單）；手機數字鍵盤 + 四碼契約則是正向存在性檢查。
+  // TASK-114a-T2 決策清單）；四碼 + 不自動大寫則是正向存在性檢查。
   {
     file: 'web/templates/access_gate.html', kind: 'forbidden-string',
     pattern: '/static',
@@ -3509,8 +3509,8 @@ const RULES = [
   },
   {
     file: 'web/templates/access_gate.html', kind: 'required-string',
-    pattern: 'inputmode="numeric"',
-    note: '[lint-guard:114a-T2] 偽裝頁輸入框必須是 inputmode="numeric"（手機數字鍵盤契約）',
+    pattern: 'autocapitalize="off"',
+    note: '[lint-guard:114a-T2/T7fix] 偽裝頁輸入框必須是 autocapitalize="off"。密碼是 4 位 ASCII 英數且比對區分大小寫，手機鍵盤預設會把第一個字母自動大寫——設的是 abcd、打出去的是 Abcd，而這頁依設計不顯示任何錯誤訊息，使用者只會看到畫面重刷、永遠進不去。（原本這條鎖 inputmode="numeric"，T7fix 把密碼放寬成英數後那個契約反而會讓手機打不出字母，故整條換掉。）',
   },
   {
     file: 'web/templates/access_gate.html', kind: 'required-string',
@@ -3520,7 +3520,7 @@ const RULES = [
   {
     file: 'web/templates/access_gate.html', kind: 'forbidden-string',
     pattern: 'type="password"',
-    note: '[lint-guard:114a-T2] 偽裝頁輸入框禁止 type="password"（會召喚瀏覽器密碼管理員 UI，當場自曝這是登入框，且可能覆蓋 inputmode="numeric"；Opus 審核補充，不得回退）',
+    note: '[lint-guard:114a-T2] 偽裝頁輸入框禁止 type="password"（會召喚瀏覽器密碼管理員 UI，當場自曝這是登入框；Opus 審核補充，不得回退）',
   },
   {
     file: 'web/templates/access_gate.html', kind: 'forbidden-string',

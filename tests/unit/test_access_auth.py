@@ -140,6 +140,22 @@ INVALID_PINS = [
     "१२३४",     # Devanagari digits — .isdigit()/\d would wrongly accept
     "12345",    # too long
     "",         # empty
+    "12-3",     # punctuation — `\w` would wrongly accept `_`, this covers the family
+    "ab_d",     # underscore specifically (the `\w` trap)
+    "あいうえ",   # CJK — .isalnum() would wrongly accept
+    "１２３",     # 3 full-width digits: folds to "123", still too short
+]
+
+# 4 ASCII alphanumerics, any mix of case — the whole accepted space.
+VALID_PINS = ["1234", "abcd", "ABCD", "a1B2", "0000", "zZ99"]
+
+# NFKC folding: what a CJK IME in wide mode emits -> what must be stored
+# and matched. Devanagari is deliberately absent — NFKC does not fold it to
+# ASCII, so it stays rejected (verified in INVALID_PINS above).
+FULLWIDTH_EQUIVALENTS = [
+    ("１２３４", "1234"),
+    ("ａｂｃｄ", "abcd"),
+    ("ＡＢ12", "AB12"),
 ]
 
 NON_STRING_CANDIDATES = [None, 42, [1, 2, 3, 4], {}]
@@ -171,6 +187,57 @@ def test_attempt_pin_rejects_invalid_pin_formats_no_raise(bad_pin):
     ensure_schema()
     set_auth(True, "1234")
     assert attempt_pin(bad_pin) is None
+
+
+@pytest.mark.parametrize("good_pin", VALID_PINS)
+def test_alphanumeric_pins_round_trip_and_verify(good_pin):
+    """T7fix: the accepted space is 4 ASCII alphanumerics, not just digits."""
+    ensure_schema()
+    set_auth(True, good_pin)
+    assert get_auth_settings(reveal=True) == {"enabled": True, "pin": good_pin}
+    assert attempt_pin(good_pin) is not None
+
+
+def test_pin_comparison_is_case_sensitive():
+    """`hmac.compare_digest` is exact, and nothing upstream lower-cases.
+
+    This is why both inputs carry `autocapitalize="off"`: a phone keyboard
+    that helpfully capitalises the first letter would otherwise turn the
+    owner's "abcd" into "Abcd" and lock them out with no error shown.
+    """
+    ensure_schema()
+    set_auth(True, "abcd")
+    assert attempt_pin("ABCD") is None
+    assert attempt_pin("Abcd") is None
+    assert attempt_pin("abcd") is not None
+
+
+@pytest.mark.parametrize("wide,ascii_form", FULLWIDTH_EQUIVALENTS)
+def test_fullwidth_pin_folds_to_ascii_on_write(wide, ascii_form):
+    """Set with a wide-mode IME, and the ASCII form is what got stored —
+    so the same PIN typed on a phone (IME off) gets in."""
+    ensure_schema()
+    set_auth(True, wide)
+    assert get_auth_settings(reveal=True) == {"enabled": True, "pin": ascii_form}
+    assert attempt_pin(ascii_form) is not None
+
+
+@pytest.mark.parametrize("wide,ascii_form", FULLWIDTH_EQUIVALENTS)
+def test_fullwidth_pin_folds_to_ascii_on_verify(wide, ascii_form):
+    """The mirror direction: PIN set in ASCII, typed back wide."""
+    ensure_schema()
+    set_auth(True, ascii_form)
+    assert attempt_pin(wide) is not None
+
+
+def test_fullwidth_folding_does_not_reopen_non_ascii_pins():
+    """Folding must not become a backdoor for scripts NFKC leaves alone —
+    a Devanagari 'PIN' is still rejected on both paths."""
+    ensure_schema()
+    set_auth(True, "1234")
+    assert attempt_pin("१२३४") is None
+    with pytest.raises(ValueError):
+        set_auth(True, "१२३४")
 
 
 @pytest.mark.parametrize("candidate", NON_STRING_CANDIDATES)

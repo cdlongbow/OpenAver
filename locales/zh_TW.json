@@ -376,11 +376,13 @@
     },
     "access_auth": {
       "label": "需要密碼才能連線",
-      "pin_label": "密碼（4 位數字）",
+      "pin_prefix": "密碼",
+      "pin_label": "密碼（4 位英文或數字，區分大小寫）",
+      "save": "儲存",
       "reveal": "顯示密碼",
       "saved": "密碼設定已儲存",
       "save_failed": "密碼設定儲存失敗，請稍後再試。",
-      "pin_invalid": "PIN 必須是 4 位數字"
+      "pin_invalid": "密碼必須是 4 位英文或數字"
     },
     "switch_mode_confirm": {
       "title": "切換媒體伺服器模式",

@@ -143,6 +143,6 @@ def update_access_settings(request: AccessSettingsRequest, raw_request: Request)
     except ValueError:
         return JSONResponse(status_code=400, content={
             "success": False, "reason": "invalid_pin",
-            "error": "PIN 必須是 4 位數字",
+            "error": "密碼必須是 4 位英文或數字",
         })
     return {"success": True}
