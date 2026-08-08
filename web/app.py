@@ -168,6 +168,7 @@ from web.routers import scraper_sources as scraper_sources_router
 from web.routers import settings_metatube as settings_metatube_router
 from web.routers import cf as cf_router
 from web.routers import diagnostics as diagnostics_router
+from web.routers import access as access_router
 # Module-level imports for startup_reconnect / _fire_probe so that
 # patch("web.app.startup_reconnect") / patch("web.app._fire_probe") target the
 # correct use-site binding (TASK-63e-1; function-local import would defeat patch).
@@ -196,6 +197,7 @@ app.include_router(scraper_sources_router.router)
 app.include_router(settings_metatube_router.router)
 app.include_router(cf_router.router)
 app.include_router(diagnostics_router.router)
+app.include_router(access_router.router)
 
 
 @app.exception_handler(RequestValidationError)
@@ -232,12 +234,14 @@ _HEALTH_ENDPOINT = ("GET", "/api/health")
 _AUTH_ALLOWLIST = frozenset({_VERIFY_ENDPOINT, _HEALTH_ENDPOINT})
 
 
-def _masked_access_gate_response(request: Request):
+def render_access_gate_page(request: Request):
     """偽裝頁：獨立完整 HTML，不透露任何真實內容存在與否。
 
-    唯一產生點——正常的「未認證」分支與冷載失敗的 fail-closed 分支都呼叫這支，
-    不得各寫一次 `TemplateResponse(...)`（兩處逐位元組必須相同，寫兩次遲早會
-    漂移）。T3 也會重用同一支（card 已預告）。
+    唯一產生點——正常的「未認證」分支、冷載失敗的 fail-closed 分支、以及 T3
+    `POST /api/access/verify` 的成功/失敗回應都呼叫這支，不得各寫一次
+    `TemplateResponse(...)`（逐位元組必須相同，寫兩次遲早會漂移）。公開名
+    （無底線前綴）：`web/routers/access.py` 要 import 它，底線私有名會撞 ruff
+    `PLC2701`（BE-LINT-01，正解是升格公開名，不是加 noqa）。
     """
     return templates.TemplateResponse(
         request, "access_gate.html", {},
@@ -287,7 +291,7 @@ async def access_gate(request: Request, call_next):
                 "access_gate: cold-load ensure_schema() failed, "
                 "fail-closed to masked page"
             )
-            return _masked_access_gate_response(request)
+            return render_access_gate_page(request)
 
     if not snap.enabled:
         return await call_next(request)
@@ -315,7 +319,7 @@ async def access_gate(request: Request, call_next):
             {"success": False, "reason": "unauthorized"}, status_code=401
         )
 
-    return _masked_access_gate_response(request)
+    return render_access_gate_page(request)
 
 
 @app.middleware("http")

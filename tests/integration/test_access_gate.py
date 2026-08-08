@@ -267,17 +267,19 @@ class TestAuthorizationHeaderFlow:
         self, gated_client
     ):
         """POST /api/access/verify 帶 Authorization：仍走 call_next（第 6 步
-        在第 9 步之前），不回 401——這支端點本來就是給沒有票的人用的。T2
-        尚未建立真正的 handler（T3 的範圍），call_next 之後落到 FastAPI
-        路由層的標準 404，但重點是**不是** 401 也**不是**偽裝頁。"""
+        在第 9 步之前），不回 401——這支端點在放行清單內，本來就是給沒有票
+        的人用的，第 6 步的比對排在第 9 步的 Authorization → 401 分支之前，
+        所以帶 header 也不會被攔截。T3 的 handler 統一回偽裝頁本體（成功/
+        失敗回應除 Set-Cookie 外逐位元組相同）；這裡送的是錯的 PIN，預期
+        沒有 Set-Cookie。"""
         r = gated_client.post(
             "/api/access/verify",
             json={"pin": "0000"},
             headers={"Authorization": "Bearer x"},
         )
-        assert r.status_code == 404
         assert r.status_code != 401
-        assert _MASKED_FINGERPRINT not in r.text
+        _assert_masked(r)
+        assert "set-cookie" not in r.headers
 
     def test_authenticated_with_authorization_header_not_401(
         self, gated_client, valid_token
