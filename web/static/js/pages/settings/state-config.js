@@ -74,8 +74,16 @@ export function stateConfig() {
         publicExposure: false,
 
         // ===== 存取密碼保護 State（114a-T5）=====
-        accessAuthEnabled: false,      // 勾選框當前值（load 後由 GET 覆寫）
+        accessAuthEnabled: false,      // 勾選框當前值（load 後由 GET 覆寫）＝**未提交草稿**
         accessAuthPin: '',             // PIN 輸入框當前值（load 後由 GET 覆寫）
+        // 後端已生效的值。與上面那個草稿分開，是因為畫面上有兩處會**對使用者做安全宣稱**
+        // （「?」說明與伺服器模式切換確認框都會說「其他裝置需要輸入密碼才能連入」）。
+        // 那兩處只准讀這個欄位：草稿在使用者勾下去的當下就變 true，但後端此刻還沒有任何
+        // 保護；若儲存又失敗（磁碟寫入失敗、或從手機按存檔吃到 403），草稿會一路停在
+        // true 直到重新整理，使用者看到的是一句「有密碼擋著」的假話，實際上整個區網都
+        // 進得來。單純「失敗時 revert」不夠：那修不到「還沒按存檔就已經在說謊」的視窗，
+        // 而且會把使用者剛打的 PIN 一起丟掉。（Codex PR#129 review P2）
+        accessAuthEnabledSaved: false,
         accessAuthPinRevealed: false,  // 伺服器旗標：這個瀏覽器能不能看到真值（loopback 才 true）
         accessAuthPinVisible: false,   // 前端顯示旗標：眼睛按鈕目前是否顯示明碼（純 UI，不影響資料）
         accessAuthSaving: false,       // Save 按鈕 in-flight 旗標，防雙擊送出
@@ -459,6 +467,9 @@ export function stateConfig() {
                 });
                 const result = await resp.json();
                 if (result.success) {
+                    // 只有這裡能推進「已生效」——每一條失敗路徑都刻意不動它，讓安全
+                    // 宣稱維持在後端的真實狀態上（草稿保留使用者輸入，不強制還原）。
+                    this.accessAuthEnabledSaved = this.accessAuthEnabled;
                     this.showToast(window.t('settings.access_auth.saved'), 'success');
                 } else if (result.reason === 'invalid_pin') {
                     this.showToast(window.t('settings.access_auth.pin_invalid'), 'error');
@@ -731,6 +742,7 @@ export function stateConfig() {
                         const authResult = await authResp.json();
                         if (authResult.success) {
                             this.accessAuthEnabled = authResult.enabled;
+                            this.accessAuthEnabledSaved = authResult.enabled;
                             this.accessAuthPin = authResult.pin;
                             this.accessAuthPinRevealed = authResult.pin_revealed;
                         }

@@ -56,7 +56,8 @@ function makeFakeThis() {
     const toasts = [];
     return {
         ...stateConfig(),
-        accessAuthEnabled: true,
+        accessAuthEnabled: true,       // 草稿：使用者已勾選「需要密碼」
+        accessAuthEnabledSaved: false, // 後端真實狀態：還沒有任何保護
         accessAuthPin: '1234',
         accessAuthSaving: false,
         showToast: (msg, type) => toasts.push({ msg, type }),
@@ -97,4 +98,46 @@ test('saveAccessAuth 未知 reason / network error → .save_failed error toast'
     await fakeThis.saveAccessAuth.call(fakeThis);
     assert.deepEqual(fakeThis._toasts, [{ msg: 'settings.access_auth.save_failed', type: 'error' }]);
     assert.equal(fakeThis.accessAuthSaving, false);  // finally 區塊必須還原，即使 catch 路徑
+});
+
+// ── Codex PR#129 P2：安全宣稱不得跟著未提交草稿走 ────────────────────────────
+//
+// 畫面上有兩處會對使用者說「其他裝置需要輸入密碼才能連入」（「?」說明與伺服器模式
+// 切換確認框）。它們讀 `accessAuthEnabledSaved`，不讀草稿 `accessAuthEnabled`。
+// 下面四支鎖住「只有真的存成功才准推進已生效值」——破了的後果不是顯示瑕疵：
+// 使用者勾了密碼、存檔失敗（磁碟寫入失敗，或從手機按存檔吃到 403），畫面卻一路
+// 宣稱「已設定密碼保護」直到重新整理，而區網其實整個是開的。
+//
+// 對應模板側的兩條 [lint-guard:114a-T7fix] 靜態守衛（那兩條管「誰在讀」，
+// 這四支管「什麼時候可以寫」）。
+
+test('saveAccessAuth 成功 → accessAuthEnabledSaved 推進到草稿值', async () => {
+    globalThis.fetch = async () => ({ json: async () => ({ success: true }) });
+    const fakeThis = makeFakeThis();
+    await fakeThis.saveAccessAuth.call(fakeThis);
+    assert.equal(fakeThis.accessAuthEnabledSaved, true);
+});
+
+test('saveAccessAuth 400 invalid_pin → accessAuthEnabledSaved 不動（草稿保留）', async () => {
+    globalThis.fetch = async () => ({ json: async () => ({ success: false, reason: 'invalid_pin' }) });
+    const fakeThis = makeFakeThis();
+    await fakeThis.saveAccessAuth.call(fakeThis);
+    assert.equal(fakeThis.accessAuthEnabledSaved, false);
+    // 草稿刻意不還原：使用者剛打的東西不該因為一次失敗就被清掉。
+    assert.equal(fakeThis.accessAuthEnabled, true);
+    assert.equal(fakeThis.accessAuthPin, '1234');
+});
+
+test('saveAccessAuth 403 remote_forbidden → accessAuthEnabledSaved 不動', async () => {
+    globalThis.fetch = async () => ({ json: async () => ({ success: false, reason: 'remote_forbidden' }) });
+    const fakeThis = makeFakeThis();
+    await fakeThis.saveAccessAuth.call(fakeThis);
+    assert.equal(fakeThis.accessAuthEnabledSaved, false);
+});
+
+test('saveAccessAuth network error → accessAuthEnabledSaved 不動', async () => {
+    globalThis.fetch = async () => { throw new Error('offline'); };
+    const fakeThis = makeFakeThis();
+    await fakeThis.saveAccessAuth.call(fakeThis);
+    assert.equal(fakeThis.accessAuthEnabledSaved, false);
 });

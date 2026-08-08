@@ -3552,6 +3552,23 @@ const RULES = [
   },
   {
     file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: 'accessAuthEnabledSaved',
+    // scope 用 RegExp 形式整段圈住那個 x-text 運算式（window 只能往後切，而被守的
+    // 識別字在 i18n key **之前**，用 anchor+window 會是永遠找不到的死守衛）。
+    // 前綴刻意寫 `accessAuthEnabled`：草稿名是已生效名的前綴，所以改回草稿時 scope
+    // 仍然匹配得到、required 卻缺席 → 轉紅。整段被改名／刪掉則 anchor 找不到，
+    // 引擎會另外報「scope anchor 找不到」——兩個方向都 fail-closed。
+    scope: /x-text="accessAuthEnabled[\s\S]{0,200}?settings\.server_info\.warning_auth/,
+    note: '[lint-guard:114a-T7fix] 「?」說明的 warning_auth 分支必須由 accessAuthEnabledSaved（後端已生效值）決定，不得改讀草稿 accessAuthEnabled。那句話對使用者做安全宣稱（「其他裝置需要輸入密碼才能連線」）——讀草稿的話，勾下去還沒存檔就開始說謊，存檔失敗更會一路說到重新整理為止，使用者以為區網有保護、實際上全開。（Codex PR#129 P2）',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: 'accessAuthEnabledSaved',
+    scope: /x-text="serverModeConfirmValue[\s\S]{0,300}?settings\.server_mode_confirm\.body_on_auth/,
+    note: '[lint-guard:114a-T7fix] 伺服器模式確認框的 body_on_auth 分支同上——「已設定密碼保護」是安全宣稱，只准讀 accessAuthEnabledSaved。（Codex PR#129 P2）',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
     pattern: "normalize('NFKC')",
     scope: { anchor: /x-model="accessAuthPin"/, window: 200 },
     note: '[lint-guard:114a-T7fix] PIN 欄必須在 input 當下做 NFKC 折疊，與後端 _canonical_pin() 同步。拿掉它 → 中文輸入法全形模式打出的 ａＢ９２ 不匹配前端的 ASCII 正規式，儲存鈕永遠不亮且不說明原因（Codex Stage-2 P2；與 T7fix 修掉的「打英文得到一顆灰按鈕」同一個病）。折在 input 上而非只放寬 disabled 判斷，欄位顯示的才會是實際存進去的值。',

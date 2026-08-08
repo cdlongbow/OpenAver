@@ -125,8 +125,12 @@
                     <div x-show="showServerWarning" x-cloak x-transition
                          @click.outside="showServerWarning = false"
                          class="help-popover">
+                        {# 讀 accessAuthEnabledSaved 而非草稿 accessAuthEnabled：這句話對
+                           使用者做安全宣稱（「其他裝置需要輸入密碼才能連線」），只能反映
+                           後端已生效的狀態。讀草稿的話，勾下去還沒存檔就開始說謊，存檔
+                           失敗更會一路說到重新整理為止。（Codex PR#129 P2）#}
                         <small class="help-popover__body"
-                               x-text="accessAuthEnabled
+                               x-text="accessAuthEnabledSaved
                                    ? window.t('settings.server_info.warning_auth')
                                    : window.t('settings.server_info.warning')"></small>
                     </div>
@@ -1328,9 +1332,11 @@
                     ? window.t('settings.server_mode_confirm.title_on')
                     : window.t('settings.server_mode_confirm.title')"></span>
             </h3>
+            {# 同「?」說明：這段也在做安全宣稱（「已設定密碼保護」），只准讀後端已生效的
+               accessAuthEnabledSaved，不可讀未提交草稿 accessAuthEnabled。（Codex PR#129 P2）#}
             <p class="fluent-modal-body"
                x-text="serverModeConfirmValue
-                   ? (accessAuthEnabled
+                   ? (accessAuthEnabledSaved
                        ? window.t('settings.server_mode_confirm.body_on_auth')
                        : window.t('settings.server_mode_confirm.body_on'))
                    : window.t('settings.server_mode_confirm.body_off')"></p>
