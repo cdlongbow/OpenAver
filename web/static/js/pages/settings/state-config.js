@@ -71,6 +71,7 @@ export function stateConfig() {
         serverMode: false,
         lanIp: '',
         lanPort: null,
+        publicExposure: false,
 
         // ===== 存取密碼保護 State（114a-T5）=====
         accessAuthEnabled: false,      // 勾選框當前值（load 後由 GET 覆寫）
@@ -434,6 +435,7 @@ export function stateConfig() {
                     this.serverMode = !!val;
                     this.lanPort = result.lan_port ?? null;
                     this.lanIp = result.lan_ip ?? null;
+                    this.publicExposure = result.public_exposure ?? false;
                 } else {
                     console.warn('[serverMode] setServerMode failed:', result.error);
                     // 遠端被拒（loopback 守衛）給專屬訊息，不用「請稍後再試」（重試無用）
@@ -712,9 +714,14 @@ export function stateConfig() {
                             const j = await r.json();
                             this.lanPort = j.lan_port ?? null;
                             this.lanIp = j.lan_ip ?? null;
-                        } catch (_e) { this.lanPort = null; }
+                            this.publicExposure = j.public_exposure ?? false;
+                        } catch (_e) {
+                            this.lanPort = null;
+                            this.publicExposure = false;
+                        }
                     } else {
                         this.lanPort = null;
+                        this.publicExposure = false;
                     }
 
                     // 114a-T5: 存取密碼保護 —— GET 無 loopback 限制，無論 serverMode 開關都嘗試讀取

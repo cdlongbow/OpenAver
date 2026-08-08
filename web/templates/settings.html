@@ -114,6 +114,14 @@
                                    : window.t('settings.server_info.warning')"></small>
                     </div>
                 </div>
+                <div class="settings-server-public-warn"
+                     x-show="publicExposure"
+                     x-cloak
+                     role="status"
+                     aria-live="polite">
+                    <i class="bi bi-exclamation-triangle-fill"></i>
+                    <span>{{ t('settings.server_info.public_exposure') }}</span>
+                </div>
             </div>
         </div>
         <div class="settings-header-actions">

@@ -613,6 +613,27 @@
     font-size: 1rem;
 }
 
+/* ─── Public-exposure warning (server mode, 114a-T7) ─── */
+#settings-components .settings-server-public-warn {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.65rem 0.9rem;
+    margin-top: 0.4rem;
+    flex-basis: 100%;
+    font-size: 0.82rem;
+    line-height: 1.4;
+    color: var(--color-warning);
+    background: color-mix(in oklch, var(--color-warning) 12%, transparent);
+    border: 1px solid color-mix(in oklch, var(--color-warning) 35%, transparent);
+    border-radius: var(--fluent-radius-md);
+}
+
+#settings-components .settings-server-public-warn i {
+    flex: 0 0 auto;
+    font-size: 1rem;
+}
+
 /* ─── Segmented control (64e-2): 全開 | 無碼模式 capsule ─── */
 /* pill 白名單：.settings-sources-segmented（搜尋來源卡 segmented 藥丸型分段控件容器） */
 #settings-components .settings-sources-segmented {
@@ -1099,6 +1120,11 @@ html.theme-transition-active::view-transition-new(root) {
 
 /* P13/P14: 全部停用警告 banner — 提 tint + border */
 [data-theme="dim"] #settings-components .settings-sources-warn {
+    background: color-mix(in oklch, var(--color-warning) 18%, transparent);
+    border-color: color-mix(in oklch, var(--color-warning) 50%, transparent);
+}
+
+[data-theme="dim"] #settings-components .settings-server-public-warn {
     background: color-mix(in oklch, var(--color-warning) 18%, transparent);
     border-color: color-mix(in oklch, var(--color-warning) 50%, transparent);
 }

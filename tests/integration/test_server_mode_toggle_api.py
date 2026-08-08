@@ -365,3 +365,71 @@ class TestServerModeToggleAPI:
             "config.py 缺少 _server_mode_toggle_lock 模組級鎖"
         assert src.count("with _server_mode_toggle_lock:") >= 2, \
             "toggle 交易與 reset 路徑都須在 _server_mode_toggle_lock 內（Codex P2 序列化）"
+
+    # ── public_exposure 欄位（114a-T7）────────────────────────────────────────
+
+    def test_toggle_true_public_ip_flags_exposure(self, client, mock_config_path, monkeypatch):
+        """PUT server_mode true + public IP → public_exposure True"""
+        monkeypatch.setattr("web.lan_listener.lan_listener.start", lambda *a, **k: 49200)
+        monkeypatch.setattr("web.lan_listener.get_lan_ip", lambda: "8.8.8.8")
+
+        resp = client.put("/api/config/general/server_mode", json={"value": True})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["public_exposure"] is True
+
+    def test_toggle_true_private_ip_no_exposure(self, client, mock_config_path, monkeypatch):
+        """PUT server_mode true + private IP → public_exposure False"""
+        monkeypatch.setattr("web.lan_listener.lan_listener.start", lambda *a, **k: 49200)
+        monkeypatch.setattr("web.lan_listener.get_lan_ip", lambda: "192.168.1.50")
+
+        resp = client.put("/api/config/general/server_mode", json={"value": True})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["public_exposure"] is False
+
+    def test_get_lan_port_public_ip(self, client, mock_config_path, monkeypatch):
+        """GET lan-port + public IP → public_exposure True"""
+        import web.lan_listener as _ll_mod
+
+        monkeypatch.setattr(_ll_mod.lan_listener.__class__, "is_running", property(lambda self: True))
+        monkeypatch.setattr(_ll_mod.lan_listener.__class__, "lan_port", property(lambda self: 49200))
+        monkeypatch.setattr(_ll_mod, "get_lan_ip", lambda: "8.8.8.8")
+
+        resp = client.get("/api/config/general/lan-port")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["public_exposure"] is True
+
+    def test_get_lan_port_private_ip(self, client, mock_config_path, monkeypatch):
+        """GET lan-port + private IP → public_exposure False"""
+        import web.lan_listener as _ll_mod
+
+        monkeypatch.setattr(_ll_mod.lan_listener.__class__, "is_running", property(lambda self: True))
+        monkeypatch.setattr(_ll_mod.lan_listener.__class__, "lan_port", property(lambda self: 49200))
+        monkeypatch.setattr(_ll_mod, "get_lan_ip", lambda: "192.168.1.50")
+
+        resp = client.get("/api/config/general/lan-port")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["public_exposure"] is False
+
+    def test_get_lan_port_ip_undetectable_no_exposure(self, client, mock_config_path, monkeypatch):
+        """GET lan-port + get_lan_ip None → public_exposure False（取不到就不警告）"""
+        import web.lan_listener as _ll_mod
+
+        monkeypatch.setattr(_ll_mod.lan_listener.__class__, "is_running", property(lambda self: False))
+        monkeypatch.setattr(_ll_mod.lan_listener.__class__, "lan_port", property(lambda self: None))
+        monkeypatch.setattr(_ll_mod, "get_lan_ip", lambda: None)
+
+        resp = client.get("/api/config/general/lan-port")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["public_exposure"] is False

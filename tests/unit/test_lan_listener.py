@@ -229,6 +229,138 @@ class TestLanListenerManager(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# is_public_exposure classification (114a-T7)
+# ---------------------------------------------------------------------------
+
+class TestIsPublicExposure(unittest.TestCase):
+    """Three-cell matrix + edge cases for is_public_exposure()."""
+
+    def test_is_public_exposure_private_ip(self):
+        from web.lan_listener import is_public_exposure
+        self.assertFalse(is_public_exposure("192.168.1.50"))
+
+    def test_is_public_exposure_public_ipv4(self):
+        from web.lan_listener import is_public_exposure
+        self.assertTrue(is_public_exposure("8.8.8.8"))
+
+    def test_is_public_exposure_public_ipv6(self):
+        from web.lan_listener import is_public_exposure
+        self.assertTrue(is_public_exposure("2001:4860:4860::8888"))
+
+    def test_is_public_exposure_none(self):
+        """None arg → consult get_lan_ip(); when that returns None, stay silent."""
+        from web.lan_listener import is_public_exposure
+        with patch("web.lan_listener.get_lan_ip", return_value=None):
+            self.assertFalse(is_public_exposure(None))
+
+    def test_is_public_exposure_empty_string(self):
+        from web.lan_listener import is_public_exposure
+        self.assertFalse(is_public_exposure(""))
+
+    def test_is_public_exposure_malformed(self):
+        from web.lan_listener import is_public_exposure
+        self.assertFalse(is_public_exposure("not-an-ip"))
+
+
+# ---------------------------------------------------------------------------
+# start() public-exposure notification wiring (114a-T7)
+# ---------------------------------------------------------------------------
+
+class TestStartPublicExposureNotify(unittest.TestCase):
+    """start() emits warn only on public IP; never on private/None; never breaks start()."""
+
+    def _start_with_ip(self, MockServer, MockThread, lan_ip, mock_emit):
+        mock_server = _make_mock_server(started=True)
+        MockServer.return_value = mock_server
+        mock_thread = MagicMock()
+        MockThread.return_value = mock_thread
+        mgr, _ = _make_wired_manager()
+        with patch("web.lan_listener.get_lan_ip", return_value=lan_ip):
+            port = mgr.start()
+        return mgr, port
+
+    @patch("web.routers.notifications.emit_notification")
+    @patch("web.lan_listener.threading.Thread")
+    @patch("web.lan_listener.uvicorn.Server")
+    def test_start_emits_warning_when_public(self, MockServer, MockThread, mock_emit):
+        mgr, port = self._start_with_ip(MockServer, MockThread, "8.8.8.8", mock_emit)
+        self.assertIsInstance(port, int)
+        mock_emit.assert_called_once_with("warn", "settings.server_info.public_exposure")
+
+    @patch("web.routers.notifications.emit_notification")
+    @patch("web.lan_listener.threading.Thread")
+    @patch("web.lan_listener.uvicorn.Server")
+    def test_start_no_warning_when_private(self, MockServer, MockThread, mock_emit):
+        self._start_with_ip(MockServer, MockThread, "192.168.1.50", mock_emit)
+        mock_emit.assert_not_called()
+
+    @patch("web.routers.notifications.emit_notification")
+    @patch("web.lan_listener.threading.Thread")
+    @patch("web.lan_listener.uvicorn.Server")
+    def test_start_no_warning_when_lan_ip_none(self, MockServer, MockThread, mock_emit):
+        """Address unavailable → stay silent (must fail if detection were fail-open)."""
+        self._start_with_ip(MockServer, MockThread, None, mock_emit)
+        mock_emit.assert_not_called()
+
+    @patch("web.routers.notifications.emit_notification")
+    @patch("web.lan_listener.threading.Thread")
+    @patch("web.lan_listener.uvicorn.Server")
+    def test_start_idempotent_no_duplicate_warning(self, MockServer, MockThread, mock_emit):
+        mock_server = _make_mock_server(started=True)
+        MockServer.return_value = mock_server
+        mock_thread = MagicMock()
+        MockThread.return_value = mock_thread
+        mgr, _ = _make_wired_manager()
+        with patch("web.lan_listener.get_lan_ip", return_value="8.8.8.8"):
+            mgr.start()
+            mgr.start()  # second call hits idempotent early-return
+        mock_emit.assert_called_once_with("warn", "settings.server_info.public_exposure")
+
+    @patch("web.routers.notifications.emit_notification")
+    @patch("web.lan_listener.threading.Thread")
+    @patch("web.lan_listener.uvicorn.Server")
+    def test_start_notification_failure_does_not_break_start(
+        self, MockServer, MockThread, mock_emit
+    ):
+        mock_emit.side_effect = RuntimeError("boom")
+        mock_server = _make_mock_server(started=True)
+        MockServer.return_value = mock_server
+        mock_thread = MagicMock()
+        MockThread.return_value = mock_thread
+        mgr, _ = _make_wired_manager()
+        with patch("web.lan_listener.get_lan_ip", return_value="8.8.8.8"):
+            port = mgr.start()
+        self.assertIsInstance(port, int)
+        self.assertTrue(mgr.is_running)
+
+    @patch("web.routers.notifications.emit_notification")
+    @patch("web.lan_listener.threading.Thread")
+    @patch("web.lan_listener.uvicorn.Server")
+    def test_start_matches_standalone_autostart_call_pattern(
+        self, MockServer, MockThread, mock_emit
+    ):
+        """Path 2 regression lock: standalone auto-start calls the same start().
+
+        Mirrors windows/standalone.py wire → conditional start() so a future
+        move of detection out of start() into only the toggle path would fail here.
+        """
+        mock_server = _make_mock_server(started=True)
+        MockServer.return_value = mock_server
+        mock_thread = MagicMock()
+        MockThread.return_value = mock_thread
+
+        from web.lan_listener import LanListenerManager
+        lan_listener = LanListenerManager()
+        mock_app = MagicMock()
+        # standalone.py: lan_listener.wire(app, local_port=port) then start()
+        lan_listener.wire(mock_app, local_port=49152)
+        with patch("web.lan_listener.get_lan_ip", return_value="8.8.8.8"):
+            _lp = lan_listener.start()
+        self.assertIsInstance(_lp, int)
+        mock_emit.assert_called_once_with("warn", "settings.server_info.public_exposure")
+
+
+# ---------------------------------------------------------------------------
 # _find_free_port_lan tests (real sockets — fast/deterministic)
 # ---------------------------------------------------------------------------
 

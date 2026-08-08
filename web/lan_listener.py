@@ -8,6 +8,7 @@ on 0.0.0.0:lan_port using lifespan="off" (no double init_db / startup_reconnect)
 Thread-safe. Module-level singleton: ``lan_listener``.
 """
 
+import ipaddress
 import socket
 import threading
 import time
@@ -36,6 +37,20 @@ def get_lan_ip():
     finally:
         if s is not None:
             s.close()
+
+
+def is_public_exposure(lan_ip: Optional[str] = None) -> bool:
+    """lan_ip（未傳則現查 get_lan_ip()）不是私有位址時回 True。
+    取不到／不是合法位址一律回 False —— fail-open 到「不警告」方向（spec §3.5：
+    誤報一次就等於這個警告不存在，寧可漏判不可錯判）。
+    """
+    ip = lan_ip if lan_ip is not None else get_lan_ip()
+    if not ip:
+        return False
+    try:
+        return not ipaddress.ip_address(ip).is_private
+    except ValueError:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +231,12 @@ class LanListenerManager:
             self._thread = thread
             self._lan_port = lan_port
             logger.info("LAN listener started on 0.0.0.0:%d", lan_port)
+            try:
+                if is_public_exposure():
+                    from web.routers.notifications import emit_notification
+                    emit_notification("warn", "settings.server_info.public_exposure")
+            except Exception:                          # noqa: BLE001 — 偵測絕不可讓 start() 失敗
+                logger.warning("public exposure detection/notify failed", exc_info=True)
             return lan_port
 
     def stop(self) -> None:
