@@ -33,6 +33,10 @@ LOOPBACK_CLIENT = ("127.0.0.1", 12345)
 
 # 偽裝頁的結構指紋（同 test_access_gate.py），用來確認回應真的是 render_access_gate_page
 # 的產物，不是別的東西。
+#
+# [lint-guard: pytest-justified] 偽裝頁反外洩指紋——斷言的是「這一次 HTTP round-trip
+# 實際回出去的東西」而非某個檔案的靜態內容（後者在 static_guard_lint）。屬 SA-pre-6
+# 明列的「安全指紋」例外。本檔各處對 r.text 的字面比對均由本註解涵蓋。
 _MASKED_FINGERPRINT = 'id="v"'
 
 

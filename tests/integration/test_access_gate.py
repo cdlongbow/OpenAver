@@ -31,6 +31,13 @@ LOOPBACK_V4_MAPPED = ("::ffff:127.0.0.1", 12345)
 
 # 偽裝頁的結構指紋：id="v" 只存在於 access_gate.html，不會出現在任何真實頁面/
 # JSON 回應裡，用它判斷「這次回應是不是偽裝頁」比對整份 HTML 更不脆弱。
+#
+# [lint-guard: pytest-justified] 偽裝頁反外洩指紋。這裡斷言的不是「某個檔案裡有某
+# 個字面」（那該進 static_guard_lint，本 branch 的靜態結構契約也確實放在那邊），而是
+# 「**這一次 HTTP round-trip 實際回給未認證來源的東西**是偽裝頁、而且沒有洩漏品牌
+# 字串」。它要走完 middleware 判斷、認證狀態、fail-closed 分支才知道答案，靜態掃檔
+# 表達不出來。同時屬於 pre-merge.md SA-pre-6 明列的「安全指紋」例外。
+# 下面 _assert_masked() 與本檔各處對 response.text 的字面比對均由本註解涵蓋。
 _MASKED_FINGERPRINT = 'id="v"'
 
 

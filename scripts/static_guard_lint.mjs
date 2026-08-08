@@ -3550,6 +3550,20 @@ const RULES = [
     scope: { anchor: /x-model="accessAuthEnabled"/, window: 200 },
     note: '[lint-guard:114a-T5] 勾選框必須維持依 serverMode disabled（spec §2.1：它是伺服器模式的子選項，關閉時不可獨立切換）',
   },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: "normalize('NFKC')",
+    scope: { anchor: /x-model="accessAuthPin"/, window: 200 },
+    note: '[lint-guard:114a-T7fix] PIN 欄必須在 input 當下做 NFKC 折疊，與後端 _canonical_pin() 同步。拿掉它 → 中文輸入法全形模式打出的 ａＢ９２ 不匹配前端的 ASCII 正規式，儲存鈕永遠不亮且不說明原因（Codex Stage-2 P2；與 T7fix 修掉的「打英文得到一顆灰按鈕」同一個病）。折在 input 上而非只放寬 disabled 判斷，欄位顯示的才會是實際存進去的值。',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: 'autocapitalize="off"',
+    // 錨點刻意用 class 而非 x-model：autocapitalize 寫在 x-model **之前**，而 scope
+    // 視窗只往後切——錨在 x-model 會變成永遠找不到的死守衛（T5 踩過同一個坑）。
+    scope: { anchor: /class="settings-access-auth-pin-input"/, window: 400 },
+    note: '[lint-guard:114a-T7fix] 設定頁 PIN 欄必須 autocapitalize="off"（與偽裝頁同一條不變式）：密碼區分大小寫，行動裝置鍵盤預設自動大寫首字母會讓使用者設出一組自己在別台裝置打不出來的密碼。',
+  },
 ];
 
 // ---- helpers ----

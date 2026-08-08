@@ -47,7 +47,14 @@
                        完整說明搬到 aria-label／title——原本那個 <span> 沒有 for/id
                        關聯，螢幕閱讀器讀不到欄位名稱，搬過去是淨改善。
                        autocapitalize=off 是必要的，不是保險：比對區分大小寫，手機
-                       鍵盤自動大寫首字母會讓 abcd 變 Abcd。 #}
+                       鍵盤自動大寫首字母會讓 abcd 變 Abcd。
+
+                       @input 的 NFKC 折疊要與後端同步（Codex Stage-2 P2）：後端存與
+                       比對都折，前端若只認 ASCII，中文輸入法全形模式打出的 ａＢ９２
+                       會讓儲存鈕永遠不亮、且不說明原因——與 T7fix 修掉的「打英文得到
+                       一顆灰按鈕」是同一個病。折在 input 上而不是只放寬 disabled 判斷：
+                       這樣欄位顯示的就是實際會存進去的值，不會出現「打的是全形、存的
+                       是半形、之後按眼睛看到的又不一樣」。 #}
                     <input class="settings-access-auth-pin-input"
                            :type="accessAuthPinVisible ? 'text' : 'password'"
                            maxlength="4"
@@ -58,6 +65,7 @@
                            :aria-label="window.t('settings.access_auth.pin_label')"
                            :title="window.t('settings.access_auth.pin_label')"
                            x-model="accessAuthPin"
+                           @input="accessAuthPin = accessAuthPin.normalize('NFKC')"
                            :disabled="!serverMode || accessAuthSaving">
                     <button type="button"
                             class="settings-access-auth-reveal-btn"
