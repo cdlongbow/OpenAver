@@ -3483,6 +3483,50 @@ const RULES = [
     pattern: /(['"`])warn\1/,
     note: "[lint-guard:113d-T4] showcase toast type 不得使用 warn 字面（任何引號風格；CSS 只有 alert-warning；toastType 唯一合法拼寫是 'warning'）",
   },
+
+  // ---- [lint-guard:114a-T2] access_gate.html 偽裝頁靜態結構契約 ----
+  // 偽裝頁必須是零外部資源、不透露品牌、無按鈕/label 的獨立文件（spec §2.3、
+  // TASK-114a-T2 決策清單）；手機數字鍵盤 + 四碼契約則是正向存在性檢查。
+  {
+    file: 'web/templates/access_gate.html', kind: 'forbidden-string',
+    pattern: '/static',
+    note: '[lint-guard:114a-T2] 偽裝頁禁止引用 /static（零外部資源，避免被靜態檔案請求洩漏「這裡有東西」）',
+  },
+  {
+    file: 'web/templates/access_gate.html', kind: 'forbidden-string',
+    pattern: 'OpenAver',
+    note: '[lint-guard:114a-T2] 偽裝頁禁止出現品牌字面（不透露這是 OpenAver）',
+  },
+  {
+    file: 'web/templates/access_gate.html', kind: 'forbidden-string',
+    pattern: '<button',
+    note: '[lint-guard:114a-T2] 偽裝頁禁止 <button>（spec §2.3：無按鈕，輸滿自動送出）',
+  },
+  {
+    file: 'web/templates/access_gate.html', kind: 'forbidden-string',
+    pattern: '<label',
+    note: '[lint-guard:114a-T2] 偽裝頁禁止 <label>（spec §2.3：無文字節點）',
+  },
+  {
+    file: 'web/templates/access_gate.html', kind: 'required-string',
+    pattern: 'inputmode="numeric"',
+    note: '[lint-guard:114a-T2] 偽裝頁輸入框必須是 inputmode="numeric"（手機數字鍵盤契約）',
+  },
+  {
+    file: 'web/templates/access_gate.html', kind: 'required-string',
+    pattern: 'maxlength="4"',
+    note: '[lint-guard:114a-T2] 偽裝頁輸入框必須是 maxlength="4"（四碼契約）',
+  },
+  {
+    file: 'web/templates/access_gate.html', kind: 'forbidden-string',
+    pattern: 'type="password"',
+    note: '[lint-guard:114a-T2] 偽裝頁輸入框禁止 type="password"（會召喚瀏覽器密碼管理員 UI，當場自曝這是登入框，且可能覆蓋 inputmode="numeric"；Opus 審核補充，不得回退）',
+  },
+  {
+    file: 'web/templates/access_gate.html', kind: 'forbidden-string',
+    pattern: '<!--',
+    note: '[lint-guard:114a-T2] 偽裝頁禁止 HTML 註解（<!-- -->）：這頁是伺服器端渲染，任何 HTML 註解逐字送到瀏覽器，view-source 就讀得到——零成本的洩漏管道。要留註解一律用 Jinja 註解 {# #}（伺服器端渲染時就被剝掉，不進 response body）。<!DOCTYPE html> 字面不同，不會誤中。',
+  },
 ];
 
 // ---- helpers ----
