@@ -40,15 +40,23 @@ def get_lan_ip():
 
 
 def is_public_exposure(lan_ip: Optional[str] = None) -> bool:
-    """lan_ip（未傳則現查 get_lan_ip()）不是私有位址時回 True。
+    """lan_ip（未傳則現查 get_lan_ip()）是**全球可路由**位址時回 True。
     取不到／不是合法位址一律回 False —— fail-open 到「不警告」方向（spec §3.5：
     誤報一次就等於這個警告不存在，寧可漏判不可錯判）。
+
+    判準用 `is_global` 而非 `not is_private`（Codex PR#129 round-2 P3）：兩者之間
+    夾著一整批「既不私有、也不可公開路由」的特殊用途網段，其中最會踩到的是
+    CGNAT 的 100.64.0.0/10——`is_private` 對它回 False，舊寫法會把它判成公網暴露。
+    那不是假想案例：把筆電接到手機熱點或 4G/5G 路由器時，本機拿到的就可能是
+    100.64.x。使用者會看到一則說他暴露在網際網路上的紅字警告，而他並沒有——
+    正好是這個函式的契約明文要避免的那種誤報。`is_global` 同時也把 TEST-NET、
+    benchmarking 等網段一併歸到「不警告」，方向上只會更保守。
     """
     ip = lan_ip if lan_ip is not None else get_lan_ip()
     if not ip:
         return False
     try:
-        return not ipaddress.ip_address(ip).is_private
+        return ipaddress.ip_address(ip).is_global
     except ValueError:
         return False
 

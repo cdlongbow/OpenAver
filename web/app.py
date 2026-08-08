@@ -249,6 +249,30 @@ def render_access_gate_page(request: Request):
     )
 
 
+def _is_cross_site_api_request(request: Request) -> bool:
+    """這個請求是「由別的網站發起、打向 `/api/` 」嗎？
+
+    Codex PR#129 round-2 P3 指出 `SameSite=Lax` 會在**跨站頂層 GET 導覽**時照送
+    `sid`，而閘門後有真的會寫檔的 GET 端點——`/api/gallery/jellyfin-update` 覆寫
+    poster/fanart（某些外部庫佈局下甚至就地裁切原始封面，本專案 0.13.x 已被這個
+    bug 咬過一次，原圖裁壞回不來）、`/api/gallery/update` 覆寫 NFO、
+    `/api/gallery/generate` 重建 DB。使用者只要開到一個知道你 LAN 位址的惡意頁，
+    那頁就能把瀏覽器導去這些路徑，用受害者的票發動批次寫入。
+
+    **沒有**改成 `SameSite=Strict`：那是 CD-114a-6 已拍板的決定，理由是分享情境
+    ——LINE/QR code 點進來的第一次導覽會掉票，而掉票看到的是刻意無文字的偽裝頁，
+    家人不會知道發生什麼事。改用這條的代價是零：分享連結一定指向頁面路由，不會
+    有人分享 `/api/...`；反過來，跨站打 `/api/` 對一個區網私有服務永遠不合法。
+
+    `Sec-Fetch-Site` 缺席時回 False（fail-open）——舊瀏覽器與 curl／AI agent 都
+    不送這個 header，那些呼叫者本來就不是這條在防的對象（它防的是「使用者的
+    瀏覽器被第三方網頁指使」，而瀏覽器一定會送）。
+    """
+    if request.headers.get("sec-fetch-site") != "cross-site":
+        return False
+    return request.url.path.startswith("/api/")
+
+
 @app.middleware("http")
 async def access_gate(request: Request, call_next):
     """
@@ -309,6 +333,12 @@ async def access_gate(request: Request, call_next):
             return await call_next(request)
         # 未認證：middleware 自己回應，不呼叫 handler（CD-114a-8 雙形狀）。
         return JSONResponse({"status": "ok"})
+
+    if authed and _is_cross_site_api_request(request):
+        # 持票但請求是「別的網站帶過來的、打向 /api/ 的」——一律當未認證處理
+        # （Codex PR#129 round-2 P3 的替代修法，見 `_is_cross_site_api_request`）。
+        # 回應與未認證完全同形，不新增可辨識的第四種形狀。
+        return render_access_gate_page(request)
 
     if authed:
         return await call_next(request)

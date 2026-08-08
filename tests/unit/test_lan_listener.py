@@ -261,6 +261,26 @@ class TestIsPublicExposure(unittest.TestCase):
         from web.lan_listener import is_public_exposure
         self.assertFalse(is_public_exposure("not-an-ip"))
 
+    # Codex PR#129 round-2 P3：`not is_private` 與 `is_global` 之間夾著一整批
+    # 「既不私有、也不可公開路由」的特殊用途網段。舊寫法會把它們全部判成公網暴露
+    # ——每一格都是這個函式契約明文要避免的誤報。
+    def test_is_public_exposure_cgnat_is_not_public(self):
+        """100.64.0.0/10（CGNAT）：is_private 為 False 但不可公開路由。
+
+        最會踩到的一格——筆電接手機熱點或 4G/5G 路由器時本機就可能拿到 100.64.x，
+        使用者會看到一則說他暴露在網際網路上的警告，而他並沒有。
+        """
+        from web.lan_listener import is_public_exposure
+        self.assertFalse(is_public_exposure("100.64.0.1"))
+        self.assertFalse(is_public_exposure("100.127.255.254"))
+
+    def test_is_public_exposure_other_special_use_ranges_are_not_public(self):
+        from web.lan_listener import is_public_exposure
+        self.assertFalse(is_public_exposure("192.0.2.1"))    # TEST-NET-1
+        self.assertFalse(is_public_exposure("198.18.0.1"))   # benchmarking
+        self.assertFalse(is_public_exposure("169.254.1.1"))  # link-local
+        self.assertFalse(is_public_exposure("127.0.0.1"))    # loopback
+
 
 # ---------------------------------------------------------------------------
 # start() public-exposure notification wiring (114a-T7)

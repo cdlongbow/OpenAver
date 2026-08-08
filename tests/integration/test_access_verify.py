@@ -411,3 +411,53 @@ class TestSourceGuards:
             / "access.py"
         ).read_text(encoding="utf-8")
         assert "time.sleep" not in src
+
+
+# ── Codex PR#129 round-2 P3：非 JSON 請求不得計入重試鎖 ──────────────────────
+#
+# 跨站的簡單表單 POST 送不出 application/json 而不觸發 preflight（本服務無 CORS
+# 標頭 → preflight 必被擋）。若這類請求仍計入失敗次數，使用者只要開到一個惡意
+# 網頁，那頁就能連打五次打開**全域**重試鎖，讓全家人都進不去，而攻擊者不需要
+# 知道密碼、也讀不到回應。
+
+class TestNonJsonContentTypeNotCharged:
+    @pytest.mark.parametrize(
+        "ctype",
+        ["text/plain", "application/x-www-form-urlencoded", "multipart/form-data", ""],
+    )
+    def test_simple_request_content_types_do_not_consume_attempts(
+        self, auth_db, client, ctype
+    ):
+        """連送 10 次（門檻的兩倍）非 JSON 請求後，正確密碼仍必須能進去。"""
+        for _ in range(10):
+            r = client.post(
+                "/api/access/verify",
+                content=b'{"pin": "0000"}',
+                headers={"Content-Type": ctype} if ctype else {},
+            )
+            assert r.status_code == 200
+            assert "set-cookie" not in r.headers
+
+        r = client.post("/api/access/verify", json={"pin": REAL_PIN})
+        assert "set-cookie" in r.headers, (
+            "非 JSON 請求把重試鎖吃掉了——惡意網頁不需要知道密碼就能鎖住整個閘門"
+        )
+
+    def test_non_json_response_is_byte_identical_to_wrong_pin(self, auth_db, client):
+        """形狀不得可辨識：偽裝頁的整個前提是三種狀態長得一模一樣。"""
+        wrong = client.post("/api/access/verify", json={"pin": "9999"})
+        rejected = client.post(
+            "/api/access/verify",
+            content=b'{"pin": "9999"}',
+            headers={"Content-Type": "text/plain"},
+        )
+        assert _decoy_shape(rejected) == _decoy_shape(wrong)
+
+    def test_charset_suffix_still_counts_as_json(self, auth_db, client):
+        """`application/json; charset=utf-8` 是合法的正常客戶端寫法，必須照常處理。"""
+        r = client.post(
+            "/api/access/verify",
+            content=('{"pin": "%s"}' % REAL_PIN).encode(),
+            headers={"Content-Type": "application/json; charset=utf-8"},
+        )
+        assert "set-cookie" in r.headers

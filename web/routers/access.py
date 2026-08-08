@@ -74,6 +74,23 @@ async def verify_pin(request: Request) -> Response:
 
     await _fixed_delay()
 
+    # 只有「真 JSON 請求」才算一次嘗試（Codex PR#129 round-2 P3，defense-in-depth）。
+    #
+    # 跨站的簡單表單 POST 只送得出 text/plain、urlencoded 或 multipart——送不出
+    # application/json 而不觸發 CORS preflight，而本服務沒有任何 CORS 標頭，
+    # preflight 一定被瀏覽器擋掉。不擋的話：使用者只要在同一台裝置上開到一個惡意
+    # 網頁，那頁就能對這支（allowlist、免認證可達的）端點自動連打五次，把**全域**
+    # 重試鎖打開，讓全家人一分鐘內都進不去，重複觸發可拉到一小時——攻擊者完全不需
+    # 要知道密碼，也讀不到任何回應。這在 spec §1.2 的威脅模型之外（惡意網頁不是
+    # 對手），所以是 P3，但擋它只要一次字串比對。
+    #
+    # 回應形狀與「密碼錯誤」完全相同（同一張偽裝頁、無 cookie），且刻意擺在
+    # _fixed_delay() **之後**——否則提前回傳會讓這條路徑比正常嘗試快一截，
+    # 反而開一條可跨站量測的時間側通道。
+    content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if content_type != "application/json":
+        return render_access_gate_page(request)
+
     try:
         data = await request.json()
     except Exception:

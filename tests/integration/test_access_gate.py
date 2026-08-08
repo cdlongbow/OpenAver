@@ -361,3 +361,72 @@ class TestColdCache:
         ):
             r = c.get("/search")
         _assert_masked(r)
+
+
+# ── Codex PR#129 round-2 P3：跨站打 /api/ 不得使用持有的票 ────────────────────
+#
+# SameSite=Lax 會在跨站頂層 GET 導覽時照送 sid，而閘門後有真的會寫檔的 GET 端點
+# （jellyfin-update 覆寫 poster/fanart 甚至就地裁原圖、gallery/update 覆寫 NFO、
+# gallery/generate 重建 DB）。沒有改用 SameSite=Strict——那會讓 LINE/QR 分享連結
+# 的第一次導覽掉票（CD-114a-6 已拍板的體驗決定）；改為只擋「跨站 → /api/」。
+
+
+class TestCrossSiteApiRequestsRejected:
+    def test_cross_site_api_get_with_valid_ticket_is_masked(
+        self, gated_client, valid_token
+    ):
+        """持票 + Sec-Fetch-Site: cross-site + /api/ → 偽裝頁，不放行 handler。"""
+        gated_client.cookies.set("sid", valid_token)
+        r = gated_client.get("/api/config", headers={"Sec-Fetch-Site": "cross-site"})
+        _assert_masked(r)
+
+    def test_cross_site_write_endpoint_never_reaches_handler(
+        self, gated_client, valid_token
+    ):
+        """本條才是這個修法真正要擋的東西：會寫檔的 GET 端點。"""
+        gated_client.cookies.set("sid", valid_token)
+        r = gated_client.get(
+            "/api/gallery/jellyfin-update",
+            headers={"Sec-Fetch-Site": "cross-site"},
+        )
+        _assert_masked(r)
+
+    def test_cross_site_page_navigation_still_works(
+        self, gated_client, valid_token
+    ):
+        """分享連結指向頁面路由而非 /api/——必須照常放行，否則等於偷偷把
+        CD-114a-6 換成 Strict 的行為。"""
+        gated_client.cookies.set("sid", valid_token)
+        r = gated_client.get("/settings", headers={"Sec-Fetch-Site": "cross-site"})
+        assert r.status_code == 200
+        assert _MASKED_FINGERPRINT not in r.text
+
+    @pytest.mark.parametrize("site", ["same-origin", "same-site", "none"])
+    def test_same_site_api_requests_unaffected(
+        self, gated_client, valid_token, site
+    ):
+        gated_client.cookies.set("sid", valid_token)
+        r = gated_client.get("/api/config", headers={"Sec-Fetch-Site": site})
+        assert r.status_code == 200
+        assert _MASKED_FINGERPRINT not in r.text
+
+    def test_missing_sec_fetch_site_header_fails_open(
+        self, gated_client, valid_token
+    ):
+        """curl／AI agent 不送這個 header，不能因此被擋（fail-open 是刻意的：
+        這條防的是「使用者的瀏覽器被第三方網頁指使」，而瀏覽器一定會送）。"""
+        gated_client.cookies.set("sid", valid_token)
+        r = gated_client.get("/api/config")
+        assert r.status_code == 200
+        assert _MASKED_FINGERPRINT not in r.text
+
+    def test_allowlisted_endpoints_are_intentionally_exempt(
+        self, gated_client, valid_token
+    ):
+        """放行清單兩支在此檢查之前就短路，是刻意的：`/api/health` 唯讀無副作用，
+        `/api/access/verify` 是登入入口本身、必須永遠可達（它自己的跨站濫用另由
+        `verify_pin` 的 content-type 閘門擋，見 test_access_verify.py）。"""
+        gated_client.cookies.set("sid", valid_token)
+        r = gated_client.get("/api/health", headers={"Sec-Fetch-Site": "cross-site"})
+        assert r.status_code == 200
+        assert r.json() == {"status": "ok", "version": VERSION}
