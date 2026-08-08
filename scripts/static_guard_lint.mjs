@@ -3527,6 +3527,29 @@ const RULES = [
     pattern: '<!--',
     note: '[lint-guard:114a-T2] 偽裝頁禁止 HTML 註解（<!-- -->）：這頁是伺服器端渲染，任何 HTML 註解逐字送到瀏覽器，view-source 就讀得到——零成本的洩漏管道。要留註解一律用 Jinja 註解 {# #}（伺服器端渲染時就被剝掉，不進 response body）。<!DOCTYPE html> 字面不同，不會誤中。',
   },
+
+  // ---- [lint-guard:114a-T5] 存取密碼保護欄位薄守衛（owner 未驗收 UI，僅鎖「不得回退到已知壞值」）----
+  // scope window 只從 anchor.start 往後切：錨點必須落在被守屬性「之前」。
+  // 卡面 skeleton 的 PIN/眼睛錨點落在屬性之後，會變成永遠不紅（死守衛）或 anchor 後找不到 required，
+  // 故改錨到同區塊更早的 Alpine 綁定（仍不焊 class / 版位）。
+  {
+    file: 'web/templates/settings.html', kind: 'forbidden-string',
+    pattern: 'type="text"',
+    scope: { anchor: /x-show="accessAuthEnabled"/, window: 400 },
+    note: '[lint-guard:114a-T5] PIN 輸入框不得回退成常駐明碼 type="text"，必須維持 :type 動態綁定於遮罩/明碼之間',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: ':disabled="!accessAuthPinRevealed"',
+    scope: { anchor: /x-model="accessAuthPin"/, window: 400 },
+    note: '[lint-guard:114a-T5] 眼睛按鈕必須保持依 accessAuthPinRevealed disabled——遠端使用者（伺服器未回真值）按了也不能求得明碼',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: ':disabled="!serverMode"',
+    scope: { anchor: /x-model="accessAuthEnabled"/, window: 200 },
+    note: '[lint-guard:114a-T5] 勾選框必須維持依 serverMode disabled（spec §2.1：它是伺服器模式的子選項，關閉時不可獨立切換）',
+  },
 ];
 
 // ---- helpers ----

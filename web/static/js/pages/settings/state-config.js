@@ -72,6 +72,13 @@ export function stateConfig() {
         lanIp: '',
         lanPort: null,
 
+        // ===== 存取密碼保護 State（114a-T5）=====
+        accessAuthEnabled: false,      // 勾選框當前值（load 後由 GET 覆寫）
+        accessAuthPin: '',             // PIN 輸入框當前值（load 後由 GET 覆寫）
+        accessAuthPinRevealed: false,  // 伺服器旗標：這個瀏覽器能不能看到真值（loopback 才 true）
+        accessAuthPinVisible: false,   // 前端顯示旗標：眼睛按鈕目前是否顯示明碼（純 UI，不影響資料）
+        accessAuthSaving: false,       // Save 按鈕 in-flight 旗標，防雙擊送出
+
         // ===== 全域模式切換破壞性 confirm State (90c-T5) =====
         switchModeConfirmOpen: false,
         pendingExternalManager: null,
@@ -440,6 +447,31 @@ export function stateConfig() {
                 this.showToast(window.t(val ? 'settings.server_info.toggle_failed' : 'settings.server_info.disable_failed'), 'error');
             }
         },
+        async saveAccessAuth() {
+            this.accessAuthSaving = true;
+            try {
+                const resp = await fetch('/api/access/settings', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: this.accessAuthEnabled, pin: this.accessAuthPin })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    this.showToast(window.t('settings.access_auth.saved'), 'success');
+                } else if (result.reason === 'invalid_pin') {
+                    this.showToast(window.t('settings.access_auth.pin_invalid'), 'error');
+                } else if (result.reason === 'remote_forbidden') {
+                    this.showToast(window.t('settings.server_info.remote_only'), 'error');
+                } else {
+                    this.showToast(window.t('settings.access_auth.save_failed'), 'error');
+                }
+            } catch (e) {
+                console.warn('[accessAuth] saveAccessAuth error:', e);
+                this.showToast(window.t('settings.access_auth.save_failed'), 'error');
+            } finally {
+                this.accessAuthSaving = false;
+            }
+        },
 
         // 90c-T5: 全域模式切換破壞性 confirm ─────────────────────────────────────
         // 攔截 external_manager segmented button：即時 fetch 判離線來源 → 有則跳破壞性
@@ -683,6 +715,20 @@ export function stateConfig() {
                         } catch (_e) { this.lanPort = null; }
                     } else {
                         this.lanPort = null;
+                    }
+
+                    // 114a-T5: 存取密碼保護 —— GET 無 loopback 限制，無論 serverMode 開關都嘗試讀取
+                    // （spec §2.6：PIN 設定與已通行裝置在 server_mode 關閉時仍要保留、仍要顯示）
+                    try {
+                        const authResp = await fetch('/api/access/settings');
+                        const authResult = await authResp.json();
+                        if (authResult.success) {
+                            this.accessAuthEnabled = authResult.enabled;
+                            this.accessAuthPin = authResult.pin;
+                            this.accessAuthPinRevealed = authResult.pin_revealed;
+                        }
+                    } catch (e) {
+                        console.warn('[accessAuth] loadConfig: GET /api/access/settings failed:', e);
                     }
 
                     // Sources（61c-2）：讀 config.sources 段填入 unified scope。

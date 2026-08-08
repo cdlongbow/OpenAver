@@ -361,7 +361,8 @@
       "toggle_failed": "無法啟動 LAN 伺服器，請稍後再試。",
       "disable_failed": "無法關閉 LAN 伺服器，請稍後再試。",
       "remote_only": "伺服器模式只能在執行 OpenAver 的主機電腦上切換。",
-      "autostart_failed": "重新啟動後無法自動開啟 LAN 伺服器模式，請至設定重新開啟。"
+      "autostart_failed": "重新啟動後無法自動開啟 LAN 伺服器模式，請至設定重新開啟。",
+      "warning_auth": "同一區網（Wi-Fi / LAN）內的裝置需要輸入密碼才能連線本機，請於信任的網路環境下使用。外網存取請自行配置 VPN（如 Tailscale）。"
     },
     "server_mode_confirm": {
       "title": "切換伺服器模式",
@@ -369,7 +370,16 @@
       "body_on": "開啟後，和這台電腦連到同一個 Wi-Fi 或區網的手機、平板、電腦，都可以用瀏覽器打開 OpenAver。目前沒有帳號密碼保護，同一個 Wi-Fi 或區網內的任何裝置都能連入，請只在你完全信任的網路環境下使用。",
       "body_off": "切回「單機」模式後，區網裝置將立即無法連線。確認切換？",
       "confirm": "確認切換",
-      "confirm_on": "仍要開啟"
+      "confirm_on": "仍要開啟",
+      "body_on_auth": "開啟後，和這台電腦連到同一個 Wi-Fi 或區網的手機、平板、電腦，都可以用瀏覽器打開 OpenAver。已設定密碼保護，其他裝置需要輸入密碼才能連入，請仍只在你信任的網路環境下使用。"
+    },
+    "access_auth": {
+      "label": "需要密碼才能連線",
+      "pin_label": "密碼（4 位數字）",
+      "reveal": "顯示密碼",
+      "saved": "密碼設定已儲存",
+      "save_failed": "密碼設定儲存失敗，請稍後再試。",
+      "pin_invalid": "PIN 必須是 4 位數字"
     },
     "switch_mode_confirm": {
       "title": "切換媒體伺服器模式",

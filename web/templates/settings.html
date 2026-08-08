@@ -31,6 +31,45 @@
                     </button>
                 </div>
             </div>
+            <!-- T5: 存取密碼保護（114a）-->
+            <div class="settings-access-auth">
+                <label class="settings-access-auth-checkbox-row">
+                    <input type="checkbox"
+                           class="toggle toggle-sm toggle-primary"
+                           x-model="accessAuthEnabled"
+                           :disabled="!serverMode">
+                    <span x-text="window.t('settings.access_auth.label')"></span>
+                </label>
+                <div class="settings-access-auth-pin-row" x-show="accessAuthEnabled" x-cloak>
+                    <span class="settings-access-auth-pin-label"
+                          x-text="window.t('settings.access_auth.pin_label')"></span>
+                    <input class="settings-access-auth-pin-input"
+                           :type="accessAuthPinVisible ? 'text' : 'password'"
+                           inputmode="numeric"
+                           maxlength="4"
+                           autocomplete="off"
+                           x-model="accessAuthPin"
+                           :disabled="!serverMode || accessAuthSaving">
+                    <button type="button"
+                            class="settings-access-auth-reveal-btn"
+                            :disabled="!accessAuthPinRevealed"
+                            :title="window.t('settings.access_auth.reveal')"
+                            :aria-label="window.t('settings.access_auth.reveal')"
+                            @click="accessAuthPinVisible = !accessAuthPinVisible">
+                        <i class="bi" :class="accessAuthPinVisible ? 'bi-eye-slash' : 'bi-eye'"></i>
+                    </button>
+                </div>
+                <button type="button"
+                        class="settings-access-auth-save-btn btn btn-sm btn-outline"
+                        :disabled="!serverMode || accessAuthSaving || (accessAuthEnabled && !/^\d{4}$/.test(accessAuthPin))"
+                        @click="saveAccessAuth()">
+                    <span x-show="accessAuthSaving" class="loading loading-spinner loading-sm"></span>
+                    <template x-if="!accessAuthSaving">
+                        <i class="bi bi-check-lg"></i>
+                    </template>
+                    <span x-text="accessAuthSaving ? '' : ' ' + window.t('settings.action.save')"></span>
+                </button>
+            </div>
             <!-- 81b-T1: 連線資訊 inline 區塊（ip:port + 複製 icon + ? popover）；
                  x-cloak 防 Alpine boot 前 FOUC（同原第二排 .settings-server-info 理由）-->
             <div class="settings-server-inline" x-show="serverMode" x-cloak>
@@ -69,9 +108,10 @@
                     <div x-show="showServerWarning" x-cloak x-transition
                          @click.outside="showServerWarning = false"
                          class="help-popover">
-                        <small class="help-popover__body">
-                            {{ t('settings.server_info.warning') }}
-                        </small>
+                        <small class="help-popover__body"
+                               x-text="accessAuthEnabled
+                                   ? window.t('settings.server_info.warning_auth')
+                                   : window.t('settings.server_info.warning')"></small>
                     </div>
                 </div>
             </div>
@@ -1265,7 +1305,9 @@
             </h3>
             <p class="fluent-modal-body"
                x-text="serverModeConfirmValue
-                   ? window.t('settings.server_mode_confirm.body_on')
+                   ? (accessAuthEnabled
+                       ? window.t('settings.server_mode_confirm.body_on_auth')
+                       : window.t('settings.server_mode_confirm.body_on'))
                    : window.t('settings.server_mode_confirm.body_off')"></p>
             <div class="modal-action fluent-modal-actions">
                 <button type="button" class="btn btn-ghost" @click="cancelServerModeChange()">
