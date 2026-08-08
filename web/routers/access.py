@@ -24,8 +24,10 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter, Request, Response
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, StrictBool, StrictStr
 
-from core.access_auth import attempt_pin
+from core.access_auth import attempt_pin, get_auth_settings, set_auth
 from core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -34,6 +36,11 @@ router = APIRouter(prefix="/api/access", tags=["access"])
 
 _VERIFY_DELAY_SECONDS = 1.0
 _COOKIE_MAX_AGE_SECONDS = 10 * 365 * 24 * 3600  # 十年（CD-114a-6）
+
+
+class AccessSettingsRequest(BaseModel):
+    enabled: StrictBool
+    pin: StrictStr
 
 
 async def _fixed_delay() -> None:
@@ -92,3 +99,50 @@ async def verify_pin(request: Request) -> Response:
             samesite="lax",
         )
     return response
+
+
+@router.get("/settings")
+def get_access_settings(raw_request: Request) -> dict:
+    """R4 之外：GET 無 loopback 限制，任何能打到這支端點的呼叫者
+    （loopback，或已通過 PIN 驗證的遠端持票人）都能看到 enabled 狀態；
+    PIN 真值只給 loopback（spec §4.1），reveal 完全由呼叫端來源決定，
+    core 層不判斷位址。"""
+    # 延遲 import，避免與 web.app → access router 的循環依賴（同 verify_pin /
+    # motion_lab.py 先例）。PLC2701 仍以 noqa 標明跨模組私有名依賴理由。
+    from web.app import _is_loopback_host  # noqa: PLC2701 — access.py 的 GET/PUT settings 端點需要與 T2 middleware 共用同一套本機判斷（CD-114a-5），避免在 router 層照抄一份字面值判斷（config.py:221 的手寫 tuple 就是這樣才產生 §1.4 記錄的既有 residual：不認 ::ffff:127.0.0.1）
+
+    _client = raw_request.client
+    _client_host = _client.host if _client else None
+    reveal = _is_loopback_host(_client_host)
+    result = get_auth_settings(reveal)
+    return {
+        "success": True,
+        "enabled": result["enabled"],
+        "pin": result["pin"],
+        "pin_revealed": reveal,
+    }
+
+
+@router.put("/settings")
+def update_access_settings(request: AccessSettingsRequest, raw_request: Request):
+    # 延遲 import，避免與 web.app → access router 的循環依賴（同 get_access_settings）。
+    from web.app import _is_loopback_host  # noqa: PLC2701 — access.py 的 GET/PUT settings 端點需要與 T2 middleware 共用同一套本機判斷（CD-114a-5），避免在 router 層照抄一份字面值判斷（config.py:221 的手寫 tuple 就是這樣才產生 §1.4 記錄的既有 residual：不認 ::ffff:127.0.0.1）
+
+    _client = raw_request.client
+    _client_host = _client.host if _client else None
+    if not _is_loopback_host(_client_host):
+        logger.warning(
+            "拒絕非本機變更認證設定（來源 %s）：僅主機可變更", _client_host
+        )
+        return JSONResponse(status_code=403, content={
+            "success": False, "reason": "remote_forbidden",
+            "error": "認證設定僅能在主機本機變更",
+        })
+    try:
+        set_auth(request.enabled, request.pin)
+    except ValueError:
+        return JSONResponse(status_code=400, content={
+            "success": False, "reason": "invalid_pin",
+            "error": "PIN 必須是 4 位數字",
+        })
+    return {"success": True}
