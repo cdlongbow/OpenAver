@@ -538,6 +538,64 @@ N/A — locale 切換、Dark/Light mode、tutorial 文案驗收均為 browser-on
 
 ---
 
+## US8: 區網存取閘門 + agent token（v0.13.7 / v0.13.8 新增）
+
+**故事**：主人在設定頁開啟「需要密碼才能連線」→ 自己這台永遠不用輸密碼 → Help 頁出現 agent token 區塊 → 從區網位址連進來的裝置看到的是一張看不出是 OpenAver 的偽裝頁 → 改密碼後所有裝置與 token 一起失效。
+
+> **為什麼分兩段**：閘門判的是「連進來的位址」。`localhost`／`127.0.0.1` 在閘門第 2 步就短路——**用 loopback 驗閘門會得到一個必然成功、但什麼都沒證明的結果**。故「被擋」那半必須打本機的 LAN 位址（同一台機器連自己的 LAN IP，peer 位址就是那個 LAN IP，閘門會正常生效，不需要第二台機器）。
+
+### Setup
+
+- Dev server 已啟動。**注意**：`uvicorn web.app:app` 起的 dev server **無法**開伺服器模式——LAN listener 需要 `standalone.py` 呼叫過 `lan_listener.wire(app, local_port=...)`，dev 模式下 toggle 會回「無法啟動 LAN 伺服器」。要跑本 US 的 [MCP] 段需先用一支 wire 過的啟動腳本（見 `web/lan_listener.py:120-135` 的 lifecycle 註解）。
+- **先備份再跑**：本 US 會寫 `web/config.json`（`server_mode`）與 DB 的 `access_auth`／`access_tickets`。跑完還原。
+- 起始狀態：密碼保護關閉（`GET /api/access/settings` 回 `enabled:false`）。
+
+### Steps
+
+1. **[MCP] 認證關閉時 Help 頁沒有多出任何東西**：`browser_navigate` → `/help`
+   - **驗**：頁面文字**不含** `Agent Token`、DOM **不含** `oav_`（AC8：PIN 未開時 Help 頁與現況逐位元組相同）
+2. **[MCP] 設定頁的控制組是單列不是直向堆疊**：`browser_navigate` → `/settings`，找到伺服器模式膠囊旁的「需要密碼才能連線」
+   - **驗**：控制組高度約 28px 量級（**不是** 80px 的三行堆疊）、PIN 欄是四格密碼樣式（**不是**瀏覽器預設的 332px 寬 input）
+   - **驗**：兩個密碼輸入框都有 `autocapitalize="off"`（手機鍵盤自動大寫會造成靜默鎖死）
+3. **[MCP] 設密碼**：勾選 → 輸入 4 位英數（例 `aB3x`）→ 儲存
+   - **驗**：出現「密碼設定已儲存」；欄位顯示為遮罩 ＋ 眼睛鈕可切換真值（**真值只給本機**）
+   - **驗**：打英文（不是數字）時儲存鈕是**可按的**（0.13.7 修過：寫死 4 位數字會讓英文密碼得到一顆永遠按不下去的灰按鈕）
+4. **[MCP] 自己這台永不被要求密碼**：`browser_navigate` → `/`、`/settings`、`/showcase`
+   - **驗**：三頁都正常顯示，沒有偽裝頁（AC2；loopback 免密碼）
+5. **[MCP] Help 頁出現 agent 區塊**：`browser_navigate` → `/help`
+   - **驗**：出現 `Agent Token` 標題、眼睛鈕、複製鈕、一行含 `Authorization: Bearer` 的 curl 範例、以及 SSE 已知限制那句
+   - **驗**：**沒有**「重新產生」按鈕（114b-T8 拔除；作廢路徑只有「到設定頁重存密碼」一條）
+   - **驗**：眼睛遮罩狀態下按複製，剪貼簿拿到的是**真值不是遮罩字串**（需 CDP attach 模式，headless 剪貼簿常被 block）
+6. **[人工／curl] 區網位址三態**（打 `http://<本機 LAN IP>:<lan_port>`，**不可用 localhost**）：
+   - 不帶憑證 → **200 但是偽裝頁 HTML**（無標題、無文字、只有一個不顯眼的輸入框）
+   - 帶 `Authorization: Bearer <亂字串>` → **401 JSON**（`{"success":false,"reason":"unauthorized"}`），不是偽裝頁
+   - 帶 `Authorization: Bearer <真 token>` → `/api/capabilities` 200，且回應裡 `network.auth` 寫明 bearer、**所有 curl 範例都帶 header**、回應本身**不含** `oav_` 真值
+7. **[人工／curl] agent 真的做得到事**：照 capabilities 裡任一支 `side_effect` 端點的 example 原文執行一次寫入 → 成功且讀得回來；同一支端點**不帶 token** 再打一次 → 偽裝頁，且**確認資料沒有被寫進去**
+8. **[MCP] 改密碼即全撤**：回設定頁，把密碼**存成同一組**（不改值）
+   - **驗**：`/help` 的 token **換成新的一組**（R5：認證設定一被動，票與 token 全部失效，「填一模一樣的 PIN」也不例外）
+9. **還原**：取消勾選密碼保護、關閉伺服器模式、還原備份的 `config.json` 與 DB
+
+### 完成後 state
+
+- `GET /api/access/settings` 回 `enabled:false`
+- `access_tickets` 表為空
+- `/help` 回到「無 agent 區塊」的形狀
+
+### PyWebView 例外
+
+桌面 App 走 loopback，行為與 step 4 相同（永不要求密碼）。step 6–7 的區網三態在 PyWebView 內驗不到，一律用 curl。
+
+### Regression 偵測點
+
+- 從區網連進來看到的是**登入畫面**而不是偽裝頁 → 偽裝設計失效（登入畫面等於向掃到 IP 的人宣告「這裡有東西且值得保護」）
+- 自己這台被要求密碼 → 閘門的 loopback 判斷接錯邊（`::ffff:127.0.0.1` 形狀是最常見的漏認），症狀是**桌面版自鎖且畫面是一張假頁**，使用者完全不知道發生什麼事
+- 拿錯 token 的 agent 收到 HTML 200 而不是 401 → agent 分不出「我 token 錯了」與「這台根本不是 OpenAver」
+- capabilities 的範例不帶 header 或 `auth` 欄寫 `none` → agent 照抄全部 401，然後回頭說「你這台壞了」；**這條所有單元測試都會是綠的**
+- 改密碼後舊裝置還連得進來 → 有人繞過 `core/access_auth.py` 直接寫票表（有一條 lint 規則在守，但它擋不掉表名不以字面值出現的寫法）
+- 手機輸入正確密碼卻永遠進不去 → 輸入框少了 `autocapitalize="off"`，或存／比對前沒做 NFKC 折疊（全形數字與 ASCII 是不同碼位）
+
+---
+
 ## Appendix C: Capabilities Smoke（Optional, curl-only）
 
 > 純 curl/API 測試，非 browser user story，**不算 milestone 必跑**。

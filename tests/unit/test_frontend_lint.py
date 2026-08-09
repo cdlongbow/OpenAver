@@ -603,9 +603,13 @@ class TestShowcaseLightboxSentinel:
     # ----- 71-T7: video delete trash button + delete modal + x-trap（element-bound）-----
 
     def test_t7_delete_trash_button_in_lightbox_details_row(self):
-        """[transient-guard] 71b-T1：垃圾桶鈕在 info panel 的 `.lb-details`（番號·片商·日期·size
-        那一行）行末，靠右常駐 muted icon，綁 openDeleteVideoModal()。搬位 / relayout 是一次性 —
-        舊斷言（鈕在 .cover-actions / .lb-delete-strip 內）失效屬預期。"""
+        """垃圾桶鈕在 info panel 的 `.lb-details`（番號·片商·日期·size 那一行）行末，靠右常駐
+        muted icon，綁 openDeleteVideoModal()。
+
+        原為 71b-T1 的過渡期標記（搬位／relayout 是一次性，舊斷言失效屬預期）。
+        位置自 v0.10.11 起三個 milestone 未再變動，標記於 v0.13.8 milestone 拔除、升格常規守衛
+        （SA-mile-5 連續三輪判定「到期可拔」）。守的是「刪除鈕不會漂回 .cover-actions／
+        .lb-delete-strip」——破了的後果是使用者在燈箱找不到刪除鈕。"""
         html = self._html()
         # 抽 .lb-details 區塊（內部僅 span/a/button，無巢狀 div → 第一個 </div> 即其收尾）
         m = re.search(

@@ -361,7 +361,9 @@
       "autostart_failed": "重新启动后无法自动开启 LAN 服务器模式，请前往设置重新开启。",
       "no_lan_ip_with_port": "无法自动获取本机局域网 IP，请在系统网络设置中查看本机 IP，再以「该 IP:{port}」连接。",
       "disable_failed": "无法关闭 LAN 服务器，请稍后再试。",
-      "remote_only": "服务器模式只能在运行 OpenAver 的主机电脑上切换。"
+      "remote_only": "服务器模式只能在运行 OpenAver 的主机电脑上切换。",
+      "public_exposure": "检测到本机当前使用的网络地址并非局域网私有地址，可能已直接暴露在公开网络上。4 位密码在这种情况下不足以保护，请确认你的网络架构，或改用 VPN（如 Tailscale）连接。",
+      "warning_auth": "同一局域网（Wi-Fi / LAN）内的设备需要输入密码才能连接本机，请在信任的网络环境下使用。外网访问请自行配置 VPN（如 Tailscale）。"
     },
     "section": {
       "search": "搜索与刮削",
@@ -563,7 +565,18 @@
       "body_on": "开启后，连接到同一个 Wi-Fi 或局域网的手机、平板、电脑，都可以用浏览器打开 OpenAver。目前没有账号密码保护，同一个 Wi-Fi 或局域网内的任何设备都能连入，请只在你完全信任的网络环境下使用。",
       "body_off": "切回「单机」模式后，局域网设备将立即无法连接。确认切换？",
       "confirm": "确认切换",
-      "confirm_on": "仍要开启"
+      "confirm_on": "仍要开启",
+      "body_on_auth": "开启后，和这台电脑连到同一个 Wi-Fi 或局域网的手机、平板、电脑，都可以用浏览器打开 OpenAver。已设置密码保护，其他设备需要输入密码才能连入，请仍只在你信任的网络环境下使用。"
+    },
+    "access_auth": {
+      "label": "需要密码才能连接",
+      "pin_prefix": "密码",
+      "pin_label": "密码（4 位英文或数字，区分大小写）",
+      "save": "保存",
+      "reveal": "显示密码",
+      "saved": "密码设置已保存",
+      "save_failed": "密码设置保存失败，请稍后再试。",
+      "pin_invalid": "密码必须是 4 位英文或数字"
     },
     "switch_mode_confirm": {
       "title": "切换媒体服务器模式",
@@ -1060,6 +1073,13 @@
       "ai_tools": "贴给 AI agent 就能操作 OpenAver — Claude Code · Cursor · Codex 等",
       "copy_curl": "复制命令"
     },
+    "agent_auth": {
+      "title": "Agent Token",
+      "reveal": "显示/隐藏 token",
+      "copy_token_tooltip": "复制完整 token（不论当前是否遮罩显示）",
+      "rotate_hint": "要换掉这组 token：到设置页重新保存密码即可（所有设备都需要重新输入密码）。",
+      "sse_limitation": "浏览器内置的实时进度推送（SSE）无法夹带此 token；若 agent 需要订阅扫描进度，改用 curl / httpx 等程序直接读取流不受影响。"
+    },
     "workflow": {
       "title": "第一次使用？先看这 3 步",
       "subtitle": "从加入文件夹到补全资料，三步上手",
@@ -1350,6 +1370,7 @@
       "how_off": "切回「单机」就完全关闭对外，局域网设备立刻连不到。",
       "h6_security": "安全提醒",
       "security_lan": "仅限信任的 Wi-Fi / 局域网使用（本程序不设账号密码，LAN-only）。",
+      "security_lan_auth": "已设置密码保护，仅限信任的 Wi-Fi / 局域网使用（其他设备需要输入密码才能连入，agent 则需要 token）。",
       "security_vpn": "需要外网访问请自行配置 VPN（如 Tailscale）；本程序不开放外网。",
       "h6_firewall": "第一次开启会弹出防火墙，请点「允许」",
       "firewall_allow": "第一次切到「服务器」时，Windows（或 macOS）会弹出防火墙询问是否允许网络访问 → 请点「<strong>允许 / Allow</strong>」。点一次就好，系统会记住。",

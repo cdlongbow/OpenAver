@@ -361,7 +361,9 @@
       "autostart_failed": "LAN server mode could not start automatically after restart. Go to Settings to re-enable it.",
       "no_lan_ip_with_port": "Unable to detect local LAN IP automatically. Please check your IP in System Network Settings, then connect using that IP:{port}.",
       "disable_failed": "Failed to stop the LAN server. Please try again later.",
-      "remote_only": "Server mode can only be toggled from the host computer running OpenAver."
+      "remote_only": "Server mode can only be toggled from the host computer running OpenAver.",
+      "public_exposure": "This computer's current network address is not a private LAN address — it may be directly exposed to the public internet. A 4-character password is not enough protection in that situation. Please check your network setup, or connect over a VPN (such as Tailscale) instead.",
+      "warning_auth": "Devices on the same Wi-Fi / LAN must enter the password to connect to this computer. Use only on networks you trust. For access from outside your network, set up a VPN (such as Tailscale) yourself."
     },
     "section": {
       "search": "Search & Scrape",
@@ -563,7 +565,18 @@
       "body_on": "Once enabled, any phone, tablet, or computer on the same Wi-Fi or LAN can open OpenAver in a browser. There is no username/password protection — any device on the same network can connect. Only use this on networks you fully trust.",
       "body_off": "After switching back to standalone mode, LAN devices will immediately lose access. Confirm switch?",
       "confirm": "Confirm",
-      "confirm_on": "Enable Anyway"
+      "confirm_on": "Enable Anyway",
+      "body_on_auth": "Once enabled, any phone, tablet, or computer on the same Wi-Fi or LAN can open OpenAver in a browser. Password protection is on, so other devices must enter the password to connect — still, only use this on networks you trust."
+    },
+    "access_auth": {
+      "label": "Require a password to connect",
+      "pin_prefix": "Password",
+      "pin_label": "Password (4 letters or digits, case-sensitive)",
+      "save": "Save",
+      "reveal": "Show password",
+      "saved": "Password settings saved",
+      "save_failed": "Could not save the password settings. Please try again later.",
+      "pin_invalid": "The password must be 4 letters or digits"
     },
     "switch_mode_confirm": {
       "title": "Switch media server mode",
@@ -1060,6 +1073,13 @@
       "ai_tools": "Paste to any AI agent to operate OpenAver — Claude Code · Cursor · Codex etc.",
       "copy_curl": "Copy Command"
     },
+    "agent_auth": {
+      "title": "Agent Token",
+      "reveal": "Show/hide token",
+      "copy_token_tooltip": "Copy the full token (whether or not it is currently masked)",
+      "rotate_hint": "To replace this token: save the password again in Settings (every device will need to re-enter the password).",
+      "sse_limitation": "The browser's built-in live progress stream (SSE) cannot carry this token. If your agent needs to follow scan progress, read the stream directly with curl / httpx instead — that works normally."
+    },
     "workflow": {
       "title": "First time? Follow these 3 steps",
       "subtitle": "From adding your folder to filling metadata — three steps to get started",
@@ -1350,6 +1370,7 @@
       "how_off": "Switching back to \"standalone\" fully closes external access — LAN devices disconnect immediately.",
       "h6_security": "Security Notice",
       "security_lan": "Use only on trusted Wi-Fi / LAN networks (no username/password protection, LAN-only).",
+      "security_lan_auth": "Password protection is on. Use only on trusted Wi-Fi / LAN networks (other devices must enter the password; agents need the token).",
       "security_vpn": "For remote access, configure a VPN yourself (e.g. Tailscale); this app does not expose itself to the internet.",
       "h6_firewall": "Firewall Prompt on First Launch",
       "firewall_allow": "The first time you switch to \"server\" mode, Windows (or macOS) will show a firewall prompt asking whether to allow network access → click \"<strong>Allow</strong>\". You only need to do this once; the system will remember.",
