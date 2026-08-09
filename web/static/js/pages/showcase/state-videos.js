@@ -9,6 +9,7 @@
 import { _videos, _filteredVideos, _nameToGroup, _tagToGroup, _setVideos, _setFilteredVideos } from '@/showcase/state-base.js';
 import { applyCellFocal } from '@/shared/focal-cell.js';
 import { openLocal } from '@/shared/open-local.js';
+import { normalizePillValue, buildPillPredicate } from '@/shared/pill-filter.js';
 
 export function stateVideos() {
     return {
@@ -88,12 +89,101 @@ export function stateVideos() {
         onSearchChange() {
             // B8: 透過 _animateFilter 觸發篩選動畫
             this._animateFilter();
-            var trimmed = this.search.trim();
-            if (!trimmed) {
+            // TASK-115-T8：改走單一判斷點（CD-8），無 pill 時行為逐位元組不變
+            // （_reconcileHeroCard 的「無 pill 分支」就是這裡原本的 if/else）。
+            this._reconcileHeroCard();
+        },
+
+        // TASK-115-T1: metadata pill filter mutations（UI 殼屬 T5；比對屬 T2）
+        normalizePillValue,
+
+        addPill(dim, value) {
+            var norm = normalizePillValue(value);
+            if (!dim || !norm) return;
+            var key = dim + '::' + norm;
+            var exists = this.pills.some(p => p.dim + '::' + normalizePillValue(p.value) === key);
+            if (exists) return;  // 靜默去重：不重跑 _animateFilter/_reconcileHeroCard
+            this.pills = [...this.pills, { dim: dim, value: value }];  // value 存原始字面（CD-3）
+            this._animateFilter();
+            this._reconcileHeroCard();
+        },
+
+        removePill(dim, value) {
+            var key = dim + '::' + normalizePillValue(value);
+            var next = this.pills.filter(p => (p.dim + '::' + normalizePillValue(p.value)) !== key);
+            if (next.length === this.pills.length) return;  // 沒命中：不重跑
+            this.pills = next;
+            this._animateFilter();
+            this._reconcileHeroCard();
+        },
+
+        // TASK-115-T9: 搜尋框 Backspace 刪最後一枚 pill（IME 組字中一律不刪）
+        onSearchBackspace(event) {
+            if (event.isComposing) return;
+            // 有字：交給瀏覽器原生刪字，不 preventDefault、不動 pill
+            if (event.target.value !== '') return;
+            // 游標必須在最左且選取為 collapsed；非 collapsed 選取不得刪 pill
+            if (!(event.target.selectionStart === 0 && event.target.selectionEnd === 0)) return;
+            if (this.pills.length === 0) return;
+            var last = this.pills[this.pills.length - 1];
+            this.removePill(last.dim, last.value);
+        },
+
+        clearAllFilters() {
+            this.search = '';
+            this.actressSearch = '';
+            this.pills = [];
+            // TASK-115-T8：不再直接呼叫 _clearPreciseMatch()（T7 留下的暫時補丁）——
+            // pills=[]、search='' 之後，_reconcileHeroCard() 的「無 pill 分支」本來就會
+            // 走到同一個 _clearPreciseMatch() 呼叫，讓收斂單一判斷點的精神落實（RULING 3：
+            // 兩處各自宣稱自己是「清 hero 狀態」的權威，收成一處）。
+            this._animateFilter();           // 影片格：CD-2 步驟 7-9（唯一一次）
+            this.applyActressFilterAndSort(); // 女優格：對應 onActressSearchChange() 的行為，不經 _animateFilter
+            this._reconcileHeroCard();
+            Alpine.store('ui').toolbarOpen = false;
+            // 無條件執行：使用者主動按下的清除鈕，即使已空跑一次也無害，且維持「按下必清」的誠實承諾
+        },
+
+        // TASK-115-T8：hero card（女優資料卡＋搜尋列愛心鈕）唯一判斷點（CD-8）。
+        // 無 pill：完全不限制，交給下面「無 pill 分支」的既有邏輯判斷（逐位元組保留
+        // onSearchChange 舊有的 if/else 語意）。有 pill：僅當恰好一枚女優 pill 且
+        // 自由文字為空才顯示（spec §4.8）。
+        _shouldShowHeroCard() {
+            if (this.pills.length === 0) return true;
+            return this.pills.length === 1
+                && this.pills[0].dim === 'actress'
+                && this.search.trim() === '';
+        },
+
+        // 七個既有觸發點（CD-8 原列六個＋RULING 1 併入 searchActressFilms）全部間接透過
+        // 本方法，不再各自決定。
+        //
+        // ⚠ 一個刻意的例外，新增呼叫點前先讀：`_shouldShowHeroCard()` 只判斷 pill／文字，
+        // **不判斷 showFavoriteActresses**。因此 toggleActressMode() 進入女優模式那條
+        // （state-actress.js）仍直接呼叫 _clearPreciseMatch() 而不走本方法——若走本方法，
+        // 帶著一枚持久化的女優 pill 切進女優牆會把 _isPreciseActressMatch 設成 true，
+        // 在女優牆上顯示一張不該出現的資料卡。**在 showFavoriteActresses 為 true 時可達的
+        // 新程式碼，不要無條件呼叫本方法**；要讓它變成真正的單一判斷點，正解是把
+        // !showFavoriteActresses 併進 _shouldShowHeroCard()，再把那個 bypass 收回來。
+        //
+        // 回傳 _checkPreciseActressMatch() 的 promise（若有呼叫），
+        // 讓 searchActressFilms() 的 ghost-fly 主流程可以 await 到真正的比對結果；
+        // 其餘呼叫端維持既有的 fire-and-forget 用法，忽略回傳值不影響行為。
+        _reconcileHeroCard() {
+            if (!this._shouldShowHeroCard()) {
                 this._clearPreciseMatch();
-            } else {
-                this._checkPreciseActressMatch(trimmed, 'manual');
+                return;
             }
+            if (this.pills.length === 1) {
+                // 有 pill 分支：唯一一枚女優 pill、文字為空（_shouldShowHeroCard 已保證）
+                return this._checkPreciseActressMatch(this.pills[0].value, 'pill');
+            }
+            // 無 pill 分支：逐位元組保留現況（onSearchChange 舊有的 if/else）
+            var trimmed = this.search.trim();
+            if (trimmed) {
+                return this._checkPreciseActressMatch(trimmed, 'manual');
+            }
+            this._clearPreciseMatch();
         },
 
         onSortChange() {
@@ -176,8 +266,19 @@ export function stateVideos() {
             var grid = null;
             var state = null;
 
-            // Step 0: capture（僅 grid mode）
-            if (this.mode === 'grid') {
+            // Step 0: capture（僅 grid mode，且僅影片模式）
+            //
+            // 115-T7 review：`showFavoriteActresses` 為真時**一律不碰 DOM 動畫**。
+            // 本函式是「影片側篩選」的動畫，而 `captureFlipState()` 只認得 `.av-card-preview`；
+            // 餵它一面 `.actress-card` 會回 null → 掉進下面的 capture-failed fallback →
+            // 對整面女優牆重播一次 playEntry 入場動畫。使用者看到的是：在女優模式按清除，
+            // 每張女優卡無故閃一下（淡出↓20px 再淡回），而既有的 onActressSearchChange()
+            // 那條路本來就是零動畫。
+            //
+            // 修在這裡而不是在 clearAllFilters() 加旗標：這是「任何呼叫端在女優模式下走到
+            // _animateFilter 都會中」的類別問題，不是單一呼叫點的問題。onSearchChange() /
+            // searchFromMetadata() 兩條既有路徑只在影片模式可達，故行為逐位元組不變。
+            if (this.mode === 'grid' && !this.showFavoriteActresses) {
                 grid = this._getActiveGrid();
                 if (grid) {
                     grid.classList.add('flip-guard');
@@ -299,12 +400,16 @@ export function stateVideos() {
 
         // --- 資料處理 ---
         applyFilterAndSort(skipPagination) {
-            // --- 搜尋篩選 (M4a) ---
+            // --- Stage 1: pill 精準比對（TASK-115-T2, CD-6）---
+            var pillPredicate = buildPillPredicate(this.pills, _nameToGroup, _tagToGroup);
+            var pillFiltered = _videos.filter(pillPredicate);
+
+            // --- Stage 2: 自由文字模糊比對 (M4a)（現況邏輯，body 逐字保留，僅改輸入來源陣列）---
             if (this.search && this.search.trim()) {
                 // 分割多個關鍵字（用空格分隔，過濾空字串）
                 const terms = this.search.toLowerCase().trim().split(/\s+/).filter(t => t.length > 0);
 
-                var filtered = _videos.filter(video => {
+                var filtered = pillFiltered.filter(video => {
                     const searchable = [
                         video.title,
                         video.original_title,
@@ -342,8 +447,8 @@ export function stateVideos() {
                 _setFilteredVideos(filtered);
                 this.filteredCount = _filteredVideos.length;
             } else {
-                // 空搜尋：回傳全部影片
-                _setFilteredVideos(_videos);
+                // 空搜尋：pill 篩選結果即為最終結果
+                _setFilteredVideos(pillFiltered);
                 this.filteredCount = _filteredVideos.length;
             }
 

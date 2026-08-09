@@ -231,6 +231,12 @@ body {
     z-index: 2;
 }
 
+/* ⚠ 這組「spotlight 框」的值在 pages/showcase.css 的 `.filter-pill-group` 有第二份副本
+   （TASK-115-T6：pill 需要框長在 wrapper 上才能把 pill 包進框內，且用 min-height 而非
+   固定 height 以便多枚 pill 換行時長高，故無法直接共用本 selector）。
+   調整下面的 border / radius / background / blur / box-shadow / transition 或 :focus 的
+   發光環時，請一併對照 showcase.css 的 `.filter-pill-group` 與 `:focus-within`，否則
+   showcase 與 search 兩條搜尋列會靜默走樣。兩處差異僅 height vs min-height。 */
 .spotlight-search input {
     width: 100%;
     height: 3.5rem;

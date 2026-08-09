@@ -3,6 +3,7 @@ T1: Showcase scroll-triggered toolbar collapse guard
 守衛 state-base.js 包含 scroll listener、toolbarOpen 條件、search/actressSearch 條件、
 相對基準 Y 追蹤（_toolbarOpenY）、以及 cleanup。
 """
+import re
 from pathlib import Path
 
 
@@ -83,10 +84,65 @@ class TestShowcaseHeaderSearchIcon:
         content = self._read_showcase_html()
         assert "showcase:clear-search" in content
 
-    def test_search_from_metadata_sets_this_search(self):
-        """searchFromMetadata 必須仍設 this.search（防止重構靜默斷開 showcaseHasSearch 路徑）"""
+    @staticmethod
+    def _extract_search_from_metadata_body(content):
+        """brace-matched 擷取 searchFromMetadata 函式體（非整檔 grep，防 FE-GUARD-06 假陽性——
+        `this.search = ` 這個字面在檔案其他函式仍合法存在）。
+
+        錨定「方法定義形狀」而非裸字串（與下方 _extract_has_active_filter_body 一致）：
+        `state-lightbox.js:467` 已經有一行註解提到 searchFromMetadata（無左括號，故裸
+        `find("searchFromMetadata(")` 今天仍抓得到 657 行的定義）——但只差一個字元。
+        任何人日後在定義之前寫出帶括號的呼叫或註解，裸 find 會靜默抓到 closeLightbox()
+        的 `if (this.lightboxCloseTimer) {` body，守衛就變成對不相干的程式碼斷言。"""
+        m = re.search(r"searchFromMetadata\s*\([^)]*\)\s*\{", content)
+        if not m:
+            return ""
+        open_idx = m.end() - 1  # 指向 `{`
+        depth = 0
+        for i in range(open_idx, len(content)):
+            ch = content[i]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return content[open_idx + 1:i]
+        return ""
+
+    @staticmethod
+    def _extract_has_active_filter_body(content):
+        """brace-matched 擷取 _hasActiveFilter 方法定義體（非整檔 grep，防 FE-GUARD-06 假陽性）。
+        錨定 `_hasActiveFilter() {` 方法定義，避開 `this._hasActiveFilter()` 呼叫點。"""
+        m = re.search(r"_hasActiveFilter\s*\(\s*\)\s*\{", content)
+        if not m:
+            return ""
+        open_idx = m.end() - 1  # 指向 `{`
+        depth = 0
+        for i in range(open_idx, len(content)):
+            ch = content[i]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return content[open_idx + 1:i]
+        return ""
+
+    def test_search_from_metadata_delegates_to_add_pill(self):
+        """searchFromMetadata 必須把值交給 addPill（防止重構靜默斷開 pill 篩選路徑）。
+        115-T4 前此測試斷言 `this.search = ` 存在——115-T4 把 searchFromMetadata 降格為
+        adapter，不再直接寫 this.search，改為呼叫 core 的 addPill()。
+        T7 會把 showcaseHasSearch 的判準擴充為涵蓋 pills.length > 0（CD-12），
+        在那之前，「有 pill 但 header 仍顯示放大鏡」是已知的中間態（見 T4 卡「邊界條件」段）。"""
         content = self._read_state_lightbox()
-        assert "this.search = " in content
+        body = self._extract_search_from_metadata_body(content)
+        assert body, "state-lightbox.js 找不到 searchFromMetadata 函式體"
+        # [lint-guard: pytest-justified] Alpine state contract 跨檔守衛：被守的是
+        # state-lightbox.js 的 adapter 必須把值交給 state-videos.js 的 addPill（兩個模組間的
+        # 所有權契約），不是單檔字面存在。static_guard_lint 的 required-string 一次只綁一個檔，
+        # 表達不出「A 檔委派給 B 檔的函式」這個關係，拆兩條規則會失去連結。
+        assert "addPill(" in body, "searchFromMetadata 必須委派給 addPill（pill 篩選路徑的入口）"
+        assert "this.search = " not in body, "searchFromMetadata 不應再直接寫 this.search（舊的取代行為，CD-2b）"
 
     def test_watch_search_updates_showcase_has_search(self):
         """state-base.js 必須有 $watch('search') 更新 showcaseHasSearch（mutation guard）"""
@@ -100,7 +156,15 @@ class TestShowcaseHeaderSearchIcon:
         assert "$watch('actressSearch'" in content or '$watch("actressSearch"' in content
 
     def test_init_sync_showcase_has_search_after_watchers(self):
-        """init() 必須在 $watch 登記後有 init-time 同步賦值（restoreState 在 $watch 前執行）"""
+        """init() 必須經 _hasActiveFilter() 同步 showcaseHasSearch（含 pills；CD-12）。
+        115-T7 前斷言舊兩欄位字面；現改為等價契約：函式體含 pills.length ＋ init sync 呼叫它。"""
         content = self._read_state_base()
+        body = self._extract_has_active_filter_body(content)
+        assert body, "state-base.js 找不到 _hasActiveFilter 函式體"
+        # [lint-guard: pytest-justified] Alpine store contract 跨檔守衛：被守的是
+        # state-base.js 寫入 → Alpine.store('ui').showcaseHasSearch → showcase.html 讀取
+        # 這條跨三檔的資料流（清除鈕出不出現）。單檔字面 lint 守得住寫入端存在，
+        # 守不住「判準涵蓋 pills」與「init 也走同一個判準」這兩件事同時成立。
+        assert "pills.length" in body, "_hasActiveFilter 必須涵蓋 pills（CD-12）"
         # 直接斷言 init sync 語句存在，防止只靠 $watch 而漏掉初始值路徑
-        assert "Alpine.store('ui').showcaseHasSearch = (this.search !== '' || this.actressSearch !== '')" in content
+        assert "Alpine.store('ui').showcaseHasSearch = this._hasActiveFilter();" in content

@@ -17,7 +17,7 @@
      x-data="showcase"
      @keydown.window="handleKeydown($event)"
      @wheel="handleWheel($event)"
-     x-on:showcase:clear-search.window="clearSearch()">
+     x-on:showcase:clear-search.window="clearAllFilters()">
 
     <!-- Loading State (初始顯示) -->
     <div class="state-page" x-cloak x-show="!showFavoriteActresses && loading && videoCount === 0">
@@ -69,12 +69,32 @@
                             <i class="bi bi-person-circle"></i>
                         </button>
                     </div>
-                    <!-- 影片搜尋框 (CD-11) -->
-                    <input type="text"
-                           x-show="!showFavoriteActresses"
-                           placeholder="{{ t('showcase.placeholder.search') }}"
-                           x-model="search"
-                           @input.debounce.300ms="onSearchChange()">
+                    <!-- 影片搜尋框 (CD-11) — pill 容器包住 input（TASK-115-T5） -->
+                    <div class="filter-pill-group" x-show="!showFavoriteActresses">
+                        <!-- role="list" 只包 pill，不包 input：list 的合法子元素只有 listitem，
+                             把輸入框圈進去會讓螢幕閱讀器數不對「目前有幾個條件」（spec §6.7 的目的本身）。
+                             pills 為空時整組 x-show 收起，避免報出一個「0 個項目的清單」。 -->
+                        <span class="filter-pill-list" role="list" x-show="pills.length">
+                            <template x-for="pill in pills" :key="pill.dim + '::' + normalizePillValue(pill.value)">
+                                <span class="filter-pill" role="listitem"
+                                      :title="t('showcase.pill.title', { dim: t('showcase.pill.dim_label.' + pill.dim), value: pill.value })">
+                                    <span class="filter-pill-value" x-text="pill.value"></span>
+                                    <button type="button" class="filter-pill-remove"
+                                            @click="removePill(pill.dim, pill.value)"
+                                            :aria-label="t('showcase.pill.remove_aria', { value: pill.value })">✕</button>
+                                </span>
+                            </template>
+                        </span>
+                        <!-- 靜態 placeholder 是 hydrate 前的 fallback，:placeholder 在 Alpine init 當下覆蓋它。
+                             兩個都要留：只留 `:placeholder` 會讓「首屏就可見」的搜尋框在 Alpine（defer）
+                             跑起來之前完全沒有提示字，而這條路徑每一次頁面載入都會走到。 -->
+                        <input type="text"
+                               placeholder="{{ t('showcase.placeholder.search') }}"
+                               :placeholder="pills.length ? '' : t('showcase.placeholder.search')"
+                               x-model="search"
+                               @input.debounce.300ms="onSearchChange()"
+                               @keydown.backspace="onSearchBackspace($event)">
+                    </div>
                     <!-- 女優搜尋框 (CD-11) -->
                     <input type="text"
                            x-show="showFavoriteActresses"
@@ -96,8 +116,8 @@
                             }" :style="_matchedActress?.is_favorite && !_favoriteHeartLoading ? 'color: var(--color-favorite)' : ''"></i>
                         </button>
                         <button class="btn-icon"
-                                x-show="(!showFavoriteActresses && search !== '') || (showFavoriteActresses && actressSearch !== '')"
-                                @click="showFavoriteActresses ? (actressSearch = '', onActressSearchChange()) : (search = '', onSearchChange())"
+                                x-show="$store.ui.showcaseHasSearch"
+                                @click="clearAllFilters()"
                                 title="{{ t('showcase.action.clear_search') }}">
                             <i class="bi bi-x-lg"></i>
                         </button>
@@ -389,7 +409,7 @@
                             <span x-show="video.maker">
                                 <b>{{ t('showcase.label.maker') }}：</b>
                                 <a class="info-link" href="#"
-                                   @click.prevent.stop="searchFromMetadata(video.maker)"
+                                   @click.prevent.stop="searchFromMetadata(video.maker, 'maker')"
                                    x-text="video.maker"></a>
                             </span>
                             <span x-show="video.release_date">
@@ -399,7 +419,7 @@
                         <div class="info-row" x-show="video.series">
                             <b>{{ t('showcase.label.series') }}：</b>
                             <a class="info-link" href="#"
-                               @click.prevent.stop="searchFromMetadata(video.series)"
+                               @click.prevent.stop="searchFromMetadata(video.series, 'series')"
                                x-text="video.series"></a>
                         </div>
                         <div class="info-row" x-show="video.duration">
@@ -912,12 +932,12 @@
                                     <i class="bi bi-gear" aria-hidden="true"></i>
                                 </button>
                                 <span x-show="currentLightboxVideo?.maker">
-                                    &nbsp;·&nbsp;<a href="#" class="lb-link" @click.prevent="searchFromMetadata(currentLightboxVideo?.maker)" x-text="currentLightboxVideo?.maker"></a>
+                                    &nbsp;·&nbsp;<a href="#" class="lb-link" @click.prevent="searchFromMetadata(currentLightboxVideo?.maker, 'maker')" x-text="currentLightboxVideo?.maker"></a>
                                 </span>
                                 <span x-show="currentLightboxVideo?.director">
                                     &nbsp;·&nbsp;<b>{{ t('showcase.label.director') }}：</b>
                                     <a href="#" class="lb-link"
-                                       @click.prevent="searchFromMetadata(currentLightboxVideo?.director)"
+                                       @click.prevent="searchFromMetadata(currentLightboxVideo?.director, 'director')"
                                        x-text="currentLightboxVideo?.director"></a>
                                 </span>
                                 <span x-show="currentLightboxVideo?.duration">
@@ -926,13 +946,13 @@
                                 <span x-show="currentLightboxVideo?.series">
                                     &nbsp;·&nbsp;<b>{{ t('showcase.label.series') }}：</b>
                                     <a href="#" class="lb-link"
-                                       @click.prevent="searchFromMetadata(currentLightboxVideo?.series)"
+                                       @click.prevent="searchFromMetadata(currentLightboxVideo?.series, 'series')"
                                        x-text="currentLightboxVideo?.series"></a>
                                 </span>
                                 <span x-show="currentLightboxVideo?.label && currentLightboxVideo?.label !== currentLightboxVideo?.maker">
                                     &nbsp;·&nbsp;<b>{{ t('showcase.label.label') }}：</b>
                                     <a href="#" class="lb-link"
-                                       @click.prevent="searchFromMetadata(currentLightboxVideo?.label)"
+                                       @click.prevent="searchFromMetadata(currentLightboxVideo?.label, 'label')"
                                        x-text="currentLightboxVideo?.label"></a>
                                 </span>
                                 <span x-show="currentLightboxVideo?.release_date">
@@ -1507,14 +1527,17 @@
             <template x-if="!showFavoriteActresses">
                 <span class="footer-count">
                     <i class="bi bi-film"></i>
-                    <template x-if="!search">
+                    <template x-if="!pills.length && !search">
                         <span><b x-text="filteredCount"></b> {{ t('showcase.status.total_suffix') }}</span>
                     </template>
-                    <template x-if="search && filteredCount > 0">
+                    <template x-if="!pills.length && search && filteredCount > 0">
                         <span>{{ t('showcase.status.search_prefix') }}<b class="footer-search-term" x-text="search"></b>{{ t('showcase.status.search_middle') }} <b x-text="filteredCount"></b> {{ t('showcase.status.search_suffix') }}</span>
                     </template>
-                    <template x-if="search && filteredCount === 0">
+                    <template x-if="!pills.length && search && filteredCount === 0">
                         <span x-text="t('showcase.status.search_empty')"></span>
+                    </template>
+                    <template x-if="pills.length > 0">
+                        <span>{{ t('showcase.status.pill_prefix') }} <b x-text="pills.length"></b> {{ t('showcase.status.pill_middle') }} <b x-text="filteredCount"></b> {{ t('showcase.status.pill_suffix') }}</span>
                     </template>
                 </span>
             </template>

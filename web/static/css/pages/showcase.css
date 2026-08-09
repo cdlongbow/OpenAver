@@ -1768,13 +1768,19 @@ body.similar-mobile-active [data-picker-ghost] {
 /* 小螢幕：Toolbar 單欄堆疊 (44c-T8) */
 @media (max-width: 768px) {
     .showcase-toolbar {
-        grid-template-columns: 1fr;
+        /* TASK-115-T6：`minmax(0, 1fr)` 而非裸 `1fr`。grid track 的 auto-minimum 會取
+           內容的 min-content 當下限，裸 `1fr` 因此擋不住寬內容把整條軌道撐破視窗。
+           filter pill 出現前，這一格永遠只裝得下一個可縮的 <input>，min-content 極小，
+           所以這個缺口從來沒有被觸發過；長系列名的 pill 是第一個撐得動它的內容
+           （實測 360px 下把工具列撐到 458px，右緣連同圓角被螢幕直接切掉）。 */
+        grid-template-columns: minmax(0, 1fr);
         gap: 0.75rem;
         padding: 1rem;
     }
 
     .toolbar-search {
         grid-column: 1;
+        min-width: 0;   /* 同上：grid item 的 min-width:auto 會把 min-content 當地板 */
     }
 
     .toolbar-controls {
@@ -2866,6 +2872,143 @@ body.sidebar-collapsed .showcase-footer {
     --spotlight-right-slot: 8.5rem;
 }
 .lightbox-metadata .lb-chips-more:hover { opacity: 1; }
+
+/* ==================== Filter pills (TASK-115-T5 shell + T6 appearance) =====
+   Shared spotlight frame lives on .filter-pill-group (not the inner input).
+   .filter-pill is neutral tint + thin border — deliberately NOT solid --accent
+   (that fill is .lb-user-tag, which permanently deletes a tag). ✕ is always
+   visible with a ≥24×24 CSS-px hit target (no hover-reveal). */
+.filter-pill-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    /* Shared frame — moved from .spotlight-search input (theme.css).
+       min-height (not fixed height) so multi-pill wrap can grow the bar. */
+    min-height: 3.5rem;
+    padding-left: var(--spotlight-left-slot);
+    padding-right: var(--spotlight-right-slot);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-pill);
+    background: var(--bg-card);
+    /* stylelint-disable-next-line declaration-property-value-disallowed-list -- Fluent Heavy acrylic 20px spotlight frame (mirrors theme.css .spotlight-search input), TASK-115-T6 */
+    backdrop-filter: blur(20px);
+    /* stylelint-disable-next-line declaration-property-value-disallowed-list -- Safari prefix mirror, TASK-115-T6 */
+    -webkit-backdrop-filter: blur(20px);
+    box-shadow:
+        inset 0 1px 0 color-mix(in oklch, var(--color-base-content) 10%, transparent),
+        var(--shadow-sm);
+    transition:
+        border-color var(--duration-normal) var(--ease-out),
+        box-shadow var(--duration-normal) var(--ease-out),
+        transform var(--duration-normal) var(--ease-out);
+}
+
+/* Focus ring wraps the whole group (pills + input), not just the text field. */
+.filter-pill-group:focus-within {
+    border-color: var(--accent);
+    box-shadow:
+        inset 0 1px 0 color-mix(in oklch, var(--color-base-content) 15%, transparent),
+        0 0 0 4px color-mix(in oklch, var(--color-primary) 15%, transparent),
+        0 0 20px var(--glow-primary),
+        var(--shadow-md);
+    transform: scale(1.02);
+}
+
+/* role="list" 包裝層：與外層同為 wrap flex，讓 pill 仍以扁平方式換行 */
+.filter-pill-list {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* Neutral tint + thin border — opposite of .lb-user-tag solid --accent fill. */
+.filter-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.15rem;
+    max-width: 100%;
+    min-width: 0;
+    padding: 0.1rem 0.2rem 0.1rem 0.55rem;
+    background: color-mix(in oklch, var(--color-base-content) 6%, transparent);
+    border: 1px solid var(--stroke-default);
+    border-radius: var(--radius-pill);
+    color: var(--text-secondary);
+    font-size: 0.8125rem;
+    line-height: 1.3;
+}
+
+.filter-pill-value {
+    max-width: 12rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Always-visible remove control. Glyph stays ~12px; hit box ≥24×24 via min-*.
+   Forbidden on resting rule: width:0 / opacity:0 / display:none / visibility:hidden
+   and any :hover-gated reveal (alias-pill-remove is the anti-pattern). */
+.filter-pill-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    min-width: 24px;
+    min-height: 24px;
+    margin: 0;
+    padding: 0;
+    border: none;
+    border-radius: var(--radius-pill);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    line-height: 1;
+    cursor: pointer;
+    transition:
+        color var(--fluent-duration-fast) var(--fluent-ease-standard),
+        background-color var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+
+.filter-pill-remove:hover {
+    color: var(--text-primary);
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
+}
+
+.filter-pill-remove:focus-visible {
+    outline: 2px solid var(--stroke-default);
+    outline-offset: 1px;
+}
+
+/* Neutralise the theme frame on the inner input — group owns the chrome now.
+   Equal specificity (0,1,1) to .spotlight-search input; showcase.css source-order wins. */
+.filter-pill-group > input {
+    flex: 1 1 8rem;
+    min-width: 8rem;
+    height: auto;
+    min-height: 0;
+    padding-left: 0;
+    padding-right: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    box-shadow: none;
+    transform: none;
+}
+
+.filter-pill-group > input:focus {
+    border: none;
+    box-shadow: none;
+    transform: none;
+    outline: none;
+}
 
 /* ==================== Phase 44b T3: Hero Card ==================== */
 
