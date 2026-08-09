@@ -3581,6 +3581,29 @@ const RULES = [
     scope: { anchor: /class="settings-access-auth-pin-input"/, window: 400 },
     note: '[lint-guard:114a-T7fix] 設定頁 PIN 欄必須 autocapitalize="off"（與偽裝頁同一條不變式）：密碼區分大小寫，行動裝置鍵盤預設自動大寫首字母會讓使用者設出一組自己在別台裝置打不出來的密碼。',
   },
+  {
+    file: { dir: 'core', ext: ['.py'], recursive: true, exclude: ['access_auth.py'] },
+    kind: 'forbidden-string',
+    pattern: 'access_tickets',
+    note: '[lint-guard:114b-T6] access_tickets 票表的寫入只能出現在 core/access_auth.py（單一所有者，CD-114b-12）。若 core/ 底下別的模組直接寫這張表，就繞過了 access_auth 那把 threading.Lock——改密碼／關閉認證時 revoke_all() 撤不到那一筆，使用者以為已經把一台裝置踢下線，其實那張憑證仍然有效，是 plan-114a.md §0 v4 修掉的 TOCTOU 窗口重新打開。',
+  },
+  {
+    file: { dir: 'web', ext: ['.py'], recursive: true },
+    kind: 'forbidden-string',
+    pattern: 'access_tickets',
+    note: '[lint-guard:114b-T6] access_tickets 票表的寫入只能出現在 core/access_auth.py（單一所有者，CD-114b-12）。若某支 web/ 底下的 router 直接寫這張表，就繞過了 access_auth 那把 threading.Lock——改密碼／關閉認證時 revoke_all() 撤不到那一筆，使用者以為已經把一台裝置踢下線，其實那張憑證仍然有效，是 plan-114a.md §0 v4 修掉的 TOCTOU 窗口重新打開。',
+  },
+  {
+    // windows/ 今天零 DB 存取，這條掃不到任何東西——刻意的。它擋的是一個具體且
+    // 合理的未來動作：系統匣加一顆「登出所有裝置」，而最短的實作路徑正是在
+    // windows/pywebview_api.py 裡直接 DELETE 這張表（那條路繞過鎖、也繞過
+    // revoke_all 的快取同步）。三個 production Python 目錄裡少掃一個，等於留一
+    // 個只有寫的人知道存在的缺口。
+    file: { dir: 'windows', ext: ['.py'], recursive: true },
+    kind: 'forbidden-string',
+    pattern: 'access_tickets',
+    note: '[lint-guard:114b-T6] access_tickets 票表的寫入只能出現在 core/access_auth.py（單一所有者，CD-114b-12）。windows/（系統匣／pywebview 層）直接寫這張表會繞過 access_auth 那把 threading.Lock——改密碼／關閉認證時 revoke_all() 撤不到那一筆，使用者以為已經把一台裝置踢下線，其實那張憑證仍然有效。',
+  },
 ];
 
 // ---- helpers ----
