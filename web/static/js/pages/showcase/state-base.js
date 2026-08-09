@@ -290,7 +290,8 @@ export function stateBase() {
                 this._isNarrow = this._narrowMq.matches;   // re-sync：補回 factory 初值到本行之間的跨界事件
             }
 
-            // T1: Mobile scroll-to-collapse — 往下滾超過 50px（相對 toolbar 展開當下 Y）自動收合（≤480px，搜尋空白時）
+            // T1: Mobile scroll-to-collapse — 往下滾超過 50px（相對 toolbar 展開當下 Y）自動收合
+            // （≤480px，**沒有任何啟用中篩選時**）
             let _toolbarOpenY = null
             const COLLAPSE_THRESHOLD = 50
             const _scrollHandler = () => {
@@ -298,7 +299,14 @@ export function stateBase() {
                 const isOpen = Alpine.store('ui').toolbarOpen
                 if (!isOpen) { _toolbarOpenY = null; return }
                 if (_toolbarOpenY === null) _toolbarOpenY = window.scrollY
-                if (this.search !== '' || this.actressSearch !== '') return  // actressSearch 來自 state-actress.js merge
+                // 115 PR#131 P3：改用 _hasActiveFilter()（含 pills），與 showcaseHasSearch 同一個判準。
+                // 兩者必須同步放寬，否則自相矛盾：navbar 那顆鈕在 showcaseHasSearch 為真時變成 ✕，
+                // 按下去是 clear-search 全清、**不再是展開工具列**（base.html:502-505）。手機上只用
+                // pill 篩選（沒打字）時，若這裡仍只看文字欄位，捲動就會把裝著 pill 的工具列收掉，
+                // 而唯一的重新開啟入口已經變成「全部清掉」——使用者再也無法只移除其中一枚 pill。
+                // 這是 T7 只放寬 showcaseHasSearch、沒跟著放寬本守衛造成的自引回歸。
+                // （actressSearch 來自 state-actress.js merge，pills 來自本檔）
+                if (this._hasActiveFilter()) return
                 if (window.scrollY - _toolbarOpenY > COLLAPSE_THRESHOLD) {
                     Alpine.store('ui').toolbarOpen = false
                     _toolbarOpenY = null  // reset: 下次 reopen 從新基準計，防 stale baseline 立即再收

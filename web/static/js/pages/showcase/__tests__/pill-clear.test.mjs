@@ -318,6 +318,42 @@ test('_hasActiveFilter 函式體含 pills.length（CD-12 真的涵蓋 pill）', 
     assert.ok(body.includes('actressSearch'), `_hasActiveFilter 體必須含 actressSearch`);
 });
 
+// ===== 捲動自動收合守衛（PR#131 P3 回歸鎖）=====
+
+test('行動版捲動自動收合守衛用 _hasActiveFilter()，不是只看兩個文字欄位', () => {
+    // Why 這是回歸鎖而不是風格檢查：navbar 那顆鈕在 showcaseHasSearch 為真時變成 ✕，
+    // 按下去是 clear-search 全清、不再是展開工具列（base.html:502-505）。手機上只用 pill
+    // 篩選時，若本守衛仍只看文字欄位，捲動會把裝著 pill 的工具列收掉，而唯一的重開入口
+    // 已變成「全部清掉」——使用者再也無法只移除其中一枚 pill。兩個判準必須同步放寬。
+    const m = /_scrollHandler\s*=\s*\(\)\s*=>\s*\{/.exec(STATE_BASE_SRC);
+    assert.ok(m, '必須有 _scrollHandler 箭頭函式定義');
+    const open = STATE_BASE_SRC.indexOf('{', m.index);
+    let depth = 0;
+    let body = '';
+    for (let i = open; i < STATE_BASE_SRC.length; i++) {
+        const ch = STATE_BASE_SRC[i];
+        if (ch === '{') depth++;
+        else if (ch === '}') {
+            depth--;
+            if (depth === 0) {
+                body = STATE_BASE_SRC.slice(open + 1, i);
+                break;
+            }
+        }
+    }
+    // 剝註解後才比對，否則上面那段說明文字自己會讓守衛通過
+    const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    assert.ok(
+        code.includes('this._hasActiveFilter()'),
+        `_scrollHandler 必須用 _hasActiveFilter() 當 early-return 守衛，實際：${code}`,
+    );
+    assert.equal(
+        /this\.search\s*!==\s*''\s*\|\|\s*this\.actressSearch\s*!==\s*''/.test(code),
+        false,
+        '_scrollHandler 不得再用舊的兩欄位字面（漏掉 pills）',
+    );
+});
+
 // ===== showcase.html 接線 =====
 
 test('showcase.html：window listener 與搜尋列清除鈕皆呼叫 clearAllFilters', () => {
