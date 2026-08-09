@@ -3,6 +3,7 @@ T1: Showcase scroll-triggered toolbar collapse guard
 守衛 state-base.js 包含 scroll listener、toolbarOpen 條件、search/actressSearch 條件、
 相對基準 Y 追蹤（_toolbarOpenY）、以及 cleanup。
 """
+import re
 from pathlib import Path
 
 
@@ -104,6 +105,25 @@ class TestShowcaseHeaderSearchIcon:
                     return content[open_idx + 1:i]
         return ""
 
+    @staticmethod
+    def _extract_has_active_filter_body(content):
+        """brace-matched 擷取 _hasActiveFilter 方法定義體（非整檔 grep，防 FE-GUARD-06 假陽性）。
+        錨定 `_hasActiveFilter() {` 方法定義，避開 `this._hasActiveFilter()` 呼叫點。"""
+        m = re.search(r"_hasActiveFilter\s*\(\s*\)\s*\{", content)
+        if not m:
+            return ""
+        open_idx = m.end() - 1  # 指向 `{`
+        depth = 0
+        for i in range(open_idx, len(content)):
+            ch = content[i]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return content[open_idx + 1:i]
+        return ""
+
     def test_search_from_metadata_delegates_to_add_pill(self):
         """searchFromMetadata 必須把值交給 addPill（防止重構靜默斷開 pill 篩選路徑）。
         115-T4 前此測試斷言 `this.search = ` 存在——115-T4 把 searchFromMetadata 降格為
@@ -128,7 +148,11 @@ class TestShowcaseHeaderSearchIcon:
         assert "$watch('actressSearch'" in content or '$watch("actressSearch"' in content
 
     def test_init_sync_showcase_has_search_after_watchers(self):
-        """init() 必須在 $watch 登記後有 init-time 同步賦值（restoreState 在 $watch 前執行）"""
+        """init() 必須經 _hasActiveFilter() 同步 showcaseHasSearch（含 pills；CD-12）。
+        115-T7 前斷言舊兩欄位字面；現改為等價契約：函式體含 pills.length ＋ init sync 呼叫它。"""
         content = self._read_state_base()
+        body = self._extract_has_active_filter_body(content)
+        assert body, "state-base.js 找不到 _hasActiveFilter 函式體"
+        assert "pills.length" in body, "_hasActiveFilter 必須涵蓋 pills（CD-12）"
         # 直接斷言 init sync 語句存在，防止只靠 $watch 而漏掉初始值路徑
-        assert "Alpine.store('ui').showcaseHasSearch = (this.search !== '' || this.actressSearch !== '')" in content
+        assert "Alpine.store('ui').showcaseHasSearch = this._hasActiveFilter();" in content

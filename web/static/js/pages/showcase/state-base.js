@@ -307,15 +307,20 @@ export function stateBase() {
             window.addEventListener('scroll', _scrollHandler, { passive: true })
             this._scrollHideHandler = _scrollHandler
 
-            // T2: 有效搜尋時 header icon 切換為 X
-            this.$watch('search', val => {
-                Alpine.store('ui').showcaseHasSearch = (val !== '' || this.actressSearch !== '')
+            // T2/115-T7：有效搜尋（含 pill）時 header icon 切換為 X。三個 $watch 與 init 同步都呼叫同一個
+            // _hasActiveFilter()（CD-12：不寫兩份判準）。
+            this.$watch('search', () => {
+                Alpine.store('ui').showcaseHasSearch = this._hasActiveFilter();
             })
-            this.$watch('actressSearch', val => {
-                Alpine.store('ui').showcaseHasSearch = (this.search !== '' || val !== '')
+            this.$watch('actressSearch', () => {
+                Alpine.store('ui').showcaseHasSearch = this._hasActiveFilter();
             })
-            // T2 init sync: restoreState() 在 $watch 前執行，初始 search/actressSearch 不觸發 watcher
-            Alpine.store('ui').showcaseHasSearch = (this.search !== '' || this.actressSearch !== '')
+            // 115-T7：pills 依 CD-3 慣例整包替換，$watch 對此可靠觸發（見 TASK-115-T7 現況分析）。
+            this.$watch('pills', () => {
+                Alpine.store('ui').showcaseHasSearch = this._hasActiveFilter();
+            })
+            // T2 init sync：restoreState() 在 $watch 前執行，初始值不會觸發上面任何一個 watcher
+            Alpine.store('ui').showcaseHasSearch = this._hasActiveFilter();
 
             // 98b-T4：換片 reset 遮罩（結構性涵蓋四條換片路徑——皆最終改 currentLightboxVideo）。
             // A 片開遮罩翻 auto → 不關直接換 B → 舊片未提交態不落 B 的 DB（_maskSession guard + 此 reset）。
@@ -329,12 +334,9 @@ export function stateBase() {
             this.$watch('currentLightboxActress?.name', () => { if (this._maskVisible) this._resetMask(); })
         },
 
-        clearSearch() {
-            this.search = ''
-            this.actressSearch = ''
-            this.onSearchChange()
-            this.onActressSearchChange()
-            Alpine.store('ui').toolbarOpen = false
+        // 115-T7 / CD-12：單一「是否有啟用中篩選」判準（文字／女優文字／pill 任一即真）
+        _hasActiveFilter() {
+            return this.search !== '' || this.actressSearch !== '' || this.pills.length > 0;
         },
 
         // --- 狀態恢復 (M2c) ---

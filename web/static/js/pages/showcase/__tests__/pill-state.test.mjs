@@ -19,6 +19,10 @@ import path from 'node:path';
 // 比照 cover-fallback.test.mjs / confirm-edit-identity-guard.test.mjs 先 stub window。
 globalThis.window = globalThis;
 globalThis.window.t = (key) => key;
+// 115-T7：clearAllFilters() 現在寫 Alpine.store('ui').toolbarOpen；T1 harness 需 stub 才能跑。
+globalThis.Alpine = globalThis.Alpine || {
+    store: () => ({ toolbarOpen: false, showcaseHasSearch: false }),
+};
 
 const IMPORTMAP = {
     '@/settings/': 'pages/settings/',
@@ -65,6 +69,7 @@ function makeComponent(overrides) {
     const c = Object.assign({}, stateVideos(), {
         pills: [],
         search: '',
+        actressSearch: '',
         page: 3,
         sort: 'title',
         order: 'asc',
@@ -72,6 +77,8 @@ function makeComponent(overrides) {
         heroCalls: 0,
         _clearPreciseMatch() {},
         _checkPreciseActressMatch() {},
+        // 115-T7：clearAllFilters 現在呼叫 applyActressFilterAndSort（定義在 state-actress.js）
+        applyActressFilterAndSort() {},
     }, overrides);
     c._animateFilter = function () { c.animateCalls++; };
     c._reconcileHeroCard = function () { c.heroCalls++; };

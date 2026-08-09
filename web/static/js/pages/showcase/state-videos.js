@@ -122,9 +122,13 @@ export function stateVideos() {
 
         clearAllFilters() {
             this.search = '';
+            this.actressSearch = '';
             this.pills = [];
-            this._animateFilter();
+            this._clearPreciseMatch();       // 清掉愛心圖示／_matchedActress 殘留（T7 現況分析第四缺口）
+            this._animateFilter();           // 影片格：CD-2 步驟 7-9（唯一一次）
+            this.applyActressFilterAndSort(); // 女優格：對應 onActressSearchChange() 的行為，不經 _animateFilter
             this._reconcileHeroCard();
+            Alpine.store('ui').toolbarOpen = false;
             // 無條件執行：使用者主動按下的清除鈕，即使已空跑一次也無害，且維持「按下必清」的誠實承諾
         },
 
@@ -214,8 +218,19 @@ export function stateVideos() {
             var grid = null;
             var state = null;
 
-            // Step 0: capture（僅 grid mode）
-            if (this.mode === 'grid') {
+            // Step 0: capture（僅 grid mode，且僅影片模式）
+            //
+            // 115-T7 review：`showFavoriteActresses` 為真時**一律不碰 DOM 動畫**。
+            // 本函式是「影片側篩選」的動畫，而 `captureFlipState()` 只認得 `.av-card-preview`；
+            // 餵它一面 `.actress-card` 會回 null → 掉進下面的 capture-failed fallback →
+            // 對整面女優牆重播一次 playEntry 入場動畫。使用者看到的是：在女優模式按清除，
+            // 每張女優卡無故閃一下（淡出↓20px 再淡回），而既有的 onActressSearchChange()
+            // 那條路本來就是零動畫。
+            //
+            // 修在這裡而不是在 clearAllFilters() 加旗標：這是「任何呼叫端在女優模式下走到
+            // _animateFilter 都會中」的類別問題，不是單一呼叫點的問題。onSearchChange() /
+            // searchFromMetadata() 兩條既有路徑只在影片模式可達，故行為逐位元組不變。
+            if (this.mode === 'grid' && !this.showFavoriteActresses) {
                 grid = this._getActiveGrid();
                 if (grid) {
                     grid.classList.add('flip-guard');

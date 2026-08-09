@@ -17,7 +17,7 @@
      x-data="showcase"
      @keydown.window="handleKeydown($event)"
      @wheel="handleWheel($event)"
-     x-on:showcase:clear-search.window="clearSearch()">
+     x-on:showcase:clear-search.window="clearAllFilters()">
 
     <!-- Loading State (初始顯示) -->
     <div class="state-page" x-cloak x-show="!showFavoriteActresses && loading && videoCount === 0">
@@ -115,8 +115,8 @@
                             }" :style="_matchedActress?.is_favorite && !_favoriteHeartLoading ? 'color: var(--color-favorite)' : ''"></i>
                         </button>
                         <button class="btn-icon"
-                                x-show="(!showFavoriteActresses && search !== '') || (showFavoriteActresses && actressSearch !== '')"
-                                @click="showFavoriteActresses ? (actressSearch = '', onActressSearchChange()) : (search = '', onSearchChange())"
+                                x-show="$store.ui.showcaseHasSearch"
+                                @click="clearAllFilters()"
                                 title="{{ t('showcase.action.clear_search') }}">
                             <i class="bi bi-x-lg"></i>
                         </button>
