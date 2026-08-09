@@ -139,13 +139,13 @@ class TestR2ScannerPageRoundTrip:
 
 
 # ===========================================================================
-# R3 — /connect with mask token → three sinks get REAL
+# R3 — /connect with mask token → all four token sinks get REAL
 # ===========================================================================
 
 class TestR3ConnectMaskToken:
-    """connect 送遮罩 token → client / canary / state.connect 三處收真值；config 不毀。"""
+    """connect 送遮罩 token → client / canary / state.connect / 背景 probe 四處收真值；config 不毀。"""
 
-    def test_r3_connect_mask_token_three_sinks(self, client):
+    def test_r3_connect_mask_token_four_sinks(self, client):
         cfg = load_config()
         cfg.setdefault("metatube", {})["token"] = METATUBE_PLAIN
         save_config(cfg)
@@ -157,7 +157,12 @@ class TestR3ConnectMaskToken:
             patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient,
             patch("web.routers.settings_metatube._verify_token_canary") as mock_canary,
             patch.object(state, "connect", wraps=state.connect) as mock_state_connect,
-            patch("web.routers.settings_metatube.probe_all"),
+            # Patch _fire_probe itself, not probe_all: _fire_probe schedules its work
+            # with run_in_executor and the handler never awaits it (settings_metatube.py
+            # :218-236), so probe_all's call args are only readable after a race the
+            # test would have to sleep/poll for. The call INTO _fire_probe happens
+            # synchronously on the loop thread — that is where the token is observable.
+            patch("web.routers.settings_metatube._fire_probe") as mock_fire_probe,
         ):
             mock_instance = MagicMock()
             mock_instance.list_providers.return_value = {
@@ -197,7 +202,15 @@ class TestR3ConnectMaskToken:
             f"state.connect got token={sc_args[1]!r}, expected REAL"
         )
 
-        # (d) config still REAL (not overwritten by mask)
+        # (d) background probe call args — a mask here would make every provider
+        # report unavailable while the connection itself looks fine.
+        mock_fire_probe.assert_called_once()
+        fp_args = mock_fire_probe.call_args[0]
+        assert fp_args[1] == METATUBE_PLAIN, (
+            f"_fire_probe got token={fp_args[1]!r}, expected REAL"
+        )
+
+        # (e) config still REAL (not overwritten by mask)
         assert load_config()["metatube"]["token"] == METATUBE_PLAIN
 
 
