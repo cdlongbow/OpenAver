@@ -117,6 +117,18 @@ export function stateVideos() {
             this._reconcileHeroCard();
         },
 
+        // TASK-115-T9: 搜尋框 Backspace 刪最後一枚 pill（IME 組字中一律不刪）
+        onSearchBackspace(event) {
+            if (event.isComposing) return;
+            // 有字：交給瀏覽器原生刪字，不 preventDefault、不動 pill
+            if (event.target.value !== '') return;
+            // 游標必須在最左且選取為 collapsed；非 collapsed 選取不得刪 pill
+            if (!(event.target.selectionStart === 0 && event.target.selectionEnd === 0)) return;
+            if (this.pills.length === 0) return;
+            var last = this.pills[this.pills.length - 1];
+            this.removePill(last.dim, last.value);
+        },
+
         clearAllFilters() {
             this.search = '';
             this.actressSearch = '';

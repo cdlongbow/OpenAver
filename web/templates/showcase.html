@@ -92,7 +92,8 @@
                                placeholder="{{ t('showcase.placeholder.search') }}"
                                :placeholder="pills.length ? '' : t('showcase.placeholder.search')"
                                x-model="search"
-                               @input.debounce.300ms="onSearchChange()">
+                               @input.debounce.300ms="onSearchChange()"
+                               @keydown.backspace="onSearchBackspace($event)">
                     </div>
                     <!-- 女優搜尋框 (CD-11) -->
                     <input type="text"
