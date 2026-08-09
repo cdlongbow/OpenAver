@@ -1,0 +1,464 @@
+"""Integration tests for resolve_secret wiring at six credential entry points (TASK-114c-T2).
+
+R1–R6: GET→PUT mask round-trip, connect mask token, positive write/clear,
+and four test endpoints × mask/plaintext (CD-114c-6).
+"""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
+import pytest
+
+from core.config import load_config, save_config
+from core.metatube.state import metatube_state as state
+from core.secret_fields import mask_secret
+
+# Canonical non-empty secrets (len > 4 so mask keeps last-4 sentinel).
+GEMINI_PLAIN = "gemini-secret-key-aaaa"
+OPENAI_PLAIN = "sk-openai-secret-bbbb"
+METATUBE_PLAIN = "mt-token-secret-cccc"
+
+GEMINI_NEW = "gemini-new-key-zzzz"
+OPENAI_NEW = "sk-openai-new-yyyy"
+METATUBE_NEW = "mt-token-new-xxxx"
+
+CONNECT_URL = "http://192.168.1.10:8080"
+
+
+def _seed_three_secrets() -> None:
+    cfg = load_config()
+    cfg.setdefault("translate", {}).setdefault("gemini", {})["api_key"] = GEMINI_PLAIN
+    cfg.setdefault("translate", {}).setdefault("openai", {})["api_key"] = OPENAI_PLAIN
+    cfg.setdefault("metatube", {})["token"] = METATUBE_PLAIN
+    save_config(cfg)
+
+
+def _disk_secrets() -> tuple[str, str, str]:
+    cfg = load_config()
+    return (
+        cfg["translate"]["gemini"]["api_key"],
+        cfg["translate"]["openai"]["api_key"],
+        cfg["metatube"]["token"],
+    )
+
+
+@pytest.fixture(autouse=True)
+def _reset_metatube_state():
+    """Reset metatube_state singleton between tests (connect paths touch it)."""
+    state.disconnect()
+    state.set_probe_done()
+    with state._lock:
+        state._probe_progress = 0
+    yield
+    state.disconnect()
+    state.set_probe_done()
+    with state._lock:
+        state._probe_progress = 0
+
+
+# ---------------------------------------------------------------------------
+# httpx helpers (mirror test_gemini_router / test_api_openai_translate)
+# ---------------------------------------------------------------------------
+
+def _make_mock_httpx_client(get_response=None, post_response=None):
+    mock_client = AsyncMock()
+    if get_response is not None:
+        mock_client.get = AsyncMock(return_value=get_response)
+    if post_response is not None:
+        mock_client.post = AsyncMock(return_value=post_response)
+    cm = AsyncMock()
+    cm.__aenter__ = AsyncMock(return_value=mock_client)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    return cm, mock_client
+
+
+def _ok_http_response(json_body: dict):
+    mock_resp = MagicMock(spec=httpx.Response)
+    mock_resp.status_code = 200
+    mock_resp.json = MagicMock(return_value=json_body)
+    mock_resp.raise_for_status = MagicMock(return_value=None)
+    return mock_resp
+
+
+# ===========================================================================
+# R1 / R2 — GET→PUT must not overwrite secrets with mask sentinels
+# ===========================================================================
+
+class TestR1SettingsPageRoundTrip:
+    """設定頁：GET 整包 → 原封不動 PUT → 三憑證 disk 真值一字未變。"""
+
+    def test_r1_put_masked_body_preserves_secrets(self, client):
+        _seed_three_secrets()
+        before = _disk_secrets()
+
+        get_resp = client.get("/api/config")
+        assert get_resp.status_code == 200
+        data = get_resp.json()["data"]
+        # Sanity: wire is masked (T1 already guarantees this).
+        assert data["translate"]["gemini"]["api_key"] == mask_secret(GEMINI_PLAIN)
+        assert data["translate"]["openai"]["api_key"] == mask_secret(OPENAI_PLAIN)
+        assert data["metatube"]["token"] == mask_secret(METATUBE_PLAIN)
+
+        put_resp = client.put("/api/config", json=data)
+        assert put_resp.status_code == 200
+        assert put_resp.json()["success"] is True
+
+        after = _disk_secrets()
+        assert after == before
+        assert after == (GEMINI_PLAIN, OPENAI_PLAIN, METATUBE_PLAIN)
+
+
+class TestR2ScannerPageRoundTrip:
+    """掃描頁：GET → 只改 gallery.directories → PUT → 三憑證不變、directories 已更新。"""
+
+    def test_r2_put_directories_only_preserves_secrets(self, client):
+        _seed_three_secrets()
+        before = _disk_secrets()
+
+        get_resp = client.get("/api/config")
+        data = get_resp.json()["data"]
+        data["gallery"]["directories"] = ["/tmp/open-aver-scan-r2"]
+
+        put_resp = client.put("/api/config", json=data)
+        assert put_resp.status_code == 200
+        assert put_resp.json()["success"] is True
+
+        after = _disk_secrets()
+        assert after == before
+        assert after == (GEMINI_PLAIN, OPENAI_PLAIN, METATUBE_PLAIN)
+
+        disk = load_config()
+        dirs = disk["gallery"]["directories"]
+        # AppConfig may coerce bare path strings into DirectoryConfig dicts.
+        assert len(dirs) == 1
+        entry = dirs[0]
+        path = entry if isinstance(entry, str) else entry.get("path")
+        assert path == "/tmp/open-aver-scan-r2"
+
+
+# ===========================================================================
+# R3 — /connect with mask token → three sinks get REAL
+# ===========================================================================
+
+class TestR3ConnectMaskToken:
+    """connect 送遮罩 token → client / canary / state.connect 三處收真值；config 不毀。"""
+
+    def test_r3_connect_mask_token_three_sinks(self, client):
+        cfg = load_config()
+        cfg.setdefault("metatube", {})["token"] = METATUBE_PLAIN
+        save_config(cfg)
+
+        mask = mask_secret(METATUBE_PLAIN)
+        assert mask != METATUBE_PLAIN  # sentinel must differ
+
+        with (
+            patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient,
+            patch("web.routers.settings_metatube._verify_token_canary") as mock_canary,
+            patch.object(state, "connect", wraps=state.connect) as mock_state_connect,
+            patch("web.routers.settings_metatube.probe_all"),
+        ):
+            mock_instance = MagicMock()
+            mock_instance.list_providers.return_value = {
+                "FANZA": "http://mt:8080",
+                "HEYZO": "http://mt:8080",
+            }
+            MockClient.return_value = mock_instance
+            mock_canary.return_value = None
+
+            resp = client.post(
+                "/api/settings/metatube/connect",
+                json={"url": CONNECT_URL, "token": mask, "allow_lan": True},
+            )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["success"] is True
+
+        # (a) MetatubeHttpClient constructor token arg
+        MockClient.assert_called()
+        call_args = MockClient.call_args
+        # MetatubeHttpClient(url, token) — positional
+        assert call_args[0][1] == METATUBE_PLAIN, (
+            f"MetatubeHttpClient got token={call_args[0][1]!r}, expected REAL"
+        )
+
+        # (b) canary call args
+        mock_canary.assert_called_once()
+        canary_args = mock_canary.call_args[0]
+        assert canary_args[1] == METATUBE_PLAIN, (
+            f"_verify_token_canary got token={canary_args[1]!r}, expected REAL"
+        )
+
+        # (c) state.connect call args
+        mock_state_connect.assert_called_once()
+        sc_args = mock_state_connect.call_args[0]
+        assert sc_args[1] == METATUBE_PLAIN, (
+            f"state.connect got token={sc_args[1]!r}, expected REAL"
+        )
+
+        # (d) config still REAL (not overwritten by mask)
+        assert load_config()["metatube"]["token"] == METATUBE_PLAIN
+
+
+# ===========================================================================
+# R4 — positive plaintext writes
+# ===========================================================================
+
+class TestR4PositiveWrite:
+    def test_r4a_put_new_gemini_key(self, client):
+        _seed_three_secrets()
+        get_resp = client.get("/api/config")
+        data = get_resp.json()["data"]
+        data["translate"]["gemini"]["api_key"] = GEMINI_NEW
+
+        put_resp = client.put("/api/config", json=data)
+        assert put_resp.status_code == 200
+        assert put_resp.json()["success"] is True
+        assert load_config()["translate"]["gemini"]["api_key"] == GEMINI_NEW
+        # Other secrets untouched (mask → stored)
+        assert load_config()["translate"]["openai"]["api_key"] == OPENAI_PLAIN
+        assert load_config()["metatube"]["token"] == METATUBE_PLAIN
+
+    def test_r4b_put_new_openai_key(self, client):
+        _seed_three_secrets()
+        get_resp = client.get("/api/config")
+        data = get_resp.json()["data"]
+        data["translate"]["openai"]["api_key"] = OPENAI_NEW
+
+        put_resp = client.put("/api/config", json=data)
+        assert put_resp.status_code == 200
+        assert put_resp.json()["success"] is True
+        assert load_config()["translate"]["openai"]["api_key"] == OPENAI_NEW
+        assert load_config()["translate"]["gemini"]["api_key"] == GEMINI_PLAIN
+        assert load_config()["metatube"]["token"] == METATUBE_PLAIN
+
+    def test_r4c_put_new_metatube_token(self, client):
+        _seed_three_secrets()
+        get_resp = client.get("/api/config")
+        data = get_resp.json()["data"]
+        data["metatube"]["token"] = METATUBE_NEW
+
+        put_resp = client.put("/api/config", json=data)
+        assert put_resp.status_code == 200
+        assert put_resp.json()["success"] is True
+        assert load_config()["metatube"]["token"] == METATUBE_NEW
+        assert load_config()["translate"]["gemini"]["api_key"] == GEMINI_PLAIN
+        assert load_config()["translate"]["openai"]["api_key"] == OPENAI_PLAIN
+
+
+# ===========================================================================
+# R5 — clear with ""
+# ===========================================================================
+
+class TestR5Clear:
+    def test_r5_put_empty_clears_all_three(self, client):
+        _seed_three_secrets()
+        get_resp = client.get("/api/config")
+        data = get_resp.json()["data"]
+        data["translate"]["gemini"]["api_key"] = ""
+        data["translate"]["openai"]["api_key"] = ""
+        data["metatube"]["token"] = ""
+
+        put_resp = client.put("/api/config", json=data)
+        assert put_resp.status_code == 200
+        assert put_resp.json()["success"] is True
+
+        disk = load_config()
+        assert disk["translate"]["gemini"]["api_key"] == ""
+        assert disk["translate"]["openai"]["api_key"] == ""
+        assert disk["metatube"]["token"] == ""
+
+
+# ===========================================================================
+# R6 — four test endpoints × mask / new plaintext (CD-114c-6)
+# ===========================================================================
+
+class TestR6GeminiTest:
+    def test_r6g1_mask_uses_stored(self, client):
+        cfg = load_config()
+        cfg.setdefault("translate", {}).setdefault("gemini", {})["api_key"] = GEMINI_PLAIN
+        save_config(cfg)
+
+        body = {
+            "models": [
+                {
+                    "name": "models/gemini-flash-lite-latest",
+                    "displayName": "Flash Lite",
+                    "description": "d",
+                }
+            ]
+        }
+        mock_cm, mock_client = _make_mock_httpx_client(get_response=_ok_http_response(body))
+        with patch("web.routers.gemini.httpx.AsyncClient", return_value=mock_cm):
+            resp = client.post(
+                "/api/gemini/test",
+                json={"api_key": mask_secret(GEMINI_PLAIN)},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        mock_client.get.assert_called_once()
+        headers = mock_client.get.call_args.kwargs["headers"]
+        assert headers["x-goog-api-key"] == GEMINI_PLAIN
+
+    def test_r6g2_new_plaintext_uses_incoming(self, client):
+        cfg = load_config()
+        cfg.setdefault("translate", {}).setdefault("gemini", {})["api_key"] = GEMINI_PLAIN
+        save_config(cfg)
+
+        body = {
+            "models": [
+                {
+                    "name": "models/gemini-flash-lite-latest",
+                    "displayName": "Flash Lite",
+                    "description": "d",
+                }
+            ]
+        }
+        mock_cm, mock_client = _make_mock_httpx_client(get_response=_ok_http_response(body))
+        with patch("web.routers.gemini.httpx.AsyncClient", return_value=mock_cm):
+            resp = client.post("/api/gemini/test", json={"api_key": GEMINI_NEW})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        headers = mock_client.get.call_args.kwargs["headers"]
+        assert headers["x-goog-api-key"] == GEMINI_NEW
+
+
+class TestR6GeminiTestTranslate:
+    def test_r6gt1_mask_uses_stored(self, client):
+        cfg = load_config()
+        cfg.setdefault("translate", {}).setdefault("gemini", {})["api_key"] = GEMINI_PLAIN
+        cfg.setdefault("general", {})["locale"] = "zh-TW"
+        save_config(cfg)
+
+        upstream = {
+            "candidates": [
+                {"content": {"parts": [{"text": "新人女優出道"}]}}
+            ]
+        }
+        mock_cm, mock_client = _make_mock_httpx_client(post_response=_ok_http_response(upstream))
+        with patch("web.routers.gemini.httpx.AsyncClient", return_value=mock_cm):
+            resp = client.post(
+                "/api/gemini/test-translate",
+                json={
+                    "api_key": mask_secret(GEMINI_PLAIN),
+                    "model": "gemini-flash-lite-latest",
+                },
+            )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        headers = mock_client.post.call_args.kwargs["headers"]
+        assert headers["x-goog-api-key"] == GEMINI_PLAIN
+
+    def test_r6gt2_new_plaintext_uses_incoming(self, client):
+        cfg = load_config()
+        cfg.setdefault("translate", {}).setdefault("gemini", {})["api_key"] = GEMINI_PLAIN
+        cfg.setdefault("general", {})["locale"] = "zh-TW"
+        save_config(cfg)
+
+        upstream = {
+            "candidates": [
+                {"content": {"parts": [{"text": "新人女優出道"}]}}
+            ]
+        }
+        mock_cm, mock_client = _make_mock_httpx_client(post_response=_ok_http_response(upstream))
+        with patch("web.routers.gemini.httpx.AsyncClient", return_value=mock_cm):
+            resp = client.post(
+                "/api/gemini/test-translate",
+                json={"api_key": GEMINI_NEW, "model": "gemini-flash-lite-latest"},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        headers = mock_client.post.call_args.kwargs["headers"]
+        assert headers["x-goog-api-key"] == GEMINI_NEW
+
+
+class TestR6OpenAIModels:
+    def test_r6o1_mask_uses_stored(self, client):
+        cfg = load_config()
+        cfg.setdefault("translate", {}).setdefault("openai", {})["api_key"] = OPENAI_PLAIN
+        save_config(cfg)
+
+        mock_cm, mock_client = _make_mock_httpx_client(
+            get_response=_ok_http_response({"data": [{"id": "m1"}]})
+        )
+        with patch("web.routers.openai_translate.httpx.AsyncClient", return_value=mock_cm):
+            resp = client.post(
+                "/api/openai/models",
+                json={
+                    "base_url": "http://localhost:8080/v1",
+                    "api_key": mask_secret(OPENAI_PLAIN),
+                },
+            )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        headers = mock_client.get.call_args.kwargs["headers"]
+        assert headers["Authorization"] == f"Bearer {OPENAI_PLAIN}"
+
+    def test_r6o2_new_plaintext_uses_incoming(self, client):
+        cfg = load_config()
+        cfg.setdefault("translate", {}).setdefault("openai", {})["api_key"] = OPENAI_PLAIN
+        save_config(cfg)
+
+        mock_cm, mock_client = _make_mock_httpx_client(
+            get_response=_ok_http_response({"data": [{"id": "m1"}]})
+        )
+        with patch("web.routers.openai_translate.httpx.AsyncClient", return_value=mock_cm):
+            resp = client.post(
+                "/api/openai/models",
+                json={"base_url": "http://localhost:8080/v1", "api_key": OPENAI_NEW},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        headers = mock_client.get.call_args.kwargs["headers"]
+        assert headers["Authorization"] == f"Bearer {OPENAI_NEW}"
+
+
+class TestR6OpenAITest:
+    def test_r6ot1_mask_uses_stored(self, client):
+        cfg = load_config()
+        cfg.setdefault("translate", {}).setdefault("openai", {})["api_key"] = OPENAI_PLAIN
+        cfg.setdefault("general", {})["locale"] = "zh-TW"
+        save_config(cfg)
+
+        upstream = {
+            "choices": [{"message": {"content": "新人女優出道"}}]
+        }
+        mock_cm, mock_client = _make_mock_httpx_client(post_response=_ok_http_response(upstream))
+        with patch("web.routers.openai_translate.httpx.AsyncClient", return_value=mock_cm):
+            resp = client.post(
+                "/api/openai/test",
+                json={
+                    "base_url": "http://localhost:8080/v1",
+                    "api_key": mask_secret(OPENAI_PLAIN),
+                    "model": "gpt-4o",
+                },
+            )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        headers = mock_client.post.call_args.kwargs["headers"]
+        assert headers["Authorization"] == f"Bearer {OPENAI_PLAIN}"
+
+    def test_r6ot2_new_plaintext_uses_incoming(self, client):
+        cfg = load_config()
+        cfg.setdefault("translate", {}).setdefault("openai", {})["api_key"] = OPENAI_PLAIN
+        cfg.setdefault("general", {})["locale"] = "zh-TW"
+        save_config(cfg)
+
+        upstream = {
+            "choices": [{"message": {"content": "新人女優出道"}}]
+        }
+        mock_cm, mock_client = _make_mock_httpx_client(post_response=_ok_http_response(upstream))
+        with patch("web.routers.openai_translate.httpx.AsyncClient", return_value=mock_cm):
+            resp = client.post(
+                "/api/openai/test",
+                json={
+                    "base_url": "http://localhost:8080/v1",
+                    "api_key": OPENAI_NEW,
+                    "model": "gpt-4o",
+                },
+            )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        headers = mock_client.post.call_args.kwargs["headers"]
+        assert headers["Authorization"] == f"Bearer {OPENAI_NEW}"

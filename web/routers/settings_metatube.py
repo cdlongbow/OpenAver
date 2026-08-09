@@ -13,13 +13,14 @@ import threading
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from core.config import mutate_config
+from core.config import load_config, mutate_config
 from core.logger import get_logger
 from core.metatube.client import MetatubeHttpClient
 from core.metatube.errors import MetatubeAuthError, MetatubeError
 from core.metatube.probe import METATUBE_PROBE_CANARIES, probe_all
 from core.metatube.state import metatube_state as state
 from core.metatube.validation import redact_metatube_url, validate_metatube_url
+from core.secret_fields import read_secret, resolve_secret
 from core.source_config import build_metatube_sources
 
 logger = get_logger(__name__)
@@ -373,26 +374,31 @@ async def connect(req: ConnectRequest):
     if err:
         return {"success": False, "error": err}
 
+    # Resolve mask sentinel after SSRF (illegal URL early-returns without
+    # loading config) and before Step 2 dedup (first real use of token).
+    cfg = await asyncio.to_thread(load_config)
+    token = resolve_secret(req.token, read_secret(cfg, "metatube.token"))
+
     # Step 2: dedup — already connected to same URL and token.
     # Even on dedup hit we still need to persist allow_lan in case the user
     # changed it (Codex P2: _persist_allow_lan updates config without re-connecting).
-    if state.is_connected and state.base_url == req.url and state.token == req.token:
+    if state.is_connected and state.base_url == req.url and state.token == token:
         # 66 Codex P1：dedup path 也跑在 loop，_persist_allow_lan 做 load/save_config → to_thread
-        if not await asyncio.to_thread(_persist_allow_lan, req.url, req.token, req.allow_lan):
+        if not await asyncio.to_thread(_persist_allow_lan, req.url, token, req.allow_lan):
             # Mirror Step5 semantics: don't report success if the opt-in wasn't
             # persisted, otherwise the restart bug silently returns (Codex P2).
             return {"success": False, "error": "設定儲存失敗，請重試。"}
         return {"success": True, "provider_count": state.provider_count}
 
     # Step 3–5: run blocking I/O (HTTP + config) in threadpool
-    result = await asyncio.to_thread(_connect_sync, req.url, req.token, req.allow_lan)
+    result = await asyncio.to_thread(_connect_sync, req.url, token, req.allow_lan)
     if not result["ok"]:
         return {"success": False, "error": result["error"]}
 
     # Step 6: fire background probe (must stay on loop — uses asyncio.get_running_loop())
     # 66 Codex P2：用 _connect_sync 回傳的 generation（此次 connect 設的），不重讀
     # state.generation（avoid stale/superseded generation under concurrent connects）
-    _fire_probe(req.url, req.token, result["names"], result["generation"])
+    _fire_probe(req.url, token, result["names"], result["generation"])
 
     return {"success": True, "provider_count": len(result["names"])}
 
