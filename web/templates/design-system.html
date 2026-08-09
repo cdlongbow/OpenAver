@@ -2088,6 +2088,61 @@
                     </ul>
                 </div>
             </div>
+
+            <!-- Subsection: Agent Token（遮罩 + 眼睛切換）-->
+            <!-- CSS source: help.css .help-agent-token-* (TASK-114b-T4) -->
+            <div class="ds-subsection" x-data="{ tokenVisible: false, tokenCopied: false, demoToken: 'oav_DEMO1234567890abcdef' }">
+                <h3>Agent Token（遮罩 + 眼睛切換）</h3>
+                <p class="ds-desc">
+                    來源：<code>help.html</code> 存取密碼保護開啟＋本機瀏覽時的 agent token 面板（TASK-114b-T4）。
+                    <strong>眼睛鈕只切換前端顯示，不像 <code>settings.html</code> 的 PIN 欄需要 <code>:disabled="!revealed"</code></strong>
+                    ——真值本來就已經在 SSR 階段寫進 DOM，不是另外打 API 才拿得到。複製鈕永遠複製真值，不論目前是否遮罩顯示。
+                </p>
+
+                <div class="ds-card-demo" style="max-width: 600px; margin: 0 auto; padding: 1.5rem;">
+                    <div class="help-agent-token-row">
+                        <span class="help-agent-token-label">Agent Token</span>
+                        <code class="help-agent-token-value" x-text="tokenVisible ? demoToken : 'oav_••••••••'"></code>
+                        <button type="button" class="help-agent-token-reveal-btn"
+                                title="顯示/隱藏 token"
+                                @click="tokenVisible = !tokenVisible">
+                            <i class="bi" :class="tokenVisible ? 'bi-eye-slash' : 'bi-eye'"></i>
+                        </button>
+                        <button type="button" class="help-agent-token-copy-btn"
+                                title="複製完整 token（不論目前是否遮罩顯示）"
+                                @click="tokenCopied = true; setTimeout(() => tokenCopied = false, 1500)">
+                            <i class="bi bi-clipboard" x-show="!tokenCopied"></i>
+                            <span x-show="tokenCopied">✓</span>
+                        </button>
+                        <button type="button" class="btn btn-outline btn-sm">
+                            <i class="bi bi-arrow-clockwise"></i> 重新產生
+                        </button>
+                    </div>
+                </div>
+
+                <pre class="ds-code"><code>&lt;div class="help-agent-token-row"&gt;
+  &lt;span class="help-agent-token-label"&gt;Agent Token&lt;/span&gt;
+  &lt;code class="help-agent-token-value"
+        x-text="agentTokenVisible ? agentToken : maskedTokenDisplay"&gt;&lt;/code&gt;
+  &lt;button class="help-agent-token-reveal-btn" @click="toggleAgentTokenVisible()"&gt;
+    &lt;i class="bi" :class="agentTokenVisible ? 'bi-eye-slash' : 'bi-eye'"&gt;&lt;/i&gt;
+  &lt;/button&gt;
+  &lt;button class="help-agent-token-copy-btn" @click="copyAgentToken()"&gt;
+    &lt;i class="bi bi-clipboard" x-show="!agentTokenCopied"&gt;&lt;/i&gt;
+    &lt;span x-show="agentTokenCopied"&gt;✓&lt;/span&gt;
+  &lt;/button&gt;
+&lt;/div&gt;</code></pre>
+
+                <div class="ds-note" style="margin-top: 1rem;">
+                    <strong>技術細節：</strong>
+                    <ul style="margin-top: 0.5rem; padding-left: 1.5rem;">
+                        <li>眼睛鈕只切換 <code>agentTokenVisible</code>（純前端顯示），真值 <code>agentToken</code> 早已在 SSR context 內（<code>show_agent_auth</code> 為真時才會渲染）</li>
+                        <li>複製鈕（<code>copyAgentToken()</code>）與 hero-terminal 的複製 curl（<code>copyCurlCommand()</code>）都固定讀 <code>this.agentToken</code>，不論 <code>agentTokenVisible</code> 是否為 false ——「看到的不等於複製到的」是刻意設計，不是 bug</li>
+                        <li>「重新產生」按鈕走確認 modal（照抄既有 update modal 骨架），不在此 demo 展開</li>
+                        <li>production 版 CSS 定義見 <code>help.css</code> 的 <code>.help-agent-token-*</code> 規則（功能性最小值，視覺未經 owner 真機驗收定稿）</li>
+                    </ul>
+                </div>
+            </div>
         </section>
 
         <!-- 區塊 8: Progress & Feedback (accent-bar 樣式) -->

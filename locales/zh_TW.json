@@ -355,7 +355,7 @@
       "copy": "複製",
       "copied": "已複製連線網址",
       "warning": "同一區網（Wi-Fi / LAN）內的裝置皆可用上方網址直接連線本機，請於信任的網路環境下使用。外網存取請自行配置 VPN（如 Tailscale）。",
-      "public_exposure": "偵測到本機目前使用的網路位址並非區網私有位址，可能已直接暴露在公開網路上。4 位數密碼在這種情況下不足以保護，請確認你的網路架構，或改用 VPN（如 Tailscale）連線。",
+      "public_exposure": "偵測到本機目前使用的網路位址並非區網私有位址，可能已直接暴露在公開網路上。4 位密碼在這種情況下不足以保護，請確認你的網路架構，或改用 VPN（如 Tailscale）連線。",
       "no_lan_ip": "無法自動取得本機區網 IP，請於系統網路設定查看本機 IP 後手動連線。",
       "no_lan_ip_with_port": "無法自動取得本機區網 IP，請於系統網路設定查看本機 IP，再以「該 IP:{port}」連線。",
       "listener_down": "LAN 伺服器未啟動，請切回單機後重新開啟伺服器模式。",
@@ -1099,6 +1099,19 @@
       "ai_hint_unsupported": "不適用網頁版聊天",
       "ai_tools": "支援：Claude Code · Cursor · Codex 等 AI agent"
     },
+    "agent_auth": {
+      "title": "Agent Token",
+      "reveal": "顯示/隱藏 token",
+      "copy_token_tooltip": "複製完整 token（不論目前是否遮罩顯示）",
+      "regenerate_btn": "重新產生",
+      "regenerate_confirm_title": "重新產生 Agent Token？",
+      "regenerate_confirm_body": "舊的 token 會立刻失效，任何用它連線的 AI agent 都要換成新值才能繼續使用。這個動作無法復原，確定要繼續嗎？",
+      "regenerate_confirm_cancel": "取消",
+      "regenerate_confirm_confirm": "仍要重新產生",
+      "regenerate_success": "已產生新的 agent token",
+      "regenerate_failed": "重新產生失敗，請稍後再試",
+      "sse_limitation": "瀏覽器內建的即時進度推送（SSE）無法夾帶此 token；若 agent 需要訂閱掃描進度，改用 curl / httpx 等程式直接讀取串流不受影響。"
+    },
     "workflow": {
       "title": "第一次使用？先看這 3 步",
       "subtitle": "從加入資料夾到補全資料，三步上手",
@@ -1359,6 +1372,7 @@
       "how_off": "切回「單機」就完全關閉對外，區網裝置立刻連不到。",
       "h6_security": "安全提醒",
       "security_lan": "僅限信任的 Wi-Fi / 區網使用（本程式不設帳號密碼，LAN-only）。",
+      "security_lan_auth": "已設定密碼保護，僅限信任的 Wi-Fi / 區網使用（其他裝置需要輸入密碼才能連入，agent 則需要 token）。",
       "security_vpn": "需要外網存取請自行配置 VPN（如 Tailscale）；本程式不開放外網。",
       "h6_firewall": "第一次開啟會跳防火牆，請按「允許」",
       "firewall_allow": "第一次切到「伺服器」時，Windows（或 macOS）會跳出防火牆詢問是否允許網路存取 → 請按「<strong>允許 / Allow</strong>」。按一次就好，系統會記住。",

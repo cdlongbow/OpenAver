@@ -86,6 +86,34 @@
     font-size: 1.5rem;
 }
 
+/* ========== Agent Token 面板（T4，功能性最小值，視覺未定稿）========== */
+
+.help-agent-token-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.help-agent-token-value {
+    font-family: monospace;
+    font-size: 0.8rem;
+    opacity: 0.85;
+}
+
+.help-agent-token-reveal-btn,
+.help-agent-token-copy-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    opacity: 0.7;
+}
+
+.help-agent-token-reveal-btn:hover,
+.help-agent-token-copy-btn:hover {
+    opacity: 1;
+}
+
 /* dim mode: terminal box 固定深色（保留終端機視覺語意） */
 [data-theme="dim"] .hero-terminal {
     background: oklch(15% 0.005 250);  /* design-intent: 深底，比 surface-2 dim 值更深 */

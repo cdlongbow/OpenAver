@@ -36,7 +36,7 @@ from core.config import load_config
 from core.database import init_db
 from core.database import backfill_readonly_nfo_mtime
 from core.metatube.state import metatube_state as _mt_startup_state
-from core.access_auth import ensure_schema, snapshot, verify_ticket
+from core.access_auth import ensure_schema, load_snapshot, snapshot, verify_ticket
 
 
 # 路徑設定
@@ -629,6 +629,17 @@ async def help_page(request: Request):
         context["base_url"] = f"http://{lan_ip}:{lan_port}"
     else:
         context["base_url"] = str(request.base_url).rstrip("/")
+
+    # TASK-114b-T4（CD-114b-7）：agent 區塊渲染條件，與上面 base_url 用的
+    # `client_host in _LOOPBACK_HOSTS`（窄）是不同判斷，不合併（plan §1.5）。
+    snap = snapshot()
+    if snap is None:
+        snap = await asyncio.to_thread(load_snapshot)
+    show_agent_auth = snap.enabled and _is_loopback_host(client_host)
+    context["show_agent_auth"] = show_agent_auth
+    if show_agent_auth:
+        context["agent_token"] = snap.agent_token
+
     return templates.TemplateResponse(request, "help.html", context)
 
 

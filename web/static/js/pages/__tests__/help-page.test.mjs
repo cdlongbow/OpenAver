@@ -19,6 +19,14 @@ globalThis.window = globalThis;
 globalThis.document = { addEventListener() {} };
 globalThis.t = (key) => key;
 
+// TASK-114b-T4：擴充既有 stub（原本只有 addEventListener），新增測試要讀
+// .hero-terminal / .help-agent-token-panel 的 dataset。
+globalThis.document.querySelector = (sel) => {
+  if (sel === '.hero-terminal') return { dataset: { capabilitiesBase: 'http://testserver' } };
+  if (sel === '.help-agent-token-panel') return { dataset: { agentToken: 'oav_realtoken123' } };
+  return null;
+};
+
 const { helpPage } = await import('../help.js');
 
 // fetch spy：記錄每次呼叫的 url/method/body，回傳成功殼
@@ -153,4 +161,104 @@ test('saveAutoCheckUpdate: PUT throw 亦清回 _autoCheckSaving=false（finally 
   const fakeThis = { ...helpPage(), autoCheckUpdate: true, showToast: () => {} };
   await fakeThis.saveAutoCheckUpdate();
   assert.equal(fakeThis._autoCheckSaving, false, 'throw 路徑也必須經 finally 清旗標，否則 checkbox 永久 disabled');
+});
+
+// ============================================================================
+// TASK-114b-T4：Agent Token 顯示區塊
+// ============================================================================
+
+// clipboard stub：既有檔案完全沒有這個 precedent，本 task 是第一個需要它的。
+// Node 內建全域 `navigator`（Node 21+）是 getter-only accessor property，
+// 直接 `globalThis.navigator = {...}` 會丟 TypeError；改用 defineProperty 覆寫。
+function installClipboardSpy() {
+  const writes = [];
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { clipboard: { writeText: async (text) => { writes.push(text); } } },
+    configurable: true,
+    writable: true,
+  });
+  return writes;
+}
+
+// regenerate 端點用的 fetch spy（與 installFetchSpy 不同：這裡要能自訂回應內容）。
+function installRegenerateFetchSpy(responseBody) {
+  const calls = [];
+  globalThis.fetch = async (url, opts = {}) => {
+    calls.push({ url, method: opts.method || 'GET' });
+    return { json: async () => responseBody };
+  };
+  return calls;
+}
+
+test('toggleAgentTokenVisible: 眼睛切換翻轉 agentTokenVisible', () => {
+  const fakeThis = { ...helpPage() };
+  assert.equal(fakeThis.agentTokenVisible, false);
+  fakeThis.toggleAgentTokenVisible();
+  assert.equal(fakeThis.agentTokenVisible, true);
+  fakeThis.toggleAgentTokenVisible();
+  assert.equal(fakeThis.agentTokenVisible, false);
+});
+
+test('copyAgentToken: 遮罩狀態（agentTokenVisible=false）下仍複製真值，不是遮罩字串', async () => {
+  const writes = installClipboardSpy();
+  const fakeThis = { ...helpPage(), agentToken: 'oav_realtoken123', agentTokenVisible: false };
+  await fakeThis.copyAgentToken();
+  assert.equal(writes[0], 'oav_realtoken123', '複製到的必須是真值，不是 oav_••••••••');
+});
+
+test('copyCurlCommand: 遮罩狀態下複製 curl 仍含真值 token（Authorization: Bearer）', async () => {
+  const writes = installClipboardSpy();
+  const fakeThis = { ...helpPage(), agentToken: 'oav_realtoken123', agentTokenVisible: false };
+  fakeThis.copyCurlCommand();
+  // navigator.clipboard.writeText 是 async，但呼叫本身同步發出（installClipboardSpy 的
+  // writeText 立即 push），故不需要 await copyCurlCommand() 本身（它不是 async 函式）。
+  await Promise.resolve(); // 讓 microtask 跑完
+  assert.ok(writes[0].includes('Authorization: Bearer oav_realtoken123'), `應含真值 Bearer token，實際: ${writes[0]}`);
+});
+
+test('confirmRegenerateToken: 成功 → URL/method 正確、agentToken 就地更新、modal 關閉', async () => {
+  const calls = installRegenerateFetchSpy({ success: true, token: 'oav_newtoken456' });
+  const toasts = [];
+  const fakeThis = {
+    ...helpPage(),
+    agentToken: 'oav_oldtoken',
+    showRegenerateConfirm: true,
+    showToast: (m, t) => toasts.push({ m, t }),
+  };
+  await fakeThis.confirmRegenerateToken();
+  assert.equal(calls[0].url, '/api/access/agent-token/regenerate');
+  assert.equal(calls[0].method, 'POST');
+  assert.equal(fakeThis.agentToken, 'oav_newtoken456');
+  assert.equal(fakeThis.showRegenerateConfirm, false);
+  assert.equal(fakeThis.regenerateLoading, false);
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].t, 'success');
+});
+
+test('confirmRegenerateToken: success:false → 舊 agentToken 不清空，只顯示失敗 toast', async () => {
+  installRegenerateFetchSpy({ success: false });
+  const toasts = [];
+  const fakeThis = {
+    ...helpPage(),
+    agentToken: 'oav_oldtoken',
+    showToast: (m, t) => toasts.push({ m, t }),
+  };
+  await fakeThis.confirmRegenerateToken();
+  assert.equal(fakeThis.agentToken, 'oav_oldtoken', '失敗時舊值必須原封不動');
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].t, 'error');
+});
+
+test('confirmRegenerateToken: fetch 網路例外 → 舊 agentToken 不清空，只顯示失敗 toast', async () => {
+  globalThis.fetch = async () => { throw new Error('offline'); };
+  const toasts = [];
+  const fakeThis = {
+    ...helpPage(),
+    agentToken: 'oav_oldtoken',
+    showToast: (m, t) => toasts.push({ m, t }),
+  };
+  await fakeThis.confirmRegenerateToken();
+  assert.equal(fakeThis.agentToken, 'oav_oldtoken', 'throw 路徑也必須保留舊值');
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].t, 'error');
 });
