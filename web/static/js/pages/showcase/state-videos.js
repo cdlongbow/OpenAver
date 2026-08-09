@@ -156,7 +156,17 @@ export function stateVideos() {
         },
 
         // 七個既有觸發點（CD-8 原列六個＋RULING 1 併入 searchActressFilms）全部間接透過
-        // 本方法，不再各自決定。回傳 _checkPreciseActressMatch() 的 promise（若有呼叫），
+        // 本方法，不再各自決定。
+        //
+        // ⚠ 一個刻意的例外，新增呼叫點前先讀：`_shouldShowHeroCard()` 只判斷 pill／文字，
+        // **不判斷 showFavoriteActresses**。因此 toggleActressMode() 進入女優模式那條
+        // （state-actress.js）仍直接呼叫 _clearPreciseMatch() 而不走本方法——若走本方法，
+        // 帶著一枚持久化的女優 pill 切進女優牆會把 _isPreciseActressMatch 設成 true，
+        // 在女優牆上顯示一張不該出現的資料卡。**在 showFavoriteActresses 為 true 時可達的
+        // 新程式碼，不要無條件呼叫本方法**；要讓它變成真正的單一判斷點，正解是把
+        // !showFavoriteActresses 併進 _shouldShowHeroCard()，再把那個 bypass 收回來。
+        //
+        // 回傳 _checkPreciseActressMatch() 的 promise（若有呼叫），
         // 讓 searchActressFilms() 的 ghost-fly 主流程可以 await 到真正的比對結果；
         // 其餘呼叫端維持既有的 fire-and-forget 用法，忽略回傳值不影響行為。
         _reconcileHeroCard() {

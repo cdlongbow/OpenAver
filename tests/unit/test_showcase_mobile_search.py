@@ -133,6 +133,10 @@ class TestShowcaseHeaderSearchIcon:
         content = self._read_state_lightbox()
         body = self._extract_search_from_metadata_body(content)
         assert body, "state-lightbox.js 找不到 searchFromMetadata 函式體"
+        # [lint-guard: pytest-justified] Alpine state contract 跨檔守衛：被守的是
+        # state-lightbox.js 的 adapter 必須把值交給 state-videos.js 的 addPill（兩個模組間的
+        # 所有權契約），不是單檔字面存在。static_guard_lint 的 required-string 一次只綁一個檔，
+        # 表達不出「A 檔委派給 B 檔的函式」這個關係，拆兩條規則會失去連結。
         assert "addPill(" in body, "searchFromMetadata 必須委派給 addPill（pill 篩選路徑的入口）"
         assert "this.search = " not in body, "searchFromMetadata 不應再直接寫 this.search（舊的取代行為，CD-2b）"
 
@@ -153,6 +157,10 @@ class TestShowcaseHeaderSearchIcon:
         content = self._read_state_base()
         body = self._extract_has_active_filter_body(content)
         assert body, "state-base.js 找不到 _hasActiveFilter 函式體"
+        # [lint-guard: pytest-justified] Alpine store contract 跨檔守衛：被守的是
+        # state-base.js 寫入 → Alpine.store('ui').showcaseHasSearch → showcase.html 讀取
+        # 這條跨三檔的資料流（清除鈕出不出現）。單檔字面 lint 守得住寫入端存在，
+        # 守不住「判準涵蓋 pills」與「init 也走同一個判準」這兩件事同時成立。
         assert "pills.length" in body, "_hasActiveFilter 必須涵蓋 pills（CD-12）"
         # 直接斷言 init sync 語句存在，防止只靠 $watch 而漏掉初始值路徑
         assert "Alpine.store('ui').showcaseHasSearch = this._hasActiveFilter();" in content
