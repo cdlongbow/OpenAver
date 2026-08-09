@@ -310,6 +310,70 @@ class TestAuthorizationHeaderFlow:
         assert _MASKED_FINGERPRINT not in r.text
 
 
+class TestBearerTokenAuth:
+    """CD-114b-3：cookie 或 Bearer 任一命中即放行，驗票不分 kind。"""
+
+    def test_bearer_agent_token_grants_access(self, gated_client):
+        token = access_auth.snapshot().agent_token
+        assert token is not None
+        r = gated_client.get("/search", headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 200
+        assert _MASKED_FINGERPRINT not in r.text
+
+    def test_bearer_browser_token_grants_access(self, gated_client, valid_token):
+        r = gated_client.get(
+            "/search", headers={"Authorization": f"Bearer {valid_token}"}
+        )
+        assert r.status_code == 200
+        assert _MASKED_FINGERPRINT not in r.text
+
+    def test_bearer_revoked_token_returns_401(self, gated_client):
+        old_token = access_auth.snapshot().agent_token
+        assert old_token is not None
+        # 重新開一次認證＝R5 全撤＋鑄新票（CD-114b-1），舊 token 必失效。
+        access_auth.set_auth(False, "")
+        access_auth.set_auth(True, "1234")
+        r = gated_client.get(
+            "/search", headers={"Authorization": f"Bearer {old_token}"}
+        )
+        assert r.status_code == 401
+        assert r.json() == {"success": False, "reason": "unauthorized"}
+
+    @pytest.mark.parametrize(
+        "header_value", ["Bearer", "Bearer ", "Basic xxx", "Bearer a b"]
+    )
+    def test_bearer_malformed_headers_return_401(self, gated_client, header_value):
+        r = gated_client.get(
+            "/search", headers={"Authorization": header_value}
+        )
+        assert r.status_code == 401
+        assert r.json() == {"success": False, "reason": "unauthorized"}
+
+    def test_capabilities_with_valid_bearer_returns_200(self, gated_client):
+        token = access_auth.snapshot().agent_token
+        r = gated_client.get(
+            "/api/capabilities", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert r.status_code == 200
+
+    def test_bearer_failures_do_not_count_toward_pin_lockout(
+        self, gated_client, monkeypatch
+    ):
+        async def _instant():
+            return None
+        monkeypatch.setattr("web.routers.access._fixed_delay", _instant)
+
+        for _ in range(20):
+            r = gated_client.get(
+                "/search",
+                headers={"Authorization": "Bearer invalid-not-a-real-token"},
+            )
+            assert r.status_code == 401
+
+        r = gated_client.post("/api/access/verify", json={"pin": "1234"})
+        assert "set-cookie" in r.headers
+
+
 # ── request.client is None（Opus 補充 C）────────────────────────────────
 
 

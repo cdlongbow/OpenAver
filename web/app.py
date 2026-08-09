@@ -273,6 +273,25 @@ def _is_cross_site_api_request(request: Request) -> bool:
     return request.url.path.startswith("/api/")
 
 
+def _bearer_token(request: Request) -> str | None:
+    """`Authorization: Bearer <token>` 的解析（CD-114b-3）。純函式、零 I/O、
+    不查 DB、不查 snapshot()——只把 header 字串拆成 token 或 None，交給
+    呼叫端（access_gate 第 8 步）自己餵給 verify_ticket()。不接受
+    query-string token（spec C-5：憑證進 URL 會進 log／瀏覽器歷史／Referer）。
+    """
+    header = request.headers.get("authorization")
+    if header is None:
+        return None
+    parts = header.split()
+    if len(parts) != 2:
+        return None
+    scheme, token = parts
+    if scheme.lower() != "bearer":
+        return None
+    token = token.strip()
+    return token if token else None
+
+
 @app.middleware("http")
 async def access_gate(request: Request, call_next):
     """
@@ -322,7 +341,7 @@ async def access_gate(request: Request, call_next):
 
     method = request.method
     path = request.url.path
-    authed = verify_ticket(request.cookies.get("sid"))
+    authed = verify_ticket(request.cookies.get("sid")) or verify_ticket(_bearer_token(request))
 
     if (method, path) == _VERIFY_ENDPOINT:
         # 登入入口本身，永遠可達，不比對 authed。
