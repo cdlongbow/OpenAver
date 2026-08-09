@@ -32,6 +32,7 @@ from core.config import (
     reset_config_file,
     iter_gallery_sources,
 )
+from core.secret_fields import render_config_secrets
 from core.database import VideoRepository, get_db_path, init_db
 from core import thumbnail_cache
 from core.path_utils import uri_to_fs_path, reverse_path_mapping, CURRENT_ENV
@@ -66,8 +67,8 @@ def _reset_translate_service():
 
 @router.get("/config")
 def get_config() -> dict:
-    """取得所有設定"""
-    return {"success": True, "data": load_config()}
+    """取得所有設定（三個不透明憑證以遮罩形狀回傳；CD-114c-2）"""
+    return {"success": True, "data": render_config_secrets(load_config())}
 
 
 @router.put("/config")

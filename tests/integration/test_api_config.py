@@ -115,5 +115,10 @@ class TestTranslateConfigRoundTrip:
         assert updated["translate"]["provider"] == "openai"
         openai_cfg = updated["translate"]["openai"]
         assert openai_cfg["base_url"] == "https://api.openai.com/v1"
-        assert openai_cfg["api_key"] == "sk-test-roundtrip"
+        # CD-114c-8: API 層改斷言遮罩形狀；round-trip 保存性質下移到 load_config 函式層
+        from core.secret_fields import mask_secret
+        from core.config import load_config as _load_config
+        assert openai_cfg["api_key"] == mask_secret("sk-test-roundtrip")
+        assert _load_config()["translate"]["openai"]["api_key"] == "sk-test-roundtrip"
         assert openai_cfg["model"] == "gpt-4o"
+
