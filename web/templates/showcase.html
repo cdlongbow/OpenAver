@@ -1527,14 +1527,17 @@
             <template x-if="!showFavoriteActresses">
                 <span class="footer-count">
                     <i class="bi bi-film"></i>
-                    <template x-if="!search">
+                    <template x-if="!pills.length && !search">
                         <span><b x-text="filteredCount"></b> {{ t('showcase.status.total_suffix') }}</span>
                     </template>
-                    <template x-if="search && filteredCount > 0">
+                    <template x-if="!pills.length && search && filteredCount > 0">
                         <span>{{ t('showcase.status.search_prefix') }}<b class="footer-search-term" x-text="search"></b>{{ t('showcase.status.search_middle') }} <b x-text="filteredCount"></b> {{ t('showcase.status.search_suffix') }}</span>
                     </template>
-                    <template x-if="search && filteredCount === 0">
+                    <template x-if="!pills.length && search && filteredCount === 0">
                         <span x-text="t('showcase.status.search_empty')"></span>
+                    </template>
+                    <template x-if="pills.length > 0">
+                        <span>{{ t('showcase.status.pill_prefix') }} <b x-text="pills.length"></b> {{ t('showcase.status.pill_middle') }} <b x-text="filteredCount"></b> {{ t('showcase.status.pill_suffix') }}</span>
                     </template>
                 </span>
             </template>

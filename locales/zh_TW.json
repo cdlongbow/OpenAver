@@ -965,6 +965,9 @@
       "search_middle": "\" — 找到",
       "search_suffix": "部",
       "search_empty": "沒有符合的影片",
+      "pill_prefix": "符合",
+      "pill_middle": "個條件的",
+      "pill_suffix": "部",
       "search_actresses_prefix": "找到 ",
       "search_actresses_middle": " 位女優 \"",
       "search_actresses_suffix": "\""
