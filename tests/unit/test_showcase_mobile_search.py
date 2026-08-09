@@ -87,13 +87,17 @@ class TestShowcaseHeaderSearchIcon:
     @staticmethod
     def _extract_search_from_metadata_body(content):
         """brace-matched 擷取 searchFromMetadata 函式體（非整檔 grep，防 FE-GUARD-06 假陽性——
-        `this.search = ` 這個字面在檔案其他函式仍合法存在）。"""
-        sig_idx = content.find("searchFromMetadata(")
-        if sig_idx == -1:
+        `this.search = ` 這個字面在檔案其他函式仍合法存在）。
+
+        錨定「方法定義形狀」而非裸字串（與下方 _extract_has_active_filter_body 一致）：
+        `state-lightbox.js:467` 已經有一行註解提到 searchFromMetadata（無左括號，故裸
+        `find("searchFromMetadata(")` 今天仍抓得到 657 行的定義）——但只差一個字元。
+        任何人日後在定義之前寫出帶括號的呼叫或註解，裸 find 會靜默抓到 closeLightbox()
+        的 `if (this.lightboxCloseTimer) {` body，守衛就變成對不相干的程式碼斷言。"""
+        m = re.search(r"searchFromMetadata\s*\([^)]*\)\s*\{", content)
+        if not m:
             return ""
-        open_idx = content.find("{", sig_idx)
-        if open_idx == -1:
-            return ""
+        open_idx = m.end() - 1  # 指向 `{`
         depth = 0
         for i in range(open_idx, len(content)):
             ch = content[i]
