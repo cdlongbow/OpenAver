@@ -69,12 +69,31 @@
                             <i class="bi bi-person-circle"></i>
                         </button>
                     </div>
-                    <!-- 影片搜尋框 (CD-11) -->
-                    <input type="text"
-                           x-show="!showFavoriteActresses"
-                           placeholder="{{ t('showcase.placeholder.search') }}"
-                           x-model="search"
-                           @input.debounce.300ms="onSearchChange()">
+                    <!-- 影片搜尋框 (CD-11) — pill 容器包住 input（TASK-115-T5） -->
+                    <div class="filter-pill-group" x-show="!showFavoriteActresses">
+                        <!-- role="list" 只包 pill，不包 input：list 的合法子元素只有 listitem，
+                             把輸入框圈進去會讓螢幕閱讀器數不對「目前有幾個條件」（spec §6.7 的目的本身）。
+                             pills 為空時整組 x-show 收起，避免報出一個「0 個項目的清單」。 -->
+                        <span class="filter-pill-list" role="list" x-show="pills.length">
+                            <template x-for="pill in pills" :key="pill.dim + '::' + normalizePillValue(pill.value)">
+                                <span class="filter-pill" role="listitem"
+                                      :title="t('showcase.pill.title', { dim: t('showcase.pill.dim_label.' + pill.dim), value: pill.value })">
+                                    <span class="filter-pill-value" x-text="pill.value"></span>
+                                    <button type="button" class="filter-pill-remove"
+                                            @click="removePill(pill.dim, pill.value)"
+                                            :aria-label="t('showcase.pill.remove_aria', { value: pill.value })">✕</button>
+                                </span>
+                            </template>
+                        </span>
+                        <!-- 靜態 placeholder 是 hydrate 前的 fallback，:placeholder 在 Alpine init 當下覆蓋它。
+                             兩個都要留：只留 `:placeholder` 會讓「首屏就可見」的搜尋框在 Alpine（defer）
+                             跑起來之前完全沒有提示字，而這條路徑每一次頁面載入都會走到。 -->
+                        <input type="text"
+                               placeholder="{{ t('showcase.placeholder.search') }}"
+                               :placeholder="pills.length ? '' : t('showcase.placeholder.search')"
+                               x-model="search"
+                               @input.debounce.300ms="onSearchChange()">
+                    </div>
                     <!-- 女優搜尋框 (CD-11) -->
                     <input type="text"
                            x-show="showFavoriteActresses"

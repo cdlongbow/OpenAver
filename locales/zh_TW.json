@@ -896,6 +896,18 @@
     "placeholder": {
       "search": "搜尋番號、女優、標題..."
     },
+    "pill": {
+      "dim_label": {
+        "actress": "女優",
+        "tag": "標籤",
+        "maker": "片商",
+        "director": "導演",
+        "series": "系列",
+        "label": "廠牌"
+      },
+      "title": "{dim}：{value}",
+      "remove_aria": "移除篩選：{value}"
+    },
     "action": {
       "clear_search": "清除搜尋",
       "search": "搜尋",

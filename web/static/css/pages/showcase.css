@@ -2867,6 +2867,48 @@ body.sidebar-collapsed .showcase-footer {
 }
 .lightbox-metadata .lb-chips-more:hover { opacity: 1; }
 
+/* ==================== Filter pills shell (TASK-115-T5) ====================
+   Anti-overflow / truncation only. Colours, hit-area, visual merge with the
+   spotlight input frame, and design-system registration are T6. */
+.filter-pill-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+/* role="list" 包裝層：與外層同為 wrap flex，讓 pill 仍以扁平方式換行（T5 只管不溢出） */
+.filter-pill-list {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.filter-pill {
+    display: inline-flex;
+    align-items: center;
+    max-width: 100%;
+    min-width: 0;
+}
+
+.filter-pill-value {
+    max-width: 12rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.filter-pill-group > input {
+    flex: 1 1 8rem;
+    min-width: 8rem;
+}
+
 /* ==================== Phase 44b T3: Hero Card ==================== */
 
 /* Grid Mode Hero Card — cursor pointer */
