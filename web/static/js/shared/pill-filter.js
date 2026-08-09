@@ -12,3 +12,78 @@ export function normalizePillValue(s) {
     if (s === null || s === undefined) return '';
     return String(s).trim().normalize('NFKC').toLowerCase();
 }
+
+/**
+ * buildPillPredicate — TASK-115-T2：pill 精準比對層（純函式，D1/D2）
+ *
+ * 逐次呼叫（每次 applyFilterAndSort() 一次）precompute 一個 predicate，
+ * 避免 per-video 重算 alias 展開（plan D2 效能理由）。
+ *
+ * @param {{dim: string, value: string}[]} pills
+ * @param {Object} nameToGroup - state-base.js 的 _nameToGroup（女優 alias map）
+ * @param {Object} tagToGroup - state-base.js 的 _tagToGroup（標籤 alias map）
+ * @returns {(video: Object) => boolean}
+ */
+export function buildPillPredicate(pills, nameToGroup, tagToGroup) {
+    if (!pills || pills.length === 0) {
+        return function () { return true; };  // 空 pill 列表 = 不過濾任何影片（D2）
+    }
+    var matchers = pills.map(function (pill) {
+        return _buildSingleMatcher(pill, nameToGroup, tagToGroup);
+    });
+    return function (video) {
+        return matchers.every(function (m) { return m(video); });
+    };
+}
+
+// dim token → video 欄位（spec §4.2 表，D3：whole-field 完全相等維度）
+var WHOLE_FIELD_DIMS = { maker: 'maker', director: 'director', series: 'series', label: 'label' };
+
+function _buildSingleMatcher(pill, nameToGroup, tagToGroup) {
+    var dim = pill.dim;
+    if (dim === 'actress' || dim === 'tag') {
+        return _actressOrTagMatcher(dim, pill.value, nameToGroup, tagToGroup);
+    }
+    if (Object.prototype.hasOwnProperty.call(WHOLE_FIELD_DIMS, dim)) {
+        var field = WHOLE_FIELD_DIMS[dim];
+        var norm = normalizePillValue(pill.value);
+        return function (video) { return normalizePillValue(video[field]) === norm; };
+    }
+    return function () { return false; };  // fail closed：未知維度不誤判為「全部符合」（D3）
+}
+
+// D4：正規化順序固定為「先 normalize 整欄，再 split」——全形逗號要先靠 NFKC 折成 ASCII 逗號才切得開。
+function _splitField(rawFieldValue) {
+    return normalizePillValue(rawFieldValue).split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+}
+
+// D5：alias 展開的雙 key 查表 + 值正規化。
+function _buildAliasSet(pillValue, groupMap) {
+    var norm = normalizePillValue(pillValue);
+    var set = new Set([norm]);  // pill 自身的正規化值恆在集合內（即使查無 alias group）
+    var candidateKeys = [norm, String(pillValue).trim().toLowerCase()];
+    for (var i = 0; i < candidateKeys.length; i++) {
+        // Opus review：`groupMap` 是普通物件字面（state-base.js:64/92），帶著 Object.prototype。
+        // 裸的 `groupMap[key]` 對 'tostring'／'constructor'／'valueof' 這類 key 會取到繼承來的
+        // 函式（truthy），下一行 `.forEach` 就 TypeError，而這個例外會從 applyFilterAndSort
+        // 一路往上炸掉整次篩選 → 封面牆空白。用 hasOwnProperty + Array.isArray 雙重把關。
+        var group = Object.prototype.hasOwnProperty.call(groupMap || {}, candidateKeys[i])
+            ? groupMap[candidateKeys[i]]
+            : null;
+        if (Array.isArray(group)) {
+            group.forEach(function (member) { set.add(normalizePillValue(member)); });
+            break;
+        }
+    }
+    return set;
+}
+
+function _actressOrTagMatcher(dim, pillValue, nameToGroup, tagToGroup) {
+    var groupMap = dim === 'actress' ? nameToGroup : tagToGroup;
+    var field = dim === 'actress' ? 'actresses' : 'tags';
+    var valueSet = _buildAliasSet(pillValue, groupMap);
+    return function (video) {
+        var tokens = _splitField(video[field]);
+        return tokens.some(function (t) { return valueSet.has(t); });
+    };
+}

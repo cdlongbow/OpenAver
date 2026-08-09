@@ -9,7 +9,7 @@
 import { _videos, _filteredVideos, _nameToGroup, _tagToGroup, _setVideos, _setFilteredVideos } from '@/showcase/state-base.js';
 import { applyCellFocal } from '@/shared/focal-cell.js';
 import { openLocal } from '@/shared/open-local.js';
-import { normalizePillValue } from '@/shared/pill-filter.js';
+import { normalizePillValue, buildPillPredicate } from '@/shared/pill-filter.js';
 
 export function stateVideos() {
     return {
@@ -337,12 +337,16 @@ export function stateVideos() {
 
         // --- 資料處理 ---
         applyFilterAndSort(skipPagination) {
-            // --- 搜尋篩選 (M4a) ---
+            // --- Stage 1: pill 精準比對（TASK-115-T2, CD-6）---
+            var pillPredicate = buildPillPredicate(this.pills, _nameToGroup, _tagToGroup);
+            var pillFiltered = _videos.filter(pillPredicate);
+
+            // --- Stage 2: 自由文字模糊比對 (M4a)（現況邏輯，body 逐字保留，僅改輸入來源陣列）---
             if (this.search && this.search.trim()) {
                 // 分割多個關鍵字（用空格分隔，過濾空字串）
                 const terms = this.search.toLowerCase().trim().split(/\s+/).filter(t => t.length > 0);
 
-                var filtered = _videos.filter(video => {
+                var filtered = pillFiltered.filter(video => {
                     const searchable = [
                         video.title,
                         video.original_title,
@@ -380,8 +384,8 @@ export function stateVideos() {
                 _setFilteredVideos(filtered);
                 this.filteredCount = _filteredVideos.length;
             } else {
-                // 空搜尋：回傳全部影片
-                _setFilteredVideos(_videos);
+                // 空搜尋：pill 篩選結果即為最終結果
+                _setFilteredVideos(pillFiltered);
                 this.filteredCount = _filteredVideos.length;
             }
 
