@@ -9,6 +9,7 @@
 import { _videos, _filteredVideos, _nameToGroup, _tagToGroup, _setVideos, _setFilteredVideos } from '@/showcase/state-base.js';
 import { applyCellFocal } from '@/shared/focal-cell.js';
 import { openLocal } from '@/shared/open-local.js';
+import { normalizePillValue } from '@/shared/pill-filter.js';
 
 export function stateVideos() {
     return {
@@ -94,6 +95,43 @@ export function stateVideos() {
             } else {
                 this._checkPreciseActressMatch(trimmed, 'manual');
             }
+        },
+
+        // TASK-115-T1: metadata pill filter mutations（UI 殼屬 T5；比對屬 T2）
+        normalizePillValue,
+
+        addPill(dim, value) {
+            var norm = normalizePillValue(value);
+            if (!dim || !norm) return;
+            var key = dim + '::' + norm;
+            var exists = this.pills.some(p => p.dim + '::' + normalizePillValue(p.value) === key);
+            if (exists) return;  // 靜默去重：不重跑 _animateFilter/_reconcileHeroCard
+            this.pills = [...this.pills, { dim: dim, value: value }];  // value 存原始字面（CD-3）
+            this._animateFilter();
+            this._reconcileHeroCard();
+        },
+
+        removePill(dim, value) {
+            var key = dim + '::' + normalizePillValue(value);
+            var next = this.pills.filter(p => (p.dim + '::' + normalizePillValue(p.value)) !== key);
+            if (next.length === this.pills.length) return;  // 沒命中：不重跑
+            this.pills = next;
+            this._animateFilter();
+            this._reconcileHeroCard();
+        },
+
+        clearAllFilters() {
+            this.search = '';
+            this.pills = [];
+            this._animateFilter();
+            this._reconcileHeroCard();
+            // 無條件執行：使用者主動按下的清除鈕，即使已空跑一次也無害，且維持「按下必清」的誠實承諾
+        },
+
+        _reconcileHeroCard() {
+            // T8 之前的 intentional no-op stub。CD-8 的 hero card 六個呼叫點之一（另五個屬 T8 範圍）。
+            // T8 落地前，此方法必須存在且每次 mutation 恰好呼叫一次——見本 task DoD 的 call-count 斷言，
+            // 目的是讓 T8 無法「漏接」這三個呼叫點（T8 只需改這個方法的方法體，call site 不必再動）。
         },
 
         onSortChange() {

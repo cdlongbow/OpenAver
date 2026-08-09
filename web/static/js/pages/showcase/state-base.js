@@ -197,6 +197,7 @@ export function stateBase() {
         modeOpen: false,
 
         search: '',
+        pills: [],  // TASK-115-T1: metadata pill filter（reactive only；持久化屬 T3）
         sort: 'date',         // M2a 先用硬編碼，M4 才從 config/localStorage 恢復
         order: 'desc',
         mode: 'grid',
