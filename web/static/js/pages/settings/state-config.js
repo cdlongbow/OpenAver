@@ -459,17 +459,22 @@ export function stateConfig() {
         },
         async saveAccessAuth() {
             this.accessAuthSaving = true;
+            // 在 await 之前把送出的值抓成快照（Codex PR#129 round-3 P2）：事後
+            // 推進「已生效」時必須記**這一次真的送出去的值**，不是回應到達當下的
+            // 草稿。模板已把勾選框與 PIN 欄一起鎖在 accessAuthSaving 上，理論上
+            // 兩者不會分岔——但這個函式的正確性不該建立在「模板記得鎖」上面。
+            const submittedEnabled = this.accessAuthEnabled;
             try {
                 const resp = await fetch('/api/access/settings', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ enabled: this.accessAuthEnabled, pin: this.accessAuthPin })
+                    body: JSON.stringify({ enabled: submittedEnabled, pin: this.accessAuthPin })
                 });
                 const result = await resp.json();
                 if (result.success) {
                     // 只有這裡能推進「已生效」——每一條失敗路徑都刻意不動它，讓安全
                     // 宣稱維持在後端的真實狀態上（草稿保留使用者輸入，不強制還原）。
-                    this.accessAuthEnabledSaved = this.accessAuthEnabled;
+                    this.accessAuthEnabledSaved = submittedEnabled;
                     this.showToast(window.t('settings.access_auth.saved'), 'success');
                 } else if (result.reason === 'invalid_pin') {
                     this.showToast(window.t('settings.access_auth.pin_invalid'), 'error');

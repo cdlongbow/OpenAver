@@ -3546,9 +3546,9 @@ const RULES = [
   },
   {
     file: 'web/templates/settings.html', kind: 'required-string',
-    pattern: ':disabled="!serverMode"',
-    scope: { anchor: /x-model="accessAuthEnabled"/, window: 200 },
-    note: '[lint-guard:114a-T5] 勾選框必須維持依 serverMode disabled（spec §2.1：它是伺服器模式的子選項，關閉時不可獨立切換）',
+    pattern: ':disabled="!serverMode || accessAuthSaving"',
+    scope: { anchor: /x-model="accessAuthEnabled"/, window: 500 },
+    note: '[lint-guard:114a-T5+T7fix] 勾選框必須同時依 serverMode 與 accessAuthSaving disabled。前者：spec §2.1，它是伺服器模式的子選項，關閉時不可獨立切換。後者（round-3 P2）：儲存請求還在飛的時候若能改勾選框，送出去的值與事後記成「已生效」的值就不是同一個——使用者可以送出「關閉保護」、在回應到達前把框重新勾起來，畫面於是宣稱有密碼保護而後端是全開的。PIN 欄本來就鎖在同一個旗標上，兩者一起鎖才一致。',
   },
   {
     file: 'web/templates/settings.html', kind: 'required-string',

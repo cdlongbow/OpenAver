@@ -141,3 +141,26 @@ test('saveAccessAuth network error → accessAuthEnabledSaved 不動', async () 
     await fakeThis.saveAccessAuth.call(fakeThis);
     assert.equal(fakeThis.accessAuthEnabledSaved, false);
 });
+
+// ── Codex PR#129 round-3 P2：送出的值必須在 await 前定格 ─────────────────────
+//
+// 模板已把勾選框與 PIN 欄一起鎖在 accessAuthSaving 上，所以 UI 上改不動；但這個
+// 函式的正確性不該建立在「模板記得鎖」上面——本測試直接在 await 中途改草稿，
+// 確認事後推進的是「這一次真的送出去的值」。
+//
+// 不修的話：使用者送出「關閉保護」、在回應到達前把框重新勾起來 → 後端是全開的，
+// 畫面卻宣稱有密碼保護。
+
+test('saveAccessAuth 在 await 中途改草稿 → 記錄的是送出當下的值，不是回應當下的草稿', async () => {
+    const fakeThis = makeFakeThis();
+    fakeThis.accessAuthEnabled = false;        // 送出「關閉保護」
+    fakeThis.accessAuthEnabledSaved = true;
+    globalThis.fetch = async (_url, opts) => {
+        assert.equal(JSON.parse(opts.body).enabled, false);  // 送出去的確實是 false
+        fakeThis.accessAuthEnabled = true;     // 回應抵達前，使用者又把框勾回來
+        return { json: async () => ({ success: true }) };
+    };
+    await fakeThis.saveAccessAuth.call(fakeThis);
+    assert.equal(fakeThis.accessAuthEnabledSaved, false,
+        '記成 true 等於宣稱有密碼保護，但後端收到的是關閉');
+});

@@ -37,7 +37,11 @@
                     <input type="checkbox"
                            class="toggle toggle-sm toggle-primary"
                            x-model="accessAuthEnabled"
-                           :disabled="!serverMode">
+                           {# accessAuthSaving 與 PIN 欄同步鎖住（Codex PR#129 round-3 P2）：
+                              兩者本來就該一起鎖，T5 只鎖了 PIN 欄是不一致。不鎖的話，
+                              使用者可以在請求還在飛的時候把勾選框改掉，於是「送出去的值」
+                              與「事後記成已生效的值」不是同一個。 #}
+                           :disabled="!serverMode || accessAuthSaving">
                     <span x-text="window.t('settings.access_auth.label')"></span>
                 </label>
                 <div class="settings-access-auth-pin-row" x-show="accessAuthEnabled" x-cloak>
