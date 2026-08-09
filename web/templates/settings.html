@@ -31,6 +31,66 @@
                     </button>
                 </div>
             </div>
+            <!-- T5: 存取密碼保護（114a）-->
+            <div class="settings-access-auth">
+                <label class="settings-access-auth-checkbox-row">
+                    <input type="checkbox"
+                           class="toggle toggle-sm toggle-primary"
+                           x-model="accessAuthEnabled"
+                           {# accessAuthSaving 與 PIN 欄同步鎖住（Codex PR#129 round-3 P2）：
+                              兩者本來就該一起鎖，T5 只鎖了 PIN 欄是不一致。不鎖的話，
+                              使用者可以在請求還在飛的時候把勾選框改掉，於是「送出去的值」
+                              與「事後記成已生效的值」不是同一個。 #}
+                           :disabled="!serverMode || accessAuthSaving">
+                    <span x-text="window.t('settings.access_auth.label')"></span>
+                </label>
+                <div class="settings-access-auth-pin-row" x-show="accessAuthEnabled" x-cloak>
+                    <span class="settings-access-auth-pin-prefix"
+                          x-text="window.t('settings.access_auth.pin_prefix')"></span>
+                    {# T7fix: 可見文字只留「密碼」，長度與字元集由四格欄位本身表達。
+                       完整說明搬到 aria-label／title——原本那個 <span> 沒有 for/id
+                       關聯，螢幕閱讀器讀不到欄位名稱，搬過去是淨改善。
+                       autocapitalize=off 是必要的，不是保險：比對區分大小寫，手機
+                       鍵盤自動大寫首字母會讓 abcd 變 Abcd。
+
+                       @input 的 NFKC 折疊要與後端同步（Codex Stage-2 P2）：後端存與
+                       比對都折，前端若只認 ASCII，中文輸入法全形模式打出的 ａＢ９２
+                       會讓儲存鈕永遠不亮、且不說明原因——與 T7fix 修掉的「打英文得到
+                       一顆灰按鈕」是同一個病。折在 input 上而不是只放寬 disabled 判斷：
+                       這樣欄位顯示的就是實際會存進去的值，不會出現「打的是全形、存的
+                       是半形、之後按眼睛看到的又不一樣」。 #}
+                    <input class="settings-access-auth-pin-input"
+                           :type="accessAuthPinVisible ? 'text' : 'password'"
+                           maxlength="4"
+                           autocomplete="off"
+                           autocapitalize="off"
+                           autocorrect="off"
+                           spellcheck="false"
+                           :aria-label="window.t('settings.access_auth.pin_label')"
+                           :title="window.t('settings.access_auth.pin_label')"
+                           x-model="accessAuthPin"
+                           @input="accessAuthPin = accessAuthPin.normalize('NFKC')"
+                           :disabled="!serverMode || accessAuthSaving">
+                    <button type="button"
+                            class="settings-access-auth-reveal-btn"
+                            :disabled="!accessAuthPinRevealed"
+                            :title="window.t('settings.access_auth.reveal')"
+                            :aria-label="window.t('settings.access_auth.reveal')"
+                            @click="accessAuthPinVisible = !accessAuthPinVisible">
+                        <i class="bi" :class="accessAuthPinVisible ? 'bi-eye-slash' : 'bi-eye'"></i>
+                    </button>
+                </div>
+                <button type="button"
+                        class="settings-access-auth-save-btn btn btn-sm btn-outline"
+                        :disabled="!serverMode || accessAuthSaving || (accessAuthEnabled && !/^[0-9A-Za-z]{4}$/.test(accessAuthPin))"
+                        @click="saveAccessAuth()">
+                    <span x-show="accessAuthSaving" class="loading loading-spinner loading-sm"></span>
+                    <template x-if="!accessAuthSaving">
+                        <i class="bi bi-check-lg"></i>
+                    </template>
+                    <span x-text="accessAuthSaving ? '' : ' ' + window.t('settings.access_auth.save')"></span>
+                </button>
+            </div>
             <!-- 81b-T1: 連線資訊 inline 區塊（ip:port + 複製 icon + ? popover）；
                  x-cloak 防 Alpine boot 前 FOUC（同原第二排 .settings-server-info 理由）-->
             <div class="settings-server-inline" x-show="serverMode" x-cloak>
@@ -69,10 +129,23 @@
                     <div x-show="showServerWarning" x-cloak x-transition
                          @click.outside="showServerWarning = false"
                          class="help-popover">
-                        <small class="help-popover__body">
-                            {{ t('settings.server_info.warning') }}
-                        </small>
+                        {# 讀 accessAuthEnabledSaved 而非草稿 accessAuthEnabled：這句話對
+                           使用者做安全宣稱（「其他裝置需要輸入密碼才能連線」），只能反映
+                           後端已生效的狀態。讀草稿的話，勾下去還沒存檔就開始說謊，存檔
+                           失敗更會一路說到重新整理為止。（Codex PR#129 P2）#}
+                        <small class="help-popover__body"
+                               x-text="accessAuthEnabledSaved
+                                   ? window.t('settings.server_info.warning_auth')
+                                   : window.t('settings.server_info.warning')"></small>
                     </div>
+                </div>
+                <div class="settings-server-public-warn"
+                     x-show="publicExposure"
+                     x-cloak
+                     role="status"
+                     aria-live="polite">
+                    <i class="bi bi-exclamation-triangle-fill"></i>
+                    <span>{{ t('settings.server_info.public_exposure') }}</span>
                 </div>
             </div>
         </div>
@@ -1263,9 +1336,13 @@
                     ? window.t('settings.server_mode_confirm.title_on')
                     : window.t('settings.server_mode_confirm.title')"></span>
             </h3>
+            {# 同「?」說明：這段也在做安全宣稱（「已設定密碼保護」），只准讀後端已生效的
+               accessAuthEnabledSaved，不可讀未提交草稿 accessAuthEnabled。（Codex PR#129 P2）#}
             <p class="fluent-modal-body"
                x-text="serverModeConfirmValue
-                   ? window.t('settings.server_mode_confirm.body_on')
+                   ? (accessAuthEnabledSaved
+                       ? window.t('settings.server_mode_confirm.body_on_auth')
+                       : window.t('settings.server_mode_confirm.body_on'))
                    : window.t('settings.server_mode_confirm.body_off')"></p>
             <div class="modal-action fluent-modal-actions">
                 <button type="button" class="btn btn-ghost" @click="cancelServerModeChange()">

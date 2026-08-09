@@ -28,7 +28,7 @@ BLOCKING_FUNC_NAMES = frozenset({
     # File I/O
     "realpath", "getsize", "open",
     # DB
-    "init_db", "get_db_path", "VideoRepository", "ActressRepository",
+    "init_db", "get_db_path", "VideoRepository", "ActressRepository", "attempt_pin",
     # Config
     "load_config", "save_config",
     # Sync HTTP（metatube）

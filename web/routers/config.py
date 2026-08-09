@@ -250,9 +250,14 @@ def update_general_field(field: str, request: GeneralFieldRequest, raw_request: 
                         except Exception:                     # noqa: BLE001,S110 — rollback best-effort
                             pass
                         return {"success": False, "error": "無法儲存伺服器模式設定"}
-                    from web.lan_listener import get_lan_ip
+                    from web.lan_listener import get_lan_ip, is_public_exposure
                     lan_ip = get_lan_ip()
-                    return {"success": True, "lan_port": lan_port, "lan_ip": lan_ip}
+                    return {
+                        "success": True,
+                        "lan_port": lan_port,
+                        "lan_ip": lan_ip,
+                        "public_exposure": is_public_exposure(lan_ip),
+                    }
                 else:
                     # Disable 順序：先 persist false，再 stop()。
                     # 原因：middleware lan_access_gate 讀 load_config().get("server_mode")，
@@ -294,11 +299,13 @@ def get_lan_port() -> dict:
     搭配前端 `?? null` 清除邏輯：listener 停止但 IP 可偵測 → lanIp 保留、lanPort
     null → 顯示「listener_down」；IP 真的無法偵測 → lanIp null → 顯示「no_lan_ip」。
     """
-    from web.lan_listener import lan_listener, get_lan_ip
+    from web.lan_listener import lan_listener, get_lan_ip, is_public_exposure
     running = lan_listener.is_running
+    _lan_ip = get_lan_ip()
     return {
         "lan_port": lan_listener.lan_port if running else None,
-        "lan_ip": get_lan_ip(),  # 獨立於 running：null 僅在 IP 真的無法偵測時
+        "lan_ip": _lan_ip,  # 獨立於 running：null 僅在 IP 真的無法偵測時
+        "public_exposure": is_public_exposure(_lan_ip),
     }
 
 

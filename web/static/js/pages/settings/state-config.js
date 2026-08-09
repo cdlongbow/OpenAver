@@ -71,6 +71,22 @@ export function stateConfig() {
         serverMode: false,
         lanIp: '',
         lanPort: null,
+        publicExposure: false,
+
+        // ===== 存取密碼保護 State（114a-T5）=====
+        accessAuthEnabled: false,      // 勾選框當前值（load 後由 GET 覆寫）＝**未提交草稿**
+        accessAuthPin: '',             // PIN 輸入框當前值（load 後由 GET 覆寫）
+        // 後端已生效的值。與上面那個草稿分開，是因為畫面上有兩處會**對使用者做安全宣稱**
+        // （「?」說明與伺服器模式切換確認框都會說「其他裝置需要輸入密碼才能連入」）。
+        // 那兩處只准讀這個欄位：草稿在使用者勾下去的當下就變 true，但後端此刻還沒有任何
+        // 保護；若儲存又失敗（磁碟寫入失敗、或從手機按存檔吃到 403），草稿會一路停在
+        // true 直到重新整理，使用者看到的是一句「有密碼擋著」的假話，實際上整個區網都
+        // 進得來。單純「失敗時 revert」不夠：那修不到「還沒按存檔就已經在說謊」的視窗，
+        // 而且會把使用者剛打的 PIN 一起丟掉。（Codex PR#129 review P2）
+        accessAuthEnabledSaved: false,
+        accessAuthPinRevealed: false,  // 伺服器旗標：這個瀏覽器能不能看到真值（loopback 才 true）
+        accessAuthPinVisible: false,   // 前端顯示旗標：眼睛按鈕目前是否顯示明碼（純 UI，不影響資料）
+        accessAuthSaving: false,       // Save 按鈕 in-flight 旗標，防雙擊送出
 
         // ===== 全域模式切換破壞性 confirm State (90c-T5) =====
         switchModeConfirmOpen: false,
@@ -427,6 +443,7 @@ export function stateConfig() {
                     this.serverMode = !!val;
                     this.lanPort = result.lan_port ?? null;
                     this.lanIp = result.lan_ip ?? null;
+                    this.publicExposure = result.public_exposure ?? false;
                 } else {
                     console.warn('[serverMode] setServerMode failed:', result.error);
                     // 遠端被拒（loopback 守衛）給專屬訊息，不用「請稍後再試」（重試無用）
@@ -438,6 +455,39 @@ export function stateConfig() {
             } catch (e) {
                 console.warn('[serverMode] setServerMode error:', e);
                 this.showToast(window.t(val ? 'settings.server_info.toggle_failed' : 'settings.server_info.disable_failed'), 'error');
+            }
+        },
+        async saveAccessAuth() {
+            this.accessAuthSaving = true;
+            // 在 await 之前把送出的值抓成快照（Codex PR#129 round-3 P2）：事後
+            // 推進「已生效」時必須記**這一次真的送出去的值**，不是回應到達當下的
+            // 草稿。模板已把勾選框與 PIN 欄一起鎖在 accessAuthSaving 上，理論上
+            // 兩者不會分岔——但這個函式的正確性不該建立在「模板記得鎖」上面。
+            const submittedEnabled = this.accessAuthEnabled;
+            try {
+                const resp = await fetch('/api/access/settings', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: submittedEnabled, pin: this.accessAuthPin })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    // 只有這裡能推進「已生效」——每一條失敗路徑都刻意不動它，讓安全
+                    // 宣稱維持在後端的真實狀態上（草稿保留使用者輸入，不強制還原）。
+                    this.accessAuthEnabledSaved = submittedEnabled;
+                    this.showToast(window.t('settings.access_auth.saved'), 'success');
+                } else if (result.reason === 'invalid_pin') {
+                    this.showToast(window.t('settings.access_auth.pin_invalid'), 'error');
+                } else if (result.reason === 'remote_forbidden') {
+                    this.showToast(window.t('settings.server_info.remote_only'), 'error');
+                } else {
+                    this.showToast(window.t('settings.access_auth.save_failed'), 'error');
+                }
+            } catch (e) {
+                console.warn('[accessAuth] saveAccessAuth error:', e);
+                this.showToast(window.t('settings.access_auth.save_failed'), 'error');
+            } finally {
+                this.accessAuthSaving = false;
             }
         },
 
@@ -680,9 +730,29 @@ export function stateConfig() {
                             const j = await r.json();
                             this.lanPort = j.lan_port ?? null;
                             this.lanIp = j.lan_ip ?? null;
-                        } catch (_e) { this.lanPort = null; }
+                            this.publicExposure = j.public_exposure ?? false;
+                        } catch (_e) {
+                            this.lanPort = null;
+                            this.publicExposure = false;
+                        }
                     } else {
                         this.lanPort = null;
+                        this.publicExposure = false;
+                    }
+
+                    // 114a-T5: 存取密碼保護 —— GET 無 loopback 限制，無論 serverMode 開關都嘗試讀取
+                    // （spec §2.6：PIN 設定與已通行裝置在 server_mode 關閉時仍要保留、仍要顯示）
+                    try {
+                        const authResp = await fetch('/api/access/settings');
+                        const authResult = await authResp.json();
+                        if (authResult.success) {
+                            this.accessAuthEnabled = authResult.enabled;
+                            this.accessAuthEnabledSaved = authResult.enabled;
+                            this.accessAuthPin = authResult.pin;
+                            this.accessAuthPinRevealed = authResult.pin_revealed;
+                        }
+                    } catch (e) {
+                        console.warn('[accessAuth] loadConfig: GET /api/access/settings failed:', e);
                     }
 
                     // Sources（61c-2）：讀 config.sources 段填入 unified scope。

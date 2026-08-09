@@ -3483,6 +3483,104 @@ const RULES = [
     pattern: /(['"`])warn\1/,
     note: "[lint-guard:113d-T4] showcase toast type 不得使用 warn 字面（任何引號風格；CSS 只有 alert-warning；toastType 唯一合法拼寫是 'warning'）",
   },
+
+  // ---- [lint-guard:114a-T2] access_gate.html 偽裝頁靜態結構契約 ----
+  // 偽裝頁必須是零外部資源、不透露品牌、無按鈕/label 的獨立文件（spec §2.3、
+  // TASK-114a-T2 決策清單）；四碼 + 不自動大寫則是正向存在性檢查。
+  {
+    file: 'web/templates/access_gate.html', kind: 'forbidden-string',
+    pattern: '/static',
+    note: '[lint-guard:114a-T2] 偽裝頁禁止引用 /static（零外部資源，避免被靜態檔案請求洩漏「這裡有東西」）',
+  },
+  {
+    file: 'web/templates/access_gate.html', kind: 'forbidden-string',
+    pattern: 'OpenAver',
+    note: '[lint-guard:114a-T2] 偽裝頁禁止出現品牌字面（不透露這是 OpenAver）',
+  },
+  {
+    file: 'web/templates/access_gate.html', kind: 'forbidden-string',
+    pattern: '<button',
+    note: '[lint-guard:114a-T2] 偽裝頁禁止 <button>（spec §2.3：無按鈕，輸滿自動送出）',
+  },
+  {
+    file: 'web/templates/access_gate.html', kind: 'forbidden-string',
+    pattern: '<label',
+    note: '[lint-guard:114a-T2] 偽裝頁禁止 <label>（spec §2.3：無文字節點）',
+  },
+  {
+    file: 'web/templates/access_gate.html', kind: 'required-string',
+    pattern: 'autocapitalize="off"',
+    note: '[lint-guard:114a-T2/T7fix] 偽裝頁輸入框必須是 autocapitalize="off"。密碼是 4 位 ASCII 英數且比對區分大小寫，手機鍵盤預設會把第一個字母自動大寫——設的是 abcd、打出去的是 Abcd，而這頁依設計不顯示任何錯誤訊息，使用者只會看到畫面重刷、永遠進不去。（原本這條鎖 inputmode="numeric"，T7fix 把密碼放寬成英數後那個契約反而會讓手機打不出字母，故整條換掉。）',
+  },
+  {
+    file: 'web/templates/access_gate.html', kind: 'required-string',
+    pattern: 'maxlength="4"',
+    note: '[lint-guard:114a-T2] 偽裝頁輸入框必須是 maxlength="4"（四碼契約）',
+  },
+  {
+    file: 'web/templates/access_gate.html', kind: 'forbidden-string',
+    pattern: 'type="password"',
+    note: '[lint-guard:114a-T2] 偽裝頁輸入框禁止 type="password"（會召喚瀏覽器密碼管理員 UI，當場自曝這是登入框；Opus 審核補充，不得回退）',
+  },
+  {
+    file: 'web/templates/access_gate.html', kind: 'forbidden-string',
+    pattern: '<!--',
+    note: '[lint-guard:114a-T2] 偽裝頁禁止 HTML 註解（<!-- -->）：這頁是伺服器端渲染，任何 HTML 註解逐字送到瀏覽器，view-source 就讀得到——零成本的洩漏管道。要留註解一律用 Jinja 註解 {# #}（伺服器端渲染時就被剝掉，不進 response body）。<!DOCTYPE html> 字面不同，不會誤中。',
+  },
+
+  // ---- [lint-guard:114a-T5] 存取密碼保護欄位薄守衛（owner 未驗收 UI，僅鎖「不得回退到已知壞值」）----
+  // scope window 只從 anchor.start 往後切：錨點必須落在被守屬性「之前」。
+  // 卡面 skeleton 的 PIN/眼睛錨點落在屬性之後，會變成永遠不紅（死守衛）或 anchor 後找不到 required，
+  // 故改錨到同區塊更早的 Alpine 綁定（仍不焊 class / 版位）。
+  {
+    file: 'web/templates/settings.html', kind: 'forbidden-string',
+    pattern: 'type="text"',
+    scope: { anchor: /x-show="accessAuthEnabled"/, window: 400 },
+    note: '[lint-guard:114a-T5] PIN 輸入框不得回退成常駐明碼 type="text"，必須維持 :type 動態綁定於遮罩/明碼之間',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: ':disabled="!accessAuthPinRevealed"',
+    scope: { anchor: /x-model="accessAuthPin"/, window: 400 },
+    note: '[lint-guard:114a-T5] 眼睛按鈕必須保持依 accessAuthPinRevealed disabled——遠端使用者（伺服器未回真值）按了也不能求得明碼',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: ':disabled="!serverMode || accessAuthSaving"',
+    scope: { anchor: /x-model="accessAuthEnabled"/, window: 500 },
+    note: '[lint-guard:114a-T5+T7fix] 勾選框必須同時依 serverMode 與 accessAuthSaving disabled。前者：spec §2.1，它是伺服器模式的子選項，關閉時不可獨立切換。後者（round-3 P2）：儲存請求還在飛的時候若能改勾選框，送出去的值與事後記成「已生效」的值就不是同一個——使用者可以送出「關閉保護」、在回應到達前把框重新勾起來，畫面於是宣稱有密碼保護而後端是全開的。PIN 欄本來就鎖在同一個旗標上，兩者一起鎖才一致。',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: 'accessAuthEnabledSaved',
+    // scope 用 RegExp 形式整段圈住那個 x-text 運算式（window 只能往後切，而被守的
+    // 識別字在 i18n key **之前**，用 anchor+window 會是永遠找不到的死守衛）。
+    // 前綴刻意寫 `accessAuthEnabled`：草稿名是已生效名的前綴，所以改回草稿時 scope
+    // 仍然匹配得到、required 卻缺席 → 轉紅。整段被改名／刪掉則 anchor 找不到，
+    // 引擎會另外報「scope anchor 找不到」——兩個方向都 fail-closed。
+    scope: /x-text="accessAuthEnabled[\s\S]{0,200}?settings\.server_info\.warning_auth/,
+    note: '[lint-guard:114a-T7fix] 「?」說明的 warning_auth 分支必須由 accessAuthEnabledSaved（後端已生效值）決定，不得改讀草稿 accessAuthEnabled。那句話對使用者做安全宣稱（「其他裝置需要輸入密碼才能連線」）——讀草稿的話，勾下去還沒存檔就開始說謊，存檔失敗更會一路說到重新整理為止，使用者以為區網有保護、實際上全開。（Codex PR#129 P2）',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: 'accessAuthEnabledSaved',
+    scope: /x-text="serverModeConfirmValue[\s\S]{0,300}?settings\.server_mode_confirm\.body_on_auth/,
+    note: '[lint-guard:114a-T7fix] 伺服器模式確認框的 body_on_auth 分支同上——「已設定密碼保護」是安全宣稱，只准讀 accessAuthEnabledSaved。（Codex PR#129 P2）',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: "normalize('NFKC')",
+    scope: { anchor: /x-model="accessAuthPin"/, window: 200 },
+    note: '[lint-guard:114a-T7fix] PIN 欄必須在 input 當下做 NFKC 折疊，與後端 _canonical_pin() 同步。拿掉它 → 中文輸入法全形模式打出的 ａＢ９２ 不匹配前端的 ASCII 正規式，儲存鈕永遠不亮且不說明原因（Codex Stage-2 P2；與 T7fix 修掉的「打英文得到一顆灰按鈕」同一個病）。折在 input 上而非只放寬 disabled 判斷，欄位顯示的才會是實際存進去的值。',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: 'autocapitalize="off"',
+    // 錨點刻意用 class 而非 x-model：autocapitalize 寫在 x-model **之前**，而 scope
+    // 視窗只往後切——錨在 x-model 會變成永遠找不到的死守衛（T5 踩過同一個坑）。
+    scope: { anchor: /class="settings-access-auth-pin-input"/, window: 400 },
+    note: '[lint-guard:114a-T7fix] 設定頁 PIN 欄必須 autocapitalize="off"（與偽裝頁同一條不變式）：密碼區分大小寫，行動裝置鍵盤預設自動大寫首字母會讓使用者設出一組自己在別台裝置打不出來的密碼。',
+  },
 ];
 
 // ---- helpers ----

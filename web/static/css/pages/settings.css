@@ -613,6 +613,27 @@
     font-size: 1rem;
 }
 
+/* ─── Public-exposure warning (server mode, 114a-T7) ─── */
+#settings-components .settings-server-public-warn {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.65rem 0.9rem;
+    margin-top: 0.4rem;
+    flex-basis: 100%;
+    font-size: 0.82rem;
+    line-height: 1.4;
+    color: var(--color-warning);
+    background: color-mix(in oklch, var(--color-warning) 12%, transparent);
+    border: 1px solid color-mix(in oklch, var(--color-warning) 35%, transparent);
+    border-radius: var(--fluent-radius-md);
+}
+
+#settings-components .settings-server-public-warn i {
+    flex: 0 0 auto;
+    font-size: 1rem;
+}
+
 /* ─── Segmented control (64e-2): 全開 | 無碼模式 capsule ─── */
 /* pill 白名單：.settings-sources-segmented（搜尋來源卡 segmented 藥丸型分段控件容器） */
 #settings-components .settings-sources-segmented {
@@ -1103,6 +1124,11 @@ html.theme-transition-active::view-transition-new(root) {
     border-color: color-mix(in oklch, var(--color-warning) 50%, transparent);
 }
 
+[data-theme="dim"] #settings-components .settings-server-public-warn {
+    background: color-mix(in oklch, var(--color-warning) 18%, transparent);
+    border-color: color-mix(in oklch, var(--color-warning) 50%, transparent);
+}
+
 /* P17/P18: tier-hint — 提 tint + border（資訊性，icon 已救，補結構清晰） */
 [data-theme="dim"] #settings-components .settings-mt-tier-hint {
     background: color-mix(in oklch, var(--accent) 16%, transparent);
@@ -1146,6 +1172,187 @@ html.theme-transition-active::view-transition-new(root) {
 [data-theme="dim"] #settings-components .settings-server-mode .settings-sources-segmented button.is-on[data-mode="server"] {
     background: color-mix(in oklch, var(--color-warning) 22%, transparent);
     box-shadow: var(--fluent-shadow-2), inset 0 0 0 1.5px var(--color-warning);
+}
+
+/* ─── 存取密碼保護（114a-T5 markup / T7fix 補樣式）───────────────────────────
+   T5 只落地 markup、零 CSS：外層 div 以 block 身分成為 .settings-header-left 的
+   flex item，三個子元素直向堆成一根柱子（實測 80px 高，同排鄰居只有 28-32px），
+   PIN 欄還吃瀏覽器預設 text input 寬（實測 332px，裝 4 個字）。這裡把它收成單列。
+
+   分組手法是「內緊外鬆」的三階間距（4px 綁元件 / 8px 綁子群 / 12px 是 header-left
+   的既有節奏），不加卡片或底色：header 本身已是 acrylic（L251），再疊一層材質只會
+   讓這排更吵。高度一律對齊 28px，與同排右邊的 .settings-server-copy-btn 同節奏。 */
+
+#settings-components .settings-access-auth {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;                    /* 子群之間（開關 / PIN / 儲存）*/
+    /* header-left 的 gap 是 12px、組內是 8px；左右各再借 4px 讓這一整組和左邊的
+       模式膠囊、右邊的連線資訊斷得開。不用分隔線：那條線在 header-left 換行時會
+       變成行首的孤立豎線（.settings-header-left 是無條件 flex-wrap，L1151）。 */
+    margin-inline: 0.25rem;
+    /* 刻意不寫 min-width:0（那是 .settings-header-left 的需求）：留著預設的
+       min-content 下限，窄屏時整組一起換行，而不是被壓扁到 PIN 欄和儲存鈕互相擠。 */
+}
+
+/* 開關 + 說明文字＝一個可點單位，故用最緊的 4px 綁在一起 */
+#settings-components .settings-access-auth-checkbox-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+#settings-components .settings-access-auth-pin-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+#settings-components .settings-access-auth-pin-prefix {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+/* 四格密碼欄（T7fix）——一個真正的 <input>，四格是畫出來的背景，不是四個 input。
+   拆成四個 input 會自己長出貼上、焦點跳轉、退格回上一格、螢幕閱讀器逐格報讀等
+   一整組問題，而這裡要表達的只有「四個字元」。
+
+   幾何全部用 ch（＝等寬字下一個字元的前進寬度），不用 px：字級控制會把 <html>
+   的 font-size 從 13px 拉到 20px（base.html:8），px 幾何在兩端都會歪。
+     step        = cell + gap（每個字元前進的距離）
+     letter-spacing = step − 1ch（字元自身佔 1ch，補到 step）
+     text-indent = (cell − 1ch) / 2（把第一個字元推到第一格正中，之後每格自動對齊）
+   遮罩態（type=password）的 • 在等寬字下同樣是 1ch，故兩種狀態幾何一致。 */
+#settings-components .settings-access-auth-pin-input {
+    --pin-cell: 1.9ch;
+    --pin-gap: 0.45ch;
+    --pin-step: calc(var(--pin-cell) + var(--pin-gap));
+    /* 撐起「四格」的是底線，不是填色。實測過填色路線：--surface-0 與 --bg-header
+       只差約 3% 亮度、--surface-2 只差約 2%，1x 下四格完全看不出來，空欄位甚至
+       看起來像沒有輸入框。故填色只留一層極淡襯底，可見度全部押在 2px 底線上——
+       小尺寸下線條的存活能力遠高於低對比色塊。 */
+    --pin-cell-bg: color-mix(in oklch, var(--surface-2) 70%, transparent);
+    --pin-cell-line: color-mix(in oklch, var(--text-secondary) 55%, transparent);
+
+    box-sizing: content-box;
+    width: calc(4 * var(--pin-cell) + 3 * var(--pin-gap));
+    height: 28px;
+    padding: 0;
+    border: 0;
+    outline: none;
+    border-radius: var(--fluent-radius-md);
+
+    font-family: ui-monospace, 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+    font-size: 0.9rem;
+    line-height: 28px;
+    text-align: left;
+    letter-spacing: calc(var(--pin-step) - 1ch);
+    text-indent: calc((var(--pin-cell) - 1ch) / 2);
+    color: var(--text-primary);
+
+    background-image:
+        repeating-linear-gradient(
+            to right,
+            var(--pin-cell-line) 0 var(--pin-cell),
+            transparent var(--pin-cell) var(--pin-step)
+        ),
+        repeating-linear-gradient(
+            to right,
+            var(--pin-cell-bg) 0 var(--pin-cell),
+            transparent var(--pin-cell) var(--pin-step)
+        );
+    background-size: 100% 2px, 100% 100%;
+    background-position: bottom left, top left;
+    background-repeat: no-repeat;
+    box-shadow: none;
+    transition: box-shadow var(--fluent-duration-fast) var(--fluent-ease-standard),
+                background-image var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+
+/* focus：格子提亮 + 沿用 .settings-mt-field input:focus-visible 的 3px accent 光暈
+   （L723），鍵盤使用者在整個設定頁看到的是同一套 focus 語彙。 */
+#settings-components .settings-access-auth-pin-input:focus-visible {
+    --pin-cell-bg: color-mix(in oklch, var(--accent) 14%, var(--surface-2));
+    --pin-cell-line: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 22%, transparent);
+}
+
+#settings-components .settings-access-auth-pin-input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* 眼睛鈕 — 沿用 .settings-server-copy-btn 的 28×28 icon 方鈕語彙（L1203），
+   那顆就在同一排右邊幾十 px 處，兩顆不同尺寸會直接看出來。 */
+#settings-components .settings-access-auth-reveal-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border-radius: var(--fluent-radius-sm);
+    border: 1px solid var(--stroke-subtle);
+    background: color-mix(in oklch, var(--surface-2) 60%, transparent);
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: color var(--fluent-duration-fast) var(--fluent-ease-standard),
+                background var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+
+#settings-components .settings-access-auth-reveal-btn:hover:not(:disabled) {
+    color: var(--text-primary);
+    background: color-mix(in oklch, var(--surface-2) 90%, transparent);
+}
+
+/* 遠端裝置上這顆永遠 disabled（後端只對 loopback 回真值）＝常態不是例外，
+   所以壓成不吸睛的靜態元素，不要看起來像壞掉的按鈕。 */
+#settings-components .settings-access-auth-reveal-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* DaisyUI .btn-sm 預設 32px，壓到 28px 與同排 icon 鈕、PIN 欄齊高 */
+#settings-components .settings-access-auth-save-btn {
+    height: 28px;
+    min-height: 28px;
+    padding: 0 0.7rem;
+    font-size: 0.8rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* DaisyUI 的 .btn-outline:disabled 在本專案是 opacity:1 + cursor:pointer（全站皆然，
+   非本次引入）——但單機模式下這顆是「整段時間都不能按」，不是像旁邊「測試」鈕那樣
+   短暫 disabled。同組的 PIN 欄與眼睛鈕都已經是 dim + not-allowed，這顆維持全亮會
+   讓整組看起來一半活一半死，故在本組內補齊同一套 disabled 語彙（不外溢到其他按鈕）。*/
+#settings-components .settings-access-auth-save-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* 手機：這組 nowrap 的 min-content 是 470px，容器一旦比它窄就會撐出整頁橫向捲軸
+   （實測 480px 下 documentElement.scrollWidth 518 > 480）。臨界點約在 vw 566px
+   （container = vw − 96），取 600px 留餘裕，在那之下改成組內換行。桌機維持 nowrap，
+   才會保有「整組一起掉到下一行」而不是被拆散的行為。 */
+@media (max-width: 600px) {
+    #settings-components .settings-access-auth {
+        flex-wrap: wrap;
+        row-gap: 0.5rem;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #settings-components .settings-access-auth-pin-input,
+    #settings-components .settings-access-auth-reveal-btn {
+        transition: none;
+    }
 }
 
 /* 81b-T2: 連線資訊 inline 區塊 — ip:port + 複製 icon + ? popover 同排；

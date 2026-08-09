@@ -36,6 +36,7 @@ from core.config import load_config
 from core.database import init_db
 from core.database import backfill_readonly_nfo_mtime
 from core.metatube.state import metatube_state as _mt_startup_state
+from core.access_auth import ensure_schema, snapshot, verify_ticket
 
 
 # 路徑設定
@@ -75,6 +76,11 @@ async def lifespan(app: FastAPI):
     # 移除 legacy clip_embedding / clip_model_id），確保 Video.from_row cls(**data)
     # 不會因 legacy schema 欄位收到未知 keyword 而 500。CD-57b-8 contract。
     init_db()
+
+    # TASK-114a-T2: 認證閘門的 schema 就緒動作，與 init_db() 同一段落一起跑
+    # （CD-114a-3：兩者刻意不合併成同一支函式，但啟動時機一致）。idempotent
+    # CREATE TABLE IF NOT EXISTS + 首次 load_snapshot() 暖 cache。
+    ensure_schema()
 
     # TASK-104: one-time heal for pre-0.12.6 readonly rows whose nfo_mtime was
     # hardcoded to 0.0 even though the sibling .nfo was really written next to
@@ -162,6 +168,7 @@ from web.routers import scraper_sources as scraper_sources_router
 from web.routers import settings_metatube as settings_metatube_router
 from web.routers import cf as cf_router
 from web.routers import diagnostics as diagnostics_router
+from web.routers import access as access_router
 # Module-level imports for startup_reconnect / _fire_probe so that
 # patch("web.app.startup_reconnect") / patch("web.app._fire_probe") target the
 # correct use-site binding (TASK-63e-1; function-local import would defeat patch).
@@ -190,6 +197,7 @@ app.include_router(scraper_sources_router.router)
 app.include_router(settings_metatube_router.router)
 app.include_router(cf_router.router)
 app.include_router(diagnostics_router.router)
+app.include_router(access_router.router)
 
 
 @app.exception_handler(RequestValidationError)
@@ -215,6 +223,133 @@ def _lan_access_allowed(client_host, server_mode):
     if client_host in _LOOPBACK_HOSTS:
         return True
     return bool(server_mode)
+
+
+# ============ 認證閘門（TASK-114a-T2）============
+
+# deny-by-default 放行清單：未認證下只有這兩組 (method, path) 可以通過。
+# CD-114a-8；具名常數 + 長度斷言（測試層）防止未來「順手多放一個」。
+_VERIFY_ENDPOINT = ("POST", "/api/access/verify")
+_HEALTH_ENDPOINT = ("GET", "/api/health")
+_AUTH_ALLOWLIST = frozenset({_VERIFY_ENDPOINT, _HEALTH_ENDPOINT})
+
+
+def render_access_gate_page(request: Request):
+    """偽裝頁：獨立完整 HTML，不透露任何真實內容存在與否。
+
+    唯一產生點——正常的「未認證」分支、冷載失敗的 fail-closed 分支、以及 T3
+    `POST /api/access/verify` 的成功/失敗回應都呼叫這支，不得各寫一次
+    `TemplateResponse(...)`（逐位元組必須相同，寫兩次遲早會漂移）。公開名
+    （無底線前綴）：`web/routers/access.py` 要 import 它，底線私有名會撞 ruff
+    `PLC2701`（BE-LINT-01，正解是升格公開名，不是加 noqa）。
+    """
+    return templates.TemplateResponse(
+        request, "access_gate.html", {},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _is_cross_site_api_request(request: Request) -> bool:
+    """這個請求是「由別的網站發起、打向 `/api/` 」嗎？
+
+    Codex PR#129 round-2 P3 指出 `SameSite=Lax` 會在**跨站頂層 GET 導覽**時照送
+    `sid`，而閘門後有真的會寫檔的 GET 端點——`/api/gallery/jellyfin-update` 覆寫
+    poster/fanart（某些外部庫佈局下甚至就地裁切原始封面，本專案 0.13.x 已被這個
+    bug 咬過一次，原圖裁壞回不來）、`/api/gallery/update` 覆寫 NFO、
+    `/api/gallery/generate` 重建 DB。使用者只要開到一個知道你 LAN 位址的惡意頁，
+    那頁就能把瀏覽器導去這些路徑，用受害者的票發動批次寫入。
+
+    **沒有**改成 `SameSite=Strict`：那是 CD-114a-6 已拍板的決定，理由是分享情境
+    ——LINE/QR code 點進來的第一次導覽會掉票，而掉票看到的是刻意無文字的偽裝頁，
+    家人不會知道發生什麼事。改用這條的代價是零：分享連結一定指向頁面路由，不會
+    有人分享 `/api/...`；反過來，跨站打 `/api/` 對一個區網私有服務永遠不合法。
+
+    `Sec-Fetch-Site` 缺席時回 False（fail-open）——舊瀏覽器與 curl／AI agent 都
+    不送這個 header，那些呼叫者本來就不是這條在防的對象（它防的是「使用者的
+    瀏覽器被第三方網頁指使」，而瀏覽器一定會送）。
+    """
+    if request.headers.get("sec-fetch-site") != "cross-site":
+        return False
+    return request.url.path.startswith("/api/")
+
+
+@app.middleware("http")
+async def access_gate(request: Request, call_next):
+    """
+    非 loopback 且認證已開啟時的 PIN 閘門。
+
+    宣告在 `lan_access_gate`（下方）之前——依 Starlette 疊加語意（後宣告者
+    最外層先執行，§1.2／§8.2 context7 結論），本 middleware 實際執行在
+    `lan_access_gate` 放行**之後**（CD-114a-4）：`lan_access_gate` 先擋掉
+    單機模式下的所有非 loopback 流量，本 middleware 只處理「已經被放行
+    進來」的 LAN 流量要不要認證。
+
+    本機判斷一律委派 `_is_loopback_host()`（CD-114a-5，比 `_LOOPBACK_HOSTS`
+    寬的判斷），不得自行解析位址／比對字串。
+    """
+    client_host = request.client.host if request.client else None
+    if _is_loopback_host(client_host):
+        return await call_next(request)
+
+    snap = snapshot()
+    if snap is None:
+        # 冷載：TestClient(app) 未當 context manager 用時 lifespan 不會跑，
+        # ensure_schema() 從未執行過——這裡用 ensure_schema()（非單純
+        # load_snapshot()）補跑一次：它的 CREATE TABLE IF NOT EXISTS 是
+        # idempotent，即使目標 DB 檔案裡連 access_auth 表都還不存在（例如
+        # 全新 checkout、或既有測試打的是完全不相干的 DB 路徑）也不會拋
+        # `sqlite3.OperationalError: no such table`。這是熱路徑唯一允許
+        # 的 DB 讀寫，且只發生在第一個請求（CD-114a-11）。
+        try:
+            await asyncio.to_thread(ensure_schema)
+            snap = snapshot()
+        except Exception:
+            # fail-closed：無法確認認證狀態時一律當作「未認證」處理，直接回
+            # 偽裝頁，不讓例外冒泡成 500——未認證訪客看到的東西必須永遠長
+            # 一樣，500 錯誤頁跟偽裝頁是兩種不同形狀，本身就是一種洩漏。
+            # 只有非 loopback 流量走得到這裡（loopback 在上面第 2 步已經
+            # return），所以「DB 壞掉時擋住 LAN」不會把主人鎖在門外——他在
+            # 自己機器上照常進得去，也才修得了 DB；反過來 fail-open 會變成
+            # 「DB 一壞，全家都進得來」。
+            logger.exception(
+                "access_gate: cold-load ensure_schema() failed, "
+                "fail-closed to masked page"
+            )
+            return render_access_gate_page(request)
+
+    if not snap.enabled:
+        return await call_next(request)
+
+    method = request.method
+    path = request.url.path
+    authed = verify_ticket(request.cookies.get("sid"))
+
+    if (method, path) == _VERIFY_ENDPOINT:
+        # 登入入口本身，永遠可達，不比對 authed。
+        return await call_next(request)
+
+    if (method, path) == _HEALTH_ENDPOINT:
+        if authed:
+            return await call_next(request)
+        # 未認證：middleware 自己回應，不呼叫 handler（CD-114a-8 雙形狀）。
+        return JSONResponse({"status": "ok"})
+
+    if authed and _is_cross_site_api_request(request):
+        # 持票但請求是「別的網站帶過來的、打向 /api/ 的」——一律當未認證處理
+        # （Codex PR#129 round-2 P3 的替代修法，見 `_is_cross_site_api_request`）。
+        # 回應與未認證完全同形，不新增可辨識的第四種形狀。
+        return render_access_gate_page(request)
+
+    if authed:
+        return await call_next(request)
+
+    if request.headers.get("authorization") is not None:
+        # 讀者是程式不是人（§4.4／D-7）：只看 header 存不存在，不驗內容。
+        return JSONResponse(
+            {"success": False, "reason": "unauthorized"}, status_code=401
+        )
+
+    return render_access_gate_page(request)
 
 
 @app.middleware("http")
