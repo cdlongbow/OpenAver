@@ -8,6 +8,7 @@ OpenAI Compatible API 路由 - 提供模型查詢和翻譯測試功能
 
 from core.logger import get_logger
 from core.config import load_config
+from core.secret_fields import read_secret, resolve_secret
 from core.translate_service import LANGUAGE_PROMPTS
 
 from fastapi import APIRouter
@@ -66,10 +67,13 @@ async def fetch_openai_models(request: ModelsRequest):
     if not request.base_url.strip():
         return ModelsResponse(success=False, error="missing_base_url")
 
+    config = await asyncio.to_thread(load_config)
+    key = resolve_secret(request.api_key, read_secret(config, "translate.openai.api_key"))
+
     base_url = request.base_url.rstrip("/")
     headers = {}
-    if request.api_key:
-        headers["Authorization"] = f"Bearer {request.api_key}"
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -129,6 +133,7 @@ async def test_openai_translate(request: TestTranslateRequest):
     test_title = "新人女優デビュー"
 
     config = await asyncio.to_thread(load_config)
+    key = resolve_secret(request.api_key, read_secret(config, "translate.openai.api_key"))
     locale = config.get("general", {}).get("locale", "zh-TW")
 
     # F2: ja short-circuit — 與 translate_service.py 的行為保持一致
@@ -153,8 +158,8 @@ async def test_openai_translate(request: TestTranslateRequest):
 
     base_url = request.base_url.rstrip("/")
     headers = {"Content-Type": "application/json"}
-    if request.api_key:
-        headers["Authorization"] = f"Bearer {request.api_key}"
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
 
     payload = {
         "model": request.model,

@@ -89,7 +89,11 @@
             <div class="flex-1 lg:pl-6 mt-4 lg:mt-0">
                 <div class="hero-terminal relative" data-capabilities-base="{{ base_url }}">
                     <span class="terminal-prompt">$</span>
+                    {%- if show_agent_auth %}
+                    <span x-text="curlDisplayText()"></span>
+                    {%- else %}
                     curl -s {{ base_url }}/api/capabilities
+                    {%- endif %}
                     <button class="terminal-copy-btn" @click="copyCurlCommand()"
                             :title="window.t('help.hero.copy_curl')"
                             :aria-label="window.t('help.hero.copy_curl')">
@@ -106,6 +110,33 @@
                 <p class="text-xs text-base-content/40 mt-0.5">
                     {{ t('help.hero.ai_hint_unsupported') }}
                 </p>
+                {%- if show_agent_auth %}
+                <div class="help-agent-token-panel mt-3" data-agent-token="{{ agent_token }}">
+                    <div class="help-agent-token-row">
+                        <span class="help-agent-token-label">{{ t('help.agent_auth.title') }}</span>
+                        <code class="help-agent-token-value" x-text="agentTokenVisible ? agentToken : maskedTokenDisplay"></code>
+                        <button type="button" class="help-agent-token-reveal-btn"
+                                :title="window.t('help.agent_auth.reveal')"
+                                :aria-label="window.t('help.agent_auth.reveal')"
+                                @click="toggleAgentTokenVisible()">
+                            <i class="bi" :class="agentTokenVisible ? 'bi-eye-slash' : 'bi-eye'"></i>
+                        </button>
+                        <button type="button" class="help-agent-token-copy-btn"
+                                :title="window.t('help.agent_auth.copy_token_tooltip')"
+                                :aria-label="window.t('help.agent_auth.copy_token_tooltip')"
+                                @click="copyAgentToken()">
+                            <i class="bi bi-clipboard" x-show="!agentTokenCopied"></i>
+                            <span x-show="agentTokenCopied">✓</span>
+                        </button>
+                    </div>
+                    <p class="help-agent-token-rotate-hint text-xs text-base-content/50 mt-1">
+                        {{ t('help.agent_auth.rotate_hint') }}
+                    </p>
+                    <p class="help-agent-token-sse-note text-xs text-base-content/50 mt-1">
+                        {{ t('help.agent_auth.sse_limitation') }}
+                    </p>
+                </div>
+                {% endif %}
             </div>
         </div>
     </div>
@@ -448,7 +479,7 @@
 
             <h6 class="mt-4">{{ t('help.server_mode.h6_security') }}</h6>
             <ul>
-                <li>{{ t('help.server_mode.security_lan') }}</li>
+                <li>{{ t('help.server_mode.security_lan_auth') if auth_enabled else t('help.server_mode.security_lan') }}</li>
                 <li>{{ t('help.server_mode.security_vpn') }}</li>
             </ul>
 

@@ -76,6 +76,7 @@ class AuthSnapshot:
     enabled: bool
     pin: str
     valid_tokens: frozenset[str]
+    agent_token: Optional[str]
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +98,13 @@ def _now() -> float:
 
 def _connect() -> sqlite3.Connection:
     return get_connection(get_db_path())
+
+
+def _new_agent_token() -> str:
+    """CD-114b-2's concrete shape. Internal helper shared by `set_auth` and
+    `_backfill_agent_ticket_locked` — not a public function, no caller needs
+    it directly."""
+    return "oav_" + secrets.token_urlsafe(32)
 
 
 def _canonical_pin(candidate: object) -> Optional[str]:
@@ -151,17 +159,36 @@ def _decide_lockout(
 
 def _load_locked() -> AuthSnapshot:
     """Caller already holds `_lock`. The only DB read point: rebuilds the
-    cache from `access_auth` + `access_tickets` and swaps it in."""
+    cache from `access_auth` + `access_tickets` and swaps it in.
+
+    `agent_token` is derived from the same ticket rows as `valid_tokens`
+    (TASK-114b-T1, CD-114b-1) — `ORDER BY rowid ASC` rather than
+    `created_at`: SQLite's `CURRENT_TIMESTAMP` only has 1-second
+    resolution, which is too coarse to order two tickets minted within
+    the same second (e.g. this module's own concurrency barrier test).
+    `rowid` is SQLite's implicit monotonically-increasing integer for a
+    normal (non-`WITHOUT ROWID`) table and needs no schema change. If more
+    than one `kind='agent'` row exists (the CD-114b-1 invariant says this
+    should never happen, but this is defensive read code, not a place
+    that should crash a hot path on an unexpected shape) the highest-rowid
+    (most recently inserted) one wins — consistent with
+    `set_auth()`'s "revoke all, insert one" mental model (see its
+    `_revoke_all_locked()` → conditional insert sequence).
+    """
     global _snapshot
     conn = _connect()
     try:
         row = conn.execute("SELECT enabled, pin FROM access_auth WHERE id = 1").fetchone()
         enabled = bool(row[0]) if row is not None else False
         pin = row[1] if row is not None else ""
-        tokens = frozenset(r[0] for r in conn.execute("SELECT token FROM access_tickets"))
+        rows = conn.execute(
+            "SELECT token, kind FROM access_tickets ORDER BY rowid ASC"
+        ).fetchall()
     finally:
         conn.close()
-    snap = AuthSnapshot(enabled=enabled, pin=pin, valid_tokens=tokens)
+    tokens = frozenset(r[0] for r in rows)
+    agent_token = next((r[0] for r in reversed(rows) if r[1] == "agent"), None)
+    snap = AuthSnapshot(enabled=enabled, pin=pin, valid_tokens=tokens, agent_token=agent_token)
     _snapshot = snap
     return snap
 
@@ -174,14 +201,43 @@ def _revoke_all_locked(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM access_tickets")
 
 
+def _backfill_agent_ticket_locked(conn: sqlite3.Connection) -> None:
+    """Caller already holds `_lock` and owns `conn` (commit/close is the
+    caller's job — same shape as `_revoke_all_locked`). Upgrade path
+    0.13.7 -> 0.13.8: mint one agent ticket if auth is enabled and none
+    exists yet. Must never touch browser tickets. Check-then-act, so it
+    must run under `_lock` for CD-114b-12's "one lock covers every writer
+    in this module" guarantee to hold for backfill too."""
+    row = conn.execute("SELECT enabled FROM access_auth WHERE id = 1").fetchone()
+    enabled = bool(row[0]) if row is not None else False
+    if not enabled:
+        return
+    has_agent = conn.execute(
+        "SELECT 1 FROM access_tickets WHERE kind = 'agent' LIMIT 1"
+    ).fetchone()
+    if has_agent is not None:
+        return
+    conn.execute(
+        "INSERT INTO access_tickets (token, kind) VALUES (?, 'agent')",
+        (_new_agent_token(),),
+    )
+
+
 # ---------------------------------------------------------------------------
-# Public interface (8 functions — T2 / T3 / T4 import contract)
+# Public interface (9 functions — T2 / T3 / T4 import contract)
 # ---------------------------------------------------------------------------
 
 
 def ensure_schema() -> None:
-    """Create both tables (idempotent) and warm the cache. Called once from
-    startup wiring (T2)."""
+    """Create both tables (idempotent), backfill an agent ticket for
+    upgraded 0.13.7 databases (TASK-114b-T1), and warm the cache. Called
+    once from startup wiring (T2).
+
+    Backfill runs inside `with _lock:` and refreshes the cache via the
+    private `_load_locked()` — NOT the public `load_snapshot()`, which
+    would try to re-acquire this same non-reentrant `threading.Lock()`
+    and deadlock (the module's "never call a public function while
+    holding `_lock`" rule)."""
     conn = _connect()
     try:
         conn.execute(_ACCESS_AUTH_SCHEMA_SQL)
@@ -189,7 +245,14 @@ def ensure_schema() -> None:
         conn.commit()
     finally:
         conn.close()
-    load_snapshot()
+    with _lock:
+        conn = _connect()
+        try:
+            _backfill_agent_ticket_locked(conn)
+            conn.commit()
+        finally:
+            conn.close()
+        _load_locked()
 
 
 def snapshot() -> Optional[AuthSnapshot]:
@@ -268,6 +331,7 @@ def attempt_pin(candidate: object) -> Optional[str]:
             enabled=snap.enabled,
             pin=snap.pin,
             valid_tokens=snap.valid_tokens | {token},
+            agent_token=snap.agent_token,
         )
         return token
 
@@ -318,10 +382,26 @@ def set_auth(enabled: bool, pin: str) -> None:
                 (1 if enabled else 0, stored_pin),
             )
             _revoke_all_locked(conn)
+            # CD-114b-1: `enabled == True` iff exactly one agent ticket
+            # exists. `_revoke_all_locked` just wiped every ticket
+            # (browser AND any prior agent one) in this same transaction,
+            # so the only place left to mint the new agent ticket that
+            # keeps the invariant true is right here.
+            agent_token = _new_agent_token() if enabled else None
+            if agent_token is not None:
+                conn.execute(
+                    "INSERT INTO access_tickets (token, kind) VALUES (?, 'agent')",
+                    (agent_token,),
+                )
             conn.commit()
         finally:
             conn.close()
-        _snapshot = AuthSnapshot(enabled=enabled, pin=stored_pin, valid_tokens=frozenset())
+        _snapshot = AuthSnapshot(
+            enabled=enabled,
+            pin=stored_pin,
+            valid_tokens=frozenset({agent_token}) if agent_token is not None else frozenset(),
+            agent_token=agent_token,
+        )
         _consecutive_failures = 0
         _lockout_started_at = None
 
@@ -339,7 +419,13 @@ def revoke_all() -> None:
         finally:
             conn.close()
         base = _snapshot if _snapshot is not None else _load_locked()
-        _snapshot = AuthSnapshot(enabled=base.enabled, pin=base.pin, valid_tokens=frozenset())
+        # R5 covers the agent ticket too: `DELETE FROM access_tickets` above
+        # already removed it from the DB, so the cache must reflect that
+        # (TASK-114b-T1 DoD) — carrying `base.agent_token` forward here
+        # would leave the cache pointing at a ticket that no longer exists.
+        _snapshot = AuthSnapshot(
+            enabled=base.enabled, pin=base.pin, valid_tokens=frozenset(), agent_token=None
+        )
 
 
 def verify_ticket(token: Optional[str]) -> bool:

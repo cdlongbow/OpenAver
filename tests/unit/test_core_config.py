@@ -6,6 +6,8 @@ tests/unit/test_core_config.py — core.config migration 邏輯 unit tests
 """
 
 import json
+import os
+import stat
 import pytest
 from pathlib import Path
 
@@ -1655,3 +1657,58 @@ class TestScraperStrmPathMappings:
 
         reloaded = load_config()
         assert reloaded["scraper"]["strm_path_mappings"] == {"Z:\\115\\": "/vol/"}
+
+
+# ============ CD-114c-9: config.json mode bits (POSIX only) ============
+
+class TestConfigPathMode:
+    """CD-114c-9: config.json must be 0600 after first-init copy2 and after save.
+
+    B19 / B20 — function-layer tests (same monkeypatch style as
+    test_copies_default_when_default_exists). Windows skips (NTFS ACLs).
+    """
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX mode bits; NTFS ACL 不吃 0600")
+    def test_first_init_copy_yields_0600(self, tmp_path, monkeypatch):
+        """B19 ①: no config.json → load_config() copy2 from default → mode 0o600.
+
+        Default content is migration-complete so first-init does **not** trigger a
+        migration rewrite (atomic_write would hide copy2's 0644). That makes this
+        assertion pin the post-copy2 chmod itself (CD-114c-9 DoD: red at 0644
+        before chmod lands, green after).
+        """
+        # Produce a fully migrated blob, then use it as 0644 default.
+        seed_path = tmp_path / "seed.json"
+        monkeypatch.setattr(core_config, "CONFIG_PATH", seed_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "unused.default.json")
+        save_config(AppConfig().model_dump())
+        complete = load_config()
+
+        config_path = tmp_path / "config.json"
+        default_path = tmp_path / "config.default.json"
+        _write_config(default_path, complete)
+        default_path.chmod(0o644)
+        assert not config_path.exists()
+
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", default_path)
+
+        load_config()
+
+        assert config_path.exists(), "應從 default 複製建立 config.json"
+        mode = stat.S_IMODE(config_path.stat().st_mode)
+        assert mode == 0o600, f"first-init config.json mode must be 0o600, got {oct(mode)}"
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX mode bits; NTFS ACL 不吃 0600")
+    def test_save_config_yields_0600(self, tmp_path, monkeypatch):
+        """B20 ②: save_config() leaves config.json at 0o600."""
+        config_path = tmp_path / "config.json"
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        cfg = AppConfig().model_dump()
+        save_config(cfg)
+
+        assert config_path.exists()
+        mode = stat.S_IMODE(config_path.stat().st_mode)
+        assert mode == 0o600, f"after save_config mode must be 0o600, got {oct(mode)}"

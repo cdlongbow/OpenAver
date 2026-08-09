@@ -32,6 +32,12 @@ from core.config import (
     reset_config_file,
     iter_gallery_sources,
 )
+from core.secret_fields import (
+    SECRET_FIELDS,
+    read_secret,
+    render_config_secrets,
+    resolve_secret,
+)
 from core.database import VideoRepository, get_db_path, init_db
 from core import thumbnail_cache
 from core.path_utils import uri_to_fs_path, reverse_path_mapping, CURRENT_ENV
@@ -66,8 +72,8 @@ def _reset_translate_service():
 
 @router.get("/config")
 def get_config() -> dict:
-    """取得所有設定"""
-    return {"success": True, "data": load_config()}
+    """取得所有設定（三個不透明憑證以遮罩形狀回傳；CD-114c-2）"""
+    return {"success": True, "data": render_config_secrets(load_config())}
 
 
 @router.put("/config")
@@ -124,6 +130,18 @@ def update_config(config: AppConfig) -> dict:
             def _write_preserving_server_mode(cfg: dict) -> None:
                 current_server_mode = cfg.get("general", {}).get("server_mode", False)
                 payload["general"]["server_mode"] = current_server_mode
+                # Mask sentinels must be restored against disk under the same
+                # _config_write_lock critical section as server_mode preserve —
+                # handler-side load would be TOCTOU against concurrent writers.
+                for dotted in SECRET_FIELDS:
+                    *parents, leaf = dotted.split(".")
+                    node = payload
+                    for part in parents:
+                        node = node.get(part) if isinstance(node, dict) else None
+                    if isinstance(node, dict) and leaf in node:
+                        node[leaf] = resolve_secret(
+                            read_secret(payload, dotted), read_secret(cfg, dotted)
+                        )
                 cfg.update(payload)
 
             mutate_config(_write_preserving_server_mode)

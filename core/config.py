@@ -9,6 +9,7 @@ core/config.py — 設定載入 / 儲存 / 遷移邏輯
 """
 
 import json
+import shutil
 import threading
 from pathlib import Path
 from typing import Callable, Dict, Literal, Optional, List
@@ -223,8 +224,8 @@ def _load_config_unlocked() -> dict:  # noqa: C901 — config 遷移主流程；
     """
     # 首次啟動：從 config.default.json 初始化
     if not CONFIG_PATH.exists() and CONFIG_DEFAULT_PATH.exists():
-        import shutil
         shutil.copy2(CONFIG_DEFAULT_PATH, CONFIG_PATH)
+        CONFIG_PATH.chmod(0o600)  # CD-114c-9: copy2 保留 0644，強制 0600
         logger.info("[Config] 首次啟動，已從 config.default.json 初始化設定")
 
     if CONFIG_PATH.exists():

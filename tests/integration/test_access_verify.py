@@ -388,15 +388,23 @@ class TestR5DeterministicTiming:
         assert "set-cookie" not in response.headers
 
         # access_tickets 表裡沒有任何一張是這個 request 建出來、且仍然可用
-        # 的票——revoke_all() 已把表清空，之後也沒有新票被插入。
+        # 的票——revoke_all() 已把表清空，之後也沒有新的**瀏覽器**票被插入。
+        # TASK-114b-T1 起，`set_auth(True, ...)` 會在同一個 transaction 內
+        # 鑄一張 `kind='agent'` 的票（CD-114b-1 的不變式），那張是合法產物、
+        # 不是這個 stale request 留下的，所以本斷言只數 browser 票；agent
+        # 票另外正向斷言恰好一張，避免「改成只數 browser 就順便放過多鑄」。
         conn = access_auth._connect()
         try:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM access_tickets"
+            browser_count = conn.execute(
+                "SELECT COUNT(*) FROM access_tickets WHERE kind = 'browser'"
+            ).fetchone()[0]
+            agent_count = conn.execute(
+                "SELECT COUNT(*) FROM access_tickets WHERE kind = 'agent'"
             ).fetchone()[0]
         finally:
             conn.close()
-        assert count == 0
+        assert browser_count == 0
+        assert agent_count == 1
 
 
 # ── 源碼斷言（CD-114a-10）─────────────────────────────────────────────────

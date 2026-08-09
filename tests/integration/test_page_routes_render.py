@@ -10,6 +10,29 @@ TemplateResponse 頁、擋住此類簽名漂移再次靜默回流。
 import pytest
 from fastapi.testclient import TestClient
 
+import core.access_auth as access_auth
+
+
+@pytest.fixture(autouse=True)
+def _isolated_access_auth(tmp_path, monkeypatch):
+    """把本檔與「跑測試那台機器上的真實 DB」隔開（TASK-114b-T4 新增）。
+
+    本檔斷言的是「頁面渲染出什麼」，與存取密碼保護無關——但 `/help` 自 114b-T4
+    起會依 `core.access_auth` 的**行程全域**狀態決定要不要渲染 agent token 區塊，
+    而 `access_gate` middleware 也會依它決定遠端請求拿到頁面還是偽裝頁。不隔離的
+    話，這幾支的結果會取決於開發者本機 DB 有沒有開密碼保護——而「開著」正是做完
+    T4 的 CDP 驗收之後的狀態，於是 pre-merge 全套會冒出 5 支看起來像 `base_url`
+    回歸、實際上與 base_url 無關的紅燈。CI 上是全新 DB 所以永遠綠，這種只在本機
+    紅的假回歸最貴。
+    """
+    monkeypatch.setattr(
+        "core.access_auth.get_db_path", lambda: tmp_path / "access_auth_page_routes.db"
+    )
+    access_auth.reset_state_for_tests()
+    access_auth.ensure_schema()  # 全新 DB ＝ enabled=False，暖好快取避免熱路徑冷載
+    yield
+    access_auth.reset_state_for_tests()
+
 
 PAGE_ROUTES = [
     "/search",

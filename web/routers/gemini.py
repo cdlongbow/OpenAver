@@ -7,6 +7,7 @@ Gemini API 路由 - 提供測試和模型查詢功能
 
 from core.logger import get_logger
 from core.config import load_config
+from core.secret_fields import read_secret, resolve_secret
 from core.translate_service import LANGUAGE_PROMPTS
 
 from fastapi import APIRouter, HTTPException
@@ -79,10 +80,13 @@ async def test_gemini_connection(request: TestRequest):
     if not request.api_key:
         raise HTTPException(status_code=400, detail="API Key is required")
 
+    config = await asyncio.to_thread(load_config)
+    key = resolve_secret(request.api_key, read_secret(config, "translate.gemini.api_key"))
+
     try:
         # 調用 Gemini API 獲取模型列表
         url = "https://generativelanguage.googleapis.com/v1beta/models"
-        headers = {"x-goog-api-key": request.api_key}
+        headers = {"x-goog-api-key": key}
 
         async with httpx.AsyncClient() as client:
             response = await client.get(url, headers=headers, timeout=30.0)
@@ -164,6 +168,7 @@ async def test_gemini_translate(request: TestTranslateRequest):
     test_title = "新人女優デビュー"
 
     config = await asyncio.to_thread(load_config)
+    key = resolve_secret(request.api_key, read_secret(config, "translate.gemini.api_key"))
     locale = config.get("general", {}).get("locale", "zh-TW")
     lang_config = LANGUAGE_PROMPTS.get(locale, LANGUAGE_PROMPTS["zh-TW"])
     lang_name = lang_config["name"]
@@ -171,7 +176,7 @@ async def test_gemini_translate(request: TestTranslateRequest):
     try:
         # 構建翻譯請求
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{request.model}:generateContent"
-        headers = {"x-goog-api-key": request.api_key}
+        headers = {"x-goog-api-key": key}
         payload = {
             "contents": [{"parts": [{"text": f"請將以下日文翻譯成{lang_name}：{test_title}"}]}],
             "generationConfig": {

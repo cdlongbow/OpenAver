@@ -36,7 +36,7 @@ from core.config import load_config
 from core.database import init_db
 from core.database import backfill_readonly_nfo_mtime
 from core.metatube.state import metatube_state as _mt_startup_state
-from core.access_auth import ensure_schema, snapshot, verify_ticket
+from core.access_auth import ensure_schema, load_snapshot, snapshot, verify_ticket
 
 
 # 路徑設定
@@ -273,6 +273,25 @@ def _is_cross_site_api_request(request: Request) -> bool:
     return request.url.path.startswith("/api/")
 
 
+def _bearer_token(request: Request) -> str | None:
+    """`Authorization: Bearer <token>` 的解析（CD-114b-3）。純函式、零 I/O、
+    不查 DB、不查 snapshot()——只把 header 字串拆成 token 或 None，交給
+    呼叫端（access_gate 第 8 步）自己餵給 verify_ticket()。不接受
+    query-string token（spec C-5：憑證進 URL 會進 log／瀏覽器歷史／Referer）。
+    """
+    header = request.headers.get("authorization")
+    if header is None:
+        return None
+    parts = header.split()
+    if len(parts) != 2:
+        return None
+    scheme, token = parts
+    if scheme.lower() != "bearer":
+        return None
+    token = token.strip()
+    return token if token else None
+
+
 @app.middleware("http")
 async def access_gate(request: Request, call_next):
     """
@@ -322,7 +341,7 @@ async def access_gate(request: Request, call_next):
 
     method = request.method
     path = request.url.path
-    authed = verify_ticket(request.cookies.get("sid"))
+    authed = verify_ticket(request.cookies.get("sid")) or verify_ticket(_bearer_token(request))
 
     if (method, path) == _VERIFY_ENDPOINT:
         # 登入入口本身，永遠可達，不比對 authed。
@@ -610,6 +629,25 @@ async def help_page(request: Request):
         context["base_url"] = f"http://{lan_ip}:{lan_port}"
     else:
         context["base_url"] = str(request.base_url).rstrip("/")
+
+    # TASK-114b-T4（CD-114b-7）：agent 區塊渲染條件，與上面 base_url 用的
+    # `client_host in _LOOPBACK_HOSTS`（窄）是不同判斷，不合併（plan §1.5）。
+    snap = snapshot()
+    if snap is None:
+        snap = await asyncio.to_thread(load_snapshot)
+    # 兩個旗標刻意分開（Codex PR review P2）：
+    #   `show_agent_auth` 守的是**祕密**（token 面板）→ 必須加上
+    #       loopback 條件，遠端裝置即使已通過 PIN 也不該拿到 token 真值。
+    #   `auth_enabled` 守的是**事實陳述**（安全提示那句文案）→ 只看認證開沒開。
+    # 兩者綁在一起的後果是：一台剛剛才輸完密碼的家人手機，打開說明頁看到的是
+    # 「本程式不設帳號密碼」——它剛做的事就否證了這句話。而那句文案裡沒有任何
+    # 祕密，持票人也早就知道認證是開著的（他才剛輸過），不存在洩漏面。
+    show_agent_auth = snap.enabled and _is_loopback_host(client_host)
+    context["show_agent_auth"] = show_agent_auth
+    context["auth_enabled"] = snap.enabled
+    if show_agent_auth:
+        context["agent_token"] = snap.agent_token
+
     return templates.TemplateResponse(request, "help.html", context)
 
 

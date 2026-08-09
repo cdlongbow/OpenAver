@@ -19,11 +19,20 @@ export function helpPage() {
         _toast: { message: '', type: 'info', visible: false },
         _toastTimer: null,
 
+        // TASK-114b-T4：agent token 顯示區塊。對應 DOM 只在 show_agent_auth 為真時
+        // 才會存在（Jinja {% if %}），但依 FE-ALPINE-06 仍必須無條件在此宣告初值。
+        agentToken: '',             // 真值；init() 從 .help-agent-token-panel 的 dataset 讀入，
+                                     // 此後全部讀寫只走這個欄位。
+        agentTokenVisible: false,   // 眼睛切換：true=顯示真值，false=顯示遮罩
+        agentTokenCopied: false,    // 複製 token 按鈕的 ✓ 微回饋（比照 curlCopied）
+        maskedTokenDisplay: 'oav_••••••••',  // 固定遮罩字串（不依真值長度計算）
+
         init() {
             this.loadVersion();
             this._isDesktop = this.$el.dataset.isDesktop === 'true';
             this.autoCheckUpdate = this.$el.dataset.autoCheckUpdate === 'true';
             if (this._isDesktop && this.autoCheckUpdate) this.checkUpdate();
+            this.agentToken = document.querySelector('.help-agent-token-panel')?.dataset.agentToken || '';
         },
 
         async saveAutoCheckUpdate() {
@@ -65,25 +74,60 @@ export function helpPage() {
 
         copyCurlCommand() {
             const base = document.querySelector('.hero-terminal')?.dataset.capabilitiesBase || window.location.origin;
-            const cmd = `curl -s ${base}/api/capabilities`;
+            const cmd = this.agentToken
+                ? `curl -s -H "Authorization: Bearer ${this.agentToken}" ${base}/api/capabilities`
+                : `curl -s ${base}/api/capabilities`;
             const onSuccess = () => {
                 this.curlCopied = true;
                 setTimeout(() => this.curlCopied = false, 800);
             };
             if (navigator.clipboard?.writeText) {
-                navigator.clipboard.writeText(cmd).then(onSuccess).catch(() => this._fallbackCopy(cmd));
+                navigator.clipboard.writeText(cmd).then(onSuccess).catch(() => this._fallbackCopy(cmd, onSuccess));
             } else {
-                this._fallbackCopy(cmd);
+                this._fallbackCopy(cmd, onSuccess);
             }
         },
 
-        _fallbackCopy(text) {
+        curlDisplayText() {
+            const base = document.querySelector('.hero-terminal')?.dataset.capabilitiesBase || '';
+            if (!this.agentToken) return `curl -s ${base}/api/capabilities`;
+            const shown = this.agentTokenVisible ? this.agentToken : this.maskedTokenDisplay;
+            return `curl -s -H "Authorization: Bearer ${shown}" ${base}/api/capabilities`;
+        },
+
+        copyAgentToken() {
+            const onSuccess = () => {
+                this.agentTokenCopied = true;
+                setTimeout(() => this.agentTokenCopied = false, 800);
+            };
+            if (navigator.clipboard?.writeText) {
+                navigator.clipboard.writeText(this.agentToken).then(onSuccess).catch(() => this._fallbackCopy(this.agentToken, onSuccess));
+            } else {
+                this._fallbackCopy(this.agentToken, onSuccess);
+            }
+        },
+
+        toggleAgentTokenVisible() {
+            this.agentTokenVisible = !this.agentTokenVisible;
+        },
+
+        // `onSuccess` 可省略——省略時維持既有（改寫前）行為：標記 curlCopied。
+        // Opus 裁定：泛化必須向後相容，既有呼叫端／既有測試的行為不可變。
+        _fallbackCopy(text, onSuccess) {
             const ta = document.createElement('textarea');
             ta.value = text;
             ta.style.cssText = 'position:fixed;top:-9999px';
             document.body.appendChild(ta);
             ta.select();
-            try { document.execCommand('copy'); this.curlCopied = true; setTimeout(() => this.curlCopied = false, 800); } catch(e) {}
+            try {
+                document.execCommand('copy');
+                if (onSuccess) {
+                    onSuccess();
+                } else {
+                    this.curlCopied = true;
+                    setTimeout(() => this.curlCopied = false, 800);
+                }
+            } catch (e) {}
             ta.remove();
         },
 

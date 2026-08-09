@@ -1,7 +1,9 @@
+import asyncio
 import copy
 
 from fastapi import APIRouter, Request
 
+from core.access_auth import load_snapshot, snapshot
 from core.version import __version__
 from core.logger import get_logger
 from core.source_config import get_source_enum
@@ -1258,19 +1260,106 @@ _TOOLS: list[dict] = [
 ]
 
 
-def _build_tools(base: str) -> list[dict]:
+def _build_tools(base: str, curl_auth: str = "") -> list[dict]:
+    """CD-114b-8: `curl_auth` is inserted right after the literal `curl `
+    prefix of every tool's rendered example. All 39 `_example_template`
+    values are confirmed to start with `curl ` (TASK-114b-T5 verification) —
+    if `curl_auth` is non-empty, `"curl "` becomes
+    `'curl -H "Authorization: Bearer $OPENAVER_TOKEN" '` and the rest of the
+    template follows unchanged (`curl -X POST ...` becomes
+    `curl -H "..." -X POST ...` — still valid curl syntax, flag order does
+    not matter to curl).
+
+    If a future `_example_template` does NOT start with `curl ` (e.g. a
+    40th tool that is not curl-shaped), this function deliberately leaves
+    it untouched rather than raising: a hard assertion here would 500 the
+    whole capabilities endpoint for every caller over one tool missing a
+    prefix. The gap is instead caught by the property test in
+    tests/integration/test_capabilities_auth.py, which walks the full
+    response and names the offending tool by its `name` field.
+    """
     tools = []
     for t in _TOOLS:
         tool = copy.deepcopy(t)
         template = tool.pop("_example_template", "")
-        tool["example"] = template.format(base=base)
+        example = template.format(base=base)
+        if curl_auth and example.startswith("curl "):
+            example = "curl " + curl_auth + example[len("curl "):]
+        tool["example"] = example
         tools.append(tool)
     return tools
+
+
+def _capabilities_auth_fields(
+    base: str, auth_enabled: bool
+) -> tuple[str, object, dict]:
+    """CD-114b-8 pure string fields derived from auth_enabled.
+
+    Extracted so get_capabilities stays under py_function_size_lint's 200-line
+    cap (card inlined this block and would push the handler to 236 lines).
+    Zero I/O — caller must resolve auth_enabled via snapshot()/load_snapshot
+    on the route handler itself so BE-ASYNC-01 still covers load_snapshot.
+    """
+    # CD-114b-8: single variable, applied right after the literal "curl "
+    # prefix at every directly-executable curl call site. Trailing space is
+    # deliberate — it separates the header flag from whatever curl flag
+    # follows "curl " at each call site.
+    curl_auth = '-H "Authorization: Bearer $OPENAVER_TOKEN" ' if auth_enabled else ""
+
+    network_auth: object = "none"
+    if auth_enabled:
+        network_auth = {
+            "type": "bearer",
+            "header": "Authorization: Bearer <token>",
+            "note": "token 請在本機（loopback）開啟 Help 頁（/help）取得；GET /api/health 不需要認證",
+        }
+
+    ps_headers = ' -Headers @{Authorization = "Bearer $OPENAVER_TOKEN"}' if auth_enabled else ""
+
+    agent_instructions = {
+        "fetch_method": "curl",
+        "fetch_note": "必須走 shell HTTP 工具（POSIX 用 curl，Windows 用 curl.exe 或 Invoke-RestMethod）存取此服務。禁止使用瀏覽器 fetch()、AI 內建的 WebFetch / web_search 等 HTTP 工具，因其常經由外部 proxy 或沙箱網路，無法可靠連到 localhost / LAN。",
+        "example": f"curl -s {curl_auth}{base}/api/capabilities",
+        "shell_compat": {
+            "preferred": {
+                "posix": "curl",
+                "windows": "curl.exe",
+            },
+            "alternative_windows": (
+                f"Invoke-RestMethod -Uri '{base}/api/batch-search' -Method POST"
+                f" -ContentType 'application/json'{ps_headers} -Body '{{\"numbers\":[\"SONE-205\"]}}'"
+            ),
+            "windows_gotcha": "PowerShell 內 curl 是 Invoke-WebRequest 的 alias，建議顯式呼叫 curl.exe；POST JSON body 引號易與 PS 字串規則打架，改用 Invoke-RestMethod -Body 較穩。",
+            "forbidden": ["fetch()", "WebFetch", "web_search"],
+            "forbidden_reason": "Browser-sandbox or external-proxy routing cannot reliably reach localhost or LAN services.",
+        },
+    }
+    if auth_enabled:
+        agent_instructions["token_setup"] = (
+            "token 請先設成環境變數再執行上面的指令 —— "
+            "POSIX（bash/zsh）：export OPENAVER_TOKEN=\"<token>\"； "
+            "PowerShell：$env:OPENAVER_TOKEN = \"<token>\"； "
+            "<token> 請在本機（loopback）開啟 Help 頁（/help）取得。"
+        )
+    return curl_auth, network_auth, agent_instructions
 
 
 @router.get("/capabilities")
 async def get_capabilities(request: Request):
     base = str(request.base_url).rstrip("/")
+
+    # CD-114b-5 / CD-114b-8: zero-I/O read of the auth snapshot on the hot
+    # path (BE-ASYNC-01); only fall back to the blocking loader when the
+    # in-process cache has never been warmed (cold start). `load_snapshot`
+    # must stay in tests/integration/test_async_offload_guard.py's
+    # `BLOCKING_FUNC_NAMES` so a future regression that calls it bare
+    # (outside `asyncio.to_thread`) is caught by that guard.
+    auth_snap = snapshot()
+    if auth_snap is None:
+        auth_snap = await asyncio.to_thread(load_snapshot)
+    curl_auth, network_auth, agent_instructions = _capabilities_auth_fields(
+        base, auth_snap.enabled
+    )
 
     return {
         "schema_version": "v1",
@@ -1281,7 +1370,7 @@ async def get_capabilities(request: Request):
         "skill_setup": {
             "description": "將以下內容加入你的 AI 自訂指令 / Skill / System Prompt，讓 AI 學會使用 OpenAver",
             "template": f"你可以使用 OpenAver 影片元數據管理工具。使用前先 GET {base}/api/capabilities 查看可用操作和使用範例。",
-            "hint": f"建議將此服務註冊為 AI skill（如 SKILL.md），存入 `curl -s {base}/api/capabilities` 指令，後續啟動自動發現。",
+            "hint": f"建議將此服務註冊為 AI skill（如 SKILL.md），存入 `curl -s {curl_auth}{base}/api/capabilities` 指令，後續啟動自動發現。",
         },
         "quick_check": {
             "description": "確認服務是否運行中",
@@ -1290,31 +1379,17 @@ async def get_capabilities(request: Request):
         },
         "network": {
             "scope": "lan",
-            "auth": "none",
+            "auth": network_auth,
             "note": "本地/區網服務，不上公網",
         },
-        "agent_instructions": {
-            "fetch_method": "curl",
-            "fetch_note": "必須走 shell HTTP 工具（POSIX 用 curl，Windows 用 curl.exe 或 Invoke-RestMethod）存取此服務。禁止使用瀏覽器 fetch()、AI 內建的 WebFetch / web_search 等 HTTP 工具，因其常經由外部 proxy 或沙箱網路，無法可靠連到 localhost / LAN。",
-            "example": f"curl -s {base}/api/capabilities",
-            "shell_compat": {
-                "preferred": {
-                    "posix": "curl",
-                    "windows": "curl.exe",
-                },
-                "alternative_windows": f"Invoke-RestMethod -Uri '{base}/api/batch-search' -Method POST -ContentType 'application/json' -Body '{{\"numbers\":[\"SONE-205\"]}}'",
-                "windows_gotcha": "PowerShell 內 curl 是 Invoke-WebRequest 的 alias，建議顯式呼叫 curl.exe；POST JSON body 引號易與 PS 字串規則打架，改用 Invoke-RestMethod -Body 較穩。",
-                "forbidden": ["fetch()", "WebFetch", "web_search"],
-                "forbidden_reason": "Browser-sandbox or external-proxy routing cannot reliably reach localhost or LAN services.",
-            },
-        },
+        "agent_instructions": agent_instructions,
         "image_display": {
             "description": "如何在對話流程中向用戶展示搜尋結果的封面 / 劇照圖片",
             "problem": "搜尋結果的 cover 和 sample_images 是遠端 URL。AI agent 直接 curl 遠端 URL 會被 Cloudflare / 防盜鏈擋掉（回傳 HTML 而非圖片）。",
             "solution": "透過 /api/proxy-image 下載圖片到本地，再依 agent 形態用本地絕對路徑嵌入。",
             "steps": [
                 "1. 搜尋取得 cover / sample_images URL",
-                "2. curl -o <local_path> '<base_url>/api/proxy-image?url=<remote_url>' 下載到本地",
+                f"2. curl {curl_auth}-o <local_path> '<base_url>/api/proxy-image?url=<remote_url>' 下載到本地",
                 "3. 依 agent 形態嵌入（見 agents 區塊）：對話氣泡內嵌 / artifact 面板 / 純路徑文字",
             ],
             "rules": [
@@ -1362,7 +1437,7 @@ async def get_capabilities(request: Request):
             },
             "retry_hint": "5xx 可重試，間隔 2 秒，最多 3 次。4xx 不重試，檢查參數。",
         },
-        "tools": _build_tools(base),
+        "tools": _build_tools(base, curl_auth),
         "examples": [
             {
                 "scenario": "新下載影片整理",
@@ -1438,7 +1513,11 @@ async def get_capabilities(request: Request):
                 "description": "用戶要求看某部片的封面或劇照，AI 在回覆中直接顯示圖片",
                 "steps": [
                     "1. GET /api/search?q=SONE-205 → 取得 cover URL",
-                    "2. curl -o /tmp/SONE-205-cover.jpg '<base_url>/api/proxy-image?url=<cover_url>' 下載到本地",
+                    # 第三個「性質測試看不到」的格子（前兩個是 PowerShell 與
+                    # image_display.steps[1]）：字串以步驟編號 "2. " 開頭，
+                    # `.startswith("curl ")` 的過濾器掃不到它，但它照樣是一行
+                    # agent 會直接照抄執行的指令——漏掉就是一次 401。
+                    f"2. curl {curl_auth}-o /tmp/SONE-205-cover.jpg '<base_url>/api/proxy-image?url=<cover_url>' 下載到本地",
                     "3. 回覆中嵌入 ![SONE-205 封面](/tmp/SONE-205-cover.jpg)",
                 ],
                 "confirmation_rule": "純查詢 + 下載圖片，不需確認",

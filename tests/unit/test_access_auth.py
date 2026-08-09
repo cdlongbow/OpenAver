@@ -13,6 +13,7 @@ module object does not.
 """
 import ast
 import dataclasses
+import logging
 import sqlite3
 import threading
 from pathlib import Path
@@ -103,7 +104,9 @@ def test_snapshot_none_before_load_snapshot():
 def test_load_snapshot_defaults_when_no_row():
     ensure_schema()
     snap = load_snapshot()
-    assert snap == AuthSnapshot(enabled=False, pin="", valid_tokens=frozenset())
+    assert snap == AuthSnapshot(
+        enabled=False, pin="", valid_tokens=frozenset(), agent_token=None
+    )
 
 
 def test_ensure_schema_warms_cache():
@@ -331,6 +334,12 @@ def test_attempt_pin_db_failure_does_not_clear_retry_state_or_leak_a_ticket(monk
     The reset must happen only after the write is confirmed committed."""
     ensure_schema()
     set_auth(True, "1234")
+    # TASK-114b-T1: set_auth(True, ...) now eagerly mints one agent ticket
+    # (CD-114b-1) — that ticket is legitimate, not a leak, so the DB-leak
+    # assertion below must allow for exactly that one token instead of an
+    # empty set.
+    agent_token = snapshot().agent_token
+    assert agent_token is not None
     clock = [T0]
     monkeypatch.setattr(access_auth, "_now", lambda: clock[0])
     for _ in range(4):
@@ -345,7 +354,10 @@ def test_attempt_pin_db_failure_does_not_clear_retry_state_or_leak_a_ticket(monk
 
     assert access_auth._consecutive_failures == 4, "retry counter must not be cleared on DB failure"
     reloaded = load_snapshot()  # still goes through the wrapper; SELECTs are unaffected
-    assert reloaded.valid_tokens == frozenset(), "no ticket should have leaked into the DB"
+    assert reloaded.valid_tokens == frozenset({agent_token}), (
+        "no browser ticket should have leaked into the DB "
+        "(only the pre-existing agent ticket may remain)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -725,7 +737,7 @@ def test_auth_snapshot_is_a_frozen_dataclass():
     both assertions (the class param flips, and field assignment stops
     raising)."""
     assert AuthSnapshot.__dataclass_params__.frozen is True
-    snap = AuthSnapshot(enabled=True, pin="1234", valid_tokens=frozenset())
+    snap = AuthSnapshot(enabled=True, pin="1234", valid_tokens=frozenset(), agent_token=None)
     with pytest.raises(dataclasses.FrozenInstanceError):
         snap.enabled = False
 
@@ -921,3 +933,246 @@ def test_module_has_no_web_import():
     src = _ACCESS_AUTH_SOURCE_PATH.read_text(encoding="utf-8")
     assert "import web" not in src
     assert "from web" not in src
+
+
+# ---------------------------------------------------------------------------
+# TASK-114b-T1: CD-114b-1 invariant — access_auth.enabled == True iff
+# access_tickets holds exactly one kind='agent' ticket.
+# ---------------------------------------------------------------------------
+
+
+def _agent_ticket_count() -> int:
+    conn = access_auth._connect()
+    try:
+        return conn.execute(
+            "SELECT COUNT(*) FROM access_tickets WHERE kind = 'agent'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+
+def test_set_auth_true_mints_exactly_one_new_agent_ticket():
+    ensure_schema()
+    set_auth(True, "1234")
+    first = snapshot().agent_token
+    assert first is not None
+    assert _agent_ticket_count() == 1
+
+    set_auth(True, "5678")
+    second = snapshot().agent_token
+    assert second is not None
+    assert second != first
+    assert _agent_ticket_count() == 1
+
+
+def test_set_auth_invalid_pin_leaves_the_agent_ticket_untouched():
+    """The card's 邊界條件: `set_auth` raising `ValueError` must mint
+    nothing and revoke nothing — the agent side of the pre-existing
+    `test_set_auth_invalid_pin_does_not_write_or_revoke`. Today this holds
+    structurally (the format check runs before `with _lock:`), so the test
+    exists to keep it that way: move the mint above the check and this
+    goes red on the token comparison."""
+    ensure_schema()
+    set_auth(True, "1234")
+    before = snapshot().agent_token
+    assert before is not None
+
+    with pytest.raises(ValueError):
+        set_auth(True, "12345")
+
+    assert snapshot().agent_token == before
+    assert _agent_ticket_count() == 1
+    assert load_snapshot().agent_token == before  # the DB agrees, not just the cache
+
+
+def test_set_auth_false_leaves_zero_agent_tickets():
+    ensure_schema()
+    set_auth(True, "1234")
+    assert snapshot().agent_token is not None
+
+    set_auth(False, "0000")
+    assert snapshot().agent_token is None
+    assert _agent_ticket_count() == 0
+
+
+def test_ensure_schema_backfills_agent_ticket_for_0_13_7_shaped_db():
+    """Manually construct the 0.13.7 shape: `enabled=1`, two browser
+    tickets, zero agent tickets — bypassing `set_auth` (which would mint
+    an agent ticket immediately) via raw SQL, then let `ensure_schema()`
+    do the upgrade."""
+    ensure_schema()  # tables created; backfill no-ops (no row yet -> enabled=False)
+    conn = access_auth._connect()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO access_auth (id, enabled, pin) VALUES (1, 1, '1234')"
+        )
+        conn.execute(
+            "INSERT INTO access_tickets (token, kind) VALUES (?, 'browser')", ("browser-1",)
+        )
+        conn.execute(
+            "INSERT INTO access_tickets (token, kind) VALUES (?, 'browser')", ("browser-2",)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    access_auth.reset_state_for_tests()  # wipe cache only, not the DB
+
+    ensure_schema()  # backfill runs now: enabled=True, no agent ticket yet
+
+    snap = load_snapshot()
+    assert snap.enabled is True
+    assert snap.agent_token is not None
+    assert "browser-1" in snap.valid_tokens
+    assert "browser-2" in snap.valid_tokens
+    assert snap.agent_token in snap.valid_tokens
+    assert _agent_ticket_count() == 1
+
+
+def test_ensure_schema_backfill_is_idempotent_across_two_calls():
+    ensure_schema()
+    conn = access_auth._connect()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO access_auth (id, enabled, pin) VALUES (1, 1, '1234')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    access_auth.reset_state_for_tests()
+
+    ensure_schema()
+    first_agent_token = load_snapshot().agent_token
+    assert first_agent_token is not None
+
+    ensure_schema()  # second call must not mint a second ticket
+    second_agent_token = load_snapshot().agent_token
+    assert second_agent_token == first_agent_token
+    assert _agent_ticket_count() == 1
+
+
+def test_ensure_schema_backfill_skips_when_auth_disabled():
+    """Boundary: no `access_auth` row at all (brand-new DB, never
+    `set_auth`'d) — backfill's `SELECT enabled` reads None -> False ->
+    no-op, must not raise and must not mint anything."""
+    ensure_schema()
+    assert snapshot().agent_token is None
+    assert _agent_ticket_count() == 0
+
+
+def test_revoke_all_clears_agent_token_too():
+    """R5 covers the agent ticket the same as browser tickets."""
+    ensure_schema()
+    set_auth(True, "1234")
+    assert snapshot().agent_token is not None
+
+    revoke_all()
+    snap = snapshot()
+    assert snap.agent_token is None
+    assert snap.valid_tokens == frozenset()
+    assert _agent_ticket_count() == 0
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda: set_auth(True, "5678"),  # PIN change
+        lambda: set_auth(False, "0000"),  # disable
+        lambda: set_auth(True, "1234"),  # same PIN
+    ],
+    ids=["pin-change", "disable", "same-pin"],
+)
+def test_agent_token_invalidated_by_set_auth_mutations(mutate):
+    """AC4 續驗: PIN 改變／關閉／填一模一樣的 PIN，舊 agent token 一律失效。"""
+    ensure_schema()
+    set_auth(True, "1234")
+    old_agent_token = snapshot().agent_token
+    assert old_agent_token is not None
+
+    mutate()
+
+    assert verify_ticket(old_agent_token) is False
+
+
+def test_agent_token_shape_and_uniqueness():
+    ensure_schema()
+    set_auth(True, "1234")
+    t1 = snapshot().agent_token
+    assert t1.startswith("oav_")
+
+    set_auth(False, "0000")
+    set_auth(True, "1234")
+    t2 = snapshot().agent_token
+    assert t2 != t1
+    assert t2.startswith("oav_")
+
+
+def test_attempt_pin_success_carries_agent_token_through():
+    """Easy-to-forget spot: `attempt_pin`'s success branch builds a new
+    `AuthSnapshot` — `agent_token` must be copied from the already-held
+    `snap`, not dropped or re-queried."""
+    ensure_schema()
+    set_auth(True, "1234")
+    agent_token = snapshot().agent_token
+    assert agent_token is not None
+
+    browser_token = attempt_pin("1234")
+    assert browser_token is not None
+
+    snap = snapshot()
+    assert snap.agent_token == agent_token
+    assert browser_token in snap.valid_tokens
+
+
+def test_auth_snapshot_constructions_all_pass_agent_token_explicitly():
+    """DoD: `AuthSnapshot`'s four production construction points must all
+    pass `agent_token` explicitly (no default value on the field) — AST
+    scan pinpoints exactly which construction is missing it, rather than
+    relying on "pytest didn't raise TypeError" as the only signal."""
+    tree = ast.parse(
+        _ACCESS_AUTH_SOURCE_PATH.read_text(encoding="utf-8"),
+        filename=str(_ACCESS_AUTH_SOURCE_PATH),
+    )
+    missing = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "AuthSnapshot"
+        ):
+            kw_names = {kw.arg for kw in node.keywords}
+            if "agent_token" not in kw_names:
+                missing.append(node.lineno)
+    assert not missing, f"AuthSnapshot(...) construction(s) missing agent_token kwarg at lines: {missing}"
+
+
+def test_load_locked_picks_highest_rowid_agent_ticket_when_multiple_exist():
+    """Defensive read: the invariant says this should never happen, but
+    `_load_locked()` must not raise if it does — it picks the most
+    recently inserted (`rowid` MAX) agent ticket, deterministically."""
+    ensure_schema()
+    set_auth(True, "1234")
+    conn = access_auth._connect()
+    try:
+        conn.execute(
+            "INSERT INTO access_tickets (token, kind) VALUES (?, 'agent')",
+            ("stray-agent-token",),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    snap = load_snapshot()  # forces a genuine DB read via _load_locked()
+    assert snap.agent_token == "stray-agent-token"
+    assert "stray-agent-token" in snap.valid_tokens
+
+
+def test_agent_token_never_logged(caplog):
+    """釘死現況：`access_auth.py` 全檔沒有任何 `logger.*` 呼叫記過 token 值。"""
+    ensure_schema()
+    with caplog.at_level(logging.DEBUG):
+        set_auth(True, "1234")
+        first_token = snapshot().agent_token
+        set_auth(True, "5678")
+        second_token = snapshot().agent_token
+    assert first_token not in caplog.text
+    assert second_token not in caplog.text
