@@ -47,6 +47,10 @@ def server_mode_true(monkeypatch):
 
 
 class TestAuthDisabledByteIdentical:
+    # [lint-guard: pytest-justified] 這四個 class 斷言的是「同一份 help.html 依
+    # 請求狀態（認證開關 × 來源是否 loopback）渲染出不同輸出」——static_guard_lint
+    # 掃的是模板源碼的字面存在，看不到 SSR 之後的結果，表達不了「非 loopback 這次
+    # 渲染不含 oav_」。守的又是安全指紋（token 真值只有一個合法出口，CD-114b-6）。
     def test_no_new_anchor_no_i18n_leak_no_token_marker(self):
         client = TestClient(app, client=LOOPBACK_CLIENT)
         resp = client.get("/help")
@@ -78,6 +82,8 @@ class TestAuthDisabledByteIdentical:
 
 
 class TestLoopbackAuthEnabledShowsRealToken:
+    # [lint-guard: pytest-justified] 同上——SSR 之後的結果依請求狀態而變，lint 掃不到；
+    # 這一格守的是「token 真值只在 loopback 的 /help 出現」這個唯一合法出口。
     def test_loopback_sees_panel_and_real_token(self):
         access_auth.set_auth(True, "AB12")
         real_token = access_auth.snapshot().agent_token
@@ -89,6 +95,9 @@ class TestLoopbackAuthEnabledShowsRealToken:
 
 
 class TestNonLoopbackNeverSeesRealToken:
+    # [lint-guard: pytest-justified] 安全指紋 ＋ 跨層 contract：斷言「已通過 PIN 的
+    # 遠端裝置渲染出來的 /help 不含 oav_ 也不含面板錨點」。這是 request 狀態的函式，
+    # 模板源碼裡那些字串永遠存在，static_guard_lint 只會永遠通過。
     def test_remote_authed_request_gets_no_token_no_anchor(self, server_mode_true):
         access_auth.set_auth(True, "AB12")
         browser_token = access_auth.attempt_pin("AB12")
@@ -133,6 +142,8 @@ class TestNonLoopbackNeverSeesRealToken:
 
 
 class TestColdSnapshotCacheDoesNotCrash:
+    # [lint-guard: pytest-justified] 時序契約（重啟後第一個請求 snapshot 為冷）——
+    # 靜態掃描沒有「第幾個請求」這個維度。
     def test_cold_cache_still_200(self):
         access_auth.set_auth(True, "AB12")
         access_auth.reset_state_for_tests()  # 模擬重啟後 snapshot() 回 None

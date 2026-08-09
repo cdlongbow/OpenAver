@@ -2114,9 +2114,6 @@
                             <i class="bi bi-clipboard" x-show="!tokenCopied"></i>
                             <span x-show="tokenCopied">✓</span>
                         </button>
-                        <button type="button" class="btn btn-outline btn-sm">
-                            <i class="bi bi-arrow-clockwise"></i> 重新產生
-                        </button>
                     </div>
                 </div>
 
@@ -2138,7 +2135,7 @@
                     <ul style="margin-top: 0.5rem; padding-left: 1.5rem;">
                         <li>眼睛鈕只切換 <code>agentTokenVisible</code>（純前端顯示），真值 <code>agentToken</code> 早已在 SSR context 內（<code>show_agent_auth</code> 為真時才會渲染）</li>
                         <li>複製鈕（<code>copyAgentToken()</code>）與 hero-terminal 的複製 curl（<code>copyCurlCommand()</code>）都固定讀 <code>this.agentToken</code>，不論 <code>agentTokenVisible</code> 是否為 false ——「看到的不等於複製到的」是刻意設計，不是 bug</li>
-                        <li>「重新產生」按鈕走確認 modal（照抄既有 update modal 骨架），不在此 demo 展開</li>
+                        <li>沒有「重新產生」鈕：作廢 token 的唯一入口是設定頁重存密碼（含存同一組），那會一起換掉 token 並撤銷所有裝置的票（114b-T8 拔除第二條路徑）</li>
                         <li>production 版 CSS 定義見 <code>help.css</code> 的 <code>.help-agent-token-*</code> 規則（功能性最小值，視覺未經 owner 真機驗收定稿）</li>
                     </ul>
                 </div>
