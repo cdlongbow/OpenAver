@@ -27,7 +27,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, StrictBool, StrictStr
 
-from core.access_auth import attempt_pin, get_auth_settings, regenerate_agent_token, set_auth
+from core.access_auth import attempt_pin, get_auth_settings, set_auth
 from core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -163,32 +163,3 @@ def update_access_settings(request: AccessSettingsRequest, raw_request: Request)
             "error": "密碼必須是 4 位英文或數字",
         })
     return {"success": True}
-
-
-@router.post("/agent-token/regenerate")
-async def regenerate_agent_token_endpoint(raw_request: Request):
-    """重新產生 agent token（CD-114b-9/CD-114b-10）：loopback-only，只換
-    kind='agent' 的票，不動瀏覽器 cookie 票。認證未開啟時回 400——不存在
-    「順便打開認證」這個隱含行為（D-8）。"""
-    # 延遲 import，避免與 web.app → access router 的循環依賴（同 get_access_settings /
-    # update_access_settings 先例）。
-    from web.app import _is_loopback_host  # noqa: PLC2701 — access.py 的認證相關端點需要與 T2 middleware 共用同一套本機判斷（CD-114a-5），避免在 router 層照抄一份字面值判斷
-
-    _client = raw_request.client
-    _client_host = _client.host if _client else None
-    if not _is_loopback_host(_client_host):
-        logger.warning(
-            "拒絕非本機重新產生 agent token（來源 %s）：僅主機可操作", _client_host
-        )
-        return JSONResponse(status_code=403, content={
-            "success": False, "reason": "remote_forbidden",
-            "error": "重新產生 agent token 僅能在主機本機操作",
-        })
-    try:
-        token = await asyncio.to_thread(regenerate_agent_token)
-    except ValueError:
-        return JSONResponse(status_code=400, content={
-            "success": False, "reason": "auth_disabled",
-            "error": "尚未開啟認證，無 agent token 可重新產生",
-        })
-    return {"success": True, "token": token}

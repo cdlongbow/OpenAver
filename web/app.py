@@ -636,7 +636,7 @@ async def help_page(request: Request):
     if snap is None:
         snap = await asyncio.to_thread(load_snapshot)
     # 兩個旗標刻意分開（Codex PR review P2）：
-    #   `show_agent_auth` 守的是**祕密**（token 面板 ＋ 重生鈕）→ 必須加上
+    #   `show_agent_auth` 守的是**祕密**（token 面板）→ 必須加上
     #       loopback 條件，遠端裝置即使已通過 PIN 也不該拿到 token 真值。
     #   `auth_enabled` 守的是**事實陳述**（安全提示那句文案）→ 只看認證開沒開。
     # 兩者綁在一起的後果是：一台剛剛才輸完密碼的家人手機，打開說明頁看到的是

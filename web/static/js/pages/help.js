@@ -22,12 +22,10 @@ export function helpPage() {
         // TASK-114b-T4：agent token 顯示區塊。對應 DOM 只在 show_agent_auth 為真時
         // 才會存在（Jinja {% if %}），但依 FE-ALPINE-06 仍必須無條件在此宣告初值。
         agentToken: '',             // 真值；init() 從 .help-agent-token-panel 的 dataset 讀入，
-                                     // regenerate 成功後就地更新——此後全部讀寫只走這個欄位。
+                                     // 此後全部讀寫只走這個欄位。
         agentTokenVisible: false,   // 眼睛切換：true=顯示真值，false=顯示遮罩
         agentTokenCopied: false,    // 複製 token 按鈕的 ✓ 微回饋（比照 curlCopied）
         maskedTokenDisplay: 'oav_••••••••',  // 固定遮罩字串（不依真值長度計算）
-        showRegenerateConfirm: false,  // 獨立於 showUpdateModal 的第二顆 modal 開關
-        regenerateLoading: false,   // 重新產生 API in-flight 旗標
 
         init() {
             this.loadVersion();
@@ -111,34 +109,6 @@ export function helpPage() {
 
         toggleAgentTokenVisible() {
             this.agentTokenVisible = !this.agentTokenVisible;
-        },
-
-        openRegenerateConfirm() {
-            this.showRegenerateConfirm = true;
-        },
-
-        cancelRegenerateConfirm() {
-            this.showRegenerateConfirm = false;
-        },
-
-        async confirmRegenerateToken() {
-            this.regenerateLoading = true;
-            try {
-                const resp = await fetch('/api/access/agent-token/regenerate', { method: 'POST' });
-                const data = await resp.json();
-                if (data.success) {
-                    this.agentToken = data.token;
-                    this.showToast(window.t('help.agent_auth.regenerate_success'), 'success');
-                } else {
-                    // 失敗：this.agentToken 完全沒被動過，畫面上的舊值原封不動（DoD 明文要求）
-                    this.showToast(window.t('help.agent_auth.regenerate_failed'), 'error');
-                }
-            } catch (e) {
-                this.showToast(window.t('help.agent_auth.regenerate_failed'), 'error');
-            } finally {
-                this.regenerateLoading = false;
-                this.showRegenerateConfirm = false;
-            }
         },
 
         // `onSuccess` 可省略——省略時維持既有（改寫前）行為：標記 curlCopied。

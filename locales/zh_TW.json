@@ -1103,13 +1103,7 @@
       "title": "Agent Token",
       "reveal": "顯示/隱藏 token",
       "copy_token_tooltip": "複製完整 token（不論目前是否遮罩顯示）",
-      "regenerate_btn": "重新產生",
-      "regenerate_confirm_title": "重新產生 Agent Token？",
-      "regenerate_confirm_body": "舊的 token 會立刻失效，任何用它連線的 AI agent 都要換成新值才能繼續使用。這個動作無法復原，確定要繼續嗎？",
-      "regenerate_confirm_cancel": "取消",
-      "regenerate_confirm_confirm": "仍要重新產生",
-      "regenerate_success": "已產生新的 agent token",
-      "regenerate_failed": "重新產生失敗，請稍後再試",
+      "rotate_hint": "要換掉這組 token：到設定頁重新儲存密碼即可（所有裝置都需要重新輸入密碼）。",
       "sse_limitation": "瀏覽器內建的即時進度推送（SSE）無法夾帶此 token；若 agent 需要訂閱掃描進度，改用 curl / httpx 等程式直接讀取串流不受影響。"
     },
     "workflow": {

@@ -128,11 +128,10 @@
                             <i class="bi bi-clipboard" x-show="!agentTokenCopied"></i>
                             <span x-show="agentTokenCopied">✓</span>
                         </button>
-                        <button type="button" class="help-agent-token-regenerate-btn btn btn-outline btn-sm"
-                                @click="openRegenerateConfirm()">
-                            <i class="bi bi-arrow-clockwise"></i> {{ t('help.agent_auth.regenerate_btn') }}
-                        </button>
                     </div>
+                    <p class="help-agent-token-rotate-hint text-xs text-base-content/50 mt-1">
+                        {{ t('help.agent_auth.rotate_hint') }}
+                    </p>
                     <p class="help-agent-token-sse-note text-xs text-base-content/50 mt-1">
                         {{ t('help.agent_auth.sse_limitation') }}
                     </p>
@@ -785,29 +784,6 @@
                         :disabled="updateLoading">
                     <span x-show="updateLoading" class="loading loading-spinner loading-sm"></span>
                     {{ t('help.update_modal.confirm_btn') }}
-                </button>
-            </div>
-        </div>
-    </dialog>
-    {% endif %}
-
-    {%- if show_agent_auth %}
-    <dialog class="modal fluent-modal"
-            :class="{ 'modal-open': showRegenerateConfirm }"
-            @click.self="!regenerateLoading && cancelRegenerateConfirm()"
-            @keydown.escape.window="!regenerateLoading && cancelRegenerateConfirm()">
-        <div class="modal-box fluent-modal-box">
-            <h3 class="fluent-modal-title">{{ t('help.agent_auth.regenerate_confirm_title') }}</h3>
-            <p class="fluent-modal-body text-sm">{{ t('help.agent_auth.regenerate_confirm_body') }}</p>
-            <div class="modal-action fluent-modal-actions">
-                <button type="button" class="btn btn-ghost btn-sm"
-                        @click="cancelRegenerateConfirm()" :disabled="regenerateLoading">
-                    {{ t('help.agent_auth.regenerate_confirm_cancel') }}
-                </button>
-                <button type="button" class="btn btn-warning btn-sm"
-                        @click="confirmRegenerateToken()" :disabled="regenerateLoading">
-                    <span x-show="regenerateLoading" class="loading loading-spinner loading-sm"></span>
-                    {{ t('help.agent_auth.regenerate_confirm_confirm') }}
                 </button>
             </div>
         </div>

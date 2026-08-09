@@ -27,7 +27,6 @@ from core.access_auth import (
     ensure_schema,
     get_auth_settings,
     load_snapshot,
-    regenerate_agent_token,
     revoke_all,
     set_auth,
     snapshot,
@@ -1106,11 +1105,6 @@ def test_agent_token_shape_and_uniqueness():
     assert t2 != t1
     assert t2.startswith("oav_")
 
-    t3 = regenerate_agent_token()
-    t4 = regenerate_agent_token()
-    assert t3 != t4
-    assert t3.startswith("oav_") and t4.startswith("oav_")
-
 
 def test_attempt_pin_success_carries_agent_token_through():
     """Easy-to-forget spot: `attempt_pin`'s success branch builds a new
@@ -1172,141 +1166,13 @@ def test_load_locked_picks_highest_rowid_agent_ticket_when_multiple_exist():
     assert "stray-agent-token" in snap.valid_tokens
 
 
-def test_regenerate_agent_token_mints_a_new_token_and_updates_cache():
-    ensure_schema()
-    set_auth(True, "1234")
-    old_agent_token = snapshot().agent_token
-    assert old_agent_token is not None
-
-    new_agent_token = regenerate_agent_token()
-
-    assert isinstance(new_agent_token, str) and new_agent_token
-    assert new_agent_token != old_agent_token
-    assert snapshot().agent_token == new_agent_token
-    assert verify_ticket(new_agent_token) is True
-    assert verify_ticket(old_agent_token) is False
-    assert _agent_ticket_count() == 1
-
-
-def test_regenerate_agent_token_does_not_touch_browser_tickets():
-    ensure_schema()
-    set_auth(True, "1234")
-    browser_token = attempt_pin("1234")
-    assert browser_token is not None
-
-    regenerate_agent_token()
-
-    assert verify_ticket(browser_token) is True
-    assert browser_token in snapshot().valid_tokens
-
-
-def test_regenerate_agent_token_raises_when_disabled_and_writes_nothing():
-    ensure_schema()
-    set_auth(False, "0000")
-
-    with pytest.raises(ValueError):
-        regenerate_agent_token()
-
-    assert _agent_ticket_count() == 0
-    assert snapshot().agent_token is None
-
-
-def test_regenerate_agent_token_does_not_hang_when_cache_cold():
-    """Lifecycle symmetry with `test_attempt_pin_does_not_hang_when_cache_cold`:
-    `regenerate_agent_token()` must self-warm via `_load_locked()` on a
-    cold cache, not hang or crash."""
-    ensure_schema()
-    set_auth(True, "1234")
-    access_auth.reset_state_for_tests()  # wipes in-memory cache only, not the DB
-
-    result = {}
-
-    def call():
-        result["token"] = regenerate_agent_token()
-
-    t = threading.Thread(target=call)
-    t.start()
-    t.join(timeout=2)
-    assert not t.is_alive(), "regenerate_agent_token hung on a cold cache"
-    assert result.get("token") is not None
-
-
 def test_agent_token_never_logged(caplog):
     """釘死現況：`access_auth.py` 全檔沒有任何 `logger.*` 呼叫記過 token 值。"""
     ensure_schema()
     with caplog.at_level(logging.DEBUG):
         set_auth(True, "1234")
         first_token = snapshot().agent_token
-        second_token = regenerate_agent_token()
+        set_auth(True, "5678")
+        second_token = snapshot().agent_token
     assert first_token not in caplog.text
     assert second_token not in caplog.text
-
-
-def test_regenerate_agent_token_and_set_auth_share_lock_mutually_exclusive(monkeypatch):
-    """Concurrency barrier (mutation self-verify target): `regenerate_agent_token()`
-    and `set_auth()` must be serialized by the identical `_lock` — if they
-    used two separate locks, both critical sections could be entered at
-    once and the gated `_connect()` barrier below (needs 2 parties) would
-    rendezvous successfully (zero breaks). With the shared lock, only one
-    thread's critical section can be "inside" at a time, so the second
-    thread never reaches its own `_connect()` gate until the first has
-    released the lock and moved on — the barrier can never gather both
-    parties concurrently, times out, and raises `BrokenBarrierError`.
-    Style follows `test_attempt_pin_critical_section_is_mutually_exclusive`
-    above and `test_ranker_cache.py`'s barrier-driven thread-safety proofs."""
-    ensure_schema()
-    set_auth(True, "1234")
-
-    barrier = threading.Barrier(2)
-    real_connect = access_auth._connect
-    already_gated = threading.local()
-
-    def gated_connect():
-        # `regenerate_agent_token()` legitimately opens a SECOND connection
-        # (the final `_load_locked()` cache refresh) after its first one —
-        # only the first `_connect()` call per thread should participate in
-        # the rendezvous, or that second call would consume the other
-        # thread's slot and make this test pass vacuously regardless of
-        # whether the lock is actually shared.
-        if not getattr(already_gated, "done", False):
-            already_gated.done = True
-            barrier.wait(timeout=0.5)
-        return real_connect()
-
-    monkeypatch.setattr(access_auth, "_connect", gated_connect)
-
-    broke = []
-    broke_lock = threading.Lock()
-    errors = []
-
-    def run_regenerate():
-        try:
-            access_auth.regenerate_agent_token()
-        except threading.BrokenBarrierError:
-            with broke_lock:
-                broke.append("regenerate")
-        except Exception as exc:  # pragma: no cover - diagnostic aid only
-            errors.append(exc)
-
-    def run_set_auth():
-        try:
-            set_auth(True, "5678")
-        except threading.BrokenBarrierError:
-            with broke_lock:
-                broke.append("set_auth")
-        except Exception as exc:  # pragma: no cover - diagnostic aid only
-            errors.append(exc)
-
-    t1 = threading.Thread(target=run_regenerate)
-    t2 = threading.Thread(target=run_set_auth)
-    t1.start()
-    t2.start()
-    t1.join(timeout=5)
-    t2.join(timeout=5)
-
-    assert not errors, f"unexpected exceptions: {errors}"
-    assert broke, (
-        "expected the gated barrier to break — regenerate_agent_token() and "
-        "set_auth() must be serialized by the same lock, never overlapping "
-        "inside their critical sections"
-    )

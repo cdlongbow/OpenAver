@@ -180,16 +180,6 @@ function installClipboardSpy() {
   return writes;
 }
 
-// regenerate 端點用的 fetch spy（與 installFetchSpy 不同：這裡要能自訂回應內容）。
-function installRegenerateFetchSpy(responseBody) {
-  const calls = [];
-  globalThis.fetch = async (url, opts = {}) => {
-    calls.push({ url, method: opts.method || 'GET' });
-    return { json: async () => responseBody };
-  };
-  return calls;
-}
-
 test('toggleAgentTokenVisible: 眼睛切換翻轉 agentTokenVisible', () => {
   const fakeThis = { ...helpPage() };
   assert.equal(fakeThis.agentTokenVisible, false);
@@ -214,51 +204,4 @@ test('copyCurlCommand: 遮罩狀態下複製 curl 仍含真值 token（Authoriza
   // writeText 立即 push），故不需要 await copyCurlCommand() 本身（它不是 async 函式）。
   await Promise.resolve(); // 讓 microtask 跑完
   assert.ok(writes[0].includes('Authorization: Bearer oav_realtoken123'), `應含真值 Bearer token，實際: ${writes[0]}`);
-});
-
-test('confirmRegenerateToken: 成功 → URL/method 正確、agentToken 就地更新、modal 關閉', async () => {
-  const calls = installRegenerateFetchSpy({ success: true, token: 'oav_newtoken456' });
-  const toasts = [];
-  const fakeThis = {
-    ...helpPage(),
-    agentToken: 'oav_oldtoken',
-    showRegenerateConfirm: true,
-    showToast: (m, t) => toasts.push({ m, t }),
-  };
-  await fakeThis.confirmRegenerateToken();
-  assert.equal(calls[0].url, '/api/access/agent-token/regenerate');
-  assert.equal(calls[0].method, 'POST');
-  assert.equal(fakeThis.agentToken, 'oav_newtoken456');
-  assert.equal(fakeThis.showRegenerateConfirm, false);
-  assert.equal(fakeThis.regenerateLoading, false);
-  assert.equal(toasts.length, 1);
-  assert.equal(toasts[0].t, 'success');
-});
-
-test('confirmRegenerateToken: success:false → 舊 agentToken 不清空，只顯示失敗 toast', async () => {
-  installRegenerateFetchSpy({ success: false });
-  const toasts = [];
-  const fakeThis = {
-    ...helpPage(),
-    agentToken: 'oav_oldtoken',
-    showToast: (m, t) => toasts.push({ m, t }),
-  };
-  await fakeThis.confirmRegenerateToken();
-  assert.equal(fakeThis.agentToken, 'oav_oldtoken', '失敗時舊值必須原封不動');
-  assert.equal(toasts.length, 1);
-  assert.equal(toasts[0].t, 'error');
-});
-
-test('confirmRegenerateToken: fetch 網路例外 → 舊 agentToken 不清空，只顯示失敗 toast', async () => {
-  globalThis.fetch = async () => { throw new Error('offline'); };
-  const toasts = [];
-  const fakeThis = {
-    ...helpPage(),
-    agentToken: 'oav_oldtoken',
-    showToast: (m, t) => toasts.push({ m, t }),
-  };
-  await fakeThis.confirmRegenerateToken();
-  assert.equal(fakeThis.agentToken, 'oav_oldtoken', 'throw 路徑也必須保留舊值');
-  assert.equal(toasts.length, 1);
-  assert.equal(toasts[0].t, 'error');
 });

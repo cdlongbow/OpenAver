@@ -101,9 +101,9 @@ def _connect() -> sqlite3.Connection:
 
 
 def _new_agent_token() -> str:
-    """CD-114b-2's concrete shape. Internal helper shared by `set_auth`,
-    `_backfill_agent_ticket_locked`, and `regenerate_agent_token` — not a
-    public function, none of T2/T3/T4 need to call it directly."""
+    """CD-114b-2's concrete shape. Internal helper shared by `set_auth` and
+    `_backfill_agent_ticket_locked` — not a public function, no caller needs
+    it directly."""
     return "oav_" + secrets.token_urlsafe(32)
 
 
@@ -172,7 +172,8 @@ def _load_locked() -> AuthSnapshot:
     should never happen, but this is defensive read code, not a place
     that should crash a hot path on an unexpected shape) the highest-rowid
     (most recently inserted) one wins — consistent with
-    `regenerate_agent_token()`'s "delete all, insert one" mental model.
+    `set_auth()`'s "revoke all, insert one" mental model (see its
+    `_revoke_all_locked()` → conditional insert sequence).
     """
     global _snapshot
     conn = _connect()
@@ -425,49 +426,6 @@ def revoke_all() -> None:
         _snapshot = AuthSnapshot(
             enabled=base.enabled, pin=base.pin, valid_tokens=frozenset(), agent_token=None
         )
-
-
-def regenerate_agent_token() -> str:
-    """CD-114b-9's entry point. Lock-held delete-all-agent -> insert-one ->
-    refresh-cache. Browser tickets are never touched — only the
-    `kind = 'agent'` row(s) are deleted.
-
-    Raises `ValueError` (does not open a connection, does not write
-    anything) when auth is currently disabled — mirrors `set_auth`'s
-    ValueError-on-invalid-input shape. This is NOT a `None` return,
-    because the CD-114b-1 invariant ("enabled == True iff exactly one
-    agent ticket exists") would break if this minted an agent ticket
-    while `enabled=False`. The check happens under `_lock` so it can never
-    race a concurrent `set_auth(False, ...)` — see this module's
-    concurrency barrier test for the anti-bypass proof. A caller that
-    checked `snapshot().enabled` before calling this without holding the
-    lock itself would only have a TOCTOU-vulnerable fast path, never a
-    substitute for this check.
-    """
-    global _snapshot
-    with _lock:
-        snap = _snapshot if _snapshot is not None else _load_locked()
-        if not snap.enabled:
-            raise ValueError("cannot regenerate agent token while auth is disabled")
-        conn = _connect()
-        try:
-            conn.execute("DELETE FROM access_tickets WHERE kind = 'agent'")
-            new_token = _new_agent_token()
-            conn.execute(
-                "INSERT INTO access_tickets (token, kind) VALUES (?, 'agent')",
-                (new_token,),
-            )
-            conn.commit()
-        finally:
-            conn.close()
-        # Rebuilt via `_load_locked()` rather than hand-written set
-        # arithmetic (Opus 補充裁定 4): this is a rare, admin-triggered
-        # operation (not `attempt_pin`'s login hot path, not middleware),
-        # so one extra DB read costs nothing — and it keeps "how a
-        # snapshot is derived from the ticket table" a single-owner
-        # responsibility (`_load_locked()`), not duplicated here.
-        _load_locked()
-        return new_token
 
 
 def verify_ticket(token: Optional[str]) -> bool:
