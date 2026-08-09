@@ -389,7 +389,7 @@
                             <span x-show="video.maker">
                                 <b>{{ t('showcase.label.maker') }}：</b>
                                 <a class="info-link" href="#"
-                                   @click.prevent.stop="searchFromMetadata(video.maker)"
+                                   @click.prevent.stop="searchFromMetadata(video.maker, 'maker')"
                                    x-text="video.maker"></a>
                             </span>
                             <span x-show="video.release_date">
@@ -399,7 +399,7 @@
                         <div class="info-row" x-show="video.series">
                             <b>{{ t('showcase.label.series') }}：</b>
                             <a class="info-link" href="#"
-                               @click.prevent.stop="searchFromMetadata(video.series)"
+                               @click.prevent.stop="searchFromMetadata(video.series, 'series')"
                                x-text="video.series"></a>
                         </div>
                         <div class="info-row" x-show="video.duration">
@@ -912,12 +912,12 @@
                                     <i class="bi bi-gear" aria-hidden="true"></i>
                                 </button>
                                 <span x-show="currentLightboxVideo?.maker">
-                                    &nbsp;·&nbsp;<a href="#" class="lb-link" @click.prevent="searchFromMetadata(currentLightboxVideo?.maker)" x-text="currentLightboxVideo?.maker"></a>
+                                    &nbsp;·&nbsp;<a href="#" class="lb-link" @click.prevent="searchFromMetadata(currentLightboxVideo?.maker, 'maker')" x-text="currentLightboxVideo?.maker"></a>
                                 </span>
                                 <span x-show="currentLightboxVideo?.director">
                                     &nbsp;·&nbsp;<b>{{ t('showcase.label.director') }}：</b>
                                     <a href="#" class="lb-link"
-                                       @click.prevent="searchFromMetadata(currentLightboxVideo?.director)"
+                                       @click.prevent="searchFromMetadata(currentLightboxVideo?.director, 'director')"
                                        x-text="currentLightboxVideo?.director"></a>
                                 </span>
                                 <span x-show="currentLightboxVideo?.duration">
@@ -926,13 +926,13 @@
                                 <span x-show="currentLightboxVideo?.series">
                                     &nbsp;·&nbsp;<b>{{ t('showcase.label.series') }}：</b>
                                     <a href="#" class="lb-link"
-                                       @click.prevent="searchFromMetadata(currentLightboxVideo?.series)"
+                                       @click.prevent="searchFromMetadata(currentLightboxVideo?.series, 'series')"
                                        x-text="currentLightboxVideo?.series"></a>
                                 </span>
                                 <span x-show="currentLightboxVideo?.label && currentLightboxVideo?.label !== currentLightboxVideo?.maker">
                                     &nbsp;·&nbsp;<b>{{ t('showcase.label.label') }}：</b>
                                     <a href="#" class="lb-link"
-                                       @click.prevent="searchFromMetadata(currentLightboxVideo?.label)"
+                                       @click.prevent="searchFromMetadata(currentLightboxVideo?.label, 'label')"
                                        x-text="currentLightboxVideo?.label"></a>
                                 </span>
                                 <span x-show="currentLightboxVideo?.release_date">

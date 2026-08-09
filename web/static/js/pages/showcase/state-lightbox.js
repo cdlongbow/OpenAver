@@ -649,7 +649,12 @@ export function stateLightbox() {
         // ==================== End Sample Gallery Methods ====================
 
         // Metadata 點擊搜尋 (M3f)
-        searchFromMetadata(term, type) {
+        // TASK-115-T4（CD-2）：本函式只負責步驟 1–5（同步關燈箱 + 250ms 延遲清 index，
+        // 逐字保留、不可改動順序）。步驟 6–10（正規化／去重／篩選／動畫／hero reconciliation）
+        // 全部收斂進 state-videos.js 的 addPill（T1 已落地）——本函式不得再自行呼叫
+        // _animateFilter/_checkPreciseActressMatch/_clearPreciseMatch 等舊職責，未來新增
+        // pill 相關行為請改 addPill 那個方法，不要在這裡加回分支。
+        searchFromMetadata(value, dim) {
             // F2: cancel pending delayed clear from previous close
             if (this.lightboxCloseTimer) {
                 clearTimeout(this.lightboxCloseTimer);
@@ -675,13 +680,7 @@ export function stateLightbox() {
                 self.lightboxCloseTimer = null;
             }, 250);
 
-            this.search = term;
-            this._animateFilter();
-            if (type === 'actress') {
-                this._checkPreciseActressMatch(term, 'metadata');
-            } else {
-                this._clearPreciseMatch();
-            }
+            this.addPill(dim, value);
         },
 
         // 44b-T4: Nav arrow visibility computed

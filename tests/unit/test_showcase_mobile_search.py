@@ -83,10 +83,38 @@ class TestShowcaseHeaderSearchIcon:
         content = self._read_showcase_html()
         assert "showcase:clear-search" in content
 
-    def test_search_from_metadata_sets_this_search(self):
-        """searchFromMetadata 必須仍設 this.search（防止重構靜默斷開 showcaseHasSearch 路徑）"""
+    @staticmethod
+    def _extract_search_from_metadata_body(content):
+        """brace-matched 擷取 searchFromMetadata 函式體（非整檔 grep，防 FE-GUARD-06 假陽性——
+        `this.search = ` 這個字面在檔案其他函式仍合法存在）。"""
+        sig_idx = content.find("searchFromMetadata(")
+        if sig_idx == -1:
+            return ""
+        open_idx = content.find("{", sig_idx)
+        if open_idx == -1:
+            return ""
+        depth = 0
+        for i in range(open_idx, len(content)):
+            ch = content[i]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return content[open_idx + 1:i]
+        return ""
+
+    def test_search_from_metadata_delegates_to_add_pill(self):
+        """searchFromMetadata 必須把值交給 addPill（防止重構靜默斷開 pill 篩選路徑）。
+        115-T4 前此測試斷言 `this.search = ` 存在——115-T4 把 searchFromMetadata 降格為
+        adapter，不再直接寫 this.search，改為呼叫 core 的 addPill()。
+        T7 會把 showcaseHasSearch 的判準擴充為涵蓋 pills.length > 0（CD-12），
+        在那之前，「有 pill 但 header 仍顯示放大鏡」是已知的中間態（見 T4 卡「邊界條件」段）。"""
         content = self._read_state_lightbox()
-        assert "this.search = " in content
+        body = self._extract_search_from_metadata_body(content)
+        assert body, "state-lightbox.js 找不到 searchFromMetadata 函式體"
+        assert "addPill(" in body, "searchFromMetadata 必須委派給 addPill（pill 篩選路徑的入口）"
+        assert "this.search = " not in body, "searchFromMetadata 不應再直接寫 this.search（舊的取代行為，CD-2b）"
 
     def test_watch_search_updates_showcase_has_search(self):
         """state-base.js 必須有 $watch('search') 更新 showcaseHasSearch（mutation guard）"""
