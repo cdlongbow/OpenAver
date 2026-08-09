@@ -16,8 +16,12 @@ const SHOWCASE_CSS = readFileSync(
     path.join(REPO_ROOT, 'web/static/css/pages/showcase.css'),
     'utf8',
 );
-const UI_CONVENTIONS = readFileSync(
-    path.join(REPO_ROOT, 'feature/AI_COLLABORATION/ui-conventions.md'),
+// 元件登記查的是 design-system.html（**已追蹤**），不是 feature/AI_COLLABORATION/
+// ui-conventions.md——後者在 .gitignore 內，CI checkout 沒有它，module 載入期
+// readFileSync 會 ENOENT 讓整個檔案 7 支測試一起死（PR#131 兩輪 CI 紅燈的原因）。
+// 產品碼的測試不得依賴 local-only 檔案。
+const DESIGN_SYSTEM = readFileSync(
+    path.join(REPO_ROOT, 'web/templates/design-system.html'),
     'utf8',
 );
 
@@ -199,21 +203,25 @@ test('.filter-pill* 區塊無硬編碼 hex/rgb 色值', () => {
 
 // ===== Component registration =====
 
-test('ui-conventions.md §1 pill 白名單含 .filter-pill 列', () => {
-    // Locate §1 pill table (between "### Pill 999px 白名單" and next ## heading)
-    const sectionStart = UI_CONVENTIONS.indexOf('### Pill 999px 白名單');
-    assert.ok(sectionStart !== -1, '應有 ### Pill 999px 白名單 小節');
-    const after = UI_CONVENTIONS.slice(sectionStart);
-    const nextH2 = after.search(/\n## /);
-    const section = nextH2 === -1 ? after : after.slice(0, nextH2);
+test('design-system.html §1 pill 白名單含 .filter-pill 卡片', () => {
+    // Locate the §1 pill whitelist subsection (through the closing </section>)
+    const sectionStart = DESIGN_SYSTEM.indexOf('<!-- §1 Pill 999px 白名單 -->');
+    assert.ok(sectionStart !== -1, 'design-system.html 應有 §1 Pill 999px 白名單 區塊');
+    const after = DESIGN_SYSTEM.slice(sectionStart);
+    const sectionEnd = after.indexOf('</section>');
+    const section = sectionEnd === -1 ? after : after.slice(0, sectionEnd);
+
     assert.ok(
-        /\|[^|\n]*\.filter-pill[^|\n]*\|/.test(section)
-            || /`\.filter-pill`/.test(section),
-        '§1 pill 白名單表應含 .filter-pill 列',
+        /<code>\.filter-pill<\/code>/.test(section),
+        '§1 pill 白名單應有 .filter-pill 的登記卡片',
     );
-    // Class number 8 row present
+    // 標題與說明的類數必須跟著長（漏改的症狀是白名單說 7 類卻列了 8 張卡）
     assert.ok(
-        /\|\s*8\s*\|/.test(section),
-        '§1 pill 白名單應有類 8 列',
+        /§1 Pill 999px 白名單（8 類）/.test(section),
+        '§1 白名單標題的類數應為 8',
+    );
+    assert.ok(
+        /限這 8 類使用/.test(section),
+        '§1 白名單說明文字的類數應為 8',
     );
 });
