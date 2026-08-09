@@ -9,6 +9,7 @@
 // 101d-T1：影片焦點 icon gate 的 page-level narrow matchMedia listener 用（init 內註冊）。
 // 門檻 reuse 既有單一真理常數，不裸寫 899（plan-101d CD-1）。
 import { POSTER_CROP_MAX_W } from '@/shared/breakpoints.js';
+import { serializePills, deserializePills } from '@/shared/pill-filter.js';
 
 // 53a codex F3: $persist 對 localStorage 壞 JSON 沒 try/catch（會在 Alpine init 階段拋錯炸整頁），
 // 必須在 Alpine.data 註冊前先清掃壞值，讓 $persist fallback 走預設物件
@@ -169,6 +170,7 @@ export function stateBase() {
             showFavoriteActresses: false,
             actressSort: null,
             actressOrder: null,
+            pills: [],
         }).as('showcase_state'),
 
         // --- 狀態變數 ---
@@ -363,6 +365,7 @@ export function stateBase() {
             this.perPage = defaultPerPage;
             this.page = parseInt(urlNum('page') ?? state.page ?? 1) || 1;
             this.search = urlParams.get('search') || state.search || '';
+            this.pills = deserializePills(state.pills);
             this.mode = urlParams.get('mode') || state.mode || 'grid';
             if (!['grid', 'table', 'list'].includes(this.mode)) this.mode = 'grid';
             // F2: grid + perPage=0 組合降級（settings 若存 items_per_page=0 之防呆）
@@ -387,6 +390,7 @@ export function stateBase() {
             this._persistedShowcase.showFavoriteActresses = this.showFavoriteActresses;  // ★ 44a
             this._persistedShowcase.actressSort = this.actressSort;                      // ★ 44a
             this._persistedShowcase.actressOrder = this.actressOrder;                    // ★ 44a
+            this._persistedShowcase.pills = serializePills(this.pills);
 
             // 同步到 URL（方便分享連結）
             const params = new URLSearchParams();

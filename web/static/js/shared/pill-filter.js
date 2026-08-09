@@ -87,3 +87,36 @@ function _actressOrTagMatcher(dim, pillValue, nameToGroup, tagToGroup) {
         return tokens.some(function (t) { return valueSet.has(t); });
     };
 }
+
+/**
+ * serializePills / deserializePills — TASK-115-T3：pill 持久化深拷貝與容錯
+ *
+ * serializePills：切斷陣列與元素參照（CD-3），供 saveState 寫入 _persistedShowcase。
+ * deserializePills：fail-safe 形狀檢查，舊格式（鍵不存在）與畸形元素皆不 throw。
+ * 不做去重／正規化——那是 addPill 的職責。
+ *
+ * ⚠ 已知且刻意的不對稱：`deserializePills` 會 trim `dim`/`value`，而 `addPill`（T1）
+ * 存的是點擊當下的原始字面（spec §4.1 第 4 條：pill 顯示點擊當下的字面值）。因此若某個
+ * metadata 值真的帶著前後空白，reload 前後顯示的字面會差那幾個空白。**不要為了「對稱」
+ * 把這裡的 trim 拿掉**——比對與去重都走 `normalizePillValue()`（自己就 trim），所以
+ * 篩選結果與去重 key 在 reload 前後恆等；拿掉 trim 只會讓「全空白的 value」有機會存活成
+ * 一枚看不見的 pill。空白字面的顯示差異是可接受的殘留，空白 pill 不是。
+ */
+export function serializePills(pills) {
+    if (!Array.isArray(pills)) return [];
+    return pills.map(function (p) { return { dim: p.dim, value: p.value }; });
+}
+
+export function deserializePills(raw) {
+    if (!Array.isArray(raw)) return [];
+    var out = [];
+    for (var i = 0; i < raw.length; i++) {
+        var p = raw[i];
+        if (!p || typeof p !== 'object') continue;
+        var dim = typeof p.dim === 'string' ? p.dim.trim() : '';
+        var value = typeof p.value === 'string' ? p.value.trim() : '';
+        if (!dim || !value) continue;
+        out.push({ dim: dim, value: value });
+    }
+    return out;
+}
