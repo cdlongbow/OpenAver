@@ -89,12 +89,9 @@ export function stateVideos() {
         onSearchChange() {
             // B8: 透過 _animateFilter 觸發篩選動畫
             this._animateFilter();
-            var trimmed = this.search.trim();
-            if (!trimmed) {
-                this._clearPreciseMatch();
-            } else {
-                this._checkPreciseActressMatch(trimmed, 'manual');
-            }
+            // TASK-115-T8：改走單一判斷點（CD-8），無 pill 時行為逐位元組不變
+            // （_reconcileHeroCard 的「無 pill 分支」就是這裡原本的 if/else）。
+            this._reconcileHeroCard();
         },
 
         // TASK-115-T1: metadata pill filter mutations（UI 殼屬 T5；比對屬 T2）
@@ -124,7 +121,10 @@ export function stateVideos() {
             this.search = '';
             this.actressSearch = '';
             this.pills = [];
-            this._clearPreciseMatch();       // 清掉愛心圖示／_matchedActress 殘留（T7 現況分析第四缺口）
+            // TASK-115-T8：不再直接呼叫 _clearPreciseMatch()（T7 留下的暫時補丁）——
+            // pills=[]、search='' 之後，_reconcileHeroCard() 的「無 pill 分支」本來就會
+            // 走到同一個 _clearPreciseMatch() 呼叫，讓收斂單一判斷點的精神落實（RULING 3：
+            // 兩處各自宣稱自己是「清 hero 狀態」的權威，收成一處）。
             this._animateFilter();           // 影片格：CD-2 步驟 7-9（唯一一次）
             this.applyActressFilterAndSort(); // 女優格：對應 onActressSearchChange() 的行為，不經 _animateFilter
             this._reconcileHeroCard();
@@ -132,10 +132,36 @@ export function stateVideos() {
             // 無條件執行：使用者主動按下的清除鈕，即使已空跑一次也無害，且維持「按下必清」的誠實承諾
         },
 
+        // TASK-115-T8：hero card（女優資料卡＋搜尋列愛心鈕）唯一判斷點（CD-8）。
+        // 無 pill：完全不限制，交給下面「無 pill 分支」的既有邏輯判斷（逐位元組保留
+        // onSearchChange 舊有的 if/else 語意）。有 pill：僅當恰好一枚女優 pill 且
+        // 自由文字為空才顯示（spec §4.8）。
+        _shouldShowHeroCard() {
+            if (this.pills.length === 0) return true;
+            return this.pills.length === 1
+                && this.pills[0].dim === 'actress'
+                && this.search.trim() === '';
+        },
+
+        // 七個既有觸發點（CD-8 原列六個＋RULING 1 併入 searchActressFilms）全部間接透過
+        // 本方法，不再各自決定。回傳 _checkPreciseActressMatch() 的 promise（若有呼叫），
+        // 讓 searchActressFilms() 的 ghost-fly 主流程可以 await 到真正的比對結果；
+        // 其餘呼叫端維持既有的 fire-and-forget 用法，忽略回傳值不影響行為。
         _reconcileHeroCard() {
-            // T8 之前的 intentional no-op stub。CD-8 的 hero card 六個呼叫點之一（另五個屬 T8 範圍）。
-            // T8 落地前，此方法必須存在且每次 mutation 恰好呼叫一次——見本 task DoD 的 call-count 斷言，
-            // 目的是讓 T8 無法「漏接」這三個呼叫點（T8 只需改這個方法的方法體，call site 不必再動）。
+            if (!this._shouldShowHeroCard()) {
+                this._clearPreciseMatch();
+                return;
+            }
+            if (this.pills.length === 1) {
+                // 有 pill 分支：唯一一枚女優 pill、文字為空（_shouldShowHeroCard 已保證）
+                return this._checkPreciseActressMatch(this.pills[0].value, 'pill');
+            }
+            // 無 pill 分支：逐位元組保留現況（onSearchChange 舊有的 if/else）
+            var trimmed = this.search.trim();
+            if (trimmed) {
+                return this._checkPreciseActressMatch(trimmed, 'manual');
+            }
+            this._clearPreciseMatch();
         },
 
         onSortChange() {

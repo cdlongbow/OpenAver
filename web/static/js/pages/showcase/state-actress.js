@@ -6,6 +6,7 @@
  */
 
 import { _actresses, _filteredActresses, _actressesLoaded, _nameToGroup, _loadAliasMap, _killLightboxTimelines, _setActressesLoaded, _setActresses, _setFilteredActresses } from '@/showcase/state-base.js';
+import { normalizePillValue } from '@/shared/pill-filter.js';
 
 export function stateActress() {
     return {
@@ -72,12 +73,27 @@ export function stateActress() {
             this._heroCardImageLoaded = false;   // 67-A3: 換命中對象要重現 skeleton
         },
 
+        // TASK-115-T8：staleness guard 依「目前有效的判斷詞」來源分流。
+        // 'manual'/'metadata' 兩條既有路徑逐位元組不變（比對 this.search）；
+        // 'pill' 是新分支——有 pill 時 this.search 依規則必須是空字串，capturedTerm 卻是
+        // pill 的 value（非空字串），兩者必然不相等，若沿用舊的單一比較式，這個 guard
+        // 會在每次呼叫都無條件擋下，女優 pill 永遠查不到人、hero card 永遠不出現且無錯誤。
+        _isExpectedHeroCardTerm(capturedTerm, source) {
+            if (source === 'pill') {
+                return this.pills.length === 1
+                    && this.pills[0].dim === 'actress'
+                    && this.search.trim() === ''
+                    && normalizePillValue(this.pills[0].value) === normalizePillValue(capturedTerm);
+            }
+            return this.search.trim() === capturedTerm;
+        },
+
         async _checkPreciseActressMatch(term, source) {
             var capturedTerm = (term || '').trim();
             if (!_actressesLoaded && _actresses.length === 0) {
                 await this.loadActresses();
             }
-            if (this.search.trim() !== capturedTerm) return;
+            if (!this._isExpectedHeroCardTerm(capturedTerm, source)) return;
             this._heroCardImageError = false;
             this._heroCardImageLoaded = false;   // 67-A3: 換命中對象要重現 skeleton
             var found = _actresses.find(function(a) {
@@ -98,7 +114,7 @@ export function stateActress() {
                         });
                     });
                 }
-            } else if (source === 'metadata') {
+            } else if (source === 'metadata' || source === 'pill') {
                 this._isPreciseActressMatch = true;
                 this._matchedActress = { name: capturedTerm, is_favorite: false };
                 this._preciseMatchSource = source;
@@ -132,10 +148,10 @@ export function stateActress() {
                     }
                 } else {
                     needEntry = true;
-                    var searchTerm = self.search.trim();
-                    if (searchTerm) {
-                        self._checkPreciseActressMatch(searchTerm, 'manual');
-                    }
+                    // TASK-115-T8：無條件呼叫（不再用 `if (searchTerm)` 短路）——pill 跨模式
+                    // 保留（spec §4.10），「文字為空但有一枚持久化的女優 pill」這個切回情境
+                    // 若只在文字非空才 reconcile 會漏掉，卡不會在切回影片模式時出現。
+                    self._reconcileHeroCard();
                 }
                 // Phase 2: $nextTick 後 fade-in 新容器
                 var gen2 = ++self._animGeneration;
@@ -642,10 +658,9 @@ export function stateActress() {
                     } else {
                         this.closeActressLightbox();
                         this.showToast(window.t('showcase.actress.removeSuccess'), 'success');
-                        var searchTerm = this.search.trim();
-                        if (searchTerm) {
-                            this._checkPreciseActressMatch(searchTerm, 'manual');
-                        }
+                        // TASK-115-T8：無條件呼叫，理由同 toggleActressMode() 的等價改動
+                        // （pill 跨模式保留，短路會漏掉「文字空但有女優 pill」情境）。
+                        this._reconcileHeroCard();
                     }
                 } else {
                     this.showToast(data.error || 'Error', 'error');
@@ -660,6 +675,14 @@ export function stateActress() {
         },
 
         // --- 44c T7: Search actress films（49a-T7：跨模式 Ghost Fly 動畫）---
+        // TASK-115-T8（RULING 1）：本函式是 CD-8 六個既有觸發點清單之外的第 7 個
+        // _checkPreciseActressMatch 呼叫點（plan 研究階段漏列，Opus 裁決併入）。
+        // 理由：pill 跨模式保留（spec §4.10），使用者可能帶著非女優 pill（例如片商）
+        // 從女優模式點「查看她的作品」——此時 this.search 被設成非空的女優名，若直接呼叫
+        // _checkPreciseActressMatch 而不經 _reconcileHeroCard，會無視 pills 直接顯示卡，
+        // 違反 spec §4.8「有 pill＋有自由文字→不顯示」。改成一律先設定 this.search 再呼叫
+        // _reconcileHeroCard()，讓它自然算出「有 pill 則不顯示」——與其餘六個呼叫點同一
+        // 決策點（CD-8「六處各自加條件必然漏一處」的教訓，本身就是這條 ruling 的證據）。
         async searchActressFilms(actressName, fromEl) {
             if (!actressName) return;
             if (this._ghostFlyInFlight) return;   // CD-13: 連點保護
@@ -689,7 +712,7 @@ export function stateActress() {
 
                 // 非女優模式 / 無 fromEl / 無 coverSrc → fallback
                 if (!wasActressMode || !fromRect || !coverSrc) {
-                    this._checkPreciseActressMatch(actressName, 'metadata');
+                    this._reconcileHeroCard();
                     if (wasActressMode) {
                         var gen0 = ++this._animGeneration;
                         this.$nextTick(function () {
@@ -722,7 +745,7 @@ export function stateActress() {
 
                 self._isPreciseActressMatch = false;
 
-                await self._checkPreciseActressMatch(actressName, 'metadata');
+                await self._reconcileHeroCard();
 
                 if (self._animGeneration !== gen) {
                     self._ghostFlyInFlight = false;

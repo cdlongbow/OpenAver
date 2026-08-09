@@ -52,8 +52,20 @@ register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.u
 
 const { stateVideos } = await import('../state-videos.js');
 const { stateLightbox } = await import('../state-lightbox.js');
-const { stateBase } = await import('../state-base.js');
+const { stateActress } = await import('../state-actress.js');
+const { stateBase, _setActresses } = await import('../state-base.js');
 const { buildPillPredicate } = await import('../../../shared/pill-filter.js');
+
+// TASK-115-T8：_reconcileHeroCard() 從 no-op stub 填成真身後，addPill() 內部會呼叫
+// _clearPreciseMatch()/_checkPreciseActressMatch()（定義在 state-actress.js）。本檔
+// 既有 harness（T4 時代）只合併了 stateBase/stateVideos/stateLightbox，缺 stateActress，
+// 會在 addPill 內部 TypeError。补上合併，並預先灌入 fixture 避免 dim==='actress' 案例
+// 因 _actresses 為空觸發真正的 loadActresses() 網路呼叫（該函式非本檔測試標的）。
+// is_favorite 刻意設 false：is_favorite:true 會排 $nextTick(requestAnimationFrame(...))
+// 播 hero card 進場動畫，本檔 $nextTick 是同步呼叫（見 makeComponent），而
+// requestAnimationFrame 在零-DOM node:test 環境不存在，會炸出 unhandledRejection——
+// 這條動畫路徑與本檔要驗證的 pill 契約無關，用 is_favorite:false 讓它天然跳過。
+_setActresses([{ name: 'Yui Hatano', is_favorite: false }]);
 
 // ===== window / document stub（saveState 讀 location/history；searchFromMetadata
 // 讀 document.querySelector + document.body.classList，比照 pill-persist.test.mjs stubWindow）=====
@@ -72,7 +84,7 @@ const LIGHTBOX_SRC = readFileSync(new URL('../state-lightbox.js', import.meta.ur
 
 function makeComponent(overrides) {
     const base = stateBase.call({ $persist: (obj) => ({ as: () => obj }) });
-    const c = Object.assign({}, base, stateVideos(), stateLightbox(), {
+    const c = Object.assign({}, base, stateVideos(), stateLightbox(), stateActress(), {
         pills: [],
         search: '',
         mode: 'table',   // 避開 grid 專屬 DOM 路徑（_getActiveGrid 只在 mode==='grid' 時被呼叫）

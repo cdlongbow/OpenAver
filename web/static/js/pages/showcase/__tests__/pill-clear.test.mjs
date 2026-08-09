@@ -140,12 +140,19 @@ test('clearAllFilters：收合 toolbar（Alpine.store ui.toolbarOpen = false）'
     assert.equal(uiStore.toolbarOpen, false);
 });
 
-test('clearAllFilters：重置 precise-actress-match／愛心狀態', () => {
+// TASK-115-T8（RULING 3）：T7 留下的直接 `this._clearPreciseMatch()` 呼叫已移除——
+// pills=[]、search='' 之後，_reconcileHeroCard() 的「無 pill 分支」本來就會走到同一個
+// _clearPreciseMatch() 呼叫（單一判斷點，不再由 clearAllFilters() 自己宣稱一次權威）。
+// 這裡改用 _reconcileHeroCard 真身（仍計數）取代純 spy，證明「清除的工作只做一次、
+// 且真的透過 _reconcileHeroCard 達成」，而不是弱化斷言去掩蓋這次合併。
+test('clearAllFilters：重置 precise-actress-match／愛心狀態（經由 _reconcileHeroCard 真身收斂）', () => {
     const c = makeClearComponent({
         search: '三上悠亜',
         _isPreciseActressMatch: true,
         _matchedActress: { name: '三上悠亜', is_favorite: false },
     });
+    const realReconcile = stateVideos()._reconcileHeroCard;
+    c._reconcileHeroCard = function () { c.heroCalls++; return realReconcile.call(c); };
     c.clearAllFilters();
     assert.equal(c.preciseClearCalls, 1);
     assert.equal(c._isPreciseActressMatch, false);
@@ -154,6 +161,9 @@ test('clearAllFilters：重置 precise-actress-match／愛心狀態', () => {
 
 // ===== call-count：一次 clear 各副作用恰好 1 次 =====
 
+// TASK-115-T8（RULING 3）：同上——_reconcileHeroCard 改用真身（仍計數），
+// preciseClearCalls 現在驗證的是「clearAllFilters → _reconcileHeroCard → _clearPreciseMatch」
+// 這條間接鏈路恰好一次，不再是 clearAllFilters 直接呼叫。
 test('clearAllFilters：一次點擊恰好 1 次 _animateFilter / applyActressFilterAndSort / _reconcileHeroCard / _clearPreciseMatch', () => {
     const c = makeClearComponent({
         search: 'x',
@@ -161,6 +171,8 @@ test('clearAllFilters：一次點擊恰好 1 次 _animateFilter / applyActressFi
         pills: [{ dim: 'maker', value: 'Moodyz' }],
         _isPreciseActressMatch: true,
     });
+    const realReconcile = stateVideos()._reconcileHeroCard;
+    c._reconcileHeroCard = function () { c.heroCalls++; return realReconcile.call(c); };
     c.clearAllFilters();
     assert.equal(c.animateCalls, 1);
     assert.equal(c.actressFilterCalls, 1);
@@ -168,6 +180,10 @@ test('clearAllFilters：一次點擊恰好 1 次 _animateFilter / applyActressFi
     assert.equal(c.preciseClearCalls, 1);
 });
 
+// TASK-115-T8（RULING 3）：同上——不再 stub _reconcileHeroCard 為純 spy，改保留
+// stateVideos() 合併進來的真身（Object.assign 已含，這裡只加計數 wrapper），
+// 讓 preciseClearCalls 真的驗到「clearAllFilters → _reconcileHeroCard → _clearPreciseMatch」
+// 這條鏈路，而不是驗一個永遠不會呼叫 _clearPreciseMatch 的假 spy。
 test('clearAllFilters：一次點擊恰好 1 次 saveState（真身 _animateFilter + mode:table）', () => {
     // 不 stub _animateFilter，改 stub 其內部依賴，讓真身跑到 saveState 那一行。
     // mode:'table' 避開 DOM capture 分支（querySelector / ShowcaseAnimations）。
@@ -188,12 +204,13 @@ test('clearAllFilters：一次點擊恰好 1 次 saveState（真身 _animateFilt
         applyActressFilterAndSort() { c.actressFilterCalls++; },
         applyFilterAndSort() {},
         saveState() { c.saveCalls++; },
-        _reconcileHeroCard() { c.heroCalls++; },
         $nextTick(fn) { fn(); },
         _getActiveGrid() { return null; },
     });
-    // 保留 stateVideos 的真身 _animateFilter
+    // 保留 stateVideos 的真身 _animateFilter 與 _reconcileHeroCard（後者只加計數 wrapper）
     assert.equal(typeof c._animateFilter, 'function');
+    const realReconcile = c._reconcileHeroCard;
+    c._reconcileHeroCard = function () { c.heroCalls++; return realReconcile.call(c); };
     c.clearAllFilters();
     assert.equal(c.saveCalls, 1, 'saveState 必須恰好 1 次（=== 1，不是 >= 1）');
     assert.equal(c.preciseClearCalls, 1);
