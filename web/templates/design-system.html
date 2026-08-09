@@ -686,8 +686,8 @@
 
             <!-- §1 Pill 999px 白名單 -->
             <div class="ds-subsection">
-                <h3>§1 Pill 999px 白名單（7 類）</h3>
-                <p class="ds-desc">ui-conventions §1：<code>border-radius: 999px</code>（<code>--radius-pill</code>）限這 7 類使用，其他元件用 <code>var(--fluent-radius-*)</code> token。</p>
+                <h3>§1 Pill 999px 白名單（8 類）</h3>
+                <p class="ds-desc">ui-conventions §1：<code>border-radius: 999px</code>（<code>--radius-pill</code>）限這 8 類使用，其他元件用 <code>var(--fluent-radius-*)</code> token。</p>
                 <div class="ds-pill-whitelist-grid">
 
                     <!-- 1. spotlight-search -->
@@ -793,6 +793,25 @@
                         <div class="ds-pill-card-meta">
                             <span class="ds-pill-card-class">類 7 · <code>.settings-sources-segmented</code></span>
                             <p class="ds-pill-card-desc">搜尋來源 segmented 容器（完整狀態見 §15）</p>
+                            <code class="ds-pill-card-token">--radius-pill: 999px</code>
+                        </div>
+                    </div>
+
+                    <!-- 8. filter-pill（Showcase 搜尋篩選；中性 tint + 常駐 ✕，與 .lb-user-tag 實心 accent 對照） -->
+                    <div class="ds-pill-card">
+                        <div class="ds-pill-card-demo" style="display: flex; gap: 0.4rem; flex-wrap: wrap; justify-content: center;">
+                            <span class="filter-pill" role="listitem" title="系列：Madonna">
+                                <span class="filter-pill-value">Madonna</span>
+                                <button type="button" class="filter-pill-remove" aria-label="remove filter" style="pointer-events: none;">✕</button>
+                            </span>
+                            <span class="filter-pill" role="listitem" title="標籤：Heels">
+                                <span class="filter-pill-value">Heels</span>
+                                <button type="button" class="filter-pill-remove" aria-label="remove filter" style="pointer-events: none;">✕</button>
+                            </span>
+                        </div>
+                        <div class="ds-pill-card-meta">
+                            <span class="ds-pill-card-class">類 8 · <code>.filter-pill</code></span>
+                            <p class="ds-pill-card-desc">Showcase 搜尋篩選 pill（中性 tint + 細邊框，✕ 常駐 ≥24px）</p>
                             <code class="ds-pill-card-token">--radius-pill: 999px</code>
                         </div>
                     </div>
