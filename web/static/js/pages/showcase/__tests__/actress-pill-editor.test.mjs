@@ -640,6 +640,111 @@ test('_pillRangeBounds：age / height / cup / null editor', () => {
     assert.equal(c._pillRangeBounds(), null, 'cup 無 range → null');
 });
 
+// ── Review fix P2：range 提交超界夾回（HTML5 :min/:max 對 type=button 不擋）──
+// 與種子夾回同一哲學：有可用值就夾回寫入並關閉 editor，不無聲拒絕。
+
+/** 開啟 height range 草稿並寫入 lo/hi，回傳 component */
+function openHeightRange(lo, hi) {
+    const c = makeComponent();
+    c.addActressPill('height', '160cm');
+    c._openPillEditor(c.actressPills[0]);
+    c._setEditorMode('range');
+    c._pillEditor.rangeLo = lo;
+    c._pillEditor.rangeHi = hi;
+    return c;
+}
+
+/** 開啟 age range 草稿並寫入 lo/hi，回傳 component */
+function openAgeRange(lo, hi) {
+    const c = makeComponent();
+    c.addActressPill('age', 30);
+    c._openPillEditor(c.actressPills[0]);
+    c._setEditorMode('range');
+    c._pillEditor.rangeLo = lo;
+    c._pillEditor.rangeHi = hi;
+    return c;
+}
+
+test('clamp#1 height 上界超出 155–300 → 155–200，寫入並關閉', () => {
+    const c = openHeightRange('155', '300');
+    c._commitPillEditor();
+    assert.equal(c._pillEditor, null, '必須關閉 editor');
+    assert.deepEqual(c.actressPills[0], {
+        dim: 'height', op: 'range', value: '155', value2: '200',
+    });
+});
+
+test('clamp#2 height 下界超出 50–160 → 130–160，寫入並關閉', () => {
+    const c = openHeightRange('50', '160');
+    c._commitPillEditor();
+    assert.equal(c._pillEditor, null);
+    assert.deepEqual(c.actressPills[0], {
+        dim: 'height', op: 'range', value: '130', value2: '160',
+    });
+});
+
+test('clamp#3 age 兩端都超出 10–200 → 18–80，寫入並關閉', () => {
+    const c = openAgeRange('10', '200');
+    c._commitPillEditor();
+    assert.equal(c._pillEditor, null);
+    assert.deepEqual(c.actressPills[0], {
+        dim: 'age', op: 'range', value: '18', value2: '80',
+    });
+});
+
+test('clamp#4 正向對照：合法邊界值原值寫入、不被動到', () => {
+    const cH = openHeightRange('130', '200');
+    cH._commitPillEditor();
+    assert.equal(cH._pillEditor, null);
+    assert.deepEqual(cH.actressPills[0], {
+        dim: 'height', op: 'range', value: '130', value2: '200',
+    });
+
+    const cA = openAgeRange('18', '80');
+    cA._commitPillEditor();
+    assert.equal(cA._pillEditor, null);
+    assert.deepEqual(cA.actressPills[0], {
+        dim: 'age', op: 'range', value: '18', value2: '80',
+    });
+});
+
+test('clamp#5 對調與夾回並存：300/150 → value=150 value2=200', () => {
+    const c = openHeightRange('300', '150');
+    c._commitPillEditor();
+    assert.equal(c._pillEditor, null);
+    assert.deepEqual(c.actressPills[0], {
+        dim: 'height', op: 'range', value: '150', value2: '200',
+    });
+});
+
+test('clamp#6 cup =/<=/>= 提交照常；bounds=null 短路不炸', () => {
+    // 非 range：else 分支不得被夾回邏輯波及
+    for (const op of ['=', '<=', '>=']) {
+        const c = makeComponent();
+        c.addActressPill('cup', 'B');
+        c._openPillEditor(c.actressPills[0]);
+        c._setEditorMode(op);
+        c._commitPillEditor();
+        assert.equal(c._pillEditor, null, `cup ${op} 應關閉`);
+        assert.deepEqual(c.actressPills[0], {
+            dim: 'cup', op, value: 'B', value2: null,
+        });
+    }
+    // bounds=null 的 range 路徑：手動塞有限數，短路放行不得 TypeError
+    const c = makeComponent();
+    c.addActressPill('cup', 'B');
+    c._openPillEditor(c.actressPills[0]);
+    c._pillEditor.op = 'range';
+    c._pillEditor.rangeLo = '1';
+    c._pillEditor.rangeHi = '2';
+    assert.equal(c._pillRangeBounds(), null);
+    assert.doesNotThrow(() => c._commitPillEditor());
+    assert.equal(c._pillEditor, null);
+    assert.deepEqual(c.actressPills[0], {
+        dim: 'cup', op: 'range', value: '1', value2: '2',
+    });
+});
+
 // ── Review fix：searchActressFilms 繞過 toggleActressMode 的 teardown ─────
 
 test('searchActressFilms teardown：呼叫前 _pillEditor 非 null → 呼叫後為 null', async () => {

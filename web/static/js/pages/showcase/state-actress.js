@@ -421,8 +421,17 @@ export function stateActress() {
                 var loN = Number(d.rangeLo);
                 var hiN = Number(d.rangeHi);
                 if (!Number.isFinite(loN) || !Number.isFinite(hiN)) return;
-                var loS = String(d.rangeLo);
-                var hiS = String(d.rangeHi);
+                // 超界夾回：✓ 是 type=button，HTML5 :min/:max 不觸發 constraint validation；
+                // 與 _setEditorMode 種子夾回同一哲學——有可用值就夾回寫入並關閉，不無聲拒絕。
+                // 順序：先各自夾回 [min,max]，再 lo>hi 對調。clamp 單調，兩序結果等價，
+                // 最終必 lo<=hi 且兩端∈[min,max]。bounds=null（cup）短路，不讀 .min/.max。
+                var bounds = this._pillRangeBounds();
+                if (bounds != null) {
+                    loN = Math.max(bounds.min, Math.min(bounds.max, loN));
+                    hiN = Math.max(bounds.min, Math.min(bounds.max, hiN));
+                }
+                var loS = String(loN);
+                var hiS = String(hiN);
                 if (loN > hiN) {
                     var tmp = loS;
                     loS = hiS;
