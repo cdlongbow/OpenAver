@@ -8,6 +8,7 @@
 import { _actresses, _filteredActresses, _actressesLoaded, _nameToGroup, _loadAliasMap, _killLightboxTimelines, _setActressesLoaded, _setActresses, _setFilteredActresses } from '@/showcase/state-base.js';
 import { normalizePillValue } from '@/shared/pill-filter.js';
 import { actressAgeValue, actressHeightValue, actressCupValue } from '@/shared/actress-metric.js';
+import { buildActressPillPredicate } from '@/shared/actress-pill-filter.js';
 
 export function stateActress() {
     return {
@@ -229,12 +230,16 @@ export function stateActress() {
         },
 
         applyActressFilterAndSort() {
-            // 1. Filter
+            // Stage 0（116a-T2）：pill 精準比對，跑在既有名字模糊搜尋之前（鏡射 spec §3.1 步驟 6）
+            var pillMatch = buildActressPillPredicate(this.actressPills);
+            var base = _actresses.filter(pillMatch);
+
+            // 1. Filter（名字模糊搜尋，改讀 base 而非 _actresses）
             var q = this.actressSearch.trim();
-            var filtered = _actresses.slice();
+            var filtered = base.slice();
             if (q) {
                 var ql = q.toLowerCase();
-                filtered = _actresses.filter(function (a) {
+                filtered = base.filter(function (a) {
                     var group = _nameToGroup[a.name] || [a.name];
                     return group.some(function(n) { return n && n.toLowerCase().includes(ql); });
                 });
@@ -284,6 +289,22 @@ export function stateActress() {
             this.actressCount = _actresses.length;
             this.filteredActressCount = _filteredActresses.length;
             this.paginatedActresses = _filteredActresses.slice();  // CD-9: 全量，不分頁
+        },
+
+        addActressPill(dim, value) {
+            var v = String(value);
+            var next = this.actressPills.filter(function (p) { return p.dim !== dim; });  // 同維度取代（CD-116a-2c：替換整個物件）
+            next.push({ dim: dim, op: '=', value: v });
+            this.actressPills = next;
+            this.applyActressFilterAndSort();  // CD-116a-9：直呼，不走 _sortWithFlip
+        },
+
+        removeActressPill(dim, value) {
+            var v = String(value);
+            var next = this.actressPills.filter(function (p) { return !(p.dim === dim && p.value === v); });
+            if (next.length === this.actressPills.length) return;  // 沒命中：不重跑
+            this.actressPills = next;
+            this.applyActressFilterAndSort();
         },
 
         onActressSearchChange() {

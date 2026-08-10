@@ -200,6 +200,7 @@ export function stateBase() {
 
         search: '',
         pills: [],  // TASK-115-T1: metadata pill filter（reactive only；持久化屬 T3）
+        actressPills: [],  // TASK-116a-T2: 女優數值 pill（reactive only；不持久化 CD-116a-5）
         sort: 'date',         // M2a 先用硬編碼，M4 才從 config/localStorage 恢復
         order: 'desc',
         mode: 'grid',
@@ -327,6 +328,10 @@ export function stateBase() {
             this.$watch('pills', () => {
                 Alpine.store('ui').showcaseHasSearch = this._hasActiveFilter();
             })
+            // 116a-T2：actressPills 同慣例整包替換，$watch 對此可靠觸發（CD-116a-2d）。
+            this.$watch('actressPills', () => {
+                Alpine.store('ui').showcaseHasSearch = this._hasActiveFilter();
+            })
             // T2 init sync：restoreState() 在 $watch 前執行，初始值不會觸發上面任何一個 watcher
             Alpine.store('ui').showcaseHasSearch = this._hasActiveFilter();
 
@@ -344,7 +349,7 @@ export function stateBase() {
 
         // 115-T7 / CD-12：單一「是否有啟用中篩選」判準（文字／女優文字／pill 任一即真）
         _hasActiveFilter() {
-            return this.search !== '' || this.actressSearch !== '' || this.pills.length > 0;
+            return this.search !== '' || this.actressSearch !== '' || this.pills.length > 0 || this.actressPills.length > 0;
         },
 
         // --- 狀態恢復 (M2c) ---

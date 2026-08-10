@@ -80,6 +80,7 @@ function makeClearComponent(overrides) {
     uiStore.showcaseHasSearch = false;
     const c = Object.assign({}, stateVideos(), {
         pills: [],
+        actressPills: [],
         search: '',
         actressSearch: '',
         page: 1,
@@ -114,9 +115,11 @@ function makeClearComponent(overrides) {
 test('clearAllFilters：僅有 pills（無文字）時清空 pills', () => {
     const c = makeClearComponent({
         pills: [{ dim: 'maker', value: 'Moodyz' }, { dim: 'series', value: 'Madonna' }],
+        actressPills: [{ dim: 'age', op: '=', value: '37' }],
     });
     c.clearAllFilters();
     assert.equal(c.pills.length, 0);
+    assert.equal(c.actressPills.length, 0);
     assert.equal(c.search, '');
     assert.equal(c.actressSearch, '');
 });
@@ -229,14 +232,19 @@ test('_hasActiveFilter：三輸入各自獨立為 true，全空為 false', () =>
     const pred = makeBase()._hasActiveFilter;
     assert.equal(typeof pred, 'function');
 
-    assert.equal(pred.call({ search: 'x', actressSearch: '', pills: [] }), true, '僅 search');
-    assert.equal(pred.call({ search: '', actressSearch: 'y', pills: [] }), true, '僅 actressSearch');
+    assert.equal(pred.call({ search: 'x', actressSearch: '', pills: [], actressPills: [] }), true, '僅 search');
+    assert.equal(pred.call({ search: '', actressSearch: 'y', pills: [], actressPills: [] }), true, '僅 actressSearch');
     assert.equal(
-        pred.call({ search: '', actressSearch: '', pills: [{ dim: 'maker', value: 'M' }] }),
+        pred.call({ search: '', actressSearch: '', pills: [{ dim: 'maker', value: 'M' }], actressPills: [] }),
         true,
         '僅 pills',
     );
-    assert.equal(pred.call({ search: '', actressSearch: '', pills: [] }), false, '全空');
+    assert.equal(
+        pred.call({ search: '', actressSearch: '', pills: [], actressPills: [{ dim: 'age', op: '=', value: '37' }] }),
+        true,
+        '僅 actressPills',
+    );
+    assert.equal(pred.call({ search: '', actressSearch: '', pills: [], actressPills: [] }), false, '全空');
 });
 
 // ===== clearSearch 已刪 =====
@@ -274,15 +282,20 @@ test('state-base.js：$watch(search/actressSearch/pills) 與 init sync 皆呼叫
         /\$watch\(\s*['"]pills['"]/.test(STATE_BASE_SRC),
         "必須有 $watch('pills')（僅 pills 變更時 predicate 才會更新）",
     );
+    // 116a-T2：actressPills watcher（CD-116a-2d）
+    assert.ok(
+        /\$watch\(\s*['"]actressPills['"]/.test(STATE_BASE_SRC),
+        "必須有 $watch('actressPills')",
+    );
 
-    // 四次寫入 store 都必須經 _hasActiveFilter（不是各自重寫兩欄位算式）
+    // 五次寫入 store 都必須經 _hasActiveFilter（不是各自重寫兩欄位算式）
     const storeAssigns = STATE_BASE_SRC.match(
         /Alpine\.store\('ui'\)\.showcaseHasSearch\s*=\s*this\._hasActiveFilter\(\)/g,
     ) || [];
     assert.equal(
         storeAssigns.length,
-        4,
-        `預期 3 個 $watch + 1 次 init sync = 4 次，實際 ${storeAssigns.length}`,
+        5,
+        `預期 4 個 $watch + 1 次 init sync = 5 次，實際 ${storeAssigns.length}`,
     );
 
     // 舊兩欄位字面不得再出現於 showcaseHasSearch 賦值（scroll handler 的不同語意不在此鎖）
