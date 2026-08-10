@@ -15,8 +15,10 @@ import { readFileSync } from 'node:fs';
 globalThis.window = globalThis;
 // identity mock：測試只驗證「呼叫了哪個 key」與「join 順序/分隔符」，不驗真正翻譯字串
 globalThis.window.t = (key) => key;
-globalThis.Alpine = globalThis.Alpine || {
-    store: () => ({ toolbarOpen: false, showcaseHasSearch: false }),
+// 單一 mutable store：116b-T4 的 toolbarOpen 斷言要讀到寫入結果（每次 new 會丟值）
+const _uiStore = { toolbarOpen: false, showcaseHasSearch: false };
+globalThis.Alpine = {
+    store: () => _uiStore,
 };
 
 const IMPORTMAP = {
@@ -208,10 +210,19 @@ test('_onActressMetadataClick：先 closeLightbox() 再 addActressPill(dim, valu
     ]);
 });
 
+test('_onActressMetadataClick：產生 pill 後 toolbarOpen=true（116b-T4 手機摸得到 pill）', () => {
+    _uiStore.toolbarOpen = false;
+    const c = makeComponent({ currentLightboxActress: FULL_ACTRESS, actressLightboxSource: 'grid' });
+    c._onActressMetadataClick('height', '160cm');
+    assert.equal(Alpine.store('ui').toolbarOpen, true, '產生 pill 後必須展開工具列');
+});
+
 test('_onActressMetadataClick：hero 路徑（防禦性 gate）不呼叫任何函式', () => {
+    _uiStore.toolbarOpen = false;
     const c = makeComponent({ currentLightboxActress: FULL_ACTRESS, actressLightboxSource: 'hero' });
     c._onActressMetadataClick('height', '160cm');
     assert.deepEqual(c.__calls, [], '防禦性 gate 應擋下呼叫，無副作用');
+    assert.equal(Alpine.store('ui').toolbarOpen, false, 'gate 擋下時不得展開工具列');
 });
 
 // ── 視覺零回歸：多組缺值組合下，join 輸出與舊版逐字相同（至少 5 組）────────

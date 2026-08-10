@@ -664,6 +664,9 @@ export function stateActress() {
             if (this.actressLightboxSource !== 'grid') return;   // 防禦性：markup 已用 x-show 擋掉按鈕，這裡是第二層
             this.closeLightbox();
             this.addActressPill(dim, value);
+            // 116b-T4：手機上剛從燈箱產生的 pill 必須看得見（toolbar 預設收合）。
+            // 桌機無副作用：.mobile-toolbar-open 只在 ≤480px 有樣式、navbar 鈕 lg:hidden。
+            Alpine.store('ui').toolbarOpen = true;
         },
 
         // TASK-116b-T1: 女優 pill 顯示文字（CD-116b-11）——op 切換符號、單位由顯示層補回

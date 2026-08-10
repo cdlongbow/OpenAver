@@ -297,9 +297,38 @@ test('浮層帶 x-transition.opacity.duration.150ms（照抄 .toolbar-dropdown �
     );
 });
 
-test('浮層不含 x-trap 或 @click.outside（T4 範圍，本 task 只鋪骨架）', () => {
-    assert.ok(!POPOVER.includes('x-trap'), '.pill-editor-popover 本 task 不應含 x-trap（留給 T4）');
-    assert.ok(!POPOVER.includes('@click.outside'), '.pill-editor-popover 本 task 不應含 @click.outside（留給 T4）');
+// 116b-T4 落地：x-trap / @click.outside / a11y（原 T3 負向骨架斷言已翻轉）
+test('浮層帶 x-trap="!!_pillEditor"（不加 .inert）與 @click.outside（CD-116b-9）', () => {
+    const openTagEnd = POPOVER.indexOf('>');
+    const openTag = POPOVER.slice(0, openTagEnd + 1);
+    assert.ok(
+        /x-trap="!!_pillEditor"/.test(openTag),
+        '.pill-editor-popover 應綁 x-trap="!!_pillEditor"',
+    );
+    assert.ok(
+        !/x-trap\.inert/.test(openTag),
+        'x-trap 不得帶 .inert（CD-116b-9：modal 級語意與點外面關閉矛盾）',
+    );
+    assert.ok(
+        /@click\.outside="_pillEditor && _cancelPillEditor\(\)"/.test(openTag),
+        '.pill-editor-popover 應綁 @click.outside="_pillEditor && _cancelPillEditor()"',
+    );
+});
+
+test('浮層 role/aria：dialog + aria-modal=false + aria-labelledby=pill-editor-title', () => {
+    const openTagEnd = POPOVER.indexOf('>');
+    const openTag = POPOVER.slice(0, openTagEnd + 1);
+    assert.ok(/role="dialog"/.test(openTag), '應有 role="dialog"');
+    assert.ok(/aria-modal="false"/.test(openTag), '應有 aria-modal="false"（non-modal）');
+    assert.ok(
+        /aria-labelledby="pill-editor-title"/.test(openTag),
+        '應有 aria-labelledby="pill-editor-title"',
+    );
+    assert.ok(
+        /class="pill-editor-title"[^>]*id="pill-editor-title"/.test(POPOVER)
+        || /id="pill-editor-title"[^>]*class="pill-editor-title"/.test(POPOVER),
+        '.pill-editor-title 應有 id="pill-editor-title"',
+    );
 });
 
 // ===== i18n key：六個新 key 存在且值正確、且模板確有引用 =====

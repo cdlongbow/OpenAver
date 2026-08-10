@@ -142,8 +142,13 @@
                          x-show="_pillEditor && showFavoriteActresses && _pillPopoverEnabled"
                          x-cloak
                          x-transition.opacity.duration.150ms
-                         @click.stop>
-                        <div class="pill-editor-title" x-text="t('showcase.pill.dim_label.' + (_pillEditor?.dim || ''))"></div>
+                         x-trap="!!_pillEditor"
+                         @click.outside="_pillEditor && _cancelPillEditor()"
+                         @click.stop
+                         role="dialog"
+                         aria-modal="false"
+                         aria-labelledby="pill-editor-title">
+                        <div class="pill-editor-title" id="pill-editor-title" x-text="t('showcase.pill.dim_label.' + (_pillEditor?.dim || ''))"></div>
 
                         <div class="pill-editor-modes">
                             <button type="button" class="pill-editor-mode" :class="{ 'is-active': _pillEditor?.op === '=' }"
