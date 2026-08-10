@@ -178,8 +178,9 @@ class TestShowcaseActressState:
             "prevActressLightbox",
             "nextActressLightbox",
             "_setActressLightboxIndex",
-            # sort logic
-            "cupRank",
+            # sort logic（116a-T1：cupRank 表移入 shared/actress-metric.js，
+            # 排序端改呼叫 extractor；鎖的仍是「罩杯排序邏輯有接上」這件事）
+            "actressCupValue",
             # mutual exclusion
             "currentLightboxActress = null",
             "_videoChipsExpanded = false",
@@ -475,7 +476,9 @@ class TestShowcaseActressLightbox:
         """state-actress.js 含 lightbox 必要 methods"""
         js = self._js()
         for expected in [
-            "_actressCoreMetadata",
+            # 116a-T3：函式改名為 _actressCoreMetadataParts（回傳結構化陣列）。
+            # 舊字面是新名字的子字串，改名後這條仍會綠——等於守衛靜默失效，故一併換成新名字。
+            "_actressCoreMetadataParts",
             "_allInfoChips",
             "_chipsLimit",
             "_visibleAliases",
