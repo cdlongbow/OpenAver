@@ -95,12 +95,24 @@
                                @input.debounce.300ms="onSearchChange()"
                                @keydown.backspace="onSearchBackspace($event)">
                     </div>
-                    <!-- 女優搜尋框 (CD-11) -->
-                    <input type="text"
-                           x-show="showFavoriteActresses"
-                           :placeholder="t('showcase.search.actress')"
-                           x-model="actressSearch"
-                           @input.debounce.300ms="onActressSearchChange()">
+                    <!-- 女優搜尋框 (CD-11) — pill 容器包住 input（TASK-116a-T3） -->
+                    <div class="filter-pill-group actress-filter-pill-group" x-show="showFavoriteActresses">
+                        <span class="filter-pill-list" role="list" x-show="actressPills.length">
+                            <template x-for="pill in actressPills" :key="pill.dim">
+                                <span class="filter-pill" role="listitem"
+                                      :title="t('showcase.pill.dim_label.' + pill.dim)">
+                                    <span class="filter-pill-value" x-text="_actressPillDisplayText(pill)"></span>
+                                    <button type="button" class="filter-pill-remove"
+                                            @click="removeActressPill(pill.dim, pill.value)"
+                                            :aria-label="t('showcase.pill.remove_aria', { value: pill.value })">✕</button>
+                                </span>
+                            </template>
+                        </span>
+                        <input type="text"
+                               :placeholder="actressPills.length ? '' : t('showcase.search.actress')"
+                               x-model="actressSearch"
+                               @input.debounce.300ms="onActressSearchChange()">
+                    </div>
                     <div class="search-actions-right">
                         <!-- 44b: heart icon (precise match) -->
                         <button class="btn-icon"
@@ -739,9 +751,17 @@
                                 </button>
                             </div>
                             <!-- Row 2: Core metadata (age · birth · height · cup · BWH) -->
-                            <div class="lb-actress-core"
-                                 x-show="_actressCoreMetadata()"
-                                 x-text="_actressCoreMetadata()"></div>
+                            <div class="lb-actress-core" x-show="_actressCoreMetadataParts().length">
+                                <template x-for="(part, idx) in _actressCoreMetadataParts()" :key="part.key">
+                                    <span>
+                                        <span x-show="idx > 0"> · </span>
+                                        <span x-show="!part.clickable" x-text="part.text"></span>
+                                        <button type="button" class="lb-actress-core-value" x-show="part.clickable"
+                                                @click="_onActressMetadataClick(part.dim, part.value)"
+                                                x-text="part.text"></button>
+                                    </span>
+                                </template>
+                            </div>
                             <!-- Row 3: Aliases chips +N -->
                             <div class="lb-chips-row"
                                  x-show="(currentLightboxActress?.aliases || []).length > 0">

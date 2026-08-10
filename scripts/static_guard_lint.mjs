@@ -1222,19 +1222,21 @@ const RULES = [
   { file: 'web/static/js/pages/search/state/batch.js', kind: 'structure-count', pattern: 'skipped_nfo_multipart', min: 2, note: '[TestSkippedNfoMultipartToastGuard] test_skipped_nfo_multipart_flag_referenced — batch.js >=2 次（scrapeAll+scrapeSingle）' },
 
   // ---- [TestActressCoreMetadataVideoCount]（order + required，brace-balanced scope，handoff 已解除留置 AD-96b-2） ----
+  // 116a-T3：anchor 由 _actressCoreMetadata 改為 _actressCoreMetadataParts（函式被結構化陣列版原地取代）。
+  // 等價遷移：4 條規則、scope 語意、鎖的內容全部不變，只換錨定的函式名。
   {
     file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string', pattern: 'video_count',
-    scope: { anchor: /(?:^|\n)\s*_actressCoreMetadata\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    scope: { anchor: /(?:^|\n)\s*_actressCoreMetadataParts\s*\([^)]*\)\s*\{/, braceBalanced: true },
     note: '[TestActressCoreMetadataVideoCount] test_video_count_pushed_first — 方法體含 video_count',
   },
   {
     file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string', pattern: 'showcase.unit.films',
-    scope: { anchor: /(?:^|\n)\s*_actressCoreMetadata\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    scope: { anchor: /(?:^|\n)\s*_actressCoreMetadataParts\s*\([^)]*\)\s*\{/, braceBalanced: true },
     note: '[TestActressCoreMetadataVideoCount] test_video_count_pushed_first — 方法體含 showcase.unit.films i18n key',
   },
   {
     file: 'web/static/js/pages/showcase/state-actress.js', kind: 'order',
-    scope: { anchor: /(?:^|\n)\s*_actressCoreMetadata\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    scope: { anchor: /(?:^|\n)\s*_actressCoreMetadataParts\s*\([^)]*\)\s*\{/, braceBalanced: true },
     items: [
       { pattern: /parts\.push\([^)]*video_count[^)]*\)/ },
       { pattern: /parts\.push\([^)]*\.age[^)]*\)/ },
@@ -1244,7 +1246,7 @@ const RULES = [
   {
     file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
     pattern: /typeof\s+\w+\.video_count\s*===\s*['"]number['"]/,
-    scope: { anchor: /(?:^|\n)\s*_actressCoreMetadata\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    scope: { anchor: /(?:^|\n)\s*_actressCoreMetadataParts\s*\([^)]*\)\s*\{/, braceBalanced: true },
     note: '[TestActressCoreMetadataVideoCount] test_video_count_typeof_number_guard — typeof a.video_count === \'number\' guard',
   },
 

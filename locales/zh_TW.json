@@ -903,7 +903,10 @@
         "maker": "片商",
         "director": "導演",
         "series": "系列",
-        "label": "廠牌"
+        "label": "廠牌",
+        "age": "年齡",
+        "height": "身高",
+        "cup": "罩杯"
       },
       "title": "{dim}：{value}",
       "remove_aria": "移除篩選：{value}"

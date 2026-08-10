@@ -496,18 +496,33 @@ export function stateActress() {
             return window.innerWidth >= 768 ? 10 : 6;
         },
 
-        _actressCoreMetadata() {
-            var a = this.currentLightboxActress; if (!a) return '';
+        // TASK-116a-T3: 取代 _actressCoreMetadata()——回傳結構化陣列，年齡/身高/罩杯三格可點（CD-116a-6）
+        _actressCoreMetadataParts() {
+            var a = this.currentLightboxActress; if (!a) return [];
+            var canClick = this.actressLightboxSource === 'grid';   // spec §4.2 的 gate，單一求值點
             var parts = [];
             if (typeof a.video_count === 'number') {
-                parts.push(a.video_count + window.t('showcase.unit.films'));
+                parts.push({ key: 'count', text: a.video_count + window.t('showcase.unit.films'), clickable: false });
             }
-            if (a.age) parts.push(a.age + window.t('search.unit.age'));
-            if (a.birth) parts.push(a.birth);
-            if (a.height) parts.push(a.height);
-            if (a.cup) parts.push(a.cup + window.t('search.unit.cup'));
-            if (a.bust && a.waist && a.hip) parts.push(a.bust + '-' + a.waist + '-' + a.hip);
-            return parts.join(' · ');
+            if (a.age) parts.push({ key: 'age', text: a.age + window.t('search.unit.age'), clickable: canClick, dim: 'age', value: a.age });
+            if (a.birth) parts.push({ key: 'birth', text: a.birth, clickable: false });
+            if (a.height) parts.push({ key: 'height', text: a.height, clickable: canClick, dim: 'height', value: a.height });
+            if (a.cup) parts.push({ key: 'cup', text: a.cup + window.t('search.unit.cup'), clickable: canClick, dim: 'cup', value: a.cup });
+            if (a.bust && a.waist && a.hip) parts.push({ key: 'bwh', text: a.bust + '-' + a.waist + '-' + a.hip, clickable: false });
+            return parts;
+        },
+
+        // TASK-116a-T3: 燈箱三格點擊 adapter（CD-116a-6）——先關燈箱再加 pill（FE-ALPINE-04，比照 searchActressFilms() 的順序）
+        _onActressMetadataClick(dim, value) {
+            if (this.actressLightboxSource !== 'grid') return;   // 防禦性：markup 已用 x-show 擋掉按鈕，這裡是第二層
+            this.closeLightbox();
+            this.addActressPill(dim, value);
+        },
+
+        // TASK-116a-T3: 女優 pill 顯示文字（CD-116a-6b）——116a 恆為 '='，116b 會依 pill.op 切換符號
+        _actressPillDisplayText(pill) {
+            var unit = pill.dim === 'age' ? window.t('search.unit.age') : pill.dim === 'cup' ? window.t('search.unit.cup') : '';
+            return '=' + pill.value + unit;
         },
 
         // --- 44c T2: Actress card footer helpers ---

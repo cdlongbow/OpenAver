@@ -2800,6 +2800,22 @@ body.sidebar-collapsed .showcase-footer {
 .actress-lightbox-meta .lb-mask-btn { margin-left: auto; }
 .actress-lightbox-meta .lb-name-en { font-size: 0.9em; opacity: 0.7; }
 .actress-lightbox-meta .lb-actress-core { font-size: 0.95em; margin: 8px 0; opacity: 0.85; }
+/* TASK-116a-T3: 燈箱 core metadata 可點格（年齡/身高/罩杯）——重置 button 預設樣式，貼合純文字視覺，
+ * hover/focus-visible 才顯示可點提示色（token 比照 .filter-pill-remove，showcase.css:2957-2986）。 */
+.lb-actress-core-value {
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+}
+.lb-actress-core-value:hover { color: var(--text-primary); }
+.lb-actress-core-value:focus-visible {
+    outline: 2px solid var(--stroke-default);
+    outline-offset: 1px;
+}
 .actress-lightbox-meta .lb-chips-row { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
 .actress-lightbox-meta .lb-chips-more {
     cursor: pointer; font-size: 0.85em; padding: 2px 8px;
