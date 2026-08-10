@@ -13,6 +13,14 @@ import { buildActressPillPredicate } from '@/shared/actress-pill-filter.js';
 /** height 顯示單位（CD-116b-11 模組常數，不進 i18n） */
 var CM_UNIT = 'cm';
 
+// TASK-116b-T2：區間種子常數（CD-116b-12 / 任務卡常數表，不得自創數值）
+var AGE_MIN = 18;
+var AGE_MAX = 80;
+var AGE_SEED_WIDTH = 3;
+var HEIGHT_MIN = 130;
+var HEIGHT_MAX = 200;
+var HEIGHT_SEED_WIDTH = 5;
+
 /** height pill value/value2 共用：extractor 解得出數值就用數字字串，否則退回 raw（永不寫入字面 'null'） */
 function normalizeHeightPillValue(raw) {
     var h = actressHeightValue({ height: raw });
@@ -137,6 +145,8 @@ export function stateActress() {
         // --- 44a: 女優模式核心方法 ---
 
         toggleActressMode() {
+            // CD-116b-8b：切換影片/女優模式時無條件 teardown 浮層草稿
+            this._pillEditor = null;
             if (this.lightboxOpen) this.closeLightbox();
             var self = this;
             var isEnteringActress = !this.showFavoriteActresses;
@@ -328,7 +338,107 @@ export function stateActress() {
             var next = this.actressPills.filter(function (p) { return !(p.dim === dim && p.value === v); });
             if (next.length === this.actressPills.length) return;  // 沒命中：不重跑
             this.actressPills = next;
+            // CD-116b-8b：移除的正是編輯中 dim → teardown 草稿
+            if (this._pillEditor && this._pillEditor.dim === dim) this._pillEditor = null;
             this.applyActressFilterAndSort();
+        },
+
+        // ── TASK-116b-T2：浮層狀態機（無 markup；CD-116b-5 / CD-116b-3 / CD-116b-8）──
+
+        // 開啟：pill（四欄位）→ 草稿（五欄位）淺拷貝映射；不得持有 actressPills 內物件參考
+        _openPillEditor(pill) {
+            if (pill.op === 'range') {
+                this._pillEditor = {
+                    dim: pill.dim,
+                    op: pill.op,
+                    value: pill.value,
+                    rangeLo: pill.value,
+                    rangeHi: pill.value2,
+                };
+            } else {
+                this._pillEditor = {
+                    dim: pill.dim,
+                    op: pill.op,
+                    value: pill.value,
+                    rangeLo: null,
+                    rangeHi: null,
+                };
+            }
+        },
+
+        // 第二層防禦（比照 _onActressMetadataClick）：markup 會擋手機按鈕，狀態層也要提早 return
+        _togglePillEditor(pill) {
+            if (!this._pillPopoverEnabled) return;
+            if (this._pillEditor && this._pillEditor.dim === pill.dim) {
+                this._pillEditor = null;
+                return;
+            }
+            this._openPillEditor(pill);
+        },
+
+        // 切換模式：切入 range 且 rangeLo/Hi 仍 null 時才種子；切出不清空 rangeLo/Hi、不動 value
+        _setEditorMode(op) {
+            if (!this._pillEditor) return;
+            this._pillEditor.op = op;
+            if (op !== 'range') return;
+            // 已種子過（第二次以後切入）→ 不重新種子
+            if (this._pillEditor.rangeLo != null || this._pillEditor.rangeHi != null) return;
+            // cup 無 range：fail-closed，不種子、不拋錯（T3 才擋 UI）
+            if (this._pillEditor.dim === 'cup') return;
+            var n = Number(this._pillEditor.value);
+            if (!Number.isFinite(n)) return;
+            var min, max, w;
+            if (this._pillEditor.dim === 'age') {
+                min = AGE_MIN; max = AGE_MAX; w = AGE_SEED_WIDTH;
+            } else if (this._pillEditor.dim === 'height') {
+                min = HEIGHT_MIN; max = HEIGHT_MAX; w = HEIGHT_SEED_WIDTH;
+            } else {
+                return;
+            }
+            // 兩端各自獨立夾回 min/max（CD-116b-12）
+            this._pillEditor.rangeLo = String(Math.max(min, n - w));
+            this._pillEditor.rangeHi = String(Math.min(max, n + w));
+        },
+
+        // T3 markup :min/:max 的單一所有者——與 _setEditorMode 種子夾回共用模組常數
+        // （AGE_*/HEIGHT_* 是模組作用域，Alpine 表達式讀不到）
+        _pillRangeBounds() {
+            if (!this._pillEditor) return null;
+            if (this._pillEditor.dim === 'age') return { min: AGE_MIN, max: AGE_MAX };
+            if (this._pillEditor.dim === 'height') return { min: HEIGHT_MIN, max: HEIGHT_MAX };
+            return null;   // cup 無 range
+        },
+
+        // 提交：草稿（五欄位）→ pill（四欄位）；range 含 lo>hi 對調（CD-116b-3）；單一所有者
+        _commitPillEditor() {
+            if (!this._pillEditor) return;
+            var d = this._pillEditor;
+            var pill;
+            if (d.op === 'range') {
+                // 空字串 / null 經 Number() 會變 0；必須先擋，永不寫入字面 'null' 或空字串
+                // （與 normalizeHeightPillValue 的「永不寫入字面 'null'」同一紀律）
+                if (d.rangeLo == null || d.rangeHi == null || d.rangeLo === '' || d.rangeHi === '') return;
+                var loN = Number(d.rangeLo);
+                var hiN = Number(d.rangeHi);
+                if (!Number.isFinite(loN) || !Number.isFinite(hiN)) return;
+                var loS = String(d.rangeLo);
+                var hiS = String(d.rangeHi);
+                if (loN > hiN) {
+                    var tmp = loS;
+                    loS = hiS;
+                    hiS = tmp;
+                }
+                pill = { dim: d.dim, op: 'range', value: loS, value2: hiS };
+            } else {
+                pill = { dim: d.dim, op: d.op, value: d.value, value2: null };
+            }
+            this._setActressPill(pill);
+            this._pillEditor = null;
+        },
+
+        // ✗ 取消：只丟棄草稿，不碰 actressPills（spec §5.6；函式體不得引用 actressPills）
+        _cancelPillEditor() {
+            this._pillEditor = null;
         },
 
         onActressSearchChange() {
@@ -785,6 +895,8 @@ export function stateActress() {
 
                 if (this.lightboxOpen) this.closeLightbox();
                 if (wasActressMode) {
+                    // 繞過 toggleActressMode() 直接翻旗標——CD-116b-8b 的 teardown 必須就地補上
+                    this._pillEditor = null;
                     this.showFavoriteActresses = false;
                     this.actressSearch = '';
                 }

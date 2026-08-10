@@ -134,6 +134,8 @@ export function stateVideos() {
             this.actressSearch = '';
             this.pills = [];
             this.actressPills = [];
+            // CD-116b-8b：clearAllFilters 清空整個 actressPills → 編輯器開著就必然命中，無條件 teardown
+            if (this._pillEditor) this._pillEditor = null;
             // TASK-115-T8：不再直接呼叫 _clearPreciseMatch()（T7 留下的暫時補丁）——
             // pills=[]、search='' 之後，_reconcileHeroCard() 的「無 pill 分支」本來就會
             // 走到同一個 _clearPreciseMatch() 呼叫，讓收斂單一判斷點的精神落實（RULING 3：
