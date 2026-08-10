@@ -84,19 +84,19 @@ function makeComponent(overrides) {
     return c;
 }
 
-// ── addActressPill 物件形狀 ────────────────────────────────────────────────
+// ── addActressPill 物件形狀（CD-116b-1：恆四欄位、height 剝單位）────────────
 
-test('addActressPill(height, "160cm")：完整物件 deepEqual { dim, op, value }', () => {
+test('addActressPill(height, "160cm")：完整物件 deepEqual 四欄位 value 剝單位', () => {
     const c = makeComponent();
     c.addActressPill('height', '160cm');
     assert.equal(c.actressPills.length, 1);
-    assert.deepEqual(c.actressPills[0], { dim: 'height', op: '=', value: '160cm' });
+    assert.deepEqual(c.actressPills[0], { dim: 'height', op: '=', value: '160', value2: null });
 });
 
 test('addActressPill(cup, "B")：完整物件 deepEqual', () => {
     const c = makeComponent();
     c.addActressPill('cup', 'B');
-    assert.deepEqual(c.actressPills[0], { dim: 'cup', op: '=', value: 'B' });
+    assert.deepEqual(c.actressPills[0], { dim: 'cup', op: '=', value: 'B', value2: null });
 });
 
 // ── 型別正規化（產品真實型別：age 是 number）──────────────────────────────
@@ -104,7 +104,7 @@ test('addActressPill(cup, "B")：完整物件 deepEqual', () => {
 test('addActressPill(age, 37 number)：value 存成字串 "37"', () => {
     const c = makeComponent();
     c.addActressPill('age', 37);
-    assert.deepEqual(c.actressPills[0], { dim: 'age', op: '=', value: '37' });
+    assert.deepEqual(c.actressPills[0], { dim: 'age', op: '=', value: '37', value2: null });
     assert.equal(typeof c.actressPills[0].value, 'string');
 });
 
@@ -130,7 +130,7 @@ test('同維度取代：add age 30 再 add age 32 → length 1 且 value "32"', 
     c.addActressPill('age', '30');
     c.addActressPill('age', '32');
     assert.equal(c.actressPills.length, 1);
-    assert.deepEqual(c.actressPills[0], { dim: 'age', op: '=', value: '32' });
+    assert.deepEqual(c.actressPills[0], { dim: 'age', op: '=', value: '32', value2: null });
 });
 
 // ── removeActressPill ──────────────────────────────────────────────────────
@@ -140,9 +140,52 @@ test('removeActressPill：移除存在的 pill → length 少一', () => {
     c.addActressPill('height', '160cm');
     c.addActressPill('cup', 'B');
     assert.equal(c.actressPills.length, 2);
-    c.removeActressPill('height', '160cm');
+    // 116b：height value 剝單位後存 '160'；remove 比對的是存入值
+    c.removeActressPill('height', '160');
     assert.equal(c.actressPills.length, 1);
-    assert.deepEqual(c.actressPills[0], { dim: 'cup', op: '=', value: 'B' });
+    assert.deepEqual(c.actressPills[0], { dim: 'cup', op: '=', value: 'B', value2: null });
+});
+
+// ── _setActressPill 直呼契約（CD-116b-1b）──────────────────────────────────
+
+test('_setActressPill：同維度整包取代 ＋ applyActressFilterAndSort 恰呼叫一次', () => {
+    const c = makeComponent();
+    let applyCalls = 0;
+    const realApply = c.applyActressFilterAndSort.bind(c);
+    c.applyActressFilterAndSort = function () {
+        applyCalls++;
+        return realApply();
+    };
+    c._setActressPill({ dim: 'age', op: '<=', value: '30', value2: null });
+    assert.equal(c.actressPills.length, 1);
+    assert.deepEqual(c.actressPills[0], { dim: 'age', op: '<=', value: '30', value2: null });
+    assert.equal(applyCalls, 1, '首次 _setActressPill 必須呼叫 apply 一次');
+
+    c._setActressPill({ dim: 'age', op: 'range', value: '25', value2: '35' });
+    assert.equal(c.actressPills.length, 1, '同維度必須整包取代、length 仍 1');
+    assert.deepEqual(c.actressPills[0], { dim: 'age', op: 'range', value: '25', value2: '35' });
+    assert.equal(applyCalls, 2, '第二次 _setActressPill 再呼叫 apply 一次');
+});
+
+// ── 116b review 修正：height 剝單位 fail-closed / value2 對稱 ───────────────
+
+test('_setActressPill：height 不可解析值退回 raw，永不寫入字面 null', () => {
+    const c = makeComponent();
+    c._setActressPill({ dim: 'height', op: '=', value: '不明', value2: null });
+    assert.equal(c.actressPills.length, 1);
+    assert.equal(c.actressPills[0].value, '不明');
+    assert.notEqual(c.actressPills[0].value, 'null', 'value 不得為字面字串 null');
+});
+
+test('_setActressPill：height range 的 value2 也剝單位', () => {
+    const c = makeComponent();
+    c._setActressPill({ dim: 'height', op: 'range', value: '155cm', value2: '165cm' });
+    assert.deepEqual(c.actressPills[0], {
+        dim: 'height',
+        op: 'range',
+        value: '155',
+        value2: '165',
+    });
 });
 
 test('removeActressPill：不存在的 (dim, value) → 陣列不變', () => {

@@ -138,8 +138,8 @@ test('stateActress() 定義 onActressSearchBackspace', () => {
 test('isComposing: true（空值＋caret 0＋有 pill）→ actressPills 不變、不呼叫 removeActressPill', () => {
     const c = makeComponent({
         actressPills: [
-            { dim: 'age', op: '=', value: '37' },
-            { dim: 'cup', op: '=', value: 'B' },
+            { dim: 'age', op: '=', value: '37', value2: null },
+            { dim: 'cup', op: '=', value: 'B', value2: null },
         ],
     });
     const realRemove = c.removeActressPill.bind(c);
@@ -159,8 +159,8 @@ test('isComposing: true（空值＋caret 0＋有 pill）→ actressPills 不變�
 test('空值＋caret 0＋非組字＋有 pill → 刪最後一枚，第一枚存活', () => {
     const c = makeComponent({
         actressPills: [
-            { dim: 'age', op: '=', value: '37' },
-            { dim: 'cup', op: '=', value: 'B' },
+            { dim: 'age', op: '=', value: '37', value2: null },
+            { dim: 'cup', op: '=', value: 'B', value2: null },
         ],
     });
     c.onActressSearchBackspace(evt({ value: '', selectionStart: 0, selectionEnd: 0 }));
@@ -172,8 +172,8 @@ test('空值＋caret 0＋非組字＋有 pill → 刪最後一枚，第一枚存
 test('刪除委派 removeActressPill(last.dim, last.value)', () => {
     const c = makeComponent({
         actressPills: [
-            { dim: 'age', op: '=', value: '37' },
-            { dim: 'cup', op: '=', value: 'B' },
+            { dim: 'age', op: '=', value: '37', value2: null },
+            { dim: 'cup', op: '=', value: 'B', value2: null },
         ],
     });
     const realRemove = c.removeActressPill.bind(c);
@@ -190,7 +190,7 @@ test('刪除委派 removeActressPill(last.dim, last.value)', () => {
 
 test('輸入框有字 → actressPills 不變、不呼叫 removeActressPill', () => {
     const c = makeComponent({
-        actressPills: [{ dim: 'age', op: '=', value: '37' }],
+        actressPills: [{ dim: 'age', op: '=', value: '37', value2: null }],
     });
     const realRemove = c.removeActressPill.bind(c);
     c.removeActressPill = function (dim, value) {
@@ -204,7 +204,7 @@ test('輸入框有字 → actressPills 不變、不呼叫 removeActressPill', ()
 
 test('輸入框有字且 caret 在最左 → 仍不刪 pill（空值判斷先擋）', () => {
     const c = makeComponent({
-        actressPills: [{ dim: 'age', op: '=', value: '37' }],
+        actressPills: [{ dim: 'age', op: '=', value: '37', value2: null }],
     });
     const realRemove = c.removeActressPill.bind(c);
     c.removeActressPill = function (dim, value) {
@@ -220,7 +220,7 @@ test('輸入框有字且 caret 在最左 → 仍不刪 pill（空值判斷先擋
 
 test('空值但 caret 不在 0 → actressPills 不變、不呼叫 removeActressPill', () => {
     const c = makeComponent({
-        actressPills: [{ dim: 'age', op: '=', value: '37' }],
+        actressPills: [{ dim: 'age', op: '=', value: '37', value2: null }],
     });
     const realRemove = c.removeActressPill.bind(c);
     c.removeActressPill = function (dim, value) {
@@ -235,7 +235,7 @@ test('空值但 caret 不在 0 → actressPills 不變、不呼叫 removeActress
 
 test('非 collapsed 選取（selectionStart !== selectionEnd）→ 不刪 pill', () => {
     const c = makeComponent({
-        actressPills: [{ dim: 'age', op: '=', value: '37' }],
+        actressPills: [{ dim: 'age', op: '=', value: '37', value2: null }],
     });
     const realRemove = c.removeActressPill.bind(c);
     c.removeActressPill = function (dim, value) {
@@ -252,7 +252,7 @@ test('非 collapsed 選取（selectionStart !== selectionEnd）→ 不刪 pill',
 // 若有人只判 selectionStart === 0 而漏 selectionEnd，這支會抓到。
 test('空值但 selection 非 collapsed → 不刪 pill（caret 判斷式必須同時比對 End）', () => {
     const c = makeComponent({
-        actressPills: [{ dim: 'age', op: '=', value: '37' }],
+        actressPills: [{ dim: 'age', op: '=', value: '37', value2: null }],
     });
     const realRemove = c.removeActressPill.bind(c);
     c.removeActressPill = function (dim, value) {

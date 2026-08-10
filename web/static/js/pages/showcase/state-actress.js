@@ -10,6 +10,15 @@ import { normalizePillValue } from '@/shared/pill-filter.js';
 import { actressAgeValue, actressHeightValue, actressCupValue } from '@/shared/actress-metric.js';
 import { buildActressPillPredicate } from '@/shared/actress-pill-filter.js';
 
+/** height 顯示單位（CD-116b-11 模組常數，不進 i18n） */
+var CM_UNIT = 'cm';
+
+/** height pill value/value2 共用：extractor 解得出數值就用數字字串，否則退回 raw（永不寫入字面 'null'） */
+function normalizeHeightPillValue(raw) {
+    var h = actressHeightValue({ height: raw });
+    return (h == null) ? String(raw) : String(h);
+}
+
 export function stateActress() {
     return {
 
@@ -291,12 +300,27 @@ export function stateActress() {
             this.paginatedActresses = _filteredActresses.slice();  // CD-9: 全量，不分頁
         },
 
-        addActressPill(dim, value) {
-            var v = String(value);
-            var next = this.actressPills.filter(function (p) { return p.dim !== dim; });  // 同維度取代（CD-116a-2c：替換整個物件）
-            next.push({ dim: dim, op: '=', value: v });
+        // CD-116b-1b：寫入 actressPills 的單一所有者（正規化 ＋ 同維度整包取代 ＋ apply）
+        _setActressPill(pill) {
+            // 單位剝離唯一落點：走既有 extractor，不得 replace/parseInt（CD-116b-1）；value/value2 對稱
+            var v = pill.dim === 'height' ? normalizeHeightPillValue(pill.value) : String(pill.value);
+            var v2 = pill.value2 == null || pill.value2 === ''
+                ? null
+                : (pill.dim === 'height' ? normalizeHeightPillValue(pill.value2) : String(pill.value2));
+            var next = this.actressPills.filter(function (p) { return p.dim !== pill.dim; });
+            next.push({
+                dim: pill.dim,
+                op: pill.op,
+                value: v,
+                value2: v2,
+            });
             this.actressPills = next;
             this.applyActressFilterAndSort();  // CD-116a-9：直呼，不走 _sortWithFlip
+        },
+
+        // CD-116b-1b：降格為 adapter，簽名不變
+        addActressPill(dim, value) {
+            this._setActressPill({ dim: dim, op: '=', value: value, value2: null });
         },
 
         removeActressPill(dim, value) {
@@ -512,14 +536,15 @@ export function stateActress() {
         _actressCoreMetadataParts() {
             var a = this.currentLightboxActress; if (!a) return [];
             var canClick = this.actressLightboxSource === 'grid';   // spec §4.2 的 gate，單一求值點
+            // spec §4.3 第 2 條：取不到值一律不符合——比不了大小的值不該變成條件，否則只會產生一枚永遠篩不到人、且畫面不解釋為什麼的死 pill；fail-closed 提前到入口。
             var parts = [];
             if (typeof a.video_count === 'number') {
                 parts.push({ key: 'count', text: a.video_count + window.t('showcase.unit.films'), clickable: false });
             }
-            if (a.age) parts.push({ key: 'age', text: a.age + window.t('search.unit.age'), clickable: canClick, dim: 'age', value: a.age });
+            if (a.age) parts.push({ key: 'age', text: a.age + window.t('search.unit.age'), clickable: canClick && actressAgeValue({ age: a.age }) != null, dim: 'age', value: a.age });
             if (a.birth) parts.push({ key: 'birth', text: a.birth, clickable: false });
-            if (a.height) parts.push({ key: 'height', text: a.height, clickable: canClick, dim: 'height', value: a.height });
-            if (a.cup) parts.push({ key: 'cup', text: a.cup + window.t('search.unit.cup'), clickable: canClick, dim: 'cup', value: a.cup });
+            if (a.height) parts.push({ key: 'height', text: a.height, clickable: canClick && actressHeightValue({ height: a.height }) != null, dim: 'height', value: a.height });
+            if (a.cup) parts.push({ key: 'cup', text: a.cup + window.t('search.unit.cup'), clickable: canClick && actressCupValue({ cup: a.cup }) != null, dim: 'cup', value: a.cup });
             if (a.bust && a.waist && a.hip) parts.push({ key: 'bwh', text: a.bust + '-' + a.waist + '-' + a.hip, clickable: false });
             return parts;
         },
@@ -531,10 +556,20 @@ export function stateActress() {
             this.addActressPill(dim, value);
         },
 
-        // TASK-116a-T3: 女優 pill 顯示文字（CD-116a-6b）——116a 恆為 '='，116b 會依 pill.op 切換符號
+        // TASK-116b-T1: 女優 pill 顯示文字（CD-116b-11）——op 切換符號、單位由顯示層補回
         _actressPillDisplayText(pill) {
-            var unit = pill.dim === 'age' ? window.t('search.unit.age') : pill.dim === 'cup' ? window.t('search.unit.cup') : '';
-            return '=' + pill.value + unit;
+            var unit = pill.dim === 'age'
+                ? window.t('search.unit.age')
+                : pill.dim === 'cup'
+                    ? window.t('search.unit.cup')
+                    : pill.dim === 'height'
+                        ? CM_UNIT
+                        : '';
+            if (pill.op === 'range') {
+                return pill.value + '–' + pill.value2 + unit;  // en dash U+2013
+            }
+            var prefix = pill.op === '<=' ? '≤' : pill.op === '>=' ? '≥' : '=';
+            return prefix + pill.value + unit;
         },
 
         // --- 44c T2: Actress card footer helpers ---

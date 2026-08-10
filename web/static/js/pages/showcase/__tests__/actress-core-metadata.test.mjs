@@ -144,6 +144,59 @@ test('hero 路徑：_actressCoreMetadataParts() 全部 part 的 clickable 為 fa
     }
 });
 
+// ── 116b review：extractor 解不出值 → clickable false；正常值仍 true ───────
+
+test('grid：height 不可解析（不明）→ clickable false', () => {
+    const c = makeComponent({
+        currentLightboxActress: { ...FULL_ACTRESS, height: '不明' },
+        actressLightboxSource: 'grid',
+    });
+    const byKey = Object.fromEntries(c._actressCoreMetadataParts().map((p) => [p.key, p]));
+    assert.ok(byKey.height, 'height 格仍應出現（原文顯示）');
+    assert.equal(byKey.height.clickable, false, '解不出數值的身高格不可點');
+});
+
+test('grid：cup 不可解析（Gカップ）→ clickable false', () => {
+    const c = makeComponent({
+        currentLightboxActress: { ...FULL_ACTRESS, cup: 'Gカップ' },
+        actressLightboxSource: 'grid',
+    });
+    const byKey = Object.fromEntries(c._actressCoreMetadataParts().map((p) => [p.key, p]));
+    assert.ok(byKey.cup, 'cup 格仍應出現（原文顯示）');
+    assert.equal(byKey.cup.clickable, false, '解不出 rank 的罩杯格不可點');
+});
+
+test('grid：age null → 無 age 格或 clickable false', () => {
+    const c = makeComponent({
+        currentLightboxActress: { ...FULL_ACTRESS, age: null },
+        actressLightboxSource: 'grid',
+    });
+    const byKey = Object.fromEntries(c._actressCoreMetadataParts().map((p) => [p.key, p]));
+    if (byKey.age) {
+        assert.equal(byKey.age.clickable, false, 'age null 時若仍有格則不可點');
+    } else {
+        assert.equal(byKey.age, undefined);
+    }
+});
+
+test('grid：正常值 height/cup/age 仍 clickable true（回歸）', () => {
+    const c = makeComponent({
+        currentLightboxActress: {
+            video_count: 1,
+            age: 37,
+            height: '160cm',
+            cup: 'B',
+            birth: '1988-01-01',
+            bust: 80, waist: 58, hip: 85,
+        },
+        actressLightboxSource: 'grid',
+    });
+    const byKey = Object.fromEntries(c._actressCoreMetadataParts().map((p) => [p.key, p]));
+    assert.equal(byKey.height.clickable, true, "height:'160cm' 應可點");
+    assert.equal(byKey.cup.clickable, true, "cup:'B' 應可點");
+    assert.equal(byKey.age.clickable, true, 'age:37 應可點');
+});
+
 // ── 呼叫序列：closeLightbox() 先於 addActressPill(dim, value) ──────────────
 
 test('_onActressMetadataClick：先 closeLightbox() 再 addActressPill(dim, value)（FE-ALPINE-04）', () => {
@@ -187,13 +240,24 @@ test('currentLightboxActress 為 null 時回傳空陣列（比照舊版回傳空
     assert.equal(legacyActressCoreMetadata(null), '');
 });
 
-// ── _actressPillDisplayText（CD-116a-6b）───────────────────────────────────
+// ── _actressPillDisplayText（CD-116b-11 全表 11 格）─────────────────────────
 
-test('_actressPillDisplayText：age 附加單位、height 不附加（值已含 cm）、cup 附加單位', () => {
+test('_actressPillDisplayText：CD-116b-11 對照表 11 個合法組合（含 en dash）', () => {
     const c = makeComponent();
-    assert.equal(c._actressPillDisplayText({ dim: 'age', op: '=', value: '28' }), '=28search.unit.age');
-    assert.equal(c._actressPillDisplayText({ dim: 'height', op: '=', value: '160cm' }), '=160cm');
-    assert.equal(c._actressPillDisplayText({ dim: 'cup', op: '=', value: 'C' }), '=Csearch.unit.cup');
+    // age × 4
+    assert.equal(c._actressPillDisplayText({ dim: 'age', op: '=', value: '37', value2: null }), '=37search.unit.age');
+    assert.equal(c._actressPillDisplayText({ dim: 'age', op: '<=', value: '37', value2: null }), '≤37search.unit.age');
+    assert.equal(c._actressPillDisplayText({ dim: 'age', op: '>=', value: '37', value2: null }), '≥37search.unit.age');
+    assert.equal(c._actressPillDisplayText({ dim: 'age', op: 'range', value: '35', value2: '40' }), '35–40search.unit.age');
+    // height × 4（單位由顯示層補 'cm'，value 不含單位）
+    assert.equal(c._actressPillDisplayText({ dim: 'height', op: '=', value: '160', value2: null }), '=160cm');
+    assert.equal(c._actressPillDisplayText({ dim: 'height', op: '<=', value: '160', value2: null }), '≤160cm');
+    assert.equal(c._actressPillDisplayText({ dim: 'height', op: '>=', value: '160', value2: null }), '≥160cm');
+    assert.equal(c._actressPillDisplayText({ dim: 'height', op: 'range', value: '155', value2: '165' }), '155–165cm');
+    // cup × 3（無 range）
+    assert.equal(c._actressPillDisplayText({ dim: 'cup', op: '=', value: 'B', value2: null }), '=Bsearch.unit.cup');
+    assert.equal(c._actressPillDisplayText({ dim: 'cup', op: '<=', value: 'B', value2: null }), '≤Bsearch.unit.cup');
+    assert.equal(c._actressPillDisplayText({ dim: 'cup', op: '>=', value: 'B', value2: null }), '≥Bsearch.unit.cup');
 });
 
 // ── `.lb-actress-core-value` 是原生 <button type="button">（機械證明，非 <span>）──

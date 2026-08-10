@@ -104,7 +104,7 @@
                                     <span class="filter-pill-value" x-text="_actressPillDisplayText(pill)"></span>
                                     <button type="button" class="filter-pill-remove"
                                             @click="removeActressPill(pill.dim, pill.value)"
-                                            :aria-label="t('showcase.pill.remove_aria', { value: pill.value })">✕</button>
+                                            :aria-label="t('showcase.pill.remove_aria', { value: _actressPillDisplayText(pill) })">✕</button>
                                 </span>
                             </template>
                         </span>

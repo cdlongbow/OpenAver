@@ -83,8 +83,9 @@ test('fail-closed：Object.prototype 的 key 當 dim 一律不符合（不得 fa
     });
 });
 
-test('fail-closed：op !== "=" → 不符合', () => {
-    const pred = buildActressPillPredicate([{ dim: 'height', op: '<=', value: '160cm' }]);
+test('fail-closed：未知 op（~=）→ 不符合', () => {
+    // 116b 之後 <= / >= / range 皆為合法 op；此處改用真正未知的 op
+    const pred = buildActressPillPredicate([{ dim: 'height', op: '~=', value: '160cm' }]);
     assert.equal(pred(A_FULL), false);
     assert.equal(pred(A_TALL), false);
 });
