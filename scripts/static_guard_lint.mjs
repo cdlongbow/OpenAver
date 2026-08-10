@@ -1087,9 +1087,9 @@ const RULES = [
   // ---- [TestStatePageCloakGuard] div.state-page 全 x-cloak（tag-scan class-tag multi） ----
   {
     file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
-    tagName: 'div', className: 'state-page', multi: true, expectedCount: 5,
+    tagName: 'div', className: 'state-page', multi: true, expectedCount: 6,
     required: ['x-cloak'],
-    note: '[TestStatePageCloakGuard] test_showcase_state_pages_cloaked — showcase.html 5 個 div.state-page 皆 x-cloak',
+    note: '[TestStatePageCloakGuard] test_showcase_state_pages_cloaked — showcase.html 6 個 div.state-page 皆 x-cloak（116a-T4 新增「有收藏但篩選後為零」分支，5→6；不變式不變：每一個都要 x-cloak）',
   },
   {
     file: 'web/templates/search.html', kind: 'tag-scan', mode: 'class-tag',

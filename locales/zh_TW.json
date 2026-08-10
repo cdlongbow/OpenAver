@@ -973,7 +973,10 @@
       "pill_suffix": "部",
       "search_actresses_prefix": "找到 ",
       "search_actresses_middle": " 位女優 \"",
-      "search_actresses_suffix": "\""
+      "search_actresses_suffix": "\"",
+      "pill_actresses_prefix": "符合",
+      "pill_actresses_middle": "個條件的",
+      "pill_actresses_suffix": "位"
     },
     "nav": {
       "prev_page": "上一頁",
@@ -1068,6 +1071,7 @@
       "removeSuccess": "已從收藏移除",
       "empty": "尚未收藏任何女優",
       "emptyHint": "點擊右上角 + 新增收藏",
+      "searchEmpty": "沒有符合條件的女優",
       "search_films": "搜尋相關影片",
       "addFavorite": "加入收藏",
       "favorited": "已收藏",

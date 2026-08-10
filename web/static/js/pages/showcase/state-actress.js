@@ -311,6 +311,18 @@ export function stateActress() {
             this.applyActressFilterAndSort();
         },
 
+        // TASK-116a-T4: 女優搜尋框 Backspace 刪最後一枚 actressPills（鏡射 onSearchBackspace）
+        onActressSearchBackspace(event) {
+            if (event.isComposing) return;
+            // 有字：交給瀏覽器原生刪字，不 preventDefault、不動 pill
+            if (event.target.value !== '') return;
+            // 游標必須在最左且選取為 collapsed；非 collapsed 選取不得刪 pill
+            if (!(event.target.selectionStart === 0 && event.target.selectionEnd === 0)) return;
+            if (this.actressPills.length === 0) return;
+            var last = this.actressPills[this.actressPills.length - 1];
+            this.removeActressPill(last.dim, last.value);
+        },
+
         onActressSortChange() {
             this._sortWithFlip(() => {
                 this.applyActressFilterAndSort();

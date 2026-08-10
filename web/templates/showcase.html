@@ -111,7 +111,8 @@
                         <input type="text"
                                :placeholder="actressPills.length ? '' : t('showcase.search.actress')"
                                x-model="actressSearch"
-                               @input.debounce.300ms="onActressSearchChange()">
+                               @input.debounce.300ms="onActressSearchChange()"
+                               @keydown.backspace="onActressSearchBackspace($event)">
                     </div>
                     <div class="search-actions-right">
                         <!-- 44b: heart icon (precise match) -->
@@ -533,6 +534,11 @@
                 <i class="bi bi-person-heart state-page-icon"></i>
                 <p class="state-page-text" x-text="t('showcase.actress.empty')"></p>
                 <p class="state-page-text" x-text="t('showcase.actress.emptyHint')"></p>
+            </div>
+            <!-- Search/filter empty (T4) -->
+            <div class="state-page" x-cloak x-show="!actressLoading && actressCount > 0 && filteredActressCount === 0">
+                <i class="bi bi-search state-page-icon"></i>
+                <p class="state-page-text" x-text="t('showcase.actress.searchEmpty')"></p>
             </div>
             <!-- Actress Grid -->
             <div class="actress-grid" x-show="!actressLoading && filteredActressCount > 0">
@@ -1565,11 +1571,14 @@
             <template x-if="showFavoriteActresses && (!actressSearch || filteredActressCount > 0)">
                 <span class="footer-count footer-count--actress">
                     <i class="bi bi-person-circle"></i>
-                    <template x-if="!actressSearch">
+                    <template x-if="!actressSearch && !actressPills.length">
                         <span><b x-text="filteredActressCount"></b> {{ t('showcase.unit.actresses') }}</span>
                     </template>
-                    <template x-if="actressSearch && filteredActressCount > 0">
+                    <template x-if="actressSearch && filteredActressCount > 0 && !actressPills.length">
                         <span>{{ t('showcase.status.search_actresses_prefix') }}<b x-text="filteredActressCount"></b>{{ t('showcase.status.search_actresses_middle') }}<b class="footer-search-term" x-text="actressSearch"></b>{{ t('showcase.status.search_actresses_suffix') }}</span>
+                    </template>
+                    <template x-if="actressPills.length > 0">
+                        <span>{{ t('showcase.status.pill_actresses_prefix') }} <b x-text="actressPills.length"></b> {{ t('showcase.status.pill_actresses_middle') }} <b x-text="filteredActressCount"></b> {{ t('showcase.status.pill_actresses_suffix') }}</span>
                     </template>
                 </span>
             </template>
