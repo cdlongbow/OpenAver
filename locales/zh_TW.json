@@ -909,7 +909,17 @@
         "cup": "罩杯"
       },
       "title": "{dim}：{value}",
-      "remove_aria": "移除篩選：{value}"
+      "remove_aria": "移除篩選：{value}",
+      "op": {
+        "eq": "等於",
+        "lte": "小於等於",
+        "gte": "大於等於",
+        "range": "區間"
+      },
+      "editor": {
+        "range_min": "下限",
+        "range_max": "上限"
+      }
     },
     "action": {
       "clear_search": "清除搜尋",

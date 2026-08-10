@@ -3026,6 +3026,151 @@ body.sidebar-collapsed .showcase-footer {
     outline: none;
 }
 
+/* ==================== 116b-T3: Actress pill editor popover ====================
+   Anchored to .spotlight-search (position:relative, theme.css:217), NOT to
+   .filter-pill-group or the pill itself — CD-116b-4: .filter-pill-group's
+   :focus-within { transform: scale(1.02) } (above) establishes a new CSS
+   containing block, which would drag even a position:fixed descendant along
+   with it. Token language copied from the project's one existing anchored
+   popover, .toolbar-dropdown (:81-96 above). */
+.pill-editor-popover {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    width: min(280px, 100%);
+    margin-top: 0.5rem;
+    background: var(--surface-2);
+    border: 1px solid var(--stroke-default);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    padding: 0.75rem;
+    z-index: 200;
+}
+
+.pill-editor-title {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.5rem;
+}
+
+.pill-editor-modes {
+    display: flex;
+    gap: 4px;
+}
+
+.pill-editor-mode {
+    height: 32px;
+    padding: 0 0.5rem;   /* 8pt grid（§4 layout 級）——0.6rem=9.6px 不落在任何合法帶 */
+    border: 1px solid var(--stroke-default);
+    border-radius: var(--fluent-radius-md);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.8125rem;
+    cursor: pointer;
+    transition:
+        background-color var(--fluent-duration-fast) var(--fluent-ease-standard),
+        border-color var(--fluent-duration-fast) var(--fluent-ease-standard),
+        color var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+
+.pill-editor-mode:hover:not(.is-active) {
+    background: color-mix(in oklch, var(--color-base-content) 8%, transparent);
+}
+
+.pill-editor-mode.is-active {
+    background: color-mix(in oklch, var(--color-primary) 15%, transparent);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.pill-editor-mode:focus-visible {
+    outline: 2px solid var(--stroke-default);
+    outline-offset: 1px;
+}
+
+.pill-editor-range {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.pill-editor-range input {
+    flex: 1 1 0;
+    width: 0;
+}
+
+.pill-editor-actions {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    margin-top: 0.75rem;
+}
+
+/* Borrow .rescrape-confirm-btn's layout (circle, inline-flex centering,
+   transition shape — rescrape-modal.css:306-319) but NOT its visual weight.
+   CD-116b-10: this ✓/✗ commits a fully reversible draft edit, not an
+   irreversible write like rescrape's — so no solid fill at rest, no
+   transform:scale() bounce, 32px instead of 48px. */
+.pill-editor-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--fluent-radius-circle);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+    cursor: pointer;
+    border: 1px solid;
+    background: transparent;
+    transition: background-color var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+
+.pill-editor-btn.cancel {
+    color: var(--color-error);
+    border-color: color-mix(in oklch, var(--color-error) 30%, transparent);
+}
+
+.pill-editor-btn.cancel:hover {
+    background: color-mix(in oklch, var(--color-error) 10%, transparent);
+}
+
+.pill-editor-btn.confirm {
+    color: var(--color-success);
+    border-color: color-mix(in oklch, var(--color-success) 30%, transparent);
+}
+
+.pill-editor-btn.confirm:hover {
+    background: color-mix(in oklch, var(--color-success) 10%, transparent);
+}
+
+.pill-editor-btn:focus-visible {
+    outline: 2px solid var(--stroke-default);
+    outline-offset: 1px;
+}
+
+/* Pill body switches <span> → <button> when the popover is available
+   (_pillPopoverEnabled, ≥481px, CD-116b-8) — reset browser button chrome so
+   it stays visually identical to the plain-text span it replaces on mobile. */
+.actress-filter-pill-group button.filter-pill-value {
+    border: none;
+    padding: inherit;
+    font: inherit;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+
+/* Editing state sits on the whole pill (CD-116b-12b: ".filter-pill 上、不新開元素").
+   The popover is anchored under the entire search row rather than to the pill it
+   edits (CD-116b-4), so this border is the only thing telling the user *which*
+   pill is open — a tint on the text alone reads as too weak a signal for that job.
+   Same --accent language as .pill-editor-mode.is-active, one step lighter on the
+   fill so the pill's own text stays legible. */
+.filter-pill.is-editing {
+    border-color: var(--accent);
+    background: color-mix(in oklch, var(--color-primary) 10%, transparent);
+}
+
 /* ==================== Phase 44b T3: Hero Card ==================== */
 
 /* Grid Mode Hero Card — cursor pointer */
