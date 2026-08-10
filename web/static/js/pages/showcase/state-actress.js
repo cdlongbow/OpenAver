@@ -7,6 +7,7 @@
 
 import { _actresses, _filteredActresses, _actressesLoaded, _nameToGroup, _loadAliasMap, _killLightboxTimelines, _setActressesLoaded, _setActresses, _setFilteredActresses } from '@/showcase/state-base.js';
 import { normalizePillValue } from '@/shared/pill-filter.js';
+import { actressAgeValue, actressHeightValue, actressCupValue } from '@/shared/actress-metric.js';
 
 export function stateActress() {
     return {
@@ -240,7 +241,6 @@ export function stateActress() {
             }
 
             // 2. Sort
-            var cupRank = { A:1, B:2, C:3, D:4, E:5, F:6, G:7, H:8, I:9, J:10, K:11 };
             var sort = this.actressSort;
             var order = this.actressOrder;
             filtered = filtered.slice().sort(function (a, b) {
@@ -256,16 +256,14 @@ export function stateActress() {
                     va = a.created_at || '';
                     vb = b.created_at || '';
                 } else if (sort === 'age') {
-                    va = a.age != null ? a.age : Infinity;
-                    vb = b.age != null ? b.age : Infinity;
+                    va = actressAgeValue(a);    va = va != null ? va : Infinity;
+                    vb = actressAgeValue(b);    vb = vb != null ? vb : Infinity;
                 } else if (sort === 'height') {
-                    var ha = parseInt(a.height);
-                    var hb = parseInt(b.height);
-                    va = isNaN(ha) ? Infinity : ha;
-                    vb = isNaN(hb) ? Infinity : hb;
+                    va = actressHeightValue(a); va = va != null ? va : Infinity;
+                    vb = actressHeightValue(b); vb = vb != null ? vb : Infinity;
                 } else if (sort === 'cup') {
-                    va = cupRank[a.cup] || Infinity;
-                    vb = cupRank[b.cup] || Infinity;
+                    va = actressCupValue(a);    va = va != null ? va : Infinity;
+                    vb = actressCupValue(b);    vb = vb != null ? vb : Infinity;
                 } else {
                     va = a.video_count || 0;
                     vb = b.video_count || 0;
