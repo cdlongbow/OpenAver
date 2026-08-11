@@ -816,6 +816,39 @@
                         </div>
                     </div>
 
+                    <!-- 8b. pill-editor-popover（Showcase 女優數值 pill 編輯浮層；116c 形狀：三鈕 + 自訂區間列） -->
+                    <div class="ds-pill-card">
+                        <div class="ds-pill-card-demo" style="display: flex; justify-content: center;">
+                            <div class="pill-editor-popover" style="position: static; width: 280px; margin: 0; pointer-events: none;">
+                                <div class="pill-editor-title">身高</div>
+                                <div class="pill-editor-modes">
+                                    <button type="button" class="pill-editor-mode is-active">=</button>
+                                    <button type="button" class="pill-editor-mode">≤</button>
+                                    <button type="button" class="pill-editor-mode">≥</button>
+                                </div>
+                                <div class="pill-editor-custom">
+                                    <div class="pill-editor-custom-label">
+                                        <span>自訂區間</span><span class="pill-editor-hint">（146 ~ 170）</span>
+                                    </div>
+                                    <div class="pill-editor-range">
+                                        <input type="number" class="input input-bordered input-sm" value="155" readonly>
+                                        <span class="pill-editor-range-sep" aria-hidden="true">~</span>
+                                        <input type="number" class="input input-bordered input-sm" value="165" readonly>
+                                    </div>
+                                    <div class="pill-editor-actions">
+                                        <button type="button" class="pill-editor-btn cancel" aria-label="cancel"><i class="bi bi-x-lg"></i></button>
+                                        <button type="button" class="pill-editor-btn confirm" aria-label="confirm"><i class="bi bi-check-lg"></i></button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="ds-pill-card-meta">
+                            <span class="ds-pill-card-class">類 8b · <code>.pill-editor-popover</code></span>
+                            <p class="ds-pill-card-desc">女優數值 pill 編輯浮層（三顆運算子鈕即點即套 ＋ 常駐自訂區間列）</p>
+                            <code class="ds-pill-card-token">.pill-editor-*</code>
+                        </div>
+                    </div>
+
                 </div>
             </div>
         </section>

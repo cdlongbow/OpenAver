@@ -152,41 +152,40 @@
 
                         <div class="pill-editor-modes">
                             <button type="button" class="pill-editor-mode" :class="{ 'is-active': _pillEditor?.op === '=' }"
-                                    @click="_setEditorMode('=')" :aria-label="t('showcase.pill.op.eq')">=</button>
+                                    @click="_applyPillOp('=')" :aria-label="t('showcase.pill.op.eq')">=</button>
                             <button type="button" class="pill-editor-mode" :class="{ 'is-active': _pillEditor?.op === '<=' }"
-                                    @click="_setEditorMode('<=')" :aria-label="t('showcase.pill.op.lte')">≤</button>
+                                    @click="_applyPillOp('<=')" :aria-label="t('showcase.pill.op.lte')">≤</button>
                             <button type="button" class="pill-editor-mode" :class="{ 'is-active': _pillEditor?.op === '>=' }"
-                                    @click="_setEditorMode('>=')" :aria-label="t('showcase.pill.op.gte')">≥</button>
-                            <!-- 罩杯無 range：結構層不渲染（非 CSS 隱藏）——CD-116b-2 predicate fail-closed 的第二道防線 -->
-                            <template x-if="_pillEditor?.dim !== 'cup'">
-                                <button type="button" class="pill-editor-mode" :class="{ 'is-active': _pillEditor?.op === 'range' }"
-                                        @click="_setEditorMode('range')" :aria-label="t('showcase.pill.op.range')">
-                                    {{ t('showcase.pill.op.range') }}
-                                </button>
-                            </template>
+                                    @click="_applyPillOp('>=')" :aria-label="t('showcase.pill.op.gte')">≥</button>
                         </div>
 
-                        <!-- 只有 range 模式才渲染；:min/:max 單一所有者是 T2 的 _pillRangeBounds()
-                             （Opus 審核附註 #2：模組級常數在 Alpine 表達式讀不到，不得在此另寫一份數字） -->
-                        <template x-if="_pillEditor?.op === 'range'">
-                            <div class="pill-editor-range">
-                                <input type="number" class="input input-bordered input-sm"
-                                       x-model="_pillEditor.rangeLo"
-                                       :min="_pillRangeBounds()?.min" :max="_pillRangeBounds()?.max"
-                                       :aria-label="t('showcase.pill.editor.range_min')">
-                                <input type="number" class="input input-bordered input-sm"
-                                       x-model="_pillEditor.rangeHi"
-                                       :min="_pillRangeBounds()?.min" :max="_pillRangeBounds()?.max"
-                                       :aria-label="t('showcase.pill.editor.range_max')">
+                        <!-- 116c-T3: 自訂區間列常駐（罩杯整組不渲染）。
+                             ⚠ x-if 必須先判 _pillEditor 非 null——浮層本體是 x-show，關閉時 markup 仍在、
+                             綁定仍求值；`_pillEditor?.dim !== 'cup'` 在 null 時為 true 會炸 x-model（CD-116c-5）。 -->
+                        <template x-if="_pillEditor && _pillEditor.dim !== 'cup'">
+                            <div class="pill-editor-custom">
+                                <div class="pill-editor-custom-label">
+                                    <span x-text="t('showcase.pill.op.range')"></span><span class="pill-editor-hint" x-text="_pillDimRangeHint()"></span>
+                                </div>
+                                <div class="pill-editor-range">
+                                    <input type="number" class="input input-bordered input-sm"
+                                           inputmode="numeric"
+                                           x-model="_pillEditor.rangeLo"
+                                           :aria-label="t('showcase.pill.editor.range_min')">
+                                    <span class="pill-editor-range-sep" aria-hidden="true">~</span>
+                                    <input type="number" class="input input-bordered input-sm"
+                                           inputmode="numeric"
+                                           x-model="_pillEditor.rangeHi"
+                                           :aria-label="t('showcase.pill.editor.range_max')">
+                                </div>
+                                <div class="pill-editor-actions" x-show="_pillEditorHasRangeInput()">
+                                    <button type="button" class="pill-editor-btn cancel" @click="_cancelPillEditor()"
+                                            :aria-label="t('common.action.cancel')"><i class="bi bi-x-lg"></i></button>
+                                    <button type="button" class="pill-editor-btn confirm" @click="_commitPillEditor()"
+                                            :aria-label="t('common.action.confirm')"><i class="bi bi-check-lg"></i></button>
+                                </div>
                             </div>
                         </template>
-
-                        <div class="pill-editor-actions">
-                            <button type="button" class="pill-editor-btn cancel" @click="_cancelPillEditor()"
-                                    :aria-label="t('common.action.cancel')"><i class="bi bi-x-lg"></i></button>
-                            <button type="button" class="pill-editor-btn confirm" @click="_commitPillEditor()"
-                                    :aria-label="t('common.action.confirm')"><i class="bi bi-check-lg"></i></button>
-                        </div>
                     </div>
 
                     <div class="search-actions-right">

@@ -1,8 +1,7 @@
-// TASK-116b-T3: 女優 pill 浮層 markup 結構契約。
+// TASK-116c-T3: 女優 pill 浮層 markup 結構契約（116c 重設計）。
 // 技術比照 actress-pill-shell.test.mjs：以文字解析 showcase.html / zh_TW.json，
 // 不跑 CDP、不動 Alpine runtime、不需要 window/importmap（純文字讀取，FE-GUARD-11 不適用本檔）。
-// 可互動 / 視覺幾何（真 click 開關、360/481px 斷點行為、溢出量測）交給 CDP 驗收，見
-// feature/116-actress-attribute-filter/TASK-116b-T3.md「CDP 驗收清單」，本檔不重複驗。
+// 可互動 / 視覺幾何（真 click 開關、360/481px 斷點行為、content box 量測）交給 T4 CDP，本檔不重複驗。
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -135,19 +134,22 @@ test('影片 .filter-pill-group（bare class）零污染：不含任何 pill-edi
     }
 });
 
-// ===== 浮層四段順序 ＝ CD-116b-12b（class 命名逐字）=====
+// ===== 浮層段落順序 ＝ CD-116c-5（title → modes → custom）=====
 
-test('浮層四段順序：title → modes → range(僅 range 模式) → actions', () => {
+test('浮層段落順序：title → modes → custom（含 range ＋ actions）', () => {
     const titleIdx = POPOVER.indexOf('class="pill-editor-title"');
     const modesIdx = POPOVER.indexOf('class="pill-editor-modes"');
+    const customIdx = POPOVER.indexOf('class="pill-editor-custom"');
     const rangeIdx = POPOVER.indexOf('class="pill-editor-range"');
     const actionsIdx = POPOVER.indexOf('class="pill-editor-actions"');
     assert.ok(titleIdx !== -1, '應有 .pill-editor-title');
     assert.ok(modesIdx !== -1, '應有 .pill-editor-modes');
+    assert.ok(customIdx !== -1, '應有 .pill-editor-custom');
     assert.ok(rangeIdx !== -1, '應有 .pill-editor-range');
     assert.ok(actionsIdx !== -1, '應有 .pill-editor-actions');
     assert.ok(titleIdx < modesIdx, 'title 應在 modes 之前');
-    assert.ok(modesIdx < rangeIdx, 'modes 應在 range 之前');
+    assert.ok(modesIdx < customIdx, 'modes 應在 custom 之前');
+    assert.ok(customIdx < rangeIdx, 'custom 應包住 range');
     assert.ok(rangeIdx < actionsIdx, 'range 應在 actions 之前');
 });
 
@@ -158,66 +160,93 @@ test('.pill-editor-title 用 t(\'showcase.pill.dim_label.\' + (_pillEditor?.dim 
     );
 });
 
-test('.pill-editor-modes 含四顆模式鈕（=/≤/≥/區間），選中態綁 .is-active', () => {
-    for (const op of ["'='", "'<='", "'>='", "'range'"]) {
+// ===== 三顆運算子鈕（116c：第四顆「區間」刪除，@click 改 _applyPillOp）=====
+
+test('.pill-editor-modes 恰有三顆鈕，@click 分別綁 _applyPillOp(\'=\'|\'<=\'|\'>=\')', () => {
+    const modesStart = POPOVER.indexOf('class="pill-editor-modes"');
+    const modesEnd = POPOVER.indexOf('</div>', modesStart);
+    const modesSection = POPOVER.slice(modesStart, modesEnd);
+    const buttons = modesSection.match(/class="pill-editor-mode"/g) || [];
+    assert.equal(buttons.length, 3, `.pill-editor-modes 應恰有三顆 .pill-editor-mode，實際 ${buttons.length}`);
+    for (const op of ["'='", "'<='", "'>='"]) {
+        assert.ok(
+            POPOVER.includes(`@click="_applyPillOp(${op})"`),
+            `應有 @click="_applyPillOp(${op})"`,
+        );
+    }
+    // 舊契約殘留不得存在
+    assert.ok(!POPOVER.includes('_setEditorMode'), '浮層不得再引用已刪的 _setEditorMode');
+    assert.ok(!POPOVER.includes("@click=\"_applyPillOp('range')\""), '不得有第四顆 range 運算子鈕');
+});
+
+test('三顆鈕的 :class="{ \'is-active\': _pillEditor?.op === … }" 維持原樣（AC-C7b）', () => {
+    for (const op of ["'='", "'<='", "'>='"]) {
         const re = new RegExp(
             `class="pill-editor-mode"[^>]*:class="\\{\\s*'is-active':\\s*_pillEditor\\?\\.op\\s*===\\s*${op}\\s*\\}"`,
         );
         assert.ok(re.test(POPOVER), `.pill-editor-mode 應有 op===${op} 的 .is-active 綁定`);
     }
-});
-
-test('.pill-editor-modes 的四顆鈕 @click 分別綁 _setEditorMode(\'=\'|\'<=\'|\'>=\'|\'range\')', () => {
-    for (const op of ["'='", "'<='", "'>='", "'range'"]) {
-        assert.ok(
-            POPOVER.includes(`@click="_setEditorMode(${op})"`),
-            `應有 @click="_setEditorMode(${op})"`,
-        );
-    }
-});
-
-// ===== 罩杯：range 鈕在結構層 <template x-if> 分流內（非 CSS 隱藏）=====
-
-test('罩杯不渲染 range 鈕：range 鈕包在 <template x-if="_pillEditor?.dim !== \'cup\'"> 內', () => {
-    const modesStart = POPOVER.indexOf('class="pill-editor-modes"');
-    const rangeStart = POPOVER.indexOf('class="pill-editor-range"');
-    const modesSection = POPOVER.slice(modesStart, rangeStart);
+    // range 不再是鈕，不得有 is-active 綁 op==='range'
     assert.ok(
-        /<template x-if="_pillEditor\?\.dim !== 'cup'">[\s\S]*_setEditorMode\('range'\)[\s\S]*<\/template>/.test(modesSection),
-        'range 模式鈕應包在 <template x-if="_pillEditor?.dim !== \'cup\'"> 內（結構層不渲染，非 x-show/display:none）',
+        !/:class="\{\s*'is-active':\s*_pillEditor\?\.op\s*===\s*'range'\s*\}"/.test(POPOVER),
+        '不得有 op===\'range\' 的 .is-active 綁定（區間不再是模式鈕）',
     );
+});
+
+// ===== 罩杯：第 3–5 段在結構層 <template x-if> 分流內（條件字面硬鎖）=====
+
+test('第 3–5 段包在 <template x-if="_pillEditor && _pillEditor.dim !== \'cup\'"> 內（條件字面硬鎖）', () => {
+    // ⚠ 本 task 第一風險：不得寫成 _pillEditor?.dim !== 'cup'
+    // （浮層關著時 _pillEditor 為 null，optional chaining 條件為 true → x-model 炸 null）
     assert.ok(
-        !/x-show="[^"]*dim[^"]*!==\s*'cup'/.test(modesSection),
+        /<template x-if="_pillEditor && _pillEditor\.dim !== 'cup'">/.test(POPOVER),
+        '必須是字面 <template x-if="_pillEditor && _pillEditor.dim !== \'cup\'">',
+    );
+    // 反向：?. 版本是本 task 最容易犯的錯，守衛必須擋得住
+    assert.ok(
+        !/<template x-if="_pillEditor\?\.dim !== 'cup'">/.test(POPOVER),
+        '不得用 <template x-if="_pillEditor?.dim !== \'cup\'">（關閉時會炸 x-model）',
+    );
+    // 根元素必須是 .pill-editor-custom
+    const xIfIdx = POPOVER.indexOf('<template x-if="_pillEditor && _pillEditor.dim !== \'cup\'">');
+    assert.ok(xIfIdx !== -1);
+    const afterXIf = POPOVER.slice(xIfIdx, xIfIdx + 200);
+    assert.ok(
+        /class="pill-editor-custom"/.test(afterXIf),
+        'x-if 的單一根元素應是 .pill-editor-custom',
+    );
+    // range + actions 都在 custom 裡面
+    const custom = extractDivContaining(POPOVER, 'class="pill-editor-custom"', '.pill-editor-custom');
+    assert.ok(custom.includes('class="pill-editor-range"'), '.pill-editor-range 應在 .pill-editor-custom 內');
+    assert.ok(custom.includes('class="pill-editor-actions"'), '.pill-editor-actions 應在 .pill-editor-custom 內');
+    assert.ok(custom.includes('class="pill-editor-custom-label"'), '.pill-editor-custom-label 應在 .pill-editor-custom 內');
+    // 罩杯排除不得用 x-show
+    assert.ok(
+        !/x-show="[^"]*dim[^"]*!==\s*'cup'/.test(POPOVER),
         '罩杯排除不得用 x-show（必須是結構層 <template x-if>）',
     );
 });
 
-// ===== range 輸入框：僅 range 模式渲染、:min/:max 走 _pillRangeBounds()、x-model 無 .number =====
+// ===== 自訂區間列：常駐、無 :min/:max、inputmode、~ 分隔 =====
 
-test('.pill-editor-range 整段包在 <template x-if="_pillEditor?.op === \'range\'"> 內', () => {
-    const rangeBlockIdx = POPOVER.indexOf('<template x-if="_pillEditor?.op === \'range\'">');
-    assert.ok(rangeBlockIdx !== -1, '應有 <template x-if="_pillEditor?.op === \'range\'">');
-    const classIdx = POPOVER.indexOf('class="pill-editor-range"');
-    assert.ok(
-        classIdx > rangeBlockIdx && classIdx < rangeBlockIdx + 200,
-        '.pill-editor-range 應緊接在該 <template x-if> 之後（僅 range 模式渲染）',
-    );
-});
-
-test('兩個 range input 的 :min/:max 綁 _pillRangeBounds()（單一所有者，不得手寫數字）', () => {
+test('兩個 range input：inputmode=numeric、無 :min/:max、無 x-model.number、aria-label 沿用既有 key', () => {
     const rangeSection = extractDivContaining(POPOVER, 'class="pill-editor-range"', '.pill-editor-range');
     const inputs = rangeSection.match(/<input\b[^>]*>/g) || [];
     assert.equal(inputs.length, 2, `.pill-editor-range 應恰有兩個 <input>，實際 ${inputs.length}`);
     for (const input of inputs) {
         assert.ok(
-            /:min="_pillRangeBounds\(\)\?\.min"/.test(input),
-            `input 的 :min 應綁 _pillRangeBounds()?.min：${input}`,
+            /inputmode="numeric"/.test(input),
+            `input 應有 inputmode="numeric"：${input}`,
         );
         assert.ok(
-            /:max="_pillRangeBounds\(\)\?\.max"/.test(input),
-            `input 的 :max 應綁 _pillRangeBounds()?.max：${input}`,
+            !/:min=/.test(input),
+            `input 不得有 :min（§3.6 不做範圍驗證）：${input}`,
         );
-        // 反面先例守則：settings.html:1000 的 x-model.number 不准抄（CD-116b-1）
+        assert.ok(
+            !/:max=/.test(input),
+            `input 不得有 :max（§3.6 不做範圍驗證）：${input}`,
+        );
+        // 反面先例守則：settings.html 的 x-model.number 不准抄（CD-116b-1）
         assert.ok(
             !/x-model\.number/.test(input),
             `input 不得用 x-model.number（草稿邊界值必須維持字串）：${input}`,
@@ -239,6 +268,38 @@ test('兩個 range input 的 :min/:max 綁 _pillRangeBounds()（單一所有者�
         /:aria-label="t\('showcase\.pill\.editor\.range_max'\)"/.test(rangeSection),
         '上限 input 應綁 :aria-label="t(\'showcase.pill.editor.range_max\')"',
     );
+    // 舊契約殘留
+    assert.ok(!POPOVER.includes('_pillRangeBounds'), '浮層不得再引用已刪的 _pillRangeBounds');
+    assert.ok(
+        !POPOVER.includes("_pillEditor?.op === 'range'"),
+        '區間列不再包在 op===\'range\' 的 x-if 裡（常駐）',
+    );
+});
+
+test('兩框之間有 ~ 分隔（.pill-editor-range-sep，aria-hidden）', () => {
+    const rangeSection = extractDivContaining(POPOVER, 'class="pill-editor-range"', '.pill-editor-range');
+    assert.ok(
+        /class="pill-editor-range-sep"[^>]*aria-hidden="true"/.test(rangeSection)
+        || /aria-hidden="true"[^>]*class="pill-editor-range-sep"/.test(rangeSection),
+        '應有 .pill-editor-range-sep 且 aria-hidden="true"',
+    );
+    assert.ok(
+        /class="pill-editor-range-sep"[^>]*>~</.test(rangeSection)
+        || />~<\/span>/.test(rangeSection),
+        '分隔符可見文字應為 ~',
+    );
+});
+
+test('自訂區間標籤用 t(\'showcase.pill.op.range\') ＋ hint 綁 _pillDimRangeHint()', () => {
+    const custom = extractDivContaining(POPOVER, 'class="pill-editor-custom"', '.pill-editor-custom');
+    assert.ok(
+        /class="pill-editor-custom-label"[\s\S]*x-text="t\('showcase\.pill\.op\.range'\)"/.test(custom),
+        '標籤應綁 t(\'showcase.pill.op.range\')',
+    );
+    assert.ok(
+        /class="pill-editor-hint"[^>]*x-text="_pillDimRangeHint\(\)"/.test(custom),
+        '.pill-editor-hint 應綁 x-text="_pillDimRangeHint()"',
+    );
 });
 
 test('整個浮層（含 range input 之外）不含任何 x-model.number（CD-116b-1 反面先例）', () => {
@@ -248,9 +309,14 @@ test('整個浮層（含 range input 之外）不含任何 x-model.number（CD-1
     );
 });
 
-// ===== ✓/✗ 動作列 =====
+// ===== ✓/✗ 動作列：x-show 條件 + 方法綁定 =====
 
-test('.pill-editor-actions 含 .pill-editor-btn.cancel 與 .pill-editor-btn.confirm，各綁對應方法', () => {
+test('.pill-editor-actions 綁 x-show="_pillEditorHasRangeInput()"，且含 cancel/confirm', () => {
+    assert.ok(
+        /class="pill-editor-actions"[^>]*x-show="_pillEditorHasRangeInput\(\)"/.test(POPOVER)
+        || /x-show="_pillEditorHasRangeInput\(\)"[^>]*class="pill-editor-actions"/.test(POPOVER),
+        '.pill-editor-actions 應綁 x-show="_pillEditorHasRangeInput()"',
+    );
     assert.ok(
         /class="pill-editor-btn cancel"[^>]*@click="_cancelPillEditor\(\)"/.test(POPOVER),
         '.pill-editor-btn.cancel 應綁 @click="_cancelPillEditor()"',
@@ -261,7 +327,7 @@ test('.pill-editor-actions 含 .pill-editor-btn.cancel 與 .pill-editor-btn.conf
     );
 });
 
-test('✓/✗ 的 aria-label 重用既有 common.action.confirm/cancel（CD-116b-12b：不新增 key）', () => {
+test('✓/✗ 的 aria-label 重用既有 common.action.confirm/cancel（不新增 key）', () => {
     assert.ok(
         /class="pill-editor-btn cancel"[\s\S]{0,200}:aria-label="t\('common\.action\.cancel'\)"/.test(POPOVER),
         '.cancel 應綁 :aria-label="t(\'common.action.cancel\')"',
@@ -282,7 +348,7 @@ test('浮層 x-show 為三合取項：_pillEditor && showFavoriteActresses && _p
     );
 });
 
-test('浮層帶 @click.stop（不得把點擊冒泡出去，供 T4 的 @click.outside 銜接）', () => {
+test('浮層帶 @click.stop（不得把點擊冒泡出去，供 @click.outside 銜接）', () => {
     const openTagEnd = POPOVER.indexOf('>');
     const openTag = POPOVER.slice(0, openTagEnd + 1);
     assert.ok(/@click\.stop/.test(openTag), '.pill-editor-popover 開始標籤應含 @click.stop');
@@ -297,7 +363,6 @@ test('浮層帶 x-transition.opacity.duration.150ms（照抄 .toolbar-dropdown �
     );
 });
 
-// 116b-T4 落地：x-trap / @click.outside / a11y（原 T3 負向骨架斷言已翻轉）
 test('浮層帶 x-trap="!!_pillEditor"（不加 .inert）與 @click.outside（CD-116b-9）', () => {
     const openTagEnd = POPOVER.indexOf('>');
     const openTag = POPOVER.slice(0, openTagEnd + 1);
@@ -331,26 +396,26 @@ test('浮層 role/aria：dialog + aria-modal=false + aria-labelledby=pill-editor
     );
 });
 
-// ===== i18n key：六個新 key 存在且值正確、且模板確有引用 =====
+// ===== i18n key：用途沿用／改值，模板確有引用 =====
 
-const EXPECTED_NEW_KEYS = {
+const EXPECTED_KEYS = {
     'showcase.pill.op.eq': '等於',
     'showcase.pill.op.lte': '小於等於',
     'showcase.pill.op.gte': '大於等於',
-    'showcase.pill.op.range': '區間',
+    'showcase.pill.op.range': '自訂區間',
     'showcase.pill.editor.range_min': '下限',
     'showcase.pill.editor.range_max': '上限',
 };
 
-test('zh_TW.json 新增六個 pill.op / pill.editor key，值與 CD-116b-12b 表逐字一致', () => {
-    for (const [key, expected] of Object.entries(EXPECTED_NEW_KEYS)) {
+test('zh_TW.json 六個 pill.op / pill.editor key 值正確（range 改為「自訂區間」）', () => {
+    for (const [key, expected] of Object.entries(EXPECTED_KEYS)) {
         const actual = lookupNested(ZH_TW, key);
         assert.equal(actual, expected, `zh_TW 缺/錯 key ${key}：期望 ${JSON.stringify(expected)}，實際 ${JSON.stringify(actual)}`);
     }
 });
 
-test('浮層 markup 確有綁定全部六個新 key', () => {
-    for (const key of Object.keys(EXPECTED_NEW_KEYS)) {
+test('浮層 markup 確有綁定全部六個 key', () => {
+    for (const key of Object.keys(EXPECTED_KEYS)) {
         assert.ok(
             POPOVER.includes(`t('${key}')`),
             `.pill-editor-popover 應引用 t('${key}')`,
@@ -358,8 +423,8 @@ test('浮層 markup 確有綁定全部六個新 key', () => {
     }
 });
 
-test('六個新 key 只寫 zh_TW（本檔不驗其餘三語，milestone 才補齊）', () => {
-    // 僅確認 zh_TW 檔內確實新增，不對 zh_CN/en/ja 做任何斷言——依 CLAUDE.md
+test('六個 key 只寫 zh_TW（本檔不驗其餘三語，milestone 才補齊）', () => {
+    // 僅確認 zh_TW 檔內確實存在，不對 zh_CN/en/ja 做任何斷言——依 CLAUDE.md
     // 「i18n 新增 key 只寫 zh_TW」，其餘三語留空靠 fallback是本 branch 刻意行為。
     assert.ok(lookupNested(ZH_TW, 'showcase.pill.op.eq') !== undefined);
 });

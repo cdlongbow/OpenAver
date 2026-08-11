@@ -3087,15 +3087,53 @@ body.sidebar-collapsed .showcase-footer {
     outline-offset: 1px;
 }
 
-.pill-editor-range {
-    display: flex;
-    gap: 0.5rem;
+/* 116c-T3: 自訂區間列。三顆鈕是「點了就生效」的觸發器，這一列要按 ✓ 才生效——
+   兩種提交行為必須在視覺上分得開（spec-116c §4），1px 分隔線是最輕的做法。 */
+.pill-editor-custom {
     margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--stroke-subtle);
 }
 
+.pill-editor-custom-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-bottom: 4px;            /* micro 級（§4） */
+}
+
+/* 提示是一句說明、不是控制項 —— 比標籤再退一階 */
+.pill-editor-hint { color: var(--text-muted); }
+
+.pill-editor-range {
+    display: flex;
+    align-items: center;
+    gap: 4px;                      /* ~ 要黏著兩個框 */
+}
+
+.pill-editor-range-sep {
+    color: var(--text-muted);
+    font-size: 0.8125rem;
+}
+
+/* CD-116c-9：.spotlight-search input（theme.css:240）是裸後代選擇器，給主搜尋框預留
+   左右 icon 位置，變數值又被 .spotlight-search--mode-toggle 覆寫成 5.5rem/8.5rem；
+   浮層錨在 .spotlight-search 底下（CD-116b-4）就被它掃到，content box 只剩約 2px。
+   同 specificity（0,1,1）＋ showcase.css 後載入 → source order 勝（同 :3005
+   .filter-pill-group > input 的既有手法）。
+   ⚠ flex 必須一起改：flex-basis: 0 在 row 方向優先於 width（FE-CSS-06）。 */
 .pill-editor-range input {
-    flex: 1 1 0;
-    width: 0;
+    flex: 0 0 auto;
+    width: 7ch;                    /* ch：與 PIN 欄同一手法，survive 字級 13→20px */
+    height: 32px;                  /* 與 .pill-editor-mode 對齊 */
+    padding: 0 4px;
+    text-align: center;
+    appearance: textfield;         /* CD-116c-10：3 位數寬放不下 spinner */
+}
+
+.pill-editor-range input::-webkit-outer-spin-button,
+.pill-editor-range input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
 }
 
 .pill-editor-actions {
