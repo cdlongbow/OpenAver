@@ -829,6 +829,13 @@ export function stateActress() {
         // --- 117-T3/T4: Actress add panel（T5 queue stubs 仍在） ---
 
         // AC-1.3 / AC-1.6：殼同步開，不 await 網路；每次開啟重載（無快取——片數必須與當下庫一致）
+        //
+        // CD-117-9（Codex PR review P2，已查證屬實）：只靠 `resolve(sync_primary) ∪ {req.name}`
+        // 聯集進 _libCovered 的名字刻意不寫進 actress_aliases 表（見 web/routers/actress.py
+        // 的 covered_names 組裝註解）——這代表「關閉再開回到空心、重新載入後看磁碟真相」
+        // 不是自動成立的語意，是**這裡**這行 reset 讓它成立。_libCovered 本身沒有其他清空點
+        // （全檔唯一寫入處是 _libMarkCovered()）；漏了這行，聯集進來的名字會在整個分頁存活期
+        // 間單調遞增、永遠標實心，使用者對那個名字的收藏入口會被永久鎖住（要整頁重整才解）。
         openActressAddPanel() {
             this.actressAddPanelOpen = true;
             this._libQuery = '';
@@ -836,7 +843,8 @@ export function stateActress() {
             this._libError = null;
             this._libRows = [];
             this._libTotal = 0;
-            this._libClearRowErrors();    // 117-T5：重開時清掉上一輪的紅字（queued/loading/covered 保留）
+            this._libCovered = {};        // CD-117-9：回到空心，磁碟真相由 _loadLibraryActresses() 的 is_favorite 重新權威判定
+            this._libClearRowErrors();    // 117-T5：重開時清掉上一輪的紅字（queued/loading 保留）
             this._loadLibraryActresses();
         },
 

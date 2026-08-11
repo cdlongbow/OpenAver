@@ -1036,14 +1036,13 @@ test('關閉面板不取消：enqueue 3 列後 closeActressAddPanel()，仍全�
     }
 });
 
-// 16. 重開清 error、保留 queued/loading/covered
-test('重開面板：error 列變 idle，queued/loading 列與 _libCovered/_libInFlight 不受影響', async () => {
+// 16a. 重開清 error、保留 queued/loading（_libCovered 的行為拆到 16b，見 CD-117-9）
+test('重開面板：error 列變 idle，queued/loading 列與 _libInFlight 不受影響', async () => {
     const restore = mockFetchOk({ success: true, actresses: [], total: 0 });
     try {
         const c = makeComponent({
             _libRowState: { '失敗優': 'error', '排隊優': 'queued', '進行優': 'loading' },
             _libRowError: { '失敗優': 'showcase.actress.addNotFound' },
-            _libCovered: { '涵蓋優': true },
             _libQueue: ['排隊優'],
             _libInFlight: 1,
         });
@@ -1053,11 +1052,67 @@ test('重開面板：error 列變 idle，queued/loading 列與 _libCovered/_libI
         assert.equal(c._libRowState['失敗優'], 'idle');
         assert.equal(c._libRowState['排隊優'], 'queued');
         assert.equal(c._libRowState['進行優'], 'loading');
-        assert.equal(c._libCovered['涵蓋優'], true);
         assert.equal(c._libQueue.length, 1);
         assert.equal(c._libInFlight, 1);
     } finally {
         restore();
+    }
+});
+
+// 16b. CD-117-9（Codex PR review P2，已查證屬實並修正）：_libCovered 必須隨重開回到空心。
+// 舊版本這裡曾釘住「_libCovered 重開後仍是 true」（相反行為），與 plan-117.md CD-117-9
+// 明文承諾的「關閉再開回到空心」矛盾——只靠 ∪{req.name} 聯集覆蓋、alias 表根本不認得的
+// 名字，會在整個分頁存活期間永久顯示實心、使用者永遠點不到那個收藏入口。
+test('CD-117-9：重開面板後 _libCovered 回到空心，僅靠聯集覆蓋的名字可以再次點擊', () => {
+    const restore = mockFetchOk({ success: true, actresses: [], total: 0 });
+    try {
+        const row = { primary_name: '涵蓋優', names: ['涵蓋優'], video_count: 1, is_favorite: false };
+        const c = makeComponent({ _libCovered: { '涵蓋優': true } });
+        assert.equal(c.libRowFavorited(row), true, '重開前：僅靠聯集覆蓋仍算實心');
+
+        c.openActressAddPanel();
+
+        assert.deepEqual(c._libCovered, {}, 'openActressAddPanel 必須同步清空 _libCovered');
+        assert.equal(c.libRowFavorited(row), false, '重開後：磁碟真相判定，允許再次點擊');
+    } finally {
+        restore();
+    }
+});
+
+// 16c. 迴歸守衛：重開清空 _libCovered 之後，「重開前」就已送出、還沒收到回應的收藏請求，
+// 落地時仍要能正確把名字標進（重開後的）_libCovered——reset 不得吃掉隨後才到的合法回應。
+test('重開後 in-flight 收藏請求落地仍正確標記 covered（reset 不吃掉隨後才到的回應）', async () => {
+    const row = { primary_name: '飛行優', names: ['飛行優'], video_count: 1, is_favorite: false };
+    const mock = mockFetchManual();
+    try {
+        // 上一輪 session 遺留的聯集覆蓋（非本測試主角）：用來讓「reopen 有沒有真的清空」
+        // 這件事可被觀察到——若只留空物件開局，拿掉 reset 這行 mutation 不會讓斷言變紅。
+        const c = makeComponent({ _libCovered: { '上一輪殘留優': true } });
+        c.libEnqueueFavorite(row);
+        assert.equal(mock.calls.length, 1);
+        const favoriteCall = mock.calls[0];
+        assert.equal(favoriteCall.url, '/api/actresses/favorite');
+
+        // 使用者在收到回應前關閉又重開面板
+        c.closeActressAddPanel();
+        c.openActressAddPanel();
+        assert.deepEqual(c._libCovered, {}, 'reopen 當下先清空（含上一輪殘留）');
+
+        // reopen 觸發的 GET /api/actresses/library 落地（磁碟上這個名字還未真的收藏）
+        const libraryCall = mock.calls[mock.calls.length - 1];
+        assert.equal(libraryCall.url, '/api/actresses/library');
+        libraryCall.resolve({ status: 200, json: async () => ({ success: true, actresses: [], total: 0 }) });
+        await flushMicrotasks();
+        assert.equal(c.libRowFavorited(row), false, 'GET 落地後、favorite 回應前：仍是空心');
+
+        // 舊 open 的收藏請求終於落地
+        favoriteCall.resolve({ status: 200, json: async () => libFavoritePayload('飛行優') });
+        await flushMicrotasks();
+        await flushMicrotasks();
+
+        assert.equal(c.libRowFavorited(row), true, 'in-flight 請求落地後仍正確標記，不被 reset 永久蓋掉');
+    } finally {
+        mock.restore();
     }
 });
 

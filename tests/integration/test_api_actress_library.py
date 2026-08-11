@@ -114,6 +114,24 @@ class TestLibraryActressesEndpoint:
         item = next(a for a in resp.json()["actresses"] if a["primary_name"] == "橋本ありな")
         assert item["is_favorite"] is False
 
+    def test_is_favorite_true_via_manually_grouped_favorited_alias(self, client, tmp_db):
+        """Codex PR review P2（已查證屬實）：別名管理 UI（POST /api/actress-aliases）允許
+        使用者自己打任意 primary_name，不要求它是已收藏女優。「A 是使用者手打的 group
+        primary（未收藏）、B 是已收藏女優的正式名、B 被加成 A 的 alias」是合法可產的資料
+        形狀。GET /library 該列必須判定為已收藏，且顯示名是 B（AC-3.1），不是使用者手打
+        的 A。"""
+        ActressRepository(tmp_db).save(Actress(name="B已收藏"))
+        AliasRepository(tmp_db).add(primary_name="A手打的別名組", aliases=["B已收藏"])
+        VideoRepository(tmp_db).upsert(_video("v1", ["A手打的別名組"]))
+
+        resp = client.get("/api/actresses/library")
+
+        names = [a["primary_name"] for a in resp.json()["actresses"]]
+        assert "A手打的別名組" not in names
+        item = next(a for a in resp.json()["actresses"] if a["primary_name"] == "B已收藏")
+        assert item["is_favorite"] is True
+        assert set(item["names"]) == {"A手打的別名組", "B已收藏"}
+
     def test_excludes_zero_video_favorite(self, client, tmp_db):
         """AC-2.7：收藏但庫內 0 片的女優不出現在回應中"""
         ActressRepository(tmp_db).save(Actress(name="無片女優"))

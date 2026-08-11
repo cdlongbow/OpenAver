@@ -133,6 +133,73 @@ def test_get_library_actresses_sort_desc_count_then_asc_name(library_db):
     assert names == ["Mango", "Apple", "Zebra"]
 
 
+def test_get_library_actresses_manual_group_favorited_alias_counts_as_favorite(library_db):
+    """Codex PR review P2（已查證屬實）：`AliasRepository.add()` 允許使用者自己在別名管理
+    UI 手打任意 primary_name、把已收藏女優的正式名加成 alias——「A 是使用者手打的 group
+    primary（未收藏）、B 是已收藏女優的正式名」是 UI 上點幾下就能做到的合法資料形狀。
+    is_favorite 判定必須看整組 names，不能只看 group 自己的 primary_name。"""
+    ActressRepository(library_db).save(Actress(name="B已收藏"))
+    AliasRepository(library_db).add(primary_name="A手打的別名組", aliases=["B已收藏"])
+    VideoRepository(library_db).upsert(_video("v1", ["A手打的別名組"]))
+
+    groups = get_library_actresses()
+    g = next(g for g in groups if set(g["names"]) == {"A手打的別名組", "B已收藏"})
+    assert g["is_favorite"] is True
+
+
+def test_get_library_actresses_manual_group_displays_favorited_official_name(library_db):
+    """AC-3.1「顯示已收藏女優的正式名」：group 自己的 primary_name（使用者手打、未收藏）
+    不得出現在回應清單中；顯示用的 primary_name 必須是已收藏那一位的正式名。"""
+    ActressRepository(library_db).save(Actress(name="B已收藏"))
+    AliasRepository(library_db).add(primary_name="A手打的別名組", aliases=["B已收藏"])
+    VideoRepository(library_db).upsert(_video("v1", ["A手打的別名組"]))
+
+    groups = get_library_actresses()
+    assert not any(g["primary_name"] == "A手打的別名組" for g in groups)
+    g = next(g for g in groups if g["primary_name"] == "B已收藏")
+    assert g["is_favorite"] is True
+    assert set(g["names"]) == {"A手打的別名組", "B已收藏"}
+
+
+def test_get_library_actresses_manual_group_parity_with_favorited_alias(library_db):
+    """CD-117-2 parity：即使顯示名換成已收藏的 alias（而非 group 自己的 primary），
+    video_count 口徑仍須與 count_videos_for_actress_names(resolve(顯示名)) 一致——
+    resolve() 雙向解析，換名不改變 group 本身。"""
+    ActressRepository(library_db).save(Actress(name="B已收藏"))
+    AliasRepository(library_db).add(primary_name="A手打的別名組", aliases=["B已收藏"])
+    vrepo = VideoRepository(library_db)
+    vrepo.upsert(_video("v1", ["A手打的別名組"]))
+    vrepo.upsert(_video("v2", ["B已收藏"]))
+
+    groups = get_library_actresses()
+    g = next(g for g in groups if g["primary_name"] == "B已收藏")
+    expected = ActressRepository(library_db).count_videos_for_actress_names(
+        AliasRepository(library_db).resolve("B已收藏")
+    )
+    assert g["video_count"] == expected
+    assert g["video_count"] == 2
+
+
+def test_get_library_actresses_display_name_deterministic_when_multiple_aliases_favorited(library_db):
+    """確定性規則：group 自己的 primary 未收藏、但有兩個 alias 成員都已收藏時，顯示名必須
+    是 names_list（= [primary_name] + aliases，既有儲存順序）裡第一個命中 favorite_names
+    的名字，不是任意挑一個——鎖住這條規則不隨字典雜湊順序漂移。"""
+    ActressRepository(library_db).save(Actress(name="先收藏的B"))
+    ActressRepository(library_db).save(Actress(name="後收藏的C"))
+    AliasRepository(library_db).add(
+        primary_name="A手打的別名組", aliases=["先收藏的B", "後收藏的C"]
+    )
+    VideoRepository(library_db).upsert(_video("v1", ["A手打的別名組"]))
+
+    groups = get_library_actresses()
+    g = next(
+        g for g in groups
+        if set(g["names"]) == {"A手打的別名組", "先收藏的B", "後收藏的C"}
+    )
+    assert g["primary_name"] == "先收藏的B"
+    assert g["is_favorite"] is True
+
+
 def test_get_library_actresses_is_favorite_false_when_alias_record_remains_but_actress_deleted(library_db):
     """§1.1 定死規則 2 ＋ Opus 裁決②的規格守門：is_favorite 判定必須讀 actresses 表
     （get_all() 集合），不是「這個 group 在 alias 表裡存在」——取消收藏（刪 actresses
