@@ -1089,7 +1089,13 @@
       "panel": {
         "title": "從片庫加入女優",
         "search_placeholder": "搜尋片庫女優，或輸入完整姓名新增",
-        "close": "關閉"
+        "close": "關閉",
+        "loading": "載入中…",
+        "load_failed": "載入失敗，請稍後再試",
+        "more": "展開更多",
+        "progress": "已顯示 {n}／共 {m} 位",
+        "progress_all": "共 {m} 位",
+        "direct_add": "直接新增「{name}」"
       },
       "picker": {
         "empty": "目前找不到候選照片",

@@ -135,6 +135,43 @@
     }
 }
 
+/* 117-T4：載入中／載入失敗狀態列 */
+.actress-add-state {
+    padding: 0.75rem 0.5rem;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+/* 117-T4 AC-5.4：無相符時「直接新增」列（單欄；長名 ellipsis，FE-CSS-12） */
+.actress-add-direct {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+    padding: 0.55rem 0.5rem;
+    margin: 0.25rem 0 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: var(--accent);
+    font-size: 0.95rem;
+    border-radius: var(--fluent-radius-md);
+    transition: background var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+
+.actress-add-direct:hover:not(:disabled) {
+    background: color-mix(in oklch, var(--color-base-content) 6%, transparent);
+}
+
+.actress-add-direct:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
 /* Footer：T4 進度文字 / 展開更多佔位 */
 .actress-add-footer {
     display: flex;

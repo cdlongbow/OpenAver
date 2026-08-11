@@ -1588,11 +1588,16 @@
                    x-model="_libQuery"
                    :placeholder="t('showcase.actress.panel.search_placeholder')">
             <div class="actress-add-list">
-                <template x-for="row in libVisibleRows()" :key="row.name">
+                <!-- 117-T4：載入中／載入失敗（x-for 之前） -->
+                <div class="actress-add-state" x-show="_libLoading"
+                     x-text="t('showcase.actress.panel.loading')"></div>
+                <div class="actress-add-state" x-show="_libError"
+                     x-text="t('showcase.actress.panel.load_failed')"></div>
+                <template x-for="row in libVisibleRows()" :key="row.primary_name">
                     <div class="actress-add-row">
                         <span class="actress-add-count" x-text="row.video_count"></span>
                         <span class="actress-add-name"
-                              x-text="row.name"
+                              x-text="row.primary_name"
                               @mouseenter="libMaybeTitle($event)"></span>
                         <!-- 未收藏：button；已收藏：span（AC-4.1 抄 search.html） -->
                         <button type="button" class="actress-add-heart"
@@ -1608,12 +1613,18 @@
                         </span>
                     </div>
                 </template>
+                <!-- 117-T4 AC-5.4：無相符時「直接新增」列；走既有 addFavoriteActress 路徑 -->
+                <button type="button" class="actress-add-direct"
+                        x-show="libShowDirectAdd()" :disabled="_addingActress"
+                        @click="libDirectAdd()"
+                        x-text="t('showcase.actress.panel.direct_add', { name: libDirectAddName() })"></button>
             </div>
             <div class="actress-add-footer">
                 <span class="actress-add-progress" x-text="libProgressText()"></span>
                 <button type="button" class="actress-add-more"
                         x-show="libHasMore()"
-                        @click="libExpandMore()"></button>
+                        @click="libExpandMore()"
+                        x-text="t('showcase.actress.panel.more')"></button>
             </div>
         </div>
     </dialog>

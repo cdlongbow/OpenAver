@@ -13,6 +13,9 @@ import { buildActressPillPredicate } from '@/shared/actress-pill-filter.js';
 /** height 顯示單位（CD-116b-11 模組常數，不進 i18n） */
 var CM_UNIT = 'cm';
 
+/** 117-T4：片庫加入面板首批／每批可見列數（初值、close 重置、expand 增量三處共用） */
+var LIB_PAGE_SIZE = 40;
+
 /**
  * height pill value/value2 共用：extractor 解得出數值就用數字字串，否則退回 raw（永不寫入字面 'null'）。
  *
@@ -80,14 +83,15 @@ export function stateActress() {
         _addActressName: '',            // + 新增 input（T4 直接新增路徑沿用）
         _addingActress: false,          // 新增 loading
 
-        // 117-T3: 從片庫加入女優面板（屬性 stub；T4/T5 接手資料／queue）
+        // 117-T3/T4: 從片庫加入女優面板（T5 接手 queue）
         actressAddPanelOpen: false,
         _libRows: [],
         _libLoading: false,
-        _libError: null,
+        _libError: null,            // null | true（布林旗標；文案在 markup 由 t() 取）
         _libQuery: '',
-        _libVisibleCount: 40,
+        _libVisibleCount: LIB_PAGE_SIZE,
         _libTotal: 0,
+        _libLoadGen: 0,             // 117-T4: stale response guard
         _libRowState: {},
         _libCovered: {},
         _libInFlight: 0,
@@ -817,25 +821,134 @@ export function stateActress() {
             return Math.max(0, tags.length - this._chipsLimit());
         },
 
-        // --- 117-T3: Actress add panel open/close + T4/T5 method stubs ---
+        // --- 117-T3/T4: Actress add panel（T5 queue stubs 仍在） ---
 
+        // AC-1.3 / AC-1.6：殼同步開，不 await 網路；每次開啟重載（無快取——片數必須與當下庫一致）
         openActressAddPanel() {
             this.actressAddPanelOpen = true;
+            this._libQuery = '';
+            this._libVisibleCount = LIB_PAGE_SIZE;
+            this._libError = null;
+            this._libRows = [];
+            this._libTotal = 0;
+            this._loadLibraryActresses();
         },
 
         closeActressAddPanel() {
             this.actressAddPanelOpen = false;
             this._libQuery = '';
-            this._libVisibleCount = 40;
+            this._libVisibleCount = LIB_PAGE_SIZE;
+            this._libError = null;
+            // _libRows 不清：關閉動畫期間避免清單瞬間空掉；下次 open 會覆蓋
         },
 
-        libVisibleRows() { return []; },
-        libHasMore() { return false; },
-        libExpandMore() {},
-        libProgressText() { return ''; },
-        libShowDirectAdd() { return false; },
-        libDirectAddName() { return ''; },
-        libRowFavorited() { return false; },
+        // 形狀照 loadActresses()：ok → json → success；catch 清空；finally 關 loading
+        // gen guard：開→關→開時，舊 response 不得覆寫新清單（finally 也要 gen 保護）
+        async _loadLibraryActresses() {
+            var gen = ++this._libLoadGen;
+            this._libLoading = true;
+            this._libError = null;
+            try {
+                var resp = await fetch('/api/actresses/library');
+                if (gen !== this._libLoadGen) return;
+                if (!resp.ok) {
+                    this._libRows = [];
+                    this._libTotal = 0;
+                    this._libError = true;
+                    return;
+                }
+                var data = await resp.json();
+                if (gen !== this._libLoadGen) return;
+                if (!data.success) {
+                    this._libRows = [];
+                    this._libTotal = 0;
+                    this._libError = true;
+                    return;
+                }
+                var rows = data.actresses || [];
+                this._libRows = rows;
+                this._libTotal = data.total ?? rows.length;
+                this._libError = null;
+            } catch (e) {
+                if (gen !== this._libLoadGen) return;
+                console.error('[Showcase] Failed to fetch library actresses:', e);
+                this._libRows = [];
+                this._libTotal = 0;
+                this._libError = true;
+            } finally {
+                // 舊輪的 finally 不得把新輪的 loading 關掉
+                if (gen === this._libLoadGen) {
+                    this._libLoading = false;
+                }
+            }
+        },
+
+        // AC-5.1/5.2/5.3：完整 _libRows + 掃 names[] 全部別名；normalizePillValue 雙側正規化
+        // 次序所有權在後端——此處零 .sort(
+        libFilteredRows() {
+            var q = normalizePillValue(this._libQuery);
+            if (!q) return this._libRows;
+            return this._libRows.filter(function (row) {
+                var names = (row.names && row.names.length) ? row.names : [row.primary_name];
+                return names.some(function (n) {
+                    return normalizePillValue(n).indexOf(q) !== -1;
+                });
+            });
+        },
+
+        libVisibleRows() {
+            return this.libFilteredRows().slice(0, this._libVisibleCount);
+        },
+
+        libHasMore() {
+            return this.libFilteredRows().length > this._libVisibleCount;
+        },
+
+        // append-only：只加可見數，不重算、不重排（AC-6.4）
+        libExpandMore() {
+            this._libVisibleCount += LIB_PAGE_SIZE;
+        },
+
+        // AC-6.5：無過濾字用伺服器 total；有過濾字用當下相符筆數；?? 保 0（FE-JS-01）
+        // 載入中／失敗時底部不顯示進度（避免「共 0 位」假訊號與錯誤文案並陳）
+        libProgressText() {
+            if (this._libLoading || this._libError) return '';
+            var shown = this.libVisibleRows().length;
+            var total = this._libQuery.trim()
+                ? this.libFilteredRows().length
+                : (this._libTotal ?? 0);
+            return shown < total
+                ? window.t('showcase.actress.panel.progress', { n: shown, m: total })
+                : window.t('showcase.actress.panel.progress_all', { m: total });
+        },
+
+        // AC-5.4：載入中不顯示（避免閃一下）；_libError 時照常顯示（刻意降級保「打全名新增」）
+        libShowDirectAdd() {
+            return !this._libLoading
+                && this._libQuery.trim() !== ''
+                && this.libFilteredRows().length === 0;
+        },
+
+        // 原始字串，絕不正規化（正規化後丟 scraper 會查不到人）
+        libDirectAddName() {
+            return this._libQuery.trim();
+        },
+
+        // 走既有 addFavoriteActress 路徑；不進 T5 queue；不關面板、不清 query
+        libDirectAdd() {
+            if (this._addingActress) return;
+            var name = this._libQuery.trim();
+            if (!name) return;
+            this._addActressName = name;
+            return this.addFavoriteActress();
+        },
+
+        // AC-3.2：本 task 只吃 row.is_favorite；_libCovered 分支留給 T5
+        libRowFavorited(row) {
+            return !!(row && row.is_favorite);
+        },
+
+        // T5 stubs
         libRowState() { return 'idle'; },
         libEnqueueFavorite() {},
         // AC-2.4：只在真的被截斷時掛 title；必須在 mouseenter 量（modal display:none 時寬度全 0）

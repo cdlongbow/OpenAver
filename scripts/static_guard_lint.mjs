@@ -3736,6 +3736,53 @@ const RULES = [
     pattern: '_addDropdownOpen',
     note: '[117-T3] _addDropdownOpen 宣告與賦值必須拔除（state-actress.js 不得殘留）',
   },
+
+  // ==== [117-T4] 直接新增列接線契約（取代原 TestShowcaseActressCRUD 2 條 HTML 斷言）====
+  // T3 刪掉 _addActressName / addFavoriteActress() 的 pytest HTML 半場；
+  // 契約改錨定新「直接新增」列：markup 綁 libDirectAdd()，JS 寫入 _addActressName 並走既有路徑。
+
+  // R1 AC-5.4：直接新增列必須存在且綁 libDirectAdd()（取代原 pytest _addActressName 的 HTML 半場）
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'libDirectAdd()',
+    scope: { anchor: /class="actress-add-direct"/, window: 400 },
+    note: '[117-T4] AC-5.4：直接新增列必須存在且綁 libDirectAdd()（取代 TestShowcaseActressCRUD _addActressName HTML 半場；破了＝庫內 0 片女優永遠加不進來）',
+  },
+  // R2 防「搬走又在別處補一顆」
+  {
+    file: 'web/templates/showcase.html', kind: 'structure-count',
+    pattern: 'libDirectAdd()',
+    count: 1,
+    note: '[117-T4] AC-5.4：libDirectAdd() 全檔恰好 1 次（防搬走又在別處補一顆）',
+  },
+  // R3 直接新增必須把使用者打的字寫進既有 _addActressName（取代原 pytest 同名斷言）
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: '_addActressName',
+    scope: { anchor: /libDirectAdd\(\)\s*\{/, braceBalanced: true },
+    note: '[117-T4] AC-5.4：libDirectAdd 必須寫入 _addActressName（取代 TestShowcaseActressCRUD 同名斷言）',
+  },
+  // R4 必須走既有新增路徑（取代原 pytest addFavoriteActress() 斷言）
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: 'addFavoriteActress()',
+    scope: { anchor: /libDirectAdd\(\)\s*\{/, braceBalanced: true },
+    note: '[117-T4] AC-5.4：libDirectAdd 必須呼叫 addFavoriteActress()（取代 TestShowcaseActressCRUD 同名斷言）',
+  },
+  // R5 不得在 libDirectAdd 內另寫第二套 POST
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'forbidden-string',
+    pattern: 'fetch(',
+    scope: { anchor: /libDirectAdd\(\)\s*\{/, braceBalanced: true },
+    note: '[117-T4] AC-5.4：libDirectAdd 內不得另寫 fetch(（409/404/504 分支與 toast 全在 addFavoriteActress）',
+  },
+
+  // AC-1.6：開面板不得等網路。同步斷言在第一個 await yield 前就跑完，測不出 async 化；只能用字面守衛。
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'forbidden-string',
+    pattern: ['async openActressAddPanel', 'await this._loadLibraryActresses'],
+    note: '[117-T4] AC-1.6：開面板不得等網路；同步斷言測不出 async 化，只能用字面守衛',
+  },
 ];
 
 // ---- helpers ----
