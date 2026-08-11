@@ -51,6 +51,7 @@ EXPECTED_TOOL_NAMES = {
     "get_actress",
     "unfavorite_actress",
     "list_actresses",
+    "list_library_actresses",
     "alias_crud_read",
     "alias_crud_write",
     "alias_search_online",
@@ -113,14 +114,27 @@ class TestCapabilitiesEndpoint:
         data = client.get("/api/capabilities").json()
         assert "retry_hint" in data["error_format"]
 
-    def test_tools_count_is_39(self, client):
+    def test_tools_count_is_40(self, client):
         data = client.get("/api/capabilities").json()
-        assert len(data["tools"]) == 39
+        assert len(data["tools"]) == 40
 
     def test_all_tool_names_present(self, client):
         data = client.get("/api/capabilities").json()
         names = {t["name"] for t in data["tools"]}
         assert names == EXPECTED_TOOL_NAMES
+
+    def test_list_library_actresses_read_only_no_confirmation_key(self, client):
+        """AC-7.2：唯讀端點不需要 confirmation_required。"""
+        data = client.get("/api/capabilities").json()
+        tool = next(t for t in data["tools"] if t["name"] == "list_library_actresses")
+        assert tool.get("side_effect") is False
+        assert "confirmation_required" not in tool
+
+    def test_favorite_actress_description_mentions_concurrency_limit(self, client):
+        """AC-7.4：收藏端點的 capability 說明必須寫明序列呼叫或併發上限 2。"""
+        data = client.get("/api/capabilities").json()
+        tool = next(t for t in data["tools"] if t["name"] == "favorite_actress")
+        assert "併發 2" in tool["description"] or "序列呼叫" in tool["description"]
 
     def test_no_server_mode_toggle_exposed(self, client):
         """AC-A7（TASK-80a-T5）：LAN 伺服器模式翻轉**不得**揭露給 AI agent。

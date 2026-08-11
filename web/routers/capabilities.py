@@ -746,7 +746,12 @@ _TOOLS: list[dict] = [
     },
     {
         "name": "favorite_actress",
-        "description": "收藏女優：從本地快取或即時爬取女優資料並存入 DB + 下載照片到本地。寫入 DB + 下載照片到 output/Gfriends/",
+        "description": (
+            "收藏女優：從本地快取或即時爬取女優資料並存入 DB + 下載照片到本地。"
+            "寫入 DB + 下載照片到 output/Gfriends/。"
+            "批次收藏多位女優時應序列呼叫或最多併發 2，不得無限制平行 POST"
+            "（爬蟲/下載壓力限制，與前端手動連點的節流是同一個不變式）。"
+        ),
         "method": "POST",
         "path": "/api/actresses/favorite",
         "input_schema": {
@@ -788,6 +793,39 @@ _TOOLS: list[dict] = [
         "idempotent": True,
         "retry_safe": True,
         "_example_template": "curl '{base}/api/actresses'",
+    },
+    {
+        "name": "list_library_actresses",
+        "description": (
+            "列出本地影片庫（videos 表的 actresses 欄位）中出現過的全部女優，"
+            "依別名 group 聚合（同一人的不同別名合併為一筆）。"
+            "每筆含 primary_name（正式名）、names（該 group 全部名字，含別名，"
+            "供比對/搜尋用）、video_count（本地片數，同一片掛多別名只算一次）、"
+            "is_favorite（是否已收藏）。"
+            "與 favorite_actress 差異：本端點涵蓋庫內*出現過*的所有名字（不論是否收藏），"
+            "list_actresses 只回傳*已收藏*的女優。"
+            "適合 AI 用 video_count 篩選候選名單（例如「片數超過 20 的都收藏」），"
+            "篩出清單後逐一呼叫 favorite_actress（見該條目的併發限制）。不修改資料庫。"
+        ),
+        "method": "GET",
+        "path": "/api/actresses/library",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+        "output_schema": {
+            "success": "boolean",
+            "actresses": (
+                "LibraryActressItem[] — 每筆 {primary_name: string, "
+                "names: string[]（primary + 別名，供比對用）, "
+                "video_count: integer（DISTINCT 片數）, is_favorite: boolean}"
+            ),
+            "total": "integer — group 總數",
+        },
+        "side_effect": False,
+        "retry_safe": True,
+        "_example_template": "curl '{base}/api/actresses/library'",
     },
     {
         "name": "get_actress",
