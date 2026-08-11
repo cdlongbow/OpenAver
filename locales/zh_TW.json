@@ -1095,7 +1095,10 @@
         "more": "展開更多",
         "progress": "已顯示 {n}／共 {m} 位",
         "progress_all": "共 {m} 位",
-        "direct_add": "直接新增「{name}」"
+        "direct_add": "直接新增「{name}」",
+        "queued": "排隊中",
+        "adding": "新增中…",
+        "add_failed": "新增失敗，請再試一次"
       },
       "picker": {
         "empty": "目前找不到候選照片",

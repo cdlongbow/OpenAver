@@ -1599,18 +1599,36 @@
                         <span class="actress-add-name"
                               x-text="row.primary_name"
                               @mouseenter="libMaybeTitle($event)"></span>
-                        <!-- 未收藏：button；已收藏：span（AC-4.1 抄 search.html） -->
-                        <button type="button" class="actress-add-heart"
-                                x-show="!libRowFavorited(row)"
-                                @click="libEnqueueFavorite(row)"
-                                :title="t('showcase.actress.addFavorite')">
-                            <i class="bi bi-heart"></i>
-                        </button>
+                        <!-- 117-T5：第三欄四態切換（先閘 libRowFavorited，再看 libRowState）-->
+                        <!-- ① done：實心（T3 既有 <span>，一個字不動——lint 鎖著這行字面） -->
                         <span class="actress-add-heart is-favorite"
                               x-show="libRowFavorited(row)"
                               :title="t('showcase.actress.favorited')">
                             <i class="bi bi-heart-fill"></i>
                         </span>
+                        <!-- ② idle / error：空心可點（error 也回空心＝可重試，AC-4.5） -->
+                        <button type="button" class="actress-add-heart"
+                                x-show="!libRowFavorited(row) && (libRowState(row) === 'idle' || libRowState(row) === 'error')"
+                                @click="libEnqueueFavorite(row)"
+                                :title="t('showcase.actress.addFavorite')">
+                            <i class="bi bi-heart"></i>
+                        </button>
+                        <!-- ③ queued：文字「排隊中」 -->
+                        <span class="actress-add-status"
+                              x-show="!libRowFavorited(row) && libRowState(row) === 'queued'"
+                              x-text="t('showcase.actress.panel.queued')"></span>
+                        <!-- ④ loading：spinner -->
+                        <span class="actress-add-status"
+                              x-show="!libRowFavorited(row) && libRowState(row) === 'loading'"
+                              :title="t('showcase.actress.panel.adding')">
+                            <span class="loading loading-spinner loading-xs"></span>
+                        </span>
+                        <!-- 失敗原因：橫跨整列的第二行，不動三欄定義（reviewer②：與三個兄弟元素一致，
+                             先閘 !libRowFavorited(row)——否則 A 失敗後、B 成功且 covered_names 涵蓋 A 時，
+                             A 變實心但底下留一條空白錯誤列，那一列比鄰居高一截，直到關閉重開才消失） -->
+                        <span class="actress-add-rowerror"
+                              x-show="!libRowFavorited(row) && libRowState(row) === 'error'"
+                              x-text="libRowErrorText(row)"></span>
                     </div>
                 </template>
                 <!-- 117-T4 AC-5.4：無相符時「直接新增」列；走既有 addFavoriteActress 路徑 -->

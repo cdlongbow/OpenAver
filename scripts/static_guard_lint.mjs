@@ -3783,6 +3783,51 @@ const RULES = [
     pattern: ['async openActressAddPanel', 'await this._loadLibraryActresses'],
     note: '[117-T4] AC-1.6：開面板不得等網路；同步斷言測不出 async 化，只能用字面守衛',
   },
+
+  // ==== [117-T5] 逐列收藏 queue：接線 ＋ 併發計數契約（不鎖視覺，owner/T7 真機驗收前的薄守衛）====
+
+  // L1 AC-4.3：空心愛心必須接上 queue（破了＝點愛心毫無反應，面板變成唯讀清單）
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'libEnqueueFavorite(row)',
+    scope: { anchor: /class="actress-add-heart"/, window: 400 },
+    note: '[117-T5] AC-4.3：空心愛心必須接上 queue。破了＝點愛心毫無反應，面板變成唯讀清單',
+  },
+  // L2 防「搬走又在別處補一顆」
+  {
+    file: 'web/templates/showcase.html', kind: 'structure-count',
+    pattern: 'libEnqueueFavorite(row)',
+    count: 1,
+    note: '[117-T5] AC-4.3：libEnqueueFavorite(row) 全檔恰好 1 次（防搬走又在別處補一顆）',
+  },
+  // L3 AC-4.3③：queue 不得用直接新增的全域旗標（第一個入口）
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'forbidden-string',
+    pattern: '_addingActress',
+    scope: { anchor: /libEnqueueFavorite\(row\)\s*\{/, braceBalanced: true },
+    note: '[117-T5] AC-4.3③：queue 不得用直接新增的全域旗標。破了＝收藏一列時「直接新增」被鎖住，且併發上限被壓成 1',
+  },
+  // L4 同上，第二個入口
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'forbidden-string',
+    pattern: '_addingActress',
+    scope: { anchor: /_libFavoriteRequest\(name\)\s*\{/, braceBalanced: true },
+    note: '[117-T5] AC-4.3③：queue 不得用直接新增的全域旗標（第二個入口，同 L3）',
+  },
+  // L5 CD-117-8①：計數器唯一增點
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'structure-count',
+    pattern: '_libInFlight++',
+    count: 1,
+    note: '[117-T5] CD-117-8①：計數器唯一增點。破了＝計數漂移，queue 要嘛永久卡死（愛心按了永遠排隊中）、要嘛上限失效',
+  },
+  // L6 同上，唯一減點
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'structure-count',
+    pattern: '_libInFlight--',
+    count: 1,
+    note: '[117-T5] CD-117-8①：計數器唯一減點（同 L5）',
+  },
 ];
 
 // ---- helpers ----

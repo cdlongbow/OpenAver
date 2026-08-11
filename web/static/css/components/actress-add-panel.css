@@ -98,10 +98,17 @@
     font-size: 0.95rem;
 }
 
-/* 愛心：命中區 ≥44×44（AC-4.2）；視覺圖示仍小、靠 flex 置中 */
+/* 愛心：命中區 ≥44×44（AC-4.2）；視覺圖示仍小、靠 flex 置中
+ * reviewer④：min-width 56px 與 .actress-add-status 對齊——每列各自是獨立 grid，
+ * 「排隊中」三字（約 49px）比原本的 44px 寬，若兩者 min-width 不同，翻到 queued 態
+ * 的那一列第三欄會單獨變寬、名字欄跟著縮，連點多列時清單左右參差。min-width 會蓋過
+ * width（CSS 用 max(min-width, width) 當最終寬度），[117-T3] 鎖住的 width:44px/
+ * height:44px 字面不變，只是實際渲染寬度被墊高到 56px，兩態統一，不影響 ≥44×44 契約。
+ */
 .actress-add-heart {
     width: 44px;
     height: 44px;
+    min-width: 56px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -133,6 +140,30 @@
         opacity: 1;
         color: var(--color-favorite);
     }
+}
+
+/* 117-T5：排隊中／新增中 狀態文字（第三欄，同愛心命中區尺寸；無 pill 造型，CD-117-11）
+ * reviewer④：min-width 與 .actress-add-heart 一致（56px，見該規則旁註解）——「排隊中」
+ * 三字＋左右 padding 本來就比 44px 寬，統一取兩者較大值，四態切換時第三欄寬度不變。 */
+.actress-add-status {
+    min-width: 56px;
+    height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    padding: 0 0.4rem;
+}
+
+/* 117-T5：失敗原因，橫跨整列的隱式第二行（grid-template-columns 不動，FE-CSS-12） */
+.actress-add-rowerror {
+    grid-column: 1 / -1;
+    font-size: 0.75rem;
+    color: var(--color-error);
+    padding: 0 0.5rem 0.25rem;
+    overflow-wrap: anywhere;
 }
 
 /* 117-T4：載入中／載入失敗狀態列 */
