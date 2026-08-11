@@ -1086,6 +1086,11 @@
       "addFavorite": "加入收藏",
       "favorited": "已收藏",
       "change_photo": "換照片",
+      "panel": {
+        "title": "從片庫加入女優",
+        "search_placeholder": "搜尋片庫女優，或輸入完整姓名新增",
+        "close": "關閉"
+      },
       "picker": {
         "empty": "目前找不到候選照片",
         "empty_hint": "收藏影片越多，本機選項越豐富；也可直接替換資料夾中的圖片",

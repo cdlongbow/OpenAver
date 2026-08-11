@@ -3606,6 +3606,136 @@ const RULES = [
     pattern: 'access_tickets',
     note: '[lint-guard:114b-T6] access_tickets 票表的寫入只能出現在 core/access_auth.py（單一所有者，CD-114b-12）。windows/（系統匣／pywebview 層）直接寫這張表會繞過 access_auth 那把 threading.Lock——改密碼／關閉認證時 revoke_all() 撤不到那一筆，使用者以為已經把一台裝置踢下線，其實那張憑證仍然有效。',
   },
+
+  // ==== [117-T3] 從片庫加入女優面板：薄守衛（不得回退到已知壞值）====
+  // owner 真機驗收前只鎖契約字面；完整視覺守衛排到驗收後。
+
+  // AC-1.1：+ 只在女優模式 toolbar-section 內；全檔 exact 1 防搬出又補
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'openActressAddPanel()',
+    scope: { anchor: /toolbar-section toolbar-controls" x-show="showFavoriteActresses"/, window: 4000 },
+    note: '[117-T3] AC-1.1：openActressAddPanel() 必須在女優模式 toolbar-section 內（+ 不得搬出 x-show=showFavoriteActresses）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'structure-count',
+    pattern: 'openActressAddPanel()',
+    count: 1,
+    note: '[117-T3] AC-1.1：openActressAddPanel() 全檔恰好 1 次（防搬出區塊又在別處補一顆）',
+  },
+
+  // AC-1.2：Esc／點外／關閉鈕三路
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: '@click.self="closeActressAddPanel()"',
+    note: '[117-T3] AC-1.2：點 backdrop 關閉（@click.self）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: '@keydown.escape.window="actressAddPanelOpen && closeActressAddPanel()"',
+    note: '[117-T3] AC-1.2：Esc 關閉',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: '@click="closeActressAddPanel()"',
+    scope: { anchor: /class="actress-add-x"/, window: 200 },
+    note: '[117-T3] AC-1.2：關閉鈕綁 closeActressAddPanel()',
+  },
+
+  // AC-1.4：焦點／捲動契約（禁回退到手刻 $nextTick focus）
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'x-trap.inert.noscroll="actressAddPanelOpen"',
+    note: '[117-T3] AC-1.4：x-trap.inert.noscroll 焦點鎖 + 背景禁捲（.noscroll 不得被拿掉只留 .inert）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'autofocus',
+    scope: { anchor: /class="actress-add-search"/, window: 120 },
+    note: '[117-T3] AC-1.4：搜尋框必須帶 autofocus（外掛先找 [autofocus]；不寫則焦點落在 ✕）',
+  },
+
+  // AC-2.3 / CD-117-6：三欄 minmax(0,1fr)（FE-CSS-12 不得退回裸 1fr）
+  {
+    file: 'web/static/css/components/actress-add-panel.css', kind: 'required-string',
+    pattern: 'grid-template-columns: auto minmax(0, 1fr) auto',
+    note: '[117-T3] AC-2.3/CD-117-6：grid-template-columns 必須 auto minmax(0,1fr) auto（裸 1fr 會讓 ellipsis 失效）',
+  },
+
+  // AC-2.4：ellipsis 三件套
+  {
+    file: 'web/static/css/components/actress-add-panel.css', kind: 'required-string',
+    pattern: ['min-width: 0', 'overflow: hidden', 'text-overflow: ellipsis', 'white-space: nowrap'],
+    scope: { anchor: /\.actress-add-name\s*\{/, braceBalanced: true },
+    note: '[117-T3] AC-2.4：名字欄 ellipsis 三件套 + min-width:0（與 minmax(0,…) 成對）',
+  },
+
+  // AC-2.5：列表 flex 自適應內部捲動；禁固定 px 高
+  {
+    file: 'web/static/css/components/actress-add-panel.css', kind: 'required-string',
+    pattern: ['flex: 1 1 auto', 'min-height: 0', 'overflow-y: auto'],
+    scope: { anchor: /\.actress-add-list\s*\{/, braceBalanced: true },
+    note: '[117-T3] AC-2.5：.actress-add-list 必須 flex:1 1 auto + min-height:0 + overflow-y:auto',
+  },
+  {
+    file: 'web/static/css/components/actress-add-panel.css', kind: 'forbidden-string',
+    pattern: /(?:max-)?height:\s*\d+px/,
+    scope: { anchor: /\.actress-add-list\s*\{/, braceBalanced: true },
+    note: '[117-T3] AC-2.5：.actress-add-list 不得寫死 height/max-height px（禁預設固定可見列數）',
+  },
+
+  // AC-4.1：已收藏用 <span> 非 <button> + cursor/pointer-events
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: '<span class="actress-add-heart is-favorite"',
+    note: '[117-T3] AC-4.1：已收藏愛心必須是 <span class="actress-add-heart is-favorite">（非 button）',
+  },
+  {
+    file: 'web/static/css/components/actress-add-panel.css', kind: 'required-string',
+    pattern: ['cursor: default', 'pointer-events: none'],
+    scope: { anchor: /\.actress-add-heart\.is-favorite\s*\{/, braceBalanced: true },
+    note: '[117-T3] AC-4.1：.is-favorite 必須 cursor:default + pointer-events:none（無 hover 反應）',
+  },
+
+  // AC-4.2 / CD-117-7：降透明度只在 @media (hover: hover)；命中區 44×44
+  {
+    file: 'web/static/css/components/actress-add-panel.css', kind: 'required-string',
+    pattern: 'opacity: 0.55',
+    scope: { anchor: /@media \(hover: hover\)\s*\{/, window: 400 },
+    note: '[117-T3] AC-4.2/CD-117-7：降透明度 opacity:0.55 必須寫在 @media (hover: hover) 內（不得移到常駐規則）',
+  },
+  {
+    file: 'web/static/css/components/actress-add-panel.css', kind: 'required-string',
+    pattern: ['width: 44px', 'height: 44px'],
+    scope: { anchor: /\.actress-add-heart\s*\{/, braceBalanced: true },
+    note: '[117-T3] AC-4.2：愛心命中區 ≥44×44',
+  },
+
+  // CD-117-13：CSS 接線進 base.html
+  {
+    file: 'web/templates/base.html', kind: 'required-string',
+    pattern: '/static/css/components/actress-add-panel.css',
+    note: '[117-T3] CD-117-13：actress-add-panel.css 必須接線進 base.html（緊接 rescrape-modal）',
+  },
+
+  // CD-117-11：新檔禁止 pill 造型
+  {
+    file: 'web/static/css/components/actress-add-panel.css', kind: 'forbidden-string',
+    pattern: ['999px', '--radius-pill'],
+    note: '[117-T3] CD-117-11：actress-add-panel.css 禁止 999px / --radius-pill（§1 白名單不動）',
+  },
+
+  // 舊 dropdown 不得復活
+  {
+    file: 'web/templates/showcase.html', kind: 'forbidden-string',
+    pattern: '_addDropdownOpen',
+    note: '[117-T3] 舊 + dropdown 的 _addDropdownOpen 不得在 showcase.html 復活',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'forbidden-string',
+    pattern: '_addDropdownOpen',
+    note: '[117-T3] _addDropdownOpen 宣告與賦值必須拔除（state-actress.js 不得殘留）',
+  },
 ];
 
 // ---- helpers ----

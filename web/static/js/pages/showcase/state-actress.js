@@ -77,9 +77,20 @@ export function stateActress() {
         actressLightboxSource: null,    // T5: 'hero' | 'grid' | null — 進入路徑（CD-9）
         _ghostFlyInFlight: false,       // T7: 跨模式 ghost fly 並發保護 flag（CD-13）
         _actressChipsExpanded: { aliases: false, info: false },  // chips 展開狀態
-        _addActressName: '',            // + 新增 input
+        _addActressName: '',            // + 新增 input（T4 直接新增路徑沿用）
         _addingActress: false,          // 新增 loading
-        _addDropdownOpen: false,        // + 新增 popover 開關
+
+        // 117-T3: 從片庫加入女優面板（屬性 stub；T4/T5 接手資料／queue）
+        actressAddPanelOpen: false,
+        _libRows: [],
+        _libLoading: false,
+        _libError: null,
+        _libQuery: '',
+        _libVisibleCount: 40,
+        _libTotal: 0,
+        _libRowState: {},
+        _libCovered: {},
+        _libInFlight: 0,
 
         // T3.3: Remove Actress fluent-modal 狀態
         removeActressModalOpen: false,
@@ -806,6 +817,34 @@ export function stateActress() {
             return Math.max(0, tags.length - this._chipsLimit());
         },
 
+        // --- 117-T3: Actress add panel open/close + T4/T5 method stubs ---
+
+        openActressAddPanel() {
+            this.actressAddPanelOpen = true;
+        },
+
+        closeActressAddPanel() {
+            this.actressAddPanelOpen = false;
+            this._libQuery = '';
+            this._libVisibleCount = 40;
+        },
+
+        libVisibleRows() { return []; },
+        libHasMore() { return false; },
+        libExpandMore() {},
+        libProgressText() { return ''; },
+        libShowDirectAdd() { return false; },
+        libDirectAddName() { return ''; },
+        libRowFavorited() { return false; },
+        libRowState() { return 'idle'; },
+        libEnqueueFavorite() {},
+        // AC-2.4：只在真的被截斷時掛 title；必須在 mouseenter 量（modal display:none 時寬度全 0）
+        libMaybeTitle(e) {
+            var el = e.currentTarget;
+            if (el.scrollWidth > el.clientWidth) el.title = el.textContent;
+            else el.removeAttribute('title');
+        },
+
         // --- 44a T5: Actress CRUD ---
 
         async addFavoriteActress() {
@@ -827,7 +866,6 @@ export function stateActress() {
                 } else if (data.success) {
                     _actresses.push(data.actress);
                     this.applyActressFilterAndSort();
-                    this._addDropdownOpen = false;
                     this.showToast(window.t('showcase.actress.addSuccess'), 'success');
                 } else {
                     this.showToast(window.t('showcase.actress.addNotFound'), 'error');

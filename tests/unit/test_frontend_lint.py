@@ -163,7 +163,7 @@ class TestShowcaseActressState:
             "_actressChipsExpanded",
             "_addActressName",
             "_addingActress",
-            "_addDropdownOpen",
+            # 117-T3：_addDropdownOpen 隨舊 + dropdown 移除（與 TestShowcaseActressCRUD HTML 側兩條同因；card 盤點只寫了 CRUD class，此處一併清）
             "_videoChipsExpanded",
             # core methods
             "toggleActressMode",
@@ -513,7 +513,8 @@ class TestShowcaseActressCRUD:
     def test_showcase_html_contains(self):
         """showcase.html 含 CRUD handlers; searchActressFilms >=2; 無 rescrapeActress"""
         html = self._html()
-        for expected in ["_addActressName", "addFavoriteActress()", "openRemoveActressModal()"]:
+        # 117-T3：舊 + dropdown 移除，HTML 側 _addActressName / addFavoriteActress() 兩條斷言的錨定物已不存在；替代 lint rule 隨 T4 的「直接新增」列落地，全部 11 條的對帳表在 T6。
+        for expected in ["openRemoveActressModal()"]:
             assert expected in html, f"showcase.html missing: {expected!r}"
         assert html.count("searchActressFilms(") >= 2, \
             "showcase.html missing: 'searchActressFilms(' (x2)"

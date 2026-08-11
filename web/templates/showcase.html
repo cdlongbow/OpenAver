@@ -326,34 +326,12 @@
                     <button class="btn-icon" @click="toggleActressOrder()" title="{{ t('showcase.action.toggle_order') }}">
                         <i class="bi" :class="actressOrder === 'asc' ? 'bi-sort-up' : 'bi-sort-down'"></i>
                     </button>
-                    <!-- [+ 新增] popover（女優模式專屬） -->
-                    <div class="dropdown dropdown-end"
-                         x-data
-                         :class="{ 'dropdown-open': _addDropdownOpen }"
-                         @click.outside="_addDropdownOpen = false">
-                        <button class="btn-icon"
-                                @click="_addDropdownOpen = !_addDropdownOpen"
-                                :title="t('showcase.actress.add')"
-                                :class="{ 'active': _addDropdownOpen }">
-                            <i class="bi bi-plus-lg"></i>
-                        </button>
-                        <div class="toolbar-dropdown dropdown-content" @click.stop>
-                            <div style="padding:8px; display:flex; gap:6px;">
-                                <input class="input input-sm input-bordered"
-                                       type="text"
-                                       x-model="_addActressName"
-                                       :placeholder="t('showcase.actress.addPlaceholder')"
-                                       @keydown.enter.prevent="addFavoriteActress()"
-                                       :disabled="_addingActress"
-                                       style="flex:1; min-width:160px;">
-                                <button class="btn btn-sm btn-primary"
-                                        @click.prevent="addFavoriteActress()"
-                                        :disabled="_addingActress || !_addActressName.trim()">
-                                    <i class="bi" :class="_addingActress ? 'bi-arrow-clockwise spin' : 'bi-check'"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
+                    <!-- [+ 新增] 從片庫加入女優面板（117-T3；舊 dropdown 已移除） -->
+                    <button class="btn-icon" x-ref="actressAddBtn" @click="openActressAddPanel()"
+                            :title="t('showcase.actress.add')"
+                            :class="{ 'active': actressAddPanelOpen }">
+                        <i class="bi bi-plus-lg"></i>
+                    </button>
                 </div>
             </div>
         </div>
@@ -1589,6 +1567,53 @@
                     <span x-show="!_deleteLoading"><i class="bi bi-trash3"></i></span>
                     {{ t('showcase.video.delete_modal.confirm') }}
                 </button>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- 117-T3: 從片庫加入女優面板（.fluent-modal class-toggle；x-trap.inert.noscroll） -->
+    <dialog class="modal fluent-modal actress-add-dialog"
+            :class="{ 'modal-open': actressAddPanelOpen }"
+            @click.self="closeActressAddPanel()"
+            @keydown.escape.window="actressAddPanelOpen && closeActressAddPanel()"
+            x-trap.inert.noscroll="actressAddPanelOpen">
+        <div class="modal-box fluent-modal-box actress-add-box">
+            <button type="button" class="actress-add-x"
+                    @click="closeActressAddPanel()"
+                    :aria-label="t('showcase.actress.panel.close')">
+                <i class="bi bi-x-lg"></i>
+            </button>
+            <h3 class="fluent-modal-title">{{ t('showcase.actress.panel.title') }}</h3>
+            <input class="actress-add-search" type="text" autofocus
+                   x-model="_libQuery"
+                   :placeholder="t('showcase.actress.panel.search_placeholder')">
+            <div class="actress-add-list">
+                <template x-for="row in libVisibleRows()" :key="row.name">
+                    <div class="actress-add-row">
+                        <span class="actress-add-count" x-text="row.video_count"></span>
+                        <span class="actress-add-name"
+                              x-text="row.name"
+                              @mouseenter="libMaybeTitle($event)"></span>
+                        <!-- 未收藏：button；已收藏：span（AC-4.1 抄 search.html） -->
+                        <button type="button" class="actress-add-heart"
+                                x-show="!libRowFavorited(row)"
+                                @click="libEnqueueFavorite(row)"
+                                :title="t('showcase.actress.addFavorite')">
+                            <i class="bi bi-heart"></i>
+                        </button>
+                        <span class="actress-add-heart is-favorite"
+                              x-show="libRowFavorited(row)"
+                              :title="t('showcase.actress.favorited')">
+                            <i class="bi bi-heart-fill"></i>
+                        </span>
+                    </div>
+                </template>
+            </div>
+            <div class="actress-add-footer">
+                <span class="actress-add-progress" x-text="libProgressText()"></span>
+                <button type="button" class="actress-add-more"
+                        x-show="libHasMore()"
+                        @click="libExpandMore()"></button>
             </div>
         </div>
     </dialog>
