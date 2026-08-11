@@ -55,6 +55,31 @@ test('年齡 pill =37 正向命中 full', () => {
     assert.deepEqual(names, ['full']);
 });
 
+// ── 罩杯是「有序分級」不是「類別」：≤／≥ 依 CUP_RANK 比大小 ──────────────────
+// spec-116c §4.4／:197（`≥B罩杯` 是正常顯示形式）與 :272（罩杯沒有自訂區間的理由
+// 正是「≤B／≥E 已涵蓋真實問題」）。spec-116 §1 的起點例子就是「B 罩杯以下」。
+// 這三條是 Codex PR review #132 P2 打出來的覆蓋洞：在此之前罩杯只有 `=` 有測試，
+// 把罩杯改成「只能等於」不會讓任何一支測試轉紅——而那會砍掉本功能的核心用途。
+// 罩杯**沒有**區間，那條由下面既有的 `cup + range 恆不符合` 守著，兩者不重疊。
+
+test('罩杯 pill ≤B：A 與 B 都命中（rank 比大小，不是字串相等）', () => {
+    const names = namesMatching([{ dim: 'cup', op: '<=', value: 'B' }]);
+    assert.deepEqual(names, ['full', 'noAge'], 'full=B、noAge=A；C/D 落榜、cup 缺值不入選');
+});
+
+test('罩杯 pill ≥C：C 與 D 都命中', () => {
+    const names = namesMatching([{ dim: 'cup', op: '>=', value: 'C' }]);
+    assert.deepEqual(names, ['tall', 'noHt'], 'tall=C、noHt=D；A/B 落榜');
+});
+
+test('罩杯 ≤／≥ 與身高 pill 可交集（spec-116 §1 的起點例子：矮 ＋ 罩杯以下）', () => {
+    const names = namesMatching([
+        { dim: 'cup', op: '<=', value: 'B' },
+        { dim: 'height', op: '<=', value: '160' },
+    ]);
+    assert.deepEqual(names, ['full', 'noAge'], 'full=160cm/B、noAge=155cm/A 同時符合');
+});
+
 // ── 多 pill 交集 ───────────────────────────────────────────────────────────
 
 test('多 pill 取交集：age=37 AND height=160cm 只剩 full', () => {
