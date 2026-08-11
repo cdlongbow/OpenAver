@@ -279,8 +279,8 @@ test('showcase.html：.lb-actress-core-value 是原生 <button type="button">，
         'utf8',
     );
     assert.ok(
-        /<button\s+type="button"\s+class="lb-actress-core-value"/.test(SHOWCASE_HTML),
-        '.lb-actress-core-value 應是 <button type="button">',
+        /<button\s+type="button"\s+class="lb-actress-core-value lb-link"/.test(SHOWCASE_HTML),
+        '.lb-actress-core-value 應是 <button type="button"> 且同時掛 lb-link（與影片模式共用 hover 規則）',
     );
     assert.ok(
         !/<span\b[^>]*\bclass="lb-actress-core-value"/.test(SHOWCASE_HTML),
