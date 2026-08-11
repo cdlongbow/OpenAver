@@ -3828,6 +3828,71 @@ const RULES = [
     count: 1,
     note: '[117-T5] CD-117-8①：計數器唯一減點（同 L5）',
   },
+
+  // ==== [117-T6] TestShowcaseActressCRUD 等價遷移（CD-117-10 第三刀）====
+  // pytest class 同 commit 移除。對帳表見 TASK-117-T6.md。
+  // #10/#11 已由 [117-T4] R3/R4 承接，本區塊不重複。
+  // #1–#5 錨定方法定義形狀（非裸字面）：裸字面會被 JS 注釋／console.warn 字串餵飽而 fail-open。
+  // 代價：async 關鍵字焊死，日後合法去 async 化會誤紅——fail-closed，可接受。
+
+  // R1 ← TestShowcaseActressCRUD #1：assert "addFavoriteActress" in js
+  // 粒度：原 whole-file 裸子字串 → 收緊為 method-definition 形狀（fail-closed）
+  // 與 [117-T4] R4 不重複：R4 鎖 libDirectAdd(){} 內 call site；函式被刪而呼叫還在時 R4 仍綠，本條才紅。
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: 'async addFavoriteActress() {',
+    note: '[117-T6] R1 ← TestShowcaseActressCRUD #1 "addFavoriteActress" in js；粒度收緊 method-definition（非裸字面，防注釋餵飽）；定義端——[117-T4] R4 鎖 libDirectAdd call site，函式刪而呼叫還在時那條仍綠，本條才紅',
+  },
+  // R2 ← #2：assert "openRemoveActressModal" in js
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: 'openRemoveActressModal() {',
+    note: '[117-T6] R2 ← TestShowcaseActressCRUD #2 "openRemoveActressModal" in js；粒度收緊 method-definition（非裸字面，防注釋餵飽）',
+  },
+  // R3 ← #3：assert "confirmRemoveActress" in js
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: 'async confirmRemoveActress() {',
+    note: '[117-T6] R3 ← TestShowcaseActressCRUD #3 "confirmRemoveActress" in js；粒度收緊 method-definition（非裸字面，防注釋餵飽；async 焊死）',
+  },
+  // R4 ← #4：assert "cancelRemoveActressModal" in js
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: 'cancelRemoveActressModal() {',
+    note: '[117-T6] R4 ← TestShowcaseActressCRUD #4 "cancelRemoveActressModal" in js；粒度收緊 method-definition（非裸字面，防注釋餵飽）',
+  },
+  // R5 ← #5：assert "searchActressFilms" in js
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: 'async searchActressFilms(',
+    note: '[117-T6] R5 ← TestShowcaseActressCRUD #5 "searchActressFilms" in js；粒度收緊 method-definition（非裸字面；:737 注釋與 console.warn 字串足以餵飽裸字面）',
+  },
+  // R6 ← #6：assert "rescrapeActress" not in js（反向，整檔；不加 stripLineComments——注釋也算命中＝fail-closed）
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'forbidden-string',
+    pattern: 'rescrapeActress',
+    note: '[117-T6] R6 ← TestShowcaseActressCRUD #6 "rescrapeActress" not in js；粒度等價 whole-file 反向；不加 stripLineComments（注釋命中仍紅＝fail-closed）；女優重刮已刻意移除不得回流',
+  },
+  // R7 ← #7：assert "openRemoveActressModal()" in html
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'openRemoveActressModal()',
+    note: '[117-T6] R7 ← TestShowcaseActressCRUD #7 "openRemoveActressModal()" in html；粒度等價 whole-file 帶括號字面',
+  },
+  // R8 ← #8：assert html.count("searchActressFilms(") >= 2
+  // 用 min:2 非 count:2——原斷言是下界；exact 會誤傷合法的第三個 call site
+  {
+    file: 'web/templates/showcase.html', kind: 'structure-count',
+    pattern: 'searchActressFilms(',
+    min: 2,
+    note: '[117-T6] R8 ← TestShowcaseActressCRUD #8 count("searchActressFilms(") >= 2；粒度等價 whole-file structure-count min:2（非 exact count）',
+  },
+  // R9 ← #9：assert "rescrapeActress()" not in html（反向，整檔）
+  {
+    file: 'web/templates/showcase.html', kind: 'forbidden-string',
+    pattern: 'rescrapeActress()',
+    note: '[117-T6] R9 ← TestShowcaseActressCRUD #9 "rescrapeActress()" not in html；粒度等價 whole-file 反向；女優重刮已刻意移除不得回流',
+  },
 ];
 
 // ---- helpers ----

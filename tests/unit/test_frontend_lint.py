@@ -487,39 +487,9 @@ class TestShowcaseActressLightbox:
         ]:
             assert expected in js, f"state-actress.js missing: {expected!r}"
 
-class TestShowcaseActressCRUD:
-    """Phase 44a-T5: Actress CRUD guards (method folded)"""
-
-    def _html(self):
-        return SHOWCASE_HTML.read_text(encoding="utf-8")
-
-    def _js(self):
-        return SHOWCASE_ACTRESS_JS.read_text(encoding="utf-8")
-
-    def test_actress_js_contains(self):
-        """state-actress.js 含 CRUD methods"""
-        js = self._js()
-        for expected in [
-            "addFavoriteActress",
-            "openRemoveActressModal",
-            "confirmRemoveActress",
-            "cancelRemoveActressModal",
-            "searchActressFilms",
-        ]:
-            assert expected in js, f"state-actress.js missing: {expected!r}"
-        assert "rescrapeActress" not in js, \
-            "state-actress.js should not contain: 'rescrapeActress'"
-
-    def test_showcase_html_contains(self):
-        """showcase.html 含 CRUD handlers; searchActressFilms >=2; 無 rescrapeActress"""
-        html = self._html()
-        # 117-T3：舊 + dropdown 移除，HTML 側 _addActressName / addFavoriteActress() 兩條斷言的錨定物已不存在；替代 lint rule 隨 T4 的「直接新增」列落地，全部 11 條的對帳表在 T6。
-        for expected in ["openRemoveActressModal()"]:
-            assert expected in html, f"showcase.html missing: {expected!r}"
-        assert html.count("searchActressFilms(") >= 2, \
-            "showcase.html missing: 'searchActressFilms(' (x2)"
-        assert "rescrapeActress()" not in html, \
-            "showcase.html should not contain: 'rescrapeActress()'"
+# TestShowcaseActressCRUD（Phase 44a-T5，9 條）已於 117-T6 等價遷入
+# scripts/static_guard_lint.mjs [117-T6] R1–R9；#10/#11 由 [117-T4] R3/R4 承接。
+# 對帳表見 feature/117-actress-add-panel/TASK-117-T6.md。
 
 
 class TestShowcaseActressCardFooter:
