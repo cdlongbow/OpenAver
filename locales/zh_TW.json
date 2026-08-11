@@ -903,10 +903,23 @@
         "maker": "片商",
         "director": "導演",
         "series": "系列",
-        "label": "廠牌"
+        "label": "廠牌",
+        "age": "年齡",
+        "height": "身高",
+        "cup": "罩杯"
       },
       "title": "{dim}：{value}",
-      "remove_aria": "移除篩選：{value}"
+      "remove_aria": "移除篩選：{value}",
+      "op": {
+        "eq": "等於",
+        "lte": "小於等於",
+        "gte": "大於等於",
+        "range": "自訂區間"
+      },
+      "editor": {
+        "range_min": "下限",
+        "range_max": "上限"
+      }
     },
     "action": {
       "clear_search": "清除搜尋",
@@ -970,7 +983,10 @@
       "pill_suffix": "部",
       "search_actresses_prefix": "找到 ",
       "search_actresses_middle": " 位女優 \"",
-      "search_actresses_suffix": "\""
+      "search_actresses_suffix": "\"",
+      "pill_actresses_prefix": "符合",
+      "pill_actresses_middle": "個條件的",
+      "pill_actresses_suffix": "位"
     },
     "nav": {
       "prev_page": "上一頁",
@@ -1065,6 +1081,7 @@
       "removeSuccess": "已從收藏移除",
       "empty": "尚未收藏任何女優",
       "emptyHint": "點擊右上角 + 新增收藏",
+      "searchEmpty": "沒有符合條件的女優",
       "search_films": "搜尋相關影片",
       "addFavorite": "加入收藏",
       "favorited": "已收藏",

@@ -200,6 +200,13 @@ export function stateBase() {
 
         search: '',
         pills: [],  // TASK-115-T1: metadata pill filter（reactive only；持久化屬 T3）
+        actressPills: [],  // TASK-116a-T2: 女優數值 pill（reactive only；不持久化 CD-116a-5）
+        // TASK-116b-T2：浮層草稿（null=關閉）與桌機閘門（CD-116b-5 / CD-116b-8）
+        // factory 初值比照 state-lightbox.js _isNarrow：就地求值一次；init() re-sync 是第二次。
+        _pillEditor: null,
+        _pillPopoverEnabled: (typeof window.matchMedia === 'function')
+            ? !window.matchMedia('(max-width: 480px)').matches
+            : (window.innerWidth > 480),
         sort: 'date',         // M2a 先用硬編碼，M4 才從 config/localStorage 恢復
         order: 'desc',
         mode: 'grid',
@@ -230,6 +237,7 @@ export function stateBase() {
                         window.GhostFly?.cleanupStaleGhosts?.();              // 53a-T1: 移除殘留 ghost（沿 v0.8.1 T4 optional-chaining pattern）
                         if (this._scrollHideHandler) window.removeEventListener('scroll', this._scrollHideHandler);  // T1: cleanup scroll collapse listener
                         if (this._narrowMq && this._narrowHandler) this._narrowMq.removeEventListener('change', this._narrowHandler);  // 101d-T1: page-level narrow gate listener（與 init 註冊對稱）
+                        if (this._pillMq && this._pillHandler) this._pillMq.removeEventListener('change', this._pillHandler);  // 116b-T2: pill 浮層桌機閘門（與 init 註冊對稱）
                     }
                 });
             }
@@ -290,6 +298,21 @@ export function stateBase() {
                 this._isNarrow = this._narrowMq.matches;   // re-sync：補回 factory 初值到本行之間的跨界事件
             }
 
+            // 116b-T2：pill 浮層桌機閘門（CD-116b-8 / CD-116b-8b）。
+            // 比照上方 _narrowMq 的 101d P1 re-sync：addEventListener 後立刻再讀 matches，
+            // 兩行相鄰、中間不得夾 await。跨進 ≤480 時與更新 _pillPopoverEnabled 同一次求值
+            // 做 _pillEditor teardown（不另開第二個 listener）。
+            if (typeof window.matchMedia === 'function') {
+                this._pillMq = window.matchMedia('(max-width: 480px)');
+                this._pillHandler = (e) => {
+                    this._pillPopoverEnabled = !e.matches;
+                    if (e.matches) this._pillEditor = null;
+                };
+                this._pillMq.addEventListener('change', this._pillHandler);
+                this._pillPopoverEnabled = !this._pillMq.matches;   // re-sync：補回 factory 初值到本行之間的跨界事件
+                if (this._pillMq.matches) this._pillEditor = null;
+            }
+
             // T1: Mobile scroll-to-collapse — 往下滾超過 50px（相對 toolbar 展開當下 Y）自動收合
             // （≤480px，**沒有任何啟用中篩選時**）
             let _toolbarOpenY = null
@@ -327,6 +350,10 @@ export function stateBase() {
             this.$watch('pills', () => {
                 Alpine.store('ui').showcaseHasSearch = this._hasActiveFilter();
             })
+            // 116a-T2：actressPills 同慣例整包替換，$watch 對此可靠觸發（CD-116a-2d）。
+            this.$watch('actressPills', () => {
+                Alpine.store('ui').showcaseHasSearch = this._hasActiveFilter();
+            })
             // T2 init sync：restoreState() 在 $watch 前執行，初始值不會觸發上面任何一個 watcher
             Alpine.store('ui').showcaseHasSearch = this._hasActiveFilter();
 
@@ -344,7 +371,7 @@ export function stateBase() {
 
         // 115-T7 / CD-12：單一「是否有啟用中篩選」判準（文字／女優文字／pill 任一即真）
         _hasActiveFilter() {
-            return this.search !== '' || this.actressSearch !== '' || this.pills.length > 0;
+            return this.search !== '' || this.actressSearch !== '' || this.pills.length > 0 || this.actressPills.length > 0;
         },
 
         // --- 狀態恢復 (M2c) ---

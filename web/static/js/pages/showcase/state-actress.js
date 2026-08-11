@@ -7,6 +7,58 @@
 
 import { _actresses, _filteredActresses, _actressesLoaded, _nameToGroup, _loadAliasMap, _killLightboxTimelines, _setActressesLoaded, _setActresses, _setFilteredActresses } from '@/showcase/state-base.js';
 import { normalizePillValue } from '@/shared/pill-filter.js';
+import { actressAgeValue, actressHeightValue, actressCupValue, actressMetricRange } from '@/shared/actress-metric.js';
+import { buildActressPillPredicate } from '@/shared/actress-pill-filter.js';
+
+/** height 顯示單位（CD-116b-11 模組常數，不進 i18n） */
+var CM_UNIT = 'cm';
+
+/**
+ * height pill value/value2 共用：extractor 解得出數值就用數字字串，否則退回 raw（永不寫入字面 'null'）。
+ *
+ * Codex PR review P2（#132）：`normalizeHeightPillValue` 同時服務兩種來源——
+ * 燈箱點擊來的刮削值（`'160cm'`，需要 extractor 剝單位）與使用者在自訂區間打的字。
+ * `<input type="number">` 接受科學記法（`1e2` 是合法輸入、`badInput` 為 false、`Number()` 得 100），
+ * 但 `parseInt('1e2')` 在 `e` 就停下 → 1。症狀最惡的是 `≥`：pill 顯示 `≥1cm`、牆上一個人都不會少，
+ * 使用者以為「篩選沒作用」，而他打的 100 已經被吃成 1（`=`／`≤` 則是牆幾乎清空，至少看得出來）。
+ *
+ * 修法刻意**不繞過 extractor**（CD-116b-1「單位剝離唯一落點」；CD-116c-4b 已駁回
+ * 「看起來像純數字就跳過 extractor」的分支寫法）：只把**數字字面**先轉成標準十進位形式，
+ * `parseInt` 仍是最終裁決者。既有被鎖住的三個案例逐位元組不變——
+ * `'0250'`→250、`'25.5'`→25（截斷仍由 parseInt 做）、`'160cm'`→`Number` 得 NaN 故原樣交給 extractor。
+ */
+function normalizeHeightPillValue(raw) {
+    // 空字串／null 明確排除：Number('') 與 Number(null) 都是 0（有限），不擋會把
+    // 「沒有值」變成 '0'，與修這條之前的行為不同。這裡只處理「真的有字」的情況。
+    var s = raw == null ? '' : String(raw).trim();
+    var n = s === '' ? NaN : Number(s);
+    var pre = Number.isFinite(n) ? String(n) : raw;
+    var h = actressHeightValue({ height: pre });
+    return (h == null) ? String(raw) : String(h);
+}
+
+/** 116c-T2（CD-116c-2）：空/空白/null 一律回 null；否則回 trim 後的字串 */
+function _trimOrNull(v) {
+    if (v == null) return null;
+    var s = String(v).trim();
+    return s === '' ? null : s;
+}
+
+/**
+ * 116c P2-2（Codex PR review）：單一格「有沒有字」與「能不能取到合法值」的判斷唯一所有者。
+ * <input type="number"> 對無法解析的輸入（如 1e999）會把 .value 回成空字串，若只看
+ * _trimOrNull(rawText) 會把「使用者確實打了東西但打壞了」誤判成「這格是空的」，導致
+ * 狀態機落到錯的分支（態①/②），使用者打的內容或另一格的合法值被靜默吃掉/誤用。
+ * badInput（來自 validity.badInput，markup @input 寫入 _pillEditor.badLo/badHi）：
+ *   有字（has=true）、但 raw 一律 null——讓 _pillOperandOk 那一關擋下，不新增第二套合法性判斷。
+ * 非 badInput：raw = _trimOrNull(rawText)，has = raw != null（沿用既有語意）。
+ * 不適用 _pillEditorHasRangeInput()（✓✗ 顯示條件維持只讀 model 值，見該函式旁註解）。
+ */
+function _pillFieldValue(rawText, isBad) {
+    if (isBad) return { has: true, raw: null };
+    var t = _trimOrNull(rawText);
+    return { has: t != null, raw: t };
+}
 
 export function stateActress() {
     return {
@@ -126,6 +178,8 @@ export function stateActress() {
         // --- 44a: 女優模式核心方法 ---
 
         toggleActressMode() {
+            // CD-116b-8b：切換影片/女優模式時無條件 teardown 浮層草稿
+            this._pillEditor = null;
             if (this.lightboxOpen) this.closeLightbox();
             var self = this;
             var isEnteringActress = !this.showFavoriteActresses;
@@ -228,19 +282,22 @@ export function stateActress() {
         },
 
         applyActressFilterAndSort() {
-            // 1. Filter
+            // Stage 0（116a-T2）：pill 精準比對，跑在既有名字模糊搜尋之前（鏡射 spec §3.1 步驟 6）
+            var pillMatch = buildActressPillPredicate(this.actressPills);
+            var base = _actresses.filter(pillMatch);
+
+            // 1. Filter（名字模糊搜尋，改讀 base 而非 _actresses）
             var q = this.actressSearch.trim();
-            var filtered = _actresses.slice();
+            var filtered = base.slice();
             if (q) {
                 var ql = q.toLowerCase();
-                filtered = _actresses.filter(function (a) {
+                filtered = base.filter(function (a) {
                     var group = _nameToGroup[a.name] || [a.name];
                     return group.some(function(n) { return n && n.toLowerCase().includes(ql); });
                 });
             }
 
             // 2. Sort
-            var cupRank = { A:1, B:2, C:3, D:4, E:5, F:6, G:7, H:8, I:9, J:10, K:11 };
             var sort = this.actressSort;
             var order = this.actressOrder;
             filtered = filtered.slice().sort(function (a, b) {
@@ -256,16 +313,14 @@ export function stateActress() {
                     va = a.created_at || '';
                     vb = b.created_at || '';
                 } else if (sort === 'age') {
-                    va = a.age != null ? a.age : Infinity;
-                    vb = b.age != null ? b.age : Infinity;
+                    va = actressAgeValue(a);    va = va != null ? va : Infinity;
+                    vb = actressAgeValue(b);    vb = vb != null ? vb : Infinity;
                 } else if (sort === 'height') {
-                    var ha = parseInt(a.height);
-                    var hb = parseInt(b.height);
-                    va = isNaN(ha) ? Infinity : ha;
-                    vb = isNaN(hb) ? Infinity : hb;
+                    va = actressHeightValue(a); va = va != null ? va : Infinity;
+                    vb = actressHeightValue(b); vb = vb != null ? vb : Infinity;
                 } else if (sort === 'cup') {
-                    va = cupRank[a.cup] || Infinity;
-                    vb = cupRank[b.cup] || Infinity;
+                    va = actressCupValue(a);    va = va != null ? va : Infinity;
+                    vb = actressCupValue(b);    vb = vb != null ? vb : Infinity;
                 } else {
                     va = a.video_count || 0;
                     vb = b.video_count || 0;
@@ -288,8 +343,178 @@ export function stateActress() {
             this.paginatedActresses = _filteredActresses.slice();  // CD-9: 全量，不分頁
         },
 
+        // CD-116b-1b：寫入 actressPills 的單一所有者（正規化 ＋ 同維度整包取代 ＋ apply）
+        _setActressPill(pill) {
+            // 單位剝離唯一落點：走既有 extractor，不得 replace/parseInt（CD-116b-1）；value/value2 對稱
+            var v = pill.dim === 'height' ? normalizeHeightPillValue(pill.value) : String(pill.value);
+            var v2 = pill.value2 == null || pill.value2 === ''
+                ? null
+                : (pill.dim === 'height' ? normalizeHeightPillValue(pill.value2) : String(pill.value2));
+            var next = this.actressPills.filter(function (p) { return p.dim !== pill.dim; });
+            next.push({
+                dim: pill.dim,
+                op: pill.op,
+                value: v,
+                value2: v2,
+            });
+            this.actressPills = next;
+            this.applyActressFilterAndSort();  // CD-116a-9：直呼，不走 _sortWithFlip
+        },
+
+        // CD-116b-1b：降格為 adapter，簽名不變
+        addActressPill(dim, value) {
+            this._setActressPill({ dim: dim, op: '=', value: value, value2: null });
+        },
+
+        removeActressPill(dim, value) {
+            var v = String(value);
+            var next = this.actressPills.filter(function (p) { return !(p.dim === dim && p.value === v); });
+            if (next.length === this.actressPills.length) return;  // 沒命中：不重跑
+            this.actressPills = next;
+            // CD-116b-8b：移除的正是編輯中 dim → teardown 草稿
+            if (this._pillEditor && this._pillEditor.dim === dim) this._pillEditor = null;
+            this.applyActressFilterAndSort();
+        },
+
+        // ── TASK-116b-T2：浮層狀態機（無 markup；CD-116b-5 / CD-116b-3 / CD-116b-8）──
+
+        // 開啟：pill（四欄位）→ 草稿（五欄位）淺拷貝映射；不得持有 actressPills 內物件參考
+        _openPillEditor(pill) {
+            if (pill.op === 'range') {
+                this._pillEditor = {
+                    dim: pill.dim,
+                    op: pill.op,
+                    value: pill.value,
+                    rangeLo: pill.value,
+                    rangeHi: pill.value2,
+                    badLo: false,
+                    badHi: false,
+                };
+            } else {
+                this._pillEditor = {
+                    dim: pill.dim,
+                    op: pill.op,
+                    value: pill.value,
+                    rangeLo: null,
+                    rangeHi: null,
+                    badLo: false,
+                    badHi: false,
+                };
+            }
+        },
+
+        // 第二層防禦（比照 _onActressMetadataClick）：markup 會擋手機按鈕，狀態層也要提早 return
+        _togglePillEditor(pill) {
+            if (!this._pillPopoverEnabled) return;
+            if (this._pillEditor && this._pillEditor.dim === pill.dim) {
+                this._pillEditor = null;
+                return;
+            }
+            this._openPillEditor(pill);
+        },
+
+        // 116c-T2（CD-116c-2）：三顆鈕操作數的單一判斷點。狀態判定只看「有沒有字」，
+        // 不看「是不是合法數字」——1e999 要進態②再被 _pillOperandOk 擋下，不能被當成
+        // 「空」而靜默落回態①（使用者打的東西被無聲丟掉，他不會知道）。
+        _pillOperandFor(op) {
+            var d = this._pillEditor;
+            if (!d) return null;
+            var lo = _pillFieldValue(d.rangeLo, d.badLo);
+            var hi = _pillFieldValue(d.rangeHi, d.badHi);
+            var raw;
+            if (!lo.has && !hi.has) raw = d.value;                // 態①：pill 目前的值
+            else if (!hi.has) raw = lo.raw;                       // 態②：只有左格（壞輸入 raw=null）
+            else if (!lo.has) raw = hi.raw;                       // 態②：只有右格（壞輸入 raw=null）
+            else raw = (op === '<=') ? hi.raw : lo.raw;           // 態③：≤ 取右，≥ 與 = 取左
+            return this._pillOperandOk(raw) ? raw : null;
+        },
+
+        // 合法性依維度分流：cup 是 'B' 這種非數字標記，不得跑 Number.isFinite；
+        // age/height 才驗有限數（1e999 之類的 Infinity 在此被擋下）。
+        _pillOperandOk(raw) {
+            if (raw == null) return false;
+            var d = this._pillEditor;
+            if (!d || d.dim === 'cup') return true;
+            return Number.isFinite(Number(raw));
+        },
+
+        // 116c-T2（CD-116c-1）：三顆運算子鈕的唯一提交路徑——取操作數 → 寫入 → 關閉。
+        // operand 為 null（不合法/無法判定）→ early return，不寫入、不關閉。
+        _applyPillOp(op) {
+            if (!this._pillEditor) return;
+            var operand = this._pillOperandFor(op);
+            if (operand == null) return;
+            this._setActressPill({ dim: this._pillEditor.dim, op: op, value: operand, value2: null });
+            this._pillEditor = null;
+        },
+
+        // ✓✗ 的顯示條件（T3 markup 會綁 x-show）：_pillEditor 為 null 時必須安全回 false
+        // （浮層是 x-show，關閉時 markup 仍會求值）。必須即時反映輸入內容。
+        _pillEditorHasRangeInput() {
+            if (!this._pillEditor) return false;
+            return _trimOrNull(this._pillEditor.rangeLo) != null
+                || _trimOrNull(this._pillEditor.rangeHi) != null;
+        },
+
+        // 116c-T2（CD-116c-6）：第 ③ 行資料範圍提示的呈現層。_pillEditor 為 null 時必須
+        // 安全回 ''（同上，x-show 求值前提）；cup 恆回 ''（無自訂區間列）。
+        _pillDimRangeHint() {
+            if (!this._pillEditor) return '';
+            var dim = this._pillEditor.dim;
+            var extractor = dim === 'age' ? actressAgeValue
+                : dim === 'height' ? actressHeightValue
+                    : null;
+            if (!extractor) return '';
+            var range = actressMetricRange(_actresses, extractor);
+            if (range == null) return '';
+            return '（' + range.min + ' ~ ' + range.max + '）';
+        },
+
+        // 提交：自訂區間列的 ✓（CD-116c-3）。單邊語意用委派——不自己組 value2:null 的
+        // range 物件，讓 AC-C7（✓ 與運算子鈕逐欄位相同）結構上成立。
+        _commitPillEditor() {
+            if (!this._pillEditor) return;
+            var d = this._pillEditor;
+            var lo = _pillFieldValue(d.rangeLo, d.badLo);
+            var hi = _pillFieldValue(d.rangeHi, d.badHi);
+            if (!lo.has && !hi.has) return;                     // 兩格皆空：✓ 不存在（防禦性 return）
+            if (!hi.has) return this._applyPillOp('>=');        // 只有左格 → 委派（壞輸入交給 operandOk 擋）
+            if (!lo.has) return this._applyPillOp('<=');        // 只有右格 → 委派（壞輸入交給 operandOk 擋）
+            if (lo.raw == null || hi.raw == null) return;       // 116c P2-2：任一格壞輸入 → fail-safe，不寫入、不關閉
+            var loN = Number(lo.raw);
+            var hiN = Number(hi.raw);
+            if (!Number.isFinite(loN) || !Number.isFinite(hiN)) return;   // fail-safe：不寫入、不關閉
+            // 對調（spec-116 §5.5 明文保留）：比較用 Number，寫入用 trim 過的原始字串
+            var loRaw = lo.raw;
+            var hiRaw = hi.raw;
+            if (loN > hiN) {
+                var tmp = loRaw;
+                loRaw = hiRaw;
+                hiRaw = tmp;
+            }
+            this._setActressPill({ dim: d.dim, op: 'range', value: loRaw, value2: hiRaw });
+            this._pillEditor = null;
+        },
+
+        // ✗ 取消：只丟棄草稿，不碰 actressPills（spec §5.6；函式體不得引用 actressPills）
+        _cancelPillEditor() {
+            this._pillEditor = null;
+        },
+
         onActressSearchChange() {
             this.applyActressFilterAndSort();
+        },
+
+        // TASK-116a-T4: 女優搜尋框 Backspace 刪最後一枚 actressPills（鏡射 onSearchBackspace）
+        onActressSearchBackspace(event) {
+            if (event.isComposing) return;
+            // 有字：交給瀏覽器原生刪字，不 preventDefault、不動 pill
+            if (event.target.value !== '') return;
+            // 游標必須在最左且選取為 collapsed；非 collapsed 選取不得刪 pill
+            if (!(event.target.selectionStart === 0 && event.target.selectionEnd === 0)) return;
+            if (this.actressPills.length === 0) return;
+            var last = this.actressPills[this.actressPills.length - 1];
+            this.removeActressPill(last.dim, last.value);
         },
 
         onActressSortChange() {
@@ -477,18 +702,47 @@ export function stateActress() {
             return window.innerWidth >= 768 ? 10 : 6;
         },
 
-        _actressCoreMetadata() {
-            var a = this.currentLightboxActress; if (!a) return '';
+        // TASK-116a-T3: 取代 _actressCoreMetadata()——回傳結構化陣列，年齡/身高/罩杯三格可點（CD-116a-6）
+        _actressCoreMetadataParts() {
+            var a = this.currentLightboxActress; if (!a) return [];
+            var canClick = this.actressLightboxSource === 'grid';   // spec §4.2 的 gate，單一求值點
+            // spec §4.3 第 2 條：取不到值一律不符合——比不了大小的值不該變成條件，否則只會產生一枚永遠篩不到人、且畫面不解釋為什麼的死 pill；fail-closed 提前到入口。
             var parts = [];
             if (typeof a.video_count === 'number') {
-                parts.push(a.video_count + window.t('showcase.unit.films'));
+                parts.push({ key: 'count', text: a.video_count + window.t('showcase.unit.films'), clickable: false });
             }
-            if (a.age) parts.push(a.age + window.t('search.unit.age'));
-            if (a.birth) parts.push(a.birth);
-            if (a.height) parts.push(a.height);
-            if (a.cup) parts.push(a.cup + window.t('search.unit.cup'));
-            if (a.bust && a.waist && a.hip) parts.push(a.bust + '-' + a.waist + '-' + a.hip);
-            return parts.join(' · ');
+            if (a.age) parts.push({ key: 'age', text: a.age + window.t('search.unit.age'), clickable: canClick && actressAgeValue({ age: a.age }) != null, dim: 'age', value: a.age });
+            if (a.birth) parts.push({ key: 'birth', text: a.birth, clickable: false });
+            if (a.height) parts.push({ key: 'height', text: a.height, clickable: canClick && actressHeightValue({ height: a.height }) != null, dim: 'height', value: a.height });
+            if (a.cup) parts.push({ key: 'cup', text: a.cup + window.t('search.unit.cup'), clickable: canClick && actressCupValue({ cup: a.cup }) != null, dim: 'cup', value: a.cup });
+            if (a.bust && a.waist && a.hip) parts.push({ key: 'bwh', text: a.bust + '-' + a.waist + '-' + a.hip, clickable: false });
+            return parts;
+        },
+
+        // TASK-116a-T3: 燈箱三格點擊 adapter（CD-116a-6）——先關燈箱再加 pill（FE-ALPINE-04，比照 searchActressFilms() 的順序）
+        _onActressMetadataClick(dim, value) {
+            if (this.actressLightboxSource !== 'grid') return;   // 防禦性：markup 已用 x-show 擋掉按鈕，這裡是第二層
+            this.closeLightbox();
+            this.addActressPill(dim, value);
+            // 116b-T4：手機上剛從燈箱產生的 pill 必須看得見（toolbar 預設收合）。
+            // 桌機無副作用：.mobile-toolbar-open 只在 ≤480px 有樣式、navbar 鈕 lg:hidden。
+            Alpine.store('ui').toolbarOpen = true;
+        },
+
+        // TASK-116b-T1: 女優 pill 顯示文字（CD-116b-11）——op 切換符號、單位由顯示層補回
+        _actressPillDisplayText(pill) {
+            var unit = pill.dim === 'age'
+                ? window.t('search.unit.age')
+                : pill.dim === 'cup'
+                    ? window.t('search.unit.cup')
+                    : pill.dim === 'height'
+                        ? CM_UNIT
+                        : '';
+            if (pill.op === 'range') {
+                return pill.value + '~' + pill.value2 + unit;  // 116c-T2（CD-116c-7）：U+007E，非 en dash
+            }
+            var prefix = pill.op === '<=' ? '≤' : pill.op === '>=' ? '≥' : '=';
+            return prefix + pill.value + unit;
         },
 
         // --- 44c T2: Actress card footer helpers ---
@@ -704,6 +958,8 @@ export function stateActress() {
 
                 if (this.lightboxOpen) this.closeLightbox();
                 if (wasActressMode) {
+                    // 繞過 toggleActressMode() 直接翻旗標——CD-116b-8b 的 teardown 必須就地補上
+                    this._pillEditor = null;
                     this.showFavoriteActresses = false;
                     this.actressSearch = '';
                 }

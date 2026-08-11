@@ -2197,6 +2197,12 @@ export function stateLightbox() {
 
         // --- 快捷鍵 (M4c 完整實作) ---
         handleKeydown(e) {
+            // 116b：浮層開啟時最高優先（必須在 INPUT early-return 之前——區間的 number input
+            // 取得焦點時 e.target.tagName === 'INPUT'，放在後面 ESC 永遠到不了這裡）
+            if (this._pillEditor) {
+                if (e.key === 'Escape') { e.preventDefault(); this._cancelPillEditor(); return; }
+                return;                       // 第二段：鎖其餘鍵。不得 preventDefault
+            }
             // 1. 輸入框中不處理快捷鍵
             if (e.target.tagName === 'INPUT') return;
 

@@ -95,12 +95,101 @@
                                @input.debounce.300ms="onSearchChange()"
                                @keydown.backspace="onSearchBackspace($event)">
                     </div>
-                    <!-- 女優搜尋框 (CD-11) -->
-                    <input type="text"
-                           x-show="showFavoriteActresses"
-                           :placeholder="t('showcase.search.actress')"
-                           x-model="actressSearch"
-                           @input.debounce.300ms="onActressSearchChange()">
+                    <!-- 女優搜尋框 (CD-11) — pill 容器包住 input（TASK-116a-T3） -->
+                    <div class="filter-pill-group actress-filter-pill-group" x-show="showFavoriteActresses">
+                        <span class="filter-pill-list" role="list" x-show="actressPills.length">
+                            <template x-for="pill in actressPills" :key="pill.dim">
+                                <span class="filter-pill" role="listitem"
+                                      :class="{ 'is-editing': _pillEditor && _pillEditor.dim === pill.dim }"
+                                      :title="t('showcase.pill.dim_label.' + pill.dim)">
+                                    <!-- 116b-T3: 桌機（≥481px）可點開浮層編輯；手機（≤480px）純文字不可點
+                                         （spec §5.7，CD-116b-8）。兩個 <template x-if> 換元素型別
+                                         （button/span），不用 :disabled 或 pointer-events:none——那仍是
+                                         可被 Tab 到、進 accessibility tree 的死控制項。
+                                         .is-editing 掛在外層 .filter-pill（CD-116b-12b 逐字）——浮層錨在整條
+                                         搜尋列下方、不黏著被編輯的那一枚，整枚 pill 的 accent 邊框才是
+                                         CD-116b-4 要求的那個「是哪一枚」訊號，文字 tint 太弱。 -->
+                                    <template x-if="_pillPopoverEnabled">
+                                        <button type="button" class="filter-pill-value"
+                                                @click.stop="_togglePillEditor(pill)"
+                                                x-text="_actressPillDisplayText(pill)"></button>
+                                    </template>
+                                    <template x-if="!_pillPopoverEnabled">
+                                        <span class="filter-pill-value" x-text="_actressPillDisplayText(pill)"></span>
+                                    </template>
+                                    <button type="button" class="filter-pill-remove"
+                                            @click="removeActressPill(pill.dim, pill.value)"
+                                            :aria-label="t('showcase.pill.remove_aria', { value: _actressPillDisplayText(pill) })">✕</button>
+                                </span>
+                            </template>
+                        </span>
+                        <input type="text"
+                               :placeholder="actressPills.length ? '' : t('showcase.search.actress')"
+                               x-model="actressSearch"
+                               @input.debounce.300ms="onActressSearchChange()"
+                               @keydown.backspace="onActressSearchBackspace($event)">
+                    </div>
+
+                    <!-- 116b-T3: 女優 pill 浮層編輯器。掛在 .spotlight-search 下、與兩個
+                         .filter-pill-group 同層（不放進任一個裡面）——CD-116b-4：
+                         .filter-pill-group:focus-within { transform: scale(1.02) } 建立新的 containing
+                         block，連 position:fixed 的後代都逃不掉，放進去浮層會被拖著一起縮放位移。
+                         x-show 三合取項是第二道防線（CD-116b-8b：主力 teardown 在 T2 狀態層，這裡只是
+                         讓漏掉一條時畫面上至少看不到）。@click.stop：內部互動元素不得把點擊冒泡到
+                         未來 T4 的 @click.outside 判定（既有慣例見 showcase.html:1139 附近註解）。
+                         x-trap / @click.outside 本身留給 T4（CD-116b-9），本 task 只鋪骨架。 -->
+                    <div class="pill-editor-popover"
+                         x-show="_pillEditor && showFavoriteActresses && _pillPopoverEnabled"
+                         x-cloak
+                         x-transition.opacity.duration.150ms
+                         x-trap="!!_pillEditor"
+                         @click.outside="_pillEditor && _cancelPillEditor()"
+                         @click.stop
+                         role="dialog"
+                         aria-modal="false"
+                         aria-labelledby="pill-editor-title">
+                        <div class="pill-editor-title" id="pill-editor-title" x-text="t('showcase.pill.dim_label.' + (_pillEditor?.dim || ''))"></div>
+
+                        <div class="pill-editor-modes">
+                            <button type="button" class="pill-editor-mode" :class="{ 'is-active': _pillEditor?.op === '=' }"
+                                    @click="_applyPillOp('=')" :aria-label="t('showcase.pill.op.eq')">=</button>
+                            <button type="button" class="pill-editor-mode" :class="{ 'is-active': _pillEditor?.op === '<=' }"
+                                    @click="_applyPillOp('<=')" :aria-label="t('showcase.pill.op.lte')">≤</button>
+                            <button type="button" class="pill-editor-mode" :class="{ 'is-active': _pillEditor?.op === '>=' }"
+                                    @click="_applyPillOp('>=')" :aria-label="t('showcase.pill.op.gte')">≥</button>
+                        </div>
+
+                        <!-- 116c-T3: 自訂區間列常駐（罩杯整組不渲染）。
+                             ⚠ x-if 必須先判 _pillEditor 非 null——浮層本體是 x-show，關閉時 markup 仍在、
+                             綁定仍求值；`_pillEditor?.dim !== 'cup'` 在 null 時為 true 會炸 x-model（CD-116c-5）。 -->
+                        <template x-if="_pillEditor && _pillEditor.dim !== 'cup'">
+                            <div class="pill-editor-custom">
+                                <div class="pill-editor-custom-label">
+                                    <span x-text="t('showcase.pill.op.range')"></span><span class="pill-editor-hint" x-text="_pillDimRangeHint()"></span>
+                                </div>
+                                <div class="pill-editor-range">
+                                    <input type="number" class="input input-bordered input-sm"
+                                           inputmode="numeric"
+                                           x-model="_pillEditor.rangeLo"
+                                           @input="_pillEditor.badLo = $event.target.validity.badInput"
+                                           :aria-label="t('showcase.pill.editor.range_min')">
+                                    <span class="pill-editor-range-sep" aria-hidden="true">~</span>
+                                    <input type="number" class="input input-bordered input-sm"
+                                           inputmode="numeric"
+                                           x-model="_pillEditor.rangeHi"
+                                           @input="_pillEditor.badHi = $event.target.validity.badInput"
+                                           :aria-label="t('showcase.pill.editor.range_max')">
+                                </div>
+                                <div class="pill-editor-actions" x-show="_pillEditorHasRangeInput()">
+                                    <button type="button" class="pill-editor-btn cancel" @click="_cancelPillEditor()"
+                                            :aria-label="t('common.action.cancel')"><i class="bi bi-x-lg"></i></button>
+                                    <button type="button" class="pill-editor-btn confirm" @click="_commitPillEditor()"
+                                            :aria-label="t('common.action.confirm')"><i class="bi bi-check-lg"></i></button>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+
                     <div class="search-actions-right">
                         <!-- 44b: heart icon (precise match) -->
                         <button class="btn-icon"
@@ -522,6 +611,11 @@
                 <p class="state-page-text" x-text="t('showcase.actress.empty')"></p>
                 <p class="state-page-text" x-text="t('showcase.actress.emptyHint')"></p>
             </div>
+            <!-- Search/filter empty (T4) -->
+            <div class="state-page" x-cloak x-show="!actressLoading && actressCount > 0 && filteredActressCount === 0">
+                <i class="bi bi-search state-page-icon"></i>
+                <p class="state-page-text" x-text="t('showcase.actress.searchEmpty')"></p>
+            </div>
             <!-- Actress Grid -->
             <div class="actress-grid" x-show="!actressLoading && filteredActressCount > 0">
                 <template x-for="(actress, index) in paginatedActresses" :key="actress.name">
@@ -739,9 +833,17 @@
                                 </button>
                             </div>
                             <!-- Row 2: Core metadata (age · birth · height · cup · BWH) -->
-                            <div class="lb-actress-core"
-                                 x-show="_actressCoreMetadata()"
-                                 x-text="_actressCoreMetadata()"></div>
+                            <div class="lb-actress-core" x-show="_actressCoreMetadataParts().length">
+                                <template x-for="(part, idx) in _actressCoreMetadataParts()" :key="part.key">
+                                    <span>
+                                        <span x-show="idx > 0"> · </span>
+                                        <span x-show="!part.clickable" x-text="part.text"></span>
+                                        <button type="button" class="lb-actress-core-value lb-link" x-show="part.clickable"
+                                                @click="_onActressMetadataClick(part.dim, part.value)"
+                                                x-text="part.text"></button>
+                                    </span>
+                                </template>
+                            </div>
                             <!-- Row 3: Aliases chips +N -->
                             <div class="lb-chips-row"
                                  x-show="(currentLightboxActress?.aliases || []).length > 0">
@@ -1545,11 +1647,14 @@
             <template x-if="showFavoriteActresses && (!actressSearch || filteredActressCount > 0)">
                 <span class="footer-count footer-count--actress">
                     <i class="bi bi-person-circle"></i>
-                    <template x-if="!actressSearch">
+                    <template x-if="!actressSearch && !actressPills.length">
                         <span><b x-text="filteredActressCount"></b> {{ t('showcase.unit.actresses') }}</span>
                     </template>
-                    <template x-if="actressSearch && filteredActressCount > 0">
+                    <template x-if="actressSearch && filteredActressCount > 0 && !actressPills.length">
                         <span>{{ t('showcase.status.search_actresses_prefix') }}<b x-text="filteredActressCount"></b>{{ t('showcase.status.search_actresses_middle') }}<b class="footer-search-term" x-text="actressSearch"></b>{{ t('showcase.status.search_actresses_suffix') }}</span>
+                    </template>
+                    <template x-if="actressPills.length > 0">
+                        <span>{{ t('showcase.status.pill_actresses_prefix') }} <b x-text="actressPills.length"></b> {{ t('showcase.status.pill_actresses_middle') }} <b x-text="filteredActressCount"></b> {{ t('showcase.status.pill_actresses_suffix') }}</span>
                     </template>
                 </span>
             </template>
