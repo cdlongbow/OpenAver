@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { CUP_RANK, actressAgeValue, actressHeightValue, actressCupValue } = await import('../actress-metric.js');
+const { CUP_RANK, actressAgeValue, actressHeightValue, actressCupValue, actressMetricRange } = await import('../actress-metric.js');
 
 // ── CUP_RANK 表 ────────────────────────────────────────────────────────────
 
@@ -88,4 +88,40 @@ test('actressCupValue 小寫 b → null（大小寫敏感）', () => {
 
 test('actressCupValue undefined（缺欄）→ null', () => {
     assert.equal(actressCupValue({}), null);
+});
+
+// ── actressMetricRange（116c-T2，CD-116c-6）─────────────────────────────────
+
+test('actressMetricRange 正常 list → { min, max }（age）', () => {
+    const list = [{ age: 37 }, { age: 25 }, { age: 40 }];
+    assert.deepEqual(actressMetricRange(list, actressAgeValue), { min: 25, max: 40 });
+});
+
+test('actressMetricRange 正常 list → { min, max }（height）', () => {
+    const list = [{ height: '160cm' }, { height: '170cm' }, { height: '155cm' }];
+    assert.deepEqual(actressMetricRange(list, actressHeightValue), { min: 155, max: 170 });
+});
+
+test('actressMetricRange 混入缺值／怪格式 → 只計得出值的那些', () => {
+    const list = [
+        { height: '160cm' },
+        { height: null },
+        { height: 'tall' },     // actressHeightValue 回 null
+        {},                     // 缺欄
+        { height: '146cm' },
+    ];
+    assert.deepEqual(actressMetricRange(list, actressHeightValue), { min: 146, max: 160 });
+});
+
+test('actressMetricRange 全部取不到值 → null', () => {
+    const list = [{ height: null }, {}, { height: 'tall' }];
+    assert.equal(actressMetricRange(list, actressHeightValue), null);
+});
+
+test('actressMetricRange 空 list → null', () => {
+    assert.equal(actressMetricRange([], actressHeightValue), null);
+});
+
+test('actressMetricRange 單一元素 list → min === max', () => {
+    assert.deepEqual(actressMetricRange([{ age: 30 }], actressAgeValue), { min: 30, max: 30 });
 });

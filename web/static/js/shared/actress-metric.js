@@ -21,3 +21,23 @@ export function actressHeightValue(a) {
 export function actressCupValue(a) {
     return CUP_RANK[a.cup] || null;
 }
+
+/**
+ * actressMetricRange(list, extractor) — 116c-T2（CD-116c-6）。
+ *
+ * 參數是 extractor 函式本身，不是 dim 字串——避免在本模組再擺一張
+ * { age, height, cup } 表（那張表的所有者是 actress-pill-filter.js）。
+ *
+ * list 空、或該維度全部取不到值 → null。純函式、零 Alpine 依賴。
+ */
+export function actressMetricRange(list, extractor) {
+    var min = null;
+    var max = null;
+    for (var i = 0; i < list.length; i++) {
+        var v = extractor(list[i]);
+        if (v == null) continue;
+        if (min == null || v < min) min = v;
+        if (max == null || v > max) max = v;
+    }
+    return min == null ? null : { min: min, max: max };
+}

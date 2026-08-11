@@ -253,18 +253,18 @@ test('currentLightboxActress 為 null 時回傳空陣列（比照舊版回傳空
 
 // ── _actressPillDisplayText（CD-116b-11 全表 11 格）─────────────────────────
 
-test('_actressPillDisplayText：CD-116b-11 對照表 11 個合法組合（含 en dash）', () => {
+test('_actressPillDisplayText：CD-116b-11 對照表 11 個合法組合（116c-T2 CD-116c-7：~ 分隔符）', () => {
     const c = makeComponent();
     // age × 4
     assert.equal(c._actressPillDisplayText({ dim: 'age', op: '=', value: '37', value2: null }), '=37search.unit.age');
     assert.equal(c._actressPillDisplayText({ dim: 'age', op: '<=', value: '37', value2: null }), '≤37search.unit.age');
     assert.equal(c._actressPillDisplayText({ dim: 'age', op: '>=', value: '37', value2: null }), '≥37search.unit.age');
-    assert.equal(c._actressPillDisplayText({ dim: 'age', op: 'range', value: '35', value2: '40' }), '35–40search.unit.age');
+    assert.equal(c._actressPillDisplayText({ dim: 'age', op: 'range', value: '35', value2: '40' }), '35~40search.unit.age');
     // height × 4（單位由顯示層補 'cm'，value 不含單位）
     assert.equal(c._actressPillDisplayText({ dim: 'height', op: '=', value: '160', value2: null }), '=160cm');
     assert.equal(c._actressPillDisplayText({ dim: 'height', op: '<=', value: '160', value2: null }), '≤160cm');
     assert.equal(c._actressPillDisplayText({ dim: 'height', op: '>=', value: '160', value2: null }), '≥160cm');
-    assert.equal(c._actressPillDisplayText({ dim: 'height', op: 'range', value: '155', value2: '165' }), '155–165cm');
+    assert.equal(c._actressPillDisplayText({ dim: 'height', op: 'range', value: '155', value2: '165' }), '155~165cm');
     // cup × 3（無 range）
     assert.equal(c._actressPillDisplayText({ dim: 'cup', op: '=', value: 'B', value2: null }), '=Bsearch.unit.cup');
     assert.equal(c._actressPillDisplayText({ dim: 'cup', op: '<=', value: 'B', value2: null }), '≤Bsearch.unit.cup');

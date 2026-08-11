@@ -7,24 +7,23 @@
 
 import { _actresses, _filteredActresses, _actressesLoaded, _nameToGroup, _loadAliasMap, _killLightboxTimelines, _setActressesLoaded, _setActresses, _setFilteredActresses } from '@/showcase/state-base.js';
 import { normalizePillValue } from '@/shared/pill-filter.js';
-import { actressAgeValue, actressHeightValue, actressCupValue } from '@/shared/actress-metric.js';
+import { actressAgeValue, actressHeightValue, actressCupValue, actressMetricRange } from '@/shared/actress-metric.js';
 import { buildActressPillPredicate } from '@/shared/actress-pill-filter.js';
 
 /** height 顯示單位（CD-116b-11 模組常數，不進 i18n） */
 var CM_UNIT = 'cm';
 
-// TASK-116b-T2：區間種子常數（CD-116b-12 / 任務卡常數表，不得自創數值）
-var AGE_MIN = 18;
-var AGE_MAX = 80;
-var AGE_SEED_WIDTH = 3;
-var HEIGHT_MIN = 130;
-var HEIGHT_MAX = 200;
-var HEIGHT_SEED_WIDTH = 5;
-
 /** height pill value/value2 共用：extractor 解得出數值就用數字字串，否則退回 raw（永不寫入字面 'null'） */
 function normalizeHeightPillValue(raw) {
     var h = actressHeightValue({ height: raw });
     return (h == null) ? String(raw) : String(h);
+}
+
+/** 116c-T2（CD-116c-2）：空/空白/null 一律回 null；否則回 trim 後的字串 */
+function _trimOrNull(v) {
+    if (v == null) return null;
+    var s = String(v).trim();
+    return s === '' ? null : s;
 }
 
 export function stateActress() {
@@ -376,72 +375,85 @@ export function stateActress() {
             this._openPillEditor(pill);
         },
 
-        // 切換模式：切入 range 且 rangeLo/Hi 仍 null 時才種子；切出不清空 rangeLo/Hi、不動 value
-        _setEditorMode(op) {
+        // 116c-T2（CD-116c-2）：三顆鈕操作數的單一判斷點。狀態判定只看「有沒有字」，
+        // 不看「是不是合法數字」——1e999 要進態②再被 _pillOperandOk 擋下，不能被當成
+        // 「空」而靜默落回態①（使用者打的東西被無聲丟掉，他不會知道）。
+        _pillOperandFor(op) {
+            var d = this._pillEditor;
+            if (!d) return null;
+            var lo = _trimOrNull(d.rangeLo);
+            var hi = _trimOrNull(d.rangeHi);
+            var raw;
+            if (lo == null && hi == null) raw = d.value;          // 態①：pill 目前的值
+            else if (hi == null) raw = lo;                        // 態②：只有左格
+            else if (lo == null) raw = hi;                        // 態②：只有右格
+            else raw = (op === '<=') ? hi : lo;                   // 態③：≤ 取右，≥ 與 = 取左
+            return this._pillOperandOk(raw) ? raw : null;
+        },
+
+        // 合法性依維度分流：cup 是 'B' 這種非數字標記，不得跑 Number.isFinite；
+        // age/height 才驗有限數（1e999 之類的 Infinity 在此被擋下）。
+        _pillOperandOk(raw) {
+            if (raw == null) return false;
+            var d = this._pillEditor;
+            if (!d || d.dim === 'cup') return true;
+            return Number.isFinite(Number(raw));
+        },
+
+        // 116c-T2（CD-116c-1）：三顆運算子鈕的唯一提交路徑——取操作數 → 寫入 → 關閉。
+        // operand 為 null（不合法/無法判定）→ early return，不寫入、不關閉。
+        _applyPillOp(op) {
             if (!this._pillEditor) return;
-            this._pillEditor.op = op;
-            if (op !== 'range') return;
-            // 已種子過（第二次以後切入）→ 不重新種子
-            if (this._pillEditor.rangeLo != null || this._pillEditor.rangeHi != null) return;
-            // cup 無 range：fail-closed，不種子、不拋錯（T3 才擋 UI）
-            if (this._pillEditor.dim === 'cup') return;
-            var n = Number(this._pillEditor.value);
-            if (!Number.isFinite(n)) return;
-            var min, max, w;
-            if (this._pillEditor.dim === 'age') {
-                min = AGE_MIN; max = AGE_MAX; w = AGE_SEED_WIDTH;
-            } else if (this._pillEditor.dim === 'height') {
-                min = HEIGHT_MIN; max = HEIGHT_MAX; w = HEIGHT_SEED_WIDTH;
-            } else {
-                return;
-            }
-            // 兩端各自獨立夾回 min/max（CD-116b-12）
-            this._pillEditor.rangeLo = String(Math.max(min, n - w));
-            this._pillEditor.rangeHi = String(Math.min(max, n + w));
+            var operand = this._pillOperandFor(op);
+            if (operand == null) return;
+            this._setActressPill({ dim: this._pillEditor.dim, op: op, value: operand, value2: null });
+            this._pillEditor = null;
         },
 
-        // T3 markup :min/:max 的單一所有者——與 _setEditorMode 種子夾回共用模組常數
-        // （AGE_*/HEIGHT_* 是模組作用域，Alpine 表達式讀不到）
-        _pillRangeBounds() {
-            if (!this._pillEditor) return null;
-            if (this._pillEditor.dim === 'age') return { min: AGE_MIN, max: AGE_MAX };
-            if (this._pillEditor.dim === 'height') return { min: HEIGHT_MIN, max: HEIGHT_MAX };
-            return null;   // cup 無 range
+        // ✓✗ 的顯示條件（T3 markup 會綁 x-show）：_pillEditor 為 null 時必須安全回 false
+        // （浮層是 x-show，關閉時 markup 仍會求值）。必須即時反映輸入內容。
+        _pillEditorHasRangeInput() {
+            if (!this._pillEditor) return false;
+            return _trimOrNull(this._pillEditor.rangeLo) != null
+                || _trimOrNull(this._pillEditor.rangeHi) != null;
         },
 
-        // 提交：草稿（五欄位）→ pill（四欄位）；range 含 lo>hi 對調（CD-116b-3）；單一所有者
+        // 116c-T2（CD-116c-6）：第 ③ 行資料範圍提示的呈現層。_pillEditor 為 null 時必須
+        // 安全回 ''（同上，x-show 求值前提）；cup 恆回 ''（無自訂區間列）。
+        _pillDimRangeHint() {
+            if (!this._pillEditor) return '';
+            var dim = this._pillEditor.dim;
+            var extractor = dim === 'age' ? actressAgeValue
+                : dim === 'height' ? actressHeightValue
+                    : null;
+            if (!extractor) return '';
+            var range = actressMetricRange(_actresses, extractor);
+            if (range == null) return '';
+            return '（' + range.min + ' ~ ' + range.max + '）';
+        },
+
+        // 提交：自訂區間列的 ✓（CD-116c-3）。單邊語意用委派——不自己組 value2:null 的
+        // range 物件，讓 AC-C7（✓ 與運算子鈕逐欄位相同）結構上成立。
         _commitPillEditor() {
             if (!this._pillEditor) return;
             var d = this._pillEditor;
-            var pill;
-            if (d.op === 'range') {
-                // 空字串 / null 經 Number() 會變 0；必須先擋，永不寫入字面 'null' 或空字串
-                // （與 normalizeHeightPillValue 的「永不寫入字面 'null'」同一紀律）
-                if (d.rangeLo == null || d.rangeHi == null || d.rangeLo === '' || d.rangeHi === '') return;
-                var loN = Number(d.rangeLo);
-                var hiN = Number(d.rangeHi);
-                if (!Number.isFinite(loN) || !Number.isFinite(hiN)) return;
-                // 超界夾回：✓ 是 type=button，HTML5 :min/:max 不觸發 constraint validation；
-                // 與 _setEditorMode 種子夾回同一哲學——有可用值就夾回寫入並關閉，不無聲拒絕。
-                // 順序：先各自夾回 [min,max]，再 lo>hi 對調。clamp 單調，兩序結果等價，
-                // 最終必 lo<=hi 且兩端∈[min,max]。bounds=null（cup）短路，不讀 .min/.max。
-                var bounds = this._pillRangeBounds();
-                if (bounds != null) {
-                    loN = Math.max(bounds.min, Math.min(bounds.max, loN));
-                    hiN = Math.max(bounds.min, Math.min(bounds.max, hiN));
-                }
-                var loS = String(loN);
-                var hiS = String(hiN);
-                if (loN > hiN) {
-                    var tmp = loS;
-                    loS = hiS;
-                    hiS = tmp;
-                }
-                pill = { dim: d.dim, op: 'range', value: loS, value2: hiS };
-            } else {
-                pill = { dim: d.dim, op: d.op, value: d.value, value2: null };
+            var lo = _trimOrNull(d.rangeLo);
+            var hi = _trimOrNull(d.rangeHi);
+            if (lo == null && hi == null) return;              // 兩格皆空：✓ 不存在（防禦性 return）
+            if (hi == null) return this._applyPillOp('>=');    // 只有左格 → 委派
+            if (lo == null) return this._applyPillOp('<=');    // 只有右格 → 委派
+            var loN = Number(lo);
+            var hiN = Number(hi);
+            if (!Number.isFinite(loN) || !Number.isFinite(hiN)) return;   // fail-safe：不寫入、不關閉
+            // 對調（spec-116 §5.5 明文保留）：比較用 Number，寫入用 trim 過的原始字串
+            var loRaw = lo;
+            var hiRaw = hi;
+            if (loN > hiN) {
+                var tmp = loRaw;
+                loRaw = hiRaw;
+                hiRaw = tmp;
             }
-            this._setActressPill(pill);
+            this._setActressPill({ dim: d.dim, op: 'range', value: loRaw, value2: hiRaw });
             this._pillEditor = null;
         },
 
@@ -688,7 +700,7 @@ export function stateActress() {
                         ? CM_UNIT
                         : '';
             if (pill.op === 'range') {
-                return pill.value + '–' + pill.value2 + unit;  // en dash U+2013
+                return pill.value + '~' + pill.value2 + unit;  // 116c-T2（CD-116c-7）：U+007E，非 en dash
             }
             var prefix = pill.op === '<=' ? '≤' : pill.op === '>=' ? '≥' : '=';
             return prefix + pill.value + unit;
