@@ -13,9 +13,27 @@ import { buildActressPillPredicate } from '@/shared/actress-pill-filter.js';
 /** height 顯示單位（CD-116b-11 模組常數，不進 i18n） */
 var CM_UNIT = 'cm';
 
-/** height pill value/value2 共用：extractor 解得出數值就用數字字串，否則退回 raw（永不寫入字面 'null'） */
+/**
+ * height pill value/value2 共用：extractor 解得出數值就用數字字串，否則退回 raw（永不寫入字面 'null'）。
+ *
+ * Codex PR review P2（#132）：`normalizeHeightPillValue` 同時服務兩種來源——
+ * 燈箱點擊來的刮削值（`'160cm'`，需要 extractor 剝單位）與使用者在自訂區間打的字。
+ * `<input type="number">` 接受科學記法（`1e2` 是合法輸入、`badInput` 為 false、`Number()` 得 100），
+ * 但 `parseInt('1e2')` 在 `e` 就停下 → 1。症狀最惡的是 `≥`：pill 顯示 `≥1cm`、牆上一個人都不會少，
+ * 使用者以為「篩選沒作用」，而他打的 100 已經被吃成 1（`=`／`≤` 則是牆幾乎清空，至少看得出來）。
+ *
+ * 修法刻意**不繞過 extractor**（CD-116b-1「單位剝離唯一落點」；CD-116c-4b 已駁回
+ * 「看起來像純數字就跳過 extractor」的分支寫法）：只把**數字字面**先轉成標準十進位形式，
+ * `parseInt` 仍是最終裁決者。既有被鎖住的三個案例逐位元組不變——
+ * `'0250'`→250、`'25.5'`→25（截斷仍由 parseInt 做）、`'160cm'`→`Number` 得 NaN 故原樣交給 extractor。
+ */
 function normalizeHeightPillValue(raw) {
-    var h = actressHeightValue({ height: raw });
+    // 空字串／null 明確排除：Number('') 與 Number(null) 都是 0（有限），不擋會把
+    // 「沒有值」變成 '0'，與修這條之前的行為不同。這裡只處理「真的有字」的情況。
+    var s = raw == null ? '' : String(raw).trim();
+    var n = s === '' ? NaN : Number(s);
+    var pre = Number.isFinite(n) ? String(n) : raw;
+    var h = actressHeightValue({ height: pre });
     return (h == null) ? String(raw) : String(h);
 }
 

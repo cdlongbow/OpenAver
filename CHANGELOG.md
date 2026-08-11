@@ -33,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 新增的介面文字本版只有繁體中文；簡中／英文／日文會回退顯示，留待下次 milestone 統一補上。
 
 ### 測試
-- 全套 pytest **6955 passed, 1 skipped**（與 v0.13.9 相同——純前端功能，Python 側只把兩支既有守衛的錨定字串跟著改名遷移）。`npm test` **698**（v0.13.9 為 468，本版新增 230 支）。`npm run lint`、`ruff check .` 全綠，四條架構閘零新增豁免。
+- 全套 pytest **6955 passed, 1 skipped**（與 v0.13.9 相同——純前端功能，Python 側只把兩支既有守衛的錨定字串跟著改名遷移）。`npm test` **701**（v0.13.9 為 468，本版新增 233 支）。`npm run lint`、`ruff check .` 全綠，四條架構閘零新增豁免。
 - **改名把一支守衛從「真守衛」變成「綠殼」，是靠讀它抓到的**：`_actressCoreMetadata` 改名為 `_actressCoreMetadataParts` 之後，舊字面是新名字的**子字串**，守衛照樣全綠卻已經什麼都沒鎖住。同批的 4 條 `static_guard_lint` 錨定規則一併做等價遷移。
 - **CDP 真機驗收 17 條**：三顆鈕即點即套、區間送出、只填一邊不動作、打壞的數字不被當成空白、浮層外點擊與 Esc 的關閉分支，都是在停用快取的硬重新整理後用真的點擊與鍵盤驗過，幾何結論一律量 content box 與 `getBoundingClientRect()`，不看 `scrollWidth`、不只看 `.value`。
 - **一個被真機推翻的設計**：上一階段做的「四種模式鈕 ＋ 種子值 ＋ 超界值夾回」在 owner 真機檢視後整組作廢——多一次「選模式再按確認」的往返，而夾回是把使用者打的數字**靜默改成別的值**。本版改成三顆鈕即點即套 ＋ 常駐區間列，那套介面從未出現在任何已發布版本上。

@@ -675,6 +675,39 @@ test('CD-116c-4b：height 0250~300 → value 正規化為 250（既有 parseInt�
     assert.notEqual(c.actressPills[0].value, '146');
 });
 
+// ── Codex PR review P2（#132）：科學記法不得被 parseInt 吃成數量級錯誤的值 ──
+// `<input type="number">` 接受 `1e2`（badInput=false、Number() 得 100），
+// 但 parseInt('1e2') 在 e 就停 → 1。最惡的是 ≥：牆上一個人都不會少，
+// 使用者以為篩選沒作用，而他打的 100 已經變成 1。
+
+test('P2-#132：height ≥ 鈕，1e2 → value 100（不得是 1）', () => {
+    const c = makeComponent();
+    c.addActressPill('height', '160cm');
+    c._openPillEditor(c.actressPills[0]);
+    c._pillEditor.rangeLo = '1e2';
+    c._applyPillOp('>=');
+    assert.equal(c.actressPills[0].op, '>=');
+    assert.equal(c.actressPills[0].value, '100', '1e2 是 100，不是 1');
+    assert.notEqual(c.actressPills[0].value, '1');
+});
+
+test('P2-#132：height 區間 1e2~1.5e2 → 100~150（value2 對稱）', () => {
+    const c = makeComponent();
+    c.addActressPill('height', '160cm');
+    c._openPillEditor(c.actressPills[0]);
+    c._pillEditor.rangeLo = '1e2';
+    c._pillEditor.rangeHi = '1.5e2';
+    c._commitPillEditor();
+    assert.equal(c.actressPills[0].value, '100');
+    assert.equal(c.actressPills[0].value2, '150', 'value2 走同一支正規化，不得只修 value');
+});
+
+test('P2-#132 回歸：刮削值 160cm 仍由 extractor 剝單位為 160', () => {
+    const c = makeComponent();
+    c.addActressPill('height', '160cm');
+    assert.equal(c.actressPills[0].value, '160', 'Number("160cm") 是 NaN → 原樣交給 extractor');
+});
+
 // ── AC-C11b fail-safe：1e999（Infinity）在被選中的那一格 → 不寫入、不關閉 ──
 // 四條路徑各驗一次（=／≤／≥／✓）。
 
