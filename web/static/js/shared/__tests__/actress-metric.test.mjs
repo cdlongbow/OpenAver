@@ -37,6 +37,30 @@ test('actressAgeValue undefined（缺欄）→ null', () => {
     assert.equal(actressAgeValue({}), null);
 });
 
+test('actressAgeValue 非數字字串 "unknown" → null（fail-closed，不回 NaN）', () => {
+    assert.equal(actressAgeValue({ age: 'unknown' }), null);
+});
+
+test('actressAgeValue 空字串 → null（不回 0）', () => {
+    assert.equal(actressAgeValue({ age: '' }), null);
+});
+
+test('actressAgeValue 全空白字串 "  " → null', () => {
+    assert.equal(actressAgeValue({ age: '  ' }), null);
+});
+
+test('actressAgeValue NaN → null', () => {
+    assert.equal(actressAgeValue({ age: NaN }), null);
+});
+
+// Codex PR review P3：isNaN(Infinity) 是 false，用 isNaN 會讓 '1e999' 漏成 Infinity 通過。
+// 這一條鎖住「fail-closed」名實相符——Infinity 無法與任何女優的數值比大小。
+test("actressAgeValue 溢位寫法 '1e999' / Infinity → null（不得回 Infinity）", () => {
+    assert.equal(actressAgeValue({ age: '1e999' }), null);
+    assert.equal(actressAgeValue({ age: Infinity }), null);
+    assert.equal(actressAgeValue({ age: -Infinity }), null);
+});
+
 // ── actressHeightValue ─────────────────────────────────────────────────────
 
 test('actressHeightValue 有值（"160cm"）→ 160', () => {
@@ -111,6 +135,17 @@ test('actressMetricRange 混入缺值／怪格式 → 只計得出值的那些',
         { height: '146cm' },
     ];
     assert.deepEqual(actressMetricRange(list, actressHeightValue), { min: 146, max: 160 });
+});
+
+test('actressMetricRange 混入怪格式 age（unknown/空字串/NaN）→ 只計得出值的那些', () => {
+    const list = [
+        { age: 37 },
+        { age: 'unknown' },   // actressAgeValue 回 null
+        { age: '' },          // actressAgeValue 回 null
+        { age: NaN },         // actressAgeValue 回 null
+        { age: 25 },
+    ];
+    assert.deepEqual(actressMetricRange(list, actressAgeValue), { min: 25, max: 37 });
 });
 
 test('actressMetricRange 全部取不到值 → null', () => {

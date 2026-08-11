@@ -734,6 +734,93 @@ test('只驗被選中的那一格：左格 1e999、右格合法，按 ≤（取�
     assert.deepEqual(c.actressPills[0], { dim: 'age', op: '<=', value: '35', value2: null });
 });
 
+// ── Codex PR review P2-2：badInput（1e999 等 <input type="number"> 無法解析）
+// 不得被誤判為「這格是空的」。四種結果對照表（見 review 附的契約表）。
+// _pillEditor.badLo/badHi 由 markup @input="$event.target.validity.badInput" 寫入；
+// 單元測試無真實 DOM validity，直接設定該布林欄位模擬同樣的狀態。
+
+test('P2-2 表列①：左格壞、右格空，按 ≥/=/≤ → 不寫入、不關閉（不得靜默套用 pill 原值）', () => {
+    for (const op of ['>=', '=', '<=']) {
+        const c = makeComponent();
+        c.addActressPill('height', '160cm');
+        const before = structuredClone(c.actressPills);
+        c._openPillEditor(c.actressPills[0]);
+        // <input type="number"> 對無法解析的輸入把 .value 逼成空字串（真實瀏覽器行為，
+        // x-model 綁的就是這個值）；validity.badInput 才是「使用者確實打了東西」的唯一線索。
+        c._pillEditor.rangeLo = '';
+        c._pillEditor.badLo = true;
+        c._pillEditor.rangeHi = '';
+        c._applyPillOp(op);
+        assert.deepEqual(c.actressPills, before, `op=${op}：actressPills 不得被改寫`);
+        assert.ok(c._pillEditor, `op=${op}：_pillEditor 必須維持開啟`);
+    }
+});
+
+test('P2-2 表列②：左格壞、右格 165，按 ✓ → 不寫入、不關閉（不得誤判成「只有右格」而套用 ≤165）', () => {
+    const c = makeComponent();
+    c.addActressPill('height', '160cm');
+    const before = structuredClone(c.actressPills);
+    c._openPillEditor(c.actressPills[0]);
+    // <input type="number"> 對無法解析的輸入把 .value 逼成空字串（真實瀏覽器行為，
+    // x-model 綁的就是這個值）；validity.badInput 才是「使用者確實打了東西」的唯一線索。
+    c._pillEditor.rangeLo = '';
+    c._pillEditor.badLo = true;
+    c._pillEditor.rangeHi = '165';
+    c._commitPillEditor();
+    assert.deepEqual(c.actressPills, before, 'actressPills 不得被改寫');
+    assert.ok(c._pillEditor, '_pillEditor 必須維持開啟');
+});
+
+test('P2-2 表列③：左格壞、右格 165，按 ≤ → 照常套用 ≤165（取右格，合法；壞的左格不影響）', () => {
+    const c = makeComponent();
+    c.addActressPill('height', '160cm');
+    c._openPillEditor(c.actressPills[0]);
+    // <input type="number"> 對無法解析的輸入把 .value 逼成空字串（真實瀏覽器行為，
+    // x-model 綁的就是這個值）；validity.badInput 才是「使用者確實打了東西」的唯一線索。
+    c._pillEditor.rangeLo = '';
+    c._pillEditor.badLo = true;
+    c._pillEditor.rangeHi = '165';
+    c._applyPillOp('<=');
+    assert.equal(c._pillEditor, null, '取右格合法 → 應正常套用並關閉');
+    assert.deepEqual(c.actressPills[0], { dim: 'height', op: '<=', value: '165', value2: null });
+});
+
+test('P2-2 表列④：左格壞、右格 165，按 =/≥ → 不寫入、不關閉（被選中的是壞的左格）', () => {
+    for (const op of ['=', '>=']) {
+        const c = makeComponent();
+        c.addActressPill('height', '160cm');
+        const before = structuredClone(c.actressPills);
+        c._openPillEditor(c.actressPills[0]);
+        // <input type="number"> 對無法解析的輸入把 .value 逼成空字串（真實瀏覽器行為，
+        // x-model 綁的就是這個值）；validity.badInput 才是「使用者確實打了東西」的唯一線索。
+        c._pillEditor.rangeLo = '';
+        c._pillEditor.badLo = true;
+        c._pillEditor.rangeHi = '165';
+        c._applyPillOp(op);
+        assert.deepEqual(c.actressPills, before, `op=${op}：actressPills 不得被改寫`);
+        assert.ok(c._pillEditor, `op=${op}：_pillEditor 必須維持開啟`);
+    }
+});
+
+test('P2-2：修好壞輸入後恢復正常套用（badLo 由 @input handler 每次覆寫，修正後應為 false）', () => {
+    const c = makeComponent();
+    c.addActressPill('age', 30);
+    c._openPillEditor(c.actressPills[0]);
+    // 先打壞
+    // <input type="number"> 對無法解析的輸入把 .value 逼成空字串（真實瀏覽器行為，
+    // x-model 綁的就是這個值）；validity.badInput 才是「使用者確實打了東西」的唯一線索。
+    c._pillEditor.rangeLo = '';
+    c._pillEditor.badLo = true;
+    c._applyPillOp('=');
+    assert.ok(c._pillEditor, '壞輸入時不應套用');
+    // 修好：markup 的 @input 每次都寫當下的 validity.badInput，修好後應變回 false
+    c._pillEditor.rangeLo = '28';
+    c._pillEditor.badLo = false;
+    c._applyPillOp('=');
+    assert.equal(c._pillEditor, null, '修好後應正常套用並關閉');
+    assert.deepEqual(c.actressPills[0], { dim: 'age', op: '=', value: '28', value2: null });
+});
+
 // ── _applyPillOp 之後 _pillEditor === null（AC-C3 的狀態層形式）───────────
 
 test('_applyPillOp 之後 _pillEditor === null', () => {

@@ -9,7 +9,13 @@
 export var CUP_RANK = { A:1, B:2, C:3, D:4, E:5, F:6, G:7, H:8, I:9, J:10, K:11 };
 
 export function actressAgeValue(a) {
-    return a.age != null ? Number(a.age) : null;
+    if (a.age == null) return null;
+    var s = String(a.age).trim();
+    if (s === '') return null;
+    var n = Number(s);
+    // Number.isFinite 而非 isNaN：isNaN(Infinity) 是 false，'1e999' 會漏成 Infinity
+    // 通過，讓「fail-closed」名不符實（Codex PR review P3）。
+    return Number.isFinite(n) ? n : null;
 }
 
 export function actressHeightValue(a) {

@@ -26,6 +26,22 @@ function _trimOrNull(v) {
     return s === '' ? null : s;
 }
 
+/**
+ * 116c P2-2（Codex PR review）：單一格「有沒有字」與「能不能取到合法值」的判斷唯一所有者。
+ * <input type="number"> 對無法解析的輸入（如 1e999）會把 .value 回成空字串，若只看
+ * _trimOrNull(rawText) 會把「使用者確實打了東西但打壞了」誤判成「這格是空的」，導致
+ * 狀態機落到錯的分支（態①/②），使用者打的內容或另一格的合法值被靜默吃掉/誤用。
+ * badInput（來自 validity.badInput，markup @input 寫入 _pillEditor.badLo/badHi）：
+ *   有字（has=true）、但 raw 一律 null——讓 _pillOperandOk 那一關擋下，不新增第二套合法性判斷。
+ * 非 badInput：raw = _trimOrNull(rawText)，has = raw != null（沿用既有語意）。
+ * 不適用 _pillEditorHasRangeInput()（✓✗ 顯示條件維持只讀 model 值，見該函式旁註解）。
+ */
+function _pillFieldValue(rawText, isBad) {
+    if (isBad) return { has: true, raw: null };
+    var t = _trimOrNull(rawText);
+    return { has: t != null, raw: t };
+}
+
 export function stateActress() {
     return {
 
@@ -353,6 +369,8 @@ export function stateActress() {
                     value: pill.value,
                     rangeLo: pill.value,
                     rangeHi: pill.value2,
+                    badLo: false,
+                    badHi: false,
                 };
             } else {
                 this._pillEditor = {
@@ -361,6 +379,8 @@ export function stateActress() {
                     value: pill.value,
                     rangeLo: null,
                     rangeHi: null,
+                    badLo: false,
+                    badHi: false,
                 };
             }
         },
@@ -381,13 +401,13 @@ export function stateActress() {
         _pillOperandFor(op) {
             var d = this._pillEditor;
             if (!d) return null;
-            var lo = _trimOrNull(d.rangeLo);
-            var hi = _trimOrNull(d.rangeHi);
+            var lo = _pillFieldValue(d.rangeLo, d.badLo);
+            var hi = _pillFieldValue(d.rangeHi, d.badHi);
             var raw;
-            if (lo == null && hi == null) raw = d.value;          // 態①：pill 目前的值
-            else if (hi == null) raw = lo;                        // 態②：只有左格
-            else if (lo == null) raw = hi;                        // 態②：只有右格
-            else raw = (op === '<=') ? hi : lo;                   // 態③：≤ 取右，≥ 與 = 取左
+            if (!lo.has && !hi.has) raw = d.value;                // 態①：pill 目前的值
+            else if (!hi.has) raw = lo.raw;                       // 態②：只有左格（壞輸入 raw=null）
+            else if (!lo.has) raw = hi.raw;                       // 態②：只有右格（壞輸入 raw=null）
+            else raw = (op === '<=') ? hi.raw : lo.raw;           // 態③：≤ 取右，≥ 與 = 取左
             return this._pillOperandOk(raw) ? raw : null;
         },
 
@@ -437,17 +457,18 @@ export function stateActress() {
         _commitPillEditor() {
             if (!this._pillEditor) return;
             var d = this._pillEditor;
-            var lo = _trimOrNull(d.rangeLo);
-            var hi = _trimOrNull(d.rangeHi);
-            if (lo == null && hi == null) return;              // 兩格皆空：✓ 不存在（防禦性 return）
-            if (hi == null) return this._applyPillOp('>=');    // 只有左格 → 委派
-            if (lo == null) return this._applyPillOp('<=');    // 只有右格 → 委派
-            var loN = Number(lo);
-            var hiN = Number(hi);
+            var lo = _pillFieldValue(d.rangeLo, d.badLo);
+            var hi = _pillFieldValue(d.rangeHi, d.badHi);
+            if (!lo.has && !hi.has) return;                     // 兩格皆空：✓ 不存在（防禦性 return）
+            if (!hi.has) return this._applyPillOp('>=');        // 只有左格 → 委派（壞輸入交給 operandOk 擋）
+            if (!lo.has) return this._applyPillOp('<=');        // 只有右格 → 委派（壞輸入交給 operandOk 擋）
+            if (lo.raw == null || hi.raw == null) return;       // 116c P2-2：任一格壞輸入 → fail-safe，不寫入、不關閉
+            var loN = Number(lo.raw);
+            var hiN = Number(hi.raw);
             if (!Number.isFinite(loN) || !Number.isFinite(hiN)) return;   // fail-safe：不寫入、不關閉
             // 對調（spec-116 §5.5 明文保留）：比較用 Number，寫入用 trim 過的原始字串
-            var loRaw = lo;
-            var hiRaw = hi;
+            var loRaw = lo.raw;
+            var hiRaw = hi.raw;
             if (loN > hiN) {
                 var tmp = loRaw;
                 loRaw = hiRaw;

@@ -171,11 +171,13 @@
                                     <input type="number" class="input input-bordered input-sm"
                                            inputmode="numeric"
                                            x-model="_pillEditor.rangeLo"
+                                           @input="_pillEditor.badLo = $event.target.validity.badInput"
                                            :aria-label="t('showcase.pill.editor.range_min')">
                                     <span class="pill-editor-range-sep" aria-hidden="true">~</span>
                                     <input type="number" class="input input-bordered input-sm"
                                            inputmode="numeric"
                                            x-model="_pillEditor.rangeHi"
+                                           @input="_pillEditor.badHi = $event.target.validity.badInput"
                                            :aria-label="t('showcase.pill.editor.range_max')">
                                 </div>
                                 <div class="pill-editor-actions" x-show="_pillEditorHasRangeInput()">

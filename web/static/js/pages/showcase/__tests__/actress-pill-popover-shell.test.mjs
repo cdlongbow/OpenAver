@@ -276,6 +276,22 @@ test('兩個 range input：inputmode=numeric、無 :min/:max、無 x-model.numbe
     );
 });
 
+// ===== Codex PR review P2-2：兩個 range input 都要回報 badInput 給狀態層 =====
+
+test('兩個 range input 都綁 @input，把 $event.target.validity.badInput 寫進對應的 badLo/badHi（不是別的東西）', () => {
+    const rangeSection = extractDivContaining(POPOVER, 'class="pill-editor-range"', '.pill-editor-range');
+    const inputs = rangeSection.match(/<input\b[^>]*>/g) || [];
+    assert.equal(inputs.length, 2, `.pill-editor-range 應恰有兩個 <input>，實際 ${inputs.length}`);
+    assert.ok(
+        /@input="_pillEditor\.badLo\s*=\s*\$event\.target\.validity\.badInput"/.test(inputs[0]),
+        `下限 input 應綁 @input 寫入 _pillEditor.badLo＝$event.target.validity.badInput：${inputs[0]}`,
+    );
+    assert.ok(
+        /@input="_pillEditor\.badHi\s*=\s*\$event\.target\.validity\.badInput"/.test(inputs[1]),
+        `上限 input 應綁 @input 寫入 _pillEditor.badHi＝$event.target.validity.badInput：${inputs[1]}`,
+    );
+});
+
 test('兩框之間有 ~ 分隔（.pill-editor-range-sep，aria-hidden）', () => {
     const rangeSection = extractDivContaining(POPOVER, 'class="pill-editor-range"', '.pill-editor-range');
     assert.ok(
