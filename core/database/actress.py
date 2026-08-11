@@ -6,7 +6,11 @@ from pathlib import Path
 from typing import Optional, List
 from datetime import datetime
 
+from core.logger import get_logger
+
 from . import connection
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -297,3 +301,24 @@ class ActressRepository:
     def count_videos_for_actress(self, name: str) -> int:
         """Count videos featuring this actress (backward-compatible single-name wrapper)."""
         return self.count_videos_for_actress_names({name})
+
+    def get_video_actress_pairs(self) -> List[tuple]:
+        """回傳全部 (videos.rowid, actress_name) 配對，供上層（core.database.actress_library）
+        依 alias group 聚合用。本方法只吐出原始配對，不做任何分組判斷——分組是 alias
+        語意，屬於另一個模組的責任（TASK-117-T1）。
+
+        連線／例外／json_valid 寫法逐字照抄 video.py:995-1023 count_by_actress() 的骨架
+        （BE-DATA-01：不用 context manager，conn.execute 直接用）。
+        """
+        conn = self._get_connection()
+        try:
+            cursor = conn.execute(
+                """SELECT videos.rowid, json_each.value FROM videos, json_each(videos.actresses)
+                   WHERE json_valid(videos.actresses)"""
+            )
+            return cursor.fetchall()
+        except sqlite3.OperationalError:
+            logger.exception("get_video_actress_pairs json_each failed (returning [])")
+            return []
+        finally:
+            conn.close()
