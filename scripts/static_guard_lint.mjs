@@ -3943,7 +3943,7 @@ const RULES = [
       ':title="t(\'showcase.actress.remove\')"',
     ],
     scope: { anchor: /<div class="actress-lb-header">/, window: 3200 },
-    note: '[117b-T9] AC-9.1/9.2/CD-117b-5：刪除鈕必須在 .actress-lb-header 內、綁 openRemoveActressModal()、且用 :title= 提示。破了＝刪除又回到照片浮層（破壞性操作混進常用 hover 列）、點擊死掉、或 hover 沒有任何提示。`!_maskVisible` 掉了＝使用者正在拖曳調整女優頭像對焦時，刪除鈕仍可按，可在遮罩編輯中途開啟移除確認，破壞既有互斥流程',
+    note: '[117b-T9] AC-9.1/9.2/CD-117b-5：刪除鈕必須在 .actress-lb-header 內、綁 openRemoveActressModal()、且用 :title= 提示。破了＝刪除又回到照片浮層（破壞性操作混進常用 hover 列）、點擊死掉、或 hover 沒有任何提示。`!_maskVisible` 掉了＝使用者正在拖曳調整女優頭像對焦時，刪除鈕仍可按，可在遮罩編輯中途開啟移除確認，破壞既有互斥流程（原 R3「header 內禁 :data-tooltip=」已於 Codex PR#133 review 後移除：真故障模式由本條的 :title= 覆蓋，R3 只剩無害的加法場景卻有 scope 假紅風險）',
   },
   // R2：.cover-actions 區不得再出現 openRemoveActressModal()
   {
@@ -3955,14 +3955,6 @@ const RULES = [
       window: 3000,
     },
     note: '[117b-T9] AC-9.1：.cover-actions 不得再呼叫 openRemoveActressModal()（必須真搬走，不是複製一份）。破了＝照片浮層與名字行各一顆刪除，或搬走失敗',
-  },
-  // R3：header 內不得出現 :data-tooltip=（Opus 裁決：header-scope 單一字面；比多行 forbidden 更強且不吃縮排）
-  {
-    file: 'web/templates/showcase.html',
-    kind: 'forbidden-string',
-    pattern: ':data-tooltip=',
-    scope: { anchor: /<div class="actress-lb-header">/, window: 3200 },
-    note: '[117b-T9] CD-117b-5 第 2 條：名字行內的按鈕一律用 :title=，不得用 :data-tooltip=。破了＝那顆鈕的提示靜默消失（.lb-action-btn[data-tooltip]::after 只認 .lb-action-btn，換 class 後整個 tooltip 不存在，而畫面上看不出少了東西）',
   },
 ];
 

@@ -2242,6 +2242,17 @@ export function stateLightbox() {
             // T3.3: Remove Actress modal 開啟期間鎖其他鍵
             if (this.removeActressModalOpen) return;
 
+            // 面板開啟時全域快捷鍵必須隔離——x-trap 只在 Tab／Esc 攔截，其餘按鍵照樣冒泡到
+            // @keydown.window，不擋的話焦點在愛心／關閉鈕時按 A／S／左右鍵會改動背後
+            // showcase 的檢視模式與頁碼（Codex PR#133 P3）。
+            if (e.key === 'Escape' && this.actressAddPanelOpen) {
+                this.closeActressAddPanel();
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+            }
+            if (this.actressAddPanelOpen) return;
+
             // 49b T4cd: Picker 開啟時，Esc 優先關閉 picker
             if (e.key === 'Escape' && this._pickerOpen) {
                 this._cancelPicker();
