@@ -3919,6 +3919,39 @@ const RULES = [
     pattern: 'rescrapeActress()',
     note: '[117-T6] R9 ← TestShowcaseActressCRUD #9 "rescrapeActress()" not in html；粒度等價 whole-file 反向；女優重刮已刻意移除不得回流',
   },
+
+  // ==== [117b-T9] 女優燈箱刪除鈕搬到名字行行末（CD-117b-5/6/7）====
+  // R1：delete 必須在 .actress-lb-header 內且綁 openRemoveActressModal()、:title=
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'required-string',
+    pattern: [
+      'class="lb-delete-btn"',
+      '@click.stop="openRemoveActressModal()"',
+      ':title="t(\'showcase.actress.remove\')"',
+    ],
+    scope: { anchor: /<div class="actress-lb-header">/, window: 3200 },
+    note: '[117b-T9] AC-9.1/9.2/CD-117b-5：刪除鈕必須在 .actress-lb-header 內、綁 openRemoveActressModal()、且用 :title= 提示。破了＝刪除又回到照片浮層（破壞性操作混進常用 hover 列）、點擊死掉、或 hover 沒有任何提示',
+  },
+  // R2：.cover-actions 區不得再出現 openRemoveActressModal()
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'forbidden-string',
+    pattern: 'openRemoveActressModal()',
+    scope: {
+      anchor: /<div class="cover-actions"\s*\n\s*:data-picker-open="_pickerOpen"/,
+      window: 3000,
+    },
+    note: '[117b-T9] AC-9.1：.cover-actions 不得再呼叫 openRemoveActressModal()（必須真搬走，不是複製一份）。破了＝照片浮層與名字行各一顆刪除，或搬走失敗',
+  },
+  // R3：header 內不得出現 :data-tooltip=（Opus 裁決：header-scope 單一字面；比多行 forbidden 更強且不吃縮排）
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'forbidden-string',
+    pattern: ':data-tooltip=',
+    scope: { anchor: /<div class="actress-lb-header">/, window: 3200 },
+    note: '[117b-T9] CD-117b-5 第 2 條：名字行內的按鈕一律用 :title=，不得用 :data-tooltip=。破了＝那顆鈕的提示靜默消失（.lb-action-btn[data-tooltip]::after 只認 .lb-action-btn，換 class 後整個 tooltip 不存在，而畫面上看不出少了東西）',
+  },
 ];
 
 // ---- helpers ----

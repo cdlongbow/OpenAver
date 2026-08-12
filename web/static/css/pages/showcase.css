@@ -2791,13 +2791,30 @@ body.sidebar-collapsed .showcase-footer {
 
 /* ==================== Phase 44a T4: Actress Lightbox ==================== */
 .actress-lightbox-meta .actress-lb-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-/* 100c-T2（CD-3）：focal icon 推到 .actress-lb-header 行末（靠右），比照 .lb-delete-btn 先例
- * （showcase.css:1586）。女優限定選擇器（非共用 .lightbox-metadata .lb-mask-btn）——影片版
- * .lb-header 是 justify-content:space-between + .lb-title flex:1，加在共用選擇器上有機會
- * 改變短標題時的 flex 自由空間分配；女優 .actress-lb-header 無 justify-content，加在此處
- * 語意單純、零風險，完全不接觸影片版 CSS 規則。30px 圓鈕樣式靠 .lightbox-metadata .lb-mask-btn
- * 祖先鏈自動命中（:962），本規則只加 margin-left。 */
-.actress-lightbox-meta .lb-mask-btn { margin-left: auto; }
+/* 100c-T2（CD-3）：當年用女優限定 `.lb-mask-btn { margin-left: auto }` 把 focal 推到
+ * .actress-lb-header 行末（靠右），比照 .lb-delete-btn 先例（showcase.css:1586／今 :1706）。
+ * 選女優限定選擇器（非共用 .lightbox-metadata .lb-mask-btn）——影片版 .lb-header 是
+ * justify-content:space-between + .lb-title flex:1，加在共用選擇器上有機會改變短標題時的
+ * flex 自由空間分配；女優 .actress-lb-header 無 justify-content，當年加 margin-left 語意
+ * 單純、零風險，完全不接觸影片版 CSS 規則。30px 圓鈕樣式靠 .lightbox-metadata .lb-mask-btn
+ * 祖先鏈自動命中。
+ * 117b-T9（CD-117b-6）：名字行改為「標題 wrapper 吃剩餘空間 ＋ 尾端動作」——
+ * `.actress-lb-title { flex: 1 1 0; min-width: 0 }`（不得寫 auto，理由見下方規則的行內註解），並移除 mask 的 margin-left:auto。
+ * 原因：第二顆尾端按鈕（delete）若也掛 margin-left:auto，flex 會把剩餘主軸空間平分給
+ * 兩顆 auto margin，focal 停中間、delete 最右，不是「兩鈕並排靠右」。min-width:0 不可省，
+ * 否則長名 min-content 不收縮、把按鈕擠出行外（spec-115 同類）。 */
+.actress-lightbox-meta .actress-lb-title {
+    flex: 1 1 0;    /* 不得寫 auto，header 有 flex-wrap:wrap，auto 會讓長名獨佔一行把按鈕擠到第二行（＝影片版 .lb-title { flex: 1 } 同義） */
+    min-width: 0;   /* 不可省：否則長名把按鈕擠出行外（CD-117b-6 / spec-115 同類） */
+}
+/* 117b-T9（CD-117b-7）：delete 在 focal 之後，明確左間距。
+ * 必須勝過 .lightbox-metadata .lb-delete-btn { margin-left: auto }（:1706），
+ * 否則 auto 在「標題已 flex-grow」時雖多半算成 0，但與 gap 的交互不直觀，且
+ * 若日後標題 flex 被改掉會突然吞掉兩鈕之間的全部剩餘空間。 */
+.actress-lightbox-meta .actress-lb-header .lb-delete-btn {
+    margin-left: 12px;
+    flex-shrink: 0;
+}
 .actress-lightbox-meta .lb-name-en { font-size: 0.9em; opacity: 0.7; }
 .actress-lightbox-meta .lb-actress-core { font-size: 0.95em; margin: 8px 0; opacity: 0.85; }
 /* TASK-116a-T3: 燈箱 core metadata 可點格（年齡/身高/罩杯）——重置 button 預設樣式，貼合純文字視覺，

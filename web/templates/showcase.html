@@ -740,13 +740,6 @@
                                         :aria-label="t('showcase.actress.search_films')">
                                     <i class="bi bi-camera-reels"></i>
                                 </button>
-                                <button class="lb-action-btn lb-action-btn--danger"
-                                        x-show="showFavoriteActresses && !_maskVisible"
-                                        @click.stop="openRemoveActressModal()"
-                                        :data-tooltip="t('showcase.actress.remove')"
-                                        :aria-label="t('showcase.actress.remove')">
-                                    <i class="bi bi-trash"></i>
-                                </button>
                                 <!-- 換照片按鈕（49b T4cd）-->
                                 <button class="lb-action-btn"
                                         x-show="currentLightboxActress?.is_favorite && !_maskVisible"
@@ -778,10 +771,12 @@
                         <div class="lightbox-metadata actress-lightbox-meta">
                             <!-- Row 1: Header — name + name_en + heart icon -->
                             <div class="actress-lb-header">
-                                <span class="lb-name" x-text="currentLightboxActress?.name"></span>
-                                <span class="lb-name-en"
-                                      x-show="currentLightboxActress?.name_en"
-                                      x-text="currentLightboxActress?.name_en"></span>
+                                <div class="actress-lb-title">
+                                    <span class="lb-name" x-text="currentLightboxActress?.name"></span>
+                                    <span class="lb-name-en"
+                                          x-show="currentLightboxActress?.name_en"
+                                          x-text="currentLightboxActress?.name_en"></span>
+                                </div>
                                 <!-- 100c-T2（CD-1/CD-2/CD-3，spec-100c §3.1 推翻 spec-100 §4-5）：
                                      女優 focal icon 從 .cover-actions 搬進名字行末，鏡射影片版
                                      .lb-mask-btn 的位置與 class（非再照抄 .lb-action-btn 的封面
@@ -790,7 +785,7 @@
                                      _actressPhotoLoaded ＋ _actressPhotoWideEnough（新，CD-7
                                      20% 可拖幅度門檻）＋ !_pickerOpen（新，CD-1：picker 開啟時
                                      CSS opacity gate 鎖死在 .cover-actions，搬出後不受影響，
-                                     必須顯式擋）。:title=（非 :data-tooltip=，CD-2 陷阱：
+                                     必須顯式擋）。:title=（非 data-tooltip 屬性綁定，CD-2 陷阱：
                                      .lb-action-btn[data-tooltip]::after 只認 .lb-action-btn，
                                      換 class 不換屬性 tooltip 會靜默消失）。
                                      🔴 五條件收成 _focalIconVisible() method（不直接寫成 x-show
@@ -808,6 +803,14 @@
                                         :title="t('showcase.lightbox.mask_toggle')"
                                         :aria-label="t('showcase.lightbox.mask_toggle')">
                                     <i class="bi bi-person-bounding-box"></i>
+                                </button>
+                                <!-- 117b-T9：刪除鈕從 .cover-actions 搬入名字行末（CD-117b-5/7）-->
+                                <button class="lb-delete-btn"
+                                        x-show="showFavoriteActresses && !_maskVisible"
+                                        @click.stop="openRemoveActressModal()"
+                                        :title="t('showcase.actress.remove')"
+                                        :aria-label="t('showcase.actress.remove')">
+                                    <i class="bi bi-trash"></i>
                                 </button>
                             </div>
                             <!-- Row 2: Core metadata (age · birth · height · cup · BWH) -->
