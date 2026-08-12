@@ -1714,7 +1714,6 @@
                         </div>
                         <div class="actress-add-footer">
                             <span class="actress-add-progress">已顯示 3 / 共 48</span>
-                            <button type="button" class="actress-add-more">載入更多</button>
                         </div>
                     </div>
                 </div>
@@ -1732,6 +1731,8 @@
                             另外「載入中／載入失敗」（<code>.actress-add-state</code>）與逐列錯誤（<code>.actress-add-rowerror</code>）兩個狀態未進 demo。</li>
                         <li><strong>Esc 關閉與 <code>autofocus</code> 是契約的一部分</strong>（<code>@keydown.escape.window</code> ＋ 搜尋框的 <code>autofocus</code>）：
                             少了 <code>autofocus</code>，Alpine focus 外掛會退而聚焦第一個可 Tab 元素——也就是右上角的 ✕，鍵盤使用者每次開窗都要多按一次 Tab。兩者都在下方程式碼範例裡。</li>
+                        <li>清單捲到距底 400px 內由 <code>x-intersect</code> sentinel 自動展開下一批 40 列，<strong>沒有「展開更多」按鈕</strong>；
+                            sentinel 是 <code>.actress-add-sentinel</code>（<code>height: 400px</code> 預取帶，<code>aria-hidden</code>），本 demo 為靜態骨架故不含它。</li>
                     </ul>
                 </div>
                 <pre class="ds-code"><code>&lt;dialog class="modal fluent-modal actress-add-dialog"

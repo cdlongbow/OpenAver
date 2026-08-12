@@ -1636,13 +1636,13 @@
                         x-show="libShowDirectAdd()" :disabled="_addingActress"
                         @click="libDirectAdd()"
                         x-text="t('showcase.actress.panel.direct_add', { name: libDirectAddName() })"></button>
+                <!-- 117b-T8：自動展開 sentinel（取代展開更多按鈕）-->
+                <div class="actress-add-sentinel" aria-hidden="true"
+                     x-show="libHasMore()"
+                     x-intersect="libExpandMore()"></div>
             </div>
             <div class="actress-add-footer">
                 <span class="actress-add-progress" x-text="libProgressText()"></span>
-                <button type="button" class="actress-add-more"
-                        x-show="libHasMore()"
-                        @click="libExpandMore()"
-                        x-text="t('showcase.actress.panel.more')"></button>
             </div>
         </div>
     </dialog>

@@ -3784,6 +3784,32 @@ const RULES = [
     note: '[117-T4] AC-1.6：開面板不得等網路；同步斷言測不出 async 化，只能用字面守衛',
   },
 
+  // ==== [117b-T8] 清單自動展開 sentinel：字面契約（取代 .actress-add-more 按鈕）====
+
+  // R1 AC-8.1/8.2：sentinel 必須 x-intersect 綁 libExpandMore()（預取由 sentinel 高度表達）
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'required-string',
+    pattern: 'x-intersect="libExpandMore()"',
+    scope: { anchor: /class="actress-add-sentinel"/, window: 300 },
+    note: '[117b-T8] AC-8.1/8.2：sentinel 必須 x-intersect 綁 libExpandMore()（預取距離由 sentinel 高度表達，不得加 .margin）。破了＝清單永遠停在首批 40',
+  },
+  // R2 AC-8.3：.actress-add-more 不得回歸
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'forbidden-string',
+    pattern: 'actress-add-more',
+    note: '[117b-T8] AC-8.3：.actress-add-more 按鈕已退場。破了＝自動展開與手動按鈕並存，使用者又被打斷節奏（spec-117b 覆蓋 F6 的決策被默默撤回）',
+  },
+  // R3 AC-8.2：預取帶＝sentinel 自己的高度（rootMargin 對捲動容器內部無效）
+  {
+    file: 'web/static/css/components/actress-add-panel.css',
+    kind: 'required-string',
+    pattern: ['height: 400px', 'margin-top: -400px', 'pointer-events: none'],
+    scope: { anchor: /\.actress-add-sentinel\s*\{/, braceBalanced: true },
+    note: '[117b-T8] AC-8.2：預取帶＝sentinel 自己的高度（rootMargin 對捲動容器內部無效）。少了 height/負 margin ＝ 要真的捲到底才展開、或清單尾端多出 400px 空白；少了 pointer-events:none ＝ 最後幾列的愛心按不下去',
+  },
+
   // ==== [117-T5] 逐列收藏 queue：接線 ＋ 併發計數契約（不鎖視覺，owner/T7 真機驗收前的薄守衛）====
 
   // L1 AC-4.3：空心愛心必須接上 queue（破了＝點愛心毫無反應，面板變成唯讀清單）

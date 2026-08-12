@@ -70,6 +70,18 @@
     margin: 0.25rem 0;
 }
 
+/* 117b-T8 預取帶：sentinel 的「高度」就是「距底多少 px 開始展開」。
+   不能用 x-intersect 的 rootMargin —— root 是 viewport，而 .actress-add-list 的
+   overflow 裁切發生在 root margin 展開之前，400px 的 root margin 對捲動容器內部
+   完全無效（CDP 實測：只有真的捲到底才觸發，見 TASK-117-T8 現況 I）。
+   負 margin 抵銷版面高度：這條帶子疊在最後 400px 的內容上，不增加捲動長度。
+   pointer-events:none：否則它會吃掉最後 ~7 列的愛心點擊。 */
+.actress-add-sentinel {
+    height: 400px;
+    margin-top: -400px;
+    pointer-events: none;
+}
+
 /* 三欄列：片數 / 名字 / 愛心（CD-117-6；minmax(0,1fr) 不可退回裸 1fr） */
 .actress-add-row {
     display: grid;
@@ -207,8 +219,6 @@
 .actress-add-footer {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
     padding-top: 0.5rem;
     min-height: 1.5rem;
     flex-shrink: 0;
@@ -217,16 +227,6 @@
 .actress-add-progress {
     font-size: 0.8rem;
     color: var(--text-secondary);
-}
-
-.actress-add-more {
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    color: var(--accent);
-    font-size: 0.85rem;
-    padding: 0.25rem 0.5rem;
-    border-radius: var(--fluent-radius-md);
 }
 
 /* Breakpoint 480 matches T6 notification drawer + A-group mobile breakpoints
