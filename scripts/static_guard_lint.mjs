@@ -3938,11 +3938,12 @@ const RULES = [
     kind: 'required-string',
     pattern: [
       'class="lb-delete-btn"',
+      'x-show="showFavoriteActresses && !_maskVisible"',
       '@click.stop="openRemoveActressModal()"',
       ':title="t(\'showcase.actress.remove\')"',
     ],
     scope: { anchor: /<div class="actress-lb-header">/, window: 3200 },
-    note: '[117b-T9] AC-9.1/9.2/CD-117b-5：刪除鈕必須在 .actress-lb-header 內、綁 openRemoveActressModal()、且用 :title= 提示。破了＝刪除又回到照片浮層（破壞性操作混進常用 hover 列）、點擊死掉、或 hover 沒有任何提示',
+    note: '[117b-T9] AC-9.1/9.2/CD-117b-5：刪除鈕必須在 .actress-lb-header 內、綁 openRemoveActressModal()、且用 :title= 提示。破了＝刪除又回到照片浮層（破壞性操作混進常用 hover 列）、點擊死掉、或 hover 沒有任何提示。`!_maskVisible` 掉了＝使用者正在拖曳調整女優頭像對焦時，刪除鈕仍可按，可在遮罩編輯中途開啟移除確認，破壞既有互斥流程',
   },
   // R2：.cover-actions 區不得再出現 openRemoveActressModal()
   {
