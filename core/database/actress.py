@@ -318,7 +318,11 @@ class ActressRepository:
             )
             return cursor.fetchall()
         except sqlite3.OperationalError:
-            logger.exception("get_video_actress_pairs json_each failed (returning [])")
-            return []
+            # 這支的唯一呼叫端是「從片庫加入女優」面板的聚合，而面板有自己的「載入失敗」狀態。
+            # 吞成 [] 會讓端點回 200 + 0 筆 → 面板顯示「共 0 位」，使用者分不出「庫是空的」
+            # 和「這次沒讀到」。往上拋 → 端點 500 → 前端 !resp.ok → 顯示「載入失敗，請稍後再試」。
+            # （Codex PR#133 review）
+            logger.exception("get_video_actress_pairs json_each failed")
+            raise
         finally:
             conn.close()

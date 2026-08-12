@@ -82,6 +82,27 @@ def test_get_video_actress_pairs_handles_malformed_json(temp_db):
     assert repo.get_video_actress_pairs() == []
 
 
+def test_get_video_actress_pairs_operational_error_propagates(temp_db, monkeypatch):
+    """json_each / execute 丟 OperationalError 必須往上拋（不可吞成 []），
+    且 finally 仍要 close 連線（Codex PR#133 finding A）。"""
+    repo = ActressRepository(temp_db)
+    close_calls = []
+
+    class _BoomConn:
+        def execute(self, *args, **kwargs):
+            raise sqlite3.OperationalError("simulated json_each failure")
+
+        def close(self):
+            close_calls.append(True)
+
+    monkeypatch.setattr(repo, "_get_connection", lambda: _BoomConn())
+
+    with pytest.raises(sqlite3.OperationalError, match="simulated json_each failure"):
+        repo.get_video_actress_pairs()
+
+    assert close_calls == [True], "finally: conn.close() must still run on exception path"
+
+
 # ── get_library_actresses() 分組／聚合 ──────────────────────────────────────
 
 def test_get_library_actresses_excludes_zero_video_actress(library_db):

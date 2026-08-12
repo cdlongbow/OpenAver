@@ -3,6 +3,8 @@
 GET /api/actresses/library 端點行為：回應形狀、is_favorite/primary_name 判定、
 路由順序（不被 {name} 捕捉）、無網路呼叫。
 """
+import sqlite3
+
 import pytest
 from unittest.mock import patch
 
@@ -140,3 +142,50 @@ class TestLibraryActressesEndpoint:
 
         names = [a["primary_name"] for a in resp.json()["actresses"]]
         assert "無片女優" not in names
+
+    def test_library_non_2xx_when_pairs_query_fails(self, tmp_db, monkeypatch):
+        """DB 層 get_video_actress_pairs 丟 OperationalError → 端點必須非 2xx，
+        不可回 200 + 空清單（前端 !resp.ok →「載入失敗」）。Codex PR#133 finding A。
+
+        raise_server_exceptions=False：讓 TestClient 回 HTTP 狀態碼而非把例外再拋給測試。
+        注入點必須走真實 except 分支（execute 失敗），且只打 pairs 的 json_each SQL——
+        勿連 get_all 一起炸掉，否則 mutation 改回 return [] 時後續 get_all 仍會 500、
+        測試假綠。
+        """
+        monkeypatch.setattr("core.database.connection.get_db_path", lambda: tmp_db)
+
+        real_get = ActressRepository._get_connection
+
+        class _FailPairsConn:
+            def __init__(self, real):
+                self._real = real
+
+            def execute(self, sql, *args, **kwargs):
+                if "json_each(videos.actresses)" in sql:
+                    raise sqlite3.OperationalError("simulated json_each failure")
+                return self._real.execute(sql, *args, **kwargs)
+
+            def close(self):
+                return self._real.close()
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        monkeypatch.setattr(
+            ActressRepository,
+            "_get_connection",
+            lambda self: _FailPairsConn(real_get(self)),
+        )
+
+        from web.app import app
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.get("/api/actresses/library")
+
+        assert not (200 <= resp.status_code < 300), (
+            f"query failure must not be 2xx (got {resp.status_code}); "
+            "old swallow-to-[] path returned 200 + empty list"
+        )
+        # 明確否定舊契約：200 + {actresses:[], total:0}
+        if resp.status_code == 200:
+            data = resp.json()
+            assert not (data.get("actresses") == [] and data.get("total") == 0)
