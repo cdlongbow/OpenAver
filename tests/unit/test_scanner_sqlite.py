@@ -416,8 +416,8 @@ class TestSampleImagesScanner:
         names = [s.split("/")[-1] for s in info.sample_images]
         assert names == sorted(names)
 
-    def test_extrafanart_only_fanart_jpg_glob(self, temp_video_dir):
-        """非 fanart*.jpg 檔案不被掃入"""
+    def test_extrafanart_any_image_file_included(self, temp_video_dir):
+        """非 fanart* 檔名與非 jpg 圖片都會被收；非圖片副檔名不收"""
         from core.gallery_scanner import VideoScanner
         video_path = create_video_file(temp_video_dir, "test.mp4")
         create_nfo_file(video_path)
@@ -426,10 +426,163 @@ class TestSampleImagesScanner:
         (extrafanart / "fanart1.jpg").write_bytes(b"img")
         (extrafanart / "fanart1.png").write_bytes(b"img")
         (extrafanart / "thumb.jpg").write_bytes(b"img")
+        (extrafanart / "extrafanart-1.jpg").write_bytes(b"img")
+        (extrafanart / "notes.txt").write_bytes(b"txt")
         scanner = VideoScanner()
         info = scanner.scan_file(str(video_path))
-        assert len(info.sample_images) == 1
-        assert "fanart1.jpg" in info.sample_images[0]
+        names = [s.split("/")[-1] for s in info.sample_images]
+        assert names == [
+            "extrafanart-1.jpg",
+            "fanart1.jpg",
+            "fanart1.png",
+            "thumb.jpg",
+        ]
+
+    def test_extrafanart_all_jellyfin_image_extensions(self, temp_video_dir):
+        """Jellyfin 劇照白名單（png/webp/gif/tbn/jpeg）都會被收；.svg 刻意不收"""
+        from core.gallery_scanner import VideoScanner
+        video_path = create_video_file(temp_video_dir, "test.mp4")
+        create_nfo_file(video_path)
+        extrafanart = temp_video_dir / "extrafanart"
+        extrafanart.mkdir()
+        for name in (
+            "fanart1.png",
+            "fanart1.webp",
+            "fanart1.gif",
+            "fanart1.tbn",
+            "fanart1.svg",
+            "fanart1.jpeg",
+        ):
+            (extrafanart / name).write_bytes(b"img")
+        scanner = VideoScanner()
+        info = scanner.scan_file(str(video_path))
+        names = [s.split("/")[-1] for s in info.sample_images]
+        assert names == [
+            "fanart1.gif",
+            "fanart1.jpeg",
+            "fanart1.png",
+            "fanart1.tbn",
+            "fanart1.webp",
+        ]
+        assert "fanart1.svg" not in names
+
+    def test_extrafanart_svg_not_collected(self, temp_video_dir):
+        """extrafanart 裡的 .svg 不被收（劇照不是向量圖；服務端不吐可執行內容）"""
+        from core.gallery_scanner import VideoScanner
+        video_path = create_video_file(temp_video_dir, "test.mp4")
+        create_nfo_file(video_path)
+        extrafanart = temp_video_dir / "extrafanart"
+        extrafanart.mkdir()
+        (extrafanart / "fanart1.jpg").write_bytes(b"img")
+        (extrafanart / "logo.svg").write_bytes(b"<svg></svg>")
+        scanner = VideoScanner()
+        info = scanner.scan_file(str(video_path))
+        names = [s.split("/")[-1] for s in info.sample_images]
+        assert names == ["fanart1.jpg"]
+        assert "logo.svg" not in names
+
+    def test_extrafanart_non_image_extensions_excluded(self, temp_video_dir):
+        """notes.txt / Thumbs.db 不被收"""
+        from core.gallery_scanner import VideoScanner
+        video_path = create_video_file(temp_video_dir, "test.mp4")
+        create_nfo_file(video_path)
+        extrafanart = temp_video_dir / "extrafanart"
+        extrafanart.mkdir()
+        (extrafanart / "fanart1.jpg").write_bytes(b"img")
+        (extrafanart / "notes.txt").write_bytes(b"txt")
+        (extrafanart / "Thumbs.db").write_bytes(b"db")
+        scanner = VideoScanner()
+        info = scanner.scan_file(str(video_path))
+        names = [s.split("/")[-1] for s in info.sample_images]
+        assert names == ["fanart1.jpg"]
+
+    def test_extrafanart_zero_byte_excluded(self, temp_video_dir):
+        """零位元組 jpg 不被收"""
+        from core.gallery_scanner import VideoScanner
+        video_path = create_video_file(temp_video_dir, "test.mp4")
+        create_nfo_file(video_path)
+        extrafanart = temp_video_dir / "extrafanart"
+        extrafanart.mkdir()
+        (extrafanart / "fanart1.jpg").write_bytes(b"img")
+        (extrafanart / "broken.jpg").write_bytes(b"")
+        scanner = VideoScanner()
+        info = scanner.scan_file(str(video_path))
+        names = [s.split("/")[-1] for s in info.sample_images]
+        assert names == ["fanart1.jpg"]
+
+    def test_extrafanart_one_stat_oserror_keeps_other_images(self, temp_video_dir, monkeypatch):
+        """四張合法圖，其中一張 stat() 拋 OSError → 另外三張仍進 sample_images"""
+        from core.gallery_scanner import VideoScanner
+        video_path = create_video_file(temp_video_dir, "test.mp4")
+        create_nfo_file(video_path)
+        extrafanart = temp_video_dir / "extrafanart"
+        extrafanart.mkdir()
+        for name in ["fanart1.jpg", "fanart2.jpg", "fanart3.jpg", "fanart4.jpg"]:
+            (extrafanart / name).write_bytes(b"img")
+
+        # is_file() 也會走 Path.stat；第一次讓它過，第二次（明確的 size 檢查）才拋。
+        # 否則 is_file 會依 errno 直接吞掉或往外冒，測不到 _iter 裡那次 stat。
+        original_stat = Path.stat
+        stat_calls: dict[str, int] = {}
+
+        def fake_stat(self, *args, **kwargs):
+            if self.name == "fanart2.jpg":
+                count = stat_calls.get(self.name, 0) + 1
+                stat_calls[self.name] = count
+                if count >= 2:
+                    raise OSError("simulated lock")
+            return original_stat(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "stat", fake_stat)
+
+        scanner = VideoScanner()
+        info = scanner.scan_file(str(video_path))
+        names = [s.split("/")[-1] for s in info.sample_images]
+        assert names == ["fanart1.jpg", "fanart3.jpg", "fanart4.jpg"]
+
+    def test_extrafanart_appledouble_hidden_excluded(self, temp_video_dir):
+        """._ 開頭的 AppleDouble 不被收（即使副檔名是 jpg 且非空）"""
+        from core.gallery_scanner import VideoScanner
+        video_path = create_video_file(temp_video_dir, "test.mp4")
+        create_nfo_file(video_path)
+        extrafanart = temp_video_dir / "extrafanart"
+        extrafanart.mkdir()
+        (extrafanart / "fanart1.jpg").write_bytes(b"img")
+        (extrafanart / "._fanart1.jpg").write_bytes(b"x" * 4096)
+        scanner = VideoScanner()
+        info = scanner.scan_file(str(video_path))
+        names = [s.split("/")[-1] for s in info.sample_images]
+        assert names == ["fanart1.jpg"]
+
+    def test_extrafanart_subdirectory_not_recursed(self, temp_video_dir):
+        """子目錄不遞迴、目錄本身不當成檔案"""
+        from core.gallery_scanner import VideoScanner
+        video_path = create_video_file(temp_video_dir, "test.mp4")
+        create_nfo_file(video_path)
+        extrafanart = temp_video_dir / "extrafanart"
+        extrafanart.mkdir()
+        (extrafanart / "fanart1.jpg").write_bytes(b"img")
+        nested = extrafanart / "@eaDir"
+        nested.mkdir()
+        (nested / "thumb.jpg").write_bytes(b"img")
+        (extrafanart / "folder.png").mkdir()
+        scanner = VideoScanner()
+        info = scanner.scan_file(str(video_path))
+        names = [s.split("/")[-1] for s in info.sample_images]
+        assert names == ["fanart1.jpg"]
+
+    def test_extrafanart_uppercase_extension_included(self, temp_video_dir):
+        """大寫副檔名 FANART1.JPG 會被收"""
+        from core.gallery_scanner import VideoScanner
+        video_path = create_video_file(temp_video_dir, "test.mp4")
+        create_nfo_file(video_path)
+        extrafanart = temp_video_dir / "extrafanart"
+        extrafanart.mkdir()
+        (extrafanart / "FANART1.JPG").write_bytes(b"img")
+        scanner = VideoScanner()
+        info = scanner.scan_file(str(video_path))
+        names = [s.split("/")[-1] for s in info.sample_images]
+        assert names == ["FANART1.JPG"]
 
     def test_extrafanart_with_base_path_relative(self, temp_video_dir):
         """有 base_path → 存相對路徑字串，非 file:/// URI"""

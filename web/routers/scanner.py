@@ -1197,6 +1197,7 @@ def get_image(path: str = Query(..., description="圖片路徑")):
         '.gif': 'image/gif',
         '.webp': 'image/webp',
         '.bmp': 'image/bmp',
+        '.tbn': 'image/jpeg',  # Kodi ecosystem: JPEG with a .tbn suffix
     }
     if ext not in mime_types:
         logger.warning("get_image: 拒絕非圖片副檔名請求 ext=%s", ext)

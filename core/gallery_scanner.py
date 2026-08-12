@@ -34,6 +34,16 @@ from core.video_extensions import DEFAULT_VIDEO_EXTENSIONS, ZERO_SIZE_EXTENSIONS
 
 logger = get_logger(__name__)
 
+# Jellyfin BaseItem.SupportedImageExtensions minus .svg.
+# Jellyfin's list is global (logo/clearart/banner too); extrafanart is stills,
+# which are never SVG. Serving user-disk .svg via /api/gallery/image would let
+# a direct navigation execute script on this origin, and this project has no CSP.
+# Same split as DEFAULT_VIDEO_EXTENSIONS vs SAFE_PROXY_EXTENSIONS: discoverable
+# is not the same as servable.
+_EXTRAFANART_IMAGE_EXTS = frozenset({
+    '.png', '.jpg', '.jpeg', '.webp', '.tbn', '.gif',
+})
+
 
 @dataclass
 class VideoInfo:
@@ -494,6 +504,30 @@ class VideoScanner:
 
         return ""
 
+    @staticmethod
+    def _iter_extrafanart_images(extrafanart_dir: Path):
+        """Yield extrafanart/ children that Jellyfin would treat as images.
+
+        Non-recursive; file + image suffix + size > 0. Hidden names (``.`` prefix)
+        are an extra filter we add on top of Jellyfin: macOS SMB writes
+        ``._fanart1.jpg`` AppleDouble sidecars (suffix ``.jpg``, ~4KB, non-empty)
+        that would otherwise surface as a broken thumbnail on NAS / network
+        drives.
+        """
+        for img_path in extrafanart_dir.iterdir():
+            if not img_path.is_file():
+                continue
+            if img_path.name.startswith('.'):
+                continue
+            if img_path.suffix.lower() not in _EXTRAFANART_IMAGE_EXTS:
+                continue
+            try:
+                if img_path.stat().st_size <= 0:
+                    continue
+            except OSError:
+                continue
+            yield img_path
+
     def scan_file(self, video_path: str, base_path: str = None) -> VideoInfo:
         """掃描單一影片檔案"""
         t_start = time.time()
@@ -576,7 +610,7 @@ class VideoScanner:
         extrafanart_dir = video_path.parent / 'extrafanart'
         if extrafanart_dir.is_dir():
             try:
-                for img_path in sorted(extrafanart_dir.glob('fanart*.jpg')):
+                for img_path in sorted(self._iter_extrafanart_images(extrafanart_dir)):
                     if base_path:
                         try:
                             rel_img = img_path.relative_to(base_path)
