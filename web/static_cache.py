@@ -30,6 +30,7 @@ _FORCED_CONTENT_TYPES = {
     ".js": "text/javascript",
     ".mjs": "text/javascript",
     ".css": "text/css",
+    ".svg": "image/svg+xml",
 }
 
 

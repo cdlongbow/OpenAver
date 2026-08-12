@@ -1,10 +1,15 @@
 # tests/integration/test_static_mime.py
 """
-契約測試：/static mount 的 .js/.mjs/.css MIME 兩層強制（issue #66）。
+契約測試：/static mount 的 .js/.mjs/.css/.svg MIME 兩層強制（issue #66、#119）。
 
 精簡版 Windows registry 把 HKEY_CLASSES_ROOT\\.js Content Type 污染成 text/plain，
 會讓 ES module 被瀏覽器 strict-MIME 拒收。NoCacheStaticFiles 在 super().file_response()
 回傳後 post-construction 覆寫 Content-Type → 對 OS registry / guess_type 污染免疫。
+
+.svg 為 issue #119 補入：同一族污染打在 HKCR\\.svg 上時，Chromium 對 <img> 載入的 SVG
+走 strict MIME，非 image/svg+xml 一律不 decode → sidebar logo 破圖。raster 圖（png/webp）
+與字型會被瀏覽器 sniff、不吃 strict MIME，故**刻意不納入**白名單（見 test_png_not_overridden
+這支負向控制：把 .png 加進清單會讓它失去意義）。
 
 依 CLAUDE.md「Lint 守衛規則」：此為「副檔名 → Content-Type 強制 API contract」→ pytest 正確。
 """
@@ -52,6 +57,26 @@ def test_css_forced_even_when_guess_type_polluted(monkeypatch):
     resp = polluted_client.get("/static/css/theme.css")
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/css")
+
+
+def test_svg_forced_to_image_svg_xml(client):
+    resp = client.get("/static/favicon.svg")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("image/svg+xml")
+
+
+def test_svg_forced_even_when_guess_type_polluted(monkeypatch):
+    # 與 .js / .css 對稱的對抗測試：healthy registry 下 test_svg_forced_to_image_svg_xml
+    # 會 vacuously 綠（OS 原生 .svg→image/svg+xml），無法守住 _FORCED_CONTENT_TYPES['.svg']
+    # 被刪的回歸。此測試污染 guess_type→text/plain，證明 .svg 的 override 同樣 load-bearing。
+    monkeypatch.setattr(
+        "starlette.responses.guess_type",
+        lambda *a, **k: ("text/plain", None),
+    )
+    polluted_client = TestClient(app)
+    resp = polluted_client.get("/static/favicon.svg")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("image/svg+xml")
 
 
 def test_png_not_overridden(client):
