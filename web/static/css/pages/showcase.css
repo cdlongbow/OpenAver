@@ -62,6 +62,41 @@
     flex-wrap: wrap;
 }
 
+/* 117b-T10：搜尋列 + 四態。只疊 .actress-add-btn，不得改 .btn-icon 全域。
+ * 不做 rotate：bi-plus-lg 四重對稱，rotate(90deg) 視覺無差；
+ * rotate(45deg) 變成 ×＝關閉語意，但本鈕是「開面板」不是 toggle → 誤導。
+ * AC-10.5「旋轉／陰影／輝光／微縮」是舉例不是清單。 */
+.actress-add-btn {
+    transition:
+        transform var(--fluent-duration-fast) var(--fluent-ease-standard),
+        color var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+
+.actress-add-btn:hover {
+    transform: scale(1.12);
+    color: var(--accent);
+    /* 背景沿用 .btn-icon:hover —— 不寫 background */
+}
+
+.actress-add-btn:active {
+    transform: scale(0.92);
+}
+
+.actress-add-btn:focus-visible {
+    /* outline 沿用全域 2px；額外 subtle glow（§6 #5 / lb-delete-btn 先例） */
+    box-shadow: 0 0 0 4px var(--glow-subtle);
+}
+
+/* 面板開啟中：沿用 .btn-icon.active（markup :class），不新增規則 */
+
+@media (prefers-reduced-motion: reduce) {
+    /* house style：本專案既有 reduced-motion 區塊只關 transition（見 actress-add-panel.css），
+       不寫 transform: none —— 別自創第二種寫法（Opus 裁決） */
+    .actress-add-btn {
+        transition: none !important;
+    }
+}
+
 /* Control Group - 單個控制元件群組（排序 + 按鈕 / select / mode switcher）*/
 .control-group {
     display: flex;

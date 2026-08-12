@@ -3610,18 +3610,29 @@ const RULES = [
   // ==== [117-T3] 從片庫加入女優面板：薄守衛（不得回退到已知壞值）====
   // owner 真機驗收前只鎖契約字面；完整視覺守衛排到驗收後。
 
-  // AC-1.1：+ 只在女優模式 toolbar-section 內；全檔 exact 1 防搬出又補
+  // AC-1.1 → 117b-T10：+ 在 .search-actions-right 內；全檔 exact 1 防搬出又補
   {
-    file: 'web/templates/showcase.html', kind: 'required-string',
-    pattern: 'openActressAddPanel()',
-    scope: { anchor: /toolbar-section toolbar-controls" x-show="showFavoriteActresses"/, window: 4000 },
-    note: '[117-T3] AC-1.1：openActressAddPanel() 必須在女優模式 toolbar-section 內（+ 不得搬出 x-show=showFavoriteActresses）',
+    file: 'web/templates/showcase.html',
+    kind: 'required-string',
+    pattern: [
+      'openActressAddPanel()',
+      'x-show="libAddBtnVisible()"',
+    ],
+    scope: { anchor: /class="search-actions-right"/, window: 2170 },
+    note: '[117-T3→117b-T10] AC-1.1/AC-10.1/CD-117b-8：openActressAddPanel() 必須在 .search-actions-right 內，且 x-show 走 libAddBtnVisible()（不得字面鏈、不得搬回 toolbar-controls）。破了＝冷啟動入口又埋進排序列，或顯示條件回到跨模式旗標',
   },
   {
     file: 'web/templates/showcase.html', kind: 'structure-count',
     pattern: 'openActressAddPanel()',
     count: 1,
     note: '[117-T3] AC-1.1：openActressAddPanel() 全檔恰好 1 次（防搬出區塊又在別處補一顆）',
+  },
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'forbidden-string',
+    pattern: 'showcaseHasSearch',
+    scope: { anchor: /x-ref="actressAddBtn"/, window: 350 },
+    note: '[117b-T10] CD-117b-8/AC-10.8：actressAddBtn 按鈕 markup 不得出現 showcaseHasSearch 字面（跨模式聯集旗標會讓影片殘留篩選把 + 藏起來）。破了＝AC-10.8 可達回歸',
   },
 
   // AC-1.2：Esc／點外／關閉鈕三路

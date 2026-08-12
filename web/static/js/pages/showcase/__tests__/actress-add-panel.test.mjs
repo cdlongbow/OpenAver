@@ -1230,3 +1230,80 @@ test('reviewer②③：A 失敗後被 B 的 covered_names 涵蓋 → A 實心且
         mock.restore();
     }
 });
+
+// ── 117b-T10：libAddBtnVisible 顯示條件（CD-117b-8 / AC-10.3 / AC-10.8）──
+
+test('libAddBtnVisible：女優模式 ＋ 搜尋列全空 → true', () => {
+    const c = makeComponent({
+        showFavoriteActresses: true,
+        actressSearch: '',
+        actressPills: [],
+        filteredActressCount: 12,
+    });
+    assert.equal(c.libAddBtnVisible(), true);
+});
+
+test('libAddBtnVisible：女優模式 ＋ 有打字 ＋ 有結果 → false', () => {
+    const c = makeComponent({
+        showFavoriteActresses: true,
+        actressSearch: '三上',
+        actressPills: [],
+        filteredActressCount: 3,
+    });
+    assert.equal(c.libAddBtnVisible(), false);
+});
+
+test('libAddBtnVisible：女優模式 ＋ 有打字 ＋ 結果 0 → true', () => {
+    const c = makeComponent({
+        showFavoriteActresses: true,
+        actressSearch: '庫裡沒有的名字',
+        actressPills: [],
+        filteredActressCount: 0,
+    });
+    assert.equal(c.libAddBtnVisible(), true);
+});
+
+test('libAddBtnVisible：女優模式 ＋ 有 pill ＋ 有結果 → false', () => {
+    const c = makeComponent({
+        showFavoriteActresses: true,
+        actressSearch: '',
+        actressPills: [{ dim: 'age', op: '=', value: '28', value2: null }],
+        filteredActressCount: 5,
+    });
+    assert.equal(c.libAddBtnVisible(), false);
+});
+
+test('libAddBtnVisible：影片側 search/pills 有值、女優側全空 → 仍 true（AC-10.8）', () => {
+    // 唯一能擋住「回頭用全域旗標／_hasActiveFilter」的測試
+    // 檔頭 stub 預設 showcaseHasSearch:false；若實作改讀 $store.ui.showcaseHasSearch，
+    // 那 stub 永遠 false 會讓本測仍綠——「女優側全空但全域旗標為 true」正是這條 AC 的唯一
+    // 分岔點；stub 給 false 等於把分岔點抹平。此測內暫時換成 true，結束還原。
+    const prevStore = globalThis.Alpine.store;
+    globalThis.Alpine.store = () => ({ toolbarOpen: false, showcaseHasSearch: true });
+    try {
+        const c = makeComponent({
+            showFavoriteActresses: true,
+            actressSearch: '',
+            actressPills: [],
+            filteredActressCount: 20,
+            search: 'ABP',
+            pills: [{ dim: 'maker', value: 'IdeaPocket' }],
+        });
+        assert.equal(c.libAddBtnVisible(), true);
+    } finally {
+        globalThis.Alpine.store = prevStore;
+    }
+});
+
+test('libAddBtnVisible：影片模式 → 一律 false', () => {
+    const c = makeComponent({
+        showFavoriteActresses: false,
+        actressSearch: '',
+        actressPills: [],
+        filteredActressCount: 0,
+    });
+    assert.equal(c.libAddBtnVisible(), false);
+    c.actressSearch = 'x';
+    c.filteredActressCount = 0;
+    assert.equal(c.libAddBtnVisible(), false);
+});

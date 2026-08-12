@@ -856,6 +856,16 @@ export function stateActress() {
             // _libRows 不清：關閉動畫期間避免清單瞬間空掉；下次 open 會覆蓋
         },
 
+        libAddBtnVisible() {
+            // 四個依賴各自無條件讀完，再組合（不得寫成短路鏈——Alpine 的 effect
+            // 依賴收集會漏訂閱鏈末條件，那個條件之後再變化畫面不會更新）
+            var isActress   = this.showFavoriteActresses;
+            var hasText     = this.actressSearch !== '';
+            var hasPills    = this.actressPills.length > 0;
+            var emptyResult = this.filteredActressCount === 0;
+            return isActress && ((!hasText && !hasPills) || emptyResult);
+        },
+
         // 形狀照 loadActresses()：ok → json → success；catch 清空；finally 關 loading
         // gen guard：開→關→開時，舊 response 不得覆寫新清單（finally 也要 gen 保護）
         async _loadLibraryActresses() {

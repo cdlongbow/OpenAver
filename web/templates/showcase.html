@@ -210,6 +210,16 @@
                                 title="{{ t('showcase.action.clear_search') }}">
                             <i class="bi bi-x-lg"></i>
                         </button>
+                        <!-- [+ 新增] 從片庫加入女優面板（117b-T10：搬入 search-actions-right） -->
+                        <button class="btn-icon actress-add-btn"
+                                x-ref="actressAddBtn"
+                                x-show="libAddBtnVisible()"
+                                x-cloak
+                                @click="openActressAddPanel()"
+                                :title="t('showcase.actress.add')"
+                                :class="{ 'active': actressAddPanelOpen }">
+                            <i class="bi bi-plus-lg"></i>
+                        </button>
                         <button class="btn-icon active"
                                 @click="(showFavoriteActresses ? onActressSearchChange() : onSearchChange()); $store.ui.toolbarOpen = false"
                                 title="{{ t('showcase.action.search') }}">
@@ -326,12 +336,7 @@
                     <button class="btn-icon" @click="toggleActressOrder()" title="{{ t('showcase.action.toggle_order') }}">
                         <i class="bi" :class="actressOrder === 'asc' ? 'bi-sort-up' : 'bi-sort-down'"></i>
                     </button>
-                    <!-- [+ 新增] 從片庫加入女優面板（117-T3；舊 dropdown 已移除） -->
-                    <button class="btn-icon" x-ref="actressAddBtn" @click="openActressAddPanel()"
-                            :title="t('showcase.actress.add')"
-                            :class="{ 'active': actressAddPanelOpen }">
-                        <i class="bi bi-plus-lg"></i>
-                    </button>
+                    <!-- [+ 新增] 已搬至 search-actions-right（117b-T10） -->
                 </div>
             </div>
         </div>
