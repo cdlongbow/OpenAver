@@ -4,10 +4,12 @@
 端點：
     POST   /api/actresses/favorite          收藏女優
     GET    /api/actresses/photo/{name}      取得本地照片（binary）
+    GET    /api/actresses/library           列出庫內全部女優（依 alias group 聚合，TASK-117-T1）
     GET    /api/actresses/{name}            查詢已收藏女優
     DELETE /api/actresses/{name}            刪除已收藏女優
 
-注意：photo/{name} 必須定義在 {name} 之前，否則 FastAPI 會將 "photo" 解析為 {name}。
+注意：photo/{name}、library 都必須定義在 {name} 之前，否則 FastAPI 會將 "photo"／
+"library" 解析為 {name}。
 """
 
 import asyncio
@@ -25,7 +27,10 @@ from PIL import Image
 from core.atomic_write import atomic_write
 from core.maker_mapping import load_prefix_mapping
 
-from core.database import ActressRepository, AliasRepository, VideoRepository, Actress, init_db
+from core.database import (
+    ActressRepository, AliasRepository, VideoRepository, Actress, init_db,
+    get_library_actresses,
+)
 from core.actress_photo import (
     download_actress_photo, get_local_photo_path, delete_local_photo,
     crop_video_cover, GFRIENDS_DIR, CONTENT_TYPE_MAP, validate_photo_url,
@@ -70,6 +75,24 @@ class SetActressFocalRequest(BaseModel):
     video.py 的 `expected_cover_path`）——本 request model 亦不帶該欄位。
     """
     focal: str
+
+
+# ---------------------------------------------------------------------------
+# Response model（TASK-117-T1）：本 router 目前全用裸 JSONResponse，GET /library 是
+# 第一支用 response_model 的端點（plan CD 明文指定，非隨意引入新風格）。
+# ---------------------------------------------------------------------------
+
+class LibraryActressItem(BaseModel):
+    primary_name: str
+    names: List[str]
+    video_count: int
+    is_favorite: bool
+
+
+class LibraryActressesResponse(BaseModel):
+    success: bool
+    actresses: List[LibraryActressItem]
+    total: int
 
 
 # ---------------------------------------------------------------------------
@@ -173,11 +196,16 @@ def add_favorite(req: FavoriteRequest):
     # 1. 已收藏檢查 → 409
     if repo.exists(name):
         existing = repo.get_by_name(name)
+        # covered_names（TASK-117-T1）：此路徑無 sync_from_favorite 呼叫（女優已存在，
+        # 不重新抓 profile），「sync_primary」概念在此就是 name 本身。
+        alias_repo = AliasRepository()
+        covered_names = alias_repo.resolve(name) | {name}
         return JSONResponse(
             status_code=409,
             content={
                 "error": "already_exists",
                 "actress": _actress_to_response(existing),
+                "covered_names": sorted(covered_names),
             }
         )
 
@@ -244,6 +272,9 @@ def add_favorite(req: FavoriteRequest):
     logger.info("[actress] 收藏女優：%s", actress.name)
 
     # Sync aliases to actress_aliases table
+    # covered_names（TASK-117-T1）：預設 sync_primary = actress.name，若 sync 失敗（例外
+    # 分支）也要有值可用——resolve() 對未知名字回 {name} 自身，語意等價「沒有 group」。
+    sync_result = {"primary_name": actress.name}
     try:
         alias_repo = AliasRepository()
         sync_result = alias_repo.sync_from_favorite(
@@ -263,6 +294,10 @@ def add_favorite(req: FavoriteRequest):
 
     alias_repo = AliasRepository()
     video_count = repo.count_videos_for_actress_names(alias_repo.resolve(actress.name))
+    # covered_names（TASK-117-T1）：sync 後完整 DB group ∪ 使用者這次點的 name——不得
+    # 寫回 actress_aliases 表，聯集只存在於這次 HTTP 回應（CD-117-9）。
+    sync_primary = sync_result["primary_name"]
+    covered_names = alias_repo.resolve(sync_primary) | {name}
     return JSONResponse(
         status_code=200,
         content={
@@ -270,6 +305,7 @@ def add_favorite(req: FavoriteRequest):
             "actress": _actress_to_response(actress, video_count),
             "photo_downloaded": photo_downloaded,
             "skipped_aliases": skipped_aliases,
+            "covered_names": sorted(covered_names),
         }
     )
 
@@ -327,6 +363,25 @@ def list_actresses():
             "total": len(result),
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# 端點五之二：GET /api/actresses/library — 列出庫內全部女優（依 alias group 聚合，TASK-117-T1）
+# NOTE：必須定義在 GET /{name} 之前！
+# ---------------------------------------------------------------------------
+
+@router.get("/library", response_model=LibraryActressesResponse)
+def list_library_actresses() -> LibraryActressesResponse:
+    """列出庫內全部女優（依 alias group 聚合，含片數與收藏狀態）。
+
+    分組／聚合邏輯的單一所有者是 core.database.actress_library.get_library_actresses()
+    （Opus 裁決①）——本端點函式本體只做 init_db() → 呼叫聚合函式 → 包 response model，
+    不含任何分組邏輯。函式名刻意與 core.database.get_library_actresses 不同名，避免
+    import 遮蔽。
+    """
+    init_db()
+    groups = get_library_actresses()
+    return LibraryActressesResponse(success=True, actresses=groups, total=len(groups))
 
 
 # ---------------------------------------------------------------------------

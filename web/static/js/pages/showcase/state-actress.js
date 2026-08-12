@@ -13,6 +13,12 @@ import { buildActressPillPredicate } from '@/shared/actress-pill-filter.js';
 /** height 顯示單位（CD-116b-11 模組常數，不進 i18n） */
 var CM_UNIT = 'cm';
 
+/** 117-T4：片庫加入面板首批／每批可見列數（初值、close 重置、expand 增量三處共用） */
+var LIB_PAGE_SIZE = 40;
+
+/** 117-T5：全域併發上限，對齊 core/scraper.py:40 的 MAX_WORKERS = 2（CD-117-8 ①） */
+var LIB_MAX_INFLIGHT = 2;
+
 /**
  * height pill value/value2 共用：extractor 解得出數值就用數字字串，否則退回 raw（永不寫入字面 'null'）。
  *
@@ -77,9 +83,23 @@ export function stateActress() {
         actressLightboxSource: null,    // T5: 'hero' | 'grid' | null — 進入路徑（CD-9）
         _ghostFlyInFlight: false,       // T7: 跨模式 ghost fly 並發保護 flag（CD-13）
         _actressChipsExpanded: { aliases: false, info: false },  // chips 展開狀態
-        _addActressName: '',            // + 新增 input
+        _addActressName: '',            // + 新增 input（T4 直接新增路徑沿用）
         _addingActress: false,          // 新增 loading
-        _addDropdownOpen: false,        // + 新增 popover 開關
+
+        // 117-T3/T4: 從片庫加入女優面板（T5 接手 queue）
+        actressAddPanelOpen: false,
+        _libRows: [],
+        _libLoading: false,
+        _libError: null,            // null | true（布林旗標；文案在 markup 由 t() 取）
+        _libQuery: '',
+        _libVisibleCount: LIB_PAGE_SIZE,
+        _libTotal: 0,
+        _libLoadGen: 0,             // 117-T4: stale response guard
+        _libRowState: {},
+        _libCovered: {},
+        _libInFlight: 0,
+        _libQueue: [],        // 排隊中的 primary_name 陣列（FIFO＝使用者點擊順序）；markup 未綁，仍宣告
+        _libRowError: {},     // primary_name → i18n key 字串（只在 'error' 態有值）
 
         // T3.3: Remove Actress fluent-modal 狀態
         removeActressModalOpen: false,
@@ -806,6 +826,296 @@ export function stateActress() {
             return Math.max(0, tags.length - this._chipsLimit());
         },
 
+        // --- 117-T3/T4: Actress add panel（T5 queue stubs 仍在） ---
+
+        // AC-1.3 / AC-1.6：殼同步開，不 await 網路；每次開啟重載（無快取——片數必須與當下庫一致）
+        //
+        // CD-117-9（Codex PR review P2，已查證屬實）：只靠 `resolve(sync_primary) ∪ {req.name}`
+        // 聯集進 _libCovered 的名字刻意不寫進 actress_aliases 表（見 web/routers/actress.py
+        // 的 covered_names 組裝註解）——這代表「關閉再開回到空心、重新載入後看磁碟真相」
+        // 不是自動成立的語意，是**這裡**這行 reset 讓它成立。_libCovered 本身沒有其他清空點
+        // （全檔唯一寫入處是 _libMarkCovered()）；漏了這行，聯集進來的名字會在整個分頁存活期
+        // 間單調遞增、永遠標實心，使用者對那個名字的收藏入口會被永久鎖住（要整頁重整才解）。
+        openActressAddPanel() {
+            this.actressAddPanelOpen = true;
+            this._libQuery = '';
+            this._libVisibleCount = LIB_PAGE_SIZE;
+            this._libError = null;
+            this._libRows = [];
+            this._libTotal = 0;
+            this._libCovered = {};        // CD-117-9：回到空心，磁碟真相由 _loadLibraryActresses() 的 is_favorite 重新權威判定
+            this._libClearRowErrors();    // 117-T5：重開時清掉上一輪的紅字（queued/loading 保留）
+            this._loadLibraryActresses();
+        },
+
+        closeActressAddPanel() {
+            this.actressAddPanelOpen = false;
+            this._libQuery = '';
+            this._libVisibleCount = LIB_PAGE_SIZE;
+            this._libError = null;
+            // _libRows 不清：關閉動畫期間避免清單瞬間空掉；下次 open 會覆蓋
+        },
+
+        libAddBtnVisible() {
+            // 四個依賴各自無條件讀完，再組合（不得寫成短路鏈——Alpine 的 effect
+            // 依賴收集會漏訂閱鏈末條件，那個條件之後再變化畫面不會更新）
+            var isActress   = this.showFavoriteActresses;
+            var hasText     = this.actressSearch !== '';
+            var hasPills    = this.actressPills.length > 0;
+            var emptyResult = this.filteredActressCount === 0;
+            return isActress && ((!hasText && !hasPills) || emptyResult);
+        },
+
+        // 形狀照 loadActresses()：ok → json → success；catch 清空；finally 關 loading
+        // gen guard：開→關→開時，舊 response 不得覆寫新清單（finally 也要 gen 保護）
+        async _loadLibraryActresses() {
+            var gen = ++this._libLoadGen;
+            this._libLoading = true;
+            this._libError = null;
+            try {
+                var resp = await fetch('/api/actresses/library');
+                if (gen !== this._libLoadGen) return;
+                if (!resp.ok) {
+                    this._libRows = [];
+                    this._libTotal = 0;
+                    this._libError = true;
+                    return;
+                }
+                var data = await resp.json();
+                if (gen !== this._libLoadGen) return;
+                if (!data.success) {
+                    this._libRows = [];
+                    this._libTotal = 0;
+                    this._libError = true;
+                    return;
+                }
+                var rows = data.actresses || [];
+                this._libRows = rows;
+                this._libTotal = data.total ?? rows.length;
+                this._libError = null;
+            } catch (e) {
+                if (gen !== this._libLoadGen) return;
+                console.error('[Showcase] Failed to fetch library actresses:', e);
+                this._libRows = [];
+                this._libTotal = 0;
+                this._libError = true;
+            } finally {
+                // 舊輪的 finally 不得把新輪的 loading 關掉
+                if (gen === this._libLoadGen) {
+                    this._libLoading = false;
+                }
+            }
+        },
+
+        // AC-5.1/5.2/5.3：完整 _libRows + 掃 names[] 全部別名；normalizePillValue 雙側正規化
+        // 次序所有權在後端——此處零 .sort(
+        libFilteredRows() {
+            var q = normalizePillValue(this._libQuery);
+            if (!q) return this._libRows;
+            return this._libRows.filter(function (row) {
+                var names = (row.names && row.names.length) ? row.names : [row.primary_name];
+                return names.some(function (n) {
+                    return normalizePillValue(n).indexOf(q) !== -1;
+                });
+            });
+        },
+
+        libVisibleRows() {
+            return this.libFilteredRows().slice(0, this._libVisibleCount);
+        },
+
+        libHasMore() {
+            return this.libFilteredRows().length > this._libVisibleCount;
+        },
+
+        // append-only：只加可見數，不重算、不重排（AC-6.4）
+        libExpandMore() {
+            this._libVisibleCount += LIB_PAGE_SIZE;
+        },
+
+        // AC-6.5：無過濾字用伺服器 total；有過濾字用當下相符筆數；?? 保 0（FE-JS-01）
+        // 載入中／失敗時底部不顯示進度（避免「共 0 位」假訊號與錯誤文案並陳）
+        libProgressText() {
+            if (this._libLoading || this._libError) return '';
+            var shown = this.libVisibleRows().length;
+            var total = this._libQuery.trim()
+                ? this.libFilteredRows().length
+                : (this._libTotal ?? 0);
+            return shown < total
+                ? window.t('showcase.actress.panel.progress', { n: shown, m: total })
+                : window.t('showcase.actress.panel.progress_all', { m: total });
+        },
+
+        // AC-5.4：載入中不顯示（避免閃一下）；_libError 時照常顯示（刻意降級保「打全名新增」）
+        libShowDirectAdd() {
+            return !this._libLoading
+                && this._libQuery.trim() !== ''
+                && this.libFilteredRows().length === 0;
+        },
+
+        // 原始字串，絕不正規化（正規化後丟 scraper 會查不到人）
+        libDirectAddName() {
+            return this._libQuery.trim();
+        },
+
+        // 走既有 addFavoriteActress 路徑；不進 T5 queue；不關面板、不清 query
+        libDirectAdd() {
+            if (this._addingActress) return;
+            var name = this._libQuery.trim();
+            if (!name) return;
+            this._addActressName = name;
+            return this.addFavoriteActress();
+        },
+
+        // AC-3.2/AC-4.1/AC-4.6：row.is_favorite（T1 端點快照）OR 本 session 內
+        // _libCovered 涵蓋任一別名（T5）。this 必須在進 .some 前先取出（本檔慣用 ES5
+        // function，callback 內拿不到元件 this——寫錯的症狀是「收藏成功但整排愛心都不變
+        // 實心」，且直接呼叫 c.libRowFavorited(row) 的單元測試會照樣綠）。
+        libRowFavorited(row) {
+            if (!row) return false;
+            if (row.is_favorite) return true;
+            var covered = this._libCovered;
+            var names = (row.names && row.names.length) ? row.names : [row.primary_name];
+            return names.some(function (n) { return !!covered[n]; });
+        },
+
+        // 117-T5：pump 出隊重檢用，只吃單一名字（CD-117-9 權威來源）
+        _libNameCovered(name) {
+            return !!this._libCovered[name];
+        },
+
+        // 117-T5：每列顯示狀態；缺鍵＝'idle'（FE-JS-01 適用於此的字串版本）
+        libRowState(row) {
+            var name = row && row.primary_name;
+            if (!name) return 'idle';
+            return this._libRowState[name] || 'idle';
+        },
+
+        // 117-T5：該列的失敗原因文字（無錯誤時回 ''，與 libProgressText 同型）
+        libRowErrorText(row) {
+            var name = row && row.primary_name;
+            if (!name) return '';
+            var key = this._libRowError[name];
+            return key ? window.t(key) : '';
+        },
+
+        // 117-T5：入隊（AC-4.3）——同步函式，@click 是 fire-and-forget，此處無「不得等
+        // 網路」的 AC，加 async 不改變行為，故不另加字面守衛（僅寫進本註解）。
+        libEnqueueFavorite(row) {
+            if (this.libRowFavorited(row)) return;               // 已收藏／已 covered → no-op（AC-4.1）
+            var name = row && row.primary_name;
+            if (!name) return;
+            var st = this._libRowState[name];
+            if (st === 'queued' || st === 'loading') return;      // 同列連點 → no-op（INV-2 第一道）
+            this._libRowError[name] = '';                         // 清掉上一次的失敗原因（重試路徑）
+            this._libRowState[name] = 'queued';                   // 同步、當幀 → 立刻看得到「排隊中」
+            this._libQueue.push(name);
+            this._libPump();                                      // 同步啟動：有額度就當幀轉 'loading'
+        },
+
+        // 117-T5：併發上限 pump（CD-117-8①）。_libInFlight 的 ++ 與 -- 全檔各只有一處，
+        // 且成對出現在本函式內——L5/L6 lint 鎖住這件事。_libFavoriteRequest() 內部不得
+        // throw（見該函式），否則 .finally 之後會冒出 unhandled rejection。
+        _libPump() {
+            var self = this;
+            while (this._libInFlight < LIB_MAX_INFLIGHT && this._libQueue.length > 0) {
+                var name = this._libQueue.shift();
+                // ── 出隊重檢（CD-117-9 的權威來源在這裡生效）──
+                if (this._libNameCovered(name)) {
+                    this._libRowState[name] = 'idle';
+                    continue;
+                }
+                this._libInFlight++;                       // ← 全檔唯一一處 ++
+                this._libRowState[name] = 'loading';
+                this._libFavoriteRequest(name).finally(function () {
+                    self._libInFlight--;                   // ← 全檔唯一一處 --
+                    self._libPump();
+                });
+            }
+        },
+
+        // 117-T5：單次請求。一律先看 resp.status，不看 data.success——409 的 body 沒有
+        // success 欄（〈現況分析 D〉），用 data.success 判會把 409 誤判成失敗，AC-4.5 直接破。
+        async _libFavoriteRequest(name) {
+            try {
+                var resp = await fetch('/api/actresses/favorite', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name }),
+                });
+                var data = null;
+                try { data = await resp.json(); } catch (e) { data = null; }   // 404/504 body 不保證存在
+
+                if (resp.status === 200 && data && data.success) {
+                    this._libDone(name, data);
+                } else if (resp.status === 409) {
+                    this._libDone(name, data);                                // AC-4.5：視為成功
+                } else if (resp.status === 404) {
+                    this._libFail(name, 'showcase.actress.addNotFound');
+                } else if (resp.status === 504) {
+                    this._libFail(name, 'showcase.actress.addTimeout');
+                } else {
+                    this._libFail(name, 'showcase.actress.panel.add_failed');
+                }
+            } catch (e) {
+                console.error('[Showcase] Failed to favorite actress:', e);
+                this._libFail(name, 'showcase.actress.panel.add_failed');
+            }
+        },
+
+        // 117-T5：成功落地（200 與 409 共用，AC-4.6）。covered_names 恆聯集剛送出的
+        // name——第二道保險，萬一欄位缺失，使用者看到的仍是「點了、成功了、愛心變實心」。
+        _libDone(name, data) {
+            this._libMarkCovered((data && data.covered_names) || [], name);
+            this._libAddToWall(data && data.actress);
+            this._libRowState[name] = 'idle';
+            this._libRowError[name] = '';
+        },
+
+        // 117-T5：失敗落地（不 toast，裁決②——面板內已有逐列狀態與紅字原因）
+        _libFail(name, key) {
+            this._libRowState[name] = 'error';
+            this._libRowError[name] = key;   // 存 i18n key，不存中文字面
+        },
+
+        // 117-T5：covered 標記，list 恆聯集 name；同時清掉每個被 covered 名字底下殘留的
+        // 紅字（邊界條件裁決：實心優先，紅字不得留在實心列底下）。
+        _libMarkCovered(list, name) {
+            var self = this;
+            var all = (list || []).concat([name]);
+            all.forEach(function (n) {
+                self._libCovered[n] = true;
+                self._libRowError[n] = '';
+            });
+        },
+
+        // 117-T5（AC-4.4/CD-117-12）：加進女優牆——data.actress 零轉換 push（形狀照
+        // :1011 搜尋頁收藏路徑同款去重寫法），唯一收斂點是 applyActressFilterAndSort()。
+        // 不得為了「當場看得到」而繞過篩選：不清空 actressSearch、不移除 actressPills、
+        // 不直接 push 進 paginatedActresses。
+        _libAddToWall(actress) {
+            if (!actress || !actress.name) return;
+            if (_actresses.find(function (a) { return a.name === actress.name; })) return;
+            _actresses.push(actress);
+            this.applyActressFilterAndSort();
+        },
+
+        // 117-T5：重開面板時把 'error' 態清成 'idle'（queued/loading/covered 保留，見
+        // openActressAddPanel 旁的邊界條件表）。
+        _libClearRowErrors() {
+            var state = this._libRowState;
+            Object.keys(state).forEach(function (name) {
+                if (state[name] === 'error') state[name] = 'idle';
+            });
+        },
+
+        // AC-2.4：只在真的被截斷時掛 title；必須在 mouseenter 量（modal display:none 時寬度全 0）
+        libMaybeTitle(e) {
+            var el = e.currentTarget;
+            if (el.scrollWidth > el.clientWidth) el.title = el.textContent;
+            else el.removeAttribute('title');
+        },
+
         // --- 44a T5: Actress CRUD ---
 
         async addFavoriteActress() {
@@ -827,7 +1137,6 @@ export function stateActress() {
                 } else if (data.success) {
                     _actresses.push(data.actress);
                     this.applyActressFilterAndSort();
-                    this._addDropdownOpen = false;
                     this.showToast(window.t('showcase.actress.addSuccess'), 'success');
                 } else {
                     this.showToast(window.t('showcase.actress.addNotFound'), 'error');

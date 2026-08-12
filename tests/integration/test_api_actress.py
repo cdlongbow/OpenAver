@@ -185,6 +185,112 @@ class TestAddFavorite:
         assert data["success"] is True
         assert data["actress"]["video_count"] == 5
 
+    # ---- TASK-117-T1: covered_names（成功／409 兩條路徑，AC-3.1/3.3/3.4 形狀）----
+
+    def test_add_favorite_covered_names_shape_a_includes_existing_group_member(self, client):
+        """covered_names 形狀 A：既有 group 成員（宇都宮しをん）不在這次 profile aliases
+        裡（scraper 這次只回部分別名），仍必須出現在 covered_names——resolve() 讀的是
+        sync 後的完整 DB group，不是這次 profile 的原始值。"""
+        from core.database import AliasRepository as _AliasRepository
+        _AliasRepository().add(primary_name="安齋らら", aliases=["RION", "宇都宮しをん"])
+
+        profile = {
+            **MOCK_PROFILE,
+            "name": "安齋らら",
+            "text": {**MOCK_PROFILE["text"], "aliases": ["RION"]},
+        }
+        with patch("web.routers.actress.get_cached_profile", return_value=None), \
+             patch("web.routers.actress.get_actress_profile") as mock_get_profile, \
+             patch("web.routers.actress.download_actress_photo", return_value=True), \
+             patch("web.routers.actress.get_local_photo_path", return_value=None):
+
+            from core.scrapers.actress.orchestrator import ProfileResult
+            mock_get_profile.return_value = ProfileResult(data=profile, timed_out=False)
+
+            resp = client.post("/api/actresses/favorite", json={"name": "安齋らら"})
+
+        assert resp.status_code == 200
+        assert "宇都宮しをん" in resp.json()["covered_names"]
+
+    def test_add_favorite_covered_names_shape_b_includes_clicked_alias(self, client):
+        """covered_names 形狀 B：使用者點的別名（新ありな）不在 scraper 回傳的正式名與
+        aliases 裡，仍必須出現在 covered_names——靠 `∪ {name}` 那一半。
+
+        🔴 獨立 reviewer REQUEST CHANGES（mutation 實測）：光斷言 `"新ありな" in
+        covered_names` 鎖不住 `resolve(sync_primary)` vs `resolve(name)` 的分歧——
+        兩者都會落回「miss → {自己}」分支，因為 `新ありな` 從未被 sync 寫進 alias 表
+        （它不在這次 profile 的 aliases=["其他別名"] 裡，只透過 `∪ {name}` 進來）。
+        必須額外斷言一個**只有 `resolve(sync_primary)` 才拿得到**的成員：sync 後
+        `actress_aliases` 的 group 是 {橋本ありな, 其他別名}（`sync_primary` =
+        `actress.name` = "橋本ありな"，來自 profile 的 name 欄位，不是使用者這次
+        POST 的 "新ありな"）——`其他別名` 只會出現在 `resolve("橋本ありな")` 裡，
+        `resolve("新ありな")`（miss）拿不到它。若實作把 `resolve(sync_primary)`
+        誤改成 `resolve(name)`，這條斷言會轉紅（已用 mutation 實地驗證，見
+        TASK-117-T1.md 的驗證紀錄）。
+        """
+        profile = {
+            **MOCK_PROFILE,
+            "name": "橋本ありな",
+            "text": {**MOCK_PROFILE["text"], "aliases": ["其他別名"]},
+        }
+        with patch("web.routers.actress.get_cached_profile", return_value=None), \
+             patch("web.routers.actress.get_actress_profile") as mock_get_profile, \
+             patch("web.routers.actress.download_actress_photo", return_value=True), \
+             patch("web.routers.actress.get_local_photo_path", return_value=None):
+
+            from core.scrapers.actress.orchestrator import ProfileResult
+            mock_get_profile.return_value = ProfileResult(data=profile, timed_out=False)
+
+            resp = client.post("/api/actresses/favorite", json={"name": "新ありな"})
+
+        assert resp.status_code == 200
+        covered_names = resp.json()["covered_names"]
+        assert "新ありな" in covered_names          # ∪ {name} 那一半
+        assert "其他別名" in covered_names           # resolve(sync_primary) 那一半（分歧點）
+        assert "橋本ありな" in covered_names
+
+    def test_add_favorite_covered_names_not_persisted_to_alias_table(self, client):
+        """covered_names 的聯集只存在於這次 HTTP 回應，不得寫進 actress_aliases 表
+        （CD-117-9：庫內存在非人名字串，猜錯會污染全站別名資料）——反向測試釘住。"""
+        profile = {
+            **MOCK_PROFILE,
+            "name": "橋本ありな",
+            "text": {**MOCK_PROFILE["text"], "aliases": ["其他別名"]},
+        }
+        with patch("web.routers.actress.get_cached_profile", return_value=None), \
+             patch("web.routers.actress.get_actress_profile") as mock_get_profile, \
+             patch("web.routers.actress.download_actress_photo", return_value=True), \
+             patch("web.routers.actress.get_local_photo_path", return_value=None):
+
+            from core.scrapers.actress.orchestrator import ProfileResult
+            mock_get_profile.return_value = ProfileResult(data=profile, timed_out=False)
+
+            client.post("/api/actresses/favorite", json={"name": "新ありな"})
+
+        from core.database import AliasRepository as _AliasRepository
+        record = _AliasRepository().get_by_primary("橋本ありな")
+        assert "新ありな" not in record.aliases
+
+    def test_add_favorite_duplicate_409_includes_covered_names(self, client):
+        """409 路徑（無 sync_from_favorite 呼叫）也要帶 covered_names，內容與「若這次
+        是成功路徑」時應涵蓋的名字一致（sync_primary 概念在此就是 name 本身）。"""
+        from core.database import AliasRepository as _AliasRepository
+
+        with patch("web.routers.actress.get_cached_profile", return_value=MOCK_PROFILE), \
+             patch("web.routers.actress.get_actress_profile"), \
+             patch("web.routers.actress.download_actress_photo", return_value=True), \
+             patch("web.routers.actress.get_local_photo_path", return_value=None):
+            client.post("/api/actresses/favorite", json={"name": ACTRESS_NAME})
+
+        with patch("web.routers.actress.get_local_photo_path", return_value=None):
+            resp = client.post("/api/actresses/favorite", json={"name": ACTRESS_NAME})
+
+        assert resp.status_code == 409
+        data = resp.json()
+        assert "covered_names" in data
+        expected = _AliasRepository().resolve(ACTRESS_NAME) | {ACTRESS_NAME}
+        assert set(data["covered_names"]) == expected
+
 
 # ---------------------------------------------------------------------------
 # T2: GET /api/actresses/{name} — 查詢已收藏女優

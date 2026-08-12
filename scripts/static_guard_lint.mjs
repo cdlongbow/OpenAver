@@ -3606,6 +3606,356 @@ const RULES = [
     pattern: 'access_tickets',
     note: '[lint-guard:114b-T6] access_tickets 票表的寫入只能出現在 core/access_auth.py（單一所有者，CD-114b-12）。windows/（系統匣／pywebview 層）直接寫這張表會繞過 access_auth 那把 threading.Lock——改密碼／關閉認證時 revoke_all() 撤不到那一筆，使用者以為已經把一台裝置踢下線，其實那張憑證仍然有效。',
   },
+
+  // ==== [117-T3] 從片庫加入女優面板：薄守衛（不得回退到已知壞值）====
+  // owner 真機驗收前只鎖契約字面；完整視覺守衛排到驗收後。
+
+  // AC-1.1 → 117b-T10：+ 在 .search-actions-right 內；全檔 exact 1 防搬出又補
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'required-string',
+    pattern: [
+      'openActressAddPanel()',
+      'x-show="libAddBtnVisible()"',
+    ],
+    scope: { anchor: /class="search-actions-right"/, window: 2170 },
+    note: '[117-T3→117b-T10] AC-1.1/AC-10.1/CD-117b-8：openActressAddPanel() 必須在 .search-actions-right 內，且 x-show 走 libAddBtnVisible()（不得字面鏈、不得搬回 toolbar-controls）。破了＝冷啟動入口又埋進排序列，或顯示條件回到跨模式旗標',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'structure-count',
+    pattern: 'openActressAddPanel()',
+    count: 1,
+    note: '[117-T3] AC-1.1：openActressAddPanel() 全檔恰好 1 次（防搬出區塊又在別處補一顆）',
+  },
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'forbidden-string',
+    pattern: 'showcaseHasSearch',
+    scope: { anchor: /x-ref="actressAddBtn"/, window: 350 },
+    note: '[117b-T10] CD-117b-8/AC-10.8：actressAddBtn 按鈕 markup 不得出現 showcaseHasSearch 字面（跨模式聯集旗標會讓影片殘留篩選把 + 藏起來）。破了＝AC-10.8 可達回歸',
+  },
+
+  // AC-1.2：Esc／點外／關閉鈕三路
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: '@click.self="closeActressAddPanel()"',
+    note: '[117-T3] AC-1.2：點 backdrop 關閉（@click.self）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: '@keydown.escape.window="actressAddPanelOpen && closeActressAddPanel()"',
+    note: '[117-T3] AC-1.2：Esc 關閉',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: '@click="closeActressAddPanel()"',
+    scope: { anchor: /class="actress-add-x"/, window: 200 },
+    note: '[117-T3] AC-1.2：關閉鈕綁 closeActressAddPanel()',
+  },
+
+  // AC-1.4：焦點／捲動契約（禁回退到手刻 $nextTick focus）
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'x-trap.inert.noscroll="actressAddPanelOpen"',
+    note: '[117-T3] AC-1.4：x-trap.inert.noscroll 焦點鎖 + 背景禁捲（.noscroll 不得被拿掉只留 .inert）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'autofocus',
+    scope: { anchor: /class="actress-add-search"/, window: 120 },
+    note: '[117-T3] AC-1.4：搜尋框必須帶 autofocus（外掛先找 [autofocus]；不寫則焦點落在 ✕）',
+  },
+
+  // AC-2.3 / CD-117-6：三欄 minmax(0,1fr)（FE-CSS-12 不得退回裸 1fr）
+  {
+    file: 'web/static/css/components/actress-add-panel.css', kind: 'required-string',
+    pattern: 'grid-template-columns: auto minmax(0, 1fr) auto',
+    note: '[117-T3] AC-2.3/CD-117-6：grid-template-columns 必須 auto minmax(0,1fr) auto（裸 1fr 會讓 ellipsis 失效）',
+  },
+
+  // AC-2.4：ellipsis 三件套
+  {
+    file: 'web/static/css/components/actress-add-panel.css', kind: 'required-string',
+    pattern: ['min-width: 0', 'overflow: hidden', 'text-overflow: ellipsis', 'white-space: nowrap'],
+    scope: { anchor: /\.actress-add-name\s*\{/, braceBalanced: true },
+    note: '[117-T3] AC-2.4：名字欄 ellipsis 三件套 + min-width:0（與 minmax(0,…) 成對）',
+  },
+
+  // AC-2.5：列表 flex 自適應內部捲動；禁固定 px 高
+  {
+    file: 'web/static/css/components/actress-add-panel.css', kind: 'required-string',
+    pattern: ['flex: 1 1 auto', 'min-height: 0', 'overflow-y: auto'],
+    scope: { anchor: /\.actress-add-list\s*\{/, braceBalanced: true },
+    note: '[117-T3] AC-2.5：.actress-add-list 必須 flex:1 1 auto + min-height:0 + overflow-y:auto',
+  },
+  {
+    file: 'web/static/css/components/actress-add-panel.css', kind: 'forbidden-string',
+    pattern: /(?:max-)?height:\s*\d+px/,
+    scope: { anchor: /\.actress-add-list\s*\{/, braceBalanced: true },
+    note: '[117-T3] AC-2.5：.actress-add-list 不得寫死 height/max-height px（禁預設固定可見列數）',
+  },
+
+  // AC-4.1：已收藏用 <span> 非 <button> + cursor/pointer-events
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: '<span class="actress-add-heart is-favorite"',
+    note: '[117-T3] AC-4.1：已收藏愛心必須是 <span class="actress-add-heart is-favorite">（非 button）',
+  },
+  {
+    file: 'web/static/css/components/actress-add-panel.css', kind: 'required-string',
+    pattern: ['cursor: default', 'pointer-events: none'],
+    scope: { anchor: /\.actress-add-heart\.is-favorite\s*\{/, braceBalanced: true },
+    note: '[117-T3] AC-4.1：.is-favorite 必須 cursor:default + pointer-events:none（無 hover 反應）',
+  },
+
+  // AC-4.2 / CD-117-7：降透明度只在 @media (hover: hover)；命中區 44×44
+  {
+    file: 'web/static/css/components/actress-add-panel.css', kind: 'required-string',
+    pattern: 'opacity: 0.55',
+    scope: { anchor: /@media \(hover: hover\)\s*\{/, window: 400 },
+    note: '[117-T3] AC-4.2/CD-117-7：降透明度 opacity:0.55 必須寫在 @media (hover: hover) 內（不得移到常駐規則）',
+  },
+  {
+    file: 'web/static/css/components/actress-add-panel.css', kind: 'required-string',
+    pattern: ['width: 44px', 'height: 44px'],
+    scope: { anchor: /\.actress-add-heart\s*\{/, braceBalanced: true },
+    note: '[117-T3] AC-4.2：愛心命中區 ≥44×44',
+  },
+
+  // CD-117-13：CSS 接線進 base.html
+  {
+    file: 'web/templates/base.html', kind: 'required-string',
+    pattern: '/static/css/components/actress-add-panel.css',
+    note: '[117-T3] CD-117-13：actress-add-panel.css 必須接線進 base.html（緊接 rescrape-modal）',
+  },
+
+  // CD-117-11：新檔禁止 pill 造型
+  {
+    file: 'web/static/css/components/actress-add-panel.css', kind: 'forbidden-string',
+    pattern: ['999px', '--radius-pill'],
+    note: '[117-T3] CD-117-11：actress-add-panel.css 禁止 999px / --radius-pill（§1 白名單不動）',
+  },
+
+  // 舊 dropdown 不得復活
+  {
+    file: 'web/templates/showcase.html', kind: 'forbidden-string',
+    pattern: '_addDropdownOpen',
+    note: '[117-T3] 舊 + dropdown 的 _addDropdownOpen 不得在 showcase.html 復活',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'forbidden-string',
+    pattern: '_addDropdownOpen',
+    note: '[117-T3] _addDropdownOpen 宣告與賦值必須拔除（state-actress.js 不得殘留）',
+  },
+
+  // ==== [117-T4] 直接新增列接線契約（取代原 TestShowcaseActressCRUD 2 條 HTML 斷言）====
+  // T3 刪掉 _addActressName / addFavoriteActress() 的 pytest HTML 半場；
+  // 契約改錨定新「直接新增」列：markup 綁 libDirectAdd()，JS 寫入 _addActressName 並走既有路徑。
+
+  // R1 AC-5.4：直接新增列必須存在且綁 libDirectAdd()（取代原 pytest _addActressName 的 HTML 半場）
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'libDirectAdd()',
+    scope: { anchor: /class="actress-add-direct"/, window: 400 },
+    note: '[117-T4] AC-5.4：直接新增列必須存在且綁 libDirectAdd()（取代 TestShowcaseActressCRUD _addActressName HTML 半場；破了＝庫內 0 片女優永遠加不進來）',
+  },
+  // R2 防「搬走又在別處補一顆」
+  {
+    file: 'web/templates/showcase.html', kind: 'structure-count',
+    pattern: 'libDirectAdd()',
+    count: 1,
+    note: '[117-T4] AC-5.4：libDirectAdd() 全檔恰好 1 次（防搬走又在別處補一顆）',
+  },
+  // R3 直接新增必須把使用者打的字寫進既有 _addActressName（取代原 pytest 同名斷言）
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: '_addActressName',
+    scope: { anchor: /libDirectAdd\(\)\s*\{/, braceBalanced: true },
+    note: '[117-T4] AC-5.4：libDirectAdd 必須寫入 _addActressName（取代 TestShowcaseActressCRUD 同名斷言）',
+  },
+  // R4 必須走既有新增路徑（取代原 pytest addFavoriteActress() 斷言）
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: 'addFavoriteActress()',
+    scope: { anchor: /libDirectAdd\(\)\s*\{/, braceBalanced: true },
+    note: '[117-T4] AC-5.4：libDirectAdd 必須呼叫 addFavoriteActress()（取代 TestShowcaseActressCRUD 同名斷言）',
+  },
+  // R5 不得在 libDirectAdd 內另寫第二套 POST
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'forbidden-string',
+    pattern: 'fetch(',
+    scope: { anchor: /libDirectAdd\(\)\s*\{/, braceBalanced: true },
+    note: '[117-T4] AC-5.4：libDirectAdd 內不得另寫 fetch(（409/404/504 分支與 toast 全在 addFavoriteActress）',
+  },
+
+  // AC-1.6：開面板不得等網路。同步斷言在第一個 await yield 前就跑完，測不出 async 化；只能用字面守衛。
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'forbidden-string',
+    pattern: ['async openActressAddPanel', 'await this._loadLibraryActresses'],
+    note: '[117-T4] AC-1.6：開面板不得等網路；同步斷言測不出 async 化，只能用字面守衛',
+  },
+
+  // ==== [117b-T8] 清單自動展開 sentinel：字面契約（取代 .actress-add-more 按鈕）====
+
+  // R1 AC-8.1/8.2：sentinel 必須 x-intersect 綁 libExpandMore()（預取由 sentinel 高度表達）
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'required-string',
+    pattern: 'x-intersect="libExpandMore()"',
+    scope: { anchor: /class="actress-add-sentinel"/, window: 300 },
+    note: '[117b-T8] AC-8.1/8.2：sentinel 必須 x-intersect 綁 libExpandMore()（預取距離由 sentinel 高度表達，不得加 .margin）。破了＝清單永遠停在首批 40',
+  },
+  // R2 AC-8.3：.actress-add-more 不得回歸
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'forbidden-string',
+    pattern: 'actress-add-more',
+    note: '[117b-T8] AC-8.3：.actress-add-more 按鈕已退場。破了＝自動展開與手動按鈕並存，使用者又被打斷節奏（spec-117b 覆蓋 F6 的決策被默默撤回）',
+  },
+  // R3 AC-8.2：預取帶＝sentinel 自己的高度（rootMargin 對捲動容器內部無效）
+  {
+    file: 'web/static/css/components/actress-add-panel.css',
+    kind: 'required-string',
+    pattern: ['height: 400px', 'margin-top: -400px', 'pointer-events: none'],
+    scope: { anchor: /\.actress-add-sentinel\s*\{/, braceBalanced: true },
+    note: '[117b-T8] AC-8.2：預取帶＝sentinel 自己的高度（rootMargin 對捲動容器內部無效）。少了 height/負 margin ＝ 要真的捲到底才展開、或清單尾端多出 400px 空白；少了 pointer-events:none ＝ 最後幾列的愛心按不下去',
+  },
+
+  // ==== [117-T5] 逐列收藏 queue：接線 ＋ 併發計數契約（不鎖視覺，owner/T7 真機驗收前的薄守衛）====
+
+  // L1 AC-4.3：空心愛心必須接上 queue（破了＝點愛心毫無反應，面板變成唯讀清單）
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'libEnqueueFavorite(row)',
+    scope: { anchor: /class="actress-add-heart"/, window: 400 },
+    note: '[117-T5] AC-4.3：空心愛心必須接上 queue。破了＝點愛心毫無反應，面板變成唯讀清單',
+  },
+  // L2 防「搬走又在別處補一顆」
+  {
+    file: 'web/templates/showcase.html', kind: 'structure-count',
+    pattern: 'libEnqueueFavorite(row)',
+    count: 1,
+    note: '[117-T5] AC-4.3：libEnqueueFavorite(row) 全檔恰好 1 次（防搬走又在別處補一顆）',
+  },
+  // L3 AC-4.3③：queue 不得用直接新增的全域旗標（第一個入口）
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'forbidden-string',
+    pattern: '_addingActress',
+    scope: { anchor: /libEnqueueFavorite\(row\)\s*\{/, braceBalanced: true },
+    note: '[117-T5] AC-4.3③：queue 不得用直接新增的全域旗標。破了＝收藏一列時「直接新增」被鎖住，且併發上限被壓成 1',
+  },
+  // L4 同上，第二個入口
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'forbidden-string',
+    pattern: '_addingActress',
+    scope: { anchor: /_libFavoriteRequest\(name\)\s*\{/, braceBalanced: true },
+    note: '[117-T5] AC-4.3③：queue 不得用直接新增的全域旗標（第二個入口，同 L3）',
+  },
+  // L5 CD-117-8①：計數器唯一增點
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'structure-count',
+    pattern: '_libInFlight++',
+    count: 1,
+    note: '[117-T5] CD-117-8①：計數器唯一增點。破了＝計數漂移，queue 要嘛永久卡死（愛心按了永遠排隊中）、要嘛上限失效',
+  },
+  // L6 同上，唯一減點
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'structure-count',
+    pattern: '_libInFlight--',
+    count: 1,
+    note: '[117-T5] CD-117-8①：計數器唯一減點（同 L5）',
+  },
+
+  // ==== [117-T6] TestShowcaseActressCRUD 等價遷移（CD-117-10 第三刀）====
+  // pytest class 同 commit 移除。對帳表見 TASK-117-T6.md。
+  // #10/#11 已由 [117-T4] R3/R4 承接，本區塊不重複。
+  // #1–#5 錨定方法定義形狀（非裸字面）：裸字面會被 JS 注釋／console.warn 字串餵飽而 fail-open。
+  // 代價：async 關鍵字焊死，日後合法去 async 化會誤紅——fail-closed，可接受。
+
+  // R1 ← TestShowcaseActressCRUD #1：assert "addFavoriteActress" in js
+  // 粒度：原 whole-file 裸子字串 → 收緊為 method-definition 形狀（fail-closed）
+  // 與 [117-T4] R4 不重複：R4 鎖 libDirectAdd(){} 內 call site；函式被刪而呼叫還在時 R4 仍綠，本條才紅。
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: 'async addFavoriteActress() {',
+    note: '[117-T6] R1 ← TestShowcaseActressCRUD #1 "addFavoriteActress" in js；粒度收緊 method-definition（非裸字面，防注釋餵飽）；定義端——[117-T4] R4 鎖 libDirectAdd call site，函式刪而呼叫還在時那條仍綠，本條才紅',
+  },
+  // R2 ← #2：assert "openRemoveActressModal" in js
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: 'openRemoveActressModal() {',
+    note: '[117-T6] R2 ← TestShowcaseActressCRUD #2 "openRemoveActressModal" in js；粒度收緊 method-definition（非裸字面，防注釋餵飽）',
+  },
+  // R3 ← #3：assert "confirmRemoveActress" in js
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: 'async confirmRemoveActress() {',
+    note: '[117-T6] R3 ← TestShowcaseActressCRUD #3 "confirmRemoveActress" in js；粒度收緊 method-definition（非裸字面，防注釋餵飽；async 焊死）',
+  },
+  // R4 ← #4：assert "cancelRemoveActressModal" in js
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: 'cancelRemoveActressModal() {',
+    note: '[117-T6] R4 ← TestShowcaseActressCRUD #4 "cancelRemoveActressModal" in js；粒度收緊 method-definition（非裸字面，防注釋餵飽）',
+  },
+  // R5 ← #5：assert "searchActressFilms" in js
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: 'async searchActressFilms(',
+    note: '[117-T6] R5 ← TestShowcaseActressCRUD #5 "searchActressFilms" in js；粒度收緊 method-definition（非裸字面；:737 注釋與 console.warn 字串足以餵飽裸字面）',
+  },
+  // R6 ← #6：assert "rescrapeActress" not in js（反向，整檔；不加 stripLineComments——注釋也算命中＝fail-closed）
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'forbidden-string',
+    pattern: 'rescrapeActress',
+    note: '[117-T6] R6 ← TestShowcaseActressCRUD #6 "rescrapeActress" not in js；粒度等價 whole-file 反向；不加 stripLineComments（注釋命中仍紅＝fail-closed）；女優重刮已刻意移除不得回流',
+  },
+  // R7 ← #7：assert "openRemoveActressModal()" in html
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'openRemoveActressModal()',
+    note: '[117-T6] R7 ← TestShowcaseActressCRUD #7 "openRemoveActressModal()" in html；粒度等價 whole-file 帶括號字面',
+  },
+  // R8 ← #8：assert html.count("searchActressFilms(") >= 2
+  // 用 min:2 非 count:2——原斷言是下界；exact 會誤傷合法的第三個 call site
+  {
+    file: 'web/templates/showcase.html', kind: 'structure-count',
+    pattern: 'searchActressFilms(',
+    min: 2,
+    note: '[117-T6] R8 ← TestShowcaseActressCRUD #8 count("searchActressFilms(") >= 2；粒度等價 whole-file structure-count min:2（非 exact count）',
+  },
+  // R9 ← #9：assert "rescrapeActress()" not in html（反向，整檔）
+  {
+    file: 'web/templates/showcase.html', kind: 'forbidden-string',
+    pattern: 'rescrapeActress()',
+    note: '[117-T6] R9 ← TestShowcaseActressCRUD #9 "rescrapeActress()" not in html；粒度等價 whole-file 反向；女優重刮已刻意移除不得回流',
+  },
+
+  // ==== [117b-T9] 女優燈箱刪除鈕搬到名字行行末（CD-117b-5/6/7）====
+  // R1：delete 必須在 .actress-lb-header 內且綁 openRemoveActressModal()、:title=
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'required-string',
+    pattern: [
+      'class="lb-delete-btn"',
+      'x-show="showFavoriteActresses && !_maskVisible"',
+      '@click.stop="openRemoveActressModal()"',
+      ':title="t(\'showcase.actress.remove\')"',
+    ],
+    scope: { anchor: /<div class="actress-lb-header">/, window: 3200 },
+    note: '[117b-T9] AC-9.1/9.2/CD-117b-5：刪除鈕必須在 .actress-lb-header 內、綁 openRemoveActressModal()、且用 :title= 提示。破了＝刪除又回到照片浮層（破壞性操作混進常用 hover 列）、點擊死掉、或 hover 沒有任何提示。`!_maskVisible` 掉了＝使用者正在拖曳調整女優頭像對焦時，刪除鈕仍可按，可在遮罩編輯中途開啟移除確認，破壞既有互斥流程（原 R3「header 內禁 :data-tooltip=」已於 Codex PR#133 review 後移除：真故障模式由本條的 :title= 覆蓋，R3 只剩無害的加法場景卻有 scope 假紅風險）',
+  },
+  // R2：.cover-actions 區不得再出現 openRemoveActressModal()
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'forbidden-string',
+    pattern: 'openRemoveActressModal()',
+    scope: {
+      anchor: /<div class="cover-actions"\s*\n\s*:data-picker-open="_pickerOpen"/,
+      window: 3000,
+    },
+    note: '[117b-T9] AC-9.1：.cover-actions 不得再呼叫 openRemoveActressModal()（必須真搬走，不是複製一份）。破了＝照片浮層與名字行各一顆刪除，或搬走失敗',
+  },
 ];
 
 // ---- helpers ----

@@ -684,6 +684,20 @@
                 </div>
             </div>
 
+            <!-- 117b-T10: Actress Add Button（搜尋列 +）四態 -->
+            <div class="ds-subsection">
+                <h3>Actress Add Button（搜尋列 +）</h3>
+                <p class="ds-desc">showcase 女優模式搜尋列動作區的「＋」入口（.actress-add-btn）。四態純 CSS：hover scale 1.12 + accent 色、:active scale 0.92、:focus-visible glow-subtle、.active 沿用 .btn-icon.active（面板開啟中）。不做旋轉。</p>
+                <div class="ds-button-row ds-button-row-dark">
+                    <button class="btn-icon actress-add-btn" title="default / hover / active">
+                        <i class="bi bi-plus-lg"></i>
+                    </button>
+                    <button class="btn-icon actress-add-btn active" title=".active 面板開啟中">
+                        <i class="bi bi-plus-lg"></i>
+                    </button>
+                </div>
+            </div>
+
             <!-- §1 Pill 999px 白名單 -->
             <div class="ds-subsection">
                 <h3>§1 Pill 999px 白名單（8 類）</h3>
@@ -1673,6 +1687,85 @@
       &lt;button class="btn btn-sm" @click="closeDuplicateModal()"&gt;了解&lt;/button&gt;
       &lt;a href="/settings" class="btn btn-sm btn-primary"&gt;前往設定&lt;/a&gt;
     &lt;/div&gt;
+  &lt;/div&gt;
+&lt;/dialog&gt;</code></pre>
+            </div>
+
+            <!-- 117-T6: Actress Add Panel（從片庫加入女優）-->
+            <div class="ds-subsection">
+                <h3>Actress Add Panel（從片庫加入女優）</h3>
+                <p class="ds-desc">showcase 女優模式「＋」開的面板：搜尋庫內女優、逐列收藏、無相符時直接新增</p>
+                <div class="ds-card-demo">
+                    <div class="fluent-modal-box actress-add-box" style="max-width: 420px; margin: 0 auto; border: 1px solid var(--border-light); border-radius: var(--fluent-radius-lg); position: relative;">
+                        <button type="button" class="actress-add-x" aria-label="關閉">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                        <h3 class="fluent-modal-title">從片庫加入女優</h3>
+                        <input class="actress-add-search" type="text" placeholder="搜尋女優名…" disabled>
+                        <div class="actress-add-list">
+                            <div class="actress-add-row">
+                                <span class="actress-add-count">12</span>
+                                <span class="actress-add-name">三上悠亞</span>
+                                <span class="actress-add-heart is-favorite" title="已收藏">
+                                    <i class="bi bi-heart-fill"></i>
+                                </span>
+                            </div>
+                            <div class="actress-add-row">
+                                <span class="actress-add-count">5</span>
+                                <span class="actress-add-name">橋本有菜</span>
+                                <button type="button" class="actress-add-heart" title="加入收藏">
+                                    <i class="bi bi-heart"></i>
+                                </button>
+                            </div>
+                            <div class="actress-add-row">
+                                <span class="actress-add-count">2</span>
+                                <span class="actress-add-name">河北彩花</span>
+                                <span class="actress-add-status">排隊中</span>
+                            </div>
+                            <button type="button" class="actress-add-direct">
+                                直接新增「未知女優」
+                            </button>
+                        </div>
+                        <div class="actress-add-footer">
+                            <span class="actress-add-progress">已顯示 3 / 共 48</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="ds-note" style="margin-top: 1rem;">
+                    <strong>技術差異：</strong>
+                    <ul style="margin-top: 0.5rem; padding-left: 1.5rem;">
+                        <li>Class-toggle 開窗（CD-62-1）：<code>:class="{ 'modal-open': actressAddPanelOpen }"</code>，非 <code>showModal()</code></li>
+                        <li>焦點與禁捲：<code>x-trap.inert.noscroll="actressAddPanelOpen"</code></li>
+                        <li><strong>進場動畫只有這個 demo 有；production 走 class-toggle 從不設 <code>open</code>，站內每顆 modal 實際上都沒有進場動畫。</strong>
+                            CSS <code>.fluent-modal[open] .fluent-modal-box</code>（<code>theme.css</code>）綁的是原生 <code>[open]</code> 屬性；
+                            production 一律 class-toggle 從不設 <code>open</code>，所以 <code>modal-scale-fade-in</code> 永不觸發。
+                            本頁 demo 為靜態渲染的 <code>.fluent-modal-box.actress-add-box</code> 骨架（無 x-data 綁 showcase state）。
+                            <code>#ds-modals</code> 第一個 Confirmation Dialog 用 <code>showModal()</code> 所以看得到動畫——那是 demo 的假象，不是產品行為。</li>
+                        <li>本 demo 為求版面一致固定在 <code>max-width: 420px</code>；<strong>production 是 <code>width: min(680px, calc(100vw - 2rem))</code></strong>。
+                            另外「載入中／載入失敗」（<code>.actress-add-state</code>）與逐列錯誤（<code>.actress-add-rowerror</code>）兩個狀態未進 demo。</li>
+                        <li><strong>Esc 關閉與 <code>autofocus</code> 是契約的一部分</strong>（<code>@keydown.escape.window</code> ＋ 搜尋框的 <code>autofocus</code>）：
+                            少了 <code>autofocus</code>，Alpine focus 外掛會退而聚焦第一個可 Tab 元素——也就是右上角的 ✕，鍵盤使用者每次開窗都要多按一次 Tab。兩者都在下方程式碼範例裡。</li>
+                        <li>清單捲到距底 400px 內由 <code>x-intersect</code> sentinel 自動展開下一批 40 列，<strong>沒有「展開更多」按鈕</strong>；
+                            sentinel 是 <code>.actress-add-sentinel</code>（<code>height: 400px</code> 預取帶，<code>aria-hidden</code>），本 demo 為靜態骨架故不含它。</li>
+                    </ul>
+                </div>
+                <pre class="ds-code"><code>&lt;dialog class="modal fluent-modal actress-add-dialog"
+        :class="{ 'modal-open': actressAddPanelOpen }"
+        @click.self="closeActressAddPanel()"
+        @keydown.escape.window="closeActressAddPanel()"
+        x-trap.inert.noscroll="actressAddPanelOpen"&gt;
+  &lt;div class="modal-box fluent-modal-box actress-add-box"&gt;
+    &lt;button type="button" class="actress-add-x"
+            @click="closeActressAddPanel()"&gt;…&lt;/button&gt;
+    &lt;h3 class="fluent-modal-title"&gt;從片庫加入女優&lt;/h3&gt;
+    &lt;input class="actress-add-search" type="text" autofocus
+           x-model="_libQuery"&gt;
+    &lt;div class="actress-add-list"&gt;
+      &lt;!-- x-for row … actress-add-row / heart / status --&gt;
+      &lt;button type="button" class="actress-add-direct"
+              @click="libDirectAdd()"&gt;…&lt;/button&gt;
+    &lt;/div&gt;
+    &lt;div class="actress-add-footer"&gt;…&lt;/div&gt;
   &lt;/div&gt;
 &lt;/dialog&gt;</code></pre>
             </div>
@@ -3067,8 +3160,8 @@
                             <button class="lb-action-btn" data-tooltip="來源網址" aria-label="來源網址" type="button">
                                 <i class="bi bi-box-arrow-up-right"></i>
                             </button>
-                            <button class="lb-action-btn lb-action-btn--danger" data-tooltip="移除最愛" aria-label="移除最愛" type="button">
-                                <i class="bi bi-trash"></i>
+                            <button class="lb-action-btn lb-action-btn--danger" data-tooltip="取消裁切位置" aria-label="取消裁切位置" type="button">
+                                <i class="bi bi-x-lg"></i>
                             </button>
                             <button class="lb-action-btn lb-action-btn--success" data-tooltip="確認裁切位置" aria-label="確認裁切位置" type="button">
                                 <i class="bi bi-check-lg"></i>

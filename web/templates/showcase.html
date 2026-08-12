@@ -210,6 +210,16 @@
                                 title="{{ t('showcase.action.clear_search') }}">
                             <i class="bi bi-x-lg"></i>
                         </button>
+                        <!-- [+ 新增] 從片庫加入女優面板（117b-T10：搬入 search-actions-right） -->
+                        <button class="btn-icon actress-add-btn"
+                                x-ref="actressAddBtn"
+                                x-show="libAddBtnVisible()"
+                                x-cloak
+                                @click="openActressAddPanel()"
+                                :title="t('showcase.actress.add')"
+                                :class="{ 'active': actressAddPanelOpen }">
+                            <i class="bi bi-plus-lg"></i>
+                        </button>
                         <button class="btn-icon active"
                                 @click="(showFavoriteActresses ? onActressSearchChange() : onSearchChange()); $store.ui.toolbarOpen = false"
                                 title="{{ t('showcase.action.search') }}">
@@ -326,34 +336,7 @@
                     <button class="btn-icon" @click="toggleActressOrder()" title="{{ t('showcase.action.toggle_order') }}">
                         <i class="bi" :class="actressOrder === 'asc' ? 'bi-sort-up' : 'bi-sort-down'"></i>
                     </button>
-                    <!-- [+ 新增] popover（女優模式專屬） -->
-                    <div class="dropdown dropdown-end"
-                         x-data
-                         :class="{ 'dropdown-open': _addDropdownOpen }"
-                         @click.outside="_addDropdownOpen = false">
-                        <button class="btn-icon"
-                                @click="_addDropdownOpen = !_addDropdownOpen"
-                                :title="t('showcase.actress.add')"
-                                :class="{ 'active': _addDropdownOpen }">
-                            <i class="bi bi-plus-lg"></i>
-                        </button>
-                        <div class="toolbar-dropdown dropdown-content" @click.stop>
-                            <div style="padding:8px; display:flex; gap:6px;">
-                                <input class="input input-sm input-bordered"
-                                       type="text"
-                                       x-model="_addActressName"
-                                       :placeholder="t('showcase.actress.addPlaceholder')"
-                                       @keydown.enter.prevent="addFavoriteActress()"
-                                       :disabled="_addingActress"
-                                       style="flex:1; min-width:160px;">
-                                <button class="btn btn-sm btn-primary"
-                                        @click.prevent="addFavoriteActress()"
-                                        :disabled="_addingActress || !_addActressName.trim()">
-                                    <i class="bi" :class="_addingActress ? 'bi-arrow-clockwise spin' : 'bi-check'"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
+                    <!-- [+ 新增] 已搬至 search-actions-right（117b-T10） -->
                 </div>
             </div>
         </div>
@@ -762,13 +745,6 @@
                                         :aria-label="t('showcase.actress.search_films')">
                                     <i class="bi bi-camera-reels"></i>
                                 </button>
-                                <button class="lb-action-btn lb-action-btn--danger"
-                                        x-show="showFavoriteActresses && !_maskVisible"
-                                        @click.stop="openRemoveActressModal()"
-                                        :data-tooltip="t('showcase.actress.remove')"
-                                        :aria-label="t('showcase.actress.remove')">
-                                    <i class="bi bi-trash"></i>
-                                </button>
                                 <!-- 換照片按鈕（49b T4cd）-->
                                 <button class="lb-action-btn"
                                         x-show="currentLightboxActress?.is_favorite && !_maskVisible"
@@ -800,10 +776,12 @@
                         <div class="lightbox-metadata actress-lightbox-meta">
                             <!-- Row 1: Header — name + name_en + heart icon -->
                             <div class="actress-lb-header">
-                                <span class="lb-name" x-text="currentLightboxActress?.name"></span>
-                                <span class="lb-name-en"
-                                      x-show="currentLightboxActress?.name_en"
-                                      x-text="currentLightboxActress?.name_en"></span>
+                                <div class="actress-lb-title">
+                                    <span class="lb-name" x-text="currentLightboxActress?.name"></span>
+                                    <span class="lb-name-en"
+                                          x-show="currentLightboxActress?.name_en"
+                                          x-text="currentLightboxActress?.name_en"></span>
+                                </div>
                                 <!-- 100c-T2（CD-1/CD-2/CD-3，spec-100c §3.1 推翻 spec-100 §4-5）：
                                      女優 focal icon 從 .cover-actions 搬進名字行末，鏡射影片版
                                      .lb-mask-btn 的位置與 class（非再照抄 .lb-action-btn 的封面
@@ -812,7 +790,7 @@
                                      _actressPhotoLoaded ＋ _actressPhotoWideEnough（新，CD-7
                                      20% 可拖幅度門檻）＋ !_pickerOpen（新，CD-1：picker 開啟時
                                      CSS opacity gate 鎖死在 .cover-actions，搬出後不受影響，
-                                     必須顯式擋）。:title=（非 :data-tooltip=，CD-2 陷阱：
+                                     必須顯式擋）。:title=（非 data-tooltip 屬性綁定，CD-2 陷阱：
                                      .lb-action-btn[data-tooltip]::after 只認 .lb-action-btn，
                                      換 class 不換屬性 tooltip 會靜默消失）。
                                      🔴 五條件收成 _focalIconVisible() method（不直接寫成 x-show
@@ -830,6 +808,14 @@
                                         :title="t('showcase.lightbox.mask_toggle')"
                                         :aria-label="t('showcase.lightbox.mask_toggle')">
                                     <i class="bi bi-person-bounding-box"></i>
+                                </button>
+                                <!-- 117b-T9：刪除鈕從 .cover-actions 搬入名字行末（CD-117b-5/7）-->
+                                <button class="lb-delete-btn"
+                                        x-show="showFavoriteActresses && !_maskVisible"
+                                        @click.stop="openRemoveActressModal()"
+                                        :title="t('showcase.actress.remove')"
+                                        :aria-label="t('showcase.actress.remove')">
+                                    <i class="bi bi-trash"></i>
                                 </button>
                             </div>
                             <!-- Row 2: Core metadata (age · birth · height · cup · BWH) -->
@@ -1589,6 +1575,82 @@
                     <span x-show="!_deleteLoading"><i class="bi bi-trash3"></i></span>
                     {{ t('showcase.video.delete_modal.confirm') }}
                 </button>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- 117-T3: 從片庫加入女優面板（.fluent-modal class-toggle；x-trap.inert.noscroll） -->
+    <dialog class="modal fluent-modal actress-add-dialog"
+            :class="{ 'modal-open': actressAddPanelOpen }"
+            @click.self="closeActressAddPanel()"
+            @keydown.escape.window="actressAddPanelOpen && closeActressAddPanel()"
+            x-trap.inert.noscroll="actressAddPanelOpen">
+        <div class="modal-box fluent-modal-box actress-add-box">
+            <button type="button" class="actress-add-x"
+                    @click="closeActressAddPanel()"
+                    :aria-label="t('showcase.actress.panel.close')">
+                <i class="bi bi-x-lg"></i>
+            </button>
+            <h3 class="fluent-modal-title">{{ t('showcase.actress.panel.title') }}</h3>
+            <input class="actress-add-search" type="text" autofocus
+                   x-model="_libQuery"
+                   :placeholder="t('showcase.actress.panel.search_placeholder')">
+            <div class="actress-add-list">
+                <!-- 117-T4：載入中／載入失敗（x-for 之前） -->
+                <div class="actress-add-state" x-show="_libLoading"
+                     x-text="t('showcase.actress.panel.loading')"></div>
+                <div class="actress-add-state" x-show="_libError"
+                     x-text="t('showcase.actress.panel.load_failed')"></div>
+                <template x-for="row in libVisibleRows()" :key="row.primary_name">
+                    <div class="actress-add-row">
+                        <span class="actress-add-count" x-text="row.video_count"></span>
+                        <span class="actress-add-name"
+                              x-text="row.primary_name"
+                              @mouseenter="libMaybeTitle($event)"></span>
+                        <!-- 117-T5：第三欄四態切換（先閘 libRowFavorited，再看 libRowState）-->
+                        <!-- ① done：實心（T3 既有 <span>，一個字不動——lint 鎖著這行字面） -->
+                        <span class="actress-add-heart is-favorite"
+                              x-show="libRowFavorited(row)"
+                              :title="t('showcase.actress.favorited')">
+                            <i class="bi bi-heart-fill"></i>
+                        </span>
+                        <!-- ② idle / error：空心可點（error 也回空心＝可重試，AC-4.5） -->
+                        <button type="button" class="actress-add-heart"
+                                x-show="!libRowFavorited(row) && (libRowState(row) === 'idle' || libRowState(row) === 'error')"
+                                @click="libEnqueueFavorite(row)"
+                                :title="t('showcase.actress.addFavorite')">
+                            <i class="bi bi-heart"></i>
+                        </button>
+                        <!-- ③ queued：文字「排隊中」 -->
+                        <span class="actress-add-status"
+                              x-show="!libRowFavorited(row) && libRowState(row) === 'queued'"
+                              x-text="t('showcase.actress.panel.queued')"></span>
+                        <!-- ④ loading：spinner -->
+                        <span class="actress-add-status"
+                              x-show="!libRowFavorited(row) && libRowState(row) === 'loading'"
+                              :title="t('showcase.actress.panel.adding')">
+                            <span class="loading loading-spinner loading-xs"></span>
+                        </span>
+                        <!-- 失敗原因：橫跨整列的第二行，不動三欄定義（reviewer②：與三個兄弟元素一致，
+                             先閘 !libRowFavorited(row)——否則 A 失敗後、B 成功且 covered_names 涵蓋 A 時，
+                             A 變實心但底下留一條空白錯誤列，那一列比鄰居高一截，直到關閉重開才消失） -->
+                        <span class="actress-add-rowerror"
+                              x-show="!libRowFavorited(row) && libRowState(row) === 'error'"
+                              x-text="libRowErrorText(row)"></span>
+                    </div>
+                </template>
+                <!-- 117-T4 AC-5.4：無相符時「直接新增」列；走既有 addFavoriteActress 路徑 -->
+                <button type="button" class="actress-add-direct"
+                        x-show="libShowDirectAdd()" :disabled="_addingActress"
+                        @click="libDirectAdd()"
+                        x-text="t('showcase.actress.panel.direct_add', { name: libDirectAddName() })"></button>
+                <!-- 117b-T8：自動展開 sentinel（取代展開更多按鈕）-->
+                <div class="actress-add-sentinel" aria-hidden="true"
+                     x-show="libHasMore()"
+                     x-intersect="libExpandMore()"></div>
+            </div>
+            <div class="actress-add-footer">
+                <span class="actress-add-progress" x-text="libProgressText()"></span>
             </div>
         </div>
     </dialog>

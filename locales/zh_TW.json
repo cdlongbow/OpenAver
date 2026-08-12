@@ -1086,6 +1086,19 @@
       "addFavorite": "加入收藏",
       "favorited": "已收藏",
       "change_photo": "換照片",
+      "panel": {
+        "title": "從片庫加入女優",
+        "search_placeholder": "搜尋片庫女優，或輸入完整姓名新增",
+        "close": "關閉",
+        "loading": "載入中…",
+        "load_failed": "載入失敗，請稍後再試",
+        "progress": "已顯示 {n}／共 {m} 位",
+        "progress_all": "共 {m} 位",
+        "direct_add": "直接新增「{name}」",
+        "queued": "排隊中",
+        "adding": "新增中…",
+        "add_failed": "新增失敗，請再試一次"
+      },
       "picker": {
         "empty": "目前找不到候選照片",
         "empty_hint": "收藏影片越多，本機選項越豐富；也可直接替換資料夾中的圖片",
