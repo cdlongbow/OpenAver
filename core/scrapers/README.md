@@ -23,7 +23,7 @@
 |---------|--------|-----------|---------------|------------|---------|------------|-----------|------|
 | `d2pass` | D2Pass | ✅ | ❌ | ❌ | ❌ | ❌ | [需確認] | 無碼；日期格式番號（caribbeancom / 1pondo 等） |
 | `heyzo` | HEYZO | ✅ | ❌ | ❌ | ❌ | ❌ | [需確認] | 無碼；HEYZO-XXXX 格式 |
-| `fc2` | FC2 | ✅ | ❌ | ❌ | ❌ | ❌ | [需確認] | 無碼；javten.com 鏡像；**無發行日**（`date=""` 硬定） |
+| `fc2` | FC2 | ✅ | ❌ | ❌ | ❌ | ❌ | [需確認] | 無碼；**官方站 `adult.contents.fc2.com`**（0.13.12 起，`fc2_official.py`；舊的 javten 鏡像 `fc2.py` 保留但不被 dispatch 引用）；**有發行日**（官方頁「販売日」）；連不上／非 200 一律靜默回 `None`，與其他來源同語意 |
 | `avsox` | AVSOX | ✅ | ❌ | ❌ | ❌ | ❌ | [需確認] | 無碼；模糊鏈永不呼叫（`search_by_keyword` 刻意不接線） |
 
 ### 1.3 常數定義位置
@@ -47,7 +47,7 @@ core/scrapers/utils.py
 |------|------|------|----------------------------------|
 | `dmm` | ✅ | ✅ | 簡介＝主 `DETAIL_QUERY` 的 `description`；評分＝**獨立 root probe** `reviewSummary(contentId:){average}`（三態 cache、禁擴 `DETAIL_QUERY`、失敗降級不影響主 metadata）|
 | `jav321` | ✅ | ✅ | 同頁文字 `平均評価: N.N`（0–5，勿 ÷10）+ 描述 div |
-| `fc2` | ✅ | ✅ | JSON-LD `aggregateRating`（支援 `@graph`）+ `div.col.des` 簡介 |
+| `fc2` | ✅ | ❌ | **官方站版**（0.13.12 起）：評分＝頂層 JSON-LD `Product.aggregateRating`（`reviewCount == 0` → `None`，**不走 `@graph`**）；**簡介硬定空字串**（官方商品頁無等價欄位，`fc2_official.py` 的 `summary=""`）。~~舊 javten 版的 `@graph` ＋ `div.col.des` 簡介~~ 已不在 dispatch 路徑上 |
 | `heyzo` | ✅ | ✅ | 同一 JSON-LD `aggregateRating` + `description` |
 | `d2pass`（1pondo/10musume）| ✅ | ✅ | 同一 phpauto JSON `AvgRating`（`<=5` guard）+ `Desc` |
 | `d2pass`（caribbeancom）| ✅ | ✅ | **JSON API 已死→HTML fallback**：moviepage `itemprop=description` + `meta-rating` 星數 rune-count（0–5）|
@@ -149,7 +149,7 @@ post-spec-85（T1c 解耦後）：standalone 函式，不再實例化 `JavBusScr
 | `number` | str | 番號（SONE-205） |
 | `title` | str | 影片標題 |
 | `actresses` | list[Actress] | 女優列表 |
-| `date` | str | 發行日期（YYYY-MM-DD）；FC2 恆為空 |
+| `date` | str | 發行日期（YYYY-MM-DD）；**FC2 官方站版有**（頁面「販売日」），~~FC2 恆為空~~ 是舊 javten 實作的性質 |
 | `maker` | str | 片商 |
 | `cover_url` | str | 封面 URL |
 | `tags` | list[str] | 類別標籤 |
@@ -196,5 +196,5 @@ post-spec-85（T1c 解耦後）：standalone 函式，不再實例化 `JavBusScr
 | JavBus 搜尋端點已死 | `/search/{keyword}` 回 404；exact 走 detail URL（正常）；partial/prefix 走 `get_ids_from_search`（正常）；**不可**再實作任何依賴 `/search/` 的功能 |
 | javlibrary manual_only | `get_enabled_source_ids()` 自動排除 manual_only 來源，javlibrary 不進 cascade head；只能由進階搜尋顯式指定 |
 | fuzzy always-on | 停用 javbus/dmm 只影響 exact cascade；模糊路徑仍會呼叫它們（設計如此，CD-65-4） |
-| FC2 無發行日 | FC2 scraper 硬定 `date=""`，不可視為 bug |
+| ~~FC2 無發行日~~ | ⛔ **0.13.12 起作廢**：該不變式屬於舊的 javten 鏡像實作（`fc2.py` 硬定 `date=""`）。現行 `fc2` 走官方站 `fc2_official.py`，**會回傳發行日**（spec-118 AC-1.2 就是要它）。看到 FC2 有日期**不是 bug**，看到它恆空才是 |
 | 路徑處理 | `file:///` URI 轉換一律用 `core/path_utils.py`，禁止手動 strip/建構 |

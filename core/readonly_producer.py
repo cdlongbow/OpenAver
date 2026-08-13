@@ -8,7 +8,15 @@ Canonical Decisions enforced here:
              read a bulk cover-path index and checked cover-file existence on
              disk. TASK-89b-T3 replaced that with a pure DB signal —
              VideoRepository.get_attempted_index() feeding _should_skip below
-             (see CD-89b-3) — with no shape change to get_mtime_index().
+             (see CD-89b-3). Note: TASK-118b-T9 later DID change
+             get_mtime_index()'s shape (2-tuple -> 3-tuple, adds an
+             extrafanart sample-image count) for the mtime/nfo_mtime
+             incremental-scan path used by web/routers/scanner.py and
+             gallery_scanner.scan_to_sqlite() — this module is unaffected
+             because it never calls get_mtime_index() (readonly sources use
+             get_attempted_index()/_should_skip() exclusively, see T9's
+             Opus decision ①: readonly sources are an explicit residual,
+             out of scope for that task).
 """
 
 from __future__ import annotations

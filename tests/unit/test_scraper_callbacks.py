@@ -652,7 +652,7 @@ class TestDisabledSourceRouting:
             patch('core.scraper.JavDBScraper', side_effect=make_cls('javdb')),
             patch('core.scraper.D2PassScraper', side_effect=make_cls('d2pass')),
             patch('core.scraper.HEYZOScraper', side_effect=make_cls('heyzo')),
-            patch('core.scraper.FC2Scraper', side_effect=make_cls('fc2')),
+            patch('core.scraper.FC2OfficialScraper', side_effect=make_cls('fc2')),
             patch('core.scraper.AVSOXScraper', side_effect=make_cls('avsox')),
             patch('core.scraper.DMMScraper', side_effect=make_cls('dmm')),
         ]

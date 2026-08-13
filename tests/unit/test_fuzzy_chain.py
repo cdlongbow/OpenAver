@@ -136,12 +136,12 @@ class TestFuzzyChain:
     def test_metatube_and_fc2_skipped(self, monkeypatch):
         """metatube:abc 和 fc2 不在 FUZZY_SEARCH_SOURCES → 鏈從 javbus 開始"""
         from core.scraper import _fuzzy_search_chain
-        from core.scrapers.fc2 import FC2Scraper
+        from core.scrapers.fc2_official import FC2OfficialScraper
 
         monkeypatch.setattr("core.scraper.get_all_source_ids_ordered",
                             lambda: ['metatube:abc', 'fc2', 'javbus', 'dmm'])
 
-        with patch.object(FC2Scraper, 'search', return_value=None) as mock_fc2, \
+        with patch.object(FC2OfficialScraper, 'search', return_value=None) as mock_fc2, \
              patch.object(JavBusScraper, 'get_ids_from_search',
                           side_effect=[['FC2-TEST'], []]) as mock_jb, \
              patch('core.scraper.search_jav',

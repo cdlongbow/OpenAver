@@ -99,9 +99,9 @@ class TestPipeline:
                 with patch.object(DMMScraper, 'search', return_value=None):
                     with patch('core.scrapers.dmm.rate_limit'):
                         # FC2 / AVSOX 也需要 mock 避免真實網路請求
-                        from core.scrapers.fc2 import FC2Scraper
+                        from core.scrapers.fc2_official import FC2OfficialScraper
                         from core.scrapers.avsox import AVSOXScraper
-                        with patch.object(FC2Scraper, 'search', return_value=None):
+                        with patch.object(FC2OfficialScraper, 'search', return_value=None):
                             with patch.object(AVSOXScraper, 'search', return_value=None):
                                 smart_search("SONE-205", uncensored_mode=True)
 
@@ -137,12 +137,12 @@ class TestPipeline:
         """uncensored_mode=True + FC2 前綴 → D2PassScraper 不被呼叫"""
         mock_video = _make_video("fc2", "FC2-PPV-1234567")
 
-        from core.scrapers.fc2 import FC2Scraper
+        from core.scrapers.fc2_official import FC2OfficialScraper
         from core.scrapers.avsox import AVSOXScraper
 
         with patch.object(D2PassScraper, 'search', return_value=None) as mock_d2:
             with patch.object(HEYZOScraper, 'search', return_value=None):
-                with patch.object(FC2Scraper, 'search', return_value=mock_video):
+                with patch.object(FC2OfficialScraper, 'search', return_value=mock_video):
                     with patch.object(AVSOXScraper, 'search', return_value=None):
                         with patch('core.scrapers.dmm.rate_limit'):
                             results = smart_search("FC2-PPV-1234567", uncensored_mode=True)
@@ -177,7 +177,7 @@ class TestPipeline:
         """
         from core.scrapers.jav321 import JAV321Scraper
         from core.scrapers.javdb import JavDBScraper
-        from core.scrapers.fc2 import FC2Scraper
+        from core.scrapers.fc2_official import FC2OfficialScraper
         from core.scrapers.avsox import AVSOXScraper
         dmm_video = _make_video("dmm", "SONE-205")
         javbus_video = _make_video("javbus", "SONE-205")
@@ -188,7 +188,7 @@ class TestPipeline:
              patch.object(JavBusScraper, 'search', return_value=javbus_video), \
              patch.object(JAV321Scraper, 'search', return_value=None), \
              patch.object(JavDBScraper, 'search', return_value=None), \
-             patch.object(FC2Scraper, 'search', return_value=None), \
+             patch.object(FC2OfficialScraper, 'search', return_value=None), \
              patch.object(AVSOXScraper, 'search', return_value=None), \
              patch('core.scrapers.dmm.rate_limit'):
             result = search_jav("SONE-205", proxy_url="http://proxy:8080")
@@ -205,7 +205,7 @@ class TestPipeline:
         """
         from core.scrapers.jav321 import JAV321Scraper
         from core.scrapers.javdb import JavDBScraper
-        from core.scrapers.fc2 import FC2Scraper
+        from core.scrapers.fc2_official import FC2OfficialScraper
         from core.scrapers.avsox import AVSOXScraper
         dmm_video = _make_video("dmm", "SONE-205")
         javbus_video = _make_video("javbus", "SONE-205")
@@ -222,7 +222,7 @@ class TestPipeline:
              patch.object(JavBusScraper, 'search', return_value=javbus_video), \
              patch.object(JAV321Scraper, 'search', return_value=None), \
              patch.object(JavDBScraper, 'search', return_value=None), \
-             patch.object(FC2Scraper, 'search', return_value=None), \
+             patch.object(FC2OfficialScraper, 'search', return_value=None), \
              patch.object(AVSOXScraper, 'search', return_value=None), \
              patch('core.scrapers.dmm.rate_limit'):
             result = search_jav("SONE-205", proxy_url="http://proxy:8080")
@@ -327,6 +327,31 @@ class TestUnknownSource:
         with patch.object(JavBusScraper, 'search', return_value=mock_video):
             result = search_jav("SONE-205", source="javguru")
 
+        assert result is None
+
+
+# ============================================================
+# TestFc2Dispatch — TASK-118-T3：fc2 source id 建的是官方站類別
+# ============================================================
+
+class TestFc2Dispatch:
+    """dispatch 路徑：source='fc2' 必須建構 FC2OfficialScraper，不是 javten FC2Scraper。"""
+
+    def test_fc2_source_constructs_official_scraper(self):
+        """search_jav(source='fc2') 建出來的是 FC2OfficialScraper。"""
+        constructed = []
+
+        def factory(*args, **kwargs):
+            constructed.append(True)
+            inst = MagicMock()
+            inst.search.return_value = None
+            return inst
+
+        with patch('core.scraper.FC2OfficialScraper', side_effect=factory) as mock_official:
+            result = search_jav("FC2-PPV-1234567", source="fc2")
+
+        assert mock_official.called
+        assert len(constructed) == 1
         assert result is None
 
 

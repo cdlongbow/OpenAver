@@ -34,6 +34,16 @@ from core.video_extensions import DEFAULT_VIDEO_EXTENSIONS, ZERO_SIZE_EXTENSIONS
 
 logger = get_logger(__name__)
 
+# Jellyfin BaseItem.SupportedImageExtensions minus .svg.
+# Jellyfin's list is global (logo/clearart/banner too); extrafanart is stills,
+# which are never SVG. Serving user-disk .svg via /api/gallery/image would let
+# a direct navigation execute script on this origin, and this project has no CSP.
+# Same split as DEFAULT_VIDEO_EXTENSIONS vs SAFE_PROXY_EXTENSIONS: discoverable
+# is not the same as servable.
+_EXTRAFANART_IMAGE_EXTS = frozenset({
+    '.png', '.jpg', '.jpeg', '.webp', '.tbn', '.gif',
+})
+
 
 @dataclass
 class VideoInfo:
@@ -126,7 +136,36 @@ def fast_scan_directory(
             # callback 本身出錯不得影響掃描
             pass
 
+    def _count_extrafanart_images(parent_dir: str) -> int:
+        """數 `<parent_dir>/extrafanart/` 裡的合格劇照張數（TASK-118b-T9）。
+
+        **這裡刻意複製 scan_file() 的定位方式，而不是自己找那個目錄**：
+        `Path(parent) / 'extrafanart'` ＋ `.is_dir()` 與 scan_file()（見該函式內的
+        `extrafanart_dir = video_path.parent / 'extrafanart'`）是**逐字相同的表達式**，
+        所以「哪個目錄算數」在兩端由構造保證一致——不管底下的檔案系統大小寫敏不敏感、
+        那個目錄是不是 symlink。
+
+        走訪端曾用 `entry.name` 比對過兩版（精確 → `.lower()`），兩版都在某一類檔案系統上
+        與 scan_file() 分岔：精確比對讓大小寫不敏感的 FS（NTFS／APFS）上的 `Extrafanart`
+        走訪端數 0、DB 數 N；`.lower()` 則讓大小寫敏感的 FS（ext4）上的 `Extrafanart`
+        走訪端數 N、DB 數 0。**兩種分岔的症狀都是「每次產生都重掃該片且永遠對不上」**。
+        用同一句表達式就沒有第三種寫錯的方式。
+
+        張數本身的過濾（副檔名／隱藏檔／size>0）同樣不另抄——直接呼叫
+        `VideoScanner._iter_extrafanart_images()`，與撿取端同源。
+        """
+        extrafanart_dir = Path(parent_dir) / 'extrafanart'
+        try:
+            if not extrafanart_dir.is_dir():
+                return 0
+            return sum(1 for _ in VideoScanner._iter_extrafanart_images(extrafanart_dir))
+        except OSError as e:
+            _safe_on_skip(str(extrafanart_dir), e)
+            return 0
+
     def scan_recursive(path: str):
+        # 每層目錄各自獨立（新的區域變數），天然不會跨目錄污染。
+        extrafanart_image_count = 0
         try:
             with os.scandir(path) as entries:
                 dir_files = []
@@ -162,9 +201,19 @@ def fast_scan_directory(
                         # entry.path 是 os.DirEntry 的純拼接屬性，通常不會拋
                         _safe_on_skip(entry.path, e)
 
+                # 只有「這層真的有影片」才去問 extrafanart/ 在不在（沒有影片的目錄
+                # 一次 syscall 都不多花）。放在 entry 迴圈**之後**：此時 dir_files 已定，
+                # 而定位方式與 scan_file() 同源，不依賴走訪順序或 entry 名稱比對。
+                if dir_files:
+                    extrafanart_image_count = _count_extrafanart_images(path)
+
                 # 將 NFO mtime 加入對應的影片資訊
                 for f in dir_files:
                     f['nfo_mtime'] = dir_nfos.get(f['stem'], 0)
+                    # 同目錄下所有影片本來就共用同一個 extrafanart/（scan_file()
+                    # 也是用 video_path.parent / 'extrafanart' 算路徑，既有行為）
+                    # ——均等掛給本層每部片，不是只掛給其中一部（TASK-118b-T9）。
+                    f['sample_image_count'] = extrafanart_image_count
                     del f['stem']  # 不需要保留 stem
                     results.append(f)
 
@@ -494,6 +543,30 @@ class VideoScanner:
 
         return ""
 
+    @staticmethod
+    def _iter_extrafanart_images(extrafanart_dir: Path):
+        """Yield extrafanart/ children that Jellyfin would treat as images.
+
+        Non-recursive; file + image suffix + size > 0. Hidden names (``.`` prefix)
+        are an extra filter we add on top of Jellyfin: macOS SMB writes
+        ``._fanart1.jpg`` AppleDouble sidecars (suffix ``.jpg``, ~4KB, non-empty)
+        that would otherwise surface as a broken thumbnail on NAS / network
+        drives.
+        """
+        for img_path in extrafanart_dir.iterdir():
+            if not img_path.is_file():
+                continue
+            if img_path.name.startswith('.'):
+                continue
+            if img_path.suffix.lower() not in _EXTRAFANART_IMAGE_EXTS:
+                continue
+            try:
+                if img_path.stat().st_size <= 0:
+                    continue
+            except OSError:
+                continue
+            yield img_path
+
     def scan_file(self, video_path: str, base_path: str = None) -> VideoInfo:
         """掃描單一影片檔案"""
         t_start = time.time()
@@ -576,7 +649,7 @@ class VideoScanner:
         extrafanart_dir = video_path.parent / 'extrafanart'
         if extrafanart_dir.is_dir():
             try:
-                for img_path in sorted(extrafanart_dir.glob('fanart*.jpg')):
+                for img_path in sorted(self._iter_extrafanart_images(extrafanart_dir)):
                     if base_path:
                         try:
                             rel_img = img_path.relative_to(base_path)
@@ -631,7 +704,7 @@ class VideoScanner:
 
         # 步驟 2: 從 SQLite 取得現有 mtime 索引
         # 注意：資料庫中的 path 是 file:/// 格式
-        db_index = repo.get_mtime_index()  # {path: (mtime, nfo_mtime)}
+        db_index = repo.get_mtime_index()  # {path: (mtime, nfo_mtime, sample_count)}
 
         # 建立 file:/// 路徑到原始路徑的映射，以及原始路徑到 mtime 的映射
         # scan_file 會產生 file:/// 格式的路徑（使用 core.path_utils.to_file_uri）
@@ -649,8 +722,15 @@ class VideoScanner:
             if db_entry is None:
                 # 新檔案
                 needs_scan.append(file_info)
-            elif db_entry[0] != file_info['mtime'] or db_entry[1] != file_info.get('nfo_mtime', 0):
-                # mtime 或 nfo_mtime 變更
+            elif (
+                db_entry[0] != file_info['mtime']
+                or db_entry[1] != file_info.get('nfo_mtime', 0)
+                # extrafanart/ 劇照張數變更（新增/刪除）也要觸發重掃（TASK-118b-T9）。
+                # db_entry[2] 可能是 get_mtime_index() 的哨兵值（壞資料，見該函式
+                # docstring）——此時恆不等於任何真實張數，同樣會落入這個分支。
+                or db_entry[2] != file_info.get('sample_image_count', 0)
+            ):
+                # mtime、nfo_mtime 或劇照張數變更
                 needs_scan.append(file_info)
 
         # 步驟 4: 清理已刪除的檔案（比對 file:/// 格式的路徑）

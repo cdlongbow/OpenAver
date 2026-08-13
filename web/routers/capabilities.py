@@ -272,6 +272,7 @@ _TOOLS: list[dict] = [
             "cover_written": "boolean — 是否寫入封面",
             "fields_filled": "[string] — fill_missing 模式下本次補上的欄位名（無缺漏則為空）；refresh_full 不回報覆蓋欄位，固定為空陣列",
             "source_used": "string — 實際使用的來源",
+            "reason": "string — hit|no_cover|not_found|error",
         },
         "side_effect": True,
         "confirmation_required": True,

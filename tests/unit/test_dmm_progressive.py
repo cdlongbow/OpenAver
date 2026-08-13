@@ -96,12 +96,12 @@ class TestDMMProgressiveFacade:
         """uncensored_mode=True + HEYZO 前綴 → D2PassScraper 不被呼叫"""
         mock_video = _make_video("heyzo", "HEYZO-0783")
 
-        from core.scrapers.fc2 import FC2Scraper
+        from core.scrapers.fc2_official import FC2OfficialScraper
         from core.scrapers.avsox import AVSOXScraper
 
         with patch.object(D2PassScraper, 'search', return_value=None) as mock_d2:
             with patch.object(HEYZOScraper, 'search', return_value=mock_video) as mock_heyzo:
-                with patch.object(FC2Scraper, 'search', return_value=None):
+                with patch.object(FC2OfficialScraper, 'search', return_value=None):
                     with patch.object(AVSOXScraper, 'search', return_value=None):
                         with patch('core.scrapers.dmm.rate_limit'):
                             results = smart_search("HEYZO-0783", uncensored_mode=True)

@@ -74,6 +74,33 @@ class TestImageProxy:
         assert response.status_code == 200
         assert response.headers['content-type'] == 'image/webp'
 
+    def test_image_proxy_tbn_as_jpeg(self, client, tmp_path, mocker):
+        """Kodi .tbn 是 JPEG 別名 → 200 且 Content-Type image/jpeg"""
+        test_image = tmp_path / "fanart1.tbn"
+        test_image.write_bytes(b'\xff\xd8\xff\xe0' + b'\x00' * 100)
+
+        mocker.patch('web.routers.scanner.load_config', return_value={
+            'gallery': {'directories': [str(tmp_path)], 'path_mappings': {}},
+        })
+
+        response = client.get('/api/gallery/image', params={'path': str(test_image)})
+
+        assert response.status_code == 200
+        assert response.headers['content-type'] == 'image/jpeg'
+
+    def test_image_proxy_svg_forbidden(self, client, tmp_path, mocker):
+        """不服務 .svg（可執行內容）；即使檔案在白名單目錄內也 403"""
+        test_image = tmp_path / "logo.svg"
+        test_image.write_bytes(b'<svg xmlns="http://www.w3.org/2000/svg"></svg>')
+
+        mocker.patch('web.routers.scanner.load_config', return_value={
+            'gallery': {'directories': [str(tmp_path)], 'path_mappings': {}},
+        })
+
+        response = client.get('/api/gallery/image', params={'path': str(test_image)})
+
+        assert response.status_code == 403
+
 
 class TestImageProxyUNCAllowlist:
     """UNC NAS 路徑白名單 — 大小寫不敏感修正（TASK-62-NAS-UNC）"""

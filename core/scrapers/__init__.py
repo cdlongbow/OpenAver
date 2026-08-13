@@ -5,6 +5,7 @@ from .javbus import JavBusScraper
 from .jav321 import JAV321Scraper
 from .javdb import JavDBScraper
 from .fc2 import FC2Scraper
+from .fc2_official import FC2OfficialScraper
 from .avsox import AVSOXScraper
 from .d2pass import D2PassScraper
 from .heyzo import HEYZOScraper
@@ -21,6 +22,7 @@ __all__ = [
     'JAV321Scraper',
     'JavDBScraper',
     'FC2Scraper',
+    'FC2OfficialScraper',
     'AVSOXScraper',
     'D2PassScraper',
     'HEYZOScraper',

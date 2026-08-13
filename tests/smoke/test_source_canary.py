@@ -26,7 +26,7 @@ from core.scrapers import (
     JAV321Scraper,
     HEYZOScraper,
     D2PassScraper,
-    FC2Scraper,
+    FC2OfficialScraper,
     JavDBScraper,
     AVSOXScraper,
     DMMScraper,
@@ -92,7 +92,7 @@ def test_avsox_canary():
 # ========== Group B (quorum-only, no probe) ==========
 
 def test_fc2_canary():
-    _run_canary("fc2", FC2Scraper())
+    _run_canary("fc2", FC2OfficialScraper())
 
 
 def test_javdb_canary():

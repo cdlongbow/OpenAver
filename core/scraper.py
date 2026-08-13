@@ -17,7 +17,7 @@ from typing import Optional, List, Dict, Any, Callable
 # 引入新版爬蟲模組
 from core.scrapers import (
     JavBusScraper, JAV321Scraper, JavDBScraper,
-    FC2Scraper, AVSOXScraper,
+    FC2OfficialScraper, AVSOXScraper,
     D2PassScraper, HEYZOScraper, DMMScraper,
     JavLibraryScraper,          # T3 新增
     Video, ScraperConfig
@@ -245,7 +245,7 @@ def search_jav(number: str, source: str = 'auto', proxy_url: str = '', javbus_la
         'javdb': lambda: [JavDBScraper()],
         'd2pass': lambda: [D2PassScraper()],
         'heyzo': lambda: [HEYZOScraper()],
-        'fc2': lambda: [FC2Scraper()],
+        'fc2': lambda: [FC2OfficialScraper()],
         'avsox': lambda: [AVSOXScraper()],
         'javlibrary': lambda: [JavLibraryScraper()],
     }
