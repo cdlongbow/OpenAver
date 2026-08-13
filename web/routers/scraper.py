@@ -178,11 +178,16 @@ def scrape_single(request: ScrapeRequest) -> dict:
         metadata['number'] = number
     else:
         # 沒有 metadata 才重新搜尋
-        metadata = search_jav(number, proxy_url=_proxy_url)
+        blocked_out: list = []
+        metadata = search_jav(number, proxy_url=_proxy_url, blocked_out=blocked_out)
         if not metadata:
+            blocked = bool(blocked_out)
+            sources = list(dict.fromkeys(r.source_id for r in blocked_out)) if blocked else []
             return {
                 "success": False,
-                "error": f"找不到 {number} 的資料"
+                "error": f"找不到 {number} 的資料",
+                "blocked": blocked,
+                "blocked_sources": sources,
             }
         metadata['number'] = number
 
@@ -330,26 +335,35 @@ def rescrape_preview_endpoint(request: RescrapePreviewRequest) -> dict:
 
     try:
         if request.source == 'javlibrary':
+            # javlibrary 走 CF 通道、不經 search_jav：它的失敗語意由 cf_needed /
+            # cf_unavailable 兩個既有旗標表達，blocked 恆為 false。三條 return 刻意
+            # **不加** blocked 兩欄——既有測試以逐欄相等釘住這個回應形狀
+            # （tests/integration/test_rescrape_javlib.py），而前端對缺席的 blocked
+            # 一律當 false 處理（T4c 防呆），加了只是動既有斷言、換不到任何行為。
             versions = search_javlib_versions(request.number)  # Cf* 例外由外層 except 接
             if not versions:
                 return {"success": False}
             if len(versions) == 1:
                 return {"success": True, **strip_internal_nfo_keys(versions[0])}
             return {"success": True, "candidates": [strip_internal_nfo_keys(v) for v in versions]}
-        elif request.source == "auto":
+        blocked_out: list = []
+        if request.source == "auto":
             result = search_jav(
                 request.number,
                 source="auto",
                 proxy_url=proxy_url,
+                blocked_out=blocked_out,
             )
         else:
             result = search_jav_single_source(
-                request.number, request.source, proxy_url
+                request.number, request.source, proxy_url, blocked_out=blocked_out
             )
 
         if result is None:
-            return {"success": False}
-        return {"success": True, **strip_internal_nfo_keys(result)}
+            blocked = bool(blocked_out)
+            sources = list(dict.fromkeys(r.source_id for r in blocked_out)) if blocked else []
+            return {"success": False, "blocked": blocked, "blocked_sources": sources}
+        return {"success": True, "blocked": False, "blocked_sources": [], **strip_internal_nfo_keys(result)}
     except CfChallengeRequired:
         t = get_cf_transport()
         if t:

@@ -34,6 +34,7 @@ from core.nfo_updater import parse_nfo
 from core.organizer import crop_to_poster, download_image, find_subtitle_files, generate_nfo
 from core.path_utils import to_file_uri, uri_to_fs_path, uri_to_local_fs_path
 from core.scraper import search_jav
+from core.scrapers.errors import BlockedRecord
 
 logger = get_logger(__name__)
 
@@ -395,10 +396,16 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
     fields_filled: List[str] = []
 
     if mode == "refresh_full":
+        blocked_out: List[BlockedRecord] = []
         if scraper_data is None:
             scraper_data = search_jav(number, proxy_url=proxy_url,
-                                      source=source or 'auto', javbus_lang=javbus_lang)
+                                      source=source or 'auto', javbus_lang=javbus_lang,
+                                      blocked_out=blocked_out)
         if not scraper_data:
+            if blocked_out:
+                _empty.error = f"找不到 {number} 的資料"
+                _empty.reason = "blocked"
+                return _empty
             repo.update_scrape_attempted_at(to_file_uri(fs_path_for_db), time.time())  # db-ns-ok: fs_path_for_db, DB round-trip value, no reverse mapping applied
             _empty.error = f"找不到 {number} 的資料"
             _empty.reason = "not_found"
@@ -433,10 +440,16 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
 
         missing = _missing_fields(meta)
         if missing:
+            blocked_out: List[BlockedRecord] = []
             if scraper_data is None:
                 scraper_data = search_jav(number, proxy_url=proxy_url,
-                                          source=source or 'auto', javbus_lang=javbus_lang)
+                                          source=source or 'auto', javbus_lang=javbus_lang,
+                                          blocked_out=blocked_out)
             if not scraper_data:
+                if blocked_out:
+                    _empty.error = f"找不到 {number} 的資料"
+                    _empty.reason = "blocked"
+                    return _empty
                 repo.update_scrape_attempted_at(to_file_uri(fs_path_for_db), time.time())  # db-ns-ok: fs_path_for_db, DB round-trip value, no reverse mapping applied
                 _empty.error = f"找不到 {number} 的資料"
                 _empty.reason = "not_found"
