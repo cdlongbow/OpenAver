@@ -202,6 +202,101 @@ class TestScanToSqlite:
         video = repo.get_all()[0]
         assert video.title == "修改後標題"
 
+    def test_scan_incremental_extrafanart_added(self, temp_db, temp_video_dir):
+        """新增劇照（N -> N+1）→ 該片被排進重掃，即使影片檔與 NFO 的 mtime 都沒變
+        （TASK-118b-T9）"""
+        video_path = create_video_file(temp_video_dir, "test.mp4")
+        create_nfo_file(video_path, title="測試影片")
+
+        scanner = VideoScanner()
+
+        # 第一次掃描：無 extrafanart（N=0）
+        result1 = scanner.scan_to_sqlite(str(temp_video_dir), temp_db)
+        assert result1['inserted'] == 1
+        repo = VideoRepository(temp_db)
+        assert repo.get_all()[0].sample_images == []
+
+        # 新增劇照（N+1=1），不動影片檔、不動 NFO
+        extrafanart = temp_video_dir / "extrafanart"
+        extrafanart.mkdir()
+        (extrafanart / "fanart1.jpg").write_bytes(b"img")
+
+        # 第二次掃描：張數變了 → 必須被排進重掃
+        result2 = scanner.scan_to_sqlite(str(temp_video_dir), temp_db)
+        assert result2['updated'] == 1
+        assert result2['inserted'] == 0
+        assert len(repo.get_all()[0].sample_images) == 1
+
+    def test_scan_incremental_extrafanart_removed(self, temp_db, temp_video_dir):
+        """刪除劇照（N -> N-1）→ 該片被排進重掃，即使影片檔與 NFO 的 mtime 都沒變
+        （TASK-118b-T9，新增/刪除對稱）"""
+        video_path = create_video_file(temp_video_dir, "test.mp4")
+        create_nfo_file(video_path, title="測試影片")
+        extrafanart = temp_video_dir / "extrafanart"
+        extrafanart.mkdir()
+        (extrafanart / "fanart1.jpg").write_bytes(b"img")
+        (extrafanart / "fanart2.jpg").write_bytes(b"img")
+
+        scanner = VideoScanner()
+
+        # 第一次掃描：N=2
+        result1 = scanner.scan_to_sqlite(str(temp_video_dir), temp_db)
+        assert result1['inserted'] == 1
+        repo = VideoRepository(temp_db)
+        assert len(repo.get_all()[0].sample_images) == 2
+
+        # 刪除一張劇照（N-1=1），不動影片檔、不動 NFO
+        (extrafanart / "fanart2.jpg").unlink()
+
+        # 第二次掃描：張數變了 → 必須被排進重掃
+        result2 = scanner.scan_to_sqlite(str(temp_video_dir), temp_db)
+        assert result2['updated'] == 1
+        assert len(repo.get_all()[0].sample_images) == 1
+
+    def test_scan_incremental_extrafanart_same_count_no_rescan(self, temp_db, temp_video_dir):
+        """劇照張數不變 → 不重掃（防止「每次都全掃」的反向鎖，TASK-118b-T9）"""
+        video_path = create_video_file(temp_video_dir, "test.mp4")
+        create_nfo_file(video_path, title="測試影片")
+        extrafanart = temp_video_dir / "extrafanart"
+        extrafanart.mkdir()
+        (extrafanart / "fanart1.jpg").write_bytes(b"img")
+        (extrafanart / "fanart2.jpg").write_bytes(b"img")
+
+        scanner = VideoScanner()
+
+        # 第一次掃描：N=2
+        result1 = scanner.scan_to_sqlite(str(temp_video_dir), temp_db)
+        assert result1['inserted'] == 1
+
+        # 第二次掃描：完全沒動任何檔案（張數仍是 2）
+        result2 = scanner.scan_to_sqlite(str(temp_video_dir), temp_db)
+        assert result2['updated'] == 0
+        assert result2['inserted'] == 0
+
+    def test_scan_incremental_corrupt_sample_images_forces_rescan(self, temp_db, temp_video_dir):
+        """DB 裡 sample_images 是壞 JSON → fail-safe 視為「張數未知」，排進重掃且
+        不拋例外（Opus 裁決④），即使影片檔與 NFO 的 mtime 都沒變"""
+        import sqlite3
+
+        video_path = create_video_file(temp_video_dir, "test.mp4")
+        create_nfo_file(video_path, title="測試影片")
+
+        scanner = VideoScanner()
+        result1 = scanner.scan_to_sqlite(str(temp_video_dir), temp_db)
+        assert result1['inserted'] == 1
+
+        # 手動把 DB 裡的 sample_images 弄壞（模擬舊資料/繞過 to_dict() 的 raw 寫入）
+        conn = sqlite3.connect(str(temp_db))
+        try:
+            conn.execute("UPDATE videos SET sample_images = ? WHERE path LIKE ?", ("{not valid json", "%test.mp4"))
+            conn.commit()
+        finally:
+            conn.close()
+
+        # 第二次掃描：檔案完全沒變，但 DB 端壞資料要 fail-safe 成「需要重掃」
+        result2 = scanner.scan_to_sqlite(str(temp_video_dir), temp_db)
+        assert result2['updated'] == 1
+
     def test_scan_nonexistent_directory(self, temp_db):
         """測試掃描不存在的目錄"""
         scanner = VideoScanner()

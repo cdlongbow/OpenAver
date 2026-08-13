@@ -12,6 +12,12 @@ from . import connection
 
 logger = get_logger(__name__)
 
+# get_mtime_index() 的哨兵值：sample_images 欄位壞掉（空字串／NULL／損毀 JSON／
+# 非 list 合法 JSON）時的張數「未知」標記。負值刻意選擇，因為真實檔案系統掃描
+# 算出來的張數恆為 >= 0，兩者永遠不相等，比對式會自然觸發重掃（見
+# get_mtime_index() docstring，TASK-118b-T9 Opus 裁決④）。
+_SAMPLE_COUNT_UNKNOWN = -1
+
 
 @dataclass
 class Video:
@@ -815,21 +821,41 @@ class VideoRepository:
             conn.close()
 
     def get_mtime_index(self) -> dict:
-        """取得 {path: (mtime, nfo_mtime)} 索引，用於增量比對"""
+        """取得 {path: (mtime, nfo_mtime, sample_count)} 索引，用於增量比對。
+
+        sample_count（TASK-118b-T9）：合法 JSON list → 實際張數。空字串／NULL／
+        損毀 JSON／非 list 的合法 JSON 這四種壞值一律回傳哨兵值
+        `_SAMPLE_COUNT_UNKNOWN`（-1），代表「筆數未知」——不是悄悄當成 0（Opus
+        裁決④：壞資料要 fail-safe 成「需要重掃」，不得讓單筆壞資料中止整個
+        SELECT／整次掃描）。真實檔案系統算出來的張數恆為 >= 0，-1 必定與任何
+        真實張數不相等，呼叫端的比對式因此自然觸發重掃，不需要額外的例外分支。
+        """
         conn = self._get_connection()
         cursor = conn.cursor()
 
         try:
-            cursor.execute("SELECT path, mtime, nfo_mtime FROM videos")
+            cursor.execute("SELECT path, mtime, nfo_mtime, sample_images FROM videos")
             rows = cursor.fetchall()
-            return {row[0]: (row[1], row[2]) for row in rows}
+            result = {}
+            for path, mtime, nfo_mtime, sample_images_raw in rows:
+                sample_count = _SAMPLE_COUNT_UNKNOWN
+                if sample_images_raw:
+                    try:
+                        parsed = json.loads(sample_images_raw)
+                        if isinstance(parsed, list):
+                            sample_count = len(parsed)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                result[path] = (mtime, nfo_mtime, sample_count)
+            return result
         finally:
             conn.close()
 
     def get_attempted_index(self) -> dict:
         """取得 {path: scrape_attempted_at} 索引，供 T3 `_should_skip` 冷啟動判斷用（TASK-89b-T1）。
 
-        Additive read-only method，鏡射 get_mtime_index() shape。SELECT 不加 WHERE，
+        Additive read-only method。回傳的是 {path: int}——**不是** get_mtime_index() 的
+        形狀（那支自 TASK-118b-T9 起回 3-tuple，含劇照張數）。SELECT 不加 WHERE，
         含 scrape_attempted_at == 0 的 row（不過濾）——呼叫端用 `.get(path, 0) > 0`
         統一判斷「從未試過」（key 不存在或值為 0 皆視為未試過）。
         """

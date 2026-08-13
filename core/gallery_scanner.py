@@ -136,7 +136,24 @@ def fast_scan_directory(
             # callback 本身出錯不得影響掃描
             pass
 
+    def _count_extrafanart_images(dir_path: str) -> int:
+        """對 extrafanart/ 目錄計算合格劇照張數（TASK-118b-T9）。
+
+        判準必須與 VideoScanner._iter_extrafanart_images() 完全一致（Opus 裁決
+        ③）——兩處若分岔，會造成「永久重掃」（走訪端數得比 DB 多）或「永久漏掉」
+        （走訪端數得比 DB 少）；改任一邊要同時改另一邊。直接呼叫該 staticmethod
+        （而非另抄一份判準）從結構上保證兩邊恆等，不會漂移。
+        """
+        try:
+            return sum(1 for _ in VideoScanner._iter_extrafanart_images(Path(dir_path)))
+        except OSError as e:
+            _safe_on_skip(dir_path, e)
+            return 0
+
     def scan_recursive(path: str):
+        # 每層目錄各自獨立（新的區域變數），天然不會跨目錄污染；未含
+        # extrafanart/ 子目錄的普通資料夾維持 0，零額外 syscall。
+        extrafanart_image_count = 0
         try:
             with os.scandir(path) as entries:
                 dir_files = []
@@ -145,6 +162,13 @@ def fast_scan_directory(
                 for entry in entries:
                     try:
                         if entry.is_dir(follow_symlinks=False):
+                            # 大小寫不敏感比對：scan_file() 那端用的是
+                            # `video_path.parent / 'extrafanart'` 的 Path.is_dir()，在
+                            # Windows / macOS 上會命中 `Extrafanart`。此處若用精確比對，
+                            # 那些片會 DB 數到 N、走訪端數到 0 → 永久重掃（裁決③ 要避免的形狀）。
+                            if entry.name.lower() == 'extrafanart':
+                                extrafanart_image_count = _count_extrafanart_images(entry.path)
+                            # 既有行為不變：extrafanart/ 底下若有巢狀子目錄仍會被走訪
                             scan_recursive(entry.path)
                         elif entry.is_file(follow_symlinks=False):
                             ext = os.path.splitext(entry.name)[1].lower()
@@ -175,6 +199,10 @@ def fast_scan_directory(
                 # 將 NFO mtime 加入對應的影片資訊
                 for f in dir_files:
                     f['nfo_mtime'] = dir_nfos.get(f['stem'], 0)
+                    # 同目錄下所有影片本來就共用同一個 extrafanart/（scan_file()
+                    # 也是用 video_path.parent / 'extrafanart' 算路徑，既有行為）
+                    # ——均等掛給本層每部片，不是只掛給其中一部（TASK-118b-T9）。
+                    f['sample_image_count'] = extrafanart_image_count
                     del f['stem']  # 不需要保留 stem
                     results.append(f)
 
@@ -665,7 +693,7 @@ class VideoScanner:
 
         # 步驟 2: 從 SQLite 取得現有 mtime 索引
         # 注意：資料庫中的 path 是 file:/// 格式
-        db_index = repo.get_mtime_index()  # {path: (mtime, nfo_mtime)}
+        db_index = repo.get_mtime_index()  # {path: (mtime, nfo_mtime, sample_count)}
 
         # 建立 file:/// 路徑到原始路徑的映射，以及原始路徑到 mtime 的映射
         # scan_file 會產生 file:/// 格式的路徑（使用 core.path_utils.to_file_uri）
@@ -683,8 +711,15 @@ class VideoScanner:
             if db_entry is None:
                 # 新檔案
                 needs_scan.append(file_info)
-            elif db_entry[0] != file_info['mtime'] or db_entry[1] != file_info.get('nfo_mtime', 0):
-                # mtime 或 nfo_mtime 變更
+            elif (
+                db_entry[0] != file_info['mtime']
+                or db_entry[1] != file_info.get('nfo_mtime', 0)
+                # extrafanart/ 劇照張數變更（新增/刪除）也要觸發重掃（TASK-118b-T9）。
+                # db_entry[2] 可能是 get_mtime_index() 的哨兵值（壞資料，見該函式
+                # docstring）——此時恆不等於任何真實張數，同樣會落入這個分支。
+                or db_entry[2] != file_info.get('sample_image_count', 0)
+            ):
+                # mtime、nfo_mtime 或劇照張數變更
                 needs_scan.append(file_info)
 
         # 步驟 4: 清理已刪除的檔案（比對 file:/// 格式的路徑）

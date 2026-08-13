@@ -163,7 +163,7 @@ class TestVideoRepository:
         assert result[1].path == to_file_uri("/video2.mp4")
 
     def test_get_mtime_index(self, temp_db):
-        """測試 get_mtime_index"""
+        """測試 get_mtime_index（TASK-118b-T9：3-tuple，第三欄是劇照張數）"""
         repo = VideoRepository(temp_db)
 
         videos = [
@@ -175,8 +175,64 @@ class TestVideoRepository:
         index = repo.get_mtime_index()
 
         assert len(index) == 2
-        assert index[to_file_uri("/video1.mp4")] == (100.5, 100.0)
-        assert index[to_file_uri("/video2.mp4")] == (200.5, 200.0)
+        # 兩筆 Video(...) 都沒帶 sample_images → dataclass 預設 [] → 序列化 '[]'
+        # → 解析張數 0（不是壞資料，走正常路徑）。
+        assert index[to_file_uri("/video1.mp4")] == (100.5, 100.0, 0)
+        assert index[to_file_uri("/video2.mp4")] == (200.5, 200.0, 0)
+
+    def test_get_mtime_index_sample_count(self, temp_db):
+        """get_mtime_index 的第三欄反映實際劇照張數（TASK-118b-T9）"""
+        repo = VideoRepository(temp_db)
+
+        video = Video(
+            path=to_file_uri("/video1.mp4"), mtime=100.5, nfo_mtime=100.0,
+            sample_images=["file:///a.jpg", "file:///b.jpg", "file:///c.jpg"],
+        )
+        repo.upsert_batch([video])
+
+        index = repo.get_mtime_index()
+
+        assert index[to_file_uri("/video1.mp4")] == (100.5, 100.0, 3)
+
+    def test_get_mtime_index_bad_sample_images_fallback_unknown(self, temp_db):
+        """sample_images 壞資料（空字串／NULL／損毀 JSON／非 list 合法 JSON）→
+        get_mtime_index 不得拋例外，且第三欄回傳的哨兵值必須與任何真實張數
+        （恆 >= 0）不相等，讓呼叫端的比對式自然被排進重掃（Opus 裁決④：
+        fail-safe 成「需要重掃」，不是悄悄當成張數 0）。
+        """
+        import sqlite3
+
+        repo = VideoRepository(temp_db)
+        conn = sqlite3.connect(str(temp_db))
+        try:
+            conn.execute(
+                "INSERT INTO videos (path, mtime, nfo_mtime, sample_images) VALUES (?, ?, ?, ?)",
+                (to_file_uri("/empty_str.mp4"), 1.0, 1.0, ''),
+            )
+            conn.execute(
+                "INSERT INTO videos (path, mtime, nfo_mtime, sample_images) VALUES (?, ?, ?, ?)",
+                (to_file_uri("/null.mp4"), 2.0, 2.0, None),
+            )
+            conn.execute(
+                "INSERT INTO videos (path, mtime, nfo_mtime, sample_images) VALUES (?, ?, ?, ?)",
+                (to_file_uri("/corrupt.mp4"), 3.0, 3.0, '{not valid json'),
+            )
+            conn.execute(
+                "INSERT INTO videos (path, mtime, nfo_mtime, sample_images) VALUES (?, ?, ?, ?)",
+                (to_file_uri("/not_a_list.mp4"), 4.0, 4.0, '{}'),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        # 不得拋例外
+        index = repo.get_mtime_index()
+
+        unknown = index[to_file_uri("/empty_str.mp4")][2]
+        assert unknown < 0, "壞資料不得被靜默當成張數 0（Opus 裁決④）"
+        assert index[to_file_uri("/null.mp4")][2] == unknown
+        assert index[to_file_uri("/corrupt.mp4")][2] == unknown
+        assert index[to_file_uri("/not_a_list.mp4")][2] == unknown
 
     def test_delete_by_paths(self, temp_db):
         """測試 delete_by_paths"""

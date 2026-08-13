@@ -224,9 +224,18 @@ If a regression of this class arises, the fix is:
 - a new rule row in `scripts/static_guard_lint.mjs` (the engine already exists — adding a
   rule is a table entry, not a new script), or `css-guard.mjs` / `i18n_lint.mjs` / eslint /
   stylelint for their domains — NOT a new TestNoXxx pytest class.
-- New string-literal assertions in `tests/**` must carry an inline
-  `# [lint-guard: pytest-justified <reason> | migrate → <tool>]` tag; pre-merge SA-pre-6
-  flags untagged ones as BLOCKER.
+- New assertions in `tests/**` that check a **literal string against frontend
+  HTML/JS/CSS text** — i.e. the shape `assert "<literal>" in (html|js|css_text)` or its
+  `not in` negation, including incremental additions to a for-loop/list of such literals —
+  must carry an inline `# [lint-guard: pytest-justified <reason> | migrate → <tool>]` tag;
+  pre-merge SA-pre-6 flags untagged ones as BLOCKER. The canonical criterion lives in
+  `feature/AI_COLLABORATION/pre-merge.md` 步驟 5.7 — read it before flagging.
+  **Out of scope for this rule** (no lint tool can express these, so they belong in pytest
+  and need no tag): assertions on the *return value* of Python code — scraper parse results
+  (`assert video.title == "…"`, `assert "tag" in video.tags`), request URLs a client builds,
+  JSON API response bodies, DB round-trips. (Asserting a literal against
+  `TestClient(...).get(...).text` when that response **is** HTML/JS/CSS is still in scope.) The 8 existing scraper test files carry ~500 such
+  assertions and none is tagged; that is correct, not debt.
 - When migrating a guard to lint, port it at the **same scan granularity** as the original
   (whole-file / element-scoped / attribute-value / method-body window) and prefer
   fail-closed over fail-open — 7 scope-narrowing regressions of exactly this kind were
