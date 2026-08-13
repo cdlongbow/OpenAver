@@ -54,6 +54,8 @@ _TOOLS: list[dict] = [
             "total": "integer — 結果總數",
             "mode": "string — 實際使用的搜尋模式",
             "discovery": "boolean — 是否為探索模式（僅 discovery=true 時出現）",
+            "blocked": "boolean — true=來源被擋／連不上（≠ 查無此片），稍後重試可能就有結果；有結果時恆 false",
+            "blocked_sources": "[string] — 被擋的來源 id（blocked=false 時為空陣列）",
         },
         "retry_safe": True,
         "_example_template": "curl '{base}/api/search?q=SONE-205'",

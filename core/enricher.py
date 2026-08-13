@@ -402,13 +402,12 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
                                       source=source or 'auto', javbus_lang=javbus_lang,
                                       blocked_out=blocked_out)
         if not scraper_data:
-            if blocked_out:
-                _empty.error = f"找不到 {number} 的資料"
-                _empty.reason = "blocked"
-                return _empty
-            repo.update_scrape_attempted_at(to_file_uri(fs_path_for_db), time.time())  # db-ns-ok: fs_path_for_db, DB round-trip value, no reverse mapping applied
+            # 被擋 ≠ 查無此片：blocked 時不得記 scrape_attempted_at，否則那部片會從
+            # 缺漏清單永久消失（scanner.py 的 `if produced or tried: continue`）。
+            if not blocked_out:
+                repo.update_scrape_attempted_at(to_file_uri(fs_path_for_db), time.time())  # db-ns-ok: fs_path_for_db, DB round-trip value, no reverse mapping applied
             _empty.error = f"找不到 {number} 的資料"
-            _empty.reason = "not_found"
+            _empty.reason = "blocked" if blocked_out else "not_found"
             return _empty
         meta = _scraper_to_meta(scraper_data)
         source_used = scraper_data.get("source", "scraper") or "scraper"
@@ -446,13 +445,11 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
                                           source=source or 'auto', javbus_lang=javbus_lang,
                                           blocked_out=blocked_out)
             if not scraper_data:
-                if blocked_out:
-                    _empty.error = f"找不到 {number} 的資料"
-                    _empty.reason = "blocked"
-                    return _empty
-                repo.update_scrape_attempted_at(to_file_uri(fs_path_for_db), time.time())  # db-ns-ok: fs_path_for_db, DB round-trip value, no reverse mapping applied
+                # 同上：blocked 不記 scrape_attempted_at
+                if not blocked_out:
+                    repo.update_scrape_attempted_at(to_file_uri(fs_path_for_db), time.time())  # db-ns-ok: fs_path_for_db, DB round-trip value, no reverse mapping applied
                 _empty.error = f"找不到 {number} 的資料"
-                _empty.reason = "not_found"
+                _empty.reason = "blocked" if blocked_out else "not_found"
                 return _empty
             supplement = _scraper_to_meta(scraper_data)
             meta, fields_filled = _merge_meta(meta, supplement)
