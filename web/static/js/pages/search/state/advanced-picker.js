@@ -54,7 +54,9 @@ export function searchStateAdvancedPicker() {
                     return;
                 } else {
                     this._searchSnapshot = null;
-                    this.errorText = data.error || window.t('search.error.hint');
+                    this.errorText = data.blocked
+                        ? window.t('search.error.blocked')
+                        : (data.error || window.t('search.error.hint'));
                     this.pageState = 'error';
                     // OQ-3 軟提示 scaffold：metatube source + 非番號 query + 空結果（B1 無 metatube source 故不觸發）
                     this._advancedMaybeMetatubeHint(source, query);

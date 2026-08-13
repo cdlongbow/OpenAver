@@ -560,9 +560,9 @@ export function searchStateSearchFlow() {
                 if (this._heroSlotReserved) {
                     this._heroSlotReserved = false;
                 }
-                this.errorText = data.error || (data.blocked
+                this.errorText = data.blocked
                     ? window.t('search.error.blocked')
-                    : window.t('search.error.no_data'));  // T6c: Alpine state
+                    : (data.error || window.t('search.error.no_data'));  // T6c: Alpine state
                 this.pageState = 'error';
             }
         } catch (err) {

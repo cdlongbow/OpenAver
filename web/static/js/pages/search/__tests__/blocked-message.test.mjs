@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { searchStateFileList } from '../state/file-list.js';
 import { searchStateSearchFlow } from '../state/search-flow.js';
+import { searchStateAdvancedPicker } from '../state/advanced-picker.js';
 import { searchStateBase } from '../state/base.js';
 
 const zhTW = JSON.parse(
@@ -37,7 +38,9 @@ function installT() {
 const BLOCKED_TEXT = 'FC2 官方站目前連不上（可能被擋或暫時無回應），這不代表沒有這部片，稍後再試一次';
 const FILELIST_BLOCKED = (number) => `${number}：來源目前連不上（可能被擋或暫時無回應），這不代表沒有這部片，稍後再試一次`;
 const NO_DATA = '找不到資料';
+const HINT = '請檢查番號格式或稍後再試';
 const FILELIST_NOT_FOUND = (number) => `找不到 ${number} 的資料`;
+const BACKEND_NOT_FOUND = '找不到 FC2-123456 的資料';
 
 assert.equal(lookup(zhTW, 'search.error.no_data'), NO_DATA);
 assert.equal(lookup(zhTW, 'search.filelist.not_found'), '找不到 {number} 的資料');
@@ -75,6 +78,7 @@ function makeFakeThis(overrides = {}) {
     searchStateBase(),
     searchStateSearchFlow(),
     searchStateFileList(),
+    searchStateAdvancedPicker(),
     {
       _resetCoverState() {},
       $nextTick(fn) { fn(); },
@@ -158,19 +162,30 @@ test('3 分支2 SSE 非漸進空：blocked true/false 兩態', async () => {
   assert.equal(notBlocked.errorText, NO_DATA);
 });
 
-// 4. 分支 3（REST fallback）：blocked:true 且 data.error 為空 → blocked；data.error 有值 → 仍優先
-test('4 分支3 REST fallback：blocked 與 data.error 優先序', async () => {
+// 4. 分支 3（REST fallback）：真實後端空結果（blocked + error:「找不到…」）→ blocked 文案
+// 生產環境空結果一定帶 error:「找不到 X 的資料」；舊測餵 error:'' 會假綠。
+test('4 分支3 REST fallback：blocked:true 且 data.error 有值 → 顯示 blocked 文案', async () => {
   setup();
   const blockedThis = makeFakeThis();
-  await driveBranch3(blockedThis, { success: false, data: [], blocked: true, error: '' });
+  await driveBranch3(blockedThis, {
+    success: false,
+    data: [],
+    blocked: true,
+    blocked_sources: ['fc2'],
+    error: BACKEND_NOT_FOUND,
+  });
   assert.equal(blockedThis.errorText, BLOCKED_TEXT);
+  assert.notEqual(blockedThis.errorText, BACKEND_NOT_FOUND);
+});
 
+// 5（卡片零回歸）：blocked:false ＋ data.error 有值 → 逐字 data.error
+test('5 分支3 REST fallback：blocked:false 且 data.error 有值 → 逐字 data.error', async () => {
   setup();
   const errorFirst = makeFakeThis();
   await driveBranch3(errorFirst, {
     success: false,
     data: [],
-    blocked: true,
+    blocked: false,
     error: 'explicit backend error',
   });
   assert.equal(errorFirst.errorText, 'explicit backend error');
@@ -179,6 +194,47 @@ test('4 分支3 REST fallback：blocked 與 data.error 優先序', async () => {
   const notBlocked = makeFakeThis();
   await driveBranch3(notBlocked, { success: false, data: [], blocked: false, error: '' });
   assert.equal(notBlocked.errorText, NO_DATA);
+});
+
+// 5b. 進階 picker：blocked:true → blocked 文案；blocked:false → data.error（否則 hint）
+async function driveAdvanced(thisArg, json) {
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => json,
+  });
+  thisArg.searchQuery = 'FC2-123456';
+  thisArg.cancelSearch = () => {};
+  await thisArg.advancedSearch('fc2');
+}
+
+test('5b 進階 picker：blocked:true → blocked 文案；blocked:false → 逐字 data.error', async () => {
+  setup();
+  const blockedThis = makeFakeThis();
+  await driveAdvanced(blockedThis, {
+    success: false,
+    data: [],
+    blocked: true,
+    blocked_sources: ['fc2'],
+    error: BACKEND_NOT_FOUND,
+  });
+  assert.equal(blockedThis.errorText, BLOCKED_TEXT);
+  assert.notEqual(blockedThis.errorText, BACKEND_NOT_FOUND);
+  assert.notEqual(blockedThis.errorText, HINT);
+
+  setup();
+  const errorFirst = makeFakeThis();
+  await driveAdvanced(errorFirst, {
+    success: false,
+    data: [],
+    blocked: false,
+    error: 'explicit backend error',
+  });
+  assert.equal(errorFirst.errorText, 'explicit backend error');
+
+  setup();
+  const hintFallback = makeFakeThis();
+  await driveAdvanced(hintFallback, { success: false, data: [], blocked: false, error: '' });
+  assert.equal(hintFallback.errorText, HINT);
 });
 
 // 5. 分支 4（逐檔搜尋）：blocked:true → coverError 是 blocked 文案；false → 既有 {number} 文案逐字

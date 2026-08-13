@@ -68,6 +68,7 @@ export function rescrapeState() {
         rescrapeLoadingSource: null,       // string | null（明確，:disabled 純 boolean）
         rescrapePreview: null,             // transient（CD-62-2）
         rescrapeNotFound: false,
+        rescrapeBlocked: false,
         rescrapeCandidates: [],            // CD-86-6：多版本候選陣列；單版本/非 javlib 為 []
         rescrapeVersionIdx: 0,             // 當前 preview 游標
         rescrapeCfWaiting: false,          // 70-T6: CF 等待態（polling 中）
@@ -96,6 +97,7 @@ export function rescrapeState() {
             this.rescrapeVersionIdx = 0;
             this.rescrapeLoadingSource = null;
             this.rescrapeNotFound = false;
+            this.rescrapeBlocked = false;
             this._rescrapeVideo = video;
             this._switchTarget = null;     // 62c-3：每次開窗先清；switch-source 入口由 openSwitchSourcePicker 隨後捕捉
         },
@@ -214,6 +216,7 @@ export function rescrapeState() {
                 return;
             }
             this.rescrapeNotFound = false;
+            this.rescrapeBlocked = false;
             this.rescrapeLoadingSource = sourceId;
             try {
                 const resp = await fetch('/api/rescrape/preview', {
@@ -239,6 +242,7 @@ export function rescrapeState() {
                     this.showToast(window.t('showcase.rescrape.jl_desktop_only'), 'warning');
                     return;
                 }
+                if (data && data.blocked) { this.rescrapeBlocked = true; return; }
                 // 62c-3 US7：switch-source 入口（在 showcase 分支之前判斷）。找到 → 只替換捕捉的當前卡 slot
                 // （不重設結果列、currentIndex 不歸零、無 ✓/✗ commit）+ seed cycle state；找不到 → 沿用 not-found。
                 // 2026-05-31：番號改為可編輯（拍板放開唯讀），故 stale 比對仍用捕捉的原 t.number
@@ -378,6 +382,7 @@ export function rescrapeState() {
             this.rescrapeCandidates = [];
             this.rescrapeVersionIdx = 0;
             this.rescrapeNotFound = false;
+            this.rescrapeBlocked = false;
         },
 
         /**
@@ -544,6 +549,7 @@ export function rescrapeState() {
             this.rescrapeCandidates = [];
             this.rescrapeVersionIdx = 0;
             this.rescrapeNotFound = false;
+            this.rescrapeBlocked = false;
             this.rescrapeLoadingSource = null;
             this._switchTarget = null;     // 62c-3：關窗清掉捕捉的 slot（switch-source 入口）
         },

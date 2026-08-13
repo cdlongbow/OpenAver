@@ -63,7 +63,7 @@ _FAKE_IMG_BYTES = b"\xff\xd8\xff\xe0FAKE-IMG"
 # acceptance assertions meaningful (card §"mock 必須寫真檔").
 # ---------------------------------------------------------------------------
 
-def _fake_search_jav(number, source="auto", proxy_url="", javbus_lang=None):
+def _fake_search_jav(number, source="auto", proxy_url="", javbus_lang=None, **_kw):  # **_kw：TASK-118-T6 P2-1b 起 produce_source 會多傳 blocked_out；本 stub 不關心它
     """Return a scraped-meta dict per number. NO network."""
     return {
         "number": number,
@@ -1059,7 +1059,7 @@ def test_incremental_idempotent(tmp_path, monkeypatch, client, parse_sse_events)
 # is kept as-is.
 # ---------------------------------------------------------------------------
 
-def _fake_search_jav_round1(number, source="auto", proxy_url="", javbus_lang=None):
+def _fake_search_jav_round1(number, source="auto", proxy_url="", javbus_lang=None, **_kw):  # **_kw：TASK-118-T6 P2-1b 起 produce_source 會多傳 blocked_out；本 stub 不關心它
     """Round 1: title A. sample_images kept in the fixture for realism but
     unused post-T2 (see reconciliation note above — bulk produce never
     downloads samples)."""
@@ -1079,7 +1079,7 @@ def _fake_search_jav_round1(number, source="auto", proxy_url="", javbus_lang=Non
     }
 
 
-def _fake_search_jav_round2(number, source="auto", proxy_url="", javbus_lang=None):
+def _fake_search_jav_round2(number, source="auto", proxy_url="", javbus_lang=None, **_kw):  # **_kw：TASK-118-T6 P2-1b 起 produce_source 會多傳 blocked_out；本 stub 不關心它
     """Round 2: DIFFERENT title (maker corrected it). sample_images count
     dropped in the fixture too but is unused post-T2 (see note above)."""
     return {

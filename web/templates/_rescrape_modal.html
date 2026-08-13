@@ -28,7 +28,7 @@
            但實測「拖入檔名解析錯 → 搜尋無結果 → 想在當前卡改正番號重抓」是真實工作流，
            故放開唯讀，讓 🔄 長壓 = 改番號 + 挑來源、只替換當前卡（仍不重設結果列，與 US5 區隔）。 #}
         <input class="rescrape-num-input" type="text" x-model="rescrapeNumber"
-               @input="if (rescrapeCfWaiting) cancelCfPoll(); rescrapeNotFound = false">
+               @input="if (rescrapeCfWaiting) cancelCfPoll(); rescrapeNotFound = false; rescrapeBlocked = false">
         <div class="rescrape-hint">{{ t('showcase.rescrape.filename_hint') }}：<code x-text="rescrapeOriginalFilename"></code></div>
       </div>
 
@@ -107,6 +107,10 @@
         <div class="rescrape-inline-error" x-show="rescrapeNotFound" x-cloak>
           <i class="bi bi-exclamation-triangle" aria-hidden="true"></i>
           <span>{{ t('showcase.rescrape.not_found') }}</span>
+        </div>
+        <div class="rescrape-inline-error" x-show="rescrapeBlocked" x-cloak>
+          <i class="bi bi-exclamation-triangle" aria-hidden="true"></i>
+          <span>{{ t('showcase.rescrape.blocked') }}</span>
         </div>
       </div>
 

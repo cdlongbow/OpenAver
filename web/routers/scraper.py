@@ -903,20 +903,20 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                     if request.mode == "refresh_full":
                         cache_key = (item.number.upper(), effective_source, effective_lang)
                         if cache_key not in scraper_cache:
+                            blocked_out: list = []
                             fetched = await loop.run_in_executor(
                                 None,
-                                lambda n=item.number, es=effective_source, el=effective_lang: search_jav(
-                                    n,
-                                    source=es,
-                                    proxy_url=proxy_url,
-                                    javbus_lang=el,
+                                lambda n=item.number, es=effective_source, el=effective_lang, bo=blocked_out: search_jav(
+                                    n, source=es, proxy_url=proxy_url, javbus_lang=el, blocked_out=bo,
                                 ),
                             )
-                            # 負向 cache：search_jav 回 None → 存 {}（空 dict falsy）
-                            # enrich_single 收到 {} 時 `is None` 為 False（不再搜），
-                            # `not scraper_data` 為 True（回錯誤）
-                            scraper_cache[cache_key] = fetched if fetched else {}
-                        cached_data = scraper_cache[cache_key]
+                            # 負向 cache：真的查無存 {}；被擋則不快取（cached_data 保持
+                            # None，enrich_single 自己重搜，reason="blocked" 不寫 attempted）。
+                            if fetched:
+                                scraper_cache[cache_key] = fetched
+                            elif not blocked_out:
+                                scraper_cache[cache_key] = {}
+                        cached_data = scraper_cache.get(cache_key)
 
                     result = await loop.run_in_executor(
                         None,

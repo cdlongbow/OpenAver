@@ -21,7 +21,7 @@ import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 from core import thumbnail_cache
 from core.config import STEM_IMAGE_MODES, iter_gallery_sources, normalize_external_manager
@@ -74,6 +74,7 @@ from core.path_utils import (
 )
 from core.readonly_source import _canonical_source_prefix
 from core.scraper import extract_number, search_jav, search_jav_single_source
+from core.scrapers.errors import BlockedRecord
 from core.video_extensions import get_video_extensions
 
 logger = get_logger(__name__)
@@ -1391,6 +1392,16 @@ def _nfo_to_producer_meta(root: ET.Element, fallback_number: str) -> dict:
     }
 
 
+def _blocked_kw(blocked_out: Optional[List[BlockedRecord]]) -> dict:
+    """`blocked_out=None`（呼叫端未要求被擋訊號）→ 回空 dict，`search_jav`/
+    `search_jav_single_source` 呼叫時**完全不帶** `blocked_out` 這個 kwarg——
+    與改動前逐位元組相同的呼叫形狀，`tests/unit/test_readonly_producer.py`
+    既有對 `search_jav` 的固定簽章 stub / `assert_called_once_with` 斷言零
+    回歸。呼叫端明確傳非 None list（如 `enrich_one_readonly`）才會被轉送。
+    """
+    return {} if blocked_out is None else {'blocked_out': blocked_out}
+
+
 def resolve_ingest_plan(
     src_fs_path: str,
     number: Optional[str],
@@ -1401,6 +1412,7 @@ def resolve_ingest_plan(
     scraper_data: Optional[dict] = None,
     source: Optional[str] = None,
     javbus_lang: Optional[str] = None,
+    blocked_out: Optional[List[BlockedRecord]] = None,
 ) -> tuple:
     """Metadata + cover two-axis decision for one source file (CD-104-3a).
 
@@ -1499,9 +1511,9 @@ def resolve_ingest_plan(
         # javbus_lang instead of hardcoding source="auto" — mirrors the
         # rescrape branch's dispatch below.
         elif source and source not in (None, 'auto'):
-            meta = search_jav_single_source(number, source, proxy_url, javbus_lang=javbus_lang)
+            meta = search_jav_single_source(number, source, proxy_url, javbus_lang=javbus_lang, **_blocked_kw(blocked_out))
         else:
-            meta = search_jav(number, source="auto", proxy_url=proxy_url, javbus_lang=javbus_lang)
+            meta = search_jav(number, source="auto", proxy_url=proxy_url, javbus_lang=javbus_lang, **_blocked_kw(blocked_out))
 
         nfo_thumb = root.findtext('thumb') if valid_nfo else None
         cover_fs = VideoScanner().find_cover_image(src_fs_path, nfo_thumb=nfo_thumb)
@@ -1573,9 +1585,9 @@ def resolve_ingest_plan(
         if scraper_data:
             meta = scraper_data
         elif source and source not in (None, 'auto'):
-            meta = search_jav_single_source(number, source, proxy_url, javbus_lang=javbus_lang) if number else None
+            meta = search_jav_single_source(number, source, proxy_url, javbus_lang=javbus_lang, **_blocked_kw(blocked_out)) if number else None
         else:
-            meta = search_jav(number, source="auto", proxy_url=proxy_url, javbus_lang=javbus_lang) if number else None
+            meta = search_jav(number, source="auto", proxy_url=proxy_url, javbus_lang=javbus_lang, **_blocked_kw(blocked_out)) if number else None
         cover_strategy = ('download', meta['cover']) if meta and meta.get('cover') else ('none',)
 
     if meta is None:
@@ -1767,6 +1779,29 @@ def _readonly_enrich_failure(error, reason=None) -> EnrichResult:
     )
 
 
+def _readonly_not_found_result(repo_factory, canonical, number, fs_path, *, blocked: bool) -> EnrichResult:
+    """`enrich_one_readonly` 的 not-found 分流（TASK-118-T6 P2-1b，從該函式
+    抽出，收斂函式規模）：`resolve_ingest_plan` 沒找到可用 meta 時，決定
+    「要不要記 scrape_attempted_at」與「reason 是 blocked 還是 not_found」。
+
+    blocked=False（真的查無）：mirror 非唯讀 core.enricher.py:391/429 的
+    not-found 記帳——mark scrape_attempted_at 讓這片不再被無限重掃/重刮。
+    TRAP：update_scrape_attempted_at 是 bare UPDATE...WHERE path=?，無 row
+    靜默 no-op，故必須先 insert_if_ignore 建樁（_readonly_stub_not_found 已
+    保證這個順序，見其 docstring；本函式只決定「要不要呼叫」，不碰它的
+    body）。
+
+    blocked=True（被擋 ≠ 查無此片，core/enricher.py:404-410 同語意）：
+    不記 scrape_attempted_at，否則這片會從缺漏清單永久消失（scanner.py 的
+    `if produced or tried: continue`）。
+    """
+    if blocked:
+        return _readonly_enrich_failure("找不到可用的番號資料", "blocked")
+    repo = repo_factory()
+    _readonly_stub_not_found(repo, canonical, number, fs_path)
+    return _readonly_enrich_failure("找不到可用的番號資料", "not_found")
+
+
 # ---------------------------------------------------------------------------
 # TASK-109-T2 (CD-109-1/2/5/8): single public readonly-enrich entry point —
 # the "produce core" (URI→FS through EnrichResult) shared by the enrich-single
@@ -1870,25 +1905,16 @@ def enrich_one_readonly(
     # step 1
     fs_path = uri_to_local_fs_path(file_path, path_mappings)
     # step 2
+    blocked_out: List[BlockedRecord] = []
     meta, cover_strategy = resolve_ingest_plan(
         fs_path, number, scraper_cfg,
         action=action, proxy_url=proxy_url, scraper_data=scraper_data, source=scrape_source,
-        javbus_lang=javbus_lang,
+        javbus_lang=javbus_lang, blocked_out=blocked_out,
     )
+    # step 3（TASK-118-T6 P2-1b：not-found 記帳 ＋ blocked/not_found 分流已抽
+    # 成 module-level helper _readonly_not_found_result，見其 docstring）
     if not meta:
-        # FIX P2-A / FIX#4 (P2 parity closeout): mirror non-readonly
-        # core.enricher.py:391/429's not-found bookkeeping — mark
-        # scrape_attempted_at so this file isn't rescanned/rescraped
-        # forever. TRAP: update_scrape_attempted_at is a bare
-        # UPDATE...WHERE path=? that silently no-ops without a row —
-        # insert_if_ignore MUST run first to create the stub row
-        # (mirrors bulk readonly_producer.py:1559-1561 byte-for-byte).
-        # reason='not_found' (not 'error') matches the batch sibling
-        # and non-readonly enricher.py:393/431.
-        # step 3
-        repo = repo_factory()
-        _readonly_stub_not_found(repo, canonical, number, fs_path)
-        return _readonly_enrich_failure("找不到可用的番號資料", "not_found")
+        return _readonly_not_found_result(repo_factory, canonical, number, fs_path, blocked=bool(blocked_out))
     # step 4
     repo = repo_factory()
     existing = repo.get_by_path(canonical)
@@ -2099,15 +2125,19 @@ def produce_source(source, config, repo, *, proxy_url="", on_progress=None, shou
         # to the pre-T2 scrape-everything behavior when neither sidecar nor
         # local cover exists (CD-104-2's 3-state cover_strategy tuple lives
         # inside resolve_ingest_plan now, not inline here).
+        blocked_out: List[BlockedRecord] = []
         meta, cover_strategy = resolve_ingest_plan(
             fi["path"], number, scraper_cfg, action='ingest', proxy_url=proxy_url,
+            blocked_out=blocked_out,
         )
         if not meta or not meta.get('number'):
             # Only stub+record-attempt when a filename number exists (matches
             # the old `if not number` branch's behavior byte-for-byte for the
             # no-number-no-NFO case — no DB row for a file we can't identify
-            # at all).
-            if number:
+            # at all). TASK-118-T6 P2-1b: 被擋 ≠ 查無 —— blocked 時不記
+            # scrape_attempted_at（否則該片從缺漏清單永久消失），其餘流程
+            # （no_scrape 計數、進度事件、整批不中止）逐字不變。
+            if number and not blocked_out:
                 _readonly_stub_not_found(repo, src_uri, number, fi["path"])
             result.no_scrape += 1
             _emit(on_progress, result, src_uri, "no_scrape")
