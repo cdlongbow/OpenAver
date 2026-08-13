@@ -129,9 +129,7 @@ export function searchStateFileList() {
                             file.searched = true;
                             file.searchResults = [];
                             this._resetCoverState();
-                            this.coverError = data.blocked
-                                ? window.t('search.filelist.blocked', { number: file.number })
-                                : window.t('search.filelist.not_found', { number: file.number });
+                            this.coverError = window.t('search.filelist.not_found', { number: file.number });
 
                             // 重置共享狀態
                             this.searchResults = [];

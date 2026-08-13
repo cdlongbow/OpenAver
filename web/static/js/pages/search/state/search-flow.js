@@ -362,9 +362,7 @@ export function searchStateSearchFlow() {
                             // 全部失敗且無 fallback → 顯示 error
                             // A7-Prod: 清理 _heroSlotReserved（頁面將切到 error state）
                             this._heroSlotReserved = false;
-                            this.errorText = data.blocked
-                                ? window.t('search.error.blocked')
-                                : window.t('search.error.no_data');
+                            this.errorText = window.t('search.error.no_data');
                             this.pageState = 'error';
                         } else {
                             // 正常 stream 完成：只補充 metadata
@@ -433,9 +431,7 @@ export function searchStateSearchFlow() {
                         this.addingTag = false;
                     } else {
                         this._searchSnapshot = null; // Fix 2: 清空 snapshot（搜尋失敗）
-                        this.errorText = data.blocked
-                            ? window.t('search.error.blocked')
-                            : window.t('search.error.no_data');  // T6c: Alpine state
+                        this.errorText = window.t('search.error.no_data');  // T6c: Alpine state
                         this.pageState = 'error';
                     }
                 }
@@ -560,9 +556,7 @@ export function searchStateSearchFlow() {
                 if (this._heroSlotReserved) {
                     this._heroSlotReserved = false;
                 }
-                this.errorText = data.blocked
-                    ? window.t('search.error.blocked')
-                    : (data.error || window.t('search.error.no_data'));  // T6c: Alpine state
+                this.errorText = data.error || window.t('search.error.no_data');  // T6c: Alpine state
                 this.pageState = 'error';
             }
         } catch (err) {

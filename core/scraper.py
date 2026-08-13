@@ -33,7 +33,6 @@ from core.metatube.client import MetatubeHttpClient, pick_movie_result
 from core.metatube.mapper import map_movie_info
 from core.metatube.state import metatube_state
 from core.metatube.errors import MetatubeUnavailable, MetatubeNotFound, MetatubeAuthError
-from core.scrapers.errors import SourceBlocked, BlockedRecord
 
 
 # ============ 全域設定 ============
@@ -210,33 +209,7 @@ def _dmm_proxy_url(proxy_url: str) -> str:
 VALID_JAVBUS_LANGS = {'zh-tw', 'ja', 'en'}
 
 
-def _record_blocked(e: Exception, blocked_out: Optional[List[BlockedRecord]]) -> bool:
-    """e 是 SourceBlocked 時：寫 log ＋（blocked_out 非 None 時）append 一筆 BlockedRecord，回 True。
-
-    單一所有者：三個記錄點（auto builtin / metatube / explicit）都呼叫這裡，
-    避免三份手抄（TASK-118-T4a）。log 一律寫（不依賴 blocked_out 是否為 None）；
-    有回應才記 status（AC-4.2：status is None 時訊息不得出現 status 數字）。
-    """
-    if not isinstance(e, SourceBlocked):
-        return False
-    if e.status is None:
-        logger.warning(
-            "[Search] 來源被擋 source=%s article_id=%s", e.source_id, e.article_id,
-        )
-    else:
-        logger.warning(
-            "[Search] 來源被擋 source=%s article_id=%s status=%s",
-            e.source_id, e.article_id, e.status,
-        )
-    if blocked_out is not None:
-        blocked_out.append(
-            BlockedRecord(source_id=e.source_id, article_id=e.article_id, status=e.status)
-        )
-    return True
-
-
-def search_jav(number: str, source: str = 'auto', proxy_url: str = '', javbus_lang: Optional[str] = None,
-                blocked_out: Optional[List[BlockedRecord]] = None) -> Optional[Dict[str, Any]]:
+def search_jav(number: str, source: str = 'auto', proxy_url: str = '', javbus_lang: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     搜尋 JAV 資訊（向後相容函數）
     """
@@ -320,8 +293,7 @@ def search_jav(number: str, source: str = 'auto', proxy_url: str = '', javbus_la
                             results_by_source[v.source] = v
                             logger.debug(f"[Search] {scraper_name} 找到結果")
                     except Exception as e:
-                        if not _record_blocked(e, blocked_out):
-                            logger.debug(f"[Search] {scraper_name} 錯誤: {e}")
+                        logger.debug(f"[Search] {scraper_name} 錯誤: {e}")
                         continue
 
         # metatube subset：bounded parallel
@@ -333,8 +305,7 @@ def search_jav(number: str, source: str = 'auto', proxy_url: str = '', javbus_la
                         v = fut.result()
                         if v:
                             results_by_source[v.source] = v
-                    except Exception as e:  # noqa: S112 — intentional skip-on-error in parallel scraper loop; individual source failure should not abort others
-                        _record_blocked(e, blocked_out)
+                    except Exception:  # noqa: S112 — intentional skip-on-error in parallel scraper loop; individual source failure should not abort others
                         continue
 
         # rebuild all_data 按 enabled_sids（user-drag）順序，保全 merge 優先度契約
@@ -362,11 +333,10 @@ def search_jav(number: str, source: str = 'auto', proxy_url: str = '', javbus_la
                 from core.cf_transport import CfChallengeRequired, CfTransportUnavailable
                 if isinstance(e, (CfChallengeRequired, CfTransportUnavailable)):
                     raise          # bubble 給 router，不 continue
-                if not _record_blocked(e, blocked_out):
-                    # [CF-DIAG] DEBUG→INFO + 例外型別：explicit 分支是 JL 的唯一路徑
-                    # （manual_only）。型別讓 40 分鐘重現能分辨 WebViewException（死窗）
-                    # vs TimeoutError（靜默死亡）vs 其他——之前藏在 DEBUG 看不到。
-                    logger.info("[Search] %s 例外 %s: %s", scraper_name, type(e).__name__, e)
+                # [CF-DIAG] DEBUG→INFO + 例外型別：explicit 分支是 JL 的唯一路徑
+                # （manual_only）。型別讓 40 分鐘重現能分辨 WebViewException（死窗）
+                # vs TimeoutError（靜默死亡）vs 其他——之前藏在 DEBUG 看不到。
+                logger.info("[Search] %s 例外 %s: %s", scraper_name, type(e).__name__, e)
                 continue
 
     if not all_data:
@@ -400,10 +370,9 @@ def search_jav(number: str, source: str = 'auto', proxy_url: str = '', javbus_la
 
 def search_jav_single_source(
     number: str, source: str, proxy_url: str = '', javbus_lang: Optional[str] = None,
-    blocked_out: Optional[List[BlockedRecord]] = None,
 ) -> Optional[Dict[str, Any]]:
     """指定單一來源搜尋"""
-    return search_jav(number, source=source, proxy_url=proxy_url, javbus_lang=javbus_lang, blocked_out=blocked_out)
+    return search_jav(number, source=source, proxy_url=proxy_url, javbus_lang=javbus_lang)
 
 
 def search_javlib_versions(number: str) -> List[Dict[str, Any]]:
@@ -816,7 +785,7 @@ def _get_uncensored_sources(search_term: str) -> list[str]:
     return mt_pick + builtin
 
 
-def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: Optional[Callable[[str, str], None]] = None, uncensored_mode: bool = False, proxy_url: str = '', result_callback: Optional[Callable[[int, Any], None]] = None, discovery_only: bool = False, blocked_out: Optional[List[BlockedRecord]] = None) -> List[Dict[str, Any]]:  # noqa: C901 — 無碼/有碼兩條搜尋鏈並存於同一函式；CD-65-7 已明文交代無碼模式模糊搜尋「預期回空」的設計語意，拆分會把這段語意說明從呼叫點剝離、增加誤讀風險
+def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: Optional[Callable[[str, str], None]] = None, uncensored_mode: bool = False, proxy_url: str = '', result_callback: Optional[Callable[[int, Any], None]] = None, discovery_only: bool = False) -> List[Dict[str, Any]]:  # noqa: C901 — 無碼/有碼兩條搜尋鏈並存於同一函式；CD-65-7 已明文交代無碼模式模糊搜尋「預期回空」的設計語意，拆分會把這段語意說明從呼叫點剝離、增加誤讀風險
     """
     智慧搜尋：自動判斷搜尋類型並執行
 
@@ -849,21 +818,12 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
 
         result = None
         unc_sources = _get_uncensored_sources(search_term)
-        # blocked_out=None（呼叫端未傳）時不建 local list、**不加 kwarg**。
-        # ⚠️ 這不是多餘防禦：既有測試會用**固定簽章的 stub** 取代 search_jav /
-        # search_jav_single_source（例 tests/unit/test_pipeline_routing.py 的 exact
-        # cascade stub），多送一個 kwarg 會在那些 stub 上 TypeError，再被 cascade 的
-        # except 吞成 miss → 整條路徑靜默回空。2026-08-13 試改成無條件傳，實測 7 紅。
-        _local_blocked: Optional[List[BlockedRecord]] = [] if blocked_out is not None else None
         for unc_source in unc_sources:
             if status_callback:
                 status_callback(unc_source, 'searching')
-            _kw = {'blocked_out': _local_blocked} if _local_blocked is not None else {}
-            result = search_jav(search_term, source=unc_source, proxy_url=proxy_url, **_kw)
+            result = search_jav(search_term, source=unc_source, proxy_url=proxy_url)
             if result:
                 break
-        if blocked_out is not None:
-            blocked_out.extend(_local_blocked)
 
         results = [result] if result else []
         if status_callback:
@@ -886,21 +846,12 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
         search_term = extracted if extracted else query
         result = None
         unc_sources = _get_uncensored_sources(search_term)
-        # blocked_out=None（呼叫端未傳）時不建 local list、**不加 kwarg**。
-        # ⚠️ 這不是多餘防禦：既有測試會用**固定簽章的 stub** 取代 search_jav /
-        # search_jav_single_source（例 tests/unit/test_pipeline_routing.py 的 exact
-        # cascade stub），多送一個 kwarg 會在那些 stub 上 TypeError，再被 cascade 的
-        # except 吞成 miss → 整條路徑靜默回空。2026-08-13 試改成無條件傳，實測 7 紅。
-        _local_blocked: Optional[List[BlockedRecord]] = [] if blocked_out is not None else None
         for unc_source in unc_sources:
             if status_callback:
                 status_callback(unc_source, 'searching')
-            _kw = {'blocked_out': _local_blocked} if _local_blocked is not None else {}
-            result = search_jav(search_term, source=unc_source, proxy_url=proxy_url, **_kw)
+            result = search_jav(search_term, source=unc_source, proxy_url=proxy_url)
             if result:
                 break
-        if blocked_out is not None:
-            blocked_out.extend(_local_blocked)
         results = [result] if result else []
         if status_callback:
             status_callback('done', f'found:{len(results)}')
@@ -916,33 +867,20 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
 
         avail_map = metatube_state.availability_map()
         enabled_sids = get_enabled_source_ids(availability_map=avail_map)
-        # blocked_out=None（呼叫端未傳）時不建 local list、**不加 kwarg**。
-        # ⚠️ 這不是多餘防禦：既有測試會用**固定簽章的 stub** 取代 search_jav /
-        # search_jav_single_source（例 tests/unit/test_pipeline_routing.py 的 exact
-        # cascade stub），多送一個 kwarg 會在那些 stub 上 TypeError，再被 cascade 的
-        # except 吞成 miss → 整條路徑靜默回空。2026-08-13 試改成無條件傳，實測 7 紅。
-        _local_blocked: Optional[List[BlockedRecord]] = [] if blocked_out is not None else None
         for sid in enabled_sids:
             if status_callback:
                 status_callback(sid, 'searching')
             try:
-                _kw = {'blocked_out': _local_blocked} if _local_blocked is not None else {}
-                res = search_jav_single_source(query, sid, proxy_url=proxy_url, **_kw)
+                res = search_jav_single_source(query, sid, proxy_url=proxy_url)
                 if res:
                     res['_mode'] = 'exact'
                     if status_callback:
                         status_callback('done', 'found:1')
-                    # 命中 early-return 前仍要併回（cascade lifecycle 對稱：前面被擋的
-                    # 事實不因後面命中而消失）
-                    if blocked_out is not None:
-                        blocked_out.extend(_local_blocked)
                     return [res]
             except Exception as e:
                 logger.debug('fast-path %s miss/error: %s', sid, e)
 
         # 全部 miss（極冷門番號/打錯字）
-        if blocked_out is not None:
-            blocked_out.extend(_local_blocked)
         if status_callback:
             status_callback('done', 'found:0')
         return []

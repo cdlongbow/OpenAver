@@ -31,7 +31,6 @@ from core.scrapers import (
     AVSOXScraper,
     DMMScraper,
 )
-from core.scrapers.errors import SourceBlocked
 
 pytestmark = pytest.mark.smoke
 
@@ -53,10 +52,6 @@ def _run_canary(source: str, scraper, note: str = "") -> None:
         except TimeoutError as e:
             # Feed the exception instance (not None) so classify_one row 1 -> skip.
             results.append(classify_one(e, None, number, source))
-            continue
-        except SourceBlocked as e:
-            # 被擋 ＝ 不可達 ＝ skip，與 timeout 同語意
-            results.append(classify_one(TimeoutError(str(e)), None, number, source))
             continue
         probe = _probe_reachable(source, number, scraper) if source in GROUP_A else None
         results.append(classify_one(video, probe, number, source))

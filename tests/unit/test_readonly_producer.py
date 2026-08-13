@@ -3323,7 +3323,7 @@ class TestProduceSourceMixedStats:
                 return None
             return basename.replace(".mp4", "").upper()
 
-        def fake_search_jav(number, source="auto", proxy_url="", javbus_lang=None, **_kw):  # **_kw：TASK-118-T6 P2-1b 起 produce_source 會多傳 blocked_out；本 stub 不關心它
+        def fake_search_jav(number, source="auto", proxy_url="", javbus_lang=None):
             if "NOSCRAPE" in number:
                 return None
             return {"number": number, "title": "T", "cover": "", "actors": [], "tags": [],
@@ -4069,7 +4069,7 @@ class TestWriteMovieAssetsStrmDrift:
 
 def _e2e_search_jav_factory():
     """Return a search_jav stub yielding per-number meta (cover + 1 sample)."""
-    def fake_search_jav(number, source="auto", proxy_url="", javbus_lang=None, **_kw):  # **_kw：TASK-118-T6 P2-1b 起 produce_source 會多傳 blocked_out；本 stub 不關心它
+    def fake_search_jav(number, source="auto", proxy_url="", javbus_lang=None):
         return {
             'number': number,
             'title': f'Title {number}',
@@ -4426,7 +4426,7 @@ class TestWriteMovieAssetsContainment:
         repo.get_all.return_value = []
         files = [{'path': str(source_dir / self.FILENAME), 'size': 1_000_000, 'mtime': 1.0, 'nfo_mtime': 0.0}]
 
-        def fake_search_jav(number, source="auto", proxy_url="", javbus_lang=None, **_kw):  # **_kw：TASK-118-T6 P2-1b 起 produce_source 會多傳 blocked_out；本 stub 不關心它
+        def fake_search_jav(number, source="auto", proxy_url="", javbus_lang=None):
             meta = {
                 'number': number,
                 'title': 'Normal Title',
@@ -6283,7 +6283,7 @@ class TestCallSequenceEquivalence:
         repo.is_output_dir_taken.return_value = False
         repo.get_empty_focal_candidates.return_value = []
 
-        def fake_search_jav(number, source="auto", proxy_url="", javbus_lang=None, **_kw):  # **_kw：TASK-118-T6 P2-1b 起 produce_source 會多傳 blocked_out；本 stub 不關心它
+        def fake_search_jav(number, source="auto", proxy_url="", javbus_lang=None):
             call_log.append(('search_jav', number))
             return {
                 'number': number, 'title': f'Title {number}', 'cover': f'http://x/{number}.jpg',

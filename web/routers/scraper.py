@@ -178,16 +178,11 @@ def scrape_single(request: ScrapeRequest) -> dict:
         metadata['number'] = number
     else:
         # 沒有 metadata 才重新搜尋
-        blocked_out: list = []
-        metadata = search_jav(number, proxy_url=_proxy_url, blocked_out=blocked_out)
+        metadata = search_jav(number, proxy_url=_proxy_url)
         if not metadata:
-            blocked = bool(blocked_out)
-            sources = list(dict.fromkeys(r.source_id for r in blocked_out)) if blocked else []
             return {
                 "success": False,
-                "error": f"找不到 {number} 的資料",
-                "blocked": blocked,
-                "blocked_sources": sources,
+                "error": f"找不到 {number} 的資料"
             }
         metadata['number'] = number
 
@@ -335,35 +330,26 @@ def rescrape_preview_endpoint(request: RescrapePreviewRequest) -> dict:
 
     try:
         if request.source == 'javlibrary':
-            # javlibrary 走 CF 通道、不經 search_jav：它的失敗語意由 cf_needed /
-            # cf_unavailable 兩個既有旗標表達，blocked 恆為 false。三條 return 刻意
-            # **不加** blocked 兩欄——既有測試以逐欄相等釘住這個回應形狀
-            # （tests/integration/test_rescrape_javlib.py），而前端對缺席的 blocked
-            # 一律當 false 處理（T4c 防呆），加了只是動既有斷言、換不到任何行為。
             versions = search_javlib_versions(request.number)  # Cf* 例外由外層 except 接
             if not versions:
                 return {"success": False}
             if len(versions) == 1:
                 return {"success": True, **strip_internal_nfo_keys(versions[0])}
             return {"success": True, "candidates": [strip_internal_nfo_keys(v) for v in versions]}
-        blocked_out: list = []
-        if request.source == "auto":
+        elif request.source == "auto":
             result = search_jav(
                 request.number,
                 source="auto",
                 proxy_url=proxy_url,
-                blocked_out=blocked_out,
             )
         else:
             result = search_jav_single_source(
-                request.number, request.source, proxy_url, blocked_out=blocked_out
+                request.number, request.source, proxy_url
             )
 
         if result is None:
-            blocked = bool(blocked_out)
-            sources = list(dict.fromkeys(r.source_id for r in blocked_out)) if blocked else []
-            return {"success": False, "blocked": blocked, "blocked_sources": sources}
-        return {"success": True, "blocked": False, "blocked_sources": [], **strip_internal_nfo_keys(result)}
+            return {"success": False}
+        return {"success": True, **strip_internal_nfo_keys(result)}
     except CfChallengeRequired:
         t = get_cf_transport()
         if t:
@@ -903,20 +889,20 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                     if request.mode == "refresh_full":
                         cache_key = (item.number.upper(), effective_source, effective_lang)
                         if cache_key not in scraper_cache:
-                            blocked_out: list = []
                             fetched = await loop.run_in_executor(
                                 None,
-                                lambda n=item.number, es=effective_source, el=effective_lang, bo=blocked_out: search_jav(
-                                    n, source=es, proxy_url=proxy_url, javbus_lang=el, blocked_out=bo,
+                                lambda n=item.number, es=effective_source, el=effective_lang: search_jav(
+                                    n,
+                                    source=es,
+                                    proxy_url=proxy_url,
+                                    javbus_lang=el,
                                 ),
                             )
-                            # 負向 cache：真的查無存 {}；被擋則不快取（cached_data 保持
-                            # None，enrich_single 自己重搜，reason="blocked" 不寫 attempted）。
-                            if fetched:
-                                scraper_cache[cache_key] = fetched
-                            elif not blocked_out:
-                                scraper_cache[cache_key] = {}
-                        cached_data = scraper_cache.get(cache_key)
+                            # 負向 cache：search_jav 回 None → 存 {}（空 dict falsy）
+                            # enrich_single 收到 {} 時 `is None` 為 False（不再搜），
+                            # `not scraper_data` 為 True（回錯誤）
+                            scraper_cache[cache_key] = fetched if fetched else {}
+                        cached_data = scraper_cache[cache_key]
 
                     result = await loop.run_in_executor(
                         None,

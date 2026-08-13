@@ -43,21 +43,12 @@ from core.scraper import (
     search_jav, smart_search, is_partial_number, is_number_format,
     is_prefix_only, search_partial, search_actress, strip_internal_nfo_keys
 )
-from core.scrapers.errors import BlockedRecord
 from core.scrapers.utils import SOURCE_NAMES
 
 router = APIRouter(prefix="/api", tags=["search"])
 
 # 載入片商前綴對照表（啟動時一次性載入）
 _MAKER_MAPPING = load_prefix_mapping()
-
-
-def _blocked_flags(results, blocked_out) -> dict:
-    """結果為空且 blocked_out 非空才亮旗；有結果時恆 false / []。"""
-    if results or not blocked_out:
-        return {"blocked": False, "blocked_sources": []}
-    sources = list(dict.fromkeys(r.source_id for r in blocked_out))
-    return {"blocked": True, "blocked_sources": sources}
 
 
 # 動態條目（metatube 圖片端點）path 的合法字元集。刻意**不含 `%`**——理由見
@@ -290,16 +281,15 @@ def search(
     use_discovery = discovery and mode in ('actress', 'partial', 'prefix')
 
     # 自動模式使用 smart_search
-    blocked_out: List[BlockedRecord] = []
     if mode == "auto":
-        results = smart_search(q, limit=limit, offset=offset, uncensored_mode=uncensored_mode, proxy_url=proxy_url, discovery_only=use_discovery, blocked_out=blocked_out)
+        results = smart_search(q, limit=limit, offset=offset, uncensored_mode=uncensored_mode, proxy_url=proxy_url, discovery_only=use_discovery)
     elif mode == "exact":
         if source:
             # 指定來源搜索
             from core.scraper import search_jav_single_source
             from core.cf_transport import CfChallengeRequired, CfTransportUnavailable
             try:
-                data = search_jav_single_source(q, source, proxy_url=proxy_url, blocked_out=blocked_out)
+                data = search_jav_single_source(q, source, proxy_url=proxy_url)
             # CD-70c-4: search entry does NOT wire the interactive CF flow (no begin_solve,
             # no cf_needed). The JavLibrary pill is hidden in search context when
             # cf_transport_available is false (frontend isJlUnavailable), so this path is
@@ -329,14 +319,14 @@ def search(
             results = [data] if data else []
         else:
             # 精確搜索（使用 smart_search 的 exact 模式）
-            data = search_jav(q, proxy_url=proxy_url, blocked_out=blocked_out)
+            data = search_jav(q, proxy_url=proxy_url)
             results = [data] if data else []
     elif mode == "partial":
         results = search_partial(q, discovery_only=use_discovery)
     elif mode == "actress":
         results = search_actress(q, limit=limit, offset=offset, proxy_url=proxy_url, discovery_only=use_discovery)
     else:
-        results = smart_search(q, limit=limit, offset=offset, proxy_url=proxy_url, discovery_only=use_discovery, blocked_out=blocked_out)
+        results = smart_search(q, limit=limit, offset=offset, proxy_url=proxy_url, discovery_only=use_discovery)
 
     detected_mode = mode if mode != "auto" else _detect_mode(q)
 
@@ -367,8 +357,7 @@ def search(
             "mode": detected_mode,
             "offset": offset,
             "has_more": has_more,
-            "actress_profile": actress_profile,
-            **_blocked_flags(results, blocked_out),
+            "actress_profile": actress_profile
         }
         # discovery flag 只在實際走 discovery 路徑時才標記（auto→exact 不算）
         if use_discovery and detected_mode in ('actress', 'partial', 'prefix'):
@@ -382,8 +371,7 @@ def search(
         "total": 0,
         "mode": detected_mode,
         "has_more": False,
-        "actress_profile": None,
-        **_blocked_flags(results, blocked_out),
+        "actress_profile": None
     }
     if use_discovery and detected_mode in ('actress', 'partial', 'prefix'):
         base_response["discovery"] = True
@@ -670,11 +658,9 @@ async def search_stream(
             # covers both drain sites（L576 live + L590 post-completion）
             status_queue.put({'type': 'result-item', 'slot': slot, 'data': strip_internal_nfo_keys(data)})
 
-    blocked_out: List[BlockedRecord] = []
-
     def run_search():
         """在背景執行搜尋"""
-        return smart_search(q, limit=limit, offset=offset, status_callback=status_callback, uncensored_mode=uncensored_mode, proxy_url=proxy_url, result_callback=result_callback, blocked_out=blocked_out)
+        return smart_search(q, limit=limit, offset=offset, status_callback=status_callback, uncensored_mode=uncensored_mode, proxy_url=proxy_url, result_callback=result_callback)
 
     async def event_generator():
         nonlocal sent_seed
@@ -762,8 +748,7 @@ async def search_stream(
                     'mode': mode,
                     'offset': offset,
                     'has_more': has_more,
-                    'actress_profile': actress_profile,
-                    **_blocked_flags(results_stripped, blocked_out),
+                    'actress_profile': actress_profile
                 }
                 yield f"data: {json.dumps(response)}\n\n"
 

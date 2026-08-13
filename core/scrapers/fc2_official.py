@@ -1,7 +1,10 @@
 """FC2 官方站爬蟲（adult.contents.fc2.com，單次 GET）
 
-與 core/scrapers/fc2.py（javten 鏡像站版）並存，dispatch 尚未接線
-（plan-118b T3 才動 core/scraper.py）。本檔零耦合既有 fc2.py。
+與 core/scrapers/fc2.py（javten 鏡像站版）並存並取代它成為 `fc2` 來源的
+dispatch 目標（core/scraper.py）。本檔零耦合既有 fc2.py。
+
+失敗語意與其他七支來源相同：逾時／連不上／非 200／解析不出商品頁，
+一律回 None（不拋自訂例外）。
 """
 import json
 import re
@@ -13,7 +16,6 @@ from lxml import etree
 from core.logger import get_logger
 
 from .base import BaseScraper
-from .errors import SourceBlocked
 from .models import Actress, ScraperConfig, Video
 from .utils import rate_limit
 
@@ -30,8 +32,8 @@ class FC2OfficialScraper(BaseScraper):
 
     注意：
     - 賣家名同時作為片商與唯一「女優」代表（FC2 無女優資訊）
-    - 軟 404（HTTP 200 但查無資料）與「被擋」是不同語意，
-      前者回 None，後者拋 SourceBlocked（CD-118b-4）
+    - 軟 404（HTTP 200 但查無資料）與連不上／逾時／非 200 一律回 None，
+      與其他來源的靜默 miss 慣例一致
     """
 
     BASE_URL = "https://adult.contents.fc2.com"
@@ -204,29 +206,23 @@ class FC2OfficialScraper(BaseScraper):
             number: 番號（如 FC2-PPV-1234567 / 1234567）
 
         Returns:
-            Video 物件，查無此片（軟 404 / id 不符）返回 None
-
-        Raises:
-            SourceBlocked: 來源被擋／連不上（非 200／逾時／連線失敗）
+            Video 物件；查無此片（軟 404 / id 不符）或連不上／逾時／非 200
+            一律回 None（與其他來源靜默 miss 慣例一致）
         """
         fc2_number = self._normalize_fc2_number(number)
         url = f"{self.BASE_URL}/article/{fc2_number}/?lang=ja"
 
         try:
             resp = self._session.get(url, timeout=self.config.timeout)
-        except requests.Timeout as e:
-            raise SourceBlocked(
-                source_id="fc2", article_id=fc2_number, status=None, message=str(e)
-            ) from e
         except requests.RequestException as e:
-            raise SourceBlocked(
-                source_id="fc2", article_id=fc2_number, status=None, message=str(e)
-            ) from e
+            # requests.Timeout / ConnectionError 皆是 RequestException 子類，單一
+            # except 即覆蓋兩者
+            logger.debug(f"FC2 official request failed for {fc2_number}: {e}")
+            return None
 
         if resp.status_code != 200:
-            raise SourceBlocked(
-                source_id="fc2", article_id=fc2_number, status=resp.status_code
-            )
+            logger.debug("FC2 official non-200 for %s: %s", fc2_number, resp.status_code)
+            return None
 
         try:
             html = etree.fromstring(resp.content, etree.HTMLParser())
@@ -266,8 +262,6 @@ class FC2OfficialScraper(BaseScraper):
 
             return video
 
-        except SourceBlocked:
-            raise
         except Exception as e:
             logger.warning(f"FC2 official search failed for {number}: {e}")
             return None

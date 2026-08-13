@@ -7,8 +7,8 @@
   （feedback_scraper_real_fixtures.md）
 - 需要製造變體時用「真 fixture 字串手術」（heyzo 測試的 _remove_* helper 風格）
 
-本 task 不接線 core/scraper.py / core/scrapers/__init__.py，只驗證
-FC2OfficialScraper 本體行為。
+本檔只驗證 FC2OfficialScraper 本體行為；dispatch 接線（core/scraper.py /
+core/scrapers/__init__.py）由 tests/unit/test_fc2_dispatch_single_point.py 守。
 """
 
 import os
@@ -290,48 +290,28 @@ class TestNormalizeNumber:
 
 
 # ============================================================
-# 11-13. 錯誤分類：非 200 / Timeout / ConnectionError → SourceBlocked
+# 11-13. 傳輸層失敗：非 200 / Timeout / ConnectionError → 靜默回 None
 # ============================================================
 
-class TestSourceBlockedErrors:
-    def test_non_200_raises_source_blocked(self, scraper):
-        from core.scrapers.errors import SourceBlocked
+class TestTransportFailureReturnsNone:
+    def test_non_200_returns_none(self, scraper):
+        # body 刻意餵**可解析成功的真商品頁**（不是 b""）：若餵空 body，就算把
+        # `if resp.status_code != 200` 整段拿掉，etree 也會對空文件拋例外並被外層
+        # `except Exception` 吞成 None——測試照樣綠，等於沒守住它宣稱的那條早退。
+        # 餵真 fixture 後，拿掉 status 早退會解析成功回一個 Video → 本斷言轉紅。
+        scraper._session.get = MagicMock(return_value=make_response(FIX_1723984, status_code=403))
 
-        scraper._session.get = MagicMock(return_value=make_response(b"", status_code=403))
+        assert scraper.search("1723984") is None
 
-        with pytest.raises(SourceBlocked) as exc_info:
-            scraper.search("1723984")
-
-        exc = exc_info.value
-        assert exc.status == 403
-        assert exc.source_id == "fc2"
-        assert exc.article_id == "1723984"
-
-    def test_timeout_raises_source_blocked_with_none_status(self, scraper):
-        from core.scrapers.errors import SourceBlocked
-
+    def test_timeout_returns_none(self, scraper):
         scraper._session.get = MagicMock(side_effect=requests.Timeout("boom"))
 
-        with pytest.raises(SourceBlocked) as exc_info:
-            scraper.search("1723984")
+        assert scraper.search("1723984") is None
 
-        exc = exc_info.value
-        assert exc.status is None
-        assert exc.source_id == "fc2"
-        assert exc.article_id == "1723984"
-
-    def test_connection_error_raises_source_blocked_with_none_status(self, scraper):
-        from core.scrapers.errors import SourceBlocked
-
+    def test_connection_error_returns_none(self, scraper):
         scraper._session.get = MagicMock(side_effect=requests.ConnectionError("boom"))
 
-        with pytest.raises(SourceBlocked) as exc_info:
-            scraper.search("1723984")
-
-        exc = exc_info.value
-        assert exc.status is None
-        assert exc.source_id == "fc2"
-        assert exc.article_id == "1723984"
+        assert scraper.search("1723984") is None
 
 
 # ============================================================
