@@ -142,7 +142,7 @@ class TestIsPrefixOnly:
 # spies recording instantiation and stub .search() so nothing real runs.
 _SCRAPER_ATTRS = [
     'DMMScraper', 'JavBusScraper', 'JAV321Scraper', 'JavDBScraper',
-    'D2PassScraper', 'HEYZOScraper', 'FC2Scraper', 'AVSOXScraper',
+    'D2PassScraper', 'HEYZOScraper', 'FC2OfficialScraper', 'AVSOXScraper',
 ]
 
 # id -> scraper class attr name in core.scraper
@@ -153,7 +153,7 @@ _ID_TO_ATTR = {
     'javdb': 'JavDBScraper',
     'd2pass': 'D2PassScraper',
     'heyzo': 'HEYZOScraper',
-    'fc2': 'FC2Scraper',
+    'fc2': 'FC2OfficialScraper',
     'avsox': 'AVSOXScraper',
 }
 

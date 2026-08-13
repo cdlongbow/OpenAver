@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from core.scrapers import (
     JavBusScraper, JAV321Scraper, JavDBScraper,
-    FC2Scraper, AVSOXScraper,
+    FC2Scraper, FC2OfficialScraper, AVSOXScraper,
     Video, Actress,
 )
 
@@ -27,6 +27,22 @@ class TestFC2NormalizePureLogic:
 
     def test_normalize_fc2_number(self, scraper):
         """測試：FC2 番號正規化（5 case 含純數字輸入）"""
+        assert scraper._normalize_fc2_number("FC2-PPV-1723984") == "1723984"
+        assert scraper._normalize_fc2_number("FC2PPV1723984") == "1723984"
+        assert scraper._normalize_fc2_number("FC2-1723984") == "1723984"
+        assert scraper._normalize_fc2_number("fc2ppv-1723984") == "1723984"
+        assert scraper._normalize_fc2_number("1723984") == "1723984"
+
+
+class TestFC2OfficialNormalizePureLogic:
+    """FC2OfficialScraper 番號正規化——與 javten 版等價（CD-118b-2）"""
+
+    @pytest.fixture
+    def scraper(self):
+        return FC2OfficialScraper()
+
+    def test_normalize_fc2_number(self, scraper):
+        """測試：官方站版 FC2 番號正規化（5 case 含純數字輸入）"""
         assert scraper._normalize_fc2_number("FC2-PPV-1723984") == "1723984"
         assert scraper._normalize_fc2_number("FC2PPV1723984") == "1723984"
         assert scraper._normalize_fc2_number("FC2-1723984") == "1723984"
@@ -124,6 +140,7 @@ class TestMultiSourceIntegration:
             JAV321Scraper(),
             JavDBScraper(),
             FC2Scraper(),
+            FC2OfficialScraper(),
             AVSOXScraper(),
         ]
 
