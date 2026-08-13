@@ -136,23 +136,35 @@ def fast_scan_directory(
             # callback 本身出錯不得影響掃描
             pass
 
-    def _count_extrafanart_images(dir_path: str) -> int:
-        """對 extrafanart/ 目錄計算合格劇照張數（TASK-118b-T9）。
+    def _count_extrafanart_images(parent_dir: str) -> int:
+        """數 `<parent_dir>/extrafanart/` 裡的合格劇照張數（TASK-118b-T9）。
 
-        判準必須與 VideoScanner._iter_extrafanart_images() 完全一致（Opus 裁決
-        ③）——兩處若分岔，會造成「永久重掃」（走訪端數得比 DB 多）或「永久漏掉」
-        （走訪端數得比 DB 少）；改任一邊要同時改另一邊。直接呼叫該 staticmethod
-        （而非另抄一份判準）從結構上保證兩邊恆等，不會漂移。
+        **這裡刻意複製 scan_file() 的定位方式，而不是自己找那個目錄**：
+        `Path(parent) / 'extrafanart'` ＋ `.is_dir()` 與 scan_file()（見該函式內的
+        `extrafanart_dir = video_path.parent / 'extrafanart'`）是**逐字相同的表達式**，
+        所以「哪個目錄算數」在兩端由構造保證一致——不管底下的檔案系統大小寫敏不敏感、
+        那個目錄是不是 symlink。
+
+        走訪端曾用 `entry.name` 比對過兩版（精確 → `.lower()`），兩版都在某一類檔案系統上
+        與 scan_file() 分岔：精確比對讓大小寫不敏感的 FS（NTFS／APFS）上的 `Extrafanart`
+        走訪端數 0、DB 數 N；`.lower()` 則讓大小寫敏感的 FS（ext4）上的 `Extrafanart`
+        走訪端數 N、DB 數 0。**兩種分岔的症狀都是「每次產生都重掃該片且永遠對不上」**。
+        用同一句表達式就沒有第三種寫錯的方式。
+
+        張數本身的過濾（副檔名／隱藏檔／size>0）同樣不另抄——直接呼叫
+        `VideoScanner._iter_extrafanart_images()`，與撿取端同源。
         """
+        extrafanart_dir = Path(parent_dir) / 'extrafanart'
         try:
-            return sum(1 for _ in VideoScanner._iter_extrafanart_images(Path(dir_path)))
+            if not extrafanart_dir.is_dir():
+                return 0
+            return sum(1 for _ in VideoScanner._iter_extrafanart_images(extrafanart_dir))
         except OSError as e:
-            _safe_on_skip(dir_path, e)
+            _safe_on_skip(str(extrafanart_dir), e)
             return 0
 
     def scan_recursive(path: str):
-        # 每層目錄各自獨立（新的區域變數），天然不會跨目錄污染；未含
-        # extrafanart/ 子目錄的普通資料夾維持 0，零額外 syscall。
+        # 每層目錄各自獨立（新的區域變數），天然不會跨目錄污染。
         extrafanart_image_count = 0
         try:
             with os.scandir(path) as entries:
@@ -162,13 +174,6 @@ def fast_scan_directory(
                 for entry in entries:
                     try:
                         if entry.is_dir(follow_symlinks=False):
-                            # 大小寫不敏感比對：scan_file() 那端用的是
-                            # `video_path.parent / 'extrafanart'` 的 Path.is_dir()，在
-                            # Windows / macOS 上會命中 `Extrafanart`。此處若用精確比對，
-                            # 那些片會 DB 數到 N、走訪端數到 0 → 永久重掃（裁決③ 要避免的形狀）。
-                            if entry.name.lower() == 'extrafanart':
-                                extrafanart_image_count = _count_extrafanart_images(entry.path)
-                            # 既有行為不變：extrafanart/ 底下若有巢狀子目錄仍會被走訪
                             scan_recursive(entry.path)
                         elif entry.is_file(follow_symlinks=False):
                             ext = os.path.splitext(entry.name)[1].lower()
@@ -195,6 +200,12 @@ def fast_scan_directory(
                     except (OSError, PermissionError) as e:
                         # entry.path 是 os.DirEntry 的純拼接屬性，通常不會拋
                         _safe_on_skip(entry.path, e)
+
+                # 只有「這層真的有影片」才去問 extrafanart/ 在不在（沒有影片的目錄
+                # 一次 syscall 都不多花）。放在 entry 迴圈**之後**：此時 dir_files 已定，
+                # 而定位方式與 scan_file() 同源，不依賴走訪順序或 entry 名稱比對。
+                if dir_files:
+                    extrafanart_image_count = _count_extrafanart_images(path)
 
                 # 將 NFO mtime 加入對應的影片資訊
                 for f in dir_files:

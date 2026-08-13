@@ -36,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 舊的鏡像站實作（`core/scrapers/fc2.py`）保留在原地、測試持續全綠，但**不再被任何搜尋路徑引用**——它是下一支 branch 接手備份站來源時的起點。
 
 ### 測試
-- 全套 pytest **7029 passed, 1 skipped**（v0.13.11 為 6986，本版新增 43 支）。`npm test` **753**（與 v0.13.11 相同——純後端功能）。`npm run lint`、`node scripts/static_guard_lint.mjs`（1113 條）、`ruff check .`、`lint-imports`、函式規模閘全綠，四條架構閘零新增豁免。
+- 全套 pytest **7030 passed, 1 skipped**（v0.13.11 為 6986，本版新增 44 支）。`npm test` **753**（與 v0.13.11 相同——純後端功能）。`npm run lint`、`node scripts/static_guard_lint.mjs`（1113 條）、`ruff check .`、`lint-imports`、函式規模閘全綠，四條架構閘零新增豁免。
 - **8 源金絲雀全 PASS**（含 fc2 打真站台），無一 skip。
 - **解析契約全部餵真檔**：官方商品頁 3 顆 ＋ 軟 404 頁 1 顆進版控當 fixture。三個 plan 階段寫錯的解析假設是靠真檔打出來的——① 標題其實沒有被截斷（規劃時假設會截斷）② 劇照的 class 掛在 `<ul>` 不是 `<section>`，照 plan 寫會拿到 **0 張** ③ 發售日那個 class 同頁出現 **3 次**（不是 2 次），照順序取會拿到「對應裝置」。
 - **軟 404 用正向標記判定**：不存在的番號官方站回 **HTTP 200 加一張長得很像商品頁的頁面**（兩顆不同的不存在番號，回來的頁面位元組數完全相同）。判準刻意不寫「頁面含『お探しの商品が見つかりませんでした』」——那是日文文案，站方改字就靜默失效，而失效方向是把下架讀成抓到、**寫一筆空資料進 NFO 和資料庫**。改判「`og:url` 存在且等於我們請求的那個商品編號」，同時擋掉「軟 404」與「拿到別片」。

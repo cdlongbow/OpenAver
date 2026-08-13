@@ -273,6 +273,34 @@ class TestScanToSqlite:
         assert result2['updated'] == 0
         assert result2['inserted'] == 0
 
+    def test_scan_incremental_case_mismatched_extrafanart_no_rescan_loop(self, temp_db, temp_video_dir):
+        """異體大小寫的 `Extrafanart/` 不得造成「每次都重掃」的迴圈（TASK-118b-T9 收斂）。
+
+        不變式：**走訪端數的目錄與 scan_file() 讀的目錄必須是同一個**。兩端曾經用不同的
+        定位方式，於是在不同檔案系統上各壞一次——精確比對讓大小寫不敏感的 FS 上走訪端
+        數 0／DB 數 N，`.lower()` 比對讓大小寫敏感的 FS 上走訪端數 N／DB 數 0。兩者的
+        症狀相同：兩端永遠對不上 → 每次「產生」都重掃該片。
+
+        現在兩端都用 `Path(parent) / 'extrafanart'` ＋ `.is_dir()`，所以無論底下的 FS
+        怎麼判大小寫，這支測試在兩種 FS 上都必須綠：
+        - 大小寫敏感（ext4，CI／WSL2 home）：兩端都找不到 → 0 vs 0
+        - 大小寫不敏感（NTFS／APFS）：兩端都找到 → 2 vs 2
+        """
+        video_path = create_video_file(temp_video_dir, "test.mp4")
+        create_nfo_file(video_path, title="測試影片")
+        extrafanart = temp_video_dir / "Extrafanart"   # 刻意大寫 E
+        extrafanart.mkdir()
+        (extrafanart / "fanart1.jpg").write_bytes(b"img")
+        (extrafanart / "fanart2.jpg").write_bytes(b"img")
+
+        scanner = VideoScanner()
+        result1 = scanner.scan_to_sqlite(str(temp_video_dir), temp_db)
+        assert result1['inserted'] == 1
+
+        # 第二、三次：沒有動任何檔案 → 不得再被排進重掃（迴圈鎖，跑兩次確認不是碰巧）
+        assert scanner.scan_to_sqlite(str(temp_video_dir), temp_db)['updated'] == 0
+        assert scanner.scan_to_sqlite(str(temp_video_dir), temp_db)['updated'] == 0
+
     def test_scan_incremental_corrupt_sample_images_forces_rescan(self, temp_db, temp_video_dir):
         """DB 裡 sample_images 是壞 JSON → fail-safe 視為「張數未知」，排進重掃且
         不拋例外（Opus 裁決④），即使影片檔與 NFO 的 mtime 都沒變"""
