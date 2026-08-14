@@ -284,17 +284,18 @@ export function stateLightbox() {
         },
 
         // 101d-T1：影片焦點 icon 顯示 gate（CD-4）。語意旗標 method——只在畫面真的以 poster 裁切
-        // 呈現時才顯示 icon（今天＝窄螢幕，讀 reactive _isNarrow）。x-show 以 () 呼叫，理由是比照
-        // _focalIconVisible() 慣例／可讀性／未來相容性——**保留括號**。⚠️ 但別把「漏括號」當 runtime
-        // bug：Alpine 3 對 x-show **尾端**求值為 function 者會 auto-invoke（101d-T1 CDP 實測），故
+        // 呈現時才顯示 icon。x-show 以 () 呼叫，理由是比照 _focalIconVisible() 慣例／可讀性／
+        // 未來相容性——**保留括號**。⚠️ 但別把「漏括號」當 runtime bug：Alpine 3 對 x-show
+        // **尾端**求值為 function 者會 auto-invoke（101d-T1 CDP 實測），故
         // `A && B && _posterModeActive` 在當前版本其實等效帶括號、非 gate 失效（見 gotchas-frontend
-        // 「Alpine methods 必須加 ()」節精確化）。未來「完整/poster 模式」toggle landed 後只改此 body
-        // 為 `return this._isNarrow || this._userPosterModeOn`，不動 icon x-show、不動任何呼叫端
+        // 「Alpine methods 必須加 ()」節精確化）。119-T5 已 landed：body 為
+        // `return this._isNarrow || this.cardShape === 'poster'`，不動 icon x-show、不動任何呼叫端
         // （plan-101d CD-4，spec §7.2 Non-Goal #14）。
+        // 本 method **只服務燈箱焦點鈕**。選單條數與 A 鍵段數絕不可讀它（CD-119-4／§0.1）。
         // 影片 gate 與女優 _focalIconVisible() 的 per-image 門檻刻意不同（影片只 ≤899px 裁、女優牆
         // 全寬度都裁，plan-101d §2.2）——此不對稱是有原則的，勿「對齊」成同一套。
         _posterModeActive() {
-            return this._isNarrow;
+            return this._isNarrow || this.cardShape === 'poster';
         },
 
         // F1: helper — 更新 lightboxIndex + currentLightboxVideo 一致性
@@ -2341,10 +2342,10 @@ export function stateLightbox() {
             if (key === 'S' && this.mode === 'grid') {
                 this.toggleInfo();
             } else if (key === 'A') {
-                const modeOrder = ['grid', 'list', 'table'];
-                const currentIndex = modeOrder.indexOf(this.mode);
-                const nextIndex = (currentIndex + 1) % 3;
-                this.switchMode(modeOrder[nextIndex]);
+                if (this.showFavoriteActresses) return;          // AC-5.3：女優牆整條早退
+                const order = this._presentationOrder();
+                const idx = order.indexOf(this._currentPresentation());
+                this.selectPresentation(order[(idx + 1) % order.length]);
             } else if (key === 'ARROWLEFT') {
                 if (this.page > 1) {
                     this.prevPage();

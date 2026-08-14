@@ -411,6 +411,21 @@ export function stateVideos() {
             });
         },
 
+        // TASK-119-T5：選單「圖片」與 A 鍵窄序列共用的 grid target。
+        // 窄螢幕不得寫死 'cover'——會把使用者在桌面選的 poster 靜默洗掉（AC-3.2）。
+        _gridTarget() {
+            return this.cardShape === 'poster' ? 'poster' : 'cover';
+        },
+        _currentPresentation() {
+            if (this.mode === 'grid') return this._gridTarget();
+            return this.mode === 'list' ? 'list' : 'table';
+        },
+        _presentationOrder() {
+            return this._isNarrow
+                ? [this._gridTarget(), 'list', 'table']
+                : ['cover', 'poster', 'list', 'table'];
+        },
+
         prevPage() {
             if (this.page > 1) {
                 this._animatePageChange('prev');
