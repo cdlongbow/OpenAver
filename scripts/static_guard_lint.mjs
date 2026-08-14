@@ -1002,6 +1002,18 @@ const RULES = [
   { file: 'web/templates/design_system/settings-components.html', kind: 'forbidden-string', pattern: 'longPressStart', note: '[TestDesignSystemLongPressCard] D.14 long-press demo card retired' },
   { file: 'web/templates/design_system/settings-components.html', kind: 'forbidden-string', pattern: 'long-press.js', note: '[TestDesignSystemLongPressCard] D.14 long-press demo card retired' },
 
+  // ---- [118a-T7] BETA 徽章反向鎖（spec F3，owner 2026-08-14 拍板移除，不換文案） ----
+  // 這不是把舊守衛換個地方守——舊的 test_modal_builtin_pill_has_beta_badge 鎖的是「徽章必須存在」，
+  // 元件整個移除後那個不變式被**反轉**了。這裡鎖的是回歸：BETA 不得重新長回任何一個渲染點。
+  // 使用者後果（若回歸）：兩支能用的來源又被標成「這功能還沒做好」，而它們只是偶爾要過一次驗證。
+  // `.source-pill-mt-badge`（metatube 的 m 角標）是不同 class，不受這些規則影響。
+  { file: 'web/templates/_rescrape_modal.html', kind: 'forbidden-string', pattern: 'source-pill-badge', note: '[118a-T7] BETA badge removed (spec F3); AC-3.2 now carried by aria-disabled + title + toast' },
+  { file: 'web/templates/settings.html', kind: 'forbidden-string', pattern: 'source-pill-badge', note: '[118a-T7] BETA badge removed (spec F3)' },
+  { file: 'web/templates/_macros/source_pill.html', kind: 'forbidden-string', pattern: 'beta_badge', note: '[118a-T7] dead macro param removed (no caller ever passed it)' },
+  { file: 'web/templates/design_system/settings-components.html', kind: 'forbidden-string', pattern: 'source-pill-badge', note: '[118a-T7] BETA badge demo retired with the component' },
+  { file: 'web/static/css/components/source-pill.css', kind: 'forbidden-string', pattern: '.source-pill-badge', note: '[118a-T7] component deleted; re-add only with a real use case' },
+  { file: 'web/templates/settings.html', kind: 'forbidden-string', pattern: 'manual_only_badge', note: '[118a-T7] i18n key deleted from all 4 locales' },
+
   // ---- [TestGridSettlePulse]（只港 flat required 半邊，method-body window 半邊留 T2） ----
   { file: 'web/static/js/pages/search/animations.js', kind: 'required-string', pattern: 'playGridSettle', note: '[TestGridSettlePulse] animations.js flat required (method-body window half deferred to T2)' },
   { file: 'web/static/js/pages/search/animations.js', kind: 'required-string', pattern: 'CustomEase.create("settle"', note: '[TestGridSettlePulse] animations.js flat required (method-body window half deferred to T2)' },
@@ -2295,6 +2307,25 @@ const RULES = [
   // test_js_has_start_probe_polling（B4#6）已與 B3#5 合併，見上方共用列。
   { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 's.available === false', note: '[TestMetatubeB4Guard] test_js_promote_metatube_has_available_check' },
   { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'mt_promote_unavailable_warning', note: '[TestMetatubeB4Guard] test_js_promote_metatube_has_unavailable_warning_key' },
+
+  // ---- [118a-T9] CF 來源逐來源可用性：bootstrap 必須注入 cf_sites（per-site 快照） ----
+  { file: 'web/templates/_advanced_search_bootstrap.html', kind: 'required-string', pattern: 'cf_sites', note: '[118a-T9] bootstrap 未注入 cf_sites — isJlUnavailable per-site gate 會 fallback 到全域 cf_transport_available，javten 視窗建立失敗時會連坐灰化 javlibrary' },
+
+  // ---- [118a-T9] 不可用理由的兩個交付點各自鎖住（tooltip / toast） ----
+  // 為什麼要兩條而不是一條「檔案裡有 cfUnavailableMessageKey 就好」：那是 whole-file
+  // 存在性，只要其中一個綁定點退回硬編碼字面就抓不到（T9 review 實測：只把 :title 改回
+  // 'showcase.rescrape.jl_desktop_only'、留 @click 正確 → 舊式斷言仍全綠）。
+  // 使用者後果：hover 灰化膠囊看到「僅限桌面應用程式」但他人就在桌面版 —— 那正是本 task 要修的矛盾訊息。
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string',
+    pattern: /:title="isJlUnavailable\(s\)\s*\?\s*window\.t\(cfUnavailableMessageKey\(\)\)/,
+    note: '[118a-T9] builtin pill 的 :title（tooltip）未走 cfUnavailableMessageKey() — 灰化膠囊的 tooltip 會回到「僅限桌面應用程式」那句矛盾訊息',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string',
+    pattern: /@click="isJlUnavailable\(s\)\s*\?\s*showToast\(window\.t\(cfUnavailableMessageKey\(\)\)/,
+    note: '[118a-T9] builtin pill 的 @click（toast）未走 cfUnavailableMessageKey() — 點擊灰化膠囊會回到「僅限桌面應用程式」那句矛盾訊息',
+  },
 
   // ---- [TestMetatubePickerWiringGuard] 63c-3：進階 picker 接 metatube 真資料（proxy_configured 注入 / routable gate / metatube 分組未刪，5 個斷言） ----
   { file: 'web/templates/_advanced_search_bootstrap.html', kind: 'required-string', pattern: 'proxy_configured:', note: '[TestMetatubePickerWiringGuard] test_bootstrap_injects_proxy_configured' },

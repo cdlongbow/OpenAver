@@ -1413,7 +1413,15 @@ export function stateConfig() {
             this.showToast(window.t('settings.sources.mt_disconnect_toast'), 'warning');
         },
 
-        // Manual-Only（JavLibrary）：Active Row 內 no-op（[BETA] badge 取代 toggle，固定末尾）。
+        // Manual-Only（JavLibrary / FC2-javten）：Active Row 內 no-op，固定末尾。
+        //
+        // 118a-T7（spec F3）：原註解寫「[BETA] badge 取代 toggle」，那顆徽章已移除。
+        //
+        // 這裡不需要 toast 說明。owner 2026-08-14 澄清：這兩顆膠囊**本來就不可點、不可拖**，
+        // 而且畫面上是這樣宣告的——`.source-pill--manual-only` 是 `cursor: default`、
+        // hover 不抬升（source-pill.css:90-103），`isDraggable()` 對 manual_only 直接回 false。
+        // 沒有可互動的樣子，就不會有「點了沒反應＝壞掉」的印象。
+        // （pre-merge Stage 2 曾把這裡標成 UX 缺口，是只看 handler 沒看 affordance 的誤判。）
         clickJavLibrary() {
             // 進階搜尋專用 — no-op。
         },

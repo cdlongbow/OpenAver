@@ -57,15 +57,16 @@
                     data-enabled="true"
                     :data-proxy-required="isSourceProxyBlocked(s) ? 'true' : 'false'"
                     :aria-disabled="isJlUnavailable(s) ? 'true' : 'false'"
-                    :title="isJlUnavailable(s) ? window.t('showcase.rescrape.jl_desktop_only') : ''"
+                    :title="isJlUnavailable(s) ? window.t(cfUnavailableMessageKey()) : ''"
                     :disabled="rescrapeLoadingSource !== null && rescrapeLoadingSource !== s.id"
-                    @click="isJlUnavailable(s) ? showToast(window.t('showcase.rescrape.jl_desktop_only'), 'warning') : (isSourceProxyBlocked(s) ? showToast(window.t('settings.sources.dmm_proxy_required_hint'), 'warning') : rescrapeWithSource(s.id))">
+                    @click="isJlUnavailable(s) ? showToast(window.t(cfUnavailableMessageKey()), 'warning') : (isSourceProxyBlocked(s) ? showToast(window.t('settings.sources.dmm_proxy_required_hint'), 'warning') : rescrapeWithSource(s.id))">
               <span class="pill-spin" x-show="rescrapeLoadingSource === s.id"></span>
               <i class="bi bi-slash-circle slash-icn" x-show="rescrapeLoadingSource !== s.id && !isJlUnavailable(s)" aria-hidden="true"></i>
               {# 品牌名（display_name_raw → display_name_key fallback；不走 i18n，CD-62-12） #}
               <span class="pill-name" x-text="s.display_name_raw || s.display_name_key || s.id"></span>
-              {# 70-T5: BETA badge（manual_only && is_beta = javlibrary 等；未來 beta source 自動顯示） #}
-              <span class="source-pill-badge" x-show="s.manual_only && s.is_beta" aria-hidden="true">BETA</span>
+              {# 118a-T7（spec F3）：BETA 徽章已移除。「這個來源可能要你完成一次驗證」改由上面那組
+                 aria-disabled / :title / @click toast 在真正需要的時刻交付；虛線外框（manual-only）
+                 負責視覺區隔。徽章是常駐裝飾，說的又是偶爾才發生的事。 #}
             </button>
           </template>
         </div>

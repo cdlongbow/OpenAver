@@ -519,6 +519,12 @@ def get_common_context(request: Request) -> dict:
     from core.cf_transport import get_cf_transport as _get_cf_transport
     _cf_transport_available = _get_cf_transport() is not None
 
+    # 118a-T9：per-site 可用性。cf_transport_available 是全域布林，答不了「這個來源
+    # 能不能用」——standalone 在某個視窗建立失敗時仍會註冊一個只含另一站的 transport。
+    # None ＝ 判不出來 → 前端沿用舊的全域旗標（fail-open，見 get_cf_available_sites）。
+    from core.cf_transport import get_cf_available_sites as _get_cf_sites
+    _cf_sites = _get_cf_sites()
+
     _server_mode = bool(config.get('general', {}).get('server_mode', False))
 
     return {
@@ -526,6 +532,7 @@ def get_common_context(request: Request) -> dict:
         "config": config,
         "proxy_configured": proxy_configured,
         "cf_transport_available": _cf_transport_available,
+        "cf_sites": _cf_sites,
         "lan_ip": get_lan_ip() if _server_mode else None,
         "theme": config.get('general', {}).get('theme', 'light'),
         "sidebar_collapsed": config.get('general', {}).get('sidebar_collapsed', False),

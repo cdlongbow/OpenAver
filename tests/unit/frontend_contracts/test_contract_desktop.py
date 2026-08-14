@@ -110,8 +110,11 @@ class TestJavlibraryPickerT5Guard:
       (1) bootstrap template 含 cf_transport_available 注入
       (2) app.py get_common_context 注入 cf_transport_available
       (3) state-rescrape.js 定義 isJlUnavailable
-      (4) _rescrape_modal.html builtin pill 含 source-pill-badge（BETA）綁於 manual_only && is_beta
-      (5) _rescrape_modal.html builtin pill 含 isJlUnavailable gate（aria-disabled + jl_desktop_only toast）
+      (4) ⛔ 已刪除（118a-T7 / spec F3）：BETA 徽章整個移除，該不變式被反轉，回歸鎖改在
+          scripts/static_guard_lint.mjs 的 [118a-T7] forbidden-string 規則
+      (5) _rescrape_modal.html builtin pill 含 isJlUnavailable gate（aria-disabled）
+          —— 不可用「理由」的字串守衛已於 118a-T9 移交 scripts/static_guard_lint.mjs
+          的兩條 [118a-T9] regex（binding-site 精度），本 class 不再重複守它
       (6) 4 locale 檔含 jl_desktop_only key
     """
 
@@ -139,18 +142,24 @@ class TestJavlibraryPickerT5Guard:
             "70-T5 違規：state-rescrape.js 未定義 isJlUnavailable helper"
         )
 
-    def test_modal_builtin_pill_has_beta_badge(self):
-        """(4) _rescrape_modal.html builtin pill 模板含 source-pill-badge（BETA badge）。"""
-        html = _MODAL_HTML_70.read_text(encoding="utf-8")
-        assert "source-pill-badge" in html, (
-            "70-T5 違規：_rescrape_modal.html builtin pill 模板缺 source-pill-badge（BETA badge）"
-        )
-        assert "manual_only" in html and "is_beta" in html, (
-            "70-T5 違規：source-pill-badge 未綁於 manual_only && is_beta 條件（不應對所有 pill 顯示）"
-        )
+    # (4) 原 test_modal_builtin_pill_has_beta_badge 已刪除（118a-T7 / spec F3）。
+    #
+    # 它鎖的是「source-pill-badge 必須存在、且綁在 manual_only && is_beta 上」。owner
+    # 2026-08-14 拍板把 BETA 徽章整個移除 —— 那個不變式被**反轉**了，不是搬到別處守，
+    # 所以這裡沒有「等價性維持」可談（AGENTS.md 守衛模式 1 的比較前提不成立）。
+    #
+    # 回歸鎖改寫在 scripts/static_guard_lint.mjs（[118a-T7] 六條 forbidden-string）——
+    # 依 CLAUDE.md「Lint 守衛規則」，「某個 HTML/CSS 字串不應出現」屬 lint 不屬 pytest。
+    #
+    # 下面兩支**必須維持綠**：徽章移除之後，AC-3.2（讓使用者理解這裡可能要他做一件事）
+    # 完全由它們守的那組機制承擔 —— 它們是本次敢移除徽章的依據，不是普通的鄰居測試。
 
     def test_modal_builtin_pill_jl_unavailable_gate(self):
-        """(5) _rescrape_modal.html builtin pill 含 isJlUnavailable gate（aria-disabled + jl_desktop_only）。"""
+        """(5) _rescrape_modal.html builtin pill 含 isJlUnavailable gate（aria-disabled）。
+
+        不可用「理由」的守衛已於 118a-T9 移交 scripts/static_guard_lint.mjs 的兩條
+        [118a-T9] regex（binding-site 精度），見下方註解。
+        """
         html = _MODAL_HTML_70.read_text(encoding="utf-8")
         assert "isJlUnavailable" in html, (
             "70-T5 違規：_rescrape_modal.html builtin pill 模板未使用 isJlUnavailable gate"
@@ -158,9 +167,21 @@ class TestJavlibraryPickerT5Guard:
         assert "aria-disabled" in html, (
             "70-T5 違規：_rescrape_modal.html builtin pill 缺 aria-disabled 綁定（不可用語義）"
         )
-        assert "jl_desktop_only" in html, (
-            "70-T5 違規：_rescrape_modal.html builtin pill 缺 jl_desktop_only i18n key（toast / title）"
-        )
+        # 118a-T9：原本這裡還有第三條 `assert "jl_desktop_only" in html`。訊息從一句變
+        # 兩句之後，選哪一句的單一所有者是 state-rescrape.js 的 cfUnavailableMessageKey()，
+        # 模板只負責呼叫它，該字面不再出現在模板裡。
+        #
+        # 那條**沒有原地換成 "cfUnavailableMessageKey"，而是整條刪掉**，理由是它會變成
+        # 一條純冗餘的斷言（SA-pre-6 checklist「重複的 assertion」）：
+        #   ① scripts/static_guard_lint.mjs 的兩條 [118a-T9] regex 各自 anchor 到
+        #      :title= 與 @click= 兩個綁定點。兩個 pattern **都必然包含**
+        #      cfUnavailableMessageKey 這個子字串，所以只要任一條過，這裡的存在性必成立
+        #      —— 它擋不到任何前者擋不到的東西。
+        #   ② 反過來前者擋得到它擋不到的：T9 review 實測，只把 :title 改回硬編碼字面、
+        #      留 @click 正確時，whole-file 存在性斷言仍全綠，兩條 regex 各自轉紅。
+        #   ③ 選擇器只能回那兩個 key，由 state-rescrape-cf-availability.test.mjs 第 9–11 條鎖住。
+        # 依 CLAUDE.md「Lint 守衛規則」，「某個 HTML 字串應該出現」本來就屬 lint 不屬 pytest；
+        # 刪掉是減碼，不是放寬（守衛模式 1 的等價性在 ① 是機械成立的子集關係）。
 
     def test_i18n_jl_desktop_only_parity(self):
         """(6) 4 locale 檔（zh_TW/zh_CN/en/ja）皆含 jl_desktop_only key。"""
@@ -238,18 +259,18 @@ class TestCfPollUnavailableGuard:
         # try finding the definition via "function body" marker (contains 'setInterval').
         # Use rfind to find the last definition (definitions come after call sites).
         all_matches = list(_re.finditer(r'\b_pollCfThenRetry\s*\(', js))
-        # Prefer the match followed by a simple parameter name (definition) over
-        # a call expression with 'this.' arguments.  The definition looks like:
-        #   _pollCfThenRetry(number) {
+        # Prefer the match followed by plain identifier parameters (definition) over
+        # a call expression with 'this.' arguments.  T4 signature:
+        #   _pollCfThenRetry(number, sourceId) {
         def_idx = None
         for match in all_matches:
             tail = js[match.start(): match.start() + 80]
-            # Definition has a plain identifier parameter, not 'this.'
-            if _re.match(r'\b_pollCfThenRetry\s*\(\s*\w+\s*\)\s*\{', tail):
+            # Definition has plain identifier parameters, not 'this.'
+            if _re.match(r'\b_pollCfThenRetry\s*\(\s*\w+\s*,\s*\w+\s*\)\s*\{', tail):
                 def_idx = match.start()
                 break
         assert def_idx is not None, (
-            "Could not find _pollCfThenRetry(param) { definition in state-rescrape.js"
+            "Could not find _pollCfThenRetry(param, param) { definition in state-rescrape.js"
         )
         # Extract ~1500 chars from the function start to cover the setInterval body
         snippet = js[def_idx: def_idx + 1500]

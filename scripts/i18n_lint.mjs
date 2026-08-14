@@ -56,6 +56,11 @@ const KNOWN_UNSCANNED_KEYS = [
   'settings.sources.mt_probe_hint_reason1',
   'settings.sources.mt_probe_hint_reason2',
   'settings.sources.mt_probe_hint_reason3',
+  // 118a-T9：CF 來源「為什麼不能按」的兩句文案。模板改成 window.t(cfUnavailableMessageKey())
+  // 之後是 dynamic key，掃描器看不見（CD-96a-2 直接跳過動態 key）——遷移前那句靜態
+  // window.t('…jl_desktop_only') 本來是被檢 1 機械守著存在性的，不補進來就是淨損失。
+  'showcase.rescrape.jl_desktop_only', //   ← 沒有 transport（dev／區網伺服器）
+  'showcase.rescrape.cf_window_restart', // ← 有 transport 但這個站的視窗沒起來／已被摧毀
 ];
 
 let hadError = false;

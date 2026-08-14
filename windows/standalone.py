@@ -226,6 +226,92 @@ def run_server(port, debug_mode=False):
     server.run()
 
 
+def _wait_for_server_or_exit(port, logger) -> None:
+    """Wait for the local server; show error and exit(1) on timeout.
+
+    Extracted from main() so the P2-A inner-try around javten create_window
+    stays inside the function-size budget (MAX_LINES = 200). Fall-through
+    or sys.exit(1) — same control flow as the inlined block.
+    """
+    if not wait_for_server(port):
+        logger.info("錯誤：伺服器啟動逾時")
+        show_error(
+            "啟動失敗",
+            "伺服器啟動逾時。\n\n請檢查是否有其他程式佔用端口 8000。",
+            None,
+            logger
+        )
+        sys.exit(1)
+
+
+def _ensure_webview2_runtime(logger) -> None:
+    """Windows-only: verify WebView2 Runtime is installed; prompt + exit(0) if not.
+
+    TASK-118a-T1: extracted out of main() (was inline step "0.") purely to keep
+    main()'s cyclomatic complexity under the ruff C901 threshold now that a
+    second CF-transport window's setup + closing-handler branches live there —
+    this block is otherwise unrelated to T1 and unchanged behaviourally.
+    """
+    if sys.platform != 'win32':
+        return
+    if check_webview2_installed():
+        return
+    logger.info("WebView2 Runtime 未安裝")
+    if not show_webview2_prompt():
+        logger.info("用戶取消安裝，程式結束")
+        sys.exit(0)
+    else:
+        logger.info("請安裝 WebView2 後重新啟動")
+        sys.exit(0)
+
+
+def _maybe_autostart_lan_listener(lan_listener, logger) -> None:
+    from core.config import load_config
+    if load_config().get("general", {}).get("server_mode", False):
+        try:
+            _lp = lan_listener.start()
+            logger.info("server_mode persisted true → LAN listener on :%s", _lp)
+        except Exception as e:                     # noqa: BLE001 — auto-start best-effort
+            logger.warning("auto-start LAN listener failed: %s", e)
+            try:
+                from web.routers.notifications import emit_notification
+                # 不傳 str(e)：Python 例外細節不可暴露給前端（安全規則）。
+                # 細節已由上方 logger.warning 寫入 server-side log。
+                emit_notification("error", "settings.server_info.autostart_failed")
+            except Exception:  # noqa: BLE001,S110 — emit_notification failure is harmless; best-effort only
+                pass
+
+
+def _setup_windows_lifecycle(window, jl_win, javten_win, saved, lan_listener) -> DesktopLifecycle | None:
+    if sys.platform == 'win32':
+        from core.config import mutate_config
+        from core.config import load_config
+        import window_state
+
+        def _write_close_action(action: str) -> None:
+            def _mutator(cfg):
+                cfg.setdefault("general", {})["close_action"] = action
+            mutate_config(_mutator)
+
+        lifecycle = DesktopLifecycle(
+            window,
+            {'javlibrary': jl_win, 'fc-javten': javten_win},
+            saved,
+            window_state.save_state,
+            on_quit_cleanup=lan_listener.shutdown,
+            read_close_action=lambda: load_config().get("general", {}).get("close_action", "ask"),
+            write_close_action=_write_close_action,
+        )
+        tray_icon = NativeTrayIcon(
+            Path(APP_DIR) / "web" / "static" / "favicon.png",
+            lifecycle.handle_tray_command,
+            lifecycle.get_close_action,
+        )
+        lifecycle.attach_tray(tray_icon)
+        return lifecycle
+    return None
+
+
 # ============ 主程序 ============
 
 def main():
@@ -238,15 +324,7 @@ def main():
     logger.info("正在啟動...")
 
     # 0. 檢查 WebView2（僅 Windows）
-    if sys.platform == 'win32':
-        if not check_webview2_installed():
-            logger.info("WebView2 Runtime 未安裝")
-            if not show_webview2_prompt():
-                logger.info("用戶取消安裝，程式結束")
-                sys.exit(0)
-            else:
-                logger.info("請安裝 WebView2 後重新啟動")
-                sys.exit(0)
+    _ensure_webview2_runtime(logger)
 
     # 1. 標記為 Windows 桌面 App（feature/82 T4：_is_windows_desktop() 讀此環境變數）
     # 必須在任何 web.app import 之前設定，確保 get_common_context 能正確判斷。
@@ -273,35 +351,14 @@ def main():
 
     # 3. 等待伺服器就緒
     logger.info("等待伺服器就緒...")
-    if not wait_for_server(port):
-        logger.info("錯誤：伺服器啟動逾時")
-        show_error(
-            "啟動失敗",
-            "伺服器啟動逾時。\n\n請檢查是否有其他程式佔用端口 8000。",
-            None,
-            logger
-        )
-        sys.exit(1)
+    _wait_for_server_or_exit(port, logger)
     logger.info("伺服器已就緒")
 
     # 3b. 接線 LAN listener manager（dual-listener 架構）
     from web.app import app as _app
     from web.lan_listener import lan_listener
     lan_listener.wire(_app, local_port=port)
-    from core.config import load_config
-    if load_config().get("general", {}).get("server_mode", False):
-        try:
-            _lp = lan_listener.start()
-            logger.info("server_mode persisted true → LAN listener on :%s", _lp)
-        except Exception as e:                     # noqa: BLE001 — auto-start best-effort
-            logger.warning("auto-start LAN listener failed: %s", e)
-            try:
-                from web.routers.notifications import emit_notification
-                # 不傳 str(e)：Python 例外細節不可暴露給前端（安全規則）。
-                # 細節已由上方 logger.warning 寫入 server-side log。
-                emit_notification("error", "settings.server_info.autostart_failed")
-            except Exception:  # noqa: BLE001,S110 — emit_notification failure is harmless; best-effort only
-                pass
+    _maybe_autostart_lan_listener(lan_listener, logger)
 
     # 4. 啟動 PyWebView 窗口
     logger.info("啟動視窗...")
@@ -326,6 +383,7 @@ def main():
     # pywebview 6.2.1: create_window(hidden=True) before start() is supported;
     # the native window is only shown after the GUI loop starts via _create_children.
     jl_win = None
+    javten_win = None
     try:
         from cf_transport_impl import PyWebViewCfTransport   # sibling import（WINDOWS_DIR 已在 sys.path）
         from core.scrapers.javlibrary import JAVLIBRARY_ORIGIN
@@ -334,16 +392,43 @@ def main():
         # app connects to javlibrary.com on every startup, even when the source is disabled.
         # This is required by the same-origin fetch design (the hidden window must be parked
         # on the origin for cookie-bearing fetch). A lazy-navigate refactor is a follow-up branch.
-        jl_win = webview.create_window(
-            'JavLibrary — CF 驗證',
-            JAVLIBRARY_ORIGIN,
-            width=1200, height=820,
-            hidden=True,
-        )
-        register_cf_transport(PyWebViewCfTransport(jl_win))
-        logger.info("JavLibrary CF transport registered")
+        # T11: jl 要有自己的 try（對稱於下方 javten），否則 JL 建立失敗會跳過 register_cf_transport()
+        # 連 fc-javten 一起灰掉 —— 理由與守衛見 test_jl_create_window_in_own_try_without_register。
+        try:
+            jl_win = webview.create_window(
+                'JavLibrary — CF 驗證', JAVLIBRARY_ORIGIN, width=1200, height=820, hidden=True,
+            )
+        except Exception as e:                                       # noqa: BLE001
+            logger.warning("javlibrary CF 視窗建立失敗，該來源不可用（FC2-javten 不受影響）：%s", e)
+        # TASK-118a-T1 / CD-118a-4: the fc-javten window is created eagerly here too
+        # (same non-lazy precedent as jl_win — both windows exist before webview.start()),
+        # but parked on about:blank instead of javten.com. It only navigates there on
+        # first use (navigate_and_settle in the search flow), so this does NOT add a
+        # second "connects to an external site on every startup" side effect on top of
+        # the existing JL one (P3-6, unchanged, still a separate follow-up).
+        try:
+            javten_win = webview.create_window(
+                'FC2 (javten) — CF 驗證',
+                'about:blank',
+                width=1200, height=820,
+                hidden=True,
+            )
+        except Exception as e:                                       # noqa: BLE001
+            logger.warning("fc-javten CF 視窗建立失敗，該來源不可用（JavLibrary 不受影響）：%s", e)
+        # D-0/D-1: only javlibrary is seeded in initial_urls — its window already sits
+        # on JAVLIBRARY_ORIGIN. fc-javten is NOT seeded (its window is on about:blank);
+        # the origin gate (INV-1) will route its first fetch()/search into
+        # navigate_and_settle instead, which is the only writer of self._origins after
+        # construction.
+        _built = (('javlibrary', jl_win), ('fc-javten', javten_win))
+        cf_wins = {k: w for k, w in _built if w is not None}
+        # 空 cf_wins 也照樣註冊：per-site 呼叫一律經 _require_window fail-closed，而空 transport
+        # 回報的狀態更準 —— available_sites()=[] 讓膠囊灰化並說「請重新啟動」；不註冊的話
+        # cf_transport_available=false，訊息會變成「僅限桌面應用程式」，那在桌面版上根本不成立。
+        register_cf_transport(PyWebViewCfTransport(cf_wins, {'javlibrary': JAVLIBRARY_ORIGIN}))
+        logger.info("CF transport registered (%s)", ', '.join(cf_wins) or '無可用視窗')
     except Exception as e:
-        logger.warning(f"JavLibrary CF transport init failed (JL will be unavailable): {e}")
+        logger.warning(f"CF transport init failed (JavLibrary/FC2-javten may be unavailable): {e}")
 
     # CD-70c-2 Layer 1: intercept JL window close → hide instead of destroy.
     # A destroyed window makes self._win dead, breaking all subsequent fetch/is_ready
@@ -351,30 +436,7 @@ def main():
     # app-quit guard: when the main window is closing (app is quitting), let the JL
     # window close normally so we don't trap the shutdown sequence.
     _app_state = {"quitting": False}
-    lifecycle = None
-    if sys.platform == 'win32':
-        from core.config import mutate_config
-
-        def _write_close_action(action: str) -> None:
-            def _mutator(cfg):
-                cfg.setdefault("general", {})["close_action"] = action
-            mutate_config(_mutator)
-
-        lifecycle = DesktopLifecycle(
-            window,
-            jl_win,
-            saved,
-            window_state.save_state,
-            on_quit_cleanup=lan_listener.shutdown,
-            read_close_action=lambda: load_config().get("general", {}).get("close_action", "ask"),
-            write_close_action=_write_close_action,
-        )
-        tray_icon = NativeTrayIcon(
-            Path(APP_DIR) / "web" / "static" / "favicon.png",
-            lifecycle.handle_tray_command,
-            lifecycle.get_close_action,
-        )
-        lifecycle.attach_tray(tray_icon)
+    lifecycle = _setup_windows_lifecycle(window, jl_win, javten_win, saved, lan_listener)
 
     def _on_main_closing():
         if lifecycle is not None:
@@ -382,12 +444,19 @@ def main():
             _app_state["quitting"] = lifecycle.quitting
             return result
         # Non-Windows launchers keep the original close-to-exit behaviour.
+        # CD-118a-4b: both transport windows must be destroyed here, not just jl_win —
+        # a window left un-destroyed keeps pywebview's instance count above 0 forever.
         _app_state["quitting"] = True
         if jl_win is not None:
             try:
                 jl_win.destroy()
             except Exception:
                 logger.warning("failed to destroy JL window on app close")
+        if javten_win is not None:
+            try:
+                javten_win.destroy()
+            except Exception:
+                logger.warning("failed to destroy javten window on app close")
         lan_listener.shutdown()
 
     def _on_jl_closing():
@@ -401,9 +470,21 @@ def main():
             return False
         # app quitting → return None (allow close)
 
+    def _on_javten_closing():
+        # Mirrors _on_jl_closing (CD-118a-4b): hidden ≠ destroyed for the second
+        # transport window either — same hide-and-cancel intercept, same
+        # app-quit passthrough.
+        quitting = lifecycle.quitting if lifecycle is not None else _app_state["quitting"]
+        if not quitting:
+            javten_win.hide()
+            return False
+        # app quitting → return None (allow close)
+
     window.events.closing += _on_main_closing
     if jl_win is not None:
         jl_win.events.closing += _on_jl_closing
+    if javten_win is not None:
+        javten_win.events.closing += _on_javten_closing
 
     def startup(w):
         bind_events(w)

@@ -72,6 +72,7 @@ export function rescrapeState() {
         rescrapeVersionIdx: 0,             // 當前 preview 游標
         rescrapeCfWaiting: false,          // 70-T6: CF 等待態（polling 中）
         _cfPollHandle: null,               // 70-T6: setInterval handle；null = 未 polling
+        _cfPollSourceId: null,             // T4: 這次 CF poll 的觸發來源；cancelCfPoll 零參數讀它
 
         // ── private ──
         _rescraping: false,                // commit 連點 guard（鏡像 _enriching）
@@ -165,12 +166,40 @@ export function rescrapeState() {
         },
 
         /**
-         * 70-T5: JavLibrary 不可用 gate（desktop-only / standalone 限定）。
-         * manual_only && is_beta = javlibrary（目前唯一）；cf_transport_available = standalone 已 register。
-         * dev / server 環境：cf_transport_available=false → 此 helper 回 true → pill 灰化不可點。
+         * 118a-T9：這個 CF 來源在這台機器上有沒有活著的驗證視窗。
+         *
+         * cf_sites（per-site，T9 起）優先；不是陣列時 fall back 到 cf_transport_available
+         * （70-T5 的全域布林）。fallback 是 fail-open —— 舊 transport 不代表它的視窗死了，
+         * 把它當成不可用會讓一個能用的 JavLibrary 被灰掉。
+         */
+        _cfSiteLive(id) {
+            const adv = window.__ADVANCED_SEARCH__ || {};
+            if (Array.isArray(adv.cf_sites)) return adv.cf_sites.includes(id);
+            return !!adv.cf_transport_available;
+        },
+
+        /**
+         * 118a-T9：兩種「這個 CF 來源不能用」是不同的事，訊息不能共用一句。
+         *   沒有 transport（dev / 區網伺服器）→ 「僅限桌面應用程式」
+         *   有 transport、但這個來源的視窗沒建起來或已被摧毀 → 「請重新啟動」
+         * 後端本來就分得出這兩種（cf_transport_impl 的 _require_window vs _dead），
+         * 是前端把它們壓成同一句才會出現「你人就在桌面版，卻被告知僅限桌面版」。
+         */
+        cfUnavailableMessageKey() {
+            const adv = window.__ADVANCED_SEARCH__ || {};
+            return adv.cf_transport_available
+                ? 'showcase.rescrape.cf_window_restart'
+                : 'showcase.rescrape.jl_desktop_only';
+        },
+
+        /**
+         * 70-T5: CF 來源不可用 gate（desktop-only / standalone 限定）。
+         * manual_only && is_beta = javlibrary + fc-javten（118a 起兩個，不再只有 javlibrary）；
+         * 118a-T9 起改查 _cfSiteLive()（per-site），不再直接讀全域 cf_transport_available。
+         * dev / server 環境：_cfSiteLive 回 false → 此 helper 回 true → pill 灰化不可點。
          */
         isJlUnavailable(s) {
-            return !!(s && s.manual_only && s.is_beta && !(window.__ADVANCED_SEARCH__ && window.__ADVANCED_SEARCH__.cf_transport_available));
+            return !!(s && s.manual_only && s.is_beta && !this._cfSiteLive(s.id));
         },
 
         /**
@@ -192,17 +221,19 @@ export function rescrapeState() {
             if (!this.rescrapeNumber.trim()) { this.rescrapeNotFound = true; return; }
             // Search 入口（62c-1）：無預覽卡，繞過 /api/rescrape/preview，直接走 B1 advancedSearch
             // 整包贏（GET /api/search?...&source=），結果進正常結果區，彈窗關閉（spec US5）。
-            // CD-86-8：javlibrary 例外——不早 return，繼續走 fetch preview（多版本候選支援）。
+            // CD-86-8 / T4：manual_only（javlibrary / fc-javten）不早 return，繼續走 fetch preview。
+            // 查不到來源（.find → undefined）與非 CF 來源一樣走 advancedSearch。
             // 番號回寫 searchQuery：讓彈窗內改番號生效（advancedSearch 讀 this.searchQuery）。
             if (this.rescrapeEntryPoint === 'search') {
-                if (sourceId !== 'javlibrary') {
-                    // 其他 source：維持原路（advancedSearch 整包贏）
+                const s = this.rescrapeSources.find(x => x.id === sourceId);
+                if (!(s && s.manual_only)) {
+                    // 其他 source / 查不到：維持原路（advancedSearch 整包贏）
                     this.searchQuery = this.rescrapeNumber.trim();
                     this.closeRescrape();
                     await this.advancedSearch(sourceId);  // 'auto' 直接傳給 /api/search（後端 merger）
                     return;
                 }
-                // javlib：不早 return，繼續走 fetch preview（CD-86-8）
+                // manual_only：不早 return，繼續走 fetch preview（CD-86-8）
             }
             // 74a US2：switch-source 入口點「自動」= 直接 cycle（picker 關閉 + switchSource 循環）
             // spec-74 §US2：picker「自動」= 原本 🔄 tap 的「換到下一個來源」循環功能。
@@ -232,11 +263,11 @@ export function rescrapeState() {
                 // 兩條路徑皆能正確進入 CF flow。finally 確保 rescrapeLoadingSource=null，retry 可進行。
                 if (data && data.cf_needed) {
                     this.rescrapeCfWaiting = true;
-                    this._pollCfThenRetry(this.rescrapeNumber.trim());
+                    this._pollCfThenRetry(this.rescrapeNumber.trim(), sourceId);
                     return;
                 }
                 if (data && data.cf_unavailable) {
-                    this.showToast(window.t('showcase.rescrape.jl_desktop_only'), 'warning');
+                    this.showToast(window.t(this.cfUnavailableMessageKey()), 'warning');
                     return;
                 }
                 // 62c-3 US7：switch-source 入口（在 showcase 分支之前判斷）。找到 → 只替換捕捉的當前卡 slot
@@ -457,11 +488,11 @@ export function rescrapeState() {
                 // 在判 success/失敗之前處理。順序對齊 preview（cf_needed 先、cf_unavailable 後）。
                 if (result.cf_needed) {
                     this.rescrapeCfWaiting = true;
-                    this._pollCfThenRetry(this.rescrapeNumber.trim());
+                    this._pollCfThenRetry(this.rescrapeNumber.trim(), this._rescrapeCommitSource);
                     return;
                 }
                 if (result.cf_unavailable) {
-                    this.showToast(window.t('showcase.rescrape.jl_desktop_only'), 'warning');
+                    this.showToast(window.t(this.cfUnavailableMessageKey()), 'warning');
                     return;
                 }
                 if (result.success) {
@@ -482,11 +513,12 @@ export function rescrapeState() {
          * 70-T6: poll /api/cf/status 直到就緒，再 auto-retry 同番號。
          * MAX_POLLS=150（150 × 2s = 300s = 5 分鐘）。
          */
-        _pollCfThenRetry(number) {
+        _pollCfThenRetry(number, sourceId) {
             if (this._cfPollHandle !== null) {   // 防覆寫洩漏：清掉任何既有 poll
                 clearInterval(this._cfPollHandle);
                 this._cfPollHandle = null;
             }
+            this._cfPollSourceId = sourceId;
             const MAX_POLLS = 150;          // 150 × 2s = 300s = 5 分鐘
             let pollCount = 0;
             this._cfPollHandle = setInterval(async () => {
@@ -496,7 +528,7 @@ export function rescrapeState() {
                     return;
                 }
                 try {
-                    const resp = await fetch('/api/cf/status?key=javlibrary');
+                    const resp = await fetch('/api/cf/status?key=' + encodeURIComponent(sourceId));
                     const data = await resp.json();
                     if (data && data.unavailable) {   // CD-70c-3: transport dead/unavailable → stop polling now
                         this.cancelCfPoll();           // clearInterval + POST /api/cf/abandon (emits 通知)
@@ -505,9 +537,10 @@ export function rescrapeState() {
                     if (data && data.ready) {
                         clearInterval(this._cfPollHandle);
                         this._cfPollHandle = null;
+                        this._cfPollSourceId = null;
                         this.rescrapeCfWaiting = false;
-                        // retry 同番號
-                        await this.rescrapeWithSource('javlibrary');
+                        // retry 同番號、同觸發來源
+                        await this.rescrapeWithSource(sourceId);
                     }
                 } catch (_) { /* network 暫時失敗，繼續 poll */ }
             }, 2000);
@@ -524,8 +557,12 @@ export function rescrapeState() {
                 this._cfPollHandle = null;
             }
             this.rescrapeCfWaiting = false;
-            // POST /api/cf/abandon（非阻塞 fire-and-forget；通知中心由後端寫）
-            fetch('/api/cf/abandon?key=javlibrary', { method: 'POST' }).catch(() => {});
+            const sourceId = this._cfPollSourceId;
+            this._cfPollSourceId = null;
+            // 沒有 sourceId 不得 POST——後端 key 預設 javlibrary，不帶 key 等於放棄別人的驗證。
+            if (sourceId) {
+                fetch('/api/cf/abandon?key=' + encodeURIComponent(sourceId), { method: 'POST' }).catch(() => {});
+            }
         },
 
         /**
@@ -538,6 +575,7 @@ export function rescrapeState() {
                 this._cfPollHandle = null;
                 this.rescrapeCfWaiting = false;
             }
+            this._cfPollSourceId = null;
             this.rescrapeOpen = false;
             this.rescrapeStep = 'pick';
             this.rescrapePreview = null;

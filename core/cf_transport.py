@@ -14,6 +14,10 @@ DI chain (plan-70b §1.1):
 """
 from typing import Protocol, Optional
 
+from core.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 class CfTransportUnavailable(RuntimeError):
     """CF transport is not initialised in this environment (dev/server).
@@ -40,14 +44,25 @@ class CfTransport(Protocol):
     """
 
     def begin_solve(self, origin_url: str, cache_key: str) -> None:
-        """**Non-blocking**: display the transport window and navigate to
-        *origin_url* so the user can complete the CF challenge + age gate.
+        """Display the transport window and navigate to *origin_url* so the user
+        can complete the CF challenge + age gate.
 
-        Returns immediately without waiting for the user to finish.
-        CD-70b-7: the backend must not hold a thread waiting for the solution.
+        **Never waits for the user to solve anything** — CD-70b-7 (the backend
+        must not hold a thread waiting for the solution) is unchanged.
 
-        *cache_key* is provided for future multi-CF-site expansion
-        (currently always ``'javlibrary'``).
+        It is NOT, however, strictly instantaneous: an implementation may spend a
+        short, bounded wait on navigation transitions before returning (the
+        pywebview one bounces the window off ``about:blank`` first for sites where
+        WebView2 otherwise stops completing repeat navigations — TASK-118a-T6/F-2,
+        bounded by ``NAV_RESET_TIMEOUT_S``, ~0.1s in practice). Call it from a
+        threadpool/sync path, not directly from an asyncio event loop.
+
+        *cache_key* selects which per-site transport window to target (e.g.
+        ``'javlibrary'`` or ``'fc-javten'``); each site owns its own hidden
+        window, dead-flag, and remembered CF URL internally (see
+        ``windows/cf_transport_impl.py``) — this Protocol's registration
+        model stays a single global transport object regardless of how many
+        sites it serves.
         """
         ...
 
@@ -60,6 +75,10 @@ class CfTransport(Protocol):
         """
         ...
 
+    def available_sites(self) -> list[str]:
+        """Site keys with a usable window right now (see impl for the exact rule)."""
+        ...
+
     def fetch(self, url: str, cache_key: str) -> str:
         """Fetch *url* HTML via a same-origin request inside the transport
         window and return the raw HTML string.
@@ -70,6 +89,30 @@ class CfTransport(Protocol):
             CfChallengeRequired: fetch completed but the returned HTML is a
                 CF challenge page.  Caller should call begin_solve() →
                 poll is_ready() → retry fetch().
+        """
+        ...
+
+    def navigate_and_settle(self, url: str, cache_key: str) -> str:
+        """**Blocking (bounded)**: navigate the *cache_key* site's transport
+        window to *url*, wait for pywebview's JS bridge to become ready
+        (bounded timeout), then return the settled final URL.
+
+        Exists for sites whose search step cannot use a same-origin
+        ``fetch()`` (e.g. a redirect chain that Mixed-Content-blocks
+        mid-flight): the caller navigates first to resolve the final landing
+        URL via this method, then calls ``fetch()`` against that URL as
+        usual — ``fetch()`` and ``is_ready()`` still do all HTML retrieval.
+
+        Does not call ``evaluate_js`` before the bridge is ready (that would
+        block ~20s and strand the bridge — the 0.9.9c root cause). Once the
+        bridge is ready, reads ``document.title`` + head HTML to detect a CF
+        challenge page; if detected, raises instead of returning the URL.
+
+        Raises:
+            CfTransportUnavailable: transport / this site's window is not
+                initialised.
+            CfChallengeRequired: the bridge never became ready within the
+                timeout, or the settled page is a CF challenge.
         """
         ...
 
@@ -92,3 +135,30 @@ def get_cf_transport() -> Optional[CfTransport]:
     been registered (dev / server environments).
     """
     return _transport
+
+
+def get_cf_available_sites() -> Optional[list[str]]:
+    """Which CF site keys are usable in this process.
+
+    Returns:
+        []    — no transport at all (dev / LAN server): nothing is usable.
+        [...] — the transport reported its live site keys.
+        None  — **undeterminable**; callers must fall back to the legacy
+                global `get_cf_transport() is not None` behaviour.
+
+    The None branch is deliberately fail-OPEN. A transport that predates
+    `available_sites()` (or whose implementation raises) is not evidence that
+    its sites are dead — treating it as "nothing available" would grey out a
+    *working* JavLibrary, turning a cosmetic bug into a functional regression.
+    """
+    transport = get_cf_transport()
+    if transport is None:
+        return []
+    fn = getattr(transport, 'available_sites', None)
+    if not callable(fn):
+        return None
+    try:
+        return sorted(str(s) for s in fn())
+    except Exception:            # noqa: BLE001 — never let this break page render
+        logger.warning("get_cf_available_sites: transport.available_sites() 失敗，改用舊的全域旗標", exc_info=True)
+        return None
