@@ -164,6 +164,22 @@
     text-align: center;
 }
 
+/* 119-T2 / CD-119-6 / AC-1.5：Bootstrap Icons 字形左右鏡像工具 class。
+   為什麼套 ::before 不套 <i>：`<i class="bi …">` 是 inline box，CSS transform 對 inline box
+   無視覺效果；vendored bootstrap-icons.css:14-16 已把 .bi::before 設為 display:inline-block，
+   故偽元素才是 transform 生效的那一層（專案記憶 feedback_css_transform_inline_verify，
+   101b-T6 曾因此連兩次假修）。
+   為什麼鏡像：JAV 橫式封面的正面（人）在**右半邊**，左半是背面拼貼；「直式海報」保留的正是右半。
+   鏡像後這顆圖示畫的就是使用者手上那張封面的實際佈局，而不是一張泛用名片。
+   原字形朝向已用渲染像素機械判定（160px canvas、alpha>32 墨水覆蓋率、以墨水 bbox 中線切半）：
+   bi-person-vcard = 左 60.3% / 右 39.7%（人像在左 → 需要鏡像）；
+   bi-person-badge = 49.6% / 50.4%（對稱，人在中間 → 不鏡像，本 task 不動它）；
+   bi-grid-3x3 對照組 = 50.3% / 49.7%（證明量法無系統性偏差）。
+   掛 class 到 <i> 上是 T5 的工作，本 task 只提供規則本體。 */
+.icon-mirror-x::before {
+    transform: scaleX(-1);
+}
+
 /* ==================== Status Bar (M3g) ==================== */
 /* 49a-T4: status bar 已從 showcase 主頁移除（showcase.html 不再使用），
    保留 CSS 是因為 design-system.html 仍引用 .showcase-status-bar / .status-total /
