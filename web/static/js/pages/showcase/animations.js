@@ -8,6 +8,8 @@
  *   - playFlipFilter(gridEl, state, params)     B8: 篩選進出場 Flip 動畫（B15 恢復 core.js 呼叫）
  *   - captureFlipState(gridEl)                  B8: 捕獲 Flip 狀態快照（B15 恢復 core.js 呼叫）
  *   - playModeCrossfade(oldMode, newMode, params) B10: 模式切換 crossfade
+ *   - captureShapeState(gridEl)                 TASK-119-T4: 卡型切換（cover/poster）Flip 快照
+ *   - playShapeMorph(capturedState, gridEl)      TASK-119-T4: 卡型切換 Flip morph 動畫
  *
  * B5 骨架：所有方法為 placeholder，return null。
  * B6-B10 逐步填入實作。
@@ -350,6 +352,73 @@
             if (!cards.length) return null;
 
             return Flip.getState(cards, { props: 'opacity', simple: true });
+        },
+
+        /**
+         * TASK-119-T4: 卡型切換（cover ↔ poster）用的 Flip 快照。
+         *
+         * 刻意與上面的 captureFlipState() 分立、不共用實作：後者服務篩選進出場，帶
+         * { props: 'opacity', simple: true }；本函式服務卡型 morph，選項需求不同——
+         * 共用會讓兩個用途互相綁架。
+         *
+         * @param {Element} gridEl - .showcase-grid / .actress-grid 容器
+         * @returns {Object|null} Flip state 物件（AC-6.4：selector 已涵蓋 hero 卡，
+         *   因為 hero 卡的 class 是 `av-card-preview hero-card`）
+         */
+        captureShapeState: function (gridEl) {
+            // null guard
+            if (!gridEl) return null;
+
+            // Flip guard
+            if (typeof Flip === 'undefined') return null;
+
+            var cards = gridEl.querySelectorAll('.av-card-preview');
+            if (!cards.length) return null;
+
+            return Flip.getState(cards);
+        },
+
+        /**
+         * TASK-119-T4: 卡型切換（cover ↔ poster）的 Flip morph 動畫。
+         *
+         * 兩階段 API 的第二階段（CD-119-12）：呼叫端（state-videos.js selectPresentation）
+         * 必須在 captureShapeState() 之後、寫入 cardShape 之前先取快照，再於 Alpine
+         * $nextTick 之後才呼叫本函式——此時新的 class 已經套上、DOM 幾何已更新，
+         * Flip.from 才量得到真正的「新位置」。
+         *
+         * @param {Object} capturedState - captureShapeState() 的回傳值
+         * @param {Element} gridEl - .showcase-grid / .actress-grid 容器
+         * @returns {gsap.core.Timeline|null}
+         */
+        playShapeMorph: function (capturedState, gridEl) {
+            // null guard
+            if (!capturedState || !gridEl) return null;
+
+            // Flip guard
+            if (typeof Flip === 'undefined' || typeof gsap === 'undefined') return null;
+
+            // Reduced Motion 降級：class 已套上，畫面本來就正確，直接到位（AC-8.2）
+            if (shouldSkip()) return null;
+
+            var cards = gridEl.querySelectorAll('.av-card-preview');
+            if (!cards.length) return null;
+
+            // C18: 中斷進行中的 Flip（連點）
+            Flip.killFlipsOf(cards);
+
+            var dur = OpenAver.motion.DURATION.medium;
+
+            // CD-119-8: absolute 顯式寫成 false（依賴預設值但不寫死會失去這條契約的可讀性）。
+            // 一次 morph 整頁 ~90 張卡，若把 absolute 設成 true 會讓 grid 容器高度在動畫期間歸零。
+            return Flip.from(capturedState, {
+                duration: dur,
+                ease: 'fluent',
+                absolute: false,
+                prune: true,
+                onComplete: function () {
+                    gsap.set(cards, { clearProps: 'transform,width,height' });
+                }
+            });
         },
 
         /**
