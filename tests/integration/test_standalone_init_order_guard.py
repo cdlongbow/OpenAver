@@ -482,6 +482,42 @@ class TestStandaloneInitOrderGuard:
             "must not skip CF transport registration for JavLibrary"
         )
 
+    def test_jl_create_window_in_own_try_without_register(self):
+        """
+        T11 (Codex PR#137 四審 P3): JL's create_window must sit inside an ast.Try
+        that does NOT contain register_cf_transport() — the symmetric twin of
+        test_javten_create_window_in_own_try_without_register above.
+
+        Before T11 only javten was isolated. A JL window failure fell through to
+        the shared outer handler, so register_cf_transport() never ran and BOTH
+        sources greyed out. 0.13.13 的 release note 對使用者說「若其中一個因故沒
+        建立成功，只有那一條會灰化……另一條不受影響、照常可用」——那句話當時只有
+        javten 失敗的方向成立。這支守衛鎖住另一個方向。
+
+        mutation: drop JL's inner try (back to the shared outer one) → red.
+        """
+        tree, _ = self._parse()
+        main_node = _find_main_func(tree)
+        assert main_node is not None, "main() not found"
+
+        direct_calls = _collect_direct_calls_in_main_body(main_node)
+        jl_create_calls = [c for c in direct_calls if _is_jl_create_window_call(c)]
+        assert len(jl_create_calls) == 1, (
+            f"Expected exactly 1 JavLibrary webview.create_window() in main() body, "
+            f"found {len(jl_create_calls)}"
+        )
+
+        parents = _build_parent_map(tree)
+        enclosing_tries = _enclosing_try_nodes(jl_create_calls[0], parents)
+        isolated = [
+            t for t in enclosing_tries if not _try_contains_register_cf_transport(t)
+        ]
+        assert isolated, (
+            "JavLibrary webview.create_window() must sit inside an ast.Try that "
+            "does not contain register_cf_transport() — a JL window failure must "
+            "not skip CF transport registration and take fc-javten down with it"
+        )
+
     def test_jl_events_closing_binding_and_handler(self):
         """
         (c) CD-70c-2 Layer 1 anti-regression: assert the JL-specific close-intercept

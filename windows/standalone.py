@@ -392,12 +392,14 @@ def main():
         # app connects to javlibrary.com on every startup, even when the source is disabled.
         # This is required by the same-origin fetch design (the hidden window must be parked
         # on the origin for cookie-bearing fetch). A lazy-navigate refactor is a follow-up branch.
-        jl_win = webview.create_window(
-            'JavLibrary — CF 驗證',
-            JAVLIBRARY_ORIGIN,
-            width=1200, height=820,
-            hidden=True,
-        )
+        # T11: jl 要有自己的 try（對稱於下方 javten），否則 JL 建立失敗會跳過 register_cf_transport()
+        # 連 fc-javten 一起灰掉 —— 理由與守衛見 test_jl_create_window_in_own_try_without_register。
+        try:
+            jl_win = webview.create_window(
+                'JavLibrary — CF 驗證', JAVLIBRARY_ORIGIN, width=1200, height=820, hidden=True,
+            )
+        except Exception as e:                                       # noqa: BLE001
+            logger.warning("javlibrary CF 視窗建立失敗，該來源不可用（FC2-javten 不受影響）：%s", e)
         # TASK-118a-T1 / CD-118a-4: the fc-javten window is created eagerly here too
         # (same non-lazy precedent as jl_win — both windows exist before webview.start()),
         # but parked on about:blank instead of javten.com. It only navigates there on
@@ -418,11 +420,13 @@ def main():
         # the origin gate (INV-1) will route its first fetch()/search into
         # navigate_and_settle instead, which is the only writer of self._origins after
         # construction.
-        cf_wins = {'javlibrary': jl_win}
-        if javten_win is not None:
-            cf_wins['fc-javten'] = javten_win
+        _built = (('javlibrary', jl_win), ('fc-javten', javten_win))
+        cf_wins = {k: w for k, w in _built if w is not None}
+        # 空 cf_wins 也照樣註冊：per-site 呼叫一律經 _require_window fail-closed，而空 transport
+        # 回報的狀態更準 —— available_sites()=[] 讓膠囊灰化並說「請重新啟動」；不註冊的話
+        # cf_transport_available=false，訊息會變成「僅限桌面應用程式」，那在桌面版上根本不成立。
         register_cf_transport(PyWebViewCfTransport(cf_wins, {'javlibrary': JAVLIBRARY_ORIGIN}))
-        logger.info("CF transport registered (%s)", ', '.join(cf_wins))
+        logger.info("CF transport registered (%s)", ', '.join(cf_wins) or '無可用視窗')
     except Exception as e:
         logger.warning(f"CF transport init failed (JavLibrary/FC2-javten may be unavailable): {e}")
 
