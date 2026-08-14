@@ -95,14 +95,21 @@ def test_bootstrap_injects_cf_sites_when_transport_reports_them(client, temp_con
     """
     monkeypatch.setattr("core.cf_transport.get_cf_available_sites", lambda: ["javlibrary"])
     html = client.get("/search").text
+    # [lint-guard: pytest-justified] 驗的是 get_common_context() → Jinja render 的跨層
+    # 序列化結果，不是模板原始碼。static_guard_lint 讀得到模板裡有沒有寫 cf_sites，
+    # 讀不到「transport 回報 ['javlibrary'] 時真的 render 出這個值」——要 render 才知道。
+    # 模板側的靜態存在性另有 [118a-T9] required-string 規則守著，兩者不重複。
     assert 'cf_sites: ["javlibrary"]' in html, (
-        f"bootstrap 應含 cf_sites: [\"javlibrary\"]，實際未找到於 HTML 中"
+        "bootstrap 應含 cf_sites: [\"javlibrary\"]，實際未找到於 HTML 中"
     )
 
 
 def test_bootstrap_cf_sites_empty_when_no_transport(client, temp_config_path):
     """118a-T9：dev 環境（無 transport）→ cf_sites 為 []（不 patch，走真實 get_cf_available_sites）。"""
     html = client.get("/search").text
+    # [lint-guard: pytest-justified] 同上：真 render 的序列化結果，非模板原始碼。
+    # 這條守的是 fail-open 的反面——沒有 transport 時必須是 []（兩顆膠囊都灰），
+    # 不能因為 get_cf_available_sites() 回錯型別而變成 null 走 fallback 全部亮起來。
     assert 'cf_sites: []' in html, (
         "dev 環境無 transport 時 bootstrap 的 cf_sites 應為 []"
     )

@@ -2520,6 +2520,11 @@ class TestRescrapeVersionStateGuard:
         )
         assert m_search, "rescrapeWithSource 中未見 rescrapeEntryPoint === 'search' 判斷"
         window = src[m_search.start():m_search.start() + 400]
+        # [lint-guard: pytest-justified] method-body window 守衛：斷言的不是「這個字串在檔案裡」，
+        # 而是「它出現在 rescrapeEntryPoint === 'search' 這個分支之後的 400 字元內」——
+        # 錨點是 regex 比對到的位置，切片範圍由它決定。static_guard_lint 的 required-string
+        # 是 whole-file/scope 粒度，表達不了這種相對位移窗口（同 test_contract_code_shape.py:18
+        # 的 method-body ordering 案例）。file-wide 版本會假綠：manual_only 在本檔別處也出現。
         assert "manual_only" in window, (
             "CD-86-8 違規：rescrapeWithSource search 分支（前 400 字元）未見 manual_only 判斷——"
             "search 入口 early return 必須依來源 manual_only 條件分流，不得無條件 advancedSearch"
