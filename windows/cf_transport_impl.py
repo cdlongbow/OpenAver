@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import queue
+import threading
 import time
 from typing import Any, TYPE_CHECKING
 from urllib.parse import urlsplit
@@ -84,6 +85,15 @@ _SITE_AGE_GATE = {'javlibrary': True, 'fc-javten': False}
 NAV_RESET_URL = 'about:blank'
 NAV_RESET_TIMEOUT_S = 2.0
 _SITE_NAV_RESET = {'javlibrary': False, 'fc-javten': True}
+
+# T10/F-2: 站內 fetch 回來的最終 URL（r.url，轉址後）必須仍在請求的 origin 上。
+# 開給 fc-javten：它是第三方鏡像站，本來就不可信，而 fc2_javten 的白名單只檢得到
+# navigate_and_settle 那一段（見 core/scrapers/fc2_javten.py 的 T6-P3-2 註解）。
+#
+# javlibrary 刻意關閉：它有多個網域、歷史上做過網域輪替，我們**沒有**它跨網域轉址
+# 行為的實測證據，而這是 fail-closed 檢查——開錯就是把一條能用的來源整條擋掉。
+# 要開之前先拿真機證據，不要用推理開。
+_SITE_FETCH_ORIGIN_PIN = {'javlibrary': False, 'fc-javten': True}
 
 
 # ──────────────────────────────────────────────────────────────
@@ -213,6 +223,12 @@ class PyWebViewCfTransport:
         for key, url in (initial_urls or {}).items():
             if key in self._origins:
                 self._origins[key] = self._origin(url)
+
+        # INV-2 (T10): per-site navigation lock. 併發的 navigate_and_settle 會互相
+        # 換掉對方的頁面，先進者讀到後進者的 location.href → 番號 predicate 比不中
+        # → 回報「找不到」。鎖的範圍只到 navigate_and_settle 內部，因為 fetch() 是
+        # URL-explicit 的（並發導航改不了它取回哪份文件）—— 這句由 oracle-2 鎖住。
+        self._nav_locks: dict[str, threading.Lock] = {key: threading.Lock() for key in self._wins}
 
         # Backstop: if a window is genuinely destroyed (crash / OS-forced / app
         # teardown) despite the closing-intercept in standalone.py, mark that
@@ -452,6 +468,19 @@ class PyWebViewCfTransport:
             )
             raise
 
+        # T10/F-2: final_url is the JS fetch()'s r.url — the URL AFTER redirects.
+        # A site-internal request that lands on a different origin is exactly
+        # T6-P3-2's sink: we would parse and persist a third party's HTML as this
+        # video's data. Only pinned per-site (see _SITE_FETCH_ORIGIN_PIN above) —
+        # this check runs BEFORE CF-challenge detection so a cross-origin landing
+        # is rejected outright instead of being scanned for challenge markup.
+        if _SITE_FETCH_ORIGIN_PIN.get(key, False) and self._origin(final_url) != self._origin(url):
+            logger.warning(
+                "[CF-SEC] fetch → 站內請求被轉址到其他 origin，已拒絕（site=%s, 請求=%s, 落地=%s）",
+                key, url, final_url,
+            )
+            raise RuntimeError(f"cross-origin redirect rejected for {url} → {final_url} (site={key})")
+
         # Detect CF challenge via title
         soup = BeautifulSoup(html, 'html.parser')
         title_tag = soup.title
@@ -657,71 +686,77 @@ class PyWebViewCfTransport:
                 "restart OpenAver to use this source again"
             )
 
-        logger.info("[CF-DIAG] navigate_and_settle → load_url (site=%s, url=%s)", key, url)
-        self._reset_navigation(key)  # T6/F-2
-        self._navigate(key, url)
+        # INV-2 (T10): serialize navigate→settle→read-href for this key so a
+        # concurrent call cannot swap the shared window's page out from under
+        # us between load_url() and reading location.href. _require_window /
+        # _dead stay OUTSIDE the lock (fail-closed doesn't need serializing,
+        # and an unavailable site should report immediately, not queue).
+        with self._nav_locks[key]:
+            logger.info("[CF-DIAG] navigate_and_settle → load_url (site=%s, url=%s)", key, url)
+            self._reset_navigation(key)  # T6/F-2
+            self._navigate(key, url)
 
-        # D-3: wait on the bridge-ready Event itself (bounded) — never evaluate_js
-        # before this returns True.
-        if not self._wait_bridge_ready(key, NAVIGATE_BRIDGE_TIMEOUT_S):
-            logger.info(
-                "[CF-DIAG] navigate_and_settle → bridge never became ready within %.1fs (site=%s, url=%s)",
-                NAVIGATE_BRIDGE_TIMEOUT_S, key, url,
-            )
-            self._cf_urls[key] = url
-            raise CfChallengeRequired(f'navigate_and_settle: bridge not ready within {NAVIGATE_BRIDGE_TIMEOUT_S}s for {url} (site={key})')
+            # D-3: wait on the bridge-ready Event itself (bounded) — never evaluate_js
+            # before this returns True.
+            if not self._wait_bridge_ready(key, NAVIGATE_BRIDGE_TIMEOUT_S):
+                logger.info(
+                    "[CF-DIAG] navigate_and_settle → bridge never became ready within %.1fs (site=%s, url=%s)",
+                    NAVIGATE_BRIDGE_TIMEOUT_S, key, url,
+                )
+                self._cf_urls[key] = url
+                raise CfChallengeRequired(f'navigate_and_settle: bridge not ready within {NAVIGATE_BRIDGE_TIMEOUT_S}s for {url} (site={key})')
 
-        # Empty title = still navigating (is_ready() 0.9.9 positive guard).
-        # Must settle BEFORE reading the URL — a mid-redirect URL would
-        # fail the scraper match and surface as "not found".
-        if not self._wait_nonempty_title(win, SETTLE_TITLE_TIMEOUT_S):
-            logger.info(
-                "[CF-DIAG] navigate_and_settle → empty title after %.1fs (still navigating) (site=%s, url=%s)",
-                SETTLE_TITLE_TIMEOUT_S, key, url,
-            )
-            self._cf_urls[key] = url
-            raise CfChallengeRequired(
-                f'navigate_and_settle: empty title within {SETTLE_TITLE_TIMEOUT_S}s for {url} (site={key})'
-            )
+            # Empty title = still navigating (is_ready() 0.9.9 positive guard).
+            # Must settle BEFORE reading the URL — a mid-redirect URL would
+            # fail the scraper match and surface as "not found".
+            if not self._wait_nonempty_title(win, SETTLE_TITLE_TIMEOUT_S):
+                logger.info(
+                    "[CF-DIAG] navigate_and_settle → empty title after %.1fs (still navigating) (site=%s, url=%s)",
+                    SETTLE_TITLE_TIMEOUT_S, key, url,
+                )
+                self._cf_urls[key] = url
+                raise CfChallengeRequired(
+                    f'navigate_and_settle: empty title within {SETTLE_TITLE_TIMEOUT_S}s for {url} (site={key})'
+                )
 
-        # T6/F-1: location.href, NOT get_current_url(). Measured on the real
-        # stack (POC5): after the /search redirect chain settles, WebView2's
-        # get_current_url() still reports the URL we *requested* while
-        # location.href (and document.title) already hold the landed video page.
-        # Trusting get_current_url() made the scraper's hit predicate miss →
-        # the user searched a film that exists and the screen said "not found".
-        # The old `... or url` fallback substituted silently, which is precisely
-        # why that bug left no trace in the log — hence the warning below.
-        href = win.evaluate_js("location.href")
-        if isinstance(href, str) and href.strip():
-            final_url = href.strip()
-        else:
-            logger.warning(
-                "[CF-DIAG] navigate_and_settle → location.href unreadable (%r); falling back "
-                "to the requested URL, the hit check will likely miss (site=%s, url=%s)",
-                href, key, url,
-            )
-            final_url = url
-        # D-0 (T1 review): the window is now settled on final_url, which a
-        # redirect may have moved to a different origin than the one we asked
-        # for. Re-record so fetch()'s origin gate compares against reality —
-        # otherwise the very next fetch() misses the gate and pops the CF
-        # window even though Cloudflare never challenged anything.
-        self._record_origin(key, final_url)
+            # T6/F-1: location.href, NOT get_current_url(). Measured on the real
+            # stack (POC5): after the /search redirect chain settles, WebView2's
+            # get_current_url() still reports the URL we *requested* while
+            # location.href (and document.title) already hold the landed video page.
+            # Trusting get_current_url() made the scraper's hit predicate miss →
+            # the user searched a film that exists and the screen said "not found".
+            # The old `... or url` fallback substituted silently, which is precisely
+            # why that bug left no trace in the log — hence the warning below.
+            href = win.evaluate_js("location.href")
+            if isinstance(href, str) and href.strip():
+                final_url = href.strip()
+            else:
+                logger.warning(
+                    "[CF-DIAG] navigate_and_settle → location.href unreadable (%r); falling back "
+                    "to the requested URL, the hit check will likely miss (site=%s, url=%s)",
+                    href, key, url,
+                )
+                final_url = url
+            # D-0 (T1 review): the window is now settled on final_url, which a
+            # redirect may have moved to a different origin than the one we asked
+            # for. Re-record so fetch()'s origin gate compares against reality —
+            # otherwise the very next fetch() misses the gate and pops the CF
+            # window even though Cloudflare never challenged anything.
+            self._record_origin(key, final_url)
 
-        # Bridge is ready now — safe to evaluate_js, limited to the same
-        # title/head challenge-detection reads as is_ready() (no over18 cookie,
-        # no _is_age_gate: those are javlibrary-only per CD-118a-5).
-        title = win.evaluate_js("document.title") or ""
-        head = win.evaluate_js("document.documentElement.outerHTML.slice(0, 4000)") or ""
+            # Bridge is ready now — safe to evaluate_js, limited to the same
+            # title/head challenge-detection reads as is_ready() (no over18 cookie,
+            # no _is_age_gate: those are javlibrary-only per CD-118a-5).
+            title = win.evaluate_js("document.title") or ""
+            head = win.evaluate_js("document.documentElement.outerHTML.slice(0, 4000)") or ""
 
-        if _is_cf_challenge(title, head):
-            logger.info(
-                "[CF-DIAG] navigate_and_settle → CF challenge detected (site=%s, title=%r, url=%s)",
-                key, (title or "")[:80], final_url,
-            )
-            self._cf_urls[key] = final_url
-            raise CfChallengeRequired(f'navigate_and_settle: CF challenge detected for {url} (site={key})')
+            if _is_cf_challenge(title, head):
+                logger.info(
+                    "[CF-DIAG] navigate_and_settle → CF challenge detected (site=%s, title=%r, url=%s)",
+                    key, (title or "")[:80], final_url,
+                )
+                self._cf_urls[key] = final_url
+                raise CfChallengeRequired(f'navigate_and_settle: CF challenge detected for {url} (site={key})')
 
-        logger.debug("[CF-DIAG] navigate_and_settle ok (site=%s, final_url=%s)", key, final_url)
-        return final_url
+            logger.debug("[CF-DIAG] navigate_and_settle ok (site=%s, final_url=%s)", key, final_url)
+            return final_url

@@ -583,6 +583,87 @@ class TestFetch:
 
 
 # ──────────────────────────────────────────────────────────────
+# Tests: fetch() cross-origin redirect rejection (TASK-118a-T10 / F-2)
+# ──────────────────────────────────────────────────────────────
+
+class TestFetchOriginPin:
+    """
+    T10/F-2: _wv_fetch's finalUrl (r.url, post-redirect) must land on the same
+    origin as the requested url for sites pinned in _SITE_FETCH_ORIGIN_PIN.
+    javten is a third-party mirror we don't control — a same-origin request
+    that redirects to a different host must be rejected outright, not parsed
+    as this video's data (same sink as T6-P3-2).
+
+    mutation (per DoD): drop `_SITE_FETCH_ORIGIN_PIN.get(key, False) and` from
+    the guard in fetch() (→ always-on) — test 4 (javlibrary) must go red;
+    tests 1-3 must stay green.
+    """
+
+    JAVTEN_URL = 'https://javten.com/tw/video/2100980/id4938117/slug'
+
+    def _javten_transport(self, win):
+        return PyWebViewCfTransport(
+            {'fc-javten': win}, {'fc-javten': self.JAVTEN_URL},
+        )
+
+    def test_1_cross_origin_final_url_raises_and_returns_no_html(self):
+        """final_url lands on a different host → RuntimeError, no HTML surfaced."""
+        win = FakeWindow()
+        win._eval_callback_result['default'] = {
+            'finalUrl': 'https://evil-mirror.example/tw/video/2100980/id4938117/slug',
+            'status': 200,
+            'html': '<html><title>not javten</title></html>',
+        }
+        transport = self._javten_transport(win)
+
+        with pytest.raises(RuntimeError, match='cross-origin redirect rejected'):
+            transport.fetch(self.JAVTEN_URL, 'fc-javten')
+
+    def test_2_same_origin_final_url_with_trailing_slash_returns_html(self):
+        """final_url differs only by a trailing slash (still same origin) → normal return."""
+        win = FakeWindow()
+        win._eval_callback_result['default'] = {
+            'finalUrl': 'https://javten.com/tw/video/2100980/id4938117/slug/',
+            'status': 200,
+            'html': '<html><title>JavTen video</title></html>',
+        }
+        transport = self._javten_transport(win)
+
+        result = transport.fetch(self.JAVTEN_URL, 'fc-javten')
+        assert result == '<html><title>JavTen video</title></html>'
+
+    def test_3_scheme_downgrade_same_host_raises(self):
+        """final_url drops to http:// on the same host → still a different origin, must raise."""
+        win = FakeWindow()
+        win._eval_callback_result['default'] = {
+            'finalUrl': 'http://javten.com/tw/video/2100980/id4938117/slug',
+            'status': 200,
+            'html': '<html><title>downgraded</title></html>',
+        }
+        transport = self._javten_transport(win)
+
+        with pytest.raises(RuntimeError, match='cross-origin redirect rejected'):
+            transport.fetch(self.JAVTEN_URL, 'fc-javten')
+
+    def test_4_javlibrary_cross_origin_final_url_not_rejected(self):
+        """
+        javlibrary is NOT in the pin table (_SITE_FETCH_ORIGIN_PIN['javlibrary']
+        is False) — an identical cross-origin final_url must NOT raise, proving
+        the guard is truly per-site, not globally on.
+        """
+        win = FakeWindow()
+        win._eval_callback_result['default'] = {
+            'finalUrl': 'https://mirror.example/ja/vl_searchbyid.php?keyword=START-578',
+            'status': 200,
+            'html': NORMAL_HTML,
+        }
+        transport = _jl_transport(win)
+
+        result = transport.fetch('https://www.javlibrary.com/ja/vl_searchbyid.php?keyword=START-578')
+        assert result == NORMAL_HTML
+
+
+# ──────────────────────────────────────────────────────────────
 # Tests: begin_solve()
 # ──────────────────────────────────────────────────────────────
 
@@ -934,6 +1015,15 @@ class TestDeadFlagFailFast:
         """
         win_a = FakeWindow()
         win_b = FakeWindowIsReady(READY_TITLE, READY_HEAD)
+        # T10/F-2: fc-javten is pinned in _SITE_FETCH_ORIGIN_PIN, so _wv_fetch's
+        # finalUrl must land on javten's own origin — the base FakeWindow default
+        # ('https://www.javlibrary.com/ja/') would now (correctly) be rejected as
+        # a cross-origin redirect, which is not what this test is exercising.
+        win_b._eval_callback_result['default'] = {
+            'finalUrl': 'https://javten.com/',
+            'status': 200,
+            'html': '<html><head><title>JavTen</title></head><body>content</body></html>',
+        }
         transport = PyWebViewCfTransport(
             {'javlibrary': win_a, 'fc-javten': win_b},
             {'javlibrary': JL_ORIGIN, 'fc-javten': 'https://javten.com/'},
@@ -1501,6 +1591,160 @@ class TestNavigateAndSettle:
         assert url_reads == [], (
             "get_current_url() must not run when title never settles; "
             f"got {url_reads}"
+        )
+
+
+# ──────────────────────────────────────────────────────────────
+# Tests: navigate_and_settle() concurrency (TASK-118a-T10 / F-1 / INV-2)
+# ──────────────────────────────────────────────────────────────
+
+class FakeWindowConcurrent(FakeWindowNavigate):
+    """Shared window used to build a deterministic two-thread race for INV-2
+    (T10) oracle-1: models "one video window, only one current URL" —
+    load_url() overwrites _current_url, and location.href always mirrors it
+    (href=None inherited from FakeWindowNavigate keeps that mirroring — no
+    explicit redirect target is configured here).
+
+    Two hooks let a test choreograph the exact interleaving TASK-118a-T10
+    describes, without any bare sleep:
+      after_navigate[url] — fires the instant load_url(url) completes. Used
+        to release the OTHER thread only once THIS thread has actually issued
+        its own load_url, so "who goes first" does not depend on OS thread
+        scheduling.
+      before_href_read — fires every time location.href is read, right
+        before the read. Used to make thread A wait (bounded) on an Event
+        thread B sets when it completes ITS OWN load_url — the exact
+        oracle-1 hook point the task card specifies.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.after_navigate: dict[str, "callable"] = {}
+        self.before_href_read = None
+
+    def load_url(self, url):
+        super().load_url(url)
+        cb = self.after_navigate.get(url)
+        if cb is not None:
+            cb()
+
+    def evaluate_js(self, code, callback=None):
+        if callback is None and 'location.href' in code and self.before_href_read is not None:
+            self.before_href_read()
+        return super().evaluate_js(code, callback)
+
+
+class TestNavigateAndSettleConcurrency:
+    """
+    TASK-118a-T10 / F-1 — INV-2: per-site navigation lock. Both oracles use
+    threading.Event for deterministic interleaving (CLAUDE.md: barrier-driven,
+    not bare-sleep-driven). The only real-time wait is the 0.5s the card
+    specifies for oracle-1's "has the other thread clobbered me yet?" probe.
+    """
+
+    URL_A = 'https://javten.com/search?kw=AAA'
+    URL_B = 'https://javten.com/search?kw=BBB'
+
+    def test_oracle_1_concurrent_calls_each_return_their_own_url(self):
+        """
+        oracle-1: two threads call navigate_and_settle(url, 'fc-javten')
+        concurrently on the SAME shared window with DIFFERENT keywords. Each
+        must get back its own URL.
+
+        Deterministic interleaving:
+          - B only starts its own navigate_and_settle after A has issued ITS
+            OWN load_url (a_navigated Event) — fixes "who goes first" without
+            depending on OS thread scheduling.
+          - A waits (timeout=0.5s) on b_loaded — set the instant B completes
+            ITS OWN load_url — right before reading location.href.
+
+        With the per-site lock (current code): B blocks trying to acquire the
+        lock for as long as A holds it, so b_loaded never fires within 0.5s →
+        A times out and reads its OWN url.
+        Without the lock (mutation target): B runs immediately, overwrites
+        the shared window's current URL, and sets b_loaded well within 0.5s →
+        A reads B's url instead of its own → FAIL.
+        """
+        win = FakeWindowConcurrent()
+        transport = PyWebViewCfTransport({'fc-javten': win}, None)
+
+        a_navigated = threading.Event()
+        b_loaded = threading.Event()
+        win.after_navigate[self.URL_A] = a_navigated.set
+        win.after_navigate[self.URL_B] = b_loaded.set
+        win.before_href_read = lambda: b_loaded.wait(timeout=0.5)
+
+        results: dict = {}
+        errors: list = []
+
+        def run_a():
+            try:
+                results['a'] = transport.navigate_and_settle(self.URL_A, 'fc-javten')
+            except BaseException as e:
+                errors.append(e)
+
+        def run_b():
+            # Scaffolding for THIS TEST's determinism (who starts first), not
+            # the thing under test — the lock inside navigate_and_settle is.
+            a_navigated.wait(timeout=5.0)
+            try:
+                results['b'] = transport.navigate_and_settle(self.URL_B, 'fc-javten')
+            except BaseException as e:
+                errors.append(e)
+
+        t_a = threading.Thread(target=run_a, name='oracle1-A')
+        t_b = threading.Thread(target=run_b, name='oracle1-B')
+        t_a.start()
+        t_b.start()
+        t_a.join(timeout=5.0)
+        t_b.join(timeout=5.0)
+
+        assert not t_a.is_alive() and not t_b.is_alive(), "threads did not finish within the join timeout"
+        if errors:
+            raise errors[0]
+
+        assert results.get('a') == self.URL_A, (
+            f"thread A must read back its OWN url; got {results.get('a')!r} "
+            "(getting url_b means the per-site nav lock is missing/ineffective)"
+        )
+        assert results.get('b') == self.URL_B, (
+            f"thread B must read back its OWN url; got {results.get('b')!r}"
+        )
+
+    def test_oracle_2_fetch_is_url_explicit_after_other_navigation(self, monkeypatch):
+        """
+        oracle-2 — the reason INV-2's lock is allowed to stop at "read href"
+        instead of extending through fetch(): after navigate_and_settle(url_a)
+        returns, if the SAME shared window gets navigated elsewhere (simulating
+        a concurrent caller B) before fetch(url_a) runs, fetch(url_a) must
+        STILL return url_a's HTML — because _wv_fetch sends fetch(url_a)
+        explicitly; it never reads the window's current location.
+
+        This must be green with or without F-1's lock — it is not testing the
+        lock, it is fencing the assumption the lock's scope depends on. If
+        fetch() is ever changed to derive its target from location.href
+        instead of the explicit url argument, THIS test goes red.
+        """
+        win = FakeWindowConcurrent()
+        transport = PyWebViewCfTransport({'fc-javten': win}, None)
+
+        landed_a = transport.navigate_and_settle(self.URL_A, 'fc-javten')
+        assert landed_a == self.URL_A
+
+        # Simulate a concurrent "B" navigating the shared window elsewhere,
+        # in between A's navigate_and_settle returning and A's fetch() call.
+        win.load_url('https://javten.com/search?kw=ELSEWHERE')
+
+        def fake_wv_fetch(window, url, **kwargs):
+            assert url == self.URL_A, f"_wv_fetch must be called with url_a exactly, got {url!r}"
+            return (url, 200, '<html><title>A page</title></html>')
+
+        monkeypatch.setattr(cf_transport_impl, '_wv_fetch', fake_wv_fetch)
+
+        html = transport.fetch(self.URL_A, 'fc-javten')
+        assert 'A page' in html, (
+            "fetch(url_a) must return A's HTML even though the shared window "
+            "was navigated elsewhere in between (oracle-2: fetch is URL-explicit)"
         )
 
 
