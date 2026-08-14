@@ -286,6 +286,43 @@ class TestPosterCropThresholdAlignment:
             f"{name} 找不到 (min-width:481px)+(max-width)+.{grid_class} repeat(4) poster grid @media block"
         )
 
+    def _card_shape_media_min_width(self) -> int:
+        """定位 showcase.css 卡型規則的 @media (min-width: Npx)，回傳 N。
+
+        先剝 /* */ 註解，再走訪全部 @media、逐字元大括號配對取 body，
+        篩 body 同時含 .showcase-grid.shape-poster 且含 aspect-ratio。
+        恰好一個；條件不得含 max-width。找不到／多個 → assert 失敗。
+        """
+        css = T11_SHOWCASE_CSS.read_text(encoding="utf-8")
+        css = re.sub(r'/\*.*?\*/', '', css, flags=re.DOTALL)
+        matches = []
+        for m in re.finditer(r"@media\s*([^{]*?)\s*\{", css):
+            cond = m.group(1)
+            start = m.end()
+            depth, i = 1, start
+            while i < len(css) and depth > 0:
+                if css[i] == "{":
+                    depth += 1
+                elif css[i] == "}":
+                    depth -= 1
+                i += 1
+            body = css[start : i - 1]
+            if ".showcase-grid.shape-poster" in body and "aspect-ratio" in body:
+                matches.append((cond, body))
+        assert len(matches) == 1, (
+            "showcase.css 卡型 @media 應恰好一個"
+            "（body 含 .showcase-grid.shape-poster 且 aspect-ratio），"
+            f"實得 {len(matches)}"
+        )
+        cond, body = matches[0]
+        assert "max-width" not in cond, (
+            f"卡型 @media 條件不得含 max-width（抓到欄數階梯？）: {cond!r}"
+        )
+        mn = re.search(r"min-width:\s*(\d+)px", cond)
+        assert mn, f"卡型 @media 條件抽不到 min-width: {cond!r}"
+        self._card_shape_media_body = body
+        return int(mn.group(1))
+
     # ---- 常數定義 ----
     def test_breakpoint_const_is_899(self):
         """shared/breakpoints.js 匯出 POSTER_CROP_MAX_W = 899。"""
@@ -378,6 +415,20 @@ class TestPosterCropThresholdAlignment:
         assert all(v == 899 for v in values.values()), (
             f"posterCrop 門檻 ↔ 燈箱貼合 ↔ poster grid 斷點未全對齊 899：{values}"
         )
+
+    def test_card_shape_media_min_width_is_const_plus_one(self):
+        """CD-119-13：卡型 @media min-width == POSTER_CROP_MAX_W + 1（900 == 899 + 1）。"""
+        assert self._card_shape_media_min_width() == self._const_value() + 1, (
+            "卡型 @media min-width 必須 == POSTER_CROP_MAX_W + 1"
+        )
+
+    def test_card_shape_media_aspect_ratio_has_height_auto(self):
+        """FE-CSS-08：卡型區塊內 aspect-ratio 旁必須有 height: auto。"""
+        self._card_shape_media_min_width()
+        body = self._card_shape_media_body
+        assert len(re.findall(r"aspect-ratio\s*:", body)) == len(
+            re.findall(r"aspect-ratio\s*:[^;]+;\s*height:\s*auto", body)
+        ), "FE-CSS-08：卡型區塊內每個 aspect-ratio 旁必須有 height: auto"
 
 
 class TestLightboxCoverSizeGuards:
