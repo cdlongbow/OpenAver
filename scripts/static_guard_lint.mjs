@@ -1109,6 +1109,12 @@ const RULES = [
     required: ['x-cloak'],
     note: '[TestStatePageCloakGuard] test_search_state_pages_cloaked — search.html 2 個 div.state-page 皆 x-cloak',
   },
+  {
+    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
+    tagName: 'div', className: 'showcase-grid',
+    required: ['shape-poster', 'cardShape'],
+    note: '[119-T5fix] .showcase-grid 必須帶 shape-poster 綁定 —— 沒有它 cardShape 到不了 CSS，選直式海報畫面完全沒反應',
+  },
 
   // ---- [TestShowcaseToolbarStructureGuard] 影片模式 .toolbar-controls 直接子 .control-group == 1（tag-scan nested-count） ----
   {

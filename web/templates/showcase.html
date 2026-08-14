@@ -357,7 +357,7 @@
         <!-- Status Bar 已於 v0.7.8 (49a-T4) 移除，統合至底部 .showcase-footer 三段式 -->
 
         <!-- Image Grid -->
-        <div class="showcase-grid" x-show="mode === 'grid'">
+        <div class="showcase-grid" :class="{ 'shape-poster': cardShape === 'poster' }" x-show="mode === 'grid'">
             <!-- Hero Card（影片模式精準匹配）— grid 內第一個 child，同 /search pattern -->
             <div class="av-card-preview hero-card"
                  x-show="!showFavoriteActresses && _isPreciseActressMatch && _matchedActress?.is_favorite"
