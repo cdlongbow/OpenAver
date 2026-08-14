@@ -2308,6 +2308,25 @@ const RULES = [
   { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 's.available === false', note: '[TestMetatubeB4Guard] test_js_promote_metatube_has_available_check' },
   { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'mt_promote_unavailable_warning', note: '[TestMetatubeB4Guard] test_js_promote_metatube_has_unavailable_warning_key' },
 
+  // ---- [118a-T9] CF 來源逐來源可用性：bootstrap 必須注入 cf_sites（per-site 快照） ----
+  { file: 'web/templates/_advanced_search_bootstrap.html', kind: 'required-string', pattern: 'cf_sites', note: '[118a-T9] bootstrap 未注入 cf_sites — isJlUnavailable per-site gate 會 fallback 到全域 cf_transport_available，javten 視窗建立失敗時會連坐灰化 javlibrary' },
+
+  // ---- [118a-T9] 不可用理由的兩個交付點各自鎖住（tooltip / toast） ----
+  // 為什麼要兩條而不是一條「檔案裡有 cfUnavailableMessageKey 就好」：那是 whole-file
+  // 存在性，只要其中一個綁定點退回硬編碼字面就抓不到（T9 review 實測：只把 :title 改回
+  // 'showcase.rescrape.jl_desktop_only'、留 @click 正確 → 舊式斷言仍全綠）。
+  // 使用者後果：hover 灰化膠囊看到「僅限桌面應用程式」但他人就在桌面版 —— 那正是本 task 要修的矛盾訊息。
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string',
+    pattern: /:title="isJlUnavailable\(s\)\s*\?\s*window\.t\(cfUnavailableMessageKey\(\)\)/,
+    note: '[118a-T9] builtin pill 的 :title（tooltip）未走 cfUnavailableMessageKey() — 灰化膠囊的 tooltip 會回到「僅限桌面應用程式」那句矛盾訊息',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string',
+    pattern: /@click="isJlUnavailable\(s\)\s*\?\s*showToast\(window\.t\(cfUnavailableMessageKey\(\)\)/,
+    note: '[118a-T9] builtin pill 的 @click（toast）未走 cfUnavailableMessageKey() — 點擊灰化膠囊會回到「僅限桌面應用程式」那句矛盾訊息',
+  },
+
   // ---- [TestMetatubePickerWiringGuard] 63c-3：進階 picker 接 metatube 真資料（proxy_configured 注入 / routable gate / metatube 分組未刪，5 個斷言） ----
   { file: 'web/templates/_advanced_search_bootstrap.html', kind: 'required-string', pattern: 'proxy_configured:', note: '[TestMetatubePickerWiringGuard] test_bootstrap_injects_proxy_configured' },
   { file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: 'rescrapeMetatubeSources', note: '[TestMetatubePickerWiringGuard] test_state_rescrape_keeps_routable_gate — rescrapeMetatubeSources 存在' },

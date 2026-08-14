@@ -14,6 +14,10 @@ DI chain (plan-70b §1.1):
 """
 from typing import Protocol, Optional
 
+from core.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 class CfTransportUnavailable(RuntimeError):
     """CF transport is not initialised in this environment (dev/server).
@@ -69,6 +73,10 @@ class CfTransport(Protocol):
         Used by the frontend poll loop.  When this first returns ``True`` the
         host implementation should automatically hide the transport window.
         """
+        ...
+
+    def available_sites(self) -> list[str]:
+        """Site keys with a usable window right now (see impl for the exact rule)."""
         ...
 
     def fetch(self, url: str, cache_key: str) -> str:
@@ -127,3 +135,30 @@ def get_cf_transport() -> Optional[CfTransport]:
     been registered (dev / server environments).
     """
     return _transport
+
+
+def get_cf_available_sites() -> Optional[list[str]]:
+    """Which CF site keys are usable in this process.
+
+    Returns:
+        []    — no transport at all (dev / LAN server): nothing is usable.
+        [...] — the transport reported its live site keys.
+        None  — **undeterminable**; callers must fall back to the legacy
+                global `get_cf_transport() is not None` behaviour.
+
+    The None branch is deliberately fail-OPEN. A transport that predates
+    `available_sites()` (or whose implementation raises) is not evidence that
+    its sites are dead — treating it as "nothing available" would grey out a
+    *working* JavLibrary, turning a cosmetic bug into a functional regression.
+    """
+    transport = get_cf_transport()
+    if transport is None:
+        return []
+    fn = getattr(transport, 'available_sites', None)
+    if not callable(fn):
+        return None
+    try:
+        return sorted(str(s) for s in fn())
+    except Exception:            # noqa: BLE001 — never let this break page render
+        logger.warning("get_cf_available_sites: transport.available_sites() 失敗，改用舊的全域旗標", exc_info=True)
+        return None

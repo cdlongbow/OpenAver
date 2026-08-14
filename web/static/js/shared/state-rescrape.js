@@ -166,13 +166,40 @@ export function rescrapeState() {
         },
 
         /**
+         * 118a-T9：這個 CF 來源在這台機器上有沒有活著的驗證視窗。
+         *
+         * cf_sites（per-site，T9 起）優先；不是陣列時 fall back 到 cf_transport_available
+         * （70-T5 的全域布林）。fallback 是 fail-open —— 舊 transport 不代表它的視窗死了，
+         * 把它當成不可用會讓一個能用的 JavLibrary 被灰掉。
+         */
+        _cfSiteLive(id) {
+            const adv = window.__ADVANCED_SEARCH__ || {};
+            if (Array.isArray(adv.cf_sites)) return adv.cf_sites.includes(id);
+            return !!adv.cf_transport_available;
+        },
+
+        /**
+         * 118a-T9：兩種「這個 CF 來源不能用」是不同的事，訊息不能共用一句。
+         *   沒有 transport（dev / 區網伺服器）→ 「僅限桌面應用程式」
+         *   有 transport、但這個來源的視窗沒建起來或已被摧毀 → 「請重新啟動」
+         * 後端本來就分得出這兩種（cf_transport_impl 的 _require_window vs _dead），
+         * 是前端把它們壓成同一句才會出現「你人就在桌面版，卻被告知僅限桌面版」。
+         */
+        cfUnavailableMessageKey() {
+            const adv = window.__ADVANCED_SEARCH__ || {};
+            return adv.cf_transport_available
+                ? 'showcase.rescrape.cf_window_restart'
+                : 'showcase.rescrape.jl_desktop_only';
+        },
+
+        /**
          * 70-T5: CF 來源不可用 gate（desktop-only / standalone 限定）。
          * manual_only && is_beta = javlibrary + fc-javten（118a 起兩個，不再只有 javlibrary）；
-         * cf_transport_available = standalone 已 register。
-         * dev / server 環境：cf_transport_available=false → 此 helper 回 true → pill 灰化不可點。
+         * 118a-T9 起改查 _cfSiteLive()（per-site），不再直接讀全域 cf_transport_available。
+         * dev / server 環境：_cfSiteLive 回 false → 此 helper 回 true → pill 灰化不可點。
          */
         isJlUnavailable(s) {
-            return !!(s && s.manual_only && s.is_beta && !(window.__ADVANCED_SEARCH__ && window.__ADVANCED_SEARCH__.cf_transport_available));
+            return !!(s && s.manual_only && s.is_beta && !this._cfSiteLive(s.id));
         },
 
         /**
@@ -240,7 +267,7 @@ export function rescrapeState() {
                     return;
                 }
                 if (data && data.cf_unavailable) {
-                    this.showToast(window.t('showcase.rescrape.jl_desktop_only'), 'warning');
+                    this.showToast(window.t(this.cfUnavailableMessageKey()), 'warning');
                     return;
                 }
                 // 62c-3 US7：switch-source 入口（在 showcase 分支之前判斷）。找到 → 只替換捕捉的當前卡 slot
@@ -465,7 +492,7 @@ export function rescrapeState() {
                     return;
                 }
                 if (result.cf_unavailable) {
-                    this.showToast(window.t('showcase.rescrape.jl_desktop_only'), 'warning');
+                    this.showToast(window.t(this.cfUnavailableMessageKey()), 'warning');
                     return;
                 }
                 if (result.success) {

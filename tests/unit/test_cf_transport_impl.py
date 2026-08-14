@@ -1502,3 +1502,49 @@ class TestNavigateAndSettle:
             "get_current_url() must not run when title never settles; "
             f"got {url_reads}"
         )
+
+
+# ──────────────────────────────────────────────────────────────
+# Tests: available_sites() (TASK-118a-T9)
+# ──────────────────────────────────────────────────────────────
+
+class TestAvailableSites:
+    """
+    118a-T9: available_sites() must answer "which sites have a usable window
+    right now" — reading the exact same two dicts (_wins / _dead) that
+    _require_window() and the _dead guard check before every fetch /
+    begin_solve / navigate_and_settle call, so it cannot drift from the real
+    failure condition.
+    """
+
+    def test_both_windows_alive_returns_sorted_both(self):
+        """兩個視窗都活 → 回排序後的兩個 key。"""
+        transport = PyWebViewCfTransport(
+            {'javlibrary': FakeWindow(), 'fc-javten': FakeWindow()},
+            {'javlibrary': JL_ORIGIN, 'fc-javten': 'https://javten.com/'},
+        )
+        assert transport.available_sites() == ['fc-javten', 'javlibrary']
+
+    def test_only_javlibrary_registered_returns_only_javlibrary(self):
+        """javten create_window() 失敗，standalone 只註冊 javlibrary。"""
+        transport = _jl_transport(FakeWindow())
+        assert transport.available_sites() == ['javlibrary']
+
+    def test_dead_site_excluded(self):
+        """兩個都註冊，但 fc-javten 已 _dead → 只回 javlibrary。"""
+        transport = PyWebViewCfTransport(
+            {'javlibrary': FakeWindow(), 'fc-javten': FakeWindow()},
+            {'javlibrary': JL_ORIGIN, 'fc-javten': 'https://javten.com/'},
+        )
+        transport._dead['fc-javten'] = True
+        assert transport.available_sites() == ['javlibrary']
+
+    def test_all_dead_returns_empty(self):
+        """全部 dead → 回空清單。"""
+        transport = PyWebViewCfTransport(
+            {'javlibrary': FakeWindow(), 'fc-javten': FakeWindow()},
+            {'javlibrary': JL_ORIGIN, 'fc-javten': 'https://javten.com/'},
+        )
+        transport._dead['javlibrary'] = True
+        transport._dead['fc-javten'] = True
+        assert transport.available_sites() == []

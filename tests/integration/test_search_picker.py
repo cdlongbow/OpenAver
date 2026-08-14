@@ -85,6 +85,29 @@ def test_bootstrap_injects_routable_and_proxy_configured(client, temp_config_pat
     assert '"available": true' in html, "builtin source 應帶 available=true"
 
 
+def test_bootstrap_injects_cf_sites_when_transport_reports_them(client, temp_config_path, monkeypatch):
+    """118a-T9：有 transport 且回報 per-site 可用性 → bootstrap 含正確的 cf_sites。
+
+    patch 在消費端會呼叫到的名字（BE-TEST-01）——web/app.py 的 get_common_context()
+    是函式內 `from core.cf_transport import get_cf_available_sites as _get_cf_sites`
+    （每次呼叫時才 import），所以呼叫當下解析到的一律是 core.cf_transport 模組屬性，
+    patch target 是 core.cf_transport.get_cf_available_sites。
+    """
+    monkeypatch.setattr("core.cf_transport.get_cf_available_sites", lambda: ["javlibrary"])
+    html = client.get("/search").text
+    assert 'cf_sites: ["javlibrary"]' in html, (
+        f"bootstrap 應含 cf_sites: [\"javlibrary\"]，實際未找到於 HTML 中"
+    )
+
+
+def test_bootstrap_cf_sites_empty_when_no_transport(client, temp_config_path):
+    """118a-T9：dev 環境（無 transport）→ cf_sites 為 []（不 patch，走真實 get_cf_available_sites）。"""
+    html = client.get("/search").text
+    assert 'cf_sites: []' in html, (
+        "dev 環境無 transport 時 bootstrap 的 cf_sites 應為 []"
+    )
+
+
 def test_routable_available_not_persisted_to_config(client, temp_config_path):
     """transient routable/available 欄位不得寫回 config.json（注入在 save_config 之後）。"""
     client.get("/search")  # 觸發 get_common_context（含首次 locale 偵測 save_config）

@@ -112,7 +112,7 @@ class TestJavlibraryPickerT5Guard:
       (3) state-rescrape.js 定義 isJlUnavailable
       (4) ⛔ 已刪除（118a-T7 / spec F3）：BETA 徽章整個移除，該不變式被反轉，回歸鎖改在
           scripts/static_guard_lint.mjs 的 [118a-T7] forbidden-string 規則
-      (5) _rescrape_modal.html builtin pill 含 isJlUnavailable gate（aria-disabled + jl_desktop_only toast）
+      (5) _rescrape_modal.html builtin pill 含 isJlUnavailable gate（aria-disabled + cfUnavailableMessageKey toast，118a-T9 起訊息選擇器化）
       (6) 4 locale 檔含 jl_desktop_only key
     """
 
@@ -153,7 +153,7 @@ class TestJavlibraryPickerT5Guard:
     # 完全由它們守的那組機制承擔 —— 它們是本次敢移除徽章的依據，不是普通的鄰居測試。
 
     def test_modal_builtin_pill_jl_unavailable_gate(self):
-        """(5) _rescrape_modal.html builtin pill 含 isJlUnavailable gate（aria-disabled + jl_desktop_only）。"""
+        """(5) _rescrape_modal.html builtin pill 含 isJlUnavailable gate（aria-disabled + cfUnavailableMessageKey）。"""
         html = _MODAL_HTML_70.read_text(encoding="utf-8")
         assert "isJlUnavailable" in html, (
             "70-T5 違規：_rescrape_modal.html builtin pill 模板未使用 isJlUnavailable gate"
@@ -161,8 +161,20 @@ class TestJavlibraryPickerT5Guard:
         assert "aria-disabled" in html, (
             "70-T5 違規：_rescrape_modal.html builtin pill 缺 aria-disabled 綁定（不可用語義）"
         )
-        assert "jl_desktop_only" in html, (
-            "70-T5 違規：_rescrape_modal.html builtin pill 缺 jl_desktop_only i18n key（toast / title）"
+        # 118a-T9：原本這裡鎖的是字面 "jl_desktop_only"。訊息從一句變兩句之後，
+        # 選哪一句的單一所有者是 state-rescrape.js 的 cfUnavailableMessageKey()，
+        # 模板只負責呼叫它——所以字面不再出現在模板裡。
+        #
+        # 等價性（守衛模式 1）：**這一行本身不構成等價**，它跟被它取代的舊斷言一樣是
+        # whole-file 存在性——T9 review 實測：只把 :title 改回硬編碼字面、留 @click 正確，
+        # 這一行仍然全綠。真正補上精度的是另外兩處，本行只是保留「模板有接上選擇器」
+        # 這個粗顆粒事實：
+        #   ① scripts/static_guard_lint.mjs 的兩條 [118a-T9] regex 規則，各自 anchor 到
+        #      :title= 與 @click= 兩個綁定點（whole-file → binding-site，比舊斷言嚴格）
+        #   ② state-rescrape-cf-availability.test.mjs 第 9–11 條，鎖住選擇器只能回那兩個 key
+        # 三者合起來才擋得比舊的多。
+        assert "cfUnavailableMessageKey" in html, (
+            "118a-T9 違規：_rescrape_modal.html builtin pill 未接上 cfUnavailableMessageKey（不可用理由的單一所有者）"
         )
 
     def test_i18n_jl_desktop_only_parity(self):

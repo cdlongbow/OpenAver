@@ -602,6 +602,21 @@ class PyWebViewCfTransport:
 
         return ready
 
+    def available_sites(self) -> list[str]:
+        """Site keys that currently have a usable CF window (T9).
+
+        A site is available iff (a) a window was created for it at startup and
+        (b) that window has not been destroyed (`_dead`).  Both conditions are
+        exactly what `_require_window()` + the `_dead` guard check before every
+        fetch/begin_solve/navigate_and_settle, so this method cannot drift from
+        the real failure condition — it reads the same two dicts.
+
+        Why this exists: `standalone.py` deliberately registers a *partial*
+        transport when one window fails to build (only javlibrary), so
+        `get_cf_transport() is not None` cannot answer "can THIS source work".
+        """
+        return sorted(k for k in self._wins if not self._dead.get(k, False))
+
     def navigate_and_settle(self, url: str, cache_key: str) -> str:
         """
         TASK-118a-T1 / CD-118a-18: navigate this site's window to *url*, wait

@@ -57,9 +57,9 @@
                     data-enabled="true"
                     :data-proxy-required="isSourceProxyBlocked(s) ? 'true' : 'false'"
                     :aria-disabled="isJlUnavailable(s) ? 'true' : 'false'"
-                    :title="isJlUnavailable(s) ? window.t('showcase.rescrape.jl_desktop_only') : ''"
+                    :title="isJlUnavailable(s) ? window.t(cfUnavailableMessageKey()) : ''"
                     :disabled="rescrapeLoadingSource !== null && rescrapeLoadingSource !== s.id"
-                    @click="isJlUnavailable(s) ? showToast(window.t('showcase.rescrape.jl_desktop_only'), 'warning') : (isSourceProxyBlocked(s) ? showToast(window.t('settings.sources.dmm_proxy_required_hint'), 'warning') : rescrapeWithSource(s.id))">
+                    @click="isJlUnavailable(s) ? showToast(window.t(cfUnavailableMessageKey()), 'warning') : (isSourceProxyBlocked(s) ? showToast(window.t('settings.sources.dmm_proxy_required_hint'), 'warning') : rescrapeWithSource(s.id))">
               <span class="pill-spin" x-show="rescrapeLoadingSource === s.id"></span>
               <i class="bi bi-slash-circle slash-icn" x-show="rescrapeLoadingSource !== s.id && !isJlUnavailable(s)" aria-hidden="true"></i>
               {# 品牌名（display_name_raw → display_name_key fallback；不走 i18n，CD-62-12） #}
