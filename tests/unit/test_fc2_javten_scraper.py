@@ -3,14 +3,22 @@ test_fc2_javten_scraper.py - FC2-javten 爬蟲單元測試（TASK-118a-T3）
 
 測試策略：
 - 全 mock，不連網
-- 經過 search() 的解析測試一律餵 tests/fixtures/scrapers/fcjavten_*.html 真檔
 - get_cf_transport 一律 patch 在消費端 core.scrapers.fc2_javten.get_cf_transport（BE-TEST-01）
-- 直接單測 _get_*() 的防禦分支可保留 inline HTML（E-1）
+- HTML 一律用檔內合成（inline），**不收 javten 真檔**
+
+為什麼不收真檔（owner 2026-08-14 拍板，T8）：
+javten 是第三方鏡像站，它改版時本地真檔還是舊結構——測試照樣全綠，線上卻全滅。
+換句話說真檔擋不住這條來源唯一會壞的方式。而它跟 javlibrary 一樣有 CF 擋在前面
+（`curl_cffi` 三種 impersonate 實測全 403），結構上也不可能做 canary。這條來源的
+迴歸偵測只能靠真實使用者回報，收 3.3 MB 的真檔換不到對應的保障。
+
+代價（已知且接受）：AC-2.2（三顆已下架片逐欄位）與 AC-2.3（日文原詞 vs /tw/ 機翻）
+的解析驗證就此失去。**不得改用合成 HTML 補回這兩支**——合成 HTML 會抹平空佔位與
+null，那是假綠（v0.11.8 的教訓）。要嘛真檔要嘛沒有。
 """
 
 from __future__ import annotations
 
-import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,54 +28,17 @@ from core.cf_transport import CfChallengeRequired, CfTransportUnavailable
 from core.scrapers.fc2_javten import FC2JavtenScraper, strip_lang_segment
 
 
-FIXTURES_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fixtures", "scrapers"
-)
-
 PATCH_TARGET = "core.scrapers.fc2_javten.get_cf_transport"
 
-# hreflang="ja" canonical（無語言段、帶 slug）——見各 fcjavten_*.html
-CANONICAL_JA = {
-    "4914771": (
-        "https://javten.com/video/2100971/id4914771/"
-        "%E3%80%90%E9%97%87%E3%83%90%E3%82%A4%E3%83%88%E3%83%BBU20%E3%80%91"
-        "%E5%88%B6%E6%9C%8D18%E6%AD%B3%E3%82%92%E5%87%BA%E4%BC%9A%E3%81%84"
-        "%EF%BD%B1%EF%BE%8C%EF%BE%9F%EF%BE%98%E3%81%A7%E9%87%A3%E3%81%A3%E3%81%A6"
-        "%E3%81%BF%E3%81%9F%E3%80%824%2F12"
-    ),
-    "4938117": (
-        "https://javten.com/video/2100985/id4938117/"
-        "%E3%80%90%EF%BC%94%EF%BC%B0%E3%80%91%E3%81%BE%E3%81%95%E3%81%AB"
-        "%E9%A3%9F%E3%81%B9%E3%81%94%E3%82%8D%21%21%E3%83%94%E3%83%81%E3%83%94"
-        "%E3%83%81%E3%81%AE%E3%82%A4%E3%83%B3%E3%83%A9%E3%83%B3%E6%80%9D%E2%97%8F"
-        "%E6%9C%9F%E3%82%AC%E3%83%BC%E3%83%AB%E3%81%A8%E7%94%9F%E3%83%8F%E3%83%A1"
-        "%E3%83%83%E3%82%AF%E3%82%B9%E2%99%A5%EF%BC%BB%EF%BC%91%EF%BC%BD"
-    ),
-    "4938221": (
-        "https://javten.com/video/2100987/id4938221/"
-        "%E3%80%90%E4%B9%B1%E4%BA%A4%E3%80%91%E3%81%BE%E3%81%95%E3%81%AB"
-        "%E9%A3%9F%E3%81%B9%E3%81%94%E3%82%8D%21%21%E3%83%94%E3%83%81%E3%83%94"
-        "%E3%83%81%E3%81%AE%E3%82%A4%E3%83%B3%E3%83%A9%E3%83%B3%E6%80%9D%E2%97%8F"
-        "%E6%9C%9F%E3%82%AC%E3%83%BC%E3%83%AB%E3%81%A8%E7%94%9F%E3%83%8F%E3%83%A1"
-        "%E3%83%83%E3%82%AF%E3%82%B9%E2%99%A5%EF%BC%BB%EF%BC%95%EF%BC%BD"
-    ),
-}
-
-JA_TAGS_4914771 = [
-    "ハメ撮り", "制服", "素人", "中出し", "フェラ", "騎乗位", "スレンダー",
-    "バック", "かわいい", "クンニ", "セーラー服", "生ハメ", "清楚", "清純",
-    "細身", "18歳", "抜ける", "キレイ", "種付け", "U20",
-]
-TW_TAGS_4914771 = [
-    "奇聞趣事", "均勻", "業餘", "中出", "吹簫", "女牛仔", "纖細",
-    "返回", "可憐", "舔陰", "水手服", "生鞍", "整潔", "純度",
-    "纖細", "18歲", "出來", "美麗", "交配", "U20",
-]
-
-
-def load_fixture(name: str) -> str:
-    with open(os.path.join(FIXTURES_DIR, name), encoding="utf-8") as f:
-        return f.read()
+# javten 對 FC2-PPV-4914771 的 hreflang="ja" canonical（無語言段、帶 slug）。
+# 抄自真站頁面，當「一個形狀正確的落地 URL」用。
+CANONICAL_JA_4914771 = (
+    "https://javten.com/video/2100971/id4914771/"
+    "%E3%80%90%E9%97%87%E3%83%90%E3%82%A4%E3%83%88%E3%83%BBU20%E3%80%91"
+    "%E5%88%B6%E6%9C%8D18%E6%AD%B3%E3%82%92%E5%87%BA%E4%BC%9A%E3%81%84"
+    "%EF%BD%B1%EF%BE%8C%EF%BE%9F%EF%BE%98%E3%81%A7%E9%87%A3%E3%81%A3%E3%81%A6"
+    "%E3%81%BF%E3%81%9F%E3%80%824%2F12"
+)
 
 
 def parse_inline(html: str):
@@ -227,111 +198,34 @@ def test_strip_lang_segment_removes_tw():
 
 
 # ============================================================
-# AC-2.3：標籤語言跟隨實際 fetch 的 URL
+# AC-2.3 的可保留部分：search() 一定要剝掉語言段才 fetch
 # ============================================================
+#
+# 原本的 AC-2.3 是「落地 /tw/ → 標籤仍是日文原詞」，靠同一顆片的日文／繁中兩份真檔
+# 對照證明（真檔已隨 T8 移除，那半邊確定失去）。
+#
+# 但可證偽的核心不在 HTML，而在**傳給 fetch 的那個 URL**：search() 若直接 fetch(final)
+# 而不是 fetch(strip_lang_segment(final))，使用者拿到的標籤就是 javten 的機翻中文
+# （實測「ハメ撮り」→「奇聞趣事」），整批寫進他的 NFO 與資料庫。
+# 這條斷言只看呼叫參數，不看解析結果，所以用合成 HTML 一樣紅得對。
 
-def test_tags_language_follows_url(scraper):
-    """AC-2.3：落地 /tw/ 必須剝語言段再 fetch，標籤才是日文原詞。
+def test_search_strips_lang_segment_before_fetch(scraper):
+    """落地在 /tw/ → 必須 fetch 無語言段的 URL，detail_url 也記無語言段的那個。
 
-    fetch 依 URL 回對應真檔——拿掉剝語言段、直接 fetch(final) 這支必須轉紅。
+    mutation：search() 改成 `transport.fetch(final, ...)` → 本支轉紅。
     """
-    ja_html = load_fixture("fcjavten_4914771.html")
-    tw_html = load_fixture("fcjavten_4914771_tw.html")
-    ja_url = CANONICAL_JA["4914771"]
+    ja_url = CANONICAL_JA_4914771
     tw_url = ja_url.replace("https://javten.com/", "https://javten.com/tw/")
 
-    def fetch_by_url(url, cache_key):
-        if "/tw/" in url or "/en/" in url or "/ko/" in url:
-            return tw_html
-        return ja_html
-
-    transport = MagicMock()
-    transport.navigate_and_settle.return_value = tw_url
-    transport.fetch.side_effect = fetch_by_url
-
+    transport = make_transport(tw_url, FULL_FIELDS_HTML)
     with patch(PATCH_TARGET, return_value=transport):
         video = scraper.search("FC2-PPV-4914771")
 
     assert video is not None
-    assert video.tags == JA_TAGS_4914771
     fetched_url = transport.fetch.call_args[0][0]
+    assert fetched_url == ja_url
     assert "/tw/" not in fetched_url
-    assert "/en/" not in fetched_url
-    assert "/ko/" not in fetched_url
     assert video.detail_url == ja_url
-    # 對照：同一顆片的 /tw/ 真檔標籤是機翻（可證偽點存在）
-    tw_tree = etree.fromstring(tw_html.encode("utf-8"), etree.HTMLParser())
-    assert scraper._get_tags(tw_tree) == TW_TAGS_4914771
-
-
-# ============================================================
-# AC-2.2：三顆官方已下架 fixture 逐欄位
-# ============================================================
-
-DELISTED_CASES = [
-    pytest.param(
-        "4914771",
-        "fcjavten_4914771.html",
-        CANONICAL_JA["4914771"],
-        "【闇バイト・U20】制服18歳を出会いｱﾌﾟﾘで釣ってみた。4/12",
-        "やっぱ抜っきゃねん",
-        "https://contents-thumbnail2.fc2.com/w1280/storage200000.contents.fc2.com/file/397/39619505/1780535279.91.jpg",
-        5,
-        5.0,
-        id="4914771",
-    ),
-    pytest.param(
-        "4938117",
-        "fcjavten_4938117.html",
-        CANONICAL_JA["4938117"],
-        "【４Ｐ】まさに食べごろ!!ピチピチのインラン思●期ガールと生ハメックス♥［１］",
-        "個撮屋本舗",
-        "https://contents-thumbnail2.fc2.com/w1280/storage201000.contents.fc2.com/file/404/40345189/1783870654.7.png",
-        5,
-        5.0,
-        id="4938117",
-    ),
-    pytest.param(
-        "4938221",
-        "fcjavten_4938221.html",
-        CANONICAL_JA["4938221"],
-        "【乱交】まさに食べごろ!!ピチピチのインラン思●期ガールと生ハメックス♥［５］",
-        "個撮屋本舗",
-        "https://contents-thumbnail2.fc2.com/w1280/storage200000.contents.fc2.com/file/404/40345189/1783902129.84.png",
-        5,
-        5.0,
-        id="4938221",
-    ),
-]
-
-
-@pytest.mark.parametrize(
-    "digits,fixture,final_url,title,studio,cover,sample_count,rating",
-    DELISTED_CASES,
-)
-def test_search_three_delisted_fixtures_parametrized(
-    scraper, digits, fixture, final_url, title, studio, cover, sample_count, rating
-):
-    """AC-2.2：三顆官方已下架真檔 → 六欄位＋發售日空字串。"""
-    html = load_fixture(fixture)
-    transport = make_transport(final_url, html)
-    with patch(PATCH_TARGET, return_value=transport):
-        video = scraper.search(f"FC2-PPV-{digits}")
-
-    assert video is not None
-    assert video.title == title
-    assert video.cover_url == cover
-    assert len(video.sample_images) == sample_count
-    assert video.maker == studio
-    assert video.summary != ""
-    assert video.rating == rating
-    assert video.date == ""
-    assert video.source == "fc-javten"
-    assert video.number == f"FC2-{digits}"
-    assert video.detail_url == final_url
-    transport.fetch.assert_called_once()
-    assert transport.fetch.call_args[0][0] == final_url
-    assert transport.fetch.call_args[0][1] == "fc-javten"
 
 
 # ============================================================
@@ -399,9 +293,9 @@ def test_search_rejects_landing_outside_javten(scraper, landed, why):
 
     mutation：把 host/scheme 檢查拿掉 → 這四個案例全部轉紅（fetch 會被呼叫）。
     """
-    # 餵真 fixture：若白名單失效，fetch 會被呼叫且真的解析成功 → 斷言必紅（而不是靠
-    # MagicMock 解析失敗矇對，那樣是假綠）
-    transport = make_transport(landed, load_fixture(DELISTED_CASES[0].values[1]))
+    # 餵一份**解析得動**的 HTML：若白名單失效，fetch 會被呼叫且真的產出 Video → 兩條斷言
+    # 都紅。若餵 MagicMock 讓解析自己失敗，白名單拿掉時第一條仍會綠 → 假綠。
+    transport = make_transport(landed, FULL_FIELDS_HTML)
     with patch(PATCH_TARGET, return_value=transport):
         result = scraper.search("FC2-PPV-4914771")
     assert result is None, f"{why}：不得被當成命中"
@@ -413,7 +307,7 @@ def test_search_still_accepts_www_subdomain(scraper):
     白名單不得把它一起擋掉——否則站方哪天換 host，使用者整條來源就失效。"""
     transport = make_transport(
         "https://www.javten.com/video/2100971/id4914771/slug",
-        load_fixture(DELISTED_CASES[0].values[1]),
+        FULL_FIELDS_HTML,
     )
     with patch(PATCH_TARGET, return_value=transport):
         result = scraper.search("FC2-PPV-4914771")
@@ -435,7 +329,7 @@ def test_cf_challenge_required_propagates_unmodified(scraper):
     transport.fetch.assert_not_called()
 
     transport = MagicMock()
-    transport.navigate_and_settle.return_value = CANONICAL_JA["4914771"]
+    transport.navigate_and_settle.return_value = CANONICAL_JA_4914771
     transport.fetch.side_effect = CfChallengeRequired("challenge on fetch")
     with patch(PATCH_TARGET, return_value=transport):
         with pytest.raises(CfChallengeRequired):
@@ -479,12 +373,12 @@ class TestFullFields:
     """happy path: extrafanart 有 URL（list[str]）"""
 
     def test_sample_images_present(self, scraper):
-        # inline HTML：真 fixture 全是完整成功頁；本支測 _get_extrafanart 在 gallery 存在時的回傳形狀，不經 transport。
+        # inline HTML：真站頁面全是完整成功頁；本支測 _get_extrafanart 在 gallery 存在時的回傳形狀，不經 transport。
         result = scraper._get_extrafanart(parse_inline(FULL_FIELDS_HTML))
         assert len(result) == 2
 
     def test_sample_images_absolute_url(self, scraper):
-        # inline HTML：真 fixture 不覆蓋「// 相對協定」這條選擇器邊界，不經 transport。
+        # inline HTML：真站頁面不覆蓋「// 相對協定」這條選擇器邊界，不經 transport。
         result = scraper._get_extrafanart(parse_inline(FULL_FIELDS_HTML))
         for url in result:
             assert url.startswith("https://")
@@ -494,7 +388,7 @@ class TestNoGallery:
     """無 extrafanart → 空 list"""
 
     def test_no_extrafanart_empty_list(self, scraper):
-        # inline HTML：四顆真檔結構性沒有「無劇照」頁，本支測 gallery 缺席時的防禦回傳，不經 transport。
+        # inline HTML：真站結構性沒有「無劇照」頁，本支測 gallery 缺席時的防禦回傳，不經 transport。
         assert scraper._get_extrafanart(parse_inline(NO_GALLERY_HTML)) == []
 
 
@@ -506,7 +400,7 @@ class TestOutline:
         assert scraper._get_outline(parse_inline(OUTLINE_RATING_HTML)) == "これはFC2の説明文です。"
 
     def test_summary_empty_when_no_col_des(self, scraper):
-        # inline HTML：真檔皆有簡介；本支測 col des 缺席時回空字串，不經 transport。
+        # inline HTML：真站頁面皆有簡介；本支測 col des 缺席時回空字串，不經 transport。
         assert scraper._get_outline(parse_inline(FULL_FIELDS_HTML)) == ""
 
 
@@ -514,25 +408,25 @@ class TestRating:
     """評分解析（JSON-LD aggregateRating.ratingValue）"""
 
     def test_rating_from_dict_jsonld(self, scraper):
-        # inline HTML：測 _get_rating 的 dict 形 JSON-LD，真檔不覆蓋此包法，不經 transport。
+        # inline HTML：測 _get_rating 的 dict 形 JSON-LD，真站頁面不覆蓋此包法，不經 transport。
         assert scraper._get_rating(parse_inline(OUTLINE_RATING_HTML)) == 4.5
 
     def test_rating_from_graph_list_jsonld(self, scraper):
-        # inline HTML：測頂層 list JSON-LD，真檔不覆蓋此包法，不經 transport。
+        # inline HTML：測頂層 list JSON-LD，真站頁面不覆蓋此包法，不經 transport。
         assert scraper._get_rating(parse_inline(GRAPH_RATING_HTML)) == 3.0
 
     def test_rating_from_graph_dict_jsonld(self, scraper):
-        # inline HTML：測 {"@graph": [...]} 包裹，真檔不覆蓋此包法，不經 transport。
+        # inline HTML：測 {"@graph": [...]} 包裹，真站頁面不覆蓋此包法，不經 transport。
         assert scraper._get_rating(parse_inline(GRAPH_DICT_RATING_HTML)) == 3.8
 
     def test_rating_none_when_no_jsonld(self, scraper):
-        # inline HTML：真檔皆有 JSON-LD；本支測缺 script 時回 None，不經 transport。
+        # inline HTML：真站頁面皆有 JSON-LD；本支測缺 script 時回 None，不經 transport。
         assert scraper._get_rating(parse_inline(FULL_FIELDS_HTML)) is None
 
     def test_rating_none_when_broken_jsonld(self, scraper):
-        # inline HTML：真檔 JSON-LD 皆合法；本支測 decode 失敗走 except，不經 transport。
+        # inline HTML：真站頁面 JSON-LD 皆合法；本支測 decode 失敗走 except，不經 transport。
         assert scraper._get_rating(parse_inline(BROKEN_JSONLD_HTML)) is None
 
     def test_rating_none_when_no_aggregate(self, scraper):
-        # inline HTML：真檔皆有 aggregateRating；本支測缺該鍵時回 None，不經 transport。
+        # inline HTML：真站頁面皆有 aggregateRating；本支測缺該鍵時回 None，不經 transport。
         assert scraper._get_rating(parse_inline(NO_AGGREGATE_JSONLD_HTML)) is None

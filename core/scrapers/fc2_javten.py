@@ -235,7 +235,8 @@ class FC2JavtenScraper(BaseScraper):
                 number=f"FC2-{digits}",
                 title=title,
                 actresses=actresses,
-                # javten 結構性沒有發售日欄位（T0 實測：販売日/発売日 在整份 HTML 出現 0 次，見 tests/fixtures/scrapers/README.md）
+                # javten 結構性沒有發售日欄位（T0 實測：販売日/発売日 在整份 HTML 出現 0 次，
+                # 見 tests/fixtures/scrapers/README.md 的「javten 鏡像站」節）
                 date="",
                 maker=studio,
                 cover_url=cover_url,
