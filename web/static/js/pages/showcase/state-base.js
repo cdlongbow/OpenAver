@@ -171,6 +171,7 @@ export function stateBase() {
             actressSort: null,
             actressOrder: null,
             pills: [],
+            cardShape: 'cover',
         }).as('showcase_state'),
 
         // --- 狀態變數 ---
@@ -210,6 +211,7 @@ export function stateBase() {
         sort: 'date',         // M2a 先用硬編碼，M4 才從 config/localStorage 恢復
         order: 'desc',
         mode: 'grid',
+        cardShape: 'cover',   // TASK-119-T3: 'cover' | 'poster'；只走 localStorage
         page: 1,
         perPage: 90,
         totalPages: 1,
@@ -413,6 +415,8 @@ export function stateBase() {
             this.showFavoriteActresses = state.showFavoriteActresses === true;  // 嚴格 === true
             this.actressSort = state.actressSort || 'video_count';
             this.actressOrder = state.actressOrder || 'desc';
+            // TASK-119-T3: 只走 localStorage，白名單比對（FE-JS-01：不可 || fallback）
+            this.cardShape = state.cardShape === 'poster' ? 'poster' : 'cover';
         },
 
         // --- 狀態持久化 (M2c) ---
@@ -428,6 +432,7 @@ export function stateBase() {
             this._persistedShowcase.actressSort = this.actressSort;                      // ★ 44a
             this._persistedShowcase.actressOrder = this.actressOrder;                    // ★ 44a
             this._persistedShowcase.pills = serializePills(this.pills);
+            this._persistedShowcase.cardShape = this.cardShape;
 
             // 同步到 URL（方便分享連結）
             const params = new URLSearchParams();
