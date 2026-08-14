@@ -1961,6 +1961,20 @@ const RULES = [
       // exact selector 判定：stripNested 後字面等於單一 class（擋 sidebar-state 前綴 `body.sidebar-collapsed .actress-grid`
       // 與 co-listed 回退；未來若真要 scoped 變體，改守衛而非放行 — fail-closed）。
       const isExactly = (selector, cls) => stripNested(selector).trim() === `.${cls}`;
+      // 119-T1：卡型變體 `.showcase-grid.shape-poster`（直式海報，spec-119 F2）。
+      // 它是「只有影片牆掛得上的 opt-in class」，結構上不可能命中 .actress-grid，
+      // 故不屬於 VIDEO 三段階梯的管轄範圍（本守衛的不變式是「女優不得悄悄脫鉤」）。
+      // 刻意**不驗欄數值**：plan-119 §7 允許 owner 真機驗收後只調 grid-template-columns 的數字，
+      // 把數字焊進期望表會讓那條逃生口變貴。守的是「形狀」不是「數值」：
+      // exact `.showcase-grid.shape-poster` + 只宣告 grid-template-columns + 單一 ≥900px media 條件。
+      const isPosterVariant = (selector) => stripNested(selector).trim() === '.showcase-grid.shape-poster';
+      // 單一 media 條件、以 (min-width: Npx) 起頭且 N ≥ 900，可選再接 and (max-width: Mpx)。
+      const POSTER_MEDIA = /^\s*\(\s*min-width\s*:\s*(\d+)px\s*\)(?:\s+and\s+\(\s*max-width\s*:\s*\d+px\s*\))?\s*$/;
+      const isPosterMedia = (media) => {
+        if (media.length !== 1) return false;
+        const m = POSTER_MEDIA.exec(media[0]);
+        return !!m && Number(m[1]) >= 900;
+      };
       // 同一 media 條件可能有多個 block（本檔 900-1099 現有兩個：影片區一個、女優階梯區一個）→ 一律掃全部。
       const rulesUnder = (cond) => extractMediaBodies(ctx.text, cond).flatMap((body) => parseRuleBlocks(body));
       // Codex T5fix2 三審 P1：同一 rule 內可重複宣告同 property（cascade 取最後者），故不能只問
@@ -2032,7 +2046,10 @@ const RULES = [
 
       // ── (C) 正向・影片 ≥900 三段維持 showcase-only（不得再 co-listed = 不得回退 T5）──
       for (const { cond, cols, label } of VIDEO) {
-        const hits = rulesUnder(cond).filter(({ selector }) => selHasSubject(selector, 'showcase-grid'));
+        // 119-T1：卡型變體不計入「同一斷點只允許一條」的計數——它是另一套獨立階梯（見 isPosterVariant）。
+        const hits = rulesUnder(cond).filter(
+          ({ selector }) => selHasSubject(selector, 'showcase-grid') && !isPosterVariant(selector),
+        );
         if (!hits.length) {
           ctx.fail(`CG-GRID-ALIGN [lint-guard:108-T5fix2]: 影片 grid 缺少 ${label} 的 .showcase-grid 規則。${FIX}`);
           continue;
@@ -2092,12 +2109,14 @@ const RULES = [
             );
           }
         } else if (!(() => {
+          if (onlyCols && isPosterVariant(selector) && isPosterMedia(media)) return true;   // 119-T1 卡型變體階梯
           const entry = tableEntry(media, VIDEO);
           return onlyCols && entry && isExactly(selector, 'showcase-grid') && colsFault(declarations, entry.cols) === null;
         })()) {
           ctx.fail(
             `CG-GRID-ALIGN [lint-guard:108-T5fix2]: .showcase-grid 單獨規則宣告寬度決定屬性 \`${props.join(', ')}\` `
-              + `卻不在影片斷點白名單（三段 ≥900 條件 + exact \`.showcase-grid\` + grid-template-columns 恰好宣告一次且欄數等於該段期望值）—— `
+              + `卻不在影片斷點白名單（三段 ≥900 條件 + exact \`.showcase-grid\` + grid-template-columns 恰好宣告一次且欄數等於該段期望值）`
+              + `或卡型變體白名單（exact \`.showcase-grid.shape-poster\` + 只宣告 grid-template-columns + 單一 (min-width: ≥900px) 條件）—— `
               + `共用區間的寬度屬性必須 co-listed，否則女優在該情境悄悄脫鉤。${FIX} — ${where}`,
           );
         }

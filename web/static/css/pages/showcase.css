@@ -390,6 +390,82 @@
     }
 }
 
+/* 119-T1 / CD-119-3 / CD-119-7 / AC-6.1 / AC-6.4
+   Desktop `.showcase-grid.shape-poster` (≥900px). Selector 形狀鏡射 L348 起 ≤899 poster-crop，
+   只在 `.showcase-grid` 後直接接 `.shape-poster`（無空格）。
+   specificity：:is() 含 #id → a=1；非 hero 5 class（showcase-grid / shape-poster /
+   av-card-preview / :not(.hero-card) / av-card-preview-img）= (1,5,0) 勝 theme.css
+   基準 (1,0,1)；hero img = (1,5,1) 勝桌面 contain 基準 (1,2,1)。禁用 !important。
+   AC-6.1：.av-num 不可寫 font-size（維持 theme 0.9rem）。
+   AC-6.4：hero 用 --poster-crop-ratio，不用 --actress-crop-ratio。
+   CD-119-7：下方六段欄數階梯每段只宣告 grid-template-columns。 */
+@media (min-width: 900px) {
+    :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid.shape-poster .av-card-preview:not(.hero-card) .av-card-preview-img {
+        aspect-ratio: var(--poster-crop-ratio, 0.71);
+        height: auto;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid.shape-poster .av-card-preview:not(.hero-card) .av-card-preview-img img {
+        object-position: right center;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid.shape-poster .av-card-preview:not(.hero-card) .av-card-preview-footer .footer-default .av-num {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid.shape-poster .av-card-preview:not(.hero-card) .av-card-preview-footer .footer-default .av-actress {
+        display: none;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid.shape-poster .av-card-preview.hero-card .av-card-preview-img {
+        aspect-ratio: var(--poster-crop-ratio, 0.71);
+        height: auto;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid.shape-poster .av-card-preview.hero-card .av-card-preview-img img {
+        object-fit: cover;
+        transform-origin: center center;
+    }
+}
+
+@media (min-width: 2100px) {
+    .showcase-grid.shape-poster {
+        grid-template-columns: repeat(8, 1fr);
+    }
+}
+
+@media (min-width: 1850px) and (max-width: 2099px) {
+    .showcase-grid.shape-poster {
+        grid-template-columns: repeat(7, 1fr);
+    }
+}
+
+@media (min-width: 1600px) and (max-width: 1849px) {
+    .showcase-grid.shape-poster {
+        grid-template-columns: repeat(6, 1fr);
+    }
+}
+
+@media (min-width: 1350px) and (max-width: 1599px) {
+    .showcase-grid.shape-poster {
+        grid-template-columns: repeat(5, 1fr);
+    }
+}
+
+@media (min-width: 1100px) and (max-width: 1349px) {
+    .showcase-grid.shape-poster {
+        grid-template-columns: repeat(4, 1fr);
+    }
+}
+
+@media (min-width: 900px) and (max-width: 1099px) {
+    .showcase-grid.shape-poster {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
 /* ==================== Actress Grid — Collection Wall (44c-T6) ====================
    108-T5（功能C）：女優 grid 承接上方 .showcase-grid 的 base（display/gap 1.5rem/padding 1.5rem/
    max-width）與 ≤899 的兩段共用斷點（481-899 → 4 欄、≤480 → 3 欄）——那半邊影片走直式 poster
