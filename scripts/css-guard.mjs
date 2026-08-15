@@ -1166,6 +1166,62 @@ const RULES = [
     },
   },
 
+  // CG-PC-14 ← test_card_shape_media_aspect_ratio_has_height_auto（119-PR Codex P1：純單檔 CSS
+  // 機械檢查應搬 lint、不進 pytest，CLAUDE.md「lint 守衛規則」north-star）。
+  // 定位 showcase.css 卡型 @media (min-width: 900px) 區塊——body 同時含 .showcase-grid.shape-poster
+  // 與 aspect-ratio、且條件不含 max-width（排除 900-1099 等純欄數階梯區塊；忠實鏡射被刪 pytest
+  // TestPosterCropThresholdAlignment._card_shape_media_min_width 的定位邏輯：brace-balance 掃全部
+  // @media，篩 body 同時命中兩個 marker）。找不到／找到不止一個 → fail（不得 fail-open 回預設值）。
+  // 判準逐條配對計數：aspect-ratio 出現次數 == aspect-ratio…;height:auto 配對次數（FE-CSS-08：
+  // width/height 都寫死時 aspect-ratio 會被完全忽略）—— 只驗「文字裡出現過 height: auto」是
+  // fail-open，刪掉其中一條仍會綠，故不可用 body.includes('height: auto')。
+  {
+    id: 'CG-PC-14',
+    file: 'pages/showcase.css',
+    kind: 'fn',
+    check(ctx) {
+      // ctx.text 已由 loadFile 用 stripCssComments 去除 /* */ 註解（該區塊上方註解本身含
+      // "aspect-ratio" 字樣，未去註解會誤判 marker 命中或計數膨脹）。
+      const css = ctx.text;
+      const matches = [];
+      for (const m of css.matchAll(/@media\s*([^{]*?)\s*\{/g)) {
+        const cond = m[1];
+        let depth = 1;
+        let i = m.index + m[0].length;
+        while (i < css.length && depth > 0) {
+          if (css[i] === '{') depth += 1;
+          else if (css[i] === '}') depth -= 1;
+          i += 1;
+        }
+        const body = css.slice(m.index + m[0].length, i - 1);
+        if (body.includes('.showcase-grid.shape-poster') && body.includes('aspect-ratio')) {
+          matches.push({ cond, body });
+        }
+      }
+      if (matches.length !== 1) {
+        ctx.fail(
+          `CG-PC-14: showcase.css 卡型 @media 應恰好一個（body 含 .showcase-grid.shape-poster `
+            + `且 aspect-ratio），實得 ${matches.length}——找不到目標區塊，不得 fail-open`,
+        );
+        return;
+      }
+      const { cond, body } = matches[0];
+      if (/max-width/.test(cond)) {
+        ctx.fail(`CG-PC-14: 卡型 @media 條件不得含 max-width（抓到欄數階梯區塊？）: ${cond.trim()}`);
+        return;
+      }
+      const arCount = (body.match(/aspect-ratio\s*:/g) || []).length;
+      const pairedCount = (body.match(/aspect-ratio\s*:[^;]+;\s*height:\s*auto/g) || []).length;
+      if (arCount !== pairedCount) {
+        ctx.fail(
+          `CG-PC-14: showcase.css 卡型區塊（@media ${cond.trim()}）內每個 aspect-ratio 旁必須有 `
+            + `height: auto（FE-CSS-08：width/height 都寫死時 aspect-ratio 會被完全忽略）—— `
+            + `${arCount} 個 aspect-ratio、僅 ${pairedCount} 個與 height: auto 配對`,
+        );
+      }
+    },
+  },
+
   // ══ T3 sub-commit 3b：handoff CSS 半邊（B 組 CG-RO-01..03）+ §B 散檔（C 組 CG-SB-01..03）══
   // B 組 = handoff receiver own-half（net+tag；整-class delete defer→96d，CD-96-12）。
   // C 組 = §B standalone 檔（CG-SB-01/02 整檔 delete；CG-SB-03 切 CSS 半邊）。忠實 port（CD-96c-2）。
@@ -1961,6 +2017,20 @@ const RULES = [
       // exact selector 判定：stripNested 後字面等於單一 class（擋 sidebar-state 前綴 `body.sidebar-collapsed .actress-grid`
       // 與 co-listed 回退；未來若真要 scoped 變體，改守衛而非放行 — fail-closed）。
       const isExactly = (selector, cls) => stripNested(selector).trim() === `.${cls}`;
+      // 119-T1：卡型變體 `.showcase-grid.shape-poster`（直式海報，spec-119 F2）。
+      // 它是「只有影片牆掛得上的 opt-in class」，結構上不可能命中 .actress-grid，
+      // 故不屬於 VIDEO 三段階梯的管轄範圍（本守衛的不變式是「女優不得悄悄脫鉤」）。
+      // 刻意**不驗欄數值**：plan-119 §7 允許 owner 真機驗收後只調 grid-template-columns 的數字，
+      // 把數字焊進期望表會讓那條逃生口變貴。守的是「形狀」不是「數值」：
+      // exact `.showcase-grid.shape-poster` + 只宣告 grid-template-columns + 單一 ≥900px media 條件。
+      const isPosterVariant = (selector) => stripNested(selector).trim() === '.showcase-grid.shape-poster';
+      // 單一 media 條件、以 (min-width: Npx) 起頭且 N ≥ 900，可選再接 and (max-width: Mpx)。
+      const POSTER_MEDIA = /^\s*\(\s*min-width\s*:\s*(\d+)px\s*\)(?:\s+and\s+\(\s*max-width\s*:\s*\d+px\s*\))?\s*$/;
+      const isPosterMedia = (media) => {
+        if (media.length !== 1) return false;
+        const m = POSTER_MEDIA.exec(media[0]);
+        return !!m && Number(m[1]) >= 900;
+      };
       // 同一 media 條件可能有多個 block（本檔 900-1099 現有兩個：影片區一個、女優階梯區一個）→ 一律掃全部。
       const rulesUnder = (cond) => extractMediaBodies(ctx.text, cond).flatMap((body) => parseRuleBlocks(body));
       // Codex T5fix2 三審 P1：同一 rule 內可重複宣告同 property（cascade 取最後者），故不能只問
@@ -2032,7 +2102,10 @@ const RULES = [
 
       // ── (C) 正向・影片 ≥900 三段維持 showcase-only（不得再 co-listed = 不得回退 T5）──
       for (const { cond, cols, label } of VIDEO) {
-        const hits = rulesUnder(cond).filter(({ selector }) => selHasSubject(selector, 'showcase-grid'));
+        // 119-T1：卡型變體不計入「同一斷點只允許一條」的計數——它是另一套獨立階梯（見 isPosterVariant）。
+        const hits = rulesUnder(cond).filter(
+          ({ selector }) => selHasSubject(selector, 'showcase-grid') && !isPosterVariant(selector),
+        );
         if (!hits.length) {
           ctx.fail(`CG-GRID-ALIGN [lint-guard:108-T5fix2]: 影片 grid 缺少 ${label} 的 .showcase-grid 規則。${FIX}`);
           continue;
@@ -2092,12 +2165,14 @@ const RULES = [
             );
           }
         } else if (!(() => {
+          if (onlyCols && isPosterVariant(selector) && isPosterMedia(media)) return true;   // 119-T1 卡型變體階梯
           const entry = tableEntry(media, VIDEO);
           return onlyCols && entry && isExactly(selector, 'showcase-grid') && colsFault(declarations, entry.cols) === null;
         })()) {
           ctx.fail(
             `CG-GRID-ALIGN [lint-guard:108-T5fix2]: .showcase-grid 單獨規則宣告寬度決定屬性 \`${props.join(', ')}\` `
-              + `卻不在影片斷點白名單（三段 ≥900 條件 + exact \`.showcase-grid\` + grid-template-columns 恰好宣告一次且欄數等於該段期望值）—— `
+              + `卻不在影片斷點白名單（三段 ≥900 條件 + exact \`.showcase-grid\` + grid-template-columns 恰好宣告一次且欄數等於該段期望值）`
+              + `或卡型變體白名單（exact \`.showcase-grid.shape-poster\` + 只宣告 grid-template-columns + 單一 (min-width: ≥900px) 條件）—— `
               + `共用區間的寬度屬性必須 co-listed，否則女優在該情境悄悄脫鉤。${FIX} — ${where}`,
           );
         }

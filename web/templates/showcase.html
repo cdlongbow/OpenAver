@@ -273,19 +273,25 @@
                     <div class="toolbar-dropdown-wrap" @click.outside="modeOpen = false">
                         <button class="btn-icon"
                                 @click="modeOpen = !modeOpen; sortOpen = false"
-                                :title="t('showcase.toolbar.mode_prefix') + ': ' + (mode === 'grid' ? t('showcase.mode.grid') : mode === 'table' ? t('showcase.mode.table') : t('showcase.mode.list'))"
+                                :title="t('showcase.toolbar.mode_prefix') + ': ' + (mode === 'grid' ? (_isNarrow ? t('showcase.mode.grid') : (cardShape === 'poster' ? t('showcase.mode.poster') : t('showcase.mode.cover'))) : mode === 'table' ? t('showcase.mode.table') : t('showcase.mode.list'))"
                                 :class="{ 'active': modeOpen }">
                             <i class="bi" :class="mode === 'grid' ? 'bi-grid-3x3' : mode === 'table' ? 'bi-table' : 'bi-list-ul'"></i>
                         </button>
                         <div class="toolbar-dropdown" x-show="modeOpen" x-transition.opacity.duration.150ms @click.stop>
-                            <a href="#" class="dropdown-item" :class="{ 'active': mode === 'grid' }"
-                               @click.prevent="switchMode('grid'); modeOpen = false">
+                            <a href="#" class="dropdown-item" x-show="_isNarrow" :class="{ 'active': mode === 'grid' }"
+                               @click.prevent="selectPresentation(_gridTarget()); modeOpen = false">
                                 <i class="bi bi-grid-3x3"></i> {{ t('showcase.mode.grid') }}</a>
+                            <a href="#" class="dropdown-item" x-show="!_isNarrow" :class="{ 'active': mode === 'grid' && cardShape === 'cover' }"
+                               @click.prevent="selectPresentation('cover'); modeOpen = false">
+                                <i class="bi bi-person-vcard icon-mirror-x"></i> {{ t('showcase.mode.cover') }}</a>
+                            <a href="#" class="dropdown-item" x-show="!_isNarrow" :class="{ 'active': mode === 'grid' && cardShape === 'poster' }"
+                               @click.prevent="selectPresentation('poster'); modeOpen = false">
+                                <i class="bi bi-person-badge"></i> {{ t('showcase.mode.poster') }}</a>
                             <a href="#" class="dropdown-item" :class="{ 'active': mode === 'table' }"
-                               @click.prevent="switchMode('table'); modeOpen = false">
+                               @click.prevent="selectPresentation('table'); modeOpen = false">
                                 <i class="bi bi-table"></i> {{ t('showcase.mode.table') }}</a>
                             <a href="#" class="dropdown-item" :class="{ 'active': mode === 'list' }"
-                               @click.prevent="switchMode('list'); modeOpen = false">
+                               @click.prevent="selectPresentation('list'); modeOpen = false">
                                 <i class="bi bi-list-ul"></i> {{ t('showcase.mode.list') }}</a>
                         </div>
                     </div>
@@ -351,7 +357,7 @@
         <!-- Status Bar 已於 v0.7.8 (49a-T4) 移除，統合至底部 .showcase-footer 三段式 -->
 
         <!-- Image Grid -->
-        <div class="showcase-grid" x-show="mode === 'grid'">
+        <div class="showcase-grid" :class="{ 'shape-poster': cardShape === 'poster' }" x-show="mode === 'grid'">
             <!-- Hero Card（影片模式精準匹配）— grid 內第一個 child，同 /search pattern -->
             <div class="av-card-preview hero-card"
                  x-show="!showFavoriteActresses && _isPreciseActressMatch && _matchedActress?.is_favorite"

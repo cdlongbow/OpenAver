@@ -164,6 +164,22 @@
     text-align: center;
 }
 
+/* 119-T2 / CD-119-6 / AC-1.5：Bootstrap Icons 字形左右鏡像工具 class。
+   為什麼套 ::before 不套 <i>：`<i class="bi …">` 是 inline box，CSS transform 對 inline box
+   無視覺效果；vendored bootstrap-icons.css:14-16 已把 .bi::before 設為 display:inline-block，
+   故偽元素才是 transform 生效的那一層（專案記憶 feedback_css_transform_inline_verify，
+   101b-T6 曾因此連兩次假修）。
+   為什麼鏡像：JAV 橫式封面的正面（人）在**右半邊**，左半是背面拼貼；「直式海報」保留的正是右半。
+   鏡像後這顆圖示畫的就是使用者手上那張封面的實際佈局，而不是一張泛用名片。
+   原字形朝向已用渲染像素機械判定（160px canvas、alpha>32 墨水覆蓋率、以墨水 bbox 中線切半）：
+   bi-person-vcard = 左 60.3% / 右 39.7%（人像在左 → 需要鏡像）；
+   bi-person-badge = 49.6% / 50.4%（對稱，人在中間 → 不鏡像，本 task 不動它）；
+   bi-grid-3x3 對照組 = 50.3% / 49.7%（證明量法無系統性偏差）。
+   掛 class 到 <i> 上是 T5 的工作，本 task 只提供規則本體。 */
+.icon-mirror-x::before {
+    transform: scaleX(-1);
+}
+
 /* ==================== Status Bar (M3g) ==================== */
 /* 49a-T4: status bar 已從 showcase 主頁移除（showcase.html 不再使用），
    保留 CSS 是因為 design-system.html 仍引用 .showcase-status-bar / .status-total /
@@ -387,6 +403,82 @@
     :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid .av-card-preview.hero-card .av-card-preview-img img {
         object-fit: cover;             /* 覆蓋 hero 桌面 contain（L2342）；女優照填滿、無 letterbox */
         transform-origin: center center;
+    }
+}
+
+/* 119-T1 / CD-119-3 / CD-119-7 / AC-6.1 / AC-6.4
+   Desktop `.showcase-grid.shape-poster` (≥900px). Selector 形狀鏡射 L348 起 ≤899 poster-crop，
+   只在 `.showcase-grid` 後直接接 `.shape-poster`（無空格）。
+   specificity：:is() 含 #id → a=1；非 hero 5 class（showcase-grid / shape-poster /
+   av-card-preview / :not(.hero-card) / av-card-preview-img）= (1,5,0) 勝 theme.css
+   基準 (1,0,1)；hero img = (1,5,1) 勝桌面 contain 基準 (1,2,1)。禁用 !important。
+   AC-6.1：.av-num 不可寫 font-size（維持 theme 0.9rem）。
+   AC-6.4：hero 用 --poster-crop-ratio，不用 --actress-crop-ratio。
+   CD-119-7：下方六段欄數階梯每段只宣告 grid-template-columns。 */
+@media (min-width: 900px) {
+    :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid.shape-poster .av-card-preview:not(.hero-card) .av-card-preview-img {
+        aspect-ratio: var(--poster-crop-ratio, 0.71);
+        height: auto;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid.shape-poster .av-card-preview:not(.hero-card) .av-card-preview-img img {
+        object-position: right center;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid.shape-poster .av-card-preview:not(.hero-card) .av-card-preview-footer .footer-default .av-num {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid.shape-poster .av-card-preview:not(.hero-card) .av-card-preview-footer .footer-default .av-actress {
+        display: none;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid.shape-poster .av-card-preview.hero-card .av-card-preview-img {
+        aspect-ratio: var(--poster-crop-ratio, 0.71);
+        height: auto;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid.shape-poster .av-card-preview.hero-card .av-card-preview-img img {
+        object-fit: cover;
+        transform-origin: center center;
+    }
+}
+
+@media (min-width: 2100px) {
+    .showcase-grid.shape-poster {
+        grid-template-columns: repeat(8, 1fr);
+    }
+}
+
+@media (min-width: 1850px) and (max-width: 2099px) {
+    .showcase-grid.shape-poster {
+        grid-template-columns: repeat(7, 1fr);
+    }
+}
+
+@media (min-width: 1600px) and (max-width: 1849px) {
+    .showcase-grid.shape-poster {
+        grid-template-columns: repeat(6, 1fr);
+    }
+}
+
+@media (min-width: 1350px) and (max-width: 1599px) {
+    .showcase-grid.shape-poster {
+        grid-template-columns: repeat(5, 1fr);
+    }
+}
+
+@media (min-width: 1100px) and (max-width: 1349px) {
+    .showcase-grid.shape-poster {
+        grid-template-columns: repeat(4, 1fr);
+    }
+}
+
+@media (min-width: 900px) and (max-width: 1099px) {
+    .showcase-grid.shape-poster {
+        grid-template-columns: repeat(3, 1fr);
     }
 }
 

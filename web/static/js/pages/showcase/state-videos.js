@@ -369,6 +369,63 @@ export function stateVideos() {
             });
         },
 
+        /**
+         * TASK-119-T4 (CD-119-11): 四條選單項與 A 鍵的唯一可執行入口。
+         * target ∈ {'cover','poster','table','list'}，其餘一律早退（fail-closed；
+         * FE-JS-01：用白名單查表，不用 `target || 'cover'` 這種寫法吃掉合法空值/0）。
+         *
+         * CD-119-14：換模式一律委派給 switchMode()（perPage 降級／updatePagination／
+         * saveState／crossfade 的唯一所有者）——本函式內零 `this.mode = ` 賦值。
+         * CD-119-12 / §0.3：capture 必須在 cardShape 寫入之前；playShapeMorph 必須在
+         * $nextTick 之後（Alpine 3 的反應式更新是排程的，同一 tick 呼叫 Flip.from
+         * 會量到舊幾何，動畫會退化成「沒有播」而畫面仍然正確，測試裡極難抓到）。
+         */
+        selectPresentation(target) {
+            const PRESENTATIONS = {
+                cover: { mode: 'grid', shape: 'cover' },
+                poster: { mode: 'grid', shape: 'poster' },
+                table: { mode: 'table', shape: null },   // shape: null = 卡型不變
+                list: { mode: 'list', shape: null },
+            };
+            const next = PRESENTATIONS[target];
+            if (!next) return;  // 未知 target：零副作用早退
+
+            const nextMode = next.mode;
+            const nextShape = next.shape === null ? this.cardShape : next.shape;
+
+            if (nextMode === this.mode && nextShape === this.cardShape) return;  // 點自己：零副作用
+
+            if (nextMode !== this.mode) {
+                this.cardShape = nextShape;   // 先落卡型（此路徑不播 morph）
+                this.switchMode(nextMode);    // 既有所有者：perPage 降級 + updatePagination + saveState + crossfade
+                return;
+            }
+
+            // 走到這裡 ＝ grid → grid，只有卡型變 → 兩階段 Flip（§0.3）
+            const gridEl = this._getActiveGrid();  // CD-119-15 ⑤：用既有 helper，不自己 querySelector
+            const captured = window.ShowcaseAnimations?.captureShapeState?.(gridEl) || null;  // ★ 必須在寫入之前
+            this.cardShape = nextShape;
+            this.saveState();
+            this.$nextTick(() => {
+                window.ShowcaseAnimations?.playShapeMorph?.(captured, gridEl);
+            });
+        },
+
+        // TASK-119-T5：選單「圖片」與 A 鍵窄序列共用的 grid target。
+        // 窄螢幕不得寫死 'cover'——會把使用者在桌面選的 poster 靜默洗掉（AC-3.2）。
+        _gridTarget() {
+            return this.cardShape === 'poster' ? 'poster' : 'cover';
+        },
+        _currentPresentation() {
+            if (this.mode === 'grid') return this._gridTarget();
+            return this.mode === 'list' ? 'list' : 'table';
+        },
+        _presentationOrder() {
+            return this._isNarrow
+                ? [this._gridTarget(), 'list', 'table']
+                : ['cover', 'poster', 'list', 'table'];
+        },
+
         prevPage() {
             if (this.page > 1) {
                 this._animatePageChange('prev');
