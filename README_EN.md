@@ -4,7 +4,7 @@ this genre is actually browsed — navigate by cover + tag, actress as a first-c
 (profile cards, cup/age/height sort, cross-language alias). 8 built-in scrape sources
 (JavBus/Jav321/JavDB/DMM/D2Pass/HEYZO/FC2/AVSOX) plus optional Metatube federation (30+ providers).
 Optionally exports NFO + cover art (poster/fanart) to Jellyfin / Emby / Kodi.
-AI-operable REST API with capabilities manifest, 5,000+ tests, MIT license. -->
+AI-operable REST API with capabilities manifest, 6,700+ tests, MIT license. -->
 
 <h1 align="center">OpenAver</h1>
 
@@ -18,7 +18,7 @@ AI-operable REST API with capabilities manifest, 5,000+ tests, MIT license. -->
 ![Downloads](https://img.shields.io/github/downloads/slive777/OpenAver/total?color=success)
 ![Stars](https://img.shields.io/github/stars/slive777/OpenAver)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
-![Tests](https://img.shields.io/github/actions/workflow/status/slive777/OpenAver/test.yml?label=tests%205%2C000%2B)
+![Tests](https://img.shields.io/github/actions/workflow/status/slive777/OpenAver/test.yml?label=tests%206%2C700%2B)
 
 **English** | [繁體中文](README.md)
 
@@ -38,11 +38,11 @@ Three pages form the core: 📋 Scan & build library → 🎬 Browse collection 
 |------|---------|
 | **Platform** | Windows 10/11 · macOS (Apple Silicon M1–M4) |
 | **Install** | One-line command or ZIP install (**no Docker**); once installed, everything runs in the GUI — **no CLI** |
-| **Collection browsing** | Showcase cover wall + Lightbox: video mode (cover/tag navigation + similar exploration), actress mode (profile cards + cup/age/height sort + cross-language alias) |
-| **Multi-device access** | One-click server mode — phones and tablets on the same Wi-Fi can browse your collection in any browser (**instant, no restart, no setup**; single-machine by default, no external exposure) |
-| **Scrape sources** | 8 built-in (JavBus / Jav321 / JavDB / DMM / D2Pass / HEYZO / FC2 / AVSOX); advanced users can optionally federate **Metatube (30+ more providers)** |
+| **Collection browsing** | Showcase cover wall + Lightbox: video mode (cover/tag navigation + stackable filter pills + selectable card shape + similar exploration), actress mode (profile cards + cup/age/height sort and filter + cross-language alias) |
+| **Multi-device access** | One-click server mode — phones and tablets on the same Wi-Fi can browse your collection in any browser (**instant, no restart, no setup**; optional password protection, single-machine by default with no external exposure) |
+| **Scrape sources** | 8 built-in (JavBus / Jav321 / JavDB / DMM / D2Pass / HEYZO / FC2 / AVSOX) + 2 desktop-only manual archive sources (JavLibrary / FC2-javten, for titles the official sites have delisted); advanced users can optionally federate **Metatube (30+ more providers)** |
 | **Media server output (optional)** | One-click NFO + cover art (poster / fanart) for **Jellyfin / Emby / Kodi**; read-only sources can generate a local `.strm` library that streams without copying the originals |
-| **Actress collection** | Auto profiles + cross-language alias expansion + multi-source photo download (or upload your own) |
+| **Actress collection** | Auto profiles + cross-language alias expansion + multi-source photo download (or upload your own) + one-click fill from your own library, ranked by title count |
 | **AI control** | Built-in REST API + capabilities manifest (Claude Code / Cursor / Perplexity and other AI agents operate it directly) |
 | **AI translation** | Ollama (local, free) / Gemini / OpenAI-compatible — your choice |
 | **Data** | 100% local SQLite — **no cloud, no account, no telemetry** |
@@ -115,7 +115,10 @@ On first launch, a built-in setup wizard walks you through folder configuration 
 
 - **Cover wall + Lightbox**: Browse your collection cover-first; click any cover to open a detail Lightbox with stills, tags, and actress info. Uncensored covers auto-center on the face, so faces don't get cropped off.
 - **Tag-based filtering and sorting**: Cover wall uses tag chips as navigation (Chinese/Japanese/English synonyms auto-expand); sort by date / ID / actress / maker / file size and more.
-- **Actress browsing mode**: Actresses are a first-class browsing axis — a cover wall of your favorited actresses plus a profile Lightbox (height, cup size, measurements, age, alias history), sortable by cup size / age / height / video count. Cross-language aliases collapse all of one person's stage names and post-retirement names into a single card.
+- **Stackable filter pills**: Click an actress, tag, maker, director, series, or label in the Lightbox and a removable pill appears in the search box; multiple pills are ANDed together and can be combined with your own keywords. Pills match exactly (clicking "巨乳" won't drag in "巨乳痴女"), while free typing stays fuzzy.
+- **Selectable card shape (desktop)**: The "front" of a landscape JAV cover is its right half, so besides the full cover you can switch the wall to a **portrait poster** — narrower cards, more per row, and no second file is ever created from that one cover. Switching morphs in place: no reload, no page change.
+- **Actress browsing mode**: Actresses are a first-class browsing axis — a cover wall of your favorited actresses plus a profile Lightbox (height, cup size, measurements, age, alias history), sortable by cup size / age / height / video count, and filterable by conditions like "height ≤ 165" or "cup B". Cross-language aliases collapse all of one person's stage names and post-retirement names into a single card.
+- **Fill the actress wall from your own library**: Filling the wall used to require knowing an actress's exact full name and being able to type it. Now the `+` button opens a list of who is already in your library and how many titles each has (sorted by count, aliases merged into one person) — tap the heart on any row to add her.
 - **Similar exploration**: Tap the wand in the Lightbox → titles with a similar style orbit the main cover; tap any to "dive in" and keep exploring. Uses **tag IDF** weighting mixed with series, maker, and cast overlap to find like-minded titles via local computation — rule-based, not a behavioral recommendation algorithm. Offline, instant, no GPU, no model download required.
 - **Instant appearance after organizing**: Organize a title on the Search page and, if the target path is within your scanned folder, it's written to SQLite immediately and the cover flies into Showcase — no manual rescan needed.
 - **Browse on phone or tablet**: In Settings, flip to "Server" mode — any phone or tablet on the same Wi-Fi can open the URL in a browser and browse the same collection. Instant, no restart, nothing to install. Flip back to "Single-machine" to close external access. The entire UI is redesigned for touch and portrait screens, with left/right swipe to move between titles.
@@ -155,7 +158,7 @@ Want to plug a NAS, a cloud mount, or any "don't let a tool touch it" original c
 - **Multi-language UI**: Traditional Chinese, Simplified Chinese, Japanese, English — instant switch.
 - **Path & naming rules**: Flexible output path configuration with `{suffix}` variable support.
 - **Favorites folders**: Save the **video folder paths** you use most often (not actress favorites) — one-click load and auto-search.
-- **External media manager mode (optional)**: Choose Jellyfin / Emby / Kodi, and scraping auto-generates correctly-named poster + fanart plus a compatible NFO — plug it into your living-room media center and it displays correctly right away. (Poster + NFO work on all three; `{stem}-fanart` is read by Jellyfin/Kodi only — Emby does not recognize this fanart filename.)
+- **External media manager mode (optional)**: Choose Jellyfin / Emby / Kodi, and scraping auto-generates correctly-named poster + fanart plus a compatible NFO — plug it into your living-room media center and it displays correctly right away. (Poster + NFO work on all three; `{stem}-fanart` is read by Jellyfin/Kodi only — Emby does not recognize this fanart filename.) With a media-manager mode selected, OpenAver **no longer writes a same-name cover file** — Jellyfin / Emby prefer that file, and it is what puts landscape images on the poster wall. Existing titles keep whatever cover location they already have (so your manual focal crops are not wiped); to fix one, delete its same-name cover yourself and regenerate.
 - **Static HTML export**: Generates a standalone HTML index file you can browse offline without any server.
 
 ### 🔌 Scrape-Source Expansion: Metatube Federation (Advanced, Optional)
@@ -255,7 +258,7 @@ No. 100% local — no data collection, no file uploads. Network requests are onl
 | **Animation** | GSAP 3.14+ + Motion Adapter (reduced-motion support) |
 | **Desktop Shell** | PyWebView (Windows / macOS) |
 | **Database** | SQLite (WAL mode) |
-| **Testing** | Pytest (5,000+ tests) |
+| **Testing** | Pytest (6,700+ tests) |
 
 ### Run from Source
 

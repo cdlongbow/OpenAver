@@ -4,7 +4,7 @@ this genre is actually browsed — navigate by cover + tag, actress as a first-c
 (profile cards, cup/age/height sort, cross-language alias). 8 built-in scrape sources
 (JavBus/Jav321/JavDB/DMM/D2Pass/HEYZO/FC2/AVSOX) plus optional Metatube federation (30+ providers).
 Optionally exports NFO + cover art (poster/fanart) to Jellyfin / Emby / Kodi.
-AI-operable REST API with capabilities manifest, 5,000+ tests, MIT license. -->
+AI-operable REST API with capabilities manifest, 6,700+ tests, MIT license. -->
 
 <h1 align="center">OpenAver</h1>
 
@@ -18,7 +18,7 @@ AI-operable REST API with capabilities manifest, 5,000+ tests, MIT license. -->
 ![Downloads](https://img.shields.io/github/downloads/slive777/OpenAver/total?color=success)
 ![Stars](https://img.shields.io/github/stars/slive777/OpenAver)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
-![Tests](https://img.shields.io/github/actions/workflow/status/slive777/OpenAver/test.yml?label=tests%205%2C000%2B)
+![Tests](https://img.shields.io/github/actions/workflow/status/slive777/OpenAver/test.yml?label=tests%206%2C700%2B)
 
 **[English](README_EN.md)** | 繁體中文
 
@@ -38,11 +38,11 @@ AI-operable REST API with capabilities manifest, 5,000+ tests, MIT license. -->
 |------|------|
 | **平台** | Windows 10/11 · macOS（Apple Silicon M1–M4） |
 | **安裝** | 一行指令或 ZIP 安裝（**免 Docker**）；裝好後全程圖形介面操作、**免命令列** |
-| **收藏瀏覽** | Showcase 封面牆 + Lightbox：影片模式（封面/tag 導航 + 相似探索）、女優模式（資料卡 + 罩杯/年齡/身高排序 + 跨語言別名） |
-| **多裝置存取** | 一鍵切換伺服器模式，同 Wi-Fi 的手機 / 平板用瀏覽器即可瀏覽收藏（**即時生效、免重啟、免設定**；預設單機完全不對外） |
-| **刮削來源** | 8 個內建（JavBus / Jav321 / JavDB / DMM / D2Pass / HEYZO / FC2 / AVSOX）；進階可選配接 Metatube 聯邦再擴 **30+ 來源** |
+| **收藏瀏覽** | Showcase 封面牆 + Lightbox：影片模式（封面/tag 導航 + 條件疊加篩選 + 卡型可選 + 相似探索）、女優模式（資料卡 + 罩杯/年齡/身高排序與篩選 + 跨語言別名） |
+| **多裝置存取** | 一鍵切換伺服器模式，同 Wi-Fi 的手機 / 平板用瀏覽器即可瀏覽收藏（**即時生效、免重啟、免設定**；可設密碼保護，預設單機完全不對外） |
+| **刮削來源** | 8 個內建（JavBus / Jav321 / JavDB / DMM / D2Pass / HEYZO / FC2 / AVSOX）＋ 2 個桌面手動備份來源（JavLibrary / FC2-javten，補官方站已下架的片）；進階可選配接 Metatube 聯邦再擴 **30+ 來源** |
 | **媒體庫輸出（選配）** | 一鍵生成 NFO + 封面海報（poster / fanart）給 **Jellyfin / Emby / Kodi**；唯讀來源可不下載原檔、本地生成 `.strm` 媒體庫直接串流 |
-| **女優收藏** | 自動建檔 + 跨語言別名展開 + 多來源照片下載（也可自選上傳） |
+| **女優收藏** | 自動建檔 + 跨語言別名展開 + 多來源照片下載（也可自選上傳）＋ 從自己片庫依片數一鍵補齊 |
 | **AI 操作** | 內建 REST API + capabilities manifest（Claude Code / Cursor / Perplexity 等 AI agent 直接操作） |
 | **AI 翻譯** | Ollama（本地免費）/ Gemini / OpenAI-compatible 任選 |
 | **資料** | 100% 本地 SQLite，**無雲端、無帳號、無遙測** |
@@ -115,7 +115,10 @@ irm https://raw.githubusercontent.com/slive777/OpenAver/main/install.ps1 | iex
 
 - **封面牆 + Lightbox**：以封面為主軸逛收藏，點封面進詳情燈箱看劇照、tag、女優資訊。無碼封面自動對準人臉裁切，不會切掉半張臉。
 - **以 tag 篩選與排序**：封面牆用 tag chip 當導航（中日英同義詞自動展開），可按日期 / 番號 / 女優 / 片商 / 檔案大小等多軸排序。
-- **女優瀏覽模式**：女優單獨成一個逛法——收藏女優封面牆 + 個人資料燈箱（身高、罩杯、三圍、年齡、別名歷史），按罩杯 / 年齡 / 身高 / 片數排序；跨語言別名把同一人的所有藝名與退休名收攏成一張卡。
+- **條件可以疊加**：燈箱裡點女優、標籤、片商、導演、系列、廠牌，搜尋框就長出一枚可按掉的條件，多枚同時存在時取交集，也能跟你自己打的關鍵字並用。點進來的是精準比對（點「巨乳」不會撈到「巨乳痴女」），自己打字仍是模糊比對。
+- **封面牆卡型可選（桌面）**：JAV 橫式封面的「正面」在右半邊，所以除了完整封面，也可以切成**直式海報**——卡片變窄、一列放得更多，同一張封面不會產生第二個檔案。切換是原地變形，不重新載入、不改頁碼。
+- **女優瀏覽模式**：女優單獨成一個逛法——收藏女優封面牆 + 個人資料燈箱（身高、罩杯、三圍、年齡、別名歷史），按罩杯 / 年齡 / 身高 / 片數排序，也能用「身高 165 以下」「B 罩杯」這種條件直接篩；跨語言別名把同一人的所有藝名與退休名收攏成一張卡。
+- **從自己的片庫補齊女優牆**：以前要填滿女優牆得先知道正確全名才打得出來。現在按 `+` 就是一份「庫裡有誰、各幾片」的清單（依片數排序、別名自動合併成同一人），逐列點愛心即可加入。
 - **相似探索**：燈箱點魔杖 → 同風格的番號環繞主圖，點任一顆「鑽入」繼續探索。以 **tag IDF** 加權再混系列、片商、女優等共同點本地比對，找出同類片（規則式，非行為推薦演算法），離線即時、免 GPU、免下載模型。
 - **整理完即時出現**：在 Search 整理一片成功、且目標在掃描範圍內 → 立刻寫入 SQLite、封面飛進 Showcase，不必手動重掃。
 - **手機 / 平板也能逛**：設定裡一鍵切到「伺服器」，同 Wi-Fi 的手機、平板用瀏覽器打開網址，就能逛同一個收藏——即時生效、不用重啟、不用裝任何東西；用完切回「單機」立刻關閉對外。整個介面為觸控與直式螢幕重做，封面可左右滑換片。
@@ -155,7 +158,7 @@ irm https://raw.githubusercontent.com/slive777/OpenAver/main/install.ps1 | iex
 - **多語系 UI**：繁中 / 简中 / 日文 / 英文，即時切換。
 - **路徑與命名規則**：靈活設定輸出路徑與檔名規則，支援 `{suffix}` 格式變數。
 - **我的最愛資料夾**：設定常用的**影片資料夾路徑**（不是女優最愛），一鍵載入並自動搜尋。
-- **外部媒體管理器模式（選配）**：選 Jellyfin / Emby / Kodi，刮削後自動生成對應命名的 poster + fanart 與相容 NFO，想掛客廳媒體庫時掛進去即正確顯示（poster 與 NFO 三者通用；`{stem}-fanart` 僅 Jellyfin／Kodi 讀取，Emby 不認此 fanart 命名）。
+- **外部媒體管理器模式（選配）**：選 Jellyfin / Emby / Kodi，刮削後自動生成對應命名的 poster + fanart 與相容 NFO，想掛客廳媒體庫時掛進去即正確顯示（poster 與 NFO 三者通用；`{stem}-fanart` 僅 Jellyfin／Kodi 讀取，Emby 不認此 fanart 命名）。選了媒體管理器模式後**不再另外產生同名封面**——那張圖會被 Jellyfin／Emby 優先讀取，是封面牆出現橫式圖的元凶；既有的片維持原位置不動（以免清掉你調過的對焦），要修正請自行刪掉該片的同名封面再重新產生。
 - **靜態 HTML 匯出**：生成獨立 HTML 索引檔，不需部署伺服器也能離線瀏覽。
 
 ### 🔌 刮削來源擴充：Metatube 聯邦（進階選配）
@@ -255,7 +258,7 @@ curl http://localhost:<port>/api/capabilities
 | **Animation** | GSAP 3.14+ + Motion Adapter (reduced-motion support) |
 | **Desktop** | PyWebView (Windows/macOS) |
 | **Database** | SQLite (WAL mode) |
-| **Testing** | Pytest (5,000+ tests) |
+| **Testing** | Pytest (6,700+ tests) |
 
 ### 從原始碼執行
 
