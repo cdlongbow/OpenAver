@@ -864,7 +864,8 @@
       "version_prev_aria": "上一个版本",
       "version_next_aria": "下一个版本",
       "adopt_version": "采用此版本",
-      "adopt_switch_source": "替换此版本"
+      "adopt_switch_source": "替换此版本",
+      "cf_window_restart": "这个来源的验证窗口没有启动成功，请重新启动 OpenAver 再试"
     },
     "placeholder": {
       "search": "搜索番号、女优、标题..."
@@ -905,7 +906,9 @@
       "table": "详细",
       "list": "文字",
       "actress": "女优模式",
-      "video": "视频模式"
+      "video": "视频模式",
+      "cover": "完整封面",
+      "poster": "竖版海报"
     },
     "unit": {
       "videos": "部",
@@ -924,7 +927,13 @@
       "search_empty": "没有符合的视频",
       "search_actresses_prefix": "找到 ",
       "search_actresses_middle": " 位女优 \"",
-      "search_actresses_suffix": "\""
+      "search_actresses_suffix": "\"",
+      "pill_prefix": "符合",
+      "pill_middle": "个条件的",
+      "pill_suffix": "部",
+      "pill_actresses_prefix": "符合",
+      "pill_actresses_middle": "个条件的",
+      "pill_actresses_suffix": "位"
     },
     "nav": {
       "prev_page": "上一页",
@@ -1044,6 +1053,20 @@
         "upload_too_large": "图片太大（文件上限 10MB、尺寸上限 50M 像素）",
         "upload_bad_format": "不支持的图片格式",
         "upload_failed": "上传失败，请稍后再试"
+      },
+      "searchEmpty": "没有符合条件的女优",
+      "panel": {
+        "title": "从片库添加女优",
+        "search_placeholder": "搜索片库女优，或输入完整姓名添加",
+        "close": "关闭",
+        "loading": "载入中…",
+        "load_failed": "载入失败，请稍后再试",
+        "progress": "已显示 {n}／共 {m} 位",
+        "progress_all": "共 {m} 位",
+        "direct_add": "直接添加「{name}」",
+        "queued": "排队中",
+        "adding": "添加中…",
+        "add_failed": "添加失败，请再试一次"
       }
     },
     "samples": {
@@ -1052,6 +1075,31 @@
       "success": "剧照补抓完成",
       "fetch_failed": "补抓剧照失败，请稍后再试",
       "multi_video_error": "此文件夹有其他视频，补抓剧照会污染其他片，请先将视频移至独立文件夹再试"
+    },
+    "pill": {
+      "dim_label": {
+        "actress": "女优",
+        "tag": "标签",
+        "maker": "片商",
+        "director": "导演",
+        "series": "系列",
+        "label": "厂牌",
+        "age": "年龄",
+        "height": "身高",
+        "cup": "罩杯"
+      },
+      "title": "{dim}：{value}",
+      "remove_aria": "移除筛选：{value}",
+      "op": {
+        "eq": "等于",
+        "lte": "小于等于",
+        "gte": "大于等于",
+        "range": "自定义区间"
+      },
+      "editor": {
+        "range_min": "下限",
+        "range_max": "上限"
+      }
     }
   },
   "help": {

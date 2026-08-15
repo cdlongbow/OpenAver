@@ -864,7 +864,8 @@
       "version_prev_aria": "Previous version",
       "version_next_aria": "Next version",
       "adopt_version": "Use this version",
-      "adopt_switch_source": "Replace with this version"
+      "adopt_switch_source": "Replace with this version",
+      "cf_window_restart": "This source's verification window failed to start. Please restart OpenAver and try again"
     },
     "placeholder": {
       "search": "Search ID, actress, title..."
@@ -905,7 +906,9 @@
       "table": "Table",
       "list": "List",
       "actress": "Actress Mode",
-      "video": "Video Mode"
+      "video": "Video Mode",
+      "cover": "Full Cover",
+      "poster": "Poster"
     },
     "unit": {
       "videos": "videos",
@@ -924,7 +927,13 @@
       "search_empty": "No matching films",
       "search_actresses_prefix": "Found ",
       "search_actresses_middle": " actresses for \"",
-      "search_actresses_suffix": "\""
+      "search_actresses_suffix": "\"",
+      "pill_prefix": "Matching",
+      "pill_middle": "filters —",
+      "pill_suffix": "videos",
+      "pill_actresses_prefix": "Matching",
+      "pill_actresses_middle": "filters —",
+      "pill_actresses_suffix": "actresses"
     },
     "nav": {
       "prev_page": "Previous",
@@ -1044,6 +1053,20 @@
         "upload_too_large": "Image too large (max 10MB file, 50M pixels)",
         "upload_bad_format": "Unsupported image format",
         "upload_failed": "Upload failed. Please try again later."
+      },
+      "searchEmpty": "No matching actresses",
+      "panel": {
+        "title": "Add Actress from Library",
+        "search_placeholder": "Search library actresses, or type a full name to add",
+        "close": "Close",
+        "loading": "Loading…",
+        "load_failed": "Failed to load. Please try again later",
+        "progress": "Showing {n} of {m}",
+        "progress_all": "{m} total",
+        "direct_add": "Add “{name}” directly",
+        "queued": "Queued",
+        "adding": "Adding…",
+        "add_failed": "Failed to add. Please try again"
       }
     },
     "samples": {
@@ -1052,6 +1075,31 @@
       "success": "Stills fetched successfully",
       "fetch_failed": "Failed to fetch stills, please try again",
       "multi_video_error": "This folder contains other videos. Fetching stills here may affect them. Please move the video to its own folder first."
+    },
+    "pill": {
+      "dim_label": {
+        "actress": "Actress",
+        "tag": "Tag",
+        "maker": "Maker",
+        "director": "Director",
+        "series": "Series",
+        "label": "Label",
+        "age": "Age",
+        "height": "Height",
+        "cup": "Cup"
+      },
+      "title": "{dim}: {value}",
+      "remove_aria": "Remove filter: {value}",
+      "op": {
+        "eq": "Equals",
+        "lte": "At most",
+        "gte": "At least",
+        "range": "Custom range"
+      },
+      "editor": {
+        "range_min": "Min",
+        "range_max": "Max"
+      }
     }
   },
   "help": {

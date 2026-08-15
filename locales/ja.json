@@ -864,7 +864,8 @@
       "version_prev_aria": "前のバージョン",
       "version_next_aria": "次のバージョン",
       "adopt_version": "このバージョンを採用",
-      "adopt_switch_source": "このバージョンに置き換え"
+      "adopt_switch_source": "このバージョンに置き換え",
+      "cf_window_restart": "このソースの認証ウィンドウを起動できませんでした。OpenAver を再起動してからお試しください"
     },
     "placeholder": {
       "search": "番号・女優名・タイトルを検索..."
@@ -905,7 +906,9 @@
       "table": "テーブル",
       "list": "リスト",
       "actress": "女優モード",
-      "video": "動画モード"
+      "video": "動画モード",
+      "cover": "カバー全体",
+      "poster": "縦型ポスター"
     },
     "unit": {
       "videos": "本",
@@ -924,7 +927,13 @@
       "search_empty": "該当する作品はありません",
       "search_actresses_prefix": "見つかった ",
       "search_actresses_middle": " 人 \"",
-      "search_actresses_suffix": "\""
+      "search_actresses_suffix": "\"",
+      "pill_prefix": "条件",
+      "pill_middle": "件に一致：",
+      "pill_suffix": "本",
+      "pill_actresses_prefix": "条件",
+      "pill_actresses_middle": "件に一致：",
+      "pill_actresses_suffix": "人"
     },
     "nav": {
       "prev_page": "前のページ",
@@ -1044,6 +1053,20 @@
         "upload_too_large": "画像が大きすぎます（ファイル上限 10MB、サイズ上限 50M ピクセル）",
         "upload_bad_format": "対応していない画像形式です",
         "upload_failed": "アップロードに失敗しました。しばらくしてからもう一度お試しください。"
+      },
+      "searchEmpty": "該当する女優はいません",
+      "panel": {
+        "title": "ライブラリから女優を追加",
+        "search_placeholder": "ライブラリ内を検索、またはフルネームを入力して追加",
+        "close": "閉じる",
+        "loading": "読み込み中…",
+        "load_failed": "読み込みに失敗しました。しばらくしてからお試しください",
+        "progress": "{m} 人中 {n} 人を表示",
+        "progress_all": "全 {m} 人",
+        "direct_add": "「{name}」を直接追加",
+        "queued": "待機中",
+        "adding": "追加中…",
+        "add_failed": "追加に失敗しました。もう一度お試しください"
       }
     },
     "samples": {
@@ -1052,6 +1075,31 @@
       "success": "サンプル画像を取得しました",
       "fetch_failed": "画像の取得に失敗しました。後でもう一度お試しください",
       "multi_video_error": "このフォルダに他の動画があります。画像を取得すると他の動画に影響します。動画を専用フォルダに移動してからお試しください。"
+    },
+    "pill": {
+      "dim_label": {
+        "actress": "女優",
+        "tag": "タグ",
+        "maker": "メーカー",
+        "director": "監督",
+        "series": "シリーズ",
+        "label": "レーベル",
+        "age": "年齢",
+        "height": "身長",
+        "cup": "カップ"
+      },
+      "title": "{dim}：{value}",
+      "remove_aria": "フィルターを削除：{value}",
+      "op": {
+        "eq": "一致",
+        "lte": "以下",
+        "gte": "以上",
+        "range": "範囲指定"
+      },
+      "editor": {
+        "range_min": "下限",
+        "range_max": "上限"
+      }
     }
   },
   "help": {
