@@ -422,14 +422,6 @@ class TestPosterCropThresholdAlignment:
             "卡型 @media min-width 必須 == POSTER_CROP_MAX_W + 1"
         )
 
-    def test_card_shape_media_aspect_ratio_has_height_auto(self):
-        """FE-CSS-08：卡型區塊內 aspect-ratio 旁必須有 height: auto。"""
-        self._card_shape_media_min_width()
-        body = self._card_shape_media_body
-        assert len(re.findall(r"aspect-ratio\s*:", body)) == len(
-            re.findall(r"aspect-ratio\s*:[^;]+;\s*height:\s*auto", body)
-        ), "FE-CSS-08：卡型區塊內每個 aspect-ratio 旁必須有 height: auto"
-
 
 class TestLightboxCoverSizeGuards:
     """71c: 守衛 lightbox 封面縮水修復（thumb 放大填滿 + blur-up 鏡像 + same-URL complete-check）

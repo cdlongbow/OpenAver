@@ -1166,6 +1166,62 @@ const RULES = [
     },
   },
 
+  // CG-PC-14 ← test_card_shape_media_aspect_ratio_has_height_auto（119-PR Codex P1：純單檔 CSS
+  // 機械檢查應搬 lint、不進 pytest，CLAUDE.md「lint 守衛規則」north-star）。
+  // 定位 showcase.css 卡型 @media (min-width: 900px) 區塊——body 同時含 .showcase-grid.shape-poster
+  // 與 aspect-ratio、且條件不含 max-width（排除 900-1099 等純欄數階梯區塊；忠實鏡射被刪 pytest
+  // TestPosterCropThresholdAlignment._card_shape_media_min_width 的定位邏輯：brace-balance 掃全部
+  // @media，篩 body 同時命中兩個 marker）。找不到／找到不止一個 → fail（不得 fail-open 回預設值）。
+  // 判準逐條配對計數：aspect-ratio 出現次數 == aspect-ratio…;height:auto 配對次數（FE-CSS-08：
+  // width/height 都寫死時 aspect-ratio 會被完全忽略）—— 只驗「文字裡出現過 height: auto」是
+  // fail-open，刪掉其中一條仍會綠，故不可用 body.includes('height: auto')。
+  {
+    id: 'CG-PC-14',
+    file: 'pages/showcase.css',
+    kind: 'fn',
+    check(ctx) {
+      // ctx.text 已由 loadFile 用 stripCssComments 去除 /* */ 註解（該區塊上方註解本身含
+      // "aspect-ratio" 字樣，未去註解會誤判 marker 命中或計數膨脹）。
+      const css = ctx.text;
+      const matches = [];
+      for (const m of css.matchAll(/@media\s*([^{]*?)\s*\{/g)) {
+        const cond = m[1];
+        let depth = 1;
+        let i = m.index + m[0].length;
+        while (i < css.length && depth > 0) {
+          if (css[i] === '{') depth += 1;
+          else if (css[i] === '}') depth -= 1;
+          i += 1;
+        }
+        const body = css.slice(m.index + m[0].length, i - 1);
+        if (body.includes('.showcase-grid.shape-poster') && body.includes('aspect-ratio')) {
+          matches.push({ cond, body });
+        }
+      }
+      if (matches.length !== 1) {
+        ctx.fail(
+          `CG-PC-14: showcase.css 卡型 @media 應恰好一個（body 含 .showcase-grid.shape-poster `
+            + `且 aspect-ratio），實得 ${matches.length}——找不到目標區塊，不得 fail-open`,
+        );
+        return;
+      }
+      const { cond, body } = matches[0];
+      if (/max-width/.test(cond)) {
+        ctx.fail(`CG-PC-14: 卡型 @media 條件不得含 max-width（抓到欄數階梯區塊？）: ${cond.trim()}`);
+        return;
+      }
+      const arCount = (body.match(/aspect-ratio\s*:/g) || []).length;
+      const pairedCount = (body.match(/aspect-ratio\s*:[^;]+;\s*height:\s*auto/g) || []).length;
+      if (arCount !== pairedCount) {
+        ctx.fail(
+          `CG-PC-14: showcase.css 卡型區塊（@media ${cond.trim()}）內每個 aspect-ratio 旁必須有 `
+            + `height: auto（FE-CSS-08：width/height 都寫死時 aspect-ratio 會被完全忽略）—— `
+            + `${arCount} 個 aspect-ratio、僅 ${pairedCount} 個與 height: auto 配對`,
+        );
+      }
+    },
+  },
+
   // ══ T3 sub-commit 3b：handoff CSS 半邊（B 組 CG-RO-01..03）+ §B 散檔（C 組 CG-SB-01..03）══
   // B 組 = handoff receiver own-half（net+tag；整-class delete defer→96d，CD-96-12）。
   // C 組 = §B standalone 檔（CG-SB-01/02 整檔 delete；CG-SB-03 切 CSS 半邊）。忠實 port（CD-96c-2）。
