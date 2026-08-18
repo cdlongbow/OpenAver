@@ -14,14 +14,26 @@ function Exit-WithPause {
     param([int]$Code = 0)
     Write-Host ""
     Write-Host "請按 Enter 關閉此視窗"
+    try { $Host.UI.RawUI.FlushInputBuffer() } catch {}
     Read-Host | Out-Null
     exit $Code
 }
 
+# 位置約束補寫（CD-120d-10）：真正的硬約束是 Exit-WithPause 函式必須在任何
+# 可能出錯的程式碼之前定義——實測把函式定義移到錯誤點之後，trap 有觸發
+# 但死在 CommandNotFoundException，而且沒有停住。至於 trap 本身，PowerShell
+# 在 scope 內會提升它，寫在檔案最後一行仍然接得到前面的錯誤（所以「trap
+# 必須擺在所有工作之前」這個常見說法是錯的）。現行「函式定義 → trap →
+# 工作」的順序同時滿足兩者，且仍是最省事的表達方式，故守衛的位置斷言維持不變。
 trap {
     Write-Host ""
     Write-Host "❌ 安裝過程發生未預期錯誤" -ForegroundColor Red
     Write-Host "$_" -ForegroundColor Red
+    try {
+        if ($_.InvocationInfo) {
+            Write-Host "$($_.InvocationInfo.PositionMessage)" -ForegroundColor Red
+        }
+    } catch {}
     Exit-WithPause 1
 }
 

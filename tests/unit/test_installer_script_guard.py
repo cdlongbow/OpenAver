@@ -393,7 +393,16 @@ def test_b_exit_paths_covered(source: str) -> None:
 
 
 def test_c_position(source: str) -> None:
-    """(c) function Exit-WithPause 行 < trap 行 < 第一個工作語句行。"""
+    """(c) function Exit-WithPause 行 < trap 行 < 第一個工作語句行。
+
+    斷言的字面順序不變，只是把理由寫出來（CD-120d-10 補寫，不是更正既有文字）。
+    真正的硬約束是 Exit-WithPause 函式必須在任何可能出錯的程式碼之前定義——
+    實測把函式定義移到錯誤點之後，trap 有觸發但死在 CommandNotFoundException，
+    而且沒有停住。至於 trap 本身，PowerShell 在 scope 內會提升它，寫在檔案
+    最後一行仍然接得到前面的錯誤（所以「trap 必須擺在所有工作之前」這個
+    常見說法是錯的）。現行「函式定義 → trap → 工作」的順序同時滿足兩者，
+    且仍是最省事的表達方式，故守衛的位置斷言維持不變。
+    """
     fn_line, trap_line, work_line = _positions(source)
     assert work_line is not None, (
         "界定不出第一個 brace-depth 0 工作語句（非整檔只有賦值／函式／trap）"
@@ -481,4 +490,29 @@ def test_last_depth0_statement_is_exit_with_pause(source: str) -> None:
     ), (
         "最後一個 depth-0 可執行語句必須是 Exit-WithPause 呼叫，"
         f"實際找到：{raw}"
+    )
+
+
+def test_c2_exit_withpause_is_top_level_in_trap(source: str) -> None:
+    """trap 本體的 Exit-WithPause 必須在最外層（depth 1），不可包進更深的 { }。
+
+    守的是：未來若再加診斷、把 Exit-WithPause 1 順手包進 try { } catch {},
+    try 內抵達該呼叫前若有例外，catch {} 會吞掉它，停留機制整個失效。
+    使用者可見後果：按「更新」→安裝出錯→視窗閃掉（Bug D 復發）。
+    """
+    trap = _find_depth0_trap_body(source, _annotate(source))
+    assert trap is not None, (
+        "界定不出 depth-0 的 trap { } 區塊，無法判定 Exit-WithPause 嵌套深度"
+    )
+    _line, body = trap
+    chars = _annotate(body)
+    cmap = _char_map(chars)
+    depths: list[int | None] = []
+    for m in _find_in_code(body, chars, _EXIT_WITH_PAUSE_RE):
+        c0 = cmap.get(m.start())
+        depths.append(None if c0 is None else c0.depth)
+    assert any(d == 1 for d in depths), (
+        "trap 區塊本體裡必須至少有一個 depth 恰好 1 的 Exit-WithPause"
+        "（trap { 為 depth 0，body 最外層語句為 depth 1；包進 try/if/foreach 會更深）。"
+        f"fail-closed：認不得或算不出 depth 即紅。depths={depths} body={body}"
     )
