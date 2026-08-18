@@ -37,6 +37,19 @@ _SKIP_DIRS = {"__pycache__", "bin", "Scripts"}
 _SKIP_SUFFIXES = (".dist-info", ".data")
 _EXT_SUFFIXES = (".pyd", ".so")
 
+# 每一項都必須回答：「它不在的話，哪個使用者可見功能會靜默死掉？」
+# 判準見 plan-120d.md CD-120d-11——不是「這個模組很重要」。
+# ctypes 沒被列進 sweep 就完全沒人驗——既有 sweep 只掃 site-packages
+# 的頂層套件，stdlib 一個都不碰。
+_STDLIB_SWEEP = [
+    "ctypes",  # 缺 ctypes 時 windows/standalone.py 的
+               # WebView2 提示彈窗（_win_message_box）與剪貼簿寫入整段炸開，
+               # 被 _ensure_webview2_runtime() 的 except Exception 吞掉、
+               # sys.exit(0)——使用者雙擊 OpenAver.bat 後畫面上什麼都不會
+               # 出現（pythonw.exe 無 console），只有 debug.log 一行
+               # warning。這正是 Bug B 的整支修復會失效的那個洞。
+]
+
 
 def _site_packages_dirs() -> list[Path]:
     """Return every ``site-packages`` directory on this interpreter's sys.path.
@@ -91,6 +104,43 @@ def _top_level_modules(sp_dir: Path) -> tuple[list[str], list[str]]:
     return sorted(names), skipped
 
 
+def _import_sweep(names: list[str]) -> list[tuple[str, str, str]]:
+    """Try importing each name; return (name, exc_type, exc_msg) for failures.
+
+    Shared by both the site-packages sweep and the stdlib sweep so there is
+    exactly one fail-collection code path feeding main()'s final exit code.
+    """
+    fails: list[tuple[str, str, str]] = []
+    for name in names:
+        try:
+            importlib.import_module(name)
+        except BaseException as exc:  # noqa: BLE001 — a sweep must catch everything
+            fails.append((name, type(exc).__name__, str(exc)))
+    return fails
+
+
+def _probe_ctypes_windll_user32() -> tuple[str, str, str] | None:
+    """Windows-only probe of ctypes.windll.user32 (CD-120d-11).
+
+    1. ``windll`` 這個屬性只在 ``os.name == "nt"`` 下才存在——同時是
+       「這確實是 Windows 直譯器」的斷言；
+    2. 它會真的走一次 ``LibraryLoader → WinDLL → LoadLibrary`` 把一個真實
+       DLL 載進來，而 ``import ctypes`` 本身不走這條路徑。
+    邊際偵測價值小但非零：``import ctypes`` 成功卻 ``windll.user32`` 失敗
+    ＝ 系統壞了、不是 build 壞了。
+    """
+    if sys.platform != "win32":
+        print("SKIP  ctypes.windll.user32 (non-Windows, contract is Windows-only)")
+        return None
+    import ctypes
+
+    try:
+        ctypes.windll.user32  # noqa: B018 — attribute access is the probe itself
+    except Exception as exc:
+        return ("ctypes.windll.user32", type(exc).__name__, str(exc))
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Import every bundled top-level package using the artifact's own interpreter.",
@@ -126,20 +176,29 @@ def main(argv: list[str] | None = None) -> int:
         for s in skipped:
             print(f"SKIP  {s} (not an import name)")
 
-    fails: list[tuple[str, str, str]] = []
+    names_to_import: list[str] = []
     for mod in sorted(modules):
         if mod in skip:
             print(f"SKIP  {mod} (--skip)")
             continue
-        try:
-            importlib.import_module(mod)
-        except BaseException as exc:  # noqa: BLE001 — a sweep must catch everything
-            fails.append((mod, type(exc).__name__, str(exc)))
+        names_to_import.append(mod)
+    fails = _import_sweep(names_to_import)
 
     scanned = len(modules) - len(skip & modules)
     print(f"TOTAL {scanned} FAILS {len(fails)}")
     for mod, exc_type, msg in fails:
         print(f"FAIL  {mod}: {exc_type}: {msg}")
+
+    stdlib_fails = _import_sweep(list(_STDLIB_SWEEP))
+    stdlib_failed_names = {name for name, _, _ in stdlib_fails}
+    if "ctypes" not in stdlib_failed_names:
+        probe_fail = _probe_ctypes_windll_user32()
+        if probe_fail is not None:
+            stdlib_fails.append(probe_fail)
+    print(f"[STDLIB] TOTAL {len(_STDLIB_SWEEP)} FAILS {len(stdlib_fails)}")
+    for mod, exc_type, msg in stdlib_fails:
+        print(f"FAIL[stdlib]  {mod}: {exc_type}: {msg}")
+    fails.extend(stdlib_fails)
 
     if scanned == 0:
         # A real artifact bundles ~50 packages; zero attempted imports means the
