@@ -3244,6 +3244,13 @@ const RULES = [
     file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: '/api/gallery/player',
     note: '[TestVideoPlaybackGuard] test_video_api_files_contain（JS 半邊，plan CD-96e-5 三分法未明列，96e-T3 研究補洞）',
   },
+  {
+    // CD-120a-11：playVideo 方法體內禁止 await——window.open 前若插入 await，
+    // 手機／區網按播放會被瀏覽器當廣告彈窗擋掉、什麼都不會發生。
+    file: 'web/static/js/pages/showcase/state-videos.js', kind: 'forbidden-string', pattern: 'await',
+    scope: { anchor: /playVideo\s*\(\s*path\s*\)\s*\{/, braceBalanced: true },
+    note: '[CD-120a-11] playVideo 內 window.open 前若插入 await，手機／區網按播放會被瀏覽器當廣告彈窗擋掉、什麼都不會發生',
+  },
 
   // ── 96e-T4：TestPageTransitionDomGuard / TestPageTransitionSettingsScopeGuard /
   // TestT4FooterStructure 三個混合 class 的 template/JS 半邊（CSS 半邊已由 96c

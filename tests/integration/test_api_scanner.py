@@ -170,6 +170,68 @@ class TestScannerAPI:
         assert 'src="/api/gallery/video?path=' in response.text
         assert '%2Fvideos%2Ftest.mp4"' in response.text
 
+    def test_player_onerror_hint_and_resolved_i18n(self, client):
+        """TASK-120a-T2：<video> 有 onerror、提示 div 預設隱藏、文案已解析非 [key]"""
+        video_path = to_file_uri("C:/videos/test.mp4")
+        response = client.get(f"/api/gallery/player?path={quote(video_path)}")
+        html = response.text
+
+        assert response.status_code == 200
+        assert "onerror=" in html
+        assert 'id="video-error-hint"' in html
+        assert 'display:none' in html or "display: none" in html
+        expected = "這部片現在放不出來——可能是檔案位置拿不到，或者這個格式瀏覽器不支援"
+        assert expected in html
+        assert "[showcase.video.player_unavailable]" not in html
+
+    def test_player_lang_follows_config_locale_ja(self, client, monkeypatch):
+        """TASK-120a-T2：config.general.locale=ja → <html lang=\"ja\">"""
+        monkeypatch.setattr(
+            "web.routers.scanner.load_config",
+            lambda: {"general": {"locale": "ja"}},
+        )
+        video_path = to_file_uri("C:/videos/test.mp4")
+        response = client.get(f"/api/gallery/player?path={quote(video_path)}")
+        assert response.status_code == 200
+        assert 'lang="ja"' in response.text
+
+    def test_player_lang_illegal_locale_falls_back_zh_tw(self, client, monkeypatch):
+        """TASK-120a-T2：非法 locale（fr）→ fail-closed lang=\"zh-TW\""""
+        monkeypatch.setattr(
+            "web.routers.scanner.load_config",
+            lambda: {"general": {"locale": "fr"}},
+        )
+        video_path = to_file_uri("C:/videos/test.mp4")
+        response = client.get(f"/api/gallery/player?path={quote(video_path)}")
+        assert response.status_code == 200
+        assert 'lang="zh-TW"' in response.text
+
+    def test_player_lang_unhashable_locale_falls_back_zh_tw(self, client, monkeypatch):
+        """TASK-120a-T2：locale 為 list（unhashable）→ 200 且 fail-closed lang=\"zh-TW\""""
+        monkeypatch.setattr(
+            "web.routers.scanner.load_config",
+            lambda: {"general": {"locale": ["zh-TW"]}},
+        )
+        video_path = to_file_uri("C:/videos/test.mp4")
+        response = client.get(f"/api/gallery/player?path={quote(video_path)}")
+        assert response.status_code == 200
+        assert 'lang="zh-TW"' in response.text
+
+    def test_player_filename_html_escaped(self, client):
+        """TASK-120a-T2：檔名 html_escape 既有行為不回歸
+
+        檔名刻意不含 `/`（既有 rsplit('/', 1) 取檔名會被 `</...>` 截斷，
+        那是既有行為而非本 task 範圍；此處只鎖 escape 本身）。
+        """
+        from html import escape as html_escape
+
+        raw_name = 'test<>&".mp4'
+        video_path = to_file_uri(f"C:/videos/{raw_name}")
+        response = client.get(f"/api/gallery/player?path={quote(video_path)}")
+        assert response.status_code == 200
+        assert raw_name not in response.text
+        assert html_escape(raw_name) in response.text
+
     def test_player_missing_path(self, client):
         """測試 /api/gallery/player 缺少 path 參數應返回 422"""
         response = client.get("/api/gallery/player")

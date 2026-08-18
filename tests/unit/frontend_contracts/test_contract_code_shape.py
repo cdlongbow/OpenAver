@@ -1008,7 +1008,7 @@ class TestVideoApiSafetyStrings:
     def test_scanner_py_safety_strings(self):
         content = (PROJECT_ROOT / "web" / "routers" / "scanner.py").read_text(encoding="utf-8")
         for expected in [
-            'def get_video(', 'async def video_player(', 'os.path.normpath',
+            'def get_video(', 'def video_player(', 'os.path.normpath',
             'get_proxy_extensions', 'is_path_under_dir',
         ]:
             assert expected in content, f"scanner.py missing: {expected!r}"

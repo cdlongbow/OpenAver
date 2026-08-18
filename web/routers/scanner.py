@@ -1595,9 +1595,11 @@ def get_video(request: Request, path: str = Query(..., description="影片路徑
 
 
 @router.get("/player")
-async def video_player(path: str = Query(..., description="影片路徑（file:/// URI 或 FS 路徑）")):
+def video_player(path: str = Query(..., description="影片路徑（file:/// URI 或 FS 路徑）")):
     """影片播放頁面 — 用 HTML5 <video> 標籤在新分頁播放"""
     from html import escape as html_escape
+    from core.i18n import t as i18n_t
+
     video_url = f"/api/gallery/video?path={quote(path, safe='')}"
 
     # 從路徑取檔名作為標題（escape 防 XSS）
@@ -1609,8 +1611,15 @@ async def video_player(path: str = Query(..., description="影片路徑（file:/
     # video_url 也做 HTML escape（防禦性，避免 src 屬性注入）
     video_url_safe = html_escape(video_url)
 
+    config = load_config()
+    locale = (config.get('general') or {}).get('locale') or ''
+    allowed_langs = {"zh-TW", "zh-CN", "ja", "en"}
+    html_lang = locale if isinstance(locale, str) and locale in allowed_langs else "zh-TW"
+    html_lang_safe = html_escape(html_lang)
+    hint_text = html_escape(i18n_t('showcase.video.player_unavailable', locale=locale))
+
     html = f"""<!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="{html_lang_safe}">
 <head>
     <meta charset="UTF-8">
     <title>{filename} - OpenAver</title>
@@ -1618,10 +1627,12 @@ async def video_player(path: str = Query(..., description="影片路徑（file:/
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ background: #000; display: flex; align-items: center; justify-content: center; height: 100vh; }}
         video {{ max-width: 100%; max-height: 100vh; }}
+        #video-error-hint {{ color: #fff; padding: 1.5rem; text-align: center; max-width: 32rem; line-height: 1.6; }}
     </style>
 </head>
 <body>
-    <video controls autoplay src="{video_url_safe}"></video>
+    <video controls autoplay src="{video_url_safe}" onerror="this.style.display='none';document.getElementById('video-error-hint').style.display='flex'"></video>
+    <div id="video-error-hint" style="display:none">{hint_text}</div>
 </body>
 </html>"""
     return HTMLResponse(content=html)
