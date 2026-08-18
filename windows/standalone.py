@@ -35,27 +35,104 @@ STARTUP_TIMEOUT = 30  # 最多等待 30 秒
 
 
 # ============ WebView2 檢查 ============
+# 判準忠實移植 pywebview 6.2.1 winforms.py `_is_chromium()`（含只比 major、
+# `pv=''` 中止走訪兩條「看起來像 bug」的語意）。兩處具名豁免：
+# 豁免 1（CD-120b-2）：.NET Release 讀不到時，pywebview 因 finally:
+# winreg.CloseKey(net_key) 對未賦值名稱取值而拋 NameError 穿出；
+# read_dotnet_release() 契約是回 None，決策邏輯把 None 轉成 False。
+# 理由：那台機器上 pywebview 必定啟動失敗，使用者可見結論相同（起不來），
+# 差別只在我們給看得懂的提示、它給未攔截例外。
+# 豁免 2（WEBVIEW2_RUNTIME_PATH 短路不移植）：_is_chromium() 開頭
+# if settings['WEBVIEW2_RUNTIME_PATH']: return True 不搬。
+# 理由：全庫 core/web/windows/build.py/build_macos.py 沒有該 setting 的賦值，
+# 恆為 falsy，等價性不受影響。前提由 test_standalone_webview2 賦值掃描鎖住。
+
+WEBVIEW2_RUNTIME_GUID = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+WEBVIEW2_BETA_GUID = '{2CD8A007-E189-409D-A2C8-9AF4EF3C72AA}'
+WEBVIEW2_DEV_GUID = '{0D50BFEC-CD6A-4F9A-964C-C7416E3ACB10}'
+WEBVIEW2_CANARY_GUID = '{65C35B14-6C1D-4122-AC46-7148CC9D6497}'
+WEBVIEW2_MIN_BUILD = '86.0.622.0'
+DOTNET_RELEASE_MIN = 394802
+WEBVIEW2_REGISTRY_HIVES = ('HKEY_CURRENT_USER', 'HKEY_LOCAL_MACHINE')
+
+
+def webview2_registry_subpath(hive_name: str, guid: str, machine_name: str) -> str:
+    """算出 EdgeUpdate Clients 的 registry 子路徑（與 pywebview edge_build 逐字相同）。"""
+    if machine_name == 'x86' or hive_name == 'HKEY_CURRENT_USER':
+        path = rf'Microsoft\EdgeUpdate\Clients\{guid}'
+    else:
+        path = rf'WOW6432Node\Microsoft\EdgeUpdate\Clients\{guid}'
+    return rf'SOFTWARE\{path}'
+
+
+def read_webview2_pv(hive_name: str, guid: str) -> str:
+    """讀某 hive／GUID 的 EdgeUpdate `pv`。讀不到回 '0'；空字串原樣回傳。"""
+    try:
+        import winreg
+        from platform import machine
+
+        subpath = webview2_registry_subpath(hive_name, guid, machine())
+        with winreg.OpenKey(getattr(winreg, hive_name), subpath) as windows_key:
+            build, _ = winreg.QueryValueEx(windows_key, 'pv')
+            return str(build)
+    except Exception:  # noqa: BLE001,S110 — registry miss is the contract ('0'); do not map '' to '0'
+        pass
+    return '0'
+
+
+def read_dotnet_release() -> int | None:
+    """讀 HKLM .NET 4 Full `Release`。讀不到回 None（豁免 1／CD-120b-2，不拋 NameError）。"""
+    try:
+        import winreg
+
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full'
+        ) as net_key:
+            version, _ = winreg.QueryValueEx(net_key, 'Release')
+        # pywebview 用原值比 version < 394802；非 int（含 bool）會 TypeError → False。
+        # 不得 int() 轉型，否則 REG_SZ "394802" 會比它寬。
+        if type(version) is not int:
+            return None
+        return version
+    except Exception:  # noqa: BLE001 — missing .NET key is a documented None, not NameError
+        return None
+
+
+def _is_new_version(current_version: str, new_version: str) -> bool:
+    # 逐字保留 pywebview 只比 major 的形狀（index 0 無條件 return）。
+    # 門檻從 WEBVIEW2_MIN_BUILD 推導，不得寫死字面 86。
+    new_range = new_version.split('.')
+    cur_range = current_version.split('.')
+    for index, _ in enumerate(new_range):
+        if len(cur_range) > index:
+            return int(new_range[index]) >= int(cur_range[index])
+    return False
+
 
 def check_webview2_installed():
-    """檢查 WebView2 Runtime 是否已安裝"""
+    """檢查 WebView2 Runtime 是否已安裝（pywebview `_is_chromium()` 忠實移植）。"""
+    if sys.platform != 'win32':
+        return False
     try:
-        import winreg
-        # 檢查 Registry - 64 位元路徑
-        key_path = r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path):
-            return True
-    except (FileNotFoundError, OSError):
-        pass
-
-    try:
-        import winreg
-        # 備用路徑 - 32 位元
-        key_path = r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path):
-            return True
-    except (FileNotFoundError, OSError):
-        pass
-
+        release = read_dotnet_release()
+        if release is None or release < DOTNET_RELEASE_MIN:
+            return False
+        for guid in (
+            WEBVIEW2_RUNTIME_GUID,
+            WEBVIEW2_BETA_GUID,
+            WEBVIEW2_DEV_GUID,
+            WEBVIEW2_CANARY_GUID,
+        ):
+            for hive_name in WEBVIEW2_REGISTRY_HIVES:
+                build = read_webview2_pv(hive_name, guid)
+                if _is_new_version(WEBVIEW2_MIN_BUILD, build):
+                    return True
+    except Exception:  # noqa: BLE001 — empty pv ValueError aborts the walk (pywebview semantics)
+        try:
+            get_logger('standalone').debug("WebView2 偵測走訪中止", exc_info=True)
+        except Exception:  # noqa: S110 — logger may not be initialized; must not abort detection
+            pass
+        return False
     return False
 
 
