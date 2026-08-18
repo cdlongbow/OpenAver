@@ -6,6 +6,7 @@ tests import it the same way test_build_artifact_audit.py imports its script.
 
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -168,12 +169,90 @@ def test_zero_packages_attempted_still_exits_1(monkeypatch, capsys):
 # ── DoD 7: each listed module has a Chinese silent-death comment ─────────────
 
 
+def _docstring_constants(tree: ast.AST) -> set[ast.Constant]:
+    """Constant nodes that are Module / Function / Class docstrings."""
+    found: set[ast.Constant] = set()
+    for node in ast.walk(tree):
+        if not isinstance(
+            node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            continue
+        if not node.body:
+            continue
+        first = node.body[0]
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            found.add(first.value)
+    return found
+
+
+def _code_string_literal_nodes(src: str) -> list[ast.Constant]:
+    tree = ast.parse(src)
+    docs = _docstring_constants(tree)
+    return [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node not in docs
+    ]
+
+
+def _code_string_literals(src: str) -> list[str]:
+    """All str constants in src EXCLUDING docstrings (comments never exist in AST)."""
+    return [node.value for node in _code_string_literal_nodes(src)]
+
+
+def _sys_exit_calls(src: str) -> list[int]:
+    """Line numbers of real sys.exit(...) Call nodes (prose can never match)."""
+    hits: list[int] = []
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == "exit"
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "sys"
+        ):
+            hits.append(node.lineno)
+    return hits
+
+
+def _stdlib_sweep_assign(src: str) -> ast.Assign:
+    tree = ast.parse(src)
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if any(isinstance(t, ast.Name) and t.id == "_STDLIB_SWEEP" for t in node.targets):
+            return node
+    raise AssertionError("_STDLIB_SWEEP assignment not found")
+
+
+def _layout_literal_hits(src: str) -> list[tuple[int, str]]:
+    hits: list[tuple[int, str]] = []
+    for node in _code_string_literal_nodes(src):
+        value = node.value
+        if "Lib/site-packages" in value or re.search(r"lib/python\d", value):
+            hits.append((node.lineno, value))
+    return hits
+
+
 def test_each_stdlib_module_has_silent_death_comment():
     """Every _STDLIB_SWEEP entry must have an adjacent Chinese reason comment."""
     src = Path(vai.__file__).read_text(encoding="utf-8")
+    assign = _stdlib_sweep_assign(src)
+    # Window is the assignment's real AST span (lineno / end_lineno), not a
+    # fixed +20 lines. Printed proof: lineno=44 end_lineno=51; the "ctypes"
+    # item's trailing / continuation comments (lines 45-50) sit inside that
+    # span (closing ']' is line 51), so no post-assignment comment extension.
+    assert assign.end_lineno is not None
     lines = src.splitlines()
-    sweep_idx = next(i for i, line in enumerate(lines) if "_STDLIB_SWEEP" in line and "=" in line)
-    window = "\n".join(lines[sweep_idx : sweep_idx + 20])
+    window = "\n".join(lines[assign.lineno - 1 : assign.end_lineno])
     chinese = re.compile(r"[\u4e00-\u9fff]")
     for mod in vai._STDLIB_SWEEP:
         # quoted name must appear in the constant block
@@ -189,30 +268,67 @@ def test_each_stdlib_module_has_silent_death_comment():
 def test_script_has_no_hardcoded_site_packages_layout():
     """Must stay layout-agnostic: no Lib/ or lib/pythonX.Y/ site-packages paths."""
     src = Path(vai.__file__).read_text(encoding="utf-8")
-    # Strip comments / docstring noise loosely; still fail if a real path sneaks in
-    # as an assignment or comparison (the module docstring mentions the two
-    # layouts in prose, which is documentation, not a hardcoded probe).
-    code_lines = []
-    for line in src.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("#") or stripped.startswith('"""') or stripped.startswith("''"):
-            continue
-        if "Layout-agnostic" in line or "Windows" in line and "site-packages" in line:
-            continue
-        code_lines.append(line)
-    code = "\n".join(code_lines)
-    assert "Lib/site-packages" not in code
-    assert not re.search(r"lib/python\d", code)
+    hits = _layout_literal_hits(src)
+    assert not hits, (
+        "hardcoded site-packages layout in non-docstring string literal(s): "
+        + "; ".join(f"L{lineno}: {value!r}" for lineno, value in hits)
+    )
 
 
 def test_no_second_return_or_exit_for_stdlib():
     """修訂 4: stdlib sweep must not grow a second return / sys.exit() exit."""
     src = Path(vai.__file__).read_text(encoding="utf-8")
-    # The final success/fail gate is this single expression.
-    assert src.count("return 1 if fails else 0") == 1
-    # Ignore comments (the ctypes silent-death note mentions standalone's
-    # sys.exit(0) as the user-visible sink — that is not a script exit).
-    code_only = "\n".join(
-        line.split("#", 1)[0] for line in src.splitlines()
+    exits = _sys_exit_calls(src)
+    assert exits == [], f"unexpected sys.exit(...) at line(s) {exits}"
+
+    tree = ast.parse(src)
+    main_fn = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "main"
     )
-    assert "sys.exit(" not in code_only
+    last = main_fn.body[-1]
+    assert isinstance(last, ast.Return), (
+        f"main() last statement must be a Return, got {type(last).__name__}"
+    )
+    assert isinstance(last.value, ast.IfExp), (
+        "main() last return must be IfExp (return 1 if fails else 0), "
+        f"got {type(last.value).__name__ if last.value is not None else None}"
+    )
+
+
+# ── F4: helpers must ignore prose and still catch real code ──────────────────
+
+_DOC_ONLY_SRC = '''\
+"""Module docs.
+
+Historically shipped under lib/python3.13/site-packages before the layout-agnostic rewrite.
+"""
+
+def helper():
+    """Earlier drafts called sys.exit(1) directly."""
+    return 0
+
+# lib/python3.12/site-packages was the old layout
+'''
+
+_DOC_PLUS_CODE_SRC = _DOC_ONLY_SRC + '''
+from pathlib import Path
+import sys
+P = Path("Lib/site-packages")
+sys.exit(2)
+'''
+
+
+def test_helpers_ignore_prose_but_catch_real_layout_and_sys_exit():
+    """Docstrings/comments must not trip the helpers; real code still must."""
+    literals = _code_string_literals(_DOC_ONLY_SRC)
+    assert not any(
+        "Lib/site-packages" in value or re.search(r"lib/python\d", value)
+        for value in literals
+    ), f"prose leaked into code literals: {literals!r}"
+    assert _sys_exit_calls(_DOC_ONLY_SRC) == []
+
+    positives = _code_string_literals(_DOC_PLUS_CODE_SRC)
+    assert any("Lib/site-packages" in value for value in positives), positives
+    assert _sys_exit_calls(_DOC_PLUS_CODE_SRC)
