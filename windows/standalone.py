@@ -116,7 +116,14 @@ def check_webview2_installed():
     try:
         release = read_dotnet_release()
         if release is None or release < DOTNET_RELEASE_MIN:
+            try:
+                get_logger('standalone').debug(
+                    "WebView2 偵測：.NET Release 不足或讀不到 release=%r", release
+                )
+            except Exception:  # noqa: S110 — logger may not be initialized; must not abort detection
+                pass
             return False
+        cells = []
         for guid in (
             WEBVIEW2_RUNTIME_GUID,
             WEBVIEW2_BETA_GUID,
@@ -125,6 +132,7 @@ def check_webview2_installed():
         ):
             for hive_name in WEBVIEW2_REGISTRY_HIVES:
                 build = read_webview2_pv(hive_name, guid)
+                cells.append((hive_name, guid, build))
                 if _is_new_version(WEBVIEW2_MIN_BUILD, build):
                     return True
     except Exception:  # noqa: BLE001 — empty pv ValueError aborts the walk (pywebview semantics)
@@ -133,6 +141,12 @@ def check_webview2_installed():
         except Exception:  # noqa: S110 — logger may not be initialized; must not abort detection
             pass
         return False
+    try:
+        get_logger('standalone').debug(
+            "WebView2 偵測：四 GUID × 兩 hive 全部沒命中 cells=%s", cells
+        )
+    except Exception:  # noqa: S110 — logger may not be initialized; must not abort detection
+        pass
     return False
 
 
@@ -161,10 +175,74 @@ def _win_message_box(text: str, caption: str, *, yes_no: bool) -> bool:
 
     result = ctypes.windll.user32.MessageBoxW(0, text, caption, flags)
     if result == 0:
-        raise RuntimeError("MessageBoxW failed")
+        code = ctypes.GetLastError()
+        raise RuntimeError(f"MessageBoxW failed (GetLastError={code})")
     if yes_no:
         return result == IDYES
     return True
+
+
+def copy_to_clipboard(text: str) -> bool:
+    """Write Unicode text to the Windows clipboard. Failures return False."""
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        user32 = ctypes.windll.user32
+
+        kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+        kernel32.GlobalAlloc.restype = ctypes.c_void_p
+        kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+        kernel32.GlobalLock.restype = ctypes.c_void_p
+        kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+        kernel32.GlobalUnlock.restype = ctypes.c_int
+        kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
+        kernel32.GlobalFree.restype = ctypes.c_void_p
+        user32.OpenClipboard.argtypes = [ctypes.c_void_p]
+        user32.OpenClipboard.restype = ctypes.c_int
+        user32.EmptyClipboard.argtypes = []
+        user32.EmptyClipboard.restype = ctypes.c_int
+        user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+        user32.SetClipboardData.restype = ctypes.c_void_p
+        user32.CloseClipboard.argtypes = []
+        user32.CloseClipboard.restype = ctypes.c_int
+
+        payload = text.encode('utf-16-le') + b'\x00\x00'
+        size = len(payload)
+        gmem_moveable = 0x0002
+        cf_unicodetext = 13
+
+        h = kernel32.GlobalAlloc(gmem_moveable, size)
+        if not h:
+            return False
+
+        p = kernel32.GlobalLock(h)
+        if not p:
+            kernel32.GlobalFree(h)
+            return False
+
+        ctypes.memmove(p, payload, size)
+        kernel32.GlobalUnlock(h)
+
+        if not user32.OpenClipboard(0):
+            kernel32.GlobalFree(h)
+            return False
+
+        try:
+            user32.EmptyClipboard()
+            owned = user32.SetClipboardData(cf_unicodetext, h)
+            if not owned:
+                kernel32.GlobalFree(h)
+                return False
+            return True
+        finally:
+            user32.CloseClipboard()
+    except Exception as e:  # noqa: BLE001 — clipboard failure must not abort the prompt
+        try:
+            get_logger('standalone').debug("clipboard copy failed: %s", e)
+        except Exception:  # noqa: S110 — logger may not be initialized; silent fallback is intentional
+            pass
+        return False
 
 
 def show_webview2_prompt():
@@ -186,6 +264,13 @@ def show_webview2_prompt():
             try:
                 import webbrowser
                 opened = webbrowser.open(WEBVIEW2_DOWNLOAD_URL)
+                if opened:
+                    try:
+                        get_logger('standalone').info(
+                            "已請系統開啟下載頁：%s", WEBVIEW2_DOWNLOAD_URL
+                        )
+                    except Exception:  # noqa: S110 — logger may not be initialized; silent fallback is intentional
+                        pass
             except Exception as e:
                 try:
                     get_logger('standalone').warning(f"[OpenAver] 開啟瀏覽器失敗：{e}")
@@ -200,7 +285,22 @@ def show_webview2_prompt():
                     )
                 except Exception:  # noqa: S110 — logger may not be initialized; silent fallback is intentional
                     pass
-                show_error("需要 WebView2 Runtime", message)
+                clipboard_copied = copy_to_clipboard(WEBVIEW2_DOWNLOAD_URL)
+                if clipboard_copied:
+                    message2 = (
+                        "瀏覽器沒能開啟。\n"
+                        "網址已複製到剪貼簿。\n"
+                        "\n"
+                        + WEBVIEW2_DOWNLOAD_URL
+                    )
+                else:
+                    message2 = (
+                        "瀏覽器沒能開啟。\n"
+                        "無法寫入剪貼簿，請按 Ctrl+C 複製此視窗文字。\n"
+                        "\n"
+                        + WEBVIEW2_DOWNLOAD_URL
+                    )
+                _win_message_box(message2, "需要 WebView2 Runtime", yes_no=False)
         return result
 
     # 非 Windows：逐字不動（tkinter 現行實作）
@@ -239,27 +339,6 @@ def show_webview2_prompt():
 
 def show_error(title, message, details=None, logger=None):
     """顯示錯誤訊息視窗"""
-    if sys.platform == 'win32':
-        full_message = message
-        if details:
-            full_message += f"\n\n錯誤詳情：\n{details[:500]}"  # 限制詳情長度
-        try:
-            _win_message_box(full_message, title, yes_no=False)
-        except Exception:
-            if logger:
-                logger.error(f"{title}: {message}")
-                if details:
-                    logger.error(f"詳情: {details}")
-            else:
-                try:
-                    err_logger = get_logger('standalone')
-                    err_logger.error(f"{title}: {message}")
-                    if details:
-                        err_logger.error(f"Details: {details}")
-                except Exception:  # noqa: S110 — logger not yet initialized; silent fallback is intentional
-                    pass  # logger 未初始化時靜默失敗
-        return
-
     try:
         import tkinter as tk
         from tkinter import messagebox

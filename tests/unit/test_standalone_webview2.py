@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import ctypes as _real_ctypes
 import logging
 import re
 import sys
@@ -611,28 +612,115 @@ _LOG_USER_ACCEPTED = "請安裝 WebView2 後重新啟動"
 _LOG_USER_DECLINED = "用戶取消安裝，程式結束"
 
 
+class _FakeWinApi:
+    """One Win32 API: records calls and exposes writable argtypes/restype."""
+
+    def __init__(self, return_value=1):
+        self.return_value = return_value
+        self.calls: list[tuple] = []
+        self.argtypes = None
+        self.restype = None
+        self.side_effect = None
+
+    def __call__(self, *args):
+        self.calls.append(args)
+        if self.side_effect is not None:
+            raise self.side_effect
+        value = self.return_value
+        if self.restype is _real_ctypes.c_void_p and value in (0, None):
+            return None
+        return value
+
+
+class _FakeDll:
+    """Independent kernel32 / user32 stand-in (must not share one object)."""
+
+
 class _FakeCtypes:
-    """Lets _win_message_box() run on Linux; MessageBoxW records args.
+    """Lets _win_message_box() / copy_to_clipboard() run on Linux.
 
     Injection shape matches _FakeDotnetWinreg: plant via
     monkeypatch.setitem(sys.modules, "ctypes", ...).
+
+    ``fake.calls`` remains MessageBoxW's (hwnd, text, caption, flags) list so
+    existing ``_install_fake_ctypes(monkeypatch, return_value=N)`` callers
+    keep working. Clipboard APIs live on ``fake.windll.kernel32.*`` /
+    ``fake.windll.user32.*`` and keep their own ``.calls``.
+    ``memmove`` is fake (never forwards to the real libc memmove).
     """
 
-    def __init__(self, return_value):
+    def __init__(self, return_value, *, last_error=0):
         self._return_value = return_value
+        self._last_error = last_error
         self.calls: list[tuple] = []
-        self.windll = self
-        self.user32 = self
+        self.memmove_calls: list[tuple] = []
 
-    def MessageBoxW(self, hwnd, text, caption, flags):
-        self.calls.append((hwnd, text, caption, flags))
-        return self._return_value
+        self.c_void_p = _real_ctypes.c_void_p
+        self.c_uint = _real_ctypes.c_uint
+        self.c_size_t = _real_ctypes.c_size_t
+        self.c_int = _real_ctypes.c_int
+
+        kernel32 = _FakeDll()
+        user32 = _FakeDll()
+        kernel32.GlobalAlloc = _FakeWinApi(0x1000)
+        kernel32.GlobalLock = _FakeWinApi(0x2000)
+        kernel32.GlobalUnlock = _FakeWinApi(1)
+        kernel32.GlobalFree = _FakeWinApi(None)
+        user32.OpenClipboard = _FakeWinApi(1)
+        user32.EmptyClipboard = _FakeWinApi(1)
+        user32.SetClipboardData = _FakeWinApi(0x1000)
+        user32.CloseClipboard = _FakeWinApi(1)
+
+        message_box = _FakeWinApi(return_value)
+
+        def message_box_w(hwnd, text, caption, flags):
+            rec = (hwnd, text, caption, flags)
+            self.calls.append(rec)
+            return message_box(hwnd, text, caption, flags)
+
+        message_box_w.argtypes = None
+        message_box_w.restype = None
+        message_box_w.calls = message_box.calls
+        user32.MessageBoxW = message_box_w
+
+        windll = _FakeDll()
+        windll.kernel32 = kernel32
+        windll.user32 = user32
+        self.windll = windll
+
+    def GetLastError(self):
+        return self._last_error
+
+    def memmove(self, dest, src, size):
+        self.memmove_calls.append((dest, src, size))
+        return dest
 
 
-def _install_fake_ctypes(monkeypatch, return_value):
-    fake = _FakeCtypes(return_value)
+def _install_fake_ctypes(monkeypatch, return_value, *, last_error=0):
+    fake = _FakeCtypes(return_value, last_error=last_error)
     monkeypatch.setitem(sys.modules, "ctypes", fake)
     return fake
+
+
+def _install_prompt_spies(monkeypatch):
+    """Record _win_message_box / show_error; first box always accepts."""
+    box_calls: list[tuple] = []
+    error_calls: list[tuple] = []
+
+    def _box(text, caption, *, yes_no):
+        box_calls.append((text, caption, yes_no))
+        return True
+
+    def _err(*args, **kwargs):
+        error_calls.append((args, kwargs))
+
+    monkeypatch.setattr(standalone, "_win_message_box", _box)
+    monkeypatch.setattr(standalone, "show_error", _err)
+    return box_calls, error_calls
+
+
+def _second_window_calls(box_calls):
+    return [c for c in box_calls if c[2] is False]
 
 
 class _FakeTk:
@@ -760,21 +848,23 @@ def test_show_webview2_prompt_display_failure_propagates(monkeypatch):
 def test_show_webview2_prompt_browser_open_false_still_returns_true(
     monkeypatch, caplog
 ):
-    """使用者按是 + webbrowser.open 回 False → 仍回 True，並另開含網址的 show_error。"""
+    """使用者按是 + webbrowser.open 回 False → 仍回 True，第二視窗直呼 _win_message_box。"""
     monkeypatch.setattr(standalone.sys, "platform", "win32")
     _install_fake_ctypes(monkeypatch, return_value=6)
     import webbrowser
 
     monkeypatch.setattr(webbrowser, "open", lambda _url: False)
-    error_calls: list[tuple] = []
-    monkeypatch.setattr(
-        standalone, "show_error", lambda *a, **k: error_calls.append((a, k))
-    )
+    box_calls, error_calls = _install_prompt_spies(monkeypatch)
     with caplog.at_level(logging.WARNING):
         result = standalone.show_webview2_prompt()
     assert result is True
-    assert len(error_calls) == 1
-    assert _WEBVIEW2_DOWNLOAD_URL in error_calls[0][0][1]
+    assert error_calls == []
+    second = _second_window_calls(box_calls)
+    assert len(second) == 1
+    text, caption, yes_no = second[0]
+    assert yes_no is False
+    assert caption == "需要 WebView2 Runtime"
+    assert _WEBVIEW2_DOWNLOAD_URL in text
     assert _PROMPT_DISPLAY_FAIL_MARK not in caplog.text
     # 回 False 這種失敗形式也要留痕（拋例外那條有自己的 log，兩者都不得靜默）
     assert "瀏覽器未開啟" in caplog.text
@@ -792,15 +882,17 @@ def test_show_webview2_prompt_browser_open_exception_still_returns_true(
         raise OSError("no browser")
 
     monkeypatch.setattr(webbrowser, "open", _boom)
-    error_calls: list[tuple] = []
-    monkeypatch.setattr(
-        standalone, "show_error", lambda *a, **k: error_calls.append((a, k))
-    )
+    box_calls, error_calls = _install_prompt_spies(monkeypatch)
     with caplog.at_level(logging.WARNING):
         result = standalone.show_webview2_prompt()
     assert result is True
-    assert len(error_calls) == 1
-    assert _WEBVIEW2_DOWNLOAD_URL in error_calls[0][0][1]
+    assert error_calls == []
+    second = _second_window_calls(box_calls)
+    assert len(second) == 1
+    text, caption, yes_no = second[0]
+    assert yes_no is False
+    assert caption == "需要 WebView2 Runtime"
+    assert _WEBVIEW2_DOWNLOAD_URL in text
     assert _BROWSER_OPEN_FAIL_MARK in caplog.text
     assert _PROMPT_DISPLAY_FAIL_MARK not in caplog.text
 
@@ -827,10 +919,15 @@ def test_browser_open_failure_not_treated_as_display_failure(
             raise OSError("no browser")
 
         monkeypatch.setattr(webbrowser, "open", _boom)
-    monkeypatch.setattr(standalone, "show_error", lambda *_a, **_k: None)
+    box_calls, error_calls = _install_prompt_spies(monkeypatch)
 
     prompt_result = standalone.show_webview2_prompt()
     assert prompt_result is True
+    assert error_calls == []
+    second = _second_window_calls(box_calls)
+    assert second, "second window must call _win_message_box(yes_no=False)"
+    assert second[0][2] is False
+    assert _WEBVIEW2_DOWNLOAD_URL in second[0][0]
 
     with caplog.at_level(logging.INFO):
         with pytest.raises(SystemExit) as ei:
@@ -862,37 +959,24 @@ def test_show_webview2_prompt_non_windows_skips_win_message_box(monkeypatch):
     assert _WEBVIEW2_DOWNLOAD_URL not in message
 
 
-def test_show_error_windows_uses_ok_message_box(monkeypatch):
-    """AC-2.5：Windows 分支 show_error 走 MessageBoxW(yes_no=False)，呼叫點簽章不變。"""
-    monkeypatch.setattr(standalone.sys, "platform", "win32")
-    fake = _install_fake_ctypes(monkeypatch, return_value=1)
-    standalone.show_error("啟動失敗", "伺服器啟動逾時。", None, None)
-    assert fake.calls
-    hwnd, text, caption, flags = fake.calls[0]
-    assert hwnd == 0
-    assert caption == "啟動失敗"
-    assert text == "伺服器啟動逾時。"
-    assert flags == _FLAGS_OK
+@pytest.mark.parametrize("platform", ["win32", "linux"], ids=["win32", "linux"])
+def test_show_error_non_windows_skips_win_message_box(monkeypatch, platform):
+    """任何平台下 show_error() 都不呼叫 _win_message_box。
 
+    反向守衛：不得把 Windows 平台分派加回 show_error()。
+    """
+    monkeypatch.setattr(standalone.sys, "platform", platform)
+    box_calls: list = []
 
-def test_show_error_windows_display_failure_is_swallowed(monkeypatch, caplog):
-    """show_error Windows 顯示失敗不得往外拋，退回寫 log。"""
-    monkeypatch.setattr(standalone.sys, "platform", "win32")
-    _install_fake_ctypes(monkeypatch, return_value=0)
-    logger = _standalone_logger()
-    with caplog.at_level(logging.ERROR, logger="OpenAver.standalone"):
-        standalone.show_error("啟動失敗", "伺服器啟動逾時。", None, logger)
-    assert "啟動失敗" in caplog.text
-    assert "伺服器啟動逾時。" in caplog.text
+    def _unexpected(*_a, **_k):
+        box_calls.append(1)
+        return True
 
-
-def test_show_error_non_windows_skips_win_message_box(monkeypatch):
-    """非 Windows 的 show_error 逐字走 tkinter，不呼叫 MessageBoxW。"""
-    monkeypatch.setattr(standalone.sys, "platform", "linux")
-    fake = _install_fake_ctypes(monkeypatch, return_value=1)
+    monkeypatch.setattr(standalone, "_win_message_box", _unexpected)
+    _install_fake_ctypes(monkeypatch, return_value=1)
     tk_calls = _install_fake_tkinter(monkeypatch)
     standalone.show_error("啟動失敗", "伺服器啟動逾時。")
-    assert fake.calls == []
+    assert box_calls == []
     assert tk_calls["showerror"]
 
 
@@ -944,3 +1028,331 @@ def test_ensure_webview2_runtime_display_failure_log_has_no_cancel(
     assert all("取消" not in msg for msg in fail_msgs)
     assert _LOG_USER_DECLINED not in caplog.text
     assert _LOG_USER_ACCEPTED not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# TASK-120d-T1: show_error 還原 / 第二視窗 / 剪貼簿 / 偵測 log / GetLastError
+# ---------------------------------------------------------------------------
+
+_CLIP_COPIED_MARK = "網址已複製到剪貼簿"
+_CLIP_FAIL_MARK = "無法寫入剪貼簿，請按 Ctrl+C 複製此視窗文字"
+_OPENED_TRUE_INFO_MARK = "已請系統開啟下載頁"
+
+
+def _drive_second_window(monkeypatch, *, clipboard_ok):
+    """User clicks Yes, browser open fails; control clipboard via fake ctypes."""
+    monkeypatch.setattr(standalone.sys, "platform", "win32")
+    fake = _install_fake_ctypes(monkeypatch, return_value=6)
+    if not clipboard_ok:
+        fake.windll.kernel32.GlobalAlloc.return_value = 0
+    import webbrowser
+
+    monkeypatch.setattr(webbrowser, "open", lambda _url: False)
+    box_calls, error_calls = _install_prompt_spies(monkeypatch)
+    result = standalone.show_webview2_prompt()
+    return result, box_calls, error_calls, fake
+
+
+def _assert_second_window_common(text, caption, yes_no):
+    assert yes_no is False
+    assert caption == "需要 WebView2 Runtime"
+    assert "？" not in text
+    assert "是否" not in text
+    assert _WEBVIEW2_DOWNLOAD_URL in text.splitlines()
+
+
+@pytest.mark.parametrize("clipboard_ok", [True, False], ids=["copied", "not_copied"])
+def test_second_window_message_no_question_mark_and_url_on_own_line(
+    monkeypatch, clipboard_ok
+):
+    """第二視窗：不含問句、完整網址單獨一行（兩種剪貼簿結果）。"""
+    result, box_calls, error_calls, _fake = _drive_second_window(
+        monkeypatch, clipboard_ok=clipboard_ok
+    )
+    assert result is True
+    assert error_calls == []
+    second = _second_window_calls(box_calls)
+    assert len(second) == 1
+    _assert_second_window_common(*second[0])
+
+
+def test_second_window_message_clipboard_success_wording(monkeypatch):
+    """clipboard_copied=True → 含「網址已複製到剪貼簿」。"""
+    result, box_calls, error_calls, _fake = _drive_second_window(
+        monkeypatch, clipboard_ok=True
+    )
+    assert result is True
+    assert error_calls == []
+    second = _second_window_calls(box_calls)
+    assert second, "second window must call _win_message_box(yes_no=False)"
+    text, caption, yes_no = second[0]
+    _assert_second_window_common(text, caption, yes_no)
+    assert _CLIP_COPIED_MARK in text
+
+
+def test_second_window_message_clipboard_failure_wording_excludes_copied(monkeypatch):
+    """clipboard_copied=False → 含 Ctrl+C 提示，且不得含「已複製」。"""
+    result, box_calls, error_calls, _fake = _drive_second_window(
+        monkeypatch, clipboard_ok=False
+    )
+    assert result is True
+    assert error_calls == []
+    second = _second_window_calls(box_calls)
+    assert second, "second window must call _win_message_box(yes_no=False)"
+    text, caption, yes_no = second[0]
+    _assert_second_window_common(text, caption, yes_no)
+    assert _CLIP_FAIL_MARK in text
+    assert "已複製" not in text
+
+
+def test_copy_to_clipboard_typed_bindings_match_contract(monkeypatch):
+    """八支剪貼簿 API 必須設好 argtypes／restype（防 x64 截斷）。"""
+    fake = _install_fake_ctypes(monkeypatch, return_value=1)
+    assert standalone.copy_to_clipboard("https://example.test") is True
+    k32 = fake.windll.kernel32
+    u32 = fake.windll.user32
+    c = _real_ctypes
+    assert k32.GlobalAlloc.argtypes == [c.c_uint, c.c_size_t]
+    assert k32.GlobalAlloc.restype is c.c_void_p
+    assert k32.GlobalLock.argtypes == [c.c_void_p]
+    assert k32.GlobalLock.restype is c.c_void_p
+    assert k32.GlobalUnlock.argtypes == [c.c_void_p]
+    assert k32.GlobalUnlock.restype is c.c_int
+    assert k32.GlobalFree.argtypes == [c.c_void_p]
+    assert k32.GlobalFree.restype is c.c_void_p
+    assert u32.OpenClipboard.argtypes == [c.c_void_p]
+    assert u32.OpenClipboard.restype is c.c_int
+    assert u32.EmptyClipboard.argtypes == []
+    assert u32.EmptyClipboard.restype is c.c_int
+    assert u32.SetClipboardData.argtypes == [c.c_uint, c.c_void_p]
+    assert u32.SetClipboardData.restype is c.c_void_p
+    assert u32.CloseClipboard.argtypes == []
+    assert u32.CloseClipboard.restype is c.c_int
+
+
+def test_copy_to_clipboard_non_bmp_size_uses_encoded_length(monkeypatch):
+    """非 BMP：size = len(utf-16-le payload)，不得用 (len(text)+1)*2。"""
+    text = "a😀b"
+    fake = _install_fake_ctypes(monkeypatch, return_value=1)
+    assert standalone.copy_to_clipboard(text) is True
+
+    payload = text.encode("utf-16-le") + b"\x00\x00"
+    encoded_size = len(payload)
+    forbidden_size = (len(text) + 1) * 2
+    assert encoded_size == len(text.encode("utf-16-le")) + 2
+    assert encoded_size != forbidden_size
+
+    alloc_calls = fake.windll.kernel32.GlobalAlloc.calls
+    assert alloc_calls, "GlobalAlloc must be called"
+    alloc_size = alloc_calls[0][1]
+    assert alloc_size == encoded_size
+    assert alloc_size == len(text.encode("utf-16-le")) + 2
+    assert alloc_size != forbidden_size
+    assert alloc_size != (len(text) + 1) * 2
+
+    assert fake.memmove_calls, "memmove must be called"
+    _dest, src, mem_size = fake.memmove_calls[0]
+    assert mem_size == alloc_size
+    assert isinstance(src, bytes)
+    assert src == payload
+    assert src == text.encode("utf-16-le") + b"\x00\x00"
+
+
+def test_copy_to_clipboard_setclipboarddata_success_no_globalfree(monkeypatch):
+    """SetClipboardData 成功 → 所有權已轉移，不得 GlobalFree。"""
+    fake = _install_fake_ctypes(monkeypatch, return_value=1)
+    assert standalone.copy_to_clipboard("ok") is True
+    assert fake.windll.user32.SetClipboardData.calls
+    assert fake.windll.kernel32.GlobalFree.calls == []
+
+
+def test_copy_to_clipboard_success_calls_globalunlock_with_alloc_handle(monkeypatch):
+    """成功路徑必須 GlobalUnlock，且 handle 等於 GlobalAlloc 回傳值。"""
+    fake = _install_fake_ctypes(monkeypatch, return_value=1)
+    assert standalone.copy_to_clipboard("ok") is True
+    alloc_handle = fake.windll.kernel32.GlobalAlloc.return_value
+    assert fake.windll.kernel32.GlobalUnlock.calls == [(alloc_handle,)]
+
+
+def test_copy_to_clipboard_setclipboarddata_failure_calls_globalfree(monkeypatch):
+    """SetClipboardData 失敗 → 所有權未轉移，必須 GlobalFree。"""
+    fake = _install_fake_ctypes(monkeypatch, return_value=1)
+    fake.windll.user32.SetClipboardData.return_value = 0
+    assert standalone.copy_to_clipboard("ok") is False
+    assert fake.windll.user32.SetClipboardData.calls
+    assert len(fake.windll.kernel32.GlobalFree.calls) == 1
+
+
+def test_copy_to_clipboard_setclipboarddata_failure_globalfree_same_handle(
+    monkeypatch,
+):
+    """SetClipboardData 失敗：GlobalFree 必須拿到 GlobalAlloc 的同一個 handle。"""
+    fake = _install_fake_ctypes(monkeypatch, return_value=1)
+    fake.windll.user32.SetClipboardData.return_value = 0
+    assert standalone.copy_to_clipboard("ok") is False
+    alloc_handle = fake.windll.kernel32.GlobalAlloc.return_value
+    assert fake.windll.kernel32.GlobalFree.calls == [(alloc_handle,)]
+
+
+def test_copy_to_clipboard_globalalloc_fails_no_free_no_close(monkeypatch):
+    """GlobalAlloc 回 0：無資源可 free，也尚未 OpenClipboard。"""
+    fake = _install_fake_ctypes(monkeypatch, return_value=1)
+    fake.windll.kernel32.GlobalAlloc.return_value = 0
+    assert standalone.copy_to_clipboard("ok") is False
+    assert fake.windll.kernel32.GlobalFree.calls == []
+    assert fake.windll.user32.CloseClipboard.calls == []
+    assert fake.windll.user32.OpenClipboard.calls == []
+
+
+def test_copy_to_clipboard_globallock_fails_frees_no_close(monkeypatch):
+    """GlobalLock 回 0：必須 GlobalFree，不得 CloseClipboard。"""
+    fake = _install_fake_ctypes(monkeypatch, return_value=1)
+    fake.windll.kernel32.GlobalLock.return_value = 0
+    assert standalone.copy_to_clipboard("ok") is False
+    assert len(fake.windll.kernel32.GlobalFree.calls) == 1
+    assert fake.windll.user32.CloseClipboard.calls == []
+    assert fake.windll.user32.OpenClipboard.calls == []
+
+
+def test_copy_to_clipboard_globallock_fails_globalfree_same_handle(monkeypatch):
+    """GlobalLock 失敗：GlobalFree 必須拿到 GlobalAlloc 的同一個 handle。"""
+    fake = _install_fake_ctypes(monkeypatch, return_value=1)
+    fake.windll.kernel32.GlobalLock.return_value = 0
+    assert standalone.copy_to_clipboard("ok") is False
+    alloc_handle = fake.windll.kernel32.GlobalAlloc.return_value
+    assert fake.windll.kernel32.GlobalFree.calls == [(alloc_handle,)]
+
+
+def test_copy_to_clipboard_openclipboard_fails_frees_no_close(monkeypatch):
+    """OpenClipboard 回 0：必須 GlobalFree，不得 CloseClipboard。"""
+    fake = _install_fake_ctypes(monkeypatch, return_value=1)
+    fake.windll.user32.OpenClipboard.return_value = 0
+    assert standalone.copy_to_clipboard("ok") is False
+    assert len(fake.windll.kernel32.GlobalFree.calls) == 1
+    assert fake.windll.user32.CloseClipboard.calls == []
+    assert fake.windll.user32.OpenClipboard.calls
+
+
+def test_copy_to_clipboard_closeclipboard_called_on_full_success(monkeypatch):
+    """OpenClipboard 成功後，完整成功路徑必須 CloseClipboard 一次。"""
+    fake = _install_fake_ctypes(monkeypatch, return_value=1)
+    assert standalone.copy_to_clipboard("ok") is True
+    assert len(fake.windll.user32.CloseClipboard.calls) == 1
+
+
+def test_copy_to_clipboard_closeclipboard_called_on_setclipboarddata_failure(
+    monkeypatch,
+):
+    """OpenClipboard 成功後，SetClipboardData 失敗路徑也必須 CloseClipboard。"""
+    fake = _install_fake_ctypes(monkeypatch, return_value=1)
+    fake.windll.user32.SetClipboardData.return_value = 0
+    assert standalone.copy_to_clipboard("ok") is False
+    assert len(fake.windll.user32.CloseClipboard.calls) == 1
+
+
+def test_copy_to_clipboard_exception_does_not_break_prompt_flow(monkeypatch):
+    """剪貼簿內部拋例外 → 第二視窗仍跳出、網址仍在、回傳值仍是 True。"""
+    monkeypatch.setattr(standalone.sys, "platform", "win32")
+    fake = _install_fake_ctypes(monkeypatch, return_value=6)
+    fake.windll.kernel32.GlobalAlloc.side_effect = OSError("alloc boom")
+    import webbrowser
+
+    monkeypatch.setattr(webbrowser, "open", lambda _url: False)
+    box_calls, error_calls = _install_prompt_spies(monkeypatch)
+    result = standalone.show_webview2_prompt()
+    assert result is True
+    assert error_calls == []
+    second = _second_window_calls(box_calls)
+    assert len(second) == 1
+    text, caption, yes_no = second[0]
+    _assert_second_window_common(text, caption, yes_no)
+    assert _CLIP_FAIL_MARK in text
+
+
+def test_copy_to_clipboard_exception_logs_debug(monkeypatch, caplog):
+    """任何例外 → 記一行 debug log（含例外訊息）→ 回 False。"""
+    fake = _install_fake_ctypes(monkeypatch, return_value=1)
+    fake.windll.kernel32.GlobalAlloc.side_effect = OSError("alloc boom")
+    with caplog.at_level(logging.DEBUG, logger="OpenAver.standalone"):
+        result = standalone.copy_to_clipboard("ok")
+    assert result is False
+    assert "alloc boom" in caplog.text
+
+
+def test_check_webview2_installed_dotnet_insufficient_logs_release_value(
+    monkeypatch, caplog
+):
+    """`.NET Release` 不足時 debug log 必須含實際讀到的值。"""
+    monkeypatch.setattr(standalone.sys, "platform", "win32")
+    release_val = standalone.DOTNET_RELEASE_MIN - 1
+    monkeypatch.setattr(standalone, "read_dotnet_release", lambda: release_val)
+    monkeypatch.setattr(
+        standalone, "read_webview2_pv", lambda *_a: standalone.WEBVIEW2_MIN_BUILD
+    )
+    with caplog.at_level(logging.DEBUG, logger="OpenAver.standalone"):
+        result = standalone.check_webview2_installed()
+    assert result is False
+    assert str(release_val) in caplog.text
+
+
+def test_check_webview2_installed_none_found_logs_all_eight_cells(monkeypatch, caplog):
+    """四 GUID × 兩 hive 全部沒命中時，debug log 含 8 格實際 pv。"""
+    monkeypatch.setattr(standalone.sys, "platform", "win32")
+    monkeypatch.setattr(standalone, "read_dotnet_release", lambda: standalone.DOTNET_RELEASE_MIN)
+    planted: dict[tuple[str, str], str] = {}
+    n = 0
+
+    def _pv(hive, guid):
+        nonlocal n
+        n += 1
+        val = f"0.{n}.0.0"
+        planted[(hive, guid)] = val
+        return val
+
+    monkeypatch.setattr(standalone, "read_webview2_pv", _pv)
+    with caplog.at_level(logging.DEBUG, logger="OpenAver.standalone"):
+        result = standalone.check_webview2_installed()
+    assert result is False
+    assert len(planted) == 8
+    for (hive, guid), pv in planted.items():
+        assert hive in caplog.text, f"missing hive {hive}"
+        assert guid in caplog.text, f"missing guid {guid}"
+        assert pv in caplog.text, f"missing pv {pv}"
+
+
+def test_check_webview2_installed_success_path_no_new_debug_log(monkeypatch, caplog):
+    """已安裝早退路徑不得出現本 task 新增的兩條 debug log（AC-4.2）。"""
+    monkeypatch.setattr(standalone.sys, "platform", "win32")
+    monkeypatch.setattr(standalone, "read_dotnet_release", lambda: standalone.DOTNET_RELEASE_MIN)
+    monkeypatch.setattr(
+        standalone, "read_webview2_pv", lambda *_a: standalone.WEBVIEW2_MIN_BUILD
+    )
+    with caplog.at_level(logging.DEBUG, logger="OpenAver.standalone"):
+        result = standalone.check_webview2_installed()
+    assert result is True
+    messages = [rec.getMessage() for rec in caplog.records]
+    joined = "\n".join(messages)
+    assert "Release" not in joined
+    assert "沒命中" not in joined
+
+
+def test_win_message_box_zero_raises_includes_get_last_error_code(monkeypatch):
+    """MessageBoxW 回 0 的例外訊息必須含 GetLastError() 的值。"""
+    _install_fake_ctypes(monkeypatch, return_value=0, last_error=1400)
+    with pytest.raises(RuntimeError) as ei:
+        standalone._win_message_box("t", "c", yes_no=False)
+    assert "1400" in str(ei.value)
+
+
+def test_show_webview2_prompt_browser_open_true_logs_info(monkeypatch, caplog):
+    """webbrowser.open() 回 True 時必須有一行 info log 含實際網址。"""
+    monkeypatch.setattr(standalone.sys, "platform", "win32")
+    _install_fake_ctypes(monkeypatch, return_value=6)
+    import webbrowser
+
+    monkeypatch.setattr(webbrowser, "open", lambda _url: True)
+    with caplog.at_level(logging.INFO):
+        result = standalone.show_webview2_prompt()
+    assert result is True
+    assert _OPENED_TRUE_INFO_MARK in caplog.text
+    assert _WEBVIEW2_DOWNLOAD_URL in caplog.text
