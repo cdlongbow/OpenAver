@@ -4,14 +4,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { CUP_RANK, actressAgeValue, actressHeightValue, actressCupValue, actressMetricRange } = await import('../actress-metric.js');
+const metricMod = await import('../actress-metric.js');
+const { actressAgeValue, actressHeightValue, actressCupValue, actressMetricRange } = metricMod;
 
-// ── CUP_RANK 表 ────────────────────────────────────────────────────────────
+// ── CUP_RANK 已刪除（120-C1：改字元碼推導，不留第二張真實來源）────────────────
 
-test('CUP_RANK 與現況 cupRank 逐字相同：A=1…K=11', () => {
-    assert.deepEqual(CUP_RANK, {
-        A: 1, B: 2, C: 3, D: 4, E: 5, F: 6, G: 7, H: 8, I: 9, J: 10, K: 11,
-    });
+test('CUP_RANK export 已刪除（AC-4）', () => {
+    assert.equal(metricMod.CUP_RANK, undefined);
 });
 
 // ── actressAgeValue ────────────────────────────────────────────────────────
@@ -98,12 +97,16 @@ test('actressCupValue 有值 A → 1、K → 11', () => {
     assert.equal(actressCupValue({ cup: 'K' }), 11);
 });
 
-test('actressCupValue null → null', () => {
-    assert.equal(actressCupValue({ cup: null }), null);
+test('actressCupValue L → 12（AC-1）', () => {
+    assert.equal(actressCupValue({ cup: 'L' }), 12);
 });
 
-test('actressCupValue 未知字母 Z → null', () => {
-    assert.equal(actressCupValue({ cup: 'Z' }), null);
+test('actressCupValue Z → 26（AC-1）', () => {
+    assert.equal(actressCupValue({ cup: 'Z' }), 26);
+});
+
+test('actressCupValue null → null', () => {
+    assert.equal(actressCupValue({ cup: null }), null);
 });
 
 test('actressCupValue 小寫 b → null（大小寫敏感）', () => {
@@ -112,6 +115,40 @@ test('actressCupValue 小寫 b → null（大小寫敏感）', () => {
 
 test('actressCupValue undefined（缺欄）→ null', () => {
     assert.equal(actressCupValue({}), null);
+});
+
+test('actressCupValue 空字串 → null（AC-3）', () => {
+    assert.equal(actressCupValue({ cup: '' }), null);
+});
+
+test("actressCupValue 'AA' → null（AC-3，非單一字母）", () => {
+    assert.equal(actressCupValue({ cup: 'AA' }), null);
+});
+
+test('actressCupValue 非字串 123 → null（AC-3）', () => {
+    assert.equal(actressCupValue({ cup: 123 }), null);
+});
+
+test("actressCupValue 'toString' → null（AC-3，不得 fail-open 回函式）", () => {
+    assert.equal(actressCupValue({ cup: 'toString' }), null);
+});
+
+test("actressCupValue 'constructor' / '__proto__' / 'valueOf' → null（AC-3）", () => {
+    assert.equal(actressCupValue({ cup: 'constructor' }), null);
+    assert.equal(actressCupValue({ cup: '__proto__' }), null);
+    assert.equal(actressCupValue({ cup: 'valueOf' }), null);
+});
+
+test('actressCupValue 全形 Ａ → null（AC-3）', () => {
+    assert.equal(actressCupValue({ cup: 'Ａ' }), null);
+});
+
+test("actressCupValue '['（Z+1）→ null（AC-3）", () => {
+    assert.equal(actressCupValue({ cup: '[' }), null);
+});
+
+test("actressCupValue '@'（A-1）→ null（AC-3）", () => {
+    assert.equal(actressCupValue({ cup: '@' }), null);
 });
 
 // ── actressMetricRange（116c-T2，CD-116c-6）─────────────────────────────────
@@ -159,4 +196,9 @@ test('actressMetricRange 空 list → null', () => {
 
 test('actressMetricRange 單一元素 list → min === max', () => {
     assert.deepEqual(actressMetricRange([{ age: 30 }], actressAgeValue), { min: 30, max: 30 });
+});
+
+test('actressMetricRange cup 含 Z → max = 26（AC-6）', () => {
+    const list = [{ cup: 'A' }, { cup: 'K' }, { cup: 'Z' }, { cup: null }];
+    assert.deepEqual(actressMetricRange(list, actressCupValue), { min: 1, max: 26 });
 });
