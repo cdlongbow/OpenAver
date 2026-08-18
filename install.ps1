@@ -10,6 +10,21 @@ $ErrorActionPreference = "Stop"
 $Repo = "slive777/OpenAver"
 $InstallDir = "$HOME\OpenAver"
 
+function Exit-WithPause {
+    param([int]$Code = 0)
+    Write-Host ""
+    Write-Host "請按 Enter 關閉此視窗"
+    Read-Host | Out-Null
+    exit $Code
+}
+
+trap {
+    Write-Host ""
+    Write-Host "❌ 安裝過程發生未預期錯誤" -ForegroundColor Red
+    Write-Host "$_" -ForegroundColor Red
+    Exit-WithPause 1
+}
+
 # 乾淨映像 / 舊系統的 PowerShell 5.1 預設可能用 TLS1.0，GitHub 會拒連
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}
 
@@ -95,7 +110,7 @@ function Wait-OpenAverClosed {
         Write-Host "⚠️  OpenAver 目前正在執行，無法覆蓋安裝。" -ForegroundColor Yellow
         Write-Host "   請關閉 OpenAver 視窗後，按 Enter 繼續（或輸入 q 取消）" -ForegroundColor Yellow
         $r = Read-Host
-        if ($r -eq 'q' -or $r -eq 'Q') { Write-Host "取消安裝"; exit 0 }
+        if ($r -eq 'q' -or $r -eq 'Q') { Write-Host "取消安裝"; Exit-WithPause 0 }
     }
 }
 
@@ -135,7 +150,7 @@ try {
     $Release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest"
 } catch {
     Write-Host "❌ 無法連線到 GitHub，請檢查網路" -ForegroundColor Red
-    exit 1
+    Exit-WithPause 1
 }
 
 $Version = $Release.tag_name
@@ -143,7 +158,7 @@ $Asset = $Release.assets | Where-Object { $_.name -match "Windows-x64\.zip$" } |
 
 if (-not $Asset) {
     Write-Host "❌ 找不到 Windows 下載連結" -ForegroundColor Red
-    exit 1
+    Exit-WithPause 1
 }
 
 $DownloadUrl = $Asset.browser_download_url
@@ -156,7 +171,7 @@ if (Test-Path $InstallDir) {
     $Reply = Read-Host "   是否覆蓋安裝？(y/N)"
     if ($Reply -ne "y" -and $Reply -ne "Y") {
         Write-Host "取消安裝"
-        exit 0
+        Exit-WithPause 0
     }
 
     # 下載前提早偵測：OpenAver 在跑就先擋，省得白下載 ~80MB 才被卡
@@ -198,7 +213,7 @@ if (Test-Path $PythonDir) {
             Write-Host "⚠️  無法清除舊版（OpenAver 可能正在執行）。" -ForegroundColor Yellow
             Write-Host "   請關閉 OpenAver 視窗後，按 Enter 重試（或輸入 q 取消）" -ForegroundColor Yellow
             $r = Read-Host
-            if ($r -eq 'q' -or $r -eq 'Q') { Write-Host "取消安裝"; exit 0 }
+            if ($r -eq 'q' -or $r -eq 'Q') { Write-Host "取消安裝"; Exit-WithPause 0 }
         }
     }
 }
@@ -252,3 +267,4 @@ Write-Host "   啟動方式："
 Write-Host "   1. 雙擊桌面上的 OpenAver 捷徑"
 Write-Host "   2. 或執行 $InstallDir\OpenAver.bat"
 Write-Host ""
+Exit-WithPause 0
