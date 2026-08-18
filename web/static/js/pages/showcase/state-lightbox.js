@@ -20,6 +20,14 @@ import { parseFocal, clampMaskWinLeft } from '@/shared/focal.js';
 import { computeMaskWinGeometry, computeMaskDragRoom, MASK_MIN_DRAG_ROOM, computeMaskSettleGeometry } from '@/shared/mask-geometry.js';
 import { syncActressFields } from '@/shared/actress-sync.js';
 
+// 120a-T1：.lb-full @error 的遲到事件判定。比較對象是 Alpine :src 寫入的相對路徑
+// 字串（getAttribute('src')），不是 IDL .src（瀏覽器已解析成絕對 URL）。
+// expectedSrc 為空沿用 isStaleCoverError 短路：不當 stale，交給呼叫端既有分支。
+export function isStaleLbFullError(actualSrc, expectedSrc) {
+    if (!expectedSrc || !actualSrc) return false;
+    return actualSrc !== expectedSrc;
+}
+
 // 排除清單容器（橫向捲動列表/表格）：命中即整條 wheel handler 提早 return，
 // 讓原生橫向捲動不受影響（見 TASK-102d-T1.md「技術要點」排除清單段）。
 const WHEEL_EXCLUDE_SELECTOR = '.sample-strip, .sg-thumbs, .picker-candidates-grid, .table-scroll-container, .overflow-x-auto';
@@ -78,6 +86,7 @@ export function stateLightbox() {
         currentLightboxVideo: null,
 
         _lbFullLoaded: false,           // 71-T6 blur-up：原圖（cover_full_url）@load 後翻 true → overlay opacity 淡入
+        _lbFullErrorPill: false,        // 120a-T1：.lb-full @error 通過判定後顯示提示 pill
 
         // 100b-T2a（§B-2b）：女優封面 img 快取命中/@load 就緒旗標，平行 _lbFullLoaded（video）。
         // openMask() 的 `if (!this._maskTarget().loaded) return;` 門檻直接消費本欄。lifecycle
@@ -211,6 +220,7 @@ export function stateLightbox() {
         // 跳過 @load 等待；否則等 @load 觸發翻 true。
         _refreshLbFullBlurUp() {
             this._lbFullLoaded = false;
+            this._lbFullErrorPill = false;
             var self = this;
             this.$nextTick(function () {
                 var fullImg = self.$refs && self.$refs.lightboxCoverFull;
@@ -218,6 +228,19 @@ export function stateLightbox() {
                     self._lbFullLoaded = true;
                 }
             });
+        },
+
+        // 120a-T1：.lb-full 原圖載入失敗。第一行 AC-A6 短路（DB 無封面 cover_full_url
+        // 恆為空字串，<img :src=""> 的 error 不是「拿不到」）。$refs 防呆後用
+        // getAttribute('src') 對當下 cover_full_url 做 stale 判定（AC-A4），通過才設旗標。
+        // 不呼叫 handleCoverError、不改 has_cover（AC-A5）。
+        _handleLbFullError(event) {
+            if (!this.currentLightboxVideo?.cover_full_url) return;
+            const target = event && event.target;
+            if (target !== this.$refs.lightboxCoverFull) return;
+            const actualSrc = (target && target.getAttribute('src')) || '';
+            if (isStaleLbFullError(actualSrc, this.currentLightboxVideo.cover_full_url)) return;
+            this._lbFullErrorPill = true;
         },
 
         // 100b-T2a（§B-2b）：女優版 _refreshLbFullBlurUp 平行實作——女優牆與燈箱用同一個

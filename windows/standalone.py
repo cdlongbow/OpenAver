@@ -35,32 +35,275 @@ STARTUP_TIMEOUT = 30  # 最多等待 30 秒
 
 
 # ============ WebView2 檢查 ============
+# 判準忠實移植 pywebview 6.2.1 winforms.py `_is_chromium()`（含只比 major、
+# `pv=''` 中止走訪兩條「看起來像 bug」的語意）。兩處具名豁免：
+# 豁免 1（CD-120b-2）：.NET Release 讀不到時，pywebview 因 finally:
+# winreg.CloseKey(net_key) 對未賦值名稱取值而拋 NameError 穿出；
+# read_dotnet_release() 契約是回 None，決策邏輯把 None 轉成 False。
+# 理由：那台機器上 pywebview 必定啟動失敗，使用者可見結論相同（起不來），
+# 差別只在我們給看得懂的提示、它給未攔截例外。
+# 豁免 2（WEBVIEW2_RUNTIME_PATH 短路不移植）：_is_chromium() 開頭
+# if settings['WEBVIEW2_RUNTIME_PATH']: return True 不搬。
+# 理由：全庫 core/web/windows/build.py/build_macos.py 沒有該 setting 的賦值，
+# 恆為 falsy，等價性不受影響。前提由 test_standalone_webview2 賦值掃描鎖住。
 
-def check_webview2_installed():
-    """檢查 WebView2 Runtime 是否已安裝"""
+WEBVIEW2_RUNTIME_GUID = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+WEBVIEW2_BETA_GUID = '{2CD8A007-E189-409D-A2C8-9AF4EF3C72AA}'
+WEBVIEW2_DEV_GUID = '{0D50BFEC-CD6A-4F9A-964C-C7416E3ACB10}'
+WEBVIEW2_CANARY_GUID = '{65C35B14-6C1D-4122-AC46-7148CC9D6497}'
+WEBVIEW2_MIN_BUILD = '86.0.622.0'
+DOTNET_RELEASE_MIN = 394802
+WEBVIEW2_REGISTRY_HIVES = ('HKEY_CURRENT_USER', 'HKEY_LOCAL_MACHINE')
+
+
+def webview2_registry_subpath(hive_name: str, guid: str, machine_name: str) -> str:
+    """算出 EdgeUpdate Clients 的 registry 子路徑（與 pywebview edge_build 逐字相同）。"""
+    if machine_name == 'x86' or hive_name == 'HKEY_CURRENT_USER':
+        path = rf'Microsoft\EdgeUpdate\Clients\{guid}'
+    else:
+        path = rf'WOW6432Node\Microsoft\EdgeUpdate\Clients\{guid}'
+    return rf'SOFTWARE\{path}'
+
+
+def read_webview2_pv(hive_name: str, guid: str) -> str:
+    """讀某 hive／GUID 的 EdgeUpdate `pv`。讀不到回 '0'；空字串原樣回傳。"""
     try:
         import winreg
-        # 檢查 Registry - 64 位元路徑
-        key_path = r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path):
-            return True
-    except (FileNotFoundError, OSError):
-        pass
+        from platform import machine
 
+        subpath = webview2_registry_subpath(hive_name, guid, machine())
+        with winreg.OpenKey(getattr(winreg, hive_name), subpath) as windows_key:
+            build, _ = winreg.QueryValueEx(windows_key, 'pv')
+            return str(build)
+    except Exception:  # noqa: BLE001,S110 — registry miss is the contract ('0'); do not map '' to '0'
+        pass
+    return '0'
+
+
+def read_dotnet_release() -> int | None:
+    """讀 HKLM .NET 4 Full `Release`。讀不到回 None（豁免 1／CD-120b-2，不拋 NameError）。"""
     try:
         import winreg
-        # 備用路徑 - 32 位元
-        key_path = r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path):
-            return True
-    except (FileNotFoundError, OSError):
-        pass
 
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full'
+        ) as net_key:
+            version, _ = winreg.QueryValueEx(net_key, 'Release')
+        # pywebview 用原值比 version < 394802；非 int（含 bool）會 TypeError → False。
+        # 不得 int() 轉型，否則 REG_SZ "394802" 會比它寬。
+        if type(version) is not int:
+            return None
+        return version
+    except Exception:  # noqa: BLE001 — missing .NET key is a documented None, not NameError
+        return None
+
+
+def _is_new_version(current_version: str, new_version: str) -> bool:
+    # 逐字保留 pywebview 只比 major 的形狀（index 0 無條件 return）。
+    # 門檻從 WEBVIEW2_MIN_BUILD 推導，不得寫死字面 86。
+    new_range = new_version.split('.')
+    cur_range = current_version.split('.')
+    for index, _ in enumerate(new_range):
+        if len(cur_range) > index:
+            return int(new_range[index]) >= int(cur_range[index])
     return False
 
 
+def check_webview2_installed():
+    """檢查 WebView2 Runtime 是否已安裝（pywebview `_is_chromium()` 忠實移植）。"""
+    if sys.platform != 'win32':
+        return False
+    try:
+        release = read_dotnet_release()
+        if release is None or release < DOTNET_RELEASE_MIN:
+            try:
+                get_logger('standalone').debug(
+                    "WebView2 偵測：.NET Release 不足或讀不到 release=%r", release
+                )
+            except Exception:  # noqa: S110 — logger may not be initialized; must not abort detection
+                pass
+            return False
+        cells = []
+        for guid in (
+            WEBVIEW2_RUNTIME_GUID,
+            WEBVIEW2_BETA_GUID,
+            WEBVIEW2_DEV_GUID,
+            WEBVIEW2_CANARY_GUID,
+        ):
+            for hive_name in WEBVIEW2_REGISTRY_HIVES:
+                build = read_webview2_pv(hive_name, guid)
+                cells.append((hive_name, guid, build))
+                if _is_new_version(WEBVIEW2_MIN_BUILD, build):
+                    return True
+    except Exception:  # noqa: BLE001 — empty pv ValueError aborts the walk (pywebview semantics)
+        try:
+            get_logger('standalone').debug("WebView2 偵測走訪中止", exc_info=True)
+        except Exception:  # noqa: S110 — logger may not be initialized; must not abort detection
+            pass
+        return False
+    try:
+        get_logger('standalone').debug(
+            "WebView2 偵測：四 GUID × 兩 hive 全部沒命中 cells=%s", cells
+        )
+    except Exception:  # noqa: S110 — logger may not be initialized; must not abort detection
+        pass
+    return False
+
+
+# ============ 原生訊息視窗（Windows MessageBoxW）============
+WEBVIEW2_DOWNLOAD_URL = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
+MB_OK = 0x00000000
+MB_YESNO = 0x00000004
+MB_ICONERROR = 0x00000010
+MB_ICONWARNING = 0x00000030
+MB_SETFOREGROUND = 0x00010000
+MB_TOPMOST = 0x00040000
+IDYES = 6
+IDNO = 7
+
+
+def _win_message_box(text: str, caption: str, *, yes_no: bool) -> bool:
+    """Windows 原生訊息視窗（MessageBoxW）。ctypes 延遲 import（函式內），
+    因為 ctypes.windll 在 Linux 上不存在，module-level 取用會炸。
+    """
+    import ctypes
+
+    if yes_no:
+        flags = MB_YESNO | MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST
+    else:
+        flags = MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST
+
+    result = ctypes.windll.user32.MessageBoxW(0, text, caption, flags)
+    if result == 0:
+        code = ctypes.GetLastError()
+        raise RuntimeError(f"MessageBoxW failed (GetLastError={code})")
+    if yes_no:
+        return result == IDYES
+    return True
+
+
+def copy_to_clipboard(text: str) -> bool:
+    """Write Unicode text to the Windows clipboard. Failures return False."""
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        user32 = ctypes.windll.user32
+
+        kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+        kernel32.GlobalAlloc.restype = ctypes.c_void_p
+        kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+        kernel32.GlobalLock.restype = ctypes.c_void_p
+        kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+        kernel32.GlobalUnlock.restype = ctypes.c_int
+        kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
+        kernel32.GlobalFree.restype = ctypes.c_void_p
+        user32.OpenClipboard.argtypes = [ctypes.c_void_p]
+        user32.OpenClipboard.restype = ctypes.c_int
+        user32.EmptyClipboard.argtypes = []
+        user32.EmptyClipboard.restype = ctypes.c_int
+        user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+        user32.SetClipboardData.restype = ctypes.c_void_p
+        user32.CloseClipboard.argtypes = []
+        user32.CloseClipboard.restype = ctypes.c_int
+
+        payload = text.encode('utf-16-le') + b'\x00\x00'
+        size = len(payload)
+        gmem_moveable = 0x0002
+        cf_unicodetext = 13
+
+        h = kernel32.GlobalAlloc(gmem_moveable, size)
+        if not h:
+            return False
+
+        p = kernel32.GlobalLock(h)
+        if not p:
+            kernel32.GlobalFree(h)
+            return False
+
+        ctypes.memmove(p, payload, size)
+        kernel32.GlobalUnlock(h)
+
+        if not user32.OpenClipboard(0):
+            kernel32.GlobalFree(h)
+            return False
+
+        try:
+            user32.EmptyClipboard()
+            owned = user32.SetClipboardData(cf_unicodetext, h)
+            if not owned:
+                kernel32.GlobalFree(h)
+                return False
+            return True
+        finally:
+            user32.CloseClipboard()
+    except Exception as e:  # noqa: BLE001 — clipboard failure must not abort the prompt
+        try:
+            get_logger('standalone').debug("clipboard copy failed: %s", e)
+        except Exception:  # noqa: S110 — logger may not be initialized; silent fallback is intentional
+            pass
+        return False
+
+
 def show_webview2_prompt():
-    """顯示 WebView2 安裝提示"""
+    """顯示 WebView2 安裝提示。回傳值只表達使用者選擇（True=去下載/False=不要）。
+    顯示本身失敗時改為拋例外（CD-120b-7），呼叫端 _ensure_webview2_runtime() 負責接住。
+    """
+    if sys.platform == 'win32':
+        message = (
+            "OpenAver 需要 Microsoft Edge WebView2 Runtime 才能運行。\n\n"
+            "這是 Windows 10/11 的標準元件，但您的系統尚未安裝。\n\n"
+            "下載網址：" + WEBVIEW2_DOWNLOAD_URL + "\n\n"
+            "是否前往下載頁面？（約 2MB，安裝需 1 分鐘）"
+        )
+        # 第一段：顯示 + 取得選擇——失敗就讓例外往外穿，不吞
+        result = _win_message_box(message, "需要 WebView2 Runtime", yes_no=True)
+        if result:
+            # 第二段：開瀏覽器——獨立 try，這裡的失敗不得改變 result 或被誤判成「沒問成」
+            opened = False
+            try:
+                import webbrowser
+                opened = webbrowser.open(WEBVIEW2_DOWNLOAD_URL)
+                if opened:
+                    try:
+                        get_logger('standalone').info(
+                            "已請系統開啟下載頁：%s", WEBVIEW2_DOWNLOAD_URL
+                        )
+                    except Exception:  # noqa: S110 — logger may not be initialized; silent fallback is intentional
+                        pass
+            except Exception as e:
+                try:
+                    get_logger('standalone').warning(f"[OpenAver] 開啟瀏覽器失敗：{e}")
+                except Exception:  # noqa: S110 — logger may not be initialized; silent fallback is intentional
+                    pass
+            if not opened:
+                # 回 False（沒有預設瀏覽器）與拋例外是兩種不同的失敗形式，兩種都要留痕：
+                # 沒有這一行時，「按了是卻沒反應」的回報在 debug.log 裡完全是空白。
+                try:
+                    get_logger('standalone').warning(
+                        "[OpenAver] 瀏覽器未開啟，改以視窗顯示下載網址"
+                    )
+                except Exception:  # noqa: S110 — logger may not be initialized; silent fallback is intentional
+                    pass
+                clipboard_copied = copy_to_clipboard(WEBVIEW2_DOWNLOAD_URL)
+                if clipboard_copied:
+                    message2 = (
+                        "瀏覽器沒能開啟。\n"
+                        "網址已複製到剪貼簿。\n"
+                        "\n"
+                        + WEBVIEW2_DOWNLOAD_URL
+                    )
+                else:
+                    message2 = (
+                        "瀏覽器沒能開啟。\n"
+                        "無法寫入剪貼簿，請按 Ctrl+C 複製此視窗文字。\n"
+                        "\n"
+                        + WEBVIEW2_DOWNLOAD_URL
+                    )
+                _win_message_box(message2, "需要 WebView2 Runtime", yes_no=False)
+        return result
+
+    # 非 Windows：逐字不動（tkinter 現行實作）
     try:
         import tkinter as tk
         from tkinter import messagebox
@@ -257,7 +500,12 @@ def _ensure_webview2_runtime(logger) -> None:
     if check_webview2_installed():
         return
     logger.info("WebView2 Runtime 未安裝")
-    if not show_webview2_prompt():
+    try:
+        accepted = show_webview2_prompt()
+    except Exception as e:
+        logger.warning("[OpenAver] 提示視窗無法顯示：%s", e)
+        sys.exit(0)
+    if not accepted:
         logger.info("用戶取消安裝，程式結束")
         sys.exit(0)
     else:

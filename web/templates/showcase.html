@@ -905,8 +905,10 @@
                                  :src="currentLightboxVideo?.cover_full_url"
                                  @load="_lbFullLoaded=true"
                                  :class="{'lb-full-shown':_lbFullLoaded}"
+                                 @error="_handleLbFullError($event)"
                                  alt=""
                                  aria-hidden="true">
+                            <div class="lb-full-hint" x-show="_lbFullErrorPill && !_lbFullLoaded && !_maskVisible" x-cloak>{{ t('showcase.lightbox.cover_unavailable') }}</div>
 
                             <!-- T1（CD-4/§B-1a）：遮罩 DOM 抽共用 partial，逐字搬移自舊 707-730（含 99a-T3/98b-T6 註解，見 partial 檔案開頭） -->
                             {% include '_macros/focal_mask.html' %}

@@ -55,7 +55,7 @@ test('年齡 pill =37 正向命中 full', () => {
     assert.deepEqual(names, ['full']);
 });
 
-// ── 罩杯是「有序分級」不是「類別」：≤／≥ 依 CUP_RANK 比大小 ──────────────────
+// ── 罩杯是「有序分級」不是「類別」：≤／≥ 依 actressCupValue() 的名次比大小 ─────
 // spec-116c §4.4／:197（`≥B罩杯` 是正常顯示形式）與 :272（罩杯沒有自訂區間的理由
 // 正是「≤B／≥E 已涵蓋真實問題」）。spec-116 §1 的起點例子就是「B 罩杯以下」。
 // 這三條是 Codex PR review #132 P2 打出來的覆蓋洞：在此之前罩杯只有 `=` 有測試，
@@ -78,6 +78,24 @@ test('罩杯 ≤／≥ 與身高 pill 可交集（spec-116 §1 的起點例子�
         { dim: 'height', op: '<=', value: '160' },
     ]);
     assert.deepEqual(names, ['full', 'noAge'], 'full=160cm/B、noAge=155cm/A 同時符合');
+});
+
+// TASK-120-C1 AC-7：≥K 必須命中 L+。自建局部陣列，不得動上面的 ALL。
+test("罩杯 pill ≥K：cup:'L'／'Z' 回 true（AC-7，局部 list）", () => {
+    const pred = buildActressPillPredicate([{ dim: 'cup', op: '>=', value: 'K' }]);
+    const local = [
+        { name: 'k', cup: 'K' },
+        { name: 'l', cup: 'L' },
+        { name: 'z', cup: 'Z' },
+        { name: 'a', cup: 'A' },
+        { name: 'none', cup: null },
+    ];
+    assert.equal(pred({ cup: 'L' }), true);
+    assert.equal(pred({ cup: 'Z' }), true);
+    assert.deepEqual(
+        local.filter(pred).map((a) => a.name),
+        ['k', 'l', 'z'],
+    );
 });
 
 // ── 多 pill 交集 ───────────────────────────────────────────────────────────

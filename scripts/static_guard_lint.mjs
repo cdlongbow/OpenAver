@@ -3244,6 +3244,36 @@ const RULES = [
     file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: '/api/gallery/player',
     note: '[TestVideoPlaybackGuard] test_video_api_files_contain（JS 半邊，plan CD-96e-5 三分法未明列，96e-T3 研究補洞）',
   },
+  {
+    // CD-120a-11：playVideo 方法體內禁止 await——window.open 前若插入 await，
+    // 手機／區網按播放會被瀏覽器當廣告彈窗擋掉、什麼都不會發生。
+    file: 'web/static/js/pages/showcase/state-videos.js', kind: 'forbidden-string', pattern: 'await',
+    scope: { anchor: /playVideo\s*\(\s*path\s*\)\s*\{/, braceBalanced: true },
+    note: '[CD-120a-11] playVideo 內 window.open 前若插入 await，手機／區網按播放會被瀏覽器當廣告彈窗擋掉、什麼都不會發生',
+  },
+
+  // 120a-T1：.lb-full 原圖載不到時才會出現提示 pill。綁定必須是 img.lb-full 開標籤屬性
+  // （tag-scan class-tag），不得用裸 required-string——註解裡同一句話會 fail-open（FE-GUARD-03）。
+  {
+    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
+    tagName: 'img', className: 'lb-full',
+    required: ['@error="_handleLbFullError($event)"'],
+    note: '[120a-T1] .lb-full 必須綁 @error=_handleLbFullError，否則原圖載不到時封面區沒有提示',
+  },
+  {
+    file: 'web/static/css/pages/showcase.css', kind: 'required-string',
+    pattern: 'pointer-events: none',
+    scope: { anchor: /\.lb-full-hint\s*\{/, braceBalanced: true },
+    note: '[120a-T1] .lb-full-hint 必須 pointer-events:none，否則會擋住封面操作區／sparkle 點擊',
+  },
+  {
+    // 120a-T4：pill 可見性必須綁「圖沒載成功」。錨到 .lb-full-hint 開標籤
+    // （tag-scan class-tag），不得用裸 required-string——註解裡同一句話會 fail-open（FE-GUARD-03）。
+    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
+    tagName: 'div', className: 'lb-full-hint',
+    required: ['!_lbFullLoaded'],
+    note: '[120a-T4] 這個條件掉了，翻片時機不巧會在一張好好的封面上蓋一句「封面讀不到」',
+  },
 
   // ── 96e-T4：TestPageTransitionDomGuard / TestPageTransitionSettingsScopeGuard /
   // TestT4FooterStructure 三個混合 class 的 template/JS 半邊（CSS 半邊已由 96c

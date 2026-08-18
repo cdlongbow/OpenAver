@@ -970,6 +970,27 @@
     }
 }
 
+/* 120a-T1：.lb-full 原圖載不到時的提示 pill。pointer-events:none 是結構保證
+   （不擋 .cover-actions / sparkle 點擊），z-index:9 在 sparkle(8) 之上純視覺。 */
+.lb-full-hint {
+    position: absolute;
+    top: 0.75rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9;
+    pointer-events: none;
+    max-width: calc(100% - 1.5rem);
+    padding: 0.35rem 0.85rem;
+    border-radius: var(--radius-pill);
+    background: var(--surface-1);
+    color: var(--text-secondary);
+    font-size: var(--text-xs);
+    line-height: 1.4;
+    text-align: center;
+    border: 1px solid var(--stroke-subtle);
+    box-shadow: var(--shadow-sm);
+}
+
 /* Metadata Panel — 緊湊版（匹配原版 gallery） */
 /* 83a-T1 M4: 移除 max-width:600px，改 width:100% 對齊封面寬（modal shrink-to-fit 後即封面寬）。
    83a-T3-fix P1: flex:1 1 auto + min-height:0 讓 metadata 吃剩餘空間並自行捲動，

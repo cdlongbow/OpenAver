@@ -6,8 +6,6 @@
  * 零 import、零 Alpine 依賴。
  */
 
-export var CUP_RANK = { A:1, B:2, C:3, D:4, E:5, F:6, G:7, H:8, I:9, J:10, K:11 };
-
 export function actressAgeValue(a) {
     if (a.age == null) return null;
     var s = String(a.age).trim();
@@ -23,9 +21,12 @@ export function actressHeightValue(a) {
     return isNaN(h) ? null : h;
 }
 
-/** 沿用 || 非 ??：rank 表 1–11 恆 truthy，邊界永不觸發（CD-116a-1b）。 */
 export function actressCupValue(a) {
-    return CUP_RANK[a.cup] || null;
+    var c = a.cup;                                  // 保持與現行相同：a 為 null 時照樣拋（呼叫端一律傳物件）
+    if (typeof c !== 'string' || c.length !== 1) return null;
+    var code = c.charCodeAt(0);
+    if (code < 65 || code > 90) return null;        // 'A'=65 … 'Z'=90
+    return code - 64;                               // A=1 … Z=26
 }
 
 /**
