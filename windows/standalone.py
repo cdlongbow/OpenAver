@@ -136,8 +136,74 @@ def check_webview2_installed():
     return False
 
 
+# ============ 原生訊息視窗（Windows MessageBoxW）============
+WEBVIEW2_DOWNLOAD_URL = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
+MB_OK = 0x00000000
+MB_YESNO = 0x00000004
+MB_ICONERROR = 0x00000010
+MB_ICONWARNING = 0x00000030
+MB_SETFOREGROUND = 0x00010000
+MB_TOPMOST = 0x00040000
+IDYES = 6
+IDNO = 7
+
+
+def _win_message_box(text: str, caption: str, *, yes_no: bool) -> bool:
+    """Windows 原生訊息視窗（MessageBoxW）。ctypes 延遲 import（函式內），
+    因為 ctypes.windll 在 Linux 上不存在，module-level 取用會炸。
+    """
+    import ctypes
+
+    if yes_no:
+        flags = MB_YESNO | MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST
+    else:
+        flags = MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST
+
+    result = ctypes.windll.user32.MessageBoxW(0, text, caption, flags)
+    if result == 0:
+        raise RuntimeError("MessageBoxW failed")
+    if yes_no:
+        return result == IDYES
+    return True
+
+
 def show_webview2_prompt():
-    """顯示 WebView2 安裝提示"""
+    """顯示 WebView2 安裝提示。回傳值只表達使用者選擇（True=去下載/False=不要）。
+    顯示本身失敗時改為拋例外（CD-120b-7），呼叫端 _ensure_webview2_runtime() 負責接住。
+    """
+    if sys.platform == 'win32':
+        message = (
+            "OpenAver 需要 Microsoft Edge WebView2 Runtime 才能運行。\n\n"
+            "這是 Windows 10/11 的標準元件，但您的系統尚未安裝。\n\n"
+            "下載網址：" + WEBVIEW2_DOWNLOAD_URL + "\n\n"
+            "是否前往下載頁面？（約 2MB，安裝需 1 分鐘）"
+        )
+        # 第一段：顯示 + 取得選擇——失敗就讓例外往外穿，不吞
+        result = _win_message_box(message, "需要 WebView2 Runtime", yes_no=True)
+        if result:
+            # 第二段：開瀏覽器——獨立 try，這裡的失敗不得改變 result 或被誤判成「沒問成」
+            opened = False
+            try:
+                import webbrowser
+                opened = webbrowser.open(WEBVIEW2_DOWNLOAD_URL)
+            except Exception as e:
+                try:
+                    get_logger('standalone').warning(f"[OpenAver] 開啟瀏覽器失敗：{e}")
+                except Exception:  # noqa: S110 — logger may not be initialized; silent fallback is intentional
+                    pass
+            if not opened:
+                # 回 False（沒有預設瀏覽器）與拋例外是兩種不同的失敗形式，兩種都要留痕：
+                # 沒有這一行時，「按了是卻沒反應」的回報在 debug.log 裡完全是空白。
+                try:
+                    get_logger('standalone').warning(
+                        "[OpenAver] 瀏覽器未開啟，改以視窗顯示下載網址"
+                    )
+                except Exception:  # noqa: S110 — logger may not be initialized; silent fallback is intentional
+                    pass
+                show_error("需要 WebView2 Runtime", message)
+        return result
+
+    # 非 Windows：逐字不動（tkinter 現行實作）
     try:
         import tkinter as tk
         from tkinter import messagebox
@@ -173,6 +239,27 @@ def show_webview2_prompt():
 
 def show_error(title, message, details=None, logger=None):
     """顯示錯誤訊息視窗"""
+    if sys.platform == 'win32':
+        full_message = message
+        if details:
+            full_message += f"\n\n錯誤詳情：\n{details[:500]}"  # 限制詳情長度
+        try:
+            _win_message_box(full_message, title, yes_no=False)
+        except Exception:
+            if logger:
+                logger.error(f"{title}: {message}")
+                if details:
+                    logger.error(f"詳情: {details}")
+            else:
+                try:
+                    err_logger = get_logger('standalone')
+                    err_logger.error(f"{title}: {message}")
+                    if details:
+                        err_logger.error(f"Details: {details}")
+                except Exception:  # noqa: S110 — logger not yet initialized; silent fallback is intentional
+                    pass  # logger 未初始化時靜默失敗
+        return
+
     try:
         import tkinter as tk
         from tkinter import messagebox
@@ -334,7 +421,12 @@ def _ensure_webview2_runtime(logger) -> None:
     if check_webview2_installed():
         return
     logger.info("WebView2 Runtime 未安裝")
-    if not show_webview2_prompt():
+    try:
+        accepted = show_webview2_prompt()
+    except Exception as e:
+        logger.warning("[OpenAver] 提示視窗無法顯示：%s", e)
+        sys.exit(0)
+    if not accepted:
         logger.info("用戶取消安裝，程式結束")
         sys.exit(0)
     else:

@@ -5,8 +5,10 @@
 """
 from __future__ import annotations
 
+import logging
 import re
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -594,3 +596,351 @@ def test_exemption2_no_webview2_runtime_path_assignment():
     # 豁免清單必須以具名常數存在（不是靜默跳過）
     assert "CD-120b-2" in EXEMPTION_1_CD120B2_DOTNET_NAMEERROR
     assert "WEBVIEW2_RUNTIME_PATH" in EXEMPTION_2_WEBVIEW2_RUNTIME_PATH_SHORTCIRCUIT
+
+
+# ---------------------------------------------------------------------------
+# TASK-120b-T2: MessageBoxW 契約／兩段 try／三態 log
+# ---------------------------------------------------------------------------
+
+_WEBVIEW2_DOWNLOAD_URL = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
+_FLAGS_YES_NO = 0x50034
+_FLAGS_OK = 0x50010
+_PROMPT_DISPLAY_FAIL_MARK = "提示視窗無法顯示"
+_BROWSER_OPEN_FAIL_MARK = "開啟瀏覽器失敗"
+_LOG_USER_ACCEPTED = "請安裝 WebView2 後重新啟動"
+_LOG_USER_DECLINED = "用戶取消安裝，程式結束"
+
+
+class _FakeCtypes:
+    """Lets _win_message_box() run on Linux; MessageBoxW records args.
+
+    Injection shape matches _FakeDotnetWinreg: plant via
+    monkeypatch.setitem(sys.modules, "ctypes", ...).
+    """
+
+    def __init__(self, return_value):
+        self._return_value = return_value
+        self.calls: list[tuple] = []
+        self.windll = self
+        self.user32 = self
+
+    def MessageBoxW(self, hwnd, text, caption, flags):
+        self.calls.append((hwnd, text, caption, flags))
+        return self._return_value
+
+
+def _install_fake_ctypes(monkeypatch, return_value):
+    fake = _FakeCtypes(return_value)
+    monkeypatch.setitem(sys.modules, "ctypes", fake)
+    return fake
+
+
+class _FakeTk:
+    def withdraw(self):
+        return None
+
+    def destroy(self):
+        return None
+
+
+def _install_fake_tkinter(monkeypatch, *, askyesno_result=False):
+    """Plant tkinter so the non-Windows branch can run headless."""
+    calls = {"askyesno": [], "showerror": []}
+
+    msg_mod = types.ModuleType("tkinter.messagebox")
+
+    def askyesno(title, message):
+        calls["askyesno"].append((title, message))
+        return askyesno_result
+
+    def showerror(title, message):
+        calls["showerror"].append((title, message))
+
+    msg_mod.askyesno = askyesno
+    msg_mod.showerror = showerror
+
+    tk_mod = types.ModuleType("tkinter")
+    tk_mod.Tk = _FakeTk
+    tk_mod.messagebox = msg_mod
+
+    monkeypatch.setitem(sys.modules, "tkinter", tk_mod)
+    monkeypatch.setitem(sys.modules, "tkinter.messagebox", msg_mod)
+    return calls
+
+
+def _standalone_logger():
+    return logging.getLogger("OpenAver.standalone")
+
+
+def test_win_message_box_yes_no_flags(monkeypatch):
+    """yes_no=True → flags = MB_YESNO|MB_ICONWARNING|MB_SETFOREGROUND|MB_TOPMOST。"""
+    fake = _install_fake_ctypes(monkeypatch, return_value=standalone.IDYES)
+    result = standalone._win_message_box("text", "caption", yes_no=True)
+    assert result is True
+    assert fake.calls == [(0, "text", "caption", _FLAGS_YES_NO)]
+    flags = fake.calls[0][3]
+    assert flags & standalone.MB_YESNO
+    assert flags & standalone.MB_ICONWARNING
+    assert flags & standalone.MB_SETFOREGROUND
+    assert flags & standalone.MB_TOPMOST
+    assert flags == (
+        standalone.MB_YESNO
+        | standalone.MB_ICONWARNING
+        | standalone.MB_SETFOREGROUND
+        | standalone.MB_TOPMOST
+    )
+
+
+def test_win_message_box_ok_flags(monkeypatch):
+    """yes_no=False → flags = MB_OK|MB_ICONERROR|MB_SETFOREGROUND|MB_TOPMOST。"""
+    fake = _install_fake_ctypes(monkeypatch, return_value=1)
+    result = standalone._win_message_box("text", "caption", yes_no=False)
+    assert result is True
+    assert fake.calls == [(0, "text", "caption", _FLAGS_OK)]
+    flags = fake.calls[0][3]
+    assert flags & standalone.MB_ICONERROR
+    assert flags & standalone.MB_SETFOREGROUND
+    assert flags & standalone.MB_TOPMOST
+    assert flags == (
+        standalone.MB_OK
+        | standalone.MB_ICONERROR
+        | standalone.MB_SETFOREGROUND
+        | standalone.MB_TOPMOST
+    )
+
+
+def test_win_message_box_idyes_returns_true(monkeypatch):
+    """MessageBoxW 回傳 IDYES(6) → True（使用者按是）。"""
+    _install_fake_ctypes(monkeypatch, return_value=6)
+    assert standalone._win_message_box("t", "c", yes_no=True) is True
+
+
+def test_win_message_box_idno_returns_false(monkeypatch):
+    """MessageBoxW 回傳 IDNO(7) → False（使用者拒絕，不是呼叫失敗）。"""
+    _install_fake_ctypes(monkeypatch, return_value=7)
+    assert standalone._win_message_box("t", "c", yes_no=True) is False
+
+
+@pytest.mark.parametrize("yes_no", [True, False], ids=["yes_no", "ok"])
+def test_win_message_box_zero_raises(monkeypatch, yes_no):
+    """回傳 0＝Win32 呼叫失敗 → 拋例外，不得回 False（Bug C）。"""
+    _install_fake_ctypes(monkeypatch, return_value=0)
+    with pytest.raises(RuntimeError):
+        standalone._win_message_box("t", "c", yes_no=yes_no)
+
+
+def test_win_message_box_ok_nonzero_returns_true(monkeypatch):
+    """yes_no=False 時任何非 0 回傳皆視為成功關閉 → True。"""
+    _install_fake_ctypes(monkeypatch, return_value=1)
+    assert standalone._win_message_box("t", "c", yes_no=False) is True
+
+
+def test_show_webview2_prompt_windows_message_contains_download_url(monkeypatch):
+    """AC-2.3：Windows 分支提示文字含完整下載網址字面。"""
+    monkeypatch.setattr(standalone.sys, "platform", "win32")
+    fake = _install_fake_ctypes(monkeypatch, return_value=7)
+    result = standalone.show_webview2_prompt()
+    assert result is False
+    assert fake.calls, "MessageBoxW must be called on win32"
+    _hwnd, text, caption, flags = fake.calls[0]
+    assert _WEBVIEW2_DOWNLOAD_URL in text
+    assert standalone.WEBVIEW2_DOWNLOAD_URL in text
+    assert caption == "需要 WebView2 Runtime"
+    assert flags == _FLAGS_YES_NO
+
+
+def test_show_webview2_prompt_display_failure_propagates(monkeypatch):
+    """顯示失敗（MessageBoxW=0）必須穿出 show_webview2_prompt()，不得吞成 False。"""
+    monkeypatch.setattr(standalone.sys, "platform", "win32")
+    _install_fake_ctypes(monkeypatch, return_value=0)
+    with pytest.raises(RuntimeError):
+        standalone.show_webview2_prompt()
+
+
+def test_show_webview2_prompt_browser_open_false_still_returns_true(
+    monkeypatch, caplog
+):
+    """使用者按是 + webbrowser.open 回 False → 仍回 True，並另開含網址的 show_error。"""
+    monkeypatch.setattr(standalone.sys, "platform", "win32")
+    _install_fake_ctypes(monkeypatch, return_value=6)
+    import webbrowser
+
+    monkeypatch.setattr(webbrowser, "open", lambda _url: False)
+    error_calls: list[tuple] = []
+    monkeypatch.setattr(
+        standalone, "show_error", lambda *a, **k: error_calls.append((a, k))
+    )
+    with caplog.at_level(logging.WARNING):
+        result = standalone.show_webview2_prompt()
+    assert result is True
+    assert len(error_calls) == 1
+    assert _WEBVIEW2_DOWNLOAD_URL in error_calls[0][0][1]
+    assert _PROMPT_DISPLAY_FAIL_MARK not in caplog.text
+    # 回 False 這種失敗形式也要留痕（拋例外那條有自己的 log，兩者都不得靜默）
+    assert "瀏覽器未開啟" in caplog.text
+
+
+def test_show_webview2_prompt_browser_open_exception_still_returns_true(
+    monkeypatch, caplog
+):
+    """使用者按是 + webbrowser.open 拋例外 → 仍回 True；log 與「提示無法顯示」不同字串。"""
+    monkeypatch.setattr(standalone.sys, "platform", "win32")
+    _install_fake_ctypes(monkeypatch, return_value=6)
+    import webbrowser
+
+    def _boom(_url):
+        raise OSError("no browser")
+
+    monkeypatch.setattr(webbrowser, "open", _boom)
+    error_calls: list[tuple] = []
+    monkeypatch.setattr(
+        standalone, "show_error", lambda *a, **k: error_calls.append((a, k))
+    )
+    with caplog.at_level(logging.WARNING):
+        result = standalone.show_webview2_prompt()
+    assert result is True
+    assert len(error_calls) == 1
+    assert _WEBVIEW2_DOWNLOAD_URL in error_calls[0][0][1]
+    assert _BROWSER_OPEN_FAIL_MARK in caplog.text
+    assert _PROMPT_DISPLAY_FAIL_MARK not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "browser_fail",
+    ["return_false", "raise"],
+    ids=["open_false", "open_raises"],
+)
+def test_browser_open_failure_not_treated_as_display_failure(
+    monkeypatch, caplog, browser_fail
+):
+    """反向鎖：開瀏覽器失敗不得被判成沒問成；_ensure 走「請安裝後重新啟動」。"""
+    monkeypatch.setattr(standalone.sys, "platform", "win32")
+    monkeypatch.setattr(standalone, "check_webview2_installed", lambda: False)
+    _install_fake_ctypes(monkeypatch, return_value=6)
+    import webbrowser
+
+    if browser_fail == "return_false":
+        monkeypatch.setattr(webbrowser, "open", lambda _url: False)
+    else:
+
+        def _boom(_url):
+            raise OSError("no browser")
+
+        monkeypatch.setattr(webbrowser, "open", _boom)
+    monkeypatch.setattr(standalone, "show_error", lambda *_a, **_k: None)
+
+    prompt_result = standalone.show_webview2_prompt()
+    assert prompt_result is True
+
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(SystemExit) as ei:
+            standalone._ensure_webview2_runtime(_standalone_logger())
+    assert ei.value.code == 0
+    assert _LOG_USER_ACCEPTED in caplog.text
+    assert _PROMPT_DISPLAY_FAIL_MARK not in caplog.text
+    assert _LOG_USER_DECLINED not in caplog.text
+
+
+def test_show_webview2_prompt_non_windows_skips_win_message_box(monkeypatch):
+    """AC-2.4：非 win32 走 tkinter，_win_message_box／MessageBoxW 呼叫次數為 0；訊息不加網址。"""
+    monkeypatch.setattr(standalone.sys, "platform", "linux")
+    fake = _install_fake_ctypes(monkeypatch, return_value=6)
+    tk_calls = _install_fake_tkinter(monkeypatch, askyesno_result=False)
+    box_calls: list = []
+
+    def _unexpected(*_a, **_k):
+        box_calls.append(1)
+        return False
+
+    monkeypatch.setattr(standalone, "_win_message_box", _unexpected)
+    result = standalone.show_webview2_prompt()
+    assert result is False
+    assert box_calls == []
+    assert fake.calls == []
+    assert tk_calls["askyesno"], "tkinter messagebox.askyesno must be used"
+    _title, message = tk_calls["askyesno"][0]
+    assert _WEBVIEW2_DOWNLOAD_URL not in message
+
+
+def test_show_error_windows_uses_ok_message_box(monkeypatch):
+    """AC-2.5：Windows 分支 show_error 走 MessageBoxW(yes_no=False)，呼叫點簽章不變。"""
+    monkeypatch.setattr(standalone.sys, "platform", "win32")
+    fake = _install_fake_ctypes(monkeypatch, return_value=1)
+    standalone.show_error("啟動失敗", "伺服器啟動逾時。", None, None)
+    assert fake.calls
+    hwnd, text, caption, flags = fake.calls[0]
+    assert hwnd == 0
+    assert caption == "啟動失敗"
+    assert text == "伺服器啟動逾時。"
+    assert flags == _FLAGS_OK
+
+
+def test_show_error_windows_display_failure_is_swallowed(monkeypatch, caplog):
+    """show_error Windows 顯示失敗不得往外拋，退回寫 log。"""
+    monkeypatch.setattr(standalone.sys, "platform", "win32")
+    _install_fake_ctypes(monkeypatch, return_value=0)
+    logger = _standalone_logger()
+    with caplog.at_level(logging.ERROR, logger="OpenAver.standalone"):
+        standalone.show_error("啟動失敗", "伺服器啟動逾時。", None, logger)
+    assert "啟動失敗" in caplog.text
+    assert "伺服器啟動逾時。" in caplog.text
+
+
+def test_show_error_non_windows_skips_win_message_box(monkeypatch):
+    """非 Windows 的 show_error 逐字走 tkinter，不呼叫 MessageBoxW。"""
+    monkeypatch.setattr(standalone.sys, "platform", "linux")
+    fake = _install_fake_ctypes(monkeypatch, return_value=1)
+    tk_calls = _install_fake_tkinter(monkeypatch)
+    standalone.show_error("啟動失敗", "伺服器啟動逾時。")
+    assert fake.calls == []
+    assert tk_calls["showerror"]
+
+
+def test_ensure_webview2_runtime_user_accepted_log(monkeypatch, caplog):
+    """使用者按是 → 現行字串「請安裝 WebView2 後重新啟動」＋ exit(0)。"""
+    monkeypatch.setattr(standalone.sys, "platform", "win32")
+    monkeypatch.setattr(standalone, "check_webview2_installed", lambda: False)
+    monkeypatch.setattr(standalone, "show_webview2_prompt", lambda: True)
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(SystemExit) as ei:
+            standalone._ensure_webview2_runtime(_standalone_logger())
+    assert ei.value.code == 0
+    assert _LOG_USER_ACCEPTED in caplog.text
+    assert _LOG_USER_DECLINED not in caplog.text
+    assert _PROMPT_DISPLAY_FAIL_MARK not in caplog.text
+
+
+def test_ensure_webview2_runtime_user_declined_log(monkeypatch, caplog):
+    """使用者按否 → 現行字串「用戶取消安裝，程式結束」＋ exit(0)。"""
+    monkeypatch.setattr(standalone.sys, "platform", "win32")
+    monkeypatch.setattr(standalone, "check_webview2_installed", lambda: False)
+    monkeypatch.setattr(standalone, "show_webview2_prompt", lambda: False)
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(SystemExit) as ei:
+            standalone._ensure_webview2_runtime(_standalone_logger())
+    assert ei.value.code == 0
+    assert _LOG_USER_DECLINED in caplog.text
+    assert _LOG_USER_ACCEPTED not in caplog.text
+    assert _PROMPT_DISPLAY_FAIL_MARK not in caplog.text
+
+
+def test_ensure_webview2_runtime_display_failure_log_has_no_cancel(
+    monkeypatch, caplog
+):
+    """顯示失敗 → 新 log 不含「取消」；exit(0)；不得走取消／已接受字串。"""
+    monkeypatch.setattr(standalone.sys, "platform", "win32")
+    monkeypatch.setattr(standalone, "check_webview2_installed", lambda: False)
+    _install_fake_ctypes(monkeypatch, return_value=0)
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(SystemExit) as ei:
+            standalone._ensure_webview2_runtime(_standalone_logger())
+    assert ei.value.code == 0
+    fail_msgs = [
+        rec.getMessage()
+        for rec in caplog.records
+        if _PROMPT_DISPLAY_FAIL_MARK in rec.getMessage()
+    ]
+    assert fail_msgs, caplog.text
+    assert all("取消" not in msg for msg in fail_msgs)
+    assert _LOG_USER_DECLINED not in caplog.text
+    assert _LOG_USER_ACCEPTED not in caplog.text
