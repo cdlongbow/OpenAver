@@ -33,6 +33,7 @@ from typing import Callable, Optional
 
 from core import thumbnail_cache
 from core.config import STEM_IMAGE_MODES, iter_gallery_sources, normalize_external_manager
+from core.cover_attributes import effective_tags
 from core.cover_layout import nfo_image_flag, resolve_cover_target, same_target_verdict
 from core.database import Video, get_db_path
 from core.enrich_contract import (
@@ -1140,6 +1141,7 @@ def _write_movie_assets(
     # Always written (P1 revert, round-3 review 2026-07-21) — see the
     # write_nfo paragraph in this function's docstring for why a skip-NFO
     # gate is never reintroduced here.
+    meta['tags'] = effective_tags(os.path.basename(source_fs_path), meta.get('tags', []))
     nfo_fs = base_stem + '.nfo'
     nfo_ok = generate_nfo(
         number=meta['number'],
