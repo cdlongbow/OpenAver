@@ -8,7 +8,7 @@
  * 從 state-base.js import 共用大陣列（F1：移出 Alpine reactive scope）。
  */
 
-import { _filteredVideos, _filteredActresses, _killLightboxTimelines, _NO_COVER_PLACEHOLDER } from '@/showcase/state-base.js';
+import { _filteredVideos, _filteredActresses, _killLightboxTimelines, _NO_COVER_PLACEHOLDER, _recomputeVideoBadges } from '@/showcase/state-base.js';
 import { POSTER_CROP_MAX_W } from '@/shared/breakpoints.js';
 import { detectSwipe } from '@/shared/swipe.js';
 import { isHorizontalWheel, isVerticalWheel, createWheelNav } from '@/shared/wheel-nav.js';
@@ -1613,6 +1613,7 @@ export function stateLightbox() {
                 const data = await resp.json();
                 if (data.success) {
                     this.currentLightboxVideo.user_tags = data.user_tags;
+                    _recomputeVideoBadges(this.currentLightboxVideo);
                 } else {
                     throw new Error(data.error || 'API failed');
                 }
@@ -1646,6 +1647,7 @@ export function stateLightbox() {
                 const data = await resp.json();
                 if (data.success) {
                     this.currentLightboxVideo.user_tags = data.user_tags;
+                    _recomputeVideoBadges(this.currentLightboxVideo);
                 } else {
                     throw new Error(data.error || 'API failed');
                 }
@@ -1735,6 +1737,7 @@ export function stateLightbox() {
                     // Object.assign 前 reset，讓補封面/重抓的新 cover_url（含上面 &t= cache-bust）重走 skeleton→@load→淡入。
                     if (data.video.cover_url) video._imgLoaded = false;
                     Object.assign(video, data.video);
+                    _recomputeVideoBadges(video);
                     // BUGfix-lightbox-cover-stale: 若燈箱正開在這支影片，重置 blur-up overlay，
                     // 讓 cover_full_url（已 bust）重新觸發 @load → _lbFullLoaded 淡入。
                     // 用 === video 守住：燈箱開在別支影片時不誤 reset。

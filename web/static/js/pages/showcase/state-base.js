@@ -10,6 +10,7 @@
 // 門檻 reuse 既有單一真理常數，不裸寫 899（plan-101d CD-1）。
 import { POSTER_CROP_MAX_W } from '@/shared/breakpoints.js';
 import { serializePills, deserializePills } from '@/shared/pill-filter.js';
+import { computeBadges, resolveEnabledIds } from '@/shared/cover-badges.js';
 
 // 53a codex F3: $persist 對 localStorage 壞 JSON 沒 try/catch（會在 Alpine init 階段拋錯炸整頁），
 // 必須在 Alpine.data 註冊前先清掃壞值，讓 $persist fallback 走預設物件
@@ -169,6 +170,32 @@ export async function _loadCoverBadgeManifest() {
     _coverBadgeManifestLoaded = true;
 }
 
+function _resolveCoverBadgeEnabledIds() {
+    // window 在 node:test 不存在；沿用 restoreState 的 `window.__SHOWCASE_CONFIG__ || {}`
+    var showcaseCfg = (typeof window !== 'undefined' && window.__SHOWCASE_CONFIG__) || {};
+    return resolveEnabledIds(_coverBadgeRules, showcaseCfg.cover_badges);
+}
+
+/**
+ * 121c-T3: 單片寫入 video._badges。enabledIds 可傳入（全量重算時只算一次）；
+ * 省略則現讀 config。video 為 falsy 直接 return。
+ */
+export function _recomputeVideoBadges(video, enabledIds) {
+    if (!video) return;
+    var ids = Array.isArray(enabledIds) ? enabledIds : _resolveCoverBadgeEnabledIds();
+    video._badges = computeBadges(video, _coverBadgeRules, _tagToGroup, ids);
+}
+
+/**
+ * 121c-T3: 對 _videos 每一筆呼叫 _recomputeVideoBadges。enabledIds 只算一次。
+ */
+export function _recomputeAllBadges() {
+    var enabledIds = _resolveCoverBadgeEnabledIds();
+    for (var i = 0; i < _videos.length; i++) {
+        _recomputeVideoBadges(_videos[i], enabledIds);
+    }
+}
+
 // 41c B-lite: 無封面 placeholder SVG (cover 載入失敗時 handleCoverError 換上)
 // viewBox 800x600 對齊 lightbox 4:3，grid card aspect-ratio:3/2 會 crop 上下少許但不影響 icon 居中
 // 設計：暗色漸層背景 + 中央 image-frame icon (邊框+太陽+山形)
@@ -321,6 +348,7 @@ export function stateBase() {
             await _loadAliasMap();      // 45-P2: 無條件載入 alias map（影片搜尋也需要）
             await _loadTagAliasMap();   // A3-4: 無條件載入 tag alias map
             await _loadCoverBadgeManifest();
+            _recomputeAllBadges();
             if (this.showFavoriteActresses) { this.loadActresses(); }
             this.applyFilterAndSort(true);  // M4a: 套用搜尋篩選（跳過 pagination，下面統一處理）
             this.page = savedPage;          // 恢復儲存的頁碼

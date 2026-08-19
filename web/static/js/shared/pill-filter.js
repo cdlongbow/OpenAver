@@ -70,7 +70,7 @@ export function mergeTagTokens(video) {
 }
 
 // D5：alias 展開的雙 key 查表 + 值正規化。
-function _buildAliasSet(pillValue, groupMap) {
+export function _buildAliasSet(pillValue, groupMap) {
     var norm = normalizePillValue(pillValue);
     var set = new Set([norm]);  // pill 自身的正規化值恆在集合內（即使查無 alias group）
     var candidateKeys = [norm, String(pillValue).trim().toLowerCase()];
