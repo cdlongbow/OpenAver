@@ -6,7 +6,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 4ch; /* spec §5.2: 以 LEAK 為基準 */
+    min-width: 5ch; /* spec §5.2：以 LEAK（4 拉丁字，最寬）為基準的定寬——三顆疊起來右緣才齊 */
     padding: var(--spacing) calc(var(--spacing) * 1.5);
     font-size: var(--text-xs); /* 12px 級距 */
     font-weight: 600;
