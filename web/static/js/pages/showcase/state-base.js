@@ -143,9 +143,9 @@ export async function _loadCoverBadgeManifest() {
                 data.forEach(function (item) {
                     if (!item) return;
                     var canonical = item.canonical_tag;
-                    var shortName = item.short_name;
-                    if (!canonical || !shortName) return;
-                    _mergeAliasPair(_tagToGroup, canonical, shortName);
+                    var displayName = item.display_name;
+                    if (!canonical || !displayName) return;
+                    _mergeAliasPair(_tagToGroup, canonical, displayName);
                 });
             }
         }

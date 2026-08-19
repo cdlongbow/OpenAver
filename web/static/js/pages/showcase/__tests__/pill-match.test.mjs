@@ -448,11 +448,11 @@ test('alias group 值不是陣列時（壞掉的 map）視為查無 group，不�
 // 重複呼叫 shared loader）；cold/warm 才打 shared 的 init()。
 
 const COVER_BADGE_MANIFEST_FIVE = [
-    { id: 'zh-sub', canonical_tag: '中文字幕', short_name: '中字', display_order: 1, i18n_key: 'cover.zh_sub' },
-    { id: 'uncen-crack', canonical_tag: '無碼破解', short_name: '破解', display_order: 2, i18n_key: 'cover.crack' },
-    { id: 'uncen-leak', canonical_tag: '無碼流出', short_name: '流出', display_order: 3, i18n_key: 'cover.leak' },
-    { id: '4k', canonical_tag: '4K', short_name: '4K', display_order: 4, i18n_key: 'cover.4k' },
-    { id: 'vr', canonical_tag: 'VR', short_name: 'VR', display_order: 5, i18n_key: 'cover.vr' },
+    { id: 'zh-sub', canonical_tag: '中文字幕', display_name: '中字', display_order: 1, i18n_key: 'cover.zh_sub' },
+    { id: 'uncen-crack', canonical_tag: '無碼破解', display_name: '破解', display_order: 2, i18n_key: 'cover.crack' },
+    { id: 'uncen-leak', canonical_tag: '無碼流出', display_name: '流出', display_order: 3, i18n_key: 'cover.leak' },
+    { id: '4k', canonical_tag: '4K', display_name: '4K', display_order: 4, i18n_key: 'cover.4k' },
+    { id: 'vr', canonical_tag: 'VR', display_name: 'VR', display_order: 5, i18n_key: 'cover.vr' },
 ];
 
 async function importFreshStateBase(tag) {
@@ -520,7 +520,7 @@ test('mergeAliasPair 三方群組合併：繁中/簡中 也能查到 中字', as
     }
 });
 
-test('mergeAliasPair canonical 與 short_name 相同（4K/VR）不重複不拋例外', async () => {
+test('mergeAliasPair canonical 與 display_name 相同（4K/VR）不重複不拋例外', async () => {
     const { _mergeAliasPair } = await import('../state-base.js');
     assert.equal(typeof _mergeAliasPair, 'function', '_mergeAliasPair 必須存在');
     const map = {};

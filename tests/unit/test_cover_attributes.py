@@ -9,7 +9,7 @@ _CANONICAL_TAGS = frozenset(
     {"中文字幕", "無碼破解", "無碼流出", "4K", "VR"}
 )
 _MANIFEST_KEYS = frozenset(
-    {"id", "canonical_tag", "short_name", "display_order", "i18n_key"}
+    {"id", "canonical_tag", "display_name", "match_aliases", "display_order", "i18n_key"}
 )
 
 
@@ -176,7 +176,7 @@ def test_b14_does_not_mutate_input():
 # ── 邊界 15 ─────────────────────────────────────────────────────────────────
 
 def test_b15_manifest_payload_shape():
-    """5 筆、欄位恰為指定 5 個 key、不含 tokens/source、display_order 符合表格。"""
+    """5 筆、欄位恰為指定 6 個 key、不含 tokens/source、display_order 符合表格。"""
     payload = manifest_payload()
     assert len(payload) == 5
     assert [row["id"] for row in payload] == [
@@ -199,6 +199,50 @@ def test_b15_manifest_payload_shape():
         "vr": 3,
     }
     assert len(ATTRIBUTE_TABLE) == 5
+
+
+def test_b15b_display_name_and_match_aliases_literals():
+    """121c-T1：display_name / match_aliases 寫死字面（BE-TEST-01）。
+
+    鎖 cracked→AI、leaked→LEAK、克破 ∈ cracked.match_aliases；
+    另鎖 match_aliases[0]==canonical、與 tokens 不相等也不互相包含。
+    """
+    by_id = {rule.id: rule for rule in ATTRIBUTE_TABLE}
+    expected_display = {
+        "subtitle": "中字",
+        "cracked": "AI",
+        "leaked": "LEAK",
+        "4k": "4K",
+        "vr": "VR",
+    }
+    expected_aliases = {
+        "subtitle": ("中文字幕", "中字", "字幕"),
+        "cracked": ("無碼破解", "破解", "克破", "AI"),
+        "leaked": ("無碼流出", "流出", "leak"),
+        "4k": ("4K",),
+        "vr": ("VR",),
+    }
+    for rule_id, display in expected_display.items():
+        rule = by_id[rule_id]
+        assert rule.display_name == display, rule_id
+        assert rule.match_aliases == expected_aliases[rule_id], rule_id
+        assert rule.match_aliases[0] == rule.canonical_tag, rule_id
+
+    cracked = by_id["cracked"]
+    assert "克破" in cracked.match_aliases
+    assert "字幕" in by_id["subtitle"].match_aliases
+    assert "leak" in by_id["leaked"].match_aliases
+    assert "-U" not in cracked.match_aliases
+    assert "AI" not in cracked.tokens
+    assert set(cracked.match_aliases) != set(cracked.tokens)
+    assert not set(cracked.match_aliases).issubset(set(cracked.tokens))
+    assert not set(cracked.tokens).issubset(set(cracked.match_aliases))
+
+    payload = manifest_payload()
+    payload_by_id = {row["id"]: row for row in payload}
+    assert payload_by_id["cracked"]["display_name"] == "AI"
+    assert payload_by_id["leaked"]["display_name"] == "LEAK"
+    assert "克破" in payload_by_id["cracked"]["match_aliases"]
 
 
 # ── 邊界 16 ─────────────────────────────────────────────────────────────────
