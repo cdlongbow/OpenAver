@@ -76,6 +76,56 @@ def _nfo_to_meta(root: ET.Element) -> dict:
     }
 
 
+def _resolve_subtitle_and_tags(fs_path: str, meta: dict) -> tuple:
+    """回傳 (has_subtitle, 合併後的 tags)。
+
+    CD-7：字幕偵測不能只看 sidecar .srt，檔名標記（-C/_C/中文字幕…）也要算數，
+    否則同一支片「補齊資料」跟「拖進搜尋頁整理」（`core/organizer.py` 已是兩者 or）
+    會出現不對稱結果。
+
+    CD-9：屬性 tag（中文字幕／VR／4K…）只在這裡算一次，讓下游 `_write_nfo()` 與
+    `_db_upsert()` 共讀同一份合併結果（不得各自再算一次）。
+    """
+    basename = os.path.basename(fs_path)
+    has_subtitle = check_subtitle(basename) or bool(find_subtitle_files(fs_path))
+    base_tags = list(meta.get('tags', []) or [])
+    if has_subtitle:
+        base_tags.append('中文字幕')
+    return has_subtitle, effective_tags(basename, base_tags)
+
+
+def _sync_tags_to_db(repo, path_uri: str, tags: list, number: str) -> None:
+    """把合併後的 tags 同步進 DB（CD-9 延伸）。
+
+    `source_used` 為 "db"/"nfo"/"" 時 `enrich_single()` 裡那個 `_db_upsert()` 的 if
+    不會跑，DB 的 tags 就永遠不會同步——**這裡是那三種來源唯一的 DB 同步點**。
+    `source_used == "scraper"` 時 `_db_upsert()` 已寫過同一份 tags，這裡比對相同、
+    no-op（`update_tags_if_changed` 內建「不變不寫」）。
+
+    錯誤隔離比照 `_db_upsert()`：呼叫到這裡時 NFO／封面／其他 DB 欄位都已寫成功，
+    不能讓 sqlite 例外（busy/locked）穿透出去把「部分成功」誤報成「整體失敗」
+    ——使用者會看到「補齊資料失敗」而重按，實際上檔案早就寫好了。
+    """
+    try:
+        repo.update_tags_if_changed(path_uri, tags)
+    except Exception as e:
+        logger.warning("tags 同步失敗 (%s): %s", number, e)
+
+
+def _pick_row_for_path(videos: list, path_uri: str) -> Video:
+    """同番號可能有多列（cd1/cd2、-4k/-uc 變體；見 config 的 suffix_keywords 預設值），
+    優先挑路徑與當前檔案相符的那一列，挑不到才退回第一列。
+
+    Why（PR #145 Codex P1）：舊碼無條件取 `videos[0]`，卻把結果寫進**當前檔案**的
+    `path_uri`——同番號多檔案時等於用另一支片的資料覆蓋這一支。退回第一列保留既有
+    行為，所以單檔情境（既有測試與絕大多數真實片庫）逐字不變。
+    """
+    for video in videos:
+        if video.path == path_uri:
+            return video
+    return videos[0]
+
+
 def _video_to_meta(video: Video) -> dict:
     return {
         "title": video.title,
@@ -392,6 +442,8 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
         return _empty
 
     repo = VideoRepository()
+    # 提前算：DB 選列（_pick_row_for_path）與後面的 user_tags 讀取共用同一個 key
+    path_uri = to_file_uri(fs_path_for_db)  # db-ns-ok: fs_path_for_db, DB round-trip value, no reverse mapping applied
     meta: dict = {}
     source_used = ""
     fields_filled: List[str] = []
@@ -415,7 +467,7 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
             _empty.error = f"DB 中找不到 {number} 的資料"
             _empty.reason = "not_found"
             return _empty
-        meta = _video_to_meta(videos[0])
+        meta = _video_to_meta(_pick_row_for_path(videos, path_uri))
         source_used = "db"
 
     else:
@@ -423,7 +475,7 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
         videos = db_hits.get(number, [])
 
         if videos:
-            meta = _video_to_meta(videos[0])
+            meta = _video_to_meta(_pick_row_for_path(videos, path_uri))
             source_used = "db"
         else:
             nfo_p = Path(fs_path).with_suffix(".nfo")
@@ -447,20 +499,9 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
             meta, fields_filled = _merge_meta(meta, supplement)
             source_used = scraper_data.get("source", "scraper") or "scraper"
 
-    # CD-7：字幕偵測不能只看 sidecar .srt，檔名標記（-C/_C/中文字幕…）也要算數，
-    # 否則同一支片「補齊資料」跟「拖進搜尋頁整理」（core/organizer.py:1035 已是
-    # 兩者 or）會出現不對稱結果。
-    has_subtitle = check_subtitle(os.path.basename(fs_path)) or bool(find_subtitle_files(fs_path))
+    has_subtitle, meta['tags'] = _resolve_subtitle_and_tags(fs_path, meta)
 
-    # CD-9：屬性 tag（中文字幕／VR／4K…）只算一次、回寫 meta['tags']，讓下游
-    # _write_nfo() 與 _db_upsert() 共讀同一份合併結果（不得各自再算一次）。
-    _base_tags = list(meta.get('tags', []) or [])
-    if has_subtitle:
-        _base_tags.append('中文字幕')
-    meta['tags'] = effective_tags(os.path.basename(fs_path), _base_tags)
-
-    # 讀取 DB 現有 user_tags，在 NFO 寫出和 DB upsert 時保留
-    path_uri = to_file_uri(fs_path_for_db)  # db-ns-ok: fs_path_for_db, DB round-trip value, no reverse mapping applied
+    # 讀取 DB 現有 user_tags，在 NFO 寫出和 DB upsert 時保留（path_uri 已於函式開頭算好）
     existing_record = repo.get_by_path(path_uri)
     preserved_user_tags = existing_record.user_tags if existing_record else []
 
@@ -575,18 +616,7 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
                 repo, path_uri, number, meta.get("maker"), local_cover, path_mappings
             )
 
-    # CD-9 延伸：source_used 為 "db"/"nfo"/"" 時 :536 的 if 不會跑 _db_upsert()，
-    # DB 的 tags 就永遠不會同步——這一行是那三種來源唯一的 DB 同步點。
-    # source_used=="scraper" 時 _db_upsert() 已寫過同一份 meta['tags']，這裡比對
-    # 相同、no-op（update_tags_if_changed 內建「不變不寫」）。重用已算好的
-    # path_uri（:451），不重算 URI。
-    # 錯誤隔離比照 _db_upsert()：NFO／封面／其他 DB 欄位此時都已寫成功，不能讓
-    # 這一行的 sqlite 例外（busy/locked）穿透出去，把「部分成功」誤報成「整體失敗」
-    # ——使用者會看到「補齊資料失敗」而重按，實際上檔案早就寫好了。
-    try:
-        repo.update_tags_if_changed(path_uri, meta.get('tags', []))
-    except Exception as e:
-        logger.warning("tags 同步失敗 (%s): %s", number, e)
+    _sync_tags_to_db(repo, path_uri, meta.get('tags', []), number)
 
     _sync_nfo_mtime(repo, fs_path, fs_path_for_db, number)
 

@@ -527,3 +527,55 @@ def test_tags_sync_failure_does_not_fail_the_whole_enrich(tmp_path, repo):
     assert result.success is True
     # 例外沒有穿透：流程一路跑到底（source_used 是回傳前才填的欄位）
     assert result.source_used == "nfo"
+
+
+# ── 邊界 10：同番號多檔案時，寫回的是「這個檔案自己那一列」 ────────────────────
+# 來源：PR #145 Codex P1。`enrich_single()` 用番號查 DB（get_by_numbers），
+# 回傳的是**一串**（cd1/cd2、-4k/-uc 變體共用同一個番號，本專案 suffix_keywords
+# 明文支援這種擺法），舊寫法無條件取 videos[0]，卻把結果寫進「當前檔案」的
+# path_uri —— 等於用另一支片的資料覆蓋這一支。
+# 這個選錯列的缺陷早於 121a（sidecar NFO 一直有），但 121a 新增的 DB 同步點
+# 讓它第一次咬到 videos.tags：source_used 為 db/nfo 時舊碼根本不寫 DB。
+
+def test_boundary10_same_number_multi_file_uses_own_row(tmp_path, repo):
+    """同番號兩列、tags 不同 → 補完 cd2 不得被 cd1 的 tags 覆蓋。"""
+    cd1 = tmp_path / "ABC-123-cd1.mp4"
+    cd2 = tmp_path / "ABC-123-cd2.mp4"
+    cd1.write_bytes(b"stub")
+    cd2.write_bytes(b"stub")
+
+    cd1_uri = to_file_uri(str(cd1))
+    cd2_uri = to_file_uri(str(cd2))
+    # cd1 先寫入 → 它會是 get_by_numbers 回傳串列的第一筆
+    repo.upsert(_make_db_video("ABC-123", cd1_uri, tags=["中文字幕", "Drama"]))
+    repo.upsert(_make_db_video("ABC-123", cd2_uri, tags=["Drama"]))
+
+    patches = _patches(repo)
+    with patches[0], patches[1], patches[2]:
+        from core.enricher import enrich_single
+        result = enrich_single(
+            file_path=str(cd2),
+            number="ABC-123",
+            mode="fill_missing",
+            write_nfo=True,
+            write_cover=False,
+        )
+
+    assert result.success is True
+
+    cd2_row = repo.get_by_path(cd2_uri)
+    assert cd2_row is not None
+    # cd2 的檔名沒有字幕 token、DB 那一列也沒有「中文字幕」→ 補完後不該長出來
+    assert "中文字幕" not in cd2_row.tags, (
+        f"cd2 被 cd1 的 tags 覆蓋了：{cd2_row.tags}（選錯 DB 列）"
+    )
+    assert "Drama" in cd2_row.tags
+
+    # 連帶：寫出的 NFO 也不該帶上 cd1 的標籤
+    nfo_text = _read_nfo(cd2.with_suffix(".nfo"))
+    assert "<tag>中文字幕</tag>" not in nfo_text
+
+    # cd1 那一列不得被這次呼叫動到
+    cd1_row = repo.get_by_path(cd1_uri)
+    assert cd1_row is not None
+    assert "中文字幕" in cd1_row.tags
