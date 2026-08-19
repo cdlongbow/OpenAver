@@ -24,7 +24,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 // ===== Part A の純函式 import（無 window 依賴，可靜態 import） =====
-import { buildPillPredicate } from '../../../shared/pill-filter.js';
+import { buildPillPredicate, mergeTagTokens } from '../../../shared/pill-filter.js';
 
 // ===== Part B 的 resolve hook + window stub（FE-GUARD-11，照抄 T1 pill-state.test.mjs） =====
 
@@ -64,12 +64,14 @@ export async function resolve(specifier, context, nextResolve) {
 register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.url);
 
 const { stateVideos } = await import('../state-videos.js');
+const stateBaseMod = await import('../state-base.js');
 const {
     _setVideos,
     _filteredVideos,
     _loadAliasMap,
     _loadTagAliasMap,
-} = await import('../state-base.js');
+    stateBase,
+} = stateBaseMod;
 
 // ===== Part B 用的 alias map 種子資料：以 stub fetch 呼叫真正的 _loadAliasMap/_loadTagAliasMap =====
 // _nameToGroup/_tagToGroup 是 state-base.js 的模組層級變數，_loadAliasMap()/_loadTagAliasMap()
@@ -93,6 +95,14 @@ const {
                 ok: true,
                 json: async () => ({ groups: [{ primary_name: '女僕', aliases: ['メイド'] }] }),
             };
+        }
+        // 121b-T2：cover-badge manifest 端點。這個 seed 區塊只呼叫 _loadAliasMap()/
+        // _loadTagAliasMap()，目前不會打到這個 URL——留著是 fail-safe：日後若有人在此
+        // seed manifest（或既有 loader 多打一次 fetch），才不會撞上下面那行 throw。
+        // 刻意回空陣列：seed 階段不消耗 _coverBadgeManifestLoaded 冪等 guard，
+        // 讓下面各 loader 測試自己決定要載入什麼。
+        if (url === '/api/cover-badges/manifest') {
+            return { ok: true, json: async () => [] };
         }
         throw new Error('pill-match.test.mjs: unexpected fetch url ' + url);
     };
@@ -168,9 +178,53 @@ test('未知 dim（如 typo）→ predicate 對任何影片皆回傳 false（fai
     assert.equal(predicate({}), false);
 });
 
-test('user_tags 不參與：tags 不含 X、user_tags 含 X → tag pill X 不 match 該影片（D7，spec §4.3）', () => {
+test('user_tags 參與：tags 不含 X、user_tags 含 X → tag pill X match 該影片（D7 反轉）', () => {
+    // 這裡曾經鎖 user_tags 不參與的舊行為（spec-115 §4.3），121b 刻意行為升級
+    const predicate = buildPillPredicate([{ dim: 'tag', value: 'X' }], {}, {});
+    assert.equal(predicate({ tags: 'Y', user_tags: ['X'] }), true);
+});
+
+test('mergeTagTokens：tags 空、user_tags 陣列含 中字 → 結果含 中字；tag pill 中字 match（邊界 1）', () => {
+    const video = { tags: '', user_tags: ['中字'] };
+    assert.ok(mergeTagTokens(video).includes('中字'));
+    const predicate = buildPillPredicate([{ dim: 'tag', value: '中字' }], {}, {});
+    assert.equal(predicate(video), true);
+});
+
+test('mergeTagTokens：user_tags 非陣列（undefined / null / 數字）不拋例外，結果等同只有 tags（邊界 3）', () => {
+    const tagsOnly = mergeTagTokens({ tags: 'Y' });
+    assert.doesNotThrow(() => {
+        assert.deepEqual(mergeTagTokens({ tags: 'Y', user_tags: undefined }), tagsOnly);
+        assert.deepEqual(mergeTagTokens({ tags: 'Y', user_tags: null }), tagsOnly);
+        assert.deepEqual(mergeTagTokens({ tags: 'Y', user_tags: 42 }), tagsOnly);
+        assert.deepEqual(mergeTagTokens({ tags: 'Y', user_tags: { X: true } }), tagsOnly);
+    });
+});
+
+test('mergeTagTokens：user_tags 為字串 X 不拋例外，結果等同只有 tags（邊界 3 字串格）', () => {
+    const tagsOnly = mergeTagTokens({ tags: 'Y' });
+    assert.doesNotThrow(() => {
+        assert.deepEqual(mergeTagTokens({ tags: 'Y', user_tags: 'X' }), tagsOnly);
+    });
     const predicate = buildPillPredicate([{ dim: 'tag', value: 'X' }], {}, {});
     assert.equal(predicate({ tags: 'Y', user_tags: 'X' }), false);
+});
+
+test('mergeTagTokens：user_tags 空值成員被濾掉，不產生假的空 token 命中（邊界 4）', () => {
+    const tokens = mergeTagTokens({ tags: 'Y', user_tags: ['', '   ', null] });
+    assert.ok(!tokens.includes(''));
+    const predicate = buildPillPredicate([{ dim: 'tag', value: '' }], {}, {});
+    assert.equal(predicate({ tags: 'Y', user_tags: ['', '   ', null] }), false);
+});
+
+test('CD-4 疊加不縮小：tags 含 痴女、user_tags 含無關的 重看 → tag pill 痴女仍 match（邊界 5）', () => {
+    const predicate = buildPillPredicate([{ dim: 'tag', value: '痴女' }], {}, {});
+    assert.equal(predicate({ tags: '痴女', user_tags: ['重看'] }), true);
+});
+
+test('actress 路徑不受 user_tags 影響：actresses 為 A、user_tags 含 B → actress pill B 不 match（邊界 6）', () => {
+    const predicate = buildPillPredicate([{ dim: 'actress', value: 'B' }], {}, {});
+    assert.equal(predicate({ actresses: 'A', user_tags: ['B'] }), false);
 });
 
 test('空 pill 列表（pills: []）→ buildPillPredicate 對任何影片皆回傳 true，不過濾任何影片（D2）', () => {
@@ -278,6 +332,86 @@ test('自由文字回歸（DoD ②）：tag alias 展開，零 pill', () => {
     assert.equal(_filteredVideos.length, 1);
 });
 
+// =====================================================================
+// TASK-121b-T3 — B1／B4 端到端（真正的 applyFilterAndSort 接線）
+// =====================================================================
+//
+// 假設（測試順序敏感）：本區塊註冊在 Part B、早於檔尾 121b-T2 的
+// CoverBadgeManifest 測試。跑到這裡時：
+//   - `_tagToGroup` 只有頂層 seed 的 女僕/メイド（不得覆寫）
+//   - `_coverBadgeManifestLoaded` 仍為 false
+// 因此就地改屬性併入短名對，不呼叫 `_loadCoverBadgeManifest()`——
+// 若改走 loader 會吃掉冪等 guard，T2 cold/warm 的 init() 就變成 no-op。
+
+test('B1 端到端：燈箱手貼 user_tags 中字 → 瀏覽頁標籤篩 中文字幕 命中', () => {
+    // 就地 seed：T2 併入 manifest 短名對之後的狀態（中字 ↔ 中文字幕 同組）。
+    // 先把「這兩個 key 在我寫入前是空的」這個隱含假設變成可執行斷言——下面的 finally
+    // 是無條件 delete，若哪天有人把本區塊搬到已經載入過 manifest 的測試之後，
+    // delete 會砍掉別人載入的真值而不是還原，這條斷言會先一步紅給你看。
+    assert.equal(stateBaseMod._tagToGroup['中文字幕'], undefined, '本區塊必須是第一個寫入這兩個 key 的測試');
+    assert.equal(stateBaseMod._tagToGroup['中字'], undefined, '本區塊必須是第一個寫入這兩個 key 的測試');
+    const b1ShortPair = ['中文字幕', '中字'];
+    stateBaseMod._tagToGroup['中文字幕'] = b1ShortPair;
+    stateBaseMod._tagToGroup['中字'] = b1ShortPair;
+
+    // ⚠ 用完必須清掉（Opus 復驗抓到）：這兩個 key 若留在共享 _tagToGroup 裡，
+    // 檔尾 121b-T2 的 cold/warm 測試就會在 init() 根本沒合併 manifest 的情況下也綠
+    // ——實測：拿掉 init() 內那行 await 時，原本轉紅的 cold/warm 會退化成綠，
+    // 只剩字面錨點那條抓得到。清掉才維持「測試順序無關」。
+    try {
+        _setVideos([
+            { number: 'B1-HAND', title: 'HandTagged', maker: '', tags: '', actresses: '', user_tags: ['中字'] },
+            { number: 'B1-MISS', title: 'NoTags', maker: '', tags: '', actresses: '', user_tags: [] },
+            { number: 'B1-OTHER', title: 'Unrelated', maker: '', tags: '痴女', actresses: '', user_tags: ['重看'] },
+        ]);
+        const c = makeComponent({ pills: [{ dim: 'tag', value: '中文字幕' }] });
+        c.applyFilterAndSort(true);
+        const numbers = _filteredVideos.map((v) => v.number);
+        assert.ok(numbers.includes('B1-HAND'), '手貼 中字 的片必須命中 中文字幕 pill');
+        assert.ok(!numbers.includes('B1-MISS'), '無標籤對照片不得命中');
+        assert.ok(!numbers.includes('B1-OTHER'), '無關標籤對照片不得命中');
+        assert.equal(numbers.length, 1);
+        assert.equal(_filteredVideos[0].number, 'B1-HAND');
+    } finally {
+        delete stateBaseMod._tagToGroup['中文字幕'];
+        delete stateBaseMod._tagToGroup['中字'];
+    }
+});
+
+test('B4 端到端：清空 user_tags 版結果集 ⊆ 保留版（既有 tag 篩選不因 121b 縮小）', () => {
+    const pill = [{ dim: 'tag', value: '痴女' }];
+    const clearVideos = [
+        { number: 'B4-TAGS', title: 'TagsHit', maker: '', tags: '痴女', actresses: '', user_tags: [] },
+        { number: 'B4-USER', title: 'UserOnly', maker: '', tags: '', actresses: '', user_tags: [] },
+        { number: 'B4-MISS', title: 'NoHit', maker: '', tags: '中出', actresses: '', user_tags: [] },
+    ];
+    const keptVideos = [
+        { number: 'B4-TAGS', title: 'TagsHit', maker: '', tags: '痴女', actresses: '', user_tags: ['重看'] },
+        { number: 'B4-USER', title: 'UserOnly', maker: '', tags: '', actresses: '', user_tags: ['痴女'] },
+        { number: 'B4-MISS', title: 'NoHit', maker: '', tags: '中出', actresses: '', user_tags: ['重看'] },
+    ];
+
+    _setVideos(clearVideos);
+    const cClear = makeComponent({ pills: pill });
+    cClear.applyFilterAndSort(true);
+    const filteredClearIds = _filteredVideos.map((v) => v.number);
+
+    _setVideos(keptVideos);
+    const cKept = makeComponent({ pills: pill });
+    cKept.applyFilterAndSort(true);
+    const filteredKeptIds = _filteredVideos.map((v) => v.number);
+
+    for (const id of filteredClearIds) {
+        assert.ok(filteredKeptIds.includes(id), `number ${id} 在保留 user_tags 後消失（篩選不得變窄）`);
+    }
+    assert.ok(filteredClearIds.includes('B4-TAGS'), '靠 tags 命中的片兩份都應在結果裡');
+    assert.ok(filteredKeptIds.includes('B4-TAGS'));
+    assert.ok(filteredKeptIds.includes('B4-USER'), '只靠 user_tags 命中的片必須只在 kept 版');
+    assert.ok(!filteredClearIds.includes('B4-USER'), '清空版不得因 user_tags 命中（子集斷言才有內容）');
+    assert.ok(!filteredClearIds.includes('B4-MISS'));
+    assert.ok(!filteredKeptIds.includes('B4-MISS'));
+});
+
 // ===== Opus review 追加：alias map 的原型鏈污染 =====
 
 // ⚠ 只有 `constructor` 真的會踩到守衛。查表 key 進去前已被 normalizePillValue 折成小寫，
@@ -301,4 +435,184 @@ test('alias group 值不是陣列時（壞掉的 map）視為查無 group，不�
     const pred = buildPillPredicate([{ dim: 'actress', value: 'A' }], brokenMap, {});
     assert.doesNotThrow(() => videos.filter(pred));
     assert.equal(videos.filter(pred).length, 1);  // 退化成只比字面值，仍命中自己
+});
+
+// =====================================================================
+// TASK-121b-T2 — CoverBadgeManifest / mergeAliasPair
+// =====================================================================
+//
+// 冪等 guard `_coverBadgeManifestLoaded` 是 module-level 的：一旦某條測試把它
+// 設為 true，同 module instance 後續再呼叫 loader 就是 no-op。失敗分支必須能
+// 在成功分支之前真正跑到 catch，而 cold/warm 又要走 shared module 的 init()。
+// 因此 loader 的成功／失敗／空陣列測試用 query-string 獨立 instance（不依賴
+// 重複呼叫 shared loader）；cold/warm 才打 shared 的 init()。
+
+const COVER_BADGE_MANIFEST_FIVE = [
+    { id: 'zh-sub', canonical_tag: '中文字幕', short_name: '中字', display_order: 1, i18n_key: 'cover.zh_sub' },
+    { id: 'uncen-crack', canonical_tag: '無碼破解', short_name: '破解', display_order: 2, i18n_key: 'cover.crack' },
+    { id: 'uncen-leak', canonical_tag: '無碼流出', short_name: '流出', display_order: 3, i18n_key: 'cover.leak' },
+    { id: '4k', canonical_tag: '4K', short_name: '4K', display_order: 4, i18n_key: 'cover.4k' },
+    { id: 'vr', canonical_tag: 'VR', short_name: 'VR', display_order: 5, i18n_key: 'cover.vr' },
+];
+
+async function importFreshStateBase(tag) {
+    return import(`../state-base.js?coverBadge=${encodeURIComponent(tag)}`);
+}
+
+async function withStubFetch(handler, fn) {
+    const orig = globalThis.fetch;
+    globalThis.fetch = handler;
+    try {
+        return await fn();
+    } finally {
+        globalThis.fetch = orig;
+    }
+}
+
+function manifestFetch(payload, { ok = true, throwError = null } = {}) {
+    return async (url) => {
+        if (url !== '/api/cover-badges/manifest') {
+            throw new Error('pill-match.test.mjs: unexpected fetch url ' + url);
+        }
+        if (throwError) throw throwError;
+        return { ok, json: async () => payload };
+    };
+}
+
+test('CoverBadgeManifest 成功分支：五筆 stub 後 中字 與 中文字幕 同組', async () => {
+    const fresh = await importFreshStateBase('success');
+    assert.equal(typeof fresh._loadCoverBadgeManifest, 'function', '_loadCoverBadgeManifest 必須存在');
+    await withStubFetch(manifestFetch(COVER_BADGE_MANIFEST_FIVE), () => fresh._loadCoverBadgeManifest());
+    const byShort = fresh._tagToGroup['中字'];
+    const byCanonical = fresh._tagToGroup['中文字幕'];
+    assert.ok(Array.isArray(byShort), '_tagToGroup[中字] 應為陣列');
+    assert.ok(Array.isArray(byCanonical), '_tagToGroup[中文字幕] 應為陣列');
+    assert.ok(byShort.includes('中字') && byShort.includes('中文字幕'));
+    assert.ok(byCanonical.includes('中字') && byCanonical.includes('中文字幕'));
+    assert.equal(byShort, byCanonical, '兩個 key 必須指到同一組陣列');
+});
+
+test('CoverBadgeManifest 失敗分支：fetch 拋錯時既有 DB alias 群組原封不動', async () => {
+    const fresh = await importFreshStateBase('fail');
+    assert.equal(typeof fresh._loadCoverBadgeManifest, 'function', '_loadCoverBadgeManifest 必須存在');
+    fresh._tagToGroup['女僕'] = ['女僕', 'メイド'];
+    await assert.doesNotReject(() =>
+        withStubFetch(
+            manifestFetch(null, { throwError: new Error('network down') }),
+            () => fresh._loadCoverBadgeManifest(),
+        ),
+    );
+    assert.deepEqual(fresh._tagToGroup['女僕'], ['女僕', 'メイド']);
+});
+
+test('mergeAliasPair 三方群組合併：繁中/簡中 也能查到 中字', async () => {
+    const { _mergeAliasPair } = await import('../state-base.js');
+    assert.equal(typeof _mergeAliasPair, 'function', '_mergeAliasPair 必須存在');
+    const map = {};
+    const group = ['中文字幕', '繁中', '簡中'];
+    for (const member of group) map[member.toLowerCase()] = group;
+    _mergeAliasPair(map, '中文字幕', '中字');
+    for (const key of ['中文字幕', '繁中', '簡中', '中字']) {
+        const got = map[key.toLowerCase()];
+        assert.ok(Array.isArray(got), `${key} 必須仍是陣列`);
+        assert.ok(got.includes('中字'), `${key} 必須查得到 中字`);
+        assert.ok(got.includes('中文字幕') && got.includes('繁中') && got.includes('簡中'));
+    }
+});
+
+test('mergeAliasPair canonical 與 short_name 相同（4K/VR）不重複不拋例外', async () => {
+    const { _mergeAliasPair } = await import('../state-base.js');
+    assert.equal(typeof _mergeAliasPair, 'function', '_mergeAliasPair 必須存在');
+    const map = {};
+    assert.doesNotThrow(() => {
+        _mergeAliasPair(map, '4K', '4K');
+        _mergeAliasPair(map, 'VR', 'VR');
+    });
+    assert.ok(Array.isArray(map['4k']));
+    assert.equal(map['4k'].length, 1);
+    assert.equal(map['4k'][0], '4K');
+    assert.ok(Array.isArray(map['vr']));
+    assert.equal(map['vr'].length, 1);
+    assert.equal(map['vr'][0], 'VR');
+});
+
+test('CoverBadgeManifest 空陣列 manifest：_tagToGroup 不變、不拋例外', async () => {
+    const fresh = await importFreshStateBase('empty');
+    assert.equal(typeof fresh._loadCoverBadgeManifest, 'function', '_loadCoverBadgeManifest 必須存在');
+    fresh._tagToGroup['女僕'] = ['女僕', 'メイド'];
+    await assert.doesNotReject(() =>
+        withStubFetch(manifestFetch([]), () => fresh._loadCoverBadgeManifest()),
+    );
+    assert.deepEqual(fresh._tagToGroup['女僕'], ['女僕', 'メイド']);
+    assert.equal(Object.keys(fresh._tagToGroup).length, 1);
+});
+
+test('CoverBadgeManifest cold/warm：pill 中文字幕 vs user_tags 中字（B1）', async () => {
+    const videos = [{ tags: '', user_tags: ['中字'] }];
+    const pills = [{ dim: 'tag', value: '中文字幕' }];
+    const cold = videos.filter(buildPillPredicate(pills, {}, {}));
+    assert.equal(cold.length, 0);
+
+    // warm 必須走 init() 才鎖得住「第一次 applyFilterAndSort 前已併入短名」。
+    // 若只餵本地 loaded map，init 漏 await 這條仍會綠——mutation A 就測不紅。
+    const c = stateBase.call({ $persist: (obj) => ({ as: () => obj }) });
+    c.restoreState = () => {};
+    c.fetchVideos = async () => {};
+    c.applyFilterAndSort = () => {};
+    c.updatePagination = () => {};
+    c.loadActresses = () => {};
+    c.$watch = () => {};
+    c.$nextTick = () => {};
+    c.mode = 'list';
+    const origAlpine = globalThis.Alpine;
+    const origAddEventListener = globalThis.window.addEventListener;
+    globalThis.Alpine = { store: () => ({ toolbarOpen: false, showcaseHasSearch: false }) };
+    globalThis.window.__registerPage = () => {};
+    globalThis.window.addEventListener = () => {};
+    try {
+        await withStubFetch(async (url) => {
+            if (url === '/api/cover-badges/manifest') {
+                return { ok: true, json: async () => COVER_BADGE_MANIFEST_FIVE };
+            }
+            return { ok: true, json: async () => ({ groups: [] }) };
+        }, () => c.init());
+    } finally {
+        // 全域 stub 必須無條件還原：init() 若因未來的回歸拋例外，殘留的 Alpine /
+        // addEventListener stub 會污染同檔後續測試，讓失敗訊息指向錯誤的地方。
+        globalThis.Alpine = origAlpine;
+        globalThis.window.addEventListener = origAddEventListener;
+        delete globalThis.window.__registerPage;
+    }
+
+    const warm = videos.filter(buildPillPredicate(pills, {}, stateBaseMod._tagToGroup));
+    assert.equal(warm.length, 1);
+});
+
+test('CoverBadgeManifest 順序錨點：await _loadCoverBadgeManifest 早於 applyFilterAndSort(true)', () => {
+    const src = readFileSync(new URL('../state-base.js', import.meta.url), 'utf8');
+    // 剝註解：mutation A 把 await 整行註解掉時必須轉 RED（裸 indexOf 會命中註解）。
+    const stripped = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const idxCover = stripped.indexOf('await _loadCoverBadgeManifest()');
+    const idxApply = stripped.indexOf('applyFilterAndSort(true)');
+    assert.ok(idxCover !== -1 && idxApply !== -1, '兩個錨點字面必須存在');
+    assert.ok(idxCover < idxApply, 'cover badge manifest 必須在第一次 applyFilterAndSort 之前載入');
+});
+
+test('CoverBadgeManifest 自由文字搜尋只會變寬：併入前命中 ⊆ 併入後命中', async () => {
+    const { _mergeAliasPair } = await import('../state-base.js');
+    assert.equal(typeof _mergeAliasPair, 'function', '_mergeAliasPair 必須存在');
+    _setVideos([
+        { id: 'w-exact', number: 'W-EXACT', title: '', maker: '', tags: 'WidenShort', actresses: '' },
+        { id: 'w-alias', number: 'W-ALIAS', title: '', maker: '', tags: 'WidenCanonical', actresses: '' },
+        { id: 'w-never', number: 'W-NEVER', title: '', maker: '', tags: 'UnrelatedTag', actresses: '' },
+    ]);
+    const c = makeComponent({ search: 'widenshort' });
+    c.applyFilterAndSort(true);
+    const beforeIds = _filteredVideos.map((v) => v.id);
+    _mergeAliasPair(stateBaseMod._tagToGroup, 'WidenCanonical', 'WidenShort');
+    c.applyFilterAndSort(true);
+    const afterIds = _filteredVideos.map((v) => v.id);
+    for (const id of beforeIds) {
+        assert.ok(afterIds.includes(id), `id ${id} 在 manifest 併入後消失（搜尋不得變窄）`);
+    }
 });

@@ -158,6 +158,7 @@ from web.routers import collection as collection_router
 from web.routers import actress as actress_router
 from web.routers import actress_alias as actress_alias_router
 from web.routers import tag_alias as tag_alias_router
+from web.routers import cover_badges as cover_badges_router
 from web.routers import tags as tags_router
 from web.routers import notifications as notifications_router
 # TASK-107-P1-T2: import emit_notification at module level so lifespan can call
@@ -190,6 +191,7 @@ app.include_router(collection_router.user_tags_router)
 app.include_router(actress_router.router)
 app.include_router(actress_alias_router.router)
 app.include_router(tag_alias_router.router)
+app.include_router(cover_badges_router.router)
 app.include_router(tags_router.router)
 app.include_router(notifications_router.router)
 app.include_router(similar_router.router)

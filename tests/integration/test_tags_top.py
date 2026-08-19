@@ -44,6 +44,11 @@ def tmp_db(tmp_path):
         "INSERT INTO videos (path, number, tags) VALUES (?, ?, ?)",
         videos,
     )
+    # B3：user_tags 獨有字串不得進入 /api/tags/top；既有 9 列資料不改
+    conn.execute(
+        "INSERT INTO videos (path, number, tags, user_tags) VALUES (?, ?, ?, ?)",
+        ("file:///10.mp4", "AAA-010", "[]", '["僅限自訂標籤ZZZ"]'),
+    )
     conn.commit()
     conn.close()
     return db_path
@@ -306,3 +311,20 @@ class TestFirstRunNoDb:
         assert data["total_unique_tags"] == 0
         # 端點呼叫後 DB 檔應已被建立（init_db 副作用）
         assert missing_db.exists()
+
+
+# ── B3：user_tags 不進 /api/tags/top 統計 ──────────────────────────────────────
+
+_USER_TAGS_EXCLUSIVE = "僅限自訂標籤ZZZ"
+
+
+class TestUserTagsExcludedFromTop:
+    def test_user_tags_exclusive_string_absent_from_top(self, client):
+        """tags 欄位從未出現的 user_tags 獨有字串不得出現在 /api/tags/top。"""
+        # min_count=1：若 SQL 誤讀 user_tags，count=1 也會進 items
+        resp = client.get("/api/tags/top?min_count=1")
+        assert resp.status_code == 200
+        data = resp.json()
+        tags = [item["tag"] for item in data["items"]]
+        assert _USER_TAGS_EXCLUSIVE not in tags
+        assert _USER_TAGS_EXCLUSIVE not in resp.text
