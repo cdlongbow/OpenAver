@@ -14,6 +14,7 @@ from PIL import Image
 from typing import Optional, Dict, Any, List, Tuple
 
 from core.config import STEM_IMAGE_MODES
+from core.cover_attributes import effective_tags
 from core.cover_layout import resolve_cover_target, same_target_verdict
 from core.path_utils import normalize_path, is_fs_path_under_dir
 from core.scrapers.utils import has_chinese, check_subtitle, strip_subtitle_markers, normalize_number_impl
@@ -768,7 +769,7 @@ def generate_nfo(
     for tag in tags:
         nfo_content += f'  <tag>{html.escape(tag)}</tag>\n'
 
-    if has_subtitle:
+    if has_subtitle and not any(t.strip() == '中文字幕' for t in tags):
         nfo_content += '  <tag>中文字幕</tag>\n'
 
     if has_vr and not any(t.strip().lower() == 'vr' for t in tags):
@@ -782,7 +783,7 @@ def generate_nfo(
     for tag in tags:
         nfo_content += f'  <genre>{html.escape(tag)}</genre>\n'
 
-    if has_subtitle:
+    if has_subtitle and not any(t.strip() == '中文字幕' for t in tags):
         nfo_content += '  <genre>中文字幕</genre>\n'
 
     if has_vr and not any(t.strip().lower() == 'vr' for t in tags):
@@ -1034,6 +1035,13 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
         has_subtitle = check_subtitle(original_filename) or bool(subtitle_files)
     elif subtitle_files:
         has_subtitle = True  # sidecar 字幕存在 → 覆寫上游 False
+
+    _base_tags = list(metadata.get('tags', []) or [])
+    if has_subtitle:
+        _base_tags.append('中文字幕')
+    if vr_cluster is not None:
+        _base_tags.append('VR')
+    metadata['tags'] = effective_tags(original_filename, _base_tags)
 
     # 計算目標路徑
     if config.get('create_folder', True):
