@@ -101,6 +101,60 @@ export async function _loadTagAliasMap() {
     _tagAliasMapLoaded = true;
 }
 
+export var _coverBadgeManifestLoaded = false;
+
+/**
+ * 121b-T2: 把封面短名併入既有 _tagToGroup（聯集疊加，不清空）。
+ * 結構鏡射 _loadTagAliasMap()，失敗語意刻意不同：catch / 非 2xx 時不動 _tagToGroup。
+ */
+export function _mergeAliasPair(map, a, b) {
+    var ka = a.toLowerCase();
+    var kb = b.toLowerCase();
+    var union = [];
+    var seen = {};
+    function add(val) {
+        var k = String(val).toLowerCase();
+        if (Object.prototype.hasOwnProperty.call(seen, k)) return;
+        seen[k] = true;
+        union.push(val);
+    }
+    function existing(key) {
+        if (Object.prototype.hasOwnProperty.call(map, key) && Array.isArray(map[key])) {
+            return map[key];
+        }
+        return [];
+    }
+    existing(ka).forEach(add);
+    existing(kb).forEach(add);
+    add(a);
+    add(b);
+    union.forEach(function (member) {
+        map[String(member).toLowerCase()] = union;
+    });
+}
+
+export async function _loadCoverBadgeManifest() {
+    if (_coverBadgeManifestLoaded) return;
+    try {
+        var resp = await fetch('/api/cover-badges/manifest');
+        if (resp.ok) {
+            var data = await resp.json();
+            if (Array.isArray(data)) {
+                data.forEach(function (item) {
+                    if (!item) return;
+                    var canonical = item.canonical_tag;
+                    var shortName = item.short_name;
+                    if (!canonical || !shortName) return;
+                    _mergeAliasPair(_tagToGroup, canonical, shortName);
+                });
+            }
+        }
+    } catch (e) {
+        console.warn('[Showcase] Failed to fetch cover badge manifest:', e);
+    }
+    _coverBadgeManifestLoaded = true;
+}
+
 // 41c B-lite: 無封面 placeholder SVG (cover 載入失敗時 handleCoverError 換上)
 // viewBox 800x600 對齊 lightbox 4:3，grid card aspect-ratio:3/2 會 crop 上下少許但不影響 icon 居中
 // 設計：暗色漸層背景 + 中央 image-frame icon (邊框+太陽+山形)
@@ -252,6 +306,7 @@ export function stateBase() {
             fetch('/api/similar/warmup').catch(() => {});
             await _loadAliasMap();      // 45-P2: 無條件載入 alias map（影片搜尋也需要）
             await _loadTagAliasMap();   // A3-4: 無條件載入 tag alias map
+            await _loadCoverBadgeManifest();
             if (this.showFavoriteActresses) { this.loadActresses(); }
             this.applyFilterAndSort(true);  // M4a: 套用搜尋篩選（跳過 pagination，下面統一處理）
             this.page = savedPage;          // 恢復儲存的頁碼
