@@ -328,4 +328,3 @@ class TestUserTagsExcludedFromTop:
         tags = [item["tag"] for item in data["items"]]
         assert _USER_TAGS_EXCLUSIVE not in tags
         assert _USER_TAGS_EXCLUSIVE not in resp.text
-

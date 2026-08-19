@@ -88,7 +88,12 @@ _RULE_PATTERNS: tuple[tuple[AttributeRule, tuple[re.Pattern[str], ...]], ...] = 
     for rule in ATTRIBUTE_TABLE
 )
 
-_TAG_4K = next(rule.canonical_tag for rule in ATTRIBUTE_TABLE if rule.id == "4k")
+_RULE_4K = next(rule for rule in ATTRIBUTE_TABLE if rule.id == "4k")
+_TAG_4K = _RULE_4K.canonical_tag
+# 既有 scraper genre 的 4K 合流值（spec-121 §4.1 最後一條）：由 4K 那一列**自己的 token**
+# 去掉前綴分隔符推導，不在這裡另寫一份字面清單——§4.7 要求表是單一資料來源，
+# 手寫一份等於「新增一個 4K 同義詞要改兩個地方」。目前推導出 {"4k", "uhd", "8k"}。
+_GENRE_4K_EQUIVALENTS = frozenset(token.lstrip("-_").lower() for token in _RULE_4K.tokens)
 
 _MANIFEST_KEYS = ("id", "canonical_tag", "short_name", "display_order", "i18n_key")
 
@@ -117,8 +122,7 @@ def effective_tags(filename: str, existing_tags: Iterable[str] | None) -> list[s
             candidates.append(rule.canonical_tag)
 
     for item in base:
-        lowered = item.strip().lower()
-        if "4k" == lowered or "uhd" == lowered or "8k" == lowered:
+        if item.strip().lower() in _GENRE_4K_EQUIVALENTS:
             candidates.append(_TAG_4K)
             break
 

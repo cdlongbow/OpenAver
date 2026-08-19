@@ -10,9 +10,6 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from core.cover_attributes import manifest_payload
-from core.logger import get_logger
-
-logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/cover-badges", tags=["cover-badges"])
 

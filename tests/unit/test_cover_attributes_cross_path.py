@@ -409,6 +409,9 @@ def _video_py_tags_write_funcs() -> list[str]:
 
 def test_b05_tags_write_site_count_locked():
     """video.py 內含 tags 欄位寫入的函式數量鎖定；必須含 update_tags_if_changed。"""
+    # [lint-guard: pytest-justified] 這條讀的是 Python 源碼語意（「哪些函式含 tags 欄位寫入」），
+    # 不是前端靜態字串——lint 表達不了「函式邊界 × SQL 寫入」這個組合，屬 SA-pre-6 例外清單的
+    # 「Python-AST 源碼語意守衛」。
     found = _video_py_tags_write_funcs()
     assert found == list(_TAGS_WRITE_FUNCS)
     assert len(found) == _TAGS_WRITE_FUNC_COUNT
