@@ -57,6 +57,18 @@ function _splitField(rawFieldValue) {
     return normalizePillValue(rawFieldValue).split(',').map(function (s) { return s.trim(); }).filter(Boolean);
 }
 
+/**
+ * mergeTagTokens — TASK-121b-T1：tags（逗號字串）＋ user_tags（陣列）疊加。
+ * concat 純疊加，不去重／不過濾／不交集。user_tags 非陣列視為空陣列，不拋例外。
+ */
+export function mergeTagTokens(video) {
+    var fromTags = _splitField(video.tags);
+    var fromUser = Array.isArray(video.user_tags)
+        ? video.user_tags.map(function (t) { return normalizePillValue(t); }).filter(Boolean)
+        : [];
+    return fromTags.concat(fromUser);
+}
+
 // D5：alias 展開的雙 key 查表 + 值正規化。
 function _buildAliasSet(pillValue, groupMap) {
     var norm = normalizePillValue(pillValue);
@@ -80,10 +92,9 @@ function _buildAliasSet(pillValue, groupMap) {
 
 function _actressOrTagMatcher(dim, pillValue, nameToGroup, tagToGroup) {
     var groupMap = dim === 'actress' ? nameToGroup : tagToGroup;
-    var field = dim === 'actress' ? 'actresses' : 'tags';
     var valueSet = _buildAliasSet(pillValue, groupMap);
     return function (video) {
-        var tokens = _splitField(video[field]);
+        var tokens = dim === 'tag' ? mergeTagTokens(video) : _splitField(video.actresses);
         return tokens.some(function (t) { return valueSet.has(t); });
     };
 }

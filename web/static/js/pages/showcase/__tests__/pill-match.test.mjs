@@ -24,7 +24,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 // ===== Part A の純函式 import（無 window 依賴，可靜態 import） =====
-import { buildPillPredicate } from '../../../shared/pill-filter.js';
+import { buildPillPredicate, mergeTagTokens } from '../../../shared/pill-filter.js';
 
 // ===== Part B 的 resolve hook + window stub（FE-GUARD-11，照抄 T1 pill-state.test.mjs） =====
 
@@ -168,9 +168,53 @@ test('未知 dim（如 typo）→ predicate 對任何影片皆回傳 false（fai
     assert.equal(predicate({}), false);
 });
 
-test('user_tags 不參與：tags 不含 X、user_tags 含 X → tag pill X 不 match 該影片（D7，spec §4.3）', () => {
+test('user_tags 參與：tags 不含 X、user_tags 含 X → tag pill X match 該影片（D7 反轉）', () => {
+    // 這裡曾經鎖 user_tags 不參與的舊行為（spec-115 §4.3），121b 刻意行為升級
+    const predicate = buildPillPredicate([{ dim: 'tag', value: 'X' }], {}, {});
+    assert.equal(predicate({ tags: 'Y', user_tags: ['X'] }), true);
+});
+
+test('mergeTagTokens：tags 空、user_tags 陣列含 中字 → 結果含 中字；tag pill 中字 match（邊界 1）', () => {
+    const video = { tags: '', user_tags: ['中字'] };
+    assert.ok(mergeTagTokens(video).includes('中字'));
+    const predicate = buildPillPredicate([{ dim: 'tag', value: '中字' }], {}, {});
+    assert.equal(predicate(video), true);
+});
+
+test('mergeTagTokens：user_tags 非陣列（undefined / null / 數字）不拋例外，結果等同只有 tags（邊界 3）', () => {
+    const tagsOnly = mergeTagTokens({ tags: 'Y' });
+    assert.doesNotThrow(() => {
+        assert.deepEqual(mergeTagTokens({ tags: 'Y', user_tags: undefined }), tagsOnly);
+        assert.deepEqual(mergeTagTokens({ tags: 'Y', user_tags: null }), tagsOnly);
+        assert.deepEqual(mergeTagTokens({ tags: 'Y', user_tags: 42 }), tagsOnly);
+        assert.deepEqual(mergeTagTokens({ tags: 'Y', user_tags: { X: true } }), tagsOnly);
+    });
+});
+
+test('mergeTagTokens：user_tags 為字串 X 不拋例外，結果等同只有 tags（邊界 3 字串格）', () => {
+    const tagsOnly = mergeTagTokens({ tags: 'Y' });
+    assert.doesNotThrow(() => {
+        assert.deepEqual(mergeTagTokens({ tags: 'Y', user_tags: 'X' }), tagsOnly);
+    });
     const predicate = buildPillPredicate([{ dim: 'tag', value: 'X' }], {}, {});
     assert.equal(predicate({ tags: 'Y', user_tags: 'X' }), false);
+});
+
+test('mergeTagTokens：user_tags 空值成員被濾掉，不產生假的空 token 命中（邊界 4）', () => {
+    const tokens = mergeTagTokens({ tags: 'Y', user_tags: ['', '   ', null] });
+    assert.ok(!tokens.includes(''));
+    const predicate = buildPillPredicate([{ dim: 'tag', value: '' }], {}, {});
+    assert.equal(predicate({ tags: 'Y', user_tags: ['', '   ', null] }), false);
+});
+
+test('CD-4 疊加不縮小：tags 含 痴女、user_tags 含無關的 重看 → tag pill 痴女仍 match（邊界 5）', () => {
+    const predicate = buildPillPredicate([{ dim: 'tag', value: '痴女' }], {}, {});
+    assert.equal(predicate({ tags: '痴女', user_tags: ['重看'] }), true);
+});
+
+test('actress 路徑不受 user_tags 影響：actresses 為 A、user_tags 含 B → actress pill B 不 match（邊界 6）', () => {
+    const predicate = buildPillPredicate([{ dim: 'actress', value: 'B' }], {}, {});
+    assert.equal(predicate({ actresses: 'A', user_tags: ['B'] }), false);
 });
 
 test('空 pill 列表（pills: []）→ buildPillPredicate 對任何影片皆回傳 true，不過濾任何影片（D2）', () => {
