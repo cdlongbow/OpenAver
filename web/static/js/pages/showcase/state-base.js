@@ -102,17 +102,19 @@ export async function _loadTagAliasMap() {
 }
 
 export var _coverBadgeManifestLoaded = false;
+export var _coverBadgeRules = [];
 
 /**
- * 121b-T2: 把封面短名併入既有 _tagToGroup（聯集疊加，不清空）。
- * 結構鏡射 _loadTagAliasMap()，失敗語意刻意不同：catch / 非 2xx 時不動 _tagToGroup。
+ * 121c-T2: N 元 alias 群組合併。對每個成員取 map 中既有群組，與 members 自身取聯集
+ * （大小寫不敏感去重、保留第一次出現的原字面），再把同一個 union 陣列指給每個成員。
+ * hasOwnProperty + Array.isArray 雙重把關（121b Opus review 針對原型污染加的，不可繞過）。
+ * members 內的 falsy 值直接跳過；全部跳過後 map 不變。
  */
-export function _mergeAliasPair(map, a, b) {
-    var ka = a.toLowerCase();
-    var kb = b.toLowerCase();
+export function _mergeAliasGroup(map, members) {
     var union = [];
     var seen = {};
     function add(val) {
+        if (!val) return;
         var k = String(val).toLowerCase();
         if (Object.prototype.hasOwnProperty.call(seen, k)) return;
         seen[k] = true;
@@ -124,15 +126,26 @@ export function _mergeAliasPair(map, a, b) {
         }
         return [];
     }
-    existing(ka).forEach(add);
-    existing(kb).forEach(add);
-    add(a);
-    add(b);
+    members.forEach(function (member) {
+        if (!member) return;
+        existing(String(member).toLowerCase()).forEach(add);
+        add(member);
+    });
     union.forEach(function (member) {
         map[String(member).toLowerCase()] = union;
     });
 }
 
+export function _mergeAliasPair(map, a, b) {
+    return _mergeAliasGroup(map, [a, b]);
+}
+
+/**
+ * 121c-T2: 把 [canonical_tag, ...match_aliases] 整組併入既有 _tagToGroup（聯集疊加，不清空），
+ * 並把 manifest 原文留在 _coverBadgeRules。display_name 不參與合併。
+ * 失敗語意刻意不同於 _loadTagAliasMap()：catch / 非 2xx / 非陣列時不動 _tagToGroup，
+ * 且 _coverBadgeRules 維持 []。
+ */
 export async function _loadCoverBadgeManifest() {
     if (_coverBadgeManifestLoaded) return;
     try {
@@ -143,10 +156,11 @@ export async function _loadCoverBadgeManifest() {
                 data.forEach(function (item) {
                     if (!item) return;
                     var canonical = item.canonical_tag;
-                    var displayName = item.display_name;
-                    if (!canonical || !displayName) return;
-                    _mergeAliasPair(_tagToGroup, canonical, displayName);
+                    if (!canonical) return;
+                    var aliases = Array.isArray(item.match_aliases) ? item.match_aliases : [];
+                    _mergeAliasGroup(_tagToGroup, [canonical].concat(aliases));
                 });
+                _coverBadgeRules = data;
             }
         }
     } catch (e) {
