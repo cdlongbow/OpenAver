@@ -332,6 +332,86 @@ test('自由文字回歸（DoD ②）：tag alias 展開，零 pill', () => {
     assert.equal(_filteredVideos.length, 1);
 });
 
+// =====================================================================
+// TASK-121b-T3 — B1／B4 端到端（真正的 applyFilterAndSort 接線）
+// =====================================================================
+//
+// 假設（測試順序敏感）：本區塊註冊在 Part B、早於檔尾 121b-T2 的
+// CoverBadgeManifest 測試。跑到這裡時：
+//   - `_tagToGroup` 只有頂層 seed 的 女僕/メイド（不得覆寫）
+//   - `_coverBadgeManifestLoaded` 仍為 false
+// 因此就地改屬性併入短名對，不呼叫 `_loadCoverBadgeManifest()`——
+// 若改走 loader 會吃掉冪等 guard，T2 cold/warm 的 init() 就變成 no-op。
+
+test('B1 端到端：燈箱手貼 user_tags 中字 → 瀏覽頁標籤篩 中文字幕 命中', () => {
+    // 就地 seed：T2 併入 manifest 短名對之後的狀態（中字 ↔ 中文字幕 同組）。
+    // 先把「這兩個 key 在我寫入前是空的」這個隱含假設變成可執行斷言——下面的 finally
+    // 是無條件 delete，若哪天有人把本區塊搬到已經載入過 manifest 的測試之後，
+    // delete 會砍掉別人載入的真值而不是還原，這條斷言會先一步紅給你看。
+    assert.equal(stateBaseMod._tagToGroup['中文字幕'], undefined, '本區塊必須是第一個寫入這兩個 key 的測試');
+    assert.equal(stateBaseMod._tagToGroup['中字'], undefined, '本區塊必須是第一個寫入這兩個 key 的測試');
+    const b1ShortPair = ['中文字幕', '中字'];
+    stateBaseMod._tagToGroup['中文字幕'] = b1ShortPair;
+    stateBaseMod._tagToGroup['中字'] = b1ShortPair;
+
+    // ⚠ 用完必須清掉（Opus 復驗抓到）：這兩個 key 若留在共享 _tagToGroup 裡，
+    // 檔尾 121b-T2 的 cold/warm 測試就會在 init() 根本沒合併 manifest 的情況下也綠
+    // ——實測：拿掉 init() 內那行 await 時，原本轉紅的 cold/warm 會退化成綠，
+    // 只剩字面錨點那條抓得到。清掉才維持「測試順序無關」。
+    try {
+        _setVideos([
+            { number: 'B1-HAND', title: 'HandTagged', maker: '', tags: '', actresses: '', user_tags: ['中字'] },
+            { number: 'B1-MISS', title: 'NoTags', maker: '', tags: '', actresses: '', user_tags: [] },
+            { number: 'B1-OTHER', title: 'Unrelated', maker: '', tags: '痴女', actresses: '', user_tags: ['重看'] },
+        ]);
+        const c = makeComponent({ pills: [{ dim: 'tag', value: '中文字幕' }] });
+        c.applyFilterAndSort(true);
+        const numbers = _filteredVideos.map((v) => v.number);
+        assert.ok(numbers.includes('B1-HAND'), '手貼 中字 的片必須命中 中文字幕 pill');
+        assert.ok(!numbers.includes('B1-MISS'), '無標籤對照片不得命中');
+        assert.ok(!numbers.includes('B1-OTHER'), '無關標籤對照片不得命中');
+        assert.equal(numbers.length, 1);
+        assert.equal(_filteredVideos[0].number, 'B1-HAND');
+    } finally {
+        delete stateBaseMod._tagToGroup['中文字幕'];
+        delete stateBaseMod._tagToGroup['中字'];
+    }
+});
+
+test('B4 端到端：清空 user_tags 版結果集 ⊆ 保留版（既有 tag 篩選不因 121b 縮小）', () => {
+    const pill = [{ dim: 'tag', value: '痴女' }];
+    const clearVideos = [
+        { number: 'B4-TAGS', title: 'TagsHit', maker: '', tags: '痴女', actresses: '', user_tags: [] },
+        { number: 'B4-USER', title: 'UserOnly', maker: '', tags: '', actresses: '', user_tags: [] },
+        { number: 'B4-MISS', title: 'NoHit', maker: '', tags: '中出', actresses: '', user_tags: [] },
+    ];
+    const keptVideos = [
+        { number: 'B4-TAGS', title: 'TagsHit', maker: '', tags: '痴女', actresses: '', user_tags: ['重看'] },
+        { number: 'B4-USER', title: 'UserOnly', maker: '', tags: '', actresses: '', user_tags: ['痴女'] },
+        { number: 'B4-MISS', title: 'NoHit', maker: '', tags: '中出', actresses: '', user_tags: ['重看'] },
+    ];
+
+    _setVideos(clearVideos);
+    const cClear = makeComponent({ pills: pill });
+    cClear.applyFilterAndSort(true);
+    const filteredClearIds = _filteredVideos.map((v) => v.number);
+
+    _setVideos(keptVideos);
+    const cKept = makeComponent({ pills: pill });
+    cKept.applyFilterAndSort(true);
+    const filteredKeptIds = _filteredVideos.map((v) => v.number);
+
+    for (const id of filteredClearIds) {
+        assert.ok(filteredKeptIds.includes(id), `number ${id} 在保留 user_tags 後消失（篩選不得變窄）`);
+    }
+    assert.ok(filteredClearIds.includes('B4-TAGS'), '靠 tags 命中的片兩份都應在結果裡');
+    assert.ok(filteredKeptIds.includes('B4-TAGS'));
+    assert.ok(filteredKeptIds.includes('B4-USER'), '只靠 user_tags 命中的片必須只在 kept 版');
+    assert.ok(!filteredClearIds.includes('B4-USER'), '清空版不得因 user_tags 命中（子集斷言才有內容）');
+    assert.ok(!filteredClearIds.includes('B4-MISS'));
+    assert.ok(!filteredKeptIds.includes('B4-MISS'));
+});
+
 // ===== Opus review 追加：alias map 的原型鏈污染 =====
 
 // ⚠ 只有 `constructor` 真的會踩到守衛。查表 key 進去前已被 normalizePillValue 折成小寫，
