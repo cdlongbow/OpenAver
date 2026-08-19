@@ -15,6 +15,7 @@ from dataclasses import dataclass, field, fields as dataclass_fields
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
+from core.cover_attributes import effective_tags
 from core.focal import requires_face_detection
 from core.focal_trigger import maybe_submit_video_focal
 from core.logger import get_logger
@@ -632,6 +633,11 @@ class VideoScanner:
 
         # 根據番號前綴正規化片商名稱
         info.maker = self.normalize_maker(info.num, info.maker)
+
+        # 新增：檔名屬性後綴 → tag（CD-6 掃描列）
+        _existing = [g.strip() for g in info.genre.split(',') if g.strip()] if info.genre else []
+        _merged = effective_tags(video_path.name, _existing)
+        info.genre = ','.join(_merged)
 
         # 尋找封面圖片
         img_path = self.find_cover_image(str(video_path), nfo_thumb=info.nfo_thumb)
