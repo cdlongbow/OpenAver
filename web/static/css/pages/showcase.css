@@ -4297,3 +4297,22 @@ body.sidebar-collapsed .showcase-footer {
         opacity: 1;
     }
 }
+
+/* 121c-T5: `.cover-badges` 定位容器 — 常駐顯示於封面左上角（spec §4.5，不掛 hover）。
+   掛載點 showcase.html:443（`.av-card-preview-img` 內、`.av-card-preview-overlay` 之前）。
+   定位脈絡沿用既有 `.av-card-preview-img { position: relative }`（theme.css:1064），本層不需重複宣告。
+   pointer-events:none 是結構保證：不擋卡片點擊（開燈箱）、不擋 overlay 三顆 `.btn-glass-circle`。
+   z-index 給低值純保險（比照 .lb-full-hint 的 9 再退一階，可能被 skeleton/no-cover 蓋住時保底浮上）；
+   `.cover-badge` 本身無 box-shadow/blur，不會像 lb-full-hint 那樣需要嚴格排在最上層。
+   badge 是 img 的 sibling 非後代，hover `scale(1.08)`（theme.css:1079）不會波及（技術要點 A 已保證，這裡零 transform）。 */
+.cover-badges {
+    position: absolute;
+    top: 0.5rem;
+    left: 0.5rem;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    pointer-events: none;
+}

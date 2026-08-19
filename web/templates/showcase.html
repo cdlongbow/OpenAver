@@ -439,6 +439,13 @@
                           <i class="bi bi-image"></i>
                           <span x-text="t('common.no_image')"></span>
                         </div>
+                        <template x-if="(video._badges || []).length">
+                            <div class="cover-badges">
+                                <template x-for="b in (video._badges || [])" :key="b.id">
+                                    <span class="cover-badge" x-text="b.display_name"></span>
+                                </template>
+                            </div>
+                        </template>
                         <div class="av-card-preview-overlay">
                             <button class="btn-glass-circle"
                                     @click.stop="playVideo(video.path)"
