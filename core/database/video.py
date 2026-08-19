@@ -1138,6 +1138,53 @@ class VideoRepository:
         finally:
             conn.close()
 
+    def update_tags_if_changed(self, path: str, tags: List[str]) -> bool:
+        """只在值真的不同時才更新 tags 欄位（不碰其他欄位）。
+
+        `tags` 是相似排序 IDF 的語料（見 tests/unit/test_similar_invalidate_completeness.py
+        的 AST 守衛），寫入成功才 invalidate SimilarRankerCache；值沒變則直接
+        return False，不執行 UPDATE、不 invalidate（TASK-121a-T4 / CD-9 延伸要求，
+        避免補完/重刮批次跑一輪就對每支片都無謂寫一次 DB 並清掉 ranker cache）。
+
+        Args:
+            path: 影片路徑（DB key，file:/// URI 格式）
+            tags: 新的 tags 列表
+
+        Returns:
+            bool: 是否真的寫入（值不同且該 path 存在對應 row）
+        """
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT tags FROM videos WHERE path = ?", (path,))
+            row = cursor.fetchone()
+            if row is None:
+                return False
+
+            try:
+                existing_tags = json.loads(row[0]) if row[0] else []
+            except (json.JSONDecodeError, TypeError):
+                existing_tags = []
+
+            if existing_tags == tags:
+                return False
+
+            cursor.execute(
+                "UPDATE videos SET tags = ?, updated_at = CURRENT_TIMESTAMP WHERE path = ?",
+                (json.dumps(tags, ensure_ascii=False), path)
+            )
+            conn.commit()
+
+            try:
+                from core.similar.ranker_cache import SimilarRankerCache
+                SimilarRankerCache.invalidate()
+            except Exception:
+                logger.exception("SimilarRankerCache invalidate failed (non-fatal)")
+
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
     def set_output_dir_if_empty(self, path: str, output_dir: str) -> bool:
         """安全設定 output_dir 欄位，僅在既有值為空時寫入（P2-B parity closeout）。
 

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from core.config import STEM_IMAGE_MODES
+from core.cover_attributes import effective_tags
 from core.cover_layout import resolve_cover_target, same_target_verdict
 from core.database import Video, VideoRepository, get_connection
 from core.enrich_contract import (
@@ -34,6 +35,7 @@ from core.nfo_updater import parse_nfo
 from core.organizer import crop_to_poster, download_image, find_subtitle_files, generate_nfo
 from core.path_utils import to_file_uri, uri_to_fs_path, uri_to_local_fs_path
 from core.scraper import search_jav
+from core.scrapers.utils import check_subtitle
 
 logger = get_logger(__name__)
 
@@ -343,7 +345,7 @@ def _write_extrafanart(
     return written_uris
 
 
-def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpus field; corpus writes go via _db_upsert → repo.upsert which already has invalidate)
+def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes go via _db_upsert → repo.upsert and via repo.update_tags_if_changed — both already invalidate)
     file_path: str,
     number: str,
     mode: str = "fill_missing",
@@ -445,7 +447,17 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
             meta, fields_filled = _merge_meta(meta, supplement)
             source_used = scraper_data.get("source", "scraper") or "scraper"
 
-    has_subtitle = bool(find_subtitle_files(fs_path))
+    # CD-7：字幕偵測不能只看 sidecar .srt，檔名標記（-C/_C/中文字幕…）也要算數，
+    # 否則同一支片「補齊資料」跟「拖進搜尋頁整理」（core/organizer.py:1035 已是
+    # 兩者 or）會出現不對稱結果。
+    has_subtitle = check_subtitle(os.path.basename(fs_path)) or bool(find_subtitle_files(fs_path))
+
+    # CD-9：屬性 tag（中文字幕／VR／4K…）只算一次、回寫 meta['tags']，讓下游
+    # _write_nfo() 與 _db_upsert() 共讀同一份合併結果（不得各自再算一次）。
+    _base_tags = list(meta.get('tags', []) or [])
+    if has_subtitle:
+        _base_tags.append('中文字幕')
+    meta['tags'] = effective_tags(os.path.basename(fs_path), _base_tags)
 
     # 讀取 DB 現有 user_tags，在 NFO 寫出和 DB upsert 時保留
     path_uri = to_file_uri(fs_path_for_db)  # db-ns-ok: fs_path_for_db, DB round-trip value, no reverse mapping applied
@@ -562,6 +574,19 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
             schedule_focal_after_cover_write(
                 repo, path_uri, number, meta.get("maker"), local_cover, path_mappings
             )
+
+    # CD-9 延伸：source_used 為 "db"/"nfo"/"" 時 :536 的 if 不會跑 _db_upsert()，
+    # DB 的 tags 就永遠不會同步——這一行是那三種來源唯一的 DB 同步點。
+    # source_used=="scraper" 時 _db_upsert() 已寫過同一份 meta['tags']，這裡比對
+    # 相同、no-op（update_tags_if_changed 內建「不變不寫」）。重用已算好的
+    # path_uri（:451），不重算 URI。
+    # 錯誤隔離比照 _db_upsert()：NFO／封面／其他 DB 欄位此時都已寫成功，不能讓
+    # 這一行的 sqlite 例外（busy/locked）穿透出去，把「部分成功」誤報成「整體失敗」
+    # ——使用者會看到「補齊資料失敗」而重按，實際上檔案早就寫好了。
+    try:
+        repo.update_tags_if_changed(path_uri, meta.get('tags', []))
+    except Exception as e:
+        logger.warning("tags 同步失敗 (%s): %s", number, e)
 
     _sync_nfo_mtime(repo, fs_path, fs_path_for_db, number)
 
