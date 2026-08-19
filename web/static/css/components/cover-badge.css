@@ -1,0 +1,25 @@
+/* Cover badge pill body — shared by covers, lightbox, settings, design-system.
+   Positioning container (.cover-badges) is T5. Recipe: plan-121c §2.4.
+   無 box-shadow、無 backdrop-filter；不引用 --glass-caption-*（CD-121c-3/4）。 */
+
+.cover-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 4ch; /* spec §5.2: 以 LEAK 為基準 */
+    padding: var(--spacing) calc(var(--spacing) * 1.5);
+    font-size: var(--text-xs); /* 12px 級距 */
+    font-weight: 600;
+    line-height: 1;
+    text-align: center;
+    white-space: nowrap;
+    background: color-mix(in oklch, black 45%, transparent);
+    border: 1px solid color-mix(in oklch, white 28%, transparent);
+    color: oklch(100% 0 0);
+    border-radius: var(--fluent-radius-sm); /* Fluent Small: 徽章、<32px；非互動 pill 不用 999px */
+}
+
+.cover-badge.is-off {
+    background: transparent;
+    color: var(--text-secondary);
+}

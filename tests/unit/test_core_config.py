@@ -12,7 +12,7 @@ import pytest
 from pathlib import Path
 
 import core.config as core_config
-from core.config import AppConfig, load_config, save_config
+from core.config import AppConfig, CoverBadgesConfig, GalleryConfig, load_config, save_config
 
 
 # ============ helpers ============
@@ -1782,3 +1782,55 @@ class TestConfigPathMode:
         assert config_path.exists()
         mode = stat.S_IMODE(config_path.stat().st_mode)
         assert mode == 0o600, f"after save_config mode must be 0o600, got {oct(mode)}"
+
+
+# ============ TASK-121c-T4：gallery.cover_badges 預設值 + default.json parity ============
+
+class TestCoverBadgesConfig:
+    """CoverBadgesConfig 預設值、舊 config 補預設、items 容忍、default.json parity。
+
+    不測「五個屬性 id 都在 config 裡」——那會把寫死清單搬進測試（spec §4.7）。
+    """
+
+    DEFAULT_PATH = Path(__file__).resolve().parents[2] / "web" / "config.default.json"
+
+    def test_gallery_defaults_cover_badges_off_empty_items(self):
+        """邊界 1：GalleryConfig() 預設 → enabled is False、items == {}"""
+        cfg = GalleryConfig()
+        assert cfg.cover_badges.enabled is False
+        assert cfg.cover_badges.items == {}
+
+    def test_default_json_gallery_cover_badges_matches_model(self):
+        """邊界 2：config.default.json 的 gallery.cover_badges 與 model 預設值一致（parity）"""
+        default = json.loads(self.DEFAULT_PATH.read_text(encoding="utf-8"))
+        model = GalleryConfig().model_dump()
+        assert "cover_badges" in default.get("gallery", {}), (
+            "config.default.json gallery 缺 cover_badges（BE-CONFIG-01 parity）"
+        )
+        assert default["gallery"]["cover_badges"] == model["cover_badges"]
+
+    def test_old_gallery_without_cover_badges_key_defaults_off(self):
+        """邊界 3：舊 config（gallery 內沒有 cover_badges key）→ model_validate 不拋錯，補預設關閉"""
+        cfg = GalleryConfig.model_validate({"items_per_page": 90})
+        assert cfg.cover_badges.enabled is False
+        assert cfg.cover_badges.items == {}
+
+    def test_items_keeps_false_and_tolerates_unknown_id(self):
+        """邊界 4：items 收到 {"4k": false} 保留；{"unknown_id": true} 不拋錯"""
+        cfg = CoverBadgesConfig(items={"4k": False, "unknown_id": True})
+        assert cfg.items["4k"] is False
+        assert cfg.items["unknown_id"] is True
+
+    def test_enabled_non_bool_string_records_pydantic_behavior(self):
+        """邊界 5：enabled 收到非 bool 字串 → 依 pydantic 既有行為（本測記錄，不另加 coerce）。
+
+        pydantic 2.13 bool 對 "true"/"false"/"1"/"0"/"yes"/"no"/"on"/"off" 會 coerce；
+        其餘字串 ValidationError。此處鎖「非布林字串被拒絕」，不自行加寬鬆解析。
+        """
+        import pydantic
+
+        with pytest.raises(pydantic.ValidationError):
+            CoverBadgesConfig(enabled="not-a-bool")
+        # 對照：pydantic 認得的布林字串仍 coerce（記錄既有行為，非本案新邏輯）
+        assert CoverBadgesConfig(enabled="true").enabled is True
+        assert CoverBadgesConfig(enabled="false").enabled is False

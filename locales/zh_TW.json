@@ -508,6 +508,15 @@
       "min_size_hint": "掃描 / 入庫閾值 — 0 = 不過濾；小於此不入庫（決定你看得到哪些片）",
       "tier_display": "列表顯示預設",
       "also_showcase_note": "也是你瀏覽頁（Showcase）的預設",
+      "cover_badges_label": "封面屬性標籤",
+      "cover_badges_note": "在封面左上角顯示中文字幕／無碼／4K 等標籤（只影響顯示，不改標籤本身）",
+      "cover_badge": {
+        "subtitle": "中文字幕",
+        "cracked": "無碼破解（AI 演算法去馬）",
+        "leaked": "無碼流出（母帶外流）",
+        "4k": "4K",
+        "vr": "VR"
+      },
       "export_section": "離線 HTML 匯出（Windows 本機檢視用）",
       "export_notice": "此匯出檔為 Windows 本機雙擊檢視設計；macOS / Linux 請改用 app 瀏覽頁。（成因：封面以 <code>file://</code> 嵌入，Mac 瀏覽器會封鎖本機跨目錄檔）",
       "mode_export_only_note": "僅影響此匯出檔（不影響 app Showcase）"

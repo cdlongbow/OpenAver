@@ -63,7 +63,11 @@
     "default_mode": "image",
     "default_sort": "date",
     "default_order": "descending",
-    "items_per_page": 90
+    "items_per_page": 90,
+    "cover_badges": {
+      "enabled": false,
+      "items": {}
+    }
   },
   "showcase": {
     "player": ""

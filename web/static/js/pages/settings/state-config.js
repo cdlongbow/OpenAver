@@ -55,6 +55,8 @@ export function stateConfig() {
             avlistMinSize: 0,
             avlistOutputDir: 'output',
             avlistOutputFilename: 'gallery_output.html',
+            coverBadgesEnabled: false,
+            coverBadgeItems: {},
 
             // Showcase
             viewerPlayer: '',
@@ -157,6 +159,7 @@ export function stateConfig() {
         // stub `[]` 供 async resolve 前 template binding 不丟 ReferenceError（CD-95a-8）。
         // 每項形 { name:'{num}', description, example, folder_ok }；label 走 i18n（_labelFor）。
         formatVariables: [],
+        coverBadgeRules: [],
         FOLDER_PREVIEW_DATA: {
             num: 'SSNI-618',
             maker: 'SOD',
@@ -624,6 +627,7 @@ export function stateConfig() {
                 // 命名區變數 SSOT（含 folder_ok 情境旗標）——須在設 folderLayerList（觸發層
                 // x-for render + 膠囊 mount）前就緒，故先 await（CD-95a-8）。
                 await this._loadFormatVariables();
+                await this._loadCoverBadgeRules();
                 naming.ready = true;
 
                 const resp = await fetch('/api/config');
@@ -711,6 +715,8 @@ export function stateConfig() {
                     this.form.avlistMinSize = config.gallery?.min_size_mb || 0;
                     this.form.avlistOutputDir = config.gallery?.output_dir || 'output';
                     this.form.avlistOutputFilename = config.gallery?.output_filename || 'gallery_output.html';
+                    this.form.coverBadgesEnabled = config.gallery?.cover_badges?.enabled === true;
+                    this.form.coverBadgeItems = { ...(config.gallery?.cover_badges?.items || {}) };
 
                     // Showcase
                     this.form.viewerPlayer = config.showcase?.player || '';
@@ -985,7 +991,11 @@ export function stateConfig() {
                     items_per_page: this.form.avlistItemsPerPage,
                     min_size_mb: this.form.avlistMinSize || 0,
                     output_dir: this.form.avlistOutputDir.trim() || 'output',
-                    output_filename: this.form.avlistOutputFilename.trim() || 'gallery_output.html'
+                    output_filename: this.form.avlistOutputFilename.trim() || 'gallery_output.html',
+                    cover_badges: {
+                        enabled: this.form.coverBadgesEnabled,
+                        items: this.form.coverBadgeItems
+                    }
                 };
 
                 // 更新 showcase
@@ -1188,6 +1198,32 @@ export function stateConfig() {
             } catch (e) {
                 console.error('[settings] format-variables 載入失敗，命名區變數暫缺', e);
                 this.formatVariables = [];
+            }
+        },
+
+        async _loadCoverBadgeRules() {
+            try {
+                const resp = await fetch('/api/cover-badges/manifest');
+                const data = await resp.json();
+                const rules = Array.isArray(data) ? data : [];
+                this.coverBadgeRules = rules.slice().sort(
+                    (a, b) => (a.display_order ?? 0) - (b.display_order ?? 0)
+                );
+            } catch (e) {
+                console.error('[settings] cover-badges manifest 載入失敗，清單暫缺', e);
+                this.coverBadgeRules = [];
+            }
+        },
+
+        isCoverBadgeItemOn(id) {
+            return this.form.coverBadgeItems[id] !== false;
+        },
+
+        toggleCoverBadgeItem(id) {
+            if (this.isCoverBadgeItemOn(id)) {
+                this.form.coverBadgeItems = { ...this.form.coverBadgeItems, [id]: false };
+            } else {
+                this.form.coverBadgeItems = { ...this.form.coverBadgeItems, [id]: true };
             }
         },
 

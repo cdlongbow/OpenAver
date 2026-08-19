@@ -1113,6 +1113,35 @@
                         </div>
                     </div>
 
+                    <!-- 封面屬性標籤：總開關 + manifest 驅動 pill 清單 -->
+                    <div class="settings-form-row">
+                        <div class="flex-1 flex flex-col gap-1">
+                            <label class="settings-label">
+                                <input type="checkbox" class="toggle toggle-primary"
+                                       x-model="form.coverBadgesEnabled">
+                                <span class="label-text">{{ t('settings.gallery.cover_badges_label') }}</span>
+                            </label>
+                            <small class="settings-note-inline">{{ t('settings.gallery.cover_badges_note') }}</small>
+                            <div x-show="form.coverBadgesEnabled" x-collapse>
+                                <template x-for="rule in coverBadgeRules" :key="rule.id">
+                                    <div class="flex items-center gap-2 cursor-pointer"
+                                         role="button"
+                                         tabindex="0"
+                                         :aria-pressed="isCoverBadgeItemOn(rule.id)"
+                                         @click="toggleCoverBadgeItem(rule.id)"
+                                         @keydown.enter.prevent="toggleCoverBadgeItem(rule.id)"
+                                         @keydown.space.prevent="toggleCoverBadgeItem(rule.id)">
+                                        <span class="cover-badge"
+                                              :class="{ 'is-off': !isCoverBadgeItemOn(rule.id) }"
+                                              x-text="rule.display_name"></span>
+                                        <span :class="{ 'line-through': !isCoverBadgeItemOn(rule.id) }"
+                                              x-text="window.t(rule.i18n_key)"></span>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- ── 進階摺疊：離線 HTML 匯出（galleryExport，預設收合 G-B1）── -->
                     <button class="collapsible-trigger" type="button" @click="galleryExport = !galleryExport"
                             :aria-expanded="galleryExport.toString()">
