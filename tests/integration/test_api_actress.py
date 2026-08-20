@@ -2534,3 +2534,159 @@ class TestWriteActressPhoto:
 
         # 例外後不留 temp 殘檔
         assert list(gfriends.glob("tmp*")) == []
+
+
+# ---------------------------------------------------------------------------
+# TASK-122-T10: 刮不到女優改用本地封面建卡（miss + 庫裡有片 → best-effort 裁圖）
+# ---------------------------------------------------------------------------
+
+class TestAddFavoriteLocalCropFallback:
+    """POST /api/actresses/favorite 的 miss 分支：四來源全刮不到、片庫裡有片時，
+    改建一張只有名字的本地卡，照片 best-effort 從片封面右側裁 3:4（issue #143）。
+
+    🔴 全 class 硬前提：任何會寫／讀本地照片的測試，`GFRIENDS_DIR` 雙 binding
+    （`web.routers.actress` ＋ `core.actress_photo`）都要 patch，否則會寫進
+    owner 真實的 output/Gfriends/（gotchas-backend.md §3b）。
+    """
+
+    ACTRESS = "長澤史華"
+
+    @staticmethod
+    def _profile_result_miss(timed_out=False):
+        from core.scrapers.actress.orchestrator import ProfileResult
+        return ProfileResult(data=None, timed_out=timed_out)
+
+    def _save_video(self, tmp_path, actress_name, with_cover=True, suffix=""):
+        """在 tmp DB 存一筆該女優的片。path / cover_path 一律用 to_file_uri
+        產生（CLAUDE.md 路徑禁止清單：禁止手拼 file:/// 字串）。"""
+        from core.database import VideoRepository, Video
+
+        video_fs = str(tmp_path / f"video{suffix}.mp4")
+        cover_uri = ""
+        if with_cover:
+            cover_fs = str(tmp_path / f"cover{suffix}.jpg")
+            Path(cover_fs).write_bytes(b"\xff\xd8\xff\xe0fake_cover")
+            cover_uri = to_file_uri(cover_fs)
+        video = Video(
+            path=to_file_uri(video_fs),
+            title="Test Video",
+            actresses=[actress_name],
+            cover_path=cover_uri,
+        )
+        VideoRepository().upsert(video)
+        return video
+
+    def test_add_favorite_local_crop_success(self, client, tmp_path):
+        """AC-1: miss ＋ 庫裡有片有封面 → 200，本地裁圖建卡且照片真的落地"""
+        self._save_video(tmp_path, self.ACTRESS)
+        gfriends = tmp_path / "gfriends"
+        gfriends.mkdir()
+        fake_jpeg = b"\xff\xd8\xff\xe0FAKE_LOCAL_CROP"
+
+        with patch("web.routers.actress.get_cached_profile", return_value=None), \
+             patch("web.routers.actress.get_actress_profile",
+                   return_value=self._profile_result_miss()), \
+             patch("web.routers.actress.crop_video_cover", return_value=fake_jpeg), \
+             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
+            resp = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        actress = data["actress"]
+        assert actress["photo_url"] is not None
+        assert actress["photo_source"] == "local_crop"
+        assert actress["primary_text_source"] == "local"
+        assert data["photo_downloaded"] is True
+
+        written = list(gfriends.glob("*.jpg"))
+        assert len(written) == 1
+        assert written[0].read_bytes() == fake_jpeg
+
+    def test_add_favorite_local_crop_no_cover_still_creates_card(self, client, tmp_path):
+        """AC-2: miss ＋ 庫裡有片但全無封面 → 200 + 無照片，卡仍建立
+        （隨後 GET /api/actresses/{name} 回 200 證明卡真的建起來了）"""
+        self._save_video(tmp_path, self.ACTRESS, with_cover=False)
+        gfriends = tmp_path / "gfriends"
+
+        with patch("web.routers.actress.get_cached_profile", return_value=None), \
+             patch("web.routers.actress.get_actress_profile",
+                   return_value=self._profile_result_miss()), \
+             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
+            resp = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["actress"]["photo_url"] is None
+            assert data["actress"]["photo_source"] is None
+
+            get_resp = client.get(f"/api/actresses/{self.ACTRESS}")
+        assert get_resp.status_code == 200
+
+    def test_add_favorite_timeout_with_videos_does_not_create_card(self, client, tmp_path):
+        """AC-4: timeout ＋ 庫裡有片 → 仍 504、不建卡（閘門不得誤套進 504 分支，
+        既有空 DB 的 test_add_favorite_timeout_returns_504 擋不住這個回歸）"""
+        self._save_video(tmp_path, self.ACTRESS)
+        gfriends = tmp_path / "gfriends"
+
+        with patch("web.routers.actress.get_cached_profile", return_value=None), \
+             patch("web.routers.actress.get_actress_profile",
+                   return_value=self._profile_result_miss(timed_out=True)), \
+             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
+            resp = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
+            assert resp.status_code == 504
+            assert resp.json()["error"] == "timeout"
+
+            get_resp = client.get(f"/api/actresses/{self.ACTRESS}")
+        assert get_resp.status_code == 404
+
+    def test_add_favorite_local_crop_picks_stable_first_and_tries_once(self, client, tmp_path):
+        """CD-T10-1 / CD-T10-3：多部有封面的片 → 依 `str(v.path)` 排序取第一筆，
+        且只裁一次。
+
+        沒有這支的話 `sorted(...)` 那行是死碼路徑（其餘測試每支只塞一部片），
+        日後被改成 random.choice / 加 for 迴圈重試都不會有測試轉紅——使用者要
+        反覆重試看到「每次得到不同的臉」才會發現。
+        """
+        # 先存 _b 再存 _a：DB 自然順序與排序後順序相反，才驗得出真的有排序
+        self._save_video(tmp_path, self.ACTRESS, suffix="_b")
+        self._save_video(tmp_path, self.ACTRESS, suffix="_a")
+        gfriends = tmp_path / "gfriends"
+        gfriends.mkdir()
+        fake_jpeg = b"\xff\xd8\xff\xe0FAKE_LOCAL_CROP"
+
+        with patch("web.routers.actress.get_cached_profile", return_value=None), \
+             patch("web.routers.actress.get_actress_profile",
+                   return_value=self._profile_result_miss()), \
+             patch("web.routers.actress.crop_video_cover",
+                   return_value=fake_jpeg) as mock_crop, \
+             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
+            resp = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
+
+        assert resp.status_code == 200
+        assert resp.json()["actress"]["photo_source"] == "local_crop"
+        # 只裁一次（CD-T10-3：失敗不換下一張，成功更不該多裁）
+        assert mock_crop.call_count == 1
+        # 裁的是 path 字典序最小的那部（cover_a），不是 DB 先插入的 cover_b
+        assert Path(mock_crop.call_args[0][0]).name == "cover_a.jpg"
+
+    def test_add_favorite_local_crop_failure_still_200(self, client, tmp_path):
+        """AC-5: crop_video_cover 回 None（裁圖失敗）→ 200（不是 500），不影響建卡"""
+        self._save_video(tmp_path, self.ACTRESS)
+        gfriends = tmp_path / "gfriends"
+        gfriends.mkdir()
+
+        with patch("web.routers.actress.get_cached_profile", return_value=None), \
+             patch("web.routers.actress.get_actress_profile",
+                   return_value=self._profile_result_miss()), \
+             patch("web.routers.actress.crop_video_cover", return_value=None), \
+             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
+            resp = client.post("/api/actresses/favorite", json={"name": self.ACTRESS})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["actress"]["photo_url"] is None
+        assert data["photo_downloaded"] is False
