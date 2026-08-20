@@ -13,10 +13,10 @@
     line-height: 1;
     text-align: center;
     white-space: nowrap;
-    background: color-mix(in oklch, black 45%, transparent);
-    border: 1px solid color-mix(in oklch, white 28%, transparent);
+    background: var(--overlay-badge);
+    border: 1.5px solid color-mix(in oklch, white 45%, transparent);
     color: oklch(100% 0 0);
-    border-radius: var(--fluent-radius-sm); /* Fluent Small: 徽章、<32px；非互動 pill 不用 999px */
+    border-radius: var(--radius-pill); /* 膠囊：ui-conventions §1 白名單第 4 條（badge 類）；spec-121d §4.1 owner 六案選定 */
 }
 
 .cover-badge.is-off {
