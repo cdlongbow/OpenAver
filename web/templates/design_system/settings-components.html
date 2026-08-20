@@ -775,6 +775,57 @@
 &lt;/div&gt;</code></pre>
 </div>
 
+<!-- Cover Attribute Pills（設定頁封面屬性膠囊列，TASK-121d-T5） -->
+<div class="ds-subsection">
+    <h3>14. Cover Attribute Pills（設定頁封面屬性膠囊列）</h3>
+    <p class="ds-desc">
+        設定頁「封面屬性標籤」那一列，資料來自 <code>/api/cover-badges/manifest</code>。
+        顯示的是<strong>封面上會出現的短名</strong>（WYSIWYG），不是全名。
+        <strong>這五顆是固定的屬性開關、不可拖曳排序</strong>（與來源膠囊的語意差異）。
+        關閉態三訊號：虛線 ＋ ⊘ ＋ 刪除線。刪除線靠 <code>settings.css</code> 的
+        <code>#ds-settings-components .settings-attr-pills</code> scope 覆寫加回來
+        （<code>.source-pill--action</code> 預設會取消刪除線）。
+        ⚠ demo 必須包在 <code>.settings-attr-pills</code> 裡，否則刪除線不會出現。
+    </p>
+
+    <div class="ds-card-demo" style="max-width: 700px; margin: 0 auto; padding: 1.5rem;">
+        <div class="settings-attr-pills" style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
+            <button type="button" class="source-pill source-pill--action" data-enabled="true">
+                <i class="bi bi-slash-circle slash-icn" aria-hidden="true"></i>
+                <span class="pill-name">中字</span>
+            </button>
+            <button type="button" class="source-pill source-pill--action" data-enabled="true">
+                <i class="bi bi-slash-circle slash-icn" aria-hidden="true"></i>
+                <span class="pill-name">AI</span>
+            </button>
+            <button type="button" class="source-pill source-pill--action" data-enabled="false">
+                <i class="bi bi-slash-circle slash-icn" aria-hidden="true"></i>
+                <span class="pill-name">LEAK</span>
+            </button>
+            <button type="button" class="source-pill source-pill--action" data-enabled="true">
+                <i class="bi bi-slash-circle slash-icn" aria-hidden="true"></i>
+                <span class="pill-name">VR</span>
+            </button>
+            <button type="button" class="source-pill source-pill--action" data-enabled="true">
+                <i class="bi bi-slash-circle slash-icn" aria-hidden="true"></i>
+                <span class="pill-name">4K</span>
+            </button>
+        </div>
+    </div>
+
+    <pre class="ds-code"><code>&lt;!-- 必須包在 .settings-attr-pills 內，刪除線才會出現 --&gt;
+&lt;div class="settings-attr-pills"&gt;
+  &lt;button type="button" class="source-pill source-pill--action" data-enabled="true"&gt;
+    &lt;i class="bi bi-slash-circle slash-icn" aria-hidden="true"&gt;&lt;/i&gt;
+    &lt;span class="pill-name"&gt;中字&lt;/span&gt;
+  &lt;/button&gt;
+  &lt;button type="button" class="source-pill source-pill--action" data-enabled="false"&gt;
+    &lt;i class="bi bi-slash-circle slash-icn" aria-hidden="true"&gt;&lt;/i&gt;
+    &lt;span class="pill-name"&gt;LEAK&lt;/span&gt;
+  &lt;/button&gt;
+&lt;/div&gt;</code></pre>
+</div>
+
 <!-- #settings-components scope wrapper：包 §15 segmented + §16 metatube banner 兩個 demo，
      使 settings.css 的 #settings-components scoped 規則生效（唯一真 id，避免 duplicate id）。 -->
 <div id="settings-components">
