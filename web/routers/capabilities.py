@@ -638,7 +638,11 @@ _TOOLS: list[dict] = [
     {
         "name": "showcase_videos",
         "description": (
-            "列出當前 Showcase 設定資料夾下「所有」影片，每筆含 19 欄位 enrich 過的完整 metadata。"
+            "列出當前 Showcase 設定資料夾下「所有」影片，每筆含 23 欄位 enrich 過的完整 metadata。"
+            " ⚠️ **分集片（`-cd1`/`-part2`…）一組只回一筆**（feature/122）：同資料夾同主幹的各段"
+            "合併成單一 item，`path` 是**段號最小的那一段**（通常是 cd1，但不保證 cd1 存在）、"
+            "`size` 是各段加總、`part_tokens` 列出段別。"
+            "因此 `total` 是**分組數不是檔案數**，做全庫盤點時不要當成檔案總數。"
             " ⚠️ 高 token 成本：回整個 configured directory（可能數百到數千筆）一次回完，無分頁。"
             " Routing 規則（依優先級）："
             " (1) 已知具體 path → 用 `showcase_video`（單筆，省 token）；"
@@ -659,7 +663,7 @@ _TOOLS: list[dict] = [
             "total": "integer — videos 陣列長度",
             "videos": {
                 "type": "array",
-                "description": "影片清單；每筆 item 為 19 欄位 dict",
+                "description": "影片清單；每筆 item 為 23 欄位 dict（分集片一組一筆）",
                 "item_fields": {
                     "path": "string — file:/// URI（DB key 格式，可作為 showcase_video 查詢輸入）",
                     "title": "string",
@@ -669,8 +673,9 @@ _TOOLS: list[dict] = [
                     "maker": "string",
                     "release_date": "string — YYYY-MM-DD（可能為空字串）",
                     "tags": "string — ⚠️ 逗號分隔字串，**不是** array",
-                    "size": "integer — 檔案 bytes",
+                    "size": "integer — 檔案 bytes；分集片為各段加總",
                     "cover_url": "string — 後端代理 URL（/api/gallery/image?path=...），可直接 <img> 顯示",
+                    "cover_full_url": "string — 恆為原圖代理 URL（不受縮圖快取開關影響）",
                     "mtime": "integer — Unix timestamp（秒）",
                     "director": "string",
                     "duration": "integer | null — 秒；null 時前端隱藏",
@@ -680,6 +685,12 @@ _TOOLS: list[dict] = [
                     "user_tags": "array[string] — 用戶自訂標籤（真正的 array，可空）",
                     "has_cover": "boolean — DB 初判 cover_path 非空（不做 IO 檢查）",
                     "has_nfo": "boolean — nfo_mtime > 0（41a 寫入契約）",
+                    "auto_focal": "string — 封面焦點 'x,y'（4 位小數）或空字串",
+                    "crop_mode": "string — 'auto'（依 auto_focal 裁切）| 'default'（右裁 baseline）",
+                    "part_tokens": (
+                        "array[string] — 分集段別字面（例 ['cd1', 'cd2']，依段號升冪）；"
+                        "單檔片為空陣列。非空即代表本筆是多個實體檔案的合併呈現。"
+                    ),
                 },
             },
         },
@@ -709,11 +720,13 @@ _TOOLS: list[dict] = [
         "output_schema": {
             "success": "boolean",
             "video": (
-                "object — 19 欄位 dict，schema 同 showcase_videos.videos.item_fields"
+                "object — 23 欄位 dict，schema 同 showcase_videos.videos.item_fields"
                 "（path/title/original_title/number/actresses[csv⚠️]/maker/release_date/tags[csv⚠️]/"
-                "size/cover_url/mtime/director/duration/series/label/sample_images[array]/"
-                "user_tags[array]/has_cover/has_nfo）。注意 actresses 和 tags 是逗號分隔字串，"
-                "其餘標記為 array 的欄位才是真正的 array。"
+                "size/cover_url/cover_full_url/mtime/director/duration/series/label/"
+                "sample_images[array]/user_tags[array]/has_cover/has_nfo/auto_focal/crop_mode/"
+                "part_tokens[array]）。注意 actresses 和 tags"
+                "是逗號分隔字串，其餘標記為 array 的欄位才是真正的 array。"
+                " 查詢分集片的任一段，回的都是該組的合併結果（`part_tokens` 非空）。"
             ),
         },
         "side_effect": False,
