@@ -232,7 +232,6 @@
       "db_not_synced": "未同期 — 整理完了後も Showcase に表示されません",
       "db_sync_failed": "DB 同期失敗（ファイルは整理済みですが Showcase に表示されません）",
       "db_synced_mobile": "保存しました",
-      "skipped_nfo_multipart": "NFO をスキップ — このファイルは分割動画の 2 本目以降で、1 本目の NFO が管理します",
       "browser_opened": "ブラウザを開きました",
       "no_translatable_titles": "翻訳が必要なタイトルはありません",
       "translate_batch_done": "翻訳完了：成功 {success}、失敗 {failed}",

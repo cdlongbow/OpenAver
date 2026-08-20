@@ -20,6 +20,9 @@ export function stateDelete() {
         deleteVideoModalOpen: false,
         _pendingDeleteNumber: null,
         _pendingDeletePath: null,
+        // feature/122 T4 起，合併卡的「移除」刪的是整組 DB 列。破壞性彈窗是授權面，
+        // 只說「這筆紀錄」等於沒有明示授權（prd「破壞性 modal 明示授權」）。
+        _pendingDeleteParts: [],
         _deleteLoading: false,
 
         // --- 71-T7: Delete Video 三段路徑（鏡像 openRemoveActressModal / cancel / confirm）---
@@ -27,6 +30,7 @@ export function stateDelete() {
             if (!this.currentLightboxVideo?.path) return;
             this._pendingDeletePath = this.currentLightboxVideo.path;
             this._pendingDeleteNumber = this.currentLightboxVideo.number || '';
+            this._pendingDeleteParts = this.currentLightboxVideo.part_tokens || [];
             this.deleteVideoModalOpen = true;
         },
 
@@ -35,6 +39,7 @@ export function stateDelete() {
             this.deleteVideoModalOpen = false;
             this._pendingDeletePath = null;
             this._pendingDeleteNumber = null;
+            this._pendingDeleteParts = [];
         },
 
         async confirmDeleteVideo() {
@@ -74,6 +79,7 @@ export function stateDelete() {
                 this.deleteVideoModalOpen = false;
                 this._pendingDeletePath = null;
                 this._pendingDeleteNumber = null;
+                this._pendingDeleteParts = [];
             }
         },
 

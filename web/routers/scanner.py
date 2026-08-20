@@ -42,6 +42,7 @@ from core.gallery_generator import HTMLGenerator
 from core.path_utils import to_file_uri, is_path_under_dir, uri_to_fs_path, coerce_to_file_uri, uri_to_local_fs_path
 from core.nfo_updater import check_cache_needs_update, update_videos_generator
 from core.database import VideoRepository, Video, init_db, get_db_path, migrate_json_to_sqlite
+from core.multipart_group import resolve_group
 from core.focal import requires_face_detection
 from core.focal_trigger import maybe_submit_video_focal
 from core.organizer import generate_jellyfin_images, HEADERS as _EMBED_HEADERS
@@ -1594,6 +1595,46 @@ def get_video(request: Request, path: str = Query(..., description="影片路徑
     )
 
 
+def _render_player_html(
+    *,
+    html_lang_safe: str,
+    filename: str,
+    src: str,
+    hint_text: str,
+    extra_style: str = '',
+    video_open_attrs: str = '',
+    video_data_attrs: str = '',
+    extra_body: str = '',
+    extra_script: str = '',
+) -> str:
+    """播放頁 HTML（單檔與分集共用同一份骨架）。
+
+    feature/122 T5 originally 為分集分支抄了一份完整的頁面骨架，只差一條 CSS、
+    兩個 video 屬性、一個 div 和一個 script tag——那份重複會在下次改播放頁樣式
+    或 error hint 時靜默漂移（/simplify reuse 條目）。骨架收成一處，差異走參數。
+
+    所有插入點都由呼叫端**先 escape 過**才傳進來（`html_escape(..., quote=True)`），
+    本函式只做字串組裝、不做 escape，維持與原本兩份 f-string 逐位元組相同的輸出。
+    """
+    return f"""<!DOCTYPE html>
+<html lang="{html_lang_safe}">
+<head>
+    <meta charset="UTF-8">
+    <title>{filename} - OpenAver</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ background: #000; display: flex; align-items: center; justify-content: center; height: 100vh; }}
+        video {{ max-width: 100%; max-height: 100vh; }}
+        #video-error-hint {{ color: #fff; padding: 1.5rem; text-align: center; max-width: 32rem; line-height: 1.6; }}{extra_style}
+    </style>
+</head>
+<body>
+    <video {video_open_attrs}controls autoplay src="{src}"{video_data_attrs} onerror="this.style.display='none';document.getElementById('video-error-hint').style.display='flex'"></video>{extra_body}
+    <div id="video-error-hint" style="display:none">{hint_text}</div>{extra_script}
+</body>
+</html>"""
+
+
 @router.get("/player")
 def video_player(path: str = Query(..., description="影片路徑（file:/// URI 或 FS 路徑）")):
     """影片播放頁面 — 用 HTML5 <video> 標籤在新分頁播放"""
@@ -1619,24 +1660,50 @@ def video_player(path: str = Query(..., description="影片路徑（file:/// URI
     html_lang_safe = html_escape(html_lang)
     hint_text = html_escape(i18n_t('showcase.video.player_unavailable', locale=html_lang))
 
-    html = f"""<!DOCTYPE html>
-<html lang="{html_lang_safe}">
-<head>
-    <meta charset="UTF-8">
-    <title>{filename} - OpenAver</title>
-    <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{ background: #000; display: flex; align-items: center; justify-content: center; height: 100vh; }}
-        video {{ max-width: 100%; max-height: 100vh; }}
-        #video-error-hint {{ color: #fff; padding: 1.5rem; text-align: center; max-width: 32rem; line-height: 1.6; }}
-    </style>
-</head>
-<body>
-    <video controls autoplay src="{video_url_safe}" onerror="this.style.display='none';document.getElementById('video-error-hint').style.display='flex'"></video>
-    <div id="video-error-hint" style="display:none">{hint_text}</div>
-</body>
-</html>"""
-    return HTMLResponse(content=html)
+    gallery_config = config.get('gallery', {})
+    path_mappings = gallery_config.get('path_mappings', {})
+
+    group = None
+    try:
+        db_path = get_db_path()
+        if db_path.exists():
+            repo = VideoRepository(db_path)
+            v = repo.get_by_path(path)
+            if v is not None:
+                group = resolve_group(repo, path, path_mappings, folder_source_uri=v.path)
+    except Exception:
+        logger.warning("video_player: 分組查詢失敗，退回單檔播放", exc_info=True)
+        group = None
+
+    if group is not None and len(group.members) > 1:
+        parts_urls = [f"/api/gallery/video?path={quote(m.path, safe='')}" for m in group.members]
+        data_parts_json = html_escape(json.dumps(parts_urls), quote=True)
+        part_label_template = html_escape(i18n_t('showcase.video.part_progress', locale=html_lang), quote=True)
+        first_src = html_escape(parts_urls[0])
+        return HTMLResponse(content=_render_player_html(
+            html_lang_safe=html_lang_safe,
+            filename=filename,
+            src=first_src,
+            hint_text=hint_text,
+            extra_style=(
+                "\n        #oa-player-progress { position: fixed; top: 1rem; left: 1rem;"
+                " z-index: 1; pointer-events: none; color: #fff; font: 14px/1.4 sans-serif; }"
+            ),
+            video_open_attrs='id="oa-player" ',
+            video_data_attrs=(
+                f' data-parts="{data_parts_json}"'
+                f' data-part-label-template="{part_label_template}"'
+            ),
+            extra_body='\n    <div id="oa-player-progress"></div>',
+            extra_script='\n    <script type="module" src="/static/js/pages/player.js"></script>',
+        ))
+
+    return HTMLResponse(content=_render_player_html(
+        html_lang_safe=html_lang_safe,
+        filename=filename,
+        src=video_url_safe,
+        hint_text=hint_text,
+    ))
 
 
 @router.get("/actress-stats")

@@ -263,14 +263,9 @@ def scrape_single(request: ScrapeRequest) -> dict:
     if result.get("success"):
         target_file = result.get("new_filename")
         if target_file:
-            # 72d-P2C：cd2/part2 外部模式下 organizer F2 skip NFO，scan_file 無 NFO 可讀
-            # → 傳 scraped_metadata 讓 db_inflow overlay scraped fields，cd2 row 與 cd1 一致。
-            # 非 multipart（skipped_nfo_multipart 不存在或 False）一律傳 None（byte-identical）。
-            _multipart_meta = metadata if result.get("skipped_nfo_multipart") else None
             db_sync_status = try_inflow_upsert(
                 target_file,
                 old_file_path=file_path,
-                scraped_metadata=_multipart_meta,
             )
         else:
             logger.warning("scrape_single: organize_file 回傳缺 new_filename，skip in-flow upsert")

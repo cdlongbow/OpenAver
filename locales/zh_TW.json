@@ -238,7 +238,6 @@
       "db_not_synced": "未連動 — 整理完成後不會出現在 Showcase",
       "db_sync_failed": "DB 同步失敗（檔案已整理但未出現在 Showcase）",
       "db_synced_mobile": "已入庫",
-      "skipped_nfo_multipart": "已跳過 NFO — 此檔為多段影片的第 2 段以後，由第 1 段的 NFO 管理",
       "browser_opened": "已開啟瀏覽器",
       "no_translatable_titles": "沒有需要翻譯的標題",
       "translate_batch_done": "翻譯完成：成功 {success}，失敗 {failed}",
@@ -248,7 +247,7 @@
     "duplicate": {
       "title": "檔案重複",
       "body": "目標檔案已存在，繼續會覆蓋原有檔案：",
-      "explanation": "這通常發生在同一部影片有多個版本（CD1/CD2、4K、UC）時。",
+      "explanation": "這通常發生在同一部影片有多個版本（CD1/CD2、part1/pt1、dvd1/disc1、4K、UC）時。",
       "instruction": "請到 <strong>設定 → 進階刮削設定 → 版本標記</strong>，新增關鍵字並確認檔案命名格式包含 <code class=\"badge badge-sm\">{suffix}</code> 變數。",
       "acknowledge": "了解",
       "go_settings": "前往設定"
@@ -1071,13 +1070,16 @@
       "delete_modal": {
         "title": "從收藏移除這部影片",
         "body": "只會從資料庫移除「{number}」這筆紀錄。影片檔會保留在磁碟，不會被刪除；若該檔仍在掃描目錄內，下次掃描會重新被加回。",
+        "body_multipart": "這是分集片（{tokens}），確認後會一併移除全部 {n} 段的紀錄——影片檔一樣都留在磁碟上。",
         "cancel": "取消",
         "confirm": "確認移除"
       },
       "delete_success": "已從收藏移除",
       "delete_failed": "移除失敗，請稍後再試",
       "play_failed": "播放失敗",
-      "player_unavailable": "這部片現在放不出來——可能是檔案位置拿不到，或者這個格式瀏覽器不支援"
+      "player_unavailable": "這部片現在放不出來——可能是檔案位置拿不到，或者這個格式瀏覽器不支援",
+      "part_count_fallback": "{n} 段",
+      "part_progress": "第 {current}／{total} 段"
     },
     "actress": {
       "add": "+ 新增女優",

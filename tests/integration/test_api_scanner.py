@@ -3169,3 +3169,227 @@ class TestJellyfinFanartCoverSelfHealRoundTrip:
         assert data["data"]["need_update"] == 0, (
             f"補齊後再 check 一次必須回 0，實得: {data}"
         )
+
+
+# ============ feature/122 T5：播放頁多段接續 ============
+
+_ALLOWED_PLAYER_MODULE = (
+    '<script type="module" src="/static/js/pages/player.js"></script>'
+)
+
+
+def _seed_player_videos(tmp_path, monkeypatch, filenames, *, dir_name="videos"):
+    """真 temp DB + 合成列；get_db_path 指到這份 DB，不碰 owner 片庫。"""
+    from core.database import init_db, VideoRepository, Video
+
+    video_dir = tmp_path / dir_name
+    video_dir.mkdir(parents=True, exist_ok=True)
+    db_path = tmp_path / "player_t5.db"
+    init_db(db_path)
+    repo = VideoRepository(db_path)
+    uris = []
+    rows = []
+    for name in filenames:
+        fs = video_dir / name
+        fs.write_bytes(b"\x00fake-mp4\x00")
+        uri = to_file_uri(str(fs), {})
+        uris.append(uri)
+        rows.append(Video(
+            path=uri,
+            number="ABC-123",
+            title=name,
+            size_bytes=10,
+            mtime=1.0,
+        ))
+    repo.upsert_batch(rows)
+    monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
+    return {"db_path": db_path, "uris": uris, "dir": video_dir}
+
+
+def _parse_player_video(html: str):
+    """HTMLParser 會還原屬性實體，所以 data-parts 拿到的是可 JSON.parse 的字面。"""
+    from html.parser import HTMLParser
+    import json as json_lib
+
+    class _P(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.attrs = {}
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "video":
+                self.attrs = dict(attrs)
+
+    parser = _P()
+    parser.feed(html)
+    parts = None
+    raw = parser.attrs.get("data-parts")
+    if raw is not None:
+        parts = json_lib.loads(raw)
+    return parser.attrs, parts
+
+
+def _path_from_video_url(url: str) -> str:
+    from urllib.parse import unquote
+
+    return unquote(url.split("path=", 1)[1])
+
+
+class TestVideoPlayerMultipart:
+    """TASK-122-T5：多段播放頁 HTML 契約。既有 TestScannerAPI 播放頁測試一字不改。"""
+
+    def test_multipart_data_parts_length_and_order(
+        self, client, tmp_path, monkeypatch
+    ):
+        """多段：data-parts JSON.parse 後長度與順序正確（part-1 在前）。AC-8 HTML 側。"""
+        # [lint-guard: pytest-justified] 斷言的是端點 render 出的 HTML 屬性值
+        # （data-parts JSON 內容／順序、src=part-1、段落模板、progress 脫離 flex
+        # 的 CSS）。static_guard_lint 讀得到 f-string 字面，讀不到「這次請求的
+        # 這兩個 DB 列被排成 [cd1, cd2] 寫進屬性」。
+        setup = _seed_player_videos(
+            tmp_path, monkeypatch,
+            ["ABC-123-cd2.mp4", "ABC-123-cd1.mp4"],
+        )
+        cd1_uri, cd2_uri = setup["uris"][1], setup["uris"][0]
+        response = client.get(f"/api/gallery/player?path={quote(cd1_uri)}")
+        assert response.status_code == 200
+        html = response.text
+        attrs, parts = _parse_player_video(html)
+        assert parts is not None
+        assert len(parts) == 2
+        assert _path_from_video_url(parts[0]) == cd1_uri
+        assert _path_from_video_url(parts[1]) == cd2_uri
+        assert attrs.get("src") == parts[0]
+        assert attrs.get("id") == "oa-player"
+        assert attrs.get("data-part-label-template") == "第 {current}／{total} 段"
+        assert 'id="oa-player-progress"' in html
+        assert "position: fixed" in html
+        assert "pointer-events: none" in html
+        assert "onerror=" in html
+        assert 'id="video-error-hint"' in html
+
+    def test_multipart_no_inline_script(self, client, tmp_path, monkeypatch):
+        """CD-122-12：除外部 ESM 模組外，沒有任何 <script>...</script> 區塊。"""
+        # [lint-guard: pytest-justified] 正面斷言「輸出 HTML 裡只允許那一種
+        # module script 形狀」。static_guard_lint 掃源碼 f-string 看得到字面，
+        # 看不到「這次 multipart 回應真的沒夾進第二個 <script>」。
+        setup = _seed_player_videos(
+            tmp_path, monkeypatch,
+            ["ABC-123-cd1.mp4", "ABC-123-cd2.mp4"],
+        )
+        response = client.get(f"/api/gallery/player?path={quote(setup['uris'][0])}")
+        assert response.status_code == 200
+        html = response.text
+        assert _ALLOWED_PLAYER_MODULE in html
+        rest = html.replace(_ALLOWED_PLAYER_MODULE, "", 1)
+        assert "<script" not in rest
+        assert "</script>" not in rest
+
+    def test_multipart_data_parts_escaping(self, client, tmp_path, monkeypatch):
+        """path 含 \" / & / < / > 時 data-parts 仍是合法屬性，JSON.parse 得回原值。
+
+        mutation-sensitive：把整個 html_escape(...) 呼叫拿掉（只留 json.dumps）
+        這支必須轉紅——**實測驗證過**。
+        注意不要寫成「拿掉 quote=True 就會轉紅」：`html.escape()` 的簽章本來就是
+        `(s, quote=True)`，只刪那個關鍵字參數行為完全不變、測試照樣綠，那是一個
+        不會咬人的 mutation（T5 review P3 抓到的措辭失真）。
+        """
+        # [lint-guard: pytest-justified] XSS 屬性 escaping：斷言特殊字元 path
+        # 經 json.dumps + html_escape(quote=True) 後，HTMLParser 還原再
+        # JSON.parse 得回原 URI。static_guard_lint 讀得到 quote=True 呼叫，
+        # 讀不到「這個 path 在這個請求下真的 round-trip」。
+        setup = _seed_player_videos(
+            tmp_path, monkeypatch,
+            ["ABC-123-cd1.mp4", "ABC-123-cd2.mp4"],
+            dir_name='dir"&<>x',
+        )
+        cd1_uri, cd2_uri = setup["uris"]
+        assert any(ch in cd1_uri for ch in '"&<>')
+        response = client.get(f"/api/gallery/player?path={quote(cd1_uri)}")
+        assert response.status_code == 200
+        html = response.text
+        assert "&quot;" in html
+        attrs, parts = _parse_player_video(html)
+        assert parts is not None
+        assert len(parts) == 2
+        assert _path_from_video_url(parts[0]) == cd1_uri
+        assert _path_from_video_url(parts[1]) == cd2_uri
+        scanner_src = Path("web/routers/scanner.py").read_text(encoding="utf-8")
+        assert "html_escape(json.dumps(parts_urls), quote=True)" in scanner_src
+
+    def test_ac16_nontoken_plus_cd2_does_not_continue(
+        self, client, tmp_path, monkeypatch
+    ):
+        """AC-16：同資料夾 ABC-123.mp4（無 token）＋ ABC-123-cd2.mp4 → 不接續。
+
+        mutation-sensitive：把分流條件 len(group.members) > 1 改成 >= 1，這支必須轉紅。
+        """
+        # [lint-guard: pytest-justified] 斷言 multipart 分支的標記（data-parts /
+        # oa-player / player.js）不得出現在 AC-16 反例的 HTML。源碼掃描看不到
+        # 「這兩個檔名組合 resolve 成 1-member 之後走了單檔 f-string」。
+        setup = _seed_player_videos(
+            tmp_path, monkeypatch,
+            ["ABC-123.mp4", "ABC-123-cd2.mp4"],
+        )
+        bare_uri = setup["uris"][0]
+        response = client.get(f"/api/gallery/player?path={quote(bare_uri)}")
+        assert response.status_code == 200
+        html = response.text
+        assert "data-parts" not in html
+        assert 'id="oa-player"' not in html
+        assert "oa-player-progress" not in html
+        assert "/static/js/pages/player.js" not in html
+        assert "<video controls autoplay src=" in html
+
+    def test_cd122_13_same_part_number_does_not_continue(
+        self, client, tmp_path, monkeypatch
+    ):
+        """CD-122-13（播放入口）：ABC-123-cd1.mp4 ＋ ABC-123-cd1.mkv → 不接續。
+
+        段號重複代表那是「同一片的兩種容器」，不是「一片的兩段」；若誤併，播放頁
+        會把同一段連播兩次（第二次只是換個容器的同內容）。
+        """
+        # [lint-guard: pytest-justified] 同上一支：源碼掃描看不到「這兩個檔名組合
+        # 因為段號重複而 resolve 成 1-member、走了單檔 f-string」。
+        setup = _seed_player_videos(
+            tmp_path, monkeypatch,
+            ["ABC-123-cd1.mp4", "ABC-123-cd1.mkv"],
+        )
+        mp4_uri = setup["uris"][0]
+        response = client.get(f"/api/gallery/player?path={quote(mp4_uri)}")
+        assert response.status_code == 200
+        html = response.text
+        assert "data-parts" not in html
+        assert 'id="oa-player"' not in html
+        assert "oa-player-progress" not in html
+        assert "/static/js/pages/player.js" not in html
+        assert "<video controls autoplay src=" in html
+
+    def test_db_exception_falls_back_to_single_file(
+        self, client, tmp_path, monkeypatch
+    ):
+        """DB 查詢拋例外 → 200 且走單檔分支（播放端 fail-safe）。
+
+        mutation-sensitive：把 except Exception 收窄（例如改成 except ZeroDivisionError）
+        這支就會紅。
+        """
+        # [lint-guard: pytest-justified] 斷言例外路徑 render 出的仍是單檔 HTML
+        # （無 data-parts）。收窄 except 會讓 TestClient 拿到 500 而非這份 HTML。
+        db_path = tmp_path / "broken.db"
+        db_path.write_bytes(b"not-sqlite")
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
+
+        def _boom(*_a, **_k):
+            raise RuntimeError("db exploded")
+
+        monkeypatch.setattr("web.routers.scanner.VideoRepository", _boom)
+        video_path = to_file_uri("C:/videos/test.mp4")
+        response = client.get(f"/api/gallery/player?path={quote(video_path)}")
+        assert response.status_code == 200
+        html = response.text
+        assert "<video" in html
+        assert "data-parts" not in html
+        assert 'id="oa-player"' not in html
+        assert "/static/js/pages/player.js" not in html
+        assert "test.mp4" in html
+

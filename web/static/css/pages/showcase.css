@@ -2084,6 +2084,16 @@ body.similar-mobile-active [data-picker-ghost] {
     font-family: var(--font-mono);
 }
 
+/* 122-T3: 分集標記在番號後面，靠 inline 排版並排，**不要**把 <td> 改成 flex。
+   實測（真實片庫 90 列、其中 43 列標題換行）：`display:flex` 設在 <td> 上會讓它
+   脫離 table-cell 佈局，`vertical-align: middle` 失效——番號離列中心 21~32px、
+   跟同列其他欄位對不齊；連掛標記的那一列自己也歪 30px。改用 inline 間距後
+   全部列（含掛標記的）都回到 -1px 置中。 */
+.table-cell-number .cover-badge {
+    margin-left: 0.5rem;
+    vertical-align: middle;
+}
+
 .table-number-highlight {
     color: var(--accent);
     font-weight: 600;
@@ -4316,6 +4326,19 @@ body.sidebar-collapsed .showcase-footer {
     gap: 4px;
     pointer-events: none;
 }
+
+/* 122-T3: 分集標記錨在封面左下（CD-122-9：不重用 .cover-badges）。
+   hover 淡出只掛 .av-card-preview，燈箱（.lightbox-cover）天然不命中（AC-17）。 */
+.cover-badges-part {
+    position: absolute;
+    bottom: 0.5rem;
+    left: 0.5rem;
+    z-index: 2;
+    display: flex;
+    pointer-events: none;
+    transition: opacity var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+.av-card-preview:hover .cover-badges-part { opacity: 0; }
 
 /* 121d-T2: 燈箱標籤整組下移，讓開常駐的魔法棒。只覆寫 top，其餘繼承 base。
    為什麼是兩個值：魔法棒 `.lightbox-similar-btn` 相對 `.lightbox-content` 的 padding box

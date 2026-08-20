@@ -232,7 +232,6 @@
       "db_not_synced": "Not linked — organized files won't appear in Showcase",
       "db_sync_failed": "DB sync failed (file organized but not showing in Showcase)",
       "db_synced_mobile": "Saved",
-      "skipped_nfo_multipart": "NFO skipped — this file is part 2+ of a multipart movie, managed by part 1's NFO",
       "browser_opened": "Browser opened",
       "no_translatable_titles": "No titles need translation",
       "translate_batch_done": "Translation done: {success} succeeded, {failed} failed",

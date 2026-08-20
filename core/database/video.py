@@ -1382,17 +1382,23 @@ class VideoRepository:
         finally:
             conn.close()
 
+    @staticmethod
+    def _escape_like(s: str) -> str:
+        """Python 側先 escape LIKE wildcards，順序：\\ → % → _。
+        ESCAPE '\\' 子句只定義 escape 字元，不會自動處理參數——`count_videos_in_folder()`
+        與 `get_by_folder_uri_prefix()` 共用同一份跳脫規則，不重複寫一次。
+        """
+        return (s
+                .replace('\\', '\\\\')
+                .replace('%', '\\%')
+                .replace('_', '\\_'))
+
     def count_videos_in_folder(self, folder_uri_prefix: str) -> int:
         """計算「直接在此目錄下」的影片數（不含子目錄）。
         folder_uri_prefix 必須以 '/' 結尾，例如 'file:///A/'。
         """
         assert folder_uri_prefix.endswith('/'), "prefix 必須以 '/' 結尾"
-        # Python 側先 escape LIKE wildcards，順序：\ → % → _
-        # ESCAPE '\\' 子句只定義 escape 字元，不會自動處理參數
-        escaped = (folder_uri_prefix
-                   .replace('\\', '\\\\')
-                   .replace('%', '\\%')
-                   .replace('_', '\\_'))
+        escaped = self._escape_like(folder_uri_prefix)
         conn = self._get_connection()
         try:
             row = conn.execute(
@@ -1404,6 +1410,29 @@ class VideoRepository:
                 (escaped + '%', escaped + '%/%'),
             ).fetchone()
             return row[0] if row else 0
+        finally:
+            conn.close()
+
+    def get_by_folder_uri_prefix(self, folder_uri_prefix: str) -> List['Video']:
+        """取得「直接在此目錄下」的全部影片列（不含子目錄），供 feature/122
+        分集片分組使用（同資料夾候選列）。folder_uri_prefix 必須以 '/' 結尾，
+        例如 'file:///A/'。與 `count_videos_in_folder()` 同構，但回傳 Video 列表
+        而非 count，且共用同一份 `_escape_like()` 跳脫規則。
+        """
+        assert folder_uri_prefix.endswith('/'), "prefix 必須以 '/' 結尾"
+        escaped = self._escape_like(folder_uri_prefix)
+        conn = self._get_connection()
+        try:
+            cursor = conn.execute(
+                """
+                SELECT * FROM videos
+                WHERE path LIKE ? ESCAPE '\\'
+                  AND path NOT LIKE ? ESCAPE '\\'
+                """,
+                (escaped + '%', escaped + '%/%'),
+            )
+            columns = self._get_columns()
+            return [Video.from_row(row, columns) for row in cursor.fetchall()]
         finally:
             conn.close()
 

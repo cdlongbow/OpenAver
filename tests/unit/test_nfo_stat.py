@@ -309,14 +309,14 @@ class TestOnErrorTriggeredCallSites:
 class TestNoNfoIsSilentRegression:
     """Opus BLOCKER fix regression lock: deleting `core.enricher.enrich_single`'s
     S3 `.exists()` check (the original T2 mistake) made every NFO-absent piece
-    — the common case for `write_nfo=False` pieces, and the whole point of
-    multipart/cd2 organizer-skip-NFO — log a spurious "nfo_mtime stat 失敗"
-    warning on every enrich, because `nfo_mtime_or_none()` treats a missing
-    file exactly like a stat failure (`FileNotFoundError` is an `OSError`
-    subclass) and always invokes `on_error`. `.exists()` is what keeps
-    "genuinely absent" and "present but unreadable" distinguishable at the
-    call site. Without this test, the next person who deletes `.exists()`
-    again gets no red signal — mutating it below must turn this test red.
+    — the common case for `write_nfo=False` pieces — log a spurious
+    "nfo_mtime stat 失敗" warning on every enrich, because
+    `nfo_mtime_or_none()` treats a missing file exactly like a stat failure
+    (`FileNotFoundError` is an `OSError` subclass) and always invokes
+    `on_error`. `.exists()` is what keeps "genuinely absent" and "present but
+    unreadable" distinguishable at the call site. Without this test, the next
+    person who deletes `.exists()` again gets no red signal — mutating it
+    below must turn this test red.
     """
 
     def test_enrich_single_no_nfo_logs_no_stat_warning(self, tmp_path, caplog):

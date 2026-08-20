@@ -29,70 +29,9 @@ def _reraise_stat_error(e: OSError) -> None:
     raise e
 
 
-def _overlay_scraped_metadata(video_info, scraped_metadata: dict) -> None:
-    """
-    將 scraped_metadata dict 的欄位 overlay 到 video_info（VideoInfo 物件）。
-
-    僅 overlay scraper 提供的非空欄位；path/img/size/mtime 等 file-derived 欄位不觸碰。
-    user_tags 由 repath 的 union 邏輯管理，此處不 overlay。
-
-    Mapping（與 parse_nfo / generate_nfo 保持一致）：
-      metadata['actors'] (list[str]) → video_info.actor  (comma-joined str)
-      metadata['tags']   (list[str]) → video_info.genre  (comma-joined str)
-      metadata['date']   (str)       → video_info.date
-      metadata['maker']  (str)       → video_info.maker
-      metadata['title']  (str)       → video_info.title
-      metadata['director'](str)      → video_info.director
-      metadata['series'] (str)       → video_info.series
-      metadata['label']  (str)       → video_info.label
-      metadata['duration'](int|None) → video_info.duration
-      metadata['number'] (str)       → video_info.num
-    """
-    actors = scraped_metadata.get('actors') or []
-    if actors:
-        video_info.actor = ', '.join(str(a) for a in actors)
-
-    tags = scraped_metadata.get('tags') or []
-    if tags:
-        video_info.genre = ', '.join(str(t) for t in tags)
-
-    date = scraped_metadata.get('date') or ''
-    if date:
-        video_info.date = date
-
-    maker = scraped_metadata.get('maker') or ''
-    if maker:
-        video_info.maker = maker
-
-    title = scraped_metadata.get('title') or ''
-    if title:
-        video_info.title = title
-
-    director = scraped_metadata.get('director') or ''
-    if director:
-        video_info.director = director
-
-    series = scraped_metadata.get('series') or ''
-    if series:
-        video_info.series = series
-
-    label = scraped_metadata.get('label') or ''
-    if label:
-        video_info.label = label
-
-    duration = scraped_metadata.get('duration')
-    if duration is not None:
-        video_info.duration = duration
-
-    number = scraped_metadata.get('number') or ''
-    if number:
-        video_info.num = number
-
-
 def try_inflow_upsert(
     target_file_path: str,
     old_file_path: str | None = None,
-    scraped_metadata: dict | None = None,
 ) -> str:
     """
     條件式 in-flow upsert（B1 擴充版）。
@@ -101,11 +40,6 @@ def try_inflow_upsert(
         target_file_path: 整理後影片的完整 FS 路徑字串（非 file:// URI）
         old_file_path: 整理前原始 FS 路徑（optional）；提供時觸發 repath 邏輯，
                        讓 DB 中舊路徑那筆原地 UPDATE 為新路徑，保留 id/created_at/user_tags。
-        scraped_metadata: 刮削取得的 metadata dict（optional）；僅在 cd2/multipart
-                          外部模式下 skip NFO 時傳入，overlay scraped fields 到
-                          scan_file 的 VideoInfo（actors/tags/date/maker 等），
-                          讓 cd2 DB row 與 cd1 metadata 一致。
-                          非 multipart 路徑一律傳 None（byte-identical 保證）。
 
     Returns:
         "synced"     — 成功寫入 DB
@@ -158,17 +92,6 @@ def try_inflow_upsert(
                     return "failed"
             return "not_linked"
 
-        # 步驟 2.7（72d-P2C）：scraped_metadata overlay（cd2 skipped-NFO multipart 專用）
-        # scan_file 找不到 NFO（organizer F2 skip）→ 僅 filename parsing，metadata 稀疏。
-        # 傳入 scraped_metadata 時 overlay scraper fields，讓 cd2 row 與 cd1 一致。
-        # 非 multipart / cd1 路徑一律傳 None，不進此分支（byte-identical 保證）。
-        if scraped_metadata:
-            _overlay_scraped_metadata(video_info, scraped_metadata)
-            logger.debug(
-                "try_inflow_upsert: scraped_metadata overlay 完成，%r",
-                target_file_path,
-            )
-
         # 步驟 3：repath（含 upsert 降級）
         repo = VideoRepository()
         video = Video.from_video_info(video_info)
@@ -176,8 +99,8 @@ def try_inflow_upsert(
         # 步驟 2.9：從磁碟 NFO 回填權威 nfo_mtime（鏡射目錄掃描 scanner.py:510 既有作法）。
         # Video.from_video_info 寫死 nfo_mtime=0.0（VideoInfo 無此欄位）；in-flow 路徑
         # 需自行 stat 剛整理好的 NFO，否則 showcase 會誤判該片缺 NFO（🔍 icon）。
-        # 只在 NFO 實際存在時才寫入真 st_mtime；不存在（如 multipart/cd2 外部模式
-        # organizer skip NFO）維持 0，誠實回報無 NFO。stat() 失敗保卡不拋例外。
+        # 只在 NFO 實際存在時才寫入真 st_mtime；不存在（如使用者關閉 NFO 寫入、
+        # 或 NFO 被手動刪除）維持 0，誠實回報無 NFO。stat() 失敗保卡不拋例外。
         _NFO_MTIME_POLICY = NFO_MTIME_ON_UPSERT
         try:
             nfo_path = Path(target_file_path).with_suffix('.nfo')

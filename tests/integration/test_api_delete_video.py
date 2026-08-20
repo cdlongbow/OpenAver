@@ -151,3 +151,255 @@ class TestDeleteVideoUnknownPath:
         repo = VideoRepository(delete_setup["db_path"])
         assert repo.get_by_path(delete_setup["vid_uri"]) is not None
         assert repo.get_by_path(delete_setup["vid2_uri"]) is not None
+
+
+# ============ feature/122 T4：整組刪除 / CD-122-10 反例 / 畸形 path fail-safe ============
+
+
+@pytest.fixture
+def multipart_delete_setup(tmp_path):
+    """同資料夾 ABC-123-cd1.mp4 + ABC-123-cd2.mp4（AC-12 整組刪除）。
+
+    獨立 fixture，不复用 delete_setup：那邊的 vid2 語意是「不相干的 bystander，不該被刪」，
+    與「同一組的 part-2，應該一起被刪」相反。子目錄 multipart/ 與 mixed/ 分開，避免兩種
+    分組情境互相干擾。
+    """
+    video_dir = tmp_path / "multipart"
+    video_dir.mkdir()
+
+    cd1_fs = video_dir / "ABC-123-cd1.mp4"
+    cd2_fs = video_dir / "ABC-123-cd2.mp4"
+    cd1_fs.write_bytes(b"\x00cd1-bytes\x00")
+    cd2_fs.write_bytes(b"\x00cd2-bytes\x00")
+
+    cd1_uri = to_file_uri(str(cd1_fs), {})
+    cd2_uri = to_file_uri(str(cd2_fs), {})
+
+    db_path = tmp_path / "multipart_delete.db"
+    init_db(db_path)
+    repo = VideoRepository(db_path)
+    repo.upsert_batch([
+        Video(
+            path=cd1_uri,
+            number="ABC-123",
+            title="Part 1",
+            size_bytes=12,
+            mtime=1700000000.0,
+        ),
+        Video(
+            path=cd2_uri,
+            number="ABC-123",
+            title="Part 2",
+            size_bytes=12,
+            mtime=1700000000.0,
+        ),
+    ])
+
+    return {
+        "db_path": db_path,
+        "cd1_uri": cd1_uri,
+        "cd2_uri": cd2_uri,
+        "cd1_fs": cd1_fs,
+        "cd2_fs": cd2_fs,
+    }
+
+
+@pytest.fixture
+def mixed_nontoken_delete_setup(tmp_path):
+    """同資料夾 ABC-123.mp4（無 token）+ ABC-123-cd2.mp4（AC-16 誤併反例）。"""
+    video_dir = tmp_path / "mixed"
+    video_dir.mkdir()
+
+    bare_fs = video_dir / "ABC-123.mp4"
+    cd2_fs = video_dir / "ABC-123-cd2.mp4"
+    bare_fs.write_bytes(b"\x00bare-bytes\x00")
+    cd2_fs.write_bytes(b"\x00cd2-bytes\x00")
+
+    bare_uri = to_file_uri(str(bare_fs), {})
+    cd2_uri = to_file_uri(str(cd2_fs), {})
+
+    db_path = tmp_path / "mixed_nontoken_delete.db"
+    init_db(db_path)
+    repo = VideoRepository(db_path)
+    repo.upsert_batch([
+        Video(
+            path=bare_uri,
+            number="ABC-123",
+            title="No Token",
+            size_bytes=12,
+            mtime=1700000000.0,
+        ),
+        Video(
+            path=cd2_uri,
+            number="ABC-123",
+            title="Has Token",
+            size_bytes=12,
+            mtime=1700000000.0,
+        ),
+    ])
+
+    return {
+        "db_path": db_path,
+        "bare_uri": bare_uri,
+        "cd2_uri": cd2_uri,
+        "bare_fs": bare_fs,
+        "cd2_fs": cd2_fs,
+    }
+
+
+@pytest.fixture
+def same_partnum_delete_setup(tmp_path):
+    """同資料夾 ABC-123-cd1.mp4 + ABC-123-cd1.mkv（CD-122-13 段號重複反例）。
+
+    這是「同一片留兩種容器」的收藏擺法，不是「一片的兩段」——兩者剝 token 後 stem
+    相同、都帶 token，唯一擋得住誤併的是「段號必須唯一」那條。
+    """
+    video_dir = tmp_path / "samepart"
+    video_dir.mkdir()
+
+    mp4_fs = video_dir / "ABC-123-cd1.mp4"
+    mkv_fs = video_dir / "ABC-123-cd1.mkv"
+    mp4_fs.write_bytes(b"\x00mp4-bytes\x00")
+    mkv_fs.write_bytes(b"\x00mkv-bytes\x00")
+
+    mp4_uri = to_file_uri(str(mp4_fs), {})
+    mkv_uri = to_file_uri(str(mkv_fs), {})
+
+    db_path = tmp_path / "same_partnum_delete.db"
+    init_db(db_path)
+    repo = VideoRepository(db_path)
+    repo.upsert_batch([
+        Video(path=mp4_uri, number="ABC-123", title="Container mp4",
+              size_bytes=12, mtime=1700000000.0),
+        Video(path=mkv_uri, number="ABC-123", title="Container mkv",
+              size_bytes=12, mtime=1700000000.0),
+    ])
+
+    return {
+        "db_path": db_path,
+        "mp4_uri": mp4_uri,
+        "mkv_uri": mkv_uri,
+    }
+
+
+class TestCD122_13DeleteDoesNotMergeDuplicatePartNumber:
+    def test_delete_one_container_leaves_the_other_row(
+        self, client, same_partnum_delete_setup, mocker
+    ):
+        """CD-122-13（刪除入口）：段號重複的兩個檔案不成組，刪一個只移除一列。
+
+        這是這條 P0 真正的傷害發生點——誤併時整組刪除會一次帶走兩列 DB，
+        而手動封面裁切座標（auto_focal / crop_mode）只存在 DB、不同步進 NFO，
+        重掃救不回來。
+        """
+        _patch_db_path(mocker, same_partnum_delete_setup["db_path"])
+        inv = mocker.spy(thumbnail_cache, "invalidate")
+
+        resp = client.delete(
+            "/api/showcase/video",
+            params={"path": same_partnum_delete_setup["mp4_uri"]},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"deleted": 1}
+
+        repo = VideoRepository(same_partnum_delete_setup["db_path"])
+        assert repo.get_by_path(same_partnum_delete_setup["mp4_uri"]) is None
+        assert repo.get_by_path(same_partnum_delete_setup["mkv_uri"]) is not None
+
+        assert inv.call_count == 1
+        assert inv.call_args.args[0] == same_partnum_delete_setup["mp4_uri"]
+
+
+class TestAC12DeleteRemovesWholeGroup:
+    def test_delete_part1_removes_both_rows_and_invalidates_each_member(
+        self, client, multipart_delete_setup, mocker
+    ):
+        """AC-12：刪 cd1 → DB 兩列都消失，thumbnail_cache.invalidate 各呼叫一次。"""
+        _patch_db_path(mocker, multipart_delete_setup["db_path"])
+        inv = mocker.spy(thumbnail_cache, "invalidate")
+
+        resp = client.delete(
+            "/api/showcase/video",
+            params={"path": multipart_delete_setup["cd1_uri"]},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"deleted": 2}
+
+        repo = VideoRepository(multipart_delete_setup["db_path"])
+        assert repo.get_by_path(multipart_delete_setup["cd1_uri"]) is None
+        assert repo.get_by_path(multipart_delete_setup["cd2_uri"]) is None
+
+        assert inv.call_count == 2
+        called_paths = [call.args[0] for call in inv.call_args_list]
+        assert multipart_delete_setup["cd1_uri"] in called_paths
+        assert multipart_delete_setup["cd2_uri"] in called_paths
+
+
+class TestAC16DeleteDoesNotMergeNoToken:
+    def test_delete_nontoken_leaves_cd2_row(self, client, mixed_nontoken_delete_setup, mocker):
+        """AC-16：同資料夾無 token 片 + 帶 token 片，刪無 token 那張只移除一列。"""
+        _patch_db_path(mocker, mixed_nontoken_delete_setup["db_path"])
+        inv = mocker.spy(thumbnail_cache, "invalidate")
+
+        resp = client.delete(
+            "/api/showcase/video",
+            params={"path": mixed_nontoken_delete_setup["bare_uri"]},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"deleted": 1}
+
+        repo = VideoRepository(mixed_nontoken_delete_setup["db_path"])
+        assert repo.get_by_path(mixed_nontoken_delete_setup["bare_uri"]) is None
+        assert repo.get_by_path(mixed_nontoken_delete_setup["cd2_uri"]) is not None
+
+        assert inv.call_count == 1
+        assert inv.call_args.args[0] == mixed_nontoken_delete_setup["bare_uri"]
+
+
+class TestDeleteVideoMalformedPathFailsafe:
+    def test_group_resolve_exception_falls_back_to_single_delete(self, client, delete_setup, mocker):
+        """分組反解**拋例外**時 fail-safe 退回單路徑刪除，不 500。
+
+        為什麼要 patch 才測得到：`uri_to_fs_path()` 對畸形輸入是寬容的（原樣回傳，
+        不拋），所以下面那支 malformed-path 測試走的是「反解不到組 → group is None」
+        那條路，**不會**碰到 try/except。真正會拋的是 `load_config()`（使用者手改壞
+        config.json 就會），那時整組刪除若沒有 fail-safe，使用者按「從收藏移除」會
+        收到 500、卡片不消失、也不知道發生什麼事。
+
+        這支測試對 fail-safe 是 mutation-sensitive 的：把 `except Exception` 收窄
+        （例如改成 `except ZeroDivisionError`）這支就會紅。
+        """
+        _patch_db_path(mocker, delete_setup["db_path"])
+        mocker.patch(
+            "web.routers.showcase.load_config",
+            side_effect=RuntimeError("config.json 壞了"),
+        )
+        inv = mocker.patch("core.thumbnail_cache.invalidate")
+
+        resp = client.delete(
+            "/api/showcase/video", params={"path": delete_setup["vid_uri"]}
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"deleted": 1}
+
+        repo = VideoRepository(delete_setup["db_path"])
+        assert repo.get_by_path(delete_setup["vid_uri"]) is None
+        assert inv.call_count == 1
+        assert inv.call_args.args[0] == delete_setup["vid_uri"]
+
+    def test_malformed_path_returns_200_deleted_zero(self, client, delete_setup, mocker):
+        """畸形 path → 200 + {"deleted": 0}（走 group is None 那條路，非例外路徑）。"""
+        _patch_db_path(mocker, delete_setup["db_path"])
+
+        resp = client.delete("/api/showcase/video", params={"path": "not-a-uri"})
+
+        assert resp.status_code == 200
+        assert resp.json() == {"deleted": 0}
+
+        repo = VideoRepository(delete_setup["db_path"])
+        assert repo.get_by_path(delete_setup["vid_uri"]) is not None
+        assert repo.get_by_path(delete_setup["vid2_uri"]) is not None

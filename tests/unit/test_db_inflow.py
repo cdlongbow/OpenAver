@@ -17,8 +17,6 @@ U13 ranker invalidate — 正常 UPDATE 分支
 U14 ranker invalidate — scan-fail 保卡分支
 U15 ranker invalidate — 碰撞 delete-merge 分支
 U16 old_uri 使用 to_file_uri(normalize_path(...))，無手拼 URI、無 [8:] strip  # path-contract-ok
-U23 scraped_metadata overlay — cd2 skipped-NFO multipart 有完整 metadata
-U24 scraped_metadata=None — cd1/normal 路徑行為不變
 U25 正常 UPDATE — output_dir 保留（incoming 空，Codex branch-review P2）
 U26 正常 UPDATE — scrape_attempted_at 保留（incoming 0，Codex branch-review P2）
 U27 正常 UPDATE — output_dir/scrape_attempted_at happy path（incoming 有值正常寫入）
@@ -1034,153 +1032,6 @@ def test_u22_repath_normal_update_rowcount0_falls_back_to_upsert(tmp_path):
     )
 
 
-# ─── U23: scraped_metadata overlay — cd2 skipped-NFO multipart ────────────────
-# RED before fix: scan_file returns sparse VideoInfo (no actors/tags/date/maker
-# because no NFO), so the DB row has empty actresses/tags/release_date/maker.
-# GREEN after fix: scraped_metadata is overlaid onto video_info, so the DB row
-# has the scraped actors/tags/date/maker.
-
-def test_u23_scraped_metadata_overlay_cd2_multipart(tmp_path):
-    """
-    cd2 外部模式下刮削：scan_file 回 filename-parsed 稀疏 VideoInfo，
-    傳入 scraped_metadata 後，DB row 應有完整的 scraped actors/tags/date/maker。
-
-    RED 條件：目前 try_inflow_upsert 不接受 scraped_metadata，DB row actors/tags 為空。
-    GREEN 條件：overlay 後 DB row.actresses == ['花澤ひまり']，tags 含 '美少女'，
-                release_date == '2024-03-15'，maker == 'SOD CREATE'。
-    """
-    new_path = "/tmp/u23_cd2.mp4"
-    new_uri = "file:///tmp/u23_cd2.mp4"
-
-    # scan_file 模擬 filename-parsed 稀疏結果（無 NFO）
-    sparse_info = _make_video_info(new_uri, num="SONE-001", title="SONE-001 cd2")
-    # sparse: actor='', genre='', maker='', date='' — just num/title from filename
-
-    scraped_metadata = {
-        'number': 'SONE-001',
-        'title': 'SOD 花澤ひまり 美少女',
-        'actors': ['花澤ひまり'],
-        'tags': ['美少女', '单体作品'],
-        'date': '2024-03-15',
-        'maker': 'SOD CREATE',
-        'director': '山田太郎',
-        'series': 'SOD STAR',
-        'label': 'SOD',
-        'duration': 120,
-    }
-
-    import core.db_inflow as _db_inflow_mod
-
-    mock_repo = MagicMock()
-    captured_video = {}
-
-    def fake_repath(old_uri, new_uri, video):
-        captured_video['video'] = video
-
-    mock_repo.repath.side_effect = fake_repath
-
-    with (
-        patch.object(_db_inflow_mod, "load_config", return_value={
-            "gallery": {"directories": ["/tmp"], "path_mappings": None}
-        }),
-        patch.object(_db_inflow_mod, "find_matched_directory", return_value="/tmp"),
-        patch.object(_db_inflow_mod, "VideoScanner") as MockScanner,
-        patch.object(_db_inflow_mod, "VideoRepository", return_value=mock_repo),
-        patch("core.similar.ranker_cache.SimilarRankerCache"),
-    ):
-        MockScanner.return_value.scan_file.return_value = sparse_info
-        mock_repo.repath.return_value = None
-
-        result = _db_inflow_mod.try_inflow_upsert(
-            new_path,
-            old_file_path=None,
-            scraped_metadata=scraped_metadata,
-        )
-
-    assert result == "synced", f"應回 'synced'，實際: {result!r}"
-    assert mock_repo.repath.called, "repo.repath 應被呼叫"
-
-    # 拿到傳入 repath 的 Video 物件
-    video = captured_video.get('video')
-    assert video is not None, "應有 Video 傳入 repath"
-
-    # 驗證 overlay 生效
-    assert video.actresses == ['花澤ひまり'], \
-        f"actresses 應為 ['花澤ひまり']，實際: {video.actresses}"
-    assert '美少女' in video.tags, \
-        f"tags 應含 '美少女'，實際: {video.tags}"
-    assert video.release_date == '2024-03-15', \
-        f"release_date 應為 '2024-03-15'，實際: {video.release_date!r}"
-    assert video.maker == 'SOD CREATE', \
-        f"maker 應為 'SOD CREATE'，實際: {video.maker!r}"
-    assert video.director == '山田太郎', \
-        f"director 應為 '山田太郎'，實際: {video.director!r}"
-    assert video.series == 'SOD STAR', \
-        f"series 應為 'SOD STAR'，實際: {video.series!r}"
-    assert video.duration == 120, \
-        f"duration 應為 120，實際: {video.duration}"
-
-
-# ─── U24: scraped_metadata=None — cd1/normal 行為不變 ───────────────────────
-
-def test_u24_no_scraped_metadata_behavior_unchanged(tmp_path):
-    """
-    cd1/normal 路徑（scraped_metadata=None）：行為與原本 byte-identical。
-    scan_file 的 sparse 結果直接進 repath，無 overlay。
-    actresses/tags 依 scan_file 結果（空）而非 scraped_metadata。
-    """
-    new_path = "/tmp/u24_cd1.mp4"
-    new_uri = "file:///tmp/u24_cd1.mp4"
-
-    # scan_file 回有 actor 的 VideoInfo（模擬 NFO 存在的 cd1）
-    info_with_actor = _make_video_info(new_uri, num="SONE-001", title="SONE-001 cd1")
-    info_with_actor.actor = "花澤ひまり"
-    info_with_actor.genre = "美少女"
-    info_with_actor.date = "2024-03-15"
-    info_with_actor.maker = "SOD CREATE"
-
-    import core.db_inflow as _db_inflow_mod
-
-    mock_repo = MagicMock()
-    captured_video = {}
-
-    def fake_repath(old_uri, new_uri, video):
-        captured_video['video'] = video
-
-    mock_repo.repath.side_effect = fake_repath
-
-    with (
-        patch.object(_db_inflow_mod, "load_config", return_value={
-            "gallery": {"directories": ["/tmp"], "path_mappings": None}
-        }),
-        patch.object(_db_inflow_mod, "find_matched_directory", return_value="/tmp"),
-        patch.object(_db_inflow_mod, "VideoScanner") as MockScanner,
-        patch.object(_db_inflow_mod, "VideoRepository", return_value=mock_repo),
-        patch("core.similar.ranker_cache.SimilarRankerCache"),
-    ):
-        MockScanner.return_value.scan_file.return_value = info_with_actor
-        mock_repo.repath.return_value = None
-
-        # scraped_metadata=None — cd1/normal path
-        result = _db_inflow_mod.try_inflow_upsert(
-            new_path,
-            old_file_path=None,
-            scraped_metadata=None,
-        )
-
-    assert result == "synced"
-    video = captured_video.get('video')
-    assert video is not None
-
-    # scan_file 的值應直接進 repath，無任何 overlay 改動
-    assert video.actresses == ['花澤ひまり'], \
-        f"actresses 應由 scan_file 給，得: {video.actresses}"
-    assert '美少女' in video.tags, \
-        f"tags 應由 scan_file 給，得: {video.tags}"
-    assert video.release_date == '2024-03-15'
-    assert video.maker == 'SOD CREATE'
-
-
 # ─── N1/N2: TASK-showcase-nfo-mtime — in-flow nfo_mtime 磁碟回填 ───────────
 # 根因：try_inflow_upsert → Video.from_video_info 寫死 nfo_mtime=0.0，
 # 目錄掃描路徑（scanner.py:510）事後從磁碟回填，in-flow 路徑原本缺這一步，
@@ -1233,7 +1084,7 @@ def test_n1_nfo_mtime_backfilled_from_disk_when_nfo_exists(tmp_path):
 
 
 def test_n2_nfo_mtime_stays_zero_when_no_nfo_on_disk(tmp_path):
-    """無 NFO 落磁碟（如 multipart cd2 external 模式 organizer skip NFO）
+    """無 NFO 落磁碟（如使用者關閉 NFO 寫入、或 NFO 被手動刪除）
     → DB nfo_mtime == 0，誠實回報缺 NFO（非回歸，維持現行正確行為）。"""
     from core.path_utils import normalize_path, to_file_uri
 

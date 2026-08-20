@@ -14,11 +14,16 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from core.database import VideoRepository, get_db_path, init_db
-from core.path_utils import is_path_under_dir, uri_to_local_fs_path, coerce_to_file_uri
+from core.path_utils import (
+    is_path_under_dir,
+    uri_to_local_fs_path,
+    coerce_to_file_uri,
+)
 from core.logger import get_logger
 from core.config import load_config, get_gallery_source_paths
 from core.focal import detect_focal, format_focal, parse_focal
 from core import thumbnail_cache
+from core.multipart_group import group_rows, resolve_group
 
 logger = get_logger(__name__)
 
@@ -89,6 +94,26 @@ def _serialize_video(v, path_mappings: dict, enabled: bool = False) -> dict:
     }
 
 
+def _serialize_group(group, path_mappings: dict, enabled: bool = False) -> dict:
+    """將 VideoGroup 序列化為前端 JSON dict（feature/122，CD-122-4）。
+
+    以 `group.members[0]`（part-1，group_rows 已依 part_number 升冪排序）的
+    `_serialize_video()` 結果為基底，只在**真的多段時**覆寫 `size`（各段 size_bytes 加總，`or 0`
+    是必要防禦——`Video.from_row()` 對 DB NULL 不做防禦，size_bytes 可能是 None）
+    與新增 `part_tokens`。其餘欄位（含 `duration`）逐字取 part-1，不做欄位級 merge。
+    單檔片：members==[v]、part_tokens==[]，輸出與今天 `_serialize_video(v, ...)`
+    逐鍵逐值相同，只多 `part_tokens: []` 一個新鍵（AC-4）。
+    """
+    base = _serialize_video(group.members[0], path_mappings, enabled)
+    # 單檔片不碰 size：`_serialize_video()` 原樣傳 `v.size_bytes`（DB NULL → None），
+    # 套 `or 0` 會把 None 變 0，違反 AC-4「單檔片逐位元組不變」的字面契約。
+    # 只有真的多段時才加總，`or 0` 的 NULL 防禦留在那條路上（T2 review P3）。
+    if len(group.members) > 1:
+        base['size'] = sum(m.size_bytes or 0 for m in group.members)
+    base['part_tokens'] = group.part_tokens
+    return base
+
+
 def _get_configured_dirs(config: dict) -> tuple[set, dict]:
     """從 config 取出 configured_dir_uris 與 path_mappings（列表與單筆端點共用）"""
     gallery_config = config.get('gallery', {})
@@ -131,9 +156,14 @@ def get_videos():
         all_videos = [v for v in repo.get_all()
                       if any(is_path_under_dir(v.path, uri) for uri in configured_dir_uris)]
 
+        # feature/122 CD-122-1：分組在序列化層收斂，前端拿到的 videos 陣列已是
+        # 合併後的一筆一組（多一個 part_tokens 欄位）。單檔片的 group 只有自己
+        # 一個 member，_serialize_group() 輸出與改動前逐鍵逐值相同（AC-4）。
+        groups = group_rows(all_videos, fs_path_of=lambda v: uri_to_local_fs_path(v.path, path_mappings))
+
         thumb_enabled = config.get('thumbnail_cache_enabled', False)
-        videos_json = [_serialize_video(v, path_mappings, thumb_enabled)
-                       for v in all_videos]
+        videos_json = [_serialize_group(g, path_mappings, thumb_enabled)
+                       for g in groups]
 
         return JSONResponse({
             "success": True,
@@ -173,8 +203,18 @@ def get_video(path: str = Query(..., description="file:/// URI")):
             return JSONResponse({"success": False, "error": "video not found"}, status_code=404)
 
         thumb_enabled = config.get('thumbnail_cache_enabled', False)
+
+        # feature/122：用查到列的 v.path（而非使用者傳入的原始 path 字面，更可靠）
+        # 算同資料夾候選列，反解該 path 所屬的組。找不到組（極端狀況：part-1 被
+        # 刪但 part-2 還在、或路徑不再是任何組的代表）→ fail-safe 退回單檔序列化，
+        # 不 500（CD-122-6）。
+        group = resolve_group(repo, path, path_mappings, folder_source_uri=v.path)
+        if group is None:
+            return JSONResponse({"success": True,
+                                 "video": _serialize_video(v, path_mappings, thumb_enabled)})
+
         return JSONResponse({"success": True,
-                             "video": _serialize_video(v, path_mappings, thumb_enabled)})
+                             "video": _serialize_group(group, path_mappings, thumb_enabled)})
 
     except Exception as e:
         logger.error("取得單筆影片失敗: %s", e)
@@ -183,7 +223,7 @@ def get_video(path: str = Query(..., description="file:/// URI")):
 
 @router.delete("/video")
 def delete_video(path: str = Query(..., description="file:/// URI")):
-    """從收藏移除單筆影片（71-T7，CD-10 / §1.6）。
+    """從收藏移除影片（71-T7，CD-10 / §1.6；feature/122 T4 改整組刪除）。
 
     只刪 DB row（repo.delete_by_paths，DB-only）+ 砍衍生縮圖 WebP
     （thumbnail_cache.invalidate）。**絕不 unlink 影片檔或原始封面檔。**
@@ -191,6 +231,13 @@ def delete_video(path: str = Query(..., description="file:/// URI")):
     刻意「無 scope guard」：issue #57 要刪的正是已移出 gallery 設定資料夾的
     stale DB row，那些 path 依定義不在任何 configured dir 下，scope guard 會
     擋掉正當用例。未知 path → delete_by_paths rowcount=0，安全 no-op。
+
+    feature/122：合併卡刪除時反解同組全部成員，一次刪除整組 DB 列，並對
+    每一個 member 呼叫 thumbnail_cache.invalidate。`deleted` 為本次刪除的列數。
+    反解失敗（找不到組、或載入設定時拋例外）→ fail-safe 退回單路徑刪除，不 500。
+    注意 try 只包住「反解組」那一段，**不包實際刪除**——DB 真的壞掉仍會照常
+    拋出 500，不會偽裝成刪除成功。（路徑運算本身不拋：uri_to_fs_path 對畸形
+    輸入是原樣回傳，那條路走的是「反解不到組 → 退回單筆」而非例外。）
 
     `def`（非 async）→ Starlette threadpool，body 內 DB / unlink 在 worker thread。
     不進 capabilities（D9）。
@@ -202,8 +249,23 @@ def delete_video(path: str = Query(..., description="file:/// URI")):
     init_db(db_path)
     repo = VideoRepository(db_path)
 
-    n = repo.delete_by_paths([path])
-    thumbnail_cache.invalidate(path)
+    group = None
+    try:
+        config = load_config()
+        _, path_mappings = _get_configured_dirs(config)
+        group = resolve_group(repo, path, path_mappings)
+    except Exception:
+        logger.warning("delete_video: 分組反解失敗，退回單路徑刪除", exc_info=True)
+        group = None
+
+    if group is None:
+        n = repo.delete_by_paths([path])
+        thumbnail_cache.invalidate(path)
+    else:
+        member_paths = [m.path for m in group.members]
+        n = repo.delete_by_paths(member_paths)
+        for m in group.members:
+            thumbnail_cache.invalidate(m.path)
 
     return JSONResponse({"deleted": n})
 
