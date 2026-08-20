@@ -1236,9 +1236,6 @@ const RULES = [
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: "'has-cover': !!currentLightboxVideo?.cover_url", note: '[TestUS5VideoCoverFitMobile] test_video_lightbox_cover_has_cover_class' },
   { file: 'web/templates/search.html', kind: 'required-string', pattern: "'has-cover': !actressLightboxMode() && !!resolveCoverUrl(currentLightboxVideo()) && !_heroLightboxImageError", note: '[TestUS9SearchGridMobileFix] test_search_lightbox_has_cover_class（TASK-113c-T7：改用 resolveCoverUrl() 純函式，內部含 _previewFailed error-time fallback，preview_cover_url 優先 fallback cover 語意不變）' },
 
-  // ---- [TestSkippedNfoMultipartToastGuard]（structure-count min，handoff 已解除留置 AD-96b-2） ----
-  { file: 'web/static/js/pages/search/state/batch.js', kind: 'structure-count', pattern: 'skipped_nfo_multipart', min: 2, note: '[TestSkippedNfoMultipartToastGuard] test_skipped_nfo_multipart_flag_referenced — batch.js >=2 次（scrapeAll+scrapeSingle）' },
-
   // ---- [TestActressCoreMetadataVideoCount]（order + required，brace-balanced scope，handoff 已解除留置 AD-96b-2） ----
   // 116a-T3：anchor 由 _actressCoreMetadata 改為 _actressCoreMetadataParts（函式被結構化陣列版原地取代）。
   // 等價遷移：4 條規則、scope 語意、鎖的內容全部不變，只換錨定的函式名。

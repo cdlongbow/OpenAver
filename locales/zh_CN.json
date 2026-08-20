@@ -232,7 +232,6 @@
       "db_not_synced": "未联动 — 整理完成后不会出现在 Showcase",
       "db_sync_failed": "DB 同步失败（文件已整理但未出现在 Showcase）",
       "db_synced_mobile": "已入库",
-      "skipped_nfo_multipart": "已跳过 NFO — 此文件为多段影片的第 2 段以后，由第 1 段的 NFO 管理",
       "browser_opened": "已打开浏览器",
       "no_translatable_titles": "没有需要翻译的标题",
       "translate_batch_done": "翻译完成：成功 {success}，失败 {failed}",

@@ -4122,12 +4122,12 @@ class TestOrganizeMultipart:
 
     涵蓋：
     A  cd1 外部模式 → 正常 NFO、part_tail 在 stem 末
-    B  cd2 外部模式 → 跳 NFO、保留封面/poster/fanart、success True
+    B  cd2 外部模式 → 產 NFO、保留封面/poster/fanart、success True
     C  長標題 + cd1 → 不超 max_filename_length 且 -cd1 不被截
     D  防 {suffix} 雙寫（-cd1-cd1 negative）
     E  off 模式 byte-identical（cd2 也照產 NFO）
     F  VR + cd1 → 順序 {vr_tail}-cd1
-    G  kodi cd2 → 保留封面
+    G  kodi cd2 → 產 NFO、保留封面
     H  邊界：apartment1（前緣字母不誤命中）
     """
 
@@ -4176,7 +4176,6 @@ class TestOrganizeMultipart:
 
         assert result['success'] is True, f"organize 失敗: {result.get('error')}"
         assert result.get('nfo_path') is not None, 'cd1 應產 NFO（nfo_path not None）'
-        assert not result.get('skipped_nfo_multipart'), 'cd1 不應設 skipped_nfo_multipart'
 
         stem = Path(result['new_filename']).stem
         import re
@@ -4186,10 +4185,10 @@ class TestOrganizeMultipart:
         nfo_stem = Path(result['nfo_path']).stem
         assert re.search(r'-cd1$', nfo_stem), f'NFO stem 應以 -cd1 結尾，實際：{nfo_stem!r}'
 
-    # ---- B: cd2 外部模式 → 跳 NFO、保留封面/poster/fanart ----
+    # ---- B: cd2 外部模式 → 產 NFO、保留封面/poster/fanart ----
 
-    def test_cd2_external_skip_nfo_keep_cover(self, tmp_path):
-        """B：外部模式 cd2 → nfo_path None、skipped_nfo_multipart True、success True、封面保留"""
+    def test_cd2_external_nfo_now_written_and_cover_kept(self, tmp_path):
+        """B：外部模式 cd2 → nfo_path not None、.nfo 存在、success True、封面保留"""
         src = tmp_path / 'MIRD-151-cd2.mp4'
         src.write_bytes(b'cd2 content')
 
@@ -4200,18 +4199,17 @@ class TestOrganizeMultipart:
             result = organize_file(str(src), metadata, config)
 
         assert result['success'] is True, f"organize 失敗: {result.get('error')}"
-        assert result['nfo_path'] is None, 'cd2 外部模式應跳過 NFO（nfo_path None）'
-        assert result.get('skipped_nfo_multipart') is True, '應設 skipped_nfo_multipart=True'
+        assert result['nfo_path'] is not None, 'cd2 外部模式應產 NFO（nfo_path not None）'
 
         # 封面/poster/fanart 照常
         assert result.get('cover_path') is not None, 'cd2 應保留 cover'
         assert result.get('fanart_path') is not None, 'cd2 應保留 fanart'
         assert result.get('poster_path') is not None, 'cd2 應保留 poster'
 
-        # 目標目錄下無 .nfo 檔
+        # 目標目錄下有 .nfo 檔
         stem = Path(result['new_filename']).stem
         nfo_candidate = tmp_path / (stem + '.nfo')
-        assert not nfo_candidate.exists(), f'.nfo 不應存在：{nfo_candidate}'
+        assert nfo_candidate.exists(), f'.nfo 應存在：{nfo_candidate}'
 
         # stem 以 -cd2 結尾
         import re
@@ -4320,12 +4318,11 @@ class TestOrganizeMultipart:
 
         assert result['success'] is True, f"organize 失敗: {result.get('error')}"
         assert result.get('nfo_path') is not None, 'off 模式 cd1 應產 NFO'
-        assert not result.get('skipped_nfo_multipart'), 'off 模式不應設 skipped_nfo_multipart'
         # -cd1 經 {suffix} 路徑進檔名
         assert '-cd1' in Path(result['new_filename']).name
 
     def test_off_mode_cd2_nfo_written_no_skip(self, tmp_path):
-        """E：off 模式 cd2 → NFO 照產（不跳），無 skipped_nfo_multipart flag"""
+        """E：off 模式 cd2 → NFO 照產"""
         src = tmp_path / 'MIRD-151-cd2.mp4'
         src.write_bytes(b'off cd2')
 
@@ -4336,8 +4333,7 @@ class TestOrganizeMultipart:
         result = organize_file(str(src), metadata, config)
 
         assert result['success'] is True, f"organize 失敗: {result.get('error')}"
-        assert result.get('nfo_path') is not None, 'off 模式 cd2 應照產 NFO（不跳）'
-        assert 'skipped_nfo_multipart' not in result, 'off 模式不應設 skipped_nfo_multipart key'
+        assert result.get('nfo_path') is not None, 'off 模式 cd2 應照產 NFO'
         assert '-cd2' in Path(result['new_filename']).name
 
     # ---- F: VR + cd1 → 順序 {base}{vr_tail}-cd1 ----
@@ -4368,7 +4364,7 @@ class TestOrganizeMultipart:
     # ---- G: kodi cd2 → 保留封面 ----
 
     def test_kodi_cd2_keep_cover(self, tmp_path):
-        """G：kodi 模式 cd2 + create_folder=False → 跳 NFO + stem 命名 poster/fanart（72c 修正後）"""
+        """G：kodi 模式 cd2 + create_folder=False → 產 NFO + stem 命名 poster/fanart（72c 修正後）"""
         src = tmp_path / 'MIRD-151-cd2.mp4'
         src.write_bytes(b'kodi cd2')
 
@@ -4379,8 +4375,8 @@ class TestOrganizeMultipart:
             result = organize_file(str(src), metadata, config)
 
         assert result['success'] is True, f"organize 失敗: {result.get('error')}"
-        assert result['nfo_path'] is None, 'kodi cd2 應跳 NFO'
-        assert result.get('skipped_nfo_multipart') is True
+        assert result['nfo_path'] is not None, 'kodi cd2 應產 NFO'
+        assert Path(result['nfo_path']).exists(), f".nfo 應存在：{result['nfo_path']}"
         # kodi 固定 stem 命名（collision-free）
         assert result.get('poster_path') is not None, 'kodi cd2 應保留 poster'
         assert result.get('fanart_path') is not None, 'kodi cd2 應保留 fanart'
@@ -4403,8 +4399,7 @@ class TestOrganizeMultipart:
             result = organize_file(str(src), metadata, config)
 
         assert result['success'] is True, f"organize 失敗: {result.get('error')}"
-        assert result.get('nfo_path') is not None, 'apartment1 不應觸發 skip_nfo'
-        assert not result.get('skipped_nfo_multipart'), 'apartment1 不應設 skipped_nfo_multipart'
+        assert result.get('nfo_path') is not None, 'apartment1 應正常產 NFO'
         # 檔名不應帶任何 part_tail
         stem = Path(result['new_filename']).stem
         assert not stem.endswith('-cd1'), f'apartment1 不應接 -cd1 part_tail：{stem!r}'

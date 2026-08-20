@@ -220,6 +220,43 @@ def jellyfin_env(tmp_path_factory):
     if not ok:
         pytest.skip("generate_nfo failed for GHI-012")
 
+    # 5. bothnfo/JKL-345/ ────────────────────────────────────────────
+    # AC-9 永久回歸守衛：cd1／cd2 各自完整（.mp4 + .nfo + 同名圖 + poster + fanart），
+    # 兩份 NFO metadata 相同——這是 cd2 也寫 NFO 後 OpenAver 會產出的形狀。
+    # probe-jellyfin-bothnfo.md 已用同一 harness 驗過：Jellyfin 仍收成 1 item、
+    # PartCount=2（cd2 的 NFO/圖被忽略，不是被當第二部片）。
+    bothnfo_dir = media_root / "bothnfo" / "JKL-345"
+    bothnfo_dir.mkdir(parents=True, exist_ok=True)
+    mp4_jkl_cd1 = bothnfo_dir / "JKL-345-cd1.mp4"
+    mp4_jkl_cd2 = bothnfo_dir / "JKL-345-cd2.mp4"
+    make_tiny_mp4(mp4_jkl_cd1)
+    make_tiny_mp4(mp4_jkl_cd2)
+    make_solid_jpg(bothnfo_dir / "JKL-345-cd1.jpg", color=(40, 80, 160))
+    make_solid_jpg(bothnfo_dir / "JKL-345-cd1-poster.jpg", color=(160, 40, 80))
+    make_solid_jpg(bothnfo_dir / "JKL-345-cd1-fanart.jpg", color=(40, 160, 80))
+    nfo_jkl_cd1 = bothnfo_dir / "JKL-345-cd1.nfo"
+    ok = generate_nfo(
+        number="JKL-345", title="POC BothNfo Title", external_manager="jellyfin",
+        has_poster=True, has_fanart=True, output_path=str(nfo_jkl_cd1),
+        summary="POC plot summary for harness assertion.",
+        date="2024-01-15", maker="POC Studio",
+    )
+    if not ok:
+        pytest.skip("generate_nfo failed for JKL-345 cd1")
+    # cd2：自己的完整 NFO + 三張圖（metadata 與 cd1 相同）——這是本樹要驗的形狀
+    make_solid_jpg(bothnfo_dir / "JKL-345-cd2.jpg", color=(40, 80, 160))
+    make_solid_jpg(bothnfo_dir / "JKL-345-cd2-poster.jpg", color=(160, 40, 80))
+    make_solid_jpg(bothnfo_dir / "JKL-345-cd2-fanart.jpg", color=(40, 160, 80))
+    nfo_jkl_cd2 = bothnfo_dir / "JKL-345-cd2.nfo"
+    ok = generate_nfo(
+        number="JKL-345", title="POC BothNfo Title", external_manager="jellyfin",
+        has_poster=True, has_fanart=True, output_path=str(nfo_jkl_cd2),
+        summary="POC plot summary for harness assertion.",
+        date="2024-01-15", maker="POC Studio",
+    )
+    if not ok:
+        pytest.skip("generate_nfo failed for JKL-345 cd2")
+
     # ── Docker lifecycle ───────────────────────────────────────────────────
 
     # Clean up any leftover container/volumes from a previous run
@@ -637,6 +674,43 @@ class TestJellyfinCompat:
         assert part_count == 2, (
             f"Expected PartCount==2 for MIX-789, got {part_count}"
         )
+
+    def test_f2_bothnfo_cd1cd2_each_own_nfo(self, jellyfin_env):
+        """
+        JKL-345: cd1／cd2 各自有完整 NFO + 圖（AC-9，cd2 也寫 NFO 後的新常態）。
+        Jellyfin 仍必須收成 ONE item，PartCount==2——這是永久回歸守衛，
+        若之後有人讓 cd2 的 NFO 破壞 stacking（例如誤把 cd2 的 title 寫進單獨
+        item），這支會紅。
+        """
+        base_url, headers, user_id = jellyfin_env
+        resp = requests.get(
+            f"{base_url}/Users/{user_id}/Items",
+            params={"IncludeItemTypes": "Movie", "Recursive": "true",
+                    "Fields": "ProviderIds,PartCount"},
+            headers=headers, timeout=15,
+        )
+        items = resp.json()["Items"]
+        jkl = next((i for i in items if i.get("ProviderIds", {}).get("num") == "JKL-345"), None)
+        if jkl is None:
+            jkl = next((i for i in items if "JKL" in i.get("Name", "").upper()
+                        or "poc bothnfo" in i.get("Name", "").lower()), None)
+        assert jkl is not None, f"JKL-345 not found; items: {[i.get('Name') for i in items]}"
+
+        jkl_items = [i for i in items if i.get("ProviderIds", {}).get("num") == "JKL-345"
+                     or "JKL" in i.get("Name", "").upper()]
+        assert len(jkl_items) == 1, (
+            f"Expected 1 stacked item for JKL-345, got {len(jkl_items)}: "
+            f"{[i.get('Name') for i in jkl_items]}"
+        )
+
+        part_count = jkl.get("PartCount", 0)
+        if part_count == 0:
+            item_id = jkl["Id"]
+            detail = requests.get(f"{base_url}/Items/{item_id}",
+                                   params={"Fields": "MediaSources"},
+                                   headers=headers, timeout=15).json()
+            part_count = detail.get("PartCount", 0) or len(detail.get("MediaSources", []))
+        assert part_count == 2, f"Expected PartCount==2 for JKL-345, got {part_count}"
 
     def test_f_newlayout_no_bare_stem_cover_shows_images(self, jellyfin_env):
         """

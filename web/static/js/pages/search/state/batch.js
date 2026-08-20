@@ -448,9 +448,6 @@ export function searchStateBatch() {
                         const fields = result.used_fallbacks.join('、');
                         this.showToast(window.t('search.toast.fields_defaulted', { fields }), 'warning');
                     }
-                    if (result.skipped_nfo_multipart) {
-                        this.showToast(window.t('search.toast.skipped_nfo_multipart'), 'info', 4000);
-                    }
                 } else {
                     file.scrapeStatus = 'failed';
                     failCount++;
@@ -538,9 +535,6 @@ export function searchStateBatch() {
                 if (result.used_fallbacks?.length) {
                     const fields = result.used_fallbacks.join('、');
                     this.showToast(window.t('search.toast.fields_defaulted', { fields }), 'warning');
-                }
-                if (result.skipped_nfo_multipart) {
-                    this.showToast(window.t('search.toast.skipped_nfo_multipart'), 'info', 4000);
                 }
                 // 動畫：成功 pop-in + row flash
                 this.$nextTick(() => {

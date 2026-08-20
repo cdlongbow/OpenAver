@@ -127,11 +127,10 @@ def test_b04_cd8_subtitle_already_in_tags_not_duplicated(tmp_path):
 
 # ── 邊界 5（CD-9 multipart overlay）──────────────────────────────────────────
 
-def test_b05_cd9_skip_nfo_rewrites_metadata_tags(tmp_path):
-    """skip_nfo=True（cd2 + 外部管理器）時，傳入的 metadata dict 被回寫屬性 tag。
+def test_b05_cd9_cd2_still_rewrites_metadata_tags(tmp_path):
+    """cd2 + 外部管理器時，傳入的 metadata dict 被回寫屬性 tag，且仍產 NFO。
 
     只賦值給區域變數、不寫回 metadata['tags'] 時，這條必須紅。
-    NFO 斷言擋不住這條——skip_nfo 根本不寫 NFO。
     """
     result, metadata = _organize(
         tmp_path,
@@ -139,21 +138,19 @@ def test_b05_cd9_skip_nfo_rewrites_metadata_tags(tmp_path):
         _metadata(number="ABP-999"),
         external_manager="jellyfin",
     )
-    assert result.get("skipped_nfo_multipart") is True
-    assert result.get("nfo_path") is None
+    assert result.get("nfo_path") is not None
     assert "無碼破解" in metadata["tags"]
     assert "中文字幕" in metadata["tags"]
 
 
-def test_b05b_skip_nfo_false_with_attribute_token_still_writes_nfo(tmp_path):
-    """正交：skip_nfo=False（cd1 + 外部管理器）＋有屬性 token → 仍寫 NFO 且含屬性 tag。"""
+def test_b05b_cd1_with_attribute_token_still_writes_nfo(tmp_path):
+    """正交：cd1 + 外部管理器＋有屬性 token → 仍寫 NFO 且含屬性 tag。"""
     result, metadata = _organize(
         tmp_path,
         "ABP-999-UC-cd1.mp4",
         _metadata(number="ABP-999"),
         external_manager="jellyfin",
     )
-    assert not result.get("skipped_nfo_multipart")
     nfo = _nfo_text(result)
     assert _count_tag(nfo, "無碼破解") == 1
     assert _count_tag(nfo, "中文字幕") == 1
@@ -170,7 +167,6 @@ def test_b06_a4_cd1_writes_nfo_without_attribute_tags(tmp_path):
         "ABC-123-cd1.mp4",
         external_manager="jellyfin",
     )
-    assert not result.get("skipped_nfo_multipart")
     nfo = _nfo_text(result)
     for name in _CANONICAL_ATTR_TAGS:
         assert _count_tag(nfo, name) == 0, name
