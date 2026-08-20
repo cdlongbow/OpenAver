@@ -232,7 +232,7 @@ def get_video(path: str = Query(..., description="file:/// URI")):
 
 @router.delete("/video")
 def delete_video(path: str = Query(..., description="file:/// URI")):
-    """從收藏移除單筆影片（71-T7，CD-10 / §1.6）。
+    """從收藏移除影片（71-T7，CD-10 / §1.6；feature/122 T4 改整組刪除）。
 
     只刪 DB row（repo.delete_by_paths，DB-only）+ 砍衍生縮圖 WebP
     （thumbnail_cache.invalidate）。**絕不 unlink 影片檔或原始封面檔。**
@@ -240,6 +240,13 @@ def delete_video(path: str = Query(..., description="file:/// URI")):
     刻意「無 scope guard」：issue #57 要刪的正是已移出 gallery 設定資料夾的
     stale DB row，那些 path 依定義不在任何 configured dir 下，scope guard 會
     擋掉正當用例。未知 path → delete_by_paths rowcount=0，安全 no-op。
+
+    feature/122：合併卡刪除時反解同組全部成員，一次刪除整組 DB 列，並對
+    每一個 member 呼叫 thumbnail_cache.invalidate。`deleted` 為本次刪除的列數。
+    反解失敗（找不到組、或載入設定時拋例外）→ fail-safe 退回單路徑刪除，不 500。
+    注意 try 只包住「反解組」那一段，**不包實際刪除**——DB 真的壞掉仍會照常
+    拋出 500，不會偽裝成刪除成功。（路徑運算本身不拋：uri_to_fs_path 對畸形
+    輸入是原樣回傳，那條路走的是「反解不到組 → 退回單筆」而非例外。）
 
     `def`（非 async）→ Starlette threadpool，body 內 DB / unlink 在 worker thread。
     不進 capabilities（D9）。
@@ -251,8 +258,32 @@ def delete_video(path: str = Query(..., description="file:/// URI")):
     init_db(db_path)
     repo = VideoRepository(db_path)
 
-    n = repo.delete_by_paths([path])
-    thumbnail_cache.invalidate(path)
+    group = None
+    try:
+        config = load_config()
+        _, path_mappings = _get_configured_dirs(config)
+        folder_uri_prefix = (
+            to_file_uri(os.path.dirname(uri_to_fs_path(path)), path_mappings) + "/"
+        )
+        candidates = repo.get_by_folder_uri_prefix(folder_uri_prefix)
+        group = resolve_group_for_path(
+            target_uri=path,
+            candidates=candidates,
+            fs_path_of=lambda r: uri_to_local_fs_path(r.path, path_mappings),
+            uri_of=lambda r: r.path,
+        )
+    except Exception:
+        logger.warning("delete_video: 分組反解失敗，退回單路徑刪除", exc_info=True)
+        group = None
+
+    if group is None:
+        n = repo.delete_by_paths([path])
+        thumbnail_cache.invalidate(path)
+    else:
+        member_paths = [m.path for m in group.members]
+        n = repo.delete_by_paths(member_paths)
+        for m in group.members:
+            thumbnail_cache.invalidate(m.path)
 
     return JSONResponse({"deleted": n})
 
