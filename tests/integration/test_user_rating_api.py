@@ -1,0 +1,263 @@
+"""
+test_user_rating_api.py — POST /api/user-rating 端點整合測試（TASK-123-T2）
+
+使用 FastAPI TestClient + 真實 SQLite DB（tmp_path）。
+鏡射 tests/integration/test_user_tags_api.py 的 fixture 慣例。
+
+plan §3.2 / TASK-123-T2 的 5 個場景：
+1. 冪等：同一 body 連送兩次，changed／results 結果相同
+2. 批次多路徑：3 個路徑一次送，results 長度與輸入一致、changed 正確計數
+3. 部分 not_found：其中一個路徑不在 DB，該路徑回 {"ok": false, "reason": "not_found"}，
+   其餘路徑照常成功
+4. -cd2 路徑解析到代表段：送 ABC-123-cd2.mp4 的路徑，DB 裡實際被寫入 user_rating 的是
+   ABC-123-cd1.mp4（代表段）那一列，ABC-123-cd2.mp4 那列不變
+5. 501 個路徑回 400：paths 長度 501 → JSONResponse(status_code=400, ...)，不落地任何寫入
+"""
+
+import sqlite3
+import pytest
+
+from fastapi.testclient import TestClient
+from core.database import init_db, VideoRepository
+from core.path_utils import to_file_uri
+
+
+# ── Fixtures ──────────────────────────────────────────────────────────────────
+
+TEST_FILE_URI = to_file_uri("/test/lib/SONE-205.mp4", {})
+TEST_FILE_URI2 = to_file_uri("/test/lib/ABW-001.mp4", {})
+NONEXISTENT_URI = to_file_uri("/test/lib/NONEXISTENT.mp4", {})
+
+
+@pytest.fixture
+def tmp_db(tmp_path):
+    """建立臨時測試資料庫，插入少量測試資料（不含分集片，分集片場景用專屬 fixture）。"""
+    db_path = tmp_path / "test_user_rating.db"
+    init_db(db_path)
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA journal_mode=WAL")
+
+    conn.execute("""
+        INSERT INTO videos (path, number, title, actresses, maker, tags, user_tags, duration, size_bytes, user_rating)
+        VALUES
+        (?, 'SONE-205', 'Test Title 1', '["明日花キララ"]', 'Sony', '["巨乳","中出"]', '[]', 7200, 4000000000, 0),
+        (?, 'ABW-001', 'Test Title 2', '["葵つかさ"]', 'ABC', '["女教師"]', '[]', 6000, 3500000000, 0)
+    """, (TEST_FILE_URI, TEST_FILE_URI2))
+
+    conn.commit()
+    conn.close()
+
+    return db_path
+
+
+@pytest.fixture
+def client(tmp_db, monkeypatch):
+    """TestClient，monkeypatch get_db_path / load_config 指向 tmp DB、空 path_mappings。"""
+    monkeypatch.setattr("web.routers.collection.get_db_path", lambda: tmp_db)
+    monkeypatch.setattr("web.routers.collection.load_config", lambda: {"gallery": {"path_mappings": {}}})
+
+    from web.app import app
+    return TestClient(app)
+
+
+def _rating(db_path, path: str) -> int:
+    repo = VideoRepository(db_path)
+    v = repo.get_by_path(path)
+    return v.user_rating if v is not None else -1
+
+
+# ── 場景 1：冪等 ────────────────────────────────────────────────────────────────
+
+class TestScenario1Idempotent:
+    """同一 body 連送兩次，changed／results 結果相同（AC-21）。"""
+
+    def test_double_post_same_result(self, client, tmp_db):
+        body = {"file_path": TEST_FILE_URI, "picked": True}
+        resp1 = client.post("/api/user-rating", json=body)
+        resp2 = client.post("/api/user-rating", json=body)
+
+        assert resp1.status_code == 200
+        assert resp2.status_code == 200
+        data1 = resp1.json()
+        data2 = resp2.json()
+        assert data1["results"] == data2["results"]
+        assert data1["changed"] == data2["changed"] == 1
+        assert _rating(tmp_db, TEST_FILE_URI) > 0
+
+
+# ── 場景 2：批次多路徑 ────────────────────────────────────────────────────────────
+
+class TestScenario2BatchMultiPath:
+    """3 個路徑一次送，results 長度與輸入一致、changed 正確計數（AC-25）。"""
+
+    def test_batch_three_paths(self, client, tmp_db):
+        third_uri = to_file_uri("/test/lib/THIRD-001.mp4", {})
+        conn = sqlite3.connect(str(tmp_db))
+        conn.execute(
+            "INSERT INTO videos (path, number, title, user_tags, user_rating) VALUES (?, 'THIRD-001', 'Third', '[]', 0)",
+            (third_uri,),
+        )
+        conn.commit()
+        conn.close()
+
+        paths = [TEST_FILE_URI, TEST_FILE_URI2, third_uri]
+        resp = client.post("/api/user-rating", json={"paths": paths, "picked": True})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert len(data["results"]) == 3
+        assert data["changed"] == 3
+        for r in data["results"]:
+            assert r["ok"] is True
+        assert _rating(tmp_db, TEST_FILE_URI) > 0
+        assert _rating(tmp_db, TEST_FILE_URI2) > 0
+        assert _rating(tmp_db, third_uri) > 0
+
+
+# ── 場景 3：部分 not_found ────────────────────────────────────────────────────────
+
+class TestScenario3PartialNotFound:
+    """其中一個路徑不在 DB，該路徑回 not_found，其餘路徑照常成功（不整批失敗）。"""
+
+    def test_one_missing_others_succeed(self, client, tmp_db):
+        paths = [TEST_FILE_URI, NONEXISTENT_URI, TEST_FILE_URI2]
+        resp = client.post("/api/user-rating", json={"paths": paths, "picked": True})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert len(data["results"]) == 3
+
+        by_path = {r["path"]: r for r in data["results"]}
+        assert by_path[TEST_FILE_URI]["ok"] is True
+        assert by_path[TEST_FILE_URI2]["ok"] is True
+        assert by_path[NONEXISTENT_URI]["ok"] is False
+        assert by_path[NONEXISTENT_URI]["reason"] == "not_found"
+
+        assert data["changed"] == 2
+        assert _rating(tmp_db, TEST_FILE_URI) > 0
+        assert _rating(tmp_db, TEST_FILE_URI2) > 0
+
+
+# ── 場景 4：-cd2 路徑解析到代表段 ────────────────────────────────────────────────────
+
+class TestScenario4MultipartRepresentative:
+    """送 ABC-123-cd2.mp4 的路徑，DB 裡實際被寫入 user_rating 的是 ABC-123-cd1.mp4
+    （代表段）那一列，ABC-123-cd2.mp4 那列不變（plan CD-123-6/7、本卡技術要點步驟 3）。
+    """
+
+    @pytest.fixture
+    def multipart_db(self, tmp_path):
+        db_path = tmp_path / "test_multipart.db"
+        init_db(db_path)
+
+        part1_uri = to_file_uri(str(tmp_path / "videos" / "ABC-123-cd1.mp4"), {})
+        part2_uri = to_file_uri(str(tmp_path / "videos" / "ABC-123-cd2.mp4"), {})
+
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "INSERT INTO videos (path, number, title, user_tags, user_rating) VALUES (?, 'ABC-123', 'Part 1', '[]', 0)",
+            (part1_uri,),
+        )
+        conn.execute(
+            "INSERT INTO videos (path, number, title, user_tags, user_rating) VALUES (?, 'ABC-123', 'Part 2', '[]', 0)",
+            (part2_uri,),
+        )
+        conn.commit()
+        conn.close()
+
+        return db_path, part1_uri, part2_uri
+
+    @pytest.fixture
+    def multipart_client(self, multipart_db, monkeypatch):
+        db_path, _, _ = multipart_db
+        monkeypatch.setattr("web.routers.collection.get_db_path", lambda: db_path)
+        monkeypatch.setattr("web.routers.collection.load_config", lambda: {"gallery": {"path_mappings": {}}})
+        from web.app import app
+        return TestClient(app)
+
+    def test_cd2_writes_representative_cd1_row(self, multipart_client, multipart_db):
+        db_path, part1_uri, part2_uri = multipart_db
+
+        resp = multipart_client.post("/api/user-rating", json={"file_path": part2_uri, "picked": True})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["changed"] == 1
+        assert data["results"][0]["ok"] is True
+
+        # 代表段（cd1）被寫入，cd2 那列本身不變（維持 0）
+        assert _rating(db_path, part1_uri) > 0
+        assert _rating(db_path, part2_uri) == 0
+
+
+# ── 場景 5：501 個路徑回 400 ──────────────────────────────────────────────────────
+
+class TestScenario5OverLimit:
+    """paths 長度 501 → JSONResponse(status_code=400, ...)，不落地任何寫入。"""
+
+    def test_501_paths_returns_400(self, client, tmp_db):
+        paths = [to_file_uri(f"/test/lib/OVER-{i:04d}.mp4", {}) for i in range(501)]
+        resp = client.post("/api/user-rating", json={"paths": paths, "picked": True})
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["success"] is False
+        assert "error" in data
+
+        # 不落地任何寫入：既有測試資料的 rating 維持 0
+        assert _rating(tmp_db, TEST_FILE_URI) == 0
+        assert _rating(tmp_db, TEST_FILE_URI2) == 0
+
+
+# ── 邊界：XOR 違反、空陣列、picked 缺欄位 ────────────────────────────────────────────
+
+class TestBoundaryXorAndEmpty:
+    def test_both_paths_and_file_path_given_400(self, client):
+        resp = client.post("/api/user-rating", json={
+            "paths": [TEST_FILE_URI],
+            "file_path": TEST_FILE_URI2,
+            "picked": True,
+        })
+        assert resp.status_code == 400
+        assert resp.json()["success"] is False
+
+    def test_neither_paths_nor_file_path_given_400(self, client):
+        resp = client.post("/api/user-rating", json={"picked": True})
+        assert resp.status_code == 400
+        assert resp.json()["success"] is False
+
+    def test_empty_paths_array_400(self, client):
+        resp = client.post("/api/user-rating", json={"paths": [], "picked": True})
+        assert resp.status_code == 400
+        assert resp.json()["success"] is False
+
+    def test_picked_missing_returns_422(self, client):
+        """picked 缺欄位由 pydantic 自動擋（422），不是端點函式體要處理的情況。"""
+        resp = client.post("/api/user-rating", json={"file_path": TEST_FILE_URI})
+        assert resp.status_code == 422
+
+
+# ── 邊界：取消精選（picked: false）與重複路徑 ────────────────────────────────────────
+
+class TestBoundaryUnpickAndDuplicate:
+    def test_picked_false_sets_rating_to_zero(self, client, tmp_db):
+        # 先設為精選
+        client.post("/api/user-rating", json={"file_path": TEST_FILE_URI, "picked": True})
+        assert _rating(tmp_db, TEST_FILE_URI) > 0
+
+        resp = client.post("/api/user-rating", json={"file_path": TEST_FILE_URI, "picked": False})
+        assert resp.status_code == 200
+        assert resp.json()["picked"] is False
+        assert _rating(tmp_db, TEST_FILE_URI) == 0
+
+    def test_duplicate_paths_report_1to1_but_changed_counts_once(self, client, tmp_db):
+        """CD-123 §C：寫入去重、回報不去重——同一 path 出現兩次，results 仍 1:1 對應輸入，
+        changed 只計代表段去重後的成功寫入數。
+        """
+        paths = [TEST_FILE_URI, TEST_FILE_URI]
+        resp = client.post("/api/user-rating", json={"paths": paths, "picked": True})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["results"]) == 2
+        assert all(r["ok"] is True for r in data["results"])
+        assert data["changed"] == 1

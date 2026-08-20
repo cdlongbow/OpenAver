@@ -613,6 +613,37 @@ _TOOLS: list[dict] = [
         "_example_template": "curl -X POST -H 'Content-Type: application/json' -d '{{\"file_path\":\"file:///C:/AVtest/SONE-205/SONE-205.mp4\",\"add\":[\"★5\",\"足\"]}}' {base}/api/user-tags",
     },
     {
+        "name": "user_rating",
+        "description": (
+            "批次或單筆冪等設定「精選」狀態（picked: true/false）。"
+            "⚠️ side effect：一次呼叫可改動多部影片的精選狀態，批次取消無一鍵復原。"
+            "精選是獨立欄位（user_rating），不是 user_tags 裡的 ★ 標籤——兩者互不影響、不會互相覆蓋。"
+            "分集片（-cd1/-cd2 等）自動解析到代表段，效果套用到整組。"
+        ),
+        "method": "POST",
+        "path": "/api/user-rating",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "paths": {"type": "array", "items": {"type": "string"}, "description": "批次影片路徑清單（file:/// URI），與 file_path 二擇一，最多 500 筆"},
+                "file_path": {"type": "string", "description": "單筆影片路徑（file:/// URI），與 paths 二擇一"},
+                "picked": {"type": "boolean", "description": "目標精選狀態，true=設為精選，false=取消精選"},
+            },
+            "required": ["picked"],
+        },
+        "output_schema": {
+            "success": "boolean",
+            "picked": "boolean — 本次設定的目標狀態",
+            "results": "[{path, ok, reason?}] — 逐路徑回報，與輸入 1:1 對應；reason 目前只有 not_found",
+            "changed": "integer — 實際被改動的影片組數（分集片去重後計數）",
+        },
+        "side_effect": True,
+        "confirmation_required": True,
+        "retry_safe": True,
+        "also_see": "GET /api/showcase/videos — 查詢影片目前的 user_rating 欄位",
+        "_example_template": "curl -X POST -H 'Content-Type: application/json' -d '{{\"file_path\":\"file:///C:/AVtest/SONE-205/SONE-205.mp4\",\"picked\":true}}' {base}/api/user-rating",
+    },
+    {
         "name": "get_user_tags",
         "description": (
             "查詢指定影片的現有 user_tags（user_tags POST 的對等讀取端點）。"

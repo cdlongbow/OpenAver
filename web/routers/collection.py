@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from core.config import load_config
 from core.database import Video, VideoRepository, get_connection, get_db_path
 from core.logger import get_logger
+from core.multipart_group import resolve_group
 from core.nfo_updater import update_nfo_user_tags
 from core.path_utils import CURRENT_ENV, reverse_path_mapping, to_file_uri, uri_to_fs_path
 from core.scraper import extract_number, is_number_format
@@ -667,7 +668,7 @@ def fix_numbers_apply(request: FixNumbersApplyRequest) -> dict:
 # ── /api/user-tags router ─────────────────────────────────────────────────────
 
 
-def _resolve_user_tag_paths(input_path: str) -> tuple[str, str]:
+def _resolve_user_tag_paths(input_path: str, path_mappings: Optional[dict] = None) -> tuple[str, str]:
     """同時取得 (canonical_uri, local_fs_path)。
 
     user_tags 端點需要兩個不同 view 的相同檔案：
@@ -679,14 +680,21 @@ def _resolve_user_tag_paths(input_path: str) -> tuple[str, str]:
     - 但 WSL 程序實際開檔得用 /home/user/nas/... 這個 mount path
     - uri_to_fs_path() 不知道 path_mappings 反向映射，所以單獨用它無法取得本地路徑
 
+    Args:
+        path_mappings: 可選，外部已 `load_config()` 載好的 gallery.path_mappings。
+            `None`（預設）時維持現行行為——自己呼叫一次 `load_config()`。TASK-123-T2
+            §D：批次呼叫端（逐路徑迴圈）應在迴圈外載一次、傳進來，避免 N 次
+            `load_config()`（每次都開檔 + 跑完整 migration 鏈）。
+
     Returns:
         (canonical_uri, local_fs_path) — 任一為空字串時表示無效輸入
     """
     if not input_path:
         return ("", "")
 
-    config = load_config()
-    path_mappings = config.get("gallery", {}).get("path_mappings", {}) or {}
+    if path_mappings is None:
+        config = load_config()
+        path_mappings = config.get("gallery", {}).get("path_mappings", {}) or {}
 
     try:
         fs_normalized = uri_to_fs_path(input_path)  # uri-no-reverse: already paired with reverse_path_mapping below (local_fs_path)
@@ -706,9 +714,12 @@ def _resolve_user_tag_paths(input_path: str) -> tuple[str, str]:
     return (canonical_uri, local_fs_path)
 
 
-def _normalize_to_uri(p: str) -> str:
-    """Backward-compat: 只取 canonical URI（不需要 local FS path 的呼叫端用）。"""
-    canonical, _ = _resolve_user_tag_paths(p)
+def _normalize_to_uri(p: str, path_mappings: Optional[dict] = None) -> str:
+    """Backward-compat: 只取 canonical URI（不需要 local FS path 的呼叫端用）。
+
+    `path_mappings`：見 `_resolve_user_tag_paths()` 同名參數說明（TASK-123-T2 §D）。
+    """
+    canonical, _ = _resolve_user_tag_paths(p, path_mappings)
     return canonical
 
 
@@ -821,3 +832,95 @@ def get_user_tags(file_path: str = Query(...)) -> dict:
         return {"user_tags": [], "file_path": normalized}
 
     return {"user_tags": video.user_tags, "file_path": normalized}
+
+
+# ── /api/user-rating router（TASK-123-T2；獨立 router，不塞進 user_tags_router，見
+#    TASK-123-T2.md「plan 未涵蓋，本卡補齊的設計決策」§A：精選與 user_tags 語意獨立，
+#    OpenAPI 分類不可混談）────────────────────────────────────────────────────────
+
+user_rating_router = APIRouter(prefix="/api", tags=["user-rating"])
+
+
+class UserRatingRequest(BaseModel):
+    paths: Optional[List[str]] = None
+    file_path: Optional[str] = None
+    picked: bool
+
+
+@user_rating_router.post("/user-rating")
+def post_user_rating(request: UserRatingRequest) -> dict:
+    """
+    批次／單筆冪等設定「精選」狀態（spec-123 CD-123-6/7/8）。
+
+    - `paths`（批次）與 `file_path`（單筆簡寫）二擇一，函式體內驗證（XOR），非 pydantic
+      cross-field validator（跟隨本檔既有風格，見 TASK-123-T2.md「技術要點」）。
+    - `picked` 必填，缺欄位由 pydantic 自動回 422，不在此處理。
+    - 路徑先正規化（`_normalize_to_uri`）、再過分集組代表段解析（`resolve_group`），
+      代表段 = `group.members[0].path`；查無一律回報 `not_found`，不建 stub 列（CD-123-8）。
+    - 重複路徑：寫入端去重（set 過的代表段才進 `set_user_rating_bulk`），回報端不去重
+      （`results` 與輸入 1:1），`changed` 只計代表段去重後的成功寫入數（§C）。
+    - **不寫 NFO**（spec §4.6，跟 `post_user_tags()` 不同，刻意不同步）。
+    """
+    value = 1 if request.picked else 0
+
+    # 1. XOR 驗證（函式體內，非 validator；跟隨本檔既有 400 慣例，見 :222-225）
+    has_paths = request.paths is not None
+    has_file_path = request.file_path is not None
+    if has_paths and has_file_path:
+        return JSONResponse(status_code=400, content={"success": False, "error": "paths 與 file_path 只能擇一"})
+    if not has_paths and not has_file_path:
+        return JSONResponse(status_code=400, content={"success": False, "error": "必須提供 paths 或 file_path"})
+
+    raw_paths = request.paths if has_paths else [request.file_path]
+
+    # 2. 空陣列與上限
+    if not raw_paths:
+        return JSONResponse(status_code=400, content={"success": False, "error": "paths 不可為空"})
+    if len(raw_paths) > 500:
+        return JSONResponse(status_code=400, content={"success": False, "error": "單次最多 500 個路徑，請分批"})
+
+    try:
+        # 3. 逐路徑解析（canonical URI → 分集代表段）。§D：config 只在迴圈外載一次，
+        #    傳給 _normalize_to_uri()，避免迴圈內重複 load_config()（每次都開檔 + 跑
+        #    完整 migration 鏈）。
+        config = load_config()
+        path_mappings = config.get("gallery", {}).get("path_mappings", {}) or {}
+        db_path = get_db_path()
+        repo = VideoRepository(db_path)
+
+        resolved: dict = {}  # raw_path -> representative_path or None
+        for raw in raw_paths:
+            canonical = _normalize_to_uri(raw, path_mappings)
+            if not canonical:
+                resolved[raw] = None
+                continue
+            group = resolve_group(repo, canonical, path_mappings)
+            resolved[raw] = group.members[0].path if group is not None else None
+
+        # 4. 去重後批次寫入（只對成功解析的代表段）
+        unique_targets = sorted({p for p in resolved.values() if p is not None})
+        write_results = repo.set_user_rating_bulk(unique_targets, value) if unique_targets else {}
+
+        # 5. 組回應（逐 raw_path 回報，1:1 對應輸入；changed 只計代表段去重後的成功寫入數）
+        results = []
+        changed = 0
+        counted = set()
+        for raw in raw_paths:
+            rep = resolved[raw]
+            if rep is None:
+                results.append({"path": raw, "ok": False, "reason": "not_found"})
+                continue
+            ok = write_results.get(rep, False)
+            if not ok:
+                results.append({"path": raw, "ok": False, "reason": "not_found"})
+                continue
+            results.append({"path": raw, "ok": True})
+            if rep not in counted:
+                counted.add(rep)
+                changed += 1
+
+        return {"success": True, "picked": request.picked, "results": results, "changed": changed}
+
+    except Exception as e:
+        logger.error("[user-rating] 內部錯誤: %s", e)
+        return {"success": False, "error": "內部錯誤，請稍後再試"}

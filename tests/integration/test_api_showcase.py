@@ -54,6 +54,9 @@ def showcase_setup(tmp_path):
             mtime=0.0,
         ),
     ])
+    # user_rating 只由 set_user_rating()/set_user_rating_bulk() 寫入（upsert 排除該欄位，
+    # CD-123-3）——vid1 精選、vid2 維持預設 0（未精選），驗證 _serialize_video 無條件輸出。
+    repo.set_user_rating(vid1_uri, 3)
 
     config = {
         "gallery": {
@@ -122,6 +125,52 @@ class TestShowcaseVideosUserTags:
             v for v in data["videos"] if v["path"] == showcase_setup["vid2_uri"]
         )
         assert video_no_tags["user_tags"] == []
+
+
+class TestShowcaseUserRatingField:
+    """測試 GET /api/showcase/videos 無條件輸出 user_rating 欄位（TASK-123-T2，FE-ALPINE-06）。
+
+    Alpine 3 讀取 x-data 未宣告的屬性會丟 ReferenceError，`x || fallback` 擋不住，
+    所以未精選的片也必須輸出鍵，值為 0，不可省略。
+    """
+
+    def test_response_contains_user_rating_field(self, client, showcase_setup, mocker):
+        """每個 video 物件必須包含 user_rating 欄位（精選與未精選皆然）"""
+        mocker.patch("web.routers.showcase.get_db_path", return_value=showcase_setup["db_path"])
+        mocker.patch("web.routers.showcase.load_config", return_value=showcase_setup["config"])
+
+        response = client.get("/api/showcase/videos")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["videos"]) == 2
+
+        for video in data["videos"]:
+            assert "user_rating" in video, f"user_rating 欄位缺失：{video.get('path')}"
+            assert isinstance(video["user_rating"], int)
+
+    def test_picked_video_returns_positive_rating(self, client, showcase_setup, mocker):
+        """已精選的片 user_rating > 0"""
+        mocker.patch("web.routers.showcase.get_db_path", return_value=showcase_setup["db_path"])
+        mocker.patch("web.routers.showcase.load_config", return_value=showcase_setup["config"])
+
+        response = client.get("/api/showcase/videos")
+        data = response.json()
+
+        picked = next(v for v in data["videos"] if v["path"] == showcase_setup["vid1_uri"])
+        assert picked["user_rating"] > 0
+
+    def test_unpicked_video_returns_zero_not_missing_key(self, client, showcase_setup, mocker):
+        """未精選的片 user_rating == 0（不是缺鍵）"""
+        mocker.patch("web.routers.showcase.get_db_path", return_value=showcase_setup["db_path"])
+        mocker.patch("web.routers.showcase.load_config", return_value=showcase_setup["config"])
+
+        response = client.get("/api/showcase/videos")
+        data = response.json()
+
+        unpicked = next(v for v in data["videos"] if v["path"] == showcase_setup["vid2_uri"])
+        assert "user_rating" in unpicked
+        assert unpicked["user_rating"] == 0
 
 
 # ============ auto_focal / crop_mode Tests (98b-T1) ============

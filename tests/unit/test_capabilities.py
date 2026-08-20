@@ -45,6 +45,7 @@ EXPECTED_TOOL_NAMES = {
     "jellyfin_check",
     "user_tags",
     "get_user_tags",
+    "user_rating",
     "showcase_videos",
     "showcase_video",
     "favorite_actress",
@@ -116,7 +117,7 @@ class TestCapabilitiesEndpoint:
 
     def test_tools_count_is_40(self, client):
         data = client.get("/api/capabilities").json()
-        assert len(data["tools"]) == 40
+        assert len(data["tools"]) == 41
 
     def test_all_tool_names_present(self, client):
         data = client.get("/api/capabilities").json()
@@ -293,6 +294,21 @@ class TestCapabilitiesEndpoint:
         assert tool.get("side_effect") is True
         assert tool.get("confirmation_required") is False
         assert tool.get("retry_safe") is True
+
+    def test_user_rating_tool(self, client):
+        """user_rating tool（TASK-123-T2）：批次精選端點，confirmation_required 必為 True，
+        description 須含風險說明，且與 user_tags 的 ★ 標籤區分開來。"""
+        data = client.get("/api/capabilities").json()
+        tool = next((t for t in data["tools"] if t["name"] == "user_rating"), None)
+        assert tool is not None, "user_rating tool 不存在"
+        assert tool["method"] == "POST"
+        assert tool["path"] == "/api/user-rating"
+        assert tool.get("side_effect") is True
+        assert tool.get("confirmation_required") is True
+        assert tool.get("retry_safe") is True
+        assert "批次" in tool["description"] or "一鍵復原" in tool["description"] or "取消" in tool["description"]
+        assert "user_tags" in tool["description"] or "★" in tool["description"]
+        assert "showcase/videos" in tool.get("also_see", "")
 
     def test_set_actress_photo_side_effect_flags(self, client):
         """set_actress_photo 有正確的 side_effect / confirmation_required 旗標"""
