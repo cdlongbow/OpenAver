@@ -17,15 +17,13 @@ from core.database import VideoRepository, get_db_path, init_db
 from core.path_utils import (
     is_path_under_dir,
     uri_to_local_fs_path,
-    uri_to_fs_path,
     coerce_to_file_uri,
-    to_file_uri,
 )
 from core.logger import get_logger
 from core.config import load_config, get_gallery_source_paths
 from core.focal import detect_focal, format_focal, parse_focal
 from core import thumbnail_cache
-from core.multipart_group import group_rows, resolve_group_for_path
+from core.multipart_group import group_rows, resolve_group
 
 logger = get_logger(__name__)
 
@@ -210,14 +208,7 @@ def get_video(path: str = Query(..., description="file:/// URI")):
         # 算同資料夾候選列，反解該 path 所屬的組。找不到組（極端狀況：part-1 被
         # 刪但 part-2 還在、或路徑不再是任何組的代表）→ fail-safe 退回單檔序列化，
         # 不 500（CD-122-6）。
-        folder_uri_prefix = to_file_uri(os.path.dirname(uri_to_fs_path(v.path)), path_mappings) + "/"
-        candidates = repo.get_by_folder_uri_prefix(folder_uri_prefix)
-        group = resolve_group_for_path(
-            target_uri=path,
-            candidates=candidates,
-            fs_path_of=lambda r: uri_to_local_fs_path(r.path, path_mappings),
-            uri_of=lambda r: r.path,
-        )
+        group = resolve_group(repo, path, path_mappings, folder_source_uri=v.path)
         if group is None:
             return JSONResponse({"success": True,
                                  "video": _serialize_video(v, path_mappings, thumb_enabled)})
@@ -262,16 +253,7 @@ def delete_video(path: str = Query(..., description="file:/// URI")):
     try:
         config = load_config()
         _, path_mappings = _get_configured_dirs(config)
-        folder_uri_prefix = (
-            to_file_uri(os.path.dirname(uri_to_fs_path(path)), path_mappings) + "/"
-        )
-        candidates = repo.get_by_folder_uri_prefix(folder_uri_prefix)
-        group = resolve_group_for_path(
-            target_uri=path,
-            candidates=candidates,
-            fs_path_of=lambda r: uri_to_local_fs_path(r.path, path_mappings),
-            uri_of=lambda r: r.path,
-        )
+        group = resolve_group(repo, path, path_mappings)
     except Exception:
         logger.warning("delete_video: 分組反解失敗，退回單路徑刪除", exc_info=True)
         group = None

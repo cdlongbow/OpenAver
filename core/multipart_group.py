@@ -6,6 +6,10 @@
 （Zone 1 字串運算，同 `core/cover_layout.py` 先例：呼叫端已把 file:// URI 轉成 fs
 path 才傳進來，不在此模組碰 URI，不違反 `path_utils.py` 的跨 Zone 轉換禁止清單）。
 
+**唯一的例外是檔尾的 `resolve_group()`**：它是給 router 用的 DB-facing 組裝層
+（repo 查詢 ＋ 資料夾 URI 前綴），URI 運算全部走 `core.path_utils` 的既有函式、
+一行都不手搓。分組演算法本體（`group_rows` 以上）維持 Zone 1 純字串。
+
 **單一真理來源（CD-122-2）**：任何需要判斷「這些 DB 列是不是同一組分集片」的地方
 （列表序列化／單筆 refresh／刪除／播放頁接續），一律呼叫本模組的 `group_rows()` /
 `resolve_group_for_path()`，不得各自重新推導比對邏輯。
@@ -31,6 +35,7 @@ import os
 import re
 
 from core.organizer import _detect_multipart_token, _strip_part_token
+from core.path_utils import to_file_uri, uri_to_fs_path, uri_to_local_fs_path
 
 T = TypeVar('T')  # 呼叫端的 row 型別（Video ORM 物件、或任意帶 path 的物件）
 
@@ -52,16 +57,27 @@ def group_key(fs_path: str) -> Tuple[str, str]:
     return (folder, normalize_stem_key(stem))
 
 
+def part_info(fs_path: str) -> Tuple[Optional[str], int]:
+    """(token 字面, 段號) 一次解析。
+
+    `part_token()` / `part_number()` 是它的兩個單欄位包裝，保留給只要一半的呼叫端；
+    `group_rows()` 走這一支，因為它兩個都要，而 `_detect_multipart_token()` 是
+    regex 掃描、且那個迴圈跑遍整個片庫（/simplify 效率條目）。
+    """
+    match = _detect_multipart_token(os.path.basename(fs_path))
+    if match:
+        return match[0], match[1]
+    return None, 1  # 單檔片（無 token）視為 part 1
+
+
 def part_number(fs_path: str) -> int:
     """單檔片（無 token）視為 part 1。"""
-    match = _detect_multipart_token(os.path.basename(fs_path))
-    return match[1] if match else 1
+    return part_info(fs_path)[1]
 
 
 def part_token(fs_path: str) -> Optional[str]:
     """回傳原始 token 字面（已是小寫，如 'cd1'），無 token 回 None。"""
-    match = _detect_multipart_token(os.path.basename(fs_path))
-    return match[0] if match else None
+    return part_info(fs_path)[0]
 
 
 @dataclass
@@ -90,6 +106,10 @@ def group_rows(rows: List[T], fs_path_of: Callable[[T], str]) -> List['VideoGrou
         groups，組內 members 依 part_number 升冪排列；組間順序＝第一次見到該 key
         的順序（呼叫端若要整體排序，序列化前再排 videos 陣列，不影響分組正確性）。
     """
+    # bucket 內存 (row, fs_path)：`fs_path_of` 是呼叫端的 URI→FS 轉換
+    # （`uri_to_local_fs_path`，含 unquote ＋ normalize ＋ path_mapping 反查），
+    # 而這個迴圈跑遍整個片庫（`GET /api/showcase/videos` 每次載入都跑一遍 2000+ 列），
+    # 所以每列只轉一次、後面全部重用（/simplify 效率條目）。
     buckets: dict = {}
     order: List[Tuple[str, str]] = []
     for row in rows:
@@ -98,12 +118,14 @@ def group_rows(rows: List[T], fs_path_of: Callable[[T], str]) -> List['VideoGrou
         if key not in buckets:
             buckets[key] = []
             order.append(key)
-        buckets[key].append(row)
+        buckets[key].append((row, fs_path))
 
     groups: List[VideoGroup] = []
     for key in order:
-        members = buckets[key]
-        tokens = [part_token(fs_path_of(r)) for r in members]
+        # parsed: [(row, token, number)]，每列的 token/段號也只解析一次（同上）。
+        parsed = [(r, *part_info(fs_path)) for r, fs_path in buckets[key]]
+        members = [r for r, _, _ in parsed]
+        tokens = [t for _, t, _ in parsed]
 
         # CD-122-10（P0）：一組成立的條件是「成員 >= 2 且每一個成員都帶 part token」。
         # 不成立 → bucket 內每一列各自單飛成單檔組。少了這條，
@@ -119,7 +141,7 @@ def group_rows(rows: List[T], fs_path_of: Callable[[T], str]) -> List['VideoGrou
         # 使用者得重新框一次。
         # 比對用 part **number** 而非 token 字面：`cd1` 與 `pt1` 字面不同但都是第 1 段，
         # 同樣是衝突（這條順手把 Codex 沒點名的同款漏洞一起堵掉）。
-        part_numbers = [part_number(fs_path_of(r)) for r in members]
+        part_numbers = [n for _, _, n in parsed]
         if (len(members) < 2
                 or not all(tokens)
                 or len(set(part_numbers)) != len(part_numbers)):
@@ -127,13 +149,10 @@ def group_rows(rows: List[T], fs_path_of: Callable[[T], str]) -> List['VideoGrou
                 groups.append(VideoGroup(members=[row], part_tokens=[]))
             continue
 
-        order_pairs = sorted(
-            zip(members, tokens, strict=True),
-            key=lambda mt: part_number(fs_path_of(mt[0])),
-        )
+        order_pairs = sorted(parsed, key=lambda p: p[2])
         groups.append(VideoGroup(
-            members=[m for m, _ in order_pairs],
-            part_tokens=[t for _, t in order_pairs],
+            members=[m for m, _, _ in order_pairs],
+            part_tokens=[t for _, t, _ in order_pairs],
         ))
     return groups
 
@@ -158,3 +177,53 @@ def resolve_group_for_path(
         if any(uri_of(m) == target_uri for m in group.members):
             return group
     return None
+
+
+def folder_uri_prefix(folder_fs: str, path_mappings: dict = None) -> str:
+    r"""資料夾 fs 路徑 → 用來做 `LIKE prefix%` 的 file:/// 前綴（保證正好一個結尾斜線）。
+
+    **`+ "/"` 不可以無條件加**（grok Stage 1 review P3，2026-08-20）：磁碟機根目錄的
+    `to_file_uri()` 本身就以斜線結尾（`D:\` → `file:///D:/`），再加一個會變成
+    `file:///D://`，`get_by_folder_uri_prefix()` 的 LIKE 從此一列都對不上。
+    後果是「片庫直接放在 D:\ 根目錄」的使用者，瀏覽頁仍然合併成一張卡（列表走的是
+    另一條查法，比對 FS dirname），但**刪除只移除第 1 段**——重整後那張卡又冒出來；
+    播放頁也不會接續下一段。同一形狀在 Unix 根目錄（`/`）成立。
+    """
+    uri = to_file_uri(folder_fs, path_mappings)
+    return uri if uri.endswith("/") else uri + "/"
+
+
+def resolve_group(
+    repo,
+    target_uri: str,
+    path_mappings: dict,
+    folder_source_uri: Optional[str] = None,
+) -> Optional['VideoGroup']:
+    """給 router 用的一站式反解：從 DB 撈同資料夾候選列，回 target_uri 所屬的組。
+
+    這是三個呼叫端（列表單筆 refresh / 刪除 / 播放頁接續）**共用的組裝層**——
+    在它存在之前，同樣的 8 行（算資料夾 URI 前綴 → `get_by_folder_uri_prefix()` →
+    `resolve_group_for_path()` ＋ 兩個 lambda）在 `showcase.py` 與 `scanner.py`
+    抄了三份，三份的 try/except 位置還各自漂移（/simplify reuse 條目）。
+
+    Args:
+        repo: `VideoRepository`（只用到 `get_by_folder_uri_prefix()`，duck-typed，
+            本模組不 import `core.database`）。
+        target_uri: 要反解的 DB-key URI（身分比對用）。
+        path_mappings: gallery 設定的跨機器路徑映射。
+        folder_source_uri: 要掃哪個資料夾。**預設 None ＝ 用 target_uri 自己**；
+            呼叫端手上若有 DB 查回的列，傳 `row.path` 比傳使用者送上來的字面更可靠。
+
+    Returns:
+        `VideoGroup` 或 None（找不到組不拋例外——fail-safe 由呼叫端決定怎麼退）。
+        **本函式不吞 DB 例外**：repo 真的壞掉照樣往上拋，由各呼叫端依自己的
+        語意決定要 500 還是退回單檔（CD-122-6 的分工）。
+    """
+    source_uri = target_uri if folder_source_uri is None else folder_source_uri
+    folder_fs = os.path.dirname(uri_to_fs_path(source_uri))  # uri-no-reverse: 只取 dirname 拼前綴，隨即 to_file_uri 回 DB namespace，不做磁碟 I/O
+    return resolve_group_for_path(
+        target_uri=target_uri,
+        candidates=repo.get_by_folder_uri_prefix(folder_uri_prefix(folder_fs, path_mappings)),
+        fs_path_of=lambda r: uri_to_local_fs_path(r.path, path_mappings),
+        uri_of=lambda r: r.path,
+    )

@@ -13,6 +13,7 @@ from core.multipart_group import (
     group_key,
     part_number,
     part_token,
+    folder_uri_prefix,
     VideoGroup,
     group_rows,
     resolve_group_for_path,
@@ -167,6 +168,38 @@ class TestCD122_13DuplicatePartNumberGuard:
         groups = group_rows(rows, _fs_path_of)
         assert len(groups) == 1
         assert groups[0].part_tokens == ["cd1", "cd2", "cd3"]
+
+
+# ── grok Stage 1 P3：片庫放在磁碟機根目錄時的資料夾前綴 ─────────────────
+
+class TestDriveRootFolderUriPrefix:
+    """`folder_uri_prefix()` 保證正好一個結尾斜線。
+
+    使用者流程：片庫直接放在 `D:\\` 根目錄（專用媒體碟的常見擺法），裡面有
+    `ABC-123-cd1.mp4` ＋ `ABC-123-cd2.mp4`。前綴若長成 `file:///D://`，
+    `get_by_folder_uri_prefix()` 的 `LIKE prefix%` 一列都對不上 → 三個操作入口
+    （單筆 refresh／刪除／播放接續）反解不到組，但瀏覽頁**仍然合併成一張卡**
+    （列表走的是 `group_rows` 比對 FS dirname，不是這條）。結果是按「從收藏移除」
+    只刪掉第 1 段，重整後那張卡又冒出來。
+    """
+
+    def test_drive_root_prefix_has_single_trailing_slash(self):
+        # `ntpath.dirname('D:\\ABC-123-cd1.mp4')` == `'D:\\'`（真 Windows Python 3.13 實測）。
+        # CI 跑 Linux、posixpath 產不出這個字面，所以直接餵 Windows dirname 的結果——
+        # `to_file_uri()` 的 drive-letter 分支不看 CURRENT_ENV，兩邊行為相同。
+        assert folder_uri_prefix("D:\\") == "file:///D:/"
+        assert folder_uri_prefix("D:/") == "file:///D:/"
+
+    def test_drive_root_prefix_actually_matches_rows_in_that_root(self):
+        """真正的後果面：前綴要能對上根目錄裡那些列（LIKE prefix% 的前半段）。"""
+        prefix = folder_uri_prefix("D:\\")
+        assert to_file_uri("D:/ABC-123-cd1.mp4").startswith(prefix)
+        assert to_file_uri("D:/ABC-123-cd2.mp4").startswith(prefix)
+
+    def test_normal_subfolder_prefix_unchanged(self):
+        """正向對照：一般子資料夾的前綴逐字不變（沒有誤傷既有路徑）。"""
+        assert folder_uri_prefix("C:/AVtest") == "file:///C:/AVtest/"
+        assert folder_uri_prefix("C:\\AVtest") == "file:///C:/AVtest/"
 
 
 # ── 舊庫零遷移守衛：分組不看 nfo_mtime ──────────────────────────────────
