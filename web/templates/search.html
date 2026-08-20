@@ -928,6 +928,22 @@
                                 {{ t('search.filelist.failed') }}
                             </button>
 
+                            <!-- Scrape duplicate（122-T6）：撞名的持久標記。
+                                 批次路徑不強制彈窗（CD-122-8：跑一半跳 modal 會打斷整批），
+                                 改成留在列表上讓使用者知道「是哪幾片」，點它才開既有的 duplicate
+                                 彈窗（不新建 modal，只多一個開啟入口）。視覺沿用 done(success)／
+                                 failed(error) 同一組 btn-scrape-single 語彙，第三態用 warning。
+                                 左邊的「產生 NFO」鈕維持可見＝去設定加版本標記後的重試路徑。
+                                 `|| ''` 防的是升級前存下的 session：那時 scrapeStatus 已經會是
+                                 'duplicate' 但還沒有 duplicateTarget 這個欄位（persistence 是整包
+                                 還原 fileList，不是欄位白名單，所以升級後存的會正常帶回來）。 -->
+                            <button x-show="file.scrapeStatus === 'duplicate'"
+                                    @click.stop="duplicateTarget = file.duplicateTarget || ''; duplicateModalOpen = true"
+                                    class="btn btn-sm btn-warning btn-scrape-single"
+                                    :title="file.duplicateTarget || ''">
+                                <i class="bi bi-files"></i>
+                            </button>
+
                             <!-- 動作按鈕：手動輸入番號 -->
                             <button x-show="needsNumberInput(file)"
                                     @click.stop="enterNumber(i)"

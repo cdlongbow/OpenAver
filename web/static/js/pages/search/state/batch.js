@@ -427,6 +427,7 @@ export function searchStateBatch() {
                 const result = await window.SearchFile.scrapeFile(file, metadata);
                 if (result.duplicate) {
                     file.scrapeStatus = 'duplicate';
+                    file.duplicateTarget = result.duplicate_target || '';
                     file.isScraping = false;  // 必須清除，否則 spinner 永遠轉（L144 的清除被 continue 跳過）
                     duplicateCount++;
                     // T2b: duplicate 仍算已處理（不播動畫）
@@ -525,6 +526,12 @@ export function searchStateBatch() {
                 this.duplicateTarget = result.duplicate_target || '';
                 this.duplicateModalOpen = true;
                 file.scrapeStatus = 'duplicate';
+                // 122-T6：單片路徑也要把 target 寫進 file 物件。這條路本來就會設
+                // scrapeStatus='duplicate'，而 T6 讓列表對這個值長出持久標記——
+                // 只寫單例 this.duplicateTarget 的話，使用者關掉彈窗後再點那顆標記，
+                // 讀到的是 undefined（單例已被 closeDuplicateModal 清空），彈窗會直接
+                // 顯示「undefined」而不是檔名。兩條路寫同一個欄位才對稱。
+                file.duplicateTarget = result.duplicate_target || '';
                 file.isScraping = false;
                 return;
             }

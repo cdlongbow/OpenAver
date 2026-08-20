@@ -247,7 +247,7 @@
     "duplicate": {
       "title": "檔案重複",
       "body": "目標檔案已存在，繼續會覆蓋原有檔案：",
-      "explanation": "這通常發生在同一部影片有多個版本（CD1/CD2、4K、UC）時。",
+      "explanation": "這通常發生在同一部影片有多個版本（CD1/CD2、part1/pt1、dvd1/disc1、4K、UC）時。",
       "instruction": "請到 <strong>設定 → 進階刮削設定 → 版本標記</strong>，新增關鍵字並確認檔案命名格式包含 <code class=\"badge badge-sm\">{suffix}</code> 變數。",
       "acknowledge": "了解",
       "go_settings": "前往設定"
