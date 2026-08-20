@@ -510,6 +510,8 @@
       "also_showcase_note": "也是你瀏覽頁（Showcase）的預設",
       "cover_badges_label": "封面屬性標籤",
       "cover_badges_note": "在封面左上角顯示中文字幕／無碼／4K 等標籤（只影響顯示，不改標籤本身）",
+      "cover_badges_legend": "＊AI：無碼破解（AI 演算法去碼），LEAK：無碼流出（母帶外流）",
+      "cover_badges_help_aria": "封面屬性標籤說明",
       "cover_badge": {
         "subtitle": "中文字幕",
         "cracked": "無碼破解（AI 演算法去馬）",
