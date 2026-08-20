@@ -274,6 +274,12 @@ def init_db(db_path: Path = None) -> None:
     if 'focal_attempted_at' not in existing_cols:
         cursor.execute("ALTER TABLE videos ADD COLUMN focal_attempted_at TIMESTAMP DEFAULT NULL")
 
+    # Migration: 加入 user_rating 欄位（videos，spec-123 精選標記；0=未精選，>0=已精選。
+    # 只由 set_user_rating()/set_user_rating_bulk() 與 repath() 分支 3 的 max() 合併寫入，
+    # 其餘動態 UPDATE builder 一律 pop 排除，見 video.py CD-123-3/-4）
+    if 'user_rating' not in existing_cols:
+        cursor.execute("ALTER TABLE videos ADD COLUMN user_rating INTEGER NOT NULL DEFAULT 0")
+
     # Migration: 加入 98a focal + photo fingerprint 欄位（actresses，CD-98a-8 新 guarded block）
     existing_actress_cols = {
         row[1] for row in cursor.execute("PRAGMA table_info(actresses)").fetchall()

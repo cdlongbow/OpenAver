@@ -1340,3 +1340,107 @@ class TestFocalCropMigration:
         all_actresses = repo.get_all()
         assert len(all_actresses) == 1
 
+
+
+# ============ TASK-123-T1: user_rating migration（CD-123-2）============
+
+class TestUserRatingMigration:
+    """舊 DB（無 user_rating 欄位）升級後：欄位補齊、既有 row 得預設值 0，migration
+    在已有欄位的 DB 上重跑不報錯不遺失既有值。"""
+
+    _OLD_VIDEOS_SQL = """
+        CREATE TABLE videos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT UNIQUE NOT NULL,
+            number TEXT,
+            title TEXT,
+            original_title TEXT,
+            actresses TEXT,
+            maker TEXT,
+            director TEXT DEFAULT '',
+            series TEXT,
+            label TEXT DEFAULT '',
+            tags TEXT,
+            sample_images TEXT DEFAULT '',
+            user_tags TEXT DEFAULT '[]',
+            output_dir TEXT DEFAULT '',
+            duration INTEGER,
+            size_bytes INTEGER,
+            cover_path TEXT,
+            release_date TEXT,
+            mtime REAL,
+            nfo_mtime REAL,
+            scrape_attempted_at REAL DEFAULT 0,
+            auto_focal TEXT DEFAULT '',
+            crop_mode TEXT NOT NULL DEFAULT 'auto',
+            focal_attempted_at TIMESTAMP DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """
+
+    def _create_old_schema_db(self, db_path: Path):
+        """建立沒有 user_rating 欄位的舊 videos 表，插入一筆既有資料。"""
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        cursor.execute(self._OLD_VIDEOS_SQL)
+        cursor.execute(
+            "INSERT INTO videos (path, number, title) VALUES (?, ?, ?)",
+            (to_file_uri("/old_user_rating_migration.mp4"), "OLD-UR-001", "舊片"),
+        )
+        conn.commit()
+        conn.close()
+
+    def test_migration_adds_user_rating_column(self, tmp_path):
+        db_path = tmp_path / "old_user_rating.db"
+        self._create_old_schema_db(db_path)
+
+        init_db(db_path)
+
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(videos)")
+        columns = [row[1] for row in cursor.fetchall()]
+        conn.close()
+
+        assert "user_rating" in columns
+
+    def test_migration_idempotent_on_old_schema(self, tmp_path):
+        """對舊 schema 連續呼叫 init_db() 兩次不拋例外"""
+        db_path = tmp_path / "old_user_rating.db"
+        self._create_old_schema_db(db_path)
+
+        init_db(db_path)
+        init_db(db_path)  # 第二次不應報錯
+
+    def test_migration_existing_video_row_gets_default_zero_and_stays_readable(self, tmp_path):
+        """既有 videos row 升級後 user_rating=0，且 get_by_path 仍可正常讀出"""
+        db_path = tmp_path / "old_user_rating.db"
+        self._create_old_schema_db(db_path)
+
+        init_db(db_path)
+
+        repo = VideoRepository(db_path)
+        result = repo.get_by_path(to_file_uri("/old_user_rating_migration.mp4"))
+        assert result is not None
+        assert result.number == "OLD-UR-001"
+        assert result.title == "舊片"
+        assert result.user_rating == 0
+
+    def test_migration_idempotent_preserves_existing_value_on_second_init(self, tmp_path):
+        """第二次 init_db() 重跑不重置既有非預設值（PRAGMA existing_cols 已含
+        user_rating → if 判斷跳過 ALTER TABLE，不觸碰既有值）。"""
+        db_path = tmp_path / "old_user_rating.db"
+        self._create_old_schema_db(db_path)
+
+        init_db(db_path)  # 第一次：補齊欄位，預設 0
+
+        repo = VideoRepository(db_path)
+        path = to_file_uri("/old_user_rating_migration.mp4")
+        assert repo.set_user_rating(path, 1) is True
+
+        init_db(db_path)  # 第二次：column 已存在，應直接跳過
+
+        result = repo.get_by_path(path)
+        assert result is not None
+        assert result.user_rating == 1

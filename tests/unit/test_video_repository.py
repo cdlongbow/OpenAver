@@ -1689,3 +1689,150 @@ class TestGetEmptyFocalCandidates:
         result = repo.get_empty_focal_candidates([p_no_face, p_never_tried])
 
         assert result == [(p_never_tried, "SIRO-5555", "", "cover5")]
+
+
+# ============ TASK-123-T1: user_rating preserve-on-conflict + mutators（CD-123-1/3/4）============
+
+class TestUserRatingPreserveOnConflict:
+    """user_rating（精選標記）所有權鎖——spec-123 §4.10 標的 P0：漏任一保存點＝使用者
+    精選過的影片在下一次掃描/補齊資料/重刮後被無聲清回 0，且不寫 NFO 無法恢復。
+    5 支場景對應 plan §3.1：upsert()／upsert_batch()／repath() 分支 2／分支 3 (old 有/new
+    無)／分支 3 (old 無/new 有)。另含兩支新 mutator 的 happy/miss/bulk 空/bulk 部分命中。
+    """
+
+    # ── 場景 1：upsert() ON CONFLICT 不覆寫 user_rating ─────────────────────
+
+    def test_upsert_preserves_user_rating_on_conflict(self, temp_db):
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/user_rating_upsert.mp4")
+        repo.upsert(Video(path=path, title="舊片"))
+        assert repo.set_user_rating(path, 1) is True
+
+        # 看似新掃描的 Video：user_rating 是 dataclass 預設值 0
+        repo.upsert(Video(path=path, title="重掃描新片"))
+
+        result = repo.get_by_path(path)
+        assert result is not None
+        assert result.user_rating == 1
+
+    # ── 場景 2：upsert_batch() ON CONFLICT 不覆寫 user_rating ────────────────
+
+    def test_upsert_batch_preserves_user_rating_on_conflict(self, temp_db):
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/user_rating_upsert_batch.mp4")
+        repo.upsert(Video(path=path, title="舊片"))
+        assert repo.set_user_rating(path, 1) is True
+
+        repo.upsert_batch([Video(path=path, title="重掃描新片")])
+
+        result = repo.get_by_path(path)
+        assert result is not None
+        assert result.user_rating == 1
+
+    # ── 場景 3：repath() 分支 2（正常 UPDATE，old 在 DB、new 不在）不覆寫 ────
+
+    def test_repath_normal_update_preserves_user_rating(self, temp_db):
+        repo = VideoRepository(temp_db)
+        old_uri = to_file_uri("/user_rating_repath_old.mp4")
+        new_uri = to_file_uri("/user_rating_repath_new.mp4")
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.upsert(Video(path=old_uri, title="舊片"))
+        assert repo.set_user_rating(old_uri, 1) is True
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.repath(old_uri, new_uri, Video(path=new_uri, title="重掃描新片"))
+
+        result = repo.get_by_path(new_uri)
+        assert result is not None
+        assert result.user_rating == 1
+
+    # ── 場景 4：repath() 分支 3（碰撞 delete-merge）old 有精選、new 沒有 → 合併保留 old ──
+
+    def test_repath_collision_merge_keeps_old_rating_when_new_has_none(self, temp_db):
+        repo = VideoRepository(temp_db)
+        old_uri = to_file_uri("/user_rating_collision_old_has.mp4")
+        new_uri = to_file_uri("/user_rating_collision_old_has_new.mp4")
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.upsert(Video(path=old_uri, title="舊片"))
+            repo.upsert(Video(path=new_uri, title="既有新路徑片"))
+        assert repo.set_user_rating(old_uri, 1) is True
+        # new_row user_rating 維持預設 0（未精選）
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.repath(old_uri, new_uri, Video(path=new_uri, title="重掃描新片"))
+
+        result = repo.get_by_path(new_uri)
+        assert result is not None
+        assert result.user_rating == 1, "old 列的精選值必須存活到合併後的列，不被 new 的 0 蓋掉"
+
+    # ── 場景 5：repath() 分支 3 old 沒有、new 有精選 → 合併後仍保留 new 的精選值 ──
+
+    def test_repath_collision_merge_keeps_new_rating_when_old_has_none(self, temp_db):
+        repo = VideoRepository(temp_db)
+        old_uri = to_file_uri("/user_rating_collision_new_has.mp4")
+        new_uri = to_file_uri("/user_rating_collision_new_has_new.mp4")
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.upsert(Video(path=old_uri, title="舊片"))
+            repo.upsert(Video(path=new_uri, title="既有新路徑片"))
+        assert repo.set_user_rating(new_uri, 1) is True
+        # old_row user_rating 維持預設 0（未精選）
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.repath(old_uri, new_uri, Video(path=new_uri, title="重掃描新片"))
+
+        result = repo.get_by_path(new_uri)
+        assert result is not None
+        assert result.user_rating == 1, "new 原本的精選值不該被 old 的 0 蓋掉"
+
+
+class TestSetUserRatingMutator:
+    """set_user_rating()／set_user_rating_bulk() 專用 mutator（BE-DATA-01 連線寫法）。"""
+
+    def test_set_user_rating_happy_path(self, temp_db):
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/user_rating_mutator_happy.mp4")
+        repo.upsert(Video(path=path, title="片"))
+
+        assert repo.set_user_rating(path, 1) is True
+
+        result = repo.get_by_path(path)
+        assert result is not None
+        assert result.user_rating == 1
+
+    def test_set_user_rating_can_reset_to_zero(self, temp_db):
+        """value=0 必須合法（取消精選）。"""
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/user_rating_mutator_reset.mp4")
+        repo.upsert(Video(path=path, title="片"))
+        assert repo.set_user_rating(path, 1) is True
+
+        assert repo.set_user_rating(path, 0) is True
+
+        result = repo.get_by_path(path)
+        assert result is not None
+        assert result.user_rating == 0
+
+    def test_set_user_rating_missing_path_returns_false(self, temp_db):
+        repo = VideoRepository(temp_db)
+        assert repo.set_user_rating(to_file_uri("/no_such_rating_path.mp4"), 1) is False
+
+    def test_set_user_rating_bulk_empty_returns_empty_dict(self, temp_db):
+        repo = VideoRepository(temp_db)
+        assert repo.set_user_rating_bulk([], 1) == {}
+
+    def test_set_user_rating_bulk_partial_hit(self, temp_db):
+        repo = VideoRepository(temp_db)
+        path_a = to_file_uri("/user_rating_bulk_a.mp4")
+        path_b = to_file_uri("/user_rating_bulk_b.mp4")
+        path_missing = to_file_uri("/user_rating_bulk_missing.mp4")
+        repo.upsert(Video(path=path_a, title="A"))
+        repo.upsert(Video(path=path_b, title="B"))
+
+        result = repo.set_user_rating_bulk([path_a, path_b, path_missing], 1)
+
+        assert result == {path_a: True, path_b: True, path_missing: False}
+        assert repo.get_by_path(path_a).user_rating == 1
+        assert repo.get_by_path(path_b).user_rating == 1
