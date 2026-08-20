@@ -261,3 +261,100 @@ class TestBoundaryUnpickAndDuplicate:
         assert len(data["results"]) == 2
         assert all(r["ok"] is True for r in data["results"])
         assert data["changed"] == 1
+
+
+# ── AC-13/AC-14：NFO 逐位元組不變（TASK-123-T7） ──────────────────────────────────
+#
+# AC-13：post_user_rating() 完全不碰 .nfo（spec §4.6，刻意跟 post_user_tags() 不同步，
+# 見 web/routers/collection.py:864 函式 docstring 註解）。這裡不只靠 grep 佐證，而是
+# 真的建一支 .nfo（含非 ASCII 內容驗證編碼不受影響）、打端點、比對 bytes + mtime_ns，
+# 把「grep 沒找到」升級成「跑起來也沒變」。
+#
+# 快照形狀（read_bytes() + st_mtime_ns 兩值）沿用
+# tests/integration/test_readonly_offflavor_e2e.py:202-220 `_snapshot()` 的精神
+# （完整目錄快照另外還比 size/sha256/st_ino，這裡因為只鎖單一已知檔案、且要驗證
+# 「連 mtime 都没被 touch 過」，改用更聚焦的兩值寫法，非 copy-paste 那支 helper——
+# 本卡 CLAUDE.md 規則明說不改該檔，這裡也沒有改它）。
+#
+# AC-14（唯讀來源零寫入）由同一組快照邏輯 ＋ 端點結構性不碰 FS 的事實覆蓋：
+# `post_user_rating()`（web/routers/collection.py:851-926）全函式 grep `open(`／
+# `write`／`shutil`／`os.remove`／`os.rename`／`Path(` 零命中；唯一的檔案 I/O 路徑
+# 是 `repo.set_user_rating_bulk()`（core/database/video.py:1177-）——純 SQLite
+# `UPDATE videos SET user_rating = ? WHERE path = ?`，沒有任何檔案系統呼叫。也就是
+# 說本檔的 nfo 快照測試同時驗掉 AC-13（NFO 不變）與 AC-14（唯讀來源零寫入，NFO 檔
+# 本身就位於「來源目錄」語境下）——沒有另外新增 AC-14 專屬測試（依本卡§B結論，
+# 端點結構上不可能寫入 FS，讀碼窮舉已可證偽）。
+
+class TestScenario6NfoByteIdentical:
+    """精選／取消精選前後，.nfo 檔案逐位元組（含 mtime）不變（AC-13/AC-14）。"""
+
+    @pytest.fixture
+    def nfo_db(self, tmp_path):
+        video_dir = tmp_path / "videos"
+        video_dir.mkdir()
+        video_path = video_dir / "SONE-205.mp4"
+        video_path.write_bytes(b"fake video bytes")
+        nfo_path = video_dir / "SONE-205.nfo"
+        # 含非 ASCII（中日文）內容，驗證 byte-level 比對不是被編碼正規化悄悄放水。
+        nfo_path.write_text(
+            "<movie><title>테스트 明日花キララ 中文標題 日本語タイトル</title></movie>",
+            encoding="utf-8",
+        )
+
+        video_uri = to_file_uri(str(video_path), {})
+        db_path = tmp_path / "test_nfo.db"
+        init_db(db_path)
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "INSERT INTO videos (path, number, title, user_tags, user_rating) VALUES (?, 'SONE-205', 'Test', '[]', 0)",
+            (video_uri,),
+        )
+        conn.commit()
+        conn.close()
+
+        return db_path, video_uri, nfo_path
+
+    @pytest.fixture
+    def nfo_client(self, nfo_db, monkeypatch):
+        db_path, _, _ = nfo_db
+        monkeypatch.setattr("web.routers.collection.get_db_path", lambda: db_path)
+        monkeypatch.setattr("web.routers.collection.load_config", lambda: {"gallery": {"path_mappings": {}}})
+        from web.app import app
+        return TestClient(app)
+
+    @staticmethod
+    def _nfo_fingerprint(nfo_path):
+        return (nfo_path.read_bytes(), nfo_path.stat().st_mtime_ns)
+
+    def test_pick_leaves_nfo_byte_identical(self, nfo_client, nfo_db):
+        """picked: True（精選）前後，.nfo 的 bytes 與 mtime_ns 完全相同。"""
+        db_path, video_uri, nfo_path = nfo_db
+        before = self._nfo_fingerprint(nfo_path)
+
+        resp = nfo_client.post("/api/user-rating", json={"file_path": video_uri, "picked": True})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+        after = self._nfo_fingerprint(nfo_path)
+        assert before == after, "AC-13 violated: .nfo bytes/mtime changed after picking"
+
+        repo = VideoRepository(db_path)
+        assert repo.get_by_path(video_uri).user_rating > 0
+
+    def test_unpick_leaves_nfo_byte_identical(self, nfo_client, nfo_db):
+        """picked: False（取消精選，鏡像方向）前後，.nfo 的 bytes 與 mtime_ns 完全相同。"""
+        db_path, video_uri, nfo_path = nfo_db
+        # 先精選一次，再取消——鏡射邊界條件「冪等設值也可能有『回到 0』的分支，
+        # 同樣不該碰 NFO」。
+        nfo_client.post("/api/user-rating", json={"file_path": video_uri, "picked": True})
+
+        before = self._nfo_fingerprint(nfo_path)
+        resp = nfo_client.post("/api/user-rating", json={"file_path": video_uri, "picked": False})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+        after = self._nfo_fingerprint(nfo_path)
+        assert before == after, "AC-13 violated: .nfo bytes/mtime changed after unpicking"
+
+        repo = VideoRepository(db_path)
+        assert repo.get_by_path(video_uri).user_rating == 0
