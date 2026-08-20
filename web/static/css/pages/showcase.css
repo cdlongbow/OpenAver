@@ -1077,6 +1077,70 @@
     font-weight: 500;
 }
 
+/* 123-T3：燈箱精選星（無補間）。兩層疊置：outline 永遠顯示、fill 用 --pick-fill clip。
+ * T3 只用 0%/100% 定值；T4 才接 GSAP —— 本規則禁止任何 transition/animation。
+ * Opus ①：兩層 <i> 必須 display:block（inline box 上 clip-path/transform 無效）。
+ * Opus ④：色值定死走 token；不加陰影／glow／背景／邊框。 */
+.lightbox-metadata .lb-details .pick-star {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;                  /* AC-23：pointer:fine 可點區 ≥28×28 */
+    height: 28px;
+    margin-right: 4px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    flex-shrink: 0;
+    vertical-align: middle;
+}
+
+.lightbox-metadata .lb-details .pick-star-outline,
+.lightbox-metadata .lb-details .pick-star-fill {
+    display: block;               /* Opus ①：不得留 inline */
+    line-height: 1;
+    font-size: 0.875rem;          /* 14px 字形；放大的是可點區不是 glyph */
+    width: 1em;
+    height: 1em;
+}
+
+.lightbox-metadata .lb-details .pick-star-outline {
+    color: var(--text-muted);     /* 未精選：與 ⚙／🗑 同色階 */
+    position: relative;
+    z-index: 1;
+}
+
+.lightbox-metadata .lb-details .pick-star:hover .pick-star-outline,
+.lightbox-metadata .lb-details .pick-star:focus-visible .pick-star-outline,
+.lightbox-metadata .lb-details .pick-star.is-picked .pick-star-outline {
+    color: var(--star-glow);      /* 未精選 hover/focus、已精選：金色 outline */
+}
+
+.lightbox-metadata .lb-details .pick-star-fill {
+    position: absolute;
+    inset: 0;
+    margin: auto;                 /* 在 28/44 hit box 內置中 1em glyph box */
+    color: var(--star-glow);
+    clip-path: inset(var(--pick-fill, 100%) 0 0 0);
+    /* --pick-fill 端點校準：T3 先用 100%/0%；glyph leading 像素 oracle 留給 CDP（Opus ②） */
+    pointer-events: none;
+    z-index: 0;
+}
+
+.lightbox-metadata .lb-details .pick-star:focus-visible {
+    outline: 2px solid var(--star-glow);
+    outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+    .lightbox-metadata .lb-details .pick-star {
+        width: 44px;              /* AC-23：觸控可點區 ≥44×44 */
+        height: 44px;
+    }
+}
+
 /* 欄位標籤（導演：/系列：/發行商：）：與其值輕微層次，值維持 muted */
 .lightbox-metadata .lb-details b {
     font-weight: 600;

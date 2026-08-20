@@ -1048,6 +1048,11 @@
       "mask_confirm": "確認裁切位置",
       "mask_cancel": "取消裁切調整"
     },
+    "pick": {
+      "add_aria": "加入精選",
+      "remove_aria": "取消精選",
+      "save_failed": "精選儲存失敗，請稍後再試"
+    },
     "gallery": {
       "prev": "上一張 (←)",
       "next": "下一張 (→)",

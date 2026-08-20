@@ -85,6 +85,11 @@ export function stateLightbox() {
 
         currentLightboxVideo: null,
 
+        // 123-T3：精選星 per-path 飛行鎖（keyed by video.path）。
+        // 「牆面是否需要重篩」不再用旗標代理（見 _pickFilterStale()，Codex review 抓到
+        // 舊版靠兩個旗標代理「牆面是否過期」，並發下會脫鉤——直接觀察真實資料，見下方）。
+        _pickInFlight: {},
+
         _lbFullLoaded: false,           // 71-T6 blur-up：原圖（cover_full_url）@load 後翻 true → overlay opacity 淡入
         _lbFullErrorPill: false,        // 120a-T1：.lb-full @error 通過判定後顯示提示 pill
 
@@ -542,6 +547,12 @@ export function stateLightbox() {
             }
             this._lightboxAnimating = false;
             this.lightboxOpen = false;
+            // 123-T3 / CD-123-14a：掛精選 pill 期間若切過星，關燈箱才重篩（不當場抽走當前卡）。
+            // 直接觀察真實資料（_pickFilterStale()），不再靠旗標代理。
+            // 123-T4（自生洞修正）：有精選請求還在飛時，_filteredVideos 裡看到的是尚未確認的
+            // 樂觀值——這時候重篩可能把「等一下要回滾」的卡移出清單，回滾後述詞掃不到它，
+            // 卡就回不來了。等最後一個請求落地（成功或已回滾）再判定，見 _pickHasInFlight()。
+            if (!this._pickHasInFlight() && this._pickFilterStale()) this.applyFilterAndSort();
             this.actressLightboxSource = null;   // T5: reset 進入路徑
             document.body.classList.remove('overflow-hidden');
 
@@ -692,6 +703,7 @@ export function stateLightbox() {
             this._lightboxAnimating = false;
             this._lightboxGeneration++;  // B19: invalidate pending $nextTick lightbox callbacks
             this.lightboxOpen = false;
+            // 123-T3 / CD-123-14a：這條路徑本來就會經 addPill 重篩一次，述詞式不需要事先清任何東西。
             document.body.classList.remove('overflow-hidden');
 
             // F2: delay state clearing until CSS transition completes (250ms)
@@ -1571,6 +1583,69 @@ export function stateLightbox() {
             ));
             if (!Number.isFinite(r) || r <= 0) return null;
             return computeMaskWinGeometry(W, H, r, this._maskFocalX);
+        },
+
+        // ==================== Pick Star (123-T3) ====================
+        // 樂觀更新 + per-path 飛行鎖 + CD-123-15 captured ref + 三層失敗判定。
+        // 成功不提示；失敗回滾 captured video + showToast。T4 才加補間，本函式不碰動畫。
+
+        // 「自生洞立即停」（2026-08-08 起）：舊版用一個「dirty」旗標＋一個「這次是不是我設起來
+        // 的」輔助旗標代理「成員關係變了嗎」，在並發（兩個 path 同時在飛）與飛行中關燈箱下都會
+        // 與真實狀態脫鉤——旗標本身就是上一輪為修別的問題而加的機制，這次不再 fix-forward
+        // 同一個機制，改成直接觀察真實資料的述詞。
+        //
+        // 述詞：牆上顯示的清單，與「精選」這個條件現在是否還一致？掛著精選 pill 時，
+        // _filteredVideos 裡的每一片理應都是精選的；只要有一片不是，就代表牆面已經過期。
+        _pickFilterStale() {
+            var hasPickPill = this.pills.some(function (p) { return p.dim === 'pick'; });
+            if (!hasPickPill) return false;      // 沒掛精選 pill → 永遠不重篩（CD-123-14a）
+            return _filteredVideos.some(function (v) { return (v.user_rating || 0) === 0; });
+        },
+
+        // 還有精選請求在路上時，樂觀值尚未確認——這時候重篩會用「可能等一下就要回滾的資料」
+        // 去移除牆上的卡，而回滾之後述詞掃不到已經被移出清單的那片，卡就回不來了。
+        // 等最後一個請求落地再篩（那時資料已經是定局，不論成功或已回滾）。
+        _pickHasInFlight() {
+            for (var k in this._pickInFlight) { if (this._pickInFlight[k]) return true; }
+            return false;
+        },
+
+        async togglePickStar() {
+            var video = this.currentLightboxVideo;
+            if (!video || !video.path) return;
+            var path = video.path;
+            if (this._pickInFlight[path]) return;
+
+            var oldValue = video.user_rating || 0;
+            var newValue = oldValue > 0 ? 0 : 1;
+
+            this._pickInFlight[path] = true;
+            video.user_rating = newValue;
+
+            try {
+                var resp = await fetch('/api/user-rating', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ file_path: path, picked: newValue > 0 }),
+                });
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                var data = await resp.json();
+                if (data.success !== true) throw new Error('API failed');
+                if (data.results?.[0]?.ok !== true) throw new Error('not_found');
+                // 成功：樂觀更新已是最終狀態，什麼都不做
+            } catch (e) {
+                video.user_rating = oldValue;
+                this.showToast(window.t('showcase.pick.save_failed'), 'error');
+            } finally {
+                delete this._pickInFlight[path];   // 本次的鎖先解掉，_pickHasInFlight() 才不會被自己擋住
+                // 燈箱還開著就不重篩（spec §4.13：不能把使用者正在看的那片從腳下抽走）；
+                // 已經關了才補一次——這條涵蓋「點完馬上關燈箱、請求之後才回來（或失敗回滾）」，
+                // 以及「兩個不同 path 同時在飛，其中一個成功改變了成員關係」（沒有旗標可競爭，
+                // 每次都重新觀察真實資料）。
+                // 123-T4：仍有其他 path 的請求在飛時也不篩（同 closeLightbox 的理由，見
+                // _pickHasInFlight() 註解）——等最後一個落地才篩一次。
+                if (!this.lightboxOpen && !this._pickHasInFlight() && this._pickFilterStale()) this.applyFilterAndSort();
+            }
         },
 
         // ==================== User Tags in Lightbox (T4) ====================

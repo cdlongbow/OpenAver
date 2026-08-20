@@ -1048,6 +1048,16 @@
                             <!-- Row 4: Details (merged) -->
                             <!-- 分隔符 " · " 內嵌於各 span 開頭，隨 x-show 一起顯示/隱藏，避免孤立 · -->
                             <div class="lb-details">
+                                <button type="button" class="pick-star"
+                                        :class="{'is-picked': (currentLightboxVideo?.user_rating || 0) > 0}"
+                                        :aria-pressed="(currentLightboxVideo?.user_rating || 0) > 0"
+                                        :aria-label="(currentLightboxVideo?.user_rating||0) > 0 ? t('showcase.pick.remove_aria') : t('showcase.pick.add_aria')"
+                                        :aria-busy="!!_pickInFlight[currentLightboxVideo?.path]"
+                                        @click.stop="togglePickStar()">
+                                    <i class="bi bi-star pick-star-outline" aria-hidden="true"></i>
+                                    <i class="bi bi-star-fill pick-star-fill" aria-hidden="true"
+                                       :style="{ '--pick-fill': (currentLightboxVideo?.user_rating || 0) > 0 ? '0%' : '100%' }"></i>
+                                </button>
                                 <span x-text="currentLightboxVideo?.number || t('showcase.lightbox.unknown_number')"></span>
                                 <!-- 62b-1: 進階重刮 ⚙ 入口（番號旁 inline 細鈕，常駐顯示）-->
                                 <button type="button"
