@@ -42,6 +42,7 @@ from core.gallery_generator import HTMLGenerator
 from core.path_utils import to_file_uri, is_path_under_dir, uri_to_fs_path, coerce_to_file_uri, uri_to_local_fs_path
 from core.nfo_updater import check_cache_needs_update, update_videos_generator
 from core.database import VideoRepository, Video, init_db, get_db_path, migrate_json_to_sqlite
+from core.multipart_group import resolve_group_for_path
 from core.focal import requires_face_detection
 from core.focal_trigger import maybe_submit_video_focal
 from core.organizer import generate_jellyfin_images, HEADERS as _EMBED_HEADERS
@@ -1618,6 +1619,55 @@ def video_player(path: str = Query(..., description="影片路徑（file:/// URI
     html_lang = locale if isinstance(locale, str) and locale in allowed_langs else "zh-TW"
     html_lang_safe = html_escape(html_lang)
     hint_text = html_escape(i18n_t('showcase.video.player_unavailable', locale=html_lang))
+
+    gallery_config = config.get('gallery', {})
+    path_mappings = gallery_config.get('path_mappings', {})
+
+    group = None
+    try:
+        db_path = get_db_path()
+        if db_path.exists():
+            repo = VideoRepository(db_path)
+            v = repo.get_by_path(path)
+            if v is not None:
+                folder_uri_prefix = to_file_uri(os.path.dirname(uri_to_fs_path(v.path)), path_mappings) + "/"
+                candidates = repo.get_by_folder_uri_prefix(folder_uri_prefix)
+                group = resolve_group_for_path(
+                    target_uri=path,
+                    candidates=candidates,
+                    fs_path_of=lambda r: uri_to_local_fs_path(r.path, path_mappings),
+                    uri_of=lambda r: r.path,
+                )
+    except Exception:
+        logger.warning("video_player: 分組查詢失敗，退回單檔播放", exc_info=True)
+        group = None
+
+    if group is not None and len(group.members) > 1:
+        parts_urls = [f"/api/gallery/video?path={quote(m.path, safe='')}" for m in group.members]
+        data_parts_json = html_escape(json.dumps(parts_urls), quote=True)
+        part_label_template = html_escape(i18n_t('showcase.video.part_progress', locale=html_lang), quote=True)
+        first_src = html_escape(parts_urls[0])
+        html = f"""<!DOCTYPE html>
+<html lang="{html_lang_safe}">
+<head>
+    <meta charset="UTF-8">
+    <title>{filename} - OpenAver</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ background: #000; display: flex; align-items: center; justify-content: center; height: 100vh; }}
+        video {{ max-width: 100%; max-height: 100vh; }}
+        #video-error-hint {{ color: #fff; padding: 1.5rem; text-align: center; max-width: 32rem; line-height: 1.6; }}
+        #oa-player-progress {{ position: fixed; top: 1rem; left: 1rem; z-index: 1; pointer-events: none; color: #fff; font: 14px/1.4 sans-serif; }}
+    </style>
+</head>
+<body>
+    <video id="oa-player" controls autoplay src="{first_src}" data-parts="{data_parts_json}" data-part-label-template="{part_label_template}" onerror="this.style.display='none';document.getElementById('video-error-hint').style.display='flex'"></video>
+    <div id="oa-player-progress"></div>
+    <div id="video-error-hint" style="display:none">{hint_text}</div>
+    <script type="module" src="/static/js/pages/player.js"></script>
+</body>
+</html>"""
+        return HTMLResponse(content=html)
 
     html = f"""<!DOCTYPE html>
 <html lang="{html_lang_safe}">

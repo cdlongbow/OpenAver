@@ -1077,7 +1077,8 @@
       "delete_failed": "移除失敗，請稍後再試",
       "play_failed": "播放失敗",
       "player_unavailable": "這部片現在放不出來——可能是檔案位置拿不到，或者這個格式瀏覽器不支援",
-      "part_count_fallback": "{n} 段"
+      "part_count_fallback": "{n} 段",
+      "part_progress": "第 {current}／{total} 段"
     },
     "actress": {
       "add": "+ 新增女優",
