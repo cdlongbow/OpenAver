@@ -226,6 +226,7 @@ def add_favorite(req: FavoriteRequest):
     profile = get_cached_profile(name)
 
     # 4. cache miss → 重新抓取
+    local_crop_ok = False
     if profile is None:
         result = get_actress_profile(name, makers=resolved_makers)
         if result.data is None:
@@ -234,12 +235,26 @@ def add_favorite(req: FavoriteRequest):
                     status_code=504,
                     content={"error": "timeout", "message": "Scraper 超時"}
                 )
-            else:
+            # TASK-122-T10：四來源全 miss、非超時 —— 片庫裡若有這位女優的片
+            # （NFO 已掃描寫進 videos.actresses），改建一張只有名字的本地卡，
+            # 照片 best-effort 從她任一部有封面的片裁右側 3:4。庫裡沒有她的
+            # 片才維持現行 404（見 CD-T10-2）。
+            videos = _get_actress_videos(name)
+            if not videos:
                 return JSONResponse(
                     status_code=404,
                     content={"error": "not_found", "message": "查無此女優"}
                 )
-        profile = result.data
+            local_crop_ok = _try_local_crop_photo(name, videos)
+            profile = {
+                "name": name,
+                "text": {},
+                "photo_url": None,
+                "photo_source": "local_crop" if local_crop_ok else None,
+                "primary_text_source": "local",
+            }
+        else:
+            profile = result.data
 
     # 4. 組裝 Actress dataclass
     text = profile.get("text") or {}
@@ -288,7 +303,9 @@ def add_favorite(req: FavoriteRequest):
         skipped_aliases = []
 
     # 5. 下載照片（photo_url 可能為 None，函數內部已有 guard）
-    photo_downloaded = download_actress_photo(
+    # TASK-122-T10：local_crop fallback 已經裁圖成功時（local_crop_ok=True）
+    # short-circuit，不呼叫 download_actress_photo（沒有 profile["photo_url"] 可下載）。
+    photo_downloaded = local_crop_ok or download_actress_photo(
         actress.name, profile.get("photo_url"), profile.get("photo_source")
     )
 
@@ -593,6 +610,39 @@ def _get_actress_videos(name: str) -> list:
     """
     names = list(AliasRepository().resolve(name))
     return VideoRepository().get_videos_by_actress_names(names)
+
+
+def _try_local_crop_photo(name: str, videos: list) -> bool:
+    """TASK-122-T10 best-effort：從 `videos` 中挑一部有封面的片，裁右側 3:4 當女優照片。
+
+    只裁「唯一的初始照片」（CD-T10-1/CD-T10-3）：依 `str(v.path)` 排序取穩定序第一筆，
+    不 shuffle、失敗不換下一張重試——換圖有 photo-candidates 可用。
+
+    全程 try/except 包住：cover_path 全空／URI 反解回空字串／crop_video_cover 回
+    None／寫檔拋例外，任一失敗都只 log warning 回 False，不影響呼叫端建卡、不上拋。
+
+    不呼叫 `_pre_invalidate_focal`（新 row 無舊焦點可作廢，見 TASK-122-T10 現況分析 §3）。
+    """
+    try:
+        candidates = sorted(
+            (v for v in videos if v.cover_path),
+            key=lambda v: str(v.path),
+        )
+        if not candidates:
+            return False
+        cover_uri = str(candidates[0].cover_path)
+        path_mappings = load_config().get('gallery', {}).get('path_mappings', {})
+        cover_fs_path = uri_to_local_fs_path(cover_uri, path_mappings)
+        if not cover_fs_path:
+            return False
+        crop_bytes = crop_video_cover(cover_fs_path, "v1")
+        if crop_bytes is None:
+            return False
+        _write_actress_photo(name, crop_bytes)
+        return True
+    except Exception as e:
+        logger.warning("[actress] _try_local_crop_photo 失敗 name=%s err=%s", name, e)
+        return False
 
 
 def _write_actress_photo(name: str, crop_bytes: bytes, ext: str = ".jpg") -> None:

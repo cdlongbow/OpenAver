@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.3] - 2026-08-21
+
+### Added
+- 查不到資料的冷門／早年女優，只要片庫裡已經有她的片（掃描過、NFO 標了名字），現在也能收藏——會用那片封面的右側自動裁一張照片當頭像；裁不出來也照樣建卡，之後可以換圖／上傳照片／調整對焦（這些過去一律不能用）。片庫裡還沒有她的片，收藏仍然是「找不到此女優」。
+
+測試數 6948 → 6953（pytest；npm test 892 未變）。
+
 ## [0.14.2] - 2026-08-20
 
 ### Added
