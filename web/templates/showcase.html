@@ -1602,6 +1602,9 @@
             <p class="fluent-modal-body"
                x-text="t('showcase.video.delete_modal.body').replace('{number}', _pendingDeleteNumber || '')">
             </p>
+            <p class="fluent-modal-body" x-show="_pendingDeleteParts.length > 1"
+               x-text="t('showcase.video.delete_modal.body_multipart').replace('{tokens}', formatPartLabel(_pendingDeleteParts)).replace('{n}', _pendingDeleteParts.length)">
+            </p>
             <div class="modal-action fluent-modal-actions">
                 <button type="button" class="btn btn-ghost" @click="cancelDeleteVideo()">
                     {{ t('showcase.video.delete_modal.cancel') }}

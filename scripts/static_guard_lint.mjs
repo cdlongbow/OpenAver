@@ -4021,6 +4021,21 @@ const RULES = [
     note: '[117b-T9] AC-9.1：.cover-actions 不得再呼叫 openRemoveActressModal()（必須真搬走，不是複製一份）。破了＝照片浮層與名字行各一顆刪除，或搬走失敗',
   },
 
+  // ==== [122 / Codex PR#147 P2] 刪除確認要明示「刪的是整組」 ====
+  // 合併卡的「從收藏移除」刪的是整組 DB 列，既有文案只說「這筆紀錄」＝破壞性彈窗
+  // 沒有明示授權（prd「破壞性 modal 明示授權」）。state 那一半由
+  // showcase/__tests__/delete-modal-multipart.test.mjs 鎖，這條鎖 HTML 綁定。
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'required-string',
+    pattern: [
+      'x-show="_pendingDeleteParts.length > 1"',
+      "t('showcase.video.delete_modal.body_multipart')",
+      'formatPartLabel(_pendingDeleteParts)',
+    ],
+    scope: { anchor: /delete_modal\.body'\)/, window: 700 },
+    note: '[122/PR147-P2] 刪除確認彈窗必須在多段時補一段「會一併移除全部 N 段」，且只在 _pendingDeleteParts.length > 1 時顯示',
+  },
   // ==== [122-T3] 分集標記四處插入點（AC-7）＋ hover 隔離（AC-17）＋ CD-122-5 ====
   // 四處各一條 scoped required-string：破壞該處 DOM 必須獨立轉紅（mutation 自驗）。
   {
