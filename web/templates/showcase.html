@@ -446,6 +446,11 @@
                                 </template>
                             </div>
                         </template>
+                        <template x-if="(video.part_tokens || []).length">
+                            <div class="cover-badges-part">
+                                <span class="cover-badge" x-text="formatPartLabel(video.part_tokens)"></span>
+                            </div>
+                        </template>
                         <div class="av-card-preview-overlay">
                             <button class="btn-glass-circle"
                                     @click.stop="playVideo(video.path)"
@@ -546,6 +551,9 @@
                                 <td class="table-cell-index" x-text="getCurrentFilteredIndex(index) + 1"></td>
                                 <td class="table-cell-number">
                                     <span class="table-number-highlight" x-text="video.number"></span>
+                                    <template x-if="(video.part_tokens || []).length">
+                                        <span class="cover-badge" x-text="formatPartLabel(video.part_tokens)"></span>
+                                    </template>
                                 </td>
                                 <td class="table-cell-title" x-text="video.title || t('showcase.grid.unknown_title')"></td>
                                 <td class="table-cell-actor" x-text="video.actresses || t('showcase.grid.unknown_actor')"></td>
@@ -584,6 +592,9 @@
                 <template x-for="(video, index) in paginatedVideos" :key="video.path">
                     <li class="list-item" @click="openLightbox(getCurrentFilteredIndex(index))">
                         <span class="list-number" x-text="video.number"></span>
+                        <template x-if="(video.part_tokens || []).length">
+                            <span class="cover-badge" x-text="formatPartLabel(video.part_tokens)"></span>
+                        </template>
                         <span class="list-title" x-text="video.title || t('showcase.grid.unknown_title')"></span>
                         <span class="list-actor" x-show="video.actresses" x-text="`(${video.actresses})`"></span>
                     </li>
@@ -921,6 +932,11 @@
                                     <template x-for="b in (currentLightboxVideo._badges || [])" :key="b.id">
                                         <span class="cover-badge" x-text="b.display_name"></span>
                                     </template>
+                                </div>
+                            </template>
+                            <template x-if="!!currentLightboxVideo?.path && !_maskVisible && (currentLightboxVideo.part_tokens || []).length">
+                                <div class="cover-badges-part">
+                                    <span class="cover-badge" x-text="formatPartLabel(currentLightboxVideo.part_tokens)"></span>
                                 </div>
                             </template>
 

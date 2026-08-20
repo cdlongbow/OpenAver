@@ -4020,6 +4020,77 @@ const RULES = [
     },
     note: '[117b-T9] AC-9.1：.cover-actions 不得再呼叫 openRemoveActressModal()（必須真搬走，不是複製一份）。破了＝照片浮層與名字行各一顆刪除，或搬走失敗',
   },
+
+  // ==== [122-T3] 分集標記四處插入點（AC-7）＋ hover 隔離（AC-17）＋ CD-122-5 ====
+  // 四處各一條 scoped required-string：破壞該處 DOM 必須獨立轉紅（mutation 自驗）。
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'required-string',
+    pattern: [
+      '<template x-if="(video.part_tokens || []).length">',
+      'class="cover-badges-part"',
+      'formatPartLabel(video.part_tokens)',
+    ],
+    scope: { anchor: /:data-flip-id="video\.path"/, window: 3200 },
+    note: '[122-T3] AC-7 grid/poster：封面卡必須以 <template x-if> 掛 .cover-badges-part，消費 formatPartLabel(video.part_tokens)',
+  },
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'required-string',
+    pattern: [
+      '<template x-if="(video.part_tokens || []).length">',
+      'formatPartLabel(video.part_tokens)',
+    ],
+    scope: { anchor: /class="table-cell-number"/, window: 400 },
+    note: '[122-T3] AC-7 table：番號欄必須以 <template x-if> 掛 formatPartLabel(video.part_tokens)',
+  },
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'required-string',
+    pattern: [
+      '<template x-if="(video.part_tokens || []).length">',
+      'formatPartLabel(video.part_tokens)',
+    ],
+    scope: { anchor: /class="list-number" x-text="video\.number"/, window: 400 },
+    note: '[122-T3] AC-7 list：番號後必須以 <template x-if> 掛 formatPartLabel(video.part_tokens)',
+  },
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'required-string',
+    pattern: [
+      '!!currentLightboxVideo?.path && !_maskVisible && (currentLightboxVideo.part_tokens || []).length',
+      'class="cover-badges-part"',
+      'formatPartLabel(currentLightboxVideo.part_tokens)',
+    ],
+    scope: { anchor: /<div class="lightbox-cover" :class="\{'has-cover': !!currentLightboxVideo\?\.cover_url\}">/, window: 4000 },
+    note: '[122-T3] AC-7/AC-17 燈箱：封面必須以 <template x-if> 掛 .cover-badges-part（含 !_maskVisible），消費 formatPartLabel(currentLightboxVideo.part_tokens)',
+  },
+  {
+    file: 'web/static/css/pages/showcase.css',
+    kind: 'required-string',
+    pattern: [
+      'position: absolute',
+      'bottom: 0.5rem',
+      'left: 0.5rem',
+      'pointer-events: none',
+      'var(--fluent-duration-fast)',
+      'var(--fluent-ease-standard)',
+    ],
+    scope: { anchor: /\.cover-badges-part\s*\{/, braceBalanced: true },
+    note: '[122-T3] AC-5：.cover-badges-part 必須左下定位、pointer-events:none、transition 走 Fluent token',
+  },
+  {
+    file: 'web/static/css/pages/showcase.css',
+    kind: 'required-string',
+    pattern: '.av-card-preview:hover .cover-badges-part { opacity: 0; }',
+    note: '[122-T3] AC-5：卡片 hover 淡出必須掛在 .av-card-preview:hover（不得改成通用 :hover，否則燈箱會誤中）',
+  },
+  {
+    file: 'web/static/css/pages/showcase.css',
+    kind: 'forbidden-string',
+    pattern: '.lightbox-cover:hover .cover-badges-part',
+    note: '[122-T3] AC-17：燈箱 .cover-badges-part 不得掛 :hover 淡出',
+  },
 ];
 
 // ---- helpers ----
