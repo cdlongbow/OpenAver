@@ -10,6 +10,7 @@
 // 門檻 reuse 既有單一真理常數，不裸寫 899（plan-101d CD-1）。
 import { POSTER_CROP_MAX_W } from '@/shared/breakpoints.js';
 import { serializePills, deserializePills } from '@/shared/pill-filter.js';
+import { computeBadges, resolveEnabledIds } from '@/shared/cover-badges.js';
 
 // 53a codex F3: $persist 對 localStorage 壞 JSON 沒 try/catch（會在 Alpine init 階段拋錯炸整頁），
 // 必須在 Alpine.data 註冊前先清掃壞值，讓 $persist fallback 走預設物件
@@ -102,17 +103,19 @@ export async function _loadTagAliasMap() {
 }
 
 export var _coverBadgeManifestLoaded = false;
+export var _coverBadgeRules = [];
 
 /**
- * 121b-T2: 把封面短名併入既有 _tagToGroup（聯集疊加，不清空）。
- * 結構鏡射 _loadTagAliasMap()，失敗語意刻意不同：catch / 非 2xx 時不動 _tagToGroup。
+ * 121c-T2: N 元 alias 群組合併。對每個成員取 map 中既有群組，與 members 自身取聯集
+ * （大小寫不敏感去重、保留第一次出現的原字面），再把同一個 union 陣列指給每個成員。
+ * hasOwnProperty + Array.isArray 雙重把關（121b Opus review 針對原型污染加的，不可繞過）。
+ * members 內的 falsy 值直接跳過；全部跳過後 map 不變。
  */
-export function _mergeAliasPair(map, a, b) {
-    var ka = a.toLowerCase();
-    var kb = b.toLowerCase();
+export function _mergeAliasGroup(map, members) {
     var union = [];
     var seen = {};
     function add(val) {
+        if (!val) return;
         var k = String(val).toLowerCase();
         if (Object.prototype.hasOwnProperty.call(seen, k)) return;
         seen[k] = true;
@@ -124,15 +127,26 @@ export function _mergeAliasPair(map, a, b) {
         }
         return [];
     }
-    existing(ka).forEach(add);
-    existing(kb).forEach(add);
-    add(a);
-    add(b);
+    members.forEach(function (member) {
+        if (!member) return;
+        existing(String(member).toLowerCase()).forEach(add);
+        add(member);
+    });
     union.forEach(function (member) {
         map[String(member).toLowerCase()] = union;
     });
 }
 
+export function _mergeAliasPair(map, a, b) {
+    return _mergeAliasGroup(map, [a, b]);
+}
+
+/**
+ * 121c-T2: 把 [canonical_tag, ...match_aliases] 整組併入既有 _tagToGroup（聯集疊加，不清空），
+ * 並把 manifest 原文留在 _coverBadgeRules。display_name 不參與合併。
+ * 失敗語意刻意不同於 _loadTagAliasMap()：catch / 非 2xx / 非陣列時不動 _tagToGroup，
+ * 且 _coverBadgeRules 維持 []。
+ */
 export async function _loadCoverBadgeManifest() {
     if (_coverBadgeManifestLoaded) return;
     try {
@@ -143,16 +157,43 @@ export async function _loadCoverBadgeManifest() {
                 data.forEach(function (item) {
                     if (!item) return;
                     var canonical = item.canonical_tag;
-                    var shortName = item.short_name;
-                    if (!canonical || !shortName) return;
-                    _mergeAliasPair(_tagToGroup, canonical, shortName);
+                    if (!canonical) return;
+                    var aliases = Array.isArray(item.match_aliases) ? item.match_aliases : [];
+                    _mergeAliasGroup(_tagToGroup, [canonical].concat(aliases));
                 });
+                _coverBadgeRules = data;
             }
         }
     } catch (e) {
         console.warn('[Showcase] Failed to fetch cover badge manifest:', e);
     }
     _coverBadgeManifestLoaded = true;
+}
+
+function _resolveCoverBadgeEnabledIds() {
+    // window 在 node:test 不存在；沿用 restoreState 的 `window.__SHOWCASE_CONFIG__ || {}`
+    var showcaseCfg = (typeof window !== 'undefined' && window.__SHOWCASE_CONFIG__) || {};
+    return resolveEnabledIds(_coverBadgeRules, showcaseCfg.cover_badges);
+}
+
+/**
+ * 121c-T3: 單片寫入 video._badges。enabledIds 可傳入（全量重算時只算一次）；
+ * 省略則現讀 config。video 為 falsy 直接 return。
+ */
+export function _recomputeVideoBadges(video, enabledIds) {
+    if (!video) return;
+    var ids = Array.isArray(enabledIds) ? enabledIds : _resolveCoverBadgeEnabledIds();
+    video._badges = computeBadges(video, _coverBadgeRules, _tagToGroup, ids);
+}
+
+/**
+ * 121c-T3: 對 _videos 每一筆呼叫 _recomputeVideoBadges。enabledIds 只算一次。
+ */
+export function _recomputeAllBadges() {
+    var enabledIds = _resolveCoverBadgeEnabledIds();
+    for (var i = 0; i < _videos.length; i++) {
+        _recomputeVideoBadges(_videos[i], enabledIds);
+    }
 }
 
 // 41c B-lite: 無封面 placeholder SVG (cover 載入失敗時 handleCoverError 換上)
@@ -307,6 +348,7 @@ export function stateBase() {
             await _loadAliasMap();      // 45-P2: 無條件載入 alias map（影片搜尋也需要）
             await _loadTagAliasMap();   // A3-4: 無條件載入 tag alias map
             await _loadCoverBadgeManifest();
+            _recomputeAllBadges();
             if (this.showFavoriteActresses) { this.loadActresses(); }
             this.applyFilterAndSort(true);  // M4a: 套用搜尋篩選（跳過 pagination，下面統一處理）
             this.page = savedPage;          // 恢復儲存的頁碼

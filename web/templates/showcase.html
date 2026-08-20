@@ -439,6 +439,13 @@
                           <i class="bi bi-image"></i>
                           <span x-text="t('common.no_image')"></span>
                         </div>
+                        <template x-if="(video._badges || []).length">
+                            <div class="cover-badges">
+                                <template x-for="b in (video._badges || [])" :key="b.id">
+                                    <span class="cover-badge" x-text="b.display_name"></span>
+                                </template>
+                            </div>
+                        </template>
                         <div class="av-card-preview-overlay">
                             <button class="btn-glass-circle"
                                     @click.stop="playVideo(video.path)"
@@ -909,6 +916,13 @@
                                  alt=""
                                  aria-hidden="true">
                             <div class="lb-full-hint" x-show="_lbFullErrorPill && !_lbFullLoaded && !_maskVisible" x-cloak>{{ t('showcase.lightbox.cover_unavailable') }}</div>
+                            <template x-if="!!currentLightboxVideo?.path && !_maskVisible && (currentLightboxVideo._badges || []).length">
+                                <div class="cover-badges">
+                                    <template x-for="b in (currentLightboxVideo._badges || [])" :key="b.id">
+                                        <span class="cover-badge" x-text="b.display_name"></span>
+                                    </template>
+                                </div>
+                            </template>
 
                             <!-- T1（CD-4/§B-1a）：遮罩 DOM 抽共用 partial，逐字搬移自舊 707-730（含 99a-T3/98b-T6 註解，見 partial 檔案開頭） -->
                             {% include '_macros/focal_mask.html' %}

@@ -152,6 +152,11 @@ class DirectoryConfig(BaseModel):
     output_path: str = ""      # 此來源的本地媒體庫輸出根目錄；空 = 未設定
 
 
+class CoverBadgesConfig(BaseModel):
+    enabled: bool = False
+    items: dict[str, bool] = {}      # 稀疏覆寫；缺 id 視為 True
+
+
 class GalleryConfig(BaseModel):
     directories: List[DirectoryConfig] = []
 
@@ -172,6 +177,7 @@ class GalleryConfig(BaseModel):
     default_sort: str = "date"
     default_order: str = "descending"
     items_per_page: int = 90
+    cover_badges: CoverBadgesConfig = CoverBadgesConfig()
 
 
 class ShowcaseConfig(BaseModel):

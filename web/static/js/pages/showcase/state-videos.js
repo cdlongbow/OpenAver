@@ -6,7 +6,7 @@
  * 從 state-base.js import 共用大陣列（F1：移出 Alpine reactive scope）。
  */
 
-import { _videos, _filteredVideos, _nameToGroup, _tagToGroup, _setVideos, _setFilteredVideos } from '@/showcase/state-base.js';
+import { _videos, _filteredVideos, _nameToGroup, _tagToGroup, _setVideos, _setFilteredVideos, _recomputeAllBadges } from '@/showcase/state-base.js';
 import { applyCellFocal } from '@/shared/focal-cell.js';
 import { openLocal } from '@/shared/open-local.js';
 import { normalizePillValue, buildPillPredicate } from '@/shared/pill-filter.js';
@@ -71,6 +71,7 @@ export function stateVideos() {
             this.error = '';
             const savedPage = this.page;
             await this.fetchVideos();
+            _recomputeAllBadges();
             this.applyFilterAndSort(true);  // 跳過 pagination，下面統一處理
             this.page = savedPage;
             this.updatePagination();

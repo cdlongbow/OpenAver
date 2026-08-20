@@ -448,11 +448,11 @@ test('alias group 值不是陣列時（壞掉的 map）視為查無 group，不�
 // 重複呼叫 shared loader）；cold/warm 才打 shared 的 init()。
 
 const COVER_BADGE_MANIFEST_FIVE = [
-    { id: 'zh-sub', canonical_tag: '中文字幕', short_name: '中字', display_order: 1, i18n_key: 'cover.zh_sub' },
-    { id: 'uncen-crack', canonical_tag: '無碼破解', short_name: '破解', display_order: 2, i18n_key: 'cover.crack' },
-    { id: 'uncen-leak', canonical_tag: '無碼流出', short_name: '流出', display_order: 3, i18n_key: 'cover.leak' },
-    { id: '4k', canonical_tag: '4K', short_name: '4K', display_order: 4, i18n_key: 'cover.4k' },
-    { id: 'vr', canonical_tag: 'VR', short_name: 'VR', display_order: 5, i18n_key: 'cover.vr' },
+    { id: 'zh-sub', canonical_tag: '中文字幕', display_name: '中字', match_aliases: ['中文字幕', '中字', '字幕'], display_order: 1, i18n_key: 'cover.zh_sub' },
+    { id: 'uncen-crack', canonical_tag: '無碼破解', display_name: '破解', match_aliases: ['無碼破解', '破解', '克破', 'AI'], display_order: 2, i18n_key: 'cover.crack' },
+    { id: 'uncen-leak', canonical_tag: '無碼流出', display_name: '流出', match_aliases: ['無碼流出', '流出', 'leak'], display_order: 3, i18n_key: 'cover.leak' },
+    { id: '4k', canonical_tag: '4K', display_name: '4K', match_aliases: ['4K'], display_order: 4, i18n_key: 'cover.4k' },
+    { id: 'vr', canonical_tag: 'VR', display_name: 'VR', match_aliases: ['VR'], display_order: 5, i18n_key: 'cover.vr' },
 ];
 
 async function importFreshStateBase(tag) {
@@ -520,7 +520,7 @@ test('mergeAliasPair 三方群組合併：繁中/簡中 也能查到 中字', as
     }
 });
 
-test('mergeAliasPair canonical 與 short_name 相同（4K/VR）不重複不拋例外', async () => {
+test('mergeAliasPair canonical 與 display_name 相同（4K/VR）不重複不拋例外', async () => {
     const { _mergeAliasPair } = await import('../state-base.js');
     assert.equal(typeof _mergeAliasPair, 'function', '_mergeAliasPair 必須存在');
     const map = {};
@@ -615,4 +615,82 @@ test('CoverBadgeManifest 自由文字搜尋只會變寬：併入前命中 ⊆ �
     for (const id of beforeIds) {
         assert.ok(afterIds.includes(id), `id ${id} 在 manifest 併入後消失（搜尋不得變窄）`);
     }
+});
+
+// =====================================================================
+// TASK-121c-T2 — mergeAliasGroup / loader 併整組 / _coverBadgeRules
+// =====================================================================
+
+test('mergeAliasGroup N 元：四個 key 同組含四成員且重複呼叫冪等', async () => {
+    const { _mergeAliasGroup } = await import('../state-base.js');
+    assert.equal(typeof _mergeAliasGroup, 'function', '_mergeAliasGroup 必須存在');
+    const map = {};
+    const members = ['無碼破解', '破解', '克破', 'AI'];
+    _mergeAliasGroup(map, members);
+    const first = map['無碼破解'.toLowerCase()];
+    assert.ok(Array.isArray(first), 'canonical key 必須是陣列');
+    assert.equal(first.length, 4, '該組必須含四個成員');
+    for (const key of members) {
+        const got = map[key.toLowerCase()];
+        assert.equal(got, first, `${key} 必須指到同一組陣列`);
+        for (const m of members) {
+            assert.ok(got.includes(m), `${key} 必須含 ${m}`);
+        }
+    }
+    _mergeAliasGroup(map, members);
+    assert.equal(map['無碼破解'.toLowerCase()].length, 4, '重複呼叫不得長出重複值');
+    assert.doesNotThrow(() => {
+        _mergeAliasGroup(map, []);
+        _mergeAliasGroup(map, ['單獨']);
+        _mergeAliasGroup(map, ['破解', '破解', '克破']);
+        _mergeAliasGroup(map, ['無碼破解', null, undefined, '', '克破']);
+    });
+});
+
+test('mergeAliasGroup 與既有 DB alias 群組相交時取聯集', async () => {
+    const { _mergeAliasGroup } = await import('../state-base.js');
+    assert.equal(typeof _mergeAliasGroup, 'function', '_mergeAliasGroup 必須存在');
+    const map = {};
+    const dbGroup = ['無碼破解', '裏'];
+    for (const member of dbGroup) map[member.toLowerCase()] = dbGroup;
+    _mergeAliasGroup(map, ['無碼破解', '破解', '克破', 'AI']);
+    const got = map['裏'.toLowerCase()];
+    assert.ok(Array.isArray(got), '裏 必須仍是陣列');
+    assert.ok(got.includes('克破'), '裏 必須查得到 克破');
+    assert.ok(got.includes('無碼破解') && got.includes('破解') && got.includes('AI'));
+    assert.equal(map['克破'.toLowerCase()], got, '克破 與 裏 必須指到同一組陣列');
+});
+
+test('CoverBadgeManifest 接線：loader 讀 match_aliases 後 破解 與 無碼破解 同組', async () => {
+    const fresh = await importFreshStateBase('wiring-match-aliases');
+    assert.equal(typeof fresh._loadCoverBadgeManifest, 'function', '_loadCoverBadgeManifest 必須存在');
+    // display_name 用 T1 真值 AI，讓 破解 只出現在 match_aliases——
+    // 這樣 loader 若只併 canonical + display_name，_tagToGroup['破解'] 就查不到 無碼破解。
+    const payload = COVER_BADGE_MANIFEST_FIVE.map((item) => (
+        item.id === 'uncen-crack' ? { ...item, display_name: 'AI' } : item
+    ));
+    await withStubFetch(manifestFetch(payload), () => fresh._loadCoverBadgeManifest());
+    const byCrack = fresh._tagToGroup['破解'];
+    const byCanonical = fresh._tagToGroup['無碼破解'];
+    assert.ok(Array.isArray(byCrack), '_tagToGroup[破解] 應為陣列');
+    assert.ok(Array.isArray(byCanonical), '_tagToGroup[無碼破解] 應為陣列');
+    assert.ok(byCrack.includes('破解') && byCrack.includes('無碼破解'));
+    assert.ok(byCanonical.includes('破解') && byCanonical.includes('無碼破解'));
+    assert.equal(byCrack, byCanonical, '兩個 key 必須指到同一組陣列');
+    assert.equal(fresh._coverBadgeRules.length, 5);
+    assert.equal(fresh._coverBadgeRules[0].display_name, '中字');
+});
+
+test('CoverBadgeManifest 失敗分支：fetch 拋錯時 _coverBadgeRules 維持空陣列', async () => {
+    const fresh = await importFreshStateBase('fail-rules');
+    assert.equal(typeof fresh._loadCoverBadgeManifest, 'function', '_loadCoverBadgeManifest 必須存在');
+    fresh._tagToGroup['女僕'] = ['女僕', 'メイド'];
+    await assert.doesNotReject(() =>
+        withStubFetch(
+            manifestFetch(null, { throwError: new Error('network down') }),
+            () => fresh._loadCoverBadgeManifest(),
+        ),
+    );
+    assert.deepEqual(fresh._coverBadgeRules, []);
+    assert.deepEqual(fresh._tagToGroup['女僕'], ['女僕', 'メイド']);
 });

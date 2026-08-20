@@ -17,7 +17,8 @@ router = APIRouter(prefix="/api/cover-badges", tags=["cover-badges"])
 class CoverBadgeRule(BaseModel):
     id: str
     canonical_tag: str
-    short_name: str
+    display_name: str
+    match_aliases: List[str]
     display_order: int
     i18n_key: str
 

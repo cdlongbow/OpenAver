@@ -4297,3 +4297,34 @@ body.sidebar-collapsed .showcase-footer {
         opacity: 1;
     }
 }
+
+/* 121c-T5: `.cover-badges` 定位容器 — 常駐顯示於封面左上角（spec §4.5，不掛 hover）。
+   掛載點 showcase.html:443（`.av-card-preview-img` 內、`.av-card-preview-overlay` 之前）。
+   定位脈絡沿用既有 `.av-card-preview-img { position: relative }`（theme.css:1064），本層不需重複宣告。
+   pointer-events:none 是結構保證：不擋卡片點擊（開燈箱）、不擋 overlay 三顆 `.btn-glass-circle`。
+   z-index 給低值純保險（比照 .lb-full-hint 的 9 再退一階，可能被 skeleton/no-cover 蓋住時保底浮上）；
+   `.cover-badge` 本身無 box-shadow/blur，不會像 lb-full-hint 那樣需要嚴格排在最上層。
+   badge 是 img 的 sibling 非後代，hover `scale(1.08)`（theme.css:1079）不會波及（技術要點 A 已保證，這裡零 transform）。 */
+.cover-badges {
+    position: absolute;
+    top: 0.5rem;
+    left: 0.5rem;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    pointer-events: none;
+}
+
+/* 121d-T2: 燈箱標籤整組下移，讓開常駐的魔法棒。只覆寫 top，其餘繼承 base。
+   為什麼是兩個值：魔法棒 `.lightbox-similar-btn` 相對 `.lightbox-content` 的 padding box
+   定位（top:1rem、高 44px ⇒ 下緣恆在內距邊起算 60px）；封面 `.lightbox-cover` 是該 flex
+   容器的第一個 in-flow 項目（上緣＝padding 值）。桌機 padding 1.5rem ⇒ 需淨距 60−24＝36px、
+   取 44px（間距 8px）；≤768px padding 降成 1rem（showcase.css:1894-1899）⇒ 需淨距
+   60−16＝44px、取 52px（間距 8px）。只寫一個 2.75rem 的話手機上間距會歸零。 */
+.lightbox-cover .cover-badges { top: 2.75rem; }
+
+@media (max-width: 768px) {
+    .lightbox-cover .cover-badges { top: 3.25rem; }
+}

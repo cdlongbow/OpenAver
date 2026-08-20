@@ -20,7 +20,8 @@ _PREFIXED_RIGHT = r"(?=[-_.\s]|$)"
 class AttributeRule:
     id: str
     canonical_tag: str
-    short_name: str
+    display_name: str
+    match_aliases: tuple[str, ...]
     display_order: int
     i18n_key: str
     source: str
@@ -31,7 +32,8 @@ ATTRIBUTE_TABLE: tuple[AttributeRule, ...] = (
     AttributeRule(
         id="subtitle",
         canonical_tag="中文字幕",
-        short_name="中字",
+        display_name="中字",
+        match_aliases=("中文字幕", "中字", "字幕"),
         display_order=1,
         i18n_key="settings.gallery.cover_badge.subtitle",
         source="filename_token",
@@ -40,7 +42,8 @@ ATTRIBUTE_TABLE: tuple[AttributeRule, ...] = (
     AttributeRule(
         id="cracked",
         canonical_tag="無碼破解",
-        short_name="破解",
+        display_name="AI",
+        match_aliases=("無碼破解", "破解", "克破", "AI"),
         display_order=2,
         i18n_key="settings.gallery.cover_badge.cracked",
         source="filename_token",
@@ -49,7 +52,8 @@ ATTRIBUTE_TABLE: tuple[AttributeRule, ...] = (
     AttributeRule(
         id="leaked",
         canonical_tag="無碼流出",
-        short_name="流出",
+        display_name="LEAK",
+        match_aliases=("無碼流出", "流出", "leak"),
         display_order=2,
         i18n_key="settings.gallery.cover_badge.leaked",
         source="filename_token",
@@ -58,7 +62,8 @@ ATTRIBUTE_TABLE: tuple[AttributeRule, ...] = (
     AttributeRule(
         id="4k",
         canonical_tag="4K",
-        short_name="4K",
+        display_name="4K",
+        match_aliases=("4K",),
         display_order=4,
         i18n_key="settings.gallery.cover_badge.4k",
         source="filename_token",
@@ -67,7 +72,8 @@ ATTRIBUTE_TABLE: tuple[AttributeRule, ...] = (
     AttributeRule(
         id="vr",
         canonical_tag="VR",
-        short_name="VR",
+        display_name="VR",
+        match_aliases=("VR",),
         display_order=3,
         i18n_key="settings.gallery.cover_badge.vr",
         source="filename_token",
@@ -95,7 +101,14 @@ _TAG_4K = _RULE_4K.canonical_tag
 # 手寫一份等於「新增一個 4K 同義詞要改兩個地方」。目前推導出 {"4k", "uhd", "8k"}。
 _GENRE_4K_EQUIVALENTS = frozenset(token.lstrip("-_").lower() for token in _RULE_4K.tokens)
 
-_MANIFEST_KEYS = ("id", "canonical_tag", "short_name", "display_order", "i18n_key")
+_MANIFEST_KEYS = (
+    "id",
+    "canonical_tag",
+    "display_name",
+    "match_aliases",
+    "display_order",
+    "i18n_key",
+)
 
 
 def _dedup_keep_first(items: list[str]) -> list[str]:
@@ -129,5 +142,15 @@ def effective_tags(filename: str, existing_tags: Iterable[str] | None) -> list[s
     return _dedup_keep_first(base + candidates)
 
 
+def _json_value(value):
+    """序列型欄位（本表用 tuple 存）統一轉 list——JSON / pydantic 只會吐 array，
+    端點回應與 manifest_payload() 才比得起來（test_response_equals_manifest_payload）。
+    用型別判斷而非欄位名判斷：日後再加一個序列型欄位不必記得回來改這裡。"""
+    return list(value) if isinstance(value, tuple) else value
+
+
 def manifest_payload() -> list[dict]:
-    return [{key: getattr(rule, key) for key in _MANIFEST_KEYS} for rule in ATTRIBUTE_TABLE]
+    return [
+        {key: _json_value(getattr(rule, key)) for key in _MANIFEST_KEYS}
+        for rule in ATTRIBUTE_TABLE
+    ]
