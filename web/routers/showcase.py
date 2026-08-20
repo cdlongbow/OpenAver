@@ -14,11 +14,18 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from core.database import VideoRepository, get_db_path, init_db
-from core.path_utils import is_path_under_dir, uri_to_local_fs_path, coerce_to_file_uri
+from core.path_utils import (
+    is_path_under_dir,
+    uri_to_local_fs_path,
+    uri_to_fs_path,
+    coerce_to_file_uri,
+    to_file_uri,
+)
 from core.logger import get_logger
 from core.config import load_config, get_gallery_source_paths
 from core.focal import detect_focal, format_focal, parse_focal
 from core import thumbnail_cache
+from core.multipart_group import group_rows, resolve_group_for_path
 
 logger = get_logger(__name__)
 
@@ -89,6 +96,26 @@ def _serialize_video(v, path_mappings: dict, enabled: bool = False) -> dict:
     }
 
 
+def _serialize_group(group, path_mappings: dict, enabled: bool = False) -> dict:
+    """將 VideoGroup 序列化為前端 JSON dict（feature/122，CD-122-4）。
+
+    以 `group.members[0]`（part-1，group_rows 已依 part_number 升冪排序）的
+    `_serialize_video()` 結果為基底，只在**真的多段時**覆寫 `size`（各段 size_bytes 加總，`or 0`
+    是必要防禦——`Video.from_row()` 對 DB NULL 不做防禦，size_bytes 可能是 None）
+    與新增 `part_tokens`。其餘欄位（含 `duration`）逐字取 part-1，不做欄位級 merge。
+    單檔片：members==[v]、part_tokens==[]，輸出與今天 `_serialize_video(v, ...)`
+    逐鍵逐值相同，只多 `part_tokens: []` 一個新鍵（AC-4）。
+    """
+    base = _serialize_video(group.members[0], path_mappings, enabled)
+    # 單檔片不碰 size：`_serialize_video()` 原樣傳 `v.size_bytes`（DB NULL → None），
+    # 套 `or 0` 會把 None 變 0，違反 AC-4「單檔片逐位元組不變」的字面契約。
+    # 只有真的多段時才加總，`or 0` 的 NULL 防禦留在那條路上（T2 review P3）。
+    if len(group.members) > 1:
+        base['size'] = sum(m.size_bytes or 0 for m in group.members)
+    base['part_tokens'] = group.part_tokens
+    return base
+
+
 def _get_configured_dirs(config: dict) -> tuple[set, dict]:
     """從 config 取出 configured_dir_uris 與 path_mappings（列表與單筆端點共用）"""
     gallery_config = config.get('gallery', {})
@@ -131,9 +158,14 @@ def get_videos():
         all_videos = [v for v in repo.get_all()
                       if any(is_path_under_dir(v.path, uri) for uri in configured_dir_uris)]
 
+        # feature/122 CD-122-1：分組在序列化層收斂，前端拿到的 videos 陣列已是
+        # 合併後的一筆一組（多一個 part_tokens 欄位）。單檔片的 group 只有自己
+        # 一個 member，_serialize_group() 輸出與改動前逐鍵逐值相同（AC-4）。
+        groups = group_rows(all_videos, fs_path_of=lambda v: uri_to_local_fs_path(v.path, path_mappings))
+
         thumb_enabled = config.get('thumbnail_cache_enabled', False)
-        videos_json = [_serialize_video(v, path_mappings, thumb_enabled)
-                       for v in all_videos]
+        videos_json = [_serialize_group(g, path_mappings, thumb_enabled)
+                       for g in groups]
 
         return JSONResponse({
             "success": True,
@@ -173,8 +205,25 @@ def get_video(path: str = Query(..., description="file:/// URI")):
             return JSONResponse({"success": False, "error": "video not found"}, status_code=404)
 
         thumb_enabled = config.get('thumbnail_cache_enabled', False)
+
+        # feature/122：用查到列的 v.path（而非使用者傳入的原始 path 字面，更可靠）
+        # 算同資料夾候選列，反解該 path 所屬的組。找不到組（極端狀況：part-1 被
+        # 刪但 part-2 還在、或路徑不再是任何組的代表）→ fail-safe 退回單檔序列化，
+        # 不 500（CD-122-6）。
+        folder_uri_prefix = to_file_uri(os.path.dirname(uri_to_fs_path(v.path)), path_mappings) + "/"
+        candidates = repo.get_by_folder_uri_prefix(folder_uri_prefix)
+        group = resolve_group_for_path(
+            target_uri=path,
+            candidates=candidates,
+            fs_path_of=lambda r: uri_to_local_fs_path(r.path, path_mappings),
+            uri_of=lambda r: r.path,
+        )
+        if group is None:
+            return JSONResponse({"success": True,
+                                 "video": _serialize_video(v, path_mappings, thumb_enabled)})
+
         return JSONResponse({"success": True,
-                             "video": _serialize_video(v, path_mappings, thumb_enabled)})
+                             "video": _serialize_group(group, path_mappings, thumb_enabled)})
 
     except Exception as e:
         logger.error("取得單筆影片失敗: %s", e)

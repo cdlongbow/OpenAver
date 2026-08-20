@@ -644,3 +644,111 @@ class TestShowcaseThumbnailCacheCoverUrl:
             assert v["cover_url"] == "", f"enabled={enabled}"
             assert v["cover_full_url"] == "", f"enabled={enabled}"
             assert v["has_cover"] is False
+
+
+# ============ AC-18: 合併卡 path 為 part-1，enrich 只作用 part-1（TASK-122-T2）============
+
+class TestAC18EnrichOnlyTouchesPart1:
+    """CD-122-11：補齊資料一律只作用 part-1。這是 `_serialize_group()` 把 `path`
+    定死為 part-1（AC-18 契約）的自然結果——前端所有「拿 video.path 打 API」的
+    既有呼叫（包含 enrich）天然只送 part-1 path，不需要任何分組感知。本測試驗證
+    這條鏈路的最後一環：真的呼叫 enrich（mode='db_to_sidecar'，不打外部 scraper，
+    只把 DB 現有 metadata 寫進 sidecar NFO）於合併卡的代表段 path，斷言 part-1
+    的 NFO 被寫入、part-2 的檔案在磁碟上完全未被觸碰（mtime 與內容不變）。
+    """
+
+    def test_enrich_db_to_sidecar_on_part1_path_leaves_part2_untouched(self, tmp_path, mocker):
+        video_dir = tmp_path / "videos"
+        video_dir.mkdir()
+
+        part1_fs = video_dir / "ABC-123-cd1.mp4"
+        part2_fs = video_dir / "ABC-123-cd2.mp4"
+        part1_fs.write_bytes(b"part1-video-bytes")
+        part2_fs.write_bytes(b"part2-video-bytes-untouched")
+
+        part1_uri = to_file_uri(str(part1_fs), {})
+        part2_uri = to_file_uri(str(part2_fs), {})
+
+        db_path = tmp_path / "ac18.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+        repo.upsert_batch([
+            Video(
+                path=part1_uri,
+                number="ABC-123",
+                title="AC-18 Part 1",
+                original_title="",
+                actresses=["Actress"],
+                maker="Maker",
+                release_date="2024-01-01",
+                tags=["tag1"],
+                duration=60,
+                size_bytes=100,
+                mtime=part1_fs.stat().st_mtime,
+            ),
+            Video(
+                path=part2_uri,
+                number="ABC-123",
+                title="AC-18 Part 2",
+                original_title="",
+                actresses=["Actress"],
+                maker="Maker",
+                release_date="2024-01-01",
+                tags=["tag1"],
+                duration=60,
+                size_bytes=100,
+                mtime=part2_fs.stat().st_mtime,
+            ),
+        ])
+
+        # 先確認 showcase 序列化真的把合併卡的 path 定成 part-1（AC-18 前半段契約），
+        # 再拿這個 path 去打 enrich（後半段：用這個 path 觸發 enrich 只碰 part-1）。
+        config = {
+            "gallery": {
+                "directories": [str(video_dir)],
+                "path_mappings": {},
+                "min_size_mb": 0,
+                "thumbnail_width": 400,
+            },
+            "scraper": {"video_extensions": [".mp4"], "image_extensions": [".jpg"]},
+            "database": {"path": ":memory:"},
+            "translate": {"provider": "ollama", "ollama_model": "llama3"},
+        }
+        mocker.patch("web.routers.showcase.get_db_path", return_value=db_path)
+        mocker.patch("web.routers.showcase.load_config", return_value=config)
+        from fastapi.testclient import TestClient
+        from web.app import app
+        showcase_client = TestClient(app, client=("127.0.0.1", 50000))
+        resp = showcase_client.get("/api/showcase/videos")
+        body = resp.json()
+        assert body["total"] == 1, "part1/part2 應合併成一張卡"
+        card = body["videos"][0]
+        assert card["path"] == part1_uri
+        assert card["part_tokens"] == ["cd1", "cd2"]
+
+        part2_mtime_before = part2_fs.stat().st_mtime
+        part2_content_before = part2_fs.read_bytes()
+        part2_nfo = part2_fs.with_suffix(".nfo")
+        assert not part2_nfo.exists()
+
+        from core.enricher import enrich_single
+        mocker.patch("core.enricher.VideoRepository", return_value=repo)
+        result = enrich_single(
+            file_path=card["path"],  # 合併卡回傳的代表段 path == part-1
+            number="ABC-123",
+            mode="db_to_sidecar",
+            write_nfo=True,
+            write_cover=False,
+            path_mappings={},
+        )
+
+        assert result.success is True
+        assert result.nfo_written is True
+
+        part1_nfo = part1_fs.with_suffix(".nfo")
+        assert part1_nfo.exists(), "part-1 的 NFO 必須被寫入"
+
+        # part-2 完全未被觸碰：沒有新產生 NFO、mtime 與內容不變
+        assert not part2_nfo.exists(), "part-2 不應該生出 NFO"
+        assert part2_fs.stat().st_mtime == part2_mtime_before
+        assert part2_fs.read_bytes() == part2_content_before
