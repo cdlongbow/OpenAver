@@ -121,6 +121,54 @@ class TestAC16CD122_10FalseMergeGuard:
             assert g.part_tokens == []
 
 
+# ── CD-122-13：段號重複的誤併反例（Codex PR review P0）─────────────────
+
+class TestCD122_13DuplicatePartNumberGuard:
+    """同一段號出現兩次 → 那是「同一片的兩種版本」，不是「一片的兩段」。
+
+    使用者流程：同一部片留了 `.mkv` 原檔 ＋ 轉出的 `.mp4` 相容版，兩個都沿用
+    同一組分集命名放在同資料夾 → 若誤併，另一個版本會從瀏覽頁消失、播放頁把同一段
+    連播兩次，而刪除那張卡會一次移除兩列 DB（手動封面裁切座標只存在 DB、不進 NFO，
+    重掃救不回來，使用者得重新框一次）。
+    """
+
+    def test_same_part_number_different_container_stay_two_singles(self):
+        """ABC-123-cd1.mp4 ＋ ABC-123-cd1.mkv → 兩個單檔組（剝 token 後 stem 相同、
+        兩者都帶 token，唯一擋得住的就是段號重複這條）。"""
+        rows = [
+            _v("/media/ABC-123-cd1.mp4"),
+            _v("/media/ABC-123-cd1.mkv"),
+        ]
+        groups = group_rows(rows, _fs_path_of)
+        assert len(groups) == 2
+        for g in groups:
+            assert len(g.members) == 1
+            assert g.part_tokens == []
+
+    def test_same_number_different_token_prefix_stay_two_singles(self):
+        """ABC-123-cd1.mp4 ＋ ABC-123-pt1.mkv → 前綴不同但都是第 1 段，同樣是衝突。
+        （比對用 part number 而非 token 字面，才擋得住這一種。）"""
+        rows = [
+            _v("/media/ABC-123-cd1.mp4"),
+            _v("/media/ABC-123-pt1.mkv"),
+        ]
+        groups = group_rows(rows, _fs_path_of)
+        assert len(groups) == 2
+        for g in groups:
+            assert g.part_tokens == []
+
+    def test_unique_part_numbers_still_merge(self):
+        """正向對照：段號唯一時照常合併（確認上面那條沒有誤傷正常分集）。"""
+        rows = [
+            _v("/media/ABC-123-cd1.mp4"),
+            _v("/media/ABC-123-cd2.mp4"),
+            _v("/media/ABC-123-cd3.mp4"),
+        ]
+        groups = group_rows(rows, _fs_path_of)
+        assert len(groups) == 1
+        assert groups[0].part_tokens == ["cd1", "cd2", "cd3"]
+
+
 # ── 舊庫零遷移守衛：分組不看 nfo_mtime ──────────────────────────────────
 
 class TestLegacyNoNfoMigrationStillGroups:

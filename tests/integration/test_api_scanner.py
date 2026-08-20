@@ -3341,6 +3341,30 @@ class TestVideoPlayerMultipart:
         assert "/static/js/pages/player.js" not in html
         assert "<video controls autoplay src=" in html
 
+    def test_cd122_13_same_part_number_does_not_continue(
+        self, client, tmp_path, monkeypatch
+    ):
+        """CD-122-13（播放入口）：ABC-123-cd1.mp4 ＋ ABC-123-cd1.mkv → 不接續。
+
+        段號重複代表那是「同一片的兩種容器」，不是「一片的兩段」；若誤併，播放頁
+        會把同一段連播兩次（第二次只是換個容器的同內容）。
+        """
+        # [lint-guard: pytest-justified] 同上一支：源碼掃描看不到「這兩個檔名組合
+        # 因為段號重複而 resolve 成 1-member、走了單檔 f-string」。
+        setup = _seed_player_videos(
+            tmp_path, monkeypatch,
+            ["ABC-123-cd1.mp4", "ABC-123-cd1.mkv"],
+        )
+        mp4_uri = setup["uris"][0]
+        response = client.get(f"/api/gallery/player?path={quote(mp4_uri)}")
+        assert response.status_code == 200
+        html = response.text
+        assert "data-parts" not in html
+        assert 'id="oa-player"' not in html
+        assert "oa-player-progress" not in html
+        assert "/static/js/pages/player.js" not in html
+        assert "<video controls autoplay src=" in html
+
     def test_db_exception_falls_back_to_single_file(
         self, client, tmp_path, monkeypatch
     ):

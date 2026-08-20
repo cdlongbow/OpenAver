@@ -15,6 +15,12 @@ path 才傳進來，不在此模組碰 URI，不違反 `path_utils.py` 的跨 Zo
 （`part_tokens=[]`）。反例：`ABC-123.mp4`（無 token）＋ `ABC-123-cd2.mp4` 必須回
 兩個單檔組，不可把無 token 的那個當 part-1 併入。
 
+**CD-122-13（Codex PR review 2026-08-20，P0）**：成組條件再加「**每個 part number
+必須唯一**」。`ABC-123-cd1.mp4` ＋ `ABC-123-cd1.mkv`（同一片留兩種容器）剝 token 後
+stem 相同、兩者都帶 token，只有這條擋得住——那是「同一片的兩個版本」不是「一片的兩段」，
+spec §7 明文不做多版本合併。比對用 part **number** 而非 token 字面（`cd1` 與 `pt1`
+都是第 1 段，同樣衝突）。
+
 **CD-122-3**：分組比對鍵只在 `normalize_stem_key()` 內做「去除所有空白字元 +
 lower()」；回傳給前端的顯示值（`part_tokens` 的 token 字面）不額外正規化。
 """
@@ -103,7 +109,20 @@ def group_rows(rows: List[T], fs_path_of: Callable[[T], str]) -> List['VideoGrou
         # 不成立 → bucket 內每一列各自單飛成單檔組。少了這條，
         # `ABC-123.mp4`（無 token）＋ `ABC-123-cd2.mp4` 會被誤併，無 token 那個
         # 被當 part-1、part_tokens 出現 None，且刪除會一次移除兩列。
-        if len(members) < 2 or not all(tokens):
+        #
+        # CD-122-13（Codex PR review P0，2026-08-20）：**再加「每個 part number 必須唯一」**。
+        # 少了這條，`ABC-123-cd1.mp4` ＋ `ABC-123-cd1.mkv`（同一片留兩種容器，收藏者常見
+        # 的「原檔 ＋ 相容版」擺法）會被誤併成「同一片的兩段」：剝 token 後 stem 相同、
+        # 兩者都帶 token，現行條件擋不住。後果是另一個容器版本從瀏覽頁消失、播放頁把同一段
+        # 連播兩次，而刪除那張卡會一次移除兩列 DB——`user_tags` 還能靠 NFO 重掃回來，
+        # 但**手動封面裁切座標（auto_focal / crop_mode）只存在 DB、不進 NFO**，
+        # 使用者得重新框一次。
+        # 比對用 part **number** 而非 token 字面：`cd1` 與 `pt1` 字面不同但都是第 1 段，
+        # 同樣是衝突（這條順手把 Codex 沒點名的同款漏洞一起堵掉）。
+        part_numbers = [part_number(fs_path_of(r)) for r in members]
+        if (len(members) < 2
+                or not all(tokens)
+                or len(set(part_numbers)) != len(part_numbers)):
             for row in members:
                 groups.append(VideoGroup(members=[row], part_tokens=[]))
             continue

@@ -247,6 +247,70 @@ def mixed_nontoken_delete_setup(tmp_path):
     }
 
 
+@pytest.fixture
+def same_partnum_delete_setup(tmp_path):
+    """同資料夾 ABC-123-cd1.mp4 + ABC-123-cd1.mkv（CD-122-13 段號重複反例）。
+
+    這是「同一片留兩種容器」的收藏擺法，不是「一片的兩段」——兩者剝 token 後 stem
+    相同、都帶 token，唯一擋得住誤併的是「段號必須唯一」那條。
+    """
+    video_dir = tmp_path / "samepart"
+    video_dir.mkdir()
+
+    mp4_fs = video_dir / "ABC-123-cd1.mp4"
+    mkv_fs = video_dir / "ABC-123-cd1.mkv"
+    mp4_fs.write_bytes(b"\x00mp4-bytes\x00")
+    mkv_fs.write_bytes(b"\x00mkv-bytes\x00")
+
+    mp4_uri = to_file_uri(str(mp4_fs), {})
+    mkv_uri = to_file_uri(str(mkv_fs), {})
+
+    db_path = tmp_path / "same_partnum_delete.db"
+    init_db(db_path)
+    repo = VideoRepository(db_path)
+    repo.upsert_batch([
+        Video(path=mp4_uri, number="ABC-123", title="Container mp4",
+              size_bytes=12, mtime=1700000000.0),
+        Video(path=mkv_uri, number="ABC-123", title="Container mkv",
+              size_bytes=12, mtime=1700000000.0),
+    ])
+
+    return {
+        "db_path": db_path,
+        "mp4_uri": mp4_uri,
+        "mkv_uri": mkv_uri,
+    }
+
+
+class TestCD122_13DeleteDoesNotMergeDuplicatePartNumber:
+    def test_delete_one_container_leaves_the_other_row(
+        self, client, same_partnum_delete_setup, mocker
+    ):
+        """CD-122-13（刪除入口）：段號重複的兩個檔案不成組，刪一個只移除一列。
+
+        這是這條 P0 真正的傷害發生點——誤併時整組刪除會一次帶走兩列 DB，
+        而手動封面裁切座標（auto_focal / crop_mode）只存在 DB、不同步進 NFO，
+        重掃救不回來。
+        """
+        _patch_db_path(mocker, same_partnum_delete_setup["db_path"])
+        inv = mocker.spy(thumbnail_cache, "invalidate")
+
+        resp = client.delete(
+            "/api/showcase/video",
+            params={"path": same_partnum_delete_setup["mp4_uri"]},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"deleted": 1}
+
+        repo = VideoRepository(same_partnum_delete_setup["db_path"])
+        assert repo.get_by_path(same_partnum_delete_setup["mp4_uri"]) is None
+        assert repo.get_by_path(same_partnum_delete_setup["mkv_uri"]) is not None
+
+        assert inv.call_count == 1
+        assert inv.call_args.args[0] == same_partnum_delete_setup["mp4_uri"]
+
+
 class TestAC12DeleteRemovesWholeGroup:
     def test_delete_part1_removes_both_rows_and_invalidates_each_member(
         self, client, multipart_delete_setup, mocker
