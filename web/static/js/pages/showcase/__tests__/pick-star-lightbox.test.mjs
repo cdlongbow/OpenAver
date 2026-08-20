@@ -96,6 +96,25 @@ function mockFetchManual() {
     };
 }
 
+/**
+ * window.ShowcaseAnimations 的 spy：只記錄 playPickFill 呼叫、不做任何事。
+ * 目前沒有任何既有測試碰 window.ShowcaseAnimations（togglePickStar 全走 `?.`，
+ * undefined 時就是安靜的 no-op）——新增這支 spy 前務必 restore() 還原，避免外溢到其他測試。
+ */
+function mockAnimationsSpy() {
+    const prev = globalThis.window.ShowcaseAnimations;
+    const calls = [];
+    globalThis.window.ShowcaseAnimations = {
+        playPickFill(fillEl, outlineEl, fromPicked, toPicked) {
+            calls.push({ fillEl, outlineEl, fromPicked, toPicked });
+        },
+    };
+    return {
+        restore() { globalThis.window.ShowcaseAnimations = prev; },
+        calls,
+    };
+}
+
 function okResp(results) {
     return {
         ok: true,
@@ -522,5 +541,91 @@ test('請求 body：file_path + picked 布林（冪等設值，非 toggle）', a
         await p;
     } finally {
         mock.restore();
+    }
+});
+
+// ── 123-T4：回滾動畫的 stale 檢查（CDP 實測重現後修正，見 state-lightbox.js
+// togglePickStar() catch 區塊的 `if (this.currentLightboxVideo === video)` 註解）─────
+// 燈箱裡的星是常駐 DOM 節點，不是每片各一顆。回滾發生在 await 之後：若飛行中已經滾到
+// 別片，document.querySelector('.pick-star-fill') 抓到的是「現在顯示那片」的星，
+// 沒有 stale 檢查就會把「已離場那片的回滾動畫」畫到「現在這片」的星上。
+
+test('T4：飛行中換片後回滾 → 資料仍打在 captured 的 A 身上，但不得播動畫（stale 檢查擋下）', async () => {
+    const mock = mockFetchManual();
+    const anim = mockAnimationsSpy();
+    try {
+        const videoA = { path: PATH_A, user_rating: 1, number: 'ABC-123' };
+        const videoB = { path: PATH_B, user_rating: 0, number: 'DEF-456' };
+        const c = makeComponent({ currentLightboxVideo: videoA });
+
+        const p = c.togglePickStar();
+        assert.equal(videoA.user_rating, 0, '樂觀更新：取消精選');
+        assert.equal(anim.calls.length, 1, '樂觀更新階段照常播一次動畫');
+
+        // 飛行中滾到下一片（B 未精選，且 B 從未呼叫過 togglePickStar）
+        c.currentLightboxVideo = videoB;
+
+        mock.calls[0].reject(new Error('network down'));
+        await p;
+
+        assert.equal(videoA.user_rating, 1, '回滾必須打在 captured 的 A 身上（資料層與動畫層分開驗證）');
+        assert.equal(videoB.user_rating, 0, 'B 完全不該被碰');
+        assert.equal(anim.calls.length, 1,
+            '換片後已經停在 B，回滾動畫若播出來就會把 A 的回滾畫到 B 的星上——stale 檢查必須擋下這次呼叫');
+    } finally {
+        mock.restore();
+        anim.restore();
+    }
+});
+
+test('T4：沒換片時回滾 → 動畫照常播一次，方向是 newValue→oldValue（防止過度攔截）', async () => {
+    const mock = mockFetchManual();
+    const anim = mockAnimationsSpy();
+    try {
+        const video = { path: PATH_A, user_rating: 1, number: 'ABC-123' };
+        const c = makeComponent({ currentLightboxVideo: video });
+
+        const p = c.togglePickStar();
+        assert.equal(video.user_rating, 0, '樂觀更新：取消精選');
+        assert.equal(anim.calls.length, 1, '樂觀更新階段一次');
+
+        mock.calls[0].reject(new Error('network down'));
+        await p;
+
+        assert.equal(video.user_rating, 1, '回滾');
+        assert.equal(anim.calls.length, 2, '沒換片，stale 檢查不該擋下這次——回滾動畫照常播');
+        assert.deepEqual(
+            { fromPicked: anim.calls[1].fromPicked, toPicked: anim.calls[1].toPicked },
+            { fromPicked: false, toPicked: true },
+            'catch 區塊呼叫方向是 (newValue>0, oldValue>0)：newValue=0(false) → oldValue=1(true)，從樂觀值畫回舊值'
+        );
+    } finally {
+        mock.restore();
+        anim.restore();
+    }
+});
+
+test('T4：樂觀更新階段呼叫一次 playPickFill(oldValue>0, newValue>0)（$nextTick 觸發鏈沒斷）', async () => {
+    const mock = mockFetchManual();
+    const anim = mockAnimationsSpy();
+    try {
+        const video = { path: PATH_A, user_rating: 0 };
+        const c = makeComponent({ currentLightboxVideo: video });
+
+        const p = c.togglePickStar();
+        assert.equal(video.user_rating, 1, '樂觀更新：按下精選');
+        assert.equal(anim.calls.length, 1, '按下當下應有一次動畫呼叫');
+        assert.deepEqual(
+            { fromPicked: anim.calls[0].fromPicked, toPicked: anim.calls[0].toPicked },
+            { fromPicked: false, toPicked: true },
+            '樂觀階段呼叫方向是 (oldValue>0, newValue>0)：oldValue=0(false) → newValue=1(true)'
+        );
+
+        mock.calls[0].resolve(okResp());
+        await p;
+        assert.equal(anim.calls.length, 1, '成功路徑不再補播第二次');
+    } finally {
+        mock.restore();
+        anim.restore();
     }
 });

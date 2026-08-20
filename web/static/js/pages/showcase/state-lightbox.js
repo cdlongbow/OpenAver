@@ -328,6 +328,11 @@ export function stateLightbox() {
 
         // F1: helper — 更新 lightboxIndex + currentLightboxVideo 一致性
         _setLightboxIndex(idx) {
+            // 123-T4 / C27：燈箱星是常駐節點，切換影片必須先殺掉進行中的 --pick-fill
+            // 與 scale tween，否則下一幀 GSAP 會把上一片的中間值蓋回來。
+            // 123-T4b：GSAP 呼叫收斂進 animations.js（TestMotionInfra 守衛，見該檔
+            // killPickStarTweens 註解）。不清 --pick-fill（沿用搬移前行為）。
+            window.ShowcaseAnimations?.killPickStarTweens?.({ clearTransform: true });
             this.lightboxIndex = idx;
             this.currentLightboxVideo = (idx >= 0 && idx < _filteredVideos.length)
                 ? _filteredVideos[idx] : null;
@@ -537,6 +542,11 @@ export function stateLightbox() {
             this._lightboxGeneration++;  // B19: invalidate pending $nextTick lightbox callbacks
             // Instant close — kill any in-progress lightbox animations
             _killLightboxTimelines();
+            // 123-T4 / CD-123-12：關燈箱是獨立於 _setLightboxIndex 的第三個 kill sink
+            // （_setLightboxIndex(-1) 要等 250ms delayed timer）。完整 teardown（含 --pick-fill）。
+            // 123-T4b：GSAP 呼叫收斂進 animations.js（TestMotionInfra 守衛，見該檔
+            // killPickStarTweens 註解）。
+            window.ShowcaseAnimations?.killPickStarTweens?.({ clearFill: true, clearTransform: true });
             if (lbEl) lbEl.classList.remove('gsap-animating');
             // Phase 50.x cleanup: kill timeline 後 clearProps 確保下次 open 從乾淨狀態起
             if (lbEl && window.OpenAver && window.OpenAver.motion) {
@@ -698,6 +708,11 @@ export function stateLightbox() {
 
             // 同步關閉 lightbox（跳過動畫，後面馬上做 filter 動畫）
             _killLightboxTimelines();
+            // 123-T4 review M1：這裡是第 4 條 kill sink（不走 closeLightbox()，_setLightboxIndex(-1)
+            // 要等 250ms delayed timer）。只止血不 clearProps——teardown 留給 closeLightbox()。
+            // 123-T4b：GSAP 呼叫收斂進 animations.js（TestMotionInfra 守衛，見該檔
+            // killPickStarTweens 註解）。
+            window.ShowcaseAnimations?.killPickStarTweens?.({});
             var lightboxEl = document.querySelector('.showcase-lightbox');
             if (lightboxEl) lightboxEl.classList.remove('gsap-animating');
             this._lightboxAnimating = false;
@@ -1587,7 +1602,8 @@ export function stateLightbox() {
 
         // ==================== Pick Star (123-T3) ====================
         // 樂觀更新 + per-path 飛行鎖 + CD-123-15 captured ref + 三層失敗判定。
-        // 成功不提示；失敗回滾 captured video + showToast。T4 才加補間，本函式不碰動畫。
+        // 成功不提示；失敗回滾 captured video + showToast。
+        // T4：樂觀更新／回滾後 $nextTick 接 playPickFill（Alpine :style 先寫終值）。
 
         // 「自生洞立即停」（2026-08-08 起）：舊版用一個「dirty」旗標＋一個「這次是不是我設起來
         // 的」輔助旗標代理「成員關係變了嗎」，在並發（兩個 path 同時在飛）與飛行中關燈箱下都會
@@ -1621,6 +1637,14 @@ export function stateLightbox() {
 
             this._pickInFlight[path] = true;
             video.user_rating = newValue;
+            this.$nextTick(() => {
+                window.ShowcaseAnimations?.playPickFill?.(
+                    document.querySelector('.pick-star-fill'),
+                    document.querySelector('.pick-star-outline'),
+                    oldValue > 0,
+                    newValue > 0
+                );
+            });
 
             try {
                 var resp = await fetch('/api/user-rating', {
@@ -1635,6 +1659,21 @@ export function stateLightbox() {
                 // 成功：樂觀更新已是最終狀態，什麼都不做
             } catch (e) {
                 video.user_rating = oldValue;
+                // CD-123-15 在動畫層的同一個坑：回滾發生在 await 之後，燈箱裡那顆星是**常駐節點**，
+                // 這時候可能已經在顯示別片了。不檢查就會把「這一片的回滾動畫」畫到「另一片的星」
+                // 上——實測過：取消已精選的 A、飛行中滾到未精選的 B、A 失敗回滾 → B 的
+                // aria-pressed 還是 false，星卻被畫成滿金色。只有還停在同一片時才播回滾動畫；
+                // 換片的話 Alpine 的 :style 綁定本來就已經把星畫成新片該有的樣子了。
+                if (this.currentLightboxVideo === video) {
+                    this.$nextTick(() => {
+                        window.ShowcaseAnimations?.playPickFill?.(
+                            document.querySelector('.pick-star-fill'),
+                            document.querySelector('.pick-star-outline'),
+                            newValue > 0,
+                            oldValue > 0
+                        );
+                    });
+                }
                 this.showToast(window.t('showcase.pick.save_failed'), 'error');
             } finally {
                 delete this._pickInFlight[path];   // 本次的鎖先解掉，_pickHasInFlight() 才不會被自己擋住

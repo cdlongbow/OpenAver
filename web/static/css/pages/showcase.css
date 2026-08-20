@@ -1141,6 +1141,21 @@
     }
 }
 
+/* 123-T4：灌滿到頂火花。動態建立、結束後 .remove()。無 transition/animation。 */
+.pick-spark-dot {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 4px;
+    height: 4px;
+    margin: -2px 0 0 -2px;
+    border-radius: 50%;
+    background: var(--star-glow);
+    pointer-events: none;
+    z-index: 2;
+    opacity: 0;
+}
+
 /* 欄位標籤（導演：/系列：/發行商：）：與其值輕微層次，值維持 muted */
 .lightbox-metadata .lb-details b {
     font-weight: 600;

@@ -170,8 +170,17 @@ class TestAC4BaselineFixtureComparison:
                     f"key={key} 值不符（path={path}）: "
                     f"expected={expected_value!r} actual={actual_v[key]!r}"
                 )
-            # 反向確認沒有意外多出的既有 key（part_tokens 除外，前面已單獨斷言過）
-            extra_keys = set(actual_v.keys()) - set(expected_v.keys()) - {"part_tokens"}
+            # 反向確認沒有意外多出的既有 key
+            # 排除的兩個都是「後續 branch 全域新增、有自己的測試」的鍵，各自單獨斷言過：
+            #   part_tokens —— 本 task（122）新增
+            #   user_rating —— spec-123 精選新增（TASK-123-T2 的 _serialize_video 無條件輸出，
+            #                   未精選為 0；該欄位的行為由 tests/integration/test_api_showcase.py
+            #                   的 TestShowcaseUserRatingField 三支守著，不歸本 baseline 管）
+            assert actual_v.get("user_rating") == 0, (
+                f"單檔片 {path} 的 user_rating 在 baseline fixture 情境下必為 0，"
+                f"實際 {actual_v.get('user_rating')}"
+            )
+            extra_keys = set(actual_v.keys()) - set(expected_v.keys()) - {"part_tokens", "user_rating"}
             assert not extra_keys, f"多出非預期 key: {extra_keys}（path={path}）"
 
 

@@ -10,6 +10,11 @@
  *   - playModeCrossfade(oldMode, newMode, params) B10: 模式切換 crossfade
  *   - captureShapeState(gridEl)                 TASK-119-T4: 卡型切換（cover/poster）Flip 快照
  *   - playShapeMorph(capturedState, gridEl)      TASK-119-T4: 卡型切換 Flip morph 動畫
+ *   - playPickFill(fillEl, outlineEl, wasPicked, isPicked)  123-T4: 精選灌滿／洩空
+ *   - playPickSpark(anchorEl)                   123-T4: 灌滿到頂火花
+ *   - killPickSpark()                           123-T4: 清殘留火花 dot
+ *   - killPickStarTweens(opts)                  123-T4b：燈箱星 teardown（kill sink 收斂，
+ *     見本檔 killPickStarTweens 定義處註解）
  *
  * B5 骨架：所有方法為 placeholder，return null。
  * B6-B10 逐步填入實作。
@@ -685,6 +690,173 @@
                 repeat: 1,
                 ease: 'fluent'
             });
+        },
+
+        /**
+         * 123-T4：燈箱精選星灌滿／洩空。
+         * Alpine :style 已把 --pick-fill 寫成終值；$nextTick 之後 fromTo
+         * （immediateRender: true）把值拉回起點再補到同一個終點。
+         * overshoot 與火花只在灌滿方向（isPicked === true）。
+         *
+         * @param {Element} fillEl - .pick-star-fill
+         * @param {Element} outlineEl - .pick-star-outline（kill 對稱；scale 做在按鈕上）
+         * @param {boolean} wasPicked
+         * @param {boolean} isPicked
+         * @returns {gsap.core.Tween|null}
+         */
+        playPickFill: function (fillEl, outlineEl, wasPicked, isPicked) {
+            if (!fillEl) return null;
+            if (typeof gsap === 'undefined') return null;
+
+            var pickStarEl = (fillEl.closest) ? fillEl.closest('.pick-star') : null;
+            if (!pickStarEl && outlineEl && outlineEl.closest) {
+                pickStarEl = outlineEl.closest('.pick-star');
+            }
+
+            // 先 kill 再 tween：flight lock 不擋「補間還沒放完但 fetch 已 resolve」的第二次點擊
+            // GSAP 3.14.2 實測：killTweensOf(target, '--custom-prop') 對 CSS 自訂屬性
+            // **完全無效**（tween 照跑到底），必須不帶 props 才殺得掉。見 CDP 實測紀錄。
+            gsap.killTweensOf(fillEl);
+            if (outlineEl) gsap.killTweensOf(outlineEl);
+            if (pickStarEl) {
+                gsap.killTweensOf(pickStarEl);
+                gsap.set(pickStarEl, { clearProps: 'transform' });
+            }
+            ShowcaseAnimations.killPickSpark();
+
+            var fromPct = wasPicked ? '0%' : '100%';
+            var toPct = isPicked ? '0%' : '100%';
+
+            if (shouldSkip()) {
+                gsap.set(fillEl, { '--pick-fill': toPct });
+                return null;
+            }
+
+            return gsap.fromTo(fillEl,
+                { '--pick-fill': fromPct },
+                {
+                    '--pick-fill': toPct,
+                    duration: isPicked ? 0.18 : 0.16,
+                    ease: isPicked ? 'fluent-decel' : 'fluent-accel',
+                    immediateRender: true,
+                    onComplete: (isPicked && pickStarEl) ? function () {
+                        gsap.to(pickStarEl, {
+                            scale: 1.15,
+                            duration: 0.12,
+                            ease: 'back.out(1.7)',
+                            yoyo: true,
+                            repeat: 1
+                        });
+                        ShowcaseAnimations.playPickSpark(pickStarEl);
+                    } : undefined
+                }
+            );
+        },
+
+        /**
+         * 123-T4：灌滿到頂火花。動態建立 4–6 顆 .pick-spark-dot，散開後淡出並 .remove()。
+         * 不使用 .sparkle-star（語意是自動對焦處理中）。
+         *
+         * @param {Element} anchorEl - .pick-star（position: relative）
+         * @returns {null}
+         */
+        playPickSpark: function (anchorEl) {
+            if (!anchorEl) return null;
+            if (typeof gsap === 'undefined') return null;
+            if (shouldSkip()) return null;
+
+            ShowcaseAnimations.killPickSpark();
+
+            var count = Math.floor(4 + Math.random() * 3);
+            var box = Math.max(anchorEl.offsetWidth || 0, anchorEl.offsetHeight || 0, 28);
+            var i;
+            for (i = 0; i < count; i++) {
+                (function () {
+                    var dot = document.createElement('span');
+                    dot.className = 'pick-spark-dot';
+                    anchorEl.appendChild(dot);
+
+                    var angle = Math.random() * Math.PI * 2;
+                    var dist = box * (0.55 + Math.random() * 0.35);
+                    var dx = Math.cos(angle) * dist;
+                    var dy = Math.sin(angle) * dist;
+
+                    var tl = gsap.timeline({
+                        onComplete: function () {
+                            if (dot.parentNode) dot.remove();
+                        }
+                    });
+                    tl.fromTo(dot,
+                        { x: 0, y: 0, opacity: 0 },
+                        { x: dx, y: dy, opacity: 1, duration: 0.12, ease: 'fluent-decel' }
+                    );
+                    tl.to(dot, { opacity: 0, duration: 0.18, ease: 'fluent-accel' });
+                })();
+            }
+            return null;
+        },
+
+        /**
+         * 123-T4：清掉殘留火花 dot。idempotent。
+         * gsap 未載入時仍移除 DOM；shouldSkip 不擋 teardown（與 play* 入口的
+         * 「不開動畫」相反，kill 是收尾）。
+         *
+         * @returns {null}
+         */
+        killPickSpark: function () {
+            if (typeof document === 'undefined') return null;
+            var dots = document.querySelectorAll('.pick-spark-dot');
+            if (!dots.length) return null;
+            var gsapReady = typeof gsap !== 'undefined';
+            if (shouldSkip() && !gsapReady) {
+                Array.prototype.forEach.call(dots, function (el) { el.remove(); });
+                return null;
+            }
+            Array.prototype.forEach.call(dots, function (el) {
+                if (gsapReady) gsap.killTweensOf(el);
+                el.remove();
+            });
+            return null;
+        },
+
+        /**
+         * 123-T4b：燈箱精選星 teardown — 三個呼叫端（state-lightbox.js 的 _setLightboxIndex /
+         * closeLightbox / searchFromMetadata）共用的 kill sink，原先各自直接呼叫 gsap.*，
+         * 撞上 static_guard_lint 的 TestMotionInfra 守衛（state-lightbox.js 不在白名單，見
+         * scripts/static_guard_lint.mjs:1705-1709）。三個呼叫端的收尾強度不同，逐一保留：
+         *   - _setLightboxIndex：{ clearTransform: true }（不清 --pick-fill）
+         *   - closeLightbox：    { clearFill: true, clearTransform: true }（完整 teardown）
+         *   - searchFromMetadata：{}（只止血，teardown 留給 closeLightbox）
+         * gsap 未載入時整條（含 killPickSpark）不執行，與搬移前三處呼叫端行為一致
+         * （原本 killPickSpark() 呼叫都包在 `typeof gsap !== 'undefined'` 判斷式內）。
+         * 存在性 guard（querySelector 有命中才 gsap.set）：常見路徑上該選擇器 0 命中
+         * （切換到女優燈箱、或 .pick-star-fill 只在影片燈箱裡），guard 避免 gsap.set(null, ...)
+         * 洗版 console.warn（沿用搬移前三處呼叫端的既有 guard）。
+         *
+         * @param {Object} [opts]
+         * @param {boolean} [opts.clearFill] - 是否對 .pick-star-fill clearProps '--pick-fill'
+         * @param {boolean} [opts.clearTransform] - 是否對 .pick-star clearProps 'transform'
+         * @returns {null}
+         */
+        killPickStarTweens: function (opts) {
+            if (typeof gsap === 'undefined') return null;
+            opts = opts || {};
+
+            // 不帶 props：GSAP 3.14.2 的 props 過濾對 CSS 自訂屬性無效（實測）
+            gsap.killTweensOf('.pick-star-fill');
+            gsap.killTweensOf('.pick-star');
+
+            if (opts.clearFill) {
+                var fillEl = document.querySelector('.pick-star-fill');
+                if (fillEl) gsap.set(fillEl, { clearProps: '--pick-fill' });
+            }
+            if (opts.clearTransform) {
+                var starEl = document.querySelector('.pick-star');
+                if (starEl) gsap.set(starEl, { clearProps: 'transform' });
+            }
+
+            ShowcaseAnimations.killPickSpark();
+            return null;
         }
     };
 
