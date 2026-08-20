@@ -1,4 +1,4 @@
-/* Cover badge pill body — shared by covers, lightbox, settings, design-system.
+/* Cover badge pill body — shared by covers, lightbox, design-system.
    Positioning container (.cover-badges) is T5. Recipe: plan-121c §2.4.
    無 box-shadow、無 backdrop-filter；不引用 --glass-caption-*（CD-121c-3/4）。 */
 
@@ -17,9 +17,4 @@
     border: 1.5px solid color-mix(in oklch, white 45%, transparent);
     color: oklch(100% 0 0);
     border-radius: var(--radius-pill); /* 膠囊：ui-conventions §1 白名單第 4 條（badge 類）；spec-121d §4.1 owner 六案選定 */
-}
-
-.cover-badge.is-off {
-    background: transparent;
-    color: var(--text-secondary);
 }

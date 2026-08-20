@@ -1123,21 +1123,18 @@
                             </label>
                             <small class="settings-note-inline">{{ t('settings.gallery.cover_badges_note') }}</small>
                             <div x-show="form.coverBadgesEnabled" x-collapse>
-                                <template x-for="rule in coverBadgeRules" :key="rule.id">
-                                    <div class="flex items-center gap-2 cursor-pointer"
-                                         role="button"
-                                         tabindex="0"
-                                         :aria-pressed="isCoverBadgeItemOn(rule.id)"
-                                         @click="toggleCoverBadgeItem(rule.id)"
-                                         @keydown.enter.prevent="toggleCoverBadgeItem(rule.id)"
-                                         @keydown.space.prevent="toggleCoverBadgeItem(rule.id)">
-                                        <span class="cover-badge"
-                                              :class="{ 'is-off': !isCoverBadgeItemOn(rule.id) }"
-                                              x-text="rule.display_name"></span>
-                                        <span :class="{ 'line-through': !isCoverBadgeItemOn(rule.id) }"
-                                              x-text="window.t(rule.i18n_key)"></span>
-                                    </div>
-                                </template>
+                                <div class="settings-attr-pills">
+                                    <template x-for="rule in coverBadgeRules" :key="rule.id">
+                                        <button type="button"
+                                                class="source-pill source-pill--action"
+                                                :data-enabled="isCoverBadgeItemOn(rule.id) ? 'true' : 'false'"
+                                                :aria-pressed="isCoverBadgeItemOn(rule.id)"
+                                                @click="toggleCoverBadgeItem(rule.id)">
+                                            <i class="bi bi-slash-circle slash-icn" aria-hidden="true"></i>
+                                            <span class="pill-name" x-text="rule.display_name"></span>
+                                        </button>
+                                    </template>
+                                </div>
                             </div>
                         </div>
                     </div>

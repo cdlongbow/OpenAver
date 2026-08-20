@@ -557,6 +557,25 @@
 /* ─── Source pill visuals moved to components/source-pill.css (TASK-62a-0,
  *     cross-page shared, unscoped). Container .settings-sources-pills stays here. ─── */
 
+/* 121d-T3: cover-badge items as a source-pill row (spec-121d §4.3).
+   Layout mirrors .settings-sources-pills above. */
+#settings-components .settings-attr-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+/* 121d-T3: restore line-through on disabled --action pills.
+   .source-pill--action[data-enabled="false"] .pill-name { text-decoration: none } (0,4,0)
+   beats the global line-through (0,3,0), and CG-RO-03 locks that none in source-pill.css
+   so it cannot be removed. Settings scope (1,4,0) puts the strike back. */
+:is(#settings-components, #ds-settings-components) .settings-attr-pills .source-pill[data-enabled="false"] .pill-name {
+    text-decoration: line-through;
+    text-decoration-color: color-mix(in oklch, var(--text-secondary) 35%, transparent);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+}
+
 /* ─── Cap-block alert ─── */
 #settings-components .settings-sources-cap-alert {
     display: flex;
