@@ -77,11 +77,11 @@
                         <span class="filter-pill-list" role="list" x-show="pills.length">
                             <template x-for="pill in pills" :key="pill.dim + '::' + normalizePillValue(pill.value)">
                                 <span class="filter-pill" role="listitem"
-                                      :title="t('showcase.pill.title', { dim: t('showcase.pill.dim_label.' + pill.dim), value: pill.value })">
-                                    <span class="filter-pill-value" x-text="pill.value"></span>
+                                      :title="pill.dim === 'pick' ? t('showcase.pick.chip_label') : t('showcase.pill.title', { dim: t('showcase.pill.dim_label.' + pill.dim), value: pill.value })">
+                                    <span class="filter-pill-value" x-text="pillLabel(pill)"></span>
                                     <button type="button" class="filter-pill-remove"
                                             @click="removePill(pill.dim, pill.value)"
-                                            :aria-label="t('showcase.pill.remove_aria', { value: pill.value })">✕</button>
+                                            :aria-label="pill.dim === 'pick' ? t('showcase.pick.remove_aria') : t('showcase.pill.remove_aria', { value: pill.value })">✕</button>
                                 </span>
                             </template>
                         </span>
@@ -236,10 +236,16 @@
                         <button class="btn-icon"
                                 @click="sortOpen = !sortOpen; modeOpen = false"
                                 :title="t('showcase.toolbar.sort_prefix') + ': ' + sort"
-                                :class="{ 'active': sortOpen }">
+                                :class="{ 'active': sortOpen || _hasPickPill() }">
                             <i class="bi bi-funnel"></i>
                         </button>
                         <div class="toolbar-dropdown" x-show="sortOpen" x-transition.opacity.duration.150ms @click.stop>
+                            <a href="#" class="dropdown-item dropdown-item-pick" :class="{ 'is-checked': _hasPickPill() }"
+                               @click.prevent="togglePickPill(); sortOpen = false">
+                                <i class="bi bi-star-fill"></i> {{ t('showcase.filter.pick_only') }}
+                                <i class="bi bi-check2 dropdown-item-pick-check" x-show="_hasPickPill()"></i>
+                            </a>
+                            <div class="dropdown-divider"></div>
                             <a href="#" class="dropdown-item" :class="{ 'active': sort === 'date' }"
                                @click.prevent="sort = 'date'; onSortChange(); sortOpen = false">
                                 <i class="bi bi-calendar"></i> {{ t('showcase.sort.date') }}</a>

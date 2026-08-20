@@ -164,6 +164,38 @@
     text-align: center;
 }
 
+/* TASK-123-T6: 選單分隔線——覆查 showcase.css / fluent-materials.css / design-system.css /
+   motion_lab.html 四個候選皆非可直接套用的緊湊型 dropdown divider（各自是 popover 內部邊框、
+   絕對定位疊加 hairline、頁面本地帶文字標籤樣式、或 1rem 大留白的 DaisyUI 通用元件），
+   故新增一條最小規則，色值借用 .toolbar-dropdown 自己的邊框 token（不硬編碼）。 */
+.dropdown-divider {
+    height: 1px;
+    margin: 0.25rem 0.625rem;
+    background: var(--stroke-default);
+}
+
+/* TASK-123-T6: 「只看精選」是勾選態，不是排序項那種單選高亮（spec 明確要求視覺上可辨識）。
+   不沿用 .dropdown-item.active 的實心背景高亮語意——維持一般 hover/idle 底色，改用星形圖示
+   變色＋打勾角標兩個訊號疊加，讓使用者一眼看出這條跟下面八條排序項不是同一種「選中」。 */
+.dropdown-item-pick {
+    position: relative;
+}
+
+.dropdown-item-pick.is-checked {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.dropdown-item-pick.is-checked i.bi-star-fill {
+    color: var(--accent);
+}
+
+.dropdown-item-pick-check {
+    margin-left: auto;
+    font-size: 0.8125rem;
+    color: var(--accent);
+}
+
 /* 119-T2 / CD-119-6 / AC-1.5：Bootstrap Icons 字形左右鏡像工具 class。
    為什麼套 ::before 不套 <i>：`<i class="bi …">` 是 inline box，CSS transform 對 inline box
    無視覺效果；vendored bootstrap-icons.css:14-16 已把 .bi::before 設為 display:inline-block，

@@ -118,6 +118,29 @@ export function stateVideos() {
             this._reconcileHeroCard();
         },
 
+        // TASK-123-T6：「只看精選」漏斗選單項 ＋ pill chip 的一組讀寫入口（CD-123-9：
+        // addPill()/removePill() 本體一行都不改，togglePickPill() 完全複用它們既有的
+        // _animateFilter()/_reconcileHeroCard()/持久化副作用鏈）。
+        _hasPickPill() {
+            return this.pills.some(p => p.dim === 'pick');
+        },
+
+        togglePickPill() {
+            if (this._hasPickPill()) {
+                this.removePill('pick', '1');
+            } else {
+                this.addPill('pick', '1');
+            }
+        },
+
+        // TASK-123-T6：pill chip 文案分流層。只有 pick 這一個特例（value 是 '1'，直接顯示
+        // 會變成一顆寫著「1」的 chip）——其餘 dim 逐字回傳 pill.value，不做成 dim→formatter
+        // 對應表（plan §4 風險表：超過 2 個特例才升級）。
+        pillLabel(pill) {
+            if (pill.dim === 'pick') return window.t('showcase.pick.chip_label');
+            return pill.value;
+        },
+
         // TASK-115-T9: 搜尋框 Backspace 刪最後一枚 pill（IME 組字中一律不刪）
         onSearchBackspace(event) {
             if (event.isComposing) return;

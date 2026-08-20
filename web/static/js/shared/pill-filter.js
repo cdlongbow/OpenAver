@@ -41,6 +41,11 @@ var WHOLE_FIELD_DIMS = { maker: 'maker', director: 'director', series: 'series',
 
 function _buildSingleMatcher(pill, nameToGroup, tagToGroup) {
     var dim = pill.dim;
+    // TASK-123-T6：pick 是唯一不看 pill.value 的分支（不像下面幾支要 normalizePillValue
+    // 或展開 alias set），放最前面避免下一個讀者以為它也走 WHOLE_FIELD_DIMS 的路徑。
+    if (dim === 'pick') {
+        return function (video) { return (video.user_rating || 0) > 0; };
+    }
     if (dim === 'actress' || dim === 'tag') {
         return _actressOrTagMatcher(dim, pill.value, nameToGroup, tagToGroup);
     }

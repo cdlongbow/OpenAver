@@ -160,9 +160,15 @@ test('✕ handler 不使用 $el.querySelector', () => {
 });
 
 test('✕ 有 :aria-label 綁定（非裸 × 字面充當唯一標籤）', () => {
+    // TASK-123-T6：pick pill 的 remove_aria 走條件式分流（'移除篩選：1' 語意很怪，
+    // 改用 showcase.pick.remove_aria），非 pick 維度仍走 showcase.pill.remove_aria——
+    // 斷言鬆綁成「:aria-label 綁定值含 t('showcase.pill.remove_aria'」，不再要求它是
+    // 值的最前綴。
+    const m = GROUP.match(/:aria-label="([^"]*)"/);
+    assert.ok(m, '✕ 應有 :aria-label 綁定');
     assert.ok(
-        /:aria-label="t\('showcase\.pill\.remove_aria'/.test(GROUP),
-        '✕ 應以 :aria-label="t(\'showcase.pill.remove_aria\', ...)" 綁定',
+        m[1].includes("t('showcase.pill.remove_aria'"),
+        '✕ 的 :aria-label 綁定應含 t(\'showcase.pill.remove_aria\', ...) 分支，實際：' + m[1],
     );
 });
 

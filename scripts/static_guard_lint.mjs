@@ -4189,6 +4189,37 @@ const RULES = [
     scope: { anchor: /\.cover-badges-part\s*\{/, braceBalanced: true },
     note: '[122-T3] AC-5：.cover-badges-part 必須左下定位、pointer-events:none、transition 走 Fluent token',
   },
+  // ==== [123-T6] AC-7：漏斗選單「只看精選」項＋分隔線＋勾選態；AC-11：漏斗按鈕 active 態 ====
+  // anchor 錨在 sortOpen 專屬 .toolbar-dropdown-wrap 的 @click.outside="sortOpen = false"
+  // （全檔僅 1 次；mode/actress 兩個姊妹 dropdown 各自用 modeOpen/actressSortOpen，不會誤命中）。
+  // 字面本身不含本規則要驗的任何 payload —— 比照 T5 修正後的 anchor 慣例（FE-GUARD-11：
+  // anchor 不可自我參照，否則殘留註解可造成 false-green）。
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'required-string',
+    pattern: [
+      "t('showcase.filter.pick_only')",
+      "'is-checked': _hasPickPill()",
+      '@click.prevent="togglePickPill(); sortOpen = false"',
+    ],
+    scope: { anchor: /@click\.outside="sortOpen = false"/, window: 900 },
+    note: '[123-T6] AC-7：選單最上方「只看精選」項存在（i18n key）＋ :class 綁 _hasPickPill()（勾選態，非排序項那種 .active 單選高亮）＋ @click 綁 togglePickPill()。window 實測 822，取 900。',
+  },
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'required-string',
+    pattern: '<div class="dropdown-divider"></div>',
+    scope: { anchor: /@click\.outside="sortOpen = false"/, window: 1200 },
+    note: '[123-T6] AC-7：「只看精選」與下面八條排序項之間有分隔線（.dropdown-divider）。window 實測 1063，取 1200。',
+  },
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'required-string',
+    pattern: "'active': sortOpen || _hasPickPill()",
+    scope: { anchor: /@click\.outside="sortOpen = false"/, window: 350 },
+    note: '[123-T6] AC-11：漏斗按鈕本身在精選開啟時呈 active（不必打開選單就知道掛著條件）。window 實測 331，取 350。',
+  },
+
   {
     file: 'web/static/css/pages/showcase.css',
     kind: 'required-string',
