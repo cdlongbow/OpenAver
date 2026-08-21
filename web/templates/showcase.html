@@ -426,6 +426,13 @@
                     <button class="btn-icon" @click="toggleActressOrder()" title="{{ t('showcase.action.toggle_order') }}">
                         <i class="bi" :class="actressOrder === 'asc' ? 'bi-sort-up' : 'bi-sort-down'"></i>
                     </button>
+                    <!-- 資訊顯示開關（女優牆恆常顯示，不受 mode 限制） -->
+                    <button class="btn-icon"
+                            :class="{ 'active': infoVisible }"
+                            @click="toggleInfo()"
+                            title="{{ t('showcase.action.toggle_info') }}">
+                        <i class="bi bi-eye"></i>
+                    </button>
                     <!-- [+ 新增] 已搬至 search-actions-right（117b-T10） -->
                 </div>
             </div>
@@ -441,7 +448,7 @@
         <!-- Status Bar 已於 v0.7.8 (49a-T4) 移除，統合至底部 .showcase-footer 三段式 -->
 
         <!-- Image Grid -->
-        <div class="showcase-grid" :class="{ 'shape-poster': cardShape === 'poster' }" x-show="mode === 'grid'">
+        <div class="showcase-grid" :class="{ 'shape-poster': cardShape === 'poster', 'info-open': infoVisible }" x-show="mode === 'grid'">
             <!-- Hero Card（影片模式精準匹配）— grid 內第一個 child，同 /search pattern -->
             <div class="av-card-preview hero-card"
                  x-show="!showFavoriteActresses && _isPreciseActressMatch && _matchedActress?.is_favorite"
@@ -727,7 +734,7 @@
                 <p class="state-page-text" x-text="t('showcase.actress.searchEmpty')"></p>
             </div>
             <!-- Actress Grid -->
-            <div class="actress-grid" x-show="!actressLoading && filteredActressCount > 0">
+            <div class="actress-grid" :class="{ 'info-open': infoVisible }" x-show="!actressLoading && filteredActressCount > 0">
                 <template x-for="(actress, index) in paginatedActresses" :key="actress.name">
                     <div class="actress-card"
                          :data-flip-id="'actress:' + actress.name"
@@ -769,9 +776,17 @@
                                 <span class="actress-sort-indicator" x-text="_actressCardMiddle(actress)"></span>
                                 <span class="av-actress" x-text="actress.age ? actress.age + t('search.unit.age') : ''"></span>
                             </div>
-                            <div class="footer-hover">
+                            <div class="footer-hover" x-show="!infoVisible">
                                 <span class="hover-title" x-text="_actressHoverInfo(actress)"></span>
                             </div>
+                        </div>
+                        <!-- Card Info 展開區 —— footer 同層，展開時撐高卡片（鏡射影片卡 M3i） -->
+                        <div class="card-info actress-card-info"
+                             x-show="infoVisible && _actressInfoTokens(actress).length"
+                             x-cloak @click.stop>
+                            <template x-for="(tok, i) in _actressInfoTokens(actress)" :key="i">
+                                <span x-text="tok"></span>
+                            </template>
                         </div>
                     </div>
                 </template>

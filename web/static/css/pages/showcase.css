@@ -416,6 +416,13 @@
         display: none; /* narrow 下次要資訊，空間不足 */
     }
 
+    /* 女優牆 footer（鏡射上方影片 caption 食譜，CD-124b-1 共用同一個既有斷點）——
+       窄螢幕收合態只留名字，作品數／年齡不顯示，名字滿寬單行 ellipsis（AC7）。 */
+    :is(#ds-gallery-components, .ds-gallery-composition) .actress-card-footer .footer-default .av-num { font-size: 0.7rem; }
+    :is(#ds-gallery-components, .ds-gallery-composition) .actress-card-footer .footer-default .actress-sort-indicator,
+    :is(#ds-gallery-components, .ds-gallery-composition) .actress-card-footer .footer-default .av-actress { display: none; }
+    .actress-card > .actress-card-info { font-size: 0.7rem; }   /* (0,2,0) 勝後方的 .card-info (0,1,0)，CD-124b-8② */
+
     /* T11：≤480px hero 卡（女優精準匹配入口）改直式 poster 比例，對齊同列 0.71 鄰卡 → 消 row 死白/錯位。
        值引用 --poster-crop-ratio（與鄰卡同源，單一真理）。img 改 object-fit:cover（女優照 0.826 略寬胖，
        cover 填滿僅輕裁上下、無 letterbox），覆蓋 hero 既有 contain（L2342）。
@@ -2530,6 +2537,16 @@ body.similar-mobile-active [data-picker-ghost] {
     content: " / ";
     color: var(--stroke-subtle);
 }
+
+/* 資訊區 token 排版（.card-info 提供 padding/字級/行高/上分隔線） */
+.actress-card-info { display: flex; flex-wrap: wrap; gap: 0.125rem 0.5rem; color: var(--text-secondary); }
+
+/* CD-124b-11：展開時 footer 沒有 hover 層可補位 → 解除既有 hover swap 的淡出。
+   兩條各自 (0,5,0)，勝 showcase.css:728 (.actress-card:hover .footer-default) 與
+   showcase.css:812 (.av-card-preview:hover .footer-default) 的 (0,3,0)（:hover 計入 b 分量）。
+   只在 .info-open 下生效 → 收合態的 hover 交換行為一個字都沒動（AC16）。 */
+.actress-grid.info-open .actress-card:hover .footer-default { opacity: 1; }
+.showcase-grid.info-open .av-card-preview:hover .footer-default { opacity: 1; }
 
 /* ==================== Light / Dim 主題適配 ==================== */
 /* 使用 theme.css 定義的 CSS 變數，無需額外覆寫 */
