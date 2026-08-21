@@ -199,7 +199,7 @@ export function stateActress() {
 
         toggleActressMode() {
             // CD-116b-8b：切換影片/女優模式時無條件 teardown 浮層草稿
-            this._pillEditor = null;
+            this._teardownPillEditors();
             if (this.lightboxOpen) this.closeLightbox();
             var self = this;
             var isEnteringActress = !this.showFavoriteActresses;
@@ -644,6 +644,11 @@ export function stateActress() {
         },
 
         prevActressLightbox() {
+            // 124c-T3（spec-124c §3.4）：對焦編輯進行中不換人。放在 _pickerOpen 之前，
+            // 讓四個 chokepoint 的「新 guard ＝第一行」零例外（兩者都是零副作用 early-return，
+            // 順序在操作上等價）。走 state-lightbox.js 的共用判斷式而非直接讀遮罩狀態——
+            // 100b-T5 CD-1 明訂本檔不得直接碰遮罩狀態識別字（同 this._resetMask() 的慣例）。
+            if (this._navBlockedByFocalEdit()) return;
             // 100b PR#108 Codex P2-A：picker（.actress-picker-overlay）開著時擋女優切換——
             // picker 候選是「這個女優」的候選照片，若切到別的女優但 picker 沒關，
             // _onPickerSelect 讀當下 currentLightboxActress?.name 會把舊女優的候選寫進
@@ -686,6 +691,11 @@ export function stateActress() {
         },
 
         nextActressLightbox() {
+            // 124c-T3（spec-124c §3.4）：對焦編輯進行中不換人。放在 _pickerOpen 之前，
+            // 讓四個 chokepoint 的「新 guard ＝第一行」零例外（兩者都是零副作用 early-return，
+            // 順序在操作上等價）。走 state-lightbox.js 的共用判斷式而非直接讀遮罩狀態——
+            // 100b-T5 CD-1 明訂本檔不得直接碰遮罩狀態識別字（同 this._resetMask() 的慣例）。
+            if (this._navBlockedByFocalEdit()) return;
             // 100b PR#108 Codex P2-A：見 prevActressLightbox 同段註解（鏡射 guard，
             // 女優模式下 .lightbox-nav-next @click + 鍵盤 ArrowRight 女優分支的共同
             // chokepoint；影片模式 hero-card 的殘留副作用同該段說明，範圍外）。
@@ -769,17 +779,7 @@ export function stateActress() {
 
         _actressCardMiddle(actress) {
             if (!actress) return '';
-            var sort = this.actressSort;
-            if (sort === 'video_count') {
-                return (actress.video_count || 0) + window.t('showcase.unit.films');
-            }
-            if (sort === 'cup') {
-                return actress.cup ? actress.cup + window.t('search.unit.cup') : '';
-            }
-            if (sort === 'height') {
-                return actress.height || '';
-            }
-            return '';
+            return (actress.video_count || 0) + window.t('showcase.unit.films');
         },
 
         _actressHoverInfo(actress) {
@@ -791,6 +791,90 @@ export function stateActress() {
                 parts.push(actress.bust + '-' + actress.waist + '-' + actress.hip);
             }
             return parts.join(' · ');
+        },
+
+        // TASK-124b-T4（CD-124b-13）：女優卡資訊層 parts 清單（M3i）。取代 124b-T1 的
+        // _actressInfoTokens()（回傳字串陣列）——回傳型別改成 parts 物件後留舊名會讓
+        // 「tokens」這個字說謊，故一併改名（全庫已 grep，無 pytest / lint 守衛鎖舊名）。
+        //
+        // 收留規則（CD-124b-13 單一真理）：
+        //   可點的（年齡／身高／罩杯）不分寬窄都出現一次；不可點的作品數只在窄螢幕被收留
+        //   （寬螢幕 footer 那格還在，重複印沒有意義；年齡在寬螢幕上下各一份是刻意的，
+        //    鏡射影片卡的女優名——footer 一份不可點、資訊區一份可點）。
+        //
+        // 缺值判定刻意維持兩套，不得統一：video_count/age 用 != null（0 是合法值，
+        // CD-124b-12 紅線）；height/cup/bwh 用 truthy（逐字鏡射 _actressHoverInfo()）。
+        //
+        // clickable 一律 fail-closed：值解析不出來就不可點——比不了大小的值不該變成條件，
+        // 否則只會產生一枚永遠篩不到人、且畫面不解釋為什麼的死 pill（鏡射
+        // _actressCoreMetadataParts() 的同一條 gate）。value 傳**原始欄位值**不是顯示字串
+        // （cup 傳 'B' 不是 'B罩杯'；height 傳 '160cm'，單位由 _setActressPill 剝）。
+        //
+        // dim→extractor 用就地 ternary，不抽共用表：EXTRACTORS 是 actress-pill-filter.js
+        // 私有未 export，本檔已有 3 處同型 inline（排序 / _pillDimRangeHint /
+        // _actressCoreMetadataParts），抽表要動 3 個既有點＝範圍漂移。
+        _actressInfoParts(actress) {
+            if (!actress) return [];
+            var parts = [];
+            if (this._isNarrow && actress.video_count != null) {
+                parts.push({
+                    key: 'count',
+                    text: actress.video_count + window.t('showcase.unit.films'),
+                    clickable: false,
+                });
+            }
+            if (actress.age != null) {
+                parts.push({
+                    key: 'age',
+                    text: actress.age + window.t('search.unit.age'),
+                    clickable: actressAgeValue({ age: actress.age }) != null,
+                    dim: 'age',
+                    value: actress.age,
+                });
+            }
+            if (actress.height) {
+                parts.push({
+                    key: 'height',
+                    text: actress.height,
+                    clickable: actressHeightValue({ height: actress.height }) != null,
+                    dim: 'height',
+                    value: actress.height,
+                });
+            }
+            if (actress.cup) {
+                parts.push({
+                    key: 'cup',
+                    text: actress.cup + window.t('search.unit.cup'),
+                    clickable: actressCupValue({ cup: actress.cup }) != null,
+                    dim: 'cup',
+                    value: actress.cup,
+                });
+            }
+            if (actress.bust && actress.waist && actress.hip) {
+                parts.push({
+                    key: 'bwh',
+                    text: actress.bust + '-' + actress.waist + '-' + actress.hip,
+                    clickable: false,
+                });
+            }
+            return parts;
+        },
+
+        // TASK-124b-T4（CD-124b-15）：女優卡資訊區的數值點擊 handler。
+        //
+        // 🔴 刻意**不**重用 _onActressMetadataClick()（燈箱那支），兩個硬理由：
+        //   ① 它第一行是 actressLightboxSource !== 'grid' 早退。卡片點擊時燈箱沒開，
+        //      那個欄位是上一次開燈箱留下的殘值（可能是 'hero'）⇒ 會靜默吞掉點擊，
+        //      而且是「有時候能點、有時候不能」的形狀。
+        //   ② 它第二行是 closeLightbox()。燈箱本來就沒開，呼叫它會白跑一遍 timeline
+        //      kill / overflow-hidden 移除 / _setLightboxIndex(-1) 延遲清理。
+        //
+        // toolbarOpen 與燈箱那支一致（owner 2026-08-22 拍板）：手機工具列預設收合，
+        // 剛產生的 pill 若看不見就刪不掉。桌機無副作用（.mobile-toolbar-open 只在
+        // ≤480px 有樣式）。
+        _onActressCardMetadataClick(dim, value) {
+            this.addActressPill(dim, value);
+            Alpine.store('ui').toolbarOpen = true;
         },
 
         _allInfoChips() {
@@ -1268,7 +1352,7 @@ export function stateActress() {
                 if (this.lightboxOpen) this.closeLightbox();
                 if (wasActressMode) {
                     // 繞過 toggleActressMode() 直接翻旗標——CD-116b-8b 的 teardown 必須就地補上
-                    this._pillEditor = null;
+                    this._teardownPillEditors();
                     this.showFavoriteActresses = false;
                     this.actressSearch = '';
                 }

@@ -6,7 +6,12 @@
  * mergeState 合併順序、可能撞 FE-ALPINE-05 覆蓋風險的模組）。
  *
  * T2 會把比對用的 predicate 加進同一個檔案。
+ *
+ * TASK-124a-T1：新增 release 維度的比對（expandPill/matchesReleasePill，
+ * 委派給 release-window.js）＋ serializePills/deserializePills 的 op/value2 擴充。
  */
+
+import { expandPill, matchesReleasePill, parseEndpoint } from './release-window.js';
 
 export function normalizePillValue(s) {
     if (s === null || s === undefined) return '';
@@ -45,6 +50,15 @@ function _buildSingleMatcher(pill, nameToGroup, tagToGroup) {
     // 或展開 alias set），放最前面避免下一個讀者以為它也走 WHOLE_FIELD_DIMS 的路徑。
     if (dim === 'pick') {
         return function (video) { return (video.user_rating || 0) > 0; };
+    }
+    // TASK-124a-T1：release 維度，展開＋比對皆委派給 release-window.js（純函式）。
+    // fail-closed 沿用本檔既有風格（內嵌匿名函式，非模組級單例，與 57 行同型——
+    // plan §2.2 擬碼的 `_never` 單例是 actress-pill-filter.js 獨有的寫法，見 T1 卡片
+    // 「plan 與現況不符之處」，本檔預設不引入新單例）。
+    if (dim === 'release') {
+        var w = expandPill(pill);
+        if (!w) return function () { return false; };
+        return function (video) { return matchesReleasePill(video, w); };
     }
     if (dim === 'actress' || dim === 'tag') {
         return _actressOrTagMatcher(dim, pill.value, nameToGroup, tagToGroup);
@@ -117,10 +131,21 @@ function _actressOrTagMatcher(dim, pillValue, nameToGroup, tagToGroup) {
  * 把這裡的 trim 拿掉**——比對與去重都走 `normalizePillValue()`（自己就 trim），所以
  * 篩選結果與去重 key 在 reload 前後恆等；拿掉 trim 只會讓「全空白的 value」有機會存活成
  * 一枚看不見的 pill。空白字面的顯示差異是可接受的殘留，空白 pill 不是。
+ *
+ * TASK-124a-T1：release pill 額外帶 op/value2 兩鍵（非 release pill 逐鍵逐值不變，
+ * 恰 dim/value 兩鍵，CD-124a-11 + AC16）。deserializePills 對 release pill 額外做
+ * 四條形狀 fail-safe（見下方函式內註解），畸形一枚丟一枚，不連坐相鄰元素。
  */
 export function serializePills(pills) {
     if (!Array.isArray(pills)) return [];
-    return pills.map(function (p) { return { dim: p.dim, value: p.value }; });
+    return pills.map(function (p) {
+        var out = { dim: p.dim, value: p.value };
+        if (p.dim === 'release') {
+            if (p.op !== undefined) out.op = p.op;
+            if (p.value2 !== undefined) out.value2 = p.value2;
+        }
+        return out;
+    });
 }
 
 export function deserializePills(raw) {
@@ -132,6 +157,21 @@ export function deserializePills(raw) {
         var dim = typeof p.dim === 'string' ? p.dim.trim() : '';
         var value = typeof p.value === 'string' ? p.value.trim() : '';
         if (!dim || !value) continue;
+        if (dim === 'release') {
+            // CD-124a-11 四條形狀 fail-safe，任一條不過就整枚丟棄：
+            var op = p.op;
+            if (op !== '=' && op !== '<=' && op !== '>=' && op !== 'range') continue;      // ① op 白名單
+            if (parseEndpoint(value) === null) continue;                                   // ③ value 形狀
+            var value2 = typeof p.value2 === 'string' ? p.value2.trim() : '';
+            if (op === 'range') {
+                if (!value2) continue;                                                      // ② range 缺 value2
+                if (parseEndpoint(value2) === null) continue;                               // ④ value2 形狀
+            }
+            var releasePill = { dim: dim, value: value, op: op };
+            if (op === 'range') releasePill.value2 = value2;
+            out.push(releasePill);
+            continue;
+        }
         out.push({ dim: dim, value: value });
     }
     return out;

@@ -731,7 +731,13 @@ export function stateLightbox() {
                 self.lightboxCloseTimer = null;
             }, 250);
 
-            this.addPill(dim, value);
+            // TASK-124a-T2（CD-124a-6）：release 維度改走發售日入口 adapter，不經 addPill
+            // （addPill 的正規化/去重路徑不適用 release 的 op/value2 結構）。
+            if (dim === 'release') {
+                this._setReleasePillFromDate(value);
+            } else {
+                this.addPill(dim, value);
+            }
         },
 
         // 44b-T4: Nav arrow visibility computed
@@ -757,6 +763,11 @@ export function stateLightbox() {
         },
 
         prevLightboxVideo() {
+            // 124c-T3（spec-124c §3.4）：對焦編輯進行中不換片。必須是第一行——下面的
+            // _killLightboxTimelines()／清 gsap-animating／_closePicker() 都是副作用，
+            // 插在它們之後＝「不換片但靜靜把 picker 關掉」，那是半套。
+            // 切片會 _resetMask()，正在調的對焦位置就沒了。
+            if (this._navBlockedByFocalEdit()) return;
             // C18: interrupt — kill open + switch timeline
             _killLightboxTimelines();
             this._lightboxAnimating = false;
@@ -828,6 +839,11 @@ export function stateLightbox() {
         },
 
         nextLightboxVideo() {
+            // 124c-T3（spec-124c §3.4）：對焦編輯進行中不換片。必須是第一行——下面的
+            // _killLightboxTimelines()／清 gsap-animating／_closePicker() 都是副作用，
+            // 插在它們之後＝「不換片但靜靜把 picker 關掉」，那是半套。
+            // 切片會 _resetMask()，正在調的對焦位置就沒了。
+            if (this._navBlockedByFocalEdit()) return;
             // C18: interrupt — kill open + switch timeline
             _killLightboxTimelines();
             this._lightboxAnimating = false;
@@ -1419,6 +1435,14 @@ export function stateLightbox() {
         },
 
         // 換片 / 關燈箱：丟棄未提交態（不 commit，不把前片焦點帶到下一片）。
+        // 124c-T3（spec-124c §3.4）：對焦編輯進行中，換片的每一個入口都不作用。
+        // 定義在這裡（_mask* 狀態的擁有者）而不是各檔各讀一次 this._maskVisible——
+        // state-actress.js 依 100b-T5 CD-1 不得直接碰 _mask* 識別字，一律走本檔的共用方法
+        // （同 this._resetMask() 的既有慣例）。四個 chokepoint 因此用同一個判斷式。
+        _navBlockedByFocalEdit() {
+            return this._maskVisible === true;
+        },
+
         _resetMask() {
             // 98b P2 fix：換片/關燈箱一律使舊 session 失效（即使當下沒開新遮罩），
             // 讓仍在途的舊 await 回應之後必被 session gate 擋下，不依賴 _maskVisible 的
@@ -2356,9 +2380,11 @@ export function stateLightbox() {
         // --- 快捷鍵 (M4c 完整實作) ---
         handleKeydown(e) {
             // 116b：浮層開啟時最高優先（必須在 INPUT early-return 之前——區間的 number input
-            // 取得焦點時 e.target.tagName === 'INPUT'，放在後面 ESC 永遠到不了這裡）
-            if (this._pillEditor) {
-                if (e.key === 'Escape') { e.preventDefault(); this._cancelPillEditor(); return; }
+            // 取得焦點時 e.target.tagName === 'INPUT'，放在後面 ESC 永遠到不了這裡）。
+            // TASK-124a-T2：新增 _releaseEditor 分支（兩個 slot 依 §3.5 不變式恆不同時非
+            // null，三元式安全）。
+            if (this._pillEditor || this._releaseEditor) {
+                if (e.key === 'Escape') { e.preventDefault(); this._pillEditor ? this._cancelPillEditor() : this._cancelReleaseEditor(); return; }
                 return;                       // 第二段：鎖其餘鍵。不得 preventDefault
             }
             // 1. 輸入框中不處理快捷鍵
@@ -2496,7 +2522,7 @@ export function stateLightbox() {
             }
 
             // 6. 非 Lightbox 狀態的快捷鍵
-            if (key === 'S' && this.mode === 'grid') {
+            if (key === 'S' && (this.mode === 'grid' || this.showFavoriteActresses)) {
                 this.toggleInfo();
             } else if (key === 'A') {
                 if (this.showFavoriteActresses) return;          // AC-5.3：女優牆整條早退

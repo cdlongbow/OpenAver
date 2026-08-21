@@ -142,24 +142,27 @@ function extractSearchFromMetadataCalls(html) {
     return calls;
 }
 
-// ===== 十個入口逐一核對（plan CD-2b / TASK-115-T4「現況分析」表，文件順序）=====
+// ===== 十二個入口逐一核對（plan CD-2b / TASK-115-T4「現況分析」表，文件順序；
+// #3／#11 是 TASK-124a-T3 新增的發售日入口）=====
 
 const EXPECTED_DIMS = [
     'actress',   // #1 卡片 · 女優
     'maker',     // #2 卡片 · 片商
-    'series',    // #3 卡片 · 系列
-    'tag',       // #4 卡片 · 標籤
-    'actress',   // #5 燈箱 · 女優
-    'maker',     // #6 燈箱 · 片商
-    'director',  // #7 燈箱 · 導演
-    'series',    // #8 燈箱 · 系列
-    'label',     // #9 燈箱 · 廠牌
-    'tag',       // #10 燈箱 · 標籤
+    'release',   // #3 卡片 · 發售日（TASK-124a-T3 新增）
+    'series',    // #4 卡片 · 系列
+    'tag',       // #5 卡片 · 標籤
+    'actress',   // #6 燈箱 · 女優
+    'maker',     // #7 燈箱 · 片商
+    'director',  // #8 燈箱 · 導演
+    'series',    // #9 燈箱 · 系列
+    'label',     // #10 燈箱 · 廠牌
+    'release',   // #11 燈箱 · 發售日（TASK-124a-T3 新增）
+    'tag',       // #12 燈箱 · 標籤
 ];
 
-test('showcase.html 恰有十個 searchFromMetadata call site，逐一帶正確維度 token（非抽樣）', () => {
+test('showcase.html 恰有十二個 searchFromMetadata call site，逐一帶正確維度 token（非抽樣）', () => {
     const calls = extractSearchFromMetadataCalls(SHOWCASE_HTML);
-    assert.equal(calls.length, 10, `預期恰好 10 個 searchFromMetadata call site，實際 ${calls.length}`);
+    assert.equal(calls.length, 12, `預期恰好 12 個 searchFromMetadata call site，實際 ${calls.length}`);
     EXPECTED_DIMS.forEach((dim, i) => {
         const args = calls[i];
         assert.ok(args.includes(','), `#${i + 1} 缺少第二個維度參數：${args}`);
@@ -170,9 +173,9 @@ test('showcase.html 恰有十個 searchFromMetadata call site，逐一帶正確�
     });
 });
 
-// ===== card-info 與燈箱同片同維度產生相同 pill（#1 vs #5 女優、#4 vs #10 標籤）=====
+// ===== card-info 與燈箱同片同維度產生相同 pill（#1 vs #6 女優、#5 vs #12 標籤）=====
 
-test('card-info 與燈箱點擊同片同維度（女優，#1 vs #5）產生完全相同的 pill', () => {
+test('card-info 與燈箱點擊同片同維度（女優，#1 vs #6）產生完全相同的 pill', () => {
     const c1 = makeComponent();
     c1.searchFromMetadata('Yui Hatano', 'actress');
     const c2 = makeComponent();
@@ -180,7 +183,7 @@ test('card-info 與燈箱點擊同片同維度（女優，#1 vs #5）產生完�
     assert.deepEqual(c1.pills, c2.pills);
 });
 
-test('card-info 與燈箱點擊同片同維度（標籤，#4 vs #10）產生完全相同的 pill', () => {
+test('card-info 與燈箱點擊同片同維度（標籤，#5 vs #12）產生完全相同的 pill', () => {
     const c1 = makeComponent();
     c1.searchFromMetadata('痴女', 'tag');
     const c2 = makeComponent();

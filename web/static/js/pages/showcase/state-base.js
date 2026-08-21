@@ -268,6 +268,7 @@ export function stateBase() {
             actressOrder: null,
             pills: [],
             cardShape: 'cover',
+            infoVisible: false,
         }).as('showcase_state'),
 
         // --- 狀態變數 ---
@@ -301,6 +302,8 @@ export function stateBase() {
         // TASK-116b-T2：浮層草稿（null=關閉）與桌機閘門（CD-116b-5 / CD-116b-8）
         // factory 初值比照 state-lightbox.js _isNarrow：就地求值一次；init() re-sync 是第二次。
         _pillEditor: null,
+        // TASK-124a-T2：發售日 pill 浮層草稿獨立 slot（CD-124a-4，不與 _pillEditor 共用一個欄位）。
+        _releaseEditor: null,
         _pillPopoverEnabled: (typeof window.matchMedia === 'function')
             ? !window.matchMedia('(max-width: 480px)').matches
             : (window.innerWidth > 480),
@@ -406,11 +409,13 @@ export function stateBase() {
                 this._pillMq = window.matchMedia('(max-width: 480px)');
                 this._pillHandler = (e) => {
                     this._pillPopoverEnabled = !e.matches;
-                    if (e.matches) this._pillEditor = null;
+                    // TASK-124a-T2：跨切面 teardown 收斂到單一函式（_teardownPillEditors，
+                    // state-videos.js），同時清 _pillEditor 與 _releaseEditor 兩個 slot。
+                    if (e.matches) this._teardownPillEditors();
                 };
                 this._pillMq.addEventListener('change', this._pillHandler);
                 this._pillPopoverEnabled = !this._pillMq.matches;   // re-sync：補回 factory 初值到本行之間的跨界事件
-                if (this._pillMq.matches) this._pillEditor = null;
+                if (this._pillMq.matches) this._teardownPillEditors();
             }
 
             // T1: Mobile scroll-to-collapse — 往下滾超過 50px（相對 toolbar 展開當下 Y）自動收合
@@ -515,6 +520,8 @@ export function stateBase() {
             this.actressOrder = state.actressOrder || 'desc';
             // TASK-119-T3: 只走 localStorage，白名單比對（FE-JS-01：不可 || fallback）
             this.cardShape = state.cardShape === 'poster' ? 'poster' : 'cover';
+            // TASK-124b-T1: 嚴格 === true（鏡射 showFavoriteActresses 慣例，FE-JS-01：不可 || fallback）
+            this.infoVisible = state.infoVisible === true;
         },
 
         // --- 狀態持久化 (M2c) ---
@@ -550,6 +557,7 @@ export function stateBase() {
         // Card Info 切換 (M3i)
         toggleInfo() {
             this.infoVisible = !this.infoVisible;
+            this._persistedShowcase.infoVisible = this.infoVisible;
         },
 
         formatPartLabel,

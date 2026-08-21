@@ -100,6 +100,22 @@ const RULES = [
   { file: 'web/static/css/pages/showcase.css', kind: 'required-string', pattern: '相似卡刻意固定右裁（桌面', note: '[lint-guard 101d-T2] 桌面 similar 卡固定右裁註解（plan-101d §5.3）' },
   { file: 'web/static/css/pages/showcase.css', kind: 'required-string', pattern: '相似卡刻意固定右裁（手機 burst', note: '[lint-guard 101d-T2] 手機 burst similar 卡固定右裁註解（plan-101d §5.3）' },
 
+  // ---- [lint-guard 124b-T4] 女優卡資訊區數值可點（薄守衛，不得回退成純顯示）----
+  // 設計尚未經 owner 真機驗收 ⇒ 只鎖「不得回退到已知壞值（點不下去）」，
+  // 不寫 token 清單／順序／視覺的重型對帳（task-workflow.md Step 1、feature/108 教訓）。
+  { file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: '_onActressCardMetadataClick(part.dim, part.value)',
+    note: '[lint-guard 124b-T4] 女優卡資訊區年齡/身高/罩杯可點（CD-124b-13）' },
+
+  // ---- [lint-guard 124c-T1] 燈箱換片箭頭錨定封面（plan-124c CD-1/CD-2）----
+  // 存在性守衛（粗顆粒）：只保證兩條宣告還在。行為正確性由 T1 的 CDP 量測負責（FE-GUARD-06）。
+  { file: 'web/static/css/pages/showcase.css', kind: 'required-string',
+    pattern: 'anchor-name: --lb-cover',
+    note: '[lint-guard 124c-T1] 燈箱箭頭錨定封面：錨點宣告（刪掉＝箭頭回視窗中心，手機重新搶 ★ 的點擊）' },
+  { file: 'web/static/css/pages/showcase.css', kind: 'required-string',
+    pattern: 'top: anchor(--lb-cover center, 50%)',
+    note: '[lint-guard 124c-T1] 燈箱箭頭錨定封面：對齊宣告 ＋ 無錨點時的 50% fallback（兩者同一條字面，不可拆）' },
+
   // ---- [TestMaskToggleGuard] 98b-T4 起家、99a-T3 沿用：遮罩綁定 / 生命週期 guard / no-硬編-ratio / endpoint URL ----
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '@click="openMask', note: '[TestMaskToggleGuard] mask toggle icon button 綁 openMask' },
   // 98b P2 fix（Codex）：commit/re-check guard 由 path 比對（_maskVideoPath/sessionPath）
@@ -3402,13 +3418,13 @@ const RULES = [
   // 需獨立 CDP 驗證，已列 follow-up——**不要**把它誤讀成「影片分支已經沒事」。
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
-    pattern: 'x-show="showFavoriteActresses ? (!_pickerOpen && actressLightboxIndex > 0) : hasVisiblePrev()"',
+    pattern: 'x-show="!_maskVisible && (showFavoriteActresses ? (!_pickerOpen && actressLightboxIndex > 0) : hasVisiblePrev())"',
     scope: { anchor: /<button class="lightbox-nav lightbox-nav-prev"/, window: 400 },
     note: '[nit-1 nav-arrow-picker] PR#108：picker 開啟時隱藏女優「上一位」箭頭（防死點擊）；影片分支 hasVisiblePrev() 維持零改動',
   },
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
-    pattern: 'x-show="showFavoriteActresses ? (!_pickerOpen && actressLightboxIndex < filteredActressCount - 1) : hasVisibleNext()"',
+    pattern: 'x-show="!_maskVisible && (showFavoriteActresses ? (!_pickerOpen && actressLightboxIndex < filteredActressCount - 1) : hasVisibleNext())"',
     scope: { anchor: /<button class="lightbox-nav lightbox-nav-next"/, window: 400 },
     note: '[nit-1 nav-arrow-picker] PR#108：picker 開啟時隱藏女優「下一位」箭頭（防死點擊）；影片分支 hasVisibleNext() 維持零改動',
   },
