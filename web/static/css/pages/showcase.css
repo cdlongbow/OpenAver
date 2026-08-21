@@ -946,6 +946,10 @@
     /* 無封面時保留 floor — placeholder SVG 不塌陷、cover-actions absolute 仍能撐盒 */
     min-width: min(60vw, 600px);
     min-height: min(58vh, 460px);
+    /* 124c-T1: 換片箭頭的錨點。燈箱是直欄（封面在上、metadata 在下），視窗中心永遠落在
+     * metadata 第一列＝標題列，箭頭用 top:50% 會壓住 ★ 精選星（手機上完全覆蓋）。
+     * 影片／女優兩分支互斥渲染，同一時刻 DOM 只有一個 .lightbox-cover，無多重 anchor 歧義。 */
+    anchor-name: --lb-cover;
 }
 
 /* 100b Codex P2-2 fix：女優分支 img/placeholder/遮罩 frame wrapper——只設 position:relative，
@@ -1960,7 +1964,13 @@ body.similar-mobile-active [data-picker-ghost] {
 /* Navigation Arrows */
 .lightbox-nav {
     position: absolute;
+    /* 124c-T1 CD-2 第一層：不支援 anchor() 的瀏覽器整條忽略下一行，靜默退回視窗中心。
+     * 順序不可互換（同屬性後者贏）。 */
     top: 50%;
+    /* 124c-T1 CD-1/CD-2 第二層：對齊封面中心；anchor() 內的 50% 是錨點不存在時的 runtime fallback。
+     * translateY(-50%) 仍必要——anchor(center) 設的是元素上緣。 */
+    top: anchor(--lb-cover center, 50%);
+    position-anchor: --lb-cover;
     transform: translateY(-50%);
     width: 56px;
     height: 56px;
