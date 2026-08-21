@@ -67,18 +67,28 @@ function extractActressFilterPillGroup(html) {
     );
 }
 
+// TASK-124a-T3 起 .pill-editor-popover 這個 class 有兩個實例（女優 ＋ 發售日）——
+// 不能再用 bare class 字面去抓「第一個」，那只是碰巧文件順序在前，換了順序就會抓錯
+// 區塊。改用 aria-labelledby="pill-editor-title" 精準錨定女優那個浮層（發售日浮層是
+// aria-labelledby="release-editor-title"，兩者互斥，字面不會混淆）。
 function extractPillEditorPopover(html) {
-    return extractDivContaining(html, 'class="pill-editor-popover"', '.pill-editor-popover 浮層');
+    return extractDivContaining(html, 'aria-labelledby="pill-editor-title"', '女優 .pill-editor-popover 浮層');
 }
 
 const ACTRESS_GROUP = extractActressFilterPillGroup(SHOWCASE_HTML);
 const POPOVER = extractPillEditorPopover(SHOWCASE_HTML);
 
 // ===== 容器唯一性 =====
+// TASK-124a-T3 起 .pill-editor-popover 這個 class 有兩個實例（女優 ＋ 發售日各一）——
+// 唯一性不再數 class 出現次數，改由各自的 title id 保證：女優浮層錨定
+// id="pill-editor-title" / aria-labelledby="pill-editor-title"，恰各出現一次即可證明
+// 「女優浮層恰一個」，不受另一個同 class 浮層存在與否影響。
 
-test('showcase.html 恰有一個 .pill-editor-popover 容器', () => {
-    const matches = SHOWCASE_HTML.match(/class="pill-editor-popover"/g) || [];
-    assert.equal(matches.length, 1, `預期恰好 1 個，實際 ${matches.length}`);
+test('女優 .pill-editor-popover 浮層唯一（由 pill-editor-title 這組 id 保證，不再數 class）', () => {
+    const idMatches = SHOWCASE_HTML.match(/id="pill-editor-title"/g) || [];
+    assert.equal(idMatches.length, 1, `預期恰好 1 個 id="pill-editor-title"，實際 ${idMatches.length}`);
+    const labelledbyMatches = SHOWCASE_HTML.match(/aria-labelledby="pill-editor-title"/g) || [];
+    assert.equal(labelledbyMatches.length, 1, `預期恰好 1 個 aria-labelledby="pill-editor-title"，實際 ${labelledbyMatches.length}`);
 });
 
 // ===== pill 本體：兩個 <template x-if> 分流（button/span），非 :disabled ／ pointer-events =====
@@ -124,12 +134,19 @@ test('.is-editing 綁在外層 .filter-pill 上（CD-116b-12b 逐字：掛在既
     );
 });
 
-test('影片 .filter-pill-group（bare class）零污染：不含任何 pill-editor / 116b 新符號', () => {
+// TASK-124a-T3 起 spec-124a 前言明文解除 spec-116 §7「影片模式的 pill 行為與 markup
+// 逐位元組不變」這條自我約束（124a 就是那個「之後」）——_pillPopoverEnabled（斷點閘門）
+// 與 is-editing（正在編輯中標記）本來就是通用機制，release pill 走同一套手勢，出現在
+// 影片 pill 區塊是預期行為，不再是污染。
+// 保留的是「不得混用女優編輯器 slot」：pill-editor / _togglePillEditor / _pillEditor
+// 是 CD-124a-4 指定的女優專屬符號（release 走獨立的 _releaseEditor slot），影片 pill
+// 區塊出現這三者代表兩個 slot 被接混了，仍然是 bug。
+test('影片 .filter-pill-group（bare class）不得混用女優編輯器 slot（pill-editor / _pillEditor 系列符號）', () => {
     const videoGroup = extractDivContaining(SHOWCASE_HTML, 'class="filter-pill-group"', '影片 .filter-pill-group（bare）');
-    for (const forbidden of ['pill-editor', '_pillPopoverEnabled', '_togglePillEditor', '_pillEditor', 'is-editing']) {
+    for (const forbidden of ['pill-editor', '_togglePillEditor', '_pillEditor']) {
         assert.ok(
             !videoGroup.includes(forbidden),
-            `影片 .filter-pill-group 不應出現 116b 符號 "${forbidden}"（AC11 逐位元組不變）`,
+            `影片 .filter-pill-group 不應出現女優編輯器專屬符號 "${forbidden}"（CD-124a-4 slot 隔離）`,
         );
     }
 });

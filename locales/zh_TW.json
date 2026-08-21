@@ -916,7 +916,8 @@
         "label": "廠牌",
         "age": "年齡",
         "height": "身高",
-        "cup": "罩杯"
+        "cup": "罩杯",
+        "release": "發售日"
       },
       "title": "{dim}：{value}",
       "remove_aria": "移除篩選：{value}",
@@ -928,7 +929,11 @@
       },
       "editor": {
         "range_min": "下限",
-        "range_max": "上限"
+        "range_max": "上限",
+        "from_year": "起始年",
+        "from_month": "起始月",
+        "to_year": "結束年",
+        "to_month": "結束月"
       }
     },
     "filter": {

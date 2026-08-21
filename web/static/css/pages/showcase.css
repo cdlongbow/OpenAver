@@ -3514,6 +3514,11 @@ body.sidebar-collapsed .showcase-footer {
     margin: 0;
 }
 
+/* TASK-124a-T3: 發售日浮層四格年月寬度，比女優版 7ch（單一數值欄）窄——年月各自只需
+   4 位數／2 位數的顯示寬度，5ch/4ch 是估算值（plan §4.4），最終視覺由 owner 真機驗。 */
+.pill-editor-range .pe-ym-year { width: 5ch; }
+.pill-editor-range .pe-ym-month { width: 4ch; }
+
 .pill-editor-actions {
     display: flex;
     justify-content: center;
@@ -3566,7 +3571,7 @@ body.sidebar-collapsed .showcase-footer {
 /* Pill body switches <span> → <button> when the popover is available
    (_pillPopoverEnabled, ≥481px, CD-116b-8) — reset browser button chrome so
    it stays visually identical to the plain-text span it replaces on mobile. */
-.actress-filter-pill-group button.filter-pill-value {
+.filter-pill-group button.filter-pill-value {
     border: none;
     padding: 0;
     font: inherit;

@@ -77,11 +77,22 @@
                         <span class="filter-pill-list" role="list" x-show="pills.length">
                             <template x-for="pill in pills" :key="pill.dim + '::' + normalizePillValue(pill.value)">
                                 <span class="filter-pill" role="listitem"
-                                      :title="pill.dim === 'pick' ? t('showcase.pick.chip_label') : t('showcase.pill.title', { dim: t('showcase.pill.dim_label.' + pill.dim), value: pill.value })">
-                                    <span class="filter-pill-value" x-text="pillLabel(pill)"></span>
+                                      :class="{ 'is-editing': !!_releaseEditor && pill.dim === 'release' }"
+                                      :title="pill.dim === 'pick' ? t('showcase.pick.chip_label') : t('showcase.pill.title', { dim: t('showcase.pill.dim_label.' + pill.dim), value: pillLabel(pill) })">
+                                    <!-- 124a-T3: release pill 依 _pillPopoverEnabled（≤480px 為 false）
+                                         分流成可點／不可點，鏡射女優版 button/span 換型別的既有手法
+                                         （:99-125），不用 :disabled 或 pointer-events。 -->
+                                    <template x-if="pill.dim === 'release' && _pillPopoverEnabled">
+                                        <button type="button" class="filter-pill-value"
+                                                @click.stop="_toggleReleaseEditor(pill)"
+                                                x-text="pillLabel(pill)"></button>
+                                    </template>
+                                    <template x-if="!(pill.dim === 'release' && _pillPopoverEnabled)">
+                                        <span class="filter-pill-value" x-text="pillLabel(pill)"></span>
+                                    </template>
                                     <button type="button" class="filter-pill-remove"
                                             @click="removePill(pill.dim, pill.value)"
-                                            :aria-label="pill.dim === 'pick' ? t('showcase.pick.remove_aria') : t('showcase.pill.remove_aria', { value: pill.value })">✕</button>
+                                            :aria-label="pill.dim === 'pick' ? t('showcase.pick.remove_aria') : t('showcase.pill.remove_aria', { value: pillLabel(pill) })">✕</button>
                                 </span>
                             </template>
                         </span>
@@ -184,6 +195,73 @@
                                     <button type="button" class="pill-editor-btn cancel" @click="_cancelPillEditor()"
                                             :aria-label="t('common.action.cancel')"><i class="bi bi-x-lg"></i></button>
                                     <button type="button" class="pill-editor-btn confirm" @click="_commitPillEditor()"
+                                            :aria-label="t('common.action.confirm')"><i class="bi bi-check-lg"></i></button>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+
+                    <!-- 124a-T3: 發售日 pill 浮層編輯器。與女優浮層同層（.spotlight-search 下），
+                         互斥條件對稱：女優版 x-show 帶 showFavoriteActresses，這裡帶
+                         !showFavoriteActresses（release 浮層只在影片模式出現）。§3.5 不變式
+                         （兩個 editor slot 恆不同時非 null）已由 T2 保證，這裡是第二層防禦。 -->
+                    <div class="pill-editor-popover"
+                         x-show="_releaseEditor && !showFavoriteActresses && _pillPopoverEnabled"
+                         x-cloak
+                         x-transition.opacity.duration.150ms
+                         x-trap="!!_releaseEditor"
+                         @click.outside="_releaseEditor && _cancelReleaseEditor()"
+                         @click.stop
+                         role="dialog"
+                         aria-modal="false"
+                         aria-labelledby="release-editor-title">
+                        <div class="pill-editor-title" id="release-editor-title" x-text="t('showcase.pill.dim_label.release')"></div>
+
+                        <div class="pill-editor-modes">
+                            <button type="button" class="pill-editor-mode" :class="{ 'is-active': _releaseEditor?.op === '=' }"
+                                    @click="_applyReleaseOp('=')" :aria-label="t('showcase.pill.op.eq')">=</button>
+                            <button type="button" class="pill-editor-mode" :class="{ 'is-active': _releaseEditor?.op === '<=' }"
+                                    @click="_applyReleaseOp('<=')" :aria-label="t('showcase.pill.op.lte')">≤</button>
+                            <button type="button" class="pill-editor-mode" :class="{ 'is-active': _releaseEditor?.op === '>=' }"
+                                    @click="_applyReleaseOp('>=')" :aria-label="t('showcase.pill.op.gte')">≥</button>
+                        </div>
+
+                        <!-- 124a-T3: 四格所在的 x-if 只判 _releaseEditor 非 null（不像女優版還要判
+                             dim !== 'cup'）——_releaseEditor 本身就是唯一閘門。⚠ 必須是裸判斷，不得
+                             寫成 _releaseEditor?.xxx（浮層本體是 x-show，關閉時 markup 仍在文件裡，
+                             x-model 對 null 求值會直接炸 FE-ALPINE-03）。 -->
+                        <template x-if="_releaseEditor">
+                            <div class="pill-editor-custom">
+                                <div class="pill-editor-custom-label">
+                                    <span x-text="t('showcase.pill.op.range')"></span><span class="pill-editor-hint" x-text="_releaseYearHint()"></span>
+                                </div>
+                                <div class="pill-editor-range">
+                                    <input type="number" class="input input-bordered input-sm pe-ym-year"
+                                           inputmode="numeric"
+                                           x-model="_releaseEditor.loYear"
+                                           @input="_releaseEditor.badLoY = $event.target.validity.badInput"
+                                           :aria-label="t('showcase.pill.editor.from_year')">
+                                    <input type="number" class="input input-bordered input-sm pe-ym-month"
+                                           inputmode="numeric"
+                                           x-model="_releaseEditor.loMonth"
+                                           @input="_releaseEditor.badLoM = $event.target.validity.badInput"
+                                           :aria-label="t('showcase.pill.editor.from_month')">
+                                    <span class="pill-editor-range-sep" aria-hidden="true">~</span>
+                                    <input type="number" class="input input-bordered input-sm pe-ym-year"
+                                           inputmode="numeric"
+                                           x-model="_releaseEditor.hiYear"
+                                           @input="_releaseEditor.badHiY = $event.target.validity.badInput"
+                                           :aria-label="t('showcase.pill.editor.to_year')">
+                                    <input type="number" class="input input-bordered input-sm pe-ym-month"
+                                           inputmode="numeric"
+                                           x-model="_releaseEditor.hiMonth"
+                                           @input="_releaseEditor.badHiM = $event.target.validity.badInput"
+                                           :aria-label="t('showcase.pill.editor.to_month')">
+                                </div>
+                                <div class="pill-editor-actions" x-show="_releaseEditorHasInput()">
+                                    <button type="button" class="pill-editor-btn cancel" @click="_cancelReleaseEditor()"
+                                            :aria-label="t('common.action.cancel')"><i class="bi bi-x-lg"></i></button>
+                                    <button type="button" class="pill-editor-btn confirm" @click="_commitReleaseEditor()"
                                             :aria-label="t('common.action.confirm')"><i class="bi bi-check-lg"></i></button>
                                 </div>
                             </div>
@@ -513,7 +591,14 @@
                                    x-text="video.maker"></a>
                             </span>
                             <span x-show="video.release_date">
-                                <b>{{ t('showcase.label.date') }}：</b><span x-text="video.release_date"></span>
+                                <b>{{ t('showcase.label.date') }}：</b><template x-if="_isReleaseClickable(video)">
+                                    <a class="info-link" href="#"
+                                       @click.prevent.stop="searchFromMetadata(video.release_date, 'release')"
+                                       x-text="video.release_date"></a>
+                                </template>
+                                <template x-if="!_isReleaseClickable(video)">
+                                    <span x-text="video.release_date"></span>
+                                </template>
                             </span>
                         </div>
                         <div class="info-row" x-show="video.series">
@@ -1112,7 +1197,14 @@
                                        x-text="currentLightboxVideo?.label"></a>
                                 </span>
                                 <span x-show="currentLightboxVideo?.release_date">
-                                    &nbsp;·&nbsp;<span x-text="currentLightboxVideo?.release_date"></span>
+                                    &nbsp;·&nbsp;<template x-if="_isReleaseClickable(currentLightboxVideo)">
+                                        <a href="#" class="lb-link"
+                                           @click.prevent="searchFromMetadata(currentLightboxVideo?.release_date, 'release')"
+                                           x-text="currentLightboxVideo?.release_date"></a>
+                                    </template>
+                                    <template x-if="!_isReleaseClickable(currentLightboxVideo)">
+                                        <span x-text="currentLightboxVideo?.release_date"></span>
+                                    </template>
                                 </span>
                                 <span class="lb-size" x-show="currentLightboxVideo?.size">
                                     &nbsp;·&nbsp;<span x-text="formatSize(currentLightboxVideo?.size || 0)"></span>
