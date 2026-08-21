@@ -1,4 +1,6 @@
 // TASK-124b-T1: _actressInfoTokens / _actressCardMiddle 恆回作品數 / infoVisible 持久化 / S 鍵 gate。
+// TASK-124b-T4: _actressInfoTokens → _actressInfoParts（parts 物件 ＋ clickable）
+//               ＋ _onActressCardMetadataClick（卡片路徑的 pill handler）。
 //
 // state-actress.js / state-base.js / state-lightbox.js 用瀏覽器 importmap 別名
 // `@/showcase/...` 與 `@/shared/...`，plain `node --test` 不認得。比照
@@ -15,6 +17,12 @@ import path from 'node:path';
 // state-base.js 模組頂層讀 localStorage（清壞值）。比照既有 showcase 測試先 stub window。
 globalThis.window = globalThis;
 globalThis.window.t = (key) => key;
+
+// 124b-T4：_onActressCardMetadataClick 會寫 Alpine.store('ui').toolbarOpen。
+// 單一 mutable store（鏡射 actress-core-metadata.test.mjs:18-19）——每次 new 一個新物件
+// 會讓寫入值丟失，斷言就永遠讀到初值。
+const _uiStore = { toolbarOpen: false, showcaseHasSearch: false };
+globalThis.Alpine = { store: () => _uiStore };
 
 const IMPORTMAP = {
     '@/settings/': 'pages/settings/',
@@ -51,7 +59,7 @@ const { stateBase } = await import('../state-base.js');
 const { stateLightbox } = await import('../state-lightbox.js');
 
 // =====================================================================
-// _actressInfoTokens
+// _actressInfoParts（124b-T4 取代 _actressInfoTokens）
 // =====================================================================
 
 const FULL_ACTRESS = {
@@ -64,13 +72,35 @@ const FULL_ACTRESS = {
     hip: 88,
 };
 
-function tokensOf(actress, isNarrow) {
+function partsOf(actress, isNarrow) {
     const c = Object.assign({}, stateActress(), { _isNarrow: isNarrow });
-    return c._actressInfoTokens(actress);
+    return c._actressInfoParts(actress);
 }
 
-test('_isNarrow=true ＋ 五欄全有值 → 陣列長度 5，順序 [作品數, 年齡, 身高, 罩杯, 三圍]', () => {
-    assert.deepEqual(tokensOf(FULL_ACTRESS, true), [
+function keysOf(actress, isNarrow) {
+    return partsOf(actress, isNarrow).map((p) => p.key);
+}
+
+function textsOf(actress, isNarrow) {
+    return partsOf(actress, isNarrow).map((p) => p.text);
+}
+
+function byKey(actress, isNarrow) {
+    return Object.fromEntries(partsOf(actress, isNarrow).map((p) => [p.key, p]));
+}
+
+// ── 收留規則（CD-124b-13）──────────────────────────────────────────────
+
+test('_isNarrow=true ＋ 五欄全有值 → 長度 5，key 順序 [count, age, height, cup, bwh]', () => {
+    assert.deepEqual(keysOf(FULL_ACTRESS, true), ['count', 'age', 'height', 'cup', 'bwh']);
+});
+
+test('_isNarrow=false ＋ 五欄全有值 → 長度 4，key 順序 [age, height, cup, bwh]（作品數不出現，年齡出現）', () => {
+    assert.deepEqual(keysOf(FULL_ACTRESS, false), ['age', 'height', 'cup', 'bwh']);
+});
+
+test('text 逐字不變（124b-T1 視覺零回歸）：窄螢幕五個 token 的文字與改動前相同', () => {
+    assert.deepEqual(textsOf(FULL_ACTRESS, true), [
         '12showcase.unit.films',
         '25search.unit.age',
         '160cm',
@@ -79,80 +109,159 @@ test('_isNarrow=true ＋ 五欄全有值 → 陣列長度 5，順序 [作品數,
     ]);
 });
 
-test('_isNarrow=false ＋ 五欄全有值 → 陣列長度 3，順序 [身高, 罩杯, 三圍]（作品數/年齡不出現）', () => {
-    assert.deepEqual(tokensOf(FULL_ACTRESS, false), [
-        '160cm',
-        'Csearch.unit.cup',
-        '88-58-88',
-    ]);
-});
-
-test('缺 height（null）→ 該 token 不出現，其餘不受影響', () => {
+test('缺 height（null）→ 該 part 不出現，其餘不受影響', () => {
     const actress = Object.assign({}, FULL_ACTRESS, { height: null });
-    assert.deepEqual(tokensOf(actress, true), [
-        '12showcase.unit.films',
-        '25search.unit.age',
-        'Csearch.unit.cup',
-        '88-58-88',
-    ]);
+    assert.deepEqual(keysOf(actress, true), ['count', 'age', 'cup', 'bwh']);
 });
 
-test('缺 cup（undefined）→ 該 token 不出現，其餘不受影響', () => {
+test('缺 cup（undefined）→ 該 part 不出現，其餘不受影響', () => {
     const actress = Object.assign({}, FULL_ACTRESS, { cup: undefined });
-    assert.deepEqual(tokensOf(actress, true), [
-        '12showcase.unit.films',
-        '25search.unit.age',
-        '160cm',
-        '88-58-88',
-    ]);
+    assert.deepEqual(keysOf(actress, true), ['count', 'age', 'height', 'bwh']);
 });
 
-test('缺 height（空字串）→ 該 token 不出現，其餘不受影響', () => {
+test('缺 height（空字串）→ 該 part 不出現，其餘不受影響', () => {
     const actress = Object.assign({}, FULL_ACTRESS, { height: '' });
-    assert.deepEqual(tokensOf(actress, true), [
-        '12showcase.unit.films',
-        '25search.unit.age',
-        'Csearch.unit.cup',
-        '88-58-88',
-    ]);
+    assert.deepEqual(keysOf(actress, true), ['count', 'age', 'cup', 'bwh']);
 });
 
-test('三圍缺一格（bust 為 null）→ 三圍整個 token 不出現', () => {
+test('三圍缺一格（bust 為 null）→ 三圍整個 part 不出現', () => {
     const actress = Object.assign({}, FULL_ACTRESS, { bust: null });
-    assert.deepEqual(tokensOf(actress, true), [
-        '12showcase.unit.films',
-        '25search.unit.age',
-        '160cm',
-        'Csearch.unit.cup',
-    ]);
+    assert.deepEqual(keysOf(actress, true), ['count', 'age', 'height', 'cup']);
 });
 
-test('actress 全空欄位（五欄皆 null）→ 回傳 []', () => {
+test('actress 全空欄位（五欄皆 null）→ 回傳 []（窄寬皆然：整塊資訊區不渲染）', () => {
     const actress = {
-        video_count: null,
-        age: null,
-        height: null,
-        cup: null,
-        bust: null,
-        waist: null,
-        hip: null,
+        video_count: null, age: null, height: null, cup: null,
+        bust: null, waist: null, hip: null,
     };
-    assert.deepEqual(tokensOf(actress, true), []);
+    assert.deepEqual(partsOf(actress, true), []);
+    assert.deepEqual(partsOf(actress, false), []);
 });
 
 test('actress 本身為 null → 回傳 []', () => {
-    assert.deepEqual(tokensOf(null, true), []);
+    assert.deepEqual(partsOf(null, true), []);
 });
 
-test('CD-124b-12 紅線：_isNarrow=true ＋ video_count:0 → 含字面 \'0showcase.unit.films\'；age:0 → 含字面 \'0search.unit.age\'', () => {
+test('CD-124b-12 紅線：video_count:0 → text \'0showcase.unit.films\'；age:0 → text \'0search.unit.age\' 且 clickable=true', () => {
     const actress = Object.assign({}, FULL_ACTRESS, { video_count: 0, age: 0 });
-    assert.deepEqual(tokensOf(actress, true), [
+    assert.deepEqual(textsOf(actress, true), [
         '0showcase.unit.films',
         '0search.unit.age',
         '160cm',
         'Csearch.unit.cup',
         '88-58-88',
     ]);
+    assert.equal(byKey(actress, true).age.clickable, true, 'age:0 篩得到她自己，必須可點');
+});
+
+// ── clickable（CD-124b-13：可點的三格 ＋ 恆不可點的兩格）──────────────
+
+test('clickable：age/height/cup 值可解析 → true；count/bwh 恆 false（窄螢幕）', () => {
+    const m = byKey(FULL_ACTRESS, true);
+    assert.equal(m.age.clickable, true);
+    assert.equal(m.height.clickable, true);
+    assert.equal(m.cup.clickable, true);
+    assert.equal(m.count.clickable, false, '作品數無對應 pill 維度，恆不可點');
+    assert.equal(m.bwh.clickable, false, '三圍無對應 pill 維度，恆不可點');
+});
+
+test('clickable：寬螢幕下三格同樣可點、bwh 同樣不可點（無斷點分支）', () => {
+    const m = byKey(FULL_ACTRESS, false);
+    assert.equal(m.age.clickable, true);
+    assert.equal(m.height.clickable, true);
+    assert.equal(m.cup.clickable, true);
+    assert.equal(m.bwh.clickable, false);
+    assert.equal(m.count, undefined, '寬螢幕作品數整格不出現');
+});
+
+// ── fail-closed：值解析不出來就不可點，但文字仍在 ─────────────────────
+
+test("fail-closed：height:'不明' → clickable=false，text 仍是 '不明'", () => {
+    const m = byKey(Object.assign({}, FULL_ACTRESS, { height: '不明' }), true);
+    assert.equal(m.height.clickable, false);
+    assert.equal(m.height.text, '不明');
+});
+
+test("fail-closed：cup:'AA'（多字元）→ clickable=false，text 仍在", () => {
+    const m = byKey(Object.assign({}, FULL_ACTRESS, { cup: 'AA' }), true);
+    assert.equal(m.cup.clickable, false);
+    assert.equal(m.cup.text, 'AAsearch.unit.cup');
+});
+
+test("fail-closed：cup:'b'（小寫）→ clickable=false", () => {
+    assert.equal(byKey(Object.assign({}, FULL_ACTRESS, { cup: 'b' }), true).cup.clickable, false);
+});
+
+test("fail-closed：age:'' → part 仍出現（!= null，CD-124b-12）、clickable=false、text 是單獨的單位字", () => {
+    const m = byKey(Object.assign({}, FULL_ACTRESS, { age: '' }), true);
+    assert.equal(m.age.clickable, false);
+    assert.equal(m.age.text, 'search.unit.age', '既有行為逐字保留：空字串年齡會印出孤零零的單位');
+});
+
+test("fail-closed：age:'不詳'（非數字）→ clickable=false", () => {
+    assert.equal(byKey(Object.assign({}, FULL_ACTRESS, { age: '不詳' }), true).age.clickable, false);
+});
+
+// ── dim / value 傳原始欄位值，不是顯示字串 ────────────────────────────
+
+test('dim/value：height 傳原始 \'160cm\'（單位由 _setActressPill 剝），不是 160', () => {
+    const m = byKey(FULL_ACTRESS, true);
+    assert.equal(m.height.dim, 'height');
+    assert.equal(m.height.value, '160cm');
+});
+
+test('dim/value：cup 傳原始 \'C\'，不是顯示字串 \'C罩杯\'', () => {
+    const m = byKey(FULL_ACTRESS, true);
+    assert.equal(m.cup.dim, 'cup');
+    assert.equal(m.cup.value, 'C');
+    assert.notEqual(m.cup.value, m.cup.text, 'value 不得等於顯示字串');
+});
+
+test('dim/value：age 傳原始數值 25', () => {
+    const m = byKey(FULL_ACTRESS, true);
+    assert.equal(m.age.dim, 'age');
+    assert.equal(m.age.value, 25);
+});
+
+test('不可點的 part 不帶 dim/value（避免誤用）', () => {
+    const m = byKey(FULL_ACTRESS, true);
+    assert.equal(m.count.dim, undefined);
+    assert.equal(m.count.value, undefined);
+    assert.equal(m.bwh.dim, undefined);
+    assert.equal(m.bwh.value, undefined);
+});
+
+// =====================================================================
+// _onActressCardMetadataClick（124b-T4 / CD-124b-15）
+// =====================================================================
+
+test('_onActressCardMetadataClick：只呼叫 addActressPill(dim, value)，不呼叫 closeLightbox', () => {
+    const calls = [];
+    const c = Object.assign({}, stateActress(), {
+        addActressPill: (dim, value) => calls.push(['addActressPill', dim, value]),
+        closeLightbox: () => calls.push(['closeLightbox']),
+    });
+    _uiStore.toolbarOpen = false;
+    c._onActressCardMetadataClick('height', '160cm');
+    assert.deepEqual(calls, [['addActressPill', 'height', '160cm']]);
+});
+
+test('_onActressCardMetadataClick：產生 pill 後 toolbarOpen=true（手機摸得到 pill）', () => {
+    const c = Object.assign({}, stateActress(), { addActressPill: () => {} });
+    _uiStore.toolbarOpen = false;
+    c._onActressCardMetadataClick('cup', 'C');
+    assert.equal(Alpine.store('ui').toolbarOpen, true);
+});
+
+test('_onActressCardMetadataClick：不讀 actressLightboxSource（卡片路徑沒有燈箱來源殘值問題）', () => {
+    const calls = [];
+    const c = Object.assign({}, stateActress(), {
+        actressLightboxSource: 'hero',   // 上一次開燈箱留下的殘值
+        addActressPill: (dim, value) => calls.push([dim, value]),
+    });
+    _uiStore.toolbarOpen = false;
+    c._onActressCardMetadataClick('age', 25);
+    assert.deepEqual(calls, [['age', 25]], '殘值不得吞掉卡片點擊');
 });
 
 // =====================================================================

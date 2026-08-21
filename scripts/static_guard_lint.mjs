@@ -100,6 +100,13 @@ const RULES = [
   { file: 'web/static/css/pages/showcase.css', kind: 'required-string', pattern: '相似卡刻意固定右裁（桌面', note: '[lint-guard 101d-T2] 桌面 similar 卡固定右裁註解（plan-101d §5.3）' },
   { file: 'web/static/css/pages/showcase.css', kind: 'required-string', pattern: '相似卡刻意固定右裁（手機 burst', note: '[lint-guard 101d-T2] 手機 burst similar 卡固定右裁註解（plan-101d §5.3）' },
 
+  // ---- [lint-guard 124b-T4] 女優卡資訊區數值可點（薄守衛，不得回退成純顯示）----
+  // 設計尚未經 owner 真機驗收 ⇒ 只鎖「不得回退到已知壞值（點不下去）」，
+  // 不寫 token 清單／順序／視覺的重型對帳（task-workflow.md Step 1、feature/108 教訓）。
+  { file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: '_onActressCardMetadataClick(part.dim, part.value)',
+    note: '[lint-guard 124b-T4] 女優卡資訊區年齡/身高/罩杯可點（CD-124b-13）' },
+
   // ---- [lint-guard 124c-T1] 燈箱換片箭頭錨定封面（plan-124c CD-1/CD-2）----
   // 存在性守衛（粗顆粒）：只保證兩條宣告還在。行為正確性由 T1 的 CDP 量測負責（FE-GUARD-06）。
   { file: 'web/static/css/pages/showcase.css', kind: 'required-string',
