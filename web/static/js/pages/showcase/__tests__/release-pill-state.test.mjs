@@ -503,6 +503,64 @@ test("⚠ 落差鎖：'0230'/'0002' 這類四字元但數值 <1000 的年份 →
     }
 });
 
+// Codex PR review P2（2026-08-21）：質疑 composeEndpoint() 只驗數值範圍（Number() 之後
+// 1000–9999），不驗字元形狀 ^\d{4}$，所以 '1e3'、'1000.0' 這類指數／多餘小數點記法會被
+// Number() 正規化成 1000 後照樣套用。實測重現（真 <input type="number"> 逐字打入）：能真
+// 的打進去的只有這幾種指數/多小數點寫法，且正規化後永遠是「同一個數字的另一種寫法」
+// （1e3 就是 1000），composeEndpoint() 的輸出仍滿足 deserializePills 的嚴格 regex，寫得進
+// 讀得回，沒有暗坑。Opus 裁決：accepted residual，不改行為——這正是 CD-124a-10 允許的
+// 「同一個數字的另一種寫法」正規化，不是夾回；CD-124a-15 要擋的「打字中途的短數字」
+// （'2'/'250'/'20244'/'0230'）不受影響，仍然被拒。
+//
+// 本測試同時鎖住「接受什麼」與「仍然拒絕什麼」。⚠ 如果未來有人把 _releaseEndpoint() 的
+// 年份判準從「數值範圍」改成「字元形狀 ^\d{4}$」，這支測試裡的指數/小數點案例會轉紅——
+// 那是提醒你先回去讀 CD-124a-10 / CD-124a-15 的定義再動，不是叫你把測試改掉。
+test("刻意接受的記法正規化：指數/多餘小數點年月（'1e3'、'1000.0'、'9.999e3'、'0.9e1'）正規化後照樣套用；短數字對照組仍拒（Codex P2 accepted residual）", () => {
+    const c = makeComponent();
+
+    // 接受組①：'1e3' → 1000，✓ 套用、浮層關閉
+    c._toggleReleaseEditor(releasePill('=', '2020'));
+    c._releaseEditor.loYear = '1e3';
+    assert.equal(c._releaseEndpoint('lo').token, '1000', "'1e3' 應正規化為 1000");
+    c._applyReleaseOp('=');
+    assert.equal(c._releaseEditor, null, '浮層應關閉');
+    assert.deepEqual(c.pills.find((x) => x.dim === 'release'), { dim: 'release', op: '=', value: '1000' });
+
+    // 接受組②：'1000.0' → 1000，同上
+    c._toggleReleaseEditor(releasePill('=', '2020'));
+    c._releaseEditor.loYear = '1000.0';
+    assert.equal(c._releaseEndpoint('lo').token, '1000', "'1000.0' 應正規化為 1000");
+    c._applyReleaseOp('=');
+    assert.equal(c._releaseEditor, null, '浮層應關閉');
+    assert.deepEqual(c.pills.find((x) => x.dim === 'release'), { dim: 'release', op: '=', value: '1000' });
+
+    // 接受組③：'9.999e3' → 9999（只驗 token，不重複驗提交路徑）
+    c._toggleReleaseEditor(releasePill('=', '2020'));
+    c._releaseEditor.loYear = '9.999e3';
+    assert.equal(c._releaseEndpoint('lo').token, '9999', "'9.999e3' 應正規化為 9999");
+    c._releaseEditor = null;
+
+    // 接受組④：月格 '0.9e1' → 09（配一個合法年）
+    c._toggleReleaseEditor(releasePill('=', '2020'));
+    c._releaseEditor.loYear = '2023';
+    c._releaseEditor.loMonth = '0.9e1';
+    assert.equal(c._releaseEndpoint('lo').token, '2023-09', "月份 '0.9e1' 應正規化為 09");
+    c._releaseEditor = null;
+
+    // 對照組：CD-124a-15 要擋的「打字中途的短數字」仍然被拒——token:null、不寫入、浮層不關。
+    // pills 快照鎖「不寫入」：接受組已把 release pill 寫成 '1000'，對照組跑完必須原封不動。
+    const pillsBefore = JSON.parse(JSON.stringify(c.pills));
+    for (const y of ['2', '250', '20244', '0230']) {
+        c._toggleReleaseEditor(releasePill('=', '2020'));
+        c._releaseEditor.loYear = y;
+        assert.equal(c._releaseEndpoint('lo').token, null, `年份 '${y}' 仍應被拒`);
+        c._applyReleaseOp('=');
+        assert.ok(c._releaseEditor, `年份 '${y}'：浮層必須維持開啟`);
+        assert.deepEqual(c.pills, pillsBefore, `年份 '${y}'：pills 不得被改寫`);
+        c._releaseEditor = null;
+    }
+});
+
 test('1800/9999 照常套用（AC13，零結果是比對層的事，不是本層的事）', () => {
     const c = makeComponent();
     c._toggleReleaseEditor(releasePill('=', '2020'));
