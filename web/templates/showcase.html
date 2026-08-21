@@ -1019,7 +1019,18 @@
                         <div class="lightbox-metadata">
                             <!-- Row 1: Header (title + sample gallery button) -->
                             <div class="lb-header">
-                                <div class="lb-title" x-text="currentLightboxVideo?.title || t('showcase.grid.unknown_title')"></div>
+                                <!-- 123-T8：精選星掛在標題行最前面（owner 拍板：標題前比番號前更清楚，
+                                     與標題有沒有番號前綴無關——scraper 本來就會剝掉前綴，見
+                                     core/scrapers/javdb.py strip_number_prefix）。星與標題文字同屬一個
+                                     inline 格式化脈絡＝共用同一條基線（詳見 showcase.css 該段註解）。
+                                     <button> 與 <span> 之間不得留空白字元，否則會多出一個空格。 -->
+                                <div class="lb-title"><button type="button" class="pick-star"
+                                        :class="{'is-picked': (currentLightboxVideo?.user_rating || 0) > 0}"
+                                        :aria-pressed="(currentLightboxVideo?.user_rating || 0) > 0"
+                                        :aria-label="(currentLightboxVideo?.user_rating||0) > 0 ? t('showcase.pick.remove_aria') : t('showcase.pick.add_aria')"
+                                        :aria-busy="!!_pickInFlight[currentLightboxVideo?.path]"
+                                        @click.stop="togglePickStar()"><i class="bi bi-star pick-star-outline" aria-hidden="true"></i><i class="bi bi-star-fill pick-star-fill" aria-hidden="true"
+                                       :style="{ '--pick-fill': (currentLightboxVideo?.user_rating || 0) > 0 ? '0%' : '100%' }"></i></button><span x-text="currentLightboxVideo?.title || t('showcase.grid.unknown_title')"></span></div>
                                 <!-- Sample Gallery 入口按鈕 (T7) -->
                                 <button class="sg-open-btn"
                                         x-show="(currentLightboxVideo?.sample_images || []).length > 0"
@@ -1062,16 +1073,7 @@
                             <!-- Row 4: Details (merged) -->
                             <!-- 分隔符 " · " 內嵌於各 span 開頭，隨 x-show 一起顯示/隱藏，避免孤立 · -->
                             <div class="lb-details">
-                                <button type="button" class="pick-star"
-                                        :class="{'is-picked': (currentLightboxVideo?.user_rating || 0) > 0}"
-                                        :aria-pressed="(currentLightboxVideo?.user_rating || 0) > 0"
-                                        :aria-label="(currentLightboxVideo?.user_rating||0) > 0 ? t('showcase.pick.remove_aria') : t('showcase.pick.add_aria')"
-                                        :aria-busy="!!_pickInFlight[currentLightboxVideo?.path]"
-                                        @click.stop="togglePickStar()">
-                                    <i class="bi bi-star pick-star-outline" aria-hidden="true"></i>
-                                    <i class="bi bi-star-fill pick-star-fill" aria-hidden="true"
-                                       :style="{ '--pick-fill': (currentLightboxVideo?.user_rating || 0) > 0 ? '0%' : '100%' }"></i>
-                                </button>
+                                <!-- 123-T8：精選星已移到 .lb-title（標題行）最前面，此列回到以番號起頭。 -->
                                 <span x-text="currentLightboxVideo?.number || t('showcase.lightbox.unknown_number')"></span>
                                 <!-- 62b-1: 進階重刮 ⚙ 入口（番號旁 inline 細鈕，常駐顯示）-->
                                 <button type="button"

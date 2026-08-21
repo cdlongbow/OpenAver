@@ -4135,8 +4135,8 @@ const RULES = [
     file: 'web/templates/showcase.html',
     kind: 'required-string',
     pattern: ['class="pick-star"', 'pick-star-outline', 'pick-star-fill'],
-    scope: { anchor: /class="lb-details"/, window: 900 },
-    note: '[123-T5] AC-1 燈箱：.lb-details 內必須保留 T3 建的可切換 .pick-star（本規則守既有結構，非本 task 新建行為）。window 實測（lb-details 到 pick-star-fill 結尾）808，取 900。',
+    scope: { anchor: /class="lb-title"/, window: 800 },
+    note: '[123-T5] AC-1 燈箱（anchor 於 123-T8 由 lb-details 改為 lb-title）：可切換的 .pick-star 必須在標題行內、與標題文字同一個 inline 脈絡——它是精選的唯一切換入口，且該處是對齊正確性的承重位置（見 showcase.css .lb-title .pick-star 註解）。anchor 全檔僅 1 次且不含 payload 字面（FE-GUARD-11）。window 實測（lb-title 到 pick-star-fill 結尾）698，取 800。',
   },
 
   // AC-6：三個唯讀表面不得被掛上 click（誤觸代價是取消精選、牆上無任何確認，spec §4.1）。

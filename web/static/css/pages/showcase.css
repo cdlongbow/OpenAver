@@ -1140,67 +1140,118 @@
     font-weight: 500;
 }
 
-/* 123-T3：燈箱精選星（無補間）。兩層疊置：outline 永遠顯示、fill 用 --pick-fill clip。
- * T3 只用 0%/100% 定值；T4 才接 GSAP —— 本規則禁止任何 transition/animation。
+/* 123-T3／T8：燈箱精選星（無補間）。兩層疊置：outline 永遠顯示、fill 用 --pick-fill clip。
+ * 補間一律由 GSAP 擁有 —— 本區塊禁止任何 transition/animation。
  * Opus ①：兩層 <i> 必須 display:block（inline box 上 clip-path/transform 無效）。
- * Opus ④：色值定死走 token；不加陰影／glow／背景／邊框。 */
-.lightbox-metadata .lb-details .pick-star {
-    position: relative;
+ * Opus ④：色值定死走 token；不加陰影／glow／背景／邊框。
+ *
+ * ── T8 為什麼從 .lb-details（番號列）搬到 .lb-title（標題列）──────────────────
+ * 舊做法星是「28px 固定高的方塊，被 .lb-details 的 align-items:center 置中」，
+ * 跟番號文字**沒有共用基線**：兩者各自置中，誤差來自「固定 28px」與「隨字級縮放的文字行」
+ * 置中時的整數吸附。五個字級（xs/sm/md/lg/xl）各需要不同補償——實測「星墨跡底緣 − 番號基線」
+ * 為 +0.82／+0.38／+2.39／+1.34／+2.34 px，**沒有任何單一固定位移能同時對**
+ * （加 −1px 會讓 xs/sm 反向浮起來）。owner 實機也回報 md 下「還是偏下」。
+ *
+ * 現做法：星是標題文字流裡的一個 inline-flex 盒，vertical-align: baseline。
+ * inline-flex 以第一個 flex item 的 glyph 基線當自己的基線，而 bi 星形的墨跡底緣恰好
+ * 落在它自己的基線上（canvas actualBoundingBoxDescent = 0）⇒ 星的底緣＝標題基線。
+ * 實測「星墨跡底緣 − 標題基線」在 xs/md/xl × 星 12/13/14px 共 9 組合下**全部 0.00px**。
+ * 這是構造上為零，不是補償值，所以不需要逐字級校準、也不需要守衛盯著數字。
+ * ⚠️ 因此 vertical-align: baseline 是承重的，不得改成 middle 或拿掉。
+ * ⚠️ 掛載點是**標題列**，不是番號列。spec-123 原文寫「番號前面一顆星」，owner 於 2026-08-21
+ *    改判「標題前更清楚，不管標題有沒有番號」——**不要**假設標題以 [番號] 開頭，正式 scraper
+ *    會刻意剝掉番號前綴（core/scrapers/javdb.py / javbus.py 的 strip_number_prefix、
+ *    core/readonly_producer.py 的 _strip_num_prefixes），多數片的標題根本沒有番號。 */
+.lightbox-metadata .lb-title .pick-star {
+    position: relative;           /* T4 火花 .pick-spark-dot 的定位錨 */
     display: inline-flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;  /* glyph 貼左，與下面「原文標題／女優／番號」三列同一條左緣 */
     width: 28px;                  /* AC-23：pointer:fine 可點區 ≥28×28 */
     height: 28px;
-    margin-right: 4px;
+    font-size: 0.875rem;          /* 14px。取這個值的理由是量出來的，不是「看起來差不多」： */
+                                  /* 實心星在此字級的墨跡高 10.74px，而標題裡拉丁／數字段（番號） */
+                                  /* 的 cap 墨跡高 10.91px —— 兩者上緣差 0.22px、下緣差 0.38px、 */
+                                  /* 重心差 0.03px，等於邊到邊對齊。13px 會矮 1.1px（上下各內縮、 */
+                                  /* 邊緣對不上，owner 實機讀成「沒對齊」）；15px 則會比 cap 高。 */
+                                  /* 相對 CJK 字身（15.08px）仍然小一階，不搶戲。 */
+    vertical-align: -0.125em;     /* ★ 承重，見上方註解。baseline 為基準再往下 1/8 em —— */
+                                  /* 這個值刻意取 Bootstrap Icons 官方對所有 .bi::before 用的 */
+                                  /* 標準補償值（bootstrap-icons.css:24），不是自己調出來的 magic */
+                                  /* number；owner 2026-08-21 拍板以「Win11 ＋ Chrome 預設字型」 */
+                                  /* 這個最多人用的組合為校準基準（見卡片「環境依賴」段：DPR／字型／ */
+                                  /* 相鄰文字語系三軸合計會讓星相對文字擺動 2–3px，無法在所有環境同時歸零）。*/
+                                  /* 為什麼需要往下補：標題是 CJK 為主，「。」「，」與方括號的墨跡會掉到 */
+                                  /* 排版基線下約 2.7px，純 baseline 對齊在 CJK 行裡目視就是偏上。 */
+                                  /* 用 em 不用 px：這是光學比例修正，必須跟著五個字級一起縮放。 */
+    margin-right: calc(1.45em - 28px);  /* 「glyph 右緣 → 文字」固定 0.45em，與盒寬解耦：
+                                           盒是 28px、glyph 只有 1em，不補這個負值會留下 15px 死空隙
+                                           （owner 實機回報「空隙太大」）。coarse 的 44px 盒另有一份。 */
     padding: 0;
     border: none;
     background: transparent;
     cursor: pointer;
     flex-shrink: 0;
-    vertical-align: middle;
 }
 
-.lightbox-metadata .lb-details .pick-star-outline,
-.lightbox-metadata .lb-details .pick-star-fill {
+.lightbox-metadata .lb-title .pick-star-outline,
+.lightbox-metadata .lb-title .pick-star-fill {
     display: block;               /* Opus ①：不得留 inline */
     line-height: 1;
-    font-size: 0.875rem;          /* 14px 字形；放大的是可點區不是 glyph */
+    font-size: 1em;               /* 跟著 .pick-star 的 0.875rem，不另外定死 */
     width: 1em;
     height: 1em;
 }
 
-.lightbox-metadata .lb-details .pick-star-outline {
-    color: var(--text-muted);     /* 未精選：與 ⚙／🗑 同色階 */
+/* 抵銷 Bootstrap Icons 的 inline 光學補償。bootstrap-icons.css:24 對所有 .bi::before 設
+ * vertical-align: -.125em，那是給「圖示混在一行文字流裡」用的；這兩層是 .pick-star 的
+ * flex item（vertical-align 對 flex item 無效，補償只會落在 ::before 上變成淨誤差）。
+ * 實測：留著 -.125em 時「星底 − 標題基線」是 +1.22～+2.19 px（隨字級變動），歸零後恆為 0.00。
+ * 必須下在 ::before 不是 <i>：glyph 是 ::before 這個 inline-level box 畫的。
+ * 兩層必須一起改，否則 fill 與 outline 錯開、灌滿動畫會出現雙影。
+ * ⚠️ 不得一併套到牆上的 .pick-star-mark：那裡容器脈絡不同，實測 bi 的 -.125em 反而是
+ *    正貢獻（grid -0.86 / table +0.54 / list +0.50 px，歸零後三者都變差）。逐處量，別全域套。 */
+.lightbox-metadata .lb-title .pick-star-outline::before,
+.lightbox-metadata .lb-title .pick-star-fill::before {
+    vertical-align: 0;
+}
+
+.lightbox-metadata .lb-title .pick-star-outline {
+    color: var(--text-muted);     /* 未精選：低調，不與標題（--text-primary）搶 */
     position: relative;
     z-index: 1;
 }
 
-.lightbox-metadata .lb-details .pick-star:hover .pick-star-outline,
-.lightbox-metadata .lb-details .pick-star:focus-visible .pick-star-outline,
-.lightbox-metadata .lb-details .pick-star.is-picked .pick-star-outline {
+.lightbox-metadata .lb-title .pick-star:hover .pick-star-outline,
+.lightbox-metadata .lb-title .pick-star:focus-visible .pick-star-outline,
+.lightbox-metadata .lb-title .pick-star.is-picked .pick-star-outline {
     color: var(--star-glow);      /* 未精選 hover/focus、已精選：金色 outline */
 }
 
-.lightbox-metadata .lb-details .pick-star-fill {
+.lightbox-metadata .lb-title .pick-star-fill {
     position: absolute;
-    inset: 0;
-    margin: auto;                 /* 在 28/44 hit box 內置中 1em glyph box */
+    inset: 0 auto 0 0;            /* 靠左：必須跟 outline 那層（justify-content:flex-start）同一個 x */
+    margin: auto 0;               /* 上下 auto ＝ 垂直置中，比照 outline 的 align-items:center */
     color: var(--star-glow);
     clip-path: inset(var(--pick-fill, 100%) 0 0 0);
-    /* --pick-fill 端點校準：T3 先用 100%/0%；glyph leading 像素 oracle 留給 CDP（Opus ②） */
     pointer-events: none;
     z-index: 0;
 }
 
-.lightbox-metadata .lb-details .pick-star:focus-visible {
+.lightbox-metadata .lb-title .pick-star:focus-visible {
     outline: 2px solid var(--star-glow);
     outline-offset: 2px;
 }
 
+/* AC-23 觸控可點區。可以放心撐大盒子：對齊由 vertical-align: baseline（＝按鈕自己的
+ * glyph 基線）決定，**盒子大小完全不影響 glyph 落點**——13／28／44px 三種盒子實測
+ * 「星底 − 標題基線」都是 0.00。這正是搬到標題行之後才成立的性質；舊的 .lb-details
+ * 版本靠盒子被 align-items:center 置中，盒子一改尺寸對齊就跟著跑。 */
 @media (pointer: coarse) {
-    .lightbox-metadata .lb-details .pick-star {
-        width: 44px;              /* AC-23：觸控可點區 ≥44×44 */
+    .lightbox-metadata .lb-title .pick-star {
+        width: 44px;
         height: 44px;
+        margin-right: calc(1.45em - 44px);   /* 同上：維持 0.45em 的視覺間距，換 44px 盒 */
     }
 }
 
