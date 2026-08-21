@@ -199,7 +199,7 @@ export function stateActress() {
 
         toggleActressMode() {
             // CD-116b-8b：切換影片/女優模式時無條件 teardown 浮層草稿
-            this._pillEditor = null;
+            this._teardownPillEditors();
             if (this.lightboxOpen) this.closeLightbox();
             var self = this;
             var isEnteringActress = !this.showFavoriteActresses;
@@ -1268,7 +1268,7 @@ export function stateActress() {
                 if (this.lightboxOpen) this.closeLightbox();
                 if (wasActressMode) {
                     // 繞過 toggleActressMode() 直接翻旗標——CD-116b-8b 的 teardown 必須就地補上
-                    this._pillEditor = null;
+                    this._teardownPillEditors();
                     this.showFavoriteActresses = false;
                     this.actressSearch = '';
                 }

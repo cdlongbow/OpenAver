@@ -731,7 +731,13 @@ export function stateLightbox() {
                 self.lightboxCloseTimer = null;
             }, 250);
 
-            this.addPill(dim, value);
+            // TASK-124a-T2（CD-124a-6）：release 維度改走發售日入口 adapter，不經 addPill
+            // （addPill 的正規化/去重路徑不適用 release 的 op/value2 結構）。
+            if (dim === 'release') {
+                this._setReleasePillFromDate(value);
+            } else {
+                this.addPill(dim, value);
+            }
         },
 
         // 44b-T4: Nav arrow visibility computed
@@ -2356,9 +2362,11 @@ export function stateLightbox() {
         // --- 快捷鍵 (M4c 完整實作) ---
         handleKeydown(e) {
             // 116b：浮層開啟時最高優先（必須在 INPUT early-return 之前——區間的 number input
-            // 取得焦點時 e.target.tagName === 'INPUT'，放在後面 ESC 永遠到不了這裡）
-            if (this._pillEditor) {
-                if (e.key === 'Escape') { e.preventDefault(); this._cancelPillEditor(); return; }
+            // 取得焦點時 e.target.tagName === 'INPUT'，放在後面 ESC 永遠到不了這裡）。
+            // TASK-124a-T2：新增 _releaseEditor 分支（兩個 slot 依 §3.5 不變式恆不同時非
+            // null，三元式安全）。
+            if (this._pillEditor || this._releaseEditor) {
+                if (e.key === 'Escape') { e.preventDefault(); this._pillEditor ? this._cancelPillEditor() : this._cancelReleaseEditor(); return; }
                 return;                       // 第二段：鎖其餘鍵。不得 preventDefault
             }
             // 1. 輸入框中不處理快捷鍵

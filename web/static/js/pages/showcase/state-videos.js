@@ -10,6 +10,24 @@ import { _videos, _filteredVideos, _nameToGroup, _tagToGroup, _setVideos, _setFi
 import { applyCellFocal } from '@/shared/focal-cell.js';
 import { openLocal } from '@/shared/open-local.js';
 import { normalizePillValue, buildPillPredicate } from '@/shared/pill-filter.js';
+// TASK-124a-T2：發售日 pill 浮層狀態機直接呼叫的 T1 六支純函式中的五支
+// （matchesReleasePill 屬 pill-filter.js 內部使用，state 層不直接呼叫）。
+import { parseReleaseKey, parseEndpoint, expandPill, composeEndpoint, videoYearRange } from '@/shared/release-window.js';
+
+// TASK-124a-T2：鏡射 state-actress.js 的 _trimOrNull（模組私有，無法 import，各自一份）。
+function _trimOrNull(v) {
+    if (v == null) return null;
+    var s = String(v).trim();
+    return s === '' ? null : s;
+}
+
+// TASK-124a-T2：鏡射 state-actress.js 的 _pillFieldValue：isBad 來自 markup @input 寫入的
+// validity.badInput，有字但取不到值 ≠ 空（has 涵蓋 badInput）。
+function _releaseFieldValue(rawText, isBad) {
+    if (isBad) return { has: true, raw: null };
+    var t = _trimOrNull(rawText);
+    return { has: t != null, raw: t };
+}
 
 export function stateVideos() {
     return {
@@ -116,6 +134,9 @@ export function stateVideos() {
             this.pills = next;
             this._animateFilter();
             this._reconcileHeroCard();
+            // TASK-124a-T2（§3.3）：移除的正是編輯中的 release pill → teardown 浮層草稿。
+            // 移除其他維度不影響 _releaseEditor（release pill 恆 0/1 枚，dim 比對即可）。
+            if (dim === 'release' && this._releaseEditor) this._releaseEditor = null;
         },
 
         // TASK-123-T6：「只看精選」漏斗選單項 ＋ pill chip 的一組讀寫入口（CD-123-9：
@@ -138,7 +159,164 @@ export function stateVideos() {
         // 對應表（plan §4 風險表：超過 2 個特例才升級）。
         pillLabel(pill) {
             if (pill.dim === 'pick') return window.t('showcase.pick.chip_label');
+            if (pill.dim === 'release') return this.releasePillText(pill);
             return pill.value;
+        },
+
+        // ── TASK-124a-T2：發售日 pill 浮層狀態機（無 markup；鏡射 state-actress.js 的
+        // 116b-T2/116c-T2 浮層狀態機，但不共用程式碼，只共用「同一套手勢」的設計）──
+
+        // 開啟：pill（op/value/value2）→ 草稿（四格 lo/hi 年月）映射；同一枚再點＝關閉。
+        // release pill 恆 0/1 枚，不需要像女優版那樣比對 dim。
+        _toggleReleaseEditor(pill) {
+            if (!this._pillPopoverEnabled) return;               // 第二層防禦（斷點閘門）
+            if (this._releaseEditor) { this._releaseEditor = null; return; }  // 同一枚再點＝關閉
+            var loParsed = pill.op === 'range' ? parseEndpoint(pill.value) : null;
+            var hiParsed = pill.op === 'range' ? parseEndpoint(pill.value2) : null;
+            this._releaseEditor = {
+                op: pill.op,
+                value: pill.value,      // 態①操作數來源，不論原 op 為何一律照抄 pill.value
+                value2: pill.value2,    // （鏡射 _openPillEditor 對 value/value2 的處理：兩欄位
+                                         //  永遠照抄，不因 op 分支而省略）
+                loYear: loParsed ? String(loParsed.y) : null,
+                loMonth: loParsed && loParsed.m != null ? (loParsed.m < 10 ? '0' + loParsed.m : String(loParsed.m)) : null,
+                hiYear: hiParsed ? String(hiParsed.y) : null,
+                hiMonth: hiParsed && hiParsed.m != null ? (hiParsed.m < 10 ? '0' + hiParsed.m : String(hiParsed.m)) : null,
+                badLoY: false, badLoM: false, badHiY: false, badHiM: false,
+            };
+        },
+
+        // 單一端點（lo 或 hi）的完整取值語意：年格＋月格合起來算一個端點。
+        // has=true 代表「這個端點有沒有被動過」（含 badInput），與「token 合不合法」是兩件事。
+        _releaseEndpoint(which) {
+            var d = this._releaseEditor;
+            if (!d) return { has: false, token: null };           // 安全回傳（x-show 求值前提）
+            var yRaw = which === 'lo' ? d.loYear : d.hiYear;
+            var mRaw = which === 'lo' ? d.loMonth : d.hiMonth;
+            var yBad = which === 'lo' ? d.badLoY : d.badHiY;
+            var mBad = which === 'lo' ? d.badLoM : d.badHiM;
+            var y = _releaseFieldValue(yRaw, yBad);
+            var m = _releaseFieldValue(mRaw, mBad);
+            if (!y.has && !m.has) return { has: false, token: null };   // 該端點沒填：has=false
+            if (y.raw == null) return { has: true, token: null };       // 有月無年 / 年格壞輸入
+            var yearNum = Number(y.raw);
+            if (!m.has) return { has: true, token: composeEndpoint(yearNum, null) };  // 只有年
+            if (m.raw == null) return { has: true, token: null };       // 月格壞輸入
+            // ⚠ 刻意選擇 composeEndpoint() 的數值範圍檢查（year>=1000 && year<=9999），不是
+            // parseEndpoint() 的純字元數判法——兩者對 '0230' 這類「四字元但數值 <1000」的
+            // 字串判法不同（見 release-window.js 檔頭與本 task 檔「⚠ 一條需要測試鎖住的落差」）。
+            // 理由：composeEndpoint() 是 T1 專為「提交時組字」設計的函式，同時做掉 zero-pad 與
+            // 月份 1–12 檢查；UI 產生的 token 永遠先過這關，不會有畸形字串流出，不必另寫第二套
+            // 年份判斷（parseEndpoint 的寬鬆只服務手改 localStorage 的容錯路徑）。
+            return { has: true, token: composeEndpoint(yearNum, Number(m.raw)) };
+        },
+
+        // spec §5.2 三態表（比照 _pillOperandFor 但省一層——release 的合法性判斷已內嵌在
+        // _releaseEndpoint() 的 token 計算裡，composeEndpoint() 回 null 就代表不合法，不需要
+        // 第二支 _releaseOperandOk）。
+        _releaseOperandFor(op) {
+            var d = this._releaseEditor;
+            if (!d) return null;
+            var lo = this._releaseEndpoint('lo');
+            var hi = this._releaseEndpoint('hi');
+            if (!lo.has && !hi.has) return d.value;                    // 態①：pill 目前的值
+            if (!hi.has) return lo.token;                               // 態②：只有左端
+            if (!lo.has) return hi.token;                               // 態②：只有右端
+            return (op === '<=') ? hi.token : lo.token;                 // 態③：≤ 取右，≥/= 取左
+        },
+
+        // 三顆鈕（=／≤／≥）唯一提交路徑。operand 為 null（不合法/無法判定）→ 不寫入、不關閉。
+        _applyReleaseOp(op) {
+            if (!this._releaseEditor) return;
+            var operand = this._releaseOperandFor(op);
+            if (operand == null) return;                 // early return：不寫入、不關閉（AC12）
+            this._setReleasePill({ dim: 'release', op: op, value: operand });
+            this._releaseEditor = null;                   // 成功路徑：立刻關閉（AC8）
+        },
+
+        // ✓ 提交：單邊有值時委派給 _applyReleaseOp（同一段程式碼路徑求值兩次，結構性保證
+        // AC10「✓ 與按對應運算子鈕逐欄位相同」，不是兩份平行邏輯剛好寫得一樣）。
+        _commitReleaseEditor() {
+            if (!this._releaseEditor) return;
+            var lo = this._releaseEndpoint('lo');
+            var hi = this._releaseEndpoint('hi');
+            if (!lo.has && !hi.has) return;                          // 兩端皆空：✓ 不存在，防禦性 return
+            if (!hi.has) return this._applyReleaseOp('>=');           // 只有左端 → 委派
+            if (!lo.has) return this._applyReleaseOp('<=');           // 只有右端 → 委派
+            if (lo.token == null || hi.token == null) return;         // 任一端形不成條件 → fail-safe（AC12）
+            var loTok = lo.token, hiTok = hi.token;
+            // 對調（AC11）：借用 expandPill({op:'=', value: token}).lo 取「該 token 代表的最早
+            // 時點」當可比較的整數 key——兩側統一用 .lo（不是各自 lo/hi），純粹是排序 key，不
+            // 涉及展開語意（展開語意在 expandPill() 對整枚 pill 求值時才發生，那是既有邏輯，
+            // 不動）。理由是零重複：借用已 export 的函式，不在本檔另寫一份「YYYYMM 整數化」邏輯。
+            var loKey = expandPill({ op: '=', value: loTok }).lo;
+            var hiKey = expandPill({ op: '=', value: hiTok }).lo;
+            if (loKey > hiKey) { var tmp = loTok; loTok = hiTok; hiTok = tmp; }
+            this._setReleasePill({ dim: 'release', op: 'range', value: loTok, value2: hiTok });
+            this._releaseEditor = null;
+        },
+
+        // ✗ 取消：只丟棄草稿，不碰 pills（函式體不得引用 pills，鏡射 _cancelPillEditor 的同一條規定）
+        _cancelReleaseEditor() {
+            this._releaseEditor = null;
+        },
+
+        // ✓✗ 顯示條件：四格任一格（不分年月、不分左右端）有字即為 true——只看有沒有打字，
+        // 不看打得對不對（打錯也要讓 ✗ 出現，使用者才點得到清掉或改對）。
+        _releaseEditorHasInput() {
+            var d = this._releaseEditor;
+            if (!d) return false;                                     // 安全回傳（x-show 求值前提）
+            return _trimOrNull(d.loYear) != null || _trimOrNull(d.loMonth) != null
+                || _trimOrNull(d.hiYear) != null || _trimOrNull(d.hiMonth) != null;
+        },
+
+        // 資料範圍提示（spec §4.9）：全庫，不是 _filteredVideos。
+        _releaseYearHint() {
+            if (!this._releaseEditor) return '';                       // 安全回傳
+            var range = videoYearRange(_videos);
+            if (range == null) return '';                                // 一部片都解析不出年月：不印
+            return '（' + range.min + ' ~ ' + range.max + '）';
+        },
+
+        // pill 顯示文字（spec §5.4）：無單位後綴（release 沒有單位）；顯示原字面，不重新展開
+        // （op:'=', value:'2023' 顯示 =2023，不是 =2023-01~2023-12，AC21）。
+        releasePillText(pill) {
+            if (pill.op === 'range') return pill.value + '~' + pill.value2;   // U+007E，不加空白
+            var prefix = pill.op === '<=' ? '≤' : pill.op === '>=' ? '≥' : '=';
+            return prefix + pill.value;
+        },
+
+        // 入口 markup 的唯一判準（T3 引用）：一行 adapter，內部直呼 T1 的 parseReleaseKey()
+        // （spec §4.1 明文「不得另寫第二份日期判斷」）。
+        _isReleaseClickable(video) {
+            return parseReleaseKey(video && video.release_date) != null;
+        },
+
+        // 唯一寫入者：一律建構全新物件、非 range 不帶 value2 鍵（避免沿用同一物件在 op 之間
+        // 切換時殘留 value2，被 pill-filter.js 的 serializePills 靜默寫出——plan §8.1 陷阱）。
+        _setReleasePill(pill) {
+            var next = this.pills.filter(function (p) { return p.dim !== 'release'; });
+            var built = { dim: 'release', op: pill.op, value: pill.value };
+            if (pill.op === 'range') built.value2 = pill.value2;    // 非 range 不帶 value2 鍵
+            next.push(built);
+            this.pills = next;
+            this._animateFilter();      // ⚠ 不是 applyFilterAndSort()（CD-124a-14，saveState 只在 _animateFilter 裡）
+            this._reconcileHeroCard();
+        },
+
+        // 入口 adapter（燈箱 metadata 點擊 / searchFromMetadata 分派用）：dateStr 切前 7 字
+        // （與 parseReleaseKey() 內部 RELEASE_KEY_RE 判定「解析得出」的同一段字元，不會有落差）。
+        _setReleasePillFromDate(dateStr) {
+            var key = parseReleaseKey(dateStr);
+            if (key == null) return;                       // 解析不出年月：不產生 pill（spec §4.4）
+            this._setReleasePill({ dim: 'release', op: '=', value: dateStr.slice(0, 7) });
+        },
+
+        // 跨切面 teardown 唯一實作（四個呼叫點：state-base.js 斷點 handler ×2、
+        // toggleActressMode()、hero 橋接、clearAllFilters()）。無條件覆寫兩個 slot，冪等。
+        _teardownPillEditors() {
+            this._pillEditor = null;
+            this._releaseEditor = null;
         },
 
         // TASK-115-T9: 搜尋框 Backspace 刪最後一枚 pill（IME 組字中一律不刪）
@@ -158,8 +336,9 @@ export function stateVideos() {
             this.actressSearch = '';
             this.pills = [];
             this.actressPills = [];
-            // CD-116b-8b：clearAllFilters 清空整個 actressPills → 編輯器開著就必然命中，無條件 teardown
-            if (this._pillEditor) this._pillEditor = null;
+            // CD-116b-8b：clearAllFilters 清空整個 actressPills → 編輯器開著就必然命中，無條件 teardown。
+            // TASK-124a-T2：收斂到單一函式 _teardownPillEditors()，同時清 _pillEditor/_releaseEditor。
+            this._teardownPillEditors();
             // TASK-115-T8：不再直接呼叫 _clearPreciseMatch()（T7 留下的暫時補丁）——
             // pills=[]、search='' 之後，_reconcileHeroCard() 的「無 pill 分支」本來就會
             // 走到同一個 _clearPreciseMatch() 呼叫，讓收斂單一判斷點的精神落實（RULING 3：
