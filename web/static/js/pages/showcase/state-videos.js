@@ -255,12 +255,21 @@ export function stateVideos() {
             if (!lo.has) return this._applyReleaseOp('<=');           // 只有右端 → 委派
             if (lo.token == null || hi.token == null) return;         // 任一端形不成條件 → fail-safe（AC12）
             var loTok = lo.token, hiTok = hi.token;
-            // 對調（AC11）：借用 expandPill({op:'=', value: token}).lo 取「該 token 代表的最早
-            // 時點」當可比較的整數 key——兩側統一用 .lo（不是各自 lo/hi），純粹是排序 key，不
-            // 涉及展開語意（展開語意在 expandPill() 對整枚 pill 求值時才發生，那是既有邏輯，
-            // 不動）。理由是零重複：借用已 export 的函式，不在本檔另寫一份「YYYYMM 整數化」邏輯。
+            // 對調（AC11）：借用 expandPill({op:'=', value: token}).lo/.hi 取「該 token 代表的
+            // 最早／最晚時點」當可比較的整數 key——下端點取 .lo、上端點取 .hi（不是兩側統一用
+            // .lo），因為真正該問的是「下端的最早時點是否晚於上端的最晚時點」，那才是區間真的
+            // 反了；純粹是排序 key，不涉及展開語意（展開語意在 expandPill() 對整枚 pill 求值時
+            // 才發生，那是既有邏輯，不動）。零重複：借用已 export 的函式，不在本檔另寫一份
+            // 「YYYYMM 整數化」邏輯。
+            //
+            // ⚠ 兩側不可都用 .lo：年份-only 的端點代表整年，其「最晚時點」是 12 月（.hi），
+            // 若上端也用 .lo 會把它讀成 1 月，導致「下端 6 月 > 上端（誤讀成）1 月」被誤判為
+            // 反轉而錯誤對調。例如使用者填 lo=2024-06、hi=2024（月份留空＝整年結尾 12 月），
+            // 原意是「2024 年 6 月～12 月」；用 .hi 才會得到 202406 <= 202412（不反轉，不對
+            // 調）；若誤用 .lo 得到 202406 > 202401（誤判反轉）會把 pill 錯組成
+            // 2024~2024-06，展開後變成 1～6 月，恰好是使用者原意的反面。
             var loKey = expandPill({ op: '=', value: loTok }).lo;
-            var hiKey = expandPill({ op: '=', value: hiTok }).lo;
+            var hiKey = expandPill({ op: '=', value: hiTok }).hi;
             if (loKey > hiKey) { var tmp = loTok; loTok = hiTok; hiTok = tmp; }
             this._setReleasePill({ dim: 'release', op: 'range', value: loTok, value2: hiTok });
             this._releaseEditor = null;

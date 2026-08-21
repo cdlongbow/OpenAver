@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **對焦編輯開著的時候不能換片**，這是刻意的取捨——正在調的位置不該被一個誤觸丟掉。
 - **哪幾個字點得下去，看不出來**——要滑鼠移上去才會變色加底線，手機沒有這一步，只能點看看。影片卡今天也是這樣，這次沒有為女優卡另外發明一種樣子。
 
-測試數 npm test 1056 → 1131（本次零 Python 改動，pytest 不變）。
+測試數 npm test 1056 → 1137（本次零 Python 改動，pytest 不變）。
 
 ## [0.14.3] - 2026-08-21
 

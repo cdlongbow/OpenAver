@@ -446,6 +446,73 @@ test('AC11 反向鎖：lo 本來就 < hi，不需要對調時 token 不被意外
     assert.deepEqual(p, { dim: 'release', op: 'range', value: '2020-01', value2: '2024-12' });
 });
 
+test('AC11 年份-only 上端不誤判反轉：lo=2024-06、hi=2024（月份留空代表整年結尾）→ 不對調', () => {
+    // 迴歸鎖：hiKey 若誤用 .lo 展開，'2024'（年份-only）會被讀成 202401（1 月）而非
+    // 202412（12 月結尾），202406 > 202401 觸發錯誤對調，pill 變成 2024~2024-06 展開後
+    // 只剩 1~6 月，正好是使用者原意（6~12 月）的反面。
+    const c = makeComponent();
+    c._toggleReleaseEditor(releasePill('=', '2020'));
+    c._releaseEditor.loYear = '2024'; c._releaseEditor.loMonth = '06';
+    c._releaseEditor.hiYear = '2024'; c._releaseEditor.hiMonth = '';
+    c._commitReleaseEditor();
+    const p = c.pills.find((x) => x.dim === 'release');
+    assert.deepEqual(p, { dim: 'release', op: 'range', value: '2024-06', value2: '2024' });
+});
+
+test('AC11 年份-only 下端不誤判反轉：lo=2024、hi=2024-06（下端整年起點 1 月 <= 6 月）→ 不對調', () => {
+    const c = makeComponent();
+    c._toggleReleaseEditor(releasePill('=', '2020'));
+    c._releaseEditor.loYear = '2024'; c._releaseEditor.loMonth = '';
+    c._releaseEditor.hiYear = '2024'; c._releaseEditor.hiMonth = '06';
+    c._commitReleaseEditor();
+    const p = c.pills.find((x) => x.dim === 'release');
+    assert.deepEqual(p, { dim: 'release', op: 'range', value: '2024', value2: '2024-06' });
+});
+
+test('AC11 年份-only 真反轉仍須對調：lo=2025、hi=2023', () => {
+    const c = makeComponent();
+    c._toggleReleaseEditor(releasePill('=', '2020'));
+    c._releaseEditor.loYear = '2025'; c._releaseEditor.loMonth = '';
+    c._releaseEditor.hiYear = '2023'; c._releaseEditor.hiMonth = '';
+    c._commitReleaseEditor();
+    const p = c.pills.find((x) => x.dim === 'release');
+    assert.deepEqual(p, { dim: 'release', op: 'range', value: '2023', value2: '2025' });
+});
+
+test('AC11 同年月反轉仍須對調：lo=2024-09、hi=2024-03', () => {
+    const c = makeComponent();
+    c._toggleReleaseEditor(releasePill('=', '2020'));
+    c._releaseEditor.loYear = '2024'; c._releaseEditor.loMonth = '09';
+    c._releaseEditor.hiYear = '2024'; c._releaseEditor.hiMonth = '03';
+    c._commitReleaseEditor();
+    const p = c.pills.find((x) => x.dim === 'release');
+    assert.deepEqual(p, { dim: 'release', op: 'range', value: '2024-03', value2: '2024-09' });
+});
+
+test('AC11 下端月份 ＝ 上端整年結尾：lo=2024-12、hi=2024 → 不對調（12 月單月）', () => {
+    // 這是本次修正**行為確實改變**的那一格，故獨立鎖住：改動前兩側都用 .lo，
+    // 202412 > 202401 觸發對調 → pill 變成 2024~2024-12 → 展開成整年；改動後
+    // 202412 <= 202412（上端整年結尾）不對調 → 2024-12~2024 → 展開成 12 月單月。
+    // 後者才是使用者填的意思（起點已經指定到 12 月，上端只是說「到這年結束」）。
+    const c = makeComponent();
+    c._toggleReleaseEditor(releasePill('=', '2020'));
+    c._releaseEditor.loYear = '2024'; c._releaseEditor.loMonth = '12';
+    c._releaseEditor.hiYear = '2024'; c._releaseEditor.hiMonth = '';
+    c._commitReleaseEditor();
+    const p = c.pills.find((x) => x.dim === 'release');
+    assert.deepEqual(p, { dim: 'release', op: 'range', value: '2024-12', value2: '2024' });
+});
+
+test('AC11 端點相等不對調：lo=2024、hi=2024', () => {
+    const c = makeComponent();
+    c._toggleReleaseEditor(releasePill('=', '2020'));
+    c._releaseEditor.loYear = '2024'; c._releaseEditor.loMonth = '';
+    c._releaseEditor.hiYear = '2024'; c._releaseEditor.hiMonth = '';
+    c._commitReleaseEditor();
+    const p = c.pills.find((x) => x.dim === 'release');
+    assert.deepEqual(p, { dim: 'release', op: 'range', value: '2024', value2: '2024' });
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 四格全空 ／ 有月無年 ／ 13/0 月 ／ 非四位年（含 '0230'/'0002'）／ 1800/9999 ／ badInput
 // ═══════════════════════════════════════════════════════════════════════════
