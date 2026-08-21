@@ -263,6 +263,43 @@ test('CD-7 regression lock：state-base.js init() 的 alias map await 必須排�
     assert.ok(idxTagAlias < idxApply, 'tag alias map 必須在第一次 applyFilterAndSort 之前載入');
 });
 
+test('TASK-124a-T1：release pill 與既有維度混用取交集（AND）', () => {
+    const predicate = buildPillPredicate(
+        [{ dim: 'release', op: '=', value: '2024-09' }, { dim: 'maker', value: 'S1' }],
+        {},
+        {},
+    );
+    assert.equal(predicate({ release_date: '2024-09-09', maker: 'S1' }), true);
+    assert.equal(predicate({ release_date: '2024-09-09', maker: 'Other' }), false);
+    assert.equal(predicate({ release_date: '2024-08-01', maker: 'S1' }), false);
+});
+
+test('TASK-124a-T1：release pill 的 expandPill 回 null 時 fail-closed（不是 fail-open）', () => {
+    // op 不在四值白名單內 → expandPill 回 null → matcher 對任何影片皆回 false，
+    // 不是讓這枚 pill 形同虛設變相回 true。
+    const predicate = buildPillPredicate([{ dim: 'release', op: '!=', value: '2024' }], {}, {});
+    assert.equal(predicate({ release_date: '2024-01-01' }), false);
+    assert.equal(predicate({}), false);
+    assert.equal(predicate({ release_date: null }), false);
+});
+
+test('TASK-124a-T1：release pill 的 value 形狀不合法 → expandPill 回 null → fail-closed', () => {
+    const predicate = buildPillPredicate([{ dim: 'release', op: '=', value: 'garbage' }], {}, {});
+    assert.equal(predicate({ release_date: '2024-01-01' }), false);
+});
+
+test('TASK-124a-T1：release pill range 命中／不命中邊界（含端點）', () => {
+    const predicate = buildPillPredicate(
+        [{ dim: 'release', op: 'range', value: '2023', value2: '2024-06' }],
+        {},
+        {},
+    );
+    assert.equal(predicate({ release_date: '2023-01-01' }), true);
+    assert.equal(predicate({ release_date: '2024-06-30' }), true);
+    assert.equal(predicate({ release_date: '2022-12-31' }), false);
+    assert.equal(predicate({ release_date: '2024-07-01' }), false);
+});
+
 // =====================================================================
 // Part B — 透過真正的 applyFilterAndSort() 接線測試
 // =====================================================================

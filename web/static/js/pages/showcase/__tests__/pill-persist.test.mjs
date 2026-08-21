@@ -164,6 +164,51 @@ test('deserializePills：回傳元素物件與 raw 原始物件非同一參照',
     assert.notEqual(out[0], raw0);
 });
 
+// ===== TASK-124a-T1：release pill 序列化 round-trip ＋ CD-124a-11 fail-safe =====
+
+test('TASK-124a-T1：serializePills 對非 release pill 的輸出逐鍵逐值不變（恰兩鍵，不多不少）', () => {
+    const out = serializePills([{ dim: 'actress', value: 'x' }]);
+    assert.deepEqual(out, [{ dim: 'actress', value: 'x' }]);
+    assert.deepEqual(Object.keys(out[0]), ['dim', 'value']);
+});
+
+test('TASK-124a-T1：serializePills 對 release pill 帶出 op（非 range 不帶 value2）', () => {
+    const out = serializePills([{ dim: 'release', op: '=', value: '2024-09' }]);
+    assert.deepEqual(out, [{ dim: 'release', value: '2024-09', op: '=' }]);
+    assert.deepEqual(new Set(Object.keys(out[0])), new Set(['dim', 'value', 'op']));
+});
+
+test('TASK-124a-T1：serializePills 對 range release pill 帶出 op + value2', () => {
+    const out = serializePills([{ dim: 'release', op: 'range', value: '2023', value2: '2024-06' }]);
+    assert.deepEqual(out, [{ dim: 'release', value: '2023', op: 'range', value2: '2024-06' }]);
+    assert.deepEqual(new Set(Object.keys(out[0])), new Set(['dim', 'value', 'op', 'value2']));
+});
+
+test('TASK-124a-T1：round-trip — serializePills → deserializePills 帶 op/value2 逐欄位相等', () => {
+    const pills = [{ dim: 'release', op: '=', value: '2024-09' }];
+    assert.deepEqual(deserializePills(serializePills(pills)), pills);
+});
+
+test('TASK-124a-T1：round-trip — op === "range" 的 pill 帶 value2', () => {
+    const pills = [{ dim: 'release', op: 'range', value: '2023', value2: '2024-06' }];
+    assert.deepEqual(deserializePills(serializePills(pills)), pills);
+});
+
+test('TASK-124a-T1：CD-124a-11 四種畸形各丟棄一枚，不影響同陣列其他 pill', () => {
+    const out = deserializePills([
+        { dim: 'release', op: '=', value: '2024-09' },          // 合法 1：release
+        { dim: 'actress', value: 'x' },                          // 合法 2：非 release
+        { dim: 'release', op: '!=', value: '2024' },             // 畸形 1：op 不在白名單
+        { dim: 'release', op: 'range', value: '2023' },          // 畸形 2：range 缺 value2
+        { dim: 'release', op: '=', value: '09/2023' },           // 畸形 3：value 形狀不合法
+        { dim: 'release', op: 'range', value: '2023', value2: '2023/09' }, // 畸形 4：value2 形狀不合法
+    ]);
+    assert.deepEqual(out, [
+        { dim: 'release', value: '2024-09', op: '=' },
+        { dim: 'actress', value: 'x' },
+    ]);
+});
+
 // ===== Layer 2: wiring via stateBase saveState / restoreState =====
 
 test('saveState：_persistedShowcase.pills 深相等但陣列與元素皆非同一參照', () => {
