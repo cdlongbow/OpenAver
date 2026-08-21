@@ -931,6 +931,9 @@
         "range_max": "上限"
       }
     },
+    "filter": {
+      "pick_only": "只看精選"
+    },
     "action": {
       "clear_search": "清除搜尋",
       "search": "搜尋",
@@ -1047,6 +1050,12 @@
       "cover_unavailable": "這部片的封面現在讀不到——可能是檔案位置目前無法存取，或者封面檔本身不見了",
       "mask_confirm": "確認裁切位置",
       "mask_cancel": "取消裁切調整"
+    },
+    "pick": {
+      "add_aria": "加入精選",
+      "remove_aria": "取消精選",
+      "save_failed": "精選儲存失敗，請稍後再試",
+      "chip_label": "★精選"
     },
     "gallery": {
       "prev": "上一張 (←)",

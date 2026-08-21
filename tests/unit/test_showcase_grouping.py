@@ -170,8 +170,17 @@ class TestAC4BaselineFixtureComparison:
                     f"key={key} 值不符（path={path}）: "
                     f"expected={expected_value!r} actual={actual_v[key]!r}"
                 )
-            # 反向確認沒有意外多出的既有 key（part_tokens 除外，前面已單獨斷言過）
-            extra_keys = set(actual_v.keys()) - set(expected_v.keys()) - {"part_tokens"}
+            # 反向確認沒有意外多出的既有 key
+            # 排除的兩個都是「後續 branch 全域新增、有自己的測試」的鍵，各自單獨斷言過：
+            #   part_tokens —— 本 task（122）新增
+            #   user_rating —— spec-123 精選新增（TASK-123-T2 的 _serialize_video 無條件輸出，
+            #                   未精選為 0；該欄位的行為由 tests/integration/test_api_showcase.py
+            #                   的 TestShowcaseUserRatingField 三支守著，不歸本 baseline 管）
+            assert actual_v.get("user_rating") == 0, (
+                f"單檔片 {path} 的 user_rating 在 baseline fixture 情境下必為 0，"
+                f"實際 {actual_v.get('user_rating')}"
+            )
+            extra_keys = set(actual_v.keys()) - set(expected_v.keys()) - {"part_tokens", "user_rating"}
             assert not extra_keys, f"多出非預期 key: {extra_keys}（path={path}）"
 
 
@@ -234,3 +243,106 @@ class TestAC18RepresentativePathIsPart1:
 
         assert result["path"] == v.path
         assert result["part_tokens"] == []
+
+
+# ── AC-12（TASK-123-T7）：精選寫入層 ＋ 序列化層串成一條完整證據鏈 ───────────────────
+#
+# tests/integration/test_user_rating_api.py 的 TestScenario4MultipartRepresentative
+# 已經驗過「寫入層」：送 -cd2 路徑，DB 裡實際被寫入 user_rating 的是代表段（-cd1）
+# 那一列。這裡驗的是「序列化層」：精選之後，group_rows()/_serialize_group()（本 branch
+# 完全未動這段既有邏輯）吐出來的 showcase 列表仍然只有一張合併卡，且那張卡的
+# `user_rating` 正確反映代表段的值——不會因為 user_rating 只寫在 cd1 而讓前端
+# 「只看精選」漏篩或重複算成兩張卡。
+#
+# 端到端走真實 TestClient：先打 POST /api/user-rating（真正的寫入路徑），
+# 再打 GET /api/showcase/videos（真正的序列化路徑），兩者共用同一個 tmp DB。
+
+class TestAC12PickThenSerializeStaysOneCard:
+    def _make_group_db(self, make_populated_db):
+        """同資料夾、同 stem、各帶 part token 的兩列 -> group_rows() 判定成組。"""
+        part1 = Video(
+            path=to_file_uri("/home/user/media/GRP-001-cd1.mp4"),
+            number="GRP-001",
+            title="Group Part 1",
+            size_bytes=100,
+        )
+        part2 = Video(
+            path=to_file_uri("/home/user/media/GRP-001-cd2.mp4"),
+            number="GRP-001",
+            title="Group Part 2",
+            size_bytes=200,
+        )
+        return make_populated_db([part1, part2]), part1.path, part2.path
+
+    @pytest.fixture
+    def group_showcase_config(self):
+        return {
+            "gallery": {
+                "directories": ["/home/user/media"],
+                "path_mappings": {},
+                "min_size_mb": 0,
+                "thumbnail_width": 400,
+            },
+            "scraper": {"video_extensions": [".mp4"], "image_extensions": [".jpg"]},
+            "database": {"path": ":memory:"},
+            "translate": {"provider": "ollama", "ollama_model": "llama3"},
+            "thumbnail_cache_enabled": False,
+        }
+
+    def _make_group_client(self, make_client, db_path, group_showcase_config):
+        """showcase／collection 兩個 router 共用同一個 tmp DB ＋ 同一份 config
+        （AC-12 需要真正打 POST /api/user-rating 寫入、再打 GET /api/showcase/videos
+        讀回，兩個端點分屬不同 router 檔案，各自的 get_db_path/load_config 要一起 mock）。
+        """
+        return make_client(
+            [
+                "web.routers.showcase.get_db_path",
+                "web.routers.showcase.load_config",
+                "web.routers.collection.get_db_path",
+                "web.routers.collection.load_config",
+            ],
+            mock_db_path=db_path,
+            config_override=group_showcase_config,
+        )
+
+    def test_pick_part1_directly_then_only_one_card_with_rating(
+        self, make_populated_db, make_client, group_showcase_config
+    ):
+        """精選 cd1（代表段本身）→ 序列化整組只有 1 筆，user_rating == 1，
+        part_tokens 仍在。"""
+        db_path, part1_path, _part2_path = self._make_group_db(make_populated_db)
+        client = self._make_group_client(make_client, db_path, group_showcase_config)
+
+        resp = client.post("/api/user-rating", json={"file_path": part1_path, "picked": True})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+        listing = client.get("/api/showcase/videos")
+        assert listing.status_code == 200
+        data = listing.json()
+        assert data["success"] is True
+        assert data["total"] == 1, "分集片精選後序列化層必須仍只吐一張合併卡"
+        assert len(data["videos"]) == 1
+        card = data["videos"][0]
+        assert card["user_rating"] == 1
+        assert card["part_tokens"] == ["cd1", "cd2"]
+
+    def test_pick_part2_resolves_to_representative_then_only_one_card_with_rating(
+        self, make_populated_db, make_client, group_showcase_config
+    ):
+        """精選 cd2（非代表段，經 resolve_group() 落到 cd1）→ 序列化整組同樣只有
+        1 筆、user_rating == 1——驗證 resolve_group() 代表段解析在序列化層的另一面。"""
+        db_path, _part1_path, part2_path = self._make_group_db(make_populated_db)
+        client = self._make_group_client(make_client, db_path, group_showcase_config)
+
+        resp = client.post("/api/user-rating", json={"file_path": part2_path, "picked": True})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+        listing = client.get("/api/showcase/videos")
+        assert listing.status_code == 200
+        data = listing.json()
+        assert data["total"] == 1, "分集片精選後序列化層必須仍只吐一張合併卡"
+        card = data["videos"][0]
+        assert card["user_rating"] == 1
+        assert card["part_tokens"] == ["cd1", "cd2"]

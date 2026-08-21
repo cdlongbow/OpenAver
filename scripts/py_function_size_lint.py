@@ -160,10 +160,15 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "組合邏輯搬到別處會打散單一事務語意。",
     ),
     ("core/database/video.py", "VideoRepository.repath"): (
-        230,
+        242,
         "docstring 已明列四個互斥分支（self-no-op／正常 UPDATE／碰撞 delete-merge／"
         "old-not-in-DB），拆分會打散同一顆 SQL 語意單元到多個函式，可讀性不會變好"
-        "（與既有 C901 noqa 理由一致）。",
+        "（與既有 C901 noqa 理由一致）。"
+        " ／ 230→242（feature/123-user-pick-star T1）：碰撞 delete-merge 分支必須明寫 "
+        "user_rating 的合併規則（取 max(old_row, new_row)，且刻意不含傳進來的 video 物件），"
+        "否則使用者手動標記的精選會在撞號合併時被清成 0。這是「新增一個只由專用 mutator 寫的"
+        "欄位」的固有成本——該欄位每多一個，這裡就必須多一條明示的合併分支，"
+        "而把它抽成 helper 只會讓「哪些欄位在這個分支被特殊處理」這件事離 SQL 更遠。",
     ),
     ("windows/tray.py", "NativeTrayIcon._run_windows"): (
         223,
@@ -184,10 +189,14 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "理由一致）。",
     ),
     ("core/database/connection.py", "init_db"): (
-        203,
+        209,
         "資料庫 schema 初始化主流程，逐表 CREATE TABLE/CREATE INDEX 語句序列，schema 仍在"
         "演進中；拆成多個小函式不會降低本質複雜度，只會增加呼叫層次與跨函式的 cursor/conn "
-        "傳遞。",
+        "傳遞。"
+        " ／ 203→209（feature/123-user-pick-star T1）：videos 新增 user_rating 欄位的"
+        "冪等 migration（`if 'user_rating' not in existing_cols: ALTER TABLE`），與同函式內"
+        "既有的 auto_focal／crop_mode／focal_attempted_at 逐字同形。新增欄位必然在此多一段，"
+        "這是 schema 演進的固有成本，不是可以靠重構消掉的膨脹。",
     ),
 }
 

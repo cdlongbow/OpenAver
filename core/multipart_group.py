@@ -193,6 +193,52 @@ def folder_uri_prefix(folder_fs: str, path_mappings: dict = None) -> str:
     return uri if uri.endswith("/") else uri + "/"
 
 
+def resolve_groups_bulk(
+    repo,
+    target_uris: List[str],
+    path_mappings: dict,
+) -> dict:
+    """批次版 `resolve_group()`：**同一個資料夾只查一次 DB、只分組一次**。
+
+    Why：`resolve_group()` 每呼叫一次就 `get_by_folder_uri_prefix()` ＋ 對整個資料夾
+    重跑 `group_rows()`。批次端點若逐路徑呼叫它，**扁平擺法**（整個片庫平鋪在同一層）
+    會把「全資料夾分組」重跑 N 次。用 owner 真實片庫實測（單一資料夾 1966 部）：
+    47.6 ms/次（查詢 27.4 ＋ 分組 24.4），500 路徑 ≈ 24 秒、300 路徑 ≈ 14 秒——
+    使用者叫 AI「把某片商的片全部加精選」就會等十幾秒且沒有任何進度回饋。
+    （同一形狀的前一半——迴圈內重複 `load_config()`——已於 TASK-123-T2 §D 修掉。）
+
+    **語意與逐一呼叫 `resolve_group(repo, uri, path_mappings)` 完全相同**：同樣的資料夾
+    前綴、同樣的 `group_rows()`、同樣以 DB-key URI 做身分比對；差別只在把重複工作攤掉。
+    因此**不改變任何共享語意**，也不需要呼叫端配合。
+
+    Args:
+        repo: `VideoRepository`（只用到 `get_by_folder_uri_prefix()`，duck-typed）。
+        target_uris: 要反解的 DB-key URI 清單（可含重複）。
+        path_mappings: gallery 設定的跨機器路徑映射。
+
+    Returns:
+        `{target_uri: VideoGroup | None}`。重複輸入只解析一次；找不到組的 key 對到
+        `None`（與 `resolve_group()` 一致，不拋例外）。**不吞 DB 例外**（同 CD-122-6）。
+    """
+    out: dict = {}
+    folder_index_cache: dict = {}   # folder prefix -> {member DB-key URI: VideoGroup}
+    for target_uri in target_uris:
+        if target_uri in out:
+            continue
+        folder_fs = os.path.dirname(uri_to_fs_path(target_uri))  # uri-no-reverse: 只取 dirname 拼前綴，隨即 to_file_uri 回 DB namespace，不做磁碟 I/O（同 resolve_group）
+        prefix = folder_uri_prefix(folder_fs, path_mappings)
+        index = folder_index_cache.get(prefix)
+        if index is None:
+            index = {}
+            rows = repo.get_by_folder_uri_prefix(prefix)
+            for group in group_rows(rows, lambda r: uri_to_local_fs_path(r.path, path_mappings)):
+                for member in group.members:
+                    index[member.path] = group
+            folder_index_cache[prefix] = index
+        out[target_uri] = index.get(target_uri)
+    return out
+
+
 def resolve_group(
     repo,
     target_uri: str,

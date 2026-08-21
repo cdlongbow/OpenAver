@@ -501,7 +501,11 @@ class TestLightboxCoverSizeGuards:
         # (b) _setLightboxIndex 必須呼叫 _refreshLbFullBlurUp（不再 inline）
         set_idx = js.find("_setLightboxIndex(")
         assert set_idx != -1, "state-lightbox.js 找不到 _setLightboxIndex 函數"
-        set_snippet = js[set_idx: set_idx + 800]
+        # 視窗 800 → 1200：TASK-123-T4 在 _setLightboxIndex 開頭插入了精選星的 tween
+        # teardown（切換影片必須先殺掉進行中的補間），把 _refreshLbFullBlurUp 的呼叫
+        # 往後推出了原本的擷取範圍。守衛要驗的語意（「應委託 helper、不得 inline」）不變，
+        # 只是函式開頭變長了——放寬視窗而非放寬斷言。
+        set_snippet = js[set_idx: set_idx + 1200]
         assert "_refreshLbFullBlurUp" in set_snippet, (
             "state-lightbox.js _setLightboxIndex 未呼叫 _refreshLbFullBlurUp"
             "（抽 helper 後 _setLightboxIndex 應委託 helper，避免邏輯漂移）"

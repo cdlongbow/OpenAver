@@ -46,6 +46,8 @@ class Video:
     auto_focal: str = ''
     crop_mode: str = 'auto'
     focal_attempted_at: Optional[str] = None  # NULL=從未偵測過；非 NULL=偵測跑過（Codex PR#105 P2）
+    user_rating: int = 0  # 精選標記（spec-123）；判準恆為 > 0，只由 set_user_rating()/
+    # set_user_rating_bulk() 與 repath() 分支 3 的 max() 合併寫入（CD-123-1/3/4）
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -226,6 +228,7 @@ class VideoRepository:
             video_dict.pop('id', None)
             video_dict.pop('created_at', None)
             video_dict.pop('updated_at', None)
+            video_dict.pop('user_rating', None)  # CD-123-3：只由 set_user_rating() 寫入，排除在動態欄位外
 
             columns = list(video_dict.keys())
             placeholders = ', '.join(['?'] * len(columns))
@@ -391,6 +394,7 @@ class VideoRepository:
             video_dict.pop('created_at', None)
             video_dict.pop('updated_at', None)
             video_dict.pop('path', None)   # path 會另外指定
+            video_dict.pop('user_rating', None)  # CD-123-3：只由 set_user_rating() 寫入，排除在動態欄位外
 
             # cover_path 是否變動決定 auto_focal/focal_attempted_at 保留或重置
             # （Codex PR#105 P2b）。old_row 為 None 屬既有存在檢查後被並行刪除的極端
@@ -489,6 +493,13 @@ class VideoRepository:
         else:
             earliest_ca = None
 
+        # user_rating 取較高（CD-123-4：所有權宣告，明確不含 video.user_rating——
+        # video 是 ingest 造出的物件，恆為 dataclass 預設 0，納入 max() 不影響結果但會
+        # 混淆「這欄只由 mutator 寫」的意圖）
+        old_ur = old_row.user_rating if old_row else 0
+        new_ur = new_row.user_rating if new_row else 0
+        merged_rating = max(old_ur, new_ur)
+
         # 動態建 INSERT 欄位 / upsert update_clause（鏡射 upsert）
         video_dict = video.to_dict()
         video_dict.pop('id', None)
@@ -504,6 +515,8 @@ class VideoRepository:
                 values[i] = new_uri
             elif col == 'user_tags':
                 values[i] = json.dumps(merged_tags, ensure_ascii=False)
+            elif col == 'user_rating':
+                values[i] = merged_rating
 
         # 顯式帶入 created_at
         if earliest_ca:
@@ -528,6 +541,8 @@ class VideoRepository:
             elif col == 'created_at':
                 # 碰撞分支：強制寫入較早的 created_at（DO UPDATE 也要更新）
                 update_parts.append("created_at = excluded.created_at")
+            elif col == 'user_rating':
+                update_parts.append("user_rating = excluded.user_rating")  # CD-123-4 明寫合併
             elif col == 'user_tags':
                 update_parts.append(
                     "user_tags = CASE WHEN excluded.user_tags = '[]' "
@@ -638,6 +653,7 @@ class VideoRepository:
                 video_dict.pop('id', None)
                 video_dict.pop('created_at', None)
                 video_dict.pop('updated_at', None)
+                video_dict.pop('user_rating', None)  # CD-123-3：只由 set_user_rating() 寫入，排除在動態欄位外
 
                 columns = list(video_dict.keys())
                 placeholders_sql = ', '.join(['?'] * len(columns))
@@ -1135,6 +1151,49 @@ class VideoRepository:
             )
             conn.commit()
             return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def set_user_rating(self, path: str, value: int) -> bool:
+        """安全更新 user_rating 欄位（不碰其他欄位，鏡射 update_user_tags）。
+
+        不呼叫 SimilarRankerCache.invalidate()——精選不是排序特徵欄位（spec-123 §4.8）。
+
+        Returns:
+            bool: path 是否命中（rowcount > 0）。path 不存在時回 False，不拋例外。
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE videos SET user_rating = ?, updated_at = CURRENT_TIMESTAMP WHERE path = ?",
+                (value, path)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def set_user_rating_bulk(self, paths: list[str], value: int) -> dict[str, bool]:
+        """批次版，逐路徑回報命中與否（供 T2 §4.12 逐路徑回報）。
+
+        空 paths → 直接回 {}，不查詢。單一連線、逐路徑 execute、最後一次 commit。
+        不呼叫 SimilarRankerCache.invalidate()（同 set_user_rating）。
+        """
+        if not paths:
+            return {}
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            results: dict[str, bool] = {}
+            for path in paths:
+                cursor.execute(
+                    "UPDATE videos SET user_rating = ?, updated_at = CURRENT_TIMESTAMP WHERE path = ?",
+                    (value, path)
+                )
+                results[path] = cursor.rowcount > 0
+            conn.commit()
+            return results
         finally:
             conn.close()
 

@@ -87,6 +87,7 @@ def _serialize_video(v, path_mappings: dict, enabled: bool = False) -> dict:
         "label": v.label or '',
         "sample_images": sample_urls,
         "user_tags": v.user_tags or [],              # list[str]，空時回空 list
+        "user_rating": v.user_rating or 0,            # 精選標記（spec-123）；無條件輸出，未精選為 0（FE-ALPINE-06）
         "has_cover": bool(v.cover_path),             # DB 初判（不做 IO）
         "has_nfo": (v.nfo_mtime or 0) > 0,          # 對齊 41a nfo_mtime 寫入契約，防禦 NULL
         "auto_focal": v.auto_focal,                  # canonical "x,y" 4dp 字串或 ''（98b：前端 focalObjectPosition 消費）

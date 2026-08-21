@@ -52,6 +52,9 @@ _BASELINE_VIDEO_COLUMNS = {
     "scrape_attempted_at", "created_at", "updated_at",
     # feature/98 focal-crop: focal 座標 + 裁切模式 + 偵測試過旗標（全域 schema，非 off-flavor 寫入路徑新增）
     "auto_focal", "crop_mode", "focal_attempted_at",
+    # spec-123 精選：user_rating（全域 migration 加的欄位，同樣不是 off-flavor 寫入路徑新增；
+    # 該路徑對它零寫入——CD-123-3 已把它排除在 upsert/upsert_batch/repath 分支 2 之外）
+    "user_rating",
 }
 
 _FAKE_COVER_BYTES = b"\xff\xd8\xff\xe0FAKE-COVER-JPEG"

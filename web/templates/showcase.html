@@ -77,11 +77,11 @@
                         <span class="filter-pill-list" role="list" x-show="pills.length">
                             <template x-for="pill in pills" :key="pill.dim + '::' + normalizePillValue(pill.value)">
                                 <span class="filter-pill" role="listitem"
-                                      :title="t('showcase.pill.title', { dim: t('showcase.pill.dim_label.' + pill.dim), value: pill.value })">
-                                    <span class="filter-pill-value" x-text="pill.value"></span>
+                                      :title="pill.dim === 'pick' ? t('showcase.pick.chip_label') : t('showcase.pill.title', { dim: t('showcase.pill.dim_label.' + pill.dim), value: pill.value })">
+                                    <span class="filter-pill-value" x-text="pillLabel(pill)"></span>
                                     <button type="button" class="filter-pill-remove"
                                             @click="removePill(pill.dim, pill.value)"
-                                            :aria-label="t('showcase.pill.remove_aria', { value: pill.value })">✕</button>
+                                            :aria-label="pill.dim === 'pick' ? t('showcase.pick.remove_aria') : t('showcase.pill.remove_aria', { value: pill.value })">✕</button>
                                 </span>
                             </template>
                         </span>
@@ -236,10 +236,16 @@
                         <button class="btn-icon"
                                 @click="sortOpen = !sortOpen; modeOpen = false"
                                 :title="t('showcase.toolbar.sort_prefix') + ': ' + sort"
-                                :class="{ 'active': sortOpen }">
+                                :class="{ 'active': sortOpen || _hasPickPill() }">
                             <i class="bi bi-funnel"></i>
                         </button>
                         <div class="toolbar-dropdown" x-show="sortOpen" x-transition.opacity.duration.150ms @click.stop>
+                            <a href="#" class="dropdown-item dropdown-item-pick" :class="{ 'is-checked': _hasPickPill() }"
+                               @click.prevent="togglePickPill(); sortOpen = false">
+                                <i class="bi bi-star-fill"></i> {{ t('showcase.filter.pick_only') }}
+                                <i class="bi bi-check2 dropdown-item-pick-check" x-show="_hasPickPill()"></i>
+                            </a>
+                            <div class="dropdown-divider"></div>
                             <a href="#" class="dropdown-item" :class="{ 'active': sort === 'date' }"
                                @click.prevent="sort = 'date'; onSortChange(); sortOpen = false">
                                 <i class="bi bi-calendar"></i> {{ t('showcase.sort.date') }}</a>
@@ -474,7 +480,11 @@
                     </div>
                     <div class="av-card-preview-footer">
                         <div class="footer-default">
-                            <span class="av-num" x-text="video.number"></span>
+                            <span class="footer-num-group">
+                                <span class="pick-star-mark bi bi-star-fill" aria-hidden="true"
+                                      x-show="(video.user_rating || 0) > 0"></span>
+                                <span class="av-num" x-text="video.number"></span>
+                            </span>
                             <span class="av-actress" x-text="video.actresses || t('showcase.grid.unknown_actor')"></span>
                         </div>
                         <div class="footer-hover" x-show="!infoVisible">
@@ -549,8 +559,14 @@
                         <template x-for="(video, index) in paginatedVideos" :key="video.path">
                             <tr @click="openLightbox(getCurrentFilteredIndex(index))" class="table-row-clickable">
                                 <td class="table-cell-index" x-text="getCurrentFilteredIndex(index) + 1"></td>
+                                <!-- 123-T8b：下面兩個 <span> 之間不得留空白字元。<td> 是 inline 格式化
+                                     脈絡，換行縮排會塌成一個空格（實測讓星到番號的距離變成 11.4px，而 grid
+                                     只有 3px）——spec §4.2 要求「一律在番號正前方」，三種呈現必須一致。
+                                     註解刻意放在 <td> 外：它若在 anchor 與 payload 之間會撐破
+                                     [123-T5] AC-4/5 table 守衛的 window。 -->
                                 <td class="table-cell-number">
-                                    <span class="table-number-highlight" x-text="video.number"></span>
+                                    <span class="pick-star-mark bi bi-star-fill" aria-hidden="true"
+                                          x-show="(video.user_rating || 0) > 0"></span><span class="table-number-highlight" x-text="video.number"></span>
                                     <template x-if="(video.part_tokens || []).length">
                                         <span class="cover-badge" x-text="formatPartLabel(video.part_tokens)"></span>
                                     </template>
@@ -591,6 +607,8 @@
             <ul class="showcase-list">
                 <template x-for="(video, index) in paginatedVideos" :key="video.path">
                     <li class="list-item" @click="openLightbox(getCurrentFilteredIndex(index))">
+                        <span class="pick-star-mark bi bi-star-fill" aria-hidden="true"
+                              x-show="(video.user_rating || 0) > 0"></span>
                         <span class="list-number" x-text="video.number"></span>
                         <template x-if="(video.part_tokens || []).length">
                             <span class="cover-badge" x-text="formatPartLabel(video.part_tokens)"></span>
@@ -1005,7 +1023,18 @@
                         <div class="lightbox-metadata">
                             <!-- Row 1: Header (title + sample gallery button) -->
                             <div class="lb-header">
-                                <div class="lb-title" x-text="currentLightboxVideo?.title || t('showcase.grid.unknown_title')"></div>
+                                <!-- 123-T8：精選星掛在標題行最前面（owner 拍板：標題前比番號前更清楚，
+                                     與標題有沒有番號前綴無關——scraper 本來就會剝掉前綴，見
+                                     core/scrapers/javdb.py strip_number_prefix）。星與標題文字同屬一個
+                                     inline 格式化脈絡＝共用同一條基線（詳見 showcase.css 該段註解）。
+                                     <button> 與 <span> 之間不得留空白字元，否則會多出一個空格。 -->
+                                <div class="lb-title"><button type="button" class="pick-star"
+                                        :class="{'is-picked': (currentLightboxVideo?.user_rating || 0) > 0}"
+                                        :aria-pressed="(currentLightboxVideo?.user_rating || 0) > 0"
+                                        :aria-label="(currentLightboxVideo?.user_rating||0) > 0 ? t('showcase.pick.remove_aria') : t('showcase.pick.add_aria')"
+                                        :aria-busy="!!_pickInFlight[currentLightboxVideo?.path]"
+                                        @click.stop="togglePickStar()"><i class="bi bi-star pick-star-outline" aria-hidden="true"></i><i class="bi bi-star-fill pick-star-fill" aria-hidden="true"
+                                       :style="{ '--pick-fill': (currentLightboxVideo?.user_rating || 0) > 0 ? '0%' : '100%' }"></i></button><span x-text="currentLightboxVideo?.title || t('showcase.grid.unknown_title')"></span></div>
                                 <!-- Sample Gallery 入口按鈕 (T7) -->
                                 <button class="sg-open-btn"
                                         x-show="(currentLightboxVideo?.sample_images || []).length > 0"
@@ -1048,6 +1077,7 @@
                             <!-- Row 4: Details (merged) -->
                             <!-- 分隔符 " · " 內嵌於各 span 開頭，隨 x-show 一起顯示/隱藏，避免孤立 · -->
                             <div class="lb-details">
+                                <!-- 123-T8：精選星已移到 .lb-title（標題行）最前面，此列回到以番號起頭。 -->
                                 <span x-text="currentLightboxVideo?.number || t('showcase.lightbox.unknown_number')"></span>
                                 <!-- 62b-1: 進階重刮 ⚙ 入口（番號旁 inline 細鈕，常駐顯示）-->
                                 <button type="button"

@@ -4056,8 +4056,8 @@ const RULES = [
       '<template x-if="(video.part_tokens || []).length">',
       'formatPartLabel(video.part_tokens)',
     ],
-    scope: { anchor: /class="table-cell-number"/, window: 400 },
-    note: '[122-T3] AC-7 table：番號欄必須以 <template x-if> 掛 formatPartLabel(video.part_tokens)',
+    scope: { anchor: /class="table-cell-number"/, window: 600 },
+    note: '[122-T3] AC-7 table：番號欄必須以 <template x-if> 掛 formatPartLabel(video.part_tokens)。[123-T5] window 400→600：table-cell-number 內插入唯讀 .pick-star-mark 後把 formatPartLabel 目標往後推，實測距離 513，取 600。',
   },
   {
     file: 'web/templates/showcase.html',
@@ -4080,6 +4080,101 @@ const RULES = [
     scope: { anchor: /<div class="lightbox-cover" :class="\{'has-cover': !!currentLightboxVideo\?\.cover_url\}">/, window: 4000 },
     note: '[122-T3] AC-7/AC-17 燈箱：封面必須以 <template x-if> 掛 .cover-badges-part（含 !_maskVisible），消費 formatPartLabel(currentLightboxVideo.part_tokens)',
   },
+
+  // ==== [123-T5] CD-123-13：三個唯讀表面 + 燈箱既有插入點的粗顆粒守衛（AC-4/5/6） ====
+  // [Codex review BLOCKER 修正] 前一版把 anchor 錨在「自己要驗的那段字面」上
+  // （/<span class="pick-star-mark...[\s\S]{0,300}class="av-num"/ 這類）。anchor.exec()
+  // 對整份檔案是非 global 搜尋：只要檔案裡任何位置（含頂部中文說明註解）殘留同樣的複合
+  // 字面，即使真正實作被整段刪掉，window 仍會在殘留文字裡「找到」要求的 pattern → false-
+  // green。review 已實測重現：三處星標全刪＋頂部塞一段含完整複合字面的 HTML 註解，
+  // 6 條全數轉綠。
+  // 修法：anchor 一律錨在「不含 payload 字面本身、且結構上必然唯一存在」的容器 class——
+  // 照抄同一個 RULES 陣列裡 122-T3 三條既有規則的做法（grid 錨 :data-flip-id="video.path"、
+  // table 錨 class="table-cell-number"），不發明新寫法：
+  //   grid  → class="footer-num-group"（pick-star-mark 的直接父層，全檔僅 1 處）
+  //   table → class="table-cell-number"（與 122-T3 table 規則共用同一個既驗證過的唯一 anchor）
+  //   list  → class="list-item"（<li> 開標籤，全檔僅 1 處）
+  // 三個 anchor 均以 grep -c 驗證全檔僅出現 1 次，且字面本身不含 pick-star-mark/av-num/
+  // table-number-highlight/list-number 任何一段 payload，故不會被同風格的中文說明註解
+  // 意外命中。window 數值已實測校準（node 量測 anchor.index 到 aria-hidden="true" 結尾的
+  // 實際字元距離，取整數進位加緩衝）：grid 197→250、table 206→260、list 228→280。
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'required-string',
+    pattern: [
+      '<span class="pick-star-mark bi bi-star-fill"',
+      'x-show="(video.user_rating || 0) > 0"',
+      'aria-hidden="true"',
+    ],
+    scope: { anchor: /class="footer-num-group"/, window: 250 },
+    note: '[123-T5] AC-4/5 grid/poster（共用同一份 markup）：.footer-num-group 內、.av-num 前必須有唯讀 .pick-star-mark（x-show 條件渲染，不佔位）。anchor 改錨 .footer-num-group（全檔唯一容器，不含 payload 字面，修 Codex review BLOCKER：舊 anchor 自我參照可被殘留註解假綠）。window 實測 197，取 250。',
+  },
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'required-string',
+    pattern: [
+      '<span class="pick-star-mark bi bi-star-fill"',
+      'x-show="(video.user_rating || 0) > 0"',
+      'aria-hidden="true"',
+    ],
+    scope: { anchor: /class="table-cell-number"/, window: 260 },
+    note: '[123-T5] AC-4/5 table：.table-cell-number 內、.table-number-highlight 前必須有唯讀 .pick-star-mark。anchor 與 122-T3 table 規則共用同一個既驗證唯一的容器 class（修 Codex review BLOCKER：舊 anchor 自我參照可被殘留註解假綠）。window 實測 206，取 260。',
+  },
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'required-string',
+    pattern: [
+      '<span class="pick-star-mark bi bi-star-fill"',
+      'x-show="(video.user_rating || 0) > 0"',
+      'aria-hidden="true"',
+    ],
+    scope: { anchor: /class="list-item"/, window: 280 },
+    note: '[123-T5] AC-4/5 list：.list-item 內、.list-number 前必須有唯讀 .pick-star-mark。anchor 改錨 .list-item（<li> 開標籤，全檔唯一，不含 payload 字面，修 Codex review BLOCKER：舊 anchor 自我參照可被殘留註解假綠）。window 實測 228，取 280。',
+  },
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'required-string',
+    pattern: ['class="pick-star"', 'pick-star-outline', 'pick-star-fill'],
+    scope: { anchor: /class="lb-title"/, window: 800 },
+    note: '[123-T5] AC-1 燈箱（anchor 於 123-T8 由 lb-details 改為 lb-title）：可切換的 .pick-star 必須在標題行內、與標題文字同一個 inline 脈絡——它是精選的唯一切換入口，且該處是對齊正確性的承重位置（見 showcase.css .lb-title .pick-star 註解）。anchor 全檔僅 1 次且不含 payload 字面（FE-GUARD-11）。window 實測（lb-title 到 pick-star-fill 結尾）698，取 800。',
+  },
+
+  // AC-6：三個唯讀表面不得被掛上 click（誤觸代價是取消精選、牆上無任何確認，spec §4.1）。
+  // resolveScopeRaw 的 anchor.exec() 非 global，單一 anchor 只會抓到「檔案中第一個」符合
+  // 的位置——不存在「occurrence: 'each'」這個 scope 選項（引擎未實作，若三條共用同一個
+  // anchor 只會實際檢查第一條命中的表面，其餘會是沒有鎖到的假安全)。改成三條各自 anchor
+  // 到自己表面的容器 class（與上面 required-string 三條同一組 anchor：
+  // footer-num-group / table-cell-number / list-item，[Codex review BLOCKER 修正] 同理換掉
+  // 舊版自我參照的 pick-star-mark 複合字面 anchor），window 收窄到只覆蓋星标自身這個
+  // <span>（實測 anchor 到 </span> 結尾 205/214/236），不重用 required-string 較寬的
+  // window——避免不小心把表面本身既有、合法的 @click（grid 卡片整體 @click="openLightbox"
+  // 在插入點之前；table <tr>／list <li> 的 @click 也都在插入點之前，理論上已被 anchor
+  // 位置排除，但仍收窄以防未來版面調整把合法 @click 移到窗口內）。
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'forbidden-string',
+    pattern: '@click',
+    scope: { anchor: /class="footer-num-group"/, window: 230 },
+    note: '[123-T5] AC-6 grid：.pick-star-mark 是唯讀標記，不得掛 @click（唯一切換入口在燈箱）。anchor 改錨 .footer-num-group（修 Codex review BLOCKER）。window 實測（anchor 到 </span> 結尾）205，取 230。',
+  },
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'forbidden-string',
+    pattern: '@click',
+    scope: { anchor: /class="table-cell-number"/, window: 240 },
+    note: '[123-T5] AC-6 table：.pick-star-mark 是唯讀標記，不得掛 @click（唯一切換入口在燈箱）。anchor 改錨 .table-cell-number（修 Codex review BLOCKER）。window 實測（anchor 到 </span> 結尾）214，取 240。',
+  },
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'forbidden-string',
+    pattern: '@click',
+    scope: {
+      anchor: /(?<=<li class="list-item" @click="openLightbox\(getCurrentFilteredIndex\(index\)\)">)/,
+      window: 190,
+    },
+    note: '[123-T5] AC-6 list：.pick-star-mark 是唯讀標記，不得掛 @click（唯一切換入口在燈箱）。anchor 不能直接用 class="list-item"（同一個 <li> 開標籤自己就掛著合法的 @click="openLightbox(...)"，window 從 anchor 起點往後切一定會把這段合法 @click 也切進去、恆假紅）；改用零寬 lookbehind 錨在該 <li> 開標籤結尾的 ">" 之後，把合法 @click 排除在 window 之外。window 實測（anchor 到 </span> 結尾）164，取 190。',
+  },
+
   {
     file: 'web/static/css/pages/showcase.css',
     kind: 'required-string',
@@ -4094,6 +4189,37 @@ const RULES = [
     scope: { anchor: /\.cover-badges-part\s*\{/, braceBalanced: true },
     note: '[122-T3] AC-5：.cover-badges-part 必須左下定位、pointer-events:none、transition 走 Fluent token',
   },
+  // ==== [123-T6] AC-7：漏斗選單「只看精選」項＋分隔線＋勾選態；AC-11：漏斗按鈕 active 態 ====
+  // anchor 錨在 sortOpen 專屬 .toolbar-dropdown-wrap 的 @click.outside="sortOpen = false"
+  // （全檔僅 1 次；mode/actress 兩個姊妹 dropdown 各自用 modeOpen/actressSortOpen，不會誤命中）。
+  // 字面本身不含本規則要驗的任何 payload —— 比照 T5 修正後的 anchor 慣例（FE-GUARD-11：
+  // anchor 不可自我參照，否則殘留註解可造成 false-green）。
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'required-string',
+    pattern: [
+      "t('showcase.filter.pick_only')",
+      "'is-checked': _hasPickPill()",
+      '@click.prevent="togglePickPill(); sortOpen = false"',
+    ],
+    scope: { anchor: /@click\.outside="sortOpen = false"/, window: 900 },
+    note: '[123-T6] AC-7：選單最上方「只看精選」項存在（i18n key）＋ :class 綁 _hasPickPill()（勾選態，非排序項那種 .active 單選高亮）＋ @click 綁 togglePickPill()。window 實測 822，取 900。',
+  },
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'required-string',
+    pattern: '<div class="dropdown-divider"></div>',
+    scope: { anchor: /@click\.outside="sortOpen = false"/, window: 1200 },
+    note: '[123-T6] AC-7：「只看精選」與下面八條排序項之間有分隔線（.dropdown-divider）。window 實測 1063，取 1200。',
+  },
+  {
+    file: 'web/templates/showcase.html',
+    kind: 'required-string',
+    pattern: "'active': sortOpen || _hasPickPill()",
+    scope: { anchor: /@click\.outside="sortOpen = false"/, window: 350 },
+    note: '[123-T6] AC-11：漏斗按鈕本身在精選開啟時呈 active（不必打開選單就知道掛著條件）。window 實測 331，取 350。',
+  },
+
   {
     file: 'web/static/css/pages/showcase.css',
     kind: 'required-string',
