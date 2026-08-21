@@ -1390,13 +1390,13 @@
                  CDP 驗證**，已列 follow-up，不在本 PR 範圍。 -->
             <button class="lightbox-nav lightbox-nav-prev"
                     @click.stop="showFavoriteActresses ? prevActressLightbox() : prevLightboxVideo()"
-                    x-show="showFavoriteActresses ? (!_pickerOpen && actressLightboxIndex > 0) : hasVisiblePrev()"
+                    x-show="!_maskVisible && (showFavoriteActresses ? (!_pickerOpen && actressLightboxIndex > 0) : hasVisiblePrev())"
                     title="{{ t('showcase.lightbox.prev') }}">
                 <i class="bi bi-chevron-left"></i>
             </button>
             <button class="lightbox-nav lightbox-nav-next"
                     @click.stop="showFavoriteActresses ? nextActressLightbox() : nextLightboxVideo()"
-                    x-show="showFavoriteActresses ? (!_pickerOpen && actressLightboxIndex < filteredActressCount - 1) : hasVisibleNext()"
+                    x-show="!_maskVisible && (showFavoriteActresses ? (!_pickerOpen && actressLightboxIndex < filteredActressCount - 1) : hasVisibleNext())"
                     title="{{ t('showcase.lightbox.next') }}">
                 <i class="bi bi-chevron-right"></i>
             </button>

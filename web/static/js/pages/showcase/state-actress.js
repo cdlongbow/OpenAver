@@ -644,6 +644,11 @@ export function stateActress() {
         },
 
         prevActressLightbox() {
+            // 124c-T3（spec-124c §3.4）：對焦編輯進行中不換人。放在 _pickerOpen 之前，
+            // 讓四個 chokepoint 的「新 guard ＝第一行」零例外（兩者都是零副作用 early-return，
+            // 順序在操作上等價）。走 state-lightbox.js 的共用判斷式而非直接讀遮罩狀態——
+            // 100b-T5 CD-1 明訂本檔不得直接碰遮罩狀態識別字（同 this._resetMask() 的慣例）。
+            if (this._navBlockedByFocalEdit()) return;
             // 100b PR#108 Codex P2-A：picker（.actress-picker-overlay）開著時擋女優切換——
             // picker 候選是「這個女優」的候選照片，若切到別的女優但 picker 沒關，
             // _onPickerSelect 讀當下 currentLightboxActress?.name 會把舊女優的候選寫進
@@ -686,6 +691,11 @@ export function stateActress() {
         },
 
         nextActressLightbox() {
+            // 124c-T3（spec-124c §3.4）：對焦編輯進行中不換人。放在 _pickerOpen 之前，
+            // 讓四個 chokepoint 的「新 guard ＝第一行」零例外（兩者都是零副作用 early-return，
+            // 順序在操作上等價）。走 state-lightbox.js 的共用判斷式而非直接讀遮罩狀態——
+            // 100b-T5 CD-1 明訂本檔不得直接碰遮罩狀態識別字（同 this._resetMask() 的慣例）。
+            if (this._navBlockedByFocalEdit()) return;
             // 100b PR#108 Codex P2-A：見 prevActressLightbox 同段註解（鏡射 guard，
             // 女優模式下 .lightbox-nav-next @click + 鍵盤 ArrowRight 女優分支的共同
             // chokepoint；影片模式 hero-card 的殘留副作用同該段說明，範圍外）。

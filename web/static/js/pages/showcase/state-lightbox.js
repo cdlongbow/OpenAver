@@ -763,6 +763,11 @@ export function stateLightbox() {
         },
 
         prevLightboxVideo() {
+            // 124c-T3（spec-124c §3.4）：對焦編輯進行中不換片。必須是第一行——下面的
+            // _killLightboxTimelines()／清 gsap-animating／_closePicker() 都是副作用，
+            // 插在它們之後＝「不換片但靜靜把 picker 關掉」，那是半套。
+            // 切片會 _resetMask()，正在調的對焦位置就沒了。
+            if (this._navBlockedByFocalEdit()) return;
             // C18: interrupt — kill open + switch timeline
             _killLightboxTimelines();
             this._lightboxAnimating = false;
@@ -834,6 +839,11 @@ export function stateLightbox() {
         },
 
         nextLightboxVideo() {
+            // 124c-T3（spec-124c §3.4）：對焦編輯進行中不換片。必須是第一行——下面的
+            // _killLightboxTimelines()／清 gsap-animating／_closePicker() 都是副作用，
+            // 插在它們之後＝「不換片但靜靜把 picker 關掉」，那是半套。
+            // 切片會 _resetMask()，正在調的對焦位置就沒了。
+            if (this._navBlockedByFocalEdit()) return;
             // C18: interrupt — kill open + switch timeline
             _killLightboxTimelines();
             this._lightboxAnimating = false;
@@ -1425,6 +1435,14 @@ export function stateLightbox() {
         },
 
         // 換片 / 關燈箱：丟棄未提交態（不 commit，不把前片焦點帶到下一片）。
+        // 124c-T3（spec-124c §3.4）：對焦編輯進行中，換片的每一個入口都不作用。
+        // 定義在這裡（_mask* 狀態的擁有者）而不是各檔各讀一次 this._maskVisible——
+        // state-actress.js 依 100b-T5 CD-1 不得直接碰 _mask* 識別字，一律走本檔的共用方法
+        // （同 this._resetMask() 的既有慣例）。四個 chokepoint 因此用同一個判斷式。
+        _navBlockedByFocalEdit() {
+            return this._maskVisible === true;
+        },
+
         _resetMask() {
             // 98b P2 fix：換片/關燈箱一律使舊 session 失效（即使當下沒開新遮罩），
             // 讓仍在途的舊 await 回應之後必被 session gate 擋下，不依賴 _maskVisible 的

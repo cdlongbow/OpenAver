@@ -3411,13 +3411,13 @@ const RULES = [
   // 需獨立 CDP 驗證，已列 follow-up——**不要**把它誤讀成「影片分支已經沒事」。
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
-    pattern: 'x-show="showFavoriteActresses ? (!_pickerOpen && actressLightboxIndex > 0) : hasVisiblePrev()"',
+    pattern: 'x-show="!_maskVisible && (showFavoriteActresses ? (!_pickerOpen && actressLightboxIndex > 0) : hasVisiblePrev())"',
     scope: { anchor: /<button class="lightbox-nav lightbox-nav-prev"/, window: 400 },
     note: '[nit-1 nav-arrow-picker] PR#108：picker 開啟時隱藏女優「上一位」箭頭（防死點擊）；影片分支 hasVisiblePrev() 維持零改動',
   },
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
-    pattern: 'x-show="showFavoriteActresses ? (!_pickerOpen && actressLightboxIndex < filteredActressCount - 1) : hasVisibleNext()"',
+    pattern: 'x-show="!_maskVisible && (showFavoriteActresses ? (!_pickerOpen && actressLightboxIndex < filteredActressCount - 1) : hasVisibleNext())"',
     scope: { anchor: /<button class="lightbox-nav lightbox-nav-next"/, window: 400 },
     note: '[nit-1 nav-arrow-picker] PR#108：picker 開啟時隱藏女優「下一位」箭頭（防死點擊）；影片分支 hasVisibleNext() 維持零改動',
   },
