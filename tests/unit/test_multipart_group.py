@@ -17,6 +17,8 @@ from core.multipart_group import (
     VideoGroup,
     group_rows,
     resolve_group_for_path,
+    resolve_group,
+    resolve_groups_bulk,
 )
 
 
@@ -277,3 +279,82 @@ class TestResolveGroupForPath:
             uri_of=_uri_of,
         )
         assert group is None
+
+
+class TestResolveGroupsBulk:
+    """123-T8b（Stage 2 Opus review P2）：批次解析必須與「逐一呼叫 resolve_group()」
+    語意逐位元相同，且同一資料夾只查一次 DB。
+
+    Why 這支測試存在：批次端點原本逐路徑呼叫 resolve_group()，而它每次都對整個資料夾
+    重查 ＋ 重跑 group_rows()（實測 owner 真實片庫 47.6 ms/次 ⇒ 500 路徑約 24 秒）。
+    改成批次後**唯一能出錯的地方就是語意漂移**，所以這裡鎖的是等價性，不是效能數字。
+    """
+
+    class _FakeRepo:
+        """只實作 resolve_group()／resolve_groups_bulk() 用到的那一個方法（duck-typed，
+        與 core.multipart_group 的 repo 契約一致），並記錄呼叫次數。"""
+
+        def __init__(self, rows):
+            self._rows = rows
+            self.calls = []
+
+        def get_by_folder_uri_prefix(self, prefix):
+            self.calls.append(prefix)
+            return [r for r in self._rows if r.path.startswith(prefix)]
+
+    def _library(self):
+        return [
+            Video(path=to_file_uri("/media/ABC-123-cd1.mp4")),
+            Video(path=to_file_uri("/media/ABC-123-cd2.mp4")),
+            Video(path=to_file_uri("/media/SOLO-001.mp4")),
+            Video(path=to_file_uri("/other/XYZ-9-cd1.mp4")),
+            Video(path=to_file_uri("/other/XYZ-9-cd2.mp4")),
+        ]
+
+    def test_matches_per_path_resolve_group_exactly(self):
+        rows = self._library()
+        targets = [r.path for r in rows] + [to_file_uri("/media/NOT-THERE.mp4")]
+
+        one_by_one = {}
+        for uri in targets:
+            g = resolve_group(self._FakeRepo(rows), uri, {})
+            one_by_one[uri] = None if g is None else [m.path for m in g.members]
+
+        bulk_raw = resolve_groups_bulk(self._FakeRepo(rows), targets, {})
+        bulk = {k: (None if v is None else [m.path for m in v.members]) for k, v in bulk_raw.items()}
+
+        assert bulk == one_by_one
+
+    def test_same_folder_queried_once_regardless_of_path_count(self):
+        rows = self._library()
+        repo = self._FakeRepo(rows)
+        # 同一資料夾 3 條路徑 + 另一資料夾 2 條
+        targets = [
+            to_file_uri("/media/ABC-123-cd1.mp4"),
+            to_file_uri("/media/ABC-123-cd2.mp4"),
+            to_file_uri("/media/SOLO-001.mp4"),
+            to_file_uri("/other/XYZ-9-cd1.mp4"),
+            to_file_uri("/other/XYZ-9-cd2.mp4"),
+        ]
+        resolve_groups_bulk(repo, targets, {})
+        assert len(repo.calls) == 2, f"每個資料夾只該查一次，實際 {repo.calls}"
+        assert len(set(repo.calls)) == 2
+
+    def test_duplicate_input_resolved_once(self):
+        rows = self._library()
+        repo = self._FakeRepo(rows)
+        uri = to_file_uri("/media/ABC-123-cd1.mp4")
+        out = resolve_groups_bulk(repo, [uri, uri, uri], {})
+        assert len(repo.calls) == 1
+        assert list(out.keys()) == [uri]
+
+    def test_not_found_maps_to_none_not_raise(self):
+        repo = self._FakeRepo(self._library())
+        missing = to_file_uri("/media/NOPE.mp4")
+        out = resolve_groups_bulk(repo, [missing], {})
+        assert out[missing] is None
+
+    def test_empty_input_no_db_call(self):
+        repo = self._FakeRepo(self._library())
+        assert resolve_groups_bulk(repo, [], {}) == {}
+        assert repo.calls == []

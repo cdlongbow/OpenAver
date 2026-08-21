@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from core.config import load_config
 from core.database import Video, VideoRepository, get_connection, get_db_path
 from core.logger import get_logger
-from core.multipart_group import resolve_group
+from core.multipart_group import resolve_groups_bulk
 from core.nfo_updater import update_nfo_user_tags
 from core.path_utils import CURRENT_ENV, reverse_path_mapping, to_file_uri, uri_to_fs_path
 from core.scraper import extract_number, is_number_format
@@ -855,7 +855,8 @@ def post_user_rating(request: UserRatingRequest) -> dict:
     - `paths`（批次）與 `file_path`（單筆簡寫）二擇一，函式體內驗證（XOR），非 pydantic
       cross-field validator（跟隨本檔既有風格，見 TASK-123-T2.md「技術要點」）。
     - `picked` 必填，缺欄位由 pydantic 自動回 422，不在此處理。
-    - 路徑先正規化（`_normalize_to_uri`）、再過分集組代表段解析（`resolve_group`），
+    - 路徑先正規化（`_normalize_to_uri`），再過分集組代表段解析（`resolve_groups_bulk`——
+      批次版，同一資料夾只查一次 DB、只分組一次；語意與逐一 `resolve_group()` 相同），
       代表段 = `group.members[0].path`；查無一律回報 `not_found`，不建 stub 列（CD-123-8）。
     - 重複路徑：寫入端去重（set 過的代表段才進 `set_user_rating_bulk`），回報端不去重
       （`results` 與輸入 1:1），`changed` 只計代表段去重後的成功寫入數（§C）。
@@ -888,13 +889,24 @@ def post_user_rating(request: UserRatingRequest) -> dict:
         db_path = get_db_path()
         repo = VideoRepository(db_path)
 
+        #    Stage 2 review（Opus, 2026-08-21）P2：這裡原本逐路徑呼叫 resolve_group()，
+        #    而它每次都對整個資料夾重查 DB ＋ 重跑 group_rows()。扁平擺法的片庫實測
+        #    47.6 ms/次 ⇒ 500 路徑 ≈ 24 秒。改用 resolve_groups_bulk()（同一資料夾只做
+        #    一次、之後查表），語意逐位元相同。這是 §D 那條「迴圈內重複昂貴工作」的另一半。
+        canonical_of: dict = {}   # raw_path -> canonical URI or None
+        for raw in raw_paths:
+            canonical_of[raw] = _normalize_to_uri(raw, path_mappings)
+
+        groups = resolve_groups_bulk(
+            repo,
+            [c for c in canonical_of.values() if c],
+            path_mappings,
+        )
+
         resolved: dict = {}  # raw_path -> representative_path or None
         for raw in raw_paths:
-            canonical = _normalize_to_uri(raw, path_mappings)
-            if not canonical:
-                resolved[raw] = None
-                continue
-            group = resolve_group(repo, canonical, path_mappings)
+            canonical = canonical_of[raw]
+            group = groups.get(canonical) if canonical else None
             resolved[raw] = group.members[0].path if group is not None else None
 
         # 4. 去重後批次寫入（只對成功解析的代表段）

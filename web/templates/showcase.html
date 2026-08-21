@@ -559,10 +559,14 @@
                         <template x-for="(video, index) in paginatedVideos" :key="video.path">
                             <tr @click="openLightbox(getCurrentFilteredIndex(index))" class="table-row-clickable">
                                 <td class="table-cell-index" x-text="getCurrentFilteredIndex(index) + 1"></td>
+                                <!-- 123-T8b：下面兩個 <span> 之間不得留空白字元。<td> 是 inline 格式化
+                                     脈絡，換行縮排會塌成一個空格（實測讓星到番號的距離變成 11.4px，而 grid
+                                     只有 3px）——spec §4.2 要求「一律在番號正前方」，三種呈現必須一致。
+                                     註解刻意放在 <td> 外：它若在 anchor 與 payload 之間會撐破
+                                     [123-T5] AC-4/5 table 守衛的 window。 -->
                                 <td class="table-cell-number">
                                     <span class="pick-star-mark bi bi-star-fill" aria-hidden="true"
-                                          x-show="(video.user_rating || 0) > 0"></span>
-                                    <span class="table-number-highlight" x-text="video.number"></span>
+                                          x-show="(video.user_rating || 0) > 0"></span><span class="table-number-highlight" x-text="video.number"></span>
                                     <template x-if="(video.part_tokens || []).length">
                                         <span class="cover-badge" x-text="formatPartLabel(video.part_tokens)"></span>
                                     </template>

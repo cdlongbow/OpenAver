@@ -779,6 +779,16 @@
     flex-shrink: 0; /* list-item 是 flex 容器，防止被壓縮 */
 }
 
+/* 123-T8b：清單模式抵銷 .list-item 的 flex gap。
+ * .list-item 是 display:flex; gap:0.75rem，而星是它的**直接** flex 子元素，
+ * 所以那 12px 的 gap 會夾在星與番號之間 ⇒ 實測距離 15px，grid（.footer-num-group
+ * 包住、gap 不適用）只有 3px。spec §4.2 要求「一律在番號正前方」，三種呈現必須一致。
+ * 負 margin 是 flex 子元素退出父層 gap 的標準做法；0.25em(3px) − 0.75rem(12px) = −9px
+ * ⇒ 12 + (−9) = 3px，與 grid 對齊。 */
+.list-item .pick-star-mark {
+    margin-right: calc(0.25em - 0.75rem);
+}
+
 /* 懸停層：標題（絕對定位覆蓋） */
 .footer-hover {
     position: absolute;
