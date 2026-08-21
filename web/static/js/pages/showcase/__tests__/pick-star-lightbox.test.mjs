@@ -63,15 +63,26 @@ const { stateLightbox } = await import('../state-lightbox.js');
 // _pickFilterStale() 讀的是 state-base.js 的模組級單例陣列（同一個 import specifier，
 // 走同一支 resolve hook，跟 state-lightbox.js 內部 `@/showcase/state-base.js` 解析到同一份
 // 模組實例）——測試用它直接佈置/清空「牆上目前顯示的清單」。
-const { _filteredVideos } = await import('@/showcase/state-base.js');
+const { _filteredVideos, _videos } = await import('@/showcase/state-base.js');
+// 123-T8c：_pickFilterStale() 改成呼叫 _computeFilteredVideos()（state-videos.js 的
+// 篩選那一半）直接算真實 membership，不再猜。所以測試元件必須把**真的那支 mixin** 併進來，
+// 讓述詞走 production call path，而不是在測試裡放一個更淺的 stub 版篩選器。
+const { stateVideos } = await import('../state-videos.js');
 
 const PATH_A = 'file:///m/ABC-123.mp4';
 const PATH_B = 'file:///m/DEF-456.mp4';
 
-/** 佈置 _filteredVideos（每個涉及 _pickFilterStale() 的測試都要先呼叫，避免吃到前一支測試殘留）。 */
-function setFilteredVideos(arr) {
+/** 佈置牆上目前顯示的清單 _filteredVideos ＋ 全庫 _videos（每個涉及 _pickFilterStale()
+ *  的測試都要先呼叫，避免吃到前一支測試殘留）。
+ *
+ *  123-T8c：述詞現在會用 _videos 重算一次真實 membership 再跟 _filteredVideos 比對，
+ *  所以兩個陣列都要佈置。`library` 省略時＝全庫就等於牆上這些（最常見情境）；要模擬
+ *  「有一片在庫裡但不在牆上」（Codex PR review P2 的相似面板情境）就明確傳第二個參數。 */
+function setFilteredVideos(arr, library) {
     _filteredVideos.length = 0;
     for (const v of arr) _filteredVideos.push(v);
+    _videos.length = 0;
+    for (const v of (library || arr)) _videos.push(v);
 }
 
 /** 手動 resolve 的 fetch mock：可量測飛行中再呼叫、可精準控制落地時機。 */
@@ -127,7 +138,7 @@ function okResp(results) {
 }
 
 function makeComponent(overrides) {
-    const c = Object.assign({}, stateLightbox(), {
+    const c = Object.assign({}, stateLightbox(), stateVideos(), {
         pills: [],
         lightboxOpen: true,
         applyFilterAndSortCalls: 0,
@@ -628,4 +639,59 @@ test('T4：樂觀更新階段呼叫一次 playPickFill(oldValue>0, newValue>0)�
         mock.restore();
         anim.restore();
     }
+});
+
+
+// ── 123-T8c：_pickFilterStale() 的雙向偵測（兩輪 review 各打中一個方向）──────────
+// 舊版述詞是「掃 _filteredVideos 有沒有 rating 0」——單向，只看得到「該離開牆的」。
+// 下面兩支各自鎖住一個方向；把述詞改回舊版的單向寫法，第一支會轉紅。
+
+test('T8c 方向一（Codex PR review P2）：庫裡有一片剛變精選但不在牆上清單裡 → 述詞必須說「過期」', () => {
+    const onWall = { path: PATH_A, user_rating: 1 };
+    // 從相似面板點進去的那一片：本來未精選所以不在牆上，使用者剛給它按了星。
+    const justPickedOffWall = { path: 'file:///m/SIMILAR-9.mp4', user_rating: 1 };
+    const c = makeComponent({ pills: [{ dim: 'pick', value: '1' }], lightboxOpen: false });
+    setFilteredVideos([onWall], [onWall, justPickedOffWall]);
+
+    assert.equal(
+        c._pickFilterStale(), true,
+        '新精選的片不在牆上清單裡，述詞必須偵測到「該回來的」這個方向'
+    );
+});
+
+test('T8c 方向二（grok Stage 1 P2）：卡被外部重篩移出清單、回滾成精選後 → 述詞必須說「過期」', () => {
+    const stillOnWall = { path: PATH_A, user_rating: 1 };
+    // A 樂觀寫 0 → 外部重篩把它移出 _filteredVideos → 請求失敗回滾成 1，但它已不在清單裡。
+    const rolledBack = { path: PATH_B, user_rating: 1 };
+    const c = makeComponent({ pills: [{ dim: 'pick', value: '1' }], lightboxOpen: false });
+    setFilteredVideos([stillOnWall], [stillOnWall, rolledBack]);
+
+    assert.equal(c._pickFilterStale(), true, '回滾後的卡不在清單裡，述詞必須偵測到');
+});
+
+test('T8c 反向：牆上清單與真實 membership 一致 → 述詞必須說「不過期」（不得每次關燈箱都重篩）', () => {
+    const a = { path: PATH_A, user_rating: 1 };
+    const b = { path: PATH_B, user_rating: 1 };
+    const unpicked = { path: 'file:///m/NOPE.mp4', user_rating: 0 };
+    const c = makeComponent({ pills: [{ dim: 'pick', value: '1' }], lightboxOpen: false });
+    setFilteredVideos([a, b], [a, b, unpicked]);
+
+    assert.equal(c._pickFilterStale(), false, '一致就不該重篩——否則隨機排序每次關燈箱整牆重洗');
+});
+
+test('T8c 盲點回歸：某片是精選但被「其他 pill」排除在外時，不得誤判為過期', () => {
+    // 這正是「補另一邊的猜法」會壞掉的案例：picked 但被 maker pill 濾掉，
+    // 天真的「庫裡有 picked 不在清單裡 → 過期」會恆為 true。
+    const shown = { path: PATH_A, user_rating: 1, maker: 'S1' };
+    const pickedButOtherMakerExcluded = { path: PATH_B, user_rating: 1, maker: 'Moodyz' };
+    const c = makeComponent({
+        pills: [{ dim: 'pick', value: '1' }, { dim: 'maker', value: 'S1' }],
+        lightboxOpen: false,
+    });
+    setFilteredVideos([shown], [shown, pickedButOtherMakerExcluded]);
+
+    assert.equal(
+        c._pickFilterStale(), false,
+        '被其他 pill 排除的精選片不算「該回來的」——述詞必須跑真實篩選而不是只看 user_rating'
+    );
 });

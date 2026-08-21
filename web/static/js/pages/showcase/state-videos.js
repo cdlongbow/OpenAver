@@ -483,7 +483,18 @@ export function stateVideos() {
         },
 
         // --- 資料處理 ---
-        applyFilterAndSort(skipPagination) {
+        // 123-T8c（Codex PR review P2 ＋ grok Stage 1 P2，同一 artifact 連兩輪 → 重評方向）：
+        // 把 applyFilterAndSort() 的**篩選那一半**原封不動抽成純函式。
+        //
+        // Why：`_pickFilterStale()` 原本用「掃 _filteredVideos 有沒有 rating 0」去**猜**
+        // 牆面過期了沒。那個猜法天生單向（只看得到「該離開的」，看不到「該回來的」），
+        // 而且 membership 同時受其他 pill 與搜尋字影響 —— 任何「補另一邊」的猜法都還有盲點
+        // （例：某片是精選但被女優 pill 排除，補了就變成每次關燈箱都重篩）。
+        // 方向改成**不猜、直接算**：算一次真實 membership 跟現況比對，兩個方向都準、沒有盲點。
+        //
+        // ⚠️ 本函式是 applyFilterAndSort() 第一半的**逐字搬移**，不得在此加入排序、分頁或
+        //    任何寫入 state 的動作 —— 它的唯一用途就是「不動 state 地問：現在該是哪些片」。
+        _computeFilteredVideos() {
             // --- Stage 1: pill 精準比對（TASK-115-T2, CD-6）---
             var pillPredicate = buildPillPredicate(this.pills, _nameToGroup, _tagToGroup);
             var pillFiltered = _videos.filter(pillPredicate);
@@ -528,13 +539,15 @@ export function stateVideos() {
                         return false;
                     });
                 });
-                _setFilteredVideos(filtered);
-                this.filteredCount = _filteredVideos.length;
-            } else {
-                // 空搜尋：pill 篩選結果即為最終結果
-                _setFilteredVideos(pillFiltered);
-                this.filteredCount = _filteredVideos.length;
+                return filtered;
             }
+            // 空搜尋：pill 篩選結果即為最終結果
+            return pillFiltered;
+        },
+
+        applyFilterAndSort(skipPagination) {
+            _setFilteredVideos(this._computeFilteredVideos());
+            this.filteredCount = _filteredVideos.length;
 
             // --- 排序 (M4b) ---
             _filteredVideos.sort((a, b) => {

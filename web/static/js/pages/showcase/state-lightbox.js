@@ -1615,7 +1615,24 @@ export function stateLightbox() {
         _pickFilterStale() {
             var hasPickPill = this.pills.some(function (p) { return p.dim === 'pick'; });
             if (!hasPickPill) return false;      // 沒掛精選 pill → 永遠不重篩（CD-123-14a）
-            return _filteredVideos.some(function (v) { return (v.user_rating || 0) === 0; });
+
+            // 123-T8c：算一次真實 membership 跟現況比對，**不猜**。
+            //
+            // 舊版是「掃 _filteredVideos 有沒有 rating 0」——那是單向的猜法，只看得到
+            // 「該離開牆的」，看不到「該回到牆上的」。兩輪 review 各從不同入口打中同一個洞：
+            //   · grok Stage 1 P2：飛行中被外部重篩把卡移出清單 → 回滾後述詞掃不到它 → 卡不回來
+            //   · Codex PR review P2：從相似面板點進一部**不在清單裡**的未精選片、給它按星
+            //                          → 述詞掃不到它 → 新精選的卡不會出現在牆上
+            // 補「另一邊」修不好：membership 還同時受其他 pill 與搜尋字影響（某片是精選但被
+            // 女優 pill 排除，補了就變成每次關燈箱都重篩、隨機排序整牆重洗）。
+            // 所以改成直接呼叫篩選那一半（_computeFilteredVideos()，不排序不寫 state）比對
+            // path 集合 —— 兩個方向都準，且沒有「其他篩選條件」的盲點。
+            //
+            // 成本：一次 O(N) 篩選 + Set 比對，只在關燈箱／精選請求落地時各跑一次。
+            var next = this._computeFilteredVideos();
+            if (next.length !== _filteredVideos.length) return true;
+            var current = new Set(_filteredVideos.map(function (v) { return v.path; }));
+            return next.some(function (v) { return !current.has(v.path); });
         },
 
         // 還有精選請求在路上時，樂觀值尚未確認——這時候重篩會用「可能等一下就要回滾的資料」
