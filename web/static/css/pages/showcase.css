@@ -1972,24 +1972,34 @@ body.similar-mobile-active [data-picker-ghost] {
     top: anchor(--lb-cover center, 50%);
     position-anchor: --lb-cover;
     transform: translateY(-50%);
+    /* 124c-T2: 盒＝感應區（≥44px 觸控下限，CD-5），不因為視覺變小而縮水 */
     width: 56px;
     height: 56px;
     border: none;
-    border-radius: 50%;
-    background: var(--overlay-control);
-    backdrop-filter: blur(var(--fluent-blur-light));
-    -webkit-backdrop-filter: blur(var(--fluent-blur-light));
+    /* 124c-T2 CD-4：卸掉玻璃圓盤（border-radius/backdrop-filter 一併移除），
+     * 改為一圈 closest-side 的徑向暗暈——同一顆 --overlay-control token 換個角色，
+     * 中心最深、邊緣全透明、無可見圓邊。封面是主角，UI 退位（ui-conventions §0）。 */
+    background: radial-gradient(closest-side, var(--overlay-control), transparent);
     color: var(--text-inverse);
-    font-size: 1.5rem;
+    /* 盤子沒了，圖示要自己撐起可見度：三斷點字級各升一階 */
+    font-size: 2rem;
     cursor: pointer;
-    transition: background var(--duration-fast) var(--ease-out),
+    /* 可讀性地板：高調白封面上純白箭頭會消失，暗暈 ＋ drop-shadow 兩層撐住對比。
+     * ⚠ filter 是整條取代不是疊加——任何 :hover/:active/:focus-visible 要動 filter，
+     * 都必須把 drop-shadow 一起重寫，否則亮封面上箭頭當場不見。 */
+    filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.9));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* background 不再隨狀態變動（去盤後 hover 改提亮箭頭），transition 跟著換成 filter */
+    transition: filter var(--duration-fast) var(--ease-out),
                 transform var(--duration-fast) var(--ease-out);
     z-index: 10;
 }
 
 .lightbox-nav:hover {
-    /* hover 升階 0.5 (charter §3 個案保留，同 .lightbox-close:hover) */
-    background: rgba(0, 0, 0, 0.5);
+    /* 124c-T2: 放大 ＋ 提亮箭頭，不長回盤子。filter 整串重寫（見 base 規則的 ⚠） */
+    filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.9)) brightness(1.25);
     transform: translateY(-50%) scale(1.1);
 }
 
@@ -2108,7 +2118,7 @@ body.similar-mobile-active [data-picker-ghost] {
     .lightbox-nav {
         width: 48px;
         height: 48px;
-        font-size: 1.25rem;
+        font-size: 1.75rem;
     }
 }
 
@@ -2120,9 +2130,10 @@ body.similar-mobile-active [data-picker-ghost] {
     }
 
     .lightbox-nav {
-        width: 40px;
-        height: 40px;
-        font-size: 1rem;
+        /* 124c-T2 CD-5: 40 → 44px，觸控感應區下限；視覺縮小不得連帶縮小感應區 */
+        width: 44px;
+        height: 44px;
+        font-size: 1.75rem;
     }
 }
 
