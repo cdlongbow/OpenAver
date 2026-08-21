@@ -2504,7 +2504,7 @@ export function stateLightbox() {
             }
 
             // 6. 非 Lightbox 狀態的快捷鍵
-            if (key === 'S' && this.mode === 'grid') {
+            if (key === 'S' && (this.mode === 'grid' || this.showFavoriteActresses)) {
                 this.toggleInfo();
             } else if (key === 'A') {
                 if (this.showFavoriteActresses) return;          // AC-5.3：女優牆整條早退

@@ -268,6 +268,7 @@ export function stateBase() {
             actressOrder: null,
             pills: [],
             cardShape: 'cover',
+            infoVisible: false,
         }).as('showcase_state'),
 
         // --- 狀態變數 ---
@@ -519,6 +520,8 @@ export function stateBase() {
             this.actressOrder = state.actressOrder || 'desc';
             // TASK-119-T3: 只走 localStorage，白名單比對（FE-JS-01：不可 || fallback）
             this.cardShape = state.cardShape === 'poster' ? 'poster' : 'cover';
+            // TASK-124b-T1: 嚴格 === true（鏡射 showFavoriteActresses 慣例，FE-JS-01：不可 || fallback）
+            this.infoVisible = state.infoVisible === true;
         },
 
         // --- 狀態持久化 (M2c) ---
@@ -554,6 +557,7 @@ export function stateBase() {
         // Card Info 切換 (M3i)
         toggleInfo() {
             this.infoVisible = !this.infoVisible;
+            this._persistedShowcase.infoVisible = this.infoVisible;
         },
 
         formatPartLabel,

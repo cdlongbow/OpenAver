@@ -769,17 +769,7 @@ export function stateActress() {
 
         _actressCardMiddle(actress) {
             if (!actress) return '';
-            var sort = this.actressSort;
-            if (sort === 'video_count') {
-                return (actress.video_count || 0) + window.t('showcase.unit.films');
-            }
-            if (sort === 'cup') {
-                return actress.cup ? actress.cup + window.t('search.unit.cup') : '';
-            }
-            if (sort === 'height') {
-                return actress.height || '';
-            }
-            return '';
+            return (actress.video_count || 0) + window.t('showcase.unit.films');
         },
 
         _actressHoverInfo(actress) {
@@ -791,6 +781,28 @@ export function stateActress() {
                 parts.push(actress.bust + '-' + actress.waist + '-' + actress.hip);
             }
             return parts.join(' · ');
+        },
+
+        // TASK-124b-T1: 女優卡資訊層 token 清單（M3i）。窄螢幕額外把作品數／年齡塞最前面
+        // （video_count/age 用 != null，0 是合法值，CD-124b-12）；後三個 token 逐字鏡射
+        // _actressHoverInfo() 的取值條件（truthy 鏈，非 != null 鏈）。
+        _actressInfoTokens(actress) {
+            if (!actress) return [];
+            var tokens = [];
+            if (this._isNarrow) {
+                if (actress.video_count != null) {
+                    tokens.push(actress.video_count + window.t('showcase.unit.films'));
+                }
+                if (actress.age != null) {
+                    tokens.push(actress.age + window.t('search.unit.age'));
+                }
+            }
+            if (actress.height) tokens.push(actress.height);
+            if (actress.cup) tokens.push(actress.cup + window.t('search.unit.cup'));
+            if (actress.bust && actress.waist && actress.hip) {
+                tokens.push(actress.bust + '-' + actress.waist + '-' + actress.hip);
+            }
+            return tokens;
         },
 
         _allInfoChips() {
