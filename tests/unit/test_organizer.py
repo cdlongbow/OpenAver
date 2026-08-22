@@ -7,7 +7,8 @@ import json
 import os
 import pytest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+import requests
 from PIL import Image
 
 from core.organizer import _detect_suffixes, format_string, organize_file, crop_to_poster, generate_nfo, extract_chinese_title, download_image, truncate_to_chars, truncate_title, _detect_vr_cluster, _is_multipart_kw, _poster_window_ratio, generate_jellyfin_images
@@ -2229,6 +2230,359 @@ class TestDownloadImage:
 
         assert result is False
         assert not save_path.exists()
+
+
+# ============ download_image() fallback / host memory (TASK-126-T4a) ============
+
+_BIG_JPEG = b"x" * 1001
+
+
+def _ok_resp(content=_BIG_JPEG):
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.content = content
+    return resp
+
+
+def _status_resp(code):
+    resp = MagicMock()
+    resp.status_code = code
+    resp.content = b""
+    return resp
+
+
+class TestDownloadImageFallback:
+    """TASK-126-T4a：原址優先、短 connect 逾時、失敗 host 記憶。"""
+
+    @pytest.fixture(autouse=True)
+    def _clear_host_failure_memory(self):
+        import core.organizer as org
+        mem = getattr(org, "_failed_hosts", None)
+        lock = getattr(org, "_failed_hosts_lock", None)
+        if mem is not None and lock is not None:
+            with lock:
+                mem.clear()
+        yield
+        if mem is not None and lock is not None:
+            with lock:
+                mem.clear()
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_no_fallback_success_preserves_args(self, mock_get, tmp_path):
+        """邊界 1：無 fallback、原址成功；除 timeout 外參數與改動前相同。"""
+        from core.organizer import HEADERS, REQUEST_TIMEOUT
+
+        mock_get.return_value = _ok_resp()
+        save_path = tmp_path / "cover.jpg"
+        result = download_image("http://example.com/cover.jpg", str(save_path))
+
+        assert result is True
+        assert save_path.read_bytes() == _BIG_JPEG
+        mock_get.assert_called_once()
+        args, kwargs = mock_get.call_args
+        assert args[0] == "http://example.com/cover.jpg"
+        assert kwargs["headers"] == HEADERS.copy()
+        assert kwargs["timeout"] == (5, REQUEST_TIMEOUT)
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_connect_timeout_is_short(self, mock_get, tmp_path):
+        """mutation 錨點：connect 逾時必須是短的 tuple，不是單一 REQUEST_TIMEOUT。"""
+        from core.organizer import CONNECT_TIMEOUT, REQUEST_TIMEOUT
+
+        mock_get.return_value = _ok_resp()
+        download_image("http://example.com/cover.jpg", str(tmp_path / "c.jpg"))
+        timeout = mock_get.call_args.kwargs["timeout"]
+        assert timeout == (CONNECT_TIMEOUT, REQUEST_TIMEOUT)
+        assert CONNECT_TIMEOUT == 5
+        assert REQUEST_TIMEOUT == 30
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_no_fallback_connect_timeout_returns_false(self, mock_get, tmp_path):
+        """邊界 2：無 fallback、原址 ConnectTimeout → False（行為不變）。"""
+        mock_get.side_effect = requests.exceptions.ConnectTimeout("connect timed out")
+        result = download_image("http://example.com/cover.jpg", str(tmp_path / "c.jpg"))
+        assert result is False
+        mock_get.assert_called_once()
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_fallback_on_connect_timeout(self, mock_get, tmp_path):
+        """邊界 3：有 fallback、原址 ConnectTimeout → 改試 fallback 並存檔。"""
+        mock_get.side_effect = [
+            requests.exceptions.ConnectTimeout("connect timed out"),
+            _ok_resp(b"y" * 1001),
+        ]
+        save_path = tmp_path / "cover.jpg"
+        result = download_image(
+            "http://example.com/cover.jpg",
+            str(save_path),
+            fallback_url="http://proxy.example/cover.jpg",
+        )
+        assert result is True
+        assert save_path.read_bytes() == b"y" * 1001
+        assert mock_get.call_count == 2
+        assert mock_get.call_args_list[0].args[0] == "http://example.com/cover.jpg"
+        assert mock_get.call_args_list[1].args[0] == "http://proxy.example/cover.jpg"
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_primary_success_skips_fallback(self, mock_get, tmp_path):
+        """邊界 4：有 fallback、原址成功 → 不呼叫 fallback。"""
+        mock_get.return_value = _ok_resp()
+        result = download_image(
+            "http://example.com/cover.jpg",
+            str(tmp_path / "c.jpg"),
+            fallback_url="http://proxy.example/cover.jpg",
+        )
+        assert result is True
+        mock_get.assert_called_once()
+        assert mock_get.call_args.args[0] == "http://example.com/cover.jpg"
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_failed_host_skips_primary_on_subsequent(self, mock_get, tmp_path):
+        """邊界 5：同一 key 連續 3 張，第 1 張 ConnectTimeout 後第 2/3 張不試原址。"""
+        primary = "http://blocked.example/a.jpg"
+        proxy = "http://proxy.example/a.jpg"
+        responses = [
+            requests.exceptions.ConnectTimeout("t"),
+            _ok_resp(b"a" * 1001),
+            _ok_resp(b"b" * 1001),
+            _ok_resp(b"c" * 1001),
+        ]
+        mock_get.side_effect = responses
+
+        assert download_image(primary, str(tmp_path / "1.jpg"), fallback_url=proxy) is True
+        assert download_image(
+            "http://blocked.example/b.jpg", str(tmp_path / "2.jpg"), fallback_url="http://proxy.example/b.jpg"
+        ) is True
+        assert download_image(
+            "http://blocked.example/c.jpg", str(tmp_path / "3.jpg"), fallback_url="http://proxy.example/c.jpg"
+        ) is True
+
+        urls = [c.args[0] for c in mock_get.call_args_list]
+        assert urls == [
+            "http://blocked.example/a.jpg",
+            "http://proxy.example/a.jpg",
+            "http://proxy.example/b.jpg",
+            "http://proxy.example/c.jpg",
+        ]
+        assert mock_get.call_count == 4
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_read_timeout_does_not_poison_host(self, mock_get, tmp_path):
+        """邊界 6 ＋ mutation 錨點：ReadTimeout 走 fallback，但不進記憶。"""
+        mock_get.side_effect = [
+            requests.exceptions.ReadTimeout("read timed out"),
+            _ok_resp(b"f" * 1001),
+            _ok_resp(b"p" * 1001),
+        ]
+        assert download_image(
+            "http://slow.example/a.jpg",
+            str(tmp_path / "1.jpg"),
+            fallback_url="http://proxy.example/a.jpg",
+        ) is True
+        assert download_image(
+            "http://slow.example/b.jpg",
+            str(tmp_path / "2.jpg"),
+            fallback_url="http://proxy.example/b.jpg",
+        ) is True
+
+        urls = [c.args[0] for c in mock_get.call_args_list]
+        assert urls == [
+            "http://slow.example/a.jpg",
+            "http://proxy.example/a.jpg",
+            "http://slow.example/b.jpg",
+        ]
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_http_error_does_not_poison_host(self, mock_get, tmp_path):
+        """邊界 7：原址 404/500 走 fallback、不進記憶。"""
+        mock_get.side_effect = [
+            _status_resp(404),
+            _ok_resp(b"f" * 1001),
+            _ok_resp(b"p" * 1001),
+        ]
+        assert download_image(
+            "http://err.example/a.jpg",
+            str(tmp_path / "1.jpg"),
+            fallback_url="http://proxy.example/a.jpg",
+        ) is True
+        assert download_image(
+            "http://err.example/b.jpg",
+            str(tmp_path / "2.jpg"),
+            fallback_url="http://proxy.example/b.jpg",
+        ) is True
+        urls = [c.args[0] for c in mock_get.call_args_list]
+        assert urls == [
+            "http://err.example/a.jpg",
+            "http://proxy.example/a.jpg",
+            "http://err.example/b.jpg",
+        ]
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_small_content_does_not_poison_host(self, mock_get, tmp_path):
+        """邊界 8：200 但 content ≤1000 走 fallback、不進記憶。"""
+        mock_get.side_effect = [
+            _ok_resp(b"tiny"),
+            _ok_resp(b"f" * 1001),
+            _ok_resp(b"p" * 1001),
+        ]
+        assert download_image(
+            "http://small.example/a.jpg",
+            str(tmp_path / "1.jpg"),
+            fallback_url="http://proxy.example/a.jpg",
+        ) is True
+        assert download_image(
+            "http://small.example/b.jpg",
+            str(tmp_path / "2.jpg"),
+            fallback_url="http://proxy.example/b.jpg",
+        ) is True
+        urls = [c.args[0] for c in mock_get.call_args_list]
+        assert urls == [
+            "http://small.example/a.jpg",
+            "http://proxy.example/a.jpg",
+            "http://small.example/b.jpg",
+        ]
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_scheme_differs_keeps_primary(self, mock_get, tmp_path):
+        """邊界 9：http 失敗後 https 同 host 仍先試原址（三元組 key）。"""
+        mock_get.side_effect = [
+            requests.exceptions.ConnectTimeout("t"),
+            _ok_resp(b"f" * 1001),
+            _ok_resp(b"p" * 1001),
+        ]
+        assert download_image(
+            "http://h.example/x",
+            str(tmp_path / "1.jpg"),
+            fallback_url="http://proxy.example/x",
+        ) is True
+        assert download_image(
+            "https://h.example/y",
+            str(tmp_path / "2.jpg"),
+            fallback_url="http://proxy.example/y",
+        ) is True
+        urls = [c.args[0] for c in mock_get.call_args_list]
+        assert urls == [
+            "http://h.example/x",
+            "http://proxy.example/x",
+            "https://h.example/y",
+        ]
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_port_differs_keeps_primary(self, mock_get, tmp_path):
+        """邊界 10：:8080 失敗後預設 port 仍先試原址。"""
+        mock_get.side_effect = [
+            requests.exceptions.ConnectTimeout("t"),
+            _ok_resp(b"f" * 1001),
+            _ok_resp(b"p" * 1001),
+        ]
+        assert download_image(
+            "http://h.example:8080/x",
+            str(tmp_path / "1.jpg"),
+            fallback_url="http://proxy.example/x",
+        ) is True
+        assert download_image(
+            "http://h.example/y",
+            str(tmp_path / "2.jpg"),
+            fallback_url="http://proxy.example/y",
+        ) is True
+        urls = [c.args[0] for c in mock_get.call_args_list]
+        assert urls == [
+            "http://h.example:8080/x",
+            "http://proxy.example/x",
+            "http://h.example/y",
+        ]
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_ttl_expiry_restores_primary(self, mock_get, tmp_path, monkeypatch):
+        """邊界 11：TTL 過期後回到原址優先（注入時鐘，不得 sleep）。"""
+        import core.organizer as org
+
+        clock = {"t": 1000.0}
+        monkeypatch.setattr(org, "_now", lambda: clock["t"])
+
+        mock_get.side_effect = [
+            requests.exceptions.ConnectTimeout("t"),
+            _ok_resp(b"f" * 1001),
+            _ok_resp(b"p" * 1001),
+        ]
+        assert download_image(
+            "http://ttl.example/a.jpg",
+            str(tmp_path / "1.jpg"),
+            fallback_url="http://proxy.example/a.jpg",
+        ) is True
+
+        clock["t"] = 1000.0 + org._HOST_FAILURE_TTL + 1
+
+        assert download_image(
+            "http://ttl.example/b.jpg",
+            str(tmp_path / "2.jpg"),
+            fallback_url="http://proxy.example/b.jpg",
+        ) is True
+
+        urls = [c.args[0] for c in mock_get.call_args_list]
+        assert urls == [
+            "http://ttl.example/a.jpg",
+            "http://proxy.example/a.jpg",
+            "http://ttl.example/b.jpg",
+        ]
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_empty_url_ignores_fallback(self, mock_get, tmp_path):
+        """邊界 12：url 空、fallback 非空 → False，不走代理。"""
+        result = download_image(
+            "",
+            str(tmp_path / "c.jpg"),
+            fallback_url="http://proxy.example/cover.jpg",
+        )
+        assert result is False
+        mock_get.assert_not_called()
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_both_fail_returns_false(self, mock_get, tmp_path):
+        """邊界 13：原址與 fallback 都失敗 → False，不拋例外。"""
+        mock_get.side_effect = [
+            requests.exceptions.ConnectTimeout("t1"),
+            requests.exceptions.ConnectTimeout("t2"),
+        ]
+        result = download_image(
+            "http://example.com/cover.jpg",
+            str(tmp_path / "c.jpg"),
+            fallback_url="http://proxy.example/cover.jpg",
+        )
+        assert result is False
+        assert mock_get.call_count == 2
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_fallback_connect_timeout_is_recorded(self, mock_get, tmp_path):
+        """邊界 14：fallback 也 ConnectTimeout → fallback host 進記憶。"""
+        import core.organizer as org
+
+        mock_get.side_effect = [
+            requests.exceptions.ConnectTimeout("primary"),
+            requests.exceptions.ConnectTimeout("fallback"),
+            _ok_resp(b"z" * 1001),
+        ]
+        assert download_image(
+            "http://primary.example/a.jpg",
+            str(tmp_path / "1.jpg"),
+            fallback_url="http://proxy.example/a.jpg",
+        ) is False
+
+        # proxy host 已進記憶：下次以它當原址時應跳過，直接走它的 fallback
+        assert download_image(
+            "http://proxy.example/b.jpg",
+            str(tmp_path / "2.jpg"),
+            fallback_url="http://other.example/b.jpg",
+        ) is True
+        urls = [c.args[0] for c in mock_get.call_args_list]
+        assert urls == [
+            "http://primary.example/a.jpg",
+            "http://proxy.example/a.jpg",
+            "http://other.example/b.jpg",
+        ]
+        key = ("http", "proxy.example", 80)
+        with org._failed_hosts_lock:
+            assert key in org._failed_hosts
 
 
 # ============ generate_nfo() 新欄位測試 (T5b) ============

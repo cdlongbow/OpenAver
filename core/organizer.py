@@ -7,11 +7,14 @@ import os
 import re
 import sys
 import shutil
+import threading
+import time
 import requests
 import html
 from pathlib import Path
 from PIL import Image
 from typing import Optional, Dict, Any, List, Tuple
+from urllib.parse import urlparse
 
 from core.config import STEM_IMAGE_MODES
 from core.cover_attributes import effective_tags
@@ -26,9 +29,16 @@ logger = get_logger(__name__)
 
 # HTTP 請求設定
 REQUEST_TIMEOUT = 30
+CONNECT_TIMEOUT = 5  # CD-126-5c：只縮 connect；可達 host 的 handshake ≪ 5s
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
 }
+
+# Process-level failed-host memory (CD-126-5 / 5b / 5c). Key = (scheme, hostname, port).
+_HOST_FAILURE_TTL = 300
+_failed_hosts: Dict[Tuple[str, str, int], float] = {}
+_failed_hosts_lock = threading.Lock()
+_now = time.monotonic  # injectable clock for TTL tests (no sleep)
 
 
 def sanitize_filename(name: str) -> str:
@@ -629,35 +639,96 @@ def generate_jellyfin_images(cover_path: str, base_stem: str, number: str = '', 
     return result
 
 
-def download_image(url: str, save_path: str, referer: str = '') -> bool:
-    """下載圖片"""
-    if not url:
+def _host_key(url: str) -> Optional[Tuple[str, str, int]]:
+    """Failure-memory key: (scheme, hostname, effective_port)."""
+    parsed = urlparse(url)
+    scheme = (parsed.scheme or "").lower()
+    hostname = (parsed.hostname or "").lower()
+    if not scheme or not hostname:
+        return None
+    port = parsed.port or (443 if scheme == "https" else 80)
+    return (scheme, hostname, port)
+
+
+def _host_recently_failed(key: Optional[Tuple[str, str, int]]) -> bool:
+    if key is None:
         return False
+    now = _now()
+    with _failed_hosts_lock:
+        expiry = _failed_hosts.get(key)
+        if expiry is None:
+            return False
+        if now >= expiry:
+            _failed_hosts.pop(key, None)
+            return False
+        return True
+
+
+def _record_host_failure(key: Optional[Tuple[str, str, int]]) -> None:
+    if key is None:
+        return
+    expiry = _now() + _HOST_FAILURE_TTL
+    with _failed_hosts_lock:
+        _failed_hosts[key] = expiry
+    logger.debug("image host connect failure recorded: %s (ttl=%ss)", key, _HOST_FAILURE_TTL)
+
+
+def _build_download_headers(url: str, referer: str = "") -> dict:
+    headers = HEADERS.copy()
+    effective_referer = referer
+    if not effective_referer:
+        if "javbus.com" in url:
+            effective_referer = "https://www.javbus.com/"
+        elif "dmm.co.jp" in url:
+            effective_referer = "https://www.dmm.co.jp/"
+        elif "jav321.com" in url:
+            effective_referer = "https://www.jav321.com/"
+    if effective_referer:
+        headers["Referer"] = effective_referer
+    return headers
+
+
+def _attempt_download_image(url: str, save_path: str, referer: str = "") -> bool:
+    """Try one URL. Record host only on connect-stage failures."""
+    headers = _build_download_headers(url, referer)
     try:
-        headers = HEADERS.copy()
-
-        # 根據 URL 設置對應的 Referer
-        if not referer:
-            if "javbus.com" in url:
-                referer = "https://www.javbus.com/"
-            elif "dmm.co.jp" in url:
-                referer = "https://www.dmm.co.jp/"
-            elif "jav321.com" in url:
-                referer = "https://www.jav321.com/"
-
-        if referer:
-            headers['Referer'] = referer
-
-        resp = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+        resp = requests.get(
+            url, headers=headers, timeout=(CONNECT_TIMEOUT, REQUEST_TIMEOUT)
+        )
         if resp.status_code == 200 and len(resp.content) > 1000:
-            with open(save_path, 'wb') as f:
+            with open(save_path, "wb") as f:
                 f.write(resp.content)
             return True
+    except requests.exceptions.ConnectionError as e:
+        # ConnectTimeout is a ConnectionError subclass; ReadTimeout is not.
+        _record_host_failure(_host_key(url))
+        logger.warning(f"[!] 下載圖片失敗: {e}")
     except Exception as e:
         logger.warning(f"[!] 下載圖片失敗: {e}")
     return False
 
 
+def download_image(
+    url: str, save_path: str, referer: str = "", fallback_url: str = ""
+) -> bool:
+    """下載圖片。
+
+    metatube 的 `/v1/images/` 會重新編碼 JPEG（實測 +3% 體積、尺寸不變），所以先試原址，取不到才用代理副本。
+    """
+    if not url:
+        return False
+
+    # CD-126-8: original-first; proxy is a re-encoded JPEG rescue copy.
+    skip_primary = bool(fallback_url) and _host_recently_failed(_host_key(url))
+
+    if not skip_primary:
+        if _attempt_download_image(url, save_path, referer):
+            return True
+        if not fallback_url:
+            return False
+        return _attempt_download_image(fallback_url, save_path, referer)
+
+    return _attempt_download_image(fallback_url, save_path, referer)
 
 
 def generate_nfo(
