@@ -5224,3 +5224,133 @@ class TestOrganizeContainment:
         target = tmp_path / "[SONE-205] Test Title.mp4"
         assert target.exists()
         assert not src.exists()
+
+
+# ============ TASK-126-T4b：代理網址走到 organize 的下載點 ============
+#
+# owner 2026-08-23 裁決把 organize 這條也納入。**但只有「後端重刮」那條會有值**——
+# 前端送來的 metadata 已被 buildOrganizeMetadata() 剝除兩個 preview 欄位
+# （TASK-126-T3 / 113c-T3b：那是只對顯示有意義、會隨 metatube 連線狀態失效的網址）。
+# 所以下面兩支測的是「metadata 帶得動就用得到」與「帶不動就跟今天一樣」。
+
+class TestT4bOrganizeFallback:
+
+    def _clear_failed_hosts(self):
+        import core.organizer as org
+        with org._failed_hosts_lock:
+            org._failed_hosts.clear()
+
+    def _resp(self, content):
+        m = MagicMock()
+        m.status_code = 200
+        m.content = content
+        return m
+
+    def _blocked_unless_proxy(self):
+        import requests as _rq
+
+        def _side(url, **kwargs):
+            if 'mt.example' in url:
+                return self._resp(b'PROXY' + b'\x00' * 2000)
+            raise _rq.exceptions.ConnectTimeout('blocked')
+        return _side
+
+    def test_organize_cover_uses_preview_fallback(self, tmp_path):
+        """邊界 4：organize 入口，原址 ConnectTimeout ＋ metadata 帶得動 preview → 走代理落地。"""
+        self._clear_failed_hosts()
+        try:
+            src = tmp_path / 'ABC-123.mp4'
+            src.write_bytes(b'v' * 100)
+            metadata = {
+                'number': 'ABC-123', 'title': 'T', 'actors': [], 'tags': [],
+                'cover': 'https://cdn.blocked/cover.jpg',
+                'preview_cover_url': 'http://mt.example/v1/images/primary/MGS/ABC-123?url=cover',
+            }
+            config = {'output_dir': str(tmp_path / 'out'), 'create_folder': True,
+                      'download_cover': True, 'create_nfo': False}
+            with patch('core.organizer.requests.get', side_effect=self._blocked_unless_proxy()):
+                result = organize_file(str(src), metadata, config)
+            assert result.get('cover_path'), '封面應經由代理落地'
+            assert open(result['cover_path'], 'rb').read().startswith(b'PROXY')
+        finally:
+            self._clear_failed_hosts()
+
+    def test_organize_without_preview_keeps_todays_behaviour(self, tmp_path):
+        """邊界 9（AC-5）：前端剝除後的 metadata（無 preview）→ 逐字元維持今天的行為。"""
+        self._clear_failed_hosts()
+        try:
+            src = tmp_path / 'ABC-124.mp4'
+            src.write_bytes(b'v' * 100)
+            metadata = {
+                'number': 'ABC-124', 'title': 'T', 'actors': [], 'tags': [],
+                'cover': 'https://cdn.blocked/cover.jpg',
+            }
+            config = {'output_dir': str(tmp_path / 'out'), 'create_folder': True,
+                      'download_cover': True, 'create_nfo': False}
+            with patch('core.organizer.requests.get',
+                       side_effect=self._blocked_unless_proxy()) as mg:
+                result = organize_file(str(src), metadata, config)
+            assert not result.get('cover_path'), '沒有 preview 就沒有退路，原址失敗即失敗'
+            assert mg.call_count == 1, '不得有第二次嘗試'
+            assert 'fallback_url' not in mg.call_args.kwargs
+        finally:
+            self._clear_failed_hosts()
+
+    def test_organize_extrafanart_uses_preview_fallback(self, tmp_path):
+        """TASK-126-T4b review MAJOR-3：organize 的**劇照**分支也要有 caller 測試。
+
+        初版兩支測試都只帶封面、沒帶 sample_images ⇒ 劇照那段迴圈根本沒跑到。
+        review 在沙盒把 `_previews` / `_pv_i` 整段拔掉，285 條照樣全綠。
+        """
+        self._clear_failed_hosts()
+        try:
+            src = tmp_path / 'ABC-125.mp4'
+            src.write_bytes(b'v' * 100)
+            metadata = {
+                'number': 'ABC-125', 'title': 'T', 'actors': [], 'tags': [],
+                'cover': '',
+                'sample_images': ['https://cdn.blocked/s1.jpg', 'https://cdn.blocked/s2.jpg'],
+                'preview_sample_images': [
+                    'http://mt.example/v1/images/primary/MGS/ABC-125?url=s1',
+                    'http://mt.example/v1/images/primary/MGS/ABC-125?url=s2',
+                ],
+            }
+            config = {'output_dir': str(tmp_path / 'out'), 'create_folder': True,
+                      'download_cover': False, 'create_nfo': False,
+                      'download_sample_images': True}
+            with patch('core.organizer.requests.get', side_effect=self._blocked_unless_proxy()):
+                result = organize_file(str(src), metadata, config)
+            ef = Path(result['new_folder']) / 'extrafanart'
+            written = sorted(ef.glob('fanart*.jpg'))
+            assert len(written) == 2, (
+                '劇照那半若沒接上 preview，被牆的使用者整理入庫會拿不到任何劇照，'
+                '而且沒有錯誤訊息'
+            )
+            for p in written:
+                assert p.read_bytes().startswith(b'PROXY')
+        finally:
+            self._clear_failed_hosts()
+
+    def test_organize_extrafanart_short_preview_does_not_truncate(self, tmp_path):
+        """邊界 8 在 organize 也成立：preview 比 sample 短，不得少下載。"""
+        self._clear_failed_hosts()
+        try:
+            src = tmp_path / 'ABC-126.mp4'
+            src.write_bytes(b'v' * 100)
+            metadata = {
+                'number': 'ABC-126', 'title': 'T', 'actors': [], 'tags': [],
+                'cover': '',
+                'sample_images': ['https://cdn.ok/s1.jpg', 'https://cdn.ok/s2.jpg', 'https://cdn.ok/s3.jpg'],
+                'preview_sample_images': ['http://mt.example/v1/images/primary/MGS/ABC-126?url=s1'],
+            }
+            config = {'output_dir': str(tmp_path / 'out'), 'create_folder': True,
+                      'download_cover': False, 'create_nfo': False,
+                      'download_sample_images': True}
+            with patch('core.organizer.requests.get',
+                       return_value=self._resp(b'DIRECT' + b'\x00' * 2000)) as mg:
+                result = organize_file(str(src), metadata, config)
+            ef = Path(result['new_folder']) / 'extrafanart'
+            assert len(sorted(ef.glob('fanart*.jpg'))) == 3, 'zip 截斷會讓這裡變成 1'
+            assert mg.call_count == 3
+        finally:
+            self._clear_failed_hosts()

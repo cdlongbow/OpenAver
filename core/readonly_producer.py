@@ -977,6 +977,19 @@ def _reraise_nfo_stat_error(e: OSError) -> None:
     raise e
 
 
+def _download_sample(url: str, dest: str, previews: list, idx: int) -> bool:
+    """逐張取劇照：原址優先，該格有代理才退代理（CD-126-3）。
+
+    **用 index 取值，不用裸 `zip()`**——zip 在長度不等時會靜默截斷，等於少下載幾張圖；
+    長度不等的正確語意是「那幾格沒有代理」，不是「少下載」。
+    preview 為空時**連 kwarg 都不傳**（AC-5：非 metatube 來源逐字元相同）。
+    """
+    fallback = previews[idx] if idx < len(previews) else ''
+    if fallback:
+        return download_image(url, dest, fallback_url=fallback)
+    return download_image(url, dest)
+
+
 def _write_movie_assets(
     movie_dir: str,
     meta: dict,
@@ -1067,9 +1080,10 @@ def _write_movie_assets(
         ef_dir = Path(movie_dir) / 'extrafanart'
         os.makedirs(ef_dir, exist_ok=True)
         sample_fs: list = []
+        previews = meta.get('preview_sample_images') or []
         for i, url in enumerate(meta.get('sample_images', []), 1):
             dest = str(ef_dir / f'fanart{i}.jpg')
-            if download_image(url, dest):
+            if _download_sample(url, dest, previews, i - 1):
                 sample_fs.append(dest)
         return {'sample_fs': sample_fs}
 
@@ -1086,7 +1100,15 @@ def _write_movie_assets(
         has_cover = False
     else:  # 'download' — byte-identical to the pre-T1 unconditional branch (C6)
         remote_url = cover_strategy[1]
-        has_cover = bool(remote_url) and download_image(remote_url, cover_fs)
+        # CD-126-9：fallback 從 `meta` 取，**不動 cover_strategy tuple 的形狀**——
+        # `cover_strategy[2]` 在 'copy' 種類下已經是 raw_source_media，同一個索引在不同
+        # kind 下代表不同東西，那正是本 branch 要消滅的形狀。
+        preview_cover = meta.get('preview_cover_url') or ''
+        has_cover = bool(remote_url) and (
+            download_image(remote_url, cover_fs, fallback_url=preview_cover)
+            if preview_cover
+            else download_image(remote_url, cover_fs)
+        )
 
     # 2) poster/fanart — media-server flavours only (CD-111-2 fail-closed whitelist); off produces none, matching non-readonly parity.
     if has_cover and external_manager in STEM_IMAGE_MODES:
@@ -1126,9 +1148,10 @@ def _write_movie_assets(
     if config.get('download_sample_images'):
         ef_dir = Path(movie_dir) / 'extrafanart'
         os.makedirs(ef_dir, exist_ok=True)
+        previews = meta.get('preview_sample_images') or []
         for i, url in enumerate(meta.get('sample_images', []), 1):
             dest = str(ef_dir / f'fanart{i}.jpg')
-            if download_image(url, dest):
+            if _download_sample(url, dest, previews, i - 1):
                 sample_fs.append(dest)
 
     # 4) NFO — title/fields use full meta (not truncated format_data).
@@ -1398,6 +1421,9 @@ def _nfo_to_producer_meta(root: ET.Element, fallback_number: str) -> dict:
         '_rating': rating_val,
         'cover': '',
         'sample_images': [],
+        # CD-126-2：本地 NFO 沒有代理可言，但鍵必須存在（同 enricher._nfo_to_meta）。
+        'preview_cover_url': '',
+        'preview_sample_images': [],
     }
 
 
@@ -1591,6 +1617,9 @@ def resolve_ingest_plan(
     if meta is None:
         return None, ('none',)
     meta['sample_images'] = []
+    # CD-126-2 等長契約：清空 sample_images 就必須連帶清空 preview——長度不等是**靜默錯位**
+    # （圖片對到別張），比破圖難查。
+    meta['preview_sample_images'] = []
     return meta, cover_strategy
 
 

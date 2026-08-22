@@ -1222,7 +1222,18 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
         img_url = metadata.get('cover', '')
         if img_url:
             cover_path = resolve_cover_target(os.path.join(target_dir, filename_base), ext_mode)
-            if download_image(img_url, cover_path):
+            # CD-126-3（owner 2026-08-23 裁決納入）：原址優先，取不到才退 metatube 代理。
+            # ⚠ **只有後端重刮那條會有值**——前端送來的 metadata 已被
+            # `buildOrganizeMetadata()` 剝除兩個 preview 欄位（TASK-126-T3 / 113c-T3b：
+            # 那是只對顯示有意義、會隨 metatube 連線狀態失效的網址，不能落磁碟）。
+            # 讀不到就跟今天完全一樣，不需要任何 if-else 去分辨來源。
+            preview_cover = metadata.get('preview_cover_url') or ''
+            cover_ok = (
+                download_image(img_url, cover_path, fallback_url=preview_cover)
+                if preview_cover
+                else download_image(img_url, cover_path)
+            )
+            if cover_ok:
                 result['cover_path'] = cover_path
 
         # 外部管理器模式：依 ext_mode 決定 poster/fanart 命名規則（ext_mode 已在早偵測層定義）
@@ -1245,12 +1256,18 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
             sample_images = metadata.get('sample_images', [])
             if sample_images:
                 extrafanart_dir = os.path.join(target_dir, 'extrafanart')
+                # 同上：逐張 index 配對（不用裸 zip，長度不等不得截斷下載張數）
+                sample_previews = metadata.get('preview_sample_images') or []
                 try:
                     os.makedirs(extrafanart_dir, exist_ok=True)
                     for i, url in enumerate(sample_images, 1):
                         try:
                             dest = os.path.join(extrafanart_dir, f'fanart{i}.jpg')
-                            download_image(url, dest)
+                            pv = sample_previews[i - 1] if i - 1 < len(sample_previews) else ''
+                            if pv:
+                                download_image(url, dest, fallback_url=pv)
+                            else:
+                                download_image(url, dest)
                         except Exception as e:
                             logger.warning(f"extrafanart {i} 下載失敗: {e}")
                 except Exception as e:

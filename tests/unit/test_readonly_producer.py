@@ -6377,6 +6377,9 @@ class TestNfoToProducerMeta:
             'number', 'title', 'original_title', 'actors', 'tags', 'date',
             'maker', 'director', 'series', 'label', 'duration', 'url',
             '_summary', '_rating', 'cover', 'sample_images',
+            # TASK-126-T4b（CD-126-2）：本地 NFO 沒有代理可言，但這兩個鍵必須存在——
+            # 否則下游 `.get()` 的預設值會散落在四個地方。值恆為空。
+            'preview_cover_url', 'preview_sample_images',
         }
         assert meta['number'] == 'ABC-123'
         assert meta['title'] == 'My Title'
@@ -7626,3 +7629,215 @@ class TestEnrichOneReadonlyEntryPoint:
             "readonly preserve gate — Table 2 #8, opposite of Table 1 #6's "
             "non-readonly .jpg-family-only rule"
         )
+
+
+# ============ TASK-126-T4b：代理網址走到 readonly 的下載點 ============
+#
+# 本 task 的整個風險是「函式對了但值沒走到」——那種缺口在單測層是**綠的**
+# （T4a 的 283 條照樣全過）。所以這幾條一律從 `_write_movie_assets` 這個
+# **caller 入口**打進去，不是直接呼叫 `download_image`。
+#
+# mock 目標是**使用端 binding**（`core.readonly_producer.requests` 底下的
+# `core.organizer.requests.get`）——`download_image` 是
+# `from core.organizer import download_image` 進來的（BE-TEST-01）。
+
+from unittest.mock import patch as _t4b_patch
+
+from core.readonly_producer import _write_movie_assets, resolve_ingest_plan
+
+_T4B_DIRECT = b'DIRECT' + b'\x00' * 2000
+_T4B_PROXY = b'PROXY' + b'\x00' * 2000
+
+
+class _T4bReadonlyBase:
+    """每支測試前後清 process 級失敗記憶（T4a review：它不分呼叫端，會跨測試污染）。"""
+
+    def _clear_failed_hosts(self):
+        import core.organizer as org
+        with org._failed_hosts_lock:
+            org._failed_hosts.clear()
+
+    def _resp(self, content):
+        m = MagicMock()
+        m.status_code = 200
+        m.content = content
+        return m
+
+    def _fake_get(self, proxy_host='mt.example'):
+        """原址一律 ConnectTimeout，代理一律成功。"""
+        import requests as _rq
+
+        def _side(url, **kwargs):
+            if proxy_host in url:
+                return self._resp(_T4B_PROXY)
+            raise _rq.exceptions.ConnectTimeout('blocked')
+        return _side
+
+
+class TestT4bReadonlySamplesOnlyFallback(_T4bReadonlyBase):
+    """邊界 3：readonly samples_only（補劇照）入口 → 原址不通時走代理。"""
+
+    def test_samples_only_uses_preview_fallback(self, tmp_path):
+        self._clear_failed_hosts()
+        try:
+            meta = {
+                'sample_images': ['https://cdn.blocked/s1.jpg', 'https://cdn.blocked/s2.jpg'],
+                'preview_sample_images': [
+                    'http://mt.example/v1/images/primary/MGS/N-1?url=s1',
+                    'http://mt.example/v1/images/primary/MGS/N-1?url=s2',
+                ],
+            }
+            movie_dir = str(tmp_path / 'movie')
+            with _t4b_patch('core.organizer.requests.get', side_effect=self._fake_get()):
+                out = _write_movie_assets(
+                    movie_dir=movie_dir, meta=meta, format_data={}, source_fs_path='',
+                    config={}, cover_strategy=('none',), assets_mode='samples_only',
+                )
+            assert len(out['sample_fs']) == 2, '兩張劇照都應該經由代理落地'
+            for p in out['sample_fs']:
+                assert open(p, 'rb').read() == _T4B_PROXY
+        finally:
+            self._clear_failed_hosts()
+
+    def test_samples_only_no_preview_keeps_todays_behaviour(self, tmp_path):
+        """邊界 9（AC-5）：沒有 preview → 原址失敗就是失敗，行為與 branch 前相同。"""
+        self._clear_failed_hosts()
+        try:
+            meta = {'sample_images': ['https://cdn.blocked/s1.jpg'], 'preview_sample_images': []}
+            movie_dir = str(tmp_path / 'movie')
+            with _t4b_patch('core.organizer.requests.get', side_effect=self._fake_get()) as mg:
+                out = _write_movie_assets(
+                    movie_dir=movie_dir, meta=meta, format_data={}, source_fs_path='',
+                    config={}, cover_strategy=('none',), assets_mode='samples_only',
+                )
+            assert out['sample_fs'] == []
+            # 只打了原址一次，沒有第二次嘗試
+            assert mg.call_count == 1
+            assert 'fallback_url' not in mg.call_args.kwargs
+        finally:
+            self._clear_failed_hosts()
+
+    def test_short_preview_does_not_truncate(self, tmp_path):
+        """邊界 8：preview 比 sample 短 → 缺的格當 '' ，**不得少下載**。"""
+        self._clear_failed_hosts()
+        try:
+            meta = {
+                'sample_images': ['https://cdn.ok/s1.jpg', 'https://cdn.ok/s2.jpg', 'https://cdn.ok/s3.jpg'],
+                'preview_sample_images': ['http://mt.example/v1/images/primary/MGS/N-1?url=s1'],
+            }
+            movie_dir = str(tmp_path / 'movie')
+            with _t4b_patch('core.organizer.requests.get', return_value=self._resp(_T4B_DIRECT)) as mg:
+                out = _write_movie_assets(
+                    movie_dir=movie_dir, meta=meta, format_data={}, source_fs_path='',
+                    config={}, cover_strategy=('none',), assets_mode='samples_only',
+                )
+            assert len(out['sample_fs']) == 3, 'zip 截斷會讓這裡變成 1'
+            assert mg.call_count == 3
+        finally:
+            self._clear_failed_hosts()
+
+
+class TestT4bReadonlyFullCoverFallback(_T4bReadonlyBase):
+    """邊界 2：readonly full 模式封面 → CD-126-9（fallback 從 meta 取，不動 tuple）。"""
+
+    def test_full_cover_uses_preview_fallback_from_meta(self, tmp_path):
+        self._clear_failed_hosts()
+        try:
+            meta = {
+                'number': 'N-1', 'title': 'T', 'actors': [], 'tags': [],
+                'sample_images': [], 'preview_sample_images': [],
+                'preview_cover_url': 'http://mt.example/v1/images/primary/MGS/N-1?url=cover',
+            }
+            movie_dir = str(tmp_path / 'movie')
+            with _t4b_patch('core.organizer.requests.get', side_effect=self._fake_get()):
+                out = _write_movie_assets(
+                    movie_dir=movie_dir, meta=meta, format_data={'number': 'N-1'},
+                    source_fs_path=str(tmp_path / 'src.mp4'), config={},
+                    cover_strategy=('download', 'https://cdn.blocked/cover.jpg'),
+                    assets_mode='full',
+                )
+            assert out.get('has_cover') is True or out.get('cover_fs'), '封面應經由代理落地'
+        finally:
+            self._clear_failed_hosts()
+
+
+class TestT4bLengthContract:
+    """邊界 7 / D4：full 模式清空 sample_images 時，preview 必須同步清空。"""
+
+    def test_resolve_ingest_plan_clears_preview_in_lockstep(self, tmp_path):
+        src = tmp_path / 'ABC-123.mp4'
+        src.write_bytes(b'x' * 10)
+        scraper_data = {
+            'number': 'ABC-123', 'title': 'T', 'cover': 'https://cdn/c.jpg',
+            'sample_images': ['https://cdn/s1.jpg', 'https://cdn/s2.jpg'],
+            'preview_sample_images': ['http://mt/p1', 'http://mt/p2'],
+            'preview_cover_url': 'http://mt/pc',
+        }
+        meta, _strategy = resolve_ingest_plan(
+            str(src), 'ABC-123', {}, action='rescrape', scraper_data=scraper_data,
+        )
+        assert meta is not None
+        assert meta['sample_images'] == []
+        assert meta['preview_sample_images'] == [], (
+            '等長契約：清空 sample_images 卻留著 preview → 兩者長度不等 → '
+            '下游逐張配對時圖片對到別張（靜默錯位，比破圖難查）'
+        )
+
+
+# ============ TASK-126-T4b review MAJOR-2：readonly full 模式的劇照分支 ============
+#
+# 初版只測了 full 模式的**封面**，而且那支的 meta 是 `sample_images: []`（劇照迴圈根本不會跑）。
+# review 在沙盒把 full 分支的 preview 傳遞整段拔掉，335 條照樣全綠 ⇒ 這個下載點沒人守。
+
+class TestT4bReadonlyFullSamplesFallback(_T4bReadonlyBase):
+
+    def test_full_mode_extrafanart_uses_preview_fallback(self, tmp_path):
+        """使用者用放大鏡全量重刮一部片（full 模式）→ 原址被牆 → 劇照經代理落地。"""
+        self._clear_failed_hosts()
+        try:
+            meta = {
+                'number': 'N-2', 'title': 'T', 'actors': [], 'tags': [],
+                'sample_images': ['https://cdn.blocked/s1.jpg', 'https://cdn.blocked/s2.jpg'],
+                'preview_sample_images': [
+                    'http://mt.example/v1/images/primary/MGS/N-2?url=s1',
+                    'http://mt.example/v1/images/primary/MGS/N-2?url=s2',
+                ],
+            }
+            movie_dir = str(tmp_path / 'movie')
+            with _t4b_patch('core.organizer.requests.get', side_effect=self._fake_get()):
+                out = _write_movie_assets(
+                    movie_dir=movie_dir, meta=meta, format_data={'number': 'N-2'},
+                    source_fs_path=str(tmp_path / 'src.mp4'),
+                    config={'download_sample_images': True},
+                    cover_strategy=('none',), assets_mode='full',
+                )
+            assert len(out.get('sample_fs') or []) == 2, (
+                'full 模式的劇照分支若沒接上 preview，被牆的使用者重刮一次會拿到 0 張劇照，'
+                '而且沒有任何錯誤訊息'
+            )
+            for p in out['sample_fs']:
+                assert open(p, 'rb').read() == _T4B_PROXY
+        finally:
+            self._clear_failed_hosts()
+
+    def test_full_mode_extrafanart_short_preview_does_not_truncate(self, tmp_path):
+        """邊界 8 在 full 模式也成立：preview 比 sample 短，不得少下載。"""
+        self._clear_failed_hosts()
+        try:
+            meta = {
+                'number': 'N-3', 'title': 'T', 'actors': [], 'tags': [],
+                'sample_images': ['https://cdn.ok/s1.jpg', 'https://cdn.ok/s2.jpg', 'https://cdn.ok/s3.jpg'],
+                'preview_sample_images': ['http://mt.example/v1/images/primary/MGS/N-3?url=s1'],
+            }
+            movie_dir = str(tmp_path / 'movie')
+            with _t4b_patch('core.organizer.requests.get', return_value=self._resp(_T4B_DIRECT)) as mg:
+                out = _write_movie_assets(
+                    movie_dir=movie_dir, meta=meta, format_data={'number': 'N-3'},
+                    source_fs_path=str(tmp_path / 'src.mp4'),
+                    config={'download_sample_images': True},
+                    cover_strategy=('none',), assets_mode='full',
+                )
+            assert len(out.get('sample_fs') or []) == 3, 'zip 截斷會讓這裡變成 1'
+            assert mg.call_count == 3
+        finally:
+            self._clear_failed_hosts()

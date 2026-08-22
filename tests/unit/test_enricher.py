@@ -3888,3 +3888,400 @@ class TestResolveNfoCoverPathsFlavourCoverage:
             f"nfo_path 必須在所有 flavour 下逐字相同，實際: {nfo_paths}"
         )
         assert next(iter(nfo_paths.values())) == str(video_path.with_suffix(".nfo"))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TASK-126-T4b：preview_* 管線接通 enricher（caller 層級）
+# ══════════════════════════════════════════════════════════════════════════════
+
+import hashlib
+import requests
+
+
+_T4B_BIG = b"P" * 1001
+_T4B_PROXY = b"F" * 1001
+
+
+def _t4b_ok(content=_T4B_BIG):
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.content = content
+    return resp
+
+
+class _T4bFailedHostsMixin:
+    @pytest.fixture(autouse=True)
+    def _clear_failed_hosts(self):
+        import core.organizer as org
+        with org._failed_hosts_lock:
+            org._failed_hosts.clear()
+        yield
+        with org._failed_hosts_lock:
+            org._failed_hosts.clear()
+
+
+def _t4b_scraper(**overrides):
+    data = {
+        "number": "SONE-205",
+        "title": "テストタイトル",
+        "actors": ["女優A"],
+        "cover": "https://cdn.example/cover.jpg",
+        "preview_cover_url": "https://mt.example/v1/images/?url=cover",
+        "date": "2024-01-01",
+        "maker": "SOD",
+        "director": "監督",
+        "series": "シリーズ",
+        "label": "LABEL",
+        "tags": ["タグ"],
+        "sample_images": [
+            "https://cdn.example/s1.jpg",
+            "https://cdn.example/s2.jpg",
+        ],
+        "preview_sample_images": [
+            "https://mt.example/v1/images/?url=s1",
+            "https://mt.example/v1/images/?url=s2",
+        ],
+        "duration": 120,
+        "url": "https://example.com/SONE-205",
+        "source": "metatube:MGS",
+    }
+    data.update(overrides)
+    return data
+
+
+class TestT4bEnrichCallerFallback(_T4bFailedHostsMixin):
+    """邊界 1：enrich_single 入口，原址 ConnectTimeout → 代理成功存檔。"""
+
+    def test_enrich_single_connect_timeout_uses_preview_fallback(self, tmp_path):
+        video = tmp_path / "SONE-205.mp4"
+        video.write_bytes(b"fake-video")
+        scraper = _t4b_scraper()
+
+        def fake_get(url, **kwargs):
+            if "cdn.example" in url:
+                raise requests.exceptions.ConnectTimeout("connect timed out")
+            return _t4b_ok(_T4B_PROXY)
+
+        with (
+            patch("core.organizer.requests.get", side_effect=fake_get),
+            patch("core.enricher.generate_nfo", return_value=True),
+            patch("core.enricher.VideoRepository") as mock_repo_cls,
+            patch("core.enricher.find_subtitle_files", return_value=[]),
+        ):
+            mock_repo_cls.return_value = MagicMock()
+            from core.enricher import enrich_single
+            result = enrich_single(
+                file_path=str(video),
+                number="SONE-205",
+                mode="refresh_full",
+                scraper_data=scraper,
+                write_nfo=False,
+                write_cover=True,
+                write_extrafanart=True,
+                overwrite_existing=True,
+            )
+
+        assert result.success is True
+        assert result.cover_written is True
+        cover = tmp_path / "SONE-205.jpg"
+        assert cover.exists()
+        assert cover.read_bytes() == _T4B_PROXY
+        ef = tmp_path / "extrafanart"
+        assert (ef / "fanart1.jpg").read_bytes() == _T4B_PROXY
+        assert (ef / "fanart2.jpg").read_bytes() == _T4B_PROXY
+
+
+class TestT4bEnrichMixedSource(_T4bFailedHostsMixin):
+    """邊界 5 / CD-126-10：source=javbus 但 preview 非空 → fallback 仍傳入。"""
+
+    def test_mixed_source_javbus_still_passes_fallback_url(self, tmp_path):
+        video = tmp_path / "SONE-205.mp4"
+        video.write_bytes(b"fake-video")
+        scraper = _t4b_scraper(source="javbus")
+
+        with (
+            patch("core.enricher.download_image", return_value=True) as mock_dl,
+            patch("core.enricher.generate_nfo", return_value=True),
+            patch("core.enricher.VideoRepository") as mock_repo_cls,
+            patch("core.enricher.find_subtitle_files", return_value=[]),
+            patch("os.makedirs"),
+        ):
+            mock_repo_cls.return_value = MagicMock()
+            from core.enricher import enrich_single
+            result = enrich_single(
+                file_path=str(video),
+                number="SONE-205",
+                mode="refresh_full",
+                scraper_data=scraper,
+                write_nfo=False,
+                write_cover=True,
+                write_extrafanart=True,
+                overwrite_existing=True,
+            )
+
+        assert result.success is True
+        fallbacks = [
+            c.kwargs.get("fallback_url", "")
+            for c in mock_dl.call_args_list
+            if c.kwargs.get("fallback_url")
+        ]
+        assert "https://mt.example/v1/images/?url=cover" in fallbacks
+        assert "https://mt.example/v1/images/?url=s1" in fallbacks
+        assert "https://mt.example/v1/images/?url=s2" in fallbacks
+
+
+class TestT4bEnrichAc4cHash(_T4bFailedHostsMixin):
+    """邊界 6 / AC-4c：原址可達時存檔 hash 等於直連位元組，不是代理副本。"""
+
+    def test_enrich_single_primary_reachable_keeps_direct_bytes(self, tmp_path):
+        video = tmp_path / "SONE-205.mp4"
+        video.write_bytes(b"fake-video")
+        scraper = _t4b_scraper()
+        primary_bytes = b"DIRECT-BYTES" + (b"A" * 1000)
+        proxy_bytes = b"PROXY-BYTES" + (b"B" * 1000)
+
+        def fake_get(url, **kwargs):
+            if "cdn.example" in url:
+                return _t4b_ok(primary_bytes)
+            return _t4b_ok(proxy_bytes)
+
+        with (
+            patch("core.organizer.requests.get", side_effect=fake_get),
+            patch("core.enricher.generate_nfo", return_value=True),
+            patch("core.enricher.VideoRepository") as mock_repo_cls,
+            patch("core.enricher.find_subtitle_files", return_value=[]),
+        ):
+            mock_repo_cls.return_value = MagicMock()
+            from core.enricher import enrich_single
+            result = enrich_single(
+                file_path=str(video),
+                number="SONE-205",
+                mode="refresh_full",
+                scraper_data=scraper,
+                write_nfo=False,
+                write_cover=True,
+                write_extrafanart=False,
+                overwrite_existing=True,
+            )
+
+        assert result.success is True
+        cover = tmp_path / "SONE-205.jpg"
+        assert cover.exists()
+        assert hashlib.sha256(cover.read_bytes()).digest() == hashlib.sha256(primary_bytes).digest()
+        assert cover.read_bytes() != proxy_bytes
+
+
+class TestT4bEnrichPreviewShorter(_T4bFailedHostsMixin):
+    """邊界 8：preview 比 sample 短 → 缺格當 ''，不得截斷下載張數。"""
+
+    def test_short_preview_does_not_truncate_downloads(self, tmp_path):
+        video = tmp_path / "SONE-205.mp4"
+        video.write_bytes(b"fake-video")
+        scraper = _t4b_scraper(
+            sample_images=[
+                "https://cdn.example/s1.jpg",
+                "https://cdn.example/s2.jpg",
+                "https://cdn.example/s3.jpg",
+            ],
+            preview_sample_images=["https://mt.example/v1/images/?url=s1"],
+        )
+
+        with (
+            patch("core.enricher.download_image", return_value=True) as mock_dl,
+            patch("core.enricher.generate_nfo", return_value=True),
+            patch("core.enricher.VideoRepository") as mock_repo_cls,
+            patch("core.enricher.find_subtitle_files", return_value=[]),
+            patch("os.makedirs"),
+        ):
+            mock_repo_cls.return_value = MagicMock()
+            from core.enricher import enrich_single
+            enrich_single(
+                file_path=str(video),
+                number="SONE-205",
+                mode="refresh_full",
+                scraper_data=scraper,
+                write_nfo=False,
+                write_cover=False,
+                write_extrafanart=True,
+                overwrite_existing=True,
+            )
+
+        sample_calls = [
+            c for c in mock_dl.call_args_list
+            if c.args and "cdn.example/s" in str(c.args[0])
+        ]
+        assert len(sample_calls) == 3
+        assert sample_calls[0].kwargs.get("fallback_url") == "https://mt.example/v1/images/?url=s1"
+        assert sample_calls[1].kwargs.get("fallback_url", "") == ""
+        assert sample_calls[2].kwargs.get("fallback_url", "") == ""
+
+
+class TestT4bEnrichNonMetatube(_T4bFailedHostsMixin):
+    """邊界 9 / AC-5：preview 全空 → 不傳 fallback_url，行為與 branch 前相同。"""
+
+    def test_empty_preview_omits_fallback_url_kwarg(self, tmp_path):
+        video = tmp_path / "SONE-205.mp4"
+        video.write_bytes(b"fake-video")
+        scraper = _t4b_scraper(
+            preview_cover_url="",
+            preview_sample_images=["", ""],
+            source="javbus",
+        )
+
+        with (
+            patch("core.enricher.download_image", return_value=True) as mock_dl,
+            patch("core.enricher.generate_nfo", return_value=True),
+            patch("core.enricher.VideoRepository") as mock_repo_cls,
+            patch("core.enricher.find_subtitle_files", return_value=[]),
+            patch("os.makedirs"),
+        ):
+            mock_repo_cls.return_value = MagicMock()
+            from core.enricher import enrich_single
+            enrich_single(
+                file_path=str(video),
+                number="SONE-205",
+                mode="refresh_full",
+                scraper_data=scraper,
+                write_nfo=False,
+                write_cover=True,
+                write_extrafanart=True,
+                overwrite_existing=True,
+            )
+
+        for c in mock_dl.call_args_list:
+            assert "fallback_url" not in c.kwargs
+            assert len(c.args) <= 2 or (len(c.args) >= 4 and c.args[3] == "")
+
+
+class TestT4bMergeMetaPreviewPair:
+    """邊界 10：_merge_meta 的 if 與 elif 兩條路都搬 preview。"""
+
+    def test_merge_meta_if_branch_moves_preview_samples(self):
+        from core.enricher import _merge_meta
+        base = {"cover_url": "http://a/c.jpg", "sample_images": None}
+        supplement = {
+            "cover_url": "http://b/c.jpg",
+            "preview_cover_url": "http://proxy/c",
+            "sample_images": ["http://b/s1.jpg"],
+            "preview_sample_images": ["http://proxy/s1"],
+        }
+        merged, _ = _merge_meta(base, supplement)
+        assert merged["sample_images"] == ["http://b/s1.jpg"]
+        assert merged["preview_sample_images"] == ["http://proxy/s1"]
+
+    def test_merge_meta_elif_branch_moves_preview_samples(self):
+        from core.enricher import _merge_meta
+        base = {"cover_url": "", "sample_images": []}
+        supplement = {
+            "cover_url": "http://b/c.jpg",
+            "preview_cover_url": "http://proxy/c",
+            "sample_images": ["http://b/s1.jpg"],
+            "preview_sample_images": ["http://proxy/s1"],
+        }
+        merged, _ = _merge_meta(base, supplement)
+        assert merged["cover_url"] == "http://b/c.jpg"
+        assert merged["preview_cover_url"] == "http://proxy/c"
+        assert merged["sample_images"] == ["http://b/s1.jpg"]
+        assert merged["preview_sample_images"] == ["http://proxy/s1"]
+
+
+class TestT4bNfoToMetaPreviewKeys:
+    """邊界 11：_nfo_to_meta / _video_to_meta 兩鍵存在且為空。"""
+
+    def test_nfo_to_meta_has_empty_preview_keys(self):
+        import xml.etree.ElementTree as ET
+        from core.enricher import _nfo_to_meta
+        root = ET.fromstring("<movie><title>T</title></movie>")
+        meta = _nfo_to_meta(root)
+        assert meta["preview_cover_url"] == ""
+        assert meta["preview_sample_images"] == []
+
+    def test_video_to_meta_has_empty_preview_keys(self):
+        from core.enricher import _video_to_meta
+        meta = _video_to_meta(_make_video())
+        assert meta["preview_cover_url"] == ""
+        assert meta["preview_sample_images"] == []
+
+    def test_scraper_to_meta_carries_preview_keys(self):
+        from core.enricher import _scraper_to_meta
+        meta = _scraper_to_meta(_t4b_scraper())
+        assert meta["preview_cover_url"] == "https://mt.example/v1/images/?url=cover"
+        assert meta["preview_sample_images"] == [
+            "https://mt.example/v1/images/?url=s1",
+            "https://mt.example/v1/images/?url=s2",
+        ]
+
+
+# ============ TASK-126-T4b review MAJOR-1：fetch_samples_only 這條下載路徑 ============
+#
+# spec §3.2 末條要求「**每條下載路徑**都要有 caller 層級的驗證」，不是「四個入口函式」。
+# T4b 的初版只守住 enrich_single，**fetch_samples_only（片庫頁按「補劇照」走的正是這條）
+# 完全沒有測試碰到**——review 在沙盒把那行 wiring 拔掉，127 條照樣全綠。
+
+class TestT4bFetchSamplesOnlyFallback(_T4bFailedHostsMixin):
+
+    def test_fetch_samples_only_uses_preview_fallback(self, tmp_path):
+        """被牆的使用者按「補劇照」→ 原址 ConnectTimeout → 代理接手，劇照落地。"""
+        import requests as _rq
+        fs = tmp_path / "ABC-999.mp4"
+        fs.write_bytes(b"v" * 100)
+        meta = {
+            "number": "ABC-999",
+            "sample_images": ["https://cdn.blocked/s1.jpg", "https://cdn.blocked/s2.jpg"],
+            "preview_sample_images": [
+                "http://mt.example/v1/images/primary/MGS/ABC-999?url=s1",
+                "http://mt.example/v1/images/primary/MGS/ABC-999?url=s2",
+            ],
+        }
+
+        def _side(url, **kwargs):
+            if "mt.example" in url:
+                return _t4b_ok(b"PROXY" + b"\x00" * 2000)
+            raise _rq.exceptions.ConnectTimeout("blocked")
+
+        with (
+            patch("core.enricher.search_jav", return_value=meta),
+            patch("core.organizer.requests.get", side_effect=_side),
+            patch("core.enricher.VideoRepository") as mock_repo_cls,
+            patch("core.enricher._db_upsert_samples_only"),
+        ):
+            mock_repo_cls.return_value = MagicMock()
+            from core.enricher import fetch_samples_only
+            result = fetch_samples_only(str(fs), "ABC-999")
+
+        assert result.extrafanart_written == 2, (
+            "兩張劇照都應該經由代理落地——這條 wiring 若被帶壞，使用者按「補劇照」"
+            "會拿到 0 張且沒有任何錯誤訊息"
+        )
+        written = sorted((tmp_path / "extrafanart").glob("fanart*.jpg"))
+        assert len(written) == 2
+        for p in written:
+            assert p.read_bytes().startswith(b"PROXY")
+
+    def test_fetch_samples_only_without_preview_keeps_todays_behaviour(self, tmp_path):
+        """AC-5：沒有 preview → 原址失敗即失敗，且不得出現 fallback_url kwarg。"""
+        import requests as _rq
+        fs = tmp_path / "ABC-998.mp4"
+        fs.write_bytes(b"v" * 100)
+        meta = {
+            "number": "ABC-998",
+            "sample_images": ["https://cdn.blocked/s1.jpg"],
+            "preview_sample_images": [],
+        }
+
+        def _side(url, **kwargs):
+            raise _rq.exceptions.ConnectTimeout("blocked")
+
+        with (
+            patch("core.enricher.search_jav", return_value=meta),
+            patch("core.organizer.requests.get", side_effect=_side) as mg,
+            patch("core.enricher.VideoRepository") as mock_repo_cls,
+            patch("core.enricher._db_upsert_samples_only"),
+        ):
+            mock_repo_cls.return_value = MagicMock()
+            from core.enricher import fetch_samples_only
+            result = fetch_samples_only(str(fs), "ABC-998")
+
+        assert result.extrafanart_written == 0
+        assert mg.call_count == 1, "不得有第二次嘗試"
+        assert "fallback_url" not in mg.call_args.kwargs
