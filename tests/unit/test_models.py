@@ -13,6 +13,7 @@ def test_video_new_fields_defaults():
     assert v.label == ""
     assert v.series == ""
     assert v.sample_images == []
+    assert v.preview_sample_images == []
 
 
 def test_video_new_fields_with_values():
@@ -24,12 +25,14 @@ def test_video_new_fields_with_values():
         label='S1',
         series='NTR',
         sample_images=['http://a.jpg'],
+        preview_sample_images=['http://proxy/a.jpg'],
     )
     assert v.director == '山田'
     assert v.duration == 119
     assert v.label == 'S1'
     assert v.series == 'NTR'
     assert v.sample_images == ['http://a.jpg']
+    assert v.preview_sample_images == ['http://proxy/a.jpg']
 
 
 def test_to_legacy_dict_new_keys():
@@ -41,6 +44,7 @@ def test_to_legacy_dict_new_keys():
         label='S1',
         series='NTR',
         sample_images=['http://a.jpg'],
+        preview_sample_images=['http://proxy/a.jpg'],
     )
     d = v.to_legacy_dict()
     assert d['director'] == '山田'
@@ -48,6 +52,7 @@ def test_to_legacy_dict_new_keys():
     assert d['label'] == 'S1'
     assert d['series'] == 'NTR'
     assert d['sample_images'] == ['http://a.jpg']
+    assert d['preview_sample_images'] == ['http://proxy/a.jpg']
 
 
 def test_to_legacy_dict_new_keys_defaults():
@@ -59,6 +64,16 @@ def test_to_legacy_dict_new_keys_defaults():
     assert d['label'] == ""
     assert d['series'] == ""
     assert d['sample_images'] == []
+    assert d['preview_sample_images'] == []
+
+
+def test_to_legacy_dict_preview_sample_images_default_empty():
+    """邊界 10／D6／AC-5：非 metatube 來源恆 []；to_legacy_dict 輸出同名 key 為 []。"""
+    v = Video(number='TEST-001', source='javbus', sample_images=['http://a.jpg'])
+    assert v.preview_sample_images == []
+    d = v.to_legacy_dict()
+    assert 'preview_sample_images' in d
+    assert d['preview_sample_images'] == []
 
 
 # ============ Merge policy 測試 ============
@@ -174,11 +189,11 @@ def test_to_legacy_dict_excludes_summary():
 
 
 def test_to_legacy_dict_key_set_unchanged():
-    """15 鍵固定集合（TASK-113c-T3b 新增 preview_cover_url，授權來源 spec §5.4 v7-2）"""
+    """16 鍵固定集合（TASK-126-T2 新增 preview_sample_images）"""
     v = Video(number="TEST-001")
     expected_keys = {
         "number", "title", "actors", "date", "maker", "cover",
         "preview_cover_url", "tags", "source", "url", "director", "duration",
-        "label", "series", "sample_images",
+        "label", "series", "sample_images", "preview_sample_images",
     }
     assert set(v.to_legacy_dict().keys()) == expected_keys

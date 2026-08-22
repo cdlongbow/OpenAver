@@ -129,9 +129,17 @@ def merge_results(
         # 不變式，merger 不該隱性依賴它（那正是 CD-113c-12 要消滅的形狀）。
         updates['preview_cover_url'] = ''
 
-    # sample_images 維持獨立 _first_non_empty（CD-113c-12 不適用於此欄，各自獨立解析）
-    sample_images_value = _first_non_empty(cover_ordered, 'sample_images', none_sentinel=False)
-    if sample_images_value is not None:
-        updates['sample_images'] = sample_images_value
+    # 劇照欄位：sample_images 依 user_order 找第一個該欄非空的候選（=「勝出候選」）。
+    # preview_sample_images 必須從**同一個**勝出候選複製，不可各自 _first_non_empty
+    # （CD-126-2／CD-113c-12 同源綁定；否則 sample 取候選 A、preview 取候選 B＝燈箱顯示別片劇照）。
+    # 勝出候選沒有 preview 時明確覆寫為空 list，不得沿用 text_source 或其他候選的值。
+    sample_winner = _first_non_empty_video(cover_ordered, 'sample_images', none_sentinel=False)
+    if sample_winner is not None:
+        updates['sample_images'] = sample_winner.sample_images
+        updates['preview_sample_images'] = sample_winner.preview_sample_images
+    elif text_source.preview_sample_images:
+        # 沒有任何候選有 sample_images ⇒ 沒有劇照可預覽。**明確清空**，不讓 preview
+        # 從 text_source 漏過來（同封面分支的防漏形狀）。
+        updates['preview_sample_images'] = []
 
     return text_source.model_copy(update=updates) if updates else text_source

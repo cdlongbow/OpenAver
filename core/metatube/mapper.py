@@ -118,20 +118,13 @@ def map_movie_info(info: dict, base_url: str = "") -> Video:
     cover_url = info.get("cover_url", "")
     preview_cover_url = _build_preview_cover_url(base_url, provider, number, cover_url)
 
-    # 來源一致性：從 metatube 刮到的影片，封面也應走 metatube 取回，避免本地
-    # 直連被牆的源站圖片 URL 超時。preview_cover_url 是 metatube 伺服器的
-    # `/v1/images/primary/...` 代理端點；base_url 帶 userinfo/query 等無法組出
-    # 代理 URL 時 _build_preview_cover_url 返回 ''，此時回退原始 cover_url，
-    # 行為與修改前一致。
-    effective_cover_url = preview_cover_url or cover_url
-
-    # 來源一致性（續，feature/metatube-image-proxy）：劇照 preview_images →
-    # sample_images 同樣逐張改寫成 metatube 代理端點 URL，取回路徑與封面一致。
-    # 逐張獨立降級：某張組不出代理 URL（base_url 異常／provider 需轉義）時
-    # 該張回退原始 URL，不影響其他張。
+    # CD-126-1／2：cover_url / sample_images 恆為原始網址；代理 URL 住在平行的
+    # preview_* 欄位。組不出代理的劇照格填 ''（不是填原始——同 preview_cover_url
+    # 形狀），讓消費端沿用 `preview || raw`。
     raw_samples = info.get("preview_images") or []
-    sample_images = [
-        _build_proxy_image_url(base_url, provider, number, u) or u for u in raw_samples
+    sample_images = list(raw_samples)
+    preview_sample_images = [
+        _build_proxy_image_url(base_url, provider, number, u) or "" for u in raw_samples
     ]
 
     return Video(
@@ -143,12 +136,13 @@ def map_movie_info(info: dict, base_url: str = "") -> Video:
         series=info.get("series", ""),
         actresses=actresses,
         date=date,
-        cover_url=effective_cover_url,
+        cover_url=cover_url,
         preview_cover_url=preview_cover_url,
         tags=info.get("genres") or [],
         detail_url=info.get("homepage", ""),
         duration=runtime,
         sample_images=sample_images,
+        preview_sample_images=preview_sample_images,
         rating=score,
         summary=summary,
         source=f"metatube:{provider}",

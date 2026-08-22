@@ -29,6 +29,10 @@ class Video(BaseModel):
     label: str = Field(default="", description="發行商/レーベル")
     series: str = Field(default="", description="系列/シリーズ")
     sample_images: list[str] = Field(default_factory=list, description="樣品圖像 URL")
+    preview_sample_images: list[str] = Field(
+        default_factory=list,
+        description="metatube 預覽用劇照 URL（與 sample_images 等長同序；組不出填 ''；CD-126-2）",
+    )
 
     # 選用欄位（Task 5 會加入）
     rating: Optional[float] = None
@@ -56,6 +60,7 @@ class Video(BaseModel):
             'label': self.label,
             'series': self.series,
             'sample_images': self.sample_images,
+            'preview_sample_images': self.preview_sample_images,
         }
 
 
