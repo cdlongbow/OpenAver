@@ -7,11 +7,14 @@ import os
 import re
 import sys
 import shutil
+import threading
+import time
 import requests
 import html
 from pathlib import Path
 from PIL import Image
 from typing import Optional, Dict, Any, List, Tuple
+from urllib.parse import urlparse
 
 from core.config import STEM_IMAGE_MODES
 from core.cover_attributes import effective_tags
@@ -26,9 +29,16 @@ logger = get_logger(__name__)
 
 # HTTP 請求設定
 REQUEST_TIMEOUT = 30
+CONNECT_TIMEOUT = 5  # CD-126-5c：只縮 connect；可達 host 的 handshake ≪ 5s
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
 }
+
+# Process-level failed-host memory (CD-126-5 / 5b / 5c). Key = (scheme, hostname, port).
+_HOST_FAILURE_TTL = 300
+_failed_hosts: Dict[Tuple[str, str, int], float] = {}
+_failed_hosts_lock = threading.Lock()
+_now = time.monotonic  # injectable clock for TTL tests (no sleep)
 
 
 def sanitize_filename(name: str) -> str:
@@ -629,35 +639,122 @@ def generate_jellyfin_images(cover_path: str, base_stem: str, number: str = '', 
     return result
 
 
-def download_image(url: str, save_path: str, referer: str = '') -> bool:
-    """下載圖片"""
-    if not url:
-        return False
+def _host_key(url: str) -> Optional[Tuple[str, str, int]]:
+    """Failure-memory key: (scheme, hostname, effective_port)。組不出就回 None。
+
+    Stage 2 review P3-1：`urlparse(...).port` 對非數字 port（`http://h:abc/x.jpg`）
+    **拋 ValueError**，而唯一的呼叫點 `download_image()` 的 `skip_primary = ...`
+    那行不在任何 try 內——例外會一路穿出 `organize_file()`，而那時
+    `shutil.move()`（:1219）**已經把影片檔搬到新資料夾了**，NFO 卻還沒寫。
+    使用者看到「整理失敗」，但檔案在新位置、資料夾是半成品，得自己收拾。
+    改動前這種髒網址只會讓封面抓不到，整理照樣完成——所以這是本 branch 引入的回歸。
+    回 None 即代表「這個網址沒有可記憶的 host」，兩個消費端都已經吃 None。
+    """
     try:
-        headers = HEADERS.copy()
+        parsed = urlparse(url)
+        scheme = (parsed.scheme or "").lower()
+        hostname = (parsed.hostname or "").lower()
+        if not scheme or not hostname:
+            return None
+        port = parsed.port or (443 if scheme == "https" else 80)
+    except ValueError:
+        return None
+    return (scheme, hostname, port)
 
-        # 根據 URL 設置對應的 Referer
-        if not referer:
-            if "javbus.com" in url:
-                referer = "https://www.javbus.com/"
-            elif "dmm.co.jp" in url:
-                referer = "https://www.dmm.co.jp/"
-            elif "jav321.com" in url:
-                referer = "https://www.jav321.com/"
 
-        if referer:
-            headers['Referer'] = referer
+def _host_recently_failed(key: Optional[Tuple[str, str, int]]) -> bool:
+    if key is None:
+        return False
+    now = _now()
+    with _failed_hosts_lock:
+        expiry = _failed_hosts.get(key)
+        if expiry is None:
+            return False
+        if now >= expiry:
+            _failed_hosts.pop(key, None)
+            return False
+        return True
 
-        resp = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+
+def _record_host_failure(key: Optional[Tuple[str, str, int]]) -> None:
+    if key is None:
+        return
+    expiry = _now() + _HOST_FAILURE_TTL
+    with _failed_hosts_lock:
+        _failed_hosts[key] = expiry
+    logger.debug("image host connect failure recorded: %s (ttl=%ss)", key, _HOST_FAILURE_TTL)
+
+
+def _build_download_headers(url: str, referer: str = "") -> dict:
+    headers = HEADERS.copy()
+    effective_referer = referer
+    if not effective_referer:
+        if "javbus.com" in url:
+            effective_referer = "https://www.javbus.com/"
+        elif "dmm.co.jp" in url:
+            effective_referer = "https://www.dmm.co.jp/"
+        elif "jav321.com" in url:
+            effective_referer = "https://www.jav321.com/"
+    if effective_referer:
+        headers["Referer"] = effective_referer
+    return headers
+
+
+def _attempt_download_image(
+    url: str, save_path: str, referer: str = "", *, short_connect: bool = False
+) -> bool:
+    """Try one URL. Record host only on connect-stage failures.
+
+    `short_connect` 只在「這次嘗試有代理可退」時為 True（CD-126-6 ＋ Codex PR review P2）。
+
+    **為什麼不無條件縮**：AC-5 要求非 metatube 來源「逐字元相同」。沒有 fallback 的
+    呼叫端（自家 9 源）縮成 5 秒 connect **等於改變結果**——連線慢但 TCP 接得起來的
+    使用者會從「30 秒後成功」變成「5 秒失敗」，而且**沒有代理可以救**。
+    短逾時的收益只存在於「失敗了還有第二條路」的情境，成本卻落在沒有第二條路的人身上。
+    """
+    headers = _build_download_headers(url, referer)
+    timeout = (CONNECT_TIMEOUT, REQUEST_TIMEOUT) if short_connect else REQUEST_TIMEOUT
+    try:
+        resp = requests.get(url, headers=headers, timeout=timeout)
         if resp.status_code == 200 and len(resp.content) > 1000:
-            with open(save_path, 'wb') as f:
+            with open(save_path, "wb") as f:
                 f.write(resp.content)
             return True
+    except requests.exceptions.ConnectionError as e:
+        # ConnectTimeout is a ConnectionError subclass; ReadTimeout is not.
+        _record_host_failure(_host_key(url))
+        logger.warning(f"[!] 下載圖片失敗: {e}")
     except Exception as e:
         logger.warning(f"[!] 下載圖片失敗: {e}")
     return False
 
 
+def download_image(
+    url: str, save_path: str, referer: str = "", fallback_url: str = ""
+) -> bool:
+    """下載圖片。
+
+    metatube 的 `/v1/images/` 會重新編碼 JPEG（實測 +3% 體積、尺寸不變），所以先試原址，取不到才用代理副本。
+    """
+    if not url:
+        return False
+
+    # CD-126-8: original-first; proxy is a re-encoded JPEG rescue copy.
+    skip_primary = bool(fallback_url) and _host_recently_failed(_host_key(url))
+
+    if not skip_primary:
+        # 只有「有代理可退」的那一次原址嘗試才用短 connect（見 _attempt_download_image
+        # 的 docstring）。沒有 fallback 時逐字元維持改動前的 timeout=REQUEST_TIMEOUT。
+        if _attempt_download_image(
+            url, save_path, referer, short_connect=bool(fallback_url)
+        ):
+            return True
+        if not fallback_url:
+            return False
+        # 代理那一次用正常 timeout（plan §2.3）——它通常在區網內，且已經是最後一條路。
+        return _attempt_download_image(fallback_url, save_path, referer)
+
+    return _attempt_download_image(fallback_url, save_path, referer)
 
 
 def generate_nfo(
@@ -1151,7 +1248,19 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
         img_url = metadata.get('cover', '')
         if img_url:
             cover_path = resolve_cover_target(os.path.join(target_dir, filename_base), ext_mode)
-            if download_image(img_url, cover_path):
+            # CD-126-3（owner 2026-08-23 裁決納入）：原址優先，取不到才退 metatube 代理。
+            # 後端重刮與前端整理（`buildOrganizeMetadata()`）**兩條都有值**——Codex PR
+            # review P2-1 之後前端不再剝除 preview 欄位。113c-T3b 的不變式是「代理網址
+            # 不落磁碟」，剝除只是當時採用的手段；改由 TestT6PreviewNotPersisted 直接
+            # 斷言 NFO／new_folder 下所有文字檔都不含代理 URL 來守。
+            # 讀不到（非 metatube 來源）就跟今天完全一樣，不需要 if-else 去分辨來源。
+            preview_cover = metadata.get('preview_cover_url') or ''
+            cover_ok = (
+                download_image(img_url, cover_path, fallback_url=preview_cover)
+                if preview_cover
+                else download_image(img_url, cover_path)
+            )
+            if cover_ok:
                 result['cover_path'] = cover_path
 
         # 外部管理器模式：依 ext_mode 決定 poster/fanart 命名規則（ext_mode 已在早偵測層定義）
@@ -1174,12 +1283,18 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
             sample_images = metadata.get('sample_images', [])
             if sample_images:
                 extrafanart_dir = os.path.join(target_dir, 'extrafanart')
+                # 同上：逐張 index 配對（不用裸 zip，長度不等不得截斷下載張數）
+                sample_previews = metadata.get('preview_sample_images') or []
                 try:
                     os.makedirs(extrafanart_dir, exist_ok=True)
                     for i, url in enumerate(sample_images, 1):
                         try:
                             dest = os.path.join(extrafanart_dir, f'fanart{i}.jpg')
-                            download_image(url, dest)
+                            pv = sample_previews[i - 1] if i - 1 < len(sample_previews) else ''
+                            if pv:
+                                download_image(url, dest, fallback_url=pv)
+                            else:
+                                download_image(url, dest)
                         except Exception as e:
                             logger.warning(f"extrafanart {i} 下載失敗: {e}")
                 except Exception as e:

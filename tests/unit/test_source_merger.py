@@ -305,3 +305,87 @@ def test_preview_cover_url_cleared_when_no_candidate_has_cover():
     assert merged.preview_cover_url == "", (
         "沒有任何候選有封面時 preview 必須清空，不得從 text_source 漏出"
     )
+
+
+# ---------------------------------------------------------------------------
+# preview_sample_images 同源綁定（TASK-126-T2, CD-126-2／CD-113c-12 形狀）
+# ---------------------------------------------------------------------------
+
+def test_merge_preview_sample_images_follows_same_winner():
+    """邊界 8：候選 A 有 sample_images（無 preview）、候選 B 有 sample＋preview，
+    A 排前 → 兩欄都取 A（含 A 的空 preview），不得從 B 漏過來。"""
+    a = _v(
+        "javbus",
+        title="JB Title",
+        sample_images=["http://javbus/s1.jpg"],
+        preview_sample_images=[],
+    )
+    b = _v(
+        "metatube:FANZA",
+        title="",
+        sample_images=["http://mt/s1.jpg"],
+        preview_sample_images=["http://mt:8080/v1/images/primary/FANZA/X?url=s1"],
+    )
+    merged = merge_results(
+        {"javbus": a, "metatube:FANZA": b},
+        user_order=["javbus", "metatube:FANZA"],
+    )
+    assert merged.sample_images == ["http://javbus/s1.jpg"]
+    assert merged.preview_sample_images == []
+
+
+def test_merge_preview_sample_images_positive_copies_winner_previews():
+    """邊界 8b（**正向**）：勝出候選自己帶非空 preview_sample_images → merged 必須拿到那組值。
+
+    Pre-merge mutation 自驗抓到的洞（`source_merger.py:139` SURVIVED）＋ SA-pre-6 獨立指到同一處：
+    邊界 8 的斷言是 `preview_sample_images == []`，而該案例的勝出候選 preview 本來就是 `[]`——
+    把那行賦值整個刪掉，值會從 text_source 沿用下來、**也是 `[]`**，測試照樣綠。
+    封面那組有這支對稱的正向鎖（test_preview_cover_url_follows_cover_winner_when_metatube），
+    劇照這組沒有。
+
+    使用者流程：來源順序把 metatube 排第一 → 搜到一片、metatube 有劇照 → 若日後有人
+    改壞這行，燈箱的劇照代理網址整組消失、退回冷門圖床 403 破圖，而測試全綠沒人發現。
+    """
+    previews = [
+        "http://mt:8080/v1/images/primary/FANZA/X?url=s1",
+        "http://mt:8080/v1/images/primary/FANZA/X?url=s2",
+    ]
+    javbus = _v("javbus", title="JB Title", sample_images=[], preview_sample_images=[])
+    metatube = _v(
+        "metatube:FANZA",
+        title="",
+        sample_images=["http://mt/s1.jpg", "http://mt/s2.jpg"],
+        preview_sample_images=previews,
+    )
+    merged = merge_results(
+        {"javbus": javbus, "metatube:FANZA": metatube},
+        user_order=["javbus", "metatube:FANZA"],
+    )
+    # javbus 是 text_source（整包贏）但沒有劇照 → 劇照勝出候選是 metatube
+    assert merged.sample_images == ["http://mt/s1.jpg", "http://mt/s2.jpg"]
+    assert merged.preview_sample_images == previews, (
+        "勝出候選帶非空 preview_sample_images 時，merged 必須取到該值（同源綁定的正向半邊）"
+    )
+    assert len(merged.preview_sample_images) == len(merged.sample_images), (
+        "CD-126-2 等長契約"
+    )
+
+
+def test_merge_preview_sample_images_cleared_when_no_sample_winner():
+    """邊界 9：無任何候選有 sample_images，但 text_source 有 preview_sample_images
+    → preview_sample_images 明確清空為 []，不得從 text_source 漏出。"""
+    leaky = _v(
+        "metatube:FANZA",
+        title="MT Title",
+        sample_images=[],
+        preview_sample_images=["http://mt:8080/v1/images/primary/FANZA/X?url=s1"],
+    )
+    other = _v("javbus", title="", sample_images=[], preview_sample_images=[])
+    merged = merge_results(
+        {"metatube:FANZA": leaky, "javbus": other},
+        user_order=["metatube:FANZA", "javbus"],
+    )
+    assert merged.sample_images == []
+    assert merged.preview_sample_images == [], (
+        "沒有任何候選有劇照時 preview_sample_images 必須清空，不得從 text_source 漏出"
+    )

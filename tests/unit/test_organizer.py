@@ -7,7 +7,8 @@ import json
 import os
 import pytest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+import requests
 from PIL import Image
 
 from core.organizer import _detect_suffixes, format_string, organize_file, crop_to_poster, generate_nfo, extract_chinese_title, download_image, truncate_to_chars, truncate_title, _detect_vr_cluster, _is_multipart_kw, _poster_window_ratio, generate_jellyfin_images
@@ -2229,6 +2230,414 @@ class TestDownloadImage:
 
         assert result is False
         assert not save_path.exists()
+
+
+# ============ download_image() fallback / host memory (TASK-126-T4a) ============
+
+_BIG_JPEG = b"x" * 1001
+
+
+def _ok_resp(content=_BIG_JPEG):
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.content = content
+    return resp
+
+
+def _status_resp(code):
+    resp = MagicMock()
+    resp.status_code = code
+    resp.content = b""
+    return resp
+
+
+class TestDownloadImageFallback:
+    """TASK-126-T4a：原址優先、短 connect 逾時、失敗 host 記憶。"""
+
+    @pytest.fixture(autouse=True)
+    def _clear_host_failure_memory(self):
+        import core.organizer as org
+        mem = getattr(org, "_failed_hosts", None)
+        lock = getattr(org, "_failed_hosts_lock", None)
+        if mem is not None and lock is not None:
+            with lock:
+                mem.clear()
+        yield
+        if mem is not None and lock is not None:
+            with lock:
+                mem.clear()
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_no_fallback_success_preserves_args(self, mock_get, tmp_path):
+        """邊界 1：無 fallback、原址成功；**參數與改動前逐字元相同，timeout 也包含在內**。
+
+        Codex PR review P2：初版讓所有呼叫端（含自家 9 源）都吃 (5, 30)，
+        等於把「連線慢但接得起來」的使用者從「30 秒後成功」改成「5 秒失敗」，
+        而且他們沒有代理可退。AC-5 的「逐字元相同」把 timeout 也算在內。
+        """
+        from core.organizer import HEADERS, REQUEST_TIMEOUT
+
+        mock_get.return_value = _ok_resp()
+        save_path = tmp_path / "cover.jpg"
+        result = download_image("http://example.com/cover.jpg", str(save_path))
+
+        assert result is True
+        assert save_path.read_bytes() == _BIG_JPEG
+        mock_get.assert_called_once()
+        args, kwargs = mock_get.call_args
+        assert args[0] == "http://example.com/cover.jpg"
+        assert kwargs["headers"] == HEADERS.copy()
+        assert kwargs["timeout"] == REQUEST_TIMEOUT, (
+            "無 fallback 的呼叫端（自家 9 源）必須維持單值 30 秒——"
+            "縮成 (5, 30) 會讓慢速連線的使用者從『30 秒後成功』變成『5 秒失敗』"
+        )
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_connect_timeout_is_short(self, mock_get, tmp_path):
+        """mutation 錨點：**有代理可退時**，原址那一次的 connect 逾時必須是短的 tuple。
+
+        短逾時的收益只存在於「失敗了還有第二條路」的情境（被牆的使用者只付第一張的等待）；
+        成本（慢速連線被提前判死）不該落在沒有第二條路的人身上——所以它綁 fallback，
+        不是全域（Codex PR review P2）。
+        """
+        from core.organizer import CONNECT_TIMEOUT, REQUEST_TIMEOUT
+
+        mock_get.return_value = _ok_resp()
+        download_image(
+            "http://example.com/cover.jpg",
+            str(tmp_path / "c.jpg"),
+            fallback_url="http://mt.example/v1/images/primary/MGS/N-1?url=c",
+        )
+        timeout = mock_get.call_args.kwargs["timeout"]
+        assert timeout == (CONNECT_TIMEOUT, REQUEST_TIMEOUT)
+        assert CONNECT_TIMEOUT == 5
+        assert REQUEST_TIMEOUT == 30
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_no_fallback_keeps_long_connect_timeout(self, mock_get, tmp_path):
+        """AC-5 的另一半：**沒有**代理可退時，connect 逾時維持改動前的單值 30 秒。
+
+        使用者流程：只用 JavBus／JAVDB 這些內建來源的人，連線慢但 TCP 接得起來
+        （手機熱點、遠端 CDN）→ 若被縮成 5 秒，本來抓得到的封面會變成抓不到，
+        而且沒有任何退路可以救。
+        """
+        from core.organizer import REQUEST_TIMEOUT
+
+        mock_get.return_value = _ok_resp()
+        download_image("http://example.com/cover.jpg", str(tmp_path / "c2.jpg"))
+        assert mock_get.call_args.kwargs["timeout"] == REQUEST_TIMEOUT
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_no_fallback_connect_timeout_returns_false(self, mock_get, tmp_path):
+        """邊界 2：無 fallback、原址 ConnectTimeout → False（行為不變）。"""
+        mock_get.side_effect = requests.exceptions.ConnectTimeout("connect timed out")
+        result = download_image("http://example.com/cover.jpg", str(tmp_path / "c.jpg"))
+        assert result is False
+        mock_get.assert_called_once()
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_fallback_on_connect_timeout(self, mock_get, tmp_path):
+        """邊界 3：有 fallback、原址 ConnectTimeout → 改試 fallback 並存檔。"""
+        mock_get.side_effect = [
+            requests.exceptions.ConnectTimeout("connect timed out"),
+            _ok_resp(b"y" * 1001),
+        ]
+        save_path = tmp_path / "cover.jpg"
+        result = download_image(
+            "http://example.com/cover.jpg",
+            str(save_path),
+            fallback_url="http://proxy.example/cover.jpg",
+        )
+        assert result is True
+        assert save_path.read_bytes() == b"y" * 1001
+        assert mock_get.call_count == 2
+        assert mock_get.call_args_list[0].args[0] == "http://example.com/cover.jpg"
+        assert mock_get.call_args_list[1].args[0] == "http://proxy.example/cover.jpg"
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_primary_success_skips_fallback(self, mock_get, tmp_path):
+        """邊界 4：有 fallback、原址成功 → 不呼叫 fallback。"""
+        mock_get.return_value = _ok_resp()
+        result = download_image(
+            "http://example.com/cover.jpg",
+            str(tmp_path / "c.jpg"),
+            fallback_url="http://proxy.example/cover.jpg",
+        )
+        assert result is True
+        mock_get.assert_called_once()
+        assert mock_get.call_args.args[0] == "http://example.com/cover.jpg"
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_failed_host_skips_primary_on_subsequent(self, mock_get, tmp_path):
+        """邊界 5：同一 key 連續 3 張，第 1 張 ConnectTimeout 後第 2/3 張不試原址。"""
+        primary = "http://blocked.example/a.jpg"
+        proxy = "http://proxy.example/a.jpg"
+        responses = [
+            requests.exceptions.ConnectTimeout("t"),
+            _ok_resp(b"a" * 1001),
+            _ok_resp(b"b" * 1001),
+            _ok_resp(b"c" * 1001),
+        ]
+        mock_get.side_effect = responses
+
+        assert download_image(primary, str(tmp_path / "1.jpg"), fallback_url=proxy) is True
+        assert download_image(
+            "http://blocked.example/b.jpg", str(tmp_path / "2.jpg"), fallback_url="http://proxy.example/b.jpg"
+        ) is True
+        assert download_image(
+            "http://blocked.example/c.jpg", str(tmp_path / "3.jpg"), fallback_url="http://proxy.example/c.jpg"
+        ) is True
+
+        urls = [c.args[0] for c in mock_get.call_args_list]
+        assert urls == [
+            "http://blocked.example/a.jpg",
+            "http://proxy.example/a.jpg",
+            "http://proxy.example/b.jpg",
+            "http://proxy.example/c.jpg",
+        ]
+        assert mock_get.call_count == 4
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_read_timeout_does_not_poison_host(self, mock_get, tmp_path):
+        """邊界 6 ＋ mutation 錨點：ReadTimeout 走 fallback，但不進記憶。"""
+        mock_get.side_effect = [
+            requests.exceptions.ReadTimeout("read timed out"),
+            _ok_resp(b"f" * 1001),
+            _ok_resp(b"p" * 1001),
+        ]
+        assert download_image(
+            "http://slow.example/a.jpg",
+            str(tmp_path / "1.jpg"),
+            fallback_url="http://proxy.example/a.jpg",
+        ) is True
+        assert download_image(
+            "http://slow.example/b.jpg",
+            str(tmp_path / "2.jpg"),
+            fallback_url="http://proxy.example/b.jpg",
+        ) is True
+
+        urls = [c.args[0] for c in mock_get.call_args_list]
+        assert urls == [
+            "http://slow.example/a.jpg",
+            "http://proxy.example/a.jpg",
+            "http://slow.example/b.jpg",
+        ]
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_http_error_does_not_poison_host(self, mock_get, tmp_path):
+        """邊界 7：原址 404/500 走 fallback、不進記憶。"""
+        mock_get.side_effect = [
+            _status_resp(404),
+            _ok_resp(b"f" * 1001),
+            _ok_resp(b"p" * 1001),
+        ]
+        assert download_image(
+            "http://err.example/a.jpg",
+            str(tmp_path / "1.jpg"),
+            fallback_url="http://proxy.example/a.jpg",
+        ) is True
+        assert download_image(
+            "http://err.example/b.jpg",
+            str(tmp_path / "2.jpg"),
+            fallback_url="http://proxy.example/b.jpg",
+        ) is True
+        urls = [c.args[0] for c in mock_get.call_args_list]
+        assert urls == [
+            "http://err.example/a.jpg",
+            "http://proxy.example/a.jpg",
+            "http://err.example/b.jpg",
+        ]
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_small_content_does_not_poison_host(self, mock_get, tmp_path):
+        """邊界 8：200 但 content ≤1000 走 fallback、不進記憶。"""
+        mock_get.side_effect = [
+            _ok_resp(b"tiny"),
+            _ok_resp(b"f" * 1001),
+            _ok_resp(b"p" * 1001),
+        ]
+        assert download_image(
+            "http://small.example/a.jpg",
+            str(tmp_path / "1.jpg"),
+            fallback_url="http://proxy.example/a.jpg",
+        ) is True
+        assert download_image(
+            "http://small.example/b.jpg",
+            str(tmp_path / "2.jpg"),
+            fallback_url="http://proxy.example/b.jpg",
+        ) is True
+        urls = [c.args[0] for c in mock_get.call_args_list]
+        assert urls == [
+            "http://small.example/a.jpg",
+            "http://proxy.example/a.jpg",
+            "http://small.example/b.jpg",
+        ]
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_scheme_differs_keeps_primary(self, mock_get, tmp_path):
+        """邊界 9：http 失敗後 https 同 host 仍先試原址（三元組 key）。"""
+        mock_get.side_effect = [
+            requests.exceptions.ConnectTimeout("t"),
+            _ok_resp(b"f" * 1001),
+            _ok_resp(b"p" * 1001),
+        ]
+        assert download_image(
+            "http://h.example/x",
+            str(tmp_path / "1.jpg"),
+            fallback_url="http://proxy.example/x",
+        ) is True
+        assert download_image(
+            "https://h.example/y",
+            str(tmp_path / "2.jpg"),
+            fallback_url="http://proxy.example/y",
+        ) is True
+        urls = [c.args[0] for c in mock_get.call_args_list]
+        assert urls == [
+            "http://h.example/x",
+            "http://proxy.example/x",
+            "https://h.example/y",
+        ]
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_malformed_port_does_not_raise(self, mock_get, tmp_path):
+        """Stage 2 review P3-1：非數字 port 的髒網址不得讓整個 organize 崩掉。
+
+        `urlparse('http://h:abc/x').port` 拋 ValueError，而 `download_image()` 的
+        `skip_primary = bool(fallback_url) and _host_recently_failed(_host_key(url))`
+        不在 try 內。它穿出去的時候 `organize_file()` 的 `shutil.move()` 已經跑完，
+        使用者拿到的是「整理失敗」＋一個影片已經被搬走的半成品資料夾。
+        正確行為：組不出 host key 就當作「沒有記憶」，照常走原址→代理兩次嘗試。
+        """
+        mock_get.side_effect = [
+            requests.exceptions.ConnectTimeout("t"),
+            _ok_resp(b"p" * 1001),
+        ]
+        assert download_image(
+            "http://h.example:abc/x.jpg",
+            str(tmp_path / "m.jpg"),
+            fallback_url="http://proxy.example/x",
+        ) is True
+        urls = [c.args[0] for c in mock_get.call_args_list]
+        assert urls == ["http://h.example:abc/x.jpg", "http://proxy.example/x"], (
+            "髒 port 應照常先試原址再退代理，不是跳過或炸掉"
+        )
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_port_differs_keeps_primary(self, mock_get, tmp_path):
+        """邊界 10：:8080 失敗後預設 port 仍先試原址。"""
+        mock_get.side_effect = [
+            requests.exceptions.ConnectTimeout("t"),
+            _ok_resp(b"f" * 1001),
+            _ok_resp(b"p" * 1001),
+        ]
+        assert download_image(
+            "http://h.example:8080/x",
+            str(tmp_path / "1.jpg"),
+            fallback_url="http://proxy.example/x",
+        ) is True
+        assert download_image(
+            "http://h.example/y",
+            str(tmp_path / "2.jpg"),
+            fallback_url="http://proxy.example/y",
+        ) is True
+        urls = [c.args[0] for c in mock_get.call_args_list]
+        assert urls == [
+            "http://h.example:8080/x",
+            "http://proxy.example/x",
+            "http://h.example/y",
+        ]
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_ttl_expiry_restores_primary(self, mock_get, tmp_path, monkeypatch):
+        """邊界 11：TTL 過期後回到原址優先（注入時鐘，不得 sleep）。"""
+        import core.organizer as org
+
+        clock = {"t": 1000.0}
+        monkeypatch.setattr(org, "_now", lambda: clock["t"])
+
+        mock_get.side_effect = [
+            requests.exceptions.ConnectTimeout("t"),
+            _ok_resp(b"f" * 1001),
+            _ok_resp(b"p" * 1001),
+        ]
+        assert download_image(
+            "http://ttl.example/a.jpg",
+            str(tmp_path / "1.jpg"),
+            fallback_url="http://proxy.example/a.jpg",
+        ) is True
+
+        clock["t"] = 1000.0 + org._HOST_FAILURE_TTL + 1
+
+        assert download_image(
+            "http://ttl.example/b.jpg",
+            str(tmp_path / "2.jpg"),
+            fallback_url="http://proxy.example/b.jpg",
+        ) is True
+
+        urls = [c.args[0] for c in mock_get.call_args_list]
+        assert urls == [
+            "http://ttl.example/a.jpg",
+            "http://proxy.example/a.jpg",
+            "http://ttl.example/b.jpg",
+        ]
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_empty_url_ignores_fallback(self, mock_get, tmp_path):
+        """邊界 12：url 空、fallback 非空 → False，不走代理。"""
+        result = download_image(
+            "",
+            str(tmp_path / "c.jpg"),
+            fallback_url="http://proxy.example/cover.jpg",
+        )
+        assert result is False
+        mock_get.assert_not_called()
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_both_fail_returns_false(self, mock_get, tmp_path):
+        """邊界 13：原址與 fallback 都失敗 → False，不拋例外。"""
+        mock_get.side_effect = [
+            requests.exceptions.ConnectTimeout("t1"),
+            requests.exceptions.ConnectTimeout("t2"),
+        ]
+        result = download_image(
+            "http://example.com/cover.jpg",
+            str(tmp_path / "c.jpg"),
+            fallback_url="http://proxy.example/cover.jpg",
+        )
+        assert result is False
+        assert mock_get.call_count == 2
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_fallback_connect_timeout_is_recorded(self, mock_get, tmp_path):
+        """邊界 14：fallback 也 ConnectTimeout → fallback host 進記憶。"""
+        import core.organizer as org
+
+        mock_get.side_effect = [
+            requests.exceptions.ConnectTimeout("primary"),
+            requests.exceptions.ConnectTimeout("fallback"),
+            _ok_resp(b"z" * 1001),
+        ]
+        assert download_image(
+            "http://primary.example/a.jpg",
+            str(tmp_path / "1.jpg"),
+            fallback_url="http://proxy.example/a.jpg",
+        ) is False
+
+        # proxy host 已進記憶：下次以它當原址時應跳過，直接走它的 fallback
+        assert download_image(
+            "http://proxy.example/b.jpg",
+            str(tmp_path / "2.jpg"),
+            fallback_url="http://other.example/b.jpg",
+        ) is True
+        urls = [c.args[0] for c in mock_get.call_args_list]
+        assert urls == [
+            "http://primary.example/a.jpg",
+            "http://proxy.example/a.jpg",
+            "http://other.example/b.jpg",
+        ]
+        key = ("http", "proxy.example", 80)
+        with org._failed_hosts_lock:
+            assert key in org._failed_hosts
 
 
 # ============ generate_nfo() 新欄位測試 (T5b) ============
@@ -4870,3 +5279,275 @@ class TestOrganizeContainment:
         target = tmp_path / "[SONE-205] Test Title.mp4"
         assert target.exists()
         assert not src.exists()
+
+
+# ============ TASK-126-T4b：代理網址走到 organize 的下載點 ============
+#
+# owner 2026-08-23 裁決把 organize 這條也納入。**但只有「後端重刮」那條會有值**——
+# 前端送來的 metadata 已被 buildOrganizeMetadata() 剝除兩個 preview 欄位
+# （TASK-126-T3 / 113c-T3b：那是只對顯示有意義、會隨 metatube 連線狀態失效的網址）。
+# 所以下面兩支測的是「metadata 帶得動就用得到」與「帶不動就跟今天一樣」。
+
+class TestT4bOrganizeFallback:
+
+    def _clear_failed_hosts(self):
+        import core.organizer as org
+        with org._failed_hosts_lock:
+            org._failed_hosts.clear()
+
+    def _resp(self, content):
+        m = MagicMock()
+        m.status_code = 200
+        m.content = content
+        return m
+
+    def _blocked_unless_proxy(self):
+        import requests as _rq
+
+        def _side(url, **kwargs):
+            if 'mt.example' in url:
+                return self._resp(b'PROXY' + b'\x00' * 2000)
+            raise _rq.exceptions.ConnectTimeout('blocked')
+        return _side
+
+    def test_organize_cover_uses_preview_fallback(self, tmp_path):
+        """邊界 4：organize 入口，原址 ConnectTimeout ＋ metadata 帶得動 preview → 走代理落地。"""
+        self._clear_failed_hosts()
+        try:
+            src = tmp_path / 'ABC-123.mp4'
+            src.write_bytes(b'v' * 100)
+            metadata = {
+                'number': 'ABC-123', 'title': 'T', 'actors': [], 'tags': [],
+                'cover': 'https://cdn.blocked/cover.jpg',
+                'preview_cover_url': 'http://mt.example/v1/images/primary/MGS/ABC-123?url=cover',
+            }
+            config = {'output_dir': str(tmp_path / 'out'), 'create_folder': True,
+                      'download_cover': True, 'create_nfo': False}
+            with patch('core.organizer.requests.get', side_effect=self._blocked_unless_proxy()):
+                result = organize_file(str(src), metadata, config)
+            assert result.get('cover_path'), '封面應經由代理落地'
+            assert open(result['cover_path'], 'rb').read().startswith(b'PROXY')
+        finally:
+            self._clear_failed_hosts()
+
+    def test_organize_without_preview_keeps_todays_behaviour(self, tmp_path):
+        """邊界 9（AC-5）：前端剝除後的 metadata（無 preview）→ 逐字元維持今天的行為。"""
+        self._clear_failed_hosts()
+        try:
+            src = tmp_path / 'ABC-124.mp4'
+            src.write_bytes(b'v' * 100)
+            metadata = {
+                'number': 'ABC-124', 'title': 'T', 'actors': [], 'tags': [],
+                'cover': 'https://cdn.blocked/cover.jpg',
+            }
+            config = {'output_dir': str(tmp_path / 'out'), 'create_folder': True,
+                      'download_cover': True, 'create_nfo': False}
+            with patch('core.organizer.requests.get',
+                       side_effect=self._blocked_unless_proxy()) as mg:
+                result = organize_file(str(src), metadata, config)
+            assert not result.get('cover_path'), '沒有 preview 就沒有退路，原址失敗即失敗'
+            assert mg.call_count == 1, '不得有第二次嘗試'
+            assert 'fallback_url' not in mg.call_args.kwargs
+        finally:
+            self._clear_failed_hosts()
+
+    def test_organize_extrafanart_uses_preview_fallback(self, tmp_path):
+        """TASK-126-T4b review MAJOR-3：organize 的**劇照**分支也要有 caller 測試。
+
+        初版兩支測試都只帶封面、沒帶 sample_images ⇒ 劇照那段迴圈根本沒跑到。
+        review 在沙盒把 `_previews` / `_pv_i` 整段拔掉，285 條照樣全綠。
+        """
+        self._clear_failed_hosts()
+        try:
+            src = tmp_path / 'ABC-125.mp4'
+            src.write_bytes(b'v' * 100)
+            metadata = {
+                'number': 'ABC-125', 'title': 'T', 'actors': [], 'tags': [],
+                'cover': '',
+                'sample_images': ['https://cdn.blocked/s1.jpg', 'https://cdn.blocked/s2.jpg'],
+                'preview_sample_images': [
+                    'http://mt.example/v1/images/primary/MGS/ABC-125?url=s1',
+                    'http://mt.example/v1/images/primary/MGS/ABC-125?url=s2',
+                ],
+            }
+            config = {'output_dir': str(tmp_path / 'out'), 'create_folder': True,
+                      'download_cover': False, 'create_nfo': False,
+                      'download_sample_images': True}
+            with patch('core.organizer.requests.get', side_effect=self._blocked_unless_proxy()):
+                result = organize_file(str(src), metadata, config)
+            ef = Path(result['new_folder']) / 'extrafanart'
+            written = sorted(ef.glob('fanart*.jpg'))
+            assert len(written) == 2, (
+                '劇照那半若沒接上 preview，被牆的使用者整理入庫會拿不到任何劇照，'
+                '而且沒有錯誤訊息'
+            )
+            for p in written:
+                assert p.read_bytes().startswith(b'PROXY')
+        finally:
+            self._clear_failed_hosts()
+
+    def test_organize_extrafanart_short_preview_does_not_truncate(self, tmp_path):
+        """邊界 8 在 organize 也成立：preview 比 sample 短，不得少下載。"""
+        self._clear_failed_hosts()
+        try:
+            src = tmp_path / 'ABC-126.mp4'
+            src.write_bytes(b'v' * 100)
+            metadata = {
+                'number': 'ABC-126', 'title': 'T', 'actors': [], 'tags': [],
+                'cover': '',
+                'sample_images': ['https://cdn.ok/s1.jpg', 'https://cdn.ok/s2.jpg', 'https://cdn.ok/s3.jpg'],
+                'preview_sample_images': ['http://mt.example/v1/images/primary/MGS/ABC-126?url=s1'],
+            }
+            config = {'output_dir': str(tmp_path / 'out'), 'create_folder': True,
+                      'download_cover': False, 'create_nfo': False,
+                      'download_sample_images': True}
+            with patch('core.organizer.requests.get',
+                       return_value=self._resp(b'DIRECT' + b'\x00' * 2000)) as mg:
+                result = organize_file(str(src), metadata, config)
+            ef = Path(result['new_folder']) / 'extrafanart'
+            assert len(sorted(ef.glob('fanart*.jpg'))) == 3, 'zip 截斷會讓這裡變成 1'
+            assert mg.call_count == 3
+        finally:
+            self._clear_failed_hosts()
+
+
+# ============ TASK-126 Codex PR review P2-1：preview_* 傳得過去，但不得持久化 ============
+#
+# 113c-T3b 立的規矩逐字是「preview_* **不能落磁碟**」；當時用「連傳都不傳」達成它。
+# 126 把兩件事分開：**傳遞是必要的**（搜尋後按「產生」是最常走的入庫路徑，後端不重新搜尋，
+# 不傳等於被牆的使用者永遠拿不到代理退路），**不落磁碟仍然是不變式**——由這個 class 直接驗。
+#
+# 這是把守衛從「代理指標」（有沒有被傳）換成「真正的不變式」（有沒有被寫下去）。
+
+class TestT6PreviewNotPersisted:
+    """preview_* 進得了 POST metadata，但不得出現在 NFO 或任何落磁碟的產物裡。"""
+
+    def _clear_failed_hosts(self):
+        import core.organizer as org
+        with org._failed_hosts_lock:
+            org._failed_hosts.clear()
+
+    _PROXY = 'http://mt.example/v1/images/primary/MGS/ABC-777?url=https%3A%2F%2Fcdn%2Fc.jpg'
+
+    def _metadata(self):
+        return {
+            'number': 'ABC-777', 'title': 'T', 'actors': ['A'], 'tags': ['t1'],
+            'date': '2024-01-01', 'maker': 'M', 'director': 'D', 'series': 'S',
+            'label': 'L', 'duration': 120, 'url': 'https://example/detail',
+            'cover': 'https://cdn/c.jpg',
+            'sample_images': ['https://cdn/s1.jpg'],
+            'preview_cover_url': self._PROXY,
+            'preview_sample_images': [self._PROXY + '&i=1'],
+        }
+
+    def test_preview_urls_never_appear_in_generated_nfo(self, tmp_path):
+        """**核心不變式**：NFO 的內容裡不得出現任何 preview／metatube 網址。
+
+        使用者流程：使用者按「產生」入庫 → 那個 .nfo 會活很久（Jellyfin 讀它、
+        換機器也跟著走）。若代理網址被寫進去，等 metatube 換 IP 之後那就是一串
+        永遠連不到的死字串躺在使用者的檔案裡。
+        """
+        self._clear_failed_hosts()
+        try:
+            src = tmp_path / 'ABC-777.mp4'
+            src.write_bytes(b'v' * 100)
+            config = {'output_dir': str(tmp_path / 'out'), 'create_folder': True,
+                      'download_cover': True, 'create_nfo': True,
+                      'download_sample_images': True}
+            with patch('core.organizer.requests.get',
+                       return_value=self._resp_ok()):
+                result = organize_file(str(src), self._metadata(), config)
+
+            nfo_path = result.get('nfo_path')
+            assert nfo_path and os.path.exists(nfo_path), 'NFO 應該有產生，否則這條驗不到東西'
+            content = open(nfo_path, encoding='utf-8').read()
+            for needle in ('preview_cover_url', 'preview_sample_images',
+                           'mt.example', '/v1/images/'):
+                assert needle not in content, (
+                    f'NFO 裡出現了 {needle!r} —— preview_* 只對顯示有意義、'
+                    f'會隨 metatube 連線狀態失效，寫進 NFO 等於留下一串會死掉的字串'
+                )
+        finally:
+            self._clear_failed_hosts()
+
+    def test_preview_urls_never_appear_in_any_written_file(self, tmp_path):
+        """更寬的一道：整個輸出資料夾裡的**任何文字檔**都不得含代理網址。
+
+        比只驗 NFO 多守住「日後有人新增別的 sidecar 產物」的情況。
+        """
+        self._clear_failed_hosts()
+        try:
+            src = tmp_path / 'ABC-777.mp4'
+            src.write_bytes(b'v' * 100)
+            config = {'output_dir': str(tmp_path / 'out'), 'create_folder': True,
+                      'download_cover': True, 'create_nfo': True,
+                      'download_sample_images': True}
+            with patch('core.organizer.requests.get',
+                       return_value=self._resp_ok()):
+                result = organize_file(str(src), self._metadata(), config)
+
+            # ⚠️ organize_file 的產出落在**來源檔旁邊**（`src.parent/<folder>/`），
+            # **不是** `output_dir` 底下。初版掃 `out/` 掃到一個空資料夾 ⇒ 假綠。
+            # （Opus 自驗 mutation 時抓到：往 NFO 注入代理網址後這支竟然沒紅。）
+            scan_root = Path(result['new_folder'])
+            assert scan_root.exists(), '沒有產出資料夾就代表這條什麼都沒驗到'
+            assert any(scan_root.rglob('*.nfo')), '沒有 NFO 就代表這條什麼都沒驗到'
+
+            offenders = []
+            for p in scan_root.rglob('*'):
+                if not p.is_file():
+                    continue
+                try:
+                    text = p.read_text(encoding='utf-8')
+                except (UnicodeDecodeError, OSError):
+                    continue  # 圖片等二進位檔不看
+                if 'mt.example' in text or '/v1/images/' in text:
+                    offenders.append(str(p))
+            assert offenders == [], f'這些落磁碟的檔案含有代理網址：{offenders}'
+        finally:
+            self._clear_failed_hosts()
+
+    def test_db_schema_has_no_preview_columns(self, tmp_path):
+        """結構面的第二道：**真的建一個 DB，用 PRAGMA 問它的欄位**。
+
+        日後若有人真的加了 preview 欄位進 videos 表，這裡會紅，
+        提醒他先想清楚「這串會隨 metatube 位址失效的網址，為什麼要落 DB」。
+
+        **為什麼是 PRAGMA 而不是掃 `connection.py` 的原始碼**（Codex PR review 第二輪 P3）：
+        初版是「原始碼裡不得出現這兩個字串」——那是**代理指標**，不是不變式。
+        它有兩個毛病：① 依 CLAUDE.md「Lint 守衛規則」，純字串存在性檢查不該進 pytest；
+        ② **會假紅**——有人在 `connection.py` 寫一句「`preview_cover_url` 刻意不存 DB」
+        的註解，或把欄位清單重構成別的形狀，守衛就無故變紅，而 schema 根本沒變。
+        改問真正的 schema 之後，它驗的是**行為**（`init_db()` 建出來的表長什麼樣），
+        註解與重構都影響不到它。
+        """
+        import sqlite3
+
+        from core.database.connection import init_db
+
+        db_path = tmp_path / 'schema_probe.db'
+        init_db(db_path)
+        with sqlite3.connect(str(db_path)) as conn:
+            tables = [
+                r[0] for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            ]
+            assert 'videos' in tables, 'init_db() 沒有建出 videos 表，這條什麼都沒驗到'
+            offenders = {}
+            for table in tables:
+                cols = [r[1] for r in conn.execute(f'PRAGMA table_info("{table}")')]
+                hits = [c for c in cols if 'preview' in c.lower()]
+                if hits:
+                    offenders[table] = hits
+
+        assert offenders == {}, (
+            f'DB schema 出現了 preview 欄位：{offenders} —— 那串網址綁著 metatube '
+            f'當下的位址，存進 DB 之後就是一筆會過期的資料（換 IP／換 port 就死）'
+        )
+
+    def _resp_ok(self):
+        m = MagicMock()
+        m.status_code = 200
+        m.content = b'IMG' + b'\x00' * 2000
+        return m

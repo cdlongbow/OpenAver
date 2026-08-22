@@ -72,6 +72,10 @@ def _nfo_to_meta(root: ET.Element) -> dict:
         "release_date": nfo_first_text(root, ("release", "premiered", "year")),
         "duration": nfo_runtime_minutes(root),
         "cover_url": "",
+        # CD-126-2：preview_* 是 metatube 取回路徑的暫態。本地 NFO 沒有代理可言，
+        # 但**鍵必須存在**——否則下游 `.get()` 的預設值會散落在四個地方。
+        "preview_cover_url": "",
+        "preview_sample_images": [],
         "url": nfo_text(root, "website"),
     }
 
@@ -139,6 +143,9 @@ def _video_to_meta(video: Video) -> dict:
         "release_date": video.release_date,
         "duration": video.duration,
         "cover_url": video.cover_path,
+        # CD-126-2：DB 來源沒有代理（preview_* 不入庫，見 T4b card 類別 Y）。鍵在值空。
+        "preview_cover_url": "",
+        "preview_sample_images": [],
         "url": "",
         "sample_images": video.sample_images or [],
     }
@@ -157,6 +164,10 @@ def _scraper_to_meta(data: dict) -> dict:
         "release_date": data.get("date", ""),
         "duration": data.get("duration"),
         "cover_url": data.get("cover", ""),
+        # CD-126-2：代理 URL 走平行欄位，與 cover/sample 同時進 meta。
+        # 這是整條 enrich 管線**唯一**有值的產生端——丟在這裡，下游全部是死的。
+        "preview_cover_url": data.get("preview_cover_url", ""),
+        "preview_sample_images": data.get("preview_sample_images", []),
         "url": data.get("url", ""),
         "sample_images": data.get("sample_images", []),
         # 63c-5（CD-63c-5）：唯一 summary/rating 流入 meta 的 crossing point。
@@ -195,12 +206,18 @@ def _merge_meta(base: dict, supplement: dict) -> tuple:
         if not merged.get(key) and supplement.get(key):
             merged[key] = supplement[key]
             filled.append(key)
+    # CD-126-2：preview_* 必須跟 cover/sample **在同一個分支裡**搬——分開搬＝封面來自
+    # 候選 A、代理來自候選 B（CD-113c-12 同一種病，畫面上看不出來）。
+    # sample_images 有 if 與 elif **兩條路**，兩條都要搬，漏一條就是上面那個病。
     if merged.get("cover_url") == "" and supplement.get("cover_url"):
         merged["cover_url"] = supplement["cover_url"]
+        merged["preview_cover_url"] = supplement.get("preview_cover_url", "")
     if merged.get("sample_images") is None and supplement.get("sample_images"):
         merged["sample_images"] = supplement["sample_images"]
+        merged["preview_sample_images"] = supplement.get("preview_sample_images", [])
     elif not merged.get("sample_images") and supplement.get("sample_images"):
         merged["sample_images"] = supplement["sample_images"]
+        merged["preview_sample_images"] = supplement.get("preview_sample_images", [])
     # 63c-5：summary/rating 從 supplement（scraper meta）透傳。base 通常是 DB/NFO meta
     # 無此欄（intentionally NOT carried），fill-if-empty 語意：base 有值不覆蓋。
     if not merged.get("summary") and supplement.get("summary"):
@@ -277,6 +294,7 @@ def _write_cover(
     write_cover: bool,
     overwrite_existing: bool,
     external_manager: str = "off",
+    preview_cover_url: str = "",
 ) -> bool:
     # write_cover=False 先短路，避免對「不寫封面」的片多做一次 os.path.exists
     # （逐位元組對齊 T2 前行為）；exists/overwrite 保留判斷仍走共用 should_preserve_cover。
@@ -289,6 +307,14 @@ def _write_cover(
     if should_preserve_cover(write_cover, overwrite_existing, os.path.exists(cover_path)):
         return False
 
+    # CD-126-3／10：原址優先，取不到才退代理。gate **只看 preview 非空**，
+    # 不得改用 meta["source"] 判斷——混源時「文字走 javbus、封面走 metatube」是合法狀態。
+    #
+    # **preview 為空時連 kwarg 都不傳**（不是傳 fallback_url=""）：AC-5 要求非 metatube
+    # 來源「逐字元相同」，而既有測試的 stub 簽名就是 (url, dest)——多一個 kwarg 會讓
+    # 它們 TypeError。這不是為了配合測試，是那些測試正確地把 AC-5 焊死了。
+    if preview_cover_url:
+        return download_image(cover_url, cover_path, fallback_url=preview_cover_url)
     return download_image(cover_url, cover_path)
 
 
@@ -376,6 +402,7 @@ def _write_extrafanart(
     sample_images: List[str],
     write_extrafanart: bool,
     path_mappings: dict = None,
+    preview_sample_images: List[str] = None,
 ) -> List[str]:
     if not write_extrafanart or not sample_images:
         return []
@@ -384,11 +411,21 @@ def _write_extrafanart(
     extrafanart_dir = parent / "extrafanart"
     os.makedirs(str(extrafanart_dir), exist_ok=True)
 
+    # CD-126-2：逐張配對用 index，**不用裸 zip()**——zip 在長度不等時會靜默截斷，
+    # 等於少下載幾張圖。長度不等的正確語意是「那幾格沒有代理」，不是「少下載」。
+    previews = preview_sample_images or []
     written_uris: List[str] = []
     for i, url in enumerate(sample_images):
         dest = str(extrafanart_dir / f"fanart{i+1}.jpg")
+        fallback = previews[i] if i < len(previews) else ""
         try:
-            if download_image(url, dest):
+            # 同 _write_cover：preview 為空時不傳 kwarg（AC-5 逐字元相同）
+            ok = (
+                download_image(url, dest, fallback_url=fallback)
+                if fallback
+                else download_image(url, dest)
+            )
+            if ok:
                 written_uris.append(to_file_uri(dest, path_mappings))
         except Exception as e:
             logger.warning("extrafanart %d 下載失敗: %s", i + 1, e)
@@ -524,6 +561,7 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
             fs_path=fs_path,
             cover_url=cover_url,
             write_cover=write_cover,
+            preview_cover_url=meta.get("preview_cover_url", ""),
             overwrite_existing=overwrite_existing, external_manager=external_manager,  # 兩個 kwarg 刻意併行：enrich_single 的規模閘 baseline(249) 零頭寸，拆成兩行會直接超標（CD-112-13）
         )
         imgs = _write_external_images(
@@ -574,6 +612,7 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
             cover_url=cover_url,
             write_cover=write_cover,
             overwrite_existing=overwrite_existing,
+            preview_cover_url=meta.get("preview_cover_url", ""),
         )
 
     written_uris = _write_extrafanart(
@@ -581,6 +620,7 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
         sample_images=meta.get("sample_images", []),
         write_extrafanart=write_extrafanart,
         path_mappings=path_mappings,
+        preview_sample_images=meta.get("preview_sample_images", []),
     )
     extrafanart_written = len(written_uris)
 
@@ -797,7 +837,10 @@ def fetch_samples_only(
         return _empty
 
     sample_images = meta.get("sample_images", [])
-    written_uris = _write_extrafanart(fs_path, sample_images, write_extrafanart=True, path_mappings=path_mappings)
+    written_uris = _write_extrafanart(
+        fs_path, sample_images, write_extrafanart=True, path_mappings=path_mappings,
+        preview_sample_images=meta.get("preview_sample_images", []),
+    )
 
     if written_uris:
         repo = VideoRepository()

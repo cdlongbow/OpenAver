@@ -86,9 +86,10 @@
                 <div class="lb-header">
                     <div class="lb-title" x-text="currentLightboxVideo()?.title || '-'"></div>
                     <!-- T8: Sample Gallery 入口按鈕 -->
+                    <!-- FE-JS-01: preview || raw 的 || 刻意；''＝這格無代理，必須落回原址，不准改 ?? -->
                     <button class="sg-open-btn"
                             x-show="(currentLightboxVideo()?.sample_images || []).length > 0"
-                            @click="openSampleGallery((currentLightboxVideo()?.sample_images || []).map(url => '/api/proxy-image?url=' + encodeURIComponent(url)), 0)"
+                            @click="openSampleGallery((currentLightboxVideo()?.sample_images || []).map((url, i) => '/api/proxy-image?url=' + encodeURIComponent(currentLightboxVideo()?.preview_sample_images?.[i] || url)), 0)"
                             x-text="t('search.gallery.sample_prefix') + ' (' + (currentLightboxVideo()?.sample_images || []).length + ')'">
                     </button>
                 </div>
@@ -454,11 +455,13 @@
                          x-show="displayMode === 'detail' && (current().sample_images || []).length > 0"
                          x-cloak>
                         <template x-for="(url, idx) in (current().sample_images || [])" :key="url">
+                            <!-- FE-JS-01: preview || raw 的 || 刻意；''＝這格無代理，必須落回原址，不准改 ?? -->
                             <button class="sample-thumb-btn"
-                                    @click="openSampleGallery((current().sample_images || []).map(u => '/api/proxy-image?url=' + encodeURIComponent(u)), idx)"
+                                    @click="openSampleGallery((current().sample_images || []).map((u, i) => '/api/proxy-image?url=' + encodeURIComponent(current().preview_sample_images?.[i] || u)), idx)"
                                     :class="{ 'sample-thumb-active': sampleGalleryOpen && sampleGalleryIndex === idx }"
                                     :title="t('search.grid.sample_prefix') + ' ' + (idx + 1)">
-                                <img :src="`/api/proxy-image?url=${encodeURIComponent(url)}`"
+                                <!-- FE-JS-01: preview || raw 的 || 刻意；''＝這格無代理，必須落回原址，不准改 ?? -->
+                                <img :src="`/api/proxy-image?url=${encodeURIComponent(current().preview_sample_images?.[idx] || url)}`"
                                      :alt="t('search.grid.sample_prefix') + ' ' + (idx + 1)"
                                      loading="lazy"
                                      class="sample-thumb-img">

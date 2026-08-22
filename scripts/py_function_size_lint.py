@@ -131,9 +131,16 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "target 焊死該函式，拆分成本由測試面而非邏輯面決定，與既有 C901 noqa 理由一致）。",
     ),
     ("core/organizer.py", "organize_file"): (
-        359,
+        366,
         "整理主流程；Phase 2（110b）會在其中加 containment 防線，加的是「呼叫一個新的小函式」，"
-        "不得讓本函式本身更複雜（見 plan-110b，與既有 C901 noqa 理由一致）。",
+        "不得讓本函式本身更複雜（見 plan-110b，與既有 C901 noqa 理由一致）。"
+        " ── 359→366（v0.14.6 / TASK-126-T4b，owner 2026-08-23 裁決把 organize 路徑納入）："
+        "封面與 extrafanart 兩處各多一段「有代理備胎才傳 fallback_url」的分支。"
+        "**backlog（不在本 branch 做）**：這個 4 行形狀在 organizer×2 / enricher×2 / "
+        "readonly_producer×3 共 7 處重複，抽成單一 helper 可同時消掉本條與 _write_movie_assets "
+        "的增量——但會讓既有測試的 `patch('core.enricher.download_image')` 攔不到"
+        "（BE-TEST-01 是 patch 消費端綁定），屬於「要連測試策略一起改」的動作，"
+        "不該在 pre-merge 尾聲順手做。",
     ),
     ("core/config.py", "_load_config_unlocked"): (
         304,
@@ -177,9 +184,14 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "難以追蹤資源釋放順序。",
     ),
     ("core/readonly_producer.py", "_write_movie_assets"): (
-        218,
+        235,
         "109 剛落地的唯讀單片產出主流程，寫入 nfo/cover/poster/fanart 等多個資產，需要維持"
-        "同一次 I/O 序列的可推理性（部分失敗時的處置順序）；剛穩定，暫不再拆避免二次擾動。",
+        "同一次 I/O 序列的可推理性（部分失敗時的處置順序）；剛穩定，暫不再拆避免二次擾動。"
+        " ── 218→235（v0.14.6 / TASK-126-T4b）：封面與 extrafanart 各接上代理備胎，"
+        "外加 CD-126-9 那條「primary 來自 cover_strategy[1]、fallback 來自 meta」隱含耦合的"
+        "說明註解（pre-merge Stage 2 P3-5；刻意用註解不用 runtime assert，"
+        "因為那會在唯讀產出跑到一半時崩掉，比它要防的「封面錯一張」更糟）。"
+        "同 organize_file 條的 helper backlog。",
     ),
     ("build.py", "download_and_install_packages"): (
         204,

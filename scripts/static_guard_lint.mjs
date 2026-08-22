@@ -4248,6 +4248,32 @@ const RULES = [
     pattern: '.lightbox-cover:hover .cover-badges-part',
     note: '[122-T3] AC-17：燈箱 .cover-badges-part 不得掛 :hover 淡出',
   },
+
+  // ---- [lint-guard 126-T3] search.html 劇照三處 proxy-image 綁定必須吃 preview 優先 ----
+  // **三條獨立規則，各釘一個位置**——刻意不用單一條 `count: 3`。
+  // 理由（T3 Sonnet review MAJOR，已在 /tmp 沙盒實證）：`required-string` 的 count 是**下限**
+  // （`if (n < rule.count) err(...)`）且不剝註解，所以「刪掉三處之一 ＋ 別處多出兩次同樣指紋
+  // （含註解裡）」會靜默維持綠燈。**使用者流程**：日後有人動這支模板漏改一處 → CI 綠 →
+  // 那一格劇照又變回 403 破圖，而且沒人會去查，因為守衛回報過關。
+  // 指紋各自帶「誰的 index」，所以三處不會互相冒充。
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: 'currentLightboxVideo()?.preview_sample_images?.[i]',
+    note: '[lint-guard 126-T3a] 燈箱劇照按鈕的 /api/proxy-image 必須吃 preview_sample_images?.[i] || raw（CD-126-3；FE-JS-01 用 || 不用 ??）',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: 'current().preview_sample_images?.[i]',
+    note: '[lint-guard 126-T3b] detail 縮圖點擊開燈箱的 map 必須吃 preview_sample_images?.[i] || raw（CD-126-3）',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: 'current().preview_sample_images?.[idx]',
+    note: '[lint-guard 126-T3c] detail 縮圖 :src 必須吃 preview_sample_images?.[idx] || raw（CD-126-3）',
+  },
 ];
 
 // ---- helpers ----
