@@ -688,13 +688,22 @@ def _build_download_headers(url: str, referer: str = "") -> dict:
     return headers
 
 
-def _attempt_download_image(url: str, save_path: str, referer: str = "") -> bool:
-    """Try one URL. Record host only on connect-stage failures."""
+def _attempt_download_image(
+    url: str, save_path: str, referer: str = "", *, short_connect: bool = False
+) -> bool:
+    """Try one URL. Record host only on connect-stage failures.
+
+    `short_connect` 只在「這次嘗試有代理可退」時為 True（CD-126-6 ＋ Codex PR review P2）。
+
+    **為什麼不無條件縮**：AC-5 要求非 metatube 來源「逐字元相同」。沒有 fallback 的
+    呼叫端（自家 9 源）縮成 5 秒 connect **等於改變結果**——連線慢但 TCP 接得起來的
+    使用者會從「30 秒後成功」變成「5 秒失敗」，而且**沒有代理可以救**。
+    短逾時的收益只存在於「失敗了還有第二條路」的情境，成本卻落在沒有第二條路的人身上。
+    """
     headers = _build_download_headers(url, referer)
+    timeout = (CONNECT_TIMEOUT, REQUEST_TIMEOUT) if short_connect else REQUEST_TIMEOUT
     try:
-        resp = requests.get(
-            url, headers=headers, timeout=(CONNECT_TIMEOUT, REQUEST_TIMEOUT)
-        )
+        resp = requests.get(url, headers=headers, timeout=timeout)
         if resp.status_code == 200 and len(resp.content) > 1000:
             with open(save_path, "wb") as f:
                 f.write(resp.content)
@@ -722,10 +731,15 @@ def download_image(
     skip_primary = bool(fallback_url) and _host_recently_failed(_host_key(url))
 
     if not skip_primary:
-        if _attempt_download_image(url, save_path, referer):
+        # 只有「有代理可退」的那一次原址嘗試才用短 connect（見 _attempt_download_image
+        # 的 docstring）。沒有 fallback 時逐字元維持改動前的 timeout=REQUEST_TIMEOUT。
+        if _attempt_download_image(
+            url, save_path, referer, short_connect=bool(fallback_url)
+        ):
             return True
         if not fallback_url:
             return False
+        # 代理那一次用正常 timeout（plan §2.3）——它通常在區網內，且已經是最後一條路。
         return _attempt_download_image(fallback_url, save_path, referer)
 
     return _attempt_download_image(fallback_url, save_path, referer)
@@ -1223,10 +1237,11 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
         if img_url:
             cover_path = resolve_cover_target(os.path.join(target_dir, filename_base), ext_mode)
             # CD-126-3（owner 2026-08-23 裁決納入）：原址優先，取不到才退 metatube 代理。
-            # ⚠ **只有後端重刮那條會有值**——前端送來的 metadata 已被
-            # `buildOrganizeMetadata()` 剝除兩個 preview 欄位（TASK-126-T3 / 113c-T3b：
-            # 那是只對顯示有意義、會隨 metatube 連線狀態失效的網址，不能落磁碟）。
-            # 讀不到就跟今天完全一樣，不需要任何 if-else 去分辨來源。
+            # 後端重刮與前端整理（`buildOrganizeMetadata()`）**兩條都有值**——Codex PR
+            # review P2-1 之後前端不再剝除 preview 欄位。113c-T3b 的不變式是「代理網址
+            # 不落磁碟」，剝除只是當時採用的手段；改由 TestT6PreviewNotPersisted 直接
+            # 斷言 NFO／new_folder 下所有文字檔都不含代理 URL 來守。
+            # 讀不到（非 metatube 來源）就跟今天完全一樣，不需要 if-else 去分辨來源。
             preview_cover = metadata.get('preview_cover_url') or ''
             cover_ok = (
                 download_image(img_url, cover_path, fallback_url=preview_cover)

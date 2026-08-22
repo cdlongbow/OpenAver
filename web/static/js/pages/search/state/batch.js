@@ -38,14 +38,26 @@ async function translateBatchHelper(titles) {
 // T7: date 隨候選 raw 直通，不再正規化——picker 產生的已是合法 YYYY-MM-DD、scraper 契約
 // 亦 YYYY-MM-DD（models.py:20），且新設計中有日期走唯讀 raw span、無日期才出 picker，
 // 唯讀 span 顯示即整理送出值（顯示＝整理一致）。cand 為 undefined 時 `{...undefined}` → {} 安全。
-// TASK-113c-T3b: preview_cover_url 只對顯示有意義（會隨 metatube 連線狀態失效），
-// 不能落磁碟。剝除後才送 /api/scrape-single——不接受「反正後端只讀 cover」當理由，
-// 那是 fail-open by accident（card 明文）。
-// TASK-126-T3 D4：preview_sample_images 同理——只對顯示有意義，對稱剝除。
+// TASK-113c-T3b 立的規矩逐字是「**不能落磁碟**」，剝除只是當時**達成**它的手段
+// （0.13.6 當下後端根本不讀 preview_*，連傳都不傳是最省的防線）。
+//
+// TASK-126（Codex PR review P2）把這兩件事分開：
+//   「不落磁碟」＝ 不變式（**仍然成立且有守衛**：preview_* 進不了 NFO——generate_nfo()
+//                 是具名參數；也進不了 DB——videos 表沒有這兩個欄位。
+//                 由 tests/unit/test_organizer.py 的 TestT6PreviewNotPersisted 釘住）
+//   「不傳遞」  ＝ 手段（**已不再需要**：後端現在有一個**刻意的**讀取點——
+//                 organize_file() 拿它當 download_image 的 fallback_url，
+//                 用完就丟。那不是 fail-open by accident，是有名字、有測試的用途）
+//
+// 為什麼一定要傳：搜尋後按「產生」是**最常走的入庫路徑**，而它的 metadata 由前端提供、
+// 後端不會重新搜尋（web/routers/scraper.py）。不傳的話，被牆的使用者明明剛剛用 metatube
+// 搜到了資料，按下產生卻因為原址 timeout 而拿不到封面與劇照——得改按「補齊資料」才行。
+// 那違反 spec §3.2 對「存檔到片庫那一步」的承諾。
+//
+// ⚠️ 安全面沒有變大：`cover` / `sample_images` 本來就是前端可控且未經白名單的值
+// （下載端沒有白名單，spec §1.2），preview_* 沒有新增任何攻擊面。
 export function buildOrganizeMetadata(file) {
-    const cand = file.searchResults[file.selectedCandidateIndex ?? 0];
-    const { preview_cover_url, preview_sample_images, ...metadata } = { ...cand };
-    return metadata;
+    return { ...file.searchResults[file.selectedCandidateIndex ?? 0] };
 }
 
 export function searchStateBatch() {

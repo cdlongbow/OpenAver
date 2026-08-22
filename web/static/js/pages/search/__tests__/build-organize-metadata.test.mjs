@@ -69,46 +69,64 @@ test('buildOrganizeMetadata: date 缺席 → 無 date key（不再正規化為�
   assert.deepEqual(buildOrganizeMetadata(file), { number: 'ABC-001' });
 });
 
-// TASK-113c-T3b DoD-4：preview_cover_url 只對顯示有意義（會隨 metatube 連線狀態失效），
-// 不可被 buildOrganizeMetadata 送進 /api/scrape-single 落磁碟（不接受「反正後端只讀 cover」
-// 當理由——那是 fail-open by accident，card 明文）。
-test('buildOrganizeMetadata: 剝除 preview_cover_url，不送 /api/scrape-single', () => {
+// TASK-126（Codex PR review P2）：這兩支從「驗**不傳遞**」翻成「驗**傳遞**」。
+//
+// 113c-T3b 立的規矩逐字是「preview_* **不能落磁碟**」，剝除只是當時達成它的手段。
+// 兩件事分開之後：不變式（不落磁碟）由 `tests/unit/test_organizer.py::TestT6PreviewNotPersisted`
+// 直接驗證產出的 NFO 與 DB；而傳遞是**必要的**——搜尋後按「產生」是最常走的入庫路徑，
+// 後端不會重新搜尋，不傳等於被牆的使用者永遠拿不到代理退路（spec §3.2 的承諾）。
+//
+// ⚠️ 這兩支測試的**方向被刻意翻面了**。若日後有人想改回剝除，請先讀
+// `feature/126-metatube-image-proxy/CODEX-ROUND1-FIXES.md`。
+
+test('buildOrganizeMetadata: preview_cover_url 必須傳給 /api/scrape-single（下載端的代理退路）', () => {
   const file = {
     searchResults: [{
       number: 'ABC-001',
       cover: 'http://example/cover.jpg',
-      preview_cover_url: 'http://mt:8080/v1/images/primary/FANZA/ABC-001?url=x',
-    }],
-  };
-
-  const result = buildOrganizeMetadata(file);
-  assert.deepEqual(result, { number: 'ABC-001', cover: 'http://example/cover.jpg' });
-  assert.ok(!('preview_cover_url' in result), 'preview_cover_url 不應出現在送出的 metadata');
-});
-
-// TASK-126-T3 D4：preview_sample_images 同 preview_cover_url——只對顯示有意義
-// （會隨 metatube 連線狀態失效），不可被 buildOrganizeMetadata 送進 /api/scrape-single
-// 落磁碟（不接受「反正後端只讀 sample_images」當理由——那是 fail-open by accident）。
-test('buildOrganizeMetadata strips preview_sample_images', () => {
-  const file = {
-    searchResults: [{
-      number: 'ABC-001',
-      sample_images: ['http://example/s1.jpg', 'http://example/s2.jpg'],
-      preview_sample_images: [
-        'http://mt:8080/v1/images/primary/MGS/ABC-001?url=s1',
-        '',
-      ],
       preview_cover_url: 'http://mt:8080/v1/images/primary/MGS/ABC-001?url=c',
     }],
   };
 
   const result = buildOrganizeMetadata(file);
-  assert.deepEqual(result, {
-    number: 'ABC-001',
-    sample_images: ['http://example/s1.jpg', 'http://example/s2.jpg'],
-  });
-  assert.ok(!('preview_sample_images' in result), 'preview_sample_images 不應出現在送出的 metadata');
-  assert.ok(!('preview_cover_url' in result), 'preview_cover_url 不應出現在送出的 metadata');
+  assert.equal(
+    result.preview_cover_url,
+    'http://mt:8080/v1/images/primary/MGS/ABC-001?url=c',
+    '剝掉它 → 被牆的使用者按「產生」永遠拿不到封面，而且沒有錯誤訊息',
+  );
+  assert.equal(result.cover, 'http://example/cover.jpg', '原址必須一併保留（原址優先）');
+});
+
+test('buildOrganizeMetadata: preview_sample_images 必須傳給 /api/scrape-single', () => {
+  const file = {
+    searchResults: [{
+      number: 'ABC-001',
+      sample_images: ['http://example/s1.jpg', 'http://example/s2.jpg'],
+      preview_sample_images: ['http://mt:8080/v1/images/primary/MGS/ABC-001?url=s1', ''],
+      preview_cover_url: 'http://mt:8080/v1/images/primary/MGS/ABC-001?url=c',
+    }],
+  };
+
+  const result = buildOrganizeMetadata(file);
+  assert.deepEqual(
+    result.preview_sample_images,
+    ['http://mt:8080/v1/images/primary/MGS/ABC-001?url=s1', ''],
+    '逐張傳遞，含空字串那一格（空＝這格沒有代理，落回原址）',
+  );
+  assert.deepEqual(result.sample_images, ['http://example/s1.jpg', 'http://example/s2.jpg']);
+});
+
+test('buildOrganizeMetadata: 仍然只送選中的那個候選，不混到別的候選', () => {
+  const file = {
+    selectedCandidateIndex: 1,
+    searchResults: [
+      { number: 'WRONG-000', cover: 'http://example/wrong.jpg' },
+      { number: 'ABC-001', cover: 'http://example/right.jpg', preview_cover_url: 'http://mt:8080/p' },
+    ],
+  };
+  const result = buildOrganizeMetadata(file);
+  assert.equal(result.number, 'ABC-001');
+  assert.equal(result.preview_cover_url, 'http://mt:8080/p');
 });
 
 test('loadMore: listMode="file" → 立即回傳 null、不呼叫 fetch（CD-106-5 P1-#2 順修 pre-existing bug）', async () => {

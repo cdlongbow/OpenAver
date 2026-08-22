@@ -2269,7 +2269,12 @@ class TestDownloadImageFallback:
 
     @patch("core.organizer.requests.get")
     def test_download_image_no_fallback_success_preserves_args(self, mock_get, tmp_path):
-        """邊界 1：無 fallback、原址成功；除 timeout 外參數與改動前相同。"""
+        """邊界 1：無 fallback、原址成功；**參數與改動前逐字元相同，timeout 也包含在內**。
+
+        Codex PR review P2：初版讓所有呼叫端（含自家 9 源）都吃 (5, 30)，
+        等於把「連線慢但接得起來」的使用者從「30 秒後成功」改成「5 秒失敗」，
+        而且他們沒有代理可退。AC-5 的「逐字元相同」把 timeout 也算在內。
+        """
         from core.organizer import HEADERS, REQUEST_TIMEOUT
 
         mock_get.return_value = _ok_resp()
@@ -2282,19 +2287,45 @@ class TestDownloadImageFallback:
         args, kwargs = mock_get.call_args
         assert args[0] == "http://example.com/cover.jpg"
         assert kwargs["headers"] == HEADERS.copy()
-        assert kwargs["timeout"] == (5, REQUEST_TIMEOUT)
+        assert kwargs["timeout"] == REQUEST_TIMEOUT, (
+            "無 fallback 的呼叫端（自家 9 源）必須維持單值 30 秒——"
+            "縮成 (5, 30) 會讓慢速連線的使用者從『30 秒後成功』變成『5 秒失敗』"
+        )
 
     @patch("core.organizer.requests.get")
     def test_download_image_connect_timeout_is_short(self, mock_get, tmp_path):
-        """mutation 錨點：connect 逾時必須是短的 tuple，不是單一 REQUEST_TIMEOUT。"""
+        """mutation 錨點：**有代理可退時**，原址那一次的 connect 逾時必須是短的 tuple。
+
+        短逾時的收益只存在於「失敗了還有第二條路」的情境（被牆的使用者只付第一張的等待）；
+        成本（慢速連線被提前判死）不該落在沒有第二條路的人身上——所以它綁 fallback，
+        不是全域（Codex PR review P2）。
+        """
         from core.organizer import CONNECT_TIMEOUT, REQUEST_TIMEOUT
 
         mock_get.return_value = _ok_resp()
-        download_image("http://example.com/cover.jpg", str(tmp_path / "c.jpg"))
+        download_image(
+            "http://example.com/cover.jpg",
+            str(tmp_path / "c.jpg"),
+            fallback_url="http://mt.example/v1/images/primary/MGS/N-1?url=c",
+        )
         timeout = mock_get.call_args.kwargs["timeout"]
         assert timeout == (CONNECT_TIMEOUT, REQUEST_TIMEOUT)
         assert CONNECT_TIMEOUT == 5
         assert REQUEST_TIMEOUT == 30
+
+    @patch("core.organizer.requests.get")
+    def test_download_image_no_fallback_keeps_long_connect_timeout(self, mock_get, tmp_path):
+        """AC-5 的另一半：**沒有**代理可退時，connect 逾時維持改動前的單值 30 秒。
+
+        使用者流程：只用 JavBus／JAVDB 這些內建來源的人，連線慢但 TCP 接得起來
+        （手機熱點、遠端 CDN）→ 若被縮成 5 秒，本來抓得到的封面會變成抓不到，
+        而且沒有任何退路可以救。
+        """
+        from core.organizer import REQUEST_TIMEOUT
+
+        mock_get.return_value = _ok_resp()
+        download_image("http://example.com/cover.jpg", str(tmp_path / "c2.jpg"))
+        assert mock_get.call_args.kwargs["timeout"] == REQUEST_TIMEOUT
 
     @patch("core.organizer.requests.get")
     def test_download_image_no_fallback_connect_timeout_returns_false(self, mock_get, tmp_path):
@@ -5354,3 +5385,145 @@ class TestT4bOrganizeFallback:
             assert mg.call_count == 3
         finally:
             self._clear_failed_hosts()
+
+
+# ============ TASK-126 Codex PR review P2-1：preview_* 傳得過去，但不得持久化 ============
+#
+# 113c-T3b 立的規矩逐字是「preview_* **不能落磁碟**」；當時用「連傳都不傳」達成它。
+# 126 把兩件事分開：**傳遞是必要的**（搜尋後按「產生」是最常走的入庫路徑，後端不重新搜尋，
+# 不傳等於被牆的使用者永遠拿不到代理退路），**不落磁碟仍然是不變式**——由這個 class 直接驗。
+#
+# 這是把守衛從「代理指標」（有沒有被傳）換成「真正的不變式」（有沒有被寫下去）。
+
+class TestT6PreviewNotPersisted:
+    """preview_* 進得了 POST metadata，但不得出現在 NFO 或任何落磁碟的產物裡。"""
+
+    def _clear_failed_hosts(self):
+        import core.organizer as org
+        with org._failed_hosts_lock:
+            org._failed_hosts.clear()
+
+    _PROXY = 'http://mt.example/v1/images/primary/MGS/ABC-777?url=https%3A%2F%2Fcdn%2Fc.jpg'
+
+    def _metadata(self):
+        return {
+            'number': 'ABC-777', 'title': 'T', 'actors': ['A'], 'tags': ['t1'],
+            'date': '2024-01-01', 'maker': 'M', 'director': 'D', 'series': 'S',
+            'label': 'L', 'duration': 120, 'url': 'https://example/detail',
+            'cover': 'https://cdn/c.jpg',
+            'sample_images': ['https://cdn/s1.jpg'],
+            'preview_cover_url': self._PROXY,
+            'preview_sample_images': [self._PROXY + '&i=1'],
+        }
+
+    def test_preview_urls_never_appear_in_generated_nfo(self, tmp_path):
+        """**核心不變式**：NFO 的內容裡不得出現任何 preview／metatube 網址。
+
+        使用者流程：使用者按「產生」入庫 → 那個 .nfo 會活很久（Jellyfin 讀它、
+        換機器也跟著走）。若代理網址被寫進去，等 metatube 換 IP 之後那就是一串
+        永遠連不到的死字串躺在使用者的檔案裡。
+        """
+        self._clear_failed_hosts()
+        try:
+            src = tmp_path / 'ABC-777.mp4'
+            src.write_bytes(b'v' * 100)
+            config = {'output_dir': str(tmp_path / 'out'), 'create_folder': True,
+                      'download_cover': True, 'create_nfo': True,
+                      'download_sample_images': True}
+            with patch('core.organizer.requests.get',
+                       return_value=self._resp_ok()):
+                result = organize_file(str(src), self._metadata(), config)
+
+            nfo_path = result.get('nfo_path')
+            assert nfo_path and os.path.exists(nfo_path), 'NFO 應該有產生，否則這條驗不到東西'
+            content = open(nfo_path, encoding='utf-8').read()
+            for needle in ('preview_cover_url', 'preview_sample_images',
+                           'mt.example', '/v1/images/'):
+                assert needle not in content, (
+                    f'NFO 裡出現了 {needle!r} —— preview_* 只對顯示有意義、'
+                    f'會隨 metatube 連線狀態失效，寫進 NFO 等於留下一串會死掉的字串'
+                )
+        finally:
+            self._clear_failed_hosts()
+
+    def test_preview_urls_never_appear_in_any_written_file(self, tmp_path):
+        """更寬的一道：整個輸出資料夾裡的**任何文字檔**都不得含代理網址。
+
+        比只驗 NFO 多守住「日後有人新增別的 sidecar 產物」的情況。
+        """
+        self._clear_failed_hosts()
+        try:
+            src = tmp_path / 'ABC-777.mp4'
+            src.write_bytes(b'v' * 100)
+            config = {'output_dir': str(tmp_path / 'out'), 'create_folder': True,
+                      'download_cover': True, 'create_nfo': True,
+                      'download_sample_images': True}
+            with patch('core.organizer.requests.get',
+                       return_value=self._resp_ok()):
+                result = organize_file(str(src), self._metadata(), config)
+
+            # ⚠️ organize_file 的產出落在**來源檔旁邊**（`src.parent/<folder>/`），
+            # **不是** `output_dir` 底下。初版掃 `out/` 掃到一個空資料夾 ⇒ 假綠。
+            # （Opus 自驗 mutation 時抓到：往 NFO 注入代理網址後這支竟然沒紅。）
+            scan_root = Path(result['new_folder'])
+            assert scan_root.exists(), '沒有產出資料夾就代表這條什麼都沒驗到'
+            assert any(scan_root.rglob('*.nfo')), '沒有 NFO 就代表這條什麼都沒驗到'
+
+            offenders = []
+            for p in scan_root.rglob('*'):
+                if not p.is_file():
+                    continue
+                try:
+                    text = p.read_text(encoding='utf-8')
+                except (UnicodeDecodeError, OSError):
+                    continue  # 圖片等二進位檔不看
+                if 'mt.example' in text or '/v1/images/' in text:
+                    offenders.append(str(p))
+            assert offenders == [], f'這些落磁碟的檔案含有代理網址：{offenders}'
+        finally:
+            self._clear_failed_hosts()
+
+    def test_db_schema_has_no_preview_columns(self, tmp_path):
+        """結構面的第二道：**真的建一個 DB，用 PRAGMA 問它的欄位**。
+
+        日後若有人真的加了 preview 欄位進 videos 表，這裡會紅，
+        提醒他先想清楚「這串會隨 metatube 位址失效的網址，為什麼要落 DB」。
+
+        **為什麼是 PRAGMA 而不是掃 `connection.py` 的原始碼**（Codex PR review 第二輪 P3）：
+        初版是「原始碼裡不得出現這兩個字串」——那是**代理指標**，不是不變式。
+        它有兩個毛病：① 依 CLAUDE.md「Lint 守衛規則」，純字串存在性檢查不該進 pytest；
+        ② **會假紅**——有人在 `connection.py` 寫一句「`preview_cover_url` 刻意不存 DB」
+        的註解，或把欄位清單重構成別的形狀，守衛就無故變紅，而 schema 根本沒變。
+        改問真正的 schema 之後，它驗的是**行為**（`init_db()` 建出來的表長什麼樣），
+        註解與重構都影響不到它。
+        """
+        import sqlite3
+
+        from core.database.connection import init_db
+
+        db_path = tmp_path / 'schema_probe.db'
+        init_db(db_path)
+        with sqlite3.connect(str(db_path)) as conn:
+            tables = [
+                r[0] for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            ]
+            assert 'videos' in tables, 'init_db() 沒有建出 videos 表，這條什麼都沒驗到'
+            offenders = {}
+            for table in tables:
+                cols = [r[1] for r in conn.execute(f'PRAGMA table_info("{table}")')]
+                hits = [c for c in cols if 'preview' in c.lower()]
+                if hits:
+                    offenders[table] = hits
+
+        assert offenders == {}, (
+            f'DB schema 出現了 preview 欄位：{offenders} —— 那串網址綁著 metatube '
+            f'當下的位址，存進 DB 之後就是一筆會過期的資料（換 IP／換 port 就死）'
+        )
+
+    def _resp_ok(self):
+        m = MagicMock()
+        m.status_code = 200
+        m.content = b'IMG' + b'\x00' * 2000
+        return m
