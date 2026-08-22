@@ -626,3 +626,73 @@ def test_to_legacy_dict_preview_never_carries_userinfo():
     blob = json.dumps(legacy, ensure_ascii=False)
     for secret in ("leakuser", "leakpass", "@127.0.0.1"):
         assert secret not in blob, f"序列化輸出洩漏 {secret!r}"
+
+
+def test_proxy_and_raw_urls_stay_distinct():
+    """不變式：代理 URL 與原始網址是兩個不同的值（備胎不准拆）。
+
+    cover-fallback.js::shouldFallbackToCover() 的 `preview !== cover` 是這條的唯一消費者。
+
+    **這支鎖的是「原址被代理 URL 就地覆蓋」這一種破壞**（＝ PR #151 原版的做法，
+    也就是本 task card 的兩個 mutation 點）。在那種破壞下，`preview !== cover` 恆為偽，
+    那套 error-time 救援變成死碼——而在本測試存在之前，**沒有任何一條測試會因此變紅**。
+
+    **它不涵蓋另一種性質的回歸**（T5 review 實測指出）：若 `_build_preview_cover_url()`
+    整個失效、`preview_cover_url` 恆為空字串，本測試的 implication 前提不成立 ⇒ **維持全綠**。
+    那種回歸由 TASK-113c-T3b 遺留的 6 支既有測試攔住（實測會同步變紅），不是這支的責任。
+
+    若這條不變式被打破（例如把 cover_url 覆蓋成代理 URL，或把 sample_images
+    就地改寫成代理 URL），前者在 metatube 重開機／更新中會讓搜尋頁封面整排破圖
+    且不會自己好（得重新載入頁面），後者會讓下載端拿不到原始網址、原址優先無從執行。
+
+    本測試窮舉：正常／cover_url 空／preview_images 空／provider 需轉義／
+    number 需轉義／base_url 帶 userinfo／base_url 帶 query × 有無 base_url，
+    逐一驗證 implication（兩者皆非空時才要求不等），不是單一案例的巧合。
+    同時斷言 len(sample_images) == len(preview_sample_images)。
+    """
+    from core.metatube.mapper import map_movie_info
+
+    scenarios = [
+        dict(_full_info()),
+        {**_full_info(), "cover_url": ""},
+        {**_full_info(), "preview_images": []},
+        {**_full_info(), "provider": "FAN ZA"},
+        {**_full_info(), "number": "SONE/205"},
+        # T5 review：這兩格原本是 `dict(_full_info())` 的重複——在 base_url="" 那條腿上
+        # 與 idx 0 逐字相同，14 組裡有 2 組沒有新增任何覆蓋。改成兩個真正不同的形狀，
+        # 讓兩條腿都有效（獨立組合數 12 → 14）。
+        {**_full_info(), "preview_images": ["https://img.fanza.com/s1.jpg", ""]},
+        {**_full_info(), "cover_url": "", "preview_images": []},
+    ]
+    unsafe_for_idx = {
+        5: "http://user:pass@192.168.1.100:8080",
+        6: "http://192.168.1.100:8080/?x=1",
+    }
+    for idx, info in enumerate(scenarios):
+        for base_url in ("", "http://192.168.1.100:8080"):
+            if idx in unsafe_for_idx:
+                actual_base = "" if base_url == "" else unsafe_for_idx[idx]
+            else:
+                actual_base = base_url
+            video = map_movie_info(info, base_url=actual_base)
+            if video.preview_cover_url and video.cover_url:
+                assert video.preview_cover_url != video.cover_url, (
+                    f"cover 與 preview 必須不同（違反不變式）："
+                    f"info={info!r} base_url={actual_base!r} "
+                    f"cover={video.cover_url!r} preview={video.preview_cover_url!r}"
+                )
+            assert len(video.sample_images) == len(video.preview_sample_images), (
+                f"sample_images 與 preview_sample_images 必須等長："
+                f"info={info!r} base_url={actual_base!r} "
+                f"len(raw)={len(video.sample_images)} len(prev)={len(video.preview_sample_images)}"
+            )
+            # strict=True：等長是硬契約（上一行已 assert），這裡再焊一次——
+            # 長度不等時當場 ValueError，而不是靜默截斷成少比對幾對。
+            for raw, prev in zip(
+                video.sample_images, video.preview_sample_images, strict=True
+            ):
+                if prev:
+                    assert prev != raw, (
+                        f"劇照代理與原始必須不同（違反不變式）："
+                        f"info={info!r} base_url={actual_base!r} raw={raw!r} prev={prev!r}"
+                    )
