@@ -669,3 +669,60 @@ test('〔facefinder 恆 false〕banner_added 寫成 true → RED（它是未修�
     assert.match(r.output, /facefinder 的 banner_added 必須是 false/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Codex round-2：manifest 形狀畸形不得用 stack trace 取代逐條診斷
+// 這一組是「窮舉盤點」的產物——不是只補 Codex 報的 vendor[0]=null 那一格。
+// ---------------------------------------------------------------------------
+
+const MALFORMED_SHAPES = [
+  ['manifest 整份是 null', (m) => null],
+  ['manifest 整份是陣列', (m) => []],
+  ['vendor[0] 是 null', (m) => { m.vendor[0] = null; return m; }],
+  ['vendor[0] 是字串', (m) => { m.vendor[0] = 'oops'; return m; }],
+  ['vendor[0] 是數字', (m) => { m.vendor[0] = 42; return m; }],
+  ['vendor[0] 是陣列', (m) => { m.vendor[0] = []; return m; }],
+  ['vendor 全部是 null', (m) => { m.vendor = [null, null]; return m; }],
+  ['facefinder 是 null', (m) => { m.facefinder = null; return m; }],
+];
+
+test('〔形狀〕facefinder 是陣列 → 立刻 fail-closed 並點名「不是物件」', () => {
+  // 鬆散的 `typeof x === "object"` 對陣列會放行，讓它一路掉到後面才因為「path 缺失」
+  // 而紅——訊息指向錯的地方。這條鎖的是**診斷品質**：形狀不對就要當場講形狀不對。
+  withScratch(({ root, manifest }) => {
+    const m = JSON.parse(JSON.stringify(manifest));
+    m.facefinder = [];
+    writeManifest(root, m);
+    const r = runGuard(root);
+    assert.notEqual(r.status, 0, r.output);
+    assert.doesNotMatch(r.output, /TypeError|Cannot read properties/);
+    assert.match(r.output, /缺 facefinder 條目、或它不是物件/);
+  });
+});
+
+for (const [name, mutate] of MALFORMED_SHAPES) {
+  test(`〔形狀〕${name} → RED 且不是 crash`, () => {
+    withScratch(({ root, manifest }) => {
+      writeManifest(root, mutate(JSON.parse(JSON.stringify(manifest))));
+      const r = runGuard(root);
+      assert.notEqual(r.status, 0, r.output);
+      // 關鍵：不得用 stack trace 取代診斷
+      assert.doesNotMatch(r.output, /TypeError|Cannot read properties/);
+      assert.match(r.output, /vendor_guard_lint/);
+    });
+  });
+}
+
+test('〔形狀〕一筆畸形不會吃掉其他條目的診斷（聚合契約）', () => {
+  withScratch(({ root, manifest, bodies }) => {
+    const m = JSON.parse(JSON.stringify(manifest));
+    m.vendor[0] = null;                       // 畸形的一筆
+    m.vendor[1].local_sha256 = 'deadbeef';    // 另一筆的 hash 錯
+    writeManifest(root, m);
+    const r = runGuard(root);
+    assert.notEqual(r.status, 0, r.output);
+    assert.doesNotMatch(r.output, /TypeError/);
+    assert.match(r.output, /vendor\[0\] 不是物件/);      // 畸形那筆被點名
+    assert.match(r.output, /內容與清單不符/);            // 其他條目仍被檢查
+  });
+});

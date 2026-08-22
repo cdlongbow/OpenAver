@@ -139,6 +139,18 @@ function hasDotDotSegment(path) {
   return path.split('/').some((seg) => seg === '..');
 }
 
+/** 是不是「可以安全解參考的資料物件」——非 null、typeof object、且不是陣列。
+ *
+ *  **為什麼要有這一層**：manifest 是人手改的 JSON，畸形形狀有兩類，混在一起處理必然漏。
+ *  ① **形狀**：這個東西根本不是物件（`null` / 字串 / 數字 / 陣列）——碰它就 crash。
+ *  ② **欄位**：是物件，但某個欄位缺失或型別錯——那是 `hasUsablePath()` 等的責任。
+ *  逐個解參考點補防呆會一直漏（實測窮舉：`manifest` 整份是 `null`、`vendor[0]` 是 `null`
+ *  兩種都會噴 stack trace，把應該逐條累積的診斷整個換成一段沒有指引的錯誤）。
+ *  所以形狀檢查集中在**進入任何逐筆邏輯之前**做一次，不再散落。 */
+function isPlainObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
 /** entry.path 是否為可用的相對路徑（非空字串）。
  *  `reconcileEntry()` 內部會對它做 `.split('/')`／`readFileSync` 等操作，
  *  path 缺失或型別不對時必須在**進對帳之前**擋掉這一筆，否則會直接
@@ -231,20 +243,44 @@ function main() {
     process.exit(1);
   }
 
-  // ---- fail-closed②：vendor[] 不存在或為空 ----
+  // ---- fail-closed②：頂層本身必須是物件 ----
+  // `JSON.parse('null')` 給 null、`JSON.parse('[]')` 給陣列，兩者都是合法 JSON 但不是我們的
+  // 清單格式；少了這道，下一行的 manifest.vendor 會直接 TypeError（實測窮舉命中）。
+  if (!isPlainObject(manifest)) {
+    err(`${MANIFEST_REL} 的最外層必須是物件（實際是 ${Array.isArray(manifest) ? 'array' : String(manifest)}）——fail-closed`);
+    process.exit(1);
+  }
+
+  // ---- fail-closed③：vendor[] 不存在或為空 ----
   if (!Array.isArray(manifest.vendor) || manifest.vendor.length === 0) {
     err(`${MANIFEST_REL} 的 vendor[] 不存在或為空——fail-closed，不靜默通過`);
     process.exit(1);
   }
-  if (!manifest.facefinder || typeof manifest.facefinder !== 'object') {
-    err(`${MANIFEST_REL} 缺 facefinder 條目——fail-closed，不靜默通過`);
+  if (!isPlainObject(manifest.facefinder)) {
+    err(`${MANIFEST_REL} 缺 facefinder 條目、或它不是物件——fail-closed，不靜默通過`);
     process.exit(1);
   }
 
   // 注意：頂層還有 `_comment` 這個純說明字串。這裡**只讀 vendor 與 facefinder 兩個具名欄位**，
   // 不對頂層做無條件遍歷——否則 `_comment` 會被誤判成第三個資料群。
-  const vendorEntries = manifest.vendor;
   const facefinder = manifest.facefinder;
+
+  // ---- 形狀閘：逐筆確認是可以安全解參考的物件，之後所有邏輯只跑得過這關的 ----
+  // 不整份 exit：畸形的那一筆各自記一條錯，其餘照常被檢查，維持「診斷逐條累積」的契約
+  // （一筆壞掉不該把整份報告換成一段 stack trace）。
+  const vendorEntries = [];
+  manifest.vendor.forEach((entry, i) => {
+    if (!isPlainObject(entry)) {
+      err(`vendor[${i}] 不是物件（實際是 ${Array.isArray(entry) ? 'array' : String(entry)}）` +
+          `——已跳過這一筆，其餘條目照常檢查`);
+      return;
+    }
+    vendorEntries.push(entry);
+  });
+  if (vendorEntries.length === 0) {
+    err(`${MANIFEST_REL} 的 vendor[] 沒有任何一筆是合法物件——fail-closed`);
+    process.exit(1);
+  }
 
   // ---- schema：必填欄位 ----
   const seenPaths = new Set();
