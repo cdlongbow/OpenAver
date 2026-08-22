@@ -640,13 +640,25 @@ def generate_jellyfin_images(cover_path: str, base_stem: str, number: str = '', 
 
 
 def _host_key(url: str) -> Optional[Tuple[str, str, int]]:
-    """Failure-memory key: (scheme, hostname, effective_port)."""
-    parsed = urlparse(url)
-    scheme = (parsed.scheme or "").lower()
-    hostname = (parsed.hostname or "").lower()
-    if not scheme or not hostname:
+    """Failure-memory key: (scheme, hostname, effective_port)。組不出就回 None。
+
+    Stage 2 review P3-1：`urlparse(...).port` 對非數字 port（`http://h:abc/x.jpg`）
+    **拋 ValueError**，而唯一的呼叫點 `download_image()` 的 `skip_primary = ...`
+    那行不在任何 try 內——例外會一路穿出 `organize_file()`，而那時
+    `shutil.move()`（:1219）**已經把影片檔搬到新資料夾了**，NFO 卻還沒寫。
+    使用者看到「整理失敗」，但檔案在新位置、資料夾是半成品，得自己收拾。
+    改動前這種髒網址只會讓封面抓不到，整理照樣完成——所以這是本 branch 引入的回歸。
+    回 None 即代表「這個網址沒有可記憶的 host」，兩個消費端都已經吃 None。
+    """
+    try:
+        parsed = urlparse(url)
+        scheme = (parsed.scheme or "").lower()
+        hostname = (parsed.hostname or "").lower()
+        if not scheme or not hostname:
+            return None
+        port = parsed.port or (443 if scheme == "https" else 80)
+    except ValueError:
         return None
-    port = parsed.port or (443 if scheme == "https" else 80)
     return (scheme, hostname, port)
 
 

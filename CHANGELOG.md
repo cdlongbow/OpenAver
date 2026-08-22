@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.6] - 2026-08-23
+
+> 這一版只影響**把 metatube 設成來源**的人。沒接 metatube 的話，圖片路徑一個位元組都沒動。
+
+### Fixed
+#### 🖼 metatube 來源的劇照，終於不再整排破圖
+- metatube 接了 30 幾家網站，但 OpenAver 顯示圖片時有一份自己的網域白名單——**冷門那幾家的圖床沒收錄，劇照就整排 403 破圖**。畫面上看起來像「這片沒有劇照」，不會知道是被自己人擋下來的。現在這些圖改走你自己那台 metatube 取回，白名單再也不用追著新站台跑。
+- 封面在 v0.13.6 已經修過，這次補上劇照。
+
+#### 🌏 連不到圖床的時候，會自動改走 metatube 那條路
+- 過去 OpenAver 是**用你自己這台電腦的網路**去抓圖，而 metatube 讀網頁用的是它自己的網路。於是會出現「資料抓得到、圖抓不到」的狀況。
+- 現在**整理／改名、補齊資料、唯讀來源產出**這三條路都一樣：先試原始網址，取不到才改用 metatube 幫你取回。封面和劇照都適用。
+- **存檔一律優先原始網址**——metatube 那條會把圖重新壓一次（實測體積 +3%、尺寸不變），所以只在原址真的取不到時才用它。
+
+#### 🛟 metatube 掛掉的時候，封面還是出得來
+- 原始網址從頭到尾保留著，沒有被代理網址取代。這讓既有的破圖救援機制（代理載不出來就換原始網址重試）繼續有效——**metatube 正在重開機或更新時，搜尋頁的封面不會整排變空白**。
+
+### 已知限制
+- 這條備援**只對「圖片網址是 metatube 給的」那些片有效**。如果你的來源順序讓 javdb／javbus 之類的自家來源贏得封面，那張圖沒有代理副本可退——自家 9 個來源的圖片路徑本次完全沒動。
+- 偶發的網路抖動會讓同一個圖床接下來 5 分鐘內的圖直接走 metatube 存檔（也就是存成重新壓過的副本）。肉眼幾乎看不出來，但如果你很在意原始檔，重刮一次即可。
+
+### 致謝
+- 起點是外部貢獻者 [@sheepzacks](https://github.com/sheepzacks) 的 [PR #151](https://github.com/slive777/OpenAver/pull/151)，他的 commit 是這支分支的第一顆。劇照代理的做法照收；「存檔要用哪一份」則翻成原址優先（理由見上）。
+
+測試數 6991 → 7048（pytest；npm test 1187 → 1189）。
+
 ## [0.14.5] - 2026-08-22
 
 ### Changed

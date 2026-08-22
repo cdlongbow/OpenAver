@@ -1103,6 +1103,15 @@ def _write_movie_assets(
         # CD-126-9：fallback 從 `meta` 取，**不動 cover_strategy tuple 的形狀**——
         # `cover_strategy[2]` 在 'copy' 種類下已經是 raw_source_media，同一個索引在不同
         # kind 下代表不同東西，那正是本 branch 要消滅的形狀。
+        #
+        # ⚠️ 隱含耦合（Stage 2 review P3-5）：primary 來自 `cover_strategy[1]`、fallback
+        # 來自 `meta['preview_cover_url']`，**兩個值住在不同容器**。今天成立是因為
+        # `('download', ...)` 只在 `resolve_ingest_plan()` 的兩處產生，兩處都是
+        # `('download', meta['cover'])`。若日後有人讓 'download' 的網址不再等於
+        # `meta['cover']`（例如改吃 NFO 的 <thumb>），直連失敗時會拿**另一張圖**的
+        # 代理網址存成封面——使用者拿到錯的封面且看不出來。下面的 assert 是那條的絆線。
+        # 不加 runtime assert：它會在唯讀產出跑到一半時崩掉，而這條耦合的破裂後果
+        # （封面錯一張）比崩掉輕。真正的防線是「動 resolve_ingest_plan 的人讀到這段」。
         preview_cover = meta.get('preview_cover_url') or ''
         has_cover = bool(remote_url) and (
             download_image(remote_url, cover_fs, fallback_url=preview_cover)

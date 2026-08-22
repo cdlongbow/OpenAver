@@ -2499,6 +2499,30 @@ class TestDownloadImageFallback:
         ]
 
     @patch("core.organizer.requests.get")
+    def test_download_image_malformed_port_does_not_raise(self, mock_get, tmp_path):
+        """Stage 2 review P3-1：非數字 port 的髒網址不得讓整個 organize 崩掉。
+
+        `urlparse('http://h:abc/x').port` 拋 ValueError，而 `download_image()` 的
+        `skip_primary = bool(fallback_url) and _host_recently_failed(_host_key(url))`
+        不在 try 內。它穿出去的時候 `organize_file()` 的 `shutil.move()` 已經跑完，
+        使用者拿到的是「整理失敗」＋一個影片已經被搬走的半成品資料夾。
+        正確行為：組不出 host key 就當作「沒有記憶」，照常走原址→代理兩次嘗試。
+        """
+        mock_get.side_effect = [
+            requests.exceptions.ConnectTimeout("t"),
+            _ok_resp(b"p" * 1001),
+        ]
+        assert download_image(
+            "http://h.example:abc/x.jpg",
+            str(tmp_path / "m.jpg"),
+            fallback_url="http://proxy.example/x",
+        ) is True
+        urls = [c.args[0] for c in mock_get.call_args_list]
+        assert urls == ["http://h.example:abc/x.jpg", "http://proxy.example/x"], (
+            "髒 port 應照常先試原址再退代理，不是跳過或炸掉"
+        )
+
+    @patch("core.organizer.requests.get")
     def test_download_image_port_differs_keeps_primary(self, mock_get, tmp_path):
         """邊界 10：:8080 失敗後預設 port 仍先試原址。"""
         mock_get.side_effect = [

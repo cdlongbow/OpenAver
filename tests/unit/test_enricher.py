@@ -3991,6 +3991,61 @@ class TestT4bEnrichCallerFallback(_T4bFailedHostsMixin):
         assert (ef / "fanart2.jpg").read_bytes() == _T4B_PROXY
 
 
+class TestT4bEnrichExternalManagerBranch(_T4bFailedHostsMixin):
+    """SA-pre-6 缺口：`external_manager != "off"` 的那個 _write_cover 呼叫點沒被驗過。
+
+    T4b 系列全部走 `external_manager` 預設值 "off"，只打到 enricher.py:610 那個
+    call site；:558 那條（Jellyfin / Emby / Kodi 使用者走的路）的
+    `preview_cover_url=` wiring 是「有寫但沒人驗過真的會退代理」。
+
+    使用者流程：使用者的外部管理器設成 Jellyfin、按「補齊資料」→ 封面原址連不到 →
+    這條 wiring 若被改壞，封面就抓不到，而測試全綠不會有人發現。
+    """
+
+    def test_external_manager_branch_uses_preview_fallback(self, tmp_path):
+        video = tmp_path / "SONE-205.mp4"
+        video.write_bytes(b"fake-video")
+        scraper = _t4b_scraper()
+
+        def fake_get(url, **kwargs):
+            if "cdn.example" in url:
+                raise requests.exceptions.ConnectTimeout("connect timed out")
+            return _t4b_ok(_T4B_PROXY)
+
+        with (
+            patch("core.organizer.requests.get", side_effect=fake_get),
+            patch("core.enricher.generate_nfo", return_value=True),
+            patch("core.enricher.VideoRepository") as mock_repo_cls,
+            patch("core.enricher.find_subtitle_files", return_value=[]),
+        ):
+            mock_repo_cls.return_value = MagicMock()
+            from core.enricher import enrich_single
+            result = enrich_single(
+                file_path=str(video),
+                number="SONE-205",
+                mode="refresh_full",
+                scraper_data=scraper,
+                write_nfo=False,
+                write_cover=True,
+                write_extrafanart=False,
+                overwrite_existing=True,
+                external_manager="jellyfin",
+            )
+
+        assert result.success is True
+        assert result.cover_written is True, (
+            "external_manager 分支的 _write_cover 沒有把 preview_cover_url 傳下去"
+        )
+        # jellyfin flavour 下封面落點不是 <stem>.jpg（走 stem 長格式 -poster/-fanart），
+        # 所以掃「實際寫出了哪些 .jpg」而不是猜檔名。原址是 ConnectTimeout，
+        # 磁碟上只可能出現代理副本的位元組——這正是本測試要鎖的東西。
+        written = sorted(f.name for f in tmp_path.iterdir() if f.suffix == ".jpg")
+        assert written, f"jellyfin 分支沒有寫出任何圖片：{sorted(p.name for p in tmp_path.iterdir())}"
+        assert all(
+            (tmp_path / name).read_bytes() == _T4B_PROXY for name in written
+        ), f"寫出的圖片不是代理副本（原址是 ConnectTimeout，只可能來自代理）：{written}"
+
+
 class TestT4bEnrichMixedSource(_T4bFailedHostsMixin):
     """邊界 5 / CD-126-10：source=javbus 但 preview 非空 → fallback 仍傳入。"""
 

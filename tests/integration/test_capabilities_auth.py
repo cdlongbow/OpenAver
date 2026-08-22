@@ -125,16 +125,25 @@ class TestCapabilitiesCurlAuthProperty:
         ps = data["agent_instructions"]["shell_compat"]["alternative_windows"]
         assert '-Headers @{Authorization = "Bearer $OPENAVER_TOKEN"}' in ps
 
-    def test_image_display_step_1_has_auth_header(self):
+    def test_image_display_curl_step_has_auth_header(self):
         """盲區 2（TASK-114b-T5 驗證階段新發現，plan-114b.md CD-114b-8 原文
         只列了 PowerShell 那一格）：這一格字面值是 "2. curl -H \"...\" -o
         ..."，因為前面帶步驟編號 "2. "，不是以 "curl " 開頭 —— `_iter_strings`
         的 `.startswith("curl ")` 過濾器天然看不到它，必須跟
-        alternative_windows 一樣單獨蓋一條。"""
+        alternative_windows 一樣單獨蓋一條。
+
+        v0.14.6：改成**按內容找**而不是按 `steps[1]` 找。原本寫死索引，結果
+        126 在前面插一格 metatube preview_* 的說明時，這支測試就紅了——而它
+        要守的東西（curl 那格帶不帶 auth header）根本沒變。位置不是它的不變式。
+        """
         data = _enabled_capabilities_json()
-        step = data["image_display"]["steps"][1]
-        assert step.startswith("2. curl ")
-        assert "Authorization: Bearer" in step
+        steps = data["image_display"]["steps"]
+        curl_steps = [s for s in steps if "curl " in s]
+        assert len(curl_steps) == 1, (
+            f"image_display.steps 裡的 curl 指令應恰好一條，實際 {len(curl_steps)} 條："
+            f"{curl_steps}——找不到就代表這支測試什麼都沒驗到"
+        )
+        assert "Authorization: Bearer" in curl_steps[0]
 
 
     def test_scenario_cover_download_step_has_auth_header(self):

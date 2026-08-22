@@ -1431,6 +1431,65 @@ def _capabilities_auth_fields(
     return curl_auth, network_auth, agent_instructions
 
 
+def _build_image_display(curl_auth: str) -> dict:
+    """`GET /api/capabilities` 的 image_display 區塊。
+
+    從 `get_capabilities()` 抽出來的原因是函式規模棘輪（`scripts/py_function_size_lint.py`，
+    上限 200 行）——加了 metatube preview_* 的食譜之後剛好推爆。抽法照該檔既有的
+    `_build_tools(base, curl_auth)` 模式，內容逐字元不變。
+    """
+    return {
+        "description": "如何在對話流程中向用戶展示搜尋結果的封面 / 劇照圖片",
+        "problem": "搜尋結果的 cover 和 sample_images 是遠端 URL。AI agent 直接 curl 遠端 URL 會被 Cloudflare / 防盜鏈擋掉（回傳 HTML 而非圖片）。",
+        "solution": "透過 /api/proxy-image 下載圖片到本地，再依 agent 形態用本地絕對路徑嵌入。",
+        "steps": [
+            "1. 搜尋取得 cover / sample_images URL",
+            "1b. 若同筆結果有 preview_cover_url / preview_sample_images（metatube 來源），"
+            "改用 preview_cover_url || cover、preview_sample_images[i] || sample_images[i]",
+            f"2. curl {curl_auth}-o <local_path> '<base_url>/api/proxy-image?url=<remote_url>' 下載到本地",
+            "3. 依 agent 形態嵌入（見 agents 區塊）：對話氣泡內嵌 / artifact 面板 / 純路徑文字",
+        ],
+        "rules": [
+            "禁止直接 curl 遠端圖片 URL — 一定會被擋",
+            "一律透過 /api/proxy-image 代理下載",
+            "metatube 來源優先用 preview_* 欄位：/api/proxy-image 的網域白名單只收錄常見圖床，"
+            "metatube 接的冷門 provider 圖床不在名單內會回 403。preview_* 走使用者自己的 "
+            "metatube 伺服器（在動態白名單內），是同一張圖的可達副本。空字串代表該格沒有代理，"
+            "退回原始網址即可（用 || 不要用 ??）",
+            "下載到本地後用絕對路徑顯示（不要用遠端 URL 嵌入）",
+        ],
+        "agents": {
+            "codex_app": {
+                "description": "Codex App（OpenAI 桌面應用）— 對話氣泡可直接內嵌圖片",
+                "mechanism": "inline_markdown",
+                "temp_dir": "C:/Codex/tmp/openaver-images/",
+                "display_format": "![SONE-205 cover](C:/Codex/tmp/openaver-images/SONE-205-cover.jpg)",
+                "naming": "<number>-cover.jpg 或 <number>-sample-<N>.jpg",
+                "note": "路徑不可含空格。OpenAver 的番號與檔名不含空格，可安全使用。",
+            },
+            "antigravity": {
+                "description": "Google Antigravity 2.0（桌面 app）— 對話氣泡不渲染圖片，必須透過右側 artifact 面板（Markdown 富文本）嵌入",
+                "mechanism": "artifact_markdown",
+                "artifact_dir_hint": "<appDataDir>/brain/<conversation-id>/  例：C:/Users/<user>/.gemini/antigravity/brain/<conv-id>/。實際路徑請從 runtime 取得當前對話的 artifact 目錄，不要寫死 conv-id",
+                "display_format": "![SONE-205 cover](<artifact_dir>/SONE-205-cover.jpg)",
+                "rules": [
+                    "圖片下載到 artifact 目錄內（或其子目錄）才能被 artifact 引用",
+                    "Markdown 路徑用絕對路徑 + 正斜線（Windows 也用 / 不用 \\）",
+                    "用 ![]() 不能用 []()，前綴 ! 才會渲染為圖片",
+                    "圖片不在對話氣泡顯示，而是右側 artifact 面板",
+                ],
+                "carousel_syntax": "多張圖可用 carousel 區塊：````carousel 開頭 + 每張 ![](path) 之間用 <!-- slide --> 分隔 + ```` 結尾（實測可用，官方文件未列）",
+            },
+            "terminal_cli": {
+                "description": "終端機型 agent（Claude Code / Codex CLI / Gemini CLI 等）— 終端不渲染圖片",
+                "mechanism": "path_text",
+                "display_format": "下載完成後在訊息中提供絕對路徑供用戶手動開啟（檔案總管 / Preview / Quick Look 等）",
+                "note": "若 agent host 環境支援開檔指令，可主動呼叫 open / xdg-open / start 等",
+            },
+        },
+    }
+
+
 @router.get("/capabilities")
 async def get_capabilities(request: Request):
     base = str(request.base_url).rstrip("/")
@@ -1470,50 +1529,7 @@ async def get_capabilities(request: Request):
             "note": "本地/區網服務，不上公網",
         },
         "agent_instructions": agent_instructions,
-        "image_display": {
-            "description": "如何在對話流程中向用戶展示搜尋結果的封面 / 劇照圖片",
-            "problem": "搜尋結果的 cover 和 sample_images 是遠端 URL。AI agent 直接 curl 遠端 URL 會被 Cloudflare / 防盜鏈擋掉（回傳 HTML 而非圖片）。",
-            "solution": "透過 /api/proxy-image 下載圖片到本地，再依 agent 形態用本地絕對路徑嵌入。",
-            "steps": [
-                "1. 搜尋取得 cover / sample_images URL",
-                f"2. curl {curl_auth}-o <local_path> '<base_url>/api/proxy-image?url=<remote_url>' 下載到本地",
-                "3. 依 agent 形態嵌入（見 agents 區塊）：對話氣泡內嵌 / artifact 面板 / 純路徑文字",
-            ],
-            "rules": [
-                "禁止直接 curl 遠端圖片 URL — 一定會被擋",
-                "一律透過 /api/proxy-image 代理下載",
-                "下載到本地後用絕對路徑顯示（不要用遠端 URL 嵌入）",
-            ],
-            "agents": {
-                "codex_app": {
-                    "description": "Codex App（OpenAI 桌面應用）— 對話氣泡可直接內嵌圖片",
-                    "mechanism": "inline_markdown",
-                    "temp_dir": "C:/Codex/tmp/openaver-images/",
-                    "display_format": "![SONE-205 cover](C:/Codex/tmp/openaver-images/SONE-205-cover.jpg)",
-                    "naming": "<number>-cover.jpg 或 <number>-sample-<N>.jpg",
-                    "note": "路徑不可含空格。OpenAver 的番號與檔名不含空格，可安全使用。",
-                },
-                "antigravity": {
-                    "description": "Google Antigravity 2.0（桌面 app）— 對話氣泡不渲染圖片，必須透過右側 artifact 面板（Markdown 富文本）嵌入",
-                    "mechanism": "artifact_markdown",
-                    "artifact_dir_hint": "<appDataDir>/brain/<conversation-id>/  例：C:/Users/<user>/.gemini/antigravity/brain/<conv-id>/。實際路徑請從 runtime 取得當前對話的 artifact 目錄，不要寫死 conv-id",
-                    "display_format": "![SONE-205 cover](<artifact_dir>/SONE-205-cover.jpg)",
-                    "rules": [
-                        "圖片下載到 artifact 目錄內（或其子目錄）才能被 artifact 引用",
-                        "Markdown 路徑用絕對路徑 + 正斜線（Windows 也用 / 不用 \\）",
-                        "用 ![]() 不能用 []()，前綴 ! 才會渲染為圖片",
-                        "圖片不在對話氣泡顯示，而是右側 artifact 面板",
-                    ],
-                    "carousel_syntax": "多張圖可用 carousel 區塊：````carousel 開頭 + 每張 ![](path) 之間用 <!-- slide --> 分隔 + ```` 結尾（實測可用，官方文件未列）",
-                },
-                "terminal_cli": {
-                    "description": "終端機型 agent（Claude Code / Codex CLI / Gemini CLI 等）— 終端不渲染圖片",
-                    "mechanism": "path_text",
-                    "display_format": "下載完成後在訊息中提供絕對路徑供用戶手動開啟（檔案總管 / Preview / Quick Look 等）",
-                    "note": "若 agent host 環境支援開檔指令，可主動呼叫 open / xdg-open / start 等",
-                },
-            },
-        },
+        "image_display": _build_image_display(curl_auth),
         "error_format": {
             "structure": {"success": False, "error": "string — 錯誤描述"},
             "http_codes": {
