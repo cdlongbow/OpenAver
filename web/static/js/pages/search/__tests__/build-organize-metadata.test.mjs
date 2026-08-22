@@ -86,6 +86,31 @@ test('buildOrganizeMetadata: 剝除 preview_cover_url，不送 /api/scrape-singl
   assert.ok(!('preview_cover_url' in result), 'preview_cover_url 不應出現在送出的 metadata');
 });
 
+// TASK-126-T3 D4：preview_sample_images 同 preview_cover_url——只對顯示有意義
+// （會隨 metatube 連線狀態失效），不可被 buildOrganizeMetadata 送進 /api/scrape-single
+// 落磁碟（不接受「反正後端只讀 sample_images」當理由——那是 fail-open by accident）。
+test('buildOrganizeMetadata strips preview_sample_images', () => {
+  const file = {
+    searchResults: [{
+      number: 'ABC-001',
+      sample_images: ['http://example/s1.jpg', 'http://example/s2.jpg'],
+      preview_sample_images: [
+        'http://mt:8080/v1/images/primary/MGS/ABC-001?url=s1',
+        '',
+      ],
+      preview_cover_url: 'http://mt:8080/v1/images/primary/MGS/ABC-001?url=c',
+    }],
+  };
+
+  const result = buildOrganizeMetadata(file);
+  assert.deepEqual(result, {
+    number: 'ABC-001',
+    sample_images: ['http://example/s1.jpg', 'http://example/s2.jpg'],
+  });
+  assert.ok(!('preview_sample_images' in result), 'preview_sample_images 不應出現在送出的 metadata');
+  assert.ok(!('preview_cover_url' in result), 'preview_cover_url 不應出現在送出的 metadata');
+});
+
 test('loadMore: listMode="file" → 立即回傳 null、不呼叫 fetch（CD-106-5 P1-#2 順修 pre-existing bug）', async () => {
   let fetchCalls = 0;
   globalThis.fetch = async () => { fetchCalls++; return { ok: true, json: async () => ({}) }; };

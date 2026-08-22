@@ -41,9 +41,10 @@ async function translateBatchHelper(titles) {
 // TASK-113c-T3b: preview_cover_url 只對顯示有意義（會隨 metatube 連線狀態失效），
 // 不能落磁碟。剝除後才送 /api/scrape-single——不接受「反正後端只讀 cover」當理由，
 // 那是 fail-open by accident（card 明文）。
+// TASK-126-T3 D4：preview_sample_images 同理——只對顯示有意義，對稱剝除。
 export function buildOrganizeMetadata(file) {
     const cand = file.searchResults[file.selectedCandidateIndex ?? 0];
-    const { preview_cover_url, ...metadata } = { ...cand };
+    const { preview_cover_url, preview_sample_images, ...metadata } = { ...cand };
     return metadata;
 }
 
