@@ -539,3 +539,52 @@ test('〔自相矛盾〕banner_added:false 但 local !== upstream → RED（改�
     assert.match(r.output, /gsap\.min\.js/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Codex P3：banner_added 型別混淆可繞過對帳（fail-open）
+// ---------------------------------------------------------------------------
+
+test('〔型別混淆〕facefinder 被改一個 byte ＋ 更新 local ＋ banner_added 寫成字串 "false" → RED', () => {
+  withScratch(({ root, manifest, bodies }) => {
+    // 這是 Codex 指出的完整攻擊路徑：兩個對帳分支都用嚴格比較，字串 "false"
+    // 兩邊都不進，這一筆就只剩「磁碟 hash == local_sha256」一道，把 local 更新就綠了。
+    const tampered = Buffer.from(bodies.ffFile);
+    tampered[2] ^= 0x01;
+    writeAt(root, FACEFINDER_REL, tampered);
+    const m = JSON.parse(JSON.stringify(manifest));
+    m.facefinder.local_sha256 = sha256(tampered); // upstream_sha256 維持原值
+    m.facefinder.banner_added = 'false';          // 字串，不是 boolean
+    writeManifest(root, m);
+
+    const r = runGuard(root);
+    assert.notEqual(r.status, 0, r.output);
+    assert.match(r.output, /banner_added/);
+  });
+});
+
+test('〔型別混淆〕vendor 條目的 banner_added 寫成字串 → RED（同一類，vendor 側也要擋）', () => {
+  withScratch(({ root, manifest, bodies }) => {
+    const tampered = Buffer.from(bodies.gsapFile);
+    tampered[3] ^= 0x01;
+    writeAt(root, `${VENDOR_REL}/gsap/gsap.min.js`, tampered);
+    const m = JSON.parse(JSON.stringify(manifest));
+    m.vendor[1].local_sha256 = sha256(tampered);
+    m.vendor[1].banner_added = 'false';
+    writeManifest(root, m);
+
+    const r = runGuard(root);
+    assert.notEqual(r.status, 0, r.output);
+    assert.match(r.output, /banner_added/);
+  });
+});
+
+test('〔facefinder 恆 false〕banner_added 寫成 true → RED（它是未修改的上游原檔複本）', () => {
+  withScratch(({ root, manifest }) => {
+    const m = JSON.parse(JSON.stringify(manifest));
+    m.facefinder.banner_added = true;
+    writeManifest(root, m);
+    const r = runGuard(root);
+    assert.notEqual(r.status, 0, r.output);
+    assert.match(r.output, /facefinder 的 banner_added 必須是 false/);
+  });
+});

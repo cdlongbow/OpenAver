@@ -133,6 +133,17 @@ function checkRequired(obj, required, label) {
 
 /** 對單一檔案做 hash 對帳。回傳 true 表示這一筆通過。 */
 function reconcileEntry(entry, label) {
+  // 下面兩條分支都用嚴格比較（=== true / === false）。若 banner_added 是別的型別
+  // （例如手改 JSON 時把 false 寫成字串 "false"），兩條分支都不會進入，這一筆就只剩
+  // 「磁碟 hash == local_sha256」一道檢查——把 local 一起更新就能拿到綠燈。
+  // 那是 fail-open，正是守衛最不該有的方向，所以在進對帳前先擋掉非 boolean。
+  if (typeof entry.banner_added !== 'boolean') {
+    err(`${label} ${entry.path}：banner_added 必須是 boolean，實際是 ` +
+        `${typeof entry.banner_added}（${JSON.stringify(entry.banner_added)}）\n` +
+        `    → JSON 裡的 false 不要加引號；這個欄位是對帳分支的依據，型別錯會讓檢查整條被跳過`);
+    return false;
+  }
+
   const abs = join(ROOT, ...entry.path.split('/'));
   if (!existsSync(abs) || !statSync(abs).isFile()) {
     // 三態②：清單有一筆，檔案不在了
@@ -219,9 +230,8 @@ function main() {
   for (const entry of vendorEntries) {
     const label = `vendor[${entry.path ?? '(無 path)'}]`;
     checkRequired(entry, VENDOR_REQUIRED, label);
-    if (typeof entry.banner_added !== 'boolean') {
-      err(`${label} 的 banner_added 必須是 boolean（顯式旗標，不靠內容嗅探）`);
-    }
+    // banner_added 的型別由 reconcileEntry() 統一把關（它是對帳分支的依據，
+    // 擋在真正要用它的地方，只留一個可被測試釘住的執行點——這裡不重複檢查）。
     // vendor[] 的每一筆都必須落在被掃描的目錄底下。否則那筆會被 reconcileEntry 對帳、
     // 卻永遠不會出現在 walkFiles 的結果裡——「清單↔磁碟一一對應」就破了一個洞，
     // 而且 `..` 之類的相對路徑會讓守衛去讀掃描範圍外的檔案。
@@ -236,6 +246,13 @@ function main() {
     seenPaths.add(entry.path);
   }
   checkRequired(facefinder, FACEFINDER_REQUIRED, 'facefinder');
+  // facefinder 在 spec 裡的身分是「未修改的上游原檔複本」——我們從來沒有、也不該對它加 banner。
+  // 所以它的 banner_added 不只要是 boolean，而是**必須恆為 false**（比 vendor[] 的
+  // 「是 boolean 就好」更嚴）。寫成 true 會讓它去走剝除分支，寫成別的型別會兩條分支都跳過。
+  if (facefinder.banner_added !== false) {
+    err(`facefinder 的 banner_added 必須是 false——它是未修改的上游原檔複本，` +
+        `我們不對它加 banner（實際值：${JSON.stringify(facefinder.banner_added)}）`);
+  }
 
   // ---- 路徑 A：遞迴掃 web/static/vendor/** ----
   const vendorDirAbs = join(ROOT, ...VENDOR_REL.split('/'));
