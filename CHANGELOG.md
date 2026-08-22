@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.5] - 2026-08-22
+
+### Changed
+- **這一版對使用者沒有任何可見改動**——畫面、功能、你的資料一律照舊，整理的是專案自己的帳。`web/static/vendor/` 底下的 Alpine／GSAP／Bootstrap Icons 每個檔案現在都查得到版本與授權，第三方來源（含焦點裁切用到的兩份移植碼）集中記在 `docs/THIRD_PARTY.md`，並加了一支守衛：之後有人換掉套件卻忘了更新紀錄，會在開發階段就被擋下來。
+
+測試數 npm test 1137 → 1187（本次產品碼零改動，pytest 不變）。
+
 ## [0.14.4] - 2026-08-21
 
 ### Added

@@ -349,6 +349,8 @@ OpenAver 使用並感謝以下開源專案：
 - **[Tailwind CSS](https://tailwindcss.com/)** - Utility-first CSS 框架
 - **[Alpine.js](https://alpinejs.dev/)** - 輕量級 JavaScript 框架
 
+完整的第三方套件版本與授權清單見 [`docs/THIRD_PARTY.md`](docs/THIRD_PARTY.md)。
+
 ## License
 
 MIT License

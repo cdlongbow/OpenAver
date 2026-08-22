@@ -349,6 +349,8 @@ OpenAver is built on these excellent open-source projects:
 - **[Tailwind CSS](https://tailwindcss.com/)** — Utility-first CSS framework
 - **[Alpine.js](https://alpinejs.dev/)** — Lightweight reactive JavaScript framework
 
+Full third-party versions and licenses: [`docs/THIRD_PARTY.md`](docs/THIRD_PARTY.md).
+
 ## License
 
 MIT License
