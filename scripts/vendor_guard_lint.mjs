@@ -131,6 +131,27 @@ function checkRequired(obj, required, label) {
   return ok;
 }
 
+/** path 是否含有「整段剛好等於 `..`」的路徑 segment（review P3）。
+ *  刻意**不用子字串比對**（`path.includes('..')`）——合法的 vendored 檔名可以含連續兩個點
+ *  （例如 `example..min.js`），子字串比對會把這種合法檔名誤判成路徑逃逸而擋下。
+ *  只有整段路徑元件剛好是 `..` 才是真正的「往上一層」，才該被擋。 */
+function hasDotDotSegment(path) {
+  return path.split('/').some((seg) => seg === '..');
+}
+
+/** entry.path 是否為可用的相對路徑（非空字串）。
+ *  `reconcileEntry()` 內部會對它做 `.split('/')`／`readFileSync` 等操作，
+ *  path 缺失或型別不對時必須在**進對帳之前**擋掉這一筆，否則會直接
+ *  `TypeError` 崩掉整支守衛——其餘條目的錯誤就永遠不會被報出來（review P3）。 */
+function hasUsablePath(entry, label) {
+  if (typeof entry.path !== 'string' || entry.path === '') {
+    err(`${label} 的 path 缺失或不是字串，無法對帳這一筆——` +
+        `已跳過對帳，其餘條目照常檢查（請補上正確的 path 後重跑）`);
+    return false;
+  }
+  return true;
+}
+
 /** 對單一檔案做 hash 對帳。回傳 true 表示這一筆通過。 */
 function reconcileEntry(entry, label) {
   // 下面兩條分支都用嚴格比較（=== true / === false）。若 banner_added 是別的型別
@@ -236,8 +257,9 @@ function main() {
     // 卻永遠不會出現在 walkFiles 的結果裡——「清單↔磁碟一一對應」就破了一個洞，
     // 而且 `..` 之類的相對路徑會讓守衛去讀掃描範圍外的檔案。
     if (typeof entry.path === 'string' &&
-        (!entry.path.startsWith(`${VENDOR_REL}/`) || entry.path.includes('..'))) {
-      err(`${label} 的 path 必須位於 ${VENDOR_REL}/ 底下且不得含 \`..\`（facefinder 例外，它有自己的欄位）`);
+        (!entry.path.startsWith(`${VENDOR_REL}/`) || hasDotDotSegment(entry.path))) {
+      err(`${label} 的 path 必須位於 ${VENDOR_REL}/ 底下且不得含 \`..\` 路徑元件` +
+          `（facefinder 例外，它有自己的欄位；檔名裡的連續點如 \`example..min.js\` 不受影響）`);
     }
     // 同一個 path 登記兩次會讓「未登記檔案」的比對失去意義（兩筆都宣稱擁有同一個檔案）
     if (seenPaths.has(entry.path)) {
@@ -273,16 +295,22 @@ function main() {
   }
 
   // ---- 逐筆對帳（vendor 15 筆） ----
+  // 進 reconcileEntry() 之前先確認 path 可用（review P3）——不合格的這一筆記錯誤後
+  // 直接 continue，不讓一筆壞資料的 TypeError 把其餘筆的檢查一起悶掉。
   let okCount = 0;
   for (const entry of vendorEntries) {
+    if (!hasUsablePath(entry, 'vendor')) continue;
     if (reconcileEntry(entry, 'vendor')) okCount += 1;
   }
 
   // ---- 路徑 B：單獨檢查 core/focal/facefinder（第 16 筆，非遞迴） ----
+  // facefinder 同樣走 reconcileEntry()，同一個 TypeError 風險要一起擋（review P3）。
   if (facefinder.path !== FACEFINDER_REL) {
     err(`facefinder.path 應為 ${FACEFINDER_REL}，實際為 ${facefinder.path}`);
   }
-  if (reconcileEntry(facefinder, 'facefinder')) okCount += 1;
+  if (hasUsablePath(facefinder, 'facefinder') && reconcileEntry(facefinder, 'facefinder')) {
+    okCount += 1;
+  }
 
   if (hadError) process.exit(1);
   console.log(

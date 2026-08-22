@@ -578,6 +578,87 @@ test('〔型別混淆〕vendor 條目的 banner_added 寫成字串 → RED（同
   });
 });
 
+// ---------------------------------------------------------------------------
+// Codex 第二輪 P3：path 缺失／型別不對造成 crash（F1）；`..` 子字串誤擋合法檔名（F2）
+// ---------------------------------------------------------------------------
+
+test('〔F1 path 缺失〕vendor 條目缺 path → RED 但不是 crash，其餘條目照常被檢查', () => {
+  withScratch(({ root, manifest, bodies }) => {
+    const m = JSON.parse(JSON.stringify(manifest));
+    delete m.vendor[0].path; // alpine 那筆缺 path
+    // 同時弄壞另一筆（gsap）的內容，證明它沒有因為 alpine 那筆 crash 而被悶掉
+    const tampered = Buffer.from(bodies.gsapFile);
+    tampered[0] ^= 0xff;
+    writeAt(root, `${VENDOR_REL}/gsap/gsap.min.js`, tampered);
+    writeManifest(root, m);
+
+    const r = runGuard(root);
+    assert.notEqual(r.status, 0, r.output);
+    assert.doesNotMatch(r.output, /TypeError/);
+    assert.match(r.output, /path 缺失或不是字串/);
+    assert.match(r.output, /內容與清單不符/);
+    assert.match(r.output, /gsap\.min\.js/);
+  });
+});
+
+test('〔F1b facefinder path 缺失〕facefinder.path 缺失 → RED 但不是 crash', () => {
+  withScratch(({ root, manifest }) => {
+    const m = JSON.parse(JSON.stringify(manifest));
+    delete m.facefinder.path;
+    writeManifest(root, m);
+
+    const r = runGuard(root);
+    assert.notEqual(r.status, 0, r.output);
+    assert.doesNotMatch(r.output, /TypeError/);
+    assert.match(r.output, /facefinder 的 path 缺失或不是字串/);
+  });
+});
+
+test('〔F1c facefinder path 非字串〕facefinder.path 是數字 → RED 但不是 crash', () => {
+  withScratch(({ root, manifest }) => {
+    const m = JSON.parse(JSON.stringify(manifest));
+    m.facefinder.path = 42;
+    writeManifest(root, m);
+
+    const r = runGuard(root);
+    assert.notEqual(r.status, 0, r.output);
+    assert.doesNotMatch(r.output, /TypeError/);
+    assert.match(r.output, /facefinder 的 path 缺失或不是字串/);
+  });
+});
+
+test('〔F2 合法連續點檔名〕example..min.js 正確登記 → GREEN（不再被 `..` 子字串誤擋）', () => {
+  withScratch(({ root, manifest }) => {
+    const body = Buffer.from('/* fake asset with dots in filename */\n', 'utf8');
+    writeAt(root, `${VENDOR_REL}/alpine/example..min.js`, body);
+    const h = sha256(body);
+    const m = JSON.parse(JSON.stringify(manifest));
+    m.vendor.push({
+      path: `${VENDOR_REL}/alpine/example..min.js`,
+      package: 'fake-dots', version: '1.0.0',
+      upstream_url: 'https://example.test/example..min.js',
+      upstream_sha256: h, local_sha256: h,
+      license: 'MIT', vendored_date: '2026-08-22', banner_added: false,
+    });
+    writeManifest(root, m);
+
+    const r = runGuard(root);
+    assert.equal(r.status, 0, r.output);
+  });
+});
+
+test('〔F2b 真逃逸仍擋〕path 含 `../../` 逃出掃描範圍 → 仍然 RED（修完沒拆掉防線）', () => {
+  withScratch(({ root, manifest }) => {
+    const m = JSON.parse(JSON.stringify(manifest));
+    m.vendor[1].path = `${VENDOR_REL}/../../../etc/hosts`;
+    writeManifest(root, m);
+
+    const r = runGuard(root);
+    assert.notEqual(r.status, 0, r.output);
+    assert.match(r.output, /不得含 `\.\.` 路徑元件/);
+  });
+});
+
 test('〔facefinder 恆 false〕banner_added 寫成 true → RED（它是未修改的上游原檔複本）', () => {
   withScratch(({ root, manifest }) => {
     const m = JSON.parse(JSON.stringify(manifest));
