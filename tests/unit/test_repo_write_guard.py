@@ -382,6 +382,20 @@ class TestEnvInjection:
         assert roots == [custom]
         assert Path(tempfile.gettempdir()) not in roots
 
+    def test_mode_default_is_fail_when_env_unset(self, monkeypatch):
+        """🔴 預設模式本身要被釘住——沒有這條，把 DEFAULT_MODE 改成 off 是全綠的。
+
+        本檔另外六支自檢的 skipif 判準就是 `DEFAULT_MODE`（`:389` 等），所以預設一被改掉
+        它們會**集體 skip**，而 subsession 那批全部顯式傳 mode ⇒ 照常綠。
+        兩條路都不會紅 ⇒ G1／G2 等於沒掛上，測試又開始寫 owner 的真實片庫。
+        （Stage 2 review P2①，2026-08-24。）
+        """
+        monkeypatch.delenv(rwg.ENV_MODE, raising=False)
+        assert rwg.get_mode() == rwg.MODE_FAIL, (
+            "守衛預設必須是 fail。改成 off/report 會讓本檔的自檢集體 skip 而非轉紅——"
+            "那正是這條斷言存在的理由。"
+        )
+
 
 class TestNestedPatchRestoresWrapper:
     """技術要點⑧：既有 5 支測試自己 `with patch("sqlite3.connect", ...)`——

@@ -303,7 +303,7 @@ _TOOLS: list[dict] = [
             "success": "boolean",
             "nfo_written": "boolean — 固定 false（此端點不寫 NFO）",
             "cover_written": "boolean — 固定 false（此端點不寫封面）",
-            "extrafanart_written": "integer — 成功下載的劇照數",
+            "extrafanart_written": "integer — 本次成功下載的劇照數；0 也可能代表「本來就齊全、沒有缺的要補」，不必然是失敗",
             "fields_filled": "[string] — 本次補齊的欄位名",
             "source_used": "string — 使用的來源",
             "error": "string|null — 錯誤訊息；multi_video_folder=資料夾有多片，拒絕執行",

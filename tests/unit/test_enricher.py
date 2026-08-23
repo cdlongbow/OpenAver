@@ -675,7 +675,7 @@ class TestExtrafanartDownloaded:
         # 正解是 extrafanart_written=0（另有測試釘住）。本測試要驗的是「缺的會被下載」，
         # 所以只讓 extrafanart/ 底下的目的檔回 False，其餘維持既有的 blanket True。
         def _exists_except_extrafanart(path):
-            return "extrafanart" not in str(path)
+            return "/extrafanart/" not in str(path)
 
         with (
             patch("os.path.exists", side_effect=_exists_except_extrafanart),
