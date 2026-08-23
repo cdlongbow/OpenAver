@@ -46,7 +46,9 @@ ENV_REPORT_PATH = "OPENAVER_GUARD_REPORT"       # 未設 → tempfile.gettempdir
 MODE_OFF = "off"
 MODE_REPORT = "report"
 MODE_FAIL = "fail"
-DEFAULT_MODE = MODE_REPORT
+# TASK-127b-T5：T3/T4 用 `report` 只印不擋跑清單；T4 把 67 個違規清乾淨之後，
+# T5 把預設切成 `fail`——`report` 只在那一次性的清點期間用，不是長期預設。
+DEFAULT_MODE = MODE_FAIL
 VALID_MODES = (MODE_OFF, MODE_REPORT, MODE_FAIL)
 
 ALLOW_REAL_DB_MARKER = "allow_real_db"
@@ -418,6 +420,52 @@ def require_nonzero_baseline(entries: set, repo_root) -> None:
         raise RepoRootScanEmptyError(
             f"G2 baseline 掃到 0 個 entry：repo_root={repo_root!r} 疑似路徑錯誤或指到空目錄"
         )
+
+
+# ── ⑤ 雙層拋出的例外基底 ＋ per-test 違規累積器（TASK-127b-T5）──────────────────
+class RepoWriteGuardViolation(BaseException):
+    """G1／G2 違規的例外基底。
+
+    🔴 刻意繼承 `BaseException`，不是 `Exception`——本專案產品碼有多處
+    `except Exception`（含本 bug 的成因本身：`core/enricher.py:719`
+    `except Exception as e: logger.warning(...)`）。T3 的 G1 曾拋
+    `AssertionError`（`Exception` 的子類），T4 實測 `fail` 模式下這個例外
+    在呼叫當下就被那個 broad except 吞掉——測試照樣綠，守衛完全沒有牙齒。
+    改繼承 `BaseException` 讓例外能穿透任何 `except Exception`（含未來新增的）。
+
+    已實測（pytest 9.0.3 / py 3.12.3，見 TASK-127b-T5.md「開工前 Opus 已實測的
+    四個前提 ①②」）：自訂 `BaseException` 子類不會中斷整場 pytest session
+    （其他測試照跑，被拋的那支報成一般 `FAILED`），也不影響 fixture teardown
+    的執行——不需要額外的 pytest hook，也不需要避開
+    `KeyboardInterrupt`／`SystemExit` 的特殊處理。
+    """
+
+
+class ViolationAccumulator:
+    """per-test 違規累積器——零 pytest 相依，供 `conftest.py` 的 G1 fixture
+    建立一個新實例、掛在 `request.node.stash` 上，隨 node 生滅。
+
+    🔴 **不可以是模組級全域**（本 branch 一路在消滅的那種東西）——這支類別本身
+    只是「一個可以被安全地當成 per-node 值來 new 的容器」，儲存位置的生滅語意
+    由呼叫端（conftest）負責，這裡不持有任何模組級狀態。
+
+    只收「會導致 `fail` 模式拋出」的違規——有 `allow_real_db` marker 豁免的
+    違規仍要進 report（審計用），但**不**進這裡；否則 teardown 保險層看到
+    「有記錄」會對明知放行的測試補刀，讓 marker 這個逃生口失效
+    （見 TASK-127b-T5.md 技術要點①-c 義務 1）。
+    """
+
+    def __init__(self) -> None:
+        self.records: list[dict] = []
+
+    def add(self, record: dict) -> None:
+        self.records.append(record)
+
+    def __bool__(self) -> bool:
+        return bool(self.records)
+
+    def __len__(self) -> int:
+        return len(self.records)
 
 
 # ── ⑥ report 輸出（JSONL，一行一筆，不准落在 repo 根）─────────────────────────

@@ -5,6 +5,11 @@ import json
 from core import config as core_config
 import _repo_write_guard as _rwg
 
+# TASK-127b-T5：`pytester` 子 session 的 mutation 自驗（`test_repo_write_guard_
+# subsession.py`）——pytest 的硬性要求是這行必須放在 root conftest。本專案沒有
+# 任何 pytester 先例，這是第一支使用它的測試。
+pytest_plugins = ["pytester"]
+
 # ── TASK-102c-T1: focal mock 座標共用常數 ──────────────────────────────
 # 刻意選一個偏離中心、x/y 不對稱的值，讓「focal 平移有沒有生效」的斷言在
 # mock 下依然有鑑別力——不可用 (0.5, 0.5)，否則平移後 crop 退化成置中 crop，
@@ -130,7 +135,7 @@ def seed_crop_mode():
     return _seed
 
 
-# ============ TASK-127b-T3：G1／G2 repo-write 守衛（autouse，骨架，預設 report）====
+# ============ TASK-127b-T3/T5：G1／G2 repo-write 守衛（autouse，預設 fail）====
 #
 # 根因（見 feature/127-gotchas-triage/TASK-127b-T3.md「現況分析」）：任何測試只要
 # `patch("core.enricher.VideoRepository")` 而沒設 `mock_repo.db_path`，
@@ -144,9 +149,31 @@ def seed_crop_mode():
 # （`tests/_repo_write_guard.py::evaluate_connect`），fixture 只負責轉發＋記錄。
 # G2：比對 repo 根第一層（非遞迴）的檔名集合，抓 G1 萬一漏掉的雜檔。
 #
-# 本 task（T3）預設模式固定 `report`：只記錄不擋，`report` 模式下全套的綠紅
-# 狀態必須與上線前完全相同——這是 DoD 硬性要求，不是這裡順手做到的。
-# T5 才會把 `OPENAVER_REPO_WRITE_GUARD` 預設切成 `fail`。
+# T3 把預設模式固定 `report`：只記錄不擋，`report` 模式下全套的綠紅狀態必須與
+# 上線前完全相同。T4 逐筆清乾淨違規（67 筆）。**T5 把預設切成 `fail`**——見下方
+# 雙層拋出的設計（TASK-127b-T5.md 技術要點①）。
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(item, call):
+    """標準 pytest 慣例：把每個階段（setup／call／teardown）的 report 存到
+    `item.rep_<when>` 上。
+
+    G1 的 teardown 保險層（見 `_g1_repo_write_guard`）要靠 `item.rep_call`
+    判斷「這支測試的 call 階段本身是否已經因為這條違規而失敗」——只有
+    「有累積到違規，但 call 階段沒有因此失敗」才補刀（技術要點①：兩層拋出
+    缺一都不算數，但已經失敗的測試不需要教訓兩次）。這是官方文件記錄的
+    "post-process test reports" pattern，`wrapper=True` 為 pluggy 1.1+／
+    pytest 7.4+ 的寫法（已實測 pytest 9.0.3：teardown 讀得到 `rep_call`）。
+    """
+    rep = yield
+    setattr(item, "rep_" + rep.when, rep)
+    return rep
+
+
+#: G1 的 per-test 違規累積器掛在 `request.node.stash` 上（隨 node 生滅，不是
+#: 模組級全域——見 `_repo_write_guard.ViolationAccumulator` docstring）。
+_G1_ACCUMULATOR_STASH_KEY = pytest.StashKey[_rwg.ViolationAccumulator]()
 
 
 # `sqlite3.connect` 的位置參數順序（Argument Clinic 產生的 `__text_signature__`）：
@@ -175,6 +202,22 @@ def _g1_repo_write_guard(request, monkeypatch, tmp_path_factory):
 
     鏡像操作對稱：用 `monkeypatch.setattr` 掛上去，pytest 保證即使測試中途
     example/early-return 也會在 teardown 還原——不手動 `patcher.start()`/`stop()`。
+
+    雙層拋出（TASK-127b-T5 技術要點①，**設計約束，不得簡化成一層**）：
+      第 1 層（inline，這裡的 `_g1_wrapper` 內，真正呼叫 `original_connect`
+        之前）：`mode == fail` 且沒有 `allow_real_db` marker ⇒ 立刻拋
+        `RepoWriteGuardViolation`（`BaseException` 子類，穿透產品碼的
+        `except Exception`），**擋得住那次連線**，同時把這筆記錄塞進本支測試的
+        `ViolationAccumulator`。
+      第 2 層（teardown，`yield` 之後）：若累積器有記錄、而這支測試的 call
+        階段最終**沒有**因此失敗（`item.rep_call.failed` 為否——代表某處用
+        `except BaseException` 把 inline 那層吞了），再拋一次
+        `RepoWriteGuardViolation` 彙總告警。專守「未來有人在 DB 路徑上新增
+        `except BaseException`」的情況（本專案已有 3 處這種寫法，見
+        TASK-127b-T5.md「✅ 解法的實證」表）。
+      掛 `allow_real_db` marker 的違規**只進 report，不進累積器**——marker
+      的語意是「記錄照記、只跳過拋出」，累積器只用來驅動 teardown 補刀，
+      兩者是分開的容器（見①-c，寫成同一個會讓 marker 這個逃生口失效）。
     """
     mode = _rwg.get_mode()
     if mode == _rwg.MODE_OFF:
@@ -187,6 +230,8 @@ def _g1_repo_write_guard(request, monkeypatch, tmp_path_factory):
     nodeid = request.node.nodeid
     has_marker = request.node.get_closest_marker(_rwg.ALLOW_REAL_DB_MARKER) is not None
     original_connect = sqlite3.connect
+    accumulator = _rwg.ViolationAccumulator()
+    request.node.stash[_G1_ACCUMULATOR_STASH_KEY] = accumulator
 
     def _g1_wrapper(*args, **kwargs):
         bound = dict(zip(_CONNECT_POSITIONAL_PARAMS, args))
@@ -201,16 +246,44 @@ def _g1_repo_write_guard(request, monkeypatch, tmp_path_factory):
             record = _rwg.format_g1_record(nodeid, decision, allowed_by_marker=has_marker)
             _rwg.append_report_record(record)
             if mode == _rwg.MODE_FAIL and not has_marker:
-                raise AssertionError(
+                accumulator.add(record)
+                raise _rwg.RepoWriteGuardViolation(
                     f"[repo_write_guard/G1] 拒絕的 sqlite3.connect 呼叫："
                     f"nodeid={nodeid} reason={decision.case} "
-                    f"raw={decision.raw_repr} resolved={decision.resolved}"
+                    f"raw={decision.raw_repr} resolved={decision.resolved}\n"
+                    "怎麼修：見 feature/127-gotchas-triage/TASK-127b-T4.md"
+                    "「既有 patch 慣例的詞彙表」。"
                 )
         return original_connect(*args, **kwargs)
 
     _g1_wrapper.__openaver_g1_wrapper__ = True
     monkeypatch.setattr(sqlite3, "connect", _g1_wrapper)
     yield
+
+    if mode == _rwg.MODE_FAIL and accumulator:
+        # 🔴 setup 與 call **兩個階段都要看**（sonnet review 2026-08-24 P2）。
+        # 只看 `rep_call` 的話，違規發生在「某個依賴 G1 的 fixture 自己的 setup
+        # 階段」時（例如 `def other(_g1_repo_write_guard): sqlite3.connect(bad)`），
+        # call 階段根本沒跑過 ⇒ `rep_call` 從未被 `pytest_runtest_makereport`
+        # 設過 ⇒ `already_failed` 判 False ⇒ 保險層補刀第二次，而且訊息會說
+        # 「被 except BaseException 吞掉了」——**那是假的**，違規根本沒被吞，
+        # 只是發生在另一個階段。實測：一支測試吐兩份 ERROR，第二份的診斷是錯的，
+        # 會把未來的除錯者導去查一個不存在的 `except BaseException`。
+        rep_setup = getattr(request.node, "rep_setup", None)
+        rep_call = getattr(request.node, "rep_call", None)
+        already_failed = bool(
+            (rep_setup is not None and rep_setup.failed)
+            or (rep_call is not None and rep_call.failed)
+        )
+        if not already_failed:
+            raise _rwg.RepoWriteGuardViolation(
+                f"[repo_write_guard/G1] teardown 保險：nodeid={nodeid} 累積到 "
+                f"{len(accumulator)} 筆違規，但 setup／call 兩個階段都沒有因此"
+                "失敗——代表 inline 拋出的 RepoWriteGuardViolation 在某處被"
+                f"`except BaseException` 吞掉了。records={accumulator.records}\n"
+                "怎麼修：見 feature/127-gotchas-triage/TASK-127b-T4.md"
+                "「既有 patch 慣例的詞彙表」。"
+            )
 
 
 @pytest.fixture(autouse=True)
@@ -220,6 +293,10 @@ def _g2_repo_root_snapshot(request):
     雪崩防護：`before` 在**每一支測試**的 setup 期現掃現拿（不是掛一份全 session
     共用的可變 baseline），所以某支測試留下的雜檔只會被算到那一支頭上——後面的
     測試在它自己的 setup 期掃到時，那個檔案已經是「本來就在」的一部分。
+
+    G2 沒有「inline 攔截點」——它只在事後比對快照,所以不像 G1 需要雙層拋出;
+    這裡的單一拋出點本身就已經是「事後」,直接改用 `RepoWriteGuardViolation`
+    即可穿透未來任何 `except Exception`。
     """
     mode = _rwg.get_mode()
     if mode == _rwg.MODE_OFF:
@@ -243,9 +320,13 @@ def _g2_repo_root_snapshot(request):
         record = _rwg.format_g2_record(nodeid, new_entries)
         _rwg.append_report_record(record)
         if mode == _rwg.MODE_FAIL:
-            raise AssertionError(
+            raise _rwg.RepoWriteGuardViolation(
                 f"[repo_write_guard/G2] repo 根第一層長出新檔案："
-                f"nodeid={nodeid} new_entries={sorted(new_entries)}"
+                f"nodeid={nodeid} new_entries={sorted(new_entries)}\n"
+                "若你同時在跑別的會寫 repo 根的 process，這可能是誤報"
+                "（見 TASK-127b-T5.md「四個 T4 交下來的硬性輸入 ④」）。\n"
+                "怎麼修：見 feature/127-gotchas-triage/TASK-127b-T4.md"
+                "「既有 patch 慣例的詞彙表」。"
             )
 
 

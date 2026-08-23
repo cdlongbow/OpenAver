@@ -411,6 +411,36 @@ class TestNestedPatchRestoresWrapper:
             "不是原生 sqlite3.connect——這是 5 支既有測試安全共存的前提"
         )
 
+    @pytest.mark.skipif(
+        os.environ.get(rwg.ENV_MODE, rwg.DEFAULT_MODE) == rwg.MODE_OFF,
+        reason="G1 在 off 模式下不掛 wrapper，此測試無意義",
+    )
+    def test_wrapper_survives_nested_patch_even_when_baseexception_propagates(self):
+        """TASK-127b-T5 邊界條件「鏡像對稱」：inline 拋出的是 `BaseException`
+        子類——pytest／`unittest.mock.patch` 對 `BaseException` 走的是跟一般
+        `Exception` 不同的清理路徑（開工前實測前提②：teardown 仍會執行，但
+        本測試釘住更貼近本專案的形狀：`with patch(...)` 這個 context manager
+        本身，在區塊內有 `BaseException` 傳出去時，`__exit__` 是否仍然正確
+        還原）。
+
+        不透過真正觸發一次 G1 違規（那會撞到本檔以外的 teardown 保險層，見
+        TASK-127b-T5.md 開工前實測前提③）——直接用 `RepoWriteGuardViolation`
+        本人在巢狀 `with patch(...)` 區塊內拋出，驗證 context manager 的
+        `__exit__` 對 `BaseException` 一樣會執行（不是只對 `Exception`）。
+        """
+        guard_wrapper_before = sqlite3.connect
+
+        with pytest.raises(rwg.RepoWriteGuardViolation):
+            with patch("sqlite3.connect", return_value=MagicMock()):
+                assert sqlite3.connect is not guard_wrapper_before
+                raise rwg.RepoWriteGuardViolation("boom")
+
+        assert sqlite3.connect is guard_wrapper_before, (
+            "BaseException 從 with patch(...) 區塊內傳出去之後,"
+            "sqlite3.connect 應該還原回我們的 wrapper——`__exit__` 對"
+            "BaseException 跟對 Exception 一樣會執行"
+        )
+
 
 class TestWrapperArgumentBinding:
     """Codex PR review 2026-08-24 P2：wrapper 的**取參**這一層在 T4 之前零覆蓋。
@@ -496,6 +526,7 @@ class TestWrapperArgumentBinding:
         conn.close()
         assert captured_records == [], f"關鍵字 database 被誤拒：{captured_records}"
 
+    @pytest.mark.allow_real_db
     @pytest.mark.skipif(
         os.environ.get(rwg.ENV_MODE, rwg.DEFAULT_MODE) == rwg.MODE_OFF,
         reason="G1 在 off 模式下不掛 wrapper，此測試無意義",
@@ -504,9 +535,14 @@ class TestWrapperArgumentBinding:
         """反向鎖：綁定修好之後**不能反過來變成放行機**。
 
         位置傳 `uri=False` ＋ repo 根相對路徑 → 仍須落 `row08` 被拒。
-        （`report` 模式下只記錄不擋，所以這裡不會真的建出檔案——
-        `evaluate_connect` 拒絕後 wrapper 仍會轉發，故用 `:memory:` 之外
-        不會落地的形狀：連線本身不建立，只斷言判定結果。）
+
+        🔴 TASK-127b-T5 技術要點①-c：切預設成 `fail` 之後，wrapper 會在轉發
+        **之前**先拋 `RepoWriteGuardViolation`，`pytest.raises(sqlite3.
+        OperationalError)` 型別對不上會讓這支測試變紅——即使 T3/T4 的
+        `report` 模式下它是綠的。修法是掛 `allow_real_db` marker，讓斷言變
+        成模式無關（`report`／`fail` 兩邊都是同一份斷言）：marker 讓 wrapper
+        跳過拋出、仍轉發給 sqlite 自己拒絕建檔（`OperationalError`），
+        record 照記（reason 帶 `_allowed_by_marker` 後綴，故用 startswith）。
         """
         rel = "__rwg_no_such_dir__/relative.db"
         assert not Path(rel).parent.exists(), (
@@ -515,9 +551,10 @@ class TestWrapperArgumentBinding:
         )
         before = len(captured_records)
         with pytest.raises(sqlite3.OperationalError):
-            # report 模式下 wrapper 只記錄、仍轉發 ⇒ 由 sqlite 自己拒絕建檔
+            # 有 allow_real_db marker ⇒ wrapper 只記錄、仍轉發 ⇒ 由 sqlite 自己拒絕建檔
             sqlite3.connect(rel, 5.0, 0, "", True, sqlite3.Connection, 128, False)
 
         new_records = captured_records[before:]
         assert len(new_records) == 1, f"相對路徑應被記一筆 row08，實際 {new_records}"
-        assert new_records[0]["reason"] == "row08_relative_path", new_records[0]
+        # marker 會讓 reason 帶 `_allowed_by_marker` 後綴 ⇒ 用 startswith
+        assert new_records[0]["reason"].startswith("row08_relative_path"), new_records[0]
