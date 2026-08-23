@@ -184,12 +184,13 @@ def _run_nonreadonly_enrich(*, search_result, os_exists, row_cover_path="",
 
 def _run_nonreadonly_samples(*, search_meta, sample_uris):
     """B：core.enricher.fetch_samples_only 直呼。"""
-    from core.enricher import fetch_samples_only
+    from core.enricher import ExtrafanartResult, fetch_samples_only
     with ExitStack() as es:
         es.enter_context(patch("os.path.exists", return_value=True))
         es.enter_context(patch("core.enricher.VideoRepository"))
         es.enter_context(patch("core.enricher.search_jav", return_value=search_meta))
-        es.enter_context(patch("core.enricher._write_extrafanart", return_value=sample_uris))
+        es.enter_context(patch("core.enricher._write_extrafanart",
+                               return_value=ExtrafanartResult(sample_uris, len(sample_uris), 0)))
         es.enter_context(patch("core.enricher._db_upsert_samples_only"))
         result = fetch_samples_only(file_path=NR_FILE, number=NUMBER)
     return asdict(result)

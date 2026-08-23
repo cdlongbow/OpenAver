@@ -93,7 +93,7 @@ pip install -r requirements.txt
 pytest
 
 # 5. 啟動開發伺服器
-uvicorn web.app:app --reload --host 127.0.0.1 --port 8000
+uvicorn web.app:app --reload --reload-include 'locales/*.json' --host 127.0.0.1 --port 8000
 ```
 
 ---

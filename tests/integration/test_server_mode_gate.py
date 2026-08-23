@@ -95,11 +95,23 @@ class TestLanAccessGateMiddleware:
         r = c.get("/api/health")
         assert r.status_code == 403
 
-    def test_remote_server_mode_200(self, monkeypatch):
+    def test_remote_server_mode_200(self, monkeypatch, tmp_path):
         """遠端 + 伺服器模式 → 200"""
+        # server_mode=True + 非 loopback 會抵達 access_gate middleware，其冷啟動
+        # `await asyncio.to_thread(ensure_schema)`（web/app.py:327）未 mock 前
+        # 連上 output/openaver.db（同手法見 tests/integration/test_capabilities_auth.py
+        # 的 auth_db fixture／127b-T4 已修正的 test_installer_api.py case9b）。
+        import core.access_auth as access_auth
+        monkeypatch.setattr("core.access_auth.get_db_path", lambda: tmp_path / "access.db")
         _server_mode_patch(monkeypatch)
         c = TestClient(app, client=REMOTE_CLIENT)
-        r = c.get("/api/health")
+        try:
+            r = c.get("/api/health")
+        finally:
+            # 避免 _snapshot warm 狀態外洩到本檔後面的
+            # test_server_mode_toggle_takes_effect（它也會走到同一條 server_mode=True
+            # + 非 loopback 路徑）。
+            access_auth.reset_state_for_tests()
         assert r.status_code == 200
 
     def test_remote_xff_spoofed_still_403(self, monkeypatch):
@@ -116,11 +128,20 @@ class TestLanAccessGateMiddleware:
         r = c.get("/api/health", headers={"X-Forwarded-For": "localhost"})
         assert r.status_code == 403
 
-    def test_server_mode_toggle_takes_effect(self, monkeypatch):
+    def test_server_mode_toggle_takes_effect(self, monkeypatch, tmp_path):
         """
         middleware per-request 讀 config：同一個 TestClient 實例下，翻轉 server_mode
         後下次 request 即生效（以 load_config 呼叫計數驗證動態路徑）。
         """
+        # 翻到 server_mode=True 後同樣會抵達 access_gate middleware 的冷啟動
+        # ensure_schema()（同 test_remote_server_mode_200 理由）。
+        import core.access_auth as access_auth
+        monkeypatch.setattr("core.access_auth.get_db_path", lambda: tmp_path / "access.db")
+        # 兩邊都要清：本測試會把 _snapshot 暖成「指向這個 tmp_path」的狀態，
+        # 而 tmp_path 之後會被 pytest 回收 ⇒ 留給後面的檔就是一個指向不存在目錄的
+        # 全域快取（sonnet review 2026-08-23 P2-2）。姊妹測試
+        # test_remote_server_mode_200 已經是 try/finally 對稱的，這支漏了另一半。
+        access_auth.reset_state_for_tests()
         call_count = {"n": 0}
         server_mode_val = {"v": False}
 
@@ -139,8 +160,11 @@ class TestLanAccessGateMiddleware:
 
         # 翻轉 server_mode → 伺服器模式 → 200
         server_mode_val["v"] = True
-        r2 = c.get("/api/health")
-        assert r2.status_code == 200
+        try:
+            r2 = c.get("/api/health")
+            assert r2.status_code == 200
+        finally:
+            access_auth.reset_state_for_tests()
 
     def test_loopback_does_not_call_load_config(self, monkeypatch):
         """loopback 短路：middleware 不讀 config（零 I/O 成本）。

@@ -1,5 +1,6 @@
 import random
 import time
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -61,6 +62,33 @@ def _build_target() -> Video:
         release_date="2020-06-15",
         duration=120,
     )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_canonicalize_cache():
+    """`SimilarRanker.__init__`／`rank()` 都會走 `canonicalize()`，其
+    `_load_merged_map()` 在 module-level cache 未命中時會連真實 DB 讀
+    `TagAliasRepository`（同手法見 `tests/unit/test_similar_canonicalize.py`）。
+
+    ⚠️ **整個測試體都要在 mock 保護內，而且前後都要 `_invalidate_cache()`。**
+    `_merged_alias_map` 是 process 級單例：
+      - 不清前面 → 拿到別的檔留下的暖快取
+      - 不清後面 → 把「只有硬編碼 19 條」的 map 留給整個 session 後面沒有隔離的檔案
+        （真實 DB 的 `tag_aliases` 有 53 列；sonnet review 2026-08-23 P2-1）
+
+    🔴 **本檔第一版把 `_invalidate_cache()` 放在 `with` 區塊正後方，結果 `rank()`
+    拿到冷快取直接連真實 DB——修正自己引入了一個新違規**，被 mutation 的 baseline
+    從 0 變 1 抓到。⇒ 改用 fixture 形狀（比照另外三個守同一個單例的檔），
+    teardown 保證在測試體跑完之後才清。
+    """
+    from core.similar.canonicalize import _invalidate_cache
+
+    mock_alias_repo = MagicMock()
+    mock_alias_repo.get_all.return_value = []
+    _invalidate_cache()
+    with patch("core.database.TagAliasRepository", return_value=mock_alias_repo):
+        yield
+    _invalidate_cache()
 
 
 @pytest.mark.perf

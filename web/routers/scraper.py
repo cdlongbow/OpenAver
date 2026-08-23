@@ -527,7 +527,7 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
     # sidecar（NFO/cover）卻仍 _db_upsert，就是純分裂。一個 sidecar「會寫」需 write 旗標開 + 檔案缺
     # （此分支 overwrite 已為 false，既有檔不覆寫）。兩者皆不會寫 → 擋；任一會寫則放行（quick-enrich
     # 缺封面零回歸）。涵蓋 write_nfo/write_cover 皆 false 的純 DB-only 路徑（Codex P1）。
-    # write_extrafanart 刻意排除：_write_extrafanart 無 overwrite gate 且只在 scraper 回
+    # write_extrafanart 刻意排除：_write_extrafanart 只補缺的（既有檔一律不覆寫，CD-127c-1）且只在 scraper 回
     # sample_images 才寫；若 scraper 無 samples → 零磁碟寫出但 _db_upsert 照跑 = 分裂，
     # 故不得計入「保證會寫 sidecar」；補劇照請用 /api/scraper/fetch-samples（Codex PR#47 round-2 P2）。
     # 在 try 之前 raise，避免被下方 except Exception 吞成籠統 200。

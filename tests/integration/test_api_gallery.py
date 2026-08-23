@@ -257,8 +257,12 @@ class TestImageProxyPathConversion:
 class TestGalleryStats:
     """測試 Gallery 統計 API"""
 
-    def test_get_stats_success(self, client):
+    def test_get_stats_success(self, client, mocker):
         """Stats 端點正常返回"""
+        # 未 mock 前 get_db_path() 連上 output/openaver.db（同檔
+        # test_clear_cache_no_db 既有慣例，同一 router 的同一 get_db_path）。
+        mocker.patch('web.routers.scanner.get_db_path',
+                      return_value=Path('/nonexistent/openaver.db'))
         response = client.get('/api/gallery/stats')
 
         assert response.status_code == 200
@@ -368,8 +372,12 @@ class TestGalleryView:
 class TestCheckUpdate:
     """測試 NFO 更新檢查"""
 
-    def test_check_update_endpoint(self, client):
+    def test_check_update_endpoint(self, client, mocker):
         """檢查更新端點正常回應"""
+        # 未 mock 前 get_db_path() 連上 output/openaver.db（同檔
+        # test_clear_cache_no_db 既有慣例，同一 router 的同一 get_db_path）。
+        mocker.patch('web.routers.scanner.get_db_path',
+                      return_value=Path('/nonexistent/openaver.db'))
         response = client.get('/api/gallery/update-check')
 
         assert response.status_code == 200

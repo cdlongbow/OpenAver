@@ -1024,8 +1024,12 @@ class TestStartupReconnect:
     # (b) Lifespan glue layer — TestClient context manager triggers lifespan
     # ------------------------------------------------------------------
 
-    def test_lifespan_calls_startup_reconnect(self, reset_state):
+    def test_lifespan_calls_startup_reconnect(self, reset_state, tmp_path, monkeypatch):
         """startup_reconnect is called during app lifespan startup."""
+        # `with TestClient(app):` 觸發完整 lifespan startup（web/app.py:79 init_db() /
+        # :84 ensure_schema()），未 mock 前連上 output/openaver.db（同 4 支測試共用理由）。
+        monkeypatch.setattr("core.database.connection.get_db_path", lambda: tmp_path / "app.db")
+        monkeypatch.setattr("core.access_auth.get_db_path", lambda: tmp_path / "access.db")
         with patch("web.app.load_config") as mock_load, \
              patch("web.app.startup_reconnect") as mock_sr, \
              patch("web.app._fire_probe") as mock_probe:
@@ -1038,11 +1042,13 @@ class TestStartupReconnect:
 
         mock_sr.assert_called_once()
 
-    def test_lifespan_fires_probe_when_names_returned(self, reset_state):
+    def test_lifespan_fires_probe_when_names_returned(self, reset_state, tmp_path, monkeypatch):
         """When startup_reconnect returns names, _fire_probe is called once."""
         names = ["FANZA", "HEYZO"]
         # Set state so it looks connected (startup_reconnect mock won't really connect)
         state.connect(_PUBLIC_URL, "tok", names)
+        monkeypatch.setattr("core.database.connection.get_db_path", lambda: tmp_path / "app.db")
+        monkeypatch.setattr("core.access_auth.get_db_path", lambda: tmp_path / "access.db")
 
         with patch("web.app.load_config") as mock_load, \
              patch("web.app.startup_reconnect") as mock_sr, \
@@ -1056,8 +1062,10 @@ class TestStartupReconnect:
 
         mock_probe.assert_called_once()
 
-    def test_lifespan_no_probe_when_none_returned(self, reset_state):
+    def test_lifespan_no_probe_when_none_returned(self, reset_state, tmp_path, monkeypatch):
         """When startup_reconnect returns None, _fire_probe is NOT called."""
+        monkeypatch.setattr("core.database.connection.get_db_path", lambda: tmp_path / "app.db")
+        monkeypatch.setattr("core.access_auth.get_db_path", lambda: tmp_path / "access.db")
         with patch("web.app.load_config") as mock_load, \
              patch("web.app.startup_reconnect") as mock_sr, \
              patch("web.app._fire_probe") as mock_probe:
@@ -1070,9 +1078,11 @@ class TestStartupReconnect:
 
         mock_probe.assert_not_called()
 
-    def test_lifespan_uses_returned_generation(self, reset_state):
+    def test_lifespan_uses_returned_generation(self, reset_state, tmp_path, monkeypatch):
         """lifespan passes the generation RETURNED by startup_reconnect to
         _fire_probe — it does NOT re-read state.generation (CD-66b-2 / B1)."""
+        monkeypatch.setattr("core.database.connection.get_db_path", lambda: tmp_path / "app.db")
+        monkeypatch.setattr("core.access_auth.get_db_path", lambda: tmp_path / "access.db")
         with patch("web.app.load_config") as mock_load, \
              patch("web.app.startup_reconnect") as mock_sr, \
              patch("web.app._fire_probe") as mock_probe:

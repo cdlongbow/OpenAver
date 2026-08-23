@@ -1366,6 +1366,12 @@ class TestReadonlyEnrichResultShapeParity:
         )
         mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
         mocker.patch("core.readonly_producer.resolve_ingest_plan", return_value=(None, ("none",)))
+        # meta=None 落入 enrich_one_readonly() 的 not-found 樁列分支
+        # （core/readonly_producer.py:1936-1939 _readonly_stub_not_found），
+        # 會呼叫 repo_factory()（=web.routers.scraper.VideoRepository）做真
+        # insert_if_ignore/update_scrape_attempted_at 寫入。未 mock 前寫進
+        # output/openaver.db（見 REPORT-127b-T3.md §0 的 ABC-001 樁列）。
+        mocker.patch("web.routers.scraper.VideoRepository")
 
         response = client.post("/api/enrich-single", json={
             "file_path": "/tmp/ro_src/ABC-001.mp4",
@@ -1793,7 +1799,7 @@ class TestEnrichRefreshFullOverwriteGuard:
         """write_nfo=false + write_cover=false + write_extrafanart=true，NFO/cover 皆存在
         → 守衛應擋回 400，enrich_single 未被呼叫。
 
-        extrafanart intent alone 不計入「保證會寫 sidecar」，因為 _write_extrafanart 無 overwrite gate
+        extrafanart intent alone 不計入「保證會寫 sidecar」，因為 _write_extrafanart 只補缺的（既有檔不覆寫）
         且只在 scraper 回 sample_images 才寫；若 scraper 無 samples → 零磁碟寫出但 _db_upsert 照跑
         = DB/磁碟分裂（守衛本要防的）。
         補劇照請改用 /api/scraper/fetch-samples（Codex PR#47 round-2 P2-A revert）。
@@ -3356,7 +3362,9 @@ class TestReadonlyRoutingE2E:
         done = [e for e in events if e["type"] == "done"][0]
         assert done["summary"] == {"total": 2, "success": 2, "failed": 0}
 
-    def test_batch_enrich_readonly_item_no_scrape_when_no_nfo_and_search_fails(self, client, mocker):
+    def test_batch_enrich_readonly_item_no_scrape_when_no_nfo_and_search_fails(
+        self, client, mocker, monkeypatch, tmp_path
+    ):
         """唯讀項無 .nfo 且 search_jav 回 None → reason='not_found'（Codex PR#113
         one-pass alignment，對齊 core.enricher 自己的 not_found reason 值），
         failed_count+=1，不中斷整批（另一唯讀項 stub 省略；此測試聚焦單一唯讀項
@@ -3368,7 +3376,14 @@ class TestReadonlyRoutingE2E:
             },
             "search": {}, "scraper": {},
         }
-        mocker.patch("web.routers.scraper.load_config", return_value=config)
+        # not_found 分支也會落 _readonly_stub_not_found 真寫（同
+        # test_enrich_single_no_meta_has_full_shape 的理由）；本 class 已有現成
+        # 的 self._wire(...) helper 負責把 web.routers.scraper.VideoRepository /
+        # core.readonly_producer.get_db_path 都接到 tmp DB，只是這支測試沒呼叫它
+        # （未 mock 前寫進 output/openaver.db 的 NS-001 樁列，見
+        # REPORT-127b-T3.md §0）。
+        db_path = self._init_db(tmp_path)
+        self._wire(mocker, monkeypatch, config, db_path)
         source_stub = MagicMock()
         source_stub.path = "/tmp/ro_src"
         mocker.patch(
@@ -3503,3 +3518,86 @@ class TestEnrichSinglePreservesOriginalTitle:
         assert nfo_file.exists(), "NFO 應被寫出"
         root = ET.parse(nfo_file).getroot()
         assert root.findtext("originaltitle") == "既存の原題"
+
+
+# ── TASK-127c-T1: 既有劇照永不被覆蓋 ＋ extrafanart_written 只算本次下載 ─────
+
+class TestExistingExtrafanartPreserved:
+    """CD-127c-1 / CD-127c-2：直呼 fetch_samples_only，真磁碟既有檔不被覆蓋，
+    且 API 欄位 extrafanart_written 只報本次下載數。"""
+
+    _KEEP = b"KEEPME-ORIGINAL-" * 100
+    _FRESH = b"FRESH-DOWNLOAD-" * 100
+
+    def _setup_video(self, tmp_path, existing_indices):
+        video = tmp_path / "SONE-205.mp4"
+        video.write_bytes(b"\x00")
+        ef_dir = tmp_path / "extrafanart"
+        ef_dir.mkdir()
+        kept = {}
+        for i in existing_indices:
+            p = ef_dir / f"fanart{i}.jpg"
+            p.write_bytes(self._KEEP)
+            kept[i] = p
+        return video, ef_dir, kept
+
+    def _fake_download(self, url, dest, fallback_url=""):
+        Path(dest).write_bytes(self._FRESH)
+        return True
+
+    def test_existing_extrafanart_is_preserved(self, tmp_path):
+        video, ef_dir, kept = self._setup_video(tmp_path, existing_indices=[1])
+        fanart1 = kept[1]
+        # 前置自證（BE-TEST-01 §7）
+        assert fanart1.exists() and fanart1.stat().st_size > 0
+        before_bytes = fanart1.read_bytes()
+        before_mtime_ns = fanart1.stat().st_mtime_ns
+
+        search_meta = {
+            "number": "SONE-205",
+            "sample_images": [
+                "http://x/s1.jpg",
+                "http://x/s2.jpg",
+                "http://x/s3.jpg",
+            ],
+            "source": "javbus",
+        }
+
+        with patch("core.enricher.search_jav", return_value=search_meta), \
+             patch("core.enricher.download_image", side_effect=self._fake_download), \
+             patch("core.enricher.VideoRepository"), \
+             patch("core.enricher._db_upsert_samples_only"):
+            from core.enricher import fetch_samples_only
+            fetch_samples_only(file_path=str(video), number="SONE-205")
+
+        assert fanart1.read_bytes() == before_bytes
+        assert fanart1.stat().st_mtime_ns == before_mtime_ns
+        fanart2 = ef_dir / "fanart2.jpg"
+        fanart3 = ef_dir / "fanart3.jpg"
+        assert fanart2.exists() and fanart2.read_bytes() == self._FRESH
+        assert fanart3.exists() and fanart3.read_bytes() == self._FRESH
+
+    def test_extrafanart_written_counts_downloads_not_existing(self, tmp_path):
+        video, ef_dir, kept = self._setup_video(tmp_path, existing_indices=[1, 2])
+        assert kept[1].exists() and kept[1].stat().st_size > 0
+        assert kept[2].exists() and kept[2].stat().st_size > 0
+
+        search_meta = {
+            "number": "SONE-205",
+            "sample_images": ["http://x/s1.jpg", "http://x/s2.jpg"],
+            "source": "javbus",
+        }
+
+        with patch("core.enricher.search_jav", return_value=search_meta), \
+             patch("core.enricher.download_image", side_effect=self._fake_download) as mock_dl, \
+             patch("core.enricher.VideoRepository"), \
+             patch("core.enricher._db_upsert_samples_only") as mock_upsert:
+            from core.enricher import fetch_samples_only
+            result = fetch_samples_only(file_path=str(video), number="SONE-205")
+
+        assert result.extrafanart_written == 0
+        mock_upsert.assert_called_once()
+        uris_arg = mock_upsert.call_args[0][2]
+        assert len(uris_arg) == 2
+        mock_dl.assert_not_called()
+        assert result.success is True

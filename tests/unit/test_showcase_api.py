@@ -31,7 +31,15 @@ def showcase_config():
 @pytest.fixture
 def client(make_client, temp_db, showcase_config):
     return make_client(
-        ["core.database.connection.get_db_path", "web.routers.showcase.get_db_path", "web.routers.showcase.load_config"],
+        [
+            "core.database.connection.get_db_path",
+            "web.routers.showcase.get_db_path",
+            "web.routers.showcase.load_config",
+            # test_player_page_returns_html 打 /api/gallery/player（web/routers/scanner.py
+            # video_player()），該端點自己也呼叫 get_db_path() 做分組查詢，未 mock 前
+            # 會連上 output/openaver.db。
+            "web.routers.scanner.get_db_path",
+        ],
         mock_db_path=temp_db,
         config_override=showcase_config,
     )

@@ -14,11 +14,25 @@ import pytest
 # ──────────────────────────────────────────────────────────
 @pytest.fixture(autouse=True)
 def reset_cache():
-    """每個 test 前後都 reset SimilarRankerCache state，避免 test 間互相污染"""
+    """每個 test 前後都 reset SimilarRankerCache state，避免 test 間互相污染。
+
+    SimilarRanker.__init__ 內部會呼叫 canonicalize()，其 _load_merged_map()
+    在 module-level cache 為 None 時會 lazy-import core.database.TagAliasRepository
+    連真實 DB（見 tests/unit/test_similar_canonicalize.py 的 isolate_canonicalize_cache
+    同一手法）。這裡比照該既有慣例：mock 掉 TagAliasRepository 並前後清 cache，
+    避免本檔案第一支呼叫 .get() 的測試連到 output/openaver.db。
+    """
     from core.similar.ranker_cache import SimilarRankerCache
+    from core.similar.canonicalize import _invalidate_cache
+
     SimilarRankerCache._instance = None
-    yield
+    _invalidate_cache()
+    mock_alias_repo = MagicMock()
+    mock_alias_repo.get_all.return_value = []
+    with patch("core.database.TagAliasRepository", return_value=mock_alias_repo):
+        yield
     SimilarRankerCache._instance = None
+    _invalidate_cache()
 
 
 # ──────────────────────────────────────────────────────────

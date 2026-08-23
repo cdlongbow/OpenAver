@@ -140,6 +140,11 @@ def _run_fill_missing(mp4_path, number: str, *, db_hit: bool = False):
         mock_repo = MagicMock()
         mock_repo_cls.return_value = mock_repo
         mock_repo.get_by_path.return_value = None
+        # db_path 設 in-memory：避免 enrich nfo_mtime 更新路徑（enricher.py:525
+        # get_connection(repo.db_path)）對 MagicMock 做 sqlite3.connect → 在 repo root
+        # 產生 "<MagicMock ...>" 垃圾檔。:memory: 下該 UPDATE 因無 videos 表靜默失敗
+        # （已被 try/except 包裹），不留任何檔案。
+        mock_repo.db_path = ":memory:"
 
         if db_hit:
             video = Video(

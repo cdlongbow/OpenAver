@@ -310,7 +310,7 @@ class TestSearchStreamSSE:
             "Exact mode should not send result-complete event"
 
     @pytest.fixture
-    def actress_mode_events(self, client, parse_sse_events):
+    def actress_mode_events(self, client, parse_sse_events, tmp_path):
         """共用 fixture：執行 actress 模式的 smart_search 並回傳解析後的 SSE events"""
         ids = ['SONE-100', 'SONE-101', 'SONE-102']
         items = {
@@ -333,7 +333,13 @@ class TestSearchStreamSSE:
                 status_callback('done', f'found:{len(ids)}')
             return list(items.values())
 
-        with patch('web.routers.search.smart_search', side_effect=mock_smart_search):
+        # 3 筆同演員（100% consistency）觸發 _fetch_actress_profile_with_db，
+        # 其 init_db() + AliasRepository().resolve()/ActressRepository().get_by_name()
+        # 未 mock 前會連上 output/openaver.db（此 fixture 本身不驗 actress_profile
+        # 內容，全數 mock 掉即可）。
+        with patch('web.routers.search.smart_search', side_effect=mock_smart_search), \
+             patch('core.database.ActressRepository.get_by_name', return_value=None), \
+             patch('core.database.connection.get_db_path', return_value=tmp_path / "test.db"):
             response = client.get('/api/search/stream?q=三上悠亜')
 
         events = parse_sse_events(response.text)
@@ -387,7 +393,7 @@ class TestSearchStreamSSE:
         result_idx = next(i for i, e in enumerate(events) if e.get('type') == 'result')
         assert complete_idx < result_idx, "result-complete must appear before result event in the stream"
 
-    def test_javdb_fallback_sends_result_event(self, client, parse_sse_events):
+    def test_javdb_fallback_sends_result_event(self, client, parse_sse_events, tmp_path):
         """JavDB fallback（no result_callback called）應走傳統 result event（C12）"""
         results = [
             {'number': 'SONE-100', 'actors': ['三上悠亜']},
@@ -403,7 +409,11 @@ class TestSearchStreamSSE:
                 status_callback('done', f'found:{len(results)}')
             return results
 
-        with patch('web.routers.search.smart_search', side_effect=mock_smart_search):
+        # 同 actress_mode_events 理由：3 筆同演員觸發 _fetch_actress_profile_with_db，
+        # init_db()/AliasRepository()/ActressRepository() 未 mock 前連上 output/openaver.db。
+        with patch('web.routers.search.smart_search', side_effect=mock_smart_search), \
+             patch('core.database.ActressRepository.get_by_name', return_value=None), \
+             patch('core.database.connection.get_db_path', return_value=tmp_path / "test.db"):
             response = client.get('/api/search/stream?q=三上悠亜')
 
         events = parse_sse_events(response.text)
@@ -507,7 +517,9 @@ class TestSearchStreamSSE:
         assert 'has_more' in result_event
         assert 'actress_profile' in result_event
 
-    def test_result_complete_has_actress_profile_and_has_more(self, client, parse_sse_events):
+    def test_result_complete_has_actress_profile_and_has_more(
+        self, client, parse_sse_events, tmp_path
+    ):
         """result-complete event 應包含 actress_profile 和 has_more 欄位"""
         ids = ['SONE-100', 'SONE-101', 'SONE-102']
         items_list = [
@@ -532,9 +544,12 @@ class TestSearchStreamSSE:
             timed_out=False
         )
 
+        # web/routers/search.py:_fetch_actress_profile_with_db 無條件呼叫 init_db() +
+        # AliasRepository().resolve()，未 mock 前連上 output/openaver.db。
         with patch('web.routers.search.smart_search', side_effect=mock_smart_search), \
              patch('core.scrapers.actress.orchestrator.get_actress_profile', return_value=mock_profile), \
-             patch('core.database.ActressRepository.get_by_name', return_value=None):
+             patch('core.database.ActressRepository.get_by_name', return_value=None), \
+             patch('core.database.connection.get_db_path', return_value=tmp_path / "test.db"):
             response = client.get('/api/search/stream?q=桜空もも')
 
         events = parse_sse_events(response.text)

@@ -178,7 +178,7 @@ _TOOLS: list[dict] = [
     },
     {
         "name": "enrich_single",
-        "description": "舊片原地補完：補齊 NFO/封面/劇照，不搬移不改名。refresh_full 搭配 overwrite_existing=true 才覆蓋既有 NFO/封面；若只想更新 DB 不覆蓋檔案，用 overwrite_existing=false（預設）。overwrite_existing=true 時必須先讓用戶確認",
+        "description": "舊片原地補完：補齊 NFO/封面/劇照，不搬移不改名。refresh_full 搭配 overwrite_existing=true 才覆蓋既有 NFO/封面；若只想更新 DB 不覆蓋檔案，用 overwrite_existing=false（預設）。overwrite_existing=true 時必須先讓用戶確認。劇照只補缺的：extrafanart 資料夾裡已經存在的圖一律不會被覆蓋，overwrite_existing 對劇照不適用",
         "method": "POST",
         "path": "/api/enrich-single",
         "input_schema": {
@@ -288,7 +288,7 @@ _TOOLS: list[dict] = [
     },
     {
         "name": "fetch_samples",
-        "description": "自動下載影片對應番號的劇照（sample images）到本機 extrafanart 資料夾，並更新 DB sample_images 欄位。僅下載劇照，不改 NFO / 封面 / 其他欄位。若影片所在資料夾有多於 1 個影片會拒絕執行（避免污染）。",
+        "description": "自動下載影片對應番號的劇照（sample images）到本機 extrafanart 資料夾，並更新 DB sample_images 欄位。僅下載劇照，不改 NFO / 封面 / 其他欄位。既有的劇照不會被取代——只補缺的那幾張；要整組換掉請由用戶自行刪除 extrafanart 資料夾後再執行。若影片所在資料夾有多於 1 個影片會拒絕執行（避免污染）。",
         "method": "POST",
         "path": "/api/scraper/fetch-samples",
         "input_schema": {
@@ -303,7 +303,7 @@ _TOOLS: list[dict] = [
             "success": "boolean",
             "nfo_written": "boolean — 固定 false（此端點不寫 NFO）",
             "cover_written": "boolean — 固定 false（此端點不寫封面）",
-            "extrafanart_written": "integer — 成功下載的劇照數",
+            "extrafanart_written": "integer — 本次成功下載的劇照數；0 也可能代表「本來就齊全、沒有缺的要補」，不必然是失敗",
             "fields_filled": "[string] — 本次補齊的欄位名",
             "source_used": "string — 使用的來源",
             "error": "string|null — 錯誤訊息；multi_video_folder=資料夾有多片，拒絕執行",
@@ -318,7 +318,7 @@ _TOOLS: list[dict] = [
     },
     {
         "name": "batch_enrich",
-        "description": "批次補完：一次提交最多 20 筆舊片，逐筆補齊 NFO/封面/DB。結果以 SSE streaming 逐筆回傳。注意：此操作會覆寫 NFO 和封面檔案，使用 overwrite_existing=true 時不可逆，必須先讓用戶確認。",
+        "description": "批次補完：一次提交最多 20 筆舊片，逐筆補齊 NFO/封面/DB。結果以 SSE streaming 逐筆回傳。注意：此操作會覆寫 NFO 和封面檔案，使用 overwrite_existing=true 時不可逆，必須先讓用戶確認。劇照不在此列：既有的 extrafanart 圖一律不會被覆蓋，overwrite_existing 對劇照不適用，只補缺的那幾張。",
         "method": "POST",
         "path": "/api/batch-enrich",
         "input_schema": {

@@ -159,8 +159,11 @@ class TestScannerAPI:
         assert response.status_code == 403
         assert "不在允許的資料夾範圍內" in response.text
 
-    def test_get_player_success(self, client):
+    def test_get_player_success(self, client, tmp_path, monkeypatch):
         """測試 /api/gallery/player 回傳正確的 HTML"""
+        # video_player() 內部無條件呼叫 get_db_path()/VideoRepository() 做分組查詢
+        # （web/routers/scanner.py），未 mock 前連上 output/openaver.db。
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
         video_path = to_file_uri("C:/videos/test.mp4")
         response = client.get(f"/api/gallery/player?path={quote(video_path)}")
 
@@ -170,7 +173,7 @@ class TestScannerAPI:
         assert 'src="/api/gallery/video?path=' in response.text
         assert '%2Fvideos%2Ftest.mp4"' in response.text
 
-    def test_player_onerror_hint_and_resolved_i18n(self, client):
+    def test_player_onerror_hint_and_resolved_i18n(self, client, tmp_path, monkeypatch):
         """TASK-120a-T2：<video> 有 onerror、提示 div 預設隱藏、文案已解析非 [key]"""
         # [lint-guard: pytest-justified] 分層：
         # (1) i18n 兩條（已解析中文句、不得洩 [key]）：真正 render 才知道，
@@ -181,6 +184,7 @@ class TestScannerAPI:
         # f-string 組裝與例外路徑），且與同一支測試的 i18n 斷言共用同一次請求，
         # 拆開反而要多打一次端點。日後若要把結構三條遷去 static_guard_lint.mjs，
         # 是獨立的 backlog，不在本卡。
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
         video_path = to_file_uri("C:/videos/test.mp4")
         response = client.get(f"/api/gallery/player?path={quote(video_path)}")
         html = response.text
@@ -193,7 +197,7 @@ class TestScannerAPI:
         assert expected in html
         assert "[showcase.video.player_unavailable]" not in html
 
-    def test_player_lang_follows_config_locale_ja(self, client, monkeypatch):
+    def test_player_lang_follows_config_locale_ja(self, client, monkeypatch, tmp_path):
         """TASK-120a-T2：config.general.locale=ja → <html lang=\"ja\">"""
         # [lint-guard: pytest-justified] 驗的是 load_config 回 locale=ja 時端點
         # 真的 render 出 lang="ja"。static_guard_lint 看得到 scanner.py 白名單
@@ -202,12 +206,13 @@ class TestScannerAPI:
             "web.routers.scanner.load_config",
             lambda: {"general": {"locale": "ja"}},
         )
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
         video_path = to_file_uri("C:/videos/test.mp4")
         response = client.get(f"/api/gallery/player?path={quote(video_path)}")
         assert response.status_code == 200
         assert 'lang="ja"' in response.text
 
-    def test_player_lang_illegal_locale_falls_back_zh_tw(self, client, monkeypatch):
+    def test_player_lang_illegal_locale_falls_back_zh_tw(self, client, monkeypatch, tmp_path):
         """TASK-120a-T2：非法 locale（fr）→ fail-closed lang=\"zh-TW\""""
         # [lint-guard: pytest-justified] 斷言的是端點在非法 locale（fr）下
         # fail-closed 之後的 render 結果。static_guard_lint 讀得到預設字串
@@ -216,12 +221,13 @@ class TestScannerAPI:
             "web.routers.scanner.load_config",
             lambda: {"general": {"locale": "fr"}},
         )
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
         video_path = to_file_uri("C:/videos/test.mp4")
         response = client.get(f"/api/gallery/player?path={quote(video_path)}")
         assert response.status_code == 200
         assert 'lang="zh-TW"' in response.text
 
-    def test_player_lang_unhashable_locale_falls_back_zh_tw(self, client, monkeypatch):
+    def test_player_lang_unhashable_locale_falls_back_zh_tw(self, client, monkeypatch, tmp_path):
         """TASK-120a-T2：locale 為 list（unhashable）→ 200 且 fail-closed lang=\"zh-TW\""""
         # [lint-guard: pytest-justified] 斷言的是 locale 為 list 時端點 render
         # 之後的結果（lang=zh-TW 且提示不得洩 [key]、須含中文提示原句）。
@@ -232,6 +238,7 @@ class TestScannerAPI:
             "web.routers.scanner.load_config",
             lambda: {"general": {"locale": ["zh-TW"]}},
         )
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
         video_path = to_file_uri("C:/videos/test.mp4")
         response = client.get(f"/api/gallery/player?path={quote(video_path)}")
         assert response.status_code == 200
@@ -240,7 +247,7 @@ class TestScannerAPI:
         assert expected in response.text
         assert "[showcase.video.player_unavailable]" not in response.text
 
-    def test_player_filename_html_escaped(self, client):
+    def test_player_filename_html_escaped(self, client, tmp_path, monkeypatch):
         """TASK-120a-T2：檔名 html_escape 既有行為不回歸
 
         檔名刻意不含 `/`（既有 rsplit('/', 1) 取檔名會被 `</...>` 截斷，
@@ -252,6 +259,7 @@ class TestScannerAPI:
         # 檔名在這個請求下真的被 escape 進回應」——要打端點 render 才知道。
         from html import escape as html_escape
 
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
         raw_name = 'test<>&".mp4'
         video_path = to_file_uri(f"C:/videos/{raw_name}")
         response = client.get(f"/api/gallery/player?path={quote(video_path)}")
@@ -963,7 +971,8 @@ class TestJellyfinExternalManagerGate:
         updated=0，卻先動了磁碟又回 error。這裡直接鎖住「gate 之前零副作用」：
         get_db_path 完全不該被呼叫。
 
-        Codex PR#123 round-3 P2②-a（BE-TEST-01 #11）：原本這裡是裸
+        Codex PR#123 round-3 P2②-a——裸 `MagicMock()`（不設 `return_value`）在 gate 短路時
+        看起來無害，mutation 把 gate 拿掉就會拿 repr 當檔名寫進 repo 根：原本這裡是裸
         `MagicMock()`，沒有設 `return_value`。正常路徑（gate 生效）下
         `assert_not_called()` 綠燈，看起來無害；但 mutation 自驗把 gate 停用時，
         `get_db_path()` 真的被呼叫，回傳一個 auto-spec 的子 mock，其 repr
@@ -1647,6 +1656,7 @@ class TestScannerGenerateLongPathsField:
             "general": {"theme": "light"},
             "scraper": {"video_extensions": [".mp4"]},
         })
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
 
         response = client.get('/api/gallery/generate')
         assert response.status_code == 200
@@ -1707,6 +1717,7 @@ class TestScannerGenerateLongPathsField:
             return []  # 無檔案進 results
 
         monkeypatch.setattr("web.routers.scanner.fast_scan_directory", stub_fast_scan)
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
 
         response = client.get('/api/gallery/generate')
         assert response.status_code == 200
@@ -1844,6 +1855,8 @@ class TestGenerateAvlistCleanupPass:
             "general": {"theme": "light"},
             "scraper": {"video_extensions": [".mp4"]},
         })
+
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
 
         # 驗證 _run_sample_images_cleanup_pass 被呼叫
         with patch(
@@ -2005,6 +2018,7 @@ class TestGenerateReadonlyBridge:
     def test_readonly_source_calls_produce_source_once(self, client, tmp_path, monkeypatch, mocker):
         cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
         monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
         mock_ps = mocker.patch("web.routers.scanner.produce_source",
                                return_value=self._result(tmp_path))
         resp = client.get("/api/gallery/generate")
@@ -2036,6 +2050,7 @@ class TestGenerateReadonlyBridge:
 
         cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
         monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
         mock_ps = mocker.patch("web.routers.scanner.produce_source",
                                return_value=self._result(tmp_path))
 
@@ -2050,6 +2065,7 @@ class TestGenerateReadonlyBridge:
     def test_non_readonly_does_not_call_produce_source(self, client, tmp_path, monkeypatch, mocker):
         cfg = self._readonly_config(tmp_path, [(False, "")])
         monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
         mock_ps = mocker.patch("web.routers.scanner.produce_source")
         resp = client.get("/api/gallery/generate")
         assert resp.status_code == 200
@@ -2063,6 +2079,7 @@ class TestGenerateReadonlyBridge:
             (True, str(tmp_path / "out1")),
         ])
         monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
 
         def side_effect(source, config, repo, *, proxy_url="", on_progress=None, should_abort=None, force=False, reachable=True, strm_mappings_getter=None):
             from core.readonly_producer import ProduceResult
@@ -2089,6 +2106,7 @@ class TestGenerateReadonlyBridge:
     def test_four_number_summary(self, client, tmp_path, monkeypatch, mocker, parse_sse_events):
         cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
         monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
         mocker.patch("web.routers.scanner.produce_source",
                      return_value=self._result(tmp_path, created=2, skipped=1, no_scrape=1, failed=1))
         resp = client.get("/api/gallery/generate")
@@ -2106,6 +2124,7 @@ class TestGenerateReadonlyBridge:
     def test_no_output_path_prompt(self, client, tmp_path, monkeypatch, mocker, parse_sse_events):
         cfg = self._readonly_config(tmp_path, [(True, "")])
         monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
         mocker.patch("web.routers.scanner.produce_source",
                      return_value=self._result(tmp_path, aborted_reason="no_output_path"))
         resp = client.get("/api/gallery/generate")
@@ -2127,6 +2146,7 @@ class TestGenerateReadonlyBridge:
             (True, str(tmp_path / "out1")),
         ])
         monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
 
         def side_effect(source, config, repo, *, proxy_url="", on_progress=None, should_abort=None, force=False, reachable=True, strm_mappings_getter=None):
             if source.path == str(tmp_path / "src0"):
@@ -2237,6 +2257,7 @@ class TestGenerateReadonlyBridge:
             "scraper": {"video_extensions": [".mp4"]},
         }
         monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
         mock_ps = mocker.patch("web.routers.scanner.produce_source",
                                return_value=ProduceResult(source_path=unc, output_path=str(tmp_path / "out0")))
         resp = client.get("/api/gallery/generate")
@@ -2252,6 +2273,7 @@ class TestGenerateReadonlyBridge:
         scanner_done_with_errors，不可 success/scanner_done（Codex P2）。"""
         cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
         monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
         mocker.patch("web.routers.scanner.produce_source",
                      side_effect=ValueError("boom（迴圈前逃出）"))
         mock_notif = mocker.patch("web.routers.scanner._emit_notif")
@@ -2283,6 +2305,7 @@ class TestGenerateReadonlyBridge:
         from core.readonly_producer import ProduceResult
         cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
         monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
         mocker.patch(
             "web.routers.scanner.produce_source",
             return_value=ProduceResult(
@@ -2331,6 +2354,7 @@ class TestGenerateReadonlyBridge:
     ):
         cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
         monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
         mocker.patch(
             "web.routers.scanner.produce_source",
             return_value=self._result(tmp_path, created=1, pruned=3),
@@ -2348,6 +2372,7 @@ class TestGenerateReadonlyBridge:
     ):
         cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
         monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
         mocker.patch(
             "web.routers.scanner.produce_source",
             return_value=self._result(tmp_path, aborted_reason="unreachable"),
@@ -2379,6 +2404,7 @@ class TestGenerateReadonlyBridge:
     ):
         cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
         monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
         mocker.patch(
             "web.routers.scanner.produce_source",
             return_value=self._result(
@@ -2412,6 +2438,7 @@ class TestGenerateReadonlyBridge:
     ):
         cfg = self._readonly_config(tmp_path, [(True, "")])
         monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.get_db_path", return_value=tmp_path / "test.db")
         mocker.patch(
             "web.routers.scanner.produce_source",
             return_value=self._result(tmp_path, aborted_reason="no_output_path"),

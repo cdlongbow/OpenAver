@@ -62,7 +62,7 @@
 - **從原始碼用 `run.sh` 跑（開發模式）**：「伺服器」膠囊在這個程序裡**不會生效**——區網
   listener 只在打包桌面版的啟動流程（`windows/standalone.py`）裡被接線，`run.sh` 直接
   跑 `uvicorn web.app:app`，切換時會回「無法啟動 LAN 伺服器」。開發時若確實需要從別的
-  裝置連入，請**自己明確加上** `--host 0.0.0.0`（`uvicorn web.app:app --reload --host 0.0.0.0 --port 8000`），
+  裝置連入，請**自己明確加上** `--host 0.0.0.0`（`uvicorn web.app:app --reload --reload-include 'locales/*.json' --host 0.0.0.0 --port 8000`），
   並清楚知道這會把服務暴露在**所有**網路介面上、且本程式不設帳號密碼——僅限你完全信任
   的網路環境。這裡的差別是「預設安全、要暴露得自己明講」，不是「不准暴露」
 - 圖片代理功能會向外部網站發送請求

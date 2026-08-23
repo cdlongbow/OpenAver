@@ -199,9 +199,20 @@ def test_trigger_update_subprocess_oserror_returns_500(client, monkeypatch):
 # 4. capabilities 守衛：trigger-update 不在 blob
 # ─────────────────────────────────────────────────────────
 
-def test_trigger_update_not_in_capabilities(client):
+def test_trigger_update_not_in_capabilities(client, tmp_path, monkeypatch):
     """capabilities JSON blob 不得含 trigger-update（不揭露給 AI agent）"""
-    blob = json.dumps(client.get("/api/capabilities").json(), ensure_ascii=False).lower()
+    # GET /api/capabilities 冷啟動時會呼叫 load_snapshot()（core/access_auth.py），
+    # 未 mock 前連上 output/openaver.db（同手法見
+    # tests/integration/test_capabilities_auth.py 的 auth_db fixture／
+    # 127b-T4 已修正的 test_capabilities.py／test_scraper_b3.py）。
+    import core.access_auth as access_auth
+    monkeypatch.setattr("core.access_auth.get_db_path", lambda: tmp_path / "access.db")
+    access_auth.ensure_schema()
+    access_auth.reset_state_for_tests()
+    try:
+        blob = json.dumps(client.get("/api/capabilities").json(), ensure_ascii=False).lower()
+    finally:
+        access_auth.reset_state_for_tests()
     assert "trigger-update" not in blob, "capabilities 不得揭露 trigger-update"
     assert "/api/trigger-update" not in blob, "capabilities 不得揭露 /api/trigger-update"
 

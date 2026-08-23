@@ -4,9 +4,11 @@ module.exports = {
   ignoreFiles: [
     // Tailwind compiled output — not hand-authored, contains all manner of values
     'web/static/css/tailwind.css',
-    // §6 fail-sample demo page — intentionally contains hardcoded values as
-    // counter-examples; per-block disable comments would add ~30 noise lines.
-    'web/static/css/pages/design-system.css',
+    // design-system.css was ignored here until 2026-08-23. The stated reason
+    // ("per-block disable comments would add ~30 noise lines") was stale: measured
+    // exactly 2 violations, one of which was a real bug (background shorthand
+    // killing a background-color fallback). Both are handled at source now.
+    // Do NOT re-add it — that would hide the same class of bug again.
   ],
   rules: {
     'color-no-hex': true,

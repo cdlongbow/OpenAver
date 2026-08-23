@@ -670,8 +670,15 @@ class TestExtrafanartDownloaded:
         video = _make_video(sample_images=["https://example.com/s1.jpg", "https://example.com/s2.jpg"])
         db_result = {"SONE-205": [video]}
 
+        # TASK-127c-T1 / CD-127c-1：_write_extrafanart 現在會跳過**磁碟上已存在**的
+        # fanart{N}.jpg。blanket os.path.exists=True 等於宣告「劇照早就齊全」，那條路的
+        # 正解是 extrafanart_written=0（另有測試釘住）。本測試要驗的是「缺的會被下載」，
+        # 所以只讓 extrafanart/ 底下的目的檔回 False，其餘維持既有的 blanket True。
+        def _exists_except_extrafanart(path):
+            return "/extrafanart/" not in str(path)
+
         with (
-            patch("os.path.exists", return_value=True),
+            patch("os.path.exists", side_effect=_exists_except_extrafanart),
             patch("core.enricher.VideoRepository") as mock_repo_cls,
             patch("core.enricher.generate_nfo", return_value=True),
             patch("core.enricher.download_image", return_value=True),
@@ -3285,7 +3292,7 @@ def _t5_run(tmp_path, db_name, *, number, external_manager, video_name=None,
             overwrite_existing=False, pre_stage=None, download_content=None,
             capture=None):
     """T5 共用 fixture 骨架：真 DB + patch `VideoRepository` 綁 tmp db
-    （`BE-TEST-07`：`get_db_path()` 硬編碼 repo-root、`temp_config_path` 對它
+    （`get_db_path()` 硬編碼 repo-root、不讀 config ⇒ `temp_config_path` 對它
     無效）+ 真 `search_jav` mock（非空 meta）+ patch `core.enricher.download_image`
     真的落地寫檔（不需要另外 mock `requests.get`：`crop_to_poster` 純讀本地
     檔案，沒有網路呼叫，見 task card §B 讀碼）。"""

@@ -18,6 +18,7 @@ class TestDbUpsertSampleImagesGate:
                         or int (converted to a mock list of that length for backward compat).
         """
         from unittest.mock import patch, MagicMock, call
+        from core.enricher import ExtrafanartResult
         if isinstance(download_count, int):
             mock_written_uris = [to_file_uri(f"/tmp/extrafanart/fanart{i+1}.jpg") for i in range(download_count)]
         else:
@@ -27,7 +28,7 @@ class TestDbUpsertSampleImagesGate:
              patch("core.enricher.search_jav") as mock_search, \
              patch("core.enricher.generate_nfo", return_value=True), \
              patch("core.enricher.download_image", return_value=True), \
-             patch("core.enricher._write_extrafanart", return_value=mock_written_uris), \
+             patch("core.enricher._write_extrafanart", return_value=ExtrafanartResult(mock_written_uris, len(mock_written_uris), 0)), \
              patch("core.enricher.find_subtitle_files", return_value=[]):
             mock_repo = MagicMock()
             mock_existing = MagicMock()
@@ -211,13 +212,16 @@ class TestFetchSamplesOnly:
         search_result=_SENTINEL,
         write_count: int = 0,
         sample_images=None,
+        skipped_count: int = 0,
     ):
         """Helper：執行 fetch_samples_only 並回傳 (result, mock_repo)
 
         write_count: 模擬成功下載的張數；_write_extrafanart mock 回傳對應長度的
                      local file:/// URIs list（新 return type）。
+        skipped_count: 模擬因既有檔而跳過的張數（uris 含 downloaded+skipped）。
         """
         from unittest.mock import patch, MagicMock
+        from core.enricher import ExtrafanartResult
         if sample_images is None:
             sample_images = ["http://example.com/s1.jpg"]
         if search_result is self._SENTINEL:
@@ -237,12 +241,13 @@ class TestFetchSamplesOnly:
             }
         mock_written_uris = [
             to_file_uri(f"/tmp/SONE-205/extrafanart/fanart{i+1}.jpg")
-            for i in range(write_count)
+            for i in range(write_count + skipped_count)
         ]
         with patch("os.path.exists", return_value=file_exists), \
              patch("core.enricher.VideoRepository") as mock_repo_cls, \
              patch("core.enricher.search_jav", return_value=search_result) as mock_search, \
-             patch("core.enricher._write_extrafanart", return_value=mock_written_uris) as mock_write:
+             patch("core.enricher._write_extrafanart",
+                   return_value=ExtrafanartResult(mock_written_uris, write_count, skipped_count)) as mock_write:
             mock_repo = MagicMock()
             mock_repo_cls.return_value = mock_repo
             from core.enricher import fetch_samples_only
@@ -335,3 +340,17 @@ class TestFetchSamplesOnly:
         # 沒有任何 http:// / https:// 遠端 URL 寫入 DB
         assert not any(s.startswith("http://") or s.startswith("https://") for s in samples_arg), \
             f"[Codex P1] scraper URL 不得入庫: {samples_arg}"
+
+    def test_all_existing_skipped_uris_nonempty_but_downloaded_zero(self):
+        """全部既有檔被跳過 → extrafanart_written=0，但 DB 仍收到磁碟真相 uris。"""
+        result, mock_repo, _search, _write = self._run_fetch(
+            file_exists=True,
+            sample_images=["http://x/s1.jpg", "http://x/s2.jpg"],
+            write_count=0,
+            skipped_count=2,
+        )
+        assert result.extrafanart_written == 0
+        mock_repo.update_sample_images.assert_called_once()
+        samples_arg = mock_repo.update_sample_images.call_args[0][1]
+        assert len(samples_arg) == 2
+        assert result.success is True

@@ -482,11 +482,16 @@ def mock_actress_profile():
     return mock_fn
 
 
-def test_search_api_actress_with_profile(client, mock_search_actress, mock_actress_profile):
+def test_search_api_actress_with_profile(
+    client, mock_search_actress, mock_actress_profile, tmp_path
+):
     """測試女優搜尋 API（有 actress_profile）"""
+    # web/routers/search.py:_fetch_actress_profile_with_db 無條件呼叫 init_db() +
+    # AliasRepository().resolve(top_actor)，未 mock 前兩者都連上 output/openaver.db。
     with patch('web.routers.search.search_actress', side_effect=mock_search_actress), \
          patch('core.scrapers.actress.orchestrator.get_actress_profile', side_effect=mock_actress_profile), \
-         patch('core.database.ActressRepository.get_by_name', return_value=None):
+         patch('core.database.ActressRepository.get_by_name', return_value=None), \
+         patch('core.database.connection.get_db_path', return_value=tmp_path / "test.db"):
 
         resp = client.get("/api/search?q=桜空もも&mode=actress")
         data = resp.json()
@@ -561,15 +566,17 @@ def test_search_api_few_results_no_profile(client):
         assert data['actress_profile'] is None  # < 3 筆不觸發
 
 
-def test_search_api_graceful_failure(client, mock_search_actress):
+def test_search_api_graceful_failure(client, mock_search_actress, tmp_path):
     """測試雙來源失敗時不影響搜尋結果"""
     from core.scrapers.actress.orchestrator import ProfileResult
 
     # Mock 雙來源都失敗（orchestrator 回傳 ProfileResult(data=None)）
+    # 同上一支理由：init_db()/AliasRepository().resolve() 未 mock 前連真實 DB。
     with patch('web.routers.search.search_actress', side_effect=mock_search_actress), \
          patch('core.scrapers.actress.orchestrator.get_actress_profile',
                return_value=ProfileResult(data=None, timed_out=False)), \
-         patch('core.database.ActressRepository.get_by_name', return_value=None):
+         patch('core.database.ActressRepository.get_by_name', return_value=None), \
+         patch('core.database.connection.get_db_path', return_value=tmp_path / "test.db"):
 
         resp = client.get("/api/search?q=桜空もも&mode=actress")
         data = resp.json()
@@ -581,12 +588,17 @@ def test_search_api_graceful_failure(client, mock_search_actress):
         assert data['data'][0]['number'] == 'SONE-205'
 
 
-def test_sse_includes_actress_profile(client, mock_search_actress, mock_actress_profile):
+def test_sse_includes_actress_profile(
+    client, mock_search_actress, mock_actress_profile, tmp_path
+):
     """SSE result event 應包含 actress_profile"""
+    # AliasRepository.resolve 已 mock，但 _fetch_actress_profile_with_db 開頭的
+    # init_db() 無條件執行，未 mock 前仍連上 output/openaver.db。
     with patch('web.routers.search.smart_search', side_effect=mock_search_actress), \
          patch('core.scrapers.actress.orchestrator.get_actress_profile', side_effect=mock_actress_profile), \
          patch('core.database.ActressRepository.get_by_name', return_value=None), \
-         patch('core.database.AliasRepository.resolve', side_effect=lambda n: {n}):
+         patch('core.database.AliasRepository.resolve', side_effect=lambda n: {n}), \
+         patch('core.database.connection.get_db_path', return_value=tmp_path / "test.db"):
 
         response = client.get('/api/search/stream?q=桜空もも')
 
@@ -960,7 +972,7 @@ def test_get_actress_profile_gfriends_only():
 # Router makers 傳遞測試
 # ============================================================================
 
-def test_search_api_passes_makers_to_profile(client):
+def test_search_api_passes_makers_to_profile(client, tmp_path):
     """REST /api/search 路徑：_extract_top_makers 的結果應傳給 get_actress_profile"""
     from core.scrapers.actress.orchestrator import ProfileResult
 
@@ -978,9 +990,11 @@ def test_search_api_passes_makers_to_profile(client):
     }, timed_out=False))
 
     # Patch smart_search in the router's own namespace (it's imported at module load time)
+    # init_db()/AliasRepository().resolve() 未 mock 前連上 output/openaver.db。
     with patch('web.routers.search.smart_search', side_effect=mock_smart_search), \
          patch('core.scrapers.actress.orchestrator.get_actress_profile', mock_profile), \
-         patch('core.database.ActressRepository.get_by_name', return_value=None):
+         patch('core.database.ActressRepository.get_by_name', return_value=None), \
+         patch('core.database.connection.get_db_path', return_value=tmp_path / "test.db"):
 
         resp = client.get("/api/search?q=桜空もも")
         data = resp.json()
@@ -997,7 +1011,7 @@ def test_search_api_passes_makers_to_profile(client):
         assert 'S1' in makers_arg
 
 
-def test_sse_passes_makers_to_profile(client):
+def test_sse_passes_makers_to_profile(client, tmp_path):
     """SSE /api/search/stream 路徑：_extract_top_makers 的結果應傳給 get_actress_profile"""
     from core.scrapers.actress.orchestrator import ProfileResult
 
@@ -1014,9 +1028,11 @@ def test_sse_passes_makers_to_profile(client):
         'backdrop': 'https://graphis.ne.jp/model.jpg',
     }, timed_out=False))
 
+    # init_db()/AliasRepository().resolve() 未 mock 前連上 output/openaver.db。
     with patch('web.routers.search.smart_search', side_effect=mock_smart_search), \
          patch('core.scrapers.actress.orchestrator.get_actress_profile', mock_profile), \
-         patch('core.database.ActressRepository.get_by_name', return_value=None):
+         patch('core.database.ActressRepository.get_by_name', return_value=None), \
+         patch('core.database.connection.get_db_path', return_value=tmp_path / "test.db"):
 
         response = client.get('/api/search/stream?q=桜空もも')
 

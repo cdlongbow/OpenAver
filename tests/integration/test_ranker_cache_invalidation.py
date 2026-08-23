@@ -8,7 +8,7 @@ SimilarRankerCache.get() returns a freshly-built instance (identity check).
 from __future__ import annotations
 
 import pytest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -61,10 +61,24 @@ def _make_corrupted_video(idx: int) -> Video:
 
 @pytest.fixture(autouse=True)
 def reset_cache():
-    """Ensure cache is clean before and after each test."""
+    """Ensure cache is clean before and after each test.
+
+    SimilarRanker.__init__ internally calls canonicalize(), whose
+    _load_merged_map() lazy-loads core.database.TagAliasRepository and, on a
+    cold module-level cache, connects to the real output/openaver.db (見
+    tests/unit/test_similar_canonicalize.py 的 isolate_canonicalize_cache 同一
+    手法；tests/unit/test_ranker_cache.py 的 reset_cache 已套用過同一修法）。
+    """
+    from core.similar.canonicalize import _invalidate_cache
+
     SimilarRankerCache._instance = None
-    yield
+    _invalidate_cache()
+    mock_alias_repo = MagicMock()
+    mock_alias_repo.get_all.return_value = []
+    with patch("core.database.TagAliasRepository", return_value=mock_alias_repo):
+        yield
     SimilarRankerCache._instance = None
+    _invalidate_cache()
 
 
 @pytest.fixture
