@@ -3518,3 +3518,86 @@ class TestEnrichSinglePreservesOriginalTitle:
         assert nfo_file.exists(), "NFO 應被寫出"
         root = ET.parse(nfo_file).getroot()
         assert root.findtext("originaltitle") == "既存の原題"
+
+
+# ── TASK-127c-T1: 既有劇照永不被覆蓋 ＋ extrafanart_written 只算本次下載 ─────
+
+class TestExistingExtrafanartPreserved:
+    """CD-127c-1 / CD-127c-2：直呼 fetch_samples_only，真磁碟既有檔不被覆蓋，
+    且 API 欄位 extrafanart_written 只報本次下載數。"""
+
+    _KEEP = b"KEEPME-ORIGINAL-" * 100
+    _FRESH = b"FRESH-DOWNLOAD-" * 100
+
+    def _setup_video(self, tmp_path, existing_indices):
+        video = tmp_path / "SONE-205.mp4"
+        video.write_bytes(b"\x00")
+        ef_dir = tmp_path / "extrafanart"
+        ef_dir.mkdir()
+        kept = {}
+        for i in existing_indices:
+            p = ef_dir / f"fanart{i}.jpg"
+            p.write_bytes(self._KEEP)
+            kept[i] = p
+        return video, ef_dir, kept
+
+    def _fake_download(self, url, dest, fallback_url=""):
+        Path(dest).write_bytes(self._FRESH)
+        return True
+
+    def test_existing_extrafanart_is_preserved(self, tmp_path):
+        video, ef_dir, kept = self._setup_video(tmp_path, existing_indices=[1])
+        fanart1 = kept[1]
+        # 前置自證（BE-TEST-01 §7）
+        assert fanart1.exists() and fanart1.stat().st_size > 0
+        before_bytes = fanart1.read_bytes()
+        before_mtime_ns = fanart1.stat().st_mtime_ns
+
+        search_meta = {
+            "number": "SONE-205",
+            "sample_images": [
+                "http://x/s1.jpg",
+                "http://x/s2.jpg",
+                "http://x/s3.jpg",
+            ],
+            "source": "javbus",
+        }
+
+        with patch("core.enricher.search_jav", return_value=search_meta), \
+             patch("core.enricher.download_image", side_effect=self._fake_download), \
+             patch("core.enricher.VideoRepository"), \
+             patch("core.enricher._db_upsert_samples_only"):
+            from core.enricher import fetch_samples_only
+            fetch_samples_only(file_path=str(video), number="SONE-205")
+
+        assert fanart1.read_bytes() == before_bytes
+        assert fanart1.stat().st_mtime_ns == before_mtime_ns
+        fanart2 = ef_dir / "fanart2.jpg"
+        fanart3 = ef_dir / "fanart3.jpg"
+        assert fanart2.exists() and fanart2.read_bytes() == self._FRESH
+        assert fanart3.exists() and fanart3.read_bytes() == self._FRESH
+
+    def test_extrafanart_written_counts_downloads_not_existing(self, tmp_path):
+        video, ef_dir, kept = self._setup_video(tmp_path, existing_indices=[1, 2])
+        assert kept[1].exists() and kept[1].stat().st_size > 0
+        assert kept[2].exists() and kept[2].stat().st_size > 0
+
+        search_meta = {
+            "number": "SONE-205",
+            "sample_images": ["http://x/s1.jpg", "http://x/s2.jpg"],
+            "source": "javbus",
+        }
+
+        with patch("core.enricher.search_jav", return_value=search_meta), \
+             patch("core.enricher.download_image", side_effect=self._fake_download) as mock_dl, \
+             patch("core.enricher.VideoRepository"), \
+             patch("core.enricher._db_upsert_samples_only") as mock_upsert:
+            from core.enricher import fetch_samples_only
+            result = fetch_samples_only(file_path=str(video), number="SONE-205")
+
+        assert result.extrafanart_written == 0
+        mock_upsert.assert_called_once()
+        uris_arg = mock_upsert.call_args[0][2]
+        assert len(uris_arg) == 2
+        mock_dl.assert_not_called()
+        assert result.success is True

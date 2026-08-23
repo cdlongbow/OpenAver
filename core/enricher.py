@@ -7,7 +7,7 @@ import shutil
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import List, Optional
+from typing import List, NamedTuple, Optional
 
 from core.config import STEM_IMAGE_MODES
 from core.cover_attributes import effective_tags
@@ -397,15 +397,27 @@ def _write_external_images(
     return {"poster": poster_ok, "fanart": fanart_ok}
 
 
+class ExtrafanartResult(NamedTuple):
+    """`_write_extrafanart` 的三個回傳值（CD-127c-2）。
+
+    uris:             磁碟真相（**含本次跳過的既有檔**）→ 餵 DB sample_images
+    downloaded:       本次真的下載成功幾格 → 餵 EnrichResult.extrafanart_written
+    skipped_existing: 因既有檔而跳過幾格 → 只進 log，不進 API
+    """
+    uris: List[str]
+    downloaded: int
+    skipped_existing: int
+
+
 def _write_extrafanart(
     fs_path: str,
     sample_images: List[str],
     write_extrafanart: bool,
     path_mappings: dict = None,
     preview_sample_images: List[str] = None,
-) -> List[str]:
+) -> ExtrafanartResult:
     if not write_extrafanart or not sample_images:
-        return []
+        return ExtrafanartResult([], 0, 0)
 
     parent = Path(fs_path).parent
     extrafanart_dir = parent / "extrafanart"
@@ -414,9 +426,17 @@ def _write_extrafanart(
     # CD-126-2：逐張配對用 index，**不用裸 zip()**——zip 在長度不等時會靜默截斷，
     # 等於少下載幾張圖。長度不等的正確語意是「那幾格沒有代理」，不是「少下載」。
     previews = preview_sample_images or []
-    written_uris: List[str] = []
+    uris: List[str] = []
+    downloaded = 0
+    skipped_existing = 0
     for i, url in enumerate(sample_images):
         dest = str(extrafanart_dir / f"fanart{i+1}.jpg")
+        # CD-127c-1：既有劇照永遠不被程式覆蓋。跳過的那格仍要 append——
+        # uris 是「磁碟真相」，少一格會讓 _db_upsert 把那張劇照從 DB 洗掉。
+        if os.path.exists(dest):
+            uris.append(to_file_uri(dest, path_mappings))
+            skipped_existing += 1
+            continue
         fallback = previews[i] if i < len(previews) else ""
         try:
             # 同 _write_cover：preview 為空時不傳 kwarg（AC-5 逐字元相同）
@@ -426,10 +446,11 @@ def _write_extrafanart(
                 else download_image(url, dest)
             )
             if ok:
-                written_uris.append(to_file_uri(dest, path_mappings))
+                uris.append(to_file_uri(dest, path_mappings))
+                downloaded += 1
         except Exception as e:
             logger.warning("extrafanart %d 下載失敗: %s", i + 1, e)
-    return written_uris
+    return ExtrafanartResult(uris, downloaded, skipped_existing)
 
 
 def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes go via _db_upsert → repo.upsert and via repo.update_tags_if_changed — both already invalidate)
@@ -615,14 +636,14 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
             preview_cover_url=meta.get("preview_cover_url", ""),
         )
 
-    written_uris = _write_extrafanart(
+    extrafanart_res = _write_extrafanart(
         fs_path=fs_path,
         sample_images=meta.get("sample_images", []),
         write_extrafanart=write_extrafanart,
         path_mappings=path_mappings,
         preview_sample_images=meta.get("preview_sample_images", []),
     )
-    extrafanart_written = len(written_uris)
+    extrafanart_written = extrafanart_res.downloaded
 
     # DB upsert 在寫檔後執行，才能知道本地封面路徑
     # db_to_sidecar 不打 scraper 也不更新 DB（metadata 不變）
@@ -641,7 +662,8 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
         # wrapper callsite decision point; helper itself: enforced at callsites
         # db-ns-ok: fs_path_for_db passed through to _db_upsert's internal primitive sink
         _db_upsert(repo, number, fs_path_for_db, meta, local_cover_path=local_cover,
-                   nfo_mtime=nfo_mtime, written_uris=written_uris, path_mappings=path_mappings)
+                   nfo_mtime=nfo_mtime, written_uris=extrafanart_res.uris,
+                   path_mappings=path_mappings)
 
         # 重刮 focal trigger（TASK-98b-T2 + 99a-T1b CD-4）：只在「實際寫入新封面內容」
         # （cover_written=True）時才作廢舊手動焦點、再排新的背景偵測；reset 必須在
@@ -837,21 +859,25 @@ def fetch_samples_only(
         return _empty
 
     sample_images = meta.get("sample_images", [])
-    written_uris = _write_extrafanart(
+    extrafanart_res = _write_extrafanart(
         fs_path, sample_images, write_extrafanart=True, path_mappings=path_mappings,
         preview_sample_images=meta.get("preview_sample_images", []),
     )
 
-    if written_uris:
+    if extrafanart_res.uris:                      # ← 既有 gate，語意不變（磁碟真相非空才寫 DB）
         repo = VideoRepository()
         # db-ns-ok: fs_path_for_db, DB round-trip value passed to wrapper sink
-        _db_upsert_samples_only(repo, fs_path_for_db, written_uris)
+        _db_upsert_samples_only(repo, fs_path_for_db, extrafanart_res.uris)
 
-    logger.info("[fetch_samples_only] %s: %d samples downloaded", number, len(written_uris))
+    logger.info(
+        "[fetch_samples_only] %s: %d downloaded / %d skipped-existing / %d on disk",
+        number, extrafanart_res.downloaded, extrafanart_res.skipped_existing,
+        len(extrafanart_res.uris),
+    )
     return enrich_success(
         nfo_written=False,
         cover_written=False,
-        extrafanart_written=len(written_uris),
+        extrafanart_written=extrafanart_res.downloaded,
         fields_filled=[],
         source_used=meta.get("source", ""),
         reason=None,
