@@ -4,8 +4,9 @@
 ——熱重載預設只監看 `.py`、不監看 JSON，而 `core/i18n.py` 的 `load_locale()` 又是
 `@lru_cache` 且無 mtime 檢查。畫面上看起來像 i18n key 沒生效，實際只是需要手動重啟。
 
-⚠️ **本檔的散文不得同時出現 `uvicorn` 與獨立的重載旗標字面**——下面的對帳鎖會把
-自己的說明文字算成第 6 個命中（`RELOAD_RE` 刻意拆成兩段字面就是為了自己不中獎）。
+⚠️ **本檔的散文若同時出現 `uvicorn` 與獨立的重載旗標字面，會被下面的 sweep 掃到**
+——那時它必須也帶著 `--reload-include 'locales/*.json'`，否則 `invalid_flag_lines`
+會紅（`RELOAD_RE` 刻意拆成兩段字面就是為了自己不中獎）。
 127b-T6 改寫本 docstring 時原地踩了一次：全套只紅這一支。
 
 # [lint-guard: pytest-justified] 掃描標的是 run.sh（shell）與四份 Markdown，
@@ -101,10 +102,12 @@ def test_all_tracked_uvicorn_reload_lines_carry_the_flag():
                 if not inc_match or inc_match.group(2) != "locales/*.json":
                     invalid_flag_lines.append(loc_str)
 
-    matched_locations = [loc for loc, _ in matched_lines]
-    assert len(matched_lines) == 5, (
-        f"Expected exactly 5 lines matching uvicorn + reload, but found {len(matched_lines)}:\n"
-        + "\n".join(matched_locations)
+    # ⚠️ 刻意**不釘死基數**：不合規的新增由下面的 invalid_flag_lines 擋住，
+    # 所以 `== N` 只會在「合規的新增」上開火 ＝ 純摩擦（127b-T6 與 0.14.7 pre-merge
+    # 各中過一次）。這裡只確保 sweep 真的有掃到東西（正規式壞掉時會歸零）。
+    assert matched_lines, (
+        "Found no line matching uvicorn + reload in tracked files — "
+        "the sweep regex is probably broken (it should match at least run.sh)."
     )
 
     assert not invalid_flag_lines, (

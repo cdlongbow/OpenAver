@@ -26,7 +26,6 @@ G1／G2 fixture 實例，不受父 session 影響。
 from __future__ import annotations
 
 import os
-import subprocess
 import textwrap
 from pathlib import Path
 
@@ -39,6 +38,15 @@ TESTS_DIR = str(Path(__file__).resolve().parent.parent)
 # `import core...`／`import web...` 要 OPENAVER_ROOT 在 PYTHONPATH；
 # `import _repo_write_guard` 是 tests/ 底下的無 __init__ 頂層模組，要 TESTS_DIR。
 _PYTHONPATH_FOR_SUBSESSION = os.pathsep.join([OPENAVER_ROOT, TESTS_DIR])
+
+#: G1／G2 落地之前的 root conftest，逐字取自 `git show <SHA>:tests/conftest.py`。
+#: SHA 是本 branch 的分支點（`git merge-base main HEAD` 在 branch 上的值）。
+#: ⛔ **不要改成動態解析 branch**：`main` 在 CI 的 shallow checkout 裡不存在（exit 128），
+#: 而且這支 branch merge 進 main 之後 `merge-base main HEAD` 會回 HEAD 本身
+#: ⇒ 取到的是「新」conftest ⇒ 「舊工具 SURVIVED」這條斷言會永久紅。
+#: 基準是一個**歷史事實**，不會變，所以釘成 fixture 才是對的形狀。
+_PRE_G1_CONFTEST_SHA = "37247391423ca479acc4065955c5e793c220ecb0"
+_PRE_G1_CONFTEST_FIXTURE = Path(__file__).resolve().parent.parent / "fixtures" / "conftest_pre_g1.py.txt"
 
 
 def _set_guard_env(monkeypatch, pytester, *, mode: str) -> None:
@@ -71,17 +79,13 @@ def _install_live_conftest(pytester) -> None:
 
 
 def _install_old_conftest(pytester) -> None:
-    """merge-base 版本的 root conftest（那時候還沒有 G1／G2）。⛔ 不用 git
-    checkout：`git show` 只讀取那個版本的檔案內容，不動當前工作樹。
-    """
-    merge_base = subprocess.run(
-        ["git", "merge-base", "main", "HEAD"], cwd=OPENAVER_ROOT,
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
-    old_content = subprocess.run(
-        ["git", "show", f"{merge_base}:tests/conftest.py"], cwd=OPENAVER_ROOT,
-        capture_output=True, text=True, check=True,
-    ).stdout
+    """G1／G2 落地之前的 root conftest（釘死的 fixture，見 `_PRE_G1_CONFTEST_SHA`）。"""
+    old_content = _PRE_G1_CONFTEST_FIXTURE.read_text(encoding="utf-8")
+    # 前置自證（BE-TEST-01 §7：注入若靜默失敗就是假綠）——這份基準必須真的**沒有**守衛，
+    # 否則「舊工具 SURVIVED」證明的就不是我們以為的那件事。
+    assert "repo_write_guard" not in old_content, (
+        f"{_PRE_G1_CONFTEST_FIXTURE} 疑似不是 pre-G1 版本（含 repo_write_guard 字樣）"
+    )
     pytester.makeconftest(old_content)
 
 
@@ -269,7 +273,7 @@ def test_g1_baseexception_does_not_abort_pytest_session(pytester, monkeypatch):
 
 
 class TestAC3OldNewConftestComparison:
-    """AC-3：舊工具（merge-base，沒有 G1／G2）SURVIVED；新工具（本 task 修好的）PASS。
+    """AC-3：舊工具（分支點的 conftest，沒有 G1／G2）SURVIVED；新工具（本 task 修好的）PASS。
 
     ⚠️ CD-127b-4：舊 conftest 抽出後要先自證「它真的跑起來了」——不是自己拼一支
     恆綠的假測試。這裡的自證是：舊 harness 真的在 pytester 的 cwd 建出
