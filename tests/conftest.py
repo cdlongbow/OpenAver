@@ -1,7 +1,9 @@
 import pytest
+import sqlite3
 from pathlib import Path
 import json
 from core import config as core_config
+import _repo_write_guard as _rwg
 
 # ── TASK-102c-T1: focal mock 座標共用常數 ──────────────────────────────
 # 刻意選一個偏離中心、x/y 不對稱的值，讓「focal 平移有沒有生效」的斷言在
@@ -126,5 +128,102 @@ def seed_crop_mode():
         finally:
             conn.close()
     return _seed
+
+
+# ============ TASK-127b-T3：G1／G2 repo-write 守衛（autouse，骨架，預設 report）====
+#
+# 根因（見 feature/127-gotchas-triage/TASK-127b-T3.md「現況分析」）：任何測試只要
+# `patch("core.enricher.VideoRepository")` 而沒設 `mock_repo.db_path`，
+# `repo.db_path` 是 MagicMock → 產品碼在 3 個檔 7 處呼叫 `sqlite3.connect(...)`
+# 前一律先 `str(db_path)`／f-string 化 → 建出檔名為
+# `<MagicMock name='...' id='...'>` 的空 SQLite，寫進 repo 根，`nfo_mtime` 回填
+# 路徑從沒被真的執行過（被 `except Exception` 吞掉）。
+#
+# G1：patch 真正的 sink `sqlite3.connect`（不是 `get_connection` 定義處——見
+# BE-TEST-01 §1／§3，24 個 import landing point 會漂）。判定邏輯是純函式
+# （`tests/_repo_write_guard.py::evaluate_connect`），fixture 只負責轉發＋記錄。
+# G2：比對 repo 根第一層（非遞迴）的檔名集合，抓 G1 萬一漏掉的雜檔。
+#
+# 本 task（T3）預設模式固定 `report`：只記錄不擋，`report` 模式下全套的綠紅
+# 狀態必須與上線前完全相同——這是 DoD 硬性要求，不是這裡順手做到的。
+# T5 才會把 `OPENAVER_REPO_WRITE_GUARD` 預設切成 `fail`。
+
+
+@pytest.fixture(autouse=True)
+def _g1_repo_write_guard(request, monkeypatch, tmp_path_factory):
+    """patch `sqlite3.connect`，白名單制 fail-closed 判定（見 `_repo_write_guard.py`）。
+
+    鏡像操作對稱：用 `monkeypatch.setattr` 掛上去，pytest 保證即使測試中途
+    example/early-return 也會在 teardown 還原——不手動 `patcher.start()`/`stop()`。
+    """
+    mode = _rwg.get_mode()
+    if mode == _rwg.MODE_OFF:
+        yield
+        return
+
+    repo_root = _rwg.get_repo_root()
+    tmp_roots = _rwg.get_tmp_roots()
+    basetemp = tmp_path_factory.getbasetemp()
+    nodeid = request.node.nodeid
+    has_marker = request.node.get_closest_marker(_rwg.ALLOW_REAL_DB_MARKER) is not None
+    original_connect = sqlite3.connect
+
+    def _g1_wrapper(*args, **kwargs):
+        database = args[0] if args else kwargs.get("database")
+        uri = kwargs.get("uri", False)
+        decision = _rwg.evaluate_connect(
+            database, uri,
+            repo_root=repo_root, tmp_roots=tmp_roots, basetemp=basetemp,
+        )
+        if not decision.allowed:
+            record = _rwg.format_g1_record(nodeid, decision, allowed_by_marker=has_marker)
+            _rwg.append_report_record(record)
+            if mode == _rwg.MODE_FAIL and not has_marker:
+                raise AssertionError(
+                    f"[repo_write_guard/G1] 拒絕的 sqlite3.connect 呼叫："
+                    f"nodeid={nodeid} reason={decision.case} "
+                    f"raw={decision.raw_repr} resolved={decision.resolved}"
+                )
+        return original_connect(*args, **kwargs)
+
+    _g1_wrapper.__openaver_g1_wrapper__ = True
+    monkeypatch.setattr(sqlite3, "connect", _g1_wrapper)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _g2_repo_root_snapshot(request):
+    """比對 repo 根第一層（非遞迴）快照，抓測試期間長出來的雜檔。
+
+    雪崩防護：`before` 在**每一支測試**的 setup 期現掃現拿（不是掛一份全 session
+    共用的可變 baseline），所以某支測試留下的雜檔只會被算到那一支頭上——後面的
+    測試在它自己的 setup 期掃到時，那個檔案已經是「本來就在」的一部分。
+    """
+    mode = _rwg.get_mode()
+    if mode == _rwg.MODE_OFF:
+        yield
+        return
+
+    repo_root = _rwg.get_repo_root()
+    nodeid = request.node.nodeid
+
+    # patterns=None（預設）→ 走 `_cached_compiled_rules` 快取，同一個 repo_root
+    # 只讀＋編譯一次 .gitignore，不隨每支測試的 setup/teardown 重跑磁碟 I/O
+    # ＋線性 fnmatch 掃描（DoD「耗時增幅 < 5%」量到超標的主因，見該函式註解）。
+    before = _rwg.scan_repo_root_first_level(repo_root)
+    _rwg.require_nonzero_baseline(before, repo_root)  # BE-TEST-05：掃到 0 筆不是「乾淨」
+
+    yield
+
+    after = _rwg.scan_repo_root_first_level(repo_root)
+    new_entries = after - before
+    if new_entries:
+        record = _rwg.format_g2_record(nodeid, new_entries)
+        _rwg.append_report_record(record)
+        if mode == _rwg.MODE_FAIL:
+            raise AssertionError(
+                f"[repo_write_guard/G2] repo 根第一層長出新檔案："
+                f"nodeid={nodeid} new_entries={sorted(new_entries)}"
+            )
 
 
