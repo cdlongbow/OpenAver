@@ -251,8 +251,17 @@ def _g1_repo_write_guard(request, monkeypatch, tmp_path_factory):
                     f"[repo_write_guard/G1] 拒絕的 sqlite3.connect 呼叫："
                     f"nodeid={nodeid} reason={decision.case} "
                     f"raw={decision.raw_repr} resolved={decision.resolved}\n"
-                    "怎麼修：見 feature/127-gotchas-triage/TASK-127b-T4.md"
-                    "「既有 patch 慣例的詞彙表」。"
+                    "怎麼修（四種既有慣例，挑對得上的那個）：\n"
+                    "  1. patch 使用端的 `get_db_path`（**不是定義端**——24 個 import "
+                    "landing point 會漂）：`patch(\"<被測模組>.get_db_path\", "
+                    "lambda: tmp_path / \"x.db\")`\n"
+                    "  2. 用 mock repo 時**明確設** `mock_repo.db_path = \":memory:\"`"
+                    "（漏設 ⇒ 產品碼 `str(MagicMock)` 會拿 repr 當檔名）\n"
+                    "  3. module-level lazy 單例（`core.access_auth._snapshot`、"
+                    "`core.similar.canonicalize._merged_alias_map`）要用 **fixture 形狀**"
+                    "前後各清一次，不能只清一邊\n"
+                    "  4. 這支測試**真的**需要碰真實 DB ⇒ 掛 "
+                    "`@pytest.mark.allow_real_db`（會照樣記進 report，只是不擋）"
                 )
         return original_connect(*args, **kwargs)
 
@@ -281,8 +290,8 @@ def _g1_repo_write_guard(request, monkeypatch, tmp_path_factory):
                 f"{len(accumulator)} 筆違規，但 setup／call 兩個階段都沒有因此"
                 "失敗——代表 inline 拋出的 RepoWriteGuardViolation 在某處被"
                 f"`except BaseException` 吞掉了。records={accumulator.records}\n"
-                "怎麼修：見 feature/127-gotchas-triage/TASK-127b-T4.md"
-                "「既有 patch 慣例的詞彙表」。"
+                "先修那個 `except BaseException`（DB 路徑上不該有），"
+                "或替這支測試掛 `@pytest.mark.allow_real_db`。"
             )
 
 
@@ -324,9 +333,10 @@ def _g2_repo_root_snapshot(request):
                 f"[repo_write_guard/G2] repo 根第一層長出新檔案："
                 f"nodeid={nodeid} new_entries={sorted(new_entries)}\n"
                 "若你同時在跑別的會寫 repo 根的 process，這可能是誤報"
-                "（見 TASK-127b-T5.md「四個 T4 交下來的硬性輸入 ④」）。\n"
-                "怎麼修：見 feature/127-gotchas-triage/TASK-127b-T4.md"
-                "「既有 patch 慣例的詞彙表」。"
+                "——G2 比對的是 repo 根第一層的快照，抓不出是哪個 process 寫的。\n"
+                "怎麼修：讓那個寫入落到 `tmp_path` 底下。若檔名長得像 "
+                "`<MagicMock ...>`，成因是某個 mock repo 沒設 `db_path`，"
+                "產品碼 `str()` 之後拿 repr 當了檔名。"
             )
 
 
