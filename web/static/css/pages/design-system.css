@@ -1030,6 +1030,7 @@
 .btn.state-active {
     transform: translateY(0) scale(0.98);
     /* §2 dual-layer: inset 改符合 Fluent dual-layer 規格 */
+    /* stylelint-disable-next-line declaration-property-value-disallowed-list -- §6 fail-sample: deliberate raw Fluent dual-layer inset values; no inset shadow token exists (all --fluent-shadow-* are outer drop shadows), 2026-08-23 */
     box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.08), inset 0 2px 4px rgba(0, 0, 0, 0.15);
 }
 
@@ -2806,7 +2807,11 @@
 /* ── Overlay swatch: fill-gradient + blur ── */
 [data-theme="dim"] .ds-fm-swatch--overlay {
     background-color: oklch(0.18 0.025 258 / 0.72); /* WKWebView fallback: gradient mid-point */
-    background: var(--glass-overlay-fill-gradient);
+    background-image: var(--glass-overlay-fill-gradient);
+    /* 中和基底 .ds-fm-swatch 的棋盤格 tiling（0 0 / 12px 12px）：
+       原本的 background shorthand 會一併重設這兩個 longhand，改成 background-image 之後不會 */
+    background-position: 0% 0%;
+    background-size: auto;
     -webkit-backdrop-filter: blur(var(--fluent-blur)) saturate(var(--glass-overlay-saturate));
     backdrop-filter: blur(var(--fluent-blur)) saturate(var(--glass-overlay-saturate));
     /* Overlay border uses border-gradient technique (padding-box/border-box) */
