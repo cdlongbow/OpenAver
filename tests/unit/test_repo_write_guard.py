@@ -410,3 +410,114 @@ class TestNestedPatchRestoresWrapper:
             "巢狀 with patch(...) 離開後,sqlite3.connect 應還原回我們的 wrapper,"
             "不是原生 sqlite3.connect——這是 5 支既有測試安全共存的前提"
         )
+
+
+class TestWrapperArgumentBinding:
+    """Codex PR review 2026-08-24 P2：wrapper 的**取參**這一層在 T4 之前零覆蓋。
+
+    `TestClassifyMatrix` 那 12 列全部直呼 `evaluate_connect()`，繞過了
+    `conftest._g1_wrapper` 把 `(*args, **kwargs)` 綁成 `(database, uri)` 的那一步；
+    `TestNestedPatchRestoresWrapper` 走 wrapper 層，但只驗身分還原、不驗取參。
+    ⇒ 「wrapper 讀錯參數」這一整類 bug 沒有任何測試在守。
+
+    🔴 **本類別的斷言全部走真正被 patch 的 `sqlite3.connect`**（也就是 conftest
+    掛上去的 wrapper 本人），不准改成直呼 `evaluate_connect()`——那樣就退回原本
+    的缺口了。
+
+    ### 為什麼用「report 有沒有記一筆」當 oracle 而不是「有沒有拋例外」
+
+    autouse fixture 在 setup 期就把 `mode` 讀進 closure，測試體內再
+    `monkeypatch.setenv(ENV_MODE, "fail")` 對已建好的 wrapper 無效
+    （會變成一支無論修法在不在都綠的假測試）。改成攔 `append_report_record`：
+    `report` 與 `fail` 兩種模式下「被拒絕 → 一定會記一筆」都成立。
+    """
+
+    @pytest.fixture
+    def captured_records(self, monkeypatch):
+        """攔 `_rwg.append_report_record`。
+
+        conftest 的 wrapper 是在**呼叫當下**做 `_rwg.append_report_record(...)`
+        的屬性查找，所以 monkeypatch 模組屬性攔得到（不是 closure 裡的舊參照）。
+        """
+        records: list = []
+        monkeypatch.setattr(
+            rwg, "append_report_record",
+            lambda record, report_path=None: records.append(record),
+        )
+        return records
+
+    @pytest.mark.skipif(
+        os.environ.get(rwg.ENV_MODE, rwg.DEFAULT_MODE) == rwg.MODE_OFF,
+        reason="G1 在 off 模式下不掛 wrapper，此測試無意義",
+    )
+    def test_positional_uri_flag_is_bound(self, captured_records, tmp_path):
+        """`uri` 用**第 8 個位置參數**傳（合法簽名）時，wrapper 必須讀得到。
+
+        oracle 的分歧點：
+          - 讀得到 `uri=True` → `evaluate_connect` 解析 URI 拿到絕對 tmp 路徑
+            → `row05_uri_tmp_path` **放行**，report 零筆。
+          - 讀不到（舊寫法 `kwargs.get("uri", False)`）→ 整串
+            `file:/tmp/.../x.db?mode=rwc` 當一般路徑，`os.path.isabs()` 為 False
+            → `row08_relative_path` **拒絕**，report 記一筆 ⇒ 本測試紅。
+        """
+        assert getattr(sqlite3.connect, "__openaver_g1_wrapper__", False) is True
+
+        db = tmp_path / "positional_uri.db"
+        conn = sqlite3.connect(
+            f"file:{db}?mode=rwc",
+            5.0, 0, "", True, sqlite3.Connection, 128,
+            True,  # ← uri，第 8 個位置參數
+        )
+        conn.close()
+
+        assert captured_records == [], (
+            "wrapper 沒讀到位置傳入的 uri=True ⇒ 合法的 tmp URI 被誤判成 "
+            f"row08 相對路徑而拒絕（假紅）。實際記到：{captured_records}"
+        )
+
+    @pytest.mark.skipif(
+        os.environ.get(rwg.ENV_MODE, rwg.DEFAULT_MODE) == rwg.MODE_OFF,
+        reason="G1 在 off 模式下不掛 wrapper，此測試無意義",
+    )
+    def test_keyword_uri_flag_still_bound(self, captured_records, tmp_path):
+        """關鍵字形式（全庫 84 個呼叫點實際採用的唯一形狀）不得因修法而回歸。"""
+        db = tmp_path / "keyword_uri.db"
+        conn = sqlite3.connect(f"file:{db}?mode=rwc", uri=True)
+        conn.close()
+        assert captured_records == [], f"關鍵字 uri=True 被誤拒：{captured_records}"
+
+    @pytest.mark.skipif(
+        os.environ.get(rwg.ENV_MODE, rwg.DEFAULT_MODE) == rwg.MODE_OFF,
+        reason="G1 在 off 模式下不掛 wrapper，此測試無意義",
+    )
+    def test_keyword_database_is_bound(self, captured_records, tmp_path):
+        """`database` 也可以用關鍵字傳；綁定表不得把它漏掉。"""
+        conn = sqlite3.connect(database=str(tmp_path / "kw_database.db"))
+        conn.close()
+        assert captured_records == [], f"關鍵字 database 被誤拒：{captured_records}"
+
+    @pytest.mark.skipif(
+        os.environ.get(rwg.ENV_MODE, rwg.DEFAULT_MODE) == rwg.MODE_OFF,
+        reason="G1 在 off 模式下不掛 wrapper，此測試無意義",
+    )
+    def test_positional_uri_false_still_rejects_repo_relative(self, captured_records):
+        """反向鎖：綁定修好之後**不能反過來變成放行機**。
+
+        位置傳 `uri=False` ＋ repo 根相對路徑 → 仍須落 `row08` 被拒。
+        （`report` 模式下只記錄不擋，所以這裡不會真的建出檔案——
+        `evaluate_connect` 拒絕後 wrapper 仍會轉發，故用 `:memory:` 之外
+        不會落地的形狀：連線本身不建立，只斷言判定結果。）
+        """
+        rel = "__rwg_no_such_dir__/relative.db"
+        assert not Path(rel).parent.exists(), (
+            "這支測試靠『父目錄不存在 ⇒ sqlite 建不出檔』來保證不在 repo 根落地，"
+            f"{rel} 的父目錄居然存在"
+        )
+        before = len(captured_records)
+        with pytest.raises(sqlite3.OperationalError):
+            # report 模式下 wrapper 只記錄、仍轉發 ⇒ 由 sqlite 自己拒絕建檔
+            sqlite3.connect(rel, 5.0, 0, "", True, sqlite3.Connection, 128, False)
+
+        new_records = captured_records[before:]
+        assert len(new_records) == 1, f"相對路徑應被記一筆 row08，實際 {new_records}"
+        assert new_records[0]["reason"] == "row08_relative_path", new_records[0]

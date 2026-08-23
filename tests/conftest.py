@@ -149,6 +149,26 @@ def seed_crop_mode():
 # T5 才會把 `OPENAVER_REPO_WRITE_GUARD` 預設切成 `fail`。
 
 
+# `sqlite3.connect` 的位置參數順序（Argument Clinic 產生的 `__text_signature__`）：
+#   (database, timeout, detect_types, isolation_level, check_same_thread,
+#    factory, cached_statements, uri, *, autocommit)
+# ⇒ **`uri` 是合法的第 8 個位置參數**（`autocommit` 才是 keyword-only）。
+#
+# 🔴 不要改用 `inspect.signature(sqlite3.connect).bind(...)`：它是 builtin，
+# `inspect` 解不動 `autocommit=sqlite3.LEGACY_TRANSACTION_CONTROL` 這個預設值，
+# 實測直接 `ValueError: builtin has invalid signature` ⇒ 每一次 connect 都會炸。
+# 手動維護這張表只讀不算，是安全的做法。
+#
+# 漏讀位置傳入的 `uri` 的後果是**假紅不是漏放**：`evaluate_connect()` 會把
+# `file:/tmp/x.db?mode=rwc` 當成相對路徑（`os.path.isabs("file:/...")` 為 False）
+# ⇒ 本該 row05 放行的落成 row08 拒絕。`fail` 模式下那支測試會無故變紅。
+# 回歸鎖：`tests/unit/test_repo_write_guard.py::TestWrapperArgumentBinding`。
+_CONNECT_POSITIONAL_PARAMS = (
+    "database", "timeout", "detect_types", "isolation_level",
+    "check_same_thread", "factory", "cached_statements", "uri",
+)
+
+
 @pytest.fixture(autouse=True)
 def _g1_repo_write_guard(request, monkeypatch, tmp_path_factory):
     """patch `sqlite3.connect`，白名單制 fail-closed 判定（見 `_repo_write_guard.py`）。
@@ -169,8 +189,10 @@ def _g1_repo_write_guard(request, monkeypatch, tmp_path_factory):
     original_connect = sqlite3.connect
 
     def _g1_wrapper(*args, **kwargs):
-        database = args[0] if args else kwargs.get("database")
-        uri = kwargs.get("uri", False)
+        bound = dict(zip(_CONNECT_POSITIONAL_PARAMS, args))
+        bound.update(kwargs)
+        database = bound.get("database")
+        uri = bound.get("uri", False)
         decision = _rwg.evaluate_connect(
             database, uri,
             repo_root=repo_root, tmp_roots=tmp_roots, basetemp=basetemp,
