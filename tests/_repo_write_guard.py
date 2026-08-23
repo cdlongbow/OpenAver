@@ -516,8 +516,13 @@ def append_report_record(record: dict, report_path: Optional[Path] = None) -> No
       ② **第一次失敗時對 stderr 印一次醒目告警**（不是每次都印，避免洗版）
 
     ⚠️ **這裡吞掉的只有「記錄」這個動作，不是「判定」。**
-    `fail` 模式的 `AssertionError` 由 fixture 獨立拋出，不經過這支
-    ⇒ 報告寫不進去**不會**讓真違規被放過。
+    `fail` 模式拋的是 `RepoWriteGuardViolation`（**`BaseException` 的子類**，見上），
+    由 fixture 獨立拋出、不經過這支 ⇒ 報告寫不進去**不會**讓真違規被放過。
+
+    🔴 **不要把那個型別「對齊」成 `AssertionError` 或任何 `Exception` 子類**——
+    本 docstring 上一版就是寫 `AssertionError`（Codex review 2026-08-24 抓到）。
+    照那句去改就會讓守衛重新被 `core/enricher.py:719` 那種 broad `except Exception`
+    吞掉，**而全套測試照樣全綠**——那正是 T3 交出去、T4 才發現的假綠。
     """
     try:
         path = report_path if report_path is not None else get_report_path()
