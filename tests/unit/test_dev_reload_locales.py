@@ -1,4 +1,12 @@
-"""#7 的兩支守衛：dev server 的 locale hot-reload 旗標（BE-ENV-07 / BE-I18N-01 / FE-I18N-01）。
+"""#7 的兩支守衛：dev server 的 locale hot-reload 旗標。
+
+沒有這個旗標時：改了 `locales/*.json` 之後，長跑中的 dev server 會一直渲染舊字
+——熱重載預設只監看 `.py`、不監看 JSON，而 `core/i18n.py` 的 `load_locale()` 又是
+`@lru_cache` 且無 mtime 檢查。畫面上看起來像 i18n key 沒生效，實際只是需要手動重啟。
+
+⚠️ **本檔的散文不得同時出現 `uvicorn` 與獨立的重載旗標字面**——下面的對帳鎖會把
+自己的說明文字算成第 6 個命中（`RELOAD_RE` 刻意拆成兩段字面就是為了自己不中獎）。
+127b-T6 改寫本 docstring 時原地踩了一次：全套只紅這一支。
 
 # [lint-guard: pytest-justified] 掃描標的是 run.sh（shell）與四份 Markdown，
 # 不是 HTML/JS/CSS ⇒ 落在 eslint/stylelint/scripts/*.mjs 的射程之外；且對帳鎖與行為鎖

@@ -1175,7 +1175,7 @@ def test_focal_wire_not_called_when_failed(client):
 #
 # patch 組合逐字複製契約表 C `_run`（tests/unit/test_cover_canonical_contract.py
 # :1473-1509）：`core.organizer.requests.get` 是 download_image 的網路邊界；
-# `core.db_inflow.VideoRepository` 必須 patch（BE-TEST-07：`get_db_path()`
+# `core.db_inflow.VideoRepository` 必須 patch（`get_db_path()`
 # 硬編碼 repo-root、不讀 config，漏了這行測試會真的寫進專案
 # `output/openaver.db`，§D #4 最高風險項）。
 

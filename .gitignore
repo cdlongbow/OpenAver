@@ -92,6 +92,8 @@ htmlcov/
 coverage.xml
 
 # 測試 mutation 自驗時，裸 MagicMock() 的 repr 可能被當成檔名寫進 repo 根
-# （見 feature/AI_COLLABORATION/gotchas-backend.md BE-TEST-01 #11）
+# 成因：測試 patch 了 VideoRepository 卻沒設 mock_repo.db_path，產品碼 str() 之後
+# 拿 MagicMock 的 repr 當檔名，在 repo 根建出 4096 bytes 的空 SQLite。
+# 127b-T4 已逐筆清掉、T5 的 conftest 守衛（G1/G2）擋住復發，這兩行留著當最後一道網。
 <MagicMock*
 <Mock*

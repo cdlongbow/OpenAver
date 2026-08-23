@@ -971,7 +971,8 @@ class TestJellyfinExternalManagerGate:
         updated=0，卻先動了磁碟又回 error。這裡直接鎖住「gate 之前零副作用」：
         get_db_path 完全不該被呼叫。
 
-        Codex PR#123 round-3 P2②-a（BE-TEST-01 #11）：原本這裡是裸
+        Codex PR#123 round-3 P2②-a——裸 `MagicMock()`（不設 `return_value`）在 gate 短路時
+        看起來無害，mutation 把 gate 拿掉就會拿 repr 當檔名寫進 repo 根：原本這裡是裸
         `MagicMock()`，沒有設 `return_value`。正常路徑（gate 生效）下
         `assert_not_called()` 綠燈，看起來無害；但 mutation 自驗把 gate 停用時，
         `get_db_path()` 真的被呼叫，回傳一個 auto-spec 的子 mock，其 repr

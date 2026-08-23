@@ -3285,7 +3285,7 @@ def _t5_run(tmp_path, db_name, *, number, external_manager, video_name=None,
             overwrite_existing=False, pre_stage=None, download_content=None,
             capture=None):
     """T5 共用 fixture 骨架：真 DB + patch `VideoRepository` 綁 tmp db
-    （`BE-TEST-07`：`get_db_path()` 硬編碼 repo-root、`temp_config_path` 對它
+    （`get_db_path()` 硬編碼 repo-root、不讀 config ⇒ `temp_config_path` 對它
     無效）+ 真 `search_jav` mock（非空 meta）+ patch `core.enricher.download_image`
     真的落地寫檔（不需要另外 mock `requests.get`：`crop_to_poster` 純讀本地
     檔案，沒有網路呼叫，見 task card §B 讀碼）。"""

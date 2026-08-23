@@ -239,7 +239,8 @@ class RepoRootScanEmptyError(RuntimeError):
 _EXTRA_IGNORE_PATTERNS = [".pytest_cache/"]
 
 # 🔴 例外中的例外：即使 .gitignore 有 `<MagicMock*` / `<Mock*` 這兩行 pattern
-# （見 .gitignore:94-97 ／ BE-TEST-01 §11），G2 一律把它們當硬失敗，不放行。
+# （見 .gitignore:94-97——那兩行 pattern 是為了擋「MagicMock repr 當檔名」而加的），
+# G2 一律把它們當硬失敗，不放行：被 gitignore 蓋住不代表它不該存在。
 _DANGEROUS_LEFTOVER_PREFIXES = ("<MagicMock", "<Mock")
 
 
