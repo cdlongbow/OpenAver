@@ -272,7 +272,7 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 # 開發模式 (Hot Reload)
-uvicorn web.app:app --reload --host 127.0.0.1 --port 8000
+uvicorn web.app:app --reload --reload-include 'locales/*.json' --host 127.0.0.1 --port 8000
 
 # 桌面模式 (Windows)
 python windows/launcher.py
