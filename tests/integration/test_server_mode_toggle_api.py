@@ -19,6 +19,28 @@ from fastapi.testclient import TestClient
 from web.app import app
 
 
+@pytest.fixture(autouse=True)
+def _isolate_access_auth(tmp_path, monkeypatch):
+    """本檔多支測試會先把 config 的 server_mode 設成 true、再用遠端 IP 發請求，
+    於是抵達 `access_gate` middleware 的冷啟動 `ensure_schema()`
+    （`web/app.py:327`）—— 未隔離前那會連上 `output/openaver.db`。
+
+    ⚠️ 本檔在 127b-T4 的前幾輪**看起來是乾淨的**：`report` 模式只報了
+    `test_remote_cannot_enable_server_mode` 一支，因為它先把 `_snapshot` 暖好，
+    後面同路徑的 `test_remote_cannot_disable_server_mode` 就再也不碰 DB 了。
+    ⇒ **整檔一次掃完，不要只修 report 當下列出的那一支。**
+
+    形狀比照 `tests/integration/test_capabilities_auth.py` 的 `auth_db` fixture。
+    """
+    import core.access_auth as access_auth
+
+    monkeypatch.setattr("core.access_auth.get_db_path", lambda: tmp_path / "access.db")
+    access_auth.ensure_schema()
+    access_auth.reset_state_for_tests()
+    yield
+    access_auth.reset_state_for_tests()
+
+
 class TestServerModeToggleAPI:
     """PUT /api/config/general/server_mode 端點 + GET lan-port（TASK-80a-T6b）"""
 

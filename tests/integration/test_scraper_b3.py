@@ -118,9 +118,20 @@ class TestFetchSamplesEndpoint:
         })
         assert resp.status_code == 422
 
-    def test_capabilities_exposes_fetch_samples(self, client):
+    def test_capabilities_exposes_fetch_samples(self, client, tmp_path, monkeypatch):
         """GET /api/capabilities → tools 陣列含 fetch_samples，且 confirmation_required=True"""
-        resp = client.get("/api/capabilities")
+        # 冷啟動 load_snapshot()（core/access_auth.py）未 mock 前會連上 output/openaver.db。
+        # 同手法見 tests/integration/test_capabilities_auth.py 的 auth_db fixture。
+        import core.access_auth as access_auth
+
+        db_path = tmp_path / "access.db"
+        monkeypatch.setattr("core.access_auth.get_db_path", lambda: db_path)
+        access_auth.ensure_schema()
+        access_auth.reset_state_for_tests()
+        try:
+            resp = client.get("/api/capabilities")
+        finally:
+            access_auth.reset_state_for_tests()
         assert resp.status_code == 200
         tools = {t["name"]: t for t in resp.json().get("tools", [])}
         assert "fetch_samples" in tools, "fetch_samples tool 未在 capabilities 中揭露"

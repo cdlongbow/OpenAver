@@ -1,9 +1,32 @@
 import random
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from core.database import Video
 from core.similar.ranker import SimilarRanker, extract_prefix
+
+
+@pytest.fixture(autouse=True)
+def _isolate_canonicalize_cache():
+    """`SimilarRanker` 走 `canonicalize()` → `_load_merged_map()`，module-level
+    單例未命中時會連真實 DB 讀 `TagAliasRepository`。
+
+    本檔在 127b-T4 之前**看起來是乾淨的**——因為別的檔先把 `_merged_alias_map`
+    暖好了。T4 把那些檔一一隔離之後，這裡就露了出來（sonnet review 的 Finding 1
+    逐字點名過本檔會是下一個）。**「report 模式沒報你」不等於「你有隔離」。**
+
+    形狀比照 `test_ranker_cache.py` / `test_similar_api.py` / `test_similar_perf.py`：
+    前後各清一次，整個測試體在 mock 保護內。
+    """
+    from core.similar.canonicalize import _invalidate_cache
+
+    mock_alias_repo = MagicMock()
+    mock_alias_repo.get_all.return_value = []
+    _invalidate_cache()
+    with patch("core.database.TagAliasRepository", return_value=mock_alias_repo):
+        yield
+    _invalidate_cache()
 
 
 def _v(

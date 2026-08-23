@@ -3,6 +3,21 @@ import pytest
 from unittest.mock import patch
 from fastapi.testclient import TestClient
 
+import core.access_auth as access_auth
+
+
+@pytest.fixture(autouse=True)
+def auth_db(tmp_path, monkeypatch):
+    """GET /api/capabilities 冷啟動時會呼叫 load_snapshot()（core/access_auth.py），
+    未 mock 前連上 output/openaver.db。同手法見
+    tests/integration/test_capabilities_auth.py 的 auth_db fixture。"""
+    db_path = tmp_path / "access.db"
+    monkeypatch.setattr("core.access_auth.get_db_path", lambda: db_path)
+    access_auth.ensure_schema()
+    access_auth.reset_state_for_tests()
+    yield db_path
+    access_auth.reset_state_for_tests()
+
 
 @pytest.fixture
 def client():

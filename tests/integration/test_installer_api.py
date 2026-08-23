@@ -190,7 +190,7 @@ def test_trigger_update_case9a_non_loopback_server_mode_off_returns_403(monkeypa
     assert resp.status_code == 403
 
 
-def test_trigger_update_case9b_non_loopback_server_mode_on_returns_403(monkeypatch):
+def test_trigger_update_case9b_non_loopback_server_mode_on_returns_403(monkeypatch, tmp_path):
     """案例9b（本 Phase 新關的 LAN 暴露面）：非 loopback（8.8.8.8）／server_mode=T → 403
     middleware 因 server_mode=True 放行非 loopback 流量後，由端點自己的 loopback
     硬條件擋下。9b 必須顯式把 server_mode 設 True，否則流量根本不會抵達 handler，
@@ -198,6 +198,10 @@ def test_trigger_update_case9b_non_loopback_server_mode_on_returns_403(monkeypat
     monkeypatch.setattr("web.app._is_windows_desktop", lambda: True)
     monkeypatch.setattr("web.app._is_mac_desktop", lambda: False)
     monkeypatch.setattr("web.app.load_config", lambda: {"general": {"server_mode": True}})
+    # server_mode=True 讓非 loopback 流量抵達 access_gate middleware，其冷啟動
+    # `await asyncio.to_thread(ensure_schema)`（web/app.py:327）未 mock 前會連上
+    # output/openaver.db。同手法見 tests/integration/test_capabilities_auth.py。
+    monkeypatch.setattr("core.access_auth.get_db_path", lambda: tmp_path / "access.db")
     client = _non_loopback_client()
     with mock.patch("web.app.subprocess.Popen"):
         resp = client.post(

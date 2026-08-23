@@ -65,6 +65,11 @@ def test_scrape_single_db_sync_status_synced(client):
 
     with (
         patch("web.routers.scraper.organize_file", return_value=_organize_ok()) as _mock_org,
+        # db_sync_status=="synced" 觸發 web/routers/scraper.py:295 的
+        # focal_repo = VideoRepository()（自建，非 core.db_inflow 那個 mock）；
+        # 未 mock 前 focal_repo.get_by_path() 連上 output/openaver.db（見
+        # _real_scrape_focal_fixture 同一 patch target 的既有慣例）。
+        patch("web.routers.scraper.VideoRepository") as MockFocalRepo,
         patch("core.db_inflow.load_config", return_value={
             "gallery": {"directories": ["/tmp"], "path_mappings": {}}
         }),
@@ -73,6 +78,7 @@ def test_scrape_single_db_sync_status_synced(client):
         patch("core.db_inflow.VideoRepository") as MockRepo,
         patch("core.db_inflow.Video") as MockVideo,
     ):
+        MockFocalRepo.return_value.get_by_path.return_value = None
         MockScanner.return_value.scan_file.return_value = video_info
         mock_video = MagicMock()
         mock_video.path = "file:///tmp/ABC-001/ABC-001.mp4"
@@ -159,6 +165,9 @@ def test_scrape_single_video_scanner_receives_path_mappings(client):
 
     with (
         patch("web.routers.scraper.organize_file", return_value=_organize_ok()),
+        # db_sync_status=="synced" 觸發 web/routers/scraper.py:295 的
+        # focal_repo = VideoRepository()（同上一支 test_..._synced 的理由）。
+        patch("web.routers.scraper.VideoRepository") as MockFocalRepo,
         patch("core.db_inflow.load_config", return_value={
             "gallery": {"directories": ["/tmp"], "path_mappings": path_mappings}
         }),
@@ -167,6 +176,7 @@ def test_scrape_single_video_scanner_receives_path_mappings(client):
         patch("core.db_inflow.VideoRepository") as MockRepo,
         patch("core.db_inflow.Video") as MockVideo,
     ):
+        MockFocalRepo.return_value.get_by_path.return_value = None
         MockScanner.return_value.scan_file.return_value = video_info
         mock_video = MagicMock()
         mock_video.path = "file:///tmp/ABC-001/ABC-001.mp4"

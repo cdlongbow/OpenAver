@@ -153,6 +153,11 @@ class TestLibraryActressesEndpoint:
         測試假綠。
         """
         monkeypatch.setattr("core.database.connection.get_db_path", lambda: tmp_db)
+        # `with TestClient(app) as client:` 觸發完整 lifespan startup（web/app.py:84
+        # ensure_schema()）；core.access_auth 是 `from ... import get_db_path` 名稱
+        # 綁定（BE-TEST-01），上面那行 patch 定義端對它無效，未 mock 前連上
+        # output/openaver.db。
+        monkeypatch.setattr("core.access_auth.get_db_path", lambda: tmp_db)
 
         real_get = ActressRepository._get_connection
 

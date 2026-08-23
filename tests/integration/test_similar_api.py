@@ -30,6 +30,25 @@ def _make_test_app() -> FastAPI:
     return app
 
 
+@pytest.fixture(autouse=True)
+def _isolate_canonicalize_alias_repo():
+    """本檔 7 處 `SimilarRanker(corpus)` 建構都會經 canonicalize() 的
+    `_load_merged_map()`：module-level cache 為 None 時 lazy-import
+    core.database.TagAliasRepository 連真實 DB（同手法見
+    tests/unit/test_similar_canonicalize.py 的 isolate_canonicalize_cache／
+    127b-T4 已修正的 test_ranker_cache.py）。集中在檔案層級的 autouse fixture，
+    不逐一 patch 7 個呼叫點，也不是 conftest.py 層的全域機制——僅本檔生效。"""
+    from unittest.mock import MagicMock, patch as _patch
+    from core.similar.canonicalize import _invalidate_cache
+
+    _invalidate_cache()
+    mock_alias_repo = MagicMock()
+    mock_alias_repo.get_all.return_value = []
+    with _patch("core.database.TagAliasRepository", return_value=mock_alias_repo):
+        yield
+    _invalidate_cache()
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

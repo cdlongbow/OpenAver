@@ -1366,6 +1366,12 @@ class TestReadonlyEnrichResultShapeParity:
         )
         mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
         mocker.patch("core.readonly_producer.resolve_ingest_plan", return_value=(None, ("none",)))
+        # meta=None 落入 enrich_one_readonly() 的 not-found 樁列分支
+        # （core/readonly_producer.py:1936-1939 _readonly_stub_not_found），
+        # 會呼叫 repo_factory()（=web.routers.scraper.VideoRepository）做真
+        # insert_if_ignore/update_scrape_attempted_at 寫入。未 mock 前寫進
+        # output/openaver.db（見 REPORT-127b-T3.md §0 的 ABC-001 樁列）。
+        mocker.patch("web.routers.scraper.VideoRepository")
 
         response = client.post("/api/enrich-single", json={
             "file_path": "/tmp/ro_src/ABC-001.mp4",
@@ -3356,7 +3362,9 @@ class TestReadonlyRoutingE2E:
         done = [e for e in events if e["type"] == "done"][0]
         assert done["summary"] == {"total": 2, "success": 2, "failed": 0}
 
-    def test_batch_enrich_readonly_item_no_scrape_when_no_nfo_and_search_fails(self, client, mocker):
+    def test_batch_enrich_readonly_item_no_scrape_when_no_nfo_and_search_fails(
+        self, client, mocker, monkeypatch, tmp_path
+    ):
         """唯讀項無 .nfo 且 search_jav 回 None → reason='not_found'（Codex PR#113
         one-pass alignment，對齊 core.enricher 自己的 not_found reason 值），
         failed_count+=1，不中斷整批（另一唯讀項 stub 省略；此測試聚焦單一唯讀項
@@ -3368,7 +3376,14 @@ class TestReadonlyRoutingE2E:
             },
             "search": {}, "scraper": {},
         }
-        mocker.patch("web.routers.scraper.load_config", return_value=config)
+        # not_found 分支也會落 _readonly_stub_not_found 真寫（同
+        # test_enrich_single_no_meta_has_full_shape 的理由）；本 class 已有現成
+        # 的 self._wire(...) helper 負責把 web.routers.scraper.VideoRepository /
+        # core.readonly_producer.get_db_path 都接到 tmp DB，只是這支測試沒呼叫它
+        # （未 mock 前寫進 output/openaver.db 的 NS-001 樁列，見
+        # REPORT-127b-T3.md §0）。
+        db_path = self._init_db(tmp_path)
+        self._wire(mocker, monkeypatch, config, db_path)
         source_stub = MagicMock()
         source_stub.path = "/tmp/ro_src"
         mocker.patch(
