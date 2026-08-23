@@ -1799,7 +1799,7 @@ class TestEnrichRefreshFullOverwriteGuard:
         """write_nfo=false + write_cover=false + write_extrafanart=true，NFO/cover 皆存在
         → 守衛應擋回 400，enrich_single 未被呼叫。
 
-        extrafanart intent alone 不計入「保證會寫 sidecar」，因為 _write_extrafanart 無 overwrite gate
+        extrafanart intent alone 不計入「保證會寫 sidecar」，因為 _write_extrafanart 只補缺的（既有檔不覆寫）
         且只在 scraper 回 sample_images 才寫；若 scraper 無 samples → 零磁碟寫出但 _db_upsert 照跑
         = DB/磁碟分裂（守衛本要防的）。
         補劇照請改用 /api/scraper/fetch-samples（Codex PR#47 round-2 P2-A revert）。
