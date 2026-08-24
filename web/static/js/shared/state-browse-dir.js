@@ -51,8 +51,13 @@ export function browseDirState() {
         browseDirExpandVideos: false,
         _browseDirOnSelect: null,
         _browseDirNavGen: 0,
+        // 一次 open→select→close 算一個 session。open 與 close 都讓它 +1，
+        // 讓「已經被取消／已經重開」的那次選取，其延遲回應無法再作用於畫面。
+        // （_browseDirNavGen 只管導覽那條路，管不到 selectBrowseDir 的二次請求）
+        _browseDirSessionGen: 0,
 
         openBrowseDir(targetKey, onSelect, { expandVideos = false } = {}) {
+            this._browseDirSessionGen++;
             this.browseDirTargetKey = targetKey;
             this._browseDirOnSelect = onSelect;
             this.browseDirExpandVideos = !!expandVideos;
@@ -63,7 +68,9 @@ export function browseDirState() {
         },
 
         closeBrowseDir() {
+            this._browseDirSessionGen++;
             this.browseDirOpen = false;
+            this.browseDirLoading = false;
             this._browseDirOnSelect = null;
             this.browseDirError = '';
             this.browseDirEntries = [];
@@ -121,6 +128,8 @@ export function browseDirState() {
             const onSelect = this._browseDirOnSelect;
             const targetKey = this.browseDirTargetKey;
             const currentPath = this.browseDirCurrentPath;
+            // 這次選取屬於哪個 session；回應回來時若已經被取消／重開就整條作廢
+            const session = this._browseDirSessionGen;
             if (this.browseDirExpandVideos) {
                 this.browseDirLoading = true;
                 try {
@@ -134,6 +143,9 @@ export function browseDirState() {
                     } catch {
                         json = null;
                     }
+                    // 使用者已經按取消／X／Escape，或已經重開另一個選擇器 → 這次的結果一律不作用：
+                    // 不寫記憶路徑、不呼叫舊 callback、不關掉新開的彈窗
+                    if (session !== this._browseDirSessionGen) return;
                     if (!resp.ok) {
                         this.browseDirError = mapBrowseDirError(json && json.error);
                         return;
@@ -144,9 +156,14 @@ export function browseDirState() {
                     }
                     this.closeBrowseDir();
                 } catch {
+                    if (session !== this._browseDirSessionGen) return;
                     this.browseDirError = mapBrowseDirError(null);
                 } finally {
-                    this.browseDirLoading = false;
+                    // 成功路徑的 closeBrowseDir() 已經把 loading 關掉並讓 session +1，
+                    // 這裡只負責「同一個 session 內」的錯誤／早退路徑
+                    if (session === this._browseDirSessionGen) {
+                        this.browseDirLoading = false;
+                    }
                 }
                 return;
             }

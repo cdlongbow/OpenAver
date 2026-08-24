@@ -555,3 +555,130 @@ test('deleted remembered path shows error but up still works', async () => {
         restoreLs();
     }
 });
+
+test('stale expand=videos response cannot apply after cancel and reopen', async () => {
+    // Codex PR review P2（2026-08-24）：selectBrowseDir 的 expand=videos 二次請求
+    // 沒有納入任何 generation guard —— 使用者在慢儲存（NAS／9p 掛載）上選了大資料夾，
+    // 等不及按取消／重開，舊回應回來時仍會塞舊清單、寫舊記憶路徑、關掉新彈窗。
+    const ls = mockLocalStorage({});
+    let resolveExpand = null;
+    const restoreFetch = mockFetch(async (url) => {
+        if (String(url).includes('expand=videos')) {
+            return new Promise((resolve) => {
+                resolveExpand = () => resolve(okJson({
+                    current_path: '/old/folder',
+                    parent_path: '/old',
+                    entries: [],
+                    files: ['/old/folder/stale.mp4'],
+                }));
+            });
+        }
+        return okJson({
+            current_path: String(url).includes('new') ? '/new/folder' : '/old/folder',
+            parent_path: '/old',
+            entries: [],
+        });
+    });
+    try {
+        const s = makeState();
+        let oldPicked = null;
+        let newPicked = null;
+
+        // ① 第一次開窗 → 停在 /old/folder → 按「選取此資料夾」（請求卡住不回）
+        s.openBrowseDir('search', (files) => { oldPicked = files; }, { expandVideos: true });
+        await flush();
+        assert.equal(s.browseDirCurrentPath, '/old/folder');
+        const selectPromise = s.selectBrowseDir();
+        await flush();
+        assert.equal(oldPicked, null, 'fetch 還沒回來，callback 不該先被呼叫');
+
+        // ② 使用者按取消（Escape／X／取消鈕都走這支），然後重開一個新的選擇器
+        s.closeBrowseDir();
+        s.openBrowseDir('search', (files) => { newPicked = files; }, { expandVideos: true });
+        await s.navigateBrowseDir('/new/folder');
+        await flush();
+        assert.equal(s.browseDirOpen, true);
+
+        // ③ 舊請求現在才回來
+        resolveExpand();
+        await selectPromise;
+        await flush();
+
+        assert.equal(oldPicked, null, '舊 callback 不得被延遲回應觸發');
+        assert.equal(newPicked, null, '也不得誤觸新 session 的 callback');
+        assert.equal(ls.store['browse_dir_last_path_search'], undefined,
+            '不得用已取消的那次選取覆寫記憶路徑');
+        assert.equal(s.browseDirOpen, true, '新開的彈窗不得被舊請求關掉');
+        assert.equal(s.browseDirCurrentPath, '/new/folder', '新 session 的路徑不得被舊回應覆蓋');
+    } finally {
+        restoreFetch();
+        ls.restore();
+    }
+});
+
+test('a normal expand=videos select still applies within the same session', async () => {
+    // 反向鎖：上面那條 guard 不得把正常流程也擋掉
+    const ls = mockLocalStorage({});
+    const restoreFetch = mockFetch(async (url) => {
+        if (String(url).includes('expand=videos')) {
+            return okJson({ current_path: '/lib/a', parent_path: '/lib', entries: [], files: ['/lib/a/1.mp4'] });
+        }
+        return okJson({ current_path: '/lib/a', parent_path: '/lib', entries: [] });
+    });
+    try {
+        const s = makeState();
+        let picked = null;
+        s.openBrowseDir('search', (files) => { picked = files; }, { expandVideos: true });
+        await flush();
+        await s.selectBrowseDir();
+        await flush();
+        assert.deepEqual(picked, ['/lib/a/1.mp4']);
+        assert.equal(ls.store['browse_dir_last_path_search'], '/lib/a');
+        assert.equal(s.browseDirOpen, false);
+        assert.equal(s.browseDirLoading, false, 'select 成功後 loading 必須回到 false');
+    } finally {
+        restoreFetch();
+        ls.restore();
+    }
+});
+
+test('cancelled expand=videos select does not apply even without reopening', async () => {
+    // 比「取消後重開」更常見的子情境：使用者只是按了取消，沒有再開。
+    // 若只有 openBrowseDir 讓 session 失效，這條就會漏 —— 舊回應照樣把整夾塞進來。
+    const ls = mockLocalStorage({});
+    let resolveExpand = null;
+    const restoreFetch = mockFetch(async (url) => {
+        if (String(url).includes('expand=videos')) {
+            return new Promise((resolve) => {
+                resolveExpand = () => resolve(okJson({
+                    current_path: '/old/folder',
+                    parent_path: '/old',
+                    entries: [],
+                    files: ['/old/folder/stale.mp4'],
+                }));
+            });
+        }
+        return okJson({ current_path: '/old/folder', parent_path: '/old', entries: [] });
+    });
+    try {
+        const s = makeState();
+        let picked = null;
+        s.openBrowseDir('search', (files) => { picked = files; }, { expandVideos: true });
+        await flush();
+        const selectPromise = s.selectBrowseDir();
+        await flush();
+
+        s.closeBrowseDir();          // 使用者按取消，之後什麼都沒做
+        resolveExpand();
+        await selectPromise;
+        await flush();
+
+        assert.equal(picked, null, '按了取消之後，延遲回應不得再把檔案塞進來');
+        assert.equal(ls.store['browse_dir_last_path_search'], undefined,
+            '按了取消之後不得寫記憶路徑');
+        assert.equal(s.browseDirOpen, false);
+    } finally {
+        restoreFetch();
+        ls.restore();
+    }
+});
