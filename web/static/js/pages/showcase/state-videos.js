@@ -351,20 +351,27 @@ export function stateVideos() {
         },
 
         clearAllFilters() {
-            this.search = '';
-            this.actressSearch = '';
-            this.pills = [];
-            this.actressPills = [];
-            // CD-116b-8b：clearAllFilters 清空整個 actressPills → 編輯器開著就必然命中，無條件 teardown。
-            // TASK-124a-T2：收斂到單一函式 _teardownPillEditors()，同時清 _pillEditor/_releaseEditor。
+            // 129-T1b / CD-129-1：只清當前分頁。另一分頁的搜尋狀態原封不動保留。
+            // CD-116b-8b：teardown 維持無條件（本身冪等，release-pill-state.test.mjs:871 已鎖）——
+            // 兩個浮層編輯器分屬兩個分頁，但「站在 A 分頁時 B 分頁的草稿還開著」本來就不可達，
+            // 無條件收比分流安全，也讓既有兩支 DoD 守衛不必跟著改。
             this._teardownPillEditors();
-            // TASK-115-T8：不再直接呼叫 _clearPreciseMatch()（T7 留下的暫時補丁）——
-            // pills=[]、search='' 之後，_reconcileHeroCard() 的「無 pill 分支」本來就會
-            // 走到同一個 _clearPreciseMatch() 呼叫，讓收斂單一判斷點的精神落實（RULING 3：
-            // 兩處各自宣稱自己是「清 hero 狀態」的權威，收成一處）。
-            this._animateFilter();           // 影片格：CD-2 步驟 7-9（唯一一次）
-            this.applyActressFilterAndSort(); // 女優格：對應 onActressSearchChange() 的行為，不經 _animateFilter
-            this._reconcileHeroCard();
+            if (this.showFavoriteActresses) {
+                this.actressSearch = '';
+                this.actressPills = [];
+                this.applyActressFilterAndSort(); // 對應 onActressSearchChange() 的行為，不經 _animateFilter
+                // ⚠ 影片牆那條的 saveState() 埋在 _animateFilter() 裡（state-videos.js:517）；
+                // 本分支不走 _animateFilter，必須顯式補一次，否則「按 ✕ 清掉、重整又跑回來」。
+                this.saveState();
+                // ⚠ 不呼叫 _reconcileHeroCard()：它只判斷 pill／文字、不判斷 showFavoriteActresses
+                //   （見本檔 :376-391 的明文不變式），在女優牆呼叫會拿影片牆還留著的 pill
+                //   算出一張不該出現的資料卡。
+            } else {
+                this.search = '';
+                this.pills = [];
+                this._animateFilter();            // 影片格：CD-2 步驟 7-9（唯一一次），內含 applyFilterAndSort() + saveState()
+                this._reconcileHeroCard();        // TASK-115-T8 / RULING 3：清 hero 狀態的單一判斷點
+            }
             Alpine.store('ui').toolbarOpen = false;
             // 無條件執行：使用者主動按下的清除鈕，即使已空跑一次也無害，且維持「按下必清」的誠實承諾
         },

@@ -111,9 +111,9 @@ class TestShowcaseHeaderSearchIcon:
 
     @staticmethod
     def _extract_has_active_filter_body(content):
-        """brace-matched 擷取 _hasActiveFilter 方法定義體（非整檔 grep，防 FE-GUARD-06 假陽性）。
-        錨定 `_hasActiveFilter() {` 方法定義，避開 `this._hasActiveFilter()` 呼叫點。"""
-        m = re.search(r"_hasActiveFilter\s*\(\s*\)\s*\{", content)
+        """brace-matched 擷取 _hasActiveFilterForCurrentTab 方法定義體（非整檔 grep，防 FE-GUARD-06 假陽性）。
+        錨定 `_hasActiveFilterForCurrentTab() {` 方法定義，避開呼叫點。"""
+        m = re.search(r"_hasActiveFilterForCurrentTab\s*\(\s*\)\s*\{", content)
         if not m:
             return ""
         open_idx = m.end() - 1  # 指向 `{`
@@ -156,15 +156,18 @@ class TestShowcaseHeaderSearchIcon:
         assert "$watch('actressSearch'" in content or '$watch("actressSearch"' in content
 
     def test_init_sync_showcase_has_search_after_watchers(self):
-        """init() 必須經 _hasActiveFilter() 同步 showcaseHasSearch（含 pills；CD-12）。
-        115-T7 前斷言舊兩欄位字面；現改為等價契約：函式體含 pills.length ＋ init sync 呼叫它。"""
+        """init() 必須經 _hasActiveFilterForCurrentTab() 同步 showcaseHasSearch（含 pills；129-T1a）。
+        函式體含 pills.length ＋ showFavoriteActresses ＋ init sync 呼叫它。"""
         content = self._read_state_base()
         body = self._extract_has_active_filter_body(content)
-        assert body, "state-base.js 找不到 _hasActiveFilter 函式體"
+        assert body, "state-base.js 找不到 _hasActiveFilterForCurrentTab 函式體"
         # [lint-guard: pytest-justified] Alpine store contract 跨檔守衛：被守的是
         # state-base.js 寫入 → Alpine.store('ui').showcaseHasSearch → showcase.html 讀取
         # 這條跨三檔的資料流（清除鈕出不出現）。單檔字面 lint 守得住寫入端存在，
-        # 守不住「判準涵蓋 pills」與「init 也走同一個判準」這兩件事同時成立。
-        assert "pills.length" in body, "_hasActiveFilter 必須涵蓋 pills（CD-12）"
+        # 守不住「判準涵蓋 pills／分頁化」與「init 也走同一個判準」這兩件事同時成立。
+        assert "pills.length" in body, "_hasActiveFilterForCurrentTab 必須涵蓋 pills（CD-12）"
+        assert "showFavoriteActresses" in body, (
+            "_hasActiveFilterForCurrentTab 必須含 showFavoriteActresses（否則只改名沒分頁化）"
+        )
         # 直接斷言 init sync 語句存在，防止只靠 $watch 而漏掉初始值路徑
-        assert "Alpine.store('ui').showcaseHasSearch = this._hasActiveFilter();" in content
+        assert "Alpine.store('ui').showcaseHasSearch = this._hasActiveFilterForCurrentTab();" in content

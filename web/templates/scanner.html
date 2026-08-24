@@ -18,7 +18,7 @@
      @drop.document.prevent="handleDrop($event)"
      @keydown.escape.window="dirtyCheckModalOpen && dirtyCheckCancel(); missingConfirmModalOpen && cancelLargeMissingEnrich(); deleteAliasGroupModalOpen && cancelDeleteAliasGroupModal(); deleteTagAliasGroupModalOpen && cancelDeleteTagAliasGroupModal(); copyFailModalOpen && closeCopyFailModal(); readonlyConfirmModalOpen && readonlyConfirmCancel();">
     <!-- Drag Overlay (must be inside x-data scope) -->
-    <div class="drag-overlay" id="dragOverlay" x-show="showDragOverlay" x-transition.opacity>
+    <div class="drag-overlay" id="dragOverlay" :class="{ active: showDragOverlay }">
         <div class="drag-overlay-content">
             <i class="bi bi-folder-plus"></i>
             <p>{{ t('scanner.drag_overlay.hint') }}</p>

@@ -410,14 +410,29 @@ test('DoD#14 removeActressPill 移除其他 dim → _pillEditor 不受影響', (
 
 // ── DoD #15：clearAllFilters 無條件 teardown（CD-116b-8b）─────────────────
 
-test('DoD#15 clearAllFilters 後 _pillEditor=null', () => {
-    const c = makeComponent();
+// 129-T1b：clearAllFilters 依分頁分流之後，這條拆成兩個分支各驗一次。
+// teardown 仍是**無條件**（CD-116b-8b 不變），所以兩邊的 `_pillEditor === null` 都要成立；
+// 差別在 actressPills——只有女優牆那條會清它，影片牆那條**不准碰**（spec-129 S1）。
+test('DoD#15 clearAllFilters 後 _pillEditor=null（女優牆：連 actressPills 一起清）', () => {
+    // harness 補 showFavoriteActresses:true —— 這才是可達的真實情境
+    //（影片牆上不可能開著女優 pill 浮層）。
+    const c = makeComponent({ showFavoriteActresses: true });
     c.addActressPill('age', 37);
     c._openPillEditor(c.actressPills[0]);
     assert.ok(c._pillEditor);
     c.clearAllFilters();
     assert.equal(c._pillEditor, null);
     assert.deepEqual(c.actressPills, []);
+});
+
+test('DoD#15b clearAllFilters 後 _pillEditor=null（影片牆：actressPills 不受影響）', () => {
+    const c = makeComponent();
+    c.addActressPill('age', 37);
+    c._openPillEditor(c.actressPills[0]);
+    assert.ok(c._pillEditor);
+    c.clearAllFilters();
+    assert.equal(c._pillEditor, null, 'teardown 無條件：影片牆按 ✕ 也要收掉草稿');
+    assert.equal(c.actressPills.length, 1, '影片牆清除不得清掉 actressPills');
 });
 
 // ── DoD #16：lifecycle 對稱——同一 handler 參考（plan §2）──────────────────

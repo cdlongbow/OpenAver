@@ -19,10 +19,9 @@
                     </button>
                 </div>
             </div>
-            <div class="search-hint ds-comp-hint">
-                <i class="bi bi-lightbulb"></i>
-                提示：輸入局部番號如 <code>IPZZ-03</code> 可搜尋 030~039
-            </div>
+            {# 129-T4：搜尋列下方那行提示已從搜尋頁移除（spec-129 S3），資訊搬進空狀態的
+               explainer 第三行。這裡的展示一併拿掉——留著會讓這份 page composition
+               展示一個產品上已經不存在的元素。`.search-hint` 那個 class 也隨之消失。 #}
         </div>
 
         <!-- Result Area (Cover + Info Panel) -->

@@ -266,6 +266,7 @@ export function stateBase() {
             showFavoriteActresses: false,
             actressSort: null,
             actressOrder: null,
+            actressSearch: '',
             pills: [],
             cardShape: 'cover',
             infoVisible: false,
@@ -355,6 +356,7 @@ export function stateBase() {
             _recomputeAllBadges();
             if (this.showFavoriteActresses) { this.loadActresses(); }
             this.applyFilterAndSort(true);  // M4a: 套用搜尋篩選（跳過 pagination，下面統一處理）
+            if (!this.showFavoriteActresses) this._reconcileHeroCard();  // 129-T3 / CD-129-2：回頁重算大卡（S2）
             this.page = savedPage;          // 恢復儲存的頁碼
             this.updatePagination();        // 單次分頁（會 clamp 超出範圍的頁碼）
 
@@ -427,14 +429,14 @@ export function stateBase() {
                 const isOpen = Alpine.store('ui').toolbarOpen
                 if (!isOpen) { _toolbarOpenY = null; return }
                 if (_toolbarOpenY === null) _toolbarOpenY = window.scrollY
-                // 115 PR#131 P3：改用 _hasActiveFilter()（含 pills），與 showcaseHasSearch 同一個判準。
-                // 兩者必須同步放寬，否則自相矛盾：navbar 那顆鈕在 showcaseHasSearch 為真時變成 ✕，
-                // 按下去是 clear-search 全清、**不再是展開工具列**（base.html:502-505）。手機上只用
-                // pill 篩選（沒打字）時，若這裡仍只看文字欄位，捲動就會把裝著 pill 的工具列收掉，
-                // 而唯一的重新開啟入口已經變成「全部清掉」——使用者再也無法只移除其中一枚 pill。
-                // 這是 T7 只放寬 showcaseHasSearch、沒跟著放寬本守衛造成的自引回歸。
+                // 115 PR#131 P3／129-T1a：改用 _hasActiveFilterForCurrentTab()（含 pills、分頁感知），
+                // 與 showcaseHasSearch 同一個判準。兩者必須同步，否則自相矛盾：navbar 那顆鈕在
+                // showcaseHasSearch 為真時變成 ✕，按下去是 clear-search 全清、**不再是展開工具列**
+                // （base.html:502-505）。手機上只用 pill 篩選（沒打字）時，若這裡仍只看文字欄位，
+                // 捲動就會把裝著 pill 的工具列收掉，而唯一的重新開啟入口已經變成「全部清掉」——
+                // 使用者再也無法只移除其中一枚 pill。
                 // （actressSearch 來自 state-actress.js merge，pills 來自本檔）
-                if (this._hasActiveFilter()) return
+                if (this._hasActiveFilterForCurrentTab()) return
                 if (window.scrollY - _toolbarOpenY > COLLAPSE_THRESHOLD) {
                     Alpine.store('ui').toolbarOpen = false
                     _toolbarOpenY = null  // reset: 下次 reopen 從新基準計，防 stale baseline 立即再收
@@ -443,24 +445,30 @@ export function stateBase() {
             window.addEventListener('scroll', _scrollHandler, { passive: true })
             this._scrollHideHandler = _scrollHandler
 
-            // T2/115-T7：有效搜尋（含 pill）時 header icon 切換為 X。三個 $watch 與 init 同步都呼叫同一個
-            // _hasActiveFilter()（CD-12：不寫兩份判準）。
+            // T2/115-T7／129-T1a：有效搜尋（含 pill）時 header icon 切換為 X。五個 $watch 與 init
+            // 同步都呼叫同一個 _hasActiveFilterForCurrentTab()（CD-12／CD-129-1：不寫兩份判準）。
             this.$watch('search', () => {
-                Alpine.store('ui').showcaseHasSearch = this._hasActiveFilter();
+                Alpine.store('ui').showcaseHasSearch = this._hasActiveFilterForCurrentTab();
             })
             this.$watch('actressSearch', () => {
-                Alpine.store('ui').showcaseHasSearch = this._hasActiveFilter();
+                Alpine.store('ui').showcaseHasSearch = this._hasActiveFilterForCurrentTab();
             })
             // 115-T7：pills 依 CD-3 慣例整包替換，$watch 對此可靠觸發（見 TASK-115-T7 現況分析）。
             this.$watch('pills', () => {
-                Alpine.store('ui').showcaseHasSearch = this._hasActiveFilter();
+                Alpine.store('ui').showcaseHasSearch = this._hasActiveFilterForCurrentTab();
             })
             // 116a-T2：actressPills 同慣例整包替換，$watch 對此可靠觸發（CD-116a-2d）。
             this.$watch('actressPills', () => {
-                Alpine.store('ui').showcaseHasSearch = this._hasActiveFilter();
+                Alpine.store('ui').showcaseHasSearch = this._hasActiveFilterForCurrentTab();
+            })
+            // 129-T1a：判準改成依分頁二選一之後，切分頁本身也要重算——切分頁不會改動
+            // search/actressSearch/pills/actressPills 任何一個，上面四個 watcher 一個都不會 fire，
+            // 而 toggleActressMode()（state-actress.js:200）也沒有碰 showcaseHasSearch。
+            this.$watch('showFavoriteActresses', () => {
+                Alpine.store('ui').showcaseHasSearch = this._hasActiveFilterForCurrentTab();
             })
             // T2 init sync：restoreState() 在 $watch 前執行，初始值不會觸發上面任何一個 watcher
-            Alpine.store('ui').showcaseHasSearch = this._hasActiveFilter();
+            Alpine.store('ui').showcaseHasSearch = this._hasActiveFilterForCurrentTab();
 
             // 98b-T4：換片 reset 遮罩（結構性涵蓋四條換片路徑——皆最終改 currentLightboxVideo）。
             // A 片開遮罩翻 auto → 不關直接換 B → 舊片未提交態不落 B 的 DB（_maskSession guard + 此 reset）。
@@ -474,9 +482,13 @@ export function stateBase() {
             this.$watch('currentLightboxActress?.name', () => { if (this._maskVisible) this._resetMask(); })
         },
 
-        // 115-T7 / CD-12：單一「是否有啟用中篩選」判準（文字／女優文字／pill 任一即真）
-        _hasActiveFilter() {
-            return this.search !== '' || this.actressSearch !== '' || this.pills.length > 0 || this.actressPills.length > 0;
+        // 129-T1a / CD-129-1：分頁感知的「是否有啟用中篩選」判準——只看當前分頁。
+        // 影片牆看 search/pills，女優牆看 actressSearch/actressPills，互不干涉。
+        _hasActiveFilterForCurrentTab() {
+            if (this.showFavoriteActresses) {
+                return this.actressSearch !== '' || this.actressPills.length > 0;
+            }
+            return this.search !== '' || this.pills.length > 0;
         },
 
         // --- 狀態恢復 (M2c) ---
@@ -518,6 +530,10 @@ export function stateBase() {
             this.showFavoriteActresses = state.showFavoriteActresses === true;  // 嚴格 === true
             this.actressSort = state.actressSort || 'video_count';
             this.actressOrder = state.actressOrder || 'desc';
+            // 129-T2 / CD-129-6：女優分頁的搜尋字比照影片分頁持久化（spec S5）。
+            // 不走 URL params（與 showFavoriteActresses/actressSort/actressOrder 一致，
+            // 避免污染分享連結）；也**不**還原 actressPills——CD-116a-5 不翻案。
+            this.actressSearch = state.actressSearch || '';
             // TASK-119-T3: 只走 localStorage，白名單比對（FE-JS-01：不可 || fallback）
             this.cardShape = state.cardShape === 'poster' ? 'poster' : 'cover';
             // TASK-124b-T1: 嚴格 === true（鏡射 showFavoriteActresses 慣例，FE-JS-01：不可 || fallback）
@@ -536,6 +552,7 @@ export function stateBase() {
             this._persistedShowcase.showFavoriteActresses = this.showFavoriteActresses;  // ★ 44a
             this._persistedShowcase.actressSort = this.actressSort;                      // ★ 44a
             this._persistedShowcase.actressOrder = this.actressOrder;                    // ★ 44a
+            this._persistedShowcase.actressSearch = this.actressSearch;                  // ★ 129-T2
             this._persistedShowcase.pills = serializePills(this.pills);
             this._persistedShowcase.cardShape = this.cardShape;
 

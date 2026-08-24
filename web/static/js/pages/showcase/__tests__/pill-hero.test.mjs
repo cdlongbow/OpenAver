@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 
 // open-local.js → path-utils.js 在模組頂層寫 window.pathToDisplay；
 // state-base.js 模組頂層讀 localStorage（清壞值）。比照既有 showcase 測試先 stub window。
@@ -54,6 +55,54 @@ register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.u
 const { stateVideos } = await import('../state-videos.js');
 const { stateActress } = await import('../state-actress.js');
 const { _setActresses } = await import('../state-base.js');
+
+const STATE_BASE_SRC = readFileSync(new URL('../state-base.js', import.meta.url), 'utf8');
+
+/** 抽「<sig> 起的下一個 `{` 開始 brace-match 到對應 `}`」的函式 body。 */
+function extractFnBody(code, sig, label) {
+    const sigIdx = code.indexOf(sig);
+    assert.ok(sigIdx >= 0, `原始碼應含 \`${sig}\`（${label}）`);
+    const open = code.indexOf('{', sigIdx);
+    assert.ok(open >= 0, `${label} 應有 {`);
+    let depth = 0;
+    for (let i = open; i < code.length; i++) {
+        const ch = code[i];
+        if (ch === '{') depth++;
+        else if (ch === '}') {
+            depth--;
+            if (depth === 0) return code.slice(open + 1, i);
+        }
+    }
+    throw new Error(`${label} 大括號未閉合（brace-match 失敗）`);
+}
+
+function countOccurrences(haystack, needle) {
+    let count = 0;
+    let idx = 0;
+    while ((idx = haystack.indexOf(needle, idx)) !== -1) {
+        count++;
+        idx += needle.length;
+    }
+    return count;
+}
+
+/**
+ * 從 init() 體內 applyFilterAndSort(true)～page=savedPage 之間抽出含
+ * `_reconcileHeroCard` 的那一行（剝行尾註解），以 component 為 this 執行。
+ * 行為契約必須跑產品碼那一行本身，否則 mutation 拿掉 guard／讓呼叫失效時測不到。
+ */
+function runInitReconcileLine(c) {
+    const body = extractFnBody(STATE_BASE_SRC, 'async init()', 'init');
+    const applyIdx = body.indexOf('this.applyFilterAndSort(true)');
+    const pageIdx = body.indexOf('this.page = savedPage');
+    assert.ok(applyIdx >= 0 && pageIdx >= 0, 'init() 應含 applyFilterAndSort(true) 與 page = savedPage');
+    assert.ok(applyIdx < pageIdx, 'applyFilterAndSort(true) 應在 page = savedPage 之前');
+    const between = body.slice(applyIdx, pageIdx);
+    const lineMatch = between.match(/[^\n]*_reconcileHeroCard[^\n]*/);
+    assert.ok(lineMatch, 'init() 在 applyFilterAndSort(true) 與 page = savedPage 之間應含 _reconcileHeroCard');
+    const line = lineMatch[0].replace(/\/\/[^\n]*$/, '').trim();
+    return (function () { return eval(line); }).call(c);
+}
 
 /**
  * 合併 stateVideos()＋stateActress()（比照 main.js 的 mergeState），保留
@@ -182,7 +231,7 @@ test('可逆性：加第二枚 pill → 隱藏；移除該 pill → 卡重新出
 
 // ===== 七個既有觸發點 =====
 
-test('call site 1/7 — onSearchChange() 觸發 _reconcileHeroCard', () => {
+test('call site 1/9 — onSearchChange() 觸發 _reconcileHeroCard', () => {
     const c = makeComponent({ search: 'Foo' });
     let calls = 0;
     c._reconcileHeroCard = () => { calls++; };
@@ -190,7 +239,7 @@ test('call site 1/7 — onSearchChange() 觸發 _reconcileHeroCard', () => {
     assert.equal(calls, 1);
 });
 
-test('call site 2/7 — toggleActressMode() 切回影片模式分支無條件觸發 _reconcileHeroCard', () => {
+test('call site 2/9 — toggleActressMode() 切回影片模式分支無條件觸發 _reconcileHeroCard', () => {
     _setActresses([{ name: 'Foo', is_favorite: true }]);
     const c = makeComponent({ showFavoriteActresses: true, search: '' });
     let calls = 0;
@@ -199,7 +248,7 @@ test('call site 2/7 — toggleActressMode() 切回影片模式分支無條件觸
     assert.equal(calls, 1);
 });
 
-test('call site 3/7 — confirmRemoveActress() 移除成功且仍在檢視該女優時觸發 _reconcileHeroCard', async () => {
+test('call site 3/9 — confirmRemoveActress() 移除成功且仍在檢視該女優時觸發 _reconcileHeroCard', async () => {
     _setActresses([{ name: 'Foo', is_favorite: true }]);
     const c = makeComponent({
         _pendingRemoveActressName: 'Foo',
@@ -218,7 +267,7 @@ test('call site 3/7 — confirmRemoveActress() 移除成功且仍在檢視該女
     assert.equal(calls, 1);
 });
 
-test('call site 4/7 — addPill() 觸發 _reconcileHeroCard', () => {
+test('call site 4/9 — addPill() 觸發 _reconcileHeroCard', () => {
     const c = makeComponent();
     let calls = 0;
     c._reconcileHeroCard = () => { calls++; };
@@ -226,7 +275,7 @@ test('call site 4/7 — addPill() 觸發 _reconcileHeroCard', () => {
     assert.equal(calls, 1);
 });
 
-test('call site 5/7 — removePill() 觸發 _reconcileHeroCard', () => {
+test('call site 5/9 — removePill() 觸發 _reconcileHeroCard', () => {
     const c = makeComponent({ pills: [{ dim: 'maker', value: 'Moodyz' }] });
     let calls = 0;
     c._reconcileHeroCard = () => { calls++; };
@@ -234,7 +283,7 @@ test('call site 5/7 — removePill() 觸發 _reconcileHeroCard', () => {
     assert.equal(calls, 1);
 });
 
-test('call site 6/7 — clearAllFilters() 觸發 _reconcileHeroCard', () => {
+test('call site 6/9 — clearAllFilters() 觸發 _reconcileHeroCard', () => {
     const c = makeComponent({ search: 'x', pills: [{ dim: 'maker', value: 'Moodyz' }] });
     let calls = 0;
     c._reconcileHeroCard = () => { calls++; };
@@ -242,13 +291,89 @@ test('call site 6/7 — clearAllFilters() 觸發 _reconcileHeroCard', () => {
     assert.equal(calls, 1);
 });
 
-test('call site 7/7 — searchActressFilms()（RULING 1 併入的第 7 個呼叫點）觸發 _reconcileHeroCard', async () => {
+test('call site 7/9 — searchActressFilms()（RULING 1 併入的第 7 個呼叫點）觸發 _reconcileHeroCard', async () => {
     _setActresses([{ name: 'Foo', is_favorite: true }]);
     const c = makeComponent({ showFavoriteActresses: false, pills: [], search: '' });
     let calls = 0;
     c._reconcileHeroCard = () => { calls++; };
     await c.searchActressFilms('Foo', null);
     assert.equal(calls, 1);
+});
+
+// 129-T3 補登記：_setReleasePill()（v0.14.4 / 124a 加的發售日 pill 寫入者）從當時起就會
+// 呼叫 _reconcileHeroCard()，但一直沒被登記進這組編號契約——分母從那時候起就是錯的。
+// 這組契約存在的目的正是「誰會觸發它，一個都不能漏」，所以本 task 把分母補正成 9 並補上這條。
+test('call site 9/9 — _setReleasePill() 觸發 _reconcileHeroCard（124a 起就漏登記的那一個）', () => {
+    const c = makeComponent({ search: '', pills: [] });
+    let calls = 0;
+    c._reconcileHeroCard = () => { calls++; };
+    c._setReleasePill({ dim: 'release', op: '=', value: '2024-09' });
+    assert.equal(calls, 1);
+    assert.equal(c.pills.length, 1, '_setReleasePill 應真的寫進一枚 release pill');
+    assert.equal(c.pills[0].dim, 'release');
+});
+
+// ===== 129-T3：call site 8/9 — init() 回頁重算大卡（S2）=====
+
+test('init() 源碼形狀：_reconcileHeroCard 帶 showFavoriteActresses guard，位於 applyFilterAndSort(true) 之後、page = savedPage 之前', () => {
+    const body = extractFnBody(STATE_BASE_SRC, 'async init()', 'init');
+    const applyLit = 'this.applyFilterAndSort(true)';
+    const pageLit = 'this.page = savedPage';
+    const reconcileLit = '_reconcileHeroCard()';
+    assert.equal(countOccurrences(body, applyLit), 1, 'init() 體內 applyFilterAndSort(true) 應恰好一次');
+    assert.equal(countOccurrences(body, pageLit), 1, 'init() 體內 page = savedPage 應恰好一次');
+    assert.equal(countOccurrences(body, reconcileLit), 1, 'init() 體內 _reconcileHeroCard() 應恰好一次');
+    assert.ok(
+        /if\s*\(\s*!this\.showFavoriteActresses\s*\)\s*this\._reconcileHeroCard\(\)/.test(body),
+        'init() 的 _reconcileHeroCard 呼叫必須帶 !this.showFavoriteActresses guard',
+    );
+    const applyIdx = body.indexOf(applyLit);
+    const pageIdx = body.indexOf(pageLit);
+    const reconcileIdx = body.indexOf(reconcileLit);
+    assert.ok(
+        applyIdx < reconcileIdx && reconcileIdx < pageIdx,
+        '_reconcileHeroCard() 必須在 applyFilterAndSort(true) 之後、page = savedPage 之前',
+    );
+});
+
+test('call site 8/9 — init() 回頁重算大卡（S2）：影片牆＋女優 pill 觸發 _reconcileHeroCard（真身）', async () => {
+    _setActresses([{ name: 'Foo', is_favorite: true }]);
+    const c = makeComponent({
+        showFavoriteActresses: false,
+        pills: [{ dim: 'actress', value: 'Foo' }],
+        search: '',
+    });
+    let calls = 0;
+    const real = c._reconcileHeroCard.bind(c);
+    c._reconcileHeroCard = function (...args) {
+        calls++;
+        return real(...args);
+    };
+    await runInitReconcileLine(c);
+    assert.equal(calls, 1);
+    assert.equal(c._isPreciseActressMatch, true);
+    assert.equal(c._matchedActress?.name, 'Foo');
+});
+
+test('女優牆：init() 回頁不得呼叫 _reconcileHeroCard，狀態不得被污染', async () => {
+    _setActresses([{ name: 'Foo', is_favorite: true }]);
+    const c = makeComponent({
+        showFavoriteActresses: true,
+        pills: [{ dim: 'actress', value: 'Foo' }],
+        search: '',
+        _isPreciseActressMatch: false,
+        _matchedActress: null,
+    });
+    let calls = 0;
+    const real = c._reconcileHeroCard.bind(c);
+    c._reconcileHeroCard = function (...args) {
+        calls++;
+        return real(...args);
+    };
+    await runInitReconcileLine(c);
+    assert.equal(calls, 0, '女優牆不得呼叫 _reconcileHeroCard');
+    assert.equal(c._isPreciseActressMatch, false, '女優牆不得污染 _isPreciseActressMatch');
+    assert.equal(c._matchedActress, null, '女優牆不得污染 _matchedActress');
 });
 
 // ===== RULING 1：searchActressFilms() 必須尊重「有 pill」的 gating 規則 =====
@@ -333,7 +458,7 @@ test("source === 'pill' 找不到本地收藏記錄仍放行，_matchedActress �
 // _isPreciseActressMatch 是錯的」會全綠——DoD 要的是值斷言，不是 call-count。
 // 其餘五個呼叫點在別處已有真身覆蓋，這裡把缺的兩個補齊（走真身，不 stub）。
 
-test('call site 1/7（真身）— onSearchChange() 有 pill 時，hero 狀態必須被關掉', () => {
+test('call site 1/9（真身）— onSearchChange() 有 pill 時，hero 狀態必須被關掉', () => {
     _setActresses([{ name: 'Foo', is_favorite: true }]);
     const c = makeComponent({
         search: 'Foo',
@@ -347,7 +472,7 @@ test('call site 1/7（真身）— onSearchChange() 有 pill 時，hero 狀態�
     assert.equal(c._matchedActress, null);
 });
 
-test('call site 3/7（真身）— confirmRemoveActress() 後 hero 狀態依規則重算，非只被呼叫', async () => {
+test('call site 3/9（真身）— confirmRemoveActress() 後 hero 狀態依規則重算，非只被呼叫', async () => {
     _setActresses([{ name: 'Foo', is_favorite: true }]);
     const c = makeComponent({
         _pendingRemoveActressName: 'Foo',

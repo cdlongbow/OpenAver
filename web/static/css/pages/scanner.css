@@ -277,7 +277,11 @@
     transition: width var(--fluent-duration-slow) var(--fluent-ease-standard), background-color var(--fluent-duration-slow) var(--fluent-ease-standard);
 }
 
-/* Drag Overlay - Consistent with Search */
+/* Drag Overlay — 129-T7 / CD-129-7：逐值對齊 search.css 那一版（spec S6 以搜尋頁為準）
+ * 這段原本的註解就寫著「Consistent with Search」，但實際上少了 .active 機制、
+ * 少了 scale 進場、字級與圖示陰影也不同。本次把它真的做到一致。
+ * ⚠ base 態的 pointer-events: none 不可省——markup 改成恆掛載之後，
+ *   少了它就是一層看不見的全螢幕遮罩，整個掃描頁會點不動。 */
 .drag-overlay {
     position: fixed;
     top: 0;
@@ -291,12 +295,29 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: background-color var(--fluent-duration-slow) var(--fluent-ease-standard);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity var(--fluent-duration-slow) var(--fluent-ease-standard), visibility var(--fluent-duration-slow) var(--fluent-ease-standard), background-color var(--fluent-duration-slow) var(--fluent-ease-standard);
+    pointer-events: none;
+}
+
+.drag-overlay.active {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
 }
 
 .drag-overlay-content {
+    background: transparent;
+    padding: 2rem;
     text-align: center;
     color: var(--color-base-content);
+    transform: scale(0.95);
+    transition: transform var(--fluent-duration-slow) var(--fluent-ease-decel);
+}
+
+.drag-overlay.active .drag-overlay-content {
+    transform: scale(1);
 }
 
 .drag-overlay-content i {
@@ -304,12 +325,12 @@
     color: var(--color-base-content);
     margin-bottom: 1rem;
     display: block;
-    text-shadow: 0 4px 12px color-mix(in oklch, var(--color-base-100) 30%, transparent);
+    text-shadow: 0 4px 12px color-mix(in oklch, var(--color-base-100) 20%, transparent);
     transition: color var(--fluent-duration-slow) var(--fluent-ease-standard);
 }
 
 .drag-overlay-content p {
-    font-size: 1.25rem;
+    font-size: 1.5rem;
     font-weight: 500;
     color: var(--color-base-content);
     margin: 0;

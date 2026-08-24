@@ -114,13 +114,18 @@ function flattenWithMedia(blocks, media = []) {
 }
 
 // @media (min-width:1024px) body 抽取（CG-FLU-09/10 11b；用 ctx.raw，鏡射 pytest css_raw）。
-// parseRuleBlocks 對 @media wrapper 只回一個 depth-0 block，故需先 regex 抽 body 再 re-parse。
+// parseRuleBlocks 對 @media wrapper 只回一個 depth-0 block，故需先抽 body 再 re-parse。
+//
+// 🔴 129-T4：原本這裡是非貪婪 regex `\{([\s\S]*?)\}(?=\s*(?:\/\*|@|...))`，
+//   **在 @media body 內只有一條規則時才正確**。一旦 body 內有第二條規則，第一條的 `}`
+//   後面接著註解或選擇器，lookahead 就命中 → body 被切在第一條規則中間 → 括號不平衡 →
+//   parseRuleBlocks 抽不到完整規則 → 守衛謊報「Rule 45 missing」。
+//   （T4 要在 Rule 45 的 media 區塊內加第二條規則時實際撞到，grok 回報、未自行改守衛。）
+//   改為委派給同檔既有的 balanced-brace `extractMediaBodies()`——**選中的 @media 集合完全相同**
+//   （condRegex 錨定 ^...$，等價於舊 regex 的字面 header 比對），只是 body 這次是完整的。
+//   ⇒ 不是放寬守衛，是修好它的解析器；等價性驗證見 commit 訊息。
 function extractDesktopMediaBodies(raw) {
-  return [
-    ...raw.matchAll(
-      /@media\s*\(\s*min-width\s*:\s*1024px\s*\)\s*\{([\s\S]*?)\}(?=\s*(?:\/\*|@|[\[\.\#a-zA-Z]|$))/g,
-    ),
-  ].map((m) => m[1]);
+  return extractMediaBodies(raw, /^\s*\(\s*min-width\s*:\s*1024px\s*\)\s*$/);
 }
 
 // @media (max-width:480px) body 抽取（CG-FLU-14/15；手工 brace-walk，鏡射 pytest —
@@ -423,13 +428,50 @@ const RULES = [
         ctx.fail('CG-FLU-09: no .search-bar rule inside @media (min-width:1024px) — CD-D1 (Rule 45) missing');
         return;
       }
-      for (const { selector, declarations } of searchBarBlocks) {
+      // 129-T4：兩個不變式的作用域**不同**，不能混在同一個迴圈裡（原本混在一起，
+      // 於是 media 區塊內只要多一條後代規則就會被要求也帶 margin/radius/border）。
+      //   ① theme-agnostic：**所有**含 .search-bar 的規則都不得被 dim scope 綁死 → 維持廣掃
+      //   ② 浮動幾何三宣告：只有 **Rule 45 本體**（選擇器恰好是 .search-bar）該帶 → 精確匹配
+      // 兩者都**沒有放寬**：刪掉 Rule 45、拿掉其中任一宣告、或把它 dim-scope 化，
+      // 三種破壞都仍然轉紅（commit 前已逐一 mutation 驗過）。
+      for (const { selector } of searchBarBlocks) {
         if (selector.includes('[data-theme="dim"]')) {
           ctx.fail(`CG-FLU-09: .search-bar @media 1024px float rule must be theme-agnostic — ${selector}`);
         }
-        if (!/border-radius\s*:/.test(declarations)) ctx.fail('CG-FLU-09: .search-bar @media 1024px block missing border-radius');
-        if (!/\bborder\s*:/.test(declarations)) ctx.fail('CG-FLU-09: .search-bar @media 1024px block missing border');
-        if (!/\bmargin\s*:/.test(declarations)) ctx.fail('CG-FLU-09: .search-bar @media 1024px block missing margin');
+      }
+      const floatRules = searchBarBlocks.filter((b) => b.selector.trim() === '.search-bar');
+      if (floatRules.length === 0) {
+        ctx.fail('CG-FLU-09: no bare `.search-bar` float rule inside @media (min-width:1024px) — CD-D1 (Rule 45) missing');
+        return;
+      }
+      // 🔴 三輪 review 之後的收斂（sonnet T4 BLOCKER ＋ PR#156 Codex 第 2／3 輪 P2）：
+      //   前三個版本全部在數「**規則條數**」——取第一條 → 裸規則不准超過一條 →
+      //   帶幾何宣告的規則不准超過一條。但 CSS cascade 是逐「**屬性**」結算的，
+      //   單位不一致 ⇒ 每一版不是漏放就是過寬：
+      //     · `.find()` 取第一條   → 第二條 `margin: 0` 中和掉浮動，守衛靜默（fail-open）
+      //     · 裸規則不准超過一條   → 另開一條只設 `color` 的裸規則被連坐擋下
+      //     · 帶幾何的不准超過一條 → 合法地把三宣告拆成兩條寫也被擋，訊息還謊報「缺屬性」
+      //   ⇒ 改成**逐屬性數宣告次數**，三個問題一次消掉：
+      //     0 次  = Rule 45 形同消失
+      //     >1 次 = 後面那次在 cascade 上蓋掉前面那次（正是 fail-open 要擋的）
+      //     拆條寫 → 每個屬性仍各 1 次 → 綠；只設 color/gap 的裸規則 → 不碰這三個屬性 → 綠
+      //   驗證改用**雙向矩陣**（8 破壞必紅 ＋ 14 合法改寫必綠），不再只驗破壞那一半
+      //   ——過寬的守衛在只有破壞案例的矩陣裡，定義上一定 100% 通過（見 FE-GUARD-17）。
+      const allDecls = floatRules
+        .map((b) => b.declarations)
+        .join(';')
+        .replace(/\/\*[\s\S]*?\*\//g, '');  // 剝區塊內註解，避免註解裡的 `margin:` 被算進來
+      for (const [name, re] of [
+        ['border-radius', /border-radius\s*:/g],
+        ['border', /(?<![-\w])border\s*:/g],      // 不吃 border-radius / border-color …
+        ['margin', /(?<![-\w])margin\s*:/g],      // 不吃 margin-inline / margin-top …
+      ]) {
+        const n = (allDecls.match(re) || []).length;
+        if (n === 0) {
+          ctx.fail(`CG-FLU-09: 裸 \`.search-bar\` 沒有宣告 ${name} — CD-D1 (Rule 45) 形同消失`);
+        } else if (n > 1) {
+          ctx.fail(`CG-FLU-09: 裸 \`.search-bar\` 宣告了 ${n} 次 ${name} — 後面那次會在 cascade 上蓋掉 Rule 45`);
+        }
       }
     },
   },
@@ -607,6 +649,49 @@ const RULES = [
       }
       if (!/-webkit-backdrop-filter\s*:\s*none\s*!important/.test(decls)) {
         ctx.fail('CG-FLU-14: mobile .notification-drawer must set -webkit-backdrop-filter: none !important (macOS WKWebView pairing)');
+      }
+    },
+  },
+
+  // CG-FLU-16 ← 129-T5 / CD-129-3：scrollbar-gutter 全站保留溝寬（spec S3 驗收條件 6）
+  // 為什麼要這支守衛：這條規則在無頭環境「看不見」——刪掉它，CDP 目視、截圖、既有 lint
+  // 全都不會有任何反應，只有 owner 在傳統捲軸的真機上才會發現兩頁搜尋列又錯開 7.5px。
+  // 本檔其他規則都有視覺表面，唯獨這條沒有 → 這就是它值得一支存在性守衛的理由。
+  {
+    id: 'CG-FLU-16',
+    file: 'components/fluent-materials.css',
+    kind: 'fn',
+    check(ctx) {
+      // 只認**頂層 `html` 區塊**裡的宣告（PR#156 Codex P2）：本規則守的是「文件層級的溝寬」這個
+      // 對齊契約。日後若有獨立捲動的元件在本檔自己宣告 scrollbar-gutter，它與 html 不在同一個
+      // cascade 上競爭，不該被這條擋下——整檔計數會把那種合法寫法誤判成「cascade 歧義」。
+      // selector 對巢狀在 @media 內的規則會帶 `@media (...)` 前綴，所以 === 'html' 同時也擋住
+      // 「被包進 media query」（那會讓只有寬螢幕有溝寬，窄桌機仍然錯位）。
+      // ctx.blocks / ctx.text 皆已 stripCssComments ⇒ 說明註解不會被算進來。
+      const htmlBlocks = ctx.blocks.filter((b) => b.selector.trim() === 'html');
+      const hits = htmlBlocks.flatMap(
+        (b) => [...b.declarations.matchAll(/scrollbar-gutter\s*:\s*([^;}]+)/g)],
+      );
+      if (hits.length === 0) {
+        const elsewhere = ctx.blocks
+          .filter((b) => /scrollbar-gutter/.test(b.declarations))
+          .map((b) => b.selector.trim());
+        ctx.fail(elsewhere.length
+          ? `CG-FLU-16: 頂層 \`html\` 區塊裡沒有 scrollbar-gutter 宣告（另有 ${elsewhere.length} 筆掛在 `
+            + `\`${elsewhere.join('` / `')}\`）— 129-T5 要的是文件層級的溝寬，文件層級才是視窗捲軸的擁有者`
+          : 'CG-FLU-16: fluent-materials.css 缺 scrollbar-gutter 宣告（129-T5 / CD-129-3）— '
+            + '少了它，搜尋頁右側不再保留捲軸溝寬，兩頁搜尋列在真機上會差 7.5px');
+        return;
+      }
+      if (hits.length > 1) {
+        ctx.fail(`CG-FLU-16: 頂層 \`html\` 的 scrollbar-gutter 宣告出現 ${hits.length} 次 — cascade 歧義，`
+          + '實際生效的是最後一條；請收斂成單一宣告');
+      }
+      for (const h of hits) {
+        const v = h[1].replace(/!important/g, '').trim();
+        if (v !== 'stable') {
+          ctx.fail(`CG-FLU-16: scrollbar-gutter 值必須是 \`stable\`（單邊），實際為 \`${v}\``);
+        }
       }
     },
   },

@@ -3302,6 +3302,33 @@ body.sidebar-collapsed .showcase-footer {
     --spotlight-left-slot: 5.5rem;
     --spotlight-right-slot: 8.5rem;
 }
+
+/* 129-T6 / CD-129-5：手機把左右預留壓到控制項的「實際佔位」
+ *
+ * 上面那兩個值是照最壞情況寫死的：左 5.5rem 給 70px 的模式切換膠囊、
+ * 右 8.5rem 給「四顆鈕都在」的情形。但右側四顆鈕是條件顯示的
+ * （❤ 只在搜尋字精準命中女優時、＋ 只在女優模式、✕ 只在有東西可清時、→ 永遠在），
+ * 常態只有兩顆 ⇒ 手機上白白空掉 44px，而 390px 的內容區總共才 119px。
+ *
+ * Opus CDP 實測（390×844，工具列展開）各元件的真實佔位：
+ *   左 .mode-toggle    left:8px + 寬 70          = 78px  → 給 82px（4px 淨空）
+ *   右 .search-actions-right right:8px + 40+4+40 = 92px  → 給 92px（貼齊，與桌機同慣例）
+ * ⇒ 內容區 119px → 169px（+42%）。
+ *
+ * 逃生口（下面那條）：愛心鈕出現時右側變成三顆（136px），
+ * 若不還原 slot，標籤會滑到愛心底下被蓋住（spec S4 驗收條件 2 禁止）。
+ */
+@media (max-width: 480px) {
+    .spotlight-search--mode-toggle {
+        --spotlight-left-slot: 5.125rem;
+        --spotlight-right-slot: 5.75rem;
+    }
+
+    /* 三顆鈕的唯一情形：影片模式 ＋ 搜尋字精準命中女優 → 右側回到原本的 8.5rem */
+    .spotlight-search--mode-toggle.spotlight-search--wide-actions {
+        --spotlight-right-slot: 8.5rem;
+    }
+}
 .lightbox-metadata .lb-chips-more:hover { opacity: 1; }
 
 /* ==================== Filter pills (TASK-115-T5 shell + T6 appearance) =====

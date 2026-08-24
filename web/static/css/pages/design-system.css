@@ -1348,19 +1348,7 @@
     box-shadow: var(--shadow-sm);
 }
 
-/* Search Hint */
-.ds-search-composition .ds-comp-hint {
-    margin-top: 0.5rem;
-    text-align: center;
-    font-size: 0.75rem;
-    color: var(--text-muted);
-}
-
-.ds-search-composition .ds-comp-hint code {
-    background: var(--border-light);
-    padding: 0.15rem 0.4rem;
-    border-radius: var(--radius-xs);
-}
+/* 129-T4：Search Hint 展示已隨產品移除（spec-129 S3），對應的 .ds-comp-hint 規則一併刪除。 */
 
 /* Result Area */
 .ds-search-composition .ds-comp-result-area {

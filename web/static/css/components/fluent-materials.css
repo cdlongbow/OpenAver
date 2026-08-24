@@ -872,6 +872,15 @@
         border-radius: var(--fluent-radius-xl);
         border: 1px solid var(--glass-shell-border);
     }
+
+    /* 129-T4 / S3：搜尋頁中央藥丸套用與 showcase toolbar Rule 13b 相同的寬度夾擠。
+     * Rule 13b 用 grid 中欄 `min(var(--spotlight-width), 100% - 30rem)` 讓藥丸隨視窗變窄而縮；
+     * search-bar 是 flex 沒有中欄，改夾在藥丸自己的 max-width 上——兩者的 100% 都解析到
+     * 各自容器的 content box，而兩頁的 margin/padding 已對齊 ⇒ 算出同一個值。
+     * 不改 theme.css 的 .spotlight-search 本體：那是兩頁共用的，動它會同時改到瀏覽頁。 */
+    .search-bar .spotlight-search {
+        max-width: min(var(--spotlight-width), 100% - 30rem);
+    }
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -949,4 +958,33 @@
  * ───────────────────────────────────────────────────────────────────────────── */
 .page-search #main-content:has(.showcase-lightbox.show) {
     view-transition-name: none;
+}
+
+/* Rule 48 — 129-T5 / CD-129-3: 全站保留捲軸溝寬（spec S3 驗收條件 6）
+ *
+ * 問題：瀏覽頁是整份文件在捲，右側被傳統捲軸吃掉 ~15px；搜尋頁的結果區是內部捲動，
+ *   文件本身不捲 → 右側沒有被吃。兩頁的置中基準因此差半條捲軸寬（owner 真機實測：
+ *   外框寬差 15px、輸入藥丸 x 差 7.5px），切頁時搜尋列看起來會橫移一下。
+ *
+ * 做法：讓文件層級恆常保留一條溝寬。MDN 明講這正是 scrollbar-gutter 的用途
+ *   ——「讓不捲動的容器與會捲動的容器對齊寬度」。用 `stable`（單邊），不是 `both-edges`。
+ *
+ * 為什麼落在這個檔而不是 theme.css：theme.css 被 input.css @import 進 tailwind.css，
+ *   改了不重編 Tailwind 會被 tailwind.css 裡的舊副本以來源順序蓋掉。本檔是 base.html:395
+ *   最後載入、且不進 Tailwind 編譯的無層樣式表。
+ *
+ * 為什麼贏得過 DaisyUI：tailwind.css:6334-6335 在 :root/[data-theme] 上宣告同一個屬性，
+ *   但它包在 @layer base 內。無層樣式勝過任何 @layer，這一步比 specificity 更早裁決
+ *   ——所以 type selector `html` 也贏得過 `:root`。DaisyUI 那條靠 --page-scroll-gutter，
+ *   而該變數只在「有 modal 開著」時才被設成 stable（tailwind.css:293），方向與我們相反。
+ *
+ * 代價（owner 已知悉並接受，spec 載明）：搜尋頁等原本不捲動的頁面，右側會永遠留一條
+ *   ~15px 空白帶。那是為了對齊必須付的——另一頁的同一段空間真的被捲軸佔著。
+ *
+ * 平台落差：需 Chromium 94+ / Firefox 97+ / Safari 18.2+（iOS 26）。更舊的版本
+ *   安靜地維持今天的樣子，不會破版、只是沒修到 → 已寫進 CHANGELOG 已知限制。
+ *   對 overlay 捲軸（macOS 預設、無頭瀏覽器）本來就沒有視覺效果，那些環境無差別。
+ */
+html {
+    scrollbar-gutter: stable;
 }

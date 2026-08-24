@@ -523,6 +523,12 @@ export function stateActress() {
 
         onActressSearchChange() {
             this.applyActressFilterAndSort();
+            // 129-T2：女優搜尋字要持久化（spec S5）。影片側 onSearchChange() 的 saveState()
+            // 是搭 _animateFilter() 的便車（state-videos.js:517）；女優側刻意不走 _animateFilter
+            // （會對女優牆播錯的動畫，見該處註解），所以這裡必須顯式補一次——
+            // 少了它，actressSearch 進了 _persistedShowcase 也永遠不會被寫進去。
+            // 同一個形狀在 clearAllFilters() 的女優牆分支也出現過一次（129-T1b）。
+            this.saveState();
         },
 
         // TASK-116a-T4: 女優搜尋框 Backspace 刪最後一枚 actressPills（鏡射 onSearchBackspace）

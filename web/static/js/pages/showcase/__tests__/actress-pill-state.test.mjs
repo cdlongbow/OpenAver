@@ -253,3 +253,91 @@ test('不持久化：saveState() 函式體字面不含 actressPills', () => {
         `saveState 不得寫 actressPills，實際體：${body.slice(0, 200)}…`,
     );
 });
+
+// ── 持久化（129-T2 / CD-129-6）──────────────────────────────────────────────
+
+function stubWindow(opts) {
+    const pathname = (opts && opts.pathname) || '/showcase';
+    const search = (opts && opts.search) || '';
+    globalThis.window.location = { pathname, search };
+    globalThis.window.history = {
+        replaceState() {},
+    };
+}
+
+test('持久化：_persistedShowcase 含 actressSearch 欄位且預設為空字串', () => {
+    const c = makeComponent();
+    assert.ok('actressSearch' in c._persistedShowcase, '_persistedShowcase 必須宣告 actressSearch');
+    assert.equal(c._persistedShowcase.actressSearch, '');
+});
+
+test('持久化：saveState() 後 _persistedShowcase.actressSearch === this.actressSearch', () => {
+    stubWindow();
+    const c = makeComponent({ actressSearch: '三上悠亞' });
+    c.saveState();
+    assert.equal(c._persistedShowcase.actressSearch, c.actressSearch);
+    assert.equal(c._persistedShowcase.actressSearch, '三上悠亞');
+});
+
+test('持久化：restoreState() 能把 actressSearch 讀回，無值時預設為空字串', () => {
+    stubWindow({ search: '' });
+    const c = makeComponent({
+        _persistedShowcase: {
+            actressSearch: '三上悠亞',
+        },
+        actressSearch: '',
+    });
+    c.restoreState();
+    assert.equal(c.actressSearch, '三上悠亞');
+
+    const cEmpty = makeComponent({
+        _persistedShowcase: {},
+        actressSearch: '既有殘留',
+    });
+    cEmpty.restoreState();
+    assert.equal(cEmpty.actressSearch, '');
+});
+
+test('持久化：actressPills 仍然不持久化（saveState 後 _persistedShowcase 仍不含 actressPills）', () => {
+    stubWindow();
+    const c = makeComponent();
+    c.addActressPill('age', 37);
+    c.saveState();
+    assert.ok(!('actressPills' in c._persistedShowcase), '_persistedShowcase 仍不得含 actressPills');
+    const keys = Object.keys(c._persistedShowcase);
+    assert.equal(keys.some((k) => /actressPill/i.test(k)), false, `keys=${keys.join(',')}`);
+});
+
+
+// ── 129-T2：光是欄位進了 _persistedShowcase 還不夠，得有人呼叫 saveState() ──
+//
+// Why 這條存在：影片側 onSearchChange() 的 saveState() 是搭 _animateFilter() 的便車
+// （state-videos.js:517），女優側刻意不走 _animateFilter，所以打字這條路**沒有**
+// 任何 saveState()。上面那三條契約（欄位存在／saveState 寫入／restoreState 讀回）
+// 全綠的情況下，使用者打字仍然不會被存下來——這個洞只有真的跑一次打字流程才看得到。
+// （129-T2 的 CDP 驗收就是這樣抓到的。）
+
+test('打字：onActressSearchChange() 必須呼叫 saveState()（否則 actressSearch 永遠不會被寫入）', () => {
+    const c = makeComponent();
+    let saveCalls = 0;
+    let applyCalls = 0;
+    c.saveState = function () { saveCalls++; };
+    c.applyActressFilterAndSort = function () { applyCalls++; };
+    c.actressSearch = '三上';
+    c.onActressSearchChange();
+    assert.equal(applyCalls, 1, 'onActressSearchChange 仍要重新篩選');
+    assert.equal(saveCalls, 1, 'onActressSearchChange 必須恰好呼叫 1 次 saveState（=== 1，不是 >= 1）');
+});
+
+// 同一條回歸的黑盒版本（sonnet review 建議）：不 stub 任何東西，直接看「打完字之後
+// _persistedShowcase 裡有沒有東西」。好處是——把 saveState() 的呼叫搬進
+// applyActressFilterAndSort()（行為不變的重構）時這條仍然綠，而上面那條會無謂變紅。
+// 兩條一起留：上面那條鎖「呼叫次數契約」（卡片 AC-6 的字面），這條鎖「使用者要的結果」。
+test('打字：onActressSearchChange() 之後 _persistedShowcase.actressSearch 真的有值（黑盒）', () => {
+    stubWindow();
+    const c = makeComponent();
+    c.actressSearch = '三上';
+    c.onActressSearchChange();
+    assert.equal(c._persistedShowcase.actressSearch, '三上',
+        '打字之後值必須已經進到 _persistedShowcase（不然重整就不見了）');
+});

@@ -1,7 +1,8 @@
-// TASK-115-T7: clearAllFilters 唯一擁有者 ＋ showcaseHasSearch / _hasActiveFilter 契約。
+// TASK-115-T7 / 129-T1a: clearAllFilters 唯一擁有者 ＋ showcaseHasSearch /
+// _hasActiveFilterForCurrentTab 契約。
 // 覆蓋：清除清掉 search/actressSearch/pills、toolbar 收合、precise-match reset、
-// 一次 clear 恰好一次 _animateFilter／saveState、predicate 三輸入、clearSearch 已刪、
-// 三個 $watch + init 共用 _hasActiveFilter、showcase.html 改接 clearAllFilters。
+// 一次 clear 恰好一次 _animateFilter／saveState、predicate 依分頁二選一、clearSearch 已刪、
+// 五個 $watch + init 共用 _hasActiveFilterForCurrentTab、showcase.html 改接 clearAllFilters。
 //
 // state-videos.js 用瀏覽器 importmap 別名 `@/showcase/...` 與 `@/shared/...`，
 // plain `node --test` 不認得。既有 search/__tests__/alias-loader.mjs 只做
@@ -112,35 +113,72 @@ function makeClearComponent(overrides) {
 
 // ===== clearAllFilters 清空正確性 =====
 
-test('clearAllFilters：僅有 pills（無文字）時清空 pills', () => {
+test('clearAllFilters：影片牆僅有 pills（無文字）時清空 pills，actressPills 原封不動', () => {
     const c = makeClearComponent({
+        showFavoriteActresses: false,
         pills: [{ dim: 'maker', value: 'Moodyz' }, { dim: 'series', value: 'Madonna' }],
         actressPills: [{ dim: 'age', op: '=', value: '37' }],
     });
     c.clearAllFilters();
     assert.equal(c.pills.length, 0);
-    assert.equal(c.actressPills.length, 0);
+    assert.equal(c.actressPills.length, 1);
     assert.equal(c.search, '');
     assert.equal(c.actressSearch, '');
 });
 
-test('clearAllFilters：同時清空 search 與 actressSearch（女優模式回歸）', () => {
+test('clearAllFilters：女優牆僅有 pills（無文字）時清空 actressPills，pills 原封不動', () => {
     const c = makeClearComponent({
+        showFavoriteActresses: true,
+        pills: [{ dim: 'maker', value: 'Moodyz' }, { dim: 'series', value: 'Madonna' }],
+        actressPills: [{ dim: 'age', op: '=', value: '37' }],
+    });
+    c.clearAllFilters();
+    assert.equal(c.actressPills.length, 0);
+    assert.equal(c.pills.length, 2);
+    assert.equal(c.search, '');
+    assert.equal(c.actressSearch, '');
+});
+
+test('clearAllFilters：影片牆清除不得清掉 actressSearch／actressPills', () => {
+    const c = makeClearComponent({
+        showFavoriteActresses: false,
         search: 'hello',
         actressSearch: '三上悠亜',
         pills: [{ dim: 'maker', value: 'S1' }],
+        actressPills: [{ dim: 'age', op: '=', value: '37' }],
     });
     c.clearAllFilters();
-    assert.equal(c.search, '');
-    assert.equal(c.actressSearch, '');
-    assert.equal(c.pills.length, 0);
+    assert.equal(c.actressSearch, '三上悠亜', '影片牆清除不得清掉 actressSearch');
+    assert.deepEqual(c.actressPills, [{ dim: 'age', op: '=', value: '37' }], '影片牆清除不得清掉 actressPills');
+    assert.equal(c.search, '', '影片牆 search 應清空');
+    assert.equal(c.pills.length, 0, '影片牆 pills 應清空');
 });
 
-test('clearAllFilters：收合 toolbar（Alpine.store ui.toolbarOpen = false）', () => {
-    const c = makeClearComponent({ search: 'x' });
-    uiStore.toolbarOpen = true;
+test('clearAllFilters：女優牆清除不得清掉 search／pills', () => {
+    const c = makeClearComponent({
+        showFavoriteActresses: true,
+        search: 'hello',
+        actressSearch: '三上悠亜',
+        pills: [{ dim: 'maker', value: 'S1' }],
+        actressPills: [{ dim: 'age', op: '=', value: '37' }],
+    });
     c.clearAllFilters();
-    assert.equal(uiStore.toolbarOpen, false);
+    assert.equal(c.search, 'hello', '女優牆清除不得清掉 search');
+    assert.deepEqual(c.pills, [{ dim: 'maker', value: 'S1' }], '女優牆清除不得清掉 pills');
+    assert.equal(c.actressSearch, '', '女優牆 actressSearch 應清空');
+    assert.equal(c.actressPills.length, 0, '女優牆 actressPills 應清空');
+});
+
+test('clearAllFilters：收合 toolbar（兩個分頁各驗一次）', () => {
+    const c1 = makeClearComponent({ showFavoriteActresses: false, search: 'x' });
+    uiStore.toolbarOpen = true;
+    c1.clearAllFilters();
+    assert.equal(uiStore.toolbarOpen, false, '影片牆清除需收合 toolbar');
+
+    const c2 = makeClearComponent({ showFavoriteActresses: true, actressSearch: 'y' });
+    uiStore.toolbarOpen = true;
+    c2.clearAllFilters();
+    assert.equal(uiStore.toolbarOpen, false, '女優牆清除需收合 toolbar');
 });
 
 // TASK-115-T8（RULING 3）：T7 留下的直接 `this._clearPreciseMatch()` 呼叫已移除——
@@ -148,8 +186,9 @@ test('clearAllFilters：收合 toolbar（Alpine.store ui.toolbarOpen = false）'
 // _clearPreciseMatch() 呼叫（單一判斷點，不再由 clearAllFilters() 自己宣稱一次權威）。
 // 這裡改用 _reconcileHeroCard 真身（仍計數）取代純 spy，證明「清除的工作只做一次、
 // 且真的透過 _reconcileHeroCard 達成」，而不是弱化斷言去掩蓋這次合併。
-test('clearAllFilters：重置 precise-actress-match／愛心狀態（經由 _reconcileHeroCard 真身收斂）', () => {
+test('clearAllFilters：影片牆重置 precise-actress-match／愛心狀態（經由 _reconcileHeroCard 真身收斂）', () => {
     const c = makeClearComponent({
+        showFavoriteActresses: false,
         search: '三上悠亜',
         _isPreciseActressMatch: true,
         _matchedActress: { name: '三上悠亜', is_favorite: false },
@@ -162,13 +201,28 @@ test('clearAllFilters：重置 precise-actress-match／愛心狀態（經由 _re
     assert.equal(c._matchedActress, null);
 });
 
+test('clearAllFilters：女優牆清除維持 precise-match 狀態，不得誤呼叫 _reconcileHeroCard', () => {
+    const c = makeClearComponent({
+        showFavoriteActresses: true,
+        search: '三上悠亜',
+        actressSearch: '三上悠亜',
+        _isPreciseActressMatch: true,
+        _matchedActress: { name: '三上悠亜', is_favorite: false },
+    });
+    const realReconcile = stateVideos()._reconcileHeroCard;
+    c._reconcileHeroCard = function () { c.heroCalls++; return realReconcile.call(c); };
+    c.clearAllFilters();
+    assert.equal(c._isPreciseActressMatch, true, '女優牆清除維持 _isPreciseActressMatch 原值');
+    assert.notEqual(c._matchedActress, null, '女優牆清除維持 _matchedActress 原值');
+    assert.equal(c.preciseClearCalls, 0, '女優牆清除不得呼叫 _clearPreciseMatch');
+    assert.equal(c.heroCalls, 0, '女優牆清除不得呼叫 _reconcileHeroCard');
+});
+
 // ===== call-count：一次 clear 各副作用恰好 1 次 =====
 
-// TASK-115-T8（RULING 3）：同上——_reconcileHeroCard 改用真身（仍計數），
-// preciseClearCalls 現在驗證的是「clearAllFilters → _reconcileHeroCard → _clearPreciseMatch」
-// 這條間接鏈路恰好一次，不再是 clearAllFilters 直接呼叫。
-test('clearAllFilters：一次點擊恰好 1 次 _animateFilter / applyActressFilterAndSort / _reconcileHeroCard / _clearPreciseMatch', () => {
+test('clearAllFilters：影片牆一次點擊副作用（_animateFilter=1, actressFilter=0, _reconcileHeroCard=1, _clearPreciseMatch=1）', () => {
     const c = makeClearComponent({
+        showFavoriteActresses: false,
         search: 'x',
         actressSearch: 'y',
         pills: [{ dim: 'maker', value: 'Moodyz' }],
@@ -178,20 +232,33 @@ test('clearAllFilters：一次點擊恰好 1 次 _animateFilter / applyActressFi
     c._reconcileHeroCard = function () { c.heroCalls++; return realReconcile.call(c); };
     c.clearAllFilters();
     assert.equal(c.animateCalls, 1);
-    assert.equal(c.actressFilterCalls, 1);
+    assert.equal(c.actressFilterCalls, 0);
     assert.equal(c.heroCalls, 1);
     assert.equal(c.preciseClearCalls, 1);
 });
 
-// TASK-115-T8（RULING 3）：同上——不再 stub _reconcileHeroCard 為純 spy，改保留
-// stateVideos() 合併進來的真身（Object.assign 已含，這裡只加計數 wrapper），
-// 讓 preciseClearCalls 真的驗到「clearAllFilters → _reconcileHeroCard → _clearPreciseMatch」
-// 這條鏈路，而不是驗一個永遠不會呼叫 _clearPreciseMatch 的假 spy。
-test('clearAllFilters：一次點擊恰好 1 次 saveState（真身 _animateFilter + mode:table）', () => {
+test('clearAllFilters：女優牆一次點擊副作用（_animateFilter=0, actressFilter=1, _reconcileHeroCard=0）', () => {
+    const c = makeClearComponent({
+        showFavoriteActresses: true,
+        search: 'x',
+        actressSearch: 'y',
+        actressPills: [{ dim: 'age', op: '=', value: '37' }],
+        _isPreciseActressMatch: true,
+    });
+    const realReconcile = stateVideos()._reconcileHeroCard;
+    c._reconcileHeroCard = function () { c.heroCalls++; return realReconcile.call(c); };
+    c.clearAllFilters();
+    assert.equal(c.animateCalls, 0);
+    assert.equal(c.actressFilterCalls, 1);
+    assert.equal(c.heroCalls, 0);
+});
+
+test('clearAllFilters：影片牆一次點擊恰好 1 次 saveState（真身 _animateFilter + mode:table）', () => {
     // 不 stub _animateFilter，改 stub 其內部依賴，讓真身跑到 saveState 那一行。
     // mode:'table' 避開 DOM capture 分支（querySelector / ShowcaseAnimations）。
     uiStore.toolbarOpen = true;
     const c = Object.assign({}, stateVideos(), {
+        showFavoriteActresses: false,
         pills: [{ dim: 'maker', value: 'Moodyz' }],
         search: 'hello',
         actressSearch: 'world',
@@ -217,8 +284,22 @@ test('clearAllFilters：一次點擊恰好 1 次 saveState（真身 _animateFilt
     c.clearAllFilters();
     assert.equal(c.saveCalls, 1, 'saveState 必須恰好 1 次（=== 1，不是 >= 1）');
     assert.equal(c.preciseClearCalls, 1);
-    assert.equal(c.actressFilterCalls, 1);
+    assert.equal(c.actressFilterCalls, 0);
     assert.equal(c.heroCalls, 1);
+});
+
+test('clearAllFilters：女優牆一次點擊恰好 1 次 saveState', () => {
+    uiStore.toolbarOpen = true;
+    const c = makeClearComponent({
+        showFavoriteActresses: true,
+        actressSearch: '三上悠亜',
+        actressPills: [{ dim: 'age', op: '=', value: '37' }],
+    });
+    c.clearAllFilters();
+    assert.equal(c.saveCalls, 1, '女優牆 saveState 必須恰好 1 次（=== 1，不是 >= 1）');
+    assert.equal(c.actressFilterCalls, 1);
+    assert.equal(c.animateCalls, 0);
+    assert.equal(c.heroCalls, 0);
 });
 
 /** stateBase 在 factory 內用 this.$persist；node harness 需 stub（比照 pill-entry / pill-persist）。 */
@@ -226,25 +307,46 @@ function makeBase() {
     return stateBase.call({ $persist: (obj) => ({ as: () => obj }) });
 }
 
-// ===== _hasActiveFilter 判準 =====
+// ===== _hasActiveFilterForCurrentTab 判準（129-T1a：依分頁二選一）=====
 
-test('_hasActiveFilter：三輸入各自獨立為 true，全空為 false', () => {
-    const pred = makeBase()._hasActiveFilter;
+test('_hasActiveFilterForCurrentTab：影片牆只看 search/pills，女優牆狀態不得讓它為真', () => {
+    const pred = makeBase()._hasActiveFilterForCurrentTab;
     assert.equal(typeof pred, 'function');
 
-    assert.equal(pred.call({ search: 'x', actressSearch: '', pills: [], actressPills: [] }), true, '僅 search');
-    assert.equal(pred.call({ search: '', actressSearch: 'y', pills: [], actressPills: [] }), true, '僅 actressSearch');
+    const base = { showFavoriteActresses: false, search: '', actressSearch: '', pills: [], actressPills: [] };
+    assert.equal(pred.call({ ...base, search: 'x' }), true, '影片牆僅 search');
     assert.equal(
-        pred.call({ search: '', actressSearch: '', pills: [{ dim: 'maker', value: 'M' }], actressPills: [] }),
+        pred.call({ ...base, pills: [{ dim: 'maker', value: 'M' }] }),
         true,
-        '僅 pills',
+        '影片牆僅 pills',
     );
+    assert.equal(pred.call({ ...base, actressSearch: 'y' }), false, '影片牆有 actressSearch 不得為真');
     assert.equal(
-        pred.call({ search: '', actressSearch: '', pills: [], actressPills: [{ dim: 'age', op: '=', value: '37' }] }),
-        true,
-        '僅 actressPills',
+        pred.call({ ...base, actressPills: [{ dim: 'age', op: '=', value: '37' }] }),
+        false,
+        '影片牆有 actressPills 不得為真',
     );
-    assert.equal(pred.call({ search: '', actressSearch: '', pills: [], actressPills: [] }), false, '全空');
+    assert.equal(pred.call(base), false, '影片牆全空');
+});
+
+test('_hasActiveFilterForCurrentTab：女優牆只看 actressSearch/actressPills，影片牆狀態不得讓它為真', () => {
+    const pred = makeBase()._hasActiveFilterForCurrentTab;
+    assert.equal(typeof pred, 'function');
+
+    const base = { showFavoriteActresses: true, search: '', actressSearch: '', pills: [], actressPills: [] };
+    assert.equal(pred.call({ ...base, actressSearch: 'y' }), true, '女優牆僅 actressSearch');
+    assert.equal(
+        pred.call({ ...base, actressPills: [{ dim: 'age', op: '=', value: '37' }] }),
+        true,
+        '女優牆僅 actressPills',
+    );
+    assert.equal(pred.call({ ...base, search: 'x' }), false, '女優牆有 search 不得為真');
+    assert.equal(
+        pred.call({ ...base, pills: [{ dim: 'maker', value: 'M' }] }),
+        false,
+        '女優牆有 pills 不得為真',
+    );
+    assert.equal(pred.call(base), false, '女優牆全空');
 });
 
 // ===== clearSearch 已刪 =====
@@ -257,7 +359,7 @@ test('clearSearch 不再存在於 stateBase／stateVideos 合併元件', () => {
     const merged = Object.assign({}, base, stateVideos());
     assert.equal(typeof merged.clearSearch, 'undefined');
     assert.equal(typeof merged.clearAllFilters, 'function');
-    assert.equal(typeof merged._hasActiveFilter, 'function');
+    assert.equal(typeof merged._hasActiveFilterForCurrentTab, 'function');
 });
 
 test('全庫產品碼無 clearSearch 字面殘留（state-base / state-videos / showcase.html）', () => {
@@ -266,9 +368,9 @@ test('全庫產品碼無 clearSearch 字面殘留（state-base / state-videos / 
     assert.equal(SHOWCASE_HTML.includes('clearSearch'), false);
 });
 
-// ===== 結構：三個 $watch + init 共用 _hasActiveFilter；$watch('pills') 存在 =====
+// ===== 結構：五個 $watch + init 共用 _hasActiveFilterForCurrentTab；$watch('showFavoriteActresses') 存在 =====
 
-test('state-base.js：$watch(search/actressSearch/pills) 與 init sync 皆呼叫 _hasActiveFilter', () => {
+test('state-base.js：$watch(search/actressSearch/pills/actressPills/showFavoriteActresses) 與 init sync 皆呼叫 _hasActiveFilterForCurrentTab', () => {
     assert.ok(
         /\$watch\(\s*['"]search['"]/.test(STATE_BASE_SRC),
         "必須有 $watch('search')",
@@ -287,15 +389,20 @@ test('state-base.js：$watch(search/actressSearch/pills) 與 init sync 皆呼叫
         /\$watch\(\s*['"]actressPills['"]/.test(STATE_BASE_SRC),
         "必須有 $watch('actressPills')",
     );
+    // 129-T1a：切分頁本身也要重算（切分頁不會改動四個搜尋欄位）
+    assert.ok(
+        /\$watch\(\s*['"]showFavoriteActresses['"]/.test(STATE_BASE_SRC),
+        "必須有 $watch('showFavoriteActresses')",
+    );
 
-    // 五次寫入 store 都必須經 _hasActiveFilter（不是各自重寫兩欄位算式）
+    // 六次寫入 store 都必須經 _hasActiveFilterForCurrentTab（不是各自重寫兩欄位算式）
     const storeAssigns = STATE_BASE_SRC.match(
-        /Alpine\.store\('ui'\)\.showcaseHasSearch\s*=\s*this\._hasActiveFilter\(\)/g,
+        /Alpine\.store\('ui'\)\.showcaseHasSearch\s*=\s*this\._hasActiveFilterForCurrentTab\(\)/g,
     ) || [];
     assert.equal(
         storeAssigns.length,
-        5,
-        `預期 4 個 $watch + 1 次 init sync = 5 次，實際 ${storeAssigns.length}`,
+        6,
+        `預期 5 個 $watch + 1 次 init sync = 6 次，實際 ${storeAssigns.length}`,
     );
 
     // 舊兩欄位字面不得再出現於 showcaseHasSearch 賦值（scroll handler 的不同語意不在此鎖）
@@ -308,11 +415,11 @@ test('state-base.js：$watch(search/actressSearch/pills) 與 init sync 皆呼叫
     );
 });
 
-test('_hasActiveFilter 函式體含 pills.length（CD-12 真的涵蓋 pill）', () => {
-    // 錨定方法定義（不是 this._hasActiveFilter() 呼叫點）：`_hasActiveFilter() { ... }`
-    const defRe = /_hasActiveFilter\s*\(\s*\)\s*\{/;
+test('_hasActiveFilterForCurrentTab 函式體含 pills.length 與 showFavoriteActresses（分頁化真的落地）', () => {
+    // 錨定方法定義（不是 this._hasActiveFilterForCurrentTab() 呼叫點）
+    const defRe = /_hasActiveFilterForCurrentTab\s*\(\s*\)\s*\{/;
     const m = defRe.exec(STATE_BASE_SRC);
-    assert.ok(m, '必須定義 _hasActiveFilter() 方法');
+    assert.ok(m, '必須定義 _hasActiveFilterForCurrentTab() 方法');
     const open = STATE_BASE_SRC.indexOf('{', m.index);
     let depth = 0;
     let body = '';
@@ -327,13 +434,17 @@ test('_hasActiveFilter 函式體含 pills.length（CD-12 真的涵蓋 pill）', 
             }
         }
     }
-    assert.ok(body.includes('pills.length'), `_hasActiveFilter 體必須含 pills.length，實際：${body}`);
-    assert.ok(body.includes('actressSearch'), `_hasActiveFilter 體必須含 actressSearch`);
+    assert.ok(body.includes('pills.length'), `_hasActiveFilterForCurrentTab 體必須含 pills.length，實際：${body}`);
+    assert.ok(
+        body.includes('showFavoriteActresses'),
+        `_hasActiveFilterForCurrentTab 體必須含 showFavoriteActresses（否則只改名沒分頁化），實際：${body}`,
+    );
+    assert.ok(body.includes('actressSearch'), `_hasActiveFilterForCurrentTab 體必須含 actressSearch`);
 });
 
-// ===== 捲動自動收合守衛（PR#131 P3 回歸鎖）=====
+// ===== 捲動自動收合守衛（PR#131 P3 回歸鎖；129-T1a 改用分頁感知判準）=====
 
-test('行動版捲動自動收合守衛用 _hasActiveFilter()，不是只看兩個文字欄位', () => {
+test('行動版捲動自動收合守衛用 _hasActiveFilterForCurrentTab()，不是只看兩個文字欄位', () => {
     // Why 這是回歸鎖而不是風格檢查：navbar 那顆鈕在 showcaseHasSearch 為真時變成 ✕，
     // 按下去是 clear-search 全清、不再是展開工具列（base.html:502-505）。手機上只用 pill
     // 篩選時，若本守衛仍只看文字欄位，捲動會把裝著 pill 的工具列收掉，而唯一的重開入口
@@ -357,8 +468,8 @@ test('行動版捲動自動收合守衛用 _hasActiveFilter()，不是只看兩�
     // 剝註解後才比對，否則上面那段說明文字自己會讓守衛通過
     const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     assert.ok(
-        code.includes('this._hasActiveFilter()'),
-        `_scrollHandler 必須用 _hasActiveFilter() 當 early-return 守衛，實際：${code}`,
+        code.includes('this._hasActiveFilterForCurrentTab()'),
+        `_scrollHandler 必須用 _hasActiveFilterForCurrentTab() 當 early-return 守衛，實際：${code}`,
     );
     assert.equal(
         /this\.search\s*!==\s*''\s*\|\|\s*this\.actressSearch\s*!==\s*''/.test(code),

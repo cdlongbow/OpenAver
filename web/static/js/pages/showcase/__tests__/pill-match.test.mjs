@@ -598,6 +598,10 @@ test('CoverBadgeManifest cold/warm：pill 中文字幕 vs user_tags 中字（B1�
     c.applyFilterAndSort = () => {};
     c.updatePagination = () => {};
     c.loadActresses = () => {};
+    // 129-T3：init() 新增了一個 _reconcileHeroCard() 呼叫，而它定義在 state-videos.js。
+    // 本 harness 刻意只建 stateBase（不 merge stateVideos）以縮小 cold/warm 的變因，
+    // 所以比照上面每一條 init 依賴的既有做法，補一個 stub。
+    c._reconcileHeroCard = () => {};
     c.$watch = () => {};
     c.$nextTick = () => {};
     c.mode = 'list';
