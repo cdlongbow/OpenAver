@@ -27,6 +27,19 @@
       "path_copied": "已複製: {path}",
       "folder_open_failed": "開啟資料夾失敗",
       "copy_failed": "複製失敗"
+    },
+    "browse_dir": {
+      "title": "選擇資料夾",
+      "select_this": "選取此資料夾",
+      "up": "上一層",
+      "close": "關閉",
+      "loading": "讀取中…",
+      "empty": "這個資料夾底下沒有子資料夾",
+      "drives": "這台電腦",
+      "err_not_found": "找不到這個資料夾",
+      "err_not_a_directory": "這不是資料夾",
+      "err_permission_denied": "沒有權限讀取這個資料夾",
+      "err_generic": "這個資料夾讀不到"
     }
   },
   "desktop": {
@@ -232,7 +245,6 @@
       "no_search_results": "此檔案沒有搜尋結果",
       "scrape_failed": "{filename} 整理失敗",
       "no_valid_files": "無有效影片檔案（無法識別番號）",
-      "desktop_only": "此功能需要在桌面應用程式中使用",
       "load_failed": "載入失敗，請重試",
       "translate_failed": "翻譯失敗，請重試",
       "db_not_synced": "未連動 — 整理完成後不會出現在 Showcase",
@@ -330,7 +342,6 @@
       }
     },
     "toast": {
-      "desktop_only": "此功能需要在桌面應用程式中使用",
       "load_current_failed": "載入現有設定失敗",
       "config_saved": "設定已儲存",
       "save_failed": "儲存失敗: {error}",
@@ -601,7 +612,6 @@
   "scanner": {
     "page_title": "列表生成",
     "toast": {
-      "desktop_only": "此功能需要在桌面應用程式中使用",
       "folder_already_added": "此資料夾已在列表中",
       "copy_path_failed": "複製失敗，路徑：{path}",
       "generate_error": "產生失敗，請查看日誌",
@@ -628,7 +638,8 @@
       "nfo_update_done": "補全完成！請重新產生列表以更新",
       "no_jellyfin_update_needed": "沒有需要補齊的影片",
       "jellyfin_update_done": "補齊完成！",
-      "path_copied": "已複製: {path}"
+      "path_copied": "已複製: {path}",
+      "browse_dir_fallback": "瀏覽器無法直接讀取拖放檔案的路徑，已為您開啟資料夾選擇器"
     },
     "copy_fail_modal": {
       "title": "複製日誌失敗",
@@ -1092,6 +1103,7 @@
       "delete_failed": "移除失敗，請稍後再試",
       "play_failed": "播放失敗",
       "player_unavailable": "這部片現在放不出來——可能是檔案位置拿不到，或者這個格式瀏覽器不支援",
+      "player_unavailable_format": "瀏覽器沒辦法播放這個檔案——可能是這個格式不支援，也可能是檔案本身壞了。可以試試電腦上的播放器（VLC／PotPlayer 等）",
       "part_count_fallback": "{n} 段",
       "part_progress": "第 {current}／{total} 段"
     },

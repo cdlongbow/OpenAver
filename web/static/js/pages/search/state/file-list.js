@@ -507,7 +507,9 @@ export function searchStateFileList() {
 
     async addFiles() {
         if (typeof window.pywebview === 'undefined' || !window.pywebview.api) {
-            this.showToast(window.t('search.toast.desktop_only'), 'info');
+            this.openBrowseDir('search', async (files) => {
+                if (files && files.length > 0) await this.setFileList(files);
+            }, { expandVideos: true });
             return;
         }
         try {
@@ -522,7 +524,9 @@ export function searchStateFileList() {
 
     async addFolder() {
         if (typeof window.pywebview === 'undefined' || !window.pywebview.api) {
-            this.showToast(window.t('search.toast.desktop_only'), 'info');
+            this.openBrowseDir('search', async (files) => {
+                if (files && files.length > 0) await this.setFileList(files);
+            }, { expandVideos: true });
             return;
         }
         try {

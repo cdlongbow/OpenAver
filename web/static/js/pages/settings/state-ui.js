@@ -56,7 +56,7 @@ export function stateUI() {
 
         async selectOutputFolder() {
             if (typeof window.pywebview === 'undefined' || !window.pywebview.api) {
-                this.showToast(window.t('settings.toast.desktop_only'), 'info');
+                this.openBrowseDir('settings', (path) => { this.form.avlistOutputDir = path; });
                 return;
             }
 

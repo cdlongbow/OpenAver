@@ -105,6 +105,8 @@ irm https://raw.githubusercontent.com/slive777/OpenAver/main/install.ps1 | iex
 
 首次開啟會自動進入新手導覽，帶你完成資料夾與基本設定，不需要先讀文件。
 
+> 🐧 **Linux 使用者**：沒有官方安裝程式，但可以自己架成區網伺服器用瀏覽器操作 —— 步驟見 [`docs/linux-server.md`](docs/linux-server.md)（進階路徑，需要命令列）。
+
 ---
 
 ## 核心功能

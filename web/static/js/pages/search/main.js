@@ -8,6 +8,7 @@ import { searchStateFileList }    from '@/search/state/file-list.js';
 import { searchStateGridMode }    from '@/search/state/grid-mode.js';
 import { searchStateAdvancedPicker } from '@/search/state/advanced-picker.js';
 import { rescrapeState }           from '@/shared/state-rescrape.js';
+import { browseDirState }          from '@/shared/state-browse-dir.js';
 import { mergeState }              from '@/shared/merge-state.js';
 
 function searchPage() {
@@ -22,6 +23,7 @@ function searchPage() {
         searchStateGridMode(),
         searchStateAdvancedPicker(),
         rescrapeState(),
+        browseDirState(),
         {
             // ===== 頁面組裝層 lifecycle（從 state/index.js 搬移）=====
             _initDragEvents() {
