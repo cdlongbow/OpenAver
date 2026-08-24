@@ -444,35 +444,34 @@ const RULES = [
         ctx.fail('CG-FLU-09: no bare `.search-bar` float rule inside @media (min-width:1024px) — CD-D1 (Rule 45) missing');
         return;
       }
-      // 🔴 129-T4 R3（sonnet review BLOCKER B1）：這裡**不能**用 `.find()` 只取第一條。
-      //   同一個 media block 內若出現第二條裸 `.search-bar`（合併衝突／複製貼上／另一個 task
-      //   疊加），CSS cascade 生效的是**最後一條**同屬性宣告，而 `.find()` 只驗第一條（合法的
-      //   那條）就放行 ⇒ 第二條 `margin: 0` 把浮動 inset 蓋掉，守衛完全靜默。
-      //
-      // 🔴 PR#156 Codex P2：但「裸 `.search-bar` 只能出現一次」是**過寬的**否決條件。
-      //   真正要守的不變式是「**浮動幾何那三個宣告不得被後來的規則蓋掉**」——日後若有人為了
-      //   別的屬性（`color` / `gap` 之類）再開一條裸 `.search-bar`，它與受保護的幾何**不在同一
-      //   個 cascade 上競爭**，卻會被整體唯一性檢查連坐擋下，接著又被要求也帶那三個宣告。
-      //   ⇒ 改成：**只看「宣告了受保護屬性」的那些裸規則**。它們必須恰好一條、且三個都帶；
-      //     完全不碰那三個屬性的裸規則一律放行。原本要擋的 `margin: 0` 仍然落在保護範圍內。
-      const PROTECTED = [
-        ['border-radius', /border-radius\s*:/],
-        ['border', /\bborder\s*:/],
-        ['margin', /\bmargin\s*:/],
-      ];
-      const geoRules = floatRules.filter(({ declarations }) =>
-        PROTECTED.some(([, re]) => re.test(declarations)));
-      if (geoRules.length === 0) {
-        ctx.fail('CG-FLU-09: 裸 `.search-bar` 規則裡沒有任何浮動幾何宣告（border-radius / border / margin）— CD-D1 (Rule 45) 形同消失');
-        return;
-      }
-      if (geoRules.length > 1) {
-        ctx.fail(`CG-FLU-09: 有 ${geoRules.length} 條裸 \`.search-bar\` 規則宣告了浮動幾何（border-radius / border / margin）— cascade 生效的是最後一條，Rule 45 會被蓋掉`);
-      }
-      for (const { declarations } of geoRules) {
-        if (!/border-radius\s*:/.test(declarations)) ctx.fail('CG-FLU-09: .search-bar @media 1024px block missing border-radius');
-        if (!/\bborder\s*:/.test(declarations)) ctx.fail('CG-FLU-09: .search-bar @media 1024px block missing border');
-        if (!/\bmargin\s*:/.test(declarations)) ctx.fail('CG-FLU-09: .search-bar @media 1024px block missing margin');
+      // 🔴 三輪 review 之後的收斂（sonnet T4 BLOCKER ＋ PR#156 Codex 第 2／3 輪 P2）：
+      //   前三個版本全部在數「**規則條數**」——取第一條 → 裸規則不准超過一條 →
+      //   帶幾何宣告的規則不准超過一條。但 CSS cascade 是逐「**屬性**」結算的，
+      //   單位不一致 ⇒ 每一版不是漏放就是過寬：
+      //     · `.find()` 取第一條   → 第二條 `margin: 0` 中和掉浮動，守衛靜默（fail-open）
+      //     · 裸規則不准超過一條   → 另開一條只設 `color` 的裸規則被連坐擋下
+      //     · 帶幾何的不准超過一條 → 合法地把三宣告拆成兩條寫也被擋，訊息還謊報「缺屬性」
+      //   ⇒ 改成**逐屬性數宣告次數**，三個問題一次消掉：
+      //     0 次  = Rule 45 形同消失
+      //     >1 次 = 後面那次在 cascade 上蓋掉前面那次（正是 fail-open 要擋的）
+      //     拆條寫 → 每個屬性仍各 1 次 → 綠；只設 color/gap 的裸規則 → 不碰這三個屬性 → 綠
+      //   驗證改用**雙向矩陣**（8 破壞必紅 ＋ 14 合法改寫必綠），不再只驗破壞那一半
+      //   ——過寬的守衛在只有破壞案例的矩陣裡，定義上一定 100% 通過（見 FE-GUARD-17）。
+      const allDecls = floatRules
+        .map((b) => b.declarations)
+        .join(';')
+        .replace(/\/\*[\s\S]*?\*\//g, '');  // 剝區塊內註解，避免註解裡的 `margin:` 被算進來
+      for (const [name, re] of [
+        ['border-radius', /border-radius\s*:/g],
+        ['border', /(?<![-\w])border\s*:/g],      // 不吃 border-radius / border-color …
+        ['margin', /(?<![-\w])margin\s*:/g],      // 不吃 margin-inline / margin-top …
+      ]) {
+        const n = (allDecls.match(re) || []).length;
+        if (n === 0) {
+          ctx.fail(`CG-FLU-09: 裸 \`.search-bar\` 沒有宣告 ${name} — CD-D1 (Rule 45) 形同消失`);
+        } else if (n > 1) {
+          ctx.fail(`CG-FLU-09: 裸 \`.search-bar\` 宣告了 ${n} 次 ${name} — 後面那次會在 cascade 上蓋掉 Rule 45`);
+        }
       }
     },
   },

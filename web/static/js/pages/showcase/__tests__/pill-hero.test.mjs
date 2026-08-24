@@ -91,6 +91,10 @@ function countOccurrences(haystack, needle) {
  * `_reconcileHeroCard` 的那一行（剝行尾註解），以 component 為 this 執行。
  * 行為契約必須跑產品碼那一行本身，否則 mutation 拿掉 guard／讓呼叫失效時測不到。
  */
+// [lint-guard: pytest-justified] method-body ordering — 抽 init() 方法體驗語句先後
+//（跨語句時序契約：_reconcileHeroCard 必須落在 applyFilterAndSort(true) 與 page = savedPage
+// 之間。eslint 逐檔 AST 表達不了「方法體內 A 必須在 B 和 C 之間」，寫 custom rule 的碼量
+// 遠大於本測試；同形狀前例見 tests/unit/frontend_contracts/test_contract_code_shape.py:18）
 function runInitReconcileLine(c) {
     const body = extractFnBody(STATE_BASE_SRC, 'async init()', 'init');
     const applyIdx = body.indexOf('this.applyFilterAndSort(true)');
@@ -315,6 +319,10 @@ test('call site 9/9 — _setReleasePill() 觸發 _reconcileHeroCard（124a 起�
 
 // ===== 129-T3：call site 8/9 — init() 回頁重算大卡（S2）=====
 
+// [lint-guard: pytest-justified] method-body ordering — 抽 init() 方法體驗語句先後
+//（跨語句時序契約：_reconcileHeroCard 必須落在 applyFilterAndSort(true) 與 page = savedPage
+// 之間。eslint 逐檔 AST 表達不了「方法體內 A 必須在 B 和 C 之間」，寫 custom rule 的碼量
+// 遠大於本測試；同形狀前例見 tests/unit/frontend_contracts/test_contract_code_shape.py:18）
 test('init() 源碼形狀：_reconcileHeroCard 帶 showFavoriteActresses guard，位於 applyFilterAndSort(true) 之後、page = savedPage 之前', () => {
     const body = extractFnBody(STATE_BASE_SRC, 'async init()', 'init');
     const applyLit = 'this.applyFilterAndSort(true)';
