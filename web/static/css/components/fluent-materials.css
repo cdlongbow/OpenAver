@@ -872,6 +872,15 @@
         border-radius: var(--fluent-radius-xl);
         border: 1px solid var(--glass-shell-border);
     }
+
+    /* 129-T4 / S3：搜尋頁中央藥丸套用與 showcase toolbar Rule 13b 相同的寬度夾擠。
+     * Rule 13b 用 grid 中欄 `min(var(--spotlight-width), 100% - 30rem)` 讓藥丸隨視窗變窄而縮；
+     * search-bar 是 flex 沒有中欄，改夾在藥丸自己的 max-width 上——兩者的 100% 都解析到
+     * 各自容器的 content box，而兩頁的 margin/padding 已對齊 ⇒ 算出同一個值。
+     * 不改 theme.css 的 .spotlight-search 本體：那是兩頁共用的，動它會同時改到瀏覽頁。 */
+    .search-bar .spotlight-search {
+        max-width: min(var(--spotlight-width), 100% - 30rem);
+    }
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────

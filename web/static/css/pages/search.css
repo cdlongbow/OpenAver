@@ -11,7 +11,7 @@
 /* 搜尋框區域 - 緊湊 */
 .search-bar {
     flex-shrink: 0;
-    padding: 0.5rem 1rem;
+    padding: 0.75rem 1.5rem;   /* 129-T4 / CD-129-4：與 .showcase-toolbar 對齊（showcase.css:36）*/
     background: var(--bg-header);
     border-bottom: 1px solid var(--border-light);
     backdrop-filter: blur(var(--fluent-blur)) saturate(var(--fluent-saturate));
@@ -415,14 +415,6 @@
     }
 }
 
-/* 搜尋提示 */
-.search-hint {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    margin-top: 0.25rem;
-    text-align: center;
-}
-
 /* === 搜尋進度指示器 === */
 .search-progress {
     display: flex;
@@ -692,10 +684,6 @@
 
     .search-bar {
         padding: 0.5rem;
-    }
-
-    .search-hint {
-        display: none;
     }
 }
 

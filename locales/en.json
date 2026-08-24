@@ -60,9 +60,6 @@
       "tag": "Tag name",
       "actors": "Actor names (separate with 、, or ,)"
     },
-    "hint": {
-      "partial_search": "Tip: Enter partial ID like IPZZ-03 to search 030–039; enter an actress name to find her works"
-    },
     "action": {
       "search": "Search",
       "cancel_search": "Cancel Search",

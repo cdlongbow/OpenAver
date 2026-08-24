@@ -114,13 +114,18 @@ function flattenWithMedia(blocks, media = []) {
 }
 
 // @media (min-width:1024px) body 抽取（CG-FLU-09/10 11b；用 ctx.raw，鏡射 pytest css_raw）。
-// parseRuleBlocks 對 @media wrapper 只回一個 depth-0 block，故需先 regex 抽 body 再 re-parse。
+// parseRuleBlocks 對 @media wrapper 只回一個 depth-0 block，故需先抽 body 再 re-parse。
+//
+// 🔴 129-T4：原本這裡是非貪婪 regex `\{([\s\S]*?)\}(?=\s*(?:\/\*|@|...))`，
+//   **在 @media body 內只有一條規則時才正確**。一旦 body 內有第二條規則，第一條的 `}`
+//   後面接著註解或選擇器，lookahead 就命中 → body 被切在第一條規則中間 → 括號不平衡 →
+//   parseRuleBlocks 抽不到完整規則 → 守衛謊報「Rule 45 missing」。
+//   （T4 要在 Rule 45 的 media 區塊內加第二條規則時實際撞到，grok 回報、未自行改守衛。）
+//   改為委派給同檔既有的 balanced-brace `extractMediaBodies()`——**選中的 @media 集合完全相同**
+//   （condRegex 錨定 ^...$，等價於舊 regex 的字面 header 比對），只是 body 這次是完整的。
+//   ⇒ 不是放寬守衛，是修好它的解析器；等價性驗證見 commit 訊息。
 function extractDesktopMediaBodies(raw) {
-  return [
-    ...raw.matchAll(
-      /@media\s*\(\s*min-width\s*:\s*1024px\s*\)\s*\{([\s\S]*?)\}(?=\s*(?:\/\*|@|[\[\.\#a-zA-Z]|$))/g,
-    ),
-  ].map((m) => m[1]);
+  return extractMediaBodies(raw, /^\s*\(\s*min-width\s*:\s*1024px\s*\)\s*$/);
 }
 
 // @media (max-width:480px) body 抽取（CG-FLU-14/15；手工 brace-walk，鏡射 pytest —
@@ -423,10 +428,33 @@ const RULES = [
         ctx.fail('CG-FLU-09: no .search-bar rule inside @media (min-width:1024px) — CD-D1 (Rule 45) missing');
         return;
       }
-      for (const { selector, declarations } of searchBarBlocks) {
+      // 129-T4：兩個不變式的作用域**不同**，不能混在同一個迴圈裡（原本混在一起，
+      // 於是 media 區塊內只要多一條後代規則就會被要求也帶 margin/radius/border）。
+      //   ① theme-agnostic：**所有**含 .search-bar 的規則都不得被 dim scope 綁死 → 維持廣掃
+      //   ② 浮動幾何三宣告：只有 **Rule 45 本體**（選擇器恰好是 .search-bar）該帶 → 精確匹配
+      // 兩者都**沒有放寬**：刪掉 Rule 45、拿掉其中任一宣告、或把它 dim-scope 化，
+      // 三種破壞都仍然轉紅（commit 前已逐一 mutation 驗過）。
+      for (const { selector } of searchBarBlocks) {
         if (selector.includes('[data-theme="dim"]')) {
           ctx.fail(`CG-FLU-09: .search-bar @media 1024px float rule must be theme-agnostic — ${selector}`);
         }
+      }
+      const floatRules = searchBarBlocks.filter((b) => b.selector.trim() === '.search-bar');
+      if (floatRules.length === 0) {
+        ctx.fail('CG-FLU-09: no bare `.search-bar` float rule inside @media (min-width:1024px) — CD-D1 (Rule 45) missing');
+        return;
+      }
+      // 🔴 129-T4 R3（sonnet review BLOCKER B1）：這裡**不能**用 `.find()` 只取第一條。
+      //   同一個 media block 內若合法地出現第二條裸 `.search-bar`（合併衝突／複製貼上／另一個
+      //   task 疊加），CSS cascade 生效的是**最後一條**同屬性宣告，而 `.find()` 只驗第一條
+      //   （合法的那條）就放行 ⇒ 第二條 `margin: 0` 把浮動 inset 蓋掉，守衛完全靜默。
+      //   reviewer 已在 /tmp 沙盒實測復現：baseline 會轉紅，`.find()` 版靜默 exit 0。
+      //   ⇒ 改成**逐一檢查每一條**（比照同檔 CG-FLU-10 的既有做法），並額外擋掉重複宣告本身
+      //   ——同一 scope 出現兩條裸 `.search-bar` 本來就是 cascade 歧義，該當場說出來。
+      if (floatRules.length > 1) {
+        ctx.fail(`CG-FLU-09: 裸 \`.search-bar\` 規則在 @media (min-width:1024px) 內出現 ${floatRules.length} 次 — cascade 歧義，Rule 45 必須唯一`);
+      }
+      for (const { declarations } of floatRules) {
         if (!/border-radius\s*:/.test(declarations)) ctx.fail('CG-FLU-09: .search-bar @media 1024px block missing border-radius');
         if (!/\bborder\s*:/.test(declarations)) ctx.fail('CG-FLU-09: .search-bar @media 1024px block missing border');
         if (!/\bmargin\s*:/.test(declarations)) ctx.fail('CG-FLU-09: .search-bar @media 1024px block missing margin');

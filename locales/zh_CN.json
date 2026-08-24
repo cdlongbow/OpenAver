@@ -60,9 +60,6 @@
       "tag": "标签名称",
       "actors": "演员名称（可用、，,分隔多人）"
     },
-    "hint": {
-      "partial_search": "提示：输入局部番号如 IPZZ-03 可搜索 030~039，输入女优名可搜索其作品"
-    },
     "action": {
       "search": "搜索",
       "cancel_search": "取消搜索",

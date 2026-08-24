@@ -308,10 +308,6 @@
                 </div>
             </div>
         </form>
-        <div class="search-hint">
-            <i class="bi bi-lightbulb"></i>
-            {{ t('search.hint.partial_search') }}
-        </div>
     </div>
 
     <!-- 結果區域 -->
@@ -346,6 +342,7 @@
                     | replace(_batch_label, _batch_label ~ ' <i class="bi bi-folder-plus explainer-icon" aria-hidden="true"></i>')
                     | safe
                 }}</p>
+                <p class="empty-explainer-line">{{ t('search.empty.explainer_partial') }}</p>
             </div>
         </div>
 
