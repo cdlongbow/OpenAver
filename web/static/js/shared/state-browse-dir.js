@@ -169,6 +169,9 @@ export function browseDirState() {
             }
             writeLastPath(targetKey, currentPath);
             if (typeof onSelect === 'function') {
+                // 刻意不 await：彈窗立刻關掉，非同步的 callback 在背景收尾。
+                // 掛非同步 callback 的呼叫端要自己處理「收尾期間畫面沒有提示」——
+                // 桌面版那條路同樣沒有 loading 提示，這裡維持一致行為。
                 onSelect(currentPath);
             }
             this.closeBrowseDir();

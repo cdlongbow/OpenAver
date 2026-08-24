@@ -128,7 +128,7 @@ venv/bin/python -c "from core.config import mutate_config; mutate_config(lambda 
 venv/bin/python -c "from web.lan_listener import get_lan_ip; ip = get_lan_ip(); print('http://%s:8000' % ip if ip else '查不到，改用下面的備援做法')"
 ```
 
-印出來的就是等一下要在別台裝置的瀏覽器打的網址，例如 `http://192.168.1.235:8000`。
+印出來的就是等一下要在別台裝置的瀏覽器打的網址，例如 `http://192.168.1.100:8000`。
 
 **如果它說「查不到」**：這個查法是靠系統的預設路由反推的，
 機器沒有對外預設路由時（純內網、沒接網際網路的環境）就會查不到。改用系統指令：
@@ -137,7 +137,7 @@ venv/bin/python -c "from web.lan_listener import get_lan_ip; ip = get_lan_ip(); 
 hostname -I
 ```
 
-它會把這台機器所有的位址一次列出來，例如 `192.168.1.235 172.17.0.1`——
+它會把這台機器所有的位址一次列出來，例如 `192.168.1.100 172.17.0.1`——
 **挑那個跟你其他裝置同網段的**（通常是 `192.168.x.x` 或 `10.x.x.x` 開頭那個）。
 `172.17.x.x` 通常是 Docker 的虛擬網卡，不是你要的。真的分不出來就去路由器的
 裝置清單看這台機器被分到哪個 IP。
