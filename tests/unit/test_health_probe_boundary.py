@@ -13,9 +13,34 @@ import ast
 import pathlib
 import subprocess
 import sys
+import threading
 import urllib.request
 
+import pytest
+
 HEALTH_PROBE_PATH = pathlib.Path(__file__).parents[2] / "windows" / "health_probe.py"
+
+
+@pytest.fixture
+def alive_thread():
+    """一個活著的 daemon thread（wait_for_server 只會對它呼叫 is_alive()）。
+
+    TASK-130a-T3 起 `wait_for_server` 的 `server_thread` 是必填參數且**沒有預設值**
+    （刻意的：給 None 預設值等於開一條永遠回不了 PROBE_THREAD_DIED 的路徑）。
+    這裡用真 thread 而不是 stub，是因為「忘了 start() 的 thread 也回報 is_alive() == False」
+    正是這支 API 最容易寫出假 PROBE_THREAD_DIED 的地方——用真的才測得到那個陷阱。
+    """
+    stop = threading.Event()
+
+    def _spin():
+        stop.wait(60)
+
+    t = threading.Thread(target=_spin, daemon=True)
+    t.start()
+    assert t.is_alive()
+    yield t
+    stop.set()
+    t.join(timeout=5)
 
 
 def test_health_probe_imports_without_webview():
@@ -63,7 +88,7 @@ def test_health_probe_does_not_import_standalone():
                 )
 
 
-def test_prober_opener_has_no_proxy_handler_with_env_proxy_set(monkeypatch):
+def test_prober_opener_has_no_proxy_handler_with_env_proxy_set(alive_thread, monkeypatch):
     """
     驗證探活 opener 顯式配置 ProxyHandler({})，不受 http_proxy / HTTP_PROXY 環境變數干擾。
     若拿掉 ProxyHandler({})，build_opener() 預設會讀環境變數或建立無參數 ProxyHandler(proxies=None)。
@@ -85,8 +110,9 @@ def test_prober_opener_has_no_proxy_handler_with_env_proxy_set(monkeypatch):
     monkeypatch.setenv("all_proxy", "http://127.0.0.99:9999")
     monkeypatch.setenv("ALL_PROXY", "http://127.0.0.99:9999")
 
-    # 執行 wait_for_server（timeout=0 短路不等待）
-    windows.health_probe.wait_for_server(49152, timeout=0)
+    # 執行 wait_for_server（timeout=0 短路：thread 活著 → 立刻走逾時分支，不發任何請求）
+    # opener 在 while 迴圈之前就建好，所以 timeout=0 仍捕捉得到它。
+    windows.health_probe.wait_for_server(49152, alive_thread, timeout=0)
 
     assert len(captured_openers) >= 1, "wait_for_server 應呼叫 urllib.request.build_opener"
     handlers, opener = captured_openers[0]

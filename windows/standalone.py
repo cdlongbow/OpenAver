@@ -24,7 +24,13 @@ from core.logger import setup_logging, get_logger
 import webview
 from pywebview_api import api, bind_events
 from tray import DesktopLifecycle, NativeTrayIcon
-from windows.health_probe import run_server, wait_for_server, CLIENT_HOST
+from windows.health_probe import (
+    CLIENT_HOST,
+    PROBE_OK,
+    format_startup_message,
+    run_server,
+    wait_for_server,
+)
 
 # 配置
 PORT = 49152  # 使用動態/私有端口範圍 (49152-65535)，避免權限問題
@@ -424,18 +430,19 @@ def find_free_port(start_port=49152, logger=None, max_attempts=100):
     raise RuntimeError(error_msg)
 
 
-def _wait_for_server_or_exit(port, logger) -> None:
+def _wait_for_server_or_exit(port, logger, server_thread) -> None:
     """Wait for the local server; show error and exit(1) on timeout.
 
     Extracted from main() so the P2-A inner-try around javten create_window
     stays inside the function-size budget (MAX_LINES = 200). Fall-through
     or sys.exit(1) — same control flow as the inlined block.
     """
-    if not wait_for_server(port):
-        logger.info("錯誤：伺服器啟動逾時")
+    result = wait_for_server(port, server_thread)
+    if result != PROBE_OK:
+        logger.info("錯誤：伺服器啟動失敗 result=%s", result)
         show_error(
             "啟動失敗",
-            "伺服器啟動逾時。\n\n請檢查是否有其他程式佔用端口 8000。",
+            format_startup_message(result, port),
             None,
             logger
         )
@@ -554,7 +561,7 @@ def main():
 
     # 3. 等待伺服器就緒
     logger.info("等待伺服器就緒...")
-    _wait_for_server_or_exit(port, logger)
+    _wait_for_server_or_exit(port, logger, server_thread)
     logger.info("伺服器已就緒")
 
     # 3b. 接線 LAN listener manager（dual-listener 架構）

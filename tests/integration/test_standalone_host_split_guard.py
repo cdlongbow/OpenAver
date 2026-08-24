@@ -206,3 +206,79 @@ class TestStandaloneLoopbackOnlyGuard:
             assert "str(e)" not in line, (
                 f"emit_notification 呼叫不可包含 str(e)（安全規則）：{line!r}"
             )
+
+
+class TestStandaloneStartupProbeWiringGuard:
+    """TASK-130a-T3: standalone.py 探活三態呼叫端 AST 守衛（Linux 無法 import standalone）"""
+
+    def _wait_for_server_or_exit_def(self, tree: ast.Module) -> ast.FunctionDef:
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name == "_wait_for_server_or_exit":
+                return node
+        raise AssertionError("standalone.py 找不到 _wait_for_server_or_exit FunctionDef")
+
+    def test_wait_for_server_or_exit_has_server_thread_param(self):
+        """_wait_for_server_or_exit 恰好 3 個位置參數，第 3 個叫 server_thread。"""
+        tree, _ = _parse_standalone()
+        fn = self._wait_for_server_or_exit_def(tree)
+        pos_args = list(fn.args.args)
+        assert len(pos_args) == 3, (
+            f"_wait_for_server_or_exit 應有恰好 3 個位置參數，實際 {[a.arg for a in pos_args]}"
+        )
+        assert pos_args[2].arg == "server_thread", (
+            f"第 3 個參數應為 server_thread，實際 {pos_args[2].arg!r}"
+        )
+
+    def test_wait_for_server_or_exit_call_passes_three_args(self):
+        """main 內 _wait_for_server_or_exit(...) 呼叫傳了 3 個位置參數。"""
+        tree, _ = _parse_standalone()
+        calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_wait_for_server_or_exit"
+        ]
+        assert calls, "standalone.py 找不到 _wait_for_server_or_exit 呼叫"
+        for call in calls:
+            assert len(call.args) == 3, (
+                f"_wait_for_server_or_exit 呼叫應傳 3 個 args，"
+                f"line {call.lineno} 實際 {len(call.args)}"
+            )
+
+    def test_show_error_message_comes_from_format_startup_message(self):
+        """_wait_for_server_or_exit 內 show_error 第 2 個 arg 必須是 format_startup_message(...) Call。"""
+        tree, _ = _parse_standalone()
+        fn = self._wait_for_server_or_exit_def(tree)
+        show_error_calls = [
+            node for node in ast.walk(fn)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "show_error"
+        ]
+        assert show_error_calls, "_wait_for_server_or_exit 內找不到 show_error 呼叫"
+        for call in show_error_calls:
+            assert len(call.args) >= 2, f"show_error 參數不足：line {call.lineno}"
+            msg_arg = call.args[1]
+            assert isinstance(msg_arg, ast.Call), (
+                f"show_error 第 2 個 arg 必須是 Call（format_startup_message(...)），"
+                f"不可為 Constant/JoinedStr；line {call.lineno} 實際 {type(msg_arg).__name__}"
+            )
+            assert not isinstance(msg_arg, (ast.Constant, ast.JoinedStr))
+            func = msg_arg.func
+            if isinstance(func, ast.Name):
+                assert func.id == "format_startup_message", (
+                    f"show_error 訊息應來自 format_startup_message，實際 {func.id!r}"
+                )
+            else:
+                raise AssertionError(
+                    f"show_error 第 2 個 arg 的 Call.func 應為 Name format_startup_message，"
+                    f"實際 {type(func).__name__}"
+                )
+
+    def test_no_hardcoded_port_8000_occupation_message(self):
+        """standalone.py 全檔不得再出現字面「請檢查是否有其他程式佔用端口 8000」。"""
+        _, src = _parse_standalone()
+        banned = "請檢查是否有其他程式佔用端口 8000"
+        assert banned not in src, (
+            f"standalone.py 仍含硬編訊息 {banned!r}；應改由 format_startup_message() 產出"
+        )
