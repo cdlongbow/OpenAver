@@ -8,6 +8,7 @@ import http.client
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 from core.logger import get_logger
 
@@ -56,19 +57,39 @@ def wait_for_server(port, server_thread, timeout=STARTUP_TIMEOUT) -> str:
         time.sleep(0.2)
 
 
+def _debug_log_hint() -> str:
+    """使用者要去哪裡找 debug.log。
+
+    路徑必須與 core/logger.py 的預設一致 —— 目錄在 core/logger.py:34-35
+    （`log_dir = Path.home() / "OpenAver" / "logs"`）、檔名在 core/logger.py:39
+    （`log_file = log_dir / "debug.log"`）。那邊改了這邊要跟著改。
+
+    這裡刻意不 import core.logger 的私有 _log_dir：format_startup_message 是純函式，
+    而 _log_dir 只有 setup_logging() 跑過才有值，在「啟動失敗」這條路徑上不保證已經初始化。
+
+    ⚠️ 這是一組「靠兩處常數相等才成立」的機制。守住它的是
+    tests/unit/test_health_probe_lifecycle.py::test_debug_log_hint_matches_core_logger_default
+    —— 那支測試直接掃 core/logger.py 的原始碼。**改這裡或改那裡都會讓它轉紅，這是刻意的。**
+    """
+    try:
+        return str(Path.home() / "OpenAver" / "logs" / "debug.log")
+    except RuntimeError:
+        return "OpenAver 的 logs 資料夾"
+
+
 def format_startup_message(result, port) -> str:
     """依探活結局產出啟動失敗文案（純函式；不含原始例外）。"""
     if result == PROBE_OK:
         return ""
     if result == PROBE_THREAD_DIED:
         return (
-            "伺服器程序已中止，無法完成啟動。\n\n"
-            "請查看 debug.log 以了解詳細原因。"
+            "伺服器程序在啟動過程中已中止。\n\n"
+            f"請查看以下檔案了解詳細原因：\n{_debug_log_hint()}"
         )
     # PROBE_TIMEOUT 與值域外 → 逾時文案（fail-safe）
     return (
-        f"伺服器啟動逾時（端口 {port}）。\n\n"
-        "請查看 debug.log 以了解詳細原因。"
+        f"伺服器未能在 {STARTUP_TIMEOUT} 秒內於端口 {port} 啟動。\n\n"
+        f"請查看以下檔案了解詳細原因：\n{_debug_log_hint()}"
     )
 
 
