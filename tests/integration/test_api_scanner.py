@@ -191,7 +191,7 @@ class TestScannerAPI:
 
         assert response.status_code == 200
         assert "onerror=" in html
-        assert 'id="video-error-hint"' in html
+        assert 'id="video-error-hint-network"' in html and 'id="video-error-hint-format"' in html
         assert 'display:none' in html or "display: none" in html
         expected = "這部片現在放不出來——可能是檔案位置拿不到，或者這個格式瀏覽器不支援"
         assert expected in html
@@ -3293,7 +3293,7 @@ class TestVideoPlayerMultipart:
         assert "position: fixed" in html
         assert "pointer-events: none" in html
         assert "onerror=" in html
-        assert 'id="video-error-hint"' in html
+        assert 'id="video-error-hint-network"' in html and 'id="video-error-hint-format"' in html
 
     def test_multipart_no_inline_script(self, client, tmp_path, monkeypatch):
         """CD-122-12：除外部 ESM 模組外，沒有任何 <script>...</script> 區塊。"""

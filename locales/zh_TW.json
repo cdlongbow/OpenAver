@@ -1103,6 +1103,7 @@
       "delete_failed": "移除失敗，請稍後再試",
       "play_failed": "播放失敗",
       "player_unavailable": "這部片現在放不出來——可能是檔案位置拿不到，或者這個格式瀏覽器不支援",
+      "player_unavailable_format": "瀏覽器沒辦法播放這個檔案——可能是這個格式不支援，也可能是檔案本身壞了。可以試試電腦上的播放器（VLC／PotPlayer 等）",
       "part_count_fallback": "{n} 段",
       "part_progress": "第 {current}／{total} 段"
     },

@@ -1601,7 +1601,8 @@ def _render_player_html(
     html_lang_safe: str,
     filename: str,
     src: str,
-    hint_text: str,
+    hint_text_network: str,
+    hint_text_format: str,
     extra_style: str = '',
     video_open_attrs: str = '',
     video_data_attrs: str = '',
@@ -1626,12 +1627,13 @@ def _render_player_html(
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ background: #000; display: flex; align-items: center; justify-content: center; height: 100vh; }}
         video {{ max-width: 100%; max-height: 100vh; }}
-        #video-error-hint {{ color: #fff; padding: 1.5rem; text-align: center; max-width: 32rem; line-height: 1.6; }}{extra_style}
+        #video-error-hint-network, #video-error-hint-format {{ color: #fff; padding: 1.5rem; text-align: center; max-width: 32rem; line-height: 1.6; }}{extra_style}
     </style>
 </head>
 <body>
-    <video {video_open_attrs}controls autoplay src="{src}"{video_data_attrs} onerror="this.style.display='none';document.getElementById('video-error-hint').style.display='flex'"></video>{extra_body}
-    <div id="video-error-hint" style="display:none">{hint_text}</div>{extra_script}
+    <video {video_open_attrs}controls autoplay src="{src}"{video_data_attrs} onerror="this.style.display='none';var c=this.error?this.error.code:0;document.getElementById((c===3||c===4)?'video-error-hint-format':'video-error-hint-network').style.display='flex'"></video>{extra_body}
+    <div id="video-error-hint-network" style="display:none">{hint_text_network}</div>
+    <div id="video-error-hint-format" style="display:none">{hint_text_format}</div>{extra_script}
 </body>
 </html>"""
 
@@ -1659,7 +1661,8 @@ def video_player(path: str = Query(..., description="影片路徑（file:/// URI
     # 本端點唯一的 locale 正規化點，lang 屬性與提示文字都吃它
     html_lang = locale if isinstance(locale, str) and locale in allowed_langs else "zh-TW"
     html_lang_safe = html_escape(html_lang)
-    hint_text = html_escape(i18n_t('showcase.video.player_unavailable', locale=html_lang))
+    hint_text_network = html_escape(i18n_t('showcase.video.player_unavailable', locale=html_lang))
+    hint_text_format = html_escape(i18n_t('showcase.video.player_unavailable_format', locale=html_lang))
 
     gallery_config = config.get('gallery', {})
     path_mappings = gallery_config.get('path_mappings', {})
@@ -1685,7 +1688,8 @@ def video_player(path: str = Query(..., description="影片路徑（file:/// URI
             html_lang_safe=html_lang_safe,
             filename=filename,
             src=first_src,
-            hint_text=hint_text,
+            hint_text_network=hint_text_network,
+            hint_text_format=hint_text_format,
             extra_style=(
                 "\n        #oa-player-progress { position: fixed; top: 1rem; left: 1rem;"
                 " z-index: 1; pointer-events: none; color: #fff; font: 14px/1.4 sans-serif; }"
@@ -1703,7 +1707,8 @@ def video_player(path: str = Query(..., description="影片路徑（file:/// URI
         html_lang_safe=html_lang_safe,
         filename=filename,
         src=video_url_safe,
-        hint_text=hint_text,
+        hint_text_network=hint_text_network,
+        hint_text_format=hint_text_format,
     ))
 
 
