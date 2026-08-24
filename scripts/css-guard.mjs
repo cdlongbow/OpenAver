@@ -648,28 +648,35 @@ const RULES = [
     file: 'components/fluent-materials.css',
     kind: 'fn',
     check(ctx) {
-      // ctx.text 已 stripCssComments ⇒ 上面那段說明註解不會被算進來
-      const hits = [...ctx.text.matchAll(/scrollbar-gutter\s*:\s*([^;}]+)/g)];
+      // 只認**頂層 `html` 區塊**裡的宣告（PR#156 Codex P2）：本規則守的是「文件層級的溝寬」這個
+      // 對齊契約。日後若有獨立捲動的元件在本檔自己宣告 scrollbar-gutter，它與 html 不在同一個
+      // cascade 上競爭，不該被這條擋下——整檔計數會把那種合法寫法誤判成「cascade 歧義」。
+      // selector 對巢狀在 @media 內的規則會帶 `@media (...)` 前綴，所以 === 'html' 同時也擋住
+      // 「被包進 media query」（那會讓只有寬螢幕有溝寬，窄桌機仍然錯位）。
+      // ctx.blocks / ctx.text 皆已 stripCssComments ⇒ 說明註解不會被算進來。
+      const htmlBlocks = ctx.blocks.filter((b) => b.selector.trim() === 'html');
+      const hits = htmlBlocks.flatMap(
+        (b) => [...b.declarations.matchAll(/scrollbar-gutter\s*:\s*([^;}]+)/g)],
+      );
       if (hits.length === 0) {
-        ctx.fail('CG-FLU-16: fluent-materials.css 缺 scrollbar-gutter 宣告（129-T5 / CD-129-3）— '
-          + '少了它，搜尋頁右側不再保留捲軸溝寬，兩頁搜尋列在真機上會差 7.5px');
+        const elsewhere = ctx.blocks
+          .filter((b) => /scrollbar-gutter/.test(b.declarations))
+          .map((b) => b.selector.trim());
+        ctx.fail(elsewhere.length
+          ? `CG-FLU-16: 頂層 \`html\` 區塊裡沒有 scrollbar-gutter 宣告（另有 ${elsewhere.length} 筆掛在 `
+            + `\`${elsewhere.join('` / `')}\`）— 129-T5 要的是文件層級的溝寬，文件層級才是視窗捲軸的擁有者`
+          : 'CG-FLU-16: fluent-materials.css 缺 scrollbar-gutter 宣告（129-T5 / CD-129-3）— '
+            + '少了它，搜尋頁右側不再保留捲軸溝寬，兩頁搜尋列在真機上會差 7.5px');
         return;
       }
       if (hits.length > 1) {
-        ctx.fail(`CG-FLU-16: scrollbar-gutter 宣告出現 ${hits.length} 次 — cascade 歧義，`
+        ctx.fail(`CG-FLU-16: 頂層 \`html\` 的 scrollbar-gutter 宣告出現 ${hits.length} 次 — cascade 歧義，`
           + '實際生效的是最後一條；請收斂成單一宣告');
       }
       for (const h of hits) {
         const v = h[1].replace(/!important/g, '').trim();
         if (v !== 'stable') {
           ctx.fail(`CG-FLU-16: scrollbar-gutter 值必須是 \`stable\`（單邊），實際為 \`${v}\``);
-        }
-      }
-      const owners = ctx.blocks.filter((b) => /scrollbar-gutter/.test(b.declarations));
-      for (const { selector } of owners) {
-        if (selector.trim() !== 'html') {
-          ctx.fail(`CG-FLU-16: scrollbar-gutter 必須掛在頂層 \`html\`（文件層級才是視窗捲軸的擁有者），`
-            + `實際選擇器為 \`${selector.trim()}\``);
         }
       }
     },
