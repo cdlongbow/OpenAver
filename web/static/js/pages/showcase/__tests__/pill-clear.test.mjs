@@ -113,35 +113,72 @@ function makeClearComponent(overrides) {
 
 // ===== clearAllFilters 清空正確性 =====
 
-test('clearAllFilters：僅有 pills（無文字）時清空 pills', () => {
+test('clearAllFilters：影片牆僅有 pills（無文字）時清空 pills，actressPills 原封不動', () => {
     const c = makeClearComponent({
+        showFavoriteActresses: false,
         pills: [{ dim: 'maker', value: 'Moodyz' }, { dim: 'series', value: 'Madonna' }],
         actressPills: [{ dim: 'age', op: '=', value: '37' }],
     });
     c.clearAllFilters();
     assert.equal(c.pills.length, 0);
-    assert.equal(c.actressPills.length, 0);
+    assert.equal(c.actressPills.length, 1);
     assert.equal(c.search, '');
     assert.equal(c.actressSearch, '');
 });
 
-test('clearAllFilters：同時清空 search 與 actressSearch（女優模式回歸）', () => {
+test('clearAllFilters：女優牆僅有 pills（無文字）時清空 actressPills，pills 原封不動', () => {
     const c = makeClearComponent({
+        showFavoriteActresses: true,
+        pills: [{ dim: 'maker', value: 'Moodyz' }, { dim: 'series', value: 'Madonna' }],
+        actressPills: [{ dim: 'age', op: '=', value: '37' }],
+    });
+    c.clearAllFilters();
+    assert.equal(c.actressPills.length, 0);
+    assert.equal(c.pills.length, 2);
+    assert.equal(c.search, '');
+    assert.equal(c.actressSearch, '');
+});
+
+test('clearAllFilters：影片牆清除不得清掉 actressSearch／actressPills', () => {
+    const c = makeClearComponent({
+        showFavoriteActresses: false,
         search: 'hello',
         actressSearch: '三上悠亜',
         pills: [{ dim: 'maker', value: 'S1' }],
+        actressPills: [{ dim: 'age', op: '=', value: '37' }],
     });
     c.clearAllFilters();
-    assert.equal(c.search, '');
-    assert.equal(c.actressSearch, '');
-    assert.equal(c.pills.length, 0);
+    assert.equal(c.actressSearch, '三上悠亜', '影片牆清除不得清掉 actressSearch');
+    assert.deepEqual(c.actressPills, [{ dim: 'age', op: '=', value: '37' }], '影片牆清除不得清掉 actressPills');
+    assert.equal(c.search, '', '影片牆 search 應清空');
+    assert.equal(c.pills.length, 0, '影片牆 pills 應清空');
 });
 
-test('clearAllFilters：收合 toolbar（Alpine.store ui.toolbarOpen = false）', () => {
-    const c = makeClearComponent({ search: 'x' });
-    uiStore.toolbarOpen = true;
+test('clearAllFilters：女優牆清除不得清掉 search／pills', () => {
+    const c = makeClearComponent({
+        showFavoriteActresses: true,
+        search: 'hello',
+        actressSearch: '三上悠亜',
+        pills: [{ dim: 'maker', value: 'S1' }],
+        actressPills: [{ dim: 'age', op: '=', value: '37' }],
+    });
     c.clearAllFilters();
-    assert.equal(uiStore.toolbarOpen, false);
+    assert.equal(c.search, 'hello', '女優牆清除不得清掉 search');
+    assert.deepEqual(c.pills, [{ dim: 'maker', value: 'S1' }], '女優牆清除不得清掉 pills');
+    assert.equal(c.actressSearch, '', '女優牆 actressSearch 應清空');
+    assert.equal(c.actressPills.length, 0, '女優牆 actressPills 應清空');
+});
+
+test('clearAllFilters：收合 toolbar（兩個分頁各驗一次）', () => {
+    const c1 = makeClearComponent({ showFavoriteActresses: false, search: 'x' });
+    uiStore.toolbarOpen = true;
+    c1.clearAllFilters();
+    assert.equal(uiStore.toolbarOpen, false, '影片牆清除需收合 toolbar');
+
+    const c2 = makeClearComponent({ showFavoriteActresses: true, actressSearch: 'y' });
+    uiStore.toolbarOpen = true;
+    c2.clearAllFilters();
+    assert.equal(uiStore.toolbarOpen, false, '女優牆清除需收合 toolbar');
 });
 
 // TASK-115-T8（RULING 3）：T7 留下的直接 `this._clearPreciseMatch()` 呼叫已移除——
@@ -149,8 +186,9 @@ test('clearAllFilters：收合 toolbar（Alpine.store ui.toolbarOpen = false）'
 // _clearPreciseMatch() 呼叫（單一判斷點，不再由 clearAllFilters() 自己宣稱一次權威）。
 // 這裡改用 _reconcileHeroCard 真身（仍計數）取代純 spy，證明「清除的工作只做一次、
 // 且真的透過 _reconcileHeroCard 達成」，而不是弱化斷言去掩蓋這次合併。
-test('clearAllFilters：重置 precise-actress-match／愛心狀態（經由 _reconcileHeroCard 真身收斂）', () => {
+test('clearAllFilters：影片牆重置 precise-actress-match／愛心狀態（經由 _reconcileHeroCard 真身收斂）', () => {
     const c = makeClearComponent({
+        showFavoriteActresses: false,
         search: '三上悠亜',
         _isPreciseActressMatch: true,
         _matchedActress: { name: '三上悠亜', is_favorite: false },
@@ -163,13 +201,28 @@ test('clearAllFilters：重置 precise-actress-match／愛心狀態（經由 _re
     assert.equal(c._matchedActress, null);
 });
 
+test('clearAllFilters：女優牆清除維持 precise-match 狀態，不得誤呼叫 _reconcileHeroCard', () => {
+    const c = makeClearComponent({
+        showFavoriteActresses: true,
+        search: '三上悠亜',
+        actressSearch: '三上悠亜',
+        _isPreciseActressMatch: true,
+        _matchedActress: { name: '三上悠亜', is_favorite: false },
+    });
+    const realReconcile = stateVideos()._reconcileHeroCard;
+    c._reconcileHeroCard = function () { c.heroCalls++; return realReconcile.call(c); };
+    c.clearAllFilters();
+    assert.equal(c._isPreciseActressMatch, true, '女優牆清除維持 _isPreciseActressMatch 原值');
+    assert.notEqual(c._matchedActress, null, '女優牆清除維持 _matchedActress 原值');
+    assert.equal(c.preciseClearCalls, 0, '女優牆清除不得呼叫 _clearPreciseMatch');
+    assert.equal(c.heroCalls, 0, '女優牆清除不得呼叫 _reconcileHeroCard');
+});
+
 // ===== call-count：一次 clear 各副作用恰好 1 次 =====
 
-// TASK-115-T8（RULING 3）：同上——_reconcileHeroCard 改用真身（仍計數），
-// preciseClearCalls 現在驗證的是「clearAllFilters → _reconcileHeroCard → _clearPreciseMatch」
-// 這條間接鏈路恰好一次，不再是 clearAllFilters 直接呼叫。
-test('clearAllFilters：一次點擊恰好 1 次 _animateFilter / applyActressFilterAndSort / _reconcileHeroCard / _clearPreciseMatch', () => {
+test('clearAllFilters：影片牆一次點擊副作用（_animateFilter=1, actressFilter=0, _reconcileHeroCard=1, _clearPreciseMatch=1）', () => {
     const c = makeClearComponent({
+        showFavoriteActresses: false,
         search: 'x',
         actressSearch: 'y',
         pills: [{ dim: 'maker', value: 'Moodyz' }],
@@ -179,20 +232,33 @@ test('clearAllFilters：一次點擊恰好 1 次 _animateFilter / applyActressFi
     c._reconcileHeroCard = function () { c.heroCalls++; return realReconcile.call(c); };
     c.clearAllFilters();
     assert.equal(c.animateCalls, 1);
-    assert.equal(c.actressFilterCalls, 1);
+    assert.equal(c.actressFilterCalls, 0);
     assert.equal(c.heroCalls, 1);
     assert.equal(c.preciseClearCalls, 1);
 });
 
-// TASK-115-T8（RULING 3）：同上——不再 stub _reconcileHeroCard 為純 spy，改保留
-// stateVideos() 合併進來的真身（Object.assign 已含，這裡只加計數 wrapper），
-// 讓 preciseClearCalls 真的驗到「clearAllFilters → _reconcileHeroCard → _clearPreciseMatch」
-// 這條鏈路，而不是驗一個永遠不會呼叫 _clearPreciseMatch 的假 spy。
-test('clearAllFilters：一次點擊恰好 1 次 saveState（真身 _animateFilter + mode:table）', () => {
+test('clearAllFilters：女優牆一次點擊副作用（_animateFilter=0, actressFilter=1, _reconcileHeroCard=0）', () => {
+    const c = makeClearComponent({
+        showFavoriteActresses: true,
+        search: 'x',
+        actressSearch: 'y',
+        actressPills: [{ dim: 'age', op: '=', value: '37' }],
+        _isPreciseActressMatch: true,
+    });
+    const realReconcile = stateVideos()._reconcileHeroCard;
+    c._reconcileHeroCard = function () { c.heroCalls++; return realReconcile.call(c); };
+    c.clearAllFilters();
+    assert.equal(c.animateCalls, 0);
+    assert.equal(c.actressFilterCalls, 1);
+    assert.equal(c.heroCalls, 0);
+});
+
+test('clearAllFilters：影片牆一次點擊恰好 1 次 saveState（真身 _animateFilter + mode:table）', () => {
     // 不 stub _animateFilter，改 stub 其內部依賴，讓真身跑到 saveState 那一行。
     // mode:'table' 避開 DOM capture 分支（querySelector / ShowcaseAnimations）。
     uiStore.toolbarOpen = true;
     const c = Object.assign({}, stateVideos(), {
+        showFavoriteActresses: false,
         pills: [{ dim: 'maker', value: 'Moodyz' }],
         search: 'hello',
         actressSearch: 'world',
@@ -218,8 +284,22 @@ test('clearAllFilters：一次點擊恰好 1 次 saveState（真身 _animateFilt
     c.clearAllFilters();
     assert.equal(c.saveCalls, 1, 'saveState 必須恰好 1 次（=== 1，不是 >= 1）');
     assert.equal(c.preciseClearCalls, 1);
-    assert.equal(c.actressFilterCalls, 1);
+    assert.equal(c.actressFilterCalls, 0);
     assert.equal(c.heroCalls, 1);
+});
+
+test('clearAllFilters：女優牆一次點擊恰好 1 次 saveState', () => {
+    uiStore.toolbarOpen = true;
+    const c = makeClearComponent({
+        showFavoriteActresses: true,
+        actressSearch: '三上悠亜',
+        actressPills: [{ dim: 'age', op: '=', value: '37' }],
+    });
+    c.clearAllFilters();
+    assert.equal(c.saveCalls, 1, '女優牆 saveState 必須恰好 1 次（=== 1，不是 >= 1）');
+    assert.equal(c.actressFilterCalls, 1);
+    assert.equal(c.animateCalls, 0);
+    assert.equal(c.heroCalls, 0);
 });
 
 /** stateBase 在 factory 內用 this.$persist；node harness 需 stub（比照 pill-entry / pill-persist）。 */
