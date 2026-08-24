@@ -266,6 +266,7 @@ export function stateBase() {
             showFavoriteActresses: false,
             actressSort: null,
             actressOrder: null,
+            actressSearch: '',
             pills: [],
             cardShape: 'cover',
             infoVisible: false,
@@ -528,6 +529,10 @@ export function stateBase() {
             this.showFavoriteActresses = state.showFavoriteActresses === true;  // 嚴格 === true
             this.actressSort = state.actressSort || 'video_count';
             this.actressOrder = state.actressOrder || 'desc';
+            // 129-T2 / CD-129-6：女優分頁的搜尋字比照影片分頁持久化（spec S5）。
+            // 不走 URL params（與 showFavoriteActresses/actressSort/actressOrder 一致，
+            // 避免污染分享連結）；也**不**還原 actressPills——CD-116a-5 不翻案。
+            this.actressSearch = state.actressSearch || '';
             // TASK-119-T3: 只走 localStorage，白名單比對（FE-JS-01：不可 || fallback）
             this.cardShape = state.cardShape === 'poster' ? 'poster' : 'cover';
             // TASK-124b-T1: 嚴格 === true（鏡射 showFavoriteActresses 慣例，FE-JS-01：不可 || fallback）
@@ -546,6 +551,7 @@ export function stateBase() {
             this._persistedShowcase.showFavoriteActresses = this.showFavoriteActresses;  // ★ 44a
             this._persistedShowcase.actressSort = this.actressSort;                      // ★ 44a
             this._persistedShowcase.actressOrder = this.actressOrder;                    // ★ 44a
+            this._persistedShowcase.actressSearch = this.actressSearch;                  // ★ 129-T2
             this._persistedShowcase.pills = serializePills(this.pills);
             this._persistedShowcase.cardShape = this.cardShape;
 
