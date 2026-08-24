@@ -639,6 +639,42 @@ const RULES = [
     },
   },
 
+  // CG-FLU-16 ← 129-T5 / CD-129-3：scrollbar-gutter 全站保留溝寬（spec S3 驗收條件 6）
+  // 為什麼要這支守衛：這條規則在無頭環境「看不見」——刪掉它，CDP 目視、截圖、既有 lint
+  // 全都不會有任何反應，只有 owner 在傳統捲軸的真機上才會發現兩頁搜尋列又錯開 7.5px。
+  // 本檔其他規則都有視覺表面，唯獨這條沒有 → 這就是它值得一支存在性守衛的理由。
+  {
+    id: 'CG-FLU-16',
+    file: 'components/fluent-materials.css',
+    kind: 'fn',
+    check(ctx) {
+      // ctx.text 已 stripCssComments ⇒ 上面那段說明註解不會被算進來
+      const hits = [...ctx.text.matchAll(/scrollbar-gutter\s*:\s*([^;}]+)/g)];
+      if (hits.length === 0) {
+        ctx.fail('CG-FLU-16: fluent-materials.css 缺 scrollbar-gutter 宣告（129-T5 / CD-129-3）— '
+          + '少了它，搜尋頁右側不再保留捲軸溝寬，兩頁搜尋列在真機上會差 7.5px');
+        return;
+      }
+      if (hits.length > 1) {
+        ctx.fail(`CG-FLU-16: scrollbar-gutter 宣告出現 ${hits.length} 次 — cascade 歧義，`
+          + '實際生效的是最後一條；請收斂成單一宣告');
+      }
+      for (const h of hits) {
+        const v = h[1].replace(/!important/g, '').trim();
+        if (v !== 'stable') {
+          ctx.fail(`CG-FLU-16: scrollbar-gutter 值必須是 \`stable\`（單邊），實際為 \`${v}\``);
+        }
+      }
+      const owners = ctx.blocks.filter((b) => /scrollbar-gutter/.test(b.declarations));
+      for (const { selector } of owners) {
+        if (selector.trim() !== 'html') {
+          ctx.fail(`CG-FLU-16: scrollbar-gutter 必須掛在頂層 \`html\`（文件層級才是視窗捲軸的擁有者），`
+            + `實際選擇器為 \`${selector.trim()}\``);
+        }
+      }
+    },
+  },
+
   // CG-FLU-15 ← test_rescrape_preview_mobile_stack（rescrape-modal.css @media(max-width:480px)）
   {
     id: 'CG-FLU-15',
