@@ -4307,6 +4307,14 @@ const RULES = [
 
   // FE-ALPINE-05：browseDirState 不得定義 init()
   { file: 'web/static/js/shared/state-browse-dir.js', kind: 'forbidden-string', pattern: /(?:^|\n)\s*init\s*\(/, note: '[TASK-128-T2] browseDirState 不得定義 init()（FE-ALPINE-05 mergeState last-wins）' },
+
+  // ==== [130a-T6] windows/ 底下 HTTP 請求不得用裸 urllib.request.urlopen ====
+  {
+    file: { dir: 'windows', ext: ['.py'], recursive: true },
+    kind: 'forbidden-string',
+    pattern: 'urllib.request.urlopen(',
+    note: '[lint-guard:130a-T6] 探活／任何 windows/ 底下的 HTTP 請求不得用 urllib.request.urlopen —— 它的預設 opener 會讀系統代理（Linux 環境變數／Windows 登錄檔）且不排除 127.0.0.1，使用者開著 Clash／v2rayN 時連自己 loopback 的請求會被送去代理並遭 RST，App 啟動直接崩出 traceback（0.14.10 修的就是這個）。一律用 urllib.request.build_opener(urllib.request.ProxyHandler({}))。',
+  },
 ];
 
 // ---- helpers ----

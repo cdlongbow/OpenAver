@@ -150,3 +150,106 @@ def test_uses_monotonic_not_wall_clock():
     src = HEALTH_PROBE_PATH.read_text(encoding="utf-8")
     assert "time.monotonic()" in src, "windows/health_probe.py 應使用 time.monotonic()"
     assert "time.time()" not in src, "windows/health_probe.py 不得使用 time.time()"
+
+
+# [lint-guard: pytest-justified] AST 精確鎖 FunctionDef，lint 的 window scope 會隨鄰近函式長度漂移而 fail-open
+class TestHealthProbeAstGuards:
+    def test_probe_loop_except_names_explicit_classes(self):
+        """AC-T6-2 / CD-130a-T6: wait_for_server 的探活重試迴圈 except 必須顯式指定例外類別，不得退化為 (Base)Exception 或裸 except:。"""
+        assert HEALTH_PROBE_PATH.exists(), f"{HEALTH_PROBE_PATH} 不存在"
+        src = HEALTH_PROBE_PATH.read_text(encoding="utf-8")
+        tree = ast.parse(src, filename=str(HEALTH_PROBE_PATH))
+
+        wait_fn = next(
+            (node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "wait_for_server"),
+            None,
+        )
+        assert wait_fn is not None, "未在 windows/health_probe.py 中找到 wait_for_server 函式定義 (fail-closed)"
+
+        while_node = next(
+            (node for node in ast.walk(wait_fn) if isinstance(node, ast.While)),
+            None,
+        )
+        assert while_node is not None, "wait_for_server 內未找到 While 迴圈節點 (fail-closed)"
+
+        handlers = [node for node in ast.walk(while_node) if isinstance(node, ast.ExceptHandler)]
+        assert len(handlers) >= 1, "wait_for_server 內未找到任何 ExceptHandler (fail-closed)"
+
+        for handler in handlers:
+            assert handler.type is not None, "wait_for_server 探活迴圈不得使用裸 except: (fail-closed)"
+
+            # 單一例外類別：Name（`except Exception`）與 Attribute（`except builtins.Exception`）
+            # 兩種形狀都要檢查。早期版本只檢查 Name，而 tuple 那一支卻有處理 Attribute
+            # ——同一支測試裡兩種寫法標準不一致（grok-4.5 與 sonnet 於 T6 review 各自獨立指出）。
+            if isinstance(handler.type, ast.Name):
+                assert handler.type.id not in ("Exception", "BaseException"), (
+                    f"wait_for_server 探活迴圈不得捕獲通用例外 {handler.type.id}"
+                )
+            elif isinstance(handler.type, ast.Attribute):
+                assert handler.type.attr not in ("Exception", "BaseException"), (
+                    f"wait_for_server 探活迴圈不得捕獲通用例外 {ast.unparse(handler.type)}"
+                )
+            elif isinstance(handler.type, ast.Tuple):
+                for elt in handler.type.elts:
+                    if isinstance(elt, ast.Name):
+                        assert elt.id not in ("Exception", "BaseException"), (
+                            f"wait_for_server 探活迴圈 except tuple 不得包含通用例外 {elt.id}"
+                        )
+                    elif isinstance(elt, ast.Attribute):
+                        assert elt.attr not in ("Exception", "BaseException"), (
+                            f"wait_for_server 探活迴圈 except tuple 不得包含通用例外 {elt.attr}"
+                        )
+
+    def test_probe_loop_has_no_logging(self):
+        """AC-T6-2: wait_for_server 探活重試迴圈內不得有 logger 呼叫（避免每次重試產生大量日誌），僅在離開迴圈的終止分支留痕 (CD-130a-8)。"""
+        assert HEALTH_PROBE_PATH.exists(), f"{HEALTH_PROBE_PATH} 不存在"
+        src = HEALTH_PROBE_PATH.read_text(encoding="utf-8")
+        tree = ast.parse(src, filename=str(HEALTH_PROBE_PATH))
+
+        wait_fn = next(
+            (node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "wait_for_server"),
+            None,
+        )
+        assert wait_fn is not None, "未在 windows/health_probe.py 中找到 wait_for_server 函式定義 (fail-closed)"
+
+        while_node = next(
+            (node for node in ast.walk(wait_fn) if isinstance(node, ast.While)),
+            None,
+        )
+        assert while_node is not None, "wait_for_server 內未找到 While 迴圈節點 (fail-closed)"
+
+        # 走訪 While 迴圈的 body。CD-130a-8 的「離開迴圈前留痕一次」就住在迴圈裡的
+        # `if <終止條件>: ... return` 分支，所以那種分支的 body 要放行。
+        #
+        # ⚠️ 放行的粒度只到「body 以 Return 收尾的那個 if 的 body」，**不含它的 test 與 orelse**。
+        # 早期版本是「只要 if 裡任何地方有 Return 就整段跳過」——那樣寫的話，
+        # 把成功處理提前成 `if response.status == 200: return PROBE_OK` / `else: logger.debug(...)`
+        # 就能把每輪留痕合法地藏進 orelse，守衛全綠。（grok-4.5 於 T6 review 構造出這個形狀。）
+        def _forbid_logger_in(node, why):
+            for child in ast.walk(node):
+                if isinstance(child, ast.Call):
+                    func = child.func
+                    if (isinstance(func, ast.Attribute)
+                            and isinstance(func.value, ast.Name)
+                            and func.value.id == "logger"):
+                        raise AssertionError(
+                            f"wait_for_server 探活迴圈內（{why}）包含 forbidden logger 呼叫 "
+                            f"(line {child.lineno}): {ast.unparse(child)} —— "
+                            "迴圈最多跑 150 次，逐輪留痕會把 debug.log 洗掉。"
+                            "留痕只准放在離開迴圈的那條路徑上（CD-130a-8）。"
+                        )
+
+        for stmt in while_node.body:
+            is_exit_branch = (
+                isinstance(stmt, ast.If)
+                and stmt.body
+                and isinstance(stmt.body[-1], ast.Return)
+            )
+            if is_exit_branch:
+                # 放行 body（那是 CD-130a-8 的單次留痕），但 test 與 orelse 照掃
+                _forbid_logger_in(stmt.test, "if 條件式")
+                for sub in stmt.orelse:
+                    _forbid_logger_in(sub, "else 分支")
+                continue
+            _forbid_logger_in(stmt, "每輪都會走到的區塊")
+
