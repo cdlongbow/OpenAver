@@ -427,8 +427,7 @@ export function stateScan() {
         // ===== Folder Management =====
         async selectFolder() {
             if (typeof window.pywebview === 'undefined' || !window.pywebview.api) {
-                this.toggleManualInput();
-                this.showToast(window.t('scanner.toast.desktop_only'), 'info');
+                this.openBrowseDir('scanner', (path) => { this.addFolderPath(path); });
                 return;
             }
 
