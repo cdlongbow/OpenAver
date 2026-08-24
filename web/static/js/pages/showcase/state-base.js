@@ -356,6 +356,7 @@ export function stateBase() {
             _recomputeAllBadges();
             if (this.showFavoriteActresses) { this.loadActresses(); }
             this.applyFilterAndSort(true);  // M4a: 套用搜尋篩選（跳過 pagination，下面統一處理）
+            if (!this.showFavoriteActresses) this._reconcileHeroCard();  // 129-T3 / CD-129-2：回頁重算大卡（S2）
             this.page = savedPage;          // 恢復儲存的頁碼
             this.updatePagination();        // 單次分頁（會 clamp 超出範圍的頁碼）
 
