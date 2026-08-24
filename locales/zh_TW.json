@@ -27,6 +27,19 @@
       "path_copied": "已複製: {path}",
       "folder_open_failed": "開啟資料夾失敗",
       "copy_failed": "複製失敗"
+    },
+    "browse_dir": {
+      "title": "選擇資料夾",
+      "select_this": "選取此資料夾",
+      "up": "上一層",
+      "close": "關閉",
+      "loading": "讀取中…",
+      "empty": "這個資料夾底下沒有子資料夾",
+      "drives": "這台電腦",
+      "err_not_found": "找不到這個資料夾",
+      "err_not_a_directory": "這不是資料夾",
+      "err_permission_denied": "沒有權限讀取這個資料夾",
+      "err_generic": "這個資料夾讀不到"
     }
   },
   "desktop": {

@@ -1,6 +1,7 @@
 import { stateConfig }       from '@/settings/state-config.js';
 import { stateProviders }    from '@/settings/state-providers.js';
 import { stateUI }           from '@/settings/state-ui.js';
+import { browseDirState }    from '@/shared/state-browse-dir.js';
 import { mergeState }        from '@/shared/merge-state.js';
 
 document.addEventListener('alpine:init', () => {
@@ -8,5 +9,6 @@ document.addEventListener('alpine:init', () => {
         stateConfig(),
         stateProviders(),
         stateUI(),
+        browseDirState(),
     ));
 });

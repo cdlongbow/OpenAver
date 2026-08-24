@@ -4274,6 +4274,39 @@ const RULES = [
     pattern: 'current().preview_sample_images?.[idx]',
     note: '[lint-guard 126-T3c] detail 縮圖 :src 必須吃 preview_sample_images?.[idx] || raw（CD-126-3）',
   },
+
+  // ==== [TASK-128-T2] 共用「選擇資料夾」彈窗：掛載點 / include / markup / 無 script / 無 init ====
+  // 掛載點（CD-128-4）：三頁 main.js 各自 import + 併入 mergeState（只做 {% include %} 不會註冊 state）
+  { file: 'web/static/js/pages/search/main.js', kind: 'required-string', pattern: "from '@/shared/state-browse-dir.js'", note: '[TASK-128-T2] search main.js 必須 import browseDirState' },
+  { file: 'web/static/js/pages/search/main.js', kind: 'required-string', pattern: /browseDirState\s*\(/, note: '[TASK-128-T2] search main.js mergeState 鏈必須呼叫 browseDirState()' },
+  { file: 'web/static/js/pages/settings/main.js', kind: 'required-string', pattern: "from '@/shared/state-browse-dir.js'", note: '[TASK-128-T2] settings main.js 必須 import browseDirState' },
+  { file: 'web/static/js/pages/settings/main.js', kind: 'required-string', pattern: /browseDirState\s*\(/, note: '[TASK-128-T2] settings main.js mergeState 鏈必須呼叫 browseDirState()' },
+  { file: 'web/static/js/pages/scanner/main.js', kind: 'required-string', pattern: "from '@/shared/state-browse-dir.js'", note: '[TASK-128-T2] scanner main.js 必須 import browseDirState' },
+  { file: 'web/static/js/pages/scanner/main.js', kind: 'required-string', pattern: /browseDirState\s*\(/, note: '[TASK-128-T2] scanner main.js mergeState 鏈必須呼叫 browseDirState()' },
+
+  // 三頁模板 include（block content 內）
+  { file: 'web/templates/search.html', kind: 'required-string', pattern: "{% include '_browse_dir_modal.html' %}", note: '[TASK-128-T2] search.html 必須 include _browse_dir_modal.html' },
+  { file: 'web/templates/settings.html', kind: 'required-string', pattern: "{% include '_browse_dir_modal.html' %}", note: '[TASK-128-T2] settings.html 必須 include _browse_dir_modal.html' },
+  { file: 'web/templates/scanner.html', kind: 'required-string', pattern: "{% include '_browse_dir_modal.html' %}", note: '[TASK-128-T2] scanner.html 必須 include _browse_dir_modal.html' },
+
+  // base.html CSS link
+  { file: 'web/templates/base.html', kind: 'required-string', pattern: '/static/css/components/browse-dir-modal.css', note: '[TASK-128-T2] base.html 必須 <link> browse-dir-modal.css' },
+
+  // partial：fluent-modal 開關、禁 .showModal()、零 <script>、單擊導覽、常駐選取鍵
+  { file: 'web/templates/_browse_dir_modal.html', kind: 'required-string', pattern: 'class="modal fluent-modal browse-dir-dialog"', note: '[TASK-128-T2] partial 必須沿用 modal fluent-modal browse-dir-dialog' },
+  { file: 'web/templates/_browse_dir_modal.html', kind: 'required-string', pattern: "{ 'modal-open': browseDirOpen }", note: "[TASK-128-T2] partial 必須 :class=\"{ 'modal-open': browseDirOpen }\" 開關" },
+  { file: 'web/templates/_browse_dir_modal.html', kind: 'forbidden-string', pattern: '.showModal()', note: '[TASK-128-T2] partial 不得使用原生 .showModal()' },
+  { file: 'web/templates/_browse_dir_modal.html', kind: 'forbidden-string', pattern: '<script', note: '[TASK-128-T2] partial 不得含 <script>（FE-TIMING-01；state 由三頁 main.js 掛載）' },
+  { file: 'web/templates/_browse_dir_modal.html', kind: 'required-string', pattern: '@click="navigateBrowseDir(e.path)"', note: '[TASK-128-T2] 資料夾列必須單擊即導覽 navigateBrowseDir(e.path)' },
+  { file: 'web/templates/_browse_dir_modal.html', kind: 'required-string', pattern: ':disabled="!browseDirCanSelect()"', note: '[TASK-128-T2] 「選取此資料夾」必須 :disabled="!browseDirCanSelect()"' },
+  { file: 'web/templates/_browse_dir_modal.html', kind: 'required-string', pattern: '@click.self="closeBrowseDir()"', note: '[TASK-128-T2] 點外面關閉必須 @click.self="closeBrowseDir()"' },
+  // 導覽入口在請求飛行中必須 disabled —— 讓「select 的二次 fetch 還沒回來就跳走」在時序上不可能發生
+  // （sonnet review 2026-08-24 MAJOR；選 UI 鎖而不是在 select 裡再加一把 generation guard）
+  { file: 'web/templates/_browse_dir_modal.html', kind: 'required-string', pattern: ':disabled="browseDirParentPath === null || browseDirLoading"', note: '[TASK-128-T2] 「上一層」在 browseDirLoading 時必須 disabled（select 二次 fetch 期間不得跳走）' },
+  { file: 'web/templates/_browse_dir_modal.html', kind: 'required-string', pattern: /class="browse-dir-crumb"\s*\n\s*:disabled="browseDirLoading"/, note: '[TASK-128-T2] 麵包屑在 browseDirLoading 時必須 disabled（同上）' },
+
+  // FE-ALPINE-05：browseDirState 不得定義 init()
+  { file: 'web/static/js/shared/state-browse-dir.js', kind: 'forbidden-string', pattern: /(?:^|\n)\s*init\s*\(/, note: '[TASK-128-T2] browseDirState 不得定義 init()（FE-ALPINE-05 mergeState last-wins）' },
 ];
 
 // ---- helpers ----
