@@ -4,6 +4,7 @@ OpenAver Windows 伺服器生命週期與探活模組
 提供 uvicorn 伺服器啟動 (run_server) 與本機 loopback 探活 (wait_for_server)。
 脫離 pywebview 依賴，可在無 GUI / Linux 環境下進行獨立測試。
 """
+import http.client
 import time
 import urllib.error
 import urllib.request
@@ -28,7 +29,7 @@ def wait_for_server(port, timeout=STARTUP_TIMEOUT):
             with _opener.open(url, timeout=1) as response:
                 if response.status == 200:
                     return True
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ConnectionRefusedError):
+        except (urllib.error.URLError, urllib.error.HTTPError, OSError, http.client.HTTPException):
             pass
         time.sleep(0.2)
 
