@@ -15,6 +15,7 @@ Scanner API 路由 - 影片列表生成
 - GET  /api/gallery/jellyfin-check        — 檢查多少影片缺少 Jellyfin poster/fanart
 - GET  /api/gallery/jellyfin-update       — 批次產生 Jellyfin poster + fanart（SSE 串流）
 - GET  /api/gallery/missing-check         — 檢查缺少 NFO/封面的影片清單
+- GET  /api/gallery/browse-dir            — 列舉資料夾目錄與影片檔案清單
 """
 
 import asyncio
@@ -2128,4 +2129,117 @@ def generate_from_ids(body: GenerateFromIdsRequest):
     if body.embed_covers:
         result["embedded_count"] = embedded_count
         result["embed_failed_count"] = embed_failed_count
+    return result
+
+
+def _is_windows() -> bool:
+    return os.name == 'nt'
+
+
+def _path_flavour():
+    from pathlib import PurePosixPath, PureWindowsPath
+    return PureWindowsPath if _is_windows() else PurePosixPath
+
+
+def _compute_parent(path: str) -> Optional[str]:
+    if not path:
+        return None
+    flavour = _path_flavour()
+    p = flavour(path)
+    if p.parent == p:
+        return "" if _is_windows() else None
+    return str(p.parent)
+
+
+def _list_windows_drives() -> list[str]:
+    try:
+        if hasattr(os, "listdrives"):
+            return list(os.listdrives())
+    except (AttributeError, OSError):
+        pass
+    import string
+    return [f"{d}:\\" for d in string.ascii_uppercase if os.path.exists(f"{d}:\\")]
+
+
+def _browse_start_dir(config: dict) -> str:
+    gallery_cfg = config.get('gallery') or {}
+    sources = iter_gallery_sources(gallery_cfg)
+    if sources:
+        path_mappings = gallery_cfg.get('path_mappings', {})
+        fs = uri_to_local_fs_path(sources[0].path, path_mappings)
+        parent = str(Path(fs).parent)
+        resolved = _safe_realpath(parent, 'browse-dir')
+        # isdir 為真還不夠：目錄存在但列不出來（traverse-only 權限、NAS 掛著但權限壞掉）
+        # 會讓「第一次開彈窗」直接吃 403，而使用者沒有任何畫面可以導去別處自救。
+        # 起點決議不得回 4xx —— 探一次 scandir，列不動就退回平台根。
+        if os.path.isdir(resolved):
+            try:
+                with os.scandir(resolved):
+                    pass
+                return resolved
+            except OSError:
+                logger.warning("browse-dir: 起點列舉失敗，退回平台根 path=%s", resolved)
+    return "" if _is_windows() else "/"
+
+
+@router.get("/browse-dir")
+def browse_dir(path: Optional[str] = Query(None), expand: Optional[str] = Query(None)):
+    config = load_config()
+    # path 省略 → 起點決議。空字串在兩個平台語意不同：Windows 的 "" 是虛擬磁碟機清單
+    # 節點（從 C:\ 按上一層會走到這裡，必須保留），POSIX 沒有這個節點，"" 等同省略。
+    if path is None or (path == "" and not _is_windows()):
+        current_path = _browse_start_dir(config)
+    else:
+        current_path = path
+
+    if current_path == "" and _is_windows():
+        drives = _list_windows_drives()
+        entries = [{"name": d, "path": d} for d in drives]
+        entries.sort(key=lambda e: (e["name"].casefold(), e["name"]))
+        result = {
+            "current_path": "",
+            "parent_path": None,
+            "entries": entries,
+        }
+        if expand == "videos":
+            result["files"] = []
+        return result
+
+    resolved_path = _safe_realpath(current_path, "browse-dir")
+    if not os.path.exists(resolved_path):
+        return JSONResponse(status_code=404, content={"success": False, "error": "not_found"})
+    if not os.path.isdir(resolved_path):
+        return JSONResponse(status_code=400, content={"success": False, "error": "not_a_directory"})
+
+    entries = []
+    video_files = []
+    video_exts = get_video_extensions(config) if expand == "videos" else set()
+
+    try:
+        with os.scandir(resolved_path) as it:
+            for entry in it:
+                try:
+                    if entry.is_dir():
+                        entries.append({"name": entry.name, "path": entry.path})
+                    elif expand == "videos" and entry.is_file():
+                        ext = os.path.splitext(entry.name)[1].lower()
+                        if ext in video_exts:
+                            video_files.append(entry.path)
+                except OSError:
+                    continue
+    except (PermissionError, OSError):
+        return JSONResponse(status_code=403, content={"success": False, "error": "permission_denied"})
+
+    entries.sort(key=lambda e: (e["name"].casefold(), e["name"]))
+    if expand == "videos":
+        video_files.sort(key=lambda p: (os.path.basename(p).casefold(), p))
+
+    parent_path = _compute_parent(resolved_path)
+    result = {
+        "current_path": resolved_path,
+        "parent_path": parent_path,
+        "entries": entries,
+    }
+    if expand == "videos":
+        result["files"] = video_files
     return result
