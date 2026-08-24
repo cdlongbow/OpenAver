@@ -23,15 +23,19 @@ def get_enabled_source_ids(
 ) -> list[str]:
     """回傳 Runtime Auto Pool 的來源 id 清單（依 order 升冪）。
 
-    Runtime Auto Pool 過濾公式（design §2.2）：
+    Runtime Auto Pool 過濾公式（design §2.2，metatube gate 已移除）：
         enabled is True AND manual_only is not True
-        AND (type != 'metatube' OR available)
 
-    - builtin（與所有非 metatube type）**bypass** availability gate（永遠視為 available）。
-    - `availability_map=None`（B1 default）= 不 gate，等同全 available（含 metatube）。
-    - populated map：`type == 'metatube'` 的 source 僅在 `map[id] is True` 時保留；
-      id 不在 map 或值為 False → 排除。
-    - 斷線的 metatube provider 仍占 cap 槽（cap basis），但**不**出現在本回傳結果。
+    - builtin（與所有非 metatube type）bypass availability gate（永遠視為 available）。
+    - **metatube availability gate 已移除**（feature/metatube-no-availability-gate）：
+      metatube server 每次 search 都對所有 provider 並發廣播、且無失敗快取
+      （engine/movie.go searchMovieAll）；本地 availability 過濾在國內網路環境下
+      會因一次臨時超時誤傷可用源並**永久擱置**（mark_failed 無 TTL，需手動
+      「測試」才恢復）。metatube 源每次刮削都應照常試驗——與 server 端
+      「以試驗為準」的設計一致。
+    - `availability_map` 參數**保留**（簽名相容既有呼叫方），但**不再影響**
+      enabled metatube 源是否進入 fan-out；UI 的灰膠囊顯示
+      （metatube_state.availability_map()）仍正常運作。
 
     空 / 缺失 `sources` 段 → 回 `[]`（graceful）。malformed 條目以 `.get()` 防禦。
     """
@@ -49,10 +53,6 @@ def get_enabled_source_ids(
             continue
         if s.get('manual_only') is True:
             continue
-        # availability gate：非 metatype bypass；metatube 需 map 允許。
-        if s.get('type') == 'metatube':
-            if availability_map is not None and availability_map.get(s.get('id'), False) is not True:
-                continue
         included.append(s)
 
     included.sort(key=lambda s: s.get('order', 0))
