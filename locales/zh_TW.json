@@ -638,7 +638,8 @@
       "nfo_update_done": "補全完成！請重新產生列表以更新",
       "no_jellyfin_update_needed": "沒有需要補齊的影片",
       "jellyfin_update_done": "補齊完成！",
-      "path_copied": "已複製: {path}"
+      "path_copied": "已複製: {path}",
+      "browse_dir_fallback": "瀏覽器無法直接讀取拖放檔案的路徑，已為您開啟資料夾選擇器"
     },
     "copy_fail_modal": {
       "title": "複製日誌失敗",

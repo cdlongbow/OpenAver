@@ -507,6 +507,10 @@ export function stateScan() {
             e.preventDefault();
             this.dragCounter = 0;
             this.showDragOverlay = false;
+            // 桌面版由 pywebview 端的 window.handleFolderDrop 接手（見 main.js），這裡不插手
+            if (typeof window.pywebview !== 'undefined' && window.pywebview.api) return;
+            this.showToast(window.t('scanner.toast.browse_dir_fallback'), 'info');
+            this.openBrowseDir('scanner', (path) => { this.addFolderPath(path); });
         },
 
         // ===== TASK-90b-T1: Readonly Confirm Modal Actions =====
