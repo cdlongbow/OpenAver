@@ -1,18 +1,21 @@
 """
-TASK-80a-T6b: standalone.py loopback-only HOST AST/source 守衛
+TASK-80a-T6b / TASK-130a-T1: standalone.py & health_probe.py loopback-only HOST AST/source 守衛
 
-dual-listener 架構（T6b 起）：
+dual-listener 架構：
   - 主 listener 綁 127.0.0.1（loopback only，消除單機防火牆提示）
   - LAN listener（0.0.0.0）由 web/lan_listener.py 管理
+  - health_probe.py 管理伺服器啟動與探活（無 webview 依賴）
 
-驗證 windows/standalone.py 中：
-  (a) CLIENT_HOST = "127.0.0.1" 模組層賦值存在
-  (b) 無 BIND_HOST 模組層賦值（已移除，不留殭屍）
-  (c) standalone.py 全檔無 "0.0.0.0" 字面（已移至 web/lan_listener.py）
-  (d) uvicorn Config/Server 呼叫使用 host=CLIENT_HOST（不是 BIND_HOST）
-  (e) find_free_port 的 sock.bind 使用 CLIENT_HOST（loopback probe）
-  (f) wait_for_server health URL 使用 CLIENT_HOST
-  (g) main window create_window URL 使用 CLIENT_HOST
+驗證：
+  (a) windows/health_probe.py 中 CLIENT_HOST = "127.0.0.1" 模組層賦值存在
+  (b) windows/standalone.py 從 windows.health_probe 匯入 CLIENT_HOST（且無自立賦值）
+  (c) windows/standalone.py 無 BIND_HOST 模組層賦值（已移除，不留殭屍）
+  (d) standalone.py 與 health_probe.py 全檔無 "0.0.0.0" 字面（0.0.0.0 由 web/lan_listener.py 管理）
+  (e) health_probe.py 中 uvicorn Config/Server 呼叫使用 host=CLIENT_HOST（不是 BIND_HOST）
+  (f) standalone.py 中 find_free_port 的 sock.bind 使用 CLIENT_HOST（loopback probe）
+  (g) health_probe.py 中 wait_for_server health URL 使用 CLIENT_HOST
+  (h) standalone.py 中 main window create_window URL 使用 CLIENT_HOST
+  (i) standalone.py 中 emit_notification auto-start 不暴露 str(e)
 
 Mirror 慣例：Path.read_text() + ast.parse，不 import windows.standalone
 （test env 無 webview 套件）。
@@ -21,11 +24,18 @@ import ast
 import pathlib
 
 STANDALONE_PATH = pathlib.Path(__file__).parents[2] / "windows" / "standalone.py"
+HEALTH_PROBE_PATH = pathlib.Path(__file__).parents[2] / "windows" / "health_probe.py"
 
 
-def _parse():
+def _parse_standalone():
     src = STANDALONE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(src, filename=str(STANDALONE_PATH))
+    return tree, src
+
+
+def _parse_health_probe():
+    src = HEALTH_PROBE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(src, filename=str(HEALTH_PROBE_PATH))
     return tree, src
 
 
@@ -45,11 +55,11 @@ def _assignment_name_value(node: ast.Assign):
 
 
 class TestStandaloneLoopbackOnlyGuard:
-    """TASK-80a-T6b: loopback-only HOST 守衛（dual-listener 架構，原 T2 改寫）"""
+    """TASK-80a-T6b / TASK-130a-T1: loopback-only HOST 守衛（dual-listener 架構）"""
 
     def test_client_host_module_assignment_exists(self):
-        """CLIENT_HOST = "127.0.0.1" 模組層賦值存在"""
-        tree, _ = _parse()
+        """CLIENT_HOST = "127.0.0.1" 模組層賦值存在於 windows/health_probe.py"""
+        tree, _ = _parse_health_probe()
         assigns = _module_assignments(tree)
         found = False
         for a in assigns:
@@ -60,11 +70,33 @@ class TestStandaloneLoopbackOnlyGuard:
                 )
                 found = True
                 break
-        assert found, "CLIENT_HOST 模組層賦值未找到（需為 CLIENT_HOST = '127.0.0.1'）"
+        assert found, "windows/health_probe.py 中 CLIENT_HOST 模組層賦值未找到（需為 CLIENT_HOST = '127.0.0.1'）"
+
+    def test_standalone_imports_client_host_from_health_probe(self):
+        """standalone.py 從 windows.health_probe 匯入 CLIENT_HOST，且無自立的 CLIENT_HOST 模組層賦值"""
+        tree, _ = _parse_standalone()
+        assigns = _module_assignments(tree)
+        for a in assigns:
+            name, _ = _assignment_name_value(a)
+            assert name != "CLIENT_HOST", (
+                f"standalone.py line {a.lineno} 仍有自立的 CLIENT_HOST 模組層賦值；"
+                "CLIENT_HOST 應由 windows.health_probe 定義並匯入"
+            )
+
+        imported = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "windows.health_probe":
+                for alias in node.names:
+                    if alias.name == "CLIENT_HOST":
+                        imported = True
+                        break
+        assert imported, (
+            "standalone.py 必須包含 'from windows.health_probe import ... CLIENT_HOST'"
+        )
 
     def test_no_bind_host_module_assignment(self):
         """無 BIND_HOST 模組層賦值（dual-listener 後 standalone 不再綁 0.0.0.0）"""
-        tree, _ = _parse()
+        tree, _ = _parse_standalone()
         assigns = _module_assignments(tree)
         violations = []
         for a in assigns:
@@ -77,10 +109,15 @@ class TestStandaloneLoopbackOnlyGuard:
         )
 
     def test_no_zero_zero_zero_zero_literal_in_standalone(self):
-        """standalone.py 全檔無 \"0.0.0.0\" 字面（已移至 web/lan_listener.py）"""
-        _, src = _parse()
-        assert "0.0.0.0" not in src, (
-            "standalone.py 含有 '0.0.0.0' 字面——T6b 後主 listener 應只綁 loopback；"
+        """standalone.py 與 health_probe.py 全檔皆無 \"0.0.0.0\" 字面（已移至 web/lan_listener.py）"""
+        _, standalone_src = _parse_standalone()
+        assert "0.0.0.0" not in standalone_src, (
+            "standalone.py 含有 '0.0.0.0' 字面——主 listener 應只綁 loopback；"
+            "0.0.0.0 應在 web/lan_listener.py 中"
+        )
+        _, health_probe_src = _parse_health_probe()
+        assert "0.0.0.0" not in health_probe_src, (
+            "health_probe.py 含有 '0.0.0.0' 字面——主 listener 與探活應只綁 loopback；"
             "0.0.0.0 應在 web/lan_listener.py 中"
         )
 
@@ -89,7 +126,7 @@ class TestStandaloneLoopbackOnlyGuard:
         uvicorn.Config(..., host=CLIENT_HOST, ...) 使用 CLIENT_HOST（loopback）。
         確認 host=CLIENT_HOST 出現，且無 host=BIND_HOST。
         """
-        _, src = _parse()
+        _, src = _parse_health_probe()
         lines = src.splitlines()
 
         # 找 uvicorn.Config 或 uvicorn.run 呼叫段落
@@ -97,7 +134,7 @@ class TestStandaloneLoopbackOnlyGuard:
             (i, line) for i, line in enumerate(lines, 1)
             if "uvicorn" in line and ("Config" in line or "run(" in line)
         ]
-        assert uvicorn_lines, "standalone.py 中找不到 uvicorn.Config / uvicorn.run 呼叫"
+        assert uvicorn_lines, "health_probe.py 中找不到 uvicorn.Config / uvicorn.run 呼叫"
 
         # 找 host=CLIENT_HOST 出現（主 listener 綁 loopback）
         host_client_lines = [
@@ -116,14 +153,14 @@ class TestStandaloneLoopbackOnlyGuard:
         assert not host_bind_lines, (
             f"uvicorn 仍用 host=BIND_HOST 在 line(s) "
             f"{[i for i, _ in host_bind_lines]}；"
-            "T6b 後應使用 host=CLIENT_HOST（loopback only）"
+            "應使用 host=CLIENT_HOST（loopback only）"
         )
 
     def test_find_free_port_uses_client_host(self):
         """
         find_free_port 的 sock.bind 使用 CLIENT_HOST（loopback probe）。
         """
-        _, src = _parse()
+        _, src = _parse_standalone()
         assert "sock.bind((CLIENT_HOST," in src, (
             "find_free_port 的 sock.bind 應使用 CLIENT_HOST（loopback，不是 0.0.0.0）"
         )
@@ -132,7 +169,7 @@ class TestStandaloneLoopbackOnlyGuard:
         """
         wait_for_server health URL 使用 CLIENT_HOST。
         """
-        _, src = _parse()
+        _, src = _parse_health_probe()
         health_lines = [
             line for line in src.splitlines()
             if "/api/health" in line
@@ -148,7 +185,7 @@ class TestStandaloneLoopbackOnlyGuard:
         main window（OpenAver）的 create_window URL 使用 CLIENT_HOST、非 BIND_HOST。
         主視窗 URL 為 f'http://{CLIENT_HOST}:{port}'（mutation-sensitive）。
         """
-        _, src = _parse()
+        _, src = _parse_standalone()
         assert "f'http://{CLIENT_HOST}:{port}'" in src, (
             "主視窗 create_window URL 應為 f'http://{CLIENT_HOST}:{port}'（CLIENT_HOST、非 BIND_HOST）"
         )
@@ -161,7 +198,7 @@ class TestStandaloneLoopbackOnlyGuard:
         auto-start 失敗的 emit_notification 呼叫不可傳入 str(e)（安全規則：
         Python 例外細節不暴露給前端）。
         """
-        _, src = _parse()
+        _, src = _parse_standalone()
         # 找 emit_notification(... 那一行
         lines = [line for line in src.splitlines() if "emit_notification" in line]
         assert lines, "standalone.py 中找不到 emit_notification 呼叫"
