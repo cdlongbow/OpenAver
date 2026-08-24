@@ -445,16 +445,31 @@ const RULES = [
         return;
       }
       // 🔴 129-T4 R3（sonnet review BLOCKER B1）：這裡**不能**用 `.find()` 只取第一條。
-      //   同一個 media block 內若合法地出現第二條裸 `.search-bar`（合併衝突／複製貼上／另一個
-      //   task 疊加），CSS cascade 生效的是**最後一條**同屬性宣告，而 `.find()` 只驗第一條
-      //   （合法的那條）就放行 ⇒ 第二條 `margin: 0` 把浮動 inset 蓋掉，守衛完全靜默。
-      //   reviewer 已在 /tmp 沙盒實測復現：baseline 會轉紅，`.find()` 版靜默 exit 0。
-      //   ⇒ 改成**逐一檢查每一條**（比照同檔 CG-FLU-10 的既有做法），並額外擋掉重複宣告本身
-      //   ——同一 scope 出現兩條裸 `.search-bar` 本來就是 cascade 歧義，該當場說出來。
-      if (floatRules.length > 1) {
-        ctx.fail(`CG-FLU-09: 裸 \`.search-bar\` 規則在 @media (min-width:1024px) 內出現 ${floatRules.length} 次 — cascade 歧義，Rule 45 必須唯一`);
+      //   同一個 media block 內若出現第二條裸 `.search-bar`（合併衝突／複製貼上／另一個 task
+      //   疊加），CSS cascade 生效的是**最後一條**同屬性宣告，而 `.find()` 只驗第一條（合法的
+      //   那條）就放行 ⇒ 第二條 `margin: 0` 把浮動 inset 蓋掉，守衛完全靜默。
+      //
+      // 🔴 PR#156 Codex P2：但「裸 `.search-bar` 只能出現一次」是**過寬的**否決條件。
+      //   真正要守的不變式是「**浮動幾何那三個宣告不得被後來的規則蓋掉**」——日後若有人為了
+      //   別的屬性（`color` / `gap` 之類）再開一條裸 `.search-bar`，它與受保護的幾何**不在同一
+      //   個 cascade 上競爭**，卻會被整體唯一性檢查連坐擋下，接著又被要求也帶那三個宣告。
+      //   ⇒ 改成：**只看「宣告了受保護屬性」的那些裸規則**。它們必須恰好一條、且三個都帶；
+      //     完全不碰那三個屬性的裸規則一律放行。原本要擋的 `margin: 0` 仍然落在保護範圍內。
+      const PROTECTED = [
+        ['border-radius', /border-radius\s*:/],
+        ['border', /\bborder\s*:/],
+        ['margin', /\bmargin\s*:/],
+      ];
+      const geoRules = floatRules.filter(({ declarations }) =>
+        PROTECTED.some(([, re]) => re.test(declarations)));
+      if (geoRules.length === 0) {
+        ctx.fail('CG-FLU-09: 裸 `.search-bar` 規則裡沒有任何浮動幾何宣告（border-radius / border / margin）— CD-D1 (Rule 45) 形同消失');
+        return;
       }
-      for (const { declarations } of floatRules) {
+      if (geoRules.length > 1) {
+        ctx.fail(`CG-FLU-09: 有 ${geoRules.length} 條裸 \`.search-bar\` 規則宣告了浮動幾何（border-radius / border / margin）— cascade 生效的是最後一條，Rule 45 會被蓋掉`);
+      }
+      for (const { declarations } of geoRules) {
         if (!/border-radius\s*:/.test(declarations)) ctx.fail('CG-FLU-09: .search-bar @media 1024px block missing border-radius');
         if (!/\bborder\s*:/.test(declarations)) ctx.fail('CG-FLU-09: .search-bar @media 1024px block missing border');
         if (!/\bmargin\s*:/.test(declarations)) ctx.fail('CG-FLU-09: .search-bar @media 1024px block missing margin');
