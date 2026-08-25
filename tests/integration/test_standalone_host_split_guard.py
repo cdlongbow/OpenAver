@@ -54,6 +54,7 @@ def _assignment_name_value(node: ast.Assign):
     return None, None
 
 
+# [lint-guard: pytest-justified] Python-AST 源碼語意守衛（跨兩檔對帳 CLIENT_HOST 的賦值/匯入形狀），lint 表達不了
 class TestStandaloneLoopbackOnlyGuard:
     """TASK-80a-T6b / TASK-130a-T1: loopback-only HOST 守衛（dual-listener 架構）"""
 
@@ -208,6 +209,7 @@ class TestStandaloneLoopbackOnlyGuard:
             )
 
 
+# [lint-guard: pytest-justified] Python-AST 源碼語意守衛（跨兩檔對帳 CLIENT_HOST 的賦值/匯入形狀），lint 表達不了
 class TestStandaloneStartupProbeWiringGuard:
     """TASK-130a-T3: standalone.py 探活三態呼叫端 AST 守衛（Linux 無法 import standalone）"""
 

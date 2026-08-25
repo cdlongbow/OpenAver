@@ -21,8 +21,10 @@ _DOMAIN_SHAPED_RE；允許清單唯一一筆 REFERER_MAP（CD-113c-10：不同�
 
 Tier 2（CD-113c-6c）：SCAN_ROOTS=core/web；僅當 receiver 可靜態解析為
 core.metatube.state.metatube_state 時禁 .base_url／.is_connected。例外帳本
-手寫死六欄，不得由掃描結果反推。scraper 兩筆 known-debt；settings_metatube
-兩筆 known-debt(dedup-only)（Opus 裁決 3：命中 race 只會多做一次重連）。
+手寫死五列（每列六欄），不得由掃描結果反推。scraper 一筆 known-debt
+（`is_connected`；`base_url` 那筆已於 TASK-130b-T6 還清，改走 probe_snapshot()
+單鎖快照，並加了負向鎖防止再被登錄回來）；settings_metatube 兩筆
+known-debt(dedup-only)（Opus 裁決 3：命中 race 只會多做一次重連）。
 
 DoD-3 fail-closed（Opus 裁決 1）：module-level 賦值 RHS 為 comprehension／
 BinOp∈{Add,Sub,BitOr,BitAnd}／內建集合建構子 Call 時轉紅——不是任何 Call 都紅。

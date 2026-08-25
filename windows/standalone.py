@@ -439,7 +439,7 @@ def _wait_for_server_or_exit(port, logger, server_thread) -> None:
     """
     result = wait_for_server(port, server_thread)
     if result != PROBE_OK:
-        logger.info("錯誤：伺服器啟動失敗 result=%s", result)
+        logger.error("伺服器啟動失敗 result=%s", result)
         show_error(
             "啟動失敗",
             format_startup_message(result, port),
