@@ -905,3 +905,115 @@ def test_routing_map_multiple_providers_mixed_states(state, monkeypatch):
     assert avail['metatube:P_EXPIRED'] is False
 
 
+# ===========================================================================
+# TASK-130b-T4: reconnect lifecycle & cooldown retention tests (AC-6)
+# ===========================================================================
+
+
+def test_reconnect_same_provider_no_stale_cooldown(state, monkeypatch):
+    """同一台伺服器斷線後重連：舊冷卻時間戳被清空，新連線從完全可用開始且過 TTL 後仍可用。"""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://mt:8080', 'tok', ['FANZA', 'HEYZO'])
+    state.mark_failed('metatube:FANZA')
+    assert state._failed_at.get('metatube:FANZA') == 100.0
+
+    state.disconnect()
+    assert state._failed_at == {}
+
+    monkeypatch.setattr('core.metatube.state._now', lambda: 150.0)
+    state.connect('http://mt:8080', 'tok', ['FANZA', 'HEYZO'])
+
+    assert state._failed_at == {}
+    assert state.availability_map() == {
+        'metatube:FANZA': True,
+        'metatube:HEYZO': True,
+    }
+    assert state.is_available('metatube:FANZA') is True
+    assert state.is_available('metatube:HEYZO') is True
+    assert state.routing_availability_map() == {
+        'metatube:FANZA': True,
+        'metatube:HEYZO': True,
+    }
+    assert state.routing_availability_map()['metatube:FANZA'] is True
+    assert state.routing_availability_map()['metatube:HEYZO'] is True
+
+    # 再把時鐘推到 t=500（＞ TTL）再讀一次：仍然兩家都 True。
+    #
+    # ⚠️ 這一段**不是**在走「冷卻到期 → 樂觀翻 True」那條分支。reconnect 之後
+    # connect() 已經把 _availability 全設回 True，routing_availability_map() 的
+    # `if avail: continue` 會直接跳過這兩把 key，TTL 條件式根本不會被執行。
+    # 它證明的是「重連之後狀態穩定、不會隨時間漂移」——真正把
+    # 「本來就可用」與「冷卻剛好到期才被放行」分開的是下面那行
+    # `_failed_at == {}`（沒有時間戳 ⇒ 不可能是被樂觀放行的）。
+    # （sonnet review P3：原註解對這段的敘述不準確，已改正。）
+    monkeypatch.setattr('core.metatube.state._now', lambda: 500.0)
+    assert state.routing_availability_map() == {
+        'metatube:FANZA': True,
+        'metatube:HEYZO': True,
+    }
+    assert state.routing_availability_map()['metatube:FANZA'] is True
+    assert state.routing_availability_map()['metatube:HEYZO'] is True
+    assert state._failed_at == {}
+
+
+def test_reconnect_new_server_drops_old_server_cooldown(state, monkeypatch):
+    """換一台伺服器（provider 部分重疊）：舊 server 的冷卻與 provider 不殘留。
+
+    **刻意不先 disconnect()**：設定頁換一個 metatube 位址走的是「直接再 connect 一次」
+    這條路（connect() 的 docstring 明講 repeated connect 會整份重建）。中間插一個
+    disconnect() 會讓 disconnect 先把冷卻紀錄清掉，connect() 自己那行清空就變成
+    永遠不會被觸發的死碼——上面 test_reconnect_same_provider_no_stale_cooldown
+    已經負責完整的斷線→重連循環，這一支負責的是「不經過斷線的換機」。
+    """
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://server1:8080', 'tok1', ['FANZA', 'HEYZO'])
+    state.mark_failed('metatube:FANZA')
+    assert state._failed_at.get('metatube:FANZA') == 100.0
+
+    monkeypatch.setattr('core.metatube.state._now', lambda: 120.0)
+    state.connect('http://server2:9090', 'tok2', ['FANZA', 'JAVBUS_MT'])
+
+    assert state._failed_at == {}
+    assert state.availability_map() == {
+        'metatube:FANZA': True,
+        'metatube:JAVBUS_MT': True,
+    }
+    assert 'metatube:HEYZO' not in state.availability_map()
+    assert state.is_available('metatube:FANZA') is True
+    assert state.is_available('metatube:JAVBUS_MT') is True
+    assert state.is_available('metatube:HEYZO') is False
+
+    assert state.routing_availability_map() == {
+        'metatube:FANZA': True,
+        'metatube:JAVBUS_MT': True,
+    }
+    assert 'metatube:HEYZO' not in state.routing_availability_map()
+    assert state.routing_availability_map()['metatube:FANZA'] is True
+    assert state.routing_availability_map()['metatube:JAVBUS_MT'] is True
+
+
+def test_disconnected_state_never_optimistically_routable(state, monkeypatch):
+    """斷線狀態下推進時鐘遠超 TTL，routing_availability_map 仍維持全 False（fail-closed）。"""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://mt:8080', 'tok', ['FANZA', 'HEYZO'])
+    state.mark_failed('metatube:FANZA')
+    state.disconnect()
+
+    # 時鐘推到 t=100000（遠超 TTL）
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100000.0)
+
+    routing = state.routing_availability_map()
+    assert routing == {
+        'metatube:FANZA': False,
+        'metatube:HEYZO': False,
+    }
+    assert routing['metatube:FANZA'] is False
+    assert routing['metatube:HEYZO'] is False
+
+    avail = state.availability_map()
+    assert avail == {
+        'metatube:FANZA': False,
+        'metatube:HEYZO': False,
+    }
+    assert avail['metatube:FANZA'] is False
+    assert avail['metatube:HEYZO'] is False
