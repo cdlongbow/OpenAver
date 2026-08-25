@@ -39,6 +39,43 @@ def _parse_health_probe():
     return tree, src
 
 
+def _docstring_constant_ids(tree: ast.AST) -> set[int]:
+    """收集所有「docstring 位置」的 Constant 節點 id（Module／ClassDef／FunctionDef 的第一個 Expr）。"""
+    ids = set()
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) \
+                and isinstance(body[0].value.value, str):
+            ids.add(id(body[0].value))
+    return ids
+
+
+def _executable_string_literals_containing(tree: ast.AST, needle: str) -> list[int]:
+    """回傳含有 `needle` 的**可執行**字串字面所在行號（排除註解與 docstring）。
+
+    **為什麼是 AST 而不是「剝掉註解與字串再比對」**（PR #157 Codex P2，第三輪）：
+    這條守衛禁的 `0.0.0.0` **本身就是一個字串字面**——若比照
+    `tests/unit/test_metatube_routing_guard.py` 的做法把 STRING token 一起抹掉，
+    要找的東西就跟著消失，守衛會變成永遠綠的空掃。
+    （那支守衛找的是識別字 `routing_availability_map(`，剝字串才是對的；needle 的性質決定做法。）
+
+    所以這裡改成走 AST：註解本來就不在 AST 裡（自動排除），docstring 是
+    「函式／類別／模組 body 的第一個裸 Expr」，可以精準辨識並排除；
+    真正的 `host="0.0.0.0"` 是被當成值使用的 Constant，照樣抓得到。
+    """
+    docstrings = _docstring_constant_ids(tree)
+    return [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and needle in node.value
+        and id(node) not in docstrings
+    ]
+
+
 def _module_assignments(tree: ast.Module) -> list[ast.Assign]:
     """頂層 Assign 節點（非巢狀在函式/類別內）"""
     return [
@@ -110,17 +147,22 @@ class TestStandaloneLoopbackOnlyGuard:
         )
 
     def test_no_zero_zero_zero_zero_literal_in_standalone(self):
-        """standalone.py 與 health_probe.py 全檔皆無 \"0.0.0.0\" 字面（已移至 web/lan_listener.py）"""
-        _, standalone_src = _parse_standalone()
-        assert "0.0.0.0" not in standalone_src, (
-            "standalone.py 含有 '0.0.0.0' 字面——主 listener 應只綁 loopback；"
-            "0.0.0.0 應在 web/lan_listener.py 中"
-        )
-        _, health_probe_src = _parse_health_probe()
-        assert "0.0.0.0" not in health_probe_src, (
-            "health_probe.py 含有 '0.0.0.0' 字面——主 listener 與探活應只綁 loopback；"
-            "0.0.0.0 應在 web/lan_listener.py 中"
-        )
+        """standalone.py 與 health_probe.py 無**可執行的** "0.0.0.0" 字串字面（已移至 web/lan_listener.py）。
+
+        註解與 docstring 不算——說明「為什麼主 listener 不綁 0.0.0.0」的文件
+        不該讓測試轉紅（PR #157 Codex P2，第三輪）。判別方式見
+        `_executable_string_literals_containing()` 的 docstring。
+        """
+        for label, (tree, _src) in (
+            ("standalone.py", _parse_standalone()),
+            ("health_probe.py", _parse_health_probe()),
+        ):
+            hits = _executable_string_literals_containing(tree, "0.0.0.0")
+            assert not hits, (
+                f"{label} 的第 {hits} 行有可執行的 '0.0.0.0' 字串字面——"
+                "主 listener 與探活應只綁 loopback；0.0.0.0 由 web/lan_listener.py 管理。\n"
+                "（若這是說明文字，請寫成註解或 docstring；那兩者不會被這條守衛擋。）"
+            )
 
     def test_uvicorn_config_uses_client_host(self):
         """
