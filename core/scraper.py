@@ -154,12 +154,18 @@ class _MetatubeShim:
     讓 metatube provider 能插入現有 source_to_scraper 架構，
     使用相同的 .search() 介面，不改 search_jav() 的 scraper 迭代邏輯。
     """
-    def __init__(self, provider: str, base_url: str, token: str) -> None:
+    def __init__(self, provider: str, base_url: str, token: str,
+                 generation: int | None = None) -> None:
         self.source = f'metatube:{provider}'
         self._provider = provider
         # TASK-113c-T3b：把已經傳進來的 base_url 存起來，供 map_movie_info() 出生時
         # 綁定 preview_cover_url 用（不新增 metatube_state 讀取點，值已在建構子參數裡）。
         self._base_url = base_url
+        # TASK-130b-T6：建立這顆 shim 時的連線世代。search() 的兩個狀態回寫都帶著它，
+        # 好讓一個屬於「已經被重連取代掉的舊連線」的遲到回應，寫不進新連線的狀態
+        # （不變式 I-2）。與 core/metatube/probe.py:185/188 同一個契約——那邊早就接上了，
+        # 搜尋這條路徑是唯一漏掉的一處。None = 不設圍欄（既有 mark_* 語意，供直接建構的測試用）。
+        self._generation = generation
         self._client = MetatubeHttpClient(base_url, token)
 
     def search(self, number: str) -> 'Video | None':
@@ -173,10 +179,10 @@ class _MetatubeShim:
                 return None
             video = map_movie_info(info, base_url=self._base_url)
             # routing 期 success → mark available（lazy liveness）
-            metatube_state.mark_available(self.source)
+            metatube_state.mark_available(self.source, generation=self._generation)
             return video
         except MetatubeUnavailable:
-            metatube_state.mark_failed(self.source)
+            metatube_state.mark_failed(self.source, generation=self._generation)
             raise
         except MetatubeNotFound:
             # 404 = 番號不在此源 = 不算失敗（spec §5.3 / CD-63a-6）
@@ -256,14 +262,17 @@ def search_jav(number: str, source: str = 'auto', proxy_url: str = '', javbus_la
     # get_enabled_source_ids(availability_map) 已在上一層排除不可達的 source，
     # 不需 double-gate（explicit picker 選當前 probe-failed provider 也應能試打）。
     if metatube_state.is_connected:
-        _mt_url = metatube_state.base_url or ''
-        _mt_token = metatube_state.token or ''
-        for _mt_name, _mt_avail in metatube_state.availability_map().items():
-            _mt_provider = _mt_name[len('metatube:'):]
+        # TASK-130b-T6：四個值必須來自同一次鎖獲取（不變式 I-1）。過去這裡是
+        # base_url / token / availability_map() 三次獨立讀取，重連可以穿插在中間，
+        # 做出一顆「拿著新連線的網址、卻蓋著舊連線世代章」的 shim。probe_snapshot()
+        # 是現成的單鎖快照（CD-66b-3 為同一類 race 而生），直接用，不新增讀取點。
+        _mt_names, _mt_gen, _mt_url, _mt_token = metatube_state.probe_snapshot()
+        for _mt_provider in _mt_names:
+            _mt_name = f'metatube:{_mt_provider}'
             # 用 default arg 固定 closure variable capture（風險點 a）
             source_to_scraper[_mt_name] = (
-                lambda _pname=_mt_provider, _url=_mt_url, _tok=_mt_token:
-                    [_MetatubeShim(_pname, _url, _tok)]
+                lambda _pname=_mt_provider, _url=_mt_url, _tok=_mt_token, _gen=_mt_gen:
+                    [_MetatubeShim(_pname, _url, _tok, _gen)]
             )
 
     # 決定要跑哪些爬蟲（auto vs. explicit）

@@ -79,15 +79,9 @@ TIER2_EXEMPTIONS: list[tuple[str, str, str, str, int, str]] = [
         "metatube_state",
         "is_connected",
         1,
+        # TASK-130b-T6：base_url 那一筆 known-debt 已還（search_jav 改用
+        # probe_snapshot() 單鎖快照），本列只剩 is_connected 的兩段式讀取。
         "known-debt",  # residual-8/9：兩段式讀取 pre-existing，113c 不修
-    ),
-    (
-        "core/scraper.py",
-        "search_jav",
-        "metatube_state",
-        "base_url",
-        1,
-        "known-debt",
     ),
     (
         "web/app.py",
@@ -763,8 +757,11 @@ class TestTier2ExemptionAntiRot:
             f"函式改名／讀取被移除或次數改變時必須更新帳本"
         )
 
-    def test_exemption_table_has_exactly_six_rows(self):
-        assert len(TIER2_EXEMPTIONS) == 6
+    def test_exemption_table_has_exactly_five_rows(self):
+        """TASK-130b-T6：原本 6 列，`core/scraper.py:search_jav` 的 base_url
+        那一筆 known-debt 已還（改走 probe_snapshot() 單鎖快照）→ 5 列。
+        **這是收緊，不是放寬**：少一個被豁免的 bare access。"""
+        assert len(TIER2_EXEMPTIONS) == 5
 
     def test_image_host_policy_not_in_exemptions(self):
         """registry 不得列入例外（它呼叫 connected_base_url()，本來就不該命中）。"""
@@ -778,9 +775,8 @@ class TestTier2ExemptionAntiRot:
         assert notes[("core/scraper.py", "search_jav", "metatube_state", "is_connected")] == (
             "known-debt"
         )
-        assert notes[("core/scraper.py", "search_jav", "metatube_state", "base_url")] == (
-            "known-debt"
-        )
+        # base_url 那一筆已於 TASK-130b-T6 還清，不再登錄
+        assert ("core/scraper.py", "search_jav", "metatube_state", "base_url") not in notes
         assert notes[
             ("web/routers/settings_metatube.py", "connect", "state", "is_connected")
         ] == "known-debt(dedup-only)"
