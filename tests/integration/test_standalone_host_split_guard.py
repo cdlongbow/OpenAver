@@ -1,18 +1,21 @@
 """
-TASK-80a-T6b: standalone.py loopback-only HOST AST/source 守衛
+TASK-80a-T6b / TASK-130a-T1: standalone.py & health_probe.py loopback-only HOST AST/source 守衛
 
-dual-listener 架構（T6b 起）：
+dual-listener 架構：
   - 主 listener 綁 127.0.0.1（loopback only，消除單機防火牆提示）
   - LAN listener（0.0.0.0）由 web/lan_listener.py 管理
+  - health_probe.py 管理伺服器啟動與探活（無 webview 依賴）
 
-驗證 windows/standalone.py 中：
-  (a) CLIENT_HOST = "127.0.0.1" 模組層賦值存在
-  (b) 無 BIND_HOST 模組層賦值（已移除，不留殭屍）
-  (c) standalone.py 全檔無 "0.0.0.0" 字面（已移至 web/lan_listener.py）
-  (d) uvicorn Config/Server 呼叫使用 host=CLIENT_HOST（不是 BIND_HOST）
-  (e) find_free_port 的 sock.bind 使用 CLIENT_HOST（loopback probe）
-  (f) wait_for_server health URL 使用 CLIENT_HOST
-  (g) main window create_window URL 使用 CLIENT_HOST
+驗證：
+  (a) windows/health_probe.py 中 CLIENT_HOST = "127.0.0.1" 模組層賦值存在
+  (b) windows/standalone.py 從 windows.health_probe 匯入 CLIENT_HOST（且無自立賦值）
+  (c) windows/standalone.py 無 BIND_HOST 模組層賦值（已移除，不留殭屍）
+  (d) standalone.py 與 health_probe.py 全檔無 "0.0.0.0" 字面（0.0.0.0 由 web/lan_listener.py 管理）
+  (e) health_probe.py 中 uvicorn Config/Server 呼叫使用 host=CLIENT_HOST（不是 BIND_HOST）
+  (f) standalone.py 中 find_free_port 的 sock.bind 使用 CLIENT_HOST（loopback probe）
+  (g) health_probe.py 中 wait_for_server health URL 使用 CLIENT_HOST
+  (h) standalone.py 中 main window create_window URL 使用 CLIENT_HOST
+  (i) standalone.py 中 emit_notification auto-start 不暴露 str(e)
 
 Mirror 慣例：Path.read_text() + ast.parse，不 import windows.standalone
 （test env 無 webview 套件）。
@@ -21,12 +24,56 @@ import ast
 import pathlib
 
 STANDALONE_PATH = pathlib.Path(__file__).parents[2] / "windows" / "standalone.py"
+HEALTH_PROBE_PATH = pathlib.Path(__file__).parents[2] / "windows" / "health_probe.py"
 
 
-def _parse():
+def _parse_standalone():
     src = STANDALONE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(src, filename=str(STANDALONE_PATH))
     return tree, src
+
+
+def _parse_health_probe():
+    src = HEALTH_PROBE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(src, filename=str(HEALTH_PROBE_PATH))
+    return tree, src
+
+
+def _docstring_constant_ids(tree: ast.AST) -> set[int]:
+    """收集所有「docstring 位置」的 Constant 節點 id（Module／ClassDef／FunctionDef 的第一個 Expr）。"""
+    ids = set()
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) \
+                and isinstance(body[0].value.value, str):
+            ids.add(id(body[0].value))
+    return ids
+
+
+def _executable_string_literals_containing(tree: ast.AST, needle: str) -> list[int]:
+    """回傳含有 `needle` 的**可執行**字串字面所在行號（排除註解與 docstring）。
+
+    **為什麼是 AST 而不是「剝掉註解與字串再比對」**（PR #157 Codex P2，第三輪）：
+    這條守衛禁的 `0.0.0.0` **本身就是一個字串字面**——若比照
+    `tests/unit/test_metatube_routing_guard.py` 的做法把 STRING token 一起抹掉，
+    要找的東西就跟著消失，守衛會變成永遠綠的空掃。
+    （那支守衛找的是識別字 `routing_availability_map(`，剝字串才是對的；needle 的性質決定做法。）
+
+    所以這裡改成走 AST：註解本來就不在 AST 裡（自動排除），docstring 是
+    「函式／類別／模組 body 的第一個裸 Expr」，可以精準辨識並排除；
+    真正的 `host="0.0.0.0"` 是被當成值使用的 Constant，照樣抓得到。
+    """
+    docstrings = _docstring_constant_ids(tree)
+    return [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and needle in node.value
+        and id(node) not in docstrings
+    ]
 
 
 def _module_assignments(tree: ast.Module) -> list[ast.Assign]:
@@ -44,12 +91,13 @@ def _assignment_name_value(node: ast.Assign):
     return None, None
 
 
+# [lint-guard: pytest-justified] Python-AST 源碼語意守衛（跨兩檔對帳 CLIENT_HOST 的賦值/匯入形狀），lint 表達不了
 class TestStandaloneLoopbackOnlyGuard:
-    """TASK-80a-T6b: loopback-only HOST 守衛（dual-listener 架構，原 T2 改寫）"""
+    """TASK-80a-T6b / TASK-130a-T1: loopback-only HOST 守衛（dual-listener 架構）"""
 
     def test_client_host_module_assignment_exists(self):
-        """CLIENT_HOST = "127.0.0.1" 模組層賦值存在"""
-        tree, _ = _parse()
+        """CLIENT_HOST = "127.0.0.1" 模組層賦值存在於 windows/health_probe.py"""
+        tree, _ = _parse_health_probe()
         assigns = _module_assignments(tree)
         found = False
         for a in assigns:
@@ -60,11 +108,33 @@ class TestStandaloneLoopbackOnlyGuard:
                 )
                 found = True
                 break
-        assert found, "CLIENT_HOST 模組層賦值未找到（需為 CLIENT_HOST = '127.0.0.1'）"
+        assert found, "windows/health_probe.py 中 CLIENT_HOST 模組層賦值未找到（需為 CLIENT_HOST = '127.0.0.1'）"
+
+    def test_standalone_imports_client_host_from_health_probe(self):
+        """standalone.py 從 windows.health_probe 匯入 CLIENT_HOST，且無自立的 CLIENT_HOST 模組層賦值"""
+        tree, _ = _parse_standalone()
+        assigns = _module_assignments(tree)
+        for a in assigns:
+            name, _ = _assignment_name_value(a)
+            assert name != "CLIENT_HOST", (
+                f"standalone.py line {a.lineno} 仍有自立的 CLIENT_HOST 模組層賦值；"
+                "CLIENT_HOST 應由 windows.health_probe 定義並匯入"
+            )
+
+        imported = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "windows.health_probe":
+                for alias in node.names:
+                    if alias.name == "CLIENT_HOST":
+                        imported = True
+                        break
+        assert imported, (
+            "standalone.py 必須包含 'from windows.health_probe import ... CLIENT_HOST'"
+        )
 
     def test_no_bind_host_module_assignment(self):
         """無 BIND_HOST 模組層賦值（dual-listener 後 standalone 不再綁 0.0.0.0）"""
-        tree, _ = _parse()
+        tree, _ = _parse_standalone()
         assigns = _module_assignments(tree)
         violations = []
         for a in assigns:
@@ -77,19 +147,29 @@ class TestStandaloneLoopbackOnlyGuard:
         )
 
     def test_no_zero_zero_zero_zero_literal_in_standalone(self):
-        """standalone.py 全檔無 \"0.0.0.0\" 字面（已移至 web/lan_listener.py）"""
-        _, src = _parse()
-        assert "0.0.0.0" not in src, (
-            "standalone.py 含有 '0.0.0.0' 字面——T6b 後主 listener 應只綁 loopback；"
-            "0.0.0.0 應在 web/lan_listener.py 中"
-        )
+        """standalone.py 與 health_probe.py 無**可執行的** "0.0.0.0" 字串字面（已移至 web/lan_listener.py）。
+
+        註解與 docstring 不算——說明「為什麼主 listener 不綁 0.0.0.0」的文件
+        不該讓測試轉紅（PR #157 Codex P2，第三輪）。判別方式見
+        `_executable_string_literals_containing()` 的 docstring。
+        """
+        for label, (tree, _src) in (
+            ("standalone.py", _parse_standalone()),
+            ("health_probe.py", _parse_health_probe()),
+        ):
+            hits = _executable_string_literals_containing(tree, "0.0.0.0")
+            assert not hits, (
+                f"{label} 的第 {hits} 行有可執行的 '0.0.0.0' 字串字面——"
+                "主 listener 與探活應只綁 loopback；0.0.0.0 由 web/lan_listener.py 管理。\n"
+                "（若這是說明文字，請寫成註解或 docstring；那兩者不會被這條守衛擋。）"
+            )
 
     def test_uvicorn_config_uses_client_host(self):
         """
         uvicorn.Config(..., host=CLIENT_HOST, ...) 使用 CLIENT_HOST（loopback）。
         確認 host=CLIENT_HOST 出現，且無 host=BIND_HOST。
         """
-        _, src = _parse()
+        _, src = _parse_health_probe()
         lines = src.splitlines()
 
         # 找 uvicorn.Config 或 uvicorn.run 呼叫段落
@@ -97,7 +177,7 @@ class TestStandaloneLoopbackOnlyGuard:
             (i, line) for i, line in enumerate(lines, 1)
             if "uvicorn" in line and ("Config" in line or "run(" in line)
         ]
-        assert uvicorn_lines, "standalone.py 中找不到 uvicorn.Config / uvicorn.run 呼叫"
+        assert uvicorn_lines, "health_probe.py 中找不到 uvicorn.Config / uvicorn.run 呼叫"
 
         # 找 host=CLIENT_HOST 出現（主 listener 綁 loopback）
         host_client_lines = [
@@ -116,14 +196,14 @@ class TestStandaloneLoopbackOnlyGuard:
         assert not host_bind_lines, (
             f"uvicorn 仍用 host=BIND_HOST 在 line(s) "
             f"{[i for i, _ in host_bind_lines]}；"
-            "T6b 後應使用 host=CLIENT_HOST（loopback only）"
+            "應使用 host=CLIENT_HOST（loopback only）"
         )
 
     def test_find_free_port_uses_client_host(self):
         """
         find_free_port 的 sock.bind 使用 CLIENT_HOST（loopback probe）。
         """
-        _, src = _parse()
+        _, src = _parse_standalone()
         assert "sock.bind((CLIENT_HOST," in src, (
             "find_free_port 的 sock.bind 應使用 CLIENT_HOST（loopback，不是 0.0.0.0）"
         )
@@ -132,7 +212,7 @@ class TestStandaloneLoopbackOnlyGuard:
         """
         wait_for_server health URL 使用 CLIENT_HOST。
         """
-        _, src = _parse()
+        _, src = _parse_health_probe()
         health_lines = [
             line for line in src.splitlines()
             if "/api/health" in line
@@ -148,7 +228,7 @@ class TestStandaloneLoopbackOnlyGuard:
         main window（OpenAver）的 create_window URL 使用 CLIENT_HOST、非 BIND_HOST。
         主視窗 URL 為 f'http://{CLIENT_HOST}:{port}'（mutation-sensitive）。
         """
-        _, src = _parse()
+        _, src = _parse_standalone()
         assert "f'http://{CLIENT_HOST}:{port}'" in src, (
             "主視窗 create_window URL 應為 f'http://{CLIENT_HOST}:{port}'（CLIENT_HOST、非 BIND_HOST）"
         )
@@ -161,7 +241,7 @@ class TestStandaloneLoopbackOnlyGuard:
         auto-start 失敗的 emit_notification 呼叫不可傳入 str(e)（安全規則：
         Python 例外細節不暴露給前端）。
         """
-        _, src = _parse()
+        _, src = _parse_standalone()
         # 找 emit_notification(... 那一行
         lines = [line for line in src.splitlines() if "emit_notification" in line]
         assert lines, "standalone.py 中找不到 emit_notification 呼叫"
@@ -169,3 +249,80 @@ class TestStandaloneLoopbackOnlyGuard:
             assert "str(e)" not in line, (
                 f"emit_notification 呼叫不可包含 str(e)（安全規則）：{line!r}"
             )
+
+
+# [lint-guard: pytest-justified] Python-AST 源碼語意守衛（跨兩檔對帳 CLIENT_HOST 的賦值/匯入形狀），lint 表達不了
+class TestStandaloneStartupProbeWiringGuard:
+    """TASK-130a-T3: standalone.py 探活三態呼叫端 AST 守衛（Linux 無法 import standalone）"""
+
+    def _wait_for_server_or_exit_def(self, tree: ast.Module) -> ast.FunctionDef:
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name == "_wait_for_server_or_exit":
+                return node
+        raise AssertionError("standalone.py 找不到 _wait_for_server_or_exit FunctionDef")
+
+    def test_wait_for_server_or_exit_has_server_thread_param(self):
+        """_wait_for_server_or_exit 恰好 3 個位置參數，第 3 個叫 server_thread。"""
+        tree, _ = _parse_standalone()
+        fn = self._wait_for_server_or_exit_def(tree)
+        pos_args = list(fn.args.args)
+        assert len(pos_args) == 3, (
+            f"_wait_for_server_or_exit 應有恰好 3 個位置參數，實際 {[a.arg for a in pos_args]}"
+        )
+        assert pos_args[2].arg == "server_thread", (
+            f"第 3 個參數應為 server_thread，實際 {pos_args[2].arg!r}"
+        )
+
+    def test_wait_for_server_or_exit_call_passes_three_args(self):
+        """main 內 _wait_for_server_or_exit(...) 呼叫傳了 3 個位置參數。"""
+        tree, _ = _parse_standalone()
+        calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_wait_for_server_or_exit"
+        ]
+        assert calls, "standalone.py 找不到 _wait_for_server_or_exit 呼叫"
+        for call in calls:
+            assert len(call.args) == 3, (
+                f"_wait_for_server_or_exit 呼叫應傳 3 個 args，"
+                f"line {call.lineno} 實際 {len(call.args)}"
+            )
+
+    def test_show_error_message_comes_from_format_startup_message(self):
+        """_wait_for_server_or_exit 內 show_error 第 2 個 arg 必須是 format_startup_message(...) Call。"""
+        tree, _ = _parse_standalone()
+        fn = self._wait_for_server_or_exit_def(tree)
+        show_error_calls = [
+            node for node in ast.walk(fn)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "show_error"
+        ]
+        assert show_error_calls, "_wait_for_server_or_exit 內找不到 show_error 呼叫"
+        for call in show_error_calls:
+            assert len(call.args) >= 2, f"show_error 參數不足：line {call.lineno}"
+            msg_arg = call.args[1]
+            assert isinstance(msg_arg, ast.Call), (
+                f"show_error 第 2 個 arg 必須是 Call（format_startup_message(...)），"
+                f"不可為 Constant/JoinedStr；line {call.lineno} 實際 {type(msg_arg).__name__}"
+            )
+            assert not isinstance(msg_arg, (ast.Constant, ast.JoinedStr))
+            func = msg_arg.func
+            if isinstance(func, ast.Name):
+                assert func.id == "format_startup_message", (
+                    f"show_error 訊息應來自 format_startup_message，實際 {func.id!r}"
+                )
+            else:
+                raise AssertionError(
+                    f"show_error 第 2 個 arg 的 Call.func 應為 Name format_startup_message，"
+                    f"實際 {type(func).__name__}"
+                )
+
+    def test_no_hardcoded_port_8000_occupation_message(self):
+        """standalone.py 全檔不得再出現字面「請檢查是否有其他程式佔用端口 8000」。"""
+        _, src = _parse_standalone()
+        banned = "請檢查是否有其他程式佔用端口 8000"
+        assert banned not in src, (
+            f"standalone.py 仍含硬編訊息 {banned!r}；應改由 format_startup_message() 產出"
+        )

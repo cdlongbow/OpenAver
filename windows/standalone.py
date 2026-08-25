@@ -4,11 +4,8 @@ OpenAver Windows 單機版啟動器
 """
 import os
 import sys
-import time
 import threading
 import socket
-import urllib.request
-import urllib.error
 import logging
 import traceback
 from pathlib import Path
@@ -27,11 +24,16 @@ from core.logger import setup_logging, get_logger
 import webview
 from pywebview_api import api, bind_events
 from tray import DesktopLifecycle, NativeTrayIcon
+from windows.health_probe import (
+    CLIENT_HOST,
+    PROBE_OK,
+    format_startup_message,
+    run_server,
+    wait_for_server,
+)
 
 # 配置
-CLIENT_HOST = "127.0.0.1"  # 桌面 App 自連：find_free_port、health 探活、WebView URL（loopback only）
 PORT = 49152  # 使用動態/私有端口範圍 (49152-65535)，避免權限問題
-STARTUP_TIMEOUT = 30  # 最多等待 30 秒
 
 
 # ============ WebView2 檢查 ============
@@ -428,59 +430,19 @@ def find_free_port(start_port=49152, logger=None, max_attempts=100):
     raise RuntimeError(error_msg)
 
 
-def wait_for_server(port, timeout=STARTUP_TIMEOUT):
-    """等待伺服器啟動"""
-    url = f"http://{CLIENT_HOST}:{port}/api/health"
-    start_time = time.time()
-
-    while time.time() - start_time < timeout:
-        try:
-            with urllib.request.urlopen(url, timeout=1) as response:
-                if response.status == 200:
-                    return True
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ConnectionRefusedError):
-            pass
-        time.sleep(0.2)
-
-    return False
-
-
-def run_server(port, debug_mode=False):
-    """在背景執行 uvicorn 伺服器"""
-    import uvicorn
-    from web.app import app
-
-    # Debug 模式顯示完整 HTTP 請求 log
-    if debug_mode:
-        log_level = "debug"
-        access_log = True
-    else:
-        log_level = "warning"
-        access_log = False
-
-    config = uvicorn.Config(
-        app,
-        host=CLIENT_HOST,
-        port=port,
-        log_level=log_level,
-        access_log=access_log,
-    )
-    server = uvicorn.Server(config)
-    server.run()
-
-
-def _wait_for_server_or_exit(port, logger) -> None:
+def _wait_for_server_or_exit(port, logger, server_thread) -> None:
     """Wait for the local server; show error and exit(1) on timeout.
 
     Extracted from main() so the P2-A inner-try around javten create_window
     stays inside the function-size budget (MAX_LINES = 200). Fall-through
     or sys.exit(1) — same control flow as the inlined block.
     """
-    if not wait_for_server(port):
-        logger.info("錯誤：伺服器啟動逾時")
+    result = wait_for_server(port, server_thread)
+    if result != PROBE_OK:
+        logger.error("伺服器啟動失敗 result=%s", result)
         show_error(
             "啟動失敗",
-            "伺服器啟動逾時。\n\n請檢查是否有其他程式佔用端口 8000。",
+            format_startup_message(result, port),
             None,
             logger
         )
@@ -599,7 +561,7 @@ def main():
 
     # 3. 等待伺服器就緒
     logger.info("等待伺服器就緒...")
-    _wait_for_server_or_exit(port, logger)
+    _wait_for_server_or_exit(port, logger, server_thread)
     logger.info("伺服器已就緒")
 
     # 3b. 接線 LAN listener manager（dual-listener 架構）

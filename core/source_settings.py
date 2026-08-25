@@ -24,14 +24,15 @@ def get_enabled_source_ids(
     """回傳 Runtime Auto Pool 的來源 id 清單（依 order 升冪）。
 
     Runtime Auto Pool 過濾公式（design §2.2）：
-        enabled is True AND manual_only is not True
-        AND (type != 'metatube' OR available)
+        enabled is True AND manual_only is not True AND (non-metatube OR available in availability_map)
 
-    - builtin（與所有非 metatube type）**bypass** availability gate（永遠視為 available）。
-    - `availability_map=None`（B1 default）= 不 gate，等同全 available（含 metatube）。
-    - populated map：`type == 'metatube'` 的 source 僅在 `map[id] is True` 時保留；
-      id 不在 map 或值為 False → 排除。
-    - 斷線的 metatube provider 仍占 cap 槽（cap basis），但**不**出現在本回傳結果。
+    - builtin（與所有非 metatube type）bypass availability gate（永遠視為 available）。
+    - metatube availability gate：若傳入 availability_map，僅保留 map 中為 True 的來源；
+      若 id 不在 map 中或值不為 True 則排除。
+    - 這張 map 由呼叫端決定語意：路由端傳 `routing_availability_map()`（含冷卻樂觀重試），
+      顯示端傳 `availability_map()`（最後一次真正驗證的結果）。本函式不知道也不需要知道
+      傳進來的是哪一張。
+    - `availability_map=None` 等同「不 gate」（既有 B1 行為，全部 enabled 非 manual_only 來源均保留）。
 
     空 / 缺失 `sources` 段 → 回 `[]`（graceful）。malformed 條目以 `.get()` 防禦。
     """

@@ -79,7 +79,7 @@ def test_populated_map_excludes_unavailable_metatube_keeps_builtin(monkeypatch):
             {'id': 'mt1', 'type': 'metatube', 'enabled': True, 'order': 1, 'manual_only': False},
         ]
     })
-    # mt1 absent from map -> excluded; builtin dmm bypasses gate even though absent.
+    # map 標記 False / 空 map → metatube 被 gate 排除；builtin 照常保留。
     assert source_settings.get_enabled_source_ids({'mt1': False}) == ['dmm']
     assert source_settings.get_enabled_source_ids({}) == ['dmm']
 

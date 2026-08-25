@@ -22,11 +22,16 @@ Usage:
     metatube_state.disconnect()
 """
 import threading
+import time
 
 from core.logger import get_logger
 from core.metatube.validation import redact_metatube_url
 
 logger = get_logger(__name__)
+
+_now = time.monotonic  # injectable clock for TTL tests (no sleep)
+# Mirrors core/organizer.py:38 _HOST_FAILURE_TTL
+_METATUBE_FAILURE_TTL = 300
 
 
 class MetatubeConnectionState:
@@ -39,6 +44,7 @@ class MetatubeConnectionState:
         self.base_url: str | None = None
         self.token: str | None = None
         self._availability: dict[str, bool] = {}   # key = 'metatube:{ProviderName}'
+        self._failed_at: dict[str, float] = {}      # key = 'metatube:{ProviderName}'
         self._providers: list[str] = []            # raw ProviderName list
         # Probe progress tracking (CD-63b-2)
         self._probe_done: bool = True
@@ -75,6 +81,7 @@ class MetatubeConnectionState:
         """
         with self._lock:
             self._availability = {}  # clear stale keys before rebuilding
+            self._failed_at = {}
             self.connected = True
             self.base_url = base_url
             self.token = token
@@ -108,6 +115,8 @@ class MetatubeConnectionState:
             self._providers = []
             for key in self._availability:
                 self._availability[key] = False
+            # Values set to False for UI; cooldown timestamps discarded on disconnect (disconnect is not jitter)
+            self._failed_at = {}
             self._generation += 1
             self._probe_done = True
             self._probe_progress = 0
@@ -153,6 +162,7 @@ class MetatubeConnectionState:
             if generation is not None and generation != self._generation:
                 return
             self._availability[source_id] = False
+            self._failed_at[source_id] = _now()
 
     def mark_available(self, source_id: str, generation: int | None = None) -> None:
         """Set a single provider source to available.
@@ -168,6 +178,7 @@ class MetatubeConnectionState:
             if generation is not None and generation != self._generation:
                 return
             self._availability[source_id] = True
+            self._failed_at.pop(source_id, None)
 
     # ------------------------------------------------------------------
     # Reads
@@ -182,6 +193,23 @@ class MetatubeConnectionState:
         """
         with self._lock:
             return dict(self._availability)
+
+    def routing_availability_map(self) -> dict[str, bool]:
+        """Return availability map for routing, optimistically treating expired failures as available.
+
+        Pure read: does NOT pop timestamps or mutate internal state.
+        Fail-closed: False without timestamp (e.g. from disconnect) stays False.
+        """
+        with self._lock:
+            snapshot = dict(self._availability)
+            now = _now()
+            for key, avail in list(snapshot.items()):
+                if avail:
+                    continue
+                failed_at = self._failed_at.get(key)
+                if failed_at is not None and now - failed_at >= _METATUBE_FAILURE_TTL:
+                    snapshot[key] = True
+            return snapshot
 
     def is_available(self, source_id: str) -> bool:
         """Return True iff the source is currently marked available.

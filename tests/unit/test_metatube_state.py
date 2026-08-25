@@ -640,3 +640,457 @@ def test_connect_log_does_not_leak_userinfo(caplog):
     assert '10.0.0.5:8900' in caplog.text          # 正向：log 真的有記，且保留診斷用的 host
     for secret in ('S3cr3tPass', 'admin', 'tok_ABC123'):
         assert secret not in caplog.text, f"connect log 洩漏 {secret!r}"
+
+
+# ---------------------------------------------------------------------------
+# TASK-130b-T1: _failed_at timestamp tracking & lifecycle
+# ---------------------------------------------------------------------------
+
+
+def test_failed_at_initialized_empty(state):
+    """MetatubeConnectionState starts with an empty _failed_at dictionary."""
+    assert hasattr(state, '_failed_at')
+    assert state._failed_at == {}
+
+
+def test_mark_failed_records_timestamp(state, monkeypatch):
+    """mark_failed records the timestamp returned by _now()."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.5)
+    state.connect('http://host', 'tok', ['FANZA', 'HEYZO'])
+    state.mark_failed('metatube:FANZA')
+
+    assert state.is_available('metatube:FANZA') is False
+    assert hasattr(state, '_failed_at')
+    assert state._failed_at.get('metatube:FANZA') == 100.5
+    assert 'metatube:HEYZO' not in state._failed_at
+
+
+def test_mark_available_clears_timestamp(state, monkeypatch):
+    """mark_available clears the failure timestamp from _failed_at."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.5)
+    state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+    assert state._failed_at.get('metatube:FANZA') == 100.5
+
+    state.mark_available('metatube:FANZA')
+    assert state.is_available('metatube:FANZA') is True
+    assert 'metatube:FANZA' not in state._failed_at
+
+
+def test_disconnect_clears_failed_at(state, monkeypatch):
+    """disconnect resets _failed_at to an empty dict while retaining provider keys."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.5)
+    state.connect('http://host', 'tok', ['FANZA', 'HEYZO'])
+    state.mark_failed('metatube:FANZA')
+    assert 'metatube:FANZA' in state._failed_at
+
+    state.disconnect()
+    assert state._failed_at == {}
+    assert state.is_available('metatube:FANZA') is False
+    # Keys still in availability_map (grey capsules requirement)
+    assert 'metatube:FANZA' in state.availability_map()
+
+
+def test_connect_clears_failed_at(state, monkeypatch):
+    """connect wipes _failed_at so stale timestamps do not carry over across servers."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.5)
+    state.connect('http://server1', 'tok1', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+    assert 'metatube:FANZA' in state._failed_at
+
+    state.connect('http://server2', 'tok2', ['FANZA', 'HEYZO'])
+    assert state._failed_at == {}
+    assert state.is_available('metatube:FANZA') is True
+
+
+def test_mark_failed_stale_generation_skipped(state, monkeypatch):
+    """mark_failed ignores writes when generation does not match current generation."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.5)
+    gen = state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA', generation=gen + 999)
+
+    assert state.is_available('metatube:FANZA') is True
+    assert 'metatube:FANZA' not in state._failed_at
+
+
+def test_mark_available_stale_generation_skipped(state, monkeypatch):
+    """mark_available ignores writes and clears when generation does not match."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.5)
+    gen = state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA', generation=gen)
+    assert state._failed_at.get('metatube:FANZA') == 100.5
+
+    state.mark_available('metatube:FANZA', generation=gen + 999)
+    assert state.is_available('metatube:FANZA') is False
+    assert state._failed_at.get('metatube:FANZA') == 100.5
+
+
+def test_mark_failed_consecutive_overwrites_timestamp(state, monkeypatch):
+    """Consecutive mark_failed calls update the timestamp to the latest time."""
+    t = 100.0
+    monkeypatch.setattr('core.metatube.state._now', lambda: t)
+    state.connect('http://host', 'tok', ['FANZA'])
+
+    state.mark_failed('metatube:FANZA')
+    assert state._failed_at.get('metatube:FANZA') == 100.0
+
+    t = 250.0
+    state.mark_failed('metatube:FANZA')
+    assert state._failed_at.get('metatube:FANZA') == 250.0
+
+
+def test_mark_available_unknown_source_no_error(state):
+    """mark_available on unknown source creates available entry and does not raise."""
+    state.mark_available('metatube:UNKNOWN_SOURCE')
+    assert state.is_available('metatube:UNKNOWN_SOURCE') is True
+    assert 'metatube:UNKNOWN_SOURCE' not in state._failed_at
+
+
+def test_mark_failed_unknown_source_records_timestamp(state, monkeypatch):
+    """mark_failed on unknown source creates unavailable entry and records timestamp."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 77.7)
+    state.mark_failed('metatube:UNKNOWN_SOURCE')
+    assert state.is_available('metatube:UNKNOWN_SOURCE') is False
+    assert state._failed_at.get('metatube:UNKNOWN_SOURCE') == 77.7
+
+
+# ---------------------------------------------------------------------------
+# TASK-130b-T2: routing_availability_map() optimistic failure cooldown
+# ---------------------------------------------------------------------------
+
+
+def test_routing_map_happy_path_all_available(state):
+    """When all providers are available, routing_availability_map equals availability_map."""
+    state.connect('http://host', 'tok', ['FANZA', 'HEYZO'])
+    assert state.routing_availability_map() == state.availability_map()
+    assert state.routing_availability_map() == {
+        'metatube:FANZA': True,
+        'metatube:HEYZO': True,
+    }
+
+
+def test_routing_map_within_cooldown_stays_false(state, monkeypatch):
+    """Provider failed within cooldown TTL stays False in routing_availability_map."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+
+    # Query at t=200 (100s elapsed < 300s TTL)
+    monkeypatch.setattr('core.metatube.state._now', lambda: 200.0)
+    res = state.routing_availability_map()
+    assert res.get('metatube:FANZA') is False
+
+
+def test_routing_map_expired_cooldown_becomes_true(state, monkeypatch):
+    """Provider failed after cooldown TTL expires becomes True in routing_availability_map."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+
+    # Query at t=450 (350s elapsed >= 300s TTL)
+    monkeypatch.setattr('core.metatube.state._now', lambda: 450.0)
+    res = state.routing_availability_map()
+    assert res.get('metatube:FANZA') is True
+
+
+def test_routing_map_exact_cooldown_boundary_becomes_true(state, monkeypatch):
+    """Provider failed exactly at cooldown TTL boundary (now - failed_at == TTL) is considered expired (True)."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+
+    # Query at t=400 (exactly 300s elapsed == 300s TTL)
+    monkeypatch.setattr('core.metatube.state._now', lambda: 400.0)
+    res = state.routing_availability_map()
+    assert res.get('metatube:FANZA') is True
+
+
+def test_routing_map_false_without_timestamp_stays_false(state):
+    """Fail-closed: provider with False availability and NO timestamp (e.g. from disconnect) stays False."""
+    state.connect('http://host', 'tok', ['FANZA', 'HEYZO'])
+    state.disconnect()
+
+    # disconnect clears _failed_at while keeping keys False
+    res = state.routing_availability_map()
+    assert res == {
+        'metatube:FANZA': False,
+        'metatube:HEYZO': False,
+    }
+
+
+def test_availability_map_ignores_cooldown(state, monkeypatch):
+    """availability_map() does NOT apply optimistic cooldown (stays False even when expired)."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+
+    # Query at t=500 (expired for routing)
+    monkeypatch.setattr('core.metatube.state._now', lambda: 500.0)
+    assert state.routing_availability_map().get('metatube:FANZA') is True
+    # UI display map must remain unchanged and not optimistic
+    assert state.availability_map().get('metatube:FANZA') is False
+
+
+def test_status_dict_ignores_cooldown(state, monkeypatch):
+    """status_dict() providers list does NOT apply optimistic cooldown."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+
+    # Query at t=500 (expired for routing)
+    monkeypatch.setattr('core.metatube.state._now', lambda: 500.0)
+    d = state.status_dict()
+    providers = {p['id']: p['available'] for p in d['providers']}
+    assert providers.get('metatube:FANZA') is False
+
+
+def test_routing_map_pure_read_no_side_effects(state, monkeypatch):
+    """routing_availability_map() is a pure read with no side effects (does not pop _failed_at)."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+
+    # Query at t=500 twice
+    monkeypatch.setattr('core.metatube.state._now', lambda: 500.0)
+    res1 = state.routing_availability_map()
+    res2 = state.routing_availability_map()
+
+    assert res1 == {'metatube:FANZA': True}
+    assert res2 == {'metatube:FANZA': True}
+    # Internal state untouched: _failed_at still has the timestamp, _availability still False
+    assert state._failed_at.get('metatube:FANZA') == 100.0
+    assert state.is_available('metatube:FANZA') is False
+
+
+def test_routing_map_returns_copy(state):
+    """Mutating the dict returned by routing_availability_map() does not affect internal state."""
+    state.connect('http://host', 'tok', ['FANZA'])
+    m = state.routing_availability_map()
+    assert m['metatube:FANZA'] is True
+    m['metatube:FANZA'] = False
+    assert state.routing_availability_map()['metatube:FANZA'] is True
+
+
+def test_routing_map_empty_availability_returns_empty(state):
+    """Fresh state before connect returns an empty dict."""
+    assert state.routing_availability_map() == {}
+
+
+def test_routing_map_multiple_providers_mixed_states(state, monkeypatch):
+    """Test 4-quadrant mixed scenario across multiple providers."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://host', 'tok', ['P_OK', 'P_COOLING', 'P_EXPIRED'])
+    # P_EXPIRED fails at t=100
+    state.mark_failed('metatube:P_EXPIRED')
+
+    # P_COOLING fails at t=350
+    monkeypatch.setattr('core.metatube.state._now', lambda: 350.0)
+    state.mark_failed('metatube:P_COOLING')
+
+    # Current time t=450:
+    # - P_OK: available (True) -> True
+    # - P_COOLING: failed at 350, elapsed 100 < 300 -> False
+    # - P_EXPIRED: failed at 100, elapsed 350 >= 300 -> True
+    monkeypatch.setattr('core.metatube.state._now', lambda: 450.0)
+
+    routing = state.routing_availability_map()
+    assert routing['metatube:P_OK'] is True
+    assert routing['metatube:P_COOLING'] is False
+    assert routing['metatube:P_EXPIRED'] is True
+
+    # availability_map strictly reflects persistent status
+    avail = state.availability_map()
+    assert avail['metatube:P_OK'] is True
+    assert avail['metatube:P_COOLING'] is False
+    assert avail['metatube:P_EXPIRED'] is False
+
+
+# ===========================================================================
+# TASK-130b-T4: reconnect lifecycle & cooldown retention tests (AC-6)
+# ===========================================================================
+
+
+def test_reconnect_same_provider_no_stale_cooldown(state, monkeypatch):
+    """同一台伺服器斷線後重連：舊冷卻時間戳被清空，新連線從完全可用開始且過 TTL 後仍可用。"""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://mt:8080', 'tok', ['FANZA', 'HEYZO'])
+    state.mark_failed('metatube:FANZA')
+    assert state._failed_at.get('metatube:FANZA') == 100.0
+
+    state.disconnect()
+    assert state._failed_at == {}
+
+    monkeypatch.setattr('core.metatube.state._now', lambda: 150.0)
+    state.connect('http://mt:8080', 'tok', ['FANZA', 'HEYZO'])
+
+    assert state._failed_at == {}
+    assert state.availability_map() == {
+        'metatube:FANZA': True,
+        'metatube:HEYZO': True,
+    }
+    assert state.is_available('metatube:FANZA') is True
+    assert state.is_available('metatube:HEYZO') is True
+    assert state.routing_availability_map() == {
+        'metatube:FANZA': True,
+        'metatube:HEYZO': True,
+    }
+    assert state.routing_availability_map()['metatube:FANZA'] is True
+    assert state.routing_availability_map()['metatube:HEYZO'] is True
+
+    # 再把時鐘推到 t=500（＞ TTL）再讀一次：仍然兩家都 True。
+    #
+    # ⚠️ 這一段**不是**在走「冷卻到期 → 樂觀翻 True」那條分支。reconnect 之後
+    # connect() 已經把 _availability 全設回 True，routing_availability_map() 的
+    # `if avail: continue` 會直接跳過這兩把 key，TTL 條件式根本不會被執行。
+    # 它證明的是「重連之後狀態穩定、不會隨時間漂移」——真正把
+    # 「本來就可用」與「冷卻剛好到期才被放行」分開的是下面那行
+    # `_failed_at == {}`（沒有時間戳 ⇒ 不可能是被樂觀放行的）。
+    # （sonnet review P3：原註解對這段的敘述不準確，已改正。）
+    monkeypatch.setattr('core.metatube.state._now', lambda: 500.0)
+    assert state.routing_availability_map() == {
+        'metatube:FANZA': True,
+        'metatube:HEYZO': True,
+    }
+    assert state.routing_availability_map()['metatube:FANZA'] is True
+    assert state.routing_availability_map()['metatube:HEYZO'] is True
+    assert state._failed_at == {}
+
+
+def test_reconnect_new_server_drops_old_server_cooldown(state, monkeypatch):
+    """換一台伺服器（provider 部分重疊）：舊 server 的冷卻與 provider 不殘留。
+
+    **刻意不先 disconnect()**：設定頁換一個 metatube 位址走的是「直接再 connect 一次」
+    這條路（connect() 的 docstring 明講 repeated connect 會整份重建）。中間插一個
+    disconnect() 會讓 disconnect 先把冷卻紀錄清掉，connect() 自己那行清空就變成
+    永遠不會被觸發的死碼——上面 test_reconnect_same_provider_no_stale_cooldown
+    已經負責完整的斷線→重連循環，這一支負責的是「不經過斷線的換機」。
+    """
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://server1:8080', 'tok1', ['FANZA', 'HEYZO'])
+    state.mark_failed('metatube:FANZA')
+    assert state._failed_at.get('metatube:FANZA') == 100.0
+
+    monkeypatch.setattr('core.metatube.state._now', lambda: 120.0)
+    state.connect('http://server2:9090', 'tok2', ['FANZA', 'JAVBUS_MT'])
+
+    assert state._failed_at == {}
+    assert state.availability_map() == {
+        'metatube:FANZA': True,
+        'metatube:JAVBUS_MT': True,
+    }
+    assert 'metatube:HEYZO' not in state.availability_map()
+    assert state.is_available('metatube:FANZA') is True
+    assert state.is_available('metatube:JAVBUS_MT') is True
+    assert state.is_available('metatube:HEYZO') is False
+
+    assert state.routing_availability_map() == {
+        'metatube:FANZA': True,
+        'metatube:JAVBUS_MT': True,
+    }
+    assert 'metatube:HEYZO' not in state.routing_availability_map()
+    assert state.routing_availability_map()['metatube:FANZA'] is True
+    assert state.routing_availability_map()['metatube:JAVBUS_MT'] is True
+
+
+def test_disconnected_state_never_optimistically_routable(state, monkeypatch):
+    """斷線狀態下推進時鐘遠超 TTL，routing_availability_map 仍維持全 False（fail-closed）。"""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://mt:8080', 'tok', ['FANZA', 'HEYZO'])
+    state.mark_failed('metatube:FANZA')
+    state.disconnect()
+
+    # 時鐘推到 t=100000（遠超 TTL）
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100000.0)
+
+    routing = state.routing_availability_map()
+    assert routing == {
+        'metatube:FANZA': False,
+        'metatube:HEYZO': False,
+    }
+    assert routing['metatube:FANZA'] is False
+    assert routing['metatube:HEYZO'] is False
+
+    avail = state.availability_map()
+    assert avail == {
+        'metatube:FANZA': False,
+        'metatube:HEYZO': False,
+    }
+    assert avail['metatube:FANZA'] is False
+    assert avail['metatube:HEYZO'] is False
+
+
+# ===========================================================================
+# TASK-130b-T5: full round-trip & 4-quadrant state matrix tests (AC-2)
+# ===========================================================================
+
+
+def test_refail_within_cooldown_restarts_the_window(state, monkeypatch):
+    """冷卻期內再次請求失敗時重新起算冷卻時間，避免持續故障的來源過早重試導致使用者頻繁等待逾時。"""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+
+    # 時鐘推到 t=250（距第一次失敗 150 秒，仍在冷卻中）
+    monkeypatch.setattr('core.metatube.state._now', lambda: 250.0)
+    assert state.routing_availability_map()['metatube:FANZA'] is False
+
+    # 在冷卻期內再次失敗，時間戳重置為 250.0
+    state.mark_failed('metatube:FANZA')
+
+    # 時鐘推到 t=450（距第一次失敗 350 秒 > 300，但距第二次失敗 200 秒 < 300）
+    # 驗證冷卻窗口已重啟，不會因為第一次失敗到期而提早放行
+    monkeypatch.setattr('core.metatube.state._now', lambda: 450.0)
+    assert state.routing_availability_map()['metatube:FANZA'] is False
+
+    # 時鐘推到 t=560（距第二次失敗 310 秒 > 300），冷卻到期恢復可路由
+    monkeypatch.setattr('core.metatube.state._now', lambda: 560.0)
+    assert state.routing_availability_map()['metatube:FANZA'] is True
+
+
+def test_success_after_expiry_converges_both_maps(state, monkeypatch):
+    """來源冷卻到期後樂觀重試成功，立即清空失敗紀錄並讓路由與顯示地圖重新收斂一致，避免設定頁顯示正常但底層殘留過期時間戳。"""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+
+    # 時鐘推到 t=500（距失敗 400 秒已過期）
+    monkeypatch.setattr('core.metatube.state._now', lambda: 500.0)
+    assert state.routing_availability_map()['metatube:FANZA'] is True
+    assert state.availability_map()['metatube:FANZA'] is False
+    assert state.routing_availability_map() != state.availability_map()
+
+    # 樂觀重試成功，呼叫 mark_available
+    state.mark_available('metatube:FANZA')
+    assert state._failed_at == {}
+    assert state.availability_map()['metatube:FANZA'] is True
+    assert state.routing_availability_map()['metatube:FANZA'] is True
+    assert state.routing_availability_map() == state.availability_map()
+
+    # 時鐘推到遠大於 TTL 的 t=100000，兩張 map 仍保持逐鍵相等且無殘留失敗紀錄
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100000.0)
+    assert state.routing_availability_map() == state.availability_map()
+    assert state._failed_at == {}
+
+
+def test_refail_after_expiry_reenters_cooldown(state, monkeypatch):
+    """來源冷卻到期後樂觀重試若再度失敗，會重新進入完整冷卻期，避免故障來源被連續重試導致使用者每次搜尋都被迫等待逾時。"""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+
+    # 時鐘推到 t=500（已過期，路由地圖樂觀放行）
+    monkeypatch.setattr('core.metatube.state._now', lambda: 500.0)
+    assert state.routing_availability_map()['metatube:FANZA'] is True
+
+    # 在 t=500 時樂觀重試失敗，再次觸發 mark_failed
+    state.mark_failed('metatube:FANZA')
+    assert state._failed_at['metatube:FANZA'] == 500.0
+    assert state.routing_availability_map()['metatube:FANZA'] is False
+
+    # 時鐘推到 t=700（距 t=500 僅 200 秒 < 300），仍處於冷卻中
+    monkeypatch.setattr('core.metatube.state._now', lambda: 700.0)
+    assert state.routing_availability_map()['metatube:FANZA'] is False
+
+    # 時鐘推到 t=801（距 t=500 已 301 秒 > 300），冷卻到期再次放行
+    monkeypatch.setattr('core.metatube.state._now', lambda: 801.0)
+    assert state.routing_availability_map()['metatube:FANZA'] is True

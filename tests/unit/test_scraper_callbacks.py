@@ -396,6 +396,7 @@ class TestSmartSearchResultCallback:
              patch('core.scraper.metatube_state') as mock_mt, \
              patch('core.scraper.search_jav_single_source', return_value=mock_result):
             mock_mt.availability_map.return_value = {}
+            mock_mt.routing_availability_map.return_value = {}
             results = smart_search('SONE-100', result_callback=my_callback)
 
         assert callback_calls == [], \
@@ -413,6 +414,7 @@ class TestSmartSearchResultCallback:
              patch('core.scraper.metatube_state') as mock_mt, \
              patch('core.scraper.search_jav_single_source', return_value=mock_result):
             mock_mt.availability_map.return_value = {}
+            mock_mt.routing_availability_map.return_value = {}
             # No result_callback — should not raise
             results = smart_search('SONE-100')
             assert isinstance(results, list)
@@ -615,6 +617,7 @@ class TestDiscoveryOnly:
              patch('core.scraper.metatube_state') as mock_mt, \
              patch('core.scraper.search_jav_single_source', return_value=mock_result):
             mock_mt.availability_map.return_value = {}
+            mock_mt.routing_availability_map.return_value = {}
             results = smart_search('SONE-100', discovery_only=True)
 
         # exact mode should still return a result (not empty)

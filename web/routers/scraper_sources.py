@@ -4,7 +4,7 @@
 enabled=True AND is_beta=False AND manual_only=False AND available=True
 （Always-On Rule 3，CD-61-18 + CD-61-10）。
 
-過濾複用 `core.source_settings.get_enabled_source_ids(availability_map)`
+過濾複用 `core.source_settings.get_enabled_source_ids(routing_availability_map())`
 （已涵蓋 enabled + manual_only + available gate），端點僅在其結果之上
 額外排除 `is_beta`，不重寫 gate 邏輯。
 
@@ -41,12 +41,12 @@ def get_scraper_sources() -> dict:
           "total_enabled": int  # = 已揭露（實際回傳）的來源數
         }
     """
-    # 63c-2：注入 MetatubeConnectionState availability map（CD-63c-7）。斷線 / probe-failed
-    # 的 metatube provider → 不在 map（或值 False）→ get_enabled_source_ids gate 排除，
-    # 與 63c-1 routing factory 對齊（揭露的來源 == 實際可 fan-out 的來源）。builtin bypass gate。
-    availability_map = metatube_state.availability_map()
+    # 63c-2 / 130b-T3：注入 MetatubeConnectionState routing availability map（CD-63c-7, AC-5）。
+    # 斷線 / probe-failed 且冷卻未過的 metatube provider → 不在 map（或值 False）→
+    # get_enabled_source_ids gate 排除，與 routing 對齊（揭露的來源 == 實際可 fan-out 的來源）。builtin bypass gate。
+    routing_map = metatube_state.routing_availability_map()
 
-    ids = set(get_enabled_source_ids(availability_map))  # enabled + !manual_only + available gate
+    ids = set(get_enabled_source_ids(routing_map))  # enabled + !manual_only + available gate
     config = load_config()
 
     out: list[dict] = []

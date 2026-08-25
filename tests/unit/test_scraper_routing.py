@@ -42,13 +42,23 @@ def _make_video(source: str, number: str = "TEST-001", summary: str = "", rating
 
 
 def _mock_state(is_connected=True, base_url="http://mt:8080", token="tok",
-                avail_map=None):
+                avail_map=None, generation=1):
     """Build a mock metatube_state object."""
     state = MagicMock()
     type(state).is_connected = PropertyMock(return_value=is_connected)
     type(state).base_url = PropertyMock(return_value=base_url)
     type(state).token = PropertyMock(return_value=token)
+    type(state).generation = PropertyMock(return_value=generation)
     state.availability_map.return_value = avail_map or {}
+    state.routing_availability_map.return_value = avail_map or {}
+    # TASK-130b-T6：search_jav 建 shim 時改吃單鎖原子快照 probe_snapshot()
+    # （names 已去掉 'metatube:' 前綴，見 core/metatube/state.py:222）。
+    state.probe_snapshot.return_value = (
+        [k.split(":", 1)[1] for k in (avail_map or {})],
+        generation,
+        base_url or "",
+        token or "",
+    )
     return state
 
 
@@ -247,10 +257,13 @@ class TestExplicitDispatch:
 class TestMetatubeShimErrors:
     """測試 _MetatubeShim 內部 error handling（直接單元測試 shim.search）"""
 
-    def _make_shim(self, mock_client=None):
+    def _make_shim(self, mock_client=None, generation=None):
         shim = _MetatubeShim.__new__(_MetatubeShim)
         shim.source = 'metatube:FANZA'
         shim._provider = 'FANZA'
+        # TASK-130b-T6：這個 helper 繞過 __init__，所以要自己補上 shim 建立時的
+        # 連線世代（search() 的兩個狀態回寫都帶著它）。None = 不設圍欄。
+        shim._generation = generation
         shim._client = mock_client or MagicMock()
         return shim
 
@@ -263,7 +276,7 @@ class TestMetatubeShimErrors:
         with patch("core.scraper.metatube_state") as mock_state:
             with pytest.raises(MetatubeUnavailable):
                 shim.search("ABF-001")
-            mock_state.mark_failed.assert_called_once_with('metatube:FANZA')
+            mock_state.mark_failed.assert_called_once_with('metatube:FANZA', generation=None)
             mock_state.mark_available.assert_not_called()
 
     def test_notfound_no_mark_failed_returns_none(self):
@@ -368,7 +381,7 @@ class TestParallelFanOutOrdering:
 
         factory_calls = []
 
-        def mock_factory(pname, url, tok):
+        def mock_factory(pname, url, tok, gen=None):
             if pname == 'A':
                 return shim_a
             else:
@@ -376,7 +389,7 @@ class TestParallelFanOutOrdering:
 
         # Patch _MetatubeShim.__init__ to return our pre-built shims
         with patch("core.scraper._MetatubeShim") as MockShim:
-            MockShim.side_effect = lambda pname, url, tok: shim_a if pname == 'A' else shim_b
+            MockShim.side_effect = lambda pname, url, tok, gen=None: shim_a if pname == 'A' else shim_b
             result = search_jav("TEST-001", source='auto')
 
         assert result is not None
@@ -400,7 +413,7 @@ class TestParallelFanOutOrdering:
         video_javbus = _make_video("javbus", "TEST-001")
         video_b = _make_video("metatube:B", "TEST-001")
 
-        def make_shim(pname, url, tok):
+        def make_shim(pname, url, tok, gen=None):
             shim = MagicMock()
             shim.source = f'metatube:{pname}'
             if pname == 'A':
@@ -560,3 +573,230 @@ def test_metatube_shim_exception_log_does_not_leak_credentials(caplog):
     assert 'metatube shim' in caplog.text  # 正向：這條 log 真的跑到了
     for secret in ('S3cr3tPass', 'admin@', 'tok_ABC123'):
         assert secret not in caplog.text, f"shim exception log 洩漏 {secret!r}"
+
+
+# ===========================================================================
+# 8. routing_availability_map behavior tests (TASK-130b-T3)
+# ===========================================================================
+
+def test_auto_fanout_uses_routing_map_expired_source_retried(monkeypatch):
+    """auto fan-out 吃 routing_availability_map：冷卻過期 (routing=True, display=False) 來源會被重試。
+    兩張 map 均為 False 則不被呼叫。"""
+    from core import source_settings
+    from core.scraper import search_jav
+
+    # 提供真實 config 使 get_enabled_source_ids 真正執行 gate 判斷
+    fake_config = {
+        'sources': [
+            {'id': 'javbus', 'type': 'builtin', 'enabled': True, 'order': 0, 'manual_only': False},
+            {'id': 'metatube:FANZA', 'type': 'metatube', 'enabled': True, 'order': 1, 'manual_only': False},
+        ]
+    }
+    monkeypatch.setattr(source_settings, "load_config", lambda: fake_config)
+
+    # 1. 正向：availability_map 為 False 但 routing_availability_map 為 True（冷卻已過期）
+    mock_state = _mock_state(
+        avail_map={'metatube:FANZA': False},
+    )
+    mock_state.routing_availability_map.return_value = {'metatube:FANZA': True}
+    monkeypatch.setattr("core.scraper.metatube_state", mock_state)
+
+    mt_video = _make_video("metatube:FANZA", "ABF-001")
+    shim_search_mock = MagicMock(return_value=mt_video)
+
+    with patch("core.scraper._MetatubeShim.search", shim_search_mock):
+        with patch("core.scrapers.javbus.JavBusScraper.search", return_value=None):
+            result = search_jav("ABF-001", source='auto')
+
+    shim_search_mock.assert_called_once_with("ABF-001")
+    assert result is not None
+    assert result['_source'] == 'metatube:FANZA'
+
+    # 2. 反向：routing_availability_map 亦為 False → 不被呼叫
+    mock_state_both_false = _mock_state(avail_map={'metatube:FANZA': False})
+    mock_state_both_false.routing_availability_map.return_value = {'metatube:FANZA': False}
+    monkeypatch.setattr("core.scraper.metatube_state", mock_state_both_false)
+
+    shim_search_mock_2 = MagicMock(return_value=None)
+    javbus_video = _make_video("javbus", "ABF-001")
+    with patch("core.scraper._MetatubeShim.search", shim_search_mock_2):
+        with patch("core.scrapers.javbus.JavBusScraper.search", return_value=javbus_video):
+            result_2 = search_jav("ABF-001", source='auto')
+
+    shim_search_mock_2.assert_not_called()
+    assert result_2['_source'] == 'javbus'
+
+
+def test_exact_cascade_uses_routing_map_expired_source_retried(monkeypatch):
+    """smart_search exact cascade 吃 routing_availability_map：冷卻過期 (routing=True, display=False) 來源會被重試。
+    兩張 map 均為 False 則不被呼叫。"""
+    from core import source_settings
+    from core.scraper import smart_search
+
+    fake_config = {
+        'sources': [
+            {'id': 'metatube:FANZA', 'type': 'metatube', 'enabled': True, 'order': 0, 'manual_only': False},
+            {'id': 'javbus', 'type': 'builtin', 'enabled': True, 'order': 1, 'manual_only': False},
+        ]
+    }
+    monkeypatch.setattr(source_settings, "load_config", lambda: fake_config)
+
+    # 1. 正向：availability_map 為 False 但 routing_availability_map 為 True
+    mock_state = _mock_state(avail_map={'metatube:FANZA': False})
+    mock_state.routing_availability_map.return_value = {'metatube:FANZA': True}
+    monkeypatch.setattr("core.scraper.metatube_state", mock_state)
+
+    mt_result = {'number': 'ABF-001', 'title': 'T', '_source': 'metatube:FANZA'}
+    mock_ss = MagicMock(return_value=mt_result)
+
+    with patch("core.scraper.search_jav_single_source", mock_ss):
+        results = smart_search("ABF-001")
+
+    mock_ss.assert_called_once_with('ABF-001', 'metatube:FANZA', proxy_url='')
+    assert len(results) == 1
+    assert results[0]['_source'] == 'metatube:FANZA'
+
+    # 2. 反向：兩張 map 皆為 False → metatube 被 gate 掉，直打 javbus
+    mock_state_both_false = _mock_state(avail_map={'metatube:FANZA': False})
+    mock_state_both_false.routing_availability_map.return_value = {'metatube:FANZA': False}
+    monkeypatch.setattr("core.scraper.metatube_state", mock_state_both_false)
+
+    def _single_source(number, source, proxy_url=''):
+        if source == 'javbus':
+            return {'number': 'ABF-001', 'title': 'T', '_source': 'javbus'}
+        return None
+
+    with patch("core.scraper.search_jav_single_source", side_effect=_single_source) as mock_ss_2:
+        results_2 = smart_search("ABF-001")
+
+    assert mock_ss_2.call_count == 1
+    mock_ss_2.assert_called_once_with('ABF-001', 'javbus', proxy_url='')
+    assert len(results_2) == 1
+    assert results_2[0]['_source'] == 'javbus'
+
+
+
+# ===========================================================================
+# 9. TASK-130b-T6：連線世代圍欄（Codex PR review P2）
+#
+# 不變式：
+#   I-1  一顆 shim 的 base_url / token / generation 來自同一次鎖獲取
+#   I-2  一顆 shim 的狀態回寫，只在「當前世代 == 建立時的世代」時生效
+#
+# 這幾支刻意用**真的** MetatubeConnectionState（不是 MagicMock）——圍欄的正確性
+# 取決於 generation 的真實遞增行為，用假物件驗不出來。
+# ===========================================================================
+
+def _real_state_with_shim(monkeypatch, provider='FANZA'):
+    """連上真 state、回傳 (state, 建 shim 用的 generation)。"""
+    from core.metatube.state import MetatubeConnectionState
+    state = MetatubeConnectionState()
+    gen = state.connect('http://mt:8080', 'tok', [provider])
+    monkeypatch.setattr('core.scraper.metatube_state', state)
+    return state, gen
+
+
+def test_stale_generation_shim_failure_does_not_poison_new_connection(monkeypatch):
+    """使用者搜尋還在跑的時候按了重新連線 → 舊那次請求逾時回來，不得把剛連好的
+    provider 又標成失敗（否則設定頁膠囊會灰五分鐘、那五分鐘內自動搜尋也少一家，
+    而那是假訊息——重連其實成功了）。"""
+    from core.metatube.errors import MetatubeUnavailable
+
+    state, old_gen = _real_state_with_shim(monkeypatch)
+    shim = _MetatubeShim('FANZA', 'http://mt:8080', 'tok', old_gen)
+    shim._client = MagicMock()
+    shim._client.search.side_effect = MetatubeUnavailable('server down')
+
+    # 使用者按「重新連線」——世代前進，provider 回到乾淨的可用狀態
+    new_gen = state.connect('http://mt:8080', 'tok', ['FANZA'])
+    assert new_gen != old_gen
+
+    # 舊那次請求現在才逾時回來
+    with pytest.raises(MetatubeUnavailable):
+        shim.search('ABF-001')
+
+    assert state.is_available('metatube:FANZA') is True
+    assert state._failed_at == {}
+
+
+def test_stale_generation_shim_success_does_not_touch_new_connection(monkeypatch):
+    """反方向的同一件事：舊連線的一次遲到成功，不得洗掉新連線上正確的失敗紀錄。
+
+    使用者換了一台 metatube 伺服器、新那台的某家其實是壞的，卻因為舊那台的一個
+    遲到回應而顯示正常 → 搜尋每次都去打它、每次都白等。"""
+    state, old_gen = _real_state_with_shim(monkeypatch)
+    shim = _MetatubeShim('FANZA', 'http://mt:8080', 'tok', old_gen)
+    shim._client = MagicMock()
+    shim._client.search.return_value = [{'id': 'X'}]
+    shim._client.get_info.return_value = {'id': 'X'}
+
+    # 換一台伺服器，新那台的 FANZA 被正確地標成失敗
+    state.connect('http://mt2:9090', 'tok2', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+    assert state.is_available('metatube:FANZA') is False
+    stamped = state._failed_at['metatube:FANZA']
+
+    # 舊連線的請求現在才成功回來
+    with patch('core.scraper.pick_movie_result', return_value={'id': 'X'}), \
+         patch('core.scraper.map_movie_info', return_value=_make_video('metatube:FANZA', 'ABF-001')):
+        shim.search('ABF-001')
+
+    assert state.is_available('metatube:FANZA') is False
+    assert state._failed_at['metatube:FANZA'] == stamped
+
+
+def test_current_generation_shim_writeback_still_works(monkeypatch):
+    """圍欄不得把 lazy liveness 自癒一起擋掉：同世代的回寫照常生效。"""
+    from core.metatube.errors import MetatubeUnavailable
+
+    state, gen = _real_state_with_shim(monkeypatch)
+
+    # 失敗方向
+    failing = _MetatubeShim('FANZA', 'http://mt:8080', 'tok', gen)
+    failing._client = MagicMock()
+    failing._client.search.side_effect = MetatubeUnavailable('down')
+    with pytest.raises(MetatubeUnavailable):
+        failing.search('ABF-001')
+    assert state.is_available('metatube:FANZA') is False
+    assert 'metatube:FANZA' in state._failed_at
+
+    # 成功方向（自癒）
+    ok = _MetatubeShim('FANZA', 'http://mt:8080', 'tok', gen)
+    ok._client = MagicMock()
+    ok._client.search.return_value = [{'id': 'X'}]
+    ok._client.get_info.return_value = {'id': 'X'}
+    with patch('core.scraper.pick_movie_result', return_value={'id': 'X'}), \
+         patch('core.scraper.map_movie_info', return_value=_make_video('metatube:FANZA', 'ABF-001')):
+        ok.search('ABF-001')
+    assert state.is_available('metatube:FANZA') is True
+    assert state._failed_at == {}
+
+
+def test_shim_snapshot_is_atomic_single_lock_acquisition(monkeypatch):
+    """I-1：建 shim 用的四個值必須來自 probe_snapshot() 一次鎖獲取。
+
+    這支不驗行為、驗的是「有沒有分成好幾次去讀」——分開讀就代表重連可以穿插在
+    中間，做出一顆拿著新網址、蓋著舊世代章的 shim。
+    """
+    state = _mock_state(avail_map={'metatube:FANZA': True})
+    # oracle：這三個舊讀取點只要被碰到就爆——比計數更直接，
+    # 因為「有沒有分開讀」正是這支要守的東西。
+    type(state).base_url = PropertyMock(
+        side_effect=AssertionError('base_url 被單獨讀取：四個值必須來自 probe_snapshot() 一次快照'))
+    type(state).token = PropertyMock(
+        side_effect=AssertionError('token 被單獨讀取：四個值必須來自 probe_snapshot() 一次快照'))
+    type(state).generation = PropertyMock(
+        side_effect=AssertionError('generation 被單獨讀取：四個值必須來自 probe_snapshot() 一次快照'))
+    state.availability_map.side_effect = AssertionError(
+        'availability_map() 被用來建 shim：那是顯示端的地圖，且它是另一次鎖獲取')
+
+    def _mock_enabled(availability_map=None):
+        return ['metatube:FANZA']
+
+    monkeypatch.setattr('core.scraper.get_enabled_source_ids', _mock_enabled)
+    monkeypatch.setattr('core.scraper.metatube_state', state)
+
+    with patch('core.scraper._MetatubeShim.search', return_value=None):
+        search_jav('ABF-001', source='auto')
+
+    state.probe_snapshot.assert_called_once()
