@@ -5,9 +5,15 @@ TASK-130a-T1: windows/health_probe.py 邊界與獨立性契約測試
 1. windows.health_probe 在無 webview 套件的環境下可獨立 import。
 2. import windows.health_probe 不會拉起 FastAPI (web.app)。
 3. windows/health_probe.py 單向依賴，不 import standalone。
-4. 探活 opener 顯式使用 ProxyHandler({})，不讀取系統/環境代理。
-5. 全檔無 urllib.request.urlopen。
-6. 使用 time.monotonic()，全檔無 time.time()。
+4. 探活 opener 顯式使用 ProxyHandler({})，不讀取系統/環境代理（**runtime 行為**：
+   攔 build_opener 檢查實際傳入的 handler 鏈）。
+
+**原本第 5、6 條（「全檔無 urllib.request.urlopen」「使用 time.monotonic()、全檔無 time.time()」）
+已於 PR #157 Codex P3 搬進 `scripts/static_guard_lint.mjs`**——它們是純全檔字串比對，
+依 CLAUDE.md 的 lint 守衛 north-star（能用 lint 機械處理的不該進 pytest、也不該耗 AI review）
+應該住在 lint 表裡；留在兩邊會變成同一份契約的兩個真理來源。
+連帶把本檔原本附在 opener 行為測試尾端的「`ProxyHandler({})` 原始碼靜態雙重鎖定」也一併搬走，
+本檔從此只留 **runtime 行為** 與 **AST 語意** 兩類（lint 表達不了的那些）。
 """
 import ast
 import pathlib
@@ -126,30 +132,6 @@ def test_prober_opener_has_no_proxy_handler_with_env_proxy_set(alive_thread, mon
     for h in opener.handlers:
         if isinstance(h, urllib.request.ProxyHandler):
             assert h.proxies == {}, f"opener handler 鏈中的 ProxyHandler.proxies 必須為 {{}}，實際為: {h.proxies}"
-
-    # 原始碼靜態雙重鎖定
-    src = HEALTH_PROBE_PATH.read_text(encoding="utf-8")
-    assert "ProxyHandler({})" in src, "windows/health_probe.py 原始碼必須包含 ProxyHandler({})"
-
-
-def test_no_urlopen_in_health_probe():
-    """windows/health_probe.py 全檔無 urllib.request.urlopen("""
-    assert HEALTH_PROBE_PATH.exists(), f"{HEALTH_PROBE_PATH} 不存在"
-    src = HEALTH_PROBE_PATH.read_text(encoding="utf-8")
-    assert "urllib.request.urlopen(" not in src, (
-        "windows/health_probe.py 包含 urllib.request.urlopen(，應改用 build_opener(ProxyHandler({}))"
-    )
-    assert "urlopen(" not in src, (
-        "windows/health_probe.py 包含 urlopen(，應改用 build_opener(ProxyHandler({}))"
-    )
-
-
-def test_uses_monotonic_not_wall_clock():
-    """windows/health_probe.py 使用 time.monotonic()，且全檔無 time.time()"""
-    assert HEALTH_PROBE_PATH.exists(), f"{HEALTH_PROBE_PATH} 不存在"
-    src = HEALTH_PROBE_PATH.read_text(encoding="utf-8")
-    assert "time.monotonic()" in src, "windows/health_probe.py 應使用 time.monotonic()"
-    assert "time.time()" not in src, "windows/health_probe.py 不得使用 time.time()"
 
 
 # [lint-guard: pytest-justified] AST 精確鎖 FunctionDef，lint 的 window scope 會隨鄰近函式長度漂移而 fail-open

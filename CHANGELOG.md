@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 這一版修的是「連自己」被代理攔截的情況。如果你的啟動失敗**另有原因**（例如某些安全軟體在更底層攔截），App 仍然開不起來——但至少會給你一句看得懂的話和一個查得到東西的 `debug.log`，而不是一段 Python 錯誤訊息。
 - 「開著代理仍能正常啟動」在 Windows 真機上驗證過（環境變數與登錄檔兩種代理設定都試過）；自動化測試涵蓋的是環境變數那一種。
 
-測試數 7130 → 7204（pytest；npm test 未變動）。
+測試數 7130 → 7202（pytest；npm test 未變動）。
 
 ## [0.14.9] - 2026-08-25
 

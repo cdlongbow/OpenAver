@@ -4315,8 +4315,31 @@ const RULES = [
     // regex（非純字串）：同一行若在 urlopen( 之前先出現 #，視為註解不比對。
     // 理由見 PR #157 Codex P2——純 raw text 比對會把「說明為什麼不要用它」的註解也擋掉，
     // 讓 npm run lint／CI 為了一行文件紅燈。docstring 仍是殘留缺口（字串比對 linter 的結構性限制）。
-    pattern: /^(?:(?!#).)*urllib\.request\.urlopen\(/m,
-    note: '[lint-guard:130a-T6] 探活／任何 windows/ 底下的 HTTP 請求不得用 urllib.request.urlopen —— 它的預設 opener 會讀系統代理（Linux 環境變數／Windows 登錄檔）且不排除 127.0.0.1，使用者開著 Clash／v2rayN 時連自己 loopback 的請求會被送去代理並遭 RST，App 啟動直接崩出 traceback（0.14.10 修的就是這個）。一律用 urllib.request.build_opener(urllib.request.ProxyHandler({}))。',
+    // \burlopen\( 同時涵蓋 `urllib.request.urlopen(` 與 `from urllib.request import urlopen` 之後的裸呼叫。
+    pattern: /^(?:(?!#).)*\burlopen\(/m,
+    note: '[lint-guard:130a-T6] 探活／任何 windows/ 底下的 HTTP 請求不得用 urlopen（含 urllib.request.urlopen 與 from-import 後的裸呼叫）—— 它的預設 opener 會讀系統代理（Linux 環境變數／Windows 登錄檔）且不排除 127.0.0.1，使用者開著 Clash／v2rayN 時連自己 loopback 的請求會被送去代理並遭 RST，App 啟動直接崩出 traceback（0.14.10 修的就是這個）。一律用 urllib.request.build_opener(urllib.request.ProxyHandler({}))。',
+  },
+
+  // ==== [130a-T6 / PR#157 Codex P3] 探活的時鐘與 opener —— 原本是 test_health_probe_boundary.py 的
+  // 全檔字串斷言，依 CLAUDE.md lint 守衛 north-star（能用 lint 機械處理的不該進 pytest）搬過來，
+  // 避免同一份契約有兩個真理來源。AST 語意那幾條仍留在 pytest（lint 表達不了）。 ====
+  {
+    file: 'windows/health_probe.py',
+    kind: 'required-string',
+    pattern: 'ProxyHandler({})',
+    note: '[lint-guard:130a-T6] 探活 opener 必須顯式帶 ProxyHandler({})（＝官方文件定義的「明確關閉代理自動偵測」寫法）。少了它，build_opener() 會讀系統代理，連 127.0.0.1 也會被送去代理。',
+  },
+  {
+    file: 'windows/health_probe.py',
+    kind: 'required-string',
+    pattern: 'time.monotonic()',
+    note: '[lint-guard:130a-T6] 探活的逾時計算必須用 time.monotonic()（量「經過時間」的正確 API，不受 NTP 校時／DST 跳時影響）。',
+  },
+  {
+    file: 'windows/health_probe.py',
+    kind: 'forbidden-string',
+    pattern: /^(?:(?!#).)*\btime\.time\(\)/m,
+    note: '[lint-guard:130a-T6] 探活不得用 time.time() 算逾時 —— 啟動那 30 秒剛好撞上系統校時，使用者會看到一句假的「啟動逾時」。用 time.monotonic()。',
   },
 ];
 
