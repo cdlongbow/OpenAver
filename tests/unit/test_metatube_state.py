@@ -640,3 +640,116 @@ def test_connect_log_does_not_leak_userinfo(caplog):
     assert '10.0.0.5:8900' in caplog.text          # 正向：log 真的有記，且保留診斷用的 host
     for secret in ('S3cr3tPass', 'admin', 'tok_ABC123'):
         assert secret not in caplog.text, f"connect log 洩漏 {secret!r}"
+
+
+# ---------------------------------------------------------------------------
+# TASK-130b-T1: _failed_at timestamp tracking & lifecycle
+# ---------------------------------------------------------------------------
+
+
+def test_failed_at_initialized_empty(state):
+    """MetatubeConnectionState starts with an empty _failed_at dictionary."""
+    assert hasattr(state, '_failed_at')
+    assert state._failed_at == {}
+
+
+def test_mark_failed_records_timestamp(state, monkeypatch):
+    """mark_failed records the timestamp returned by _now()."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.5)
+    state.connect('http://host', 'tok', ['FANZA', 'HEYZO'])
+    state.mark_failed('metatube:FANZA')
+
+    assert state.is_available('metatube:FANZA') is False
+    assert hasattr(state, '_failed_at')
+    assert state._failed_at.get('metatube:FANZA') == 100.5
+    assert 'metatube:HEYZO' not in state._failed_at
+
+
+def test_mark_available_clears_timestamp(state, monkeypatch):
+    """mark_available clears the failure timestamp from _failed_at."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.5)
+    state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+    assert state._failed_at.get('metatube:FANZA') == 100.5
+
+    state.mark_available('metatube:FANZA')
+    assert state.is_available('metatube:FANZA') is True
+    assert 'metatube:FANZA' not in state._failed_at
+
+
+def test_disconnect_clears_failed_at(state, monkeypatch):
+    """disconnect resets _failed_at to an empty dict while retaining provider keys."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.5)
+    state.connect('http://host', 'tok', ['FANZA', 'HEYZO'])
+    state.mark_failed('metatube:FANZA')
+    assert 'metatube:FANZA' in state._failed_at
+
+    state.disconnect()
+    assert state._failed_at == {}
+    assert state.is_available('metatube:FANZA') is False
+    # Keys still in availability_map (grey capsules requirement)
+    assert 'metatube:FANZA' in state.availability_map()
+
+
+def test_connect_clears_failed_at(state, monkeypatch):
+    """connect wipes _failed_at so stale timestamps do not carry over across servers."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.5)
+    state.connect('http://server1', 'tok1', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+    assert 'metatube:FANZA' in state._failed_at
+
+    state.connect('http://server2', 'tok2', ['FANZA', 'HEYZO'])
+    assert state._failed_at == {}
+    assert state.is_available('metatube:FANZA') is True
+
+
+def test_mark_failed_stale_generation_skipped(state, monkeypatch):
+    """mark_failed ignores writes when generation does not match current generation."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.5)
+    gen = state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA', generation=gen + 999)
+
+    assert state.is_available('metatube:FANZA') is True
+    assert 'metatube:FANZA' not in state._failed_at
+
+
+def test_mark_available_stale_generation_skipped(state, monkeypatch):
+    """mark_available ignores writes and clears when generation does not match."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.5)
+    gen = state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA', generation=gen)
+    assert state._failed_at.get('metatube:FANZA') == 100.5
+
+    state.mark_available('metatube:FANZA', generation=gen + 999)
+    assert state.is_available('metatube:FANZA') is False
+    assert state._failed_at.get('metatube:FANZA') == 100.5
+
+
+def test_mark_failed_consecutive_overwrites_timestamp(state, monkeypatch):
+    """Consecutive mark_failed calls update the timestamp to the latest time."""
+    t = 100.0
+    monkeypatch.setattr('core.metatube.state._now', lambda: t)
+    state.connect('http://host', 'tok', ['FANZA'])
+
+    state.mark_failed('metatube:FANZA')
+    assert state._failed_at.get('metatube:FANZA') == 100.0
+
+    t = 250.0
+    state.mark_failed('metatube:FANZA')
+    assert state._failed_at.get('metatube:FANZA') == 250.0
+
+
+def test_mark_available_unknown_source_no_error(state):
+    """mark_available on unknown source creates available entry and does not raise."""
+    state.mark_available('metatube:UNKNOWN_SOURCE')
+    assert state.is_available('metatube:UNKNOWN_SOURCE') is True
+    assert 'metatube:UNKNOWN_SOURCE' not in state._failed_at
+
+
+def test_mark_failed_unknown_source_records_timestamp(state, monkeypatch):
+    """mark_failed on unknown source creates unavailable entry and records timestamp."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 77.7)
+    state.mark_failed('metatube:UNKNOWN_SOURCE')
+    assert state.is_available('metatube:UNKNOWN_SOURCE') is False
+    assert state._failed_at.get('metatube:UNKNOWN_SOURCE') == 77.7
+
