@@ -4312,7 +4312,10 @@ const RULES = [
   {
     file: { dir: 'windows', ext: ['.py'], recursive: true },
     kind: 'forbidden-string',
-    pattern: 'urllib.request.urlopen(',
+    // regex（非純字串）：同一行若在 urlopen( 之前先出現 #，視為註解不比對。
+    // 理由見 PR #157 Codex P2——純 raw text 比對會把「說明為什麼不要用它」的註解也擋掉，
+    // 讓 npm run lint／CI 為了一行文件紅燈。docstring 仍是殘留缺口（字串比對 linter 的結構性限制）。
+    pattern: /^(?:(?!#).)*urllib\.request\.urlopen\(/m,
     note: '[lint-guard:130a-T6] 探活／任何 windows/ 底下的 HTTP 請求不得用 urllib.request.urlopen —— 它的預設 opener 會讀系統代理（Linux 環境變數／Windows 登錄檔）且不排除 127.0.0.1，使用者開著 Clash／v2rayN 時連自己 loopback 的請求會被送去代理並遭 RST，App 啟動直接崩出 traceback（0.14.10 修的就是這個）。一律用 urllib.request.build_opener(urllib.request.ProxyHandler({}))。',
   },
 ];
