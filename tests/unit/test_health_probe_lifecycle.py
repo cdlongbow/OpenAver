@@ -371,6 +371,10 @@ def test_debug_log_hint_fallback_on_runtime_error(monkeypatch):
 
 
 
+# [lint-guard: pytest-justified] 跨檔 runtime 契約：core/logger.py 的預設路徑
+# 必須與 windows/health_probe.py::_debug_log_hint() 的實際輸出是同一個地方。
+# 只把前兩條「logger 源碼含某字面」搬去 lint 會拆斷這個關係——那樣 lint pattern、
+# 測試的 expected_tail、兩支產品碼會變成四份各自為政的字面，改一半而兩邊都綠。
 def test_debug_log_hint_matches_core_logger_default():
     """跨檔守衛：_debug_log_hint() 與 core/logger.py 的預設 log 路徑必須是同一個地方。
 
