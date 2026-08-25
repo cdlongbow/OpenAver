@@ -27,6 +27,19 @@
       "path_copied": "コピーしました: {path}",
       "folder_open_failed": "フォルダを開けませんでした",
       "copy_failed": "コピーに失敗しました"
+    },
+    "browse_dir": {
+      "title": "フォルダを選択",
+      "select_this": "このフォルダを選択",
+      "up": "上の階層",
+      "close": "閉じる",
+      "loading": "読み込み中…",
+      "empty": "このフォルダにはサブフォルダがありません",
+      "drives": "このコンピューター",
+      "err_not_found": "このフォルダが見つかりません",
+      "err_not_a_directory": "これはフォルダではありません",
+      "err_permission_denied": "このフォルダを読み取る権限がありません",
+      "err_generic": "このフォルダを読み取れません"
     }
   },
   "desktop": {
@@ -86,7 +99,8 @@
       "drag_hint": "ファイルやフォルダを直接ドロップすることもできます",
       "explainer_lookup": "番号／女優名の入力、女優のクリック、動画のドラッグは、すべて「データの検索」だけです。",
       "explainer_organize": "「この作品を整理」または「一括整理」を押したときだけ、ファイルが操作されます（設定に従って名前変更・フォルダ作成・カバー/スチルのダウンロード・NFO の書き込みを行います）。",
-      "favorite_note": "「お気に入り」はよく使う動画フォルダのパスで、女優のお気に入りではありません"
+      "favorite_note": "「お気に入り」はよく使う動画フォルダのパスで、女優のお気に入りではありません",
+      "explainer_partial": "「IPZZ-03」のように途中まで入力すると、030〜039 をまとめて検索できます。"
     },
     "error": {
       "hint": "番号の形式を確認するか、しばらくしてから再試行してください",
@@ -223,7 +237,6 @@
       "no_search_results": "このファイルの検索結果がありません",
       "scrape_failed": "{filename} の整理に失敗しました",
       "no_valid_files": "有効な動画ファイルがありません（番号を識別できません）",
-      "desktop_only": "この機能はデスクトップアプリで使用する必要があります",
       "load_failed": "読み込みに失敗しました。もう一度お試しください",
       "translate_failed": "翻訳に失敗しました。もう一度お試しください",
       "db_not_synced": "未同期 — 整理完了後も Showcase に表示されません",
@@ -327,7 +340,6 @@
       }
     },
     "toast": {
-      "desktop_only": "この機能はデスクトップアプリで使用する必要があります",
       "load_current_failed": "現在の設定の読み込みに失敗しました",
       "config_saved": "設定を保存しました",
       "save_failed": "保存に失敗しました: {error}",
@@ -471,7 +483,18 @@
       "also_showcase_note": "ブラウズ（Showcase）のデフォルトにもなります",
       "export_section": "オフライン HTML エクスポート（Windows ローカル閲覧用）",
       "export_notice": "このエクスポートファイルは Windows でのローカル閲覧（ダブルクリック）向けです。macOS / Linux ではアプリのブラウズページをご利用ください。（理由：カバーが <code>file://</code> で埋め込まれており、Mac のブラウザはローカルの別ディレクトリのファイルをブロックします）",
-      "mode_export_only_note": "このエクスポートファイルのみに影響します（アプリの Showcase には影響しません）"
+      "mode_export_only_note": "このエクスポートファイルのみに影響します（アプリの Showcase には影響しません）",
+      "cover_badges_label": "カバーの属性バッジ",
+      "cover_badges_note": "カバーの左上に「字幕」「無修正」「4K」などのバッジを表示します（表示のみ。タグ自体は変更しません）",
+      "cover_badges_legend": "＊AI：AI による無修正化、LEAK：無修正マスターの流出",
+      "cover_badges_help_aria": "カバー属性バッジの説明",
+      "cover_badge": {
+        "subtitle": "中国語字幕",
+        "cracked": "AI 無修正化",
+        "leaked": "無修正マスター流出",
+        "4k": "4K",
+        "vr": "VR"
+      }
     },
     "system": {
       "default_page_label": "起動時に開くページ",
@@ -587,7 +610,6 @@
   "scanner": {
     "page_title": "リスト生成",
     "toast": {
-      "desktop_only": "この機能はデスクトップアプリで使用する必要があります",
       "folder_already_added": "このフォルダはすでにリストにあります",
       "copy_path_failed": "コピーに失敗しました：{path}",
       "generate_error": "生成に失敗しました。ログを確認してください",
@@ -614,7 +636,8 @@
       "nfo_update_done": "補完が完了しました。リストを再生成して更新してください",
       "no_jellyfin_update_needed": "補完が必要な動画はありません",
       "jellyfin_update_done": "補完が完了しました！",
-      "path_copied": "コピーしました: {path}"
+      "path_copied": "コピーしました: {path}",
+      "browse_dir_fallback": "ブラウザではドロップしたファイルのパスを直接読み取れないため、フォルダ選択画面を開きました"
     },
     "copy_fail_modal": {
       "title": "ログのコピーに失敗",
@@ -976,7 +999,8 @@
       "mask_save_failed": "切り抜き設定の保存に失敗しました。しばらくしてからもう一度お試しください。",
       "mask_cover_changed": "カバーが変更されました。切り抜きツールを開き直してもう一度お試しください。",
       "mask_confirm": "切り抜き位置を確定",
-      "mask_cancel": "切り抜き調整をキャンセル"
+      "mask_cancel": "切り抜き調整をキャンセル",
+      "cover_unavailable": "このカバー画像を読み込めません。ファイルの場所にアクセスできないか、カバー画像自体が失われている可能性があります"
     },
     "gallery": {
       "prev": "前の画像 (←)",
@@ -1001,11 +1025,16 @@
         "title": "この動画をコレクションから削除",
         "body": "「{number}」のデータベースレコードのみ削除されます。動画ファイルはディスクに残り、削除されません。スキャン対象フォルダ内にある場合は次回スキャン時に再追加されます。",
         "cancel": "キャンセル",
-        "confirm": "削除を確認"
+        "confirm": "削除を確認",
+        "body_multipart": "これは分割動画（{tokens}）です。確認すると全 {n} パートのレコードがまとめて削除されます。動画ファイルはいずれもディスクに残ります。"
       },
       "delete_success": "コレクションから削除しました",
       "delete_failed": "削除に失敗しました。後ほど再試行してください",
-      "play_failed": "再生に失敗しました"
+      "play_failed": "再生に失敗しました",
+      "part_count_fallback": "{n} パート",
+      "part_progress": "{current}／{total} パート目",
+      "player_unavailable": "この動画は現在再生できません。ファイルの場所にアクセスできないか、この形式にブラウザが対応していない可能性があります",
+      "player_unavailable_format": "ブラウザではこのファイルを再生できません。形式が未対応か、ファイル自体が壊れている可能性があります。VLC や PotPlayer などのパソコン用プレーヤーをお試しください"
     },
     "search": {
       "actress": "女優名を検索...",
@@ -1082,7 +1111,8 @@
         "label": "レーベル",
         "age": "年齢",
         "height": "身長",
-        "cup": "カップ"
+        "cup": "カップ",
+        "release": "発売日"
       },
       "title": "{dim}：{value}",
       "remove_aria": "フィルターを削除：{value}",
@@ -1094,8 +1124,21 @@
       },
       "editor": {
         "range_min": "下限",
-        "range_max": "上限"
+        "range_max": "上限",
+        "from_year": "開始年",
+        "from_month": "開始月",
+        "to_year": "終了年",
+        "to_month": "終了月"
       }
+    },
+    "filter": {
+      "pick_only": "★のみ表示"
+    },
+    "pick": {
+      "add_aria": "★を付ける",
+      "remove_aria": "★を外す",
+      "save_failed": "★の保存に失敗しました。後ほど再試行してください",
+      "chip_label": "★ ピック"
     }
   },
   "help": {

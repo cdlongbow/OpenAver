@@ -27,6 +27,19 @@
       "path_copied": "已复制: {path}",
       "folder_open_failed": "打开文件夹失败",
       "copy_failed": "复制失败"
+    },
+    "browse_dir": {
+      "title": "选择文件夹",
+      "select_this": "选取此文件夹",
+      "up": "上一层",
+      "close": "关闭",
+      "loading": "读取中…",
+      "empty": "这个文件夹底下没有子文件夹",
+      "drives": "这台电脑",
+      "err_not_found": "找不到这个文件夹",
+      "err_not_a_directory": "这不是文件夹",
+      "err_permission_denied": "没有权限读取这个文件夹",
+      "err_generic": "这个文件夹读不到"
     }
   },
   "desktop": {
@@ -86,7 +99,8 @@
       "drag_hint": "也可直接拖入文件或文件夹",
       "explainer_lookup": "输入番号／女优名、点演员、拖入视频，都只是「查资料」。",
       "explainer_organize": "按「整理此片」或「批量整理」才会「动文件」（依设置改名、建文件夹、下载封面/剧照、写 NFO）。",
-      "favorite_note": "「我的最爱」是你常用的视频文件夹路径，不是女优最爱"
+      "favorite_note": "「我的最爱」是你常用的视频文件夹路径，不是女优最爱",
+      "explainer_partial": "输入局部番号如 IPZZ-03，可以一次搜索 030~039 整段。"
     },
     "error": {
       "hint": "请检查番号格式或稍后再试",
@@ -223,7 +237,6 @@
       "no_search_results": "此文件没有搜索结果",
       "scrape_failed": "{filename} 整理失败",
       "no_valid_files": "无有效视频文件（无法识别番号）",
-      "desktop_only": "此功能需要在桌面应用程序中使用",
       "load_failed": "加载失败，请重试",
       "translate_failed": "翻译失败，请重试",
       "db_not_synced": "未联动 — 整理完成后不会出现在 Showcase",
@@ -327,7 +340,6 @@
       }
     },
     "toast": {
-      "desktop_only": "此功能需要在桌面应用程序中使用",
       "load_current_failed": "加载现有设置失败",
       "config_saved": "设置已保存",
       "save_failed": "保存失败: {error}",
@@ -471,7 +483,18 @@
       "also_showcase_note": "也是你浏览页（Showcase）的默认",
       "export_section": "离线 HTML 导出（Windows 本机查看用）",
       "export_notice": "此导出文件为 Windows 本机双击查看设计；macOS / Linux 请改用 app 浏览页。（成因：封面以 <code>file://</code> 嵌入，Mac 浏览器会拦截本机跨目录文件）",
-      "mode_export_only_note": "仅影响此导出文件（不影响 app Showcase）"
+      "mode_export_only_note": "仅影响此导出文件（不影响 app Showcase）",
+      "cover_badges_label": "封面属性标签",
+      "cover_badges_note": "在封面左上角显示中文字幕／无码／4K 等标签（只影响显示，不改标签本身）",
+      "cover_badges_legend": "＊AI：无码破解（AI 算法去码），LEAK：无码流出（母带外流）",
+      "cover_badges_help_aria": "封面属性标签说明",
+      "cover_badge": {
+        "subtitle": "中文字幕",
+        "cracked": "无码破解（AI 算法去码）",
+        "leaked": "无码流出（母带外流）",
+        "4k": "4K",
+        "vr": "VR"
+      }
     },
     "system": {
       "default_page_label": "启动时打开页面",
@@ -587,7 +610,6 @@
   "scanner": {
     "page_title": "列表生成",
     "toast": {
-      "desktop_only": "此功能需要在桌面应用程序中使用",
       "folder_already_added": "此文件夹已在列表中",
       "copy_path_failed": "复制失败，路径：{path}",
       "generate_error": "生成失败，请查看日志",
@@ -614,7 +636,8 @@
       "nfo_update_done": "补全完成！请重新生成列表以更新",
       "no_jellyfin_update_needed": "没有需要补齐的视频",
       "jellyfin_update_done": "补齐完成！",
-      "path_copied": "已复制: {path}"
+      "path_copied": "已复制: {path}",
+      "browse_dir_fallback": "浏览器无法直接读取拖放文件的路径，已为您打开文件夹选择器"
     },
     "copy_fail_modal": {
       "title": "复制日志失败",
@@ -976,7 +999,8 @@
       "mask_save_failed": "裁切设置保存失败，请稍后再试",
       "mask_cover_changed": "封面已变更，请重新打开裁切工具再试一次",
       "mask_confirm": "确认裁切位置",
-      "mask_cancel": "取消裁切调整"
+      "mask_cancel": "取消裁切调整",
+      "cover_unavailable": "这部视频的封面现在读不到——可能是文件位置目前无法访问，或者封面文件本身不见了"
     },
     "gallery": {
       "prev": "上一张 (←)",
@@ -1001,11 +1025,16 @@
         "title": "从收藏移除这部视频",
         "body": "只会从数据库移除「{number}」这条记录。视频文件会保留在磁盘，不会被删除；若该文件仍在扫描目录内，下次扫描会重新被加回。",
         "cancel": "取消",
-        "confirm": "确认移除"
+        "confirm": "确认移除",
+        "body_multipart": "这是分集视频（{tokens}），确认后会一并移除全部 {n} 段的记录——视频文件一样都留在磁盘上。"
       },
       "delete_success": "已从收藏移除",
       "delete_failed": "移除失败，请稍后再试",
-      "play_failed": "播放失败"
+      "play_failed": "播放失败",
+      "part_count_fallback": "{n} 段",
+      "part_progress": "第 {current}／{total} 段",
+      "player_unavailable": "这部视频现在放不出来——可能是文件位置拿不到，或者这个格式浏览器不支持",
+      "player_unavailable_format": "浏览器没办法播放这个文件——可能是这个格式不支持，也可能是文件本身坏了。可以试试电脑上的播放器（VLC／PotPlayer 等）"
     },
     "search": {
       "actress": "搜索女优名称...",
@@ -1082,7 +1111,8 @@
         "label": "厂牌",
         "age": "年龄",
         "height": "身高",
-        "cup": "罩杯"
+        "cup": "罩杯",
+        "release": "发售日"
       },
       "title": "{dim}：{value}",
       "remove_aria": "移除筛选：{value}",
@@ -1094,8 +1124,21 @@
       },
       "editor": {
         "range_min": "下限",
-        "range_max": "上限"
+        "range_max": "上限",
+        "from_year": "起始年",
+        "from_month": "起始月",
+        "to_year": "结束年",
+        "to_month": "结束月"
       }
+    },
+    "filter": {
+      "pick_only": "只看精选"
+    },
+    "pick": {
+      "add_aria": "加入精选",
+      "remove_aria": "取消精选",
+      "save_failed": "精选保存失败，请稍后再试",
+      "chip_label": "★精选"
     }
   },
   "help": {

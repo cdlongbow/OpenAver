@@ -27,6 +27,19 @@
       "path_copied": "Copied: {path}",
       "folder_open_failed": "Failed to open folder",
       "copy_failed": "Copy failed"
+    },
+    "browse_dir": {
+      "title": "Select Folder",
+      "select_this": "Select This Folder",
+      "up": "Up",
+      "close": "Close",
+      "loading": "Loading…",
+      "empty": "This folder has no subfolders",
+      "drives": "This PC",
+      "err_not_found": "Folder not found",
+      "err_not_a_directory": "Not a folder",
+      "err_permission_denied": "No permission to read this folder",
+      "err_generic": "Cannot read this folder"
     }
   },
   "desktop": {
@@ -86,7 +99,8 @@
       "drag_hint": "You can also drag and drop files or folders",
       "explainer_lookup": "Typing an ID / actress name, clicking an actress, or dragging in a video only looks up data.",
       "explainer_organize": "Only \"Organize\" or \"Batch Organize\" touches your files (rename, create folders, download cover/stills, and write NFO per your settings).",
-      "favorite_note": "\"Favorites\" is your frequently-used video folder path, not favorite actresses."
+      "favorite_note": "\"Favorites\" is your frequently-used video folder path, not favorite actresses.",
+      "explainer_partial": "Enter a partial ID such as IPZZ-03 to search the whole 030–039 range at once."
     },
     "error": {
       "hint": "Please check the ID format or try again later",
@@ -223,7 +237,6 @@
       "no_search_results": "No search results for this file",
       "scrape_failed": "Failed to organize {filename}",
       "no_valid_files": "No valid video files (could not identify number)",
-      "desktop_only": "This feature requires the desktop app",
       "load_failed": "Load failed. Please try again.",
       "translate_failed": "Translation failed. Please try again.",
       "db_not_synced": "Not linked — organized files won't appear in Showcase",
@@ -327,7 +340,6 @@
       }
     },
     "toast": {
-      "desktop_only": "This feature requires the desktop app",
       "load_current_failed": "Failed to load current settings",
       "config_saved": "Settings saved",
       "save_failed": "Save failed: {error}",
@@ -471,7 +483,18 @@
       "also_showcase_note": "Also the default for your Showcase page",
       "export_section": "Offline HTML export (for local viewing on Windows)",
       "export_notice": "This export file is designed for local double-click viewing on Windows; on macOS / Linux, use the app’s Showcase page instead. (Reason: covers are embedded via <code>file://</code>, which Mac browsers block for local cross-directory files.)",
-      "mode_export_only_note": "Affects only this export file (not the app’s Showcase)"
+      "mode_export_only_note": "Affects only this export file (not the app’s Showcase)",
+      "cover_badges_label": "Cover attribute badges",
+      "cover_badges_note": "Show badges such as Subtitled / Uncensored / 4K in the top-left corner of covers (display only — your tags are not changed)",
+      "cover_badges_legend": "* AI: AI-decensored, LEAK: leaked uncensored master",
+      "cover_badges_help_aria": "About cover attribute badges",
+      "cover_badge": {
+        "subtitle": "Subtitled",
+        "cracked": "AI-decensored",
+        "leaked": "Leaked uncensored",
+        "4k": "4K",
+        "vr": "VR"
+      }
     },
     "system": {
       "default_page_label": "Default Page on Startup",
@@ -587,7 +610,6 @@
   "scanner": {
     "page_title": "Scanner",
     "toast": {
-      "desktop_only": "This feature requires the desktop app",
       "folder_already_added": "This folder is already in the list",
       "copy_path_failed": "Copy failed: {path}",
       "generate_error": "Generation failed. Check the log for details.",
@@ -614,7 +636,8 @@
       "nfo_update_done": "Update complete! Regenerate the list to refresh",
       "no_jellyfin_update_needed": "No videos need updating",
       "jellyfin_update_done": "Update complete!",
-      "path_copied": "Copied: {path}"
+      "path_copied": "Copied: {path}",
+      "browse_dir_fallback": "Your browser can’t read the path of dropped files, so the folder picker has been opened for you"
     },
     "copy_fail_modal": {
       "title": "Copy logs failed",
@@ -976,7 +999,8 @@
       "mask_save_failed": "Failed to save crop settings. Please try again later.",
       "mask_cover_changed": "Cover has changed. Please reopen the crop tool and try again.",
       "mask_confirm": "Confirm crop position",
-      "mask_cancel": "Cancel crop adjustment"
+      "mask_cancel": "Cancel crop adjustment",
+      "cover_unavailable": "This cover can’t be loaded right now — the file location may be unreachable, or the cover file may be missing"
     },
     "gallery": {
       "prev": "Previous (←)",
@@ -1001,11 +1025,16 @@
         "title": "Remove This Video from Collection",
         "body": "Only the database record for \"{number}\" will be removed. The video file will remain on disk and will not be deleted; if the file is still in a scanned folder, it will be added back on the next scan.",
         "cancel": "Cancel",
-        "confirm": "Confirm Remove"
+        "confirm": "Confirm Remove",
+        "body_multipart": "This is a multi-part video ({tokens}). Confirming removes the records for all {n} parts — the video files all remain on disk."
       },
       "delete_success": "Removed from collection",
       "delete_failed": "Remove failed, please try again",
-      "play_failed": "Playback failed"
+      "play_failed": "Playback failed",
+      "part_count_fallback": "{n} parts",
+      "part_progress": "Part {current} of {total}",
+      "player_unavailable": "This video can’t be played right now — the file location may be unreachable, or the browser may not support this format",
+      "player_unavailable_format": "Your browser can’t play this file — the format may be unsupported, or the file itself may be damaged. Try a desktop player such as VLC or PotPlayer"
     },
     "search": {
       "actress": "Search actress name...",
@@ -1082,7 +1111,8 @@
         "label": "Label",
         "age": "Age",
         "height": "Height",
-        "cup": "Cup"
+        "cup": "Cup",
+        "release": "Release Date"
       },
       "title": "{dim}: {value}",
       "remove_aria": "Remove filter: {value}",
@@ -1094,8 +1124,21 @@
       },
       "editor": {
         "range_min": "Min",
-        "range_max": "Max"
+        "range_max": "Max",
+        "from_year": "From Year",
+        "from_month": "From Month",
+        "to_year": "To Year",
+        "to_month": "To Month"
       }
+    },
+    "filter": {
+      "pick_only": "Picks only"
+    },
+    "pick": {
+      "add_aria": "Add to picks",
+      "remove_aria": "Remove from picks",
+      "save_failed": "Failed to save pick, please try again",
+      "chip_label": "★ Pick"
     }
   },
   "help": {
