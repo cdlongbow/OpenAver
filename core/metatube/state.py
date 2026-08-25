@@ -30,6 +30,8 @@ from core.metatube.validation import redact_metatube_url
 logger = get_logger(__name__)
 
 _now = time.monotonic  # injectable clock for TTL tests (no sleep)
+# Mirrors core/organizer.py:38 _HOST_FAILURE_TTL
+_METATUBE_FAILURE_TTL = 300
 
 
 class MetatubeConnectionState:
@@ -191,6 +193,23 @@ class MetatubeConnectionState:
         """
         with self._lock:
             return dict(self._availability)
+
+    def routing_availability_map(self) -> dict[str, bool]:
+        """Return availability map for routing, optimistically treating expired failures as available.
+
+        Pure read: does NOT pop timestamps or mutate internal state.
+        Fail-closed: False without timestamp (e.g. from disconnect) stays False.
+        """
+        with self._lock:
+            snapshot = dict(self._availability)
+            now = _now()
+            for key, avail in list(snapshot.items()):
+                if avail:
+                    continue
+                failed_at = self._failed_at.get(key)
+                if failed_at is not None and now - failed_at >= _METATUBE_FAILURE_TTL:
+                    snapshot[key] = True
+            return snapshot
 
     def is_available(self, source_id: str) -> bool:
         """Return True iff the source is currently marked available.

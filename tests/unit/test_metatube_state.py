@@ -753,3 +753,155 @@ def test_mark_failed_unknown_source_records_timestamp(state, monkeypatch):
     assert state.is_available('metatube:UNKNOWN_SOURCE') is False
     assert state._failed_at.get('metatube:UNKNOWN_SOURCE') == 77.7
 
+
+# ---------------------------------------------------------------------------
+# TASK-130b-T2: routing_availability_map() optimistic failure cooldown
+# ---------------------------------------------------------------------------
+
+
+def test_routing_map_happy_path_all_available(state):
+    """When all providers are available, routing_availability_map equals availability_map."""
+    state.connect('http://host', 'tok', ['FANZA', 'HEYZO'])
+    assert state.routing_availability_map() == state.availability_map()
+    assert state.routing_availability_map() == {
+        'metatube:FANZA': True,
+        'metatube:HEYZO': True,
+    }
+
+
+def test_routing_map_within_cooldown_stays_false(state, monkeypatch):
+    """Provider failed within cooldown TTL stays False in routing_availability_map."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+
+    # Query at t=200 (100s elapsed < 300s TTL)
+    monkeypatch.setattr('core.metatube.state._now', lambda: 200.0)
+    res = state.routing_availability_map()
+    assert res.get('metatube:FANZA') is False
+
+
+def test_routing_map_expired_cooldown_becomes_true(state, monkeypatch):
+    """Provider failed after cooldown TTL expires becomes True in routing_availability_map."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+
+    # Query at t=450 (350s elapsed >= 300s TTL)
+    monkeypatch.setattr('core.metatube.state._now', lambda: 450.0)
+    res = state.routing_availability_map()
+    assert res.get('metatube:FANZA') is True
+
+
+def test_routing_map_exact_cooldown_boundary_becomes_true(state, monkeypatch):
+    """Provider failed exactly at cooldown TTL boundary (now - failed_at == TTL) is considered expired (True)."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+
+    # Query at t=400 (exactly 300s elapsed == 300s TTL)
+    monkeypatch.setattr('core.metatube.state._now', lambda: 400.0)
+    res = state.routing_availability_map()
+    assert res.get('metatube:FANZA') is True
+
+
+def test_routing_map_false_without_timestamp_stays_false(state):
+    """Fail-closed: provider with False availability and NO timestamp (e.g. from disconnect) stays False."""
+    state.connect('http://host', 'tok', ['FANZA', 'HEYZO'])
+    state.disconnect()
+
+    # disconnect clears _failed_at while keeping keys False
+    res = state.routing_availability_map()
+    assert res == {
+        'metatube:FANZA': False,
+        'metatube:HEYZO': False,
+    }
+
+
+def test_availability_map_ignores_cooldown(state, monkeypatch):
+    """availability_map() does NOT apply optimistic cooldown (stays False even when expired)."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+
+    # Query at t=500 (expired for routing)
+    monkeypatch.setattr('core.metatube.state._now', lambda: 500.0)
+    assert state.routing_availability_map().get('metatube:FANZA') is True
+    # UI display map must remain unchanged and not optimistic
+    assert state.availability_map().get('metatube:FANZA') is False
+
+
+def test_status_dict_ignores_cooldown(state, monkeypatch):
+    """status_dict() providers list does NOT apply optimistic cooldown."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+
+    # Query at t=500 (expired for routing)
+    monkeypatch.setattr('core.metatube.state._now', lambda: 500.0)
+    d = state.status_dict()
+    providers = {p['id']: p['available'] for p in d['providers']}
+    assert providers.get('metatube:FANZA') is False
+
+
+def test_routing_map_pure_read_no_side_effects(state, monkeypatch):
+    """routing_availability_map() is a pure read with no side effects (does not pop _failed_at)."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+
+    # Query at t=500 twice
+    monkeypatch.setattr('core.metatube.state._now', lambda: 500.0)
+    res1 = state.routing_availability_map()
+    res2 = state.routing_availability_map()
+
+    assert res1 == {'metatube:FANZA': True}
+    assert res2 == {'metatube:FANZA': True}
+    # Internal state untouched: _failed_at still has the timestamp, _availability still False
+    assert state._failed_at.get('metatube:FANZA') == 100.0
+    assert state.is_available('metatube:FANZA') is False
+
+
+def test_routing_map_returns_copy(state):
+    """Mutating the dict returned by routing_availability_map() does not affect internal state."""
+    state.connect('http://host', 'tok', ['FANZA'])
+    m = state.routing_availability_map()
+    assert m['metatube:FANZA'] is True
+    m['metatube:FANZA'] = False
+    assert state.routing_availability_map()['metatube:FANZA'] is True
+
+
+def test_routing_map_empty_availability_returns_empty(state):
+    """Fresh state before connect returns an empty dict."""
+    assert state.routing_availability_map() == {}
+
+
+def test_routing_map_multiple_providers_mixed_states(state, monkeypatch):
+    """Test 4-quadrant mixed scenario across multiple providers."""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://host', 'tok', ['P_OK', 'P_COOLING', 'P_EXPIRED'])
+    # P_EXPIRED fails at t=100
+    state.mark_failed('metatube:P_EXPIRED')
+
+    # P_COOLING fails at t=350
+    monkeypatch.setattr('core.metatube.state._now', lambda: 350.0)
+    state.mark_failed('metatube:P_COOLING')
+
+    # Current time t=450:
+    # - P_OK: available (True) -> True
+    # - P_COOLING: failed at 350, elapsed 100 < 300 -> False
+    # - P_EXPIRED: failed at 100, elapsed 350 >= 300 -> True
+    monkeypatch.setattr('core.metatube.state._now', lambda: 450.0)
+
+    routing = state.routing_availability_map()
+    assert routing['metatube:P_OK'] is True
+    assert routing['metatube:P_COOLING'] is False
+    assert routing['metatube:P_EXPIRED'] is True
+
+    # availability_map strictly reflects persistent status
+    avail = state.availability_map()
+    assert avail['metatube:P_OK'] is True
+    assert avail['metatube:P_COOLING'] is False
+    assert avail['metatube:P_EXPIRED'] is False
+
+
