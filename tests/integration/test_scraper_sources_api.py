@@ -160,7 +160,7 @@ def test_connected_available_metatube_appears(client, temp_config_path, monkeypa
     cfg = _append_metatube_source(_base_config(client))
     assert client.put("/api/config", json=cfg).status_code == 200
     monkeypatch.setattr(
-        metatube_state, "availability_map", lambda: {"mt_active": True}
+        metatube_state, "routing_availability_map", lambda: {"mt_active": True}
     )
 
     data = client.get("/api/scraper-sources").json()
@@ -176,7 +176,7 @@ def test_connected_but_unavailable_metatube_gated_out(client, temp_config_path, 
     cfg = _append_metatube_source(_base_config(client))
     assert client.put("/api/config", json=cfg).status_code == 200
     monkeypatch.setattr(
-        metatube_state, "availability_map", lambda: {"mt_active": False}
+        metatube_state, "routing_availability_map", lambda: {"mt_active": False}
     )
 
     data = client.get("/api/scraper-sources").json()
@@ -187,10 +187,28 @@ def test_connected_but_unavailable_metatube_gated_out(client, temp_config_path, 
 
 def test_builtin_unaffected_by_availability_map(client, temp_config_path, monkeypatch):
     """63c-2：builtin 來源 bypass availability gate — 即使 map 為空也始終出現。"""
-    monkeypatch.setattr(metatube_state, "availability_map", lambda: {})
+    monkeypatch.setattr(metatube_state, "routing_availability_map", lambda: {})
     data = client.get("/api/scraper-sources").json()
     assert data["total_enabled"] == 8
     assert all(s["type"] != "metatube" for s in data["sources"])
+
+
+def test_expired_cooldown_source_appears_in_capabilities(client, temp_config_path, monkeypatch):
+    """AC-5：routing_availability_map 回 True、availability_map 回 False（冷卻過期）時，
+    來源出現在 /api/scraper-sources 端點回應裡（與 routing 一致，非與 UI 顯示一致）。"""
+    cfg = _append_metatube_source(_base_config(client))
+    assert client.put("/api/config", json=cfg).status_code == 200
+    monkeypatch.setattr(
+        metatube_state, "availability_map", lambda: {"mt_active": False}
+    )
+    monkeypatch.setattr(
+        metatube_state, "routing_availability_map", lambda: {"mt_active": True}
+    )
+
+    data = client.get("/api/scraper-sources").json()
+    by_id = {s["id"]: s for s in data["sources"]}
+    assert "mt_active" in by_id
+    assert data["total_enabled"] == 9
 
 
 def test_capability_count_unchanged_no_new_capability():

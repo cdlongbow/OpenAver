@@ -126,6 +126,7 @@ class TestPipeline:
              patch('core.scraper.metatube_state') as mock_mt, \
              patch('core.scraper.search_jav_single_source', side_effect=_single_source) as mock_ss:
             mock_mt.availability_map.return_value = {}
+            mock_mt.routing_availability_map.return_value = {}
             results = smart_search("SONE-205", proxy_url="http://proxy:8080")
 
         assert len(results) == 1
@@ -161,6 +162,7 @@ class TestPipeline:
              patch('core.scraper.search_jav_single_source', return_value=None), \
              patch('core.scraper.merge_results') as mock_merge:
             mock_mt.availability_map.return_value = {}
+            mock_mt.routing_availability_map.return_value = {}
             results = smart_search("SONE-205", proxy_url="")
 
         assert results == []
@@ -511,6 +513,7 @@ class TestCascadeExactBranch:
              patch('core.scraper.metatube_state') as mock_mt, \
              patch('core.scraper.search_jav_single_source', side_effect=_single_source) as mock_ss:
             mock_mt.availability_map.return_value = {}
+            mock_mt.routing_availability_map.return_value = {}
             results = smart_search('HMN-706')
 
         assert len(results) == 1
@@ -534,6 +537,7 @@ class TestCascadeExactBranch:
              patch('core.scraper.metatube_state') as mock_mt, \
              patch('core.scraper.search_jav_single_source', side_effect=_single_source) as mock_ss:
             mock_mt.availability_map.return_value = {}
+            mock_mt.routing_availability_map.return_value = {}
             results = smart_search('HMN-706')
 
         assert len(results) == 1
@@ -559,6 +563,7 @@ class TestCascadeExactBranch:
              patch('core.scraper.metatube_state') as mock_mt, \
              patch('core.scraper.search_jav_single_source', side_effect=_single_source) as mock_ss:
             mock_mt.availability_map.return_value = {}
+            mock_mt.routing_availability_map.return_value = {}
             results = smart_search('HMN-706')
 
         assert len(results) == 1
@@ -583,6 +588,7 @@ class TestCascadeExactBranch:
              patch('core.scraper.metatube_state') as mock_mt, \
              patch('core.scraper.search_jav_single_source', side_effect=_single_source):
             mock_mt.availability_map.return_value = {}
+            mock_mt.routing_availability_map.return_value = {}
             results = smart_search('HMN-706')  # must not raise
 
         assert len(results) == 1
@@ -601,6 +607,7 @@ class TestCascadeExactBranch:
              patch('core.scraper.search_jav_single_source', return_value=None), \
              patch('core.scraper.merge_results') as mock_merge:
             mock_mt.availability_map.return_value = {}
+            mock_mt.routing_availability_map.return_value = {}
             results = smart_search('HMN-706')
 
         assert results == []
@@ -623,6 +630,7 @@ class TestCascadeExactBranch:
              patch('core.scraper.metatube_state') as mock_mt, \
              patch('core.scraper.search_jav_single_source', return_value=None):
             mock_mt.availability_map.return_value = {}
+            mock_mt.routing_availability_map.return_value = {}
             smart_search('HMN-706', status_callback=lambda a, b: miss_calls.append((a, b)))
 
         assert miss_calls == [
@@ -642,6 +650,7 @@ class TestCascadeExactBranch:
              patch('core.scraper.metatube_state') as mock_mt, \
              patch('core.scraper.search_jav_single_source', side_effect=_single_source):
             mock_mt.availability_map.return_value = {}
+            mock_mt.routing_availability_map.return_value = {}
             smart_search('HMN-706', status_callback=lambda a, b: hit_calls.append((a, b)))
 
         assert hit_calls == [

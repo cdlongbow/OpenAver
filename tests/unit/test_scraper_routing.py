@@ -49,6 +49,7 @@ def _mock_state(is_connected=True, base_url="http://mt:8080", token="tok",
     type(state).base_url = PropertyMock(return_value=base_url)
     type(state).token = PropertyMock(return_value=token)
     state.availability_map.return_value = avail_map or {}
+    state.routing_availability_map.return_value = avail_map or {}
     return state
 
 
@@ -560,3 +561,104 @@ def test_metatube_shim_exception_log_does_not_leak_credentials(caplog):
     assert 'metatube shim' in caplog.text  # 正向：這條 log 真的跑到了
     for secret in ('S3cr3tPass', 'admin@', 'tok_ABC123'):
         assert secret not in caplog.text, f"shim exception log 洩漏 {secret!r}"
+
+
+# ===========================================================================
+# 8. routing_availability_map behavior tests (TASK-130b-T3)
+# ===========================================================================
+
+def test_auto_fanout_uses_routing_map_expired_source_retried(monkeypatch):
+    """auto fan-out 吃 routing_availability_map：冷卻過期 (routing=True, display=False) 來源會被重試。
+    兩張 map 均為 False 則不被呼叫。"""
+    from core import source_settings
+    from core.scraper import search_jav
+
+    # 提供真實 config 使 get_enabled_source_ids 真正執行 gate 判斷
+    fake_config = {
+        'sources': [
+            {'id': 'javbus', 'type': 'builtin', 'enabled': True, 'order': 0, 'manual_only': False},
+            {'id': 'metatube:FANZA', 'type': 'metatube', 'enabled': True, 'order': 1, 'manual_only': False},
+        ]
+    }
+    monkeypatch.setattr(source_settings, "load_config", lambda: fake_config)
+
+    # 1. 正向：availability_map 為 False 但 routing_availability_map 為 True（冷卻已過期）
+    mock_state = _mock_state(
+        avail_map={'metatube:FANZA': False},
+    )
+    mock_state.routing_availability_map.return_value = {'metatube:FANZA': True}
+    monkeypatch.setattr("core.scraper.metatube_state", mock_state)
+
+    mt_video = _make_video("metatube:FANZA", "ABF-001")
+    shim_search_mock = MagicMock(return_value=mt_video)
+
+    with patch("core.scraper._MetatubeShim.search", shim_search_mock):
+        with patch("core.scrapers.javbus.JavBusScraper.search", return_value=None):
+            result = search_jav("ABF-001", source='auto')
+
+    shim_search_mock.assert_called_once_with("ABF-001")
+    assert result is not None
+    assert result['_source'] == 'metatube:FANZA'
+
+    # 2. 反向：routing_availability_map 亦為 False → 不被呼叫
+    mock_state_both_false = _mock_state(avail_map={'metatube:FANZA': False})
+    mock_state_both_false.routing_availability_map.return_value = {'metatube:FANZA': False}
+    monkeypatch.setattr("core.scraper.metatube_state", mock_state_both_false)
+
+    shim_search_mock_2 = MagicMock(return_value=None)
+    javbus_video = _make_video("javbus", "ABF-001")
+    with patch("core.scraper._MetatubeShim.search", shim_search_mock_2):
+        with patch("core.scrapers.javbus.JavBusScraper.search", return_value=javbus_video):
+            result_2 = search_jav("ABF-001", source='auto')
+
+    shim_search_mock_2.assert_not_called()
+    assert result_2['_source'] == 'javbus'
+
+
+def test_exact_cascade_uses_routing_map_expired_source_retried(monkeypatch):
+    """smart_search exact cascade 吃 routing_availability_map：冷卻過期 (routing=True, display=False) 來源會被重試。
+    兩張 map 均為 False 則不被呼叫。"""
+    from core import source_settings
+    from core.scraper import smart_search
+
+    fake_config = {
+        'sources': [
+            {'id': 'metatube:FANZA', 'type': 'metatube', 'enabled': True, 'order': 0, 'manual_only': False},
+            {'id': 'javbus', 'type': 'builtin', 'enabled': True, 'order': 1, 'manual_only': False},
+        ]
+    }
+    monkeypatch.setattr(source_settings, "load_config", lambda: fake_config)
+
+    # 1. 正向：availability_map 為 False 但 routing_availability_map 為 True
+    mock_state = _mock_state(avail_map={'metatube:FANZA': False})
+    mock_state.routing_availability_map.return_value = {'metatube:FANZA': True}
+    monkeypatch.setattr("core.scraper.metatube_state", mock_state)
+
+    mt_result = {'number': 'ABF-001', 'title': 'T', '_source': 'metatube:FANZA'}
+    mock_ss = MagicMock(return_value=mt_result)
+
+    with patch("core.scraper.search_jav_single_source", mock_ss):
+        results = smart_search("ABF-001")
+
+    mock_ss.assert_called_once_with('ABF-001', 'metatube:FANZA', proxy_url='')
+    assert len(results) == 1
+    assert results[0]['_source'] == 'metatube:FANZA'
+
+    # 2. 反向：兩張 map 皆為 False → metatube 被 gate 掉，直打 javbus
+    mock_state_both_false = _mock_state(avail_map={'metatube:FANZA': False})
+    mock_state_both_false.routing_availability_map.return_value = {'metatube:FANZA': False}
+    monkeypatch.setattr("core.scraper.metatube_state", mock_state_both_false)
+
+    def _single_source(number, source, proxy_url=''):
+        if source == 'javbus':
+            return {'number': 'ABF-001', 'title': 'T', '_source': 'javbus'}
+        return None
+
+    with patch("core.scraper.search_jav_single_source", side_effect=_single_source) as mock_ss_2:
+        results_2 = smart_search("ABF-001")
+
+    assert mock_ss_2.call_count == 1
+    mock_ss_2.assert_called_once_with('ABF-001', 'javbus', proxy_url='')
+    assert len(results_2) == 1
+    assert results_2[0]['_source'] == 'javbus'
+

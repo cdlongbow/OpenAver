@@ -273,8 +273,8 @@ def search_jav(number: str, source: str = 'auto', proxy_url: str = '', javbus_la
         # - builtin：循序執行（維持既有行為）
         # - metatube：defer 到 ThreadPoolExecutor 並行（bounded parallel fan-out）
         # - 結果以 enabled_sids 順序重建 all_data（保全 user-drag merge 優先度）
-        # get_enabled_source_ids 傳入 availability_map 讓 metatube gate 生效（🔴 CRITICAL）
-        enabled_sids = get_enabled_source_ids(availability_map=metatube_state.availability_map())
+        # get_enabled_source_ids 傳入 routing_availability_map 讓 metatube gate 生效（🔴 CRITICAL；routing 版含冷卻樂觀重試，顯示端不得用）
+        enabled_sids = get_enabled_source_ids(availability_map=metatube_state.routing_availability_map())
         results_by_source: Dict[str, Video] = {}
         metatube_shims = []  # list of (sid, shim) for parallel dispatch
 
@@ -764,7 +764,7 @@ def _get_uncensored_sources(search_term: str) -> list[str]:
     from core.scrapers.utils import METATUBE_DATE_UNCENSORED
 
     # enabled + available + !manual_only 的 metatube 來源（按 order，含 availability gate）
-    avail_map = metatube_state.availability_map()
+    avail_map = metatube_state.routing_availability_map()
     mt_enabled = [
         sid for sid in get_enabled_source_ids(availability_map=avail_map)
         if sid.startswith('metatube:')
@@ -866,7 +866,7 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
         if offset > 0:
             return []
 
-        avail_map = metatube_state.availability_map()
+        avail_map = metatube_state.routing_availability_map()
         enabled_sids = get_enabled_source_ids(availability_map=avail_map)
         for sid in enabled_sids:
             if status_callback:

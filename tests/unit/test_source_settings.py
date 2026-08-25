@@ -72,24 +72,16 @@ def test_availability_none_includes_all_enabled_incl_metatube(monkeypatch):
     assert source_settings.get_enabled_source_ids(None) == ['dmm', 'mt1']
 
 
-def test_populated_map_keeps_unavailable_metatube_gate_removed(monkeypatch):
-    """availability gate 已移除（feature/metatube-no-availability-gate）：
-    map 標記不可用（或不在 map）的 enabled metatube 源**仍**進入 fan-out。
-
-    理由：metatube server 每次 search 都並發廣播所有 provider 且無失敗快取
-    （engine/movie.go searchMovieAll）；本地 availability 過濾在國內網路環境下
-    會因一次臨時超時誤傷可用源並永久擱置（mark_failed 無 TTL），需手動「測試」
-    才恢復。metatube 源每次刮削照常試驗，與 server 端設計一致。builtin 照舊 bypass。
-    """
+def test_populated_map_excludes_unavailable_metatube_keeps_builtin(monkeypatch):
     _patch_config(monkeypatch, {
         'sources': [
             {'id': 'dmm', 'type': 'builtin', 'enabled': True, 'order': 0, 'manual_only': False},
             {'id': 'mt1', 'type': 'metatube', 'enabled': True, 'order': 1, 'manual_only': False},
         ]
     })
-    # map 標記 False / 空 map → metatube 照常保留；builtin 亦保留。
-    assert source_settings.get_enabled_source_ids({'mt1': False}) == ['dmm', 'mt1']
-    assert source_settings.get_enabled_source_ids({}) == ['dmm', 'mt1']
+    # map 標記 False / 空 map → metatube 被 gate 排除；builtin 照常保留。
+    assert source_settings.get_enabled_source_ids({'mt1': False}) == ['dmm']
+    assert source_settings.get_enabled_source_ids({}) == ['dmm']
 
 
 def test_populated_map_keeps_available_metatube(monkeypatch):
