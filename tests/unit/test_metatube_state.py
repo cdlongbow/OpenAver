@@ -1017,3 +1017,80 @@ def test_disconnected_state_never_optimistically_routable(state, monkeypatch):
     }
     assert avail['metatube:FANZA'] is False
     assert avail['metatube:HEYZO'] is False
+
+
+# ===========================================================================
+# TASK-130b-T5: full round-trip & 4-quadrant state matrix tests (AC-2)
+# ===========================================================================
+
+
+def test_refail_within_cooldown_restarts_the_window(state, monkeypatch):
+    """冷卻期內再次請求失敗時重新起算冷卻時間，避免持續故障的來源過早重試導致使用者頻繁等待逾時。"""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+
+    # 時鐘推到 t=250（距第一次失敗 150 秒，仍在冷卻中）
+    monkeypatch.setattr('core.metatube.state._now', lambda: 250.0)
+    assert state.routing_availability_map()['metatube:FANZA'] is False
+
+    # 在冷卻期內再次失敗，時間戳重置為 250.0
+    state.mark_failed('metatube:FANZA')
+
+    # 時鐘推到 t=450（距第一次失敗 350 秒 > 300，但距第二次失敗 200 秒 < 300）
+    # 驗證冷卻窗口已重啟，不會因為第一次失敗到期而提早放行
+    monkeypatch.setattr('core.metatube.state._now', lambda: 450.0)
+    assert state.routing_availability_map()['metatube:FANZA'] is False
+
+    # 時鐘推到 t=560（距第二次失敗 310 秒 > 300），冷卻到期恢復可路由
+    monkeypatch.setattr('core.metatube.state._now', lambda: 560.0)
+    assert state.routing_availability_map()['metatube:FANZA'] is True
+
+
+def test_success_after_expiry_converges_both_maps(state, monkeypatch):
+    """來源冷卻到期後樂觀重試成功，立即清空失敗紀錄並讓路由與顯示地圖重新收斂一致，避免設定頁顯示正常但底層殘留過期時間戳。"""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+
+    # 時鐘推到 t=500（距失敗 400 秒已過期）
+    monkeypatch.setattr('core.metatube.state._now', lambda: 500.0)
+    assert state.routing_availability_map()['metatube:FANZA'] is True
+    assert state.availability_map()['metatube:FANZA'] is False
+    assert state.routing_availability_map() != state.availability_map()
+
+    # 樂觀重試成功，呼叫 mark_available
+    state.mark_available('metatube:FANZA')
+    assert state._failed_at == {}
+    assert state.availability_map()['metatube:FANZA'] is True
+    assert state.routing_availability_map()['metatube:FANZA'] is True
+    assert state.routing_availability_map() == state.availability_map()
+
+    # 時鐘推到遠大於 TTL 的 t=100000，兩張 map 仍保持逐鍵相等且無殘留失敗紀錄
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100000.0)
+    assert state.routing_availability_map() == state.availability_map()
+    assert state._failed_at == {}
+
+
+def test_refail_after_expiry_reenters_cooldown(state, monkeypatch):
+    """來源冷卻到期後樂觀重試若再度失敗，會重新進入完整冷卻期，避免故障來源被連續重試導致使用者每次搜尋都被迫等待逾時。"""
+    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
+    state.connect('http://host', 'tok', ['FANZA'])
+    state.mark_failed('metatube:FANZA')
+
+    # 時鐘推到 t=500（已過期，路由地圖樂觀放行）
+    monkeypatch.setattr('core.metatube.state._now', lambda: 500.0)
+    assert state.routing_availability_map()['metatube:FANZA'] is True
+
+    # 在 t=500 時樂觀重試失敗，再次觸發 mark_failed
+    state.mark_failed('metatube:FANZA')
+    assert state._failed_at['metatube:FANZA'] == 500.0
+    assert state.routing_availability_map()['metatube:FANZA'] is False
+
+    # 時鐘推到 t=700（距 t=500 僅 200 秒 < 300），仍處於冷卻中
+    monkeypatch.setattr('core.metatube.state._now', lambda: 700.0)
+    assert state.routing_availability_map()['metatube:FANZA'] is False
+
+    # 時鐘推到 t=801（距 t=500 已 301 秒 > 300），冷卻到期再次放行
+    monkeypatch.setattr('core.metatube.state._now', lambda: 801.0)
+    assert state.routing_availability_map()['metatube:FANZA'] is True
