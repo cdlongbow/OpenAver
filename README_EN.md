@@ -4,7 +4,7 @@ this genre is actually browsed — navigate by cover + tag, actress as a first-c
 (profile cards, cup/age/height sort, cross-language alias). 8 built-in scrape sources
 (JavBus/Jav321/JavDB/DMM/D2Pass/HEYZO/FC2/AVSOX) plus optional Metatube federation (30+ providers).
 Optionally exports NFO + cover art (poster/fanart) to Jellyfin / Emby / Kodi.
-AI-operable REST API with capabilities manifest, 6,700+ tests, MIT license. -->
+AI-operable REST API with capabilities manifest, 7,000+ tests, MIT license. -->
 
 <h1 align="center">OpenAver</h1>
 
@@ -18,7 +18,7 @@ AI-operable REST API with capabilities manifest, 6,700+ tests, MIT license. -->
 ![Downloads](https://img.shields.io/github/downloads/slive777/OpenAver/total?color=success)
 ![Stars](https://img.shields.io/github/stars/slive777/OpenAver)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
-![Tests](https://img.shields.io/github/actions/workflow/status/slive777/OpenAver/test.yml?label=tests%206%2C700%2B)
+![Tests](https://img.shields.io/github/actions/workflow/status/slive777/OpenAver/test.yml?label=tests%207%2C000%2B)
 
 **English** | [繁體中文](README.md)
 
@@ -258,7 +258,7 @@ No. 100% local — no data collection, no file uploads. Network requests are onl
 | **Animation** | GSAP 3.14+ + Motion Adapter (reduced-motion support) |
 | **Desktop Shell** | PyWebView (Windows / macOS) |
 | **Database** | SQLite (WAL mode) |
-| **Testing** | Pytest (6,700+ tests) |
+| **Testing** | Pytest (7,000+ tests) |
 
 ### Run from Source
 
@@ -296,8 +296,8 @@ OpenAver/
 │   ├── templates/      # HTML templates (DaisyUI + Fluent Design 2)
 │   └── static/         # CSS/JS assets (modular JS, theme CSS)
 ├── core/               # Core logic
-│   ├── scrapers/       # Modular scrapers (JavBus/JavDB/Jav321/FC2/AVSOX/DMM/D2Pass/HEYZO)
-│   ├── database.py     # SQLite data layer (WAL mode)
+│   ├── scrapers/       # Modular scrapers (JavBus/JavDB/Jav321/FC2/AVSOX/DMM/D2Pass/HEYZO/JavLibrary)
+│   ├── database/       # SQLite data layer package (connection/video/actress/alias/tag_alias/migrate, WAL)
 │   ├── organizer.py    # File organizer + null-value fallback guards
 │   ├── path_utils.py   # Cross-platform path handling (file:// URI)
 │   ├── i18n.py         # i18n core (t() / fallback chain)

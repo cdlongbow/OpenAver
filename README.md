@@ -4,7 +4,7 @@ this genre is actually browsed — navigate by cover + tag, actress as a first-c
 (profile cards, cup/age/height sort, cross-language alias). 8 built-in scrape sources
 (JavBus/Jav321/JavDB/DMM/D2Pass/HEYZO/FC2/AVSOX) plus optional Metatube federation (30+ providers).
 Optionally exports NFO + cover art (poster/fanart) to Jellyfin / Emby / Kodi.
-AI-operable REST API with capabilities manifest, 6,700+ tests, MIT license. -->
+AI-operable REST API with capabilities manifest, 7,000+ tests, MIT license. -->
 
 <h1 align="center">OpenAver</h1>
 
@@ -18,7 +18,7 @@ AI-operable REST API with capabilities manifest, 6,700+ tests, MIT license. -->
 ![Downloads](https://img.shields.io/github/downloads/slive777/OpenAver/total?color=success)
 ![Stars](https://img.shields.io/github/stars/slive777/OpenAver)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
-![Tests](https://img.shields.io/github/actions/workflow/status/slive777/OpenAver/test.yml?label=tests%206%2C700%2B)
+![Tests](https://img.shields.io/github/actions/workflow/status/slive777/OpenAver/test.yml?label=tests%207%2C000%2B)
 
 **[English](README_EN.md)** | 繁體中文
 
@@ -260,7 +260,7 @@ curl http://localhost:<port>/api/capabilities
 | **Animation** | GSAP 3.14+ + Motion Adapter (reduced-motion support) |
 | **Desktop** | PyWebView (Windows/macOS) |
 | **Database** | SQLite (WAL mode) |
-| **Testing** | Pytest (6,700+ tests) |
+| **Testing** | Pytest (7,000+ tests) |
 
 ### 從原始碼執行
 
@@ -298,8 +298,8 @@ OpenAver/
 │   ├── templates/      # HTML Templates (DaisyUI + Fluent Design 2)
 │   └── static/         # CSS/JS Assets (Modular JS, Theme CSS)
 ├── core/               # 核心邏輯
-│   ├── scrapers/       # 模組化爬蟲 (JavBus/JavDB/Jav321/FC2/AVSOX/DMM/D2Pass/HEYZO)
-│   ├── database.py     # SQLite 資料層 (WAL mode)
+│   ├── scrapers/       # 模組化爬蟲 (JavBus/JavDB/Jav321/FC2/AVSOX/DMM/D2Pass/HEYZO/JavLibrary)
+│   ├── database/       # SQLite 資料層套件 (connection/video/actress/alias/tag_alias/migrate, WAL)
 │   ├── organizer.py    # 檔案整理 + fallback 空值防護
 │   ├── path_utils.py   # 跨平台路徑處理 (file:// URI)
 │   ├── i18n.py         # 多語系翻譯核心 (t() / fallback chain)
