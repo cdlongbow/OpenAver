@@ -37,6 +37,116 @@ _cainfo_override = _UNSET   # _UNSET=未算 / None=no-op 或降級 / bytes=CAINF
 _ca_warned = False
 
 
+def _parse_rating_votes(text: str) -> tuple[Optional[float], Optional[int]]:
+    """'4.58分, 由48人評價' → (4.58, 48)。抽不到的那一半回 None，不拋。"""
+    rating: Optional[float] = None
+    votes: Optional[int] = None
+    m = re.search(r'([0-9.]+)\s*分', text)
+    if m:
+        rating = float(m.group(1))
+    vm = re.search(r'由(\d+)人', text)
+    if vm:
+        votes = int(vm.group(1))
+    return rating, votes
+
+
+def _parse_panel_blocks(soup: BeautifulSoup) -> dict:
+    """解析詳情頁 `.panel-block`，回傳 date/maker/label/director/series/duration/actresses/tags/rating/votes。"""
+    date = ''
+    maker = ''
+    label = ''
+    director = ''
+    series = ''
+    duration: Optional[int] = None
+    actresses: list[Actress] = []
+    tags: list[str] = []
+    rating: Optional[float] = None
+    votes: Optional[int] = None
+
+    for panel in soup.select('.panel-block'):
+        label_elem = panel.select_one('strong')
+        value = panel.select_one('.value')
+
+        if not label_elem:
+            continue
+
+        label_text = label_elem.text.strip()
+
+        # 日期
+        if '日期' in label_text and value:
+            date = value.text.strip()
+
+        # 片商（排除「發行日期」；「發行」另走 label，避免覆蓋片商）
+        if ('片商' in label_text or '製作' in label_text) and '日期' not in label_text:
+            if value:
+                maker = value.text.strip()
+
+        # 發行 → label（同樣排除「發行日期」）
+        if '發行' in label_text and '日期' not in label_text:
+            if value:
+                label = value.text.strip()
+
+        # 時長 → duration（分鐘）；只抽數字，不比對「分鍾」
+        if '時長' in label_text and value:
+            dm = re.search(r'(\d+)', value.text)
+            if dm:
+                duration = int(dm.group(1))
+
+        # 導演
+        if '導演' in label_text and value:
+            director = value.text.strip()
+
+        # 系列
+        if '系列' in label_text and value:
+            series = value.text.strip()
+
+        # 演員（只抓女優）
+        if '演員' in label_text:
+            for a in panel.select('a'):
+                name = a.text.strip()
+                if not name:
+                    continue
+
+                # 檢查性別標記
+                next_elem = a.find_next_sibling()
+
+                # 跳過男優
+                classes: list[str] = []
+                if next_elem and hasattr(next_elem, 'get'):
+                    cls_val = next_elem.get('class')
+                    if isinstance(cls_val, list):
+                        classes = [str(c) for c in cls_val]
+                    else:
+                        classes = [str(cls_val)] if cls_val else []
+
+                if 'male' in classes and 'female' not in classes:
+                    continue
+
+                actresses.append(Actress(name=name))
+
+        # 標籤
+        if '類別' in label_text:
+            tag_elems = panel.select('a')
+            tags = [t.text.strip() for t in tag_elems if t.text.strip()]
+
+        # 評分（D8：0–5 真實用戶評分，`分` 錨定；javdb 無簡介）
+        if '評分' in label_text and value:
+            rating, votes = _parse_rating_votes(value.text)
+
+    return {
+        'date': date,
+        'maker': maker,
+        'label': label,
+        'director': director,
+        'series': series,
+        'duration': duration,
+        'actresses': actresses,
+        'tags': tags,
+        'rating': rating,
+        'votes': votes,
+    }
+
+
 def _resolve_proxies(url: str) -> Optional[dict]:
     """Resolve system proxy for curl_cffi. None = omit proxies kwarg (same as pre-F1).
 
@@ -86,7 +196,6 @@ class JavDBScraper(BaseScraper):
     - Tag 豐富
 
     缺點：
-    - 封面有浮水印
     - 需 curl_cffi 偽造 TLS 指紋
     """
 
@@ -204,74 +313,30 @@ class JavDBScraper(BaseScraper):
 
             soup = BeautifulSoup(detail_html, 'html.parser')
 
-            # 標題（用 get_text(separator=' ') 把嵌入換行轉空格，再剝番號前綴）
+            # 標題：優先取 strong.current-title，避免混入「顯示原標題」按鈕與隱藏原文
             title_elem = soup.select_one('.video-detail h2, .title.is-4')
-            title = title_elem.get_text(separator=' ', strip=True) if title_elem else ''
+            title = ''
+            if title_elem:
+                current = title_elem.select_one('strong.current-title')
+                if current is not None:
+                    title = current.get_text(separator=' ', strip=True)
+                else:
+                    title = title_elem.get_text(separator=' ', strip=True)
             title = strip_number_prefix(title, number)
 
             # 封面
             cover_elem = soup.select_one('.video-cover img, .column-video-cover img')
             cover_url = str(cover_elem.get('src', '')) if cover_elem else ''
 
-            # 解析資訊面板
-            date = ''
-            maker = ''
-            actresses = []
-            tags = []
-            rating: Optional[float] = None
+            # 劇照：必須限定 .preview-images，否則會混進「相關影片」封面
+            sample_images = [
+                str(a['href'])
+                for a in soup.select('.preview-images a.tile-item')
+                if a.get('href')
+            ]
 
-            for panel in soup.select('.panel-block'):
-                label = panel.select_one('strong')
-                value = panel.select_one('.value')
-
-                if not label:
-                    continue
-
-                label_text = label.text.strip()
-
-                # 日期
-                if '日期' in label_text and value:
-                    date = value.text.strip()
-
-                # 片商（排除「發行日期」避免把日期誤判為片商）
-                if ('片商' in label_text or '製作' in label_text or '發行' in label_text) and '日期' not in label_text:
-                    if value:
-                        maker = value.text.strip()
-
-                # 演員（只抓女優）
-                if '演員' in label_text:
-                    for a in panel.select('a'):
-                        name = a.text.strip()
-                        if not name:
-                            continue
-
-                        # 檢查性別標記
-                        next_elem = a.find_next_sibling()
-                        
-                        # 跳過男優
-                        classes: list[str] = []
-                        if next_elem and hasattr(next_elem, 'get'):
-                            cls_val = next_elem.get('class')
-                            if isinstance(cls_val, list):
-                                classes = [str(c) for c in cls_val]
-                            else:
-                                classes = [str(cls_val)] if cls_val else []
-                        
-                        if 'male' in classes and 'female' not in classes:
-                            continue
-
-                        actresses.append(Actress(name=name))
-
-                # 標籤
-                if '類別' in label_text:
-                    tag_elems = panel.select('a')
-                    tags = [t.text.strip() for t in tag_elems if t.text.strip()]
-
-                # 評分（D8：0–5 真實用戶評分，`分` 錨定；javdb 無簡介）
-                if '評分' in label_text and value:
-                    m = re.search(r'([0-9.]+)\s*分', value.text)
-                    if m:
-                        rating = float(m.group(1))
+            # 解析資訊面板（抽出以壓低 search() 複雜度，見 TASK §7）
+            panel = _parse_panel_blocks(soup)
 
             if not title and not cover_url:
                 return None
@@ -283,12 +348,18 @@ class JavDBScraper(BaseScraper):
             video = Video(
                 number=number,
                 title=title,
-                actresses=actresses,
-                date=date,
-                maker=maker,
+                actresses=panel['actresses'],
+                date=panel['date'],
+                maker=panel['maker'],
                 cover_url=cover_url,
-                tags=tags,
-                rating=rating,
+                tags=panel['tags'],
+                rating=panel['rating'],
+                votes=panel['votes'],
+                director=panel['director'],
+                duration=panel['duration'],
+                label=panel['label'],
+                series=panel['series'],
+                sample_images=sample_images,
                 source=self.source_name,
                 detail_url=detail_url,
             )
