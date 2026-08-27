@@ -64,7 +64,6 @@ export function stateScan() {
         // ===== T6d: Jellyfin Image Update =====
         jellyfinImageCount: 0,
         jellyfinImageVisible: false,
-        showJellyfinHelp: false,
         jellyfinCheckState: 'idle',   // T2(40c): 'idle' | 'checking' | 'done'
         _jellyfinCheckController: null,
 

@@ -4357,6 +4357,13 @@ const RULES = [
     pattern: 'x-trap.inert="sampleGalleryOpen && !rescrapeOpen && !removeActressModalOpen && !deleteVideoModalOpen"',
     note: '[131b-T1] 瀏覽頁劇照集開著時若沒這條，Tab 會跑到燈箱與頁面背景，等於這層焦點鎖沒做',
   },
+
+  // ==== [131b-T4] Help Popover 共用元件掛載 ====
+  {
+    file: 'web/templates/base.html', kind: 'required-string',
+    pattern: 'components/help-popover.js',
+    note: '[131b-T4] 少這一行，設定頁與掃描頁 8 個 ? 按鈕全部點不出東西——x-data="helpPopover" 找不到定義，Alpine 只會在 console 抱怨，畫面上就是「按了沒反應」',
+  },
 ];
 
 // ---- helpers ----

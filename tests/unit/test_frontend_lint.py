@@ -2774,13 +2774,23 @@ class TestSettingsQuickToggleGuard:
             "71-T5 違規：form.thumbnailCacheEnabled x-model 必須在 .settings-quick-toggle-row 內"
 
     def test_thumbnail_cache_has_help_popover_state(self):
-        """71-T5：封面縮圖快取區塊必須有 showThumbCacheHelp state binding（Alpine↔HTML API contract）"""
+        """71-T5→131b-T4：封面縮圖快取區塊必須有可運作的 help popover（Alpine↔HTML API contract）。
+
+        131b-T4 把 showThumbCacheHelp 旗標搬進 Alpine.data('helpPopover') 共用元件，原字面消失。
+        ⚠️ 錨點不能只換成 x-data="helpPopover"／class="help-popover"：舊的 settings-quick-toggle-row
+        區間裡有**兩顆**結構相同的浮層（下載劇照 + 封面縮圖快取），共用字面會讓「只拆掉縮圖快取那顆」
+        仍然全綠（131b-T4 雙審都抓到這條）。改用**全檔唯一**的 x-model="form.thumbnailCacheEnabled"
+        往回找它自己那個 wrapper，把範圍收窄到只含這一顆，專一性與舊錨點相同。"""
         html = self._html()
-        row_start = html.index('class="settings-quick-toggle-row"')
-        sec_search_pos = html.index('id="sec-search"')
-        row_block = html[row_start:sec_search_pos]
-        assert 'showThumbCacheHelp' in row_block, \
-            "71-T5 違規：quick-toggle 列內封面縮圖快取區塊缺少 showThumbCacheHelp state binding"
+        tc_pos = html.index('x-model="form.thumbnailCacheEnabled"')  # 全檔唯一（見同 class 其他測試）
+        block_start = html.rindex('<div class="settings-form-group popover-anchor"', 0, tc_pos)
+        next_group = html.find('<div class="settings-form-group popover-anchor"', tc_pos)
+        block_end = next_group if next_group != -1 else html.index('id="sec-search"')
+        block = html[block_start:block_end]
+        assert 'x-data="helpPopover"' in block, \
+            "71-T5→131b-T4 違規：封面縮圖快取那一顆 ? 的 wrapper 缺少 x-data=\"helpPopover\" 元件掛載"
+        assert 'class="help-popover"' in block, \
+            "71-T5→131b-T4 違規：封面縮圖快取那一顆 ? 缺少 help-popover 浮層本體"
 
     # ── 71-T11: 估算搬出 help-popover → confirm modal ──────────────────
     def test_thumbnail_cache_help_popover_no_longer_has_hint_estimate(self):

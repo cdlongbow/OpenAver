@@ -295,16 +295,16 @@
         </div>
         <!-- 補圖結果列（jellyfinImageVisible 由檢查結果驅動：偵測到缺漏才顯示，與 external_manager 模式無關） -->
         <div class="nfo-update-row" x-show="jellyfinImageVisible">
-            <span class="nfo-badge">
+            <span class="nfo-badge" x-data="helpPopover">
                 <i class="bi bi-image"></i>
                 {{ t('scanner.stats.jellyfin_prefix') }} <strong x-text="jellyfinImageCount"></strong> {{ t('scanner.stats.jellyfin_suffix') }}
                 <button type="button" class="help-popover-btn"
-                        @click="showJellyfinHelp = !showJellyfinHelp"
-                        :aria-expanded="showJellyfinHelp">
+                        @click="toggle()"
+                        :aria-expanded="open">
                     <i class="bi bi-question-circle"></i>
                 </button>
-                <div x-show="showJellyfinHelp" x-cloak x-transition
-                     @click.outside="showJellyfinHelp = false"
+                <div x-show="open" x-cloak x-transition
+                     @click.outside="close()"
                      class="help-popover">
                     <small class="help-popover__body">
                         {{ t('scanner.stats.jellyfin_help_line1') }}<br>
@@ -466,20 +466,20 @@
                 <i class="bi bi-tags"></i> <span>{{ t('scanner.tag_alias.section_title') }}</span>
             </div>
             <!-- (?) AI hint icon + popover — @click.stop 避免觸發 collapse -->
-            <div class="tag-alias-ai-hint-wrap" @click.stop>
+            <div class="tag-alias-ai-hint-wrap" @click.stop x-data="helpPopover">
                 <button type="button"
                         class="help-popover-btn"
                         :title="window.t('scanner.tag_alias.ai_hint.icon_title')"
                         :aria-label="window.t('scanner.tag_alias.ai_hint.icon_title')"
-                        @click.stop.prevent="toggleTagAliasAiHint()"
+                        @click.stop.prevent="toggle()"
                         @keydown.enter.stop
                         @keydown.space.stop>
                     <i class="bi bi-question-circle"></i>
                 </button>
                 <div class="help-popover tag-alias-ai-hint-popover"
-                     x-show="tagAliasAiHintOpen"
+                     x-show="open"
                      x-transition.opacity
-                     @click.outside="tagAliasAiHintOpen = false"
+                     @click.outside="close()"
                      x-cloak>
                     <p class="help-popover__body"
                        x-text="window.t('scanner.tag_alias.ai_hint.tooltip')"></p>
