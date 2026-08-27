@@ -615,7 +615,8 @@ class DMMScraper(BaseScraper):
         Returns:
             Video 物件，找不到返回 None
         """
-        # 正規化番號
+        # 正規化番號（保留原始輸入，供第 4 步 cid 直拉兜底使用）
+        raw_input = number.strip()
         number = self.normalize_number(number)
         number_upper = number.upper()
 
@@ -651,7 +652,21 @@ class DMMScraper(BaseScraper):
                 rate_limit(self.config.delay)
                 return result
 
-        # 4. 完全失敗
+        # 4. 使用者直接提供完整 cid 兜底（如 h_113id00057）
+        #    - 觸發條件：輸入無法解析為標準番號（非 ABC-123 格式）
+        #    - GraphQL 對 cid 大小寫敏感且僅認小寫 → 統一轉小寫
+        #    - 成功後以返回的規範番號（makerContentId）為鍵存快取並學習前綴
+        prefix, _ = self._parse_number(raw_input)
+        if not prefix:
+            result = self._fetch_by_id(raw_input.lower())
+            if result:
+                canonical = result.number or number_upper
+                self._save_cache(canonical, raw_input.lower())
+                self._learn_prefix(canonical, raw_input.lower())
+                rate_limit(self.config.delay)
+                return result
+
+        # 5. 完全失敗
         return None
 
     def search_by_keyword_with_ids(self, keyword: str, limit: int = 20, offset: int = 0) -> list[tuple[str, Video]]:
