@@ -594,6 +594,129 @@ mergeState(shardA());
   });
 });
 
+// ==== export list 形（Codex PR#161 review：守衛對合法程式碼誤報是 defect 不是 nit）====
+// `export function f(){}` 與 `function f(){}; export { f };` 行為完全等價。
+// 只吃前者的話，純語法搬動就會讓 npm run lint 紅在 FAIL_CLOSED_7，而那句
+// "named factory 'X' not found" 完全不指向根因。本庫已有 5 處 export list 用例。
+
+test('〔export-list-1〕`function f(){}; export { f };` → 正常解析，不 fail-closed', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/shardA.js',
+      `function shardA() {
+  return { a: 1, b: 2 };
+}
+
+export { shardA };
+`,
+    );
+    writeAt(
+      root,
+      'web/static/js/pages/demo/shardB.js',
+      `export function shardB() {
+  return { c: 3 };
+}
+`,
+    );
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `import { shardA } from '@/demo/shardA.js';
+import { shardB } from '@/demo/shardB.js';
+import { mergeState } from '@/shared/merge-state.js';
+mergeState(shardA(), shardB());
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 0, r.output);
+    assert.match(r.output, /demo 2\/3/);   // 兩貢獻者、三個 key —— export list 那份真的被讀進來了
+  });
+});
+
+test('〔export-list-2〕export list ＋ 改名（`export { local as Outer }`）→ 用對外名找得到', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/shardA.js',
+      `const localFactory = () => ({ a: 1 });
+
+export { localFactory as shardA };
+`,
+    );
+    writeAt(root, 'web/static/js/pages/demo/shardB.js', factoryFile('shardB', '{ b: 2 }'));
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `import { shardA } from '@/demo/shardA.js';
+import { shardB } from '@/demo/shardB.js';
+import { mergeState } from '@/shared/merge-state.js';
+mergeState(shardA(), shardB());
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 0, r.output);
+    assert.match(r.output, /demo 2\/2/);
+  });
+});
+
+test('〔export-list-3〕export list 形也抓得到跨貢獻者撞名（不是只「不報錯」）', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/shardA.js',
+      `function shardA() {
+  return { dup: 1 };
+}
+
+export { shardA };
+`,
+    );
+    writeAt(root, 'web/static/js/pages/demo/shardB.js', factoryFile('shardB', '{ dup: 2 }'));
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `import { shardA } from '@/demo/shardA.js';
+import { shardB } from '@/demo/shardB.js';
+import { mergeState } from '@/shared/merge-state.js';
+mergeState(shardA(), shardB());
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /dup/);
+  });
+});
+
+test('〔export-list-4〕跨檔 re-export（export ... from 別的檔）仍不支援 → FAIL_CLOSED_7', () => {
+  // 刻意的既有限制（檔頭「已知限制」）：本地 export list 支援、跨檔追鏈不支援。
+  // 這一案把「node.source !== null 要被排除」釘成刻意行為，而不是新分支的漏網。
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(root, 'web/static/js/pages/demo/real.js', factoryFile('shardA', '{ a: 1 }'));
+    writeAt(
+      root,
+      'web/static/js/pages/demo/shardA.js',
+      `export { shardA } from '@/demo/real.js';
+`,
+    );
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `import { shardA } from '@/demo/shardA.js';
+import { mergeState } from '@/shared/merge-state.js';
+mergeState(shardA());
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /FAIL_CLOSED_7/);
+  });
+});
+
 test('〔FC-7b〕頂層 return 不是 ObjectExpression → FAIL_CLOSED_7', () => {
   withScratch((root) => {
     writeBase(root);

@@ -225,8 +225,10 @@ function buildImportBindings(ast) {
  * - `import * as ns from '...'; ns.mergeState(...)` 的 namespace import **不吃**。
  *   全檔對 import 的處理向來只認 `ImportSpecifier`（具名），這是既有慣例不是本次新開的洞；
  *   要支援得新增一條 fail-closed 規則（CD-6 會變 9 條），超出本次範圍。
- * - barrel 檔的 re-export（`export { mergeState } from '...'`）不追鏈，會被判為「別家來源」而排除。
- *   現況專案沒有 barrel 檔。
+ * - barrel 檔的**跨檔** re-export（`export { mergeState } from '...'`，`node.source !== null`）不追鏈，
+ *   會被判為「別家來源」而排除。現況專案沒有 barrel 檔。
+ *   ⚠️ **同檔內的 export list**（`function f(){}; export { f };`，`node.source === null`）**是支援的**——
+ *   見 `findNamedFactory()` / `findFactoryViaExportList()`（Codex PR#161 review 修）。
  * - **非 importmap 別名的 specifier（相對路徑 `'../../shared/merge-state.js'`）不吃** ⇒ 該頁**整頁靜默排除**，
  *   報告裡直接少一頁、數字照樣全綠（131b branch review 沙盒實證）。這與上面兩條同源：
  *   `specifierToRelPath()` 只認 importmap 別名。**沒有升級成 fail-closed 是刻意的**——
@@ -300,6 +302,21 @@ function walk(node, visit) {
 
 /**
  * 依具名 export 找 factory 函式節點。
+ *
+ * 吃兩種**行為等價**的 export 形式：
+ * 1. inline —— `export function stateFoo() {...}` / `export const stateFoo = () => ({...})`
+ * 2. export list —— `function stateFoo() {...}` ＋ 另一個頂層節點 `export { stateFoo };`
+ *
+ * 只吃 1 的話，把 factory 從形式 1 改寫成形式 2（純語法搬動、行為零差異）會讓本守衛
+ * 丟 `FAIL_CLOSED_7: named factory 'X' not found` **擋住整個 `npm run lint`**，而那句訊息
+ * 完全不指向根因（開發者會先去找打錯的名字或路徑）。**守衛對合法程式碼誤報是 defect 不是 nit**
+ * （`AGENTS.md`「false positives on valid code … block regardless of P-level」），
+ * 而形式 2 在本庫已有 5 處用例（含本檔 `export { DEFAULT_ROOT, ... }`）。
+ * ——Codex PR#161 review 指出，實測 `export { stateDelete }` 確實 exit 1。
+ *
+ * `export { x } from './y.js'`（`node.source !== null`）是**跨檔 re-export，刻意仍不支援**，
+ * 由 `node.source` 是否為 null 區分（見檔頭「已知限制」）。
+ *
  * @param {import('estree').Program} ast
  * @param {string} name
  * @returns {import('estree').Function|null}
@@ -315,6 +332,57 @@ function findNamedFactory(ast, name) {
     if (decl.type === 'VariableDeclaration') {
       for (const d of decl.declarations) {
         if (d.id.type !== 'Identifier' || d.id.name !== name) continue;
+        if (
+          d.init
+          && (d.init.type === 'FunctionExpression' || d.init.type === 'ArrowFunctionExpression')
+        ) {
+          return d.init;
+        }
+      }
+    }
+  }
+  // 形式 1 找不到才走第二趟（inline export 維持原本的最短路徑，行為不變）
+  return findFactoryViaExportList(ast, name);
+}
+
+/**
+ * export list 形（`function stateFoo() {...}` ＋ `export { stateFoo };`）。
+ *
+ * 分兩步：先從 export list 把「對外名」映回「本地名」，再去頂層宣告裡找那個本地名。
+ * 兩步分開是必要的——`export { stateFoo as searchStateFoo }` 這種改名 export，
+ * 對外名與宣告名不同，一步走不完。
+ *
+ * @param {import('estree').Program} ast
+ * @param {string} name 對外的 export 名（＝ main.js import 進來的那個名字）
+ * @returns {import('estree').Function|null}
+ */
+function findFactoryViaExportList(ast, name) {
+  /** @type {string|null} */
+  let localName = null;
+  for (const node of ast.body) {
+    if (node.type !== 'ExportNamedDeclaration') continue;
+    if (node.declaration) continue;          // 形式 1，第一趟已處理
+    if (node.source) continue;               // `export {x} from './y.js'` ＝ 跨檔 re-export，刻意不追鏈
+    for (const spec of node.specifiers) {
+      if (spec.type !== 'ExportSpecifier') continue;
+      const exported = spec.exported.type === 'Identifier'
+        ? spec.exported.name
+        : String(spec.exported.value);
+      if (exported !== name) continue;
+      localName = spec.local.type === 'Identifier'
+        ? spec.local.name
+        : String(spec.local.value);
+    }
+  }
+  if (localName === null) return null;
+
+  for (const node of ast.body) {
+    if (node.type === 'FunctionDeclaration' && node.id && node.id.name === localName) {
+      return node;
+    }
+    if (node.type === 'VariableDeclaration') {
+      for (const d of node.declarations) {
+        if (d.id.type !== 'Identifier' || d.id.name !== localName) continue;
         if (
           d.init
           && (d.init.type === 'FunctionExpression' || d.init.type === 'ArrowFunctionExpression')
