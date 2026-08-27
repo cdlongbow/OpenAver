@@ -1416,6 +1416,7 @@
     <!-- Sample Gallery Overlay (T7) -->
     <div class="sample-gallery"
          :class="{ 'show': sampleGalleryOpen }"
+         x-trap.inert="sampleGalleryOpen && !rescrapeOpen && !removeActressModalOpen && !deleteVideoModalOpen"
          @click.self="closeSampleGallery()"
          @touchstart.passive="_sgTouchStart($event)"
          @touchend.passive="_sgTouchEnd($event)">

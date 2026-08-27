@@ -21,6 +21,7 @@
     <!-- T2a: Lightbox（Grid 模式） -->
     <div class="showcase-lightbox"
          :class="{ 'show': lightboxOpen }"
+         x-trap.inert="lightboxOpen && !sampleGalleryOpen && !rescrapeOpen && !browseDirOpen && !duplicateModalOpen"
          @touchstart.passive="_lbTouchStart($event)"
          @touchend.passive="_lbTouchEnd($event)"
          @click="handleLightboxBackdropClick($event)">
@@ -220,6 +221,7 @@
     <!-- T8: Sample Gallery Overlay（縮圖列 + 切換動畫） -->
     <div class="sample-gallery"
          :class="{ 'show': sampleGalleryOpen }"
+         x-trap.inert="sampleGalleryOpen && !rescrapeOpen && !browseDirOpen && !duplicateModalOpen"
          @click.self="closeSampleGallery()"
          @touchstart.passive="_sgTouchStart($event)"
          @touchend.passive="_sgTouchEnd($event)">

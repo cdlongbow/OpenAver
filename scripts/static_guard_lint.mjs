@@ -4341,6 +4341,23 @@ const RULES = [
     pattern: /^(?:(?!#).)*\btime\.time\(\)/m,
     note: '[lint-guard:130a-T6] 探活不得用 time.time() 算逾時 —— 啟動那 30 秒剛好撞上系統校時，使用者會看到一句假的「啟動逾時」。用 time.monotonic()。',
   },
+
+  // ==== [131b-T1] 全螢幕層 x-trap.inert 焦點鎖 ====
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: 'x-trap.inert="lightboxOpen && !sampleGalleryOpen && !rescrapeOpen && !browseDirOpen && !duplicateModalOpen"',
+    note: '[131b-T1] 搜尋頁燈箱開著時若沒這條，Tab 會跑到底下看不見的搜尋列與卡片上',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: 'x-trap.inert="sampleGalleryOpen && !rescrapeOpen && !browseDirOpen && !duplicateModalOpen"',
+    note: '[131b-T1] 搜尋頁劇照集開著時若沒這條，Tab 會跑到燈箱與頁面背景的按鈕上',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'x-trap.inert="sampleGalleryOpen && !rescrapeOpen && !removeActressModalOpen && !deleteVideoModalOpen"',
+    note: '[131b-T1] 瀏覽頁劇照集開著時若沒這條，Tab 會跑到燈箱與頁面背景，等於這層焦點鎖沒做',
+  },
 ];
 
 // ---- helpers ----
