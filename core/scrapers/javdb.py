@@ -197,9 +197,10 @@ class JavDBScraper(BaseScraper):
     優點：
     - 資料最完整（有 maker）
     - Tag 豐富
+    - 資料介面路徑封面無浮水印（網頁備援路徑封面有 javdb.com 浮水印）
 
     缺點：
-    - 需 curl_cffi 偽造 TLS 指紋
+    - 需 curl_cffi 偽造 TLS 指紋（僅網頁備援路徑）
     """
 
     def _get_source_name(self) -> str:

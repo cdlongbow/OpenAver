@@ -19,6 +19,8 @@ from urllib.parse import urlparse
 from core.config import STEM_IMAGE_MODES
 from core.cover_attributes import effective_tags
 from core.cover_layout import resolve_cover_target, same_target_verdict
+from core.image_codec import decode_image_payload, looks_like_image
+from core.image_host_policy import codec_for_host
 from core.path_utils import normalize_path, is_fs_path_under_dir
 from core.scrapers.utils import has_chinese, check_subtitle, strip_subtitle_markers, normalize_number_impl
 from core.focal import requires_face_detection, detect_focal
@@ -717,8 +719,24 @@ def _attempt_download_image(
     try:
         resp = requests.get(url, headers=headers, timeout=timeout)
         if resp.status_code == 200 and len(resp.content) > 1000:
+            host_key = _host_key(url)
+            url_host = host_key[1] if host_key else ""
+            # 只有 registry 標了 payload_codec 的 host 才走「解碼 → 驗魔數」。
+            # 既有 28 筆條目的 payload_codec 都是 None ⇒ 它們**結構上走不進這裡**，
+            # 寫進磁碟的位元組與改動前逐位元相同。
+            #
+            # 為什麼不對全部 host 一視同仁（plan §T4 的爆炸半徑限制）：魔數表只認
+            # JPEG/PNG/GIF/WebP。哪天某個既有圖床改用 AVIF 之類的新格式，全站閘一開
+            # 就是「那個來源整排破圖」——那會是本 branch 引進的**新**回歸，而它要修的
+            # 「明文 CDN 回 200 錯誤頁」是本來就存在的曝險。後者列 backlog，不在本 branch 做。
+            payload = resp.content
+            if codec_for_host(url_host) is not None:
+                payload = decode_image_payload(url_host, payload)
+                if not looks_like_image(payload):
+                    logger.warning("[!] 下載圖片失敗：解碼後不是圖片 host=%s", url_host)
+                    return False
             with open(save_path, "wb") as f:
-                f.write(resp.content)
+                f.write(payload)
             return True
     except requests.exceptions.ConnectionError as e:
         # ConnectTimeout is a ConnectionError subclass; ReadTimeout is not.

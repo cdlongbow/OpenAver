@@ -32,6 +32,9 @@ class ImageHost:
     # keep defaults — path_prefix/port None means "no extra check".
     path_prefix: str | None = None
     port: int | None = None
+    # Body codec name for hosts whose response is not a plain image
+    # (e.g. "javdb-xor"). None = pass through unchanged.
+    payload_codec: str | None = None
 
 
 # Static translation of the two pre-T1 whitelists (+ T3a cf.javfree.me).
@@ -238,6 +241,20 @@ IMAGE_HOSTS: tuple[ImageHost, ...] = (
         consumers=("proxy",),
         photo_source=None,
     ),
+    # ---- javdb App API image host (encoded body; decode via payload_codec) ----
+    # consumers 只列 "proxy"：本 registry 的 "download" 消費端專指**女優照片**那條路
+    # （`download_hosts_for(photo_source)` → core/actress_photo.py），封面／劇照的下載
+    # 走 core/organizer.py 且**不查 registry**。標上 "download" 一個東西都選不到，
+    # 卻會逼著鬆綁兩條真的不變式（download ⇒ http+https、photo_source is None ⟺ 非 download）。
+    # 解碼與 host 存在性判斷走 codec_for_host() / is_registered_host()，兩者都不看 consumers。
+    ImageHost(
+        host="tp.spfcas.com",
+        match="exact",
+        schemes=("https",),
+        consumers=("proxy",),
+        photo_source=None,
+        payload_codec="javdb-xor",
+    ),
 )
 
 
@@ -252,6 +269,42 @@ def download_hosts_for(photo_source: str) -> set[str]:
         for entry in IMAGE_HOSTS
         if "download" in entry.consumers and entry.photo_source == photo_source
     }
+
+
+def _host_matches(entry: ImageHost, host: str) -> bool:
+    """exact = 逐字相等；root = host == root or host.endswith('.' + root)。"""
+    if entry.match == "exact":
+        return host == entry.host
+    if entry.match == "root":
+        return host == entry.host or host.endswith("." + entry.host)
+    return False
+
+
+def _iter_registry_entries() -> tuple[ImageHost, ...]:
+    """靜態 IMAGE_HOSTS ＋ 動態 proxy_dynamic_hosts()（每次重算）。"""
+    return IMAGE_HOSTS + proxy_dynamic_hosts()
+
+
+def codec_for_host(host: str) -> str | None:
+    """查 host 的 payload_codec；查不到或未標 codec → None。
+
+    同時查靜態 IMAGE_HOSTS 與動態 proxy_dynamic_hosts()。
+    """
+    if not host:
+        return None
+    host = host.lower()
+    for entry in _iter_registry_entries():
+        if _host_matches(entry, host):
+            return entry.payload_codec
+    return None
+
+
+def is_registered_host(host: str) -> bool:
+    """host 是否出現在 registry（靜態或動態），與有無 codec 無關。"""
+    if not host:
+        return False
+    host = host.lower()
+    return any(_host_matches(entry, host) for entry in _iter_registry_entries())
 
 
 def proxy_rules() -> tuple[frozenset[str], tuple[str, ...]]:

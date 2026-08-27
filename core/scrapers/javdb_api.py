@@ -6,9 +6,11 @@ import hashlib
 import time
 import uuid
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 import requests
 
+from core.image_host_policy import is_registered_host
 from core.logger import get_logger
 from core.scrapers.errors import SourceBlocked, SourceUnreachable
 from core.scrapers.models import Actress, Video
@@ -252,6 +254,29 @@ def _match_movie(movie: dict, number: str) -> bool:
     return True
 
 
+def _assert_image_hosts_registered(video: Video) -> None:
+    """CD-132b-7：cover / sample 的 host 必須已在 image_host_policy 登記。
+
+    空字串／None 的 cover_url 不算違規。未登記 → ValueError（search 會降級 HTML）。
+    """
+    urls: list[str] = []
+    if video.cover_url:
+        urls.append(video.cover_url)
+    urls.extend(u for u in (video.sample_images or []) if u)
+
+    for url in urls:
+        try:
+            host = (urlparse(url).hostname or "").lower()
+        except Exception:
+            host = ""
+        if not host:
+            continue
+        if not is_registered_host(host):
+            raise ValueError(
+                f"javdb: 圖片 host 未登記於 image_host_policy: {host}"
+            )
+
+
 def fetch_video(number: str) -> Optional[Video]:
     """依番號查詢影片並映射成 Video 物件；查無或無效回傳 None。"""
     movies = api_search(number)
@@ -266,7 +291,8 @@ def fetch_video(number: str) -> Optional[Video]:
 
     detail = api_movie_detail(str(movie["id"]))
     video = _to_video(detail, number)
-    if not video.title and not video.cover_url:
-        return None
-    return video
+    if video.title or video.cover_url:
+        _assert_image_hosts_registered(video)
+        return video
+    return None
 

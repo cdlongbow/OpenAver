@@ -31,7 +31,13 @@ from core.video_extensions import ZERO_SIZE_EXTENSIONS, get_video_extensions
 logger = get_logger(__name__)
 
 from core.database import VideoRepository, get_db_path as get_db_path, init_db
+from core.image_codec import (
+    decode_image_payload,
+    image_media_type,
+    looks_like_image,
+)
 from core.image_host_policy import (
+    codec_for_host,
     nested_preview_target_allowed,
     proxy_dynamic_hosts,
     proxy_rules,
@@ -209,12 +215,28 @@ def proxy_image(url: str = Query(..., description="圖片 URL")):
                 req_host, resp.status_code, loc_host,
             )
         elif resp.status_code == 200:
-            content_type = resp.headers.get('Content-Type', 'image/jpeg')
-            return Response(
-                content=resp.content,
-                media_type=content_type,
-                headers={"Cache-Control": "public, max-age=86400"},
-            )
+            host = (urlparse(url).hostname or "").lower()
+            # 沒標 codec 的 host（既有 28 筆全部）走原路：內容與標頭逐位元不變。
+            # 範圍為什麼不擴到全部 host，見 core/organizer.py 同一處的註解。
+            if codec_for_host(host) is None:
+                return Response(
+                    content=resp.content,
+                    media_type=resp.headers.get("Content-Type", "image/jpeg"),
+                    headers={"Cache-Control": "public, max-age=86400"},
+                )
+            payload = decode_image_payload(host, resp.content)
+            if not looks_like_image(payload):
+                logger.warning(
+                    "proxy_image 拒絕: host=%s 原因=解碼後不是圖片", host
+                )
+            else:
+                # 上游回的是 binary/octet-stream；沿用它的話瀏覽器不會 render。
+                # 型別改用**解出來的位元組**判定。
+                return Response(
+                    content=payload,
+                    media_type=image_media_type(payload) or "image/jpeg",
+                    headers={"Cache-Control": "public, max-age=86400"},
+                )
     except Exception:
         # CD-113c-8 的同一條原則（圖片 URL 常帶簽名／token，不記完整 URL）套用到
         # 例外路徑：原本這行記的是**完整 url**——含 query 的 token，以及 T3b 之後
