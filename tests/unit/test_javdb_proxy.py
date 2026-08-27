@@ -6,6 +6,7 @@ AC-2：_get_html() 有無代理時 proxies kwarg 形狀
 AC-3：假 proxy socket 真的收到 CONNECT（＋ bypass 對照零連線）
 """
 
+import contextlib
 import socket
 import threading
 from unittest.mock import MagicMock, patch
@@ -13,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from core.scrapers import javdb
+from core.scrapers.errors import SourceUnreachable
 
 
 @pytest.fixture
@@ -256,7 +258,10 @@ class TestFakeProxyConnect:
         monkeypatch.setattr(javdb, "proxy_bypass", lambda host: False, raising=False)
 
         # Real curl_cffi call — proxy will RST/close after CONNECT; we only need the hit.
-        scraper._get_html("https://javdb.com/v/Ww9zN8")
+        # T2 起連線層失敗會拋 SourceUnreachable；本測試的斷言是「假 proxy 收到 CONNECT」，
+        # 不是回傳值，所以吞掉它（吞的是預期中的失敗，不是在掩蓋錯誤）。
+        with contextlib.suppress(SourceUnreachable):
+            scraper._get_html("https://javdb.com/v/Ww9zN8")
 
         lines = fake_connect_proxy["hit_lines"]()
         assert fake_connect_proxy["hit_count"]() >= 1, f"proxy got no hits; lines={lines}"
@@ -278,6 +283,7 @@ class TestFakeProxyConnect:
         monkeypatch.setattr(javdb, "proxy_bypass", lambda host: True, raising=False)
 
         # Direct to a closed loopback port — must not touch the fake proxy.
-        scraper._get_html(f"https://127.0.0.1:{_closed_loopback_port()}/")
+        with contextlib.suppress(SourceUnreachable):
+            scraper._get_html(f"https://127.0.0.1:{_closed_loopback_port()}/")
 
         assert fake_connect_proxy["hit_count"]() == 0

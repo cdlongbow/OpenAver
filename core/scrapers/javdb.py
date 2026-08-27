@@ -11,6 +11,7 @@ from urllib.parse import quote, urlparse
 from urllib.request import getproxies, proxy_bypass
 from bs4 import BeautifulSoup
 from .base import BaseScraper
+from .errors import SourceBlocked, SourceUnreachable
 from .models import Video, Actress
 from .utils import rate_limit, strip_number_prefix
 
@@ -124,10 +125,30 @@ class JavDBScraper(BaseScraper):
             )
 
             if response.status_code == 200:
-                return str(response.text)
-            logger.debug("JavDB non-200 for %s: %s", url, response.status_code)
+                text = str(response.text)
+                if len(text) < 20000:
+                    text_lower = text.lower()
+                    if (
+                        "cf-browser-verification" in text_lower
+                        or "just a moment" in text_lower
+                        or "challenge-platform" in text_lower
+                    ):
+                        logger.warning("JavDB blocked (Cloudflare challenge) for %s", url)
+                        raise SourceBlocked(f"javdb: Cloudflare challenge detected for {url}")
+                return text
+
+            if response.status_code in (403, 429, 503):
+                logger.warning("JavDB blocked (%s) for %s", response.status_code, url)
+                raise SourceBlocked(
+                    f"javdb: HTTP {response.status_code} for {url}"
+                )
+
+            logger.warning("JavDB non-200 for %s: %s", url, response.status_code)
+        except (SourceUnreachable, SourceBlocked):
+            raise
         except Exception as e:
-            logger.debug(f"JavDB request failed for {url}: {e}")
+            logger.warning(f"JavDB request failed for {url}: {e}")
+            raise SourceUnreachable(f"javdb: {e}") from e
 
         return None
 
@@ -276,6 +297,8 @@ class JavDBScraper(BaseScraper):
 
             return video
 
+        except (SourceUnreachable, SourceBlocked):
+            raise
         except Exception as e:
             logger.warning(f"JavDB search failed for {number}: {e}")
             return None
@@ -314,12 +337,16 @@ class JavDBScraper(BaseScraper):
                     if video:
                         results.append(video)
 
+                except (SourceUnreachable, SourceBlocked):
+                    raise
                 except Exception as e:
                     logger.debug(f"JavDB keyword search item failed: {e}")
                     continue
 
             return results
 
+        except (SourceUnreachable, SourceBlocked):
+            raise
         except Exception as e:
             logger.warning(f"JavDB keyword search failed for {keyword}: {e}")
             return []
