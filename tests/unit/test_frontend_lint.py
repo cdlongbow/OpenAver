@@ -2787,6 +2787,16 @@ class TestSettingsQuickToggleGuard:
         next_group = html.find('<div class="settings-form-group popover-anchor"', tc_pos)
         block_end = next_group if next_group != -1 else html.index('id="sec-search"')
         block = html[block_start:block_end]
+        # [lint-guard: pytest-justified] Alpine↔HTML binding contract（pre-merge.md §5.7 例外清單第 2 條）。
+        # 鎖的不是「這個字串在檔案裡」，而是「擁有全檔唯一 x-model="form.thumbnailCacheEnabled" 的那個
+        # wrapper，必須自己掛著 popover 元件」——範圍由該字面**往回**解析出它自己的 wrapper 決定。
+        # ⚠️ 不寫「lint 表達不了」：`static_guard_lint` 的 `scope` 吃整條 RegExp（含 capture group），
+        # 用 negative-lookahead 把「不含下一個 wrapper 開頭」寫進去是做得到的。不遷移的理由是另外三個：
+        #   ① 這支是 71-T5 就存在的既有測試，131b-T4 只改錨點；遷移要走「等價性維持嚴審」，
+        #      成本遠高於它擋的東西（判準句：不修＝我們自己再收斂一次，不是使用者的損失）。
+        #   ② 要寫的那條 RegExp 約 200 字元、lookahead 密集，比這 6 行 Python 更難驗；寫歪了是 fail-open。
+        #   ③ 它是 TestSettingsQuickToggleGuard 這 17 支同型 HTML 斷言裡的一員，單獨搬走只會讓
+        #      class 覆蓋面破碎，而三桶棘輪本來就合計計量——搬桶不減量（§5.7 明文提醒的「換桶」）。
         assert 'x-data="helpPopover"' in block, \
             "71-T5→131b-T4 違規：封面縮圖快取那一顆 ? 的 wrapper 缺少 x-data=\"helpPopover\" 元件掛載"
         assert 'class="help-popover"' in block, \
