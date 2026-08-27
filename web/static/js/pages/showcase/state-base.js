@@ -279,11 +279,6 @@ export function stateBase() {
         filteredCount: 0,     // _filteredVideos.length 的 reactive scalar
         paginatedVideos: [],  // 當前頁顯示的影片
 
-        // Lightbox 狀態 (M3a)
-        lightboxOpen: false,
-        lightboxIndex: -1,              // 指向 filteredVideos 的索引
-        lightboxCloseTimer: null,       // F2: generation-guarded delayed clear timer
-
         // Toast 狀態 (M3h)
         toastVisible: false,
         toastMessage: '',
@@ -316,8 +311,6 @@ export function stateBase() {
         perPage: 90,
         totalPages: 1,
         _animGeneration: 0,  // B13: 防止 stale deferred callback
-        _lightboxAnimating: false,  // B16: Lightbox 動畫進行中 guard
-        _lightboxGeneration: 0,    // B19: invalidation token for deferred $nextTick lightbox callbacks
 
         // --- 生命週期 ---
         async init() {
