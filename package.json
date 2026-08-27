@@ -4,7 +4,7 @@
   "private": true,
   "description": "ESLint + stylelint devtools for OpenAver frontend",
   "scripts": {
-    "lint": "npm run lint:js && npm run lint:css && npm run lint:css-guard && npm run lint:html && npm run lint:i18n && npm run lint:cjk && npm run lint:vendor",
+    "lint": "npm run lint:js && npm run lint:css && npm run lint:css-guard && npm run lint:html && npm run lint:i18n && npm run lint:cjk && npm run lint:vendor && npm run lint:state",
     "lint:js": "eslint web/static/js/",
     "lint:css": "stylelint \"web/static/css/**/*.css\"",
     "lint:css-guard": "node scripts/css-guard.mjs",
@@ -12,6 +12,8 @@
     "lint:i18n": "node scripts/i18n_lint.mjs",
     "lint:cjk": "node scripts/cjk_guard_lint.mjs",
     "lint:vendor": "node scripts/vendor_guard_lint.mjs",
+    "lint:state": "node scripts/state_key_guard.mjs",
+    "map:state": "node scripts/state_map.mjs",
     "test": "node --test \"web/static/js/**/__tests__/**/*.test.mjs\" \"scripts/__tests__/**/*.test.mjs\"",
     "test:cjk-guard": "node --test \"scripts/__tests__/**/*.test.mjs\"",
     "test:tokenizer": "node --test \"web/static/js/pages/settings/__tests__/**/*.test.mjs\"",
@@ -23,6 +25,7 @@
     "@tailwindcss/cli": "^4.1.18",
     "daisyui": "^5.5.17",
     "eslint": "^9.39.4",
+    "espree": "^10.4.0",
     "stylelint": "^16.0.0",
     "stylelint-config-standard": "^36.0.0",
     "tailwindcss": "^4.1.18"
