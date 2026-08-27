@@ -3,6 +3,12 @@ test_javdb_api_mapping.py - JavDB API JSON → Video 映射單元測試（TASK-1
 
 本檔不證明站方的欄位名是對的。餵存下來的 JSON 跑欄位斷言，在站方改版時會假綠。
 欄位名的偵測器是金絲雀 A（T5）。本檔鎖的只有「我們自己的規則」。
+
+
+⚠️ **圖片網址一律用 `tp.spfcas.com`（真實的資料介面圖床），不要用 `example.com` 佔位。**
+TASK-132b-T4 之後 `fetch_video()` 會驗圖片 host 有沒有登記在 `core/image_host_policy.py`
+（CD-132b-7：未登記 → 丟 `ValueError` → `search()` 降級 HTML）。用未登記的佔位網域
+會讓本檔每一支都炸在那個閘上，而不是測到映射規則。
 """
 
 from __future__ import annotations
@@ -53,7 +59,7 @@ class TestGenderFilter:
             "id": "m1",
             "number": "SONE-205",
             "title": "測試標題",
-            "cover_url": "https://example.com/cover.jpg",
+            "cover_url": "https://tp.spfcas.com/cover.jpg",
             "actors": [
                 {"id": "a1", "name": "未歩なな", "gender": 0},
                 {"id": "a2", "name": "田淵正浩", "gender": 1},
@@ -73,7 +79,7 @@ class TestGenderFilter:
             "id": "m1",
             "number": "SONE-205",
             "title": "測試標題",
-            "cover_url": "https://example.com/cover.jpg",
+            "cover_url": "https://tp.spfcas.com/cover.jpg",
             "actors": [
                 {"id": "a1", "name": "女優甲", "gender": 0},
                 {"id": "a2", "name": "未知乙", "gender": 2},
@@ -96,7 +102,7 @@ class TestGenderFilter:
             "id": "m1",
             "number": "SONE-205",
             "title": "測試標題",
-            "cover_url": "https://example.com/cover.jpg",
+            "cover_url": "https://tp.spfcas.com/cover.jpg",
             "actors": [
                 {"id": "a1", "name": "未歩なな", "gender": 0},
                 {"id": "a2", "name": "", "gender": 0},
@@ -131,7 +137,7 @@ class TestNumberMatching:
             "id": "id-sone205",
             "number": "SONE-205",
             "title": "精確命中",
-            "cover_url": "https://example.com/cover.jpg",
+            "cover_url": "https://tp.spfcas.com/cover.jpg",
         }
         _, mock_detail = _setup_api_mocks(monkeypatch, search_payload, detail_payload)
 
@@ -151,7 +157,7 @@ class TestNumberMatching:
             "id": "id-hone205",
             "number": "HONE-205",
             "title": "近似番號影片",
-            "cover_url": "https://example.com/cover.jpg",
+            "cover_url": "https://tp.spfcas.com/cover.jpg",
         }
         _, mock_detail = _setup_api_mocks(monkeypatch, search_payload, detail_payload)
 
@@ -177,7 +183,7 @@ class TestNumberMatching:
             "id": "id-target",
             "number": matched_number,
             "title": "相符標題",
-            "cover_url": "https://example.com/cover.jpg",
+            "cover_url": "https://tp.spfcas.com/cover.jpg",
         }
         _, mock_detail = _setup_api_mocks(monkeypatch, search_payload, detail_payload)
 
@@ -222,15 +228,15 @@ class TestNumberMatching:
 class TestSampleImages:
     def test_sample_images_all_collected_in_order(self, monkeypatch):
         """preview_images 12 筆應全部收錄至 sample_images，且維持原順序。"""
-        images = [f"https://img.example.com/sample_{i:02d}.jpg" for i in range(12)]
+        images = [f"https://tp.spfcas.com/sample_{i:02d}.jpg" for i in range(12)]
         search_payload = [{"id": "m1", "number": "SONE-205"}]
         detail_payload = {
             "id": "m1",
             "number": "SONE-205",
             "title": "劇照測試",
-            "cover_url": "https://example.com/cover.jpg",
+            "cover_url": "https://tp.spfcas.com/cover.jpg",
             "preview_images": [
-                {"thumb_url": f"https://img.example.com/thumb_{i:02d}.jpg", "large_url": u}
+                {"thumb_url": f"https://tp.spfcas.com/thumb_{i:02d}.jpg", "large_url": u}
                 for i, u in enumerate(images)
             ],
         }
@@ -244,16 +250,16 @@ class TestSampleImages:
 
     def test_sample_images_first_item_retained_lock(self, monkeypatch):
         """反向鎖：首張劇照不得被丟棄（斷言第 0 筆等於 preview_images[0].large_url）。"""
-        first_large = "https://img.example.com/sample_00_l_0.jpg"
+        first_large = "https://tp.spfcas.com/sample_00_l_0.jpg"
         search_payload = [{"id": "m1", "number": "SONE-205"}]
         detail_payload = {
             "id": "m1",
             "number": "SONE-205",
             "title": "首圖測試",
-            "cover_url": "https://example.com/cover.jpg",
+            "cover_url": "https://tp.spfcas.com/cover.jpg",
             "preview_images": [
                 {"large_url": first_large},
-                {"large_url": "https://img.example.com/sample_01.jpg"},
+                {"large_url": "https://tp.spfcas.com/sample_01.jpg"},
             ],
         }
         _setup_api_mocks(monkeypatch, search_payload, detail_payload)
@@ -271,15 +277,15 @@ class TestSampleImages:
             "id": "m1",
             "number": "SONE-205",
             "title": "缺圖測試",
-            "cover_url": "https://example.com/cover.jpg",
+            "cover_url": "https://tp.spfcas.com/cover.jpg",
             "preview_images": [
-                {"large_url": "https://img.example.com/img1.jpg"},
+                {"large_url": "https://tp.spfcas.com/img1.jpg"},
                 {"large_url": ""},
                 {"large_url": None},
-                {"thumb_url": "https://img.example.com/thumb_only.jpg"},
+                {"thumb_url": "https://tp.spfcas.com/thumb_only.jpg"},
                 None,
                 "invalid",
-                {"large_url": "https://img.example.com/img2.jpg"},
+                {"large_url": "https://tp.spfcas.com/img2.jpg"},
             ],
         }
         _setup_api_mocks(monkeypatch, search_payload, detail_payload)
@@ -288,8 +294,8 @@ class TestSampleImages:
 
         assert video is not None
         assert video.sample_images == [
-            "https://img.example.com/img1.jpg",
-            "https://img.example.com/img2.jpg",
+            "https://tp.spfcas.com/img1.jpg",
+            "https://tp.spfcas.com/img2.jpg",
         ]
 
 
@@ -305,9 +311,9 @@ class TestParallelPreviewFields:
             "id": "m1",
             "number": "SONE-205",
             "title": "平行欄位測試",
-            "cover_url": "https://example.com/cover.jpg",
+            "cover_url": "https://tp.spfcas.com/cover.jpg",
             "preview_images": [
-                {"large_url": f"https://img.example.com/img_{i}.jpg"} for i in range(12)
+                {"large_url": f"https://tp.spfcas.com/img_{i}.jpg"} for i in range(12)
             ],
         }
         _setup_api_mocks(monkeypatch, search_payload, detail_payload)
@@ -332,7 +338,7 @@ class TestNullFieldsSafety:
             "id": "m1",
             "number": "SONE-205",
             "title": "空欄位測試",
-            "cover_url": "https://example.com/cover.jpg",
+            "cover_url": "https://tp.spfcas.com/cover.jpg",
             "series_name": None,
             "director_name": None,
             "publisher_name": None,
@@ -374,7 +380,7 @@ class TestTypeCasting:
             "id": "m1",
             "number": "SONE-205",
             "title": "評分測試",
-            "cover_url": "https://example.com/cover.jpg",
+            "cover_url": "https://tp.spfcas.com/cover.jpg",
             "score": score_val,
         }
         _setup_api_mocks(monkeypatch, search_payload, detail_payload)
@@ -403,7 +409,7 @@ class TestTypeCasting:
             "id": "m1",
             "number": "SONE-205",
             "title": "時長測試",
-            "cover_url": "https://example.com/cover.jpg",
+            "cover_url": "https://tp.spfcas.com/cover.jpg",
             "duration": duration_val,
         }
         _setup_api_mocks(monkeypatch, search_payload, detail_payload)
@@ -430,7 +436,7 @@ class TestTypeCasting:
             "id": "m1",
             "number": "SONE-205",
             "title": "投票數測試",
-            "cover_url": "https://example.com/cover.jpg",
+            "cover_url": "https://tp.spfcas.com/cover.jpg",
             "reviews_count": reviews_val,
         }
         _setup_api_mocks(monkeypatch, search_payload, detail_payload)
@@ -453,7 +459,7 @@ class TestFullDetailMapping:
             "id": "P9QrXa",
             "number": "SONE-205",
             "title": "新人AVデビュー 未歩なな",
-            "cover_url": "https://img.example.com/covers/sone205.jpg",
+            "cover_url": "https://tp.spfcas.com/covers/sone205.jpg",
             "release_date": "2023-01-01",
             "maker_name": "S1 NO.1 STYLE",
             "director_name": "監督太郎",
@@ -468,8 +474,8 @@ class TestFullDetailMapping:
             "reviews_count": 42,
             "duration": 150,
             "preview_images": [
-                {"large_url": "https://img.example.com/samples/01.jpg"},
-                {"large_url": "https://img.example.com/samples/02.jpg"},
+                {"large_url": "https://tp.spfcas.com/samples/01.jpg"},
+                {"large_url": "https://tp.spfcas.com/samples/02.jpg"},
             ],
         }
         _setup_api_mocks(monkeypatch, search_payload, detail_payload)
@@ -479,7 +485,7 @@ class TestFullDetailMapping:
         assert video is not None
         assert video.number == "sone-205"  # 呼叫端傳入之 number
         assert video.title == "新人AVデビュー 未歩なな"
-        assert video.cover_url == "https://img.example.com/covers/sone205.jpg"
+        assert video.cover_url == "https://tp.spfcas.com/covers/sone205.jpg"
         assert video.date == "2023-01-01"
         assert video.maker == "S1 NO.1 STYLE"
         assert video.director == "監督太郎"
@@ -491,8 +497,8 @@ class TestFullDetailMapping:
         assert video.votes == 42
         assert video.duration == 150
         assert video.sample_images == [
-            "https://img.example.com/samples/01.jpg",
-            "https://img.example.com/samples/02.jpg",
+            "https://tp.spfcas.com/samples/01.jpg",
+            "https://tp.spfcas.com/samples/02.jpg",
         ]
         assert video.source == "javdb"
         assert video.detail_url == "https://javdb.com/v/P9QrXa"
@@ -545,7 +551,7 @@ class TestEmptyResults:
             "id": "m1",
             "number": "SONE-205",
             "title": "",
-            "cover_url": "https://example.com/cover.jpg",
+            "cover_url": "https://tp.spfcas.com/cover.jpg",
         }
         _setup_api_mocks(monkeypatch, search_payload, detail_payload)
 
@@ -553,7 +559,7 @@ class TestEmptyResults:
 
         assert video is not None
         assert video.title == ""
-        assert video.cover_url == "https://example.com/cover.jpg"
+        assert video.cover_url == "https://tp.spfcas.com/cover.jpg"
 
     def test_empty_search_results_returns_none(self, monkeypatch):
         """搜尋結果為空清單時，直接回傳 None 且不調用詳情。"""
@@ -621,7 +627,7 @@ class TestTagsPreserved:
             "id": "m1",
             "number": "SONE-205",
             "title": "標籤測試",
-            "cover_url": "https://example.com/cover.jpg",
+            "cover_url": "https://tp.spfcas.com/cover.jpg",
             "tags": [
                 {"id": 1, "name": "美少女电影"},
                 {"id": 2, "name": "巨乳"},
@@ -655,7 +661,7 @@ class TestReviewRound1Hardening:
             detail_return={
                 "id": "m1",
                 "title": "SONE-205 優しくてイヤだと言えない部活少女",
-                "cover_url": "https://example.com/c.jpg",
+                "cover_url": "https://tp.spfcas.com/c.jpg",
             },
         )
         video = javdb_api.fetch_video("SONE-205")
@@ -674,7 +680,7 @@ class TestReviewRound1Hardening:
             detail_return={
                 "id": "m1",
                 "title": "t",
-                "cover_url": "https://example.com/c.jpg",
+                "cover_url": "https://tp.spfcas.com/c.jpg",
                 "tags": [{"name": "巨乳"}, {"name": "   "}, {"name": "\t\n"}, {"name": "苗条"}],
             },
         )
@@ -698,16 +704,16 @@ class TestReviewRound1Hardening:
             detail_return={
                 "id": "m1",
                 "title": "t",
-                "cover_url": "https://example.com/c.jpg",
+                "cover_url": "https://tp.spfcas.com/c.jpg",
                 "preview_images": [
                     {"large_url": bad_url},
-                    {"large_url": "https://img.example.com/ok.jpg"},
+                    {"large_url": "https://tp.spfcas.com/ok.jpg"},
                 ],
             },
         )
         video = javdb_api.fetch_video("SONE-205")
         assert video is not None
-        assert video.sample_images == ["https://img.example.com/ok.jpg"]
+        assert video.sample_images == ["https://tp.spfcas.com/ok.jpg"]
 
     def test_search_exception_propagates_as_the_very_same_object(self, monkeypatch):
         """不只是同一個型別——必須是同一顆例外物件。
