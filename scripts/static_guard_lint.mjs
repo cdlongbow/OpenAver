@@ -1052,7 +1052,6 @@ const RULES = [
   { file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string', pattern: '_setTimer(', note: '[TestTimerTracking] search-flow.js timer methods' },
   { file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string', pattern: '_clearAllTimers(', note: '[TestTimerTracking] search-flow.js timer methods' },
   { file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string', pattern: '_clearAllTimers()', note: '[TestTimerTracking] search-flow.js timer methods' },
-  { file: 'web/static/js/pages/search/state/result-card.js', kind: 'required-string', pattern: "_setTimer('toast'", note: '[TestTimerTracking] result-card.js timer' },
   { file: 'web/static/js/pages/search/state/persistence.js', kind: 'required-string', pattern: "_setTimer('autosave'", note: '[TestTimerTracking] persistence.js timer' },
   { file: 'web/static/js/pages/search/state/file-list.js', kind: 'required-string', pattern: "_setTimer('loadFavorite'", note: '[TestTimerTracking] file-list.js timer' },
 
@@ -3530,10 +3529,10 @@ const RULES = [
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
     pattern: [
-      "'alert-success': toastType === 'success'",
-      "'alert-error':   toastType === 'error'",
-      "'alert-warning': toastType === 'warning'",
-      "'alert-info':    toastType === 'info'",
+      "'alert-success': $store.toast.type === 'success'",
+      "'alert-error':   $store.toast.type === 'error'",
+      "'alert-warning': $store.toast.type === 'warning'",
+      "'alert-info':    $store.toast.type === 'info'",
     ],
     scope: /<div class="alert fluent-toast"[\s\S]*?<\/div>/,
     note: '[lint-guard:113d-T4] showcase toast class map 四鍵逐字對應（鎖住每個 class 與它的條件，不是字串存在性）',
@@ -3541,10 +3540,10 @@ const RULES = [
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
     pattern: [
-      "'bi-check-circle':         toastType === 'success'",
-      "'bi-exclamation-circle':   toastType === 'error'",
-      "'bi-exclamation-triangle': toastType === 'warning'",
-      "'bi-info-circle':          toastType === 'info'",
+      "'bi-check-circle':         $store.toast.type === 'success'",
+      "'bi-exclamation-circle':   $store.toast.type === 'error'",
+      "'bi-exclamation-triangle': $store.toast.type === 'warning'",
+      "'bi-info-circle':          $store.toast.type === 'info'",
     ],
     scope: /<div class="alert fluent-toast"[\s\S]*?<\/div>/,
     note: '[lint-guard:113d-T4] showcase toast icon map 四鍵逐字對應',

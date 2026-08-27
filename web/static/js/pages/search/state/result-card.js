@@ -468,18 +468,6 @@ export function searchStateResultCard() {
         }
     },
 
-    // ===== T6b: Toast =====
-
-    showToast(message, type = 'success', duration = 2500) {
-        // 設定 toast 內容
-        this._toast.message = message;
-        this._toast.type = type;
-        this._toast.visible = true;
-
-        // T4.2: 使用 _setTimer 管理（自動取代舊 timer，離頁時可統一清除）
-        this._setTimer('toast', () => { this._toast.visible = false; }, duration);
-    },
-
     // ===== T1c: Cover Error =====
 
     // TASK-113c-T7: preview 失敗且有 cover fallback 時（shouldFallbackToCover）跳過

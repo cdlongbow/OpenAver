@@ -8,14 +8,6 @@ export function stateScan() {
         config: {},
         configDirty: false,
 
-        // ===== Toast State =====
-        _toast: {
-            message: '',
-            type: 'info',
-            visible: false
-        },
-        _toastTimer: null,
-
         // ===== Folder Dirty Check =====
         folderSnapshot: null,
         pendingNavigationUrl: '',
@@ -192,7 +184,7 @@ export function stateScan() {
                     },
                     cleanup: () => {
                         if (this.eventSource) { this.eventSource.close(); this.eventSource = null; }
-                        clearTimeout(this._toastTimer);
+                        window.Alpine?.store?.('toast')?.hide?.();   // 131b-T3：cleanup 不得拋錯（拋了會跳過後面所有 teardown）
                         clearTimeout(this.logTimer);
                         // T2(40c): abort jellyfin check fetch
                         if (this._jellyfinCheckController) {
@@ -582,21 +574,6 @@ export function stateScan() {
         },
 
         // ===== Utility Methods =====
-        showToast(msg, type = 'info', duration = 2500) {
-            this._toast.message = msg;
-            this._toast.type = type;
-            this._toast.visible = true;
-
-            if (this._toastTimer) {
-                clearTimeout(this._toastTimer);
-            }
-
-            this._toastTimer = setTimeout(() => {
-                this._toast.visible = false;
-                this._toastTimer = null;
-            }, duration);
-        },
-
         escapeHtml(str) {
             if (!str) return '';
             return str.replace(/&/g, '&amp;')
@@ -711,7 +688,7 @@ export function stateScan() {
 
         copyLogs() {
             if (this.logEntries.length === 0) {
-                this.showToast(window.t('scanner.toast.no_logs'));
+                this.showToast(window.t('scanner.toast.no_logs'), 'info');
                 return;
             }
 
@@ -746,7 +723,7 @@ export function stateScan() {
         confirmClearAll() {
             const hasLogs = this.logEntries.length > 0 || localStorage.getItem('avlist_logs');
             if (!hasLogs) {
-                this.showToast(window.t('scanner.toast.no_logs'));
+                this.showToast(window.t('scanner.toast.no_logs'), 'info');
                 return;
             }
 
@@ -763,7 +740,7 @@ export function stateScan() {
             if (this.isGenerating) return;
 
             if (this.directories.length === 0) {
-                this.showToast(window.t('scanner.toast.no_folder'));
+                this.showToast(window.t('scanner.toast.no_folder'), 'info');
                 return;
             }
 
@@ -903,7 +880,7 @@ export function stateScan() {
             if (this.isGenerating) return;
 
             if (this.nfoNeedUpdateCount === 0) {
-                this.showToast(window.t('scanner.toast.no_nfo_update_needed'));
+                this.showToast(window.t('scanner.toast.no_nfo_update_needed'), 'info');
                 return;
             }
 
@@ -980,7 +957,7 @@ export function stateScan() {
             if (this.isGenerating) return;
 
             if (this.jellyfinImageCount === 0) {
-                this.showToast(window.t('scanner.toast.no_jellyfin_update_needed'));
+                this.showToast(window.t('scanner.toast.no_jellyfin_update_needed'), 'info');
                 return;
             }
 

@@ -1847,7 +1847,7 @@
 
     <!-- Toast (M3h) -->
     <div class="toast toast-bottom toast-center fluent-toast-container"
-         x-show="toastVisible"
+         x-show="$store.toast.visible"
          x-transition:enter="fluent-toast-enter"
          x-transition:enter-start="fluent-toast-enter-start"
          x-transition:enter-end="fluent-toast-enter-end"
@@ -1856,18 +1856,18 @@
          x-transition:leave-end="fluent-toast-leave-end">
         <div class="alert fluent-toast"
              :class="{
-                 'alert-success': toastType === 'success',
-                 'alert-error':   toastType === 'error',
-                 'alert-warning': toastType === 'warning',
-                 'alert-info':    toastType === 'info'
+                 'alert-success': $store.toast.type === 'success',
+                 'alert-error':   $store.toast.type === 'error',
+                 'alert-warning': $store.toast.type === 'warning',
+                 'alert-info':    $store.toast.type === 'info'
              }">
             <i class="bi" :class="{
-                'bi-check-circle':         toastType === 'success',
-                'bi-exclamation-circle':   toastType === 'error',
-                'bi-exclamation-triangle': toastType === 'warning',
-                'bi-info-circle':          toastType === 'info'
+                'bi-check-circle':         $store.toast.type === 'success',
+                'bi-exclamation-circle':   $store.toast.type === 'error',
+                'bi-exclamation-triangle': $store.toast.type === 'warning',
+                'bi-info-circle':          $store.toast.type === 'info'
             }"></i>
-            <span x-text="toastMessage"></span>
+            <span x-text="$store.toast.message"></span>
         </div>
     </div>
 
