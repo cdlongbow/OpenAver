@@ -21,6 +21,21 @@ from core.scrapers import javdb
 from core.scrapers.errors import SourceBlocked, SourceUnreachable
 
 
+@pytest.fixture(autouse=True)
+def _api_path_disabled(monkeypatch):
+    """本檔測的是**網頁那條**的契約（132a 出貨的三態）。
+
+    T3 之後 search() 會先打 App 資料介面——若不擋掉，這些測試會真的連上活站。
+    一律讓資料介面那條「連不上」，search() 就會照 CD-132b-4 降級到網頁那條，
+    本檔既有的斷言語意因此逐條維持不變。
+    """
+    from core.scrapers import javdb_api
+    monkeypatch.setattr(
+        javdb_api, "fetch_video",
+        MagicMock(side_effect=SourceUnreachable("api disabled in this test module")),
+    )
+
+
 @pytest.fixture
 def scraper():
     with patch("core.scrapers.javdb.rate_limit"):

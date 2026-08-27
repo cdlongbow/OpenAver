@@ -14,6 +14,7 @@ from .base import BaseScraper
 from .errors import SourceBlocked, SourceUnreachable
 from .models import Video, Actress
 from .utils import rate_limit, strip_number_prefix
+from . import javdb_api
 
 # 嘗試載入 curl_cffi
 # CURL_CFFI_IMPORT_ERROR 先在頂層初始化：正常 import 成功時此變數仍須存在，否則單獨
@@ -191,6 +192,8 @@ class JavDBScraper(BaseScraper):
     """
     JavDB 爬蟲
 
+    精準番號搜尋優先走資料介面，失敗或查無時自動退回網頁解析。
+
     優點：
     - 資料最完整（有 maker）
     - Tag 豐富
@@ -261,21 +264,19 @@ class JavDBScraper(BaseScraper):
 
         return None
 
-    def search(self, number: str) -> Optional[Video]:
+    def search_via_api(self, number: str) -> Optional[Video]:
+        """走 App 資料介面。呼叫端必須傳入已正規化的番號。
+
+        查無回 None；傳輸失敗照 B6 拋 SourceUnreachable / SourceBlocked
+        （由 search() 攔下並降級，見 CD-132b-5）。
         """
-        搜尋影片資訊
+        return javdb_api.fetch_video(number)
 
-        Args:
-            number: 番號
+    def search_via_html(self, number: str) -> Optional[Video]:
+        """走網頁解析。呼叫端必須傳入已正規化的番號。
 
-        Returns:
-            Video 物件或 None
+        查無回 None；傳輸失敗照 132a 契約拋 SourceUnreachable / SourceBlocked。
         """
-        number = self.normalize_number(number)
-
-        if not self.validate_number(number):
-            raise ValueError(f"Invalid number format: {number}")
-
         try:
             # 先搜尋取得列表
             search_url = f"https://javdb.com/search?q={quote(number)}&f=all"
@@ -364,8 +365,6 @@ class JavDBScraper(BaseScraper):
                 detail_url=detail_url,
             )
 
-            rate_limit(self.config.delay)
-
             return video
 
         except (SourceUnreachable, SourceBlocked):
@@ -373,6 +372,39 @@ class JavDBScraper(BaseScraper):
         except Exception as e:
             logger.warning(f"JavDB search failed for {number}: {e}")
             return None
+
+    def search(self, number: str) -> Optional[Video]:
+        """
+        搜尋影片資訊。精準番號搜尋優先走資料介面，失敗或查無時自動退回網頁解析。
+
+        Args:
+            number: 番號
+
+        Returns:
+            Video 物件或 None
+        """
+        number = self.normalize_number(number)
+
+        if not self.validate_number(number):
+            raise ValueError(f"Invalid number format: {number}")
+
+        try:
+            video = self.search_via_api(number)
+        except Exception as api_err:
+            # 刻意攔 Exception 而不是只攔那兩個 typed exception：資料介面回了沒見過的
+            # 形狀時 Video(...) 會拋 pydantic ValidationError，只攔兩個就等於
+            # 「API 壞了 ＝ javdb 壞了」，而所有單元測試都會是綠的（CD-132b-5）。
+            logger.warning("javdb: API 降級 → HTML（%s: %s）", type(api_err).__name__, api_err)
+        else:
+            if video is not None:
+                rate_limit(self.config.delay)
+                return video
+            logger.info("javdb: API 查無 %s，改試 HTML", number)
+
+        video = self.search_via_html(number)
+        if video is not None:
+            rate_limit(self.config.delay)
+        return video
 
     def search_by_keyword(self, keyword: str, limit: int = 20) -> list[Video]:
         """
