@@ -15,7 +15,9 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'espree';
-import { collectPages } from './lib/alpine-state.mjs';
+import {
+  collectPages, loadImportMap, findMergeStateLocalNames, findMergeStateCalls,
+} from './lib/alpine-state.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const argv2 = process.argv[2];
@@ -76,20 +78,11 @@ function findNamedFactory(ast, name) {
  * @param {import('estree').Program} ast
  * @returns {import('estree').CallExpression[]}
  */
-function findMergeStateCalls(ast) {
-  /** @type {import('estree').CallExpression[]} */
-  const found = [];
-  walk(ast, (node) => {
-    if (
-      node.type === 'CallExpression'
-      && node.callee.type === 'Identifier'
-      && node.callee.name === 'mergeState'
-    ) {
-      found.push(node);
-    }
-  });
-  return found;
-}
+// findMergeStateCalls 已改由 ./lib/alpine-state.mjs 提供（吃 local 綁定名集合）。
+// 這裡原本有一份逐字相同、硬編字面 'mergeState' 的副本——頁面一旦用 alias
+// （`import { mergeState as composeState }`）它就找不到呼叫、`return new Set()`，
+// 於是該 inline 貢獻者那一列的伸手矩陣**靜默全印成 `·`**：不報錯、不提示，
+// 是一筆看起來正常但錯誤的資料。刪掉副本，與守衛共用同一份實作。
 
 /**
  * 收集 node 整棵子樹內的 `this.<name>`
@@ -136,7 +129,7 @@ function contributorShortName(c) {
  * @param {Map<string, import('estree').Program>} astCache
  * @returns {Set<string>}
  */
-function getContributorReads(root, page, contributor, astCache) {
+function getContributorReads(root, page, contributor, astCache, importMap) {
   if (contributor.kind === 'factory') {
     const absPath = resolve(root, contributor.source);
     let ast = astCache.get(absPath);
@@ -158,7 +151,9 @@ function getContributorReads(root, page, contributor, astCache) {
       ast = parse(code, PARSE_OPTS);
       astCache.set(entryAbs, ast);
     }
-    const mergeCalls = findMergeStateCalls(ast);
+    // 吃 local 綁定名，才認得 `import { mergeState as composeState }` 的 alias 頁；
+    // 硬編字面 'mergeState' 會在那種頁面靜默回空集合、把整列印成 `·`。
+    const mergeCalls = findMergeStateCalls(ast, findMergeStateLocalNames(ast, importMap));
     if (mergeCalls.length === 0) return new Set();
     const arg = mergeCalls[0].arguments[contributor.order];
     if (!arg) return new Set();
@@ -177,6 +172,9 @@ function main() {
     console.error(`✗ state_map: ${msg}`);
     process.exit(1);
   }
+
+  // 與 collectPages 讀同一份 importmap（CD-3：現場解析，不抄第二份）
+  const importMap = loadImportMap(ROOT);
 
   /** @type {Map<string, import('estree').Program>} */
   const astCache = new Map();
@@ -201,7 +199,7 @@ function main() {
 
     // 收集各 contributor 的 this.<name> 讀取
     const contributorReads = contributors.map((c) =>
-      getContributorReads(ROOT, page, c, astCache)
+      getContributorReads(ROOT, page, c, astCache, importMap)
     );
 
     // 建構 dependency matrix: cell[reader][owner]

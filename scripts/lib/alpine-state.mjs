@@ -18,6 +18,9 @@ const DEFAULT_ROOT = join(__dirname, '../..');
 
 const PARSE_OPTS = { ecmaVersion: 2024, sourceType: 'module', loc: true };
 
+/** 共用 merge 契約的正典位置。來源限定比對這個路徑，不比對 specifier 字面字串。 */
+const MERGE_STATE_REL = 'web/static/js/shared/merge-state.js';
+
 const IMPORTMAP_START = '<script type="importmap">';
 const IMPORTMAP_END = '</script>';
 
@@ -93,6 +96,33 @@ function loadImportMap(root) {
     throw new AlpineStateError(1, 'base.html importmap missing "imports" object');
   }
   return /** @type {Record<string, string>} */ (parsed.imports);
+}
+
+/**
+ * specifier → 磁碟相對路徑（posix），**純字串代換，不碰檔案系統**。
+ *
+ * 刻意與 `resolveSpecifier()` 分家：那一支會 `existsSync` 並在找不到檔案時
+ * throw rule 6，語意是「這個 factory 分片必須真的存在」。本支只回答
+ * 「這個 specifier **指向哪裡**」——用在判斷某個 import 是不是來自共用的
+ * merge 契約，那件事不需要、也不該要求該檔在掃描目標裡實體存在
+ * （合成 fixture 只寫 main.js ＋ 分片檔，從不寫出 shared/merge-state.js）。
+ * 把兩者混用會讓全部合成案例集體變成 FAIL_CLOSED_6。
+ *
+ * @param {Record<string, string>} imports
+ * @param {string} specifier
+ * @returns {string|null} 相對 root 的 posix 路徑；不吃任何別名時回 null
+ */
+function specifierToRelPath(imports, specifier) {
+  // 最長前綴優先（避免 `@/` 誤吃 `@/shared/`）
+  const aliases = Object.keys(imports).sort((a, b) => b.length - a.length);
+  for (const alias of aliases) {
+    if (!specifier.startsWith(alias)) continue;
+    const urlPath = imports[alias];
+    if (!urlPath.startsWith('/')) return null;
+    return join('web', urlPath.slice(1), specifier.slice(alias.length))
+      .split(sep).join('/');
+  }
+  return null;
 }
 
 /**
@@ -175,19 +205,49 @@ function buildImportBindings(ast) {
   return map;
 }
 
-/** 該檔是否具名 import 了 mergeState */
-function importsMergeState(ast) {
+/**
+ * 收集該檔中「綁到共用 merge 契約」的**本地名稱**。
+ *
+ * 為什麼回的是 local name 而不是布林：ESM 的 `import { mergeState as composeState }`
+ * 是完全合法的，呼叫端寫的是 `composeState(...)`。舊版以 **imported name** 判定該頁要納入、
+ * 卻以字面 `mergeState` 找 CallExpression，兩者只是碰巧一致——只要有人取別名，
+ * 該頁就會被納入卻找不到呼叫，噴一個**內容說謊**的 FAIL_CLOSED_3（訊息說「沒有呼叫」，
+ * 但呼叫就在那裡）。這違反 CD-2「日後新頁自動涵蓋、不維護清單」的承諾。
+ * 沒有別名時 `local === imported`，走同一條路徑，不需要特判。
+ *
+ * 同時**限定來源**必須是 `web/static/js/shared/merge-state.js`：本守衛檢查的是
+ * 那支 `Object.defineProperties` descriptor-preserving 合併的 last-wins 語意，
+ * 別處一個剛好也叫 `mergeState` 的函式（例如 `Object.assign` 版）語意不同，
+ * 不該被當成同一套契約。來源比對走**解析後的路徑**而不是 specifier 字面字串——
+ * 別名表是從 base.html 現場讀的（CD-3），比對字面會在別名 value 改動時誤判。
+ *
+ * ⚠️ **已知限制（刻意留白，不隱藏）**：
+ * - `import * as ns from '...'; ns.mergeState(...)` 的 namespace import **不吃**。
+ *   全檔對 import 的處理向來只認 `ImportSpecifier`（具名），這是既有慣例不是本次新開的洞；
+ *   要支援得新增一條 fail-closed 規則（CD-6 會變 9 條），超出本次範圍。
+ * - barrel 檔的 re-export（`export { mergeState } from '...'`）不追鏈，會被判為「別家來源」而排除。
+ *   現況專案沒有 barrel 檔。
+ *
+ * @param {import('estree').Program} ast
+ * @param {Record<string, string>} imports importmap 別名表
+ * @returns {Set<string>} 本地綁定名集合；空集合 ＝ 這頁沒有用共用 merge 契約
+ */
+function findMergeStateLocalNames(ast, imports) {
+  /** @type {Set<string>} */
+  const locals = new Set();
   for (const node of ast.body) {
     if (node.type !== 'ImportDeclaration') continue;
+    if (typeof node.source.value !== 'string') continue;
+    if (specifierToRelPath(imports, node.source.value) !== MERGE_STATE_REL) continue;
     for (const spec of node.specifiers) {
       if (spec.type !== 'ImportSpecifier') continue;
       const imported = spec.imported.type === 'Identifier'
         ? spec.imported.name
         : String(spec.imported.value);
-      if (imported === 'mergeState') return true;
+      if (imported === 'mergeState') locals.add(spec.local.name);
     }
   }
-  return false;
+  return locals;
 }
 
 /**
@@ -199,16 +259,17 @@ function importsMergeState(ast) {
  * 所以由呼叫端在「不是恰好一處」時走 fail-closed 第 3 條。
  *
  * @param {import('estree').Program} ast
+ * @param {Set<string>} localNames `findMergeStateLocalNames()` 回的本地綁定名集合
  * @returns {import('estree').CallExpression[]}
  */
-function findMergeStateCalls(ast) {
+export function findMergeStateCalls(ast, localNames) {
   /** @type {import('estree').CallExpression[]} */
   const found = [];
   walk(ast, (node) => {
     if (
       node.type === 'CallExpression'
       && node.callee.type === 'Identifier'
-      && node.callee.name === 'mergeState'
+      && localNames.has(node.callee.name)
     ) {
       found.push(node);
     }
@@ -432,13 +493,17 @@ export function collectPages(root = DEFAULT_ROOT) {
     const code = readFileSync(entryAbs, 'utf8');
     const ast = parseModule(code, entryRel);
 
-    if (!importsMergeState(ast)) continue;
+    // 空集合 ＝ 這頁沒有用共用 merge 契約（沒 import，或 import 的是別處同名函式）
+    // ⇒ 靜默排除，與「這頁根本沒 import」同一邊。CD-2 的頁面篩選本來就是排除性質，
+    //    把它升級成 fail-closed 只會無謂擴大觸發面；不用本契約的頁面原本就不在檢查範圍內。
+    const mergeLocals = findMergeStateLocalNames(ast, importMap);
+    if (mergeLocals.size === 0) continue;
 
-    const mergeCalls = findMergeStateCalls(ast);
+    const mergeCalls = findMergeStateCalls(ast, mergeLocals);
     if (mergeCalls.length === 0) {
       throw new AlpineStateError(
         3,
-        `${entryRel}: imports mergeState but no mergeState(...) call found`,
+        `${entryRel}: imports mergeState (as ${[...mergeLocals].join('/')}) but no ${[...mergeLocals].join('/')}(...) call found`,
       );
     }
     if (mergeCalls.length > 1) {
@@ -470,4 +535,4 @@ export function collectPages(root = DEFAULT_ROOT) {
   return pages;
 }
 
-export { DEFAULT_ROOT };
+export { DEFAULT_ROOT, MERGE_STATE_REL, loadImportMap, findMergeStateLocalNames };
