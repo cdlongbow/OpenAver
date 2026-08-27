@@ -70,6 +70,39 @@ def _probe_reachable(source: str, number: str, scraper) -> bool:
             base, _ = scraper._ensure_session()
             return base is not None
 
+        if source == "javdb-api":
+            # 契約：**任何 HTTP 回應 ＝ True**（主機在、網路通），只有連線層失敗 ＝ False。
+            # 是不是 200、內容對不對，都是 classify_one 要判的事，不是 probe 的事。
+            #
+            # 🔴 **刻意不用 `javdb_api.api_search()`**（review P1）：它回答的是
+            # 「有沒有拿到可用資料」，不是「主機有沒有回應」。簽章輪替、信封形狀改變、
+            # 被擋——全都會讓它丟例外，而那些正是「**我們自己壞了**」的情形。
+            # 那些例外被本函式底下的 `except Exception: return False` 收成 unreachable
+            # 之後，`classify_one` 走 row 5（skip）⇒ **這顆燈在它最該紅的時候不會紅**。
+            # 用同一支會用同一種方式失敗的函式同時當 probe 和 search，probe 就沒有資訊量。
+            #
+            # 所以這裡自己送一次請求，只在**連線層**失敗時回 False。
+            # 沿用 javdb_api 的網域／路徑／簽名（同 javbus 分支重用 scraper 的 URL 與 session
+            # 的理由）——網域知識不做第二份拷貝。
+            from core.scrapers import javdb_api
+
+            resp_url = javdb_api._API_HOSTS[0] + javdb_api._SEARCH_PATH
+            headers = {
+                "jdsignature": javdb_api.sign(),
+                "user-agent": javdb_api._USER_AGENT,
+            }
+            try:
+                requests.get(
+                    resp_url,
+                    params={**javdb_api._PUBLIC_PARAMS, "q": number,
+                            "uuid": javdb_api._DEVICE_UUID},
+                    headers=headers,
+                    timeout=10,
+                )
+            except requests.exceptions.RequestException:
+                return False
+            return True
+
         # Group B (javdb / fc2) or unknown source.
         return False
     except Exception:

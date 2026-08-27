@@ -36,7 +36,7 @@ from core.scrapers import (
 pytestmark = pytest.mark.smoke
 
 
-def _run_canary(source: str, scraper, note: str = "") -> None:
+def _run_canary(source: str, scraper, note: str = "", method: str = "search") -> None:
     """Run the canary for one source: loop numbers -> classify -> quorum -> verdict.
 
     quorum needs every number's result before deciding, so this is a per-source
@@ -45,11 +45,14 @@ def _run_canary(source: str, scraper, note: str = "") -> None:
     `note` (optional) prepends a source-specific hint to the skip/fail reason so a
     human reading `pytest -r s` can tell an *expected* skip (avsox known-dead,
     javdb CF-ban) from an incidental one — without touching the pure T1 core.
+
+    `method` is the scraper method name to call (string + getattr on purpose:
+    a typo surfaces as AttributeError instead of a silent wrong lambda).
     """
     results = []
     for number in CANARY_NUMBERS[source]:
         try:
-            video = scraper.search(number)
+            video = getattr(scraper, method)(number)
         except TimeoutError as e:
             # Feed the exception instance (not None) so classify_one row 1 -> skip.
             results.append(classify_one(e, None, number, source))
@@ -114,11 +117,48 @@ def test_fc2_canary():
 def test_javdb_canary():
     # javdb needs curl_cffi (CF bypass). Numbers are deliberately few -> all-skip
     # must not fail (Group B quorum: None probe -> row 6 skip).
+    # Hits search_via_html only — the API path has its own canary (Group A).
     try:
         import curl_cffi  # noqa: F401
     except ImportError:
         pytest.skip("curl_cffi not installed")
-    _run_canary("javdb", JavDBScraper(), note="javdb all-skip likely CF-banned")
+    _run_canary(
+        "javdb",
+        JavDBScraper(),
+        note="javdb all-skip likely CF-banned",
+        method="search_via_html",
+    )
+
+
+def test_javdb_api_canary():
+    # Group A: never touches Cloudflare, so all-skip means the API path is dead.
+    _run_canary("javdb-api", JavDBScraper(), method="search_via_api")
+
+    # 判綠之後才做：抓一張封面 → 走 production 的 host→codec 對應解碼 → 驗魔數。
+    # 「解碼規則／host 對應壞了」在 runtime 沒有偵測器（CD-132b-7 說明了為什麼不在
+    # 搜尋時驗），這顆燈就是那個偵測器。沒有它，使用者會是第一個發現的人。
+    from urllib.parse import urlparse
+
+    import requests
+
+    from core.image_codec import decode_image_payload, looks_like_image
+
+    video = JavDBScraper().search_via_api(CANARY_NUMBERS["javdb-api"][0])
+    if video is None or not video.cover_url:
+        pytest.skip("javdb-api: 拿不到封面網址（上面的 quorum 已經判過了）")
+    host = urlparse(video.cover_url).hostname or ""
+    try:
+        raw = requests.get(video.cover_url, timeout=20).content
+    except requests.exceptions.RequestException as e:
+        # 連不到圖床是**站方／網路**問題，不是「我們的解碼規則壞了」。
+        # 不 try/except 的話這裡會變成 pytest ERROR，人工讀報表時分不出是哪一種（review P3）。
+        pytest.skip(f"javdb-api: 連不到圖床（{type(e).__name__}）——非解碼問題")
+    payload = decode_image_payload(host, raw)
+    if not looks_like_image(payload):
+        pytest.fail(
+            f"javdb-api: 封面解不開（host={host}, raw={len(raw)}B, payload={len(payload)}B）"
+            " — host→codec 對應或解碼規則可能失效"
+        )
 
 
 # ========== dmm (proxy-gated, 4-way) ==========

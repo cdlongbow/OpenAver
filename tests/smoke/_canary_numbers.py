@@ -16,6 +16,9 @@ CANARY_NUMBERS: dict[str, list[str]] = {
     # N0762/N2046 = Tokyo Hot 單字母無碼（73a 修好），live 證實 javbus 收錄且修復有效
     "jav321": ["MIDV-018", "SONE-103", "N0762", "STARS-804"],
     "javdb": ["SSNI-001", "SONE-103"],  # 刻意放少（查多觸發 CF ban，接受全 skip 為正常）
+    # 資料介面那條不經過 Cloudflare，可以比網頁那條多放幾個。
+    # 這 5 個在 2026-08-28 全部實打得到（不同片商，避免單一片商下架就整組失效）。
+    "javdb-api": ["SONE-205", "ABW-300", "MIDV-500", "IPZZ-100", "JUQ-500"],
 
     # dmm — 經 proxy 實打；.number 取自 DMM API（非 echo-input），故須挑「回的番號 == 查的番號」者。
     # 排除 SSNI-001：proxy 實打回 SSNI-192（dmm content-id 前綴學習映射到別片）→ 會被 classify_one
