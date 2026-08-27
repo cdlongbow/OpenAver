@@ -19,6 +19,7 @@ verdict mapping:
 import pytest
 
 from tests.smoke._canary_core import classify_one, quorum_verdict, GROUP_A
+from core.scrapers.errors import SourceBlocked, SourceUnreachable
 from tests.smoke._canary_numbers import CANARY_NUMBERS
 from tests.smoke._probe import _probe_reachable
 from core.scrapers import (
@@ -53,6 +54,21 @@ def _run_canary(source: str, scraper, note: str = "") -> None:
             # Feed the exception instance (not None) so classify_one row 1 -> skip.
             results.append(classify_one(e, None, number, source))
             continue
+        except (SourceUnreachable, SourceBlocked):
+            # Transport-level failure (CF ban / cannot connect). Until 0.15.1 these
+            # were swallowed into `None` inside javdb's `_get_html`; typed exceptions
+            # (TASK-132a-T2) made them escape `search()` and blow straight past the
+            # `except TimeoutError` above, turning the *expected* javdb CF-ban skip
+            # into a hard ERROR. Collapsing to `video = None` restores the pre-0.15.1
+            # input shape EXACTLY — including the Group A probe below, so a Group A
+            # source keeps its row-4 (reachable but empty -> fail) verdict rather
+            # than being silently downgraded to skip.
+            #
+            # NOTE for 132b: this restores the *input*, it does NOT hand out the
+            # "all skip = normal" exemption — that comes from Group B membership in
+            # `_canary_core.GROUP_B`. The new API canary must NOT join Group B
+            # (spec-132 F5: it never touches CF, so all-skip means it is really dead).
+            video = None
         probe = _probe_reachable(source, number, scraper) if source in GROUP_A else None
         results.append(classify_one(video, probe, number, source))
 
