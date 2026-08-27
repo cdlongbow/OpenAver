@@ -4364,6 +4364,27 @@ const RULES = [
     pattern: 'components/help-popover.js',
     note: '[131b-T4] 少這一行，設定頁與掃描頁 8 個 ? 按鈕全部點不出東西——x-data="helpPopover" 找不到定義，Alpine 只會在 console 抱怨，畫面上就是「按了沒反應」',
   },
+  // 8 個掛載點逐一鎖住（既有 :1175-1179 的 help-popover / help-popover-btn 是 min，
+  // 拆掉其中一顆仍會過；count 讓「少一顆」直接紅）。131b branch review P3。
+  {
+    file: 'web/templates/settings.html', kind: 'structure-count',
+    pattern: 'x-data="helpPopover"', count: 6,
+    note: '[131b-T4] settings 的 6 個 ? 說明浮層各自掛一份 helpPopover——少一顆＝那顆點下去沒反應（console ReferenceError，畫面無事發生）',
+  },
+  {
+    file: 'web/templates/scanner.html', kind: 'structure-count',
+    pattern: 'x-data="helpPopover"', count: 2,
+    note: '[131b-T4] scanner 的 2 個 ? 說明浮層各自掛一份 helpPopover——少一顆＝那顆點下去沒反應',
+  },
+
+  // ==== [131b-T3] Toast store 全站掛載 ====
+  // branch review P2：全站載入的模組每一支都有 required-string（ghost-fly / burst-picker /
+  // path-utils / motion-* / page-lifecycle / gsap / alpine），T4 也照著加了——只有這支漏了。
+  {
+    file: 'web/templates/base.html', kind: 'required-string',
+    pattern: 'components/toast-store.js',
+    note: '[131b-T3] 少這一行，$store.toast 是 undefined：五頁的 toast 容器綁定當場 TypeError，而且 this.showToast(...) 會往呼叫端拋——使用者按「重新刮削」「複製路徑」「儲存設定」不但沒有提示，那個函式後面那半段也不會跑',
+  },
 ];
 
 // ---- helpers ----

@@ -1794,6 +1794,9 @@
         </section>
 
         <!-- 區塊: Toasts -->
+        <!-- ⚠️ 下面這個 inline x-data 是**自足的視覺展示**（按鈕按下去就看得到四種樣式），
+             刻意不接 Alpine.store('toast')：展示頁不該去動全站共用狀態。
+             要抄的形狀在本區塊下方的「程式碼範例」，不是這裡。（131b-T3 branch review） -->
         <section id="ds-toasts" class="ds-section accent-bar"
                  x-data="{
                    toastVisible: false,
@@ -1887,26 +1890,22 @@
                 </div>
 
                 <!-- 程式碼範例 -->
-                <pre class="ds-code"><code>&lt;!-- Alpine.js 控制 --&gt;
-&lt;div x-data="{
-  toastVisible: false,
-  toastMessage: '',
-  toastType: 'success',
-  showToast(message, type = 'success', duration = 2500) {
-    this.toastMessage = message;
-    this.toastType = type;
-    this.toastVisible = true;
-    setTimeout(() =&gt; { this.toastVisible = false; }, duration);
-  }
-}"&gt;
-  &lt;button @click="showToast('已複製', 'success')"&gt;複製&lt;/button&gt;
+                <pre class="ds-code"><code>&lt;!-- 全站只有一份 toast：Alpine.store('toast')（131b-T3 收斂）。
+     不要在頁面裡自己寫 showToast / toastVisible —— 那正是收斂前的五份重複。 --&gt;
 
-  &lt;div class="toast toast-bottom toast-center" x-show="toastVisible"&gt;
-    &lt;div class="alert fluent-toast" :class="`alert-${toastType}`"&gt;
-      &lt;span x-text="toastMessage"&gt;&lt;/span&gt;
-    &lt;/div&gt;
+&lt;!-- ① 觸發（頁面 state 分片內，呼叫面不變） --&gt;
+this.showToast('已複製', 'success', 2500)   // 委派給 store，由 shared/state-toast.js 提供
+
+&lt;!-- ② 容器（每頁一個，只有視覺自訂，綁定來源一律是 $store.toast） --&gt;
+&lt;div class="toast toast-bottom toast-center fluent-toast-container" x-show="$store.toast.visible"&gt;
+  &lt;div class="alert fluent-toast" :class="`alert-${$store.toast.type}`"&gt;
+    &lt;span x-text="$store.toast.message"&gt;&lt;/span&gt;
   &lt;/div&gt;
-&lt;/div&gt;</code></pre>
+&lt;/div&gt;
+
+&lt;!-- ③ 關閉鈕（可選；一定要走 hide()，直接寫 visible = false 不會取消計時器，
+     舊計時器會提早關掉下一則） --&gt;
+&lt;button @click="$store.toast.hide()"&gt;✕&lt;/button&gt;</code></pre>
             </div>
 
             <!-- Toast Pattern 對照表 -->

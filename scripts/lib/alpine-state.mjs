@@ -227,6 +227,12 @@ function buildImportBindings(ast) {
  *   要支援得新增一條 fail-closed 規則（CD-6 會變 9 條），超出本次範圍。
  * - barrel 檔的 re-export（`export { mergeState } from '...'`）不追鏈，會被判為「別家來源」而排除。
  *   現況專案沒有 barrel 檔。
+ * - **非 importmap 別名的 specifier（相對路徑 `'../../shared/merge-state.js'`）不吃** ⇒ 該頁**整頁靜默排除**，
+ *   報告裡直接少一頁、數字照樣全綠（131b branch review 沙盒實證）。這與上面兩條同源：
+ *   `specifierToRelPath()` 只認 importmap 別名。**沒有升級成 fail-closed 是刻意的**——
+ *   「這頁提到 mergeState 卻解析不出來源就 throw」會把 `〔source-3〕`（namespace import 刻意排除）
+ *   那支既有測試一起弄紅，屬於自生洞。現況全庫 main.js 一律用 `@/`；
+ *   哪天要正式支援，跟上面兩條一起做成 CD-6 的第 9 條規則。
  *
  * @param {import('estree').Program} ast
  * @param {Record<string, string>} imports importmap 別名表
