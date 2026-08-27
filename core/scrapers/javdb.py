@@ -7,7 +7,8 @@ from typing import Optional
 from core.logger import get_logger
 
 logger = get_logger(__name__)
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
+from urllib.request import getproxies, proxy_bypass
 from bs4 import BeautifulSoup
 from .base import BaseScraper
 from .models import Video, Actress
@@ -33,6 +34,25 @@ _warned = False
 _UNSET = object()
 _cainfo_override = _UNSET   # _UNSET=未算 / None=no-op 或降級 / bytes=CAINFO override
 _ca_warned = False
+
+
+def _resolve_proxies(url: str) -> Optional[dict]:
+    """Resolve system proxy for curl_cffi. None = omit proxies kwarg (same as pre-F1).
+
+    No cache: user may toggle system proxy mid-session (CD-132a-2).
+    """
+    try:
+        host = urlparse(url).hostname
+        if host and proxy_bypass(host):
+            return None
+    except Exception as e:
+        logger.debug("javdb: proxy_bypass 檢查失敗，視為不繞道: %s", e)
+    try:
+        raw = getproxies() or {}
+        filtered = {k: v for k, v in raw.items() if k in ("http", "https")}
+        return filtered or None
+    except Exception:
+        return None
 
 
 def _cainfo_override_bytes():
@@ -86,6 +106,7 @@ class JavDBScraper(BaseScraper):
 
         _ca = _cainfo_override_bytes()
         extra = {"curl_options": {CurlOpt.CAINFO: _ca}} if _ca is not None else {}
+        _proxies = _resolve_proxies(url)
 
         try:
             response = curl_requests.get(
@@ -98,7 +119,8 @@ class JavDBScraper(BaseScraper):
                     "Referer": "https://javdb.com/",
                 },
                 timeout=30,
-                **extra
+                **extra,
+                **({"proxies": _proxies} if _proxies else {}),
             )
 
             if response.status_code == 200:
