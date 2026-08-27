@@ -609,4 +609,8 @@ export function collectPages(root = DEFAULT_ROOT) {
   return pages;
 }
 
-export { DEFAULT_ROOT, MERGE_STATE_REL, loadImportMap, findMergeStateLocalNames };
+// walk / findNamedFactory 由 state_map.mjs 共用（Codex PR#161 review 第 2 輪）。
+// 這兩支原本是 state_map.mjs 各留一份逐字副本——當初沒共用不是設計判斷，是這裡沒 export。
+// 代價實測過：第 1 輪把 findNamedFactory 補上 export list 支援後，副本沒跟著改，
+// 於是 export list 形的貢獻者「守衛過得了、地圖靜默印成全 ·」（exit 0、stderr 全空）。
+export { DEFAULT_ROOT, MERGE_STATE_REL, loadImportMap, findMergeStateLocalNames, walk, findNamedFactory };

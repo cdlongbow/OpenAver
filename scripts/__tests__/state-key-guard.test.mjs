@@ -5,7 +5,19 @@
  * `spawnSync` 黑箱跑守衛、斷言 exit code 與合併後的 stdout+stderr。
  *
  * 覆蓋 TASK-131a-T3 案例清單：正向 6、反向 4、基準 1、fail-closed 14 子案例、
- * 箭頭函式 2、real-repo 4。共 31 個 test()。
+ * 箭頭函式 2、real-repo 4 —— 小計 31。
+ *
+ * 之後逐輪補上（每一批都附「為什麼補」，避免下次對帳時看不出增量來自哪裡）：
+ * - alias 4、source 3（131a Codex PR review：mergeState 的本地綁定名與來源限定）
+ * - export-list 4（131b Codex PR#161 第 1 輪：`function f(){}; export { f };` 是合法且行為等價的
+ *   寫法，卻會撞 FAIL_CLOSED_7 擋住整個 npm run lint —— 守衛對合法程式碼誤報是 defect 不是 nit）
+ * - map 1（131b Codex PR#161 第 2 輪：state_map.mjs 曾各留一份 walk / findNamedFactory 副本，
+ *   第 1 輪修了守衛那份、副本沒跟著改 ⇒ 同一個貢獻者「守衛過得了、地圖印成全 ·」且 exit 0、
+ *   stderr 全空。副本已刪、改成與守衛共用；本案鎖住它不再分岔）
+ *
+ * **共 43 個 test()**（＝ 31 + 4 + 3 + 4 + 1）。
+ * ⚠️ 增刪案例時**同步改這個數字**——它是對帳錨點，數字對不上會讓下一輪 review 誤判增量來源。
+ * 機械核對：`grep -c "^test('" scripts/__tests__/state-key-guard.test.mjs`
  */
 
 import test from 'node:test';
@@ -36,6 +48,15 @@ const REGRESSION_KEYS = [
 function runGuard(root) {
   const args = root ? [GUARD_PATH, root] : [GUARD_PATH];
   const result = spawnSync(process.execPath, args, { encoding: 'utf8' });
+  return { ...result, output: `${result.stdout}\n${result.stderr}` };
+}
+
+// state_map.mjs 與守衛共用 lib/alpine-state.mjs 的同一份解析核心，也共用本檔的 fixture helper。
+// 放這裡而不是另開檔：另開就得把 withScratch / writeBase / writePage / factoryFile 全部複製一份，
+// 那正是本輪在收斂的東西。
+const MAP_PATH = join(__dirname, '..', 'state_map.mjs');
+function runMap(root) {
+  const result = spawnSync(process.execPath, [MAP_PATH, root], { encoding: 'utf8' });
   return { ...result, output: `${result.stdout}\n${result.stderr}` };
 }
 
@@ -714,6 +735,48 @@ mergeState(shardA());
     const r = runGuard(root);
     assert.equal(r.status, 1, r.output);
     assert.match(r.output, /FAIL_CLOSED_7/);
+  });
+});
+
+// ==== 地圖端的同一個缺口（Codex PR#161 review 第 2 輪）====
+// state_map.mjs 曾各留一份 walk / findNamedFactory 的逐字副本。第 1 輪把守衛那份補上
+// export list 支援之後，副本沒跟著改 ⇒ export list 形的貢獻者「守衛過得了、地圖印成全 ·」，
+// 而且 exit 0、stderr 全空——**看起來完全正常的錯誤資料**。副本已刪、改成共用；本案鎖住它不再分岔。
+
+test('〔map-1〕export list 形的貢獻者，地圖不會把它的伸手矩陣塌成全 ·', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/shardA.js',
+      `function shardA() {
+  return {
+    a: 1,
+    readsOwn() {
+      return this.a;
+    },
+  };
+}
+
+export { shardA };
+`,
+    );
+    writeAt(root, 'web/static/js/pages/demo/shardB.js', factoryFile('shardB', '{ b: 2 }'));
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `import { shardA } from '@/demo/shardA.js';
+import { shardB } from '@/demo/shardB.js';
+import { mergeState } from '@/shared/merge-state.js';
+mergeState(shardA(), shardB());
+`,
+    );
+    const r = runMap(root);
+    assert.equal(r.status, 0, r.output);
+    // shardA 那一列必須量得到它自己讀自己的那一次（自有 1），不是塌成 0
+    const row = r.output.split('\n').find((l) => l.trim().startsWith('| shardA |'));
+    assert.ok(row, `找不到 shardA 那一列：\n${r.output}`);
+    assert.match(row, /\|\s*1\s*\|\s*0\s*\|\s*$/, `shardA 列應為「自有 1／外求 0」，實際：${row}`);
   });
 });
 

@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'espree';
 import {
   collectPages, loadImportMap, findMergeStateLocalNames, findMergeStateCalls,
+  walk, findNamedFactory,
 } from './lib/alpine-state.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -25,64 +26,19 @@ const ROOT = argv2 && !argv2.startsWith('--') ? resolve(argv2) : join(__dirname,
 
 const PARSE_OPTS = { ecmaVersion: 2024, sourceType: 'module', loc: true };
 
-/**
- * 簡易 AST walk
- * @param {any} node
- * @param {(node: any) => void} visit
- */
-function walk(node, visit) {
-  if (!node || typeof node !== 'object') return;
-  visit(node);
-  for (const key of Object.keys(node)) {
-    if (key === 'loc' || key === 'range') continue;
-    const child = node[key];
-    if (Array.isArray(child)) {
-      for (const c of child) walk(c, visit);
-    } else if (child && typeof child === 'object' && child.type) {
-      walk(child, visit);
-    }
-  }
-}
 
-/**
- * 依具名 export 找 factory 函式節點
- * @param {import('estree').Program} ast
- * @param {string} name
- * @returns {import('estree').Function|null}
- */
-function findNamedFactory(ast, name) {
-  for (const node of ast.body) {
-    if (node.type !== 'ExportNamedDeclaration') continue;
-    const decl = node.declaration;
-    if (!decl) continue;
-    if (decl.type === 'FunctionDeclaration' && decl.id && decl.id.name === name) {
-      return decl;
-    }
-    if (decl.type === 'VariableDeclaration') {
-      for (const d of decl.declarations) {
-        if (d.id.type !== 'Identifier' || d.id.name !== name) continue;
-        if (
-          d.init
-          && (d.init.type === 'FunctionExpression' || d.init.type === 'ArrowFunctionExpression')
-        ) {
-          return d.init;
-        }
-      }
-    }
-  }
-  return null;
-}
-
-/**
- * 收集 mergeState CallExpression
- * @param {import('estree').Program} ast
- * @returns {import('estree').CallExpression[]}
- */
 // findMergeStateCalls 已改由 ./lib/alpine-state.mjs 提供（吃 local 綁定名集合）。
 // 這裡原本有一份逐字相同、硬編字面 'mergeState' 的副本——頁面一旦用 alias
 // （`import { mergeState as composeState }`）它就找不到呼叫、`return new Set()`，
 // 於是該 inline 貢獻者那一列的伸手矩陣**靜默全印成 `·`**：不報錯、不提示，
 // 是一筆看起來正常但錯誤的資料。刪掉副本，與守衛共用同一份實作。
+//
+// walk / findNamedFactory 同理，於 Codex PR#161 review 第 2 輪一併收斂（**同一個病第二次發作**）：
+// 第 1 輪把 alpine-state.mjs 的 findNamedFactory 補上 export list 支援後，這裡的逐字副本沒跟著改，
+// 於是 `function f(){}; export { f };` 形的貢獻者變成「守衛過得了、地圖印成全 `·`」——
+// exit 0、stderr 全空、數字看起來完全正常。**這正是「重複實作」的失效形狀：不是兩邊都錯，是兩邊分岔。**
+// 依 CLAUDE.md 停損規則（下一輪 finding 由上一輪的修正造成 → 停止 fix-forward、改窮舉盤點），
+// 窮舉結果：兩支腳本只重複這 2 個函式、無第三份，且當初沒共用不是設計判斷而是 alpine-state.mjs 沒 export。
 
 /**
  * 收集 node 整棵子樹內的 `this.<name>`
