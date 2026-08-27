@@ -9,6 +9,7 @@ import { searchStateGridMode }    from '@/search/state/grid-mode.js';
 import { searchStateAdvancedPicker } from '@/search/state/advanced-picker.js';
 import { rescrapeState }           from '@/shared/state-rescrape.js';
 import { browseDirState }          from '@/shared/state-browse-dir.js';
+import { toastState }              from '@/shared/state-toast.js';
 import { mergeState }              from '@/shared/merge-state.js';
 
 function searchPage() {
@@ -24,6 +25,7 @@ function searchPage() {
         searchStateAdvancedPicker(),
         rescrapeState(),
         browseDirState(),
+        toastState(),
         {
             // ===== 頁面組裝層 lifecycle（從 state/index.js 搬移）=====
             _initDragEvents() {

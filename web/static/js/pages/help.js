@@ -1,6 +1,9 @@
 // Help 頁面 Alpine.js 元件
+import { toastState } from '../shared/state-toast.js';
+
 export function helpPage() {
     return {
+        ...toastState(),
         // State
         appVersion: '',
         curlCopied: false,
@@ -16,8 +19,6 @@ export function helpPage() {
         autoCheckUpdate: false,
         _autoCheckSaving: false,
         _isDesktop: false,
-        _toast: { message: '', type: 'info', visible: false },
-        _toastTimer: null,
 
         // TASK-114b-T4：agent token 顯示區塊。對應 DOM 只在 show_agent_auth 為真時
         // 才會存在（Jinja {% if %}），但依 FE-ALPINE-06 仍必須無條件在此宣告初值。
@@ -187,17 +188,6 @@ export function helpPage() {
 
         cancelUpdate() {
             this.showUpdateModal = false;
-        },
-
-        showToast(message, type = 'info', duration = 2500) {
-            this._toast.message = message;
-            this._toast.type = type;
-            this._toast.visible = true;
-            if (this._toastTimer) clearTimeout(this._toastTimer);
-            this._toastTimer = setTimeout(() => {
-                this._toast.visible = false;
-                this._toastTimer = null;
-            }, duration);
         },
 
         _showHelpToast(msg) {

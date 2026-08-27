@@ -66,6 +66,11 @@ export function stateLightbox() {
     return {
 
         // --- Lightbox 狀態初始值 ---
+        // 131a-T4：下面這五個（lightboxOpen / lightboxIndex / lightboxCloseTimer /
+        // _lightboxAnimating / _lightboxGeneration）的正本在此。state-base.js 曾有一份
+        // 逐字相同的宣告，但 mergeState 順序 base(0) 在前、lightbox(3) 在後，那份從未生效
+        // ——改它的人會看到「我改了但沒作用」。該份已於 131a-T4 移除，跨貢獻者撞名由
+        // scripts/state_key_guard.mjs 守著。
         lightboxOpen: false,
         lightboxIndex: -1,              // 指向 filteredVideos 的索引
         lightboxCloseTimer: null,       // F2: generation-guarded delayed clear timer

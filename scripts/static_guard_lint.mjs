@@ -1052,7 +1052,6 @@ const RULES = [
   { file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string', pattern: '_setTimer(', note: '[TestTimerTracking] search-flow.js timer methods' },
   { file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string', pattern: '_clearAllTimers(', note: '[TestTimerTracking] search-flow.js timer methods' },
   { file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string', pattern: '_clearAllTimers()', note: '[TestTimerTracking] search-flow.js timer methods' },
-  { file: 'web/static/js/pages/search/state/result-card.js', kind: 'required-string', pattern: "_setTimer('toast'", note: '[TestTimerTracking] result-card.js timer' },
   { file: 'web/static/js/pages/search/state/persistence.js', kind: 'required-string', pattern: "_setTimer('autosave'", note: '[TestTimerTracking] persistence.js timer' },
   { file: 'web/static/js/pages/search/state/file-list.js', kind: 'required-string', pattern: "_setTimer('loadFavorite'", note: '[TestTimerTracking] file-list.js timer' },
 
@@ -3530,10 +3529,10 @@ const RULES = [
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
     pattern: [
-      "'alert-success': toastType === 'success'",
-      "'alert-error':   toastType === 'error'",
-      "'alert-warning': toastType === 'warning'",
-      "'alert-info':    toastType === 'info'",
+      "'alert-success': $store.toast.type === 'success'",
+      "'alert-error':   $store.toast.type === 'error'",
+      "'alert-warning': $store.toast.type === 'warning'",
+      "'alert-info':    $store.toast.type === 'info'",
     ],
     scope: /<div class="alert fluent-toast"[\s\S]*?<\/div>/,
     note: '[lint-guard:113d-T4] showcase toast class map 四鍵逐字對應（鎖住每個 class 與它的條件，不是字串存在性）',
@@ -3541,10 +3540,10 @@ const RULES = [
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
     pattern: [
-      "'bi-check-circle':         toastType === 'success'",
-      "'bi-exclamation-circle':   toastType === 'error'",
-      "'bi-exclamation-triangle': toastType === 'warning'",
-      "'bi-info-circle':          toastType === 'info'",
+      "'bi-check-circle':         $store.toast.type === 'success'",
+      "'bi-exclamation-circle':   $store.toast.type === 'error'",
+      "'bi-exclamation-triangle': $store.toast.type === 'warning'",
+      "'bi-info-circle':          $store.toast.type === 'info'",
     ],
     scope: /<div class="alert fluent-toast"[\s\S]*?<\/div>/,
     note: '[lint-guard:113d-T4] showcase toast icon map 四鍵逐字對應',
@@ -4340,6 +4339,51 @@ const RULES = [
     kind: 'forbidden-string',
     pattern: /^(?:(?!#).)*\btime\.time\(\)/m,
     note: '[lint-guard:130a-T6] 探活不得用 time.time() 算逾時 —— 啟動那 30 秒剛好撞上系統校時，使用者會看到一句假的「啟動逾時」。用 time.monotonic()。',
+  },
+
+  // ==== [131b-T1] 全螢幕層 x-trap.inert 焦點鎖 ====
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: 'x-trap.inert="lightboxOpen && !sampleGalleryOpen && !rescrapeOpen && !browseDirOpen && !duplicateModalOpen"',
+    note: '[131b-T1] 搜尋頁燈箱開著時若沒這條，Tab 會跑到底下看不見的搜尋列與卡片上',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: 'x-trap.inert="sampleGalleryOpen && !rescrapeOpen && !browseDirOpen && !duplicateModalOpen"',
+    note: '[131b-T1] 搜尋頁劇照集開著時若沒這條，Tab 會跑到燈箱與頁面背景的按鈕上',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'x-trap.inert="sampleGalleryOpen && !rescrapeOpen && !removeActressModalOpen && !deleteVideoModalOpen"',
+    note: '[131b-T1] 瀏覽頁劇照集開著時若沒這條，Tab 會跑到燈箱與頁面背景，等於這層焦點鎖沒做',
+  },
+
+  // ==== [131b-T4] Help Popover 共用元件掛載 ====
+  {
+    file: 'web/templates/base.html', kind: 'required-string',
+    pattern: 'components/help-popover.js',
+    note: '[131b-T4] 少這一行，設定頁與掃描頁 8 個 ? 按鈕全部點不出東西——x-data="helpPopover" 找不到定義，Alpine 只會在 console 抱怨，畫面上就是「按了沒反應」',
+  },
+  // 8 個掛載點逐一鎖住（既有 :1175-1179 的 help-popover / help-popover-btn 是 min，
+  // 拆掉其中一顆仍會過；count 讓「少一顆」直接紅）。131b branch review P3。
+  {
+    file: 'web/templates/settings.html', kind: 'structure-count',
+    pattern: 'x-data="helpPopover"', count: 6,
+    note: '[131b-T4] settings 的 6 個 ? 說明浮層各自掛一份 helpPopover——少一顆＝那顆點下去沒反應（console ReferenceError，畫面無事發生）',
+  },
+  {
+    file: 'web/templates/scanner.html', kind: 'structure-count',
+    pattern: 'x-data="helpPopover"', count: 2,
+    note: '[131b-T4] scanner 的 2 個 ? 說明浮層各自掛一份 helpPopover——少一顆＝那顆點下去沒反應',
+  },
+
+  // ==== [131b-T3] Toast store 全站掛載 ====
+  // branch review P2：全站載入的模組每一支都有 required-string（ghost-fly / burst-picker /
+  // path-utils / motion-* / page-lifecycle / gsap / alpine），T4 也照著加了——只有這支漏了。
+  {
+    file: 'web/templates/base.html', kind: 'required-string',
+    pattern: 'components/toast-store.js',
+    note: '[131b-T3] 少這一行，$store.toast 是 undefined：五頁的 toast 容器綁定當場 TypeError，而且 this.showToast(...) 會往呼叫端拋——使用者按「重新刮削」「複製路徑」「儲存設定」不但沒有提示，那個函式後面那半段也不會跑',
   },
 ];
 

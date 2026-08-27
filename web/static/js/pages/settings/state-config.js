@@ -371,7 +371,7 @@ export function stateConfig() {
                         return null;
                     },
                     cleanup: () => {
-                        if (this._toastTimer) clearTimeout(this._toastTimer);
+                        window.Alpine?.store?.('toast')?.hide?.();   // 131b-T3：cleanup 不得拋錯（拋了會跳過後面所有 teardown）
                         // 61b-5: 回收 GSAP inline props（frontend-stack-roles 共存規則 3）
                         this._gsapCtx?.revert();
                     }

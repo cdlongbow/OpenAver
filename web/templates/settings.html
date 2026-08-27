@@ -120,14 +120,14 @@
                 </template>
                 <!-- ? 警語 popover（沿用 .help-popover disclosure 模式，與「下載劇照」等一致；
                      81b-T1 直接落地完整互動＝既有 pattern verbatim copy，T3 收為 verify-only）-->
-                <div class="settings-server-warning-anchor popover-anchor">
+                <div class="settings-server-warning-anchor popover-anchor" x-data="helpPopover">
                     <button type="button" class="help-popover-btn"
-                            @click.prevent="showServerWarning = !showServerWarning"
-                            :aria-expanded="showServerWarning">
+                            @click.prevent="toggle()"
+                            :aria-expanded="open">
                         <i class="bi bi-question-circle"></i>
                     </button>
-                    <div x-show="showServerWarning" x-cloak x-transition
-                         @click.outside="showServerWarning = false"
+                    <div x-show="open" x-cloak x-transition
+                         @click.outside="close()"
                          class="help-popover">
                         {# 讀 accessAuthEnabledSaved 而非草稿 accessAuthEnabled：這句話對
                            使用者做安全宣稱（「其他裝置需要輸入密碼才能連線」），只能反映
@@ -195,19 +195,19 @@
         <div class="settings-quick-toggle-row">
 
             <!-- 下載劇照（extrafanart） -->
-            <div class="settings-form-group popover-anchor">
+            <div class="settings-form-group popover-anchor" x-data="helpPopover">
                 <label class="settings-label">
                     <input type="checkbox" class="toggle toggle-primary"
                            x-model="form.downloadSampleImages">
                     <span class="label-text">{{ t('settings.scraper.download_sample_images_label') }}</span>
                     <button type="button" class="help-popover-btn"
-                            @click.prevent="showSampleImagesHelp = !showSampleImagesHelp"
-                            :aria-expanded="showSampleImagesHelp">
+                            @click.prevent="toggle()"
+                            :aria-expanded="open">
                         <i class="bi bi-question-circle"></i>
                     </button>
                 </label>
-                <div x-show="showSampleImagesHelp" x-cloak x-transition
-                     @click.outside="showSampleImagesHelp = false"
+                <div x-show="open" x-cloak x-transition
+                     @click.outside="close()"
                      class="help-popover">
                     <small class="help-popover__body">
                         {{ t('settings.scraper.download_sample_images_hint') }}
@@ -216,20 +216,20 @@
             </div>
 
             <!-- 封面縮圖快取（71-T5） -->
-            <div class="settings-form-group popover-anchor">
+            <div class="settings-form-group popover-anchor" x-data="helpPopover">
                 <label class="settings-label">
                     <input type="checkbox" class="toggle toggle-primary"
                            x-model="form.thumbnailCacheEnabled"
                            @change="onThumbCacheToggleChange()">
                     <span class="label-text">{{ t('settings.thumbnail_cache.label') }}</span>
                     <button type="button" class="help-popover-btn"
-                            @click.prevent="showThumbCacheHelp = !showThumbCacheHelp"
-                            :aria-expanded="showThumbCacheHelp">
+                            @click.prevent="toggle()"
+                            :aria-expanded="open">
                         <i class="bi bi-question-circle"></i>
                     </button>
                 </label>
-                <div x-show="showThumbCacheHelp" x-cloak x-transition
-                     @click.outside="showThumbCacheHelp = false"
+                <div x-show="open" x-cloak x-transition
+                     @click.outside="close()"
                      class="help-popover">
                     <small class="help-popover__body">
                         {{ t('settings.thumbnail_cache.hint') }}
@@ -269,19 +269,19 @@
                             </div>
                         </div>
                         <div class="settings-sources-batchbar-right">
-                            <span class="settings-sources-counter popover-anchor">
+                            <span class="settings-sources-counter popover-anchor" x-data="helpPopover">
                                 <span>{{ t('settings.sources.counter_prefix') }}</span>
                                 <strong x-text="enabledCount"></strong>
                                 <span class="cap-divider">/</span>
                                 <span class="cap-value">10</span>
                                 <span class="cap-tag">{{ t('settings.sources.cap_tag') }}</span>
                                 <button type="button" class="help-popover-btn"
-                                        @click.prevent="showCounterHelp = !showCounterHelp"
-                                        :aria-expanded="showCounterHelp">
+                                        @click.prevent="toggle()"
+                                        :aria-expanded="open">
                                     <i class="bi bi-question-circle"></i>
                                 </button>
-                                <div x-show="showCounterHelp" x-cloak x-transition
-                                     @click.outside="showCounterHelp = false"
+                                <div x-show="open" x-cloak x-transition
+                                     @click.outside="close()"
                                      class="help-popover">
                                     <small class="help-popover__body">
                                         {{ t('settings.sources.counter_help') }}
@@ -1005,19 +1005,19 @@
 
                         <div class="settings-form-row">
                             <label class="row-label" for="maxFilenameLength">{{ t('settings.scraper.max_filename_length_label') }}</label>
-                            <div class="input-group-inline popover-anchor">
+                            <div class="input-group-inline popover-anchor" x-data="helpPopover">
                                 <input type="number" class="input input-bordered input-sm" id="maxFilenameLength"
                                     x-model.number="form.maxFilenameLength" min="50" max="255">
                                 <span class="input-suffix">{{ t('settings.scraper.unit_chars') }}</span>
                                 <button type="button" class="help-popover-btn"
-                                        @click="showPathHelp = !showPathHelp"
-                                        :aria-expanded="showPathHelp"
+                                        @click="toggle()"
+                                        :aria-expanded="open"
                                         aria-controls="pathLengthHelp"
                                         aria-label="{{ t('settings.scraper.path_length_help_aria') }}">
                                     <i class="bi bi-question-circle"></i>
                                 </button>
-                                <div id="pathLengthHelp" x-show="showPathHelp" x-cloak x-transition
-                                     @click.outside="showPathHelp = false"
+                                <div id="pathLengthHelp" x-show="open" x-cloak x-transition
+                                     @click.outside="close()"
                                      class="help-popover">
                                     <small class="help-popover__body">
                                         {{ t('settings.scraper.path_length_help_line1') }}<br>
@@ -1116,21 +1116,21 @@
                     <!-- 封面屬性標籤：總開關 + manifest 驅動 pill 清單 -->
                     <div class="settings-form-row">
                         <div class="flex-1 flex flex-col gap-1">
-                            <div class="settings-attr-head popover-anchor">
+                            <div class="settings-attr-head popover-anchor" x-data="helpPopover">
                                 <label class="settings-label">
                                     <input type="checkbox" class="toggle toggle-primary"
                                            x-model="form.coverBadgesEnabled">
                                     <span class="label-text">{{ t('settings.gallery.cover_badges_label') }}</span>
                                 </label>
                                 <button type="button" class="help-popover-btn"
-                                        @click="showCoverBadgesHelp = !showCoverBadgesHelp"
-                                        :aria-expanded="showCoverBadgesHelp"
+                                        @click="toggle()"
+                                        :aria-expanded="open"
                                         aria-controls="coverBadgesHelp"
                                         aria-label="{{ t('settings.gallery.cover_badges_help_aria') }}">
                                     <i class="bi bi-question-circle"></i>
                                 </button>
-                                <div id="coverBadgesHelp" x-show="showCoverBadgesHelp" x-cloak x-transition
-                                     @click.outside="showCoverBadgesHelp = false"
+                                <div id="coverBadgesHelp" x-show="open" x-cloak x-transition
+                                     @click.outside="close()"
                                      class="help-popover">
                                     <small class="help-popover__body">{{ t('settings.gallery.cover_badges_note') }}</small>
                                 </div>
@@ -1444,10 +1444,10 @@
     </dialog>
 
 <!-- Toast 容器（Alpine controlled）-->
-<div class="toast toast-end toast-top z-[9999]" x-show="_toast.visible" x-cloak x-transition>
-    <div class="alert" :class="`alert-${_toast.type}`">
-        <span x-text="_toast.message"></span>
-        <button type="button" class="btn btn-sm btn-circle btn-ghost" @click="_toast.visible = false">
+<div class="toast toast-end toast-top z-[9999]" x-show="$store.toast.visible" x-cloak x-transition>
+    <div class="alert" :class="`alert-${$store.toast.type}`">
+        <span x-text="$store.toast.message"></span>
+        <button type="button" class="btn btn-sm btn-circle btn-ghost" @click="$store.toast.hide()">
             <i class="bi bi-x"></i>
         </button>
     </div>

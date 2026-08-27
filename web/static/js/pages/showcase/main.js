@@ -15,6 +15,7 @@ import { stateLightbox } from '@/showcase/state-lightbox.js';
 import { stateSimilar }  from '@/showcase/state-similar.js';
 import { stateDelete }   from '@/showcase/state-delete.js';
 import { rescrapeState } from '@/shared/state-rescrape.js';
+import { toastState } from '@/shared/state-toast.js';
 import { mergeState } from '@/shared/merge-state.js';
 
 window.showcaseState = function() {
@@ -26,6 +27,7 @@ window.showcaseState = function() {
         stateSimilar.call(this),
         stateDelete.call(this),
         rescrapeState.call(this),
+        toastState.call(this),
     );
 };
 

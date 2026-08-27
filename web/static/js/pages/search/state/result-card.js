@@ -15,6 +15,77 @@ export function parseActorsInput(str) {
 // 與本 branch 的主張相反。各 consumer 一律直接 import 那個唯一所有者。
 import { resolveResultCoverUrl, shouldFallbackToCover } from '@/shared/cover-fallback.js';
 
+// ---- 131b-T2: 三組行內編輯的共用實作（module-level，不進頂層 return）----
+// 收斂理由：下面這個 identity guard 曾被 Codex PR#115 / PR#116 在四份重複實作裡各修一次。
+// 共用之後「同一個修正只需改一處」。
+
+// TASK-106 Option C Part 1（唯一權威保證）：current() 已換到別的候選/檔（不論是
+// navigate/switchToFile/scrapeAll/grid/lightbox 或任何未來路徑造成的）就擋下寫入，
+// 不寫錯候選。必須在任何寫入之前、最先執行。
+// Codex PR#115 P2：三個欄位各有專屬的 _editSourceX，不共用單一欄位——title/chinese/actors
+// 三個 editingX 可同時開啟，共用一個欄位會讓後開啟者覆蓋先開啟者捕獲的來源，
+// 使先開啟者的 guard 誤判「候選未換」而把 stale 內容寫進別的候選（data pollution）。
+// Codex PR#116 P2：date 也走同一個 guard（同源 pattern，fail-closed：未捕獲 null 也算變了）。
+function candidateChanged(ctx, c, sourceKey) {
+    return c !== ctx[sourceKey];
+}
+
+const INLINE_EDIT_FIELDS = {
+    title: {
+        editing: 'editingTitle',
+        buffer: 'editedTitleValue',
+        source: '_editSourceTitle',
+        ref: 'titleInput',
+        read: (ctx, c) => c.title || '',
+        write: (ctx, c, raw) => { c.title = raw.trim(); c._titleEdited = true; },
+    },
+    chineseTitle: {
+        editing: 'editingChineseTitle',
+        buffer: 'editedChineseTitleValue',
+        source: '_editSourceChineseTitle',
+        ref: 'chineseTitleInput',
+        read: (ctx) => ctx.chineseTitleText() || '',
+        write: (ctx, c, raw) => { c.translated_title = raw.trim(); c._chineseTitleEdited = true; },
+    },
+    actors: {
+        editing: 'editingActors',
+        buffer: 'editedActorsValue',
+        source: '_editSourceActors',
+        ref: 'actorsInput',
+        read: (ctx, c) => (c.actors || []).join(', '),
+        // 刻意不 .trim()：交給 parseActorsInput 逐段 trim。也刻意沒有 _xxxEdited 旗標。
+        write: (ctx, c, raw) => { c.actors = parseActorsInput(raw); },
+    },
+};
+
+function startInlineEdit(ctx, name) {
+    const f = INLINE_EDIT_FIELDS[name];
+    const c = ctx.current();
+    ctx[f.buffer] = f.read(ctx, c);
+    ctx[f.editing] = true;
+    ctx[f.source] = c;
+    ctx.$nextTick(() => {
+        ctx.$refs[f.ref]?.focus();
+        ctx.$refs[f.ref]?.select();
+    });
+}
+
+function confirmInlineEdit(ctx, name) {
+    const f = INLINE_EDIT_FIELDS[name];
+    const c = ctx.current();
+    if (candidateChanged(ctx, c, f.source)) {
+        ctx[f.editing] = false;
+        return;
+    }
+    f.write(ctx, c, ctx[f.buffer]);
+    ctx[f.editing] = false;
+    ctx.saveState();
+}
+
+function cancelInlineEdit(ctx, name) {
+    ctx[INLINE_EDIT_FIELDS[name].editing] = false;
+}
+
 export function searchStateResultCard() {
     return {
     // ===== T1c: Result Card Computed =====
@@ -105,104 +176,26 @@ export function searchStateResultCard() {
             : window.t('search.local.has_local');
     },
 
-    // ===== T1c: Title Edit Methods =====
+    // ===== T1c: Title Edit Methods =====（實作見檔頭的 INLINE_EDIT_FIELDS）
 
-    startEditTitle() {
-        const c = this.current();
-        this.editedTitleValue = c.title || '';
-        this.editingTitle = true;
-        // TASK-106 Option C Part 1: 捕獲編輯開啟當下的候選物件參照，供 confirmEditTitle 比對。
-        // Codex PR#115 P2: 用 title 專屬欄位，不與 chineseTitle/actors 共用（見 base.js 註解）。
-        this._editSourceTitle = c;
-        this.$nextTick(() => {
-            this.$refs.titleInput?.focus();
-            this.$refs.titleInput?.select();
-        });
-    },
+    startEditTitle() { startInlineEdit(this, 'title'); },
+    confirmEditTitle() { confirmInlineEdit(this, 'title'); },
+    cancelEditTitle() { cancelInlineEdit(this, 'title'); },
 
-    confirmEditTitle() {
-        // TASK-106 Option C Part 1（唯一權威保證）：current() 已換到別的候選/檔（不論是
-        // navigate/switchToFile/scrapeAll/grid/lightbox 或任何未來路徑造成的）就擋下寫入，
-        // 不寫錯候選。必須在任何寫入之前、最先執行。
-        const c = this.current();
-        if (c !== this._editSourceTitle) {
-            this.editingTitle = false;
-            return;
-        }
-        const newValue = this.editedTitleValue.trim();
-        c.title = newValue;
-        c._titleEdited = true;
-        this.editingTitle = false;
-        this.saveState();
-    },
-
-    cancelEditTitle() {
-        this.editingTitle = false;
-    },
-
-    startEditChineseTitle() {
-        const c = this.current();
-        this.editedChineseTitleValue = this.chineseTitleText() || '';
-        this.editingChineseTitle = true;
-        // TASK-106 Option C Part 1: 捕獲編輯開啟當下的候選物件參照，供 confirmEditChineseTitle 比對。
-        // Codex PR#115 P2: 用 chineseTitle 專屬欄位，不與 title/actors 共用（見 base.js 註解）。
-        this._editSourceChineseTitle = c;
-        this.$nextTick(() => {
-            this.$refs.chineseTitleInput?.focus();
-            this.$refs.chineseTitleInput?.select();
-        });
-    },
-
-    confirmEditChineseTitle() {
-        // TASK-106 Option C Part 1（唯一權威保證）：見 confirmEditTitle 同段註解。
-        const c = this.current();
-        if (c !== this._editSourceChineseTitle) {
-            this.editingChineseTitle = false;
-            return;
-        }
-        const newValue = this.editedChineseTitleValue.trim();
-        c.translated_title = newValue;
-        c._chineseTitleEdited = true;
-        this.editingChineseTitle = false;
-        this.saveState();
-    },
-
-    cancelEditChineseTitle() {
-        this.editingChineseTitle = false;
-    },
+    startEditChineseTitle() { startInlineEdit(this, 'chineseTitle'); },
+    confirmEditChineseTitle() { confirmInlineEdit(this, 'chineseTitle'); },
+    cancelEditChineseTitle() { cancelInlineEdit(this, 'chineseTitle'); },
 
     // ===== T3: Actor Edit Methods =====
 
-    startEditActors() {
-        const c = this.current();
-        this.editedActorsValue = (c.actors || []).join(', ');
-        this.editingActors = true;
-        // TASK-106 Option C Part 1: 捕獲編輯開啟當下的候選物件參照，供 confirmEditActors 比對。
-        // Codex PR#115 P2: 用 actors 專屬欄位，不與 title/chineseTitle 共用（見 base.js 註解）。
-        this._editSourceActors = c;
-        this.$nextTick(() => {
-            this.$refs.actorsInput?.focus();
-            this.$refs.actorsInput?.select();
-        });
-    },
-
-    confirmEditActors() {
-        // TASK-106 Option C Part 1（唯一權威保證）：見 confirmEditTitle 同段註解。
-        const c = this.current();
-        if (c !== this._editSourceActors) {
-            this.editingActors = false;
-            return;
-        }
-        c.actors = parseActorsInput(this.editedActorsValue);
-        this.editingActors = false;
-        this.saveState();
-    },
-
-    cancelEditActors() {
-        this.editingActors = false;
-    },
+    startEditActors() { startInlineEdit(this, 'actors'); },
+    confirmEditActors() { confirmInlineEdit(this, 'actors'); },
+    cancelEditActors() { cancelInlineEdit(this, 'actors'); },
 
     // ===== T7: Date Edit Methods =====
+    // date 刻意**不**套 INLINE_EDIT_FIELDS：它沒有 editing flag、沒有 buffer、沒有 cancel、
+    // 簽名也不同（吃 value）。硬套會生出三個 null 欄位的設定物件。
+    // 但它**共用同一份 candidateChanged**——那正是被 Codex 修過四次的東西。
 
     startEditDate() {
         // TASK-106 Codex PR#116 P2: 打開原生日曆當下捕獲候選物件參照，供 confirmEditDate 比對，
@@ -211,10 +204,9 @@ export function searchStateResultCard() {
     },
 
     confirmEditDate(value) {
-        // TASK-106 Codex PR#116 P2（與 confirmEditTitle 同源的 identity guard）：current() 已換到
-        // 別的候選/檔就擋下寫入、不寫錯候選。必須在寫入前最先執行。掛 date input @change。
+        // TASK-106 Codex PR#116 P2（與 confirmEditTitle 同源的 identity guard）。掛 date input @change。
         const c = this.current();
-        if (c !== this._editSourceDate) return;   // fail-closed：候選變了（含未捕獲 null）就丟棄不寫
+        if (candidateChanged(this, c, '_editSourceDate')) return;   // fail-closed：候選變了（含未捕獲 null）就丟棄不寫
         c.date = value;
         this.saveState();
     },
@@ -474,18 +466,6 @@ export function searchStateResultCard() {
         } else {
             window.open(url, '_blank', 'noopener,noreferrer');
         }
-    },
-
-    // ===== T6b: Toast =====
-
-    showToast(message, type = 'success', duration = 2500) {
-        // 設定 toast 內容
-        this._toast.message = message;
-        this._toast.type = type;
-        this._toast.visible = true;
-
-        // T4.2: 使用 _setTimer 管理（自動取代舊 timer，離頁時可統一清除）
-        this._setTimer('toast', () => { this._toast.visible = false; }, duration);
     },
 
     // ===== T1c: Cover Error =====

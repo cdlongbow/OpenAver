@@ -2774,13 +2774,33 @@ class TestSettingsQuickToggleGuard:
             "71-T5 違規：form.thumbnailCacheEnabled x-model 必須在 .settings-quick-toggle-row 內"
 
     def test_thumbnail_cache_has_help_popover_state(self):
-        """71-T5：封面縮圖快取區塊必須有 showThumbCacheHelp state binding（Alpine↔HTML API contract）"""
+        """71-T5→131b-T4：封面縮圖快取區塊必須有可運作的 help popover（Alpine↔HTML API contract）。
+
+        131b-T4 把 showThumbCacheHelp 旗標搬進 Alpine.data('helpPopover') 共用元件，原字面消失。
+        ⚠️ 錨點不能只換成 x-data="helpPopover"／class="help-popover"：舊的 settings-quick-toggle-row
+        區間裡有**兩顆**結構相同的浮層（下載劇照 + 封面縮圖快取），共用字面會讓「只拆掉縮圖快取那顆」
+        仍然全綠（131b-T4 雙審都抓到這條）。改用**全檔唯一**的 x-model="form.thumbnailCacheEnabled"
+        往回找它自己那個 wrapper，把範圍收窄到只含這一顆，專一性與舊錨點相同。"""
         html = self._html()
-        row_start = html.index('class="settings-quick-toggle-row"')
-        sec_search_pos = html.index('id="sec-search"')
-        row_block = html[row_start:sec_search_pos]
-        assert 'showThumbCacheHelp' in row_block, \
-            "71-T5 違規：quick-toggle 列內封面縮圖快取區塊缺少 showThumbCacheHelp state binding"
+        tc_pos = html.index('x-model="form.thumbnailCacheEnabled"')  # 全檔唯一（見同 class 其他測試）
+        block_start = html.rindex('<div class="settings-form-group popover-anchor"', 0, tc_pos)
+        next_group = html.find('<div class="settings-form-group popover-anchor"', tc_pos)
+        block_end = next_group if next_group != -1 else html.index('id="sec-search"')
+        block = html[block_start:block_end]
+        # [lint-guard: pytest-justified] Alpine↔HTML binding contract（pre-merge.md §5.7 例外清單第 2 條）。
+        # 鎖的不是「這個字串在檔案裡」，而是「擁有全檔唯一 x-model="form.thumbnailCacheEnabled" 的那個
+        # wrapper，必須自己掛著 popover 元件」——範圍由該字面**往回**解析出它自己的 wrapper 決定。
+        # ⚠️ 不寫「lint 表達不了」：`static_guard_lint` 的 `scope` 吃整條 RegExp（含 capture group），
+        # 用 negative-lookahead 把「不含下一個 wrapper 開頭」寫進去是做得到的。不遷移的理由是另外三個：
+        #   ① 這支是 71-T5 就存在的既有測試，131b-T4 只改錨點；遷移要走「等價性維持嚴審」，
+        #      成本遠高於它擋的東西（判準句：不修＝我們自己再收斂一次，不是使用者的損失）。
+        #   ② 要寫的那條 RegExp 約 200 字元、lookahead 密集，比這 6 行 Python 更難驗；寫歪了是 fail-open。
+        #   ③ 它是 TestSettingsQuickToggleGuard 這 17 支同型 HTML 斷言裡的一員，單獨搬走只會讓
+        #      class 覆蓋面破碎，而三桶棘輪本來就合計計量——搬桶不減量（§5.7 明文提醒的「換桶」）。
+        assert 'x-data="helpPopover"' in block, \
+            "71-T5→131b-T4 違規：封面縮圖快取那一顆 ? 的 wrapper 缺少 x-data=\"helpPopover\" 元件掛載"
+        assert 'class="help-popover"' in block, \
+            "71-T5→131b-T4 違規：封面縮圖快取那一顆 ? 缺少 help-popover 浮層本體"
 
     # ── 71-T11: 估算搬出 help-popover → confirm modal ──────────────────
     def test_thumbnail_cache_help_popover_no_longer_has_hint_estimate(self):

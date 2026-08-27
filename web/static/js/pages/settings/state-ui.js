@@ -5,20 +5,10 @@ export function stateUI() {
         dirPath,
         // ===== UI State =====
         newSuffixInput: '',
-        showPathHelp: false,
-        showSampleImagesHelp: false,
-        showCounterHelp: false,
-        showThumbCacheHelp: false,
-        showCoverBadgesHelp: false,
-        showServerWarning: false,  // 81b-T1: 伺服器模式警語 ? popover（沿用 show*Help disclosure 模式）
 
         // 64b-1: 進階摺疊開關（x-collapse 驅動）
         scraperAdvanced: false,
         galleryExport: false,   // 95b-T2: 離線 HTML 匯出摺疊（預設收合，CD-95b-7）
-
-        // Toast state
-        _toast: { message: '', type: 'success', visible: false },
-        _toastTimer: null,
 
         // Dirty Check Modal State
         dirtyCheckModalOpen: false,
@@ -43,17 +33,6 @@ export function stateUI() {
         scannerDirectories: [],
 
         // ===== Methods =====
-        showToast(message, type = 'success', duration = 2500) {
-            this._toast.message = message;
-            this._toast.type = type;
-            this._toast.visible = true;
-            if (this._toastTimer) clearTimeout(this._toastTimer);
-            this._toastTimer = setTimeout(() => {
-                this._toast.visible = false;
-                this._toastTimer = null;
-            }, duration);
-        },
-
         async selectOutputFolder() {
             if (typeof window.pywebview === 'undefined' || !window.pywebview.api) {
                 this.openBrowseDir('settings', (path) => { this.form.avlistOutputDir = path; });

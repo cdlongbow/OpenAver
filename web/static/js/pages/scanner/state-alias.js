@@ -211,7 +211,7 @@ export function stateAlias() {
         async startOnlineSearch() {
             const name = this.aliasInput.trim();
             if (!name) {
-                this.showToast(window.t('scanner.alias.toast_need_primary_name'));
+                this.showToast(window.t('scanner.alias.toast_need_primary_name'), 'info');
                 return;
             }
 

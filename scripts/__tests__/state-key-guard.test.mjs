@@ -1,0 +1,1115 @@
+/**
+ * state-key-guard.test.mjs — `scripts/state_key_guard.mjs` 黑箱測試（plan-131a T3）
+ *
+ * 手法比照 `scripts/__tests__/vendor-guard.test.mjs`：`mkdtempSync` 建 scratch root、
+ * `spawnSync` 黑箱跑守衛、斷言 exit code 與合併後的 stdout+stderr。
+ *
+ * 覆蓋 TASK-131a-T3 案例清單：正向 6、反向 4、基準 1、fail-closed 14 子案例、
+ * 箭頭函式 2、real-repo 4 —— 小計 31。
+ *
+ * 之後逐輪補上（每一批都附「為什麼補」，避免下次對帳時看不出增量來自哪裡）：
+ * - alias 4、source 3（131a Codex PR review：mergeState 的本地綁定名與來源限定）
+ * - export-list 4（131b Codex PR#161 第 1 輪：`function f(){}; export { f };` 是合法且行為等價的
+ *   寫法，卻會撞 FAIL_CLOSED_7 擋住整個 npm run lint —— 守衛對合法程式碼誤報是 defect 不是 nit）
+ * - map 1（131b Codex PR#161 第 2 輪：state_map.mjs 曾各留一份 walk / findNamedFactory 副本，
+ *   第 1 輪修了守衛那份、副本沒跟著改 ⇒ 同一個貢獻者「守衛過得了、地圖印成全 ·」且 exit 0、
+ *   stderr 全空。副本已刪、改成與守衛共用；本案鎖住它不再分岔）
+ *
+ * **共 43 個 test()**（＝ 31 + 4 + 3 + 4 + 1）。
+ * ⚠️ 增刪案例時**同步改這個數字**——它是對帳錨點，數字對不上會讓下一輪 review 誤判增量來源。
+ * 機械核對：`grep -c "^test('" scripts/__tests__/state-key-guard.test.mjs`
+ */
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import {
+  mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, cpSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { collectPages } from '../lib/alpine-state.mjs';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const GUARD_PATH = join(__dirname, '..', 'state_key_guard.mjs');
+const REPO_ROOT = join(__dirname, '..', '..');
+
+const PAGES = ['showcase', 'search', 'scanner', 'settings'];
+
+const REGRESSION_KEYS = [
+  'lightboxOpen',
+  'lightboxIndex',
+  'lightboxCloseTimer',
+  '_lightboxAnimating',
+  '_lightboxGeneration',
+];
+
+function runGuard(root) {
+  const args = root ? [GUARD_PATH, root] : [GUARD_PATH];
+  const result = spawnSync(process.execPath, args, { encoding: 'utf8' });
+  return { ...result, output: `${result.stdout}\n${result.stderr}` };
+}
+
+// state_map.mjs 與守衛共用 lib/alpine-state.mjs 的同一份解析核心，也共用本檔的 fixture helper。
+// 放這裡而不是另開檔：另開就得把 withScratch / writeBase / writePage / factoryFile 全部複製一份，
+// 那正是本輪在收斂的東西。
+const MAP_PATH = join(__dirname, '..', 'state_map.mjs');
+function runMap(root) {
+  const result = spawnSync(process.execPath, [MAP_PATH, root], { encoding: 'utf8' });
+  return { ...result, output: `${result.stdout}\n${result.stderr}` };
+}
+
+function writeAt(root, rel, content) {
+  const abs = join(root, ...rel.split('/'));
+  mkdirSync(dirname(abs), { recursive: true });
+  writeFileSync(abs, content);
+  return abs;
+}
+
+function defaultImports(extra = {}) {
+  return {
+    '@/shared/': '/static/js/shared/',
+    '@/showcase/': '/static/js/pages/showcase/',
+    '@/scanner/': '/static/js/pages/scanner/',
+    '@/settings/': '/static/js/pages/settings/',
+    '@/search/': '/static/js/pages/search/',
+    '@/demo/': '/static/js/pages/demo/',
+    ...extra,
+  };
+}
+
+function writeBase(root, imports = defaultImports()) {
+  writeAt(
+    root,
+    'web/templates/base.html',
+    `<script type="importmap">\n${JSON.stringify({ imports }, null, 2)}\n</script>\n`,
+  );
+}
+
+function factoryFile(name, keysObj) {
+  return `export function ${name}() {\n  return ${keysObj};\n}\n`;
+}
+
+function mainMerging(page, factories, inlineObj = null, opts = {}) {
+  // opts.localName：mergeState 的本地綁定名（測 `import { mergeState as X }`）
+  // opts.source    ：mergeState 的來源 specifier（測「別家同名函式」）
+  const localName = opts.localName || 'mergeState';
+  const source = opts.source || '@/shared/merge-state.js';
+  const alias = `@/${page}/`;
+  const lines = [];
+  for (const f of factories) {
+    lines.push(`import { ${f} } from '${alias}${f}.js';`);
+  }
+  const binding = localName === 'mergeState' ? 'mergeState' : `mergeState as ${localName}`;
+  lines.push(`import { ${binding} } from '${source}';`);
+  const args = factories.map((f) => `${f}()`);
+  if (inlineObj) args.push(inlineObj);
+  lines.push(`${localName}(${args.join(', ')});`);
+  lines.push('');
+  return lines.join('\n');
+}
+
+function writePage(root, page, shards, inlineObj = null, opts = {}) {
+  const names = Object.keys(shards);
+  for (const [name, body] of Object.entries(shards)) {
+    writeAt(root, `web/static/js/pages/${page}/${name}.js`, body);
+  }
+  writeAt(root, `web/static/js/pages/${page}/main.js`, mainMerging(page, names, inlineObj, opts));
+}
+
+/** 乾淨基準：demo 兩貢獻者、五個不重複 key → `demo 2/5` */
+function makeCleanDemo(root) {
+  writeBase(root);
+  writePage(root, 'demo', {
+    shardA: factoryFile('shardA', '{\n    a: 1,\n    b: 2,\n    c: 3,\n  }'),
+    shardB: factoryFile('shardB', '{\n    d: 4,\n    e: 5,\n  }'),
+  });
+}
+
+function withScratch(fn) {
+  const root = mkdtempSync(join(tmpdir(), 'state-key-guard-'));
+  try {
+    fn(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function withWebCopy(fn) {
+  const root = mkdtempSync(join(tmpdir(), 'state-key-guard-repo-'));
+  try {
+    cpSync(join(REPO_ROOT, 'web'), join(root, 'web'), { recursive: true });
+    fn(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 基準
+// ---------------------------------------------------------------------------
+
+test('〔基準〕乾淨合成 scratch root → exit 0，摘要 demo 2/5', () => {
+  withScratch((root) => {
+    makeCleanDemo(root);
+    const r = runGuard(root);
+    assert.equal(r.status, 0, r.output);
+    assert.match(r.output, /demo 2\/5/);
+    assert.match(r.output, /頂層狀態零跨貢獻者撞名/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 正向鎖
+// ---------------------------------------------------------------------------
+
+test('〔正1〕同一頁兩個分片宣告同名 key → exit 1；訊息含兩路徑＋行號＋key 名', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writePage(root, 'demo', {
+      shardA: factoryFile('shardA', '{\n    foo: 1,\n  }'),
+      shardB: factoryFile('shardB', '{\n    foo: 2,\n  }'),
+    });
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /\bfoo\b/);
+    assert.match(r.output, /web\/static\/js\/pages\/demo\/shardA\.js:\d+/);
+    assert.match(r.output, /web\/static\/js\/pages\/demo\/shardB\.js:\d+/);
+  });
+});
+
+test('〔正2〕四頁（showcase／search／scanner／settings）各做一次同名撞名 → 皆 exit 1', () => {
+  withScratch((root) => {
+    writeBase(root);
+    for (const page of PAGES) {
+      writePage(root, page, {
+        shardA: factoryFile('shardA', '{\n    collided: 1,\n  }'),
+        shardB: factoryFile('shardB', '{\n    collided: 2,\n  }'),
+      });
+    }
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    for (const page of PAGES) {
+      assert.match(r.output, new RegExp(`${page} 頁跨貢獻者撞名`), `missing page ${page}`);
+    }
+  });
+});
+
+test('〔正3〕同一頁三個貢獻者宣告同名 key → 訊息三來源全列', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writePage(root, 'demo', {
+      shardA: factoryFile('shardA', '{\n    triple: 1,\n  }'),
+      shardB: factoryFile('shardB', '{\n    triple: 2,\n  }'),
+      shardC: factoryFile('shardC', '{\n    triple: 3,\n  }'),
+    });
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /\btriple\b/);
+    assert.match(r.output, /web\/static\/js\/pages\/demo\/shardA\.js:\d+/);
+    assert.match(r.output, /web\/static\/js\/pages\/demo\/shardB\.js:\d+/);
+    assert.match(r.output, /web\/static\/js\/pages\/demo\/shardC\.js:\d+/);
+  });
+});
+
+test('〔正4〕factory key × inline 物件撞名 → 訊息同時列出分片與 main.js', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writePage(
+      root,
+      'demo',
+      { shardA: factoryFile('shardA', '{\n    sharedKey: 1,\n  }') },
+      '{\n    sharedKey: 2,\n  }',
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /\bsharedKey\b/);
+    assert.match(r.output, /web\/static\/js\/pages\/demo\/shardA\.js:\d+/);
+    assert.match(r.output, /web\/static\/js\/pages\/demo\/main\.js:\d+/);
+  });
+});
+
+test('〔正5〕同檔兩個 factory 都進 mergeState、彼此撞名 → 訊息列兩個 factory', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/dual.js',
+      `export function factoryOne() {
+  return {
+    clash: 1,
+  };
+}
+export function factoryTwo() {
+  return {
+    clash: 2,
+  };
+}
+`,
+    );
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `import { factoryOne, factoryTwo } from '@/demo/dual.js';
+import { mergeState } from '@/shared/merge-state.js';
+mergeState(factoryOne(), factoryTwo());
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /\bclash\b/);
+    // 兩個 factory 同檔；若誤用檔案 collapse 會靜默轉綠。訊息應出現兩次同檔不同行。
+    const hits = r.output.match(/web\/static\/js\/pages\/demo\/dual\.js:\d+/g) || [];
+    assert.ok(hits.length >= 2, `expected ≥2 dual.js locs, got ${hits}: ${r.output}`);
+    assert.notEqual(hits[0], hits[1], 'two factories must report distinct lines');
+  });
+});
+
+test('〔正6〕正1 案例還原後 → exit 0（避免恆紅空殼）', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writePage(root, 'demo', {
+      shardA: factoryFile('shardA', '{\n    foo: 1,\n  }'),
+      shardB: factoryFile('shardB', '{\n    foo: 2,\n  }'),
+    });
+    assert.equal(runGuard(root).status, 1, 'precondition: collision must be RED');
+    // 還原：改名消除撞名
+    writeAt(root, 'web/static/js/pages/demo/shardB.js', factoryFile('shardB', '{\n    bar: 2,\n  }'));
+    const r = runGuard(root);
+    assert.equal(r.status, 0, r.output);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 反向鎖
+// ---------------------------------------------------------------------------
+
+test('〔反①〕同一貢獻者內 get/set 配對（真實形狀 uncensoredMode）→ exit 0', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/settings/state-config.js',
+      `export function stateConfig() {
+  return {
+    sources: [],
+    CENSORED_SOURCES: [],
+    get uncensoredMode() {
+      const censored = this.sources.filter(s => this.CENSORED_SOURCES.includes(s.id));
+      return censored.length > 0 && censored.every(s => !s.enabled);
+    },
+    set uncensoredMode(v) {
+      if (v === true) {
+        this.sources.forEach(s => {
+          if (this.CENSORED_SOURCES.includes(s.id) && !s.manual_only) {
+            s.enabled = false;
+          }
+        });
+      }
+    },
+  };
+}
+`,
+    );
+    writeAt(
+      root,
+      'web/static/js/pages/settings/state-ui.js',
+      factoryFile('stateUI', '{\n    panelOpen: false,\n  }'),
+    );
+    writeAt(
+      root,
+      'web/static/js/pages/settings/main.js',
+      `import { stateConfig } from '@/settings/state-config.js';
+import { stateUI } from '@/settings/state-ui.js';
+import { mergeState } from '@/shared/merge-state.js';
+mergeState(stateConfig(), stateUI());
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 0, r.output);
+    // kinds collapse：get+set 必須併成同一個 key 且兩種 kind 都在。
+    // 卡片 mutation #1（existing.kinds.add → keys.set 覆寫）會丟掉先寫入的 get，
+    // exit-code 黑箱看不出來（Map 仍只有一個 name），所以這裡直接驗 kinds。
+    const pages = collectPages(root);
+    const config = pages
+      .find((p) => p.page === 'settings')
+      .contributors
+      .find((c) => c.factoryName === 'stateConfig');
+    const info = config.keys.get('uncensoredMode');
+    assert.ok(info, 'uncensoredMode must be collected');
+    assert.equal(config.keys.size, 3, 'sources + CENSORED_SOURCES + uncensoredMode');
+    assert.ok(info.kinds.has('get'), 'get must survive collapse');
+    assert.ok(info.kinds.has('set'), 'set must survive collapse');
+  });
+});
+
+test('〔反②〕不同頁出現同名 key → exit 0', () => {
+  withScratch((root) => {
+    writeBase(root);
+    for (const page of PAGES) {
+      writePage(root, page, {
+        shardA: factoryFile('shardA', '{\n    sameAcrossPages: 1,\n  }'),
+        shardB: factoryFile('shardB', '{\n    unique_' + page + ': 2,\n  }'),
+      });
+    }
+    const r = runGuard(root);
+    assert.equal(r.status, 0, r.output);
+  });
+});
+
+test('〔反③〕分片 method 內部巢狀 return {...} 帶同名 key → exit 0', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/shardA.js',
+      `export function shardA() {
+  return {
+    outer: 1,
+    method() {
+      return { shared: 99 };
+    },
+  };
+}
+`,
+    );
+    writeAt(
+      root,
+      'web/static/js/pages/demo/shardB.js',
+      factoryFile('shardB', '{\n    shared: 1,\n  }'),
+    );
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      mainMerging('demo', ['shardA', 'shardB']),
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 0, r.output);
+  });
+});
+
+test('〔反④〕同一貢獻者內同一個 key 宣告兩次 → exit 0（屬 ESLint no-dupe-keys）', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/shardA.js',
+      `export function shardA() {
+  return {
+    duped: 1,
+    duped: 2,
+  };
+}
+`,
+    );
+    writeAt(
+      root,
+      'web/static/js/pages/demo/shardB.js',
+      factoryFile('shardB', '{\n    other: 3,\n  }'),
+    );
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      mainMerging('demo', ['shardA', 'shardB']),
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 0, r.output);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fail-closed
+// ---------------------------------------------------------------------------
+
+test('〔FC-1a〕base.html 沒有 importmap 區塊 → exit 1，含 FAIL_CLOSED_1', () => {
+  withScratch((root) => {
+    writeAt(root, 'web/templates/base.html', '<html><body>no importmap here</body></html>\n');
+    writePage(root, 'demo', {
+      shardA: factoryFile('shardA', '{\n    a: 1,\n  }'),
+    });
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /FAIL_CLOSED_1/);
+  });
+});
+
+test('〔FC-1b〕importmap 不是合法 JSON → exit 1，含 FAIL_CLOSED_1', () => {
+  withScratch((root) => {
+    writeAt(
+      root,
+      'web/templates/base.html',
+      '<script type="importmap">\n{ imports: BROKEN }\n</script>\n',
+    );
+    writePage(root, 'demo', {
+      shardA: factoryFile('shardA', '{\n    a: 1,\n  }'),
+    });
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /FAIL_CLOSED_1/);
+  });
+});
+
+test('〔FC-2〕所有 pages/*/main.js 都不 import mergeState → exit 1，含 FAIL_CLOSED_2', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `// no mergeState import
+export function demo() { return {}; }
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /FAIL_CLOSED_2/);
+  });
+});
+
+test('〔FC-3a〕某頁 import 了 mergeState 卻沒有 mergeState(...) 呼叫 → FAIL_CLOSED_3', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `import { mergeState } from '@/shared/merge-state.js';
+// imported but never called
+const x = mergeState;
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /FAIL_CLOSED_3/);
+  });
+});
+
+test('〔FC-3b〕同一頁多於一處 mergeState(...) 呼叫 → FAIL_CLOSED_3，訊息列每一處行號', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/shardA.js',
+      factoryFile('shardA', '{\n    a: 1,\n  }'),
+    );
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `import { shardA } from '@/demo/shardA.js';
+import { mergeState } from '@/shared/merge-state.js';
+mergeState(shardA());
+mergeState(shardA());
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /FAIL_CLOSED_3/);
+    // 兩處呼叫的行號都要出現（main.js 第 3、4 行）
+    assert.match(r.output, /lines \d+, \d+/);
+  });
+});
+
+test('〔FC-4a〕mergeState argument 是字面量（非 Call／Object）→ FAIL_CLOSED_4', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `import { mergeState } from '@/shared/merge-state.js';
+mergeState(42);
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /FAIL_CLOSED_4/);
+  });
+});
+
+test('〔FC-4b〕CallExpression 取不出識別字（window[\'x\']()）→ FAIL_CLOSED_4', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `import { mergeState } from '@/shared/merge-state.js';
+mergeState(window['x']());
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /FAIL_CLOSED_4/);
+  });
+});
+
+test('〔FC-5〕factory 識別字在 main.js 找不到對應 import → FAIL_CLOSED_5', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `import { mergeState } from '@/shared/merge-state.js';
+mergeState(ghostFactory());
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /FAIL_CLOSED_5/);
+  });
+});
+
+test('〔FC-6a〕specifier 解析不到存在的檔 → FAIL_CLOSED_6', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `import { missing } from '@/demo/missing.js';
+import { mergeState } from '@/shared/merge-state.js';
+mergeState(missing());
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /FAIL_CLOSED_6/);
+  });
+});
+
+test('〔FC-6b〕specifier 不吃任何別名 → FAIL_CLOSED_6', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `import { orphan } from 'orphan-pkg/no-alias.js';
+import { mergeState } from '@/shared/merge-state.js';
+mergeState(orphan());
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /FAIL_CLOSED_6/);
+  });
+});
+
+test('〔FC-7a〕分片檔找不到該具名 factory → FAIL_CLOSED_7', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/shardA.js',
+      `export function otherName() {
+  return { a: 1 };
+}
+`,
+    );
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `import { shardA } from '@/demo/shardA.js';
+import { mergeState } from '@/shared/merge-state.js';
+mergeState(shardA());
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /FAIL_CLOSED_7/);
+  });
+});
+
+// ==== export list 形（Codex PR#161 review：守衛對合法程式碼誤報是 defect 不是 nit）====
+// `export function f(){}` 與 `function f(){}; export { f };` 行為完全等價。
+// 只吃前者的話，純語法搬動就會讓 npm run lint 紅在 FAIL_CLOSED_7，而那句
+// "named factory 'X' not found" 完全不指向根因。本庫已有 5 處 export list 用例。
+
+test('〔export-list-1〕`function f(){}; export { f };` → 正常解析，不 fail-closed', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/shardA.js',
+      `function shardA() {
+  return { a: 1, b: 2 };
+}
+
+export { shardA };
+`,
+    );
+    writeAt(
+      root,
+      'web/static/js/pages/demo/shardB.js',
+      `export function shardB() {
+  return { c: 3 };
+}
+`,
+    );
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `import { shardA } from '@/demo/shardA.js';
+import { shardB } from '@/demo/shardB.js';
+import { mergeState } from '@/shared/merge-state.js';
+mergeState(shardA(), shardB());
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 0, r.output);
+    assert.match(r.output, /demo 2\/3/);   // 兩貢獻者、三個 key —— export list 那份真的被讀進來了
+  });
+});
+
+test('〔export-list-2〕export list ＋ 改名（`export { local as Outer }`）→ 用對外名找得到', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/shardA.js',
+      `const localFactory = () => ({ a: 1 });
+
+export { localFactory as shardA };
+`,
+    );
+    writeAt(root, 'web/static/js/pages/demo/shardB.js', factoryFile('shardB', '{ b: 2 }'));
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `import { shardA } from '@/demo/shardA.js';
+import { shardB } from '@/demo/shardB.js';
+import { mergeState } from '@/shared/merge-state.js';
+mergeState(shardA(), shardB());
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 0, r.output);
+    assert.match(r.output, /demo 2\/2/);
+  });
+});
+
+test('〔export-list-3〕export list 形也抓得到跨貢獻者撞名（不是只「不報錯」）', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/shardA.js',
+      `function shardA() {
+  return { dup: 1 };
+}
+
+export { shardA };
+`,
+    );
+    writeAt(root, 'web/static/js/pages/demo/shardB.js', factoryFile('shardB', '{ dup: 2 }'));
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `import { shardA } from '@/demo/shardA.js';
+import { shardB } from '@/demo/shardB.js';
+import { mergeState } from '@/shared/merge-state.js';
+mergeState(shardA(), shardB());
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /dup/);
+  });
+});
+
+test('〔export-list-4〕跨檔 re-export（export ... from 別的檔）仍不支援 → FAIL_CLOSED_7', () => {
+  // 刻意的既有限制（檔頭「已知限制」）：本地 export list 支援、跨檔追鏈不支援。
+  // 這一案把「node.source !== null 要被排除」釘成刻意行為，而不是新分支的漏網。
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(root, 'web/static/js/pages/demo/real.js', factoryFile('shardA', '{ a: 1 }'));
+    writeAt(
+      root,
+      'web/static/js/pages/demo/shardA.js',
+      `export { shardA } from '@/demo/real.js';
+`,
+    );
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `import { shardA } from '@/demo/shardA.js';
+import { mergeState } from '@/shared/merge-state.js';
+mergeState(shardA());
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /FAIL_CLOSED_7/);
+  });
+});
+
+// ==== 地圖端的同一個缺口（Codex PR#161 review 第 2 輪）====
+// state_map.mjs 曾各留一份 walk / findNamedFactory 的逐字副本。第 1 輪把守衛那份補上
+// export list 支援之後，副本沒跟著改 ⇒ export list 形的貢獻者「守衛過得了、地圖印成全 ·」，
+// 而且 exit 0、stderr 全空——**看起來完全正常的錯誤資料**。副本已刪、改成共用；本案鎖住它不再分岔。
+
+test('〔map-1〕export list 形的貢獻者，地圖不會把它的伸手矩陣塌成全 ·', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/shardA.js',
+      `function shardA() {
+  return {
+    a: 1,
+    readsOwn() {
+      return this.a;
+    },
+  };
+}
+
+export { shardA };
+`,
+    );
+    writeAt(root, 'web/static/js/pages/demo/shardB.js', factoryFile('shardB', '{ b: 2 }'));
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `import { shardA } from '@/demo/shardA.js';
+import { shardB } from '@/demo/shardB.js';
+import { mergeState } from '@/shared/merge-state.js';
+mergeState(shardA(), shardB());
+`,
+    );
+    const r = runMap(root);
+    assert.equal(r.status, 0, r.output);
+    // shardA 那一列必須量得到它自己讀自己的那一次（自有 1），不是塌成 0
+    const row = r.output.split('\n').find((l) => l.trim().startsWith('| shardA |'));
+    assert.ok(row, `找不到 shardA 那一列：\n${r.output}`);
+    assert.match(row, /\|\s*1\s*\|\s*0\s*\|\s*$/, `shardA 列應為「自有 1／外求 0」，實際：${row}`);
+  });
+});
+
+test('〔FC-7b〕頂層 return 不是 ObjectExpression → FAIL_CLOSED_7', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/shardA.js',
+      `export function shardA() {
+  return 42;
+}
+`,
+    );
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      mainMerging('demo', ['shardA']),
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /FAIL_CLOSED_7/);
+  });
+});
+
+test('〔FC-8a〕頂層 return 出現 SpreadElement → FAIL_CLOSED_8', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/shardA.js',
+      `const base = { x: 1 };
+export function shardA() {
+  return {
+    ...base,
+    y: 2,
+  };
+}
+`,
+    );
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      mainMerging('demo', ['shardA']),
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /FAIL_CLOSED_8/);
+  });
+});
+
+test('〔FC-8b〕頂層 return 出現 computed key → FAIL_CLOSED_8', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/shardA.js',
+      `export function shardA() {
+  const k = 'dyn';
+  return {
+    [k]: 1,
+  };
+}
+`,
+    );
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      mainMerging('demo', ['shardA']),
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /FAIL_CLOSED_8/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 箭頭函式 factory
+// ---------------------------------------------------------------------------
+
+test('〔箭1〕export const demoState = () => ({ a, b }) → 解析 2 key、exit 0', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/arrow.js',
+      `export const demoState = () => ({ a: 1, b: 2 });
+`,
+    );
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `import { demoState } from '@/demo/arrow.js';
+import { mergeState } from '@/shared/merge-state.js';
+mergeState(demoState());
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 0, r.output);
+    assert.match(r.output, /demo 1\/2/);
+  });
+});
+
+test('〔箭2〕箭頭函式 factory 與另一分片撞名 → exit 1', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(
+      root,
+      'web/static/js/pages/demo/arrow.js',
+      `export const demoState = () => ({ shared: 1 });
+`,
+    );
+    writeAt(
+      root,
+      'web/static/js/pages/demo/other.js',
+      factoryFile('other', '{\n    shared: 2,\n  }'),
+    );
+    writeAt(
+      root,
+      'web/static/js/pages/demo/main.js',
+      `import { demoState } from '@/demo/arrow.js';
+import { other } from '@/demo/other.js';
+import { mergeState } from '@/shared/merge-state.js';
+mergeState(demoState(), other());
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /\bshared\b/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// real-repo
+// ---------------------------------------------------------------------------
+
+test('〔真1〕掃真 repo（不帶 root）→ exit 0', () => {
+  const r = runGuard();
+  assert.equal(r.status, 0, r.output);
+  assert.match(r.output, /頂層狀態零跨貢獻者撞名/);
+});
+
+test('〔真2〕真 repo 副本複製一個 key 到另一分片 → exit 1', () => {
+  withWebCopy((root) => {
+    assert.equal(runGuard(root).status, 0, '副本本身應乾淨');
+    const lightboxPath = join(root, 'web/static/js/pages/showcase/state-lightbox.js');
+    const src = readFileSync(lightboxPath, 'utf8');
+    // state-base 有 loading: true；注入到 state-lightbox 頂層 return 造成跨貢獻者撞名
+    const injected = src.replace(
+      'return {',
+      'return {\n        loading: true, // state-key-guard test injection',
+    );
+    assert.notEqual(injected, src, 'injection must modify file');
+    writeFileSync(lightboxPath, injected);
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /\bloading\b/);
+  });
+});
+
+test('〔真3〕回歸鎖：注入 §F 五個 key 到 showcase/state-base.js → exit 1 且命中字面值', () => {
+  withWebCopy((root) => {
+    assert.equal(runGuard(root).status, 0, '副本本身應乾淨');
+    const basePath = join(root, 'web/static/js/pages/showcase/state-base.js');
+    const src = readFileSync(basePath, 'utf8');
+    const injection = REGRESSION_KEYS.map((k) => `        ${k}: null,`).join('\n');
+    // stateBase() 的 return { 在 export function stateBase 之後；用獨特錨點
+    const anchor = 'export function stateBase() {\n    return {';
+    assert.ok(src.includes(anchor), 'stateBase return anchor must exist');
+    const injected = src.replace(
+      anchor,
+      `${anchor}\n${injection}`,
+    );
+    assert.notEqual(injected, src, 'injection must modify file');
+    writeFileSync(basePath, injected);
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    for (const key of REGRESSION_KEYS) {
+      assert.match(r.output, new RegExp(`\\b${key}\\b`), `missing key ${key}`);
+    }
+  });
+});
+
+// ⚠️ 這條是**前瞻性**回歸鎖，不是「證明有主動排除」。現況 collectPages() 只讀
+// web/templates/base.html 與 readdirSync(web/static/js/pages)，沒有全庫走訪、也沒有
+// 排除清單 —— 所以 scripts/ 底下的東西是「結構上看不見」，不是「被過濾掉」。
+// 留著的理由：哪天有人把 collectPages 改成廣域 tree-walk，這條會立刻紅。
+// （vendor-guard / cjk-guard 那兩支真的會走全庫，它們的同型測試證明力比這條強。）
+test('〔真4〕掃描範圍不含 scripts/：scratch 下放假撞名檔仍 exit 0', () => {
+  withWebCopy((root) => {
+    writeAt(
+      root,
+      'scripts/fake-collision.js',
+      `// looks like a collision fixture but must not be scanned
+export function a() { return { boom: 1 }; }
+export function b() { return { boom: 2 }; }
+mergeState(a(), b());
+`,
+    );
+    const r = runGuard(root);
+    assert.equal(r.status, 0, r.output);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Codex PR review（2026-08-27）：mergeState 的 import alias 與來源限定
+//
+// 舊版以 **imported name** 判定該頁要納入，卻以字面 `mergeState` 找 CallExpression，
+// 兩者只是碰巧一致 —— 一旦有人寫合法的 `import { mergeState as X }`，該頁會被納入
+// 卻找不到呼叫，噴一個內容說謊的 FAIL_CLOSED_3（訊息說「沒有呼叫」，但呼叫就在那裡）。
+// 修法：從 ImportSpecifier.local.name 收綁定名，並限定來源為 shared/merge-state.js。
+// ---------------------------------------------------------------------------
+
+test('〔alias-1〕import { mergeState as X } ＋ X(...) 呼叫 → exit 0（合法程式不得被擋）', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writePage(root, 'demo', {
+      shardA: factoryFile('shardA', '{\n    a: 1,\n    b: 2,\n    c: 3,\n  }'),
+      shardB: factoryFile('shardB', '{\n    d: 4,\n    e: 5,\n  }'),
+    }, null, { localName: 'composeState' });
+    const r = runGuard(root);
+    assert.equal(r.status, 0, r.output);
+    assert.match(r.output, /demo 2\/5/);
+  });
+});
+
+test('〔alias-2〕alias 頁出現真撞名 → 仍 exit 1（正向偵測不得被 alias 化繞過）', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writePage(root, 'demo', {
+      shardA: factoryFile('shardA', '{\n    dup: 1,\n  }'),
+      shardB: factoryFile('shardB', '{\n    dup: 2,\n  }'),
+    }, null, { localName: 'composeState' });
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /dup/);
+    assert.match(r.output, /shardA\.js:\d+/);
+    assert.match(r.output, /shardB\.js:\d+/);
+  });
+});
+
+test('〔alias-3〕alias 頁 import 了卻從未呼叫 → FAIL_CLOSED_3，訊息用真實綁定名', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(root, 'web/static/js/pages/demo/shardA.js',
+      factoryFile('shardA', '{\n    a: 1,\n  }'));
+    writeAt(root, 'web/static/js/pages/demo/main.js',
+      "import { shardA } from '@/demo/shardA.js';\n"
+      + "import { mergeState as composeState } from '@/shared/merge-state.js';\n"
+      + 'const unused = shardA();\n');
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /FAIL_CLOSED_3/);
+    // 訊息必須點名實際綁定名，不能再說「no mergeState(...) call found」那種假話
+    assert.match(r.output, /composeState/);
+  });
+});
+
+test('〔alias-4〕alias 頁呼叫兩次 → FAIL_CLOSED_3 且列出每一處行號', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(root, 'web/static/js/pages/demo/shardA.js',
+      factoryFile('shardA', '{\n    a: 1,\n  }'));
+    writeAt(root, 'web/static/js/pages/demo/main.js',
+      "import { shardA } from '@/demo/shardA.js';\n"
+      + "import { mergeState as composeState } from '@/shared/merge-state.js';\n"
+      + 'composeState(shardA());\n'
+      + 'window.__x = () => composeState(shardA());\n');
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /FAIL_CLOSED_3/);
+    assert.match(r.output, /found 2/);
+  });
+});
+
+test('〔source-1〕別處同名 mergeState → 該頁靜默排除（不 fail-closed、也不被分析）', () => {
+  withScratch((root) => {
+    writeBase(root);
+    // 合法的一頁，確保不會落到 FAIL_CLOSED_2
+    writePage(root, 'demo', {
+      shardA: factoryFile('shardA', '{\n    a: 1,\n  }'),
+      shardB: factoryFile('shardB', '{\n    b: 2,\n  }'),
+    });
+    // decoy：同名但來源不同，且**自己內部有撞名**——若被誤當成本契約就會被報出來
+    writeAt(root, 'web/static/js/shared/unrelated-merge.js',
+      'export function mergeState(...p) { return Object.assign({}, ...p); }\n');
+    writePage(root, 'search', {
+      shardC: factoryFile('shardC', '{\n    dup: 1,\n  }'),
+      shardD: factoryFile('shardD', '{\n    dup: 2,\n  }'),
+    }, null, { source: '@/shared/unrelated-merge.js' });
+    const r = runGuard(root);
+    assert.equal(r.status, 0, r.output);
+    assert.match(r.output, /demo 2\/2/);
+    // decoy 頁不得出現在摘要裡，其內部撞名也不得被報出
+    assert.ok(!r.output.includes('search'), r.output);
+    assert.ok(!r.output.includes('dup'), r.output);
+  });
+});
+
+test('〔source-2〕全庫只有別家同名 mergeState → FAIL_CLOSED_2（沒有任何一頁用本契約）', () => {
+  withScratch((root) => {
+    writeBase(root);
+    writeAt(root, 'web/static/js/shared/unrelated-merge.js',
+      'export function mergeState(...p) { return Object.assign({}, ...p); }\n');
+    writePage(root, 'demo', {
+      shardA: factoryFile('shardA', '{\n    a: 1,\n  }'),
+    }, null, { source: '@/shared/unrelated-merge.js' });
+    const r = runGuard(root);
+    assert.equal(r.status, 1, r.output);
+    assert.match(r.output, /FAIL_CLOSED_2/);
+  });
+});
+
+test('〔source-3〕namespace import（ns.mergeState）→ 目前刻意不吃，該頁排除', () => {
+  // 這條把「排除」釘成刻意行為而非疏漏。要正式支援得新增一條 fail-closed 規則
+  // （CD-6 會從 8 條變 9 條），超出 Codex 該條 finding 的範圍，列 backlog。
+  withScratch((root) => {
+    writeBase(root);
+    writePage(root, 'demo', {
+      shardA: factoryFile('shardA', '{\n    a: 1,\n  }'),
+      shardB: factoryFile('shardB', '{\n    b: 2,\n  }'),
+    });
+    writeAt(root, 'web/static/js/pages/search/shardC.js',
+      factoryFile('shardC', '{\n    dup: 1,\n  }'));
+    writeAt(root, 'web/static/js/pages/search/shardD.js',
+      factoryFile('shardD', '{\n    dup: 2,\n  }'));
+    writeAt(root, 'web/static/js/pages/search/main.js',
+      "import { shardC } from '@/search/shardC.js';\n"
+      + "import { shardD } from '@/search/shardD.js';\n"
+      + "import * as ns from '@/shared/merge-state.js';\n"
+      + 'ns.mergeState(shardC(), shardD());\n');
+    const r = runGuard(root);
+    assert.equal(r.status, 0, r.output);
+    assert.ok(!r.output.includes('search'), r.output);
+  });
+});

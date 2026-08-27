@@ -110,12 +110,6 @@ export function searchStateBase() {
         duplicateModalOpen: false,  // Alpine state for duplicate modal
         errorText: '',  // T6c: Error message state
 
-        // ===== T6b: Toast State =====
-        _toast: {
-            message: '',
-            type: 'success',  // 'success' | 'error' | 'warning' | 'info'
-            visible: false
-        },
         _timers: {},  // Timer registry：{ [key: string]: number }（setTimeout ID）
         _batchCheckInterval: null,      // T1(40b): batch searchAll 暫停等待 interval ref
         _translateCheckInterval: null,  // T1(40b): translateAll 暫停等待 interval ref

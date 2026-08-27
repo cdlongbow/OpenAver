@@ -279,17 +279,6 @@ export function stateBase() {
         filteredCount: 0,     // _filteredVideos.length 的 reactive scalar
         paginatedVideos: [],  // 當前頁顯示的影片
 
-        // Lightbox 狀態 (M3a)
-        lightboxOpen: false,
-        lightboxIndex: -1,              // 指向 filteredVideos 的索引
-        lightboxCloseTimer: null,       // F2: generation-guarded delayed clear timer
-
-        // Toast 狀態 (M3h)
-        toastVisible: false,
-        toastMessage: '',
-        toastType: 'success',
-        toastTimer: null,
-
         // Card Info 展開狀態 (M3i)
         infoVisible: false,
 
@@ -316,8 +305,6 @@ export function stateBase() {
         perPage: 90,
         totalPages: 1,
         _animGeneration: 0,  // B13: 防止 stale deferred callback
-        _lightboxAnimating: false,  // B16: Lightbox 動畫進行中 guard
-        _lightboxGeneration: 0,    // B19: invalidation token for deferred $nextTick lightbox callbacks
 
         // --- 生命週期 ---
         async init() {
@@ -328,7 +315,7 @@ export function stateBase() {
                         this._animGeneration++;       // B13: 使 pending deferred callback 失效
                         this._lightboxGeneration++;   // B19: invalidate pending $nextTick lightbox callbacks
                         if (this.lightboxCloseTimer) clearTimeout(this.lightboxCloseTimer);  // F2: cleanup delayed clear timer
-                        if (this.toastTimer) clearTimeout(this.toastTimer);
+                        window.Alpine?.store?.('toast')?.hide?.();   // 131b-T3：cleanup 不得拋錯（拋了會跳過後面所有 teardown）
                         if (this.lightboxOpen) document.body.classList.remove('overflow-hidden');
                         this._resetPicker();                                  // 53a-T1: 清場 picker 狀態（含 abort _pickerReadyAbort）
                         // nexttick-hydrate P2-2：離頁時 mobile 面板不走 closeMobilePanel（僅 matchMedia
@@ -604,15 +591,5 @@ export function stateBase() {
             event.target.src = _NO_COVER_PLACEHOLDER;
         },
 
-        // --- Toast 通知 (M3h) ---
-        showToast(msg, type = 'success', duration = 2500) {
-            this.toastMessage = msg;
-            this.toastType = type;
-            this.toastVisible = true;
-            if (this.toastTimer) clearTimeout(this.toastTimer);
-            this.toastTimer = setTimeout(() => {
-                this.toastVisible = false;
-            }, duration);
-        },
     };
 }
