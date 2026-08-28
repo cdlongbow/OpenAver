@@ -511,6 +511,7 @@ export function stateBase() {
             this.pills = deserializePills(state.pills);
             this.mode = urlParams.get('mode') || state.mode || 'grid';
             if (!['grid', 'table', 'list'].includes(this.mode)) this.mode = 'grid';
+            if (!this.showTableList && this.mode !== 'grid') this.mode = 'grid';
             // F2: grid + perPage=0 組合降級（settings 若存 items_per_page=0 之防呆）
             if (this.mode === 'grid' && this.perPage === 0) {
                 this.perPage = 120;

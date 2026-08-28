@@ -178,7 +178,8 @@ test('saveState：replaceState 捕捉到的 URL 字串不含 cardShape', () => {
 });
 
 test('reload 模擬：saveState → 新 stateBase 實例 restoreState → cardShape 一致', () => {
-    stubWindow({ search: '' });
+    // T2 hydrate 從 config 覆寫 showTableList；僅 makeComponent override 撐不過 restoreState
+    stubWindow({ search: '', config: { show_table_list: true } });
     const c1 = makeComponent({
         cardShape: 'poster',
         sort: 'title',
@@ -198,6 +199,7 @@ test('reload 模擬：saveState → 新 stateBase 實例 restoreState → cardSh
         page: 1,
         search: '',
         mode: 'grid',
+        showTableList: true,
     });
     c2.restoreState();
     assert.equal(c2.cardShape, 'poster');
