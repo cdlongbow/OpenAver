@@ -177,6 +177,7 @@ class GalleryConfig(BaseModel):
     default_sort: str = "date"
     default_order: str = "descending"
     items_per_page: int = 90
+    show_table_list: bool = False
     cover_badges: CoverBadgesConfig = CoverBadgesConfig()
 
 

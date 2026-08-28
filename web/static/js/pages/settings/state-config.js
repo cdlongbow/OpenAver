@@ -57,6 +57,7 @@ export function stateConfig() {
             avlistOutputFilename: 'gallery_output.html',
             coverBadgesEnabled: false,
             coverBadgeItems: {},
+            showTableList: false,
 
             // Showcase
             viewerPlayer: '',
@@ -717,6 +718,7 @@ export function stateConfig() {
                     this.form.avlistOutputFilename = config.gallery?.output_filename || 'gallery_output.html';
                     this.form.coverBadgesEnabled = config.gallery?.cover_badges?.enabled === true;
                     this.form.coverBadgeItems = { ...(config.gallery?.cover_badges?.items || {}) };
+                    this.form.showTableList = config.gallery?.show_table_list === true;
 
                     // Showcase
                     this.form.viewerPlayer = config.showcase?.player || '';
@@ -992,6 +994,7 @@ export function stateConfig() {
                     min_size_mb: this.form.avlistMinSize || 0,
                     output_dir: this.form.avlistOutputDir.trim() || 'output',
                     output_filename: this.form.avlistOutputFilename.trim() || 'gallery_output.html',
+                    show_table_list: this.form.showTableList,
                     cover_badges: {
                         enabled: this.form.coverBadgesEnabled,
                         items: this.form.coverBadgeItems

@@ -4375,8 +4375,8 @@ const RULES = [
   // 拆掉其中一顆仍會過；count 讓「少一顆」直接紅）。131b branch review P3。
   {
     file: 'web/templates/settings.html', kind: 'structure-count',
-    pattern: 'x-data="helpPopover"', count: 6,
-    note: '[131b-T4] settings 的 6 個 ? 說明浮層各自掛一份 helpPopover——少一顆＝那顆點下去沒反應（console ReferenceError，畫面無事發生）',
+    pattern: 'x-data="helpPopover"', count: 7,
+    note: '[131b-T4] settings 的 7 個 ? 說明浮層各自掛一份 helpPopover——少一顆＝那顆點下去沒反應（console ReferenceError，畫面無事發生）。133b-T1 新增第 7 顆（顯示表格與清單）時同步 +1',
   },
   {
     file: 'web/templates/scanner.html', kind: 'structure-count',

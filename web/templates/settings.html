@@ -1153,6 +1153,31 @@
                         </div>
                     </div>
 
+                    <!-- 顯示表格與清單（TASK-133b-T1） -->
+                    <div class="settings-form-row">
+                        <div class="flex-1 flex flex-col gap-1">
+                            <div class="settings-attr-head popover-anchor" x-data="helpPopover">
+                                <label class="settings-label">
+                                    <input type="checkbox" class="toggle toggle-primary"
+                                           x-model="form.showTableList">
+                                    <span class="label-text">{{ t('settings.gallery.show_table_list_label') }}</span>
+                                </label>
+                                <button type="button" class="help-popover-btn"
+                                        @click="toggle()"
+                                        :aria-expanded="open"
+                                        aria-controls="showTableListHelp"
+                                        aria-label="{{ t('settings.gallery.show_table_list_help_aria') }}">
+                                    <i class="bi bi-question-circle"></i>
+                                </button>
+                                <div id="showTableListHelp" x-show="open" x-cloak x-transition
+                                     @click.outside="close()"
+                                     class="help-popover">
+                                    <small class="help-popover__body">{{ t('settings.gallery.show_table_list_note') }}</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- ── 進階摺疊：離線 HTML 匯出（galleryExport，預設收合 G-B1）── -->
                     <button class="collapsible-trigger" type="button" @click="galleryExport = !galleryExport"
                             :aria-expanded="galleryExport.toString()">

@@ -64,6 +64,7 @@
     "default_sort": "date",
     "default_order": "descending",
     "items_per_page": 90,
+    "show_table_list": false,
     "cover_badges": {
       "enabled": false,
       "items": {}
