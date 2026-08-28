@@ -17,11 +17,11 @@ Shared by:
 #   Group A — smoke-side reachability probe distinguishes state-1 (down) vs
 #             state-2 (200 but parser empty).
 #   Group B — quorum-only (no probe); None -> skip, never false state-2 fail.
-GROUP_A = {"javbus", "jav321", "heyzo", "d2pass", "dmm", "avsox"}
+GROUP_A = {"javbus", "jav321", "heyzo", "d2pass", "dmm", "avsox", "javdb-api"}
 GROUP_B = {"javdb", "fc2"}
 
 # Source classes for numbers_match canonical rules.
-_CENSORED = {"javbus", "jav321", "javdb", "dmm"}
+_CENSORED = {"javbus", "jav321", "javdb", "dmm", "javdb-api"}
 
 
 def _is_timeout(search_result) -> bool:

@@ -70,6 +70,46 @@ def _probe_reachable(source: str, number: str, scraper) -> bool:
             base, _ = scraper._ensure_session()
             return base is not None
 
+        if source == "javdb-api":
+            # 契約：**任何 HTTP 回應 ＝ True**（主機在、網路通），只有連線層失敗 ＝ False。
+            # 是不是 200、內容對不對，都是 classify_one 要判的事，不是 probe 的事。
+            #
+            # 🔴 **刻意不用 `javdb_api.api_search()`**（review P1）：它回答的是
+            # 「有沒有拿到可用資料」，不是「主機有沒有回應」。簽章輪替、信封形狀改變、
+            # 被擋——全都會讓它丟例外，而那些正是「**我們自己壞了**」的情形。
+            # 那些例外被本函式底下的 `except Exception: return False` 收成 unreachable
+            # 之後，`classify_one` 走 row 5（skip）⇒ **這顆燈在它最該紅的時候不會紅**。
+            # 用同一支會用同一種方式失敗的函式同時當 probe 和 search，probe 就沒有資訊量。
+            #
+            # 所以這裡自己送一次請求，只在**連線層**失敗時回 False。
+            # 沿用 javdb_api 的網域／路徑／簽名（同 javbus 分支重用 scraper 的 URL 與 session
+            # 的理由）——網域知識不做第二份拷貝。
+            from core.scrapers import javdb_api
+
+            # 網域備援與參數名都跟著正式路徑走（`api_get()`）：
+            # ① 只打第一個網域的話，「主網域死、鏡像活」會被判成 unreachable ⇒ skip，
+            #    而正式路徑那時是活的——偵測器會在不該黃的時候黃。
+            # ② 參數名是 `device_uuid` 不是 `uuid`（pre-merge branch review 抓到打錯）。
+            #    這裡不重建參數字典，直接照 `api_get()` 的組法，避免第二份拷貝再漂一次。
+            for _host in javdb_api._API_HOSTS:
+                query = dict(javdb_api._PUBLIC_PARAMS)
+                query["device_uuid"] = javdb_api._DEVICE_UUID
+                query["q"] = number
+                try:
+                    requests.get(
+                        _host + javdb_api._SEARCH_PATH,
+                        params=query,
+                        headers={
+                            "jdsignature": javdb_api.sign(),
+                            "user-agent": javdb_api._USER_AGENT,
+                        },
+                        timeout=10,
+                    )
+                except requests.exceptions.RequestException:
+                    continue
+                return True
+            return False
+
         # Group B (javdb / fc2) or unknown source.
         return False
     except Exception:

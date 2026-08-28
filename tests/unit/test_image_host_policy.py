@@ -65,6 +65,7 @@ def test_proxy_rules_matches_reconciliation_table():
         "minnano-av.com",
         "file.netcdn.space",
         "cf.javfree.me",  # TASK-113c-T3a: §1.4 sole enumerated new host
+        "tp.spfcas.com",  # TASK-132b-T4: javdb App API image host
     })
     assert set(roots) == {
         "javbus.com",
@@ -264,7 +265,7 @@ def test_cf_javfree_me_in_static_proxy_exact():
 
 def test_registry_truth_table_download_and_proxy_consumers():
     """Walk every IMAGE_HOSTS row × (download, proxy) + one live dynamic row."""
-    assert len(IMAGE_HOSTS) == 28
+    assert len(IMAGE_HOSTS) == 29  # +1 tp.spfcas.com (TASK-132b-T4)
 
     for entry in IMAGE_HOSTS:
         download_allowed = "download" in entry.consumers

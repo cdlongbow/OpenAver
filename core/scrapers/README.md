@@ -14,7 +14,7 @@
 | `dmm` | DMM | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | GraphQL API；需日本 IP（VPN/proxy）；數位 PPV 新片優先；封面高畫質 |
 | `javbus` | JavBus | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | 直打 detail URL；封面無浮水印但**僅右半裁切**；搜尋端點 `/search/` 已 404（站方改版，variant 探查已移除，見 §2） |
 | `jav321` | Jav321 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | keyword 搜尋恆回空，故不入 FUZZY_SEARCH_SOURCES |
-| `javdb` | JavDB | ✅ | ❌ | ❌ | ❌ | ⚠️ | ✅ | 重複 keyword 呼叫觸發 Cloudflare ban，故不入 FUZZY_SEARCH_SOURCES；封面有浮水印 |
+| `javdb` | JavDB | ✅ | ❌ | ❌ | ❌ | ⚠️ | 網頁有／API 無 | 重複 keyword 呼叫觸發 Cloudflare ban，故不入 FUZZY_SEARCH_SOURCES；**網頁路徑封面有 `javdb.com` 浮水印；資料介面路徑無浮水印**（見 §5）|
 | `javlibrary` | JavLibrary | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | **manual_only**：不進 SOURCE_ORDER fan-out；exact-only（CD-70b）；需 CfTransport（桌面版限定）；封面 hotlink DMM CDN（`pl.jpg`，同 dmm 無浮水印）；手動版本切換：**eager 全抓、新片優先、三手動入口（lightbox/search/switch-source）多版本皆出切換器**（spec-86 done，含 T7 switch-source follow-on） |
 
 ### 1.2 無碼來源（UNCENSORED_SOURCES）
@@ -180,9 +180,16 @@ post-spec-85（T1c 解耦後）：standalone 函式，不再實例化 `JavBusScr
 | JavBus | 無浮水印，但右半裁切 | 排前（若可接受裁切）|
 | DMM | 無浮水印，全框高畫質 | 排前（需 proxy） |
 | Jav321 | 無浮水印，全框 | 排前 |
-| JavDB | **有浮水印** | 排後（避免封面帶水印） |
+| JavDB | 網頁路徑有 `javdb.com` 浮水印；資料介面路徑無浮水印、全框 | 排前（0.15.1 起 javdb 走資料介面優先 ⇒ 一般情況下拿到的是無浮水印那張；只有降級到網頁備援時才會帶浮水印）|
 
-> 用戶若將 JavDB 排前，封面將帶浮水印。推薦：JavBus / DMM / Jav321 排於 JavDB 之前。
+> ⚠️ **2026-08-28 再訂正**：同日稍早曾用「平均像素差 ＋ >30% 像素比例」判定
+> 「網頁路徑與資料介面路徑是同一張、都沒有浮水印」——**那組統計量分不出半透明浮水印
+> 與 JPEG 重編碼雜訊**（兩者都落在平均差 2–5、>30 的像素 1–2%）。把差異圖放大存成
+> PNG 後，中央有清楚的 `javdb.com` 字樣：網頁那條有浮水印，資料介面那條沒有。
+> （SONE-205 / ABW-300 各自確認；五片同尺寸。）
+>
+> 📌 **這條敘述曾經影響過推薦排序**（「JavBus / DMM / Jav321 排於 JavDB 之前」）。
+> **本次只訂正事實，不改任何預設排序**——排序是 owner 的設定，要不要因此調整是另一件事。
 
 ---
 

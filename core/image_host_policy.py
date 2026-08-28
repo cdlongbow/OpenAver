@@ -6,8 +6,12 @@ Single source of truth for which hosts may be used by the download consumer
 
 Consumers export their own minimal-permission views via download_hosts_for()
 and proxy_rules(). Matching mechanism differences (exact-only vs exact+root,
-http+https vs https-only, photo_source binding) stay at the call sites —
-this module only declares hosts, it does not evaluate URLs.
+http+https vs https-only, photo_source binding) stay at the call sites.
+
+**代理那條路的判準本體在這裡**（`proxy_verdict()`）——所有權歸 registry 是
+Codex PR#128 round-2 P3 就定下的，132b 只是把最後一段實作搬過來：
+`web/routers/search.py` 退成「問一次 ＋ 記 log」，`core/scrapers/javdb_api.py`
+的圖片閘問同一個函式。兩邊各寫一份的話，第二份永遠比第一份寬鬆（BE-TEST-14）。
 
 `match="exact"` 不允子域是刻意的（**CD-60-1**：CDN / 女優照片的固定 host 嚴格匹配）；
 `match="root"` 才走呼叫端的 `host == root or host.endswith("." + root)` 邊界比對。
@@ -17,6 +21,7 @@ this module only declares hosts, it does not evaluate URLs.
 from __future__ import annotations
 
 import ipaddress
+import re
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, urlparse
 
@@ -32,6 +37,9 @@ class ImageHost:
     # keep defaults — path_prefix/port None means "no extra check".
     path_prefix: str | None = None
     port: int | None = None
+    # Body codec name for hosts whose response is not a plain image
+    # (e.g. "javdb-xor"). None = pass through unchanged.
+    payload_codec: str | None = None
 
 
 # Static translation of the two pre-T1 whitelists (+ T3a cf.javfree.me).
@@ -238,6 +246,21 @@ IMAGE_HOSTS: tuple[ImageHost, ...] = (
         consumers=("proxy",),
         photo_source=None,
     ),
+    # ---- javdb App API image host (encoded body; decode via payload_codec) ----
+    # consumers 只列 "proxy"：本 registry 的 "download" 消費端專指**女優照片**那條路
+    # （`download_hosts_for(photo_source)` → core/actress_photo.py），封面／劇照的下載
+    # 走 core/organizer.py 且**不查 registry**。標上 "download" 一個東西都選不到，
+    # 卻會逼著鬆綁兩條真的不變式（download ⇒ http+https、photo_source is None ⟺ 非 download）。
+    # 解碼查 codec_for_host()（不看 consumers）；javdb 的圖片閘查 proxy_verdict()，
+    # 那條**必須**看 consumers——它問的正是「代理端會不會收」。
+    ImageHost(
+        host="tp.spfcas.com",
+        match="exact",
+        schemes=("https",),
+        consumers=("proxy",),
+        photo_source=None,
+        payload_codec="javdb-xor",
+    ),
 )
 
 
@@ -252,6 +275,154 @@ def download_hosts_for(photo_source: str) -> set[str]:
         for entry in IMAGE_HOSTS
         if "download" in entry.consumers and entry.photo_source == photo_source
     }
+
+
+def _host_matches(entry: ImageHost, host: str) -> bool:
+    """exact = 逐字相等；root = host == root or host.endswith('.' + root)。"""
+    if entry.match == "exact":
+        return host == entry.host
+    if entry.match == "root":
+        return host == entry.host or host.endswith("." + entry.host)
+    return False
+
+
+def _iter_registry_entries() -> tuple[ImageHost, ...]:
+    """靜態 IMAGE_HOSTS ＋ 動態 proxy_dynamic_hosts()（每次重算）。"""
+    return IMAGE_HOSTS + proxy_dynamic_hosts()
+
+
+def codec_for_host(host: str) -> str | None:
+    """查 host 的 payload_codec；查不到或未標 codec → None。
+
+    同時查靜態 IMAGE_HOSTS 與動態 proxy_dynamic_hosts()。
+    """
+    if not host:
+        return None
+    host = host.lower()
+    for entry in _iter_registry_entries():
+        if _host_matches(entry, host):
+            return entry.payload_codec
+    return None
+
+
+# 動態條目（metatube 圖片端點）path 的合法字元集。刻意**不含 `%`**——理由見
+# `_path_prefix_allowed()` docstring。
+_SAFE_PATH_SEGMENT = re.compile(r"^[A-Za-z0-9._~-]+$")
+
+
+def _path_prefix_allowed(path: str, prefix: str) -> bool:
+    """動態條目的 path 閘門：前綴相符 ＋ 其後每一段都在**正向允許清單**內。
+
+    CD-113c-11 要的是「無法判定的形狀一律 fail-closed」。本函式的前一版是
+    **列舉違規編碼**（`%2e`/`%2f` 解碼後比對 `.`／`..`），review 實測打穿五種：
+    `%252e%252e`（雙重編碼）、`%c0%ae`／`..%c0%af`（overlong UTF-8）、`..;`
+    （matrix parameter）、`%00`。每補一種就多一條規則，而下一種永遠在清單外——
+    這是列舉黑名單的結構性失敗，不是漏想幾個。
+
+    改成**列舉合法形狀**：前綴之後的每一段必須是 `[A-Za-z0-9._~-]+`，且不得是
+    `.`／`..`。`%` 完全不在字元集裡，所以**所有**百分比編碼把戲（不論幾層、
+    什麼編碼）在解碼之前就出局，不需要我們去猜對面伺服器怎麼正規化。
+
+    代價（已知 residual）：provider／番號若真的需要百分比編碼（非 ASCII），
+    那一片的**預覽**會 403 破圖。這是刻意接受的降級——它不是安全洞，而且 T2
+    的 403 log 會指名 `原因=path 不在白名單`，真的發生時查得到。
+    """
+    if not path.startswith(prefix):
+        return False
+    rest = path[len(prefix):]
+    for segment in rest.split("/"):
+        if segment in ("", ".", ".."):
+            return False
+        if not _SAFE_PATH_SEGMENT.match(segment):
+            return False
+    return True
+
+
+def _effective_port(parsed) -> int | None:
+    """Default-port normalisation: missing port → 443 (https) / 80 (else).
+
+    BE-SEC-01 family: `parsed.port` RAISES ValueError for a malformed port
+    (out of 0-65535, or non-numeric — `urlparse()` itself accepts those and
+    only `.port` blows up). Returning None instead of propagating keeps this
+    a fail-closed 403 rather than an unhandled 500.
+    """
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    return port or (443 if parsed.scheme == "https" else 80)
+
+
+@dataclass(frozen=True, slots=True)
+class ProxyVerdict:
+    """`proxy_verdict()` 的結果。`reason is None` ⟺ `allowed is True`。
+
+    `host` / `scheme` 一併帶出來，是為了讓呼叫端記 log 時**不必再 parse 一次**
+    （BE-SEC-01：重複 parse 是這條路踩過的坑）。放行與拒絕都會填，
+    只有 URL 連 parse 都失敗時是空字串。
+    """
+
+    allowed: bool
+    host: str
+    scheme: str
+    reason: str | None
+
+
+def proxy_verdict(url: str) -> ProxyVerdict:
+    """這個**完整 URL** 能不能經 `/api/proxy-image` 取得？
+
+    兩個呼叫端問的是同一個問題，只是拿來做不同的事：
+    - `web/routers/search.py`：不能 → 403（這是 SSRF 閘門本體）
+    - `core/scrapers/javdb_api.py`：資料介面回了不能代理的圖片網址 → 丟 ValueError
+      → `search()` 降級 HTML，使用者拿到有浮水印但**看得見**的封面
+
+    第二個呼叫端如果自己寫一份「host 有沒有登記」的近似判斷，就會放行
+    `http://`（scheme 不符）與只給下載用的 host（沒有 proxy consumer）——
+    閘門過了、代理仍 403，使用者得到的是**沒有封面**。所以判準只能有一份。
+    """
+    # BE-SEC-01: single try/except-wrapped urlparse; reuse `parsed` everywhere
+    # below (including path / port checks). Never re-parse without try/except.
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return ProxyVerdict(False, "", "", "URL 無法解析")
+    host = (parsed.hostname or "").lower()
+    scheme = parsed.scheme
+    if not host:
+        return ProxyVerdict(False, host, scheme, "host 不在名單")
+
+    # Branch 1: static registry (proxy_rules) — still forces https.
+    # Host match first, then this branch's own scheme rule (設計問題 4).
+    exact_hosts, root_domains = proxy_rules()
+    if host in exact_hosts or any(
+        host == root or host.endswith("." + root) for root in root_domains
+    ):
+        if scheme != "https":
+            return ProxyVerdict(False, host, scheme, "scheme 不符")
+        return ProxyVerdict(True, host, scheme, None)
+
+    # Branch 2: dynamic entries (currently: connected metatube only).
+    # Scheme / port / path_prefix come from the entry itself (裁決 1 / 3).
+    for entry in proxy_dynamic_hosts():
+        if host != entry.host:
+            continue
+        if scheme not in entry.schemes:
+            return ProxyVerdict(False, host, scheme, "scheme 不符")
+        if entry.port is not None and _effective_port(parsed) != entry.port:
+            # _effective_port() 回 None（畸形 port）也落在這裡＝fail-closed
+            return ProxyVerdict(False, host, scheme, "port 不符")
+        if entry.path_prefix and not _path_prefix_allowed(
+            parsed.path, entry.path_prefix
+        ):
+            return ProxyVerdict(False, host, scheme, "path 不在白名單")
+        # metatube 的 /v1/images/ 端點會**自己去抓** `?url=` 指的那個目標，
+        # 外層白名單看不到它（同 T2 修 redirect 的理由）。判準的所有權在
+        # registry，不在這裡（Codex PR#128 round-2 P3）。
+        if entry.path_prefix and not nested_preview_target_allowed(parsed.query):
+            return ProxyVerdict(False, host, scheme, "巢狀目標不在白名單")
+        return ProxyVerdict(True, host, scheme, None)
+
+    return ProxyVerdict(False, host, scheme, "host 不在名單")
 
 
 def proxy_rules() -> tuple[frozenset[str], tuple[str, ...]]:

@@ -7,11 +7,14 @@ from typing import Optional
 from core.logger import get_logger
 
 logger = get_logger(__name__)
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
+from urllib.request import getproxies, proxy_bypass
 from bs4 import BeautifulSoup
 from .base import BaseScraper
+from .errors import SourceBlocked, SourceUnreachable
 from .models import Video, Actress
 from .utils import rate_limit, strip_number_prefix
+from . import javdb_api
 
 # 嘗試載入 curl_cffi
 # CURL_CFFI_IMPORT_ERROR 先在頂層初始化：正常 import 成功時此變數仍須存在，否則單獨
@@ -33,6 +36,135 @@ _warned = False
 _UNSET = object()
 _cainfo_override = _UNSET   # _UNSET=未算 / None=no-op 或降級 / bytes=CAINFO override
 _ca_warned = False
+
+
+def _parse_rating_votes(text: str) -> tuple[Optional[float], Optional[int]]:
+    """'4.58分, 由48人評價' → (4.58, 48)。抽不到的那一半回 None，不拋。"""
+    rating: Optional[float] = None
+    votes: Optional[int] = None
+    m = re.search(r'([0-9.]+)\s*分', text)
+    if m:
+        rating = float(m.group(1))
+    vm = re.search(r'由(\d+)人', text)
+    if vm:
+        votes = int(vm.group(1))
+    return rating, votes
+
+
+def _parse_panel_blocks(soup: BeautifulSoup) -> dict:
+    """解析詳情頁 `.panel-block`，回傳 date/maker/label/director/series/duration/actresses/tags/rating/votes。"""
+    date = ''
+    maker = ''
+    label = ''
+    director = ''
+    series = ''
+    duration: Optional[int] = None
+    actresses: list[Actress] = []
+    tags: list[str] = []
+    rating: Optional[float] = None
+    votes: Optional[int] = None
+
+    for panel in soup.select('.panel-block'):
+        label_elem = panel.select_one('strong')
+        value = panel.select_one('.value')
+
+        if not label_elem:
+            continue
+
+        label_text = label_elem.text.strip()
+
+        # 日期
+        if '日期' in label_text and value:
+            date = value.text.strip()
+
+        # 片商（排除「發行日期」；「發行」另走 label，避免覆蓋片商）
+        if ('片商' in label_text or '製作' in label_text) and '日期' not in label_text:
+            if value:
+                maker = value.text.strip()
+
+        # 發行 → label（同樣排除「發行日期」）
+        if '發行' in label_text and '日期' not in label_text:
+            if value:
+                label = value.text.strip()
+
+        # 時長 → duration（分鐘）；只抽數字，不比對「分鍾」
+        if '時長' in label_text and value:
+            dm = re.search(r'(\d+)', value.text)
+            if dm:
+                duration = int(dm.group(1))
+
+        # 導演
+        if '導演' in label_text and value:
+            director = value.text.strip()
+
+        # 系列
+        if '系列' in label_text and value:
+            series = value.text.strip()
+
+        # 演員（只抓女優）
+        if '演員' in label_text:
+            for a in panel.select('a'):
+                name = a.text.strip()
+                if not name:
+                    continue
+
+                # 檢查性別標記
+                next_elem = a.find_next_sibling()
+
+                # 跳過男優
+                classes: list[str] = []
+                if next_elem and hasattr(next_elem, 'get'):
+                    cls_val = next_elem.get('class')
+                    if isinstance(cls_val, list):
+                        classes = [str(c) for c in cls_val]
+                    else:
+                        classes = [str(cls_val)] if cls_val else []
+
+                if 'male' in classes and 'female' not in classes:
+                    continue
+
+                actresses.append(Actress(name=name))
+
+        # 標籤
+        if '類別' in label_text:
+            tag_elems = panel.select('a')
+            tags = [t.text.strip() for t in tag_elems if t.text.strip()]
+
+        # 評分（D8：0–5 真實用戶評分，`分` 錨定；javdb 無簡介）
+        if '評分' in label_text and value:
+            rating, votes = _parse_rating_votes(value.text)
+
+    return {
+        'date': date,
+        'maker': maker,
+        'label': label,
+        'director': director,
+        'series': series,
+        'duration': duration,
+        'actresses': actresses,
+        'tags': tags,
+        'rating': rating,
+        'votes': votes,
+    }
+
+
+def _resolve_proxies(url: str) -> Optional[dict]:
+    """Resolve system proxy for curl_cffi. None = omit proxies kwarg (same as pre-F1).
+
+    No cache: user may toggle system proxy mid-session (CD-132a-2).
+    """
+    try:
+        host = urlparse(url).hostname
+        if host and proxy_bypass(host):
+            return None
+    except Exception as e:
+        logger.debug("javdb: proxy_bypass 檢查失敗，視為不繞道: %s", e)
+    try:
+        raw = getproxies() or {}
+        filtered = {k: v for k, v in raw.items() if k in ("http", "https")}
+        return filtered or None
+    except Exception:
+        return None
 
 
 def _cainfo_override_bytes():
@@ -60,13 +192,15 @@ class JavDBScraper(BaseScraper):
     """
     JavDB 爬蟲
 
+    精準番號搜尋優先走資料介面，失敗或查無時自動退回網頁解析。
+
     優點：
     - 資料最完整（有 maker）
     - Tag 豐富
+    - 資料介面路徑封面無浮水印（網頁備援路徑封面有 javdb.com 浮水印）
 
     缺點：
-    - 封面有浮水印
-    - 需 curl_cffi 偽造 TLS 指紋
+    - 需 curl_cffi 偽造 TLS 指紋（僅網頁備援路徑）
     """
 
     def _get_source_name(self) -> str:
@@ -86,6 +220,7 @@ class JavDBScraper(BaseScraper):
 
         _ca = _cainfo_override_bytes()
         extra = {"curl_options": {CurlOpt.CAINFO: _ca}} if _ca is not None else {}
+        _proxies = _resolve_proxies(url)
 
         try:
             response = curl_requests.get(
@@ -98,32 +233,51 @@ class JavDBScraper(BaseScraper):
                     "Referer": "https://javdb.com/",
                 },
                 timeout=30,
-                **extra
+                **extra,
+                **({"proxies": _proxies} if _proxies else {}),
             )
 
             if response.status_code == 200:
-                return str(response.text)
-            logger.debug("JavDB non-200 for %s: %s", url, response.status_code)
+                text = str(response.text)
+                if len(text) < 20000:
+                    text_lower = text.lower()
+                    if (
+                        "cf-browser-verification" in text_lower
+                        or "just a moment" in text_lower
+                        or "challenge-platform" in text_lower
+                    ):
+                        logger.warning("JavDB blocked (Cloudflare challenge) for %s", url)
+                        raise SourceBlocked(f"javdb: Cloudflare challenge detected for {url}")
+                return text
+
+            if response.status_code in (403, 429, 503):
+                logger.warning("JavDB blocked (%s) for %s", response.status_code, url)
+                raise SourceBlocked(
+                    f"javdb: HTTP {response.status_code} for {url}"
+                )
+
+            logger.warning("JavDB non-200 for %s: %s", url, response.status_code)
+        except (SourceUnreachable, SourceBlocked):
+            raise
         except Exception as e:
-            logger.debug(f"JavDB request failed for {url}: {e}")
+            logger.warning(f"JavDB request failed for {url}: {e}")
+            raise SourceUnreachable(f"javdb: {e}") from e
 
         return None
 
-    def search(self, number: str) -> Optional[Video]:
+    def search_via_api(self, number: str) -> Optional[Video]:
+        """走 App 資料介面。呼叫端必須傳入已正規化的番號。
+
+        查無回 None；傳輸失敗照 B6 拋 SourceUnreachable / SourceBlocked
+        （由 search() 攔下並降級，見 CD-132b-5）。
         """
-        搜尋影片資訊
+        return javdb_api.fetch_video(number)
 
-        Args:
-            number: 番號
+    def search_via_html(self, number: str) -> Optional[Video]:
+        """走網頁解析。呼叫端必須傳入已正規化的番號。
 
-        Returns:
-            Video 物件或 None
+        查無回 None；傳輸失敗照 132a 契約拋 SourceUnreachable / SourceBlocked。
         """
-        number = self.normalize_number(number)
-
-        if not self.validate_number(number):
-            raise ValueError(f"Invalid number format: {number}")
-
         try:
             # 先搜尋取得列表
             search_url = f"https://javdb.com/search?q={quote(number)}&f=all"
@@ -161,74 +315,30 @@ class JavDBScraper(BaseScraper):
 
             soup = BeautifulSoup(detail_html, 'html.parser')
 
-            # 標題（用 get_text(separator=' ') 把嵌入換行轉空格，再剝番號前綴）
+            # 標題：優先取 strong.current-title，避免混入「顯示原標題」按鈕與隱藏原文
             title_elem = soup.select_one('.video-detail h2, .title.is-4')
-            title = title_elem.get_text(separator=' ', strip=True) if title_elem else ''
+            title = ''
+            if title_elem:
+                current = title_elem.select_one('strong.current-title')
+                if current is not None:
+                    title = current.get_text(separator=' ', strip=True)
+                else:
+                    title = title_elem.get_text(separator=' ', strip=True)
             title = strip_number_prefix(title, number)
 
             # 封面
             cover_elem = soup.select_one('.video-cover img, .column-video-cover img')
             cover_url = str(cover_elem.get('src', '')) if cover_elem else ''
 
-            # 解析資訊面板
-            date = ''
-            maker = ''
-            actresses = []
-            tags = []
-            rating: Optional[float] = None
+            # 劇照：必須限定 .preview-images，否則會混進「相關影片」封面
+            sample_images = [
+                str(a['href'])
+                for a in soup.select('.preview-images a.tile-item')
+                if a.get('href')
+            ]
 
-            for panel in soup.select('.panel-block'):
-                label = panel.select_one('strong')
-                value = panel.select_one('.value')
-
-                if not label:
-                    continue
-
-                label_text = label.text.strip()
-
-                # 日期
-                if '日期' in label_text and value:
-                    date = value.text.strip()
-
-                # 片商（排除「發行日期」避免把日期誤判為片商）
-                if ('片商' in label_text or '製作' in label_text or '發行' in label_text) and '日期' not in label_text:
-                    if value:
-                        maker = value.text.strip()
-
-                # 演員（只抓女優）
-                if '演員' in label_text:
-                    for a in panel.select('a'):
-                        name = a.text.strip()
-                        if not name:
-                            continue
-
-                        # 檢查性別標記
-                        next_elem = a.find_next_sibling()
-                        
-                        # 跳過男優
-                        classes: list[str] = []
-                        if next_elem and hasattr(next_elem, 'get'):
-                            cls_val = next_elem.get('class')
-                            if isinstance(cls_val, list):
-                                classes = [str(c) for c in cls_val]
-                            else:
-                                classes = [str(cls_val)] if cls_val else []
-                        
-                        if 'male' in classes and 'female' not in classes:
-                            continue
-
-                        actresses.append(Actress(name=name))
-
-                # 標籤
-                if '類別' in label_text:
-                    tag_elems = panel.select('a')
-                    tags = [t.text.strip() for t in tag_elems if t.text.strip()]
-
-                # 評分（D8：0–5 真實用戶評分，`分` 錨定；javdb 無簡介）
-                if '評分' in label_text and value:
-                    m = re.search(r'([0-9.]+)\s*分', value.text)
-                    if m:
-                        rating = float(m.group(1))
+            # 解析資訊面板（抽出以壓低 search() 複雜度，見 TASK §7）
+            panel = _parse_panel_blocks(soup)
 
             if not title and not cover_url:
                 return None
@@ -240,23 +350,82 @@ class JavDBScraper(BaseScraper):
             video = Video(
                 number=number,
                 title=title,
-                actresses=actresses,
-                date=date,
-                maker=maker,
+                actresses=panel['actresses'],
+                date=panel['date'],
+                maker=panel['maker'],
                 cover_url=cover_url,
-                tags=tags,
-                rating=rating,
+                tags=panel['tags'],
+                rating=panel['rating'],
+                votes=panel['votes'],
+                director=panel['director'],
+                duration=panel['duration'],
+                label=panel['label'],
+                series=panel['series'],
+                sample_images=sample_images,
                 source=self.source_name,
                 detail_url=detail_url,
             )
 
-            rate_limit(self.config.delay)
-
             return video
 
+        except (SourceUnreachable, SourceBlocked):
+            raise
         except Exception as e:
             logger.warning(f"JavDB search failed for {number}: {e}")
             return None
+
+    def search(self, number: str) -> Optional[Video]:
+        """
+        搜尋影片資訊。精準番號搜尋優先走資料介面，失敗或查無時自動退回網頁解析。
+
+        Args:
+            number: 番號
+
+        Returns:
+            Video 物件或 None
+        """
+        return self._search_number(number, allow_api=True)
+
+    def _search_number(self, number: str, *, allow_api: bool) -> Optional[Video]:
+        """`search()` 與 `search_by_keyword()` 共用的番號查詢本體。
+
+        `allow_api=False` ＝ 只走 HTML，給關鍵字搜尋用。
+        **spec-132 Non-Goals：關鍵字搜尋維持現行 HTML 做法。** plan 的 CD-132b-12
+        以為「`search_by_keyword()` 一個字都不動」就等於這件事，但那支是逐筆呼叫
+        `search()` 取詳情的——`search()` 改成 API 優先之後，一次關鍵字搜尋會對資料介面
+        打最多 20 次，而那正是我們想省著用、且精準番號搜尋唯一依賴的那條路。
+
+        正規化與格式檢查留在這裡（CD-132b-13）：兩條路徑之前只做一次，
+        搬進任一條就會漂移，而 parity 測試抓不到（BE-TEST-14）。
+        """
+        number = self.normalize_number(number)
+
+        if not self.validate_number(number):
+            raise ValueError(f"Invalid number format: {number}")
+
+        if not allow_api:
+            video = self.search_via_html(number)
+            if video is not None:
+                rate_limit(self.config.delay)
+            return video
+
+        try:
+            video = self.search_via_api(number)
+        except Exception as api_err:
+            # 刻意攔 Exception 而不是只攔那兩個 typed exception：資料介面回了沒見過的
+            # 形狀時 Video(...) 會拋 pydantic ValidationError，只攔兩個就等於
+            # 「API 壞了 ＝ javdb 壞了」，而所有單元測試都會是綠的（CD-132b-5）。
+            logger.warning("javdb: API 降級 → HTML（%s: %s）", type(api_err).__name__, api_err)
+        else:
+            if video is not None:
+                rate_limit(self.config.delay)
+                return video
+            logger.info("javdb: API 查無 %s，改試 HTML", number)
+
+        video = self.search_via_html(number)
+        if video is not None:
+            rate_limit(self.config.delay)
+        return video
 
     def search_by_keyword(self, keyword: str, limit: int = 20) -> list[Video]:
         """
@@ -287,17 +456,23 @@ class JavDBScraper(BaseScraper):
                     if not number:
                         continue
 
-                    # 遞迴呼叫 search() 取得完整資訊
-                    video = self.search(number)
+                    # 逐筆取詳情。**刻意不呼叫 `search()`**：那支是 API 優先的，
+                    # 關鍵字搜尋走它等於一次搜尋打最多 20 次資料介面
+                    # （spec-132 Non-Goals：關鍵字搜尋維持 HTML）。
+                    video = self._search_number(number, allow_api=False)
                     if video:
                         results.append(video)
 
+                except (SourceUnreachable, SourceBlocked):
+                    raise
                 except Exception as e:
                     logger.debug(f"JavDB keyword search item failed: {e}")
                     continue
 
             return results
 
+        except (SourceUnreachable, SourceBlocked):
+            raise
         except Exception as e:
             logger.warning(f"JavDB keyword search failed for {keyword}: {e}")
             return []
