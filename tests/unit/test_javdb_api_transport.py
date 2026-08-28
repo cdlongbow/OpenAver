@@ -331,11 +331,51 @@ class TestNoProvenance:
             r"github\.com",
             r"javdb-cli",
             r"jdb_official",
-            r"1\.9\.35",
         ]
         for pattern in forbidden:
             assert re.search(pattern, src, re.IGNORECASE) is None, (
                 f"forbidden provenance pattern found: {pattern!r}"
+            )
+
+    def test_version_literals_appear_only_as_request_parameters(self):
+        """版本號**只准**待在 `_PUBLIC_PARAMS` 裡，不准出現在註解／docstring／別的地方。
+
+        為什麼這條長這樣（pre-merge branch review 抓到前一版是死的）：
+        前一版禁的是一個**寫死的版本字面**，而檔案裡的版本不是那一個 ⇒ 規則恆綠、
+        什麼都沒守到。而「一律禁版本號」也做不到——那兩個值是**請求必帶的參數**，
+        拿掉功能就壞了。
+
+        所以真正可執行的不變式是**位置**而不是**存在**：值可以在請求參數裡，
+        但不准被複述進任何散文（那才是「怎麼取得的」會外洩的地方）。
+        參數值改版時本測試自動跟著走，不需要同步維護一份字面清單。
+        """
+        import ast
+
+        path = Path("core/scrapers/javdb_api.py")
+        src = path.read_text(encoding="utf-8")
+        tree = ast.parse(src)
+
+        params_node = None
+        for node in tree.body:
+            targets = getattr(node, "targets", [])
+            if targets and getattr(targets[0], "id", None) == "_PUBLIC_PARAMS":
+                params_node = node
+                break
+        assert params_node is not None, "找不到 _PUBLIC_PARAMS —— 本守衛的錨點沒了"
+
+        # 只守「夠獨特」的版本值（≥4 字元）。`system_version` 那種兩位數字面
+        # （`"13"`）在任何檔案裡都會撞到一堆無關的東西，守它只會製造假紅。
+        versions = {
+            v for k, v in ast.literal_eval(params_node.value).items()
+            if "version" in k and isinstance(v, str) and len(v) >= 4
+        }
+        assert versions, "_PUBLIC_PARAMS 裡沒有 version 欄位 —— 錨點漂了，本守衛已失效"
+
+        rest = src.replace(ast.get_source_segment(src, params_node) or "", "")
+        for v in versions:
+            assert v not in rest, (
+                f"版本字面 {v!r} 出現在 _PUBLIC_PARAMS 之外（註解／docstring／其他程式碼）"
+                " —— CD-132b-11：不得複述取得來源的任何線索"
             )
 
 

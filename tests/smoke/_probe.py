@@ -86,22 +86,29 @@ def _probe_reachable(source: str, number: str, scraper) -> bool:
             # 的理由）——網域知識不做第二份拷貝。
             from core.scrapers import javdb_api
 
-            resp_url = javdb_api._API_HOSTS[0] + javdb_api._SEARCH_PATH
-            headers = {
-                "jdsignature": javdb_api.sign(),
-                "user-agent": javdb_api._USER_AGENT,
-            }
-            try:
-                requests.get(
-                    resp_url,
-                    params={**javdb_api._PUBLIC_PARAMS, "q": number,
-                            "uuid": javdb_api._DEVICE_UUID},
-                    headers=headers,
-                    timeout=10,
-                )
-            except requests.exceptions.RequestException:
-                return False
-            return True
+            # 網域備援與參數名都跟著正式路徑走（`api_get()`）：
+            # ① 只打第一個網域的話，「主網域死、鏡像活」會被判成 unreachable ⇒ skip，
+            #    而正式路徑那時是活的——偵測器會在不該黃的時候黃。
+            # ② 參數名是 `device_uuid` 不是 `uuid`（pre-merge branch review 抓到打錯）。
+            #    這裡不重建參數字典，直接照 `api_get()` 的組法，避免第二份拷貝再漂一次。
+            for _host in javdb_api._API_HOSTS:
+                query = dict(javdb_api._PUBLIC_PARAMS)
+                query["device_uuid"] = javdb_api._DEVICE_UUID
+                query["q"] = number
+                try:
+                    requests.get(
+                        _host + javdb_api._SEARCH_PATH,
+                        params=query,
+                        headers={
+                            "jdsignature": javdb_api.sign(),
+                            "user-agent": javdb_api._USER_AGENT,
+                        },
+                        timeout=10,
+                    )
+                except requests.exceptions.RequestException:
+                    continue
+                return True
+            return False
 
         # Group B (javdb / fc2) or unknown source.
         return False

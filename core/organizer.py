@@ -719,8 +719,15 @@ def _attempt_download_image(
     try:
         resp = requests.get(url, headers=headers, timeout=timeout)
         if resp.status_code == 200 and len(resp.content) > 1000:
-            host_key = _host_key(url)
-            url_host = host_key[1] if host_key else ""
+            # 解碼用的 host 走 urlparse——與 proxy 端（web/routers/search.py）同一種取法。
+            # **刻意不重用 `_host_key()`**：那支對畸形 port 回 None（理由見它自己的
+            # docstring），而「畸形 port」不該讓「解碼 → 驗魔數」整組被跳過——那會讓
+            # registry 標了 codec 的 host 靜默寫出一個打不開的檔，正是 CD-132b-16
+            # 承諾不存在的那個狀態。（pre-merge branch review P3 實測到的不對稱。）
+            try:
+                url_host = (urlparse(url).hostname or "").lower()
+            except Exception:
+                url_host = ""
             # 只有 registry 標了 payload_codec 的 host 才走「解碼 → 驗魔數」。
             # 既有 28 筆條目的 payload_codec 都是 None ⇒ 它們**結構上走不進這裡**，
             # 寫進磁碟的位元組與改動前逐位元相同。

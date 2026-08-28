@@ -30,20 +30,20 @@ def _patched_javdb(get_mock):
 
     javdb 屬 Group B，`_run_canary` 不會跑 probe，所以整條路徑是 hermetic 的。
 
-    🔴 **第四個 patch 是 0.15.1 / TASK-132b-T3 補的，不是可有可無的**：
-    T3 之後 `JavDBScraper.search()` 會**先打 App 資料介面**，只 patch `curl_requests.get`
-    已經不夠——本檔會真的連上活站（實測 5 支紅、耗時 17.4 秒）。
-    把資料介面那條固定成「連不上」，`search()` 就照 CD-132b-4 降級到網頁那條，
-    本檔守的仍然是**網頁 shell 的執行契約**，下面每一支的斷言語意逐條不變。
+    **曾經有第四個 patch**（把 `javdb_api.fetch_video` 固定成連不上），因為 T3 之後
+    `JavDBScraper.search()` 會先打 App 資料介面，只 patch `curl_requests.get` 會真的連上活站。
+    **T5 之後它是死碼**：`test_javdb_canary` 已改成 `method="search_via_html"`，
+    整條路根本不經過 `search()`（pre-merge branch review 抓到）。
 
-    ⚠️ 這是**加嚴不是放寬**：它讓本檔回到自己 docstring 宣稱的「完全不碰網路」。
-    spec-132 B8 禁止的是放寬本檔，不是禁止讓它重新 hermetic。
+    那個不變式**沒有消失，只是換人守**：
+    `tests/unit/test_source_canary_api_group.py` 用 AST 讀 `_run_canary(...)` 的 `method=`，
+    把 `test_javdb_canary` 鎖在 `search_via_html`。哪天有人改回 `method="search"`，
+    那支會紅——而不是本檔靜靜地開始連活站。
     """
     return (
         patch.object(javdb, "CURL_CFFI_AVAILABLE", True),
         patch.object(javdb, "_resolve_proxies", lambda url: None),
         patch.object(javdb.curl_requests, "get", get_mock),
-        patch.object(javdb_api, "fetch_video", MagicMock(side_effect=_ApiDisabled())),
     )
 
 
@@ -66,8 +66,8 @@ def test_cf_ban_is_skip_not_error(status_code):
     """被擋（403/429/503）→ 金絲雀必須 **skip**，不得 ERROR 也不得 fail。"""
     resp = MagicMock(status_code=status_code, text="blocked")
     get_mock = MagicMock(return_value=resp)
-    p1, p2, p3, p4 = _patched_javdb(get_mock)
-    with p1, p2, p3, p4, pytest.raises(pytest.skip.Exception) as exc:
+    p1, p2, p3 = _patched_javdb(get_mock)
+    with p1, p2, p3, pytest.raises(pytest.skip.Exception) as exc:
         _run_javdb_canary()
     assert "javdb" in str(exc.value)
     # 🔴 沒有這一行，「skip」也可能是資料介面那條丟的例外造成的（grok review P2）
@@ -79,8 +79,8 @@ def test_unreachable_is_skip_not_error():
     from curl_cffi.requests.exceptions import ConnectionError as CurlConnErr
 
     get_mock = MagicMock(side_effect=CurlConnErr("refused"))
-    p1, p2, p3, p4 = _patched_javdb(get_mock)
-    with p1, p2, p3, p4, pytest.raises(pytest.skip.Exception) as exc:
+    p1, p2, p3 = _patched_javdb(get_mock)
+    with p1, p2, p3, pytest.raises(pytest.skip.Exception) as exc:
         _run_javdb_canary()
     assert "javdb" in str(exc.value)
     assert get_mock.call_count >= 1, "HTML 那條根本沒被走到，這支測試綠得沒有意義"
@@ -93,8 +93,8 @@ def test_transport_exceptions_do_not_escape_the_shell():
     正是 CD-132a-7 說要避免的「假紅」。
     """
     resp = MagicMock(status_code=403, text="blocked")
-    p1, p2, p3, p4 = _patched_javdb(MagicMock(return_value=resp))
-    with p1, p2, p3, p4:
+    p1, p2, p3 = _patched_javdb(MagicMock(return_value=resp))
+    with p1, p2, p3:
         try:
             _run_javdb_canary()
         except pytest.skip.Exception:
@@ -118,8 +118,8 @@ def test_http_200_empty_parse_still_reaches_a_verdict():
     """
     resp = MagicMock(status_code=200, text="<html><body>nothing</body></html>")
     get_mock = MagicMock(return_value=resp)
-    p1, p2, p3, p4 = _patched_javdb(get_mock)
-    with p1, p2, p3, p4:
+    p1, p2, p3 = _patched_javdb(get_mock)
+    with p1, p2, p3:
         with pytest.raises(pytest.skip.Exception) as exc:
             _run_javdb_canary()
     assert "javdb" in str(exc.value)

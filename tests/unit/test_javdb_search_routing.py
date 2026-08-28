@@ -303,6 +303,9 @@ def test_rate_limit_lives_only_in_search_not_in_search_via_html():
     # （`search()` 現在只是它的 `allow_api=True` 入口）。
     search_src = inspect.getsource(JavDBScraper._search_number)
 
+    # [lint-guard: pytest-justified] 這裡的 `html_src` 是 `inspect.getsource()` 取出的
+    # **Python 源碼**，不是 HTML/JS/CSS 資產——屬 SA-pre-6 例外清單的「Python 源碼語意守衛」。
+    # 變數名容易讓 content-based 偵測誤命中，故就地標註。
     assert "rate_limit" not in html_src, (
         "search_via_html() 裡不得有 rate_limit——它已經搬到 search()，"
         "留兩份會讓每次搜尋節流兩次"
