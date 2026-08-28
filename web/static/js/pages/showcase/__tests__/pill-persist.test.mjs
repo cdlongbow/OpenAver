@@ -264,7 +264,8 @@ test('CD-3 端到端：saveState 後改 this.pills 不再 save → _persistedSho
 });
 
 test('restoreState：缺 pills 鍵（舊格式）→ this.pills=[]，不 throw，其餘欄位照常還原', () => {
-    stubWindow({ search: '' });
+    // T2 hydrate 從 config 覆寫 showTableList；僅 makeComponent override 撐不過 restoreState
+    stubWindow({ search: '', config: { show_table_list: true } });
     // 模擬 $persist 整包取代：舊 showcase_state 沒有 pills 屬性
     const oldState = {
         sort: 'title',
@@ -287,6 +288,7 @@ test('restoreState：缺 pills 鍵（舊格式）→ this.pills=[]，不 throw�
         page: 1,
         search: '',
         mode: 'grid',
+        showTableList: true,
     });
     assert.doesNotThrow(() => c.restoreState());
     assert.deepEqual(c.pills, []);
@@ -347,7 +349,8 @@ test('URL 含 ?pills=... 不產生任何 pill', () => {
 });
 
 test('reload 模擬：saveState → 新 stateBase 實例 restoreState → pills 深相等', () => {
-    stubWindow({ search: '' });
+    // T2 hydrate 從 config 覆寫 showTableList；僅 makeComponent override 撐不過 restoreState
+    stubWindow({ search: '', config: { show_table_list: true } });
     const originalPills = [
         { dim: 'maker', value: 'Moodyz' },
         { dim: 'series', value: 'Madonna' },
@@ -372,6 +375,7 @@ test('reload 模擬：saveState → 新 stateBase 實例 restoreState → pills 
         page: 1,
         search: '',
         mode: 'grid',
+        showTableList: true,
     });
     c2.restoreState();
     assert.deepEqual(c2.pills, originalPills);

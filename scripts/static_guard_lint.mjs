@@ -1130,6 +1130,13 @@ const RULES = [
     required: ['shape-poster', 'cardShape'],
     note: '[119-T5fix] .showcase-grid 必須帶 shape-poster 綁定 —— 沒有它 cardShape 到不了 CSS，選直式海報畫面完全沒反應',
   },
+  {
+    file: 'web/templates/base.html', kind: 'tag-scan', mode: 'class-tag',
+    tagName: 'a', className: 'rotating-border-spotlight',
+    required: ['active-once'],
+    note: '[133a-T3] 側欄「瀏覽」必須帶 active-once —— 少了它就退回「永遠轉」，'
+        + '整頁永遠無法靜止（spec §1.5：燈箱開著時 13fps vs 61fps）',
+  },
 
   // ---- [TestShowcaseToolbarStructureGuard] 影片模式 .toolbar-controls 直接子 .control-group == 1（tag-scan nested-count） ----
   {
@@ -4368,8 +4375,8 @@ const RULES = [
   // 拆掉其中一顆仍會過；count 讓「少一顆」直接紅）。131b branch review P3。
   {
     file: 'web/templates/settings.html', kind: 'structure-count',
-    pattern: 'x-data="helpPopover"', count: 6,
-    note: '[131b-T4] settings 的 6 個 ? 說明浮層各自掛一份 helpPopover——少一顆＝那顆點下去沒反應（console ReferenceError，畫面無事發生）',
+    pattern: 'x-data="helpPopover"', count: 7,
+    note: '[131b-T4] settings 的 7 個 ? 說明浮層各自掛一份 helpPopover——少一顆＝那顆點下去沒反應（console ReferenceError，畫面無事發生）。133b-T1 新增第 7 顆（顯示表格與清單）時同步 +1',
   },
   {
     file: 'web/templates/scanner.html', kind: 'structure-count',

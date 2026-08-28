@@ -1834,3 +1834,29 @@ class TestCoverBadgesConfig:
         # 對照：pydantic 認得的布林字串仍 coerce（記錄既有行為，非本案新邏輯）
         assert CoverBadgesConfig(enabled="true").enabled is True
         assert CoverBadgesConfig(enabled="false").enabled is False
+
+
+# ============ TASK-133b-T1：gallery.show_table_list 預設值 + default.json parity ============
+
+class TestShowTableListConfig:
+    """GalleryConfig.show_table_list 預設關、default.json parity、舊 config 缺 key 不拋錯。"""
+
+    DEFAULT_PATH = Path(__file__).resolve().parents[2] / "web" / "config.default.json"
+
+    def test_gallery_defaults_show_table_list_off(self):
+        """邊界 1：GalleryConfig() 預設 → show_table_list is False"""
+        assert GalleryConfig().show_table_list is False
+
+    def test_default_json_gallery_show_table_list_matches_model(self):
+        """邊界 2：config.default.json 的 gallery.show_table_list 與 model 預設值一致（parity）"""
+        default = json.loads(self.DEFAULT_PATH.read_text(encoding="utf-8"))
+        model = GalleryConfig().model_dump()
+        assert "show_table_list" in default.get("gallery", {}), (
+            "config.default.json gallery 缺 show_table_list（BE-CONFIG-01 parity）"
+        )
+        assert default["gallery"]["show_table_list"] == model["show_table_list"]
+
+    def test_old_gallery_without_show_table_list_key_defaults_off(self):
+        """邊界 3：舊 config（gallery 內沒有 show_table_list key）→ model_validate 不拋錯，補預設關閉"""
+        cfg = GalleryConfig.model_validate({"items_per_page": 90})
+        assert cfg.show_table_list is False

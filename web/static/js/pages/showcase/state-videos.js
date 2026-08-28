@@ -605,9 +605,13 @@ export function stateVideos() {
          *
          * CD-119-14：換模式一律委派給 switchMode()（perPage 降級／updatePagination／
          * saveState／crossfade 的唯一所有者）——本函式內零 `this.mode = ` 賦值。
-         * CD-119-12 / §0.3：capture 必須在 cardShape 寫入之前；playShapeMorph 必須在
-         * $nextTick 之後（Alpine 3 的反應式更新是排程的，同一 tick 呼叫 Flip.from
-         * 會量到舊幾何，動畫會退化成「沒有播」而畫面仍然正確，測試裡極難抓到）。
+         * ~~CD-119-12 / §0.3：capture 必須在 cardShape 寫入之前；playShapeMorph 必須在
+         * $nextTick 之後～～~~ ← 2026-08-28 TASK-133a-T2 作廢
+         * 作廢理由：$nextTick 保證的是「Alpine 的 DOM 更新已套用」，**不保證瀏覽器還沒上色**。
+         * 那個空隙裡瀏覽器會先畫一幀新版面（spec §1.1 的 t=491ms），Flip 之後才把舊位置貼上 ⇒ 閃兩次。
+         * 「同一 tick 會量到舊幾何」的顧慮不成立：Flip.from / getBoundingClientRect 呼叫當下
+         * 會強制同步 layout，只要 class 已寫進 DOM 就量得到新幾何。
+         * 取代它的是 CD-133a-2：capture → 同步切 class → 同步 morph → 最後寫 state。
          */
         selectPresentation(target) {
             const PRESENTATIONS = {
@@ -630,15 +634,28 @@ export function stateVideos() {
                 return;
             }
 
-            // 走到這裡 ＝ grid → grid，只有卡型變 → 兩階段 Flip（§0.3）
+            // 走到這裡 ＝ grid → grid，只有卡型變 → 同一工作單元完成（CD-133a-2 取代 CD-119-12）
             const gridEl = this._getActiveGrid();  // CD-119-15 ⑤：用既有 helper，不自己 querySelector
             const captured = window.ShowcaseAnimations?.captureShapeState?.(gridEl) || null;  // ★ 必須在寫入之前
+            // ★ 同步套用新版面，不等 Alpine：$nextTick 只保證「Alpine 已改 DOM」，
+            //   不保證「瀏覽器還沒上色」，舊做法就是在那個空隙裡多畫了一幀（spec §1.1）。
+            gridEl?.classList?.toggle('shape-poster', nextShape === 'poster');
+            // ★ 同步建動畫：Flip.from 會強制同步 layout，此時量到的就是真正的新幾何
+            // try/catch 的理由（T2 review P3）：morph 現在排在 state 寫入**之前**，
+            // 它若拋錯就會吃掉下面兩行 ⇒ 使用者按了鈕但畫面完全沒反應。重排之前它在
+            // $nextTick 回呼裡、天生擋不到 state 寫入——這道 try/catch 是把那個保護補回來。
+            try {
+                window.ShowcaseAnimations?.playShapeMorph?.(captured, gridEl);
+            } catch (err) {
+                console.error('playShapeMorph failed (卡型仍會切換):', err);
+            }
+            // ★ 最後才寫 state：Alpine 的 :class 稍後算出同一個值，不會再動一次 DOM
             this.cardShape = nextShape;
             this.saveState();
-            this.$nextTick(() => {
-                window.ShowcaseAnimations?.playShapeMorph?.(captured, gridEl);
-            });
         },
+
+        // TASK-133b-T2：設定「顯示表格／清單」；預設關。hydrate 在 state-base restoreState。
+        showTableList: false,
 
         // TASK-119-T5：選單「圖片」與 A 鍵窄序列共用的 grid target。
         // 窄螢幕不得寫死 'cover'——會把使用者在桌面選的 poster 靜默洗掉（AC-3.2）。
@@ -650,6 +667,9 @@ export function stateVideos() {
             return this.mode === 'list' ? 'list' : 'table';
         },
         _presentationOrder() {
+            if (!this.showTableList) {
+                return this._isNarrow ? [this._gridTarget()] : ['cover', 'poster'];
+            }
             return this._isNarrow
                 ? [this._gridTarget(), 'list', 'table']
                 : ['cover', 'poster', 'list', 'table'];

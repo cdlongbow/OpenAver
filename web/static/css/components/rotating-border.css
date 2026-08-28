@@ -181,3 +181,19 @@
   animation: rotate-spotlight 2.5s linear 1;
   opacity: 1;
 }
+
+/**
+ * TASK-133a-T3（CD-133a-3）：進場轉一圈就停的 .active 變體。
+ *
+ * 為什麼不直接把上面 .active::before 的 infinite 改成 1：
+ * .rotating-border-spotlight.active 是跨頁共用的——search.html:772 讓每一張
+ * 「本地已有」的結果卡都掛一顆，那是常駐的狀態指示，spec §4 明文不碰搜尋頁。
+ *
+ * 為什麼不重用 .pulse-once：base.html 的 @animationend.self 會在播完後把
+ * pulse-once 移掉，接著 .active 的無限旋轉就接手了（比原本更難查）。
+ *
+ * 只覆蓋次數，不重寫整條 shorthand —— 時長／曲線跟著上面那條走，不會漂移。
+ */
+.rotating-border-spotlight.active.active-once::before {
+  animation-iteration-count: 1;
+}
