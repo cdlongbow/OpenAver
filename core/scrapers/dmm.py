@@ -439,14 +439,24 @@ class DMMScraper(BaseScraper):
         if not prefix:
             return
 
-        # content_id 格式：{dmm_prefix}{prefix}{num_padded}
-        # 例如：1stars00804
-        # 找出 dmm_prefix
-        idx = content_id.lower().find(prefix)
-        if idx > 0:
-            dmm_prefix = content_id[:idx]
-            # 儲存學習到的映射
-            self._save_prefix_hint(prefix, dmm_prefix)
+        # 防誤學（8/27）：content_id 結構為 {dmm_prefix}{series}{num}，
+        # 其中 series 必須**精確等於** prefix，不能用 find(prefix) 子串匹配。
+        # 反例：搜 ERK-116 時，gerk116 含子串 "erk" → find 誤判 dmm_prefix="g"，
+        # 造成 erk → "g" 錯誤映射（把 GERK 系列誤歸給 ERK 系列）。
+        # 真實衝突對（部署實測）："id" ⊂ "midv"（搜 ID-xxx 可能誤中 midv 系）。
+        # 精確匹配規則：series 段 == prefix，且前面是合法 dmm_prefix（空 / 純數字 / h_數字）。
+        m = re.match(
+            r'^((?:h_\d+)|(?:\d+))?([a-z]+)(\d+)$',
+            content_id.lower()
+        )
+        if not m:
+            return  # 結構不匹配（含 _ 的非標準 cid 等）→ 不學
+        series, dmm_prefix = m.group(2), m.group(1) or ''
+        if series != prefix:
+            return  # 系列段不精確等於番號前綴 → 不學（防誤學核心）
+
+        # 儲存學習到的映射
+        self._save_prefix_hint(prefix, dmm_prefix)
 
     def _content_id_to_number(self, content_id: str) -> str:
         """
@@ -505,14 +515,21 @@ class DMMScraper(BaseScraper):
             if not contents:
                 return None
 
-            # 找包含番號前綴的結果
+            # 找系列段精確匹配番號前綴的結果（防誤學：搜 ERK-116 不應命中 gerk116，
+            # 搜 ID-xxx 不應命中 midv 系）。結構 {dmm_prefix}{series}{num}，series 段
+            # 必須 == prefix；找不到精確匹配 → 返回 None（不盲取第一個，避免誤刮）。
             for content in contents:
                 cid = content['id']
-                if prefix in cid.lower():
+                m = re.match(
+                    r'^((?:h_\d+)|(?:\d+))?([a-z]+)(\d+)$',
+                    cid.lower()
+                )
+                if m and m.group(2) == prefix:
                     return cid
 
-            # 沒找到匹配的，返回第一個
-            return contents[0]['id']
+            # 沒找到精確匹配 → 返回 None（原邏輯 return contents[0]['id'] 會誤刮
+            # 子串相近的其他系列，例如 ERK-116 → gerk116）
+            return None
 
         except Exception:
             return None
@@ -549,7 +566,7 @@ class DMMScraper(BaseScraper):
                 for a in item.get('actresses', [])
             ]
 
-            release_date = item.get('makerReleasedAt', '')
+            release_date = item.get('makerReleasedAt') or ''
             if release_date and 'T' in release_date:
                 release_date = release_date.split('T')[0]
 
@@ -571,13 +588,24 @@ class DMMScraper(BaseScraper):
 
             series = (item.get('series') or {}).get('name', '')
 
+            # null 防護：amateur 等內容的 largeUrl/makerReleasedAt 可能為 null，
+            # 直接傳 None 給 pydantic str 欄位會 ValidationError（被 except 吞掉→整片失敗）。
+            # 統一 or '' 歸一為空串；title 不加防護（內容標識保險絲，為空寧可失敗）。
+            cover_url = (item.get('packageImage') or {}).get('largeUrl') or ''
+            # amateur 封面兜底：老式無前綴 cid（如 erk116）無 largeUrl，
+            # 但 DMM 封面有規律 {cid}jp.jpg（digital/amateur 目錄，1458×1458 方形）。
+            # 帶前綴新 cid（hpet/hoip/herk 等）走 digital/video 目錄、largeUrl 有值，不觸發。
+            if not cover_url and re.match(r'^[a-z]+\d+$', content_id):
+                cover_url = (f"https://awsimgsrc.dmm.co.jp/pics_dig/digital/amateur/"
+                             f"{content_id}/{content_id}jp.jpg")
+
             video = Video(
                 number=item.get('makerContentId', ''),
                 title=item.get('title', ''),
                 actresses=actresses,
                 date=release_date,
                 maker=item.get('maker', {}).get('name', ''),
-                cover_url=item.get('packageImage', {}).get('largeUrl', ''),
+                cover_url=cover_url,
                 tags=tags,
                 source=self.source_name,
                 detail_url=f"https://www.dmm.co.jp/digital/videoa/-/detail/=/cid={content_id}/",
@@ -615,7 +643,8 @@ class DMMScraper(BaseScraper):
         Returns:
             Video 物件，找不到返回 None
         """
-        # 正規化番號
+        # 正規化番號（保留原始輸入，供第 4 步 cid 直拉兜底使用）
+        raw_input = number.strip()
         number = self.normalize_number(number)
         number_upper = number.upper()
 
@@ -651,7 +680,21 @@ class DMMScraper(BaseScraper):
                 rate_limit(self.config.delay)
                 return result
 
-        # 4. 完全失敗
+        # 4. 使用者直接提供完整 cid 兜底（如 h_113id00057）
+        #    - 觸發條件：輸入無法解析為標準番號（非 ABC-123 格式）
+        #    - GraphQL 對 cid 大小寫敏感且僅認小寫 → 統一轉小寫
+        #    - 成功後以返回的規範番號（makerContentId）為鍵存快取並學習前綴
+        prefix, _ = self._parse_number(raw_input)
+        if not prefix:
+            result = self._fetch_by_id(raw_input.lower())
+            if result:
+                canonical = result.number or number_upper
+                self._save_cache(canonical, raw_input.lower())
+                self._learn_prefix(canonical, raw_input.lower())
+                rate_limit(self.config.delay)
+                return result
+
+        # 5. 完全失敗
         return None
 
     def search_by_keyword_with_ids(self, keyword: str, limit: int = 20, offset: int = 0) -> list[tuple[str, Video]]:
