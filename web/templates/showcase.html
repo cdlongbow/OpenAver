@@ -355,7 +355,13 @@
                         <i class="bi" :class="order === 'asc' ? 'bi-sort-up' : 'bi-sort-down'"></i>
                     </button>
                     <!-- 顯示模式 -->
-                    <div class="toolbar-dropdown-wrap" @click.outside="modeOpen = false">
+                    <button class="btn-icon"
+                            x-show="!showTableList && !_isNarrow"
+                            @click="selectPresentation(cardShape === 'poster' ? 'cover' : 'poster')"
+                            :title="t('showcase.toolbar.mode_prefix') + ': ' + (cardShape === 'poster' ? t('showcase.mode.poster') : t('showcase.mode.cover'))">
+                        <i class="bi" :class="cardShape === 'poster' ? 'bi-person-badge' : 'bi-person-vcard icon-mirror-x'"></i>
+                    </button>
+                    <div class="toolbar-dropdown-wrap" x-show="showTableList" @click.outside="modeOpen = false">
                         <button class="btn-icon"
                                 @click="modeOpen = !modeOpen; sortOpen = false"
                                 :title="t('showcase.toolbar.mode_prefix') + ': ' + (mode === 'grid' ? (_isNarrow ? t('showcase.mode.grid') : (cardShape === 'poster' ? t('showcase.mode.poster') : t('showcase.mode.cover'))) : mode === 'table' ? t('showcase.mode.table') : t('showcase.mode.list'))"
@@ -363,19 +369,19 @@
                             <i class="bi" :class="mode === 'grid' ? 'bi-grid-3x3' : mode === 'table' ? 'bi-table' : 'bi-list-ul'"></i>
                         </button>
                         <div class="toolbar-dropdown" x-show="modeOpen" x-transition.opacity.duration.150ms @click.stop>
-                            <a href="#" class="dropdown-item" x-show="_isNarrow" :class="{ 'active': mode === 'grid' }"
+                            <a href="#" class="dropdown-item" x-show="showTableList && _isNarrow" :class="{ 'active': mode === 'grid' }"
                                @click.prevent="selectPresentation(_gridTarget()); modeOpen = false">
                                 <i class="bi bi-grid-3x3"></i> {{ t('showcase.mode.grid') }}</a>
-                            <a href="#" class="dropdown-item" x-show="!_isNarrow" :class="{ 'active': mode === 'grid' && cardShape === 'cover' }"
+                            <a href="#" class="dropdown-item" x-show="showTableList && !_isNarrow" :class="{ 'active': mode === 'grid' && cardShape === 'cover' }"
                                @click.prevent="selectPresentation('cover'); modeOpen = false">
                                 <i class="bi bi-person-vcard icon-mirror-x"></i> {{ t('showcase.mode.cover') }}</a>
-                            <a href="#" class="dropdown-item" x-show="!_isNarrow" :class="{ 'active': mode === 'grid' && cardShape === 'poster' }"
+                            <a href="#" class="dropdown-item" x-show="showTableList && !_isNarrow" :class="{ 'active': mode === 'grid' && cardShape === 'poster' }"
                                @click.prevent="selectPresentation('poster'); modeOpen = false">
                                 <i class="bi bi-person-badge"></i> {{ t('showcase.mode.poster') }}</a>
-                            <a href="#" class="dropdown-item" :class="{ 'active': mode === 'table' }"
+                            <a href="#" class="dropdown-item" x-show="showTableList" :class="{ 'active': mode === 'table' }"
                                @click.prevent="selectPresentation('table'); modeOpen = false">
                                 <i class="bi bi-table"></i> {{ t('showcase.mode.table') }}</a>
-                            <a href="#" class="dropdown-item" :class="{ 'active': mode === 'list' }"
+                            <a href="#" class="dropdown-item" x-show="showTableList" :class="{ 'active': mode === 'list' }"
                                @click.prevent="selectPresentation('list'); modeOpen = false">
                                 <i class="bi bi-list-ul"></i> {{ t('showcase.mode.list') }}</a>
                         </div>

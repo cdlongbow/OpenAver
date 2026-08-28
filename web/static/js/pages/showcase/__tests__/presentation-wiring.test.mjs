@@ -5,6 +5,8 @@
 //
 // harness 照抄 select-presentation.test.mjs（importmap hook、readFileSync 讀源碼、
 // Object.assign({}, stateVideos(), …)），並把 stateLightbox() 併進元件以測 A 鍵。
+//
+// TASK-133b-T2：選單／序列／A 鍵三組各拆旗標開／關兩態；新鈕 x-show／@click 源碼鎖。
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -114,6 +116,7 @@ function evalMenuXShow(expr, c) {
         '_posterModeActive',
         'cardShape',
         'mode',
+        'showTableList',
         `return (${expr});`,
     );
     return Boolean(fn(
@@ -121,6 +124,7 @@ function evalMenuXShow(expr, c) {
         () => c._posterModeActive(),
         c.cardShape,
         c.mode,
+        c.showTableList,
     ));
 }
 
@@ -135,17 +139,52 @@ function visibleMenuCount(c) {
     }).length;
 }
 
+/** 新鈕：x-show 含 showTableList 的 <button>（下拉觸發鈕沒有這個 gate）。 */
+function extractShapeToggleButton(menu) {
+    const re = /<button\b([^>]*)>/g;
+    let m;
+    while ((m = re.exec(menu)) !== null) {
+        const attrs = m[1];
+        const xs = attrs.match(/\bx-show="([^"]*)"/);
+        if (xs && xs[1].includes('showTableList')) {
+            return { attrs, xShow: xs[1] };
+        }
+    }
+    return null;
+}
+
 // =====================================================================
-// 反向鎖（§0.1 / P2-1）：桌面 + poster 仍是四條／四段
+// 反向鎖（§0.1 / P2-1）：桌面 + poster 仍是四條／四段（旗標開）
+// 旗標關 → 選單 <a> 全隱（visibleMenuCount=0）、序列兩段
 // =====================================================================
 
-test('反向鎖：桌面 + cardShape=poster → 選單條數判斷仍是四條', () => {
-    const c = makeComponent({ _isNarrow: false, cardShape: 'poster', mode: 'grid' });
+test('反向鎖（旗標開）：桌面 + cardShape=poster → 選單條數判斷仍是四條', () => {
+    const c = makeComponent({
+        _isNarrow: false,
+        cardShape: 'poster',
+        mode: 'grid',
+        showTableList: true,
+    });
     assert.equal(visibleMenuCount(c), 4, 'x-show 必須讀 _isNarrow，不得讀 _posterModeActive()');
 });
 
-test('反向鎖：桌面 + cardShape=poster → A 仍四段', () => {
-    const c = makeComponent({ _isNarrow: false, cardShape: 'poster', mode: 'grid' });
+test('反向鎖（旗標關）：桌面 → 選單 <a> 可見數為 0', () => {
+    const c = makeComponent({
+        _isNarrow: false,
+        cardShape: 'poster',
+        mode: 'grid',
+        showTableList: false,
+    });
+    assert.equal(visibleMenuCount(c), 0, '旗標關時下拉 <a> 全隱；cover/poster 已搬到 <button>');
+});
+
+test('反向鎖（旗標開）：桌面 + cardShape=poster → A 仍四段', () => {
+    const c = makeComponent({
+        _isNarrow: false,
+        cardShape: 'poster',
+        mode: 'grid',
+        showTableList: true,
+    });
     assert.deepEqual(
         c._presentationOrder(),
         ['cover', 'poster', 'list', 'table'],
@@ -153,15 +192,27 @@ test('反向鎖：桌面 + cardShape=poster → A 仍四段', () => {
     assert.equal(c._presentationOrder().length, 4);
 });
 
+test('反向鎖（旗標關）：桌面 → 序列只有 cover／poster 兩段', () => {
+    const c = makeComponent({
+        _isNarrow: false,
+        cardShape: 'poster',
+        mode: 'grid',
+        showTableList: false,
+    });
+    assert.deepEqual(c._presentationOrder(), ['cover', 'poster']);
+    assert.equal(c._presentationOrder().length, 2);
+});
+
 // =====================================================================
 // A 鍵循環
 // =====================================================================
 
-test('A 鍵：桌面四段循環 cover → poster → list → table → cover', () => {
+test('A 鍵（旗標開）：桌面四段循環 cover → poster → list → table → cover', () => {
     const c = makeComponent({
         _isNarrow: false,
         mode: 'grid',
         cardShape: 'cover',
+        showTableList: true,
     });
     pressA(c);
     assert.equal(c.mode, 'grid');
@@ -177,11 +228,27 @@ test('A 鍵：桌面四段循環 cover → poster → list → table → cover',
     assert.equal(c.cardShape, 'cover');
 });
 
+test('A 鍵（旗標關）：桌面兩段循環 cover → poster → cover', () => {
+    const c = makeComponent({
+        _isNarrow: false,
+        mode: 'grid',
+        cardShape: 'cover',
+        showTableList: false,
+    });
+    pressA(c);
+    assert.equal(c.mode, 'grid');
+    assert.equal(c.cardShape, 'poster');
+    pressA(c);
+    assert.equal(c.mode, 'grid');
+    assert.equal(c.cardShape, 'cover');
+});
+
 test('A 鍵：窄螢幕三段循環 cover → list → table → cover', () => {
     const c = makeComponent({
         _isNarrow: true,
         mode: 'grid',
         cardShape: 'cover',
+        showTableList: true,
     });
     pressA(c);
     assert.equal(c.mode, 'list');
@@ -199,6 +266,7 @@ test('A 鍵：窄螢幕 + cardShape=poster 循環一整圈後 cardShape 仍是 p
         _isNarrow: true,
         mode: 'grid',
         cardShape: 'poster',
+        showTableList: true,
     });
     pressA(c);
     assert.equal(c.mode, 'list');
@@ -209,6 +277,21 @@ test('A 鍵：窄螢幕 + cardShape=poster 循環一整圈後 cardShape 仍是 p
     pressA(c);
     assert.equal(c.mode, 'grid');
     assert.equal(c.cardShape, 'poster', '窄螢幕「圖片」必須送 _gridTarget()，不得寫死 cover');
+});
+
+test('A 鍵（旗標關）：窄螢幕按 A → mode 與 cardShape 都不變（單元素序列早退）', () => {
+    const c = makeComponent({
+        _isNarrow: true,
+        mode: 'grid',
+        cardShape: 'poster',
+        showTableList: false,
+    });
+    pressA(c);
+    assert.equal(c.mode, 'grid');
+    assert.equal(c.cardShape, 'poster', '窄＋旗標關不得靜默洗掉桌機卡型');
+    pressA(c);
+    assert.equal(c.mode, 'grid');
+    assert.equal(c.cardShape, 'poster');
 });
 
 test('A 鍵：女優牆（showFavoriteActresses=true）mode 與 cardShape 都不變', () => {
@@ -277,18 +360,33 @@ test('_currentPresentation()：grid 走卡型，list 走 list，其餘 fail-safe
     );
 });
 
-test('_presentationOrder()：桌面四段字面、窄螢幕三段且第一格是 _gridTarget()', () => {
+test('_presentationOrder()（旗標開）：桌面四段字面、窄螢幕三段且第一格是 _gridTarget()', () => {
     assert.deepEqual(
-        makeComponent({ _isNarrow: false, cardShape: 'poster' })._presentationOrder(),
+        makeComponent({ _isNarrow: false, cardShape: 'poster', showTableList: true })._presentationOrder(),
         ['cover', 'poster', 'list', 'table'],
     );
     assert.deepEqual(
-        makeComponent({ _isNarrow: true, cardShape: 'cover' })._presentationOrder(),
+        makeComponent({ _isNarrow: true, cardShape: 'cover', showTableList: true })._presentationOrder(),
         ['cover', 'list', 'table'],
     );
     assert.deepEqual(
-        makeComponent({ _isNarrow: true, cardShape: 'poster' })._presentationOrder(),
+        makeComponent({ _isNarrow: true, cardShape: 'poster', showTableList: true })._presentationOrder(),
         ['poster', 'list', 'table'],
+    );
+});
+
+test('_presentationOrder()（旗標關）：桌面兩段、窄螢幕單元素 _gridTarget()', () => {
+    assert.deepEqual(
+        makeComponent({ _isNarrow: false, cardShape: 'poster', showTableList: false })._presentationOrder(),
+        ['cover', 'poster'],
+    );
+    assert.deepEqual(
+        makeComponent({ _isNarrow: true, cardShape: 'cover', showTableList: false })._presentationOrder(),
+        ['cover'],
+    );
+    assert.deepEqual(
+        makeComponent({ _isNarrow: true, cardShape: 'poster', showTableList: false })._presentationOrder(),
+        ['poster'],
     );
 });
 
@@ -310,14 +408,66 @@ test('源碼：觸發鈕 <i> class 運算式逐字未變', () => {
     );
 });
 
-test('源碼：「完整封面」那條含 icon-mirror-x', () => {
+test('源碼：「完整封面」下拉 <a> 與新鈕都含 icon-mirror-x', () => {
     const menu = extractModeMenu(SHOWCASE_HTML);
+    // 下拉裡那條 <a>（selectPresentation('cover')）
+    const coverAnchor = menu.match(/<a\b[^>]*selectPresentation\('cover'\)[^>]*>[\s\S]*?<\/a>/);
+    assert.ok(coverAnchor, '必須有完整封面那條 <a>');
     assert.ok(
-        menu.includes('icon-mirror-x'),
-        '完整封面 <i> 必須含 icon-mirror-x',
+        coverAnchor[0].includes('icon-mirror-x'),
+        '完整封面 <a> 的 <i> 必須含 icon-mirror-x',
     );
     assert.ok(
-        /bi-person-vcard[^"']*icon-mirror-x|icon-mirror-x[^"']*bi-person-vcard/.test(menu),
-        'icon-mirror-x 必須掛在完整封面的 person-vcard 圖示上',
+        /bi-person-vcard[^"']*icon-mirror-x|icon-mirror-x[^"']*bi-person-vcard/.test(coverAnchor[0]),
+        'icon-mirror-x 必須掛在完整封面 <a> 的 person-vcard 圖示上',
+    );
+    // 新鈕（x-show 含 showTableList）
+    const btn = extractShapeToggleButton(menu);
+    assert.ok(btn, '必須有旗標關時的卡型切換新鈕');
+    const btnBlock = menu.slice(menu.indexOf(btn.attrs) - '<button'.length);
+    const btnEnd = btnBlock.indexOf('</button>');
+    const btnHtml = btnBlock.slice(0, btnEnd >= 0 ? btnEnd + '</button>'.length : 400);
+    assert.ok(
+        /bi-person-vcard[^"']*icon-mirror-x|icon-mirror-x[^"']*bi-person-vcard/.test(btnHtml),
+        '新鈕封面圖示必須含 icon-mirror-x',
+    );
+});
+
+test('源碼：新鈕 x-show 同時含 !showTableList 與 !_isNarrow，四態可見性正確', () => {
+    const menu = extractModeMenu(SHOWCASE_HTML);
+    const btn = extractShapeToggleButton(menu);
+    assert.ok(btn, '必須有旗標關時的卡型切換新鈕');
+    assert.ok(btn.xShow.includes('!showTableList'), '新鈕 x-show 必須含 !showTableList');
+    assert.ok(btn.xShow.includes('!_isNarrow'), '新鈕 x-show 必須含 !_isNarrow');
+    // 寬/窄 × 旗標開/關
+    assert.equal(
+        evalMenuXShow(btn.xShow, makeComponent({ _isNarrow: false, showTableList: false })),
+        true,
+        '寬＋旗標關 → 新鈕可見',
+    );
+    assert.equal(
+        evalMenuXShow(btn.xShow, makeComponent({ _isNarrow: false, showTableList: true })),
+        false,
+        '寬＋旗標開 → 新鈕不可見',
+    );
+    assert.equal(
+        evalMenuXShow(btn.xShow, makeComponent({ _isNarrow: true, showTableList: false })),
+        false,
+        '窄＋旗標關 → 新鈕不可見',
+    );
+    assert.equal(
+        evalMenuXShow(btn.xShow, makeComponent({ _isNarrow: true, showTableList: true })),
+        false,
+        '窄＋旗標開 → 新鈕不可見',
+    );
+});
+
+test('源碼：新鈕 @click 落到 selectPresentation(', () => {
+    const menu = extractModeMenu(SHOWCASE_HTML);
+    const btn = extractShapeToggleButton(menu);
+    assert.ok(btn, '必須有旗標關時的卡型切換新鈕');
+    assert.ok(
+        /@click="[^"]*selectPresentation\(/.test(btn.attrs) || btn.attrs.includes('selectPresentation('),
+        '新鈕 @click 必須落到 selectPresentation(',
     );
 });

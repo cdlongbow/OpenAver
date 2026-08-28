@@ -482,6 +482,8 @@ export function stateBase() {
         restoreState() {
             // 1. 從 config 取得預設值
             const cfg = window.__SHOWCASE_CONFIG__ || {};
+            // TASK-133b-T2：嚴格 === true（FE-JS-01；宣告在 state-videos.js）
+            this.showTableList = cfg.show_table_list === true;
             const defaultSort = cfg.default_sort || 'date';
             const defaultOrder = cfg.default_order === 'ascending' ? 'asc' : 'desc';
             // T3.2 P2 fix: `??` 而非 `||` — Settings 允許 items_per_page=0（"全部"語意），

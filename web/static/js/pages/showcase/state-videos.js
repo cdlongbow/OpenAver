@@ -654,6 +654,9 @@ export function stateVideos() {
             this.saveState();
         },
 
+        // TASK-133b-T2：設定「顯示表格／清單」；預設關。hydrate 在 state-base restoreState。
+        showTableList: false,
+
         // TASK-119-T5：選單「圖片」與 A 鍵窄序列共用的 grid target。
         // 窄螢幕不得寫死 'cover'——會把使用者在桌面選的 poster 靜默洗掉（AC-3.2）。
         _gridTarget() {
@@ -664,6 +667,9 @@ export function stateVideos() {
             return this.mode === 'list' ? 'list' : 'table';
         },
         _presentationOrder() {
+            if (!this.showTableList) {
+                return this._isNarrow ? [this._gridTarget()] : ['cover', 'poster'];
+            }
             return this._isNarrow
                 ? [this._gridTarget(), 'list', 'table']
                 : ['cover', 'poster', 'list', 'table'];
