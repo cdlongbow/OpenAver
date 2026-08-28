@@ -88,6 +88,9 @@ class TestDMMProbePayloadVariables:
         import core.scrapers.dmm as dmm_module
         monkeypatch.setattr(dmm_module, "CACHE_FILE", tmp_path / "dmm_content_ids.json")
         monkeypatch.setattr(dmm_module, "PREFIX_FILE", tmp_path / "dmm_prefix_hints.json")
+        monkeypatch.setattr(dmm_module, "_shipped_table_cache", {})
+        monkeypatch.setattr(dmm_module, "_local_hints_cache", None)
+        monkeypatch.setattr(dmm_module, "_local_hints_cache_mtime", None)
         config = ScraperConfig(proxy_url="http://test-proxy:8080")
         return DMMScraper(config)
 

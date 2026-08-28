@@ -1,5 +1,6 @@
 """DMM 爬蟲（官方 GraphQL API）"""
 import json
+import os
 import re
 import requests
 from pathlib import Path
@@ -17,12 +18,32 @@ from .utils import rate_limit
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 CACHE_FILE = PROJECT_ROOT / "dmm_content_ids.json"      # 完整番號 → content_id
 PREFIX_FILE = PROJECT_ROOT / "dmm_prefix_hints.json"    # 番號前綴 → DMM 前綴
+SHIPPED_TABLE_FILE = PROJECT_ROOT / "dmm_prefix_table.json"  # 出貨前綴表（依片商分組）
 
 # module-level capability cache（三態）
 # None = 未知（首次或暫時性失敗），True = schema 支援，False = schema 不支援
 _genres_supported: Optional[bool] = None
 _sample_images_supported: Optional[bool] = None
 _review_supported: Optional[bool] = None
+
+# 出貨表／本機自學檔快取（None = 尚未讀）
+_shipped_table_cache: Optional[dict] = None
+_local_hints_cache: Optional[dict] = None
+_local_hints_cache_mtime: Optional[float] = None
+
+
+def _flatten_shipped_table(raw: dict) -> dict[str, dict]:
+    """展平出貨表 makers → {prefix: entry}；跨片商撞名時 raise。"""
+    flat: dict[str, dict] = {}
+    for maker, prefixes in raw.get("makers", {}).items():
+        for prefix, entry in prefixes.items():
+            if prefix in flat:
+                raise ValueError(
+                    f"dmm_prefix_table.json 撞名：前綴 '{prefix}' 同時出現在片商 "
+                    f"'{flat[prefix]['_maker']}' 與 '{maker}' 底下"
+                )
+            flat[prefix] = {**entry, "_maker": maker}
+    return flat
 
 
 class DMMScraper(BaseScraper):
@@ -380,8 +401,76 @@ class DMMScraper(BaseScraper):
         self._save_json(CACHE_FILE, cache)
 
     def _load_prefix_hints(self) -> dict:
-        """讀取前綴映射"""
-        return self._load_json(PREFIX_FILE)
+        """讀出貨表 + 本機自學檔，本機優先合併（只讀、不寫）。"""
+        global _shipped_table_cache, _local_hints_cache, _local_hints_cache_mtime
+
+        # 1. 出貨表：process 內讀一次；缺席／壞 JSON／缺 makers → 空表（D1）
+        if _shipped_table_cache is None:
+            try:
+                if not SHIPPED_TABLE_FILE.exists():
+                    logger.warning(
+                        "dmm_prefix_table.json 不存在，視為空表繼續"
+                    )
+                    _shipped_table_cache = {}
+                else:
+                    raw = json.loads(
+                        SHIPPED_TABLE_FILE.read_text(encoding="utf-8")
+                    )
+                    if "makers" not in raw:
+                        logger.warning(
+                            "dmm_prefix_table.json 缺少 makers 鍵，視為空表繼續"
+                        )
+                        _shipped_table_cache = {}
+                    else:
+                        # 撞名 ValueError 不得在此吞掉（D2）
+                        _shipped_table_cache = _flatten_shipped_table(raw)
+            except (json.JSONDecodeError, OSError, AttributeError, TypeError) as e:
+                # AttributeError/TypeError：JSON 語法合法但形狀不對（makers 是
+                # null/list、片商底下不是 dict、entry 不是 mapping…）。這些同樣屬
+                # D1「出貨表是加分項不是必要條件」的範圍——出貨表壞掉只該讓它失效，
+                # 不該讓整支 DMM 來源在每次搜尋時噴例外（search() 步驟 2 沒有接例外）。
+                # ⚠️ 不含 ValueError：撞名必須逃出去（D2），且 JSONDecodeError 是
+                # ValueError 的子類、已單獨列在前面，順序不可調換。
+                logger.warning(
+                    "dmm_prefix_table.json 讀取失敗，視為空表繼續：%s", e
+                )
+                _shipped_table_cache = {}
+
+        shipped = _shipped_table_cache
+
+        # 2. 本機檔：mtime 未變沿用快取；檔案不存在回 {}（不拋例外）
+        #    exists() 與 stat() 之間檔案被刪掉（防毒隔離／使用者手動刪）→ 回 {}，
+        #    不讓一次 race 變成一次搜尋失敗。
+        local: dict = {}
+        try:
+            if PREFIX_FILE.exists():
+                mtime = os.stat(PREFIX_FILE).st_mtime
+                if (
+                    _local_hints_cache is not None
+                    and _local_hints_cache_mtime == mtime
+                ):
+                    local = _local_hints_cache
+                else:
+                    local = self._load_json(PREFIX_FILE)
+                    _local_hints_cache = local
+                    _local_hints_cache_mtime = mtime
+        except OSError as e:
+            logger.warning("dmm_prefix_hints.json 讀取失敗，忽略本機值：%s", e)
+            local = {}
+
+        # 本機檔是使用者手可及的（手改／外部工具寫入），形狀不保證是 dict。
+        # 不是 dict 就整份忽略——同 D1 的理由：它壞掉不該讓搜尋掛掉。
+        if not isinstance(local, dict):
+            logger.warning(
+                "dmm_prefix_hints.json 不是物件（%s），忽略本機值",
+                type(local).__name__,
+            )
+            local = {}
+
+        # 3. 純合併，本機優先；只取 dmm_prefix 字串（sample 不得外洩）
+        merged = {p: e.get("dmm_prefix", "") for p, e in shipped.items()}
+        merged.update({p: v for p, v in local.items() if not p.startswith("_")})
+        return merged
 
     # ========== content_id 轉換 ==========
 
