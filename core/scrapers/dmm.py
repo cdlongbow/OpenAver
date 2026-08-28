@@ -149,9 +149,6 @@ class DMMScraper(BaseScraper):
                 'http': self.config.proxy_url,
                 'https': self.config.proxy_url,
             }
-        else:
-            # direct 模式：明確不走任何 proxy（包括環境變數）
-            self._session.trust_env = False
 
     def _get_source_name(self) -> str:
         return "dmm"

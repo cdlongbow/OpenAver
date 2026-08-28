@@ -4,6 +4,8 @@ Tests for Phase 37d T3 — Proxy `direct` 模式
 覆蓋 _is_dmm_enabled() / _dmm_proxy_url() helpers 和 DMMScraper 行為。
 """
 import json
+import os
+
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -61,13 +63,6 @@ class TestDmmProxyUrl:
 class TestDmmScraperDirect:
     """DMMScraper session.proxies 行為"""
 
-    def test_empty_proxy_url_trust_env_false(self):
-        """proxy_url='' → trust_env=False（不吃環境 proxy，直連模式）"""
-        from core.scrapers import DMMScraper, ScraperConfig
-        scraper = DMMScraper(ScraperConfig(proxy_url=''))
-        assert scraper._session.trust_env is False, \
-            "proxy_url='' 時 trust_env 必須為 False（阻止環境 proxy 介入）"
-
     def test_real_proxy_url_proxies_set(self):
         """proxy_url='http://...' → session.proxies 已設定"""
         from core.scrapers import DMMScraper, ScraperConfig
@@ -93,8 +88,8 @@ class TestSearchDirect:
         from core.scrapers import DMMScraper, ScraperConfig
         dmm_config = ScraperConfig(proxy_url=_dmm_proxy_url(proxy_url))
         scraper = DMMScraper(dmm_config)
-        assert scraper._session.trust_env is False, \
-            "direct 模式下 DMMScraper 的 trust_env 必須為 False（不走環境 proxy）"
+        assert scraper._session.trust_env is True, \
+            "direct 模式下 DMMScraper 尊重系統代理（CD-134-6 反轉 4ee0baa2 的舊契約）"
 
     def test_search_jav_direct_dmm_config_not_none(self):
         """proxy_url='direct' → _is_dmm_enabled=True → dmm_config 建立（非 None）"""
@@ -122,6 +117,73 @@ class TestSearchDirect:
             if _is_dmm_enabled(proxy_url) else None
         assert dmm_config is None, \
             "proxy_url='' 時 dmm_config 必須為 None（不得啟用 DMM）"
+
+
+# ── TestDmmRespectsSystemProxy ───────────────────────────────────────────────
+
+_PROXY_ENVS = (
+    "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy",
+    "NO_PROXY", "no_proxy", "ALL_PROXY", "all_proxy",
+)
+
+
+@pytest.fixture
+def clean_proxy_env(monkeypatch):
+    for name in _PROXY_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    # urllib 的 getproxies_environment（requests 經 get_environ_proxies 走它）掃的是
+    # **任何以 `_proxy` 結尾**的變數，不只上面那 8 個——開發機上若有 ftp_proxy /
+    # socks_proxy 之類殘留，「無代理」那支會假紅。清乾淨這一整類。
+    for name in [n for n in os.environ if n.lower().endswith("_proxy")]:
+        monkeypatch.delenv(name, raising=False)
+    return monkeypatch
+
+
+def _resolved_proxies(scraper, url="https://api.video.dmm.co.jp/graphql"):
+    """把 requests 對環境變數的解析結果變成可斷言的具體值。"""
+    return scraper._session.merge_environment_settings(url, {}, None, None, None)["proxies"]
+
+
+class TestDmmRespectsSystemProxy:
+    """CD-134-6／F4：direct 模式尊重系統代理（環境變數，三象限，斷言值互不相同）"""
+
+    def test_empty_proxy_url_trust_env_true(self):
+        """proxy_url='' → trust_env=True（尊重系統代理，CD-134-6／F4 反轉後的新契約）"""
+        scraper = DMMScraper(ScraperConfig(proxy_url=''))
+        assert scraper._session.trust_env is True, \
+            "proxy_url='' 時 trust_env 必須為 True（尊重系統代理，見 spec-134 F4）"
+
+    def test_empty_proxy_url_proxies_empty(self):
+        """proxy_url='' → session.proxies 為空（交由 requests 依系統環境決定）"""
+        scraper = DMMScraper(ScraperConfig(proxy_url=''))
+        assert not scraper._session.proxies, \
+            "proxy_url='' 時 session.proxies 必須為空"
+
+    def test_explicit_proxy_url_proxies_set(self):
+        """明確設定 proxy_url → session.proxies 包含 http/https 代理"""
+        scraper = DMMScraper(ScraperConfig(proxy_url='http://x:1'))
+        assert scraper._session.proxies == {
+            'http': 'http://x:1',
+            'https': 'http://x:1',
+        }
+
+    def test_env_https_proxy_is_respected(self, clean_proxy_env):
+        """HTTPS_PROXY 有設 → 解析結果含該 proxy"""
+        clean_proxy_env.setenv("HTTPS_PROXY", "http://env-proxy:1")
+        scraper = DMMScraper(ScraperConfig(proxy_url=''))
+        assert _resolved_proxies(scraper)["https"] == "http://env-proxy:1"
+
+    def test_env_no_proxy_excludes_dmm_host(self, clean_proxy_env):
+        """HTTPS_PROXY 有設 + NO_PROXY 命中 DMM API host → 代理被排除"""
+        clean_proxy_env.setenv("HTTPS_PROXY", "http://env-proxy:1")
+        clean_proxy_env.setenv("NO_PROXY", "api.video.dmm.co.jp")
+        scraper = DMMScraper(ScraperConfig(proxy_url=''))
+        assert _resolved_proxies(scraper) == {}
+
+    def test_env_no_proxy_vars_is_clean_direct(self, clean_proxy_env):
+        """無任何代理環境變數 → 解析結果無代理"""
+        scraper = DMMScraper(ScraperConfig(proxy_url=''))
+        assert _resolved_proxies(scraper) == {}
 
 
 # ============================================================
