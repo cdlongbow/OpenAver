@@ -44,6 +44,7 @@ COPY_ITEMS = [
     "windows",  # 包含 standalone.py
     "locales",
     "maker_mapping.json",
+    "dmm_prefix_table.json",
 ]
 
 # macOS 專用套件
