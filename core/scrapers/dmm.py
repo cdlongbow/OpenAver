@@ -549,7 +549,7 @@ class DMMScraper(BaseScraper):
                 for a in item.get('actresses', [])
             ]
 
-            release_date = item.get('makerReleasedAt', '')
+            release_date = item.get('makerReleasedAt') or ''
             if release_date and 'T' in release_date:
                 release_date = release_date.split('T')[0]
 
@@ -571,13 +571,24 @@ class DMMScraper(BaseScraper):
 
             series = (item.get('series') or {}).get('name', '')
 
+            # null 防護：amateur 等內容的 largeUrl/makerReleasedAt 可能為 null，
+            # 直接傳 None 給 pydantic str 欄位會 ValidationError（被 except 吞掉→整片失敗）。
+            # 統一 or '' 歸一為空串；title 不加防護（內容標識保險絲，為空寧可失敗）。
+            cover_url = (item.get('packageImage') or {}).get('largeUrl') or ''
+            # amateur 封面兜底：老式無前綴 cid（如 erk116）無 largeUrl，
+            # 但 DMM 封面有規律 {cid}jp.jpg（digital/amateur 目錄，1458×1458 方形）。
+            # 帶前綴新 cid（hpet/hoip/herk 等）走 digital/video 目錄、largeUrl 有值，不觸發。
+            if not cover_url and re.match(r'^[a-z]+\d+$', content_id):
+                cover_url = (f"https://awsimgsrc.dmm.co.jp/pics_dig/digital/amateur/"
+                             f"{content_id}/{content_id}jp.jpg")
+
             video = Video(
                 number=item.get('makerContentId', ''),
                 title=item.get('title', ''),
                 actresses=actresses,
                 date=release_date,
                 maker=item.get('maker', {}).get('name', ''),
-                cover_url=item.get('packageImage', {}).get('largeUrl', ''),
+                cover_url=cover_url,
                 tags=tags,
                 source=self.source_name,
                 detail_url=f"https://www.dmm.co.jp/digital/videoa/-/detail/=/cid={content_id}/",
