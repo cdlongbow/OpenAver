@@ -1,4 +1,4 @@
-"""DMM 爬蟲（官方 GraphQL API + 動態學習）"""
+"""DMM 爬蟲（官方 GraphQL API）"""
 import json
 import re
 import requests
@@ -36,8 +36,7 @@ class DMMScraper(BaseScraper):
 
     特點：
     - 雙層快取：前綴映射 + content_id 快取
-    - 動態學習：發現新前綴會自動記錄
-    - 無需預設映射表，完全由用戶運行時生成
+    - 無需預設映射表
 
     注意：
     - 需要日本 IP（VPN）
@@ -384,12 +383,6 @@ class DMMScraper(BaseScraper):
         """讀取前綴映射"""
         return self._load_json(PREFIX_FILE)
 
-    def _save_prefix_hint(self, prefix: str, dmm_prefix: str):
-        """儲存新學習的前綴映射"""
-        hints = self._load_prefix_hints()
-        hints[prefix.lower()] = dmm_prefix
-        self._save_json(PREFIX_FILE, hints)
-
     # ========== content_id 轉換 ==========
 
     def _parse_number(self, number: str) -> tuple[str, str]:
@@ -426,37 +419,6 @@ class DMMScraper(BaseScraper):
         dmm_prefix = hints.get(prefix, "")
 
         return f"{dmm_prefix}{prefix}{num_padded}"
-
-    def _learn_prefix(self, number: str, content_id: str):
-        """
-        從成功的 content_id 學習前綴映射
-
-        Examples:
-            number=STARS-804, content_id=1stars00804
-            → 學習到 stars → "1"
-        """
-        prefix, _ = self._parse_number(number)
-        if not prefix:
-            return
-
-        # 防誤學（8/27）：content_id 結構為 {dmm_prefix}{series}{num}，
-        # 其中 series 必須**精確等於** prefix，不能用 find(prefix) 子串匹配。
-        # 反例：搜 ERK-116 時，gerk116 含子串 "erk" → find 誤判 dmm_prefix="g"，
-        # 造成 erk → "g" 錯誤映射（把 GERK 系列誤歸給 ERK 系列）。
-        # 真實衝突對（部署實測）："id" ⊂ "midv"（搜 ID-xxx 可能誤中 midv 系）。
-        # 精確匹配規則：series 段 == prefix，且前面是合法 dmm_prefix（空 / 純數字 / h_數字）。
-        m = re.match(
-            r'^((?:h_\d+)|(?:\d+))?([a-z]+)(\d+)$',
-            content_id.lower()
-        )
-        if not m:
-            return  # 結構不匹配（含 _ 的非標準 cid 等）→ 不學
-        series, dmm_prefix = m.group(2), m.group(1) or ''
-        if series != prefix:
-            return  # 系列段不精確等於番號前綴 → 不學（防誤學核心）
-
-        # 儲存學習到的映射
-        self._save_prefix_hint(prefix, dmm_prefix)
 
     def _content_id_to_number(self, content_id: str) -> str:
         """
@@ -634,7 +596,7 @@ class DMMScraper(BaseScraper):
         流程：
         1. 查快取 → 有就直接用（最快）
         2. 用前綴映射轉換 → 嘗試查詢（快）
-        3. 搜索 API 發現 → 學習前綴（慢，但只需一次）
+        3. 搜索 API 發現 → 寫入快取（慢，但只需一次）
         4. 都失敗 → 返回 None
 
         Args:
@@ -670,27 +632,25 @@ class DMMScraper(BaseScraper):
                 rate_limit(self.config.delay)
                 return result
 
-        # 3. 搜索 API 發現（慢，但會學習）
+        # 3. 搜索 API 發現（慢，但會寫入快取）
         discovered_cid = self._search_content_id(number)
         if discovered_cid:
             result = self._fetch_by_id(discovered_cid)
             if result:
                 self._save_cache(number, discovered_cid)
-                self._learn_prefix(number, discovered_cid)  # 學習新前綴
                 rate_limit(self.config.delay)
                 return result
 
         # 4. 使用者直接提供完整 cid 兜底（如 h_113id00057）
         #    - 觸發條件：輸入無法解析為標準番號（非 ABC-123 格式）
         #    - GraphQL 對 cid 大小寫敏感且僅認小寫 → 統一轉小寫
-        #    - 成功後以返回的規範番號（makerContentId）為鍵存快取並學習前綴
+        #    - 成功後以返回的規範番號（makerContentId）為鍵存快取
         prefix, _ = self._parse_number(raw_input)
         if not prefix:
             result = self._fetch_by_id(raw_input.lower())
             if result:
                 canonical = result.number or number_upper
                 self._save_cache(canonical, raw_input.lower())
-                self._learn_prefix(canonical, raw_input.lower())
                 rate_limit(self.config.delay)
                 return result
 
