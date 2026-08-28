@@ -726,6 +726,13 @@ class DMMScraper(BaseScraper):
                 self._save_cache(number, discovered_cid)
                 rate_limit(self.config.delay)
                 return result
+        else:
+            # legacySearchPPV 在非日本 IP 下回 HTTP 200 + 空陣列 + 無 errors，
+            # 「DMM 沒收這片」與「被地區封鎖」在 log 裡長得一模一樣 → 只留痕，不宣稱能分辨。
+            logger.debug(
+                "[DMM] 步驟 3 查無結果，番號=%s（可能是 DMM 未收錄，也可能是地區限制——見 spec-134 F5）",
+                number_upper,
+            )
 
         # 4. 使用者直接提供完整 cid 兜底（如 h_113id00057）
         #    - 觸發條件：輸入無法解析為標準番號（非 ABC-123 格式）
