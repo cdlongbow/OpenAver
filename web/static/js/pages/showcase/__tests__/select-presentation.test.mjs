@@ -1,7 +1,7 @@
-// TASK-119-T4: selectPresentation() 協調器 ＋ animations.js 兩階段 Flip API（captureShapeState /
-// playShapeMorph）。覆蓋 plan-119 §0.2 行為表七列、§0.3 順序契約（capture 必須在 cardShape 寫入
-// 之前）、§0.4 CD-119-14（換模式一律委派 switchMode()，selectPresentation 內零 this.mode = 賦值）、
-// $nextTick 契約（playShapeMorph 不得在同一 tick 被呼叫）。
+// TASK-119-T4 / TASK-133a-T2: selectPresentation() 協調器 ＋ animations.js 兩階段 Flip API
+// （captureShapeState / playShapeMorph）。覆蓋 plan-119 §0.2 行為表七列、CD-133a-2 同一工作單元
+// 契約（capture → 同步切 class → 同步 morph → 最後寫 state；該分支零 $nextTick）、
+// §0.4 CD-119-14（換模式一律委派 switchMode()，selectPresentation 內零 this.mode = 賦值）。
 //
 // state-videos.js 用瀏覽器 importmap 別名 `@/showcase/...` 與 `@/shared/...`，
 // plain `node --test` 不認得。比照既有 pill-clear.test.mjs / pill-match.test.mjs，
@@ -86,9 +86,16 @@ function extractFnBody(src, name) {
     return null;
 }
 
-const FAKE_GRID = { id: 'fake-grid' };
+const FAKE_GRID = {
+    id: 'fake-grid',
+    _classOps: [],                                   // [[name, force], ...] 依序記錄
+    classList: {
+        toggle(name, force) { FAKE_GRID._classOps.push([name, force]); },
+    },
+};
 
 function makeComponent(overrides) {
+    FAKE_GRID._classOps.length = 0;
     const c = Object.assign({}, stateVideos(), {
         mode: 'grid',
         cardShape: 'cover',
@@ -280,28 +287,84 @@ test('契約（順序）：captureShapeState 必須在 cardShape 寫入之前呼
         assert.equal(events[0].event, 'capture');
         assert.equal(events[0].cardShapeAtCallTime, 'cover', 'capture 當下必須讀到舊值（寫入前）');
         assert.equal(events[1].event, 'morph');
-        assert.equal(events[1].cardShapeAtCallTime, 'poster');
+        assert.equal(events[1].cardShapeAtCallTime, 'cover',
+            'morph 必須在 cardShape 寫入之前呼叫（CD-133a-2：state 最後寫）');
+        assert.equal(c.cardShape, 'poster', '回傳後 cardShape 必須已經是新值');
     });
 });
 
-test('契約（$nextTick）：playShapeMorph 不得在 selectPresentation 回傳前被呼叫', () => {
+test('契約（同一工作單元）：playShapeMorph 必須同步呼叫，該分支不得排 $nextTick', () => {
     let morphCalls = 0;
     withAnimStub({
         captureShapeState() { return 'SNAP'; },
         playShapeMorph() { morphCalls++; },
     }, () => {
         const ticks = [];
-        const c = makeComponent({
-            mode: 'grid',
-            cardShape: 'cover',
-            $nextTick(fn) { ticks.push(fn); },
-        });
+        const c = makeComponent({ mode: 'grid', cardShape: 'cover', $nextTick(fn) { ticks.push(fn); } });
         c.selectPresentation('poster');
-        assert.equal(morphCalls, 0, 'playShapeMorph 不得在同一 tick 被呼叫（Flip 會量到舊幾何）');
-        assert.equal(ticks.length, 1, '必須恰好排一個 $nextTick callback');
-        ticks.forEach((f) => f());
-        assert.equal(morphCalls, 1, 'flush $nextTick 後 playShapeMorph 才被呼叫');
+        assert.equal(morphCalls, 1, 'playShapeMorph 必須在回傳前就被呼叫（同一工作單元）');
+        assert.equal(ticks.length, 0, 'grid→grid 分支不得再排任何 $nextTick');
     });
+});
+
+test('契約（同一工作單元）：新版面的 class 必須在 playShapeMorph 之前就切成新值', () => {
+    const events = [];
+    withAnimStub({
+        captureShapeState() {
+            events.push({ event: 'capture', classOpsLen: FAKE_GRID._classOps.length });
+            return 'SNAP';
+        },
+        playShapeMorph() {
+            events.push({
+                event: 'morph',
+                classOpsLen: FAKE_GRID._classOps.length,
+                classOpsSnapshot: FAKE_GRID._classOps.slice(),
+            });
+        },
+    }, () => {
+        // cover → poster
+        const c1 = makeComponent({ mode: 'grid', cardShape: 'cover' });
+        c1.selectPresentation('poster');
+        assert.equal(events.length, 2);
+        assert.equal(events[0].event, 'capture');
+        assert.equal(events[1].event, 'morph');
+        assert.ok(
+            events[1].classOpsLen > events[0].classOpsLen,
+            'class toggle 必須發生在 morph 之前（capture 後、morph 前）',
+        );
+        assert.deepEqual(
+            events[1].classOpsSnapshot,
+            [['shape-poster', true]],
+            'cover→poster 必須 toggle shape-poster 為 true',
+        );
+
+        // poster → cover
+        events.length = 0;
+        const c2 = makeComponent({ mode: 'grid', cardShape: 'poster' });
+        c2.selectPresentation('cover');
+        assert.equal(events.length, 2);
+        assert.equal(events[0].event, 'capture');
+        assert.equal(events[1].event, 'morph');
+        assert.ok(
+            events[1].classOpsLen > events[0].classOpsLen,
+            'class toggle 必須發生在 morph 之前（反向）',
+        );
+        assert.deepEqual(
+            events[1].classOpsSnapshot,
+            [['shape-poster', false]],
+            'poster→cover 必須 toggle shape-poster 為 false',
+        );
+    });
+});
+
+test('契約：selectPresentation() body 內零 $nextTick（CD-133a-2，源碼斷言）', () => {
+    const body = extractFnBody(STATE_VIDEOS_SRC, 'selectPresentation');
+    assert.ok(body);
+    // 剝註解再掃：技術要點 A 的說明註解必須保留「$nextTick」字樣（作廢理由），
+    // 契約鎖的是可執行碼不得再排 $nextTick（比照 pill-clear / actress-pill-backspace）。
+    const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    assert.equal(code.includes('$nextTick'), false,
+        '同一工作單元完成套版面＋建動畫，不得再排 $nextTick（會多畫一幀舊版面）');
 });
 
 test('契約：_getActiveGrid() 在 morph 路徑被呼叫（證明沒有自己 querySelector，CD-119-15 ⑤）', () => {
@@ -352,6 +415,27 @@ test('契約：window.ShowcaseAnimations 不存在時狀態仍正確切換、不
     } finally {
         if (prev !== undefined) globalThis.window.ShowcaseAnimations = prev;
     }
+});
+
+// TASK-133a-T2 review P3：morph 現在排在 cardShape/saveState **之前**（同一工作單元的重排）。
+// 重排之前它在 $nextTick 回呼裡，拋錯天生擋不到 state 寫入；重排之後就擋得到了。
+// 使用者流程：GSAP 載到一半／Flip 沒註冊成功 → playShapeMorph 拋錯 → 按海報鈕
+// 「完全沒反應」（卡型沒變也沒存），而不是「切換了只是沒動畫」。
+test('契約：playShapeMorph 拋錯時，卡型仍必須切換並持久化（不得吃掉 state 寫入）', () => {
+    withAnimStub({
+        captureShapeState() { return { state: {}, cards: [{}] }; },
+        playShapeMorph() { throw new Error('boom'); },
+    }, () => {
+        const c = makeComponent({ mode: 'grid', cardShape: 'cover' });
+        assert.doesNotThrow(() => c.selectPresentation('poster'));
+        assert.equal(c.cardShape, 'poster', '動畫拋錯不得吃掉 cardShape 寫入');
+        assert.equal(c.saveCalls, 1, '動畫拋錯不得吃掉 saveState()');
+        assert.deepEqual(
+            FAKE_GRID._classOps,
+            [['shape-poster', true]],
+            '版面 class 在 morph 之前就切好了，拋錯不影響它',
+        );
+    });
 });
 
 // =====================================================================
