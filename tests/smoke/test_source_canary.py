@@ -50,9 +50,13 @@ def _run_canary(source: str, scraper, note: str = "", method: str = "search") ->
     a typo surfaces as AttributeError instead of a silent wrong lambda).
     """
     results = []
+    first_pass_video = None
+    # `getattr` 故意留在迴圈外、也故意不在 try 裡：`method` 打錯字要當場 AttributeError
+    # （＝測試自己壞了，該 ERROR），不可以被下面那個 broad except 收成「來源紅了」。
+    call = getattr(scraper, method)
     for number in CANARY_NUMBERS[source]:
         try:
-            video = getattr(scraper, method)(number)
+            video = call(number)
         except TimeoutError as e:
             # Feed the exception instance (not None) so classify_one row 1 -> skip.
             results.append(classify_one(e, None, number, source))
@@ -72,12 +76,31 @@ def _run_canary(source: str, scraper, note: str = "", method: str = "search") ->
             # `_canary_core.GROUP_B`. The new API canary must NOT join Group B
             # (spec-132 F5: it never touches CF, so all-skip means it is really dead).
             video = None
+        except Exception as e:
+            # 映射／解析炸掉（欄位型別變了、信封形狀變了、pydantic 驗證失敗…）。
+            # 這正是這顆燈存在的理由，卻是唯一會**繞過** classify/quorum 的路徑：
+            # 不接的話它是 pytest ERROR ⇒ ① 判決不再來自 classify_one，
+            # ② 迴圈當場中止，後面幾個番號一個都沒驗到（Codex PR review P2）。
+            #
+            # 🔴 **刻意記成 "fail" 而不是塞 `video = None`**：塞 None 的話
+            # Group B 會走 classify_one row 6 → skip，而 Group B 的「全 skip 視為正常」
+            # 豁免會把**真正的 parser 回歸**吃掉，變成靜靜的綠燈（spec-132 B8 禁止的正是
+            # 這種放寬）。記 "fail" 對兩個 group 都是「這個番號壞了」，語意一致。
+            #
+            # quorum 仍然 pass-wins：一個番號的資料形狀特殊 → 其餘健康 → 綠（正確，
+            # 資料介面是活的）；整批都炸 → 紅（正確，形狀真的變了）。
+            print(f"[canary] {source}/{number} 映射失敗: {type(e).__name__}: {e}")
+            results.append("fail")
+            continue
         probe = _probe_reachable(source, number, scraper) if source in GROUP_A else None
-        results.append(classify_one(video, probe, number, source))
+        outcome = classify_one(video, probe, number, source)
+        if outcome == "pass" and first_pass_video is None:
+            first_pass_video = video
+        results.append(outcome)
 
     verdict, reason = quorum_verdict(results)
     if verdict == "green":
-        return
+        return first_pass_video
     hint = f"{note} — " if note else ""
     if verdict == "skip":
         pytest.skip(f"{source}: {hint}{reason}")
@@ -132,7 +155,11 @@ def test_javdb_canary():
 
 def test_javdb_api_canary():
     # Group A: never touches Cloudflare, so all-skip means the API path is dead.
-    _run_canary("javdb-api", JavDBScraper(), method="search_via_api")
+    # 拿回**真的通過 quorum 的那一部**——不可以再自己抓 `[0]`：第一個番號被下架、
+    # 但後面某個過了的時候，quorum 是綠（pass-wins），重抓 `[0]` 卻會回 None ⇒
+    # 整支 skip ⇒ 底下的解碼驗證被靜默跳過，而那時明明有一張可用的封面
+    # （Codex PR review P3）。順帶少發一次活站請求。
+    video = _run_canary("javdb-api", JavDBScraper(), method="search_via_api")
 
     # 判綠之後才做：抓一張封面 → 走 production 的 host→codec 對應解碼 → 驗魔數。
     # 「解碼規則／host 對應壞了」在 runtime 沒有偵測器（CD-132b-7 說明了為什麼不在
@@ -143,8 +170,9 @@ def test_javdb_api_canary():
 
     from core.image_codec import decode_image_payload, looks_like_image
 
-    video = JavDBScraper().search_via_api(CANARY_NUMBERS["javdb-api"][0])
     if video is None or not video.cover_url:
+        # 判綠必定代表至少一個 "pass"，而 "pass" 的定義就含 cover_url ⇒ 這條走不到。
+        # 留著是防呆：哪天 `_run_canary` 的回傳約定改了，這裡要 skip 不要 AttributeError。
         pytest.skip("javdb-api: 拿不到封面網址（上面的 quorum 已經判過了）")
     host = urlparse(video.cover_url).hostname or ""
     try:

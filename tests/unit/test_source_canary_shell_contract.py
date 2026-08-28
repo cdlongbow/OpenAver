@@ -124,3 +124,114 @@ def test_http_200_empty_parse_still_reaches_a_verdict():
             _run_javdb_canary()
     assert "javdb" in str(exc.value)
     assert get_mock.call_count >= 1, "HTML 那條根本沒被走到，這支測試綠得沒有意義"
+
+
+# ============================================================
+# 映射／解析失敗的執行契約（Codex PR review round-2 P2 / P3）
+# ============================================================
+
+class _Stub:
+    """假 scraper：照 `plan` 逐個番號回東西或丟東西。"""
+
+    def __init__(self, plan):
+        self._plan = list(plan)
+        self.calls = 0
+
+    def search_via_api(self, number):
+        self.calls += 1
+        item = self._plan.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+
+def _video(number, cover="https://tp.spfcas.com/c.jpg"):
+    from core.scrapers.models import Video
+
+    return Video(number=number, title="T", source="javdb",
+                 detail_url="https://javdb.com/v/x", cover_url=cover)
+
+
+def _numbers(source, n):
+    """把 CANARY_NUMBERS[source] 暫時換成 n 個真番號（形狀要能通過 numbers_match）。"""
+    from tests.smoke import test_source_canary as shell
+
+    return patch.dict(shell.CANARY_NUMBERS, {source: [f"SONE-{200 + i}" for i in range(n)]})
+
+
+def test_mapping_error_is_a_fail_not_a_pytest_error():
+    """欄位型別變了 → 必須走 classify/quorum 判紅，不可以變成 pytest ERROR。
+
+    為什麼要這一支：ERROR 會**繞過判決本體**，而且當場中止迴圈——
+    後面幾個番號一個都沒驗到。這顆燈存在的理由正是偵測這種形狀改變。
+    """
+    from tests.smoke import test_source_canary as shell
+
+    stub = _Stub([AttributeError("'int' object has no attribute 'strip'")] * 3)
+    with _numbers("javdb-api", 3), \
+         patch.object(shell, "_probe_reachable", lambda *a, **k: True), \
+         pytest.raises(pytest.fail.Exception) as exc:
+        shell._run_canary("javdb-api", stub, method="search_via_api")
+
+    assert "javdb-api" in str(exc.value)
+    assert stub.calls == 3, "迴圈被例外中止了——後面的番號沒被驗到"
+
+
+def test_mapping_error_on_group_b_must_not_become_skip():
+    """🔴 反向鎖：Group B 的映射失敗**不可以**被記成 skip。
+
+    Group B（javdb 網頁）享有「全 skip 視為正常」的 CF-ban 豁免。
+    如果映射失敗被塞成 `video = None`，它會走 classify_one row 6 → skip → 被豁免吃掉
+    ⇒ **真正的 parser 回歸變成靜靜的綠燈**。spec-132 B8 禁止的正是這種放寬。
+    """
+    from tests.smoke import test_source_canary as shell
+
+    stub = _Stub([TypeError("bad shape")] * 2)
+    stub.search_via_html = stub.search_via_api
+
+    # 🔴 **不能用 `pytest.raises(pytest.fail.Exception)`**：`pytest.skip()` 丟的
+    # `Skipped` 繼承 `BaseException`，`raises` 收不到，它會直接穿出本函式 ⇒
+    # 這一支會被報成 **skipped**，而摘要行的 `N passed, 1 skipped` 讀起來像綠的。
+    # 也就是說那樣寫的話，本守衛在陷阱真的出現時「看起來是過的」——
+    # 正是它要防的那個形狀。三個出口全部明寫。
+    with _numbers("javdb", 2):
+        try:
+            shell._run_canary("javdb", stub, method="search_via_html")
+        except pytest.fail.Exception as e:
+            assert "0 healthy" in str(e), f"紅了但理由不對: {e}"
+        except pytest.skip.Exception as e:
+            raise AssertionError(
+                f"Group B 的映射失敗被降級成 skip，會被 CF-ban 豁免吃掉: {e}"
+            ) from None
+        else:
+            raise AssertionError("既沒紅也沒 skip —— 判決根本沒發生")
+
+
+def test_a_typo_in_method_name_still_errors():
+    """反向鎖：`method` 打錯字是**測試自己壞了**，必須 ERROR，不可以被當成「來源紅了」。
+
+    上面那個 broad except 如果罩住了 `getattr`，打錯字會靜靜變成紅燈，
+    而我們會去查 javdb 而不是去查自己的測試。
+    """
+    from tests.smoke import test_source_canary as shell
+
+    with _numbers("javdb-api", 1), pytest.raises(AttributeError):
+        shell._run_canary("javdb-api", _Stub([]), method="search_via_typo")
+
+
+def test_run_canary_returns_the_video_that_passed_not_the_first_number():
+    """判綠時要交回**真的通過的那一部**，而不是讓呼叫端自己重抓 `[0]`。
+
+    第一個番號被下架、後面某個過了 → quorum 綠（pass-wins），
+    重抓 `[0]` 卻是 None ⇒ 封面解碼驗證被靜默跳過，而那時明明有可用的封面。
+    """
+    from tests.smoke import test_source_canary as shell
+
+    stub = _Stub([None, _video("SONE-201")])
+    with _numbers("javdb-api", 2), \
+         patch.object(shell, "_probe_reachable", lambda *a, **k: False):
+        got = shell._run_canary("javdb-api", stub, method="search_via_api")
+
+    assert got is not None and got.number == "SONE-201", (
+        "回傳的不是通過 quorum 的那一部——呼叫端會拿不到封面"
+    )
