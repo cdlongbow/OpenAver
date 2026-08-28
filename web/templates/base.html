@@ -633,7 +633,7 @@
                 </a>
             </li>
             <li class="nav-item">
-                <a id="sidebar-showcase-link" class="nav-link rotating-border-spotlight {% if page == 'showcase' %}active{% endif %} {% if showcase_has_content %}active{% endif %}" href="/showcase" title="{{ t('nav.showcase') }}"
+                <a id="sidebar-showcase-link" class="nav-link rotating-border-spotlight {% if page == 'showcase' %}active active-once{% endif %}" href="/showcase" title="{{ t('nav.showcase') }}"
                    @search:local-match.window="
                        $el.classList.remove('pulse-once');
                        void $el.offsetWidth;  // force reflow to replay animation

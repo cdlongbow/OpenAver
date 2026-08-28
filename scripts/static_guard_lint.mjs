@@ -1130,6 +1130,13 @@ const RULES = [
     required: ['shape-poster', 'cardShape'],
     note: '[119-T5fix] .showcase-grid 必須帶 shape-poster 綁定 —— 沒有它 cardShape 到不了 CSS，選直式海報畫面完全沒反應',
   },
+  {
+    file: 'web/templates/base.html', kind: 'tag-scan', mode: 'class-tag',
+    tagName: 'a', className: 'rotating-border-spotlight',
+    required: ['active-once'],
+    note: '[133a-T3] 側欄「瀏覽」必須帶 active-once —— 少了它就退回「永遠轉」，'
+        + '整頁永遠無法靜止（spec §1.5：燈箱開著時 13fps vs 61fps）',
+  },
 
   // ---- [TestShowcaseToolbarStructureGuard] 影片模式 .toolbar-controls 直接子 .control-group == 1（tag-scan nested-count） ----
   {
