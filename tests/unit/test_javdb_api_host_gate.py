@@ -1,6 +1,10 @@
-"""CD-132b-7：javdb API 回的圖片 host 必須已登記於 image_host_policy。
+"""CD-132b-7：javdb API 回的圖片網址必須是**圖片代理收得下**的形狀。
 
-未登記 → fetch_video 丟 ValueError → search() 降級 HTML。
+閘門問的是 `proxy_verdict()`，不是「host 有沒有登記」（Codex review round-2 P2）：
+登記過但代理仍會 403 的三種形狀（`http://`、只給下載用的 host、host parse 不出來）
+以前會被放行 ⇒ **不降級** ⇒ 使用者在瀏覽器裡看到的是破圖。
+
+不可代理 → fetch_video 丟 ValueError → search() 降級 HTML（有浮水印但看得見）。
 測試不得發出真實網路請求。
 """
 from __future__ import annotations
@@ -118,6 +122,39 @@ class TestUnregisteredHost:
         video = javdb_api.fetch_video("SSIS-001")
         assert video is not None
         assert "tp.spfcas.com" in video.cover_url
+
+
+class TestRegisteredButNotProxyable:
+    """review round-2 P2：這三種都在 registry 裡「查得到」，代理卻一定 403。"""
+
+    def _fetch(self, monkeypatch, cover_url: str):
+        monkeypatch.setattr(
+            javdb_api,
+            "api_search",
+            lambda _kw: [{"id": "abc123", "number": "SSIS-001"}],
+        )
+        monkeypatch.setattr(
+            javdb_api,
+            "api_movie_detail",
+            lambda _id: _detail_with_cover(cover_url),
+        )
+        return javdb_api.fetch_video("SSIS-001")
+
+    def test_http_scheme_raises(self, monkeypatch):
+        """host 登記了、scheme 不合。代理端 branch 1 一律要求 https。"""
+        with pytest.raises(ValueError, match="scheme 不符"):
+            self._fetch(monkeypatch, "http://tp.spfcas.com/rhe/covers/x.jpg")
+
+    def test_download_only_host_raises(self, monkeypatch):
+        """`raw.githubusercontent.com` 在 registry 裡，但 consumers 只有 download
+        （女優照片那條路）。`proxy_rules()` 選不到它 ⇒ 代理 403。"""
+        with pytest.raises(ValueError, match="raw.githubusercontent.com"):
+            self._fetch(monkeypatch, "https://raw.githubusercontent.com/a/b.jpg")
+
+    def test_unparseable_host_raises(self, monkeypatch):
+        """舊版對「非空但抓不出 host」的網址直接 `continue` 放行。"""
+        with pytest.raises(ValueError, match="host=\\?"):
+            self._fetch(monkeypatch, "not-a-url-at-all")
 
 
 class TestSearchDegradesOnUnregisteredHost:

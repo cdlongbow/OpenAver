@@ -252,7 +252,7 @@ class TestPublicApiPropagatesErrors:
             raise SourceUnreachable("inner detail connection failed")
 
         monkeypatch.setattr(scraper, "_get_html", lambda url: search_list_html)
-        monkeypatch.setattr(scraper, "search", mock_search_impl)
+        monkeypatch.setattr(scraper, "search_via_html", mock_search_impl)
 
         with pytest.raises(SourceUnreachable):
             scraper.search_by_keyword("SSIS")
@@ -277,7 +277,7 @@ class TestPublicApiPropagatesErrors:
             raise SourceBlocked("inner detail blocked by CF")
 
         monkeypatch.setattr(scraper, "_get_html", lambda url: search_list_html)
-        monkeypatch.setattr(scraper, "search", mock_search_impl)
+        monkeypatch.setattr(scraper, "search_via_html", mock_search_impl)
 
         with pytest.raises(SourceBlocked):
             scraper.search_by_keyword("SSIS")

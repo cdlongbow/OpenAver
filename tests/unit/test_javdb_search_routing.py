@@ -299,14 +299,16 @@ def test_rate_limit_lives_only_in_search_not_in_search_via_html():
 
     html_src = inspect.getsource(JavDBScraper.search_via_html)
     api_src = inspect.getsource(JavDBScraper.search_via_api)
-    search_src = inspect.getsource(JavDBScraper.search)
+    # 節流已隨 review round-2 的 `allow_api` 拆分搬進 `_search_number()`
+    # （`search()` 現在只是它的 `allow_api=True` 入口）。
+    search_src = inspect.getsource(JavDBScraper._search_number)
 
     assert "rate_limit" not in html_src, (
         "search_via_html() 裡不得有 rate_limit——它已經搬到 search()，"
         "留兩份會讓每次搜尋節流兩次"
     )
     assert "rate_limit" not in api_src, "search_via_api() 是薄封裝，不該節流"
-    assert search_src.count("rate_limit(") == 2, (
-        "search() 應該剛好有兩個 rate_limit 呼叫點（API 命中一個、HTML 命中一個），"
-        "兩者互斥所以每次搜尋最多只會執行到一個"
+    assert search_src.count("rate_limit(") == 3, (
+        "_search_number() 應該剛好有三個 rate_limit 呼叫點（API 命中、html-only、"
+        "HTML 備援），三者互斥所以每次搜尋最多只會執行到一個"
     )

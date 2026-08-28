@@ -6,11 +6,10 @@ import hashlib
 import time
 import uuid
 from typing import Any, Optional
-from urllib.parse import urlparse
 
 import requests
 
-from core.image_host_policy import is_registered_host
+from core.image_host_policy import proxy_verdict
 from core.logger import get_logger
 from core.scrapers.errors import SourceBlocked, SourceUnreachable
 from core.scrapers.models import Actress, Video
@@ -254,10 +253,17 @@ def _match_movie(movie: dict, number: str) -> bool:
     return True
 
 
-def _assert_image_hosts_registered(video: Video) -> None:
-    """CD-132b-7：cover / sample 的 host 必須已在 image_host_policy 登記。
+def _assert_image_urls_proxyable(video: Video) -> None:
+    """CD-132b-7：cover / sample 的網址必須是**圖片代理收得下**的形狀。
 
-    空字串／None 的 cover_url 不算違規。未登記 → ValueError（search 會降級 HTML）。
+    問的不是「host 有沒有登記」而是 `proxy_verdict()`（review round-2 P2）。
+    差別會咬人的三種形狀，全都是「登記過但代理仍 403」：
+    `http://tp.spfcas.com/...`（scheme）、只給女優照片下載用的 host（沒有 proxy
+    consumer）、以及 host 根本 parse 不出來的網址（舊版直接 `continue` 放行）。
+    放行它們的下場是閘門過了 ⇒ **不降級**，而瀏覽器那頭是破圖；擋下來則降級 HTML，
+    使用者拿到有浮水印但看得見的封面。
+
+    空字串／None 的 cover_url 不算違規。不可代理 → ValueError（search 會降級 HTML）。
     """
     urls: list[str] = []
     if video.cover_url:
@@ -265,15 +271,11 @@ def _assert_image_hosts_registered(video: Video) -> None:
     urls.extend(u for u in (video.sample_images or []) if u)
 
     for url in urls:
-        try:
-            host = (urlparse(url).hostname or "").lower()
-        except Exception:
-            host = ""
-        if not host:
-            continue
-        if not is_registered_host(host):
+        verdict = proxy_verdict(url)
+        if not verdict.allowed:
             raise ValueError(
-                f"javdb: 圖片 host 未登記於 image_host_policy: {host}"
+                f"javdb: 圖片網址不可代理（{verdict.reason}）: "
+                f"host={verdict.host or '?'} scheme={verdict.scheme or '?'}"
             )
 
 
@@ -292,7 +294,7 @@ def fetch_video(number: str) -> Optional[Video]:
     detail = api_movie_detail(str(movie["id"]))
     video = _to_video(detail, number)
     if video.title or video.cover_url:
-        _assert_image_hosts_registered(video)
+        _assert_image_urls_proxyable(video)
         return video
     return None
 
