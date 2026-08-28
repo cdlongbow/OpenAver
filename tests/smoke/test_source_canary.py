@@ -176,11 +176,18 @@ def test_javdb_api_canary():
         pytest.skip("javdb-api: 拿不到封面網址（上面的 quorum 已經判過了）")
     host = urlparse(video.cover_url).hostname or ""
     try:
-        raw = requests.get(video.cover_url, timeout=20).content
+        resp = requests.get(video.cover_url, timeout=20)
     except requests.exceptions.RequestException as e:
         # 連不到圖床是**站方／網路**問題，不是「我們的解碼規則壞了」。
         # 不 try/except 的話這裡會變成 pytest ERROR，人工讀報表時分不出是哪一種（review P3）。
         pytest.skip(f"javdb-api: 連不到圖床（{type(e).__name__}）——非解碼問題")
+    if resp.status_code != 200:
+        # `requests.get()` 對 4xx/5xx **不會拋例外**，所以上面那個 except 接不到它。
+        # 不擋的話 403/429/503 的錯誤頁 body 會被拿去解碼、魔數過不了，
+        # 然後報成「解碼規則失效」——一次圖床抽風就是一顆假紅（Codex PR review round-3 P3）。
+        # 這一格與上面那個 except 是同一個判斷：圖床拿不到東西 ＝ 站方問題 ＝ skip。
+        pytest.skip(f"javdb-api: 圖床回 {resp.status_code}——非解碼問題")
+    raw = resp.content
     payload = decode_image_payload(host, raw)
     if not looks_like_image(payload):
         pytest.fail(
