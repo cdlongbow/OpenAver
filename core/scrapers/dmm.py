@@ -439,14 +439,24 @@ class DMMScraper(BaseScraper):
         if not prefix:
             return
 
-        # content_id 格式：{dmm_prefix}{prefix}{num_padded}
-        # 例如：1stars00804
-        # 找出 dmm_prefix
-        idx = content_id.lower().find(prefix)
-        if idx > 0:
-            dmm_prefix = content_id[:idx]
-            # 儲存學習到的映射
-            self._save_prefix_hint(prefix, dmm_prefix)
+        # 防誤學（8/27）：content_id 結構為 {dmm_prefix}{series}{num}，
+        # 其中 series 必須**精確等於** prefix，不能用 find(prefix) 子串匹配。
+        # 反例：搜 ERK-116 時，gerk116 含子串 "erk" → find 誤判 dmm_prefix="g"，
+        # 造成 erk → "g" 錯誤映射（把 GERK 系列誤歸給 ERK 系列）。
+        # 真實衝突對（部署實測）："id" ⊂ "midv"（搜 ID-xxx 可能誤中 midv 系）。
+        # 精確匹配規則：series 段 == prefix，且前面是合法 dmm_prefix（空 / 純數字 / h_數字）。
+        m = re.match(
+            r'^((?:h_\d+)|(?:\d+))?([a-z]+)(\d+)$',
+            content_id.lower()
+        )
+        if not m:
+            return  # 結構不匹配（含 _ 的非標準 cid 等）→ 不學
+        series, dmm_prefix = m.group(2), m.group(1) or ''
+        if series != prefix:
+            return  # 系列段不精確等於番號前綴 → 不學（防誤學核心）
+
+        # 儲存學習到的映射
+        self._save_prefix_hint(prefix, dmm_prefix)
 
     def _content_id_to_number(self, content_id: str) -> str:
         """
@@ -505,14 +515,21 @@ class DMMScraper(BaseScraper):
             if not contents:
                 return None
 
-            # 找包含番號前綴的結果
+            # 找系列段精確匹配番號前綴的結果（防誤學：搜 ERK-116 不應命中 gerk116，
+            # 搜 ID-xxx 不應命中 midv 系）。結構 {dmm_prefix}{series}{num}，series 段
+            # 必須 == prefix；找不到精確匹配 → 返回 None（不盲取第一個，避免誤刮）。
             for content in contents:
                 cid = content['id']
-                if prefix in cid.lower():
+                m = re.match(
+                    r'^((?:h_\d+)|(?:\d+))?([a-z]+)(\d+)$',
+                    cid.lower()
+                )
+                if m and m.group(2) == prefix:
                     return cid
 
-            # 沒找到匹配的，返回第一個
-            return contents[0]['id']
+            # 沒找到精確匹配 → 返回 None（原邏輯 return contents[0]['id'] 會誤刮
+            # 子串相近的其他系列，例如 ERK-116 → gerk116）
+            return None
 
         except Exception:
             return None
