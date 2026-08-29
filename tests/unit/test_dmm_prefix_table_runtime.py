@@ -51,11 +51,11 @@ def test_flatten_duplicate_prefix_raises_with_prefix_and_makers():
 # ── DoD 2 正常 ───────────────────────────────────────────────────────────────
 
 
-def test_real_shipped_table_flattens_to_160():
-    """DoD 2：真實出貨表展平不拋例外、長度 160。"""
+def test_real_shipped_table_flattens_to_164():
+    """DoD 2：真實出貨表展平不拋例外、長度 164。"""
     raw = json.loads(REAL_TABLE_PATH.read_text(encoding="utf-8"))
     flat = _flatten_shipped_table(raw)
-    assert len(flat) == 160
+    assert len(flat) == 164
 
 
 # ── DoD 3 快取失效 ───────────────────────────────────────────────────────────

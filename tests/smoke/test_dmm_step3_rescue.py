@@ -10,9 +10,10 @@ from core.scrapers.models import ScraperConfig
 
 pytestmark = pytest.mark.smoke
 
-# STARS 系列真實 cid 帶數字前綴（1stars00804）；空 hints 下
-# _convert_with_hints → "stars00804"，步驟 2 必然失敗，只能靠步驟 3 救回。
-RESCUE_NUMBER = "STARS-804"
+# NWF 系列（ワンズファクトリー）真實 cid 帶數字前綴（3nwf237）；不在出貨表與收割名單中。
+# 空 hints 下 _convert_with_hints → "nwf00237"，步驟 2 必然失敗（DMM 查無此 cid），
+# 只能靠步驟 3 救回。若未來 refresh 收錄 nwf 前綴，自檢斷言會因前提崩壞而報錯（TASK-134b-T11 D5）。
+RESCUE_NUMBER = "NWF-237"
 
 
 @pytest.mark.smoke
@@ -34,7 +35,7 @@ def test_dmm_step3_rescues_number_not_convertible_by_hints(tmp_path, monkeypatch
 
     # 防衛：空 hints 下步驟 2 候選必須算不出正確 cid
     converted = scraper._convert_with_hints(RESCUE_NUMBER)
-    assert converted != "1stars00804", (
+    assert converted != "3nwf237", (
         f"測試前提崩壞：空 hints 竟算出正確 cid {converted!r}"
     )
 

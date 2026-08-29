@@ -1,7 +1,7 @@
 {
   "_meta": {
     "corrected": "2026-08-29",
-    "count": 160,
+    "count": 164,
     "crawl_date": "2026-07-03"
   },
   "makers": {
@@ -490,6 +490,10 @@
         "dmm_prefix": "1",
         "sample": "SDNM-552"
       },
+      "stars": {
+        "dmm_prefix": "1",
+        "sample": "STARS-627"
+      },
       "start": {
         "dmm_prefix": "1",
         "sample": "START-605"
@@ -503,6 +507,10 @@
       "sdab": {
         "dmm_prefix": "1",
         "sample": "SDAB-351"
+      },
+      "sddm": {
+        "dmm_prefix": "1",
+        "sample": "SDDM-497"
       }
     },
     "SWITCH": {
@@ -547,6 +555,12 @@
       "aifxd": {
         "dmm_prefix": "h_1639",
         "sample": "AIFXD-041"
+      }
+    },
+    "Wanz Factory": {
+      "ie": {
+        "dmm_prefix": "3",
+        "sample": "IE-115"
       }
     },
     "Youare": {
@@ -659,6 +673,12 @@
       "totte": {
         "dmm_prefix": "1",
         "sample": "TOTTE-305"
+      }
+    },
+    "ズボズバ": {
+      "zzza": {
+        "dmm_prefix": "h_1510",
+        "sample": "ZZZA-002"
       }
     },
     "ティッシュシコレール": {

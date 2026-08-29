@@ -45,13 +45,13 @@ class TestDmmPrefixTableCountAndKeys:
     def test_meta_count_matches_flattened_length(self):
         """Internal consistency: seed lives under feature/ (gitignored) so CI
         cannot re-read nonempty seed keys. Instead assert _meta.count, flattened
-        length, and sum of per-maker sizes are all 160 and equal."""
+        length, and sum of per-maker sizes are all 164 and equal."""
         table = _load_table()
         flat = _flatten_shipped_table(table)
         per_maker = sum(len(v) for v in table["makers"].values())
-        assert table["_meta"]["count"] == 160
-        assert len(flat) == 160
-        assert per_maker == 160
+        assert table["_meta"]["count"] == 164
+        assert len(flat) == 164
+        assert per_maker == 164
         assert table["_meta"]["count"] == len(flat) == per_maker
 
     def test_flattened_keys_lowercase_unique(self):
@@ -61,9 +61,11 @@ class TestDmmPrefixTableCountAndKeys:
         assert all(k == k.lower() for k in keys)
         assert len(keys) == len(set(keys))
 
-    def test_flattened_keys_subset_of_crawl_fixture(self):
+    def test_flattened_keys_diff_from_crawl_fixture_is_harvested(self):
         """Stand-in for bidirectional seed equality (seed not in CI):
-        flattened keys ⊆ fixture pfx (lowered), difference empty.
+        flattened keys minus fixture pfx (lowered) equals the harvested set exactly.
+        Harvested prefixes (stars, ie, sddm, zzza) come from real-machine self-learning,
+        not in the frozen 2026-07 crawl fixture (TASK-134b-T11 D7).
 
         NOT a completeness proof. The three DoD-2 checks (count/lowercase/subset)
         all survive an equal-sized swap — dropping one nonempty seed prefix while
@@ -77,9 +79,8 @@ class TestDmmPrefixTableCountAndKeys:
         flat = _flatten_shipped_table(table)
         fixture = _load_fixture()
         fixture_pfx = {g["pfx"].lower() for g in fixture}
-        extras = set(flat.keys()) - fixture_pfx
-        assert extras == set()
-        assert set(flat.keys()) <= fixture_pfx
+        harvested = {"stars", "ie", "sddm", "zzza"}  # 來自兩台實機的自學值，不在 2026-07 crawl 樣本裡
+        assert set(flat.keys()) - fixture_pfx == harvested
 
 
 # ── DoD 3 ─────────────────────────────────────────────────────────────────────
@@ -108,6 +109,19 @@ class TestDmmPrefixCorrections:
         flat = _flatten_shipped_table(table)
         assert flat["mcsr"]["dmm_prefix"] == "57"
 
+    def test_harvested_prefixes_have_expected_values(self):
+        """TASK-134b-T11 DoD 2: 斷言四個收割前綴的 dmm_prefix 值與所屬 maker key。"""
+        table = _load_table()
+        flat = _flatten_shipped_table(table)
+        assert table["makers"]["SOD"]["stars"]["dmm_prefix"] == "1"
+        assert table["makers"]["SOD Create"]["sddm"]["dmm_prefix"] == "1"
+        assert table["makers"]["Wanz Factory"]["ie"]["dmm_prefix"] == "3"
+        assert table["makers"]["ズボズバ"]["zzza"]["dmm_prefix"] == "h_1510"
+        assert flat["stars"]["dmm_prefix"] == "1"
+        assert flat["sddm"]["dmm_prefix"] == "1"
+        assert flat["ie"]["dmm_prefix"] == "3"
+        assert flat["zzza"]["dmm_prefix"] == "h_1510"
+
 
 # ── DoD 4 ─────────────────────────────────────────────────────────────────────
 
@@ -124,10 +138,10 @@ class TestFlattenCollisionDetection:
             _flatten_shipped_table(raw)
         assert "abc" in str(exc_info.value)
 
-    def test_real_table_flattens_to_160_without_error(self):
+    def test_real_table_flattens_to_164_without_error(self):
         table = _load_table()
         flat = _flatten_shipped_table(table)
-        assert len(flat) == 160
+        assert len(flat) == 164
 
 
 # ── DoD 5 ─────────────────────────────────────────────────────────────────────
