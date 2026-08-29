@@ -11,7 +11,11 @@ test_enrich_metadata_validation.py - metadata 形狀驗證與清洗之單元測�
 
 import pytest
 from fastapi import HTTPException
-from web.routers.scraper import _validate_metadata_shape, _clean_metadata_for_scraper_data  # noqa: PLC2701
+from web.routers.scraper import (  # noqa: PLC2701
+    _validate_metadata_shape,
+    _clean_metadata_for_scraper_data,
+    _resolve_write_cover,
+)
 
 
 class TestValidateMetadataShape:
@@ -179,3 +183,26 @@ class TestCleanMetadataForScraperData:
         eight_keys = ["number", "mode", "success", "total", "_source", "_mode", "_all_variant_ids", "candidates"]
         for k in eight_keys:
             assert k not in cleaned, f"Key '{k}' should be stripped by cleaner"
+
+
+class TestResolveWriteCover:
+    """DoD-5: 測試 _resolve_write_cover 純函式之四種輸入組合"""
+
+    def test_resolve_write_cover_none_with_metadata_returns_false(self):
+        """DoD-5 / M1: (None, has_metadata=True) → False（有 metadata 且未表態時不換封面）"""
+        assert _resolve_write_cover(None, has_metadata=True) is False
+
+    def test_resolve_write_cover_none_without_metadata_returns_true(self):
+        """DoD-5: (None, has_metadata=False) → True（無 metadata 且未表態時照舊換封面）"""
+        assert _resolve_write_cover(None, has_metadata=False) is True
+
+    def test_resolve_write_cover_explicit_true_returns_true(self):
+        """DoD-5: (True, 任意 has_metadata) → True（顯式 True 原樣通過）"""
+        assert _resolve_write_cover(True, has_metadata=True) is True
+        assert _resolve_write_cover(True, has_metadata=False) is True
+
+    def test_resolve_write_cover_explicit_false_returns_false(self):
+        """DoD-5: (False, 任意 has_metadata) → False（顯式 False 原樣通過）"""
+        assert _resolve_write_cover(False, has_metadata=True) is False
+        assert _resolve_write_cover(False, has_metadata=False) is False
+

@@ -540,3 +540,194 @@ class TestEnrichSingleMetadataIntegration:
         assert response.status_code == 200
         assert response.json()["success"] is True
         assert mock_enrich.call_count == 1
+
+    def test_write_cover_none_with_metadata_preserves_cover_and_focal(self, client, mocker, tmp_path):
+        """DoD-1: 帶 metadata ＋ mode=refresh_full ＋ overwrite_existing=true ＋ 不帶 write_cover
+        → 200，且既有封面檔 bytes/mtime 逐位元組不變、DB cover_path 記錄不變、手動對焦排程未被呼叫、回應 cover_written=False。
+        """
+        number = "SONE-205"
+        mp4_path = tmp_path / f"{number}.mp4"
+        mp4_path.write_bytes(b"\x00" * 16)
+
+        cover_path = tmp_path / f"{number}.jpg"
+        initial_cover_bytes = b"existing-cover-image-binary-data-12345"
+        cover_path.write_bytes(initial_cover_bytes)
+        before_bytes = cover_path.read_bytes()
+        before_mtime = cover_path.stat().st_mtime_ns
+
+        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
+        mock_existing = Video(
+            number=number,
+            title="舊標題",
+            cover_path=f"file://{cover_path}",
+            auto_focal="0.5,0.5",
+            crop_mode="manual",
+        )
+        mocker.patch("web.routers.scraper.VideoRepository").return_value.get_by_path.return_value = mock_existing
+
+        mock_search = mocker.patch("core.enricher.search_jav")
+        mock_download = mocker.patch("core.enricher.download_image", return_value=True)
+        mock_focal = mocker.patch("core.enricher.schedule_focal_after_cover_write")
+
+        mock_repo_cls = mocker.patch("core.enricher.VideoRepository")
+        mock_repo = MagicMock()
+        mock_repo_cls.return_value = mock_repo
+        mock_repo.db_path = ":memory:"
+        mock_repo.get_by_path.return_value = mock_existing
+        mock_repo.get_by_numbers.return_value = {}
+
+        req_payload = {
+            "file_path": str(mp4_path),
+            "number": number,
+            "mode": "refresh_full",
+            "overwrite_existing": True,
+            "metadata": {
+                "title": "新標題",
+                "source": "javdb",
+                "cover": "https://example.com/new_cover.jpg",
+            },
+        }
+
+        response = client.post("/api/enrich-single", json=req_payload)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["cover_written"] is False
+
+        # 斷言封面檔案 bytes/mtime 逐位元組不變 (BE-TEST-10)
+        assert cover_path.read_bytes() == before_bytes
+        assert cover_path.stat().st_mtime_ns == before_mtime
+
+        # 斷言 DB 的 cover_path 記錄不變
+        assert mock_repo.upsert.call_count == 1
+        saved_video = mock_repo.upsert.call_args[0][0]
+        assert saved_video.cover_path == mock_existing.cover_path
+
+        # 斷言手動對焦座標排程未被觸發
+        mock_focal.assert_not_called()
+        mock_download.assert_not_called()
+        mock_search.assert_not_called()
+
+    def test_write_cover_explicit_true_with_metadata_writes_cover(self, client, mocker, tmp_path):
+        """DoD-2: 帶 metadata ＋ mode=refresh_full ＋ overwrite_existing=true ＋ write_cover=True
+        → 200，且封面真的被重新下載與寫入（download_image 被呼叫，cover_written=True）。
+        """
+        number = "SONE-205"
+        mp4_path = tmp_path / f"{number}.mp4"
+        mp4_path.write_bytes(b"\x00" * 16)
+
+        cover_path = tmp_path / f"{number}.jpg"
+        cover_path.write_bytes(b"old-cover")
+
+        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
+        mock_existing = Video(number=number, cover_path=f"file://{cover_path}")
+        mocker.patch("web.routers.scraper.VideoRepository").return_value.get_by_path.return_value = mock_existing
+
+        mock_download = mocker.patch("core.enricher.download_image", return_value=True)
+        mocker.patch("core.enricher.schedule_focal_after_cover_write")
+
+        mock_repo_cls = mocker.patch("core.enricher.VideoRepository")
+        mock_repo = MagicMock()
+        mock_repo_cls.return_value = mock_repo
+        mock_repo.db_path = ":memory:"
+        mock_repo.get_by_path.return_value = mock_existing
+        mock_repo.get_by_numbers.return_value = {}
+
+        req_payload = {
+            "file_path": str(mp4_path),
+            "number": number,
+            "mode": "refresh_full",
+            "overwrite_existing": True,
+            "write_cover": True,
+            "metadata": {
+                "title": "新標題",
+                "cover": "https://example.com/new_cover.jpg",
+                "source": "javdb",
+            },
+        }
+
+        response = client.post("/api/enrich-single", json=req_payload)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["cover_written"] is True
+        mock_download.assert_called()
+
+    def test_write_cover_none_without_metadata_writes_cover(self, client, mocker):
+        """DoD-3 (AC-10 / M3): 不帶 metadata、不帶 write_cover（None）→ 照舊換封面（傳給 enrich_single 的 write_cover 必須為 True）。"""
+        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
+        mock_enrich = mocker.patch(
+            "web.routers.scraper.enrich_single",
+            return_value=_ok_result(source_used="javdb")
+        )
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/video/SONE-205.mp4",
+            "number": "SONE-205",
+            "mode": "fill_missing",
+        })
+        assert response.status_code == 200
+        assert mock_enrich.call_count == 1
+        assert mock_enrich.call_args.kwargs["write_cover"] is True
+
+    def test_write_cover_explicit_false_without_metadata_preserves_cover(self, client, mocker):
+        """DoD-4 (AC-10): 不帶 metadata、顯式 write_cover=False → 傳給 enrich_single 的 write_cover 必須為 False。"""
+        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
+        mock_enrich = mocker.patch(
+            "web.routers.scraper.enrich_single",
+            return_value=_ok_result(source_used="javdb")
+        )
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/video/SONE-205.mp4",
+            "number": "SONE-205",
+            "mode": "fill_missing",
+            "write_cover": False,
+        })
+        assert response.status_code == 200
+        assert mock_enrich.call_count == 1
+        assert mock_enrich.call_args.kwargs["write_cover"] is False
+
+    def test_will_write_external_guard_requires_resolved_write_cover_p1_3_regression(self, client, mocker, tmp_path):
+        """DoD-6 (Codex P1-3 / M2): external_manager=jellyfin ＋ metadata（不帶 write_cover）＋ overwrite_existing=false
+        ＋ 既有 NFO 存在 ＋ 既有正典同名封面存在 ＋ -poster.jpg 存在但 -fanart.jpg 缺 → 400（分裂守衛擋下）。
+        """
+        number = "SONE-205"
+        mp4_path = tmp_path / f"{number}.mp4"
+        mp4_path.write_bytes(b"\x00" * 16)
+
+        nfo_path = tmp_path / f"{number}.nfo"
+        nfo_path.write_text("<movie><title>舊標題</title></movie>", encoding="utf-8")
+
+        # 注意：正典封面必須建同名 .jpg（不是 -fanart.jpg）
+        cover_path = tmp_path / f"{number}.jpg"
+        cover_path.write_bytes(b"existing-cover-bytes")
+
+        poster_path = tmp_path / f"{number}-poster.jpg"
+        poster_path.write_bytes(b"existing-poster-bytes")
+
+        # SONE-205-fanart.jpg 刻意不建立（fanart 缺）
+
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value={
+                "scraper": {"external_manager": "jellyfin"},
+                "search": {},
+                "gallery": {},
+            },
+        )
+        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
+        mock_existing = Video(number=number)
+        mocker.patch("web.routers.scraper.VideoRepository").return_value.get_by_path.return_value = mock_existing
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": str(mp4_path),
+            "number": number,
+            "mode": "refresh_full",
+            "overwrite_existing": False,
+            "metadata": {"title": "任意新標題"},
+        })
+
+        assert response.status_code == 400
+        assert "不會寫出任何 NFO/封面" in response.json()["detail"]
+

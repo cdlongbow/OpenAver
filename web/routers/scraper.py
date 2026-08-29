@@ -313,7 +313,7 @@ class EnrichRequest(BaseModel):
     number: str
     mode: Literal["refresh_full", "fill_missing", "db_to_sidecar"] = "fill_missing"
     write_nfo: bool = True
-    write_cover: bool = True
+    write_cover: Optional[bool] = None
     write_extrafanart: bool = False
     overwrite_existing: bool = False
     source: Optional[str] = None
@@ -516,6 +516,14 @@ def _clean_metadata_for_scraper_data(metadata: dict) -> dict:
     }
 
 
+def _resolve_write_cover(write_cover: Optional[bool], has_metadata: bool) -> bool:
+    """三態解析（CD-135-4）：沒表態時，有 metadata → False，無 metadata → True（照舊）。"""
+    if write_cover is not None:
+        return write_cover
+    return not has_metadata  # 無 metadata → True（照舊）；有 metadata → False（CD-135-4）
+
+
+
 @router.post("/enrich-single")
 def enrich_single_endpoint(request: EnrichRequest) -> dict:
     config = load_config()
@@ -524,6 +532,7 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
     # TASK-91-T3：讀取端 path_mappings，供 resolve_nfo_cover_paths / uri_to_local_fs_path /
     # enrich_single 共用一次算好的同一組值（避免重複 .get() chain）。
     path_mappings = config.get("gallery", {}).get("path_mappings", {})
+    resolved_write_cover = _resolve_write_cover(request.write_cover, request.metadata is not None)  # CD-135-4
 
     # TASK-104-T3 (CD-104-5)：唯讀來源片不再一律拒絕——改道 output_dir。
     # resolve_owning_output_root 依 canonical URI 找最內層唯讀來源（尊重 writable
@@ -583,7 +592,7 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
                 number=request.number, scraper_cfg=config.get("scraper", {}),
                 path_mappings=path_mappings, action=action, proxy_url=proxy_url,
                 scraper_data=scraper_data, scrape_source=request.source,
-                javbus_lang=request.javbus_lang, write_cover=request.write_cover,
+                javbus_lang=request.javbus_lang, write_cover=resolved_write_cover,
                 overwrite_existing=request.overwrite_existing,
                 after_produce=lambda: thumbnail_cache.invalidate(canonical),
             )
@@ -621,7 +630,7 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
         )
         will_write_nfo = request.write_nfo and not os.path.exists(nfo_path)
         will_write_cover = not should_preserve_cover(
-            request.write_cover, request.overwrite_existing, os.path.exists(cover_path)
+            resolved_write_cover, request.overwrite_existing, os.path.exists(cover_path)
         )
         # Codex PR review P1（pre-existing，早於 112）：guard 必須與實際寫出者
         # （core/enricher.py::_write_external_images 的 STEM_IMAGE_MODES 白名單，
@@ -636,7 +645,7 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
             fanart_path = stem + "-fanart.jpg"
             # 底圖存在 + 至少一張外部圖缺 → _write_external_images 有寫出機會
             cover_exists_on_disk = os.path.exists(cover_path)
-            will_write_external = cover_exists_on_disk and (
+            will_write_external = resolved_write_cover and cover_exists_on_disk and (
                 not os.path.exists(poster_path) or not os.path.exists(fanart_path)
             )
         else:
@@ -680,7 +689,7 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
             number=request.number,
             mode=request.mode,
             write_nfo=request.write_nfo,
-            write_cover=request.write_cover,
+            write_cover=resolved_write_cover,
             write_extrafanart=request.write_extrafanart,
             overwrite_existing=request.overwrite_existing,
             external_manager=config.get("scraper", {}).get("external_manager", "off"),
