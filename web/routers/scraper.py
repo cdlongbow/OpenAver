@@ -502,6 +502,13 @@ def _validate_enrich_request(request: EnrichRequest, owning, action: Optional[st
                 raise HTTPException(400, detail="唯讀來源重刮：metadata.number 型別錯誤，必須是字串")
             if 'title' not in request.metadata:
                 raise HTTPException(400, detail="唯讀來源重刮：metadata 缺 title")
+            # 4. 番號守衛唯讀那一半（CD-135-7 點 2）：查 DB 用 canonical——執行本體
+            # （core/readonly_producer.py 的 enrich_one_readonly/resolve_ingest_plan）
+            # 自己查 DB 用的就是同一個 canonical key，守衛必須問同一筆記錄。
+            if not request.allow_number_change:
+                existing = VideoRepository().get_by_path(canonical)
+                if existing and existing.number and existing.number != submitted_number:
+                    raise HTTPException(400, detail=f"番號不符：metadata 給 {submitted_number}，DB 既有 {existing.number}；如確定要改號請帶 allow_number_change=true")
         else:
             # DB 的 path 欄位寫入時不套 path_mappings（core/enricher.py:504 同構），
             # 帶 path_mappings 會查到另一個命名空間、永遠對不上 → 守衛形同虛設。
@@ -580,6 +587,8 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
                 scraper_data, _cand_err = _javlib_candidate_scraper_data(request)
                 if _cand_err:
                     return _cand_err
+            if request.metadata is not None:
+                scraper_data = dict(request.metadata)
             # TASK-109-T2: 產出核心（URI→FS 轉換到組 EnrichResult 為止）薄搬移進
             # core.readonly_producer.enrich_one_readonly；caller 只保留三個刻意
             # 缺口——javlib 預抓（上面已做）、reject guard + output_dir 解析
