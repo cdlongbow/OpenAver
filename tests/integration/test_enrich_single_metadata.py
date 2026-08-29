@@ -14,6 +14,7 @@ test_enrich_single_metadata.py - POST /api/enrich-single 帶 metadata 之整合�
 import xml.etree.ElementTree as ET
 from unittest.mock import MagicMock
 
+from core.database import Video
 from core.enricher import EnrichResult
 
 
@@ -53,6 +54,7 @@ class TestEnrichSingleMetadataIntegration:
             return_value=_ok_result(source_used="javdb")
         )
         mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
+        mocker.patch("web.routers.scraper.VideoRepository").return_value.get_by_path.return_value = None
 
         req_payload = {
             "file_path": "/video/ABC-123.mp4",
@@ -96,6 +98,7 @@ class TestEnrichSingleMetadataIntegration:
         mp4_path.write_bytes(b"\x00" * 16)
 
         mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
+        mocker.patch("web.routers.scraper.VideoRepository").return_value.get_by_path.return_value = None
         mock_search = mocker.patch("core.enricher.search_jav")
         mock_download = mocker.patch("core.enricher.download_image", return_value=True)
 
@@ -278,6 +281,7 @@ class TestEnrichSingleMetadataIntegration:
     def test_source_sink_reports_source_used(self, client, mocker):
         """DoD-5 (CD-135-3 / M3): 帶 metadata 含 source: 'javdb' → 200 且回應 source_used == 'javdb'"""
         mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
+        mocker.patch("web.routers.scraper.VideoRepository").return_value.get_by_path.return_value = None
 
         # Mock enrich_single: 回傳 source_used 來自 scraper_data['source']
         def mock_enrich_impl(**kwargs):
@@ -387,3 +391,152 @@ class TestEnrichSingleMetadataIntegration:
         })
         assert response.status_code == 400
         assert "唯讀來源重刮：metadata.number 型別錯誤，必須是字串" in response.json()["detail"]
+
+    def test_number_guard_mismatch_raises_400_and_nfo_unchanged(self, client, mocker, tmp_path):
+        """DoD-1 (AC-5 / M1): DB 既有 number="SONE-205"、請求送 number="SONE-206" ＋ metadata ＋ mode=refresh_full
+        → 400，且 detail 同時含兩個番號；且既有 NFO 檔案的 mtime 與 bytes 逐位元組不變（BE-TEST-10）。
+        """
+        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
+        mock_video = Video(number="SONE-205")
+        mocker.patch("web.routers.scraper.VideoRepository").return_value.get_by_path.return_value = mock_video
+
+        # 建立既有 NFO 檔案並在 POST 之前記錄 baseline (BE-TEST-10)
+        nfo_path = tmp_path / "SONE-206.nfo"
+        initial_content = b"<movie><title>[SONE-205] \xe5\x8e\x9f\xe5\xa7\x8b\xe6\xa8\x99\xe9\xa1\x8c</title></movie>"
+        nfo_path.write_bytes(initial_content)
+        before_bytes = nfo_path.read_bytes()
+        before_mtime = nfo_path.stat().st_mtime_ns
+
+        mp4_path = tmp_path / "SONE-206.mp4"
+        mp4_path.write_bytes(b"\x00" * 16)
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": str(mp4_path),
+            "number": "SONE-206",
+            "mode": "refresh_full",
+            "overwrite_existing": True,
+            "metadata": {"title": "新標題"},
+        })
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "SONE-206" in detail
+        assert "SONE-205" in detail
+        assert "allow_number_change=true" in detail
+
+        # 斷言 NFO 檔案未被改動（bytes 逐位元組 ＋ mtime 不變）
+        assert nfo_path.read_bytes() == before_bytes
+        assert nfo_path.stat().st_mtime_ns == before_mtime
+
+    def test_number_guard_allow_flag_permits_change(self, client, mocker, tmp_path):
+        """DoD-2 (AC-5 / M2): DB 既有 number="SONE-205"、請求送 number="SONE-206" ＋ allow_number_change=True
+        → 200，且寫出的 NFO／DB 的番號真的是新番號。
+        """
+        number = "SONE-206"
+        mp4_path = tmp_path / f"{number}.mp4"
+        mp4_path.write_bytes(b"\x00" * 16)
+
+        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
+        mock_search = mocker.patch("core.enricher.search_jav")
+        mock_download = mocker.patch("core.enricher.download_image", return_value=True)
+
+        mock_existing = Video(number="SONE-205", title="舊標題")
+        mocker.patch("web.routers.scraper.VideoRepository").return_value.get_by_path.return_value = mock_existing
+
+        mock_repo_cls = mocker.patch("core.enricher.VideoRepository")
+        mock_repo = MagicMock()
+        mock_repo_cls.return_value = mock_repo
+        mock_repo.db_path = ":memory:"
+        mock_repo.get_by_path.return_value = mock_existing
+        mock_repo.get_by_numbers.return_value = {}
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": str(mp4_path),
+            "number": number,
+            "mode": "refresh_full",
+            "overwrite_existing": True,
+            "allow_number_change": True,
+            "metadata": {
+                "title": "新標題",
+                "source": "javdb",
+            },
+        })
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+
+        nfo_path = tmp_path / f"{number}.nfo"
+        assert nfo_path.exists()
+        root = ET.fromstring(nfo_path.read_text(encoding="utf-8"))
+        assert root.findtext("title") == f"[{number}]新標題"
+
+        mock_search.assert_not_called()
+        assert mock_repo.upsert.call_count == 1
+        saved_video = mock_repo.upsert.call_args[0][0]
+        assert saved_video.number == number
+        assert saved_video.title == "新標題"
+
+    def test_number_guard_new_file_not_blocked(self, client, mocker):
+        """DoD-3 (AC-5): DB 查無該列（get_by_path 回 None）→ 不擋（200）。"""
+        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
+        mocker.patch("web.routers.scraper.VideoRepository").return_value.get_by_path.return_value = None
+        mock_enrich = mocker.patch(
+            "web.routers.scraper.enrich_single",
+            return_value=_ok_result(source_used="javdb")
+        )
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/video/SONE-206.mp4",
+            "number": "SONE-206",
+            "mode": "refresh_full",
+            "overwrite_existing": True,
+            "metadata": {"title": "標題"},
+        })
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        assert mock_enrich.call_count == 1
+
+    def test_number_guard_db_empty_number_not_blocked(self, client, mocker):
+        """DoD-4 (AC-5 / M3): DB 有列但 existing.number 為 "" 或 None → 不擋（200）。"""
+        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
+        mock_existing = Video(number="")
+        mocker.patch("web.routers.scraper.VideoRepository").return_value.get_by_path.return_value = mock_existing
+        mock_enrich = mocker.patch(
+            "web.routers.scraper.enrich_single",
+            return_value=_ok_result(source_used="javdb")
+        )
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/video/SONE-206.mp4",
+            "number": "SONE-206",
+            "mode": "refresh_full",
+            "overwrite_existing": True,
+            "metadata": {"title": "標題"},
+        })
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        assert mock_enrich.call_count == 1
+
+    def test_number_guard_without_metadata_not_affected(self, client, mocker):
+        """DoD-5 (AC-10): 不帶 metadata、番號與 DB 不符的既有呼叫 → 行為與現況完全相同（不擋，200）。"""
+        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
+        mock_existing = Video(number="SONE-205")
+        mocker.patch("web.routers.scraper.VideoRepository").return_value.get_by_path.return_value = mock_existing
+        mock_enrich = mocker.patch(
+            "web.routers.scraper.enrich_single",
+            return_value=_ok_result(source_used="javdb")
+        )
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/video/SONE-206.mp4",
+            "number": "SONE-206",
+            "mode": "fill_missing",
+            "overwrite_existing": True,
+        })
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        assert mock_enrich.call_count == 1

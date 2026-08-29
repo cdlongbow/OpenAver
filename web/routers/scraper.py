@@ -327,6 +327,7 @@ class EnrichRequest(BaseModel):
     # remote overwrite without an explicit gear action).
     readonly_action: Optional[Literal['rescrape', 'ingest']] = None
     metadata: Optional[Dict[str, Any]] = None
+    allow_number_change: bool = False
 
 
 class BatchEnrichItem(BaseModel):
@@ -501,6 +502,10 @@ def _validate_enrich_request(request: EnrichRequest, owning, action: Optional[st
                 raise HTTPException(400, detail="唯讀來源重刮：metadata.number 型別錯誤，必須是字串")
             if 'title' not in request.metadata:
                 raise HTTPException(400, detail="唯讀來源重刮：metadata 缺 title")
+        else:
+            existing = VideoRepository().get_by_path(to_file_uri(uri_to_fs_path(request.file_path)))
+            if existing and existing.number and existing.number != request.number and not request.allow_number_change:
+                raise HTTPException(400, detail=f"番號不符：請求 {request.number}，DB 既有 {existing.number}；如確定要改號請帶 allow_number_change=true")
 
 
 def _clean_metadata_for_scraper_data(metadata: dict) -> dict:
