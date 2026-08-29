@@ -328,3 +328,85 @@ def test_local_hints_not_a_dict_is_ignored(tmp_path, monkeypatch, caplog):
 
     assert merged["id"] == "h_113"          # 出貨表仍然生效
     assert any(r.levelno == logging.WARNING for r in caplog.records)
+
+
+# ── Codex review 追加（P3-2）────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    [None, ["h_113"], 5, {"dmm_prefix": "h_113"}, True],
+    ids=["null", "list", "int", "dict", "bool"],
+)
+def test_local_hint_non_string_value_falls_back_to_shipped(
+    tmp_path, monkeypatch, bad_value
+):
+    """本機值型別壞掉 → 丟棄該鍵，出貨表的正確值仍然生效。
+
+    丟棄而不是改成 ""：改成 "" 等於讓壞的本機值把出貨表蓋掉，使用者打一個字錯
+    就吃不到我們出貨的 h_113，沒日本 IP 時整個前綴查不到。
+    """
+    prefix_path = tmp_path / "dmm_prefix_hints.json"
+    prefix_path.write_text(json.dumps({"id": bad_value}), encoding="utf-8")
+    monkeypatch.setattr(dmm_module, "SHIPPED_TABLE_FILE", REAL_TABLE_PATH)
+    monkeypatch.setattr(dmm_module, "PREFIX_FILE", prefix_path)
+
+    merged = _scraper()._load_prefix_hints()
+
+    assert merged["id"] == "h_113"
+
+
+def test_local_hint_string_value_still_overrides_shipped(tmp_path, monkeypatch):
+    """正向鎖：合法字串本機值仍然覆寫出貨表（別把過濾寫成全部忽略本機檔）。"""
+    prefix_path = tmp_path / "dmm_prefix_hints.json"
+    prefix_path.write_text(json.dumps({"id": "h_999"}), encoding="utf-8")
+    monkeypatch.setattr(dmm_module, "SHIPPED_TABLE_FILE", REAL_TABLE_PATH)
+    monkeypatch.setattr(dmm_module, "PREFIX_FILE", prefix_path)
+
+    merged = _scraper()._load_prefix_hints()
+
+    assert merged["id"] == "h_999"
+
+
+def test_merged_values_are_all_strings(tmp_path, monkeypatch):
+    """T2 對外宣告的契約：回傳的 value 一律是字串（含空字串）。"""
+    prefix_path = tmp_path / "dmm_prefix_hints.json"
+    prefix_path.write_text(
+        json.dumps({"id": None, "sone": "9", "zzz": ["x"]}), encoding="utf-8"
+    )
+    monkeypatch.setattr(dmm_module, "SHIPPED_TABLE_FILE", REAL_TABLE_PATH)
+    monkeypatch.setattr(dmm_module, "PREFIX_FILE", prefix_path)
+
+    merged = _scraper()._load_prefix_hints()
+
+    assert all(isinstance(v, str) for v in merged.values())
+    assert "zzz" not in merged
+
+
+def test_shipped_entry_with_non_string_prefix_is_dropped(tmp_path, monkeypatch):
+    """出貨表若被塞非字串（build script 出錯）→ 該前綴視為不存在，
+    退回預設規則，而不是把 "[]" 組進 content_id。"""
+    table_path = tmp_path / "dmm_prefix_table.json"
+    table_path.write_text(
+        json.dumps(
+            {
+                "_meta": {"count": 2},
+                "makers": {
+                    "M": {
+                        "aaa": {"dmm_prefix": [], "sample": "AAA-001"},
+                        "bbb": {"dmm_prefix": "h_1", "sample": "BBB-001"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dmm_module, "SHIPPED_TABLE_FILE", table_path)
+    monkeypatch.setattr(dmm_module, "PREFIX_FILE", tmp_path / "absent.json")
+
+    scraper = _scraper()
+    merged = scraper._load_prefix_hints()
+
+    assert "aaa" not in merged
+    assert merged["bbb"] == "h_1"
+    assert scraper._convert_with_hints("AAA-001") == "aaa00001"

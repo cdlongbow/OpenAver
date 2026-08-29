@@ -91,3 +91,40 @@ def test_step3_cid_found_but_fetch_fails_no_log(dmm_scraper, caplog, monkeypatch
 
     assert result is None
     assert not any(LOG_SNIPPET in r.getMessage() for r in caplog.records)
+
+
+# ── Codex review 追加（P3-1）────────────────────────────────────────────────
+
+
+def test_raw_cid_input_does_not_log_step3(dmm_scraper, caplog, monkeypatch):
+    """完整 cid 輸入 → _search_content_id 發請求前就 return None → 不得留痕。
+
+    這條路接著被步驟 4 救回來（搜尋其實成功），若仍印「可能是地區限制」，
+    之後拿 debug.log 排錯的人會被誤導去查 VPN。
+    """
+    video = Video(number="ID-057", title="t", source="dmm")
+    monkeypatch.setattr(
+        dmm_scraper,
+        "_fetch_by_id",
+        lambda cid: video if cid == "h_113id00057" else None,
+    )
+
+    with caplog.at_level(logging.DEBUG, logger=dmm_module.logger.name):
+        result = dmm_scraper.search("h_113id00057")
+
+    assert result is not None
+    assert not any(LOG_SNIPPET in r.getMessage() for r in caplog.records)
+
+
+def test_raw_cid_input_that_also_fails_still_does_not_log(
+    dmm_scraper, caplog, monkeypatch
+):
+    """反向鎖：步驟 4 也失敗時同樣不得留痕——判準是『番號可不可解析』，
+    不是『最後有沒有找到』。避免用 result is not None 之類的假條件過關。"""
+    monkeypatch.setattr(dmm_scraper, "_fetch_by_id", lambda cid: None)
+
+    with caplog.at_level(logging.DEBUG, logger=dmm_module.logger.name):
+        result = dmm_scraper.search("h_113id00057")
+
+    assert result is None
+    assert not any(LOG_SNIPPET in r.getMessage() for r in caplog.records)

@@ -56,8 +56,10 @@ class DMMScraper(BaseScraper):
     - 有完整簡介、導演資訊
 
     特點：
-    - 雙層快取：前綴映射 + content_id 快取
-    - 無需預設映射表
+    - 隨版本出貨的番號前綴對照表（dmm_prefix_table.json，見 spec-134 F1）
+      ⚠️ 該檔是出貨產物，build.py / build_macos.py 的 COPY_ITEMS 必須帶上；
+         拿掉它冷啟動命中率會從 320/335 掉回 175/335。
+    - content_id 快取（逐番號，可丟）
 
     注意：
     - 需要日本 IP（VPN）
@@ -465,8 +467,31 @@ class DMMScraper(BaseScraper):
             local = {}
 
         # 3. 純合併，本機優先；只取 dmm_prefix 字串（sample 不得外洩）
-        merged = {p: e.get("dmm_prefix", "") for p, e in shipped.items()}
-        merged.update({p: v for p, v in local.items() if not p.startswith("_")})
+        #    非字串值一律丟棄（不是改成 ""）——丟掉之後 .get(prefix, "") 自然
+        #    退回「預設規則」，本機打錯型別時還吃得到出貨表的正確值；若改成 ""
+        #    則壞的本機值會把出貨表蓋掉。出貨表那半另有 test_hit_rate 守著。
+        merged = {
+            p: e["dmm_prefix"]
+            for p, e in shipped.items()
+            if isinstance(e.get("dmm_prefix"), str)
+        }
+        usable_local = {
+            p: v
+            for p, v in local.items()
+            if not p.startswith("_") and isinstance(v, str)
+        }
+        dropped = [
+            p for p in local if not p.startswith("_") and p not in usable_local
+        ]
+        if dropped:
+            # 本機檔是使用者手可及的 → 打錯型別要留得下痕跡；debug 級避免每次
+            # 搜尋都往 console 噴（_load_prefix_hints 每次 search 都會走到）。
+            logger.debug(
+                "dmm_prefix_hints.json 有 %d 個非字串值，已忽略：%s",
+                len(dropped),
+                ", ".join(sorted(dropped)[:10]),
+            )
+        merged.update(usable_local)
         return merged
 
     # ========== content_id 轉換 ==========
@@ -726,7 +751,11 @@ class DMMScraper(BaseScraper):
                 self._save_cache(number, discovered_cid)
                 rate_limit(self.config.delay)
                 return result
-        else:
+        elif self._parse_number(number)[0]:
+            # 只在「番號可解析 ⇒ _search_content_id 真的發了 API」時留痕。
+            # 輸入是完整 cid（h_113id00057）時它在發請求前就 return None，
+            # 此時印「可能是地區限制」是假話——那條路接著會被步驟 4 救回來。
+            #
             # legacySearchPPV 在非日本 IP 下回 HTTP 200 + 空陣列 + 無 errors，
             # 「DMM 沒收這片」與「被地區封鎖」在 log 裡長得一模一樣 → 只留痕，不宣稱能分辨。
             logger.debug(
