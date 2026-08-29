@@ -186,6 +186,25 @@ def _ensure_repo_on_path() -> None:
         sys.path.insert(0, root)
 
 
+def _configured_dmm_proxy() -> str:
+    """讀設定頁的 DMM 代理；沒設定、或設定讀不起來，一律回 `""`（直連）。
+
+    刻意吞掉所有例外：這支腳本的契約是「無論如何都要印得出東西」，
+    不能因為 config 壞了就 traceback（同 D1 / DoD 6）。
+    """
+    _ensure_repo_on_path()
+    try:
+        from core.config import load_config
+        from core.scraper import _dmm_proxy_url
+
+        # 借用產品端的同一支判斷（`core/scraper.py` 也是這樣取），不在這裡重寫一份：
+        # 空字串與 "direct"（大小寫不敏感）都要收斂成 ""，而那個規則只有它知道。
+        raw = (load_config().get("search") or {}).get("proxy_url") or ""
+        return _dmm_proxy_url(raw)
+    except Exception:
+        return ""
+
+
 def fetch_latest_cids(limit: int = SAMPLE_LIMIT) -> tuple[list[str] | None, bool]:
     """打一次 legacySearchPPV（不帶 queryWord）。
 
@@ -196,8 +215,14 @@ def fetch_latest_cids(limit: int = SAMPLE_LIMIT) -> tuple[list[str] | None, bool
     _ensure_repo_on_path()
     import requests
     from core.scrapers.dmm import DMMScraper
+    from core.scrapers.models import ScraperConfig
 
-    scraper = DMMScraper()
+    # 設定頁若填了 DMM 代理就跟著走，否則直連（2026-08-29 branch review P2）。
+    # Why：DMM 在產品端是 proxy-gated（`core/scraper.py` 無 proxy_url 就不建立這個來源），
+    # 所以「會用 DMM 的人」一定在設定頁填了東西。裸 `DMMScraper()` 只吃環境變數，
+    # 在那種機器上量到的是**另一條網路路徑**——不是它平常在走的那條。
+    # 反過來沒填也照樣跑得動（本檔的設計場景就是「無 VPN 跑得完」，CD-134-8）。
+    scraper = DMMScraper(ScraperConfig(proxy_url=_configured_dmm_proxy()))
     payload = {
         "query": LATEST_QUERY,
         "variables": {
@@ -276,13 +301,27 @@ def run_check(
         cids_fetched, fetch_failed = fetch_latest_cids()
         cids = cids_fetched or []
 
-    prefix_map = prefix_loader()
-    meta = meta_loader()
+    # 出貨表本身讀不起來時也必須 exit 0（D1 / DoD 6）——這兩個 loader 是真的會拋的：
+    #   `_prefix_map()` 對跨片商撞名**刻意**拋 ValueError（不吞，那是設計）；
+    #   `_meta` / `crawl_date` 缺欄位是 KeyError。
+    # 讓它們冒出去 ⇒ traceback ＋ 非零離開 ⇒ 使用者分不出「腳本壞了」與「表過期」
+    # （與 2026-08-29 Codex P3 攔 requests 例外是同一條契約）。
+    try:
+        prefix_map = prefix_loader()
+        meta = meta_loader()
+        crawl_date = meta["crawl_date"]
+    except Exception as exc:  # noqa: BLE001 — 契約是「無論如何印得出東西」，不挑例外類型
+        print(
+            "出貨表讀取失敗，體檢無法進行："
+            f"{type(exc).__name__}: {exc}\n"
+            "（這是腳本／出貨表自己的問題，不代表表過期了。）"
+        )
+        sys.exit(0)
 
     report = format_report(
         cids=cids,
         prefix_map=prefix_map,
-        crawl_date=meta["crawl_date"],
+        crawl_date=crawl_date,
         today=today,
         fetch_failed=fetch_failed,
     )

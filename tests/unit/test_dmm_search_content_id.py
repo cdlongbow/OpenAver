@@ -242,10 +242,23 @@ def test_number_mismatch_rejected_on_second_try_and_step3(
     assert not any(LOG_SNIPPET in r.getMessage() for r in caplog.records)
 
 
-def test_padded_first_try_returns_mismatched_number_without_validation(
-    dmm_scraper, monkeypatch
-):
-    """DoD 4 正向鎖：補零主路徑刻意不加驗證——number 不符的 Video 仍被回傳。"""
+def test_padded_first_try_rejects_parseable_mismatched_number(dmm_scraper, monkeypatch):
+    """⚠️ 2026-08-29 branch review P3 起**反轉**：補零第一試改為不對稱驗證。
+
+    原本這支鎖的是「補零主路徑刻意不驗證，`OTHER-999` 照樣回傳」，
+    理由寫的是「CD-134-11 的 320 命中不得被動到」（TASK-134b-T10 D5 / L139）。
+    **那個理由是錯的**：`test_hit_rate_is_320_0_15` 是純離線算式
+    （`_parse_number` ＋ `zfill(5)` ＋ f-string 拼接），**從不呼叫 `search()`**，
+    所以這裡加不加驗證對它零影響——加上守衛後它仍然綠。
+
+    真正該擔心的是 runtime 會不會誤擋。實測（2026-08-29，日本線路，
+    從同一份 335 組 crawl fixture 隨機抽 24 筆）：22 筆解析出的番號與輸入
+    **逐字相符**、0 筆「解析得出但不符」、0 筆解析不出 ⇒ **這條守衛一筆都不會誤擋**。
+
+    為什麼要擋：`core/enricher.py` 那一層**不比對番號**，DMM 若在 auto merge
+    裡排第一就整包贏 ⇒ 別部片的標題／女優／封面會**靜默**寫進一整批 NFO。
+    步驟 2 與步驟 3 本來就驗，只有這條沒驗。
+    """
     mismatched = Video(number="OTHER-999", title="t", source="dmm")
 
     monkeypatch.setattr(
@@ -266,8 +279,56 @@ def test_padded_first_try_returns_mismatched_number_without_validation(
 
     result = dmm_scraper.search("MIDD-357")
 
-    assert result is mismatched
-    assert step3_called["v"] is False
+    assert result is None, "解析得出來且與輸入不符 ⇒ 必須拒絕，不得回傳別部片"
+    assert step3_called["v"] is True, "拒絕之後要落到步驟 2 繼續找，不是直接放棄"
+
+
+def test_padded_first_try_still_accepts_unparseable_number(dmm_scraper, monkeypatch):
+    """守衛的**不對稱**那一半：番號解析不出來時照舊接受，不得一起擋掉。
+
+    這半不可省——DMM 的 `makerContentId` 常常是分片番號（`MCSR-042-01`）或
+    異形（`OLM-343M`）。出貨表 164 條的 `sample` 逐條丟進同一個正則，
+    **15 條解析不出來**；若改用嚴格版 `_number_matches`，那批會全部被誤擋，
+    使用者端的後果是「這些片以前 DMM 抓得到，升級後一片都不給」。
+
+    把 `_number_conflicts` 換成 `not _number_matches` 這支就會紅。
+    """
+    weird = Video(number="MCSR-042-01", title="t", source="dmm")
+
+    monkeypatch.setattr(
+        dmm_scraper, "_convert_with_hints", lambda number, zfill=True: "57mcsr00042"
+    )
+    monkeypatch.setattr(
+        dmm_scraper,
+        "_fetch_by_id",
+        lambda cid: weird if cid == "57mcsr00042" else None,
+    )
+    step3_called = {"v": False}
+
+    def step3(number):
+        step3_called["v"] = True
+        return None
+
+    monkeypatch.setattr(dmm_scraper, "_search_content_id", step3)
+
+    result = dmm_scraper.search("MCSR-042")
+
+    assert result is weird, "解析不出來 ⇒ 不拒絕（不對稱守衛的另一半）"
+    assert step3_called["v"] is False, "第一試已命中，不該再走步驟 2"
+
+
+def test_number_conflicts_is_strictly_weaker_than_not_number_matches(dmm_scraper):
+    """釘住兩支的差別就在「解析不出來」那一半，否則不對稱性會被順手簡化掉。"""
+    # 兩邊都解析得出來：兩支互為反面
+    assert dmm_scraper._number_conflicts("OTHER-999", "MIDD-357") is True
+    assert dmm_scraper._number_matches("OTHER-999", "MIDD-357") is False
+    assert dmm_scraper._number_conflicts("MIDD-357", "MIDD-357") is False
+    assert dmm_scraper._number_matches("MIDD-357", "MIDD-357") is True
+    # 解析不出來：這裡才分家——_matches 說「不算相符」，_conflicts 說「不算衝突」
+    assert dmm_scraper._number_matches("MCSR-042-01", "MCSR-042") is False
+    assert dmm_scraper._number_conflicts("MCSR-042-01", "MCSR-042") is False
+    assert dmm_scraper._number_matches("", "MIDD-357") is False
+    assert dmm_scraper._number_conflicts("", "MIDD-357") is False
 
 
 def test_number_matches_tolerates_zero_padding_difference(dmm_scraper):

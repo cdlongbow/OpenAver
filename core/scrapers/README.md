@@ -12,7 +12,7 @@
 | 來源 ID | 顯示名 | exact 番號 | keyword-fuzzy | prefix 範圍 | 需 proxy | 桌面限定 CF | 封面浮水印 | 備註 |
 |---------|--------|-----------|---------------|------------|---------|------------|-----------|------|
 | `dmm` | DMM | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | GraphQL API；需日本 IP（VPN/proxy）；數位 PPV 新片優先；封面高畫質 |
-| `javbus` | JavBus | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | 直打 detail URL；封面無浮水印但**僅右半裁切**；搜尋端點 `/search/` 已 404（站方改版，variant 探查已移除，見 §2） |
+| `javbus` | JavBus | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | 直打 detail URL；封面無浮水印但**僅右半裁切**；~~搜尋端點 `/search/` 已 404~~ → **2026-08-29 實測回 200、30 筆**（variant 探查於 spec-85 移除是產品決定，與端點死活無關，見 §2 與陷阱表） |
 | `jav321` | Jav321 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | keyword 搜尋恆回空，故不入 FUZZY_SEARCH_SOURCES |
 | `javdb` | JavDB | ✅ | ❌ | ❌ | ❌ | ⚠️ | 網頁有／API 無 | 重複 keyword 呼叫觸發 Cloudflare ban，故不入 FUZZY_SEARCH_SOURCES；**網頁路徑封面有 `javdb.com` 浮水印；資料介面路徑無浮水印**（見 §5）|
 | `javlibrary` | JavLibrary | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | **manual_only**：不進 SOURCE_ORDER fan-out；exact-only（CD-70b）；需 CfTransport（桌面版限定）；封面 hotlink DMM CDN（`pl.jpg`，同 dmm 無浮水印）；手動版本切換：**eager 全抓、新片優先、三手動入口（lightbox/search/switch-source）多版本皆出切換器**（spec-86 done，含 T7 switch-source follow-on） |
@@ -69,7 +69,8 @@ core/scrapers/utils.py
 
 ### 2.2 版本切換現況
 
-- **JavBus variant 探查（spec-85 已移除）**：舊版透過 `/search/` 端點枚舉同番號多版本 ID，但該端點於 2025 年站方改版後已 404。依賴此機制的 `get_all_variant_ids` / `search_by_variant_id` 及前端版本切換 UI 已在 **spec-85 全棧原子清除**。
+- **JavBus variant 探查（spec-85 已移除）**：舊版透過 `/search/` 端點枚舉同番號多版本 ID。依賴此機制的 `get_all_variant_ids` / `search_by_variant_id` 及前端版本切換 UI 已在 **spec-85 全棧原子清除**。
+  ⚠️ **訂正（2026-08-29 實測）**：這裡原本寫「該端點於 2025 年站方改版後已 404」——**不是**，`/search/{keyword}` 回的是 **HTTP 200、30 筆**，`get_ids_from_search` 現在就在用它。移除 variant 探查是**產品決定**（spec-85），不是因為端點死了。兩件事別再綁在一起講。
 - **JavLibrary 手動版本切換（spec-86 done）**：同番號多版本的使用者手動切換，基於 JavLibrary 搜尋列表（非 JavBus 搜尋）。開窗時 eager 全抓所有候選的完整 detail、新片優先排序（發行日 desc，預設游標停在最新）。**三個手動入口遇多版本皆出現封面 `‹ ›` 切換器**讓使用者選版本，採用語意各異：lightbox 寫入選定版本 NFO/封面（保留不可逆警告）、search 採用選定版本進結果列、switch-source 以選定版本就地替換當前結果卡。**switch-source 單版本維持靜默直接替換**（最小驚訝；多版本才開切換器，spec-86 D7 follow-on 已於 T7 實作，反轉原 Non-Goal）。不進批次匯入、不揭露 AI agent（detail_url 為內部路由細節，AC9）。
 
 ---
@@ -201,7 +202,7 @@ post-spec-85（T1c 解耦後）：standalone 函式，不再實例化 `JavBusScr
 |------|--------|
 | Mock patch target | 測試 patch 要指**使用端** `core.scraper.*`，不是定義端 `core.scrapers.javbus.*`；否則 mock 不生效、測試打真網路 |
 | DMM proxy gate | `search_jav_single_source(q, 'dmm')` 無 `proxy_url` 時 DMM 回 `None`，cascade 繼續試下一個來源（預期行為） |
-| JavBus 搜尋端點已死 | `/search/{keyword}` 回 404；exact 走 detail URL（正常）；partial/prefix 走 `get_ids_from_search`（正常）；**不可**再實作任何依賴 `/search/` 的功能 |
+| ~~JavBus 搜尋端點已死~~ | ⛔ **2026-08-29 實測推翻**：`/search/{keyword}` 回的是 **HTTP 200、30 筆**，不是 404（`get_ids_from_search('a')` 當場驗過，`_build_search_url` 本來就在組這個網址）。舊敘述「**不可**再實作任何依賴 `/search/` 的功能」曾讓一位 reviewer 判定某個 task 的樣本來源已死並下 BLOCK。**exact 走 detail URL、partial/prefix 走 `get_ids_from_search`** 這半仍然正確，是分工不是能力限制。⚠️ 這是 live-only 事實，要據此做決定前**自己再驗一次**（見 `gotchas-backend.md` `BE-VERIFY-03`）|
 | javlibrary manual_only | `get_enabled_source_ids()` 自動排除 manual_only 來源，javlibrary 不進 cascade head；只能由進階搜尋顯式指定 |
 | fuzzy always-on | 停用 javbus/dmm 只影響 exact cascade；模糊路徑仍會呼叫它們（設計如此，CD-65-4） |
 | ~~FC2 無發行日~~ | ⛔ **0.13.12 起作廢**：該不變式屬於舊的 javten 鏡像實作（0.13.13 起為 `fc2_javten.py`／來源 `fc-javten`，仍硬定 `date=""`——站方結構性沒有這個欄位）。現行 `fc2` 走官方站 `fc2_official.py`，**會回傳發行日**（spec-118 AC-1.2 就是要它）。看到 FC2 有日期**不是 bug**，看到它恆空才是 |

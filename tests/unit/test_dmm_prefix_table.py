@@ -109,6 +109,34 @@ class TestDmmPrefixCorrections:
         flat = _flatten_shipped_table(table)
         assert flat["mcsr"]["dmm_prefix"] == "57"
 
+    def test_inferred_57_prefixes_have_live_evidence(self):
+        """六條 `57` 的真連線佐證（2026-08-29 pre-merge branch review P2 追認）。
+
+        Reviewer 正確地指出：這六條在 `dmm_crawl_groups.json` 裡**只觀測到**
+        `h_1454` / `h_1787`，表值 `57` 是從 `itsr`（crawl 裡同時有 `57itsr00153`
+        與 `h_1454itsr15303`）與 `mcsr`（另有 live log）兩個佐證**推論**出來的；
+        而且它們所屬的 group 正好就是 `test_hit_rate_is_320_0_15` 那 15 筆
+        `unparseable`（番號是 `JKSR-741-01` 這種三段式），**結構上不可能被
+        320/0/15 那條算式碰到**。⇒ 不用推理，改用真連線逐條定案。
+
+        實測結果（`feature/dmm/build_prefix_table_verification.log` 有完整留檔）：
+        `57bdsr00500` → `BDSR-500`、`57bdst00111` → `BDST-111`、
+        `57husr00304` → `HUSR-304`、`57sgsr00401` → `SGSR-401`、
+        `57jksr00741` → `JKSR-741`，`hust` 用同前綴的
+        `57hust00020/00081/00083` 佐證（`HUST-082` 的整片版 DMM 沒收，
+        那是**這一個番號**的事，不是前綴錯）。**6/6 正確。**
+
+        這支測試的作用是**把那次實測釘住**：下次有人看到「crawl 裡沒有 57」
+        而想把這六條改掉或刪掉時，會先撞到這裡的理由。
+        """
+        table = _load_table()
+        flat = _flatten_shipped_table(table)
+        for pfx in ("jksr", "bdsr", "bdst", "husr", "hust", "sgsr", "itsr", "mcsr"):
+            assert flat[pfx]["dmm_prefix"] == "57", (
+                f"{pfx} 的 dmm_prefix 被改動了——改之前請先讀本測試的 docstring："
+                "這個值是 2026-08-29 真連線逐條驗過的，不是從 crawl 抽出來的"
+            )
+
     def test_harvested_prefixes_have_expected_values(self):
         """TASK-134b-T11 DoD 2: 斷言四個收割前綴的 dmm_prefix 值與所屬 maker key。"""
         table = _load_table()

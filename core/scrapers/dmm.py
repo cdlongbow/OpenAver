@@ -462,6 +462,23 @@ class DMMScraper(BaseScraper):
             return False
         return (vp, vn.lstrip("0") or "0") == (ip, in_.lstrip("0") or "0")
 
+    def _number_conflicts(self, video_number: str, input_number: str) -> bool:
+        """**不對稱**版本：只有「兩邊都解析得出來、而且不同」才算衝突。
+
+        與 `_number_matches` 的差別就在解析不出來的那一半：
+        `_number_matches` 回 False（＝不採用），這支回 False（＝不拒絕）。
+
+        Why 要兩支：DMM 的 `makerContentId` 常常是分片番號（`MCSR-042-01`）
+        或異形（`OLM-343M`），解析不出來是常態、不是異常。步驟 1 若用嚴格版，
+        那批全部會被誤擋；若完全不驗，`OTHER-999` 這種明顯是別部片的也會被
+        寫進 NFO（`core/enricher.py` 那一層不比對番號）。不對稱版兩邊都要。
+        """
+        vp, vn = self._parse_number(video_number)
+        ip, in_ = self._parse_number(input_number)
+        if not vp or not vn or not ip or not in_:
+            return False  # 解析不出來 → 不拒絕（這就是「不對稱」）
+        return (vp, vn.lstrip("0") or "0") != (ip, in_.lstrip("0") or "0")
+
     def _content_id_to_number(self, content_id: str) -> str:
         """
         從 content_id 推導標準番號格式。
@@ -661,8 +678,10 @@ class DMMScraper(BaseScraper):
         converted_cid = self._convert_with_hints(number)
         if converted_cid:
             result = self._fetch_by_id(converted_cid)
-            if result:
-                # 補零第一試刻意不驗證番號——CD-134-11 的 320 命中不得被動到
+            if result and not self._number_conflicts(result.number, number):
+                # 不對稱守衛（2026-08-29 branch review P3）：只擋「解析得出來且不符」，
+                # 解析不出來照舊接受。CD-134-11 的 320 命中是**離線算式**、不經過
+                # 這條路，所以不受影響；實測 24 筆真連線裡 0 筆會被這條擋掉。
                 rate_limit(self.config.delay)
                 return result
 

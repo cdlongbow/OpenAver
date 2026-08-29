@@ -318,3 +318,35 @@ def test_fetch_latest_cids_swallows_all_requests_exceptions(monkeypatch, exc_nam
 
     monkeypatch.setattr(requests.Session, "post", _boom)
     assert check.fetch_latest_cids() == (None, True)
+
+
+# ── 出貨表讀不起來也要 exit 0（2026-08-29 branch review P3）────────────────────
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [ValueError("跨片商撞名：abc（MakerA / MakerB）"), KeyError("crawl_date")],
+)
+def test_run_check_exits_zero_when_table_loader_raises(capsys, exc):
+    """`_prefix_map()` 對撞名**刻意**拋 ValueError、`_meta` 缺欄位是 KeyError。
+
+    這兩條真路徑原本沒有被 `run_check` 接住 ⇒ traceback ＋ 非零離開 ⇒
+    使用者分不出「腳本自己壞了」與「表過期了」，而 CD-134-8 要求這兩件事
+    在輸出上分得出來。既有的 exit-0 測試全部走注入版 loader，踩不到這條。
+    """
+
+    def _boom():
+        raise exc
+
+    with pytest.raises(SystemExit) as got:
+        check.run_check(
+            fetch_samples=lambda: ["h_1711sioz00004"],
+            load_prefix_map=_boom,
+            load_meta=lambda: {"crawl_date": "2026-07-03"},
+            today=date(2026, 8, 29),
+        )
+    assert got.value.code == 0
+    out = capsys.readouterr().out
+    assert "出貨表讀取失敗" in out
+    assert "不代表表過期" in out
+    assert "%" not in out, "讀不到表就不得印任何百分比"
