@@ -28,12 +28,12 @@ _TOOLS: list[dict] = [
                     "type": "string",
                     "enum": ["auto", "exact", "partial", "prefix", "actress", "keyword", "uncensored"],
                     "default": "auto",
-                    "description": "搜尋模式",
+                    "description": "搜尋模式；source 只在 exact 時有效",
                 },
                 "source": {
                     "type": "string",
                     "enum": get_source_enum(include_auto=False),
-                    "description": "指定來源（可選）",
+                    "description": "指定來源必須搭配精確模式（mode=exact），其他模式帶了會被拒絕",
                 },
                 "since": {
                     "type": "string",
