@@ -458,6 +458,24 @@ def _validate_metadata_shape(metadata: dict) -> None:
 
     for k, v in metadata.items():
         if k in ignored_keys:
+            # `source` 是忽略清單裡唯一「有 sink」的 key（spec-135 §忽略清單 / CD-135-3）：
+            # 它不寫進 NFO／DB，但會原樣路過 enrich_single 的 `source_used`，而
+            # core/enricher.py:677 用 `source_used not in ("db", "nfo", "")` 當「跳過
+            # _db_upsert」的內部哨兵（那兩個值是 db_to_sidecar／fill_missing 命中 DB 或
+            # sidecar NFO 時自己填的）。送進來的字面值若撞上哨兵，NFO 會被整份改寫、DB
+            # 主欄位（title/maker/director/series/label/duration/cover_path/release_date）
+            # 全部留舊值，只有 tags 經 _sync_tags_to_db 同步——靜默分裂且回 200。
+            # 只擋邊界，不動 :677 的判準：那條閘是內部兩個 mode 的正常語意，改判準會牽動
+            # test_cover_canonical_contract 整份契約表的前提（PR #167 Codex P2）。
+            if k == "source":
+                if not isinstance(v, str):
+                    raise HTTPException(400, detail="metadata.source 型別錯誤，必須是字串")
+                if v in ("db", "nfo"):
+                    raise HTTPException(
+                        400,
+                        detail='metadata.source 不可為 "db" 或 "nfo"（後端保留值）；'
+                               "請填實際來源代號（如 javdb／dmm／metatube:xxx）或省略此欄位",
+                    )
             continue
         if k in whitelist_str:
             if not isinstance(v, str):

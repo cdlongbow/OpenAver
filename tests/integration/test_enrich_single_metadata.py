@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 
 from core.database import Video
 from core.enricher import EnrichResult
+from core.path_utils import to_file_uri
 
 
 def _owning_stub(path="/tmp/ro_src", output_root="/out/ro_src-abcdef", output_uri="file:///out/ro_src-abcdef"):
@@ -310,6 +311,175 @@ class TestEnrichSingleMetadataIntegration:
         data = response.json()
         assert data["success"] is True
         assert data["source_used"] == "javdb"
+
+    # --- PR #167 Codex P2: metadata.source 不可冒充後端保留值 -------------------
+
+    def test_source_sentinel_db_rejected_400_and_nothing_written(self, client, mocker, tmp_path):
+        """Codex P2: metadata.source == "db" → 400，且 NFO 與 DB 都沒被動到。
+
+        守衛拿掉時的失敗形狀（＝這條 finding 的實害）：請求會通過，
+        core/enricher.py:677 的 `source_used not in ("db", "nfo", "")` 判為 False →
+        NFO 被整份改寫、`_db_upsert()` 完全不跑（DB 的 title/maker/director/series/
+        label/duration/cover_path/release_date 全留舊值，只有 tags 經
+        `_sync_tags_to_db` 同步），而 HTTP 仍是 200 success。
+        所以這裡鎖三件事，缺一都驗不出實害：400、NFO 檔不存在、repo.upsert 零呼叫。
+        """
+        number = "ABC-123"
+        mp4_path = tmp_path / f"{number}.mp4"
+        mp4_path.write_bytes(b"\x00" * 16)
+
+        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
+        mocker.patch("web.routers.scraper.VideoRepository").return_value.get_by_path.return_value = None
+        mock_search = mocker.patch("core.enricher.search_jav")
+        mocker.patch("core.enricher.download_image", return_value=True)
+
+        mock_repo_cls = mocker.patch("core.enricher.VideoRepository")
+        mock_repo = MagicMock()
+        mock_repo_cls.return_value = mock_repo
+        mock_repo.db_path = ":memory:"
+        mock_repo.get_by_path.return_value = None
+        mock_repo.get_by_numbers.return_value = {}
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": str(mp4_path),
+            "number": number,
+            "mode": "refresh_full",
+            "overwrite_existing": True,
+            "metadata": {
+                "title": "AI 審核後標題",
+                "maker": "片商A",
+                "source": "db",
+            },
+        })
+
+        assert response.status_code == 400
+        assert "source" in response.json()["detail"]
+
+        # 實害鎖點：擋下來之後不得有任何寫入
+        assert not (tmp_path / f"{number}.nfo").exists(), "被拒的請求不得寫出 NFO"
+        assert mock_repo.upsert.call_count == 0
+        mock_search.assert_not_called()
+
+    def test_source_sentinel_nfo_rejected_400(self, client, mocker):
+        """Codex P2: 另一個保留值 "nfo" 同樣 400（core/enricher.py:571 的 sentinel）。"""
+        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
+        mock_enrich = mocker.patch("web.routers.scraper.enrich_single")
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/video/ABC-123.mp4",
+            "number": "ABC-123",
+            "mode": "refresh_full",
+            "metadata": {"title": "標題", "source": "nfo"},
+        })
+
+        assert response.status_code == 400
+        assert "source" in response.json()["detail"]
+        mock_enrich.assert_not_called()
+
+    def test_source_non_string_rejected_400(self, client, mocker):
+        """Codex P2 後半：`source` 是忽略清單裡唯一有 sink 卻零型別驗證的 key。
+
+        非字串本身撞不到 sentinel（`123 == "db"` 恆假），但會讓回應的 `source_used`
+        違反 capabilities 宣告的 string 型別，故一併在邊界收斂。
+        """
+        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
+        mock_enrich = mocker.patch("web.routers.scraper.enrich_single")
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/video/ABC-123.mp4",
+            "number": "ABC-123",
+            "mode": "refresh_full",
+            "metadata": {"title": "標題", "source": 123},
+        })
+
+        assert response.status_code == 400
+        assert "source" in response.json()["detail"]
+        mock_enrich.assert_not_called()
+
+    def test_source_sentinel_rejected_on_readonly_path_too(self, client, mocker):
+        """Codex P2: 唯讀重刮走同一道 `_validate_metadata_shape`，故同樣被擋。
+
+        鎖的是「單一驗證閘」這個結構：唯讀路徑不清洗 metadata（直接 dict(...)），
+        若守衛只寫在非唯讀分支，這條路會漏。
+        """
+        mocker.patch(
+            "web.routers.scraper.resolve_owning_output_root",
+            return_value=_owning_stub(),
+        )
+        mock_ro = mocker.patch("web.routers.scraper.enrich_one_readonly")
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/ro/ABC-123.mp4",
+            "number": "ABC-123",
+            "mode": "refresh_full",
+            "readonly_action": "rescrape",
+            "metadata": {"number": "ABC-123", "title": "標題", "source": "db"},
+        })
+
+        assert response.status_code == 400
+        assert "source" in response.json()["detail"]
+        mock_ro.assert_not_called()
+
+    def test_existing_db_row_legit_source_updates_both_nfo_and_db(self, client, mocker, tmp_path):
+        """Codex P2 建議的正向對照：DB 已有舊資料 ＋ 合法 source → NFO 與 DB 都更新。
+
+        這是 sentinel 洞的「正確樣子」：同一份請求換成真實來源代號時，
+        `_db_upsert()` 必須跑，DB 主欄位不得留舊值。
+        """
+        number = "ABC-123"
+        mp4_path = tmp_path / f"{number}.mp4"
+        mp4_path.write_bytes(b"\x00" * 16)
+
+        existing = Video(
+            path=to_file_uri(str(mp4_path)),  # db-ns-ok: 測試 fixture，DB round-trip 值
+            number=number,
+            title="舊標題",
+            maker="舊片商",
+            director="舊導演",
+        )
+
+        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
+        mocker.patch("web.routers.scraper.VideoRepository").return_value.get_by_path.return_value = existing
+        mock_search = mocker.patch("core.enricher.search_jav")
+        mocker.patch("core.enricher.download_image", return_value=True)
+
+        mock_repo_cls = mocker.patch("core.enricher.VideoRepository")
+        mock_repo = MagicMock()
+        mock_repo_cls.return_value = mock_repo
+        mock_repo.db_path = ":memory:"
+        mock_repo.get_by_path.return_value = existing
+        mock_repo.get_by_numbers.return_value = {}
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": str(mp4_path),
+            "number": number,
+            "mode": "refresh_full",
+            "overwrite_existing": True,
+            "metadata": {
+                "title": "AI 審核後標題",
+                "maker": "片商A",
+                "director": "導演A",
+                "source": "javdb",
+            },
+        })
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        assert response.json()["source_used"] == "javdb"
+
+        # NFO 有寫
+        nfo_path = tmp_path / f"{number}.nfo"
+        assert nfo_path.exists()
+        root = ET.fromstring(nfo_path.read_text(encoding="utf-8"))
+        assert root.findtext("studio") == "片商A"
+
+        # DB 也有寫，且不是舊值
+        assert mock_repo.upsert.call_count == 1
+        saved = mock_repo.upsert.call_args[0][0]
+        assert saved.title == "AI 審核後標題"
+        assert saved.maker == "片商A"
+        assert saved.director == "導演A"
+        mock_search.assert_not_called()
 
     def test_mutual_exclusion_metadata_and_javlib_detail_url_raises_400(self, client, mocker):
         """DoD-7 (CD-135-11): 帶 metadata ＋ source=javlibrary ＋ detail_url → 400"""
