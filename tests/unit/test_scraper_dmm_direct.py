@@ -243,14 +243,10 @@ class TestDMMScraperIntegration:
         monkeypatch.setattr("core.scrapers.dmm.rate_limit", lambda *a, **kw: None)
 
     @pytest.fixture
-    def dmm_scraper(self, tmp_path, monkeypatch):
-        """DMM scraper with isolated cache files"""
+    def dmm_scraper(self, monkeypatch):
+        """DMM scraper fixture"""
         import core.scrapers.dmm as dmm_module
-        monkeypatch.setattr(dmm_module, "CACHE_FILE", tmp_path / "dmm_content_ids.json")
-        monkeypatch.setattr(dmm_module, "PREFIX_FILE", tmp_path / "dmm_prefix_hints.json")
         monkeypatch.setattr(dmm_module, "_shipped_table_cache", {})
-        monkeypatch.setattr(dmm_module, "_local_hints_cache", None)
-        monkeypatch.setattr(dmm_module, "_local_hints_cache_mtime", None)
         config = ScraperConfig(proxy_url="http://test-proxy:8080")
         return DMMScraper(config)
 
@@ -260,12 +256,8 @@ class TestDMMScraperIntegration:
         assert not scraper._session.proxies, \
             "proxy_url='' 時 session.proxies 不應被設定"
 
-    def test_dmm_cache_hit(self, dmm_scraper, tmp_path, monkeypatch):
-        """快取命中時不呼叫 search query（detail query + probe query，不超過 2 次）"""
-        import core.scrapers.dmm as dmm_module
-        cache_path = tmp_path / "dmm_content_ids.json"
-        cache_path.write_text('{"SONE-205": "sone00205"}', encoding='utf-8')
-
+    def test_dmm_cache_hit(self, dmm_scraper):
+        """前綴表命中時不呼叫 search query（detail query + probe query，不超過 2 次）"""
         detail_resp = _make_mock_resp(status_code=200, json_data=DMM_DETAIL_RESPONSE)
 
         with patch.object(dmm_scraper._session, 'post', return_value=detail_resp) as mock_post, \
@@ -306,8 +298,21 @@ class TestDMMScraperIntegration:
         assert video.actresses[0].name == "Nana Miho"
         assert video.maker == "S1 NO.1 STYLE"
 
-    def test_dmm_cache_isolation(self, dmm_scraper, tmp_path):
-        """搜尋成功後 cache 寫入 tmp_path，不污染 project root"""
+    def test_dmm_search_success_writes_no_files(self, dmm_scraper, tmp_path, monkeypatch):
+        """搜尋**成功**之後，專案根不得多出任何 DMM 資料檔（T12 DoD 2/3 的成功路徑那一半）。
+
+        ⚠️ 2026-08-29 兩位 reviewer 各自指出：本測試改名前的斷言
+        ``assert not (tmp_path / "dmm_content_ids.json").exists()`` **是恆真的**——
+        沒有任何東西被指到 ``tmp_path``，就算有人把「寫快取」加回專案根，它也不會紅。
+
+        姊妹測試 ``test_poisoned_local_files_do_not_affect_search`` 把 ``_fetch_by_id``
+        mock 成恆回 ``None`` ⇒ 它只走得到**失敗**路徑，踩不到「搜尋成功後寫檔」那一段。
+        ⇒ **成功路徑的「不寫檔」必須由這一支扛**，所以這裡把 ``PROJECT_ROOT`` 真的
+        monkeypatch 到 ``tmp_path``，讓「有人把寫檔加回來」這件事在這裡看得見。
+        """
+        import core.scrapers.dmm as dmm_module
+        monkeypatch.setattr(dmm_module, "PROJECT_ROOT", tmp_path)
+
         detail_resp = _make_mock_resp(status_code=200, json_data=DMM_DETAIL_RESPONSE)
 
         with patch.object(dmm_scraper._session, 'post', return_value=detail_resp), \
@@ -315,5 +320,11 @@ class TestDMMScraperIntegration:
              patch('core.scrapers.dmm.rate_limit'):
             video = dmm_scraper.search("SONE-205")
 
-        # cache 應寫入 tmp_path 而非 project root
-        assert (tmp_path / "dmm_content_ids.json").exists()
+        # 正向：這一輪真的成功了（否則下面的反向斷言會恆真）
+        assert video is not None
+        assert video.number == "SONE-205"
+
+        # 反向：成功路徑一個檔都沒寫
+        assert list(tmp_path.iterdir()) == [], (
+            f"搜尋成功後 PROJECT_ROOT 多出檔案：{[p.name for p in tmp_path.iterdir()]}"
+        )

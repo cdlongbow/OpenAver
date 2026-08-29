@@ -7,22 +7,24 @@ import core.scrapers.dmm as dmm_module
 from core.scrapers.dmm import DMMScraper
 from core.scrapers.models import ScraperConfig, Video
 
-LOG_SNIPPET = "步驟 3 查無結果"
+LOG_SNIPPET = "搜尋 API 查無結果"
 
 
 @pytest.fixture
-def dmm_scraper(tmp_path, monkeypatch):
-    monkeypatch.setattr(dmm_module, "CACHE_FILE", tmp_path / "dmm_content_ids.json")
-    monkeypatch.setattr(dmm_module, "PREFIX_FILE", tmp_path / "dmm_prefix_hints.json")
+def dmm_scraper(monkeypatch):
     monkeypatch.setattr(dmm_module, "_shipped_table_cache", {})
-    monkeypatch.setattr(dmm_module, "_local_hints_cache", None)
-    monkeypatch.setattr(dmm_module, "_local_hints_cache_mtime", None)
     monkeypatch.setattr(dmm_module, "rate_limit", lambda *a, **kw: None)
     return DMMScraper(ScraperConfig(proxy_url="http://test-proxy:8080"))
 
 
 def test_step3_miss_logs_debug_with_number(dmm_scraper, caplog, monkeypatch):
     """DoD 1：discovered_cid 為 None → caplog 抓到一行 DEBUG，內容含番號。"""
+
+# ⚠️ 本檔的函式名與 docstring 裡的「步驟 N」沿用 T12 **之前**的編號
+#    （當時：1 查快取／2 前綴轉換／3 搜尋 API／4 手貼 cid）。
+#    T12 刪掉逐番號快取後 search() 只剩三步，搜尋 API 現在是**步驟 2**。
+#    測試邏輯本身沒有受影響（斷言的是機制不是編號）；不批次改名是為了
+#    避免一次為零使用者價值的重命名產生大 diff——見 TASK-134b-T12 的已接受 residual。
     monkeypatch.setattr(dmm_scraper, "_convert_with_hints", lambda number: "")
     monkeypatch.setattr(dmm_scraper, "_search_content_id", lambda number: None)
 

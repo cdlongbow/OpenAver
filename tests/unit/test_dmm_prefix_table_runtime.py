@@ -1,11 +1,10 @@
-"""TASK-134a-T2 — runtime flatten / cache / merge for _load_prefix_hints."""
+"""TASK-134a-T2 / TASK-134b-T12 — runtime flatten / cache for _prefix_map."""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
-import os
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -19,10 +18,8 @@ REAL_TABLE_PATH = PROJECT_ROOT / "dmm_prefix_table.json"
 
 @pytest.fixture(autouse=True)
 def _reset_prefix_hint_caches(monkeypatch):
-    """BE-TEST-18：每個測試重置三個 module-level 快取，避免互相污染。"""
+    """BE-TEST-18：重置 module-level 出貨表快取，避免互相污染。"""
     monkeypatch.setattr(dmm_module, "_shipped_table_cache", None)
-    monkeypatch.setattr(dmm_module, "_local_hints_cache", None)
-    monkeypatch.setattr(dmm_module, "_local_hints_cache_mtime", None)
 
 
 def _scraper() -> DMMScraper:
@@ -58,202 +55,145 @@ def test_real_shipped_table_flattens_to_164():
     assert len(flat) == 164
 
 
-# ── DoD 3 快取失效 ───────────────────────────────────────────────────────────
+# ── TASK-134b-T12 DoD 2/3 毒檔無作用 + mtime/md5 未變 ───────────────────────
 
 
-def test_local_hints_cache_respects_mtime(tmp_path, monkeypatch):
-    """DoD 3：暖機後本機檔 mtime 未變不重讀；mtime 變才重讀一次。出貨表永不重讀。"""
-    shipped_path = tmp_path / "dmm_prefix_table.json"
-    prefix_path = tmp_path / "dmm_prefix_hints.json"
-    shipped_path.write_text(
-        json.dumps(
-            {
-                "makers": {
-                    "X": {"aaa": {"dmm_prefix": "1", "sample": "AAA-001"}},
-                }
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+def test_poisoned_local_files_do_not_affect_search(tmp_path, monkeypatch):
+    """DoD 2/3：即使兩個本機檔存在且內容有毒，search() 結果不受毒檔影響，
+    且跑完一輪後兩個檔案的 mtime／md5 皆未變（BE-TEST-10：baseline 在操作前取）。
+
+    毒檔內容為真實案例：
+    - dmm_content_ids.json：{"MCSR-042": "h_1787mcsr04201"}（真實錯誤快取值之一）
+    - dmm_prefix_hints.json：{"dvaj": "yrnkmtn"}（真實錯誤本機前綴值之一）
+    """
+    content_ids_path = tmp_path / "dmm_content_ids.json"
+    prefix_hints_path = tmp_path / "dmm_prefix_hints.json"
+
+    content_ids_path.write_text(
+        json.dumps({"MCSR-042": "h_1787mcsr04201"}), encoding="utf-8"
     )
-    prefix_path.write_text(
-        json.dumps({"bbb": "9"}, ensure_ascii=False),
-        encoding="utf-8",
+    prefix_hints_path.write_text(
+        json.dumps({"dvaj": "yrnkmtn"}), encoding="utf-8"
     )
-    monkeypatch.setattr(dmm_module, "SHIPPED_TABLE_FILE", shipped_path)
-    monkeypatch.setattr(dmm_module, "PREFIX_FILE", prefix_path)
+
+    # BE-TEST-10：baseline 在被測操作（search）之前取
+    content_ids_before = (
+        content_ids_path.stat().st_mtime,
+        hashlib.md5(content_ids_path.read_bytes()).hexdigest(),
+    )
+    prefix_hints_before = (
+        prefix_hints_path.stat().st_mtime,
+        hashlib.md5(prefix_hints_path.read_bytes()).hexdigest(),
+    )
+
+    monkeypatch.setattr(dmm_module, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(dmm_module, "SHIPPED_TABLE_FILE", REAL_TABLE_PATH)
+    monkeypatch.setattr(dmm_module, "_shipped_table_cache", None)
+    monkeypatch.setattr(dmm_module, "rate_limit", lambda *a, **kw: None)
 
     scraper = _scraper()
-    scraper._load_prefix_hints()  # 暖機
 
-    prefix_reads = {"n": 0}
-    shipped_reads = {"n": 0}
-    real_read_text = Path.read_text
+    # ⚠️ 這裡必須記下「實際被拿去查的 cid」，不能只用 lambda cid: None。
+    # 2026-08-29 主 session 自選 mutation 實測：只回 None 的話，就算有人把
+    # 「讀逐番號快取」硬加回步驟 1，本測試照樣綠（毒 cid 被拿去 fetch 了，但
+    # fetch 回 None，最終結果一樣是 None，測試分辨不出來）——DoD 2 的「快取那半」
+    # 等於沒有鎖。記下 cid 才能斷言「毒值從來沒有被拿去查」。
+    fetched: list[str] = []
 
-    def tracked_read_text(self, *args, **kwargs):
-        if self == prefix_path:
-            prefix_reads["n"] += 1
-        elif self == shipped_path:
-            shipped_reads["n"] += 1
-        return real_read_text(self, *args, **kwargs)
+    def _record(cid):
+        fetched.append(cid)
+        return None
 
-    with patch.object(Path, "read_text", tracked_read_text):
-        # 改內容但還原 mtime → 不得重讀本機檔
-        old_mtime = os.stat(prefix_path).st_mtime
-        prefix_path.write_text(
-            json.dumps({"bbb": "8"}, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        os.utime(prefix_path, (old_mtime, old_mtime))
-        prefix_reads["n"] = 0
-        shipped_reads["n"] = 0
-        scraper._load_prefix_hints()
-        assert prefix_reads["n"] == 0
-        assert shipped_reads["n"] == 0
+    monkeypatch.setattr(scraper, "_fetch_by_id", _record)
+    monkeypatch.setattr(scraper, "_search_content_id", lambda number: None)
 
-        # 改內容並推進 mtime → 本機檔重讀恰好一次；出貨表仍 0
-        prefix_path.write_text(
-            json.dumps({"bbb": "7"}, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        os.utime(prefix_path, (old_mtime + 10, old_mtime + 10))
-        prefix_reads["n"] = 0
-        shipped_reads["n"] = 0
-        result = scraper._load_prefix_hints()
-        assert prefix_reads["n"] == 1
-        assert shipped_reads["n"] == 0
-        assert result["bbb"] == "7"
+    # 直接斷言：_prefix_map() 不含毒檔鍵（直接命中 mutation M3）
+    assert "dvaj" not in scraper._prefix_map()
 
+    # 探針：MCSR-042（毒 CACHE 裡有）、DVAJ-001（毒 PREFIX 的 dvaj 前綴）都查
+    result_mcsr = scraper.search("MCSR-042")
+    result_dvaj = scraper.search("DVAJ-001")
 
-# ── DoD 4 純合併 ─────────────────────────────────────────────────────────────
+    assert result_mcsr is None
+    assert result_dvaj is None
 
-
-def test_merge_local_overrides_shipped_values_are_str_no_http(
-    tmp_path, monkeypatch
-):
-    """DoD 4：本機優先；僅出貨表有的前綴取出貨表值；value 皆字串；零 HTTP。"""
-    shipped_path = tmp_path / "dmm_prefix_table.json"
-    prefix_path = tmp_path / "dmm_prefix_hints.json"
-    shipped_path.write_text(
-        json.dumps(
-            {
-                "makers": {
-                    "MakerX": {
-                        "shared": {
-                            "dmm_prefix": "shipped_val",
-                            "sample": "SHARED-001",
-                        },
-                        "only_shipped": {
-                            "dmm_prefix": "h_99",
-                            "sample": "ONLY-001",
-                        },
-                    }
-                }
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+    # 毒快取的值（h_1787mcsr04201 ＝ MCSR-042-01，別部片）從來沒有被拿去查
+    assert "h_1787mcsr04201" not in fetched, (
+        f"逐番號快取被讀回來了——毒值進了查詢路徑：{fetched}"
     )
-    prefix_path.write_text(
-        json.dumps(
-            {"shared": "local_val", "_meta": "must_skip"},
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+    # 毒前綴的值（dvaj → yrnkmtn）也沒有進到組出來的 cid 裡
+    assert not any("yrnkmtn" in cid for cid in fetched), (
+        f"本機自學檔被讀回來了——毒前綴進了 cid：{fetched}"
     )
-    monkeypatch.setattr(dmm_module, "SHIPPED_TABLE_FILE", shipped_path)
-    monkeypatch.setattr(dmm_module, "PREFIX_FILE", prefix_path)
+    # 正向：確認這一輪真的有發生查詢（否則上面兩條是空的恆真）
+    assert fetched, "沒有任何 cid 被查詢，上面兩條反向斷言會恆真"
 
-    scraper = _scraper()
-    with (
-        patch.object(scraper._session, "post") as mock_post,
-        patch.object(scraper._session, "get") as mock_get,
-    ):
-        merged = scraper._load_prefix_hints()
-        assert mock_post.call_count == 0
-        assert mock_get.call_count == 0
-
-    assert merged["shared"] == "local_val"
-    assert merged["only_shipped"] == "h_99"
-    assert "_meta" not in merged
-    assert all(isinstance(v, str) for v in merged.values())
-    assert not any(isinstance(v, dict) for v in merged.values())
+    # DoD 3：mtime 與 md5 未變
+    content_ids_after = (
+        content_ids_path.stat().st_mtime,
+        hashlib.md5(content_ids_path.read_bytes()).hexdigest(),
+    )
+    prefix_hints_after = (
+        prefix_hints_path.stat().st_mtime,
+        hashlib.md5(prefix_hints_path.read_bytes()).hexdigest(),
+    )
+    assert content_ids_after == content_ids_before
+    assert prefix_hints_after == prefix_hints_before
 
 
 # ── DoD 5 缺席降級 ───────────────────────────────────────────────────────────
 
 
-def test_missing_shipped_table_degrades_to_local_only(
+def test_missing_shipped_table_degrades_to_empty(
     tmp_path, monkeypatch, caplog
 ):
-    """DoD 5：出貨表檔案不存在 → 不拋例外、只回本機值、有 WARNING。"""
-    prefix_path = tmp_path / "dmm_prefix_hints.json"
-    prefix_path.write_text(
-        json.dumps({"zzz": "1"}, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    """DoD 5：出貨表檔案不存在 → 不拋例外、回空表、有 WARNING。"""
     missing = tmp_path / "does_not_exist.json"
     monkeypatch.setattr(dmm_module, "SHIPPED_TABLE_FILE", missing)
-    monkeypatch.setattr(dmm_module, "PREFIX_FILE", prefix_path)
 
     scraper = _scraper()
     with caplog.at_level(logging.WARNING, logger=dmm_module.logger.name):
-        merged = scraper._load_prefix_hints()
+        merged = scraper._prefix_map()
 
-    assert merged == {"zzz": "1"}
+    assert merged == {}
     assert any(r.levelno == logging.WARNING for r in caplog.records)
 
 
 def test_bad_json_shipped_table_degrades(tmp_path, monkeypatch, caplog):
-    """DoD 5：出貨表 JSON 壞掉 → 不拋例外、有 WARNING。"""
+    """DoD 5：出貨表 JSON 壞掉 → 不拋例外、回空表、有 WARNING。"""
     shipped_path = tmp_path / "dmm_prefix_table.json"
-    prefix_path = tmp_path / "dmm_prefix_hints.json"
     shipped_path.write_text("{not-json", encoding="utf-8")
-    prefix_path.write_text(
-        json.dumps({"aaa": "2"}, ensure_ascii=False),
-        encoding="utf-8",
-    )
     monkeypatch.setattr(dmm_module, "SHIPPED_TABLE_FILE", shipped_path)
-    monkeypatch.setattr(dmm_module, "PREFIX_FILE", prefix_path)
 
     scraper = _scraper()
     with caplog.at_level(logging.WARNING, logger=dmm_module.logger.name):
-        merged = scraper._load_prefix_hints()
+        merged = scraper._prefix_map()
 
-    assert merged == {"aaa": "2"}
+    assert merged == {}
     assert any(r.levelno == logging.WARNING for r in caplog.records)
 
 
 def test_missing_makers_key_degrades(tmp_path, monkeypatch, caplog):
-    """DoD 5：出貨表缺 makers 鍵 → 不拋例外、有 WARNING。"""
+    """DoD 5：出貨表缺 makers 鍵 → 不拋例外、回空表、有 WARNING。"""
     shipped_path = tmp_path / "dmm_prefix_table.json"
-    prefix_path = tmp_path / "dmm_prefix_hints.json"
     shipped_path.write_text(
-        json.dumps({"_meta": {"count": 0}}, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    prefix_path.write_text(
-        json.dumps({"bbb": "3"}, ensure_ascii=False),
+        json.dumps(
+            {"_meta": {"count": 0}, "foo": {"dmm_prefix": "bar"}},
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
     monkeypatch.setattr(dmm_module, "SHIPPED_TABLE_FILE", shipped_path)
-    monkeypatch.setattr(dmm_module, "PREFIX_FILE", prefix_path)
 
     scraper = _scraper()
     with caplog.at_level(logging.WARNING, logger=dmm_module.logger.name):
-        merged = scraper._load_prefix_hints()
+        merged = scraper._prefix_map()
 
-    assert merged == {"bbb": "3"}
+    assert merged == {}
     assert any(r.levelno == logging.WARNING for r in caplog.records)
 
 
 # ── DoD 5 補強：JSON 語法合法但「形狀」壞掉（review P1）─────────────────────
-#
-# 為什麼補這幾支：`except (json.JSONDecodeError, OSError)` 只擋語法錯與 IO 錯。
-# 語法合法、欄位型別錯的表會讓 `_flatten_shipped_table` 噴 AttributeError/TypeError，
-# 而 `search()` 步驟 2 呼叫 `_convert_with_hints` **沒有包 try/except**——例外會直接
-# 穿透，使用者每搜一個番號 DMM 整支罷工（不是「查不到那部片」）。
-# D1 明文說出貨表是加分項不是必要條件，所以這一整類都必須降級成空表。
 
 
 @pytest.mark.parametrize(
@@ -271,23 +211,17 @@ def test_structurally_broken_shipped_table_degrades(
 ):
     """DoD 5／review P1：語法合法但形狀壞掉 → 降級成空表，不得穿透例外。"""
     shipped_path = tmp_path / "dmm_prefix_table.json"
-    prefix_path = tmp_path / "dmm_prefix_hints.json"
     shipped_path.write_text(
         json.dumps({"_meta": {}, "makers": bad_makers}, ensure_ascii=False),
         encoding="utf-8",
     )
-    prefix_path.write_text(
-        json.dumps({"ccc": "4"}, ensure_ascii=False),
-        encoding="utf-8",
-    )
     monkeypatch.setattr(dmm_module, "SHIPPED_TABLE_FILE", shipped_path)
-    monkeypatch.setattr(dmm_module, "PREFIX_FILE", prefix_path)
 
     scraper = _scraper()
     with caplog.at_level(logging.WARNING, logger=dmm_module.logger.name):
-        merged = scraper._load_prefix_hints()
+        merged = scraper._prefix_map()
 
-    assert merged == {"ccc": "4"}
+    assert merged == {}
     assert any(r.levelno == logging.WARNING for r in caplog.records)
 
 
@@ -296,16 +230,14 @@ def test_structurally_broken_table_does_not_break_search_step2(
 ):
     """review P1 的 sink：壞掉的出貨表不得讓 search() 步驟 2 噴例外。
 
-    這支才是「使用者會看到什麼」那一層——上面幾支只證明 _load_prefix_hints 不拋，
-    這支證明整條搜尋路徑仍然只是「查不到」。
+    這支才是「使用者會看到什麼」那一層——上面幾支只證明 _prefix_map 不拋，
+    這支證明整條搜尋路徑仍然持續是「查不到」。
     """
     shipped_path = tmp_path / "dmm_prefix_table.json"
     shipped_path.write_text(
         json.dumps({"makers": None}, ensure_ascii=False), encoding="utf-8"
     )
     monkeypatch.setattr(dmm_module, "SHIPPED_TABLE_FILE", shipped_path)
-    monkeypatch.setattr(dmm_module, "PREFIX_FILE", tmp_path / "absent.json")
-    monkeypatch.setattr(dmm_module, "CACHE_FILE", tmp_path / "cache.json")
     monkeypatch.setattr(dmm_module, "rate_limit", lambda *a, **kw: None)
 
     scraper = _scraper()
@@ -315,72 +247,7 @@ def test_structurally_broken_table_does_not_break_search_step2(
     assert scraper.search("SONE-205") is None
 
 
-def test_local_hints_not_a_dict_is_ignored(tmp_path, monkeypatch, caplog):
-    """本機檔是使用者手可及的：內容不是物件時整份忽略，不得讓搜尋掛掉。"""
-    prefix_path = tmp_path / "dmm_prefix_hints.json"
-    prefix_path.write_text(json.dumps(["not", "a", "dict"]), encoding="utf-8")
-    monkeypatch.setattr(dmm_module, "SHIPPED_TABLE_FILE", REAL_TABLE_PATH)
-    monkeypatch.setattr(dmm_module, "PREFIX_FILE", prefix_path)
-
-    scraper = _scraper()
-    with caplog.at_level(logging.WARNING, logger=dmm_module.logger.name):
-        merged = scraper._load_prefix_hints()
-
-    assert merged["id"] == "h_113"          # 出貨表仍然生效
-    assert any(r.levelno == logging.WARNING for r in caplog.records)
-
-
-# ── Codex review 追加（P3-2）────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    "bad_value",
-    [None, ["h_113"], 5, {"dmm_prefix": "h_113"}, True],
-    ids=["null", "list", "int", "dict", "bool"],
-)
-def test_local_hint_non_string_value_falls_back_to_shipped(
-    tmp_path, monkeypatch, bad_value
-):
-    """本機值型別壞掉 → 丟棄該鍵，出貨表的正確值仍然生效。
-
-    丟棄而不是改成 ""：改成 "" 等於讓壞的本機值把出貨表蓋掉，使用者打一個字錯
-    就吃不到我們出貨的 h_113，沒日本 IP 時整個前綴查不到。
-    """
-    prefix_path = tmp_path / "dmm_prefix_hints.json"
-    prefix_path.write_text(json.dumps({"id": bad_value}), encoding="utf-8")
-    monkeypatch.setattr(dmm_module, "SHIPPED_TABLE_FILE", REAL_TABLE_PATH)
-    monkeypatch.setattr(dmm_module, "PREFIX_FILE", prefix_path)
-
-    merged = _scraper()._load_prefix_hints()
-
-    assert merged["id"] == "h_113"
-
-
-def test_local_hint_string_value_still_overrides_shipped(tmp_path, monkeypatch):
-    """正向鎖：合法字串本機值仍然覆寫出貨表（別把過濾寫成全部忽略本機檔）。"""
-    prefix_path = tmp_path / "dmm_prefix_hints.json"
-    prefix_path.write_text(json.dumps({"id": "h_999"}), encoding="utf-8")
-    monkeypatch.setattr(dmm_module, "SHIPPED_TABLE_FILE", REAL_TABLE_PATH)
-    monkeypatch.setattr(dmm_module, "PREFIX_FILE", prefix_path)
-
-    merged = _scraper()._load_prefix_hints()
-
-    assert merged["id"] == "h_999"
-
-
-def test_merged_values_are_all_strings(tmp_path, monkeypatch):
-    """T2 對外宣告的契約：回傳的 value 一律是字串（含空字串）。"""
-    prefix_path = tmp_path / "dmm_prefix_hints.json"
-    prefix_path.write_text(
-        json.dumps({"id": None, "sone": "9", "zzz": ["x"]}), encoding="utf-8"
-    )
-    monkeypatch.setattr(dmm_module, "SHIPPED_TABLE_FILE", REAL_TABLE_PATH)
-    monkeypatch.setattr(dmm_module, "PREFIX_FILE", prefix_path)
-
-    merged = _scraper()._load_prefix_hints()
-
-    assert all(isinstance(v, str) for v in merged.values())
-    assert "zzz" not in merged
+# ── 出貨表側非字串值過濾 ───────────────────────────────────────────────────
 
 
 def test_shipped_entry_with_non_string_prefix_is_dropped(tmp_path, monkeypatch):
@@ -402,10 +269,9 @@ def test_shipped_entry_with_non_string_prefix_is_dropped(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setattr(dmm_module, "SHIPPED_TABLE_FILE", table_path)
-    monkeypatch.setattr(dmm_module, "PREFIX_FILE", tmp_path / "absent.json")
 
     scraper = _scraper()
-    merged = scraper._load_prefix_hints()
+    merged = scraper._prefix_map()
 
     assert "aaa" not in merged
     assert merged["bbb"] == "h_1"

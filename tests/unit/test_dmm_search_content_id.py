@@ -1,5 +1,4 @@
 """TASK-134a-T4 + TASK-134b-T10 — _search_content_id / 第二試 / 番號驗證."""
-import json
 import logging
 from unittest.mock import MagicMock, patch
 
@@ -9,7 +8,7 @@ import core.scrapers.dmm as dmm_module
 from core.scrapers.dmm import DMMScraper
 from core.scrapers.models import ScraperConfig, Video
 
-LOG_SNIPPET = "步驟 3 查無結果"
+LOG_SNIPPET = "搜尋 API 查無結果"
 
 
 def _make_mock_resp(status_code=200, json_data=None):
@@ -33,11 +32,9 @@ def _legacy_search_payload(cids: list[str]) -> dict:
 
 
 @pytest.fixture
-def dmm_scraper(tmp_path, monkeypatch):
+def dmm_scraper(monkeypatch):
     import core.scrapers.dmm as dmm_module
 
-    monkeypatch.setattr(dmm_module, "CACHE_FILE", tmp_path / "dmm_content_ids.json")
-    monkeypatch.setattr(dmm_module, "PREFIX_FILE", tmp_path / "dmm_prefix_hints.json")
     monkeypatch.setattr(dmm_module, "rate_limit", lambda *a, **kw: None)
     return DMMScraper(ScraperConfig(proxy_url="http://test-proxy:8080"))
 
@@ -45,45 +42,6 @@ def dmm_scraper(tmp_path, monkeypatch):
 def test_learn_prefix_and_save_prefix_hint_removed():
     assert hasattr(DMMScraper, "_learn_prefix") is False
     assert hasattr(DMMScraper, "_save_prefix_hint") is False
-
-
-def test_search_step3_hit_prefix_file_unchanged_cache_gains_entry(
-    tmp_path, monkeypatch
-):
-    """DoD 2：快取 miss → hints miss → 步驟 3 命中後，PREFIX 逐位元組不變、CACHE 有新增。"""
-    import core.scrapers.dmm as dmm_module
-
-    prefix_file = tmp_path / "dmm_prefix_hints.json"
-    cache_file = tmp_path / "dmm_content_ids.json"
-    prefix_file.write_text(
-        json.dumps({"zzza": "h_1510"}, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    cache_file.write_text("{}", encoding="utf-8")
-
-    monkeypatch.setattr(dmm_module, "PREFIX_FILE", prefix_file)
-    monkeypatch.setattr(dmm_module, "CACHE_FILE", cache_file)
-    monkeypatch.setattr(dmm_module, "rate_limit", lambda *a, **kw: None)
-
-    # BE-TEST-10：基準值必須在被測操作之前取得
-    prefix_before = prefix_file.read_bytes()
-
-    scraper = DMMScraper(ScraperConfig(proxy_url="http://test-proxy:8080"))
-    video = Video(number="ERK-116", title="test", source="dmm")
-
-    # hints miss（步驟 2 無轉換結果）→ 步驟 3 命中 → _fetch_by_id 成功
-    monkeypatch.setattr(scraper, "_convert_with_hints", lambda number: "")
-    monkeypatch.setattr(scraper, "_search_content_id", lambda number: "erk00116")
-    monkeypatch.setattr(
-        scraper, "_fetch_by_id", lambda cid: video if cid == "erk00116" else None
-    )
-
-    result = scraper.search("ERK-116")
-
-    assert result is not None
-    assert prefix_file.read_bytes() == prefix_before
-    cache = json.loads(cache_file.read_text(encoding="utf-8"))
-    assert cache.get("ERK-116") == "erk00116"
 
 
 def test_search_content_id_rejects_gerk116_for_erk_prefix(dmm_scraper):
@@ -200,17 +158,13 @@ def test_second_try_skipped_when_cid_identical(dmm_scraper, monkeypatch):
 
 
 def test_number_mismatch_rejected_on_second_try_and_step3(
-    dmm_scraper, tmp_path, monkeypatch, caplog
+    dmm_scraper, monkeypatch, caplog
 ):
-    """DoD 3 反向鎖：第二試／步驟 3 拿到 number 不符的 Video → 不回傳、不寫快取、不印 F5。
+    """DoD 3 反向鎖：第二試／步驟 3 拿到 number 不符的 Video → 不回傳、不印 F5。
 
     必須含「兩邊都能 _parse_number 但 tuple 不等」的案例，否則 mutation 把
     helper 末行改成 return True 時仍會被「解析不出 → return False」提前擋掉而 SURVIVED。
     """
-    cache_file = tmp_path / "dmm_content_ids.json"
-    cache_file.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(dmm_module, "CACHE_FILE", cache_file)
-
     # 兩邊都解析得出、但 prefix/num 不同（守住 helper 末行的 tuple 比對）
     wrong_but_parseable = Video(number="MIDD-999", title="wrong", source="dmm")
     # 解析不出／空字串（守住「任一側解不出即不符」）
@@ -234,7 +188,6 @@ def test_number_mismatch_rejected_on_second_try_and_step3(
         result_a = dmm_scraper.search("MIDD-357")
 
     assert result_a is None
-    assert json.loads(cache_file.read_text(encoding="utf-8")) == {}
 
     caplog.clear()
 
@@ -253,7 +206,6 @@ def test_number_mismatch_rejected_on_second_try_and_step3(
         result_b = dmm_scraper.search("MCSR-191")
 
     assert result_b is None
-    assert json.loads(cache_file.read_text(encoding="utf-8")) == {}
     assert not any(LOG_SNIPPET in r.getMessage() for r in caplog.records)
 
     caplog.clear()
@@ -269,7 +221,6 @@ def test_number_mismatch_rejected_on_second_try_and_step3(
         result_b2 = dmm_scraper.search("MCSR-191")
 
     assert result_b2 is None
-    assert json.loads(cache_file.read_text(encoding="utf-8")) == {}
     assert not any(LOG_SNIPPET in r.getMessage() for r in caplog.records)
 
     caplog.clear()
@@ -288,7 +239,6 @@ def test_number_mismatch_rejected_on_second_try_and_step3(
         result_b3 = dmm_scraper.search("MIDD-357")
 
     assert result_b3 is None
-    assert json.loads(cache_file.read_text(encoding="utf-8")) == {}
     assert not any(LOG_SNIPPET in r.getMessage() for r in caplog.records)
 
 
@@ -358,13 +308,13 @@ def test_convert_with_hints_zfill_flag_changes_the_cid(dmm_scraper, monkeypatch)
     第二試組出的 cid 與第一試逐字相同 → 被 D3 的去重條件跳過 → 路徑 (b) 整條死掉
     → 畫面上是「DMM 沒有這部片」，而 ``midd357`` 直拉其實是有的。
     """
-    monkeypatch.setattr(dmm_scraper, "_load_prefix_hints", lambda: {})
+    monkeypatch.setattr(dmm_scraper, "_prefix_map", lambda: {})
 
     assert dmm_scraper._convert_with_hints("MIDD-357") == "midd00357"
     assert dmm_scraper._convert_with_hints("MIDD-357", zfill=True) == "midd00357"
     assert dmm_scraper._convert_with_hints("MIDD-357", zfill=False) == "midd357"
 
     # 前綴有值時兩式都要帶上它（證明 zfill 只影響補零，不影響前綴組裝）
-    monkeypatch.setattr(dmm_scraper, "_load_prefix_hints", lambda: {"nwf": "3"})
+    monkeypatch.setattr(dmm_scraper, "_prefix_map", lambda: {"nwf": "3"})
     assert dmm_scraper._convert_with_hints("NWF-237") == "3nwf00237"
     assert dmm_scraper._convert_with_hints("NWF-237", zfill=False) == "3nwf237"
