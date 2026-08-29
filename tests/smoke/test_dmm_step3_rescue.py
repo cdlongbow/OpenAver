@@ -45,9 +45,9 @@ def test_dmm_step3_rescues_number_not_convertible_by_hints(tmp_path, monkeypatch
         pytest.skip(f"DMM 連線失敗（{type(e).__name__}: {e}）")
 
     if result is None:
-        pytest.skip(
+        pytest.fail(
             f"DMM 步驟 3 救回失敗或回空（番號={RESCUE_NUMBER}；"
-            "可能無日本線路、被擋、或該片下架）"
+            "HTTP 已通但查無結果——不是環境未就緒）"
         )
 
     assert result is not None

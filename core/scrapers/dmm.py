@@ -510,26 +510,39 @@ class DMMScraper(BaseScraper):
             return match.group(1).lower(), match.group(2)
         return "", ""
 
-    def _convert_with_hints(self, number: str) -> str:
+    def _convert_with_hints(self, number: str, zfill: bool = True) -> str:
         """
         用前綴映射轉換番號
 
         Examples:
             SONE-205 + hints={} → sone00205
             STARS-804 + hints={"stars": "1"} → 1stars00804
+            MIDD-357 + zfill=False → midd357
         """
         prefix, num = self._parse_number(number)
         if not prefix or not num:
             return ""
 
-        # 數字補零到 5 位
-        num_padded = num.zfill(5)
+        # 數字補零到 5 位（zfill=False 時保留原樣，供步驟 2 第二試）
+        num_padded = num.zfill(5) if zfill else num
 
         # 查前綴映射
         hints = self._load_prefix_hints()
         dmm_prefix = hints.get(prefix, "")
 
         return f"{dmm_prefix}{prefix}{num_padded}"
+
+    def _number_matches(self, video_number: str, input_number: str) -> bool:
+        """比對 Video.number（makerContentId）與輸入番號是否為同一片。
+
+        兩邊都丟進 _parse_number()，比較 (prefix, num.lstrip("0") or "0")。
+        任一側解析不出來即視同不符。
+        """
+        vp, vn = self._parse_number(video_number)
+        ip, in_ = self._parse_number(input_number)
+        if not vp or not vn or not ip or not in_:
+            return False
+        return (vp, vn.lstrip("0") or "0") == (ip, in_.lstrip("0") or "0")
 
     def _content_id_to_number(self, content_id: str) -> str:
         """
@@ -560,11 +573,12 @@ class DMMScraper(BaseScraper):
         """
         用搜索 API 查找正確的 content_id（MDCX 方法）
         """
-        query_word = number.upper().replace('-', '')
-        prefix, _ = self._parse_number(number)
+        prefix, num = self._parse_number(number)
 
         if not prefix:
             return None
+
+        query_word = f"{prefix.upper()} {num}"
 
         try:
             payload = {
@@ -739,18 +753,30 @@ class DMMScraper(BaseScraper):
         if converted_cid:
             result = self._fetch_by_id(converted_cid)
             if result:
+                # 補零第一試刻意不驗證番號——CD-134-11 的 320 命中不得被動到
                 self._save_cache(number, converted_cid)
                 rate_limit(self.config.delay)
                 return result
+
+            # 第一試失敗才試不補零第二試；兩式相同就不重複發請求
+            unpadded_cid = self._convert_with_hints(number, zfill=False)
+            if unpadded_cid and unpadded_cid != converted_cid:
+                second_result = self._fetch_by_id(unpadded_cid)
+                if second_result and self._number_matches(second_result.number, number):
+                    self._save_cache(number, unpadded_cid)
+                    rate_limit(self.config.delay)
+                    return second_result
+                # 驗證失敗或未命中 → 不回傳、不寫快取、不加 log，靜靜落到步驟 3
 
         # 3. 搜索 API 發現（慢，但會寫入快取）
         discovered_cid = self._search_content_id(number)
         if discovered_cid:
             result = self._fetch_by_id(discovered_cid)
-            if result:
+            if result and self._number_matches(result.number, number):
                 self._save_cache(number, discovered_cid)
                 rate_limit(self.config.delay)
                 return result
+            # 驗證失敗仍屬 discovered_cid 有值分支，不會落到 elif，F5 不會被誤觸
         elif self._parse_number(number)[0]:
             # 只在「番號可解析 ⇒ _search_content_id 真的發了 API」時留痕。
             # 輸入是完整 cid（h_113id00057）時它在發請求前就 return None，
