@@ -118,11 +118,119 @@ class TestSearchSourceValidation:
         assert response.status_code != 400
 
     def test_d2pass_and_heyzo_sources_not_400(self, client, mocker):
-        """d2pass / heyzo（capabilities 原缺、search 一直接受）→ 非 400"""
-        mocker.patch('web.routers.search.smart_search', return_value=[])
+        """d2pass / heyzo（capabilities 原缺、search 一直接受）→ 非 400
+
+        TASK-135-T7：d2pass/heyzo 是具體來源（在 SOURCE_ORDER 內，非 'auto' 特判），
+        T7 新增「source 只在 mode=exact 生效」的檢查後，這裡必須明帶 mode=exact
+        才能繼續測試本測試原本要鎖的東西（validate_source_id 接受 d2pass/heyzo，
+        不是被本測試不相關的 mode 預設值擋掉）。
+        """
+        mocker.patch('core.scraper.search_jav_single_source', return_value=None)
         for src in ('d2pass', 'heyzo'):
-            response = client.get('/api/search', params={'q': 'SONE-103', 'source': src})
+            response = client.get('/api/search', params={'q': 'SONE-103', 'mode': 'exact', 'source': src})
             assert response.status_code != 400, f"source={src} should not be 400"
+
+
+class TestSearchSourceExactModeRequired:
+    """測試 TASK-135-T7：指定 source 必須搭配 mode=exact（CD-135-9 / AC-13）"""
+
+    def test_auto_mode_with_source_returns_400(self, client):
+        """mode=auto ＋ source=dmm → 400（DoD-1）"""
+        response = client.get('/api/search', params={'q': 'SONE-103', 'mode': 'auto', 'source': 'dmm'})
+        assert response.status_code == 400
+        assert response.json() == {
+            "success": False,
+            "error": "source 僅在 mode=exact 時生效，請改用 mode=exact 或移除 source",
+        }
+
+    def test_default_mode_with_source_returns_400(self, client):
+        """不帶 mode（走預設 auto）＋ source=dmm → 400（DoD-1）"""
+        response = client.get('/api/search', params={'q': 'SONE-103', 'source': 'dmm'})
+        assert response.status_code == 400
+        assert set(response.json().keys()) == {"success", "error"}
+
+    def test_partial_mode_with_source_returns_400(self, client):
+        """mode=partial ＋ source → 400（一般化：非 exact 一律擋，不只 auto）"""
+        response = client.get('/api/search', params={'q': 'SON', 'mode': 'partial', 'source': 'dmm'})
+        assert response.status_code == 400
+
+    def test_actress_mode_with_source_returns_400(self, client):
+        """mode=actress ＋ source → 400"""
+        response = client.get('/api/search', params={'q': '明日花キララ', 'mode': 'actress', 'source': 'dmm'})
+        assert response.status_code == 400
+
+    def test_exact_mode_with_source_unaffected(self, client, mocker):
+        """合法組合：mode=exact ＋ source=dmm → 照舊行為，不受本檢查影響（DoD-3）"""
+        mock_data = load_fixture('responses/javbus/SONE-103.json')
+        mocker.patch('core.scraper.search_jav_single_source', return_value=mock_data)
+
+        response = client.get('/api/search', params={'q': 'SONE-103', 'mode': 'exact', 'source': 'dmm'})
+
+        assert response.status_code != 400
+        data = response.json()
+        assert data['success'] is True
+        assert data['data'][0]['number'] == 'SONE-103'
+
+    def test_no_source_zero_impact_across_modes(self, client, mocker):
+        """不帶 source：auto/exact/partial/actress/不帶 mode/非法 mode 一律不受本檢查影響（DoD-4）"""
+        mocker.patch('web.routers.search.smart_search', return_value=[])
+        mocker.patch('web.routers.search.search_jav', return_value=None)
+        mocker.patch('web.routers.search.search_partial', return_value=[])
+        mocker.patch('web.routers.search.search_actress', return_value=[])
+
+        for params in (
+            {'q': 'SONE-103', 'mode': 'auto'},
+            {'q': 'SONE-103'},
+            {'q': 'SONE-103', 'mode': 'exact'},
+            {'q': 'SON', 'mode': 'partial'},
+            {'q': '明日花キララ', 'mode': 'actress'},
+            {'q': 'SONE-103', 'mode': 'EXACT'},
+        ):
+            response = client.get('/api/search', params=params)
+            assert response.status_code != 400, f"params={params} should not be 400"
+
+    def test_source_auto_not_blocked_regardless_of_mode(self, client, mocker):
+        """source=auto 語意上不是「指定了具體來源」（core/source_config.py 的既有特判），
+        不受本檢查限制，即使不帶 mode（預設 auto）也不是 400（回歸鎖，見 test_auto_source_not_400）"""
+        mocker.patch('web.routers.search.smart_search', return_value=[])
+        response = client.get('/api/search', params={'q': 'SONE-103', 'source': 'auto'})
+        assert response.status_code != 400
+
+    def test_illegal_mode_case_with_source_returns_400(self, client):
+        """mode=EXACT（大寫，既有端點本來就不驗證，靜默降級成 auto）＋ source
+        → 400（刻意接受的既有行為改動，僅限「source 存在 + mode 非法」這個冷門組合）"""
+        response = client.get('/api/search', params={'q': 'SONE-103', 'mode': 'EXACT', 'source': 'dmm'})
+        assert response.status_code == 400
+
+
+class TestSearchCapabilitiesSourceExactModeDoc:
+    """測試 TASK-135-T7 DoD-5：capabilities 的 search 工具寫明 source/mode 相依"""
+
+    def test_search_tool_source_and_mode_description_mention_exact_dependency(self, client, tmp_path, monkeypatch):
+        # 冷啟動 load_snapshot()（core/access_auth.py）未 mock 前會連上 output/openaver.db。
+        # 同手法見 tests/integration/test_scraper_b3.py::test_capabilities_exposes_fetch_samples。
+        import core.access_auth as access_auth
+
+        db_path = tmp_path / "access.db"
+        monkeypatch.setattr("core.access_auth.get_db_path", lambda: db_path)
+        access_auth.ensure_schema()
+        access_auth.reset_state_for_tests()
+        try:
+            resp = client.get('/api/capabilities')
+        finally:
+            access_auth.reset_state_for_tests()
+        assert resp.status_code == 200
+        tools = resp.json()['tools']
+        search_tool = next(t for t in tools if t['name'] == 'search')
+        source_desc = search_tool['input_schema']['properties']['source']['description']
+        mode_desc = search_tool['input_schema']['properties']['mode']['description']
+
+        # [lint-guard: pytest-justified] 斷言的是 /api/capabilities 回傳的 dict 欄位
+        # 說明（AI-facing 契約），不是 html/js/css 字串；它鎖的是「web/routers/search.py
+        # 新增的 source×mode 拒絕條件有沒有被揭露給 AI」這個跨檔 contract。
+        assert 'exact' in source_desc
+        assert '必須搭配精確模式' in source_desc
+        assert 'source 只在 exact 時有效' in mode_desc
 
 
 class TestSearchModes:

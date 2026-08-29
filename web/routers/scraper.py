@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from core.database import VideoRepository
 from core.db_inflow import try_inflow_upsert
@@ -313,7 +313,7 @@ class EnrichRequest(BaseModel):
     number: str
     mode: Literal["refresh_full", "fill_missing", "db_to_sidecar"] = "fill_missing"
     write_nfo: bool = True
-    write_cover: bool = True
+    write_cover: Optional[bool] = None
     write_extrafanart: bool = False
     overwrite_existing: bool = False
     source: Optional[str] = None
@@ -326,6 +326,8 @@ class EnrichRequest(BaseModel):
     # file with it omitted defaults to 'ingest' (safe default — never force a
     # remote overwrite without an explicit gear action).
     readonly_action: Optional[Literal['rescrape', 'ingest']] = None
+    metadata: Optional[Dict[str, Any]] = None
+    allow_number_change: bool = False
 
 
 class BatchEnrichItem(BaseModel):
@@ -440,6 +442,126 @@ def _javlib_candidate_scraper_data(request: "EnrichRequest"):
     return scraper_data, None
 
 
+# metadata 白名單提升為 module-level 常數：capabilities 的揭露文字必須逐欄位對得上這裡
+# （`tests/integration/test_capabilities_metadata.py` 直接 import 這幾個名字做集合比對）。
+# 過去它在 capabilities 說明、驗證函式、測試三處各抄一份，改一處另兩處不會紅（SA-pre-9 P3-2）。
+METADATA_WHITELIST_STR = {
+    "title", "original_title", "maker", "director", "series",
+    "label", "date", "cover", "preview_cover_url", "url", "_summary",
+}
+METADATA_WHITELIST_LIST_STR = {
+    "actors", "tags", "preview_sample_images", "sample_images",
+}
+METADATA_IGNORED_KEYS = {
+    "number", "source", "mode", "success", "total",
+    "_source", "_mode", "_all_variant_ids", "candidates",
+}
+# 揭露給 AI 的完整可落地欄位集合（白名單兩組 ＋ 只驗數值型別的 duration/_rating）。
+METADATA_ALLOWED_FIELDS = METADATA_WHITELIST_STR | METADATA_WHITELIST_LIST_STR | {"duration", "_rating"}
+
+
+def _validate_metadata_shape(metadata: dict) -> None:
+    """嚴格白名單驗證 metadata 欄位形狀與型別（CD-135-2 / CD-135-3 / CD-135-14）。"""
+    whitelist_str = METADATA_WHITELIST_STR
+    whitelist_list_str = METADATA_WHITELIST_LIST_STR
+    ignored_keys = METADATA_IGNORED_KEYS
+
+    for k, v in metadata.items():
+        if k in ignored_keys:
+            # `source` 是忽略清單裡唯一「有 sink」的 key（spec-135 §忽略清單 / CD-135-3）：
+            # 它不寫進 NFO／DB，但會原樣路過 enrich_single 的 `source_used`，而
+            # core/enricher.py:677 用 `source_used not in ("db", "nfo", "")` 當「跳過
+            # _db_upsert」的內部哨兵（那兩個值是 db_to_sidecar／fill_missing 命中 DB 或
+            # sidecar NFO 時自己填的）。送進來的字面值若撞上哨兵，NFO 會被整份改寫、DB
+            # 主欄位（title/maker/director/series/label/duration/cover_path/release_date）
+            # 全部留舊值，只有 tags 經 _sync_tags_to_db 同步——靜默分裂且回 200。
+            # 只擋邊界，不動 :677 的判準：那條閘是內部兩個 mode 的正常語意，改判準會牽動
+            # test_cover_canonical_contract 整份契約表的前提（PR #167 Codex P2）。
+            if k == "source":
+                if not isinstance(v, str):
+                    raise HTTPException(400, detail="metadata.source 型別錯誤，必須是字串")
+                if v in ("db", "nfo"):
+                    raise HTTPException(
+                        400,
+                        detail='metadata.source 不可為 "db" 或 "nfo"（後端保留值）；'
+                               "請填實際來源代號（如 javdb／dmm／metatube:xxx）或省略此欄位",
+                    )
+            continue
+        if k in whitelist_str:
+            if not isinstance(v, str):
+                raise HTTPException(400, detail=f"metadata.{k} 型別錯誤，必須是字串")
+            if k == "original_title" and v == "":
+                raise HTTPException(400, detail="metadata.original_title 無法透過本入口清空")
+        elif k in whitelist_list_str:
+            if not isinstance(v, list) or not all(isinstance(item, str) for item in v):
+                raise HTTPException(400, detail=f"metadata.{k} 型別錯誤，必須是字串列表")
+        elif k == "duration":
+            if v is not None and (not isinstance(v, int) or isinstance(v, bool)):
+                raise HTTPException(400, detail="metadata.duration 型別錯誤，必須是整數或 null")
+        elif k == "_rating":
+            if v is not None and (not isinstance(v, (int, float)) or isinstance(v, bool)):
+                raise HTTPException(400, detail="metadata._rating 型別錯誤，必須是數字或 null")
+        else:
+            raise HTTPException(400, detail=f"metadata 包含未知欄位: {k}")
+
+
+def _validate_enrich_request(request: EnrichRequest, owning, action: Optional[str], canonical: str) -> None:
+    """共用驗證階段：模式閘、互斥檢查、欄位型別驗證（CD-135-1 / CD-135-11 / CD-135-12）。"""
+    # 1a. 模式閘（CD-135-1）
+    if request.metadata is not None and request.mode != "refresh_full":
+        raise HTTPException(400, detail="metadata 只在 mode=refresh_full 時合法")
+
+    # 1b. 唯讀路徑的 action 閘（CD-135-12 item 1b）
+    if request.metadata is not None and owning is not None and action != 'rescrape':
+        raise HTTPException(400, detail="唯讀來源：metadata 只在 rescrape（重刮）意圖下生效，補完（ingest）不讀取預先取得的內容")
+
+    # 2. 互斥檢查（CD-135-11）
+    if request.metadata is not None and request.source == "javlibrary" and request.detail_url:
+        raise HTTPException(400, detail="metadata 與 javlibrary 明細網址（detail_url）不可同時提供")
+
+    # 3. key／型別驗證
+    if request.metadata is not None:
+        _validate_metadata_shape(request.metadata)
+        if owning is not None and action == 'rescrape':
+            submitted_number = request.metadata.get('number')
+            if not submitted_number:
+                raise HTTPException(400, detail="唯讀來源重刮：metadata 缺 number")
+            if not isinstance(submitted_number, str):
+                raise HTTPException(400, detail="唯讀來源重刮：metadata.number 型別錯誤，必須是字串")
+            if 'title' not in request.metadata:
+                raise HTTPException(400, detail="唯讀來源重刮：metadata 缺 title")
+            # 4. 番號守衛唯讀那一半（CD-135-7 點 2）：查 DB 用 canonical——執行本體
+            # （core/readonly_producer.py 的 enrich_one_readonly/resolve_ingest_plan）
+            # 自己查 DB 用的就是同一個 canonical key，守衛必須問同一筆記錄。
+            if not request.allow_number_change:
+                existing = VideoRepository().get_by_path(canonical)
+                if existing and existing.number and existing.number != submitted_number:
+                    raise HTTPException(400, detail=f"番號不符：metadata 給 {submitted_number}，DB 既有 {existing.number}；如確定要改號請帶 allow_number_change=true")
+        else:
+            # DB 的 path 欄位寫入時不套 path_mappings（core/enricher.py:504 同構），
+            # 帶 path_mappings 會查到另一個命名空間、永遠對不上 → 守衛形同虛設。
+            # db-ns-ok: uri_to_fs_path(request.file_path) 是 DB round-trip 值，不做反向映射
+            existing = VideoRepository().get_by_path(to_file_uri(uri_to_fs_path(request.file_path)))
+            if existing and existing.number and existing.number != request.number and not request.allow_number_change:
+                raise HTTPException(400, detail=f"番號不符：請求 {request.number}，DB 既有 {existing.number}；如確定要改號請帶 allow_number_change=true")
+
+
+def _clean_metadata_for_scraper_data(metadata: dict) -> dict:
+    """非唯讀分支清洗：剔除 8 個忽略鍵，保留 source（CD-135-3）。"""
+    return {
+        k: v for k, v in metadata.items()
+        if k not in ("number", "mode", "success", "total", "_source", "_mode", "_all_variant_ids", "candidates")
+    }
+
+
+def _resolve_write_cover(write_cover: Optional[bool], has_metadata: bool) -> bool:
+    """三態解析（CD-135-4）：沒表態時，有 metadata → False，無 metadata → True（照舊）。"""
+    if write_cover is not None:
+        return write_cover
+    return not has_metadata  # 無 metadata → True（照舊）；有 metadata → False（CD-135-4）
+
+
+
 @router.post("/enrich-single")
 def enrich_single_endpoint(request: EnrichRequest) -> dict:
     config = load_config()
@@ -448,6 +570,7 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
     # TASK-91-T3：讀取端 path_mappings，供 resolve_nfo_cover_paths / uri_to_local_fs_path /
     # enrich_single 共用一次算好的同一組值（避免重複 .get() chain）。
     path_mappings = config.get("gallery", {}).get("path_mappings", {})
+    resolved_write_cover = _resolve_write_cover(request.write_cover, request.metadata is not None)  # CD-135-4
 
     # TASK-104-T3 (CD-104-5)：唯讀來源片不再一律拒絕——改道 output_dir。
     # resolve_owning_output_root 依 canonical URI 找最內層唯讀來源（尊重 writable
@@ -456,6 +579,8 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
     # （resolve_nfo_cover_paths 對唯讀路徑推 source-adjacent 路徑沒有意義，CD-104-10）。
     canonical = coerce_to_file_uri(request.file_path, path_mappings)  # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
     owning = resolve_owning_output_root(canonical, config)
+    action = (request.readonly_action or 'ingest') if owning is not None else None
+    _validate_enrich_request(request, owning, action, canonical)
     if owning is not None:
         source, output_root, output_uri = owning
         # Codex PR#113 one-pass alignment (2026-07-21): readonly branch now returns
@@ -485,12 +610,13 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
         if not output_root:
             return asdict(_readonly_enrich_failure("未設定媒體庫輸出路徑", "error"))
         try:
-            action = request.readonly_action or 'ingest'
             scraper_data = None
             if action == 'rescrape' and request.source == 'javlibrary' and request.detail_url:
                 scraper_data, _cand_err = _javlib_candidate_scraper_data(request)
                 if _cand_err:
                     return _cand_err
+            if request.metadata is not None:
+                scraper_data = dict(request.metadata)
             # TASK-109-T2: 產出核心（URI→FS 轉換到組 EnrichResult 為止）薄搬移進
             # core.readonly_producer.enrich_one_readonly；caller 只保留三個刻意
             # 缺口——javlib 預抓（上面已做）、reject guard + output_dir 解析
@@ -506,7 +632,7 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
                 number=request.number, scraper_cfg=config.get("scraper", {}),
                 path_mappings=path_mappings, action=action, proxy_url=proxy_url,
                 scraper_data=scraper_data, scrape_source=request.source,
-                javbus_lang=request.javbus_lang, write_cover=request.write_cover,
+                javbus_lang=request.javbus_lang, write_cover=resolved_write_cover,
                 overwrite_existing=request.overwrite_existing,
                 after_produce=lambda: thumbnail_cache.invalidate(canonical),
             )
@@ -544,7 +670,7 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
         )
         will_write_nfo = request.write_nfo and not os.path.exists(nfo_path)
         will_write_cover = not should_preserve_cover(
-            request.write_cover, request.overwrite_existing, os.path.exists(cover_path)
+            resolved_write_cover, request.overwrite_existing, os.path.exists(cover_path)
         )
         # Codex PR review P1（pre-existing，早於 112）：guard 必須與實際寫出者
         # （core/enricher.py::_write_external_images 的 STEM_IMAGE_MODES 白名單，
@@ -559,7 +685,7 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
             fanart_path = stem + "-fanart.jpg"
             # 底圖存在 + 至少一張外部圖缺 → _write_external_images 有寫出機會
             cover_exists_on_disk = os.path.exists(cover_path)
-            will_write_external = cover_exists_on_disk and (
+            will_write_external = resolved_write_cover and cover_exists_on_disk and (
                 not os.path.exists(poster_path) or not os.path.exists(fanart_path)
             )
         else:
@@ -596,12 +722,14 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
             # 重刮的 NFO 輸出（search_jav 走 internal_nfo_carriers 注入同組，PR #89 Codex P2）
             scraper_data = video.to_legacy_dict()
             scraper_data.update(internal_nfo_carriers(video))
+        if request.metadata is not None:
+            scraper_data = _clean_metadata_for_scraper_data(request.metadata)
         result = enrich_single(
             file_path=request.file_path,
             number=request.number,
             mode=request.mode,
             write_nfo=request.write_nfo,
-            write_cover=request.write_cover,
+            write_cover=resolved_write_cover,
             write_extrafanart=request.write_extrafanart,
             overwrite_existing=request.overwrite_existing,
             external_manager=config.get("scraper", {}).get("external_manager", "off"),

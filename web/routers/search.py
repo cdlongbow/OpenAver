@@ -188,6 +188,11 @@ def search(
     if source is not None and not validate_source_id(source):
         return JSONResponse(status_code=400, content={"success": False, "error": f"未知來源: {source}"})
 
+    # source 只在 exact 模式生效（CD-135-9 / AC-13）；auto 語意上不是「指定了具體來源」
+    # （見 core/source_config.py:244 的特判），不受本檢查限制
+    if source is not None and source != "auto" and mode != "exact":
+        return JSONResponse(status_code=400, content={"success": False, "error": "source 僅在 mode=exact 時生效，請改用 mode=exact 或移除 source"})
+
     # 讀取設定（無碼模式 + proxy）
     from core.config import load_config
     config = load_config()

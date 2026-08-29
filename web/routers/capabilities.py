@@ -28,12 +28,12 @@ _TOOLS: list[dict] = [
                     "type": "string",
                     "enum": ["auto", "exact", "partial", "prefix", "actress", "keyword", "uncensored"],
                     "default": "auto",
-                    "description": "搜尋模式",
+                    "description": "搜尋模式；source 只在 exact 時有效",
                 },
                 "source": {
                     "type": "string",
                     "enum": get_source_enum(include_auto=False),
-                    "description": "指定來源（可選）",
+                    "description": "指定來源必須搭配精確模式（mode=exact），其他模式帶了會被拒絕",
                 },
                 "since": {
                     "type": "string",
@@ -178,7 +178,7 @@ _TOOLS: list[dict] = [
     },
     {
         "name": "enrich_single",
-        "description": "舊片原地補完：補齊 NFO/封面/劇照，不搬移不改名。refresh_full 搭配 overwrite_existing=true 才覆蓋既有 NFO/封面；若只想更新 DB 不覆蓋檔案，用 overwrite_existing=false（預設）。overwrite_existing=true 時必須先讓用戶確認。劇照只補缺的：extrafanart 資料夾裡已經存在的圖一律不會被覆蓋，overwrite_existing 對劇照不適用",
+        "description": "舊片原地補完：補齊 NFO/封面/劇照，不搬移不改名。refresh_full 搭配 overwrite_existing=true 才覆蓋既有 NFO/封面；若只想更新 DB 不覆蓋檔案，用 overwrite_existing=false（預設）。overwrite_existing=true 時必須先讓用戶確認。劇照只補缺的：extrafanart 資料夾裡已經存在的圖一律不會被覆蓋，overwrite_existing 對劇照不適用。metadata 帶番號與 DB 既有值不符會被拒絕，除非帶 allow_number_change=true；分集片（-cd1/-cd2）要逐段各自呼叫本端點，一次只吃一個 file_path",
         "method": "POST",
         "path": "/api/enrich-single",
         "input_schema": {
@@ -192,9 +192,44 @@ _TOOLS: list[dict] = [
                     "default": "fill_missing",
                     "description": "fill_missing=只補缺的 / db_to_sidecar=從DB重建不打外站 / refresh_full=強制重抓（搭配 overwrite_existing=true 才覆蓋既有 NFO/封面）",
                 },
+                "metadata": {
+                    "type": "object",
+                    "description": (
+                        "AI 已審核/改寫過的刮削結果，逐欄位落地（整包取代，不是補缺）。"
+                        "只在 mode=refresh_full 時生效，其餘模式會被拒絕。"
+                        "允許欄位：title/original_title/actors/maker/director/series/label/tags/date/duration/"
+                        "cover/preview_cover_url/preview_sample_images/url/sample_images/_summary/_rating。"
+                        "換封面須顯式帶 write_cover=true（本欄位存在時，write_cover 預設改為 false）。"
+                        "_summary（簡介）與 _rating（評分）可以寫入，即使你讀不到既有值也可以送一份新的——"
+                        "但兩者都不會被任何查詢端點回顯給你，所以你沒辦法先讀現值再決定要不要改。"
+                        "⚠️ _rating 是 0-5 刻度（不是 Jellyfin 那種 0-10），後端會自動 ×2 存進 NFO；"
+                        "送 8.0 會寫出 16.0，不是你以為的『10 分制打 8 分』。"
+                        "⚠️ original_title 送空字串會被拒絕（400）——這一欄沒有受支援的清空途徑，"
+                        "只能換成另一個非空值。其餘文字欄位送空字串是合法的，意思是「這一欄我要它空的」。"
+                        "⚠️ **這是整包取代：你沒送的白名單欄位會被寫成空**（女優、標籤、片商、系列、"
+                        "發售日…），不是「維持原值」。要只改一欄，就得把其餘欄位連同原值一起送回來"
+                        "（例外只有三個：original_title 拒絕空字串、_summary 與 _rating 未帶時沿用既有 NFO）。"
+                        "⚠️ duration 的單位是**分鐘**（與讀取端回的 duration 同一刻度），不是秒。"
+                        "⚠️ source 不是可落地欄位，但若要帶必須是字串、且不可為 \"db\" 或 \"nfo\"（400）"
+                        "——那兩個是後端內部保留值，不要拿來標示「這份資料來自你的資料庫」。"
+                        "帶了就原樣回顯在 source_used，省略則回顯 \"scraper\"。"
+                    ),
+                },
                 "write_nfo": {"type": "boolean", "default": True},
-                "write_cover": {"type": "boolean", "default": True},
+                "write_cover": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "預設是否換封面。這個預設值只在不帶 metadata 時成立；帶 metadata 時預設改為 false（CD-135-4）——要換封面必須顯式傳 true。",
+                },
                 "write_extrafanart": {"type": "boolean", "default": False},
+                "allow_number_change": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "允許把這個檔案的番號改成與資料庫既有值不同的號。預設 false：番號不符一律 400，"
+                        "避免把別部片的資料寫到這部片上。只有在你確定要改號（例如原本認錯番號）時才傳 true。"
+                    ),
+                },
                 "overwrite_existing": {
                     "type": "boolean",
                     "default": False,
@@ -710,7 +745,7 @@ _TOOLS: list[dict] = [
                     "cover_full_url": "string — 恆為原圖代理 URL（不受縮圖快取開關影響）",
                     "mtime": "integer — Unix timestamp（秒）",
                     "director": "string",
-                    "duration": "integer | null — 秒；null 時前端隱藏",
+                    "duration": "integer | null — 分鐘；null 時前端隱藏",
                     "series": "string",
                     "label": "string",
                     "sample_images": "array[string] — 劇照 gallery image URLs（真正的 array）",
@@ -1633,6 +1668,17 @@ async def get_capabilities(request: Request):
                     "2. POST /api/collection/sql → SELECT strftime('%Y', release_date) as year, COUNT(*) FROM videos GROUP BY year ORDER BY year DESC",
                 ],
                 "confirmation_rule": "純查詢，不需確認",
+            },
+            {
+                "scenario": "逐欄位選來源 + AI 改寫後提交",
+                "description": "查兩個來源、挑欄位、翻譯標題，交回審過的結果（不是把查到的原樣送回，是組合＋改寫後的版本）",
+                "steps": [
+                    "1. GET /api/search?q=SONE-205&mode=exact&source=dmm 取得 dmm 版（封面/文字）",
+                    "2. GET /api/search?q=SONE-205&mode=exact&source=javdb 取得 javdb 版（文字）",
+                    "3. AI 自己決定：封面用 dmm 的 url，標題翻成中文，其餘文字用 javdb 的——組出一份新的 metadata dict（不是直接轉傳步驟 1/2 的原始回應）",
+                    "4. POST /api/enrich-single {file_path, number, mode: 'refresh_full', overwrite_existing: true, metadata: {...}, write_cover: true}",
+                ],
+                "confirmation_rule": "本流程掛在免確認條目上，AI 可在無人值守排程中執行；分集片要逐段各自提交，對每一段各自重複步驟 3-4",
             },
         ],
         "integration_notes": {
