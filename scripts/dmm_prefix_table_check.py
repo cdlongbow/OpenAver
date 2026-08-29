@@ -190,7 +190,7 @@ def fetch_latest_cids(limit: int = SAMPLE_LIMIT) -> tuple[list[str] | None, bool
     """打一次 legacySearchPPV（不帶 queryWord）。
 
     回 (cids, fetch_failed)。
-    非 200／例外／結構壞掉 → (None, True)；成功但空清單 → ([], False)
+    非 200／任何 requests 例外／結構壞掉 → (None, True)；成功但空清單 → ([], False)
     （兩者在 format_report 都走「樣本取得失敗」）。
     """
     _ensure_repo_on_path()
@@ -210,7 +210,11 @@ def fetch_latest_cids(limit: int = SAMPLE_LIMIT) -> tuple[list[str] | None, bool
         resp = scraper._session.post(
             API_URL, json=payload, timeout=scraper.config.timeout
         )
-    except (requests.Timeout, requests.ConnectionError):
+    except requests.RequestException:
+        # 不只 Timeout/ConnectionError：ChunkedEncodingError、TooManyRedirects
+        # （DMM 把沒 VPN 的請求重導到封鎖頁就是這一種）同樣是「這次量不到」，
+        # 不是「表過期了」。全部收斂成 (None, True)，否則會 traceback ＋ 非零離開，
+        # 破壞 CD-134-8 要求的「腳本自己失敗 vs 表過期」可分辨輸出（Codex P3）。
         return None, True
     if resp.status_code != 200:
         return None, True

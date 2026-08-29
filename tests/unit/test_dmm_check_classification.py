@@ -288,3 +288,33 @@ def test_run_check_exits_zero_even_when_below_threshold(capsys):
     assert exc.value.code == 0, "命中率再差也不得以非 0 結束（CD-134-8：非 exit-code gate）"
     out = capsys.readouterr().out
     assert "未達標" in out
+
+
+# ── fetch_latest_cids 的例外收斂（2026-08-29 Codex P3）────────────────────────
+
+
+@pytest.mark.parametrize(
+    "exc_name",
+    ["TooManyRedirects", "ChunkedEncodingError", "ContentDecodingError", "RetryError"],
+)
+def test_fetch_latest_cids_swallows_all_requests_exceptions(monkeypatch, exc_name):
+    """任何 requests 例外都要收斂成 (None, True)，不得 traceback。
+
+    原本只攔 (Timeout, ConnectionError)。其餘 RequestException 子類會直接冒出去 →
+    腳本 traceback ＋ 非零離開 → 使用者分不出「腳本自己失敗」與「表過期」，
+    而那正是 CD-134-8 明文要求要能分辨的兩件事。
+    這幾個都是真的會發生的：DMM 對沒 VPN 的請求重導到封鎖頁 = TooManyRedirects。
+    """
+    import requests
+
+    exc_cls = getattr(requests.exceptions, exc_name)
+    assert issubclass(exc_cls, requests.RequestException)
+    assert not issubclass(exc_cls, (requests.Timeout, requests.ConnectionError)), (
+        f"{exc_name} 若本來就是舊 except 的子類，這條測試證明不了任何事"
+    )
+
+    def _boom(*args, **kwargs):
+        raise exc_cls("simulated")
+
+    monkeypatch.setattr(requests.Session, "post", _boom)
+    assert check.fetch_latest_cids() == (None, True)
