@@ -503,6 +503,9 @@ def _validate_enrich_request(request: EnrichRequest, owning, action: Optional[st
             if 'title' not in request.metadata:
                 raise HTTPException(400, detail="唯讀來源重刮：metadata 缺 title")
         else:
+            # DB 的 path 欄位寫入時不套 path_mappings（core/enricher.py:504 同構），
+            # 帶 path_mappings 會查到另一個命名空間、永遠對不上 → 守衛形同虛設。
+            # db-ns-ok: uri_to_fs_path(request.file_path) 是 DB round-trip 值，不做反向映射
             existing = VideoRepository().get_by_path(to_file_uri(uri_to_fs_path(request.file_path)))
             if existing and existing.number and existing.number != request.number and not request.allow_number_change:
                 raise HTTPException(400, detail=f"番號不符：請求 {request.number}，DB 既有 {existing.number}；如確定要改號請帶 allow_number_change=true")
