@@ -481,6 +481,233 @@ class TestRefreshFullScraperFail:
         mock_repo.upsert.assert_not_called()
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# TASK-135-T4：NFO-only 欄位保留（plot/rating/url）＋ rating ÷2
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# CD-135-5：只讀三個 tag（plot/rating/website），rating 讀回時除以 2
+# （寫入端 core/organizer.py 的 × 2 相消）。
+# CD-135-13：判準問 scraper_data 的 key presence（映射前），不是 meta 的 truthiness
+# （映射後）——`_summary: ""` 是「AI 審過了、就是要空」的合法指令，不得被 fallback
+# 用既有 NFO 的舊值蓋掉。
+
+_T4_NFO_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
+<movie>
+  <plot>{plot}</plot>
+  <rating>{rating}</rating>
+  <website>{website}</website>
+</movie>
+"""
+
+
+def _t4_write_nfo(nfo_path, plot="既有劇情", rating="7.0", website="http://existing.example/"):
+    nfo_path.write_text(
+        _T4_NFO_TEMPLATE.format(plot=plot, rating=rating, website=website),
+        encoding="utf-8",
+    )
+
+
+class TestPreserveNfoOnlyFields:
+    """DoD-1／DoD-2／DoD-4／DoD-5 ＋ 早退設計決策：直接對 `_preserve_nfo_only_fields()`
+    單元測試（不透過完整 `enrich_single()`）。"""
+
+    # ── DoD-1: key 不存在 → 讀既有 NFO（三欄各一案例，六案例矩陣的前三個）───
+
+    def test_summary_key_missing_falls_back_to_nfo_plot(self, tmp_path):
+        from core.enricher import _preserve_nfo_only_fields, _scraper_to_meta
+        fs_path = str(tmp_path / "SONE-205.mp4")
+        _t4_write_nfo(tmp_path / "SONE-205.nfo", plot="既有劇情")
+        # 刻意不帶 _summary key
+        scraper_data = {"_rating": 3.5, "url": "http://ai.example/"}
+        meta = _scraper_to_meta(scraper_data)
+
+        _preserve_nfo_only_fields(meta, scraper_data, fs_path)
+
+        assert meta["summary"] == "既有劇情"
+
+    def test_rating_key_missing_falls_back_to_nfo_rating_divided_by_two(self, tmp_path):
+        from core.enricher import _preserve_nfo_only_fields, _scraper_to_meta
+        fs_path = str(tmp_path / "SONE-205.mp4")
+        _t4_write_nfo(tmp_path / "SONE-205.nfo", rating="7.0")
+        # 刻意不帶 _rating key
+        scraper_data = {"_summary": "AI 審過的劇情", "url": "http://ai.example/"}
+        meta = _scraper_to_meta(scraper_data)
+
+        _preserve_nfo_only_fields(meta, scraper_data, fs_path)
+
+        assert meta["rating"] == 3.5
+
+    def test_url_key_missing_falls_back_to_nfo_website(self, tmp_path):
+        from core.enricher import _preserve_nfo_only_fields, _scraper_to_meta
+        fs_path = str(tmp_path / "SONE-205.mp4")
+        _t4_write_nfo(tmp_path / "SONE-205.nfo", website="http://existing.example/")
+        # 刻意不帶 url key
+        scraper_data = {"_summary": "AI 審過的劇情", "_rating": 3.5}
+        meta = _scraper_to_meta(scraper_data)
+
+        _preserve_nfo_only_fields(meta, scraper_data, fs_path)
+
+        assert meta["url"] == "http://existing.example/"
+
+    # ── DoD-2: key 存在但值為空 → 不讀 NFO（CD-135-13，三欄各一案例，
+    #    與 DoD-1 合計六個獨立案例，不能只寫三個） ─────────────────────────
+
+    def test_summary_key_empty_string_not_overwritten(self, tmp_path):
+        from core.enricher import _preserve_nfo_only_fields, _scraper_to_meta
+        fs_path = str(tmp_path / "SONE-205.mp4")
+        _t4_write_nfo(tmp_path / "SONE-205.nfo", plot="既有劇情")
+        # _summary key 存在，值為空字串 —— AI 明確要求清空，不是沒帶。
+        # 刻意只帶這一個 key（_rating/url 都不帶）：三個 key 全在時
+        # `_preserve_nfo_only_fields` 會在函式最前面早退，不會走到這裡要驗的
+        # `if "_summary" not in scraper_data:` 那一行，等於測不到 M2 mutation。
+        scraper_data = {"_summary": ""}
+        meta = _scraper_to_meta(scraper_data)
+
+        _preserve_nfo_only_fields(meta, scraper_data, fs_path)
+
+        assert meta["summary"] == ""
+
+    def test_rating_key_none_not_overwritten(self, tmp_path):
+        from core.enricher import _preserve_nfo_only_fields, _scraper_to_meta
+        fs_path = str(tmp_path / "SONE-205.mp4")
+        _t4_write_nfo(tmp_path / "SONE-205.nfo", rating="7.0")
+        # _rating key 存在，值為 None —— AI 明確送 None，不是沒帶。
+        # 同上，刻意只帶這一個 key，避免三個 key 全在觸發早退。
+        scraper_data = {"_rating": None}
+        meta = _scraper_to_meta(scraper_data)
+
+        _preserve_nfo_only_fields(meta, scraper_data, fs_path)
+
+        assert meta["rating"] is None
+
+    def test_url_key_empty_string_not_overwritten(self, tmp_path):
+        from core.enricher import _preserve_nfo_only_fields, _scraper_to_meta
+        fs_path = str(tmp_path / "SONE-205.mp4")
+        _t4_write_nfo(tmp_path / "SONE-205.nfo", website="http://existing.example/")
+        # url key 存在，值為空字串 —— AI 明確要求清空，不是沒帶。
+        # 同上，刻意只帶這一個 key，避免三個 key 全在觸發早退。
+        scraper_data = {"url": ""}
+        meta = _scraper_to_meta(scraper_data)
+
+        _preserve_nfo_only_fields(meta, scraper_data, fs_path)
+
+        assert meta["url"] == ""
+
+    # ── DoD-4: 既有 NFO 不存在 → 不炸 ──────────────────────────────────────
+
+    def test_nfo_missing_leaves_meta_untouched_no_crash(self, tmp_path):
+        from core.enricher import _preserve_nfo_only_fields, _scraper_to_meta
+        fs_path = str(tmp_path / "SONE-205.mp4")  # 對應 .nfo 不存在
+        scraper_data = {}  # 三個 key 全缺
+        meta = _scraper_to_meta(scraper_data)
+
+        _preserve_nfo_only_fields(meta, scraper_data, fs_path)
+
+        assert meta["summary"] == ""
+        assert meta["rating"] is None
+        assert meta["url"] == ""
+
+    # ── DoD-5: <rating> 內容不是數字（第三方 NFO 手改壞掉）→ 不炸、留空 ────
+
+    def test_rating_non_numeric_in_nfo_left_blank_no_crash(self, tmp_path):
+        from core.enricher import _preserve_nfo_only_fields, _scraper_to_meta
+        fs_path = str(tmp_path / "SONE-205.mp4")
+        _t4_write_nfo(tmp_path / "SONE-205.nfo", rating="N/A")
+        # 刻意不帶 _rating key，其餘兩欄都帶，隔離只驗 rating 這一格
+        scraper_data = {"_summary": "x", "url": "y"}
+        meta = _scraper_to_meta(scraper_data)
+
+        _preserve_nfo_only_fields(meta, scraper_data, fs_path)
+
+        assert meta["rating"] is None
+
+    # ── 設計決策：三欄全在 scraper_data → 早退，不開檔（效能，非語意合併）──
+
+    def test_all_three_keys_present_short_circuits_without_parsing_nfo(self, tmp_path):
+        from core.enricher import _preserve_nfo_only_fields, _scraper_to_meta
+        fs_path = str(tmp_path / "SONE-205.mp4")
+        _t4_write_nfo(tmp_path / "SONE-205.nfo")  # 存在也不該被打開
+        scraper_data = {"_summary": "x", "_rating": 3.5, "url": "y"}
+        meta = _scraper_to_meta(scraper_data)
+
+        with patch("core.enricher.parse_nfo") as mock_parse:
+            _preserve_nfo_only_fields(meta, scraper_data, fs_path)
+
+        mock_parse.assert_not_called()
+
+
+class TestEnrichSingleRefreshFullRatingRoundtrip:
+    """DoD-3：對同一個檔案連續跑兩次 `refresh_full`（都不帶 `_rating`）→ 寫出的 NFO
+    `<rating>` 兩次都是 `7.0`，不是 `14.0`（NFO 寫入端 × 2、T4 讀回端 ÷ 2 相消）。
+
+    BE-TEST-11：兩次呼叫都必須帶 `overwrite_existing=True`——否則 `_write_nfo()` 在
+    NFO 已存在時直接 `return False` 不寫檔，兩次呼叫都是 no-op，翻倍與否測不出來
+    （假綠）。
+    """
+
+    def _run_refresh_full(self, tmp_path):
+        video_path = tmp_path / "SONE-205.mp4"
+        if not video_path.exists():
+            video_path.write_bytes(b"fake video bytes")
+        # 刻意不帶 _rating —— round-trip 只驗這一格；_summary/url 都帶，避免
+        # 那兩欄的 fallback 干擾本測試只想驗證的 rating 行為。
+        scraper_data = {
+            "title": "T",
+            "_summary": "AI 審過的新劇情",
+            "url": "http://ai.example/",
+        }
+
+        mock_repo = MagicMock()
+        mock_repo.get_by_path.return_value = None
+        mock_repo.get_by_numbers.return_value = {}
+        # db_path 設 :memory: —— 避免 _sync_nfo_mtime 對 MagicMock 做
+        # sqlite3.connect() 在 repo root 產生 "<MagicMock ...>" 垃圾檔（見
+        # TestKodiStemNaming._make_mock_repo_for 同款防護）。:memory: 下該 UPDATE
+        # 因無 videos 表靜默失敗（已被 try/except 包裹），不留任何檔案。
+        mock_repo.db_path = ":memory:"
+
+        with (
+            patch("core.enricher.VideoRepository", return_value=mock_repo),
+            patch("core.enricher.search_jav", return_value=scraper_data),
+            patch("core.enricher.download_image", return_value=True),
+        ):
+            from core.enricher import enrich_single
+            result = enrich_single(
+                file_path=str(video_path),
+                number="SONE-205",
+                mode="refresh_full",
+                write_nfo=True,
+                write_cover=False,
+                write_extrafanart=False,
+                overwrite_existing=True,
+                scraper_data=dict(scraper_data),
+            )
+        assert result.success is True, f"enrich_single 應成功，error={result.error}"
+        assert result.nfo_written is True, "NFO 應真的被寫出（否則翻倍與否測不出來）"
+
+    def test_rating_stable_across_two_refresh_full_runs(self, tmp_path):
+        import xml.etree.ElementTree as ET
+
+        nfo_path = tmp_path / "SONE-205.nfo"
+        nfo_path.write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            "<movie>\n"
+            "  <rating>7.0</rating>\n"
+            "</movie>\n",
+            encoding="utf-8",
+        )
+
+        self._run_refresh_full(tmp_path)
+        first_rating = ET.parse(str(nfo_path)).getroot().find("rating").text
+        assert first_rating == "7.0", f"第一次跑完應仍是 7.0，實際：{first_rating}"
+
+        self._run_refresh_full(tmp_path)
+        second_rating = ET.parse(str(nfo_path)).getroot().find("rating").text
+        assert second_rating == "7.0", (
+            f"第二次跑完不應翻倍成 14.0，實際：{second_rating}"
+        )
+
+
 # ── 14. write_nfo=False ───────────────────────────────────────────────────────
 
 class TestWriteNfoFalse:
