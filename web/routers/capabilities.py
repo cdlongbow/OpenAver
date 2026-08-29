@@ -206,6 +206,10 @@ _TOOLS: list[dict] = [
                         "送 8.0 會寫出 16.0，不是你以為的『10 分制打 8 分』。"
                         "⚠️ original_title 送空字串會被拒絕（400）——這一欄沒有受支援的清空途徑，"
                         "只能換成另一個非空值。其餘文字欄位送空字串是合法的，意思是「這一欄我要它空的」。"
+                        "⚠️ **這是整包取代：你沒送的白名單欄位會被寫成空**（女優、標籤、片商、系列、"
+                        "發售日…），不是「維持原值」。要只改一欄，就得把其餘欄位連同原值一起送回來"
+                        "（例外只有三個：original_title 拒絕空字串、_summary 與 _rating 未帶時沿用既有 NFO）。"
+                        "⚠️ duration 的單位是**分鐘**（與讀取端回的 duration 同一刻度），不是秒。"
                         "⚠️ source 不是可落地欄位，但若要帶必須是字串、且不可為 \"db\" 或 \"nfo\"（400）"
                         "——那兩個是後端內部保留值，不要拿來標示「這份資料來自你的資料庫」。"
                         "帶了就原樣回顯在 source_used，省略則回顯 \"scraper\"。"
@@ -218,6 +222,14 @@ _TOOLS: list[dict] = [
                     "description": "預設是否換封面。這個預設值只在不帶 metadata 時成立；帶 metadata 時預設改為 false（CD-135-4）——要換封面必須顯式傳 true。",
                 },
                 "write_extrafanart": {"type": "boolean", "default": False},
+                "allow_number_change": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "允許把這個檔案的番號改成與資料庫既有值不同的號。預設 false：番號不符一律 400，"
+                        "避免把別部片的資料寫到這部片上。只有在你確定要改號（例如原本認錯番號）時才傳 true。"
+                    ),
+                },
                 "overwrite_existing": {
                     "type": "boolean",
                     "default": False,

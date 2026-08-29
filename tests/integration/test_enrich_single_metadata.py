@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 
 from core.database import Video
 from core.enricher import EnrichResult
-from core.path_utils import to_file_uri
+from core.path_utils import to_file_uri, uri_to_fs_path
 
 
 def _owning_stub(path="/tmp/ro_src", output_root="/out/ro_src-abcdef", output_uri="file:///out/ro_src-abcdef"):
@@ -568,7 +568,14 @@ class TestEnrichSingleMetadataIntegration:
         """
         mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
         mock_video = Video(number="SONE-205")
-        mocker.patch("web.routers.scraper.VideoRepository").return_value.get_by_path.return_value = mock_video
+        mock_repo_cls = mocker.patch("web.routers.scraper.VideoRepository")
+        mock_repo_cls.return_value.get_by_path.return_value = mock_video
+        # SA-pre-9 P3-1 / BE-TEST-11：沒有 path_mappings 時 canonical 與 DB round-trip key
+        # 產生同一個字串，兩者對調測試不會紅（實測過）。注入一組映射讓這個分岔在測資裡
+        # 真的存在，下面的 assert_called_once_with 才鎖得住「查的是哪一個 key」。
+        mocker.patch("web.routers.scraper.load_config", return_value={
+            "gallery": {"path_mappings": {str(tmp_path): "/mnt/nas-guard-probe"}},
+        })
 
         # 建立既有 NFO 檔案並在 POST 之前記錄 baseline (BE-TEST-10)
         nfo_path = tmp_path / "SONE-206.nfo"
@@ -597,6 +604,14 @@ class TestEnrichSingleMetadataIntegration:
         # 斷言 NFO 檔案未被改動（bytes 逐位元組 ＋ mtime 不變）
         assert nfo_path.read_bytes() == before_bytes
         assert nfo_path.stat().st_mtime_ns == before_mtime
+
+        # SA-pre-9 P3-1：鎖住「查的是哪一個 DB key」。非唯讀那條路必須用
+        # to_file_uri(uri_to_fs_path(...))（不套 path_mappings），與 core/enricher.py 的
+        # _db_upsert 寫入 key 同構；換成 canonical 會在有 path_mappings 的部署上永久失效，
+        # 而 mock 對任何 key 都回同一個物件，沒有這條斷言的話換掉也不會紅。
+        mock_repo_cls.return_value.get_by_path.assert_called_once_with(
+            to_file_uri(uri_to_fs_path(str(mp4_path)))
+        )
 
     def test_number_guard_allow_flag_permits_change(self, client, mocker, tmp_path):
         """DoD-2 (AC-5 / M2): DB 既有 number="SONE-205"、請求送 number="SONE-206" ＋ allow_number_change=True

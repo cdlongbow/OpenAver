@@ -442,19 +442,29 @@ def _javlib_candidate_scraper_data(request: "EnrichRequest"):
     return scraper_data, None
 
 
+# metadata 白名單提升為 module-level 常數：capabilities 的揭露文字必須逐欄位對得上這裡
+# （`tests/integration/test_capabilities_metadata.py` 直接 import 這幾個名字做集合比對）。
+# 過去它在 capabilities 說明、驗證函式、測試三處各抄一份，改一處另兩處不會紅（SA-pre-9 P3-2）。
+METADATA_WHITELIST_STR = {
+    "title", "original_title", "maker", "director", "series",
+    "label", "date", "cover", "preview_cover_url", "url", "_summary",
+}
+METADATA_WHITELIST_LIST_STR = {
+    "actors", "tags", "preview_sample_images", "sample_images",
+}
+METADATA_IGNORED_KEYS = {
+    "number", "source", "mode", "success", "total",
+    "_source", "_mode", "_all_variant_ids", "candidates",
+}
+# 揭露給 AI 的完整可落地欄位集合（白名單兩組 ＋ 只驗數值型別的 duration/_rating）。
+METADATA_ALLOWED_FIELDS = METADATA_WHITELIST_STR | METADATA_WHITELIST_LIST_STR | {"duration", "_rating"}
+
+
 def _validate_metadata_shape(metadata: dict) -> None:
     """嚴格白名單驗證 metadata 欄位形狀與型別（CD-135-2 / CD-135-3 / CD-135-14）。"""
-    whitelist_str = {
-        "title", "original_title", "maker", "director", "series",
-        "label", "date", "cover", "preview_cover_url", "url", "_summary",
-    }
-    whitelist_list_str = {
-        "actors", "tags", "preview_sample_images", "sample_images",
-    }
-    ignored_keys = {
-        "number", "source", "mode", "success", "total",
-        "_source", "_mode", "_all_variant_ids", "candidates",
-    }
+    whitelist_str = METADATA_WHITELIST_STR
+    whitelist_list_str = METADATA_WHITELIST_LIST_STR
+    ignored_keys = METADATA_IGNORED_KEYS
 
     for k, v in metadata.items():
         if k in ignored_keys:

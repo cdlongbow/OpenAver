@@ -225,6 +225,9 @@ class TestSearchCapabilitiesSourceExactModeDoc:
         source_desc = search_tool['input_schema']['properties']['source']['description']
         mode_desc = search_tool['input_schema']['properties']['mode']['description']
 
+        # [lint-guard: pytest-justified] 斷言的是 /api/capabilities 回傳的 dict 欄位
+        # 說明（AI-facing 契約），不是 html/js/css 字串；它鎖的是「web/routers/search.py
+        # 新增的 source×mode 拒絕條件有沒有被揭露給 AI」這個跨檔 contract。
         assert 'exact' in source_desc
         assert '必須搭配精確模式' in source_desc
         assert 'source 只在 exact 時有效' in mode_desc

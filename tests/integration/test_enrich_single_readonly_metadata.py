@@ -21,6 +21,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from core.database import Video
+from core.path_utils import coerce_to_file_uri
 
 
 # ── mock-only 佈局（DoD-3/4/5/6/7）：照抄 tests/integration/test_api_enrich.py
@@ -347,7 +348,12 @@ class TestReadonlyRescrapeNumberGuard:
     def test_5a_number_mismatch_without_allow_change_rejected_400(self, client, mocker):
         """5a：metadata['number'] 與 DB 既有番號不符且未帶 allow_number_change → 400，
         detail 同時含兩個番號。"""
-        self._mock_repo_existing(mocker, Video(number="SONE-205"))
+        mock_repo = self._mock_repo_existing(mocker, Video(number="SONE-205"))
+        # SA-pre-9 P3-1 / BE-TEST-11：同上——注入映射讓 canonical 與 round-trip key 不同。
+        mapping = {"/tmp/ro_src": "/mnt/nas-guard-probe"}
+        mocker.patch("web.routers.scraper.load_config", return_value={
+            "gallery": {"path_mappings": mapping},
+        })
 
         response = client.post("/api/enrich-single", json={
             "file_path": "/tmp/ro_src/SONE-205.mp4",
@@ -361,6 +367,15 @@ class TestReadonlyRescrapeNumberGuard:
         detail = response.json()["detail"]
         assert "SONE-206" in detail
         assert "SONE-205" in detail
+
+        # SA-pre-9 P3-1：鎖住「查的是哪一個 DB key」。唯讀那條路必須用 canonical
+        # （＝ coerce_to_file_uri(file_path, path_mappings)），與 enrich_one_readonly 自己的
+        # repo.get_by_path(canonical)（core/readonly_producer.py:1942）同一個 key；
+        # 兩條路刻意用不同 key，各自對齊自己的執行路徑。mock 對任何 key 都回同一個物件，
+        # 沒有這條斷言的話對調兩者也不會紅。
+        mock_repo.return_value.get_by_path.assert_called_once_with(
+            coerce_to_file_uri("/tmp/ro_src/SONE-205.mp4", mapping)
+        )
 
     def test_5b_number_mismatch_with_allow_change_permitted_200(self, client, mocker):
         """5b：同上但帶 allow_number_change=true → 放行（200，需 mock 產出核心避免真跑）。"""
