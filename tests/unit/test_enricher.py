@@ -1674,7 +1674,7 @@ class TestEnrichSingleExternalManager:
                 file_path=str(mp4),
                 number="SONE-205",
                 write_nfo=True,
-                write_cover=False,
+                write_cover=True,
                 overwrite_existing=True,
                 external_manager="jellyfin",
             )
@@ -1711,7 +1711,7 @@ class TestEnrichSingleExternalManager:
                 file_path=str(mp4),
                 number="SONE-205",
                 write_nfo=True,
-                write_cover=False,
+                write_cover=True,
                 overwrite_existing=True,
                 external_manager="kodi",
             )
@@ -1802,7 +1802,7 @@ class TestEnrichSingleExternalManager:
                 file_path=str(mp4),
                 number="SONE-205",
                 write_nfo=True,
-                write_cover=False,
+                write_cover=True,
                 overwrite_existing=True,
                 external_manager="jellyfin",
             )
@@ -1914,6 +1914,47 @@ class TestEnrichSingleExternalManager:
         assert result.extrafanart_written == 0
         assert not (tmp_path / "extrafanart").exists()
 
+    def test_enrich_single_passes_write_cover_explicitly(self, tmp_path, mocker):
+        """DoD-8：enrich_single 呼叫 _write_external_images 時必須顯式帶
+        write_cover=write_cover，不得依賴預設值（依賴預設＝這個閘根本沒接上）。"""
+        mp4 = tmp_path / "SONE-205.mp4"
+        mp4.touch()
+        cover = tmp_path / "SONE-205.jpg"
+        _create_dummy_jpeg(cover)
+
+        mock_write_ext = mocker.patch(
+            "core.enricher._write_external_images",
+            return_value={"poster": True, "fanart": True},
+        )
+
+        def _run(write_cover_value):
+            with (
+                patch("core.enricher.VideoRepository", return_value=self._make_mock_repo()),
+                patch("core.enricher.search_jav", return_value=None),
+                patch("core.enricher.generate_nfo", return_value=True),
+                patch("core.enricher.download_image", return_value=False),
+                patch("core.enricher.find_subtitle_files", return_value=[]),
+            ):
+                from core.enricher import enrich_single
+                enrich_single(
+                    file_path=str(mp4),
+                    number="SONE-205",
+                    write_nfo=True,
+                    write_cover=write_cover_value,
+                    overwrite_existing=True,
+                    external_manager="jellyfin",
+                )
+
+        _run(True)
+        assert "write_cover" in mock_write_ext.call_args.kwargs
+        assert mock_write_ext.call_args.kwargs["write_cover"] is True
+
+        mock_write_ext.reset_mock()
+
+        _run(False)
+        assert "write_cover" in mock_write_ext.call_args.kwargs
+        assert mock_write_ext.call_args.kwargs["write_cover"] is False
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 72c-codexP1：kodi 多片共用資料夾 stem 命名（E1/E2/E3/E4）
@@ -1969,7 +2010,7 @@ class TestKodiStemNaming:
                 file_path=str(mp4_a),
                 number="SONE-205",
                 write_nfo=True,
-                write_cover=False,
+                write_cover=True,
                 overwrite_existing=True,
                 external_manager="kodi",
             )
@@ -1987,7 +2028,7 @@ class TestKodiStemNaming:
                 file_path=str(mp4_b),
                 number="MIDE-001",
                 write_nfo=True,
-                write_cover=False,
+                write_cover=True,
                 overwrite_existing=True,
                 external_manager="kodi",
             )
@@ -2035,7 +2076,7 @@ class TestKodiStemNaming:
                 file_path=str(mp4),
                 number="SONE-205",
                 write_nfo=True,
-                write_cover=False,
+                write_cover=True,
                 overwrite_existing=True,
                 external_manager="kodi",
             )
@@ -2078,7 +2119,7 @@ class TestKodiStemNaming:
                 file_path=str(mp4_a),
                 number="SONE-205",
                 write_nfo=False,
-                write_cover=False,
+                write_cover=True,
                 overwrite_existing=True,
                 external_manager="kodi",
             )
@@ -2103,7 +2144,7 @@ class TestKodiStemNaming:
                 file_path=str(mp4_b),
                 number="MIDE-001",
                 write_nfo=False,
-                write_cover=False,
+                write_cover=True,
                 overwrite_existing=True,
                 external_manager="kodi",
             )
@@ -2147,7 +2188,7 @@ class TestKodiStemNaming:
                 file_path=str(mp4_a),
                 number="SONE-205",
                 write_nfo=True,
-                write_cover=False,
+                write_cover=True,
                 overwrite_existing=True,
                 external_manager="jellyfin",
             )
@@ -2226,7 +2267,7 @@ class TestKodiStemNaming:
                 file_path=file_uri,
                 number="SONE-205",
                 write_nfo=True,
-                write_cover=False,
+                write_cover=True,
                 overwrite_existing=True,
                 external_manager="kodi",
             )
@@ -2265,7 +2306,7 @@ class TestKodiStemNaming:
                 file_path=str(mp4_a),
                 number="SONE-205",
                 write_nfo=True,
-                write_cover=False,
+                write_cover=True,
                 overwrite_existing=True,
                 external_manager="kodi",
             )
@@ -3400,7 +3441,7 @@ class TestEnrichSingleStationWiring:
                 number=fixture["number"],
                 mode="db_to_sidecar",
                 write_nfo=True,
-                write_cover=False,
+                write_cover=True,
                 overwrite_existing=True,
                 external_manager="jellyfin",
             )
@@ -3882,6 +3923,165 @@ class TestTable1Row6RangeOutExtensionStillDownloads:
         expected_cover_uri = to_file_uri(str(fanart))
         assert row.cover_path == expected_cover_uri, "③ 記帳=改變（指向新的 -fanart.jpg）"
         assert row.crop_mode == "auto", "④ 焦點重置"
+
+
+class TestWriteExternalImagesWriteCoverGate:
+    """spec-135 T5／CD-135-16：`write_cover` 在 `_write_external_images()` 三處
+    既有條件裡的效力，與 `overwrite_existing` 完全同構——都是「別重寫，照磁碟
+    現況回報」。DoD-1～DoD-7 對應本卡承重段逐條。"""
+
+    def test_no_overwrite_no_write_cover_files_exist_bytes_mtime_unchanged(self, tmp_path):
+        """DoD-1：不覆蓋 + 不換封面 + 檔案都在
+        → bytes/mtime 不變，回報 {"poster": True, "fanart": True}。"""
+        cover = tmp_path / "SONE-205.jpg"
+        _create_dummy_jpeg(cover)
+        poster = tmp_path / "SONE-205-poster.jpg"
+        fanart = tmp_path / "SONE-205-fanart.jpg"
+        poster.write_bytes(b"existing-poster")
+        fanart.write_bytes(b"existing-fanart")
+        poster_bytes = poster.read_bytes()
+        fanart_bytes = fanart.read_bytes()
+        poster_mtime = poster.stat().st_mtime
+        fanart_mtime = fanart.stat().st_mtime
+
+        from core.enricher import _write_external_images
+        result = _write_external_images(
+            str(tmp_path / "SONE-205.mp4"), "jellyfin", False, write_cover=False,
+        )
+
+        assert result == {"poster": True, "fanart": True}
+        assert poster.read_bytes() == poster_bytes
+        assert fanart.read_bytes() == fanart_bytes
+        assert poster.stat().st_mtime == poster_mtime
+        assert fanart.stat().st_mtime == fanart_mtime
+
+    def test_overwrite_true_write_cover_false_files_exist_unchanged_reports_true(self, tmp_path):
+        """DoD-2（CD-135-16 核心情境，被否決做法在此回 False）：要求覆蓋
+        + 不換封面 + 檔案都在 → bytes/mtime 不變，仍回報 True。
+        BE-TEST-11：overwrite_existing 必須是 True（不能用 False 頂替），
+        否則 `not overwrite_existing` 本身已真，M1 拿掉 `or not write_cover`
+        測不出差異。"""
+        cover = tmp_path / "SONE-205.jpg"
+        _create_dummy_jpeg(cover)
+        poster = tmp_path / "SONE-205-poster.jpg"
+        fanart = tmp_path / "SONE-205-fanart.jpg"
+        poster.write_bytes(b"existing-poster")
+        fanart.write_bytes(b"existing-fanart")
+        poster_bytes = poster.read_bytes()
+        fanart_bytes = fanart.read_bytes()
+        poster_mtime = poster.stat().st_mtime
+        fanart_mtime = fanart.stat().st_mtime
+
+        from core.enricher import _write_external_images
+        result = _write_external_images(
+            str(tmp_path / "SONE-205.mp4"), "jellyfin", True, write_cover=False,
+        )
+
+        assert result == {"poster": True, "fanart": True}
+        assert poster.read_bytes() == poster_bytes
+        assert fanart.read_bytes() == fanart_bytes
+        assert poster.stat().st_mtime == poster_mtime
+        assert fanart.stat().st_mtime == fanart_mtime
+
+    def test_write_cover_true_regenerates_as_before(self, tmp_path):
+        """DoD-3：換封面（write_cover=True）→ 照舊重生（行為與現況相同）。"""
+        cover = tmp_path / "SONE-205.jpg"
+        _create_dummy_jpeg(cover)
+        fanart = tmp_path / "SONE-205-fanart.jpg"
+        fanart.write_bytes(b"tiny")  # 比真實 JPEG 小
+
+        from core.enricher import _write_external_images
+        result = _write_external_images(
+            str(tmp_path / "SONE-205.mp4"), "jellyfin", True, write_cover=True,
+        )
+
+        assert result["fanart"] is True
+        assert fanart.stat().st_size > 4  # 覆蓋後應為真實 JPEG
+
+    def test_write_cover_true_skip_but_exists_still_true(self, tmp_path):
+        """DoD-4：write_cover=True 但 skip-but-exists（overwrite=False + 已存在）
+        → poster_ok/fanart_ok 仍為 True，不得退化（既有正確行為）。"""
+        cover = tmp_path / "SONE-205.jpg"
+        _create_dummy_jpeg(cover)
+        poster = tmp_path / "SONE-205-poster.jpg"
+        fanart = tmp_path / "SONE-205-fanart.jpg"
+        poster.write_bytes(b"existing")
+        fanart.write_bytes(b"existing")
+        poster_mtime = poster.stat().st_mtime
+        fanart_mtime = fanart.stat().st_mtime
+
+        from core.enricher import _write_external_images
+        result = _write_external_images(
+            str(tmp_path / "SONE-205.mp4"), "jellyfin", False, write_cover=True,
+        )
+
+        assert result == {"poster": True, "fanart": True}
+        assert poster.stat().st_mtime == poster_mtime
+        assert fanart.stat().st_mtime == fanart_mtime
+
+    def test_write_cover_false_files_absent_reports_false_no_new_files(self, tmp_path):
+        """DoD-5：不換封面 + poster/fanart 本來就不存在
+        → 回報 {"poster": False, "fanart": False}，磁碟不得生出任何新檔
+        （不生成、不裁切、不複製）。"""
+        cover = tmp_path / "SONE-205.jpg"
+        _create_dummy_jpeg(cover)
+
+        from core.enricher import _write_external_images
+        result = _write_external_images(
+            str(tmp_path / "SONE-205.mp4"), "jellyfin", True, write_cover=False,
+        )
+
+        assert result == {"poster": False, "fanart": False}
+        assert not (tmp_path / "SONE-205-poster.jpg").exists()
+        assert not (tmp_path / "SONE-205-fanart.jpg").exists()
+
+    def test_no_cover_write_cover_false_existing_stem_files_report_true(self, tmp_path):
+        """DoD-6：底圖不存在 + 不換封面 + poster/fanart 已在磁碟
+        → 回報 True/True 邏輯要覆蓋的核心情境（承重段字面「poster/fanart 已在
+        磁碟」，本測試以 poster 那一半成立即可——見下方 fixture 說明），刻意變更
+        不違反 AC-10（生產碼零呼叫端送 write_cover=false）。
+
+        `resolve_cover_target` 對 STEM 模式的三步規則②會沿用既有的
+        `{stem}-fanart.jpg` 當底圖——所以「底圖不存在 + fanart 已存在」在真實
+        世界不可能同時成立（cover_path 與 fanart_path 會是同一個檔案）。
+        早退段（M3 落點）在真實世界能到達的佈局，是既有 72d-P2B 註解所指的
+        MDCX/Javinizer 匯入情境：**只有 `{stem}-poster.jpg` 存在**，沒有同名
+        `{stem}.jpg`、也沒有 `{stem}-fanart.jpg`——resolve_cover_target 三步
+        規則①②皆不命中，回傳的 fanart 候選本身不存在於磁碟，`not
+        cover_path.exists()` 為真，早退段成立。用真實佈局測，不 mock 掉
+        resolve_cover_target。"""
+        # 不建立 {stem}.jpg（同名候選）、也不建立 {stem}-fanart.jpg（fanart
+        # 候選）——只留 poster，逼 resolve_cover_target 三步規則③新建出一個
+        # 磁碟上不存在的 fanart 候選路徑當「底圖」。
+        poster = tmp_path / "SONE-205-poster.jpg"
+        poster.write_bytes(b"existing-poster")
+
+        from core.enricher import _write_external_images
+        result = _write_external_images(
+            str(tmp_path / "SONE-205.mp4"), "jellyfin", True, write_cover=False,
+        )
+
+        assert result == {"poster": True, "fanart": False}
+
+    def test_write_cover_false_never_touches_generation_path(self, tmp_path, mocker):
+        """DoD-7：write_cover=False 時 same_target_verdict/crop_to_poster/
+        shutil.copy2 一次都不被呼叫（不只是跳過 copy/crop，連判斷用的
+        same_target_verdict 呼叫都不跑）。"""
+        cover = tmp_path / "SONE-205.jpg"
+        _create_dummy_jpeg(cover)
+        mock_verdict = mocker.patch("core.enricher.same_target_verdict")
+        mock_crop = mocker.patch("core.enricher.crop_to_poster")
+        mock_copy2 = mocker.patch("core.enricher.shutil.copy2")
+
+        from core.enricher import _write_external_images
+        result = _write_external_images(
+            str(tmp_path / "SONE-205.mp4"), "jellyfin", True, write_cover=False,
+        )
+
+        assert result == {"poster": False, "fanart": False}
+        mock_verdict.assert_not_called()
+        mock_crop.assert_not_called()
+        mock_copy2.assert_not_called()
 
 
 class TestWriteExternalImagesStemDerivationDirectLock:

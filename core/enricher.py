@@ -322,6 +322,7 @@ def _write_external_images(
     fs_path: str,
     external_manager: str,
     overwrite_existing: bool,
+    write_cover: bool = True,
     number: str = '',
     maker: str = '',
 ) -> dict:
@@ -355,7 +356,7 @@ def _write_external_images(
     # 但若 stem-poster/fanart 已獨立存在（MDCX/Javinizer 匯入）且 overwrite=False，
     # 則直接認可磁碟現況，不嘗試生成（72d-P2B）
     if not cover_path.exists():
-        if not overwrite_existing:
+        if not overwrite_existing or not write_cover:
             poster_ok = poster_path.exists()
             fanart_ok = fanart_path.exists()
             if poster_ok or fanart_ok:
@@ -366,9 +367,9 @@ def _write_external_images(
     fanart_ok = False
 
     # fanart = 原圖複製
-    if fanart_path.exists() and not overwrite_existing:
+    if fanart_path.exists() and (not overwrite_existing or not write_cover):
         fanart_ok = True  # 存在即算 True，NFO tag 對得上磁碟現況
-    else:
+    elif write_cover:
         is_same, certain = same_target_verdict(str(cover_path), str(fanart_path))
         if is_same:
             fanart_ok = certain
@@ -382,9 +383,9 @@ def _write_external_images(
                 logger.warning("_write_external_images fanart 複製失敗 (%s): %s", fs_path, e)
 
     # poster = 裁切
-    if poster_path.exists() and not overwrite_existing:
+    if poster_path.exists() and (not overwrite_existing or not write_cover):
         poster_ok = True  # 同上
-    else:
+    elif write_cover:
         is_same, certain = same_target_verdict(str(cover_path), str(poster_path))
         if is_same:
             poster_ok = certain
@@ -614,7 +615,7 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
         imgs = _write_external_images(
             fs_path=fs_path,
             external_manager=external_manager,
-            overwrite_existing=overwrite_existing,
+            overwrite_existing=overwrite_existing, write_cover=write_cover,
             number=number,
             maker=meta.get("maker", ""),
         )
