@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from core.database import VideoRepository
 from core.db_inflow import try_inflow_upsert
@@ -326,6 +326,7 @@ class EnrichRequest(BaseModel):
     # file with it omitted defaults to 'ingest' (safe default — never force a
     # remote overwrite without an explicit gear action).
     readonly_action: Optional[Literal['rescrape', 'ingest']] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class BatchEnrichItem(BaseModel):
@@ -440,6 +441,76 @@ def _javlib_candidate_scraper_data(request: "EnrichRequest"):
     return scraper_data, None
 
 
+def _validate_metadata_shape(metadata: dict) -> None:
+    """嚴格白名單驗證 metadata 欄位形狀與型別（CD-135-2 / CD-135-3 / CD-135-14）。"""
+    whitelist_str = {
+        "title", "original_title", "maker", "director", "series",
+        "label", "date", "cover", "preview_cover_url", "url", "_summary",
+    }
+    whitelist_list_str = {
+        "actors", "tags", "preview_sample_images", "sample_images",
+    }
+    ignored_keys = {
+        "number", "source", "mode", "success", "total",
+        "_source", "_mode", "_all_variant_ids", "candidates",
+    }
+
+    for k, v in metadata.items():
+        if k in ignored_keys:
+            continue
+        if k in whitelist_str:
+            if not isinstance(v, str):
+                raise HTTPException(400, detail=f"metadata.{k} 型別錯誤，必須是字串")
+            if k == "original_title" and v == "":
+                raise HTTPException(400, detail="metadata.original_title 無法透過本入口清空")
+        elif k in whitelist_list_str:
+            if not isinstance(v, list) or not all(isinstance(item, str) for item in v):
+                raise HTTPException(400, detail=f"metadata.{k} 型別錯誤，必須是字串列表")
+        elif k == "duration":
+            if v is not None and (not isinstance(v, int) or isinstance(v, bool)):
+                raise HTTPException(400, detail="metadata.duration 型別錯誤，必須是整數或 null")
+        elif k == "_rating":
+            if v is not None and (not isinstance(v, (int, float)) or isinstance(v, bool)):
+                raise HTTPException(400, detail="metadata._rating 型別錯誤，必須是數字或 null")
+        else:
+            raise HTTPException(400, detail=f"metadata 包含未知欄位: {k}")
+
+
+def _validate_enrich_request(request: EnrichRequest, owning, action: Optional[str], canonical: str) -> None:
+    """共用驗證階段：模式閘、互斥檢查、欄位型別驗證（CD-135-1 / CD-135-11 / CD-135-12）。"""
+    # 1a. 模式閘（CD-135-1）
+    if request.metadata is not None and request.mode != "refresh_full":
+        raise HTTPException(400, detail="metadata 只在 mode=refresh_full 時合法")
+
+    # 1b. 唯讀路徑的 action 閘（CD-135-12 item 1b）
+    if request.metadata is not None and owning is not None and action != 'rescrape':
+        raise HTTPException(400, detail="唯讀來源：metadata 只在 rescrape（重刮）意圖下生效，補完（ingest）不讀取預先取得的內容")
+
+    # 2. 互斥檢查（CD-135-11）
+    if request.metadata is not None and request.source == "javlibrary" and request.detail_url:
+        raise HTTPException(400, detail="metadata 與 javlibrary 明細網址（detail_url）不可同時提供")
+
+    # 3. key／型別驗證
+    if request.metadata is not None:
+        _validate_metadata_shape(request.metadata)
+        if owning is not None and action == 'rescrape':
+            submitted_number = request.metadata.get('number')
+            if not submitted_number:
+                raise HTTPException(400, detail="唯讀來源重刮：metadata 缺 number")
+            if not isinstance(submitted_number, str):
+                raise HTTPException(400, detail="唯讀來源重刮：metadata.number 型別錯誤，必須是字串")
+            if 'title' not in request.metadata:
+                raise HTTPException(400, detail="唯讀來源重刮：metadata 缺 title")
+
+
+def _clean_metadata_for_scraper_data(metadata: dict) -> dict:
+    """非唯讀分支清洗：剔除 8 個忽略鍵，保留 source（CD-135-3）。"""
+    return {
+        k: v for k, v in metadata.items()
+        if k not in ("number", "mode", "success", "total", "_source", "_mode", "_all_variant_ids", "candidates")
+    }
+
+
 @router.post("/enrich-single")
 def enrich_single_endpoint(request: EnrichRequest) -> dict:
     config = load_config()
@@ -456,6 +527,8 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
     # （resolve_nfo_cover_paths 對唯讀路徑推 source-adjacent 路徑沒有意義，CD-104-10）。
     canonical = coerce_to_file_uri(request.file_path, path_mappings)  # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
     owning = resolve_owning_output_root(canonical, config)
+    action = (request.readonly_action or 'ingest') if owning is not None else None
+    _validate_enrich_request(request, owning, action, canonical)
     if owning is not None:
         source, output_root, output_uri = owning
         # Codex PR#113 one-pass alignment (2026-07-21): readonly branch now returns
@@ -485,7 +558,6 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
         if not output_root:
             return asdict(_readonly_enrich_failure("未設定媒體庫輸出路徑", "error"))
         try:
-            action = request.readonly_action or 'ingest'
             scraper_data = None
             if action == 'rescrape' and request.source == 'javlibrary' and request.detail_url:
                 scraper_data, _cand_err = _javlib_candidate_scraper_data(request)
@@ -596,6 +668,8 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
             # 重刮的 NFO 輸出（search_jav 走 internal_nfo_carriers 注入同組，PR #89 Codex P2）
             scraper_data = video.to_legacy_dict()
             scraper_data.update(internal_nfo_carriers(video))
+        if request.metadata is not None:
+            scraper_data = _clean_metadata_for_scraper_data(request.metadata)
         result = enrich_single(
             file_path=request.file_path,
             number=request.number,
