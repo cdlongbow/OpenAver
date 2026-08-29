@@ -37,6 +37,7 @@ COPY_ITEMS = [
     "windows",
     "locales",
     "maker_mapping.json",
+    "dmm_prefix_table.json",
 ]
 
 # ============ Allowlist 模型（T2：棄 pip freeze + denylist） ============

@@ -1,4 +1,4 @@
-"""DMM 爬蟲（官方 GraphQL API + 動態學習）"""
+"""DMM 爬蟲（官方 GraphQL API）"""
 import json
 import re
 import requests
@@ -13,16 +13,32 @@ from .models import Video, Actress, ScraperConfig
 from .utils import rate_limit
 
 
-# 快取檔案路徑（專案根目錄）
+# 出貨前綴表路徑（專案根目錄，依片商分組）
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-CACHE_FILE = PROJECT_ROOT / "dmm_content_ids.json"      # 完整番號 → content_id
-PREFIX_FILE = PROJECT_ROOT / "dmm_prefix_hints.json"    # 番號前綴 → DMM 前綴
+SHIPPED_TABLE_FILE = PROJECT_ROOT / "dmm_prefix_table.json"
 
 # module-level capability cache（三態）
 # None = 未知（首次或暫時性失敗），True = schema 支援，False = schema 不支援
 _genres_supported: Optional[bool] = None
 _sample_images_supported: Optional[bool] = None
 _review_supported: Optional[bool] = None
+
+# 出貨表快取（None = 尚未讀）
+_shipped_table_cache: Optional[dict] = None
+
+
+def _flatten_shipped_table(raw: dict) -> dict[str, dict]:
+    """展平出貨表 makers → {prefix: entry}；跨片商撞名時 raise。"""
+    flat: dict[str, dict] = {}
+    for maker, prefixes in raw.get("makers", {}).items():
+        for prefix, entry in prefixes.items():
+            if prefix in flat:
+                raise ValueError(
+                    f"dmm_prefix_table.json 撞名：前綴 '{prefix}' 同時出現在片商 "
+                    f"'{flat[prefix]['_maker']}' 與 '{maker}' 底下"
+                )
+            flat[prefix] = {**entry, "_maker": maker}
+    return flat
 
 
 class DMMScraper(BaseScraper):
@@ -35,9 +51,9 @@ class DMMScraper(BaseScraper):
     - 有完整簡介、導演資訊
 
     特點：
-    - 雙層快取：前綴映射 + content_id 快取
-    - 動態學習：發現新前綴會自動記錄
-    - 無需預設映射表，完全由用戶運行時生成
+    - 隨版本出貨的番號前綴對照表（dmm_prefix_table.json，見 spec-134 F1）
+      ⚠️ 該檔是出貨產物，build.py / build_macos.py 的 COPY_ITEMS 必須帶上；
+         拿掉它冷啟動命中率會從 320/335 掉回 175/335。
 
     注意：
     - 需要日本 IP（VPN）
@@ -129,9 +145,6 @@ class DMMScraper(BaseScraper):
                 'http': self.config.proxy_url,
                 'https': self.config.proxy_url,
             }
-        else:
-            # direct 模式：明確不走任何 proxy（包括環境變數）
-            self._session.trust_env = False
 
     def _get_source_name(self) -> str:
         return "dmm"
@@ -349,46 +362,55 @@ class DMMScraper(BaseScraper):
         except Exception:
             return []
 
-    # ========== 快取管理 ==========
+    # ========== 前綴映射 ==========
 
-    def _load_json(self, path: Path) -> dict:
-        """讀取 JSON，檔案不存在返回空 dict"""
-        if path.exists():
+    def _prefix_map(self) -> dict:
+        """讀出貨前綴表（只讀、不寫）。"""
+        global _shipped_table_cache
+
+        # 出貨表：process 內讀一次；缺席／壞 JSON／缺 makers → 空表（D1）
+        if _shipped_table_cache is None:
             try:
-                return json.loads(path.read_text(encoding='utf-8'))
-            except (json.JSONDecodeError, IOError):
-                return {}
-        return {}
+                if not SHIPPED_TABLE_FILE.exists():
+                    logger.warning(
+                        "dmm_prefix_table.json 不存在，視為空表繼續"
+                    )
+                    _shipped_table_cache = {}
+                else:
+                    raw = json.loads(
+                        SHIPPED_TABLE_FILE.read_text(encoding="utf-8")
+                    )
+                    if "makers" not in raw:
+                        logger.warning(
+                            "dmm_prefix_table.json 缺少 makers 鍵，視為空表繼續"
+                        )
+                        _shipped_table_cache = {}
+                    else:
+                        # 撞名 ValueError 不得在此吞掉（D2）
+                        _shipped_table_cache = _flatten_shipped_table(raw)
+            except (json.JSONDecodeError, OSError, AttributeError, TypeError) as e:
+                # AttributeError/TypeError：JSON 語法合法但形狀不對（makers 是
+                # null/list、片商底下不是 dict、entry 不是 mapping…）。這些同樣屬
+                # D1「出貨表是加分項不是必要條件」的範圍——出貨表壞掉只該讓它失效，
+                # 不該讓整支 DMM 來源在每次搜尋時噴例外（search() 步驟 1 沒有接例外）。
+                # ⚠️ 不含 ValueError：撞名必須逃出去（D2），且 JSONDecodeError 是
+                # ValueError 的子類、已單獨列在前面，順序不可調換。
+                logger.warning(
+                    "dmm_prefix_table.json 讀取失敗，視為空表繼續：%s", e
+                )
+                _shipped_table_cache = {}
 
-    def _save_json(self, path: Path, data: dict):
-        """儲存 JSON"""
-        try:
-            path.write_text(
-                json.dumps(data, indent=2, ensure_ascii=False),
-                encoding='utf-8'
-            )
-        except IOError:
-            pass
+        shipped = _shipped_table_cache
 
-    def _load_cache(self) -> dict:
-        """讀取 content_id 快取"""
-        return self._load_json(CACHE_FILE)
-
-    def _save_cache(self, number: str, content_id: str):
-        """儲存到 content_id 快取"""
-        cache = self._load_cache()
-        cache[number.upper()] = content_id
-        self._save_json(CACHE_FILE, cache)
-
-    def _load_prefix_hints(self) -> dict:
-        """讀取前綴映射"""
-        return self._load_json(PREFIX_FILE)
-
-    def _save_prefix_hint(self, prefix: str, dmm_prefix: str):
-        """儲存新學習的前綴映射"""
-        hints = self._load_prefix_hints()
-        hints[prefix.lower()] = dmm_prefix
-        self._save_json(PREFIX_FILE, hints)
+        # 只取 dmm_prefix 字串（sample 不得外洩）
+        # 非字串值一律丟棄（不是改成 ""）——丟掉之後 .get(prefix, "") 自然
+        # 退回「預設規則」。出貨表那半另有 test_hit_rate 守著。
+        merged = {
+            p: e["dmm_prefix"]
+            for p, e in shipped.items()
+            if isinstance(e.get("dmm_prefix"), str)
+        }
+        return merged
 
     # ========== content_id 轉換 ==========
 
@@ -406,47 +428,56 @@ class DMMScraper(BaseScraper):
             return match.group(1).lower(), match.group(2)
         return "", ""
 
-    def _convert_with_hints(self, number: str) -> str:
+    def _convert_with_hints(self, number: str, zfill: bool = True) -> str:
         """
         用前綴映射轉換番號
 
         Examples:
             SONE-205 + hints={} → sone00205
             STARS-804 + hints={"stars": "1"} → 1stars00804
+            MIDD-357 + zfill=False → midd357
         """
         prefix, num = self._parse_number(number)
         if not prefix or not num:
             return ""
 
-        # 數字補零到 5 位
-        num_padded = num.zfill(5)
+        # 數字補零到 5 位（zfill=False 時保留原樣，供步驟 1 的第二試）
+        num_padded = num.zfill(5) if zfill else num
 
         # 查前綴映射
-        hints = self._load_prefix_hints()
+        hints = self._prefix_map()
         dmm_prefix = hints.get(prefix, "")
 
         return f"{dmm_prefix}{prefix}{num_padded}"
 
-    def _learn_prefix(self, number: str, content_id: str):
-        """
-        從成功的 content_id 學習前綴映射
+    def _number_matches(self, video_number: str, input_number: str) -> bool:
+        """比對 Video.number（makerContentId）與輸入番號是否為同一片。
 
-        Examples:
-            number=STARS-804, content_id=1stars00804
-            → 學習到 stars → "1"
+        兩邊都丟進 _parse_number()，比較 (prefix, num.lstrip("0") or "0")。
+        任一側解析不出來即視同不符。
         """
-        prefix, _ = self._parse_number(number)
-        if not prefix:
-            return
+        vp, vn = self._parse_number(video_number)
+        ip, in_ = self._parse_number(input_number)
+        if not vp or not vn or not ip or not in_:
+            return False
+        return (vp, vn.lstrip("0") or "0") == (ip, in_.lstrip("0") or "0")
 
-        # content_id 格式：{dmm_prefix}{prefix}{num_padded}
-        # 例如：1stars00804
-        # 找出 dmm_prefix
-        idx = content_id.lower().find(prefix)
-        if idx > 0:
-            dmm_prefix = content_id[:idx]
-            # 儲存學習到的映射
-            self._save_prefix_hint(prefix, dmm_prefix)
+    def _number_conflicts(self, video_number: str, input_number: str) -> bool:
+        """**不對稱**版本：只有「兩邊都解析得出來、而且不同」才算衝突。
+
+        與 `_number_matches` 的差別就在解析不出來的那一半：
+        `_number_matches` 回 False（＝不採用），這支回 False（＝不拒絕）。
+
+        Why 要兩支：DMM 的 `makerContentId` 常常是分片番號（`MCSR-042-01`）
+        或異形（`OLM-343M`），解析不出來是常態、不是異常。步驟 1 若用嚴格版，
+        那批全部會被誤擋；若完全不驗，`OTHER-999` 這種明顯是別部片的也會被
+        寫進 NFO（`core/enricher.py` 那一層不比對番號）。不對稱版兩邊都要。
+        """
+        vp, vn = self._parse_number(video_number)
+        ip, in_ = self._parse_number(input_number)
+        if not vp or not vn or not ip or not in_:
+            return False  # 解析不出來 → 不拒絕（這就是「不對稱」）
+        return (vp, vn.lstrip("0") or "0") != (ip, in_.lstrip("0") or "0")
 
     def _content_id_to_number(self, content_id: str) -> str:
         """
@@ -477,11 +508,12 @@ class DMMScraper(BaseScraper):
         """
         用搜索 API 查找正確的 content_id（MDCX 方法）
         """
-        query_word = number.upper().replace('-', '')
-        prefix, _ = self._parse_number(number)
+        prefix, num = self._parse_number(number)
 
         if not prefix:
             return None
+
+        query_word = f"{prefix.upper()} {num}"
 
         try:
             payload = {
@@ -505,14 +537,21 @@ class DMMScraper(BaseScraper):
             if not contents:
                 return None
 
-            # 找包含番號前綴的結果
+            # 找系列段精確匹配番號前綴的結果（防誤學：搜 ERK-116 不應命中 gerk116，
+            # 搜 ID-xxx 不應命中 midv 系）。結構 {dmm_prefix}{series}{num}，series 段
+            # 必須 == prefix；找不到精確匹配 → 返回 None（不盲取第一個，避免誤刮）。
             for content in contents:
                 cid = content['id']
-                if prefix in cid.lower():
+                m = re.match(
+                    r'^((?:h_\d+)|(?:\d+))?([a-z]+)(\d+)$',
+                    cid.lower()
+                )
+                if m and m.group(2) == prefix:
                     return cid
 
-            # 沒找到匹配的，返回第一個
-            return contents[0]['id']
+            # 沒找到精確匹配 → 返回 None（原邏輯 return contents[0]['id'] 會誤刮
+            # 子串相近的其他系列，例如 ERK-116 → gerk116）
+            return None
 
         except Exception:
             return None
@@ -549,7 +588,7 @@ class DMMScraper(BaseScraper):
                 for a in item.get('actresses', [])
             ]
 
-            release_date = item.get('makerReleasedAt', '')
+            release_date = item.get('makerReleasedAt') or ''
             if release_date and 'T' in release_date:
                 release_date = release_date.split('T')[0]
 
@@ -571,13 +610,24 @@ class DMMScraper(BaseScraper):
 
             series = (item.get('series') or {}).get('name', '')
 
+            # null 防護：amateur 等內容的 largeUrl/makerReleasedAt 可能為 null，
+            # 直接傳 None 給 pydantic str 欄位會 ValidationError（被 except 吞掉→整片失敗）。
+            # 統一 or '' 歸一為空串；title 不加防護（內容標識保險絲，為空寧可失敗）。
+            cover_url = (item.get('packageImage') or {}).get('largeUrl') or ''
+            # amateur 封面兜底：老式無前綴 cid（如 erk116）無 largeUrl，
+            # 但 DMM 封面有規律 {cid}jp.jpg（digital/amateur 目錄，1458×1458 方形）。
+            # 帶前綴新 cid（hpet/hoip/herk 等）走 digital/video 目錄、largeUrl 有值，不觸發。
+            if not cover_url and re.match(r'^[a-z]+\d+$', content_id):
+                cover_url = (f"https://awsimgsrc.dmm.co.jp/pics_dig/digital/amateur/"
+                             f"{content_id}/{content_id}jp.jpg")
+
             video = Video(
                 number=item.get('makerContentId', ''),
                 title=item.get('title', ''),
                 actresses=actresses,
                 date=release_date,
                 maker=item.get('maker', {}).get('name', ''),
-                cover_url=item.get('packageImage', {}).get('largeUrl', ''),
+                cover_url=cover_url,
                 tags=tags,
                 source=self.source_name,
                 detail_url=f"https://www.dmm.co.jp/digital/videoa/-/detail/=/cid={content_id}/",
@@ -604,9 +654,9 @@ class DMMScraper(BaseScraper):
         搜尋影片資訊
 
         流程：
-        1. 查快取 → 有就直接用（最快）
-        2. 用前綴映射轉換 → 嘗試查詢（快）
-        3. 搜索 API 發現 → 學習前綴（慢，但只需一次）
+        1. 用前綴映射轉換 → 嘗試查詢（快）
+        2. 搜索 API 發現 → 嘗試查詢（慢）
+        3. 使用者直接提供完整 cid 兜底
         4. 都失敗 → 返回 None
 
         Args:
@@ -615,7 +665,8 @@ class DMMScraper(BaseScraper):
         Returns:
             Video 物件，找不到返回 None
         """
-        # 正規化番號
+        # 正規化番號（保留原始輸入，供第 3 步 cid 直拉兜底使用）
+        raw_input = number.strip()
         number = self.normalize_number(number)
         number_upper = number.upper()
 
@@ -623,31 +674,53 @@ class DMMScraper(BaseScraper):
         if 'FC2' in number_upper:
             return None
 
-        # 1. 查快取（最快）
-        cache = self._load_cache()
-        if number_upper in cache:
-            cached_cid = cache[number_upper]
-            result = self._fetch_by_id(cached_cid)
-            if result:
-                rate_limit(self.config.delay)
-                return result
-
-        # 2. 用前綴映射轉換（快）
+        # 1. 用前綴映射轉換（快）
         converted_cid = self._convert_with_hints(number)
         if converted_cid:
             result = self._fetch_by_id(converted_cid)
-            if result:
-                self._save_cache(number, converted_cid)
+            if result and not self._number_conflicts(result.number, number):
+                # 不對稱守衛（2026-08-29 branch review P3）：只擋「解析得出來且不符」，
+                # 解析不出來照舊接受。CD-134-11 的 320 命中是**離線算式**、不經過
+                # 這條路，所以不受影響；實測 24 筆真連線裡 0 筆會被這條擋掉。
                 rate_limit(self.config.delay)
                 return result
 
-        # 3. 搜索 API 發現（慢，但會學習）
+            # 第一試失敗才試不補零第二試；兩式相同就不重複發請求
+            unpadded_cid = self._convert_with_hints(number, zfill=False)
+            if unpadded_cid and unpadded_cid != converted_cid:
+                second_result = self._fetch_by_id(unpadded_cid)
+                if second_result and self._number_matches(second_result.number, number):
+                    rate_limit(self.config.delay)
+                    return second_result
+                # 驗證失敗或未命中 → 不回傳、不加 log，靜靜落到步驟 2
+
+        # 2. 搜索 API 發現（慢）
         discovered_cid = self._search_content_id(number)
         if discovered_cid:
             result = self._fetch_by_id(discovered_cid)
+            if result and self._number_matches(result.number, number):
+                rate_limit(self.config.delay)
+                return result
+            # 驗證失敗仍屬 discovered_cid 有值分支，不會落到 elif，F5 不會被誤觸
+        elif self._parse_number(number)[0]:
+            # 只在「番號可解析 ⇒ _search_content_id 真的發了 API」時留痕。
+            # 輸入是完整 cid（h_113id00057）時它在發請求前就 return None，
+            # 此時印「可能是地區限制」是假話——那條路接著會被步驟 3 救回來。
+            #
+            # legacySearchPPV 在非日本 IP 下回 HTTP 200 + 空陣列 + 無 errors，
+            # 「DMM 沒收這片」與「被地區封鎖」在 log 裡長得一模一樣 → 只留痕，不宣稱能分辨。
+            logger.debug(
+                "[DMM] 搜尋 API 查無結果，番號=%s（可能是 DMM 未收錄，也可能是地區限制——見 spec-134 F5）",
+                number_upper,
+            )
+
+        # 3. 使用者直接提供完整 cid 兜底（如 h_113id00057）
+        #    - 觸發條件：輸入無法解析為標準番號（非 ABC-123 格式）
+        #    - GraphQL 對 cid 大小寫敏感且僅認小寫 → 統一轉小寫
+        prefix, _ = self._parse_number(raw_input)
+        if not prefix:
+            result = self._fetch_by_id(raw_input.lower())
             if result:
-                self._save_cache(number, discovered_cid)
-                self._learn_prefix(number, discovered_cid)  # 學習新前綴
                 rate_limit(self.config.delay)
                 return result
 

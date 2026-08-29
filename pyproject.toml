@@ -33,6 +33,10 @@ max-complexity = 30
 "scripts/audit_build_artifact.py" = ["T201"]  # CLI build 工具，print 為正常輸出（同 build.py）
 "scripts/verify_artifact_imports.py" = ["T201"]  # 產物 import sweep 守衛，print 即輸出（跑在 embedded python，stdlib-only）
 "scripts/py_function_size_lint.py" = ["T201"]  # 規模閘守衛，print 即輸出（比照 audit_build_artifact.py／verify_artifact_imports.py）
+"scripts/dmm_prefix_table_check.py" = ["T201", "PLC2701"]  # 便宜體檢腳本：print 即輸出（同 audit_build_artifact.py）；
+# PLC2701 豁免僅限本檔——它要拿 `core.scraper._dmm_proxy_url` 判「設定頁的 DMM 代理」。
+# 替代方案是在腳本裡重寫一份同樣的判斷，那正是 BE-TEST-14（兩份實作＋parity 測試＝假綠溫床）禁止的。
+# 本檔是 dev 工具、不在 import-linter 的分層契約內（契約只管 core↛web），所以借用單一真理來源優於複製。
 "core/logger.py" = ["TID251"]  # 本模組即 get_logger 的實作，合法直呼 logging.getLogger
 
 # ── 分層契約（import-linter，CLI: lint-imports；跑在 CI 的 lint-frontend job）──

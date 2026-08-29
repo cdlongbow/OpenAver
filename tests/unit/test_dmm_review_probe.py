@@ -84,10 +84,9 @@ class TestDMMProbePayloadVariables:
     """
 
     @pytest.fixture
-    def dmm_scraper(self, tmp_path, monkeypatch):
+    def dmm_scraper(self, monkeypatch):
         import core.scrapers.dmm as dmm_module
-        monkeypatch.setattr(dmm_module, "CACHE_FILE", tmp_path / "dmm_content_ids.json")
-        monkeypatch.setattr(dmm_module, "PREFIX_FILE", tmp_path / "dmm_prefix_hints.json")
+        monkeypatch.setattr(dmm_module, "_shipped_table_cache", {})
         config = ScraperConfig(proxy_url="http://test-proxy:8080")
         return DMMScraper(config)
 

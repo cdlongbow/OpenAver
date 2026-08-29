@@ -1,0 +1,3270 @@
+[
+  {
+    "authNum": "VRKM-1889",
+    "ids": [
+      "vrkm01889",
+      "vrkm01870",
+      "vrkm01872",
+      "vrkm01868"
+    ],
+    "pfx": "VRKM"
+  },
+  {
+    "authNum": "RD-1361",
+    "ids": [
+      "149rd01361",
+      "149rd01362",
+      "149rd01363",
+      "149rd01364"
+    ],
+    "pfx": "RD"
+  },
+  {
+    "authNum": "SAVR-1116",
+    "ids": [
+      "savr01116",
+      "savr01125",
+      "savr01133",
+      "savr01118"
+    ],
+    "pfx": "SAVR"
+  },
+  {
+    "authNum": "VRPRD-198",
+    "ids": [
+      "vrprd00198",
+      "vrprd00193",
+      "vrprd00192",
+      "vrprd00189"
+    ],
+    "pfx": "VRPRD"
+  },
+  {
+    "authNum": "SY-225",
+    "ids": [
+      "h_113sy00225",
+      "h_113sy00224",
+      "h_113sy00223"
+    ],
+    "pfx": "SY"
+  },
+  {
+    "authNum": "ID-060",
+    "ids": [
+      "h_113id00060",
+      "5534id00021",
+      "h_113id00059",
+      "5534id00017"
+    ],
+    "pfx": "ID"
+  },
+  {
+    "authNum": "CB-125",
+    "ids": [
+      "h_113cb00125",
+      "h_113cb00124",
+      "h_113cb00123"
+    ],
+    "pfx": "CB"
+  },
+  {
+    "authNum": "DRPT-118",
+    "ids": [
+      "1drpt00118",
+      "1drpt00115",
+      "1drpt00113",
+      "1drpt00111"
+    ],
+    "pfx": "DRPT"
+  },
+  {
+    "authNum": "DOCD-095",
+    "ids": [
+      "h_1711docd00095",
+      "h_1711docd00094",
+      "h_1711docd00093",
+      "h_1711docd00092"
+    ],
+    "pfx": "DOCD"
+  },
+  {
+    "authNum": "MIST-523",
+    "ids": [
+      "1mist00523",
+      "1mist00522",
+      "1mist00525",
+      "1mist00524"
+    ],
+    "pfx": "MIST"
+  },
+  {
+    "authNum": "START-605",
+    "ids": [
+      "1start00605",
+      "1start00594",
+      "1start00591",
+      "1start00590"
+    ],
+    "pfx": "START"
+  },
+  {
+    "authNum": "SGKI-094",
+    "ids": [
+      "1sgki00094",
+      "1sgki00095",
+      "1sgki00097",
+      "1sgki00092"
+    ],
+    "pfx": "SGKI"
+  },
+  {
+    "authNum": "NAMH-069",
+    "ids": [
+      "1namh00069",
+      "1namh00068",
+      "1namh00067",
+      "1namh00066"
+    ],
+    "pfx": "NAMH"
+  },
+  {
+    "authNum": "YMDS-305",
+    "ids": [
+      "ymds00305",
+      "ymds00304",
+      "ymds00303",
+      "ymds00302"
+    ],
+    "pfx": "YMDS"
+  },
+  {
+    "authNum": "MSOC-061",
+    "ids": [
+      "h_1832msoc00061",
+      "h_1832msoc00060",
+      "h_1832msoc00059",
+      "h_1832msoc00058"
+    ],
+    "pfx": "MSOC"
+  },
+  {
+    "authNum": "ERKR-1119",
+    "ids": [
+      "h_1838erkr01119",
+      "h_1838erkr01118",
+      "h_1838erkr01117",
+      "h_1838erkr01116"
+    ],
+    "pfx": "ERKR"
+  },
+  {
+    "authNum": "BIBIVR-173",
+    "ids": [
+      "bibivr00173",
+      "bibivr00172",
+      "bibivr00175",
+      "bibivr00171"
+    ],
+    "pfx": "BIBIVR"
+  },
+  {
+    "authNum": "OLM-343M",
+    "ids": [
+      "h_1757olm00343",
+      "h_1757olm00342",
+      "h_1757olm00323",
+      "h_1757olm00327"
+    ],
+    "pfx": "OLM"
+  },
+  {
+    "authNum": "GOJI-108",
+    "ids": [
+      "h_1729goji00108",
+      "h_1729goji00107",
+      "h_1729goji00104",
+      "h_1729goji00099"
+    ],
+    "pfx": "GOJI"
+  },
+  {
+    "authNum": "JQRE-028",
+    "ids": [
+      "jqre00028",
+      "jqre00027",
+      "jqre00026"
+    ],
+    "pfx": "JQRE"
+  },
+  {
+    "authNum": "TR-2621",
+    "ids": [
+      "h_125tr02621",
+      "h_125tr02620",
+      "h_125tr02619",
+      "h_125tr02616"
+    ],
+    "pfx": "TR"
+  },
+  {
+    "authNum": "SMJB-024",
+    "ids": [
+      "smjb00024",
+      "smjb00023",
+      "smjb00022"
+    ],
+    "pfx": "SMJB"
+  },
+  {
+    "authNum": "KTRA-792",
+    "ids": [
+      "ktra00792",
+      "ktra00790",
+      "ktra00789",
+      "ktra00787"
+    ],
+    "pfx": "KTRA"
+  },
+  {
+    "authNum": "HOIZ-212",
+    "ids": [
+      "hoiz00212",
+      "hoiz00211",
+      "hoiz00210",
+      "hoiz00209"
+    ],
+    "pfx": "HOIZ"
+  },
+  {
+    "authNum": "SCPX-562",
+    "ids": [
+      "scpx00562",
+      "scpx00561",
+      "scpx00560",
+      "scpx00557"
+    ],
+    "pfx": "SCPX"
+  },
+  {
+    "authNum": "SABA-988",
+    "ids": [
+      "saba00988",
+      "saba00987",
+      "saba00986",
+      "saba00985"
+    ],
+    "pfx": "SABA"
+  },
+  {
+    "authNum": "MKMP-740",
+    "ids": [
+      "mkmp00740",
+      "mkmp00741",
+      "mkmp00739",
+      "mkmp00738"
+    ],
+    "pfx": "MKMP"
+  },
+  {
+    "authNum": "MGHT-393",
+    "ids": [
+      "mght00393",
+      "mght00392",
+      "mght00391",
+      "mght00390"
+    ],
+    "pfx": "MGHT"
+  },
+  {
+    "authNum": "CEAD-759",
+    "ids": [
+      "cead00759",
+      "cead00758",
+      "cead00756",
+      "cead00753"
+    ],
+    "pfx": "CEAD"
+  },
+  {
+    "authNum": "ALDN-602",
+    "ids": [
+      "aldn00602",
+      "aldn00601",
+      "aldn00600",
+      "aldn00599"
+    ],
+    "pfx": "ALDN"
+  },
+  {
+    "authNum": "UMSO-651",
+    "ids": [
+      "umso00651",
+      "umso00650",
+      "umso00649",
+      "umso00648"
+    ],
+    "pfx": "UMSO"
+  },
+  {
+    "authNum": "OKZU-046",
+    "ids": [
+      "okzu00046",
+      "okzu00045",
+      "okzu00044",
+      "okzu00043"
+    ],
+    "pfx": "OKZU"
+  },
+  {
+    "authNum": "NASK-422",
+    "ids": [
+      "nask00422",
+      "nask00421",
+      "nask00420",
+      "nask00419"
+    ],
+    "pfx": "NASK"
+  },
+  {
+    "authNum": "MADV-639",
+    "ids": [
+      "madv00639",
+      "madv00636",
+      "madv00635",
+      "madv00633"
+    ],
+    "pfx": "MADV"
+  },
+  {
+    "authNum": "HMIX-058",
+    "ids": [
+      "hmix00058",
+      "hmix00057",
+      "hmix00056"
+    ],
+    "pfx": "HMIX"
+  },
+  {
+    "authNum": "GIGL-774",
+    "ids": [
+      "gigl00774",
+      "gigl00773",
+      "gigl00772",
+      "gigl00771"
+    ],
+    "pfx": "GIGL"
+  },
+  {
+    "authNum": "EYS-127",
+    "ids": [
+      "eys00127",
+      "eys00126",
+      "eys00125"
+    ],
+    "pfx": "EYS"
+  },
+  {
+    "authNum": "CEMD-873",
+    "ids": [
+      "cemd00873",
+      "cemd00872",
+      "cemd00871",
+      "cemd00870"
+    ],
+    "pfx": "CEMD"
+  },
+  {
+    "authNum": "AMOZ-140",
+    "ids": [
+      "amoz00140",
+      "amoz00139",
+      "amoz00138"
+    ],
+    "pfx": "AMOZ"
+  },
+  {
+    "authNum": "AGAV-177",
+    "ids": [
+      "agav00177",
+      "agav00175",
+      "agav00173",
+      "agav00172"
+    ],
+    "pfx": "AGAV"
+  },
+  {
+    "authNum": "UZU-039",
+    "ids": [
+      "uzu00039",
+      "uzu00038",
+      "uzu00037"
+    ],
+    "pfx": "UZU"
+  },
+  {
+    "authNum": "ONSG-109",
+    "ids": [
+      "onsg00109",
+      "onsg00108",
+      "onsg00107",
+      "onsg00106"
+    ],
+    "pfx": "ONSG"
+  },
+  {
+    "authNum": "MOOR-068",
+    "ids": [
+      "moor00068",
+      "moor00065",
+      "moor00066",
+      "moor00063"
+    ],
+    "pfx": "MOOR"
+  },
+  {
+    "authNum": "KAGP-401",
+    "ids": [
+      "kagp00401",
+      "kagp00400",
+      "kagp00398",
+      "kagp00396"
+    ],
+    "pfx": "KAGP"
+  },
+  {
+    "authNum": "BLOR-303",
+    "ids": [
+      "blor00303",
+      "blor00302",
+      "blor00300",
+      "blor00301"
+    ],
+    "pfx": "BLOR"
+  },
+  {
+    "authNum": "NSFS-499",
+    "ids": [
+      "nsfs00499",
+      "nsfs00498",
+      "nsfs00497",
+      "nsfs00496"
+    ],
+    "pfx": "NSFS"
+  },
+  {
+    "authNum": "JUYU-006",
+    "ids": [
+      "juyu00006",
+      "juyu00005",
+      "juyu00004"
+    ],
+    "pfx": "JUYU"
+  },
+  {
+    "authNum": "GVH-864",
+    "ids": [
+      "gvh00864",
+      "gvh00863",
+      "gvh00862",
+      "gvh00858"
+    ],
+    "pfx": "GVH"
+  },
+  {
+    "authNum": "FLAV-424",
+    "ids": [
+      "flav00424",
+      "flav00423",
+      "flav00421"
+    ],
+    "pfx": "FLAV"
+  },
+  {
+    "authNum": "DFTR-262",
+    "ids": [
+      "dftr00262",
+      "dftr00261",
+      "dftr00259",
+      "dftr00258"
+    ],
+    "pfx": "DFTR"
+  },
+  {
+    "authNum": "DPJT-213",
+    "ids": [
+      "dpjt00213",
+      "dpjt00212",
+      "dpjt00211"
+    ],
+    "pfx": "DPJT"
+  },
+  {
+    "authNum": "AVSA-447",
+    "ids": [
+      "avsa00447",
+      "avsa00446",
+      "avsa00443",
+      "avsa00442"
+    ],
+    "pfx": "AVSA"
+  },
+  {
+    "authNum": "AGMX-270",
+    "ids": [
+      "agmx00270",
+      "agmx00269",
+      "agmx00268",
+      "agmx00267"
+    ],
+    "pfx": "AGMX"
+  },
+  {
+    "authNum": "KBMS-211",
+    "ids": [
+      "kbms00211",
+      "kbms00210",
+      "kbms00209",
+      "kbms00208"
+    ],
+    "pfx": "KBMS"
+  },
+  {
+    "authNum": "CMJU-005",
+    "ids": [
+      "cmju00005",
+      "cmju00004",
+      "cmju00003"
+    ],
+    "pfx": "CMJU"
+  },
+  {
+    "authNum": "EVIS-630",
+    "ids": [
+      "evis00630",
+      "evis00629",
+      "evis00628",
+      "evis00626"
+    ],
+    "pfx": "EVIS"
+  },
+  {
+    "authNum": "SNOS-370",
+    "ids": [
+      "snos00370",
+      "snos00320",
+      "snos00318",
+      "snos00312"
+    ],
+    "pfx": "SNOS"
+  },
+  {
+    "authNum": "RROY-019",
+    "ids": [
+      "rroy00019",
+      "rroy00020",
+      "rroy00018"
+    ],
+    "pfx": "RROY"
+  },
+  {
+    "authNum": "ROYD-346",
+    "ids": [
+      "royd00346",
+      "royd00337",
+      "royd00332",
+      "royd00336"
+    ],
+    "pfx": "ROYD"
+  },
+  {
+    "authNum": "ROE-528",
+    "ids": [
+      "roe00528",
+      "roe00527",
+      "roe00521",
+      "roe00526"
+    ],
+    "pfx": "ROE"
+  },
+  {
+    "authNum": "REZD-335",
+    "ids": [
+      "rezd00335",
+      "rezd00334",
+      "rezd00333"
+    ],
+    "pfx": "REZD"
+  },
+  {
+    "authNum": "OFJE-648",
+    "ids": [
+      "ofje00648",
+      "ofje00647",
+      "ofje00653",
+      "ofje00646"
+    ],
+    "pfx": "OFJE"
+  },
+  {
+    "authNum": "JUR-816",
+    "ids": [
+      "jur00816",
+      "jur00813",
+      "jur00812",
+      "jur00807"
+    ],
+    "pfx": "JUR"
+  },
+  {
+    "authNum": "JUMS-179",
+    "ids": [
+      "jums00179",
+      "jums00176",
+      "jums00171",
+      "jums00178"
+    ],
+    "pfx": "JUMS"
+  },
+  {
+    "authNum": "HMN-912",
+    "ids": [
+      "hmn00912",
+      "hmn00885",
+      "hmn00878",
+      "hmn00870"
+    ],
+    "pfx": "HMN"
+  },
+  {
+    "authNum": "DSOD-036",
+    "ids": [
+      "dsod00036",
+      "dsod00016",
+      "dsod00034",
+      "dsod00026"
+    ],
+    "pfx": "DSOD"
+  },
+  {
+    "authNum": "DAZD-302",
+    "ids": [
+      "dazd00302",
+      "dazd00301",
+      "dazd00300",
+      "dazd00298"
+    ],
+    "pfx": "DAZD"
+  },
+  {
+    "authNum": "DASS-994",
+    "ids": [
+      "dass00994",
+      "dass00988",
+      "dass00996",
+      "dass00989"
+    ],
+    "pfx": "DASS"
+  },
+  {
+    "authNum": "CJOD-534",
+    "ids": [
+      "cjod00534",
+      "cjod00526",
+      "cjod00524",
+      "cjod00522"
+    ],
+    "pfx": "CJOD"
+  },
+  {
+    "authNum": "CJOB-212",
+    "ids": [
+      "cjob00212",
+      "cjob00211",
+      "cjob00210",
+      "cjob00208"
+    ],
+    "pfx": "CJOB"
+  },
+  {
+    "authNum": "AKIB-031",
+    "ids": [
+      "akib00031",
+      "akib00030",
+      "akib00029"
+    ],
+    "pfx": "AKIB"
+  },
+  {
+    "authNum": "BONY-198",
+    "ids": [
+      "bony00198",
+      "bony00195",
+      "bony00191"
+    ],
+    "pfx": "BONY"
+  },
+  {
+    "authNum": "MISM-455",
+    "ids": [
+      "mism00455",
+      "mism00450",
+      "mism00445",
+      "mism00444"
+    ],
+    "pfx": "MISM"
+  },
+  {
+    "authNum": "JYMA-111",
+    "ids": [
+      "jyma00111",
+      "jyma00110",
+      "jyma00109",
+      "jyma00107"
+    ],
+    "pfx": "JYMA"
+  },
+  {
+    "authNum": "AARM-358",
+    "ids": [
+      "aarm00358",
+      "aarm00357",
+      "aarm00356",
+      "aarm00353"
+    ],
+    "pfx": "AARM"
+  },
+  {
+    "authNum": "GODR-1267",
+    "ids": [
+      "78godr01267",
+      "78godr01269",
+      "78godr01263",
+      "78godr01264"
+    ],
+    "pfx": "GODR"
+  },
+  {
+    "authNum": "HHH-418",
+    "ids": [
+      "78hhh00418",
+      "78hhh00419",
+      "78hhh00415",
+      "78hhh00417"
+    ],
+    "pfx": "HHH"
+  },
+  {
+    "authNum": "HNHU-0212",
+    "ids": [
+      "h_1658hnhu00212",
+      "h_1658hnhu00211",
+      "h_1658hnhu00210",
+      "h_1658hnhu00209"
+    ],
+    "pfx": "HNHU"
+  },
+  {
+    "authNum": "KMDS-20702",
+    "ids": [
+      "h_1380kmds20702",
+      "h_1380kmds20701",
+      "h_1380kmds20700",
+      "h_1380kmds20699"
+    ],
+    "pfx": "KMDS"
+  },
+  {
+    "authNum": "HODV-22100",
+    "ids": [
+      "5642hodv22100",
+      "5642hodv22099",
+      "5642hodv22098",
+      "5642hodv22097"
+    ],
+    "pfx": "HODV"
+  },
+  {
+    "authNum": "FTHT-352",
+    "ids": [
+      "1ftht00352",
+      "1ftht00343",
+      "1ftht00342",
+      "1ftht00337"
+    ],
+    "pfx": "FTHT"
+  },
+  {
+    "authNum": "SW-1060",
+    "ids": [
+      "1sw01060",
+      "1sw01059",
+      "1sw01058",
+      "1sw01057"
+    ],
+    "pfx": "SW"
+  },
+  {
+    "authNum": "FTKD-040",
+    "ids": [
+      "1ftkd00040",
+      "1ftkd00036",
+      "1ftkd00039",
+      "1ftkd00042"
+    ],
+    "pfx": "FTKD"
+  },
+  {
+    "authNum": "FTHTD-218",
+    "ids": [
+      "1fthtd00218",
+      "1fthtd00212",
+      "1fthtd00210",
+      "1fthtd00209"
+    ],
+    "pfx": "FTHTD"
+  },
+  {
+    "authNum": "FNS-224",
+    "ids": [
+      "1fns00224",
+      "1fns00222",
+      "1fns00221",
+      "1fns00220"
+    ],
+    "pfx": "FNS"
+  },
+  {
+    "authNum": "NEO-951",
+    "ids": [
+      "433neo00951",
+      "433neo00950",
+      "433neo00855",
+      "433neo00854"
+    ],
+    "pfx": "NEO"
+  },
+  {
+    "authNum": "REBD-1053",
+    "ids": [
+      "h_346rebd01053",
+      "h_346rebd01052",
+      "h_346rebd01051",
+      "h_346rebd01050"
+    ],
+    "pfx": "REBD"
+  },
+  {
+    "authNum": "OKS-196",
+    "ids": [
+      "1oks00196",
+      "1oks00195",
+      "1oks00194",
+      "1oks00193"
+    ],
+    "pfx": "OKS"
+  },
+  {
+    "authNum": "OKK-119",
+    "ids": [
+      "1okk00119",
+      "1okk00118",
+      "1okk00117",
+      "1okk00116"
+    ],
+    "pfx": "OKK"
+  },
+  {
+    "authNum": "JERA-036",
+    "ids": [
+      "1jera00036",
+      "1jera00041",
+      "1jera00040",
+      "1jera00045"
+    ],
+    "pfx": "JERA"
+  },
+  {
+    "authNum": "OFTR-012",
+    "ids": [
+      "1oftr00012",
+      "1oftr00011",
+      "1oftr00010",
+      "1oftr00007"
+    ],
+    "pfx": "OFTR"
+  },
+  {
+    "authNum": "MGTD-080",
+    "ids": [
+      "h_1711mgtd00080",
+      "h_1711mgtd00081",
+      "h_1711mgtd00079",
+      "h_1711mgtd00078"
+    ],
+    "pfx": "MGTD"
+  },
+  {
+    "authNum": "SDAB-351",
+    "ids": [
+      "1sdab00351",
+      "1sdab00348",
+      "1sdab00350",
+      "1sdab00349"
+    ],
+    "pfx": "SDAB"
+  },
+  {
+    "authNum": "SDAM-175",
+    "ids": [
+      "1sdam00175",
+      "1sdam00174",
+      "1sdam00173",
+      "1sdam00170"
+    ],
+    "pfx": "SDAM"
+  },
+  {
+    "authNum": "SVMGM-051",
+    "ids": [
+      "1svmgm00051",
+      "1svmgm00049",
+      "1svmgm00048"
+    ],
+    "pfx": "SVMGM"
+  },
+  {
+    "authNum": "SVFLA-021",
+    "ids": [
+      "1svfla00021",
+      "1svfla00020",
+      "1svfla00019"
+    ],
+    "pfx": "SVFLA"
+  },
+  {
+    "authNum": "SDMM-234",
+    "ids": [
+      "1sdmm00234",
+      "1sdmm00233",
+      "1sdmm00231"
+    ],
+    "pfx": "SDMM"
+  },
+  {
+    "authNum": "MOGI-160",
+    "ids": [
+      "1mogi00160",
+      "1mogi00159",
+      "1mogi00157",
+      "1mogi00156"
+    ],
+    "pfx": "MOGI"
+  },
+  {
+    "authNum": "MREC-007",
+    "ids": [
+      "mrec00007",
+      "mrec00006",
+      "mrec00005",
+      "mrec00004"
+    ],
+    "pfx": "MREC"
+  },
+  {
+    "authNum": "KIWVR-907",
+    "ids": [
+      "kiwvr00907",
+      "kiwvr00901",
+      "kiwvr00895",
+      "kiwvr00906"
+    ],
+    "pfx": "KIWVR"
+  },
+  {
+    "authNum": "FAVR-003",
+    "ids": [
+      "1favr00003",
+      "1favr00002",
+      "1favr00001",
+      "1favr00004"
+    ],
+    "pfx": "FAVR"
+  },
+  {
+    "authNum": "SQTE-703",
+    "ids": [
+      "sqte00703",
+      "sqte00702",
+      "sqte00701",
+      "sqte00700"
+    ],
+    "pfx": "SQTE"
+  },
+  {
+    "authNum": "KTKC-205",
+    "ids": [
+      "ktkc00205",
+      "ktkc00204",
+      "ktkc00203"
+    ],
+    "pfx": "KTKC"
+  },
+  {
+    "authNum": "HRD-410",
+    "ids": [
+      "hrd00410",
+      "hrd00407",
+      "hrd00408"
+    ],
+    "pfx": "HRD"
+  },
+  {
+    "authNum": "EFDM-200",
+    "ids": [
+      "efdm00200",
+      "efdm00199",
+      "efdm00197",
+      "efdm00198"
+    ],
+    "pfx": "EFDM"
+  },
+  {
+    "authNum": "PRMJ-373",
+    "ids": [
+      "prmj00373",
+      "prmj00367",
+      "prmj00368",
+      "prmj00369"
+    ],
+    "pfx": "PRMJ"
+  },
+  {
+    "authNum": "KSBJ-437",
+    "ids": [
+      "ksbj00437",
+      "ksbj00436",
+      "ksbj00433",
+      "ksbj00431"
+    ],
+    "pfx": "KSBJ"
+  },
+  {
+    "authNum": "ERDM-232",
+    "ids": [
+      "erdm00232",
+      "erdm00231",
+      "erdm00230",
+      "erdm00225"
+    ],
+    "pfx": "ERDM"
+  },
+  {
+    "authNum": "ATYA-044",
+    "ids": [
+      "atya00044",
+      "atya00042",
+      "atya00043"
+    ],
+    "pfx": "ATYA"
+  },
+  {
+    "authNum": "TIKB-224",
+    "ids": [
+      "tikb00224",
+      "tikb00223",
+      "tikb00221"
+    ],
+    "pfx": "TIKB"
+  },
+  {
+    "authNum": "FSTU-032",
+    "ids": [
+      "fstu00032",
+      "fstu00031",
+      "fstu00030"
+    ],
+    "pfx": "FSTU"
+  },
+  {
+    "authNum": "SYKH-197",
+    "ids": [
+      "sykh00197",
+      "sykh00196",
+      "sykh00192",
+      "sykh00193"
+    ],
+    "pfx": "SYKH"
+  },
+  {
+    "authNum": "VEC-781",
+    "ids": [
+      "vec00781",
+      "vec00779",
+      "vec00778",
+      "vec00777"
+    ],
+    "pfx": "VEC"
+  },
+  {
+    "authNum": "VOD-060",
+    "ids": [
+      "vod00060",
+      "vod00059",
+      "vod00058",
+      "vod00057"
+    ],
+    "pfx": "VOD"
+  },
+  {
+    "authNum": "DINM-924",
+    "ids": [
+      "h_1386dinm00924",
+      "h_1386dinm00923",
+      "h_1386dinm00922",
+      "h_1386dinm00921"
+    ],
+    "pfx": "DINM"
+  },
+  {
+    "authNum": "PRED-886",
+    "ids": [
+      "pred00886",
+      "pred00879",
+      "pred00878",
+      "pred00870"
+    ],
+    "pfx": "PRED"
+  },
+  {
+    "authNum": "PPPE-430",
+    "ids": [
+      "pppe00430",
+      "pppe00426",
+      "pppe00431",
+      "pppe00425"
+    ],
+    "pfx": "PPPE"
+  },
+  {
+    "authNum": "PBD-522",
+    "ids": [
+      "pbd00522",
+      "pbd00521",
+      "pbd00519",
+      "pbd00520"
+    ],
+    "pfx": "PBD"
+  },
+  {
+    "authNum": "MUDR-396",
+    "ids": [
+      "mudr00396",
+      "mudr00386",
+      "mudr00380",
+      "mudr00375"
+    ],
+    "pfx": "MUDR"
+  },
+  {
+    "authNum": "MNGS-084",
+    "ids": [
+      "mngs00084",
+      "mngs00065",
+      "mngs00061",
+      "mngs00060"
+    ],
+    "pfx": "MNGS"
+  },
+  {
+    "authNum": "MKCK-426",
+    "ids": [
+      "mkck00426",
+      "mkck00425",
+      "mkck00423",
+      "mkck00424"
+    ],
+    "pfx": "MKCK"
+  },
+  {
+    "authNum": "MIZD-545",
+    "ids": [
+      "mizd00545",
+      "mizd00494",
+      "mizd00539",
+      "mizd00544"
+    ],
+    "pfx": "MIZD"
+  },
+  {
+    "authNum": "MIMK-286",
+    "ids": [
+      "mimk00286",
+      "mimk00276",
+      "mimk00280",
+      "mimk00284"
+    ],
+    "pfx": "MIMK"
+  },
+  {
+    "authNum": "MIKR-109",
+    "ids": [
+      "mikr00109",
+      "mikr00106",
+      "mikr00107",
+      "mikr00092"
+    ],
+    "pfx": "MIKR"
+  },
+  {
+    "authNum": "MIDA-756",
+    "ids": [
+      "mida00756",
+      "mida00717",
+      "mida00711",
+      "mida00707"
+    ],
+    "pfx": "MIDA"
+  },
+  {
+    "authNum": "MFYD-169",
+    "ids": [
+      "mfyd00169",
+      "mfyd00168",
+      "mfyd00167",
+      "mfyd00164"
+    ],
+    "pfx": "MFYD"
+  },
+  {
+    "authNum": "KIBD-350",
+    "ids": [
+      "kibd00350",
+      "kibd00349",
+      "kibd00352",
+      "kibd00348"
+    ],
+    "pfx": "KIBD"
+  },
+  {
+    "authNum": "JFB-510",
+    "ids": [
+      "jfb00510",
+      "jfb00509",
+      "jfb00496"
+    ],
+    "pfx": "JFB"
+  },
+  {
+    "authNum": "HJMO-732",
+    "ids": [
+      "hjmo00732",
+      "hjmo00731",
+      "hjmo00725"
+    ],
+    "pfx": "HJMO"
+  },
+  {
+    "authNum": "HJBB-241",
+    "ids": [
+      "hjbb00241",
+      "hjbb00238",
+      "hjbb00239"
+    ],
+    "pfx": "HJBB"
+  },
+  {
+    "authNum": "FPRE-238",
+    "ids": [
+      "fpre00238",
+      "fpre00237",
+      "fpre00235"
+    ],
+    "pfx": "FPRE"
+  },
+  {
+    "authNum": "EBWH-359",
+    "ids": [
+      "ebwh00359",
+      "ebwh00345",
+      "ebwh00342",
+      "ebwh00341"
+    ],
+    "pfx": "EBWH"
+  },
+  {
+    "authNum": "DVMM-424",
+    "ids": [
+      "dvmm00424",
+      "dvmm00423",
+      "dvmm00422",
+      "dvmm00421"
+    ],
+    "pfx": "DVMM"
+  },
+  {
+    "authNum": "MVSD-702",
+    "ids": [
+      "mvsd00702",
+      "mvsd00696",
+      "mvsd00686",
+      "mvsd00699"
+    ],
+    "pfx": "MVSD"
+  },
+  {
+    "authNum": "MIRD-284",
+    "ids": [
+      "mird00284",
+      "mird00286",
+      "mird00275",
+      "mird00285"
+    ],
+    "pfx": "MIRD"
+  },
+  {
+    "authNum": "MANX-033",
+    "ids": [
+      "manx00033",
+      "manx00032",
+      "manx00029"
+    ],
+    "pfx": "MANX"
+  },
+  {
+    "authNum": "NCMC-043",
+    "ids": [
+      "h_1836ncmc00043",
+      "h_1836ncmc00042",
+      "h_1836ncmc00041",
+      "h_1836ncmc00040"
+    ],
+    "pfx": "NCMC"
+  },
+  {
+    "authNum": "NACT-160",
+    "ids": [
+      "h_237nact00160",
+      "h_237nact00157",
+      "h_237nact00156",
+      "h_237nact00154"
+    ],
+    "pfx": "NACT"
+  },
+  {
+    "authNum": "VNDS-5237",
+    "ids": [
+      "h_1664vnds05237",
+      "h_1664vnds03442",
+      "h_1664vnds05236",
+      "h_1664vnds03441"
+    ],
+    "pfx": "VNDS"
+  },
+  {
+    "authNum": "SPZ-1177",
+    "ids": [
+      "h_1664spz01177",
+      "h_1664spz01176",
+      "h_1664spz01175"
+    ],
+    "pfx": "SPZ"
+  },
+  {
+    "authNum": "KANZ-347",
+    "ids": [
+      "h_1664kanz00347",
+      "h_1664kanz00345",
+      "h_1664kanz00342"
+    ],
+    "pfx": "KANZ"
+  },
+  {
+    "authNum": "URVRSP-587",
+    "ids": [
+      "urvrsp00587",
+      "urvrsp00579",
+      "urvrsp00591",
+      "urvrsp00578"
+    ],
+    "pfx": "URVRSP"
+  },
+  {
+    "authNum": "SEVEN-036",
+    "ids": [
+      "1seven00036",
+      "1seven00035",
+      "1seven00032",
+      "1seven00031"
+    ],
+    "pfx": "SEVEN"
+  },
+  {
+    "authNum": "MBDD-2187",
+    "ids": [
+      "301mbdd02187",
+      "301mbdd02186",
+      "301mbdd02185",
+      "301mbdd02184"
+    ],
+    "pfx": "MBDD"
+  },
+  {
+    "authNum": "SIRON-090",
+    "ids": [
+      "h_1492siron00090",
+      "h_1492siron00089",
+      "h_1492siron00088",
+      "h_1492siron00087"
+    ],
+    "pfx": "SIRON"
+  },
+  {
+    "authNum": "NKWMR-025",
+    "ids": [
+      "nkwmr00025",
+      "nkwmr00021",
+      "nkwmr00020"
+    ],
+    "pfx": "NKWMR"
+  },
+  {
+    "authNum": "MIHD-008",
+    "ids": [
+      "mihd00008",
+      "mihd00006",
+      "mihd00003",
+      "mihd00004"
+    ],
+    "pfx": "MIHD"
+  },
+  {
+    "authNum": "HMDNV-939",
+    "ids": [
+      "h_1472hmdnv00939",
+      "h_1472hmdnv00937",
+      "h_1472hmdnv00935",
+      "h_1472hmdnv00897"
+    ],
+    "pfx": "HMDNV"
+  },
+  {
+    "authNum": "PYM-572",
+    "ids": [
+      "h_283pym00572",
+      "h_283pym00571",
+      "h_283pym00570",
+      "h_283pym00566"
+    ],
+    "pfx": "PYM"
+  },
+  {
+    "authNum": "WA-591",
+    "ids": [
+      "h_047wa00591",
+      "h_047wa00590",
+      "h_047wa00588",
+      "h_047wa00589"
+    ],
+    "pfx": "WA"
+  },
+  {
+    "authNum": "PTS-551",
+    "ids": [
+      "h_021pts00551",
+      "h_021pts00550",
+      "h_021pts00549",
+      "h_021pts00548"
+    ],
+    "pfx": "PTS"
+  },
+  {
+    "authNum": "INSTV-721",
+    "ids": [
+      "h_1472instv00721",
+      "h_1472instv00720",
+      "h_1472instv00719",
+      "h_1472instv00713"
+    ],
+    "pfx": "INSTV"
+  },
+  {
+    "authNum": "CNSTV-024",
+    "ids": [
+      "h_1472cnstv00024",
+      "h_1472cnstv00023",
+      "h_1472cnstv00022",
+      "h_1472cnstv00021"
+    ],
+    "pfx": "CNSTV"
+  },
+  {
+    "authNum": "LOU-121",
+    "ids": [
+      "h_1802lou00121",
+      "h_1802lou00120",
+      "h_1802lou00119",
+      "h_1802lou00118"
+    ],
+    "pfx": "LOU"
+  },
+  {
+    "authNum": "EROFV-381",
+    "ids": [
+      "h_1472erofv00381",
+      "h_1472erofv00380",
+      "h_1472erofv00379",
+      "h_1472erofv00377"
+    ],
+    "pfx": "EROFV"
+  },
+  {
+    "authNum": "HPET-020",
+    "ids": [
+      "hpet00020",
+      "hpet00019",
+      "hpet00018"
+    ],
+    "pfx": "HPET"
+  },
+  {
+    "authNum": "MDTM-882",
+    "ids": [
+      "mdtm00882",
+      "mdtm00881",
+      "mdtm00880",
+      "mdtm00879"
+    ],
+    "pfx": "MDTM"
+  },
+  {
+    "authNum": "MDBK-422",
+    "ids": [
+      "mdbk00422",
+      "mdbk00419",
+      "mdbk00417"
+    ],
+    "pfx": "MDBK"
+  },
+  {
+    "authNum": "REAL-999",
+    "ids": [
+      "real00999",
+      "real00998",
+      "real00990"
+    ],
+    "pfx": "REAL"
+  },
+  {
+    "authNum": "NGHJ-067",
+    "ids": [
+      "nghj00067",
+      "nghj00066",
+      "nghj00065",
+      "nghj00064"
+    ],
+    "pfx": "NGHJ"
+  },
+  {
+    "authNum": "MMMB-183",
+    "ids": [
+      "mmmb00183",
+      "mmmb00181",
+      "mmmb00182"
+    ],
+    "pfx": "MMMB"
+  },
+  {
+    "authNum": "DVAJ-749",
+    "ids": [
+      "dvaj00749",
+      "dvaj00748",
+      "dvaj00747",
+      "dvaj00744"
+    ],
+    "pfx": "DVAJ"
+  },
+  {
+    "authNum": "BACJ-186",
+    "ids": [
+      "bacj00186",
+      "bacj00185",
+      "bacj00184",
+      "bacj00183"
+    ],
+    "pfx": "BACJ"
+  },
+  {
+    "authNum": "UMAN-009",
+    "ids": [
+      "uman00009",
+      "uman00008",
+      "uman00007",
+      "uman00005"
+    ],
+    "pfx": "UMAN"
+  },
+  {
+    "authNum": "RKI-753",
+    "ids": [
+      "rki00753",
+      "rki00751",
+      "rki00749",
+      "rki00758"
+    ],
+    "pfx": "RKI"
+  },
+  {
+    "authNum": "RBB-340",
+    "ids": [
+      "rbb00340",
+      "rbb00339",
+      "rbb00338",
+      "rbb00337"
+    ],
+    "pfx": "RBB"
+  },
+  {
+    "authNum": "NGOD-348",
+    "ids": [
+      "ngod00348",
+      "ngod00347",
+      "ngod00346",
+      "ngod00343"
+    ],
+    "pfx": "NGOD"
+  },
+  {
+    "authNum": "IPZZ-909",
+    "ids": [
+      "ipzz00909",
+      "ipzz00906",
+      "ipzz00905",
+      "ipzz00903"
+    ],
+    "pfx": "IPZZ"
+  },
+  {
+    "authNum": "IPOK-026",
+    "ids": [
+      "ipok00026",
+      "ipok00024",
+      "ipok00023",
+      "ipok00017"
+    ],
+    "pfx": "IPOK"
+  },
+  {
+    "authNum": "HUNTC-633",
+    "ids": [
+      "huntc00633",
+      "huntc00564",
+      "huntc00523",
+      "huntc00510"
+    ],
+    "pfx": "HUNTC"
+  },
+  {
+    "authNum": "HSODA-125",
+    "ids": [
+      "hsoda00125",
+      "hsoda00124",
+      "hsoda00118",
+      "hsoda00122"
+    ],
+    "pfx": "HSODA"
+  },
+  {
+    "authNum": "BBAN-598",
+    "ids": [
+      "bban00598",
+      "bban00593",
+      "bban00581",
+      "bban00590"
+    ],
+    "pfx": "BBAN"
+  },
+  {
+    "authNum": "FWAY-100",
+    "ids": [
+      "fway00100",
+      "fway00098",
+      "fway00095",
+      "fway00097"
+    ],
+    "pfx": "FWAY"
+  },
+  {
+    "authNum": "KDMN-051",
+    "ids": [
+      "h_491kdmn00051",
+      "h_491kdmn00050",
+      "h_491kdmn00049",
+      "h_491kdmn00048"
+    ],
+    "pfx": "KDMN"
+  },
+  {
+    "authNum": "BEAF-222",
+    "ids": [
+      "h_1615beaf00222",
+      "h_1615beaf00221",
+      "h_1615beaf00220",
+      "h_1615beaf00219"
+    ],
+    "pfx": "BEAF"
+  },
+  {
+    "authNum": "HONB-493",
+    "ids": [
+      "h_1133honb00493",
+      "h_1133honb00492",
+      "h_1133honb00491",
+      "h_1133honb00490"
+    ],
+    "pfx": "HONB"
+  },
+  {
+    "authNum": "AWAW-025",
+    "ids": [
+      "h_1819awaw00025",
+      "h_1819awaw00024",
+      "h_1819awaw00023"
+    ],
+    "pfx": "AWAW"
+  },
+  {
+    "authNum": "TENN-049",
+    "ids": [
+      "h_491tenn00049",
+      "h_491tenn00048",
+      "h_491tenn01002",
+      "h_491tenn00047"
+    ],
+    "pfx": "TENN"
+  },
+  {
+    "authNum": "JJGG-004",
+    "ids": [
+      "h_1758jjgg00004",
+      "h_1758jjgg00003",
+      "h_1758jjgg00002",
+      "h_1758jjgg00001"
+    ],
+    "pfx": "JJGG"
+  },
+  {
+    "authNum": "CLO-377",
+    "ids": [
+      "h_1435clo00377",
+      "h_1435clo00376",
+      "h_1435clo00375",
+      "h_1435clo00374"
+    ],
+    "pfx": "CLO"
+  },
+  {
+    "authNum": "AQULA-135",
+    "ids": [
+      "aqula00135",
+      "aqula00134",
+      "aqula00133",
+      "aqula00130"
+    ],
+    "pfx": "AQULA"
+  },
+  {
+    "authNum": "NIZX-014",
+    "ids": [
+      "h_1472nizx00014",
+      "h_1472nizx00013",
+      "h_1472nizx00012",
+      "h_1472nizx00011"
+    ],
+    "pfx": "NIZX"
+  },
+  {
+    "authNum": "NMSL-043",
+    "ids": [
+      "h_1814nmsl00043",
+      "h_1814nmsl00042",
+      "h_1814nmsl00041",
+      "h_1814nmsl00040"
+    ],
+    "pfx": "NMSL"
+  },
+  {
+    "authNum": "HEZ-906",
+    "ids": [
+      "59hez00906",
+      "59hez00905",
+      "59hez00904",
+      "59hez00903"
+    ],
+    "pfx": "HEZ"
+  },
+  {
+    "authNum": "NKKVR-193",
+    "ids": [
+      "nkkvr00193",
+      "nkkvr00192",
+      "nkkvr00191"
+    ],
+    "pfx": "NKKVR"
+  },
+  {
+    "authNum": "CVDA-052",
+    "ids": [
+      "h_086cvda00052",
+      "h_086cvda00051",
+      "h_086cvda00050",
+      "h_086cvda00048"
+    ],
+    "pfx": "CVDA"
+  },
+  {
+    "authNum": "MEKO-403",
+    "ids": [
+      "h_1160meko00403",
+      "h_1160meko00402",
+      "h_1160meko00399",
+      "h_1160meko00398"
+    ],
+    "pfx": "MEKO"
+  },
+  {
+    "authNum": "JURA-204",
+    "ids": [
+      "h_086jura00204",
+      "h_086jura00203",
+      "h_086jura00202",
+      "h_086jura00201"
+    ],
+    "pfx": "JURA"
+  },
+  {
+    "authNum": "JRZE-309",
+    "ids": [
+      "h_086jrze00309",
+      "h_086jrze00308",
+      "h_086jrze00307",
+      "h_086jrze00306"
+    ],
+    "pfx": "JRZE"
+  },
+  {
+    "authNum": "CVDX-650",
+    "ids": [
+      "h_086cvdx00650",
+      "h_086cvdx00649",
+      "h_086cvdx00648",
+      "h_086cvdx00647"
+    ],
+    "pfx": "CVDX"
+  },
+  {
+    "authNum": "NHDTC-219",
+    "ids": [
+      "1nhdtc00219",
+      "1nhdtc00183",
+      "1nhdtc00206",
+      "1nhdtc00214"
+    ],
+    "pfx": "NHDTC"
+  },
+  {
+    "authNum": "HBAD-737",
+    "ids": [
+      "1hbad00737",
+      "1hbad00734",
+      "1hbad00735"
+    ],
+    "pfx": "HBAD"
+  },
+  {
+    "authNum": "STSK-235",
+    "ids": [
+      "h_1605stsk00235",
+      "h_1605stsk00234",
+      "h_1605stsk00233",
+      "h_1605stsk00232"
+    ],
+    "pfx": "STSK"
+  },
+  {
+    "authNum": "MGOLD-062",
+    "ids": [
+      "1mgold00062",
+      "1mgold00049",
+      "1mgold00061"
+    ],
+    "pfx": "MGOLD"
+  },
+  {
+    "authNum": "DLDSS-522",
+    "ids": [
+      "1dldss00522",
+      "1dldss00520",
+      "1dldss00519",
+      "1dldss00518"
+    ],
+    "pfx": "DLDSS"
+  },
+  {
+    "authNum": "OKB-192",
+    "ids": [
+      "1okb00192",
+      "1okb00191",
+      "1okb00190"
+    ],
+    "pfx": "OKB"
+  },
+  {
+    "authNum": "DANDYA-038",
+    "ids": [
+      "1dandya00038",
+      "1dandya00035",
+      "1dandya00037",
+      "1dandya00036"
+    ],
+    "pfx": "DANDYA"
+  },
+  {
+    "authNum": "HAWA-382",
+    "ids": [
+      "1hawa00382",
+      "1hawa00381",
+      "1hawa00380",
+      "1hawa00379"
+    ],
+    "pfx": "HAWA"
+  },
+  {
+    "authNum": "URKN-014",
+    "ids": [
+      "1urkn00014",
+      "1urkn00013",
+      "1urkn02001",
+      "1urkn01903"
+    ],
+    "pfx": "URKN"
+  },
+  {
+    "authNum": "SDJS-371",
+    "ids": [
+      "1sdjs00371",
+      "1sdjs00374",
+      "1sdjs00365",
+      "1sdjs00375"
+    ],
+    "pfx": "SDJS"
+  },
+  {
+    "authNum": "RCTD-741",
+    "ids": [
+      "1rctd00741",
+      "1rctd00743",
+      "1rctd00734",
+      "1rctd00735"
+    ],
+    "pfx": "RCTD"
+  },
+  {
+    "authNum": "SDNM-552",
+    "ids": [
+      "1sdnm00552",
+      "1sdnm00551",
+      "1sdnm00549",
+      "1sdnm00550"
+    ],
+    "pfx": "SDNM"
+  },
+  {
+    "authNum": "PMFT-444",
+    "ids": [
+      "h_283pmft00444",
+      "h_283pmft00443",
+      "h_283pmft00442",
+      "h_283pmft00441"
+    ],
+    "pfx": "PMFT"
+  },
+  {
+    "authNum": "UGH-050",
+    "ids": [
+      "h_1795ugh00050",
+      "h_1795ugh00049",
+      "h_1795ugh00048",
+      "h_1795ugh00047"
+    ],
+    "pfx": "UGH"
+  },
+  {
+    "authNum": "NPJH-011",
+    "ids": [
+      "npjh00011",
+      "npjh00004",
+      "npjh00003"
+    ],
+    "pfx": "NPJH"
+  },
+  {
+    "authNum": "JJDX-013",
+    "ids": [
+      "jjdx00013",
+      "jjdx00012",
+      "jjdx00011"
+    ],
+    "pfx": "JJDX"
+  },
+  {
+    "authNum": "AUKG-654",
+    "ids": [
+      "aukg00654",
+      "aukg00653",
+      "aukg00652"
+    ],
+    "pfx": "AUKG"
+  },
+  {
+    "authNum": "PKPD-424",
+    "ids": [
+      "pkpd00424",
+      "pkpd00425",
+      "pkpd00426",
+      "pkpd00427"
+    ],
+    "pfx": "PKPD"
+  },
+  {
+    "authNum": "XVSR-883",
+    "ids": [
+      "xvsr00883",
+      "xvsr00885",
+      "xvsr00886",
+      "xvsr00887"
+    ],
+    "pfx": "XVSR"
+  },
+  {
+    "authNum": "EMBZ-348",
+    "ids": [
+      "embz00348",
+      "embz00345",
+      "embz00346"
+    ],
+    "pfx": "EMBZ"
+  },
+  {
+    "authNum": "BAB-193",
+    "ids": [
+      "bab00193",
+      "bab00194",
+      "bab00192"
+    ],
+    "pfx": "BAB"
+  },
+  {
+    "authNum": "FJIN-152",
+    "ids": [
+      "fjin00152",
+      "fjin00151",
+      "fjin00150",
+      "fjin00143"
+    ],
+    "pfx": "FJIN"
+  },
+  {
+    "authNum": "FCSS-008",
+    "ids": [
+      "fcss00008",
+      "fcss00010",
+      "fcss00006",
+      "fcss00007"
+    ],
+    "pfx": "FCSS"
+  },
+  {
+    "authNum": "DBNK-118",
+    "ids": [
+      "dbnk00118",
+      "dbnk00116",
+      "dbnk00115",
+      "dbnk00113"
+    ],
+    "pfx": "DBNK"
+  },
+  {
+    "authNum": "SMOK-040",
+    "ids": [
+      "smok00040",
+      "smok00041",
+      "smok00039",
+      "smok00038"
+    ],
+    "pfx": "SMOK"
+  },
+  {
+    "authNum": "MMPB-131",
+    "ids": [
+      "mmpb00131",
+      "mmpb00130",
+      "mmpb00129",
+      "mmpb00128"
+    ],
+    "pfx": "MMPB"
+  },
+  {
+    "authNum": "DSDP-044",
+    "ids": [
+      "dsdp00044",
+      "dsdp00043",
+      "dsdp00042",
+      "dsdp00041"
+    ],
+    "pfx": "DSDP"
+  },
+  {
+    "authNum": "AED-262",
+    "ids": [
+      "aed00262",
+      "aed00261",
+      "aed00259"
+    ],
+    "pfx": "AED"
+  },
+  {
+    "authNum": "ATID-681",
+    "ids": [
+      "atid00681",
+      "atid00685",
+      "atid00688",
+      "atid00689"
+    ],
+    "pfx": "ATID"
+  },
+  {
+    "authNum": "ADN-783",
+    "ids": [
+      "adn00783",
+      "adn00784",
+      "adn00789",
+      "adn00758"
+    ],
+    "pfx": "ADN"
+  },
+  {
+    "authNum": "YUJ-061",
+    "ids": [
+      "yuj00061",
+      "yuj00065",
+      "yuj00068",
+      "yuj00066"
+    ],
+    "pfx": "YUJ"
+  },
+  {
+    "authNum": "KWBD-480",
+    "ids": [
+      "kwbd00480",
+      "kwbd00433",
+      "kwbd00427"
+    ],
+    "pfx": "KWBD"
+  },
+  {
+    "authNum": "LULU-443",
+    "ids": [
+      "lulu00443",
+      "lulu00442",
+      "lulu00441",
+      "lulu00439"
+    ],
+    "pfx": "LULU"
+  },
+  {
+    "authNum": "WAAA-668",
+    "ids": [
+      "waaa00668",
+      "waaa00666",
+      "waaa00663",
+      "waaa00662"
+    ],
+    "pfx": "WAAA"
+  },
+  {
+    "authNum": "STOL-148",
+    "ids": [
+      "stol00148",
+      "stol00147",
+      "stol00146"
+    ],
+    "pfx": "STOL"
+  },
+  {
+    "authNum": "NPJB-126",
+    "ids": [
+      "npjb00126",
+      "npjb00125",
+      "npjb00214",
+      "npjb00124"
+    ],
+    "pfx": "NPJB"
+  },
+  {
+    "authNum": "JJDA-076",
+    "ids": [
+      "jjda00076",
+      "jjda00075",
+      "jjda00074",
+      "jjda00073"
+    ],
+    "pfx": "JJDA"
+  },
+  {
+    "authNum": "DSAM-004",
+    "ids": [
+      "dsam00004",
+      "dsam00003",
+      "dsam00001"
+    ],
+    "pfx": "DSAM"
+  },
+  {
+    "authNum": "CAWD-998",
+    "ids": [
+      "cawd00998",
+      "cawd00993",
+      "cawd00964"
+    ],
+    "pfx": "CAWD"
+  },
+  {
+    "authNum": "CAWB-014",
+    "ids": [
+      "cawb00014",
+      "cawb00010",
+      "cawb00008",
+      "cawb00005"
+    ],
+    "pfx": "CAWB"
+  },
+  {
+    "authNum": "BMW-362",
+    "ids": [
+      "bmw00362",
+      "bmw00361",
+      "bmw00360"
+    ],
+    "pfx": "BMW"
+  },
+  {
+    "authNum": "IPVR-374",
+    "ids": [
+      "ipvr00374",
+      "ipvr00385",
+      "ipvr00376",
+      "ipvr00383"
+    ],
+    "pfx": "IPVR"
+  },
+  {
+    "authNum": "parathd-04490",
+    "ids": [
+      "parathd04490",
+      "parathd04491",
+      "parathd04481",
+      "parathd04488"
+    ],
+    "pfx": "PARATHD"
+  },
+  {
+    "authNum": "BRV-166",
+    "ids": [
+      "h_1755brv00166",
+      "h_1755brv00165",
+      "h_1755brv00163",
+      "h_1755brv00162"
+    ],
+    "pfx": "BRV"
+  },
+  {
+    "authNum": "MDVR-424",
+    "ids": [
+      "mdvr00424",
+      "mdvr00433",
+      "mdvr00426",
+      "mdvr00425"
+    ],
+    "pfx": "MDVR"
+  },
+  {
+    "authNum": "NACX-174",
+    "ids": [
+      "h_237nacx00174",
+      "h_237nacx00173",
+      "h_237nacx00172",
+      "h_237nacx00171"
+    ],
+    "pfx": "NACX"
+  },
+  {
+    "authNum": "ZMAR-163",
+    "ids": [
+      "h_237zmar00163",
+      "h_237zmar00162",
+      "h_237zmar00161",
+      "h_237zmar00160"
+    ],
+    "pfx": "ZMAR"
+  },
+  {
+    "authNum": "MAAN-1182",
+    "ids": [
+      "h_1711maan01182",
+      "h_1711maan01181",
+      "h_1711maan01180",
+      "h_1711maan01179"
+    ],
+    "pfx": "MAAN"
+  },
+  {
+    "authNum": "YSN-661",
+    "ids": [
+      "h_127ysn00661",
+      "h_127ysn00659",
+      "h_127ysn00660"
+    ],
+    "pfx": "YSN"
+  },
+  {
+    "authNum": "YST-354",
+    "ids": [
+      "540yst00354",
+      "540yst00355",
+      "540yst00353"
+    ],
+    "pfx": "YST"
+  },
+  {
+    "authNum": "CRNX-339",
+    "ids": [
+      "crnx00339",
+      "crnx00338",
+      "crnx00337",
+      "crnx00336"
+    ],
+    "pfx": "CRNX"
+  },
+  {
+    "authNum": "HHKL-247",
+    "ids": [
+      "hhkl00247",
+      "hhkl00245",
+      "hhkl00243",
+      "hhkl00241"
+    ],
+    "pfx": "HHKL"
+  },
+  {
+    "authNum": "ORECS-621",
+    "ids": [
+      "h_1732orecs00621",
+      "h_1732orecs00620",
+      "h_1732orecs00619",
+      "h_1732orecs00616"
+    ],
+    "pfx": "ORECS"
+  },
+  {
+    "authNum": "MBMU-321",
+    "ids": [
+      "h_460mbmu00321",
+      "h_460mbmu00320",
+      "h_460mbmu00318",
+      "h_460mbmu00317"
+    ],
+    "pfx": "MBMU"
+  },
+  {
+    "authNum": "XVT-071",
+    "ids": [
+      "xvt00071",
+      "xvt00070",
+      "xvt00069",
+      "xvt00068"
+    ],
+    "pfx": "XVT"
+  },
+  {
+    "authNum": "BEBL-055",
+    "ids": [
+      "bebl00055",
+      "bebl00051",
+      "bebl00050"
+    ],
+    "pfx": "BEBL"
+  },
+  {
+    "authNum": "AQUMA-149",
+    "ids": [
+      "aquma00149",
+      "aquma00148",
+      "aquma00146",
+      "aquma00145"
+    ],
+    "pfx": "AQUMA"
+  },
+  {
+    "authNum": "TOTTE-305",
+    "ids": [
+      "1totte00305",
+      "1totte00304",
+      "1totte00303",
+      "1totte00302"
+    ],
+    "pfx": "TOTTE"
+  },
+  {
+    "authNum": "KING-334",
+    "ids": [
+      "1king00334",
+      "1king00333",
+      "1king00332"
+    ],
+    "pfx": "KING"
+  },
+  {
+    "authNum": "TLDC-057",
+    "ids": [
+      "1tldc00057",
+      "1tldc00054",
+      "1tldc00055",
+      "1tldc00053"
+    ],
+    "pfx": "TLDC"
+  },
+  {
+    "authNum": "NPH-243",
+    "ids": [
+      "1nph00243",
+      "1nph00245",
+      "1nph00246",
+      "1nph00247"
+    ],
+    "pfx": "NPH"
+  },
+  {
+    "authNum": "GRMO-333",
+    "ids": [
+      "h_1534grmo00333",
+      "h_1534grmo00337",
+      "h_1534grmo00326",
+      "h_1534grmo00328"
+    ],
+    "pfx": "GRMO"
+  },
+  {
+    "authNum": "HTTM-0061",
+    "ids": [
+      "h_068httm00061",
+      "h_068httm00060",
+      "h_068httm00059",
+      "h_068httm00058"
+    ],
+    "pfx": "HTTM"
+  },
+  {
+    "authNum": "CRVR-421",
+    "ids": [
+      "crvr00421",
+      "crvr00419",
+      "crvr00416",
+      "crvr00417"
+    ],
+    "pfx": "CRVR"
+  },
+  {
+    "authNum": "TMAVR-284",
+    "ids": [
+      "55tmavr00284",
+      "55tmavr00283",
+      "55tmavr00282",
+      "55tmavr00279"
+    ],
+    "pfx": "TMAVR"
+  },
+  {
+    "authNum": "SIVR-495",
+    "ids": [
+      "sivr00495",
+      "sivr00494",
+      "sivr00492",
+      "sivr00479"
+    ],
+    "pfx": "SIVR"
+  },
+  {
+    "authNum": "SAN-466",
+    "ids": [
+      "h_796san00466",
+      "h_796san00467",
+      "h_796san00468",
+      "h_796san00469"
+    ],
+    "pfx": "SAN"
+  },
+  {
+    "authNum": "TPI-244",
+    "ids": [
+      "h_1422tpi00244",
+      "h_1422tpi00246",
+      "h_1422tpi00248",
+      "h_1422tpi00249"
+    ],
+    "pfx": "TPI"
+  },
+  {
+    "authNum": "DG-546",
+    "ids": [
+      "h_1596dg00546",
+      "h_1596dg00545",
+      "h_1596dg00544",
+      "h_1596dg00543"
+    ],
+    "pfx": "DG"
+  },
+  {
+    "authNum": "DHT-1348",
+    "ids": [
+      "59dht01348",
+      "59dht01347",
+      "59dht01352",
+      "59dht01351"
+    ],
+    "pfx": "DHT"
+  },
+  {
+    "authNum": "yrnknkjdvaj-00711",
+    "ids": [
+      "yrnknkjdvaj00711",
+      "yrnknkjdvaj00734",
+      "yrnknkjdvaj00727"
+    ],
+    "pfx": "YRNKNKJDVAJ"
+  },
+  {
+    "authNum": "AJVR-320",
+    "ids": [
+      "ajvr00320",
+      "ajvr00317",
+      "ajvr00316"
+    ],
+    "pfx": "AJVR"
+  },
+  {
+    "authNum": "GAS-543",
+    "ids": [
+      "71gas00543",
+      "71gas00542",
+      "71gas00541",
+      "71gas00540"
+    ],
+    "pfx": "GAS"
+  },
+  {
+    "authNum": "OFES-030",
+    "ids": [
+      "ofes00030",
+      "ofes00031",
+      "ofes00032",
+      "ofes00034"
+    ],
+    "pfx": "OFES"
+  },
+  {
+    "authNum": "SBP-394",
+    "ids": [
+      "1sbp00394",
+      "1sbp00393",
+      "1sbp00392",
+      "1sbp00391"
+    ],
+    "pfx": "SBP"
+  },
+  {
+    "authNum": "TCHB-070",
+    "ids": [
+      "tchb00070",
+      "tchb00069",
+      "tchb00067",
+      "tchb00066"
+    ],
+    "pfx": "TCHB"
+  },
+  {
+    "authNum": "hnf06-2",
+    "ids": [
+      "h_1651hnf0600002",
+      "h_1651hnf0600004",
+      "h_1651hnf0500001"
+    ],
+    "pfx": "HNF"
+  },
+  {
+    "authNum": "kist05-1",
+    "ids": [
+      "h_1651kist0500001",
+      "h_1651kist0400001",
+      "h_1651kist0400003"
+    ],
+    "pfx": "KIST"
+  },
+  {
+    "authNum": "Y-402",
+    "ids": [
+      "h_1651y00402",
+      "h_1651y00403",
+      "h_1651y00404",
+      "h_1651y00399"
+    ],
+    "pfx": "Y"
+  },
+  {
+    "authNum": "HNVR-178",
+    "ids": [
+      "hnvr00178",
+      "hnvr00195",
+      "hnvr00165",
+      "hnvr00176"
+    ],
+    "pfx": "HNVR"
+  },
+  {
+    "authNum": "MDVIJ-032",
+    "ids": [
+      "48mdvij00032",
+      "48mdvij00029",
+      "48mdvij00030",
+      "48mdvij00031"
+    ],
+    "pfx": "MDVIJ"
+  },
+  {
+    "authNum": "JKSR-741-01",
+    "ids": [
+      "h_1787jksr74101",
+      "h_1787jksr74102",
+      "h_1787jksr74103",
+      "h_1454jksr63803"
+    ],
+    "pfx": "JKSR"
+  },
+  {
+    "authNum": "MCSR-042-01",
+    "ids": [
+      "h_1787mcsr04201",
+      "h_1787mcsr04203",
+      "h_1787mcsr10901",
+      "h_1787mcsr10902"
+    ],
+    "pfx": "MCSR"
+  },
+  {
+    "authNum": "BDST-111-01",
+    "ids": [
+      "h_1454bdst11101",
+      "h_1454bdst11102",
+      "h_1454bdst11201",
+      "h_1454bdst11202"
+    ],
+    "pfx": "BDST"
+  },
+  {
+    "authNum": "BDSR-500-01",
+    "ids": [
+      "h_1454bdsr50001",
+      "h_1454bdsr50002",
+      "h_1454bdsr50003",
+      "h_1454bdsr50004"
+    ],
+    "pfx": "BDSR"
+  },
+  {
+    "authNum": "TSSR-045-09",
+    "ids": [
+      "h_1825tssr04509",
+      "h_1825tssr04508",
+      "h_1825tssr04507",
+      "h_1825tssr04506"
+    ],
+    "pfx": "TSSR"
+  },
+  {
+    "authNum": "SGSR-401-06",
+    "ids": [
+      "h_1454sgsr40106",
+      "h_1454sgsr40105",
+      "h_1454sgsr40104",
+      "h_1454sgsr40103"
+    ],
+    "pfx": "SGSR"
+  },
+  {
+    "authNum": "ITSR-153-03",
+    "ids": [
+      "h_1454itsr15303",
+      "h_1454itsr15302",
+      "h_1454itsr15301",
+      "57itsr00153"
+    ],
+    "pfx": "ITSR"
+  },
+  {
+    "authNum": "HUST-082-02",
+    "ids": [
+      "h_1454hust08202",
+      "h_1454hust08201",
+      "h_1454hust08003",
+      "h_1454hust08002"
+    ],
+    "pfx": "HUST"
+  },
+  {
+    "authNum": "HUSR-304-04",
+    "ids": [
+      "h_1454husr30404",
+      "h_1454husr30403",
+      "h_1454husr30402",
+      "h_1454husr30401"
+    ],
+    "pfx": "HUSR"
+  },
+  {
+    "authNum": "CHUC-180",
+    "ids": [
+      "h_491chuc00180",
+      "h_491chuc00179",
+      "h_491chuc00178",
+      "h_491chuc00177"
+    ],
+    "pfx": "CHUC"
+  },
+  {
+    "authNum": "KNMB-127",
+    "ids": [
+      "h_491knmb00127",
+      "h_491knmb00126",
+      "h_491knmb00125",
+      "h_491knmb00124"
+    ],
+    "pfx": "KNMB"
+  },
+  {
+    "authNum": "YAKO-095",
+    "ids": [
+      "h_1133yako00095",
+      "h_1133yako00092",
+      "h_1133yako00093"
+    ],
+    "pfx": "YAKO"
+  },
+  {
+    "authNum": "OEM-055",
+    "ids": [
+      "h_460oem00055",
+      "h_460oem00054",
+      "h_460oem00053"
+    ],
+    "pfx": "OEM"
+  },
+  {
+    "authNum": "HRSM-149",
+    "ids": [
+      "h_1745hrsm00149",
+      "h_1745hrsm00150",
+      "h_1745hrsm00146",
+      "h_1745hrsm00145"
+    ],
+    "pfx": "HRSM"
+  },
+  {
+    "authNum": "SKMJ-760",
+    "ids": [
+      "h_1324skmj00760",
+      "h_1324skmj00761",
+      "h_1324skmj00762",
+      "h_1324skmj00763"
+    ],
+    "pfx": "SKMJ"
+  },
+  {
+    "authNum": "EMTH-265",
+    "ids": [
+      "h_1638emth00265",
+      "h_1638emth00266",
+      "h_1638emth00269",
+      "h_1638emth00268"
+    ],
+    "pfx": "EMTH"
+  },
+  {
+    "authNum": "ZOOO-281",
+    "ids": [
+      "h_1515zooo00281",
+      "h_1515zooo00280",
+      "h_1515zooo00260",
+      "h_1515zooo00282"
+    ],
+    "pfx": "ZOOO"
+  },
+  {
+    "authNum": "BTH-368",
+    "ids": [
+      "h_1435bth00368",
+      "h_1435bth00367",
+      "h_1435bth00366",
+      "h_1435bth00365"
+    ],
+    "pfx": "BTH"
+  },
+  {
+    "authNum": "SPRO-180",
+    "ids": [
+      "h_1594spro00180",
+      "h_1594spro00179",
+      "h_1594spro00177",
+      "h_1594spro00175"
+    ],
+    "pfx": "SPRO"
+  },
+  {
+    "authNum": "VRNC-093",
+    "ids": [
+      "1vrnc00093",
+      "1vrnc00089",
+      "1vrnc00092",
+      "1vrnc00091"
+    ],
+    "pfx": "VRNC"
+  },
+  {
+    "authNum": "MGNL-173",
+    "ids": [
+      "1mgnl00173",
+      "1mgnl00171",
+      "1mgnl00170",
+      "1mgnl00172"
+    ],
+    "pfx": "MGNL"
+  },
+  {
+    "authNum": "DOKS-681",
+    "ids": [
+      "36doks00681",
+      "36doks00680",
+      "36doks00679",
+      "36doks00678"
+    ],
+    "pfx": "DOKS"
+  },
+  {
+    "authNum": "STCVS-049",
+    "ids": [
+      "1stcvs00049",
+      "1stcvs00048",
+      "1stcvs00047"
+    ],
+    "pfx": "STCVS"
+  },
+  {
+    "authNum": "opg-0029-03",
+    "ids": [
+      "h_1157opg02903",
+      "h_1157opg02902",
+      "h_1157opg02901"
+    ],
+    "pfx": "OPG"
+  },
+  {
+    "authNum": "NAGA-265",
+    "ids": [
+      "h_1566naga00265",
+      "h_1566naga00264",
+      "h_1566naga00263",
+      "h_1566naga00262"
+    ],
+    "pfx": "NAGA"
+  },
+  {
+    "authNum": "LKB-153",
+    "ids": [
+      "1lkb00153",
+      "1lkb00154",
+      "1lkb00158",
+      "1lkb00160"
+    ],
+    "pfx": "LKB"
+  },
+  {
+    "authNum": "GMZST-005",
+    "ids": [
+      "h_1780gmzst00005",
+      "h_1780gmzst00003",
+      "h_1780gmzst00004"
+    ],
+    "pfx": "GMZST"
+  },
+  {
+    "authNum": "GSUMK-004",
+    "ids": [
+      "h_1780gsumk00004",
+      "h_1780gsumk00002",
+      "h_1780gsumk00003",
+      "h_1780gsumk00001"
+    ],
+    "pfx": "GSUMK"
+  },
+  {
+    "authNum": "KOJA-055",
+    "ids": [
+      "1koja00055",
+      "1koja00056",
+      "1koja00054",
+      "1koja00053"
+    ],
+    "pfx": "KOJA"
+  },
+  {
+    "authNum": "KAVR-501",
+    "ids": [
+      "kavr00501",
+      "kavr00506",
+      "kavr00508",
+      "kavr00492"
+    ],
+    "pfx": "KAVR"
+  },
+  {
+    "authNum": "PXVRG-005",
+    "ids": [
+      "pxvrg00005",
+      "pxvrg00004",
+      "pxvrg00003"
+    ],
+    "pfx": "PXVRG"
+  },
+  {
+    "authNum": "PXVR-454",
+    "ids": [
+      "pxvr00454",
+      "pxvr00453",
+      "pxvr00452",
+      "pxvr00449"
+    ],
+    "pfx": "PXVR"
+  },
+  {
+    "authNum": "COSX-110",
+    "ids": [
+      "cosx00110",
+      "cosx00109",
+      "cosx00108"
+    ],
+    "pfx": "COSX"
+  },
+  {
+    "authNum": "FCVR-075",
+    "ids": [
+      "fcvr00075",
+      "fcvr00079",
+      "fcvr00074",
+      "fcvr00073"
+    ],
+    "pfx": "FCVR"
+  },
+  {
+    "authNum": "EKDV-822",
+    "ids": [
+      "ekdv00822",
+      "ekdv00820",
+      "ekdv00818",
+      "ekdv00819"
+    ],
+    "pfx": "EKDV"
+  },
+  {
+    "authNum": "ACHJ-086",
+    "ids": [
+      "achj00086",
+      "achj00085",
+      "achj00087"
+    ],
+    "pfx": "ACHJ"
+  },
+  {
+    "authNum": "OAE-312",
+    "ids": [
+      "oae00312",
+      "oae00308",
+      "oae00309",
+      "oae00313"
+    ],
+    "pfx": "OAE"
+  },
+  {
+    "authNum": "HHF-109",
+    "ids": [
+      "hhf00109",
+      "hhf00108",
+      "hhf00107",
+      "hhf00106"
+    ],
+    "pfx": "HHF"
+  },
+  {
+    "authNum": "esk09-4",
+    "ids": [
+      "h_1651esk0900004",
+      "h_1651esk0900003",
+      "h_1651esk0900002"
+    ],
+    "pfx": "ESK"
+  },
+  {
+    "authNum": "FCH-125",
+    "ids": [
+      "h_1711fch00125",
+      "h_1711fch00124",
+      "h_1711fch00123"
+    ],
+    "pfx": "FCH"
+  },
+  {
+    "authNum": "OFKU-247",
+    "ids": [
+      "h_1664ofku00247",
+      "h_1664ofku00246",
+      "h_1664ofku00245"
+    ],
+    "pfx": "OFKU"
+  },
+  {
+    "authNum": "DOKI-036",
+    "ids": [
+      "h_1664doki00036",
+      "h_1664doki00035",
+      "h_1664doki00034"
+    ],
+    "pfx": "DOKI"
+  },
+  {
+    "authNum": "MBMP-173",
+    "ids": [
+      "h_460mbmp00173",
+      "h_460mbmp00172",
+      "h_460mbmp00171",
+      "h_460mbmp00174"
+    ],
+    "pfx": "MBMP"
+  },
+  {
+    "authNum": "MBMA-269",
+    "ids": [
+      "h_460mbma00269",
+      "h_460mbma00267",
+      "h_460mbma00265",
+      "h_460mbma00262"
+    ],
+    "pfx": "MBMA"
+  },
+  {
+    "authNum": "DKRA-03003",
+    "ids": [
+      "dkra03003",
+      "dkra03002",
+      "dkra03001",
+      "dkra02901"
+    ],
+    "pfx": "DKRA"
+  },
+  {
+    "authNum": "MILK-294",
+    "ids": [
+      "h_1240milk00294",
+      "h_1240milk00296",
+      "h_1240milk00290"
+    ],
+    "pfx": "MILK"
+  },
+  {
+    "authNum": "IENFR-45102",
+    "ids": [
+      "1ienfr45102",
+      "1ienfr45103",
+      "1ienfr45101"
+    ],
+    "pfx": "IENFR"
+  },
+  {
+    "authNum": "SILK-204-2",
+    "ids": [
+      "1silk02042",
+      "1silk02022",
+      "1silk00198",
+      "1silk02041"
+    ],
+    "pfx": "SILK"
+  },
+  {
+    "authNum": "MXGS-1433",
+    "ids": [
+      "h_068mxgs01433",
+      "h_068mxgs01434",
+      "h_068mxgs01435"
+    ],
+    "pfx": "MXGS"
+  },
+  {
+    "authNum": "HDRT-00801",
+    "ids": [
+      "hdrt00801",
+      "hdrt00802",
+      "hdrt00803",
+      "hdrt00804"
+    ],
+    "pfx": "HDRT"
+  },
+  {
+    "authNum": "NHMSG-117",
+    "ids": [
+      "h_1597nhmsg00117",
+      "h_1597nhmsg00118",
+      "h_1597nhmsg00119",
+      "h_1597nhmsg00120"
+    ],
+    "pfx": "NHMSG"
+  },
+  {
+    "authNum": "GURHD-009",
+    "ids": [
+      "h_1780gurhd00009",
+      "h_1780gurhd00010",
+      "h_1780gurhd00011",
+      "h_1780gurhd00005"
+    ],
+    "pfx": "GURHD"
+  },
+  {
+    "authNum": "GSCSG-005",
+    "ids": [
+      "h_1780gscsg00005",
+      "h_1780gscsg00003",
+      "h_1780gscsg00004"
+    ],
+    "pfx": "GSCSG"
+  },
+  {
+    "authNum": "GMDMS-005",
+    "ids": [
+      "h_1780gmdms00005",
+      "h_1780gmdms00003",
+      "h_1780gmdms00004"
+    ],
+    "pfx": "GMDMS"
+  },
+  {
+    "authNum": "AIFXD-041",
+    "ids": [
+      "h_1639aifxd00041",
+      "h_1639aifxd00037",
+      "h_1639aifxd00035",
+      "h_1639aifxd00017"
+    ],
+    "pfx": "AIFXD"
+  },
+  {
+    "authNum": "JUVR-296",
+    "ids": [
+      "juvr00296",
+      "juvr00295",
+      "juvr00294"
+    ],
+    "pfx": "JUVR"
+  },
+  {
+    "authNum": "CJVR-056",
+    "ids": [
+      "cjvr00056",
+      "cjvr00061",
+      "cjvr00058"
+    ],
+    "pfx": "CJVR"
+  },
+  {
+    "authNum": "PTES-024",
+    "ids": [
+      "h_021ptes00024",
+      "h_021ptes00023",
+      "h_021ptes00022"
+    ],
+    "pfx": "PTES"
+  },
+  {
+    "authNum": "IENFA-44501",
+    "ids": [
+      "1ienfa44501",
+      "1ienfa44502",
+      "1ienfa44503",
+      "1ienfa44901"
+    ],
+    "pfx": "IENFA"
+  },
+  {
+    "authNum": "FTO-051",
+    "ids": [
+      "h_1784fto00051",
+      "h_1784fto00052",
+      "h_1784fto00054",
+      "h_1784fto00055"
+    ],
+    "pfx": "FTO"
+  },
+  {
+    "authNum": "YMDD-494",
+    "ids": [
+      "ymdd00494",
+      "ymdd00496",
+      "ymdd00495"
+    ],
+    "pfx": "YMDD"
+  },
+  {
+    "authNum": "GL-014",
+    "ids": [
+      "47gl00014",
+      "47gl00012",
+      "47gl00009",
+      "47gl00008"
+    ],
+    "pfx": "GL"
+  },
+  {
+    "authNum": "AIAS-359",
+    "ids": [
+      "149aias00359",
+      "149aias00426",
+      "149aias00712"
+    ],
+    "pfx": "AIAS"
+  },
+  {
+    "authNum": "HTF-038",
+    "ids": [
+      "h_1728htf00038",
+      "h_1728htf00037",
+      "h_1728htf00036",
+      "h_1728htf00035"
+    ],
+    "pfx": "HTF"
+  }
+]
