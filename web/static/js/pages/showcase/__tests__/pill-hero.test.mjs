@@ -54,7 +54,10 @@ register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.u
 
 const { stateVideos } = await import('../state-videos.js');
 const { stateActress } = await import('../state-actress.js');
-const { _setActresses } = await import('../state-base.js');
+// namespace import：_awaitHeroCardWithTimeout 在產品碼尚未 export 時，具名解構會讓整檔載入失敗；
+// 用 namespace 才能讓「產品碼還沒改」以斷言紅（而非 loader 炸）呈現。
+const stateBaseMod = await import('../state-base.js');
+const { _setActresses } = stateBaseMod;
 
 const STATE_BASE_SRC = readFileSync(new URL('../state-base.js', import.meta.url), 'utf8');
 
@@ -87,21 +90,60 @@ function countOccurrences(haystack, needle) {
 }
 
 /**
- * 從 init() 體內 applyFilterAndSort(true)～page=savedPage 之間抽出含
- * `_reconcileHeroCard` 的那一行（剝行尾註解），以 component 為 this 執行。
- * 行為契約必須跑產品碼那一行本身，否則 mutation 拿掉 guard／讓呼叫失效時測不到。
+ * CD-1 新契約：兩個錨點——
+ *   1. 「提前啟動」：restoreState() 之後、fetchVideos() 之前含 _reconcileHeroCard
+ *   2. 「await」：fetchVideos() 之後、applyFilterAndSort(true) 之前 await heroCardPromise
+ * eval span ＝ 提前啟動那一行 ＋ `await heroCardPromise;`（不 eval `_awaitHeroCardWithTimeout`
+ * ——模組作用域 binding 在 eval 裡取不到；await 行改由結構斷言鎖住）。
+ * AsyncFunction 承載 span：ESM 嚴格模式下 eval 無法直接吃 `await`。
  */
 function runInitReconcileLine(c) {
     const body = extractFnBody(STATE_BASE_SRC, 'async init()', 'init');
+    const restoreIdx = body.indexOf('this.restoreState()');
+    const fetchIdx = body.indexOf('await this.fetchVideos()');
     const applyIdx = body.indexOf('this.applyFilterAndSort(true)');
-    const pageIdx = body.indexOf('this.page = savedPage');
-    assert.ok(applyIdx >= 0 && pageIdx >= 0, 'init() 應含 applyFilterAndSort(true) 與 page = savedPage');
-    assert.ok(applyIdx < pageIdx, 'applyFilterAndSort(true) 應在 page = savedPage 之前');
-    const between = body.slice(applyIdx, pageIdx);
-    const lineMatch = between.match(/[^\n]*_reconcileHeroCard[^\n]*/);
-    assert.ok(lineMatch, 'init() 在 applyFilterAndSort(true) 與 page = savedPage 之間應含 _reconcileHeroCard');
-    const line = lineMatch[0].replace(/\/\/[^\n]*$/, '').trim();
-    return (function () { return eval(line); }).call(c);
+    assert.ok(
+        restoreIdx >= 0 && fetchIdx >= 0 && applyIdx >= 0,
+        'init() 應含 restoreState()、await fetchVideos()、applyFilterAndSort(true)',
+    );
+    assert.ok(restoreIdx < fetchIdx, 'restoreState() 應在 fetchVideos() 之前');
+
+    // 「提前啟動」段：restoreState() 之後、fetchVideos() 之前，必須含 _reconcileHeroCard 呼叫
+    const startZone = body.slice(restoreIdx, fetchIdx);
+    const startMatch = startZone.match(/[^\n]*_reconcileHeroCard[^\n]*/);
+    assert.ok(
+        startMatch,
+        '[pill-hero:CD-1-start] init() 在 restoreState() 之後、fetchVideos() 之前應含提前啟動 _reconcileHeroCard 的那一行',
+    );
+    const startLine = startMatch[0].replace(/\/\/[^\n]*$/, '').trim();
+    const startOffset = restoreIdx + startZone.indexOf(startMatch[0]);
+
+    // 「await」段：fetchVideos() 之後、applyFilterAndSort(true) 之前，必須 await 上面啟動的 promise
+    const awaitZone = body.slice(fetchIdx, applyIdx);
+    const awaitMatch = awaitZone.match(/[^\n]*await[^\n]*heroCardPromise[^\n]*/);
+    assert.ok(
+        awaitMatch,
+        '[pill-hero:CD-1-await] init() 在 fetchVideos() 之後、applyFilterAndSort(true) 之前應 await 提前啟動的 heroCardPromise',
+    );
+    const awaitOffset = fetchIdx + awaitZone.indexOf(awaitMatch[0]);
+
+    assert.ok(
+        startOffset < awaitOffset,
+        '[pill-hero:CD-1-order] 提前啟動那一行必須在 await 那一行之前（不得原地不動、也不得順序反轉）',
+    );
+
+    // eval span ＝ 提前啟動行 ＋ await heroCardPromise;（不 eval _awaitHeroCardWithTimeout）
+    const span = `${startLine}\nawait heroCardPromise;`;
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+    try {
+        return AsyncFunction(span).call(c);
+    } catch (e) {
+        throw new Error(
+            `[pill-hero:CD-1-eval] 擷取到的那一行無法單獨執行——heroCardPromise 的賦值是否被換成多行了？`
+            + `見 state-base.js 該行註解「單行：pill-hero.test.mjs 以單行 regex 擷取本行並 eval，勿換行」。`
+            + `擷取到的內容：${JSON.stringify(span)}；原始錯誤：${e.message}`,
+        );
+    }
 }
 
 /**
@@ -315,24 +357,34 @@ test('call site 9/9 — _setReleasePill() 觸發 _reconcileHeroCard（124a 起�
 
 // ===== 129-T3：call site 8/9 — init() 回頁重算大卡（S2）=====
 
-test('init() 源碼形狀：_reconcileHeroCard 帶 showFavoriteActresses guard，位於 applyFilterAndSort(true) 之後、page = savedPage 之前', () => {
+test('init() 源碼形狀：_reconcileHeroCard 以 showFavoriteActresses 三元閘門提前啟動，await 在 applyFilterAndSort(true) 之前', () => {
     const body = extractFnBody(STATE_BASE_SRC, 'async init()', 'init');
     const applyLit = 'this.applyFilterAndSort(true)';
     const pageLit = 'this.page = savedPage';
     const reconcileLit = '_reconcileHeroCard()';
+    // countOccurrences 三條原封不動（CD-C1 之後仍是唯一呼叫點）
     assert.equal(countOccurrences(body, applyLit), 1, 'init() 體內 applyFilterAndSort(true) 應恰好一次');
     assert.equal(countOccurrences(body, pageLit), 1, 'init() 體內 page = savedPage 應恰好一次');
     assert.equal(countOccurrences(body, reconcileLit), 1, 'init() 體內 _reconcileHeroCard() 應恰好一次');
+    // guard regex 重新指向三元形狀；「女優牆不呼叫」不變式不得消失
     assert.ok(
-        /if\s*\(\s*!this\.showFavoriteActresses\s*\)\s*this\._reconcileHeroCard\(\)/.test(body),
-        'init() 的 _reconcileHeroCard 呼叫必須帶 !this.showFavoriteActresses guard',
+        /this\.showFavoriteActresses\s*\?[^\n]*:\s*this\._reconcileHeroCard\(\)/.test(body),
+        'init() 的 _reconcileHeroCard 呼叫必須以 showFavoriteActresses 三元為閘（女優牆走 Promise.resolve）',
     );
+    // 六點鏈：restoreIdx < reconcileIdx < fetchIdx 且 awaitIdx < applyIdx < pageIdx
+    const restoreIdx = body.indexOf('this.restoreState()');
+    const fetchIdx = body.indexOf('await this.fetchVideos()');
+    const reconcileIdx = body.indexOf(reconcileLit);
+    const awaitIdx = body.indexOf('_awaitHeroCardWithTimeout');
     const applyIdx = body.indexOf(applyLit);
     const pageIdx = body.indexOf(pageLit);
-    const reconcileIdx = body.indexOf(reconcileLit);
+    assert.ok(restoreIdx >= 0, 'init() 應含 restoreState()');
+    assert.ok(fetchIdx >= 0, 'init() 應含 await this.fetchVideos()');
+    assert.ok(awaitIdx >= 0, 'init() 應含 _awaitHeroCardWithTimeout');
     assert.ok(
-        applyIdx < reconcileIdx && reconcileIdx < pageIdx,
-        '_reconcileHeroCard() 必須在 applyFilterAndSort(true) 之後、page = savedPage 之前',
+        restoreIdx < reconcileIdx && reconcileIdx < fetchIdx
+            && awaitIdx < applyIdx && applyIdx < pageIdx,
+        '六點鏈：restoreState < _reconcileHeroCard < fetchVideos 且 _awaitHeroCardWithTimeout < applyFilterAndSort < page=savedPage',
     );
 });
 
@@ -491,4 +543,59 @@ test('call site 3/9（真身）— confirmRemoveActress() 後 hero 狀態依規�
     }
     assert.equal(c._isPreciseActressMatch, false, '移除最愛後仍須依 pill 規則重算，不得停在舊的顯示狀態');
     assert.equal(c._matchedActress, null);
+});
+
+// ===== TASK-138-T1：_awaitHeroCardWithTimeout 行為（import 真身，不 stub）=====
+// HERO_CARD_RECONCILE_TIMEOUT_MS = 300（卡死保險）；四案例對應 card 補充段第 2 條。
+
+test('_awaitHeroCardWithTimeout：promise 早於逾時 resolve → 包裝也早 resolve（不空等滿逾時）', async () => {
+    const fn = stateBaseMod._awaitHeroCardWithTimeout;
+    assert.equal(typeof fn, 'function', '_awaitHeroCardWithTimeout 必須是 module-level export function');
+    const t0 = Date.now();
+    await fn(new Promise((resolve) => setTimeout(resolve, 20)));
+    const elapsed = Date.now() - t0;
+    assert.ok(elapsed < 200, `應在逾時門檻前 resolve，實際耗時 ${elapsed}ms`);
+});
+
+test('_awaitHeroCardWithTimeout：promise 慢於逾時 → 包裝在逾時點 resolve，且原 promise 仍跑到完成', async () => {
+    const fn = stateBaseMod._awaitHeroCardWithTimeout;
+    assert.equal(typeof fn, 'function', '_awaitHeroCardWithTimeout 必須是 module-level export function');
+    let originalFinished = false;
+    const slow = new Promise((resolve) => {
+        setTimeout(() => { originalFinished = true; resolve(); }, 500);
+    });
+    const t0 = Date.now();
+    await fn(slow);
+    const elapsed = Date.now() - t0;
+    assert.ok(elapsed >= 250 && elapsed < 450, `應約在 300ms 逾時點 resolve，實際耗時 ${elapsed}ms`);
+    assert.equal(originalFinished, false, '逾時點當下原 promise 尚未完成（證明包裝沒有空等它）');
+    await slow;
+    assert.equal(originalFinished, true, '原 promise 必須繼續跑到完成（CD-C3：不得取消 in-flight）');
+});
+
+test('_awaitHeroCardWithTimeout：傳入 undefined／非 Promise → 立即 resolve 不 hang', async () => {
+    const fn = stateBaseMod._awaitHeroCardWithTimeout;
+    assert.equal(typeof fn, 'function', '_awaitHeroCardWithTimeout 必須是 module-level export function');
+    const t0 = Date.now();
+    await fn(undefined);
+    await fn(42);
+    await fn(null);
+    const elapsed = Date.now() - t0;
+    assert.ok(elapsed < 100, `非 Promise 輸入應立即 resolve，實際耗時 ${elapsed}ms`);
+});
+
+test('_awaitHeroCardWithTimeout：傳入會 reject 的 promise → 包裝仍 resolve、不產生 unhandled rejection', async () => {
+    const fn = stateBaseMod._awaitHeroCardWithTimeout;
+    assert.equal(typeof fn, 'function', '_awaitHeroCardWithTimeout 必須是 module-level export function');
+    const unhandled = [];
+    const onUnhandled = (reason) => { unhandled.push(reason); };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+        await fn(Promise.reject(new Error('boom')));
+        // 給 microtask 一個機會浮出 unhandled rejection
+        await new Promise((r) => setImmediate(r));
+        assert.equal(unhandled.length, 0, '不得產生 unhandled rejection');
+    } finally {
+        process.off('unhandledRejection', onUnhandled);
+    }
 });

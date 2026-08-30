@@ -177,7 +177,8 @@ export function stateActress() {
                 this._matchedActress = found;
                 this._preciseMatchSource = source;
                 // T5: hero card 出現動畫 — 只在 is_favorite 時觸發（card 才會 x-show=true）
-                if (found.is_favorite && !this.showFavoriteActresses) {
+                // TASK-138-T1（CD-C5）：init first-frame 窗口內不播；逾時降級後旗標已 false，晚到仍會播
+                if (found.is_favorite && !this.showFavoriteActresses && !this._heroCardReconcilePending) {
                     var self = this;
                     this.$nextTick(function () {
                         requestAnimationFrame(function () {
@@ -286,6 +287,7 @@ export function stateActress() {
                 var self = this;
                 this.$nextTick(function () { requestAnimationFrame(function () {
                     if (self._animGeneration !== gen) return;
+                    if (!self.showFavoriteActresses) return;  // CD-C4：playEntry 只在女優模式播，影片模式的觸發是誤傷
                     var grid = self._getActiveGrid();
                     window.ShowcaseAnimations?.playEntry?.(grid);
                 }); });

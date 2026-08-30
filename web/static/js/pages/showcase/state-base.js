@@ -52,6 +52,20 @@ export var _nameToGroup = {};  // { "舊名": ["新名", "舊名"], "新名": [.
 export var _aliasMapLoaded = false;
 
 /**
+ * TASK-138-T1（CD-C3）：逾時降級包裝。逾時後立即 resolve，但不取消原 promise
+ * （不得用 Promise.race 丟棄）。角色是卡死保險，不是 API 預算。
+ * module-level export（比照 _loadAliasMap）——pill-hero.test.mjs 的 makeComponent
+ * 不含 state-base 方法；若寫成 factory method，runInitReconcileLine eval 會 TypeError。
+ */
+export var HERO_CARD_RECONCILE_TIMEOUT_MS = 300;
+export function _awaitHeroCardWithTimeout(promise) {
+    return new Promise((resolve) => {
+        const timer = setTimeout(resolve, HERO_CARD_RECONCILE_TIMEOUT_MS);
+        Promise.resolve(promise).finally(() => { clearTimeout(timer); resolve(); }).catch(() => {});
+    });
+}
+
+/**
  * 45-P2 fix: 獨立載入 alias map，init() 時無條件呼叫。
  * 冪等：已載入時直接 return。
  */
@@ -305,6 +319,7 @@ export function stateBase() {
         perPage: 90,
         totalPages: 1,
         _animGeneration: 0,  // B13: 防止 stale deferred callback
+        _heroCardReconcilePending: false,  // TASK-138-T1（CD-C5）：init first-frame 窗口；非 $persist
 
         // --- 生命週期 ---
         async init() {
@@ -333,6 +348,12 @@ export function stateBase() {
 
             this.restoreState();        // M2c: 先恢復狀態
             const savedPage = this.page;
+
+            // TASK-138-T1（CD-C1）：提前啟動 hero 卡判斷，與 fetchVideos() 平行。
+            // 保留 promise，稍後在 applyFilterAndSort 之前 await——不是 fire-and-forget。
+            this._heroCardReconcilePending = true;   // CD-C5：init 作用域旗標，非持久化
+            var heroCardPromise = this.showFavoriteActresses ? Promise.resolve() : this._reconcileHeroCard();  // 單行：pill-hero.test.mjs 以單行 regex 擷取本行並 eval，勿換行
+
             await this.fetchVideos();
             // 57e hotfix：fire-and-forget warm-up SimilarRankerCache，避免 magic icon 首次點擊 cold-start race。
             // 失敗靜默（端點不存在的舊 server / 網路斷線都不影響 showcase 主流程）。
@@ -342,8 +363,13 @@ export function stateBase() {
             await _loadCoverBadgeManifest();
             _recomputeAllBadges();
             if (this.showFavoriteActresses) { this.loadActresses(); }
+
+            // CD-C3：逾時降級，不取消 in-flight 判斷
+            await _awaitHeroCardWithTimeout(heroCardPromise);
+            this._heroCardReconcilePending = false;   // CD-C5：first-frame 窗口結束
+
             this.applyFilterAndSort(true);  // M4a: 套用搜尋篩選（跳過 pagination，下面統一處理）
-            if (!this.showFavoriteActresses) this._reconcileHeroCard();  // 129-T3 / CD-129-2：回頁重算大卡（S2）
+            // 129-T3 的回頁重算已提前到 restoreState 之後平行啟動（見上），此處不再呼叫
             this.page = savedPage;          // 恢復儲存的頁碼
             this.updatePagination();        // 單次分頁（會 clamp 超出範圍的頁碼）
 
