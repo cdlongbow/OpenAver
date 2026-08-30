@@ -12,7 +12,14 @@ import { browseDirState }          from '@/shared/state-browse-dir.js';
 import { toastState }              from '@/shared/state-toast.js';
 import { mergeState }              from '@/shared/merge-state.js';
 
-function searchPage() {
+let _dragTimeoutHandle = null;
+
+// TASK-138-T3（CD-A2）：逾時門檻需 > 瀏覽器原生 dragover 心跳間隔（WHATWG 規範值 350ms）。
+// 目前實測值與安全餘裕見 plan-138.md「CD-A2」。兩頁常數值與本注解必須逐字相同（CD-A5）。
+// 必須 export——測試要 import 這個常數本身去驅動 mock.timers.tick()，不得在測試檔裡另抄一份數字。
+export const DRAG_OVERLAY_TIMEOUT_MS = 1200; // 待 T3 實測覆核（見「驗證方式」CD-A2 量測步驟）
+
+export function searchPage() {
     return mergeState(
         searchStateBase(),
         searchStatePersistence(),
@@ -28,37 +35,35 @@ function searchPage() {
         toastState(),
         {
             // ===== 頁面組裝層 lifecycle（從 state/index.js 搬移）=====
-            _initDragEvents() {
-                let dragCounter = 0;
+            _armDragHeartbeat(e) {
+                if (!e.dataTransfer.types.includes('Files')) return;
+                if (!this.dragActive) this.dragActive = true;   // CD-A4：值沒變就不寫
+                clearTimeout(_dragTimeoutHandle);
+                _dragTimeoutHandle = setTimeout(() => this._onDragTimeout(), DRAG_OVERLAY_TIMEOUT_MS);
+            },
 
+            _onDragTimeout() {
+                if (this.dragActive) this.dragActive = false;   // CD-A4
+                _dragTimeoutHandle = null;
+            },
+
+            _onDrop(e) {
+                clearTimeout(_dragTimeoutHandle);
+                _dragTimeoutHandle = null;
+                if (this.dragActive) this.dragActive = false;
+                if (typeof window.pywebview === 'undefined') {
+                    this.handleFileDrop(e.dataTransfer.files);
+                }
+            },
+
+            _initDragEvents() {
                 document.addEventListener('dragover', (e) => {
                     e.preventDefault();
+                    this._armDragHeartbeat(e);
                 });
-
-                document.addEventListener('dragenter', (e) => {
-                    e.preventDefault();
-                    dragCounter++;
-                    if (e.dataTransfer.types.includes('Files')) {
-                        this.dragActive = true;
-                    }
-                });
-
-                document.addEventListener('dragleave', (e) => {
-                    e.preventDefault();
-                    dragCounter--;
-                    if (dragCounter === 0) {
-                        this.dragActive = false;
-                    }
-                });
-
                 document.addEventListener('drop', (e) => {
                     e.preventDefault();
-                    dragCounter = 0;
-                    this.dragActive = false;
-                    // PyWebView 環境由 Python 端處理
-                    if (typeof window.pywebview === 'undefined') {
-                        this.handleFileDrop(e.dataTransfer.files);
-                    }
+                    this._onDrop(e);
                 });
             },
 

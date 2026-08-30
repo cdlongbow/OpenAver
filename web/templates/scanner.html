@@ -12,9 +12,7 @@
 
 {% block content %}
 <div class="avlist-container ds-gallery-composition" x-data="scanner"
-     @dragenter.document="handleDragEnter($event)"
-     @dragleave.document="handleDragLeave($event)"
-     @dragover.document.prevent
+     @dragover.document.prevent="handleDragOver($event)"
      @drop.document.prevent="handleDrop($event)"
      @keydown.escape.window="dirtyCheckModalOpen && dirtyCheckCancel(); missingConfirmModalOpen && cancelLargeMissingEnrich(); deleteAliasGroupModalOpen && cancelDeleteAliasGroupModal(); deleteTagAliasGroupModalOpen && cancelDeleteTagAliasGroupModal(); copyFailModalOpen && closeCopyFailModal(); readonlyConfirmModalOpen && readonlyConfirmCancel();">
     <!-- Drag Overlay (must be inside x-data scope) -->
