@@ -4392,6 +4392,43 @@ const RULES = [
     pattern: 'components/toast-store.js',
     note: '[131b-T3] 少這一行，$store.toast 是 undefined：五頁的 toast 容器綁定當場 TypeError，而且 this.showToast(...) 會往呼叫端拋——使用者按「重新刮削」「複製路徑」「儲存設定」不但沒有提示，那個函式後面那半段也不會跑',
   },
+
+  // ---- [lint-guard 137-T1] showcase.html 三條假綠接線補守衛（plan-137 CD-3/CD-4） ----
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'x-show="part.clickable"',
+    scope: { anchor: /<div class="card-info actress-card-info"/, window: 600 },
+    note: '[lint-guard 137-T1 #1] 拔掉這條 → 女優卡資訊區「不該可點」的欄位（如空白年齡）同時出現純文字和一個可點連結，點下去篩出空結果（來源 TASK-136a-T4.md:106-113），scope 錨到 .actress-card-info 區塊（anchor 距 target 473 字元，window=600，與 #2 的 anchor 相距 12812 字元，不重疊）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'x-show="part.clickable"',
+    scope: { anchor: /<div class="lb-actress-core"/, window: 600 },
+    note: '[lint-guard 137-T1 #2] 拔掉這條 → 女優燈箱 metadata「不該可點」的欄位同時出現純文字和一個可點連結，重複顯示（來源 TASK-136a-T4.md:106-113），scope 錨到 .lb-actress-core 區塊（anchor 距 target 499 字元，window=600，與 #1 的 anchor 相距 12812 字元，不重疊）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: '@input.debounce.300ms="onSearchChange()"',
+    note: '[lint-guard 137-T1 #5] 拔掉這條 → 瀏覽頁搜尋框打字完全不篩選（來源 TASK-136a-T4.md:106-113）',
+  },
+
+  // ---- [lint-guard 137-T2] search.html / chip-editor.js / scanner.html 三條假綠接線補守衛（plan-137 CD-3/CD-4） ----
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: '@error="handleHeroLightboxError($event)"',
+    note: '[lint-guard 137-T2 #8] 拔掉這條 → 搜尋頁燈箱封面載入失敗時，破圖救援不啟動（來源 TASK-136a-T4.md:106-113）',
+  },
+  {
+    file: 'web/static/js/pages/settings/chip-editor.js', kind: 'required-string',
+    pattern: 'tokenize(text, this.whitelist)',
+    scope: { anchor: /_onPaste\s*\(\s*e\s*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 137-T2 #12] 拔掉這條 → 設定頁命名格式貼上文字沒有反應（來源 TASK-136a-T4.md:106-113），scope 錨到 _onPaste 方法體（同字面 tokenize(text, this.whitelist) 在 drop handler :185 也有一份，scope 外，不 scope 會 fail-open）',
+  },
+  {
+    file: 'web/templates/scanner.html', kind: 'required-string',
+    pattern: '@drop.document.prevent="handleDrop($event)"',
+    note: '[lint-guard 137-T2 #13] 拔掉這條 → 掃描頁拖放資料夾整個失效（同層 @dragover.document.prevent 還在，看起來像可以拖，放開卻沒事；.prevent 修飾詞被單拔也會紅，來源 TASK-136a-T4.md:106-113）',
+  },
 ];
 
 // ---- helpers ----
