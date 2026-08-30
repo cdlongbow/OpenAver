@@ -466,14 +466,22 @@
                  @click="openHeroCardLightbox()">
               <div class="av-card-preview-img">
                 <!-- 67-A3: hero 三態（actress photo，獨立 _heroCardImageLoaded，CD-67-4）。首屏 eager+high -->
+                <!-- TASK-138-T5（CD-E1/E2）：hero 卡焦點裁切接線。
+                     applyCellFocal 用 2 引數（省略第三參數 ⇒ 預設 --poster-crop-ratio）——
+                     CD-100b：hero 卡要跟同一列的影片卡對齊裁窗，不得抄女優卡 3 引數
+                     --actress-crop-ratio（抄錯不會報錯，只會裁得不一致）。
+                     $watch 路徑一律用 ?.——_matchedActress 在沒有精準命中時是 null，
+                     影片卡／女優卡 watch 的是 x-for 迴圈變數（永遠存在），那個形狀不能照抄。 -->
                 <img :src="_matchedActress?.photo_url || ''"
                      :alt="_matchedActress?.name"
                      loading="eager"
                      fetchpriority="high"
                      x-show="_matchedActress?.photo_url && !_heroCardImageError"
                      :class="{ 'cover-loaded': _heroCardImageLoaded }"
-                     @load="_heroCardImageLoaded = true"
-                     @error="if (_matchedActress?.photo_url) _heroCardImageError = true">
+                     @load="_heroCardImageLoaded = true; applyCellFocal($el, _matchedActress)"
+                     @error="if (_matchedActress?.photo_url) _heroCardImageError = true"
+                     x-init="$watch('_matchedActress?.auto_focal', () => applyCellFocal($el, _matchedActress));
+                             $watch('_matchedActress?.crop_mode', () => applyCellFocal($el, _matchedActress))">
                 <!-- 67-A3: skeleton overlay。gate 含 photo_url（空 photo 的 img src="" 不觸發 @load/@error → 不卡 shimmer，鏡射 grid cover_url gate）-->
                 <div class="skeleton-cover shimmer"
                      x-show="_matchedActress?.photo_url && !_heroCardImageError && !_heroCardImageLoaded"></div>

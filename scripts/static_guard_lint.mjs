@@ -4445,6 +4445,14 @@ const RULES = [
     scope: { anchor: /<div class="av-card-preview hero-card"/, window: 7000 },
     note: '[lint-guard 138-T4] 拔掉這條 → hero 卡標籤補白列被接到別的函式（或整段被刪），使用者展開資訊時看到的是垃圾資料或空白（window 實測：anchor→hero 卡區塊結束 4385 字元、同字面下游無第二處；以同錨點下游第一個 class="info-link"（影片卡 metadata）10135 字元為上界參考 ⇒ 安全區間 (4385, 10135)，取 7000 兩側各留 2615／3135 餘裕；太小會漏掉外層 x-show／補白列 x-show／x-for 三處之一＝假綠，太大只是 scope 變寬）',
   },
+
+  // ---- [lint-guard 138-T5] showcase.html hero 卡焦點裁切接線正向鎖（TASK-138-T5 CD-E5） ----
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'applyCellFocal($el, _matchedActress', count: 3,
+    scope: { anchor: /<div class="av-card-preview hero-card"/, window: 7500 },
+    note: '[lint-guard 138-T5] 拔掉這條 → 使用者在直式海報格拖完對焦按確認，hero 卡的圖一動也不動（window 實測：anchor→hero 卡區塊結束 5040 字元、同字面下游無第二處；以同錨點下游第一個 class="info-link"（影片卡 metadata）10790 字元為上界參考 ⇒ 安全區間 (5040, 10790)，取 7500 兩側各留 2460／3290 餘裕；count:3 鎖 @load＋兩條 $watch，只拔 @load 也會紅；太小會漏掉三件套之一＝假綠，太大只是 scope 變寬）',
+  },
 ];
 
 // ---- helpers ----
