@@ -4397,8 +4397,8 @@ const RULES = [
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
     pattern: 'x-show="part.clickable"',
-    scope: { anchor: /<div class="card-info actress-card-info"/, window: 600 },
-    note: '[lint-guard 137-T1 #1] 拔掉這條 → 女優卡資訊區「不該可點」的欄位（如空白年齡）同時出現純文字和一個可點連結，點下去篩出空結果（來源 TASK-136a-T4.md:106-113），scope 錨到 .actress-card-info 區塊（anchor 距 target 473 字元，window=600，與 #2 的 anchor 相距 12812 字元，不重疊）',
+    scope: { anchor: /x-show="infoVisible && _actressInfoParts\(actress\)\.length"/, window: 600 },
+    note: '[lint-guard 137-T1 #1] 拔掉這條 → 女優卡資訊區「不該可點」的欄位（如空白年齡）同時出現純文字和一個可點連結，點下去篩出空結果（來源 TASK-136a-T4.md:106-113）。**anchor 於 138-T2 改精確**：原本錨 `<div class="card-info actress-card-info"` 是 first-match，138-T2 讓 hero 卡也用同一組 class 之後會先命中 hero 卡區塊（那裡依 CD-B3 刻意不可點）⇒ 誤報。改錨女優牆獨有的 `_actressInfoParts(actress)`（hero 卡傳的是 `_matchedActress`），守的區塊與 pattern 一字未變（anchor 距 target 約 408 字元，window=600）',
   },
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
@@ -4428,6 +4428,14 @@ const RULES = [
     file: 'web/templates/scanner.html', kind: 'required-string',
     pattern: '@drop.document.prevent="handleDrop($event)"',
     note: '[lint-guard 137-T2 #13] 拔掉這條 → 掃描頁拖放資料夾整個失效（同層 @dragover.document.prevent 還在，看起來像可以拖，放開卻沒事；.prevent 修飾詞被單拔也會紅，來源 TASK-136a-T4.md:106-113）',
+  },
+
+  // ---- [lint-guard 138-T2] showcase.html hero 卡展開資訊區純文字渲染反向鎖（TASK-138-T2 CD-B7） ----
+  {
+    file: 'web/templates/showcase.html', kind: 'forbidden-string',
+    pattern: ['class="info-link"', '_onActressCardMetadataClick'],
+    scope: { anchor: /<div class="av-card-preview hero-card"/, window: 6000 },
+    note: '[lint-guard 138-T2] 拔掉這條 → hero 卡的年齡／身高變成可點，使用者點了沒有任何反應（window 實測：anchor→hero 卡區塊結束 3782 字元、anchor→下游第一個合法 class="info-link" 9532 字元（該處是**影片卡** metadata 連結；女優牆的在 23570）⇒ 安全區間 (3782, 9532)，取 6000 兩側各留 2218／3532 餘裕；太小會漏掉區塊尾端的違規＝fail-open，太大會誤抓下游的合法字面）',
   },
 ];
 

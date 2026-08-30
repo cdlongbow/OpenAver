@@ -422,6 +422,7 @@
     :is(#ds-gallery-components, .ds-gallery-composition) .actress-card-footer .footer-default .actress-sort-indicator,
     :is(#ds-gallery-components, .ds-gallery-composition) .actress-card-footer .footer-default .av-actress { display: none; }
     .actress-card > .actress-card-info { font-size: 0.7rem; }   /* (0,2,0) 勝後方的 .card-info (0,1,0)，CD-124b-8② */
+    .hero-card > .actress-card-info { font-size: 0.7rem; }
 
     /* T11：≤480px hero 卡（女優精準匹配入口）改直式 poster 比例，對齊同列 0.71 鄰卡 → 消 row 死白/錯位。
        值引用 --poster-crop-ratio（與鄰卡同源，單一真理）。img 改 object-fit:cover（女優照 0.826 略寬胖，

@@ -499,7 +499,7 @@
                   <span class="av-actress"
                         x-text="_matchedActress?.age ? _matchedActress.age + t('search.unit.age') : ''"></span>
                 </div>
-                <div class="footer-hover" x-show="_matchedActress">
+                <div class="footer-hover" x-show="_matchedActress && !infoVisible">
                   <div class="hover-title"
                        x-text="[
                          _matchedActress?.height || '',
@@ -507,6 +507,15 @@
                          [_matchedActress?.bust, _matchedActress?.waist, _matchedActress?.hip].filter(Boolean).join('-')
                        ].filter(Boolean).join(' · ') || '-'"></div>
                 </div>
+              </div>
+              <!-- TASK-138-T2（CD-B1/B2/B3/B4）：hero 卡展開資訊區，鏡射女優卡 :796-807，
+                   純顯示不可點（spec #1）。資料直接呼叫既有 _actressInfoParts()，不新增 state。 -->
+              <div class="card-info actress-card-info"
+                   x-show="infoVisible && _actressInfoParts(_matchedActress).length"
+                   x-cloak @click.stop>
+                  <template x-for="(part, i) in _actressInfoParts(_matchedActress)" :key="i">
+                      <span x-text="part.text"></span>
+                  </template>
               </div>
             </div>
             <template x-for="(video, index) in paginatedVideos" :key="video.path">
