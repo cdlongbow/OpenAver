@@ -41,7 +41,7 @@ max-complexity = 30
 
 # ── 分層契約（import-linter，CLI: lint-imports；跑在 CI 的 lint-frontend job）──
 [tool.importlinter]
-root_packages = ["core", "web"]
+root_packages = ["core", "web", "windows"]
 
 [[tool.importlinter.contracts]]
 name = "core must not import web"
@@ -54,3 +54,9 @@ forbidden_modules = ["web"]
 # scraper／search／showcase／similar／tag_alias／tags），等同強迫一次全站 service 化重構；
 # 該重構範圍已於 109 討論中被否決（根因不在分層，投資 2/3 會打在不受益的位置）。
 # 是刻意不鎖、不是漏寫。理由見 feature/110-governance-and-security/spec-110a.md §2.1 / D1。
+
+[[tool.importlinter.contracts]]
+name = "core must not import windows"
+type = "forbidden"
+source_modules = ["core"]
+forbidden_modules = ["windows"]

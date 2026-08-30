@@ -546,6 +546,7 @@ export function stateSimilar() {
       await this._preloadImages(newData.results.slice(0, 8).map(r => r.cover_url));
 
       const prevVisible = new Set(this.similarVisibleSlots);
+      // ※ 此處無自動化覆蓋，見 shared/constellation/anchors.js 的 pickEight 上方註解
       const nextVisible = pickEight(slotId, prevVisible, Math.random);
       const isPRM = !!(window.OpenAver && window.OpenAver.prefersReducedMotion);
 
@@ -762,6 +763,7 @@ export function stateSimilar() {
         // 56c-T4fix7: 改用 _applyHoverDim 一次性設定 8 卡目標 dim 狀態，
         // 取代 filter brightness 兩段式 race + compositing layer 重建
         this._applySimilarHoverDim(slotId);
+        // ※ 此處無自動化覆蓋，見 shared/constellation/anchors.js 的 pickEight 上方註解
         const neighbors = nearestNeighbors(slotId, [...this.similarVisibleSlots], 3);
         neighbors.forEach(nid => {
           const nline = this.similarRailLines[nid];
