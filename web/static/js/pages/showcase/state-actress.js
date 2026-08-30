@@ -211,6 +211,10 @@ export function stateActress() {
             // Codex P1: 抽出 callback body 作 fallback；若 playModeCrossfade 不可用直接同步呼叫
             var flipAndFadeIn = function () {
                 if (self._animGeneration !== gen) return;
+                // 缺口 F：必須在 stale-guard 之後、旗標翻轉之前歸零。
+                // 不可放在 toggleActressMode() 最前面——淡出動畫期間使用者還能繼續捲，
+                // 捲完會蓋掉提前歸零，等 DOM 真換時錨定／clamp 照樣發作（AC-F3）。
+                window.scrollTo(0, 0);
                 // 翻轉（觸發 x-if 重新掛載 DOM）
                 self.showFavoriteActresses = isEnteringActress;
                 var needEntry = false;
@@ -1380,6 +1384,11 @@ export function stateActress() {
                         coverSrc = fromImg.src;
                     }
                 }
+
+                // 缺口 F：Chrome scroll anchoring 會在 DOM 換掉時把畫面錨到最底。
+                // 此段到第一個 await 全同步，歸零後到 DOM 換掉之間插不進捲動；
+                // 必須晚於上方 fromRect 擷取（viewport 相對座標＝ghost 飛行起點）。
+                window.scrollTo(0, 0);
 
                 if (this.lightboxOpen) this.closeLightbox();
                 if (wasActressMode) {

@@ -4453,6 +4453,20 @@ const RULES = [
     scope: { anchor: /<div class="av-card-preview hero-card"/, window: 7500 },
     note: '[lint-guard 138-T5] 拔掉這條 → 使用者在直式海報格拖完對焦按確認，hero 卡的圖一動也不動（window 實測：anchor→hero 卡區塊結束 5040 字元、同字面下游無第二處；以同錨點下游第一個 class="info-link"（影片卡 metadata）10790 字元為上界參考 ⇒ 安全區間 (5040, 10790)，取 7500 兩側各留 2460／3290 餘裕；count:3 鎖 @load＋兩條 $watch，只拔 @load 也會紅；太小會漏掉三件套之一＝假綠，太大只是 scope 變寬）',
   },
+
+  // ---- [lint-guard 138-T6] 缺口 F：模式切換歸零捲動（TASK-138-T6 CD-F4） ----
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: 'window.scrollTo(0, 0)',
+    scope: { anchor: /async\s+searchActressFilms\s*\(\s*actressName\s*,\s*fromEl\s*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 138-T6-F1] 缺口F正向：searchActressFilms() 缺少 window.scrollTo(0, 0) → 使用者從女優牆按「搜尋相關影片」切到影片牆，畫面落在最底部，要自己捲回去才看得到 hero 卡與第一排影片',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: 'window.scrollTo(0, 0)',
+    scope: { anchor: /flipAndFadeIn\s*=\s*function\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 138-T6-F2] 缺口F反向：toggleActressMode()/flipAndFadeIn 缺少 window.scrollTo(0, 0) → 使用者從影片牆按「女優模式」切回女優牆，畫面落在女優牆最底部，要自己捲回去才看得到熟悉的第一排女優',
+  },
 ];
 
 // ---- helpers ----

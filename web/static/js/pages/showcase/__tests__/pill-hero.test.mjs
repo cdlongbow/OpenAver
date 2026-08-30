@@ -18,6 +18,10 @@ import { readFileSync } from 'node:fs';
 // state-base.js 模組頂層讀 localStorage（清壞值）。比照既有 showcase 測試先 stub window。
 globalThis.window = globalThis;
 globalThis.window.t = (key) => key;
+// TASK-138-T6：searchActressFilms / flipAndFadeIn 呼叫 window.scrollTo(0, 0)
+if (typeof globalThis.window.scrollTo !== 'function') {
+    globalThis.window.scrollTo = () => {};
+}
 globalThis.Alpine = globalThis.Alpine || {
     store: () => ({ toolbarOpen: false, showcaseHasSearch: false }),
 };
