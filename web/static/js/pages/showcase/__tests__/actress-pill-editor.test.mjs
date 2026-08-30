@@ -37,6 +37,10 @@ if (typeof globalThis.window.addEventListener !== 'function') {
     globalThis.window.addEventListener = () => {};
     globalThis.window.removeEventListener = () => {};
 }
+// TASK-138-T6：searchActressFilms / flipAndFadeIn 呼叫 window.scrollTo(0, 0)
+if (typeof globalThis.window.scrollTo !== 'function') {
+    globalThis.window.scrollTo = () => {};
+}
 if (typeof globalThis.document === 'undefined') {
     globalThis.document = {
         querySelector: () => null,

@@ -422,6 +422,7 @@
     :is(#ds-gallery-components, .ds-gallery-composition) .actress-card-footer .footer-default .actress-sort-indicator,
     :is(#ds-gallery-components, .ds-gallery-composition) .actress-card-footer .footer-default .av-actress { display: none; }
     .actress-card > .actress-card-info { font-size: 0.7rem; }   /* (0,2,0) 勝後方的 .card-info (0,1,0)，CD-124b-8② */
+    .hero-card > .actress-card-info { font-size: 0.7rem; }
 
     /* T11：≤480px hero 卡（女優精準匹配入口）改直式 poster 比例，對齊同列 0.71 鄰卡 → 消 row 死白/錯位。
        值引用 --poster-crop-ratio（與鄰卡同源，單一真理）。img 改 object-fit:cover（女優照 0.826 略寬胖，
@@ -3683,6 +3684,13 @@ body.sidebar-collapsed .showcase-footer {
 .hero-card .btn-glass-circle.is-favorite {
     color: var(--color-favorite);
     cursor: pointer;
+}
+
+/* TASK-138-T4（CD-D1）：hero 卡標籤補白列強制獨占一行——.actress-card-info 是
+   flex-wrap 容器（:2564），不加這條會跟既有 age/height/cup/bwh 幾個 <span> 擠同一行。
+   scope 限定 .hero-card，不影響女優牆 .actress-card（Non-Goal，spec 缺口 D）。 */
+.hero-card .card-info.actress-card-info > .info-tags {
+    flex-basis: 100%;
 }
 
 /* No-cover fallback placeholder（Hero Card 圖片載入失敗） */

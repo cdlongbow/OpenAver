@@ -177,7 +177,8 @@ export function stateActress() {
                 this._matchedActress = found;
                 this._preciseMatchSource = source;
                 // T5: hero card 出現動畫 — 只在 is_favorite 時觸發（card 才會 x-show=true）
-                if (found.is_favorite && !this.showFavoriteActresses) {
+                // TASK-138-T1（CD-C5）：init first-frame 窗口內不播；逾時降級後旗標已 false，晚到仍會播
+                if (found.is_favorite && !this.showFavoriteActresses && !this._heroCardReconcilePending) {
                     var self = this;
                     this.$nextTick(function () {
                         requestAnimationFrame(function () {
@@ -210,6 +211,10 @@ export function stateActress() {
             // Codex P1: 抽出 callback body 作 fallback；若 playModeCrossfade 不可用直接同步呼叫
             var flipAndFadeIn = function () {
                 if (self._animGeneration !== gen) return;
+                // 缺口 F：必須在 stale-guard 之後、旗標翻轉之前歸零。
+                // 不可放在 toggleActressMode() 最前面——淡出動畫期間使用者還能繼續捲，
+                // 捲完會蓋掉提前歸零，等 DOM 真換時錨定／clamp 照樣發作（AC-F3）。
+                window.scrollTo(0, 0);
                 // 翻轉（觸發 x-if 重新掛載 DOM）
                 self.showFavoriteActresses = isEnteringActress;
                 var needEntry = false;
@@ -286,6 +291,7 @@ export function stateActress() {
                 var self = this;
                 this.$nextTick(function () { requestAnimationFrame(function () {
                     if (self._animGeneration !== gen) return;
+                    if (!self.showFavoriteActresses) return;  // CD-C4：playEntry 只在女優模式播，影片模式的觸發是誤傷
                     var grid = self._getActiveGrid();
                     window.ShowcaseAnimations?.playEntry?.(grid);
                 }); });
@@ -866,6 +872,30 @@ export function stateActress() {
             return parts;
         },
 
+        /**
+         * TASK-138-T4（CD-D1〜D8，缺口 D）：hero 卡補白標籤列——tags → hometown → agency，
+         * 依序 push，皆 truthy 過濾；hometown/agency 帶 title（i18n 標籤，AC-D5），
+         * tags 不帶 title（它就是標籤，沒有欄位名可標）。三者皆空回 []（AC-D4 唯一機制）。
+         * hometown／agency 排在 tags 之後：它們是補白，line-clamp 截斷時應先被切掉的是它們。
+         * 與 _actressInfoParts() 各自獨立、互不呼叫（CD-D3：不得改 _actressInfoParts，
+         * 它是女優牆共用函式，動它＝動共享語意）。
+         */
+        _heroCardTagParts(actress) {
+            if (!actress) return [];
+            var parts = [];
+            var tags = Array.isArray(actress.tags) ? actress.tags : [];
+            tags.forEach(function (tag) {
+                if (tag) parts.push({ text: tag, title: '' });
+            });
+            if (actress.hometown) {
+                parts.push({ text: actress.hometown, title: window.t('showcase.label.hometown') });
+            }
+            if (actress.agency) {
+                parts.push({ text: actress.agency, title: window.t('showcase.label.agency') });
+            }
+            return parts;
+        },
+
         // TASK-124b-T4（CD-124b-15）：女優卡資訊區的數值點擊 handler。
         //
         // 🔴 刻意**不**重用 _onActressMetadataClick()（燈箱那支），兩個硬理由：
@@ -1354,6 +1384,11 @@ export function stateActress() {
                         coverSrc = fromImg.src;
                     }
                 }
+
+                // 缺口 F：Chrome scroll anchoring 會在 DOM 換掉時把畫面錨到最底。
+                // 此段到第一個 await 全同步，歸零後到 DOM 換掉之間插不進捲動；
+                // 必須晚於上方 fromRect 擷取（viewport 相對座標＝ghost 飛行起點）。
+                window.scrollTo(0, 0);
 
                 if (this.lightboxOpen) this.closeLightbox();
                 if (wasActressMode) {

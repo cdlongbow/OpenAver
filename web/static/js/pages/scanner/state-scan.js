@@ -1,5 +1,12 @@
 import { dirPath } from '@/shared/dir-path.js';
 
+let _dragTimeoutHandle = null;
+
+// TASK-138-T3（CD-A2）：逾時門檻需 > 瀏覽器原生 dragover 心跳間隔（WHATWG 規範值 350ms）。
+// 目前實測值與安全餘裕見 plan-138.md「CD-A2」。兩頁常數值與本注解必須逐字相同（CD-A5）。
+// 必須 export——測試要 import 這個常數本身去驅動 mock.timers.tick()，不得在測試檔裡另抄一份數字。
+export const DRAG_OVERLAY_TIMEOUT_MS = 1200; // 待 T3 實測覆核（見「驗證方式」CD-A2 量測步驟）
+
 export function stateScan() {
     return {
         dirPath,
@@ -18,7 +25,6 @@ export function stateScan() {
         readonlyConfirmTargetIdx: null,
 
         // ===== Drag-drop State =====
-        dragCounter: 0,
         showDragOverlay: false,
 
         // ===== Stats State =====
@@ -478,26 +484,26 @@ export function stateScan() {
         },
 
         // ===== Drag-drop Methods =====
-        handleDragEnter(e) {
+        handleDragOver(e) {
             e.preventDefault();
-            this.dragCounter++;
-            if (this.dragCounter === 1) {
-                this.showDragOverlay = true;
-            }
+            if (!e.dataTransfer.types.includes('Files')) return;
+            if (!this.showDragOverlay) this.showDragOverlay = true;  // CD-A4
+            clearTimeout(_dragTimeoutHandle);
+            _dragTimeoutHandle = setTimeout(() => this.handleDragTimeout(), DRAG_OVERLAY_TIMEOUT_MS);
         },
 
-        handleDragLeave(e) {
-            e.preventDefault();
-            this.dragCounter--;
-            if (this.dragCounter === 0) {
-                this.showDragOverlay = false;
-            }
+        // CD-A6：逾時 callback 也是「有邏輯的程式」，必須具名、能被 node:test 直接呼叫——
+        // 不得沿用匿名 setTimeout(() => {...})，這一段正是「按 Esc 後覆蓋層會不會消失」的判定點本身。
+        handleDragTimeout() {
+            if (this.showDragOverlay) this.showDragOverlay = false;  // CD-A4
+            _dragTimeoutHandle = null;
         },
 
         handleDrop(e) {
             e.preventDefault();
-            this.dragCounter = 0;
-            this.showDragOverlay = false;
+            clearTimeout(_dragTimeoutHandle);
+            _dragTimeoutHandle = null;
+            if (this.showDragOverlay) this.showDragOverlay = false;
             // 桌面版由 pywebview 端的 window.handleFolderDrop 接手（見 main.js），這裡不插手
             if (typeof window.pywebview !== 'undefined' && window.pywebview.api) return;
             this.showToast(window.t('scanner.toast.browse_dir_fallback'), 'info');

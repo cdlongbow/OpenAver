@@ -1394,6 +1394,16 @@ export function stateLightbox() {
                 if (kind === 'actress') {
                     this._syncActressesArray(targetObj.name, { auto_focal: data.auto_focal, crop_mode: 'manual' });
                 }
+                // TASK-138-T5（CD-E3）：hero 卡 by-name 回寫，對稱於上面牆格 _syncActressesArray。
+                // openHeroCardLightbox 先讓 currentLightboxActress === _matchedActress，隨後
+                // _fetchLiveAliases 的 Object.assign 會把 currentLightboxActress 換成脫鉤副本；
+                // 此時只寫 targetObj（= 脫鉤副本）改不到 hero 卡讀的 _matchedActress。
+                // 不得拆 Object.assign；不動 syncActressFields 簽章；用 targetObj.name
+                // （await 前捕獲）比對，沿用既有 by-name 寫法，不自創正規化。
+                if (kind === 'actress' && this._matchedActress && this._matchedActress.name === targetObj.name) {
+                    this._matchedActress.auto_focal = data.auto_focal;
+                    this._matchedActress.crop_mode = 'manual';
+                }
             } catch (e) {
                 if (session === this._maskSession) {
                     this.showToast(window.t('showcase.lightbox.mask_save_failed'), 'error');   // 沿用既有 key

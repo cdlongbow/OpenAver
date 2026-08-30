@@ -4397,8 +4397,8 @@ const RULES = [
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
     pattern: 'x-show="part.clickable"',
-    scope: { anchor: /<div class="card-info actress-card-info"/, window: 600 },
-    note: '[lint-guard 137-T1 #1] 拔掉這條 → 女優卡資訊區「不該可點」的欄位（如空白年齡）同時出現純文字和一個可點連結，點下去篩出空結果（來源 TASK-136a-T4.md:106-113），scope 錨到 .actress-card-info 區塊（anchor 距 target 473 字元，window=600，與 #2 的 anchor 相距 12812 字元，不重疊）',
+    scope: { anchor: /x-show="infoVisible && _actressInfoParts\(actress\)\.length"/, window: 600 },
+    note: '[lint-guard 137-T1 #1] 拔掉這條 → 女優卡資訊區「不該可點」的欄位（如空白年齡）同時出現純文字和一個可點連結，點下去篩出空結果（來源 TASK-136a-T4.md:106-113）。**anchor 於 138-T2 改精確**：原本錨 `<div class="card-info actress-card-info"` 是 first-match，138-T2 讓 hero 卡也用同一組 class 之後會先命中 hero 卡區塊（那裡依 CD-B3 刻意不可點）⇒ 誤報。改錨女優牆獨有的 `_actressInfoParts(actress)`（hero 卡傳的是 `_matchedActress`），守的區塊與 pattern 一字未變（anchor 距 target 約 408 字元，window=600）',
   },
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
@@ -4428,6 +4428,44 @@ const RULES = [
     file: 'web/templates/scanner.html', kind: 'required-string',
     pattern: '@drop.document.prevent="handleDrop($event)"',
     note: '[lint-guard 137-T2 #13] 拔掉這條 → 掃描頁拖放資料夾整個失效（同層 @dragover.document.prevent 還在，看起來像可以拖，放開卻沒事；.prevent 修飾詞被單拔也會紅，來源 TASK-136a-T4.md:106-113）',
+  },
+
+  // ---- [lint-guard 138-T2] showcase.html hero 卡展開資訊區純文字渲染反向鎖（TASK-138-T2 CD-B7） ----
+  {
+    file: 'web/templates/showcase.html', kind: 'forbidden-string',
+    pattern: ['class="info-link"', '_onActressCardMetadataClick'],
+    scope: { anchor: /<div class="av-card-preview hero-card"/, window: 6000 },
+    note: '[lint-guard 138-T2] 拔掉這條 → hero 卡的年齡／身高變成可點，使用者點了沒有任何反應（window 實測：anchor→hero 卡區塊結束 3782 字元、anchor→下游第一個合法 class="info-link" 9532 字元（該處是**影片卡** metadata 連結；女優牆的在 23570）⇒ 安全區間 (3782, 9532)，取 6000 兩側各留 2218／3532 餘裕；太小會漏掉區塊尾端的違規＝fail-open，太大會誤抓下游的合法字面）',
+  },
+
+  // ---- [lint-guard 138-T4] showcase.html hero 卡補白標籤列資料來源正向鎖（TASK-138-T4 CD-D5） ----
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: '_heroCardTagParts(_matchedActress)', count: 3,
+    scope: { anchor: /<div class="av-card-preview hero-card"/, window: 7000 },
+    note: '[lint-guard 138-T4] 拔掉這條 → hero 卡標籤補白列被接到別的函式（或整段被刪），使用者展開資訊時看到的是垃圾資料或空白（window 實測：anchor→hero 卡區塊結束 4385 字元、同字面下游無第二處；以同錨點下游第一個 class="info-link"（影片卡 metadata）10135 字元為上界參考 ⇒ 安全區間 (4385, 10135)，取 7000 兩側各留 2615／3135 餘裕；太小會漏掉外層 x-show／補白列 x-show／x-for 三處之一＝假綠，太大只是 scope 變寬）',
+  },
+
+  // ---- [lint-guard 138-T5] showcase.html hero 卡焦點裁切接線正向鎖（TASK-138-T5 CD-E5） ----
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'applyCellFocal($el, _matchedActress', count: 3,
+    scope: { anchor: /<div class="av-card-preview hero-card"/, window: 7500 },
+    note: '[lint-guard 138-T5] 拔掉這條 → 使用者在直式海報格拖完對焦按確認，hero 卡的圖一動也不動（window 實測：anchor→hero 卡區塊結束 5040 字元、同字面下游無第二處；以同錨點下游第一個 class="info-link"（影片卡 metadata）10790 字元為上界參考 ⇒ 安全區間 (5040, 10790)，取 7500 兩側各留 2460／3290 餘裕；count:3 鎖 @load＋兩條 $watch，只拔 @load 也會紅；太小會漏掉三件套之一＝假綠，太大只是 scope 變寬）',
+  },
+
+  // ---- [lint-guard 138-T6] 缺口 F：模式切換歸零捲動（TASK-138-T6 CD-F4） ----
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: 'window.scrollTo(0, 0)',
+    scope: { anchor: /async\s+searchActressFilms\s*\(\s*actressName\s*,\s*fromEl\s*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 138-T6-F1] 缺口F正向：searchActressFilms() 缺少 window.scrollTo(0, 0) → 使用者從女優牆按「搜尋相關影片」切到影片牆，畫面落在最底部，要自己捲回去才看得到 hero 卡與第一排影片',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: 'window.scrollTo(0, 0)',
+    scope: { anchor: /flipAndFadeIn\s*=\s*function\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 138-T6-F2] 缺口F反向：toggleActressMode()/flipAndFadeIn 缺少 window.scrollTo(0, 0) → 使用者從影片牆按「女優模式」切回女優牆，畫面落在女優牆最底部，要自己捲回去才看得到熟悉的第一排女優',
   },
 ];
 

@@ -1036,7 +1036,9 @@
       "series": "系列",
       "duration": "片長",
       "director": "導演",
-      "label": "發行"
+      "label": "發行",
+      "hometown": "出身地",
+      "agency": "事務所"
     },
     "table": {
       "col_number": "番號",
