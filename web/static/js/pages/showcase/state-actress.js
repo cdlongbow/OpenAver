@@ -868,6 +868,30 @@ export function stateActress() {
             return parts;
         },
 
+        /**
+         * TASK-138-T4（CD-D1〜D8，缺口 D）：hero 卡補白標籤列——tags → hometown → agency，
+         * 依序 push，皆 truthy 過濾；hometown/agency 帶 title（i18n 標籤，AC-D5），
+         * tags 不帶 title（它就是標籤，沒有欄位名可標）。三者皆空回 []（AC-D4 唯一機制）。
+         * hometown／agency 排在 tags 之後：它們是補白，line-clamp 截斷時應先被切掉的是它們。
+         * 與 _actressInfoParts() 各自獨立、互不呼叫（CD-D3：不得改 _actressInfoParts，
+         * 它是女優牆共用函式，動它＝動共享語意）。
+         */
+        _heroCardTagParts(actress) {
+            if (!actress) return [];
+            var parts = [];
+            var tags = Array.isArray(actress.tags) ? actress.tags : [];
+            tags.forEach(function (tag) {
+                if (tag) parts.push({ text: tag, title: '' });
+            });
+            if (actress.hometown) {
+                parts.push({ text: actress.hometown, title: window.t('showcase.label.hometown') });
+            }
+            if (actress.agency) {
+                parts.push({ text: actress.agency, title: window.t('showcase.label.agency') });
+            }
+            return parts;
+        },
+
         // TASK-124b-T4（CD-124b-15）：女優卡資訊區的數值點擊 handler。
         //
         // 🔴 刻意**不**重用 _onActressMetadataClick()（燈箱那支），兩個硬理由：

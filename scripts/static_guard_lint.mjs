@@ -4437,6 +4437,14 @@ const RULES = [
     scope: { anchor: /<div class="av-card-preview hero-card"/, window: 6000 },
     note: '[lint-guard 138-T2] 拔掉這條 → hero 卡的年齡／身高變成可點，使用者點了沒有任何反應（window 實測：anchor→hero 卡區塊結束 3782 字元、anchor→下游第一個合法 class="info-link" 9532 字元（該處是**影片卡** metadata 連結；女優牆的在 23570）⇒ 安全區間 (3782, 9532)，取 6000 兩側各留 2218／3532 餘裕；太小會漏掉區塊尾端的違規＝fail-open，太大會誤抓下游的合法字面）',
   },
+
+  // ---- [lint-guard 138-T4] showcase.html hero 卡補白標籤列資料來源正向鎖（TASK-138-T4 CD-D5） ----
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: '_heroCardTagParts(_matchedActress)', count: 3,
+    scope: { anchor: /<div class="av-card-preview hero-card"/, window: 7000 },
+    note: '[lint-guard 138-T4] 拔掉這條 → hero 卡標籤補白列被接到別的函式（或整段被刪），使用者展開資訊時看到的是垃圾資料或空白（window 實測：anchor→hero 卡區塊結束 4385 字元、同字面下游無第二處；以同錨點下游第一個 class="info-link"（影片卡 metadata）10135 字元為上界參考 ⇒ 安全區間 (4385, 10135)，取 7000 兩側各留 2615／3135 餘裕；太小會漏掉外層 x-show／補白列 x-show／x-for 三處之一＝假綠，太大只是 scope 變寬）',
+  },
 ];
 
 // ---- helpers ----

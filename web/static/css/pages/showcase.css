@@ -3686,6 +3686,13 @@ body.sidebar-collapsed .showcase-footer {
     cursor: pointer;
 }
 
+/* TASK-138-T4（CD-D1）：hero 卡標籤補白列強制獨占一行——.actress-card-info 是
+   flex-wrap 容器（:2564），不加這條會跟既有 age/height/cup/bwh 幾個 <span> 擠同一行。
+   scope 限定 .hero-card，不影響女優牆 .actress-card（Non-Goal，spec 缺口 D）。 */
+.hero-card .card-info.actress-card-info > .info-tags {
+    flex-basis: 100%;
+}
+
 /* No-cover fallback placeholder（Hero Card 圖片載入失敗） */
 .av-card-no-cover {
     position: absolute;

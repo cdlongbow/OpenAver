@@ -511,11 +511,19 @@
               <!-- TASK-138-T2（CD-B1/B2/B3/B4）：hero 卡展開資訊區，鏡射女優卡 :796-807，
                    純顯示不可點（spec #1）。資料直接呼叫既有 _actressInfoParts()，不新增 state。 -->
               <div class="card-info actress-card-info"
-                   x-show="infoVisible && _actressInfoParts(_matchedActress).length"
+                   x-show="infoVisible && (_actressInfoParts(_matchedActress).length || _heroCardTagParts(_matchedActress).length)"
                    x-cloak @click.stop>
                   <template x-for="(part, i) in _actressInfoParts(_matchedActress)" :key="i">
                       <span x-text="part.text"></span>
                   </template>
+                  <!-- TASK-138-T4（CD-D1〜D8）：hero 卡補白標籤列，鏡射一般影片卡 .info-tags
+                       （:636-641），純顯示不可點（spec 缺口 D）。資料走新純函式
+                       _heroCardTagParts()，不改 _actressInfoParts()。 -->
+                  <div class="info-tags" x-show="_heroCardTagParts(_matchedActress).length" x-cloak>
+                      <template x-for="(part, i) in _heroCardTagParts(_matchedActress)" :key="i">
+                          <span class="tag" x-text="part.text" :title="part.title"></span>
+                      </template>
+                  </div>
               </div>
             </div>
             <template x-for="(video, index) in paginatedVideos" :key="video.path">
