@@ -3,7 +3,8 @@
 TDD-lite tests for windows/cf_transport_impl.py
 
 Import strategy: sys.path.insert + sibling import (matches standalone.py runtime)
-Structural guards: grep assertions for core→windows and launcher purity.
+Structural guards: grep assertions for _wv_fetch module-level 與 javlibrary 不呼叫 navigate_and_settle。
+（core⇏windows 已於 0.15.5 搬進 import-linter 契約，見 pyproject.toml；launcher purity 檢查追不到 sink 已刪除，見 spec-136b.md F1）
 """
 import subprocess
 import sys
@@ -909,26 +910,6 @@ class TestIsReady:
 # ──────────────────────────────────────────────────────────────
 
 class TestStructuralGuards:
-    def test_no_core_importing_windows(self):
-        """core/ must not import from windows/ (one-way dependency)."""
-        result = subprocess.run(
-            ['grep', '-rn', r'import windows|from windows', str(REPO_ROOT / 'core')],
-            capture_output=True, text=True
-        )
-        # grep returns exit code 0 if found, 1 if not found
-        assert result.returncode == 1 or result.stdout.strip() == '', \
-            f"FAIL: core/ imports windows:\n{result.stdout}"
-
-    def test_launcher_has_no_transport_register(self):
-        """launcher.py must not import cf_transport_impl or register_cf_transport."""
-        launcher_path = str(REPO_ROOT / 'windows' / 'launcher.py')
-        result = subprocess.run(
-            ['grep', '-n', 'cf_transport_impl|register_cf_transport', launcher_path],
-            capture_output=True, text=True
-        )
-        assert result.returncode == 1 or result.stdout.strip() == '', \
-            f"FAIL: launcher.py references transport:\n{result.stdout}"
-
     def test_wv_fetch_is_module_level(self):
         """_wv_fetch must be defined at module level (column 0), not inside a class."""
         impl_path = REPO_ROOT / 'windows' / 'cf_transport_impl.py'
