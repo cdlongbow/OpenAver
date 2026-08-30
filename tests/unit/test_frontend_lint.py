@@ -3093,8 +3093,14 @@ class TestCoverLoadingUx67Guard:
     def test_hero_img_has_load_and_heroloaded_fade(self):
         """A3/CD-67-4: hero <img> 含 @load=_heroCardImageLoaded（獨立旗標，不混 video _imgLoaded）"""
         img = self._hero_img()
-        assert '@load="_heroCardImageLoaded = true"' in img, \
-            "hero <img> 缺 @load=\"_heroCardImageLoaded = true\""
+        # [lint-guard: pytest-justified] showcase.html(HTML @load) ↔ state-actress.js
+        # (_heroCardImageLoaded 消費/重置) 的跨檔 Alpine binding contract；ESLint 看不到
+        # HTML 側、static_guard_lint 看不到 JS 側的消費，單邊守衛任一邊都測不出接線斷掉。
+        # 138-T5：@load 現同時設旗標 + 呼叫 applyCellFocal（load-gated focal object-position），
+        # 比照 grid <img> 於 99a-T2 的同一處置——釘「@load 開頭仍是設這個旗標」，
+        # 不釘整串字面（否則任何合法追加都會誤紅）。
+        assert '@load="_heroCardImageLoaded = true' in img, \
+            "hero <img> 的 @load 缺 _heroCardImageLoaded = true（三態的 loaded 觸發）"
         assert ":class=\"{ 'cover-loaded': _heroCardImageLoaded }\"" in img, \
             "hero <img> 缺 :class 淡入綁定（.cover-loaded by _heroCardImageLoaded）"
         assert 'fetchpriority="high"' in img and 'loading="eager"' in img, \
