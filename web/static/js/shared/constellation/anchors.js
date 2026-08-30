@@ -61,6 +61,21 @@ export function sampleN(candidates, n, rng) {
  * @param {() => number} rng - 隨機函數（預設 Math.random）
  * @returns {Set<string>} 8 個 slot id 的 Set
  */
+// ⚠ 覆蓋缺口（2026-08-30）：此處曾有 1,122 行測試（六個 Python 檔，tests/unit/test_constellation_*.py），已刪除。
+// 它們測的是這支 JS 的 Python 手抄本（re-implementation），不是本檔本身——實質覆蓋為 0
+// （測試檔自述是抄本；rails.py／state.py 完全沒有讀檔／node／.js 引用；刪除前後覆蓋率都是 0）。
+//
+// 同一批刪除也讓隔壁兩支失去覆蓋，它們同樣 0，但沒有各自的註解：
+//   rails.js 的 railRole（全庫已無任何測試提到它）、neighbors.js 的 nearestNeighbors。
+// 唯一的例外是 host_T6.py：它真的讀 motion_lab.html 的 <svg class="clip-lab-dust"> 驗 100 顆
+// dust 座標的幾何不變式，那道守衛刪除後全庫歸零（/motion-lab 是開發頁，已列 accepted residual）。
+//
+// 下次動這裡請補真覆蓋：可照 web/static/js/pages/showcase/__tests__/*pill*.test.mjs，
+// 用 import map 直接載入真模組跑 node:test，不要再抄一份 Python 邏輯。
+//
+// ⚠ 這段註解的射程有限：它在函式簽名正上方，預設 3 行 context 的 git diff 只在改動靠近
+// 簽名時才會把它帶進 hunk；改本體中後段（約 :80 之後）看不到它。真正貼著呼叫點的提醒在
+// state-similar.js 的兩處呼叫行上方。
 export function pickEight(excludeSlotId, prevVisible, rng = Math.random) {
   const allIds = ANCHORS.map(a => a.id);
 
