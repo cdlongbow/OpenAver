@@ -4411,6 +4411,24 @@ const RULES = [
     pattern: '@input.debounce.300ms="onSearchChange()"',
     note: '[lint-guard 137-T1 #5] 拔掉這條 → 瀏覽頁搜尋框打字完全不篩選（來源 TASK-136a-T4.md:106-113）',
   },
+
+  // ---- [lint-guard 137-T2] search.html / chip-editor.js / scanner.html 三條假綠接線補守衛（plan-137 CD-3/CD-4） ----
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: '@error="handleHeroLightboxError($event)"',
+    note: '[lint-guard 137-T2 #8] 拔掉這條 → 搜尋頁燈箱封面載入失敗時，破圖救援不啟動（來源 TASK-136a-T4.md:106-113）',
+  },
+  {
+    file: 'web/static/js/pages/settings/chip-editor.js', kind: 'required-string',
+    pattern: 'tokenize(text, this.whitelist)',
+    scope: { anchor: /_onPaste\s*\(\s*e\s*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 137-T2 #12] 拔掉這條 → 設定頁命名格式貼上文字沒有反應（來源 TASK-136a-T4.md:106-113），scope 錨到 _onPaste 方法體（同字面 tokenize(text, this.whitelist) 在 drop handler :185 也有一份，scope 外，不 scope 會 fail-open）',
+  },
+  {
+    file: 'web/templates/scanner.html', kind: 'required-string',
+    pattern: '@drop.document.prevent="handleDrop($event)"',
+    note: '[lint-guard 137-T2 #13] 拔掉這條 → 掃描頁拖放資料夾整個失效（同層 @dragover.document.prevent 還在，看起來像可以拖，放開卻沒事；.prevent 修飾詞被單拔也會紅，來源 TASK-136a-T4.md:106-113）',
+  },
 ];
 
 // ---- helpers ----
