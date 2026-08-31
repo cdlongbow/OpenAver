@@ -141,13 +141,15 @@ test('handleFileDrop: 單檔拖曳、API 成功但無番號 → errorText 顯示
     parseFilenames: async () => [{ filename: 'random_clip.mp4', number: null, has_subtitle: false }],
   };
   window.t = (key) => key;
-  const fakeThis = makeFakeThis({ doSearch() {}, showToast() {} });
+  const fakeThis = makeFakeThis({ doSearch() {}, showToast() {}, currentQuery: 'ABP-123', searchQuery: 'ABP-123' });
 
   searchStateFileList().handleFileDrop.call(fakeThis, [{ name: 'random_clip.mp4' }]);
   await flush();
 
   assert.equal(fakeThis.errorText, 'search.error.number_not_recognized');
   assert.equal(fakeThis.pageState, 'error');
+  assert.equal(fakeThis.currentQuery, '', 'currentQuery 必須被清空，不得殘留 ABP-123');
+  assert.equal(fakeThis.searchQuery, '', 'searchQuery 也必須清空，否則 isComposing() 翻 true、search.html:305 那顆讀 searchQuery 的膠囊會冒出來帶舊番號');
 });
 
 test('handleFileDrop: API 失敗（非 AbortError）→ errorText 顯示 number_parse_unavailable（DoD #3 mutation 錨点）', async () => {
@@ -155,13 +157,15 @@ test('handleFileDrop: API 失敗（非 AbortError）→ errorText 顯示 number_
     parseFilenames: async () => { throw new Error('network fail'); },
   };
   window.t = (key) => key;
-  const fakeThis = makeFakeThis({ doSearch() {}, showToast() {} });
+  const fakeThis = makeFakeThis({ doSearch() {}, showToast() {}, currentQuery: 'ABP-123', searchQuery: 'ABP-123' });
 
   searchStateFileList().handleFileDrop.call(fakeThis, [{ name: 'x.mp4' }]);
   await flush();
 
   assert.equal(fakeThis.errorText, 'search.error.number_parse_unavailable');
   assert.equal(fakeThis.pageState, 'error');
+  assert.equal(fakeThis.currentQuery, '', 'currentQuery 必須被清空，不得殘留 ABP-123');
+  assert.equal(fakeThis.searchQuery, '', 'searchQuery 也必須清空，否則 isComposing() 翻 true、search.html:305 那顆讀 searchQuery 的膠囊會冒出來帶舊番號');
 });
 
 // Codex PR#112 review P2：這條與上面的 CD-11 mutation A/B 是不同層的競態——CD-11 那組是
