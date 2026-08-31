@@ -22,7 +22,13 @@ from core.scrapers import (
     JavLibraryScraper,          # T3 新增
     Video, ScraperConfig
 )
-from core.scrapers.utils import extract_number as _new_extract_number, FUZZY_SEARCH_SOURCES, normalize_number_impl
+from core.scrapers.utils import (
+    extract_number as _new_extract_number,
+    FUZZY_SEARCH_SOURCES,
+    normalize_number_impl,
+    is_strict_number,
+    is_strict_uncensored_number,
+)
 from core.maker_mapping import get_maker_by_prefix
 from core.source_merger import merge_results
 from core.source_config import validate_source_id
@@ -75,7 +81,7 @@ def is_number_format(s: str) -> bool:
         r'[-_](UC|UNCEN|UNCENSORED|LEAK|LEAKED)(?=[-_.\s]|$)',
         '', s, flags=re.IGNORECASE
     )
-    return bool(re.match(r'^[a-zA-Z]+-?\d{3,}$', s))
+    return is_strict_number(s)
 
 
 def is_partial_number(s: str) -> bool:
@@ -843,12 +849,7 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
         return results
 
     # 0. 無碼特殊處理 - 自動偵測（FC2 / HEYZO / 日期-編號格式）
-    is_uncensored = (
-        query.lower().strip().startswith('fc2') or
-        query.lower().strip().startswith('heyzo') or
-        re.match(r'^\d{6}-\d{2,}$', query) or
-        re.match(r'^\d{6}_\d{2,}$', query)
-    )
+    is_uncensored = is_strict_uncensored_number(query)
     if is_uncensored:
         if status_callback:
             status_callback('mode', 'uncensored')

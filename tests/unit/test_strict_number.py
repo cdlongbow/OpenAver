@@ -41,13 +41,43 @@ POSITIVE_SURROUNDING_WHITESPACE = [
     "　SONE-103　",  # 全形空白
 ]
 
+POSITIVE_NO_HYPHEN = [
+    "SONE205",
+    "ABC123",
+    "T28103",
+    "sone205",
+]
+
 ALL_POSITIVE = (
     POSITIVE_NUMERIC_PREFIX
     + POSITIVE_STANDARD
     + POSITIVE_FC2_VARIANTS
     + POSITIVE_UNCENSORED
     + POSITIVE_SURROUNDING_WHITESPACE
+    + POSITIVE_NO_HYPHEN
 )
+
+NEGATIVE_PARTIAL_NUMBERS = [
+    # 一般形（鎖 `[A-Z]+-?\d{3,}` 的位數下限）
+    "ABP-01",
+    "ABP-1",
+    "SNIS-1",
+    "ABC-12",
+    "SONE-01",
+    # 數字前綴形（鎖 `\d{1,4}[A-Z]+-\d{3,}` 的位數下限）
+    "200GANA-36",
+    "7IPZ-01",
+    "529STCV-1",
+    # 混合形（鎖 `[A-Z]+\d+-\d{3,}` 的位數下限）
+    "T28-01",
+    "T28-12",
+    # FC2 / HEYZO 形（鎖那三條 uncensored pattern 的位數下限）——
+    # 少了下限，使用者打 HEYZO-12 想瀏覽系列會被判成完整番號、候選清單消失
+    "FC21",
+    "FC2-12",
+    "HEYZO1",
+    "HEYZO-12",
+]
 
 ALL_NEGATIVE = [
     "",
@@ -62,7 +92,7 @@ ALL_NEGATIVE = [
     "hhd800.com@SONE-103",
     "SONE-103\nSSIS-001",
     "SONE\n-103",
-]
+] + NEGATIVE_PARTIAL_NUMBERS
 
 
 @pytest.mark.parametrize("num", POSITIVE_NUMERIC_PREFIX)
@@ -124,3 +154,26 @@ def test_strict_number_structural_invariant():
         strict_res = is_strict_number(item)
         if uncensored_res:
             assert strict_res is True, f"Invariant violated for {item!r}: uncensored=True but strict=False"
+
+
+@pytest.mark.parametrize("num", POSITIVE_NO_HYPHEN)
+def test_strict_number_positive_no_hyphen(num: str):
+    """DoD 增補正向鎖：無 hyphen 形 SONE205/ABC123/T28103/sone205 皆為 True"""
+    assert is_strict_number(num) is True
+
+
+@pytest.mark.parametrize("num", NEGATIVE_PARTIAL_NUMBERS)
+def test_strict_number_negative_partial_numbers(num: str):
+    """DoD 增補反向鎖：部分番號 ABP-01/ABP-1/SNIS-1/ABC-12/SONE-01 皆為 False"""
+    assert is_strict_number(num) is False
+
+
+def test_is_number_format_and_is_partial_number_exclusive():
+    """DoD 增補：is_number_format 與 is_partial_number 不得同時為 True"""
+    from core.scraper import is_number_format, is_partial_number
+    for s in ["SNIS-1", "ABP-01", "ABC-12", "SONE-01",
+              # grok review 抓到 sonnet 漏掉的一組：FC2/HEYZO 的短尾也必須留給 partial
+              "FC21", "HEYZO1", "HEYZO-12"]:
+        assert is_number_format(s) is False, f"is_number_format({s!r}) 應為 False"
+        assert is_partial_number(s) is True, f"is_partial_number({s!r}) 應為 True"
+

@@ -467,15 +467,21 @@ METATUBE_PROVIDER_ORDER: list[str] = [
 # 比對方式：對「已 strip + upper」的整串做 re.fullmatch（不寫 ^$ 錨定——
 # Python 的 $ 會放行結尾換行，'SONE-103\n' 必須判 False）
 _STRICT_NUMBER_PATTERNS = [
-    (r'FC2[\s_-]*PPV[\s_-]*\d+', 'uncensored'),   # FC2PPV-4943690 / FC2 PPV 4943690 / FC2-PPV-4943690
-    (r'FC2[\s_-]*\d+', 'uncensored'),             # FC2-4943690 / FC24943690
-    (r'HEYZO[\s_-]*\d+', 'uncensored'),           # HEYZO-1234 / heyzo1234（G 現況以 startswith('heyzo') 判無碼，收斂後不得漏）
+    # ❗FC2／HEYZO 這三條的數字同樣要求「至少 3 位」——理由與下面 censored 三條同源：
+    # 1-2 位尾數是 is_partial_number（候選清單）的地盤。少了它，使用者打 HEYZO-12 想瀏覽系列時，
+    # 會被判成完整番號而改走精準／無碼單片搜尋 → 候選清單消失、多半查無結果。
+    # （真實 FC2 編號 6-7 位、HEYZO 4 位，3 位下限不會擋掉任何真番號。）
+    (r'FC2[\s_-]*PPV[\s_-]*\d{3,}', 'uncensored'),   # FC2PPV-4943690 / FC2 PPV 4943690 / FC2-PPV-4943690
+    (r'FC2[\s_-]*\d{3,}', 'uncensored'),             # FC2-4943690 / FC24943690
+    (r'HEYZO[\s_-]*\d{3,}', 'uncensored'),           # HEYZO-1234 / heyzo1234（G 現況以 startswith('heyzo') 判無碼，收斂後不得漏）
     (r'\d{6}-\d{2,}', 'uncensored'),              # 020317-001 日期-編號（無碼）
     (r'\d{6}_\d{2,}', 'uncensored'),              # 090122_001 日期_編號（無碼）
     (r'[A-Z]\d{4}', 'uncensored'),                # N0762 單字母 + 恰 4 位（東京熱）
-    (r'\d{1,4}[A-Z]+-\d+', 'censored'),           # 200GANA-3360 / 529STCV-152 / 7IPZ-154 數字前綴
-    (r'[A-Z]+\d+-\d+', 'censored'),               # T28-103 混合
-    (r'[A-Z]+-\d+', 'censored'),                  # SONE-205 一般
+    (r'\d{1,4}[A-Z]+-\d{3,}', 'censored'),        # 200GANA-3360 / 529STCV-152 / 7IPZ-154 數字前綴
+    (r'[A-Z]+\d+-\d{3,}', 'censored'),            # T28-103 混合
+    (r'[A-Z]+-?\d{3,}', 'censored'),              # SONE-205 / SONE205 一般（hyphen 可省、至少 3 位——
+                                                  # 與舊 is_number_format 的 ^[a-zA-Z]+-?\d{3,}$ 邊界逐字對齊。
+                                                  # 1-2 位數是「部分番號」的地盤，故意不收：那條路要給候選清單）
 ]
 
 

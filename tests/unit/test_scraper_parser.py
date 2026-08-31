@@ -13,8 +13,11 @@ import pytest
 import json
 from pathlib import Path
 
+from unittest.mock import patch
+
 # 測試目標模組
-from core.scraper import extract_number, normalize_number, is_number_format
+from core.scraper import extract_number, normalize_number, is_number_format, smart_search
+from core.scrapers.utils import is_strict_uncensored_number
 
 
 # ============ TestExtractNumber ============
@@ -593,3 +596,52 @@ class TestExtractNumberFromSamples:
                 if expected is not None:
                     result = extract_number(filename)
                     assert result == expected, f'{filename}: 預期 {expected}，實際 {result}'
+
+
+# ============ TASK-139-T3: G / C-G 一致性 / F3-b ============
+
+class TestSmartSearchUncensoredAndConsistency:
+    """TASK-139-T3: G（smart_search is_uncensored）、C-G 一致性與 F3-b must-not-break 測試"""
+
+    @pytest.mark.parametrize("query", [
+        "FC2-4943690",
+        "090122_001",
+        "020317-001",
+        "HEYZO-1234",
+    ])
+    def test_smart_search_uncensored_routing(self, query: str):
+        """F3-a G 正向：無碼番號由 smart_search 自動偵測並標記 _mode='uncensored'"""
+        mock_result = {"number": query, "title": "Test Title"}
+        with patch("core.scraper._get_uncensored_sources", return_value=["fc2"]), \
+             patch("core.scraper.search_jav", return_value=mock_result):
+            results = smart_search(query)
+            assert len(results) == 1
+            assert results[0]["_mode"] == "uncensored"
+
+    def test_c_and_g_consistency(self):
+        """C 與 G 一致性：斷言不會出現 is_number_format=False 且 is_strict_uncensored_number=True"""
+        test_inputs = [
+            "FC2-4943690", "090122_001", "020317-001", "n0762", "HEYZO-1234",
+            "SONE-205", "200GANA-3360", "T28-103", "ABC-123", "sone205",
+            "三上悠亜", "IPZ", "2024", "ABP-01", "SNIS-1", "", "   ", None
+        ]
+        for s in test_inputs:
+            c_val = is_number_format(s) if s is not None else False
+            g_val = is_strict_uncensored_number(s)
+            if g_val:
+                assert c_val is True, f"Inconsistency for {s!r}: g_val is True but c_val is False"
+
+    def test_f3b_h_pipeline_must_not_break(self):
+        """F3-b: H（is_number_format -> normalize_number）呼叫鏈 must-not-break"""
+        cases = [
+            ("SONE-103", "SONE-103"),
+            ("n0762", "N0762"),
+            ("020317-001", "020317-001"),
+            ("090122_001", "090122_001"),
+            ("FC2PPV-4943690", "FC2-4943690"),
+            ("FC2-PPV-4943690", "FC2-4943690"),
+        ]
+        for raw, expected in cases:
+            assert is_number_format(raw) is True, f"is_number_format({raw!r}) 應為 True"
+            assert normalize_number(raw) == expected, f"normalize_number({raw!r}) 應為 {expected!r}"
+

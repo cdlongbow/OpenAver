@@ -3,6 +3,7 @@ test_collection_analysis.py — Unit tests for _is_western, _is_corrupted_number
 _has_japanese_tags helpers and is_number_format (no_nfo group filter).
 
 All tests are pure Python — no FS, no DB, no network.
+Updated for TASK-139: is_number_format delegates to is_strict_number.
 """
 
 import pytest
@@ -128,10 +129,10 @@ class TestIsNumberFormatNoNfoFilter:
         """SONE-205 → True"""
         assert is_number_format("SONE-205") is True
 
-    def test_fc2_ppv_returns_false(self):
-        """FC2-PPV-1234567 → False（含兩個 - 分隔，不符合 ^[a-zA-Z]+-?\\d{3,}$）"""
-        assert is_number_format("FC2-PPV-1234567") is False
+    def test_fc2_ppv_returns_true(self):
+        """FC2-PPV-1234567 → True（符合 is_strict_number）"""
+        assert is_number_format("FC2-PPV-1234567") is True
 
-    def test_digit_prefix_returns_false(self):
-        """7IPZ-154 → False（數字開頭）"""
-        assert is_number_format("7IPZ-154") is False
+    def test_digit_prefix_returns_true(self):
+        """7IPZ-154 → True（符合 is_strict_number）"""
+        assert is_number_format("7IPZ-154") is True

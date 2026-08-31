@@ -2,8 +2,8 @@
 寫於 tests/unit/test_scraper_validators.py
 涵蓋 is_number_format, is_partial_number, is_prefix_only 的單元測試
 
-注意：測試按照 CURRENT prod code 行為撰寫：
-- is_number_format: regex ``^[a-zA-Z]+-?\\d{3,}$`` (先清除 -UC/-UNCEN 等後綴)
+注意：測試按照 TASK-139 委派 is_strict_number 行為撰寫：
+- is_number_format: 委派 is_strict_number (先清除 -UC/-UNCEN 等後綴)
 - is_partial_number: regex ``^([a-zA-Z]+)-?(\\d{1,2})$``
 - is_prefix_only: regex ``^[A-Z]{2,6}$``
 - 三者都沒有 null guard (.strip() on None raises AttributeError)
@@ -38,17 +38,17 @@ class TestIsNumberFormat:
         """UC/UNCEN suffixes are stripped before matching"""
         assert is_number_format("SONE-103-UC") is True
 
-    def test_multi_dash_rejected(self):
-        """Multi-dash formats like FC2-PPV-1234567 don't match simple regex"""
-        assert is_number_format("FC2-PPV-1234567") is False
+    def test_multi_dash_accepted(self):
+        """Multi-dash formats like FC2-PPV-1234567 are accepted via is_strict_number"""
+        assert is_number_format("FC2-PPV-1234567") is True
 
-    def test_digit_in_prefix_rejected(self):
-        """Prefix must be pure letters; T28 has a digit"""
-        assert is_number_format("T28-001") is False
+    def test_digit_in_prefix_accepted(self):
+        """Prefix with digit like T28-001 is accepted via is_strict_number"""
+        assert is_number_format("T28-001") is True
 
-    def test_number_prefix_rejected(self):
-        """Prefix starting with digit rejected"""
-        assert is_number_format("259LUXU-001") is False
+    def test_number_prefix_accepted(self):
+        """Prefix starting with digit like 259LUXU-001 is accepted via is_strict_number"""
+        assert is_number_format("259LUXU-001") is True
 
     def test_underscore_in_number_rejected(self):
         """Underscore in number portion doesn't match"""
@@ -62,9 +62,24 @@ class TestIsNumberFormat:
         assert is_number_format("-001") is False
 
     def test_too_few_digits(self):
-        """Less than 3 digits rejected"""
+        """Less than 3 digits rejected (belongs to is_partial_number)"""
         assert is_number_format("ABP-01") is False
         assert is_number_format("ABP-1") is False
+
+    def test_positive_f3a_cases(self):
+        """F3-a 正向：200GANA-3360, 529STCV-152, T28-103 經 is_number_format 為 True"""
+        assert is_number_format("200GANA-3360") is True
+        assert is_number_format("529STCV-152") is True
+        assert is_number_format("T28-103") is True
+
+    @pytest.mark.parametrize("val", [
+        "三上悠亜", "白桃はな", "巨乳 2024", "S1 NO.1 STYLE", "prestige 2023",
+        "4K 無碼", "IPZ", "2024", "hhd800.com@SONE-103",
+        "../etc/passwd/SONE-103", "https://evil.com/SONE-103"
+    ])
+    def test_negative_f3a_cases(self, val: str):
+        """F3-a 反向鎖：關鍵字與路徑/網址等雜訊字串經 is_number_format 為 False"""
+        assert is_number_format(val) is False
 
     def test_none_raises(self):
         """None input raises AttributeError (no null guard)"""
