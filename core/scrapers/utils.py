@@ -464,8 +464,13 @@ METATUBE_PROVIDER_ORDER: list[str] = [
 # ============================================================
 
 # (regex, kind)；kind ∈ {'censored', 'uncensored'}
-# 比對方式：對「已 strip + upper」的整串做 re.fullmatch（不寫 ^$ 錨定——
-# Python 的 $ 會放行結尾換行，'SONE-103\n' 必須判 False）
+# 比對方式：對「已 strip + upper」的整串做 re.fullmatch。
+# 為什麼要先 strip 才 fullmatch，不是直接對原字串套 ^...$ 錨定：
+# 若不 strip，Python 的 $ 會放行結尾換行——'SONE-103\n' 這種輸入會被 ^...$ 誤判為合法番號。
+# 先 .strip() 再 fullmatch 兩個問題一次解決：使用者從別處貼進來的番號帶前後空白/換行時
+# （POSITIVE_SURROUNDING_WHITESPACE 覆蓋的情境）視為合法去除，'SONE-103\n' 本身因此正確判 True；
+# 真正該擋的是「夾在字串中間」的換行（ALL_NEGATIVE 的 'SONE-103\nSSIS-001' 那類），
+# strip 不動中間字元，fullmatch 對它仍然失敗。
 _STRICT_NUMBER_PATTERNS = [
     # ❗FC2／HEYZO 這三條的數字同樣要求「至少 3 位」——理由與下面 censored 三條同源：
     # 1-2 位尾數是 is_partial_number（候選清單）的地盤。少了它，使用者打 HEYZO-12 想瀏覽系列時，
@@ -538,4 +543,46 @@ def is_lenient_number(s: str) -> bool:
     if is_strict_number(normalized):
         return True
     return bool(re.fullmatch(_LENIENT_NUMBER_PATTERN, normalized))
+
+
+def is_uncensored_route(s: str) -> bool:
+    """G 專用：判斷是否應走無碼搜尋路由（139-T9，CD-b3 拍板①）。
+
+    條件集＝舊 G 語意（FC2 兩條 ＋ HEYZO 一條 ＋ 日期式兩條），刻意排除
+    [A-Z]\\d{4}（那是 C 的無碼判定範疇，不該連帶把路由也搶走，見 CD-b3 放寬方向）。
+    呼叫端須先用 resolve_route_target() 把輸入變乾淨再傳進來（CD-b3 拍板② B＋）；
+    本函式自己不做尾綴剝除或前綴寬鬆比對。空字串 / None 回傳 False。
+    """
+    if not s or not isinstance(s, str):
+        return False
+    normalized = s.strip().upper()
+    if not normalized:
+        return False
+    if re.fullmatch(r'FC2[ \t　_-]*PPV[ \t　_-]*\d{3,}', normalized):
+        return True
+    if re.fullmatch(r'FC2[ \t　_-]*\d{3,}', normalized):
+        return True
+    if re.fullmatch(r'HEYZO[ \t　_-]*\d{3,}', normalized):
+        return True
+    if re.fullmatch(r'\d{6}-\d{2,}', s.strip()):
+        return True
+    if re.fullmatch(r'\d{6}_\d{2,}', s.strip()):
+        return True
+    return False
+
+
+def resolve_route_target(q: str) -> str:
+    """G／C 路由決策前的共用前處理（139-T9，CD-b3 B＋ 對稱修法）。
+
+    對輸入跑一次 extract_number()，只有抽出的結果本身也通過 is_strict_number()
+    才採用為 candidate（那道 is_strict_number 閘不得省略——省了 '2024' 這類輸入
+    會被誤判成候選；見 CD-b3 證據 A）；沒有合格候選則原樣回傳輸入字串。
+
+    呼叫端注意：partial() / prefix() 判斷不得使用本函式的回傳值，仍須用原字串 q
+    （CD-b3 證據 C：這是設計的一部分，不是巧合）。
+    """
+    n = extract_number(q)
+    candidate = n if (n and is_strict_number(n)) else None
+    return candidate or q
+
 

@@ -27,7 +27,8 @@ from core.scrapers.utils import (
     FUZZY_SEARCH_SOURCES,
     normalize_number_impl,
     is_strict_number,
-    is_strict_uncensored_number,
+    is_uncensored_route,
+    resolve_route_target,
 )
 from core.maker_mapping import get_maker_by_prefix
 from core.source_merger import merge_results
@@ -848,13 +849,15 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
             r['_mode'] = 'uncensored'
         return results
 
+    # 139b-T9（CD-b3 B＋ 對稱修法）：candidate 只算一次，G 與 C 都問它。
+    target = resolve_route_target(query)
+
     # 0. 無碼特殊處理 - 自動偵測（FC2 / HEYZO / 日期-編號格式）
-    is_uncensored = is_strict_uncensored_number(query)
+    is_uncensored = is_uncensored_route(target)
     if is_uncensored:
         if status_callback:
             status_callback('mode', 'uncensored')
-        extracted = _new_extract_number(query)
-        search_term = extracted if extracted else query
+        search_term = target
         result = None
         unc_sources = _get_uncensored_sources(search_term)
         for unc_source in unc_sources:
@@ -871,8 +874,8 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
         return results
 
     # 1. 精確搜尋 — 依優先序串接直打，命中即回（spec-85 B1，CD-85-1）
-    if is_number_format(query):
-        query = normalize_number(query)
+    if is_number_format(target):
+        query = normalize_number(target)
         if offset > 0:
             return []
 

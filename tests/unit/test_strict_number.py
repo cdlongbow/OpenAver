@@ -3,6 +3,8 @@ from core.scrapers.utils import (
     is_lenient_number,
     is_strict_number,
     is_strict_uncensored_number,
+    is_uncensored_route,
+    resolve_route_target,
 )
 
 
@@ -232,5 +234,98 @@ def test_t8_crlf_rejected():
     """\r\n 正向鎖：含換行的字串被排除，不通過 strict 與 lenient 驗證。"""
     assert is_strict_number("HEYZO\r\n1234") is False
     assert is_lenient_number("HEYZO\r\n1234") is False
+
+
+# ============================================================
+# TASK-139-T9: G 條件集重建 ＋ C／G 對稱前處理 (CD-b3 / CD-b5)
+# ============================================================
+
+CORPUS_T9 = [
+    # 收窄修復對象（老：False，新：True）——B＋ 前處理抽出乾淨候選後應命中
+    "FC2-PPV-4914771-C", "HEYZO-1234-C", "FC2PPV-4943690-1080P",
+    # 放寬排除對象（老：True，新：False）——[A-Z]\d{4} 不再屬於 G
+    "N0762", "K0150", "T1234",
+    # 維持不變：FC2/HEYZO/日期式全部七 + 2 種寫法（皆應老新一致為 True）
+    "FC2PPV-4943690", "FC2PPV4943690", "FC2 PPV 4943690", "FC2PPV_4943690",
+    "FC2-PPV-4943690", "FC2-4943690", "fc2ppv-4943690",
+    "HEYZO-1234", "heyzo1234", "090122_001", "020317-001",
+    # 維持不變：censored 形（皆應老新一致為 False，G 不該收）
+    "SONE-205", "200GANA-3360", "T28-103",
+    # 證據 A 代表樣本（皆應老新一致為 False——candidate 為 None，不得被 target 誤收進 G）
+    "JULIA 2024", "2024", "1080p", "VR 8K", "MOODYZ 25周年", "東京熱", "caribbean",
+    # 維持不變：關鍵字/雜訊（皆應老新一致為 False）
+    "三上悠亜", "hhd800.com@SONE-103", "../etc/passwd/SONE-103", "", None,
+]
+
+EXPECTED_DIFF_T9 = [
+    ("FC2-PPV-4914771-C", False, True),
+    ("HEYZO-1234-C", False, True),
+    ("FC2PPV-4943690-1080P", False, True),
+    ("N0762", True, False),
+    ("K0150", True, False),
+    ("T1234", True, False),
+]
+
+
+def test_t9_diff_matches_expected():
+    def new_g(s):
+        return is_uncensored_route(resolve_route_target(s)) if s is not None else False
+    diff = [
+        (s, is_strict_uncensored_number(s), new_g(s))
+        for s in CORPUS_T9
+        if is_strict_uncensored_number(s) != new_g(s)
+    ]
+    assert diff == EXPECTED_DIFF_T9
+
+
+ADVERSARIAL_INPUTS_EVIDENCE_A = [
+    "JULIA 2024",
+    "2024",
+    "1080p",
+    "VR 8K",
+    "MOODYZ 25周年",
+    "S1 2024",
+    "美少女 100人",
+    "素人 20歳",
+    "エスワン 2024",
+    "東京熱",
+    "caribbean",
+    "fc2",
+    "heyzo",
+    "三上悠亜",
+    "波多野結衣",
+    "深田えいみ",
+    "白桃はな",
+]
+
+
+@pytest.mark.parametrize("s", ADVERSARIAL_INPUTS_EVIDENCE_A)
+def test_resolve_route_target_evidence_a(s: str):
+    """DoD-4 證據 A: 對抗性輸入 candidate 為 None，原樣回傳輸入字串。"""
+    assert resolve_route_target(s) == s
+
+
+EVIDENCE_B_INPUTS = [
+    "[ABC-123]",
+    "ABC-123.mp4",
+    "【ABC-123】",
+    "[JavBus] ABC-123 標題.mp4",
+    "(ABC-123)",
+    "ABC-123 - 中文字幕.mkv",
+]
+
+
+@pytest.mark.parametrize("s", EVIDENCE_B_INPUTS)
+def test_resolve_route_target_evidence_b(s: str):
+    """DoD-4 證據 B: residual #6 包裝字串經 resolve_route_target 抽出乾淨番號。"""
+    assert resolve_route_target(s) == "ABC-123"
+
+
+def test_resolve_route_target_d3_witness():
+    """DoD-4 / D3 見證：extract_number('fc2 12') -> 'FC2-12'，但 is_strict_number('FC2-12') 為 False，
+    因此 resolve_route_target('fc2 12') 必須回傳原字串 'fc2 12'。
+    """
+    assert resolve_route_target("fc2 12") == "fc2 12"
+
 
 
