@@ -726,6 +726,12 @@ body {
     margin-top: 0.5rem;
 }
 
+/* State Page Action - 狀態頁裡的行動膠囊（139-T7 錯誤頁「使用番號進階搜尋」）
+   間距比照同層的 .empty-actions（狀態頁的行動區塊），避免緊貼 .state-page-hint */
+.ds-page .state-page-action {
+    margin-top: 0.75rem;
+}
+
 /* Empty Actions - 按鈕容器 */
 .ds-page .empty-actions {
     display: flex;

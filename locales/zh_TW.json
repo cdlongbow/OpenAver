@@ -110,6 +110,8 @@
     },
     "error": {
       "hint": "請檢查番號格式或稍後再試",
+      "hint_retry": "請稍後再試",
+      "advanced_search_cta": "使用番號進階搜尋",
       "tag_api_failed": "標籤儲存失敗，請稍後再試",
       "no_data": "找不到資料",
       "search_failed": "搜尋失敗",
