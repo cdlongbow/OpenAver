@@ -1,0 +1,309 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# Manual-trigger only (auto_review.enabled: false below). To run a review, comment
+# on a PR: @coderabbitai full review
+# See feature/coderabbit-config PR body / feature/coderabbit-setup.md for rationale.
+
+language: en-US
+
+tone_instructions: >-
+  Report findings only. Each inline comment: start with **[P0]**/**[P1]**/**[P2]**/**[P3]**
+  then a short imperative title, then one paragraph on real user impact. No praise, no summary.
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+
+  # ── PR-level output: all off, keep only inline findings ──
+  high_level_summary: false
+  changed_files_summary: false
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  assess_linked_issues: false
+  related_issues: false
+  related_prs: false
+  suggested_labels: false
+  auto_apply_labels: false
+  suggested_reviewers: false
+  auto_assign_reviewers: false
+  poem: false
+  in_progress_fortune: false
+  review_status: false
+  review_details: false
+  enable_prompt_for_ai_agents: false
+
+  review_progress: true
+  commit_status: false
+
+  # ── Trigger: manual only ──
+  auto_review:
+    enabled: false
+    auto_incremental_review: false
+    drafts: false
+    base_branches: []
+
+  slop_detection:
+    enabled: false
+
+  # ── Pro-only surfaces: all off (keeps behavior stable past the trial window) ──
+  pre_merge_checks:
+    title:
+      mode: "off"
+    description:
+      mode: "off"
+    docstrings:
+      mode: "off"
+    issue_assessment:
+      mode: "off"
+
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
+    autofix:
+      enabled: false
+    fix_ci:
+      enabled: false
+    resolve_merge_conflict:
+      enabled: false
+
+  # ── Static analysis tools: disable what CI already runs ──
+  tools:
+    ruff:
+      enabled: false
+    eslint:
+      enabled: false
+    stylelint:
+      enabled: false
+    pylint:
+      enabled: false
+    flake8:
+      enabled: false
+    markdownlint:
+      enabled: false
+    languagetool:
+      enabled: false
+    yamllint:
+      enabled: false
+    htmlhint:
+      enabled: false
+    semgrep:
+      enabled: false
+    opengrep:
+      enabled: false
+    ast-grep:
+      enabled: false
+    biome:
+      enabled: false
+    oxc:
+      enabled: false
+    gitleaks:
+      enabled: true
+    trufflehog:
+      enabled: true
+    actionlint:
+      enabled: true
+    checkov:
+      enabled: false
+    osvScanner:
+      enabled: false
+
+  path_instructions:
+    - path: "**/*"
+      instructions: >-
+        OpenAver is a single-user, LAN-only desktop application for managing a personal video
+        library. The user is also the operator. No multi-tenancy, no account system, and NO
+        hostile authenticated LAN user in the default threat model. External access is delegated
+        to the user's Tailscale / Cloudflare Zero Trust.
+
+
+        OUTPUT FORMAT — every inline comment must be exactly:
+          **[P<n>] <short imperative title>**
+          <one paragraph: what a real user sees or loses if this is not fixed, traced to the
+           final sink — which file, which DB row, which flow>
+        No praise, no restating the diff, no summary sections, no "consider" hedging.
+
+
+        SEVERITY — grade by RECOVERY COST, not by whether a defect exists in the abstract:
+        - P0: irreversibly destroys something unrecoverable — the video files themselves
+          (rename/move/delete/content overwrite), or user-authored metadata with no external
+          source and no automatic reconstruction (custom tags, aliases, primary names).
+          A settings toggle is user-authored but trivially reset; NOT P0.
+        - P1: silent x batch x unattributable — wrong data written across many items, no
+          notification, screen looks normal, user cannot tell afterwards which items were
+          touched. Also: leaked secrets or credentials.
+        - P2: user-visible and wrong, but single-item, visible at the time, fixed by re-scraping
+          or re-running. Or a real weakening of a security boundary the stated threat model covers.
+        - P3: everything else — internal consistency, theoretical edge cases requiring input a
+          real user cannot produce, a guard's completeness against additional bypasses, cosmetics.
+
+
+        Explicitly NOT P0/P1 on their own: covers, NFO contents, sample images, focal
+        coordinates. Overwriting them for a single title the user is looking at is an
+        inconvenience. The SAME overwrite applied silently across a batch IS P1 — severity comes
+        from the silence and the scale, not the file type.
+
+
+        Never stop at the surface. A predicate that reads like a trivial boolean edge case may
+        reach shutil.move() on the user's video file — that is P0. Trace to the final sink before
+        assigning severity.
+
+
+        An issue requiring an attacker capability outside the stated threat model is P3 regardless
+        of how severe the consequence would be if triggered. Say so explicitly rather than omitting it.
+
+
+        REPORTING VOLUME — report ALL blockers (P0/P1), plus AT MOST THREE non-blocking
+        suggestions per review, ordered by blast radius. If items fell below the cut, say how many
+        and in one line what category; do not expand them.
+
+
+        OUT OF SCOPE — the CI lint layer already enforces these; do NOT re-report them:
+        eslint / stylelint / ruff (F, E722, B incl. B904/B905/B023, T201, S110/S112) and four
+        custom guards: scripts/static_guard_lint.mjs (string-presence rules over HTML/JS/Python),
+        scripts/css-guard.mjs (Fluent tokens, poster-crop, z-index ordering, selector scoping),
+        scripts/i18n_lint.mjs, scripts/lint-settings-ia.mjs. Formatting, import order, and style
+        nits are out of scope. Logic, cross-file contracts, and dead code not caught by ruff F
+        remain in scope.
+
+
+        GUARDS — two modes, do not conflate:
+        1. Guard migration or deletion is reviewed strictly. If a replacement catches strictly
+           less than the original, that is a silent loss of coverage = regression. Check target
+           set, scope, first-vs-all match, count/order, polarity, anchor-absent behaviour,
+           granularity. Grade by the product impact of what is no longer caught.
+        2. Guard absolute strength is ALWAYS P3 and never a merge blocker. "This guard can be
+           bypassed by renaming a variable" — report once, do not re-raise. This covers ONLY
+           additional false-negative bypasses. It does NOT cover: loss of existing coverage
+           (that is mode 1), false positives on valid code, or crashes/hangs/altered test
+           execution — those three are defects in the change itself and block regardless of P-level.
+
+    - path: "**/*.py"
+      instructions: >-
+        - API responses MUST NOT contain str(e) or Python exception details. Frontend-facing error
+          messages must be fixed Chinese strings (e.g. "操作失敗"); details go to logger.error()
+          or logger.exception() server-side. Flag violations.
+        - All database queries must use parameterized statements. No SQL string interpolation.
+        - No unvalidated user input passed directly into open() / Path() / os.path.
+        - No hardcoded secrets, API keys, passwords, or tokens. (P1.)
+        - except blocks must not silently swallow errors — at minimum logger.error().
+
+
+        SSRF IS BEST-EFFORT, NOT A DEFAULT BLOCKER. Per the threat model, the default model does
+        not include a hostile authenticated LAN user; residual browser-origin risks (DNS
+        rebinding, malicious webpages) are defense-in-depth, not merge blockers. Missing SSRF
+        hardening in NEW backend URL-fetching code is a P3 suggestion. NEVER block a PR solely on
+        absent SSRF guards. DO still flag: removal or weakening of existing mitigations
+        (private-IP rejection, no-redirect-follow, image-host allowlist, LAN opt-in), clear
+        regressions in already-hardened endpoints, unauthenticated arbitrary-request proxy
+        behavior, or code contradicting a feature's own stated security contract.
+
+
+        PATH HANDLING — all file:/// URI construction and parsing must go through
+        core/path_utils.py. Forbidden outside that file: path[8:] or path[len('file:///'):],
+        f"file:///{...}", replace('/', '\\') for path conversion, startswith('file:///') plus
+        manual handling. These are already enforced mechanically by TestPathContract in
+        tests/unit/test_frontend_lint.py — do NOT assign severity by pattern match; if a violation
+        reaches you, grade it by the product impact of what the wrong path actually writes to.
+
+    - path: "web/static/js/**/*.js"
+      instructions: >-
+        ALPINE.JS
+        - document.querySelector('[x-data]') without a scoped selector (e.g.
+          '.search-container[x-data]') is a bug — it selects the sidebar, not the page component.
+        - Alpine methods in templates must be called with parentheses.
+          :disabled="!canGoPrev" is wrong; :disabled="!canGoPrev()" is correct.
+
+
+        I18N — strategy is source-locale-only plus milestone sync. During development PRs, only
+        locales/zh_TW.json is required to be updated.
+        - Missing keys or entire missing subtrees in zh_CN.json, ja.json, or en.json ARE NOT
+          FINDINGS. Do not report them.
+        - DO flag: hardcoded Chinese UI text in HTML/JS that should use t() / window.t();
+          t() / window.t() referencing keys missing from zh_TW.json; HTML-containing translations
+          rendered without | safe.
+        - Out of scope for i18n: showToast(), alert(), confirm(), SSE messages, console.*,
+          technical terms (NFO, API Key, Jellyfin, Proxy), browser/platform built-in text, and the
+          design-system / motion-lab demo page body content (internal dev-reference pages; their
+          demo labels contain Fluent design tokens that must not be translated — page chrome still
+          goes through i18n).
+
+
+        GENERAL
+        - No console.log left in production JavaScript (except intentional debug modes).
+        - Avoid introducing new inline <script> blocks in templates; prefer separate .js files.
+
+    - path: "web/templates/**/*.html"
+      instructions: >-
+        ALPINE.JS
+        - document.querySelector('[x-data]') without a scoped selector (e.g.
+          '.search-container[x-data]') is a bug — it selects the sidebar, not the page component.
+        - Alpine methods in templates must be called with parentheses.
+          :disabled="!canGoPrev" is wrong; :disabled="!canGoPrev()" is correct.
+
+
+        I18N — strategy is source-locale-only plus milestone sync. During development PRs, only
+        locales/zh_TW.json is required to be updated.
+        - Missing keys or entire missing subtrees in zh_CN.json, ja.json, or en.json ARE NOT
+          FINDINGS. Do not report them.
+        - DO flag: hardcoded Chinese UI text in HTML/JS that should use t() / window.t();
+          t() / window.t() referencing keys missing from zh_TW.json; HTML-containing translations
+          rendered without | safe.
+        - Out of scope for i18n: showToast(), alert(), confirm(), SSE messages, console.*,
+          technical terms (NFO, API Key, Jellyfin, Proxy), browser/platform built-in text, and the
+          design-system / motion-lab demo page body content (internal dev-reference pages; their
+          demo labels contain Fluent design tokens that must not be translated — page chrome still
+          goes through i18n).
+
+
+        GENERAL
+        - No console.log left in production JavaScript (except intentional debug modes).
+        - Avoid introducing new inline <script> blocks in templates; prefer separate .js files.
+
+    - path: "tests/**"
+      instructions: >-
+        TEST BLOAT POLICY — do NOT request new pytest tests for anything the lint layer can
+        express. If a regression of this class arises, the fix is a new rule row in
+        scripts/static_guard_lint.mjs (the engine exists; adding a rule is a table entry, not a
+        new script), or css-guard.mjs / i18n_lint.mjs / eslint / stylelint for their domains —
+        NOT a new TestNoXxx pytest class.
+
+
+        New assertions that check a LITERAL STRING against frontend HTML/JS/CSS text — the shape
+        assert "<literal>" in (html|js|css_text) or its not-in negation, including incremental
+        additions to a for-loop or list of such literals — must carry an inline
+        `# [lint-guard: pytest-justified <reason> | migrate -> <tool>]` tag. Flag untagged ones.
+
+
+        OUT OF SCOPE for that tagging rule (no lint tool can express these; they belong in pytest
+        and need no tag): assertions on the RETURN VALUE of Python code — scraper parse results,
+        request URLs a client builds, JSON API response bodies, DB round-trips. Asserting a
+        literal against TestClient(...).get(...).text when that response IS HTML/JS/CSS is still
+        in scope. The 8 existing scraper test files carry ~500 untagged assertions of the
+        return-value kind; that is correct, not debt.
+
+
+        When migrating a guard to lint, it must be ported at the SAME scan granularity as the
+        original (whole-file / element-scoped / attribute-value / method-body window) and prefer
+        fail-closed over fail-open.
+
+
+        Do not request migration of the E2E-block classes in tests/unit/test_frontend_lint.py
+        (user-journey guards: swipe / keyboard / lightbox / actress flows) — they stay as pytest
+        by decision. Likewise tests/unit/frontend_contracts/ and [lint-guard: pytest-justified]
+        tagged classes are deliberate KEEPs.
+
+chat:
+  auto_reply: false
+  art: false
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "AGENTS.md"
+  web_search:
+    enabled: false
