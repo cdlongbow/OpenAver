@@ -882,6 +882,29 @@ class TestSmartSearchUncensoredAndConsistency:
             called_number = mock_search.call_args[0][0]
             assert called_number == "ABC-123"
 
+    def test_numeric_prefix_number_reaches_source_intact(self):
+        """數字前綴番號送去來源查的必須是**完整原字串**，不是被 A 咬掉前綴的子串。
+
+        139-T9 第 3 輪（grok-4.6 branch review P1）：resolve_route_target() 原本無條件
+        先跑 extract_number()，而 A 的 ([A-Za-z]{1,7}-\d{3,5}) 會咬到子串——
+        200GANA-3360 被改寫成 GANA-3360 送去查，那是**另一部片**。
+
+        這四種正是 0.15.7 CHANGELOG 明文承諾「現在會走精準搜尋」的形狀，
+        T9 讓它們確實走了 exact，但查錯番號 ⇒ 招牌功能被自己打壞。
+
+        🔴 這條測的是 **search term**，不是 mode 標籤——T9 的兩支 oracle 只鎖 mode，
+        而這四筆的 mode 前後都是 exact，所以 oracle 對它是隱形的。
+        """
+        for raw in ("200GANA-3360", "259LUXU-1234", "529STCV-152", "7IPZ-154"):
+            with patch("core.scraper.get_enabled_source_ids", return_value=["javbus"]), \
+                 patch("core.scraper.search_jav_single_source", return_value=None) as mock:
+                smart_search(raw, limit=1)
+            assert mock.call_count >= 1, f"{raw!r} 沒有到達 exact 分支，這條測試等於沒測"
+            for call in mock.call_args_list:
+                assert call.args[0] == raw, (
+                    f"{raw!r} 送出的是 {call.args[0]!r}——數字前綴被咬掉了"
+                )
+
     def test_t9_raw_noise_never_reaches_scraper(self):
         """路徑／網址雜訊可以路由到 exact，但送給來源的必須是抽取後的番號，不是原字串。"""
         cases = [

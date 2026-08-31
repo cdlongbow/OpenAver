@@ -589,6 +589,15 @@ def resolve_route_target(q: str) -> str:
     呼叫端注意：partial() / prefix() 判斷不得使用本函式的回傳值，仍須用原字串 q
     （CD-b3 證據 C：這是設計的一部分，不是巧合）。
     """
+    raw = q.strip() if isinstance(q, str) else q
+    if raw and is_strict_number(raw):
+        # 🔴 原字串本身已經是完整番號 → 直接用它，**不得**拿 A 的抽取結果覆寫。
+        # 少了這道閘，數字前綴番號會被 A 的 ([A-Za-z]{1,7}-\d{3,5}) 咬掉前綴：
+        #     200GANA-3360 -> GANA-3360、259LUXU-1234 -> LUXU-1234、7IPZ-154 -> IPZ-154
+        # 而那三種正是 0.15.7 CHANGELOG 明文承諾「現在會走精準搜尋」的形狀
+        # ——會路由到 exact，但查的是另一個番號。（grok-4.6 branch review 抓到，139-T9 第 3 輪）
+        # A 的職責是「從一堆雜訊裡挖出番號」，C 已經承認整串就是番號時，A 沒有發言權。
+        return raw
     n = extract_number(q)
     candidate = n if (n and is_strict_number(n)) else None
     return candidate or q
