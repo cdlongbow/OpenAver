@@ -349,13 +349,85 @@ class TestValidateNumber:
         """K0150（單字母 + 4 位）validate 應為 True"""
         assert self._scraper().validate_number('K0150') is True
 
-    def test_validate_SONE103_false(self):
-        """SONE103（多字母無 hyphen）validate 仍應為 False（回歸守衛）"""
-        assert self._scraper().validate_number('SONE103') is False
+    def test_validate_SONE103_true(self):
+        """SONE103（多字母無 hyphen）validate 應為 True。
+
+        T3 已拍板「hyphen 可省」（`is_number_format` / `is_strict_number` 對
+        SONE103 皆 True）。D 委派同一張表後必須跟 True——C 與 D 對同一字串
+        給不同答案才是 bug。送進 scraper 的值一定是正規化後的（H 先、D 後），
+        本類的呼叫順序釘子鎖住這點；D 接受無 hyphen 形，不代表無 hyphen
+        字串會跑到組 URL 的地方。
+        """
+        assert self._scraper().validate_number('SONE103') is True
 
     def test_validate_SONE103_with_hyphen_true(self):
         """SONE-103（多字母有 hyphen）validate 仍應為 True（回歸守衛）"""
         assert self._scraper().validate_number('SONE-103') is True
+
+    # --- TASK-139-T4：§1.4 正向鎖（委派 is_strict_number 後必須 True）---
+    def test_validate_200GANA_3360_true(self):
+        """素人數字前綴 200GANA-3360"""
+        assert self._scraper().validate_number('200GANA-3360') is True
+
+    def test_validate_529STCV_152_true(self):
+        """素人數字前綴 529STCV-152"""
+        assert self._scraper().validate_number('529STCV-152') is True
+
+    def test_validate_090122_001_true(self):
+        """日期底線格式 090122_001"""
+        assert self._scraper().validate_number('090122_001') is True
+
+    def test_validate_020317_001_true(self):
+        """日期連字號格式 020317-001"""
+        assert self._scraper().validate_number('020317-001') is True
+
+    def test_validate_FC2PPV_4943690_true(self):
+        """FC2 無 hyphen-PPV 分隔形 FC2PPV-4943690"""
+        assert self._scraper().validate_number('FC2PPV-4943690') is True
+
+    # --- TASK-139-T4：反向鎖 5 類（委派前後皆 False）---
+    def test_validate_empty_false(self):
+        """空字串"""
+        assert self._scraper().validate_number('') is False
+
+    def test_validate_chinese_false(self):
+        """純中文"""
+        assert self._scraper().validate_number('中文測試') is False
+
+    def test_validate_path_traversal_false(self):
+        """路徑穿越字串"""
+        assert self._scraper().validate_number('../etc/passwd') is False
+
+    def test_validate_url_scheme_false(self):
+        """含 :// 的 URL 形"""
+        assert self._scraper().validate_number('http://evil.com') is False
+
+    def test_validate_embedded_newline_false(self):
+        """含內嵌換行（非整串單一番號）"""
+        assert self._scraper().validate_number('SONE-103\nSSIS-001') is False
+
+    def test_validate_number_receives_normalized_value(self, monkeypatch):
+        """呼叫順序釘子：H（normalize）先跑、D（validate）後跑。
+
+        傳入 'sone103'，validate_number 必須收到正規化後的 'SONE-103'，
+        不是原字串（Opus 裁決 2026-08-31）。
+        """
+        from unittest.mock import MagicMock
+
+        scraper = self._scraper()
+        received = []
+
+        def spy(number):
+            received.append(number)
+            return True
+
+        monkeypatch.setattr(scraper, 'validate_number', spy)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+        monkeypatch.setattr(scraper._session, 'get', MagicMock(return_value=mock_resp))
+
+        scraper.search('sone103')
+        assert received == ['SONE-103']
 
 
 # ============ TestIsNumberFormat ============
