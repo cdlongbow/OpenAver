@@ -82,7 +82,7 @@ def post_html(url: str, data: Optional[dict[str, object]] = None, timeout: int =
 # 實測 'SONE-205fc21.mp4' 會從 SONE-205 變成 FC2-1、'notfc2-1234567' 變成 FC2-1234567
 # （第 3 輪 review 由 grok/sonnet 各自獨立命中）。H 的 fullmatch 與 B 的 (.*[\W_])? 前綴
 # 都不受這條影響（位置 0 或前一字元本來就是非英數）。
-FC2_TOKEN_PATTERN = r'(?<![A-Za-z0-9])FC2[\s_-]*(?:PPV[\s_-]*)?(?P<fc2digits>\d+)'
+FC2_TOKEN_PATTERN = r'(?<![A-Za-z0-9])FC2[ \t　_-]*(?:PPV[ \t　_-]*)?(?P<fc2digits>\d+)'
 
 
 def extract_number(filename: str) -> Optional[str]:
@@ -471,9 +471,9 @@ _STRICT_NUMBER_PATTERNS = [
     # 1-2 位尾數是 is_partial_number（候選清單）的地盤。少了它，使用者打 HEYZO-12 想瀏覽系列時，
     # 會被判成完整番號而改走精準／無碼單片搜尋 → 候選清單消失、多半查無結果。
     # （真實 FC2 編號 6-7 位、HEYZO 4 位，3 位下限不會擋掉任何真番號。）
-    (r'FC2[\s_-]*PPV[\s_-]*\d{3,}', 'uncensored'),   # FC2PPV-4943690 / FC2 PPV 4943690 / FC2-PPV-4943690
-    (r'FC2[\s_-]*\d{3,}', 'uncensored'),             # FC2-4943690 / FC24943690
-    (r'HEYZO[\s_-]*\d{3,}', 'uncensored'),           # HEYZO-1234 / heyzo1234（G 現況以 startswith('heyzo') 判無碼，收斂後不得漏）
+    (r'FC2[ \t　_-]*PPV[ \t　_-]*\d{3,}', 'uncensored'),   # FC2PPV-4943690 / FC2 PPV 4943690 / FC2-PPV-4943690
+    (r'FC2[ \t　_-]*\d{3,}', 'uncensored'),             # FC2-4943690 / FC24943690
+    (r'HEYZO[ \t　_-]*\d{3,}', 'uncensored'),           # HEYZO-1234 / heyzo1234（G 現況以 startswith('heyzo') 判無碼，收斂後不得漏）
     (r'\d{6}-\d{2,}', 'uncensored'),              # 020317-001 日期-編號（無碼）
     (r'\d{6}_\d{2,}', 'uncensored'),              # 090122_001 日期_編號（無碼）
     (r'[A-Z]\d{4}', 'uncensored'),                # N0762 單字母 + 恰 4 位（東京熱）
@@ -517,3 +517,25 @@ def is_strict_uncensored_number(s: str) -> bool:
         if kind == 'uncensored' and re.fullmatch(pattern, normalized):
             return True
     return False
+
+
+# D 專用寬表（139-T8，CD-b2）：strict 表 ∪ 短尾碼（1-2 位）。
+# 不供 C／G 使用——C 的 ≥3 位下限是刻意的（1-2 位要留給 is_partial_number 給候選清單），
+# D 只是「送去查之前的格式衛生檢查」，不該替 C 做路由決定。
+_LENIENT_NUMBER_PATTERN = r'[A-Z]+\d*-\d{1,2}'   # 有 hyphen 且尾碼 1-2 位（HITMA-16 / T28-10）
+
+
+def is_lenient_number(s: str) -> bool:
+    """D 專用：is_strict_number(s) 或符合 _LENIENT_NUMBER_PATTERN（短尾碼）。
+
+    空字串 / None 回傳 False。前置正規化與 is_strict_number 一致（s.strip().upper()）。
+    """
+    if not s or not isinstance(s, str):
+        return False
+    normalized = s.strip().upper()
+    if not normalized:
+        return False
+    if is_strict_number(normalized):
+        return True
+    return bool(re.fullmatch(_LENIENT_NUMBER_PATTERN, normalized))
+

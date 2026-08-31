@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 from typing import Optional
 from .models import Video, ScraperConfig
-from core.scrapers.utils import is_strict_number, normalize_number_impl
+from core.scrapers.utils import is_lenient_number, normalize_number_impl
 
 
 class BaseScraper(ABC):
@@ -68,7 +68,7 @@ class BaseScraper(ABC):
         Returns:
             True 如果格式正確
         """
-        return is_strict_number(number)
+        return is_lenient_number(number)
 
     def normalize_number(self, number: str) -> str:
         """正規化番號（統一大寫、格式）"""

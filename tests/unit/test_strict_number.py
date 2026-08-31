@@ -1,5 +1,9 @@
 import pytest
-from core.scrapers.utils import is_strict_number, is_strict_uncensored_number
+from core.scrapers.utils import (
+    is_lenient_number,
+    is_strict_number,
+    is_strict_uncensored_number,
+)
 
 
 POSITIVE_NUMERIC_PREFIX = [
@@ -176,4 +180,57 @@ def test_is_number_format_and_is_partial_number_exclusive():
               "FC21", "HEYZO1", "HEYZO-12"]:
         assert is_number_format(s) is False, f"is_number_format({s!r}) 應為 False"
         assert is_partial_number(s) is True, f"is_partial_number({s!r}) 應為 True"
+
+
+# ============ TASK-139-T8：D 專用寬表測試 ============
+
+# 舊 D（139b 之前）= is_strict_number(s)；新 D = is_lenient_number(s)
+CORPUS_T8 = [
+    # 短尾碼（1-2 位，收窄修復對象——舊 D 收、is_strict_number 不收）
+    "HITMA-16", "T28-10", "ABC-1", "SONE-01", "IPZZ-03", "SNIS-1", "ABP-01",
+    # ❗數字前綴 ＋ 1-2 位尾碼：**舊 D 也不收**（`^[A-Z]+-\d+$` 要求字母開頭），
+    # 不是回歸、不在本卡範圍。放進語料是為了「反向鎖住它仍然不收」。
+    "200GANA-36", "529STCV-1",
+    # 唯一已知殘留（承重段窮舉出的 1 筆例外，仍收不到）
+    "FC2-PPV-12",
+    # 無 hyphen 形（T4 的既有放寬，不得回退——is_strict_number 已收，is_lenient_number 應維持收）
+    "SONE205", "HEYZO1234", "ABC123",
+    # 一般合法番號（is_strict_number 已收，is_lenient_number 應維持收）
+    "SONE-205", "200GANA-3360", "FC2PPV-4943690", "090122_001", "020317-001",
+    # 帶尾綴／雜訊（皆不應被 D 收，短尾碼 pattern 不吃字母結尾或路徑雜訊）
+    "SONE-205-C", "../etc/passwd/SONE-103", "https://evil.com/SONE-103",
+    "hhd800.com@SONE-103", "SONE-103\nSSIS-001",
+    # 空值 / 純中文
+    "", "三上悠亜",
+]
+EXPECTED_DIFF_T8 = [
+    ("HITMA-16", False, True), ("T28-10", False, True), ("ABC-1", False, True),
+    ("SONE-01", False, True), ("IPZZ-03", False, True), ("SNIS-1", False, True),
+    ("ABP-01", False, True),
+    # ❗`200GANA-36` / `529STCV-1` **不在差集裡**——見上方語料註解，兩者 old_D 也是 False。
+]
+
+
+def test_t8_diff_matches_expected():
+    diff = [
+        (s, is_strict_number(s), is_lenient_number(s))
+        for s in CORPUS_T8
+        if is_strict_number(s) != is_lenient_number(s)
+    ]
+    assert diff == EXPECTED_DIFF_T8
+
+
+def test_t8_fullwidth_space_preserved():
+    """全形空白反向鎖：U+3000 全形空白在 is_strict_number, is_lenient_number, extract_number 均維持正常。"""
+    assert is_strict_number("FC2　1234567") is True
+    assert is_lenient_number("HEYZO　1234") is True
+    from core.scrapers.utils import extract_number
+    assert extract_number("FC2　1234567") == "FC2-1234567"
+
+
+def test_t8_crlf_rejected():
+    """\r\n 正向鎖：含換行的字串被排除，不通過 strict 與 lenient 驗證。"""
+    assert is_strict_number("HEYZO\r\n1234") is False
+    assert is_lenient_number("HEYZO\r\n1234") is False
+
 

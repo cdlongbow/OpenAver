@@ -429,6 +429,19 @@ class TestValidateNumber:
         scraper.search('sone103')
         assert received == ['SONE-103']
 
+    def test_hitma_16_reaches_http_layer(self, monkeypatch):
+        """HITMA-16（68 個收回形狀之一）經 JavBusScraper.search 真的發出 HTTP 請求（spy 數，不出網）。"""
+        from unittest.mock import MagicMock
+        scraper = self._scraper()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404   # 不進 _parse_detail_page，只驗證有沒有發出去
+        spy = MagicMock(return_value=mock_resp)
+        monkeypatch.setattr(scraper._session, 'get', spy)
+        result = scraper.search('HITMA-16')
+        assert spy.call_count == 1
+        assert 'HITMA-16' in spy.call_args[0][0]   # URL 含正規化後的番號
+        assert result is None   # 404 → 乾淨回 None，不拋例外
+
 
 # ============ TestIsNumberFormat ============
 
