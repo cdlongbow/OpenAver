@@ -5,7 +5,7 @@ TestExtractNumber — extract_number 和 normalize_number 單元測試
 純邏輯測試，不需 mock
 """
 import pytest
-from core.scrapers.utils import extract_number
+from core.scrapers.utils import extract_number, is_strict_number, normalize_number_impl
 from core.scrapers.d2pass import D2PassScraper
 from core.scraper import is_prefix_only
 from core.gallery_scanner import VideoScanner
@@ -132,6 +132,21 @@ class TestExtractNumberCapAlignment:
     def test_synthetic_7letter_prefix(self):
         """abcdefg-123.mp4 → ABCDEFG-123（合成 7 字母前綴，證明非 PARATHD 單一案例）"""
         assert extract_number("abcdefg-123.mp4") == "ABCDEFG-123"
+
+
+class TestExtractNumberTASK139T5BackendAccepts:
+    """139-T5：前端不再改寫，三個代表例的原字串／trim 後字串，後端（C/H）仍接得住。"""
+
+    @pytest.mark.parametrize("raw", ["n0762", "200GANA-3360", "FC2PPV-4943690"])
+    def test_is_strict_number_accepts_raw_input(self, raw):
+        assert is_strict_number(raw) is True
+
+    def test_normalize_number_impl_n0762_no_hyphen(self):
+        """n0762 → N0762，不是 N-0762（F8-2 must-not-break，本卡要防的回歸就是這個）"""
+        assert normalize_number_impl("n0762") == "N0762"
+
+    def test_normalize_number_impl_fc2_variant_collapses(self):
+        assert normalize_number_impl("FC2PPV-4943690") == "FC2-4943690"
 
 
 class TestExtractNumberKnownLimitationUnchanged:

@@ -131,22 +131,6 @@ async function parseFilenames(filenames, { signal } = {}) {
 }
 
 /**
- * 格式化番號（標準化格式）
- */
-function formatNumber(input) {
-    if (!input) return null;
-    const match = input.match(/([A-Z]{1,7})-?(\d{3,7})/i);
-    if (match) {
-        return `${match[1].toUpperCase()}-${match[2]}`;
-    }
-    const fc2Match = input.match(/FC2-?PPV-?(\d{5,7})/i);
-    if (fc2Match) {
-        return `FC2-PPV-${fc2Match[1]}`;
-    }
-    return input.toUpperCase();
-}
-
-/**
  * 從檔名偵測版本標記關鍵字（邊界正則，與 Python _detect_suffixes 同邏輯）
  * @param {string} filename - 原始檔名
  * @param {string[]} keywords - 設定的關鍵字列表
@@ -185,7 +169,6 @@ window.SearchFile = {
     cleanSourceSuffix,
     stripSubtitleMarkers,
     extractChineseTitle,
-    formatNumber,
     parseFilenames,
     scrapeFile,
     detectSuffixes,

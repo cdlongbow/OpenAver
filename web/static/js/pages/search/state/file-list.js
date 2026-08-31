@@ -259,8 +259,7 @@ export function searchStateFileList() {
         const number = prompt(window.t('search.filelist.enter_number_prompt'), '');
         if (!number || !number.trim()) return;
 
-        const formatted = window.SearchFile.formatNumber(number.trim());
-        file.number = formatted;
+        file.number = number.trim();
         file.searched = false;
         file.searchResults = [];
 
