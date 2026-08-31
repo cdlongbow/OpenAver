@@ -73,9 +73,11 @@ class TestGalleryScanner:
         assert info is None
 
     def test_parse_filename_fallback_naming_format(self, scanner):
-        # 預設 naming formats 的 \[ 會被 _compile_naming_formats 中的 re.escape
-        # 雙重轉義為 \\[，所以帶 [...] 的檔名不會匹配 naming format。
-        # 結果走 fallback 路徑：find_num_from_filename 提取番號，title = stem。
+        # 歷史行為：曾經有 9 條命名格式樣板，139-T2 已整條刪除。
+        # 它們對**真實檔名**從未命中（re.escape 把 [ ( 跳脫之後只 unescape < >，
+        # 編譯出來的正則要求檔名裡有「字面反斜線」；刻意造一個含 \ 的檔名倒是命中得了，
+        # 但那種檔名 Windows 直接禁止、Linux 上也沒有任何工具會產生）。
+        # 帶 [...] 的檔名走 fallback 路徑：find_num_from_filename 提取番號，title = stem。
         filename = "ActorName - [TEST-002]Some Title Here.mp4"
         info = scanner.parse_filename(filename)
         # find_num_from_filename 提取到 TEST-002
