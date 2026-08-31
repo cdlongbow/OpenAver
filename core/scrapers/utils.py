@@ -441,3 +441,57 @@ METATUBE_PROVIDER_ORDER: list[str] = [
     'HEYZO', '1Pondo', 'Caribbeancom', 'CaribbeancomPR', 'FC2', 'FC2PPVDB', 'fc2hub',
     '10musume', 'C0930', 'H0930', 'H4610', 'MURAMURA', 'MYWIFE', 'PACOPACOMAMA', 'KIN8',
 ]
+
+
+# ============================================================
+# 整串番號判定（139-T1a）：C／D／G 三處判斷的單一事實來源
+# ============================================================
+
+# (regex, kind)；kind ∈ {'censored', 'uncensored'}
+# 比對方式：對「已 strip + upper」的整串做 re.fullmatch（不寫 ^$ 錨定——
+# Python 的 $ 會放行結尾換行，'SONE-103\n' 必須判 False）
+_STRICT_NUMBER_PATTERNS = [
+    (r'FC2[\s_-]*PPV[\s_-]*\d+', 'uncensored'),   # FC2PPV-4943690 / FC2 PPV 4943690 / FC2-PPV-4943690
+    (r'FC2[\s_-]*\d+', 'uncensored'),             # FC2-4943690 / FC24943690
+    (r'HEYZO[\s_-]*\d+', 'uncensored'),           # HEYZO-1234 / heyzo1234（G 現況以 startswith('heyzo') 判無碼，收斂後不得漏）
+    (r'\d{6}-\d{2,}', 'uncensored'),              # 020317-001 日期-編號（無碼）
+    (r'\d{6}_\d{2,}', 'uncensored'),              # 090122_001 日期_編號（無碼）
+    (r'[A-Z]\d{4}', 'uncensored'),                # N0762 單字母 + 恰 4 位（東京熱）
+    (r'\d{1,4}[A-Z]+-\d+', 'censored'),           # 200GANA-3360 / 529STCV-152 / 7IPZ-154 數字前綴
+    (r'[A-Z]+\d+-\d+', 'censored'),               # T28-103 混合
+    (r'[A-Z]+-\d+', 'censored'),                  # SONE-205 一般
+]
+
+
+def is_strict_number(s: str) -> bool:
+    """判斷輸入字串是否為整串合法番號。
+
+    空字串 / None 回傳 False。
+    前置正規化 s.strip().upper() 後對 _STRICT_NUMBER_PATTERNS 整表做 re.fullmatch 比對，任一命中即 True。
+    """
+    if not s or not isinstance(s, str):
+        return False
+    normalized = s.strip().upper()
+    if not normalized:
+        return False
+    for pattern, _ in _STRICT_NUMBER_PATTERNS:
+        if re.fullmatch(pattern, normalized):
+            return True
+    return False
+
+
+def is_strict_uncensored_number(s: str) -> bool:
+    """判斷輸入字串是否為整串合法無碼番號。
+
+    空字串 / None 回傳 False。
+    前置正規化 s.strip().upper() 後只對 _STRICT_NUMBER_PATTERNS 中 kind == 'uncensored' 的子集做 re.fullmatch 比對，任一命中即 True。
+    """
+    if not s or not isinstance(s, str):
+        return False
+    normalized = s.strip().upper()
+    if not normalized:
+        return False
+    for pattern, kind in _STRICT_NUMBER_PATTERNS:
+        if kind == 'uncensored' and re.fullmatch(pattern, normalized):
+            return True
+    return False
