@@ -33,7 +33,7 @@ class TestExtractNumber:
 
     def test_basic_fc2ppv(self):
         """FC2-PPV 格式"""
-        assert extract_number('FC2-PPV-123456.avi') == 'FC2-PPV-123456'
+        assert extract_number('FC2-PPV-123456.avi') == 'FC2-123456'
 
     # --- real_world/ 真實世界格式 ---
     def test_no_hyphen(self):
@@ -64,12 +64,10 @@ class TestExtractNumber:
         assert extract_number('stars-804_4K_60fps.mp4') == 'STARS-804'
 
     def test_fc2_no_second_hyphen(self):
-        """FC2 無第二橫線 FC2PPV-999999 - 被通用 regex 誤抓"""
-        # 目前 regex 只支援 FC2-PPV-\d+
-        # FC2PPV-999999 會被通用 regex 誤解析為 PPV-99999
-        # 這是已知限制，待未來優化
+        """FC2 無第二橫線 FC2PPV-999999"""
+        # 139-T1b: FC2 統一收斂為 FC2-<純數字> 正典格式
         result = extract_number('FC2PPV-999999.avi')
-        assert result == 'PPV-99999'  # 誤抓結果，非預期但目前行為
+        assert result == 'FC2-999999'
 
     # --- suffix/ 後綴處理 ---
     # extract_number 會預處理清理 -UC/-UNCENSORED/-LEAK 等後綴
@@ -238,8 +236,8 @@ class TestNormalizeNumber:
         assert normalize_number('abc00123') == 'ABC-00123'
 
     def test_fc2ppv_format(self):
-        """FC2-PPV 格式保持不變"""
-        assert normalize_number('FC2-PPV-123456') == 'FC2-PPV-123456'
+        """FC2-PPV 格式正規化為正典 FC2-<純數字>"""
+        assert normalize_number('FC2-PPV-123456') == 'FC2-123456'
 
     def test_with_whitespace(self):
         """帶空白 ' sone103 ' → SONE-103"""
@@ -503,6 +501,52 @@ class TestSearchQueryIntegration:
         query = 'JUC-123-UC'
         assert is_number_format(query) is True
         assert normalize_number(query) == 'JUC-123'  # 只移除後綴的 -UC
+
+
+class TestNormalizeNumberTASK139T1b:
+    """TASK-139-T1b: H（normalize_number）FC2 收斂與 F8/F9 守衛測試。"""
+
+    @pytest.mark.parametrize("raw", [
+        "FC2PPV-4943690",
+        "FC2PPV4943690",
+        "FC2 PPV 4943690",
+        "FC2PPV_4943690",
+        "FC2-PPV-4943690",
+        "FC2-4943690",
+        "fc2ppv-4943690",
+    ])
+    def test_normalize_number_seven_fc2_shapes(self, raw):
+        """七形 FC2 原始字串全部正規化為 FC2-4943690。"""
+        assert normalize_number(raw) == "FC2-4943690"
+
+    # --- F8 must-not-break 四條 ---
+
+    def test_f8_tokyo_hot_single_letter(self):
+        """F8-2: 東京熱單字母 + 4 位不插 hyphen（n0762, k0150）"""
+        assert normalize_number("n0762") == "N0762"
+        assert normalize_number("k0150") == "K0150"
+
+    def test_f8_date_format_delimiters_not_swapped(self):
+        """F8-3: 一本道/加勒比日期格式分隔符不互換（020317-001 與 090122_001）"""
+        assert normalize_number("020317-001") == "020317-001"
+        assert normalize_number("090122_001") == "090122_001"
+
+    # --- F9 反向鎖 ---
+
+    @pytest.mark.parametrize("raw", [
+        "FC2PPV-4943690",
+        "FC2PPV4943690",
+        "FC2 PPV 4943690",
+        "FC2PPV_4943690",
+        "FC2-PPV-4943690",
+        "FC2-4943690",
+        "fc2ppv-4943690",
+    ])
+    def test_f9_reverse_lock_no_ppv_prefix(self, raw):
+        """F9 反向鎖：七形輸入的正規化結果皆不得以 PPV- 開頭。"""
+        result = normalize_number(raw)
+        assert result != ""
+        assert not result.startswith("PPV-")
 
 
 # ============ 從 samples/ 讀取測試 ============

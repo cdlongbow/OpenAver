@@ -90,7 +90,7 @@ class TestGalleryScanner:
         # 這時候 title 會直接用檔名
         filename = "Random Words FC2-PPV-1234567 And More.mp4"
         info = scanner.parse_filename(filename)
-        assert info.num == "FC2PPV-1234567"
+        assert info.num == "FC2-1234567"
         assert info.title == "Random Words FC2-PPV-1234567 And More"
         assert info.actor == ""
 
@@ -1023,3 +1023,70 @@ class TestScanFocalTrigger:
             scanner.scan_to_sqlite(str(tmp_path), db_path=db_file)
 
         mock_submit_2.assert_not_called()
+
+
+class TestGalleryScannerTASK139T1b:
+    """TASK-139-T1b: B（VideoScanner.NUM_PATTERNS）FC2 收斂與 F8/F9 守衛測試。"""
+
+    @pytest.mark.parametrize("filename", [
+        "FC2PPV-4943690.mp4",
+        "FC2PPV4943690.mp4",
+        "FC2 PPV 4943690.mp4",
+        "FC2PPV_4943690.mp4",
+        "FC2-PPV-4943690.mp4",
+        "FC2-4943690.mp4",
+        "fc2ppv-4943690.mp4",
+    ])
+    def test_find_num_seven_fc2_shapes(self, filename):
+        """七形 FC2 檔名全部解析為 FC2-4943690。"""
+        scanner = VideoScanner()
+        assert scanner.find_num_from_filename(filename) == "FC2-4943690"
+
+    def test_bifurcation_anchor_be_test_11(self):
+        """BE-TEST-11 分岔錨點測試：FC2PPV-4943690.mp4。
+
+        改動前 extract_number 輸出為截斷誤抓的 'PPV-49436'，
+        而 VideoScanner.find_num_from_filename 輸出為 'FC2PPV-4943690'。
+        兩側輸出互不相同且都非空，是最強的「兩處真的呼叫同一支正規化 (normalize_number_impl)」證明。
+        改動後兩側皆收斂為 'FC2-4943690'。
+        """
+        scanner = VideoScanner()
+        assert scanner.find_num_from_filename("FC2PPV-4943690.mp4") == "FC2-4943690"
+
+    # --- F8 must-not-break 四條 ---
+
+    def test_f8_dmm_content_id_1sdms00808(self):
+        """F8-1: 1sdms00808.mp4 → SDMS-00808（不被破壞）"""
+        scanner = VideoScanner()
+        assert scanner.find_num_from_filename("1sdms00808.mp4") == "SDMS-00808"
+
+    def test_f8_tokyo_hot_single_letter(self):
+        """F8-2: 東京熱單字母 + 4 位不插 hyphen（n0762, k0150）"""
+        scanner = VideoScanner()
+        assert scanner.find_num_from_filename("n0762.mp4") == "N0762"
+        assert scanner.find_num_from_filename("k0150.mp4") == "K0150"
+
+    def test_f8_date_format_delimiters_not_swapped(self):
+        """F8-3: 一本道/加勒比日期格式分隔符不互換（020317-001 與 090122_001）"""
+        scanner = VideoScanner()
+        assert scanner.find_num_from_filename("020317-001.mp4") == "020317-001"
+        assert scanner.find_num_from_filename("090122_001.mp4") == "090122_001"
+
+    # --- F9 反向鎖 ---
+
+    @pytest.mark.parametrize("filename", [
+        "FC2PPV-4943690.mp4",
+        "FC2PPV4943690.mp4",
+        "FC2 PPV 4943690.mp4",
+        "FC2PPV_4943690.mp4",
+        "FC2-PPV-4943690.mp4",
+        "FC2-4943690.mp4",
+        "fc2ppv-4943690.mp4",
+    ])
+    def test_f9_reverse_lock_no_ppv_prefix(self, filename):
+        """F9 反向鎖：七形輸入的解析結果皆不得以 PPV- 開頭（防止截斷形再現）。"""
+        scanner = VideoScanner()
+        result = scanner.find_num_from_filename(filename)
+        assert result != ""
+        assert not result.startswith("PPV-")
+

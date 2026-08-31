@@ -75,6 +75,16 @@ def post_html(url: str, data: Optional[dict[str, object]] = None, timeout: int =
     return None
 
 
+# FC2 正典形式 FC2-<純數字> 的抓取樣式（139-T1b）：
+# A（extract_number）／B（VideoScanner.NUM_PATTERNS）／H（normalize_number_impl）三處共用這一支。
+# 任何一處都不得自己組 f"FC2-{...}" 字面（CD-2；散裝維護正是 BE-TEST-14 的假綠溫床）。
+# 左邊界 (?<![A-Za-z0-9])：不加的話 re.search 會咬進別的 token 中間——
+# 實測 'SONE-205fc21.mp4' 會從 SONE-205 變成 FC2-1、'notfc2-1234567' 變成 FC2-1234567
+# （第 3 輪 review 由 grok/sonnet 各自獨立命中）。H 的 fullmatch 與 B 的 (.*[\W_])? 前綴
+# 都不受這條影響（位置 0 或前一字元本來就是非英數）。
+FC2_TOKEN_PATTERN = r'(?<![A-Za-z0-9])FC2[\s_-]*(?:PPV[\s_-]*)?(?P<fc2digits>\d+)'
+
+
 def extract_number(filename: str) -> Optional[str]:
     """
     從檔名中提取番號
@@ -103,7 +113,7 @@ def extract_number(filename: str) -> Optional[str]:
     )
 
     patterns = [
-        r'(FC2-PPV-\d+)',               # FC2-PPV-1234567
+        rf'(?P<fc2>{FC2_TOKEN_PATTERN})',
         r'(\d{6}-\d{2,})',              # 041417-413 日期-編號格式（無碼）
         r'(\d{6}_\d{2,})',             # 120415_201 / 082912_01 底線格式（無碼）
         r'([A-Za-z]+\d+-\d+)',          # T28-103 混合格式
@@ -111,13 +121,15 @@ def extract_number(filename: str) -> Optional[str]:
         r'([A-Za-z]{1,7}-\d{3,5})',     # ABC-123 帶橫線
         r'([A-Za-z]{2,7})(\d{3,5})',    # ABC12345 不帶橫線（index 6，兩 group → 插 hyphen）
         r'([nkcmsNKCMS]\d{4})(?!\d)',      # n0762 單字母 + 恰 4 位（Tokyo Hot 無碼，前綴限 n/k/c/m/s（spec-73 US2 權威模型），右側無更多數字）
-        r'(\d{3}[A-Za-z]{3,4}-?\d{3,4})', # 123ABC-456 或 123ABC456
+        # 139c 若要恢復數字前綴保留是新設計，不是還原這條
     ]
 
     for i, pattern in enumerate(patterns):
         match = re.search(pattern, basename, re.IGNORECASE)
         if match:
-            if i == 6:  # 不帶橫線需重組（ABC12345）
+            if i == 0:
+                return normalize_number_impl(match.group('fc2'))
+            elif i == 6:  # 不帶橫線需重組（ABC12345）
                 number = f"{match.group(1).upper()}-{match.group(2)}"
             else:
                 number = match.group(1).upper()
@@ -360,6 +372,10 @@ def normalize_number_impl(number: str) -> str:
         '', number, flags=re.IGNORECASE
     )
     number = number.upper()
+    # FC2 正規化（139-T1b）：七種寫法全部收斂成 FC2-<純數字>
+    fc2_match = re.fullmatch(FC2_TOKEN_PATTERN, number)
+    if fc2_match:
+        return f"FC2-{fc2_match.group('fc2digits')}"
     # 單字母 + 恰 4 位（如 N0762, K0150）→ Tokyo Hot 無碼番號，不插 hyphen
     if re.match(r'^[A-Z]\d{4}$', number):
         return number

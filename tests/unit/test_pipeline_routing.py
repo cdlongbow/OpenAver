@@ -178,7 +178,11 @@ class TestPipeline:
         this test exercises search_jav(auto) merge directly, not the smart_search exact path).
         """
         from core.scrapers.jav321 import JAV321Scraper
-        from core.scrapers.javdb import JavDBScraper
+        # ⚠️ 從「使用端 binding」取 JavDBScraper，不從定義端（139-T1b）：
+        # test_javdb_cainfo.py 會 importlib.reload(core.scrapers.javdb)，reload 後定義端是
+        # 新的 class 物件，而 core/scraper.py 仍持有舊的 ⇒ patch 打在新的上、被測程式跑的是
+        # 舊的真實 scraper（會發真網路請求）。從 core.scraper 取，identity 保證與被測程式一致。
+        from core.scraper import JavDBScraper
         from core.scrapers.fc2_official import FC2OfficialScraper
         from core.scrapers.avsox import AVSOXScraper
         dmm_video = _make_video("dmm", "SONE-205")
@@ -206,7 +210,11 @@ class TestPipeline:
         This proves drag-order determines the merge winner, NOT primary_source.
         """
         from core.scrapers.jav321 import JAV321Scraper
-        from core.scrapers.javdb import JavDBScraper
+        # ⚠️ 從「使用端 binding」取 JavDBScraper，不從定義端（139-T1b）：
+        # test_javdb_cainfo.py 會 importlib.reload(core.scrapers.javdb)，reload 後定義端是
+        # 新的 class 物件，而 core/scraper.py 仍持有舊的 ⇒ patch 打在新的上、被測程式跑的是
+        # 舊的真實 scraper（會發真網路請求）。從 core.scraper 取，identity 保證與被測程式一致。
+        from core.scraper import JavDBScraper
         from core.scrapers.fc2_official import FC2OfficialScraper
         from core.scrapers.avsox import AVSOXScraper
         dmm_video = _make_video("dmm", "SONE-205")
@@ -234,7 +242,11 @@ class TestPipeline:
     def test_fuzzy_chain_dmm_no_proxy_falls_through(self):
         """DMM 排第一 + 無 proxy → 跳過 DMM，fallback 到 javbus（新鏈行為）"""
         from core.scraper import search_actress
-        from core.scrapers.javdb import JavDBScraper
+        # ⚠️ 從「使用端 binding」取 JavDBScraper，不從定義端（139-T1b）：
+        # test_javdb_cainfo.py 會 importlib.reload(core.scrapers.javdb)，reload 後定義端是
+        # 新的 class 物件，而 core/scraper.py 仍持有舊的 ⇒ patch 打在新的上、被測程式跑的是
+        # 舊的真實 scraper（會發真網路請求）。從 core.scraper 取，identity 保證與被測程式一致。
+        from core.scraper import JavDBScraper
 
         mock_video = _make_video("javbus", "SONE-205")
 
@@ -276,7 +288,11 @@ class TestPipeline:
     def test_search_actress_dmm_fallback_to_javbus(self):
         """DMM 排第一 + proxy 有效 + DMM 無結果 → fallback 到 JavBus"""
         from core.scraper import search_actress
-        from core.scrapers.javdb import JavDBScraper
+        # ⚠️ 從「使用端 binding」取 JavDBScraper，不從定義端（139-T1b）：
+        # test_javdb_cainfo.py 會 importlib.reload(core.scrapers.javdb)，reload 後定義端是
+        # 新的 class 物件，而 core/scraper.py 仍持有舊的 ⇒ patch 打在新的上、被測程式跑的是
+        # 舊的真實 scraper（會發真網路請求）。從 core.scraper 取，identity 保證與被測程式一致。
+        from core.scraper import JavDBScraper
 
         # DMM returns nothing → should fall through to JavBus path
         with patch('core.scraper.get_all_source_ids_ordered', return_value=['dmm', 'javbus', 'jav321', 'javdb']), \
@@ -412,7 +428,11 @@ class TestFcJavtenDoesNotAffectOtherSources:
         from core.scrapers.avsox import AVSOXScraper
         from core.scrapers.fc2_official import FC2OfficialScraper
         from core.scrapers.jav321 import JAV321Scraper
-        from core.scrapers.javdb import JavDBScraper
+        # ⚠️ 從「使用端 binding」取 JavDBScraper，不從定義端（139-T1b）：
+        # test_javdb_cainfo.py 會 importlib.reload(core.scrapers.javdb)，reload 後定義端是
+        # 新的 class 物件，而 core/scraper.py 仍持有舊的 ⇒ patch 打在新的上、被測程式跑的是
+        # 舊的真實 scraper（會發真網路請求）。從 core.scraper 取，identity 保證與被測程式一致。
+        from core.scraper import JavDBScraper
 
         mock_video = _make_video("fc2", "FC2-PPV-1234567")
 

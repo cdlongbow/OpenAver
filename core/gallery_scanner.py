@@ -31,6 +31,7 @@ from core.nfo_read import (
 from core.nfo_stat import NFO_MTIME_REFRESH, nfo_mtime_or_none
 from core.nfo_utils import sanitize_nfo_bytes
 from core.path_utils import normalize_path, to_file_uri, uri_to_fs_path, uri_to_local_fs_path
+from core.scrapers.utils import FC2_TOKEN_PATTERN, normalize_number_impl
 from core.video_extensions import DEFAULT_VIDEO_EXTENSIONS, ZERO_SIZE_EXTENSIONS
 
 logger = get_logger(__name__)
@@ -232,8 +233,8 @@ class VideoScanner:
     # 番號識別正則表達式 (從 galleryHtml.cs 移植)
     NUM_PATTERNS = [
         # FC2-PPV
-        (r'^(.*[\W_])?FC2(-?PPV)?-(\d+)([\W_].*|[a-z]+|F?HD.*)?$',
-         lambda m: f"FC2PPV-{m.group(3)}"),
+        (rf'^(.*[\W_])?(?P<fc2>{FC2_TOKEN_PATTERN})([\W_].*|[a-z]+|F?HD.*)?$',
+         lambda m: normalize_number_impl(m.group('fc2'))),
 
         # 一本道/加勒比 (n1234, k1234)
         (r'^(.*[\W_])?([nk]\d{4})([\W_].*|[a-z]+|F?HD.*)?$',
