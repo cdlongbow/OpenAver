@@ -575,8 +575,16 @@ def resolve_route_target(q: str) -> str:
     """G／C 路由決策前的共用前處理（139-T9，CD-b3 B＋ 對稱修法）。
 
     對輸入跑一次 extract_number()，只有抽出的結果本身也通過 is_strict_number()
-    才採用為 candidate（那道 is_strict_number 閘不得省略——省了 '2024' 這類輸入
-    會被誤判成候選；見 CD-b3 證據 A）；沒有合格候選則原樣回傳輸入字串。
+    才採用為 candidate；沒有合格候選則原樣回傳輸入字串。
+
+    那道 is_strict_number 閘不得省略，但**它的見證形狀不是 '2024'**——
+    extract_number('2024') 回 None，candidate 在進閘之前就已經是 None，
+    拿它驗閘會得到假綠（Codex plan review 第四輪抓到的錯，139-T9 卡片 D3）。
+    真正會被閘擋下來的是「抽得出、但 is_strict_number 判 False」的輸入，
+    實測全庫只有 FC2 短尾這一類：
+        extract_number('fc2 12') -> 'FC2-12'，is_strict_number('FC2-12') -> False
+    ⇒ 閘在守的是「resolve_route_target('fc2 12') 必須回原字串 'fc2 12'」。
+    ('2024' / 'VR 8K' / 女優名那批鎖的是「本來就不該被抽出」，是另一件事。)
 
     呼叫端注意：partial() / prefix() 判斷不得使用本函式的回傳值，仍須用原字串 q
     （CD-b3 證據 C：這是設計的一部分，不是巧合）。
