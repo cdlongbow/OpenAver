@@ -25,6 +25,8 @@ export function searchStateNavigation() {
     // （spec 明文：垂直滾輪＝捲頁面），故無 wheelNavDetailV。
     const wheelNavSampleGalleryV = createWheelNav({ axis: 'vertical' });
     const wheelNavLightboxV = createWheelNav({ axis: 'vertical' });
+    const wheelNavWishlistLightbox = createWheelNav();
+    const wheelNavWishlistLightboxV = createWheelNav({ axis: 'vertical' });
 
     return {
     // ===== Navigation Methods =====
@@ -280,6 +282,28 @@ export function searchStateNavigation() {
             return;
         }
 
+        // TASK-140-T11b: 書籤燈箱鍵盤導航（sampleGalleryOpen 已排除後處理；插在 lightboxOpen
+        // 之前——書籤燈箱與搜尋燈箱互斥，放前面避免兩者都意外開著時誤觸
+        // prevLightboxVideo/nextLightboxVideo，見 gotcha FE-ALPINE-04）
+        if (this.wishlistLightboxOpen) {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                this.closeWishlistLightbox();
+                return;
+            }
+            if (event.key === 'ArrowLeft') {
+                event.preventDefault();
+                this.prevWishlistLightbox();
+                return;
+            }
+            if (event.key === 'ArrowRight') {
+                event.preventDefault();
+                this.nextWishlistLightbox();
+                return;
+            }
+            return;
+        }
+
         // T2a: Lightbox 鍵盤導航（sampleGalleryOpen 已排除後處理）
         if (this.lightboxOpen) {
             if (event.key === 'Escape') {
@@ -331,7 +355,7 @@ export function searchStateNavigation() {
         // sample gallery / lightbox 這兩種「垂直捲動無意義的全螢幕 overlay」吃垂直滾輪。
         // Search detail 頁垂直捲動＝捲頁面（spec 明文絕對不碰）——非 overlay 狀態下垂直
         // 滾輪在此零成本早退，不觸發 closest()/feed()，效能特性與 102d-T1 原版一致。
-        const isOverlay = this.sampleGalleryOpen || this.lightboxOpen;
+        const isOverlay = this.sampleGalleryOpen || this.wishlistLightboxOpen || this.lightboxOpen;
         if (vertical && !isOverlay) return;
 
         // 排除清單容器：原生橫向捲動優先，不吃導航。
@@ -367,6 +391,27 @@ export function searchStateNavigation() {
                 wheelNavSampleGalleryV.feed(event, {
                     onUp: () => this.prevSampleGallery(),
                     onDown: () => this.nextSampleGallery(),
+                });
+                event.preventDefault();
+            }
+            return;
+        }
+
+        // TASK-140-T11b: 書籤燈箱滾輪導航（sampleGalleryOpen 已排除後處理；插在 lightboxOpen
+        // 之前，理由同 handleKeydown）
+        if (this.wishlistLightboxOpen) {
+            if (horizontal) {
+                const triggered = wheelNavWishlistLightbox.feed(event, {
+                    onLeft: () => this.prevWishlistLightbox(),
+                    onRight: () => this.nextWishlistLightbox(),
+                });
+                if (triggered) event.preventDefault();
+            } else {
+                // Codex 102d 三審 P2：同上（見 sample gallery 垂直分支註解），overlay 垂直
+                // 分支一律 preventDefault，未達門檻的 sub-threshold tick 也吞。
+                wheelNavWishlistLightboxV.feed(event, {
+                    onUp: () => this.prevWishlistLightbox(),
+                    onDown: () => this.nextWishlistLightbox(),
                 });
                 event.preventDefault();
             }
