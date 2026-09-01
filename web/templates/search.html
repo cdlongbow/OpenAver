@@ -65,11 +65,33 @@
                             data-tooltip="{{ t('search.action.open_source_url') }}" aria-label="{{ t('search.action.open_source_url') }}">
                         <i class="bi bi-box-arrow-up-right"></i>
                     </button>
+                    <!-- TASK-140-T6: 播放 -->
+                    <button class="lb-action-btn"
+                            @click="window.open('/api/gallery/player?path=' + encodeURIComponent(currentLightboxVideo()?._localStatus?.paths?.[0] || ''), '_blank')"
+                            x-show="!actressLightboxMode() && (cardActionState(currentLightboxVideo()) === 'play' || cardActionState(currentLightboxVideo()) === 'play+folder')"
+                            data-tooltip="{{ t('search.action.play') }}" aria-label="{{ t('search.action.play') }}">
+                        <i class="bi bi-play-fill"></i>
+                    </button>
+                    <!-- TASK-140-T6: 開資料夾（count>1 時與播放並列）-->
                     <button class="lb-action-btn"
                             @click="openLocal(currentLightboxVideo()?._localStatus?.paths?.[0] || '')"
-                            x-show="currentLightboxVideo()?._localStatus?.exists"
+                            x-show="!actressLightboxMode() && cardActionState(currentLightboxVideo()) === 'play+folder'"
                             data-tooltip="{{ t('search.action.open_folder') }}" aria-label="{{ t('search.action.open_folder') }}">
                         <i class="bi bi-folder2-open"></i>
+                    </button>
+                    <!-- TASK-140-T6: 加入書籤 -->
+                    <button class="lb-action-btn"
+                            @click="addToWishlist(currentLightboxVideo())"
+                            x-show="!actressLightboxMode() && cardActionState(currentLightboxVideo()) === 'bookmark-add'"
+                            data-tooltip="{{ t('search.action.add_wishlist') }}" aria-label="{{ t('search.action.add_wishlist') }}">
+                        <i class="bi bi-bookmark-plus"></i>
+                    </button>
+                    <!-- TASK-140-T6: 從書籤移除 -->
+                    <button class="lb-action-btn"
+                            @click="removeFromWishlist(currentLightboxVideo()?.number)"
+                            x-show="!actressLightboxMode() && cardActionState(currentLightboxVideo()) === 'bookmark-remove'"
+                            data-tooltip="{{ t('search.action.remove_wishlist') }}" aria-label="{{ t('search.action.remove_wishlist') }}">
+                        <i class="bi bi-bookmark-fill"></i>
                     </button>
                     <button class="lb-action-btn"
                             @click="openSourceUrl(currentLightboxVideo()?.url || '')"
@@ -499,6 +521,20 @@
                             title="{{ t('search.action.open_source_url') }}">
                         <i class="bi bi-box-arrow-up-right"></i>
                     </button>
+                    <!-- TASK-140-T6: 加入書籤（本地沒有 ＋ 未加入）-->
+                    <button class="info-icon-btn"
+                            @click="addToWishlist(current())"
+                            x-show="cardActionState(current()) === 'bookmark-add'"
+                            title="{{ t('search.action.add_wishlist') }}">
+                        <i class="bi bi-bookmark-plus"></i>
+                    </button>
+                    <!-- TASK-140-T6: 從書籤移除（本地沒有 ＋ 已加入）-->
+                    <button class="info-icon-btn"
+                            @click="removeFromWishlist(current()?.number)"
+                            x-show="cardActionState(current()) === 'bookmark-remove'"
+                            title="{{ t('search.action.remove_wishlist') }}">
+                        <i class="bi bi-bookmark-fill"></i>
+                    </button>
                 </div>
                 <div class="av-card-full-title">
                     <div class="av-card-full-footer-content">
@@ -797,11 +833,33 @@
                                         title="{{ t('search.grid.detail_title') }}">
                                     <i class="bi bi-info-circle"></i>
                                 </button>
+                                <!-- TASK-140-T6: 播放（count===1 或 count>1 皆顯示）-->
+                                <button class="btn-glass-circle"
+                                        @click.stop="window.open('/api/gallery/player?path=' + encodeURIComponent(result._localStatus?.paths?.[0] || ''), '_blank')"
+                                        x-show="cardActionState(result) === 'play' || cardActionState(result) === 'play+folder'"
+                                        title="{{ t('search.action.play') }}">
+                                    <i class="bi bi-play-fill"></i>
+                                </button>
+                                <!-- TASK-140-T6: 開資料夾（僅 count>1 時與播放並列）-->
                                 <button class="btn-glass-circle"
                                         @click.stop="openLocal(result._localStatus?.paths?.[0] || '')"
-                                        x-show="result._localStatus?.exists"
+                                        x-show="cardActionState(result) === 'play+folder'"
                                         title="{{ t('search.action.open_folder') }}">
                                     <i class="bi bi-folder2-open"></i>
+                                </button>
+                                <!-- TASK-140-T6: 加入書籤 -->
+                                <button class="btn-glass-circle"
+                                        @click.stop="addToWishlist(result)"
+                                        x-show="cardActionState(result) === 'bookmark-add'"
+                                        title="{{ t('search.action.add_wishlist') }}">
+                                    <i class="bi bi-bookmark-plus"></i>
+                                </button>
+                                <!-- TASK-140-T6: 從書籤移除 -->
+                                <button class="btn-glass-circle"
+                                        @click.stop="removeFromWishlist(result.number)"
+                                        x-show="cardActionState(result) === 'bookmark-remove'"
+                                        title="{{ t('search.action.remove_wishlist') }}">
+                                    <i class="bi bi-bookmark-fill"></i>
                                 </button>
                             </div>
                         </div>

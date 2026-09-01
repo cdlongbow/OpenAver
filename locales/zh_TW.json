@@ -98,6 +98,9 @@
       "switch_source": "切換版本",
       "open_source_url": "開啟來源頁面",
       "open_folder": "開啟資料夾",
+      "play": "播放",
+      "add_wishlist": "加入書籤",
+      "remove_wishlist": "從書籤移除",
       "back_to_detail": "返回詳情"
     },
     "empty": {

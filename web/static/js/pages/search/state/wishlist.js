@@ -2,6 +2,16 @@
  * SearchState - Wishlist Mixin（TASK-140-T5）
  * 書籤清單狀態與 API 接線。提供 loadWishlistCount 供 main.js 生命周期呼叫。
  */
+
+// TASK-140-T6：三態互斥的共用 computed。grid／燈箱／detail 三處模板都只問這支，
+// 不得各自重寫判斷式（spec F1「同一組三態要出現在三處」）。
+export function cardActionState(result) {
+    if (result?._localStatus?.exists) {
+        return (result._localStatus.count > 1) ? 'play+folder' : 'play';
+    }
+    return result?._wishlisted ? 'bookmark-remove' : 'bookmark-add';
+}
+
 export function searchStateWishlist() {
     return {
         // ===== Wishlist State =====
@@ -10,6 +20,8 @@ export function searchStateWishlist() {
         wishlistLoaded: false,
         wishlistLightboxOpen: false,   // T9 佔位
         wishlistLightboxIndex: -1,     // T9 佔位
+
+        cardActionState,
 
         switchToWishlist() {
             this.listMode = 'wishlist';

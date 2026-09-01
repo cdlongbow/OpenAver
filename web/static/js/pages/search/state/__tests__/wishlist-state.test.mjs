@@ -22,7 +22,7 @@ globalThis.document = { addEventListener() {} };
 // state/__tests__ → 上一層 __tests__/alias-loader.mjs（鏡射 pages/search/__tests__ 慣例）
 register(new URL('../../__tests__/alias-loader.mjs', import.meta.url), import.meta.url);
 
-const { searchStateWishlist } = await import('../wishlist.js');
+const { searchStateWishlist, cardActionState } = await import('../wishlist.js');
 const { searchStatePersistence } = await import('../persistence.js');
 const { searchStateNavigation } = await import('../navigation.js');
 const { searchStateBase } = await import('../base.js');
@@ -509,4 +509,34 @@ test('switchToSearchList: 只設 listMode=search', () => {
     searchStateWishlist().switchToSearchList.call(fakeThis);
     assert.equal(fakeThis.listMode, 'search');
     assert.equal(fakeThis.displayMode, 'grid', 'displayMode 不強制改動');
+});
+
+// ─── TASK-140-T6：cardActionState 四態（mutation M1/M2）───────────────────
+
+test("cardActionState: 本地有且 count===1 → 'play'", () => {
+    assert.equal(
+        cardActionState({ _localStatus: { exists: true, count: 1 }, _wishlisted: false }),
+        'play',
+    );
+});
+
+test("cardActionState: 本地有且 count>1 → 'play+folder'", () => {
+    assert.equal(
+        cardActionState({ _localStatus: { exists: true, count: 2 }, _wishlisted: false }),
+        'play+folder',
+    );
+});
+
+test("cardActionState: 本地沒有且未加入 → 'bookmark-add'", () => {
+    assert.equal(
+        cardActionState({ _localStatus: { exists: false }, _wishlisted: false }),
+        'bookmark-add',
+    );
+});
+
+test("cardActionState: 本地沒有且已加入 → 'bookmark-remove'", () => {
+    assert.equal(
+        cardActionState({ _localStatus: { exists: false }, _wishlisted: true }),
+        'bookmark-remove',
+    );
 });
