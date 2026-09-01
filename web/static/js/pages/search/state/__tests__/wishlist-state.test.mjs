@@ -338,6 +338,24 @@ test('switchToWishlist: 設 listMode=wishlist 且 displayMode=grid', async () =>
     assert.equal(fakeThis.displayMode, 'grid');
 });
 
+test('switchToWishlist: 已載入過也要重新對帳（T8 review P2）', async () => {
+    // spec F6 的對帳時機是「開啟書籤清單時」——每一次，不是只有第一次。
+    // 只在 !wishlistLoaded 時載入的話：你把書籤裡的片掃描入庫 → 切回書籤分頁 →
+    // 角標不會出現、卡片也不會沉底，除非整頁重新整理。
+    let loadCalls = 0;
+    const fakeThis = {
+        ...searchStateWishlist(),
+        listMode: 'search',
+        displayMode: 'grid',
+        wishlistLoaded: true,          // 已經載入過
+        wishlistItems: [{ number: 'OLD-001', _owned: false }],
+        async loadWishlist() { loadCalls++; },
+    };
+
+    await searchStateWishlist().switchToWishlist.call(fakeThis);
+    assert.equal(loadCalls, 1, '已載入過仍必須重新對帳一次');
+});
+
 test('switchToWishlist: wishlistLoaded=false 時呼叫 loadWishlist', async () => {
     let loadCalls = 0;
     const fakeThis = {

@@ -193,6 +193,10 @@
       "has_local": "本地已有（點擊開啟資料夾）",
       "has_local_count": "本地已有 {count} 個版本（點擊開啟資料夾）"
     },
+    "wishlist": {
+      "empty": "還沒有任何書籤",
+      "owned": "已入手"
+    },
     "button": {
       "search_all": "批次搜尋",
       "continue": "繼續",

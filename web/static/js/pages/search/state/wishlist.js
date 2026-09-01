@@ -35,9 +35,14 @@ export function searchStateWishlist() {
             }
             this.listMode = 'wishlist';
             this.displayMode = 'grid';
-            if (!this.wishlistLoaded) {
-                return this.loadWishlist();
-            }
+            // T8 review P2：**每次開啟都重新對帳**，不是只有第一次。
+            // spec F6 的對帳時機明寫「開啟書籤清單時」；只在 !wishlistLoaded 時載入的話：
+            // 你把書籤裡的片掃描入庫 → 切回書籤分頁 → 角標不會出現、卡片也不會沉底，
+            // 除非整頁重新整理（owner hard-gate 第 6 條走的就是這條流程）。
+            // 成本是每次切換一支**本地** SQLite 查詢，F6 驗收 5「零對外請求」不受影響。
+            // `wishlistLoaded` 保留，但語意收斂成「載入過至少一次」——只用來 gate 空狀態，
+            // 避免資料還沒回來就先閃一下「還沒有任何書籤」。
+            return this.loadWishlist();
         },
 
         switchToSearchList() {

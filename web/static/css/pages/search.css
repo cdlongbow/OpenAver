@@ -1015,6 +1015,75 @@
     height: 2.5rem;
 }
 
+/* TASK-140-T8: wishlist 專屬 grid 容器。不可命名為 search-grid ——
+   search.css 896-956 行的 poster-crop 區塊用 :is(...).search-grid 選擇器，
+   套用在所有非 hero-card 卡片；spec F3「固定 fanart，做不出海報卡型」
+   要求 wishlist 卡在任何寬度都不裁成海報比例，故必須用不同 class 名隔離。
+   版面／斷點沿用 .search-grid（850-894 行）同一組數值，僅省略 896-956 行的 poster-crop。 */
+.wishlist-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1.5rem;
+    padding: 1.5rem;
+    padding-bottom: 2.5rem;
+    max-width: 100%;
+}
+@media (min-width: 1500px) {
+    .wishlist-grid { grid-template-columns: repeat(5, 1fr); }
+}
+@media (min-width: 1100px) and (max-width: 1499px) {
+    .wishlist-grid { grid-template-columns: repeat(4, 1fr); }
+}
+@media (min-width: 900px) and (max-width: 1099px) {
+    .wishlist-grid { grid-template-columns: repeat(3, 1fr); }
+}
+@media (min-width: 481px) and (max-width: 899px) {
+    .wishlist-grid { grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+}
+@media (max-width: 480px) {
+    .wishlist-grid { grid-template-columns: repeat(3, 1fr); gap: 0.5rem; padding: 0.75rem; }
+}
+
+/* .footer-hover（showcase.css:801-812）是 position:absolute;inset:0，
+   需要一個有 position 的祖先才能正確疊在 footer 區域內（而非整張卡／整頁）。
+   .av-card-preview 本身無 position（theme.css:1029-1040），search-grid 靠這條
+   （search.css:1012-1016）補上，wishlist-grid 需要同一條等價規則。 */
+.wishlist-grid .av-card-preview-footer {
+    position: relative;
+    overflow: hidden;
+    height: 2.5rem;
+}
+
+/* 空狀態外層需要一個有 position + 高度的容器，
+   .cover-error-placeholder 本身 position:absolute;inset:0（search.css:125-133），
+   裸放在頁面上會找不到正確的定位祖先（往上吃到 .search-container 甚至更外層）。 */
+.wishlist-empty {
+    position: relative;
+    min-height: 40vh;
+}
+
+/* 已入手角標：沿用 .cover-badge（components/cover-badge.css）同一組 token
+   （--overlay-badge、white 45% 邊框、--radius-pill——ui-conventions.md §1 白名單
+   第 4 類「badge 類」的延伸），改成 icon-only 圓形尺寸。恆常可見（不掛在
+   .av-card-preview-overlay 內，見上方 search.html 段的說明）。 */
+.wishlist-owned-badge {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: var(--radius-pill);
+    background: var(--overlay-badge);
+    border: 1.5px solid color-mix(in oklch, white 45%, transparent);
+    color: oklch(100% 0 0);
+    font-size: 0.9rem;
+    pointer-events: none;
+}
+
 /* ==================== T2d: Actress Profile ==================== */
 
 /* T5: Detail Mode Actress Banner 已移除（HTML + CSS），僅保留 Grid Mode Hero Card */

@@ -4489,6 +4489,45 @@ const RULES = [
     pattern: 'x-show="wishlistCount > 0"',
     note: '[TASK-140-T7] wishlist badge 只在 wishlistCount>0 時顯示（F2 驗收1，那一段本身仍要顯示）',
   },
+
+  // ---- [TASK-140-T8] wishlist 封面端點 + 已入手角標條件（F4 驗收2／F6 驗收5／F6 驗收1/2/6） ----
+  // window 實測：.wishlist-grid 開標 class= 錨點 → 閉合 </div> 共 2415 字元；+ 安全邊際 → 3000。
+  {
+    file: 'web/templates/search.html',
+    kind: 'forbidden-string',
+    pattern: 'resolveCoverUrl(item)',
+    scope: { anchor: /class="wishlist-grid[^"]*"/, window: 3000 },
+    note: '[TASK-140-T8] wishlist 封面必須走本地 /api/wishlist/cover 端點，不得用 resolveCoverUrl（F4 驗收2／F6 驗收5）',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: 'x-show="item._owned"',
+    scope: { anchor: /class="wishlist-grid[^"]*"/, window: 3000 },
+    note: '[TASK-140-T8] 已入手角標只在 item._owned 為真時顯示（F6 驗收1/2/6）',
+  },
+  // Opus 補（T8 Step 6 自驗發現原稿這條 SURVIVED）：三個狀態頁必須排除 wishlist。
+  // 沒有這條的話，把 `&& listMode !== 'wishlist'` 刪掉不會有任何東西轉紅，而後果是
+  // 「請輸入番號」那類提示文案疊在書籤清單上面（pageState 與 listMode 是正交的兩個閘，
+  // T1 那張 29 列 listMode 對帳表結構上看不到 pageState）。
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: `x-show="pageState === 'empty' && listMode !== 'wishlist'"`,
+    note: '[TASK-140-T8] #emptyState 必須排除 wishlist（否則空狀態提示會疊在書籤清單上）',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: `x-show="pageState === 'loading' && listMode !== 'wishlist'"`,
+    note: '[TASK-140-T8] #loadingState 必須排除 wishlist',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: `x-show="pageState === 'error' && listMode !== 'wishlist'"`,
+    note: '[TASK-140-T8] #errorState 必須排除 wishlist',
+  },
 ];
 
 // ---- helpers ----
