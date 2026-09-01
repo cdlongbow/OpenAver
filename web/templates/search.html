@@ -294,8 +294,23 @@
     <!-- 搜尋框（Spotlight 中央輸入；US-1 navbar 收合不作用於 search 頁，維持永遠可見） -->
     <div class="search-bar">
         <form id="searchForm" @submit.prevent="doSearch()">
-            <div class="spotlight-search">
-                <i class="bi bi-search search-icon-left"></i>
+            <div class="spotlight-search spotlight-search--wishlist-toggle">
+                <!-- TASK-140-T7 / spec F2：segmented 檢視切換，取代原本的 search-icon-left -->
+                <div class="mode-toggle">
+                    <button type="button" class="mode-toggle-btn"
+                            :class="{ 'active': listMode !== 'wishlist' }"
+                            @click="listMode === 'wishlist' && switchToSearchList()"
+                            :title="t('search.action.view_search_results')">
+                        <i class="bi bi-search"></i>
+                    </button>
+                    <button type="button" class="mode-toggle-btn"
+                            :class="{ 'active': listMode === 'wishlist' }"
+                            @click="listMode !== 'wishlist' && switchToWishlist()"
+                            :title="t('search.action.view_wishlist')">
+                        <i class="bi bi-bookmarks"></i>
+                        <span class="mode-toggle-badge" x-show="wishlistCount > 0" x-text="wishlistCount"></span>
+                    </button>
+                </div>
                 <input type="text" id="searchQuery" name="q" placeholder="{{ t('search.placeholder.query') }}" autocomplete="off" x-model="searchQuery" x-ref="searchQuery" @keydown.enter="if ($event.isComposing) { $event.preventDefault(); return; }">
                 <div class="search-actions-right">
                     <!-- 取消搜尋按鈕（loading 狀態顯示） -->

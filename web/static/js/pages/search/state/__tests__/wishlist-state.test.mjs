@@ -500,6 +500,31 @@ test('addToWishlist: number 空值 → no-op', async () => {
     assert.equal(fakeThis.wishlistCount, 0);
 });
 
+test('switchToWishlist→switchToSearchList: 還原切進來之前的 displayMode（T7 review P2）', () => {
+    // 使用者在 detail 模式看著某一片 → 點書籤段 → 點回搜尋段。
+    // 不還原的話那張卡會消失、變成整片 grid 牆，得自己重新找回那一筆。
+    const state = { ...searchStateWishlist(), listMode: 'search', displayMode: 'detail', wishlistLoaded: true };
+
+    state.switchToWishlist.call(state);
+    assert.equal(state.listMode, 'wishlist');
+    assert.equal(state.displayMode, 'grid', 'wishlist 下 displayMode 不得為 detail');
+
+    state.switchToSearchList.call(state);
+    assert.equal(state.listMode, 'search');
+    assert.equal(state.displayMode, 'detail', '切回來要回到原本的 detail');
+    assert.equal(state._preWishlistDisplayMode, null, '還原後要清掉，不得殘留');
+});
+
+test('switchToWishlist: 重複點同一段不得把 grid 記成「切進來之前的值」', () => {
+    // 已經在 wishlist 時再點一次書籤段，若無條件覆寫 _preWishlistDisplayMode，
+    // 記住的會變成 'grid'，切回搜尋段就再也回不到 detail。
+    const state = { ...searchStateWishlist(), listMode: 'search', displayMode: 'detail', wishlistLoaded: true };
+    state.switchToWishlist.call(state);
+    state.switchToWishlist.call(state);   // 重複點
+    state.switchToSearchList.call(state);
+    assert.equal(state.displayMode, 'detail');
+});
+
 test('switchToSearchList: 只設 listMode=search', () => {
     const fakeThis = {
         ...searchStateWishlist(),

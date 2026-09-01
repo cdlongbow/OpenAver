@@ -101,7 +101,9 @@
       "play": "播放",
       "add_wishlist": "加入書籤",
       "remove_wishlist": "從書籤移除",
-      "back_to_detail": "返回詳情"
+      "back_to_detail": "返回詳情",
+      "view_search_results": "檢視搜尋結果",
+      "view_wishlist": "檢視書籤"
     },
     "empty": {
       "hint": "輸入番號搜尋，或加入影片檔案",

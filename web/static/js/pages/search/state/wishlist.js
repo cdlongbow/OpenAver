@@ -20,10 +20,19 @@ export function searchStateWishlist() {
         wishlistLoaded: false,
         wishlistLightboxOpen: false,   // T9 佔位
         wishlistLightboxIndex: -1,     // T9 佔位
+        // T7 review P2：切進書籤前的 displayMode，切回搜尋段時還原。
+        // 沒有它的話：你在 detail 模式看著某一片 → 點書籤段 → 點回來 → 剛才那張卡
+        // 不見了、變成整片 grid 牆，得自己在牆上重新找回那一筆。
+        // 為什麼不能乾脆不動 displayMode：wishlist 模式下 displayMode 不得為 'detail'
+        // （listMode 對帳表 #2/#3/#7/#29 的前提），所以「記住再還原」是唯一解。
+        _preWishlistDisplayMode: null,
 
         cardActionState,
 
         switchToWishlist() {
+            if (this.listMode !== 'wishlist') {
+                this._preWishlistDisplayMode = this.displayMode;
+            }
             this.listMode = 'wishlist';
             this.displayMode = 'grid';
             if (!this.wishlistLoaded) {
@@ -33,6 +42,10 @@ export function searchStateWishlist() {
 
         switchToSearchList() {
             this.listMode = 'search';
+            if (this._preWishlistDisplayMode) {
+                this.displayMode = this._preWishlistDisplayMode;
+                this._preWishlistDisplayMode = null;
+            }
         },
 
         async loadWishlistCount() {

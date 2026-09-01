@@ -27,6 +27,55 @@
     --spotlight-right-slot: 11.5rem;
 }
 
+/* 140-T7 / CD-140-4（研究題結論 #4）：search 頁自己的左槽變體，不借用
+ * showcase.css:3301-3305 的 .spotlight-search--mode-toggle（那條同時把右槽設成
+ * 8.5rem，撞上面 26-27 行 search 頁自己的 11.5rem 右槽覆寫）。這裡只設左槽，
+ * 右槽沿用上面既有的 .search-bar .spotlight-search 規則（CSS cascade 疊加）。
+ * 推導初值（待 CDP 實測覆核（TASK-140-T7 DoD-2））：
+ *   .mode-toggle left:0.5rem(=8px) + padding 2+2 + btn 32+32 + gap 2 = 佔位 78px
+ *   桌機給 5.5rem(=88px，+10px headroom，與 showcase 左槽同值／同幾何)
+ *   手機給 5.125rem(=82px，+4px 淨空，比照 showcase.css:3307-3321 129-T6)
+ */
+.search-bar .spotlight-search--wishlist-toggle {
+    --spotlight-left-slot: 5.5rem; /* 待 CDP 實測覆核（TASK-140-T7 DoD-2）*/
+}
+
+@media (max-width: 480px) {
+    .search-bar .spotlight-search--wishlist-toggle {
+        --spotlight-left-slot: 5.125rem; /* 待 CDP 實測覆核（TASK-140-T7 DoD-2）*/
+    }
+}
+
+/* 140-T7 研究題結論 #2：badge 疊在 .mode-toggle-btn 右上角，不是分段內文字（32px
+ * 圓鈕塞不下）。視覺 DNA 沿用 .staging-counter-badge（本檔 1064-1071 行），改成
+ * position:absolute 疊角；radius 用 --radius-pill（不是 --fluent-radius-md）——
+ * 疊在圓鈕角落用膠囊比方角更貼合 Fluent 圓角語彙（ui-conventions.md §1 pill 白名單
+ * 第 4 類「badge 類」）。scoped 到本卡新增的變體 class，不動 showcase.css 的
+ * .mode-toggle-btn 原始規則。
+ * overflow：showcase.css .mode-toggle 預設 visible、無 overflow:hidden；badge 先疊
+ * 在按鈕角落。若 CDP 實測被裁，再擇承重段 #4 兩個合法解之一（不得改 showcase.css）。
+ */
+.spotlight-search--wishlist-toggle .mode-toggle-btn {
+    position: relative; /* badge 絕對定位的錨點 */
+}
+
+.mode-toggle-badge {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    line-height: 14px;
+    text-align: center;
+    font-size: 0.65rem;
+    font-weight: 700;
+    background: var(--color-primary);
+    color: var(--color-primary-content);
+    border-radius: var(--radius-pill);
+    white-space: nowrap;
+}
+
 /* 92a-T3: 「自動」來源 pill 不壓縮、不折行（配合放寬的 slot；pill 是 slot 內唯一變動寬元素，
    icon 鈕已 flex-shrink:0）。消除 spec §1.1 症狀 1「pill 被 flex-shrink 壓縮變形」。 */
 .search-auto-pill {

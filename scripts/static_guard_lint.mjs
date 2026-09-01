@@ -4481,6 +4481,14 @@ const RULES = [
     scope: { anchor: /<div id="errorState"/, window: 2000 },
     note: '[lint-guard 139-T7] 同上：膠囊文字的 i18n key 被改掉或膠囊被移除',
   },
+
+  // ---- [TASK-140-T7] wishlist badge x-show（F2 驗收1） ----
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: 'x-show="wishlistCount > 0"',
+    note: '[TASK-140-T7] wishlist badge 只在 wishlistCount>0 時顯示（F2 驗收1，那一段本身仍要顯示）',
+  },
 ];
 
 // ---- helpers ----
