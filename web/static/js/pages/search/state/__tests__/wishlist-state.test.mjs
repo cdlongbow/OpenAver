@@ -1,8 +1,9 @@
 // TASK-140-T5：wishlist 狀態分片 ＋ listMode 對帳表 ＋ membership hydration
+// TASK-140-T10：listMode/displayMode 還原不變式
 //
 // 覆蓋 DoD：
 //   - loadMore 白名單化（M1）
-//   - _persistableListMode（M2）
+//   - saveState live 取值／restoreState switchToWishlist／resolveVisibleDisplayMode（T10）
 //   - addToWishlist I3 回滾（M3）
 //   - switchToWishlist 設 displayMode='grid'
 //   - membership hydration 三條
@@ -23,7 +24,7 @@ globalThis.document = { addEventListener() {} };
 register(new URL('../../__tests__/alias-loader.mjs', import.meta.url), import.meta.url);
 
 const { searchStateWishlist, cardActionState } = await import('../wishlist.js');
-const { searchStatePersistence } = await import('../persistence.js');
+const { searchStatePersistence, resolveVisibleDisplayMode } = await import('../persistence.js');
 const { searchStateNavigation } = await import('../navigation.js');
 const { searchStateBase } = await import('../base.js');
 const { searchPage } = await import('../../main.js');
@@ -123,29 +124,20 @@ test('loadMore: listMode="search" → 不因白名單提前 return（可繼續�
     assert.equal(fetchCalls, 1, 'search 模式應真正發 /api/search');
 });
 
-// ─── 對帳表 #5：_persistableListMode（mutation M2）────────────────────────
+// ─── TASK-140-T10：listMode/displayMode 還原不變式（DoD 4a–4f）────────────
 
-test('_persistableListMode: wishlist→null、file/search/null 原樣', () => {
-    const p = searchStatePersistence();
-    assert.equal(p._persistableListMode('wishlist'), null);
-    assert.equal(p._persistableListMode('file'), 'file');
-    assert.equal(p._persistableListMode('search'), 'search');
-    assert.equal(p._persistableListMode(null), null);
-});
-
-test('saveState: listMode="wishlist" 寫入 sessionStorage 時轉成 null', () => {
-    const store = {};
+function mockSessionStorage(initial = {}) {
+    const store = { ...initial };
     globalThis.sessionStorage = {
         setItem: (k, v) => { store[k] = v; },
         getItem: (k) => store[k] ?? null,
         removeItem: (k) => { delete store[k]; },
     };
+    return store;
+}
 
-    const fakeThis = {
-        ...searchStatePersistence(),
-        STATE_KEY: 'test-wishlist-persist',
-        _searchSnapshot: null,
-        pageState: 'result',
+function basePersistFields(overrides = {}) {
+    return {
         searchResults: [],
         currentIndex: 0,
         currentQuery: '',
@@ -153,16 +145,232 @@ test('saveState: listMode="wishlist" 寫入 sessionStorage 時轉成 null', () =
         hasMoreResults: false,
         fileList: [],
         currentFileIndex: 0,
-        listMode: 'wishlist',
+        listMode: null,
         searchQuery: '',
-        displayMode: 'grid',
+        displayMode: 'detail',
+        _preWishlistDisplayMode: null,
         currentMode: '',
         actressProfile: null,
+        pageState: 'result',
+        ...overrides,
+    };
+}
+
+// DoD 4a（mutation M1）
+test("saveState: pageState===loading 且有 snapshot 時，寫出的 listMode 是 live 的 'wishlist'（不是 snap.listMode）", () => {
+    const store = mockSessionStorage();
+    const fakeThis = {
+        ...searchStatePersistence(),
+        STATE_KEY: 'test-t10-loading',
+        ...basePersistFields({
+            pageState: 'loading',
+            listMode: 'wishlist',
+            displayMode: 'grid',
+            _preWishlistDisplayMode: 'detail',
+            _searchSnapshot: {
+                searchResults: [{ number: 'OLD-1' }],
+                currentIndex: 0,
+                currentQuery: 'OLD-1',
+                currentOffset: 0,
+                hasMoreResults: false,
+                fileList: [],
+                currentFileIndex: 0,
+                listMode: 'search',
+                displayMode: 'detail',
+                currentMode: '',
+                actressProfile: null,
+            },
+        }),
     };
 
     searchStatePersistence().saveState.call(fakeThis);
-    const saved = JSON.parse(store['test-wishlist-persist']);
-    assert.equal(saved.listMode, null, 'wishlist 不得寫進 snapshot');
+    const saved = JSON.parse(store['test-t10-loading']);
+    assert.equal(saved.listMode, 'wishlist', 'loading 分支必須寫 live listMode，不是 snap.listMode');
+    assert.notEqual(saved.listMode, 'search');
+});
+
+// DoD 4b
+test("saveState: 正常分支寫出 listMode: 'wishlist'（不再是 null）", () => {
+    const store = mockSessionStorage();
+    const fakeThis = {
+        ...searchStatePersistence(),
+        STATE_KEY: 'test-t10-normal',
+        ...basePersistFields({
+            _searchSnapshot: null,
+            pageState: 'result',
+            listMode: 'wishlist',
+            displayMode: 'grid',
+            _preWishlistDisplayMode: 'detail',
+        }),
+    };
+
+    searchStatePersistence().saveState.call(fakeThis);
+    const saved = JSON.parse(store['test-t10-normal']);
+    assert.equal(saved.listMode, 'wishlist', 'wishlist 必須原樣寫入，不得再淨化成 null');
+});
+
+// DoD 4c
+test('saveState: 寫出 _preWishlistDisplayMode', () => {
+    const store = mockSessionStorage();
+    const fakeThis = {
+        ...searchStatePersistence(),
+        STATE_KEY: 'test-t10-pre',
+        ...basePersistFields({
+            _searchSnapshot: null,
+            pageState: 'result',
+            listMode: 'wishlist',
+            displayMode: 'grid',
+            _preWishlistDisplayMode: 'detail',
+        }),
+    };
+
+    searchStatePersistence().saveState.call(fakeThis);
+    const saved = JSON.parse(store['test-t10-pre']);
+    assert.equal(saved._preWishlistDisplayMode, 'detail');
+});
+
+// DoD 4d（mutation M2）
+test('restoreState: listMode恢復為wishlist時呼叫switchToWishlist並載入清單', () => {
+    const STATE_KEY = 'test-t10-restore';
+    mockSessionStorage({
+        [STATE_KEY]: JSON.stringify({
+            searchResults: [],
+            currentIndex: 0,
+            currentQuery: '',
+            currentOffset: 0,
+            hasMoreResults: false,
+            fileList: [],
+            currentFileIndex: 0,
+            listMode: 'wishlist',
+            queryValue: '',
+            displayMode: 'grid',
+            _preWishlistDisplayMode: 'detail',
+            currentMode: '',
+            actressProfile: null,
+        }),
+    });
+
+    let switchCalls = 0;
+    const fakeThis = {
+        ...searchStatePersistence(),
+        STATE_KEY,
+        ...basePersistFields(),
+        lightboxOpen: false,
+        lightboxIndex: 0,
+        _heroCardImageError: false,
+        _heroLightboxImageError: false,
+        _resetCoverState: () => {},
+        switchToWishlist() { switchCalls += 1; },
+    };
+
+    const ret = searchStatePersistence().restoreState.call(fakeThis);
+    assert.equal(fakeThis.listMode, 'wishlist');
+    assert.equal(fakeThis._preWishlistDisplayMode, 'detail');
+    assert.equal(switchCalls, 1, 'restoreState 必須 fire-and-forget 呼叫 switchToWishlist 一次');
+    assert.equal(ret instanceof Promise, false, 'restoreState 必須維持同步，回傳值不是 Promise');
+});
+
+// DoD 4e
+test("restoreState: 還原 wishlist 後 _preWishlistDisplayMode 仍是存檔值（不被 switchToWishlist 覆寫）", () => {
+    const STATE_KEY = 'test-t10-order';
+    mockSessionStorage({
+        [STATE_KEY]: JSON.stringify({
+            searchResults: [],
+            currentIndex: 0,
+            currentQuery: '',
+            currentOffset: 0,
+            hasMoreResults: false,
+            fileList: [],
+            currentFileIndex: 0,
+            listMode: 'wishlist',
+            queryValue: '',
+            displayMode: 'grid',
+            _preWishlistDisplayMode: 'detail',
+            currentMode: '',
+            actressProfile: null,
+        }),
+    });
+
+    const wishlist = searchStateWishlist();
+    const fakeThis = {
+        ...searchStatePersistence(),
+        ...wishlist,
+        STATE_KEY,
+        ...basePersistFields({
+            listMode: null,
+            displayMode: 'detail',
+            _preWishlistDisplayMode: null,
+        }),
+        lightboxOpen: false,
+        lightboxIndex: 0,
+        _heroCardImageError: false,
+        _heroLightboxImageError: false,
+        _resetCoverState: () => {},
+        loadWishlist: async () => {},
+    };
+
+    searchStatePersistence().restoreState.call(fakeThis);
+    assert.equal(fakeThis.listMode, 'wishlist');
+    assert.equal(
+        fakeThis._preWishlistDisplayMode,
+        'detail',
+        '必須先還原 listMode=wishlist 再呼叫 switchToWishlist，否則會被覆寫成 grid',
+    );
+});
+
+// DoD 4f（mutation M3）
+test('resolveVisibleDisplayMode: 不合法組合修正為detail、合法組合原樣不動', () => {
+    assert.equal(resolveVisibleDisplayMode(null, 'grid'), 'detail');
+    assert.equal(resolveVisibleDisplayMode('file', 'grid'), 'detail');
+    assert.equal(resolveVisibleDisplayMode('wishlist', 'grid'), 'grid');
+    assert.equal(resolveVisibleDisplayMode('search', 'grid'), 'grid');
+    assert.equal(resolveVisibleDisplayMode(null, 'detail'), 'detail');
+});
+
+// DoD 4f 接線：restoreState 必須真的呼叫 resolveVisibleDisplayMode（純函式測不到這層）
+test("restoreState: 讀到 (null,'grid') 這種沒有渲染器命中的組合時，實際套用守衛修正成 detail", () => {
+    const STATE_KEY = 'test-t10-restore-guard';
+    mockSessionStorage({
+        [STATE_KEY]: JSON.stringify({
+            searchResults: [{ number: 'SSIS-001' }],
+            currentIndex: 0,
+            currentQuery: 'SSIS-001',
+            currentOffset: 0,
+            hasMoreResults: false,
+            fileList: [],
+            currentFileIndex: 0,
+            // listMode 缺省／null：沒有渲染器命中 grid
+            displayMode: 'grid',
+            _preWishlistDisplayMode: null,
+            currentMode: '',
+            actressProfile: null,
+        }),
+    });
+
+    const fakeThis = {
+        ...searchStatePersistence(),
+        STATE_KEY,
+        ...basePersistFields({
+            listMode: null,
+            displayMode: 'detail',
+            searchResults: [],
+            pageState: 'empty',
+        }),
+        lightboxOpen: false,
+        lightboxIndex: 0,
+        _heroCardImageError: false,
+        _heroLightboxImageError: false,
+        _resetCoverState: () => {},
+    };
+
+    searchStatePersistence().restoreState.call(fakeThis);
+    assert.equal(fakeThis.listMode, null);
+    assert.equal(fakeThis.pageState, 'result');
+    assert.equal(
+        fakeThis.displayMode,
+        'detail',
+        'restoreState 必須經 resolveVisibleDisplayMode 把 (null, grid) 修正成 detail',
+    );
 });
 
 // ─── search.html Load More x-show ──────────────────────────────────────────

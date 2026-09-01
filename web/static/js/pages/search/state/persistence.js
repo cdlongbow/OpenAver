@@ -1,7 +1,7 @@
 /**
  * SearchState - Persistence Mixin
  * 包含：狀態持久化（restoreState, saveState, clearState, setupAutoSave）
- * `'wishlist'` 不寫入 snapshot（重新整理回搜尋結果）
+ * listMode/displayMode 原樣存、原樣還原（對齊 showcase $persist）
  */
 
 /**
@@ -54,12 +54,50 @@ export function clearPreviewFailedFlags(results) {
     return results;
 }
 
+/**
+ * 還原後的 (listMode, displayMode) 是否至少有一個 search.html 渲染器會顯示；
+ * 不合法就把 displayMode 修正成 'detail'（對任何 listMode !== 'wishlist' 恆合法，是唯一
+ * 「永遠救得回來」的落點）。不動 listMode——那會竄改使用者離開時所在的模式。
+ *
+ * 合法組合對照 search.html 四個渲染器：
+ *   - listMode === 'wishlist'                          （L1061 書籤格，不看 displayMode）
+ *   - listMode === 'search' && displayMode === 'grid'  （L757 搜尋格子牆）
+ *   - displayMode === 'detail'（且 listMode !== 'wishlist'）（L449 detail 大卡，
+ *     祖先 #resultCard 要求 listMode !== 'wishlist'，L443）
+ *
+ * `listMode === 'file'` 不獨立成一支：本專案目前只在賦值處（file-list.js:102-103,439-440）
+ * 成對寫入 listMode='file' + displayMode='detail'，從未產生 ('file','grid') 這個組合；
+ * 沒有其他證據顯示 ('file','grid') 是設計上合法的畫面，保守收斂進 detail 分支即可
+ * ——('file','grid') 因此會被本函式修正成 ('file','detail')。
+ *
+ * T11a 之後若新增 wishlistLightboxOpen 閘，這裡要跟著擴充合法組合清單（見 plan「不變式」段）。
+ *
+ * @param {string|null} listMode
+ * @param {string} displayMode
+ * @returns {string} 修正後的 displayMode（合法組合原樣傳回）
+ */
+export function resolveVisibleDisplayMode(listMode, displayMode) {
+    if (listMode === 'wishlist') return displayMode;
+    if (listMode === 'search' && displayMode === 'grid') return displayMode;
+    if (displayMode === 'detail') return displayMode;
+    return 'detail';
+}
+
 export function searchStatePersistence() {
     return {
     // ===== State Persistence =====
-    /** 'wishlist' → null；其餘 listMode 原樣（含 null） */
-    _persistableListMode(listMode) {
-        return listMode === 'wishlist' ? null : listMode;
+    /**
+     * saveState() 兩條分支共用的取值邏輯（Codex Phase 2 review P2-1）：一律讀 live state，
+     * 永不讀 snapshot——snapshot 保住的是上一輪的結果集，不是「你在看哪個模式」。
+     * 搜尋還在跑時（pageState==='loading'）書籤分段沒有 disabled，使用者切書籤再離頁／F5
+     * 是走得到的路徑，這時若讀 snap.listMode 會把使用者丟回舊的搜尋畫面。
+     */
+    _liveModeFields() {
+        return {
+            listMode: this.listMode,
+            displayMode: this.displayMode,
+            _preWishlistDisplayMode: this._preWishlistDisplayMode,
+        };
     },
 
     restoreState() {
@@ -84,7 +122,8 @@ export function searchStatePersistence() {
             this.fileList = state.fileList || [];
             this.currentFileIndex = state.currentFileIndex || 0;
             this.listMode = state.listMode || null;
-            this.displayMode = state.displayMode || 'detail';
+            this.displayMode = resolveVisibleDisplayMode(this.listMode, state.displayMode || 'detail');
+            this._preWishlistDisplayMode = state._preWishlistDisplayMode || null;
             this.currentMode = state.currentMode || '';  // T3 fix: 還原搜尋模式
             this.actressProfile = state.actressProfile || null;  // T5: 恢復女優資料
 
@@ -120,6 +159,16 @@ export function searchStatePersistence() {
                 this.lightboxIndex = -1;
             }
 
+            // T10：listMode 現在原樣還原（不再被舊的淨化邏輯清成 null）。
+            // 還原成 wishlist 時，只設欄位不夠——清單資料要重新對帳，否則畫面上的格子牆永遠是空的。
+            // fire-and-forget：restoreState() 必須維持同步函式，不 await switchToWishlist()/loadWishlist()。
+            // 順序硬約束：this.listMode 必須先被設成 'wishlist'（上面已經做了）才能呼叫，否則
+            // switchToWishlist() 內 `if (this.listMode !== 'wishlist')` 會誤判成「剛切換」，
+            // 用當下的 this.displayMode（可能是預設值）覆寫掉剛還原的 _preWishlistDisplayMode。
+            if (this.listMode === 'wishlist') {
+                this.switchToWishlist();
+            }
+
         } catch (e) {
             console.error('[Alpine] 還原狀態失敗:', e);
             sessionStorage.removeItem(this.STATE_KEY);
@@ -131,6 +180,7 @@ export function searchStatePersistence() {
         // 條件：snapshot 存在 + pageState 仍是 loading（覆蓋 SSE 和 REST fallback 兩條路徑）
         if (this._searchSnapshot && this.pageState === 'loading') {
             const snap = this._searchSnapshot;
+            const live = this._liveModeFields();
             const state = {
                 searchResults: snap.searchResults,
                 currentIndex: snap.currentIndex,
@@ -139,9 +189,10 @@ export function searchStatePersistence() {
                 hasMoreResults: snap.hasMoreResults,
                 fileList: snap.fileList,
                 currentFileIndex: snap.currentFileIndex,
-                listMode: this._persistableListMode(snap.listMode),
+                listMode: live.listMode,
                 queryValue: snap.currentQuery,    // 上一輪的 query
-                displayMode: snap.displayMode,
+                displayMode: live.displayMode,
+                _preWishlistDisplayMode: live._preWishlistDisplayMode,
                 currentMode: snap.currentMode,
                 actressProfile: snap.actressProfile
             };
@@ -150,6 +201,7 @@ export function searchStatePersistence() {
         }
 
         // T3.2 Step 3: SearchCore.state 已代理 Alpine，直接用 Alpine state
+        const live = this._liveModeFields();
         const state = {
             searchResults: this.searchResults,
             currentIndex: this.currentIndex,
@@ -158,9 +210,10 @@ export function searchStatePersistence() {
             hasMoreResults: this.hasMoreResults,
             fileList: this.fileList,
             currentFileIndex: this.currentFileIndex,
-            listMode: this._persistableListMode(this.listMode),
+            listMode: live.listMode,
             queryValue: this.searchQuery,
-            displayMode: this.displayMode,
+            displayMode: live.displayMode,
+            _preWishlistDisplayMode: live._preWishlistDisplayMode,
             currentMode: this.currentMode,  // T3 fix: 持久化搜尋模式
             actressProfile: this.actressProfile  // T5: 持久化女優資料
         };

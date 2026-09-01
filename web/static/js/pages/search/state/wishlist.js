@@ -18,8 +18,8 @@ export function searchStateWishlist() {
         wishlistItems: [],
         wishlistCount: 0,
         wishlistLoaded: false,
-        wishlistLightboxOpen: false,   // T9 佔位
-        wishlistLightboxIndex: -1,     // T9 佔位
+        wishlistLightboxOpen: false,   // T11a 佔位
+        wishlistLightboxIndex: -1,     // T11a 佔位
         // T7 review P2：切進書籤前的 displayMode，切回搜尋段時還原。
         // 沒有它的話：你在 detail 模式看著某一片 → 點書籤段 → 點回來 → 剛才那張卡
         // 不見了、變成整片 grid 牆，得自己在牆上重新找回那一筆。
