@@ -21,6 +21,7 @@ from PIL import Image
 from core.atomic_write import atomic_write
 from core.database import get_db_path
 from core.logger import get_logger
+from core.organizer import build_download_headers
 from core.scraper import normalize_number
 
 logger = get_logger(__name__)
@@ -45,8 +46,9 @@ def _fetch_image_bytes(url: str, timeout: float = 30) -> bytes | None:
     """下載封面 bytes；失敗回 None（不拋）。"""
     if not url:
         return None
+    headers = build_download_headers(url)
     try:
-        resp = requests.get(url, timeout=timeout)
+        resp = requests.get(url, headers=headers, timeout=timeout)
     except requests.RequestException:
         logger.warning("wishlist cover fetch failed: url=%s", url)
         return None

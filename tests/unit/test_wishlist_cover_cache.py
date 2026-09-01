@@ -304,3 +304,23 @@ def test_fetch_passes_timeout(db_path, monkeypatch):
     assert wcc.download_and_save("SONE-001", "https://cdn.example/c.jpg") is True
     assert "timeout" in seen
     assert seen["timeout"] == 30
+
+
+# ── headers 必須帶 organizer 那組（UA + javbus Referer）──────────
+def test_fetch_passes_organizer_headers(db_path, monkeypatch):
+    seen = {}
+
+    def fake_get(url, *a, **k):
+        seen.update(k)
+        return _ok_response(_jpeg_bytes())
+
+    monkeypatch.setattr(wcc.requests, "get", fake_get)
+    assert (
+        wcc.download_and_save(
+            "SONE-001", "https://www.javbus.com/pics/cover/ci5u_b.jpg"
+        )
+        is True
+    )
+    assert "headers" in seen
+    assert "User-Agent" in seen["headers"]
+    assert seen["headers"].get("Referer") == "https://www.javbus.com/"

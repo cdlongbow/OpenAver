@@ -847,6 +847,14 @@
 }
 
 /* ==================== T2a: Grid Mode ==================== */
+/* TASK-140-T9：`.wishlist-grid` 與 `.search-grid` 共用版面／斷點（數值本來就逐值相同，
+   這裡是去重）。**兩條不可再往下延伸到 896-956 行的 poster-crop 區塊**——那塊用
+   `:is(...).search-grid` 把非 hero 卡裁成海報比例，而 spec F3 要求書籤卡在任何寬度
+   都維持固定 fanart（TASK-140-T8 判定）。所以那塊**只掛 `.search-grid`**。
+   ⚠️ 逗號清單的順序有意義：`.search-grid` 必須排在最後、緊接 `{` 之前——
+   `scripts/css-guard.mjs` 的 CG-PC-04 用字面 regex `/\.search-grid \{/` 掃 ≤480px 區塊，
+   換順序會讓那條字面比對抓不到而誤判（正確的碼被 lint 判紅）。 */
+.wishlist-grid,
 .search-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -860,18 +868,21 @@
 
 /* 響應式斷點 - 對齊 showcase.css */
 @media (min-width: 1500px) {
+    .wishlist-grid,
     .search-grid {
         grid-template-columns: repeat(5, 1fr);
     }
 }
 
 @media (min-width: 1100px) and (max-width: 1499px) {
+    .wishlist-grid,
     .search-grid {
         grid-template-columns: repeat(4, 1fr);
     }
 }
 
 @media (min-width: 900px) and (max-width: 1099px) {
+    .wishlist-grid,
     .search-grid {
         grid-template-columns: repeat(3, 1fr);
     }
@@ -879,6 +890,7 @@
 
 /* 481-899px → 4 columns 直式右裁 poster 格（US-10 / CD-11） */
 @media (min-width: 481px) and (max-width: 899px) {
+    .wishlist-grid,
     .search-grid {
         grid-template-columns: repeat(4, 1fr);
         gap: 1rem;
@@ -886,6 +898,7 @@
 }
 
 @media (max-width: 480px) {
+    .wishlist-grid,
     .search-grid {
         grid-template-columns: repeat(3, 1fr);  /* T9-port：search 影片格對齊 showcase 3-col */
         gap: 0.5rem;
@@ -1009,49 +1022,23 @@
 }
 
 /* Footer 雙層切換（對齊 showcase.css .showcase-grid 的 footer 設定） */
+.wishlist-grid .av-card-preview-footer,
 .search-grid .av-card-preview-footer {
     position: relative;
     overflow: hidden;
     height: 2.5rem;
 }
 
-/* TASK-140-T8: wishlist 專屬 grid 容器。不可命名為 search-grid ——
-   search.css 896-956 行的 poster-crop 區塊用 :is(...).search-grid 選擇器，
-   套用在所有非 hero-card 卡片；spec F3「固定 fanart，做不出海報卡型」
-   要求 wishlist 卡在任何寬度都不裁成海報比例，故必須用不同 class 名隔離。
-   版面／斷點沿用 .search-grid（850-894 行）同一組數值，僅省略 896-956 行的 poster-crop。 */
+/* TASK-140-T9：.wishlist-grid 是 .result-area（display:flex 橫向）的直接子元素。
+   #resultCard 本來就有 width:100%/max-height:100%（search.css:102-109）才撐得滿版面，
+   .wishlist-grid 缺這兩條會被 flex 壓成內容寬（實測 110×727），還被 stretch 拉滿高度。
+   overflow-y:auto 讓卡片數超過可視高度時獨立捲動（不撐爆 .result-area）；
+   align-content:start 防止 grid 的多行被 flex-stretch 影響時仍垂直置頂而非平均分散。 */
 .wishlist-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 1.5rem;
-    padding: 1.5rem;
-    padding-bottom: 2.5rem;
-    max-width: 100%;
-}
-@media (min-width: 1500px) {
-    .wishlist-grid { grid-template-columns: repeat(5, 1fr); }
-}
-@media (min-width: 1100px) and (max-width: 1499px) {
-    .wishlist-grid { grid-template-columns: repeat(4, 1fr); }
-}
-@media (min-width: 900px) and (max-width: 1099px) {
-    .wishlist-grid { grid-template-columns: repeat(3, 1fr); }
-}
-@media (min-width: 481px) and (max-width: 899px) {
-    .wishlist-grid { grid-template-columns: repeat(4, 1fr); gap: 1rem; }
-}
-@media (max-width: 480px) {
-    .wishlist-grid { grid-template-columns: repeat(3, 1fr); gap: 0.5rem; padding: 0.75rem; }
-}
-
-/* .footer-hover（showcase.css:801-812）是 position:absolute;inset:0，
-   需要一個有 position 的祖先才能正確疊在 footer 區域內（而非整張卡／整頁）。
-   .av-card-preview 本身無 position（theme.css:1029-1040），search-grid 靠這條
-   （search.css:1012-1016）補上，wishlist-grid 需要同一條等價規則。 */
-.wishlist-grid .av-card-preview-footer {
-    position: relative;
-    overflow: hidden;
-    height: 2.5rem;
+    width: 100%;
+    max-height: 100%;
+    overflow-y: auto;
+    align-content: start;
 }
 
 /* 空狀態外層需要一個有 position + 高度的容器，

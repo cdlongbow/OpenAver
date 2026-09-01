@@ -2264,6 +2264,39 @@ const RULES = [
       }
     },
   },
+  {
+    id: 'CG-WISH-01',
+    file: 'pages/search.css',
+    kind: 'fn',
+    check(ctx) {
+      // 只認「.wishlist-grid 是逗號清單裡唯一 token」的 block——排除 D4 合併後
+      // 「.wishlist-grid, .search-grid { ... }」這類 selector（那些 block 沒有本規則要守的
+      // 四個宣告，用 markers.includes() 子字串比對會誤判，見「現況分析」的分析）。
+      // 🔴 Opus 訂正（Step 2 審卡）：原稿寫成「逗號清單裡有一個 token 等於 .wishlist-grid」，
+      // 那會**連 D4 合併後的 `.wishlist-grid, .search-grid` 也算命中**，而 `.find()` 取檔案順序
+      // 第一個 → 抓到 850 行那個合併 base block（它本來就沒有這四個宣告）→ 正確的碼被判紅。
+      // 正解：selector 必須**整條就是** `.wishlist-grid`（不含逗號）。
+      // 另外用 filter + 取最後一個而非 `.find()` 取第一個（FE-GUARD-14：CSS 生效的是最後一條，
+      // `.find()` 只驗第一個是 fail-open）。
+      const standalone = ctx.blocks.filter(({ selector }) => selector.trim() === '.wishlist-grid');
+      const block = standalone[standalone.length - 1];
+      if (!block) {
+        ctx.fail('CG-WISH-01: .wishlist-grid 專屬（非合併）規則區塊不存在');
+        return;
+      }
+      const required = [
+        [/width\s*:\s*100%/, 'width: 100%'],
+        [/max-height\s*:\s*100%/, 'max-height: 100%'],
+        [/overflow-y\s*:\s*auto/, 'overflow-y: auto'],
+        [/align-content\s*:\s*start/, 'align-content: start'],
+      ];
+      for (const [re, label] of required) {
+        if (!re.test(block.declarations)) {
+          ctx.fail(`CG-WISH-01: .wishlist-grid 專屬區塊缺少 ${label}（flex-child 版面會壞，實測回歸為 110×727 窄直行）`);
+        }
+      }
+    },
+  },
 ];
 
 // ── per-file read+parse cache（同檔多 rule 共用，讀一次 → stripCssComments → parseRuleBlocks）──

@@ -687,7 +687,7 @@ def _record_host_failure(key: Optional[Tuple[str, str, int]]) -> None:
     logger.debug("image host connect failure recorded: %s (ttl=%ss)", key, _HOST_FAILURE_TTL)
 
 
-def _build_download_headers(url: str, referer: str = "") -> dict:
+def build_download_headers(url: str, referer: str = "") -> dict:
     headers = HEADERS.copy()
     effective_referer = referer
     if not effective_referer:
@@ -714,7 +714,7 @@ def _attempt_download_image(
     使用者會從「30 秒後成功」變成「5 秒失敗」，而且**沒有代理可以救**。
     短逾時的收益只存在於「失敗了還有第二條路」的情境，成本卻落在沒有第二條路的人身上。
     """
-    headers = _build_download_headers(url, referer)
+    headers = build_download_headers(url, referer)
     timeout = (CONNECT_TIMEOUT, REQUEST_TIMEOUT) if short_connect else REQUEST_TIMEOUT
     try:
         resp = requests.get(url, headers=headers, timeout=timeout)

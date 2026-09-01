@@ -440,7 +440,7 @@
         </div>
 
         <!-- 結果卡片（wrapper：卡片 + 檔案列表垂直排列） -->
-        <div id="resultCard" x-show="pageState === 'result'" x-cloak>
+        <div id="resultCard" x-show="pageState === 'result' && listMode !== 'wishlist'" x-cloak>
             <!-- T5: Actress Banner 完全移除（Detail 模式不顯示女優資訊）-->
             <!-- Hero Card 仍在 Grid 模式顯示（L379-400，已有 x-show="displayMode === 'grid'"） -->
 

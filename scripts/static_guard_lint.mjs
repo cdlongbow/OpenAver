@@ -4528,6 +4528,12 @@ const RULES = [
     pattern: `x-show="pageState === 'error' && listMode !== 'wishlist'"`,
     note: '[TASK-140-T8] #errorState 必須排除 wishlist',
   },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: `x-show="pageState === 'result' && listMode !== 'wishlist'"`,
+    note: '[TASK-140-T9] #resultCard 必須排除 wishlist（否則搜尋結果會與書籤清單並排顯示）',
+  },
 ];
 
 // ---- helpers ----
