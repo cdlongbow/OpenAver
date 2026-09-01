@@ -259,8 +259,7 @@ export function searchStateFileList() {
         const number = prompt(window.t('search.filelist.enter_number_prompt'), '');
         if (!number || !number.trim()) return;
 
-        const formatted = window.SearchFile.formatNumber(number.trim());
-        file.number = formatted;
+        file.number = number.trim();
         file.searched = false;
         file.searchResults = [];
 
@@ -490,6 +489,13 @@ export function searchStateFileList() {
             if (!r?.number) {
                 this.errorText = window.t('search.error.number_not_recognized');  // T6c: 沿用既有 key
                 this.pageState = 'error';
+                // 139b-T10（CD-b4 ＋ review 第 2 輪）：兩個欄位一起清。
+                // currentQuery：#errorState 那顆膠囊（search.html:383）讀它。
+                // searchQuery：不清的話 isComposing() 會翻成 true，讓搜尋列旁那顆讀 searchQuery 的
+                // 「自動」膠囊（search.html:305）冒出來、預填上一部片的番號——同一個 bug 換入口重現。
+                // 對稱性：成功路徑（:495）本來就把 searchQuery 設成剛拖進來那個檔的番號。
+                this.currentQuery = '';
+                this.searchQuery = '';
                 return;
             }
             this.searchQuery = r.number;
@@ -500,6 +506,8 @@ export function searchStateFileList() {
             if (capturedRequestId !== this.requestId) return;   // 同上：手動搜尋期間發生的失敗不覆蓋新搜尋狀態
             this.errorText = window.t('search.error.number_parse_unavailable');   // 新 key
             this.pageState = 'error';
+            this.currentQuery = '';   // 139b-T10（CD-b4 ＋ review 第 2 輪）：同上，兩個欄位一起清
+            this.searchQuery = '';
         } finally {
             this._clearAbort('handleFileDrop', signal);   // 比對 signal，避免刪掉新請求的 controller
         }

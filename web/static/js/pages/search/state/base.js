@@ -439,8 +439,19 @@ export function searchStateBase() {
             return file.searched && file.searchResults && file.searchResults.length > 0 && !file.scraped;
         },
 
+        // 139b-T12：兩種「這一列需要人手介入」都給鉛筆。
+        //   ① 檔名解析不出番號（file.number 空）——原本就有。
+        //   ② 番號解析出來了、但八個來源都查無結果（searched 且 searchResults 空）。
+        // ② 過去是死路：拖檔查無結果走 pageState='result'（file-list.js:65/132），
+        //    #errorState 的「使用番號進階搜尋」不會出現；結果卡右上角的來源膠囊包在
+        //    x-if="current().source"（search.html:487）裡、沒結果就整顆不渲染；而鉛筆
+        //    的條件是 !file.number，番號解析成功時它也被藏起來 ⇒ 三個出口全關。
+        //    典型情境：拖入 ABC-999.mp4，番號其實打錯了，卻沒有地方可以改。
+        // searchResults 在 ① 可能是 undefined，但那時 searched 為 false，短路先擋掉。
         needsNumberInput(file) {
-            return !file.number;
+            // Boolean() 包住：file.searched 不存在時（剛建 fileList）`undefined && ...` 會回
+            // undefined 而非 false。x-show 兩者等效，但守衛與測試用 strict 比較。
+            return Boolean(!file.number || (file.searched && !file.searchResults?.length));
         },
 
         // ===== T4: Rotating Border Methods =====

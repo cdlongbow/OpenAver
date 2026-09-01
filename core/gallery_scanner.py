@@ -31,6 +31,7 @@ from core.nfo_read import (
 from core.nfo_stat import NFO_MTIME_REFRESH, nfo_mtime_or_none
 from core.nfo_utils import sanitize_nfo_bytes
 from core.path_utils import normalize_path, to_file_uri, uri_to_fs_path, uri_to_local_fs_path
+from core.scrapers.utils import FC2_TOKEN_PATTERN, normalize_number_impl
 from core.video_extensions import DEFAULT_VIDEO_EXTENSIONS, ZERO_SIZE_EXTENSIONS
 
 logger = get_logger(__name__)
@@ -232,8 +233,8 @@ class VideoScanner:
     # 番號識別正則表達式 (從 galleryHtml.cs 移植)
     NUM_PATTERNS = [
         # FC2-PPV
-        (r'^(.*[\W_])?FC2(-?PPV)?-(\d+)([\W_].*|[a-z]+|F?HD.*)?$',
-         lambda m: f"FC2PPV-{m.group(3)}"),
+        (rf'^(.*[\W_])?(?P<fc2>{FC2_TOKEN_PATTERN})([\W_].*|[a-z]+|F?HD.*)?$',
+         lambda m: normalize_number_impl(m.group('fc2'))),
 
         # 一本道/加勒比 (n1234, k1234)
         (r'^(.*[\W_])?([nk]\d{4})([\W_].*|[a-z]+|F?HD.*)?$',
@@ -260,22 +261,7 @@ class VideoScanner:
          lambda m: f"HEYZO-{m.group(3)}"),
     ]
 
-    # 檔名格式解析的預設模式 (從 gallery.ini)
-    DEFAULT_NAMING_FORMATS = [
-        r"<演員> - \[<片商>\]\[<編號>\]<片名>",
-        r"<演員> - \[<編號>\]<片名>",
-        r"\(<編號>\)<演員> - <片名>",
-        r"\(<編號>\)<片名>",
-        r"\(<片商>\)\(<編號>\)<片名>",
-        r"\(<片商>\)\(<編號>\)<演員> - <片名>",
-        r"\[<發售日>\]\(<片商>\)\(<編號>\)<片名>",
-        r"\[<發售日>\]\(<編號>\)<片名>",
-        r"\[<發售日>\]\(<編號>\)<演員> - <片名>",
-    ]
-
-    def __init__(self, naming_formats: List[str] = None, path_mappings: dict = None):
-        self.naming_formats = naming_formats or self.DEFAULT_NAMING_FORMATS
-        self._compiled_formats = self._compile_naming_formats()
+    def __init__(self, path_mappings: dict = None):
         self.path_mappings = path_mappings or {}
         self.prefix_mapping = load_prefix_mapping()
         self.name_mapping = load_name_mapping()
@@ -306,22 +292,6 @@ class VideoScanner:
 
         return maker
 
-    def _compile_naming_formats(self) -> List[re.Pattern]:
-        """將命名格式轉換為正則表達式"""
-        patterns = []
-        for fmt in self.naming_formats:
-            # 轉義特殊字符
-            pattern = re.escape(fmt)
-            # 將 <欄位> 轉換為命名群組
-            pattern = re.sub(r'<(\w+)>', r'(?P<\1>.*?)', pattern)
-            # 移除轉義的反斜線（因為原本就是正則）
-            pattern = pattern.replace(r'\<', '<').replace(r'\>', '>')
-            try:
-                patterns.append(re.compile(f'^{pattern}$', re.IGNORECASE))
-            except re.error:
-                pass
-        return patterns
-
     def find_num_from_filename(self, filename: str) -> str:
         """從檔名提取番號"""
         # 移除副檔名
@@ -335,24 +305,15 @@ class VideoScanner:
         return ""
 
     def parse_filename(self, filename: str) -> VideoInfo:
-        """依據命名格式解析檔名"""
+        """從檔名取出番號與標題。
+
+        139-T2 起只做這兩件事——原本那套「命名格式樣板」解析（會填 actor/maker/date/genre）
+        已整條刪除，它從來沒有被執行過。要從檔名抽那幾個欄位是新功能，不是修 bug。
+        """
         name = Path(filename).stem
         info = VideoInfo()
 
-        # 嘗試匹配每個格式
-        for pattern in self._compiled_formats:
-            match = pattern.match(name)
-            if match:
-                groups = match.groupdict()
-                info.title = groups.get('片名', '').strip()
-                info.actor = groups.get('演員', '').strip()
-                info.num = groups.get('編號', '').strip()
-                info.maker = groups.get('片商', '').strip()
-                info.date = groups.get('發售日', '').strip()
-                info.genre = groups.get('類型', '').strip()
-                break
-
-        # 如果沒匹配到格式，嘗試從檔名提取番號
+        # 從檔名提取番號
         if not info.num:
             info.num = self.find_num_from_filename(filename)
 
@@ -625,11 +586,7 @@ class VideoScanner:
         if not info.title or not info.num:
             filename_info = self.parse_filename(video_path.name)
             info.title = info.title or filename_info.title
-            info.actor = info.actor or filename_info.actor
             info.num = info.num or filename_info.num
-            info.maker = info.maker or filename_info.maker
-            info.date = info.date or filename_info.date
-            info.genre = info.genre or filename_info.genre
 
         # 根據番號前綴正規化片商名稱
         info.maker = self.normalize_maker(info.num, info.maker)

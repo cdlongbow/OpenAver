@@ -148,13 +148,15 @@ class TestGroupsNoNfo:
 
     def test_groups_no_nfo_happy_path(self, tmp_db, monkeypatch):
         rows = [
-            # 3 筆 nfo_mtime=0，number 符合 is_number_format()
+            # 4 筆 nfo_mtime=0，number 符合 is_number_format()
             (to_file_uri("/test/SONE-205.mp4"), "SONE-205", "Title 1",
              '["明日花"]', "Sony", '[]', "Dir", "L", "T1", None, "2024-01-01", 0.0),
             (to_file_uri("/test/ABW-001.mp4"), "ABW-001", "Title 2",
              '["葵"]', "ABC", '[]', "Dir", "L", "T2", None, "2024-02-01", 0.0),
             (to_file_uri("/test/IPZ-154.mp4"), "IPZ-154", "Title 3",
              '["あ"]', "Idea", '[]', "Dir", "L", "T3", None, "2024-03-01", 0.0),
+            (to_file_uri("/test/200GANA-3360.mp4"), "200GANA-3360", "Title GANA",
+             '["女優G"]', "GANA", '[]', "Dir", "L", "TG", None, "2024-05-01", 0.0),
             # 1 筆正常（有 nfo）→ 不應出現在結果
             (to_file_uri("/test/MIDE-001.mp4"), "MIDE-001", "Title 4",
              '["女優D"]', "Mide", '[]', "Dir", "L", "T4", None, "2024-04-01", 9999.0),
@@ -172,8 +174,8 @@ class TestGroupsNoNfo:
         assert resp.status_code == 200
         data = resp.json()
 
-        assert data["total"] == 3
-        assert len(data["items"]) == 3
+        assert data["total"] == 4
+        assert len(data["items"]) == 4
 
         # 每筆含必填欄位
         for item in data["items"]:
@@ -183,9 +185,10 @@ class TestGroupsNoNfo:
             assert "title" in item
             assert "maker" in item
 
-        # 正常影片不應出現
+        # 正常影片不應出現，200GANA-3360 應出現
         returned_numbers = {item["number"] for item in data["items"]}
         assert "MIDE-001" not in returned_numbers
+        assert "200GANA-3360" in returned_numbers
 
         # response 結構
         assert data["group"] == "no_nfo"

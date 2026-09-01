@@ -91,11 +91,13 @@ def test_precise_search_still_prefers_the_api(scraper, monkeypatch):
     assert html.call_count == 0
 
 
-def test_keyword_search_still_rejects_amateur_numbers(scraper, monkeypatch):
-    """素人番號照舊在 `validate_number()` 就出局——連 HTML 詳情頁都不發。
+def test_keyword_search_now_returns_amateur_numbers(scraper, monkeypatch):
+    """素人番號過閘後送出 HTML 詳情請求並回結果。
 
-    這條鎖的是 `_search_number()` 沒有在拆分時把正規化／格式檢查漏掉
-    （CD-132b-13：兩條路徑之前只做一次）。
+    這條鎖的仍是 `_search_number()` 沒有在拆分時把正規化／格式檢查漏掉
+    （CD-132b-13：兩條路徑之前只做一次）——D 委派 `is_strict_number` 後，
+    素人番號（如 259LUXU-1234）會通過閘門，期望從「零詳情請求」翻面為
+    「送出詳情並回結果」。
     """
     list_html = (
         '<div class="movie-list">'
@@ -105,9 +107,10 @@ def test_keyword_search_still_rejects_amateur_numbers(scraper, monkeypatch):
         '  </div>'
         '</div>'
     )
-    html = MagicMock(side_effect=AssertionError("素人番號不該送出詳情請求"))
+    html = MagicMock(side_effect=lambda number: _video(number))
     monkeypatch.setattr(scraper, "_get_html", lambda _url: list_html)
     monkeypatch.setattr(scraper, "search_via_html", html)
 
-    assert scraper.search_by_keyword("LUXU") == []
-    assert html.call_count == 0
+    results = scraper.search_by_keyword("LUXU")
+    assert [v.number for v in results] == ["259LUXU-1234"]
+    assert html.call_count == 1

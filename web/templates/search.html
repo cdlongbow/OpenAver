@@ -373,7 +373,15 @@
         <div id="errorState" class="state-page error w-full" x-show="pageState === 'error'" x-cloak>
             <i class="bi bi-exclamation-triangle state-page-icon"></i>
             <p class="state-page-text error-text" id="errorMessage" x-text="errorText || window.t('search.filelist.search_failed')">{{ t('search.filelist.search_failed') }}</p>
-            <small class="state-page-hint">{{ t('search.error.hint') }}</small>
+            <small class="state-page-hint">{{ t('search.error.hint_retry') }}</small>
+            {{ source_pill(
+                name="t('search.error.advanced_search_cta')",
+                censored=true,
+                variant='action',
+                icon='bi-sliders',
+                extra_classes='state-page-action',
+                attrs='@click="openRescrape(null, \'search\'); rescrapeNumber = (currentQuery || \'\').trim()"'
+            ) }}
             <!-- 多檔案模式導航 -->
             <div class="error-nav" x-show="fileList.length > 1" id="errorNav">
                 <button class="btn btn-sm btn-outline btn-neutral"

@@ -1,5 +1,5 @@
 // TASK-caps: 番號字母 cap 對齊守衛（5/6 → 7），修復 7 字母前綴（PARATHD）
-// 被 re.search-like 滑窗截斷掉首字的 bug + 前端「手動輸入番號」逃生口（CD-5）。
+// 被 re.search-like 滑窗截斷掉首字的 bug。
 //
 // file.js 是 classic script（掛到 window.SearchFile），非 ES module——
 // stub window 後動態 import 觸發頂層副作用（見 TASK-caps.md「前端 node:test 選擇理由」）。
@@ -10,17 +10,7 @@ import assert from 'node:assert/strict';
 
 globalThis.window = globalThis;
 await import('../file.js');
-const { formatNumber, extractChineseTitle } = globalThis.window.SearchFile;
-
-// === 必須新 PASS：formatNumber 逃生口（CD-5）===
-
-test('formatNumber: 7 字母前綴逃生口不再截斷（帶 hyphen）', () => {
-  assert.equal(formatNumber('PARATHD-02976'), 'PARATHD-02976');
-});
-
-test('formatNumber: 7 字母前綴逃生口不再截斷（無 hyphen 手動輸入）', () => {
-  assert.equal(formatNumber('parathd02976'), 'PARATHD-02976');
-});
+const { extractChineseTitle } = globalThis.window.SearchFile;
 
 // === 必須新 PASS：extractChineseTitle 不殘留 7 字母番號碎片 ===
 
@@ -33,13 +23,3 @@ test('extractChineseTitle: 7 字母番號靠通用 cleanup 完整剝除（number
   assert.equal(result, '純中文標題');
 });
 
-// === Collision guard：既有格式不受 cap 加寬影響（mutation 驗證用回歸錨點）===
-
-test('formatNumber: ABC-123 不變', () => {
-  assert.equal(formatNumber('ABC-123'), 'ABC-123');
-});
-
-test('formatNumber: guard clause — null/空字串仍回 null（不受 cap 寬度影響）', () => {
-  assert.equal(formatNumber(null), null);
-  assert.equal(formatNumber(''), null);
-});

@@ -4467,6 +4467,20 @@ const RULES = [
     scope: { anchor: /flipAndFadeIn\s*=\s*function\s*\(\s*\)\s*\{/, braceBalanced: true },
     note: '[lint-guard 138-T6-F2] 缺口F反向：toggleActressMode()/flipAndFadeIn 缺少 window.scrollTo(0, 0) → 使用者從影片牆按「女優模式」切回女優牆，畫面落在女優牆最底部，要自己捲回去才看得到熟悉的第一排女優',
   },
+
+  // ---- [lint-guard 139-T7] 錯誤頁「使用番號進階搜尋」膠囊接線正向鎖（TASK-139-T7 D6） ----
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: 'rescrapeNumber = (currentQuery',
+    scope: { anchor: /<div id="errorState"/, window: 2000 },
+    note: '[lint-guard 139-T7] 錯誤頁「使用番號進階搜尋」膠囊的接線斷掉 → 使用者搜尋查無結果時，畫面上不再有任何可以自己挑來源重試的入口，只剩一句「請稍後再試」的死路',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: "t('search.error.advanced_search_cta')",
+    scope: { anchor: /<div id="errorState"/, window: 2000 },
+    note: '[lint-guard 139-T7] 同上：膠囊文字的 i18n key 被改掉或膠囊被移除',
+  },
 ];
 
 // ---- helpers ----

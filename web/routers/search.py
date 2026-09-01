@@ -47,7 +47,7 @@ from core.scraper import (
     search_jav, smart_search, is_partial_number, is_number_format,
     is_prefix_only, search_partial, search_actress, strip_internal_nfo_keys
 )
-from core.scrapers.utils import SOURCE_NAMES
+from core.scrapers.utils import SOURCE_NAMES, resolve_route_target
 
 router = APIRouter(prefix="/api", tags=["search"])
 
@@ -318,7 +318,8 @@ def _extract_top_makers(results: list) -> list:
 
 def _detect_mode(q: str) -> str:
     """偵測搜尋模式"""
-    if is_number_format(q):
+    target = resolve_route_target(q)
+    if is_number_format(target):
         return "exact"
     elif is_partial_number(q):
         return "partial"

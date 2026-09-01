@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 from typing import Optional
 from .models import Video, ScraperConfig
-from core.scrapers.utils import normalize_number_impl
+from core.scrapers.utils import is_lenient_number, normalize_number_impl
 
 
 class BaseScraper(ABC):
@@ -68,14 +68,7 @@ class BaseScraper(ABC):
         Returns:
             True 如果格式正確
         """
-        import re
-        patterns = [
-            r'^[A-Z]+-\d+$',         # ABC-123
-            r'^FC2-PPV-\d+$',        # FC2-PPV-1234567
-            r'^[A-Z]+\d+-\d+$',      # T28-103
-            r'^[A-Z]\d{4}$',         # N0762, K0150（單字母 + 恰 4 位，Tokyo Hot 無碼）
-        ]
-        return any(re.match(p, number.upper()) for p in patterns)
+        return is_lenient_number(number)
 
     def normalize_number(self, number: str) -> str:
         """正規化番號（統一大寫、格式）"""

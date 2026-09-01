@@ -13,8 +13,18 @@ import pytest
 import json
 from pathlib import Path
 
+from unittest.mock import patch
+
 # 測試目標模組
-from core.scraper import extract_number, normalize_number, is_number_format
+from core.scraper import (
+    extract_number, normalize_number, is_number_format, smart_search,
+    is_partial_number, is_prefix_only
+)
+from core.scrapers.utils import (
+    is_strict_uncensored_number,
+    is_uncensored_route,
+    resolve_route_target,
+)
 
 
 # ============ TestExtractNumber ============
@@ -33,7 +43,7 @@ class TestExtractNumber:
 
     def test_basic_fc2ppv(self):
         """FC2-PPV 格式"""
-        assert extract_number('FC2-PPV-123456.avi') == 'FC2-PPV-123456'
+        assert extract_number('FC2-PPV-123456.avi') == 'FC2-123456'
 
     # --- real_world/ 真實世界格式 ---
     def test_no_hyphen(self):
@@ -64,12 +74,10 @@ class TestExtractNumber:
         assert extract_number('stars-804_4K_60fps.mp4') == 'STARS-804'
 
     def test_fc2_no_second_hyphen(self):
-        """FC2 無第二橫線 FC2PPV-999999 - 被通用 regex 誤抓"""
-        # 目前 regex 只支援 FC2-PPV-\d+
-        # FC2PPV-999999 會被通用 regex 誤解析為 PPV-99999
-        # 這是已知限制，待未來優化
+        """FC2 無第二橫線 FC2PPV-999999"""
+        # 139-T1b: FC2 統一收斂為 FC2-<純數字> 正典格式
         result = extract_number('FC2PPV-999999.avi')
-        assert result == 'PPV-99999'  # 誤抓結果，非預期但目前行為
+        assert result == 'FC2-999999'
 
     # --- suffix/ 後綴處理 ---
     # extract_number 會預處理清理 -UC/-UNCENSORED/-LEAK 等後綴
@@ -238,8 +246,8 @@ class TestNormalizeNumber:
         assert normalize_number('abc00123') == 'ABC-00123'
 
     def test_fc2ppv_format(self):
-        """FC2-PPV 格式保持不變"""
-        assert normalize_number('FC2-PPV-123456') == 'FC2-PPV-123456'
+        """FC2-PPV 格式正規化為正典 FC2-<純數字>"""
+        assert normalize_number('FC2-PPV-123456') == 'FC2-123456'
 
     def test_with_whitespace(self):
         """帶空白 ' sone103 ' → SONE-103"""
@@ -348,13 +356,98 @@ class TestValidateNumber:
         """K0150（單字母 + 4 位）validate 應為 True"""
         assert self._scraper().validate_number('K0150') is True
 
-    def test_validate_SONE103_false(self):
-        """SONE103（多字母無 hyphen）validate 仍應為 False（回歸守衛）"""
-        assert self._scraper().validate_number('SONE103') is False
+    def test_validate_SONE103_true(self):
+        """SONE103（多字母無 hyphen）validate 應為 True。
+
+        T3 已拍板「hyphen 可省」（`is_number_format` / `is_strict_number` 對
+        SONE103 皆 True）。D 委派同一張表後必須跟 True——C 與 D 對同一字串
+        給不同答案才是 bug。送進 scraper 的值一定是正規化後的（H 先、D 後），
+        本類的呼叫順序釘子鎖住這點；D 接受無 hyphen 形，不代表無 hyphen
+        字串會跑到組 URL 的地方。
+        """
+        assert self._scraper().validate_number('SONE103') is True
 
     def test_validate_SONE103_with_hyphen_true(self):
         """SONE-103（多字母有 hyphen）validate 仍應為 True（回歸守衛）"""
         assert self._scraper().validate_number('SONE-103') is True
+
+    # --- TASK-139-T4：§1.4 正向鎖（委派 is_strict_number 後必須 True）---
+    def test_validate_200GANA_3360_true(self):
+        """素人數字前綴 200GANA-3360"""
+        assert self._scraper().validate_number('200GANA-3360') is True
+
+    def test_validate_529STCV_152_true(self):
+        """素人數字前綴 529STCV-152"""
+        assert self._scraper().validate_number('529STCV-152') is True
+
+    def test_validate_090122_001_true(self):
+        """日期底線格式 090122_001"""
+        assert self._scraper().validate_number('090122_001') is True
+
+    def test_validate_020317_001_true(self):
+        """日期連字號格式 020317-001"""
+        assert self._scraper().validate_number('020317-001') is True
+
+    def test_validate_FC2PPV_4943690_true(self):
+        """FC2 無 hyphen-PPV 分隔形 FC2PPV-4943690"""
+        assert self._scraper().validate_number('FC2PPV-4943690') is True
+
+    # --- TASK-139-T4：反向鎖 5 類（委派前後皆 False）---
+    def test_validate_empty_false(self):
+        """空字串"""
+        assert self._scraper().validate_number('') is False
+
+    def test_validate_chinese_false(self):
+        """純中文"""
+        assert self._scraper().validate_number('中文測試') is False
+
+    def test_validate_path_traversal_false(self):
+        """路徑穿越字串"""
+        assert self._scraper().validate_number('../etc/passwd') is False
+
+    def test_validate_url_scheme_false(self):
+        """含 :// 的 URL 形"""
+        assert self._scraper().validate_number('http://evil.com') is False
+
+    def test_validate_embedded_newline_false(self):
+        """含內嵌換行（非整串單一番號）"""
+        assert self._scraper().validate_number('SONE-103\nSSIS-001') is False
+
+    def test_validate_number_receives_normalized_value(self, monkeypatch):
+        """呼叫順序釘子：H（normalize）先跑、D（validate）後跑。
+
+        傳入 'sone103'，validate_number 必須收到正規化後的 'SONE-103'，
+        不是原字串（Opus 裁決 2026-08-31）。
+        """
+        from unittest.mock import MagicMock
+
+        scraper = self._scraper()
+        received = []
+
+        def spy(number):
+            received.append(number)
+            return True
+
+        monkeypatch.setattr(scraper, 'validate_number', spy)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+        monkeypatch.setattr(scraper._session, 'get', MagicMock(return_value=mock_resp))
+
+        scraper.search('sone103')
+        assert received == ['SONE-103']
+
+    def test_hitma_16_reaches_http_layer(self, monkeypatch):
+        """HITMA-16（68 個收回形狀之一）經 JavBusScraper.search 真的發出 HTTP 請求（spy 數，不出網）。"""
+        from unittest.mock import MagicMock
+        scraper = self._scraper()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404   # 不進 _parse_detail_page，只驗證有沒有發出去
+        spy = MagicMock(return_value=mock_resp)
+        monkeypatch.setattr(scraper._session, 'get', spy)
+        result = scraper.search('HITMA-16')
+        assert spy.call_count == 1
+        assert 'HITMA-16' in spy.call_args[0][0]   # URL 含正規化後的番號
+        assert result is None   # 404 → 乾淨回 None，不拋例外
 
 
 # ============ TestIsNumberFormat ============
@@ -505,6 +598,52 @@ class TestSearchQueryIntegration:
         assert normalize_number(query) == 'JUC-123'  # 只移除後綴的 -UC
 
 
+class TestNormalizeNumberTASK139T1b:
+    """TASK-139-T1b: H（normalize_number）FC2 收斂與 F8/F9 守衛測試。"""
+
+    @pytest.mark.parametrize("raw", [
+        "FC2PPV-4943690",
+        "FC2PPV4943690",
+        "FC2 PPV 4943690",
+        "FC2PPV_4943690",
+        "FC2-PPV-4943690",
+        "FC2-4943690",
+        "fc2ppv-4943690",
+    ])
+    def test_normalize_number_seven_fc2_shapes(self, raw):
+        """七形 FC2 原始字串全部正規化為 FC2-4943690。"""
+        assert normalize_number(raw) == "FC2-4943690"
+
+    # --- F8 must-not-break 四條 ---
+
+    def test_f8_tokyo_hot_single_letter(self):
+        """F8-2: 東京熱單字母 + 4 位不插 hyphen（n0762, k0150）"""
+        assert normalize_number("n0762") == "N0762"
+        assert normalize_number("k0150") == "K0150"
+
+    def test_f8_date_format_delimiters_not_swapped(self):
+        """F8-3: 一本道/加勒比日期格式分隔符不互換（020317-001 與 090122_001）"""
+        assert normalize_number("020317-001") == "020317-001"
+        assert normalize_number("090122_001") == "090122_001"
+
+    # --- F9 反向鎖 ---
+
+    @pytest.mark.parametrize("raw", [
+        "FC2PPV-4943690",
+        "FC2PPV4943690",
+        "FC2 PPV 4943690",
+        "FC2PPV_4943690",
+        "FC2-PPV-4943690",
+        "FC2-4943690",
+        "fc2ppv-4943690",
+    ])
+    def test_f9_reverse_lock_no_ppv_prefix(self, raw):
+        """F9 反向鎖：七形輸入的正規化結果皆不得以 PPV- 開頭。"""
+        result = normalize_number(raw)
+        assert result != ""
+        assert not result.startswith("PPV-")
+
+
 # ============ 從 samples/ 讀取測試 ============
 
 class TestExtractNumberFromSamples:
@@ -549,3 +688,240 @@ class TestExtractNumberFromSamples:
                 if expected is not None:
                     result = extract_number(filename)
                     assert result == expected, f'{filename}: 預期 {expected}，實際 {result}'
+
+
+# ============ TASK-139-T3: G / C-G 一致性 / F3-b ============
+
+class TestSmartSearchUncensoredAndConsistency:
+    """TASK-139-T3: G（smart_search is_uncensored）、C-G 一致性與 F3-b must-not-break 測試"""
+
+    @pytest.mark.parametrize("query", [
+        "FC2-4943690",
+        "090122_001",
+        "020317-001",
+        "HEYZO-1234",
+    ])
+    def test_smart_search_uncensored_routing(self, query: str):
+        """F3-a G 正向：無碼番號由 smart_search 自動偵測並標記 _mode='uncensored'"""
+        mock_result = {"number": query, "title": "Test Title"}
+        with patch("core.scraper._get_uncensored_sources", return_value=["fc2"]), \
+             patch("core.scraper.search_jav", return_value=mock_result):
+            results = smart_search(query)
+            assert len(results) == 1
+            assert results[0]["_mode"] == "uncensored"
+
+    def test_c_and_g_consistency(self):
+        """C 與 G 一致性：斷言不會出現 is_number_format=False 且 is_strict_uncensored_number=True"""
+        test_inputs = [
+            "FC2-4943690", "090122_001", "020317-001", "n0762", "HEYZO-1234",
+            "SONE-205", "200GANA-3360", "T28-103", "ABC-123", "sone205",
+            "三上悠亜", "IPZ", "2024", "ABP-01", "SNIS-1", "", "   ", None
+        ]
+        for s in test_inputs:
+            c_val = is_number_format(s) if s is not None else False
+            g_val = is_strict_uncensored_number(s)
+            if g_val:
+                assert c_val is True, f"Inconsistency for {s!r}: g_val is True but c_val is False"
+
+    def test_f3b_h_pipeline_must_not_break(self):
+        """F3-b: H（is_number_format -> normalize_number）呼叫鏈 must-not-break"""
+        cases = [
+            ("SONE-103", "SONE-103"),
+            ("n0762", "N0762"),
+            ("020317-001", "020317-001"),
+            ("090122_001", "090122_001"),
+            ("FC2PPV-4943690", "FC2-4943690"),
+            ("FC2-PPV-4943690", "FC2-4943690"),
+        ]
+        for raw, expected in cases:
+            assert is_number_format(raw) is True, f"is_number_format({raw!r}) 應為 True"
+            assert normalize_number(raw) == expected, f"normalize_number({raw!r}) 應為 {expected!r}"
+
+    def test_oracle_a_smart_search_routing(self):
+        """DoD-3 Oracle A: smart_search 路由對照（206 筆語料，含 G 分支）"""
+        from collections import Counter
+        import ast
+
+        corpus_file = Path(__file__).parent / "test_number_corpus_139.py"
+        with open(corpus_file, "r", encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+        corpus_182 = []
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == "CORPUS":
+                        corpus_182 = [item["input"] for item in ast.literal_eval(node.value)]
+            elif isinstance(node, ast.AnnAssign):
+                if isinstance(node.target, ast.Name) and node.target.id == "CORPUS":
+                    corpus_182 = [item["input"] for item in ast.literal_eval(node.value)]
+
+        extra_24 = [
+            "SONE-0", "ABP-12", "HITMA-1",                      # partial：必須維持 partial
+            "IPZZ", "SONE", "ABP",                              # prefix：必須維持 prefix
+            "[ABC-123]", "ABC-123.mp4", "【ABC-123】", "(ABC-123)",
+            "[JavBus] ABC-123 標題.mp4", "ABC-123 - 中文字幕.mkv",  # residual #6 的包裝
+            "FC2-PPV-4914771-C", "HEYZO-1234-C", "FC2PPV-4943690-1080P",  # 收窄修復對象
+            "N0762", "K0150", "T1234",                          # [A-Z]\d{4}：退出 G
+            "JULIA 2024", "2024", "VR 8K", "MOODYZ 25周年",      # 對抗性：抽不出番號
+            "三上悠亜", "波多野結衣",                             # 真實女優名
+        ]
+        corpus_206 = corpus_182 + extra_24
+
+        def old_ss_mode(q: str) -> str:
+            if not q or len(q.strip()) < 2:
+                return "actress"
+            if is_strict_uncensored_number(q):
+                return "uncensored"
+            elif is_number_format(q):
+                return "exact"
+            elif is_partial_number(q):
+                return "partial"
+            elif is_prefix_only(q):
+                return "prefix"
+            else:
+                return "actress"
+
+        def new_ss_mode(q: str) -> str:
+            if not q or len(q.strip()) < 2:
+                return "actress"
+            target = resolve_route_target(q)
+            if is_uncensored_route(target):
+                return "uncensored"
+            elif is_number_format(target):
+                return "exact"
+            elif is_partial_number(q):
+                return "partial"
+            elif is_prefix_only(q):
+                return "prefix"
+            else:
+                return "actress"
+
+        moves = []
+        diff = []
+        for q in corpus_206:
+            old_m = old_ss_mode(q)
+            new_m = new_ss_mode(q)
+            if old_m != new_m:
+                moves.append((old_m, new_m))
+                diff.append((q, old_m, new_m))
+
+        allowed_transitions_ss = {('actress', 'exact'), ('actress', 'uncensored'), ('uncensored', 'exact')}
+        expected_counts_ss = {('actress', 'exact'): 118, ('actress', 'uncensored'): 47, ('uncensored', 'exact'): 4}
+        expected_unc_to_exact = ['n9110', 'N0762', 'K0150', 'T1234']
+        expected_a2u = [
+            'FC2PPV-123456-1',
+            'FC2-123456-1',
+            'FC2-PPV-123456-C.mp4',
+            '093021_539-FHD.mkv',
+            '093021_539-480p.mkv',
+            '093021_539-1080pFHD.mkv',
+            '093021_539-2160pHD.mkv',
+            'caribean-020317_001.mp4',
+            'caribbean-020317_001.mp4',
+            'caribeancom-020317_001.mp4',
+            'caribeancompr-020317_001.mp4',
+            'caribbeancom-020317_001.mp4',
+            '020317_001-caribbeancom.mp4',
+            '020317_001-caribbean 你好.mp4',
+            '020317_001-caribbean-fhd 你好.mp4',
+            '020317_001-caribbean.mp4',
+            '020317_001-carib-whole_hd1.mp4',
+            '020317_001-carib-whole_fhd1.mp4',
+            '020317_001-carib_sd1.mp4',
+            'carib-020317_001.mp4',
+            '020317-001-1pondo.mp4',
+            '020317-001-pondo.mp4',
+            '020317-001-pond.mp4',
+            'DL1pon-020317-001.mp4',
+            '1pondp-020317-001.mp4',
+            '020317-001-paco.mp4',
+            '020317-001-pacomama.mp4',
+            '020317-001-pacopaco.mp4',
+            '020317-001-caribpr.mp4',
+            '020317-001-caribpr-fhd.mp4',
+            '020317-001-caribpr-x1080x.mp4',
+            '020317-001-caribpr-360p.mp4',
+            '020317-001-caribpr-1080p60fps.mp4',
+            '020317-001-caribpr-h265.mp4',
+            '020317-01-10musume-1080p.mp4',
+            '020317-01-10mu-1080p.mp4',
+            '020317-01-10mu-1080i.mp4',
+            '1pon-020317-001.mp4',
+            '1pondo-020317-001.mp4',
+            '_1PONDO_020317-001.mp4',
+            'pond-020317-001.mp4',
+            'pondo-020317-001.mp4',
+            '10musume-020317_01-CD2.iso',
+            'Carib 080520-001.mp4',
+            'FC2-PPV-4914771-C',
+            'HEYZO-1234-C',
+            'FC2PPV-4943690-1080P',
+        ]
+
+        # ① 方向不變式
+        assert set(moves) <= allowed_transitions_ss
+        # ② 筆數對帳
+        assert dict(Counter(moves)) == expected_counts_ss
+        # ③ uncensored -> exact 逐筆對帳
+        assert [q for q, a, b in diff if (a, b) == ('uncensored', 'exact')] == expected_unc_to_exact
+        # ④ actress -> uncensored 逐筆對帳
+        assert [q for q, a, b in diff if (a, b) == ('actress', 'uncensored')] == expected_a2u
+
+    def test_n0762_no_longer_routes_uncensored(self):
+        """N0762 不再被 G 判為無碼；應落入精確搜尋（is_number_format 仍為 True，C 未變）分支。"""
+        with patch("core.scraper._get_uncensored_sources") as mock_unc, \
+             patch("core.scraper.search_jav_single_source", return_value=None):
+            smart_search("N0762")
+            mock_unc.assert_not_called()
+
+    def test_bracket_wrapped_query_reaches_source_with_clean_number(self):
+        """[ABC-123] 貼進搜尋框，實際送去 source 查詢的是 'ABC-123'（residual #6 有碼那半）。"""
+        with patch("core.scraper.search_jav_single_source", return_value=None) as mock_search:
+            smart_search("[ABC-123]")
+            assert mock_search.call_count >= 1
+            called_number = mock_search.call_args[0][0]
+            assert called_number == "ABC-123"
+
+    def test_numeric_prefix_number_reaches_source_intact(self):
+        """數字前綴番號送去來源查的必須是**完整原字串**，不是被 A 咬掉前綴的子串。
+
+        139-T9 第 3 輪（grok-4.6 branch review P1）：resolve_route_target() 原本無條件
+        先跑 extract_number()，而 A 的 ([A-Za-z]{1,7}-\d{3,5}) 會咬到子串——
+        200GANA-3360 被改寫成 GANA-3360 送去查，那是**另一部片**。
+
+        這四種正是 0.15.7 CHANGELOG 明文承諾「現在會走精準搜尋」的形狀，
+        T9 讓它們確實走了 exact，但查錯番號 ⇒ 招牌功能被自己打壞。
+
+        🔴 這條測的是 **search term**，不是 mode 標籤——T9 的兩支 oracle 只鎖 mode，
+        而這四筆的 mode 前後都是 exact，所以 oracle 對它是隱形的。
+        """
+        for raw in ("200GANA-3360", "259LUXU-1234", "529STCV-152", "7IPZ-154"):
+            with patch("core.scraper.get_enabled_source_ids", return_value=["javbus"]), \
+                 patch("core.scraper.search_jav_single_source", return_value=None) as mock:
+                smart_search(raw, limit=1)
+            assert mock.call_count >= 1, f"{raw!r} 沒有到達 exact 分支，這條測試等於沒測"
+            for call in mock.call_args_list:
+                assert call.args[0] == raw, (
+                    f"{raw!r} 送出的是 {call.args[0]!r}——數字前綴被咬掉了"
+                )
+
+    def test_t9_raw_noise_never_reaches_scraper(self):
+        """路徑／網址雜訊可以路由到 exact，但送給來源的必須是抽取後的番號，不是原字串。"""
+        cases = [
+            ("../etc/passwd/SONE-103", "SONE-103"),
+            ("https://evil.com/SONE-103", "SONE-103"),
+            ("hhd800.com@SONE-103", "HHD-800"),  # extract_number("hhd800.com@...") 先抽取 hhd800 為 HHD-800 (corpus U3)
+        ]
+        for raw, expected_number in cases:
+            # ❶ exact 分支呼叫的是 search_jav_single_source（core/scraper.py:885），**不是** search_jav
+            # ❷ enabled sources 必須釘死，否則 config 只要回空清單，迴圈跑 0 次、斷言 vacuous pass
+            with patch('core.scraper.get_enabled_source_ids', return_value=['javbus']), \
+                 patch('core.scraper.search_jav_single_source', return_value=None) as mock:
+                smart_search(raw, limit=1)
+            # ❸ 先證明「真的攔到了」——沒有這行，上面兩條斷言在零呼叫時恆真
+            assert mock.call_count >= 1, f'{raw!r} 沒有到達 exact 分支，這條測試等於沒測'
+            for call in mock.call_args_list:
+                assert call.args[0] == expected_number   # 只送抽取值
+                assert raw not in str(call)              # raw 字串不得出現在任何參數
+
+

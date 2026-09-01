@@ -40,7 +40,8 @@ class TestParseFilename:
         assert data["results"][0]["number"] == "SONE-205"
         assert data["results"][1]["number"] == "ABC-123"
         assert data["results"][1]["has_subtitle"] is True
-        assert data["results"][2]["number"] == "FC2-PPV-1234567"
+        # 139-T1b：FC2 正典形式收斂為 FC2-<純數字>（七種寫法統一，與兩支 FC2 scraper 回的形式一致）
+        assert data["results"][2]["number"] == "FC2-1234567"
 
     def test_with_subtitle_markers(self):
         """測試字幕標記偵測"""
