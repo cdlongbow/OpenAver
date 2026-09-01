@@ -211,15 +211,8 @@ def search(
             # 指定來源搜索
             from core.scraper import search_jav_single_source
             from core.cf_transport import CfChallengeRequired, CfTransportUnavailable
-            # 139-T9 對稱修法（Codex PR review P2）：errorState CTA / canReopenSourcePick
-            # 重試時回填的是使用者原始輸入（可能帶包裝，如 '[SSIS-003]' / 'SSIS-003.mp4'）。
-            # smart_search（auto 模式）與 _detect_mode 都已經過 resolve_route_target()，
-            # 這條「指定來源」分支是第三個入口，之前直接把 q 原樣送下去，會被 D
-            # （BaseScraper.validate_number）擋掉、連網路都沒打就回「查無結果」。
-            # 錯誤訊息（f"找不到 {q} 的資料"）與 log 仍用原始 q，只有送去查的值改用 target。
-            target = resolve_route_target(q)
             try:
-                data = search_jav_single_source(target, source, proxy_url=proxy_url)
+                data = search_jav_single_source(q, source, proxy_url=proxy_url)
             # CD-70c-4: search entry does NOT wire the interactive CF flow (no begin_solve,
             # no cf_needed). The JavLibrary pill is hidden in search context when
             # cf_transport_available is false (frontend isJlUnavailable), so this path is
