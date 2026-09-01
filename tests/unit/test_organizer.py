@@ -5520,10 +5520,19 @@ class TestT6PreviewNotPersisted:
         的註解，或把欄位清單重構成別的形狀，守衛就無故變紅，而 schema 根本沒變。
         改問真正的 schema 之後，它驗的是**行為**（`init_db()` 建出來的表長什麼樣），
         註解與重構都影響不到它。
+        **白名單（owner 2026-09-02 拍板 B）**：`wishlist` 表允許有 preview 欄位——
+        理由是「網址會過期是這類資料的常態，不是 metatube 特有的（javbus 自己也會下架）」，
+        不值得為它蓋一套「顯示時現組代理網址」的機制。白名單只赦免 `wishlist`，
+        其餘表照樣被這支測試守著。
         """
         import sqlite3
 
         from core.database.connection import init_db
+
+        # owner 2026-09-02 拍板 B：wishlist 允許存 preview 欄位（理由見上方 docstring 末段）。
+        # fail-closed：若這張表哪天被改名／刪掉，下面的存在性斷言會先紅，
+        # 提醒維護者這條赦免已經過期，該把它從 PREVIEW_COLUMN_WHITELIST 刪掉。
+        PREVIEW_COLUMN_WHITELIST = {'wishlist'}
 
         db_path = tmp_path / 'schema_probe.db'
         init_db(db_path)
@@ -5534,8 +5543,15 @@ class TestT6PreviewNotPersisted:
                 )
             ]
             assert 'videos' in tables, 'init_db() 沒有建出 videos 表，這條什麼都沒驗到'
+            for whitelisted in PREVIEW_COLUMN_WHITELIST:
+                assert whitelisted in tables, (
+                    f'白名單裡的表 {whitelisted!r} 不存在於目前的 schema —— '
+                    f'這條赦免已經過期，請把它從 PREVIEW_COLUMN_WHITELIST 刪掉'
+                )
             offenders = {}
             for table in tables:
+                if table in PREVIEW_COLUMN_WHITELIST:
+                    continue
                 cols = [r[1] for r in conn.execute(f'PRAGMA table_info("{table}")')]
                 hits = [c for c in cols if 'preview' in c.lower()]
                 if hits:
