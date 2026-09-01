@@ -301,6 +301,16 @@ function scanJsFile(filePath, relPath) {
   return results;
 }
 
+// 測試探針檔命名慣例：以 `__` 開頭、以 `_probe__.js` 結尾（見 scripts/__tests__/cjk-guard.test.mjs
+// 的 J12 測試：探針必須寫在 web/static/js/ 底下供 flat config glob 匹配，測完即刪；
+// 與 motion guard 的全 repo 掃描並行執行時，探針被刪掉的瞬間會讓這裡列出的檔案在
+// scanJsFile() 讀取時噴 ENOENT，是既有的 CI 隨機紅燈來源（TASK-140-T13））
+const TEST_PROBE_JS_PATTERN = /^__.*_probe__\.js$/;
+
+function isTestProbeFile(name) {
+  return TEST_PROBE_JS_PATTERN.test(name);
+}
+
 function walkJsFiles(dir, base, list = []) {
   if (!existsSync(dir)) return list;
   for (const ent of readdirSync(dir, { withFileTypes: true })) {
@@ -311,6 +321,7 @@ function walkJsFiles(dir, base, list = []) {
         walkJsFiles(full, rel, list);
       }
     } else if (ent.isFile() && ent.name.endsWith('.js')) {
+      if (isTestProbeFile(ent.name)) continue; // 跳過測試探針檔，避免與其他測試並行寫入/刪除造成 ENOENT flake
       list.push({ full, rel });
     }
   }
