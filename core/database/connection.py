@@ -225,6 +225,32 @@ def init_db(db_path: Path = None) -> None:
         )
     """)
 
+    # 創建書籤資料表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS wishlist (
+            number TEXT PRIMARY KEY,
+            title TEXT DEFAULT '',
+            actresses TEXT DEFAULT '',
+            tags TEXT DEFAULT '',
+            maker TEXT DEFAULT '',
+            director TEXT DEFAULT '',
+            series TEXT DEFAULT '',
+            label TEXT DEFAULT '',
+            duration INTEGER,
+            release_date TEXT DEFAULT '',
+            cover_path TEXT DEFAULT '',
+            sample_images TEXT DEFAULT '',
+            preview_sample_images TEXT DEFAULT '',
+            source TEXT DEFAULT '',
+            source_url TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_wishlist_created_at ON wishlist(created_at)
+    """)
+
     # Migration: 加入 Phase 37 新欄位
     existing_cols = {row[1] for row in cursor.execute("PRAGMA table_info(videos)").fetchall()}
     if 'director' not in existing_cols:

@@ -201,14 +201,17 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "理由一致）。",
     ),
     ("core/database/connection.py", "init_db"): (
-        209,
+        235,
         "資料庫 schema 初始化主流程，逐表 CREATE TABLE/CREATE INDEX 語句序列，schema 仍在"
         "演進中；拆成多個小函式不會降低本質複雜度，只會增加呼叫層次與跨函式的 cursor/conn "
         "傳遞。"
         " ／ 203→209（feature/123-user-pick-star T1）：videos 新增 user_rating 欄位的"
         "冪等 migration（`if 'user_rating' not in existing_cols: ALTER TABLE`），與同函式內"
         "既有的 auto_focal／crop_mode／focal_attempted_at 逐字同形。新增欄位必然在此多一段，"
-        "這是 schema 演進的固有成本，不是可以靠重構消掉的膨脹。",
+        "這是 schema 演進的固有成本，不是可以靠重構消掉的膨脹。"
+        " ／ 209→235（feature/140-wishlist T2）：新增 `wishlist` 表的 `CREATE TABLE IF NOT "
+        "EXISTS` ＋ `idx_wishlist_created_at` 索引，與同函式內既有 5 張表逐字同形。把單獨一張"
+        "表抽成 helper 會讓 6 張表有 5 張在函式內、1 張在函式外，反而更難讀。",
     ),
 }
 
