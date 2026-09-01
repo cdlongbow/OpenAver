@@ -12,9 +12,11 @@
 from __future__ import annotations
 
 import hashlib
+import io
 from pathlib import Path
 
 import requests
+from PIL import Image
 
 from core.atomic_write import atomic_write
 from core.database import get_db_path
@@ -22,6 +24,11 @@ from core.logger import get_logger
 from core.scraper import normalize_number
 
 logger = get_logger(__name__)
+
+# 轉檔參數：與 `core/thumbnail_cache.py:49-50` 的縮圖同組值。封面是全尺寸圖、
+# 不縮放（書籤卡與燈箱都要用），只做格式正規化。
+COVER_QUALITY = 80
+COVER_METHOD = 4
 
 
 def cover_file_for(number: str) -> Path:
@@ -48,29 +55,66 @@ def _fetch_image_bytes(url: str, timeout: float = 30) -> bytes | None:
     return None
 
 
-def download_and_save(number: str, cover_url: str, fallback_url: str = "") -> bool:
-    """下載封面並原子寫到 cover_file_for(number)。
+def _save_as_webp(number: str, data: bytes, dest: Path) -> bool:
+    """把下載到的 bytes 轉成 WebP 原子寫進 dest。**解不開回 False，不留檔。**
 
-    先試 cover_url，拿不到且 fallback_url 非空再試 fallback。
-    兩個 URL 都失敗 → logger.warning 後回 False（不拋，I2）。
+    落地檔副檔名是 `.webp`、`/api/wishlist/cover` 也固定回 `image/webp`
+    ⇒ **內容必須真的是 WebP**（Codex review 第 2 輪）。外站給的多半是 JPEG/PNG。
+    （全庫其他三處都不是原樣落地：`thumbnail_cache` 真轉 WebP、`actress_photo`
+    依 Content-Type 決定副檔名、`organizer` 真存 JPEG。）
+
+    **刻意不做「解不開就寫原始 bytes」的逃生口**：對解不開的資料而言，
+    寫下去的產物**本來就是破圖**，只是多騙一個 `cover_available: true`。
+    解不開就回 False，書籤那一列照樣留著（I2 不變式），前端走既有的破圖 fallback。
+
+    `except` 只包**解碼／轉碼**階段：`atomic_write()` 的寫檔失敗（磁碟滿／權限／
+    Windows 防毒鎖 `os.replace`）**照原樣往上拋**，由 T4 的 POST handler 收成
+    `cover_available: false`——那是它的職責，不是在這裡吞掉。
     """
-    data = _fetch_image_bytes(cover_url)
-    if data is None and fallback_url:
-        data = _fetch_image_bytes(fallback_url)
-    if data is None:
+    try:
+        img = Image.open(io.BytesIO(data))
+        img = img.convert("RGB")  # 強制解碼；去 alpha/CMYK，WebP 友善
+    except Exception as e:
         logger.warning(
-            "wishlist cover download failed: number=%s cover_url=%s fallback_url=%s",
-            number,
-            cover_url,
-            fallback_url,
+            "wishlist cover decode failed: number=%s bytes=%d err=%s", number, len(data), e
         )
         return False
 
-    dest = cover_file_for(number)
+    # 解得開才建目錄——兩個 URL 都不可解時不留下空資料夾
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with atomic_write(dest) as f:
-        f.write(data)
+    with img:
+        with atomic_write(dest) as f:
+            img.save(f, "WEBP", quality=COVER_QUALITY, method=COVER_METHOD)
     return True
+
+
+def download_and_save(number: str, cover_url: str, fallback_url: str = "") -> bool:
+    """下載封面、轉成 WebP 原子寫到 cover_file_for(number)。
+
+    先試 cover_url，**下載失敗或轉不成 WebP** 都會再試 fallback_url（非空時）。
+    兩個 URL 都不成 → logger.warning 後回 False（不拋，I2）。
+
+    ⚠️ 「轉不成也要試 fallback」是 Codex review 第 2 輪的要求：主圖拿得到但解不開
+    （CDN 回了一頁 HTML、或格式 Pillow 不認得）時，備援那張往往是好的。
+    """
+    dest = cover_file_for(number)
+
+    for url in (cover_url, fallback_url):
+        if not url:
+            continue
+        data = _fetch_image_bytes(url)
+        if data is None:
+            continue
+        if _save_as_webp(number, data, dest):
+            return True
+
+    logger.warning(
+        "wishlist cover unavailable: number=%s cover_url=%s fallback_url=%s",
+        number,
+        cover_url,
+        fallback_url,
+    )
+    return False
 
 
 def remove(number: str) -> None:

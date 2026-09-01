@@ -300,6 +300,16 @@ test('checkLocalStatus: membership 卡住時 local-status 仍先發出（P2-1 �
         'membership 尚未回應時，local-status 必須已經發出（否則就是序列不是平行）',
     );
 
+    // 🔴 Codex review P2：只斷言「有沒有發出」是**半套**——第一版就是兩個 fetch 都發出了、
+    // 但寫 `_localStatus` 的那段串在 `await membershipPromise` 後面，membership 卡住時
+    // 使用者一樣看不到「本地已有」的紅框。要斷言的是**結果有沒有被寫進去**。
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    assert.deepEqual(
+        results[0]._localStatus,
+        { exists: true },
+        'membership 仍卡住時，local-status 的結果必須已經寫入（處理也要獨立，不只發出獨立）',
+    );
+
     releaseMembership(jsonResponse({ 'SSIS-001': true }));
     await pending;
 });

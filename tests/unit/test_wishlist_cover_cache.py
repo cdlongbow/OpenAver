@@ -6,11 +6,13 @@
 from __future__ import annotations
 
 import hashlib
+import io
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 import requests
+from PIL import Image
 
 import core.wishlist_cover_cache as wcc
 from core.scraper import normalize_number
@@ -61,17 +63,103 @@ def test_cover_file_for_creates_nothing_on_disk(db_path):
     assert not (db_path.parent / "wishlist_cover").exists()
 
 
-# ── DoD-2: 下載成功落地（逐位元） ────────────────────────────────
-def test_download_and_save_writes_exact_bytes(db_path, monkeypatch):
-    payload = b"x" * 1500
-    monkeypatch.setattr(
-        wcc.requests, "get", lambda *a, **k: _ok_response(payload)
-    )
+def _jpeg_bytes(w: int = 120, h: int = 80) -> bytes:
+    """產一張**真的** JPEG（外站給的通常就是 JPEG，不是 WebP）。
+
+    用雜訊不用純色：純色 JPEG 壓完只有 ~790 bytes，會低於
+    `_fetch_image_bytes()` 的 1000 bytes 門檻而被當成「下載失敗」。
+    """
+    img = Image.new("RGB", (w, h))
+    img.putdata([((x * 7) % 256, (y * 13) % 256, (x * y) % 256)
+                 for y in range(h) for x in range(w)])
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=95)
+    data = buf.getvalue()
+    assert len(data) > 1000, "fixture 必須大於 _fetch_image_bytes 的 1000 bytes 門檻"
+    return data
+
+
+# ── DoD-2: 下載成功落地，且**內容真的是 WebP** ──────────────────
+def test_download_and_save_writes_real_webp(db_path, monkeypatch):
+    """副檔名是 .webp、`/api/wishlist/cover` 也回 image/webp ⇒ 內容必須真的是 WebP。
+
+    這支測試取代原本的「逐位元等於下載到的 bytes」——那個斷言把一個**錯的契約**
+    鎖死了（Codex review P2）：外站給 JPEG，原樣寫進 .webp 檔就是副檔名與 mime
+    兩邊一起說謊。Chrome 靠 magic bytes 嗅探所以照樣顯示，但那是它寬容不是我們對。
+    """
+    src = _jpeg_bytes()
+    monkeypatch.setattr(wcc.requests, "get", lambda *a, **k: _ok_response(src))
+
     assert wcc.download_and_save("SONE-001", "https://cdn.example/cover.jpg") is True
+
     dest = wcc.cover_file_for("SONE-001")
     assert dest.exists()
-    assert dest.read_bytes() == payload
     assert list(dest.parent.glob("*.tmp")) == []
+
+    # 正向鎖：讀回來必須是 WEBP，而且**不等於**下載到的原始 bytes
+    with Image.open(dest) as img:
+        assert img.format == "WEBP", f"落地檔應為 WebP，實際是 {img.format}"
+        assert img.size == (120, 80), "不縮放：封面要原尺寸（書籤卡與燈箱都用它）"
+    assert dest.read_bytes() != src, "若逐位元相同代表根本沒轉檔"
+
+
+def test_download_and_save_undecodable_primary_falls_back_to_transcodable(db_path, monkeypatch):
+    """主圖拿得到但**解不開**時，要繼續試 fallback（Codex review 第 2 輪第 2 點）。
+
+    CDN 回一頁 HTML、或格式 Pillow 不認得時，備援那張往往是好的。
+    只有「下載失敗」才換備援是不夠的。
+    """
+    good = _jpeg_bytes(90, 60)
+    calls = []
+
+    def fake_get(url, *a, **k):
+        calls.append(url)
+        if "cover" in url:
+            return _ok_response(b"<html>404 not found</html>" + b"x" * 1500)  # 下載成功但解不開
+        return _ok_response(good)
+
+    monkeypatch.setattr(wcc.requests, "get", fake_get)
+    assert (
+        wcc.download_and_save(
+            "SONE-001",
+            "https://cdn.example/cover.jpg",
+            fallback_url="https://cdn.example/fallback.jpg",
+        )
+        is True
+    )
+    assert calls == [
+        "https://cdn.example/cover.jpg",
+        "https://cdn.example/fallback.jpg",
+    ], "主圖轉檔失敗後必須真的去打 fallback"
+
+    dest = wcc.cover_file_for("SONE-001")
+    with Image.open(dest) as img:
+        assert img.format == "WEBP"
+        assert img.size == (90, 60), "落地的應該是 fallback 那張"
+
+
+def test_download_and_save_returns_false_when_nothing_decodable(db_path, monkeypatch):
+    """兩個 URL 都解不開 → 回 False 且**不留檔**（Codex review 第 2 輪第 1 點）。
+
+    刻意**不**寫回原始 bytes：對解不開的資料而言，寫下去的產物本來就是破圖，
+    只是多騙一個 `cover_available: true`。書籤那一列照樣留著（I2），
+    前端走既有的破圖 fallback。
+    """
+    junk = b"\x00NOT-AN-IMAGE" + b"x" * 1500
+    monkeypatch.setattr(wcc.requests, "get", lambda *a, **k: _ok_response(junk))
+
+    assert (
+        wcc.download_and_save(
+            "SONE-002",
+            "https://cdn.example/cover.bin",
+            fallback_url="https://cdn.example/fallback.bin",
+        )
+        is False
+    )
+
+    dest = wcc.cover_file_for("SONE-002")
+    assert not dest.exists(), "解不開就不該留下任何檔案"
+    assert not dest.parent.exists(), "也不該留下空的 bucket 目錄"
 
 
 # ── DoD-3 / M2: RequestException → False，不拋、不留檔 ───────────
@@ -111,8 +199,7 @@ def test_download_and_save_returns_false_on_non_200(db_path, monkeypatch):
 
 # ── DoD-4: fallback 生效 ─────────────────────────────────────────
 def test_download_and_save_uses_fallback_when_cover_fails(db_path, monkeypatch):
-    cover_bytes = b"C" * 1500
-    fallback_bytes = b"F" * 1500
+    fallback_bytes = _jpeg_bytes(90, 60)
     calls = []
 
     def fake_get(url, *a, **k):
@@ -131,8 +218,9 @@ def test_download_and_save_uses_fallback_when_cover_fails(db_path, monkeypatch):
         is True
     )
     dest = wcc.cover_file_for("SONE-001")
-    assert dest.read_bytes() == fallback_bytes
-    assert dest.read_bytes() != cover_bytes
+    with Image.open(dest) as img:
+        assert img.format == "WEBP"
+        assert img.size == (90, 60), "落地的應該是 fallback 那張"
     assert calls == [
         "https://cdn.example/cover.jpg",
         "https://cdn.example/fallback.jpg",
@@ -140,7 +228,7 @@ def test_download_and_save_uses_fallback_when_cover_fails(db_path, monkeypatch):
 
 
 def test_download_and_save_empty_cover_url_tries_fallback(db_path, monkeypatch):
-    fallback_bytes = b"F" * 1500
+    fallback_bytes = _jpeg_bytes(70, 50)
     calls = []
 
     def fake_get(url, *a, **k):
@@ -157,7 +245,9 @@ def test_download_and_save_empty_cover_url_tries_fallback(db_path, monkeypatch):
         is True
     )
     assert calls == ["https://cdn.example/fallback.jpg"]
-    assert wcc.cover_file_for("SONE-001").read_bytes() == fallback_bytes
+    with Image.open(wcc.cover_file_for("SONE-001")) as img:
+        assert img.format == "WEBP"
+        assert img.size == (70, 50)
 
 
 def test_download_and_save_both_urls_empty_returns_false(db_path, monkeypatch):
@@ -172,7 +262,7 @@ def test_download_and_save_both_urls_empty_returns_false(db_path, monkeypatch):
 
 # ── DoD-5: remove ────────────────────────────────────────────────
 def test_remove_deletes_existing_file(db_path, monkeypatch):
-    payload = b"x" * 1500
+    payload = _jpeg_bytes()
     monkeypatch.setattr(
         wcc.requests, "get", lambda *a, **k: _ok_response(payload)
     )
@@ -189,7 +279,7 @@ def test_remove_missing_is_noop(db_path):
 
 # ── 鏡像對稱：download / remove 對不同格式番號走同一路徑 ─────────
 def test_download_and_remove_share_path_across_number_forms(db_path, monkeypatch):
-    payload = b"y" * 1500
+    payload = _jpeg_bytes()
     monkeypatch.setattr(
         wcc.requests, "get", lambda *a, **k: _ok_response(payload)
     )
@@ -208,7 +298,7 @@ def test_fetch_passes_timeout(db_path, monkeypatch):
 
     def fake_get(url, *a, **k):
         seen.update(k)
-        return _ok_response(b"z" * 1500)
+        return _ok_response(_jpeg_bytes())
 
     monkeypatch.setattr(wcc.requests, "get", fake_get)
     assert wcc.download_and_save("SONE-001", "https://cdn.example/c.jpg") is True

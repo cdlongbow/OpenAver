@@ -125,9 +125,15 @@ def cleanup_wishlist() -> dict:
     numbers = [item["number"] for item in items]
     owned = VideoRepository().get_by_numbers(numbers)
     owned_numbers = [n for n in numbers if owned.get(n)]
-    for n in owned_numbers:
-        wishlist_cover_cache.remove(n)
+    # 🔴 順序：**先刪 DB，成功了才刪封面**（Codex review P3），與單筆刪除端點
+    # `delete_wishlist()` 同形。反過來（先刪封面）的話，`delete_many()` 若拋例外
+    # （DB 鎖住／磁碟滿），使用者會看到「書籤列還在、封面全沒了」的破圖清單——
+    # 那不在 spec §5 已接受的殘留裡；spec 接受的是**反方向**：DB 刪掉了、檔案沒刪掉
+    # 而留下孤兒 webp（單人本機、幾十 KB 一張，不做 GC）。
     deleted_count = repo.delete_many(owned_numbers)
+    if deleted_count:
+        for n in owned_numbers:
+            wishlist_cover_cache.remove(n)
     return {"deleted_count": deleted_count}
 
 
