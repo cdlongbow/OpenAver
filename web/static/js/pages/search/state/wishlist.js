@@ -1,0 +1,133 @@
+/**
+ * SearchState - Wishlist Mixin（TASK-140-T5）
+ * 書籤清單狀態與 API 接線。提供 loadWishlistCount 供 main.js 生命周期呼叫。
+ */
+export function searchStateWishlist() {
+    return {
+        // ===== Wishlist State =====
+        wishlistItems: [],
+        wishlistCount: 0,
+        wishlistLoaded: false,
+        wishlistLightboxOpen: false,   // T9 佔位
+        wishlistLightboxIndex: -1,     // T9 佔位
+
+        switchToWishlist() {
+            this.listMode = 'wishlist';
+            this.displayMode = 'grid';
+            if (!this.wishlistLoaded) {
+                return this.loadWishlist();
+            }
+        },
+
+        switchToSearchList() {
+            this.listMode = 'search';
+        },
+
+        async loadWishlistCount() {
+            try {
+                const resp = await fetch('/api/wishlist/count');
+                if (!resp.ok) {
+                    console.error('[Wishlist] count 請求失敗:', resp.status);
+                    return;
+                }
+                const data = await resp.json();
+                this.wishlistCount = data.count;
+            } catch (err) {
+                console.error('[Wishlist] count 查詢失敗:', err);
+            }
+        },
+
+        async loadWishlist() {
+            try {
+                const resp = await fetch('/api/wishlist');
+                if (!resp.ok) {
+                    console.error('[Wishlist] list 請求失敗:', resp.status);
+                    return;
+                }
+                const data = await resp.json();
+                this.wishlistItems = data;
+                this.wishlistLoaded = true;
+            } catch (err) {
+                console.error('[Wishlist] list 查詢失敗:', err);
+            }
+        },
+
+        async addToWishlist(result) {
+            if (!result?.number) return;
+
+            const prevWishlisted = result._wishlisted;
+            // 計數用「增量」不用「快照還原」（sonnet review P2-2）：兩張不同卡片
+            // 連點時，後者捕到的 prevCount 已經含前者的樂觀 +1；前者失敗時把
+            // wishlistCount 寫回自己的 prevCount，會連後者那筆成功的一起抹掉。
+            // 增量回滾（--）在任意交錯順序下都收斂到正確值，而且少一個要維護的狀態。
+            result._wishlisted = true;
+            this.wishlistCount += 1;
+            if (this.wishlistLoaded) {
+                this.wishlistItems.unshift(result);
+            }
+
+            try {
+                const resp = await fetch('/api/wishlist', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        number: result.number,
+                        title: result.title || '',
+                        actors: result.actors || [],
+                        tags: result.tags || [],
+                        maker: result.maker || '',
+                        director: result.director || '',
+                        series: result.series || '',
+                        label: result.label || '',
+                        duration: result.duration ?? null,
+                        date: result.date || '',
+                        cover: result.cover || '',
+                        preview_cover_url: result.preview_cover_url || '',
+                        sample_images: result.sample_images || [],
+                        preview_sample_images: result.preview_sample_images || [],
+                        source: result.source || '',
+                        url: result.url || '',
+                    }),
+                });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            } catch (err) {
+                console.error('[Wishlist] add 失敗:', err);
+                result._wishlisted = prevWishlisted;
+                this.wishlistCount = Math.max(0, this.wishlistCount - 1);
+                if (this.wishlistLoaded) {
+                    this.wishlistItems = this.wishlistItems.filter((i) => i !== result);
+                }
+            }
+        },
+
+        async removeFromWishlist(number) {
+            if (!number) return;
+
+            const matchedResults = (this.searchResults || []).filter((r) => r.number === number);
+            const prevFlags = matchedResults.map((r) => r._wishlisted);
+            const removedItem = this.wishlistLoaded
+                ? this.wishlistItems.find((i) => i.number === number)
+                : null;
+
+            this.wishlistCount = Math.max(0, this.wishlistCount - 1);  // 增量，理由同 addToWishlist
+            matchedResults.forEach((r) => { r._wishlisted = false; });
+            if (this.wishlistLoaded) {
+                this.wishlistItems = this.wishlistItems.filter((i) => i.number !== number);
+            }
+
+            try {
+                const resp = await fetch(`/api/wishlist/${encodeURIComponent(number)}`, {
+                    method: 'DELETE',
+                });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            } catch (err) {
+                console.error('[Wishlist] remove 失敗:', err);
+                this.wishlistCount += 1;
+                matchedResults.forEach((r, idx) => { r._wishlisted = prevFlags[idx]; });
+                if (this.wishlistLoaded && removedItem) {
+                    this.wishlistItems.unshift(removedItem);
+                }
+            }
+        },
+    };
+}

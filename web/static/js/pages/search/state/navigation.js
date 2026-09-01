@@ -185,7 +185,7 @@ export function searchStateNavigation() {
      * @returns {{ loadedCount: number, oldLength: number }|null}
      */
     async loadMore(trigger = 'detail') {
-        if (this.listMode === 'file') return null;
+        if (this.listMode !== 'search') return null;
         if (this.isLoadingMore || !this.hasMoreResults || !this.currentQuery) return null;
 
         this.isLoadingMore = true;

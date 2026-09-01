@@ -820,7 +820,7 @@
             </div>
             <!-- Load More 按鈕 -->
             <div class="text-center py-4"
-                 x-show="hasMoreResults && displayMode === 'grid'"
+                 x-show="hasMoreResults && displayMode === 'grid' && listMode === 'search'"
                  x-cloak>
                 <button class="btn btn-outline btn-sm" @click="gridLoadMore()"
                         :disabled="isLoadingMore">

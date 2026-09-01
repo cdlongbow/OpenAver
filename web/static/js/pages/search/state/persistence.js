@@ -1,6 +1,7 @@
 /**
  * SearchState - Persistence Mixin
  * 包含：狀態持久化（restoreState, saveState, clearState, setupAutoSave）
+ * `'wishlist'` 不寫入 snapshot（重新整理回搜尋結果）
  */
 
 /**
@@ -56,6 +57,11 @@ export function clearPreviewFailedFlags(results) {
 export function searchStatePersistence() {
     return {
     // ===== State Persistence =====
+    /** 'wishlist' → null；其餘 listMode 原樣（含 null） */
+    _persistableListMode(listMode) {
+        return listMode === 'wishlist' ? null : listMode;
+    },
+
     restoreState() {
         const saved = sessionStorage.getItem(this.STATE_KEY);
         if (!saved) return;
@@ -133,7 +139,7 @@ export function searchStatePersistence() {
                 hasMoreResults: snap.hasMoreResults,
                 fileList: snap.fileList,
                 currentFileIndex: snap.currentFileIndex,
-                listMode: snap.listMode,
+                listMode: this._persistableListMode(snap.listMode),
                 queryValue: snap.currentQuery,    // 上一輪的 query
                 displayMode: snap.displayMode,
                 currentMode: snap.currentMode,
@@ -152,7 +158,7 @@ export function searchStatePersistence() {
             hasMoreResults: this.hasMoreResults,
             fileList: this.fileList,
             currentFileIndex: this.currentFileIndex,
-            listMode: this.listMode,
+            listMode: this._persistableListMode(this.listMode),
             queryValue: this.searchQuery,
             displayMode: this.displayMode,
             currentMode: this.currentMode,  // T3 fix: 持久化搜尋模式

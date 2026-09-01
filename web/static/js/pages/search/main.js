@@ -10,6 +10,7 @@ import { searchStateAdvancedPicker } from '@/search/state/advanced-picker.js';
 import { rescrapeState }           from '@/shared/state-rescrape.js';
 import { browseDirState }          from '@/shared/state-browse-dir.js';
 import { toastState }              from '@/shared/state-toast.js';
+import { searchStateWishlist }    from '@/search/state/wishlist.js';
 import { mergeState }              from '@/shared/merge-state.js';
 
 let _dragTimeoutHandle = null;
@@ -33,6 +34,7 @@ export function searchPage() {
         rescrapeState(),
         browseDirState(),
         toastState(),
+        searchStateWishlist(),
         {
             // ===== 頁面組裝層 lifecycle（從 state/index.js 搬移）=====
             _armDragHeartbeat(e) {
@@ -80,13 +82,16 @@ export function searchPage() {
                 // 3. 還原 sessionStorage 狀態
                 this.restoreState();
 
-                // 4. 建立拖拽事件（從 init.js 搬移）
+                // 4. 載入書籤數量（badge；失敗不擋後續 init）
+                await this.loadWishlistCount();
+
+                // 5. 建立拖拽事件（從 init.js 搬移）
                 this._initDragEvents();
 
-                // 5. Watch state 變化並自動儲存
+                // 6. Watch state 變化並自動儲存
                 this.setupAutoSave();
 
-                // 6. 接入 page lifecycle（取代 cleanupSearchBeforeLeave + beforeunload）
+                // 7. 接入 page lifecycle（取代 cleanupSearchBeforeLeave + beforeunload）
                 if (window.__registerPage) {
                     window.__registerPage({
                         beforeLeave: () => {
@@ -115,11 +120,11 @@ export function searchPage() {
                     });
                 }
 
-                // 7. T1d: 監聽 pywebview-files 事件
+                // 8. T1d: 監聽 pywebview-files 事件
                 this._pywebviewFilesHandler = async (e) => { await this.setFileList(e.detail.paths); };
                 window.addEventListener('pywebview-files', this._pywebviewFilesHandler);
 
-                // 8. Issue-2: resize / 導航時更新封面高度 CSS variable
+                // 9. Issue-2: resize / 導航時更新封面高度 CSS variable
                 this._resizeHandler = () => this._updateCoverHeight();
                 window.addEventListener('resize', this._resizeHandler);
                 this.$watch('currentIndex', () => {

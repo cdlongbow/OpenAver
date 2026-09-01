@@ -40,7 +40,7 @@ export function searchStateBase() {
         // ===== File List State =====
         fileList: [],
         currentFileIndex: 0,
-        listMode: null,  // 'file' | 'search' | null
+        listMode: null,  // 'file' | 'search' | 'wishlist' | null
 
         // ===== Batch State =====
         batchState: {
@@ -336,15 +336,47 @@ export function searchStateBase() {
 
         async checkLocalStatus(results) {
             // 收集所有有效番號
-            const numbers = results
+            const numberList = results
                 .map(r => r.number)
-                .filter(n => n)
-                .join(',');
+                .filter(n => n);
+            const numbers = numberList.join(',');
 
             if (!numbers) return;
 
+            // TASK-140-T5：membership hydration。
+            // 🔴 **兩個請求必須平行發出**（sonnet review P2-1）：先 await membership
+            // 再打 local-status 的話，membership 慢或卡住時，連帶把**既有功能**的
+            // 「本地已有」紅框一起壓住——使用者會誤判該片沒下載過而重複整理。
+            // 兩者無任何資料相依，這裡先把 promise 發出去，各自 await、各自 try/catch。
+            const membershipPromise = fetch('/api/wishlist/membership', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ numbers: numberList }),
+            });
+            const localStatusPromise = fetch(`/api/search/local-status?numbers=${encodeURIComponent(numbers)}`);
+            // 先接住 rejection，避免 local-status 那段 await 期間 membership 先 reject
+            // 造成 unhandledrejection（兩個 promise 的 await 點不在同一 tick）。
+            membershipPromise.catch(() => {});
+            localStatusPromise.catch(() => {});
+
             try {
-                const resp = await fetch(`/api/search/local-status?numbers=${encodeURIComponent(numbers)}`);
+                const membershipResp = await membershipPromise;
+                if (!membershipResp.ok) {
+                    console.warn('[WishlistMembership] API 請求失敗:', membershipResp.status);
+                } else {
+                    const membershipData = await membershipResp.json();
+                    results.forEach(result => {
+                        if (result.number) {
+                            result._wishlisted = membershipData[result.number];
+                        }
+                    });
+                }
+            } catch (err) {
+                console.error('[WishlistMembership] 查詢失敗:', err);
+            }
+
+            try {
+                const resp = await localStatusPromise;
                 if (!resp.ok) {
                     console.warn('[LocalStatus] API 請求失敗:', resp.status);
                     return;
