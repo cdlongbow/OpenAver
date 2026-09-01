@@ -52,3 +52,26 @@ class TestAdvancedSearchSourceOverride:
         args, kwargs = mock_single.call_args
         assert args[0] == "SSIS-002"
         assert args[1] == "javbus"
+
+    def test_override_packaged_query_resolves_before_dispatch(self, client, temp_config_path, mocker):
+        """帶包裝字元的 query（如 [SSIS-003]，來自 errorState CTA 重試 / canReopenSourcePick
+        重開來源挑選時回填的原始 currentQuery/searchQuery）→ search_jav_single_source 收到的
+        必須是解析後的乾淨番號，不是原始未清理字串。
+
+        Codex PR review P2 finding：這條路徑之前直接把 q 原樣送進 search_jav_single_source，
+        scraper 的 validate_number() 會判定格式不合法、raise ValueError，連網路都沒打就回
+        「查無結果」——與 smart_search / _detect_mode 兩個入口（T9 resolve_route_target()）
+        不對稱。鎖「送出去的值」而非只鎖 mode/布林，避免差集 oracle 打假綠。
+        """
+        mock_single = mocker.patch(
+            "core.scraper.search_jav_single_source",
+            return_value={"number": "SSIS-003", "source": "javbus"},
+        )
+        resp = client.get("/api/search", params={
+            "q": "[SSIS-003]", "mode": "exact", "source": "javbus"
+        })
+        assert resp.status_code == 200
+        mock_single.assert_called_once()
+        args, kwargs = mock_single.call_args
+        assert args[0] == "SSIS-003"  # 不是 '[SSIS-003]'
+        assert args[1] == "javbus"
