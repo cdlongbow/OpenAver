@@ -1417,8 +1417,8 @@
                             </button>
                         </div>
 
-                        <!-- State 5: needsNumberInput（file.number 為空，需手動輸入番號）-->
-                        <div class="file-item" title="State: !file.number (needsNumberInput)">
+                        <!-- State 5: needsNumberInput（檔名解析不出番號，或番號查無結果，需手動輸入／更正番號）-->
+                        <div class="file-item" title="State: !file.number || (file.searched && 無結果) (needsNumberInput)">
                             <button class="btn btn-link btn-sm p-0 btn-remove-file text-muted" title="移除此檔案">
                                 <i class="bi bi-x"></i>
                             </button>
@@ -1442,7 +1442,7 @@
                         <li><code>x-show="file.isScraping"</code> → 顯示 spinner</li>
                         <li><code>x-show="file.scrapeStatus === 'done'"</code> → 顯示完成按鈕（disabled）</li>
                         <li><code>x-show="file.scrapeStatus === 'failed'"</code> → 顯示失敗按鈕（可重試）</li>
-                        <li><code>x-show="needsNumberInput(file)"</code> → <code>!file.number</code>，顯示手動輸入按鈕</li>
+                        <li><code>x-show="needsNumberInput(file)"</code> → <code>!file.number || (file.searched &amp;&amp; !file.searchResults?.length)</code>，顯示手動輸入／更正番號按鈕（139b-T12：番號解析成功但八個來源都查無結果時，這一列同樣是死路，需要人手更正）</li>
                     </ul>
                 </div>
 
