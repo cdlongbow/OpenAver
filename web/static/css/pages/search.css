@@ -1029,14 +1029,36 @@
     height: 2.5rem;
 }
 
-/* TASK-140-T9：.wishlist-grid 是 .result-area（display:flex 橫向）的直接子元素。
-   #resultCard 本來就有 width:100%/max-height:100%（search.css:102-109）才撐得滿版面，
-   .wishlist-grid 缺這兩條會被 flex 壓成內容寬（實測 110×727），還被 stretch 拉滿高度。
-   overflow-y:auto 讓卡片數超過可視高度時獨立捲動（不撐爆 .result-area）；
-   align-content:start 防止 grid 的多行被 flex-stretch 影響時仍垂直置頂而非平均分散。 */
-.wishlist-grid {
+/* TASK-140-T12：三層分工 wrapper（plan「容器結構寫死」，Codex Phase 2 P2-3）。
+   .wishlist-panel 才是 .result-area 的直接 flex item——尺寸宣告必須釘在這一層，
+   不能留在 .wishlist-grid（T9 教訓：宣告留在會 shrink 的子層，窄欄照樣重現）。
+   與 #resultCard 既有形狀同構（search.css:102-109）。 */
+.wishlist-panel {
     width: 100%;
     max-height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* 工具列：固定高，不被 .wishlist-grid 的 flex:1 壓縮。 */
+.wishlist-toolbar {
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: flex-end;
+    padding: 0.75rem 1.5rem 0;
+}
+
+/* TASK-140-T9（T12 改：width/max-height 搬到 .wishlist-panel，這裡改吃剩餘高度）。
+   flex:1 讓 .wishlist-grid 在 .wishlist-panel 這個 flex-column 容器裡吃滿工具列以外的
+   剩餘高度；min-height:0 是 flex-item 在捲動容器裡的必要條件（沒有這行，min-height
+   預設 auto 會撐爆父層、overflow-y:auto 形同虛設）。overflow-y:auto 讓卡片數超過可視
+   高度時獨立捲動；align-content:start 防止 grid 的多行被 flex-stretch 影響時仍垂直
+   置頂而非平均分散。 */
+.wishlist-grid {
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
     align-content: start;
 }

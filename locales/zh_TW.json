@@ -195,7 +195,8 @@
     },
     "wishlist": {
       "empty": "還沒有任何書籤",
-      "owned": "已入手"
+      "owned": "已入手",
+      "cleanup_owned": "已入手 {count}"
     },
     "button": {
       "search_all": "批次搜尋",
@@ -263,7 +264,9 @@
       "no_translatable_titles": "沒有需要翻譯的標題",
       "translate_batch_done": "翻譯完成：成功 {success}，失敗 {failed}",
       "fields_defaulted": "⚠️ {fields} 資訊未取得，已使用預設值",
-      "from_source": "來自 {name}"
+      "from_source": "來自 {name}",
+      "wishlist_cleaned": "已清除 {count} 筆已入手書籤",
+      "wishlist_clean_failed": "書籤清理失敗，請重試"
     },
     "duplicate": {
       "title": "檔案重複",

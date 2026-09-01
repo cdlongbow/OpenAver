@@ -28,6 +28,12 @@ export function searchStateWishlist() {
         // （listMode 對帳表 #2/#3/#7/#29 的前提），所以「記住再還原」是唯一解。
         _preWishlistDisplayMode: null,
 
+        // ===== Computed Properties =====
+        // TASK-140-T12：F7 清理鈕只在有已入手項目時出現，讀 T8 對帳寫入的 _owned 欄位。
+        get ownedWishlistCount() {
+            return this.wishlistItems.filter((i) => i._owned).length;
+        },
+
         cardActionState,
 
         switchToWishlist() {
@@ -187,6 +193,42 @@ export function searchStateWishlist() {
         nextWishlistLightbox() {
             this._wishlistLbImgError = false;
             this.wishlistLightboxIndex = Math.min(this.wishlistItems.length - 1, this.wishlistLightboxIndex + 1);
+        },
+
+        // TASK-140-T12（F7）：破壞性操作，不做樂觀更新——失敗時三件事都不做，只出 error toast
+        // （承重段第4條：與 add/remove 的樂觀更新刻意不同，那兩個失敗頂多少一筆書籤，這個失敗
+        // 若做了樂觀更新，使用者會以為整理完了但其實沒有）。刻意用「fetch 與 !resp.ok 分開判斷、
+        // 各自 early return」的形狀（不是 addToWishlist 那種單一 try/throw），理由見下方
+        // mutation M3 錨點說明。
+        async cleanupOwnedWishlist() {
+            let resp;
+            try {
+                resp = await fetch('/api/wishlist/cleanup', { method: 'POST' });
+            } catch (err) {
+                console.error('[Wishlist] cleanup 失敗:', err);
+                this.showToast(window.t('search.toast.wishlist_clean_failed'), 'error');
+                return;
+            }
+            if (!resp.ok) {
+                console.error('[Wishlist] cleanup 請求失敗:', resp.status);
+                this.showToast(window.t('search.toast.wishlist_clean_failed'), 'error');
+                return;
+            }
+            // sonnet review P2：resp.json() 本身會 throw（2xx 但 body 不是合法 JSON——
+            // 連線被截斷、反向代理插了非 JSON 內容）。不包的話那條路徑是 unhandled rejection：
+            // 畫面上不會有任何 toast，count/items 也沒動，使用者按完完全不知道成功還是失敗。
+            let data;
+            try {
+                data = await resp.json();
+            } catch (err) {
+                console.error('[Wishlist] cleanup 回應解析失敗:', err);
+                this.showToast(window.t('search.toast.wishlist_clean_failed'), 'error');
+                return;
+            }
+            const deletedCount = data.deleted_count || 0;
+            this.wishlistCount = Math.max(0, this.wishlistCount - deletedCount);
+            this.wishlistItems = this.wishlistItems.filter((i) => !i._owned);
+            this.showToast(window.t('search.toast.wishlist_cleaned', { count: deletedCount }), 'success');
         },
     };
 }

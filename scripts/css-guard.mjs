@@ -2269,30 +2269,47 @@ const RULES = [
     file: 'pages/search.css',
     kind: 'fn',
     check(ctx) {
-      // 只認「.wishlist-grid 是逗號清單裡唯一 token」的 block——排除 D4 合併後
-      // 「.wishlist-grid, .search-grid { ... }」這類 selector（那些 block 沒有本規則要守的
-      // 四個宣告，用 markers.includes() 子字串比對會誤判，見「現況分析」的分析）。
-      // 🔴 Opus 訂正（Step 2 審卡）：原稿寫成「逗號清單裡有一個 token 等於 .wishlist-grid」，
-      // 那會**連 D4 合併後的 `.wishlist-grid, .search-grid` 也算命中**，而 `.find()` 取檔案順序
-      // 第一個 → 抓到 850 行那個合併 base block（它本來就沒有這四個宣告）→ 正確的碼被判紅。
-      // 正解：selector 必須**整條就是** `.wishlist-grid`（不含逗號）。
-      // 另外用 filter + 取最後一個而非 `.find()` 取第一個（FE-GUARD-14：CSS 生效的是最後一條，
-      // `.find()` 只驗第一個是 fail-open）。
-      const standalone = ctx.blocks.filter(({ selector }) => selector.trim() === '.wishlist-grid');
-      const block = standalone[standalone.length - 1];
-      if (!block) {
-        ctx.fail('CG-WISH-01: .wishlist-grid 專屬（非合併）規則區塊不存在');
-        return;
+      // TASK-140-T12：三層分工搬家（不刪）。wrapper（.wishlist-panel）現在扛
+      // width:100%／max-height:100%／min-height:0；.wishlist-grid 改吃 flex:1／
+      // min-height:0，overflow-y:auto／align-content:start 兩條原本就在 grid 身上，
+      // 沒有搬動。兩段都沿用 T9 的「整條 selector 等於 class 本身（不含逗號）＋
+      // filter 取最後一個」邏輯（FE-GUARD-14：.find() 取第一個是 fail-open；D4
+      // 合併後 `.wishlist-grid, .search-grid` 這種 comma-list block 必須被排除）。
+      const findStandalone = (cls) => {
+        const matches = ctx.blocks.filter(({ selector }) => selector.trim() === cls);
+        return matches[matches.length - 1];
+      };
+
+      const panel = findStandalone('.wishlist-panel');
+      if (!panel) {
+        ctx.fail('CG-WISH-01: .wishlist-panel 專屬（非合併）規則區塊不存在');
+      } else {
+        const panelRequired = [
+          [/width\s*:\s*100%/, 'width: 100%'],
+          [/max-height\s*:\s*100%/, 'max-height: 100%'],
+          [/min-height\s*:\s*0/, 'min-height: 0'],
+        ];
+        for (const [re, label] of panelRequired) {
+          if (!re.test(panel.declarations)) {
+            ctx.fail(`CG-WISH-01: .wishlist-panel 專屬區塊缺少 ${label}（wrapper 不再是 .result-area 撐滿版面的那一層，窄欄會重現 T9 的 110×727）`);
+          }
+        }
       }
-      const required = [
-        [/width\s*:\s*100%/, 'width: 100%'],
-        [/max-height\s*:\s*100%/, 'max-height: 100%'],
-        [/overflow-y\s*:\s*auto/, 'overflow-y: auto'],
-        [/align-content\s*:\s*start/, 'align-content: start'],
-      ];
-      for (const [re, label] of required) {
-        if (!re.test(block.declarations)) {
-          ctx.fail(`CG-WISH-01: .wishlist-grid 專屬區塊缺少 ${label}（flex-child 版面會壞，實測回歸為 110×727 窄直行）`);
+
+      const grid = findStandalone('.wishlist-grid');
+      if (!grid) {
+        ctx.fail('CG-WISH-01: .wishlist-grid 專屬（非合併）規則區塊不存在');
+      } else {
+        const gridRequired = [
+          [/flex\s*:\s*1\b/, 'flex: 1'],
+          [/min-height\s*:\s*0/, 'min-height: 0'],
+          [/overflow-y\s*:\s*auto/, 'overflow-y: auto'],
+          [/align-content\s*:\s*start/, 'align-content: start'],
+        ];
+        for (const [re, label] of gridRequired) {
+          if (!re.test(grid.declarations)) {
+            ctx.fail(`CG-WISH-01: .wishlist-grid 專屬區塊缺少 ${label}（flex-child 版面會壞，實測回歸為 110×727 窄直行）`);
+          }
         }
       }
     },

@@ -915,3 +915,138 @@ test('prev/nextWishlistLightbox()：箭頭換片也重設 _wishlistLbImgError（
     w.prevWishlistLightbox.call(prev);
     assert.equal(prev._wishlistLbImgError, false, 'prev 換片後仍是 true ⇒ 上一張的封面會被占位蓋掉');
 });
+
+// ─── TASK-140-T12：F7 批次清理（DoD 5a–5d）────────────────────────────────
+
+// 技術要點 §4：plain spread 會在展開當下求值 getter 並凍結成 0，必須保留 descriptor。
+function makeWishlistThis(overrides = {}) {
+    const target = {};
+    Object.defineProperties(target, Object.getOwnPropertyDescriptors(searchStateWishlist()));
+    Object.assign(target, overrides);
+    return target;
+}
+
+// DoD 5a（mutation 圍欄 expect_fail 字串必須逐字相等）
+test('ownedWishlistCount：3 筆 _owned:true 加 2 筆 false ⇒ 回 3', () => {
+    const state = makeWishlistThis({
+        wishlistItems: [
+            { number: 'A-1', _owned: true },
+            { number: 'A-2', _owned: true },
+            { number: 'A-3', _owned: true },
+            { number: 'B-1', _owned: false },
+            { number: 'B-2', _owned: false },
+        ],
+    });
+    assert.equal(state.ownedWishlistCount, 3);
+});
+
+// DoD 5b
+test('cleanupOwnedWishlist() 成功：wishlistCount 減掉 deleted_count、wishlistItems 只剩未入手項目、showToast 帶 success', async () => {
+    mockFetch(() => jsonResponse({ deleted_count: 3 }));
+    const toasts = [];
+    globalThis.window.t = (key, params) => `${key}:${JSON.stringify(params ?? {})}`;
+    const fakeThis = {
+        ...searchStateWishlist(),
+        wishlistCount: 5,
+        wishlistItems: [
+            { number: 'OWN-1', _owned: true },
+            { number: 'OWN-2', _owned: true },
+            { number: 'OWN-3', _owned: true },
+            { number: 'KEEP-1', _owned: false },
+            { number: 'KEEP-2', _owned: false },
+        ],
+        showToast(msg, type) { toasts.push({ msg, type }); },
+    };
+
+    await searchStateWishlist().cleanupOwnedWishlist.call(fakeThis);
+
+    assert.equal(fakeThis.wishlistCount, 2, 'wishlistCount 必須減掉 deleted_count=3');
+    assert.deepEqual(
+        fakeThis.wishlistItems.map((i) => i.number),
+        ['KEEP-1', 'KEEP-2'],
+        'wishlistItems 只剩未入手項目',
+    );
+    assert.equal(toasts.length, 1);
+    assert.equal(toasts[0].type, 'success');
+});
+
+// DoD 5c
+test('cleanupOwnedWishlist() 失敗（resp.ok===false）：wishlistCount 不變、wishlistItems 不變、toast 是 error', async () => {
+    mockFetch(() => jsonResponse({}, { ok: false, status: 500 }));
+    const toasts = [];
+    globalThis.window.t = (key) => key;
+    const items = [
+        { number: 'OWN-1', _owned: true },
+        { number: 'KEEP-1', _owned: false },
+    ];
+    const fakeThis = {
+        ...searchStateWishlist(),
+        wishlistCount: 2,
+        wishlistItems: items,
+        showToast(msg, type) { toasts.push({ msg, type }); },
+    };
+
+    await searchStateWishlist().cleanupOwnedWishlist.call(fakeThis);
+
+    assert.equal(fakeThis.wishlistCount, 2, '失敗時 wishlistCount 不得變');
+    assert.equal(fakeThis.wishlistItems, items, '失敗時 wishlistItems 陣列參考不得被替換');
+    assert.equal(fakeThis.wishlistItems.length, 2, '失敗時一筆都沒少');
+    assert.equal(toasts.length, 1);
+    assert.equal(toasts[0].type, 'error');
+});
+
+// sonnet review P2（Opus 2026-09-02 補）：resp.json() 本身會 throw（2xx 但 body 不是合法
+// JSON）。不包 try 的話那條路徑是 unhandled rejection ⇒ 使用者按完清理鈕**什麼提示都沒有**，
+// 不知道成功還是失敗。
+test('cleanupOwnedWishlist() 回應解析失敗（resp.json() throw）：wishlistCount 不變、wishlistItems 不變、toast 是 error', async () => {
+    mockFetch(() => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token < in JSON'); } }));
+    const toasts = [];
+    globalThis.window.t = (key) => key;
+    const items = [
+        { number: 'OWN-1', _owned: true },
+        { number: 'KEEP-1', _owned: false },
+    ];
+    const fakeThis = {
+        ...searchStateWishlist(),
+        wishlistCount: 2,
+        wishlistItems: items,
+        showToast(msg, type) { toasts.push({ msg, type }); },
+    };
+
+    await searchStateWishlist().cleanupOwnedWishlist.call(fakeThis);
+
+    assert.equal(fakeThis.wishlistCount, 2, '解析失敗時 wishlistCount 不得變');
+    assert.equal(fakeThis.wishlistItems, items, '解析失敗時 wishlistItems 陣列參考不得被替換');
+    assert.equal(fakeThis.wishlistItems.length, 2, '解析失敗時一筆都沒少');
+    assert.equal(toasts.length, 1, '解析失敗必須出一個 toast——不出的話使用者完全不知道發生了什麼');
+    assert.equal(toasts[0].type, 'error');
+});
+
+// DoD 5d
+test('cleanupOwnedWishlist() 成功後未入手的一筆都沒被動到（spec F7 驗收4）', async () => {
+    mockFetch(() => jsonResponse({ deleted_count: 2 }));
+    globalThis.window.t = (key, params) => `${key}:${JSON.stringify(params ?? {})}`;
+    const unowned = [
+        { number: 'KEEP-A', _owned: false },
+        { number: 'KEEP-B', _owned: false },
+    ];
+    const fakeThis = {
+        ...searchStateWishlist(),
+        wishlistCount: 4,
+        wishlistItems: [
+            { number: 'OWN-X', _owned: true },
+            { number: 'OWN-Y', _owned: true },
+            ...unowned,
+        ],
+        showToast() {},
+    };
+
+    await searchStateWishlist().cleanupOwnedWishlist.call(fakeThis);
+
+    const remaining = new Set(fakeThis.wishlistItems.map((i) => i.number));
+    assert.deepEqual(
+        [...remaining].sort(),
+        ['KEEP-A', 'KEEP-B'].sort(),
+        '剩下的 number 集合必須與原本未入手的集合逐值相同',
+    );
+});

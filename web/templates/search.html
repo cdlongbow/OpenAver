@@ -1164,46 +1164,62 @@
              見「對 plan 技術方案的訂正」：#resultCard 只在 pageState==='result' 時顯示，
              若巢狀在裡面，使用者從未搜尋過就直接點書籤會看到空白頁。
              點卡片開燈箱是 T9（Phase 2）的工作，本卡不接線 @click。 -->
-        <div class="wishlist-grid ds-gallery-composition" x-show="listMode === 'wishlist'" x-cloak>
-            <template x-for="(item, index) in wishlistItems" :key="item.number">
-                <div class="av-card-preview" @click="openWishlistLightbox(index)">
-                    <div class="av-card-preview-img">
-                        <img :src="`/api/wishlist/cover?number=${encodeURIComponent(item.number)}`"
-                             :alt="item.number"
-                             loading="lazy"
-                             x-show="!item._imgError"
-                             @error="item._imgError = true">
-                        <div x-show="item._imgError" class="cover-error-placeholder">
-                            <i class="bi bi-image text-5xl"></i>
-                            <p class="mt-2" x-text="t('common.no_image')"></p>
+        <!-- TASK-140-T12: 三層分工 wrapper（plan「容器結構寫死」，Codex Phase 2 P2-3）。
+             .wishlist-panel 才是 .result-area 的直接 flex item——尺寸宣告（width:100%／
+             max-height:100%）必須釘在這一層，不能留在 .wishlist-grid（T9 教訓：宣告留在
+             會 shrink 的子層，窄欄照樣重現）。與 #resultCard 既有形狀同構（search.css:102-109）。
+             .wishlist-empty 刻意留在 wrapper 外面（見技術要點 §1 的設計決策），維持
+             「狀態頁扁平 siblings」的既有慣例。 -->
+        <div class="wishlist-panel" x-show="listMode === 'wishlist'" x-cloak>
+            <div class="wishlist-toolbar">
+                <button id="btnWishlistCleanup" class="btn btn-sm btn-outline btn-warning"
+                        x-show="ownedWishlistCount > 0"
+                        @click="cleanupOwnedWishlist()">
+                    <i class="bi bi-eraser"></i>
+                    <span x-text="t('search.wishlist.cleanup_owned', { count: ownedWishlistCount })"></span>
+                </button>
+            </div>
+            <div class="wishlist-grid ds-gallery-composition" x-show="listMode === 'wishlist'" x-cloak>
+                <template x-for="(item, index) in wishlistItems" :key="item.number">
+                    <div class="av-card-preview" @click="openWishlistLightbox(index)">
+                        <div class="av-card-preview-img">
+                            <img :src="`/api/wishlist/cover?number=${encodeURIComponent(item.number)}`"
+                                 :alt="item.number"
+                                 loading="lazy"
+                                 x-show="!item._imgError"
+                                 @error="item._imgError = true">
+                            <div x-show="item._imgError" class="cover-error-placeholder">
+                                <i class="bi bi-image text-5xl"></i>
+                                <p class="mt-2" x-text="t('common.no_image')"></p>
+                            </div>
+                            <!-- 已入手角標（F6）：獨立 sibling，不進 .av-card-preview-overlay
+                                 ——那個 div 預設 opacity:0，只有 hover 才 1（theme.css:1140-1142），
+                                 角標必須恆常可見，套進去會被 hover 機制吃掉 -->
+                            <span class="wishlist-owned-badge"
+                                  x-show="item._owned"
+                                  title="{{ t('search.wishlist.owned') }}">
+                                <i class="bi bi-collection-play-fill"></i>
+                            </span>
+                            <div class="av-card-preview-overlay">
+                                <button class="btn-glass-circle"
+                                        @click.stop="removeFromWishlist(item.number)"
+                                        title="{{ t('search.action.remove_wishlist') }}">
+                                    <i class="bi bi-trash3"></i>
+                                </button>
+                            </div>
                         </div>
-                        <!-- 已入手角標（F6）：獨立 sibling，不進 .av-card-preview-overlay
-                             ——那個 div 預設 opacity:0，只有 hover 才 1（theme.css:1140-1142），
-                             角標必須恆常可見，套進去會被 hover 機制吃掉 -->
-                        <span class="wishlist-owned-badge"
-                              x-show="item._owned"
-                              title="{{ t('search.wishlist.owned') }}">
-                            <i class="bi bi-collection-play-fill"></i>
-                        </span>
-                        <div class="av-card-preview-overlay">
-                            <button class="btn-glass-circle"
-                                    @click.stop="removeFromWishlist(item.number)"
-                                    title="{{ t('search.action.remove_wishlist') }}">
-                                <i class="bi bi-trash3"></i>
-                            </button>
+                        <div class="av-card-preview-footer">
+                            <div class="footer-default">
+                                <span class="av-num" x-text="item.number"></span>
+                                <span class="av-actress" x-text="(item.actresses || []).slice(0, 2).join(', ') || t('search.grid.unknown_actor')"></span>
+                            </div>
+                            <div class="footer-hover">
+                                <div class="hover-title" x-text="item.title || t('search.grid.unknown_title')"></div>
+                            </div>
                         </div>
                     </div>
-                    <div class="av-card-preview-footer">
-                        <div class="footer-default">
-                            <span class="av-num" x-text="item.number"></span>
-                            <span class="av-actress" x-text="(item.actresses || []).slice(0, 2).join(', ') || t('search.grid.unknown_actor')"></span>
-                        </div>
-                        <div class="footer-hover">
-                            <div class="hover-title" x-text="item.title || t('search.grid.unknown_title')"></div>
-                        </div>
-                    </div>
-                </div>
-            </template>
+                </template>
+            </div>
         </div>
         <!-- TASK-140-T8: 空狀態（F3 驗收4）。額外加 listMode 判斷，避免離開書籤頁後殘留顯示 -->
         <div class="wishlist-empty" x-show="listMode === 'wishlist' && wishlistItems.length === 0 && wishlistLoaded" x-cloak>
