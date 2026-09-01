@@ -240,6 +240,112 @@
         </button>
     </div>
 
+        <!-- TASK-140-T11a: 書籤燈箱（F5）。獨立狀態機，不與 lightboxOpen/lightboxIndex 共用
+             （研究題結論 #1、gotcha FE-ALPINE-04）。掛載點與既有 .showcase-lightbox 同層、
+             .result-area 之外，祖先鏈上無 pageState／listMode 閘，只認 wishlistLightboxOpen。
+             鍵盤/滾輪導航不在本卡（T11b），此區塊只靠上方導航箭頭與關閉鈕互動。 -->
+        <div class="showcase-lightbox wishlist-lightbox"
+             :class="{ 'show': wishlistLightboxOpen }"
+             x-trap.inert="wishlistLightboxOpen && !sampleGalleryOpen && !rescrapeOpen && !browseDirOpen && !duplicateModalOpen"
+             @click="closeWishlistLightbox()">
+
+            <div class="lightbox-content" @click.stop>
+                <!-- Close Button -->
+                <button class="lightbox-close"
+                        @click="closeWishlistLightbox()"
+                        title="{{ t('search.lightbox.close') }}">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+
+                <!-- Cover Image：本地端點，零對外請求（設計決策 #4，不得用 resolveCoverUrl／proxy-image）
+                     破圖 fallback 照清單卡（search.html .wishlist-grid）同一套 x-show/@error/placeholder，
+                     否則 cover_available:false 的列會露出瀏覽器預設破圖 icon -->
+                <div class="lightbox-cover" :class="{ 'has-cover': !_wishlistLbImgError }">
+                    <!-- 三元擋掉「沒有當前項目」的空 number（照既有燈箱 search.html:39-41 的同一種寫法）：
+                         少了它，燈箱關著的時候 <img> 照樣會帶著空番號去打封面端點，每次載入搜尋頁
+                         console 就多一筆 404（實測），而且 @error 會把破圖旗標打開。
+                         ⚠️ 這段註解**刻意不寫出端點字面**——static_guard_lint 的 required-string
+                         是字面比對，註解裡出現同一串會把守衛餵飽（Opus 2026-09-02 實測踩過：
+                         把 src 改成 proxy-image 之後 lint 照樣全綠）。 -->
+                    <img :src="currentWishlistLightboxItem()?.number
+                                 ? `/api/wishlist/cover?number=${encodeURIComponent(currentWishlistLightboxItem().number)}`
+                                 : ''"
+                         :alt="currentWishlistLightboxItem()?.number"
+                         x-show="!_wishlistLbImgError"
+                         @error="_wishlistLbImgError = true">
+                    <div x-show="_wishlistLbImgError" class="cover-error-placeholder">
+                        <i class="bi bi-image text-5xl"></i>
+                        <p class="mt-2" x-text="t('common.no_image')"></p>
+                    </div>
+                    <div class="cover-actions">
+                        <!-- 唯一的下游動作：開原站（spec F5 開頭） -->
+                        <button class="lb-action-btn"
+                                x-show="currentWishlistLightboxItem()?.source_url"
+                                @click.stop="openSourceUrl(currentWishlistLightboxItem()?.source_url || '')"
+                                data-tooltip="{{ t('search.action.open_source_url') }}" aria-label="{{ t('search.action.open_source_url') }}">
+                            <i class="bi bi-box-arrow-up-right"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Metadata -->
+                <div class="lightbox-metadata">
+                    <div class="lb-header">
+                        <div class="lb-title" x-text="currentWishlistLightboxItem()?.title || '-'"></div>
+                        <!-- FE-JS-01: preview || raw 的 || 刻意——preview_sample_images 目前每筆皆為空陣列，
+                             取 index 得 undefined，|| 落回 raw；哪天代理組不出來改填 ''，?? 會把 '' 當非 nullish
+                             放行成破圖，|| 才會正確再落回 raw -->
+                        <button class="sg-open-btn"
+                                x-show="(currentWishlistLightboxItem()?.sample_images || []).length > 0"
+                                @click="openSampleGallery((currentWishlistLightboxItem()?.sample_images || []).map((url, i) => '/api/proxy-image?url=' + encodeURIComponent(currentWishlistLightboxItem()?.preview_sample_images?.[i] || url)), 0)"
+                                x-text="t('search.gallery.sample_prefix') + ' (' + (currentWishlistLightboxItem()?.sample_images || []).length + ')'">
+                        </button>
+                    </div>
+                    <div class="lb-actor" x-text="(currentWishlistLightboxItem()?.actresses || []).join(', ') || '-'"></div>
+                    <div class="lb-details">
+                        <span class="lb-detail-num" x-text="currentWishlistLightboxItem()?.number || '-'"></span>
+                        <span x-show="currentWishlistLightboxItem()?.maker">
+                            &nbsp;·&nbsp;<span x-text="currentWishlistLightboxItem()?.maker"></span>
+                        </span>
+                        <span x-show="currentWishlistLightboxItem()?.director">
+                            &nbsp;·&nbsp;<b>{{ t('search.label.director') }}：</b><span x-text="currentWishlistLightboxItem()?.director"></span>
+                        </span>
+                        <span x-show="currentWishlistLightboxItem()?.duration">
+                            &nbsp;·&nbsp;<span x-text="currentWishlistLightboxItem()?.duration ? currentWishlistLightboxItem().duration + ' ' + t('search.unit.minutes') : ''"></span>
+                        </span>
+                        <span x-show="currentWishlistLightboxItem()?.series">
+                            &nbsp;·&nbsp;<b>{{ t('search.label.series') }}：</b><span x-text="currentWishlistLightboxItem()?.series"></span>
+                        </span>
+                        <span x-show="currentWishlistLightboxItem()?.label && currentWishlistLightboxItem()?.label !== currentWishlistLightboxItem()?.maker">
+                            &nbsp;·&nbsp;<b>{{ t('search.label.label') }}：</b><span x-text="currentWishlistLightboxItem()?.label"></span>
+                        </span>
+                        <span x-show="currentWishlistLightboxItem()?.release_date">
+                            &nbsp;·&nbsp;<span x-text="currentWishlistLightboxItem()?.release_date"></span>
+                        </span>
+                    </div>
+                    <div class="lb-tags" x-show="(currentWishlistLightboxItem()?.tags || []).length > 0">
+                        <template x-for="tag in (currentWishlistLightboxItem()?.tags || [])" :key="tag">
+                            <span class="lb-tag" x-text="tag"></span>
+                        </template>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Navigation Arrows：純陣列邊界導航，無 loadMore -->
+            <button class="lightbox-nav lightbox-nav-prev"
+                    @click.stop="prevWishlistLightbox()"
+                    x-show="wishlistLightboxIndex > 0"
+                    title="{{ t('search.lightbox.prev') }}">
+                <i class="bi bi-chevron-left"></i>
+            </button>
+            <button class="lightbox-nav lightbox-nav-next"
+                    @click.stop="nextWishlistLightbox()"
+                    x-show="wishlistLightboxIndex < wishlistItems.length - 1"
+                    title="{{ t('search.lightbox.next') }}">
+                <i class="bi bi-chevron-right"></i>
+            </button>
+        </div>
+
     <!-- T8: Sample Gallery Overlay（縮圖列 + 切換動畫） -->
     <div class="sample-gallery"
          :class="{ 'show': sampleGalleryOpen }"
@@ -1059,8 +1165,8 @@
              若巢狀在裡面，使用者從未搜尋過就直接點書籤會看到空白頁。
              點卡片開燈箱是 T9（Phase 2）的工作，本卡不接線 @click。 -->
         <div class="wishlist-grid ds-gallery-composition" x-show="listMode === 'wishlist'" x-cloak>
-            <template x-for="item in wishlistItems" :key="item.number">
-                <div class="av-card-preview">
+            <template x-for="(item, index) in wishlistItems" :key="item.number">
+                <div class="av-card-preview" @click="openWishlistLightbox(index)">
                     <div class="av-card-preview-img">
                         <img :src="`/api/wishlist/cover?number=${encodeURIComponent(item.number)}`"
                              :alt="item.number"

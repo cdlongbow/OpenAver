@@ -18,8 +18,9 @@ export function searchStateWishlist() {
         wishlistItems: [],
         wishlistCount: 0,
         wishlistLoaded: false,
-        wishlistLightboxOpen: false,   // T11a 佔位
-        wishlistLightboxIndex: -1,     // T11a 佔位
+        wishlistLightboxOpen: false,   // T11a：書籤燈箱開關（獨立狀態機，不與 lightboxOpen 共用）
+        wishlistLightboxIndex: -1,     // T11a：書籤燈箱目前顯示的 wishlistItems 索引
+        _wishlistLbImgError: false,    // T11a：燈箱封面破圖 flag（開燈箱時必須重設，否則殘留占位）
         // T7 review P2：切進書籤前的 displayMode，切回搜尋段時還原。
         // 沒有它的話：你在 detail 模式看著某一片 → 點書籤段 → 點回來 → 剛才那張卡
         // 不見了、變成整片 grid 牆，得自己在牆上重新找回那一筆。
@@ -158,6 +159,34 @@ export function searchStateWishlist() {
                     this.wishlistItems.unshift(removedItem);
                 }
             }
+        },
+
+        currentWishlistLightboxItem() {
+            if (this.wishlistLightboxIndex < 0 || this.wishlistLightboxIndex >= this.wishlistItems.length) return undefined;
+            return this.wishlistItems[this.wishlistLightboxIndex];
+        },
+
+        openWishlistLightbox(index) {
+            this._wishlistLbImgError = false;
+            this.wishlistLightboxIndex = index;
+            this.wishlistLightboxOpen = true;
+        },
+
+        closeWishlistLightbox() {
+            this.wishlistLightboxOpen = false;
+        },
+
+        // 三支換片的方法都要重設 _wishlistLbImgError（Opus 2026-09-02 補，grok 自報的偏離 #2）：
+        // 只在 open() 重設的話，先看到一部沒封面的片、再按箭頭切到有封面的那部，
+        // 封面不會出現——畫面停在「無圖」占位，使用者會以為那部也沒封面。
+        prevWishlistLightbox() {
+            this._wishlistLbImgError = false;
+            this.wishlistLightboxIndex = Math.max(0, this.wishlistLightboxIndex - 1);
+        },
+
+        nextWishlistLightbox() {
+            this._wishlistLbImgError = false;
+            this.wishlistLightboxIndex = Math.min(this.wishlistItems.length - 1, this.wishlistLightboxIndex + 1);
         },
     };
 }

@@ -4534,6 +4534,81 @@ const RULES = [
     pattern: `x-show="pageState === 'result' && listMode !== 'wishlist'"`,
     note: '[TASK-140-T9] #resultCard 必須排除 wishlist（否則搜尋結果會與書籤清單並排顯示）',
   },
+
+  // ---- [TASK-140-T11a] 書籤燈箱掛載與封面/按鈕守衛（F5 驗收 1-5，承重段第 11 條） ----
+  // window 實測：class="showcase-lightbox wishlist-lightbox" 錨點 → 閉合 </div> 共 5659 字元；+ 安全邊際 → 7000。
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: 'class="showcase-lightbox wishlist-lightbox"',
+    note: '[TASK-140-T11a] 書籤燈箱區塊必須存在（沿用 .showcase-lightbox 視覺，加 wishlist-lightbox modifier，見設計決策 #1）',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: `:class="{ 'show': wishlistLightboxOpen }"`,
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 200 },
+    note: '[TASK-140-T11a] 書籤燈箱必須綁 wishlistLightboxOpen，不得與既有 lightboxOpen 共用（研究題結論 #1、gotcha FE-ALPINE-04）',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: '/api/wishlist/cover?number=',
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    note: '[TASK-140-T11a] 書籤燈箱封面必須走本地 /api/wishlist/cover 端點，不得用 resolveCoverUrl／proxy-image（承重段第4條；退回打外站會破壞 F6 驗收5「零對外請求」，且 javbus 圖床沒有 Referer 會回 403，正是 T9 修的那個破圖）',
+  },
+  // Opus 抽驗（T11a 第 2 輪）：拔掉卡片上的 @click 入口後 lint/test 全綠——燈箱寫得再好
+  // 也永遠開不了。window 實測：.wishlist-grid 開標 class= 錨點 → 閉合 </div> 共 2482 字元；
+  // + 安全邊際 → 3000（與 T8 同錨同窗）。
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: '@click="openWishlistLightbox(index)"',
+    scope: { anchor: /class="wishlist-grid[^"]*"/, window: 3000 },
+    note: '[TASK-140-T11a] 書籤卡片必須綁 @click="openWishlistLightbox(index)"——這是開燈箱的唯一入口；拔掉它使用者點卡片完全沒反應、燈箱永遠開不了，而其餘守衛與測試都照樣綠（v0.12.1 同形事故）',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string',
+    pattern: 'bi-arrow-return-left',
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    note: '[TASK-140-T11a] 書籤燈箱不得出現返回詳情鈕（spec F5 驗收4，書籤沒有本地檔案可返回）',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string',
+    pattern: 'bi-folder2-open',
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    note: '[TASK-140-T11a] 書籤燈箱不得出現開資料夾鈕（書籤沒有本地檔案）',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string',
+    pattern: 'bi-play-fill',
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    note: '[TASK-140-T11a] 書籤燈箱不得出現播放鈕（書籤沒有本地檔案）',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string',
+    pattern: 'bi-bookmark-plus',
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    note: '[TASK-140-T11a] 書籤燈箱不得出現加入書籤鈕（本身就在書籤清單裡）',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string',
+    pattern: 'bi-bookmark-fill',
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    note: '[TASK-140-T11a] 書籤燈箱不得出現移除書籤鈕（spec F5：唯一下游動作是開原站，移除走 grid 卡的垃圾桶）',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string',
+    pattern: 'bi-pencil',
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    note: '[TASK-140-T11a] 書籤燈箱不得出現編輯鈕（spec F5 驗收4：那些需要本地檔案）',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string',
+    pattern: 'bi-translate',
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    note: '[TASK-140-T11a] 書籤燈箱不得出現翻譯鈕（spec F5 驗收4：那些需要本地檔案）',
+  },
 ];
 
 // ---- helpers ----

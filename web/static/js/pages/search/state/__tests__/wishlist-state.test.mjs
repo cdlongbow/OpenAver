@@ -801,3 +801,117 @@ test("cardActionState: 本地沒有且已加入 → 'bookmark-remove'", () => {
         'bookmark-remove',
     );
 });
+
+// ─── TASK-140-T11a：書籤燈箱狀態機（DoD 4a–4e）────────────────────────────
+
+function wishlistLightboxFixture(overrides = {}) {
+    return {
+        ...searchStateWishlist(),
+        wishlistItems: [
+            { number: 'WL-001', title: 'one' },
+            { number: 'WL-002', title: 'two' },
+            { number: 'WL-003', title: 'three' },
+        ],
+        wishlistLightboxOpen: false,
+        wishlistLightboxIndex: -1,
+        lightboxOpen: false,
+        lightboxIndex: 0,
+        ...overrides,
+    };
+}
+
+// DoD 4a（mutation M1）— 測試名必須逐字等於 mutation expect_fail
+test('openWishlistLightbox(2)：wishlistLightboxOpen===true 且 wishlistLightboxIndex===2', () => {
+    const state = wishlistLightboxFixture();
+    searchStateWishlist().openWishlistLightbox.call(state, 2);
+    assert.equal(state.wishlistLightboxOpen, true);
+    assert.equal(state.wishlistLightboxIndex, 2);
+});
+
+// DoD 4b
+test('closeWishlistLightbox()：open===false 且 wishlistItems 陣列本身不被清空', () => {
+    const items = [
+        { number: 'WL-001', title: 'one' },
+        { number: 'WL-002', title: 'two' },
+        { number: 'WL-003', title: 'three' },
+    ];
+    const state = wishlistLightboxFixture({
+        wishlistItems: items,
+        wishlistLightboxOpen: true,
+        wishlistLightboxIndex: 1,
+    });
+    searchStateWishlist().closeWishlistLightbox.call(state);
+    assert.equal(state.wishlistLightboxOpen, false);
+    assert.equal(state.wishlistItems, items, 'wishlistItems 陣列參考不得被替換或清空');
+    assert.equal(state.wishlistItems.length, 3);
+});
+
+// DoD 4c（mutation M2）— 測試名必須逐字等於 mutation expect_fail
+test('nextWishlistLightbox() 在最後一筆時 index 不超出 length-1；prevWishlistLightbox() 在第 0 筆時不變成 -1', () => {
+    const state = wishlistLightboxFixture({
+        wishlistLightboxOpen: true,
+        wishlistLightboxIndex: 2,
+    });
+    searchStateWishlist().nextWishlistLightbox.call(state);
+    assert.equal(state.wishlistLightboxIndex, 2, '最後一筆時 next 不得超出 length-1');
+
+    state.wishlistLightboxIndex = 0;
+    searchStateWishlist().prevWishlistLightbox.call(state);
+    assert.equal(state.wishlistLightboxIndex, 0, '第 0 筆時 prev 不得變成 -1');
+});
+
+// DoD 4d
+test('currentWishlistLightboxItem()：index 越界／陣列為空時回 undefined／null（不得拋例外）', () => {
+    const state = wishlistLightboxFixture({ wishlistLightboxIndex: -1 });
+    assert.equal(
+        searchStateWishlist().currentWishlistLightboxItem.call(state),
+        undefined,
+    );
+
+    state.wishlistLightboxIndex = 99;
+    assert.equal(
+        searchStateWishlist().currentWishlistLightboxItem.call(state),
+        undefined,
+    );
+
+    state.wishlistItems = [];
+    state.wishlistLightboxIndex = 0;
+    assert.equal(
+        searchStateWishlist().currentWishlistLightboxItem.call(state),
+        undefined,
+    );
+});
+
+// DoD 4e
+test('開書籤燈箱不會動到 lightboxOpen／lightboxIndex（獨立狀態機正向鎖）', () => {
+    const state = wishlistLightboxFixture({
+        lightboxOpen: false,
+        lightboxIndex: 7,
+    });
+    searchStateWishlist().openWishlistLightbox.call(state, 1);
+    assert.equal(state.wishlistLightboxOpen, true);
+    assert.equal(state.wishlistLightboxIndex, 1);
+    assert.equal(state.lightboxOpen, false, '不得動到 lightboxOpen');
+    assert.equal(state.lightboxIndex, 7, '不得動到 lightboxIndex');
+});
+
+// T11a 第 2 輪：破圖 flag 殘留——看過一張 404 封面後再開別張會一直顯示占位
+test('openWishlistLightbox()：每次開啟都重設 _wishlistLbImgError（看過破圖後再開別張不會殘留占位）', () => {
+    const state = wishlistLightboxFixture({ _wishlistLbImgError: true });
+    searchStateWishlist().openWishlistLightbox.call(state, 1);
+    assert.equal(state._wishlistLbImgError, false);
+});
+
+// Opus 2026-09-02 補（grok 自報偏離 #2）：箭頭換片也要重設，否則先看到一部沒封面的片、
+// 再按箭頭切到有封面的那部，封面不會出現——畫面停在「無圖」占位。
+test('prev/nextWishlistLightbox()：箭頭換片也重設 _wishlistLbImgError（不殘留到下一張）', () => {
+    const w = searchStateWishlist();
+
+    const next = wishlistLightboxFixture({ _wishlistLbImgError: true, wishlistLightboxIndex: 0 });
+    w.nextWishlistLightbox.call(next);
+    assert.equal(next._wishlistLbImgError, false, 'next 換片後仍是 true ⇒ 下一張的封面會被占位蓋掉');
+
+    const prev = wishlistLightboxFixture({ _wishlistLbImgError: true, wishlistLightboxIndex: 2 });
+    w.prevWishlistLightbox.call(prev);
+    assert.equal(prev._wishlistLbImgError, false, 'prev 換片後仍是 true ⇒ 上一張的封面會被占位蓋掉');
+});
