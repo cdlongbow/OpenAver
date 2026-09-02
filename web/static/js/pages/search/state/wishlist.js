@@ -3,6 +3,8 @@
  * 書籤清單狀態與 API 接線。提供 loadWishlistCount 供 main.js 生命周期呼叫。
  */
 
+import { detectSwipe } from '@/shared/swipe.js';  // TASK-141b-T5：對照 grid-mode.js:6 既有寫法
+
 // TASK-140-T6：三態互斥的共用 computed。grid／燈箱／detail 三處模板都只問這支，
 // 不得各自重寫判斷式（spec F1「同一組三態要出現在三處」）。
 export function cardActionState(result) {
@@ -64,6 +66,8 @@ export function searchStateWishlist() {
         // 燈箱換片/開啟動畫的世代旗標。獨立宣告，不與 _wishlistViewGeneration（T2，分頁切換用）
         // 或主燈箱 _lightboxGeneration 共用——FE-ALPINE-04：書籤燈箱是獨立狀態機，三個世代空間互不相干。
         _wishlistLbGeneration: 0,
+        _wishlistLbTouchStartX: null,  // TASK-141b-T5：書籤燈箱觸控起點 X（獨立於主燈箱 _lbTouchStartX）
+        _wishlistLbTouchStartY: null,  // TASK-141b-T5：書籤燈箱觸控起點 Y
 
         // ===== Computed Properties =====
         cardActionState,
@@ -480,6 +484,49 @@ export function searchStateWishlist() {
                 var content = safeQuery('.wishlist-lightbox .lightbox-content');
                 window.SearchAnimations?.playLightboxSwitch?.(content, direction, {});
             });
+        },
+
+        // TASK-141b-T5：書籤燈箱觸控滑動（CD-1，對照 grid-mode.js:427-466 的 _lbTouchStart/_lbTouchEnd）。
+        // 獨立一對 state／handler，不與主燈箱共用（FE-ALPINE-04：書籤燈箱是獨立狀態機）。
+        _wishlistLbTouchStart(e) {
+            if (e.touches && e.touches.length > 0) {
+                this._wishlistLbTouchStartX = e.touches[0].clientX;
+                this._wishlistLbTouchStartY = e.touches[0].clientY;
+            }
+        },
+
+        _wishlistLbTouchEnd(e) {
+            if (this._wishlistLbTouchStartX === null) return;
+            var endX = e.changedTouches && e.changedTouches.length > 0
+                ? e.changedTouches[0].clientX
+                : null;
+            var endY = e.changedTouches && e.changedTouches.length > 0
+                ? e.changedTouches[0].clientY
+                : null;
+            if (endX === null || endY === null) {
+                this._wishlistLbTouchStartX = null;
+                this._wishlistLbTouchStartY = null;
+                return;
+            }
+            // 攔截短路串（比照主燈箱 grid-mode.js:448-453；x-trap.inert 只管焦點/樣式，
+            // 不保證 @touchend.passive 監聽器不被觸發，設計決策 5）
+            if (this.sampleGalleryOpen || this.rescrapeOpen) {
+                this._wishlistLbTouchStartX = null;
+                this._wishlistLbTouchStartY = null;
+                return;
+            }
+            // 🔴 順序不變式（設計決策 2）：先讀座標算 dir，再清空 state——
+            // 顛倒的話 detectSwipe(null, null, endX, endY, 50) 因為 null 在算術運算會
+            // 被當成 0（不是 NaN），結果會依 endX/endY 的絕對值而定，不是穩定的「沒反應」，
+            // 比單純沒反應更難查。
+            var dir = detectSwipe(this._wishlistLbTouchStartX, this._wishlistLbTouchStartY, endX, endY, 50);
+            this._wishlistLbTouchStartX = null;
+            this._wishlistLbTouchStartY = null;
+            if (dir === 'left') {
+                this.nextWishlistLightbox();
+            } else if (dir === 'right') {
+                this.prevWishlistLightbox();
+            }
         },
     };
 }

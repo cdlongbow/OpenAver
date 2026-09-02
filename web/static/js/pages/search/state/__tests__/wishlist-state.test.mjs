@@ -2298,3 +2298,113 @@ test('T4-DoD6-reduced-motion-final-state-same', async () => {
         assert.equal(state.wishlistLightboxIndex, 0, 'reduced-motion 不影響 index（本 task 不清 index，設計決策 6）');
     });
 });
+
+// ===== TASK-141b-T5: 書籤燈箱觸控滑動 =====
+
+function makeSwipeSpies(overrides = {}) {
+    const nextCalls = [];
+    const prevCalls = [];
+    return {
+        nextCalls,
+        prevCalls,
+        nextWishlistLightbox() { nextCalls.push(true); },
+        prevWishlistLightbox() { prevCalls.push(true); },
+        ...overrides,
+    };
+}
+
+test('T5-DoD1-swipe-left-calls-next-not-prev', () => {
+    // 座標刻意挑選（見「技術要點」5）：同時覆蓋 DoD1（方向）與 DoD2（順序不變式）——
+    // 若實作把 dir 算在「清空 state 之後」讀，detectSwipe(null, null, 100, 150, 50) 回 null，
+    // 兩個 spy 都不會被呼叫，下面的 assert.equal(nextCalls.length, 1) 會失敗。
+    const spies = makeSwipeSpies();
+    const state = makeWishlistThis({ ...spies, wishlistLightboxOpen: true });
+    searchStateWishlist()._wishlistLbTouchStart.call(state, { touches: [{ clientX: 500, clientY: 100 }] });
+    searchStateWishlist()._wishlistLbTouchEnd.call(state, { changedTouches: [{ clientX: 100, clientY: 150 }] });
+    assert.equal(spies.nextCalls.length, 1, '左滑必須呼叫 nextWishlistLightbox 恰好一次');
+    assert.equal(spies.prevCalls.length, 0, '左滑不得呼叫 prevWishlistLightbox');
+    assert.equal(state._wishlistLbTouchStartX, null, 'touchend 之後座標必須清回 null（DoD 7）');
+    assert.equal(state._wishlistLbTouchStartY, null);
+});
+
+test('T5-DoD1-swipe-right-calls-prev-not-next', () => {
+    const spies = makeSwipeSpies();
+    const state = makeWishlistThis({ ...spies, wishlistLightboxOpen: true });
+    searchStateWishlist()._wishlistLbTouchStart.call(state, { touches: [{ clientX: -300, clientY: 50 }] });
+    searchStateWishlist()._wishlistLbTouchEnd.call(state, { changedTouches: [{ clientX: 100, clientY: 200 }] });
+    assert.equal(spies.prevCalls.length, 1, '右滑必須呼叫 prevWishlistLightbox 恰好一次');
+    assert.equal(spies.nextCalls.length, 0, '右滑不得呼叫 nextWishlistLightbox');
+    assert.equal(state._wishlistLbTouchStartX, null);
+    assert.equal(state._wishlistLbTouchStartY, null);
+});
+
+test('T5-DoD3-vertical-scroll-no-call', () => {
+    // |dY|(200) > |dX|(10)：detectSwipe 既有邏輯回 null，本卡不重寫這段判斷
+    const spies = makeSwipeSpies();
+    const state = makeWishlistThis({ ...spies, wishlistLightboxOpen: true });
+    searchStateWishlist()._wishlistLbTouchStart.call(state, { touches: [{ clientX: 100, clientY: 100 }] });
+    searchStateWishlist()._wishlistLbTouchEnd.call(state, { changedTouches: [{ clientX: 110, clientY: 300 }] });
+    assert.equal(spies.nextCalls.length, 0, '垂直位移為主時不得換片');
+    assert.equal(spies.prevCalls.length, 0);
+});
+
+test('T5-DoD4-desktop-mouse-touchstart-without-touches-sets-nothing', () => {
+    const spies = makeSwipeSpies();
+    const state = makeWishlistThis({ ...spies, wishlistLightboxOpen: true });
+    searchStateWishlist()._wishlistLbTouchStart.call(state, {});   // 無 touches（桌機滑鼠事件形狀）
+    assert.equal(state._wishlistLbTouchStartX, null, '沒有 touches 時不得記座標');
+    assert.equal(state._wishlistLbTouchStartY, null);
+});
+
+test('T5-DoD4b-touchend-without-prior-touchstart-no-call', () => {
+    const spies = makeSwipeSpies();
+    const state = makeWishlistThis({ ...spies, wishlistLightboxOpen: true });
+    // _wishlistLbTouchStartX 是初值 null（未經過 touchstart），下面這通 touchend 必須直接 return
+    searchStateWishlist()._wishlistLbTouchEnd.call(state, { changedTouches: [{ clientX: 100, clientY: 150 }] });
+    assert.equal(spies.nextCalls.length, 0);
+    assert.equal(spies.prevCalls.length, 0);
+});
+
+test('T5-DoD5-gallery-open-blocks-swipe', () => {
+    // 沿用 DoD1 的「左滑」座標（本來會觸發 next），加上 sampleGalleryOpen 驗證短路生效
+    const spies = makeSwipeSpies();
+    const state = makeWishlistThis({ ...spies, wishlistLightboxOpen: true, sampleGalleryOpen: true });
+    searchStateWishlist()._wishlistLbTouchStart.call(state, { touches: [{ clientX: 500, clientY: 100 }] });
+    searchStateWishlist()._wishlistLbTouchEnd.call(state, { changedTouches: [{ clientX: 100, clientY: 150 }] });
+    assert.equal(spies.nextCalls.length, 0, 'sampleGalleryOpen 為真時不得換片');
+    assert.equal(spies.prevCalls.length, 0);
+    assert.equal(state._wishlistLbTouchStartX, null, '短路路徑也必須清空座標（DoD 7）');
+});
+
+test('T5-DoD7-touchend-without-changedTouches-still-clears-coords', () => {
+    // DoD 7 的最後一個分支（Opus 2026-09-03 補；grok 與 sonnet 兩邊 review 都獨立指到同一處）。
+    // 實測：把這個分支裡的兩行清空拿掉，91 支測試全綠——**完全沒人守**。
+    //
+    // 走的是「有合法 touchstart，但 touchend 拿不到 changedTouches」這條（與 T5-DoD4b 不同：
+    // 那支測的是根本沒有 touchstart，走更早的 `_wishlistLbTouchStartX === null` 早退）。
+    // 不清空的後果：座標留在 state 裡，**下一次滑動會拿上一次的起點去算方向**——
+    // 使用者輕點一下（沒有位移的 touchend）之後再滑，方向可能算成相反的那一邊。
+    const spies = makeSwipeSpies();
+    const state = makeWishlistThis({ ...spies, wishlistLightboxOpen: true });
+
+    searchStateWishlist()._wishlistLbTouchStart.call(state, { touches: [{ clientX: 500, clientY: 100 }] });
+    assert.equal(state._wishlistLbTouchStartX, 500, '前提：touchstart 有記到座標');
+
+    // changedTouches 空陣列 ⇒ endX/endY 皆為 null，走 early-return 那條
+    searchStateWishlist()._wishlistLbTouchEnd.call(state, { changedTouches: [] });
+
+    assert.equal(spies.nextCalls.length, 0, '拿不到終點座標時不得換片');
+    assert.equal(spies.prevCalls.length, 0);
+    assert.equal(state._wishlistLbTouchStartX, null, '起點 X 必須被清回 null（否則下一次滑動會用到舊座標）');
+    assert.equal(state._wishlistLbTouchStartY, null, '起點 Y 必須被清回 null');
+});
+
+test('T5-DoD5b-rescrape-open-blocks-swipe', () => {
+    const spies = makeSwipeSpies();
+    const state = makeWishlistThis({ ...spies, wishlistLightboxOpen: true, rescrapeOpen: true });
+    searchStateWishlist()._wishlistLbTouchStart.call(state, { touches: [{ clientX: 500, clientY: 100 }] });
+    searchStateWishlist()._wishlistLbTouchEnd.call(state, { changedTouches: [{ clientX: 100, clientY: 150 }] });
+    assert.equal(spies.nextCalls.length, 0, 'rescrapeOpen 為真時不得換片');
+    assert.equal(spies.prevCalls.length, 0);
+});
+

@@ -247,6 +247,8 @@
         <div class="showcase-lightbox wishlist-lightbox"
              :class="{ 'show': wishlistLightboxOpen }"
              x-trap.inert="wishlistLightboxOpen && !sampleGalleryOpen && !rescrapeOpen && !browseDirOpen && !duplicateModalOpen"
+             @touchstart.passive="_wishlistLbTouchStart($event)"
+             @touchend.passive="_wishlistLbTouchEnd($event)"
              @click="closeWishlistLightbox()">
 
             <div class="lightbox-content" @click.stop>

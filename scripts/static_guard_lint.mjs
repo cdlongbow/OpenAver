@@ -4561,6 +4561,23 @@ const RULES = [
   {
     file: 'web/templates/search.html',
     kind: 'required-string',
+    pattern: '@touchstart.passive="_wishlistLbTouchStart($event)"',
+    // window 實測（Opus 2026-09-03）：anchor → @touchstart 241 字元、→ @touchend 306、
+    // → 開頭標籤閉合 `>` 367。取 450＝涵蓋整個開頭標籤 ＋ 小幅邊際；刻意**不用** 7000
+    // （同 anchor 其他 8 條用的那個窗 headroom 只剩約 114 字元，見 plan 陷阱段）。
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 450 },
+    note: '[TASK-141b-T5] 書籤燈箱的觸控接線：拿掉這個綁定，手機／平板上滑動換片整個失效，而 node:test（測 JS 處理器）與其餘守衛全部照樣綠',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: '@touchend.passive="_wishlistLbTouchEnd($event)"',
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 450 },
+    note: '[TASK-141b-T5] 同上，touchend 那半。兩個綁定缺任一都會讓滑動失效',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
     pattern: '/api/wishlist/cover?number=',
     scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
     note: '[TASK-140-T11a] 書籤燈箱封面必須走本地 /api/wishlist/cover 端點，不得用 resolveCoverUrl／proxy-image（承重段第4條；退回打外站會破壞 F6 驗收5「零對外請求」，且 javbus 圖床沒有 Referer 會回 403，正是 T9 修的那個破圖）',
