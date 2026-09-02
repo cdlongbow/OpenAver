@@ -36,11 +36,6 @@ export function searchStateWishlist() {
         _preWishlistListMode: null,
 
         // ===== Computed Properties =====
-        // TASK-140-T12：F7 清理鈕只在有已入手項目時出現，讀 T8 對帳寫入的 _owned 欄位。
-        get ownedWishlistCount() {
-            return this.wishlistItems.filter((i) => i._owned).length;
-        },
-
         cardActionState,
 
         switchToWishlist() {
@@ -52,7 +47,7 @@ export function searchStateWishlist() {
             this.displayMode = 'grid';
             // T8 review P2：**每次開啟都重新對帳**，不是只有第一次。
             // spec F6 的對帳時機明寫「開啟書籤清單時」；只在 !wishlistLoaded 時載入的話：
-            // 你把書籤裡的片掃描入庫 → 切回書籤分頁 → 角標不會出現、卡片也不會沉底，
+            // 你把書籤裡的片掃描入庫 → 切回書籤分頁 → 那筆書籤不會消失，
             // 除非整頁重新整理（owner hard-gate 第 6 條走的就是這條流程）。
             // 成本是每次切換一支**本地** SQLite 查詢，F6 驗收 5「零對外請求」不受影響。
             // `wishlistLoaded` 保留，但語意收斂成「載入過至少一次」——只用來 gate 空狀態，
@@ -87,15 +82,17 @@ export function searchStateWishlist() {
         // Codex review P2（Opus 2026-09-02）：這支是**整包覆蓋**（`this.wishlistItems = data`），
         // 而且沒有任何機制能分辨「這個回應是不是已經過期」。過期窗口確實存在：
         // `switchToSearchList()`（上面）不清空 `wishlistItems`，所以切回書籤分頁的那一瞬間，
-        // 畫面會先用**上一次的舊資料**把卡片、垃圾桶鈕、清理鈕全部渲染出來，新的 GET 這時
-        // 還在飛。使用者於是能在舊 GET 回來之前就按下清理——舊 GET 晚回來就把剛清掉的項目
+        // 畫面會先用**上一次的舊資料**把卡片與垃圾桶鈕渲染出來，新的 GET 這時還在飛。
+        // 使用者於是能在舊 GET 回來之前就按下某張卡的移除——舊 GET 晚回來就把剛移除的項目
         // 整包寫回畫面。
-        // 窗口大小不是理論值：`GET /api/wishlist` 會對 videos 做**全表掃描**
-        // （`get_by_numbers()` 用 `UPPER(number)` 比對，吃不到 `idx_videos_number`，
-        // EXPLAIN QUERY PLAN 實測是 `SCAN videos`），片庫越大、機器越慢窗口越寬。
+        // 窗口大小不是理論值：`GET /api/wishlist` 現在**先對帳再回清單**（141a-T4），
+        // 對帳要對每一筆書籤查一次片庫。141a-T1 之前 `get_by_numbers()` 的
+        // `UPPER(number)` 吃不到索引、EXPLAIN QUERY PLAN 實測是 `SCAN videos`；
+        // 加了 `idx_videos_number_upper` 之後成本只跟**書籤數**有關，不再跟片庫大小成正比
+        // ——但窗口仍然存在（網路 ＋ 對帳 ＋ 刪封面檔）。
         // 接上既有的 AbortController registry（`_getAbortSignal`/`_clearAbort`，
-        // search-flow.js:938-955，setFileList／loadFavorite／loadMore 同一套），讓
-        // `cleanupOwnedWishlist()` 有辦法作廢它；順帶讓連續兩次載入變成 last-wins。
+        // search-flow.js:938-955，setFileList／loadFavorite／loadMore 同一套），
+        // 讓連續兩次載入變成 last-wins（晚回來的舊回應不覆蓋新清單）。
         async loadWishlist() {
             const signal = this._getAbortSignal('loadWishlist');
             try {
@@ -106,13 +103,54 @@ export function searchStateWishlist() {
                 }
                 const data = await resp.json();
                 this.wishlistItems = data;
+                // 🔴 branch review P2（2026-09-02）：**清單與計數在這裡一起寫**。
+                // 141a 之前「已入手」是使用者按鈕觸發的，`cleanupOwnedWishlist()`
+                // 同時扮演「觸發」與「把本地計數拉回權威值」兩個角色；退場時只有
+                // 前者被搬到後端，後者沒有東西接手。於是：掃描完成自動移除 3 筆 →
+                // 切到書籤分頁 → 牆上剩 2 張，鈕上的 badge 還是寫 5，一直錯到整頁
+                // 重新整理（`loadWishlistCount()` 全站唯一呼叫點在 main.js 的初始化，
+                // 分頁來回切不會重跑）。
+                // 這支的回應就是權威清單，`data.length` 就是權威計數——**不再多接一條線**。
+                this.wishlistCount = data.length;
                 this.wishlistLoaded = true;
             } catch (err) {
-                if (err?.name === 'AbortError') return;   // 被新載入或清理作廢，靜默放棄
+                if (err?.name === 'AbortError') return;   // 被新的載入作廢，靜默放棄
                 console.error('[Wishlist] list 查詢失敗:', err);
             } finally {
                 this._clearAbort('loadWishlist', signal);
             }
+        },
+
+        // 🔴 PR#176 第 2 輪窮舉盤點（2026-09-02）——**唯一的計數收斂點**。
+        //
+        // 不變式：**任何 `await` 之後都不准用相對加減改 `wishlistCount`。**
+        //
+        // 為什麼上一版的相對加減曾經是對的、現在不是：`:128-131` 那段註解（sonnet
+        // review P2-2，在 main 上）主張「增量回滾在任意交錯順序下都收斂」——那句話在
+        // 當時成立，因為那時 `wishlistCount` 的**所有**寫入端都是相對的。branch review
+        // P2-1 讓 `loadWishlist()` 開始寫**絕對值**（`data.length`）之後，前提就沒了，
+        // 但沒人回去作廢那句話。5 組「樂觀更新→回滾」於是變成 3 種相對 ＋ 2 種權威。
+        //
+        // 可達的壞法（實測，不是理論）：使用者一邊掃描一邊按「加入書籤」→ `repo.add()`
+        // 撞上 `upsert_batch` 的寫鎖、阻塞 5 秒後拋 `database is locked` → POST 回 500；
+        // 這 5 秒裡使用者以為沒反應、去點了書籤分頁，`GET /api/wishlist` 在同一個持鎖
+        // 期間 1 ms 就回來（WAL 讀不擋、沒有已入手書籤時零寫入）並寫入權威值 → POST
+        // 才落地做 `-1` ⇒ **badge 比牆上少一張，而且不會自己好**（那顆分頁鈕
+        // `listMode !== 'wishlist'` 才會重載，人已經在書籤分頁了）。
+        //
+        // 收斂方式**不需要新狀態也不需要多打一次網路**：回滾時 `wishlistItems` 已經先
+        // 被修正過，而 `wishlistLoaded` 為真時它就是權威清單（`loadWishlist()` 整包覆蓋
+        // 時兩者一起寫）⇒ 直接讓計數去對齊清單。`wishlistLoaded` 為假時清單不權威，
+        // 但那時也**不可能**發生上述交錯（唯一寫絕對值的 `loadWishlist()` 必定同時把
+        // `wishlistLoaded` 設為真），所以相對加減仍然正確，保留作 fallback。
+        //
+        // ⚠️ 呼叫端必須**先**調整好 `wishlistItems`、**再**呼叫本函式。
+        _settleWishlistCountAfterAwait(fallbackDelta) {
+            if (this.wishlistLoaded) {
+                this.wishlistCount = this.wishlistItems.length;
+                return;
+            }
+            this.wishlistCount = Math.max(0, this.wishlistCount + fallbackDelta);
         },
 
         async addToWishlist(result) {
@@ -122,7 +160,9 @@ export function searchStateWishlist() {
             // 計數用「增量」不用「快照還原」（sonnet review P2-2）：兩張不同卡片
             // 連點時，後者捕到的 prevCount 已經含前者的樂觀 +1；前者失敗時把
             // wishlistCount 寫回自己的 prevCount，會連後者那筆成功的一起抹掉。
-            // 增量回滾（--）在任意交錯順序下都收斂到正確值，而且少一個要維護的狀態。
+            // ⚠️ 這條只管**送出之前**的樂觀 +1；`await` 之後的回滾一律走
+            // `_settleWishlistCountAfterAwait()`（原本這裡寫「增量回滾在任意交錯順序下
+            // 都收斂」，那句話在 `loadWishlist()` 開始寫絕對值之後就失效了，見該函式註解）。
             result._wishlisted = true;
             this.wishlistCount += 1;
             if (this.wishlistLoaded) {
@@ -166,6 +206,16 @@ export function searchStateWishlist() {
                 } catch (parseErr) {
                     console.error('[Wishlist] add 回應解析失敗:', parseErr);
                 }
+                if (data?.already_owned) {
+                    result._wishlisted = prevWishlisted;
+                    if (this.wishlistLoaded) {
+                        this.wishlistItems = this.wishlistItems.filter((i) => i !== result);
+                    }
+                    this._settleWishlistCountAfterAwait(-1);
+                    result._localStatus = data.local_status;
+                    this.showToast(window.t('search.toast.wishlist_already_owned'), 'info');
+                    return;
+                }
                 if (data?.added === false) {
                     if (this.wishlistLoaded) {
                         this.wishlistItems = this.wishlistItems.filter((i) => i !== result);
@@ -175,10 +225,10 @@ export function searchStateWishlist() {
             } catch (err) {
                 console.error('[Wishlist] add 失敗:', err);
                 result._wishlisted = prevWishlisted;
-                this.wishlistCount = Math.max(0, this.wishlistCount - 1);
                 if (this.wishlistLoaded) {
                     this.wishlistItems = this.wishlistItems.filter((i) => i !== result);
                 }
+                this._settleWishlistCountAfterAwait(-1);
             }
         },
 
@@ -225,11 +275,15 @@ export function searchStateWishlist() {
                 }
             } catch (err) {
                 console.error('[Wishlist] remove 失敗:', err);
-                this.wishlistCount += 1;
                 matchedResults.forEach((r, idx) => { r._wishlisted = prevFlags[idx]; });
-                if (this.wishlistLoaded && removedItem) {
+                if (this.wishlistLoaded && removedItem
+                    && !this.wishlistItems.some((i) => i.number === removedItem.number)) {
+                    // 同一次窮舉盤點順手補的正向鎖：若 `loadWishlist()` 在這次 DELETE
+                    // 飛的期間落地，它整包覆蓋回來的清單**已經含**這一筆（刪除失敗
+                    // ⇒ 伺服器上還在），無條件 unshift 會塞出同 number 的重複 :key。
                     this.wishlistItems.unshift(removedItem);
                 }
+                this._settleWishlistCountAfterAwait(+1);
             }
         },
 
@@ -259,55 +313,6 @@ export function searchStateWishlist() {
         nextWishlistLightbox() {
             this._wishlistLbImgError = false;
             this.wishlistLightboxIndex = Math.min(this.wishlistItems.length - 1, this.wishlistLightboxIndex + 1);
-        },
-
-        // TASK-140-T12（F7）：破壞性操作，不做樂觀更新——失敗時三件事都不做，只出 error toast
-        // （承重段第4條：與 add/remove 的樂觀更新刻意不同，那兩個失敗頂多少一筆書籤，這個失敗
-        // 若做了樂觀更新，使用者會以為整理完了但其實沒有）。刻意用「fetch 與 !resp.ok 分開判斷、
-        // 各自 early return」的形狀（不是 addToWishlist 那種單一 try/throw），理由見下方
-        // mutation M3 錨點說明。
-        async cleanupOwnedWishlist() {
-            let resp;
-            try {
-                resp = await fetch('/api/wishlist/cleanup', { method: 'POST' });
-            } catch (err) {
-                console.error('[Wishlist] cleanup 失敗:', err);
-                this.showToast(window.t('search.toast.wishlist_clean_failed'), 'error');
-                return;
-            }
-            if (!resp.ok) {
-                console.error('[Wishlist] cleanup 請求失敗:', resp.status);
-                this.showToast(window.t('search.toast.wishlist_clean_failed'), 'error');
-                return;
-            }
-            // sonnet review P2：resp.json() 本身會 throw（2xx 但 body 不是合法 JSON——
-            // 連線被截斷、反向代理插了非 JSON 內容）。不包的話那條路徑是 unhandled rejection：
-            // 畫面上不會有任何 toast，count/items 也沒動，使用者按完完全不知道成功還是失敗。
-            let data;
-            try {
-                data = await resp.json();
-            } catch (err) {
-                console.error('[Wishlist] cleanup 回應解析失敗:', err);
-                this.showToast(window.t('search.toast.wishlist_clean_failed'), 'error');
-                return;
-            }
-            // Codex 二審 P2（Opus 2026-09-02）：清理成功後對 `wishlistItems` 的過濾是**權威值**，
-            // 而 `loadWishlist()` 是無條件整包覆蓋。作廢的時機必須是**這裡**（寫入之前），不是
-            // 送出 POST 之前——我第一輪放在開頭並註明「之後不可能再有新的 GET」，那個推理是錯的：
-            // 兩顆 segmented 鈕在清理期間都沒被擋（search.html:407-415），使用者覺得慢而點
-            // 「搜尋」再點「書籤」，`listMode !== 'wishlist'` 成立 ⇒ `switchToWishlist()` 會建出
-            // **全新的** controller，開頭那次 abort 碰不到它。而那個新 GET 很可能在伺服器端讀到
-            // 刪除前的資料（清理還在跑全表掃描 ＋ 逐筆刪封面），卻晚於清理回來。
-            //
-            // 放在寫入之前就完整了，三種到達順序都收斂：
-            //   ① 此刻仍在飛的 GET（不論它是清理前還是清理中發出的）⇒ 這裡作廢，寫不進來
-            //   ② 已經在這之前回來的 GET ⇒ 它寫進去的舊清單接著被下一行的 `!_owned` 過濾掉
-            //   ③ 這之後才發出的 GET ⇒ POST 已回，伺服器端 DELETE 早已 commit，讀到的是對的
-            this._abortControllers.loadWishlist?.abort();
-            const deletedCount = data.deleted_count || 0;
-            this.wishlistCount = Math.max(0, this.wishlistCount - deletedCount);
-            this.wishlistItems = this.wishlistItems.filter((i) => !i._owned);
-            this.showToast(window.t('search.toast.wishlist_cleaned', { count: deletedCount }), 'success');
         },
     };
 }

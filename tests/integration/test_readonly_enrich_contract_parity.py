@@ -18,6 +18,7 @@ Non-Goal（spec §3，守住）：不斷言任何時序/併發（不碰 PR#93 �
 CoverPreserveGate 類（本檔獨立新增）；不比 `EnrichResult` 以外的 fs 路徑值。
 """
 
+import pytest
 import dataclasses
 from contextlib import ExitStack
 from dataclasses import asdict
@@ -26,6 +27,12 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from core.enrich_contract import EnrichResult
+
+# TASK-141a-T5：本檔測的兩支端點（generate_avlist / enrich_single_endpoint）收尾會
+# 無條件呼叫 reconcile_wishlist()，它用無參數 repo ⇒ 解析到真實 DB。逐檔明示 opt-in
+# 隔離（fixture 定義見 tests/conftest.py，刻意不做成 autouse——見該處說明）。
+pytestmark = pytest.mark.usefixtures("isolate_reconcile_db")
+
 
 
 # ── 全欄位歸類常數（防「只比三欄」退化的靈魂，CD-105-6-3）────────────────────────

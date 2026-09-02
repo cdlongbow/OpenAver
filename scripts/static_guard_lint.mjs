@@ -4490,7 +4490,7 @@ const RULES = [
     note: '[TASK-140-T7] wishlist badge 只在 wishlistCount>0 時顯示（F2 驗收1，那一段本身仍要顯示）',
   },
 
-  // ---- [TASK-140-T8] wishlist 封面端點 + 已入手角標條件（F4 驗收2／F6 驗收5／F6 驗收1/2/6） ----
+  // ---- [TASK-140-T8] wishlist 封面端點（F4 驗收2／F6 驗收5）——已入手角標那三條已隨 141a-T6 退場 ----
   // window 實測：.wishlist-grid 開標 class= 錨點 → 閉合 </div> 共 2415 字元；+ 安全邊際 → 3000。
   {
     file: 'web/templates/search.html',
@@ -4509,13 +4509,6 @@ const RULES = [
     pattern: '/api/wishlist/cover?number=',
     scope: { anchor: /class="wishlist-grid[^"]*"/, window: 3000 },
     note: '[branch review P2-2] 書籤格卡封面必須走本地端點：退回打外站會破壞 F6 驗收5「零對外請求」，且 javbus 圖床沒有 Referer 會回 403 ＝ T9 修過的那個整頁破圖',
-  },
-  {
-    file: 'web/templates/search.html',
-    kind: 'required-string',
-    pattern: 'x-show="item._owned"',
-    scope: { anchor: /class="wishlist-grid[^"]*"/, window: 3000 },
-    note: '[TASK-140-T8] 已入手角標只在 item._owned 為真時顯示（F6 驗收1/2/6）',
   },
   // Opus 補（T8 Step 6 自驗發現原稿這條 SURVIVED）：三個狀態頁必須排除 wishlist。
   // 沒有這條的話，把 `&& listMode !== 'wishlist'` 刪掉不會有任何東西轉紅，而後果是
@@ -4620,27 +4613,12 @@ const RULES = [
     scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
     note: '[TASK-140-T11a] 書籤燈箱不得出現翻譯鈕（spec F5 驗收4：那些需要本地檔案）',
   },
-  // ---- [TASK-140-T12] 頂部批次清理鈕（F7 驗收1-3，承重段第9條字串存在性清單） ----
+  // ---- [TASK-140-T12] 書籤面板三層容器結構（原「頂部批次清理鈕 F7 驗收1-3」那三條已隨 141a-T6 退場） ----
   {
     file: 'web/templates/search.html',
     kind: 'required-string',
     pattern: 'class="wishlist-panel"',
-    note: '[TASK-140-T12] 三層分工 wrapper 必須存在（plan「容器結構寫死」，Codex Phase 2 P2-3）——沒有它，清理鈕與書籤格的尺寸宣告會退回掛在會 shrink 的層，重現 T9 的 110×727',
-  },
-  // window 實測：class="wishlist-panel" 開標錨點 → 工具列 </div> 閉合共 514 字元；+ 安全邊際 → 700。
-  {
-    file: 'web/templates/search.html',
-    kind: 'required-string',
-    pattern: 'x-show="ownedWishlistCount > 0"',
-    scope: { anchor: /class="wishlist-panel"/, window: 700 },
-    note: '[TASK-140-T12] 清理鈕只在有已入手項目時顯示（F7 驗收1：N===0 整顆不顯示）',
-  },
-  {
-    file: 'web/templates/search.html',
-    kind: 'required-string',
-    pattern: 'bi-eraser',
-    scope: { anchor: /class="wishlist-panel"/, window: 700 },
-    note: '[TASK-140-T12] 清理鈕圖示必須是 bi-eraser（spec F7 明寫）',
+    note: '[TASK-140-T12] 三層分工 wrapper 必須存在（plan「容器結構寫死」，Codex Phase 2 P2-3）——沒有它，書籤格的尺寸宣告會退回掛在會 shrink 的層，重現 T9 的 110×727',
   },
   // Opus 抽驗（T12 Step 6）：把 wrapper 的 listMode 閘拿掉之後 lint 與 npm test 全綠——
   // 而後果是 wrapper 在搜尋模式下仍是 .result-area 的 flex item，與 #resultCard 並排搶寬度，
@@ -4651,12 +4629,30 @@ const RULES = [
     pattern: `<div class="wishlist-panel" x-show="listMode === 'wishlist'"`,
     note: '[TASK-140-T12] 書籤 wrapper 必須自帶 listMode 閘——少了它，wrapper 在搜尋模式下仍是 .result-area 的 flex item，會與搜尋結果並排搶寬度把結果擠成半邊（T9 修過的同一種缺陷）',
   },
+
+  // ---- [lint-guard 141a-T5] 對帳呼叫點逐檔計數（spec F2／設計決策 5）----
+  // 鎖 scanner/scraper/wishlist 三個已知檔案的 reconcile_wishlist( 出現次數。
+  // 多掛會把通知 buffer 灌爆；少掛會讓該觸發點形同虛設。不是全庫白名單——
+  // 全新第四個檔案掛對帳不會被這三條攔下（見 TASK-141a-T5 DoD 8 邊界）。
+  { file: 'web/routers/scanner.py', kind: 'structure-count', pattern: 'reconcile_wishlist(', count: 1,
+    note: '[lint-guard 141a-T5] 對帳呼叫點逐檔計數：scanner.py 恰 1 處（generate_avlist 收尾），多一處或少一處代表未來 branch 順手多掛/漏掛觸發點' },
+  // scraper.py 的兩個出口共用 helper `_reconcile_wishlist_after_write()`（ruff C901 逼出來的抽取，
+  // 見該函式 docstring），所以這一檔要兩條規則才數得對：
+  //   · `reconcile_wishlist(` 恰 1 處 —— 只在 helper 內部（少一處＝對帳被拔掉）
+  //   · `_reconcile_wishlist_after_write(` 恰 3 處 —— 1 個 def ＋ 2 個呼叫點（多一處＝順手多掛觸發點）
+  { file: 'web/routers/scraper.py', kind: 'structure-count', pattern: 'reconcile_wishlist(', count: 1,
+    note: '[lint-guard 141a-T5] 對帳呼叫點逐檔計數：scraper.py 的 reconcile_wishlist( 恰 1 處（只在 _reconcile_wishlist_after_write helper 內），少一處代表對帳被拔掉' },
+  { file: 'web/routers/scraper.py', kind: 'structure-count', pattern: '_reconcile_wishlist_after_write(', count: 3,
+    note: '[lint-guard 141a-T5] 對帳觸發點逐檔計數：scraper.py 的 _reconcile_wishlist_after_write( 恰 3 處（1 個 def ＋ enrich_single_endpoint 唯讀/一般分支各 1 個呼叫），多一處代表未來 branch 順手多掛觸發點（scrape-single／batch-enrich 也住這一檔）' },
+  { file: 'web/routers/wishlist.py', kind: 'structure-count', pattern: 'reconcile_wishlist(', count: 1,
+    note: '[lint-guard 141a-T5] 對帳呼叫點逐檔計數：wishlist.py 恰 1 處（T4 落地的 GET 載入前對帳）' },
+
+  // ---- [lint-guard 141a-T7] 格牆／大卡切換鈕顯示條件（spec F4／設計決策 1、5）----
   {
     file: 'web/templates/search.html',
     kind: 'required-string',
-    pattern: '@click="cleanupOwnedWishlist()"',
-    scope: { anchor: /class="wishlist-panel"/, window: 700 },
-    note: '[TASK-140-T12] 清理鈕必須接上 cleanupOwnedWishlist()（F7 驗收3：點下去要真的觸發清理），比承重段第9條原列的三項多加這一條——click 接線是同一批字串存在性檢查最自然的延伸，遺漏會讓鈕看起來對但按下去沒反應',
+    pattern: `x-show="listMode === 'search' && pageState === 'result' && (searchResults.length > 1 || actressProfile) && !isComposing()"`,
+    note: '[lint-guard 141a-T7] 格牆／大卡切換鈕顯示條件必須為「結果模式＋(結果數>1 或有女優 hero 卡)＋非組合輸入」（CD-9，spec F4 驗收 2/2b/3；`|| actressProfile` 是 branch review P2 補的，見 search.html 該行上方註解）',
   },
 ];
 
@@ -4883,11 +4879,96 @@ function evalDupId(rule, text, fileLabel) {
   }
 }
 
+// stripPythonNoise（PR#176 Codex P2 修正，[lint-guard 141a-T5] 延伸）：
+// structure-count 數的是「檔案原始文字」，.py 檔裡註解／docstring／trailing comment
+// 只要含 pattern 字面（例如 'reconcile_wishlist('）就會讓計數跑掉。Codex 原講法是
+// 「誤報造成開發摩擦」——那只是我們的成本，不足以構成必修理由。真正的理由是同一根因
+// 的反向：註解裡有該字面時，若有人把「真正的呼叫」順手拔掉，計數仍是 1 ⇒ 守衛全綠而
+// 對帳被拔掉 ⇒ 使用者的書籤不再自動移除（0.15.9 已拿掉手動清理鈕，使用者沒有別的辦法
+// 補救）。修法採粗顆粒中間解：計數前先剝掉 Python 的行內/整行註解與三引號 docstring，
+// 不解析真正的 call site（不把 AST 塞進 .mjs，那是重型守衛，專案規則明確反對），也不拿掉
+// 這幾條守衛。逐行處理、剝掉的內容一律換成等量空白（保留換行數與行號），故不影響其他
+// kind（forbidden-string/required-string/cross-file-equal 等）沿用的行號語意——本函式只在
+// evalStructureCount 內對 .py 檔套用，其餘 kind／檔案類型完全不受影響。
+// 逐字元掃描，state 只有「是否在三引號字串內」跨行延續；一般 '/" 字串在單行內用簡單
+// escape-aware 掃描辨識，避免把字串字面內的 '#'（例如 URL fragment）誤判成註解起點。
+function stripPythonNoise(text) {
+  const lines = text.split('\n');
+  const out = new Array(lines.length);
+  let tripleDelim = null; // null | "'''" | '"""'（跨行 docstring 未結束時延續到下一行）
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li];
+    const n = line.length;
+    let result = '';
+    let i = 0;
+    let inStr = null; // 目前是否在單行字串內，值為該字串的引號字元
+    while (i < n) {
+      if (tripleDelim) {
+        const idx = line.indexOf(tripleDelim, i);
+        if (idx === -1) {
+          result += ' '.repeat(n - i);
+          i = n;
+        } else {
+          result += ' '.repeat(idx + 3 - i);
+          i = idx + 3;
+          tripleDelim = null;
+        }
+        continue;
+      }
+      const ch = line[i];
+      if (inStr) {
+        result += ch;
+        if (ch === '\\' && i + 1 < n) {
+          result += line[i + 1];
+          i += 2;
+          continue;
+        }
+        if (ch === inStr) inStr = null;
+        i += 1;
+        continue;
+      }
+      if (ch === '#') {
+        // 行內／整行註解：# 之後（不在字串內）一律視為註解，剝到行尾
+        result += ' '.repeat(n - i);
+        i = n;
+        continue;
+      }
+      if (ch === "'" || ch === '"') {
+        if (line.slice(i, i + 3) === ch.repeat(3)) {
+          const closeIdx = line.indexOf(ch.repeat(3), i + 3);
+          if (closeIdx === -1) {
+            // 三引號在本行開啟但未結束 → 剝到行尾，跨行狀態延續
+            result += ' '.repeat(n - i);
+            tripleDelim = ch.repeat(3);
+            i = n;
+          } else {
+            // 三引號整段落在同一行 → 連同引號一起剝除
+            result += ' '.repeat(closeIdx + 3 - i);
+            i = closeIdx + 3;
+          }
+          continue;
+        }
+        // 一般單/雙引號字串：不剝除內容（保留真正的字串字面，只剝註解/docstring）
+        result += ch;
+        inStr = ch;
+        i += 1;
+        continue;
+      }
+      result += ch;
+      i += 1;
+    }
+    out[li] = result;
+  }
+  return out.join('\n');
+}
+
 // ---- structure-count：count（exact）/ min（下界）二擇一 ----
 function evalStructureCount(rule, text, fileLabel) {
   const { scopedText, ok } = resolveScope(rule, text, fileLabel);
   if (!ok) return;
-  const n = countOccurrences(scopedText, rule.pattern);
+  // .py 檔先剝除註解/docstring 再計數（見上方 stripPythonNoise 註解：防漏報，不只是防誤報）
+  const countedText = fileLabel.endsWith('.py') ? stripPythonNoise(scopedText) : scopedText;
+  const n = countOccurrences(countedText, rule.pattern);
   if (rule.count !== undefined && n !== rule.count) {
     err(`${rule.note} — ${fileLabel}: 出現次數 ${n} != 要求 ${rule.count}（exact）：${patternLabel(rule.pattern)}`);
   }

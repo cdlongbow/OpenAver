@@ -17,11 +17,32 @@ test_enrich_single_readonly_metadata.py - TASK-135-T6
 
 import hashlib
 import os
+import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from core.database import Video
 from core.path_utils import coerce_to_file_uri
+
+# TASK-141a-T5：本檔測的兩支端點（generate_avlist / enrich_single_endpoint）收尾會
+# 無條件呼叫 reconcile_wishlist()，它用無參數 repo ⇒ 解析到真實 DB。逐檔明示 opt-in
+# 隔離（fixture 定義見 tests/conftest.py，刻意不做成 autouse——見該處說明）。
+pytestmark = pytest.mark.usefixtures("isolate_reconcile_db")
+
+
+
+@pytest.fixture(autouse=True)
+def reset_buffer():
+    """通知 buffer 是模組層級全域 deque，測試間必須清空，否則「恰好一筆」會閃爍。"""
+    import web.routers.notifications as notif_mod
+    notif_mod._notifications.clear()
+    notif_mod._read_ids.clear()
+    yield
+    notif_mod._notifications.clear()
+    notif_mod._read_ids.clear()
+
 
 
 # ── mock-only 佈局（DoD-3/4/5/6/7）：照抄 tests/integration/test_api_enrich.py
@@ -480,3 +501,142 @@ class TestReadonlyRescrapeNumberGuard:
 
         assert response.status_code == 200
         assert response.json()["success"] is True
+
+
+class TestReadonlyEnrichWishlistReconcile:
+    """TASK-141a-T5：enrich-single 唯讀分支掛 reconcile_wishlist（DoD 2/4）。"""
+
+    def test_readonly_rescrape_reconciles_wishlist_on_success(
+        self, tmp_path, client, mocker, monkeypatch
+    ):
+        """DoD 2（唯讀分支）：rescrape 成功 → 恰好一筆 auto_removed，書籤消失。"""
+        from core.database import WishlistRepository
+        from core.path_utils import to_file_uri
+
+        src = tmp_path / "src"
+        src.mkdir()
+        video = src / "SONE-205.mp4"
+        video.write_bytes(b"FAKE-VIDEO")
+
+        db_path = _e2e_init_db(tmp_path)
+        config = _e2e_off_config(src)
+        _e2e_wire(mocker, monkeypatch, config, db_path)
+        monkeypatch.setattr("core.database.connection.get_db_path", lambda: db_path)
+        monkeypatch.setattr("core.wishlist_cover_cache.get_db_path", lambda: db_path)
+        mocker.patch("core.readonly_producer.search_jav")
+        mocker.patch("core.readonly_producer.search_jav_single_source")
+        mocker.patch(
+            "core.readonly_producer.download_image",
+            side_effect=_e2e_download_writes_url_bytes,
+        )
+
+        WishlistRepository().add("SONE-205", title="Owned")
+
+        canonical = to_file_uri(str(video))
+        response = client.post("/api/enrich-single", json={
+            "file_path": canonical,
+            "number": "SONE-205",
+            "readonly_action": "rescrape",
+            "mode": "refresh_full",
+            "overwrite_existing": True,
+            "metadata": {
+                "number": "SONE-205",
+                "title": "AI Title",
+                "actors": ["A"],
+                "maker": "M",
+                "date": "2024-01-01",
+                "cover": "http://x/c.jpg",
+            },
+        })
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+
+        notif_items = client.get("/api/notifications").json()["items"]
+        auto_removed = [
+            i for i in notif_items if i["title_key"] == "notif.wishlist_auto_removed"
+        ]
+        assert len(auto_removed) == 1
+        assert auto_removed[0]["level"] == "info"
+        assert auto_removed[0]["task_type"] == "wishlist_reconcile"
+
+        conn = sqlite3.connect(str(db_path))
+        row = conn.execute(
+            "SELECT 1 FROM wishlist WHERE number = ?", ("SONE-205",)
+        ).fetchone()
+        conn.close()
+        assert row is None
+
+    def test_readonly_rescrape_reconcile_failure_keeps_success_response(
+        self, tmp_path, client, mocker, monkeypatch
+    ):
+        """DoD 4（唯讀分支）：對帳丟例外時回應仍是完整成功 EnrichResult。"""
+        from core.path_utils import to_file_uri
+
+        src = tmp_path / "src"
+        src.mkdir()
+        video = src / "SONE-205.mp4"
+        video.write_bytes(b"FAKE-VIDEO")
+
+        db_path = _e2e_init_db(tmp_path)
+        config = _e2e_off_config(src)
+        _e2e_wire(mocker, monkeypatch, config, db_path)
+        # reconcile_wishlist 走 connection.get_db_path；必須與 e2e DB 同路徑
+        monkeypatch.setattr("core.database.connection.get_db_path", lambda: db_path)
+        monkeypatch.setattr("core.wishlist_cover_cache.get_db_path", lambda: db_path)
+        mocker.patch("core.readonly_producer.search_jav")
+        mocker.patch("core.readonly_producer.search_jav_single_source")
+        mocker.patch(
+            "core.readonly_producer.download_image",
+            side_effect=_e2e_download_writes_url_bytes,
+        )
+
+        payload = {
+            "file_path": to_file_uri(str(video)),
+            "number": "SONE-205",
+            "readonly_action": "rescrape",
+            "mode": "refresh_full",
+            "overwrite_existing": True,
+            "metadata": {
+                "number": "SONE-205",
+                "title": "AI Title",
+                "actors": ["A"],
+                "maker": "M",
+                "date": "2024-01-01",
+                "cover": "http://x/c.jpg",
+            },
+        }
+
+        # BE-TEST-10：baseline 在注入例外之前取得
+        baseline = client.post("/api/enrich-single", json=payload)
+        assert baseline.status_code == 200
+        baseline_data = baseline.json()
+        assert baseline_data["success"] is True
+
+        import web.routers.notifications as notif_mod
+        notif_mod._notifications.clear()
+        notif_mod._read_ids.clear()
+
+        def _boom():
+            raise RuntimeError("reconcile exploded")
+
+        # raising=False：實作前屬性尚不存在；RED 應落在「未發 warn」而非 AttributeError
+        monkeypatch.setattr("web.routers.scraper.reconcile_wishlist", _boom, raising=False)
+
+        response = client.post("/api/enrich-single", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["nfo_written"] == baseline_data["nfo_written"]
+        assert data["cover_written"] == baseline_data["cover_written"]
+        assert data["fields_filled"] == baseline_data["fields_filled"]
+        assert data["source_used"] == baseline_data["source_used"]
+        assert data["reason"] == baseline_data["reason"]
+
+        notif_items = client.get("/api/notifications").json()["items"]
+        warn_items = [
+            i for i in notif_items
+            if i["title_key"] == "notif.wishlist_reconcile_failed"
+        ]
+        assert len(warn_items) == 1
+        assert warn_items[0]["level"] == "warn"

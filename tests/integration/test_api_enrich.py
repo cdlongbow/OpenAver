@@ -14,6 +14,12 @@ from unittest.mock import patch, MagicMock
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+# TASK-141a-T5：本檔測的兩支端點（generate_avlist / enrich_single_endpoint）收尾會
+# 無條件呼叫 reconcile_wishlist()，它用無參數 repo ⇒ 解析到真實 DB。逐檔明示 opt-in
+# 隔離（fixture 定義見 tests/conftest.py，刻意不做成 autouse——見該處說明）。
+pytestmark = pytest.mark.usefixtures("isolate_reconcile_db")
+
+
 
 # ── helper: EnrichResult stub ────────────────────────────────────────────────
 

@@ -567,7 +567,7 @@ test('switchToWishlist: 已載入過也要重新對帳（T8 review P2）', async
         listMode: 'search',
         displayMode: 'grid',
         wishlistLoaded: true,          // 已經載入過
-        wishlistItems: [{ number: 'OLD-001', _owned: false }],
+        wishlistItems: [{ number: 'OLD-001' }],
         async loadWishlist() { loadCalls++; },
     };
 
@@ -608,12 +608,34 @@ test('loadWishlistCount: 失敗時不歸零、不 throw', async () => {
 });
 
 test('loadWishlist: 寫入 wishlistItems 並設 wishlistLoaded=true', async () => {
-    const items = [{ number: 'A-1', _owned: false }, { number: 'B-2', _owned: true }];
+    const items = [{ number: 'A-1' }, { number: 'B-2' }];
     mockFetch(() => jsonResponse(items));
     const fakeThis = makeWishlistThis();
     await fakeThis.loadWishlist();
     assert.deepEqual(fakeThis.wishlistItems, items);
     assert.equal(fakeThis.wishlistLoaded, true);
+});
+
+// branch review P2（2026-09-02）：對帳在伺服器端自動刪書籤之後，前端唯一能感知
+// 「權威狀態變了」的通道就是這支 GET 的回應。它以前只寫清單不寫計數 ⇒ badge 會停在
+// 舊數字直到整頁重新整理。
+test('loadWishlist: 同時把 wishlistCount 對齊權威清單長度（伺服器端自動移除後 badge 不留舊值）', async () => {
+    const items = [{ number: 'A-1' }, { number: 'B-2' }];
+    mockFetch(() => jsonResponse(items));
+    const fakeThis = makeWishlistThis();
+    fakeThis.wishlistCount = 5;          // 掃描前是 5 筆
+    await fakeThis.loadWishlist();
+    assert.equal(fakeThis.wishlistCount, 2, 'badge 必須與清單一致，不得停在舊值');
+});
+
+test('loadWishlist: 請求失敗時不得把 wishlistCount 歸零（清單與計數一起不動）', async () => {
+    mockFetch(() => new Response('boom', { status: 500 }));
+    const fakeThis = makeWishlistThis();
+    fakeThis.wishlistCount = 5;
+    fakeThis.wishlistItems = [{ number: 'OLD-1' }];
+    await fakeThis.loadWishlist();
+    assert.equal(fakeThis.wishlistCount, 5);
+    assert.deepEqual(fakeThis.wishlistItems, [{ number: 'OLD-1' }]);
 });
 
 // ─── hydration ③：wishlistLoaded 時同步 wishlistItems ─────────────────────
@@ -677,16 +699,21 @@ test('removeFromWishlist: wishlistLoaded=true 時從 wishlistItems 移除', asyn
 test('addToWishlist: POST 失敗時回滾 _wishlisted 與 wishlistCount（I3）', async () => {
     mockFetch(() => jsonResponse({}, { ok: false, status: 500 }));
     const result = { number: 'FAIL-1', title: 'x', _wishlisted: false };
+    // PR#176 第 2 輪：原本 fixture 是 `wishlistCount: 5` 配 1 筆 wishlistItems，
+    // 那是**生產環境不可能存在的狀態**——`loadWishlist()` 是全站唯一把 wishlistLoaded
+    // 設為 true 的地方，而它整包同時寫入清單與計數，兩者必然相等。合成 fixture 把這條
+    // 不變式抹平了，於是這支測試從來沒有真的驗到「計數與清單說同一件事」。
+    // 改成自洽的 1／1 之後，斷言的意圖（失敗要回滾三件事）完全不變，且更嚴格。
     const fakeThis = {
         ...searchStateWishlist(),
-        wishlistCount: 5,
+        wishlistCount: 1,
         wishlistLoaded: true,
         wishlistItems: [{ number: 'KEEP-1' }],
     };
 
     await searchStateWishlist().addToWishlist.call(fakeThis, result);
     assert.equal(result._wishlisted, false, '失敗應回滾 _wishlisted');
-    assert.equal(fakeThis.wishlistCount, 5, '失敗應回滾 wishlistCount');
+    assert.equal(fakeThis.wishlistCount, 1, '失敗應回滾 wishlistCount');
     assert.deepEqual(
         fakeThis.wishlistItems.map((i) => i.number),
         ['KEEP-1'],
@@ -919,11 +946,11 @@ test('prev/nextWishlistLightbox()：箭頭換片也重設 _wishlistLbImgError（
     assert.equal(prev._wishlistLbImgError, false, 'prev 換片後仍是 true ⇒ 上一張的封面會被占位蓋掉');
 });
 
-// ─── TASK-140-T12：F7 批次清理（DoD 5a–5d）────────────────────────────────
+// ─── 書籤載入與交錯（TASK-140-T12 起，141a-T4/T6 之後只剩載入端）──────────────
 
 // 技術要點 §4：plain spread 會在展開當下求值 getter 並凍結成 0，必須保留 descriptor。
 //
-// Codex review P2 修正後，loadWishlist()／cleanupOwnedWishlist() 會用到 search-flow 的
+// Codex review P2 修正後，loadWishlist() 會用到 search-flow 的
 // AbortController registry（_getAbortSignal／_clearAbort／_abortControllers）。照
 // set-file-list-race.test.mjs 的既有手法**組真的 mixin**，不手抄 abort 邏輯——手抄的話
 // 產品端改了機制測試不會紅。_abortControllers 由 base.js:118 宣告，這裡補上同一個初始值。
@@ -936,135 +963,15 @@ function makeWishlistThis(overrides = {}) {
     return target;
 }
 
-// DoD 5a（mutation 圍欄 expect_fail 字串必須逐字相等）
-test('ownedWishlistCount：3 筆 _owned:true 加 2 筆 false ⇒ 回 3', () => {
-    const state = makeWishlistThis({
-        wishlistItems: [
-            { number: 'A-1', _owned: true },
-            { number: 'A-2', _owned: true },
-            { number: 'A-3', _owned: true },
-            { number: 'B-1', _owned: false },
-            { number: 'B-2', _owned: false },
-        ],
-    });
-    assert.equal(state.ownedWishlistCount, 3);
-});
-
-// DoD 5b
-test('cleanupOwnedWishlist() 成功：wishlistCount 減掉 deleted_count、wishlistItems 只剩未入手項目、showToast 帶 success', async () => {
-    mockFetch(() => jsonResponse({ deleted_count: 3 }));
-    const toasts = [];
-    globalThis.window.t = (key, params) => `${key}:${JSON.stringify(params ?? {})}`;
-    const fakeThis = makeWishlistThis({
-        wishlistCount: 5,
-        wishlistItems: [
-            { number: 'OWN-1', _owned: true },
-            { number: 'OWN-2', _owned: true },
-            { number: 'OWN-3', _owned: true },
-            { number: 'KEEP-1', _owned: false },
-            { number: 'KEEP-2', _owned: false },
-        ],
-        showToast(msg, type) { toasts.push({ msg, type }); },
-    });
-
-    await fakeThis.cleanupOwnedWishlist();
-
-    assert.equal(fakeThis.wishlistCount, 2, 'wishlistCount 必須減掉 deleted_count=3');
-    assert.deepEqual(
-        fakeThis.wishlistItems.map((i) => i.number),
-        ['KEEP-1', 'KEEP-2'],
-        'wishlistItems 只剩未入手項目',
-    );
-    assert.equal(toasts.length, 1);
-    assert.equal(toasts[0].type, 'success');
-});
-
-// DoD 5c
-test('cleanupOwnedWishlist() 失敗（resp.ok===false）：wishlistCount 不變、wishlistItems 不變、toast 是 error', async () => {
-    mockFetch(() => jsonResponse({}, { ok: false, status: 500 }));
-    const toasts = [];
-    globalThis.window.t = (key) => key;
-    const items = [
-        { number: 'OWN-1', _owned: true },
-        { number: 'KEEP-1', _owned: false },
-    ];
-    const fakeThis = makeWishlistThis({
-        wishlistCount: 2,
-        wishlistItems: items,
-        showToast(msg, type) { toasts.push({ msg, type }); },
-    });
-
-    await fakeThis.cleanupOwnedWishlist();
-
-    assert.equal(fakeThis.wishlistCount, 2, '失敗時 wishlistCount 不得變');
-    assert.equal(fakeThis.wishlistItems, items, '失敗時 wishlistItems 陣列參考不得被替換');
-    assert.equal(fakeThis.wishlistItems.length, 2, '失敗時一筆都沒少');
-    assert.equal(toasts.length, 1);
-    assert.equal(toasts[0].type, 'error');
-});
-
-// sonnet review P2（Opus 2026-09-02 補）：resp.json() 本身會 throw（2xx 但 body 不是合法
-// JSON）。不包 try 的話那條路徑是 unhandled rejection ⇒ 使用者按完清理鈕**什麼提示都沒有**，
-// 不知道成功還是失敗。
-test('cleanupOwnedWishlist() 回應解析失敗（resp.json() throw）：wishlistCount 不變、wishlistItems 不變、toast 是 error', async () => {
-    mockFetch(() => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token < in JSON'); } }));
-    const toasts = [];
-    globalThis.window.t = (key) => key;
-    const items = [
-        { number: 'OWN-1', _owned: true },
-        { number: 'KEEP-1', _owned: false },
-    ];
-    const fakeThis = makeWishlistThis({
-        wishlistCount: 2,
-        wishlistItems: items,
-        showToast(msg, type) { toasts.push({ msg, type }); },
-    });
-
-    await fakeThis.cleanupOwnedWishlist();
-
-    assert.equal(fakeThis.wishlistCount, 2, '解析失敗時 wishlistCount 不得變');
-    assert.equal(fakeThis.wishlistItems, items, '解析失敗時 wishlistItems 陣列參考不得被替換');
-    assert.equal(fakeThis.wishlistItems.length, 2, '解析失敗時一筆都沒少');
-    assert.equal(toasts.length, 1, '解析失敗必須出一個 toast——不出的話使用者完全不知道發生了什麼');
-    assert.equal(toasts[0].type, 'error');
-});
-
-// DoD 5d
-test('cleanupOwnedWishlist() 成功後未入手的一筆都沒被動到（spec F7 驗收4）', async () => {
-    mockFetch(() => jsonResponse({ deleted_count: 2 }));
-    globalThis.window.t = (key, params) => `${key}:${JSON.stringify(params ?? {})}`;
-    const unowned = [
-        { number: 'KEEP-A', _owned: false },
-        { number: 'KEEP-B', _owned: false },
-    ];
-    const fakeThis = makeWishlistThis({
-        wishlistCount: 4,
-        wishlistItems: [
-            { number: 'OWN-X', _owned: true },
-            { number: 'OWN-Y', _owned: true },
-            ...unowned,
-        ],
-        showToast() {},
-    });
-
-    await fakeThis.cleanupOwnedWishlist();
-
-    const remaining = new Set(fakeThis.wishlistItems.map((i) => i.number));
-    assert.deepEqual(
-        [...remaining].sort(),
-        ['KEEP-A', 'KEEP-B'].sort(),
-        '剩下的 number 集合必須與原本未入手的集合逐值相同',
-    );
-});
-
 // ─── Codex review P2（Opus 2026-09-02）：非同步 fetch 交錯 ─────────────────
 //
 // T12 的卡片把「背景 worker 交錯」勾成 N/A 是對的（沒有背景任務），但漏掉了另一種
 // 交錯：`switchToSearchList()` 不清空 `wishlistItems`，所以切回書籤分頁的瞬間，畫面
-// 會先用**上一次的舊資料**把卡片、垃圾桶鈕、清理鈕全部渲染出來，而新的 GET 還在飛。
-// 使用者於是能在那個窗口裡按清理、或按某張卡的垃圾桶。窗口不是理論值——
-// `GET /api/wishlist` 對 videos 是全表掃描（`get_by_numbers()` 的 `UPPER(number)` 吃不到
-// `idx_videos_number`），片庫越大、機器越慢窗口越寬。
+// 會先用**上一次的舊資料**把卡片與垃圾桶鈕渲染出來，而新的 GET 還在飛。
+// 使用者於是能在那個窗口裡按某張卡的垃圾桶。窗口不是理論值——
+// `GET /api/wishlist` 現在**先對帳再回清單**（141a-T4），對帳要對每一筆書籤查一次片庫。
+// （141a-T1 之前那支查詢的 `UPPER(number)` 吃不到索引、實測是 `SCAN videos`；
+// 加了 `idx_videos_number_upper` 之後成本只跟書籤數有關，但窗口仍在：網路 ＋ 對帳 ＋ 刪封面檔。）
 //
 // 手法照 set-file-list-race.test.mjs：mock 尊重 AbortSignal（有 signal 才會在 abort 時
 // reject），所以「產品端忘了把 signal 傳進 fetch」這個回歸也會被這兩條測出來。
@@ -1073,27 +980,32 @@ function makeAbortError() {
     return new DOMException('The operation was aborted', 'AbortError');
 }
 
-test('deferred-fetch：切回書籤分頁的舊 GET 晚於 cleanup 才回來，不得把已清理的項目寫回畫面', async () => {
+test('deferred-fetch：連續兩次 loadWishlist，舊 GET 晚到不得覆蓋新結果', async () => {
     globalThis.window.t = (key) => key;
-    let releaseGet;
-    const getReleased = new Promise((r) => { releaseGet = r; });
-    const staleFromServer = [{ number: 'OWNED-1', _owned: true }, { number: 'FREE-1', _owned: false }];
+    let releaseGet1;
+    const get1Released = new Promise((r) => { releaseGet1 = r; });
+    const staleFromServer = [{ number: 'OWNED-1' }, { number: 'FREE-1' }];
+    const freshFromServer = [{ number: 'FREE-1' }];
 
-    let getSignal;
+    let get1Signal;
+    let getCall = 0;
     globalThis.fetch = async (url, opts = {}) => {
         const u = String(url);
         if (u === '/api/wishlist') {
-            return new Promise((resolve, reject) => {
-                const { signal } = opts;
-                getSignal = signal;
-                if (signal) {
-                    if (signal.aborted) { reject(makeAbortError()); return; }
-                    signal.addEventListener('abort', () => reject(makeAbortError()), { once: true });
-                }
-                getReleased.then(() => resolve(jsonResponse(staleFromServer)));
-            });
+            getCall += 1;
+            if (getCall === 1) {
+                return new Promise((resolve, reject) => {
+                    const { signal } = opts;
+                    get1Signal = signal;
+                    if (signal) {
+                        if (signal.aborted) { reject(makeAbortError()); return; }
+                        signal.addEventListener('abort', () => reject(makeAbortError()), { once: true });
+                    }
+                    get1Released.then(() => resolve(jsonResponse(staleFromServer)));
+                });
+            }
+            return jsonResponse(freshFromServer);
         }
-        if (u === '/api/wishlist/cleanup') return jsonResponse({ deleted_count: 1 });
         throw new Error(`unexpected url: ${u}`);
     };
 
@@ -1104,25 +1016,22 @@ test('deferred-fetch：切回書籤分頁的舊 GET 晚於 cleanup 才回來，�
         showToast() {},
     });
 
-    const pendingGet = state.loadWishlist();   // 切回書籤分頁發出的 GET，不 await
-    await state.cleanupOwnedWishlist();        // 使用者在舊 GET 回來前按下清理
-    releaseGet();                              // 此刻舊 GET 才回來
-    await pendingGet;
+    const pendingGet1 = state.loadWishlist();
+    const pendingGet2 = state.loadWishlist();
+    await pendingGet2;
+    releaseGet1();
+    await pendingGet1;
 
     assert.deepEqual(
         state.wishlistItems.map((i) => i.number),
         ['FREE-1'],
-        '舊 GET 不得把已清理的 OWNED-1 寫回 wishlistItems',
+        '第一次那個晚到的回應不得覆蓋 wishlistItems',
     );
-    assert.equal(state.wishlistCount, 1, 'badge 必須維持 cleanup 算出的值');
-    // 接線斷言：少了這條，把 fetch 的 { signal } 拿掉時整個取消機制變死碼卻沒有測試會紅
-    // （實測過——那條 mutation 一開始是存活的）。傳了 signal，清理才是真的取消那條
-    // videos 全表掃描查詢，而不是等它跑完再把結果丟掉。
-    assert.ok(getSignal instanceof AbortSignal, 'GET 必須把 AbortSignal 傳進 fetch');
-    assert.equal(getSignal.aborted, true, '清理必須真的 abort 掉那條在飛的 GET');
+    assert.ok(get1Signal instanceof AbortSignal, 'GET 必須把 AbortSignal 傳進 fetch');
+    assert.equal(get1Signal.aborted, true, '第二次 loadWishlist 必須 abort 掉第一次在飛的 GET');
 });
 
-test('deferred-fetch：cleanup 先刪掉該列、單筆 DELETE 後到拿 {success:false} ⇒ badge 跟伺服器重新對帳', async () => {
+test('deferred-fetch：loadWishlist 對帳先清掉該列、單筆 DELETE 後到拿 {success:false} ⇒ badge 跟伺服器重新對帳', async () => {
     globalThis.window.t = (key) => key;
     let releaseDelete;
     const deleteReleased = new Promise((r) => { releaseDelete = r; });
@@ -1132,9 +1041,9 @@ test('deferred-fetch：cleanup 先刪掉該列、單筆 DELETE 後到拿 {succes
         const u = String(url);
         if (u === '/api/wishlist/OWN-1' && opts.method === 'DELETE') {
             await deleteReleased;
-            return jsonResponse({ success: false });   // cleanup 已經先把這一列刪掉了
+            return jsonResponse({ success: false });   // 開書籤時對帳已經先把這一列清掉了
         }
-        if (u === '/api/wishlist/cleanup') return jsonResponse({ deleted_count: 2 });
+        if (u === '/api/wishlist') return jsonResponse([{ number: 'KEEP-1' }]);
         if (u === '/api/wishlist/count') { countCalls++; return jsonResponse({ count: 1 }); }
         throw new Error(`unexpected url: ${u}`);
     };
@@ -1143,16 +1052,16 @@ test('deferred-fetch：cleanup 先刪掉該列、單筆 DELETE 後到拿 {succes
         wishlistCount: 3,
         wishlistLoaded: true,
         wishlistItems: [
-            { number: 'OWN-1', _owned: true },
-            { number: 'OWN-2', _owned: true },
-            { number: 'KEEP-1', _owned: false },
+            { number: 'OWN-1' },
+            { number: 'OWN-2' },
+            { number: 'KEEP-1' },
         ],
         searchResults: [],
         showToast() {},
     });
 
     const pendingRemove = state.removeFromWishlist('OWN-1');  // 樂觀扣掉一筆，DELETE 掛住
-    await state.cleanupOwnedWishlist();                       // 清理把兩筆都算進 deleted_count
+    await state.loadWishlist();                               // 開書籤對帳：伺服器已無 OWN-1
     releaseDelete();
     await pendingRemove;
 
@@ -1189,41 +1098,40 @@ test('removeFromWishlist：HTTP 200 {success:false} ⇒ 重新對帳 badge，且
     assert.equal(state.searchResults[0]._wishlisted, false, '搜尋卡的書籤態不得回滾成已收藏');
 });
 
-// Codex 二審 P2：第一輪把 abort 放在 cleanup 開頭，並註明「之後不可能再有新的 GET」——錯的。
-// 兩顆 segmented 鈕在清理期間都沒被擋（search.html:407-415），使用者按了清理覺得慢而去點
-// 「搜尋」再點回「書籤」，會建出全新的 loadWishlist controller，開頭那次 abort 碰不到它。
-// 上一條 deferred test 只覆蓋「GET 早於 cleanup 建立」，覆蓋不到這個順序。
-test('deferred-fetch：cleanup 進行中切到搜尋段再切回書籤段，那個「新」GET 一樣不得覆蓋清理結果', async () => {
+// Codex 二審 P2（改指向 T4）：對帳觸發點改成 GET /api/wishlist 後，仍要守住
+// switchToSearchList → switchToWishlist 這條 tab 切換路徑上的 abort registry。
+test('deferred-fetch：loadWishlist 進行中切到搜尋段再切回書籤段，舊 GET 不得覆蓋新結果', async () => {
     globalThis.window.t = (key) => key;
-    let releaseCleanup, releaseGet;
-    const cleanupReleased = new Promise((r) => { releaseCleanup = r; });
-    const getReleased = new Promise((r) => { releaseGet = r; });
-    const staleFromServer = [{ number: 'OWNED-1', _owned: true }, { number: 'FREE-1', _owned: false }];
-    let getSignal;
+    let releaseGet1, releaseGet2;
+    const get1Released = new Promise((r) => { releaseGet1 = r; });
+    const get2Released = new Promise((r) => { releaseGet2 = r; });
+    const staleFromServer = [{ number: 'OWNED-1' }, { number: 'FREE-1' }];
+    const freshFromServer = [{ number: 'FREE-1' }];
+    let get1Signal;
+    let getCall = 0;
 
     globalThis.fetch = async (url, opts = {}) => {
         const u = String(url);
-        if (u === '/api/wishlist/cleanup') {
-            await cleanupReleased;              // 清理在伺服器端還在跑（全表掃描＋逐筆刪封面）
-            return jsonResponse({ deleted_count: 1 });
-        }
         if (u === '/api/wishlist') {
+            getCall += 1;
+            const callNum = getCall;
             return new Promise((resolve, reject) => {
                 const { signal } = opts;
-                getSignal = signal;
+                if (callNum === 1) get1Signal = signal;
                 if (signal) {
                     if (signal.aborted) { reject(makeAbortError()); return; }
                     signal.addEventListener('abort', () => reject(makeAbortError()), { once: true });
                 }
-                // 伺服器端讀到的是刪除**前**的資料，但比清理晚回來
-                getReleased.then(() => resolve(jsonResponse(staleFromServer)));
+                const released = callNum === 1 ? get1Released : get2Released;
+                const payload = callNum === 1 ? staleFromServer : freshFromServer;
+                released.then(() => resolve(jsonResponse(payload)));
             });
         }
         throw new Error(`unexpected url: ${u}`);
     };
 
     const state = makeWishlistThis({
-        listMode: 'wishlist',
+        listMode: 'search',
         displayMode: 'grid',
         wishlistCount: 2,
         wishlistLoaded: true,
@@ -1231,21 +1139,20 @@ test('deferred-fetch：cleanup 進行中切到搜尋段再切回書籤段，那�
         showToast() {},
     });
 
-    const pendingCleanup = state.cleanupOwnedWishlist();  // 按下清理，POST 掛住
-    state.switchToSearchList();                           // 覺得慢 → 去看搜尋結果
-    const pendingGet = state.switchToWishlist();          // 再切回書籤 ⇒ 全新的 controller
-    releaseCleanup();
-    await pendingCleanup;
-    releaseGet();
-    await pendingGet;
+    const pendingGet1 = state.switchToWishlist();  // 第一次 loadWishlist，GET 掛住
+    state.switchToSearchList();                    // 覺得慢 → 去看搜尋結果
+    const pendingGet2 = state.switchToWishlist();  // 再切回書籤 ⇒ 同一個 key 會 abort 第一次
+    releaseGet2();
+    await pendingGet2;
+    releaseGet1();
+    await pendingGet1;
 
-    assert.equal(getSignal.aborted, true, '清理期間才發出的那個 GET 也必須被作廢');
+    assert.equal(get1Signal.aborted, true, '切回書籤時發出的第二次 GET 必須作廢第一次');
     assert.deepEqual(
         state.wishlistItems.map((i) => i.number),
         ['FREE-1'],
-        '清理期間發出的新 GET 不得把已清理的 OWNED-1 寫回 wishlistItems',
+        '第一次那個晚到的回應不得把 OWNED-1 寫回 wishlistItems',
     );
-    assert.equal(state.wishlistCount, 1);
 });
 
 // branch review P2-1：POST 回 added:false（那個番號本來就在）時，樂觀 +1 必須收回。
@@ -1262,7 +1169,7 @@ test('addToWishlist：HTTP 200 {added:false} ⇒ 重新對帳 badge，並收回�
         throw new Error(`unexpected url: ${u}`);
     };
 
-    const existing = { number: 'DUP-1', _owned: false };
+    const existing = { number: 'DUP-1' };
     const result = { number: 'DUP-1', title: 't' };
     const state = makeWishlistThis({
         wishlistCount: 5,
@@ -1331,4 +1238,209 @@ test('saveState/restoreState：_preWishlistListMode 與 _preWishlistDisplayMode 
         '不一起還原的話，在書籤頁重新整理再點回搜尋段仍會掉進 search 而不是 file');
     assert.equal(restorer._preWishlistDisplayMode, 'detail');
     assert.ok(store, 'sessionStorage mock 有被用到');
+});
+
+// ─── TASK-141a-T3：加入書籤寫入點守門（already_owned）──────────────────────
+
+test('T3-DoD3：already_owned ⇒ 回滾三件事、設 _localStatus、info toast（非 error）', async () => {
+    const localStatus = {
+        exists: true,
+        count: 1,
+        paths: ['/lib/OWNED-1.mp4'],
+    };
+    globalThis.fetch = async (url, opts = {}) => {
+        const u = String(url);
+        if (u === '/api/wishlist' && opts.method === 'POST') {
+            return jsonResponse({
+                success: false,
+                already_owned: true,
+                local_status: localStatus,
+            });
+        }
+        throw new Error(`unexpected url: ${u}`);
+    };
+    globalThis.window.t = (key) => key;
+
+    const toasts = [];
+    const existing = { number: 'KEEP-1' };
+    const result = { number: 'OWNED-1', title: 't', _wishlisted: false };
+    // PR#176 第 2 輪：同上——wishlistLoaded:true 時計數必等於清單長度，原本的 3／1 不自洽。
+    const state = makeWishlistThis({
+        wishlistCount: 1,
+        wishlistLoaded: true,
+        wishlistItems: [existing],
+        showToast(msg, type) { toasts.push({ msg, type }); },
+    });
+
+    await state.addToWishlist(result);
+
+    assert.deepEqual(result._localStatus, localStatus,
+        '_localStatus 必須等於回應的 local_status（逐欄位）');
+    assert.equal(result._wishlisted, false, '_wishlisted 必須回滾成呼叫前的值');
+    assert.equal(state.wishlistCount, 1, 'wishlistCount 必須回滾');
+    assert.deepEqual(state.wishlistItems, [existing],
+        'wishlistItems 不得含樂觀 unshift 的那筆');
+    assert.equal(toasts.length, 1, '必須顯示 toast');
+    assert.equal(toasts[0].type, 'info', 'toast 等級必須是 info，不是 error');
+    assert.equal(toasts[0].msg, 'search.toast.wishlist_already_owned');
+    assert.ok(!toasts.some((t) => t.type === 'error'), '不得顯示 error 等級 toast');
+});
+
+test("T3-DoD4a：already_owned count=1 ⇒ cardActionState(result) === 'play'", async () => {
+    const localStatus = {
+        exists: true,
+        count: 1,
+        paths: ['/lib/PLAY-1.mp4'],
+    };
+    globalThis.fetch = async (url, opts = {}) => {
+        const u = String(url);
+        if (u === '/api/wishlist' && opts.method === 'POST') {
+            return jsonResponse({
+                success: false,
+                already_owned: true,
+                local_status: localStatus,
+            });
+        }
+        throw new Error(`unexpected url: ${u}`);
+    };
+    globalThis.window.t = (key) => key;
+
+    const result = { number: 'PLAY-1', title: 't', _wishlisted: false };
+    const state = makeWishlistThis({
+        wishlistCount: 0,
+        wishlistLoaded: false,
+        wishlistItems: [],
+        showToast() {},
+    });
+
+    await state.addToWishlist(result);
+
+    assert.equal(cardActionState(result), 'play');
+});
+
+test("T3-DoD4b：already_owned count=2 ⇒ cardActionState(result) === 'play+folder'", async () => {
+    const localStatus = {
+        exists: true,
+        count: 2,
+        paths: ['/lib/FOLDER-1a.mp4', '/lib/FOLDER-1b.mp4'],
+    };
+    globalThis.fetch = async (url, opts = {}) => {
+        const u = String(url);
+        if (u === '/api/wishlist' && opts.method === 'POST') {
+            return jsonResponse({
+                success: false,
+                already_owned: true,
+                local_status: localStatus,
+            });
+        }
+        throw new Error(`unexpected url: ${u}`);
+    };
+    globalThis.window.t = (key) => key;
+
+    const result = { number: 'FOLDER-1', title: 't', _wishlisted: false };
+    const state = makeWishlistThis({
+        wishlistCount: 0,
+        wishlistLoaded: false,
+        wishlistItems: [],
+        showToast() {},
+    });
+
+    await state.addToWishlist(result);
+
+    assert.equal(cardActionState(result), 'play+folder');
+});
+
+// ─── PR#176 第 2 輪：await 之後的計數回滾（不變式 oracle）─────────────────
+//
+// 這五支釘的是**同一條不變式**：`await` 之後不准用相對加減改 `wishlistCount`；
+// `wishlistLoaded` 為真時計數必須等於權威清單長度。
+//
+// 交錯的形狀是實測出來的可達路徑（不是理論）：使用者一邊掃描一邊按「加入書籤」→
+// `repo.add()` 撞上 `upsert_batch` 的寫鎖、5 秒後拋 `database is locked` → POST 回 500；
+// 這期間使用者以為沒反應去點了書籤分頁，`GET /api/wishlist` 在同一個持鎖期間 1 ms 就
+// 回來（WAL 讀不擋）並寫入權威值 → POST 才落地做回滾。
+//
+// 每支的真相都是「DB 有 5 筆」，所以收斂後 badge 一律必須是 5（remove 那支是 3）。
+
+function makeInterleaveState(authoritative) {
+    const state = makeWishlistThis({
+        wishlistLoaded: true,
+        wishlistItems: [],
+        wishlistCount: authoritative.length,
+        searchResults: [],
+    });
+    // 模擬 loadWishlist() 已經整包覆蓋落地（清單與計數同時寫入權威值）
+    state.wishlistItems = authoritative.slice();
+    state.wishlistCount = authoritative.length;
+    return state;
+}
+
+const AUTHORITATIVE_5 = [
+    { number: 'W-1' }, { number: 'W-2' }, { number: 'W-3' }, { number: 'W-4' }, { number: 'W-5' },
+];
+
+test('await 後回滾（already_owned）：loadWishlist 先落地時 badge 不得低估', async () => {
+    const state = makeInterleaveState(AUTHORITATIVE_5);
+    const card = { number: 'OWNED-1' };
+    let landAdd;
+    mockFetch(() => new Promise((r) => { landAdd = () => r(jsonResponse({
+        success: false, already_owned: true,
+        local_status: { exists: true, count: 1, paths: ['file:///x/OWNED-1.mp4'] },
+    })); }));
+    state.showToast = () => {};
+    const p = state.addToWishlist(card);          // 樂觀 +1 → 6，unshift → 6 張
+    state.wishlistItems = AUTHORITATIVE_5.slice();  // loadWishlist() 整包覆蓋落地
+    state.wishlistCount = AUTHORITATIVE_5.length;
+    landAdd();
+    await p;
+    assert.equal(state.wishlistCount, 5, 'badge 必須等於權威清單長度，不得被 -1 扣成 4');
+    assert.equal(state.wishlistItems.length, 5);
+});
+
+test('await 後回滾（網路錯誤）：loadWishlist 先落地時 badge 不得低估', async () => {
+    const state = makeInterleaveState(AUTHORITATIVE_5);
+    const card = { number: 'NET-1' };
+    let boom;
+    mockFetch(() => new Promise((_, rej) => { boom = () => rej(new Error('network down')); }));
+    const p = state.addToWishlist(card);
+    state.wishlistItems = AUTHORITATIVE_5.slice();
+    state.wishlistCount = AUTHORITATIVE_5.length;
+    boom();
+    await p;
+    assert.equal(state.wishlistCount, 5);
+});
+
+test('await 後回滾（500，掃描持鎖那條可達路徑）：badge 不得低估', async () => {
+    const state = makeInterleaveState(AUTHORITATIVE_5);
+    const card = { number: 'LOCK-1' };
+    let land500;
+    mockFetch(() => new Promise((r) => { land500 = () => r({ ok: false, status: 500 }); }));
+    const p = state.addToWishlist(card);
+    state.wishlistItems = AUTHORITATIVE_5.slice();
+    state.wishlistCount = AUTHORITATIVE_5.length;
+    land500();
+    await p;
+    assert.equal(state.wishlistCount, 5);
+});
+
+test('await 後回滾（remove 失敗）：badge 不得高估、清單不得出現重複 number', async () => {
+    const authoritative = [{ number: 'R-1' }, { number: 'R-2' }, { number: 'R-3' }];
+    const state = makeInterleaveState(authoritative);
+    let boom;
+    mockFetch(() => new Promise((_, rej) => { boom = () => rej(new Error('network down')); }));
+    const p = state.removeFromWishlist('R-2');     // 樂觀移除 → 2 張
+    state.wishlistItems = authoritative.slice();   // loadWishlist() 落地：刪除失敗 ⇒ R-2 還在
+    state.wishlistCount = authoritative.length;
+    boom();
+    await p;
+    assert.equal(state.wishlistCount, 3, 'badge 不得被 +1 加成 4');
+    const numbers = state.wishlistItems.map((i) => i.number);
+    assert.equal(numbers.length, new Set(numbers).size, '不得出現同 number 的重複 :key');
+});
+
+test('await 後回滾（wishlistLoaded=false）：沒有權威清單時仍走相對回滾', async () => {
+    const state = makeWishlistThis({ wishlistLoaded: false, wishlistItems: [], wishlistCount: 5, searchResults: [] });
+    mockFetch(() => Promise.reject(new Error('network down')));
+    await state.addToWishlist({ number: 'NL-1' });
+    assert.equal(state.wishlistCount, 5, '沒開過書籤分頁 ⇒ 清單不權威，相對回滾仍是正確答案');
 });

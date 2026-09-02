@@ -126,9 +126,15 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "同上，純 JS 字面值；正解是抽成靜態 .js 檔由前端載入，而非拆函式。",
     ),
     ("web/routers/scanner.py", "generate_avlist"): (
-        500,
+        514,
         "avlist SSE 生成主流程；109 已判定為「列 backlog、現在別搬」（60–100 處測試 patch "
-        "target 焊死該函式，拆分成本由測試面而非邏輯面決定，與既有 C901 noqa 理由一致）。",
+        "target 焊死該函式，拆分成本由測試面而非邏輯面決定，與既有 C901 noqa 理由一致）。"
+        " ／ 500→514（feature/141-wishlist-motion T5）：掃描完成收尾掛書籤對帳（spec-141 F2），"
+        "含 CD-4 要求的自我隔離 try/except ＋ 兩則通知，與同函式內既有的 "
+        "`_run_sample_images_cleanup_pass` 那段「呼叫端自己包一層、不中斷主流程」逐字同形。"
+        "**沒有跟著 scraper.py 抽 helper 是刻意的**：那一支是因為唯讀／一般兩個出口要跑同一件事"
+        "（重複）＋ ruff C901 撞上限（硬錯誤）才抽；這裡只有一個呼叫點，抽出去只會讓兩個 router "
+        "各存一份同名 helper，比 inline 更糟。",
     ),
     ("core/organizer.py", "organize_file"): (
         366,
@@ -201,7 +207,7 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "理由一致）。",
     ),
     ("core/database/connection.py", "init_db"): (
-        235,
+        238,
         "資料庫 schema 初始化主流程，逐表 CREATE TABLE/CREATE INDEX 語句序列，schema 仍在"
         "演進中；拆成多個小函式不會降低本質複雜度，只會增加呼叫層次與跨函式的 cursor/conn "
         "傳遞。"
@@ -211,7 +217,10 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "這是 schema 演進的固有成本，不是可以靠重構消掉的膨脹。"
         " ／ 209→235（feature/140-wishlist T2）：新增 `wishlist` 表的 `CREATE TABLE IF NOT "
         "EXISTS` ＋ `idx_wishlist_created_at` 索引，與同函式內既有 5 張表逐字同形。把單獨一張"
-        "表抽成 helper 會讓 6 張表有 5 張在函式內、1 張在函式外，反而更難讀。",
+        "表抽成 helper 會讓 6 張表有 5 張在函式內、1 張在函式外，反而更難讀。"
+        " ／ 235→238（feature/141-wishlist-motion T1）：新增 `idx_videos_number_upper` "
+        "表達式索引（`UPPER(number)`），與同區塊既有 4 條 `idx_videos_*` 逐字同形。"
+        "它讓書籤與片庫對帳不再全表掃描（spec-141 F5），是純加法的 3 行索引宣告。",
     ),
 }
 

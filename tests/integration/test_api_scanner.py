@@ -6,6 +6,25 @@ from urllib.parse import quote
 from core.path_utils import to_file_uri
 from tests.conftest import MOCK_FOCAL_XY
 
+# TASK-141a-T5：本檔測的兩支端點（generate_avlist / enrich_single_endpoint）收尾會
+# 無條件呼叫 reconcile_wishlist()，它用無參數 repo ⇒ 解析到真實 DB。逐檔明示 opt-in
+# 隔離（fixture 定義見 tests/conftest.py，刻意不做成 autouse——見該處說明）。
+pytestmark = pytest.mark.usefixtures("isolate_reconcile_db")
+
+
+
+@pytest.fixture(autouse=True)
+def reset_buffer():
+    """通知 buffer 是模組層級全域 deque，測試間必須清空，否則「恰好一筆」會閃爍。"""
+    import web.routers.notifications as notif_mod
+    notif_mod._notifications.clear()
+    notif_mod._read_ids.clear()
+    yield
+    notif_mod._notifications.clear()
+    notif_mod._read_ids.clear()
+
+
+
 class TestScannerAPI:
     """測試 scanner.py 相關 endpoints"""
 
@@ -3419,4 +3438,199 @@ class TestVideoPlayerMultipart:
         assert 'id="oa-player"' not in html
         assert "/static/js/pages/player.js" not in html
         assert "test.mp4" in html
+
+
+class TestGenerateAvlistWishlistReconcile:
+    """TASK-141a-T5：掃描完成收尾掛 reconcile_wishlist（DoD 1/3/6）。"""
+
+    def _scan_config(self, scan_dir, output_dir):
+        return {
+            "gallery": {
+                "directories": [str(scan_dir)],
+                "output_dir": str(output_dir),
+                "path_mappings": {},
+                "min_size_mb": 0,
+            },
+            "general": {"theme": "light"},
+            "scraper": {"video_extensions": [".mp4"]},
+            "search": {"proxy_url": ""},
+        }
+
+    def _patch_db_paths(self, monkeypatch, db_path):
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
+        monkeypatch.setattr("core.database.connection.get_db_path", lambda: db_path)
+        monkeypatch.setattr("core.wishlist_cover_cache.get_db_path", lambda: db_path)
+
+    def test_generate_avlist_reconciles_wishlist_on_completion(
+        self, client, tmp_path, monkeypatch, parse_sse_events
+    ):
+        """DoD 1：書籤有已入手項目 → 完整掃描後恰好一筆 auto_removed 通知，DB 真刪。"""
+        import sqlite3
+        from core.database import init_db, WishlistRepository, VideoRepository, Video
+
+        scan_dir = tmp_path / "videos"
+        scan_dir.mkdir()
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        db_path = tmp_path / "test.db"
+        init_db(db_path)
+
+        monkeypatch.setattr(
+            "web.routers.scanner.load_config",
+            lambda: self._scan_config(scan_dir, output_dir),
+        )
+        self._patch_db_paths(monkeypatch, db_path)
+
+        number = "OWNED-SCAN-001"
+        WishlistRepository().add(number, title="Owned Title")
+        VideoRepository().upsert(Video(
+            path=to_file_uri(f"/test/{number}.mp4"),
+            number=number,
+            title="Owned Video",
+        ))
+
+        response = client.get("/api/gallery/generate")
+        assert response.status_code == 200
+        events = parse_sse_events(response.text)
+        assert [e for e in events if e.get("type") == "done"], "掃描應正常完成並 yield done"
+
+        notif_items = client.get("/api/notifications").json()["items"]
+        auto_removed = [
+            i for i in notif_items if i["title_key"] == "notif.wishlist_auto_removed"
+        ]
+        assert len(auto_removed) == 1, (
+            f"掃描完成應對帳並恰好發 1 筆 auto_removed，實得 {[i['title_key'] for i in notif_items]}"
+        )
+        assert auto_removed[0]["level"] == "info"
+        assert auto_removed[0]["task_type"] == "wishlist_reconcile"
+
+        conn = sqlite3.connect(str(db_path))
+        row = conn.execute(
+            "SELECT 1 FROM wishlist WHERE number = ?", (number,)
+        ).fetchone()
+        conn.close()
+        assert row is None, "已入手書籤應被對帳刪除"
+
+    def test_generate_avlist_reconcile_failure_isolated(
+        self, client, tmp_path, monkeypatch, parse_sse_events
+    ):
+        """DoD 3：reconcile 丟例外時 done 欄位與 baseline 一致，並發 warn 通知。"""
+        scan_dir = tmp_path / "videos"
+        scan_dir.mkdir()
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        db_path = tmp_path / "test.db"
+
+        from core.database import init_db
+        init_db(db_path)
+
+        monkeypatch.setattr(
+            "web.routers.scanner.load_config",
+            lambda: self._scan_config(scan_dir, output_dir),
+        )
+        self._patch_db_paths(monkeypatch, db_path)
+
+        # BE-TEST-10：先跑 baseline（不注入例外）取得預期 done 欄位
+        baseline_resp = client.get("/api/gallery/generate")
+        assert baseline_resp.status_code == 200
+        baseline_done = [
+            e for e in parse_sse_events(baseline_resp.text) if e.get("type") == "done"
+        ]
+        assert len(baseline_done) == 1
+        baseline = baseline_done[0]
+
+        import web.routers.notifications as notif_mod
+        notif_mod._notifications.clear()
+        notif_mod._read_ids.clear()
+
+        def _boom():
+            raise RuntimeError("reconcile exploded")
+
+        # raising=False：實作前屬性尚不存在；RED 應落在「未發 warn」而非 AttributeError
+        monkeypatch.setattr("web.routers.scanner.reconcile_wishlist", _boom, raising=False)
+
+        failure_resp = client.get("/api/gallery/generate")
+        assert failure_resp.status_code == 200
+        failure_done = [
+            e for e in parse_sse_events(failure_resp.text) if e.get("type") == "done"
+        ]
+        assert len(failure_done) == 1
+        failed = failure_done[0]
+
+        assert failed["video_count"] == baseline["video_count"]
+        assert failed["stats"] == baseline["stats"]
+
+        notif_items = client.get("/api/notifications").json()["items"]
+        warn_items = [
+            i for i in notif_items
+            if i["title_key"] == "notif.wishlist_reconcile_failed"
+        ]
+        assert len(warn_items) == 1, (
+            f"對帳失敗應發恰好 1 筆 reconcile_failed，實得 {[i['title_key'] for i in notif_items]}"
+        )
+        assert warn_items[0]["level"] == "warn"
+        assert warn_items[0]["task_type"] == "wishlist_reconcile"
+
+    def test_generate_avlist_reconciles_even_when_aborted(
+        self, tmp_path, monkeypatch, mocker
+    ):
+        """DoD 6：使用者中止但已寫入新片 → 對帳仍觸發。"""
+        from web.routers.scanner import generate_avlist
+        from core.database import init_db
+        from core.gallery_scanner import VideoInfo
+
+        dir0 = tmp_path / "src0"
+        dir0.mkdir()
+        (dir0 / "video_0.mp4").write_bytes(b"x" * 2048)
+        dir1 = tmp_path / "src1"
+        dir1.mkdir()
+        (dir1 / "video_0.mp4").write_bytes(b"x" * 2048)
+
+        output_dir = tmp_path / "html_out"
+        output_dir.mkdir()
+        db_path = tmp_path / "test.db"
+        init_db(db_path)
+
+        cfg = {
+            "gallery": {
+                "directories": [str(dir0), str(dir1)],
+                "output_dir": str(output_dir),
+                "path_mappings": {},
+                "min_size_mb": 0,
+            },
+            "search": {"proxy_url": ""},
+            "general": {"theme": "light"},
+            "scraper": {"video_extensions": [".mp4"]},
+        }
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        self._patch_db_paths(monkeypatch, db_path)
+
+        def fake_scan_file(self, video_path, base_path=None):
+            return VideoInfo(path=to_file_uri(video_path), title="t", num="ABC-001")
+
+        mocker.patch("web.routers.scanner.VideoScanner.scan_file", fake_scan_file)
+        mocker.patch("web.routers.scanner.HTMLGenerator")
+        mocker.patch("web.routers.scanner._emit_notif")
+
+        reconcile_calls = []
+
+        def fake_reconcile():
+            reconcile_calls.append(1)
+            return []
+
+        # raising=False：實作前屬性尚不存在；RED 應落在「呼叫次數 0」而非 AttributeError
+        monkeypatch.setattr("web.routers.scanner.reconcile_wishlist", fake_reconcile, raising=False)
+
+        # outer(dir0)=#1, inner(file0@dir0)=#2, outer(dir1)=#3 → trigger 後 abort
+        state = {"n": 0}
+
+        def should_abort():
+            state["n"] += 1
+            return state["n"] > 2
+
+        list(generate_avlist(should_abort=should_abort))
+
+        assert len(reconcile_calls) >= 1, (
+            "abort 路徑仍應觸發 reconcile_wishlist（已掃到的片是真的已入手）"
+        )
 

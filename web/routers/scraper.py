@@ -42,6 +42,7 @@ from core.readonly_producer import (
 )
 from core import thumbnail_cache
 from web.routers.notifications import emit_notification as _emit_notif
+from core.wishlist_reconcile import reconcile_wishlist, format_wishlist_removed_message
 
 logger = get_logger(__name__)
 
@@ -562,6 +563,32 @@ def _resolve_write_cover(write_cover: Optional[bool], has_metadata: bool) -> boo
 
 
 
+def _reconcile_wishlist_after_write() -> None:
+    """單片重刮／補完成功後的書籤對帳 ＋ 通知（TASK-141a-T5，CD-4）。
+
+    抽成 helper 有兩個理由，缺一都不成立：
+    ① `enrich_single_endpoint()` 的唯讀分支與一般分支要跑**一模一樣**的事，
+       inline 兩份就是兩份會漂的實作；
+    ② inline 版本讓 `enrich_single_endpoint()` 的 ruff C901 從 30 撞到 34。
+
+    **失敗一律吞在這裡**：對帳丟例外只發一筆 warn 通知，絕不讓它穿透到
+    `enrich_single_endpoint()` 外層既有的 catch-all——否則一次**成功**的重刮
+    （檔案已搬完、DB 已寫入）會被翻成 `{"success": false, ...}`，畫面說失敗。
+    """
+    try:
+        _wl_removed = reconcile_wishlist()
+    except Exception:
+        logger.exception("wishlist 對帳失敗（單片重刮／補完完成）")
+        _emit_notif("warn", "notif.wishlist_reconcile_failed", task_type="wishlist_reconcile")
+        return
+    if _wl_removed:
+        _emit_notif(
+            "info", "notif.wishlist_auto_removed",
+            message=format_wishlist_removed_message(_wl_removed),
+            task_type="wishlist_reconcile",
+        )
+
+
 @router.post("/enrich-single")
 def enrich_single_endpoint(request: EnrichRequest) -> dict:
     config = load_config()
@@ -636,6 +663,8 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
                 overwrite_existing=request.overwrite_existing,
                 after_produce=lambda: thumbnail_cache.invalidate(canonical),
             )
+            if result.success:
+                _reconcile_wishlist_after_write()
             return asdict(result)
         except CfChallengeRequired:
             # F-0：完整 EnrichResult 形狀 ＋ additive cf_needed/cf_source（不得回 partial dict）
@@ -747,6 +776,7 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
         # double-encode 砍錯 hash（PR #60 Codex P2）。
         if result.success:
             thumbnail_cache.invalidate(coerce_to_file_uri(request.file_path))  # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
+            _reconcile_wishlist_after_write()
         return asdict(result)
     except CfChallengeRequired:
         outcome = _begin_solve_for_source(request.source)

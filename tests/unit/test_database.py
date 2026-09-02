@@ -1444,3 +1444,114 @@ class TestUserRatingMigration:
         result = repo.get_by_path(path)
         assert result is not None
         assert result.user_rating == 1
+
+
+def test_upper_number_index_used_by_query_plan(tmp_path):
+    """DoD-2: 驗證查詢規劃器對 UPPER(number) IN (?) 使用 idx_videos_number_upper 索引而非全表掃描。"""
+    db_path = tmp_path / "test.db"
+    init_db(db_path)
+
+    conn = sqlite3.connect(str(db_path))
+    cursor = conn.cursor()
+    cursor.execute(
+        "EXPLAIN QUERY PLAN SELECT * FROM videos WHERE UPPER(number) IN (?)",
+        ("ABC-001",),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+
+    assert rows, "EXPLAIN QUERY PLAN 應回傳至少一列"
+    detail = rows[-1][3]
+    assert "idx_videos_number_upper" in detail
+    assert "SCAN videos" not in detail
+
+
+def test_init_db_creates_upper_number_index(tmp_path):
+    """DoD-1: 新鮮 DB 執行 init_db() 後，sqlite_master 存在 idx_videos_number_upper 索引。"""
+    db_path = tmp_path / "fresh.db"
+    init_db(db_path)
+
+    conn = sqlite3.connect(str(db_path))
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT name FROM sqlite_master
+        WHERE type='index'
+    """)
+    indexes = [row[0] for row in cursor.fetchall()]
+    conn.close()
+
+    assert "idx_videos_number_upper" in indexes
+
+
+def test_init_db_in_place_upgrade_creates_upper_number_index_and_preserves_videos(tmp_path):
+    """DoD-1 & DoD-4: 舊 schema DB 執行 init_db() 就地升級後建立 idx_videos_number_upper，且既有 videos 資料零改動。"""
+    db_path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(str(db_path))
+    cursor = conn.cursor()
+    # 手動建立既有 videos 表（不含任何索引）
+    cursor.execute("""
+        CREATE TABLE videos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT UNIQUE NOT NULL,
+            number TEXT,
+            title TEXT,
+            original_title TEXT,
+            actresses TEXT,
+            maker TEXT,
+            director TEXT DEFAULT '',
+            series TEXT,
+            label TEXT DEFAULT '',
+            tags TEXT,
+            sample_images TEXT DEFAULT '',
+            user_tags TEXT DEFAULT '[]',
+            output_dir TEXT DEFAULT '',
+            duration INTEGER,
+            size_bytes INTEGER,
+            cover_path TEXT,
+            release_date TEXT,
+            mtime REAL,
+            nfo_mtime REAL,
+            scrape_attempted_at REAL DEFAULT 0,
+            auto_focal TEXT DEFAULT '',
+            crop_mode TEXT NOT NULL DEFAULT 'auto',
+            focal_attempted_at TIMESTAMP DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute(
+        "INSERT INTO videos (path, number, title, maker) VALUES (?, ?, ?, ?)",
+        ("/videos/ABC-001.mp4", "ABC-001", "Old Video Title", "SOD"),
+    )
+    conn.commit()
+
+    # BE-TEST-10: 基準值在被測操作（init_db）之前取得
+    cursor.execute("PRAGMA table_info(videos)")
+    cols_before = [row[1] for row in cursor.fetchall()]
+    cursor.execute(f"SELECT {', '.join(cols_before)} FROM videos WHERE number = 'ABC-001'")
+    before_row = cursor.fetchone()
+    before_data = dict(zip(cols_before, before_row))
+    conn.close()
+
+    # 執行 init_db 升級
+    init_db(db_path)
+
+    # 驗證索引已建立且無需遷移腳本
+    conn = sqlite3.connect(str(db_path))
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT name FROM sqlite_master
+        WHERE type='index'
+    """)
+    indexes = [row[0] for row in cursor.fetchall()]
+    assert "idx_videos_number_upper" in indexes
+
+    # DoD-4: 逐欄位比對操作前後既有資料完全相同
+    cursor.execute(f"SELECT {', '.join(cols_before)} FROM videos WHERE number = 'ABC-001'")
+    after_row = cursor.fetchone()
+    after_data = dict(zip(cols_before, after_row))
+    conn.close()
+
+    assert after_data == before_data
+    assert after_data["number"] == "ABC-001"
+

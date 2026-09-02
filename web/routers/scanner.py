@@ -56,6 +56,7 @@ from core.source_settings import is_uncensored_mode_effective
 from pydantic import BaseModel
 from core.logger import get_logger
 from web.routers.notifications import emit_notification as _emit_notif
+from core.wishlist_reconcile import reconcile_wishlist, format_wishlist_removed_message
 
 logger = get_logger(__name__)
 
@@ -732,6 +733,20 @@ def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Genera
         # 使用者每中止一次就累積一筆錯的狀態（Codex P2）。此處 fresh 再查一次
         # should_abort()（Codex P1：涵蓋 HTML 產生期間才斷線的 tail-race）。
         _aborted = _is_aborted()
+
+        try:
+            _wl_removed = reconcile_wishlist()
+        except Exception:
+            logger.exception("wishlist 對帳失敗（掃描完成收尾）")
+            _emit_notif("warn", "notif.wishlist_reconcile_failed", task_type="wishlist_reconcile")
+            _wl_removed = []
+        if _wl_removed:
+            _emit_notif(
+                "info", "notif.wishlist_auto_removed",
+                message=format_wishlist_removed_message(_wl_removed),
+                task_type="wishlist_reconcile",
+            )
+
         if _aborted:
             _emit_notif(
                 "info", "notif.scanner_cancelled",
