@@ -1073,27 +1073,32 @@ function makeAbortError() {
     return new DOMException('The operation was aborted', 'AbortError');
 }
 
-test('deferred-fetch：切回書籤分頁的舊 GET 晚於 cleanup 才回來，不得把已清理的項目寫回畫面', async () => {
+test('deferred-fetch：連續兩次 loadWishlist，舊 GET 晚到不得覆蓋新結果', async () => {
     globalThis.window.t = (key) => key;
-    let releaseGet;
-    const getReleased = new Promise((r) => { releaseGet = r; });
-    const staleFromServer = [{ number: 'OWNED-1', _owned: true }, { number: 'FREE-1', _owned: false }];
+    let releaseGet1;
+    const get1Released = new Promise((r) => { releaseGet1 = r; });
+    const staleFromServer = [{ number: 'OWNED-1' }, { number: 'FREE-1' }];
+    const freshFromServer = [{ number: 'FREE-1' }];
 
-    let getSignal;
+    let get1Signal;
+    let getCall = 0;
     globalThis.fetch = async (url, opts = {}) => {
         const u = String(url);
         if (u === '/api/wishlist') {
-            return new Promise((resolve, reject) => {
-                const { signal } = opts;
-                getSignal = signal;
-                if (signal) {
-                    if (signal.aborted) { reject(makeAbortError()); return; }
-                    signal.addEventListener('abort', () => reject(makeAbortError()), { once: true });
-                }
-                getReleased.then(() => resolve(jsonResponse(staleFromServer)));
-            });
+            getCall += 1;
+            if (getCall === 1) {
+                return new Promise((resolve, reject) => {
+                    const { signal } = opts;
+                    get1Signal = signal;
+                    if (signal) {
+                        if (signal.aborted) { reject(makeAbortError()); return; }
+                        signal.addEventListener('abort', () => reject(makeAbortError()), { once: true });
+                    }
+                    get1Released.then(() => resolve(jsonResponse(staleFromServer)));
+                });
+            }
+            return jsonResponse(freshFromServer);
         }
-        if (u === '/api/wishlist/cleanup') return jsonResponse({ deleted_count: 1 });
         throw new Error(`unexpected url: ${u}`);
     };
 
@@ -1104,25 +1109,22 @@ test('deferred-fetch：切回書籤分頁的舊 GET 晚於 cleanup 才回來，�
         showToast() {},
     });
 
-    const pendingGet = state.loadWishlist();   // 切回書籤分頁發出的 GET，不 await
-    await state.cleanupOwnedWishlist();        // 使用者在舊 GET 回來前按下清理
-    releaseGet();                              // 此刻舊 GET 才回來
-    await pendingGet;
+    const pendingGet1 = state.loadWishlist();
+    const pendingGet2 = state.loadWishlist();
+    await pendingGet2;
+    releaseGet1();
+    await pendingGet1;
 
     assert.deepEqual(
         state.wishlistItems.map((i) => i.number),
         ['FREE-1'],
-        '舊 GET 不得把已清理的 OWNED-1 寫回 wishlistItems',
+        '第一次那個晚到的回應不得覆蓋 wishlistItems',
     );
-    assert.equal(state.wishlistCount, 1, 'badge 必須維持 cleanup 算出的值');
-    // 接線斷言：少了這條，把 fetch 的 { signal } 拿掉時整個取消機制變死碼卻沒有測試會紅
-    // （實測過——那條 mutation 一開始是存活的）。傳了 signal，清理才是真的取消那條
-    // videos 全表掃描查詢，而不是等它跑完再把結果丟掉。
-    assert.ok(getSignal instanceof AbortSignal, 'GET 必須把 AbortSignal 傳進 fetch');
-    assert.equal(getSignal.aborted, true, '清理必須真的 abort 掉那條在飛的 GET');
+    assert.ok(get1Signal instanceof AbortSignal, 'GET 必須把 AbortSignal 傳進 fetch');
+    assert.equal(get1Signal.aborted, true, '第二次 loadWishlist 必須 abort 掉第一次在飛的 GET');
 });
 
-test('deferred-fetch：cleanup 先刪掉該列、單筆 DELETE 後到拿 {success:false} ⇒ badge 跟伺服器重新對帳', async () => {
+test('deferred-fetch：loadWishlist 對帳先清掉該列、單筆 DELETE 後到拿 {success:false} ⇒ badge 跟伺服器重新對帳', async () => {
     globalThis.window.t = (key) => key;
     let releaseDelete;
     const deleteReleased = new Promise((r) => { releaseDelete = r; });
@@ -1132,9 +1134,9 @@ test('deferred-fetch：cleanup 先刪掉該列、單筆 DELETE 後到拿 {succes
         const u = String(url);
         if (u === '/api/wishlist/OWN-1' && opts.method === 'DELETE') {
             await deleteReleased;
-            return jsonResponse({ success: false });   // cleanup 已經先把這一列刪掉了
+            return jsonResponse({ success: false });   // 開書籤時對帳已經先把這一列清掉了
         }
-        if (u === '/api/wishlist/cleanup') return jsonResponse({ deleted_count: 2 });
+        if (u === '/api/wishlist') return jsonResponse([{ number: 'KEEP-1' }]);
         if (u === '/api/wishlist/count') { countCalls++; return jsonResponse({ count: 1 }); }
         throw new Error(`unexpected url: ${u}`);
     };
@@ -1143,16 +1145,16 @@ test('deferred-fetch：cleanup 先刪掉該列、單筆 DELETE 後到拿 {succes
         wishlistCount: 3,
         wishlistLoaded: true,
         wishlistItems: [
-            { number: 'OWN-1', _owned: true },
-            { number: 'OWN-2', _owned: true },
-            { number: 'KEEP-1', _owned: false },
+            { number: 'OWN-1' },
+            { number: 'OWN-2' },
+            { number: 'KEEP-1' },
         ],
         searchResults: [],
         showToast() {},
     });
 
     const pendingRemove = state.removeFromWishlist('OWN-1');  // 樂觀扣掉一筆，DELETE 掛住
-    await state.cleanupOwnedWishlist();                       // 清理把兩筆都算進 deleted_count
+    await state.loadWishlist();                               // 開書籤對帳：伺服器已無 OWN-1
     releaseDelete();
     await pendingRemove;
 
@@ -1189,41 +1191,40 @@ test('removeFromWishlist：HTTP 200 {success:false} ⇒ 重新對帳 badge，且
     assert.equal(state.searchResults[0]._wishlisted, false, '搜尋卡的書籤態不得回滾成已收藏');
 });
 
-// Codex 二審 P2：第一輪把 abort 放在 cleanup 開頭，並註明「之後不可能再有新的 GET」——錯的。
-// 兩顆 segmented 鈕在清理期間都沒被擋（search.html:407-415），使用者按了清理覺得慢而去點
-// 「搜尋」再點回「書籤」，會建出全新的 loadWishlist controller，開頭那次 abort 碰不到它。
-// 上一條 deferred test 只覆蓋「GET 早於 cleanup 建立」，覆蓋不到這個順序。
-test('deferred-fetch：cleanup 進行中切到搜尋段再切回書籤段，那個「新」GET 一樣不得覆蓋清理結果', async () => {
+// Codex 二審 P2（改指向 T4）：對帳觸發點改成 GET /api/wishlist 後，仍要守住
+// switchToSearchList → switchToWishlist 這條 tab 切換路徑上的 abort registry。
+test('deferred-fetch：loadWishlist 進行中切到搜尋段再切回書籤段，舊 GET 不得覆蓋新結果', async () => {
     globalThis.window.t = (key) => key;
-    let releaseCleanup, releaseGet;
-    const cleanupReleased = new Promise((r) => { releaseCleanup = r; });
-    const getReleased = new Promise((r) => { releaseGet = r; });
-    const staleFromServer = [{ number: 'OWNED-1', _owned: true }, { number: 'FREE-1', _owned: false }];
-    let getSignal;
+    let releaseGet1, releaseGet2;
+    const get1Released = new Promise((r) => { releaseGet1 = r; });
+    const get2Released = new Promise((r) => { releaseGet2 = r; });
+    const staleFromServer = [{ number: 'OWNED-1' }, { number: 'FREE-1' }];
+    const freshFromServer = [{ number: 'FREE-1' }];
+    let get1Signal;
+    let getCall = 0;
 
     globalThis.fetch = async (url, opts = {}) => {
         const u = String(url);
-        if (u === '/api/wishlist/cleanup') {
-            await cleanupReleased;              // 清理在伺服器端還在跑（全表掃描＋逐筆刪封面）
-            return jsonResponse({ deleted_count: 1 });
-        }
         if (u === '/api/wishlist') {
+            getCall += 1;
+            const callNum = getCall;
             return new Promise((resolve, reject) => {
                 const { signal } = opts;
-                getSignal = signal;
+                if (callNum === 1) get1Signal = signal;
                 if (signal) {
                     if (signal.aborted) { reject(makeAbortError()); return; }
                     signal.addEventListener('abort', () => reject(makeAbortError()), { once: true });
                 }
-                // 伺服器端讀到的是刪除**前**的資料，但比清理晚回來
-                getReleased.then(() => resolve(jsonResponse(staleFromServer)));
+                const released = callNum === 1 ? get1Released : get2Released;
+                const payload = callNum === 1 ? staleFromServer : freshFromServer;
+                released.then(() => resolve(jsonResponse(payload)));
             });
         }
         throw new Error(`unexpected url: ${u}`);
     };
 
     const state = makeWishlistThis({
-        listMode: 'wishlist',
+        listMode: 'search',
         displayMode: 'grid',
         wishlistCount: 2,
         wishlistLoaded: true,
@@ -1231,21 +1232,20 @@ test('deferred-fetch：cleanup 進行中切到搜尋段再切回書籤段，那�
         showToast() {},
     });
 
-    const pendingCleanup = state.cleanupOwnedWishlist();  // 按下清理，POST 掛住
-    state.switchToSearchList();                           // 覺得慢 → 去看搜尋結果
-    const pendingGet = state.switchToWishlist();          // 再切回書籤 ⇒ 全新的 controller
-    releaseCleanup();
-    await pendingCleanup;
-    releaseGet();
-    await pendingGet;
+    const pendingGet1 = state.switchToWishlist();  // 第一次 loadWishlist，GET 掛住
+    state.switchToSearchList();                    // 覺得慢 → 去看搜尋結果
+    const pendingGet2 = state.switchToWishlist();  // 再切回書籤 ⇒ 同一個 key 會 abort 第一次
+    releaseGet2();
+    await pendingGet2;
+    releaseGet1();
+    await pendingGet1;
 
-    assert.equal(getSignal.aborted, true, '清理期間才發出的那個 GET 也必須被作廢');
+    assert.equal(get1Signal.aborted, true, '切回書籤時發出的第二次 GET 必須作廢第一次');
     assert.deepEqual(
         state.wishlistItems.map((i) => i.number),
         ['FREE-1'],
-        '清理期間發出的新 GET 不得把已清理的 OWNED-1 寫回 wishlistItems',
+        '第一次那個晚到的回應不得把 OWNED-1 寫回 wishlistItems',
     );
-    assert.equal(state.wishlistCount, 1);
 });
 
 // branch review P2-1：POST 回 added:false（那個番號本來就在）時，樂觀 +1 必須收回。

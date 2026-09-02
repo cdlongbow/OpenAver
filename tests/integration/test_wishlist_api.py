@@ -13,6 +13,17 @@ from core import wishlist_cover_cache
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
+@pytest.fixture(autouse=True)
+def reset_buffer():
+    """通知 buffer 是模組層級全域 deque，測試間必須清空，否則「恰好一筆」會閃爍。"""
+    import web.routers.notifications as notif_mod
+    notif_mod._notifications.clear()
+    notif_mod._read_ids.clear()
+    yield
+    notif_mod._notifications.clear()
+    notif_mod._read_ids.clear()
+
+
 @pytest.fixture
 def tmp_db(tmp_path):
     """建立臨時測試資料庫"""
@@ -190,8 +201,8 @@ def test_list_wishlist_empty(client):
     assert resp.json() == []
 
 
-def test_list_wishlist_sorting_unowned_first_then_owned(client, tmp_db):
-    """DoD-5: GET /api/wishlist 排序：未入手（新到舊）在前，已入手（新到舊）在後"""
+def test_list_wishlist_auto_removes_owned_items_on_load(client, tmp_db):
+    """TASK-141a-T4 DoD 1: GET /api/wishlist 對帳後已入手項目直接消失（DB 真刪、無 _owned）。"""
     conn = sqlite3.connect(str(tmp_db))
     # 插入 3 筆書籤，created_at 由舊到新：AAA-001, BBB-002, CCC-003
     conn.execute("""
@@ -212,21 +223,22 @@ def test_list_wishlist_sorting_unowned_first_then_owned(client, tmp_db):
     resp = client.get("/api/wishlist")
     assert resp.status_code == 200
     items = resp.json()
-    assert len(items) == 3
+    assert len(items) == 2
+    assert [item["number"] for item in items] == ["CCC-003", "AAA-001"]
+    for item in items:
+        assert "_owned" not in item
 
-    # 順序應為：CCC-003 (未入手，最新), AAA-001 (未入手，較舊), BBB-002 (已入手)
-    assert items[0]["number"] == "CCC-003"
-    assert items[0]["_owned"] is False
-
-    assert items[1]["number"] == "AAA-001"
-    assert items[1]["_owned"] is False
-
-    assert items[2]["number"] == "BBB-002"
-    assert items[2]["_owned"] is True
+    conn = sqlite3.connect(str(tmp_db))
+    row = conn.execute(
+        "SELECT COUNT(*) FROM wishlist WHERE number = ?",
+        ("BBB-002",),
+    ).fetchone()
+    conn.close()
+    assert row[0] == 0
 
 
-def test_fc2_legacy_number_format_stays_unowned_by_design(client, tmp_db):
-    """DoD-6: FC2 格式舊列殘留（書籤 FC2-1234567 vs videos FC2PPV-1234567）依設計維持 _owned: False。"""
+def test_fc2_legacy_number_format_survives_auto_removal(client, tmp_db):
+    """TASK-141a-T4：FC2 舊列漏判（FC2- vs FC2PPV-）不會被自動移除。"""
     conn = sqlite3.connect(str(tmp_db))
     conn.execute("""
         INSERT INTO wishlist (number, title, created_at)
@@ -244,7 +256,14 @@ def test_fc2_legacy_number_format_stays_unowned_by_design(client, tmp_db):
     items = resp.json()
     assert len(items) == 1
     assert items[0]["number"] == "FC2-1234567"
-    assert items[0]["_owned"] is False
+
+    conn = sqlite3.connect(str(tmp_db))
+    row = conn.execute(
+        "SELECT COUNT(*) FROM wishlist WHERE number = ?",
+        ("FC2-1234567",),
+    ).fetchone()
+    conn.close()
+    assert row[0] == 1
 
 
 def test_delete_wishlist_existing(client, tmp_db):
@@ -324,8 +343,8 @@ def test_wishlist_membership_empty(client, tmp_db):
     assert resp.json() == {}
 
 
-def test_cleanup_deletes_only_owned_and_leaves_others(client, tmp_db):
-    """DoD-7 & M1: POST /api/wishlist/cleanup 只刪已入手的書籤與封面，保留未入手的"""
+def test_list_wishlist_reconcile_deletes_only_owned_and_leaves_others(client, tmp_db):
+    """TASK-141a-T4：GET /api/wishlist 對帳只刪已入手的書籤與封面，保留未入手的"""
     conn = sqlite3.connect(str(tmp_db))
     conn.execute("""
         INSERT INTO wishlist (number, title)
@@ -354,9 +373,8 @@ def test_cleanup_deletes_only_owned_and_leaves_others(client, tmp_db):
     f3.parent.mkdir(parents=True, exist_ok=True)
     f3.write_bytes(b"cover3")
 
-    resp = client.post("/api/wishlist/cleanup")
+    resp = client.get("/api/wishlist")
     assert resp.status_code == 200
-    assert resp.json() == {"deleted_count": 1}
 
     # 已入手的封面被刪
     assert not f1.exists()
@@ -369,16 +387,16 @@ def test_cleanup_deletes_only_owned_and_leaves_others(client, tmp_db):
     assert count_resp.json()["count"] == 2
 
 
-def test_cleanup_all_unowned_noop(client, tmp_db):
-    """POST /api/wishlist/cleanup 全部未入手時回 deleted_count: 0"""
+def test_list_wishlist_reconcile_noop_when_all_unowned(client, tmp_db):
+    """TASK-141a-T4：GET /api/wishlist 全部未入手時對帳為 no-op，清單與 count 不變"""
     conn = sqlite3.connect(str(tmp_db))
     conn.execute("INSERT INTO wishlist (number, title) VALUES ('UN-1', 'T1'), ('UN-2', 'T2')")
     conn.commit()
     conn.close()
 
-    resp = client.post("/api/wishlist/cleanup")
+    resp = client.get("/api/wishlist")
     assert resp.status_code == 200
-    assert resp.json() == {"deleted_count": 0}
+    assert len(resp.json()) == 2
 
     count_resp = client.get("/api/wishlist/count")
     assert count_resp.json()["count"] == 2
@@ -442,8 +460,8 @@ def test_delete_wishlist_survives_cover_unlink_failure(client, tmp_db, monkeypat
     assert client.get("/api/wishlist/count").json()["count"] == 0
 
 
-def test_cleanup_wishlist_survives_cover_unlink_failure(client, tmp_db, monkeypatch):
-    """同上，批次路徑：第 k 筆刪檔失敗不得中斷後面的清理、也不得回 500。"""
+def test_list_wishlist_reconcile_survives_cover_unlink_failure(client, tmp_db, monkeypatch):
+    """TASK-141a-T4：GET 對帳路徑——第 k 筆封面刪檔失敗不得中斷、也不得回 500。"""
     monkeypatch.setattr("core.wishlist_cover_cache.download_and_save", lambda *a, **k: True)
     numbers = ("BATCHLOCK-001", "BATCHLOCK-002")
     for n in numbers:
@@ -461,10 +479,141 @@ def test_cleanup_wishlist_survives_cover_unlink_failure(client, tmp_db, monkeypa
 
     monkeypatch.setattr("core.wishlist_cover_cache.remove", _boom)
 
-    resp = client.post("/api/wishlist/cleanup")
+    resp = client.get("/api/wishlist")
     assert resp.status_code == 200, "封面刪不掉不得變成 500"
-    assert resp.json()["deleted_count"] == 2, "兩筆都必須被算進去（迴圈不得被第一筆的例外中斷）"
+    assert resp.json() == []
     assert client.get("/api/wishlist/count").json()["count"] == 0
+
+
+def test_list_wishlist_emits_single_reconcile_notification(client, tmp_db):
+    """TASK-141a-T4 DoD 2: 一次 GET 恰好一筆 notif.wishlist_auto_removed，message 逐字比對。"""
+    from core.wishlist_reconcile import format_wishlist_removed_message
+
+    conn = sqlite3.connect(str(tmp_db))
+    conn.execute("""
+        INSERT INTO wishlist (number, title, created_at)
+        VALUES
+        ('NOTIF-001', 'Owned One', '2026-01-01 10:00:00'),
+        ('NOTIF-002', 'Owned Two', '2026-01-02 10:00:00')
+    """)
+    conn.executemany(
+        "INSERT INTO videos (path, number, title) VALUES (?, ?, ?)",
+        [
+            ("/lib/NOTIF-001.mp4", "NOTIF-001", "v1"),
+            ("/lib/NOTIF-002.mp4", "NOTIF-002", "v2"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    # list_all 依 created_at DESC → 對帳回傳順序為 NOTIF-002, NOTIF-001
+    expected_message = format_wishlist_removed_message(["NOTIF-002", "NOTIF-001"])
+
+    resp = client.get("/api/wishlist")
+    assert resp.status_code == 200
+
+    notif_resp = client.get("/api/notifications")
+    assert notif_resp.status_code == 200
+    items = notif_resp.json()["items"]
+    assert len(items) == 1
+    assert items[0]["title_key"] == "notif.wishlist_auto_removed"
+    assert items[0]["level"] == "info"
+    assert items[0]["message"] == expected_message
+    assert items[0]["task_type"] == "wishlist_reconcile"
+
+
+def test_list_wishlist_second_load_no_duplicate_notification(client, tmp_db, monkeypatch):
+    """TASK-141a-T4 DoD 3: 連續兩次 GET → 第二次零通知、delete_many 不被呼叫。"""
+    from core.database import WishlistRepository
+
+    conn = sqlite3.connect(str(tmp_db))
+    conn.execute("""
+        INSERT INTO wishlist (number, title)
+        VALUES ('SECOND-001', 'Owned')
+    """)
+    conn.execute("""
+        INSERT INTO videos (path, number, title)
+        VALUES ('/lib/SECOND-001.mp4', 'SECOND-001', 'v')
+    """)
+    conn.commit()
+    conn.close()
+
+    real_delete_many = WishlistRepository.delete_many
+    second_phase = {"active": False}
+    second_calls = []
+
+    def _counting_delete_many(self, numbers):
+        if second_phase["active"]:
+            second_calls.append(list(numbers))
+        return real_delete_many(self, numbers)
+
+    monkeypatch.setattr(
+        "core.database.WishlistRepository.delete_many",
+        _counting_delete_many,
+    )
+
+    first = client.get("/api/wishlist")
+    assert first.status_code == 200
+
+    notif_after_first = client.get("/api/notifications").json()["items"]
+    assert len(notif_after_first) == 1
+
+    second_phase["active"] = True
+    second = client.get("/api/wishlist")
+    assert second.status_code == 200
+
+    notif_after_second = client.get("/api/notifications").json()["items"]
+    assert len(notif_after_second) == 1
+    assert second_calls == []
+
+
+def test_cleanup_endpoint_removed(client):
+    """TASK-141a-T4 DoD 4: POST /api/wishlist/cleanup 端點已移除，不再回 200 + deleted_count。
+
+    Card 原文寫「回 404」；實際是 **405 Method Not Allowed**——`DELETE /{number}` 那條
+    路徑模板仍然匹配 `/cleanup` 這個路徑，只是不接受 POST。端點確實不存在了
+    （不再回 `deleted_count`），前端 `!resp.ok` 對 404／405 行為相同。
+    """
+    resp = client.post("/api/wishlist/cleanup")
+    assert resp.status_code == 405
+    assert resp.json() != {"deleted_count": 0}
+    assert "deleted_count" not in resp.json()
+
+
+def test_list_wishlist_reconcile_then_delete_race_converges(client, tmp_db, monkeypatch):
+    """TASK-141a-T4 DoD 5: 對帳與 list_all 之間插入手動刪除 → 收斂到刪除後狀態。"""
+    from core.database import WishlistRepository
+
+    conn = sqlite3.connect(str(tmp_db))
+    conn.execute("""
+        INSERT INTO wishlist (number, title, created_at)
+        VALUES
+        ('RACE-X', 'Will Be Manually Deleted', '2026-01-01 10:00:00'),
+        ('RACE-Y', 'Survives', '2026-01-02 10:00:00')
+    """)
+    conn.commit()
+    conn.close()
+
+    real_list_all = WishlistRepository.list_all
+    call_count = {"n": 0}
+
+    def _wrapped_list_all(self):
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            # 模擬使用者在對帳送出與清單渲染之間手動刪除 RACE-X
+            WishlistRepository().remove("RACE-X")
+        return real_list_all(self)
+
+    monkeypatch.setattr(
+        "core.database.WishlistRepository.list_all",
+        _wrapped_list_all,
+    )
+
+    resp = client.get("/api/wishlist")
+    assert resp.status_code == 200
+    numbers = [item["number"] for item in resp.json()]
+    assert "RACE-X" not in numbers
+    assert "RACE-Y" in numbers
 
 
 def test_add_wishlist_already_owned_blocks_write(client, tmp_db):

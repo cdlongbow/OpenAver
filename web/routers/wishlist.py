@@ -1,7 +1,7 @@
 """
 web.routers.wishlist — 書籤路由（TASK-140-T4）。
 
-七個端點連接 WishlistRepository、wishlist_cover_cache 與 VideoRepository。
+六個端點連接 WishlistRepository、wishlist_cover_cache 與 VideoRepository。
 一律使用同步 def，FastAPI 自動交由 threadpool 處理。
 """
 from typing import List, Optional
@@ -14,6 +14,8 @@ from core import wishlist_cover_cache
 from core.database import VideoRepository, WishlistRepository, get_db_path as get_db_path, init_db
 from core.logger import get_logger
 from core.scraper import normalize_number
+from core.wishlist_reconcile import reconcile_wishlist, format_wishlist_removed_message
+from web.routers.notifications import emit_notification as _emit_notif
 
 logger = get_logger(__name__)
 
@@ -104,16 +106,15 @@ def add_wishlist(req: WishlistAddRequest) -> dict:
 @router.get("")
 def list_wishlist() -> list:
     init_db()
-    repo = WishlistRepository()
-    items = repo.list_all()
-    numbers = [item["number"] for item in items]
-    video_repo = VideoRepository()
-    owned = video_repo.get_by_numbers(numbers)
-    for item in items:
-        item["_owned"] = bool(owned.get(item["number"]))
-    unowned = [item for item in items if not item["_owned"]]
-    owned_items = [item for item in items if item["_owned"]]
-    return unowned + owned_items
+    removed = reconcile_wishlist()
+    if removed:
+        _emit_notif(
+            "info",
+            "notif.wishlist_auto_removed",
+            message=format_wishlist_removed_message(removed),
+            task_type="wishlist_reconcile",
+        )
+    return WishlistRepository().list_all()
 
 
 @router.delete("/{number}")
@@ -137,28 +138,6 @@ def wishlist_membership(req: WishlistMembershipRequest) -> dict:
     init_db()
     stored = {item["number"] for item in WishlistRepository().list_all()}
     return {raw: normalize_number(raw) in stored for raw in req.numbers}
-
-
-@router.post("/cleanup")
-def cleanup_wishlist() -> dict:
-    init_db()
-    repo = WishlistRepository()
-    items = repo.list_all()
-    numbers = [item["number"] for item in items]
-    owned = VideoRepository().get_by_numbers(numbers)
-    owned_numbers = [n for n in numbers if owned.get(n)]
-    # 🔴 順序：**先刪 DB，成功了才刪封面**（Codex review P3），與單筆刪除端點
-    # `delete_wishlist()` 同形。反過來（先刪封面）的話，`delete_many()` 若拋例外
-    # （DB 鎖住／磁碟滿），使用者會看到「書籤列還在、封面全沒了」的破圖清單——
-    # 那不在 spec §5 已接受的殘留裡；spec 接受的是**反方向**：DB 刪掉了、檔案沒刪掉
-    # 而留下孤兒 webp（單人本機、幾十 KB 一張，不做 GC）。
-    deleted_count = repo.delete_many(owned_numbers)
-    if deleted_count:
-        for n in owned_numbers:
-            # 同上：迴圈裡尤其不能讓第 k 筆的 OSError 中斷後面的清理，
-            # 也不能讓已經 commit 的批次刪除回一個 500。
-            wishlist_cover_cache.remove_best_effort(n)
-    return {"deleted_count": deleted_count}
 
 
 @router.get("/cover")
