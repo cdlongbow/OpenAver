@@ -1184,7 +1184,7 @@
         <div class="wishlist-panel" x-show="listMode === 'wishlist'" x-cloak>
             <div class="wishlist-grid ds-gallery-composition" x-show="listMode === 'wishlist'" x-cloak>
                 <template x-for="(item, index) in wishlistItems" :key="item.number">
-                    <div class="av-card-preview" :data-slot="index" @click="openWishlistLightbox(index)">
+                    <div class="av-card-preview" :data-slot="index" :data-flip-id="item.number" @click="openWishlistLightbox(index)">
                         <div class="av-card-preview-img">
                             <img :src="`/api/wishlist/cover?number=${encodeURIComponent(item.number)}`"
                                  :alt="item.number"
@@ -1197,7 +1197,7 @@
                             </div>
                             <div class="av-card-preview-overlay">
                                 <button class="btn-glass-circle"
-                                        @click.stop="removeFromWishlist(item.number)"
+                                        @click.stop="removeFromWishlist(item.number, 'wall')"
                                         title="{{ t('search.action.remove_wishlist') }}">
                                     <i class="bi bi-trash3"></i>
                                 </button>

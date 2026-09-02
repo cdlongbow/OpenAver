@@ -68,6 +68,9 @@ export function searchStateWishlist() {
         _wishlistLbGeneration: 0,
         _wishlistLbTouchStartX: null,  // TASK-141b-T5：書籤燈箱觸控起點 X（獨立於主燈箱 _lbTouchStartX）
         _wishlistLbTouchStartY: null,  // TASK-141b-T5：書籤燈箱觸控起點 Y
+        // TASK-141b-T6：F8.1/F8.2 FLIP 收攏世代旗標。獨立宣告，不與 _wishlistViewGeneration
+        // （T2，分頁切換）或 _wishlistLbGeneration（T3，燈箱開關/換片）共用——三個世代空間互不相干。
+        _wishlistFlipGeneration: 0,
 
         // ===== Computed Properties =====
         cardActionState,
@@ -179,6 +182,25 @@ export function searchStateWishlist() {
                     return;
                 }
                 const data = await resp.json();
+
+                // TASK-141b-T6（F8.2，設計決策 4）：capture 必須在資料變更之前——此時
+                // this.wishlistItems 還是舊資料、data 是新資料，兩者都在手上，可以先算出
+                // goneItems 再賦值。只在使用者正看著書籤牆（onWall）且已經載入過一次時才算。
+                var onWall = this.listMode === 'wishlist' && !this.wishlistLightboxOpen;
+                var grid = (onWall && this.wishlistLoaded) ? safeQuery('.wishlist-grid') : null;
+                var flipState = null;
+                var goneItems = [];
+                if (grid) {
+                    var newNumbers = new Set(data.map(function (i) { return i.number; }));
+                    goneItems = this.wishlistItems.filter(function (i) { return !newNumbers.has(i.number); });
+                    if (goneItems.length) {
+                        grid.classList.add('flip-guard');
+                        void grid.offsetHeight;  // force reflow
+                        flipState = window.GridMotion?.captureFlipState?.(grid) || null;
+                        if (!flipState) grid.classList.remove('flip-guard');
+                    }
+                }
+
                 this.wishlistItems = data;
                 // 🔴 branch review P2（2026-09-02）：**清單與計數在這裡一起寫**。
                 // 141a 之前「已入手」是使用者按鈕觸發的，`cleanupOwnedWishlist()`
@@ -190,6 +212,22 @@ export function searchStateWishlist() {
                 // 這支的回應就是權威清單，`data.length` 就是權威計數——**不再多接一條線**。
                 this.wishlistCount = data.length;
                 this.wishlistLoaded = true;
+
+                // TASK-141b-T6：差集收攏播放（掛在既有整包覆蓋之後）。只驗 onLeave 路徑——
+                // Alpine x-for 依 :key（番號）重用節點，F8.2 對帳只刪不增，不會有真正「新增」
+                // 的節點（設計決策 6）。
+                if (grid && flipState) {
+                    var gen = ++this._wishlistFlipGeneration;
+                    var self = this;
+                    safeNextTick(this, function () { requestAnimationFrame(function () {
+                        if (self._wishlistFlipGeneration !== gen) {
+                            grid.classList.remove('flip-guard');
+                            return;
+                        }
+                        var result = window.GridMotion?.playFlipFilter?.(grid, flipState);
+                        if (!result) grid.classList.remove('flip-guard');
+                    }); });
+                }
             } catch (err) {
                 if (err?.name === 'AbortError') return;   // 被新的載入作廢，靜默放棄
                 console.error('[Wishlist] list 查詢失敗:', err);
@@ -309,8 +347,20 @@ export function searchStateWishlist() {
             }
         },
 
-        async removeFromWishlist(number) {
+        async removeFromWishlist(number, context = 'search') {
             if (!number) return;
+
+            // TASK-141b-T6（設計決策 1/3/4/8）：capture 必須在資料變更之前。
+            // context 由呼叫端顯式傳入（'wall'|'lightbox'|'search'）——T6 只接書籤牆這一處
+            // （'wall'）；'lightbox' 由 T7 接、'search' 由 T8 接，兩者現在都不播 FLIP。
+            var grid = (context === 'wall') ? safeQuery('.wishlist-grid') : null;
+            var flipState = null;
+            if (grid) {
+                grid.classList.add('flip-guard');
+                void grid.offsetHeight;  // force reflow（比照 state-videos.js _animateFilter()）
+                flipState = window.GridMotion?.captureFlipState?.(grid) || null;
+                if (!flipState) grid.classList.remove('flip-guard');  // capture 失敗不留殘 class
+            }
 
             const matchedResults = (this.searchResults || []).filter((r) => r.number === number);
             const prevFlags = matchedResults.map((r) => r._wishlisted);
@@ -322,6 +372,22 @@ export function searchStateWishlist() {
             matchedResults.forEach((r) => { r._wishlisted = false; });
             if (this.wishlistLoaded) {
                 this.wishlistItems = this.wishlistItems.filter((i) => i.number !== number);
+            }
+
+            // TASK-141b-T6：FLIP 播放（掛在既有樂觀更新之後，設計決策 4）。世代旗標讓連續呼叫時，
+            // 前一次尚未播完的動畫世代失效——一次收攏、不逐張排隊（設計決策 4／DoD 4）。
+            if (grid && flipState) {
+                var gen = ++this._wishlistFlipGeneration;
+                var self = this;
+                safeNextTick(this, function () { requestAnimationFrame(function () {
+                    if (self._wishlistFlipGeneration !== gen) {
+                        grid.classList.remove('flip-guard');
+                        return;
+                    }
+                    var result = window.GridMotion?.playFlipFilter?.(grid, flipState);
+                    if (!result) grid.classList.remove('flip-guard');
+                    // flip-guard 由 playFlipFilter 的 onComplete 移除（既有機制）
+                }); });
             }
 
             try {

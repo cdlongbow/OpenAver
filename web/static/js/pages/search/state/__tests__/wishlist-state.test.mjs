@@ -20,6 +20,10 @@ import { register } from 'node:module';
 globalThis.window = globalThis;
 globalThis.document = { addEventListener() {} };
 
+if (typeof globalThis.requestAnimationFrame !== 'function') {
+    globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0);
+}
+
 // state/__tests__ → 上一層 __tests__/alias-loader.mjs（鏡射 pages/search/__tests__ 慣例）
 register(new URL('../../__tests__/alias-loader.mjs', import.meta.url), import.meta.url);
 
@@ -2406,5 +2410,320 @@ test('T5-DoD5b-rescrape-open-blocks-swipe', () => {
     searchStateWishlist()._wishlistLbTouchEnd.call(state, { changedTouches: [{ clientX: 100, clientY: 150 }] });
     assert.equal(spies.nextCalls.length, 0, 'rescrapeOpen 為真時不得換片');
     assert.equal(spies.prevCalls.length, 0);
+});
+
+// ─── TASK-141b-T6：F8.1/F8.2 FLIP 收攏 ─────────────────────────────────────
+//
+// 閘控路徑會臨時掛 window.GridMotion（captureFlipState/playFlipFilter）、
+// document.querySelector、requestAnimationFrame；測完必須還原，否則污染同檔既有 stub。
+//
+// requestAnimationFrame 用「佇列，呼叫端手動 flush」而不是全域那顆 setTimeout(fn,0) 版本
+// ——DoD 4（世代收攏）需要精準控制「call A 的 tick 與 frame」跟「call B 的 tick 與 frame」
+// 之間的交錯順序，用 setTimeout 的話時序不受控。
+
+function makeFlipGridEl() {
+    const classes = new Set();
+    return {
+        className: 'wishlist-grid ds-gallery-composition',
+        classList: {
+            add(c) { classes.add(c); },
+            remove(c) { classes.delete(c); },
+            contains(c) { return classes.has(c); },
+        },
+        offsetHeight: 100,
+        _classes: classes,   // 測試內部直接讀，不當作 DOM API 的一部分
+    };
+}
+
+function withFlipEnv({ queryMap, captureImpl, playImpl } = {}, fn) {
+    const prevGM = globalThis.window.GridMotion;
+    const prevQS = globalThis.document.querySelector;
+    const prevRAF = globalThis.requestAnimationFrame;
+
+    const captureCalls = [];
+    const playCalls = [];
+    const pendingTicks = [];
+    const pendingFrames = [];
+
+    globalThis.document.querySelector = (sel) => (queryMap && Object.prototype.hasOwnProperty.call(queryMap, sel))
+        ? queryMap[sel] : null;
+
+    globalThis.window.GridMotion = {
+        captureFlipState(gridEl) {
+            captureCalls.push({ gridEl });
+            return (typeof captureImpl === 'function') ? captureImpl(gridEl) : { __mockFlipState: true };
+        },
+        playFlipFilter(gridEl, state) {
+            playCalls.push({ gridEl, state });
+            return (typeof playImpl === 'function') ? playImpl(gridEl, state) : { fake: 'timeline' };
+        },
+    };
+
+    globalThis.requestAnimationFrame = (cb) => { pendingFrames.push(cb); return pendingFrames.length; };
+
+    const api = {
+        captureCalls, playCalls,
+        attachNextTick(state) {
+            state.$nextTick = (cb) => { pendingTicks.push(cb); };
+        },
+        flushTicks() {
+            const q = pendingTicks.splice(0, pendingTicks.length);
+            for (const cb of q) cb();
+        },
+        flushFrames() {
+            const q = pendingFrames.splice(0, pendingFrames.length);
+            for (const cb of q) cb();
+        },
+        flush() { api.flushTicks(); api.flushFrames(); },
+    };
+
+    const run = async () => {
+        try {
+            return await fn(api);
+        } finally {
+            if (prevGM === undefined) delete globalThis.window.GridMotion; else globalThis.window.GridMotion = prevGM;
+            if (prevQS === undefined) delete globalThis.document.querySelector; else globalThis.document.querySelector = prevQS;
+            if (prevRAF === undefined) delete globalThis.requestAnimationFrame; else globalThis.requestAnimationFrame = prevRAF;
+        }
+    };
+    return run();
+}
+
+test('T6-DoD1-wall-context-triggers-flip', async () => {
+    mockFetch(() => jsonResponse({ success: true }));
+    let state;
+    const seenAtCapture = [];
+    const capturedState = { __s: 'wall-pre' };
+    await withFlipEnv({
+        queryMap: { '.wishlist-grid': makeFlipGridEl() },
+        captureImpl: () => {
+            seenAtCapture.push(state.wishlistItems.map((i) => i.number));
+            return capturedState;
+        },
+    }, async (api) => {
+        state = makeWishlistThis({
+            wishlistCount: 2, wishlistLoaded: true,
+            wishlistItems: [{ number: 'A-1' }, { number: 'B-2' }],
+            searchResults: [],
+        });
+        api.attachNextTick(state);
+
+        const p = state.removeFromWishlist('A-1', 'wall');
+        api.flush();          // 陷阱 1：removeFromWishlist 的派發在第一個 await 之前，立刻 flush 是對的
+        await p;
+
+        assert.equal(api.captureCalls.length, 1, 'wall context 必須觸發一次 captureFlipState');
+        assert.equal(api.playCalls.length, 1, 'wall context 必須觸發一次 playFlipFilter');
+        assert.equal(api.playCalls[0].state, capturedState, 'play 必須傳入 capture 當下那份 state');
+        assert.deepEqual(seenAtCapture[0], ['A-1', 'B-2'],
+            'capture 必須在樂觀過濾之前發生（看到的是還沒被過濾掉的清單）');
+        assert.deepEqual(state.wishlistItems.map((i) => i.number), ['B-2']);
+    });
+});
+
+test('T6-DoD2-search-and-lightbox-context-no-flip', async () => {
+    mockFetch(() => jsonResponse({ success: true }));
+    await withFlipEnv({ queryMap: { '.wishlist-grid': makeFlipGridEl() } }, async (api) => {
+        const base = {
+            wishlistCount: 2, wishlistLoaded: true,
+            wishlistItems: [{ number: 'A-1' }, { number: 'B-2' }],
+            searchResults: [],
+        };
+
+        const stateSearch = makeWishlistThis({ ...base });
+        api.attachNextTick(stateSearch);
+        const p1 = stateSearch.removeFromWishlist('A-1', 'search');
+        api.flush();
+        await p1;
+
+        const stateLb = makeWishlistThis({
+            ...base,
+            wishlistItems: [{ number: 'A-1' }, { number: 'B-2' }],
+            wishlistCount: 2,
+        });
+        api.attachNextTick(stateLb);
+        const p2 = stateLb.removeFromWishlist('A-1', 'lightbox');
+        api.flush();
+        await p2;
+
+        // 未傳 context（舊呼叫端）→ 預設 'search'，行為不變
+        const stateDefault = makeWishlistThis({
+            ...base,
+            wishlistItems: [{ number: 'A-1' }, { number: 'B-2' }],
+            wishlistCount: 2,
+        });
+        api.attachNextTick(stateDefault);
+        const p3 = stateDefault.removeFromWishlist('A-1');
+        api.flush();
+        await p3;
+
+        assert.equal(api.captureCalls.length, 0, 'search/lightbox/預設 context 不得呼叫 captureFlipState');
+        assert.equal(api.playCalls.length, 0, 'search/lightbox/預設 context 不得呼叫 playFlipFilter');
+    });
+});
+
+test('T6-DoD3-diffset-equals-onLeave-set-and-capture-before-assign', async () => {
+    // wishlistItems=[A,B,C]，fetch 回 [A,C]（B 被對帳掉）
+    // ① 有差集才觸發 capture/play；② capture 看到的是舊清單（順序不變式）
+    mockFetch(() => jsonResponse([{ number: 'A' }, { number: 'C' }]));
+    let state;
+    const seenAtCapture = [];
+    await withFlipEnv({
+        queryMap: { '.wishlist-grid': makeFlipGridEl() },
+        captureImpl: () => {
+            seenAtCapture.push(state.wishlistItems.map((i) => i.number));
+            return { __s: 1 };
+        },
+    }, async (api) => {
+        state = makeWishlistThis({
+            listMode: 'wishlist', wishlistLightboxOpen: false,
+            wishlistLoaded: true,
+            wishlistItems: [{ number: 'A' }, { number: 'B' }, { number: 'C' }],
+            wishlistCount: 3,
+        });
+        api.attachNextTick(state);
+        const p = state.loadWishlist();
+        await p;               // 陷阱 1：loadWishlist 的派發在第一個 await 之後，必須先 await 再 flush
+        api.flush();
+
+        assert.equal(api.captureCalls.length, 1, '有差集時必須呼叫一次 captureFlipState');
+        assert.equal(api.playCalls.length, 1, '有差集時必須呼叫一次 playFlipFilter');
+        assert.deepEqual(seenAtCapture[0], ['A', 'B', 'C'],
+            'capture 必須在 this.wishlistItems = data 之前發生（看到的是舊清單，不是新的）');
+        assert.deepEqual(state.wishlistItems.map((i) => i.number), ['A', 'C'],
+            '賦值後清單必須是 fetch 回來的新資料（B 消失）');
+        assert.equal(state.wishlistCount, 2);
+    });
+});
+
+test('T6-DoD3b-no-diff-no-flip', async () => {
+    // boolean 反轉（mutation 1）的真正 oracle：見上方「展開時對承重段 DoD 3 的技術訂正」。
+    mockFetch(() => jsonResponse([{ number: 'A' }, { number: 'B' }]));  // 與現有清單完全相同
+    await withFlipEnv({ queryMap: { '.wishlist-grid': makeFlipGridEl() } }, async (api) => {
+        const state = makeWishlistThis({
+            listMode: 'wishlist', wishlistLightboxOpen: false,
+            wishlistLoaded: true,
+            wishlistItems: [{ number: 'A' }, { number: 'B' }],
+        });
+        api.attachNextTick(state);
+        const p = state.loadWishlist();
+        await p;               // 陷阱 1：loadWishlist 的派發在第一個 await 之後，必須先 await 再 flush
+        api.flush();
+        assert.equal(api.captureCalls.length, 0, '沒有任何項目被對帳掉時不得呼叫 captureFlipState');
+        assert.equal(api.playCalls.length, 0, '沒有任何項目被對帳掉時不得呼叫 playFlipFilter');
+    });
+});
+
+test('T6-DoD4-generation-collapses-consecutive-removes', async () => {
+    let releaseA, releaseB;
+    globalThis.fetch = async (url) => {
+        if (String(url).includes('A-1')) return new Promise((r) => { releaseA = () => r(jsonResponse({ success: true })); });
+        return new Promise((r) => { releaseB = () => r(jsonResponse({ success: true })); });
+    };
+    await withFlipEnv({ queryMap: { '.wishlist-grid': makeFlipGridEl() } }, async (api) => {
+        const state = makeWishlistThis({
+            wishlistCount: 3, wishlistLoaded: true,
+            wishlistItems: [{ number: 'A-1' }, { number: 'B-1' }, { number: 'C-1' }],
+            searchResults: [],
+        });
+        api.attachNextTick(state);
+
+        const p1 = state.removeFromWishlist('A-1', 'wall');
+        const p2 = state.removeFromWishlist('B-1', 'wall');
+        api.flushTicks();    // 陷阱 2：ticks 與 frames 分開 flush
+        api.flushFrames();
+
+        assert.equal(api.captureCalls.length, 2, '兩次呼叫都必須各自 capture 一次');
+        assert.equal(api.playCalls.length, 1, '只有最後一次世代相符，只播放一次（不逐張排隊）');
+
+        releaseA(); releaseB();
+        await p1; await p2;
+    });
+});
+
+test('T6-DoD5-capture-fail-no-residual-flip-guard', async () => {
+    mockFetch(() => jsonResponse({ success: true }));
+    const gridEl = makeFlipGridEl();
+    await withFlipEnv({
+        queryMap: { '.wishlist-grid': gridEl },
+        captureImpl: () => null,   // 模擬 Flip undefined／cards 為空等 capture 失敗情境
+    }, async (api) => {
+        const state = makeWishlistThis({
+            wishlistCount: 2, wishlistLoaded: true,
+            wishlistItems: [{ number: 'A-1' }, { number: 'B-2' }],
+            searchResults: [],
+        });
+        api.attachNextTick(state);
+        const p = state.removeFromWishlist('A-1', 'wall');
+        api.flush();
+        await p;
+        assert.equal(api.captureCalls.length, 1);
+        assert.equal(api.playCalls.length, 0, 'capture 失敗不得播放');
+        assert.equal(gridEl._classes.has('flip-guard'), false, 'capture 失敗後不得殘留 flip-guard');
+    });
+});
+
+test('T6-DoD5b-generation-mismatch-no-residual-flip-guard', async () => {
+    mockFetch(() => jsonResponse({ success: true }));
+    const gridEl = makeFlipGridEl();
+    await withFlipEnv({ queryMap: { '.wishlist-grid': gridEl } }, async (api) => {
+        const state = makeWishlistThis({
+            wishlistCount: 2, wishlistLoaded: true,
+            wishlistItems: [{ number: 'A-1' }, { number: 'B-2' }],
+            searchResults: [],
+        });
+        api.attachNextTick(state);
+
+        const p = state.removeFromWishlist('A-1', 'wall');
+        // 先 flush ticks（排入 rAF），再把世代弄成不符，最後 flush frames
+        api.flushTicks();
+        state._wishlistFlipGeneration = 999;
+        api.flushFrames();
+        await p;
+
+        assert.equal(api.playCalls.length, 0, '世代不符不得播放');
+        assert.equal(gridEl._classes.has('flip-guard'), false, '世代不符時必須自己移除 flip-guard');
+    });
+});
+
+test('T6-DoD7-reduced-motion-data-unchanged', async () => {
+    // playFlipFilter 走 shouldSkip() 回 null；資料最終值必須與有動畫時相同（CD-11）
+    mockFetch(() => jsonResponse({ success: true }));
+    await withFlipEnv({
+        queryMap: { '.wishlist-grid': makeFlipGridEl() },
+        playImpl: () => null,   // 模擬 reduced-motion：play 短路回 null
+    }, async (api) => {
+        const state = makeWishlistThis({
+            wishlistCount: 2, wishlistLoaded: true,
+            wishlistItems: [{ number: 'A-1' }, { number: 'B-2' }],
+            searchResults: [],
+        });
+        api.attachNextTick(state);
+        const p = state.removeFromWishlist('A-1', 'wall');
+        api.flush();
+        await p;
+        assert.equal(api.captureCalls.length, 1);
+        assert.equal(api.playCalls.length, 1, 'play 仍被呼叫一次（由 playFlipFilter 內部 shouldSkip）');
+        assert.deepEqual(state.wishlistItems.map((i) => i.number), ['B-2']);
+        assert.equal(state.wishlistCount, 1);
+    });
+
+    mockFetch(() => jsonResponse([{ number: 'A' }, { number: 'C' }]));
+    await withFlipEnv({
+        queryMap: { '.wishlist-grid': makeFlipGridEl() },
+        playImpl: () => null,
+    }, async (api) => {
+        const state = makeWishlistThis({
+            listMode: 'wishlist', wishlistLightboxOpen: false,
+            wishlistLoaded: true,
+            wishlistItems: [{ number: 'A' }, { number: 'B' }, { number: 'C' }],
+            wishlistCount: 3,
+        });
+        api.attachNextTick(state);
+        await state.loadWishlist();
+        api.flush();
+        assert.deepEqual(state.wishlistItems.map((i) => i.number), ['A', 'C']);
+        assert.equal(state.wishlistCount, 2);
+    });
 });
 
