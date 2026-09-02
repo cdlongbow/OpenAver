@@ -29,6 +29,8 @@ EXPECTED_NAMES = [
     # video.py
     "Video",
     "VideoRepository",
+    # wishlist.py
+    "WishlistRepository",
     # alias.py
     "AliasRecord",
     "AliasRepository",

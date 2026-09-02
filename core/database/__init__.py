@@ -14,6 +14,7 @@ from .tag_alias import TagAliasRecord, TagAliasRepository
 from .actress import Actress, ActressRepository
 from .actress_library import get_library_actresses
 from .migrate import migrate_json_to_sqlite, backfill_readonly_nfo_mtime
+from .wishlist import WishlistRepository
 
 __all__ = [
     "get_db_path",
@@ -31,4 +32,5 @@ __all__ = [
     "get_library_actresses",
     "migrate_json_to_sqlite",
     "backfill_readonly_nfo_mtime",
+    "WishlistRepository",
 ]

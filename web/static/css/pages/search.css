@@ -27,6 +27,55 @@
     --spotlight-right-slot: 11.5rem;
 }
 
+/* 140-T7 / CD-140-4（研究題結論 #4）：search 頁自己的左槽變體，不借用
+ * showcase.css:3301-3305 的 .spotlight-search--mode-toggle（那條同時把右槽設成
+ * 8.5rem，撞上面 26-27 行 search 頁自己的 11.5rem 右槽覆寫）。這裡只設左槽，
+ * 右槽沿用上面既有的 .search-bar .spotlight-search 規則（CSS cascade 疊加）。
+ * 推導初值（待 CDP 實測覆核（TASK-140-T7 DoD-2））：
+ *   .mode-toggle left:0.5rem(=8px) + padding 2+2 + btn 32+32 + gap 2 = 佔位 78px
+ *   桌機給 5.5rem(=88px，+10px headroom，與 showcase 左槽同值／同幾何)
+ *   手機給 5.125rem(=82px，+4px 淨空，比照 showcase.css:3307-3321 129-T6)
+ */
+.search-bar .spotlight-search--wishlist-toggle {
+    --spotlight-left-slot: 5.5rem; /* 待 CDP 實測覆核（TASK-140-T7 DoD-2）*/
+}
+
+@media (max-width: 480px) {
+    .search-bar .spotlight-search--wishlist-toggle {
+        --spotlight-left-slot: 5.125rem; /* 待 CDP 實測覆核（TASK-140-T7 DoD-2）*/
+    }
+}
+
+/* 140-T7 研究題結論 #2：badge 疊在 .mode-toggle-btn 右上角，不是分段內文字（32px
+ * 圓鈕塞不下）。視覺 DNA 沿用 .staging-counter-badge（本檔 1064-1071 行），改成
+ * position:absolute 疊角；radius 用 --radius-pill（不是 --fluent-radius-md）——
+ * 疊在圓鈕角落用膠囊比方角更貼合 Fluent 圓角語彙（ui-conventions.md §1 pill 白名單
+ * 第 4 類「badge 類」）。scoped 到本卡新增的變體 class，不動 showcase.css 的
+ * .mode-toggle-btn 原始規則。
+ * overflow：showcase.css .mode-toggle 預設 visible、無 overflow:hidden；badge 先疊
+ * 在按鈕角落。若 CDP 實測被裁，再擇承重段 #4 兩個合法解之一（不得改 showcase.css）。
+ */
+.spotlight-search--wishlist-toggle .mode-toggle-btn {
+    position: relative; /* badge 絕對定位的錨點 */
+}
+
+.mode-toggle-badge {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    line-height: 14px;
+    text-align: center;
+    font-size: 0.65rem;
+    font-weight: 700;
+    background: var(--color-primary);
+    color: var(--color-primary-content);
+    border-radius: var(--radius-pill);
+    white-space: nowrap;
+}
+
 /* 92a-T3: 「自動」來源 pill 不壓縮、不折行（配合放寬的 slot；pill 是 slot 內唯一變動寬元素，
    icon 鈕已 flex-shrink:0）。消除 spec §1.1 症狀 1「pill 被 flex-shrink 壓縮變形」。 */
 .search-auto-pill {
@@ -798,6 +847,14 @@
 }
 
 /* ==================== T2a: Grid Mode ==================== */
+/* TASK-140-T9：`.wishlist-grid` 與 `.search-grid` 共用版面／斷點（數值本來就逐值相同，
+   這裡是去重）。**兩條不可再往下延伸到 896-956 行的 poster-crop 區塊**——那塊用
+   `:is(...).search-grid` 把非 hero 卡裁成海報比例，而 spec F3 要求書籤卡在任何寬度
+   都維持固定 fanart（TASK-140-T8 判定）。所以那塊**只掛 `.search-grid`**。
+   ⚠️ 逗號清單的順序有意義：`.search-grid` 必須排在最後、緊接 `{` 之前——
+   `scripts/css-guard.mjs` 的 CG-PC-04 用字面 regex `/\.search-grid \{/` 掃 ≤480px 區塊，
+   換順序會讓那條字面比對抓不到而誤判（正確的碼被 lint 判紅）。 */
+.wishlist-grid,
 .search-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -811,18 +868,21 @@
 
 /* 響應式斷點 - 對齊 showcase.css */
 @media (min-width: 1500px) {
+    .wishlist-grid,
     .search-grid {
         grid-template-columns: repeat(5, 1fr);
     }
 }
 
 @media (min-width: 1100px) and (max-width: 1499px) {
+    .wishlist-grid,
     .search-grid {
         grid-template-columns: repeat(4, 1fr);
     }
 }
 
 @media (min-width: 900px) and (max-width: 1099px) {
+    .wishlist-grid,
     .search-grid {
         grid-template-columns: repeat(3, 1fr);
     }
@@ -830,6 +890,7 @@
 
 /* 481-899px → 4 columns 直式右裁 poster 格（US-10 / CD-11） */
 @media (min-width: 481px) and (max-width: 899px) {
+    .wishlist-grid,
     .search-grid {
         grid-template-columns: repeat(4, 1fr);
         gap: 1rem;
@@ -837,6 +898,7 @@
 }
 
 @media (max-width: 480px) {
+    .wishlist-grid,
     .search-grid {
         grid-template-columns: repeat(3, 1fr);  /* T9-port：search 影片格對齊 showcase 3-col */
         gap: 0.5rem;
@@ -960,10 +1022,83 @@
 }
 
 /* Footer 雙層切換（對齊 showcase.css .showcase-grid 的 footer 設定） */
+.wishlist-grid .av-card-preview-footer,
 .search-grid .av-card-preview-footer {
     position: relative;
     overflow: hidden;
     height: 2.5rem;
+}
+
+/* TASK-140-T12：三層分工 wrapper（plan「容器結構寫死」，Codex Phase 2 P2-3）。
+   .wishlist-panel 才是 .result-area 的直接 flex item——尺寸宣告必須釘在這一層，
+   不能留在 .wishlist-grid（T9 教訓：宣告留在會 shrink 的子層，窄欄照樣重現）。
+   與 #resultCard 既有形狀同構（search.css:102-109）。 */
+.wishlist-panel {
+    width: 100%;
+    max-height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* 工具列：固定高，不被 .wishlist-grid 的 flex:1 壓縮。 */
+.wishlist-toolbar {
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: flex-end;
+    padding: 0.75rem 1.5rem 0;
+}
+
+/* TASK-140-T9（T12 改：width/max-height 搬到 .wishlist-panel，這裡改吃剩餘高度）。
+   flex:1 讓 .wishlist-grid 在 .wishlist-panel 這個 flex-column 容器裡吃滿工具列以外的
+   剩餘高度；min-height:0 是 flex-item 在捲動容器裡的必要條件（沒有這行，min-height
+   預設 auto 會撐爆父層、overflow-y:auto 形同虛設）。overflow-y:auto 讓卡片數超過可視
+   高度時獨立捲動；align-content:start 防止 grid 的多行被 flex-stretch 影響時仍垂直
+   置頂而非平均分散。 */
+.wishlist-grid {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    align-content: start;
+}
+
+/* 空狀態外層需要一個有 position + 高度的容器，
+   .cover-error-placeholder 本身 position:absolute;inset:0（search.css:125-133），
+   裸放在頁面上會找不到正確的定位祖先（往上吃到 .search-container 甚至更外層）。 */
+/* 🔴 branch review P1-1（2026-09-02）：`width:100%` 不是裝飾，是這一層存在的理由。
+   .wishlist-empty 是 .result-area（display:flex，預設 row）的直接 flex item，而它唯一的
+   子元素 .cover-error-placeholder 是 position:absolute;inset:0 ⇒ **內在寬度 0**。
+   沒有這一條，flex 會把它算成 0 寬，實測 getBoundingClientRect() 是 w=0、文字被擠成
+   16px 寬的直排七個字貼在畫面最右緣、圖示裁掉一半——而這正是新使用者第一次點開
+   書籤段看到的畫面。與 T9／T12 修過兩次的是同一種缺陷（尺寸宣告落在會 shrink 的層），
+   只是這塊刻意留在 .wishlist-panel 外面，所以前兩次的守衛都罩不到它。 */
+.wishlist-empty {
+    position: relative;
+    width: 100%;
+    min-height: 40vh;
+}
+
+/* 已入手角標：沿用 .cover-badge（components/cover-badge.css）同一組 token
+   （--overlay-badge、white 45% 邊框、--radius-pill——ui-conventions.md §1 白名單
+   第 4 類「badge 類」的延伸），改成 icon-only 圓形尺寸。恆常可見（不掛在
+   .av-card-preview-overlay 內，見上方 search.html 段的說明）。 */
+.wishlist-owned-badge {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: var(--radius-pill);
+    background: var(--overlay-badge);
+    border: 1.5px solid color-mix(in oklch, white 45%, transparent);
+    color: oklch(100% 0 0);
+    font-size: 0.9rem;
+    pointer-events: none;
 }
 
 /* ==================== T2d: Actress Profile ==================== */

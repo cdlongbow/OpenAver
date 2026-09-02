@@ -1012,3 +1012,74 @@ class TestVideoApiSafetyStrings:
             'get_proxy_extensions', 'is_path_under_dir',
         ]:
             assert expected in content, f"scanner.py missing: {expected!r}"
+
+
+class TestWishlistLightboxDispatchOrderGuard:
+    # [lint-guard: pytest-justified] method-body ordering ——
+    # handleKeydown()/handleWheel() 內三個 overlay 分支（sampleGalleryOpen →
+    # wishlistLightboxOpen → lightboxOpen）的出現順序是方法內的執行優先序契約，
+    # lint 的字串存在檢查表達不了「A 分支在 B 分支之前」，需要 AST/字串位置比較。
+    """TASK-140-T11b：書籤燈箱分派鏈必須插在 sampleGalleryOpen 之後、lightboxOpen 之前"""
+
+    NAVIGATION_JS = PROJECT_ROOT / "web" / "static" / "js" / "pages" / "search" / "state" / "navigation.js"
+
+    # 🔴 CodeRabbit PR#175 P3：原本是 `content[start:start + 4000]` 固定字元窗口。本 branch
+    # 在 `handleWheel` 插入書籤燈箱分支後，該函式從 3874 字漲到 4807 字——**首次超出窗口**，
+    # 最後一個 `if (this.lightboxOpen) {` 落在第 3632 字，離切斷點只剩 368 字。再多寫約 370 字
+    # 那行就被切在窗口外，測試會報「缺少三個分支之一」——**而三個分支明明都在**，下一個改
+    # navigation.js 的人得先不信任這句訊息，才找得到真因。
+    #
+    # 單純把 4000 調大**方向更錯**：`handleKeydown` 在 `handleWheel` **之前**，窗口一放大就
+    # 吃進後面那支，而 handleWheel 裡有同樣三個字面、同樣的順序 ⇒ `test_handle_keydown_order`
+    # 會綠，但綠的是 handleWheel 的順序。那是把「假紅（吵人）」換成「假綠（放行真 bug）」。
+    #
+    # ⇒ 魔術數字整個拿掉，改為大括號配對抓完整主體，截斷與溢出兩個失效方向同時消滅。
+    # 殘留風險：函式內若出現單邊大括號（註解／字串裡），計數會失衡——但那會炸出明確的
+    # 「大括號不平衡」，不是騙人的「缺少分支」。
+    @staticmethod
+    def _extract_function(content, func_name):
+        pattern = re.compile(r'^\s*(?:async\s+)?' + re.escape(func_name) + r'\s*\(', re.MULTILINE)
+        match = pattern.search(content)
+        assert match, f"{func_name} 函數未找到"
+        start = match.start()
+        depth = 0
+        for j in range(content.index('{', start), len(content)):
+            if content[j] == '{':
+                depth += 1
+            elif content[j] == '}':
+                depth -= 1
+                if depth == 0:
+                    return content[start:j + 1]
+        raise AssertionError(f"{func_name} 大括號不平衡，無法擷取完整函式主體")
+
+    def _js(self):
+        return self.NAVIGATION_JS.read_text(encoding="utf-8")
+
+    def test_handle_keydown_order(self):
+        """比對分支開頭字面，理由同 test_handle_wheel_order 的 docstring。"""
+        body = self._extract_function(self._js(), "handleKeydown")
+        sg = body.find("if (this.sampleGalleryOpen) {")
+        wl = body.find("if (this.wishlistLightboxOpen) {")
+        lb = body.find("if (this.lightboxOpen) {")
+        assert sg != -1 and wl != -1 and lb != -1, \
+            "handleKeydown 缺少 sampleGalleryOpen/wishlistLightboxOpen/lightboxOpen 三個分支之一"
+        assert sg < wl < lb, \
+            "handleKeydown: wishlistLightboxOpen 分支必須插在 sampleGalleryOpen 之後、lightboxOpen 之前"
+
+    def test_handle_wheel_order(self):
+        """⚠️ 比對的是 `if (this.xxxOpen) {` 這個**分支開頭**字面，不是裸的識別字。
+
+        Opus 2026-09-02 抽驗發現：用裸識別字（`body.find("this.sampleGalleryOpen")`）在
+        handleWheel 裡是**空殼**——三個 find 全部落在同一行
+        `const isOverlay = this.sampleGalleryOpen || this.wishlistLightboxOpen || this.lightboxOpen;`
+        上（實測 offset 741 / 767 / 796），`sg < wl < lb` 恆成立，與真正的分支位置無關。
+        改比對分支開頭字面之後，把書籤分支整段搬到 lightbox 之後才會轉紅。
+        """
+        body = self._extract_function(self._js(), "handleWheel")
+        sg = body.find("if (this.sampleGalleryOpen) {")
+        wl = body.find("if (this.wishlistLightboxOpen) {")
+        lb = body.find("if (this.lightboxOpen) {")
+        assert sg != -1 and wl != -1 and lb != -1, \
+            "handleWheel 缺少 sampleGalleryOpen/wishlistLightboxOpen/lightboxOpen 三個分支之一"
+        assert sg < wl < lb, \
+            "handleWheel: wishlistLightboxOpen 分支必須插在 sampleGalleryOpen 之後、lightboxOpen 之前"

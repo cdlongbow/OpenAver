@@ -4481,6 +4481,183 @@ const RULES = [
     scope: { anchor: /<div id="errorState"/, window: 2000 },
     note: '[lint-guard 139-T7] 同上：膠囊文字的 i18n key 被改掉或膠囊被移除',
   },
+
+  // ---- [TASK-140-T7] wishlist badge x-show（F2 驗收1） ----
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: 'x-show="wishlistCount > 0"',
+    note: '[TASK-140-T7] wishlist badge 只在 wishlistCount>0 時顯示（F2 驗收1，那一段本身仍要顯示）',
+  },
+
+  // ---- [TASK-140-T8] wishlist 封面端點 + 已入手角標條件（F4 驗收2／F6 驗收5／F6 驗收1/2/6） ----
+  // window 實測：.wishlist-grid 開標 class= 錨點 → 閉合 </div> 共 2415 字元；+ 安全邊際 → 3000。
+  {
+    file: 'web/templates/search.html',
+    kind: 'forbidden-string',
+    pattern: 'resolveCoverUrl(item)',
+    scope: { anchor: /class="wishlist-grid[^"]*"/, window: 3000 },
+    note: '[TASK-140-T8] wishlist 封面必須走本地 /api/wishlist/cover 端點，不得用 resolveCoverUrl（F4 驗收2／F6 驗收5）',
+  },
+  // 🔴 branch review P2-2（2026-09-02）：上面只有反向鎖（不得用 resolveCoverUrl），
+  // 少了正向鎖 ⇒ 把 :src 改成打 /api/proxy-image 時 static_guard 1217 條、css-guard 52 條
+  // **全綠**（reviewer 在乾淨樹沙盒實測過）。燈箱那側本來就有這條正向鎖，卡片這側漏了。
+  // 兩處字面相距 6 萬字元、各自有 scope，不會互相餵飽（FE-GUARD-22）。
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: '/api/wishlist/cover?number=',
+    scope: { anchor: /class="wishlist-grid[^"]*"/, window: 3000 },
+    note: '[branch review P2-2] 書籤格卡封面必須走本地端點：退回打外站會破壞 F6 驗收5「零對外請求」，且 javbus 圖床沒有 Referer 會回 403 ＝ T9 修過的那個整頁破圖',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: 'x-show="item._owned"',
+    scope: { anchor: /class="wishlist-grid[^"]*"/, window: 3000 },
+    note: '[TASK-140-T8] 已入手角標只在 item._owned 為真時顯示（F6 驗收1/2/6）',
+  },
+  // Opus 補（T8 Step 6 自驗發現原稿這條 SURVIVED）：三個狀態頁必須排除 wishlist。
+  // 沒有這條的話，把 `&& listMode !== 'wishlist'` 刪掉不會有任何東西轉紅，而後果是
+  // 「請輸入番號」那類提示文案疊在書籤清單上面（pageState 與 listMode 是正交的兩個閘，
+  // T1 那張 29 列 listMode 對帳表結構上看不到 pageState）。
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: `x-show="pageState === 'empty' && listMode !== 'wishlist'"`,
+    note: '[TASK-140-T8] #emptyState 必須排除 wishlist（否則空狀態提示會疊在書籤清單上）',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: `x-show="pageState === 'loading' && listMode !== 'wishlist'"`,
+    note: '[TASK-140-T8] #loadingState 必須排除 wishlist',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: `x-show="pageState === 'error' && listMode !== 'wishlist'"`,
+    note: '[TASK-140-T8] #errorState 必須排除 wishlist',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: `x-show="pageState === 'result' && listMode !== 'wishlist'"`,
+    note: '[TASK-140-T9] #resultCard 必須排除 wishlist（否則搜尋結果會與書籤清單並排顯示）',
+  },
+
+  // ---- [TASK-140-T11a] 書籤燈箱掛載與封面/按鈕守衛（F5 驗收 1-5，承重段第 11 條） ----
+  // window 實測：class="showcase-lightbox wishlist-lightbox" 錨點 → 閉合 </div> 共 5659 字元；+ 安全邊際 → 7000。
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: 'class="showcase-lightbox wishlist-lightbox"',
+    note: '[TASK-140-T11a] 書籤燈箱區塊必須存在（沿用 .showcase-lightbox 視覺，加 wishlist-lightbox modifier，見設計決策 #1）',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: `:class="{ 'show': wishlistLightboxOpen }"`,
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 200 },
+    note: '[TASK-140-T11a] 書籤燈箱必須綁 wishlistLightboxOpen，不得與既有 lightboxOpen 共用（研究題結論 #1、gotcha FE-ALPINE-04）',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: '/api/wishlist/cover?number=',
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    note: '[TASK-140-T11a] 書籤燈箱封面必須走本地 /api/wishlist/cover 端點，不得用 resolveCoverUrl／proxy-image（承重段第4條；退回打外站會破壞 F6 驗收5「零對外請求」，且 javbus 圖床沒有 Referer 會回 403，正是 T9 修的那個破圖）',
+  },
+  // Opus 抽驗（T11a 第 2 輪）：拔掉卡片上的 @click 入口後 lint/test 全綠——燈箱寫得再好
+  // 也永遠開不了。window 實測：.wishlist-grid 開標 class= 錨點 → 閉合 </div> 共 2482 字元；
+  // + 安全邊際 → 3000（與 T8 同錨同窗）。
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: '@click="openWishlistLightbox(index)"',
+    scope: { anchor: /class="wishlist-grid[^"]*"/, window: 3000 },
+    note: '[TASK-140-T11a] 書籤卡片必須綁 @click="openWishlistLightbox(index)"——這是開燈箱的唯一入口；拔掉它使用者點卡片完全沒反應、燈箱永遠開不了，而其餘守衛與測試都照樣綠（v0.12.1 同形事故）',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string',
+    pattern: 'bi-arrow-return-left',
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    note: '[TASK-140-T11a] 書籤燈箱不得出現返回詳情鈕（spec F5 驗收4，書籤沒有本地檔案可返回）',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string',
+    pattern: 'bi-folder2-open',
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    note: '[TASK-140-T11a] 書籤燈箱不得出現開資料夾鈕（書籤沒有本地檔案）',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string',
+    pattern: 'bi-play-fill',
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    note: '[TASK-140-T11a] 書籤燈箱不得出現播放鈕（書籤沒有本地檔案）',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string',
+    pattern: 'bi-bookmark-plus',
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    note: '[TASK-140-T11a] 書籤燈箱不得出現加入書籤鈕（本身就在書籤清單裡）',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string',
+    pattern: 'bi-bookmark-fill',
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    note: '[TASK-140-T11a] 書籤燈箱不得出現移除書籤鈕（spec F5：唯一下游動作是開原站，移除走 grid 卡的垃圾桶）',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string',
+    pattern: 'bi-pencil',
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    note: '[TASK-140-T11a] 書籤燈箱不得出現編輯鈕（spec F5 驗收4：那些需要本地檔案）',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string',
+    pattern: 'bi-translate',
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    note: '[TASK-140-T11a] 書籤燈箱不得出現翻譯鈕（spec F5 驗收4：那些需要本地檔案）',
+  },
+  // ---- [TASK-140-T12] 頂部批次清理鈕（F7 驗收1-3，承重段第9條字串存在性清單） ----
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: 'class="wishlist-panel"',
+    note: '[TASK-140-T12] 三層分工 wrapper 必須存在（plan「容器結構寫死」，Codex Phase 2 P2-3）——沒有它，清理鈕與書籤格的尺寸宣告會退回掛在會 shrink 的層，重現 T9 的 110×727',
+  },
+  // window 實測：class="wishlist-panel" 開標錨點 → 工具列 </div> 閉合共 514 字元；+ 安全邊際 → 700。
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: 'x-show="ownedWishlistCount > 0"',
+    scope: { anchor: /class="wishlist-panel"/, window: 700 },
+    note: '[TASK-140-T12] 清理鈕只在有已入手項目時顯示（F7 驗收1：N===0 整顆不顯示）',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: 'bi-eraser',
+    scope: { anchor: /class="wishlist-panel"/, window: 700 },
+    note: '[TASK-140-T12] 清理鈕圖示必須是 bi-eraser（spec F7 明寫）',
+  },
+  // Opus 抽驗（T12 Step 6）：把 wrapper 的 listMode 閘拿掉之後 lint 與 npm test 全綠——
+  // 而後果是 wrapper 在搜尋模式下仍是 .result-area 的 flex item，與 #resultCard 並排搶寬度，
+  // 搜尋結果被擠成半邊（＝T9 那個 owner 一眼看到的並排缺陷，換一個容器重演一次）。
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: `<div class="wishlist-panel" x-show="listMode === 'wishlist'"`,
+    note: '[TASK-140-T12] 書籤 wrapper 必須自帶 listMode 閘——少了它，wrapper 在搜尋模式下仍是 .result-area 的 flex item，會與搜尋結果並排搶寬度把結果擠成半邊（T9 修過的同一種缺陷）',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: '@click="cleanupOwnedWishlist()"',
+    scope: { anchor: /class="wishlist-panel"/, window: 700 },
+    note: '[TASK-140-T12] 清理鈕必須接上 cleanupOwnedWishlist()（F7 驗收3：點下去要真的觸發清理），比承重段第9條原列的三項多加這一條——click 接線是同一批字串存在性檢查最自然的延伸，遺漏會讓鈕看起來對但按下去沒反應',
+  },
 ];
 
 // ---- helpers ----

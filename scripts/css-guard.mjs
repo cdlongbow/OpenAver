@@ -2264,6 +2264,66 @@ const RULES = [
       }
     },
   },
+  {
+    id: 'CG-WISH-01',
+    file: 'pages/search.css',
+    kind: 'fn',
+    check(ctx) {
+      // TASK-140-T12：三層分工搬家（不刪）。wrapper（.wishlist-panel）現在扛
+      // width:100%／max-height:100%／min-height:0；.wishlist-grid 改吃 flex:1／
+      // min-height:0，overflow-y:auto／align-content:start 兩條原本就在 grid 身上，
+      // 沒有搬動。兩段都沿用 T9 的「整條 selector 等於 class 本身（不含逗號）＋
+      // filter 取最後一個」邏輯（FE-GUARD-14：.find() 取第一個是 fail-open；D4
+      // 合併後 `.wishlist-grid, .search-grid` 這種 comma-list block 必須被排除）。
+      const findStandalone = (cls) => {
+        const matches = ctx.blocks.filter(({ selector }) => selector.trim() === cls);
+        return matches[matches.length - 1];
+      };
+
+      const panel = findStandalone('.wishlist-panel');
+      if (!panel) {
+        ctx.fail('CG-WISH-01: .wishlist-panel 專屬（非合併）規則區塊不存在');
+      } else {
+        const panelRequired = [
+          [/width\s*:\s*100%/, 'width: 100%'],
+          [/max-height\s*:\s*100%/, 'max-height: 100%'],
+          [/min-height\s*:\s*0/, 'min-height: 0'],
+        ];
+        for (const [re, label] of panelRequired) {
+          if (!re.test(panel.declarations)) {
+            ctx.fail(`CG-WISH-01: .wishlist-panel 專屬區塊缺少 ${label}（wrapper 不再是 .result-area 撐滿版面的那一層，窄欄會重現 T9 的 110×727）`);
+          }
+        }
+      }
+
+      // branch review P1-1：第三層。.wishlist-empty 與 .wishlist-panel 是**兄弟**
+      // flex item（不是巢狀），所以上面兩段的檢查完全罩不到它；它的子元素是
+      // position:absolute ⇒ 內在寬度 0，少了寬度宣告就被 flex 壓成 0 寬。
+      const empty = findStandalone('.wishlist-empty');
+      if (!empty) {
+        ctx.fail('CG-WISH-01: .wishlist-empty 專屬（非合併）規則區塊不存在');
+      } else if (!/width\s*:\s*100%/.test(empty.declarations)) {
+        ctx.fail('CG-WISH-01: .wishlist-empty 專屬區塊缺少 width: 100%（子元素是 absolute ⇒ 內在寬度 0，會被 flex 壓成 0 寬的直排字，實測 w=0）');
+      }
+
+      const grid = findStandalone('.wishlist-grid');
+      if (!grid) {
+        ctx.fail('CG-WISH-01: .wishlist-grid 專屬（非合併）規則區塊不存在');
+      } else {
+        const gridRequired = [
+          [/flex\s*:\s*1\b/, 'flex: 1'],
+          [/min-height\s*:\s*0/, 'min-height: 0'],
+          [/overflow-y\s*:\s*auto/, 'overflow-y: auto'],
+          [/align-content\s*:\s*start/, 'align-content: start'],
+        ];
+        for (const [re, label] of gridRequired) {
+          if (!re.test(grid.declarations)) {
+            ctx.fail(`CG-WISH-01: .wishlist-grid 專屬區塊缺少 ${label}（flex-child 版面會壞，實測回歸為 110×727 窄直行）`);
+          }
+        }
+      }
+    },
+  },
 ];
 
 // ── per-file read+parse cache（同檔多 rule 共用，讀一次 → stripCssComments → parseRuleBlocks）──

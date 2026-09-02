@@ -253,3 +253,33 @@ test('〔額外-3〕JS 語法錯誤 fail-closed → RED', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('〔額外-4〕測試探針檔 __x_probe__.js 排除在外 → GREEN；同內容正常檔名 real.js → RED（TASK-140-T13）', () => {
+  const probeRoot = mkdtempSync(join(tmpdir(), 'motion-guard-'));
+  try {
+    writeAt(
+      probeRoot,
+      'web/static/js/__x_probe__.js',
+      'const tl = gsap.timeline({ repeat: -1 });',
+    );
+    const probeResult = runGuard(probeRoot);
+    assert.equal(probeResult.status, 0, probeResult.output);
+  } finally {
+    rmSync(probeRoot, { recursive: true, force: true });
+  }
+
+  const realRoot = mkdtempSync(join(tmpdir(), 'motion-guard-'));
+  try {
+    writeAt(
+      realRoot,
+      'web/static/js/real.js',
+      'const tl = gsap.timeline({ repeat: -1 });',
+    );
+    const realResult = runGuard(realRoot);
+    assert.notEqual(realResult.status, 0, '正常檔名同內容必須被抓到，排除規則不能連真檔案一起放掉');
+    assert.match(realResult.output, /MG-JS-01/);
+    assert.match(realResult.output, /real\.js/);
+  } finally {
+    rmSync(realRoot, { recursive: true, force: true });
+  }
+});

@@ -40,7 +40,7 @@ export function searchStateBase() {
         // ===== File List State =====
         fileList: [],
         currentFileIndex: 0,
-        listMode: null,  // 'file' | 'search' | null
+        listMode: null,  // 'file' | 'search' | 'wishlist' | null
 
         // ===== Batch State =====
         batchState: {
@@ -336,44 +336,77 @@ export function searchStateBase() {
 
         async checkLocalStatus(results) {
             // 收集所有有效番號
-            const numbers = results
+            const numberList = results
                 .map(r => r.number)
-                .filter(n => n)
-                .join(',');
+                .filter(n => n);
+            const numbers = numberList.join(',');
 
             if (!numbers) return;
 
-            try {
-                const resp = await fetch(`/api/search/local-status?numbers=${encodeURIComponent(numbers)}`);
-                if (!resp.ok) {
-                    console.warn('[LocalStatus] API 請求失敗:', resp.status);
-                    return;
-                }
-
-                const data = await resp.json();
-
-                // 更新搜尋結果的本地狀態
-                results.forEach(result => {
-                    if (result.number) {
-                        result._localStatus = data[result.number] || data[result.number?.toUpperCase()];
+            // TASK-140-T5：membership hydration。
+            // 🔴 **兩件事都要獨立：發出要平行，「處理」也要平行**（Codex review P2）。
+            // 第一版先 await membership 再 await local-status——即使兩個 fetch 是平行發出的，
+            // **處理**仍串在同一條 async 序列上：membership 卡住不 resolve 時，local-status
+            // 明明早就回來了，寫 `_localStatus` 那段也永遠不會執行。
+            // 使用者後果與沒修之前一模一樣：**「本地已有」的紅框與播放鈕不會出現**，
+            // 使用者以為這片沒下載過，又去整理／下載一次。
+            // ⇒ 兩邊各自包成獨立的 async 任務，最後一起 await；任一邊卡住都不擋另一邊。
+            const membershipTask = (async () => {
+                try {
+                    const membershipResp = await fetch('/api/wishlist/membership', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ numbers: numberList }),
+                    });
+                    if (!membershipResp.ok) {
+                        console.warn('[WishlistMembership] API 請求失敗:', membershipResp.status);
+                        return;
                     }
-                });
-
-                // 收集有本地匹配的番號
-                const localMatchNumbers = results
-                    .filter(r => r._localStatus?.exists)
-                    .map(r => r.number);
-
-                // 觸發跨 scope 事件（通知 sidebar + 卡片）
-                if (localMatchNumbers.length > 0) {
-                    window.dispatchEvent(new CustomEvent('search:local-match', {
-                        detail: { numbers: localMatchNumbers }
-                    }));
+                    const membershipData = await membershipResp.json();
+                    results.forEach(result => {
+                        if (result.number) {
+                            result._wishlisted = membershipData[result.number];
+                        }
+                    });
+                } catch (err) {
+                    console.error('[WishlistMembership] 查詢失敗:', err);
                 }
+            })();
 
-            } catch (err) {
-                console.error('[LocalStatus] 查詢失敗:', err);
-            }
+            const localStatusTask = (async () => {
+                try {
+                    const resp = await fetch(`/api/search/local-status?numbers=${encodeURIComponent(numbers)}`);
+                    if (!resp.ok) {
+                        console.warn('[LocalStatus] API 請求失敗:', resp.status);
+                        return;
+                    }
+
+                    const data = await resp.json();
+
+                    // 更新搜尋結果的本地狀態
+                    results.forEach(result => {
+                        if (result.number) {
+                            result._localStatus = data[result.number] || data[result.number?.toUpperCase()];
+                        }
+                    });
+
+                    // 收集有本地匹配的番號
+                    const localMatchNumbers = results
+                        .filter(r => r._localStatus?.exists)
+                        .map(r => r.number);
+
+                    // 觸發跨 scope 事件（通知 sidebar + 卡片）
+                    if (localMatchNumbers.length > 0) {
+                        window.dispatchEvent(new CustomEvent('search:local-match', {
+                            detail: { numbers: localMatchNumbers }
+                        }));
+                    }
+                } catch (err) {
+                    console.error('[LocalStatus] 查詢失敗:', err);
+                }
+            })();
+
+            await Promise.all([membershipTask, localStatusTask]);
         },
 
         translateAllButtonText() {

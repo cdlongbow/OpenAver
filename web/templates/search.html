@@ -65,11 +65,33 @@
                             data-tooltip="{{ t('search.action.open_source_url') }}" aria-label="{{ t('search.action.open_source_url') }}">
                         <i class="bi bi-box-arrow-up-right"></i>
                     </button>
+                    <!-- TASK-140-T6: 播放 -->
+                    <button class="lb-action-btn"
+                            @click="window.open('/api/gallery/player?path=' + encodeURIComponent(currentLightboxVideo()?._localStatus?.paths?.[0] || ''), '_blank')"
+                            x-show="!actressLightboxMode() && (cardActionState(currentLightboxVideo()) === 'play' || cardActionState(currentLightboxVideo()) === 'play+folder')"
+                            data-tooltip="{{ t('search.action.play') }}" aria-label="{{ t('search.action.play') }}">
+                        <i class="bi bi-play-fill"></i>
+                    </button>
+                    <!-- TASK-140-T6: 開資料夾（count>1 時與播放並列）-->
                     <button class="lb-action-btn"
                             @click="openLocal(currentLightboxVideo()?._localStatus?.paths?.[0] || '')"
-                            x-show="currentLightboxVideo()?._localStatus?.exists"
+                            x-show="!actressLightboxMode() && cardActionState(currentLightboxVideo()) === 'play+folder'"
                             data-tooltip="{{ t('search.action.open_folder') }}" aria-label="{{ t('search.action.open_folder') }}">
                         <i class="bi bi-folder2-open"></i>
+                    </button>
+                    <!-- TASK-140-T6: 加入書籤 -->
+                    <button class="lb-action-btn"
+                            @click="addToWishlist(currentLightboxVideo())"
+                            x-show="!actressLightboxMode() && cardActionState(currentLightboxVideo()) === 'bookmark-add'"
+                            data-tooltip="{{ t('search.action.add_wishlist') }}" aria-label="{{ t('search.action.add_wishlist') }}">
+                        <i class="bi bi-bookmark-plus"></i>
+                    </button>
+                    <!-- TASK-140-T6: 從書籤移除 -->
+                    <button class="lb-action-btn"
+                            @click="removeFromWishlist(currentLightboxVideo()?.number)"
+                            x-show="!actressLightboxMode() && cardActionState(currentLightboxVideo()) === 'bookmark-remove'"
+                            data-tooltip="{{ t('search.action.remove_wishlist') }}" aria-label="{{ t('search.action.remove_wishlist') }}">
+                        <i class="bi bi-bookmark-fill"></i>
                     </button>
                     <button class="lb-action-btn"
                             @click="openSourceUrl(currentLightboxVideo()?.url || '')"
@@ -218,6 +240,112 @@
         </button>
     </div>
 
+        <!-- TASK-140-T11a: 書籤燈箱（F5）。獨立狀態機，不與 lightboxOpen/lightboxIndex 共用
+             （研究題結論 #1、gotcha FE-ALPINE-04）。掛載點與既有 .showcase-lightbox 同層、
+             .result-area 之外，祖先鏈上無 pageState／listMode 閘，只認 wishlistLightboxOpen。
+             鍵盤/滾輪導航不在本卡（T11b），此區塊只靠上方導航箭頭與關閉鈕互動。 -->
+        <div class="showcase-lightbox wishlist-lightbox"
+             :class="{ 'show': wishlistLightboxOpen }"
+             x-trap.inert="wishlistLightboxOpen && !sampleGalleryOpen && !rescrapeOpen && !browseDirOpen && !duplicateModalOpen"
+             @click="closeWishlistLightbox()">
+
+            <div class="lightbox-content" @click.stop>
+                <!-- Close Button -->
+                <button class="lightbox-close"
+                        @click="closeWishlistLightbox()"
+                        title="{{ t('search.lightbox.close') }}">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+
+                <!-- Cover Image：本地端點，零對外請求（設計決策 #4，不得用 resolveCoverUrl／proxy-image）
+                     破圖 fallback 照清單卡（search.html .wishlist-grid）同一套 x-show/@error/placeholder，
+                     否則 cover_available:false 的列會露出瀏覽器預設破圖 icon -->
+                <div class="lightbox-cover" :class="{ 'has-cover': !_wishlistLbImgError }">
+                    <!-- 三元擋掉「沒有當前項目」的空 number（照既有燈箱 search.html:39-41 的同一種寫法）：
+                         少了它，燈箱關著的時候 <img> 照樣會帶著空番號去打封面端點，每次載入搜尋頁
+                         console 就多一筆 404（實測），而且 @error 會把破圖旗標打開。
+                         ⚠️ 這段註解**刻意不寫出端點字面**——static_guard_lint 的 required-string
+                         是字面比對，註解裡出現同一串會把守衛餵飽（Opus 2026-09-02 實測踩過：
+                         把 src 改成 proxy-image 之後 lint 照樣全綠）。 -->
+                    <img :src="currentWishlistLightboxItem()?.number
+                                 ? `/api/wishlist/cover?number=${encodeURIComponent(currentWishlistLightboxItem().number)}`
+                                 : ''"
+                         :alt="currentWishlistLightboxItem()?.number"
+                         x-show="!_wishlistLbImgError"
+                         @error="_wishlistLbImgError = true">
+                    <div x-show="_wishlistLbImgError" class="cover-error-placeholder">
+                        <i class="bi bi-image text-5xl"></i>
+                        <p class="mt-2" x-text="t('common.no_image')"></p>
+                    </div>
+                    <div class="cover-actions">
+                        <!-- 唯一的下游動作：開原站（spec F5 開頭） -->
+                        <button class="lb-action-btn"
+                                x-show="currentWishlistLightboxItem()?.source_url"
+                                @click.stop="openSourceUrl(currentWishlistLightboxItem()?.source_url || '')"
+                                data-tooltip="{{ t('search.action.open_source_url') }}" aria-label="{{ t('search.action.open_source_url') }}">
+                            <i class="bi bi-box-arrow-up-right"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Metadata -->
+                <div class="lightbox-metadata">
+                    <div class="lb-header">
+                        <div class="lb-title" x-text="currentWishlistLightboxItem()?.title || '-'"></div>
+                        <!-- FE-JS-01: preview || raw 的 || 刻意——preview_sample_images 目前每筆皆為空陣列，
+                             取 index 得 undefined，|| 落回 raw；哪天代理組不出來改填 ''，?? 會把 '' 當非 nullish
+                             放行成破圖，|| 才會正確再落回 raw -->
+                        <button class="sg-open-btn"
+                                x-show="(currentWishlistLightboxItem()?.sample_images || []).length > 0"
+                                @click="openSampleGallery((currentWishlistLightboxItem()?.sample_images || []).map((url, i) => '/api/proxy-image?url=' + encodeURIComponent(currentWishlistLightboxItem()?.preview_sample_images?.[i] || url)), 0)"
+                                x-text="t('search.gallery.sample_prefix') + ' (' + (currentWishlistLightboxItem()?.sample_images || []).length + ')'">
+                        </button>
+                    </div>
+                    <div class="lb-actor" x-text="(currentWishlistLightboxItem()?.actresses || []).join(', ') || '-'"></div>
+                    <div class="lb-details">
+                        <span class="lb-detail-num" x-text="currentWishlistLightboxItem()?.number || '-'"></span>
+                        <span x-show="currentWishlistLightboxItem()?.maker">
+                            &nbsp;·&nbsp;<span x-text="currentWishlistLightboxItem()?.maker"></span>
+                        </span>
+                        <span x-show="currentWishlistLightboxItem()?.director">
+                            &nbsp;·&nbsp;<b>{{ t('search.label.director') }}：</b><span x-text="currentWishlistLightboxItem()?.director"></span>
+                        </span>
+                        <span x-show="currentWishlistLightboxItem()?.duration">
+                            &nbsp;·&nbsp;<span x-text="currentWishlistLightboxItem()?.duration ? currentWishlistLightboxItem().duration + ' ' + t('search.unit.minutes') : ''"></span>
+                        </span>
+                        <span x-show="currentWishlistLightboxItem()?.series">
+                            &nbsp;·&nbsp;<b>{{ t('search.label.series') }}：</b><span x-text="currentWishlistLightboxItem()?.series"></span>
+                        </span>
+                        <span x-show="currentWishlistLightboxItem()?.label && currentWishlistLightboxItem()?.label !== currentWishlistLightboxItem()?.maker">
+                            &nbsp;·&nbsp;<b>{{ t('search.label.label') }}：</b><span x-text="currentWishlistLightboxItem()?.label"></span>
+                        </span>
+                        <span x-show="currentWishlistLightboxItem()?.release_date">
+                            &nbsp;·&nbsp;<span x-text="currentWishlistLightboxItem()?.release_date"></span>
+                        </span>
+                    </div>
+                    <div class="lb-tags" x-show="(currentWishlistLightboxItem()?.tags || []).length > 0">
+                        <template x-for="tag in (currentWishlistLightboxItem()?.tags || [])" :key="tag">
+                            <span class="lb-tag" x-text="tag"></span>
+                        </template>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Navigation Arrows：純陣列邊界導航，無 loadMore -->
+            <button class="lightbox-nav lightbox-nav-prev"
+                    @click.stop="prevWishlistLightbox()"
+                    x-show="wishlistLightboxIndex > 0"
+                    title="{{ t('search.lightbox.prev') }}">
+                <i class="bi bi-chevron-left"></i>
+            </button>
+            <button class="lightbox-nav lightbox-nav-next"
+                    @click.stop="nextWishlistLightbox()"
+                    x-show="wishlistLightboxIndex < wishlistItems.length - 1"
+                    title="{{ t('search.lightbox.next') }}">
+                <i class="bi bi-chevron-right"></i>
+            </button>
+        </div>
+
     <!-- T8: Sample Gallery Overlay（縮圖列 + 切換動畫） -->
     <div class="sample-gallery"
          :class="{ 'show': sampleGalleryOpen }"
@@ -272,8 +400,23 @@
     <!-- 搜尋框（Spotlight 中央輸入；US-1 navbar 收合不作用於 search 頁，維持永遠可見） -->
     <div class="search-bar">
         <form id="searchForm" @submit.prevent="doSearch()">
-            <div class="spotlight-search">
-                <i class="bi bi-search search-icon-left"></i>
+            <div class="spotlight-search spotlight-search--wishlist-toggle">
+                <!-- TASK-140-T7 / spec F2：segmented 檢視切換，取代原本的 search-icon-left -->
+                <div class="mode-toggle">
+                    <button type="button" class="mode-toggle-btn"
+                            :class="{ 'active': listMode !== 'wishlist' }"
+                            @click="listMode === 'wishlist' && switchToSearchList()"
+                            :title="t('search.action.view_search_results')">
+                        <i class="bi bi-search"></i>
+                    </button>
+                    <button type="button" class="mode-toggle-btn"
+                            :class="{ 'active': listMode === 'wishlist' }"
+                            @click="listMode !== 'wishlist' && switchToWishlist()"
+                            :title="t('search.action.view_wishlist')">
+                        <i class="bi bi-bookmarks"></i>
+                        <span class="mode-toggle-badge" x-show="wishlistCount > 0" x-text="wishlistCount"></span>
+                    </button>
+                </div>
                 <input type="text" id="searchQuery" name="q" placeholder="{{ t('search.placeholder.query') }}" autocomplete="off" x-model="searchQuery" x-ref="searchQuery" @keydown.enter="if ($event.isComposing) { $event.preventDefault(); return; }">
                 <div class="search-actions-right">
                     <!-- 取消搜尋按鈕（loading 狀態顯示） -->
@@ -315,7 +458,7 @@
     <!-- 結果區域 -->
     <div class="result-area">
         <!-- 初始狀態 -->
-        <div id="emptyState" class="state-page w-full" x-show="pageState === 'empty'" x-cloak>
+        <div id="emptyState" class="state-page w-full" x-show="pageState === 'empty' && listMode !== 'wishlist'" x-cloak>
             <i class="bi bi-film state-page-icon"></i>
             <p class="state-page-text">{{ t('search.empty.hint') }}</p>
             <div class="empty-actions">
@@ -349,7 +492,7 @@
         </div>
 
         <!-- 載入中 - 進度指示器 -->
-        <div id="loadingState" class="search-progress w-full" x-show="pageState === 'loading'" x-cloak>
+        <div id="loadingState" class="search-progress w-full" x-show="pageState === 'loading' && listMode !== 'wishlist'" x-cloak>
             <div class="progress-container">
                 <!-- 搜尋標題 -->
                 <div class="progress-header">
@@ -370,7 +513,7 @@
         </div>
 
         <!-- 錯誤狀態 -->
-        <div id="errorState" class="state-page error w-full" x-show="pageState === 'error'" x-cloak>
+        <div id="errorState" class="state-page error w-full" x-show="pageState === 'error' && listMode !== 'wishlist'" x-cloak>
             <i class="bi bi-exclamation-triangle state-page-icon"></i>
             <p class="state-page-text error-text" id="errorMessage" x-text="errorText || window.t('search.filelist.search_failed')">{{ t('search.filelist.search_failed') }}</p>
             <small class="state-page-hint">{{ t('search.error.hint_retry') }}</small>
@@ -403,7 +546,7 @@
         </div>
 
         <!-- 結果卡片（wrapper：卡片 + 檔案列表垂直排列） -->
-        <div id="resultCard" x-show="pageState === 'result'" x-cloak>
+        <div id="resultCard" x-show="pageState === 'result' && listMode !== 'wishlist'" x-cloak>
             <!-- T5: Actress Banner 完全移除（Detail 模式不顯示女優資訊）-->
             <!-- Hero Card 仍在 Grid 模式顯示（L379-400，已有 x-show="displayMode === 'grid'"） -->
 
@@ -498,6 +641,20 @@
                             x-show="appConfig?.source_links?.[current()?.source] && current()?.url"
                             title="{{ t('search.action.open_source_url') }}">
                         <i class="bi bi-box-arrow-up-right"></i>
+                    </button>
+                    <!-- TASK-140-T6: 加入書籤（本地沒有 ＋ 未加入）-->
+                    <button class="info-icon-btn"
+                            @click="addToWishlist(current())"
+                            x-show="cardActionState(current()) === 'bookmark-add'"
+                            title="{{ t('search.action.add_wishlist') }}">
+                        <i class="bi bi-bookmark-plus"></i>
+                    </button>
+                    <!-- TASK-140-T6: 從書籤移除（本地沒有 ＋ 已加入）-->
+                    <button class="info-icon-btn"
+                            @click="removeFromWishlist(current()?.number)"
+                            x-show="cardActionState(current()) === 'bookmark-remove'"
+                            title="{{ t('search.action.remove_wishlist') }}">
+                        <i class="bi bi-bookmark-fill"></i>
                     </button>
                 </div>
                 <div class="av-card-full-title">
@@ -797,11 +954,33 @@
                                         title="{{ t('search.grid.detail_title') }}">
                                     <i class="bi bi-info-circle"></i>
                                 </button>
+                                <!-- TASK-140-T6: 播放（count===1 或 count>1 皆顯示）-->
+                                <button class="btn-glass-circle"
+                                        @click.stop="window.open('/api/gallery/player?path=' + encodeURIComponent(result._localStatus?.paths?.[0] || ''), '_blank')"
+                                        x-show="cardActionState(result) === 'play' || cardActionState(result) === 'play+folder'"
+                                        title="{{ t('search.action.play') }}">
+                                    <i class="bi bi-play-fill"></i>
+                                </button>
+                                <!-- TASK-140-T6: 開資料夾（僅 count>1 時與播放並列）-->
                                 <button class="btn-glass-circle"
                                         @click.stop="openLocal(result._localStatus?.paths?.[0] || '')"
-                                        x-show="result._localStatus?.exists"
+                                        x-show="cardActionState(result) === 'play+folder'"
                                         title="{{ t('search.action.open_folder') }}">
                                     <i class="bi bi-folder2-open"></i>
+                                </button>
+                                <!-- TASK-140-T6: 加入書籤 -->
+                                <button class="btn-glass-circle"
+                                        @click.stop="addToWishlist(result)"
+                                        x-show="cardActionState(result) === 'bookmark-add'"
+                                        title="{{ t('search.action.add_wishlist') }}">
+                                    <i class="bi bi-bookmark-plus"></i>
+                                </button>
+                                <!-- TASK-140-T6: 從書籤移除 -->
+                                <button class="btn-glass-circle"
+                                        @click.stop="removeFromWishlist(result.number)"
+                                        x-show="cardActionState(result) === 'bookmark-remove'"
+                                        title="{{ t('search.action.remove_wishlist') }}">
+                                    <i class="bi bi-bookmark-fill"></i>
                                 </button>
                             </div>
                         </div>
@@ -820,7 +999,7 @@
             </div>
             <!-- Load More 按鈕 -->
             <div class="text-center py-4"
-                 x-show="hasMoreResults && displayMode === 'grid'"
+                 x-show="hasMoreResults && displayMode === 'grid' && listMode === 'search'"
                  x-cloak>
                 <button class="btn btn-outline btn-sm" @click="gridLoadMore()"
                         :disabled="isLoadingMore">
@@ -979,6 +1158,74 @@
                         </div>
                     </template>
                 </div>
+            </div>
+        </div>
+        <!-- TASK-140-T8: 書籤清單（F3）。獨立於 #resultCard／pageState，只認 listMode——
+             見「對 plan 技術方案的訂正」：#resultCard 只在 pageState==='result' 時顯示，
+             若巢狀在裡面，使用者從未搜尋過就直接點書籤會看到空白頁。
+             點卡片開燈箱是 T9（Phase 2）的工作，本卡不接線 @click。 -->
+        <!-- TASK-140-T12: 三層分工 wrapper（plan「容器結構寫死」，Codex Phase 2 P2-3）。
+             .wishlist-panel 才是 .result-area 的直接 flex item——尺寸宣告（width:100%／
+             max-height:100%）必須釘在這一層，不能留在 .wishlist-grid（T9 教訓：宣告留在
+             會 shrink 的子層，窄欄照樣重現）。與 #resultCard 既有形狀同構（search.css:102-109）。
+             .wishlist-empty 刻意留在 wrapper 外面（見技術要點 §1 的設計決策），維持
+             「狀態頁扁平 siblings」的既有慣例。 -->
+        <div class="wishlist-panel" x-show="listMode === 'wishlist'" x-cloak>
+            <div class="wishlist-toolbar">
+                <button id="btnWishlistCleanup" class="btn btn-sm btn-outline btn-warning"
+                        x-show="ownedWishlistCount > 0"
+                        @click="cleanupOwnedWishlist()">
+                    <i class="bi bi-eraser"></i>
+                    <span x-text="t('search.wishlist.cleanup_owned', { count: ownedWishlistCount })"></span>
+                </button>
+            </div>
+            <div class="wishlist-grid ds-gallery-composition" x-show="listMode === 'wishlist'" x-cloak>
+                <template x-for="(item, index) in wishlistItems" :key="item.number">
+                    <div class="av-card-preview" @click="openWishlistLightbox(index)">
+                        <div class="av-card-preview-img">
+                            <img :src="`/api/wishlist/cover?number=${encodeURIComponent(item.number)}`"
+                                 :alt="item.number"
+                                 loading="lazy"
+                                 x-show="!item._imgError"
+                                 @error="item._imgError = true">
+                            <div x-show="item._imgError" class="cover-error-placeholder">
+                                <i class="bi bi-image text-5xl"></i>
+                                <p class="mt-2" x-text="t('common.no_image')"></p>
+                            </div>
+                            <!-- 已入手角標（F6）：獨立 sibling，不進 .av-card-preview-overlay
+                                 ——那個 div 預設 opacity:0，只有 hover 才 1（theme.css:1140-1142），
+                                 角標必須恆常可見，套進去會被 hover 機制吃掉 -->
+                            <span class="wishlist-owned-badge"
+                                  x-show="item._owned"
+                                  title="{{ t('search.wishlist.owned') }}">
+                                <i class="bi bi-collection-play-fill"></i>
+                            </span>
+                            <div class="av-card-preview-overlay">
+                                <button class="btn-glass-circle"
+                                        @click.stop="removeFromWishlist(item.number)"
+                                        title="{{ t('search.action.remove_wishlist') }}">
+                                    <i class="bi bi-trash3"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="av-card-preview-footer">
+                            <div class="footer-default">
+                                <span class="av-num" x-text="item.number"></span>
+                                <span class="av-actress" x-text="(item.actresses || []).slice(0, 2).join(', ') || t('search.grid.unknown_actor')"></span>
+                            </div>
+                            <div class="footer-hover">
+                                <div class="hover-title" x-text="item.title || t('search.grid.unknown_title')"></div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+        <!-- TASK-140-T8: 空狀態（F3 驗收4）。額外加 listMode 判斷，避免離開書籤頁後殘留顯示 -->
+        <div class="wishlist-empty" x-show="listMode === 'wishlist' && wishlistItems.length === 0 && wishlistLoaded" x-cloak>
+            <div class="cover-error-placeholder">
+                <i class="bi bi-image text-5xl"></i>
+                <p class="mt-2" x-text="t('search.wishlist.empty')"></p>
             </div>
         </div>
     </div>
