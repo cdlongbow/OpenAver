@@ -402,3 +402,21 @@ def test_get_wishlist_cover_miss(client, tmp_db):
     """DoD-8: GET /api/wishlist/cover 未命中回 404"""
     resp = client.get("/api/wishlist/cover?number=NONEXISTENT-999")
     assert resp.status_code == 404
+
+
+def test_add_wishlist_reports_added_false_on_duplicate(client, tmp_db, monkeypatch):
+    """branch review P2-1：重複加入回 added:false（success 仍 True，冪等語意不變）。
+
+    沒有這個欄位，前端的樂觀 +1 補不回來——切換版本會把整顆結果物件換掉、連帶清掉
+    `_wishlisted`，卡片變回「加入書籤」，再按一次計數就永久多一。
+    """
+    monkeypatch.setattr("core.wishlist_cover_cache.download_and_save", lambda *a, **k: True)
+    payload = {"number": "ADDFLAG-001", "title": "x", "cover": "http://cov"}
+
+    first = client.post("/api/wishlist", json=payload).json()
+    assert first["success"] is True
+    assert first["added"] is True, "第一次加入必須回 added:True"
+
+    second = client.post("/api/wishlist", json=payload).json()
+    assert second["success"] is True, "重複加入不是錯誤（冪等），success 維持 True"
+    assert second["added"] is False, "重複加入必須回 added:False，否則前端計數補不回來"

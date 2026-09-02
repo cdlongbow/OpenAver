@@ -4499,6 +4499,17 @@ const RULES = [
     scope: { anchor: /class="wishlist-grid[^"]*"/, window: 3000 },
     note: '[TASK-140-T8] wishlist 封面必須走本地 /api/wishlist/cover 端點，不得用 resolveCoverUrl（F4 驗收2／F6 驗收5）',
   },
+  // 🔴 branch review P2-2（2026-09-02）：上面只有反向鎖（不得用 resolveCoverUrl），
+  // 少了正向鎖 ⇒ 把 :src 改成打 /api/proxy-image 時 static_guard 1217 條、css-guard 52 條
+  // **全綠**（reviewer 在乾淨樹沙盒實測過）。燈箱那側本來就有這條正向鎖，卡片這側漏了。
+  // 兩處字面相距 6 萬字元、各自有 scope，不會互相餵飽（FE-GUARD-22）。
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: '/api/wishlist/cover?number=',
+    scope: { anchor: /class="wishlist-grid[^"]*"/, window: 3000 },
+    note: '[branch review P2-2] 書籤格卡封面必須走本地端點：退回打外站會破壞 F6 驗收5「零對外請求」，且 javbus 圖床沒有 Referer 會回 403 ＝ T9 修過的那個整頁破圖',
+  },
   {
     file: 'web/templates/search.html',
     kind: 'required-string',

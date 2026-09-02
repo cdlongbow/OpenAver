@@ -2296,6 +2296,16 @@ const RULES = [
         }
       }
 
+      // branch review P1-1：第三層。.wishlist-empty 與 .wishlist-panel 是**兄弟**
+      // flex item（不是巢狀），所以上面兩段的檢查完全罩不到它；它的子元素是
+      // position:absolute ⇒ 內在寬度 0，少了寬度宣告就被 flex 壓成 0 寬。
+      const empty = findStandalone('.wishlist-empty');
+      if (!empty) {
+        ctx.fail('CG-WISH-01: .wishlist-empty 專屬（非合併）規則區塊不存在');
+      } else if (!/width\s*:\s*100%/.test(empty.declarations)) {
+        ctx.fail('CG-WISH-01: .wishlist-empty 專屬區塊缺少 width: 100%（子元素是 absolute ⇒ 內在寬度 0，會被 flex 壓成 0 寬的直排字，實測 w=0）');
+      }
+
       const grid = findStandalone('.wishlist-grid');
       if (!grid) {
         ctx.fail('CG-WISH-01: .wishlist-grid 專屬（非合併）規則區塊不存在');

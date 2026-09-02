@@ -143,6 +143,25 @@ export function searchStateWishlist() {
                     }),
                 });
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                // 🔴 branch review P2-1（2026-09-02）：端點對「這個番號本來就在」回的是
+                // 200 ＋ `added:false`（不是錯誤——加入書籤是冪等的）。不看這個欄位的話，
+                // 樂觀 +1 會憑空多算一筆：切換版本會把整顆結果物件換掉、連帶清掉
+                // `_wishlisted`，卡片變回「加入書籤」，再按一次就重複計數。
+                // 處置與 removeFromWishlist 的 `success:false` 同一套：本地計數已知與 DB
+                // 對不上 ⇒ 跟伺服器要權威值；同時把樂觀 unshift 的那筆重複拿掉
+                // （原本那筆還在陣列裡，留著會產生同 number 的重複 :key）。
+                let data = null;
+                try {
+                    data = await resp.json();
+                } catch (parseErr) {
+                    console.error('[Wishlist] add 回應解析失敗:', parseErr);
+                }
+                if (data?.added === false) {
+                    if (this.wishlistLoaded) {
+                        this.wishlistItems = this.wishlistItems.filter((i) => i !== result);
+                    }
+                    await this.loadWishlistCount();
+                }
             } catch (err) {
                 console.error('[Wishlist] add 失敗:', err);
                 result._wishlisted = prevWishlisted;

@@ -1066,8 +1066,16 @@
 /* 空狀態外層需要一個有 position + 高度的容器，
    .cover-error-placeholder 本身 position:absolute;inset:0（search.css:125-133），
    裸放在頁面上會找不到正確的定位祖先（往上吃到 .search-container 甚至更外層）。 */
+/* 🔴 branch review P1-1（2026-09-02）：`width:100%` 不是裝飾，是這一層存在的理由。
+   .wishlist-empty 是 .result-area（display:flex，預設 row）的直接 flex item，而它唯一的
+   子元素 .cover-error-placeholder 是 position:absolute;inset:0 ⇒ **內在寬度 0**。
+   沒有這一條，flex 會把它算成 0 寬，實測 getBoundingClientRect() 是 w=0、文字被擠成
+   16px 寬的直排七個字貼在畫面最右緣、圖示裁掉一半——而這正是新使用者第一次點開
+   書籤段看到的畫面。與 T9／T12 修過兩次的是同一種缺陷（尺寸宣告落在會 shrink 的層），
+   只是這塊刻意留在 .wishlist-panel 外面，所以前兩次的守衛都罩不到它。 */
 .wishlist-empty {
     position: relative;
+    width: 100%;
     min-height: 40vh;
 }
 

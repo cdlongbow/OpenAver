@@ -76,7 +76,14 @@ def add_wishlist(req: WishlistAddRequest) -> dict:
                 cover_available = False
     else:
         cover_available = wishlist_cover_cache.cover_file_for(number).exists()
-    return {"success": True, "cover_available": cover_available}
+    # 🔴 branch review P2-1（2026-09-02）：多回一個 `added`。`success` 維持 True
+    # （加入書籤是冪等的，重複加入不是錯誤——既有契約由
+    # `test_add_wishlist_duplicate_number` 釘住，不改），但前端需要分辨「真的多了一筆」
+    # 與「本來就有」，否則樂觀 +1 永遠補不回來：切換版本會把整顆結果物件換掉
+    # （state-rescrape.js 的 `t.arr[t.idx] = variant`），連帶清掉 `_wishlisted`，卡片
+    # 於是變回「加入書籤」，再按一次就重複 +1。與 DELETE 端點回 `success: removed`
+    # 是同一組對稱資訊，那一半已經有了。
+    return {"success": True, "added": added, "cover_available": cover_available}
 
 
 @router.get("")

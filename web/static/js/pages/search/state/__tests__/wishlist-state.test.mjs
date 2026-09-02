@@ -1247,3 +1247,33 @@ test('deferred-fetch：cleanup 進行中切到搜尋段再切回書籤段，那�
     );
     assert.equal(state.wishlistCount, 1);
 });
+
+// branch review P2-1：POST 回 added:false（那個番號本來就在）時，樂觀 +1 必須收回。
+// 到達路徑：切換版本把整顆結果物件換掉 ⇒ `_wishlisted` 一起沒了 ⇒ 卡片變回「加入書籤」
+// ⇒ 再按一次。與 removeFromWishlist 的 success:false 是同一組對稱處置。
+test('addToWishlist：HTTP 200 {added:false} ⇒ 重新對帳 badge，並收回樂觀 unshift 的重複項', async () => {
+    let countCalls = 0;
+    globalThis.fetch = async (url, opts = {}) => {
+        const u = String(url);
+        if (u === '/api/wishlist' && opts.method === 'POST') {
+            return jsonResponse({ success: true, added: false, cover_available: true });
+        }
+        if (u === '/api/wishlist/count') { countCalls++; return jsonResponse({ count: 5 }); }
+        throw new Error(`unexpected url: ${u}`);
+    };
+
+    const existing = { number: 'DUP-1', _owned: false };
+    const result = { number: 'DUP-1', title: 't' };
+    const state = makeWishlistThis({
+        wishlistCount: 5,
+        wishlistLoaded: true,
+        wishlistItems: [existing],
+    });
+
+    await state.addToWishlist(result);
+
+    assert.equal(countCalls, 1, 'added:false 必須觸發一次跟伺服器的重新對帳');
+    assert.equal(state.wishlistCount, 5, '本來就有的番號不得讓計數 +1（收伺服器權威值）');
+    assert.deepEqual(state.wishlistItems, [existing],
+        '樂觀 unshift 的那筆重複必須收回，只留原本那筆（否則 x-for 會有重複 :key）');
+});
