@@ -138,6 +138,9 @@ def init_db(db_path: Path = None) -> None:
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_videos_cover_path ON videos(cover_path)
     """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_videos_number_upper ON videos(UPPER(number))
+    """)
 
     # 女優別名表 — 偵測舊 schema (old_name 欄位) 並執行跟鏈遷移
     existing_alias_cols = {

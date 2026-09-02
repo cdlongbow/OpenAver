@@ -201,7 +201,7 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "理由一致）。",
     ),
     ("core/database/connection.py", "init_db"): (
-        235,
+        238,
         "資料庫 schema 初始化主流程，逐表 CREATE TABLE/CREATE INDEX 語句序列，schema 仍在"
         "演進中；拆成多個小函式不會降低本質複雜度，只會增加呼叫層次與跨函式的 cursor/conn "
         "傳遞。"
@@ -211,7 +211,10 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "這是 schema 演進的固有成本，不是可以靠重構消掉的膨脹。"
         " ／ 209→235（feature/140-wishlist T2）：新增 `wishlist` 表的 `CREATE TABLE IF NOT "
         "EXISTS` ＋ `idx_wishlist_created_at` 索引，與同函式內既有 5 張表逐字同形。把單獨一張"
-        "表抽成 helper 會讓 6 張表有 5 張在函式內、1 張在函式外，反而更難讀。",
+        "表抽成 helper 會讓 6 張表有 5 張在函式內、1 張在函式外，反而更難讀。"
+        " ／ 235→238（feature/141-wishlist-motion T1）：新增 `idx_videos_number_upper` "
+        "表達式索引（`UPPER(number)`），與同區塊既有 4 條 `idx_videos_*` 逐字同形。"
+        "它讓書籤與片庫對帳不再全表掃描（spec-141 F5），是純加法的 3 行索引宣告。",
     ),
 }
 
