@@ -404,7 +404,44 @@ export function searchStateWishlist() {
         },
 
         closeWishlistLightbox() {
+            // ★ fly-back capture（對照 grid-mode.js closeLightbox() :176-180）——
+            // 🔴 必須在 wishlistLightboxOpen=false 之前抓（設計決策 2）：Alpine 一旦把燈箱
+            // 隱藏，getBoundingClientRect() 就會回傳寬高皆 0，playLightboxToGrid 的
+            // 「起點無效」分支（ghost-fly.js:834）會被觸發 ⇒ 封面直接消失、不拋錯。
+            var closingIndex = this.wishlistLightboxIndex;
+            var lbEl = safeQuery('.wishlist-lightbox');
+            var lbImg = lbEl ? lbEl.querySelector('.lightbox-cover img') : null;
+            var flybackFromRect = lbImg ? lbImg.getBoundingClientRect() : null;
+            var flybackCoverSrc = lbImg ? lbImg.src : null;
+
+            // 世代旗標先遞增（對照 grid-mode.js:182，順序在 kill 之前），讓 T3 懸置的
+            // $nextTick 回呼（開啟／換片動畫）在關閉之後不再執行。
+            this._wishlistLbGeneration++;
+
+            // CD-20：kill 字面固定 'lightboxOpen' + 'lightboxSwitch'（與 T3 的
+            // _animateWishlistLightboxSwitch、對照物 grid-mode.js:184-187 一致；
+            // 訂正 plan 草稿碼只 kill 單一 id 的漏洞，見上方「Opus 訂正 plan 草稿碼」）。
+            if (typeof gsap !== 'undefined') {
+                gsap.getById('lightboxOpen')?.kill();
+                gsap.getById('lightboxSwitch')?.kill();
+            }
+            if (lbEl) lbEl.classList.remove('gsap-animating');
             this.wishlistLightboxOpen = false;
+
+            // ★ Fly-back（對照 grid-mode.js:198-206）。找不到目標卡就不呼叫——
+            // 視窗外／已捲走的退化淡出交給 playLightboxToGrid 自己的 abort() 分支
+            // （ghost-fly.js:842-869），T4 不寫任何 viewport 判斷（設計決策 5）。
+            if (closingIndex >= 0 && flybackFromRect && window.GhostFly?.playLightboxToGrid) {
+                safeNextTick(this, function () {
+                    var grid = safeQuery('.wishlist-grid');
+                    var cardEl = grid ? grid.querySelector('[data-slot="' + closingIndex + '"]') : null;
+                    if (cardEl) {
+                        window.GhostFly.playLightboxToGrid(flybackFromRect, cardEl, {
+                            coverSrc: flybackCoverSrc, fromImg: lbImg
+                        });
+                    }
+                });
+            }
         },
 
         // 三支換片的方法都要重設 _wishlistLbImgError（Opus 2026-09-02 補，grok 自報的偏離 #2）：
