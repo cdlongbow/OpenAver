@@ -4658,6 +4658,23 @@ const RULES = [
     scope: { anchor: /class="wishlist-panel"/, window: 700 },
     note: '[TASK-140-T12] 清理鈕必須接上 cleanupOwnedWishlist()（F7 驗收3：點下去要真的觸發清理），比承重段第9條原列的三項多加這一條——click 接線是同一批字串存在性檢查最自然的延伸，遺漏會讓鈕看起來對但按下去沒反應',
   },
+
+  // ---- [lint-guard 141a-T5] 對帳呼叫點逐檔計數（spec F2／設計決策 5）----
+  // 鎖 scanner/scraper/wishlist 三個已知檔案的 reconcile_wishlist( 出現次數。
+  // 多掛會把通知 buffer 灌爆；少掛會讓該觸發點形同虛設。不是全庫白名單——
+  // 全新第四個檔案掛對帳不會被這三條攔下（見 TASK-141a-T5 DoD 8 邊界）。
+  { file: 'web/routers/scanner.py', kind: 'structure-count', pattern: 'reconcile_wishlist(', count: 1,
+    note: '[lint-guard 141a-T5] 對帳呼叫點逐檔計數：scanner.py 恰 1 處（generate_avlist 收尾），多一處或少一處代表未來 branch 順手多掛/漏掛觸發點' },
+  // scraper.py 的兩個出口共用 helper `_reconcile_wishlist_after_write()`（ruff C901 逼出來的抽取，
+  // 見該函式 docstring），所以這一檔要兩條規則才數得對：
+  //   · `reconcile_wishlist(` 恰 1 處 —— 只在 helper 內部（少一處＝對帳被拔掉）
+  //   · `_reconcile_wishlist_after_write(` 恰 3 處 —— 1 個 def ＋ 2 個呼叫點（多一處＝順手多掛觸發點）
+  { file: 'web/routers/scraper.py', kind: 'structure-count', pattern: 'reconcile_wishlist(', count: 1,
+    note: '[lint-guard 141a-T5] 對帳呼叫點逐檔計數：scraper.py 的 reconcile_wishlist( 恰 1 處（只在 _reconcile_wishlist_after_write helper 內），少一處代表對帳被拔掉' },
+  { file: 'web/routers/scraper.py', kind: 'structure-count', pattern: '_reconcile_wishlist_after_write(', count: 3,
+    note: '[lint-guard 141a-T5] 對帳觸發點逐檔計數：scraper.py 的 _reconcile_wishlist_after_write( 恰 3 處（1 個 def ＋ enrich_single_endpoint 唯讀/一般分支各 1 個呼叫），多一處代表未來 branch 順手多掛觸發點（scrape-single／batch-enrich 也住這一檔）' },
+  { file: 'web/routers/wishlist.py', kind: 'structure-count', pattern: 'reconcile_wishlist(', count: 1,
+    note: '[lint-guard 141a-T5] 對帳呼叫點逐檔計數：wishlist.py 恰 1 處（T4 落地的 GET 載入前對帳）' },
 ];
 
 // ---- helpers ----

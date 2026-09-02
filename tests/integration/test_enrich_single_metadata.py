@@ -11,12 +11,37 @@ test_enrich_single_metadata.py - POST /api/enrich-single 帶 metadata 之整合�
 - DoD-8 (CD-135-12 item 1b/3): 唯讀路徑門口檢查（ingest 400、rescrape 缺 number/title/number 為 int 400）
 """
 
+import sqlite3
 import xml.etree.ElementTree as ET
 from unittest.mock import MagicMock
+
+import pytest
 
 from core.database import Video
 from core.enricher import EnrichResult
 from core.path_utils import to_file_uri, uri_to_fs_path
+
+
+@pytest.fixture(autouse=True)
+def reset_buffer():
+    """通知 buffer 是模組層級全域 deque，測試間必須清空，否則「恰好一筆」會閃爍。"""
+    import web.routers.notifications as notif_mod
+    notif_mod._notifications.clear()
+    notif_mod._read_ids.clear()
+    yield
+    notif_mod._notifications.clear()
+    notif_mod._read_ids.clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_reconcile_db(tmp_path_factory, monkeypatch):
+    """T5：enrich-single 成功路徑會呼叫 reconcile_wishlist()；既有測試未 patch
+    connection.get_db_path，若不隔離會撞上 repo_write_guard。只新增、不改既有測試。"""
+    from core.database import init_db
+    db_path = tmp_path_factory.mktemp("t5_reconcile") / "isolate.db"
+    init_db(db_path)
+    monkeypatch.setattr("core.database.connection.get_db_path", lambda: db_path)
+    monkeypatch.setattr("core.wishlist_cover_cache.get_db_path", lambda: db_path)
 
 
 def _owning_stub(path="/tmp/ro_src", output_root="/out/ro_src-abcdef", output_uri="file:///out/ro_src-abcdef"):
@@ -915,4 +940,168 @@ class TestEnrichSingleMetadataIntegration:
 
         assert response.status_code == 400
         assert "不會寫出任何 NFO/封面" in response.json()["detail"]
+
+
+class TestEnrichSingleWishlistReconcile:
+    """TASK-141a-T5：enrich-single 一般分支掛 reconcile_wishlist（DoD 2/4/5）。"""
+
+    def _patch_reconcile_db(self, monkeypatch, db_path):
+        monkeypatch.setattr("core.database.connection.get_db_path", lambda: db_path)
+        monkeypatch.setattr("core.wishlist_cover_cache.get_db_path", lambda: db_path)
+
+    def test_enrich_single_reconciles_wishlist_on_success(
+        self, client, mocker, tmp_path, monkeypatch
+    ):
+        """DoD 2（一般分支）：成功 enrich → 恰好一筆 auto_removed，書籤消失。"""
+        from core.database import init_db, WishlistRepository, VideoRepository
+
+        number = "OWNED-ENR-001"
+        mp4_path = tmp_path / f"{number}.mp4"
+        mp4_path.write_bytes(b"\x00" * 16)
+
+        db_path = tmp_path / "wishlist.db"
+        init_db(db_path)
+        self._patch_reconcile_db(monkeypatch, db_path)
+        WishlistRepository().add(number, title="Owned")
+        VideoRepository().upsert(Video(
+            path=to_file_uri(str(mp4_path)),
+            number=number,
+            title="Owned Video",
+        ))
+
+        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
+        mocker.patch("web.routers.scraper.VideoRepository").return_value.get_by_path.return_value = None
+        mocker.patch("core.enricher.search_jav")
+        mocker.patch("core.enricher.download_image", return_value=True)
+
+        mock_repo_cls = mocker.patch("core.enricher.VideoRepository")
+        mock_repo = MagicMock()
+        mock_repo_cls.return_value = mock_repo
+        mock_repo.db_path = ":memory:"
+        mock_repo.get_by_path.return_value = None
+        mock_repo.get_by_numbers.return_value = {}
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": str(mp4_path),
+            "number": number,
+            "mode": "refresh_full",
+            "overwrite_existing": True,
+            "metadata": {
+                "title": "AI Title",
+                "actors": ["A"],
+                "tags": ["T"],
+                "source": "javdb",
+            },
+        })
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+
+        notif_items = client.get("/api/notifications").json()["items"]
+        auto_removed = [
+            i for i in notif_items if i["title_key"] == "notif.wishlist_auto_removed"
+        ]
+        assert len(auto_removed) == 1
+        assert auto_removed[0]["level"] == "info"
+        assert auto_removed[0]["task_type"] == "wishlist_reconcile"
+
+        conn = sqlite3.connect(str(db_path))
+        row = conn.execute(
+            "SELECT 1 FROM wishlist WHERE number = ?", (number,)
+        ).fetchone()
+        conn.close()
+        assert row is None
+
+    def test_enrich_single_reconcile_failure_keeps_success_response(
+        self, client, mocker, monkeypatch, tmp_path
+    ):
+        """DoD 4（一般分支）：對帳丟例外時回應仍是完整成功 EnrichResult。"""
+        from core.database import init_db
+
+        db_path = tmp_path / "wishlist.db"
+        init_db(db_path)
+        self._patch_reconcile_db(monkeypatch, db_path)
+
+        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
+        mocker.patch("web.routers.scraper.VideoRepository").return_value.get_by_path.return_value = None
+        ok = _ok_result(
+            nfo_written=True,
+            cover_written=False,
+            fields_filled=["title"],
+            source_used="javdb",
+            reason="hit",
+        )
+        mocker.patch("web.routers.scraper.enrich_single", return_value=ok)
+
+        payload = {
+            "file_path": "/video/ABC-123.mp4",
+            "number": "ABC-123",
+            "mode": "refresh_full",
+            "overwrite_existing": True,
+            "metadata": {"title": "T", "source": "javdb"},
+        }
+
+        # BE-TEST-10：baseline 在注入例外之前取得（對帳走 tmp DB，不碰真實庫）
+        baseline = client.post("/api/enrich-single", json=payload)
+        assert baseline.status_code == 200
+        baseline_data = baseline.json()
+        assert baseline_data["success"] is True
+
+        import web.routers.notifications as notif_mod
+        notif_mod._notifications.clear()
+        notif_mod._read_ids.clear()
+
+        def _boom():
+            raise RuntimeError("reconcile exploded")
+
+        # raising=False：實作前屬性尚不存在；RED 應落在「未發 warn」而非 AttributeError
+        monkeypatch.setattr("web.routers.scraper.reconcile_wishlist", _boom, raising=False)
+
+        response = client.post("/api/enrich-single", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["nfo_written"] == baseline_data["nfo_written"]
+        assert data["cover_written"] == baseline_data["cover_written"]
+        assert data["fields_filled"] == baseline_data["fields_filled"]
+        assert data["source_used"] == baseline_data["source_used"]
+        assert data["reason"] == baseline_data["reason"]
+
+        notif_items = client.get("/api/notifications").json()["items"]
+        warn_items = [
+            i for i in notif_items
+            if i["title_key"] == "notif.wishlist_reconcile_failed"
+        ]
+        assert len(warn_items) == 1
+        assert warn_items[0]["level"] == "warn"
+
+    def test_enrich_single_skips_reconcile_when_enrich_fails(self, client, mocker):
+        """DoD 5：result.success 為 False → reconcile_wishlist 呼叫次數為 0。"""
+        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
+        mocker.patch("web.routers.scraper.VideoRepository").return_value.get_by_path.return_value = None
+        mocker.patch(
+            "web.routers.scraper.enrich_single",
+            return_value=EnrichResult(
+                success=False,
+                nfo_written=False,
+                cover_written=False,
+                extrafanart_written=0,
+                fields_filled=[],
+                source_used="",
+                error="刮削失敗",
+            ),
+        )
+        reconcile_spy = mocker.patch("web.routers.scraper.reconcile_wishlist", create=True)
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/video/ABC-123.mp4",
+            "number": "ABC-123",
+            "mode": "refresh_full",
+            "overwrite_existing": True,
+            "metadata": {"title": "T", "source": "javdb"},
+        })
+
+        assert response.status_code == 200
+        assert response.json()["success"] is False
+        assert reconcile_spy.call_count == 0
 
