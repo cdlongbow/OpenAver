@@ -699,16 +699,21 @@ test('removeFromWishlist: wishlistLoaded=true 時從 wishlistItems 移除', asyn
 test('addToWishlist: POST 失敗時回滾 _wishlisted 與 wishlistCount（I3）', async () => {
     mockFetch(() => jsonResponse({}, { ok: false, status: 500 }));
     const result = { number: 'FAIL-1', title: 'x', _wishlisted: false };
+    // PR#176 第 2 輪：原本 fixture 是 `wishlistCount: 5` 配 1 筆 wishlistItems，
+    // 那是**生產環境不可能存在的狀態**——`loadWishlist()` 是全站唯一把 wishlistLoaded
+    // 設為 true 的地方，而它整包同時寫入清單與計數，兩者必然相等。合成 fixture 把這條
+    // 不變式抹平了，於是這支測試從來沒有真的驗到「計數與清單說同一件事」。
+    // 改成自洽的 1／1 之後，斷言的意圖（失敗要回滾三件事）完全不變，且更嚴格。
     const fakeThis = {
         ...searchStateWishlist(),
-        wishlistCount: 5,
+        wishlistCount: 1,
         wishlistLoaded: true,
         wishlistItems: [{ number: 'KEEP-1' }],
     };
 
     await searchStateWishlist().addToWishlist.call(fakeThis, result);
     assert.equal(result._wishlisted, false, '失敗應回滾 _wishlisted');
-    assert.equal(fakeThis.wishlistCount, 5, '失敗應回滾 wishlistCount');
+    assert.equal(fakeThis.wishlistCount, 1, '失敗應回滾 wishlistCount');
     assert.deepEqual(
         fakeThis.wishlistItems.map((i) => i.number),
         ['KEEP-1'],
@@ -1259,8 +1264,9 @@ test('T3-DoD3：already_owned ⇒ 回滾三件事、設 _localStatus、info toas
     const toasts = [];
     const existing = { number: 'KEEP-1' };
     const result = { number: 'OWNED-1', title: 't', _wishlisted: false };
+    // PR#176 第 2 輪：同上——wishlistLoaded:true 時計數必等於清單長度，原本的 3／1 不自洽。
     const state = makeWishlistThis({
-        wishlistCount: 3,
+        wishlistCount: 1,
         wishlistLoaded: true,
         wishlistItems: [existing],
         showToast(msg, type) { toasts.push({ msg, type }); },
@@ -1271,7 +1277,7 @@ test('T3-DoD3：already_owned ⇒ 回滾三件事、設 _localStatus、info toas
     assert.deepEqual(result._localStatus, localStatus,
         '_localStatus 必須等於回應的 local_status（逐欄位）');
     assert.equal(result._wishlisted, false, '_wishlisted 必須回滾成呼叫前的值');
-    assert.equal(state.wishlistCount, 3, 'wishlistCount 必須回滾');
+    assert.equal(state.wishlistCount, 1, 'wishlistCount 必須回滾');
     assert.deepEqual(state.wishlistItems, [existing],
         'wishlistItems 不得含樂觀 unshift 的那筆');
     assert.equal(toasts.length, 1, '必須顯示 toast');
@@ -1342,4 +1348,99 @@ test("T3-DoD4b：already_owned count=2 ⇒ cardActionState(result) === 'play+fol
     await state.addToWishlist(result);
 
     assert.equal(cardActionState(result), 'play+folder');
+});
+
+// ─── PR#176 第 2 輪：await 之後的計數回滾（不變式 oracle）─────────────────
+//
+// 這五支釘的是**同一條不變式**：`await` 之後不准用相對加減改 `wishlistCount`；
+// `wishlistLoaded` 為真時計數必須等於權威清單長度。
+//
+// 交錯的形狀是實測出來的可達路徑（不是理論）：使用者一邊掃描一邊按「加入書籤」→
+// `repo.add()` 撞上 `upsert_batch` 的寫鎖、5 秒後拋 `database is locked` → POST 回 500；
+// 這期間使用者以為沒反應去點了書籤分頁，`GET /api/wishlist` 在同一個持鎖期間 1 ms 就
+// 回來（WAL 讀不擋）並寫入權威值 → POST 才落地做回滾。
+//
+// 每支的真相都是「DB 有 5 筆」，所以收斂後 badge 一律必須是 5（remove 那支是 3）。
+
+function makeInterleaveState(authoritative) {
+    const state = makeWishlistThis({
+        wishlistLoaded: true,
+        wishlistItems: [],
+        wishlistCount: authoritative.length,
+        searchResults: [],
+    });
+    // 模擬 loadWishlist() 已經整包覆蓋落地（清單與計數同時寫入權威值）
+    state.wishlistItems = authoritative.slice();
+    state.wishlistCount = authoritative.length;
+    return state;
+}
+
+const AUTHORITATIVE_5 = [
+    { number: 'W-1' }, { number: 'W-2' }, { number: 'W-3' }, { number: 'W-4' }, { number: 'W-5' },
+];
+
+test('await 後回滾（already_owned）：loadWishlist 先落地時 badge 不得低估', async () => {
+    const state = makeInterleaveState(AUTHORITATIVE_5);
+    const card = { number: 'OWNED-1' };
+    let landAdd;
+    mockFetch(() => new Promise((r) => { landAdd = () => r(jsonResponse({
+        success: false, already_owned: true,
+        local_status: { exists: true, count: 1, paths: ['file:///x/OWNED-1.mp4'] },
+    })); }));
+    state.showToast = () => {};
+    const p = state.addToWishlist(card);          // 樂觀 +1 → 6，unshift → 6 張
+    state.wishlistItems = AUTHORITATIVE_5.slice();  // loadWishlist() 整包覆蓋落地
+    state.wishlistCount = AUTHORITATIVE_5.length;
+    landAdd();
+    await p;
+    assert.equal(state.wishlistCount, 5, 'badge 必須等於權威清單長度，不得被 -1 扣成 4');
+    assert.equal(state.wishlistItems.length, 5);
+});
+
+test('await 後回滾（網路錯誤）：loadWishlist 先落地時 badge 不得低估', async () => {
+    const state = makeInterleaveState(AUTHORITATIVE_5);
+    const card = { number: 'NET-1' };
+    let boom;
+    mockFetch(() => new Promise((_, rej) => { boom = () => rej(new Error('network down')); }));
+    const p = state.addToWishlist(card);
+    state.wishlistItems = AUTHORITATIVE_5.slice();
+    state.wishlistCount = AUTHORITATIVE_5.length;
+    boom();
+    await p;
+    assert.equal(state.wishlistCount, 5);
+});
+
+test('await 後回滾（500，掃描持鎖那條可達路徑）：badge 不得低估', async () => {
+    const state = makeInterleaveState(AUTHORITATIVE_5);
+    const card = { number: 'LOCK-1' };
+    let land500;
+    mockFetch(() => new Promise((r) => { land500 = () => r({ ok: false, status: 500 }); }));
+    const p = state.addToWishlist(card);
+    state.wishlistItems = AUTHORITATIVE_5.slice();
+    state.wishlistCount = AUTHORITATIVE_5.length;
+    land500();
+    await p;
+    assert.equal(state.wishlistCount, 5);
+});
+
+test('await 後回滾（remove 失敗）：badge 不得高估、清單不得出現重複 number', async () => {
+    const authoritative = [{ number: 'R-1' }, { number: 'R-2' }, { number: 'R-3' }];
+    const state = makeInterleaveState(authoritative);
+    let boom;
+    mockFetch(() => new Promise((_, rej) => { boom = () => rej(new Error('network down')); }));
+    const p = state.removeFromWishlist('R-2');     // 樂觀移除 → 2 張
+    state.wishlistItems = authoritative.slice();   // loadWishlist() 落地：刪除失敗 ⇒ R-2 還在
+    state.wishlistCount = authoritative.length;
+    boom();
+    await p;
+    assert.equal(state.wishlistCount, 3, 'badge 不得被 +1 加成 4');
+    const numbers = state.wishlistItems.map((i) => i.number);
+    assert.equal(numbers.length, new Set(numbers).size, '不得出現同 number 的重複 :key');
+});
+
+test('await 後回滾（wishlistLoaded=false）：沒有權威清單時仍走相對回滾', async () => {
+    const state = makeWishlistThis({ wishlistLoaded: false, wishlistItems: [], wishlistCount: 5, searchResults: [] });
+    mockFetch(() => Promise.reject(new Error('network down')));
+    await state.addToWishlist({ number: 'NL-1' });
+    assert.equal(state.wishlistCount, 5, '沒開過書籤分頁 ⇒ 清單不權威，相對回滾仍是正確答案');
 });

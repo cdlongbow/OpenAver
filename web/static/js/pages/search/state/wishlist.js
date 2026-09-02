@@ -121,6 +121,38 @@ export function searchStateWishlist() {
             }
         },
 
+        // 🔴 PR#176 第 2 輪窮舉盤點（2026-09-02）——**唯一的計數收斂點**。
+        //
+        // 不變式：**任何 `await` 之後都不准用相對加減改 `wishlistCount`。**
+        //
+        // 為什麼上一版的相對加減曾經是對的、現在不是：`:128-131` 那段註解（sonnet
+        // review P2-2，在 main 上）主張「增量回滾在任意交錯順序下都收斂」——那句話在
+        // 當時成立，因為那時 `wishlistCount` 的**所有**寫入端都是相對的。branch review
+        // P2-1 讓 `loadWishlist()` 開始寫**絕對值**（`data.length`）之後，前提就沒了，
+        // 但沒人回去作廢那句話。5 組「樂觀更新→回滾」於是變成 3 種相對 ＋ 2 種權威。
+        //
+        // 可達的壞法（實測，不是理論）：使用者一邊掃描一邊按「加入書籤」→ `repo.add()`
+        // 撞上 `upsert_batch` 的寫鎖、阻塞 5 秒後拋 `database is locked` → POST 回 500；
+        // 這 5 秒裡使用者以為沒反應、去點了書籤分頁，`GET /api/wishlist` 在同一個持鎖
+        // 期間 1 ms 就回來（WAL 讀不擋、沒有已入手書籤時零寫入）並寫入權威值 → POST
+        // 才落地做 `-1` ⇒ **badge 比牆上少一張，而且不會自己好**（那顆分頁鈕
+        // `listMode !== 'wishlist'` 才會重載，人已經在書籤分頁了）。
+        //
+        // 收斂方式**不需要新狀態也不需要多打一次網路**：回滾時 `wishlistItems` 已經先
+        // 被修正過，而 `wishlistLoaded` 為真時它就是權威清單（`loadWishlist()` 整包覆蓋
+        // 時兩者一起寫）⇒ 直接讓計數去對齊清單。`wishlistLoaded` 為假時清單不權威，
+        // 但那時也**不可能**發生上述交錯（唯一寫絕對值的 `loadWishlist()` 必定同時把
+        // `wishlistLoaded` 設為真），所以相對加減仍然正確，保留作 fallback。
+        //
+        // ⚠️ 呼叫端必須**先**調整好 `wishlistItems`、**再**呼叫本函式。
+        _settleWishlistCountAfterAwait(fallbackDelta) {
+            if (this.wishlistLoaded) {
+                this.wishlistCount = this.wishlistItems.length;
+                return;
+            }
+            this.wishlistCount = Math.max(0, this.wishlistCount + fallbackDelta);
+        },
+
         async addToWishlist(result) {
             if (!result?.number) return;
 
@@ -128,7 +160,9 @@ export function searchStateWishlist() {
             // 計數用「增量」不用「快照還原」（sonnet review P2-2）：兩張不同卡片
             // 連點時，後者捕到的 prevCount 已經含前者的樂觀 +1；前者失敗時把
             // wishlistCount 寫回自己的 prevCount，會連後者那筆成功的一起抹掉。
-            // 增量回滾（--）在任意交錯順序下都收斂到正確值，而且少一個要維護的狀態。
+            // ⚠️ 這條只管**送出之前**的樂觀 +1；`await` 之後的回滾一律走
+            // `_settleWishlistCountAfterAwait()`（原本這裡寫「增量回滾在任意交錯順序下
+            // 都收斂」，那句話在 `loadWishlist()` 開始寫絕對值之後就失效了，見該函式註解）。
             result._wishlisted = true;
             this.wishlistCount += 1;
             if (this.wishlistLoaded) {
@@ -174,10 +208,10 @@ export function searchStateWishlist() {
                 }
                 if (data?.already_owned) {
                     result._wishlisted = prevWishlisted;
-                    this.wishlistCount = Math.max(0, this.wishlistCount - 1);
                     if (this.wishlistLoaded) {
                         this.wishlistItems = this.wishlistItems.filter((i) => i !== result);
                     }
+                    this._settleWishlistCountAfterAwait(-1);
                     result._localStatus = data.local_status;
                     this.showToast(window.t('search.toast.wishlist_already_owned'), 'info');
                     return;
@@ -191,10 +225,10 @@ export function searchStateWishlist() {
             } catch (err) {
                 console.error('[Wishlist] add 失敗:', err);
                 result._wishlisted = prevWishlisted;
-                this.wishlistCount = Math.max(0, this.wishlistCount - 1);
                 if (this.wishlistLoaded) {
                     this.wishlistItems = this.wishlistItems.filter((i) => i !== result);
                 }
+                this._settleWishlistCountAfterAwait(-1);
             }
         },
 
@@ -241,11 +275,15 @@ export function searchStateWishlist() {
                 }
             } catch (err) {
                 console.error('[Wishlist] remove 失敗:', err);
-                this.wishlistCount += 1;
                 matchedResults.forEach((r, idx) => { r._wishlisted = prevFlags[idx]; });
-                if (this.wishlistLoaded && removedItem) {
+                if (this.wishlistLoaded && removedItem
+                    && !this.wishlistItems.some((i) => i.number === removedItem.number)) {
+                    // 同一次窮舉盤點順手補的正向鎖：若 `loadWishlist()` 在這次 DELETE
+                    // 飛的期間落地，它整包覆蓋回來的清單**已經含**這一筆（刪除失敗
+                    // ⇒ 伺服器上還在），無條件 unshift 會塞出同 number 的重複 :key。
                     this.wishlistItems.unshift(removedItem);
                 }
+                this._settleWishlistCountAfterAwait(+1);
             }
         },
 
