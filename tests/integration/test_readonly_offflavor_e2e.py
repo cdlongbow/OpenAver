@@ -35,6 +35,7 @@ spec-89 §89a.3 acceptance mapping (see TASK-89a-T6 for the full inventory):
 shared root with hash-suffix disambiguation).
 """
 from __future__ import annotations
+import pytest
 
 import hashlib
 import os
@@ -43,6 +44,12 @@ from unittest.mock import patch
 
 from core.database import Video, VideoRepository
 from core.path_utils import to_file_uri, uri_to_fs_path
+
+# TASK-141a-T5：本檔測的兩支端點（generate_avlist / enrich_single_endpoint）收尾會
+# 無條件呼叫 reconcile_wishlist()，它用無參數 repo ⇒ 解析到真實 DB。逐檔明示 opt-in
+# 隔離（fixture 定義見 tests/conftest.py，刻意不做成 autouse——見該處說明）。
+pytestmark = pytest.mark.usefixtures("isolate_reconcile_db")
+
 
 # Baseline `videos` schema (Acceptance #7 — no new columns from 88b write path).
 _BASELINE_VIDEO_COLUMNS = {

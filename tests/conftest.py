@@ -340,3 +340,32 @@ def _g2_repo_root_snapshot(request):
             )
 
 
+
+
+# ============ TASK-141a-T5：對帳 hook 的 DB 隔離（named fixture，非 autouse）====
+#
+# 為什麼需要它：141a-T5 讓 `generate_avlist()` 與 `enrich_single_endpoint()` 在收尾
+# **無條件**呼叫 `core.wishlist_reconcile.reconcile_wishlist()`。那支函式在 `core/` 層，
+# 用無參數的 `WishlistRepository()` / `VideoRepository()`，於是解析到
+# `connection.get_db_path()`＝真實 `output/openaver.db` ⇒ 撞上 G1。
+#
+# 既有測試對這兩支端點的隔離手法是「patch 使用端的 `VideoRepository` **類別**」
+# （`web.routers.scraper.VideoRepository`），那個 patch 到不了 `core.wishlist_reconcile`
+# 內部的 import ⇒ 92 支既有測試會紅。
+#
+# **為什麼不做成 autouse（放進 conftest 全域）**：那會讓每一支測試的
+# `connection.get_db_path()` 都指向 tmp 檔，於是「忘記 patch DB」這一整類錯誤
+# 再也不會被 G1 攔下——那正是 127b 花力氣買到的守衛。**寧可逐檔明示 opt-in。**
+#
+# 用法（放在測試檔頂層）：
+#     pytestmark = pytest.mark.usefixtures("isolate_reconcile_db")
+@pytest.fixture
+def isolate_reconcile_db(tmp_path_factory, monkeypatch):
+    """把對帳 hook 會用到的 DB 路徑導到一個乾淨的 tmp 庫（空庫 ⇒ 對帳是 no-op）。"""
+    from core.database import init_db
+
+    db_path = tmp_path_factory.mktemp("reconcile_isolate") / "isolate.db"
+    init_db(db_path)
+    monkeypatch.setattr("core.database.connection.get_db_path", lambda: db_path)
+    monkeypatch.setattr("core.wishlist_cover_cache.get_db_path", lambda: db_path)
+    return db_path

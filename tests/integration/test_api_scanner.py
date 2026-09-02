@@ -6,6 +6,12 @@ from urllib.parse import quote
 from core.path_utils import to_file_uri
 from tests.conftest import MOCK_FOCAL_XY
 
+# TASK-141a-T5：本檔測的兩支端點（generate_avlist / enrich_single_endpoint）收尾會
+# 無條件呼叫 reconcile_wishlist()，它用無參數 repo ⇒ 解析到真實 DB。逐檔明示 opt-in
+# 隔離（fixture 定義見 tests/conftest.py，刻意不做成 autouse——見該處說明）。
+pytestmark = pytest.mark.usefixtures("isolate_reconcile_db")
+
+
 
 @pytest.fixture(autouse=True)
 def reset_buffer():
@@ -17,17 +23,6 @@ def reset_buffer():
     notif_mod._notifications.clear()
     notif_mod._read_ids.clear()
 
-
-@pytest.fixture(autouse=True)
-def _isolate_reconcile_db(tmp_path_factory, monkeypatch):
-    """T5：generate_avlist 收尾會呼叫 reconcile_wishlist()，後者走
-    connection.get_db_path。既有測試只 patch scanner.get_db_path，若不隔離
-    會撞上 repo_write_guard（真實 openaver.db）。本 fixture 只新增、不改既有測試。"""
-    from core.database import init_db
-    db_path = tmp_path_factory.mktemp("t5_reconcile") / "isolate.db"
-    init_db(db_path)
-    monkeypatch.setattr("core.database.connection.get_db_path", lambda: db_path)
-    monkeypatch.setattr("core.wishlist_cover_cache.get_db_path", lambda: db_path)
 
 
 class TestScannerAPI:
@@ -3489,7 +3484,7 @@ class TestGenerateAvlistWishlistReconcile:
         number = "OWNED-SCAN-001"
         WishlistRepository().add(number, title="Owned Title")
         VideoRepository().upsert(Video(
-            path=f"file:///test/{number}.mp4",
+            path=to_file_uri(f"/test/{number}.mp4"),
             number=number,
             title="Owned Video",
         ))

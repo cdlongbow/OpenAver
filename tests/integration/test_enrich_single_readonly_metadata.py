@@ -26,6 +26,12 @@ import pytest
 from core.database import Video
 from core.path_utils import coerce_to_file_uri
 
+# TASK-141a-T5：本檔測的兩支端點（generate_avlist / enrich_single_endpoint）收尾會
+# 無條件呼叫 reconcile_wishlist()，它用無參數 repo ⇒ 解析到真實 DB。逐檔明示 opt-in
+# 隔離（fixture 定義見 tests/conftest.py，刻意不做成 autouse——見該處說明）。
+pytestmark = pytest.mark.usefixtures("isolate_reconcile_db")
+
+
 
 @pytest.fixture(autouse=True)
 def reset_buffer():
@@ -37,16 +43,6 @@ def reset_buffer():
     notif_mod._notifications.clear()
     notif_mod._read_ids.clear()
 
-
-@pytest.fixture(autouse=True)
-def _isolate_reconcile_db(tmp_path_factory, monkeypatch):
-    """T5：enrich-single 唯讀成功路徑會呼叫 reconcile_wishlist()；既有測試未 patch
-    connection.get_db_path，若不隔離會撞上 repo_write_guard。只新增、不改既有測試。"""
-    from core.database import init_db
-    db_path = tmp_path_factory.mktemp("t5_reconcile") / "isolate.db"
-    init_db(db_path)
-    monkeypatch.setattr("core.database.connection.get_db_path", lambda: db_path)
-    monkeypatch.setattr("core.wishlist_cover_cache.get_db_path", lambda: db_path)
 
 
 # ── mock-only 佈局（DoD-3/4/5/6/7）：照抄 tests/integration/test_api_enrich.py
