@@ -3117,3 +3117,31 @@ test('T8-DoD8-reduced-motion-data-unchanged', async () => {
         assert.equal(state2.wishlistCount, 1);
     });
 });
+
+// ─── TASK-141b-T9：wishlistAgingStage/wishlistAgingDays 在真實 mixin 上的委派 wiring ────
+// 不 mock Date.now()——用真實 wall-clock 相對算出 created_at，證明消費端確實把 Date.now()
+// 傳進純函式（而非讀取某個預存欄位）。
+
+function toWishlistTimestamp(ms) {
+    const d = new Date(ms);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+}
+
+test('T9-DoD-wiring-stage-and-days-delegate-to-pure-function', () => {
+    const state = makeWishlistThis();
+    const item = { created_at: toWishlistTimestamp(Date.now() - 20 * 86400000), release_date: '' };
+    assert.equal(state.wishlistAgingStage(item), 1, '20 天前應落在第 1 階');
+    assert.equal(state.wishlistAgingDays(item), 20);
+});
+
+test('T9-DoD-wiring-future-release-overrides-even-through-mixin', () => {
+    const state = makeWishlistThis();
+    const futureDate = new Date(Date.now() + 10 * 86400000);
+    const pad = (n) => String(n).padStart(2, '0');
+    const item = {
+        created_at: toWishlistTimestamp(Date.now() - 60 * 86400000),
+        release_date: `${futureDate.getUTCFullYear()}-${pad(futureDate.getUTCMonth() + 1)}-${pad(futureDate.getUTCDate())}`,
+    };
+    assert.equal(state.wishlistAgingStage(item), 0, '未來發售日透過 mixin 呼叫仍要壓過計齡');
+});

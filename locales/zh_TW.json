@@ -194,7 +194,8 @@
       "has_local_count": "本地已有 {count} 個版本（點擊開啟資料夾）"
     },
     "wishlist": {
-      "empty": "還沒有任何書籤"
+      "empty": "還沒有任何書籤",
+      "aged_days": "放了 {days} 天"
     },
     "button": {
       "search_all": "批次搜尋",

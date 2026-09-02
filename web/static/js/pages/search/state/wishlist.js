@@ -4,6 +4,7 @@
  */
 
 import { detectSwipe } from '@/shared/swipe.js';  // TASK-141b-T5：對照 grid-mode.js:6 既有寫法
+import { classifyWishlistAging, ageDaysOf } from '../wishlist-aging.js';  // TASK-141b-T9
 
 // TASK-140-T6：三態互斥的共用 computed。grid／燈箱／detail 三處模板都只問這支，
 // 不得各自重寫判斷式（spec F1「同一組三態要出現在三處」）。
@@ -234,6 +235,15 @@ export function searchStateWishlist() {
             } finally {
                 this._clearAbort('loadWishlist', signal);
             }
+        },
+
+        // TASK-141b-T9（F9，CD-5/CD-6/CD-7）：aging 分階/顯示天數。純函式委派 wishlist-aging.js，
+        // 每次 render 求值讀 Date.now()（不預存進 item，CD-6；不加計時器，見設計決策 12）。
+        wishlistAgingStage(item) {
+            return classifyWishlistAging(item.created_at, item.release_date, Date.now());
+        },
+        wishlistAgingDays(item) {
+            return ageDaysOf(item.created_at, Date.now());
         },
 
         // 🔴 PR#176 第 2 輪窮舉盤點（2026-09-02）——**唯一的計數收斂點**。

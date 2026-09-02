@@ -4721,6 +4721,26 @@ const RULES = [
     pattern: `x-show="listMode === 'search' && pageState === 'result' && (searchResults.length > 1 || actressProfile) && !isComposing()"`,
     note: '[lint-guard 141a-T7] 格牆／大卡切換鈕顯示條件必須為「結果模式＋(結果數>1 或有女優 hero 卡)＋非組合輸入」（CD-9，spec F4 驗收 2/2b/3；`|| actressProfile` 是 branch review P2 補的，見 search.html 該行上方註解）',
   },
+  {
+    file: 'web/static/js/pages/search/wishlist-aging.js',
+    kind: 'forbidden-string',
+    pattern: ['Date.parse(', 'new Date('],
+    note: '[TASK-141b-T9] CD-6/CD-124a-2：禁止對日期字串做跨瀏覽器不保證一致的解析。全檔零合法場景需要這兩種字面——「現在時刻」一律由呼叫端以 Date.now() 注入，本檔自己不建構 Date 物件（與 release-window.js 不同，本檔不需要「取得當下時刻」的情境）。無 scope：全新檔案，全檔皆守備範圍。',
+  },
+  {
+    file: 'web/static/css/pages/search.css',
+    kind: 'required-string',
+    pattern: 'position: absolute',
+    scope: { anchor: /\.wishlist-aging\s*\{/, braceBalanced: true },
+    note: '[TASK-141b-T9] .wishlist-aging 必須是 position:absolute（CD-17 零佔位）——少了它，元素會進文件流撐高卡片，而 node:test 與既有 lint 全部是綠的。scope 用 braceBalanced 精準扣住這條規則本體（CSS 宣告區塊無巢狀 {}，anchor 到對應 } 之間即為完整規則），不靠猜測字元距離。',
+  },
+  {
+    file: 'web/static/css/pages/search.css',
+    kind: 'required-string',
+    pattern: 'var(--color-warning)',
+    scope: { anchor: /\.wishlist-aging--stage2\s*\{/, braceBalanced: true },
+    note: '[TASK-141b-T9] 第 2 階必須用既有註冊 token var(--color-warning)（owner 拍板，設計決策 1），不得手寫十六進位、不得用 --color-error。scope 用 braceBalanced 精準扣住這條規則本體。',
+  },
 ];
 
 // ---- helpers ----

@@ -18,6 +18,13 @@
     --bg-header: color-mix(in oklch, var(--color-base-200) 85%, transparent);
     --bg-overlay: color-mix(in oklch, var(--color-base-100) 88%, transparent);
 
+    /* 141b-T9：文字直接浮在媒體上的可讀性陰影（無底色場景）。
+       角色已登記於 ui-conventions.md §3 角色色白名單。
+       值沿用 showcase.css 的 .lb-mask-spinner（唯一既有的「文字浮在媒體上、無底色」處理），
+       抽成 token 讓 search.css 的 CG-PC-13（禁裸 rgba）也能用同一個值，兩處日後可收斂成一處。
+       不需要主題變體：它是襯在淺色文字後面的暗向陰影，兩個主題都成立。 */
+    --shadow-text-on-media: rgba(0, 0, 0, 0.6);
+
     /* 文字色 */
     --text-primary: var(--color-base-content);
     --text-secondary: color-mix(in oklch, var(--color-base-content) 70%, transparent);

@@ -1420,3 +1420,33 @@
         var(--fluent-shadow-2),
         0 0 0 4px var(--glow-primary);
 }
+
+/* TASK-141b-T9（CD-17／設計決策 1-6）：aging 提示掛封面左上角，借 .cover-badges 定位手法
+   （showcase.css:4599 起）但不借 background/border-radius——spec F9「無底色、不搶封面」。
+   淺色字 ＋ 暗向 text-shadow 沿用 .lb-mask-spinner 唯一的既有「無底色文字/圖示浮於媒體上」
+   樣板（showcase.css:1481-1490，白字 ＋ 同值暗向陰影，已抽成 --shadow-text-on-media）。
+   第 2 階琥珀用既有註冊 token var(--color-warning)（theme.css:93/659，主題感知），不得手寫
+   十六進位、不得用 --color-error。position:absolute 不進文件流，零佔位、不影響卡片高度。
+   position:relative 定位脈絡由 .av-card-preview-img（theme.css:1070）提供，本層不需重複宣告。 */
+.wishlist-aging {
+    position: absolute;
+    top: 0.5rem;
+    left: 0.5rem;
+    z-index: 2;
+    font-size: 0.7rem;
+    font-weight: 600;
+    line-height: 1;
+    /* 🔴 Opus 2026-09-03：淡度用 color 的 alpha，**不要用元素 opacity**。
+       `opacity` 會把 text-shadow 一起淡掉——而那道陰影正是在**淺色封面**上提供對比的東西。
+       元素 opacity:0.55 會讓陰影的有效 alpha 掉到約 0.33，白字浮在淺色封面上就讀不出來了。
+       color-alpha 只淡文字本身、陰影維持全強度，兩種封面都保得住可讀性。 */
+    color: rgba(255, 255, 255, 0.55);
+    text-shadow: 0 1px 4px var(--shadow-text-on-media);
+    pointer-events: none;
+}
+
+.wishlist-aging--stage2 {
+    /* 第 2 階同理不加 opacity：直接用 token 本色（主題感知），
+       與第 1 階的差別就是「從半透明白 → 實心琥珀」，位置／字級／字重全部不變（設計決策 4）。 */
+    color: var(--color-warning);
+}
