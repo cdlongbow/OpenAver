@@ -2,11 +2,11 @@
  * ShowcaseAnimations — /showcase 頁面動畫模組
  *
  * 暴露 window.ShowcaseAnimations 物件，提供：
- *   - playEntry(gridEl, params)                B6: 進場動畫（B13 後也用於翻頁）
+ *   - playEntry(gridEl, params)                B6: 進場動畫（B13 後也用於翻頁）［TASK-141b-T1 起為委派殼］
  *   - capturePositions(gridEl)                  B12: 捕獲手動位置快照（B15 恢復 core.js 呼叫）
  *   - playFlipReorder(gridEl, positionMap, params) B12: 排序洗牌手動動畫（B15 恢復 core.js 呼叫）
- *   - playFlipFilter(gridEl, state, params)     B8: 篩選進出場 Flip 動畫（B15 恢復 core.js 呼叫）
- *   - captureFlipState(gridEl)                  B8: 捕獲 Flip 狀態快照（B15 恢復 core.js 呼叫）
+ *   - playFlipFilter(gridEl, state, params)     B8: 篩選進出場 Flip 動畫（B15 恢復 core.js 呼叫）［TASK-141b-T1 起為委派殼］
+ *   - captureFlipState(gridEl)                  B8: 捕獲 Flip 狀態快照（B15 恢復 core.js 呼叫）［TASK-141b-T1 起為委派殼］
  *   - playModeCrossfade(oldMode, newMode, params) B10: 模式切換 crossfade
  *   - captureShapeState(gridEl) → { state, cards }|null  TASK-133a-T1: 卡型切換 Flip 快照（視野 ±200px）
  *   - playShapeMorph(captured, gridEl) → Timeline|null   TASK-133a-T1: 卡型切換 Flip morph（只吃 captured.cards）
@@ -18,6 +18,10 @@
  *
  * B5 骨架：所有方法為 placeholder，return null。
  * B6-B10 逐步填入實作。
+ *
+ * TASK-141b-T1：上列標「委派殼」的三支，實作已搬到 web/static/js/shared/grid-motion.js
+ * （window.GridMotion），本檔只保留原名原簽章的轉發殼——書籤牆要用同一份實作，
+ * 兩頁共用避免第三份動畫語彙。呼叫端與行為零改變。
  *
  * Graceful fallback：若 GSAP 未載入，所有方法安全降級（不拋錯）。
  * core.js 透過 window.ShowcaseAnimations?.playEntry?.()
@@ -138,68 +142,7 @@
         },
 
         playEntry: function (gridEl, params) {
-            params = params || {};
-
-            // null guard
-            if (!gridEl) return null;
-
-            // GSAP guard（CDN 故障降級）
-            if (typeof gsap === 'undefined') return null;
-
-            var cards = gridEl.querySelectorAll('.av-card-preview, .actress-card');
-            if (!cards.length) return null;
-
-            // C4: 清除舊動畫
-            gsap.killTweensOf(cards);
-
-            // Reduced Motion 降級：瞬間顯示
-            if (shouldSkip()) {
-                gsap.set(cards, { opacity: 1, y: 0, scale: 1 });
-                return null;
-            }
-
-            var dur = params.duration || OpenAver.motion.DURATION.emphasis;
-            var staggerVal = params.stagger || 0.04;
-            var ease = params.easing || 'fluent-decel';
-
-            // Viewport 分流：fold 以下卡片瞬間顯示
-            var viewportH = window.innerHeight;
-            var visible = [];
-            var offscreen = [];
-            Array.from(cards).forEach(function (card) {
-                if (card.getBoundingClientRect().top < viewportH) {
-                    visible.push(card);
-                } else {
-                    offscreen.push(card);
-                }
-            });
-
-            if (offscreen.length) {
-                gsap.set(offscreen, { clearProps: 'transform,opacity' });
-            }
-
-            if (!visible.length) return null;
-
-            // 設定初始狀態
-            var fromVars = { opacity: 0, y: 20 };
-            gsap.set(visible, fromVars);
-
-            // C21: cascade 進場期間 hover 不可搶 transform 控制權
-            visible.forEach(function (c) { c.classList.add('gsap-animating'); });
-
-            var tl = gsap.timeline({
-                id: 'showcaseEntry',
-                onComplete: function () {
-                    visible.forEach(function (c) { c.classList.remove('gsap-animating'); });
-                    gsap.set(visible, { clearProps: 'transform,opacity' });
-                },
-                onInterrupt: function () {
-                    visible.forEach(function (c) { c.classList.remove('gsap-animating'); });
-                }
-            });
-            tl.to(visible, { opacity: 1, y: 0, duration: dur, ease: ease, stagger: staggerVal });
-
-            return tl;
+            return window.GridMotion?.playEntry?.(gridEl, params) ?? null;
         },
 
         /**
@@ -272,54 +215,7 @@
          * @returns {null}
          */
         playFlipFilter: function (gridEl, state, params) {
-            params = params || {};
-
-            // null guard
-            if (!gridEl || !state) return null;
-
-            // Flip guard
-            if (typeof Flip === 'undefined' || typeof gsap === 'undefined') return null;
-
-            var cards = gridEl.querySelectorAll('.av-card-preview, .actress-card');
-            if (!cards.length) return null;
-
-            // Reduced Motion 降級：Alpine 已完成 DOM 更新，不需額外處理
-            if (shouldSkip()) return null;
-
-            // C18: 中斷進行中的 Flip 動畫
-            Flip.killFlipsOf(cards);
-
-            var dur = params.duration || OpenAver.motion.DURATION.medium;
-
-            // Flip.from — 含 onEnter/onLeave 進出場回調
-            return Flip.from(state, {
-                duration: dur,
-                ease: 'fluent',
-                absolute: true,
-                prune: true,
-                simple: true,
-                onEnter: function (els) {
-                    // B18: 大量新卡片同時進場 → 純 fade + stagger（無 scale，降低視覺混亂）
-                    if (els.length > 10) {
-                        return gsap.fromTo(els,
-                            { opacity: 0 },
-                            { opacity: 1, duration: dur * 0.6, stagger: 0.02, ease: 'fluent-decel' }
-                        );
-                    }
-                    // 預設：scale + fade（少量卡片進場時效果好）
-                    return gsap.fromTo(els,
-                        { opacity: 0, scale: 0.85 },
-                        { opacity: 1, scale: 1, duration: dur * 0.8, ease: 'fluent-decel' }
-                    );
-                },
-                onLeave: function (els) {
-                    return gsap.to(els, { opacity: 0, scale: 0.85, duration: dur * 0.6, ease: 'fluent-accel' });
-                },
-                onComplete: function () {
-                    gsap.set(cards, { clearProps: 'transform' });
-                    gridEl.classList.remove('flip-guard');
-                }
-            });
+            return window.GridMotion?.playFlipFilter?.(gridEl, state, params) ?? null;
         },
 
         /**
@@ -347,16 +243,7 @@
          * @returns {Object|null} Flip state 物件
          */
         captureFlipState: function (gridEl) {
-            // null guard
-            if (!gridEl) return null;
-
-            // Flip guard
-            if (typeof Flip === 'undefined') return null;
-
-            var cards = gridEl.querySelectorAll('.av-card-preview');
-            if (!cards.length) return null;
-
-            return Flip.getState(cards, { props: 'opacity', simple: true });
+            return window.GridMotion?.captureFlipState?.(gridEl) ?? null;
         },
 
         /**

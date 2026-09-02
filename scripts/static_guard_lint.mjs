@@ -2551,8 +2551,12 @@ const RULES = [
     note: '[TestMotionDurationConstants] test_adapter_callers_use_duration_constants — js.count("motion.DURATION.") >= 4（required-string count=min-bound，非 structure-count exact）',
   },
   {
-    file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'OpenAver.motion.DURATION.', count: 8,
-    note: '[TestMotionDurationConstants] test_animations_callers_use_duration_constants — js.count("OpenAver.motion.DURATION.") >= 8（min-bound；現況恰貼齊門檻，mutation 高風險列）',
+    file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'OpenAver.motion.DURATION.', count: 7,
+    note: '[TestMotionDurationConstants] test_animations_callers_use_duration_constants — js.count("OpenAver.motion.DURATION.") >= 7（min-bound；現況恰貼齊門檻，mutation 高風險列）。TASK-141b-T1：原為 8，playEntry/playFlipFilter 各帶走 1 次搬去 shared/grid-motion.js，由下一列接住（7+2=9，總覆蓋未減）',
+  },
+  {
+    file: 'web/static/js/shared/grid-motion.js', kind: 'required-string', pattern: 'OpenAver.motion.DURATION.', count: 2,
+    note: '[TestMotionDurationConstants] TASK-141b-T1：playEntry/playFlipFilter 搬家後的新家，接住從 animations.js 移出的那 2 次（min-bound）',
   },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'params.duration || 0.8', note: '[TestMotionDurationConstants] test_white_list_durations_preserved — showcaseSettle 招牌曲線白名單' },
   {
@@ -2600,7 +2604,7 @@ const RULES = [
   { file: 'web/static/js/components/motion-adapter.js', kind: 'forbidden-string', pattern: "opts.ease || 'power", note: '[TestMotionAdapterFluentDefaults] test_no_legacy_power_ease_defaults — unscoped 全檔' },
 
   // ---- [TestShowcaseAnimationsFluent] showcase/animations.js + ghost-fly.js + search/animations.js ease → fluent 角色 ----
-  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: "params.easing || 'fluent-decel'", note: '[TestShowcaseAnimationsFluent] test_animations_js_contains — playEntry' },
+  { file: 'web/static/js/shared/grid-motion.js', kind: 'required-string', pattern: "params.easing || 'fluent-decel'", note: '[TestShowcaseAnimationsFluent] test_animations_js_contains — playEntry' },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: "params.ease || 'fluent'", note: '[TestShowcaseAnimationsFluent] test_animations_js_contains — playFlipReorder' },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: "ease: 'fluent-accel'", note: '[TestShowcaseAnimationsFluent] test_animations_js_contains — playModeCrossfade' },
   {
@@ -2707,8 +2711,8 @@ const RULES = [
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: '.av-card-preview', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B7' },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'data-flip-id', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B7' },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'Flip.from', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8 playFlipFilter' },
-  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'onEnter', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8' },
-  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'onLeave', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8' },
+  { file: 'web/static/js/shared/grid-motion.js', kind: 'required-string', pattern: 'onEnter', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8' },
+  { file: 'web/static/js/shared/grid-motion.js', kind: 'required-string', pattern: 'onLeave', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8' },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'clearProps', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8' },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'return gsap.fromTo', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8 playFlipFilter returns tweens' },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'return gsap.to', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8' },
