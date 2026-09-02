@@ -347,6 +347,35 @@ export function searchStateWishlist() {
             }
         },
 
+        addToWishlistFromGrid(result, event) {
+            var fromEl = event?.target?.closest('.av-card-preview')?.querySelector('.av-card-preview-img img') || null;
+            return this._addToWishlistWithFly(result, fromEl);
+        },
+
+        addToWishlistFromLightbox(result) {
+            var fromEl = safeQuery('.showcase-lightbox:not(.wishlist-lightbox) .lightbox-cover img');
+            return this._addToWishlistWithFly(result, fromEl);
+        },
+
+        addToWishlistFromDetail(result) {
+            var fromEl = safeQuery('.av-card-full-cover-img');
+            return this._addToWishlistWithFly(result, fromEl);
+        },
+
+        _addToWishlistWithFly(result, fromEl) {
+            var promise = this.addToWishlist(result);
+            var toEl = safeQuery('#wishlistToggleBtn');
+            window.GhostFly?.playInboundFly?.({
+                fromEl: fromEl,
+                toEl: toEl,
+                fallback: {
+                    toastFn: (msg) => this.showToast(msg, 'success', 1500),
+                    message: window.t('search.toast.wishlist_added_offscreen')
+                }
+            });
+            return promise;
+        },
+
         async removeFromWishlist(number, context = 'search') {
             if (!number) return;
 
@@ -388,6 +417,9 @@ export function searchStateWishlist() {
                     if (!result) grid.classList.remove('flip-guard');
                     // flip-guard 由 playFlipFilter 的 onComplete 移除（既有機制）
                 }); });
+            } else if (context === 'search') {
+                // TASK-141b-T8（設計決策 3，F8.3）：badge 收縮反饋，卡片本身不動。
+                window.SearchAnimations?.playWishlistBadgeShrink?.(safeQuery('.mode-toggle-badge'));
             }
 
             try {

@@ -4652,6 +4652,34 @@ const RULES = [
     scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 3200 },
     note: '[TASK-141b-T7] 書籤燈箱移除鈕的接線鎖：這顆鈕是燈箱裡唯一的移除入口（spec F8.4），字面被改掉或刪掉的話，燈箱裡就再也移除不了、而 node:test（測 JS 函式）與其餘守衛全部照樣綠。`.stop` 一併鎖住：它在目前 DOM 下是防禦性冗餘（祖先 .lightbox-content 已有無條件 @click.stop 攔截冒泡），但與同容器既有那顆鈕寫法一致；若日後有人拿掉 .lightbox-content 那道攔截，這裡就是唯一的防線',
   },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: 'x-transition:enter-end="opacity-100"',
+    count: 6,
+    note: '[TASK-141b-T8] F8.3 三處（搜尋燈箱/單片大卡/搜尋格牆卡）加入鈕與移除鈕共 6 顆，各帶一組 x-transition:enter* 過渡（CD-18）。全域無 scope——這個精確字面（不含 translate 尾碼）在改動前全檔 0 筆命中，是本卡獨有，不與既有 toast 容器的 "opacity-100 translate-y-0" 衝突。count 掉到 6 以下代表有鈕的 enter 過渡被拿掉了。',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'forbidden-string',
+    pattern: 'x-transition:leave',
+    scope: { anchor: /@click="addToWishlistFromLightbox\(currentLightboxVideo\(\)\)"/, window: 1600 },
+    note: '[TASK-141b-T8] CD-18：搜尋燈箱這對加入/移除鈕只寫 enter、不寫 leave（雙向 crossfade 會讓兩顆鈕同時 display，overlay 變雙寬）。window 實測（Opus）：anchor → 移除鈕 </button> 距離 1377 字元，訂 1600（約 220 字元邊際）。',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'forbidden-string',
+    pattern: 'x-transition:leave',
+    scope: { anchor: /@click="addToWishlistFromDetail\(current\(\)\)"/, window: 1500 },
+    note: '[TASK-141b-T8] CD-18，同上，單片大卡這對鈕。window 實測：anchor → 移除鈕 </button> 距離 1163 字元，訂 1500（約 340 字元邊際）。',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'forbidden-string',
+    pattern: 'x-transition:leave',
+    scope: { anchor: /@click\.stop="addToWishlistFromGrid\(result, \$event\)"/, window: 1600 },
+    note: '[TASK-141b-T8] CD-18，同上，搜尋格牆卡這對鈕。window 實測：anchor → 移除鈕 </button> 距離 1362 字元，訂 1600（約 240 字元邊際）。',
+  },
   // ---- [TASK-140-T12] 書籤面板三層容器結構（原「頂部批次清理鈕 F7 驗收1-3」那三條已隨 141a-T6 退場） ----
   {
     file: 'web/templates/search.html',

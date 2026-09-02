@@ -2863,3 +2863,257 @@ test('T7-DoD6-no-current-item-safe-noop', () => {
     assert.equal(state.wishlistLightboxIndex, 99, '狀態必須原封不動');
 });
 
+
+// ─── TASK-141b-T8：F6 加入飛入（三入口）＋ F8.3 搜尋側移除回饋 ＋ badge ±1 反饋 ────
+
+function withWishlistFlyEnv({ queryMap = {}, ghostFlyImpl, badgeShrinkImpl } = {}, fn) {
+    const prevDoc = globalThis.document;
+    const prevGF = globalThis.window.GhostFly;
+    const prevSA = globalThis.window.SearchAnimations;
+    const prevT = globalThis.window.t;
+    globalThis.document = {
+        addEventListener() {},
+        querySelector: (sel) => (Object.prototype.hasOwnProperty.call(queryMap, sel) ? queryMap[sel] : null),
+    };
+    const flyCalls = [];
+    globalThis.window.GhostFly = {
+        playInboundFly: (opts) => { flyCalls.push(opts); return ghostFlyImpl ? ghostFlyImpl(opts) : null; },
+    };
+    const badgeCalls = [];
+    globalThis.window.SearchAnimations = {
+        ...prevSA,
+        playWishlistBadgeShrink: (el) => { badgeCalls.push(el); return badgeShrinkImpl ? badgeShrinkImpl(el) : null; },
+    };
+    globalThis.window.t = (key) => key;
+    const restore = () => {
+        globalThis.document = prevDoc;
+        if (prevGF === undefined) delete globalThis.window.GhostFly; else globalThis.window.GhostFly = prevGF;
+        if (prevSA === undefined) delete globalThis.window.SearchAnimations; else globalThis.window.SearchAnimations = prevSA;
+        if (prevT === undefined) delete globalThis.window.t; else globalThis.window.t = prevT;
+    };
+    return Promise.resolve()
+        .then(() => fn({ flyCalls, badgeCalls }))
+        .finally(restore);
+}
+
+test('T8-DoD1-grid-fromEl-is-clicked-card-cover', async () => {
+    const state = makeWishlistThis({ searchResults: [] });
+    mockFetch(() => jsonResponse({ added: true }));
+    const fakeImg = { tagName: 'IMG', src: 'cover.jpg' };
+    const fakeCard = { querySelector: (sel) => (sel === '.av-card-preview-img img' ? fakeImg : null) };
+    const fakeEvent = { target: { closest: (sel) => (sel === '.av-card-preview' ? fakeCard : null) } };
+    const toEl = { id: 'wishlistToggleBtn' };
+    await withWishlistFlyEnv({ queryMap: { '#wishlistToggleBtn': toEl } }, async ({ flyCalls }) => {
+        const result = { number: 'ABC-001' };
+        await state.addToWishlistFromGrid(result, fakeEvent);
+        assert.equal(flyCalls.length, 1);
+        assert.equal(flyCalls[0].fromEl, fakeImg, 'fromEl 必須是被按的那一張卡的封面 img');
+        assert.equal(flyCalls[0].toEl, toEl, 'toEl 必須是 #wishlistToggleBtn');
+    });
+});
+
+test('T8-DoD1-lightbox-fromEl-scoped-to-main-lightbox-not-wishlist-lightbox', async () => {
+    const state = makeWishlistThis({ searchResults: [] });
+    mockFetch(() => jsonResponse({ added: true }));
+    const mainLbImg = { tagName: 'IMG', src: 'main.jpg' };
+    const wishlistLbImg = { tagName: 'IMG', src: 'wishlist.jpg' };
+    const toEl = { id: 'wishlistToggleBtn' };
+    await withWishlistFlyEnv({
+        queryMap: {
+            '.showcase-lightbox:not(.wishlist-lightbox) .lightbox-cover img': mainLbImg,
+            '#wishlistToggleBtn': toEl,
+        },
+    }, async ({ flyCalls }) => {
+        await state.addToWishlistFromLightbox({ number: 'ABC-002' });
+        assert.equal(flyCalls.length, 1);
+        assert.equal(flyCalls[0].fromEl, mainLbImg, 'fromEl 必須是主搜尋燈箱的封面，不是書籤燈箱的');
+        assert.notEqual(flyCalls[0].fromEl, wishlistLbImg);
+        assert.equal(flyCalls[0].toEl, toEl, 'toEl 必須是 #wishlistToggleBtn');
+    });
+});
+
+test('T8-DoD1-detail-fromEl-is-full-cover-img', async () => {
+    const state = makeWishlistThis({ searchResults: [] });
+    mockFetch(() => jsonResponse({ added: true }));
+    const detailImg = { tagName: 'IMG', src: 'detail.jpg' };
+    const toEl = { id: 'wishlistToggleBtn' };
+    await withWishlistFlyEnv({
+        queryMap: { '.av-card-full-cover-img': detailImg, '#wishlistToggleBtn': toEl },
+    }, async ({ flyCalls }) => {
+        await state.addToWishlistFromDetail({ number: 'ABC-003' });
+        assert.equal(flyCalls.length, 1);
+        assert.equal(flyCalls[0].fromEl, detailImg);
+        assert.equal(flyCalls[0].toEl, toEl);
+    });
+});
+
+test('T8-DoD3-fly-failure-does-not-affect-data', async () => {
+    const state = makeWishlistThis({ searchResults: [], wishlistLoaded: true, wishlistItems: [], wishlistCount: 0 });
+    mockFetch(() => jsonResponse({ added: true }));
+    await withWishlistFlyEnv({
+        queryMap: {},
+        ghostFlyImpl: () => { throw new Error('boom'); },
+    }, async () => {
+        const result = { number: 'ABC-004' };
+        // GhostFly.playInboundFly 本身拋錯不應該讓 wrapper 整個中斷資料層
+        try {
+            await state.addToWishlistFromGrid(result, { target: { closest: () => null } });
+        } catch (e) { /* 若實作把呼叫包進 try/catch 這裡不該進來；若沒包，資料層已經先跑完 */ }
+        assert.equal(state.wishlistCount, 1);
+        assert.equal(result._wishlisted, true);
+    });
+});
+
+test('T8-DoD4-fallback-toast-wired-correctly', async () => {
+    const toastCalls = [];
+    const state = makeWishlistThis({
+        searchResults: [],
+        showToast(msg, type, ms) { toastCalls.push({ msg, type, ms }); },
+    });
+    mockFetch(() => jsonResponse({ added: true }));
+    const toEl = { id: 'wishlistToggleBtn' };
+    await withWishlistFlyEnv({
+        queryMap: { '.av-card-full-cover-img': { tagName: 'IMG' }, '#wishlistToggleBtn': toEl },
+    }, async ({ flyCalls }) => {
+        await state.addToWishlistFromDetail({ number: 'ABC-004b' });
+        assert.equal(flyCalls.length, 1);
+        assert.equal(typeof flyCalls[0].fallback?.toastFn, 'function', 'fallback.toastFn 必須接上');
+        assert.equal(flyCalls[0].fallback.message, 'search.toast.wishlist_added_offscreen');
+        flyCalls[0].fallback.toastFn('offscreen-msg');
+        assert.equal(toastCalls.length, 1);
+        assert.deepEqual(toastCalls[0], { msg: 'offscreen-msg', type: 'success', ms: 1500 });
+    });
+});
+
+test('T8-DoD5-search-context-badge-shrink-called-once', async () => {
+    const result = { number: 'ABC-005', _wishlisted: true };
+    const state = makeWishlistThis({
+        searchResults: [result], wishlistLoaded: false, wishlistCount: 3,
+    });
+    mockFetch(() => jsonResponse({ success: true }));
+    const badgeEl = { className: 'mode-toggle-badge' };
+    await withWishlistFlyEnv({
+        queryMap: { '.mode-toggle-badge': badgeEl },
+    }, async ({ badgeCalls }) => {
+        const prevGM = globalThis.window.GridMotion;
+        const captureCalls = [];
+        const playCalls = [];
+        globalThis.window.GridMotion = {
+            captureFlipState(...a) { captureCalls.push(a); return { __s: 1 }; },
+            playFlipFilter(...a) { playCalls.push(a); return { fake: 'tl' }; },
+        };
+        try {
+            await state.removeFromWishlist('ABC-005', 'search');
+            assert.equal(badgeCalls.length, 1, 'playWishlistBadgeShrink 必須被呼叫一次');
+            assert.equal(badgeCalls[0], badgeEl);
+            assert.equal(captureCalls.length, 0, "'search' context 不得觸發 captureFlipState");
+            assert.equal(playCalls.length, 0, "'search' context 不得觸發 playFlipFilter");
+            assert.equal(result._wishlisted, false, '卡片翻回未加入狀態');
+            assert.ok(state.searchResults.includes(result), '卡片本身仍在 searchResults 裡，沒有被移除');
+        } finally {
+            if (prevGM === undefined) delete globalThis.window.GridMotion;
+            else globalThis.window.GridMotion = prevGM;
+        }
+    });
+});
+
+test('T8-DoD6-badge-shrink-params-compliant', async () => {
+    const prevOpenAver = globalThis.OpenAver;
+    const prevGsap = globalThis.gsap;
+    const fromToCalls = [];
+    const killCalls = [];
+    globalThis.OpenAver = {
+        prefersReducedMotion: false,
+        motion: { DURATION: { fast: 0.167, medium: 0.333, emphasis: 0.5 } },
+    };
+    globalThis.gsap = {
+        killTweensOf(el) { killCalls.push(el); },
+        fromTo(el, from, to) {
+            fromToCalls.push({ el, from, to });
+            return { fake: 'tween' };
+        },
+    };
+    try {
+        await import('../../animations.js');
+        const SA = globalThis.window.SearchAnimations;
+        assert.equal(typeof SA.playWishlistBadgeShrink, 'function');
+        const el = { id: 'badge' };
+        const result = SA.playWishlistBadgeShrink(el);
+        assert.notEqual(result, null);
+        assert.equal(killCalls.length, 1);
+        assert.equal(fromToCalls.length, 1);
+        assert.equal(fromToCalls[0].el, el);
+        assert.deepEqual(fromToCalls[0].from, { scale: 1 });
+        assert.equal(fromToCalls[0].to.scale, 0.85);
+        assert.equal(fromToCalls[0].to.duration, OpenAver.motion.DURATION.fast);
+        assert.equal(fromToCalls[0].to.repeat, 1);
+        assert.notEqual(fromToCalls[0].to.repeat, -1, 'repeat 不得為 -1（CD-16）');
+        assert.equal(fromToCalls[0].to.yoyo, true);
+        const KNOWN_EASES = ['fluent', 'fluent-decel', 'fluent-accel'];
+        assert.ok(KNOWN_EASES.includes(fromToCalls[0].to.ease), `ease 必須是既有名稱之一，實得 ${fromToCalls[0].to.ease}`);
+        assert.equal(fromToCalls[0].to.clearProps, 'transform');
+    } finally {
+        if (prevOpenAver === undefined) delete globalThis.OpenAver; else globalThis.OpenAver = prevOpenAver;
+        if (prevGsap === undefined) delete globalThis.gsap; else globalThis.gsap = prevGsap;
+    }
+});
+
+test('T8-DoD6-badge-shrink-null-el-safe', async () => {
+    const prevOpenAver = globalThis.OpenAver;
+    const prevGsap = globalThis.gsap;
+    globalThis.OpenAver = {
+        prefersReducedMotion: false,
+        motion: { DURATION: { fast: 0.167 } },
+    };
+    globalThis.gsap = {
+        killTweensOf() {},
+        fromTo() { return {}; },
+    };
+    try {
+        await import('../../animations.js');
+        const SA = globalThis.window.SearchAnimations;
+        assert.equal(SA.playWishlistBadgeShrink(null), null);
+        assert.equal(SA.playWishlistBadgeShrink(undefined), null);
+        assert.doesNotThrow(() => SA.playWishlistBadgeShrink(null));
+    } finally {
+        if (prevOpenAver === undefined) delete globalThis.OpenAver; else globalThis.OpenAver = prevOpenAver;
+        if (prevGsap === undefined) delete globalThis.gsap; else globalThis.gsap = prevGsap;
+    }
+});
+
+test('T8-DoD8-reduced-motion-data-unchanged', async () => {
+    const state = makeWishlistThis({
+        searchResults: [], wishlistLoaded: true, wishlistItems: [], wishlistCount: 0,
+    });
+    mockFetch(() => jsonResponse({ added: true }));
+    await withWishlistFlyEnv({
+        queryMap: {
+            '.av-card-full-cover-img': { tagName: 'IMG' },
+            '#wishlistToggleBtn': { id: 'wishlistToggleBtn' },
+        },
+        ghostFlyImpl: () => null, // 模擬 reduced-motion / shouldSkip 降級
+    }, async ({ flyCalls }) => {
+        const result = { number: 'ABC-008' };
+        await state.addToWishlistFromDetail(result);
+        assert.equal(flyCalls.length, 1);
+        assert.equal(state.wishlistCount, 1);
+        assert.equal(result._wishlisted, true);
+        assert.equal(state.wishlistItems.length, 1);
+    });
+
+    const result2 = { number: 'ABC-008b', _wishlisted: true };
+    const state2 = makeWishlistThis({
+        searchResults: [result2], wishlistLoaded: false, wishlistCount: 2,
+    });
+    mockFetch(() => jsonResponse({ success: true }));
+    await withWishlistFlyEnv({
+        queryMap: { '.mode-toggle-badge': { className: 'mode-toggle-badge' } },
+        badgeShrinkImpl: () => null, // 模擬 reduced-motion 降級
+    }, async ({ badgeCalls }) => {
+        await state2.removeFromWishlist('ABC-008b', 'search');
+        assert.equal(badgeCalls.length, 1);
+        assert.equal(result2._wishlisted, false);
+        assert.ok(state2.searchResults.includes(result2));
+        assert.equal(state2.wishlistCount, 1);
+    });
+});

@@ -81,15 +81,21 @@
                     </button>
                     <!-- TASK-140-T6: 加入書籤 -->
                     <button class="lb-action-btn"
-                            @click="addToWishlist(currentLightboxVideo())"
+                            @click="addToWishlistFromLightbox(currentLightboxVideo())"
                             x-show="!actressLightboxMode() && cardActionState(currentLightboxVideo()) === 'bookmark-add'"
+                            x-transition:enter="transition ease-out duration-150"
+                            x-transition:enter-start="opacity-0"
+                            x-transition:enter-end="opacity-100"
                             data-tooltip="{{ t('search.action.add_wishlist') }}" aria-label="{{ t('search.action.add_wishlist') }}">
                         <i class="bi bi-bookmark-plus"></i>
                     </button>
                     <!-- TASK-140-T6: 從書籤移除 -->
                     <button class="lb-action-btn"
-                            @click="removeFromWishlist(currentLightboxVideo()?.number)"
+                            @click="removeFromWishlist(currentLightboxVideo()?.number, 'search')"
                             x-show="!actressLightboxMode() && cardActionState(currentLightboxVideo()) === 'bookmark-remove'"
+                            x-transition:enter="transition ease-out duration-150"
+                            x-transition:enter-start="opacity-0"
+                            x-transition:enter-end="opacity-100"
                             data-tooltip="{{ t('search.action.remove_wishlist') }}" aria-label="{{ t('search.action.remove_wishlist') }}">
                         <i class="bi bi-bookmark-fill"></i>
                     </button>
@@ -416,7 +422,7 @@
                             :title="t('search.action.view_search_results')">
                         <i class="bi bi-search"></i>
                     </button>
-                    <button type="button" class="mode-toggle-btn"
+                    <button type="button" id="wishlistToggleBtn" class="mode-toggle-btn"
                             :class="{ 'active': listMode === 'wishlist' }"
                             @click="listMode !== 'wishlist' && switchToWishlist()"
                             :title="t('search.action.view_wishlist')">
@@ -660,15 +666,21 @@
                     </button>
                     <!-- TASK-140-T6: 加入書籤（本地沒有 ＋ 未加入）-->
                     <button class="info-icon-btn"
-                            @click="addToWishlist(current())"
+                            @click="addToWishlistFromDetail(current())"
                             x-show="cardActionState(current()) === 'bookmark-add'"
+                            x-transition:enter="transition ease-out duration-150"
+                            x-transition:enter-start="opacity-0"
+                            x-transition:enter-end="opacity-100"
                             title="{{ t('search.action.add_wishlist') }}">
                         <i class="bi bi-bookmark-plus"></i>
                     </button>
                     <!-- TASK-140-T6: 從書籤移除（本地沒有 ＋ 已加入）-->
                     <button class="info-icon-btn"
-                            @click="removeFromWishlist(current()?.number)"
+                            @click="removeFromWishlist(current()?.number, 'search')"
                             x-show="cardActionState(current()) === 'bookmark-remove'"
+                            x-transition:enter="transition ease-out duration-150"
+                            x-transition:enter-start="opacity-0"
+                            x-transition:enter-end="opacity-100"
                             title="{{ t('search.action.remove_wishlist') }}">
                         <i class="bi bi-bookmark-fill"></i>
                     </button>
@@ -986,15 +998,21 @@
                                 </button>
                                 <!-- TASK-140-T6: 加入書籤 -->
                                 <button class="btn-glass-circle"
-                                        @click.stop="addToWishlist(result)"
+                                        @click.stop="addToWishlistFromGrid(result, $event)"
                                         x-show="cardActionState(result) === 'bookmark-add'"
+                                        x-transition:enter="transition ease-out duration-150"
+                                        x-transition:enter-start="opacity-0"
+                                        x-transition:enter-end="opacity-100"
                                         title="{{ t('search.action.add_wishlist') }}">
                                     <i class="bi bi-bookmark-plus"></i>
                                 </button>
                                 <!-- TASK-140-T6: 從書籤移除 -->
                                 <button class="btn-glass-circle"
-                                        @click.stop="removeFromWishlist(result.number)"
+                                        @click.stop="removeFromWishlist(result.number, 'search')"
                                         x-show="cardActionState(result) === 'bookmark-remove'"
+                                        x-transition:enter="transition ease-out duration-150"
+                                        x-transition:enter-start="opacity-0"
+                                        x-transition:enter-end="opacity-100"
                                         title="{{ t('search.action.remove_wishlist') }}">
                                     <i class="bi bi-bookmark-fill"></i>
                                 </button>

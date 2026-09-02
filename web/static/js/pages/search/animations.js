@@ -1069,6 +1069,19 @@
                 });
             }
             return tl;
+        },
+
+        // TASK-141b-T8（設計決策 3，spec F8.3）：badge 收縮反饋，唯一新寫的動畫函式。
+        // repeat: 1（非 -1，CD-16 禁 infinite）＋ yoyo: true 做一次縮小再回彈。
+        playWishlistBadgeShrink: function (el) {
+            if (!el) return null;
+            if (typeof gsap === 'undefined') return null;
+            if (shouldSkip()) return null;
+            gsap.killTweensOf(el);
+            return gsap.fromTo(el, { scale: 1 }, {
+                scale: 0.85, duration: OpenAver.motion.DURATION.fast, ease: 'fluent-accel',
+                yoyo: true, repeat: 1, clearProps: 'transform'
+            });
         }
     };
 })();
