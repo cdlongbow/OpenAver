@@ -1042,14 +1042,6 @@
     overflow: hidden;
 }
 
-/* 工具列：固定高，不被 .wishlist-grid 的 flex:1 壓縮。 */
-.wishlist-toolbar {
-    flex: 0 0 auto;
-    display: flex;
-    justify-content: flex-end;
-    padding: 0.75rem 1.5rem 0;
-}
-
 /* TASK-140-T9（T12 改：width/max-height 搬到 .wishlist-panel，這裡改吃剩餘高度）。
    flex:1 讓 .wishlist-grid 在 .wishlist-panel 這個 flex-column 容器裡吃滿工具列以外的
    剩餘高度；min-height:0 是 flex-item 在捲動容器裡的必要條件（沒有這行，min-height
@@ -1077,28 +1069,6 @@
     position: relative;
     width: 100%;
     min-height: 40vh;
-}
-
-/* 已入手角標：沿用 .cover-badge（components/cover-badge.css）同一組 token
-   （--overlay-badge、white 45% 邊框、--radius-pill——ui-conventions.md §1 白名單
-   第 4 類「badge 類」的延伸），改成 icon-only 圓形尺寸。恆常可見（不掛在
-   .av-card-preview-overlay 內，見上方 search.html 段的說明）。 */
-.wishlist-owned-badge {
-    position: absolute;
-    top: 0.5rem;
-    right: 0.5rem;
-    z-index: 2;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.75rem;
-    height: 1.75rem;
-    border-radius: var(--radius-pill);
-    background: var(--overlay-badge);
-    border: 1.5px solid color-mix(in oklch, white 45%, transparent);
-    color: oklch(100% 0 0);
-    font-size: 0.9rem;
-    pointer-events: none;
 }
 
 /* ==================== T2d: Actress Profile ==================== */

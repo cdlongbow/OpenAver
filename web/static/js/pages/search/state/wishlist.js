@@ -36,11 +36,6 @@ export function searchStateWishlist() {
         _preWishlistListMode: null,
 
         // ===== Computed Properties =====
-        // TASK-140-T12：F7 清理鈕只在有已入手項目時出現，讀 T8 對帳寫入的 _owned 欄位。
-        get ownedWishlistCount() {
-            return this.wishlistItems.filter((i) => i._owned).length;
-        },
-
         cardActionState,
 
         switchToWishlist() {
@@ -90,12 +85,14 @@ export function searchStateWishlist() {
         // 畫面會先用**上一次的舊資料**把卡片、垃圾桶鈕、清理鈕全部渲染出來，新的 GET 這時
         // 還在飛。使用者於是能在舊 GET 回來之前就按下清理——舊 GET 晚回來就把剛清掉的項目
         // 整包寫回畫面。
-        // 窗口大小不是理論值：`GET /api/wishlist` 會對 videos 做**全表掃描**
-        // （`get_by_numbers()` 用 `UPPER(number)` 比對，吃不到 `idx_videos_number`，
-        // EXPLAIN QUERY PLAN 實測是 `SCAN videos`），片庫越大、機器越慢窗口越寬。
+        // 窗口大小不是理論值：`GET /api/wishlist` 現在**先對帳再回清單**（141a-T4），
+        // 對帳要對每一筆書籤查一次片庫。141a-T1 之前 `get_by_numbers()` 的
+        // `UPPER(number)` 吃不到索引、EXPLAIN QUERY PLAN 實測是 `SCAN videos`；
+        // 加了 `idx_videos_number_upper` 之後成本只跟**書籤數**有關，不再跟片庫大小成正比
+        // ——但窗口仍然存在（網路 ＋ 對帳 ＋ 刪封面檔）。
         // 接上既有的 AbortController registry（`_getAbortSignal`/`_clearAbort`，
-        // search-flow.js:938-955，setFileList／loadFavorite／loadMore 同一套），讓
-        // `cleanupOwnedWishlist()` 有辦法作廢它；順帶讓連續兩次載入變成 last-wins。
+        // search-flow.js:938-955，setFileList／loadFavorite／loadMore 同一套），
+        // 讓連續兩次載入變成 last-wins（晚回來的舊回應不覆蓋新清單）。
         async loadWishlist() {
             const signal = this._getAbortSignal('loadWishlist');
             try {
@@ -269,55 +266,6 @@ export function searchStateWishlist() {
         nextWishlistLightbox() {
             this._wishlistLbImgError = false;
             this.wishlistLightboxIndex = Math.min(this.wishlistItems.length - 1, this.wishlistLightboxIndex + 1);
-        },
-
-        // TASK-140-T12（F7）：破壞性操作，不做樂觀更新——失敗時三件事都不做，只出 error toast
-        // （承重段第4條：與 add/remove 的樂觀更新刻意不同，那兩個失敗頂多少一筆書籤，這個失敗
-        // 若做了樂觀更新，使用者會以為整理完了但其實沒有）。刻意用「fetch 與 !resp.ok 分開判斷、
-        // 各自 early return」的形狀（不是 addToWishlist 那種單一 try/throw），理由見下方
-        // mutation M3 錨點說明。
-        async cleanupOwnedWishlist() {
-            let resp;
-            try {
-                resp = await fetch('/api/wishlist/cleanup', { method: 'POST' });
-            } catch (err) {
-                console.error('[Wishlist] cleanup 失敗:', err);
-                this.showToast(window.t('search.toast.wishlist_clean_failed'), 'error');
-                return;
-            }
-            if (!resp.ok) {
-                console.error('[Wishlist] cleanup 請求失敗:', resp.status);
-                this.showToast(window.t('search.toast.wishlist_clean_failed'), 'error');
-                return;
-            }
-            // sonnet review P2：resp.json() 本身會 throw（2xx 但 body 不是合法 JSON——
-            // 連線被截斷、反向代理插了非 JSON 內容）。不包的話那條路徑是 unhandled rejection：
-            // 畫面上不會有任何 toast，count/items 也沒動，使用者按完完全不知道成功還是失敗。
-            let data;
-            try {
-                data = await resp.json();
-            } catch (err) {
-                console.error('[Wishlist] cleanup 回應解析失敗:', err);
-                this.showToast(window.t('search.toast.wishlist_clean_failed'), 'error');
-                return;
-            }
-            // Codex 二審 P2（Opus 2026-09-02）：清理成功後對 `wishlistItems` 的過濾是**權威值**，
-            // 而 `loadWishlist()` 是無條件整包覆蓋。作廢的時機必須是**這裡**（寫入之前），不是
-            // 送出 POST 之前——我第一輪放在開頭並註明「之後不可能再有新的 GET」，那個推理是錯的：
-            // 兩顆 segmented 鈕在清理期間都沒被擋（search.html:407-415），使用者覺得慢而點
-            // 「搜尋」再點「書籤」，`listMode !== 'wishlist'` 成立 ⇒ `switchToWishlist()` 會建出
-            // **全新的** controller，開頭那次 abort 碰不到它。而那個新 GET 很可能在伺服器端讀到
-            // 刪除前的資料（清理還在跑全表掃描 ＋ 逐筆刪封面），卻晚於清理回來。
-            //
-            // 放在寫入之前就完整了，三種到達順序都收斂：
-            //   ① 此刻仍在飛的 GET（不論它是清理前還是清理中發出的）⇒ 這裡作廢，寫不進來
-            //   ② 已經在這之前回來的 GET ⇒ 它寫進去的舊清單接著被下一行的 `!_owned` 過濾掉
-            //   ③ 這之後才發出的 GET ⇒ POST 已回，伺服器端 DELETE 早已 commit，讀到的是對的
-            this._abortControllers.loadWishlist?.abort();
-            const deletedCount = data.deleted_count || 0;
-            this.wishlistCount = Math.max(0, this.wishlistCount - deletedCount);
-            this.wishlistItems = this.wishlistItems.filter((i) => !i._owned);
-            this.showToast(window.t('search.toast.wishlist_cleaned', { count: deletedCount }), 'success');
         },
     };
 }

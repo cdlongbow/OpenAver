@@ -1171,14 +1171,6 @@
              .wishlist-empty 刻意留在 wrapper 外面（見技術要點 §1 的設計決策），維持
              「狀態頁扁平 siblings」的既有慣例。 -->
         <div class="wishlist-panel" x-show="listMode === 'wishlist'" x-cloak>
-            <div class="wishlist-toolbar">
-                <button id="btnWishlistCleanup" class="btn btn-sm btn-outline btn-warning"
-                        x-show="ownedWishlistCount > 0"
-                        @click="cleanupOwnedWishlist()">
-                    <i class="bi bi-eraser"></i>
-                    <span x-text="t('search.wishlist.cleanup_owned', { count: ownedWishlistCount })"></span>
-                </button>
-            </div>
             <div class="wishlist-grid ds-gallery-composition" x-show="listMode === 'wishlist'" x-cloak>
                 <template x-for="(item, index) in wishlistItems" :key="item.number">
                     <div class="av-card-preview" @click="openWishlistLightbox(index)">
@@ -1192,14 +1184,6 @@
                                 <i class="bi bi-image text-5xl"></i>
                                 <p class="mt-2" x-text="t('common.no_image')"></p>
                             </div>
-                            <!-- 已入手角標（F6）：獨立 sibling，不進 .av-card-preview-overlay
-                                 ——那個 div 預設 opacity:0，只有 hover 才 1（theme.css:1140-1142），
-                                 角標必須恆常可見，套進去會被 hover 機制吃掉 -->
-                            <span class="wishlist-owned-badge"
-                                  x-show="item._owned"
-                                  title="{{ t('search.wishlist.owned') }}">
-                                <i class="bi bi-collection-play-fill"></i>
-                            </span>
                             <div class="av-card-preview-overlay">
                                 <button class="btn-glass-circle"
                                         @click.stop="removeFromWishlist(item.number)"

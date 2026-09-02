@@ -4510,13 +4510,6 @@ const RULES = [
     scope: { anchor: /class="wishlist-grid[^"]*"/, window: 3000 },
     note: '[branch review P2-2] 書籤格卡封面必須走本地端點：退回打外站會破壞 F6 驗收5「零對外請求」，且 javbus 圖床沒有 Referer 會回 403 ＝ T9 修過的那個整頁破圖',
   },
-  {
-    file: 'web/templates/search.html',
-    kind: 'required-string',
-    pattern: 'x-show="item._owned"',
-    scope: { anchor: /class="wishlist-grid[^"]*"/, window: 3000 },
-    note: '[TASK-140-T8] 已入手角標只在 item._owned 為真時顯示（F6 驗收1/2/6）',
-  },
   // Opus 補（T8 Step 6 自驗發現原稿這條 SURVIVED）：三個狀態頁必須排除 wishlist。
   // 沒有這條的話，把 `&& listMode !== 'wishlist'` 刪掉不會有任何東西轉紅，而後果是
   // 「請輸入番號」那類提示文案疊在書籤清單上面（pageState 與 listMode 是正交的兩個閘，
@@ -4627,21 +4620,6 @@ const RULES = [
     pattern: 'class="wishlist-panel"',
     note: '[TASK-140-T12] 三層分工 wrapper 必須存在（plan「容器結構寫死」，Codex Phase 2 P2-3）——沒有它，清理鈕與書籤格的尺寸宣告會退回掛在會 shrink 的層，重現 T9 的 110×727',
   },
-  // window 實測：class="wishlist-panel" 開標錨點 → 工具列 </div> 閉合共 514 字元；+ 安全邊際 → 700。
-  {
-    file: 'web/templates/search.html',
-    kind: 'required-string',
-    pattern: 'x-show="ownedWishlistCount > 0"',
-    scope: { anchor: /class="wishlist-panel"/, window: 700 },
-    note: '[TASK-140-T12] 清理鈕只在有已入手項目時顯示（F7 驗收1：N===0 整顆不顯示）',
-  },
-  {
-    file: 'web/templates/search.html',
-    kind: 'required-string',
-    pattern: 'bi-eraser',
-    scope: { anchor: /class="wishlist-panel"/, window: 700 },
-    note: '[TASK-140-T12] 清理鈕圖示必須是 bi-eraser（spec F7 明寫）',
-  },
   // Opus 抽驗（T12 Step 6）：把 wrapper 的 listMode 閘拿掉之後 lint 與 npm test 全綠——
   // 而後果是 wrapper 在搜尋模式下仍是 .result-area 的 flex item，與 #resultCard 並排搶寬度，
   // 搜尋結果被擠成半邊（＝T9 那個 owner 一眼看到的並排缺陷，換一個容器重演一次）。
@@ -4650,13 +4628,6 @@ const RULES = [
     kind: 'required-string',
     pattern: `<div class="wishlist-panel" x-show="listMode === 'wishlist'"`,
     note: '[TASK-140-T12] 書籤 wrapper 必須自帶 listMode 閘——少了它，wrapper 在搜尋模式下仍是 .result-area 的 flex item，會與搜尋結果並排搶寬度把結果擠成半邊（T9 修過的同一種缺陷）',
-  },
-  {
-    file: 'web/templates/search.html',
-    kind: 'required-string',
-    pattern: '@click="cleanupOwnedWishlist()"',
-    scope: { anchor: /class="wishlist-panel"/, window: 700 },
-    note: '[TASK-140-T12] 清理鈕必須接上 cleanupOwnedWishlist()（F7 驗收3：點下去要真的觸發清理），比承重段第9條原列的三項多加這一條——click 接線是同一批字串存在性檢查最自然的延伸，遺漏會讓鈕看起來對但按下去沒反應',
   },
 
   // ---- [lint-guard 141a-T5] 對帳呼叫點逐檔計數（spec F2／設計決策 5）----
