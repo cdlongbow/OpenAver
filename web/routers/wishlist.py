@@ -106,7 +106,22 @@ def add_wishlist(req: WishlistAddRequest) -> dict:
 @router.get("")
 def list_wishlist() -> list:
     init_db()
-    removed = reconcile_wishlist()
+    # 🔴 branch review P2（2026-09-02）：對帳失敗**不得吃掉整份清單**。
+    # T4 把這支從唯讀端點變成了含 DELETE ＋ commit 的寫入端點，於是它多了一種
+    # 以前不存在的死法：掃描正在跑（`upsert_batch` 整個目錄一個交易、最後才 commit）
+    # 時點開書籤分頁 → `delete_many()` 撞上寫鎖 → sqlite3 預設 5 秒 timeout 後丟
+    # `database is locked` → 這支回 500 → 前端 `!resp.ok` 只 console.error，
+    # 連空狀態都不顯示（`wishlist-empty` 要 `wishlistLoaded`）⇒ **整片空白、零提示，
+    # 使用者以為書籤全沒了**。
+    # 隔離形狀與另外兩個觸發點（scanner.py / scraper.py 的 CD-4）逐字相同：
+    # 對帳掛掉只發一筆 warn 通知，清單照回——沒對到帳最多是「已入庫的書籤這次還留著」，
+    # 下一次開啟或下一次掃描完成就收斂。
+    try:
+        removed = reconcile_wishlist()
+    except Exception:
+        logger.exception("wishlist 對帳失敗（開啟書籤清單）")
+        _emit_notif("warn", "notif.wishlist_reconcile_failed", task_type="wishlist_reconcile")
+        removed = []
     if removed:
         _emit_notif(
             "info",

@@ -522,6 +522,39 @@ def test_list_wishlist_emits_single_reconcile_notification(client, tmp_db):
     assert items[0]["task_type"] == "wishlist_reconcile"
 
 
+def test_list_wishlist_survives_reconcile_failure(client, tmp_db, monkeypatch):
+    """branch review P2（2026-09-02）：對帳掛掉不得吃掉整份清單。
+
+    三個對帳觸發點裡只有這一個是**使用者正盯著看的畫面**，卻是唯一沒做失敗隔離的。
+    真實死法：掃描正在跑（upsert_batch 整個目錄一個交易）→ 使用者點開書籤分頁 →
+    delete_many 撞寫鎖 → 5 秒後 database is locked → 這支回 500 → 前端 !resp.ok
+    只 console.error、空狀態又要 wishlistLoaded 才顯示 ⇒ 整片空白零提示。
+    """
+    conn = sqlite3.connect(str(tmp_db))
+    conn.execute(
+        "INSERT INTO wishlist (number, title, created_at) "
+        "VALUES ('LOCK-001', 'Still Here', '2026-01-01 10:00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    def _boom():
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr("web.routers.wishlist.reconcile_wishlist", _boom)
+
+    resp = client.get("/api/wishlist")
+    assert resp.status_code == 200, "對帳失敗不得讓清單回 500"
+    numbers = [item["number"] for item in resp.json()]
+    assert numbers == ["LOCK-001"], "清單必須照回，沒對到帳只是這次沒收斂"
+
+    items = client.get("/api/notifications").json()["items"]
+    assert len(items) == 1
+    assert items[0]["title_key"] == "notif.wishlist_reconcile_failed"
+    assert items[0]["level"] == "warn"
+    assert items[0]["task_type"] == "wishlist_reconcile"
+
+
 def test_list_wishlist_second_load_no_duplicate_notification(client, tmp_db, monkeypatch):
     """TASK-141a-T4 DoD 3: 連續兩次 GET → 第二次零通知、delete_many 不被呼叫。"""
     from core.database import WishlistRepository

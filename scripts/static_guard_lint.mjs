@@ -4490,7 +4490,7 @@ const RULES = [
     note: '[TASK-140-T7] wishlist badge 只在 wishlistCount>0 時顯示（F2 驗收1，那一段本身仍要顯示）',
   },
 
-  // ---- [TASK-140-T8] wishlist 封面端點 + 已入手角標條件（F4 驗收2／F6 驗收5／F6 驗收1/2/6） ----
+  // ---- [TASK-140-T8] wishlist 封面端點（F4 驗收2／F6 驗收5）——已入手角標那三條已隨 141a-T6 退場 ----
   // window 實測：.wishlist-grid 開標 class= 錨點 → 閉合 </div> 共 2415 字元；+ 安全邊際 → 3000。
   {
     file: 'web/templates/search.html',
@@ -4613,12 +4613,12 @@ const RULES = [
     scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
     note: '[TASK-140-T11a] 書籤燈箱不得出現翻譯鈕（spec F5 驗收4：那些需要本地檔案）',
   },
-  // ---- [TASK-140-T12] 頂部批次清理鈕（F7 驗收1-3，承重段第9條字串存在性清單） ----
+  // ---- [TASK-140-T12] 書籤面板三層容器結構（原「頂部批次清理鈕 F7 驗收1-3」那三條已隨 141a-T6 退場） ----
   {
     file: 'web/templates/search.html',
     kind: 'required-string',
     pattern: 'class="wishlist-panel"',
-    note: '[TASK-140-T12] 三層分工 wrapper 必須存在（plan「容器結構寫死」，Codex Phase 2 P2-3）——沒有它，清理鈕與書籤格的尺寸宣告會退回掛在會 shrink 的層，重現 T9 的 110×727',
+    note: '[TASK-140-T12] 三層分工 wrapper 必須存在（plan「容器結構寫死」，Codex Phase 2 P2-3）——沒有它，書籤格的尺寸宣告會退回掛在會 shrink 的層，重現 T9 的 110×727',
   },
   // Opus 抽驗（T12 Step 6）：把 wrapper 的 listMode 閘拿掉之後 lint 與 npm test 全綠——
   // 而後果是 wrapper 在搜尋模式下仍是 .result-area 的 flex item，與 #resultCard 並排搶寬度，
@@ -4651,8 +4651,8 @@ const RULES = [
   {
     file: 'web/templates/search.html',
     kind: 'required-string',
-    pattern: `x-show="listMode === 'search' && pageState === 'result' && searchResults.length > 1 && !isComposing()"`,
-    note: '[lint-guard 141a-T7] 格牆／大卡切換鈕顯示條件必須為「結果模式＋結果數>1＋非組合輸入」（CD-9，spec F4 驗收 2b/3）',
+    pattern: `x-show="listMode === 'search' && pageState === 'result' && (searchResults.length > 1 || actressProfile) && !isComposing()"`,
+    note: '[lint-guard 141a-T7] 格牆／大卡切換鈕顯示條件必須為「結果模式＋(結果數>1 或有女優 hero 卡)＋非組合輸入」（CD-9，spec F4 驗收 2/2b/3；`|| actressProfile` 是 branch review P2 補的，見 search.html 該行上方註解）',
   },
 ];
 

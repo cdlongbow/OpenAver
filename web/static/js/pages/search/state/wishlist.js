@@ -47,7 +47,7 @@ export function searchStateWishlist() {
             this.displayMode = 'grid';
             // T8 review P2：**每次開啟都重新對帳**，不是只有第一次。
             // spec F6 的對帳時機明寫「開啟書籤清單時」；只在 !wishlistLoaded 時載入的話：
-            // 你把書籤裡的片掃描入庫 → 切回書籤分頁 → 角標不會出現、卡片也不會沉底，
+            // 你把書籤裡的片掃描入庫 → 切回書籤分頁 → 那筆書籤不會消失，
             // 除非整頁重新整理（owner hard-gate 第 6 條走的就是這條流程）。
             // 成本是每次切換一支**本地** SQLite 查詢，F6 驗收 5「零對外請求」不受影響。
             // `wishlistLoaded` 保留，但語意收斂成「載入過至少一次」——只用來 gate 空狀態，
@@ -82,8 +82,8 @@ export function searchStateWishlist() {
         // Codex review P2（Opus 2026-09-02）：這支是**整包覆蓋**（`this.wishlistItems = data`），
         // 而且沒有任何機制能分辨「這個回應是不是已經過期」。過期窗口確實存在：
         // `switchToSearchList()`（上面）不清空 `wishlistItems`，所以切回書籤分頁的那一瞬間，
-        // 畫面會先用**上一次的舊資料**把卡片、垃圾桶鈕、清理鈕全部渲染出來，新的 GET 這時
-        // 還在飛。使用者於是能在舊 GET 回來之前就按下清理——舊 GET 晚回來就把剛清掉的項目
+        // 畫面會先用**上一次的舊資料**把卡片與垃圾桶鈕渲染出來，新的 GET 這時還在飛。
+        // 使用者於是能在舊 GET 回來之前就按下某張卡的移除——舊 GET 晚回來就把剛移除的項目
         // 整包寫回畫面。
         // 窗口大小不是理論值：`GET /api/wishlist` 現在**先對帳再回清單**（141a-T4），
         // 對帳要對每一筆書籤查一次片庫。141a-T1 之前 `get_by_numbers()` 的
@@ -103,9 +103,18 @@ export function searchStateWishlist() {
                 }
                 const data = await resp.json();
                 this.wishlistItems = data;
+                // 🔴 branch review P2（2026-09-02）：**清單與計數在這裡一起寫**。
+                // 141a 之前「已入手」是使用者按鈕觸發的，`cleanupOwnedWishlist()`
+                // 同時扮演「觸發」與「把本地計數拉回權威值」兩個角色；退場時只有
+                // 前者被搬到後端，後者沒有東西接手。於是：掃描完成自動移除 3 筆 →
+                // 切到書籤分頁 → 牆上剩 2 張，鈕上的 badge 還是寫 5，一直錯到整頁
+                // 重新整理（`loadWishlistCount()` 全站唯一呼叫點在 main.js 的初始化，
+                // 分頁來回切不會重跑）。
+                // 這支的回應就是權威清單，`data.length` 就是權威計數——**不再多接一條線**。
+                this.wishlistCount = data.length;
                 this.wishlistLoaded = true;
             } catch (err) {
-                if (err?.name === 'AbortError') return;   // 被新載入或清理作廢，靜默放棄
+                if (err?.name === 'AbortError') return;   // 被新的載入作廢，靜默放棄
                 console.error('[Wishlist] list 查詢失敗:', err);
             } finally {
                 this._clearAbort('loadWishlist', signal);

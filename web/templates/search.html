@@ -428,9 +428,18 @@
                         <i class="bi bi-x-lg"></i>
                     </button>
                     <!-- T2a/T3a: Grid / Detail Toggle -->
+                    <!-- 🔴 branch review P2（2026-09-02）：`|| actressProfile` 不是白名單復辟，
+                         是把 hero 卡算進「有沒有第二張卡」。T7 只寫 `length > 1` 時，
+                         **只有一部作品的女優**會落在大卡模式（新搜尋一律 detail，actress/prefix 要
+                         ≥10 筆才自動切 grid）而按鈕不出現 ⇒ 沒有任何路徑進得去格牆 ⇒ 她的檔案照、
+                         年齡、別名與「加入最愛女優」全部按不到（那張 hero 卡與 openActressLightbox()
+                         **只存在於 `.search-grid` 之內**，是格牆唯一獨有的可點元素；其餘六顆鈕大卡都有）。
+                         改動前 actress 模式是無條件顯示的 ⇒ 那是本次新增的死路，違反 spec F4 驗收 2。
+                         前綴單一結果仍不顯示：那時格牆裡就是同一張卡、沒有多出任何東西，
+                         spec 自己那句「一張卡的格牆沒有意義」成立。精確番號單一結果同理，驗收 3 不受影響。 -->
                     <button type="button"
                             class="btn-icon rotating-border-spotlight active"
-                            x-show="listMode === 'search' && pageState === 'result' && searchResults.length > 1 && !isComposing()"
+                            x-show="listMode === 'search' && pageState === 'result' && (searchResults.length > 1 || actressProfile) && !isComposing()"
                             @click="toggleDisplayMode()"
                             :title="displayMode === 'detail' ? t('search.action.toggle_grid') : t('search.action.toggle_detail')">
                         <i class="bi" :class="displayMode === 'detail' ? 'bi-grid-3x3' : 'bi-list-ul'"></i>

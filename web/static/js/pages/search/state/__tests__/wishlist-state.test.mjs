@@ -616,6 +616,28 @@ test('loadWishlist: 寫入 wishlistItems 並設 wishlistLoaded=true', async () =
     assert.equal(fakeThis.wishlistLoaded, true);
 });
 
+// branch review P2（2026-09-02）：對帳在伺服器端自動刪書籤之後，前端唯一能感知
+// 「權威狀態變了」的通道就是這支 GET 的回應。它以前只寫清單不寫計數 ⇒ badge 會停在
+// 舊數字直到整頁重新整理。
+test('loadWishlist: 同時把 wishlistCount 對齊權威清單長度（伺服器端自動移除後 badge 不留舊值）', async () => {
+    const items = [{ number: 'A-1' }, { number: 'B-2' }];
+    mockFetch(() => jsonResponse(items));
+    const fakeThis = makeWishlistThis();
+    fakeThis.wishlistCount = 5;          // 掃描前是 5 筆
+    await fakeThis.loadWishlist();
+    assert.equal(fakeThis.wishlistCount, 2, 'badge 必須與清單一致，不得停在舊值');
+});
+
+test('loadWishlist: 請求失敗時不得把 wishlistCount 歸零（清單與計數一起不動）', async () => {
+    mockFetch(() => new Response('boom', { status: 500 }));
+    const fakeThis = makeWishlistThis();
+    fakeThis.wishlistCount = 5;
+    fakeThis.wishlistItems = [{ number: 'OLD-1' }];
+    await fakeThis.loadWishlist();
+    assert.equal(fakeThis.wishlistCount, 5);
+    assert.deepEqual(fakeThis.wishlistItems, [{ number: 'OLD-1' }]);
+});
+
 // ─── hydration ③：wishlistLoaded 時同步 wishlistItems ─────────────────────
 
 test('addToWishlist: wishlistLoaded=true 時新項目 unshift 到 wishlistItems[0]', async () => {

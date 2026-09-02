@@ -1043,8 +1043,8 @@
 }
 
 /* TASK-140-T9（T12 改：width/max-height 搬到 .wishlist-panel，這裡改吃剩餘高度）。
-   flex:1 讓 .wishlist-grid 在 .wishlist-panel 這個 flex-column 容器裡吃滿工具列以外的
-   剩餘高度；min-height:0 是 flex-item 在捲動容器裡的必要條件（沒有這行，min-height
+   flex:1 讓 .wishlist-grid 在 .wishlist-panel 這個 flex-column 容器裡吃滿剩餘高度
+   （141a-T6 之前上面還有一列工具列，現在它是唯一的 flex-item）；min-height:0 是 flex-item 在捲動容器裡的必要條件（沒有這行，min-height
    預設 auto 會撐爆父層、overflow-y:auto 形同虛設）。overflow-y:auto 讓卡片數超過可視
    高度時獨立捲動；align-content:start 防止 grid 的多行被 flex-stretch 影響時仍垂直
    置頂而非平均分散。 */

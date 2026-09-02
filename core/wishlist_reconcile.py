@@ -12,6 +12,9 @@ from __future__ import annotations
 
 from core import wishlist_cover_cache
 from core.database import VideoRepository, WishlistRepository
+from core.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def reconcile_wishlist() -> list[str]:
@@ -38,6 +41,12 @@ def reconcile_wishlist() -> list[str]:
     wishlist_repo.delete_many(owned_numbers)
     for n in owned_numbers:
         wishlist_cover_cache.remove_best_effort(n)
+    # 🔴 branch review P3（2026-09-02）：**完整名單留一行進 debug.log**。
+    # 這是全庫唯一會自動刪掉使用者自建資料的路徑，而 spec D13 指定的補償機制
+    # 就是「通知裡列出番號」——但通知只列前 5 筆（其餘壓成「及其他 N 部」），
+    # 且通知 buffer 是 10 筆上限的記憶體 deque、重開就沒了。一次移除 8 筆而其中
+    # 一筆是番號誤判時，那 3 個沒列出來的番號在畫面上哪裡都查不到。
+    logger.info("wishlist 對帳移除 %d 筆: %s", len(owned_numbers), owned_numbers)
     return owned_numbers
 
 

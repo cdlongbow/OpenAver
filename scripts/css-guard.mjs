@@ -1396,7 +1396,8 @@ const RULES = [
     },
   },
 
-  // CG-SB-03 ← test_search_icon_mutex.py CSS 半邊（search.css；in-block line scan）
+  // CG-SB-03 ← 原 test_search_icon_mutex.py 的 CSS 半邊（search.css；in-block line scan）。
+  //           該支 pytest 已於 141a 全數退場——HTML 半邊由 static_guard_lint [lint-guard 141a-T7] 承接。
   {
     id: 'CG-SB-03',
     file: 'pages/search.css',
