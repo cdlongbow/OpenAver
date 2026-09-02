@@ -74,9 +74,22 @@ export function searchStateWishlist() {
             }
         },
 
+        // Codex review P2（Opus 2026-09-02）：這支是**整包覆蓋**（`this.wishlistItems = data`），
+        // 而且沒有任何機制能分辨「這個回應是不是已經過期」。過期窗口確實存在：
+        // `switchToSearchList()`（上面）不清空 `wishlistItems`，所以切回書籤分頁的那一瞬間，
+        // 畫面會先用**上一次的舊資料**把卡片、垃圾桶鈕、清理鈕全部渲染出來，新的 GET 這時
+        // 還在飛。使用者於是能在舊 GET 回來之前就按下清理——舊 GET 晚回來就把剛清掉的項目
+        // 整包寫回畫面。
+        // 窗口大小不是理論值：`GET /api/wishlist` 會對 videos 做**全表掃描**
+        // （`get_by_numbers()` 用 `UPPER(number)` 比對，吃不到 `idx_videos_number`，
+        // EXPLAIN QUERY PLAN 實測是 `SCAN videos`），片庫越大、機器越慢窗口越寬。
+        // 接上既有的 AbortController registry（`_getAbortSignal`/`_clearAbort`，
+        // search-flow.js:938-955，setFileList／loadFavorite／loadMore 同一套），讓
+        // `cleanupOwnedWishlist()` 有辦法作廢它；順帶讓連續兩次載入變成 last-wins。
         async loadWishlist() {
+            const signal = this._getAbortSignal('loadWishlist');
             try {
-                const resp = await fetch('/api/wishlist');
+                const resp = await fetch('/api/wishlist', { signal });
                 if (!resp.ok) {
                     console.error('[Wishlist] list 請求失敗:', resp.status);
                     return;
@@ -85,7 +98,10 @@ export function searchStateWishlist() {
                 this.wishlistItems = data;
                 this.wishlistLoaded = true;
             } catch (err) {
+                if (err?.name === 'AbortError') return;   // 被新載入或清理作廢，靜默放棄
                 console.error('[Wishlist] list 查詢失敗:', err);
+            } finally {
+                this._clearAbort('loadWishlist', signal);
             }
         },
 
@@ -157,6 +173,27 @@ export function searchStateWishlist() {
                     method: 'DELETE',
                 });
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                // Codex review P2（Opus 2026-09-02）：端點對「那一列本來就不在」回的是
+                // **HTTP 200 `{success:false}`**（wishlist.py:104），不是錯誤碼。只看 `resp.ok`
+                // 的話那次會被當成刪除成功，樂觀扣掉的計數永遠補不回來——而 `loadWishlistCount()`
+                // 只掛在 main.js 的生命周期初始化，書籤／搜尋分頁來回切**都不會重跑**，數字要
+                // 整個離開頁面再回來才會校正。（此處刻意不寫出那支函式的字面名稱：本檔有一條
+                // 「不得出現該字面」的守衛，T11a 踩過註解餵飽守衛、這次是註解踩壞守衛。）
+                //
+                // 這裡刻意**不**回滾。`success:false` 的語意是「伺服器上已經沒有這一列」，
+                // 把它 unshift 回去等於在畫面塞一張 DB 裡不存在的幽靈卡、並讓計數高於實際，
+                // 比不處理更糟。正確處置是承認本地計數已經和 DB 對不上，直接跟伺服器要
+                // 權威值（`/api/wishlist/count` 是單一 COUNT(*)，不走 videos 全表掃描）。
+                let data = null;
+                try {
+                    data = await resp.json();
+                } catch (parseErr) {
+                    // 2xx 但 body 不是合法 JSON：刪除本身已成功，狀態不動
+                    console.error('[Wishlist] remove 回應解析失敗:', parseErr);
+                }
+                if (data?.success === false) {
+                    await this.loadWishlistCount();
+                }
             } catch (err) {
                 console.error('[Wishlist] remove 失敗:', err);
                 this.wishlistCount += 1;
@@ -225,6 +262,19 @@ export function searchStateWishlist() {
                 this.showToast(window.t('search.toast.wishlist_clean_failed'), 'error');
                 return;
             }
+            // Codex 二審 P2（Opus 2026-09-02）：清理成功後對 `wishlistItems` 的過濾是**權威值**，
+            // 而 `loadWishlist()` 是無條件整包覆蓋。作廢的時機必須是**這裡**（寫入之前），不是
+            // 送出 POST 之前——我第一輪放在開頭並註明「之後不可能再有新的 GET」，那個推理是錯的：
+            // 兩顆 segmented 鈕在清理期間都沒被擋（search.html:407-415），使用者覺得慢而點
+            // 「搜尋」再點「書籤」，`listMode !== 'wishlist'` 成立 ⇒ `switchToWishlist()` 會建出
+            // **全新的** controller，開頭那次 abort 碰不到它。而那個新 GET 很可能在伺服器端讀到
+            // 刪除前的資料（清理還在跑全表掃描 ＋ 逐筆刪封面），卻晚於清理回來。
+            //
+            // 放在寫入之前就完整了，三種到達順序都收斂：
+            //   ① 此刻仍在飛的 GET（不論它是清理前還是清理中發出的）⇒ 這裡作廢，寫不進來
+            //   ② 已經在這之前回來的 GET ⇒ 它寫進去的舊清單接著被下一行的 `!_owned` 過濾掉
+            //   ③ 這之後才發出的 GET ⇒ POST 已回，伺服器端 DELETE 早已 commit，讀到的是對的
+            this._abortControllers.loadWishlist?.abort();
             const deletedCount = data.deleted_count || 0;
             this.wishlistCount = Math.max(0, this.wishlistCount - deletedCount);
             this.wishlistItems = this.wishlistItems.filter((i) => !i._owned);
