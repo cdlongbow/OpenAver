@@ -29,6 +29,13 @@ function searchStateContainerSel(pageState) {
     return SEARCH_STATE_CONTAINERS[pageState] || '#resultCard';
 }
 
+// 既有測試環境（fakeThis）沒有 Alpine 的 $nextTick；裸呼叫會拋錯。
+// 缺方法時直接同步呼叫 fn，行為等同於「animation frame 已經到了」（測試環境本來就不驗動畫時序）。
+function safeNextTick(self, fn) {
+    if (typeof self.$nextTick === 'function') self.$nextTick(fn);
+    else fn();
+}
+
 export function searchStateWishlist() {
     return {
         // ===== Wishlist State =====
@@ -54,6 +61,9 @@ export function searchStateWishlist() {
         // TASK-141b-T2：連按分頁鈕時，讓上一輪 loadPromise.then 在世代不符時短路，
         // 避免對「已經不是當前檢視」的容器播 playEntry。
         _wishlistViewGeneration: 0,
+        // 燈箱換片/開啟動畫的世代旗標。獨立宣告，不與 _wishlistViewGeneration（T2，分頁切換用）
+        // 或主燈箱 _lightboxGeneration 共用——FE-ALPINE-04：書籤燈箱是獨立狀態機，三個世代空間互不相干。
+        _wishlistLbGeneration: 0,
 
         // ===== Computed Properties =====
         cardActionState,
@@ -356,9 +366,41 @@ export function searchStateWishlist() {
         },
 
         openWishlistLightbox(index) {
+            if (this.wishlistLightboxOpen && this.wishlistLightboxIndex === index) return;
+            if (this.wishlistLightboxOpen && this.wishlistLightboxIndex !== index) {
+                var dir = index > this.wishlistLightboxIndex ? 'next' : 'prev';
+                this._animateWishlistLightboxSwitch(index, dir);
+                return;
+            }
+
+            var fromRect = null, coverSrc = null;
+            var grid = safeQuery('.wishlist-grid');
+            var card = grid ? grid.querySelector('[data-slot="' + index + '"]') : null;
+            var img = card ? card.querySelector('.av-card-preview-img img') : null;
+            if (img && img.complete && img.getBoundingClientRect().width > 0) {
+                fromRect = img.getBoundingClientRect();
+                coverSrc = img.src;
+            }
+
             this._wishlistLbImgError = false;
             this.wishlistLightboxIndex = index;
+            var lbEl = safeQuery('.wishlist-lightbox');
+            if (lbEl) lbEl.classList.add('gsap-animating');
             this.wishlistLightboxOpen = true;
+
+            var gen = ++this._wishlistLbGeneration;
+            var self = this;
+            safeNextTick(this, function () {
+                if (self._wishlistLbGeneration !== gen) return;
+                var el = safeQuery('.wishlist-lightbox');
+                if (!el) return;
+                if (fromRect && window.GhostFly?.playGridToLightbox) {
+                    window.GhostFly.playGridToLightbox(fromRect, el, { coverSrc: coverSrc });
+                    window.SearchAnimations?.playLightboxOpen?.(el, { skipCover: true });
+                } else {
+                    window.SearchAnimations?.playLightboxOpen?.(el, {});
+                }
+            });
         },
 
         closeWishlistLightbox() {
@@ -368,14 +410,39 @@ export function searchStateWishlist() {
         // 三支換片的方法都要重設 _wishlistLbImgError（Opus 2026-09-02 補，grok 自報的偏離 #2）：
         // 只在 open() 重設的話，先看到一部沒封面的片、再按箭頭切到有封面的那部，
         // 封面不會出現——畫面停在「無圖」占位，使用者會以為那部也沒封面。
+        // 索引沒變（滑到頭）時直接 return，不播動畫、不重設 flag（設計決策 8）。
         prevWishlistLightbox() {
-            this._wishlistLbImgError = false;
-            this.wishlistLightboxIndex = Math.max(0, this.wishlistLightboxIndex - 1);
+            var newIndex = Math.max(0, this.wishlistLightboxIndex - 1);
+            if (newIndex === this.wishlistLightboxIndex) return;
+            this._animateWishlistLightboxSwitch(newIndex, 'prev');
         },
 
         nextWishlistLightbox() {
+            var newIndex = Math.min(this.wishlistItems.length - 1, this.wishlistLightboxIndex + 1);
+            if (newIndex === this.wishlistLightboxIndex) return;
+            this._animateWishlistLightboxSwitch(newIndex, 'next');
+        },
+
+        // CD-20：kill 字面固定 'lightboxOpen' + 'lightboxSwitch'（對照 grid-mode.js prevLightboxVideo）。
+        // 共用主搜尋燈箱那兩支 id 是安全的——兩個燈箱互斥不能同時開，且每條 timeline 的
+        // onComplete/onInterrupt 都閉包持有自己的 lightboxEl。
+        _animateWishlistLightboxSwitch(newIndex, direction) {
+            if (typeof gsap !== 'undefined') {
+                gsap.getById('lightboxOpen')?.kill();
+                gsap.getById('lightboxSwitch')?.kill();
+            }
+            var lbEl = safeQuery('.wishlist-lightbox');
+            if (lbEl) lbEl.classList.remove('gsap-animating');
+
             this._wishlistLbImgError = false;
-            this.wishlistLightboxIndex = Math.min(this.wishlistItems.length - 1, this.wishlistLightboxIndex + 1);
+            this.wishlistLightboxIndex = newIndex;
+            var gen = ++this._wishlistLbGeneration;
+            var self = this;
+            safeNextTick(this, function () {
+                if (self._wishlistLbGeneration !== gen) return;
+                var content = safeQuery('.wishlist-lightbox .lightbox-content');
+                window.SearchAnimations?.playLightboxSwitch?.(content, direction, {});
+            });
         },
     };
 }
