@@ -4879,11 +4879,96 @@ function evalDupId(rule, text, fileLabel) {
   }
 }
 
+// stripPythonNoise（PR#176 Codex P2 修正，[lint-guard 141a-T5] 延伸）：
+// structure-count 數的是「檔案原始文字」，.py 檔裡註解／docstring／trailing comment
+// 只要含 pattern 字面（例如 'reconcile_wishlist('）就會讓計數跑掉。Codex 原講法是
+// 「誤報造成開發摩擦」——那只是我們的成本，不足以構成必修理由。真正的理由是同一根因
+// 的反向：註解裡有該字面時，若有人把「真正的呼叫」順手拔掉，計數仍是 1 ⇒ 守衛全綠而
+// 對帳被拔掉 ⇒ 使用者的書籤不再自動移除（0.15.9 已拿掉手動清理鈕，使用者沒有別的辦法
+// 補救）。修法採粗顆粒中間解：計數前先剝掉 Python 的行內/整行註解與三引號 docstring，
+// 不解析真正的 call site（不把 AST 塞進 .mjs，那是重型守衛，專案規則明確反對），也不拿掉
+// 這幾條守衛。逐行處理、剝掉的內容一律換成等量空白（保留換行數與行號），故不影響其他
+// kind（forbidden-string/required-string/cross-file-equal 等）沿用的行號語意——本函式只在
+// evalStructureCount 內對 .py 檔套用，其餘 kind／檔案類型完全不受影響。
+// 逐字元掃描，state 只有「是否在三引號字串內」跨行延續；一般 '/" 字串在單行內用簡單
+// escape-aware 掃描辨識，避免把字串字面內的 '#'（例如 URL fragment）誤判成註解起點。
+function stripPythonNoise(text) {
+  const lines = text.split('\n');
+  const out = new Array(lines.length);
+  let tripleDelim = null; // null | "'''" | '"""'（跨行 docstring 未結束時延續到下一行）
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li];
+    const n = line.length;
+    let result = '';
+    let i = 0;
+    let inStr = null; // 目前是否在單行字串內，值為該字串的引號字元
+    while (i < n) {
+      if (tripleDelim) {
+        const idx = line.indexOf(tripleDelim, i);
+        if (idx === -1) {
+          result += ' '.repeat(n - i);
+          i = n;
+        } else {
+          result += ' '.repeat(idx + 3 - i);
+          i = idx + 3;
+          tripleDelim = null;
+        }
+        continue;
+      }
+      const ch = line[i];
+      if (inStr) {
+        result += ch;
+        if (ch === '\\' && i + 1 < n) {
+          result += line[i + 1];
+          i += 2;
+          continue;
+        }
+        if (ch === inStr) inStr = null;
+        i += 1;
+        continue;
+      }
+      if (ch === '#') {
+        // 行內／整行註解：# 之後（不在字串內）一律視為註解，剝到行尾
+        result += ' '.repeat(n - i);
+        i = n;
+        continue;
+      }
+      if (ch === "'" || ch === '"') {
+        if (line.slice(i, i + 3) === ch.repeat(3)) {
+          const closeIdx = line.indexOf(ch.repeat(3), i + 3);
+          if (closeIdx === -1) {
+            // 三引號在本行開啟但未結束 → 剝到行尾，跨行狀態延續
+            result += ' '.repeat(n - i);
+            tripleDelim = ch.repeat(3);
+            i = n;
+          } else {
+            // 三引號整段落在同一行 → 連同引號一起剝除
+            result += ' '.repeat(closeIdx + 3 - i);
+            i = closeIdx + 3;
+          }
+          continue;
+        }
+        // 一般單/雙引號字串：不剝除內容（保留真正的字串字面，只剝註解/docstring）
+        result += ch;
+        inStr = ch;
+        i += 1;
+        continue;
+      }
+      result += ch;
+      i += 1;
+    }
+    out[li] = result;
+  }
+  return out.join('\n');
+}
+
 // ---- structure-count：count（exact）/ min（下界）二擇一 ----
 function evalStructureCount(rule, text, fileLabel) {
   const { scopedText, ok } = resolveScope(rule, text, fileLabel);
   if (!ok) return;
-  const n = countOccurrences(scopedText, rule.pattern);
+  // .py 檔先剝除註解/docstring 再計數（見上方 stripPythonNoise 註解：防漏報，不只是防誤報）
+  const countedText = fileLabel.endsWith('.py') ? stripPythonNoise(scopedText) : scopedText;
+  const n = countOccurrences(countedText, rule.pattern);
   if (rule.count !== undefined && n !== rule.count) {
     err(`${rule.note} — ${fileLabel}: 出現次數 ${n} != 要求 ${rule.count}（exact）：${patternLabel(rule.pattern)}`);
   }

@@ -169,12 +169,86 @@ function scanCallSites() {
 
 const NOTIF_KEY_RE = /["'](notif\.[a-zA-Z0-9_]+)["']/g;
 
+// stripPythonNoiseLines（PR#176 Codex P2 修正）：NOTIF_KEY_RE 掃的是 web/routers/*.py 的
+// 全部原始文字，註解或無關常數裡巧合出現的 "notif.xxx" 字面也會被要求要有 zh_TW 翻譯——
+// 這是純粹的開發摩擦（不是 static_guard_lint 那條「守衛全綠而對帳被拔掉」的漏報風險：真正
+// 傳給 _emit_notif(...) 的 title_key 是程式碼裡的字串字面，不在註解/docstring 內，剝除註解
+// 不會讓它從掃描結果消失）。做法與 static_guard_lint.mjs 的 stripPythonNoise 同形狀：逐行
+// 剝掉整行/行尾註解與三引號 docstring，剝掉的內容換成等量空白——**逐行處理、輸出與輸入
+// 行數一一對應**，故呼叫端仍可用原始行索引 i 組出 `${rel}:${i + 1}` 的正確行號（硬需求，
+// 不可剝成一整坨讓行號漂掉）。字串字面內的 '#'（例如 URL fragment）不會被誤剝成註解起點。
+function stripPythonNoiseLines(lines) {
+  const out = new Array(lines.length);
+  let tripleDelim = null; // null | "'''" | '"""'（跨行 docstring 未結束時延續到下一行）
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li];
+    const n = line.length;
+    let result = '';
+    let i = 0;
+    let inStr = null;
+    while (i < n) {
+      if (tripleDelim) {
+        const idx = line.indexOf(tripleDelim, i);
+        if (idx === -1) {
+          result += ' '.repeat(n - i);
+          i = n;
+        } else {
+          result += ' '.repeat(idx + 3 - i);
+          i = idx + 3;
+          tripleDelim = null;
+        }
+        continue;
+      }
+      const ch = line[i];
+      if (inStr) {
+        result += ch;
+        if (ch === '\\' && i + 1 < n) {
+          result += line[i + 1];
+          i += 2;
+          continue;
+        }
+        if (ch === inStr) inStr = null;
+        i += 1;
+        continue;
+      }
+      if (ch === '#') {
+        result += ' '.repeat(n - i);
+        i = n;
+        continue;
+      }
+      if (ch === "'" || ch === '"') {
+        if (line.slice(i, i + 3) === ch.repeat(3)) {
+          const closeIdx = line.indexOf(ch.repeat(3), i + 3);
+          if (closeIdx === -1) {
+            result += ' '.repeat(n - i);
+            tripleDelim = ch.repeat(3);
+            i = n;
+          } else {
+            result += ' '.repeat(closeIdx + 3 - i);
+            i = closeIdx + 3;
+          }
+          continue;
+        }
+        result += ch;
+        inStr = ch;
+        i += 1;
+        continue;
+      }
+      result += ch;
+      i += 1;
+    }
+    out[li] = result;
+  }
+  return out;
+}
+
 function scanBackendTitleKeys() {
   const files = [];
   walk(join(REPO_ROOT, 'web', 'routers'), ['.py'], files);
   const used = new Map(); // key -> ['file:line', ...]
   for (const f of files) {
-    const lines = readFileSync(f, 'utf8').split('\n');
+    const rawLines = readFileSync(f, 'utf8').split('\n');
+    const lines = stripPythonNoiseLines(rawLines); // 剝除註解/docstring，行數與 rawLines 一一對應
     const rel = f.slice(REPO_ROOT.length + 1);
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
