@@ -280,12 +280,17 @@
                         <p class="mt-2" x-text="t('common.no_image')"></p>
                     </div>
                     <div class="cover-actions">
-                        <!-- 唯一的下游動作：開原站（spec F5 開頭） -->
+                        <!-- 下游動作兩顆：開原站（spec F5）＋ 移除書籤（spec F8.4，141b-T7 起） -->
                         <button class="lb-action-btn"
                                 x-show="currentWishlistLightboxItem()?.source_url"
                                 @click.stop="openSourceUrl(currentWishlistLightboxItem()?.source_url || '')"
                                 data-tooltip="{{ t('search.action.open_source_url') }}" aria-label="{{ t('search.action.open_source_url') }}">
                             <i class="bi bi-box-arrow-up-right"></i>
+                        </button>
+                        <button class="lb-action-btn"
+                                @click.stop="removeFromWishlistInLightbox()"
+                                data-tooltip="{{ t('search.action.remove_wishlist') }}" aria-label="{{ t('search.action.remove_wishlist') }}">
+                            <i class="bi bi-trash3"></i>
                         </button>
                     </div>
                 </div>

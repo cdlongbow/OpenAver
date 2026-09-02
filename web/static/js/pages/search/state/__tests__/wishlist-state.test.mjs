@@ -2727,3 +2727,139 @@ test('T6-DoD7-reduced-motion-data-unchanged', async () => {
     });
 });
 
+// ─── TASK-141b-T7：書籤燈箱移除鈕 ＋ 索引收斂 ──────────────────────────
+
+function makeRemoveSpy(state) {
+    // 薄封裝的測試手法：spy 取代真實 removeFromWishlist，但仍做等價的同步過濾，
+    // 讓 DoD1-3 的索引收斂邏輯可以在不牽動 fetch/FLIP 的情況下被獨立驗證。
+    const calls = [];
+    state.removeFromWishlist = function (number, context) {
+        calls.push({ number, context });
+        this.wishlistItems = this.wishlistItems.filter((i) => i.number !== number);
+        return Promise.resolve();
+    };
+    return calls;
+}
+
+test('T7-DoD1-remove-middle-keeps-index-not-close', () => {
+    const state = makeWishlistThis({
+        wishlistItems: [{ number: 'A' }, { number: 'B' }, { number: 'C' }, { number: 'D' }, { number: 'E' }],
+        wishlistLightboxOpen: true,
+        wishlistLightboxIndex: 2,
+        _wishlistLbImgError: true,
+    });
+    const removeCalls = makeRemoveSpy(state);
+    const closeCalls = [];
+    state.closeWishlistLightbox = () => { closeCalls.push(1); };
+
+    searchStateWishlist().removeFromWishlistInLightbox.call(state);
+
+    assert.equal(removeCalls.length, 1, '必須呼叫既有 removeFromWishlist 恰好一次');
+    assert.deepEqual(removeCalls[0], { number: 'C', context: 'lightbox' },
+        '移除的必須是 index=2 對應的那一筆（C），context 必須是 lightbox');
+    assert.equal(closeCalls.length, 0, '非最後一筆時不得呼叫 closeWishlistLightbox');
+    assert.equal(state.wishlistLightboxIndex, 2, '刪中間，索引維持原值（畫面顯示遞補上來的那張）');
+    assert.equal(state._wishlistLbImgError, false, '收斂後必須重設破圖旗標');
+    assert.equal(state.wishlistItems.length, 4);
+});
+
+test('T7-DoD2-remove-last-collapses-index', () => {
+    // mutation 點 1 守：把 Math.min(oldIndex, newLen-1) 改成 oldIndex 時，這支必須紅
+    const state = makeWishlistThis({
+        wishlistItems: [{ number: 'A' }, { number: 'B' }, { number: 'C' }, { number: 'D' }, { number: 'E' }],
+        wishlistLightboxOpen: true,
+        wishlistLightboxIndex: 4,
+    });
+    const removeCalls = makeRemoveSpy(state);
+    const closeCalls = [];
+    state.closeWishlistLightbox = () => { closeCalls.push(1); };
+
+    searchStateWishlist().removeFromWishlistInLightbox.call(state);
+
+    assert.equal(removeCalls[0].number, 'E');
+    assert.equal(closeCalls.length, 0);
+    assert.equal(state.wishlistLightboxIndex, 3, 'min(4, 5-1-1) = min(4,3) = 3');
+    assert.equal(state.wishlistItems.length, 4);
+});
+
+test('T7-DoD3-remove-to-zero-closes-lightbox', () => {
+    // mutation 點 2 守：把 closeWishlistLightbox() 呼叫拿掉時，這支必須紅
+    const state = makeWishlistThis({
+        wishlistItems: [{ number: 'A' }],
+        wishlistLightboxOpen: true,
+        wishlistLightboxIndex: 0,
+    });
+    const removeCalls = makeRemoveSpy(state);
+    const closeCalls = [];
+    state.closeWishlistLightbox = () => { closeCalls.push(1); };
+
+    searchStateWishlist().removeFromWishlistInLightbox.call(state);
+
+    assert.equal(removeCalls.length, 1);
+    assert.equal(closeCalls.length, 1, '刪到 0 筆必須呼叫 closeWishlistLightbox 恰好一次');
+    assert.equal(state.wishlistItems.length, 0);
+});
+
+test('T7-DoD4-delegates-to-removeFromWishlist-with-lightbox-context', () => {
+    const state = makeWishlistThis({
+        wishlistItems: [{ number: 'A' }, { number: 'B' }],
+        wishlistLightboxOpen: true,
+        wishlistLightboxIndex: 0,
+        wishlistCount: 2,
+    });
+    const removeCalls = makeRemoveSpy(state);
+    state.closeWishlistLightbox = () => {};
+    const countBefore = state.wishlistCount;
+
+    searchStateWishlist().removeFromWishlistInLightbox.call(state);
+
+    assert.equal(removeCalls.length, 1);
+    assert.deepEqual(removeCalls[0], { number: 'A', context: 'lightbox' });
+    assert.equal(state.wishlistCount, countBefore,
+        'wrapper 本身不得直接寫 wishlistCount——那是 removeFromWishlist() 自己的責任，spy 沒有動它，值必須原封不動');
+});
+
+test('T7-DoD5-lightbox-context-no-flip', async () => {
+    // 承接 T6 DoD2：走真實 removeFromWishlist()（非 spy），驗證整合點——
+    // 'lightbox' context 下 grid 恆為 null，captureFlipState/playFlipFilter 零呼叫。
+    mockFetch(() => jsonResponse({ success: true }));
+    await withFlipEnv({ queryMap: { '.wishlist-grid': makeFlipGridEl() } }, async (api) => {
+        const state = makeWishlistThis({
+            wishlistItems: [{ number: 'A' }, { number: 'B' }],
+            wishlistLightboxOpen: true,
+            wishlistLightboxIndex: 0,
+            wishlistCount: 2,
+            wishlistLoaded: true,
+            searchResults: [],
+        });
+        state.closeWishlistLightbox = () => {};
+        api.attachNextTick(state);
+
+        searchStateWishlist().removeFromWishlistInLightbox.call(state);
+        api.flush();
+        await Promise.resolve().then(() => {}).then(() => {});   // 讓 removeFromWishlist 的 await fetch 落地
+
+        assert.equal(api.captureCalls.length, 0, "'lightbox' context 不得觸發 captureFlipState");
+        assert.equal(api.playCalls.length, 0, "'lightbox' context 不得觸發 playFlipFilter");
+        assert.deepEqual(state.wishlistItems.map((i) => i.number), ['B']);
+    });
+});
+
+test('T7-DoD6-no-current-item-safe-noop', () => {
+    const state = makeWishlistThis({
+        wishlistItems: [{ number: 'A' }],
+        wishlistLightboxOpen: true,
+        wishlistLightboxIndex: 99,   // 越界 → currentWishlistLightboxItem() 回 undefined
+    });
+    const removeCalls = makeRemoveSpy(state);
+    const closeCalls = [];
+    state.closeWishlistLightbox = () => { closeCalls.push(1); };
+
+    assert.doesNotThrow(() => {
+        searchStateWishlist().removeFromWishlistInLightbox.call(state);
+    });
+    assert.equal(removeCalls.length, 0, '找不到目前項目時不得呼叫 removeFromWishlist');
+    assert.equal(closeCalls.length, 0, '也不得呼叫 closeWishlistLightbox');
+    assert.equal(state.wishlistLightboxIndex, 99, '狀態必須原封不動');
+});
+

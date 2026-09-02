@@ -990,6 +990,14 @@ const RULES = [
 
   // ---- [TestSwitchSourceBtnRemoved] ----
   { file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'id="switchSourceBtn"', note: '[TestSwitchSourceBtnRemoved] switchSourceBtn id gone' },
+  // 🔴 window 實測與定值理由（Opus 2026-09-03，141b-T7）：
+  //   區塊 anchor→閉合 </div> = 7268；下一個兄弟 .sample-gallery 起點 = 7326；
+  //   該兄弟區域內第一個 bi-* 圖示 = 7802（bi-x-lg）。
+  //   取 7500：給書籤燈箱尾端約 230 字元餘裕，同時離 7802 還有 300 字元。
+  // ⚠️ **不要把窗貼齊區塊邊界**。forbidden-string 要擋的正是「有人在區塊尾端加了不該有的東西」，
+  //   而新加的內容會把區塊撐長——窗貼齊邊界時，新加的字面立刻落在窗外，守衛靜默失效。
+  //   （實測：貼齊到 7275 時，在尾端種 bi-play-fill 落在 7276-7288，一個字元之差就抓不到。）
+  //   上限由「兄弟元素裡第一個合法的同類字面」決定，不是由區塊邊界決定。
   {
     file: 'web/templates/search.html', kind: 'forbidden-string',
     pattern: 'bi-arrow-repeat',
@@ -4595,44 +4603,54 @@ const RULES = [
   {
     file: 'web/templates/search.html', kind: 'forbidden-string',
     pattern: 'bi-arrow-return-left',
-    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7500 },
     note: '[TASK-140-T11a] 書籤燈箱不得出現返回詳情鈕（spec F5 驗收4，書籤沒有本地檔案可返回）',
   },
   {
     file: 'web/templates/search.html', kind: 'forbidden-string',
     pattern: 'bi-folder2-open',
-    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7500 },
     note: '[TASK-140-T11a] 書籤燈箱不得出現開資料夾鈕（書籤沒有本地檔案）',
   },
   {
     file: 'web/templates/search.html', kind: 'forbidden-string',
     pattern: 'bi-play-fill',
-    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7500 },
     note: '[TASK-140-T11a] 書籤燈箱不得出現播放鈕（書籤沒有本地檔案）',
   },
   {
     file: 'web/templates/search.html', kind: 'forbidden-string',
     pattern: 'bi-bookmark-plus',
-    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7500 },
     note: '[TASK-140-T11a] 書籤燈箱不得出現加入書籤鈕（本身就在書籤清單裡）',
   },
   {
     file: 'web/templates/search.html', kind: 'forbidden-string',
     pattern: 'bi-bookmark-fill',
-    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
-    note: '[TASK-140-T11a] 書籤燈箱不得出現移除書籤鈕（spec F5：唯一下游動作是開原站，移除走 grid 卡的垃圾桶）',
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7500 },
+    note: '[TASK-140-T11a→141b-T7 訂正] 書籤燈箱不得出現 `bi-bookmark-fill` 這顆「書籤圖示」的移除鈕。⚠️ 原 note 寫「唯一下游動作是開原站，移除走 grid 卡的垃圾桶」——**那個意圖已被 spec F8.4／CD-9 取代**：141b-T7 起燈箱裡就有移除鈕了（用 `bi-trash3`，與牆上卡片同一個圖示語彙）。本條**仍然有效**，但守的是「別用書籤圖示當移除鈕」——那會與『加入書籤』的圖示混淆',
   },
   {
     file: 'web/templates/search.html', kind: 'forbidden-string',
     pattern: 'bi-pencil',
-    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7500 },
     note: '[TASK-140-T11a] 書籤燈箱不得出現編輯鈕（spec F5 驗收4：那些需要本地檔案）',
   },
   {
     file: 'web/templates/search.html', kind: 'forbidden-string',
     pattern: 'bi-translate',
-    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7500 },
     note: '[TASK-140-T11a] 書籤燈箱不得出現翻譯鈕（spec F5 驗收4：那些需要本地檔案）',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: '@click.stop="removeFromWishlistInLightbox()"',
+    // window 實測（Opus 2026-09-03）：anchor → 本字面距離 2860 字元；訂 3200（約 340 字元安全邊際，
+    // 見「現況分析」F 段完整量測過程）。不得抄旁邊 7000 那個窗——那是給區塊「頭部」規則用的預算，
+    // 本規則的目標字面在區塊中段，用 7000 雖然也能過但會虛耗窗口、也會誤導未來的人以為這是頭部規則。
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 3200 },
+    note: '[TASK-141b-T7] 書籤燈箱移除鈕的接線鎖：這顆鈕是燈箱裡唯一的移除入口（spec F8.4），字面被改掉或刪掉的話，燈箱裡就再也移除不了、而 node:test（測 JS 函式）與其餘守衛全部照樣綠。`.stop` 一併鎖住：它在目前 DOM 下是防禦性冗餘（祖先 .lightbox-content 已有無條件 @click.stop 攔截冒泡），但與同容器既有那顆鈕寫法一致；若日後有人拿掉 .lightbox-content 那道攔截，這裡就是唯一的防線',
   },
   // ---- [TASK-140-T12] 書籤面板三層容器結構（原「頂部批次清理鈕 F7 驗收1-3」那三條已隨 141a-T6 退場） ----
   {

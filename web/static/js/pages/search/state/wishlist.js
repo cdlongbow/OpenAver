@@ -513,6 +513,22 @@ export function searchStateWishlist() {
                 });
             }
         },
+        removeFromWishlistInLightbox() {
+            var item = this.currentWishlistLightboxItem();
+            if (!item) return;
+            var oldIndex = this.wishlistLightboxIndex;
+            this.removeFromWishlist(item.number, 'lightbox');
+            // TASK-141b-T7（設計決策 4，時序前提已核對 removeFromWishlist() 現況成立，見「現況分析」B 段）：
+            // 樂觀過濾 this.wishlistItems = this.wishlistItems.filter(...) 是同步執行、在
+            // await fetch(...) 之前，呼叫後立即讀 this.wishlistItems.length 已經是新長度。
+            var newLen = this.wishlistItems.length;
+            if (newLen === 0) {
+                this.closeWishlistLightbox();
+            } else {
+                this.wishlistLightboxIndex = Math.min(oldIndex, newLen - 1);
+                this._wishlistLbImgError = false;
+            }
+        },
 
         // 三支換片的方法都要重設 _wishlistLbImgError（Opus 2026-09-02 補，grok 自報的偏離 #2）：
         // 只在 open() 重設的話，先看到一部沒封面的片、再按箭頭切到有封面的那部，
