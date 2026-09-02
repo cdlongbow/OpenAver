@@ -129,3 +129,22 @@ def download_and_save(number: str, cover_url: str, fallback_url: str = "") -> bo
 def remove(number: str) -> None:
     """刪掉某番號的封面檔（缺檔 no-op，不拋）。"""
     cover_file_for(number).unlink(missing_ok=True)
+
+
+def remove_best_effort(number: str) -> None:
+    """刪封面檔，失敗只記 log。
+
+    🔴 Codex PR#175 P2：`wishlist_cover_cache.remove()` 的 docstring 寫「不拋」，但它是
+    `Path.unlink(missing_ok=True)`——那只吞 `FileNotFoundError`。`PermissionError`／
+    `OSError`（Windows 檔案鎖／防毒正在掃那張圖／唯讀掛載）會整個穿透出去，而本 app 只
+    註冊了 `RequestValidationError` 的 handler（`web/app.py:209`）⇒ 變成 500。
+
+    問題在於**DB 那筆已經 commit 了**：回 500 會讓前端把樂觀移除整個回滾，於是畫面上
+    跳出一張「資料庫裡其實已經不存在」的幽靈卡、計數還加一，要重新整理才會消失。
+    ⇒ 刪檔一律 best-effort，回應只反映 DB 的權威狀態。留下來的孤兒 webp 是 spec §5
+    已接受的方向（單人本機、幾十 KB 一張，不做 GC）。
+    """
+    try:
+        remove(number)
+    except OSError:
+        logger.warning("wishlist 封面刪除失敗（DB 已刪，留下孤兒檔）: number=%s", number, exc_info=True)

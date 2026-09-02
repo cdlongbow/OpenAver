@@ -277,6 +277,36 @@ def test_remove_missing_is_noop(db_path):
     assert wcc.remove("NEVER-EXISTED") is None
 
 
+# ── remove_best_effort（TASK-141a-T2）────────────────────────────
+def test_remove_best_effort_deletes_existing_file(db_path, monkeypatch):
+    """成功路徑：既有封面檔被刪掉。"""
+    payload = _jpeg_bytes()
+    monkeypatch.setattr(
+        wcc.requests, "get", lambda *a, **k: _ok_response(payload)
+    )
+    assert wcc.download_and_save("SONE-001", "https://cdn.example/cover.jpg") is True
+    dest = wcc.cover_file_for("SONE-001")
+    assert dest.exists()
+    assert wcc.remove_best_effort("SONE-001") is None
+    assert not dest.exists()
+
+
+def test_remove_best_effort_survives_oserror(db_path, monkeypatch):
+    """DoD 3 / mutation 點 1：remove() 丟 OSError 時不往上拋。"""
+
+    def _boom(number):
+        raise OSError(16, "Device or resource busy")
+
+    monkeypatch.setattr(wcc, "remove", _boom)
+    # 不得拋例外
+    assert wcc.remove_best_effort("LOCKED-001") is None
+
+
+def test_remove_best_effort_missing_is_noop(db_path):
+    """缺檔時與 remove() 一樣 no-op。"""
+    assert wcc.remove_best_effort("NEVER-EXISTED") is None
+
+
 # ── 鏡像對稱：download / remove 對不同格式番號走同一路徑 ─────────
 def test_download_and_remove_share_path_across_number_forms(db_path, monkeypatch):
     payload = _jpeg_bytes()
