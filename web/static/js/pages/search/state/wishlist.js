@@ -12,6 +12,23 @@ export function cardActionState(result) {
     return result?._wishlisted ? 'bookmark-remove' : 'bookmark-add';
 }
 
+// TASK-141b-T2：測試環境的 document stub 缺 querySelector；裸呼叫會拋錯。
+// 降級成 null → 觸發 switchTo* 的直通分支（與無動畫時同行為）。
+function safeQuery(sel) {
+    return (typeof document !== 'undefined' && typeof document.querySelector === 'function')
+        ? document.querySelector(sel)
+        : null;
+}
+
+// FE-ALPINE-12：listMode 與 pageState 正交。四個狀態容器同時存在於 DOM（x-show），
+// 只能依 pageState 選「當前看得見」的那一個，不能 || 串（永遠短路在 #resultCard）。
+var SEARCH_STATE_CONTAINERS = {
+    result: '#resultCard', empty: '#emptyState', loading: '#loadingState', error: '#errorState'
+};
+function searchStateContainerSel(pageState) {
+    return SEARCH_STATE_CONTAINERS[pageState] || '#resultCard';
+}
+
 export function searchStateWishlist() {
     return {
         // ===== Wishlist State =====
@@ -34,17 +51,23 @@ export function searchStateWishlist() {
         // 整理列、改番號那排控制項（:1014/:1020/:1036）全部隱藏 ⇒ **使用者的拖曳工作階段
         // 看起來整個不見了**，而且會被 $watch 存進 sessionStorage，重新整理也回不來。
         _preWishlistListMode: null,
+        // TASK-141b-T2：連按分頁鈕時，讓上一輪 loadPromise.then 在世代不符時短路，
+        // 避免對「已經不是當前檢視」的容器播 playEntry。
+        _wishlistViewGeneration: 0,
 
         // ===== Computed Properties =====
         cardActionState,
 
         switchToWishlist() {
+            // ── 既有邏輯，逐字不動、順序不變：前置記錄必須同步，且早於 displayMode 被覆寫 ──
             if (this.listMode !== 'wishlist') {
                 this._preWishlistDisplayMode = this.displayMode;
                 this._preWishlistListMode = this.listMode;
             }
-            this.listMode = 'wishlist';
-            this.displayMode = 'grid';
+            var self = this;
+            var gen = ++this._wishlistViewGeneration;
+
+            // 真正的切換＋載入。無論走哪條路徑都會執行，且一定回傳 loadWishlist() 的 promise。
             // T8 review P2：**每次開啟都重新對帳**，不是只有第一次。
             // spec F6 的對帳時機明寫「開啟書籤清單時」；只在 !wishlistLoaded 時載入的話：
             // 你把書籤裡的片掃描入庫 → 切回書籤分頁 → 那筆書籤不會消失，
@@ -52,17 +75,57 @@ export function searchStateWishlist() {
             // 成本是每次切換一支**本地** SQLite 查詢，F6 驗收 5「零對外請求」不受影響。
             // `wishlistLoaded` 保留，但語意收斂成「載入過至少一次」——只用來 gate 空狀態，
             // 避免資料還沒回來就先閃一下「還沒有任何書籤」。
-            return this.loadWishlist();
+            var doSwitch = function () {
+                // 世代守衛（Opus 2026-09-03 補，sonnet review P2 的真實可達版本）：
+                // 使用者在淡出動畫（DURATION.fast=167ms）跑完之前又點了另一顆分頁鈕時，
+                // 這個回呼是「上一輪的」。沒有這道守衛的話它照樣會翻 listMode ＋ 淡入 .wishlist-panel，
+                // 使用者會看到書籤面閃一下淡入再被蓋掉——spec F7 驗收 3 的「連按不留半透明殘面」。
+                if (self._wishlistViewGeneration !== gen) return;
+                self.listMode = 'wishlist';
+                self.displayMode = 'grid';
+                var loadPromise = self.loadWishlist();
+                window.SearchAnimations?.playListModeCrossfade?.(null, safeQuery('.wishlist-panel'), {});
+                loadPromise.then(function () {
+                    if (self._wishlistViewGeneration !== gen) return;
+                    if (!self.wishlistItems.length) return;
+                    window.GridMotion?.playEntry?.(safeQuery('.wishlist-grid'));
+                });
+                return loadPromise;
+            };
+
+            // 重入（restoreState 還原、或重複點同一顆）：不是「切換」，沒有舊面要淡出 ⇒ 直接做、不播 crossfade。
+            // ⚠️ 這裡 return 的是 doSwitch()（**會**呼叫 loadWishlist()），**不是** `return;`。
+            if (this.listMode === 'wishlist') return doSwitch();
+
+            var oldEl = safeQuery(searchStateContainerSel(this.pageState));
+            var fade = window.SearchAnimations?.playListModeCrossfade;
+            if (typeof fade !== 'function' || !oldEl) return doSwitch();
+            return new Promise(function (resolve) {
+                fade(oldEl, null, { onOldFadeComplete: function () { resolve(doSwitch()); } });
+            });
         },
 
         switchToSearchList() {
-            // 還原成切進書籤前的那個模式；沒記到就落回 'search'（這顆鈕的預設語意）。
-            this.listMode = this._preWishlistListMode || 'search';
-            this._preWishlistListMode = null;
-            if (this._preWishlistDisplayMode) {
-                this.displayMode = this._preWishlistDisplayMode;
-                this._preWishlistDisplayMode = null;
-            }
+            var self = this;
+            var gen = ++this._wishlistViewGeneration;
+            var doSwitch = function () {
+                // 世代守衛：與 switchToWishlist() 對稱。`onOldFadeComplete` 是非同步回呼
+                // （GSAP tween 完成才觸發），連按時上一輪的回呼會晚於下一輪開始才落地。
+                if (self._wishlistViewGeneration !== gen) return;
+                // 還原成切進書籤前的那個模式；沒記到就落回 'search'（這顆鈕的預設語意）。
+                self.listMode = self._preWishlistListMode || 'search';
+                self._preWishlistListMode = null;
+                if (self._preWishlistDisplayMode) {
+                    self.displayMode = self._preWishlistDisplayMode;
+                    self._preWishlistDisplayMode = null;
+                }
+                var newEl = safeQuery(searchStateContainerSel(self.pageState));
+                window.SearchAnimations?.playListModeCrossfade?.(null, newEl, {});
+            };
+            var oldEl = safeQuery('.wishlist-panel');
+            var fade = window.SearchAnimations?.playListModeCrossfade;
+            if (typeof fade !== 'function' || !oldEl) { doSwitch(); return; }
+            fade(oldEl, null, { onOldFadeComplete: doSwitch });
         },
 
         async loadWishlistCount() {

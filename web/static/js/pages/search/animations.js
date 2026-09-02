@@ -1041,6 +1041,34 @@
                     }
                 }
             );
+        },
+
+        // TASK-141b-T2：搜尋結果 ↔ 書籤分頁的容器 crossfade。
+        // 吃元素不吃 mode 名（與 showcase playModeCrossfade 的 selector 表刻意分開）。
+        // oldEl 有值就一定淡出（無論有無 onOldFadeComplete）；newEl 有值就一定淡入。
+        playListModeCrossfade: function (oldEl, newEl, options) {
+            options = options || {};
+            var hasCb = !!(options.onOldFadeComplete);
+            if (shouldSkip() || typeof gsap === 'undefined') {
+                if (hasCb) options.onOldFadeComplete();
+                return null;
+            }
+            var tl = gsap.timeline();
+            if (oldEl) {
+                tl.to(oldEl, {
+                    opacity: 0, duration: OpenAver.motion.DURATION.fast, ease: 'fluent-accel',
+                    clearProps: 'opacity',
+                    onComplete: hasCb ? function () { options.onOldFadeComplete(); } : undefined
+                });
+            } else if (hasCb) {
+                options.onOldFadeComplete();
+            }
+            if (newEl) {
+                tl.fromTo(newEl, { opacity: 0 }, {
+                    opacity: 1, duration: OpenAver.motion.DURATION.fast, ease: 'fluent-decel', clearProps: 'opacity'
+                });
+            }
+            return tl;
         }
     };
 })();

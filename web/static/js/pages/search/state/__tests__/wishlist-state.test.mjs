@@ -575,6 +575,33 @@ test('switchToWishlist: 已載入過也要重新對帳（T8 review P2）', async
     assert.equal(loadCalls, 1, '已載入過仍必須重新對帳一次');
 });
 
+test('T2-DoD6b-reentry-still-loads: listMode 已經是 wishlist 時（restoreState 路徑）仍必須呼叫 loadWishlist', async () => {
+    // 🔴 這條守的是 persistence.js:171-178 的硬約束，Opus 2026-09-03 補。
+    // restoreState() 會**先**把 this.listMode 設成 'wishlist'（為了不讓 switchToWishlist()
+    // 內部的前置記錄覆寫掉剛還原的 _preWishlistDisplayMode），**再**呼叫 switchToWishlist()
+    // ——它就是靠這一呼去 loadWishlist()，因為 wishlistItems 不進 sessionStorage。
+    //
+    // T2 為了不對「已經在書籤牆」的重入播 crossfade，加了一條
+    // `if (this.listMode === 'wishlist') return doSwitch();` 的短路。
+    // 那一行看起來像一顆多餘的重入守衛，**下一個人很容易把它「簡化」成 `return;`**——
+    // 而那個簡化沒有任何既有測試會轉紅（實測：改掉之後 70/70 全綠）。
+    //
+    // 使用者流程：停在書籤分頁 → 重新整理（或關掉再打開）→ 整面書籤牆永久空白，
+    // 直到手動切去搜尋結果再切回來。本測試就是為了讓那個簡化轉紅。
+    let loadCalls = 0;
+    const fakeThis = {
+        ...searchStateWishlist(),
+        listMode: 'wishlist',          // restoreState 已經先設好
+        displayMode: 'grid',
+        wishlistLoaded: false,
+        wishlistItems: [],
+        async loadWishlist() { loadCalls++; },
+    };
+
+    await searchStateWishlist().switchToWishlist.call(fakeThis);
+    assert.equal(loadCalls, 1, 'listMode 已是 wishlist 的重入路徑仍必須載入清單（persistence.js restore 靠這一呼）');
+});
+
 test('switchToWishlist: wishlistLoaded=false 時呼叫 loadWishlist', async () => {
     let loadCalls = 0;
     const fakeThis = {
@@ -1443,4 +1470,313 @@ test('await 後回滾（wishlistLoaded=false）：沒有權威清單時仍走相
     mockFetch(() => Promise.reject(new Error('network down')));
     await state.addToWishlist({ number: 'NL-1' });
     assert.equal(state.wishlistCount, 5, '沒開過書籤分頁 ⇒ 清單不權威，相對回滾仍是正確答案');
+});
+
+// ─── TASK-141b-T2：書籤牆進場 ＋ 分頁切換 crossfade ─────────────────────────
+//
+// 閘控路徑測試會臨時掛 window.SearchAnimations / document.querySelector /
+// window.GridMotion；測完必須還原，否則污染同檔既有 stub。
+
+function withCrossfadeEnv({ queryMap, fadeImpl, playEntryImpl }, fn) {
+    const prevSA = globalThis.window.SearchAnimations;
+    const prevGM = globalThis.window.GridMotion;
+    const prevQS = globalThis.document.querySelector;
+    const crossfadeCalls = [];
+    const playEntryCalls = [];
+
+    globalThis.document.querySelector = (sel) => (queryMap && Object.prototype.hasOwnProperty.call(queryMap, sel))
+        ? queryMap[sel]
+        : null;
+    globalThis.window.SearchAnimations = {
+        playListModeCrossfade(oldEl, newEl, options) {
+            crossfadeCalls.push({ oldEl, newEl, options: options || {} });
+            if (typeof fadeImpl === 'function') return fadeImpl(oldEl, newEl, options || {}, crossfadeCalls);
+            if (options && typeof options.onOldFadeComplete === 'function') options.onOldFadeComplete();
+            return null;
+        },
+    };
+    globalThis.window.GridMotion = {
+        playEntry(el) {
+            playEntryCalls.push(el);
+            if (typeof playEntryImpl === 'function') return playEntryImpl(el);
+            return null;
+        },
+    };
+
+    const api = { crossfadeCalls, playEntryCalls };
+    const run = async () => {
+        try {
+            return await fn(api);
+        } finally {
+            if (prevSA === undefined) delete globalThis.window.SearchAnimations;
+            else globalThis.window.SearchAnimations = prevSA;
+            if (prevGM === undefined) delete globalThis.window.GridMotion;
+            else globalThis.window.GridMotion = prevGM;
+            if (prevQS === undefined) delete globalThis.document.querySelector;
+            else globalThis.document.querySelector = prevQS;
+        }
+    };
+    return run();
+}
+
+const T2_ELS = {
+    '#resultCard': { id: 'resultCard' },
+    '#emptyState': { id: 'emptyState' },
+    '#loadingState': { id: 'loadingState' },
+    '#errorState': { id: 'errorState' },
+    '.wishlist-panel': { className: 'wishlist-panel' },
+    '.wishlist-grid': { className: 'wishlist-grid' },
+};
+
+test('T2-DoD1-switchToWishlist-crossfade-then-playEntry', async () => {
+    // DoD 1：oldEl 淡出 → listMode=wishlist → .wishlist-panel 淡入 → load 後 playEntry
+    mockFetch(() => jsonResponse([{ number: 'W-1' }]));
+    await withCrossfadeEnv({ queryMap: T2_ELS }, async ({ crossfadeCalls, playEntryCalls }) => {
+        const state = makeWishlistThis({
+            listMode: 'search',
+            displayMode: 'detail',
+            pageState: 'result',
+            wishlistLoaded: false,
+            wishlistItems: [],
+        });
+
+        await state.switchToWishlist();
+        await Promise.resolve(); // flush loadPromise.then
+
+        assert.equal(state.listMode, 'wishlist');
+        assert.equal(state.displayMode, 'grid');
+        assert.ok(crossfadeCalls.length >= 2, '必須先淡出舊容器、再淡入書籤面板');
+
+        const fadeOut = crossfadeCalls[0];
+        assert.equal(fadeOut.oldEl, T2_ELS['#resultCard'], 'oldEl 必須是 pageState 對應的可見容器');
+        assert.equal(fadeOut.newEl, null);
+        assert.equal(typeof fadeOut.options.onOldFadeComplete, 'function');
+
+        const fadeIn = crossfadeCalls[1];
+        assert.equal(fadeIn.oldEl, null);
+        assert.equal(fadeIn.newEl, T2_ELS['.wishlist-panel']);
+
+        assert.equal(playEntryCalls.length, 1, '有書籤時必須播 playEntry');
+        assert.equal(playEntryCalls[0], T2_ELS['.wishlist-grid']);
+    });
+});
+
+test('T2-DoD1-empty-pageState-fades-emptyState', async () => {
+    // FE-ALPINE-12：從未搜尋過就點書籤，淡出的必須是 #emptyState，不是隱形的 #resultCard
+    mockFetch(() => jsonResponse([{ number: 'W-1' }]));
+    await withCrossfadeEnv({ queryMap: T2_ELS }, async ({ crossfadeCalls }) => {
+        const state = makeWishlistThis({
+            listMode: 'search',
+            displayMode: 'grid',
+            pageState: 'empty',
+            wishlistLoaded: false,
+            wishlistItems: [],
+        });
+        await state.switchToWishlist();
+        assert.equal(crossfadeCalls[0].oldEl, T2_ELS['#emptyState']);
+    });
+});
+
+test('T2-DoD2-switchToSearchList-crossfade-no-playEntry', async () => {
+    // DoD 2：回程對稱淡出／淡入；GridMotion.playEntry 零呼叫
+    mockFetch(() => jsonResponse([{ number: 'W-1' }]));
+    await withCrossfadeEnv({ queryMap: T2_ELS }, async ({ crossfadeCalls, playEntryCalls }) => {
+        const state = makeWishlistThis({
+            listMode: 'search',
+            displayMode: 'detail',
+            pageState: 'result',
+            wishlistLoaded: false,
+            wishlistItems: [],
+        });
+        await state.switchToWishlist();
+        await Promise.resolve();
+        playEntryCalls.length = 0;
+        crossfadeCalls.length = 0;
+
+        state.switchToSearchList();
+
+        assert.equal(state.listMode, 'search');
+        assert.equal(state.displayMode, 'detail');
+        assert.ok(crossfadeCalls.length >= 2, '回程必須淡出書籤面板、再淡入搜尋容器');
+        assert.equal(crossfadeCalls[0].oldEl, T2_ELS['.wishlist-panel']);
+        assert.equal(crossfadeCalls[0].newEl, null);
+        assert.equal(crossfadeCalls[1].oldEl, null);
+        assert.equal(crossfadeCalls[1].newEl, T2_ELS['#resultCard']);
+        assert.equal(playEntryCalls.length, 0, '切回搜尋結果不得重播 playEntry');
+    });
+});
+
+test('T2-DoD3-empty-wishlist-no-playEntry', async () => {
+    // DoD 3／mutation 點 2：空清單短路，容器淡入仍要有
+    mockFetch(() => jsonResponse([]));
+    await withCrossfadeEnv({ queryMap: T2_ELS }, async ({ crossfadeCalls, playEntryCalls }) => {
+        const state = makeWishlistThis({
+            listMode: 'search',
+            displayMode: 'grid',
+            pageState: 'result',
+            wishlistLoaded: false,
+            wishlistItems: [],
+        });
+        await state.switchToWishlist();
+        await Promise.resolve();
+
+        assert.equal(state.listMode, 'wishlist');
+        assert.ok(crossfadeCalls.some((c) => c.newEl === T2_ELS['.wishlist-panel']),
+            '空清單仍要淡入 .wishlist-panel');
+        assert.equal(playEntryCalls.length, 0, '空清單不得呼叫 GridMotion.playEntry');
+    });
+});
+
+test('T2-DoD4-generation-guards-stale-playEntry', async () => {
+    // DoD 4：連按後舊世代 loadPromise.then 不得觸發 playEntry
+    const releases = [];
+    mockFetch(() => new Promise((resolve) => {
+        releases.push((items) => resolve(jsonResponse(items)));
+    }));
+
+    await withCrossfadeEnv({ queryMap: T2_ELS }, async ({ playEntryCalls }) => {
+        // 直通路徑（fade 立即 cb）下世代遞增仍守住 loadPromise.then
+        const state = makeWishlistThis({
+            listMode: 'search',
+            displayMode: 'grid',
+            pageState: 'result',
+            wishlistLoaded: false,
+            wishlistItems: [],
+        });
+
+        const p1 = state.switchToWishlist();
+        state.switchToSearchList();
+        const p3 = state.switchToWishlist();
+
+        assert.ok(state._wishlistViewGeneration >= 3, '三次切換必須遞增世代');
+
+        // 先放行第一輪（舊世代）load
+        releases[0]([{ number: 'STALE-1' }]);
+        await p1;
+        await Promise.resolve();
+        assert.equal(playEntryCalls.length, 0, '舊世代 load 落地不得播 playEntry');
+
+        // 再放行最新一輪
+        releases[1]([{ number: 'FRESH-1' }]);
+        await p3;
+        await Promise.resolve();
+        assert.equal(playEntryCalls.length, 1, '只有當前世代的 load 落地才播 playEntry');
+        assert.equal(playEntryCalls[0], T2_ELS['.wishlist-grid']);
+    });
+});
+
+test('T2-DoD4b-stale-crossfade-no-residual-panel', async () => {
+    // 🔴 DoD 4 的另一半（Opus 2026-09-03 補，sonnet review P2）：
+    // 上一支測試只驗了「舊世代不播 playEntry」，但 DoD 4 字面要求的是
+    // 「舊世代回呼沒有觸發任何 playEntry／playListModeCrossfade」。
+    //
+    // 這裡用**延遲**的 fadeImpl（把 onOldFadeComplete 收起來不立即呼叫）重現真實時序：
+    // 淡出是 GSAP tween（DURATION.fast = 167ms），使用者在它跑完之前又點了另一顆分頁鈕，
+    // 於是第一次的回呼會在第二次已經開始之後才落地——**這不是時序倒轉，是連按的正常情況**。
+    //
+    // 沒有世代守衛的話，那個遲到的回呼照樣會翻 listMode 並淡入 .wishlist-panel：
+    // 使用者流程 = 在 167ms 內連點兩下分頁鈕 → 書籤面閃一下淡入再被蓋掉
+    // → 就是 spec F7 驗收 3 明文禁止的「切換分頁時連按留下半透明的殘面」。
+    const pendingCbs = [];
+    mockFetch(() => jsonResponse([{ number: 'W-1' }]));
+
+    await withCrossfadeEnv({
+        queryMap: T2_ELS,
+        // 只把「有 onOldFadeComplete」的那一支（＝淡出）延遲；純淡入（無 cb）照常記錄
+        fadeImpl: (oldEl, newEl, options) => {
+            if (typeof options.onOldFadeComplete === 'function') pendingCbs.push(options.onOldFadeComplete);
+            return null;
+        },
+    }, async ({ crossfadeCalls }) => {
+        const state = makeWishlistThis({
+            listMode: 'file',
+            displayMode: 'grid',
+            pageState: 'result',
+            wishlistLoaded: false,
+            wishlistItems: [],
+        });
+
+        state.switchToWishlist();      // 第 1 次：淡出 #resultCard（cb0），回呼被收起來
+        state.switchToSearchList();    // 第 2 次：使用者在 167ms 內又點了一下（cb1）
+        state.switchToWishlist();      // 第 3 次：再點回來（cb2）—— 這下 cb0/cb1 都是舊世代
+
+        assert.equal(pendingCbs.length, 3, '三次切換各自起了一支淡出（回呼都還沒落地）');
+
+        // ── 依「自然完成順序」逐一放行（cb0 → cb1 → cb2）。
+        //    不需要任何時序倒轉：第 3 次點擊發生的當下，cb0 與 cb1 就已經是舊世代了。──
+        let before = crossfadeCalls.length;
+        pendingCbs[0]();               // 舊世代（switchToWishlist 那一支）
+        assert.notEqual(state.listMode, 'wishlist',
+            '舊世代的 switchToWishlist 回呼不得把 listMode 翻成 wishlist');
+        assert.equal(crossfadeCalls.length, before,
+            '舊世代回呼不得淡入 .wishlist-panel（否則書籤面會閃一下再被蓋掉）');
+
+        before = crossfadeCalls.length;
+        const listModeBefore = state.listMode;
+        pendingCbs[1]();               // 舊世代（switchToSearchList 那一支）
+        assert.equal(state.listMode, listModeBefore,
+            '舊世代的 switchToSearchList 回呼不得改動 listMode');
+        assert.equal(crossfadeCalls.length, before,
+            '舊世代回呼不得淡入搜尋結果容器（否則搜尋面會閃一下再被蓋掉）');
+
+        // ── 最新那一輪照常生效 ──
+        pendingCbs[2]();
+        assert.equal(state.listMode, 'wishlist', '最新世代的回呼必須正常完成切換');
+    });
+});
+
+test('T2-DoD5-reduced-motion-final-state-same', async () => {
+    // DoD 5：shouldSkip 形狀（立即 onOldFadeComplete）下資料結果與有動畫時相同
+    mockFetch(() => jsonResponse([{ number: 'W-1' }]));
+    await withCrossfadeEnv({
+        queryMap: T2_ELS,
+        fadeImpl(oldEl, newEl, options) {
+            // 模擬 playListModeCrossfade 的 shouldSkip／gsap-undefined 分支：立刻呼叫 cb
+            if (options && typeof options.onOldFadeComplete === 'function') options.onOldFadeComplete();
+            return null;
+        },
+    }, async () => {
+        const state = makeWishlistThis({
+            listMode: 'file',
+            displayMode: 'detail',
+            pageState: 'result',
+            wishlistLoaded: false,
+            wishlistItems: [],
+            fileList: [{ path: '/x/a.mp4' }],
+        });
+        await state.switchToWishlist();
+        assert.equal(state.listMode, 'wishlist');
+        assert.equal(state.displayMode, 'grid');
+        assert.equal(state.wishlistItems.length, 1);
+
+        state.switchToSearchList();
+        assert.equal(state.listMode, 'file');
+        assert.equal(state.displayMode, 'detail');
+        assert.equal(state.fileList.length, 1);
+    });
+});
+
+test('T2-DoD6-file-mode-restore-after-crossfade', async () => {
+    // DoD 6／mutation 點 1：crossfade 閘控路徑上 file 模式必須還原
+    mockFetch(() => jsonResponse([{ number: 'W-1' }]));
+    await withCrossfadeEnv({ queryMap: T2_ELS }, async () => {
+        const state = makeWishlistThis({
+            listMode: 'file',
+            displayMode: 'detail',
+            pageState: 'result',
+            wishlistLoaded: true,
+            wishlistItems: [],
+            fileList: [{ path: '/x/a.mp4', searchResults: [] }],
+        });
+
+        await state.switchToWishlist();
+        assert.equal(state.listMode, 'wishlist');
+        assert.equal(state._preWishlistListMode, 'file');
+
+        state.switchToSearchList();
+        assert.equal(state.listMode, 'file', 'crossfade 路徑還原必須回到 file，不是 grid/search');
+        assert.equal(state.displayMode, 'detail');
+        assert.equal(state._preWishlistListMode, null);
+        assert.equal(state.fileList.length, 1, 'fileList 不得被動到');
+    });
 });
