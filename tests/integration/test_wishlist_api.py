@@ -465,3 +465,46 @@ def test_cleanup_wishlist_survives_cover_unlink_failure(client, tmp_db, monkeypa
     assert resp.status_code == 200, "封面刪不掉不得變成 500"
     assert resp.json()["deleted_count"] == 2, "兩筆都必須被算進去（迴圈不得被第一筆的例外中斷）"
     assert client.get("/api/wishlist/count").json()["count"] == 0
+
+
+def test_add_wishlist_already_owned_blocks_write(client, tmp_db):
+    """TASK-141a-T3 DoD 1: 片庫已有（大小寫不同）→ 拒絕寫入、帶完整 local_status、書籤表無新增列。"""
+    conn = sqlite3.connect(str(tmp_db))
+    conn.execute(
+        "INSERT INTO videos (path, number, title) VALUES (?, ?, ?)",
+        ("/lib/abc-123.mp4", "abc-123", "Already Owned"),
+    )
+    conn.commit()
+    conn.close()
+
+    before_count = client.get("/api/wishlist/count").json()["count"]
+
+    from core.database import VideoRepository
+    from core.scraper import normalize_number
+
+    normalized = normalize_number("ABC-123")
+    expected_videos = VideoRepository().get_by_numbers([normalized]).get(normalized) or []
+
+    resp = client.post("/api/wishlist", json={
+        "number": "ABC-123",
+        "title": "Should Not Be Added",
+        "cover": "http://example.com/c.jpg",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is False
+    assert data["already_owned"] is True
+    assert data["local_status"]["exists"] is True
+    assert data["local_status"]["count"] == len(expected_videos)
+    assert data["local_status"]["paths"] == [v.path for v in expected_videos]
+
+    after_count = client.get("/api/wishlist/count").json()["count"]
+    assert after_count == before_count
+
+    conn = sqlite3.connect(str(tmp_db))
+    row = conn.execute(
+        "SELECT COUNT(*) FROM wishlist WHERE UPPER(number) = UPPER(?)",
+        ("ABC-123",),
+    ).fetchone()
+    conn.close()
+    assert row[0] == 0

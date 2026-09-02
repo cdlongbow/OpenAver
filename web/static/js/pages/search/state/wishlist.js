@@ -166,6 +166,16 @@ export function searchStateWishlist() {
                 } catch (parseErr) {
                     console.error('[Wishlist] add 回應解析失敗:', parseErr);
                 }
+                if (data?.already_owned) {
+                    result._wishlisted = prevWishlisted;
+                    this.wishlistCount = Math.max(0, this.wishlistCount - 1);
+                    if (this.wishlistLoaded) {
+                        this.wishlistItems = this.wishlistItems.filter((i) => i !== result);
+                    }
+                    result._localStatus = data.local_status;
+                    this.showToast(window.t('search.toast.wishlist_already_owned'), 'info');
+                    return;
+                }
                 if (data?.added === false) {
                     if (this.wishlistLoaded) {
                         this.wishlistItems = this.wishlistItems.filter((i) => i !== result);

@@ -47,6 +47,21 @@ class WishlistMembershipRequest(BaseModel):
 def add_wishlist(req: WishlistAddRequest) -> dict:
     init_db()
     number = normalize_number(req.number)
+
+    video_repo = VideoRepository()
+    owned = video_repo.get_by_numbers([number])
+    videos = owned.get(number)
+    if videos:
+        return {
+            "success": False,
+            "already_owned": True,
+            "local_status": {
+                "exists": True,
+                "count": len(videos),
+                "paths": [v.path for v in videos],
+            },
+        }
+
     repo = WishlistRepository()
     added = repo.add(
         number,

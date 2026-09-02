@@ -266,7 +266,8 @@
       "fields_defaulted": "⚠️ {fields} 資訊未取得，已使用預設值",
       "from_source": "來自 {name}",
       "wishlist_cleaned": "已清除 {count} 筆已入手書籤",
-      "wishlist_clean_failed": "書籤清理失敗，請重試"
+      "wishlist_clean_failed": "書籤清理失敗，請重試",
+      "wishlist_already_owned": "這部片已經在你的片庫裡"
     },
     "duplicate": {
       "title": "檔案重複",

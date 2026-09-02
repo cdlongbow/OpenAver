@@ -1332,3 +1332,112 @@ test('saveState/restoreState：_preWishlistListMode 與 _preWishlistDisplayMode 
     assert.equal(restorer._preWishlistDisplayMode, 'detail');
     assert.ok(store, 'sessionStorage mock 有被用到');
 });
+
+// ─── TASK-141a-T3：加入書籤寫入點守門（already_owned）──────────────────────
+
+test('T3-DoD3：already_owned ⇒ 回滾三件事、設 _localStatus、info toast（非 error）', async () => {
+    const localStatus = {
+        exists: true,
+        count: 1,
+        paths: ['/lib/OWNED-1.mp4'],
+    };
+    globalThis.fetch = async (url, opts = {}) => {
+        const u = String(url);
+        if (u === '/api/wishlist' && opts.method === 'POST') {
+            return jsonResponse({
+                success: false,
+                already_owned: true,
+                local_status: localStatus,
+            });
+        }
+        throw new Error(`unexpected url: ${u}`);
+    };
+    globalThis.window.t = (key) => key;
+
+    const toasts = [];
+    const existing = { number: 'KEEP-1', _owned: false };
+    const result = { number: 'OWNED-1', title: 't', _wishlisted: false };
+    const state = makeWishlistThis({
+        wishlistCount: 3,
+        wishlistLoaded: true,
+        wishlistItems: [existing],
+        showToast(msg, type) { toasts.push({ msg, type }); },
+    });
+
+    await state.addToWishlist(result);
+
+    assert.deepEqual(result._localStatus, localStatus,
+        '_localStatus 必須等於回應的 local_status（逐欄位）');
+    assert.equal(result._wishlisted, false, '_wishlisted 必須回滾成呼叫前的值');
+    assert.equal(state.wishlistCount, 3, 'wishlistCount 必須回滾');
+    assert.deepEqual(state.wishlistItems, [existing],
+        'wishlistItems 不得含樂觀 unshift 的那筆');
+    assert.equal(toasts.length, 1, '必須顯示 toast');
+    assert.equal(toasts[0].type, 'info', 'toast 等級必須是 info，不是 error');
+    assert.equal(toasts[0].msg, 'search.toast.wishlist_already_owned');
+    assert.ok(!toasts.some((t) => t.type === 'error'), '不得顯示 error 等級 toast');
+});
+
+test("T3-DoD4a：already_owned count=1 ⇒ cardActionState(result) === 'play'", async () => {
+    const localStatus = {
+        exists: true,
+        count: 1,
+        paths: ['/lib/PLAY-1.mp4'],
+    };
+    globalThis.fetch = async (url, opts = {}) => {
+        const u = String(url);
+        if (u === '/api/wishlist' && opts.method === 'POST') {
+            return jsonResponse({
+                success: false,
+                already_owned: true,
+                local_status: localStatus,
+            });
+        }
+        throw new Error(`unexpected url: ${u}`);
+    };
+    globalThis.window.t = (key) => key;
+
+    const result = { number: 'PLAY-1', title: 't', _wishlisted: false };
+    const state = makeWishlistThis({
+        wishlistCount: 0,
+        wishlistLoaded: false,
+        wishlistItems: [],
+        showToast() {},
+    });
+
+    await state.addToWishlist(result);
+
+    assert.equal(cardActionState(result), 'play');
+});
+
+test("T3-DoD4b：already_owned count=2 ⇒ cardActionState(result) === 'play+folder'", async () => {
+    const localStatus = {
+        exists: true,
+        count: 2,
+        paths: ['/lib/FOLDER-1a.mp4', '/lib/FOLDER-1b.mp4'],
+    };
+    globalThis.fetch = async (url, opts = {}) => {
+        const u = String(url);
+        if (u === '/api/wishlist' && opts.method === 'POST') {
+            return jsonResponse({
+                success: false,
+                already_owned: true,
+                local_status: localStatus,
+            });
+        }
+        throw new Error(`unexpected url: ${u}`);
+    };
+    globalThis.window.t = (key) => key;
+
+    const result = { number: 'FOLDER-1', title: 't', _wishlisted: false };
+    const state = makeWishlistThis({
+        wishlistCount: 0,
+        wishlistLoaded: false,
+        wishlistItems: [],
+        showToast() {},
+    });
+
+    await state.addToWishlist(result);
+
+    assert.equal(cardActionState(result), 'play+folder');
+});
