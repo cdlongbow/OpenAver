@@ -101,9 +101,16 @@ def download_and_save(number: str, cover_url: str, fallback_url: str = "") -> bo
     """
     dest = cover_file_for(number)
 
+    # 🔴 Codex PR#175 P2：去重。`add_wishlist()` 傳的是
+    # `(preview_cover_url or cover, cover)`，而 `preview_cover_url` **只有 metatube 會填**
+    # （全部內建 scraper 都留空，`core/scrapers/models.py` 的 default 就是 `''`）⇒ 沒接
+    # metatube 的人，兩個參數恆為同一個網址。圖床連不上時這個迴圈會對**同一個 URL 打兩次**、
+    # 各等一次 30 秒 timeout ⇒ 使用者按下加入書籤要轉 60 秒而不是 30 秒。
+    seen = set()
     for url in (cover_url, fallback_url):
-        if not url:
+        if not url or url in seen:
             continue
+        seen.add(url)
         data = _fetch_image_bytes(url)
         if data is None:
             continue

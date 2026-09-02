@@ -97,6 +97,7 @@ export function searchStatePersistence() {
             listMode: this.listMode,
             displayMode: this.displayMode,
             _preWishlistDisplayMode: this._preWishlistDisplayMode,
+            _preWishlistListMode: this._preWishlistListMode,
         };
     },
 
@@ -124,6 +125,9 @@ export function searchStatePersistence() {
             this.listMode = state.listMode || null;
             this.displayMode = resolveVisibleDisplayMode(this.listMode, state.displayMode || 'detail');
             this._preWishlistDisplayMode = state._preWishlistDisplayMode || null;
+            // 與 _preWishlistDisplayMode 對稱（Codex PR#175 P2）：不一起還原的話，
+            // 在書籤頁重新整理再點回搜尋段，仍然會掉進 'search' 而不是原本的 'file'。
+            this._preWishlistListMode = state._preWishlistListMode || null;
             this.currentMode = state.currentMode || '';  // T3 fix: 還原搜尋模式
             this.actressProfile = state.actressProfile || null;  // T5: 恢復女優資料
 
@@ -193,6 +197,7 @@ export function searchStatePersistence() {
                 queryValue: snap.currentQuery,    // 上一輪的 query
                 displayMode: live.displayMode,
                 _preWishlistDisplayMode: live._preWishlistDisplayMode,
+                _preWishlistListMode: live._preWishlistListMode,
                 currentMode: snap.currentMode,
                 actressProfile: snap.actressProfile
             };
@@ -214,6 +219,7 @@ export function searchStatePersistence() {
             queryValue: this.searchQuery,
             displayMode: live.displayMode,
             _preWishlistDisplayMode: live._preWishlistDisplayMode,
+                _preWishlistListMode: live._preWishlistListMode,
             currentMode: this.currentMode,  // T3 fix: 持久化搜尋模式
             actressProfile: this.actressProfile  // T5: 持久化女優資料
         };

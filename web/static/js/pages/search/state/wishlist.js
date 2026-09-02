@@ -27,6 +27,13 @@ export function searchStateWishlist() {
         // 為什麼不能乾脆不動 displayMode：wishlist 模式下 displayMode 不得為 'detail'
         // （listMode 對帳表 #2/#3/#7/#29 的前提），所以「記住再還原」是唯一解。
         _preWishlistDisplayMode: null,
+        // 🔴 Codex PR#175 P2：連 listMode 一起記。原本只記 displayMode，`switchToSearchList()`
+        // 硬設 `listMode = 'search'`——但切進書籤之前可能是 `'file'`（把影片檔拖進來比對的那條
+        // 流程）。實測重現：`listMode:'file'`／`fileList` 1 筆 → 點書籤 → 點回搜尋 ⇒ listMode
+        // 落在 `'search'`，`fileList` 資料還在記憶體裡但 `#fileList`（search.html:1068）連同
+        // 整理列、改番號那排控制項（:1014/:1020/:1036）全部隱藏 ⇒ **使用者的拖曳工作階段
+        // 看起來整個不見了**，而且會被 $watch 存進 sessionStorage，重新整理也回不來。
+        _preWishlistListMode: null,
 
         // ===== Computed Properties =====
         // TASK-140-T12：F7 清理鈕只在有已入手項目時出現，讀 T8 對帳寫入的 _owned 欄位。
@@ -39,6 +46,7 @@ export function searchStateWishlist() {
         switchToWishlist() {
             if (this.listMode !== 'wishlist') {
                 this._preWishlistDisplayMode = this.displayMode;
+                this._preWishlistListMode = this.listMode;
             }
             this.listMode = 'wishlist';
             this.displayMode = 'grid';
@@ -53,7 +61,9 @@ export function searchStateWishlist() {
         },
 
         switchToSearchList() {
-            this.listMode = 'search';
+            // 還原成切進書籤前的那個模式；沒記到就落回 'search'（這顆鈕的預設語意）。
+            this.listMode = this._preWishlistListMode || 'search';
+            this._preWishlistListMode = null;
             if (this._preWishlistDisplayMode) {
                 this.displayMode = this._preWishlistDisplayMode;
                 this._preWishlistDisplayMode = null;

@@ -420,3 +420,48 @@ def test_add_wishlist_reports_added_false_on_duplicate(client, tmp_db, monkeypat
     second = client.post("/api/wishlist", json=payload).json()
     assert second["success"] is True, "重複加入不是錯誤（冪等），success 維持 True"
     assert second["added"] is False, "重複加入必須回 added:False，否則前端計數補不回來"
+
+
+def test_delete_wishlist_survives_cover_unlink_failure(client, tmp_db, monkeypatch):
+    """Codex PR#175 P2：封面刪不掉（Windows 檔案鎖／防毒）不得讓已 commit 的刪除回 500。
+
+    回 500 的話前端會把樂觀移除整個回滾 ⇒ 畫面跳出一張 DB 裡已經不存在的幽靈卡、
+    計數還加一，要重新整理才會消失。
+    """
+    monkeypatch.setattr("core.wishlist_cover_cache.download_and_save", lambda *a, **k: True)
+    client.post("/api/wishlist", json={"number": "LOCKED-001", "title": "x", "cover": "http://c"})
+
+    def _boom(number):
+        raise PermissionError(32, "The process cannot access the file because it is being used by another process")
+
+    monkeypatch.setattr("core.wishlist_cover_cache.remove", _boom)
+
+    resp = client.delete("/api/wishlist/LOCKED-001")
+    assert resp.status_code == 200, "封面刪不掉不得變成 500"
+    assert resp.json() == {"success": True}, "回應必須反映 DB 的權威狀態（那一列真的刪掉了）"
+    assert client.get("/api/wishlist/count").json()["count"] == 0
+
+
+def test_cleanup_wishlist_survives_cover_unlink_failure(client, tmp_db, monkeypatch):
+    """同上，批次路徑：第 k 筆刪檔失敗不得中斷後面的清理、也不得回 500。"""
+    monkeypatch.setattr("core.wishlist_cover_cache.download_and_save", lambda *a, **k: True)
+    numbers = ("BATCHLOCK-001", "BATCHLOCK-002")
+    for n in numbers:
+        client.post("/api/wishlist", json={"number": n, "title": "x", "cover": "http://c"})
+    conn = sqlite3.connect(str(tmp_db))
+    conn.executemany(
+        "INSERT INTO videos (path, number, title) VALUES (?, ?, ?)",
+        [(f"/lib/{n}.mp4", n, "x") for n in numbers],
+    )
+    conn.commit()
+    conn.close()
+
+    def _boom(number):
+        raise OSError(16, "Device or resource busy")
+
+    monkeypatch.setattr("core.wishlist_cover_cache.remove", _boom)
+
+    resp = client.post("/api/wishlist/cleanup")
+    assert resp.status_code == 200, "封面刪不掉不得變成 500"
+    assert resp.json()["deleted_count"] == 2, "兩筆都必須被算進去（迴圈不得被第一筆的例外中斷）"
+    assert client.get("/api/wishlist/count").json()["count"] == 0

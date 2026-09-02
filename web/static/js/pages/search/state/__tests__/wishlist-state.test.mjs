@@ -1277,3 +1277,58 @@ test('addToWishlist：HTTP 200 {added:false} ⇒ 重新對帳 badge，並收回�
     assert.deepEqual(state.wishlistItems, [existing],
         '樂觀 unshift 的那筆重複必須收回，只留原本那筆（否則 x-for 會有重複 :key）');
 });
+
+// Codex PR#175 P2：切進書籤前的 listMode 必須被記住並還原。
+// 實測重現過：listMode:'file'（把影片檔拖進來比對）→ 點書籤 → 點回搜尋 ⇒ listMode 落在
+// 'search'，fileList 資料還在記憶體裡但 #fileList 連同整理列／改番號控制項全部隱藏，
+// 使用者的拖曳工作階段看起來整個不見了。
+test('switchToWishlist→switchToSearchList：從 file 模式進書籤再回來，必須回到 file 而不是 search', async () => {
+    mockFetch(() => jsonResponse([]));
+    const state = makeWishlistThis({
+        listMode: 'file',
+        displayMode: 'detail',
+        wishlistLoaded: true,
+        fileList: [{ path: '/x/a.mp4', searchResults: [] }],
+    });
+
+    state.switchToWishlist();
+    assert.equal(state.listMode, 'wishlist');
+
+    state.switchToSearchList();
+    assert.equal(state.listMode, 'file', '必須回到切進書籤前的 file 模式');
+    assert.equal(state.displayMode, 'detail');
+    assert.equal(state._preWishlistListMode, null, '還原後要清掉，不得殘留');
+    assert.equal(state.fileList.length, 1, 'fileList 不得被動到');
+});
+
+test('switchToSearchList：沒記到前一個模式時落回 search（這顆鈕的預設語意）', () => {
+    const state = makeWishlistThis({ listMode: 'wishlist', displayMode: 'grid' });
+    state.switchToSearchList();
+    assert.equal(state.listMode, 'search');
+});
+
+test('saveState/restoreState：_preWishlistListMode 與 _preWishlistDisplayMode 對稱持久化', () => {
+    const store = mockSessionStorage();
+    const saver = {
+        ...searchStatePersistence(),
+        ...basePersistFields({
+            listMode: 'wishlist',
+            displayMode: 'grid',
+            _preWishlistDisplayMode: 'detail',
+            _preWishlistListMode: 'file',
+        }),
+    };
+    saver.saveState();
+
+    const restorer = {
+        ...searchStatePersistence(),
+        ...basePersistFields(),
+        switchToWishlist() {},
+    };
+    restorer.restoreState();
+
+    assert.equal(restorer._preWishlistListMode, 'file',
+        '不一起還原的話，在書籤頁重新整理再點回搜尋段仍會掉進 search 而不是 file');
+    assert.equal(restorer._preWishlistDisplayMode, 'detail');
+    assert.ok(store, 'sessionStorage mock 有被用到');
+});

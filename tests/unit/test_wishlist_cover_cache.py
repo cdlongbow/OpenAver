@@ -324,3 +324,40 @@ def test_fetch_passes_organizer_headers(db_path, monkeypatch):
     assert "headers" in seen
     assert "User-Agent" in seen["headers"]
     assert seen["headers"].get("Referer") == "https://www.javbus.com/"
+
+
+def test_download_and_save_does_not_refetch_identical_fallback(tmp_path, monkeypatch):
+    """Codex PR#175 P2：primary 與 fallback 是同一個網址時只准打一次。
+
+    `add_wishlist()` 傳的是 `(preview_cover_url or cover, cover)`，而 `preview_cover_url`
+    只有 metatube 會填 ⇒ 沒接 metatube 的人兩個參數恆為同一字串。不去重的話圖床連不上時
+    會各等一次 30 秒 timeout，使用者按下加入書籤要轉 60 秒而不是 30 秒。
+    """
+    monkeypatch.setattr(wcc, "get_db_path", lambda: tmp_path / "db.sqlite")
+    calls = []
+
+    def _fake_get(url, **kwargs):
+        calls.append(url)
+        raise requests.RequestException("host unreachable")
+
+    monkeypatch.setattr(wcc.requests, "get", _fake_get)
+
+    same = "https://cdn.example/only.jpg"
+    assert wcc.download_and_save("DEDUP-001", same, same) is False
+    assert calls == [same], f"同一個網址只准打一次，實際打了 {len(calls)} 次：{calls}"
+
+
+def test_download_and_save_still_tries_distinct_fallback(tmp_path, monkeypatch):
+    """反向鎖：兩個網址不同時 fallback 仍必須被嘗試（去重不得誤殺備援）。"""
+    monkeypatch.setattr(wcc, "get_db_path", lambda: tmp_path / "db.sqlite")
+    calls = []
+
+    def _fake_get(url, **kwargs):
+        calls.append(url)
+        raise requests.RequestException("host unreachable")
+
+    monkeypatch.setattr(wcc.requests, "get", _fake_get)
+
+    primary, fallback = "https://cdn.example/a.jpg", "https://cdn.example/b.jpg"
+    assert wcc.download_and_save("DEDUP-002", primary, fallback) is False
+    assert calls == [primary, fallback], "兩個不同網址都必須各打一次"
