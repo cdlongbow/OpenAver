@@ -4646,6 +4646,14 @@ const RULES = [
     note: '[lint-guard 141a-T5] 對帳觸發點逐檔計數：scraper.py 的 _reconcile_wishlist_after_write( 恰 3 處（1 個 def ＋ enrich_single_endpoint 唯讀/一般分支各 1 個呼叫），多一處代表未來 branch 順手多掛觸發點（scrape-single／batch-enrich 也住這一檔）' },
   { file: 'web/routers/wishlist.py', kind: 'structure-count', pattern: 'reconcile_wishlist(', count: 1,
     note: '[lint-guard 141a-T5] 對帳呼叫點逐檔計數：wishlist.py 恰 1 處（T4 落地的 GET 載入前對帳）' },
+
+  // ---- [lint-guard 141a-T7] 格牆／大卡切換鈕顯示條件（spec F4／設計決策 1、5）----
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: `x-show="listMode === 'search' && pageState === 'result' && searchResults.length > 1 && !isComposing()"`,
+    note: '[lint-guard 141a-T7] 格牆／大卡切換鈕顯示條件必須為「結果模式＋結果數>1＋非組合輸入」（CD-9，spec F4 驗收 2b/3）',
+  },
 ];
 
 // ---- helpers ----
