@@ -880,7 +880,9 @@
     "jl_cf_timeout": "Cloudflare 驗證逾時",
     "thumb_prewarm_start": "開始建立封面縮圖快取",
     "thumb_prewarm_done": "封面縮圖快取已完成",
-    "update_available": "OpenAver 有新版本"
+    "update_available": "OpenAver 有新版本",
+    "wishlist_auto_removed": "書籤自動更新",
+    "wishlist_reconcile_failed": "書籤對帳失敗，請查閱日誌"
   },
   "similar_mode": {
     "button_aria_label": "探索相似影片",

@@ -6,7 +6,7 @@
  * HELP_KEYS(345 行)——把「靜態 t() call-site ↔ locale leaf key」的機械對照移出 pytest
  * （north-star：能用 lint 機械處理的不進 pytest、不耗 Codex 審）。
  *
- * 四檢：
+ * 五檢：
  *   1. used-but-missing（RED）：每個靜態 t('key') 必須 ∈ zh_TW leaf-key 集，否則 exit 1。
  *   2. parity（warn，--strict 才 fail）：zh_TW 每個 leaf key 於 zh_CN/en/ja 存在
  *      （開發期 warn、milestone 同步；沿用 test_i18n.py::TestAllLocalesKeyCompleteness 政策）。
@@ -14,6 +14,7 @@
  *      組的 key 靜態掃不到 → 只 warn，不誤殺）。
  *   4. forbidden-word（RED）：四語 leaf 值不得含「推薦」（PRD wording）/「風味」（scanner tone,
  *      CD-96-11）。
+ *   5. backend-title-key（RED）：web/routers/*.py 傳給通知中心的 notif.* title_key 必須 ∈ zh_TW leaf-key 集。
  *
  * 掃描標的＝靜態可解析的 t('key') / window.t('key') / w.t('key')（w = window alias）。
  * 動態/拼接 key（t(varName)、t(a ? 'x' : 'y')、t('x' + y)）一律跳過（CD-96a-2）。
@@ -166,6 +167,29 @@ function scanCallSites() {
   return used;
 }
 
+const NOTIF_KEY_RE = /["'](notif\.[a-zA-Z0-9_]+)["']/g;
+
+function scanBackendTitleKeys() {
+  const files = [];
+  walk(join(REPO_ROOT, 'web', 'routers'), ['.py'], files);
+  const used = new Map(); // key -> ['file:line', ...]
+  for (const f of files) {
+    const lines = readFileSync(f, 'utf8').split('\n');
+    const rel = f.slice(REPO_ROOT.length + 1);
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      let m;
+      NOTIF_KEY_RE.lastIndex = 0;
+      while ((m = NOTIF_KEY_RE.exec(line)) !== null) {
+        const key = m[1];
+        if (!used.has(key)) used.set(key, []);
+        used.get(key).push(`${rel}:${i + 1}`);
+      }
+    }
+  }
+  return used;
+}
+
 // ---- main ----
 // 每個 locale 檔只讀一次（zh_TW 主 + 三 secondary），避免重複 I/O 與重複錯誤訊息
 const zhTW = loadLocale('zh_TW');
@@ -203,6 +227,21 @@ if (missing.length) {
   err(`${missing.length} 個 t() 引用的 key 不存在於 zh_TW.json：`);
   for (const { key, file } of missing.slice(0, 20)) {
     console.error(`    '${key}'  (${file})`);
+  }
+}
+
+// 檢 5：backend-title-key（RED）— 驗證 web/routers/*.py 傳給通知中心的 notif.* title_key
+const backendUsed = scanBackendTitleKeys();
+const backendMissing = [];
+for (const [key, locs] of backendUsed) {
+  if (!zhTwKeys.has(key)) backendMissing.push({ key, locs });
+}
+if (backendMissing.length) {
+  err(
+    `[i18n-lint backend-title-key] ${backendMissing.length} 個後端 notif.* title_key 不存在於 zh_TW.json：`,
+  );
+  for (const { key, locs } of backendMissing) {
+    console.error(`    '${key}'  (${locs.join(', ')})`);
   }
 }
 
