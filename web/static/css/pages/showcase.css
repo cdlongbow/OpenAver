@@ -2659,6 +2659,13 @@ body.sidebar-collapsed .showcase-footer {
     color: var(--color-warning);
 }
 
+/* 文字本身也要是 warning 色。後面的 `.footer-count > span` 把 label 降階成 muted，
+   那對「2114 部影片」是對的，對「無法存取：\\192.168.1.177」是錯的——
+   只有圖示變琥珀、句子維持半透明灰，等於把這句話藏在旁邊。 */
+.footer-count.footer-count--unreachable > span {
+    color: var(--color-warning);
+}
+
 @keyframes sourceUnreachableFadeIn {
     from { opacity: 0; }
     to { opacity: 1; }
