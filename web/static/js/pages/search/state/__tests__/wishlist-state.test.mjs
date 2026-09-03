@@ -669,6 +669,32 @@ test('loadWishlist: 請求失敗時不得把 wishlistCount 歸零（清單與計
     assert.deepEqual(fakeThis.wishlistItems, [{ number: 'OLD-1' }]);
 });
 
+// ─── TASK-141b-T10／CD-19：封面載入狀態不得掛在 wishlistItems 元素物件上 ───
+// 不變式：同一番號、同一封面 URL，loadWishlist() 跑第二次（回傳等值但全新的物件陣列）
+// 之後，該卡的封面仍為可見狀態（_wishlistCoverLoaded[番號] 仍為 true）。
+// 候選 (a)：狀態掛在 wishlist.js state 上的番號→bool map，loadWishlist() 完全不碰。
+test('CD-19: loadWishlist 第二次整包覆蓋後，封面載入狀態仍保留（候選 a）', async () => {
+    const items1 = [{ number: 'ABC-001', cover: '/covers/abc.jpg' }];
+    const items2 = [{ number: 'ABC-001', cover: '/covers/abc.jpg' }]; // 等值、全新物件
+    let call = 0;
+    mockFetch(() => {
+        call++;
+        return jsonResponse(call === 1 ? items1 : items2);
+    });
+    const fakeThis = makeWishlistThis();
+    await fakeThis.loadWishlist();
+    // 模擬 @load="_wishlistCoverLoaded[item.number] = true"
+    fakeThis._wishlistCoverLoaded['ABC-001'] = true;
+    await fakeThis.loadWishlist();
+    assert.equal(
+        fakeThis._wishlistCoverLoaded['ABC-001'],
+        true,
+        'loadWishlist 整包覆蓋物件後，_wishlistCoverLoaded[番號] 必須仍為 true（CD-19）',
+    );
+    assert.notEqual(fakeThis.wishlistItems[0], items1[0], '第二次回傳必須是全新物件');
+    assert.equal(fakeThis.wishlistItems[0].number, 'ABC-001');
+});
+
 // ─── hydration ③：wishlistLoaded 時同步 wishlistItems ─────────────────────
 
 test('addToWishlist: wishlistLoaded=true 時新項目 unshift 到 wishlistItems[0]', async () => {

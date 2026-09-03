@@ -1211,10 +1211,15 @@
                         <div class="av-card-preview-img">
                             <img :src="`/api/wishlist/cover?number=${encodeURIComponent(item.number)}`"
                                  :alt="item.number"
-                                 loading="lazy"
-                                 x-show="!item._imgError"
-                                 @error="item._imgError = true">
-                            <div x-show="item._imgError" class="cover-error-placeholder">
+                                 :loading="index < 8 ? 'eager' : 'lazy'"
+                                 :fetchpriority="index < 8 ? 'high' : 'auto'"
+                                 x-show="!_wishlistCoverError[item.number]"
+                                 :class="{ 'cover-loaded': _wishlistCoverLoaded[item.number] }"
+                                 @load="_wishlistCoverLoaded[item.number] = true"
+                                 @error="_wishlistCoverError[item.number] = true">
+                            <div class="skeleton-cover shimmer"
+                                 x-show="!_wishlistCoverLoaded[item.number] && !_wishlistCoverError[item.number]"></div>
+                            <div x-show="_wishlistCoverError[item.number]" class="cover-error-placeholder">
                                 <i class="bi bi-image text-5xl"></i>
                                 <p class="mt-2" x-text="t('common.no_image')"></p>
                             </div>

@@ -4741,6 +4741,16 @@ const RULES = [
     scope: { anchor: /\.wishlist-aging--stage2\s*\{/, braceBalanced: true },
     note: '[TASK-141b-T9] 第 2 階必須用既有註冊 token var(--color-warning)（owner 拍板，設計決策 1），不得手寫十六進位、不得用 --color-error。scope 用 braceBalanced 精準扣住這條規則本體。',
   },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'item._imgError',
+    scope: /<template x-for="\(item, index\) in wishlistItems"[\s\S]*?<\/template>/,
+    note: '[TestWishlistCoverFadeGuard] TASK-141b-T10／CD-19：書籤卡封面狀態禁止掛在 item._imgError（loadWishlist() 整包覆蓋物件會讓封面消失）',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'item._imgLoaded',
+    scope: /<template x-for="\(item, index\) in wishlistItems"[\s\S]*?<\/template>/,
+    note: '[TestWishlistCoverFadeGuard] TASK-141b-T10／CD-19：同上，禁止 item._imgLoaded 形狀',
+  },
 ];
 
 // ---- helpers ----

@@ -45,6 +45,8 @@ export function searchStateWishlist() {
         wishlistItems: [],
         wishlistCount: 0,
         wishlistLoaded: false,
+        _wishlistCoverLoaded: {},  // TASK-141b-T10（CD-19 候選 a）：番號為 key，loadWishlist() 不碰
+        _wishlistCoverError: {},   // TASK-141b-T10（CD-19）：同上，破圖旗標
         wishlistLightboxOpen: false,   // T11a：書籤燈箱開關（獨立狀態機，不與 lightboxOpen 共用）
         wishlistLightboxIndex: -1,     // T11a：書籤燈箱目前顯示的 wishlistItems 索引
         _wishlistLbImgError: false,    // T11a：燈箱封面破圖 flag（開燈箱時必須重設，否則殘留占位）
