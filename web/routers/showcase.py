@@ -388,11 +388,17 @@ async def get_source_status():
     await schedule_reprobe_if_stale()
     snapshot = get_snapshot()
     out = []
+    seen_displays = set()
     for path, status in snapshot.items():
         if status != 'unreachable':
             continue
         host = unc_host(path)
         display = host if host else path
+        # spec F3：同一主機底下多個來源合成一個名字。去重在端點做（CD-6：顯示名由端點算、
+        # 前端不做字串處理），否則 footer 會列出兩次同一台 NAS，「N 個位置」也會多算。
+        if display in seen_displays:
+            continue
+        seen_displays.add(display)
         out.append({"path": path, "display": display, "status": status})
     return out
 

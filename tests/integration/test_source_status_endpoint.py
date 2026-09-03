@@ -185,3 +185,26 @@ def test_dod5_unreachable_sources_display_format(monkeypatch: pytest.MonkeyPatch
     assert local_item is not None
     assert local_item["display"] == "/mnt/storage/media"
     assert local_item["status"] == "unreachable"
+
+
+def test_same_unc_host_sources_merge_into_one_display(monkeypatch: pytest.MonkeyPatch) -> None:
+    """spec F3: 同一主機底下多個來源合成一個名字（否則 footer 列兩次同一台 NAS，
+    「N 個位置無法存取」也會多算）。非 UNC 的不同根路徑仍各自一筆。"""
+    monkeypatch.setattr(
+        sr,
+        "get_snapshot",
+        lambda: {
+            "\\\\nas-box\\share\\videos": "unreachable",
+            "\\\\nas-box\\share2\\more": "unreachable",
+            "/mnt/usb-a": "unreachable",
+            "/mnt/usb-b": "unreachable",
+        },
+    )
+    monkeypatch.setattr(sr, "schedule_reprobe_if_stale", AsyncMock())
+
+    client = TestClient(app, client=("127.0.0.1", 50000))
+    data = client.get("/api/showcase/source-status").json()
+
+    displays = [item["display"] for item in data]
+    assert displays.count("\\\\nas-box") == 1, "同一 UNC 主機只該出現一次"
+    assert sorted(displays) == sorted(["\\\\nas-box", "/mnt/usb-a", "/mnt/usb-b"])
