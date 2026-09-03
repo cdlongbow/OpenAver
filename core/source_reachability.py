@@ -148,6 +148,11 @@ async def wait_for_first_probe(timeout: float = _FIRST_PROBE_WAIT_S) -> None:
     if task is None or task.done():
         return
 
+    # 例外一律吞掉，其中一種是**設計上接受**的：LAN 模式（`web/lan_listener.py`）用第二個
+    # uvicorn thread ＋ 自己的 event loop 服務同一個 app，而 `_reprobe_task` 屬於 loopback
+    # 那個 loop ⇒ 跨 loop await 會拋，於是這裡直接返回、端點回當下的快照。
+    # 後果與其他兩個已記載的殘留同一級：那句話晚一次導覽才出現（下次進來快照已經寫好了）。
+    # 不改成跨 loop 的完成訊號——那是這支函式的第三次改寫，而收益只有「早一次導覽」。
     with contextlib.suppress(Exception):
         await asyncio.wait_for(asyncio.shield(task), timeout)
 
@@ -270,8 +275,13 @@ async def _tcp_probe(host: str) -> bool | None:
     except OSError as exc:
         if getattr(exc, "errno", None) in _NEG_ERRNOS:
             return True
+        # 預期內的「探測機構自己答不出來」（gaierror／權限等）→ unknown，不吵。
         return None
     except Exception:
+        # 非 OSError 一律是意料外的（to_thread 的 executor 掛掉、我們自己寫錯）。
+        # 仍然收斂成 unknown（不得誤報成 ok，見 _probe_with_retry），但**必須留痕**：
+        # 否則「探測永久壞掉」與「這次剛好問不出來」在 debug.log 裡長得一模一樣。
+        logger.warning("_tcp_probe: unexpected failure for %s", host, exc_info=True)
         return None
 
 
