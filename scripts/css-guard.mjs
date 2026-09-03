@@ -2303,8 +2303,23 @@ const RULES = [
       const empty = findStandalone('.wishlist-empty');
       if (!empty) {
         ctx.fail('CG-WISH-01: .wishlist-empty 專屬（非合併）規則區塊不存在');
-      } else if (!/width\s*:\s*100%/.test(empty.declarations)) {
-        ctx.fail('CG-WISH-01: .wishlist-empty 專屬區塊缺少 width: 100%（子元素是 absolute ⇒ 內在寬度 0，會被 flex 壓成 0 寬的直排字，實測 w=0）');
+      } else {
+        if (!/width\s*:\s*100%/.test(empty.declarations)) {
+          ctx.fail('CG-WISH-01: .wishlist-empty 專屬區塊缺少 width: 100%（子元素是 absolute ⇒ 內在寬度 0，會被 flex 壓成 0 寬的直排字，實測 w=0）');
+        }
+        // [Codex PR review BLOCKER 2026-09-03] TASK-141b-T10 DoD6 的空狀態淡入由 pytest 搬來這裡
+        // （CLAUDE.md north-star：純字串掃描不進 pytest）。掛在同一個 findStandalone 結果上
+        // 是刻意的——T10 的卡片明文要求這兩個宣告必須加進**既有那條** .wishlist-empty 規則本體，
+        // 另開第二個頂層規則會讓 findStandalone 取到沒有 width:100% 的那一個而轉紅。
+        const emptyFade = [
+          [/opacity\s*:\s*0/, 'opacity: 0'],
+          [/animation\s*:\s*wishlistEmptyFadeIn/, 'animation: wishlistEmptyFadeIn'],
+        ];
+        for (const [re, label] of emptyFade) {
+          if (!re.test(empty.declarations)) {
+            ctx.fail(`CG-WISH-01: .wishlist-empty 專屬區塊缺少 ${label}（書籤 0 筆時的空狀態會硬跳出來而不是淡入，DoD 6）`);
+          }
+        }
       }
 
       const grid = findStandalone('.wishlist-grid');

@@ -468,7 +468,32 @@ export function searchStateWishlist() {
                     // 同一次窮舉盤點順手補的正向鎖：若 `loadWishlist()` 在這次 DELETE
                     // 飛的期間落地，它整包覆蓋回來的清單**已經含**這一筆（刪除失敗
                     // ⇒ 伺服器上還在），無條件 unshift 會塞出同 number 的重複 :key。
+                    // 🔴 Codex PR review P2（141b-T7 引入的表面）：燈箱是**唯一**用裸陣列索引
+                    // （wishlistLightboxIndex）定位的消費端。回滾把這一筆塞回陣列**開頭**（不是
+                    // 原位），開頭以後的每一個索引都位移一格 ⇒ 使用者的索引沒動、底下那一片卻換了。
+                    // 書籤牆不受影響：它是 :key="item.number"（keyed by identity），重排只是換位置。
+                    //
+                    // 🔴 不變式（delta review 後改訂，見下方「為什麼換掉上一版」）：
+                    //     **回滾不得改變畫面上當下那一片。**
+                    // 作法：改動陣列**之前**先記下畫面上那一筆的 number，改完之後把索引重新指回它。
+                    // 這是純粹的位移補償，不做任何導航。
+                    //
+                    // 為什麼換掉上一版：上一版的不變式訂成「回到**被刪的**那一片」，兩個方向都錯——
+                    //   ① 就算沒有競態也錯：刪 B 時畫面早就樂觀切到 C 了，把索引拉回 B 等於
+                    //      多做一次使用者沒要求的換片（C→B），而不是「不要跳」。
+                    //   ② 有競態時更錯（Codex delta review 抓到）：DELETE 撞 DB 鎖時是**5 秒**的
+                    //      busy timeout，那 5 秒裡使用者早就按到下一張、下下一張了；晚到的失敗回應
+                    //      會把他從 D 硬拉回 B。
+                    // 讀「當下顯示的那一筆」而不是「當初被刪的那一筆」，同時解掉這兩個——
+                    // 而且不需要世代旗標：它從來不導航，沒有「舊請求該不該生效」這個問題。
+                    const shownBefore = this.wishlistLightboxOpen
+                        ? this.wishlistItems[this.wishlistLightboxIndex]?.number
+                        : undefined;
                     this.wishlistItems.unshift(removedItem);
+                    if (shownBefore !== undefined) {
+                        const stillIdx = this.wishlistItems.findIndex((i) => i.number === shownBefore);
+                        if (stillIdx >= 0) this.wishlistLightboxIndex = stillIdx;
+                    }
                 }
                 this._settleWishlistCountAfterAwait(+1);
             }

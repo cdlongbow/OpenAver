@@ -4751,6 +4751,63 @@ const RULES = [
     scope: /<template x-for="\(item, index\) in wishlistItems"[\s\S]*?<\/template>/,
     note: '[TestWishlistCoverFadeGuard] TASK-141b-T10／CD-19：同上，禁止 item._imgLoaded 形狀',
   },
+
+  // ---- [Codex PR review BLOCKER 2026-09-03] T10 的五條純字串掃描由 pytest 搬來這裡 ----
+  // CLAUDE.md north-star：「能用 lint 機械處理的，就不該進 pytest、也不該耗 Codex 審」。
+  // plan NC-3 只裁定了「既有那支 scope 守衛維持 pytest」，**沒有**授權新增的這幾條；
+  // 實作端把那個授權就地擴大套用，且連 [lint-guard: pytest-justified] 標記都沒補。
+  // 三條 required-string 的目標字面在 search.html 全檔各只出現一次（已量測），
+  // 故不需要 scope——沒有任何兄弟元素能餵飽它們（FE-GUARD-22 的假綠風險為零）。
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: ":loading=\"index < 8 ? 'eager' : 'lazy'\"",
+    note: '[TASK-141b-T10 DoD5] 書籤卡首屏前 8 張 eager、其餘 lazy（閾值逐字抄自瀏覽頁）。少了它整面牆都是 lazy，冷載時首屏封面要等捲動才開始下載。',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: ":fetchpriority=\"index < 8 ? 'high' : 'auto'\"",
+    note: '[TASK-141b-T10 DoD5] 同上的 fetchpriority 那一半；兩個屬性要成對，只留一個等於沒做首屏優先。',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'forbidden-string',
+    pattern: 'loading="lazy"',
+    scope: /<template x-for="\(item, index\) in wishlistItems"[\s\S]*?<\/template>/,
+    note: '[TASK-141b-T10 DoD5] 書籤卡不得寫死 loading="lazy"（要走 :loading 綁定）。必須 scope：這個字面在搜尋結果牆那側是合法的、且出現在本區塊之前三次，裸鎖會恆紅。scope 用 template 邊界的完整 regex 而非固定字元窗——窗貼齊區塊邊界正是 T5/T7 踩過的靜默失效類別。',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: 'x-show="!_wishlistCoverLoaded[item.number] && !_wishlistCoverError[item.number]"',
+    note: '[TASK-141b-T10 DoD1] 骨架的三態 gate（未載入且未破圖才顯示 shimmer）。gate 寫錯會讓骨架與封面同時在場或永遠不消失。',
+  },
+  {
+    file: 'web/static/js/pages/search/state/wishlist.js',
+    kind: 'required-string',
+    pattern: ['_wishlistCoverLoaded: {}', '_wishlistCoverError: {}'],
+    note: '[TASK-141b-T10 CD-19] 封面載入狀態必須是「番號為 key」的 state 宣告，且掛在 wishlist.js 的 state 上（loadWishlist() 內部不碰）。這是 CD-19 落點的另一半——模板側的兩條 forbidden 只擋得住「退回 item._imgLoaded」，擋不住「宣告整個被刪掉」。',
+  },
+  // 🔴 這兩條刻意拆成「一條規則扣一個 CSS 規則本體」，不是把整個 @media 當一袋字串掃。
+  // 被取代的那支 pytest 是後者（`".wishlist-grid" in body and "opacity: 1" in body`），
+  // 而 `.wishlist-empty` 自己也有一份 `opacity: 1` ⇒ **把封面那份刪掉照樣全綠**（fail-open）。
+  // 這個洞是搬家時做反向驗證才量出來的：舊測試也有，不是本次新引入的，但不該原樣搬過來。
+  // anchor 收在各自規則的 `{`，braceBalanced 從那裡起算 ⇒ scope 就是那一條規則的宣告區塊。
+  {
+    file: 'web/static/css/pages/search.css',
+    kind: 'required-string',
+    pattern: ['transition: none', 'opacity: 1'],
+    scope: { anchor: /@media \(prefers-reduced-motion:\s*reduce\)\s*\{\s*:is\([^)]*\)\.wishlist-grid[^{]*\{/, braceBalanced: true },
+    note: '[TASK-141b-T10 DoD7] PRM 下書籤封面淡入退化成「瞬間到位」：transition 關掉 ＋ opacity 直接是 1。少了 opacity:1 會留下一整面 opacity:0 的空白卡——「不執行動畫」與「瞬間到最終狀態」是兩件事（CD-11）。',
+  },
+  {
+    file: 'web/static/css/pages/search.css',
+    kind: 'required-string',
+    pattern: ['opacity: 1', 'animation: none'],
+    scope: { anchor: /@media \(prefers-reduced-motion:\s*reduce\)\s*\{[\s\S]*?\.wishlist-empty\s*\{/, braceBalanced: true },
+    note: '[TASK-141b-T10 DoD7] PRM 下空狀態同理：animation 關掉 ＋ opacity 直接是 1。keyframes 的起始狀態是 opacity:0，只關 animation 不補 opacity:1 會讓「書籤是空的」那段字永遠不出現。',
+  },
 ];
 
 // ---- helpers ----

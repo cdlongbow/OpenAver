@@ -1423,34 +1423,47 @@
         0 0 0 4px var(--glow-primary);
 }
 
-/* TASK-141b-T9（CD-17／設計決策 1-6）：aging 提示掛封面左上角，借 .cover-badges 定位手法
-   （showcase.css:4599 起）但不借 background/border-radius——spec F9「無底色、不搶封面」。
-   淺色字 ＋ 暗向 text-shadow 沿用 .lb-mask-spinner 唯一的既有「無底色文字/圖示浮於媒體上」
-   樣板（showcase.css:1481-1490，白字 ＋ 同值暗向陰影，已抽成 --shadow-text-on-media）。
-   第 2 階琥珀用既有註冊 token var(--color-warning)（theme.css:93/659，主題感知），不得手寫
-   十六進位、不得用 --color-error。position:absolute 不進文件流，零佔位、不影響卡片高度。
-   position:relative 定位脈絡由 .av-card-preview-img（theme.css:1070）提供，本層不需重複宣告。 */
+/* TASK-141b-T9（CD-17）＋ owner 2026-09-03 視覺改判（T11 六筆真資料驗收的產出）：
+   aging 提示掛封面左上角。
+   🔴 原設計「無底色 ＋ 極淡白字」（spec F9 原文）在真封面上被證偽：T11 把六筆真封面放上牆之後，
+   第 1 階完全不可見、第 2 階在 11.2px 下也認不出來——本專案的封面是滿版彩色日文字，
+   任何無底色的小字都會被吃掉。⇒ **spec F9 的「無底色」與「極淡」兩詞由本次改判取代**。
+   owner 拍板改用既有 `.cover-badge` 膠囊語彙（showcase 封面左上／右下的 4K／CD1 那顆，
+   components/cover-badge.css:5，ui-conventions §1 pill 白名單第 4 條「封面左上常駐屬性標籤」，
+   當初由 owner 六案並排選定）；第 2 階再把**底色**換成琥珀（設計決策 1 的 var(--color-warning)
+   從字色改為底色，token 本身不變、仍是主題感知）。
+   ⚠️ 這裡刻意「照抄樣式」而不是直接掛 `.cover-badge` class：`.cover-badge` 帶 min-width:5ch
+   （為了三顆屬性標籤右緣對齊的定寬），本提示是單顆變長文字，套上去會多出左右空白。
+   位置沿用 `.cover-badges`（showcase.css:4599）：position:absolute 不進文件流、零佔位、
+   不影響卡片高度（CD-17 的理由完全不變）；pointer-events:none 不擋卡片點擊與 overlay 垃圾桶鈕。
+   定位脈絡由 `.av-card-preview-img`（theme.css:1070）提供，本層不需重複宣告。
+   零動畫（ui-conventions §0「UI 退位」）：它是靜態提示，不加 transition／hover。 */
 .wishlist-aging {
     position: absolute;
     top: 0.5rem;
     left: 0.5rem;
     z-index: 2;
-    font-size: 0.7rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--spacing) calc(var(--spacing) * 1.5);
+    font-size: var(--text-xs);
     font-weight: 600;
     line-height: 1;
-    /* 🔴 Opus 2026-09-03：淡度用 color 的 alpha，**不要用元素 opacity**。
-       `opacity` 會把 text-shadow 一起淡掉——而那道陰影正是在**淺色封面**上提供對比的東西。
-       元素 opacity:0.55 會讓陰影的有效 alpha 掉到約 0.33，白字浮在淺色封面上就讀不出來了。
-       color-alpha 只淡文字本身、陰影維持全強度，兩種封面都保得住可讀性。 */
-    color: rgba(255, 255, 255, 0.55);
-    text-shadow: 0 1px 4px var(--shadow-text-on-media);
+    white-space: nowrap;
+    background: var(--overlay-badge);
+    border: 1.5px solid color-mix(in oklch, white 45%, transparent);
+    border-radius: var(--radius-pill);
+    color: oklch(100% 0 0);
     pointer-events: none;
 }
 
 .wishlist-aging--stage2 {
-    /* 第 2 階同理不加 opacity：直接用 token 本色（主題感知），
-       與第 1 階的差別就是「從半透明白 → 實心琥珀」，位置／字級／字重全部不變（設計決策 4）。 */
-    color: var(--color-warning);
+    /* 與第 1 階的差別只有底色與字色，位置／字級／字重／形狀全部不變（設計決策 4：
+       第 2 階是「同一個位置提高對比」，不是換成另一種徽章）。 */
+    background: var(--color-warning);
+    border-color: color-mix(in oklch, var(--color-warning) 80%, white);
+    color: oklch(22% 0 0);
 }
 
 /* TASK-141b-T10（CD-13／CD-19／CD-11）：書籤封面淡入。scope compound

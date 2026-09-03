@@ -3171,3 +3171,95 @@ test('T9-DoD-wiring-future-release-overrides-even-through-mixin', () => {
     };
     assert.equal(state.wishlistAgingStage(item), 0, '未來發售日透過 mixin 呼叫仍要壓過計齡');
 });
+
+// ─── Codex PR review P2 ＋ delta review（Opus 2026-09-03）：燈箱刪除失敗的索引回滾 ───
+//
+// 🔴 不變式：**DELETE 失敗回滾不得改變畫面上當下那一片。**
+//
+// 為什麼會破：回滾是把那一筆 `unshift` 回**陣列開頭**（不是原位），開頭以後每個索引都
+// 位移一格；而燈箱是唯一用裸陣列索引定位的消費端 ⇒ 使用者的索引沒動、底下那一片卻換了。
+// 書籤牆不會有這個症狀：它是 `:key="item.number"`，重排只是換位置。
+//
+// ⚠️ 這裡刻意**不是**「回到被刪的那一片」（本輪第一版的寫法，delta review 推翻）：
+//   ① 刪 B 時畫面早就樂觀切到 C，拉回 B 是多做一次使用者沒要求的換片；
+//   ② DELETE 撞 DB 鎖是 5 秒 busy timeout，那 5 秒內使用者早已按到別張，
+//      晚到的失敗回應會把他硬拉回去（下面第二支測試就是這個競態）。
+//
+// 真實觸發條件不是理論值：`web/routers/wishlist.py` 的 DELETE 沒有包 try/except，
+// 掃描中 `upsert_batch()` 持著寫入鎖時，`conn.commit()` 撞 busy timeout 會拋成 HTTP 500
+// （同一種鎖競爭該檔 :110 已經為 GET 記錄過一次）。
+
+test('T7-P2-rollback-keeps-current-film-on-screen', async () => {
+    // 立即失敗：[A,B,C] 正在看 B → 刪除 → 樂觀切到 C → 500 → 畫面必須**仍是 C**。
+    // （既不能變成 A ＝ 原始 finding，也不能跳回 B ＝ 本輪第一版的錯。）
+    mockFetch(() => jsonResponse({}, { ok: false, status: 500 }));
+    const state = makeWishlistThis({
+        wishlistItems: [{ number: 'A' }, { number: 'B' }, { number: 'C' }],
+        wishlistLightboxOpen: true,
+        wishlistLightboxIndex: 1,
+        wishlistLoaded: true,
+        wishlistCount: 3,
+        searchResults: [],
+    });
+
+    state.removeFromWishlistInLightbox();
+    assert.equal(state.wishlistItems[state.wishlistLightboxIndex].number, 'C',
+        '前提：樂觀移除後畫面已切到遞補上來的 C');
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    assert.deepEqual(state.wishlistItems.map((i) => i.number), ['B', 'A', 'C'], '回滾把 B 塞回開頭（既有行為）');
+    assert.equal(state.wishlistItems[state.wishlistLightboxIndex].number, 'C',
+        '回滾後畫面上那一片不得改變');
+});
+
+test('T7-P2-late-failure-does-not-yank-user-back', async () => {
+    // Codex delta review 指名要的競態：500 晚到，期間使用者已經按到下一張。
+    // DB 鎖的 busy timeout 是 5 秒 ⇒ 這個窗口不是理論值，是**主要**的失敗形狀。
+    let rejectDelete;
+    mockFetch((url, opts) => {
+        if (opts.method === 'DELETE') return new Promise((_, rej) => { rejectDelete = rej; });
+        return jsonResponse({});
+    });
+    const state = makeWishlistThis({
+        wishlistItems: [{ number: 'A' }, { number: 'B' }, { number: 'C' }, { number: 'D' }, { number: 'E' }],
+        wishlistLightboxOpen: true,
+        wishlistLightboxIndex: 1,          // 正在看 B
+        wishlistLoaded: true,
+        wishlistCount: 5,
+        searchResults: [],
+    });
+
+    state.removeFromWishlistInLightbox();          // → [A,C,D,E]，畫面切到 C（index 1）
+    assert.equal(state.wishlistItems[state.wishlistLightboxIndex].number, 'C');
+
+    state.nextWishlistLightbox();                  // 使用者在 DELETE 還在飛的時候按下一張 → D
+    assert.equal(state.wishlistItems[state.wishlistLightboxIndex].number, 'D');
+
+    rejectDelete(new Error('database is locked'));  // 500 這時才回來
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    assert.deepEqual(state.wishlistItems.map((i) => i.number), ['B', 'A', 'C', 'D', 'E']);
+    assert.equal(state.wishlistItems[state.wishlistLightboxIndex].number, 'D',
+        '晚到的失敗回應不得把使用者從 D 拉回任何別的片');
+});
+
+test('T7-P2-rollback-does-not-touch-index-when-lightbox-closed', async () => {
+    // 反向鎖：燈箱沒開時不得動 wishlistLightboxIndex（牆的路徑不受本修正影響）。
+    mockFetch(() => jsonResponse({}, { ok: false, status: 500 }));
+    const state = makeWishlistThis({
+        wishlistItems: [{ number: 'A' }, { number: 'B' }, { number: 'C' }],
+        wishlistLightboxOpen: false,
+        wishlistLightboxIndex: 1,
+        wishlistLoaded: true,
+        wishlistCount: 3,
+        searchResults: [],
+    });
+
+    await state.removeFromWishlist('B', 'wall');
+
+    assert.equal(state.wishlistLightboxIndex, 1, '燈箱關著時不得改動索引');
+});

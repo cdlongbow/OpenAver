@@ -3375,50 +3375,18 @@ class TestWishlistCoverFadeGuard:
         assert 'item._imgError' not in img and 'item._imgLoaded' not in img, \
             "CD-19 禁止形狀：書籤卡 <img> 仍殘留 item._imgError/item._imgLoaded（掛在整包覆蓋的元素物件上，切分頁再切回會讓封面全部消失）"
 
-    def test_wishlist_img_first_screen_fetchpriority(self):
-        """DoD 5: 書籤卡首屏前 8 張 eager+high（不可 lazy+high 並存），照抄瀏覽頁 < 8 閾值"""
-        img = self._wishlist_img()
-        assert ":loading=\"index < 8 ? 'eager' : 'lazy'\"" in img, \
-            "書籤卡 <img> 缺首屏 :loading 綁定（index<8 eager 其餘 lazy）"
-        assert ":fetchpriority=\"index < 8 ? 'high' : 'auto'\"" in img, \
-            "書籤卡 <img> 缺 :fetchpriority 綁定（index<8 high 其餘 auto）"
-        assert 'loading="lazy"' not in img, \
-            "書籤卡 <img> 仍有寫死 loading=\"lazy\"（應改 :loading 綁定）"
-
-    def test_wishlist_has_skeleton_cover(self):
-        """DoD 1: 骨架 div 存在，gate 含未載入且未破圖（照抄瀏覽頁三態 gate 的書籤版）"""
-        html = self._html()
-        assert 'x-show="!_wishlistCoverLoaded[item.number] && !_wishlistCoverError[item.number]"' in html, \
-            "search.html 書籤卡缺 skeleton-cover 的 x-show gate"
-
-    def test_wishlist_js_declares_cover_state(self):
-        """CD-19 候選 (a): wishlist.js 宣告 _wishlistCoverLoaded/_wishlistCoverError（番號為 key 的 plain object）"""
-        src = self.WISHLIST_JS.read_text(encoding="utf-8")
-        assert "_wishlistCoverLoaded: {}" in src, "wishlist.js 缺 _wishlistCoverLoaded: {} 宣告"
-        assert "_wishlistCoverError: {}" in src, "wishlist.js 缺 _wishlistCoverError: {} 宣告"
-
-    def test_wishlist_empty_has_fade_in_animation(self):
-        """DoD 6: .wishlist-empty 顯示時有 animation（非硬跳），且與既有 width:100% 同一個規則本體
-        （CG-WISH-01 用 findStandalone() 抓「最後一個」逐字 .wishlist-empty 頂層規則並要求
-        width:100% 在場，兩個宣告必須加進同一個規則，不能另開一個新的——見 card「C」）"""
-        css = SEARCH_CSS.read_text(encoding="utf-8")
-        m = re.search(r'(?<![\w-])\.wishlist-empty\s*\{([^}]*)\}', css)
-        assert m, "search.css 找不到 .wishlist-empty 規則"
-        body = m.group(1)
-        assert "width: 100%" in body, ".wishlist-empty 規則遺失既有 width: 100%（CG-WISH-01 會轉紅）"
-        assert "opacity: 0" in body and "animation: wishlistEmptyFadeIn" in body, \
-            ".wishlist-empty 缺 opacity:0 + animation:wishlistEmptyFadeIn（DoD 6 淡入）"
-
-    def test_wishlist_fade_and_empty_prm_degrade(self):
-        """DoD 7: reduced-motion 下淡入與空狀態動畫皆退化為瞬間到位，不留 opacity:0 的卡"""
-        css = SEARCH_CSS.read_text(encoding="utf-8")
-        blocks = re.findall(r'@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{(.*?)\n\}', css, re.S)
-        assert blocks, "search.css 找不到 @media (prefers-reduced-motion: reduce) 區塊"
-        body = blocks[0]
-        assert ".wishlist-grid" in body and "transition: none" in body and "opacity: 1" in body, \
-            "PRM 缺書籤封面淡入退化（.wishlist-grid ... transition:none; opacity:1）"
-        assert ".wishlist-empty" in body and "animation: none" in body, \
-            "PRM 缺 .wishlist-empty 退化（opacity:1; animation:none）"
+    # ── 以下五條純字串掃描已於 2026-09-03 搬去 lint（Codex PR review BLOCKER）──────────
+    # CLAUDE.md「Lint 守衛規則」north-star：能用 lint 機械處理的就不該進 pytest。
+    # plan NC-3 只裁定「既有那支 scope 守衛（test_fade_rule_scoped_to_showcase_container）
+    # 維持 pytest」，**沒有**授權新增的這五條；T10 實作端把那個授權就地擴大套用了。
+    #   test_wishlist_img_first_screen_fetchpriority → static_guard_lint.mjs（required×2 + forbidden×1）
+    #   test_wishlist_has_skeleton_cover            → static_guard_lint.mjs（required-string）
+    #   test_wishlist_js_declares_cover_state       → static_guard_lint.mjs（required-string，wishlist.js）
+    #   test_wishlist_empty_has_fade_in_animation   → css-guard.mjs CG-WISH-01（沿用同一個 findStandalone 結果）
+    #   test_wishlist_fade_and_empty_prm_degrade    → static_guard_lint.mjs（braceBalanced @media scope）
+    # 上面 test_wishlist_img_has_load_and_covererror_fade 留在 pytest：它是同檔十個既有
+    # 「跨檔 Alpine binding contract」測試的同一家族，單獨搬走一條會製造風格不一致——
+    # 那批舊測試要不要一起遷移，依「守衛的退場」規則等下次真的要動它們時再判。
 
 
 # ── TASK-70-T5: JavLibrary Picker BETA 視覺 + 不可用 gate 靜態守衛 ──
