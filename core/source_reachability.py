@@ -28,8 +28,8 @@ logger = get_logger(__name__)
 
 # TTL 非對稱（CD-5）：全好時重探買不到東西——碟中途被拔，封面自己會失敗＝今天的行為；
 # 已經不可達時使用者隨時會把碟插回來，要讓 footer 那句話快點消失。
-_SNAPSHOT_TTL_OK_S = 600.0
-_SNAPSHOT_TTL_UNREACHABLE_S = 60.0
+_TTL_HEALTHY = 600.0
+_TTL_DEGRADED = 60.0
 _TCP_TIMEOUT_S = 2.0
 _EXISTS_WAIT_S = 5.0
 _RETRY_SLEEP_S = 1.0
@@ -51,9 +51,11 @@ _reprobe_task: asyncio.Task | None = None
 
 def _current_ttl_locked() -> float:
     """Pick the snapshot TTL from the *last* snapshot (caller must hold ``_lock``)."""
-    if any(status == "unreachable" for status in _snapshot.values()):
-        return _SNAPSHOT_TTL_UNREACHABLE_S
-    return _SNAPSHOT_TTL_OK_S
+    return (
+        _TTL_DEGRADED
+        if any(status == "unreachable" for status in _snapshot.values())
+        else _TTL_HEALTHY
+    )
 
 
 def get_snapshot() -> dict[str, str]:
