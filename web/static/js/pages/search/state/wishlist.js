@@ -395,6 +395,25 @@ export function searchStateWishlist() {
             window.GhostFly?.playInboundFly?.({
                 fromEl: fromEl,
                 toEl: toEl,
+                // ⚠️ Codex PR#177 P2（2026-09-03，**已判 decline，理由留在這裡**）：
+                // 這個 fallback 的文案逐字是「已加入書籤」（locales/zh_TW.json:268）——
+                // 一句完成式斷言。而它是在 `await fetch` 回來**之前**就可能被說出口的。
+                //
+                // 為什麼今天不修：
+                // ① **這條分支現在打不到。** 觸發條件是 `#wishlistToggleBtn` 的 rect 寬或高為 0
+                //    （ghost-fly.js:955）。那顆鈕在 search.html 是固定佈局、無 x-show/x-if，
+                //    全庫 CSS 查無任何 display:none 命中它。**320px（比任何斷點都窄）實測 32×32、
+                //    visible**。
+                // ② 就算打得到，它也只是**同一個樂觀斷言的文字版**：卡片按鈕在同一個同步區塊裡
+                //    就已經翻成「移除書籤」、badge 也已經 +1。三個訊號同源，只把其中一個
+                //    改成「等結果」並不自洽。
+                // ③ 三個一起等結果 ＝ Codex 建議的做法，代價是**每一次成功加入**的第一個回饋都要
+                //    等 POST 回來——而那支端點是**同步下載封面**的（routers/wishlist.py:90 →
+                //    wishlist_cover_cache.py:104，兩個網址各 timeout 30s）⇒ 最壞 60 秒才有反應。
+                //    為一條打不到的路徑，讓所有人的正常路徑退化，方向是反的（T8 設計決策 5）。
+                //
+                // 🔴 **如果哪天你要在窄螢幕把 #wishlistToggleBtn 藏起來，這條就活了**——
+                // 那時要一起把這句 toast 改成「等 addToWishlist() 的結果為真的新增才說」。
                 fallback: {
                     toastFn: (msg) => this.showToast(msg, 'success', 1500),
                     message: window.t('search.toast.wishlist_added_offscreen')
