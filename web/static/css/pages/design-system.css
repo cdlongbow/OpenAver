@@ -2863,3 +2863,14 @@
     border-color: color-mix(in oklch, white 8%, transparent);
     /* Child .ds-fm-edge-chip variants use --glass-edge-highlight-* / --glass-edge-lowlight-* */
 }
+
+
+/* TASK-142-T5：來源不可達 pill 的型錄容器。
+   刻意**不用** production 的 `.footer-left`——showcase.css 對它有 `@media (max-width: 640px) { display: none }`，
+   而 design-system 直接載入那支 CSS，窄視窗會讓六個範例整組消失（owner 目視比對 icon 時會以為登記壞了）。
+   這裡只還原它的 flex/gap context。 */
+.ds-footer-pill-demo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
