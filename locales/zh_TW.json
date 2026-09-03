@@ -195,7 +195,7 @@
     },
     "wishlist": {
       "empty": "還沒有任何書籤",
-      "aged_days": "放了 {days} 天"
+      "aged_days": "{days} 天前加入"
     },
     "button": {
       "search_all": "批次搜尋",

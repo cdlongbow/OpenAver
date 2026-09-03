@@ -180,6 +180,9 @@
       "has_local": "本地已有（点击打开文件夹）",
       "has_local_count": "本地已有 {count} 个版本（点击打开文件夹）"
     },
+    "wishlist": {
+      "aged_days": "{days} 天前加入"
+    },
     "button": {
       "search_all": "批量搜索",
       "continue": "继续",
