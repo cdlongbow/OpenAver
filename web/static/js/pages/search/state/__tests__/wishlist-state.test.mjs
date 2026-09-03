@@ -1549,6 +1549,13 @@ function withCrossfadeEnv({ queryMap, fadeImpl, playEntryImpl }, fn) {
     return run();
 }
 
+// ⚠️ `.wishlist-grid` 這一筆**沒有 `classList`**（見 gotchas FE-TIMING-11 同期的 T6 紀錄）。
+// T6 之所以沒炸純粹是巧合：用到本 fixture 的那支測試 `wishlistItems` 初值是空陣列
+// ⇒ `goneItems` 恆空 ⇒ 走不到 `grid.classList.add('flip-guard')`。
+// **下一支動 `loadWishlist()` 或改本 fixture 的 task，只要讓那支測試的清單非空就會炸在
+// `classList` undefined 上，而錯誤訊息完全不會指向真正的原因。** 動之前先補 `classList` stub。
+// 附帶：node:test 的零-DOM 環境**沒有 `requestAnimationFrame`**——未來在 `wishlist.js` 加
+// 巢狀 `$nextTick(() => requestAnimationFrame(...))` 都會撞到，沿用 T6 的 guarded stub。
 const T2_ELS = {
     '#resultCard': { id: 'resultCard' },
     '#emptyState': { id: 'emptyState' },
@@ -3262,4 +3269,130 @@ test('T7-P2-rollback-does-not-touch-index-when-lightbox-closed', async () => {
     await state.removeFromWishlist('B', 'wall');
 
     assert.equal(state.wishlistLightboxIndex, 1, '燈箱關著時不得改動索引');
+});
+
+// ─── branch review P2-2（Opus 2026-09-03）：進場與差集收攏不得同時打同一批卡 ───
+//
+// 🔴 不變式：**同一批卡片、同一次載入，只能有一支動畫寫它的 opacity。**
+//
+// 情境：看過書籤牆 → 切走 → 掃描把其中幾片入庫 → 切回書籤牆（spec F8.2 驗收 4 那一幕）。
+// `switchToWishlist()` 的 `loadPromise.then(playEntry)` 是 microtask，而 `loadWishlist()` 的
+// FLIP 派發包在 `$nextTick → rAF` 裡 ⇒ playEntry 一定先跑，先 `gsap.set(opacity:0, y:20)` 再往 1 補；
+// 一個 frame 之後 `Flip.from(state)` 帶著 `props:'opacity'` 對同一批卡再開一條 opacity tween。
+// 兩條誰都沒 kill 誰（`Flip.killFlipsOf` 只殺 Flip、playEntry 的 `killTweensOf` 在 Flip 之前）。
+//
+// 既有測試照不到這條：`T2-DoD1` 用 `wishlistLoaded: false` ⇒ 無 FLIP；
+// `T6-DoD3` 直接呼叫 `loadWishlist()` ⇒ 無 playEntry。兩條各驗一半，合起來的路徑沒有 oracle。
+
+function withEntryAndFlipEnv({ queryMap }, fn) {
+    const prevGM = globalThis.window.GridMotion;
+    const prevSA = globalThis.window.SearchAnimations;
+    const prevQS = globalThis.document.querySelector;
+    const prevRAF = globalThis.requestAnimationFrame;
+
+    const playEntryCalls = [];
+    const captureCalls = [];
+    const playFlipCalls = [];
+    const pendingTicks = [];
+    const pendingFrames = [];
+
+    globalThis.document.querySelector = (sel) => (queryMap && Object.prototype.hasOwnProperty.call(queryMap, sel))
+        ? queryMap[sel] : null;
+    globalThis.window.SearchAnimations = {
+        playListModeCrossfade(oldEl, newEl, options) {
+            if (options && typeof options.onOldFadeComplete === 'function') options.onOldFadeComplete();
+            return null;
+        },
+    };
+    globalThis.window.GridMotion = {
+        playEntry(el) { playEntryCalls.push(el); return null; },
+        captureFlipState(gridEl) { captureCalls.push(gridEl); return { __mockFlipState: true }; },
+        playFlipFilter(gridEl, state) { playFlipCalls.push({ gridEl, state }); return { fake: 'timeline' }; },
+    };
+    globalThis.requestAnimationFrame = (cb) => { pendingFrames.push(cb); return pendingFrames.length; };
+
+    const api = {
+        playEntryCalls, captureCalls, playFlipCalls,
+        attachNextTick(state) { state.$nextTick = (cb) => { pendingTicks.push(cb); }; },
+        flush() {
+            for (const cb of pendingTicks.splice(0, pendingTicks.length)) cb();
+            for (const cb of pendingFrames.splice(0, pendingFrames.length)) cb();
+        },
+    };
+    const restore = () => {
+        globalThis.window.GridMotion = prevGM;
+        globalThis.window.SearchAnimations = prevSA;
+        globalThis.document.querySelector = prevQS;
+        globalThis.requestAnimationFrame = prevRAF;
+    };
+    const run = async () => { try { return await fn(api); } finally { restore(); } };
+    return run();
+}
+
+// 這個 fixture 的 `.wishlist-grid` **必須有 classList**（flip-guard 會用到）——
+// 見該 fixture 上方註解記的那條巧合。
+const P22_ELS = {
+    '#resultCard': { id: 'resultCard' },
+    '.wishlist-panel': { className: 'wishlist-panel' },
+    '.wishlist-grid': { className: 'wishlist-grid', classList: { add() {}, remove() {} }, offsetHeight: 0 },
+};
+
+test('P2-2-diff-collapse-suppresses-entry-animation', async () => {
+    // 切回書籤牆、而且有卡被對帳掉 ⇒ 收攏獨佔，不得再播進場。
+    mockFetch(() => jsonResponse([{ number: 'W-1' }]));      // 舊清單 2 筆 → 新清單 1 筆（差集 1）
+    await withEntryAndFlipEnv({ queryMap: P22_ELS }, async (env) => {
+        const state = makeWishlistThis({
+            listMode: 'search', displayMode: 'grid', pageState: 'result',
+            wishlistLoaded: true,
+            wishlistItems: [{ number: 'W-1' }, { number: 'GONE-1' }],
+        });
+        env.attachNextTick(state);
+
+        await state.switchToWishlist();
+        await Promise.resolve();
+        await Promise.resolve();
+        env.flush();
+
+        assert.equal(env.captureCalls.length, 1, '有差集 ⇒ 必須 capture');
+        assert.equal(env.playFlipCalls.length, 1, '有差集 ⇒ 必須播收攏');
+        assert.equal(env.playEntryCalls.length, 0,
+            '收攏在跑時不得同時播進場——兩支會搶著寫同一批卡片的 opacity');
+    });
+});
+
+test('P2-2-no-diff-still-plays-entry-animation', async () => {
+    // 反向鎖：沒有差集時進場照播（不能為了修上面那條把進場整個關掉）。
+    mockFetch(() => jsonResponse([{ number: 'W-1' }, { number: 'W-2' }]));
+    await withEntryAndFlipEnv({ queryMap: P22_ELS }, async (env) => {
+        const state = makeWishlistThis({
+            listMode: 'search', displayMode: 'grid', pageState: 'result',
+            wishlistLoaded: true,
+            wishlistItems: [{ number: 'W-1' }, { number: 'W-2' }],
+        });
+        env.attachNextTick(state);
+
+        await state.switchToWishlist();
+        await Promise.resolve();
+        await Promise.resolve();
+        env.flush();
+
+        assert.equal(env.captureCalls.length, 0, '無差集 ⇒ 零 capture');
+        assert.equal(env.playFlipCalls.length, 0, '無差集 ⇒ 零收攏');
+        assert.equal(env.playEntryCalls.length, 1, '無差集時進場必須照播');
+    });
+});
+
+// ─── branch review P3-8（Opus 2026-09-03）：燈箱沒開時觸控不得換片 ───
+// 主燈箱有三條短路（`grid-mode.js:448-455`），T5 鏡射時漏抄第三條「燈箱沒開不換片」。
+// 今天碰不到是因為 `.showcase-lightbox` 關著時 `pointer-events: none`（showcase.css:857）——
+// 但那是**別的檔案的樣式**在替這支 handler 擋，不是 handler 自己守住的。
+test('P3-8-touchend-noop-when-lightbox-closed', () => {
+    const spies = makeSwipeSpies();
+    const state = makeWishlistThis({ ...spies, wishlistLightboxOpen: false });
+    searchStateWishlist()._wishlistLbTouchStart.call(state, { touches: [{ clientX: 500, clientY: 100 }] });
+    searchStateWishlist()._wishlistLbTouchEnd.call(state, { changedTouches: [{ clientX: 100, clientY: 150 }] });
+    assert.equal(spies.nextCalls.length, 0, '燈箱沒開時左滑不得換片');
+    assert.equal(spies.prevCalls.length, 0, '燈箱沒開時右滑不得換片');
+    assert.equal(state._wishlistLbTouchStartX, null, '短路仍要把座標清回 null');
+    assert.equal(state._wishlistLbTouchStartY, null);
 });

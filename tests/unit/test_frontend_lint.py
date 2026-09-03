@@ -3180,22 +3180,32 @@ class TestCoverLoadingUx67Guard:
         """Codex P2#1 + TASK-141b-T10: 淡入 opacity:0 規則必須各自 compound 正確 scope。
         showcase.css 那條必須含 .showcase-container；search.css 書籤那條必須含 .wishlist-grid。
         兩個 scope 都要對，不是「任一 scope 存在即可」（CD-13 禁止放寬成任意 scope）。"""
+        # 🔴 branch review P3-1（Opus 2026-09-03）：用 finditer 逐條驗，不是 search 只驗第一條。
+        # 原本用 re.search ⇒ 只檢查**第一條**匹配的規則。實測：在檔尾追加一條裸的
+        # `.av-card-preview-img img { opacity: 0; }`（正是 CD-13 白紙黑字要防的
+        # 「洩漏到 .search-grid 讓搜尋封面整片隱形」），本測試**仍然綠**。
+        # 「拿掉既有那條的 scope 會轉紅」是成立的，缺的是「新增第二條」這個方向。
+        pat = re.compile(r'([^{}]*?\.av-card-preview-img img)\s*\{[^}]*opacity:\s*0[^}]*\}')
+
         css = self._css()  # showcase.css，既有
         css_nc = re.sub(r'/\*.*?\*/', '', css, flags=re.S)
-        m = re.search(r'([^{}]*?\.av-card-preview-img img)\s*\{[^}]*opacity:\s*0[^}]*\}', css_nc)
-        assert m, "showcase.css 找不到 opacity:0 的 .av-card-preview-img img 淡入規則"
-        assert ".showcase-container" in m.group(1), (
-            "showcase.css 淡入規則未 compound .showcase-container：" + m.group(1).strip()
-        )
+        matches = list(pat.finditer(css_nc))
+        assert matches, "showcase.css 找不到 opacity:0 的 .av-card-preview-img img 淡入規則"
+        for m in matches:
+            assert ".showcase-container" in m.group(1), (
+                "showcase.css 淡入規則未 compound .showcase-container：" + m.group(1).strip()
+            )
         # TASK-141b-T10 新增：search.css 書籤那條的對應檢查
         search_css = SEARCH_CSS.read_text(encoding="utf-8")
         search_css_nc = re.sub(r'/\*.*?\*/', '', search_css, flags=re.S)
-        m2 = re.search(r'([^{}]*?\.av-card-preview-img img)\s*\{[^}]*opacity:\s*0[^}]*\}', search_css_nc)
-        assert m2, "search.css 找不到書籤封面 opacity:0 淡入規則（TASK-141b-T10）"
-        assert ".wishlist-grid" in m2.group(1), (
-            "search.css 書籤淡入規則未 compound .wishlist-grid（會洩漏到 .search-grid 讓搜尋封面隱形）："
-            + m2.group(1).strip()
-        )
+        matches2 = list(pat.finditer(search_css_nc))
+        assert matches2, "search.css 找不到書籤封面 opacity:0 淡入規則（TASK-141b-T10）"
+        m2 = matches2[0]
+        for mm in matches2:
+            assert ".wishlist-grid" in mm.group(1), (
+                "search.css 書籤淡入規則未 compound .wishlist-grid（會洩漏到 .search-grid 讓搜尋封面隱形）："
+                + mm.group(1).strip()
+            )
         # 🔴 Opus 2026-09-03 追加：連 :is() compound 一起鎖。
         # 沒有這一條的話，有人把選擇器「簡化」成裸 .wishlist-grid .av-card-preview-img img
         # （specificity 0,2,1）會輸給 theme.css:1084 的
@@ -3204,11 +3214,12 @@ class TestCoverLoadingUx67Guard:
         # 那條宣告的是 transition: transform，會把我們的 transition: opacity 整個吃掉。
         # 後果：opacity 照樣 0→1，但**沒有過渡** ⇒ 淡入變成瞬間出現 ＝ 我們要消除的白閃本身，
         # 而 opacity:0 那條斷言、node:test、check.sh 全部照樣綠。只有 owner 真機驗收看得到。
-        assert ":is(#ds-gallery-components" in m2.group(1), (
-            "search.css 書籤淡入規則未 compound :is(#ds-gallery-components, .ds-gallery-composition)："
-            "特異度會輸給 theme.css:1084 的同名 transition 宣告，淡入被靜默吃掉（見本測試上方註解）："
-            + m2.group(1).strip()
-        )
+        for mm in matches2:
+            assert ":is(#ds-gallery-components" in mm.group(1), (
+                "search.css 書籤淡入規則未 compound :is(#ds-gallery-components, .ds-gallery-composition)："
+                "特異度會輸給 theme.css:1084 的同名 transition 宣告，淡入被靜默吃掉（見本測試上方註解）："
+                + mm.group(1).strip()
+            )
 
     def test_prm_degrades_shimmer_and_fade(self):
         """A1/DoD A-4: reduced-motion 下 shimmer animation:none + 淡入 transition:none/opacity:1 皆退化"""
@@ -3355,7 +3366,15 @@ class TestWishlistCoverFadeGuard:
     def _wishlist_img(self):
         """抽出書籤卡封面 <img :src="`/api/wishlist/cover?number=…`" …>（唯一含這個 endpoint 字面的 img tag）"""
         html = self._html()
-        m = re.search(r'<img :src="`/api/wishlist/cover\?number=.*?>', html, re.S)
+        # branch review P2-1 之後 :src 前面多了 item.created_at 三元閘（樂觀 unshift 那一筆
+        # 沒有 created_at ⇒ src 為 null ⇒ 不發那個必定 404 的請求），錨點不能寫死從反引號開頭。
+        # ⚠️ 但也不能只放寬成「src 裡含該端點」——**書籤燈箱那張大圖用同一個端點**
+        # （search.html:279），放寬之後 re.search 會先抓到它，斷言就變成在驗錯的元素。
+        # 正解：先扣住書籤卡的 x-for 模板區塊，再在裡面找那個 img。
+        tpl = re.search(
+            r'<template x-for="\(item, index\) in wishlistItems".*?</template>', html, re.S)
+        assert tpl, "search.html: 書籤卡的 x-for 模板不存在"
+        m = re.search(r'<img :src="[^"]*/api/wishlist/cover\?number=.*?>', tpl.group(0), re.S)
         assert m, "search.html: 書籤卡封面 <img :src=\"`/api/wishlist/cover?number=…\"> 不存在"
         return m.group(0)
 

@@ -103,10 +103,25 @@ export function searchStateWishlist() {
                 if (self._wishlistViewGeneration !== gen) return;
                 self.listMode = 'wishlist';
                 self.displayMode = 'grid';
+                // 🔴 branch review P2-2（2026-09-03）：先記下 FLIP 世代。
+                // `loadWishlist()` **只有在真的排了差集收攏時**才會遞增 `_wishlistFlipGeneration`
+                // （見該函式尾段），所以「這次載入有沒有 FLIP」用它比對就問得出來，
+                // 不必動 `loadWishlist()` 內部一行。
+                var flipGenBefore = self._wishlistFlipGeneration;
                 var loadPromise = self.loadWishlist();
                 window.SearchAnimations?.playListModeCrossfade?.(null, safeQuery('.wishlist-panel'), {});
                 loadPromise.then(function () {
                     if (self._wishlistViewGeneration !== gen) return;
+                    // 🔴 不變式：**同一批卡片同一次只能有一支動畫寫它的 opacity。**
+                    // 實測呼叫序是 crossfade → capture → playEntry → playFlipFilter：
+                    // `playEntry` 是 microtask、FLIP 派發包在 `$nextTick → rAF` 裡，所以
+                    // playEntry 一定先跑，先把視窗內的卡設成 opacity 0 / y 20 再往 1 補；
+                    // 一個 frame 之後 `Flip.from(state)` 帶著 `props:'opacity'`（capture 時錄到的是 1）
+                    // 對同一批卡再開一條 opacity tween，兩條誰都沒 kill 誰
+                    // （`Flip.killFlipsOf` 只殺 Flip、playEntry 的 `killTweensOf` 在 Flip 之前）。
+                    // 差集收攏是使用者真正該看到的那一幕（spec F8.2 驗收 4「被對帳掉的卡演著離開」），
+                    // 進場只是通用轉場 ⇒ **有收攏就讓收攏獨佔**。
+                    if (self._wishlistFlipGeneration !== flipGenBefore) return;
                     if (!self.wishlistItems.length) return;
                     window.GridMotion?.playEntry?.(safeQuery('.wishlist-grid'));
                 });
@@ -662,6 +677,15 @@ export function searchStateWishlist() {
             // 攔截短路串（比照主燈箱 grid-mode.js:448-453；x-trap.inert 只管焦點/樣式，
             // 不保證 @touchend.passive 監聽器不被觸發，設計決策 5）
             if (this.sampleGalleryOpen || this.rescrapeOpen) {
+                this._wishlistLbTouchStartX = null;
+                this._wishlistLbTouchStartY = null;
+                return;
+            }
+            // [branch review P3-8] 主燈箱的第三條短路（grid-mode.js:453「燈箱沒開不換片」）
+            // T5 鏡射時漏抄。今天碰不到——`.showcase-lightbox` 關著時是 pointer-events:none
+            // （showcase.css:857）——但那是**別的檔案的樣式**在替這支 handler 擋，
+            // 哪天有人給子元素補 pointer-events:auto 就露出來。三條要齊。
+            if (!this.wishlistLightboxOpen) {
                 this._wishlistLbTouchStartX = null;
                 this._wishlistLbTouchStartY = null;
                 return;

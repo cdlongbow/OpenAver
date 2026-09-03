@@ -4659,6 +4659,24 @@ const RULES = [
     count: 6,
     note: '[TASK-141b-T8] F8.3 三處（搜尋燈箱/單片大卡/搜尋格牆卡）加入鈕與移除鈕共 6 顆，各帶一組 x-transition:enter* 過渡（CD-18）。全域無 scope——這個精確字面（不含 translate 尾碼）在改動前全檔 0 筆命中，是本卡獨有，不與既有 toast 容器的 "opacity-100 translate-y-0" 衝突。count 掉到 6 以下代表有鈕的 enter 過渡被拿掉了。',
   },
+  // 🔴 branch review P3-2（Opus 2026-09-03）：上面那條只鎖 enter-end，是三分之一。
+  // `x-transition:enter*` 是三件一組——拿掉 **enter-start** 之後過渡實際失效（沒有起始
+  // opacity，等於從 1 到 1），而 lint 與 node:test **全綠**：正是上面那條 note 說要擋的東西。
+  // 三個字面在改動前全檔各 0 筆命中，是本卡獨有，全域無 scope 安全。
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: 'x-transition:enter-start="opacity-0"',
+    count: 6,
+    note: '[branch review P3-2] 同上 6 顆鈕的 enter 起始狀態。少了它 opacity 從 1 到 1，過渡靜默失效。',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: 'x-transition:enter="transition ease-out duration-150"',
+    count: 6,
+    note: '[branch review P3-2] 同上 6 顆鈕的 enter 過渡本體（時長對齊 OpenAver.motion.DURATION.fast）。少了它就沒有 transition class，起訖狀態瞬間切換。',
+  },
   {
     file: 'web/templates/search.html',
     kind: 'forbidden-string',
@@ -4787,6 +4805,7 @@ const RULES = [
     file: 'web/static/js/pages/search/state/wishlist.js',
     kind: 'required-string',
     pattern: ['_wishlistCoverLoaded: {}', '_wishlistCoverError: {}'],
+    stripLineComments: true,   // [branch review P3-3] 本 codebase 兩次踩過「註解餵飽守衛」（search.html:271 / wishlist.js:449 的註解都明文寫著這件事）——宣告被刪掉、字面只留在註解裡時，沒有這個旗標守衛照樣綠
     note: '[TASK-141b-T10 CD-19] 封面載入狀態必須是「番號為 key」的 state 宣告，且掛在 wishlist.js 的 state 上（loadWishlist() 內部不碰）。這是 CD-19 落點的另一半——模板側的兩條 forbidden 只擋得住「退回 item._imgLoaded」，擋不住「宣告整個被刪掉」。',
   },
   // 🔴 這兩條刻意拆成「一條規則扣一個 CSS 規則本體」，不是把整個 @media 當一袋字串掃。
@@ -4800,6 +4819,12 @@ const RULES = [
     pattern: ['transition: none', 'opacity: 1'],
     scope: { anchor: /@media \(prefers-reduced-motion:\s*reduce\)\s*\{\s*:is\([^)]*\)\.wishlist-grid[^{]*\{/, braceBalanced: true },
     note: '[TASK-141b-T10 DoD7] PRM 下書籤封面淡入退化成「瞬間到位」：transition 關掉 ＋ opacity 直接是 1。少了 opacity:1 會留下一整面 opacity:0 的空白卡——「不執行動畫」與「瞬間到最終狀態」是兩件事（CD-11）。',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: 'item.created_at ? `/api/wishlist/cover?number=',
+    note: '[branch review P2-1] 書籤卡封面的 :src 必須用 item.created_at 當閘。樂觀 unshift 的那一筆（addToWishlist 在 POST 之前就 unshift）沒有這個伺服器端欄位；沒有這道閘，它會在封面檔還沒寫完時就發 GET ⇒ 必定 404 ⇒ @error 寫進 _wishlistCoverError，而那張表依 CD-19 刻意不被 loadWishlist() 清掉 ⇒ 剛加的片在書籤牆上永遠是灰底「無圖」，只有 F5 才會好。事後清旗標不是解法：實測清了也不會重新請求（naturalWidth 仍 0），只會把占位換成破圖 icon。',
   },
   {
     file: 'web/static/css/pages/search.css',

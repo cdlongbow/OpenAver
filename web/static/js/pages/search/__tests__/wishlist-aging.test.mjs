@@ -12,6 +12,9 @@ import {
     WISHLIST_AGING_THRESHOLD_DAYS,
 } from '../wishlist-aging.js';
 
+// [branch review P3-7] CD-5：門檻只在定義處出現一次，測試由常數推導邊界。
+const { STAGE1, STAGE2 } = WISHLIST_AGING_THRESHOLD_DAYS;
+
 // 固定基準時刻（不依賴真實 wall-clock，CD-6 可注入的意義所在）
 const NOW_MS = Date.UTC(2026, 8, 3, 12, 0, 0); // 2026-09-03T12:00:00Z
 
@@ -33,20 +36,22 @@ test('T9-DoD1-recent-created-not-aged: 3 天前、發售日過去 → 0', () => 
     assert.equal(classifyWishlistAging(daysAgoStr(3), '2020-01-01', NOW_MS), 0);
 });
 
-test('T9-DoD1-lower-boundary-13-days-not-aged: 13 天前 → 0', () => {
-    assert.equal(classifyWishlistAging(daysAgoStr(13), '', NOW_MS), 0);
+test('T9-DoD1-lower-boundary-13-days-not-aged: 第 1 階門檻前一天 → 0', () => {
+    // [branch review P3-7] CD-5 的目的是「改一個常數就能調門檻」——邊界一律由常數推出，
+    // 不抄字面 14/30，否則改門檻會讓 5 支測試同時假性轉紅、得逐支手改。
+    assert.equal(classifyWishlistAging(daysAgoStr(STAGE1 - 1), '', NOW_MS), 0);
 });
 
-test('T9-DoD1-stage1-upper-boundary-14-days: 14 天前 → 1', () => {
-    assert.equal(classifyWishlistAging(daysAgoStr(14), '', NOW_MS), 1);
+test('T9-DoD1-stage1-upper-boundary-14-days: 第 1 階門檻當天 → 1', () => {
+    assert.equal(classifyWishlistAging(daysAgoStr(STAGE1), '', NOW_MS), 1);
 });
 
-test('T9-DoD1-stage1-29-days: 29 天前 → 1', () => {
-    assert.equal(classifyWishlistAging(daysAgoStr(29), '', NOW_MS), 1);
+test('T9-DoD1-stage1-29-days: 第 2 階門檻前一天 → 1', () => {
+    assert.equal(classifyWishlistAging(daysAgoStr(STAGE2 - 1), '', NOW_MS), 1);
 });
 
-test('T9-DoD1-stage2-30-days-no-release-date: 30 天前、release_date 空字串 → 2（沒有發售日照常計齡）', () => {
-    assert.equal(classifyWishlistAging(daysAgoStr(30), '', NOW_MS), 2);
+test('T9-DoD1-stage2-30-days-no-release-date: 第 2 階門檻當天、release_date 空字串 → 2（沒有發售日照常計齡）', () => {
+    assert.equal(classifyWishlistAging(daysAgoStr(STAGE2), '', NOW_MS), 2);
 });
 
 test('T9-DoD1-future-release-overrides-aging: 60 天前、發售日未來 → 0（未發售例外壓過計齡）', () => {
@@ -54,7 +59,7 @@ test('T9-DoD1-future-release-overrides-aging: 60 天前、發售日未來 → 0�
 });
 
 test('T9-DoD1-now-accepts-Date-instance: now 可傳 Date 物件而非純數字', () => {
-    assert.equal(classifyWishlistAging(daysAgoStr(14), '', new Date(NOW_MS)), 1);
+    assert.equal(classifyWishlistAging(daysAgoStr(STAGE1), '', new Date(NOW_MS)), 1);
 });
 
 test('T9-DoD1-thresholds-are-named-constants: 具名常數值可被 import 斷言', () => {
@@ -98,5 +103,5 @@ test('T9-DoD3-ageDaysOf-malformed-returns-null', () => {
 });
 
 test('T9-DoD3-ageDaysOf-valid-returns-number', () => {
-    assert.equal(ageDaysOf(daysAgoStr(14), NOW_MS), 14);
+    assert.equal(ageDaysOf(daysAgoStr(STAGE1), NOW_MS), STAGE1);
 });

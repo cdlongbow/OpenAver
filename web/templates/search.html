@@ -1209,7 +1209,19 @@
                 <template x-for="(item, index) in wishlistItems" :key="item.number">
                     <div class="av-card-preview" :data-slot="index" :data-flip-id="item.number" @click="openWishlistLightbox(index)">
                         <div class="av-card-preview-img">
-                            <img :src="`/api/wishlist/cover?number=${encodeURIComponent(item.number)}`"
+<!-- 🔴 branch review P2-1（2026-09-03）：:src 必須用 item.created_at 當閘。
+                                 addToWishlist() 的樂觀 unshift 在 POST 之前（wishlist.js:296），而封面是
+                                 POST handler **同步下載寫檔**的（routers/wishlist.py:82）⇒ 那一瞬間發出去的
+                                 GET /api/wishlist/cover 必定 404 ⇒ @error 寫進 _wishlistCoverError，
+                                 而那張表（CD-19 的設計）刻意不被 loadWishlist() 清掉 ⇒ **旗標永遠留著**：
+                                 剛加的那部片在書籤牆上是灰底「無圖」，切走切回都不會好，只有 F5。
+                                 （實測：封面其實已經在硬碟上，GET 回 200。）
+                                 為什麼不改成「事後清掉旗標」：清了也**不會重新請求**——實測 img 的
+                                 naturalWidth 仍是 0、complete 仍是 true ⇒ 只會把整齊的占位換成破圖 icon，比不修更糟。
+                                 created_at 是伺服器端獨有欄位（搜尋結果的 17 個欄位裡沒有它，已實測），
+                                 所以樂觀那一筆 :src 為 null ⇒ Alpine 移除 src 屬性 ⇒ **請求根本不發**；
+                                 loadWishlist() 落地後 item 帶著 created_at ⇒ src 首次被設 ⇒ 發一次乾淨的請求。 -->
+                            <img :src="item.created_at ? `/api/wishlist/cover?number=${encodeURIComponent(item.number)}` : null"
                                  :alt="item.number"
                                  :loading="index < 8 ? 'eager' : 'lazy'"
                                  :fetchpriority="index < 8 ? 'high' : 'auto'"
