@@ -25,7 +25,7 @@ from web.app import app, lifespan
 def _reset_sr_module() -> None:
     with sr._lock:
         sr._snapshot = {}
-        sr._snapshot_at = 0.0
+        sr._snapshot_at = sr._NEVER
         sr._in_flight = False
         sr._pending_exists.clear()
         sr._reprobe_task = None
@@ -185,6 +185,62 @@ def test_dod5_unreachable_sources_display_format(monkeypatch: pytest.MonkeyPatch
     assert local_item is not None
     assert local_item["display"] == "/mnt/storage/media"
     assert local_item["status"] == "unreachable"
+
+
+def test_cold_start_waits_for_first_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """缺陷 B：快照從未寫過時，端點要等第一次探測寫完，不能拿到 []。"""
+    _reset_sr_module()
+
+    async def fake_probe_all() -> None:
+        await asyncio.sleep(0.05)
+        with sr._lock:
+            sr._snapshot = {"/mnt/cold": "unreachable"}
+            sr._snapshot_at = sr._now()
+            sr._in_flight = False
+
+    monkeypatch.setattr(sr, "_probe_all", fake_probe_all)
+
+    client = TestClient(app, client=("127.0.0.1", 50000))
+    resp = client.get("/api/showcase/source-status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert any(item["path"] == "/mnt/cold" for item in data), (
+        f"cold start must wait for first probe, got {data!r}"
+    )
+
+
+def test_warm_snapshot_does_not_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """缺陷 B 的反向守衛：已探測過（快照新鮮）時，就算 _reprobe_task 永不完成，端點也要立刻回應。"""
+    _reset_sr_module()
+
+    with sr._lock:
+        sr._snapshot = {"/mnt/warm": "unreachable"}
+        sr._snapshot_at = sr._now()
+
+    async def never_finishes() -> None:
+        await asyncio.sleep(3600)
+
+    # schedule_reprobe_if_stale is patched so the never-finishing task is created
+    # on whatever event loop actually runs the endpoint coroutine (TestClient runs
+    # each request through the app's own loop), rather than on this test's loop.
+    async def install_never_finishing_task() -> None:
+        with sr._lock:
+            sr._reprobe_task = asyncio.ensure_future(never_finishes())
+
+    monkeypatch.setattr(sr, "schedule_reprobe_if_stale", install_never_finishing_task)
+
+    client = TestClient(app, client=("127.0.0.1", 50000))
+    t0 = time.perf_counter()
+    resp = client.get("/api/showcase/source-status")
+    elapsed = time.perf_counter() - t0
+    assert resp.status_code == 200
+    assert elapsed < 1.0, f"warm path must not wait, took {elapsed:.3f}s"
+    data = resp.json()
+    assert any(item["path"] == "/mnt/warm" for item in data)
+
+    task = sr._reprobe_task
+    if task is not None and not task.done():
+        task.cancel()
 
 
 def test_same_unc_host_sources_merge_into_one_display(monkeypatch: pytest.MonkeyPatch) -> None:

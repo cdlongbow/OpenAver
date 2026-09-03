@@ -7,6 +7,7 @@ Probe means are a closed set of two (CD-2):
 Public API:
   - ``get_snapshot()`` — pure memory read; safe from sync threadpool endpoints
   - ``schedule_reprobe_if_stale()`` — async-only; schedules background reprobe
+  - ``wait_for_first_probe()`` — async-only; bounded wait for cold start only
   - ``unc_host(native_path)`` — public (T2 display name; ruff PLC2701)
 """
 
@@ -33,6 +34,14 @@ _TTL_DEGRADED = 60.0
 _TCP_TIMEOUT_S = 2.0
 _EXISTS_WAIT_S = 5.0
 _RETRY_SLEEP_S = 1.0
+_FIRST_PROBE_WAIT_S = 15.0
+
+# Sentinel for "never probed" (module just imported / process just started).
+# time.monotonic() is seconds-since-boot on Linux/macOS/Windows, so a literal
+# 0.0 default reads as "fresh" (not stale) for up to _TTL_HEALTHY seconds after
+# boot — the exact window in which a freshly booted NAS/PC needs the probe most.
+# -inf makes "now - _snapshot_at" unconditionally exceed any TTL, no branch needed.
+_NEVER = float("-inf")
 
 _NEG_ERRNOS = {
     errno.EHOSTUNREACH,
@@ -43,10 +52,21 @@ _NEG_ERRNOS = {
 
 _lock = threading.Lock()
 _snapshot: dict[str, str] = {}
-_snapshot_at: float = 0.0
+_snapshot_at: float = _NEVER
 _in_flight: bool = False
 _pending_exists: dict[str, asyncio.Future] = {}
 _reprobe_task: asyncio.Task | None = None
+
+
+def _now() -> float:
+    """Indirection over ``time.monotonic()`` so tests can inject a fake clock.
+
+    Patching ``time.monotonic`` directly would also break asyncio's event loop
+    timers (``loop.time()`` is ``time.monotonic()`` on the default loop), which
+    would hang any ``await asyncio.sleep(...)`` in the same test. Module-level
+    function (not a lambda/method) so ``unittest.mock.patch.object`` can target it.
+    """
+    return time.monotonic()
 
 
 def _current_ttl_locked() -> float:
@@ -74,7 +94,7 @@ async def schedule_reprobe_if_stale() -> None:
 
     should_schedule = False
     with _lock:
-        now = time.monotonic()
+        now = _now()
         ttl = _current_ttl_locked()
         stale = (now - _snapshot_at) > ttl
         if stale and not _in_flight:
@@ -95,6 +115,29 @@ async def schedule_reprobe_if_stale() -> None:
             "schedule_reprobe_if_stale: create_task failed; released in-flight",
             exc_info=True,
         )
+
+
+async def wait_for_first_probe(timeout: float = _FIRST_PROBE_WAIT_S) -> None:
+    """Cold start only: wait (bounded) until the first snapshot has been written.
+
+    Returns immediately once any probe has ever completed, so the warm path
+    pays nothing. Caller is a fire-and-forget fetch, so waiting costs no UI.
+
+    The 15s default is the worst case for sequential multi-source probing
+    (TCP 2s + 1s retry-sleep + 2s, or exists 5s + 1s + 5s per source, run one
+    after another) — the timeout is a backstop, not the expected wait.
+    """
+    with _lock:
+        already_probed = _snapshot_at != _NEVER
+        task = _reprobe_task
+
+    if already_probed:
+        return
+    if task is None or task.done():
+        return
+
+    with contextlib.suppress(Exception):
+        await asyncio.wait_for(asyncio.shield(task), timeout)
 
 
 def unc_host(native_path: str) -> str | None:
@@ -129,13 +172,13 @@ async def _probe_all() -> None:
             logger.warning("_probe_all: failed to load sources", exc_info=True)
             with _lock:
                 _snapshot = {}
-                _snapshot_at = time.monotonic()
+                _snapshot_at = _now()
             return
 
         if not sources:
             with _lock:
                 _snapshot = {}
-                _snapshot_at = time.monotonic()
+                _snapshot_at = _now()
             return
 
         host_memo: dict[str, str] = {}
@@ -153,7 +196,7 @@ async def _probe_all() -> None:
 
         with _lock:
             _snapshot = new_snapshot
-            _snapshot_at = time.monotonic()
+            _snapshot_at = _now()
     finally:
         with _lock:
             _in_flight = False

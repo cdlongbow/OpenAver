@@ -17,7 +17,7 @@ from core.config import DirectoryConfig
 def _reset_module(sr):
     with sr._lock:
         sr._snapshot = {}
-        sr._snapshot_at = 0.0
+        sr._snapshot_at = sr._NEVER
         sr._in_flight = False
         sr._pending_exists.clear()
         sr._reprobe_task = None
@@ -403,4 +403,30 @@ async def test_degraded_snapshot_ttl_60s(sr):
     with patch.object(sr, "_probe_all", side_effect=quick_probe):
         await sr.schedule_reprobe_if_stale()
         assert sr._reprobe_task is not None, "已不可達的快照 61 秒就該重探（碟插回來要快點消失）"
+        await sr._reprobe_task
+
+
+# ── 缺陷 A：剛開機（monotonic 很小）仍要排到第一次探測 ──────────────────
+
+
+@pytest.mark.asyncio
+async def test_fresh_boot_clock_still_schedules_first_probe(sr):
+    """開機 5 秒（monotonic=5.0）時，_snapshot_at 維持模組預設值（_NEVER）也必須排程。
+
+    這是 CI 8 支紅的直接成因：_snapshot_at 預設 0.0 時，剛開機 now-0.0 不大於
+    _TTL_HEALTHY(600) 而不排程。改成 _NEVER 後 now-_NEVER 恆為 inf，不受開機時間影響。
+    """
+    async def quick_probe():
+        with sr._lock:
+            sr._in_flight = False
+
+    with (
+        patch.object(sr, "_now", return_value=5.0),
+        patch.object(sr, "load_config", return_value={"gallery": {}}),
+        patch.object(sr, "iter_gallery_sources", return_value=[]),
+        patch.object(sr, "_probe_all", side_effect=quick_probe),
+    ):
+        await sr.schedule_reprobe_if_stale()
+        assert sr._reprobe_task is not None
+        assert sr._in_flight is True
         await sr._reprobe_task

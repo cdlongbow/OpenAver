@@ -383,9 +383,15 @@ def set_manual_focal(req: ManualFocalRequest):
 
 @router.get("/source-status")
 async def get_source_status():
-    from core.source_reachability import get_snapshot, schedule_reprobe_if_stale, unc_host
+    from core.source_reachability import (
+        get_snapshot,
+        schedule_reprobe_if_stale,
+        unc_host,
+        wait_for_first_probe,
+    )
 
     await schedule_reprobe_if_stale()
+    await wait_for_first_probe()
     snapshot = get_snapshot()
     out = []
     seen_displays = set()
