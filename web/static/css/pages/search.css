@@ -1069,6 +1069,8 @@
     position: relative;
     width: 100%;
     min-height: 40vh;
+    opacity: 0;
+    animation: wishlistEmptyFadeIn var(--fluent-duration-fast) var(--fluent-ease-standard) forwards;
 }
 
 /* ==================== T2d: Actress Profile ==================== */
@@ -1419,4 +1421,92 @@
         inset 0 1px 0 color-mix(in oklch, var(--color-base-content) 8%, transparent),
         var(--fluent-shadow-2),
         0 0 0 4px var(--glow-primary);
+}
+
+/* TASK-141b-T9（CD-17）＋ owner 2026-09-03 視覺改判（T11 六筆真資料驗收的產出）：
+   aging 提示掛封面左上角。
+   🔴 原設計「無底色 ＋ 極淡白字」（spec F9 原文）在真封面上被證偽：T11 把六筆真封面放上牆之後，
+   第 1 階完全不可見、第 2 階在 11.2px 下也認不出來——本專案的封面是滿版彩色日文字，
+   任何無底色的小字都會被吃掉。⇒ **spec F9 的「無底色」與「極淡」兩詞由本次改判取代**。
+   owner 拍板改用既有 `.cover-badge` 膠囊語彙（showcase 封面左上／右下的 4K／CD1 那顆，
+   components/cover-badge.css:5，ui-conventions §1 pill 白名單第 4 條「封面左上常駐屬性標籤」，
+   當初由 owner 六案並排選定）；第 2 階再把**底色**換成琥珀（設計決策 1 的 var(--color-warning)
+   從字色改為底色，token 本身不變、仍是主題感知）。
+   ⚠️ 這裡刻意「照抄樣式」而不是直接掛 `.cover-badge` class：`.cover-badge` 帶 min-width:5ch
+   （為了三顆屬性標籤右緣對齊的定寬），本提示是單顆變長文字，套上去會多出左右空白。
+   位置沿用 `.cover-badges`（showcase.css:4599）：position:absolute 不進文件流、零佔位、
+   不影響卡片高度（CD-17 的理由完全不變）；pointer-events:none 不擋卡片點擊與 overlay 垃圾桶鈕。
+   定位脈絡由 `.av-card-preview-img`（theme.css:1070）提供，本層不需重複宣告。
+   零動畫（ui-conventions §0「UI 退位」）：它是靜態提示，不加 transition／hover。 */
+.wishlist-aging {
+    position: absolute;
+    top: 0.5rem;
+    left: 0.5rem;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--spacing) calc(var(--spacing) * 1.5);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    background: var(--overlay-badge);
+    border: 1.5px solid color-mix(in oklch, white 45%, transparent);
+    border-radius: var(--radius-pill);
+    color: oklch(100% 0 0);
+    pointer-events: none;
+}
+
+.wishlist-aging--stage2 {
+    /* 與第 1 階的差別只有底色與字色，位置／字級／字重／形狀全部不變（設計決策 4：
+       第 2 階是「同一個位置提高對比」，不是換成另一種徽章）。 */
+    background: var(--color-warning);
+    border-color: color-mix(in oklch, var(--color-warning) 80%, white);
+    color: oklch(22% 0 0);
+}
+
+/* TASK-141b-T10（CD-13／CD-19／CD-11）：書籤封面淡入。scope compound
+   :is(#ds-gallery-components, .ds-gallery-composition).wishlist-grid——.wishlist-grid
+   （search.html:1208）本身同時帶 .ds-gallery-composition，若只寫裸 .wishlist-grid（不 compound
+   :is()），本規則 selector 特異度只有 (0,2,1)，輸給 theme.css 的
+   :is(#ds-gallery-components, .ds-gallery-composition) .av-card-preview-img img（特異度
+   (1,1,1)，ID 級）——那條已經在同一元素上宣告 transition:transform，而 transition 是
+   shorthand，同屬性的宣告互相取代不合併：theme 那條贏，我們這條的 transition:opacity 會被
+   完全吃掉，opacity 值仍然 0→1（沒有輸），但過渡動畫消失，視覺上退化成瞬間跳字——正是 DoD 1
+   要擋的「白閃」。compound :is() 把特異度拉到 (1,2,1)，穩贏 theme 的 (1,1,1)（比照
+   showcase.css:4561-4568 對 .showcase-container 的同一段既有註解，那邊也是為了同一個理由
+   compound；本卡展開時發現 CD-19 承重段附的草稿碼只寫裸 .wishlist-grid，未處理這個
+   shorthand 覆蓋問題——不是否定 CD-13 的 scope 判斷，是修正 selector 的特異度寫法）。
+   transition 只寫 opacity——書籤卡沒有 showcase 那種 hover transform 疊加淡入的既有規則，
+   不比照 showcase 額外宣告 transform transition。 */
+:is(#ds-gallery-components, .ds-gallery-composition).wishlist-grid .av-card-preview-img img {
+    opacity: 0;
+    transition: opacity var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+:is(#ds-gallery-components, .ds-gallery-composition).wishlist-grid .av-card-preview-img img.cover-loaded {
+    opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    :is(#ds-gallery-components, .ds-gallery-composition).wishlist-grid .av-card-preview-img img {
+        transition: none;
+        opacity: 1;
+    }
+    .wishlist-empty {
+        opacity: 1;
+        animation: none;
+    }
+}
+
+/* TASK-141b-T10（CD-11）：.wishlist-empty 淡入用 CSS @keyframes（非 GSAP）——它是靠 x-show
+   掛載/卸載的（非持續狀態），animation:...forwards 讓它每次被顯示時自動播一次，不需要 JS
+   掛鉤，比照既有 .shimmer 純 CSS @keyframes 慣例（search.css:1090-1104）。opacity/animation
+   兩個宣告加進上面既有的 .wishlist-empty {} 規則本體（search.css:1068-1074），不另開第二個
+   獨立 .wishlist-empty {} 規則——CG-WISH-01（scripts/css-guard.mjs:2268-2298）用
+   findStandalone('.wishlist-empty') 抓「最後一個」逐字等於 .wishlist-empty 的頂層規則並要求
+   width:100% 在場；若另開一個新的頂層 .wishlist-empty {} 規則放在檔尾，它會變成「最後一個」
+   卻沒有 width:100%，CG-WISH-01 會轉紅（本卡展開時發現，plan-141b.md 未提及這個既有守衛）。 */
+@keyframes wishlistEmptyFadeIn {
+    to { opacity: 1; }
 }

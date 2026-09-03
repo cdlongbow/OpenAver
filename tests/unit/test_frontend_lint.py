@@ -3174,20 +3174,52 @@ class TestCoverLoadingUx67Guard:
         assert any("opacity: 0" in b and "transition" in b and "opacity" in b for b in rules), \
             "showcase.css 缺 .av-card-preview-img img 淡入規則（opacity:0 預設 + opacity transition）"
 
+    # [lint-guard: pytest-justified] 兩個頁面各自的 CSS scope compound 是否正確排除對方
+    # （跨檔案 CSS 洩漏契約，Codex P2#1 + TASK-141b-T10），非單純「某字串不該出現」。
     def test_fade_rule_scoped_to_showcase_container(self):
-        """Codex P2#1: 淡入 opacity:0 規則必須 compound .showcase-container scope（防洩漏到 search.html /
-        design-system.html——兩頁也載 showcase.css + 共用 ds scope 但無 .cover-loaded 機制，洩漏會讓搜尋
-        封面/demo 整片隱形）。抓含 opacity:0 的淡入規則整條 selector，斷言含 .showcase-container。"""
-        css = self._css()
-        # 先剝除 /* */ 註解（否則 [^{}]*? 會吃進前面提及 .showcase-container 的註解 → 假 GREEN）
+        """Codex P2#1 + TASK-141b-T10: 淡入 opacity:0 規則必須各自 compound 正確 scope。
+        showcase.css 那條必須含 .showcase-container；search.css 書籤那條必須含 .wishlist-grid。
+        兩個 scope 都要對，不是「任一 scope 存在即可」（CD-13 禁止放寬成任意 scope）。"""
+        # 🔴 branch review P3-1（Opus 2026-09-03）：用 finditer 逐條驗，不是 search 只驗第一條。
+        # 原本用 re.search ⇒ 只檢查**第一條**匹配的規則。實測：在檔尾追加一條裸的
+        # `.av-card-preview-img img { opacity: 0; }`（正是 CD-13 白紙黑字要防的
+        # 「洩漏到 .search-grid 讓搜尋封面整片隱形」），本測試**仍然綠**。
+        # 「拿掉既有那條的 scope 會轉紅」是成立的，缺的是「新增第二條」這個方向。
+        pat = re.compile(r'([^{}]*?\.av-card-preview-img img)\s*\{[^}]*opacity:\s*0[^}]*\}')
+
+        css = self._css()  # showcase.css，既有
         css_nc = re.sub(r'/\*.*?\*/', '', css, flags=re.S)
-        # 抓 opacity:0 淡入 base 規則的完整 selector（含前綴）
-        m = re.search(r'([^{}]*?\.av-card-preview-img img)\s*\{[^}]*opacity:\s*0[^}]*\}', css_nc)
-        assert m, "showcase.css 找不到 opacity:0 的 .av-card-preview-img img 淡入規則"
-        selector = m.group(1)
-        assert ".showcase-container" in selector, \
-            ("淡入 opacity:0 規則未 compound .showcase-container（Codex P2#1）：會洩漏到 search.html / "
-             f"design-system.html 讓封面隱形。實際 selector: {selector.strip()!r}")
+        matches = list(pat.finditer(css_nc))
+        assert matches, "showcase.css 找不到 opacity:0 的 .av-card-preview-img img 淡入規則"
+        for m in matches:
+            assert ".showcase-container" in m.group(1), (
+                "showcase.css 淡入規則未 compound .showcase-container：" + m.group(1).strip()
+            )
+        # TASK-141b-T10 新增：search.css 書籤那條的對應檢查
+        search_css = SEARCH_CSS.read_text(encoding="utf-8")
+        search_css_nc = re.sub(r'/\*.*?\*/', '', search_css, flags=re.S)
+        matches2 = list(pat.finditer(search_css_nc))
+        assert matches2, "search.css 找不到書籤封面 opacity:0 淡入規則（TASK-141b-T10）"
+        m2 = matches2[0]
+        for mm in matches2:
+            assert ".wishlist-grid" in mm.group(1), (
+                "search.css 書籤淡入規則未 compound .wishlist-grid（會洩漏到 .search-grid 讓搜尋封面隱形）："
+                + mm.group(1).strip()
+            )
+        # 🔴 Opus 2026-09-03 追加：連 :is() compound 一起鎖。
+        # 沒有這一條的話，有人把選擇器「簡化」成裸 .wishlist-grid .av-card-preview-img img
+        # （specificity 0,2,1）會輸給 theme.css:1084 的
+        # :is(#ds-gallery-components, .ds-gallery-composition) .av-card-preview-img img（1,1,1，
+        # :is() 取引數清單最高特異度、#ds-gallery-components 是 ID）——
+        # 那條宣告的是 transition: transform，會把我們的 transition: opacity 整個吃掉。
+        # 後果：opacity 照樣 0→1，但**沒有過渡** ⇒ 淡入變成瞬間出現 ＝ 我們要消除的白閃本身，
+        # 而 opacity:0 那條斷言、node:test、check.sh 全部照樣綠。只有 owner 真機驗收看得到。
+        for mm in matches2:
+            assert ":is(#ds-gallery-components" in mm.group(1), (
+                "search.css 書籤淡入規則未 compound :is(#ds-gallery-components, .ds-gallery-composition)："
+                "特異度會輸給 theme.css:1084 的同名 transition 宣告，淡入被靜默吃掉（見本測試上方註解）："
+                + mm.group(1).strip()
+            )
 
     def test_prm_degrades_shimmer_and_fade(self):
         """A1/DoD A-4: reduced-motion 下 shimmer animation:none + 淡入 transition:none/opacity:1 皆退化"""
@@ -3315,6 +3347,65 @@ class TestCoverLoadingUx67Guard:
         assert set_m, "state-lightbox.js: 找不到 _setLightboxIndex(idx) 方法"
         assert "_refreshLbFullBlurUp" in set_m.group(1), \
             "_setLightboxIndex 未委託 _refreshLbFullBlurUp（71c-P2 抽 helper 後應呼叫 helper 不可 inline）"
+
+
+# ── TASK-141b-T10: 書籤牆封面淡入 + 骨架 + 首屏優先 + 空狀態淡入 ──
+
+class TestWishlistCoverFadeGuard:
+    """TASK-141b-T10（CD-13／CD-19／CD-11）：書籤牆封面淡入 ＋ 骨架 ＋ 首屏優先 ＋ 空狀態淡入。
+    候選 (a)（番號為 key 的 state，wishlist.js 宣告，loadWishlist() 不碰）已用 Alpine 3.15.12
+    原始碼證實會觸發重新求值（見 card「B. Alpine 3.15.12 原始碼查證」）。
+    """
+
+    SEARCH_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "search.html"
+    WISHLIST_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "state" / "wishlist.js"
+
+    def _html(self):
+        return self.SEARCH_HTML.read_text(encoding="utf-8")
+
+    def _wishlist_img(self):
+        """抽出書籤卡封面 <img :src="`/api/wishlist/cover?number=…`" …>（唯一含這個 endpoint 字面的 img tag）"""
+        html = self._html()
+        # branch review P2-1 之後 :src 前面多了 item.created_at 三元閘（樂觀 unshift 那一筆
+        # 沒有 created_at ⇒ src 為 null ⇒ 不發那個必定 404 的請求），錨點不能寫死從反引號開頭。
+        # ⚠️ 但也不能只放寬成「src 裡含該端點」——**書籤燈箱那張大圖用同一個端點**
+        # （search.html:279），放寬之後 re.search 會先抓到它，斷言就變成在驗錯的元素。
+        # 正解：先扣住書籤卡的 x-for 模板區塊，再在裡面找那個 img。
+        tpl = re.search(
+            r'<template x-for="\(item, index\) in wishlistItems".*?</template>', html, re.S)
+        assert tpl, "search.html: 書籤卡的 x-for 模板不存在"
+        m = re.search(r'<img :src="[^"]*/api/wishlist/cover\?number=.*?>', tpl.group(0), re.S)
+        assert m, "search.html: 書籤卡封面 <img :src=\"`/api/wishlist/cover?number=…\"> 不存在"
+        return m.group(0)
+
+    def test_wishlist_img_has_load_and_covererror_fade(self):
+        """DoD 1/CD-19: 書籤卡 <img> 用番號 key 的 state（非 item._imgLoaded/_imgError）驅動淡入/破圖"""
+        img = self._wishlist_img()
+        # [lint-guard: pytest-justified] search.html(HTML @load/@error) ↔ wishlist.js
+        # (_wishlistCoverLoaded/_wishlistCoverError 宣告) 的跨檔 Alpine binding contract；
+        # ESLint 看不到 HTML 側、static_guard_lint 看不到 JS 側的宣告，單邊守衛任一邊都測不出
+        # 接線斷掉或退回 item._imgLoaded/_imgError（CD-19 明文禁止的形狀）。
+        assert '_wishlistCoverLoaded[item.number] = true' in img, \
+            "書籤卡 <img> 缺 @load=\"_wishlistCoverLoaded[item.number] = true\"（CD-19 落點）"
+        assert '_wishlistCoverError[item.number] = true' in img, \
+            "書籤卡 <img> 缺 @error=\"_wishlistCoverError[item.number] = true\"（CD-19 落點）"
+        assert ":class=\"{ 'cover-loaded': _wishlistCoverLoaded[item.number] }\"" in img, \
+            "書籤卡 <img> 缺 :class 淡入綁定（.cover-loaded by _wishlistCoverLoaded[item.number]）"
+        assert 'item._imgError' not in img and 'item._imgLoaded' not in img, \
+            "CD-19 禁止形狀：書籤卡 <img> 仍殘留 item._imgError/item._imgLoaded（掛在整包覆蓋的元素物件上，切分頁再切回會讓封面全部消失）"
+
+    # ── 以下五條純字串掃描已於 2026-09-03 搬去 lint（Codex PR review BLOCKER）──────────
+    # CLAUDE.md「Lint 守衛規則」north-star：能用 lint 機械處理的就不該進 pytest。
+    # plan NC-3 只裁定「既有那支 scope 守衛（test_fade_rule_scoped_to_showcase_container）
+    # 維持 pytest」，**沒有**授權新增的這五條；T10 實作端把那個授權就地擴大套用了。
+    #   test_wishlist_img_first_screen_fetchpriority → static_guard_lint.mjs（required×2 + forbidden×1）
+    #   test_wishlist_has_skeleton_cover            → static_guard_lint.mjs（required-string）
+    #   test_wishlist_js_declares_cover_state       → static_guard_lint.mjs（required-string，wishlist.js）
+    #   test_wishlist_empty_has_fade_in_animation   → css-guard.mjs CG-WISH-01（沿用同一個 findStandalone 結果）
+    #   test_wishlist_fade_and_empty_prm_degrade    → static_guard_lint.mjs（braceBalanced @media scope）
+    # 上面 test_wishlist_img_has_load_and_covererror_fade 留在 pytest：它是同檔十個既有
+    # 「跨檔 Alpine binding contract」測試的同一家族，單獨搬走一條會製造風格不一致——
+    # 那批舊測試要不要一起遷移，依「守衛的退場」規則等下次真的要動它們時再判。
 
 
 # ── TASK-70-T5: JavLibrary Picker BETA 視覺 + 不可用 gate 靜態守衛 ──

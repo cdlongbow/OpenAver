@@ -180,6 +180,9 @@
       "has_local": "ローカルに存在（クリックしてフォルダを開く）",
       "has_local_count": "ローカルに {count} バージョン存在（クリックしてフォルダを開く）"
     },
+    "wishlist": {
+      "aged_days": "{days}日前に追加"
+    },
     "button": {
       "search_all": "一括検索",
       "continue": "続行",

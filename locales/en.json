@@ -180,6 +180,9 @@
       "has_local": "Available locally (click to open folder)",
       "has_local_count": "{count} local versions available (click to open folder)"
     },
+    "wishlist": {
+      "aged_days": "Added {days} days ago"
+    },
     "button": {
       "search_all": "Batch Search",
       "continue": "Continue",

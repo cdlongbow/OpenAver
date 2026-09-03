@@ -81,15 +81,21 @@
                     </button>
                     <!-- TASK-140-T6: 加入書籤 -->
                     <button class="lb-action-btn"
-                            @click="addToWishlist(currentLightboxVideo())"
+                            @click="addToWishlistFromLightbox(currentLightboxVideo())"
                             x-show="!actressLightboxMode() && cardActionState(currentLightboxVideo()) === 'bookmark-add'"
+                            x-transition:enter="transition ease-out duration-150"
+                            x-transition:enter-start="opacity-0"
+                            x-transition:enter-end="opacity-100"
                             data-tooltip="{{ t('search.action.add_wishlist') }}" aria-label="{{ t('search.action.add_wishlist') }}">
                         <i class="bi bi-bookmark-plus"></i>
                     </button>
                     <!-- TASK-140-T6: 從書籤移除 -->
                     <button class="lb-action-btn"
-                            @click="removeFromWishlist(currentLightboxVideo()?.number)"
+                            @click="removeFromWishlist(currentLightboxVideo()?.number, 'search')"
                             x-show="!actressLightboxMode() && cardActionState(currentLightboxVideo()) === 'bookmark-remove'"
+                            x-transition:enter="transition ease-out duration-150"
+                            x-transition:enter-start="opacity-0"
+                            x-transition:enter-end="opacity-100"
                             data-tooltip="{{ t('search.action.remove_wishlist') }}" aria-label="{{ t('search.action.remove_wishlist') }}">
                         <i class="bi bi-bookmark-fill"></i>
                     </button>
@@ -247,6 +253,8 @@
         <div class="showcase-lightbox wishlist-lightbox"
              :class="{ 'show': wishlistLightboxOpen }"
              x-trap.inert="wishlistLightboxOpen && !sampleGalleryOpen && !rescrapeOpen && !browseDirOpen && !duplicateModalOpen"
+             @touchstart.passive="_wishlistLbTouchStart($event)"
+             @touchend.passive="_wishlistLbTouchEnd($event)"
              @click="closeWishlistLightbox()">
 
             <div class="lightbox-content" @click.stop>
@@ -278,12 +286,17 @@
                         <p class="mt-2" x-text="t('common.no_image')"></p>
                     </div>
                     <div class="cover-actions">
-                        <!-- 唯一的下游動作：開原站（spec F5 開頭） -->
+                        <!-- 下游動作兩顆：開原站（spec F5）＋ 移除書籤（spec F8.4，141b-T7 起） -->
                         <button class="lb-action-btn"
                                 x-show="currentWishlistLightboxItem()?.source_url"
                                 @click.stop="openSourceUrl(currentWishlistLightboxItem()?.source_url || '')"
                                 data-tooltip="{{ t('search.action.open_source_url') }}" aria-label="{{ t('search.action.open_source_url') }}">
                             <i class="bi bi-box-arrow-up-right"></i>
+                        </button>
+                        <button class="lb-action-btn"
+                                @click.stop="removeFromWishlistInLightbox()"
+                                data-tooltip="{{ t('search.action.remove_wishlist') }}" aria-label="{{ t('search.action.remove_wishlist') }}">
+                            <i class="bi bi-trash3"></i>
                         </button>
                     </div>
                 </div>
@@ -409,7 +422,7 @@
                             :title="t('search.action.view_search_results')">
                         <i class="bi bi-search"></i>
                     </button>
-                    <button type="button" class="mode-toggle-btn"
+                    <button type="button" id="wishlistToggleBtn" class="mode-toggle-btn"
                             :class="{ 'active': listMode === 'wishlist' }"
                             @click="listMode !== 'wishlist' && switchToWishlist()"
                             :title="t('search.action.view_wishlist')">
@@ -653,15 +666,21 @@
                     </button>
                     <!-- TASK-140-T6: 加入書籤（本地沒有 ＋ 未加入）-->
                     <button class="info-icon-btn"
-                            @click="addToWishlist(current())"
+                            @click="addToWishlistFromDetail(current())"
                             x-show="cardActionState(current()) === 'bookmark-add'"
+                            x-transition:enter="transition ease-out duration-150"
+                            x-transition:enter-start="opacity-0"
+                            x-transition:enter-end="opacity-100"
                             title="{{ t('search.action.add_wishlist') }}">
                         <i class="bi bi-bookmark-plus"></i>
                     </button>
                     <!-- TASK-140-T6: 從書籤移除（本地沒有 ＋ 已加入）-->
                     <button class="info-icon-btn"
-                            @click="removeFromWishlist(current()?.number)"
+                            @click="removeFromWishlist(current()?.number, 'search')"
                             x-show="cardActionState(current()) === 'bookmark-remove'"
+                            x-transition:enter="transition ease-out duration-150"
+                            x-transition:enter-start="opacity-0"
+                            x-transition:enter-end="opacity-100"
                             title="{{ t('search.action.remove_wishlist') }}">
                         <i class="bi bi-bookmark-fill"></i>
                     </button>
@@ -979,15 +998,21 @@
                                 </button>
                                 <!-- TASK-140-T6: 加入書籤 -->
                                 <button class="btn-glass-circle"
-                                        @click.stop="addToWishlist(result)"
+                                        @click.stop="addToWishlistFromGrid(result, $event)"
                                         x-show="cardActionState(result) === 'bookmark-add'"
+                                        x-transition:enter="transition ease-out duration-150"
+                                        x-transition:enter-start="opacity-0"
+                                        x-transition:enter-end="opacity-100"
                                         title="{{ t('search.action.add_wishlist') }}">
                                     <i class="bi bi-bookmark-plus"></i>
                                 </button>
                                 <!-- TASK-140-T6: 從書籤移除 -->
                                 <button class="btn-glass-circle"
-                                        @click.stop="removeFromWishlist(result.number)"
+                                        @click.stop="removeFromWishlist(result.number, 'search')"
                                         x-show="cardActionState(result) === 'bookmark-remove'"
+                                        x-transition:enter="transition ease-out duration-150"
+                                        x-transition:enter-start="opacity-0"
+                                        x-transition:enter-end="opacity-100"
                                         title="{{ t('search.action.remove_wishlist') }}">
                                     <i class="bi bi-bookmark-fill"></i>
                                 </button>
@@ -1182,20 +1207,41 @@
         <div class="wishlist-panel" x-show="listMode === 'wishlist'" x-cloak>
             <div class="wishlist-grid ds-gallery-composition" x-show="listMode === 'wishlist'" x-cloak>
                 <template x-for="(item, index) in wishlistItems" :key="item.number">
-                    <div class="av-card-preview" @click="openWishlistLightbox(index)">
+                    <div class="av-card-preview" :data-slot="index" :data-flip-id="item.number" @click="openWishlistLightbox(index)">
                         <div class="av-card-preview-img">
-                            <img :src="`/api/wishlist/cover?number=${encodeURIComponent(item.number)}`"
+<!-- 🔴 branch review P2-1（2026-09-03）：:src 必須用 item.created_at 當閘。
+                                 addToWishlist() 的樂觀 unshift 在 POST 之前（wishlist.js:326），而封面是
+                                 POST handler **同步下載寫檔**的（routers/wishlist.py:90）⇒ 那一瞬間發出去的
+                                 GET /api/wishlist/cover 必定 404 ⇒ @error 寫進 _wishlistCoverError，
+                                 而那張表（CD-19 的設計）刻意不被 loadWishlist() 清掉 ⇒ **旗標永遠留著**：
+                                 剛加的那部片在書籤牆上是灰底「無圖」，切走切回都不會好，只有 F5。
+                                 （實測：封面其實已經在硬碟上，GET 回 200。）
+                                 為什麼不改成「事後清掉旗標」：清了也**不會重新請求**——實測 img 的
+                                 naturalWidth 仍是 0、complete 仍是 true ⇒ 只會把整齊的占位換成破圖 icon，比不修更糟。
+                                 created_at 是伺服器端獨有欄位（搜尋結果的 17 個欄位裡沒有它，已實測），
+                                 所以樂觀那一筆 :src 為 null ⇒ Alpine 移除 src 屬性 ⇒ **請求根本不發**；
+                                 loadWishlist() 落地後 item 帶著 created_at ⇒ src 首次被設 ⇒ 發一次乾淨的請求。 -->
+                            <img :src="item.created_at ? `/api/wishlist/cover?number=${encodeURIComponent(item.number)}${_wishlistCoverRetry[item.number] ? `&r=${_wishlistCoverRetry[item.number]}` : ''}` : null"
                                  :alt="item.number"
-                                 loading="lazy"
-                                 x-show="!item._imgError"
-                                 @error="item._imgError = true">
-                            <div x-show="item._imgError" class="cover-error-placeholder">
+                                 :loading="index < 8 ? 'eager' : 'lazy'"
+                                 :fetchpriority="index < 8 ? 'high' : 'auto'"
+                                 x-show="!_wishlistCoverError[item.number]"
+                                 :class="{ 'cover-loaded': _wishlistCoverLoaded[item.number] }"
+                                 @load="_wishlistCoverLoaded[item.number] = true"
+                                 @error="_wishlistCoverError[item.number] = true">
+                            <div class="skeleton-cover shimmer"
+                                 x-show="!_wishlistCoverLoaded[item.number] && !_wishlistCoverError[item.number]"></div>
+                            <div x-show="_wishlistCoverError[item.number]" class="cover-error-placeholder">
                                 <i class="bi bi-image text-5xl"></i>
                                 <p class="mt-2" x-text="t('common.no_image')"></p>
                             </div>
+                            <span class="wishlist-aging"
+                                  x-show="wishlistAgingStage(item) > 0"
+                                  :class="{ 'wishlist-aging--stage2': wishlistAgingStage(item) === 2 }"
+                                  x-text="t('search.wishlist.aged_days', { days: wishlistAgingDays(item) })"></span>
                             <div class="av-card-preview-overlay">
                                 <button class="btn-glass-circle"
-                                        @click.stop="removeFromWishlist(item.number)"
+                                        @click.stop="removeFromWishlist(item.number, 'wall')"
                                         title="{{ t('search.action.remove_wishlist') }}">
                                     <i class="bi bi-trash3"></i>
                                 </button>
@@ -1303,6 +1349,7 @@
 
     // === 主程式已移至 /static/js/pages/search/ ===
 </script>
+<script src="/static/js/shared/grid-motion.js"></script>
 <!-- T5: 動畫模組（GSAP 已在 base.html defer 載入）-->
 <script src="/static/js/pages/search/animations.js"></script>
 <!-- Existing JS modules -->

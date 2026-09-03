@@ -1041,6 +1041,47 @@
                     }
                 }
             );
+        },
+
+        // TASK-141b-T2：搜尋結果 ↔ 書籤分頁的容器 crossfade。
+        // 吃元素不吃 mode 名（與 showcase playModeCrossfade 的 selector 表刻意分開）。
+        // oldEl 有值就一定淡出（無論有無 onOldFadeComplete）；newEl 有值就一定淡入。
+        playListModeCrossfade: function (oldEl, newEl, options) {
+            options = options || {};
+            var hasCb = !!(options.onOldFadeComplete);
+            if (shouldSkip() || typeof gsap === 'undefined') {
+                if (hasCb) options.onOldFadeComplete();
+                return null;
+            }
+            var tl = gsap.timeline();
+            if (oldEl) {
+                tl.to(oldEl, {
+                    opacity: 0, duration: OpenAver.motion.DURATION.fast, ease: 'fluent-accel',
+                    clearProps: 'opacity',
+                    onComplete: hasCb ? function () { options.onOldFadeComplete(); } : undefined
+                });
+            } else if (hasCb) {
+                options.onOldFadeComplete();
+            }
+            if (newEl) {
+                tl.fromTo(newEl, { opacity: 0 }, {
+                    opacity: 1, duration: OpenAver.motion.DURATION.fast, ease: 'fluent-decel', clearProps: 'opacity'
+                });
+            }
+            return tl;
+        },
+
+        // TASK-141b-T8（設計決策 3，spec F8.3）：badge 收縮反饋，唯一新寫的動畫函式。
+        // repeat: 1（非 -1，CD-16 禁 infinite）＋ yoyo: true 做一次縮小再回彈。
+        playWishlistBadgeShrink: function (el) {
+            if (!el) return null;
+            if (typeof gsap === 'undefined') return null;
+            if (shouldSkip()) return null;
+            gsap.killTweensOf(el);
+            return gsap.fromTo(el, { scale: 1 }, {
+                scale: 0.85, duration: OpenAver.motion.DURATION.fast, ease: 'fluent-accel',
+                yoyo: true, repeat: 1, clearProps: 'transform'
+            });
         }
     };
 })();

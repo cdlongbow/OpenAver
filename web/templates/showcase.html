@@ -1995,6 +1995,7 @@
 window.__SHOWCASE_CONFIG__ = {{ (config.gallery or {}) | tojson | safe }};
 
 </script>
+<script src="/static/js/shared/grid-motion.js"></script>
 <!-- B5: animations.js 在 ESM main.js 之前載入（透過 extra_js defer） -->
 <script src="/static/js/pages/showcase/animations.js"></script>
 {% endblock %}

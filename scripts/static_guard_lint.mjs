@@ -990,6 +990,14 @@ const RULES = [
 
   // ---- [TestSwitchSourceBtnRemoved] ----
   { file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'id="switchSourceBtn"', note: '[TestSwitchSourceBtnRemoved] switchSourceBtn id gone' },
+  // 🔴 window 實測與定值理由（Opus 2026-09-03，141b-T7）：
+  //   區塊 anchor→閉合 </div> = 7268；下一個兄弟 .sample-gallery 起點 = 7326；
+  //   該兄弟區域內第一個 bi-* 圖示 = 7802（bi-x-lg）。
+  //   取 7500：給書籤燈箱尾端約 230 字元餘裕，同時離 7802 還有 300 字元。
+  // ⚠️ **不要把窗貼齊區塊邊界**。forbidden-string 要擋的正是「有人在區塊尾端加了不該有的東西」，
+  //   而新加的內容會把區塊撐長——窗貼齊邊界時，新加的字面立刻落在窗外，守衛靜默失效。
+  //   （實測：貼齊到 7275 時，在尾端種 bi-play-fill 落在 7276-7288，一個字元之差就抓不到。）
+  //   上限由「兄弟元素裡第一個合法的同類字面」決定，不是由區塊邊界決定。
   {
     file: 'web/templates/search.html', kind: 'forbidden-string',
     pattern: 'bi-arrow-repeat',
@@ -2551,8 +2559,12 @@ const RULES = [
     note: '[TestMotionDurationConstants] test_adapter_callers_use_duration_constants — js.count("motion.DURATION.") >= 4（required-string count=min-bound，非 structure-count exact）',
   },
   {
-    file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'OpenAver.motion.DURATION.', count: 8,
-    note: '[TestMotionDurationConstants] test_animations_callers_use_duration_constants — js.count("OpenAver.motion.DURATION.") >= 8（min-bound；現況恰貼齊門檻，mutation 高風險列）',
+    file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'OpenAver.motion.DURATION.', count: 7,
+    note: '[TestMotionDurationConstants] test_animations_callers_use_duration_constants — js.count("OpenAver.motion.DURATION.") >= 7（min-bound；現況恰貼齊門檻，mutation 高風險列）。TASK-141b-T1：原為 8，playEntry/playFlipFilter 各帶走 1 次搬去 shared/grid-motion.js，由下一列接住（7+2=9，總覆蓋未減）',
+  },
+  {
+    file: 'web/static/js/shared/grid-motion.js', kind: 'required-string', pattern: 'OpenAver.motion.DURATION.', count: 2,
+    note: '[TestMotionDurationConstants] TASK-141b-T1：playEntry/playFlipFilter 搬家後的新家，接住從 animations.js 移出的那 2 次（min-bound）',
   },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'params.duration || 0.8', note: '[TestMotionDurationConstants] test_white_list_durations_preserved — showcaseSettle 招牌曲線白名單' },
   {
@@ -2600,7 +2612,7 @@ const RULES = [
   { file: 'web/static/js/components/motion-adapter.js', kind: 'forbidden-string', pattern: "opts.ease || 'power", note: '[TestMotionAdapterFluentDefaults] test_no_legacy_power_ease_defaults — unscoped 全檔' },
 
   // ---- [TestShowcaseAnimationsFluent] showcase/animations.js + ghost-fly.js + search/animations.js ease → fluent 角色 ----
-  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: "params.easing || 'fluent-decel'", note: '[TestShowcaseAnimationsFluent] test_animations_js_contains — playEntry' },
+  { file: 'web/static/js/shared/grid-motion.js', kind: 'required-string', pattern: "params.easing || 'fluent-decel'", note: '[TestShowcaseAnimationsFluent] test_animations_js_contains — playEntry' },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: "params.ease || 'fluent'", note: '[TestShowcaseAnimationsFluent] test_animations_js_contains — playFlipReorder' },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: "ease: 'fluent-accel'", note: '[TestShowcaseAnimationsFluent] test_animations_js_contains — playModeCrossfade' },
   {
@@ -2707,11 +2719,36 @@ const RULES = [
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: '.av-card-preview', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B7' },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'data-flip-id', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B7' },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'Flip.from', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8 playFlipFilter' },
-  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'onEnter', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8' },
-  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'onLeave', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8' },
+  { file: 'web/static/js/shared/grid-motion.js', kind: 'required-string', pattern: 'onEnter', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8' },
+  { file: 'web/static/js/shared/grid-motion.js', kind: 'required-string', pattern: 'onLeave', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8' },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'clearProps', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8' },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'return gsap.fromTo', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8 playFlipFilter returns tweens' },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'return gsap.to', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8' },
+  // 🔴 Codex PR#177 第 2 輪 P3（Opus 2026-09-03）：B8 群組的搬家只做了一半。
+  // T1 把 playFlipFilter 從 animations.js 搬進 grid-motion.js 時，只有 onEnter/onLeave 兩條
+  // 跟著改 `file`；`Flip.from` / `clearProps` / `return gsap.fromTo` / `return gsap.to` 四條
+  // 仍指向 animations.js——而那個檔裡**別的方法**（playFlipReorder / playModeCrossfade /
+  // pick-star）恰好也有同樣字面，於是把 grid-motion.js 裡 playFlipFilter 的那些行為刪掉，
+  // lint 照樣全綠（三次獨立 mutation 實測，全部 green）⇒ **搬家把覆蓋率靜默削掉了**。
+  // 這正是 gotchas FE-GUARD-26 記的兩種錯法之一。
+  // 依該條的判定法：grep 舊檔剩餘次數——四條全部非零（1 / 15 / 3 / 1），代表 animations.js
+  // 那幾列仍在合法地守 B12 與其他方法 ⇒ **純新增四列守新家，不動舊列、總覆蓋只增不減**。
+  { file: 'web/static/js/shared/grid-motion.js', kind: 'required-string', pattern: 'Flip.from',
+    stripLineComments: true,
+    note: '[TestShowcaseAnimationsGuard] B8 playFlipFilter 的 Flip.from（TASK-141b-T1 搬家後的新家）。stripLineComments 是必要的：grid-motion.js 的行內註解本身含 `Flip.from` 字面，不剝掉的話刪掉真正的呼叫仍會 false-pass（實測踩過）。' },
+  { file: 'web/static/js/shared/grid-motion.js', kind: 'required-string', pattern: 'clearProps', count: 3,
+    note: '[TestShowcaseAnimationsGuard] B8：playEntry 兩處 ＋ playFlipFilter onComplete 一處。count 鎖 3，少任何一處都轉紅。' },
+  { file: 'web/static/js/shared/grid-motion.js', kind: 'required-string', pattern: 'return gsap.fromTo', count: 2,
+    note: '[TestShowcaseAnimationsGuard] B8：playFlipFilter 的 onEnter 兩個分支各回一條 tween。' },
+  { file: 'web/static/js/shared/grid-motion.js', kind: 'required-string', pattern: 'return gsap.to',
+    note: '[TestShowcaseAnimationsGuard] B8：playFlipFilter 的 onLeave 回傳的 tween。' },
+  {
+    file: 'web/static/css/theme.css',
+    kind: 'required-string',
+    pattern: ':is(.ds-gallery-composition .flip-guard, .ds-gallery-composition.flip-guard)',
+    count: 2,
+    note: '[branch review / Codex PR#177 第 2 輪 P3] B15 的 flip-guard 覆蓋規則必須同時接受兩種形狀：瀏覽頁的「composition 與 flip-guard 分屬兩層」與書籤牆的「兩個 class 疊在同一元素」（search.html:1208 的 .wishlist-grid 本身就帶 ds-gallery-composition）。只寫後代形式的話，書籤牆的卡片**0 命中**（真瀏覽器實測），收合時 hover 的 transform 會跟 GSAP FLIP 搶——而這條規則存在的唯一理由就是蓋掉它。兩處（本體 ＋ :hover）都要，所以 count 鎖 2。瀏覽頁實測不受影響（新舊 selector 命中數同為 91）。',
+  },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: '.fromTo', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B12 playFlipReorder manual fromTo' },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'killLightboxAnimations', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — T20' },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: "getById('showcaseLightboxOpen')", note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — T20' },
@@ -4557,6 +4594,23 @@ const RULES = [
   {
     file: 'web/templates/search.html',
     kind: 'required-string',
+    pattern: '@touchstart.passive="_wishlistLbTouchStart($event)"',
+    // window 實測（Opus 2026-09-03）：anchor → @touchstart 241 字元、→ @touchend 306、
+    // → 開頭標籤閉合 `>` 367。取 450＝涵蓋整個開頭標籤 ＋ 小幅邊際；刻意**不用** 7000
+    // （同 anchor 其他 8 條用的那個窗 headroom 只剩約 114 字元，見 plan 陷阱段）。
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 450 },
+    note: '[TASK-141b-T5] 書籤燈箱的觸控接線：拿掉這個綁定，手機／平板上滑動換片整個失效，而 node:test（測 JS 處理器）與其餘守衛全部照樣綠',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: '@touchend.passive="_wishlistLbTouchEnd($event)"',
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 450 },
+    note: '[TASK-141b-T5] 同上，touchend 那半。兩個綁定缺任一都會讓滑動失效',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
     pattern: '/api/wishlist/cover?number=',
     scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
     note: '[TASK-140-T11a] 書籤燈箱封面必須走本地 /api/wishlist/cover 端點，不得用 resolveCoverUrl／proxy-image（承重段第4條；退回打外站會破壞 F6 驗收5「零對外請求」，且 javbus 圖床沒有 Referer 會回 403，正是 T9 修的那個破圖）',
@@ -4574,44 +4628,100 @@ const RULES = [
   {
     file: 'web/templates/search.html', kind: 'forbidden-string',
     pattern: 'bi-arrow-return-left',
-    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7500 },
     note: '[TASK-140-T11a] 書籤燈箱不得出現返回詳情鈕（spec F5 驗收4，書籤沒有本地檔案可返回）',
   },
   {
     file: 'web/templates/search.html', kind: 'forbidden-string',
     pattern: 'bi-folder2-open',
-    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7500 },
     note: '[TASK-140-T11a] 書籤燈箱不得出現開資料夾鈕（書籤沒有本地檔案）',
   },
   {
     file: 'web/templates/search.html', kind: 'forbidden-string',
     pattern: 'bi-play-fill',
-    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7500 },
     note: '[TASK-140-T11a] 書籤燈箱不得出現播放鈕（書籤沒有本地檔案）',
   },
   {
     file: 'web/templates/search.html', kind: 'forbidden-string',
     pattern: 'bi-bookmark-plus',
-    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7500 },
     note: '[TASK-140-T11a] 書籤燈箱不得出現加入書籤鈕（本身就在書籤清單裡）',
   },
   {
     file: 'web/templates/search.html', kind: 'forbidden-string',
     pattern: 'bi-bookmark-fill',
-    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
-    note: '[TASK-140-T11a] 書籤燈箱不得出現移除書籤鈕（spec F5：唯一下游動作是開原站，移除走 grid 卡的垃圾桶）',
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7500 },
+    note: '[TASK-140-T11a→141b-T7 訂正] 書籤燈箱不得出現 `bi-bookmark-fill` 這顆「書籤圖示」的移除鈕。⚠️ 原 note 寫「唯一下游動作是開原站，移除走 grid 卡的垃圾桶」——**那個意圖已被 spec F8.4／CD-9 取代**：141b-T7 起燈箱裡就有移除鈕了（用 `bi-trash3`，與牆上卡片同一個圖示語彙）。本條**仍然有效**，但守的是「別用書籤圖示當移除鈕」——那會與『加入書籤』的圖示混淆',
   },
   {
     file: 'web/templates/search.html', kind: 'forbidden-string',
     pattern: 'bi-pencil',
-    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7500 },
     note: '[TASK-140-T11a] 書籤燈箱不得出現編輯鈕（spec F5 驗收4：那些需要本地檔案）',
   },
   {
     file: 'web/templates/search.html', kind: 'forbidden-string',
     pattern: 'bi-translate',
-    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7000 },
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 7500 },
     note: '[TASK-140-T11a] 書籤燈箱不得出現翻譯鈕（spec F5 驗收4：那些需要本地檔案）',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: '@click.stop="removeFromWishlistInLightbox()"',
+    // window 實測（Opus 2026-09-03）：anchor → 本字面距離 2860 字元；訂 3200（約 340 字元安全邊際，
+    // 見「現況分析」F 段完整量測過程）。不得抄旁邊 7000 那個窗——那是給區塊「頭部」規則用的預算，
+    // 本規則的目標字面在區塊中段，用 7000 雖然也能過但會虛耗窗口、也會誤導未來的人以為這是頭部規則。
+    scope: { anchor: /class="showcase-lightbox wishlist-lightbox"/, window: 3200 },
+    note: '[TASK-141b-T7] 書籤燈箱移除鈕的接線鎖：這顆鈕是燈箱裡唯一的移除入口（spec F8.4），字面被改掉或刪掉的話，燈箱裡就再也移除不了、而 node:test（測 JS 函式）與其餘守衛全部照樣綠。`.stop` 一併鎖住：它在目前 DOM 下是防禦性冗餘（祖先 .lightbox-content 已有無條件 @click.stop 攔截冒泡），但與同容器既有那顆鈕寫法一致；若日後有人拿掉 .lightbox-content 那道攔截，這裡就是唯一的防線',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: 'x-transition:enter-end="opacity-100"',
+    count: 6,
+    note: '[TASK-141b-T8] F8.3 三處（搜尋燈箱/單片大卡/搜尋格牆卡）加入鈕與移除鈕共 6 顆，各帶一組 x-transition:enter* 過渡（CD-18）。全域無 scope——這個精確字面（不含 translate 尾碼）在改動前全檔 0 筆命中，是本卡獨有，不與既有 toast 容器的 "opacity-100 translate-y-0" 衝突。count 掉到 6 以下代表有鈕的 enter 過渡被拿掉了。',
+  },
+  // 🔴 branch review P3-2（Opus 2026-09-03）：上面那條只鎖 enter-end，是三分之一。
+  // `x-transition:enter*` 是三件一組——拿掉 **enter-start** 之後過渡實際失效（沒有起始
+  // opacity，等於從 1 到 1），而 lint 與 node:test **全綠**：正是上面那條 note 說要擋的東西。
+  // 三個字面在改動前全檔各 0 筆命中，是本卡獨有，全域無 scope 安全。
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: 'x-transition:enter-start="opacity-0"',
+    count: 6,
+    note: '[branch review P3-2] 同上 6 顆鈕的 enter 起始狀態。少了它 opacity 從 1 到 1，過渡靜默失效。',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: 'x-transition:enter="transition ease-out duration-150"',
+    count: 6,
+    note: '[branch review P3-2] 同上 6 顆鈕的 enter 過渡本體（時長對齊 OpenAver.motion.DURATION.fast）。少了它就沒有 transition class，起訖狀態瞬間切換。',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'forbidden-string',
+    pattern: 'x-transition:leave',
+    scope: { anchor: /@click="addToWishlistFromLightbox\(currentLightboxVideo\(\)\)"/, window: 1600 },
+    note: '[TASK-141b-T8] CD-18：搜尋燈箱這對加入/移除鈕只寫 enter、不寫 leave（雙向 crossfade 會讓兩顆鈕同時 display，overlay 變雙寬）。window 實測（Opus）：anchor → 移除鈕 </button> 距離 1377 字元，訂 1600（約 220 字元邊際）。',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'forbidden-string',
+    pattern: 'x-transition:leave',
+    scope: { anchor: /@click="addToWishlistFromDetail\(current\(\)\)"/, window: 1500 },
+    note: '[TASK-141b-T8] CD-18，同上，單片大卡這對鈕。window 實測：anchor → 移除鈕 </button> 距離 1163 字元，訂 1500（約 340 字元邊際）。',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'forbidden-string',
+    pattern: 'x-transition:leave',
+    scope: { anchor: /@click\.stop="addToWishlistFromGrid\(result, \$event\)"/, window: 1600 },
+    note: '[TASK-141b-T8] CD-18，同上，搜尋格牆卡這對鈕。window 實測：anchor → 移除鈕 </button> 距離 1362 字元，訂 1600（約 240 字元邊際）。',
   },
   // ---- [TASK-140-T12] 書籤面板三層容器結構（原「頂部批次清理鈕 F7 驗收1-3」那三條已隨 141a-T6 退場） ----
   {
@@ -4653,6 +4763,100 @@ const RULES = [
     kind: 'required-string',
     pattern: `x-show="listMode === 'search' && pageState === 'result' && (searchResults.length > 1 || actressProfile) && !isComposing()"`,
     note: '[lint-guard 141a-T7] 格牆／大卡切換鈕顯示條件必須為「結果模式＋(結果數>1 或有女優 hero 卡)＋非組合輸入」（CD-9，spec F4 驗收 2/2b/3；`|| actressProfile` 是 branch review P2 補的，見 search.html 該行上方註解）',
+  },
+  {
+    file: 'web/static/js/pages/search/wishlist-aging.js',
+    kind: 'forbidden-string',
+    pattern: ['Date.parse(', 'new Date('],
+    note: '[TASK-141b-T9] CD-6/CD-124a-2：禁止對日期字串做跨瀏覽器不保證一致的解析。全檔零合法場景需要這兩種字面——「現在時刻」一律由呼叫端以 Date.now() 注入，本檔自己不建構 Date 物件（與 release-window.js 不同，本檔不需要「取得當下時刻」的情境）。無 scope：全新檔案，全檔皆守備範圍。',
+  },
+  {
+    file: 'web/static/css/pages/search.css',
+    kind: 'required-string',
+    pattern: 'position: absolute',
+    scope: { anchor: /\.wishlist-aging\s*\{/, braceBalanced: true },
+    note: '[TASK-141b-T9] .wishlist-aging 必須是 position:absolute（CD-17 零佔位）——少了它，元素會進文件流撐高卡片，而 node:test 與既有 lint 全部是綠的。scope 用 braceBalanced 精準扣住這條規則本體（CSS 宣告區塊無巢狀 {}，anchor 到對應 } 之間即為完整規則），不靠猜測字元距離。',
+  },
+  {
+    file: 'web/static/css/pages/search.css',
+    kind: 'required-string',
+    pattern: 'var(--color-warning)',
+    scope: { anchor: /\.wishlist-aging--stage2\s*\{/, braceBalanced: true },
+    note: '[TASK-141b-T9] 第 2 階必須用既有註冊 token var(--color-warning)（owner 拍板，設計決策 1），不得手寫十六進位、不得用 --color-error。scope 用 braceBalanced 精準扣住這條規則本體。',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'item._imgError',
+    scope: /<template x-for="\(item, index\) in wishlistItems"[\s\S]*?<\/template>/,
+    note: '[TestWishlistCoverFadeGuard] TASK-141b-T10／CD-19：書籤卡封面狀態禁止掛在 item._imgError（loadWishlist() 整包覆蓋物件會讓封面消失）',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'item._imgLoaded',
+    scope: /<template x-for="\(item, index\) in wishlistItems"[\s\S]*?<\/template>/,
+    note: '[TestWishlistCoverFadeGuard] TASK-141b-T10／CD-19：同上，禁止 item._imgLoaded 形狀',
+  },
+
+  // ---- [Codex PR review BLOCKER 2026-09-03] T10 的五條純字串掃描由 pytest 搬來這裡 ----
+  // CLAUDE.md north-star：「能用 lint 機械處理的，就不該進 pytest、也不該耗 Codex 審」。
+  // plan NC-3 只裁定了「既有那支 scope 守衛維持 pytest」，**沒有**授權新增的這幾條；
+  // 實作端把那個授權就地擴大套用，且連 [lint-guard: pytest-justified] 標記都沒補。
+  // 三條 required-string 的目標字面在 search.html 全檔各只出現一次（已量測），
+  // 故不需要 scope——沒有任何兄弟元素能餵飽它們（FE-GUARD-22 的假綠風險為零）。
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: ":loading=\"index < 8 ? 'eager' : 'lazy'\"",
+    note: '[TASK-141b-T10 DoD5] 書籤卡首屏前 8 張 eager、其餘 lazy（閾值逐字抄自瀏覽頁）。少了它整面牆都是 lazy，冷載時首屏封面要等捲動才開始下載。',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: ":fetchpriority=\"index < 8 ? 'high' : 'auto'\"",
+    note: '[TASK-141b-T10 DoD5] 同上的 fetchpriority 那一半；兩個屬性要成對，只留一個等於沒做首屏優先。',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'forbidden-string',
+    pattern: 'loading="lazy"',
+    scope: /<template x-for="\(item, index\) in wishlistItems"[\s\S]*?<\/template>/,
+    note: '[TASK-141b-T10 DoD5] 書籤卡不得寫死 loading="lazy"（要走 :loading 綁定）。必須 scope：這個字面在搜尋結果牆那側是合法的、且出現在本區塊之前三次，裸鎖會恆紅。scope 用 template 邊界的完整 regex 而非固定字元窗——窗貼齊區塊邊界正是 T5/T7 踩過的靜默失效類別。',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: 'x-show="!_wishlistCoverLoaded[item.number] && !_wishlistCoverError[item.number]"',
+    note: '[TASK-141b-T10 DoD1] 骨架的三態 gate（未載入且未破圖才顯示 shimmer）。gate 寫錯會讓骨架與封面同時在場或永遠不消失。',
+  },
+  {
+    file: 'web/static/js/pages/search/state/wishlist.js',
+    kind: 'required-string',
+    pattern: ['_wishlistCoverLoaded: {}', '_wishlistCoverError: {}'],
+    stripLineComments: true,   // [branch review P3-3] 本 codebase 兩次踩過「註解餵飽守衛」（search.html:271 / wishlist.js:449 的註解都明文寫著這件事）——宣告被刪掉、字面只留在註解裡時，沒有這個旗標守衛照樣綠
+    note: '[TASK-141b-T10 CD-19] 封面載入狀態必須是「番號為 key」的 state 宣告，且掛在 wishlist.js 的 state 上（loadWishlist() 內部不碰）。這是 CD-19 落點的另一半——模板側的兩條 forbidden 只擋得住「退回 item._imgLoaded」，擋不住「宣告整個被刪掉」。',
+  },
+  // 🔴 這兩條刻意拆成「一條規則扣一個 CSS 規則本體」，不是把整個 @media 當一袋字串掃。
+  // 被取代的那支 pytest 是後者（`".wishlist-grid" in body and "opacity: 1" in body`），
+  // 而 `.wishlist-empty` 自己也有一份 `opacity: 1` ⇒ **把封面那份刪掉照樣全綠**（fail-open）。
+  // 這個洞是搬家時做反向驗證才量出來的：舊測試也有，不是本次新引入的，但不該原樣搬過來。
+  // anchor 收在各自規則的 `{`，braceBalanced 從那裡起算 ⇒ scope 就是那一條規則的宣告區塊。
+  {
+    file: 'web/static/css/pages/search.css',
+    kind: 'required-string',
+    pattern: ['transition: none', 'opacity: 1'],
+    scope: { anchor: /@media \(prefers-reduced-motion:\s*reduce\)\s*\{\s*:is\([^)]*\)\.wishlist-grid[^{]*\{/, braceBalanced: true },
+    note: '[TASK-141b-T10 DoD7] PRM 下書籤封面淡入退化成「瞬間到位」：transition 關掉 ＋ opacity 直接是 1。少了 opacity:1 會留下一整面 opacity:0 的空白卡——「不執行動畫」與「瞬間到最終狀態」是兩件事（CD-11）。',
+  },
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    pattern: ['item.created_at ? `/api/wishlist/cover?number=', '_wishlistCoverRetry[item.number] ? `&r='],
+    note: '[branch review P2-1] 書籤卡封面的 :src 必須用 item.created_at 當閘。樂觀 unshift 的那一筆（addToWishlist 在 POST 之前就 unshift）沒有這個伺服器端欄位；沒有這道閘，它會在封面檔還沒寫完時就發 GET ⇒ 必定 404 ⇒ @error 寫進 _wishlistCoverError，而那張表依 CD-19 刻意不被 loadWishlist() 清掉 ⇒ 剛加的片在書籤牆上永遠是灰底「無圖」，只有 F5 才會好。事後清旗標不是解法：實測清了也不會重新請求（naturalWidth 仍 0），只會把占位換成破圖 icon。第二個字面是 Codex PR#177 第 2 輪 P2 補的重試 token：端點是「先 commit 那一列、才下載封面」（routers/wishlist.py:69→90），使用者按下加入後馬上切到書籤分頁（真瀏覽器實測 100ms 就撞得到）會拿到有 created_at 但封面還沒寫完的列 ⇒ 404 ⇒ 旗標永久。token 讓 :src 在 POST 回報 cover_available 之後變一次——**光清旗標不會讓瀏覽器重新請求**。',
+  },
+  {
+    file: 'web/static/css/pages/search.css',
+    kind: 'required-string',
+    pattern: ['opacity: 1', 'animation: none'],
+    scope: { anchor: /@media \(prefers-reduced-motion:\s*reduce\)\s*\{[\s\S]*?\.wishlist-empty\s*\{/, braceBalanced: true },
+    note: '[TASK-141b-T10 DoD7] PRM 下空狀態同理：animation 關掉 ＋ opacity 直接是 1。keyframes 的起始狀態是 opacity:0，只關 animation 不補 opacity:1 會讓「書籤是空的」那段字永遠不出現。',
   },
 ];
 

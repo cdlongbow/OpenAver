@@ -3255,6 +3255,25 @@ this.showToast('已複製', 'success', 2500)   // 委派給 store，由 shared/s
                 </p>
             </div>
 
+            <!-- Wishlist Aging Hint（TASK-141b-T9，spec F9） -->
+            <div class="ds-subsection">
+                <h3>Wishlist Aging Hint</h3>
+                <p class="ds-desc">
+                    書籤卡「放多久了」提示（<code>.wishlist-aging</code>）。三階：0 不顯示、1（14 天起）中性膠囊、2（30 天起）換成琥珀底 <code>var(--color-warning)</code>。
+                    形狀沿用 <code>.cover-badge</code>（封面左上常駐屬性標籤，pill 白名單第 4 條），定位沿用 <code>.cover-badges</code>（<code>position:absolute</code> 左上角、零佔位）。
+                    <strong>為什麼有底色</strong>：原設計是無底色的極淡小字，在滿版彩色文字的真封面上完全讀不出來（141b-T11 六筆真資料驗收，owner 2026-09-03 改判）。
+                </p>
+                <div style="position: relative; width: 240px; height: 135px; background: linear-gradient(135deg, #555, #1a1a1a); border-radius: 0.375rem; overflow: hidden;">
+                    <span class="wishlist-aging">20 天前加入</span>
+                </div>
+                <div style="position: relative; width: 240px; height: 135px; background: linear-gradient(135deg, #eee, #ccc); border-radius: 0.375rem; overflow: hidden; margin-top: 0.5rem;">
+                    <span class="wishlist-aging wishlist-aging--stage2">35 天前加入</span>
+                </div>
+                <p class="ds-desc" style="margin-top: 0.75rem;">
+                    Classes：<code>.wishlist-aging</code> <code>.wishlist-aging--stage2</code>
+                </p>
+            </div>
+
         </section>
 
         <!-- Notification Center (53b-T1 demo) -->

@@ -194,7 +194,8 @@
       "has_local_count": "本地已有 {count} 個版本（點擊開啟資料夾）"
     },
     "wishlist": {
-      "empty": "還沒有任何書籤"
+      "empty": "還沒有任何書籤",
+      "aged_days": "{days} 天前加入"
     },
     "button": {
       "search_all": "批次搜尋",
@@ -263,7 +264,8 @@
       "translate_batch_done": "翻譯完成：成功 {success}，失敗 {failed}",
       "fields_defaulted": "⚠️ {fields} 資訊未取得，已使用預設值",
       "from_source": "來自 {name}",
-      "wishlist_already_owned": "這部片已經在你的片庫裡"
+      "wishlist_already_owned": "這部片已經在你的片庫裡",
+      "wishlist_added_offscreen": "已加入書籤"
     },
     "duplicate": {
       "title": "檔案重複",
