@@ -1941,6 +1941,19 @@
                     </template>
                 </span>
             </template>
+            <!-- TASK-142-T4: 來源不可達 pill（與 .footer-count 同層；不可加 x-data） -->
+            <template x-if="unreachableSources.length">
+                <span class="footer-count footer-count--unreachable">
+                    <i class="bi bi-plug"></i>
+                    <template x-if="unreachableSources.length <= 2">
+                        <span x-text="t('showcase.status.source_unreachable_list', { list: unreachableSources.map(s => s.display).join('、') })"></span>
+                    </template>
+                    <template x-if="unreachableSources.length > 2">
+                        <span :title="unreachableSources.map(s => s.display).join('、')"
+                              x-text="t('showcase.status.source_unreachable_count', { n: unreachableSources.length })"></span>
+                    </template>
+                </span>
+            </template>
         </div>
 
         <!-- Center: shortcut hint（永遠顯示）-->

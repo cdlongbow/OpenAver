@@ -2948,6 +2948,108 @@ this.showToast('已複製', 'success', 2500)   // 委派給 store，由 shared/s
                 </p>
             </div>
 
+            <!-- 來源不可達 Pill (Footer) -->
+            <div class="ds-subsection">
+                <h3>來源不可達 Pill (Footer) <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: normal;">(圖示待 owner 拍板)</span></h3>
+                <p class="ds-desc">
+                    Showcase 頁面底部狀態列（<code>.showcase-footer .footer-left</code>）的來源不可達提示。使用 <code>.footer-count</code>、<code>.footer-count--unreachable</code>。當系統偵測到影片來源路徑無法存取時顯示，文字與圖示皆使用 <code>var(--color-warning)</code>（文字色需要 <code>.footer-count.footer-count--unreachable &gt; span</code> 覆蓋既有的 label 降階規則），並套用單次淡入動畫。<br>
+                    收斂規則：1 至 2 個位置時直接列出路徑名稱；3 個以上位置時收斂為「N 個位置無法存取」，並於文字 <code>&lt;span&gt;</code> 上帶原生 <code>title</code> 提示完整路徑清單（與產品碼同一層）。<br>
+                    <strong>⚠️ 圖示待 owner 拍板：</strong>目前產品碼使用 <code>bi-plug</code>，<code>bi-hdd-network</code> 為候選圖示，以下並列展示兩者在三種狀態下（footer 字級）的辨識度比較。
+                </p>
+
+                <div style="display: flex; gap: 1.5rem; flex-wrap: wrap; margin-top: 1rem;">
+                    <!-- bi-plug 版本 -->
+                    <div style="flex: 1; min-width: 300px;">
+                        <p class="ds-desc" style="font-weight: 600; margin-bottom: 0.5rem;">
+                            版本 A：<code>bi-plug</code>（目前產品碼）
+                        </p>
+                        <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                            <!-- 1 個位置 -->
+                            <div>
+                                <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.25rem;">1 個位置無法存取</p>
+                                <div style="position: relative; overflow: hidden; border-radius: 0.5rem; border: 1px solid var(--color-border); padding: 0.5rem 1rem;">
+                                    <div class="ds-footer-pill-demo">
+                                        <span class="footer-count footer-count--unreachable">
+                                            <i class="bi bi-plug"></i>
+                                            <span>無法存取：\\192.168.1.177</span>
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- 2 個位置 -->
+                            <div>
+                                <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.25rem;">2 個位置無法存取</p>
+                                <div style="position: relative; overflow: hidden; border-radius: 0.5rem; border: 1px solid var(--color-border); padding: 0.5rem 1rem;">
+                                    <div class="ds-footer-pill-demo">
+                                        <span class="footer-count footer-count--unreachable">
+                                            <i class="bi bi-plug"></i>
+                                            <span>無法存取：\\192.168.1.177、D:\Videos</span>
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- 3 個以上 -->
+                            <div>
+                                <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.25rem;">3 個以上位置（含原生 title tooltip）</p>
+                                <div style="position: relative; overflow: hidden; border-radius: 0.5rem; border: 1px solid var(--color-border); padding: 0.5rem 1rem;">
+                                    <div class="ds-footer-pill-demo">
+                                        <span class="footer-count footer-count--unreachable">
+                                            <i class="bi bi-plug"></i>
+                                            <span title="\\192.168.1.177、D:\Videos、/Volumes/Archive">3 個位置無法存取</span>
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- bi-hdd-network 版本 -->
+                    <div style="flex: 1; min-width: 300px;">
+                        <p class="ds-desc" style="font-weight: 600; margin-bottom: 0.5rem;">
+                            版本 B：<code>bi-hdd-network</code>（候選，圖示待 owner 拍板）
+                        </p>
+                        <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                            <!-- 1 個位置 -->
+                            <div>
+                                <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.25rem;">1 個位置無法存取</p>
+                                <div style="position: relative; overflow: hidden; border-radius: 0.5rem; border: 1px solid var(--color-border); padding: 0.5rem 1rem;">
+                                    <div class="ds-footer-pill-demo">
+                                        <span class="footer-count footer-count--unreachable">
+                                            <i class="bi bi-hdd-network"></i>
+                                            <span>無法存取：\\192.168.1.177</span>
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- 2 個位置 -->
+                            <div>
+                                <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.25rem;">2 個位置無法存取</p>
+                                <div style="position: relative; overflow: hidden; border-radius: 0.5rem; border: 1px solid var(--color-border); padding: 0.5rem 1rem;">
+                                    <div class="ds-footer-pill-demo">
+                                        <span class="footer-count footer-count--unreachable">
+                                            <i class="bi bi-hdd-network"></i>
+                                            <span>無法存取：\\192.168.1.177、D:\Videos</span>
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- 3 個以上 -->
+                            <div>
+                                <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.25rem;">3 個以上位置（含原生 title tooltip）</p>
+                                <div style="position: relative; overflow: hidden; border-radius: 0.5rem; border: 1px solid var(--color-border); padding: 0.5rem 1rem;">
+                                    <div class="ds-footer-pill-demo">
+                                        <span class="footer-count footer-count--unreachable">
+                                            <i class="bi bi-hdd-network"></i>
+                                            <span title="\\192.168.1.177、D:\Videos、/Volumes/Archive">3 個位置無法存取</span>
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Table Mode -->
             <div class="ds-subsection">
                 <h3>Table Mode</h3>

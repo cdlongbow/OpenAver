@@ -1033,7 +1033,9 @@
       "search_actresses_suffix": "\"",
       "pill_actresses_prefix": "符合",
       "pill_actresses_middle": "個條件的",
-      "pill_actresses_suffix": "位"
+      "pill_actresses_suffix": "位",
+      "source_unreachable_list": "無法存取：{list}",
+      "source_unreachable_count": "{n} 個位置無法存取"
     },
     "nav": {
       "prev_page": "上一頁",

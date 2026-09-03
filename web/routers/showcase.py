@@ -379,3 +379,32 @@ def set_manual_focal(req: ManualFocalRequest):
     except Exception as e:
         logger.error("存入手動焦點失敗: %s", e)
         return JSONResponse({"success": False, "error": "存入手動焦點失敗"}, status_code=500)
+
+
+@router.get("/source-status")
+async def get_source_status():
+    from core.source_reachability import (
+        get_snapshot,
+        schedule_reprobe_if_stale,
+        unc_host,
+        wait_for_first_probe,
+    )
+
+    await schedule_reprobe_if_stale()
+    await wait_for_first_probe()
+    snapshot = get_snapshot()
+    out = []
+    seen_displays = set()
+    for path, status in snapshot.items():
+        if status != 'unreachable':
+            continue
+        host = unc_host(path)
+        display = host if host else path
+        # spec F3：同一主機底下多個來源合成一個名字。去重在端點做（CD-6：顯示名由端點算、
+        # 前端不做字串處理），否則 footer 會列出兩次同一台 NAS，「N 個位置」也會多算。
+        if display in seen_displays:
+            continue
+        seen_displays.add(display)
+        out.append({"path": path, "display": display, "status": status})
+    return out
+
