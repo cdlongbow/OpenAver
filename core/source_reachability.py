@@ -172,20 +172,29 @@ async def _probe_one(native_path: str, host_memo: dict[str, str]) -> str:
     return await _probe_exists_with_retry(native_path)
 
 
-async def _probe_tcp_with_retry(host: str) -> str:
-    r1 = await _tcp_probe(host)
-    if r1 is None:
-        return "unknown"
-    if r1 is False:
-        return "ok"
-    # Negative → retry once after 1s.
-    await asyncio.sleep(_RETRY_SLEEP_S)
-    r2 = await _tcp_probe(host)
-    if r2 is None:
-        return "unknown"
-    if r2 is False:
-        return "ok"
+async def _probe_with_retry(probe, target: str) -> str:
+    """CD-4 三態收斂（TCP 與 exists 兩條路共用同一套規則）。
+
+    ``probe`` 回 ``False``=肯定 / ``True``=否定 / ``None``=unknown。
+    肯定 → ``ok``；**unknown 不重試**（探測機構自己壞掉，再問一次也是猜）；
+    否定 → 隔 1 秒再問一次，兩次都否定才是 ``unreachable``。
+
+    🔴 **「非否定」不得寫成 ok**——``None`` 必須是獨立分支，否則
+    ``gaierror`` 這類會被誤報成「這個位置是通的」（誤報比漏報更糟）。
+    """
+    for attempt in (1, 2):
+        result = await probe(target)
+        if result is None:
+            return "unknown"
+        if result is False:
+            return "ok"
+        if attempt == 1:
+            await asyncio.sleep(_RETRY_SLEEP_S)
     return "unreachable"
+
+
+async def _probe_tcp_with_retry(host: str) -> str:
+    return await _probe_with_retry(_tcp_probe, host)
 
 
 async def _tcp_probe(host: str) -> bool | None:
@@ -212,18 +221,7 @@ async def _tcp_probe(host: str) -> bool | None:
 
 
 async def _probe_exists_with_retry(path: str) -> str:
-    r1 = await _exists_probe(path)
-    if r1 is None:
-        return "unknown"
-    if r1 is False:
-        return "ok"
-    await asyncio.sleep(_RETRY_SLEEP_S)
-    r2 = await _exists_probe(path)
-    if r2 is None:
-        return "unknown"
-    if r2 is False:
-        return "ok"
-    return "unreachable"
+    return await _probe_with_retry(_exists_probe, path)
 
 
 async def _exists_probe(path: str) -> bool | None:
