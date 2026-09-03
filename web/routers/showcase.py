@@ -379,3 +379,20 @@ def set_manual_focal(req: ManualFocalRequest):
     except Exception as e:
         logger.error("存入手動焦點失敗: %s", e)
         return JSONResponse({"success": False, "error": "存入手動焦點失敗"}, status_code=500)
+
+
+@router.get("/source-status")
+async def get_source_status():
+    from core.source_reachability import get_snapshot, schedule_reprobe_if_stale, unc_host
+
+    await schedule_reprobe_if_stale()
+    snapshot = get_snapshot()
+    out = []
+    for path, status in snapshot.items():
+        if status != 'unreachable':
+            continue
+        host = unc_host(path)
+        display = host if host else path
+        out.append({"path": path, "display": display, "status": status})
+    return out
+

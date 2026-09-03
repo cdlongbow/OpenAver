@@ -38,6 +38,7 @@ from core.database import init_db
 from core.database import backfill_readonly_nfo_mtime
 from core.metatube.state import metatube_state as _mt_startup_state
 from core.access_auth import ensure_schema, load_snapshot, snapshot, verify_ticket
+from core import source_reachability
 
 
 # 路徑設定
@@ -122,6 +123,11 @@ async def lifespan(app: FastAPI):
     # create_task 回傳值須保留強引用（event loop 只持 weak ref），否則 task 可能
     # 執行中途被 GC 回收 —— 存 app.state（app 已建立、比 module global 乾淨，無需 global）。
     app.state.startup_check_task = asyncio.create_task(_startup_update_check())
+
+    try:
+        await source_reachability.schedule_reprobe_if_stale()
+    except Exception:
+        logger.warning("lifespan: source reachability startup probe failed unexpectedly", exc_info=True)
 
     yield
     # ── shutdown ──────────────────────────────────────────────
