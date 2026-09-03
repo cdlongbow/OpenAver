@@ -321,8 +321,13 @@ async def _exists_probe(path: str) -> bool | None:
                 asyncio.shield(future), timeout=_EXISTS_WAIT_S
             )
         except asyncio.TimeoutError:
+            # 預期內：碟沒回應。future 留在 _pending_exists 裡（去重），不吵。
             return None
         except Exception:
+            # 與 _tcp_probe 對稱：非逾時一律是意料外的（executor 關閉中拒收等）。
+            # 仍收斂成 unknown（不得誤報成 ok），但必須留痕，否則「探測永久壞掉」
+            # 與「這次剛好問不出來」在 debug.log 裡分不出來。
+            logger.warning("_exists_probe: unexpected failure for %s", path, exc_info=True)
             return None
         # exists True → affirmative (False); missing → negative (True)
         return False if result else True
