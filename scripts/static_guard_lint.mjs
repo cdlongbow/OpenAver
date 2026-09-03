@@ -2724,6 +2724,31 @@ const RULES = [
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'clearProps', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8' },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'return gsap.fromTo', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8 playFlipFilter returns tweens' },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'return gsap.to', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8' },
+  // 🔴 Codex PR#177 第 2 輪 P3（Opus 2026-09-03）：B8 群組的搬家只做了一半。
+  // T1 把 playFlipFilter 從 animations.js 搬進 grid-motion.js 時，只有 onEnter/onLeave 兩條
+  // 跟著改 `file`；`Flip.from` / `clearProps` / `return gsap.fromTo` / `return gsap.to` 四條
+  // 仍指向 animations.js——而那個檔裡**別的方法**（playFlipReorder / playModeCrossfade /
+  // pick-star）恰好也有同樣字面，於是把 grid-motion.js 裡 playFlipFilter 的那些行為刪掉，
+  // lint 照樣全綠（三次獨立 mutation 實測，全部 green）⇒ **搬家把覆蓋率靜默削掉了**。
+  // 這正是 gotchas FE-GUARD-26 記的兩種錯法之一。
+  // 依該條的判定法：grep 舊檔剩餘次數——四條全部非零（1 / 15 / 3 / 1），代表 animations.js
+  // 那幾列仍在合法地守 B12 與其他方法 ⇒ **純新增四列守新家，不動舊列、總覆蓋只增不減**。
+  { file: 'web/static/js/shared/grid-motion.js', kind: 'required-string', pattern: 'Flip.from',
+    stripLineComments: true,
+    note: '[TestShowcaseAnimationsGuard] B8 playFlipFilter 的 Flip.from（TASK-141b-T1 搬家後的新家）。stripLineComments 是必要的：grid-motion.js 的行內註解本身含 `Flip.from` 字面，不剝掉的話刪掉真正的呼叫仍會 false-pass（實測踩過）。' },
+  { file: 'web/static/js/shared/grid-motion.js', kind: 'required-string', pattern: 'clearProps', count: 3,
+    note: '[TestShowcaseAnimationsGuard] B8：playEntry 兩處 ＋ playFlipFilter onComplete 一處。count 鎖 3，少任何一處都轉紅。' },
+  { file: 'web/static/js/shared/grid-motion.js', kind: 'required-string', pattern: 'return gsap.fromTo', count: 2,
+    note: '[TestShowcaseAnimationsGuard] B8：playFlipFilter 的 onEnter 兩個分支各回一條 tween。' },
+  { file: 'web/static/js/shared/grid-motion.js', kind: 'required-string', pattern: 'return gsap.to',
+    note: '[TestShowcaseAnimationsGuard] B8：playFlipFilter 的 onLeave 回傳的 tween。' },
+  {
+    file: 'web/static/css/theme.css',
+    kind: 'required-string',
+    pattern: ':is(.ds-gallery-composition .flip-guard, .ds-gallery-composition.flip-guard)',
+    count: 2,
+    note: '[branch review / Codex PR#177 第 2 輪 P3] B15 的 flip-guard 覆蓋規則必須同時接受兩種形狀：瀏覽頁的「composition 與 flip-guard 分屬兩層」與書籤牆的「兩個 class 疊在同一元素」（search.html:1208 的 .wishlist-grid 本身就帶 ds-gallery-composition）。只寫後代形式的話，書籤牆的卡片**0 命中**（真瀏覽器實測），收合時 hover 的 transform 會跟 GSAP FLIP 搶——而這條規則存在的唯一理由就是蓋掉它。兩處（本體 ＋ :hover）都要，所以 count 鎖 2。瀏覽頁實測不受影響（新舊 selector 命中數同為 91）。',
+  },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: '.fromTo', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B12 playFlipReorder manual fromTo' },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'killLightboxAnimations', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — T20' },
   { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: "getById('showcaseLightboxOpen')", note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — T20' },
@@ -4823,8 +4848,8 @@ const RULES = [
   {
     file: 'web/templates/search.html',
     kind: 'required-string',
-    pattern: 'item.created_at ? `/api/wishlist/cover?number=',
-    note: '[branch review P2-1] 書籤卡封面的 :src 必須用 item.created_at 當閘。樂觀 unshift 的那一筆（addToWishlist 在 POST 之前就 unshift）沒有這個伺服器端欄位；沒有這道閘，它會在封面檔還沒寫完時就發 GET ⇒ 必定 404 ⇒ @error 寫進 _wishlistCoverError，而那張表依 CD-19 刻意不被 loadWishlist() 清掉 ⇒ 剛加的片在書籤牆上永遠是灰底「無圖」，只有 F5 才會好。事後清旗標不是解法：實測清了也不會重新請求（naturalWidth 仍 0），只會把占位換成破圖 icon。',
+    pattern: ['item.created_at ? `/api/wishlist/cover?number=', '_wishlistCoverRetry[item.number] ? `&r='],
+    note: '[branch review P2-1] 書籤卡封面的 :src 必須用 item.created_at 當閘。樂觀 unshift 的那一筆（addToWishlist 在 POST 之前就 unshift）沒有這個伺服器端欄位；沒有這道閘，它會在封面檔還沒寫完時就發 GET ⇒ 必定 404 ⇒ @error 寫進 _wishlistCoverError，而那張表依 CD-19 刻意不被 loadWishlist() 清掉 ⇒ 剛加的片在書籤牆上永遠是灰底「無圖」，只有 F5 才會好。事後清旗標不是解法：實測清了也不會重新請求（naturalWidth 仍 0），只會把占位換成破圖 icon。第二個字面是 Codex PR#177 第 2 輪 P2 補的重試 token：端點是「先 commit 那一列、才下載封面」（routers/wishlist.py:69→90），使用者按下加入後馬上切到書籤分頁（真瀏覽器實測 100ms 就撞得到）會拿到有 created_at 但封面還沒寫完的列 ⇒ 404 ⇒ 旗標永久。token 讓 :src 在 POST 回報 cover_available 之後變一次——**光清旗標不會讓瀏覽器重新請求**。',
   },
   {
     file: 'web/static/css/pages/search.css',

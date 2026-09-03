@@ -1039,12 +1039,23 @@ body {
     border: 1px solid var(--border-light);
 }
 
-/* B15: Flip 動畫期間關掉 CSS transition，避免搶 transform 控制權 */
-.ds-gallery-composition .flip-guard .av-card-preview {
+/* B15: Flip 動畫期間關掉 CSS transition，避免搶 transform 控制權。
+   🔴 Codex PR#177 第 2 輪 P3（2026-09-03）：原本只寫後代形式
+   `.ds-gallery-composition .flip-guard`，那要求**兩個相異祖先元素**。
+   瀏覽頁滿足（`.showcase-container.ds-gallery-composition` → `.showcase-grid.flip-guard` → 卡片，
+   showcase.html:16 / :458 兩層），**書籤牆不滿足**：`search.html:1208` 的
+   `.wishlist-grid` 本身**同時**帶 `ds-gallery-composition`，加上 flip-guard 之後三個 class
+   疊在同一個元素上、卡片只有一層父元素 ⇒ 這條規則對書籤牆的卡片**從來 0 命中**。
+   後果：書籤牆收合時，滑鼠停在原地那張卡的 hover `transform: translateY(-4px) scale(1.01)`
+   （:1057 那條只需要一層祖先，恆常有效）會跟 GSAP FLIP 寫的 transform 搶——
+   而這條規則存在的唯一理由就是要用 `!important` 蓋掉它。
+   修法是**純加法**：用 `:is()` 多接受「composition 與 flip-guard 疊在同一元素」這一種形狀。
+   瀏覽頁不會誤觸新分支（那兩個 class 從不疊在同一元素上，已逐字核對 showcase.html）。 */
+:is(.ds-gallery-composition .flip-guard, .ds-gallery-composition.flip-guard) .av-card-preview {
     transition: box-shadow var(--fluent-duration-fast) var(--fluent-ease-standard),
                 border-color var(--fluent-duration-fast) var(--fluent-ease-standard) !important;
 }
-.ds-gallery-composition .flip-guard .av-card-preview:hover {
+:is(.ds-gallery-composition .flip-guard, .ds-gallery-composition.flip-guard) .av-card-preview:hover {
     transform: none !important;
     box-shadow: none !important;
 }

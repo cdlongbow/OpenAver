@@ -3396,3 +3396,52 @@ test('P3-8-touchend-noop-when-lightbox-closed', () => {
     assert.equal(state._wishlistLbTouchStartX, null, '短路仍要把座標清回 null');
     assert.equal(state._wishlistLbTouchStartY, null);
 });
+
+// ─── Codex PR#177 第 2 輪 P2（Opus 2026-09-03）：破圖旗標要有回得來的路 ───
+//
+// 🔴 不變式：**封面檔從「不存在」變成「存在」的那一刻，:src 必須變一次。**
+//
+// 為什麼：`add_wishlist()` 是**先 commit 那一列、才下載封面**
+// （web/routers/wishlist.py:69 → :90）。使用者按下加入之後馬上點書籤分頁，
+// GET 拿到的列已經有 created_at、封面檔卻還沒寫完 ⇒ 404 ⇒ `_wishlistCoverError`
+// 永久（CD-19 刻意不讓 loadWishlist() 碰它）⇒ 那部片在牆上是灰底占位，只有 F5 才會好。
+// **真瀏覽器實測：延遲 100ms 就撞得到。**
+//
+// ⚠️ 光把旗標清掉沒有用——實測清了 img 也不會重新請求（naturalWidth 仍 0、complete 仍 true），
+// 只會把整齊的占位換成破圖 icon。唯一有效的手段是**讓 URL 變**，所以是 token 不是布林。
+//
+// 上一輪（同一 artifact）的修法只治了「不要發那個必定 404 的請求」；這一條是它的另一半。
+// 依 CLAUDE.md 停損 ①，這不是在同一個機制上疊補丁——兩者合起來是一條規則：
+// **請求只在檔案應該存在時發出；檔案剛變成存在時讓 URL 變一次。**
+
+test('P2-cover-retry-token-bumped-after-successful-add', async () => {
+    mockFetch((url, opts) => {
+        if (opts.method === 'POST') return jsonResponse({ success: true, added: true, cover_available: true });
+        return jsonResponse([]);
+    });
+    const state = makeWishlistThis({ wishlistLoaded: false, wishlistCount: 0, searchResults: [] });
+    // 模擬「下載窗口期間已經吃過一次 404」
+    state._wishlistCoverError['NEW-1'] = true;
+
+    await state.addToWishlist({ number: 'NEW-1' });
+
+    assert.equal(state._wishlistCoverError['NEW-1'], undefined,
+        '封面確定落地之後，破圖旗標必須被清掉');
+    assert.ok(state._wishlistCoverRetry['NEW-1'],
+        '必須 bump 重試 token——只清旗標不會讓瀏覽器重新請求（實測 naturalWidth 仍 0）');
+});
+
+test('P2-cover-retry-not-bumped-when-cover-unavailable', async () => {
+    // 反向鎖：兩個網址都抓不到封面時不得 bump——那是真的沒有封面，重試只會再吃一次 404。
+    mockFetch((url, opts) => {
+        if (opts.method === 'POST') return jsonResponse({ success: true, added: true, cover_available: false });
+        return jsonResponse([]);
+    });
+    const state = makeWishlistThis({ wishlistLoaded: false, wishlistCount: 0, searchResults: [] });
+    state._wishlistCoverError['NEW-2'] = true;
+
+    await state.addToWishlist({ number: 'NEW-2' });
+
+    assert.equal(state._wishlistCoverError['NEW-2'], true, '真的沒有封面時旗標要留著');
+    assert.equal(state._wishlistCoverRetry['NEW-2'], undefined, '真的沒有封面時不得 bump token');
+});

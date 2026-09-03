@@ -47,6 +47,21 @@ export function searchStateWishlist() {
         wishlistLoaded: false,
         _wishlistCoverLoaded: {},  // TASK-141b-T10（CD-19 候選 a）：番號為 key，loadWishlist() 不碰
         _wishlistCoverError: {},   // TASK-141b-T10（CD-19）：同上，破圖旗標
+        // 🔴 Codex PR#177 第 2 輪 P2（2026-09-03）：破圖旗標**必須有一條回得來的路**。
+        // 上一輪只治了「不要發那個必定 404 的請求」（:src 用 created_at 當閘），沒治根：
+        // `_wishlistCoverError` 一旦設起來就永久（CD-19 刻意不讓 loadWishlist() 碰它），
+        // 而它記錄的是一個**本質上短暫**的狀態。實測撞到的窗口只要 100ms：
+        // `add_wishlist()` 是**先 commit 那一列、才下載封面**（routers/wishlist.py:69→90），
+        // 使用者按下加入之後馬上點書籤分頁，GET 拿到的列已經有 created_at、封面檔卻還沒寫完
+        // ⇒ 404 ⇒ 旗標永久 ⇒ 那部片在牆上是灰底占位，只有 F5 才會好。
+        // ⚠️ 光把旗標清掉沒有用——**實測清了 img 也不會重新請求**（naturalWidth 仍 0、
+        // complete 仍 true），只會把整齊的占位換成破圖 icon。唯一有效的手段是**讓 URL 變**。
+        // ⇒ 這張表是重試 token：POST 回來且 `cover_available` 為真（＝檔案這一刻確定在硬碟上）
+        // 時 bump 一次，`:src` 帶上它 ⇒ 瀏覽器視為新資源、重新請求一次。
+        // **為什麼不在 loadWishlist() 每次都重試**：封面檔是本地檔案，404 一次之後除非重新加入
+        // 否則永遠 404 ⇒ 每次切分頁都重試是純浪費。唯一**短暫**的 404 就是上面那個下載窗口，
+        // 而它的結束時刻正好由 POST 的回應告訴我們。
+        _wishlistCoverRetry: {},
         wishlistLightboxOpen: false,   // T11a：書籤燈箱開關（獨立狀態機，不與 lightboxOpen 共用）
         wishlistLightboxIndex: -1,     // T11a：書籤燈箱目前顯示的 wishlistItems 索引
         _wishlistLbImgError: false,    // T11a：燈箱封面破圖 flag（開燈箱時必須重設，否則殘留占位）
@@ -363,6 +378,15 @@ export function searchStateWishlist() {
                         this.wishlistItems = this.wishlistItems.filter((i) => i !== result);
                     }
                     await this.loadWishlistCount();
+                    return;
+                }
+                // 真的新增成功：封面此刻已經寫完（端點是同步下載的）。若下載窗口期間有人
+                // 打過那個 URL 而吃到 404，這裡把旗標清掉並 bump token 讓 :src 變一次。
+                // `cover_available` 為 false（兩個網址都抓不到）時**不 bump**——那是真的沒有封面，
+                // 重試只會再吃一次 404。
+                if (data?.cover_available) {
+                    delete this._wishlistCoverError[result.number];
+                    this._wishlistCoverRetry[result.number] = Date.now();
                 }
             } catch (err) {
                 console.error('[Wishlist] add 失敗:', err);
