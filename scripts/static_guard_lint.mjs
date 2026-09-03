@@ -4858,6 +4858,15 @@ const RULES = [
     scope: { anchor: /@media \(prefers-reduced-motion:\s*reduce\)\s*\{[\s\S]*?\.wishlist-empty\s*\{/, braceBalanced: true },
     note: '[TASK-141b-T10 DoD7] PRM 下空狀態同理：animation 關掉 ＋ opacity 直接是 1。keyframes 的起始狀態是 opacity:0，只關 animation 不補 opacity:1 會讓「書籤是空的」那段字永遠不出現。',
   },
+
+  // ---- [TASK-142-T1 CD-13] source_reachability 探測只碰根路徑，禁止目錄遍歷／開檔 ----
+  // 陣列語意：任一命中即報錯。探測手段封閉清單只有 TCP 445 與 os.path.exists(root)。
+  {
+    file: 'core/source_reachability.py',
+    kind: 'forbidden-string',
+    pattern: ['listdir', 'scandir', '.walk(', 'open('],
+    note: '[TASK-142-T1 CD-13] core/source_reachability.py 不得出現 listdir／scandir／.walk(／open(（探測只碰根路徑本身，spec F1 驗收 7）',
+  },
 ];
 
 // ---- helpers ----
