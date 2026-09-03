@@ -293,7 +293,7 @@ async def test_pending_exists_dedup_across_ttl_cycles(sr):
 
         # Round 2: push TTL stale; pending future still unfinished → no new exists.
         with sr._lock:
-            sr._snapshot_at = time.monotonic() - 61.0
+            sr._snapshot_at = time.monotonic() - (sr._SNAPSHOT_TTL_OK_S + 1.0)
         await sr.schedule_reprobe_if_stale()
         await sr._reprobe_task
         assert call_count["n"] == 1
@@ -311,7 +311,7 @@ async def test_pending_exists_dedup_across_ttl_cycles(sr):
 
         # Round 3: after cleanup, a new exists may be submitted.
         with sr._lock:
-            sr._snapshot_at = time.monotonic() - 61.0
+            sr._snapshot_at = time.monotonic() - (sr._SNAPSHOT_TTL_OK_S + 1.0)
         await sr.schedule_reprobe_if_stale()
         await sr._reprobe_task
         assert call_count["n"] == 2
@@ -360,3 +360,37 @@ def test_unc_host_parses_backslash_and_slash(sr):
     assert sr.unc_host("//nas/share/path") == r"\\nas"
     assert sr.unc_host("/mnt/data") is None
     assert sr.unc_host(r"D:\Videos") is None
+
+
+# ── CD-5 TTL 非對稱（owner 2026-09-03 修訂）────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_all_ok_snapshot_uses_long_ttl(sr):
+    """全部 ok/unknown 的快照走 600 秒 TTL：過了 120 秒仍不重探。"""
+    with sr._lock:
+        sr._snapshot = {"/mnt/a": "ok", "/mnt/b": "unknown"}
+        sr._snapshot_at = time.monotonic() - 120.0
+
+    with patch.object(sr.asyncio, "create_task") as mock_create:
+        await sr.schedule_reprobe_if_stale()
+
+    assert mock_create.call_count == 0
+    assert sr._in_flight is False
+
+
+@pytest.mark.asyncio
+async def test_unreachable_snapshot_uses_short_ttl(sr):
+    """有任何 unreachable 的快照走 60 秒 TTL：過了 120 秒就重探（碟插回來要快點消失）。"""
+    with sr._lock:
+        sr._snapshot = {"/mnt/a": "ok", "/mnt/nas": "unreachable"}
+        sr._snapshot_at = time.monotonic() - 120.0
+
+    async def quick_probe():
+        with sr._lock:
+            sr._in_flight = False
+
+    with patch.object(sr, "_probe_all", side_effect=quick_probe):
+        await sr.schedule_reprobe_if_stale()
+        assert sr._reprobe_task is not None
+        await sr._reprobe_task

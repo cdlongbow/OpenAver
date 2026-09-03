@@ -26,7 +26,10 @@ from core.path_utils import uri_to_fs_path
 
 logger = get_logger(__name__)
 
-_SNAPSHOT_TTL_S = 60.0
+# TTL 非對稱（CD-5）：全好時重探買不到東西——碟中途被拔，封面自己會失敗＝今天的行為；
+# 已經不可達時使用者隨時會把碟插回來，要讓 footer 那句話快點消失。
+_SNAPSHOT_TTL_OK_S = 600.0
+_SNAPSHOT_TTL_UNREACHABLE_S = 60.0
 _TCP_TIMEOUT_S = 2.0
 _EXISTS_WAIT_S = 5.0
 _RETRY_SLEEP_S = 1.0
@@ -46,6 +49,13 @@ _pending_exists: dict[str, asyncio.Future] = {}
 _reprobe_task: asyncio.Task | None = None
 
 
+def _current_ttl_locked() -> float:
+    """Pick the snapshot TTL from the *last* snapshot (caller must hold ``_lock``)."""
+    if any(status == "unreachable" for status in _snapshot.values()):
+        return _SNAPSHOT_TTL_UNREACHABLE_S
+    return _SNAPSHOT_TTL_OK_S
+
+
 def get_snapshot() -> dict[str, str]:
     """Pure memory read of the latest probe snapshot. Never schedules IO."""
     with _lock:
@@ -63,7 +73,8 @@ async def schedule_reprobe_if_stale() -> None:
     should_schedule = False
     with _lock:
         now = time.monotonic()
-        stale = (now - _snapshot_at) > _SNAPSHOT_TTL_S
+        ttl = _current_ttl_locked()
+        stale = (now - _snapshot_at) > ttl
         if stale and not _in_flight:
             _in_flight = True
             should_schedule = True
