@@ -34,7 +34,7 @@ _TTL_DEGRADED = 60.0
 _TCP_TIMEOUT_S = 2.0
 _EXISTS_WAIT_S = 5.0
 _RETRY_SLEEP_S = 1.0
-_FIRST_PROBE_WAIT_S = 15.0
+_FIRST_PROBE_WAIT_S = 120.0
 
 # Sentinel for "never probed" (module just imported / process just started).
 # time.monotonic() is seconds-since-boot on Linux/macOS/Windows, so a literal
@@ -118,14 +118,26 @@ async def schedule_reprobe_if_stale() -> None:
 
 
 async def wait_for_first_probe(timeout: float = _FIRST_PROBE_WAIT_S) -> None:
-    """Cold start only: wait (bounded) until the first snapshot has been written.
+    """Cold start only: wait until the first snapshot has been written.
 
     Returns immediately once any probe has ever completed, so the warm path
     pays nothing. Caller is a fire-and-forget fetch, so waiting costs no UI.
 
-    The 15s default is the worst case for sequential multi-source probing
-    (TCP 2s + 1s retry-sleep + 2s, or exists 5s + 1s + 5s per source, run one
-    after another) — the timeout is a backstop, not the expected wait.
+    Correctness is *not* derived from ``timeout`` — ``_probe_all`` is
+    sequential, so its total duration scales with source count and is not a
+    number this function can guess correctly. What actually bounds the wait
+    is the task itself finishing: every individual probe has its own timeout
+    (TCP 2s x2 + 1s retry-sleep, or exists 5s x2 + 1s), and ``_probe_all``
+    always writes the snapshot in its ``finally`` block, so the shielded
+    ``await`` below resolves as soon as that happens, however long it took.
+
+    ``timeout`` (``_FIRST_PROBE_WAIT_S``) is a pure fuse, not an expected
+    wait time: it exists only to stop a pathologically stuck probe (e.g. a
+    hung syscall that outruns even the per-probe timeouts) from wedging this
+    request forever. It is set far above any realistic total probe duration
+    so it never trips on the correctness path; on trip, the exception is
+    swallowed and the caller just gets whatever snapshot exists (possibly
+    still empty) — it does not cancel the still-running task (``shield``).
     """
     with _lock:
         already_probed = _snapshot_at != _NEVER

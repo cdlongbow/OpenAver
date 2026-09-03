@@ -243,6 +243,77 @@ def test_warm_snapshot_does_not_wait(monkeypatch: pytest.MonkeyPatch) -> None:
         task.cancel()
 
 
+def test_cold_start_waits_for_slow_multi_source_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PR#178 R2 缺陷D：_probe_all 是循序探測、快照只在整個迴圈跑完才寫入。端點等的
+    必須是 task 本身跑完，不是某個固定秒數——用多來源、迴圈結束後才寫快照的假探測，
+    斷言端點拿到的是完整快照（每一筆都在），證明沒有任何來源在中途被「等到一半就放棄」
+    漏接。（刻意不真的睡 15 秒，也不在這支測試裡動 _FIRST_PROBE_WAIT_S——那是保險絲
+    測試的手法，混進來會測到保險絲而不是測到正確性。）"""
+    _reset_sr_module()
+
+    sources = ["/mnt/multi-1", "/mnt/multi-2", "/mnt/multi-3", "/mnt/multi-4", "/mnt/multi-5"]
+
+    async def fake_probe_all() -> None:
+        snapshot: dict[str, str] = {}
+        for s in sources:
+            await asyncio.sleep(0.1)
+            snapshot[s] = "unreachable"
+        # 快照只在迴圈整個跑完後才一次寫入（與真正的 _probe_all 同形狀）
+        with sr._lock:
+            sr._snapshot = snapshot
+            sr._snapshot_at = sr._now()
+            sr._in_flight = False
+
+    monkeypatch.setattr(sr, "_probe_all", fake_probe_all)
+
+    client = TestClient(app, client=("127.0.0.1", 50000))
+    resp = client.get("/api/showcase/source-status")
+    assert resp.status_code == 200
+    data = resp.json()
+    got_paths = {item["path"] for item in data}
+    assert got_paths == set(sources), (
+        f"cold start 必須等到 task 本身跑完，拿到的應是完整快照，實際={data!r}"
+    )
+
+
+def test_first_probe_wait_is_a_fuse_not_a_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PR#178 R2 缺陷D 的保險絲測試（不驗正確性）：_FIRST_PROBE_WAIT_S 必須是遠大於任何
+    正常探測耗時的保險絲值，只用來防止 task 永久卡住時把請求焊死，不是拿來當「正確」
+    秒數算出來的猜測值。用一個永不完成的 task + 直接呼叫真正的 wait_for_first_probe
+    並把 timeout 顯式覆寫成極小值，證明逾時後端點仍會回應（不拋、不掛住）——這支只守
+    保險絲機制本身會動，不守等待時長的正確性語意。"""
+    _reset_sr_module()
+    assert sr._FIRST_PROBE_WAIT_S >= 120.0
+
+    async def never_finishes() -> None:
+        await asyncio.sleep(3600)
+
+    async def install_never_finishing_task() -> None:
+        with sr._lock:
+            sr._reprobe_task = asyncio.ensure_future(never_finishes())
+
+    monkeypatch.setattr(sr, "schedule_reprobe_if_stale", install_never_finishing_task)
+
+    real_wait_for_first_probe = sr.wait_for_first_probe
+
+    async def wait_with_tiny_fuse() -> None:
+        await real_wait_for_first_probe(timeout=0.01)
+
+    monkeypatch.setattr(sr, "wait_for_first_probe", wait_with_tiny_fuse)
+
+    client = TestClient(app, client=("127.0.0.1", 50000))
+    t0 = time.perf_counter()
+    resp = client.get("/api/showcase/source-status")
+    elapsed = time.perf_counter() - t0
+
+    assert resp.status_code == 200
+    assert elapsed < 1.0, f"保險絲必須讓端點快速回應，實際耗時 {elapsed:.3f}s"
+
+    task = sr._reprobe_task
+    if task is not None and not task.done():
+        task.cancel()
+
+
 def test_same_unc_host_sources_merge_into_one_display(monkeypatch: pytest.MonkeyPatch) -> None:
     """spec F3: 同一主機底下多個來源合成一個名字（否則 footer 列兩次同一台 NAS，
     「N 個位置無法存取」也會多算）。非 UNC 的不同根路徑仍各自一筆。"""

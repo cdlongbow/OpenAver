@@ -372,6 +372,58 @@ def test_dod8_healthy_path_short_circuits(mocker, snapshot):
 # ── DoD 8 端點層（owner 明確要求的「沒斷線的使用者零影響」機械證據）──────
 
 
+def test_image_fast_fail_precedes_realpath(client, tmp_path, mocker):
+    """PR#178 R2 缺陷C：字面式早退必須排在任何 os.path.realpath() 之前——斷線來源上的
+    封面請求不能在到達 fast-fail 前就已經先付一次遠端 realpath()（_safe_realpath 與
+    _dir_candidate_forms 都會呼叫它）。
+
+    patch 落在 `os.path.realpath`（而非 `web.routers.scanner._safe_realpath` 之類的
+    wrapper），因為 _safe_realpath 與 _dir_candidate_forms 都是對同一個 `os` module
+    物件做 `os.path.realpath(...)` 查找，兩條路徑會同時被涵蓋。
+    """
+    import web.routers.scanner as scanner_mod
+
+    # module-level TTL 快取，不清會讓上一支測試的白名單 dir forms 殘留 → 假綠
+    scanner_mod._dir_forms_cache.clear()
+
+    src = tmp_path / "unreachable_src"
+    src.mkdir()
+    img = src / "poster.jpg"
+    native = uri_to_fs_path(str(src))
+
+    mocker.patch(
+        "web.routers.scanner.load_config",
+        return_value={
+            "gallery": {
+                "directories": [
+                    {"path": str(src), "readonly": False, "output_path": ""},
+                ],
+                "path_mappings": {},
+            },
+        },
+    )
+    mocker.patch(
+        "core.source_reachability.get_snapshot",
+        return_value={native: "unreachable"},
+    )
+
+    call_count = {"n": 0}
+
+    def _counting_realpath(p):
+        call_count["n"] += 1
+        return p  # 記次數＋回傳輸入值，不得一律回真（BE-TEST-12 同精神）
+
+    mocker.patch("os.path.realpath", side_effect=_counting_realpath)
+
+    resp = client.get("/api/gallery/image", params={"path": str(img)})
+
+    assert call_count["n"] == 0, (
+        f"os.path.realpath 被呼叫了 {call_count['n']} 次，字面式早退沒有排在它之前"
+    )
+    assert resp.status_code == 404
+    assert resp.text == "來源目前無法存取"
+
+
 def test_dod8_healthy_snapshot_image_still_200_without_touching_sources(
     client, tmp_path, mocker
 ):

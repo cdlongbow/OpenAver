@@ -1202,6 +1202,22 @@ def get_image(path: str = Query(..., description="圖片路徑")):
     except ValueError:
         local_path = path  # 無法轉換時使用原路徑
 
+    # 0. 字面式早退（PR#178 R2 缺陷C）：在任何 realpath 之前，用純字面（lexical）URI
+    # 判斷來源是否已知斷線。_safe_realpath 與 _dir_candidate_forms 都會對位在斷線來源上
+    # 的路徑呼叫 os.path.realpath()（跑在 sync def 的 threadpool worker），滿頁封面請求
+    # 會在走到下方既有 fast-fail 之前就先一張一張卡在遠端逾時——這裡把判斷挪到任何遠端
+    # IO 之前，不呼叫 realpath / _safe_realpath / _dir_candidate_forms / os.path.exists。
+    # config/gallery_config/path_mappings 從原本「3. 目錄白名單」段落整段上移到這裡
+    # （不多呼叫一次 load_config()，下方該段落改用這裡算好的變數）。
+    config = load_config()
+    gallery_config = config.get('gallery', {})
+    path_mappings = gallery_config.get('path_mappings', {})
+
+    from core.source_reachability import is_path_on_unreachable_source
+    lexical_uri = to_file_uri(os.path.normpath(local_path), path_mappings)
+    if is_path_on_unreachable_source(lexical_uri, gallery_config):
+        return Response(status_code=404, content="來源目前無法存取")
+
     # 1. 解析 .. 並追蹤 symlink target（realpath）；FUSE/WinFsp OSError 時降級 normpath
     local_path = _safe_realpath(local_path, "get_image")
 
@@ -1221,9 +1237,8 @@ def get_image(path: str = Query(..., description="圖片路徑")):
         return Response(status_code=403, content="不允許的檔案類型")
 
     # 3. 目錄白名單：只允許 gallery.directories 底下的檔案
-    config = load_config()
-    gallery_config = config.get('gallery', {})
-    path_mappings = gallery_config.get('path_mappings', {})
+    # config / gallery_config / path_mappings 已於上方「0. 字面式早退」段落算好（不重複
+    # 呼叫 load_config()）。
 
     # TASK-73: 兩端對稱正規化 — request_uri 用 single-form（realpath已做）；
     # dir 端用 dual-form（normpath + realpath 候選），避免 SMB mapped drive 格式不同 403 誤殺
@@ -1239,9 +1254,12 @@ def get_image(path: str = Query(..., description="圖片路徑")):
         logger.warning("get_image: 拒絕白名單外路徑請求 uri=%s", request_uri)
         return Response(status_code=403, content="路徑不在允許的資料夾範圍內")
 
-    from core.source_reachability import is_path_on_unreachable_source
-    if is_path_on_unreachable_source(request_uri, gallery_config):
-        return Response(status_code=404, content="來源目前無法存取")
+    # 來源可達性已在上方「0. 字面式早退」判過（PR#178 R2）。這裡不再判第二次：
+    # 兩處用的是同一組來源前綴，只差 normpath vs realpath 形式，對非 symlink 路徑
+    # 完全等價 —— 留著第二道會變成沒有任何測試守得住的死碼（mutation M5 SURVIVED），
+    # 而「守不住的守衛」比沒有守衛更糟（它會讓全綠變成假的）。
+    # 放棄的涵蓋範圍：realpath 之後才落進斷線來源的 symlink（那種情況 realpath 本身
+    # 就已經先付過遠端成本，第二道也救不了牆），行為等同本 branch 之前。
 
     # 4. 檔案存在性
     if not os.path.exists(local_path):
