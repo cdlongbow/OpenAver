@@ -257,6 +257,10 @@ export function searchStateWishlist() {
                             grid.classList.remove('flip-guard');
                             return;
                         }
+                        // 同上（Codex PR#177 第 3 輪 P3）：對帳這條路徑與手動移除**共用同一顆
+                        // `_wishlistFlipGeneration` 與同一個 class**，所以兩者交錯時症狀相同，
+                        // 冪等的重新宣告也要一起補。
+                        grid.classList.add('flip-guard');
                         var result = window.GridMotion?.playFlipFilter?.(grid, flipState);
                         if (!result) grid.classList.remove('flip-guard');
                     }); });
@@ -363,6 +367,28 @@ export function searchStateWishlist() {
                 } catch (parseErr) {
                     console.error('[Wishlist] add 回應解析失敗:', parseErr);
                 }
+                // 🔴 不變式（PR#177 第 3 輪的窮舉盤點結論，取代前兩輪的逐個補丁）：
+                // **這三張表描述的是「`:src` 這一刻算出來的那條 URL」的載入結果，
+                //   不是「這個番號」的歷史 ⇒ 必須整組動。**
+                // `cover_available` 為真 ＝ 封面檔這一刻確定在硬碟上，而它可能是「剛下載好」，
+                // 也可能是「移除過之後重新加入、換成全新的一份」（DELETE 會把封面檔一起刪掉，
+                // routers/wishlist.py:141）⇒ 兩張結果旗標一起作廢、token 一起 bump。
+                // ⚠️ 只清旗標不會讓瀏覽器重抓（實測 naturalWidth 仍 0）——token 才是讓 URL 變的那一半。
+                //
+                // **位置在兩個早退之前是刻意的**：`added:false`（重複加入）時後端一樣算好了
+                // 這個欄位（routers/wishlist.py:95 ＝ 檔案存不存在），早退會把它丟掉——
+                // 那正是「吃到 404 窗口 → 切版本讓 _wishlisted 被清掉 → 再按一次加入」
+                // 那條路徑會永遠灰底無圖的原因。
+                // （`already_owned` 分支後端不回這個欄位，走到這裡自動 no-op。）
+                //
+                // 為什麼不必動 removeFromWishlist()／loadWishlist()：移除之後 `loaded` 唯一還
+                // 看得見的路徑就是「同番號再被加入」，而那條路必定經過這裡。
+                // loadWishlist() 更是明令不得碰（CD-19：清了整面牆每次切回都重閃骨架）。
+                if (data?.cover_available) {
+                    delete this._wishlistCoverError[result.number];
+                    delete this._wishlistCoverLoaded[result.number];
+                    this._wishlistCoverRetry[result.number] = Date.now();
+                }
                 if (data?.already_owned) {
                     result._wishlisted = prevWishlisted;
                     if (this.wishlistLoaded) {
@@ -379,14 +405,6 @@ export function searchStateWishlist() {
                     }
                     await this.loadWishlistCount();
                     return;
-                }
-                // 真的新增成功：封面此刻已經寫完（端點是同步下載的）。若下載窗口期間有人
-                // 打過那個 URL 而吃到 404，這裡把旗標清掉並 bump token 讓 :src 變一次。
-                // `cover_available` 為 false（兩個網址都抓不到）時**不 bump**——那是真的沒有封面，
-                // 重試只會再吃一次 404。
-                if (data?.cover_available) {
-                    delete this._wishlistCoverError[result.number];
-                    this._wishlistCoverRetry[result.number] = Date.now();
                 }
             } catch (err) {
                 console.error('[Wishlist] add 失敗:', err);
@@ -483,6 +501,17 @@ export function searchStateWishlist() {
                         grid.classList.remove('flip-guard');
                         return;
                     }
+                    // 🔴 Codex PR#177 第 3 輪 P3（2026-09-03）：**重新宣告 flip-guard，不是多此一舉。**
+                    // rAF 回呼依註冊順序執行，所以「連按兩張卡的垃圾桶」時是：
+                    // A(stale) 先跑 → 走上面那條 `remove('flip-guard')` → B(current) 才跑。
+                    // ⇒ **最新那次的 FLIP 在沒有 guard 的情況下開始播**（實測重現：flushFrames 之後
+                    // class 已不在，而 playFlipFilter 照樣被呼叫）。
+                    // 為什麼不改成「stale 分支不要 remove」：那會讓既有的
+                    // `T6-DoD5b-generation-mismatch-no-residual-flip-guard` 轉紅——它守的是
+                    // 「世代不符卻沒人接手清理」的殘留，範圍比本條更廣，不該為了本條讓它變弱。
+                    // 這一行是**冪等的加法**：class 已在就沒事，被上一個世代拔掉就補回來。
+                    // 移除的責任沒有改變（下面的 `!result` 分支 ＋ playFlipFilter 的 onComplete）。
+                    grid.classList.add('flip-guard');
                     var result = window.GridMotion?.playFlipFilter?.(grid, flipState);
                     if (!result) grid.classList.remove('flip-guard');
                     // flip-guard 由 playFlipFilter 的 onComplete 移除（既有機制）

@@ -3445,3 +3445,104 @@ test('P2-cover-retry-not-bumped-when-cover-unavailable', async () => {
     assert.equal(state._wishlistCoverError['NEW-2'], true, '真的沒有封面時旗標要留著');
     assert.equal(state._wishlistCoverRetry['NEW-2'], undefined, '真的沒有封面時不得 bump token');
 });
+
+// ─── Codex PR#177 第 3 輪 P3（Opus 2026-09-03）：過期回呼不得拔掉現任世代的 flip-guard ───
+//
+// 🔴 不變式：**最新那一次 FLIP 開始播的當下，`flip-guard` 必須在 grid 上。**
+//
+// rAF 回呼依註冊順序執行，所以連按兩張卡的垃圾桶時是
+// A(stale) 先跑 → `remove('flip-guard')` → B(current) 才跑 ⇒ **最新那次在沒有 guard 的
+// 情況下開始播**，而那個 class 存在的唯一理由就是在動畫期間把 hover 的 transform
+// 從 transition list 拿掉（theme.css B15）。
+//
+// ⚠️ 為什麼不是改成「stale 分支不要 remove」：那會讓
+// `T6-DoD5b-generation-mismatch-no-residual-flip-guard` 轉紅——它守的是「世代不符卻沒人
+// 接手清理」的殘留，範圍比本條更廣，不該為了本條把它變弱。改用**冪等的重新宣告**：
+// class 已在就沒事、被上一個世代拔掉就補回來，移除的責任完全沒有改變。
+//
+// 這個 race 的窗口在正常裝置上只有一個 frame（≈16.7ms），但 rAF 被推遲多久窗口就變寬多少
+// （這段路徑每次都強制 reflow，弱裝置上會放大）。後果是純視覺：333ms 內、且滑鼠剛好停在
+// 剩下的某張卡上時會看到一下抖動。
+
+test('P3-flip-guard-present-when-newest-flip-starts', async () => {
+    let releaseA, releaseB;
+    globalThis.fetch = async (url) => {
+        if (String(url).includes('A-1')) return new Promise((r) => { releaseA = () => r(jsonResponse({ success: true })); });
+        return new Promise((r) => { releaseB = () => r(jsonResponse({ success: true })); });
+    };
+    const gridEl = makeFlipGridEl();
+    const guardAtPlay = [];
+    await withFlipEnv({
+        queryMap: { '.wishlist-grid': gridEl },
+        playImpl: () => { guardAtPlay.push(gridEl._classes.has('flip-guard')); return { fake: 'timeline' }; },
+    }, async (api) => {
+        const state = makeWishlistThis({
+            wishlistCount: 3, wishlistLoaded: true,
+            wishlistItems: [{ number: 'A-1' }, { number: 'B-1' }, { number: 'C-1' }],
+            searchResults: [],
+        });
+        api.attachNextTick(state);
+
+        const p1 = state.removeFromWishlist('A-1', 'wall');
+        const p2 = state.removeFromWishlist('B-1', 'wall');
+        api.flushTicks();
+        api.flushFrames();   // A(stale) 先跑並 remove、B(current) 後跑
+
+        assert.equal(api.playCalls.length, 1, '前提：只有最新那次世代相符（承接 T6-DoD4）');
+        assert.deepEqual(guardAtPlay, [true],
+            '最新那次 FLIP 開始播的當下，flip-guard 必須在 grid 上——'
+            + '過期回呼不得拔掉現任世代擁有的 class');
+
+        releaseA(); releaseB();
+        await p1; await p2;
+    });
+});
+
+// ─── Codex PR#177 第 3 輪窮舉盤點（Opus 2026-09-03）：三張封面表必須整組動 ───
+//
+// 🔴 不變式：**三張表描述的是「`:src` 這一刻算出來的那條 URL」的載入結果，
+//            不是「這個番號」的歷史 ⇒ 凡是 URL／資源身分改變的事件，三張一起動。**
+//
+// 前兩輪各補了一角（error 旗標、retry token），第三輪的 finding 是 `loaded` 沒被算進那一組：
+// 移除書籤會把封面檔一起刪掉（routers/wishlist.py:141），之後重新加入拿到的是**全新的一份**，
+// 而 `_wishlistCoverLoaded[n]` 還留著上一份的 true ⇒ 新卡片跳過骨架直接顯示。
+//
+// 下面第二支測的是**位置**：`cover_available` 區塊必須在 `already_owned` / `added:false`
+// 兩個早退**之前**。後端在 `added:false` 時一樣算好了那個欄位（檔案存不存在），
+// 早退會把它丟掉——那是「吃到 404 窗口 → 切版本 → 再按一次加入」永遠灰底無圖的成因。
+
+test('P3-cover-state-cleared-as-a-group-on-successful-add', async () => {
+    mockFetch((url, opts) => {
+        if (opts.method === 'POST') return jsonResponse({ success: true, added: true, cover_available: true });
+        return jsonResponse([]);
+    });
+    const state = makeWishlistThis({ wishlistLoaded: false, wishlistCount: 0, searchResults: [] });
+    // 模擬「這個番號先前被移除過，而移除前它的封面已經載入成功」
+    state._wishlistCoverLoaded['RE-1'] = true;
+    state._wishlistCoverError['RE-1'] = true;
+
+    await state.addToWishlist({ number: 'RE-1' });
+
+    assert.equal(state._wishlistCoverLoaded['RE-1'], undefined,
+        'loaded 必須一起作廢——移除會刪掉封面檔，重新加入拿到的是全新的一份');
+    assert.equal(state._wishlistCoverError['RE-1'], undefined, 'error 一起作廢');
+    assert.ok(state._wishlistCoverRetry['RE-1'], 'token 一起 bump（讓 URL 真的變一次）');
+});
+
+test('P3-cover-state-group-runs-before-the-early-returns', async () => {
+    // added:false（重複加入）時後端一樣回 cover_available；區塊若被搬到早退之後就吃不到。
+    mockFetch((url, opts) => {
+        if (opts.method === 'POST') return jsonResponse({ success: true, added: false, cover_available: true });
+        return jsonResponse([]);
+    });
+    const state = makeWishlistThis({ wishlistLoaded: false, wishlistCount: 0, searchResults: [] });
+    state._wishlistCoverError['DUP-1'] = true;
+    state._wishlistCoverLoaded['DUP-1'] = true;
+
+    await state.addToWishlist({ number: 'DUP-1' });
+
+    assert.equal(state._wishlistCoverError['DUP-1'], undefined,
+        'added:false 也要吃到 cover_available——區塊必須在早退之前');
+    assert.equal(state._wishlistCoverLoaded['DUP-1'], undefined);
+    assert.ok(state._wishlistCoverRetry['DUP-1']);
+});
