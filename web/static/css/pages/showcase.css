@@ -2649,6 +2649,21 @@ body.sidebar-collapsed .showcase-footer {
     line-height: 1;         /* 避免大字撐高 footer */
 }
 
+/* TASK-142-T4: 來源不可達 pill（warning token；一次性進場淡入，非 infinite） */
+.footer-count--unreachable {
+    color: var(--color-warning);
+    animation: sourceUnreachableFadeIn var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+
+.footer-count--unreachable i {
+    color: var(--color-warning);
+}
+
+@keyframes sourceUnreachableFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
 /* Center: shortcut hint — absolute 居中，解耦 left/right */
 .footer-center {
     position: absolute;

@@ -292,6 +292,7 @@ export function stateBase() {
         videoCount: 0,        // _videos.length 的 reactive scalar
         filteredCount: 0,     // _filteredVideos.length 的 reactive scalar
         paginatedVideos: [],  // 當前頁顯示的影片
+        unreachableSources: [],  // TASK-142-T4: /api/showcase/source-status（只含 unreachable）
 
         // Card Info 展開狀態 (M3i)
         infoVisible: false,
@@ -323,6 +324,12 @@ export function stateBase() {
 
         // --- 生命週期 ---
         async init() {
+            // TASK-142-T4: fire-and-forget 來源可達性；失敗靜默，不進 await 鏈。
+            fetch('/api/showcase/source-status')
+                .then(r => r.ok ? r.json() : [])
+                .then(list => { this.unreachableSources = Array.isArray(list) ? list : []; })
+                .catch(() => {});
+
             // 接入 page lifecycle：清理 lightbox timer 和 body class
             if (window.__registerPage) {
                 window.__registerPage({
