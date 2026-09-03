@@ -65,7 +65,7 @@ def get_snapshot() -> dict[str, str]:
 
 
 async def schedule_reprobe_if_stale() -> None:
-    """If snapshot is older than 60s and no probe is in flight, schedule one.
+    """If the snapshot is stale (TTL is status-dependent — see ``_TTL_HEALTHY``/``_TTL_DEGRADED``) and no probe is in flight, schedule one.
 
     Must only be called from an async context (has a running event loop).
     Ownership of ``_in_flight`` is taken under the lock before ``create_task``.
@@ -160,17 +160,16 @@ async def _probe_all() -> None:
 
 
 async def _probe_one(native_path: str, host_memo: dict[str, str]) -> str:
-    try:
-        host = unc_host(native_path)
-        if host is not None:
-            if host in host_memo:
-                return host_memo[host]
-            status = await _probe_tcp_with_retry(host)
-            host_memo[host] = status
-            return status
-        return await _probe_exists_with_retry(native_path)
-    except Exception:
-        return "unknown"
+    # Unexpected exceptions propagate to _probe_all's per-source handler,
+    # which already logs (exc_info=True) and isolates this source to "unknown".
+    host = unc_host(native_path)
+    if host is not None:
+        if host in host_memo:
+            return host_memo[host]
+        status = await _probe_tcp_with_retry(host)
+        host_memo[host] = status
+        return status
+    return await _probe_exists_with_retry(native_path)
 
 
 async def _probe_tcp_with_retry(host: str) -> str:
