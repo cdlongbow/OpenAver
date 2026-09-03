@@ -268,3 +268,27 @@ async def _exists_probe(path: str) -> bool | None:
         with _lock:
             if future.done() and _pending_exists.get(path) is future:
                 _pending_exists.pop(path, None)
+
+
+def is_path_on_unreachable_source(file_uri: str, gallery_config: dict) -> bool:
+    """Return True if file_uri belongs to a source currently marked unreachable.
+
+    file_uri is already a caller-coerced file:/// URI. unknown / ok / missing
+    keys never block (CD-4 invariant C). Sync-only: calls get_snapshot() only.
+    """
+    from core.path_utils import is_path_under_dir
+    from core.readonly_source import _canonical_source_prefix  # shape copy of is_path_readonly
+
+    snapshot = get_snapshot()
+    # CD-8 healthy-path short-circuit: no unreachable → do not iterate sources.
+    if not any(v == "unreachable" for v in snapshot.values()):
+        return False
+    path_mappings = gallery_config.get("path_mappings", {})
+    for src in iter_gallery_sources(gallery_config):
+        native = uri_to_fs_path(src.path)  # uri-no-reverse
+        if snapshot.get(native) != "unreachable":
+            continue
+        prefix = _canonical_source_prefix(src.path, path_mappings)
+        if is_path_under_dir(file_uri, prefix):
+            return True
+    return False

@@ -1239,6 +1239,10 @@ def get_image(path: str = Query(..., description="圖片路徑")):
         logger.warning("get_image: 拒絕白名單外路徑請求 uri=%s", request_uri)
         return Response(status_code=403, content="路徑不在允許的資料夾範圍內")
 
+    from core.source_reachability import is_path_on_unreachable_source
+    if is_path_on_unreachable_source(request_uri, gallery_config):
+        return Response(status_code=404, content="來源目前無法存取")
+
     # 4. 檔案存在性
     if not os.path.exists(local_path):
         return Response(status_code=404, content="檔案不存在")
@@ -1329,11 +1333,17 @@ def get_thumb(request: Request, path: str = Query(..., description="影片路徑
     # 「封面不在快取記錄中」（本 task 發現的卡片未涵蓋 gap，見 report）。
     # 修法：DB 背書比對維持用裸 uri_to_fs_path（與改動前行為等價，零回歸）；
     # 反解只用在「即將真的碰磁碟」的 cover_fs（generate/fallback FileResponse/os.path.isfile）。
-    path_mappings = load_config().get('gallery', {}).get('path_mappings', {})
+    gallery_config = load_config().get('gallery', {})
+    path_mappings = gallery_config.get('path_mappings', {})
     cover_fs_for_db = uri_to_fs_path(video.cover_path)  # uri-no-reverse: DB round-trip comparison-only (is_known_cover_path), real disk path uses uri_to_local_fs_path below  # db-ns-ok: _for_db, sourced from existing DB URI (uri_to_fs_path, not reverse-mapped), round-trips to mapped namespace
     if not repo.is_known_cover_path(cover_fs_for_db):
         return Response(status_code=404, content="封面不在快取記錄中")
     cover_fs = uri_to_local_fs_path(video.cover_path, path_mappings)
+
+    from core.source_reachability import is_path_on_unreachable_source
+    cover_uri = to_file_uri(cover_fs, path_mappings)
+    if is_path_on_unreachable_source(cover_uri, gallery_config):
+        return Response(status_code=404, content="來源目前無法存取")
 
     # P2-B（TASK-71c）：miss 路徑 gate disabled，不重生 WebP。
     # 用戶關閉快取 + clear 後，stale 分頁的 miss 請求不應重建剛清的目錄。
