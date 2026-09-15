@@ -325,3 +325,19 @@
     }
 }
 
+.toggle-info-eye-btn {
+    position: relative;   /* 讓兩個 <i> 可以絕對定位疊在同一個位置 */
+}
+
+.toggle-info-eye-icon {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    opacity: 1;
+    transition: opacity var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+
+.toggle-info-eye-icon.toggle-info-eye-icon-hidden {
+    opacity: 0;
+}

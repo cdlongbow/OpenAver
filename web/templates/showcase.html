@@ -387,12 +387,13 @@
                         </div>
                     </div>
                     <!-- 資訊顯示開關 (僅 Grid 模式) -->
-                    <button class="btn-icon"
+                    <button class="btn-icon toggle-info-eye-btn"
                             x-show="mode === 'grid'"
                             :class="{ 'active': infoVisible }"
                             @click="toggleInfo()"
                             title="{{ t('showcase.action.toggle_info') }}">
-                        <i class="bi bi-eye"></i>
+                        <i class="bi bi-eye toggle-info-eye-icon" :class="{ 'toggle-info-eye-icon-hidden': infoVisible }" aria-hidden="true"></i>
+                        <i class="bi bi-eye-slash toggle-info-eye-icon" :class="{ 'toggle-info-eye-icon-hidden': !infoVisible }" aria-hidden="true"></i>
                     </button>
                 </div>
             </div>
@@ -434,11 +435,12 @@
                         <i class="bi" :class="actressOrder === 'asc' ? 'bi-sort-up' : 'bi-sort-down'"></i>
                     </button>
                     <!-- 資訊顯示開關（女優牆恆常顯示，不受 mode 限制） -->
-                    <button class="btn-icon"
+                    <button class="btn-icon toggle-info-eye-btn"
                             :class="{ 'active': infoVisible }"
                             @click="toggleInfo()"
                             title="{{ t('showcase.action.toggle_info') }}">
-                        <i class="bi bi-eye"></i>
+                        <i class="bi bi-eye toggle-info-eye-icon" :class="{ 'toggle-info-eye-icon-hidden': infoVisible }" aria-hidden="true"></i>
+                        <i class="bi bi-eye-slash toggle-info-eye-icon" :class="{ 'toggle-info-eye-icon-hidden': !infoVisible }" aria-hidden="true"></i>
                     </button>
                     <!-- [+ 新增] 已搬至 search-actions-right（117b-T10） -->
                 </div>
