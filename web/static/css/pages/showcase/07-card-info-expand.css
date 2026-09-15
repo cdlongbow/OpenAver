@@ -89,8 +89,8 @@
 .actress-card-info { flex-wrap: wrap; gap: 0.125rem 0.5rem; color: var(--text-secondary); }
 
 /* CD-124b-11：展開時 footer 沒有 hover 層可補位 → 解除既有 hover swap 的淡出。
-   兩條各自 (0,5,0)，勝 showcase.css:728 (.actress-card:hover .footer-default) 與
-   showcase.css:812 (.av-card-preview:hover .footer-default) 的 (0,3,0)（:hover 計入 b 分量）。
+   兩條各自 (0,5,0)，勝 showcase/03-actress-grid.css 的 .actress-card:hover .footer-default 與
+   showcase/04-card-footer.css 的 .av-card-preview:hover .footer-default 的 (0,3,0)（:hover 計入 b 分量）。
    只在 .info-open 下生效 → 收合態的 hover 交換行為一個字都沒動（AC16）。 */
 .actress-grid.info-open .actress-card:hover .footer-default { opacity: 1; }
 .showcase-grid.info-open .av-card-preview:hover .footer-default { opacity: 1; }
