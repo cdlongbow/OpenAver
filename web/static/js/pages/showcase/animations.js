@@ -10,6 +10,8 @@
  *   - playModeCrossfade(oldMode, newMode, params) B10: 模式切換 crossfade
  *   - captureShapeState(gridEl) → { state, cards }|null  TASK-133a-T1: 卡型切換 Flip 快照（視野 ±200px）
  *   - playShapeMorph(captured, gridEl) → Timeline|null   TASK-133a-T1: 卡型切換 Flip morph（只吃 captured.cards）
+ *   - captureInfoState(gridEl) → { state, cards }|null  TASK-148b-T2: 資訊展開 Flip 快照（視野 ±200px，排除 0×0）
+ *   - playInfoExpand(captured, gridEl, toVisible, options) → Timeline|null  TASK-148b-T2: 資訊展開 Flip morph（只吃 captured.cards）
  *   - playPickFill(fillEl, outlineEl, wasPicked, isPicked)  123-T4: 精選灌滿／洩空
  *   - playPickSpark(anchorEl)                   123-T4: 灌滿到頂火花
  *   - killPickSpark()                           123-T4: 清殘留火花 dot
@@ -327,6 +329,97 @@
                 duration: dur,
                 ease: 'fluent',
                 absolute: false,
+                prune: true,
+                onComplete: function () {
+                    gsap.set(cards, { clearProps: 'transform,width,height' });
+                }
+            });
+        },
+
+        /**
+         * TASK-148b-T2: 資訊展開兩階段 Flip — capture 階段。
+         *
+         * 選卡 selector：'.av-card-preview, .actress-card'。量測前對完整集合
+         * killTweensOf → 移除 gsap-animating → clearProps transform,opacity，
+         * 再過濾 ±200px 視窗子集並排除 0×0（hero x-show/x-cloak），最後
+         * Flip.getState(picked, { simple: true })。
+         *
+         * @param {Element} gridEl - .showcase-grid / .actress-grid 容器
+         * @returns {{ state: Object, cards: Element[] }|null}
+         */
+        captureInfoState: function (gridEl) {
+            if (!gridEl) return null;
+
+            // CD-148b-1 C3 / CD-148b-7：gsap 與 Flip 各自獨立頂層 if，不合併 ||
+            if (typeof gsap === 'undefined') return null;
+            if (typeof Flip === 'undefined') return null;
+
+            var cards = gridEl.querySelectorAll('.av-card-preview, .actress-card');
+            if (!cards.length) return null;
+
+            // I-148b-2 capture 四步驟（對完整 cards，視窗過濾之前）
+            gsap.killTweensOf(cards);
+            Array.from(cards).forEach(function (c) {
+                c.classList.remove('gsap-animating');
+            });
+            gsap.set(cards, { clearProps: 'transform,opacity' });
+
+            var VIEWPORT_MARGIN = 200;
+            var viewportH = window.innerHeight;
+            var picked = Array.from(cards).filter(function (card) {
+                var rect = card.getBoundingClientRect();
+                // x-show/x-cloak 隱藏時 0×0，留著會污染 grid:'auto' 的行列推導
+                if (rect.width === 0 && rect.height === 0) return false;
+                return rect.bottom > -VIEWPORT_MARGIN && rect.top < viewportH + VIEWPORT_MARGIN;
+            });
+            if (!picked.length) return null;
+
+            return { state: Flip.getState(picked, { simple: true }), cards: picked };
+        },
+
+        /**
+         * TASK-148b-T2: 資訊展開兩階段 Flip — play 階段。
+         *
+         * 只准用 capturedState.cards，不得重新挑卡。stagger.from 依 toVisible
+         * 讀 STAGGER_ORIGIN／STAGGER_ORIGIN_COLLAPSE，options.origin 可覆寫。
+         *
+         * @param {{ state: Object, cards: Element[] }|null} capturedState
+         * @param {Element} gridEl
+         * @param {boolean} toVisible - true=展開，false=收合
+         * @param {Object} [options] - { origin } 可覆寫 stagger.from
+         * @returns {gsap.core.Timeline|null}
+         */
+        playInfoExpand: function (capturedState, gridEl, toVisible, options) {
+            if (!capturedState || !gridEl) return null;
+
+            // CD-148b-1 C3 / CD-148b-7：gsap 與 Flip 各自獨立頂層 if，不合併 ||
+            if (typeof gsap === 'undefined') return null;
+            if (typeof Flip === 'undefined') return null;
+
+            if (shouldSkip()) return null;
+
+            var cards = capturedState.cards;
+            if (!cards || !cards.length) return null;
+
+            // C18: 中斷進行中的 Flip（連點）
+            Flip.killFlipsOf(cards);
+
+            options = options || {};
+            var origin = (options.origin !== undefined)
+                ? options.origin
+                : (toVisible
+                    ? OpenAver.motion.WALL_MOTION.STAGGER_ORIGIN
+                    : OpenAver.motion.WALL_MOTION.STAGGER_ORIGIN_COLLAPSE);
+
+            return Flip.from(capturedState.state, {
+                absolute: false,
+                duration: OpenAver.motion.WALL_MOTION.INFO_EXPAND_DURATION,
+                ease: 'fluent',
+                stagger: {
+                    amount: OpenAver.motion.WALL_MOTION.INFO_EXPAND_STAGGER_AMOUNT,
+                    from: origin,
+                    grid: 'auto'
+                },
                 prune: true,
                 onComplete: function () {
                     gsap.set(cards, { clearProps: 'transform,width,height' });
