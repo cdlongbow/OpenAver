@@ -293,7 +293,7 @@ class TestPosterCropThresholdAlignment:
         篩 body 同時含 .showcase-grid.shape-poster 且含 aspect-ratio。
         恰好一個；條件不得含 max-width。找不到／多個 → assert 失敗。
         """
-        css = read_showcase_css_full(PROJECT_ROOT / "web" / "static", PROJECT_ROOT / "web" / "templates")
+        css = read_showcase_css_full(PROJECT_ROOT / "web" / "static")
         css = re.sub(r'/\*.*?\*/', '', css, flags=re.DOTALL)
         matches = []
         for m in re.finditer(r"@media\s*([^{]*?)\s*\{", css):
@@ -353,7 +353,7 @@ class TestPosterCropThresholdAlignment:
         無條件提供 width:100%（不再依賴 @media max-width:899px T8 block）。
         守衛改為確認 modal-hug img 規則存在且含 width:100%。
         """
-        css = read_showcase_css_full(PROJECT_ROOT / "web" / "static", PROJECT_ROOT / "web" / "templates")
+        css = read_showcase_css_full(PROJECT_ROOT / "web" / "static")
         # 83b-T2 移除 T8 block，modal-hug 接管（無 @media gate）
         assert ".lightbox-content .lightbox-cover.has-cover img" in css, (
             "showcase.css modal-hug img 規則缺失（83b-T2 後應由此規則提供 width:100%）"
@@ -375,7 +375,7 @@ class TestPosterCropThresholdAlignment:
     # ---- T10 poster grid 斷點（參考；三位一體比對）----
     def test_showcase_poster_grid_breakpoint_899(self):
         """showcase.css poster-crop grid 斷點（.showcase-grid 4 欄）== max-width: 899px（T10）。"""
-        css = read_showcase_css_full(PROJECT_ROOT / "web" / "static", PROJECT_ROOT / "web" / "templates")
+        css = read_showcase_css_full(PROJECT_ROOT / "web" / "static")
         mw = self._poster_grid_max_width(css, "showcase-grid", "showcase.css")
         assert mw == 899, f"showcase.css poster grid @media max-width={mw}px，應為 899"
 
@@ -393,7 +393,7 @@ class TestPosterCropThresholdAlignment:
         showcase 燈箱貼合改由 modal-hug 無條件提供。核心對齊守衛去掉 showcase-lightbox-fit 維度，
         保留其他 5 值（2 JS + 1 search CSS lightbox-fit + 2 poster grid）。
         """
-        showcase_css = read_showcase_css_full(PROJECT_ROOT / "web" / "static", PROJECT_ROOT / "web" / "templates")
+        showcase_css = read_showcase_css_full(PROJECT_ROOT / "web" / "static")
         search_css = T11_SEARCH_CSS.read_text(encoding="utf-8")
         values = {
             "js:showcase": self._js_poster_crop_threshold(
@@ -435,7 +435,7 @@ class TestLightboxCoverSizeGuards:
     """
 
     def _css(self):
-        return read_showcase_css_full(PROJECT_ROOT / "web" / "static", PROJECT_ROOT / "web" / "templates")
+        return read_showcase_css_full(PROJECT_ROOT / "web" / "static")
 
     def _lightbox_js(self):
         return SHOWCASE_LIGHTBOX_JS.read_text(encoding="utf-8")

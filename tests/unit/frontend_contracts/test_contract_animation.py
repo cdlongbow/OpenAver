@@ -326,7 +326,6 @@ class TestPickerIntegrationGuard:
     def _css(self):
         return read_showcase_css_full(
             Path(__file__).parent.parent.parent.parent / "web" / "static",
-            Path(__file__).parent.parent.parent.parent / "web" / "templates",
         )
 
     def test_picker_html_contains(self):
@@ -527,7 +526,6 @@ class TestMobileSimilarPanelContractGuard:
     def _css():
         return read_showcase_css_full(
             Path(__file__).parent.parent.parent.parent / "web" / "static",
-            Path(__file__).parent.parent.parent.parent / "web" / "templates",
         )
 
     @staticmethod

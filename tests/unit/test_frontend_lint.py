@@ -3013,7 +3013,7 @@ class TestCoverLoadingUx67Guard:
         return SHOWCASE_HTML.read_text(encoding="utf-8")
 
     def _css(self):
-        return read_showcase_css_full(PROJECT_ROOT / "web" / "static", PROJECT_ROOT / "web" / "templates")
+        return read_showcase_css_full(PROJECT_ROOT / "web" / "static")
 
     def _grid_img(self):
         """抽出 grid 卡片封面 <img>（唯一含 :src="video.cover_url" 的 img tag）"""
@@ -4229,7 +4229,7 @@ class TestMobileToolbarCss:
     """
 
     def _css(self):
-        return read_showcase_css_full(PROJECT_ROOT / "web" / "static", PROJECT_ROOT / "web" / "templates")
+        return read_showcase_css_full(PROJECT_ROOT / "web" / "static")
 
     def _480_block(self, css):
         """擷取 ≤480 區塊中含 .showcase-toolbar 的 @media block（容忍巢狀無，平掃）。"""
@@ -4422,7 +4422,7 @@ class TestLightboxModalHugContract:
 
     def _css(self):
         # Reuse module-level constant declared at line 3474
-        return read_showcase_css_full(PROJECT_ROOT / "web" / "static", PROJECT_ROOT / "web" / "templates")
+        return read_showcase_css_full(PROJECT_ROOT / "web" / "static")
 
     def _js(self):
         # Reuse module-level constant declared at line 91
@@ -4887,7 +4887,7 @@ class TestSimilarMobilePanelT4Guard:
         return Path("web/templates/showcase.html").read_text(encoding="utf-8")
 
     def _css(self):
-        return read_showcase_css_full(PROJECT_ROOT / "web" / "static", PROJECT_ROOT / "web" / "templates")
+        return read_showcase_css_full(PROJECT_ROOT / "web" / "static")
 
     def test_mobile_play_btn_exists_in_stage(self):
         """T4: .similar-mobile-stage 內含 .similar-mobile-play-btn button（.similar-mobile-cover 子元素，overflow:hidden 已移至 img）"""

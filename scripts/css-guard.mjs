@@ -2764,9 +2764,9 @@ const RULES = [
     },
   },
 
-  // CG-148A-URL-01 ← CD-148a-15：pages/showcase/ 底下的 part 檔，url() 只允許 data: 與根相對
-  // （/static/...），@import/@charset/@namespace/@layer 零出現——part 檔換了子目錄層級後，
-  // 相對 url() 的解析基準會差一層，粗顆粒守衛防呆（不做路徑正確性驗證，只問「有沒有相對 url()」）。
+  // CG-148A-URL-01 ← CD-148a-15：part 檔的 url() 只允許 data: URI 與根相對路徑（/ 開頭）或絕對 URL
+  // （http(s):）——粗顆粒防呆，只問「有沒有相對 url()」，不驗路徑正確性（CD-148a-15 的刻意取捨）。
+  // @import/@charset/@namespace/@layer 零出現——part 檔換了子目錄層級後，相對 url() 的解析基準會差一層。
   {
     id: 'CG-148A-URL-01',
     file: 'theme.css', // 佔位滿足 runner loadFile；實際掃描在 check() 內用 readdirSync 遍歷 pages/showcase/（比照 CG-FOCAL-01 既有形狀）
@@ -2776,7 +2776,7 @@ const RULES = [
       for (const name of readdirSync(dir).filter((n) => n.endsWith('.css'))) {
         const raw = readFileSync(join(dir, name), 'utf-8');
         let text = stripCssComments(raw);                                     // 步驟 1：去註解
-        text = text.replace(/url\(\s*(['"])data:[\s\S]*?\1\s*\)/gi, '');       // 步驟 2：去 data URI 字串
+        text = text.replace(/url\(\s*(?:(['"])data:[\s\S]*?\1|data:[^)]*)\s*\)/gi, '');   // 步驟 2：去 data URI（含無引號形式）
         const urlRe = /url\(\s*(['"]?)([^'")]+)\1\s*\)/gi;                     // 步驟 3：查剩餘 url()
         let m;
         while ((m = urlRe.exec(text))) {
@@ -2801,6 +2801,28 @@ const RULES = [
     file: 'theme.css', // 佔位滿足 runner loadFile；實際比對在 check() 內
     kind: 'fn',
     check(ctx) {
+      // 行格式檢查先於清單比對：把表示形式收斂成單一正典，讓下游 hrefRe 不必追著合法 HTML
+      // 的各種等價寫法跑（屬性對調／單引號／自閉合……）。不符正典 → 大聲報行號，不會靜默少讀。
+      // 格式已紅就 return，避免再跑清單比對被 parser 靜默少讀後誤報成「少了某個 part」。
+      const html = loadWebFile('templates/_showcase_css.html');
+      const canonicalLine = /^\s*<link href="\/static\/css\/pages\/showcase\/[^"]+\.css" rel="stylesheet">\s*$/;
+      const lines = html.split(/\r?\n/);
+      let formatBad = false;
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (/^\s*$/.test(line)) continue;
+        if (!canonicalLine.test(line)) {
+          formatBad = true;
+          ctx.fail(
+            `CG-148A-PARTS-01: _showcase_css.html 第 ${i + 1} 行不符正典行格式：${JSON.stringify(line)}。` +
+            `_showcase_css.html 只接受單一正典行格式（href 在前、雙引號、一行一個 <link>）——` +
+            `這是刻意把表示形式收斂成契約，讓下游 parser 不必追著合法 HTML 的各種等價寫法跑。` +
+            `等價但不同形的寫法（屬性對調、單引號、自閉合）一律在這裡擋下，不會讓 parser 靜默少讀一個 part。`
+          );
+        }
+      }
+      if (formatBad) return;
+
       const fromTemplate = showcasePartsFromTemplate();
       const names = readdirSync(CSS('pages/showcase')).filter((n) => n.endsWith('.css'));
       // 兩位數補零是 .sort()（字典序）能代表 A→H 數字序的**前提**，不是命名潔癖：
@@ -2826,9 +2848,11 @@ const RULES = [
 
 // 解析 _showcase_css.html 的 <link href> 出現順序——單一來源＝ CD-148a-3 的 template，
 // 本檔零硬編清單。未來再拆出第 9 個 part，template 一改，這裡自動跟著讀到。
+// CG-148A-PARTS-01 的行格式檢查已把 template 收斂成單一正典形狀，所以這裡的 hrefRe
+// 不必再追著合法 HTML 的各種等價寫法跑；測試端改讀目錄，本函式是唯一還 parse template 的地方。
 function showcasePartsFromTemplate() {
   const html = loadWebFile('templates/_showcase_css.html');
-  const hrefRe = /<link\s+href="\/static\/css\/(pages\/showcase\/[^"]+\.css)"/g;
+  const hrefRe = /<link\b[^>]*\bhref="\/static\/css\/(pages\/showcase\/[^"]+\.css)"[^>]*>/g;
   const parts = [];
   let m;
   while ((m = hrefRe.exec(html))) parts.push(m[1]);

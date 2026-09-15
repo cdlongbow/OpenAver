@@ -6,7 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -437,14 +437,19 @@ test('release 浮層 hint 綁 _releaseYearHint()，label 綁 t(\'showcase.pill.o
 
 // ===== CSS：.pe-ym-year / .pe-ym-month 兩條新增 + :3569 selector 改動 =====
 
+// 把 pages/showcase/ 底下的 part 依檔名排序串接成完整字串（逐 byte 等於拆檔前的 showcase.css）。
+// 刻意不 parse web/templates/_showcase_css.html：
+// 「template 清單 == 本目錄排序」這條不變式由 scripts/css-guard.mjs 的 CG-148A-PARTS-01
+// 在 `npm run lint` 強制（順序／完整性／幽靈條目三者一次鎖住），所以目錄排序就是正典順序。
+// 測試端再自己 parse 一次 HTML 只會多一份會分岔的實作，且要追著合法 HTML 的表示形式跑
+// （屬性順序、單雙引號、大小寫、自閉合……）——那是 2026-09-15 Codex 兩輪 review 的根因。
 function readShowcaseCssFull(repoRoot) {
-  const html = readFileSync(path.join(repoRoot, 'web/templates/_showcase_css.html'), 'utf8');
-  const hrefRe = /<link\s+href="\/static\/css\/(pages\/showcase\/[^"]+\.css)"/g;
-  const parts = [];
-  let m;
-  while ((m = hrefRe.exec(html))) parts.push(m[1]);
-  if (parts.length === 0) throw new Error('readShowcaseCssFull: _showcase_css.html 內找不到任何 pages/showcase/*.css <link>');
-  return parts.map((p) => readFileSync(path.join(repoRoot, 'web/static/css', p), 'utf8')).join('');
+  const partsDir = path.join(repoRoot, 'web/static/css/pages/showcase');
+  const names = readdirSync(partsDir).filter((n) => n.endsWith('.css')).sort();
+  if (names.length === 0) {
+    throw new Error(`readShowcaseCssFull: ${partsDir} 底下找不到任何 .css part 檔`);
+  }
+  return names.map((n) => readFileSync(path.join(partsDir, n), 'utf8')).join('');
 }
 const SHOWCASE_CSS = readShowcaseCssFull(REPO_ROOT);
 
