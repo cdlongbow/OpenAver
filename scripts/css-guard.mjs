@@ -351,6 +351,11 @@ function checkContainerMinHeightUsesMobileTopbar(ctx, { id, selector }) {
 }
 
 // ── 表驅動 rule-set（fluent 家族 14 條，忠實 port test_fluent_materials_guards.py，CD-96c-2）──
+// 虛擬路徑：CD-148a-6/7 的反向鎖／跨 part 規則需要「8 個 part 串接後的全文」，不是單一實體檔。
+// 讓 loadFile 認得這個字面（刻意不是合法相對路徑，不會撞到真檔案），runner／ctx 組裝完全不用改，
+// 10 條 callsite 各自只需把 `'pages/showcase.css'` 換成 SHOWCASE_FULL 這個常數。
+const SHOWCASE_FULL = 'virtual:showcase-full';
+
 const RULES = [
   // CG-FLU-01 ← test_non_shell_backdrop_filter_dim_scoped
   {
@@ -1146,7 +1151,7 @@ const RULES = [
         if (b.includes('71/100')) ctx.fail('CG-PC-01: .poster-crop must not hardcode 71/100 (use var)');
       }
       // showcase.css：.similar-slot-img / .similar-main-static
-      const sc = ctx.load('pages/showcase.css').raw;
+      const sc = ctx.load(SHOWCASE_FULL).raw;
       const sm = sc.match(/\.similar-slot-img\s*\{([^}]+)\}/);
       if (!sm) ctx.fail('CG-PC-01: showcase.css .similar-slot-img not found');
       else {
@@ -1185,7 +1190,7 @@ const RULES = [
   // 那時才是重判的當下；不要只因「改到某個行號附近」就自動重寫本 rule。
   {
     id: 'CG-PC-02',
-    file: 'pages/showcase.css',
+    file: SHOWCASE_FULL,
     kind: 'fn',
     check(ctx) {
       // stripped text（extractMediaBodies 用 loose `@media\b` regex，raw 上前置 comment 內的 @media
@@ -1242,7 +1247,7 @@ const RULES = [
   // CG-PC-03 ← TestUS5PosterCropScoped（rule-bound :is() scope silent-no-op 守衛）
   {
     id: 'CG-PC-03',
-    file: 'pages/showcase.css',
+    file: SHOWCASE_FULL,
     kind: 'fn',
     check(ctx) {
       // aspect-ratio / object-position 用 stripped text（防 selector 說明註解騙過）
@@ -1370,7 +1375,7 @@ const RULES = [
         }
       }
       // (6) showcase.css modal-hug 回歸護欄（stripped showcase）
-      const scText = ctx.load('pages/showcase.css').text;
+      const scText = ctx.load(SHOWCASE_FULL).text;
       const mh2 = scText.match(/\.lightbox-content\s+\.lightbox-cover\.has-cover\s+img\s*\{([^}]+)\}/);
       if (!mh2) ctx.fail('CG-PC-04: showcase.css modal-hug img 規則應保留');
       else if (!mh2[1].includes('width: 100%')) ctx.fail('CG-PC-04: showcase.css modal-hug img 缺 width: 100%');
@@ -1489,7 +1494,7 @@ const RULES = [
   // CG-PC-08 ← TestSimilarCssSafetyAndGridGuard（960 安全網 + .similar-slot 寬度）
   {
     id: 'CG-PC-08',
-    file: 'pages/showcase.css',
+    file: SHOWCASE_FULL,
     kind: 'fn',
     check(ctx) {
       const css = ctx.raw;
@@ -1567,7 +1572,7 @@ const RULES = [
       const searchBlock = ruleBody(ctx.raw, '\\.tag-badge\\.user-tag');
       if (searchBlock === null) ctx.fail('CG-PC-11: search.css 找不到 .tag-badge.user-tag 規則');
       else if (searchBlock.includes('--text-inverse')) ctx.fail('CG-PC-11: .tag-badge.user-tag 應用 --color-primary-content，非 --text-inverse');
-      const scRaw = ctx.load('pages/showcase.css').raw;
+      const scRaw = ctx.load(SHOWCASE_FULL).raw;
       const scBlock = ruleBody(scRaw, '\\.lb-user-tag');
       if (scBlock === null) ctx.fail('CG-PC-11: showcase.css 找不到 .lb-user-tag 規則');
       else if (scBlock.includes('--text-inverse')) ctx.fail('CG-PC-11: .lb-user-tag 應用 --color-primary-content，非 --text-inverse');
@@ -1772,7 +1777,7 @@ const RULES = [
   // CG-SB-01 ← test_css_spotlight_scoping.py（showcase.css + theme.css；4 檢查皆存在性/scope）
   {
     id: 'CG-SB-01',
-    file: 'pages/showcase.css',
+    file: SHOWCASE_FULL,
     kind: 'fn',
     check(ctx) {
       // .spotlight-search--mode-toggle variant + --spotlight-left-slot token 存在
@@ -1844,7 +1849,7 @@ const RULES = [
     kind: 'fn',
     check(ctx) {
       const modalCss = ctx.raw; // rescrape-modal.css
-      const showcaseRaw = ctx.load('pages/showcase.css').raw;
+      const showcaseRaw = ctx.load(SHOWCASE_FULL).raw;
       const themeRaw = ctx.load('theme.css').raw;
       const sourcePillRaw = ctx.load('components/source-pill.css').raw;
 
@@ -2169,7 +2174,7 @@ const RULES = [
   // when-modified 才修，非本規則管轄）。鎖住「不要把新 modifier 也走回硬編老路」。
   {
     id: 'CG-FOCAL-03',
-    file: 'pages/showcase.css',
+    file: SHOWCASE_FULL,
     kind: 'selector-forbid',
     markers: ['.lb-action-btn--success'],
     pattern: /rgba\(/,
@@ -2408,7 +2413,7 @@ const RULES = [
   // 「≤899 同欄同寬（比例相近）／≥900 各走各的斷點、女優欄數 ≥ 影片欄數」。
   {
     id: 'CG-GRID-ALIGN',
-    file: 'pages/showcase.css',
+    file: SHOWCASE_FULL,
     kind: 'fn',
     check(ctx) {
       // 「最終 subject」判定（Codex 四審 P2 + 五審 P2）：判斷 selector 某逗號段是否以 class `cls`
@@ -2758,13 +2763,92 @@ const RULES = [
       }
     },
   },
+
+  // CG-148A-URL-01 ← CD-148a-15：pages/showcase/ 底下的 part 檔，url() 只允許 data: 與根相對
+  // （/static/...），@import/@charset/@namespace/@layer 零出現——part 檔換了子目錄層級後，
+  // 相對 url() 的解析基準會差一層，粗顆粒守衛防呆（不做路徑正確性驗證，只問「有沒有相對 url()」）。
+  {
+    id: 'CG-148A-URL-01',
+    file: 'theme.css', // 佔位滿足 runner loadFile；實際掃描在 check() 內用 readdirSync 遍歷 pages/showcase/（比照 CG-FOCAL-01 既有形狀）
+    kind: 'fn',
+    check(ctx) {
+      const dir = CSS('pages/showcase');
+      for (const name of readdirSync(dir).filter((n) => n.endsWith('.css'))) {
+        const raw = readFileSync(join(dir, name), 'utf-8');
+        let text = stripCssComments(raw);                                     // 步驟 1：去註解
+        text = text.replace(/url\(\s*(['"])data:[\s\S]*?\1\s*\)/gi, '');       // 步驟 2：去 data URI 字串
+        const urlRe = /url\(\s*(['"]?)([^'")]+)\1\s*\)/gi;                     // 步驟 3：查剩餘 url()
+        let m;
+        while ((m = urlRe.exec(text))) {
+          const val = m[2];
+          if (!(val.startsWith('/') || /^https?:/i.test(val))) {
+            ctx.fail(`CG-148A-URL-01: pages/showcase/${name} 出現非法 url() 值（須以 / 或 http 開頭）：${val}`);
+          }
+        }
+        if (/@import\b|@charset\b|@namespace\b|@layer\b/i.test(text)) {        // 步驟 4：查四種 at-rule
+          ctx.fail(`CG-148A-URL-01: pages/showcase/${name} 出現位置敏感 at-rule（@import/@charset/@namespace/@layer 之一）`);
+        }
+      }
+    },
+  },
+
+  // CG-148A-PARTS-01 ← T5 第 2 輪：_showcase_css.html 的 part 清單必須與 pages/showcase/ 目錄
+  // 內容完全一致（同集合、同順序）。拆檔後「層疊順序」變成 template 行序這個獨立自由度，
+  // 而 T9 刪掉原檔之後就再也沒有「串接 == 原檔」可以對——這條是它唯一的長期鎖。
+  // 順序錯 → 瀏覽器層疊結果改變；漏掛 → 那個 part 的樣式整段不載入；兩者 lint 都不會自己紅。
+  {
+    id: 'CG-148A-PARTS-01',
+    file: 'theme.css', // 佔位滿足 runner loadFile；實際比對在 check() 內
+    kind: 'fn',
+    check(ctx) {
+      const fromTemplate = showcasePartsFromTemplate();
+      const names = readdirSync(CSS('pages/showcase')).filter((n) => n.endsWith('.css'));
+      // 兩位數補零是 .sort()（字典序）能代表 A→H 數字序的**前提**，不是命名潔癖：
+      // 一個沒補零的 `9-x.css` 會讓字典序把 `10-` 排到它前面，本規則就會安靜地開始說謊。
+      const bad = names.filter((n) => !/^\d{2}-/.test(n));
+      if (bad.length) {
+        ctx.fail(
+          `CG-148A-PARTS-01: pages/showcase/ 底下的 part 檔名必須是兩位數補零前綴（NN-）：${bad.join(', ')}。` +
+          `本規則用字典序代表 CD-148a-1 的 A→H 順序，沒補零會讓字典序與數字序分岔。`
+        );
+      }
+      const onDisk = names.sort().map((n) => `pages/showcase/${n}`);
+      if (fromTemplate.join('|') !== onDisk.join('|')) {
+        ctx.fail(
+          `CG-148A-PARTS-01: _showcase_css.html 的 part 清單與 pages/showcase/ 目錄不一致——` +
+          `template=[${fromTemplate.join(', ')}] vs 目錄排序=[${onDisk.join(', ')}]。` +
+          `順序錯會改變瀏覽器層疊結果，漏掛會讓該 part 樣式整段不載入，兩者都不會被其他守衛抓到。`
+        );
+      }
+    },
+  },
 ];
+
+// 解析 _showcase_css.html 的 <link href> 出現順序——單一來源＝ CD-148a-3 的 template，
+// 本檔零硬編清單。未來再拆出第 9 個 part，template 一改，這裡自動跟著讀到。
+function showcasePartsFromTemplate() {
+  const html = loadWebFile('templates/_showcase_css.html');
+  const hrefRe = /<link\s+href="\/static\/css\/(pages\/showcase\/[^"]+\.css)"/g;
+  const parts = [];
+  let m;
+  while ((m = hrefRe.exec(html))) parts.push(m[1]);
+  if (parts.length === 0) {
+    throw new Error('showcasePartsFromTemplate: _showcase_css.html 內找不到任何 pages/showcase/*.css <link>（template 格式被改了？）');
+  }
+  return parts;
+}
+
+// 依 template 給的順序，把 8 個 part 的 raw 內容串接成一份完整字串（等價於拆檔前的 showcase.css）。
+// 依序呼叫 loadFile(p) 讀各 part（共用同一份 fileCache，不重複讀檔）。
+function readShowcaseFull() {
+  return showcasePartsFromTemplate().map((p) => loadFile(p).raw).join('');
+}
 
 // ── per-file read+parse cache（同檔多 rule 共用，讀一次 → stripCssComments → parseRuleBlocks）──
 const fileCache = new Map();
 function loadFile(rel) {
   if (fileCache.has(rel)) return fileCache.get(rel);
-  const raw = readFileSync(CSS(rel), 'utf-8');
+  const raw = rel === SHOWCASE_FULL ? readShowcaseFull() : readFileSync(CSS(rel), 'utf-8');
   const text = stripCssComments(raw);
   const entry = { raw, text, blocks: parseRuleBlocks(text) };
   fileCache.set(rel, entry);
@@ -2806,7 +2890,13 @@ for (const rule of RULES) {
     }
     ctx = { text: entry.text, raw: entry.raw, blocks: entry.blocks, fail, rel: rule.file, load: loadFile, loadWeb: loadWebFile };
   }
-  KINDS[rule.kind](rule, ctx);
+  // check() 內 ctx.load(...) 也可能丟 ENOENT（例如 template 幽靈 part）；與上方 read-fail
+  // 同形：轉成 fail+continue，讓後續規則（含 CG-148A-PARTS-01）仍能跑完再累積 exit。
+  try {
+    KINDS[rule.kind](rule, ctx);
+  } catch (e) {
+    fail(`${rule.id}: 執行失敗 — ${e && e.message ? e.message : e}`);
+  }
 }
 
 if (hadError) process.exit(1);
