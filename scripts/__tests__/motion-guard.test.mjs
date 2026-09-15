@@ -193,11 +193,11 @@ test('〔A1〕白名單有登記但檔案內未掃到（殘留條目）→ RED',
   }
 });
 
-test('〔A2〕真 repo regression → GREEN (今天的 18 CSS + 6 JS 全部登記到位)', () => {
+test('〔A2〕真 repo regression → GREEN (今天的 14 CSS + 6 JS 全部登記到位)', () => {
   const r = runGuard(REPO_ROOT);
   assert.equal(r.status, 0, r.output);
   assert.match(r.output, /對帳一致/);
-  assert.match(r.output, /CSS 13 條 \/ 18 處/);
+  assert.match(r.output, /CSS 10 條 \/ 14 處/);
   assert.match(r.output, /JS 5 條 \/ 6 處/);
 });
 
