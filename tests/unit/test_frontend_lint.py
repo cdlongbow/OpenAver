@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 import pytest
+from tests.unit.frontend_contracts._showcase_css import read_showcase_css_full
 
 SHOWCASE_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "showcase.html"
 
@@ -1255,8 +1256,6 @@ class TestDetailSwipeGuard:
 
 
 # ─── 49b-T4cd: Actress Photo Picker UI/Alpine/SSE 整合守衛 ──────────────────
-SHOWCASE_CSS_T4CD = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "showcase.css"
-
 
 # Removed in T55b — superseded by stylelint:
 #   TestSettingsCssHardcoded, TestHelpCssHardcoded, TestDesignSystemCssHardcoded
@@ -3000,7 +2999,6 @@ class TestSettingsDmmProxyContract:
             "64e-3 違規：proxy row 應在 id=\"sec-search\" 之後、id=\"metatubeEnableToggle\" 之前（搬至 metatube toggle 正上方）"
 
 
-SHOWCASE_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "showcase.css"
 PAGE_LIFECYCLE_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "components" / "page-lifecycle.js"
 
 
@@ -3015,7 +3013,7 @@ class TestCoverLoadingUx67Guard:
         return SHOWCASE_HTML.read_text(encoding="utf-8")
 
     def _css(self):
-        return SHOWCASE_CSS.read_text(encoding="utf-8")
+        return read_showcase_css_full(PROJECT_ROOT / "web" / "static", PROJECT_ROOT / "web" / "templates")
 
     def _grid_img(self):
         """抽出 grid 卡片封面 <img>（唯一含 :src="video.cover_url" 的 img tag）"""
@@ -3826,7 +3824,6 @@ STATE_RESCRAPE_JS = (
 )
 
 
-SHOWCASE_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "showcase.css"
 SHOWCASE_SIMILAR_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-similar.js"
 
 
@@ -4232,7 +4229,7 @@ class TestMobileToolbarCss:
     """
 
     def _css(self):
-        return SHOWCASE_CSS.read_text(encoding="utf-8")
+        return read_showcase_css_full(PROJECT_ROOT / "web" / "static", PROJECT_ROOT / "web" / "templates")
 
     def _480_block(self, css):
         """擷取 ≤480 區塊中含 .showcase-toolbar 的 @media block（容忍巢狀無，平掃）。"""
@@ -4397,7 +4394,6 @@ class TestMobileToolbarAutoCollapse:
 T11_BREAKPOINTS_JS    = PROJECT_ROOT / "web" / "static" / "js" / "shared" / "breakpoints.js"
 T11_STATE_LIGHTBOX_JS = PROJECT_ROOT / "web" / "static" / "js" / "pages" / "showcase" / "state-lightbox.js"
 T11_GRID_MODE_JS      = PROJECT_ROOT / "web" / "static" / "js" / "pages" / "search" / "state" / "grid-mode.js"
-T11_SHOWCASE_CSS      = PROJECT_ROOT / "web" / "static" / "css" / "pages" / "showcase.css"
 T11_SEARCH_CSS        = PROJECT_ROOT / "web" / "static" / "css" / "pages" / "search.css"
 
 
@@ -4426,7 +4422,7 @@ class TestLightboxModalHugContract:
 
     def _css(self):
         # Reuse module-level constant declared at line 3474
-        return SHOWCASE_CSS.read_text(encoding="utf-8")
+        return read_showcase_css_full(PROJECT_ROOT / "web" / "static", PROJECT_ROOT / "web" / "templates")
 
     def _js(self):
         # Reuse module-level constant declared at line 91
@@ -4854,7 +4850,6 @@ class TestSearchDetailCoverFixContract:
 # ============================================================================
 
 _T2_SHOWCASE_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "showcase.html"
-_T2_SHOWCASE_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "showcase.css"
 _T2_SIMILAR_JS = (
     Path(__file__).parent.parent.parent
     / "web" / "static" / "js" / "pages" / "showcase" / "state-similar.js"
@@ -4892,7 +4887,7 @@ class TestSimilarMobilePanelT4Guard:
         return Path("web/templates/showcase.html").read_text(encoding="utf-8")
 
     def _css(self):
-        return Path("web/static/css/pages/showcase.css").read_text(encoding="utf-8")
+        return read_showcase_css_full(PROJECT_ROOT / "web" / "static", PROJECT_ROOT / "web" / "templates")
 
     def test_mobile_play_btn_exists_in_stage(self):
         """T4: .similar-mobile-stage 內含 .similar-mobile-play-btn button（.similar-mobile-cover 子元素，overflow:hidden 已移至 img）"""

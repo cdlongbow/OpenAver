@@ -12,10 +12,16 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 本檔：web/static/js/pages/showcase/__tests__/ → 上五層 = repo root
 const REPO_ROOT = path.resolve(__dirname, '../../../../../..');
-const SHOWCASE_CSS = readFileSync(
-    path.join(REPO_ROOT, 'web/static/css/pages/showcase.css'),
-    'utf8',
-);
+function readShowcaseCssFull(repoRoot) {
+  const html = readFileSync(path.join(repoRoot, 'web/templates/_showcase_css.html'), 'utf8');
+  const hrefRe = /<link\s+href="\/static\/css\/(pages\/showcase\/[^"]+\.css)"/g;
+  const parts = [];
+  let m;
+  while ((m = hrefRe.exec(html))) parts.push(m[1]);
+  if (parts.length === 0) throw new Error('readShowcaseCssFull: _showcase_css.html 內找不到任何 pages/showcase/*.css <link>');
+  return parts.map((p) => readFileSync(path.join(repoRoot, 'web/static/css', p), 'utf8')).join('');
+}
+const SHOWCASE_CSS = readShowcaseCssFull(REPO_ROOT);
 // 元件登記查的是 design-system.html（**已追蹤**），不是 feature/AI_COLLABORATION/
 // ui-conventions.md——後者在 .gitignore 內，CI checkout 沒有它，module 載入期
 // readFileSync 會 ENOENT 讓整個檔案 7 支測試一起死（PR#131 兩輪 CI 紅燈的原因）。

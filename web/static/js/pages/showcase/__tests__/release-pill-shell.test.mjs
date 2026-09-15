@@ -437,10 +437,16 @@ test('release 浮層 hint 綁 _releaseYearHint()，label 綁 t(\'showcase.pill.o
 
 // ===== CSS：.pe-ym-year / .pe-ym-month 兩條新增 + :3569 selector 改動 =====
 
-const SHOWCASE_CSS = readFileSync(
-    path.join(REPO_ROOT, 'web/static/css/pages/showcase.css'),
-    'utf8',
-);
+function readShowcaseCssFull(repoRoot) {
+  const html = readFileSync(path.join(repoRoot, 'web/templates/_showcase_css.html'), 'utf8');
+  const hrefRe = /<link\s+href="\/static\/css\/(pages\/showcase\/[^"]+\.css)"/g;
+  const parts = [];
+  let m;
+  while ((m = hrefRe.exec(html))) parts.push(m[1]);
+  if (parts.length === 0) throw new Error('readShowcaseCssFull: _showcase_css.html 內找不到任何 pages/showcase/*.css <link>');
+  return parts.map((p) => readFileSync(path.join(repoRoot, 'web/static/css', p), 'utf8')).join('');
+}
+const SHOWCASE_CSS = readShowcaseCssFull(REPO_ROOT);
 
 test('showcase.css 新增 .pe-ym-year（5ch）與 .pe-ym-month（4ch）', () => {
     assert.ok(
