@@ -39,6 +39,15 @@ DURATION: {
     emphasis: 0.5      // 強調級長過場（lightbox 主動畫、模式切換）
 },
 
+WALL_MOTION: {
+    STAGGER_ORIGIN:           'center',
+    STAGGER_ORIGIN_COLLAPSE:  'center',
+    ENTRY_STAGGER_AMOUNT:        0.3,
+    FILTER_ENTER_STAGGER_AMOUNT: 0.2,
+    INFO_EXPAND_DURATION:        0.2,
+    INFO_EXPAND_STAGGER_AMOUNT: 0.13
+},
+
 /**
  * 建立頁面級動畫 context
  *
