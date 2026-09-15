@@ -86,6 +86,9 @@ const CSS_ALLOW = [
     count: 1,
     why: '骨架微光',
   },
+  { file: 'web/static/css/pages/showcase/08-remainder.css', name: 'spin',          count: 2, why: '載入指示器' },
+  { file: 'web/static/css/pages/showcase/08-remainder.css', name: 'dust-twinkle',  count: 1, why: '相似探索的星塵（spec §5.1 owner 拍板結案不追）' },
+  { file: 'web/static/css/pages/showcase/08-remainder.css', name: 'shimmer',       count: 1, why: '骨架微光' },
   {
     file: 'web/static/css/theme.css',
     name: 'spin',
