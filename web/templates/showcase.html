@@ -521,7 +521,7 @@
               <!-- TASK-138-T2（CD-B1/B2/B3/B4）：hero 卡展開資訊區，鏡射女優卡 :796-807，
                    純顯示不可點（spec #1）。資料直接呼叫既有 _actressInfoParts()，不新增 state。 -->
               <div class="card-info actress-card-info"
-                   x-show="infoVisible && (_actressInfoParts(_matchedActress).length || _heroCardTagParts(_matchedActress).length)"
+                   :class="{'has-info': _actressInfoParts(_matchedActress).length || _heroCardTagParts(_matchedActress).length}"
                    x-cloak @click.stop>
                   <template x-for="(part, i) in _actressInfoParts(_matchedActress)" :key="i">
                       <span x-text="part.text"></span>
@@ -611,7 +611,7 @@
                         </div>
                     </div>
                     <!-- Card Info 展開區 (M3i) — footer 同層，展開時撐高卡片 -->
-                    <div class="card-info" x-show="infoVisible" x-cloak @click.stop>
+                    <div class="card-info" x-cloak @click.stop>
                         <div class="info-title" x-text="video.title || t('showcase.grid.unknown_title')"></div>
                         <div class="info-row" x-show="video.actresses">
                             <b>{{ t('showcase.label.actor') }}：</b>
@@ -821,7 +821,7 @@
                              :key 維持索引（CD-124b-9）：陣列整包重算、長度 ≤5。
                              不加 · 分隔符——.actress-card-info 靠 gap 分隔（showcase/07-card-info-expand.css）。 -->
                         <div class="card-info actress-card-info"
-                             x-show="infoVisible && _actressInfoParts(actress).length"
+                             :class="{'has-info': _actressInfoParts(actress).length}"
                              x-cloak @click.stop>
                             <template x-for="(part, i) in _actressInfoParts(actress)" :key="i">
                                 <span>

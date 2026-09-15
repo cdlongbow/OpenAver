@@ -4436,8 +4436,8 @@ const RULES = [
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
     pattern: 'x-show="part.clickable"',
-    scope: { anchor: /x-show="infoVisible && _actressInfoParts\(actress\)\.length"/, window: 600 },
-    note: '[lint-guard 137-T1 #1] 拔掉這條 → 女優卡資訊區「不該可點」的欄位（如空白年齡）同時出現純文字和一個可點連結，點下去篩出空結果（來源 TASK-136a-T4.md:106-113）。**anchor 於 138-T2 改精確**：原本錨 `<div class="card-info actress-card-info"` 是 first-match，138-T2 讓 hero 卡也用同一組 class 之後會先命中 hero 卡區塊（那裡依 CD-B3 刻意不可點）⇒ 誤報。改錨女優牆獨有的 `_actressInfoParts(actress)`（hero 卡傳的是 `_matchedActress`），守的區塊與 pattern 一字未變（anchor 距 target 約 408 字元，window=600）',
+    scope: { anchor: /:class="\{'has-info': _actressInfoParts\(actress\)\.length\}"/, window: 600 },
+    note: '[lint-guard 137-T1 #1] 拔掉這條 → 女優卡資訊區「不該可點」的欄位（如空白年齡）同時出現純文字和一個可點連結，點下去篩出空結果（來源 TASK-136a-T4.md:106-113）。**anchor 於 138-T2 改精確**：原本錨 `<div class="card-info actress-card-info"` 是 first-match，138-T2 讓 hero 卡也用同一組 class 之後會先命中 hero 卡區塊（那裡依 CD-B3 刻意不可點）⇒ 誤報。改錨女優牆獨有的 `_actressInfoParts(actress)`（hero 卡傳的是 `_matchedActress`），守的區塊與 pattern 一字未變（anchor 距 target 約 408 字元，window=600）。**anchor 於 148b-T5 再次 repoint**：模式 A 改造把女優卡 `.card-info` 的顯示從 `x-show="infoVisible && _actressInfoParts(actress).length"` 換成 `:class="{\'has-info\': _actressInfoParts(actress).length}"`（顯示改由 `.info-open` 容器 class 驅動），舊 anchor 字面消失。**守的區塊、pattern、window 一字未變**；沿用同一個區辨性質——女優牆傳 `actress`、hero 卡傳 `_matchedActress`，所以新 anchor 仍然只命中女優牆那一塊',
   },
   {
     file: 'web/templates/showcase.html', kind: 'required-string',

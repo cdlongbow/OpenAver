@@ -594,23 +594,19 @@ export function stateBase() {
             window.history.replaceState({}, '', newUrl);
         },
 
-        // Card Info 切換 (M3i) — 兩階段 Flip ＋ 世代閘（CD-148b-10）
+        // Card Info 切換 (M3i) — 原型 B：先寫眼睛 → capture 舊位 → 同步 .info-open → x/y 位移
         toggleInfo() {
-            // Step 0: capture（必須在寫入之前；缺 helper 時安靜降級，不挾持狀態機／AC-6）
+            var toVisible = !this.infoVisible;
+            this.infoVisible = toVisible;                      // ★ 第一行就寫，眼睛立刻回饋
+            this._persistedShowcase.infoVisible = toVisible;
             var grid = this._getActiveGrid?.();
-            var capturedInfoState = window.ShowcaseAnimations?.captureInfoState?.(grid) || null;
-
-            // Step 1: 既有兩行（逐字不變）
-            this.infoVisible = !this.infoVisible;
-            this._persistedShowcase.infoVisible = this.infoVisible;
-
-            // Step 2: 世代閘住 play（缺 $nextTick 時不排延後工作；狀態機已翻轉）
-            var toVisible = this.infoVisible;
-            var gen = ++this._animGeneration;
-            this.$nextTick?.(() => { requestAnimationFrame(() => {
-                if (this._animGeneration !== gen) return;
-                window.ShowcaseAnimations?.playInfoExpand?.(capturedInfoState, grid, toVisible);
-            }); });
+            var captured = window.ShowcaseAnimations?.captureInfoState?.(grid) || null;
+            grid?.classList?.toggle('info-open', toVisible);   // ★ 同步改版面
+            try {
+                window.ShowcaseAnimations?.playInfoExpand?.(captured, grid);
+            } catch (err) {
+                console.error('playInfoExpand failed (資訊區仍會切換):', err);
+            }
         },
 
         formatPartLabel,

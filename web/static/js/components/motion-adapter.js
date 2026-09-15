@@ -40,12 +40,11 @@ DURATION: {
 },
 
 WALL_MOTION: {
-    STAGGER_ORIGIN:           'center',
-    STAGGER_ORIGIN_COLLAPSE:  'center',
-    ENTRY_STAGGER_AMOUNT:        0.3,
-    FILTER_ENTER_STAGGER_AMOUNT: 0.2,
-    INFO_EXPAND_DURATION:        0.2,
-    INFO_EXPAND_STAGGER_AMOUNT: 0.13
+    // 收合 origin／展開 stagger 兩個 key 不再保留以免誤當可調。
+    STAGGER_ORIGIN:              'center',
+    ENTRY_STAGGER_AMOUNT:        0.2,
+    FILTER_ENTER_STAGGER_AMOUNT: 0.133,
+    INFO_EXPAND_DURATION:        0.133
 },
 
 /**
