@@ -1,10 +1,14 @@
 // TASK-148b-T2：captureInfoState / playInfoExpand 兩階段 Flip 機制
+// TASK-148b-T3：toggleInfo() capture-before-write ＋ 世代閘契約
 //
-// 真的 import() animations.js，用假 DOM／假 gsap／假 Flip 驅動——不是源碼字串斷言。
-// Stub 形狀照 shape-morph-viewport.test.mjs。
+// 真的 import() animations.js／state-base.js，用假 DOM／假 gsap／假 Flip 驅動——不是源碼字串斷言。
+// Stub 形狀照 shape-morph-viewport.test.mjs；@/ importmap loader 照 pill-hero.test.mjs。
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { register } from 'node:module';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+import path from 'node:path';
 
 globalThis.window = globalThis;
 globalThis.document = {
@@ -52,8 +56,40 @@ globalThis.OpenAver = {
     },
 };
 
+// state-base.js 用 @/shared/... 別名；plain node --test 需要 importmap resolve hook。
+const IMPORTMAP = {
+    '@/settings/': 'pages/settings/',
+    '@/shared/': 'shared/',
+    '@/components/': 'components/',
+    '@/search/': 'pages/search/',
+    '@/showcase/': 'pages/showcase/',
+    '@/scanner/': 'pages/scanner/',
+};
+const STATIC_JS_ROOT = pathToFileURL(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../') + '/',
+).href;
+
+const loaderCode = `
+const IMPORTMAP = ${JSON.stringify(IMPORTMAP)};
+const STATIC_JS_ROOT = ${JSON.stringify(STATIC_JS_ROOT)};
+export async function resolve(specifier, context, nextResolve) {
+    for (const [prefix, rel] of Object.entries(IMPORTMAP)) {
+        if (specifier.startsWith(prefix)) {
+            return nextResolve(STATIC_JS_ROOT + rel + specifier.slice(prefix.length), context);
+        }
+    }
+    if (specifier.startsWith('@/')) {
+        return nextResolve(STATIC_JS_ROOT + specifier.slice(2), context);
+    }
+    return nextResolve(specifier, context);
+}
+`;
+register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.url);
+
 await import('../animations.js');
 const ShowcaseAnimations = globalThis.window.ShowcaseAnimations;
+
+const { stateBase } = await import('../state-base.js');
 
 const VIEWPORT_H = 900;
 const MARGIN = 200;
@@ -494,4 +530,149 @@ test('playInfoExpand：shouldSkip() 成立時回 null 且不呼叫 Flip.from', (
 
     assert.equal(result, null);
     assert.equal(flipCalls.from.length, 0, 'reduced-motion 時 Flip.from 零呼叫');
+});
+
+// ── TASK-148b-T3：toggleInfo() capture-before-write ＋ 世代閘 ─────
+
+/**
+ * $nextTick / rAF 必須「排入佇列、由測試手動 flush」——不可同步立即執行，
+ * 否則世代閘 mutation（拿掉 ++）測不出「多份 pending 工作同時存在」的窗口。
+ */
+function makeToggleInfoCtx() {
+    const nextTickQueue = [];
+    const rafQueue = [];
+    const fakeGrid = { __fakeGrid: true };
+    // stateBase factory 內用 this.$persist；node harness 需 stub（比照 pill-persist / pill-clear）
+    const ctx = Object.assign(
+        stateBase.call({ $persist: (obj) => ({ as: () => obj }) }),
+        {
+            infoVisible: false,
+            _persistedShowcase: {},
+            _animGeneration: 0,
+            _getActiveGrid: () => fakeGrid,
+            $nextTick(cb) { nextTickQueue.push(cb); },
+        },
+    );
+    return { ctx, fakeGrid, nextTickQueue, rafQueue };
+}
+
+function flushOne(nextTickQueue, rafQueue) {
+    const tick = nextTickQueue.shift();
+    tick();
+    const raf = rafQueue.shift();
+    raf();
+}
+
+test('toggleInfo()：captureInfoState 呼叫必須在 infoVisible 寫入之前（capture-before-write 契約）', () => {
+    const { ctx, fakeGrid, nextTickQueue, rafQueue } = makeToggleInfoCtx();
+    const origRaf = globalThis.requestAnimationFrame;
+    globalThis.requestAnimationFrame = (cb) => { rafQueue.push(cb); };
+
+    let capturedAtInfoVisible;
+    const savedSA = globalThis.window.ShowcaseAnimations;
+    globalThis.window.ShowcaseAnimations = {
+        captureInfoState(gridEl) {
+            // 呼叫當下立刻讀——不要延後；mutation 把寫入插到 capture 前後時，這裡必須抓到翻轉後的值才會紅
+            capturedAtInfoVisible = ctx.infoVisible;
+            assert.equal(gridEl, fakeGrid);
+            return { state: { __captured: true }, cards: [] };
+        },
+        playInfoExpand() {},
+    };
+
+    try {
+        assert.equal(ctx.infoVisible, false);
+        ctx.toggleInfo();
+
+        assert.equal(
+            capturedAtInfoVisible,
+            false,
+            'captureInfoState 呼叫當下 infoVisible 必須仍是舊值 false（capture-before-write）',
+        );
+        // 既有兩行：同步翻轉不受動畫影響
+        assert.equal(ctx.infoVisible, true);
+        assert.equal(ctx._persistedShowcase.infoVisible, true);
+        assert.equal(nextTickQueue.length, 1, '應排入一份 $nextTick 延後工作');
+    } finally {
+        globalThis.requestAnimationFrame = origRaf;
+        globalThis.window.ShowcaseAnimations = savedSA;
+    }
+});
+
+test('toggleInfo()：連續三次呼叫，只有最後一次通過世代核對並呼叫 playInfoExpand（I-148b-3）', () => {
+    const { ctx, fakeGrid, nextTickQueue, rafQueue } = makeToggleInfoCtx();
+    const origRaf = globalThis.requestAnimationFrame;
+    globalThis.requestAnimationFrame = (cb) => { rafQueue.push(cb); };
+
+    const captureCalls = [];
+    const playCalls = [];
+    const savedSA = globalThis.window.ShowcaseAnimations;
+    globalThis.window.ShowcaseAnimations = {
+        captureInfoState(gridEl) {
+            const captured = { state: { n: captureCalls.length }, cards: [{ n: captureCalls.length }] };
+            captureCalls.push({ gridEl, captured });
+            return captured;
+        },
+        playInfoExpand(capturedState, gridEl, toVisible) {
+            playCalls.push({ capturedState, gridEl, toVisible });
+        },
+    };
+
+    try {
+        // 三次都先 push，全部呼叫完才 flush——製造「多份 pending 工作同時存在」的窗口
+        ctx.toggleInfo(); // false → true
+        ctx.toggleInfo(); // true → false
+        ctx.toggleInfo(); // false → true
+
+        assert.equal(nextTickQueue.length, 3, '三次呼叫應留下三份 pending $nextTick');
+        assert.equal(rafQueue.length, 0, 'rAF 尚未排入（等 $nextTick flush）');
+        assert.equal(captureCalls.length, 3);
+        assert.equal(playCalls.length, 0, 'flush 前 playInfoExpand 零呼叫');
+        assert.equal(ctx.infoVisible, true, '三次翻轉後 infoVisible 為 true');
+        assert.equal(ctx._persistedShowcase.infoVisible, true);
+
+        flushOne(nextTickQueue, rafQueue);
+        flushOne(nextTickQueue, rafQueue);
+        flushOne(nextTickQueue, rafQueue);
+
+        assert.equal(
+            playCalls.length,
+            1,
+            '只有最後一次通過世代核對並呼叫 playInfoExpand（I-148b-3）',
+        );
+        assert.equal(playCalls[0].gridEl, fakeGrid);
+        assert.equal(playCalls[0].toVisible, true, '第三次呼叫結束時 toVisible === true');
+        assert.equal(
+            playCalls[0].capturedState,
+            captureCalls[2].captured,
+            'play 參數對應第三次 capture 的 capturedInfoState',
+        );
+    } finally {
+        globalThis.requestAnimationFrame = origRaf;
+        globalThis.window.ShowcaseAnimations = savedSA;
+    }
+});
+
+test('toggleInfo()：缺 _getActiveGrid 與 $nextTick 時不得 throw，狀態機仍翻轉（AC-6）', () => {
+    // 故意不提供 _getActiveGrid / $nextTick——動畫前導不得挾持狀態機（AC-6）
+    const ctx = Object.assign(
+        stateBase.call({ $persist: (obj) => ({ as: () => obj }) }),
+        {
+            infoVisible: false,
+            _persistedShowcase: {},
+            _animGeneration: 0,
+        },
+    );
+    delete ctx._getActiveGrid;
+    delete ctx.$nextTick;
+    assert.equal(typeof ctx._getActiveGrid, 'undefined');
+    assert.equal(typeof ctx.$nextTick, 'undefined');
+
+    assert.doesNotThrow(() => ctx.toggleInfo());
+    assert.equal(ctx.infoVisible, true);
+    assert.equal(ctx._persistedShowcase.infoVisible, true);
+
+    assert.doesNotThrow(() => ctx.toggleInfo());
+    assert.equal(ctx.infoVisible, false);
+    assert.equal(ctx._persistedShowcase.infoVisible, false);
 });

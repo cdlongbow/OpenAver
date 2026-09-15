@@ -594,10 +594,23 @@ export function stateBase() {
             window.history.replaceState({}, '', newUrl);
         },
 
-        // Card Info 切換 (M3i)
+        // Card Info 切換 (M3i) — 兩階段 Flip ＋ 世代閘（CD-148b-10）
         toggleInfo() {
+            // Step 0: capture（必須在寫入之前；缺 helper 時安靜降級，不挾持狀態機／AC-6）
+            var grid = this._getActiveGrid?.();
+            var capturedInfoState = window.ShowcaseAnimations?.captureInfoState?.(grid) || null;
+
+            // Step 1: 既有兩行（逐字不變）
             this.infoVisible = !this.infoVisible;
             this._persistedShowcase.infoVisible = this.infoVisible;
+
+            // Step 2: 世代閘住 play（缺 $nextTick 時不排延後工作；狀態機已翻轉）
+            var toVisible = this.infoVisible;
+            var gen = ++this._animGeneration;
+            this.$nextTick?.(() => { requestAnimationFrame(() => {
+                if (this._animGeneration !== gen) return;
+                window.ShowcaseAnimations?.playInfoExpand?.(capturedInfoState, grid, toVisible);
+            }); });
         },
 
         formatPartLabel,
