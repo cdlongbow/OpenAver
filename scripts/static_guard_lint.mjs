@@ -97,8 +97,8 @@ const RULES = [
   // 錨四處「刻意不同/刻意不接」設計意圖註解的唯一關鍵句。刪任一句即紅（mutation 自驗）。
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'per-image 門檻刻意不同', note: '[lint-guard 101d-T2] 影片 gate≠女優 gate 就地註解（plan-101d §2.2）' },
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '與影片 _posterModeActive() 刻意不同', note: '[lint-guard 101d-T2] 女優側反向指引註解（plan-101d §2.2）' },
-  { file: 'web/static/css/pages/showcase.css', kind: 'required-string', pattern: '相似卡刻意固定右裁（桌面', note: '[lint-guard 101d-T2] 桌面 similar 卡固定右裁註解（plan-101d §5.3）' },
-  { file: 'web/static/css/pages/showcase.css', kind: 'required-string', pattern: '相似卡刻意固定右裁（手機 burst', note: '[lint-guard 101d-T2] 手機 burst similar 卡固定右裁註解（plan-101d §5.3）' },
+  { file: 'web/static/css/pages/showcase/08-remainder.css', kind: 'required-string', pattern: '相似卡刻意固定右裁（桌面', note: '[lint-guard 101d-T2] 桌面 similar 卡固定右裁註解（plan-101d §5.3）' },
+  { file: 'web/static/css/pages/showcase/06-responsive-and-lists.css', kind: 'required-string', pattern: '相似卡刻意固定右裁（手機 burst', note: '[lint-guard 101d-T2] 手機 burst similar 卡固定右裁註解（plan-101d §5.3）' },
 
   // ---- [lint-guard 124b-T4] 女優卡資訊區數值可點（薄守衛，不得回退成純顯示）----
   // 設計尚未經 owner 真機驗收 ⇒ 只鎖「不得回退到已知壞值（點不下去）」，
@@ -109,10 +109,10 @@ const RULES = [
 
   // ---- [lint-guard 124c-T1] 燈箱換片箭頭錨定封面（plan-124c CD-1/CD-2）----
   // 存在性守衛（粗顆粒）：只保證兩條宣告還在。行為正確性由 T1 的 CDP 量測負責（FE-GUARD-06）。
-  { file: 'web/static/css/pages/showcase.css', kind: 'required-string',
+  { file: 'web/static/css/pages/showcase/05-lightbox.css', kind: 'required-string',
     pattern: 'anchor-name: --lb-cover',
     note: '[lint-guard 124c-T1] 燈箱箭頭錨定封面：錨點宣告（刪掉＝箭頭回視窗中心，手機重新搶 ★ 的點擊）' },
-  { file: 'web/static/css/pages/showcase.css', kind: 'required-string',
+  { file: 'web/static/css/pages/showcase/06-responsive-and-lists.css', kind: 'required-string',
     pattern: 'top: anchor(--lb-cover center, 50%)',
     note: '[lint-guard 124c-T1] 燈箱箭頭錨定封面：對齊宣告 ＋ 無錨點時的 50% fallback（兩者同一條字面，不可拆）' },
 
@@ -471,7 +471,7 @@ const RULES = [
   { file: 'web/templates/_macros/focal_mask.html', kind: 'required-string', pattern: "'lb-mask-window--settling': _maskSettling",
     note: '[TestMaskToggleGuard] 101b-T3（CD-5）：.lb-mask-window :class 綁 --settling guard class' },
 
-  { file: 'web/static/css/pages/showcase.css', kind: 'required-string', pattern: '.lb-mask-window--settling',
+  { file: 'web/static/css/pages/showcase/05-lightbox.css', kind: 'required-string', pattern: '.lb-mask-window--settling',
     note: '[TestMaskToggleGuard] 101b-T3（CD-5/C21）：--settling class 停用 transition 規則存在' },
 
   // 101b-T6：修 spinner 靜止不轉——CDP 像素驗證證實根因是 <i class="bi spin"> 預設
@@ -481,7 +481,7 @@ const RULES = [
   // 病灶。只鎖 animation 字串仍可能假綠（拿掉 display:inline-block 那行，animation 字串仍在，
   // 但視覺照樣不轉）——兩條都鎖，anchor scope 到 .lb-mask-spinner .bi.spin 規則本體，
   // braceBalanced 防止改到其他規則的同名字串。
-  { file: 'web/static/css/pages/showcase.css', kind: 'required-string',
+  { file: 'web/static/css/pages/showcase/08-remainder.css', kind: 'required-string',
     pattern: ['display: inline-block;', 'animation: spin 1s linear infinite !important;'],
     scope: { anchor: /\.lb-mask-spinner \.bi\.spin\s*\{/, braceBalanced: true },
     note: '[TestMaskSpinnerRotateGuard] 101b-T6：.lb-mask-spinner .bi.spin 真正修復需 display:inline-block（承重，讓 inline icon 變可 transform 的盒子）+ animation !important（蓋過 PRM blanket，owner 訴求「不存在靜態模式」）兩條並存，缺一視覺仍不轉' },
@@ -829,7 +829,7 @@ const RULES = [
     // 搬進 .lb-mask-window 基礎規則——scope-anchored（非裸 required-string）：本檔附近仍可能
     // 有規劃註解字面提到「ew-resize」，裸的 required-string 會被那類註解假綠掉（本 branch
     // 已踩過三次的 fail-open 形狀）。錨定實際 CSS rule block，只在該 block 內斷言。
-    file: 'web/static/css/pages/showcase.css', kind: 'required-string', pattern: 'ew-resize',
+    file: 'web/static/css/pages/showcase/05-lightbox.css', kind: 'required-string', pattern: 'ew-resize',
     scope: { anchor: /\.lb-mask-window\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100c-T3a：.lb-mask-window 基礎規則的 cursor: ew-resize（Y 軸砍除後唯一可拖方向併回基礎規則，取代舊 grab；scope 錨定防同檔規劃註解假綠）',
   },
@@ -3317,7 +3317,7 @@ const RULES = [
     note: '[120a-T1] .lb-full 必須綁 @error=_handleLbFullError，否則原圖載不到時封面區沒有提示',
   },
   {
-    file: 'web/static/css/pages/showcase.css', kind: 'required-string',
+    file: 'web/static/css/pages/showcase/05-lightbox.css', kind: 'required-string',
     pattern: 'pointer-events: none',
     scope: { anchor: /\.lb-full-hint\s*\{/, braceBalanced: true },
     note: '[120a-T1] .lb-full-hint 必須 pointer-events:none，否則會擋住封面操作區／sparkle 點擊',
@@ -4235,7 +4235,7 @@ const RULES = [
   },
 
   {
-    file: 'web/static/css/pages/showcase.css',
+    file: 'web/static/css/pages/showcase/08-remainder.css',
     kind: 'required-string',
     pattern: [
       'position: absolute',
@@ -4280,13 +4280,13 @@ const RULES = [
   },
 
   {
-    file: 'web/static/css/pages/showcase.css',
+    file: 'web/static/css/pages/showcase/08-remainder.css',
     kind: 'required-string',
     pattern: '.av-card-preview:hover .cover-badges-part { opacity: 0; }',
     note: '[122-T3] AC-5：卡片 hover 淡出必須掛在 .av-card-preview:hover（不得改成通用 :hover，否則燈箱會誤中）',
   },
   {
-    file: 'web/static/css/pages/showcase.css',
+    file: { dir: 'web/static/css/pages/showcase', ext: ['.css'], recursive: false },
     kind: 'forbidden-string',
     pattern: '.lightbox-cover:hover .cover-badges-part',
     note: '[122-T3] AC-17：燈箱 .cover-badges-part 不得掛 :hover 淡出',
