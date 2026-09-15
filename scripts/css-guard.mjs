@@ -877,7 +877,7 @@ const RULES = [
   // getComputedStyle 分不出字面 1.5rem 與 --layer-inset（同為 24px）——e2e 對此無鑑別力。
   {
     id: 'CG-LAYER-01',
-    file: 'pages/showcase.css',
+    file: 'pages/showcase/02-image-grid.css',
     kind: 'fn',
     check(ctx) {
       const SEL = '.showcase-grid, .actress-grid';
@@ -1068,7 +1068,7 @@ const RULES = [
   // 樣板同 CG-LAYER-04；各自獨立、不跨檔聚合（刻意不抄 CG-PC-02 的 join 形狀）。
   {
     id: 'CG-LAYER-05',
-    file: 'pages/showcase.css',
+    file: 'pages/showcase/01-toolbar.css',
     kind: 'fn',
     check(ctx) {
       checkContainerMinHeightUsesMobileTopbar(ctx, {
@@ -1380,7 +1380,7 @@ const RULES = [
   // CG-PC-05 ← TestUS11HeroCardMobileFix（showcase ↔ search 雙檔 hero）
   {
     id: 'CG-PC-05',
-    file: 'pages/showcase.css',
+    file: 'pages/showcase/02-image-grid.css',
     kind: 'fn',
     check(ctx) {
       const showcaseText = ctx.text;
@@ -1469,7 +1469,7 @@ const RULES = [
   // CG-PC-07 ← TestUS5ShowcaseGridIs3Col（≤480 showcase-grid = repeat(3,1fr)）
   {
     id: 'CG-PC-07',
-    file: 'pages/showcase.css',
+    file: 'pages/showcase/02-image-grid.css',
     kind: 'fn',
     check(ctx) {
       // 108-T5：selector 由 .showcase-grid 擴為 .showcase-grid,\n.actress-grid（co-listed）→ 放寬 anchor 容納併列選擇器
@@ -1546,7 +1546,7 @@ const RULES = [
   // CG-PC-10 ← TestShowcaseCssTransitionTokens（正向存在，raw includes）
   {
     id: 'CG-PC-10',
-    file: 'pages/showcase.css',
+    file: 'pages/showcase/08-remainder.css',
     kind: 'fn',
     check(ctx) {
       if (!ctx.raw.includes('transition: opacity var(--fluent-duration-fast) var(--fluent-ease-standard)')) {
@@ -1678,7 +1678,7 @@ const RULES = [
   // fail-open，刪掉其中一條仍會綠，故不可用 body.includes('height: auto')。
   {
     id: 'CG-PC-14',
-    file: 'pages/showcase.css',
+    file: 'pages/showcase/02-image-grid.css',
     kind: 'fn',
     check(ctx) {
       // ctx.text 已由 loadFile 用 stripCssComments 去除 /* */ 註解（該區塊上方註解本身含
@@ -1956,7 +1956,7 @@ const RULES = [
   //   （extractMediaBodies(css, /640px/)），不搬壞掉的主 regex（見 card §4 CG-XP-03）。
   {
     id: 'CG-XP-03',
-    file: 'pages/showcase.css',
+    file: 'pages/showcase/08-remainder.css',
     kind: 'fn',
     check(ctx) {
       const css = ctx.raw; // showcase.css
@@ -2157,7 +2157,7 @@ const RULES = [
   // 手感變差），純靠人眼不易發現，值得一條結構守衛鎖住。
   {
     id: 'CG-FOCAL-02',
-    file: 'pages/showcase.css',
+    file: 'pages/showcase/05-lightbox.css',
     kind: 'selector-require',
     markers: ['.lb-mask-window--dragging'],
     pattern: /transition\s*:\s*none/,
@@ -2184,7 +2184,7 @@ const RULES = [
   // 涵蓋 hit-test 本身，只鎖住這個數值前提不會被未來改動悄悄破壞。
   {
     id: 'CG-FOCAL-04',
-    file: 'pages/showcase.css',
+    file: 'pages/showcase/05-lightbox.css',
     kind: 'fn',
     check(ctx) {
       const focalEditZ = zindexOf(ctx.raw, '.cover-actions.cover-actions--focal-edit');
@@ -2214,7 +2214,7 @@ const RULES = [
   // :1155 提到 75a-US3c 字面的另一段註解）。
   {
     id: 'CG-TOUCH-01',
-    file: 'pages/showcase.css',
+    file: 'pages/showcase/05-lightbox.css',
     kind: 'fn',
     check(ctx) {
       const raw = ctx.raw;
@@ -2261,7 +2261,7 @@ const RULES = [
   // .missing-cover（無封面才需要常駐可點），非 CG-TOUCH-01 鎖的「touch 裝置全域」force-show。
   {
     id: 'CG-TOUCH-02',
-    file: 'pages/showcase.css',
+    file: 'pages/showcase/08-remainder.css',
     kind: 'selector-require',
     markers: ['.missing-cover', '.av-card-preview-overlay'],
     pattern: /(?=[\s\S]*?opacity\s*:\s*1)(?=[\s\S]*?pointer-events\s*:\s*auto)/,
@@ -2274,7 +2274,7 @@ const RULES = [
   // 而非正向從 any-hover:none 找 body（防「gate 對但綁錯 selector」漏檢）。
   {
     id: 'CG-TOUCH-03',
-    file: 'pages/showcase.css',
+    file: 'pages/showcase/05-lightbox.css',
     kind: 'fn',
     check(ctx) {
       const css = ctx.text; // 去註解，避免註解內字面 any-hover:none / .js-open-folder 假陽性
@@ -2318,7 +2318,7 @@ const RULES = [
   // 宣告須 opacity:0（女優另補 pointer-events:none，其 show 規則帶 pointer-events:auto）。
   {
     id: 'CG-TOUCH-04',
-    file: 'pages/showcase.css',
+    file: 'pages/showcase/05-lightbox.css',
     kind: 'fn',
     check(ctx) {
       const css = ctx.text;
