@@ -2362,7 +2362,6 @@ class TestShowcaseSampleGalleryGuard:
     """
 
     SHOWCASE_HTML = PROJECT_ROOT / 'web' / 'templates' / 'showcase.html'
-    CORE_JS = PROJECT_ROOT / 'web' / 'static' / 'js' / 'pages' / 'showcase' / 'state-lightbox.js'
     SAMPLES_JS = PROJECT_ROOT / 'web' / 'static' / 'js' / 'pages' / 'showcase' / 'state-lightbox-samples.js'
     ANIMATIONS_JS = PROJECT_ROOT / 'web' / 'static' / 'js' / 'pages' / 'showcase' / 'animations.js'
 

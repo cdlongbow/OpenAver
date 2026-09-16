@@ -3252,8 +3252,8 @@ const RULES = [
     note: '[TestFetchSamplesButton] test_core_js_contains — state 初始化（pin 到實際所在檔 state-actress.js）',
   },
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'fetchSamples',
-    note: '[TestFetchSamplesButton] test_core_js_contains — fetchSamples method（pin 到實際所在檔 state-lightbox.js）',
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: /^\s+async\s+fetchSamples\s*\(/m,
+    note: '[TestFetchSamplesButton] test_core_js_contains — fetchSamples method 定義（regex 鎖方法定義，防被 _fetchSamplesFailed/_fetchSamplesLoading 子字串矇混，149a-T5 修）',
   },
   {
     file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '_fetchSamplesFailed = {}',
