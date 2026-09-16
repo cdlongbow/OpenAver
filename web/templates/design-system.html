@@ -10,7 +10,7 @@
      No broad naked-element selectors (img, a, p, …) exist in these files.
      Design decision: prefer live coupling over duplicating rules in design-system.css. -->
 <link href="/static/css/pages/search.css" rel="stylesheet">
-<link href="/static/css/pages/showcase.css" rel="stylesheet">
+{% include '_showcase_css.html' %}
 <!-- settings.css note: the file header marks it "非共用，不納入 Design System".
      Loaded to support Source Badge + Font Size demos in #settings-components scope.
      Some selectors (.settings-header) are NOT scoped to

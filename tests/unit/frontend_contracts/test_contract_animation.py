@@ -5,6 +5,8 @@ module-level 路徑常數為源檔複製（CD-96c-7：源檔殘留 class 仍引�
 import re
 from pathlib import Path
 
+from tests.unit.frontend_contracts._showcase_css import read_showcase_css_full
+
 SHOWCASE_HTML = Path(__file__).parent.parent.parent.parent / "web" / "templates" / "showcase.html"
 SHOWCASE_VIDEOS_JS   = Path(__file__).parent.parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-videos.js"
 SHOWCASE_ACTRESS_JS  = Path(__file__).parent.parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-actress.js"
@@ -14,10 +16,8 @@ SHOWCASE_ANIMATIONS_JS = (
     / "web" / "static" / "js" / "pages" / "showcase" / "animations.js"
 )
 GHOST_FLY_JS = Path(__file__).parent.parent.parent.parent / "web" / "static" / "js" / "shared" / "ghost-fly.js"
-SHOWCASE_CSS_T4CD = Path(__file__).parent.parent.parent.parent / "web" / "static" / "css" / "pages" / "showcase.css"
 STATE_LIGHTBOX_JS = Path(__file__).parent.parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-lightbox.js"
 _T2_SHOWCASE_HTML = Path(__file__).parent.parent.parent.parent / "web" / "templates" / "showcase.html"
-_T2_SHOWCASE_CSS = Path(__file__).parent.parent.parent.parent / "web" / "static" / "css" / "pages" / "showcase.css"
 _T2_SIMILAR_JS = (
     Path(__file__).parent.parent.parent.parent
     / "web" / "static" / "js" / "pages" / "showcase" / "state-similar.js"
@@ -324,7 +324,9 @@ class TestPickerIntegrationGuard:
         return SHOWCASE_LIGHTBOX_JS.read_text(encoding="utf-8")
 
     def _css(self):
-        return SHOWCASE_CSS_T4CD.read_text(encoding="utf-8")
+        return read_showcase_css_full(
+            Path(__file__).parent.parent.parent.parent / "web" / "static",
+        )
 
     def test_picker_html_contains(self):
         """showcase.html 含 picker button、overlay 結構"""
@@ -522,7 +524,9 @@ class TestMobileSimilarPanelContractGuard:
 
     @staticmethod
     def _css():
-        return _T2_SHOWCASE_CSS.read_text(encoding="utf-8")
+        return read_showcase_css_full(
+            Path(__file__).parent.parent.parent.parent / "web" / "static",
+        )
 
     @staticmethod
     def _similar_js():

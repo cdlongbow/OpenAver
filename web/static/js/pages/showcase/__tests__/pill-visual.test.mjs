@@ -5,17 +5,28 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 本檔：web/static/js/pages/showcase/__tests__/ → 上五層 = repo root
 const REPO_ROOT = path.resolve(__dirname, '../../../../../..');
-const SHOWCASE_CSS = readFileSync(
-    path.join(REPO_ROOT, 'web/static/css/pages/showcase.css'),
-    'utf8',
-);
+// 把 pages/showcase/ 底下的 part 依檔名排序串接成完整字串（逐 byte 等於拆檔前的 showcase.css）。
+// 刻意不 parse web/templates/_showcase_css.html：
+// 「template 清單 == 本目錄排序」這條不變式由 scripts/css-guard.mjs 的 CG-148A-PARTS-01
+// 在 `npm run lint` 強制（順序／完整性／幽靈條目三者一次鎖住），所以目錄排序就是正典順序。
+// 測試端再自己 parse 一次 HTML 只會多一份會分岔的實作，且要追著合法 HTML 的表示形式跑
+// （屬性順序、單雙引號、大小寫、自閉合……）——那是 2026-09-15 Codex 兩輪 review 的根因。
+function readShowcaseCssFull(repoRoot) {
+  const partsDir = path.join(repoRoot, 'web/static/css/pages/showcase');
+  const names = readdirSync(partsDir).filter((n) => n.endsWith('.css')).sort();
+  if (names.length === 0) {
+    throw new Error(`readShowcaseCssFull: ${partsDir} 底下找不到任何 .css part 檔`);
+  }
+  return names.map((n) => readFileSync(path.join(partsDir, n), 'utf8')).join('');
+}
+const SHOWCASE_CSS = readShowcaseCssFull(REPO_ROOT);
 // 元件登記查的是 design-system.html（**已追蹤**），不是 feature/AI_COLLABORATION/
 // ui-conventions.md——後者在 .gitignore 內，CI checkout 沒有它，module 載入期
 // readFileSync 會 ENOENT 讓整個檔案 7 支測試一起死（PR#131 兩輪 CI 紅燈的原因）。

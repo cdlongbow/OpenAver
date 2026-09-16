@@ -10,6 +10,8 @@
  *   - playModeCrossfade(oldMode, newMode, params) B10: 模式切換 crossfade
  *   - captureShapeState(gridEl) → { state, cards }|null  TASK-133a-T1: 卡型切換 Flip 快照（視野 ±200px）
  *   - playShapeMorph(captured, gridEl) → Timeline|null   TASK-133a-T1: 卡型切換 Flip morph（只吃 captured.cards）
+ *   - captureInfoState(gridEl) → { el, top, left, bottom }[]|null  資訊展開位置快照（整格非 0×0；只收位置）
+ *   - playInfoExpand(captured, gridEl) → Tween|null  資訊展開 x/y 位移（舊或新在窗內才動；無 scale、無 stagger）
  *   - playPickFill(fillEl, outlineEl, wasPicked, isPicked)  123-T4: 精選灌滿／洩空
  *   - playPickSpark(anchorEl)                   123-T4: 灌滿到頂火花
  *   - killPickSpark()                           123-T4: 清殘留火花 dot
@@ -332,6 +334,139 @@
                     gsap.set(cards, { clearProps: 'transform,width,height' });
                 }
             });
+        },
+
+        /**
+         * 資訊展開兩階段 — capture 階段（只收位置，不動尺寸）。
+         *
+         * 選卡 selector：'.av-card-preview, .actress-card'。量測前對完整集合
+         * killTweensOf → 移除 gsap-animating → clearProps transform,opacity，
+         * 再收集整個 grid 內非 0×0 的卡（視口過濾改在 play），回傳 { el, top, left, bottom }。
+         * 不呼叫 Flip.getState / Flip.from。
+         *
+         * @param {Element} gridEl - .showcase-grid / .actress-grid 容器
+         * @returns {{ el: Element, top: number, left: number, bottom: number }[]|null}
+         */
+        captureInfoState: function (gridEl) {
+            if (!gridEl) return null;
+
+            if (typeof gsap === 'undefined') return null;
+
+            var cards = gridEl.querySelectorAll('.av-card-preview, .actress-card');
+            if (!cards.length) return null;
+
+            // capture 四步驟（對完整 cards，量測之前 — FE-MOTION-06）
+            gsap.killTweensOf(cards);
+            Array.from(cards).forEach(function (c) {
+                c.classList.remove('gsap-animating');
+            });
+            gsap.set(cards, { clearProps: 'transform,opacity' });
+
+            var captured = [];
+            Array.from(cards).forEach(function (card) {
+                var rect = card.getBoundingClientRect();
+                if (rect.width === 0 && rect.height === 0) return;
+                captured.push({
+                    el: card,
+                    top: rect.top,
+                    left: rect.left,
+                    bottom: rect.bottom
+                });
+            });
+            if (!captured.length) return null;
+
+            return captured;
+        },
+
+        /**
+         * 資訊展開兩階段 — play 階段（只做 x/y 位移，無 scale、無 stagger）。
+         *
+         * 兩趟：先一次讀完全部新 rect（不寫 style），過濾「舊或新位置落在
+         * 視口 ±200px」的卡；再只對這批 gsap.set 反轉，ticker.tick() 對齊時基後
+         * gsap.to 歸零。
+         *
+         * @param {{ el: Element, top: number, left: number, bottom: number }[]|null} captured
+         * @param {Element} gridEl
+         * @returns {gsap.core.Tween|null}
+         */
+        playInfoExpand: function (captured, gridEl) {
+            if (!captured || !gridEl) return null;
+
+            if (typeof gsap === 'undefined') return null;
+
+            if (shouldSkip()) return null;
+
+            if (!captured.length) return null;
+
+            var VIEWPORT_MARGIN = 200;
+            var viewportH = window.innerHeight;
+            function inBand(top, bottom) {
+                return bottom > -VIEWPORT_MARGIN && top < viewportH + VIEWPORT_MARGIN;
+            }
+
+            // 第一趟：只讀新 rect（中間不寫任何 style，避免 layout thrashing）
+            var afterRects = captured.map(function (item) {
+                return item.el.getBoundingClientRect();
+            });
+
+            // 舊位置或新位置任一落在視窗內才 animate（收合時界外卡跳進視口也要補間）
+            var animateItems = [];
+            var i;
+            for (i = 0; i < captured.length; i++) {
+                var item = captured[i];
+                var after = afterRects[i];
+                var oldIn = inBand(item.top, item.bottom);
+                var newIn = inBand(after.top, after.bottom);
+                if (oldIn || newIn) {
+                    animateItems.push({ item: item, after: after });
+                }
+            }
+            if (!animateItems.length) return null;
+
+            var els = animateItems.map(function (a) { return a.item.el; });
+
+            // C21/B15：關掉卡片 CSS transition:transform，否則會跟 gsap.set 反轉搶控制權
+            var classesReleased = false;
+            function releaseMotionClasses() {
+                if (classesReleased) return;
+                classesReleased = true;
+                // onComplete／onInterrupt／catch 共用；clearProps 冪等，重複呼叫無害
+                gsap.set(els, { clearProps: 'transform' });
+                els.forEach(function (c) { c.classList.remove('gsap-animating'); });
+                gridEl.classList.remove('flip-guard');
+            }
+            gridEl.classList.add('flip-guard');
+            els.forEach(function (c) { c.classList.add('gsap-animating'); });
+
+            try {
+                gsap.killTweensOf(els);
+                // 第二趟：只寫反轉（不再讀 rect）
+                animateItems.forEach(function (a) {
+                    gsap.set(a.item.el, {
+                        x: a.item.left - a.after.left,
+                        y: a.item.top - a.after.top
+                    });
+                });
+                // gsap.to 的 _start 取上一次 ticker 時間；同步準備耗時會被記成已播進度。
+                // 建 tween 前先 tick 一次，把時基推到「現在」。
+                gsap.ticker.tick();
+                return gsap.to(els, {
+                    x: 0,
+                    y: 0,
+                    duration: OpenAver.motion.WALL_MOTION.INFO_EXPAND_DURATION,
+                    ease: 'fluent',
+                    onComplete: function () {
+                        releaseMotionClasses();
+                    },
+                    onInterrupt: function () {
+                        releaseMotionClasses();
+                    }
+                });
+            } catch (err) {
+                // 建 tween 中途拋錯時 kill 不會跑 onInterrupt；必須同步卸 class，否則 pointer-events:none 殘留
+                releaseMotionClasses();
+                throw err;
+            }
         },
 
         /**

@@ -594,10 +594,19 @@ export function stateBase() {
             window.history.replaceState({}, '', newUrl);
         },
 
-        // Card Info 切換 (M3i)
+        // Card Info 切換 (M3i) — 原型 B：先寫眼睛 → capture 舊位 → 同步 .info-open → x/y 位移
         toggleInfo() {
-            this.infoVisible = !this.infoVisible;
-            this._persistedShowcase.infoVisible = this.infoVisible;
+            var toVisible = !this.infoVisible;
+            this.infoVisible = toVisible;                      // ★ 第一行就寫，眼睛立刻回饋
+            this._persistedShowcase.infoVisible = toVisible;
+            var grid = this._getActiveGrid?.();
+            var captured = window.ShowcaseAnimations?.captureInfoState?.(grid) || null;
+            grid?.classList?.toggle('info-open', toVisible);   // ★ 同步改版面
+            try {
+                window.ShowcaseAnimations?.playInfoExpand?.(captured, grid);
+            } catch (err) {
+                console.error('playInfoExpand failed (資訊區仍會切換):', err);
+            }
         },
 
         formatPartLabel,

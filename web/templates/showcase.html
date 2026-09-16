@@ -3,7 +3,7 @@
 {% block title %}{{ t('showcase.page_title') }} - OpenAver{% endblock %}
 
 {% block extra_css %}
-<link href="/static/css/pages/showcase.css" rel="stylesheet">
+{% include '_showcase_css.html' %}
 {% endblock %}
 
 {% block pre_alpine_module %}
@@ -387,12 +387,13 @@
                         </div>
                     </div>
                     <!-- 資訊顯示開關 (僅 Grid 模式) -->
-                    <button class="btn-icon"
+                    <button class="btn-icon toggle-info-eye-btn"
                             x-show="mode === 'grid'"
                             :class="{ 'active': infoVisible }"
                             @click="toggleInfo()"
                             title="{{ t('showcase.action.toggle_info') }}">
-                        <i class="bi bi-eye"></i>
+                        <i class="bi bi-eye toggle-info-eye-icon" :class="{ 'toggle-info-eye-icon-hidden': infoVisible }" aria-hidden="true"></i>
+                        <i class="bi bi-eye-slash toggle-info-eye-icon" :class="{ 'toggle-info-eye-icon-hidden': !infoVisible }" aria-hidden="true"></i>
                     </button>
                 </div>
             </div>
@@ -434,11 +435,12 @@
                         <i class="bi" :class="actressOrder === 'asc' ? 'bi-sort-up' : 'bi-sort-down'"></i>
                     </button>
                     <!-- 資訊顯示開關（女優牆恆常顯示，不受 mode 限制） -->
-                    <button class="btn-icon"
+                    <button class="btn-icon toggle-info-eye-btn"
                             :class="{ 'active': infoVisible }"
                             @click="toggleInfo()"
                             title="{{ t('showcase.action.toggle_info') }}">
-                        <i class="bi bi-eye"></i>
+                        <i class="bi bi-eye toggle-info-eye-icon" :class="{ 'toggle-info-eye-icon-hidden': infoVisible }" aria-hidden="true"></i>
+                        <i class="bi bi-eye-slash toggle-info-eye-icon" :class="{ 'toggle-info-eye-icon-hidden': !infoVisible }" aria-hidden="true"></i>
                     </button>
                     <!-- [+ 新增] 已搬至 search-actions-right（117b-T10） -->
                 </div>
@@ -519,7 +521,7 @@
               <!-- TASK-138-T2（CD-B1/B2/B3/B4）：hero 卡展開資訊區，鏡射女優卡 :796-807，
                    純顯示不可點（spec #1）。資料直接呼叫既有 _actressInfoParts()，不新增 state。 -->
               <div class="card-info actress-card-info"
-                   x-show="infoVisible && (_actressInfoParts(_matchedActress).length || _heroCardTagParts(_matchedActress).length)"
+                   :class="{'has-info': _actressInfoParts(_matchedActress).length || _heroCardTagParts(_matchedActress).length}"
                    x-cloak @click.stop>
                   <template x-for="(part, i) in _actressInfoParts(_matchedActress)" :key="i">
                       <span x-text="part.text"></span>
@@ -609,7 +611,7 @@
                         </div>
                     </div>
                     <!-- Card Info 展開區 (M3i) — footer 同層，展開時撐高卡片 -->
-                    <div class="card-info" x-show="infoVisible" x-cloak @click.stop>
+                    <div class="card-info" x-cloak @click.stop>
                         <div class="info-title" x-text="video.title || t('showcase.grid.unknown_title')"></div>
                         <div class="info-row" x-show="video.actresses">
                             <b>{{ t('showcase.label.actor') }}：</b>
@@ -817,9 +819,9 @@
                              可點與不可點用同一個 wrapper 內的兩個 x-show 兄弟承接（鏡射燈箱
                              :966-974），不用 x-if——x-if 在 x-for 內每次重建節點。
                              :key 維持索引（CD-124b-9）：陣列整包重算、長度 ≤5。
-                             不加 · 分隔符——.actress-card-info 靠 gap 分隔（showcase.css:2563）。 -->
+                             不加 · 分隔符——.actress-card-info 靠 gap 分隔（showcase/07-card-info-expand.css）。 -->
                         <div class="card-info actress-card-info"
-                             x-show="infoVisible && _actressInfoParts(actress).length"
+                             :class="{'has-info': _actressInfoParts(actress).length}"
                              x-cloak @click.stop>
                             <template x-for="(part, i) in _actressInfoParts(actress)" :key="i">
                                 <span>

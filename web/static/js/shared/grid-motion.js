@@ -48,7 +48,7 @@
             }
 
             var dur = params.duration || OpenAver.motion.DURATION.emphasis;
-            var staggerVal = params.stagger || 0.04;
+            var staggerVal = params.stagger || { amount: OpenAver.motion.WALL_MOTION.ENTRY_STAGGER_AMOUNT, from: OpenAver.motion.WALL_MOTION.STAGGER_ORIGIN, grid: 'auto' };
             var ease = params.easing || 'fluent-decel';
 
             // Viewport 分流：fold 以下卡片瞬間顯示
@@ -56,7 +56,11 @@
             var visible = [];
             var offscreen = [];
             Array.from(cards).forEach(function (card) {
-                if (card.getBoundingClientRect().top < viewportH) {
+                var rect = card.getBoundingClientRect();
+                // 沒有版面框的元素在畫面上看不到自己在動，而且會污染 grid:'auto' 的行列推導
+                if (rect.width === 0 && rect.height === 0) {
+                    offscreen.push(card);
+                } else if (rect.top < viewportH) {
                     visible.push(card);
                 } else {
                     offscreen.push(card);
@@ -130,7 +134,7 @@
                     if (els.length > 10) {
                         return gsap.fromTo(els,
                             { opacity: 0 },
-                            { opacity: 1, duration: dur * 0.6, stagger: 0.02, ease: 'fluent-decel' }
+                            { opacity: 1, duration: dur * 0.6, stagger: { amount: OpenAver.motion.WALL_MOTION.FILTER_ENTER_STAGGER_AMOUNT, from: OpenAver.motion.WALL_MOTION.STAGGER_ORIGIN, grid: 'auto' }, ease: 'fluent-decel' }
                         );
                     }
                     // 預設：scale + fade（少量卡片進場時效果好）
