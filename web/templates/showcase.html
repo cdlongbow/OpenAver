@@ -1215,7 +1215,7 @@
                             <div class="lb-actor" x-show="currentLightboxVideo?.actresses">
                                 <template x-for="(actress, idx) in (currentLightboxVideo?.actresses || '').split(',').filter(a => a.trim())" :key="actress">
                                     <span>
-                                        <a href="#" class="lb-link" @click.prevent="searchFromMetadata(actress.trim(), 'actress')" x-text="actress.trim()"></a><span x-show="idx < (currentLightboxVideo?.actresses || '').split(',').filter(a => a.trim()).length - 1">, </span>
+                                        <a href="#" class="lb-link" @click.prevent="searchFromMetadata(actress.trim(), 'actress')" x-text="actress.trim()"></a><span class="lb-actor-age" x-show="_lbActorAges[actress.trim()] != null" x-text="' (' + _lbActorAges[actress.trim()] + t('showcase.unit.age_suffix') + ')'"></span><span x-show="idx < (currentLightboxVideo?.actresses || '').split(',').filter(a => a.trim()).length - 1">, </span>
                                     </span>
                                 </template>
                             </div>

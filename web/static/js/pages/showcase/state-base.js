@@ -369,7 +369,9 @@ export function stateBase() {
             await _loadTagAliasMap();   // A3-4: 無條件載入 tag alias map
             await _loadCoverBadgeManifest();
             _recomputeAllBadges();
-            if (this.showFavoriteActresses) { this.loadActresses(); }
+            // 149b-T3 CD-149b-2：無條件呼叫——燈箱女優列的發行時年齡（_refreshLbActorAges）
+            // 需要 _actresses/_nameToGroup 就緒，不能只在「女優模式」開著時才載入。
+            this.loadActresses();
 
             // CD-C3：逾時降級，不取消 in-flight 判斷
             await _awaitHeroCardWithTimeout(heroCardPromise);

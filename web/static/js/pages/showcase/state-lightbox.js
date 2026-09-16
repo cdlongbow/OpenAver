@@ -10,11 +10,12 @@
  * 從 state-base.js import 共用大陣列（F1：移出 Alpine reactive scope）。
  */
 
-import { _filteredVideos, _filteredActresses, _killLightboxTimelines, _NO_COVER_PLACEHOLDER, _recomputeVideoBadges } from '@/showcase/state-base.js';
+import { _filteredVideos, _filteredActresses, _killLightboxTimelines, _NO_COVER_PLACEHOLDER, _recomputeVideoBadges, _actresses, _nameToGroup } from '@/showcase/state-base.js';
 import { POSTER_CROP_MAX_W } from '@/shared/breakpoints.js';
 import { detectSwipe } from '@/shared/swipe.js';
 import { isHorizontalWheel, isVerticalWheel, createWheelNav } from '@/shared/wheel-nav.js';
 import { shouldShowEnrichButton } from '@/shared/enrich-gate.js';
+import { resolveFavoriteActressAge } from '@/shared/actress-release-age.js';
 
 // 120a-T1：.lb-full @error 的遲到事件判定。比較對象是 Alpine :src 寫入的相對路徑
 // 字串（getAttribute('src')），不是 IDL .src（瀏覽器已解析成絕對 URL）。
@@ -75,6 +76,11 @@ export function stateLightbox() {
         _lbFullLoaded: false,           // 71-T6 blur-up：原圖（cover_full_url）@load 後翻 true → overlay opacity 淡入
         _lbFullErrorPill: false,        // 120a-T1：.lb-full @error 通過判定後顯示提示 pill
 
+        // 149b-T3 CD-149b-3：{ 女優名: 發行時年齡 } 對照表。明確重新賦值（見 _refreshLbActorAges），
+        // 不是 getter——_actresses/_nameToGroup 是模組層級純陣列/物件（state-base.js:29 F1
+        // 註解），Alpine 的 proxy-only 依賴追蹤讀不到它們的變化，getter 會卡死在資料還沒到位
+        // 時算出的值。
+        _lbActorAges: {},
 
         // 101d-T1：影片焦點 icon gate（CD-1/CD-3）。「窄」＝畫面正以 poster（0.71 直式）裁切呈現，
         // 今天＝ ≤899px（grid 小格的 poster-crop 只在 @media (max-width:899px) 套，plan-101d §2.1）。
@@ -137,6 +143,25 @@ export function stateLightbox() {
             });
         },
 
+        // 149b-T3（CD-149b-3）：燈箱女優列「發行時年齡」重算——規則是「_refreshLbFullBlurUp()
+        // 出現在哪，這個就出現在哪」（六個刷新點，見 plan-149b §9 陷阱②）。對 currentLightboxVideo
+        // 的女優列每個 trim 過的名字呼叫一次 resolveFavoriteActressAge()，組出
+        // { 名字: 年齡 }（算不出來的名字直接跳過，不寫入 null），整份**明確重新賦值**給
+        // this._lbActorAges（新物件參照——Alpine 的 proxy set 攔截靠參照變化，原地 mutate 偵測
+        // 不到，見 mutation 點①）。
+        _refreshLbActorAges() {
+            var video = this.currentLightboxVideo;
+            var nextAges = {};
+            if (video && video.actresses) {
+                var names = video.actresses.split(',').map(function (n) { return n.trim(); }).filter(Boolean);
+                for (var i = 0; i < names.length; i++) {
+                    var age = resolveFavoriteActressAge(names[i], video, _actresses, _nameToGroup);
+                    if (age != null) nextAges[names[i]] = age;
+                }
+            }
+            this._lbActorAges = { ...nextAges };
+        },
+
         // 120a-T1：.lb-full 原圖載入失敗。第一行 AC-A6 短路（DB 無封面 cover_full_url
         // 恆為空字串，<img :src=""> 的 error 不是「拿不到」）。$refs 防呆後用
         // getAttribute('src') 對當下 cover_full_url 做 stale 判定（AC-A4），通過才設旗標。
@@ -184,6 +209,7 @@ export function stateLightbox() {
             this.similarExitVideo = null;
             // 71c-P2: 抽至 _refreshLbFullBlurUp helper（slip-through 路徑共用）
             this._refreshLbFullBlurUp();
+            this._refreshLbActorAges();
         },
 
         // --- Lightbox (M3a) ---
@@ -939,6 +965,7 @@ export function stateLightbox() {
                     // 必須在 Object.assign 之後呼叫（src 已更新，$nextTick complete-check 才讀到新 URL）。
                     if (this.currentLightboxVideo === video) {
                         this._refreshLbFullBlurUp();
+                        this._refreshLbActorAges();
                     }
                 }
             } catch (e) {

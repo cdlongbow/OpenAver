@@ -292,6 +292,12 @@
     margin-bottom: 0.25rem;
 }
 
+/* 149b-T3（CD-149b-14）：發行時年齡 (28y) —— .lb-actor 本身是 color: var(--accent)，
+   子層 <span> 若不自己宣告 color 會繼承 accent 色，蓋不過去（FE-CSS-02）。 */
+.lightbox-metadata .lb-actor-age {
+    color: var(--text-muted);
+}
+
 /* Meta: Number · Maker · Date — 單行 flex */
 .lightbox-metadata .lb-meta {
     font-size: 0.75rem;

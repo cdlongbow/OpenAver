@@ -382,6 +382,48 @@ const RULES = [
         + '前導 8 空白是刻意的：它把 return 物件裡的屬性與 import 那一行區分開。',
   },
 
+  // ---- [LbActorAgeRefresh] 149b-CD-3：燈箱女優列「發行時年齡」六個刷新點的計數守衛 ----
+  // 規則：`_refreshLbActorAges()` 必須緊跟每一處既有 `_refreshLbFullBlurUp()`（五處，字面相同），
+  // 第六處在 state-actress.js loadActresses() 成功路徑，字面帶 `?.`（獨立第五條規則，見下）。
+  // exact count 而非 required-string 的下限：後者放行「多加一次」，這裡任何一處漏改／多改
+  // 都要被抓到（漏改＝使用者看到上一部片的舊歲數；多改＝重複刷新非本 task 的範圍）。
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'structure-count',
+    pattern: 'this._refreshLbFullBlurUp();', count: 2,
+    note: '[LbActorAgeRefresh] 149b-CD-3：state-lightbox.js 兩個既有 blur-up 刷新點（_setLightboxIndex／refreshVideoData）。'
+        + 'exact count 鎖住既有呼叫點沒有被誤刪或重複——本 task 不動這支既有 helper 本身，只確保它仍在原處，'
+        + '因為下一條規則要求 _refreshLbActorAges() 緊跟在它後面。',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'structure-count',
+    pattern: 'this._refreshLbActorAges();', count: 2,
+    note: '[LbActorAgeRefresh] 149b-CD-3：state-lightbox.js 兩處刷新點（_setLightboxIndex :186 之後、'
+        + 'refreshVideoData :941 之後）。漏掉任一處：換片或補資料成功後燈箱顯示上一部片的女優歲數，'
+        + '不是資料錯誤而是顯示錯誤（spec §2.3 存在的理由就是別顯示錯的數字）。',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'structure-count',
+    pattern: 'this._refreshLbFullBlurUp();', count: 3,
+    note: '[LbActorAgeRefresh] 149b-CD-3：state-similar.js 三個既有 blur-up 刷新點（:466／:490／:1720）。'
+        + 'exact count 鎖住既有呼叫點沒有被誤刪或重複，理由同上一條。',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'structure-count',
+    pattern: 'this._refreshLbActorAges();', count: 3,
+    note: '[LbActorAgeRefresh] 149b-CD-3：state-similar.js 三個相似探索退出路徑的刷新點（:466／:490／:1720，'
+        + '三處缺一不可）。使用者從相似探索挑一部相似片、退出後回到燈箱，任一處漏改都會讓名字旁邊寫的是'
+        + '上一部片的歲數（mutation 點②驗的正是這件事）。',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'structure-count',
+    pattern: 'this._refreshLbActorAges?.();', count: 1,
+    note: '[LbActorAgeRefresh] 149b-CD-3 刷新契約第 6 點：生日資料是非同步到位的，'
+        + '這一行是「燈箱已經開著時，資料到了要重算一次」的唯一觸發點。刪掉它 → 使用者在資料還沒回來時開燈箱，'
+        + '年齡永遠不出現，除非他關掉燈箱再開一次。exact count 而非 required-string：後者 count 是下限，'
+        + '第二個誤增的呼叫點會被放行。⚠ 這一行的字面帶 ?.，與另外五處不同，所以不會被 state-lightbox.js／'
+        + 'state-similar.js 那四條的計數涵蓋——必須獨立一條。',
+  },
+
   // ---- [TestMaskToggleGuard] 99a-T5：detect-first 重新設計（Bug 1 修法）+ 星空等待動畫 lifecycle ----
   // 舊 race 旗標退役（比照既有 _maskVideoPath/_maskMode/closeMask 先例 :136/193/197/201）。
   ...LIGHTBOX_SLICE_FILES.map((f) => ({

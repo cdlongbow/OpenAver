@@ -1042,7 +1042,8 @@
       "minutes_abbr": "分",
       "videos_count": " 部",
       "films": "部作品",
-      "actresses": "位女優"
+      "actresses": "位女優",
+      "age_suffix": "y"
     },
     "status": {
       "total_prefix": "共",
