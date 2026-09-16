@@ -16,6 +16,8 @@ function isLeapYear(y) {
 }
 
 function isValidCalendarDate(y, m, d) {
+    // 對齊 Python datetime 的 MINYEAR=1／MAXYEAR=9999（strptime 對超出此範圍會拋 ValueError）。
+    if (y < 1 || y > 9999) return false;
     if (m < 1 || m > 12) return false;
     if (d < 1) return false;
     const maxDay = (m === 2 && isLeapYear(y)) ? 29 : DAYS_IN_MONTH[m - 1];

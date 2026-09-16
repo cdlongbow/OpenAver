@@ -84,6 +84,14 @@ test('日曆不合法但格式對的日期必須回 null，閏日必須算得出
     assert.strictEqual(computeAgeAtDate('1998-03-31', '2015-02-30'), null);
     // 正向斷言：閏年 2/29 是合法日期，不得被日曆檢查一併擋掉
     assert.strictEqual(computeAgeAtDate('1998-03-31', '2016-02-29'), 17);
+    // Codex 149b review P3：0000-01-01 月/日皆合法、只有年份是 0——不對齊 Python
+    // datetime.strptime（MINYEAR=1）就會放過，顯示出離奇的年齡。生日／發行日兩個位置各驗一次。
+    assert.strictEqual(computeAgeAtDate('0000-01-01', '2020-01-01'), null);
+    assert.strictEqual(computeAgeAtDate('1998-03-31', '0000-01-01'), null);
+    // 0000 依現有 isLeapYear() 公式（0 % 400 === 0）會被判成閏年，2/29 若只驗月份/日期
+    // 天數表會放過——同一顆年份下限守衛必須連這個閏日組合也擋下。
+    assert.strictEqual(computeAgeAtDate('0000-02-29', '2020-01-01'), null);
+    assert.strictEqual(computeAgeAtDate('1998-03-31', '0000-02-29'), null);
 });
 
 // ── 邊界條件 4 [mutation B 偵測] ─────────────────────────────────────────

@@ -369,9 +369,15 @@ export function stateBase() {
             await _loadTagAliasMap();   // A3-4: 無條件載入 tag alias map
             await _loadCoverBadgeManifest();
             _recomputeAllBadges();
-            // 149b-T3 CD-149b-2：無條件呼叫——燈箱女優列的發行時年齡（_refreshLbActorAges）
-            // 需要 _actresses/_nameToGroup 就緒，不能只在「女優模式」開著時才載入。
-            this.loadActresses();
+            // 149b-T3 CD-149b-2：燈箱女優列的發行時年齡（_refreshLbActorAges）需要
+            // _actresses/_nameToGroup 就緒，不能只在「女優模式」開著時才載入。
+            // Codex review（149b P2）：above 的 hero-card 分支（:362）可能已經在
+            // fetchVideos()／alias map 幾個 await 之間 settle 成功；若這裡仍無條件
+            // 再發一次請求，第二次若暫時失敗，統一清理會把第一次已成功載入的資料清空。
+            // 改成只在「還沒成功載入」時才呼叫——失敗時 _actressesLoaded 會被
+            // _clearActressesOnLoadFailure() 明確設回 false（CD-149b-2 第 3 項），
+            // 這個閘不會擋住重試路徑。
+            if (!_actressesLoaded) this.loadActresses();
 
             // CD-C3：逾時降級，不取消 in-flight 判斷
             await _awaitHeroCardWithTimeout(heroCardPromise);

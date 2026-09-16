@@ -52,10 +52,14 @@ export async function resolve(specifier, context, nextResolve) {
 register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.url);
 
 const { stateActress } = await import('../state-actress.js');
+const { stateVideos } = await import('../state-videos.js');
 // 117-T5：_actresses / _filteredActresses 是 module-level 共享陣列（測試間互相污染）——
 // 每個測試前都要重置。_actressesLoaded 走 setter；讀取用 live binding（同一模組實例）。
 const stateBase = await import('../state-base.js');
 const { _actresses, _filteredActresses, _setActresses } = stateBase;
+// init() factory 本體（與命名空間物件 stateBase 撞名，另取別名）——
+// 頂層 `this.$persist(...)` 需要綁定一個提供 $persist 的假 this（照抄 pill-match.test.mjs）。
+const stateBaseFactory = stateBase.stateBase;
 
 function resetActresses() {
     _actresses.length = 0;
@@ -193,5 +197,124 @@ test('失敗出口 catch（fetch throw）：_actressesLoaded===false、_actresse
         assert.deepEqual(c._lbActorAges, {});
     } finally {
         globalThis.fetch = prev;
+    }
+});
+
+// ── 邊界條件 4（Codex 149b implementation review P2）：init() 循序時序 ──────
+//
+// :362 的 hero-card 分支（_reconcileHeroCard → _checkPreciseActressMatch）可能在
+// fetchVideos()／alias map 幾個 await 之間先行 settle 成功；若 init() 在 :374 仍
+// 無條件呼叫第二次 loadActresses()，第二次若暫時失敗，統一清理會把第一次已成功
+// 載入的資料清空。這裡走真正的 stateBase().init()（合併 stateVideos()/stateActress()），
+// 不用推理描述時序——用 fetchVideos() stub 主動讓出足夠的 microtask，逼 hero-card
+// 分支的第一次 loadActresses() 真的完整 settle（含 module-level in-flight promise
+// 清空），複現 Codex 描述的「較小的女優請求先完成」情境。
+
+function makeFetchMockForInit(actressesResponses) {
+    const orig = globalThis.fetch;
+    const calls = { actresses: 0 };
+    globalThis.fetch = async (url) => {
+        if (url === '/api/actresses') {
+            const idx = calls.actresses;
+            calls.actresses += 1;
+            const handler = actressesResponses[Math.min(idx, actressesResponses.length - 1)];
+            return handler();
+        }
+        if (url === '/api/actress-aliases') return { ok: true, json: async () => ({ groups: [] }) };
+        if (url === '/api/tag-aliases') return { ok: true, json: async () => ({ groups: [] }) };
+        if (url === '/api/cover-badges/manifest') return { ok: true, json: async () => [] };
+        // 其餘皆 fire-and-forget（/api/showcase/source-status、/api/similar/warmup）：
+        // 給良性回應，不污染本檔要驗的 '/api/actresses' 呼叫次數。
+        return { ok: true, json: async () => ({}) };
+    };
+    return { calls, restore() { globalThis.fetch = orig; } };
+}
+
+// 合併三個 factory，比照 pill-match.test.mjs 的 cold/warm harness 建構真正的 init()。
+function makeInitComponent(overrides = {}) {
+    const base = stateBaseFactory.call({ $persist: (obj) => ({ as: () => obj }) });
+    return Object.assign({}, base, stateVideos(), stateActress(), {
+        restoreState() {},
+        fetchVideos: async () => {},
+        applyFilterAndSort() {},
+        updatePagination() {},
+        $nextTick() {},
+        $watch() {},
+        showToast() {},
+        ...overrides,
+    });
+}
+
+async function withInitGlobals(fn) {
+    const origRegisterPage = globalThis.window.__registerPage;
+    const origAddEventListener = globalThis.window.addEventListener;
+    globalThis.window.__registerPage = () => {};
+    globalThis.window.addEventListener = () => {};
+    try {
+        return await fn();
+    } finally {
+        globalThis.window.__registerPage = origRegisterPage;
+        globalThis.window.addEventListener = origAddEventListener;
+    }
+}
+
+test('P2（Codex 149b review）：hero-card 首次 loadActresses 成功 settle 後，init() 不得再無條件發第二次請求去清掉第一次已成功載入的資料', async () => {
+    resetActresses();
+    stateBase._setActressesLoaded(false);
+    const mock = makeFetchMockForInit([
+        () => okResp([{ name: 'HeroActress', birth: '1990-01-01' }]),  // 第一次：hero-card 分支，成功
+        () => notOkResp(),                                             // 第二次：若無條件重發，模擬暫時失敗
+    ]);
+    try {
+        await withInitGlobals(async () => {
+            const c = makeInitComponent({
+                search: 'SampleActress',   // pills=[]（0 枚）→ _shouldShowHeroCard() 走無 pill 分支，文字非空即觸發
+                fetchVideos: async () => {
+                    // 逼 hero-card 分支的第一次 loadActresses() 完整 settle
+                    // （含 module-level in-flight promise 清空），才讓出控制權。
+                    for (let i = 0; i < 200 && !stateBase._actressesLoaded; i++) await Promise.resolve();
+                    for (let i = 0; i < 50; i++) await Promise.resolve();
+                },
+            });
+            await c.init();
+            // init() 對第二次 loadActresses() 是 fire-and-forget，讓其在背景跑完再驗證。
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+
+        assert.equal(_actresses.length, 1, '第二次失敗不該清掉第一次已成功載入的有效資料');
+        assert.equal(_actresses[0].name, 'HeroActress');
+    } finally {
+        mock.restore();
+    }
+});
+
+test('P2 修法不擋合法重試：hero-card 分支載入失敗（_actressesLoaded 被設回 false）後，init() 的 guard 仍會真的重試並成功', async () => {
+    resetActresses();
+    stateBase._setActressesLoaded(false);
+    const mock = makeFetchMockForInit([
+        () => notOkResp(),                                            // 第一次：hero-card 分支，失敗
+        () => okResp([{ name: 'RetryActress', birth: '1990-01-01' }]), // 第二次：init() guard 判斷仍未載入 → 真的重試，成功
+    ]);
+    try {
+        await withInitGlobals(async () => {
+            const c = makeInitComponent({
+                search: 'SampleActress',
+                fetchVideos: async () => {
+                    // 逼 hero-card 分支的第一次 loadActresses()（失敗）完整 settle。
+                    for (let i = 0; i < 200 && stateBase._actressesLoaded === false; i++) {
+                        await Promise.resolve();
+                    }
+                    for (let i = 0; i < 50; i++) await Promise.resolve();
+                },
+            });
+            await c.init();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+
+        assert.equal(mock.calls.actresses, 2, '失敗後 init() 的 guard 必須仍會發出第二次請求（重試）');
+        assert.equal(_actresses.length, 1, '第二次重試成功後資料必須生效');
+        assert.equal(_actresses[0].name, 'RetryActress');
+    } finally {
+        mock.restore();
     }
 });
