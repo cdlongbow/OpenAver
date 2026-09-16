@@ -530,27 +530,27 @@ const RULES = [
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '$refs.actressPhotoUploadInput.click()', note: '[TestMaskToggleGuard] 100b-T2b：上傳鈕觸發隱藏 input（$refs，非 $el，G3/坑7 對齊）' },
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '@change="_uploadActressPhoto($event)"', note: '[TestMaskToggleGuard] 100b-T2b：file input @change 綁 _uploadActressPhoto' },
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'class="picker-upload-btn"', note: '[TestMaskToggleGuard] 100b-T2b：.picker-upload-btn 按鈕存在（裁決 5，同 .picker-refresh-btn 排）' },
-  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'async _uploadActressPhoto(evt) {', note: '[TestMaskToggleGuard] 100b-T2b：_uploadActressPhoto 函式定義存在' },
+  { file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'required-string', pattern: 'async _uploadActressPhoto(evt) {', note: '[TestMaskToggleGuard] 100b-T2b：_uploadActressPhoto 函式定義存在' },
 
   // 必踩點 #1（mutation 反向驗：拿掉這行 → 必紅）：同一檔案連選兩次 change 不會再觸發，
   // 排在 await（fetch）之前——scope 內若把這行搬到 fetch 之後，本規則仍會通過字面存在性
   // 檢查，但「排序」語意已由函式本體 review + CDP ⓪ 實測把關（lint 只鎖存在性）。
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'required-string',
     pattern: "evt.target.value = '';",
     scope: { anchor: /async\s+_uploadActressPhoto\s*\(\s*evt\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100b-T2b：_uploadActressPhoto 必須清空 evt.target.value（同檔重選需要 change 再次觸發，spec §3.1 禁「點了沒反應」）',
   },
   // 必踩點 #6 上半（改資料無條件執行）：_syncActressesArray by-name 呼叫存在。
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'required-string',
     pattern: 'this._syncActressesArray(capturedName, data);',
     scope: { anchor: /async\s+_uploadActressPhoto\s*\(\s*evt\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100b-T2b：_uploadActressPhoto 上傳成功後同步 _syncActressesArray（stale-success #6 上半，改資料無條件做）',
   },
   // §B-2b 第三呼叫點：上傳成功後刷新 _actressPhotoLoaded（新圖需重新等載入/快取判定）。
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'required-string',
     pattern: 'this._refreshActressPhotoLoaded();',
     scope: { anchor: /async\s+_uploadActressPhoto\s*\(\s*evt\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100b-T2b：_uploadActressPhoto 成功且仍是同一位女優時呼叫 _refreshActressPhotoLoaded（§B-2b 第三呼叫點）',
@@ -558,26 +558,26 @@ const RULES = [
   // CD-9：錯誤分流依 HTTP status，不依 body code；無 409。鎖 413/415 兩個字面分支存在，
   // 證明「依 status 分流」這個決策點沒被改寫成單一籠統 catch。
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'required-string',
     pattern: 'resp.status === 413',
     scope: { anchor: /async\s+_uploadActressPhoto\s*\(\s*evt\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100b-T2b：CD-9 413→upload_too_large 分支存在',
   },
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'required-string',
     pattern: 'resp.status === 415',
     scope: { anchor: /async\s+_uploadActressPhoto\s*\(\s*evt\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100b-T2b：CD-9 415→upload_bad_format 分支存在',
   },
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: 'resp.status === 409',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'forbidden-string', pattern: 'resp.status === 409',
     scope: { anchor: /async\s+_uploadActressPhoto\s*\(\s*evt\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100b-T2b：CD-9 明訂上傳無 409（v3 砍了 compare token），不得復活',
   },
   // 必踩點 #3（mutation 反向驗：把這行改成 this._closePicker() → 必紅）：失敗分支刻意
   // 與既有候選換圖的 catch（_onPickerSelect 呼叫 _closePicker()）分歧，不可關 picker。
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: 'this._closePicker();',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'forbidden-string', pattern: 'this._closePicker();',
     scope: { anchor: /if\s*\(!resp\.ok\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100b-T2b：_uploadActressPhoto 失敗分支（!resp.ok）不得關 picker（spec §3.1+§C 刻意分歧，非漏改）',
   },
@@ -599,7 +599,7 @@ const RULES = [
   // spec §3.7-7「零偵測成本」：上傳流程全程不得呼叫 detect-focal（by-construction，本
   // 規則把它機械鎖住——「不做某事」測試鎖不到，只有守衛鎖得到）。
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: 'detect-focal',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'forbidden-string', pattern: 'detect-focal',
     scope: { anchor: /async\s+_uploadActressPhoto\s*\(\s*evt\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100b-T2b：spec §3.7-7 零偵測成本——_uploadActressPhoto scope 內不得出現 detect-focal',
   },
@@ -612,14 +612,14 @@ const RULES = [
   // 拿掉本行也照樣正常；只有 alias 回 200 的 3 位會壞 ⇒ 人工抽測與 CDP 抽樣都可能整批放行。
   // 資料相依的間歇失敗只有守衛鎖得到。
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'required-string',
     pattern: 'this.currentLightboxActress.photo_url = data.photo_url;',
     scope: { anchor: /async\s+_uploadActressPhoto\s*\(\s*evt\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100b-T2b：_uploadActressPhoto 成功後顯式同步 currentLightboxActress.photo_url（CD-10 訂正：_fetchLiveAliases 的 Object.assign 讓「同物件」前提失效，缺此行燈箱主圖不換）',
   },
   // §B-2b 第四呼叫點（Opus 2026-07-16 裁決）：換候選成功換 URL 後亦須刷新，與上傳同形。
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'required-string',
     pattern: 'this._refreshActressPhotoLoaded();',
     scope: { anchor: /async\s+_onPickerSelect\s*\(\s*candidate\s*,\s*i\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100b-T2b：_onPickerSelect 換候選成功後呼叫 _refreshActressPhotoLoaded（§B-2b 第四呼叫點，photo_url 一變就要重新等載入）',
@@ -680,19 +680,19 @@ const RULES = [
   // （_onPickerHoverIn／_onPickerHoverOut／_onPickerSelect 三者開頭皆
   // `if (this._pickerSelected) return;`，49c-era 既有碼，先前無 lint 鎖住不被回歸刪除）。
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'required-string',
     pattern: 'if (this._pickerSelected) return;',
     scope: { anchor: /_onPickerHoverIn\s*\(\s*el\s*,\s*i\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100b-T4：_onPickerHoverIn 互斥 guard 回歸鎖（裁決 5——.picker-candidate-card 是 div，:disabled 無效，改走此 @click guard）',
   },
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'required-string',
     pattern: 'if (this._pickerSelected) return;',
     scope: { anchor: /async\s+_onPickerHoverOut\s*\(\s*el\s*,\s*i\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100b-T4：_onPickerHoverOut 互斥 guard 回歸鎖（裁決 5，同上）',
   },
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'required-string',
     pattern: 'if (this._pickerSelected) return;',
     scope: { anchor: /async\s+_onPickerSelect\s*\(\s*candidate\s*,\s*i\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100b-T4：_onPickerSelect 互斥 guard 回歸鎖（裁決 5，同上——AC-13 race lock 兼任兩角色：候選列互斥 + 原有的重複點擊防護）',
@@ -706,7 +706,7 @@ const RULES = [
   // 關掉。guard 加在函式入口（覆蓋兩個既有 callsite），沿用既有 _onPickerHoverIn／
   // _onPickerHoverOut／_onPickerSelect 同款 early-return 慣例。
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'required-string',
     pattern: 'if (this._pickerSelected) return;',
     scope: { anchor: /async\s+openActressPicker\s*\(\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100b P2-3 fix：openActressPicker 互斥 guard 回歸鎖（.picker-refresh-btn 在上傳/換候選 in-flight 期間再次觸發會與原 fetch 競爭關閉 picker，CDP 2026-07-16 實測重現）',
@@ -722,7 +722,7 @@ const RULES = [
   // 論證即失效）。本規則只證字面順序，證不出執行時序（catch/提早 return 是否遵守）——
   // 最終把關仍是 CDP 實測 .cover-actions 的 pointer-events（DoD④-c）。
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'order',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'order',
     scope: { anchor: /async\s+_uploadActressPhoto\s*\(\s*evt\s*\)\s*\{/, braceBalanced: true },
     items: [
       { pattern: /await\s+fetch\(/ },
@@ -821,7 +821,7 @@ const RULES = [
   // _onPickerSelect（換候選）是另一個不該觸發偵測的入口，同一責任、同一 scope 寫法，
   // T2b 當時刻意留給本 task（TASK-100b-T2.md 裁決 3）。
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: 'detect-focal',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'forbidden-string', pattern: 'detect-focal',
     scope: { anchor: /async\s+_onPickerSelect\s*\(\s*candidate\s*,\s*i\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100b-T5：spec §3.7-7 零偵測成本——_onPickerSelect scope 內不得出現 detect-focal',
   },
@@ -880,37 +880,37 @@ const RULES = [
   // ⇒ card DoD 1 的「拿掉每條條件」逐一對應到這 6 條規則其中之一單獨紅，比原本單一大字面
   // required-string 更精準——任何一條被拿掉都直接對應到它自己的守衛，不會混在一起判讀）。
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'required-string',
     pattern: 'const notEditing = !this._maskVisible;',
     scope: { anchor: /_focalIconVisible\s*\(\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100c-T2（CD-1）：_focalIconVisible 條件① !_maskVisible 無條件讀取',
   },
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'required-string',
     pattern: 'const hasPhoto = !!this.currentLightboxActress?.photo_url;',
     scope: { anchor: /_focalIconVisible\s*\(\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100c-T2（CD-1）：_focalIconVisible 條件② photo_url 無條件讀取',
   },
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'required-string',
     pattern: 'const loaded = this._actressPhotoLoaded;',
     scope: { anchor: /_focalIconVisible\s*\(\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100c-T2（CD-1）：_focalIconVisible 條件③ _actressPhotoLoaded 無條件讀取',
   },
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'required-string',
     pattern: 'const wideEnough = this._actressPhotoWideEnough;',
     scope: { anchor: /_focalIconVisible\s*\(\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100c-T2（CD-1/CD-7）：_focalIconVisible 條件④ _actressPhotoWideEnough 無條件讀取（20% 門檻）',
   },
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'required-string',
     pattern: 'const pickerClosed = !this._pickerOpen;',
     scope: { anchor: /_focalIconVisible\s*\(\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100c-T2（CD-1）：_focalIconVisible 條件⑤ !_pickerOpen 無條件讀取（picker 開啟保護，搬出 .cover-actions 後 CSS gate 不再涵蓋，必須顯式擋）',
   },
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'required-string',
     pattern: 'return notEditing && hasPhoto && loaded && wideEnough && pickerClosed;',
     scope: { anchor: /_focalIconVisible\s*\(\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100c-T2（CD-1）：_focalIconVisible 完整五條件組合（錨完整 return 字面，防片段假綠）',
@@ -942,7 +942,7 @@ const RULES = [
   // 靠設計本身（只有 helper 寫旗標）＋ Fix A forbidden 擋 _maskTeardown，已足夠；此處只需
   // 正向鎖「該接的呼叫點都在」，不需反向鎖「別處不准呼叫」（那是 over-engineering）。
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'required-string',
     pattern: 'this._clearActressPhotoState()',
     scope: { anchor: /_refreshActressPhotoLoaded\s*\(\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100c-T2（CD-5）：_refreshActressPhotoLoaded() 起手呼叫 _clearActressPhotoState()（切換/開啟女優先清兩旗標）',
@@ -954,7 +954,7 @@ const RULES = [
     note: '[TestMaskToggleGuard] 100c-T2（CD-5）：_resetMask() 呼叫 _clearActressPhotoState()（換片/關燈箱清兩旗標，其後必經 _refreshActressPhotoLoaded 重新判定）',
   },
   {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    file: 'web/static/js/pages/showcase/state-lightbox-picker.js', kind: 'required-string',
     pattern: '_readyActressPhotoState(',
     scope: { anchor: /_refreshActressPhotoLoaded\s*\(\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100c-T2（CD-5）：_refreshActressPhotoLoaded() 的 $nextTick 內呼叫 _readyActressPhotoState()（已快取路徑；未快取路徑那次由 showcase.html @load required 規則鎖）',
@@ -1537,6 +1537,7 @@ const RULES = [
     ['state-videos.js', 'stateVideos'],
     ['state-actress.js', 'stateActress'],
     ['state-lightbox.js', 'stateLightbox'],
+    ['state-lightbox-picker.js', 'stateLightboxPicker'],
     ['state-lightbox-samples.js', 'stateLightboxSamples'],
     ['state-lightbox-tags.js', 'stateLightboxTags'],
   ].map(([file, fn]) => ({
@@ -1578,14 +1579,14 @@ const RULES = [
     file: 'web/static/js/pages/showcase/main.js', kind: 'forbidden-string', pattern: `...${fn}`,
     note: '[TestShowcaseESMGuard] test_main_js_no_plain_spread_merge — 4 factory 全禁',
   })),
-  ...['stateBase', 'stateVideos', 'stateActress', 'stateLightbox', 'stateLightboxSamples', 'stateLightboxTags'].map((fn) => ({
+  ...['stateBase', 'stateVideos', 'stateActress', 'stateLightbox', 'stateLightboxPicker', 'stateLightboxSamples', 'stateLightboxTags'].map((fn) => ({
     file: 'web/static/js/pages/showcase/main.js', kind: 'required-string', pattern: `${fn}.call(this)`,
     note: '[TestShowcaseESMGuard] test_main_js_factory_calls_use_call_this — 唯一有此斷言的頁（settings/scanner/search 皆未檢查）',
   })),
   { file: 'web/static/js/pages/showcase/main.js', kind: 'required-string', pattern: 'window.showcaseState', note: '[TestShowcaseESMGuard] test_main_js_has_window_showcase_state_bridge — 唯一有 window bridge 斷言的頁' },
-  ...['state-videos.js', 'state-actress.js', 'state-lightbox.js', 'state-lightbox-samples.js', 'state-lightbox-tags.js'].map((file) => ({
+  ...['state-videos.js', 'state-actress.js', 'state-lightbox.js', 'state-lightbox-picker.js', 'state-lightbox-samples.js', 'state-lightbox-tags.js'].map((file) => ({
     file: `web/static/js/pages/showcase/${file}`, kind: 'forbidden-string',
-    pattern: /^\s*import\b[^\n]*\b(?:stateBase|stateVideos|stateActress|stateLightbox|stateLightboxSamples|stateLightboxTags)\b/m,
+    pattern: /^\s*import\b[^\n]*\b(?:stateBase|stateVideos|stateActress|stateLightbox|stateLightboxPicker|stateLightboxSamples|stateLightboxTags)\b/m,
     note: `[TestShowcaseESMGuard] test_no_circular_state_factory_imports — ${file} 頂層 import 不可含 6 個 factory 函式名（判斷單位是 factory 名非檔名；state-base.js 本身不驗）`,
   })),
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '_killLightboxTimelines', note: '[TestShowcaseESMGuard] test_state_lightbox_imports_kill_timelines' },
@@ -1593,17 +1594,17 @@ const RULES = [
   { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'forbidden-string', pattern: 'addFavoriteActress', note: '[TestShowcaseESMGuard] test_state_videos_no_actress_functions' },
   { file: 'web/static/js/pages/showcase/state-actress.js', kind: 'forbidden-string', pattern: /^\s+openLightbox\s*\(/m, note: '[TestShowcaseESMGuard] test_state_actress_no_lightbox_functions — 方法定義 regex（行首縮排+openLightbox(，防誤殺 this.openLightbox(...) 呼叫）' },
   { file: 'web/static/js/pages/showcase/state-actress.js', kind: 'forbidden-string', pattern: /^\s+closeLightbox\s*\(/m, note: '[TestShowcaseESMGuard] test_state_actress_no_lightbox_functions' },
-  ...['state-base.js', 'state-videos.js', 'state-actress.js', 'state-lightbox.js', 'state-lightbox-samples.js', 'state-lightbox-tags.js', 'main.js'].map((file) => ({
+  ...['state-base.js', 'state-videos.js', 'state-actress.js', 'state-lightbox.js', 'state-lightbox-picker.js', 'state-lightbox-samples.js', 'state-lightbox-tags.js', 'main.js'].map((file) => ({
     file: `web/static/js/pages/showcase/${file}`, kind: 'forbidden-string',
     pattern: /^(?!\s)(?!\/\/)(?!\*)[^\n]*window\.gsap/m,
     note: `[TestShowcaseESMGuard] test_no_gsap_at_module_top_level — ${file} 頂層非註解行不可含 window.gsap`,
   })),
-  ...['state-base.js', 'state-videos.js', 'state-actress.js', 'state-lightbox.js', 'state-lightbox-samples.js', 'state-lightbox-tags.js', 'main.js'].map((file) => ({
+  ...['state-base.js', 'state-videos.js', 'state-actress.js', 'state-lightbox.js', 'state-lightbox-picker.js', 'state-lightbox-samples.js', 'state-lightbox-tags.js', 'main.js'].map((file) => ({
     file: `web/static/js/pages/showcase/${file}`, kind: 'forbidden-string',
     pattern: /^gsap\b/m,
     note: `[TestShowcaseESMGuard] test_no_gsap_at_module_top_level — ${file} 頂層行不可以 gsap 識別字開頭`,
   })),
-  ...['state-base.js', 'state-videos.js', 'state-actress.js', 'state-lightbox.js', 'state-lightbox-samples.js', 'state-lightbox-tags.js'].map((file) => ({
+  ...['state-base.js', 'state-videos.js', 'state-actress.js', 'state-lightbox.js', 'state-lightbox-picker.js', 'state-lightbox-samples.js', 'state-lightbox-tags.js'].map((file) => ({
     file: `web/static/js/pages/showcase/${file}`, kind: 'forbidden-string', pattern: 'this._PICKER_PARAMS',
     note: `[TestShowcaseESMGuard] test_no_this_picker_params_in_state_modules — ${file} 不可 this._PICKER_PARAMS（main.js 不在此列）`,
   })),

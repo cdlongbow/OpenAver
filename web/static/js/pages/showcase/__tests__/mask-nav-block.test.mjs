@@ -31,6 +31,7 @@ globalThis.document = globalThis.document || {
 register(new URL('../../search/__tests__/alias-loader.mjs', import.meta.url), import.meta.url);
 
 const { stateLightbox } = await import('../state-lightbox.js');
+const { stateLightboxPicker } = await import('../state-lightbox-picker.js');
 const { stateActress } = await import('../state-actress.js');
 const { _setFilteredVideos, _setFilteredActresses } = await import('../state-base.js');
 
@@ -41,7 +42,7 @@ const VIDEOS = [
 const ACTRESSES = [{ name: 'A' }, { name: 'B' }];
 
 function makeComponent(overrides) {
-    return Object.assign({}, stateLightbox(), stateActress(), {
+    return Object.assign({}, stateLightbox(), stateLightboxPicker(), stateActress(), {
         lightboxOpen: true,
         showFavoriteActresses: false,
         currentLightboxActress: null,

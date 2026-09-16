@@ -12,6 +12,7 @@ import { stateBase }     from '@/showcase/state-base.js';
 import { stateVideos }   from '@/showcase/state-videos.js';
 import { stateActress }  from '@/showcase/state-actress.js';
 import { stateLightbox } from '@/showcase/state-lightbox.js';
+import { stateLightboxPicker } from '@/showcase/state-lightbox-picker.js';
 import { stateLightboxTags } from '@/showcase/state-lightbox-tags.js';
 import { stateLightboxSamples } from '@/showcase/state-lightbox-samples.js';
 import { stateSimilar }  from '@/showcase/state-similar.js';
@@ -26,6 +27,7 @@ window.showcaseState = function() {
         stateVideos.call(this),
         stateActress.call(this),
         stateLightbox.call(this),
+        stateLightboxPicker.call(this),
         stateLightboxTags.call(this),
         stateLightboxSamples.call(this),
         stateSimilar.call(this),
