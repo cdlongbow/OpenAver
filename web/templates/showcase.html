@@ -589,7 +589,7 @@
                             </button>
                             <!-- 74b US4: tap=enrichVideo（自動補缺）；長壓已移除（進階重刮收斂到燈箱齒輪 ⚙）。 -->
                             <button class="btn-glass-circle enrich-btn"
-                                    x-show="!video.has_cover || !video.has_nfo"
+                                    x-show="shouldShowEnrichButton(video)"
                                     :disabled="_enriching"
                                     @click.stop="enrichVideo(video)"
                                     title="{{ t('showcase.action.enrich') }}">
@@ -1089,6 +1089,7 @@
                                  alt=""
                                  aria-hidden="true">
                             <div class="lb-full-hint" x-show="_lbFullErrorPill && !_lbFullLoaded && !_maskVisible" x-cloak>{{ t('showcase.lightbox.cover_unavailable') }}</div>
+                            <div class="lb-full-hint" x-show="!currentLightboxVideo?.has_cover && !currentLightboxVideo?.number && !_maskVisible" x-cloak>{{ t('showcase.lightbox.cover_escape_hint') }}</div>
                             <template x-if="!!currentLightboxVideo?.path && !_maskVisible && (currentLightboxVideo._badges || []).length">
                                 <div class="cover-badges">
                                     <template x-for="b in (currentLightboxVideo._badges || [])" :key="b.id">
@@ -1133,7 +1134,7 @@
                                 </button>
                                 <!-- 74b US4: tap=enrichVideo（自動補缺）；長壓已移除（進階重刮走齒輪 ⚙）。 -->
                                 <button class="lb-action-btn"
-                                        x-show="(!currentLightboxVideo?.has_cover || !currentLightboxVideo?.has_nfo) && !_maskVisible"
+                                        x-show="shouldShowEnrichButton(currentLightboxVideo) && !_maskVisible"
                                         :disabled="_enriching"
                                         @click.stop="enrichVideo(currentLightboxVideo)"
                                         data-tooltip="{{ t('showcase.action.enrich') }}"

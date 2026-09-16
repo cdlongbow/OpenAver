@@ -356,8 +356,30 @@ const RULES = [
   },
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
-    pattern: 'x-show="(!currentLightboxVideo?.has_cover || !currentLightboxVideo?.has_nfo) && !_maskVisible"',
-    note: '[TestMaskToggleGuard] 99a-T4：補缺鈕編輯中暫隱（CD-6，錨完整值防 has_cover/has_nfo 條件被誤刪只剩 !_maskVisible）',
+    pattern: 'x-show="shouldShowEnrichButton(currentLightboxVideo) && !_maskVisible"',
+    note: '[TestMaskToggleGuard] 99a-T4：補缺鈕編輯中暫隱（CD-6，錨完整值防 has_cover/has_nfo 條件被誤刪只剩 !_maskVisible）；149b：條件改抽成 shouldShowEnrichButton()，has_cover/has_nfo 的判斷邏輯本身由 enrich-gate.js 的 node:test 守，這條 required-string 只守『呼叫點沒有被誤刪成只剩 !_maskVisible』這個原本要守的目的',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'x-show="shouldShowEnrichButton(video)"',
+    note: '[EnrichGate] 149b-CD-10：卡片補資料鈕的呼叫點（與燈箱 :359 那條成對）。'
+        + '判斷邏輯由 enrich-gate.js 的 node:test 守，這條只守「呼叫點沒有被改回內聯條件或被誤刪」。'
+        + '⚠ 兩條必須成對存在——只留一條會讓卡片與燈箱的顯示條件靜默漂移（149a 教訓）。',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'x-show="!currentLightboxVideo?.has_cover && !currentLightboxVideo?.number && !_maskVisible"',
+    note: '[EnrichGate] 149b-CD-11：封面逃生口提示的顯示條件（spec §2.5：沒封面「且」沒番號，真實庫 373 部）。'
+        + '拿掉「沒番號」那半會讓提示也長在 75 部有番號、🔍 本來就有效的片上——那句提示會叫使用者去手動放圖，'
+        + '而正確做法是按 🔍。實測：拿掉之後 npm run lint:html 1335 條全綠，這條是唯一的安全網。',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: '        shouldShowEnrichButton,',
+    note: '[EnrichGate] 149b-CD-9：卡片與燈箱兩顆 🔍 都靠 stateLightbox() 回傳物件把這個函式送進 Alpine scope。'
+        + '刪掉這一行 → 兩處 x-show 求值成 undefined → 兩顆按鈕同時永久消失，而 npm run lint 1336 條、'
+        + 'npm test 1630 條、./scripts/check.sh 全綠（實測）。eslint 也不會抓孤兒 import（實測 exit 0）。'
+        + '前導 8 空白是刻意的：它把 return 物件裡的屬性與 import 那一行區分開。',
   },
 
   // ---- [TestMaskToggleGuard] 99a-T5：detect-first 重新設計（Bug 1 修法）+ 星空等待動畫 lifecycle ----

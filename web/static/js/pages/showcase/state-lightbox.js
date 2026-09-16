@@ -14,6 +14,7 @@ import { _filteredVideos, _filteredActresses, _killLightboxTimelines, _NO_COVER_
 import { POSTER_CROP_MAX_W } from '@/shared/breakpoints.js';
 import { detectSwipe } from '@/shared/swipe.js';
 import { isHorizontalWheel, isVerticalWheel, createWheelNav } from '@/shared/wheel-nav.js';
+import { shouldShowEnrichButton } from '@/shared/enrich-gate.js';
 
 // 120a-T1：.lb-full @error 的遲到事件判定。比較對象是 Alpine :src 寫入的相對路徑
 // 字串（getAttribute('src')），不是 IDL .src（瀏覽器已解析成絕對 URL）。
@@ -97,6 +98,7 @@ export function stateLightbox() {
 
         // Enrich 狀態 (T3)
         _enriching: false,
+        shouldShowEnrichButton,  // CD-149b-9：物件簡寫，import 自 @/shared/enrich-gate.js
 
         // --- helper in return {} ---
 
