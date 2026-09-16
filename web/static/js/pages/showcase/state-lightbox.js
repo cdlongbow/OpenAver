@@ -190,10 +190,6 @@ export function stateLightbox() {
         _pickerBurstFired: false,       // SSE 收齊後一次 burst（防 done/error 重複觸發）
         _pickerReadyAbort: null,        // T3: _burstAllPickerCandidates waitForMount 的 per-run AbortController
 
-        // User Tags 狀態 (T4)
-        addingLbTag: false,
-        newLbTagValue: '',
-
         // Enrich 狀態 (T3)
         _enriching: false,
 
@@ -1646,96 +1642,6 @@ export function stateLightbox() {
                 if (!this.lightboxOpen && !this._pickHasInFlight() && this._pickFilterStale()) this.applyFilterAndSort();
             }
         },
-
-        // ==================== User Tags in Lightbox (T4) ====================
-
-        // 展開 inline 輸入框並 focus
-        showAddLbTagInput() {
-            this.addingLbTag = true;
-            this.newLbTagValue = '';
-            this.$nextTick(() => this.$refs.lbTagInput?.focus());
-        },
-
-        // 確認新增 tag — 呼叫 POST /api/user-tags
-        async confirmAddLbTag() {
-            const tag = (this.newLbTagValue || '').trim();
-            if (!tag) {
-                this.addingLbTag = false;
-                return;
-            }
-            if (!this.currentLightboxVideo?.path) {
-                this.addingLbTag = false;
-                return;
-            }
-            const existingTags = this.currentLightboxVideo.user_tags || [];
-            if (existingTags.includes(tag)) {
-                // 重複 tag，靜默忽略
-                this.addingLbTag = false;
-                this.newLbTagValue = '';
-                return;
-            }
-            try {
-                const resp = await fetch('/api/user-tags', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        file_path: this.currentLightboxVideo.path,
-                        add: [tag],
-                    }),
-                });
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                const data = await resp.json();
-                if (data.success) {
-                    this.currentLightboxVideo.user_tags = data.user_tags;
-                    _recomputeVideoBadges(this.currentLightboxVideo);
-                    if (data.readonly_no_output) {
-                        this.showToast(window.t('showcase.lightbox.tag_nfo_not_written'), 'info');
-                    }
-                } else {
-                    throw new Error(data.error || 'API failed');
-                }
-            } catch (e) {
-                this.showToast(window.t('showcase.lightbox.tag_api_failed'), 'error');
-            } finally {
-                this.addingLbTag = false;
-                this.newLbTagValue = '';
-            }
-        },
-
-        // 取消輸入框
-        cancelAddLbTag() {
-            this.addingLbTag = false;
-            this.newLbTagValue = '';
-        },
-
-        // 刪除 user tag — 呼叫 POST /api/user-tags {remove: [tag]}
-        async removeLbUserTag(tag) {
-            if (!this.currentLightboxVideo?.path) return;
-            try {
-                const resp = await fetch('/api/user-tags', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        file_path: this.currentLightboxVideo.path,
-                        remove: [tag],
-                    }),
-                });
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                const data = await resp.json();
-                if (data.success) {
-                    this.currentLightboxVideo.user_tags = data.user_tags;
-                    _recomputeVideoBadges(this.currentLightboxVideo);
-                    if (data.readonly_no_output) {
-                        this.showToast(window.t('showcase.lightbox.tag_nfo_not_written'), 'info');
-                    }
-                } else {
-                    throw new Error(data.error || 'API failed');
-                }
-            } catch (e) {
-                this.showToast(window.t('showcase.lightbox.tag_api_failed'), 'error');
-            }
-        },
-
         // --- Enrich 補資料 (T3) ---
         async enrichVideo(video) {
             if (this._enriching) return;

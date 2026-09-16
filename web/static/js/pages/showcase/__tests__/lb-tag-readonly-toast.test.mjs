@@ -39,7 +39,7 @@ export async function resolve(specifier, context, nextResolve) {
 `;
 register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.url);
 
-const { stateLightbox } = await import('../state-lightbox.js');
+const { stateLightboxTags: stateLightbox } = await import('../state-lightbox-tags.js');
 
 const PATH = 'file:////tmp/openaver-ro-cdp-t4-test/T4-STUB.mp4';
 const TOAST_KEY = 'showcase.lightbox.tag_nfo_not_written';
