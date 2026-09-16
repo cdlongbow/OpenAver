@@ -32,6 +32,7 @@ register(new URL('../../search/__tests__/alias-loader.mjs', import.meta.url), im
 
 const { stateLightbox } = await import('../state-lightbox.js');
 const { stateLightboxPicker } = await import('../state-lightbox-picker.js');
+const { stateLightboxMask } = await import('../state-lightbox-mask.js');
 const { stateActress } = await import('../state-actress.js');
 const { _setFilteredVideos, _setFilteredActresses } = await import('../state-base.js');
 
@@ -42,7 +43,7 @@ const VIDEOS = [
 const ACTRESSES = [{ name: 'A' }, { name: 'B' }];
 
 function makeComponent(overrides) {
-    return Object.assign({}, stateLightbox(), stateLightboxPicker(), stateActress(), {
+    return Object.assign({}, stateLightbox(), stateLightboxPicker(), stateLightboxMask(), stateActress(), {
         lightboxOpen: true,
         showFavoriteActresses: false,
         currentLightboxActress: null,
