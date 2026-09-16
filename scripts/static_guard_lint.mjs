@@ -92,8 +92,8 @@ const RULES = [
     pattern: ["searchFromMetadata(video.series, 'series')", "searchFromMetadata(currentLightboxVideo?.series, 'series')"],
     note: '[TestShowcaseMetadataGuard] series searchFromMetadata call (grid panel or lightbox, OR)',
   },
-  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'bi bi-eye toggle-info-eye-icon" :class="{ \'toggle-info-eye-icon-hidden\': infoVisible }"', count: 2, note: '[TASK-148b-T4] 影片牆／女優牆眼睛按鈕各一個 bi-eye <i>（CD-148b-8 交叉淡入）' },
-  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'bi bi-eye-slash toggle-info-eye-icon" :class="{ \'toggle-info-eye-icon-hidden\': !infoVisible }"', count: 2, note: '[TASK-148b-T4] 影片牆／女優牆眼睛按鈕各一個 bi-eye-slash <i>（CD-148b-8 交叉淡入）' },
+  { file: 'web/templates/showcase.html', kind: 'structure-count', pattern: 'bi bi-eye toggle-info-eye-icon" :class="{ \'toggle-info-eye-icon-hidden\': infoVisible }"', count: 2, note: '[TASK-148b-T4] 影片牆／女優牆眼睛按鈕各一個 bi-eye <i>（CD-148b-8 交叉淡入）。用 structure-count 不用 required-string：後者的 count 是下限（:5518 的 n < rule.count），第三顆同款圖示會被放行——同檔 :355 的 100b-T1/P2-1 記過同一個坑' },
+  { file: 'web/templates/showcase.html', kind: 'structure-count', pattern: 'bi bi-eye-slash toggle-info-eye-icon" :class="{ \'toggle-info-eye-icon-hidden\': !infoVisible }"', count: 2, note: '[TASK-148b-T4] 影片牆／女優牆眼睛按鈕各一個 bi-eye-slash <i>（CD-148b-8 交叉淡入）。exact 計數理由同上一條' },
 
   // ---- [lint-guard 101d-T2] 焦點適用邊界就地註解不得被順手刪（spec-101 §7.3-2 要求就地註解；plan-101d §5.2/§5.3）----
   // 錨四處「刻意不同/刻意不接」設計意圖註解的唯一關鍵句。刪任一句即紅（mutation 自驗）。
