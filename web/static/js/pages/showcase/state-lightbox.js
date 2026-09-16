@@ -1,9 +1,11 @@
 /**
- * state-lightbox.js — Showcase ESM（54b-T1b）
+ * state-lightbox.js — Showcase ESM（54b-T1b，149a 拆檔後為核心）
  *
- * Lightbox / Sample Gallery / Picker / User Tags / Keyboard 邏輯。
- * state-lightbox.js 超 700 行例外：picker 是動畫密集型邏輯，與 lightbox 業務不可分割。
- * 詳見 plan-54b.md CD-54B-1。
+ * 燈箱核心：開／關（影片＋女優）、上一/下一片導航、封面比例／blur-up、
+ * 鍵盤／滾輪／觸控手勢、metadata 搜尋連結。
+ * 焦點裁切遮罩、女優換圖挑選器、燈箱自訂標籤、樣本劇照廊已拆成獨立分片
+ * （state-lightbox-mask.js / state-lightbox-picker.js / state-lightbox-tags.js /
+ * state-lightbox-samples.js），見 plan-149a.md CD-149a-1。
  *
  * 從 state-base.js import 共用大陣列（F1：移出 Alpine reactive scope）。
  */

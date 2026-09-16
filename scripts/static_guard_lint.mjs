@@ -73,6 +73,17 @@ const argv = process.argv.slice(2);
 const rootArg = argv.find((a) => !a.startsWith('--'));
 const ROOT = rootArg ? resolve(rootArg) : REPO_ROOT;
 
+// 149a：state-lightbox.js 拆成 5 片（核心 ＋ mask/picker/tags/samples）。
+// whole-file forbidden 的「退役字面不得復活」禁令，拆前掃的是整份 2697 行，
+// 拆後必須同時覆蓋五個檔才維持等價涵蓋——只守核心＋mask 會讓字面搬進 picker/tags/samples 靜默通過。
+const LIGHTBOX_SLICE_FILES = [
+  'web/static/js/pages/showcase/state-lightbox.js',
+  'web/static/js/pages/showcase/state-lightbox-mask.js',
+  'web/static/js/pages/showcase/state-lightbox-picker.js',
+  'web/static/js/pages/showcase/state-lightbox-samples.js',
+  'web/static/js/pages/showcase/state-lightbox-tags.js',
+];
+
 // ---- RULES ----
 // note 一律標明來源 class（供 T6 對照表直接引用）。
 const RULES = [
@@ -158,8 +169,10 @@ const RULES = [
     scope: { anchor: /async\s+confirmMask\s*\(\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] confirmMask await 後 session re-check（不誤存已切走的別片；99a-T3 承接原 closeMask 語意）',
   },
-  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: '_maskVideoPath', note: '[TestMaskToggleGuard] 舊 path-based guard 變數不得復活（已由 _maskSession 取代，Codex P2）' },
-  { file: 'web/static/js/pages/showcase/state-lightbox-mask.js', kind: 'forbidden-string', pattern: '_maskVideoPath', note: '[TestMaskToggleGuard] 舊 path-based guard 變數不得復活（已由 _maskSession 取代，Codex P2）' },
+  ...LIGHTBOX_SLICE_FILES.map((f) => ({
+    file: f, kind: 'forbidden-string', pattern: '_maskVideoPath',
+    note: '[TestMaskToggleGuard] 舊 path-based guard 變數不得復活（已由 _maskSession 取代，Codex P2）（149a：五個分片同禁）',
+  })),
   // 98b-T6：亮窗幾何改 reactive data（imperative $nextTick 算），禁量測-in-binding 復活。
   // 100b-T1（CD-4/CD-5）：遮罩 DOM 抽出 web/templates/_macros/focal_mask.html partial，
   // 下列 6 條（原標 #2/#3/#4/#5/#6/#9）file: 改指向 partial——守護對象（遮罩互動綁定 /
@@ -178,8 +191,10 @@ const RULES = [
   // 像影片廣告 beacon，會被 ad/privacy 過濾清單（uBlock/AdGuard/Brave/Pi-hole）在瀏覽器端 net::ERR_FAILED
   // 秒殺，✓ 存檔請求根本到不了 server（2026-07-18 owner 實測 + CDP/Network 診斷）。正名 video/save-focal。
   // 註：`video/detect-focal`/`video/save-focal` 皆不含子字串 `video/focal`（video/ 後非恰為 focal）→ 不誤觸。
-  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: '/api/showcase/video/focal', note: '[lint-guard 101d-T3] 影片對焦存檔端點禁復名 video/focal（撞廣告過濾清單），用 video/save-focal' },
-  { file: 'web/static/js/pages/showcase/state-lightbox-mask.js', kind: 'forbidden-string', pattern: '/api/showcase/video/focal', note: '[lint-guard 101d-T3] 影片對焦存檔端點禁復名 video/focal（撞廣告過濾清單），用 video/save-focal' },
+  ...LIGHTBOX_SLICE_FILES.map((f) => ({
+    file: f, kind: 'forbidden-string', pattern: '/api/showcase/video/focal',
+    note: '[lint-guard 101d-T3] 影片對焦存檔端點禁復名 video/focal（撞廣告過濾清單），用 video/save-focal（149a：五個分片同禁）',
+  })),
   {
     file: 'web/static/js/pages/showcase/state-lightbox-mask.js', kind: 'required-string', pattern: 'getComputedStyle',
     scope: { anchor: /_computeMaskWinStyle\s*\(\s*\)\s*\{/, braceBalanced: true },
@@ -246,33 +261,21 @@ const RULES = [
     pattern: '_maskDragStart(evt) {',
     note: '[TestMaskToggleGuard] 99a-T4：拖曳起手函式定義存在',
   },
-  {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: 'toggleMaskMode',
-    note: '[TestMaskToggleGuard] 99a-T4：退役 toggle handler 不得復活（thorough-cleanup lock）',
-  },
-  {
-    file: 'web/static/js/pages/showcase/state-lightbox-mask.js', kind: 'forbidden-string', pattern: 'toggleMaskMode',
-    note: '[TestMaskToggleGuard] 99a-T4：退役 toggle handler 不得復活（thorough-cleanup lock）',
-  },
+  ...LIGHTBOX_SLICE_FILES.map((f) => ({
+    file: f, kind: 'forbidden-string', pattern: 'toggleMaskMode',
+    note: '[TestMaskToggleGuard] 99a-T4：退役 toggle handler 不得復活（thorough-cleanup lock）（149a：五個分片同禁）',
+  })),
 
   // §2 退役識別字 forbidden-string（3，比照既有 _maskVideoPath 先例 :136）：_maskMode/closeMask
   // 全域零殘留，本 task 補鎖住這個「巧合乾淨」的狀態，防未來以舊名復活。
-  {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: '_maskMode',
-    note: '[TestMaskToggleGuard] 99a-T4：退役 default⇄auto toggle 狀態不得復活（thorough-cleanup lock）',
-  },
-  {
-    file: 'web/static/js/pages/showcase/state-lightbox-mask.js', kind: 'forbidden-string', pattern: '_maskMode',
-    note: '[TestMaskToggleGuard] 99a-T4：退役 default⇄auto toggle 狀態不得復活（thorough-cleanup lock）',
-  },
-  {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: 'closeMask',
-    note: '[TestMaskToggleGuard] 99a-T4：退役「點窗外隱式存」函式不得以舊名復活（confirmMask/cancelMask 已取代）',
-  },
-  {
-    file: 'web/static/js/pages/showcase/state-lightbox-mask.js', kind: 'forbidden-string', pattern: 'closeMask',
-    note: '[TestMaskToggleGuard] 99a-T4：退役「點窗外隱式存」函式不得以舊名復活（confirmMask/cancelMask 已取代）',
-  },
+  ...LIGHTBOX_SLICE_FILES.map((f) => ({
+    file: f, kind: 'forbidden-string', pattern: '_maskMode',
+    note: '[TestMaskToggleGuard] 99a-T4：退役 default⇄auto toggle 狀態不得復活（thorough-cleanup lock）（149a：五個分片同禁）',
+  })),
+  ...LIGHTBOX_SLICE_FILES.map((f) => ({
+    file: f, kind: 'forbidden-string', pattern: 'closeMask',
+    note: '[TestMaskToggleGuard] 99a-T4：退役「點窗外隱式存」函式不得以舊名復活（confirmMask/cancelMask 已取代）（149a：五個分片同禁）',
+  })),
   {
     file: 'web/templates/_macros/focal_mask.html', kind: 'forbidden-string', pattern: 'closeMask',
     note: '[TestMaskToggleGuard] 99a-T4：overlay @click.self 不得指回舊 closeMask（現為 cancelMask）',
@@ -359,8 +362,10 @@ const RULES = [
 
   // ---- [TestMaskToggleGuard] 99a-T5：detect-first 重新設計（Bug 1 修法）+ 星空等待動畫 lifecycle ----
   // 舊 race 旗標退役（比照既有 _maskVideoPath/_maskMode/closeMask 先例 :136/193/197/201）。
-  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: '_maskUserAdjusted', note: '[TestMaskToggleGuard] 99a-T5：detect-first 重新設計後 race 在結構上不可能，舊自查補強旗標不得復活（thorough-cleanup lock）' },
-  { file: 'web/static/js/pages/showcase/state-lightbox-mask.js', kind: 'forbidden-string', pattern: '_maskUserAdjusted', note: '[TestMaskToggleGuard] 99a-T5：detect-first 重新設計後 race 在結構上不可能，舊自查補強旗標不得復活（thorough-cleanup lock）' },
+  ...LIGHTBOX_SLICE_FILES.map((f) => ({
+    file: f, kind: 'forbidden-string', pattern: '_maskUserAdjusted',
+    note: '[TestMaskToggleGuard] 99a-T5：detect-first 重新設計後 race 在結構上不可能，舊自查補強旗標不得復活（thorough-cleanup lock）（149a：五個分片同禁）',
+  })),
 
   // 新 gating 條件字面存在（.lb-mask-window + ✓ + ✗ 三處，count-based 確保三處都改到，防未來
   // 重構把其中一處漏改回舊的單旗標 x-show="_maskVisible"）。
@@ -676,16 +681,11 @@ const RULES = [
   // paginatedActresses[idx] 恆為同一物件參考（本 branch 稱其為「CD-10 同物件參考」）——
   // 已被 CDP 實測推翻三次，本 branch 已為它付出代價（錯的理由比沒有理由更危險）。
   // 全檔禁止再出現這句字面舊註解。
-  {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string',
+  ...LIGHTBOX_SLICE_FILES.map((f) => ({
+    file: f, kind: 'forbidden-string',
     pattern: 'CD-10 同物件參考',
-    note: '[TestMaskToggleGuard] 100b-T4：禁止復活已被 CDP 實測推翻的舊註解（currentLightboxActress 與 paginatedActresses[idx] 不保證同一物件，見 plan-100b.md CD-10 訂正框）',
-  },
-  {
-    file: 'web/static/js/pages/showcase/state-lightbox-mask.js', kind: 'forbidden-string',
-    pattern: 'CD-10 同物件參考',
-    note: '[TestMaskToggleGuard] 100b-T4：禁止復活已被 CDP 實測推翻的舊註解（currentLightboxActress 與 paginatedActresses[idx] 不保證同一物件，見 plan-100b.md CD-10 訂正框）',
-  },
+    note: '[TestMaskToggleGuard] 100b-T4：禁止復活已被 CDP 實測推翻的舊註解（currentLightboxActress 與 paginatedActresses[idx] 不保證同一物件，見 plan-100b.md CD-10 訂正框）（149a：五個分片同禁）',
+  })),
 
   // 裁決 4-b／G2：.picker-upload-btn 互斥鎖必須 !! 強制 boolean（fresh session 下
   // _pickerSelected 若為 undefined，裸讀會讓按鈕一開始就不可點，且靜態分析全過）。
@@ -832,14 +832,10 @@ const RULES = [
   // v3 已砍 compare token 機制（CD-9：無 409），_maskExpectedFp 是 v2 殘留識別字，全檔零出現
   // （已查）。防它以「還原相容性」之類理由復活——一旦復活即代表有人試圖繞過 CD-9 的三桶錯誤
   // 分流，重新做回 fingerprint-based CAS。
-  {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: '_maskExpectedFp',
-    note: '[TestMaskToggleGuard] 100b-T5：v2 殘留識別字 _maskExpectedFp 不得復活（v3 無 token，CD-9/§B-1b 明訂）',
-  },
-  {
-    file: 'web/static/js/pages/showcase/state-lightbox-mask.js', kind: 'forbidden-string', pattern: '_maskExpectedFp',
-    note: '[TestMaskToggleGuard] 100b-T5：v2 殘留識別字 _maskExpectedFp 不得復活（v3 無 token，CD-9/§B-1b 明訂）',
-  },
+  ...LIGHTBOX_SLICE_FILES.map((f) => ({
+    file: f, kind: 'forbidden-string', pattern: '_maskExpectedFp',
+    note: '[TestMaskToggleGuard] 100b-T5：v2 殘留識別字 _maskExpectedFp 不得復活（v3 無 token，CD-9/§B-1b 明訂）（149a：五個分片同禁）',
+  })),
 
   // spec §3.7-7「零偵測成本」：_uploadActressPhoto 已有同型規則（100b-T2b，:457-459）；
   // _onPickerSelect（換候選）是另一個不該觸發偵測的入口，同一責任、同一 scope 寫法，
@@ -861,16 +857,11 @@ const RULES = [
   },
 
   // ---- [TestMaskToggleGuard] 100c-T3a：CD-11 Y 軸/軸向判定/凍結模式不得復活 ----
-  {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string',
+  ...LIGHTBOX_SLICE_FILES.map((f) => ({
+    file: f, kind: 'forbidden-string',
     pattern: ['this._maskFocalY', 'this._maskAxis', 'this._maskFrozen', 'computeMaskAxis('],
-    note: '[TestMaskToggleGuard] 100c-T3a／CD-11：Y 軸/軸向判定/凍結模式不得復活（spec-100c §3.3 廢止）——鎖程式碼形式（this. 前綴/呼叫括號），散文註解仍可提及裸名',
-  },
-  {
-    file: 'web/static/js/pages/showcase/state-lightbox-mask.js', kind: 'forbidden-string',
-    pattern: ['this._maskFocalY', 'this._maskAxis', 'this._maskFrozen', 'computeMaskAxis('],
-    note: '[TestMaskToggleGuard] 100c-T3a／CD-11：Y 軸/軸向判定/凍結模式不得復活（spec-100c §3.3 廢止）——鎖程式碼形式（this. 前綴/呼叫括號），散文註解仍可提及裸名',
-  },
+    note: '[TestMaskToggleGuard] 100c-T3a／CD-11：Y 軸/軸向判定/凍結模式不得復活（spec-100c §3.3 廢止）——鎖程式碼形式（this. 前綴/呼叫括號），散文註解仍可提及裸名（149a：五個分片同禁）',
+  })),
   {
     file: 'web/static/js/shared/mask-geometry.js', kind: 'forbidden-string',
     pattern: ['translateY', 'computeMaskAxis'],
@@ -1605,9 +1596,9 @@ const RULES = [
     pattern: /^[ \t]*return[ \t]*mergeState\(/m,
     note: '[TestShowcaseESMGuard] test_main_js_calls_merge_state — 實際呼叫 mergeState(...)，非 Object.assign 等替代品（防 descriptor 丟失假綠，Codex P2）',
   },
-  ...['stateBase()', 'stateVideos()', 'stateActress()', 'stateLightbox()'].map((fn) => ({
+  ...['stateBase()', 'stateVideos()', 'stateActress()', 'stateLightbox()', 'stateLightboxMask()', 'stateLightboxPicker()', 'stateLightboxTags()', 'stateLightboxSamples()'].map((fn) => ({
     file: 'web/static/js/pages/showcase/main.js', kind: 'forbidden-string', pattern: `...${fn}`,
-    note: '[TestShowcaseESMGuard] test_main_js_no_plain_spread_merge — 4 factory 全禁',
+    note: '[TestShowcaseESMGuard] test_main_js_no_plain_spread_merge — 8 factory 全禁',
   })),
   ...['stateBase', 'stateVideos', 'stateActress', 'stateLightbox', 'stateLightboxMask', 'stateLightboxPicker', 'stateLightboxSamples', 'stateLightboxTags'].map((fn) => ({
     file: 'web/static/js/pages/showcase/main.js', kind: 'required-string', pattern: `${fn}.call(this)`,
@@ -1892,16 +1883,11 @@ const RULES = [
   // 規則 3：state-lightbox.js / state-base.js 禁 objectPosition...right（同一行）。
   // state-similar.js 在 pytest 是 CALLER_SCOPE_FILES 的一員但因白名單命中而 pytest.skip，
   // 不建列（與白名單語意一致，不對它重複套用此禁令）。
-  {
-    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string',
+  ...LIGHTBOX_SLICE_FILES.map((f) => ({
+    file: f, kind: 'forbidden-string',
     pattern: /objectPosition[^\n]*right/,
-    note: '[TestGhostFlyCropModeBoundary] test_caller_scope_no_object_position_right (state-lightbox.js) — 禁自算 objectPosition: right，須走 createCoverGhost(..., { cropMode })',
-  },
-  {
-    file: 'web/static/js/pages/showcase/state-lightbox-mask.js', kind: 'forbidden-string',
-    pattern: /objectPosition[^\n]*right/,
-    note: '[TestGhostFlyCropModeBoundary] test_caller_scope_no_object_position_right (state-lightbox.js) — 禁自算 objectPosition: right，須走 createCoverGhost(..., { cropMode })',
-  },
+    note: '[TestGhostFlyCropModeBoundary] test_caller_scope_no_object_position_right (state-lightbox.js) — 禁自算 objectPosition: right，須走 createCoverGhost(..., { cropMode })（149a：五個分片同禁）',
+  })),
   { file: 'web/static/js/pages/showcase/state-lightbox-mask.js', kind: 'required-string',
     pattern: /^import\s*\{[^}]*\bcomputeMaskSettleGeometry\b[^}]*\}\s*from\s*'@\/shared\/mask-geometry\.js'/m,
     note: '[TestShowcaseESMGuard] state-lightbox-mask.js 必須 import computeMaskSettleGeometry——'

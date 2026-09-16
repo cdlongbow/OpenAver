@@ -1,10 +1,10 @@
 /**
- * state-lightbox-mask.js — Showcase ESM（149a-T4a）
+ * state-lightbox-mask.js — Showcase ESM（149a-T4a／T4b）
  *
- * 焦點裁切遮罩：force-detect 幾何計算與星空等待/收斂動畫（GhostFly timeline）的
- * kill 生命週期。這是遮罩功能的「動畫＋幾何」半——session 生命週期與拖曳/✓/✗互動
- * 留在核心（state-lightbox.js），由 T4b 之後併入本檔。從 state-lightbox.js 拆出，
- * 逐字搬移，見 plan-149a.md CD-149a-1。
+ * 焦點裁切遮罩：session 生命週期（openMask/confirmMask/cancelMask/_resetMask）、
+ * 拖曳互動（_maskDragStart 及對應 pointermove/pointerup）、force-detect 幾何計算
+ * 與星空等待/收斂動畫（GhostFly timeline）的 kill 生命週期。從 state-lightbox.js
+ * 拆出，逐字搬移，見 plan-149a.md CD-149a-1。
  */
 
 import { computeMaskWinGeometry, computeMaskSettleGeometry } from '@/shared/mask-geometry.js';
