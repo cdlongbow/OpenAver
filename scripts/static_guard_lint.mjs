@@ -3394,6 +3394,12 @@ const RULES = [
     note: '[TestVideoPlaybackGuard] test_no_hardcoded_video_extensions_in_modules — scanner.py 不可硬編影片副檔名 set',
   },
   {
+    // TASK-150a-T1：get_video() 搬到 gallery_media.py 後的對等規則（scanner.py 原規則不動）。
+    file: 'web/routers/gallery_media.py', kind: 'forbidden-string',
+    pattern: /=\s*\{[^}]*'\.mp4'[^}:]*'\.avi'[^}:]*\}/s,
+    note: '[TestVideoPlaybackGuard] test_no_hardcoded_video_extensions_in_modules — gallery_media.py 不可硬編影片副檔名 set（須 import core.video_extensions SSOT）',
+  },
+  {
     file: 'windows/pywebview_api.py', kind: 'forbidden-string',
     pattern: /=\s*\{[^}]*'\.mp4'[^}:]*'\.avi'[^}:]*\}/s,
     note: '[TestVideoPlaybackGuard] test_no_hardcoded_video_extensions_in_modules — pywebview_api.py 不可硬編影片副檔名 set',

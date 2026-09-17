@@ -45,7 +45,7 @@ class TestScannerAPI:
                 "video_extensions": [".mp4"]
             }
         }
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: test_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", lambda: test_config)
         
         # 3. 請求
         path_arg = to_file_uri(str(video_file))
@@ -70,7 +70,7 @@ class TestScannerAPI:
                 "video_extensions": [".mp4"]
             }
         }
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: test_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", lambda: test_config)
         
         path_arg = to_file_uri(str(video_file))
         response = client.get(f"/api/gallery/video?path={quote(path_arg)}")
@@ -93,7 +93,7 @@ class TestScannerAPI:
                 "video_extensions": [".mp4"]
             }
         }
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: test_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", lambda: test_config)
         
         path_arg = to_file_uri(str(bad_file))
         response = client.get(f"/api/gallery/video?path={quote(path_arg)}")
@@ -113,14 +113,14 @@ class TestScannerAPI:
             },
             'scraper': {'video_extensions': ['.mp4']},
         }
-        monkeypatch.setattr('web.routers.scanner.load_config', lambda: test_config)
+        monkeypatch.setattr('web.routers.gallery_media.load_config', lambda: test_config)
 
         path_arg = to_file_uri(r'\\DiskStation\usbshare1\a.mp4')
 
         with patch('os.path.realpath', return_value=r'\\?\UNC\DiskStation\usbshare1\a.mp4'), \
              patch('os.path.exists', return_value=True), \
              patch('os.path.getsize', return_value=1024), \
-             patch('web.routers.scanner.FileResponse',
+             patch('web.routers.gallery_media.FileResponse',
                    return_value=__import__('starlette.responses', fromlist=['Response']).Response(status_code=200)):
             response = client.get(f'/api/gallery/video?path={quote(path_arg)}')
 
@@ -138,7 +138,7 @@ class TestScannerAPI:
             },
             'scraper': {'video_extensions': ['.mp4']},
         }
-        monkeypatch.setattr('web.routers.scanner.load_config', lambda: test_config)
+        monkeypatch.setattr('web.routers.gallery_media.load_config', lambda: test_config)
 
         path_arg = to_file_uri(r'\\AnotherNAS\evil\a.mp4')
 
@@ -170,7 +170,7 @@ class TestScannerAPI:
             },
             "scraper": {"video_extensions": [".mp4"]},
         }
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: test_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", lambda: test_config)
 
         path_arg = to_file_uri(str(video_file))
         response = client.get(f"/api/gallery/video?path={quote(path_arg)}")

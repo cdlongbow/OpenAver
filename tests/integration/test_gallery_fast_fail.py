@@ -71,7 +71,7 @@ def test_unreachable_writable_source_image_fast_fails_404(
     native = uri_to_fs_path(str(src))
 
     mocker.patch(
-        "web.routers.scanner.load_config",
+        "web.routers.gallery_media.load_config",
         return_value={
             "gallery": {
                 "directories": [
@@ -200,7 +200,7 @@ def test_unknown_status_not_blocked(client, tmp_path, mocker):
     native = uri_to_fs_path(str(src))
 
     mocker.patch(
-        "web.routers.scanner.load_config",
+        "web.routers.gallery_media.load_config",
         return_value={
             "gallery": {
                 "directories": [
@@ -235,7 +235,7 @@ def test_missing_snapshot_key_not_blocked(client, tmp_path, mocker):
     img = _jpeg(src / "poster.jpg")
 
     mocker.patch(
-        "web.routers.scanner.load_config",
+        "web.routers.gallery_media.load_config",
         return_value={
             "gallery": {
                 "directories": [
@@ -274,7 +274,7 @@ def test_path_mappings_still_fast_fails(
     native = uri_to_fs_path(str(nas))
 
     mocker.patch(
-        "web.routers.scanner.load_config",
+        "web.routers.gallery_media.load_config",
         return_value={
             "gallery": {
                 "directories": [
@@ -374,17 +374,19 @@ def test_dod8_healthy_path_short_circuits(mocker, snapshot):
 
 def test_image_fast_fail_precedes_realpath(client, tmp_path, mocker):
     """PR#178 R2 缺陷C：字面式早退必須排在任何 os.path.realpath() 之前——斷線來源上的
-    封面請求不能在到達 fast-fail 前就已經先付一次遠端 realpath()（_safe_realpath 與
+    封面請求不能在到達 fast-fail 前就已經先付一次遠端 realpath()（safe_realpath 與
     _dir_candidate_forms 都會呼叫它）。
 
-    patch 落在 `os.path.realpath`（而非 `web.routers.scanner._safe_realpath` 之類的
-    wrapper），因為 _safe_realpath 與 _dir_candidate_forms 都是對同一個 `os` module
+    patch 落在 `os.path.realpath`（而非 `web.routers.gallery_media.safe_realpath` 之類的
+    wrapper），因為 safe_realpath 與 _dir_candidate_forms 都是對同一個 `os` module
     物件做 `os.path.realpath(...)` 查找，兩條路徑會同時被涵蓋。
+
+    TASK-150a-T1：get_image() 搬到 gallery_media.py，_dir_forms_cache 隨之搬走。
     """
-    import web.routers.scanner as scanner_mod
+    import web.routers.gallery_media as gallery_media_mod
 
     # module-level TTL 快取，不清會讓上一支測試的白名單 dir forms 殘留 → 假綠
-    scanner_mod._dir_forms_cache.clear()
+    gallery_media_mod._dir_forms_cache.clear()
 
     src = tmp_path / "unreachable_src"
     src.mkdir()
@@ -392,7 +394,7 @@ def test_image_fast_fail_precedes_realpath(client, tmp_path, mocker):
     native = uri_to_fs_path(str(src))
 
     mocker.patch(
-        "web.routers.scanner.load_config",
+        "web.routers.gallery_media.load_config",
         return_value={
             "gallery": {
                 "directories": [
@@ -439,7 +441,7 @@ def test_dod8_healthy_snapshot_image_still_200_without_touching_sources(
     native = uri_to_fs_path(str(src))
 
     mocker.patch(
-        "web.routers.scanner.load_config",
+        "web.routers.gallery_media.load_config",
         return_value={
             "gallery": {
                 "directories": [

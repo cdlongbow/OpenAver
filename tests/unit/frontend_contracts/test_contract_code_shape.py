@@ -1016,15 +1016,30 @@ class TestExternalManagerSwitchModeGuard:
 # 字串存在性只是弱代理，non-AST 機械掃描無法驗證邏輯正確，留 pytest。
 class TestVideoApiSafetyStrings:
     """96e-T5 relocate（from TestVideoPlaybackGuard.test_video_api_files_contain
-    scanner.py 半邊）：web/routers/scanner.py 含 video proxy 安全守衛字串。"""
+    scanner.py 半邊）：video proxy 安全守衛字串。
+
+    TASK-150a-T1：get_video() 搬到 gallery_media.py 後，原本「讀一個檔案、跑一個
+    for-loop」的形狀不再成立——`def video_player(` 仍留在 scanner.py（T2 才搬），
+    `def get_video(`／`os.path.normpath`／`get_proxy_extensions` 隨 get_video 搬到
+    gallery_media.py；`is_path_under_dir` 兩邊都留（scanner.py 的 generate_avlist
+    pipeline 仍在用，gallery_media.py 的 get_image/get_video 也在用），維持原掃描
+    粒度與正負極性，不刪不放寬（plan-150a.md CD-150a-1 mutation 點表格 #1）。
+    """
 
     def test_scanner_py_safety_strings(self):
+        """video_player() 仍留在 scanner.py 的安全字串。"""
         content = (PROJECT_ROOT / "web" / "routers" / "scanner.py").read_text(encoding="utf-8")
+        for expected in ['def video_player(', 'is_path_under_dir']:
+            assert expected in content, f"scanner.py missing: {expected!r}"
+
+    def test_gallery_media_py_safety_strings(self):
+        """get_video() 隨 TASK-150a-T1 搬到 gallery_media.py 後的安全字串。"""
+        content = (PROJECT_ROOT / "web" / "routers" / "gallery_media.py").read_text(encoding="utf-8")
         for expected in [
-            'def get_video(', 'def video_player(', 'os.path.normpath',
+            'def get_video(', 'os.path.normpath',
             'get_proxy_extensions', 'is_path_under_dir',
         ]:
-            assert expected in content, f"scanner.py missing: {expected!r}"
+            assert expected in content, f"gallery_media.py missing: {expected!r}"
 
 
 class TestWishlistLightboxDispatchOrderGuard:

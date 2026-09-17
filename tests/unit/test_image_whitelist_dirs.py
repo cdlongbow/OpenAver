@@ -13,7 +13,7 @@ test_image_whitelist_dirs.py — `_image_whitelist_dirs` 純函式候選目錄�
 """
 
 from core.database import get_db_path
-from web.routers.scanner import _image_whitelist_dirs
+from web.routers.gallery_media import _image_whitelist_dirs
 
 
 def _config(directories, external_manager="off"):

@@ -247,10 +247,10 @@ class TestConvertedHandlersAreDef:
 
     # T1 — hot path
     def test_t1_get_image_is_def(self):
-        assert self._func_type("scanner.py", "get_image") is ast.FunctionDef
+        assert self._func_type("gallery_media.py", "get_image") is ast.FunctionDef
 
     def test_t1_get_video_is_def(self):
-        assert self._func_type("scanner.py", "get_video") is ast.FunctionDef
+        assert self._func_type("gallery_media.py", "get_video") is ast.FunctionDef
 
     # T2 — 純讀 DB 路由
     def test_t2_get_stats_is_def(self):
