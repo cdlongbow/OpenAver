@@ -1343,29 +1343,6 @@
         </div>
     </dialog>
 
-    <!-- 71-T11: 開啟封面縮圖快取 Confirm Modal（非破壞性 + 動態估算 body）-->
-    <dialog class="modal fluent-modal"
-            :class="{ 'modal-open': thumbCacheConfirmOpen }"
-            @click.self="cancelThumbCacheConfirm()"
-            @keydown.escape.window="thumbCacheConfirmOpen && cancelThumbCacheConfirm()">
-        <div class="modal-box fluent-modal-box">
-            <h3 class="fluent-modal-title">
-                <i class="bi bi-info-circle"></i>
-                {{ t('settings.thumbnail_cache.confirm_modal.title') }}
-            </h3>
-            <p class="fluent-modal-body"
-               x-text="window.t('settings.thumbnail_cache.confirm_modal.body').replace('{count}', videoCount).replace('{mb}', _thumbEstimateMb).replace('{min}', _thumbEstimateMin)"></p>
-            <div class="modal-action fluent-modal-actions">
-                <button type="button" class="btn btn-ghost" @click="cancelThumbCacheConfirm()">
-                    {{ t('settings.thumbnail_cache.confirm_modal.cancel') }}
-                </button>
-                <button type="button" class="btn btn-primary" @click="confirmThumbCacheEnable()">
-                    {{ t('settings.thumbnail_cache.confirm_modal.confirm') }}
-                </button>
-            </div>
-        </div>
-    </dialog>
-
     <!-- 71b-T2: 關閉封面縮圖快取 Confirm Modal（warning 語氣 + 釋放估算 body）-->
     <dialog class="modal fluent-modal"
             :class="{ 'modal-open': thumbCacheDisableConfirmOpen }"

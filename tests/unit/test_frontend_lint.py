@@ -2828,36 +2828,6 @@ class TestSettingsQuickToggleGuard:
         assert 'x-model="form.thumbnailCacheEnabled"' in tag, \
             "71-T11 違規：thumbnailCacheEnabled toggle 必須保留 x-model（@change 攔截不取代 x-model）"
 
-    def test_thumbnail_cache_confirm_modal_exists(self):
-        """71-T11：confirm fluent-modal 存在 + 綁 thumbCacheConfirmOpen + confirm/cancel handler"""
-        html = self._html()
-        idx = html.find('thumbCacheConfirmOpen')
-        assert idx != -1, \
-            "71-T11 違規：settings.html 缺少 thumbCacheConfirmOpen confirm modal binding"
-        # 抽 thumbCacheConfirmOpen 首次出現的鄰域（modal 區塊）
-        block = html[idx - 200: idx + 1200]
-        assert 'fluent-modal' in block, \
-            "71-T11 違規：thumbCacheConfirmOpen 必須綁在 fluent-modal 上"
-        assert 'confirmThumbCacheEnable()' in block, \
-            "71-T11 違規：confirm modal 缺少 confirmThumbCacheEnable() 確認 handler"
-        assert 'cancelThumbCacheConfirm()' in block, \
-            "71-T11 違規：confirm modal 缺少 cancelThumbCacheConfirm() 取消 handler"
-
-    def test_thumbnail_cache_confirm_modal_body_is_dynamic(self):
-        """71-T11：confirm modal body 用 x-text 動態替換 {count}/{mb}/{min}（非靜態 SSR）"""
-        html = self._html()
-        idx = html.find('thumbCacheConfirmOpen')
-        assert idx != -1, \
-            "71-T11 違規：settings.html 缺少 thumbCacheConfirmOpen confirm modal binding"
-        block = html[idx - 200: idx + 1200]
-        assert 'confirm_modal.body' in block, \
-            "71-T11 違規：confirm modal body 必須引用 settings.thumbnail_cache.confirm_modal.body"
-        for token in ("'{count}'", "'{mb}'", "'{min}'"):
-            assert token in block, \
-                f"71-T11 違規：confirm modal body 必須 .replace({token}, ...) 動態填值"
-        assert '_thumbEstimateMin' in block, \
-            "71-T11 違規：confirm modal body 必須用 _thumbEstimateMin（HDD 時間估算）"
-
     # ===== 71b-T2: disable confirm modal contract =====
     STATE_CONFIG_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "settings" / "state-config.js"
     STATE_UI_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "settings" / "state-ui.js"

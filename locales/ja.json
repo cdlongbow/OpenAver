@@ -359,15 +359,9 @@
     "thumbnail_cache": {
       "label": "カバーサムネイルキャッシュ",
       "hint": "カバーの小さなサムネイルをローカルに生成し、カバーウォールと Lightbox の読み込みを大幅に高速化します（特に動画が NAS / HDD にある場合）。1 枚あたり約 30KB。",
-      "confirm_modal": {
-        "title": "カバーサムネイルキャッシュを有効にする",
-        "body": "現在の {count} 本の動画にカバーサムネイルを生成します。約 {mb}MB のスペースが必要です。従来のハードディスク（HDD）では約 {min} 分かかりますがバックグラウンドで実行されるため、通常どおり使い続けられます。完了時に通知します。（確認後、現在の設定がすぐに保存されます）",
-        "cancel": "キャンセル",
-        "confirm": "保存して開始"
-      },
       "disable_modal": {
         "title": "カバーサムネイルキャッシュを無効にする",
-        "body": "生成済みのカバーサムネイルを削除します（約 {mb}MB を解放）。動画データや元のカバー画像には影響しません。再有効化するにはバックグラウンドで再生成が必要です。",
+        "body": "生成済みのカバーサムネイルを削除します（約 {mb}MB を解放）。動画データや元のカバー画像には影響しません。",
         "cancel": "キャンセル",
         "confirm": "無効にしてクリア"
       }
@@ -1571,8 +1565,6 @@
     "batch_enrich_done_with_errors": "一括補完（一部失敗）",
     "batch_enrich_failed": "一括補完中断",
     "jl_cf_timeout": "JavLibrary CF認証タイムアウト",
-    "thumb_prewarm_start": "カバーサムネイルキャッシュの生成を開始しました",
-    "thumb_prewarm_done": "カバーサムネイルキャッシュが完了しました",
     "update_available": "OpenAver の新しいバージョンがあります",
     "auto_organize_summary": "定期整理",
     "auto_organize_aborted": "定期整理を中止しました",

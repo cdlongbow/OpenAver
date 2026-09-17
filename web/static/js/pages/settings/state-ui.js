@@ -17,9 +17,6 @@ export function stateUI() {
         resetConfigModalOpen: false,
         _resetConfigLoading: false,
 
-        // 71-T11: 開啟封面縮圖快取 Confirm Modal State
-        thumbCacheConfirmOpen: false,
-
         // 71b-T2: 關閉封面縮圖快取 Confirm Modal State
         thumbCacheDisableConfirmOpen: false,
 

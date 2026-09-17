@@ -359,15 +359,9 @@
     "thumbnail_cache": {
       "label": "Cover Thumbnail Cache",
       "hint": "Generates small local thumbnail caches for covers, greatly speeding up the cover wall and lightbox (especially when videos are on NAS / HDD). About 30 KB each.",
-      "confirm_modal": {
-        "title": "Enable Cover Thumbnail Cache",
-        "body": "Thumbnails will be generated for the current {count} videos, taking approximately {mb} MB of space. On a traditional hard drive (HDD) this will take about {min} minutes in the background; much faster on SSD. You can continue using the app normally while it runs — you'll be notified when done. (Saving current settings will start immediately upon confirmation.)",
-        "cancel": "Cancel",
-        "confirm": "Save & Start Building"
-      },
       "disable_modal": {
         "title": "Disable Cover Thumbnail Cache",
-        "body": "The generated cover thumbnails will be deleted (freeing approximately {mb} MB); no video data or original covers will be affected. Re-enabling will require regeneration in the background.",
+        "body": "The generated cover thumbnails will be deleted (freeing approximately {mb} MB); no video data or original covers will be affected.",
         "cancel": "Cancel",
         "confirm": "Disable & Clear"
       }
@@ -1571,8 +1565,6 @@
     "batch_enrich_done_with_errors": "Batch enrich (some failures)",
     "batch_enrich_failed": "Batch enrich interrupted",
     "jl_cf_timeout": "JavLibrary CF challenge timed out",
-    "thumb_prewarm_start": "Starting cover thumbnail cache generation",
-    "thumb_prewarm_done": "Cover thumbnail cache complete",
     "update_available": "A new version of OpenAver is available",
     "auto_organize_summary": "Scheduled Organize",
     "auto_organize_aborted": "Scheduled organize aborted",
