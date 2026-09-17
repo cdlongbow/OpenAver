@@ -589,7 +589,7 @@
                             </button>
                             <!-- 74b US4: tap=enrichVideo（自動補缺）；長壓已移除（進階重刮收斂到燈箱齒輪 ⚙）。 -->
                             <button class="btn-glass-circle enrich-btn"
-                                    x-show="!video.has_cover || !video.has_nfo"
+                                    x-show="shouldShowEnrichButton(video)"
                                     :disabled="_enriching"
                                     @click.stop="enrichVideo(video)"
                                     title="{{ t('showcase.action.enrich') }}">
@@ -1089,6 +1089,7 @@
                                  alt=""
                                  aria-hidden="true">
                             <div class="lb-full-hint" x-show="_lbFullErrorPill && !_lbFullLoaded && !_maskVisible" x-cloak>{{ t('showcase.lightbox.cover_unavailable') }}</div>
+                            <div class="lb-full-hint" x-show="!currentLightboxVideo?.has_cover && !currentLightboxVideo?.number && !_maskVisible" x-cloak>{{ t('showcase.lightbox.cover_escape_hint') }}</div>
                             <template x-if="!!currentLightboxVideo?.path && !_maskVisible && (currentLightboxVideo._badges || []).length">
                                 <div class="cover-badges">
                                     <template x-for="b in (currentLightboxVideo._badges || [])" :key="b.id">
@@ -1133,7 +1134,7 @@
                                 </button>
                                 <!-- 74b US4: tap=enrichVideo（自動補缺）；長壓已移除（進階重刮走齒輪 ⚙）。 -->
                                 <button class="lb-action-btn"
-                                        x-show="(!currentLightboxVideo?.has_cover || !currentLightboxVideo?.has_nfo) && !_maskVisible"
+                                        x-show="shouldShowEnrichButton(currentLightboxVideo) && !_maskVisible"
                                         :disabled="_enriching"
                                         @click.stop="enrichVideo(currentLightboxVideo)"
                                         data-tooltip="{{ t('showcase.action.enrich') }}"
@@ -1214,7 +1215,7 @@
                             <div class="lb-actor" x-show="currentLightboxVideo?.actresses">
                                 <template x-for="(actress, idx) in (currentLightboxVideo?.actresses || '').split(',').filter(a => a.trim())" :key="actress">
                                     <span>
-                                        <a href="#" class="lb-link" @click.prevent="searchFromMetadata(actress.trim(), 'actress')" x-text="actress.trim()"></a><span x-show="idx < (currentLightboxVideo?.actresses || '').split(',').filter(a => a.trim()).length - 1">, </span>
+                                        <a href="#" class="lb-link" @click.prevent="searchFromMetadata(actress.trim(), 'actress')" x-text="actress.trim()"></a><span class="lb-actor-age" x-show="_lbActorAges[actress.trim()] != null" x-text="' (' + _lbActorAges[actress.trim()] + t('showcase.unit.age_suffix') + ')'"></span><span x-show="idx < (currentLightboxVideo?.actresses || '').split(',').filter(a => a.trim()).length - 1">, </span>
                                     </span>
                                 </template>
                             </div>

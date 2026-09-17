@@ -2362,16 +2362,16 @@ class TestShowcaseSampleGalleryGuard:
     """
 
     SHOWCASE_HTML = PROJECT_ROOT / 'web' / 'templates' / 'showcase.html'
-    CORE_JS = PROJECT_ROOT / 'web' / 'static' / 'js' / 'pages' / 'showcase' / 'state-lightbox.js'
+    SAMPLES_JS = PROJECT_ROOT / 'web' / 'static' / 'js' / 'pages' / 'showcase' / 'state-lightbox-samples.js'
     ANIMATIONS_JS = PROJECT_ROOT / 'web' / 'static' / 'js' / 'pages' / 'showcase' / 'animations.js'
 
     def test_showcase_sample_gallery_js_contains(self):
         """T7 守衛 2/3/7: core.js state props + methods；animations.js playSampleGallerySwitch 完整實作"""
-        core = self.CORE_JS.read_text(encoding='utf-8')
+        samples = self.SAMPLES_JS.read_text(encoding='utf-8')
         for expected in ('sampleGalleryOpen', 'sampleGalleryImages', 'sampleGalleryIndex',
                          'openSampleGallery', 'closeSampleGallery', 'prevSampleGallery',
                          'nextSampleGallery', 'jumpSampleGallery'):
-            assert expected in core, f"showcase/state-lightbox.js missing: {expected!r}"
+            assert expected in samples, f"showcase/state-lightbox-samples.js missing: {expected!r}"
         anim = self.ANIMATIONS_JS.read_text(encoding='utf-8')
         for expected in ['playSampleGallerySwitch', 'killTweensOf', 'gsap-animating', 'clearProps']:
             assert expected in anim, f"showcase/animations.js missing: {expected!r}"

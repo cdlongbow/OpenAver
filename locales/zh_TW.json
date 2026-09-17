@@ -1042,7 +1042,8 @@
       "minutes_abbr": "分",
       "videos_count": " 部",
       "films": "部作品",
-      "actresses": "位女優"
+      "actresses": "位女優",
+      "age_suffix": "y"
     },
     "status": {
       "total_prefix": "共",
@@ -1111,6 +1112,7 @@
       "mask_save_failed": "裁切設定儲存失敗，請稍後再試",
       "mask_cover_changed": "封面已變更，請重新開啟裁切工具再試一次",
       "cover_unavailable": "這部片的封面現在讀不到——可能是檔案位置目前無法存取，或者封面檔本身不見了",
+      "cover_escape_hint": "找不到封面。可以把圖片用影片檔名命名放在影片旁邊（例：`ABC-123.mp4` → `ABC-123.jpg`），回掃描頁按一次「產生網頁」就會收進來；或按 ⚙ 手動指定番號重新刮。",
       "mask_confirm": "確認裁切位置",
       "mask_cancel": "取消裁切調整"
     },

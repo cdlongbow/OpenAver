@@ -10,6 +10,73 @@ import { normalizePillValue } from '@/shared/pill-filter.js';
 import { actressAgeValue, actressHeightValue, actressCupValue, actressMetricRange } from '@/shared/actress-metric.js';
 import { buildActressPillPredicate } from '@/shared/actress-pill-filter.js';
 
+// TASK-149b-T3 CD-149b-2：in-flight promise 放模組層級 `let`，不放 Alpine 物件上——放到 `this`
+// 上會進 reactive scope，被撞名守衛與 map:state 掃到，且反應式範圍裡放 Promise 本身是壞味道。
+// settle 後（成功或失敗皆同）在 loadActresses() 的 finally 清回 null，讓下一次呼叫真的重試。
+let _actressesLoadPromise = null;
+
+/**
+ * TASK-149b-T3：loadActresses() 三個失敗出口（!resp.ok／!data.success／catch）共用的清理邏輯，
+ * 抽成 helper 避免三份複製貼上漂移（directive §8 已標記為實作細節自由，非卡片契約）。
+ * 明確呼叫 _setActressesLoaded(false)，並清空 self._lbActorAges（149b-CD-3：不得殘留上一次
+ * 成功算出的舊年齡——伺服器偶發回錯時，燈箱不能顯示 stale 的女優歲數）。
+ */
+function _clearActressesOnLoadFailure(self) {
+    _actresses.splice(0, _actresses.length);
+    _filteredActresses.splice(0, _filteredActresses.length);
+    self.actressCount = 0;
+    self.filteredActressCount = 0;
+    self._lbActorAges = {};
+    _setActressesLoaded(false);
+}
+
+/**
+ * TASK-149b-T3：loadActresses() 實際 fetch + 套用的實作本體，抽出成獨立函式讓
+ * loadActresses() 本身只負責 in-flight dedup（CD-149b-2）。用一般 function（非 arrow）
+ * 讓 `this` 可綁定成呼叫端的 Alpine 實例——loadActresses() 用 `.call(this)` 呼叫本函式，
+ * 讓函式體內對第 6 個刷新點的呼叫字面與卡片 mutation/守衛 pattern 逐字一致
+ * （149b-CD-3 第 5 條 structure-count 守衛比對的是那個確切字面，不是 `self.` 開頭）。
+ */
+async function _fetchActressesAndApply() {
+    this.actressLoading = true;
+    try {
+        var resp = await fetch('/api/actresses');
+        if (!resp.ok) {
+            _clearActressesOnLoadFailure(this);
+            return;
+        }
+        var data = await resp.json();
+        if (!data.success) {
+            _clearActressesOnLoadFailure(this);
+            return;
+        }
+        var acts = data.actresses || [];
+        _setActresses(acts);
+        // 45: alias map（冪等，init 可能已載入）
+        await _loadAliasMap();
+        this.applyActressFilterAndSort();
+        // CD-149b-2②：_setActressesLoaded(true) 從 finally 移到成功路徑。
+        _setActressesLoaded(true);
+        // CD-149b-3/6 第 6 個刷新點：`?.` 而非裸呼叫——至少 8 個既有測試檔單獨用 stateActress()
+        // 組 harness，不合併 stateLightbox()，裸呼叫會讓那些測試踩到 TypeError。
+        this._refreshLbActorAges?.();
+        // 卡片進場動畫
+        var self = this;
+        var gen = ++self._animGeneration;
+        self.$nextTick(function () { requestAnimationFrame(function () {
+            if (self._animGeneration !== gen) return;
+            if (!self.showFavoriteActresses) return;  // CD-C4：playEntry 只在女優模式播，影片模式的觸發是誤傷
+            var grid = self._getActiveGrid();
+            window.ShowcaseAnimations?.playEntry?.(grid);
+        }); });
+    } catch (e) {
+        console.error('[Showcase] Failed to fetch actresses:', e);
+        _clearActressesOnLoadFailure(this);
+    } finally {
+        this.actressLoading = false;
+    }
+}
+
 /** height 顯示單位（CD-116b-11 模組常數，不進 i18n） */
 var CM_UNIT = 'cm';
 
@@ -262,49 +329,15 @@ export function stateActress() {
             }
         },
 
+        // TASK-149b-T3 CD-149b-2①：module-level in-flight promise dedup——連續同步呼叫
+        // loadActresses() 只發生一次 fetch，兩個呼叫方都拿到同一份結果；settle 後（成功或失敗
+        // 皆同）finally 清回 null，讓下一次呼叫真的重試（不會卡在已 settle 的舊 promise）。
         async loadActresses() {
-            this.actressLoading = true;
-            try {
-                var resp = await fetch('/api/actresses');
-                if (!resp.ok) {
-                    _actresses.splice(0, _actresses.length);
-                    _filteredActresses.splice(0, _filteredActresses.length);
-                    this.actressCount = 0;
-                    this.filteredActressCount = 0;
-                    return;
-                }
-                var data = await resp.json();
-                if (!data.success) {
-                    _actresses.splice(0, _actresses.length);
-                    _filteredActresses.splice(0, _filteredActresses.length);
-                    this.actressCount = 0;
-                    this.filteredActressCount = 0;
-                    return;
-                }
-                var acts = data.actresses || [];
-                _setActresses(acts);
-                // 45: alias map（冪等，init 可能已載入）
-                await _loadAliasMap();
-                this.applyActressFilterAndSort();
-                // 卡片進場動畫
-                var gen = ++this._animGeneration;
-                var self = this;
-                this.$nextTick(function () { requestAnimationFrame(function () {
-                    if (self._animGeneration !== gen) return;
-                    if (!self.showFavoriteActresses) return;  // CD-C4：playEntry 只在女優模式播，影片模式的觸發是誤傷
-                    var grid = self._getActiveGrid();
-                    window.ShowcaseAnimations?.playEntry?.(grid);
-                }); });
-            } catch (e) {
-                console.error('[Showcase] Failed to fetch actresses:', e);
-                _actresses.splice(0, _actresses.length);
-                _filteredActresses.splice(0, _filteredActresses.length);
-                this.actressCount = 0;
-                this.filteredActressCount = 0;
-            } finally {
-                this.actressLoading = false;
-                _setActressesLoaded(true);
+            if (_actressesLoadPromise) {
+                return await _actressesLoadPromise;
             }
+            _actressesLoadPromise = _fetchActressesAndApply.call(this);
+            try { return await _actressesLoadPromise; } finally { _actressesLoadPromise = null; }
         },
 
         applyActressFilterAndSort() {

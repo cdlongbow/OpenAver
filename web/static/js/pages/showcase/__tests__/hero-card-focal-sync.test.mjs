@@ -58,6 +58,8 @@ export async function resolve(specifier, context, nextResolve) {
 register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.url);
 
 const { stateLightbox } = await import('../state-lightbox.js');
+const { stateLightboxPicker } = await import('../state-lightbox-picker.js');
+const { stateLightboxMask } = await import('../state-lightbox-mask.js');
 
 const SAVED_FOCAL = '0.2500,0.5000';
 
@@ -85,7 +87,7 @@ function makeActressConfirmComponent(overrides = {}) {
     const matched = Object.assign({}, wallActress);
     const lightboxActress = Object.assign({}, matched, { aliases: ['みれい'] });
 
-    const c = Object.assign({}, stateLightbox(), {
+    const c = Object.assign({}, stateLightbox(), stateLightboxPicker(), stateLightboxMask(), {
         _maskFocalX: 0.25,
         _maskKind: 'actress',
         _maskSession: 1,

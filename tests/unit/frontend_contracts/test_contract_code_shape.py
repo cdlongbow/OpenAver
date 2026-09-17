@@ -659,13 +659,26 @@ class TestShowcaseReactiveScopeGuard:
     CORE_JS = PROJECT_ROOT / "web/static/js/pages/showcase/state-base.js"
     SHOWCASE_HTML = PROJECT_ROOT / "web/templates/showcase.html"
 
+    # 149a：state-lightbox.js 拆成 5 片後，燈箱家族的 return {...} 散在 5 個檔。
+    # F1 守衛的斷言是「大陣列不得進 Alpine reactive scope」，掃描範圍少一個檔
+    # 就等於那個檔可以自由宣告 videos:／filteredVideos: 而不會被擋（實測：注入
+    # 拆前檔 2 failed，注入四個新分片全綠）。⇒ 清單必須涵蓋全部 8 個模組。
+    F1_SCOPE_MODULES = (
+        "state-base.js",
+        "state-videos.js",
+        "state-actress.js",
+        "state-lightbox.js",
+        "state-lightbox-mask.js",
+        "state-lightbox-picker.js",
+        "state-lightbox-samples.js",
+        "state-lightbox-tags.js",
+    )
+
     def _read_js(self):
-        """合併讀取全部 4 個 ESM 模組覆蓋 F1 守衛範圍。"""
-        return (
-            (PROJECT_ROOT / "web/static/js/pages/showcase/state-base.js").read_text(encoding='utf-8') + "\n" +
-            (PROJECT_ROOT / "web/static/js/pages/showcase/state-videos.js").read_text(encoding='utf-8') + "\n" +
-            (PROJECT_ROOT / "web/static/js/pages/showcase/state-actress.js").read_text(encoding='utf-8') + "\n" +
-            (PROJECT_ROOT / "web/static/js/pages/showcase/state-lightbox.js").read_text(encoding='utf-8')
+        """合併讀取全部 8 個 showcase state ESM 模組覆蓋 F1 守衛範圍。"""
+        base = PROJECT_ROOT / "web/static/js/pages/showcase"
+        return "\n".join(
+            (base / name).read_text(encoding='utf-8') for name in self.F1_SCOPE_MODULES
         )
 
     def _get_return_block(self):

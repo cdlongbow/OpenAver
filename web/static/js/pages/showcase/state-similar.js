@@ -464,6 +464,7 @@ export function stateSimilar() {
             this.similarExitVideo = _videos[drilledVIdx];
             this.currentLightboxVideo = this.similarExitVideo;
             this._refreshLbFullBlurUp();
+            this._refreshLbActorAges();
           } else if (this._similarLastDrilledItem) {
             // _videos 也 miss（孤兒列 / demo）→ standalone snapshot：用 _similarLastDrilledItem（v2 修法；
             // v1 用 similarResults.find 常找不到 — similarResults 在 onComplete 已替換為 clickedItem 的鄰居，
@@ -488,6 +489,7 @@ export function stateSimilar() {
             // 71c-P2: slip-through 繞過 _setLightboxIndex，需手動重走 blur-up reset + same-URL complete-check
             // （assignment 先、helper 後，讓 $nextTick 在 Alpine patch DOM 後才讀 lightboxCoverFull.complete）
             this._refreshLbFullBlurUp();
+            this._refreshLbActorAges();
           }
           // 三者皆 miss（理論上不發生）→ 靜默，顯示進場前舊影片（同 no-op 行為）
         }
@@ -1718,6 +1720,7 @@ export function stateSimilar() {
       this._videoChipsExpanded = false;
       this.addingLbTag = false;
       this._refreshLbFullBlurUp();
+      this._refreshLbActorAges();
     },
 
     /**

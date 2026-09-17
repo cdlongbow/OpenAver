@@ -11,6 +11,7 @@ SHOWCASE_HTML = Path(__file__).parent.parent.parent.parent / "web" / "templates"
 SHOWCASE_VIDEOS_JS   = Path(__file__).parent.parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-videos.js"
 SHOWCASE_ACTRESS_JS  = Path(__file__).parent.parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-actress.js"
 SHOWCASE_LIGHTBOX_JS = Path(__file__).parent.parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-lightbox.js"
+SHOWCASE_LIGHTBOX_PICKER_JS = Path(__file__).parent.parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-lightbox-picker.js"
 SHOWCASE_ANIMATIONS_JS = (
     Path(__file__).parent.parent.parent.parent
     / "web" / "static" / "js" / "pages" / "showcase" / "animations.js"
@@ -315,13 +316,17 @@ class TestModeToggleFadeOutGuard:
 
 
 class TestPickerIntegrationGuard:
-    """49b-T4cd: 守衛 Actress Photo Picker 在 Showcase Lightbox 的 UI + Alpine + SSE 整合（method folded）"""
+    """49b-T4cd: 守衛 Actress Photo Picker 在 Showcase Lightbox 的 UI + Alpine + SSE 整合（method folded）
+
+    149a-T3 拆檔後 picker 狀態/方法已搬到 state-lightbox-picker.js，本 class 的 _core_js()
+    跟著 repoint（149a-T5 修：T3 引入的回歸，見 T5-AUDIT.md §8）。
+    """
 
     def _html(self):
         return SHOWCASE_HTML.read_text(encoding="utf-8")
 
     def _core_js(self):
-        return SHOWCASE_LIGHTBOX_JS.read_text(encoding="utf-8")
+        return SHOWCASE_LIGHTBOX_PICKER_JS.read_text(encoding="utf-8")
 
     def _css(self):
         return read_showcase_css_full(
