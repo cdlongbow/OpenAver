@@ -85,8 +85,8 @@ class TestGetThumbHit:
         _make_webp(thumbnail_cache.thumb_file_for(uri))
 
         gen_spy = mocker.patch("web.routers.scanner.thumbnail_cache.generate")
-        repo_spy = mocker.patch("web.routers.scanner.VideoRepository")
-        db_spy = mocker.patch("web.routers.scanner.get_db_path")
+        repo_spy = mocker.patch("web.routers.gallery_media.VideoRepository")
+        db_spy = mocker.patch("web.routers.gallery_media.get_db_path")
 
         resp = client.get("/api/gallery/thumb", params={"path": uri})
 
@@ -113,10 +113,15 @@ class TestGetThumbHit:
 
 
 class TestGetThumbMiss:
-    def test_miss_generates_webp(self, client, thumb_dir, thumb_enabled, temp_db, tmp_path):
+    def test_miss_generates_webp(self, client, thumb_dir, thumb_enabled, temp_db, tmp_path, mocker):
         """邊界4：miss + DB 有 video + cover 真小圖 → 200 image/webp，thumb 檔被建立。"""
         from core.database import Video
-        _, repo = temp_db
+        db_path, repo = temp_db
+        mocker.patch(
+            "web.routers.gallery_media.load_config",
+            return_value={"thumbnail_cache_enabled": True},
+        )
+        mocker.patch("web.routers.gallery_media.get_db_path", return_value=db_path)
         cover = _make_small_jpg(tmp_path / "cover.jpg")
         uri = to_file_uri("/movies/v1.mp4")
         repo.upsert_batch([
@@ -132,25 +137,28 @@ class TestGetThumbMiss:
         assert resp.headers["content-type"] == "image/webp"
         assert tf.exists()
 
-    def test_no_cover_returns_404(self, client, thumb_dir, temp_db):
+    def test_no_cover_returns_404(self, client, thumb_dir, temp_db, mocker):
         """邊界5a：DB 有 video 但 cover_path 空 → 404。"""
         from core.database import Video
-        _, repo = temp_db
+        db_path, repo = temp_db
+        mocker.patch("web.routers.gallery_media.get_db_path", return_value=db_path)
         uri = to_file_uri("/movies/nocover.mp4")
         repo.upsert_batch([Video(path=uri, mtime=100.0)])
 
         resp = client.get("/api/gallery/thumb", params={"path": uri})
         assert resp.status_code == 404
 
-    def test_no_video_returns_404(self, client, thumb_dir, temp_db):
+    def test_no_video_returns_404(self, client, thumb_dir, temp_db, mocker):
         """邊界5b：DB 無該 video → 404。"""
+        db_path, _ = temp_db
+        mocker.patch("web.routers.gallery_media.get_db_path", return_value=db_path)
         uri = to_file_uri("/movies/ghost.mp4")
         resp = client.get("/api/gallery/thumb", params={"path": uri})
         assert resp.status_code == 404
 
     def test_db_not_exists_returns_404(self, client, thumb_dir, mocker):
         """miss 但 DB 不存在 → 404（不 500）。"""
-        mocker.patch("web.routers.scanner.get_db_path",
+        mocker.patch("web.routers.gallery_media.get_db_path",
                      return_value=Path("/nonexistent/openaver.db"))
         uri = to_file_uri("/movies/v1.mp4")
         resp = client.get("/api/gallery/thumb", params={"path": uri})
@@ -159,7 +167,8 @@ class TestGetThumbMiss:
     def test_generate_fail_fallbacks_to_original(self, client, thumb_dir, temp_db, tmp_path, mocker):
         """邊界6：generate 失敗 → fallback 原圖（200，非 image/webp、非 404、非破圖）。"""
         from core.database import Video
-        _, repo = temp_db
+        db_path, repo = temp_db
+        mocker.patch("web.routers.gallery_media.get_db_path", return_value=db_path)
         cover = _make_small_jpg(tmp_path / "cover.jpg")
         uri = to_file_uri("/movies/v1.mp4")
         repo.upsert_batch([
@@ -181,7 +190,8 @@ class TestGetThumbMiss:
         而非 FileResponse(cover_fs) 在 send 時拋 → 500。讓前端破圖三態接手（D6）。
         """
         from core.database import Video
-        _, repo = temp_db
+        db_path, repo = temp_db
+        mocker.patch("web.routers.gallery_media.get_db_path", return_value=db_path)
         # 建一個真檔讓 is_known_cover_path 通過後再刪，模擬 cover 消失
         cover = _make_small_jpg(tmp_path / "cover.jpg")
         uri = to_file_uri("/movies/v1.mp4")
@@ -209,7 +219,12 @@ class TestGetThumbMissServeConcurrentUnlinkRace:
     def test_miss_serve_oserror_does_not_500(self, client, thumb_dir, thumb_enabled, temp_db, tmp_path, mocker):
         """miss→generate True，但 miss-serve 拋 FileNotFoundError → 降級 fallback 原圖 200（非 500）。"""
         from core.database import Video
-        _, repo = temp_db
+        db_path, repo = temp_db
+        mocker.patch(
+            "web.routers.gallery_media.load_config",
+            return_value={"thumbnail_cache_enabled": True},
+        )
+        mocker.patch("web.routers.gallery_media.get_db_path", return_value=db_path)
         cover = _make_small_jpg(tmp_path / "cover.jpg")
         uri = to_file_uri("/movies/v1.mp4")
         repo.upsert_batch([
@@ -218,7 +233,7 @@ class TestGetThumbMissServeConcurrentUnlinkRace:
         # generate 回 True（但不真寫 thumb），miss-serve _serve_thumb_file 拋 FileNotFoundError
         mocker.patch("web.routers.scanner.thumbnail_cache.generate", return_value=True)
 
-        real_serve = __import__("web.routers.scanner", fromlist=["_serve_thumb_file"])._serve_thumb_file
+        real_serve = __import__("web.routers.gallery_media", fromlist=["_serve_thumb_file"])._serve_thumb_file
         state = {"raised": False}
 
         def racing_serve(tf, request):
@@ -227,7 +242,7 @@ class TestGetThumbMissServeConcurrentUnlinkRace:
                 raise FileNotFoundError("raced unlink before serve")
             return real_serve(tf, request)
 
-        mocker.patch("web.routers.scanner._serve_thumb_file", side_effect=racing_serve)
+        mocker.patch("web.routers.gallery_media._serve_thumb_file", side_effect=racing_serve)
 
         resp = client.get("/api/gallery/thumb", params={"path": uri})
 
@@ -248,7 +263,12 @@ class TestGetThumbFreshNoneAfterGenerate:
 
     def test_fresh_none_invalidates_and_404(self, client, thumb_dir, thumb_enabled, temp_db, tmp_path, mocker):
         from core.database import Video
-        _, repo = temp_db
+        db_path, repo = temp_db
+        mocker.patch(
+            "web.routers.gallery_media.load_config",
+            return_value={"thumbnail_cache_enabled": True},
+        )
+        mocker.patch("web.routers.gallery_media.get_db_path", return_value=db_path)
         cover = _make_small_jpg(tmp_path / "cover.jpg")
         uri = to_file_uri("/movies/v1.mp4")
         repo.upsert_batch([
@@ -294,7 +314,12 @@ class TestGetThumbStaleCoverAfterGenerate:
         self, client, thumb_dir, thumb_enabled, temp_db, tmp_path, mocker
     ):
         from core.database import Video
-        _, repo = temp_db
+        db_path, repo = temp_db
+        mocker.patch(
+            "web.routers.gallery_media.load_config",
+            return_value={"thumbnail_cache_enabled": True},
+        )
+        mocker.patch("web.routers.gallery_media.get_db_path", return_value=db_path)
         cover_a = _make_small_jpg(tmp_path / "cover_a.jpg", size=(800, 600))
         cover_b = _make_small_jpg(tmp_path / "cover_b.jpg", size=(640, 480))
         uri = to_file_uri("/movies/v1.mp4")
@@ -400,7 +425,12 @@ class TestThumbHitConcurrentUnlinkRace:
     def test_stat_filenotfound_does_not_500(self, client, thumb_dir, thumb_enabled, temp_db, tmp_path, mocker):
         """hit 後 stat 拋 FileNotFoundError：DB 有 video+cover → 降級重生 200（非 500）。"""
         from core.database import Video
-        _, repo = temp_db
+        db_path, repo = temp_db
+        mocker.patch(
+            "web.routers.gallery_media.load_config",
+            return_value={"thumbnail_cache_enabled": True},
+        )
+        mocker.patch("web.routers.gallery_media.get_db_path", return_value=db_path)
         cover = _make_small_jpg(tmp_path / "cover.jpg")
         uri = to_file_uri("/movies/v1.mp4")
         # 放真 thumb 讓 tf.exists() 為 True（hit 判定通過）
@@ -438,6 +468,8 @@ class TestThumbHitConcurrentUnlinkRace:
         self, client, thumb_dir, temp_db, mocker
     ):
         """hit 後 stat 拋 FileNotFoundError、DB 無 video → 404（非 500）。"""
+        db_path, _ = temp_db
+        mocker.patch("web.routers.gallery_media.get_db_path", return_value=db_path)
         uri = to_file_uri("/movies/ghost.mp4")
         _make_webp(thumbnail_cache.thumb_file_for(uri))  # 有檔 → hit
 
@@ -776,14 +808,15 @@ class TestGetThumbDoubleDecodeP2A:
     修法：移除 get_thumb 內的 path = unquote(path)，信任 FastAPI 已 decode。
     """
 
-    def test_miss_with_literal_percent_in_path(self, client, thumb_dir, temp_db, tmp_path):
+    def test_miss_with_literal_percent_in_path(self, client, thumb_dir, temp_db, tmp_path, mocker):
         """P2-A RED → GREEN：path 含字面 %，FastAPI 已 decode，handler 不應再 unquote。
         TestClient 走真 FastAPI decode pipeline（quote → ASGI → FastAPI decode → handler）。
         修前 double-decode → key 失配 → 404（RED）。修後 200（GREEN）。
         """
         from core.database import Video
 
-        _, repo = temp_db
+        db_path, repo = temp_db
+        mocker.patch("web.routers.gallery_media.get_db_path", return_value=db_path)
         # path 含字面 %（不是 URL encode 序列，而是檔名本身含 % 的字串）
         v_path = to_file_uri("/nas/Test%20File.mp4")  # 字面 % 在 URI 中
         cover = _make_small_jpg(tmp_path / "cover_percent.jpg")
@@ -819,7 +852,8 @@ class TestGetThumbMissDisabledGateP2B:
         """
         from core.database import Video
 
-        _, repo = temp_db
+        db_path, repo = temp_db
+        mocker.patch("web.routers.gallery_media.get_db_path", return_value=db_path)
         cover = _make_small_jpg(tmp_path / "cover_disabled.jpg")
         uri = to_file_uri("/movies/disabled_test.mp4")
         repo.upsert_batch([
@@ -828,7 +862,7 @@ class TestGetThumbMissDisabledGateP2B:
 
         # 快取關閉
         mocker.patch(
-            "web.routers.scanner.load_config",
+            "web.routers.gallery_media.load_config",
             return_value={"thumbnail_cache_enabled": False},
         )
         gen_spy = mocker.patch("web.routers.scanner.thumbnail_cache.generate")
@@ -867,7 +901,8 @@ class TestUriToLocalFsPathReverseMappingThumb:
         import core.path_utils as path_utils
         from core.database import Video
 
-        _, repo = temp_db
+        db_path, repo = temp_db
+        mocker.patch("web.routers.gallery_media.get_db_path", return_value=db_path)
         monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
 
         nas_dir = tmp_path / "nas"
@@ -876,7 +911,7 @@ class TestUriToLocalFsPathReverseMappingThumb:
         mappings = {str(nas_dir): "//NAS/share"}
 
         mocker.patch(
-            "web.routers.scanner.load_config",
+            "web.routers.gallery_media.load_config",
             return_value={
                 "thumbnail_cache_enabled": True,
                 "gallery": {"path_mappings": mappings},
@@ -913,7 +948,8 @@ class TestUriToLocalFsPathReverseMappingThumb:
         import core.path_utils as path_utils
         from core.database import Video
 
-        _, repo = temp_db
+        db_path, repo = temp_db
+        mocker.patch("web.routers.gallery_media.get_db_path", return_value=db_path)
         monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
 
         nas_dir = tmp_path / "nas"
@@ -923,7 +959,7 @@ class TestUriToLocalFsPathReverseMappingThumb:
         mappings = {str(nas_dir): "//NAS/share"}
 
         mocker.patch(
-            "web.routers.scanner.load_config",
+            "web.routers.gallery_media.load_config",
             return_value={
                 "thumbnail_cache_enabled": True,
                 "gallery": {"path_mappings": mappings},
@@ -949,7 +985,7 @@ class TestUriToLocalFsPathReverseMappingThumb:
             return v
 
         mocker.patch.object(repo, "get_by_path", side_effect=fake_get_by_path)
-        mocker.patch("web.routers.scanner.VideoRepository", return_value=repo)
+        mocker.patch("web.routers.gallery_media.VideoRepository", return_value=repo)
         invalidate_spy = mocker.patch("web.routers.scanner.thumbnail_cache.invalidate")
 
         resp = client.get("/api/gallery/thumb", params={"path": uri})

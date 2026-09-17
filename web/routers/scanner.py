@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Generator, List, Optional
 
 from fastapi import APIRouter, Query, Request
-from fastapi.responses import StreamingResponse, HTMLResponse, Response, FileResponse, JSONResponse
+from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
 from starlette.background import BackgroundTask
 
 from core.gallery_scanner import VideoScanner, fast_scan_directory, VideoInfo, _run_sample_images_cleanup_pass  # noqa: PLC2701 — scanner 的 rescan 端點需要在特定時機主動觸發 gallery_scanner 內部的樣本圖清理 pass（該 pass 平常只在 scanner 自身流程內被呼叫），避免把整段清理邏輯複製一份到 router 層
@@ -1131,141 +1131,6 @@ def view_list():
 _prewarm_lock = threading.Lock()
 _prewarming = False
 
-# fallback 原圖用副檔名 → mime（thumb 端點不抄 get_image 的安全鏈，用 DB 背書）
-_THUMB_FALLBACK_MIME = {
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.png': 'image/png',
-    '.gif': 'image/gif',
-    '.webp': 'image/webp',
-    '.bmp': 'image/bmp',
-}
-
-
-def _serve_thumb_file(tf: Path, request: Request) -> Response:
-    """serve 一個已存在的 thumb webp：強 ETag + no-cache + If-None-Match → 304。
-
-    本地一次 stat（零 DB / 零 NAS）。CD-4 明令不可用 max-age。
-
-    Codex P2(b)：200 路徑改 read_bytes() 在 handler try 內把整檔讀進記憶體，**不再用
-    FileResponse**。FileResponse 會把 stat/open 延到 ASGI send 階段（在 handler try 外），
-    若此時 thumb 被並發 invalidate(unlink)，Starlette 內部 stat 失敗會冒成 500。
-    在此同步讀 bytes → send 階段已不碰磁碟；read 期間的並發 unlink 會在這裡拋 OSError，
-    由呼叫端 get_thumb 既有的 try/except OSError 接住降級 miss 重生（與 M1 一致）。
-    """
-    etag = f'"{tf.stat().st_mtime_ns}"'
-    if request.headers.get("If-None-Match") == etag:
-        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
-    data = tf.read_bytes()  # 並發 unlink → OSError 上拋給 get_thumb 降級重生
-    return Response(
-        content=data,
-        media_type="image/webp",
-        headers={"Cache-Control": "no-cache", "ETag": etag},
-    )
-
-
-@router.get("/thumb")
-def get_thumb(request: Request, path: str = Query(..., description="影片路徑 URI")):
-    """縮圖 serve（feature/71 T3）：hit 零 DB/NAS、miss 生成、失敗 fallback 原圖。
-
-    sync def → 跑在 Starlette threadpool worker thread。
-
-    P2-A（TASK-71c）：不呼叫 unquote(path)。FastAPI 已自動 decode query string 一次；
-    再 unquote 造成 double-decode → 檔名含字面 % 的影片 key 失配 → 404。
-    get_image / get_video 的 unquote 是 pre-existing 不同建構鏈，留作 follow-up。
-    """
-    tf = thumbnail_cache.thumb_file_for(path)
-
-    # hit：零 DB、零 NAS（只一次本地 stat）— 驗收 4.A 核心
-    # feature/71 T8 M1（+ Codex P2(b)）：hit 判定（tf.exists()）通過後、_serve_thumb_file
-    # 內讀 thumb（stat / read_bytes）期間，thumb 可能被並發 invalidate(unlink) → 拋 OSError
-    # （含 FileNotFoundError）。整個 serve 在此 try 內把 bytes 讀完（send 時不再碰磁碟），
-    # 拋出時降級 fall through 到下方 miss 重生路徑（DB 有 cover → 重生；無 → 404），不 500。
-    if tf.exists():
-        try:
-            return _serve_thumb_file(tf, request)
-        except OSError as e:
-            logger.warning("thumb hit 後並發失效，降級重生: path=%s err=%s", path, e)
-
-    # miss：DB 背書取 cover
-    db_path = get_db_path()
-    if not db_path.exists():
-        return Response(status_code=404, content="無快取")
-
-    repo = VideoRepository(db_path)
-    video = repo.get_by_path(path)
-    if video is None or not video.cover_path:
-        return Response(status_code=404, content="無封面")
-
-    # 路徑轉換一步（不疊 normalize_path）；DB 背書取代 realpath 安全鏈
-    # TASK-91-T2b #9：is_known_cover_path 內部用「不帶 path_mappings 的 to_file_uri」
-    # 跟 DB 存的 mapped-namespace URI 字面比對（round-trip 契約），若改餵反解後的本機
-    # 路徑進去，to_file_uri 落 fallback 分支產生四斜線怪字串、永遠比對不到 → 誤判
-    # 「封面不在快取記錄中」（本 task 發現的卡片未涵蓋 gap，見 report）。
-    # 修法：DB 背書比對維持用裸 uri_to_fs_path（與改動前行為等價，零回歸）；
-    # 反解只用在「即將真的碰磁碟」的 cover_fs（generate/fallback FileResponse/os.path.isfile）。
-    gallery_config = load_config().get('gallery', {})
-    path_mappings = gallery_config.get('path_mappings', {})
-    cover_fs_for_db = uri_to_fs_path(video.cover_path)  # uri-no-reverse: DB round-trip comparison-only (is_known_cover_path), real disk path uses uri_to_local_fs_path below  # db-ns-ok: _for_db, sourced from existing DB URI (uri_to_fs_path, not reverse-mapped), round-trips to mapped namespace
-    if not repo.is_known_cover_path(cover_fs_for_db):
-        return Response(status_code=404, content="封面不在快取記錄中")
-    cover_fs = uri_to_local_fs_path(video.cover_path, path_mappings)
-
-    from core.source_reachability import is_path_on_unreachable_source
-    cover_uri = to_file_uri(cover_fs, path_mappings)
-    if is_path_on_unreachable_source(cover_uri, gallery_config):
-        return Response(status_code=404, content="來源目前無法存取")
-
-    # P2-B（TASK-71c）：miss 路徑 gate disabled，不重生 WebP。
-    # 用戶關閉快取 + clear 後，stale 分頁的 miss 請求不應重建剛清的目錄。
-    # disabled → fall through 到下方 fallback 原圖（D6 不破圖）。
-    # load_config() 無 lru_cache，每次讀 disk（與 _prewarm_worker:945 同 pattern）。
-    # hit 路徑（tf.exists() → _serve_thumb_file）不 gate：已存在直接 serve 是 harmless。
-    if not load_config().get("thumbnail_cache_enabled", False):
-        # disabled：跳過 generate，fall through 到 fallback 原圖
-        pass
-    elif thumbnail_cache.generate(cover_fs, tf):
-        # Codex P1（round-1 + round-2）：generate 用的 cover_fs 是 miss 進來時的 DB 值。
-        # 生成期間若 enrich/rescrape 並發換封面，剛寫的 thumb 可能是 stale。re-read DB 一次
-        # （miss 路徑本就碰本地 DB，不違反 D4「serve hit 不碰 NAS」）：
-        #   - fresh is None / cover_path 空（並發刪除）→ stale，invalidate 丟棄剛寫 thumb + 404，
-        #     不 serve 剛生成的 stale thumb（round-2 P1 補強）。
-        #   - cover_path 換了不同 path → invalidate 丟棄 + 把 cover_fs 重指當前封面，
-        #     fall through 到下方 P2(a)-guarded fallback serve 當前封面（下次 view lazy 重生）。
-        #   - 同路徑原地覆寫競態 → 已由 core per-thumb 鎖（修法 A）關閉，web 不再 stat 比對，
-        #     直接 safe-serve（OSError → fall through 重指/fallback，round-2 P2）。
-        fresh = repo.get_by_path(path)
-        if not fresh or not fresh.cover_path:
-            thumbnail_cache.invalidate(path)
-            return Response(status_code=404, content="影片已不存在")
-        # TASK-91-T2b #10：同函式同一個 path_mappings（上方 #9 已算好）
-        fresh_fs = uri_to_local_fs_path(fresh.cover_path, path_mappings)
-        if fresh_fs != cover_fs:
-            thumbnail_cache.invalidate(path)
-            cover_fs = fresh_fs
-            # fall through 到 fallback：serve 當前封面（cover_fs 已重指）
-        else:
-            # 同路徑：原地覆寫競態已由 core per-thumb 鎖關閉 → 集中 safe-serve。
-            # generate 後 thumb 被並發刪（DB row 刪除 + invalidate）→ OSError，fall through
-            # 到 fallback（round-2 P2：此 serve 過去在 try 外，會冒成 500）。
-            try:
-                return _serve_thumb_file(tf, request)
-            except OSError as e:
-                logger.warning("thumb miss→generate 後並發失效，降級 fallback: path=%s err=%s", path, e)
-
-    # generate 失敗 → fallback 原圖（D6 不破圖；非 404）
-    # Codex P2(a)：fallback 前先確認 cover 原圖存在；不存在（並發刪/搬移）→ 回 404，
-    # 讓前端破圖三態接手，而非讓 FileResponse 在 send 階段 stat 失敗冒成 500。
-    if not os.path.isfile(cover_fs):
-        return Response(status_code=404, content="封面檔不存在")
-    ext = os.path.splitext(cover_fs)[1].lower()
-    media_type = _THUMB_FALLBACK_MIME.get(ext, "application/octet-stream")
-    return FileResponse(
-        cover_fs,
-        media_type=media_type,
-        headers={"Cache-Control": "no-cache"},
-    )
-
 
 def _prewarm_worker():
     """背景預熱 daemon thread：對 DB 全部影片補缺縮圖。
@@ -1369,18 +1234,6 @@ def thumb_prewarm():
 
     threading.Thread(target=_prewarm_worker, daemon=True).start()
     return {"status": "started"}
-
-
-@router.post("/thumb/clear")
-def thumb_clear():
-    """DB-safe 清空封面縮圖快取（feature/71b T2）。
-
-    僅 rmtree output/thumb/（CD-71b-3）——**絕不碰 videos DB**。前端在
-    「關閉縮圖快取 toggle 且存檔成功」後才 fire-and-forget POST 此端點（先存才清）。
-    冪等：clear_all() 對缺目錄 no-op。sync def → Starlette threadpool。
-    """
-    thumbnail_cache.clear_all()
-    return {"cleared": True}
 
 
 @router.get("/actress-stats")

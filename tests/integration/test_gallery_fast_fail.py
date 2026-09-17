@@ -115,13 +115,14 @@ def test_readonly_source_cover_not_blocked(
     video_uri = to_file_uri(str(src / "MOVIE-001.mp4"))
     cover_uri = to_file_uri(str(cover))
 
-    _, repo = temp_db
+    db_path, repo = temp_db
+    mocker.patch("web.routers.gallery_media.get_db_path", return_value=db_path)
     repo.upsert_batch(
         [Video(path=video_uri, mtime=100.0, cover_path=cover_uri)]
     )
 
     mocker.patch(
-        "web.routers.scanner.load_config",
+        "web.routers.gallery_media.load_config",
         return_value={
             "thumbnail_cache_enabled": False,
             "gallery": {
