@@ -314,8 +314,8 @@ def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Genera
                 # （比照 :353/:96 既定作法，見 TASK-89b-T5 現況分析 #5）。
                 reachable = os.path.exists(uri_to_fs_path(src.path))  # uri-no-reverse: native config path (src.path), no DB-mapped namespace
                 # PR #93 五審四次 P2 (option C)：注入 fresh strm 映射 getter。config 是 :303
-                # 一次載入的凍結快照；load_config() 無 lru_cache、每次讀 disk（同 :1275 prewarm
-                # pattern），故 getter 拿到的是「當下磁碟上的」映射 → 斷線尾巴那片也用當前映射。
+                # 一次載入的凍結快照；load_config() 無 lru_cache、每次讀 disk，故 getter 拿到
+                # 的是「當下磁碟上的」映射 → 斷線尾巴那片也用當前映射。
                 yield from _run_readonly_source(
                     src, config, repo, proxy_url, readonly_summary, reachable,
                     should_abort=should_abort,
@@ -1124,116 +1124,6 @@ def view_list():
             content="<html><body><h1>錯誤</h1><p>列表載入失敗，請重試。</p></body></html>",
             status_code=500
         )
-
-
-# ── feature/71 T3: 縮圖快取端點 ────────────────────────────────────────────────
-# prewarm 單例鎖（背景 daemon thread，fire-and-forget；sync def → 無 event loop）
-_prewarm_lock = threading.Lock()
-_prewarming = False
-
-
-def _prewarm_worker():
-    """背景預熱 daemon thread：對 DB 全部影片補缺縮圖。
-
-    自包 try/except（不冒泡 → 沒包就靜默死 + flag 卡死）+ finally 清 flag。
-    絕不碰 event loop（sync thread 無 running loop）。notification center 跨 thread 安全。
-    """
-    global _prewarming
-    try:
-        _emit_notif("info", "notif.thumb_prewarm_start", task_type="thumb_prewarm")
-        db_path = get_db_path()
-        if not db_path.exists():
-            return
-        repo = VideoRepository(db_path)
-        n = 0
-        stopped_disabled = False  # Codex P3：被 disable 中止時跳過 done 通知
-        # TASK-91-T2b #11：迴圈外讀一次即可（mapping 配置在 prewarm 進行中變更是
-        # pathological case，非本 task 範圍，比照 thumbnail_cache_enabled 之外的容忍度）
-        path_mappings = load_config().get('gallery', {}).get('path_mappings', {})
-        # round-3 P2：snapshot（iter_missing 吃 repo.get_all()）取得後，用戶可能按
-        # 「清除所有影片快取」→ clear_cache 跑 repo.clear_all()（清空 DB）+
-        # thumbnail_cache.clear_all()（rmtree thumb 目錄）；單筆刪除 / prune 亦同理。
-        # clear_all 只是 rmtree，不 fence 後續生成，故 worker 從 stale snapshot 繼續
-        # generate 會在已清空目錄重建 orphan webp（DB 空 thumb 在）。
-        # surgical fence：逐項用「同一個 repo」re-check get_by_path（reuse，不每筆新建），
-        # 只跳過/清理被移除的那部，存活影片照常完成預熱（不像 generation token 會 abort
-        # 整個 prewarm，也不需 clear_cache cancel/join 背景 thread 卡住同步請求）。
-        # round-4 P2：snapshot 的 cover 只用來「列出待補項」，不用於 generate。enrich /
-        # rescrape 可能在 snapshot 後換封面（video 還在但 cover_path 變），故一律從
-        # fresh DB 讀「當前」cover 生成（與 get_thumb miss 路徑對稱：fresh re-read +
-        # path-change 偵測）；before/after re-check 收 video 消失 / 無 cover / cover 換掉
-        # 三種期間變動（≤1 generate-期間-變動窗口，與 get_thumb 同級）。
-        for video_uri, _stale_cover_fs in thumbnail_cache.iter_missing(repo.get_all(), path_mappings):
-            # Codex P2 race：用戶可在 prewarm 進行中關閉快取（toggle false → save →
-            # clear）。worker 每筆重讀 load_config()（無 lru_cache，每次讀 disk）拿前端
-            # 剛 PUT 的 false → 立即 break，不再 generate 後續 item（否則在 clear 已
-            # rmtree 的目錄重建 orphan webp）。before-check：關閉即停。
-            if not load_config().get("thumbnail_cache_enabled", False):
-                stopped_disabled = True
-                break
-            # before-check：影片已從 DB 移除（clear / prune / 單筆刪除）或無 cover → 不生成孤兒
-            fresh = repo.get_by_path(video_uri)
-            if fresh is None or not fresh.cover_path:
-                continue
-            cover_fs = uri_to_local_fs_path(fresh.cover_path, path_mappings)  # 用當前 cover，忽略 stale snapshot
-            ok = thumbnail_cache.generate(cover_fs, thumbnail_cache.thumb_file_for(video_uri))
-            # after-check：generate 期間影片被清 / cover 又換 / 快取被關閉（≤1 窗口）→
-            # 丟棄剛寫的 stale thumb。disabled_after：再讀一次 load_config，若快取已關閉
-            # → invalidate 剛生成的 webp + break（關掉 generate-in-flight 的最後殘留窗口）。
-            # 正確性依賴前端契約「先 save(false) 才 clear」（config.json 寫 false 早於
-            # clear fetch）；若未來改成「先清才存」會破此假設。
-            disabled_after = not load_config().get("thumbnail_cache_enabled", False)
-            after = repo.get_by_path(video_uri)
-            # disabled-after 拉到 ok 判斷外（Codex P3-2）：generate 期間被關閉時，無論這筆
-            # 成功或失敗都要停止且不送 done 通知。成功才需 invalidate（清剛寫的殘留 thumb）；
-            # 失敗無 thumb 可清。否則「最後一筆 generate 失敗 + 同時關閉」會漏 break → 誤送 done。
-            if disabled_after:
-                if ok:
-                    thumbnail_cache.invalidate(video_uri)
-                stopped_disabled = True
-                break
-            # 既有孤兒處理：generate 成功但影片消失 / 無 cover / cover 換掉 → 丟棄 stale thumb
-            # 注意：此比對必須跟上面 #11 的反解入口一致，否則 WSL+mapping 環境下
-            # cover_fs（已反解為本機路徑）永遠不等於裸 uri_to_fs_path 結果，
-            # 造成每筆都被誤判「cover 換了」而錯誤 invalidate（TASK-91-T2b 修正，
-            # 卡片未列此行，但與 #11 同一變數耦合，不修會製造新 regression）
-            if ok and (after is None or not after.cover_path
-                       or uri_to_local_fs_path(after.cover_path, path_mappings) != cover_fs):
-                thumbnail_cache.invalidate(video_uri)
-                continue
-            if ok:
-                n += 1
-        # Codex P3：若被 disable 中止（用戶「關閉並清除」），跳過「完成 N 張」通知——那些
-        # 縮圖已被 clear 刪除 / invalidate，顯示完成數會誤導且與「關閉並清除」UX 打架。
-        # disable 流程自身有確認 modal + saveConfig 回饋，無需 done 通知。
-        if not stopped_disabled:
-            _emit_notif("success", "notif.thumb_prewarm_done",
-                        message=f"{n} 張", task_type="thumb_prewarm")
-    except Exception:
-        logger.exception("縮圖預熱背景任務失敗")
-    finally:
-        with _prewarm_lock:
-            _prewarming = False
-
-
-@router.post("/thumb/prewarm")
-def thumb_prewarm():
-    """背景預熱縮圖快取（feature/71 T3）：後端自 gate + 單例鎖，fire-and-forget。
-
-    sync def。前端兩觸發點（toggle-on / scan-done）可無條件 POST，由此 gate。
-    """
-    global _prewarming
-    config = load_config()
-    if not config.get("thumbnail_cache_enabled", False):
-        return {"status": "disabled"}
-
-    with _prewarm_lock:
-        if _prewarming:
-            return {"status": "already_running"}
-        _prewarming = True
-
-    threading.Thread(target=_prewarm_worker, daemon=True).start()
-    return {"status": "started"}
 
 
 @router.get("/actress-stats")

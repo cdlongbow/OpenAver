@@ -10,18 +10,16 @@
 - generate 失敗（損圖/讀取/save 失敗）→ logger.warning 後回 False，不拋例外（D6）。
 """
 import hashlib
-import os
 import shutil
 import threading
 from pathlib import Path
-from typing import Iterator, Optional, Tuple
+from typing import Optional
 
 from PIL import Image
 
 from core.atomic_write import atomic_write
 from core.database import get_db_path
 from core.logger import get_logger
-from core.path_utils import uri_to_local_fs_path
 
 logger = get_logger(__name__)
 
@@ -108,7 +106,7 @@ def get_or_create(video_path_uri: str, cover_fs_path: str) -> Optional[Path]:
 
 
 def invalidate(video_path_uri: str) -> None:
-    """砍掉某影片的縮圖（缺檔 no-op，不拋）。下次 lazy/prewarm 重生（CD-9/CD-11）。
+    """砍掉某影片的縮圖（缺檔 no-op，不拋）。下次進畫面時重生（CD-9/CD-11）。
 
     unlink 包在 per-thumb 鎖內，與 generate 的「讀 cover + 寫 thumb」序列化
     （Codex round-2 P1 修法 A）。tf 與 generate 的 dst 對同 uri 是同一 Path → 同一把鎖。
@@ -121,27 +119,3 @@ def invalidate(video_path_uri: str) -> None:
 def clear_all() -> None:
     """清空整個縮圖快取目錄（缺目錄 no-op，CD-11）。"""
     shutil.rmtree(_thumb_dir(), ignore_errors=True)
-
-
-def iter_missing(videos, path_mappings: dict = None) -> Iterator[Tuple[str, str]]:
-    """prewarm 用：yield 出「缺 thumb 且 cover 有效」者（CD-8）。
-
-    產出 (video_path_uri, cover_fs_path)。已有 thumb 或 cover 無效者跳過
-    （冪等、只補缺，spec 2.A.2/D3）。用 getattr 容忍物件/屬性缺漏。
-
-    TASK-91-T2b #15：path_mappings 預設 None（等價於裸 uri_to_fs_path），
-    不動既有呼叫端測試。
-    """
-    for v in videos:
-        video_path_uri = getattr(v, "path", None)
-        if not video_path_uri:
-            continue
-        if thumb_file_for(video_path_uri).exists():
-            continue
-        cover_path = getattr(v, "cover_path", None)
-        if not cover_path:
-            continue
-        cover_fs = uri_to_local_fs_path(cover_path, path_mappings)
-        if not os.path.exists(cover_fs):
-            continue
-        yield (video_path_uri, cover_fs)

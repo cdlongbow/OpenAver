@@ -287,9 +287,6 @@ class TestConvertedHandlersAreDef:
     def test_t3_71_get_thumb_is_def(self):
         assert self._func_type("gallery_media.py", "get_thumb") is ast.FunctionDef
 
-    def test_t3_71_thumb_prewarm_is_def(self):
-        assert self._func_type("scanner.py", "thumb_prewarm") is ast.FunctionDef
-
     def test_t3_71_thumb_clear_is_def(self):
         # 71b-T2：DB-safe 清空端點。def → Starlette threadpool（rmtree 不阻塞 loop）。
         assert self._func_type("gallery_media.py", "thumb_clear") is ast.FunctionDef

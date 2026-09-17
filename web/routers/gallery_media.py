@@ -505,7 +505,6 @@ def get_thumb(request: Request, path: str = Query(..., description="影片路徑
     # P2-B（TASK-71c）：miss 路徑 gate disabled，不重生 WebP。
     # 用戶關閉快取 + clear 後，stale 分頁的 miss 請求不應重建剛清的目錄。
     # disabled → fall through 到下方 fallback 原圖（D6 不破圖）。
-    # load_config() 無 lru_cache，每次讀 disk（與 _prewarm_worker:945 同 pattern）。
     # hit 路徑（tf.exists() → _serve_thumb_file）不 gate：已存在直接 serve 是 harmless。
     if not load_config().get("thumbnail_cache_enabled", False):
         # disabled：跳過 generate，fall through 到 fallback 原圖
