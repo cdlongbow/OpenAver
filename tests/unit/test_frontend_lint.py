@@ -2986,10 +2986,29 @@ class TestCoverLoadingUx67Guard:
         return read_showcase_css_full(PROJECT_ROOT / "web" / "static")
 
     def _grid_img(self):
-        """抽出 grid 卡片封面 <img>（唯一含 :src="video.cover_url" 的 img tag）"""
+        """抽出 grid 卡片封面 <img>。
+
+        定位不錨在 :src 表達式（該屬性最常被改，150b-T3 已踩過一次），也不錨在本 class
+        斷言目標（@load / _imgLoaded / :loading / :fetchpriority）上——否則斷言變同義反覆。
+        改走結構錨：`<template x-for="(video, index) in paginatedVideos"` 全檔出現 3 次
+        （#1 格狀／#2 表格／#3 清單），re.search 取第一個＝格狀；再從該處往後抓第一個 <img>。
+        quote-aware 收尾，避免 x-init 內 `=>` 被 `.*?>` 提前截斷。
+        """
         html = self._html()
-        m = re.search(r'<img :src="video\.cover_url".*?>', html, re.S)
-        assert m, "showcase.html: grid 封面 <img :src=\"video.cover_url\"> 不存在"
+        m_for = re.search(
+            r'<template x-for="\(video, index\) in paginatedVideos"', html
+        )
+        assert m_for, (
+            "showcase.html: 找不到 <template x-for=\"(video, index) in paginatedVideos\" "
+            "（取第一個＝格狀；後兩次為表格／清單）"
+        )
+        rest = html[m_for.start():]
+        # <img\s（要空白）避開註解裡的字面「<img>」；quote-aware 收尾避開 x-init 內 `=>`
+        m = re.search(r'<img\s(?:[^>"\']|"[^"]*"|\'[^\']*\')*>', rest, re.S)
+        assert m, (
+            "showcase.html: 格狀 paginatedVideos 區塊內找不到 <img> "
+            "（定位自第一個 x-for=\"(video, index) in paginatedVideos\"）"
+        )
         return m.group(0)
 
     def _hero_img(self):
