@@ -1541,7 +1541,7 @@ class TestMappedDriveWhitelistWslUncSymmetry:
                 },
             }
         monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
-        monkeypatch.setattr("web.routers.scanner.os.path.getsize", lambda p: 1000)
+        monkeypatch.setattr("web.routers.gallery_media.os.path.getsize", lambda p: 1000)
 
         response = video_client.get("/api/gallery/video?path=file://///NAS/share/x.mp4")
         assert response.status_code in (200, 206), (

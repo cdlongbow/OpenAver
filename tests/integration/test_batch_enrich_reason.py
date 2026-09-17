@@ -307,7 +307,7 @@ class TestResultItemThumbTimingLock:
             return_value={"gallery": {}, "search": {}, "scraper": {}},
         )
         mocker.patch(
-            "web.routers.scanner.load_config",
+            "web.routers.gallery_media.load_config",
             return_value={"thumbnail_cache_enabled": False, "gallery": {}},
         )
         mocker.patch(

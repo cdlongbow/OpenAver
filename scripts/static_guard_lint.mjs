@@ -5094,14 +5094,19 @@ const RULES = [
     scope: { anchor: /<img :src="\(\(index < 8/, window: 1200 },
     note: '[TASK-150b-T3 CD-150b-7 #3] 骨架 shimmer x-show 必須含 !video._imgLoaded && video._coverRequested',
   },
-  // 規則 4：base.html AC-2 fallback 必須真的「賦值」替代建構子（非裸 IntersectionObserver）。
+  // 規則 4：base.html AC-2 fallback 必須真的「賦值」替代建構子（非裸 IntersectionObserver），
+  // 且守門條件必須是 !ok（IO 不可用才 fallback），不是 ok（IO 可用才 fallback，語意反轉）。
   // scope 錨在唯一的 Alpine.store('ui'；window 實測 768（錨 → shim IIFE `})();`），取 800。
-  // 賦值字面結尾距 anchor 實測 437，仍在 800 內。
+  // pattern 逐字含 `if (!ok) {` 到賦值那行（含實際縮排／換行），結尾距 anchor 仍在 800 內。
+  // 沙盒實測（150b-T3 修正）：只鎖裸 `window.IntersectionObserver = function (cb) {` 時，
+  // 把 `if (!ok) {` 改成 `if (ok) {` 不動賦值字面本身 ⇒ 1349 條全綠，而 shim 在 IO 正常的
+  // 瀏覽器上會被換成 pass-through，viewport 閘門靜默失效退回全量請求。改成含守門條件的
+  // 完整字面後，翻轉 !ok/ok 會讓這條字面消失 ⇒ 規則必須紅。
   {
     file: 'web/templates/base.html', kind: 'required-string',
-    pattern: 'window.IntersectionObserver = function (cb) {',
+    pattern: 'if (!ok) {\n              window.IntersectionObserver = function (cb) {',
     scope: { anchor: /Alpine\.store\('ui'/, window: 800 },
-    note: '[TASK-150b-T3 CD-150b-7 #4] base.html 的 AC-2 fallback 必須真的「賦值」一個替代建構子，不只是 feature-detect。鎖完整賦值字面，不是裸 IntersectionObserver——裸字面在同 window 內有 3 個供應者（typeof 檢查／探測用 new／賦值本身），刪掉整個 if(!ok){...} 區塊後仍剩 2 個，守衛會綠而 shim 退化成「只探測不修」（Codex PR review 延伸調查實測）',
+    note: '[TASK-150b-T3 CD-150b-7 #4] base.html 的 AC-2 fallback 必須真的「賦值」一個替代建構子，且守門條件必須是 !ok 不是 ok（語意反轉會讓 shim 在 IO 正常瀏覽器上把它換成 pass-through，viewport 閘門靜默失效）。鎖「守門條件 ＋ 賦值」同一個完整字面，不是裸 IntersectionObserver 或裸 !ok——裸字面在同 window 內各自還有其他供應者，只鎖其一擋不住「賦值還在、但條件被反轉」這種掏空（沙盒實測，見 150b-T3 修正）',
   },
   // 規則 5：viewport gate 的「寫入端」——x-intersect directive 本身必須存在且 N 正確。
   // 規則 1/2/3 守的都是讀取端（:src 表達式、骨架 shimmer），刪掉 x-intersect 整行時

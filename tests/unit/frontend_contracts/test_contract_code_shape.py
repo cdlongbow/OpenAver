@@ -1010,10 +1010,11 @@ class TestExternalManagerSwitchModeGuard:
         assert "風味" not in node["body"], "switch_mode_confirm.body 不應出現「風味」"
 
 
-# [lint-guard: pytest-justified] scanner.py Python-source 安全字串弱代理
-# （option-b，CD-96e-5〔c〕）——get_video/video_player/normpath/get_proxy_extensions/
-# is_path_under_dir 是否真的組成安全的路徑校驗邏輯，屬 Python 源碼語意，
-# 字串存在性只是弱代理，non-AST 機械掃描無法驗證邏輯正確，留 pytest。
+# [lint-guard: pytest-justified] scanner.py / gallery_media.py Python-source 安全字串弱代理
+# （option-b，CD-96e-5〔c〕；TASK-150a 搬遷後拆成 test_scanner_py_safety_strings /
+# test_gallery_media_py_safety_strings 兩支 method，各守一個檔）——get_video/video_player/
+# normpath/get_proxy_extensions/is_path_under_dir 是否真的組成安全的路徑校驗邏輯，屬 Python
+# 源碼語意，字串存在性只是弱代理，non-AST 機械掃描無法驗證邏輯正確，留 pytest。
 class TestVideoApiSafetyStrings:
     """96e-T5 relocate（from TestVideoPlaybackGuard.test_video_api_files_contain
     scanner.py 半邊）：video proxy 安全守衛字串。

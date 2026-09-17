@@ -160,7 +160,7 @@ def test_cached_thumb_not_blocked(client, tmp_path, mocker, thumb_dir):
     _webp(thumbnail_cache.thumb_file_for(video_uri))
 
     mocker.patch(
-        "web.routers.scanner.load_config",
+        "web.routers.gallery_media.load_config",
         return_value={
             "thumbnail_cache_enabled": True,
             "gallery": {
@@ -175,9 +175,11 @@ def test_cached_thumb_not_blocked(client, tmp_path, mocker, thumb_dir):
         "core.source_reachability.get_snapshot",
         return_value={native: "unreachable"},
     )
-    # Hit path must not touch DB / generate
-    mocker.patch("web.routers.scanner.VideoRepository")
-    mocker.patch("web.routers.scanner.get_db_path")
+    # Hit path（tf.exists() → _serve_thumb_file）early-return，根本不會呼叫
+    # VideoRepository / get_db_path；這兩個 patch 只是防禦性保險，不是反向鎖
+    # （即使拿掉，hit 這條路徑的斷言仍然通過）。
+    mocker.patch("web.routers.gallery_media.VideoRepository")
+    mocker.patch("web.routers.gallery_media.get_db_path")
 
     resp = client.get("/api/gallery/thumb", params={"path": video_uri})
 
