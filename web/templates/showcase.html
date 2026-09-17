@@ -544,8 +544,10 @@
                      :data-flip-id="video.path">
                     <div class="av-card-preview-img">
                         <!-- 67-A2: 三態（CD-67-3）。保留單一 <img> 沿用 handleCoverError 換圖；
-                             淡入靠 _imgLoaded 的 .cover-loaded class（A1 CSS）；首屏前 8 張 eager+high（CD-67-5，不可 lazy+high 並存） -->
-                        <img :src="video.cover_url"
+                             淡入靠 _imgLoaded 的 .cover-loaded class（A1 CSS）；首屏前 8 張 eager+high（CD-67-5，不可 lazy+high 並存）。
+                             150b-T3 起「要不要載」改由 _coverRequested / x-intersect 決定，
+                             :loading / :fetchpriority 只決定已通過閘之後的下載優先序 -->
+                        <img :src="((index < 8 && mode === 'grid') || video._coverRequested) ? video.cover_url : null"
                              :alt="video.number"
                              :loading="index < 8 ? 'eager' : 'lazy'"
                              :fetchpriority="index < 8 ? 'high' : 'auto'"
@@ -553,11 +555,12 @@
                              :class="{ 'cover-loaded': video._imgLoaded }"
                              @load="video._imgLoaded = true; applyCellFocal($el, video)"
                              @error="handleCoverError(video, $event)"
+                             x-intersect.once.margin.690px="video._coverRequested = true"
                              x-init="$watch('video.auto_focal', () => applyCellFocal($el, video));
                                      $watch('video.crop_mode', () => applyCellFocal($el, video))">
                         <!-- 67-A2: skeleton overlay（pending 時，gate 含 has_cover → stale @error 後 has_cover=false 自動退出）-->
                         <div class="skeleton-cover shimmer"
-                             x-show="video.cover_url && video.has_cover && !video._imgLoaded"></div>
+                             x-show="video.cover_url && video.has_cover && !video._imgLoaded && video._coverRequested"></div>
                         <!-- 67-A2: no-cover（CD-67-3 (a)：DB 缺封面 cover_url="" 空白 img 不發請求；鏡射 hero :272-276）。
                              與 stale-@error 換 placeholder 路徑互斥（stale 時 cover_url 仍非空 → 不顯示，不雙重渲染）-->
                         <div x-show="!video.cover_url" class="av-card-no-cover">

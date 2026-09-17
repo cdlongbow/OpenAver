@@ -10,7 +10,7 @@ class TestPlayerErrorHints:
     def test_onerror_maps_decode_and_src_not_supported_to_format_hint(self, client, monkeypatch, tmp_path):
         """error.code 3 (DECODE) 與 4 (SRC_NOT_SUPPORTED) 對應至 format hint，其餘落至 network hint"""
         # [lint-guard: pytest-justified] 斷言端點 render 出來的 onerror 屬性邏輯
-        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
+        monkeypatch.setattr("web.routers.gallery_media.get_db_path", lambda: tmp_path / "test.db")
         video_path = to_file_uri("C:/videos/test.mp4")
         response = client.get(f"/api/gallery/player?path={quote(video_path)}")
         assert response.status_code == 200
@@ -25,7 +25,7 @@ class TestPlayerErrorHints:
     def test_two_hint_texts_are_different(self, client, monkeypatch, tmp_path):
         """network 與 format 兩則 hint 文案在 HTML 裡皆存在且內容不同"""
         # [lint-guard: pytest-justified] 斷言端點 render 出來的兩則 i18n 提示文案非空且不相同
-        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
+        monkeypatch.setattr("web.routers.gallery_media.get_db_path", lambda: tmp_path / "test.db")
         video_path = to_file_uri("C:/videos/test.mp4")
         response = client.get(f"/api/gallery/player?path={quote(video_path)}")
         assert response.status_code == 200
@@ -54,7 +54,7 @@ class TestPlayerErrorHints:
     def test_both_hints_hidden_by_default(self, client, monkeypatch, tmp_path):
         """兩個 hint div 預設皆含有 style=\"display:none\" """
         # [lint-guard: pytest-justified] 斷言端點 render 出來的兩個 hint div 皆預設 display:none
-        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
+        monkeypatch.setattr("web.routers.gallery_media.get_db_path", lambda: tmp_path / "test.db")
         video_path = to_file_uri("C:/videos/test.mp4")
         response = client.get(f"/api/gallery/player?path={quote(video_path)}")
         assert response.status_code == 200

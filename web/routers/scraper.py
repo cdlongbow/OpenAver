@@ -784,10 +784,10 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
             scraper_data=scraper_data,
             path_mappings=path_mappings,
         )
-        # feature/71 T8: 換封面成功 → 失效舊縮圖（下次 lazy/prewarm 重生，CD-9 / spec 2.A.7）。
+        # feature/71 T8: 換封面成功 → 失效舊縮圖（下次進畫面時重生，CD-9 / spec 2.A.7）。
         # request.file_path 已是 DB 的 file:/// URI（前端送 currentLightboxVideo.path /
         # missing-check items / rescrape，皆 DB v.path）。縮圖 canonical key = v.path 原字串
-        # hash（generate/serve/prewarm 同源），故 invalidate 必須用同一 URI 原值——用冪等
+        # hash（generate/serve 同源），故 invalidate 必須用同一 URI 原值——用冪等
         # coerce_to_file_uri（已是 URI 就原樣回），不可再套 to_file_uri 造成 file:///file:///
         # double-encode 砍錯 hash（PR #60 Codex P2）。
         if result.success:

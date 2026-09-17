@@ -291,7 +291,8 @@ class TestResultItemThumbTimingLock:
         from PIL import Image
         from core.database import Video
 
-        _, repo = temp_db
+        db_path, repo = temp_db
+        mocker.patch("web.routers.gallery_media.get_db_path", return_value=db_path)
         cover = tmp_path / "cover.jpg"
         Image.new("RGB", (200, 150), (10, 20, 30)).save(cover, "JPEG")
 
@@ -306,7 +307,7 @@ class TestResultItemThumbTimingLock:
             return_value={"gallery": {}, "search": {}, "scraper": {}},
         )
         mocker.patch(
-            "web.routers.scanner.load_config",
+            "web.routers.gallery_media.load_config",
             return_value={"thumbnail_cache_enabled": False, "gallery": {}},
         )
         mocker.patch(

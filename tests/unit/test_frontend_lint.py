@@ -2828,36 +2828,6 @@ class TestSettingsQuickToggleGuard:
         assert 'x-model="form.thumbnailCacheEnabled"' in tag, \
             "71-T11 違規：thumbnailCacheEnabled toggle 必須保留 x-model（@change 攔截不取代 x-model）"
 
-    def test_thumbnail_cache_confirm_modal_exists(self):
-        """71-T11：confirm fluent-modal 存在 + 綁 thumbCacheConfirmOpen + confirm/cancel handler"""
-        html = self._html()
-        idx = html.find('thumbCacheConfirmOpen')
-        assert idx != -1, \
-            "71-T11 違規：settings.html 缺少 thumbCacheConfirmOpen confirm modal binding"
-        # 抽 thumbCacheConfirmOpen 首次出現的鄰域（modal 區塊）
-        block = html[idx - 200: idx + 1200]
-        assert 'fluent-modal' in block, \
-            "71-T11 違規：thumbCacheConfirmOpen 必須綁在 fluent-modal 上"
-        assert 'confirmThumbCacheEnable()' in block, \
-            "71-T11 違規：confirm modal 缺少 confirmThumbCacheEnable() 確認 handler"
-        assert 'cancelThumbCacheConfirm()' in block, \
-            "71-T11 違規：confirm modal 缺少 cancelThumbCacheConfirm() 取消 handler"
-
-    def test_thumbnail_cache_confirm_modal_body_is_dynamic(self):
-        """71-T11：confirm modal body 用 x-text 動態替換 {count}/{mb}/{min}（非靜態 SSR）"""
-        html = self._html()
-        idx = html.find('thumbCacheConfirmOpen')
-        assert idx != -1, \
-            "71-T11 違規：settings.html 缺少 thumbCacheConfirmOpen confirm modal binding"
-        block = html[idx - 200: idx + 1200]
-        assert 'confirm_modal.body' in block, \
-            "71-T11 違規：confirm modal body 必須引用 settings.thumbnail_cache.confirm_modal.body"
-        for token in ("'{count}'", "'{mb}'", "'{min}'"):
-            assert token in block, \
-                f"71-T11 違規：confirm modal body 必須 .replace({token}, ...) 動態填值"
-        assert '_thumbEstimateMin' in block, \
-            "71-T11 違規：confirm modal body 必須用 _thumbEstimateMin（HDD 時間估算）"
-
     # ===== 71b-T2: disable confirm modal contract =====
     STATE_CONFIG_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "settings" / "state-config.js"
     STATE_UI_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "settings" / "state-ui.js"
@@ -3016,10 +2986,29 @@ class TestCoverLoadingUx67Guard:
         return read_showcase_css_full(PROJECT_ROOT / "web" / "static")
 
     def _grid_img(self):
-        """抽出 grid 卡片封面 <img>（唯一含 :src="video.cover_url" 的 img tag）"""
+        """抽出 grid 卡片封面 <img>。
+
+        定位不錨在 :src 表達式（該屬性最常被改，150b-T3 已踩過一次），也不錨在本 class
+        斷言目標（@load / _imgLoaded / :loading / :fetchpriority）上——否則斷言變同義反覆。
+        改走結構錨：`<template x-for="(video, index) in paginatedVideos"` 全檔出現 3 次
+        （#1 格狀／#2 表格／#3 清單），re.search 取第一個＝格狀；再從該處往後抓第一個 <img>。
+        quote-aware 收尾，避免 x-init 內 `=>` 被 `.*?>` 提前截斷。
+        """
         html = self._html()
-        m = re.search(r'<img :src="video\.cover_url".*?>', html, re.S)
-        assert m, "showcase.html: grid 封面 <img :src=\"video.cover_url\"> 不存在"
+        m_for = re.search(
+            r'<template x-for="\(video, index\) in paginatedVideos"', html
+        )
+        assert m_for, (
+            "showcase.html: 找不到 <template x-for=\"(video, index) in paginatedVideos\" "
+            "（取第一個＝格狀；後兩次為表格／清單）"
+        )
+        rest = html[m_for.start():]
+        # <img\s（要空白）避開註解裡的字面「<img>」；quote-aware 收尾避開 x-init 內 `=>`
+        m = re.search(r'<img\s(?:[^>"\']|"[^"]*"|\'[^\']*\')*>', rest, re.S)
+        assert m, (
+            "showcase.html: 格狀 paginatedVideos 區塊內找不到 <img> "
+            "（定位自第一個 x-for=\"(video, index) in paginatedVideos\"）"
+        )
         return m.group(0)
 
     def _hero_img(self):

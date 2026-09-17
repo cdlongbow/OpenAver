@@ -35,10 +35,10 @@ def client(make_client, temp_db, showcase_config):
             "core.database.connection.get_db_path",
             "web.routers.showcase.get_db_path",
             "web.routers.showcase.load_config",
-            # test_player_page_returns_html 打 /api/gallery/player（web/routers/scanner.py
-            # video_player()），該端點自己也呼叫 get_db_path() 做分組查詢，未 mock 前
-            # 會連上 output/openaver.db。
-            "web.routers.scanner.get_db_path",
+            # test_player_page_returns_html 打 /api/gallery/player（TASK-150a-T2 起
+            # video_player() 搬到 web/routers/gallery_media.py），該端點自己也呼叫
+            # get_db_path() 做分組查詢，未 mock 前會連上 output/openaver.db。
+            "web.routers.gallery_media.get_db_path",
         ],
         mock_db_path=temp_db,
         config_override=showcase_config,
@@ -708,7 +708,7 @@ class TestVideoProxy:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         response = client.get(f"/api/gallery/video?path={str(video)}")
         assert response.status_code == 200
@@ -726,7 +726,7 @@ class TestVideoProxy:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         response = client.get(f"/api/gallery/video?path={str(video)}")
         assert response.status_code == 403
@@ -743,7 +743,7 @@ class TestVideoProxy:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         response = client.get(f"/api/gallery/video?path={str(txt_file)}")
         assert response.status_code == 403
@@ -759,7 +759,7 @@ class TestVideoProxy:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         response = client.get(f"/api/gallery/video?path={str(nonexistent)}")
         assert response.status_code == 404
@@ -776,7 +776,7 @@ class TestVideoProxy:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         response = client.get(
             f"/api/gallery/video?path={str(video)}",
@@ -818,7 +818,7 @@ class TestVideoProxy:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         # 嘗試用 ../ 穿越到 allowed_dir 之外
         traversal_path = str(allowed_dir / "sub" / ".." / ".." / "secret.mp4")
@@ -847,7 +847,7 @@ class TestVideoProxy:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         # realpath 追蹤 symlink target 到白名單外 → 403
         response = client.get(f"/api/gallery/video?path={str(symlink)}")
@@ -866,7 +866,7 @@ class TestVideoProxy:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         response = client.get(
             f"/api/gallery/video?path={str(video)}",
@@ -889,18 +889,21 @@ class TestVideoProxy:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         response = client.get(f"/api/gallery/video?path={str(exe_file)}")
         assert response.status_code == 403, \
             ".exe should be blocked by proxy security (SAFE_PROXY_EXTENSIONS)"
 
     def test_video_api_uses_get_proxy_extensions(self):
-        """get_video() must use get_proxy_extensions (not hardcoded ALLOWED_VIDEO_EXTENSIONS)"""
-        scanner_py = Path(__file__).parent.parent.parent / "web" / "routers" / "scanner.py"
-        content = scanner_py.read_text(encoding='utf-8')
+        """get_video() must use get_proxy_extensions (not hardcoded ALLOWED_VIDEO_EXTENSIONS)
+
+        TASK-150a-T1：get_video() 搬到 gallery_media.py，斷言指向改隨之改指向。
+        """
+        gallery_media_py = Path(__file__).parent.parent.parent / "web" / "routers" / "gallery_media.py"
+        content = gallery_media_py.read_text(encoding='utf-8')
         assert 'get_proxy_extensions' in content, \
-            "scanner.py get_video() should use get_proxy_extensions from core.video_extensions"
+            "gallery_media.py get_video() should use get_proxy_extensions from core.video_extensions"
 
     def test_endpoint_works_when_realpath_would_raise(self, client, tmp_path, monkeypatch):
         """FUSE/WinFsp 相容：mock os.path.realpath 丟 OSError 時 endpoint 走 except 分支降級 normpath，仍回傳 200"""
@@ -917,7 +920,7 @@ class TestVideoProxy:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
         monkeypatch.setattr(os.path, "realpath", Mock(side_effect=OSError("WinError 1005")))
 
         response = client.get(f"/api/gallery/video?path={str(video)}")
@@ -949,7 +952,7 @@ class TestVideoProxy:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
         # mock realpath raise OSError（模擬 WinFsp GetFinalPathNameByHandle 失敗）
         monkeypatch.setattr(os.path, "realpath", Mock(side_effect=OSError("WinError 1005")))
 
@@ -973,7 +976,7 @@ class TestVideoProxy:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         # Case A: sub/../cover.mp4 → normpath → allowed_dir/cover.mp4 → 200
         legal_path = str(sub / ".." / "cover.mp4")
@@ -1010,7 +1013,7 @@ class TestImageProxy:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         response = client.get(f"/api/gallery/image?path={str(img)}")
         assert response.status_code == 200, "白名單內圖片應回傳 200"
@@ -1031,7 +1034,7 @@ class TestImageProxy:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         response = client.get(f"/api/gallery/image?path={str(img)}")
         assert response.status_code == 403, "白名單外路徑應被 403 擋下"
@@ -1054,7 +1057,7 @@ class TestImageProxy:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         # 用 ../ 穿越到 allowed_dir 之外
         traversal_path = str(allowed_dir / "sub" / ".." / ".." / "secret.jpg")
@@ -1075,7 +1078,7 @@ class TestImageProxy:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         response = client.get(f"/api/gallery/image?path={str(py_file)}")
         assert response.status_code == 403, ".py 副檔名應被 403 擋下"
@@ -1105,7 +1108,7 @@ class TestImageProxy:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         # realpath 追蹤 symlink target 到白名單外 → 403
         response = client.get(f"/api/gallery/image?path={str(symlink)}")
@@ -1129,7 +1132,7 @@ class TestImageProxy:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
         monkeypatch.setattr(os.path, "realpath", Mock(side_effect=OSError("WinError 1005")))
 
         response = client.get(f"/api/gallery/image?path={str(img)}")
@@ -1161,7 +1164,7 @@ class TestImageProxy:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
         # mock realpath raise OSError（模擬 WinFsp GetFinalPathNameByHandle 失敗）
         monkeypatch.setattr(os.path, "realpath", Mock(side_effect=OSError("WinError 1005")))
 
@@ -1185,7 +1188,7 @@ class TestImageProxy:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         # Case A: sub/../cover.jpg → normpath → allowed_dir/cover.jpg → 200
         legal_path = str(sub / ".." / "cover.jpg")
@@ -1221,8 +1224,8 @@ class TestMappedDriveWhitelist:
 
     def _clear_cache(self):
         """在每個測試開始前清除 TTL 快取，避免跨測試污染。"""
-        import web.routers.scanner as _scanner
-        _scanner._dir_forms_cache.clear()
+        import web.routers.gallery_media as _media
+        _media._dir_forms_cache.clear()
 
     # ── T1: SMB mapped drive — get_image → 200 ────────────────────────────────
     def test_smb_mapped_drive_get_image_200(self, image_client, tmp_path, monkeypatch):
@@ -1254,7 +1257,7 @@ class TestMappedDriveWhitelist:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         response = image_client.get(f"/api/gallery/image?path={str(kform_dir / 'cover.jpg')}")
         assert response.status_code == 200, (
@@ -1293,7 +1296,7 @@ class TestMappedDriveWhitelist:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         response = video_client.get(f"/api/gallery/video?path={str(kform_dir / 'movie.mp4')}")
         assert response.status_code == 200, (
@@ -1330,7 +1333,7 @@ class TestMappedDriveWhitelist:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         response = image_client.get(f"/api/gallery/image?path={str(dfs_dir / 'cover.jpg')}")
         assert response.status_code == 200, (
@@ -1388,7 +1391,7 @@ class TestMappedDriveWhitelist:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         # 第一次請求：realpath 成功，warm dir cache（dual-form），200（預期）
         response1 = image_client.get(f"/api/gallery/image?path={str(kform_dir / 'cover.jpg')}")
@@ -1438,7 +1441,7 @@ class TestMappedDriveWhitelist:
                     "path_mappings": {},
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         response = image_client.get(f"/api/gallery/image?path={str(kform_dir / 'cover.jpg')}")
         assert response.status_code == 200, (
@@ -1474,8 +1477,8 @@ class TestMappedDriveWhitelistWslUncSymmetry:
         return TestClient(app)
 
     def _clear_cache(self):
-        import web.routers.scanner as _scanner
-        _scanner._dir_forms_cache.clear()
+        import web.routers.gallery_media as _media
+        _media._dir_forms_cache.clear()
 
     def test_get_image_reverse_mapped_native_path_passes_whitelist(
         self, image_client, tmp_path, monkeypatch
@@ -1501,7 +1504,7 @@ class TestMappedDriveWhitelistWslUncSymmetry:
                     "path_mappings": mappings,
                 }
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
 
         response = image_client.get(f"/api/gallery/image?path={str(cover)}")
         assert response.status_code == 200, (
@@ -1537,8 +1540,8 @@ class TestMappedDriveWhitelistWslUncSymmetry:
                     "path_mappings": mappings,
                 },
             }
-        monkeypatch.setattr("web.routers.scanner.load_config", mock_load_config)
-        monkeypatch.setattr("web.routers.scanner.os.path.getsize", lambda p: 1000)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", mock_load_config)
+        monkeypatch.setattr("web.routers.gallery_media.os.path.getsize", lambda p: 1000)
 
         response = video_client.get("/api/gallery/video?path=file://///NAS/share/x.mp4")
         assert response.status_code in (200, 206), (

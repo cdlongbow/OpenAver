@@ -3394,6 +3394,12 @@ const RULES = [
     note: '[TestVideoPlaybackGuard] test_no_hardcoded_video_extensions_in_modules — scanner.py 不可硬編影片副檔名 set',
   },
   {
+    // TASK-150a-T1：get_video() 搬到 gallery_media.py 後的對等規則（scanner.py 原規則不動）。
+    file: 'web/routers/gallery_media.py', kind: 'forbidden-string',
+    pattern: /=\s*\{[^}]*'\.mp4'[^}:]*'\.avi'[^}:]*\}/s,
+    note: '[TestVideoPlaybackGuard] test_no_hardcoded_video_extensions_in_modules — gallery_media.py 不可硬編影片副檔名 set（須 import core.video_extensions SSOT）',
+  },
+  {
     file: 'windows/pywebview_api.py', kind: 'forbidden-string',
     pattern: /=\s*\{[^}]*'\.mp4'[^}:]*'\.avi'[^}:]*\}/s,
     note: '[TestVideoPlaybackGuard] test_no_hardcoded_video_extensions_in_modules — pywebview_api.py 不可硬編影片副檔名 set',
@@ -5060,6 +5066,66 @@ const RULES = [
     scope: { anchor: /export function didEnrichSomething\s*\([^)]*\)\s*\{/, braceBalanced: true },
     stripLineComments: true,
     note: '[TASK-147b-T3 CD-147b-5b] didEnrichSomething 本體必須含 fields_filled（三欄判準不得退回兩欄）',
+  },
+
+  // ---- [TASK-150b-T3 / CD-150b-7] viewport gate：封面 _coverRequested ＋ x-intersect ＋ shim ----
+  // 規則 1：showcase 影片卡 <img> 的 :src 表達式必須逐字如此（完整屬性值，非裸 _coverRequested）。
+  // scope 錨在唯一字首 `<img :src="((index < 8`；window 實測 862（錨 → x-init 收尾 `">`），取 900。
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: ':src="((index < 8 && mode === \'grid\') || video._coverRequested) ? video.cover_url : null"',
+    scope: { anchor: /<img :src="\(\(index < 8/, window: 900 },
+    note: '[TASK-150b-T3 CD-150b-7 #1] showcase 影片卡 <img> 的 :src 表達式必須逐字如此（鎖完整屬性值，不是裸 _coverRequested——裸字面會被同一個 scope window 內 x-intersect 那行供應，Codex PR review P3 實測：只把 :src 裡的 video._coverRequested 改成 false，1348 條全綠而整牆只剩前 8 張圖）',
+  },
+  // 規則 2：禁止退回舊的裸 :src="video.cover_url"（完整舊屬性字串，不可裸識別字——
+  // 新表達式合法含 video.cover_url，裸字面會誤傷；掃描粒度＝屬性值，避開 FE-GUARD-20）。
+  // scope 與規則 1 同一個 anchor／window。
+  {
+    file: 'web/templates/showcase.html', kind: 'forbidden-string',
+    pattern: ':src="video.cover_url"',
+    scope: { anchor: /<img :src="\(\(index < 8/, window: 900 },
+    note: '[TASK-150b-T3 CD-150b-7 #2] showcase 影片卡的加閘 <img> 區塊內不得另外出現未加閘的裸 :src="video.cover_url"（半退回／重複 img）。⚠️ 完整退回成裸 :src 的情形不是由本規則的 pattern 比對抓到的——那會讓本規則與規則 1／3 共用的 scope.anchor 一起消失，三條都以「anchor 找不到」fail-closed 轉紅；本規則自己的 matches() 只在「anchor 還在、但區塊內多了一個裸 :src」時才會執行到（已實測）',
+  },
+  // 規則 3：骨架 shimmer x-show 必須含 `!video._imgLoaded && video._coverRequested` 片段。
+  // 同 anchor；window 實測 1170（錨 → shimmer </div>），取 1200。
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: '!video._imgLoaded && video._coverRequested',
+    scope: { anchor: /<img :src="\(\(index < 8/, window: 1200 },
+    note: '[TASK-150b-T3 CD-150b-7 #3] 骨架 shimmer x-show 必須含 !video._imgLoaded && video._coverRequested',
+  },
+  // 規則 4：base.html AC-2 fallback 必須真的「賦值」替代建構子（非裸 IntersectionObserver），
+  // 且守門條件必須是 !ok（IO 不可用才 fallback），不是 ok（IO 可用才 fallback，語意反轉）。
+  // scope 錨在唯一的 Alpine.store('ui'；window 實測 768（錨 → shim IIFE `})();`），取 800。
+  // pattern 逐字含 `if (!ok) {` 到賦值那行（含實際縮排／換行），結尾距 anchor 仍在 800 內。
+  // 沙盒實測（150b-T3 修正）：只鎖裸 `window.IntersectionObserver = function (cb) {` 時，
+  // 把 `if (!ok) {` 改成 `if (ok) {` 不動賦值字面本身 ⇒ 1349 條全綠，而 shim 在 IO 正常的
+  // 瀏覽器上會被換成 pass-through，viewport 閘門靜默失效退回全量請求。改成含守門條件的
+  // 完整字面後，翻轉 !ok/ok 會讓這條字面消失 ⇒ 規則必須紅。
+  {
+    file: 'web/templates/base.html', kind: 'required-string',
+    pattern: 'if (!ok) {\n              window.IntersectionObserver = function (cb) {',
+    scope: { anchor: /Alpine\.store\('ui'/, window: 800 },
+    note: '[TASK-150b-T3 CD-150b-7 #4] base.html 的 AC-2 fallback 必須真的「賦值」一個替代建構子，且守門條件必須是 !ok 不是 ok（語意反轉會讓 shim 在 IO 正常瀏覽器上把它換成 pass-through，viewport 閘門靜默失效）。鎖「守門條件 ＋ 賦值」同一個完整字面，不是裸 IntersectionObserver 或裸 !ok——裸字面在同 window 內各自還有其他供應者，只鎖其一擋不住「賦值還在、但條件被反轉」這種掏空（沙盒實測，見 150b-T3 修正）',
+  },
+  // 規則 5：viewport gate 的「寫入端」——x-intersect directive 本身必須存在且 N 正確。
+  // 規則 1/2/3 守的都是讀取端（:src 表達式、骨架 shimmer），刪掉 x-intersect 整行時
+  // `_coverRequested` 這個字面仍留在 :src 裡 ⇒ 四條全綠而功能全毀（實測）。這條補寫入端。
+  // window 與規則 1 同 900：搬家後 x-intersect 在 @error 後，pattern 結尾距 anchor 實測 664，仍在 900 內。
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'x-intersect.once.margin.690px="video._coverRequested = true"',
+    scope: { anchor: /<img :src="\(\(index < 8/, window: 900 },
+    note: '[TASK-150b-T3 CD-150b-7 #5] viewport gate 的寫入端：x-intersect directive 本身 ＋ N=690 ＋ 設 _coverRequested 三者一體，逐字鎖住。刪掉這一行會讓 _coverRequested 永遠是 false ⇒ 整面封面牆只剩前 8 張、其餘永久空白且捲動不補，而規則 1/2/3 全部照樣綠（它們守的是讀取端，_coverRequested 字面仍在 :src 裡）',
+  },
+  // 規則 6：pass-through 的行為契約——fallback 的 observe() 必須「立刻回報已相交」。
+  // 只鎖賦值存在（規則 4）擋不住「賦值了但 observe() 是空函式」這種掏空。
+  // isIntersecting: true 全檔唯一（grep -c = 1）；結尾距 anchor 實測 523，仍在 800 內。
+  {
+    file: 'web/templates/base.html', kind: 'required-string',
+    pattern: 'isIntersecting: true',
+    scope: { anchor: /Alpine\.store\('ui'/, window: 800 },
+    note: '[TASK-150b-T3 CD-150b-7 #6] fallback 的 observe() 必須同步回報 isIntersecting: true（pass-through 語意）。規則 4 只鎖「有沒有賦值」，這條鎖「賦值的東西會不會真的讓卡片載圖」——兩者缺一都會讓 shim 在 IO 不可用時變成擺設',
   },
 ];
 

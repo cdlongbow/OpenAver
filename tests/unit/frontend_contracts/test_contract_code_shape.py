@@ -1010,21 +1010,39 @@ class TestExternalManagerSwitchModeGuard:
         assert "風味" not in node["body"], "switch_mode_confirm.body 不應出現「風味」"
 
 
-# [lint-guard: pytest-justified] scanner.py Python-source 安全字串弱代理
-# （option-b，CD-96e-5〔c〕）——get_video/video_player/normpath/get_proxy_extensions/
-# is_path_under_dir 是否真的組成安全的路徑校驗邏輯，屬 Python 源碼語意，
-# 字串存在性只是弱代理，non-AST 機械掃描無法驗證邏輯正確，留 pytest。
+# [lint-guard: pytest-justified] scanner.py / gallery_media.py Python-source 安全字串弱代理
+# （option-b，CD-96e-5〔c〕；TASK-150a 搬遷後拆成 test_scanner_py_safety_strings /
+# test_gallery_media_py_safety_strings 兩支 method，各守一個檔）——get_video/video_player/
+# normpath/get_proxy_extensions/is_path_under_dir 是否真的組成安全的路徑校驗邏輯，屬 Python
+# 源碼語意，字串存在性只是弱代理，non-AST 機械掃描無法驗證邏輯正確，留 pytest。
 class TestVideoApiSafetyStrings:
     """96e-T5 relocate（from TestVideoPlaybackGuard.test_video_api_files_contain
-    scanner.py 半邊）：web/routers/scanner.py 含 video proxy 安全守衛字串。"""
+    scanner.py 半邊）：video proxy 安全守衛字串。
+
+    TASK-150a-T1：get_video() 搬到 gallery_media.py 後，原本「讀一個檔案、跑一個
+    for-loop」的形狀不再成立——`def get_video(`／`os.path.normpath`／
+    `get_proxy_extensions` 隨 get_video 搬到 gallery_media.py。
+    TASK-150a-T2：`def video_player(` 也隨 `_render_player_html` 一起搬到
+    gallery_media.py，scanner.py 這半邊只剩 `is_path_under_dir`；`is_path_under_dir`
+    兩邊都留（scanner.py 的 generate_avlist pipeline 仍在用，gallery_media.py 的
+    get_image/get_video/video_player 也在用），維持原掃描粒度與正負極性，不刪不
+    放寬（plan-150a.md CD-150a-1 mutation 點表格 #1）。
+    """
 
     def test_scanner_py_safety_strings(self):
+        """TASK-150a-T2：video_player() 搬到 gallery_media.py 後，scanner.py 仍保留的安全字串。"""
         content = (PROJECT_ROOT / "web" / "routers" / "scanner.py").read_text(encoding="utf-8")
-        for expected in [
-            'def get_video(', 'def video_player(', 'os.path.normpath',
-            'get_proxy_extensions', 'is_path_under_dir',
-        ]:
+        for expected in ['is_path_under_dir']:
             assert expected in content, f"scanner.py missing: {expected!r}"
+
+    def test_gallery_media_py_safety_strings(self):
+        """get_video() 隨 TASK-150a-T1、video_player() 隨 TASK-150a-T2 搬到 gallery_media.py 後的安全字串。"""
+        content = (PROJECT_ROOT / "web" / "routers" / "gallery_media.py").read_text(encoding="utf-8")
+        for expected in [
+            'def get_video(', 'os.path.normpath',
+            'get_proxy_extensions', 'is_path_under_dir', 'def video_player(',
+        ]:
+            assert expected in content, f"gallery_media.py missing: {expected!r}"
 
 
 class TestWishlistLightboxDispatchOrderGuard:

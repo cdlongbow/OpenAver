@@ -25,7 +25,7 @@ class TestImageProxy:
         test_image = tmp_path / "test.jpg"
         test_image.write_bytes(b'\xff\xd8\xff\xe0' + b'\x00' * 100)  # JPEG magic bytes
 
-        mocker.patch('web.routers.scanner.load_config', return_value={
+        mocker.patch('web.routers.gallery_media.load_config', return_value={
             'gallery': {'directories': [str(tmp_path)], 'path_mappings': {}},
         })
 
@@ -40,7 +40,7 @@ class TestImageProxy:
         # PNG magic bytes
         test_image.write_bytes(b'\x89PNG\r\n\x1a\n' + b'\x00' * 100)
 
-        mocker.patch('web.routers.scanner.load_config', return_value={
+        mocker.patch('web.routers.gallery_media.load_config', return_value={
             'gallery': {'directories': [str(tmp_path)], 'path_mappings': {}},
         })
 
@@ -51,7 +51,7 @@ class TestImageProxy:
 
     def test_image_proxy_not_found(self, client, tmp_path, mocker):
         """圖片不存在應返回 404（路徑在白名單內但檔案不存在）"""
-        mocker.patch('web.routers.scanner.load_config', return_value={
+        mocker.patch('web.routers.gallery_media.load_config', return_value={
             'gallery': {'directories': [str(tmp_path)], 'path_mappings': {}},
         })
 
@@ -65,7 +65,7 @@ class TestImageProxy:
         # WebP magic bytes (RIFF....WEBP)
         test_image.write_bytes(b'RIFF\x00\x00\x00\x00WEBP' + b'\x00' * 100)
 
-        mocker.patch('web.routers.scanner.load_config', return_value={
+        mocker.patch('web.routers.gallery_media.load_config', return_value={
             'gallery': {'directories': [str(tmp_path)], 'path_mappings': {}},
         })
 
@@ -79,7 +79,7 @@ class TestImageProxy:
         test_image = tmp_path / "fanart1.tbn"
         test_image.write_bytes(b'\xff\xd8\xff\xe0' + b'\x00' * 100)
 
-        mocker.patch('web.routers.scanner.load_config', return_value={
+        mocker.patch('web.routers.gallery_media.load_config', return_value={
             'gallery': {'directories': [str(tmp_path)], 'path_mappings': {}},
         })
 
@@ -93,7 +93,7 @@ class TestImageProxy:
         test_image = tmp_path / "logo.svg"
         test_image.write_bytes(b'<svg xmlns="http://www.w3.org/2000/svg"></svg>')
 
-        mocker.patch('web.routers.scanner.load_config', return_value={
+        mocker.patch('web.routers.gallery_media.load_config', return_value={
             'gallery': {'directories': [str(tmp_path)], 'path_mappings': {}},
         })
 
@@ -108,7 +108,7 @@ class TestImageProxyUNCAllowlist:
     def test_unc_host_uppercase_allowed(self, client, mocker):
         """realpath 回傳 host 大寫 UNC → 白名單命中 → 200"""
         # 白名單設 \\DiskStation\usbshare1，realpath 回傳 \\DISKSTATION\usbshare1\a.jpg
-        mocker.patch('web.routers.scanner.load_config', return_value={
+        mocker.patch('web.routers.gallery_media.load_config', return_value={
             'gallery': {
                 'directories': [r'\\DiskStation\usbshare1'],
                 'path_mappings': {},
@@ -127,7 +127,7 @@ class TestImageProxyUNCAllowlist:
             side_effect=lambda p: fake_realpath_result if p in (request_path, dir_path) else p,
         )
         mocker.patch('os.path.exists', return_value=True)
-        mocker.patch('web.routers.scanner.FileResponse',
+        mocker.patch('web.routers.gallery_media.FileResponse',
                      return_value=__import__('starlette.responses', fromlist=['Response']).Response(status_code=200))
 
         response = client.get('/api/gallery/image', params={'path': request_path})
@@ -135,7 +135,7 @@ class TestImageProxyUNCAllowlist:
 
     def test_unc_outside_allowlist_still_403(self, client, mocker):
         """realpath 回傳白名單外 UNC → 403（安全守衛不退化）"""
-        mocker.patch('web.routers.scanner.load_config', return_value={
+        mocker.patch('web.routers.gallery_media.load_config', return_value={
             'gallery': {
                 'directories': [r'\\DiskStation\usbshare1'],
                 'path_mappings': {},
@@ -179,7 +179,7 @@ class TestImageProxyOutputPath:
         # output_path is whitelisted — that is media-server semantics now, so pin
         # external_manager to jellyfin. Under off, resolve_output_root ignores
         # output_path and returns the fixed output/lib/<name> root instead.
-        mocker.patch('web.routers.scanner.load_config', return_value={
+        mocker.patch('web.routers.gallery_media.load_config', return_value={
             'scraper': {'external_manager': 'jellyfin'},
             'gallery': {
                 'directories': [
@@ -204,7 +204,7 @@ class TestImageProxyOutputPath:
         cover = elsewhere / "poster.jpg"
         cover.write_bytes(b'\xff\xd8\xff\xe0' + b'\x00' * 50)
 
-        mocker.patch('web.routers.scanner.load_config', return_value={
+        mocker.patch('web.routers.gallery_media.load_config', return_value={
             'gallery': {
                 'directories': [
                     {'path': str(src_dir), 'readonly': True, 'output_path': str(out_dir)},
@@ -227,7 +227,7 @@ class TestImageProxyPathConversion:
 
         unix_path = str(test_image)  # 已經是 Unix 風格
 
-        mocker.patch('web.routers.scanner.load_config', return_value={
+        mocker.patch('web.routers.gallery_media.load_config', return_value={
             'gallery': {'directories': [str(tmp_path)], 'path_mappings': {}},
         })
 
@@ -243,7 +243,7 @@ class TestImageProxyPathConversion:
         from urllib.parse import quote
         encoded_path = quote(str(test_image))
 
-        mocker.patch('web.routers.scanner.load_config', return_value={
+        mocker.patch('web.routers.gallery_media.load_config', return_value={
             'gallery': {'directories': [str(tmp_path)], 'path_mappings': {}},
         })
 

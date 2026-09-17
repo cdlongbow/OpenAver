@@ -375,8 +375,16 @@ class TestOffFlavorHappyPath:
         assert stats["failed"] == 0
 
     def test_cover_via_image_proxy_200_and_bytes(self, tmp_path, monkeypatch, client, parse_sse_events):
-        """#16 (chains T-1): DB cover_path → /api/gallery/image → 200 + real bytes; outside → 403."""
+        """#16 (chains T-1): DB cover_path → /api/gallery/image → 200 + real bytes; outside → 403.
+
+        TASK-150a-T1：get_image() 搬到 gallery_media.py 後，共用的 `_setup()`/`_wire()`
+        （服務本 class 其餘測試與掃描管線）只 patch `web.routers.scanner.load_config`——
+        這裡額外加一行讓 image proxy 讀到同一份 config，不動 `_setup()`/`_wire()` 本身
+        （BE-TEST-29 陷阱：兩個名字各自重新綁定，patch 一邊不會自動涵蓋另一邊）。
+        """
         numbers, src, output, db_path = self._setup(tmp_path, monkeypatch)
+        import web.routers.scanner as scanner_mod
+        monkeypatch.setattr("web.routers.gallery_media.load_config", scanner_mod.load_config)
         _run_generate(client, parse_sse_events)
 
         repo = VideoRepository(str(db_path))
@@ -1294,7 +1302,7 @@ class TestUriSourcePathIdempotent:
             },
             "scraper": {"video_extensions": [".mp4"]},
         }
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: test_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", lambda: test_config)
 
         path_arg = to_file_uri(str(video_file), {})
         resp = client.get(f"/api/gallery/video?path={quote(path_arg)}")
@@ -1316,7 +1324,7 @@ class TestUriSourcePathIdempotent:
             },
             "scraper": {},
         }
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: test_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", lambda: test_config)
 
         r = client.get("/api/gallery/image", params={"path": str(cover)})
         assert r.status_code == 200, r.text

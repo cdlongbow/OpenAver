@@ -186,6 +186,7 @@ from web.routers import config as config_router
 from web.routers import scraper as scraper_router
 from web.routers import translate as translate_router
 from web.routers import scanner as scanner_router
+from web.routers import gallery_media as gallery_media_router
 from web.routers import gemini as gemini_router
 from web.routers import openai_translate as openai_translate_router
 from web.routers import filename as filename_router
@@ -219,6 +220,7 @@ app.include_router(config_router.router)
 app.include_router(scraper_router.router)
 app.include_router(translate_router.router)
 app.include_router(scanner_router.router)
+app.include_router(gallery_media_router.router)
 app.include_router(gemini_router.router)
 app.include_router(openai_translate_router.router)
 app.include_router(filename_router.router)

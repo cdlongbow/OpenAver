@@ -45,7 +45,7 @@ class TestScannerAPI:
                 "video_extensions": [".mp4"]
             }
         }
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: test_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", lambda: test_config)
         
         # 3. 請求
         path_arg = to_file_uri(str(video_file))
@@ -70,7 +70,7 @@ class TestScannerAPI:
                 "video_extensions": [".mp4"]
             }
         }
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: test_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", lambda: test_config)
         
         path_arg = to_file_uri(str(video_file))
         response = client.get(f"/api/gallery/video?path={quote(path_arg)}")
@@ -93,7 +93,7 @@ class TestScannerAPI:
                 "video_extensions": [".mp4"]
             }
         }
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: test_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", lambda: test_config)
         
         path_arg = to_file_uri(str(bad_file))
         response = client.get(f"/api/gallery/video?path={quote(path_arg)}")
@@ -113,14 +113,14 @@ class TestScannerAPI:
             },
             'scraper': {'video_extensions': ['.mp4']},
         }
-        monkeypatch.setattr('web.routers.scanner.load_config', lambda: test_config)
+        monkeypatch.setattr('web.routers.gallery_media.load_config', lambda: test_config)
 
         path_arg = to_file_uri(r'\\DiskStation\usbshare1\a.mp4')
 
         with patch('os.path.realpath', return_value=r'\\?\UNC\DiskStation\usbshare1\a.mp4'), \
              patch('os.path.exists', return_value=True), \
              patch('os.path.getsize', return_value=1024), \
-             patch('web.routers.scanner.FileResponse',
+             patch('web.routers.gallery_media.FileResponse',
                    return_value=__import__('starlette.responses', fromlist=['Response']).Response(status_code=200)):
             response = client.get(f'/api/gallery/video?path={quote(path_arg)}')
 
@@ -138,7 +138,7 @@ class TestScannerAPI:
             },
             'scraper': {'video_extensions': ['.mp4']},
         }
-        monkeypatch.setattr('web.routers.scanner.load_config', lambda: test_config)
+        monkeypatch.setattr('web.routers.gallery_media.load_config', lambda: test_config)
 
         path_arg = to_file_uri(r'\\AnotherNAS\evil\a.mp4')
 
@@ -170,7 +170,7 @@ class TestScannerAPI:
             },
             "scraper": {"video_extensions": [".mp4"]},
         }
-        monkeypatch.setattr("web.routers.scanner.load_config", lambda: test_config)
+        monkeypatch.setattr("web.routers.gallery_media.load_config", lambda: test_config)
 
         path_arg = to_file_uri(str(video_file))
         response = client.get(f"/api/gallery/video?path={quote(path_arg)}")
@@ -181,8 +181,8 @@ class TestScannerAPI:
     def test_get_player_success(self, client, tmp_path, monkeypatch):
         """測試 /api/gallery/player 回傳正確的 HTML"""
         # video_player() 內部無條件呼叫 get_db_path()/VideoRepository() 做分組查詢
-        # （web/routers/scanner.py），未 mock 前連上 output/openaver.db。
-        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
+        # （web/routers/gallery_media.py），未 mock 前連上 output/openaver.db。
+        monkeypatch.setattr("web.routers.gallery_media.get_db_path", lambda: tmp_path / "test.db")
         video_path = to_file_uri("C:/videos/test.mp4")
         response = client.get(f"/api/gallery/player?path={quote(video_path)}")
 
@@ -203,7 +203,7 @@ class TestScannerAPI:
         # f-string 組裝與例外路徑），且與同一支測試的 i18n 斷言共用同一次請求，
         # 拆開反而要多打一次端點。日後若要把結構三條遷去 static_guard_lint.mjs，
         # 是獨立的 backlog，不在本卡。
-        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
+        monkeypatch.setattr("web.routers.gallery_media.get_db_path", lambda: tmp_path / "test.db")
         video_path = to_file_uri("C:/videos/test.mp4")
         response = client.get(f"/api/gallery/player?path={quote(video_path)}")
         html = response.text
@@ -222,10 +222,10 @@ class TestScannerAPI:
         # 真的 render 出 lang="ja"。static_guard_lint 看得到 scanner.py 白名單
         # 寫了 "ja"，看不到「這個 config 狀態下 html_lang 選中 ja 並寫進 <html>」。
         monkeypatch.setattr(
-            "web.routers.scanner.load_config",
+            "web.routers.gallery_media.load_config",
             lambda: {"general": {"locale": "ja"}},
         )
-        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
+        monkeypatch.setattr("web.routers.gallery_media.get_db_path", lambda: tmp_path / "test.db")
         video_path = to_file_uri("C:/videos/test.mp4")
         response = client.get(f"/api/gallery/player?path={quote(video_path)}")
         assert response.status_code == 200
@@ -237,10 +237,10 @@ class TestScannerAPI:
         # fail-closed 之後的 render 結果。static_guard_lint 讀得到預設字串
         # "zh-TW" 寫在源碼，讀不到「fr 這次真的沒被當成 lang 寫出去」。
         monkeypatch.setattr(
-            "web.routers.scanner.load_config",
+            "web.routers.gallery_media.load_config",
             lambda: {"general": {"locale": "fr"}},
         )
-        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
+        monkeypatch.setattr("web.routers.gallery_media.get_db_path", lambda: tmp_path / "test.db")
         video_path = to_file_uri("C:/videos/test.mp4")
         response = client.get(f"/api/gallery/player?path={quote(video_path)}")
         assert response.status_code == 200
@@ -254,10 +254,10 @@ class TestScannerAPI:
         # 寫這個字面，讀不到「unhashable locale 這個 config 狀態下真的 render
         # 出正規化後的值」。這是 i18n fallback 字串 fingerprint。
         monkeypatch.setattr(
-            "web.routers.scanner.load_config",
+            "web.routers.gallery_media.load_config",
             lambda: {"general": {"locale": ["zh-TW"]}},
         )
-        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
+        monkeypatch.setattr("web.routers.gallery_media.get_db_path", lambda: tmp_path / "test.db")
         video_path = to_file_uri("C:/videos/test.mp4")
         response = client.get(f"/api/gallery/player?path={quote(video_path)}")
         assert response.status_code == 200
@@ -278,7 +278,7 @@ class TestScannerAPI:
         # 檔名在這個請求下真的被 escape 進回應」——要打端點 render 才知道。
         from html import escape as html_escape
 
-        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
+        monkeypatch.setattr("web.routers.gallery_media.get_db_path", lambda: tmp_path / "test.db")
         raw_name = 'test<>&".mp4'
         video_path = to_file_uri(f"C:/videos/{raw_name}")
         response = client.get(f"/api/gallery/player?path={quote(video_path)}")
@@ -3248,7 +3248,7 @@ def _seed_player_videos(tmp_path, monkeypatch, filenames, *, dir_name="videos"):
             mtime=1.0,
         ))
     repo.upsert_batch(rows)
-    monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
+    monkeypatch.setattr("web.routers.gallery_media.get_db_path", lambda: db_path)
     return {"db_path": db_path, "uris": uris, "dir": video_dir}
 
 
@@ -3360,7 +3360,7 @@ class TestVideoPlayerMultipart:
         assert len(parts) == 2
         assert _path_from_video_url(parts[0]) == cd1_uri
         assert _path_from_video_url(parts[1]) == cd2_uri
-        scanner_src = Path("web/routers/scanner.py").read_text(encoding="utf-8")
+        scanner_src = Path("web/routers/gallery_media.py").read_text(encoding="utf-8")
         assert "html_escape(json.dumps(parts_urls), quote=True)" in scanner_src
 
     def test_ac16_nontoken_plus_cd2_does_not_continue(
@@ -3423,12 +3423,12 @@ class TestVideoPlayerMultipart:
         # （無 data-parts）。收窄 except 會讓 TestClient 拿到 500 而非這份 HTML。
         db_path = tmp_path / "broken.db"
         db_path.write_bytes(b"not-sqlite")
-        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
+        monkeypatch.setattr("web.routers.gallery_media.get_db_path", lambda: db_path)
 
         def _boom(*_a, **_k):
             raise RuntimeError("db exploded")
 
-        monkeypatch.setattr("web.routers.scanner.VideoRepository", _boom)
+        monkeypatch.setattr("web.routers.gallery_media.VideoRepository", _boom)
         video_path = to_file_uri("C:/videos/test.mp4")
         response = client.get(f"/api/gallery/player?path={quote(video_path)}")
         assert response.status_code == 200

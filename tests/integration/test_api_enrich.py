@@ -2101,7 +2101,7 @@ class TestEnrichSingleThumbnailInvalidation:
     """feature/71 T8 邊界3/4/6：enrich/rescrape 成功 → invalidate 用 canonical key；失敗不呼叫。
 
     PR #60 Codex P2 回歸：生產的 file_path 已是 DB 的 file:/// URI（前端送 v.path）。
-    縮圖 canonical key = 該 URI 原字串 hash（generate/serve/prewarm 同源）。端點須用冪等
+    縮圖 canonical key = 該 URI 原字串 hash（generate/serve 同源）。端點須用冪等
     coerce_to_file_uri（已是 URI 原樣回），**不可**再套 to_file_uri 造成 file:///file:///
     double-encode 砍錯 hash → 舊縮圖殘留。舊測餵裸 FS path 並斷言 double-encode 後的 mapped
     URI，是把 bug 行為當合約鎖死，已整套重寫。"""

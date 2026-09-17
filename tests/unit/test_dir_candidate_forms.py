@@ -13,7 +13,7 @@ Pure function; each call uses a distinct raw_dir so the module-level TTL cache
 import os
 
 from core.path_utils import is_path_under_dir, to_file_uri
-from web.routers.scanner import _dir_candidate_forms
+from web.routers.gallery_media import _dir_candidate_forms
 
 
 class TestDirCandidateFormsUriIdempotent:

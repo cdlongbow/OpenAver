@@ -359,15 +359,9 @@
     "thumbnail_cache": {
       "label": "封面縮圖快取",
       "hint": "在本機產生封面的小圖快取，大幅加快封面牆與燈箱載入（尤其影片檔放在 NAS / HDD 時）。每張約 30KB。",
-      "confirm_modal": {
-        "title": "開啟封面縮圖快取",
-        "body": "將為目前 {count} 部影片建立封面縮圖，約佔 {mb}MB 空間。在傳統硬碟（HDD）上預計約需 {min} 分鐘於背景生成；SSD 會快很多。期間可繼續正常使用，完成後會通知你。（確認後會立即儲存目前設定）",
-        "cancel": "取消",
-        "confirm": "儲存並開始建立"
-      },
       "disable_modal": {
         "title": "關閉封面縮圖快取",
-        "body": "將刪除已生成的封面縮圖（釋放約 {mb}MB 空間）；不影響任何影片資料與原始封面。重新開啟需再次於背景生成。",
+        "body": "將刪除已生成的封面縮圖（釋放約 {mb}MB 空間）；不影響任何影片資料與原始封面。",
         "cancel": "取消",
         "confirm": "關閉並清除"
       }
@@ -900,8 +894,6 @@
     "batch_enrich_done_with_errors": "批次補完（部分失敗）",
     "batch_enrich_failed": "批次補完中斷",
     "jl_cf_timeout": "Cloudflare 驗證逾時",
-    "thumb_prewarm_start": "開始建立封面縮圖快取",
-    "thumb_prewarm_done": "封面縮圖快取已完成",
     "update_available": "OpenAver 有新版本",
     "auto_organize_summary": "定時整理",
     "auto_organize_aborted": "定時整理已中止",

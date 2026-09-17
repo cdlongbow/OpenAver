@@ -359,15 +359,9 @@
     "thumbnail_cache": {
       "label": "封面缩略图缓存",
       "hint": "在本机生成封面的小图缓存，大幅加快封面墙与灯箱加载（尤其视频文件放在 NAS / HDD 时）。每张约 30KB。",
-      "confirm_modal": {
-        "title": "开启封面缩略图缓存",
-        "body": "将为目前 {count} 部视频建立封面缩略图，约占 {mb}MB 空间。在传统硬盘（HDD）上预计约需 {min} 分钟于后台生成；SSD 会快很多。期间可继续正常使用，完成后会通知你。（确认后会立即保存目前设置）",
-        "cancel": "取消",
-        "confirm": "保存并开始建立"
-      },
       "disable_modal": {
         "title": "关闭封面缩略图缓存",
-        "body": "将删除已生成的封面缩略图（释放约 {mb}MB 空间）；不影响任何视频数据与原始封面。重新开启需再次于后台生成。",
+        "body": "将删除已生成的封面缩略图（释放约 {mb}MB 空间）；不影响任何视频数据与原始封面。",
         "cancel": "取消",
         "confirm": "关闭并清除"
       }
@@ -1571,8 +1565,6 @@
     "batch_enrich_done_with_errors": "批量补完（部分失败）",
     "batch_enrich_failed": "批量补完中断",
     "jl_cf_timeout": "JavLibrary CF 验证超时",
-    "thumb_prewarm_start": "开始建立封面缩略图缓存",
-    "thumb_prewarm_done": "封面缩略图缓存已完成",
     "update_available": "OpenAver 有新版本",
     "auto_organize_summary": "定时整理",
     "auto_organize_aborted": "定时整理已中止",
