@@ -13,7 +13,7 @@
   S3 = core.enricher.enrich_single
   S4 = core.enricher._sync_nfo_mtime
   S5 = core.database.migrate.backfill_readonly_nfo_mtime
-  S6 = core.readonly_producer._write_movie_assets
+  S6 = core.readonly_assets._write_movie_assets
 
 六處各自要對帳兩個計數：「直接讀 mtime」（`.st_mtime` / `.st_mtime_ns` 屬性存取，
 以及 `os.path.getmtime(...)` / 裸名 `getmtime(...)` 呼叫——Opus 審核裁決 2，三種

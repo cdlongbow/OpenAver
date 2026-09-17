@@ -44,10 +44,19 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# 掃描範圍＝會寫 stem 級衍生圖（正典封面 / -poster / -fanart）的三個模組。
+# 掃描範圍＝會寫 stem 級衍生圖（正典封面 / -poster / -fanart）的模組。TASK-151a-T3
+# 把 `_write_movie_assets` 等資產寫入函式從 `core/readonly_producer.py` 搬到
+# `core/readonly_assets.py`，但 `readonly_producer.py` 本身仍是唯讀 produce 流程
+# 的入口檔、`readonly_paths.py` 也是同一次拆分出來的姊妹模組——三個檔都留在掃描
+# 集合裡，才不會讓「換成新模組」在守衛帳面上被誤讀成「換掉了原本被掃描的檔」。
+# 主 session pre-merge branch review 第 3 輪裁決（2026-09-18）：`4a3cc96d` commit
+# 訊息宣稱「守衛強度零變動」不成立（T3 用 readonly_assets.py 取代、不是新增
+# readonly_producer.py，導致 readonly_producer.py 整個掉出掃描集合），本次修正。
 _MODULES = (
     'core/enricher.py',
     'core/organizer.py',
+    'core/readonly_producer.py',
+    'core/readonly_paths.py',
     'core/readonly_assets.py',
 )
 

@@ -3385,7 +3385,7 @@ class TestReadonlyRoutingE2E:
         # not_found 分支也會落 _readonly_stub_not_found 真寫（同
         # test_enrich_single_no_meta_has_full_shape 的理由）；本 class 已有現成
         # 的 self._wire(...) helper 負責把 web.routers.scraper.VideoRepository /
-        # core.readonly_producer.get_db_path 都接到 tmp DB，只是這支測試沒呼叫它
+        # core.readonly_paths.get_db_path 都接到 tmp DB，只是這支測試沒呼叫它
         # （未 mock 前寫進 output/openaver.db 的 NS-001 樁列，見
         # REPORT-127b-T3.md §0）。
         db_path = self._init_db(tmp_path)
