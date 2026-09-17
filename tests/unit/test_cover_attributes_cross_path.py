@@ -12,7 +12,7 @@ import textwrap
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from core import readonly_paths, readonly_producer
+from core import readonly_assets, readonly_paths, readonly_producer
 from core.cover_attributes import ATTRIBUTE_TABLE, effective_tags
 from core.database import VideoRepository, init_db
 from core.gallery_scanner import VideoScanner
@@ -206,7 +206,7 @@ def _run_readonly(tmp_path, filename, meta=None):
     md = meta if meta is not None else _readonly_meta()
     cfg = _readonly_config()
     fd = readonly_paths._format_data(md, str(source_path), cfg)
-    readonly_producer._write_movie_assets(
+    readonly_assets._write_movie_assets(
         str(movie_dir),
         md,
         fd,

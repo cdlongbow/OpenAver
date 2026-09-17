@@ -2520,7 +2520,7 @@ class TestReadonlyRoutingE2E:
             side_effect=lambda *a, **kw: RealRepo(db_path),
         )
         mocker.patch(
-            "core.readonly_producer.generate_jellyfin_images",
+            "core.readonly_assets.generate_jellyfin_images",
             side_effect=_e2e_fake_generate_jellyfin_images,
         )
 
@@ -2554,7 +2554,7 @@ class TestReadonlyRoutingE2E:
         config = _e2e_off_config(src)
         self._wire(mocker, monkeypatch, config, db_path)
         mock_search = mocker.patch("core.readonly_producer.search_jav")
-        mock_download = mocker.patch("core.readonly_producer.download_image")
+        mock_download = mocker.patch("core.readonly_assets.download_image")
 
         before = _e2e_snapshot(src)
 
@@ -2616,7 +2616,7 @@ class TestReadonlyRoutingE2E:
             },
         )
         mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
         resp1 = client.post("/api/enrich-single", json={
             "file_path": canonical, "number": "RG-001", "readonly_action": "ingest",
@@ -2694,7 +2694,7 @@ class TestReadonlyRoutingE2E:
             },
         )
         mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
         resp1 = client.post("/api/enrich-single", json={
             "file_path": canonical, "number": "DL-001", "readonly_action": "ingest",
@@ -2762,7 +2762,7 @@ class TestReadonlyRoutingE2E:
             },
         )
         mock_download = mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
         resp1 = client.post("/api/enrich-single", json={
             "file_path": canonical, "number": "PV-001", "readonly_action": "ingest",
@@ -2841,7 +2841,7 @@ class TestReadonlyRoutingE2E:
             },
         )
         mock_download = mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
         resp1 = client.post("/api/enrich-single", json={
             "file_path": canonical, "number": "WCF-001", "readonly_action": "ingest",
@@ -2899,7 +2899,7 @@ class TestReadonlyRoutingE2E:
             },
         )
         mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
         resp1 = client.post("/api/enrich-single", json={
             "file_path": canonical, "number": "WNF-001", "readonly_action": "ingest",
@@ -3069,7 +3069,7 @@ class TestReadonlyRoutingE2E:
         canonical = to_file_uri(str(video))
 
         mock_search = mocker.patch("core.readonly_producer.search_jav")
-        mock_download = mocker.patch("core.readonly_producer.download_image")
+        mock_download = mocker.patch("core.readonly_assets.download_image")
 
         response = client.post("/api/enrich-single", json={
             "file_path": canonical, "number": "DBO-001", "readonly_action": "ingest",
@@ -3112,7 +3112,7 @@ class TestReadonlyRoutingE2E:
             },
         )
         mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
         resp1 = client.post("/api/enrich-single", json={
             "file_path": canonical, "number": "SM-001", "readonly_action": "ingest",
@@ -3178,7 +3178,7 @@ class TestReadonlyRoutingE2E:
             },
         )
         mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
         resp1 = client.post("/api/enrich-single", json={
             "file_path": canonical, "number": "PR-001", "readonly_action": "ingest",
@@ -3259,7 +3259,7 @@ class TestReadonlyRoutingE2E:
             },
         )
         mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
         resp1 = client.post("/api/enrich-single", json={
             "file_path": canonical, "number": "PC-001", "readonly_action": "ingest",
@@ -3283,7 +3283,7 @@ class TestReadonlyRoutingE2E:
         fake_video.summary = ""
         mocker.patch("web.routers.scraper.fetch_javlib_by_detail_url", return_value=fake_video)
         mock_download = mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
 
         resp2 = client.post("/api/enrich-single", json={

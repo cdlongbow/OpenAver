@@ -120,7 +120,7 @@ def _e2e_wire(mocker, monkeypatch, config, db_path):
         side_effect=lambda *a, **kw: RealRepo(db_path),
     )
     mocker.patch(
-        "core.readonly_producer.generate_jellyfin_images",
+        "core.readonly_assets.generate_jellyfin_images",
         side_effect=_e2e_fake_generate_jellyfin_images,
     )
 
@@ -154,7 +154,7 @@ class TestReadonlyRescrapeMetadataWiring:
         mock_search = mocker.patch("core.readonly_producer.search_jav")
         mock_search_single = mocker.patch("core.readonly_producer.search_jav_single_source")
         mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
 
         # BE-TEST-10：baseline 在 fixture 建檔之後、client.post 之前取
@@ -218,7 +218,7 @@ class TestReadonlyRescrapeMetadataWiring:
         mocker.patch("core.readonly_producer.search_jav")
         mocker.patch("core.readonly_producer.search_jav_single_source")
         mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
 
         canonical = to_file_uri(str(video))
@@ -526,7 +526,7 @@ class TestReadonlyEnrichWishlistReconcile:
         mocker.patch("core.readonly_producer.search_jav")
         mocker.patch("core.readonly_producer.search_jav_single_source")
         mocker.patch(
-            "core.readonly_producer.download_image",
+            "core.readonly_assets.download_image",
             side_effect=_e2e_download_writes_url_bytes,
         )
 
@@ -587,7 +587,7 @@ class TestReadonlyEnrichWishlistReconcile:
         mocker.patch("core.readonly_producer.search_jav")
         mocker.patch("core.readonly_producer.search_jav_single_source")
         mocker.patch(
-            "core.readonly_producer.download_image",
+            "core.readonly_assets.download_image",
             side_effect=_e2e_download_writes_url_bytes,
         )
 

@@ -139,9 +139,9 @@ def _install_producer_mocks(monkeypatch):
     miss the already-bound references and let real network/IO run (§8 risk 6).
     """
     monkeypatch.setattr("core.readonly_producer.search_jav", _fake_search_jav)
-    monkeypatch.setattr("core.readonly_producer.download_image", _fake_download_image)
-    monkeypatch.setattr("core.readonly_producer.generate_jellyfin_images", _fake_generate_jellyfin_images)
-    monkeypatch.setattr("core.readonly_producer.generate_nfo", _fake_generate_nfo)
+    monkeypatch.setattr("core.readonly_assets.download_image", _fake_download_image)
+    monkeypatch.setattr("core.readonly_assets.generate_jellyfin_images", _fake_generate_jellyfin_images)
+    monkeypatch.setattr("core.readonly_assets.generate_nfo", _fake_generate_nfo)
 
 
 # ---------------------------------------------------------------------------
@@ -539,7 +539,7 @@ class TestIngestFourMatrix:
         _wire(monkeypatch, config, db_path)
         before = _snapshot(src)
         with patch("core.readonly_producer.search_jav", side_effect=_fake_search_jav) as mock_search, \
-             patch("core.readonly_producer.download_image", side_effect=_fake_download_image) as mock_download:
+             patch("core.readonly_assets.download_image", side_effect=_fake_download_image) as mock_download:
             _run_generate(client, parse_sse_events)
         after = _snapshot(src)
 
@@ -800,13 +800,13 @@ class TestIngestCuratedPosterFanartVerbatimMediaServer:
             external_manager="jellyfin",
         )
         _wire(monkeypatch, config, db_path)
-        # BE-TEST-01 #1: patch 使用端 core.readonly_producer.generate_jellyfin_images
+        # BE-TEST-01 #1: patch 使用端 core.readonly_assets.generate_jellyfin_images
         # (NOT core.organizer.*) — layered on top of _wire's monkeypatch.setattr,
         # mirroring TestIngestFourMatrix._run_case's existing double-mock idiom, so
         # this `with patch(...)` block additionally gets call-tracking for
         # assert_not_called() below.
         with patch(
-            "core.readonly_producer.generate_jellyfin_images",
+            "core.readonly_assets.generate_jellyfin_images",
             side_effect=_fake_generate_jellyfin_images,
         ) as mock_jellyfin:
             _run_generate(client, parse_sse_events)
@@ -870,7 +870,7 @@ class TestH10CuratorSameNameConflictUpgrade:
         )
         _wire(monkeypatch, config, db_path)
         with patch(
-            "core.readonly_producer.generate_jellyfin_images",
+            "core.readonly_assets.generate_jellyfin_images",
             side_effect=_fake_generate_jellyfin_images,
         ) as mock_jellyfin:
             _run_generate(client, parse_sse_events)

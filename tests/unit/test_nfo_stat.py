@@ -94,7 +94,7 @@ class TestNfoMtimeOrNoneReraisePrimitiveLayer:
 
 
 class TestNfoMtimeOrNoneReraiseConsumerLayer:
-    """S6 re-raise, consumer layer: core.readonly_producer._write_movie_assets
+    """S6 re-raise, consumer layer: core.readonly_assets._write_movie_assets
     must still fail the whole piece when the NFO it just wrote can't be
     stat()'d — this is the pre-existing "no try/except, exception propagates"
     semantics (CD-113b-5), now re-implemented via nfo_mtime_or_none +
@@ -105,7 +105,7 @@ class TestNfoMtimeOrNoneReraiseConsumerLayer:
     """
 
     def test_write_movie_assets_propagates_when_nfo_stat_fails(self, tmp_path):
-        from core.readonly_producer import _write_movie_assets
+        from core.readonly_assets import _write_movie_assets
         from tests.unit.test_readonly_producer import (
             _T3_BASE_CONFIG,
             _T3_META,
@@ -124,10 +124,10 @@ class TestNfoMtimeOrNoneReraiseConsumerLayer:
                 raise OSError(13, "Permission denied")
             return real_stat(self, *args, **kwargs)
 
-        with patch("core.readonly_producer.download_image", return_value=True), \
-             patch("core.readonly_producer.generate_jellyfin_images",
+        with patch("core.readonly_assets.download_image", return_value=True), \
+             patch("core.readonly_assets.generate_jellyfin_images",
                    return_value={"poster": True, "fanart": True}), \
-             patch("core.readonly_producer.generate_nfo",
+             patch("core.readonly_assets.generate_nfo",
                    side_effect=_t3_generate_nfo_side_effect), \
              patch.object(Path, "stat", _selective_stat), \
              pytest.raises(OSError):

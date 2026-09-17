@@ -65,6 +65,6 @@ forbidden_modules = ["windows"]
 [[tool.importlinter.contracts]]
 name = "readonly_producer must not import maker_mapping directly"
 type = "forbidden"
-source_modules = ["core.readonly_producer", "core.readonly_paths"]
+source_modules = ["core.readonly_producer", "core.readonly_paths", "core.readonly_assets"]
 forbidden_modules = ["core.maker_mapping"]
 allow_indirect_imports = true
