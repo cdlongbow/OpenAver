@@ -5067,6 +5067,51 @@ const RULES = [
     stripLineComments: true,
     note: '[TASK-147b-T3 CD-147b-5b] didEnrichSomething 本體必須含 fields_filled（三欄判準不得退回兩欄）',
   },
+
+  // ---- [TASK-150b-T3 / CD-150b-7] viewport gate：封面 _coverRequested ＋ x-intersect ＋ shim ----
+  // 規則 1：showcase 影片卡 <img> 必須含 _coverRequested（gate 接線）。
+  // scope 錨在唯一字首 `<img :src="((index < 8`；window 實測 862（錨 → x-init 收尾 `">`），取 900。
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: '_coverRequested',
+    scope: { anchor: /<img :src="\(\(index < 8/, window: 900 },
+    note: '[TASK-150b-T3 CD-150b-7 #1] showcase 影片卡 <img> 必須含 _coverRequested（viewport gate 接線）',
+  },
+  // 規則 2：禁止退回舊的裸 :src="video.cover_url"（完整舊屬性字串，不可裸識別字——
+  // 新表達式合法含 video.cover_url，裸字面會誤傷；掃描粒度＝屬性值，避開 FE-GUARD-20）。
+  // scope 與規則 1 同一個 anchor／window。
+  {
+    file: 'web/templates/showcase.html', kind: 'forbidden-string',
+    pattern: ':src="video.cover_url"',
+    scope: { anchor: /<img :src="\(\(index < 8/, window: 900 },
+    note: '[TASK-150b-T3 CD-150b-7 #2] showcase 影片卡的加閘 <img> 區塊內不得另外出現未加閘的裸 :src="video.cover_url"（半退回／重複 img）。⚠️ 完整退回成裸 :src 的情形不是由本規則的 pattern 比對抓到的——那會讓本規則與規則 1／3 共用的 scope.anchor 一起消失，三條都以「anchor 找不到」fail-closed 轉紅；本規則自己的 matches() 只在「anchor 還在、但區塊內多了一個裸 :src」時才會執行到（已實測）',
+  },
+  // 規則 3：骨架 shimmer x-show 必須含 `!video._imgLoaded && video._coverRequested` 片段。
+  // 同 anchor；window 實測 1170（錨 → shimmer </div>），取 1200。
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: '!video._imgLoaded && video._coverRequested',
+    scope: { anchor: /<img :src="\(\(index < 8/, window: 1200 },
+    note: '[TASK-150b-T3 CD-150b-7 #3] 骨架 shimmer x-show 必須含 !video._imgLoaded && video._coverRequested',
+  },
+  // 規則 4：base.html AC-2 pass-through shim 必須存在於 Alpine plugins／core 之前。
+  // scope 錨在唯一的 Alpine.store('ui'；window 實測 768（錨 → shim IIFE `})();`），取 800。
+  {
+    file: 'web/templates/base.html', kind: 'required-string',
+    pattern: 'IntersectionObserver',
+    scope: { anchor: /Alpine\.store\('ui'/, window: 800 },
+    note: '[TASK-150b-T3 CD-150b-7 #4] base.html 必須含 IntersectionObserver shim（早於 Alpine plugins／core）',
+  },
+  // 規則 5：viewport gate 的「寫入端」——x-intersect directive 本身必須存在且 N 正確。
+  // 規則 1/2/3 守的都是讀取端（:src 表達式、骨架 shimmer），刪掉 x-intersect 整行時
+  // `_coverRequested` 這個字面仍留在 :src 裡 ⇒ 四條全綠而功能全毀（實測）。這條補寫入端。
+  // window 與規則 1 同 900：搬家後 x-intersect 在 @error 後，pattern 結尾距 anchor 實測 664，仍在 900 內。
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'x-intersect.once.margin.690px="video._coverRequested = true"',
+    scope: { anchor: /<img :src="\(\(index < 8/, window: 900 },
+    note: '[TASK-150b-T3 CD-150b-7 #5] viewport gate 的寫入端：x-intersect directive 本身 ＋ N=690 ＋ 設 _coverRequested 三者一體，逐字鎖住。刪掉這一行會讓 _coverRequested 永遠是 false ⇒ 整面封面牆只剩前 8 張、其餘永久空白且捲動不補，而規則 1/2/3 全部照樣綠（它們守的是讀取端，_coverRequested 字面仍在 :src 裡）',
+  },
 ];
 
 // ---- helpers ----
