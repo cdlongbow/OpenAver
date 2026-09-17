@@ -23,7 +23,7 @@ from core.logger import get_logger
 from core.multipart_group import resolve_groups_bulk
 from core.nfo_updater import update_nfo_user_tags
 from core.path_utils import CURRENT_ENV, reverse_path_mapping, to_file_uri, uri_to_fs_path, uri_to_local_fs_path
-from core.readonly_producer import resolve_owning_output_root
+from core.readonly_paths import resolve_owning_output_root
 from core.scraper import extract_number, is_number_format
 
 logger = get_logger(__name__)

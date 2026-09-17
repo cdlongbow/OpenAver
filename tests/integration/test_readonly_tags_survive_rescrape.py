@@ -40,7 +40,7 @@ class TestReadonlyTagsSurviveRescrape:
             "web.routers.scraper.VideoRepository",
             lambda *a, **kw: RealRepo(tmp_db),
         )
-        monkeypatch.setattr("core.readonly_producer.get_db_path", lambda: tmp_db)
+        monkeypatch.setattr("core.readonly_paths.get_db_path", lambda: tmp_db)
         monkeypatch.setattr("core.readonly_producer.download_image", lambda *a, **kw: False)
         # /api/enrich-single 成功後會呼叫 _reconcile_wishlist_after_write() → reconcile_wishlist()，
         # 而 WishlistRepository() 不帶參數時走 connection.get_db_path()（模組屬性、呼叫當下才解析）。

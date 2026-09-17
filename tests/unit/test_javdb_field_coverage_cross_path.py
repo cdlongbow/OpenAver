@@ -25,7 +25,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from core import readonly_producer
+from core import readonly_paths, readonly_producer
 from core.database import Video, VideoRepository, init_db
 from core.gallery_scanner import VideoScanner
 from core.organizer import organize_file
@@ -328,7 +328,7 @@ def _run_readonly(tmp_path: Path, filename: str = "ABC-123.mp4", meta: dict = No
     movie_dir = work / "output" / "movie"
     md = meta if meta is not None else _readonly_meta()
     cfg = _readonly_config(**config_overrides)
-    fd = readonly_producer._format_data(md, str(source_path), cfg)
+    fd = readonly_paths._format_data(md, str(source_path), cfg)
     with patch("core.readonly_producer.download_image", side_effect=_fake_download_image):
         readonly_producer._write_movie_assets(
             str(movie_dir),

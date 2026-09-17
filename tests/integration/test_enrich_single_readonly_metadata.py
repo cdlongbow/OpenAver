@@ -114,7 +114,7 @@ def _e2e_wire(mocker, monkeypatch, config, db_path):
     from core.database import VideoRepository as RealRepo
 
     mocker.patch("web.routers.scraper.load_config", return_value=config)
-    monkeypatch.setattr("core.readonly_producer.get_db_path", lambda: db_path)
+    monkeypatch.setattr("core.readonly_paths.get_db_path", lambda: db_path)
     mocker.patch(
         "web.routers.scraper.VideoRepository",
         side_effect=lambda *a, **kw: RealRepo(db_path),

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from core import readonly_producer
+from core import readonly_paths, readonly_producer
 from core.database import VideoRepository
 from core.organizer import generate_nfo
 from core.path_utils import to_file_uri
@@ -62,7 +62,7 @@ def _write_assets(tmp_path, source_filename, meta=None, movie_leaf="movie"):
     movie_dir = tmp_path / "output" / movie_leaf
     md = meta if meta is not None else _meta()
     cfg = _config()
-    fd = readonly_producer._format_data(md, str(source_path), cfg)
+    fd = readonly_paths._format_data(md, str(source_path), cfg)
     assets = readonly_producer._write_movie_assets(
         str(movie_dir),
         md,

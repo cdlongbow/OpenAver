@@ -232,34 +232,34 @@ class TestFormatData:
     }
 
     def test_long_title_truncated(self):
-        from core.readonly_producer import _format_data
+        from core.readonly_paths import _format_data
         meta = {'number': 'ABC-123', 'title': 'A' * 30}
         fd = _format_data(meta, '/src/ABC-123.mp4', self.BASE_CONFIG)
         assert len(fd['title']) <= 20
         assert fd['title'].endswith('...')
 
     def test_prefix_stripped_from_title(self):
-        from core.readonly_producer import _format_data
+        from core.readonly_paths import _format_data
         meta = {'number': 'ABC-123', 'title': '[ABC-123]Original Title'}
         fd = _format_data(meta, '/src/ABC-123.mp4', self.BASE_CONFIG)
         assert 'ABC-123' not in fd['title']
         assert 'Original Title' in fd['title']
 
     def test_suffix_detected_from_basename(self):
-        from core.readonly_producer import _format_data
+        from core.readonly_paths import _format_data
         meta = {'number': 'ABC-123', 'title': 'Some Title'}
         fd = _format_data(meta, '/src/ABC-123-C.mp4', self.BASE_CONFIG)
         assert '-c' in fd['suffix'].lower()
 
     def test_no_suffix_when_no_match(self):
-        from core.readonly_producer import _format_data
+        from core.readonly_paths import _format_data
         meta = {'number': 'ABC-123', 'title': 'Some Title'}
         fd = _format_data(meta, '/src/ABC-123.mp4', self.BASE_CONFIG)
         assert fd['suffix'] == ''
 
     def test_truncated_title_consistent_in_folder_and_basename(self):
         """Same truncated title feeds both _folder_parts and _build_basename (no drift)."""
-        from core.readonly_producer import _build_basename, _folder_parts, _format_data
+        from core.readonly_paths import _build_basename, _folder_parts, _format_data
         long_title = 'VeryLong' * 5
         meta = {'number': 'ABC-123', 'title': long_title}
         config = {
@@ -282,14 +282,14 @@ class TestFolderParts:
     """Tests for _folder_parts."""
 
     def test_two_layers(self):
-        from core.readonly_producer import _folder_parts
+        from core.readonly_paths import _folder_parts
         config = {'folder_layers': ['{actor}', '{num}'], 'max_filename_length': 60}
         fd = {'number': 'ABC-123', 'title': 'Title', 'actors': ['Actress'], 'maker': '', 'date': '', 'suffix': ''}
         parts = _folder_parts(fd, config)
         assert len(parts) == 2
 
     def test_more_than_3_layers_capped(self):
-        from core.readonly_producer import _folder_parts
+        from core.readonly_paths import _folder_parts
         config = {
             'folder_layers': ['{num}', '{num}', '{num}', '{num}'],
             'max_filename_length': 60,
@@ -299,7 +299,7 @@ class TestFolderParts:
         assert len(parts) <= 3
 
     def test_empty_layer_skipped(self):
-        from core.readonly_producer import _folder_parts
+        from core.readonly_paths import _folder_parts
         # An empty-string layer formats to '' and must be dropped by the `if part` guard.
         config = {'folder_layers': ['{num}', ''], 'max_filename_length': 60}
         fd = {'number': 'ABC-123', 'title': 'Title', 'actors': [], 'maker': '', 'date': '', 'suffix': ''}
@@ -309,7 +309,7 @@ class TestFolderParts:
 
     def test_folder_format_fallback(self):
         """When folder_layers is empty, folder_format is used."""
-        from core.readonly_producer import _folder_parts
+        from core.readonly_paths import _folder_parts
         config = {
             'folder_layers': [],
             'folder_format': '{num}',
@@ -320,7 +320,7 @@ class TestFolderParts:
         assert parts == ['ABC-123']
 
     def test_no_layers_no_folder_format_defaults_num(self):
-        from core.readonly_producer import _folder_parts
+        from core.readonly_paths import _folder_parts
         config = {'max_filename_length': 60}
         fd = {'number': 'XYZ-001', 'title': '', 'actors': [], 'maker': '', 'date': '', 'suffix': ''}
         parts = _folder_parts(fd, config)
@@ -345,31 +345,31 @@ class TestBuildBasename:
     }
 
     def test_vr_tail_present_for_vr_file(self):
-        from core.readonly_producer import _build_basename
-        with patch('core.readonly_producer._detect_vr_cluster', return_value='180_LR'):
+        from core.readonly_paths import _build_basename
+        with patch('core.readonly_paths._detect_vr_cluster', return_value='180_LR'):
             result = _build_basename(self.BASE_FD, '/src/ABC-123_180_LR.mp4', self.BASE_CONFIG)
         assert result.endswith('_180_LR')
 
     def test_no_vr_tail_for_normal_file(self):
-        from core.readonly_producer import _build_basename
-        with patch('core.readonly_producer._detect_vr_cluster', return_value=None):
+        from core.readonly_paths import _build_basename
+        with patch('core.readonly_paths._detect_vr_cluster', return_value=None):
             result = _build_basename(self.BASE_FD, '/src/ABC-123.mp4', self.BASE_CONFIG)
         # BASE_FD title has no underscore → any '_' means an erroneous VR tail (RED if injected)
         assert '_' not in result
 
     def test_suffix_not_truncated_in_two_pass(self):
         """When {suffix} in template, suffix is not cut off by truncation."""
-        from core.readonly_producer import _build_basename
+        from core.readonly_paths import _build_basename
         fd = dict(self.BASE_FD, suffix='-C', title='X' * 60)
         config = dict(self.BASE_CONFIG, filename_format='{num} {title}{suffix}', max_filename_length=30)
-        with patch('core.readonly_producer._detect_vr_cluster', return_value=None):
+        with patch('core.readonly_paths._detect_vr_cluster', return_value=None):
             result = _build_basename(fd, '/src/ABC-123-C.mp4', config)
         # suffix '-c' / '-C' should survive truncation
         assert result.endswith('-c') or result.endswith('-C') or '-c' in result.lower()
 
     def test_plain_num_title_no_vr_tail(self):
-        from core.readonly_producer import _build_basename
-        with patch('core.readonly_producer._detect_vr_cluster', return_value=None):
+        from core.readonly_paths import _build_basename
+        with patch('core.readonly_paths._detect_vr_cluster', return_value=None):
             result = _build_basename(self.BASE_FD, '/src/ABC-123.mp4', self.BASE_CONFIG)
         assert result == 'ABC-123 Normal Title'
 
@@ -413,7 +413,7 @@ class TestResolveMovieDir:
 
     def test_existing_under_output_root_reused_no_increment(self):
         """existing.output_dir non-empty and under output_uri → reuse verbatim, no increment."""
-        from core.readonly_producer import _resolve_movie_dir
+        from core.readonly_paths import _resolve_movie_dir
         repo = MagicMock()
         repo.is_output_dir_taken.return_value = False
         existing_uri = self._uri('ABC-123')
@@ -434,7 +434,7 @@ class TestResolveMovieDir:
     def test_b1_multi_format_collision_increments(self):
         """First file (existing=None) allocates ABC-123; DB shows ABC-123 taken (by the
         first file's own committed row) for the second file → second gets ABC-123-2."""
-        from core.readonly_producer import _resolve_movie_dir
+        from core.readonly_paths import _resolve_movie_dir
         repo = MagicMock()
         taken_uri = self._uri('ABC-123')
 
@@ -456,7 +456,7 @@ class TestResolveMovieDir:
 
     def test_first_allocation_no_collision(self):
         """existing=None, nothing taken → plain leaf, n==1."""
-        from core.readonly_producer import _resolve_movie_dir
+        from core.readonly_paths import _resolve_movie_dir
         repo = MagicMock()
         repo.is_output_dir_taken.return_value = False
         allocated: set = set()
@@ -473,7 +473,7 @@ class TestResolveMovieDir:
 
     def test_existing_outside_new_output_root_reallocates(self):
         """existing.output_dir set but NOT under the (new) output_uri → new allocation branch."""
-        from core.readonly_producer import _resolve_movie_dir
+        from core.readonly_paths import _resolve_movie_dir
         repo = MagicMock()
         repo.is_output_dir_taken.return_value = False
         existing = self._existing(to_file_uri('/old-root/ABC-123', {}))  # stale root, moved output_path
@@ -491,7 +491,7 @@ class TestResolveMovieDir:
 
     def test_increment_limit_raises(self):
         """Every candidate taken → RuntimeError once n exceeds _MAX_INCREMENT."""
-        from core.readonly_producer import _MAX_INCREMENT, _resolve_movie_dir
+        from core.readonly_paths import _MAX_INCREMENT, _resolve_movie_dir
         repo = MagicMock()
         repo.is_output_dir_taken.return_value = True  # everything taken, forever
         allocated: set = set()
@@ -507,7 +507,7 @@ class TestResolveMovieDir:
     def test_allocated_this_run_blocks_reuse_within_same_run(self):
         """A candidate already recorded in allocated_this_run is treated as taken even
         though repo/disk both say it's free (same-run guard)."""
-        from core.readonly_producer import _resolve_movie_dir
+        from core.readonly_paths import _resolve_movie_dir
         repo = MagicMock()
         repo.is_output_dir_taken.return_value = False
         allocated = {self._uri('ABC-123')}  # pre-seeded as if file #1 already claimed it
@@ -523,19 +523,20 @@ class TestResolveMovieDir:
 
     # -----------------------------------------------------------------
     # TASK-89a-T5 (CD-89a-6 / Codex C3): mapped-output 定位.
-    # gotcha: CURRENT_ENV is value-imported into core.readonly_producer,
-    # so monkeypatch the USE site (core.readonly_producer.CURRENT_ENV),
-    # not core.path_utils.CURRENT_ENV (see TASK-89a-T5.md).
+    # gotcha: CURRENT_ENV is value-imported into core.readonly_paths (moved
+    # here by TASK-151a-T1 along with _resolve_movie_dir), so monkeypatch the
+    # USE site (core.readonly_paths.CURRENT_ENV), not core.path_utils.CURRENT_ENV
+    # (see TASK-89a-T5.md).
     # -----------------------------------------------------------------
 
     def test_mapped_output_wsl_with_mapping_reverses_fs_but_not_uri(self, monkeypatch):
         """A main scenario: wsl + non-empty path_mappings + hit → returned fs Path is
         reverse-mapped to the real local path, while the returned URI (stored back to
         DB) stays the original forward-mapped existing.output_dir untouched."""
-        import core.readonly_producer as producer_module
-        from core.readonly_producer import _resolve_movie_dir
+        from core import readonly_paths
+        from core.readonly_paths import _resolve_movie_dir
 
-        monkeypatch.setattr(producer_module, 'CURRENT_ENV', 'wsl')
+        monkeypatch.setattr(readonly_paths, 'CURRENT_ENV', 'wsl')
         mappings = {'/home/user/nas': '//NAS-SERVER/share'}
         output_root_local = '/home/user/nas/lib'
         output_uri = to_file_uri(output_root_local, mappings)
@@ -561,10 +562,10 @@ class TestResolveMovieDir:
     def test_mapped_output_wsl_no_mapping_unchanged(self, monkeypatch):
         """Degenerate combo 2/4: wsl but path_mappings empty → behavior unchanged
         (regression lock for the non-mapped 88/89 scenarios)."""
-        import core.readonly_producer as producer_module
-        from core.readonly_producer import _resolve_movie_dir
+        from core import readonly_paths
+        from core.readonly_paths import _resolve_movie_dir
 
-        monkeypatch.setattr(producer_module, 'CURRENT_ENV', 'wsl')
+        monkeypatch.setattr(readonly_paths, 'CURRENT_ENV', 'wsl')
         repo = MagicMock()
         repo.is_output_dir_taken.return_value = False
         existing_uri = self._uri('ABC-123')
@@ -584,10 +585,10 @@ class TestResolveMovieDir:
     def test_mapped_output_non_wsl_with_mapping_unchanged(self, monkeypatch):
         """Degenerate combo 3/4: non-wsl env + non-empty path_mappings → no reverse
         (symmetric with to_file_uri's forward mapping only firing in wsl)."""
-        import core.readonly_producer as producer_module
-        from core.readonly_producer import _resolve_movie_dir
+        from core import readonly_paths
+        from core.readonly_paths import _resolve_movie_dir
 
-        monkeypatch.setattr(producer_module, 'CURRENT_ENV', 'windows')
+        monkeypatch.setattr(readonly_paths, 'CURRENT_ENV', 'windows')
         mappings = {'/home/user/nas': '//NAS-SERVER/share'}
         repo = MagicMock()
         repo.is_output_dir_taken.return_value = False
@@ -608,10 +609,10 @@ class TestResolveMovieDir:
     def test_mapped_output_non_wsl_no_mapping_unchanged(self, monkeypatch):
         """Degenerate combo 4/4: non-wsl env + empty path_mappings → no reverse
         (baseline, both guard conditions false)."""
-        import core.readonly_producer as producer_module
-        from core.readonly_producer import _resolve_movie_dir
+        from core import readonly_paths
+        from core.readonly_paths import _resolve_movie_dir
 
-        monkeypatch.setattr(producer_module, 'CURRENT_ENV', 'linux')
+        monkeypatch.setattr(readonly_paths, 'CURRENT_ENV', 'linux')
         repo = MagicMock()
         repo.is_output_dir_taken.return_value = False
         existing_uri = self._uri('ABC-123')
@@ -631,10 +632,10 @@ class TestResolveMovieDir:
     def test_new_allocation_branch_not_reverse_mapped(self, monkeypatch):
         """New-allocation branch never runs URI→fs reversal: candidate_fs is already a
         native fs path built via output_root, not derived from an existing URI."""
-        import core.readonly_producer as producer_module
-        from core.readonly_producer import _resolve_movie_dir
+        from core import readonly_paths
+        from core.readonly_paths import _resolve_movie_dir
 
-        monkeypatch.setattr(producer_module, 'CURRENT_ENV', 'wsl')
+        monkeypatch.setattr(readonly_paths, 'CURRENT_ENV', 'wsl')
         mappings = {'/home/user/nas': '//NAS-SERVER/share'}
         output_root_local = '/home/user/nas/lib'
         output_uri = to_file_uri(output_root_local, mappings)
@@ -700,7 +701,7 @@ _T3_BASE_CONFIG = {
 
 
 def _t3_format_data(meta=None, source_fs_path='/src/TEST-001.mp4', config=None):
-    from core.readonly_producer import _format_data
+    from core.readonly_paths import _format_data
     return _format_data(meta or _T3_META, source_fs_path, config or _T3_BASE_CONFIG)
 
 
@@ -971,7 +972,8 @@ class TestWriteMovieAssets:
         （即還原成 bug 版本）→ 本測試單獨轉紅（AssertionError：cover_fs 為空 /
         poster 或 fanart 未產生），其餘測試不受影響。
         """
-        from core.readonly_producer import _build_basename, _write_movie_assets
+        from core.readonly_paths import _build_basename
+        from core.readonly_producer import _write_movie_assets
 
         movie_dir = str(tmp_path / 'output' / 'TEST-CD1127')
         os.makedirs(movie_dir, exist_ok=True)
@@ -1053,7 +1055,8 @@ class TestWriteMovieAssets:
         → 本測試單獨轉紅（cover_fs 非空 + poster/fanart 被產生），
         姊妹測試 `..._preflight_regression` 維持綠（形狀正確：正向鎖不該一起紅）。
         """
-        from core.readonly_producer import _build_basename, _write_movie_assets
+        from core.readonly_paths import _build_basename
+        from core.readonly_producer import _write_movie_assets
 
         movie_dir = str(tmp_path / 'output' / 'TEST-CD1127')
         os.makedirs(movie_dir, exist_ok=True)
@@ -1173,7 +1176,8 @@ class TestOffModeNfoTagFallback:
     _BASE = 'TEST-001 Test Movie Title'
 
     def _write_and_read_nfo(self, tmp_path, meta, config):
-        from core.readonly_producer import _format_data, _write_movie_assets
+        from core.readonly_paths import _format_data
+        from core.readonly_producer import _write_movie_assets
 
         movie_dir = str(tmp_path / 'movie')
         fd = _format_data(meta, '/src/TEST-001.mp4', config)
@@ -1410,7 +1414,8 @@ class TestWriteMovieAssetsStationWiring:
     _FIXTURE_B = {"number": "SSIS-001", "maker": "10musume"}
 
     def _run_station3(self, tmp_path, tag, fixture, external_manager='jellyfin'):
-        from core.readonly_producer import _build_basename, _write_movie_assets
+        from core.readonly_paths import _build_basename
+        from core.readonly_producer import _write_movie_assets
 
         movie_dir = str(tmp_path / 'output' / f"{fixture['number']}_{tag}")
         source_fs_path = f"/src/{fixture['number']}_{tag}.mp4"
@@ -1513,7 +1518,8 @@ def _t4_real_nfo(**kwargs):
 
 def _t4_write(movie_dir, meta, config, old_base='', download_side_effect=None):
     """Run the real _write_movie_assets (real file writes) with T4's old_base kwarg."""
-    from core.readonly_producer import _format_data, _write_movie_assets
+    from core.readonly_paths import _format_data
+    from core.readonly_producer import _write_movie_assets
 
     fd = _format_data(meta, '/src/TEST-001.mp4', config)
     with patch('core.readonly_producer.download_image',
@@ -1530,25 +1536,25 @@ class TestBuildOldBase:
     """T4: _build_old_base — DB row (`existing`) → old_meta mapping → old basename."""
 
     def test_none_existing_returns_empty(self):
-        from core.readonly_producer import _build_old_base
+        from core.readonly_paths import _build_old_base
         assert _build_old_base(None, '/src/TEST-001.mp4', _T3_BASE_CONFIG) == ''
 
     def test_empty_title_returns_empty(self):
         existing = _t4_existing(dict(_T3_META, title=''))
-        from core.readonly_producer import _build_old_base
+        from core.readonly_paths import _build_old_base
         assert _build_old_base(existing, '/src/TEST-001.mp4', _T3_BASE_CONFIG) == ''
 
     def test_empty_number_returns_empty(self):
         """Defensive guard (Opus note #3): existing.number falsy must not crash / must skip."""
         existing = _t4_existing(dict(_T3_META, number=''))
-        from core.readonly_producer import _build_old_base
+        from core.readonly_paths import _build_old_base
         assert _build_old_base(existing, '/src/TEST-001.mp4', _T3_BASE_CONFIG) == ''
 
     def test_normal_existing_matches_manual_pipeline(self):
         """old_base must equal _format_data + _build_basename run manually against the
         same mapped fields — proves _build_old_base doesn't silently diverge from
         the documented mapping (number/title/actors/maker/date)."""
-        from core.readonly_producer import _build_basename, _build_old_base, _format_data
+        from core.readonly_paths import _build_basename, _build_old_base, _format_data
 
         existing = _t4_existing(dict(_T3_META, title='Old Title'))
         source_fs_path = '/src/TEST-001.mp4'
@@ -1723,7 +1729,7 @@ class TestWriteMovieAssetsStaleCleanup:
         d = Path(movie_dir)
         assert (d / 'TEST-001 Title A.nfo').exists()
 
-        from core.readonly_producer import _build_old_base
+        from core.readonly_paths import _build_old_base
         old_base = _build_old_base(_t4_existing(meta_a), '/src/TEST-001.mp4', config)
         assert old_base == 'TEST-001 Title A'
 
@@ -1749,7 +1755,7 @@ class TestWriteMovieAssetsStaleCleanup:
         ef_dir = Path(movie_dir) / 'extrafanart'
         assert (ef_dir / 'fanart3.jpg').exists()
 
-        from core.readonly_producer import _build_old_base
+        from core.readonly_paths import _build_old_base
         old_base = _build_old_base(_t4_existing(meta3), '/src/TEST-001.mp4', config)
         meta2 = dict(_T3_META, title='Same Title',
                      sample_images=['http://x/1.jpg', 'http://x/2.jpg'])
@@ -1770,7 +1776,7 @@ class TestWriteMovieAssetsStaleCleanup:
         assert (ef_dir / 'fanart1.jpg').exists()
         assert (ef_dir / 'fanart2.jpg').exists()
 
-        from core.readonly_producer import _build_old_base
+        from core.readonly_paths import _build_old_base
         old_base = _build_old_base(_t4_existing(meta), '/src/TEST-001.mp4', config_on)
         config_off = self._config(download_sample_images=False)
         _t4_write(movie_dir, meta, config_off, old_base=old_base)
@@ -1783,7 +1789,7 @@ class TestWriteMovieAssetsStaleCleanup:
         follow-up) — the same-named file is left for download_image/generate_nfo
         to overwrite directly, never pre-deleted. Deleting first (old behavior)
         would destroy the old asset even when the new write then fails partway."""
-        from core.readonly_producer import _build_basename, _build_old_base, _format_data
+        from core.readonly_paths import _build_basename, _build_old_base, _format_data
 
         movie_dir = str(tmp_path / 'TEST-001')
         meta = dict(_T3_META, title='Same Title')
@@ -1830,7 +1836,7 @@ class TestWriteMovieAssetsStaleCleanup:
         ef_custom = ef_dir / 'custom.jpg'
         ef_custom.write_bytes(b'USER-CUSTOM')
 
-        from core.readonly_producer import _build_old_base
+        from core.readonly_paths import _build_old_base
         old_base = _build_old_base(_t4_existing(meta_a), '/src/TEST-001.mp4', config)
         meta_b = dict(_T3_META, title='Title B')
         _t4_write(movie_dir, meta_b, config, old_base=old_base)
@@ -1842,7 +1848,7 @@ class TestWriteMovieAssetsStaleCleanup:
 
     def test_first_generation_no_existing_row_no_op(self, tmp_path):
         """existing is None → _build_old_base == '' → no cleanup attempted, write succeeds."""
-        from core.readonly_producer import _build_old_base
+        from core.readonly_paths import _build_old_base
 
         movie_dir = str(tmp_path / 'TEST-001')
         meta = dict(_T3_META, title='Title A')
@@ -1866,7 +1872,7 @@ class TestWriteMovieAssetsStaleCleanup:
         _t4_write(old_dir, meta_a, config)
         assert (Path(old_dir) / 'TEST-001 Title A.nfo').exists()
 
-        from core.readonly_producer import _build_old_base
+        from core.readonly_paths import _build_old_base
         old_base = _build_old_base(_t4_existing(meta_a), '/src/TEST-001.mp4', config)
         _t4_write(new_dir, meta_b, config, old_base=old_base)
 
@@ -1889,7 +1895,8 @@ class TestWriteMovieAssetsStaleCleanup:
         """generate_nfo returning False → _write_movie_assets raises, and the
         OLD series (nfo/cover/poster/fanart) must all still be on disk — the
         card keeps its previously-usable asset set rather than losing both."""
-        from core.readonly_producer import _build_old_base, _format_data, _write_movie_assets
+        from core.readonly_paths import _build_old_base, _format_data
+        from core.readonly_producer import _write_movie_assets
 
         movie_dir = str(tmp_path / 'TEST-001')
         meta_a = dict(_T3_META, title='Title A')
@@ -1923,7 +1930,8 @@ class TestWriteMovieAssetsStaleCleanup:
         """old_base == new_base, cover download fails this run → old cover.jpg
         must survive (download_image never got to overwrite it); NFO still
         writes successfully and is NOT stale-cleaned (same base, no-op)."""
-        from core.readonly_producer import _build_old_base, _format_data, _write_movie_assets
+        from core.readonly_paths import _build_old_base, _format_data
+        from core.readonly_producer import _write_movie_assets
 
         movie_dir = str(tmp_path / 'TEST-001')
         meta = dict(_T3_META, title='Same Title')
@@ -1965,7 +1973,8 @@ class TestWriteMovieAssetsStaleCleanup:
         (<old_base>.jpg) must survive (has_cover False gates the delete), but
         old NFO (<old_base>.nfo) IS cleaned since it always writes successfully
         and old_base differs from new_base."""
-        from core.readonly_producer import _build_old_base, _format_data, _write_movie_assets
+        from core.readonly_paths import _build_old_base, _format_data
+        from core.readonly_producer import _write_movie_assets
 
         movie_dir = str(tmp_path / 'TEST-001')
         meta_a = dict(_T3_META, title='Title A')
@@ -2036,7 +2045,8 @@ class TestCd112_16NfoRegressionLock:
         <poster>/<fanart> 退回 {b}.jpg，該檔不存在）；off 情境與首次產出情境
         維持綠。
         """
-        from core.readonly_producer import _format_data, _write_movie_assets
+        from core.readonly_paths import _format_data
+        from core.readonly_producer import _write_movie_assets
 
         movie_dir, meta, config = self._first_full_write(tmp_path)
         d = Path(movie_dir)
@@ -2067,7 +2077,8 @@ class TestCd112_16NfoRegressionLock:
         的 -fanart.jpg；<poster> 確實退回 {b}.jpg 且該檔**不存在**（斷言存在性
         為 False，不是斷言路徑字面值）。**不得**把 <poster> 改指 -fanart.jpg
         ——這是已知且刻意接受的行為，不是要修的 bug。"""
-        from core.readonly_producer import _format_data, _write_movie_assets
+        from core.readonly_paths import _format_data
+        from core.readonly_producer import _write_movie_assets
 
         movie_dir, meta, config = self._first_full_write(tmp_path)
         d = Path(movie_dir)
@@ -2120,7 +2131,8 @@ class TestCd112_16NfoRegressionLock:
         呼叫改成餵 nfo_image_flag 包裹過的值（即讓 cleanup 也吃磁碟真相）→
         該支轉紅（`<old_base>-poster/-fanart` 被誤刪）。
         """
-        from core.readonly_producer import _build_old_base, _format_data, _write_movie_assets
+        from core.readonly_paths import _build_old_base, _format_data
+        from core.readonly_producer import _write_movie_assets
 
         movie_dir, meta_a, config = self._first_full_write(tmp_path)
         d = Path(movie_dir)
@@ -2571,7 +2583,7 @@ class TestResolveOutputRoot:
 
     def test_off_with_empty_output_path_returns_fixed_root(self):
         from core.database import get_db_path
-        from core.readonly_producer import resolve_output_root
+        from core.readonly_paths import resolve_output_root
 
         source = _make_source(output_path="", path="/src/movies")
         config = _make_config()  # scraper_cfg={} → fallback 'off'
@@ -2585,7 +2597,7 @@ class TestResolveOutputRoot:
         """off mode ignores source.output_path even if the user typed one (UI hides
         this field in off mode, but the backend must not trust a stale value)."""
         from core.database import get_db_path
-        from core.readonly_producer import resolve_output_root
+        from core.readonly_paths import resolve_output_root
 
         source = _make_source(output_path="/user/typed/path", path="/src/movies")
         config = _make_config(scraper_cfg={"external_manager": "off"})
@@ -2597,7 +2609,7 @@ class TestResolveOutputRoot:
 
     @pytest.mark.parametrize("mode", ["jellyfin", "emby", "kodi"])
     def test_media_server_modes_return_output_path_verbatim(self, mode):
-        from core.readonly_producer import resolve_output_root
+        from core.readonly_paths import resolve_output_root
 
         source = _make_source(output_path="/nas/media", path="/src/movies")
         config = _make_config(scraper_cfg={"external_manager": mode})
@@ -2609,7 +2621,7 @@ class TestResolveOutputRoot:
         """Media-server flavours still require the user to configure output_path —
         resolve_output_root passes the empty value through unchanged (call sites
         keep their existing empty-string guards, CD-89a-7)."""
-        from core.readonly_producer import resolve_output_root
+        from core.readonly_paths import resolve_output_root
 
         source = _make_source(output_path="", path="/src/movies")
         config = _make_config(scraper_cfg={"external_manager": mode})
@@ -2619,7 +2631,7 @@ class TestResolveOutputRoot:
     def test_two_sources_same_basename_do_not_collide(self):
         """B1: two off-mode sources whose folder basename would clash (same leaf
         directory name, different parent path) must resolve to different roots."""
-        from core.readonly_producer import resolve_output_root
+        from core.readonly_paths import resolve_output_root
 
         config = _make_config()  # off
         source_a = _make_source(path="/mnt/driveA/MyDrive")
@@ -2633,7 +2645,7 @@ class TestResolveOutputRoot:
     def test_same_source_resolves_to_same_root_across_calls(self):
         """Stability lock (DoD): calling resolve_output_root twice for the same
         source/config must yield the identical path (no hidden per-call state)."""
-        from core.readonly_producer import resolve_output_root
+        from core.readonly_paths import resolve_output_root
 
         config = _make_config()  # off
         source = _make_source(path="/mnt/driveA/MyDrive")
@@ -2648,7 +2660,7 @@ class TestResolveOutputRoot:
         Path(...).name == '') must not produce an empty-string folder name — falls
         back to src-<shortcode>."""
         from core.database import get_db_path
-        from core.readonly_producer import resolve_output_root
+        from core.readonly_paths import resolve_output_root
 
         config = _make_config()  # off
         source = _make_source(path="/")
@@ -2983,7 +2995,7 @@ class TestProduceSourceOffModeNeverAborts:
         """Sanity check: the resolved root that unblocked the guard is the off fixed
         folder, not a leaked None/whitespace value."""
         from core.database import get_db_path
-        from core.readonly_producer import resolve_output_root
+        from core.readonly_paths import resolve_output_root
 
         source = _make_source(output_path=output_path)
         config = _make_config()
@@ -3370,8 +3382,8 @@ class TestProduceSourceMixedStats:
              patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
              patch("core.readonly_producer.extract_number", side_effect=fake_extract_number), \
              patch("core.readonly_producer.search_jav", side_effect=fake_search_jav), \
-             patch("core.readonly_producer._format_data", return_value={"number": "X", "title": "T", "actors": [], "maker": "", "date": "", "suffix": ""}), \
-             patch("core.readonly_producer._resolve_movie_dir", return_value=(mock_movie_dir, "file:///output/dest/SUCCESS-001")), \
+             patch("core.readonly_paths._format_data", return_value={"number": "X", "title": "T", "actors": [], "maker": "", "date": "", "suffix": ""}), \
+             patch("core.readonly_paths._resolve_movie_dir", return_value=(mock_movie_dir, "file:///output/dest/SUCCESS-001")), \
              patch("core.readonly_producer._write_movie_assets", return_value={"cover_fs": "/output/dest/SUCCESS-001/cover.jpg", "sample_fs": []}), \
              patch("core.readonly_producer._upsert_db"):
             return produce_source(source, config, repo)
@@ -3496,8 +3508,8 @@ class TestProduceSourceExceptionDoesNotAbort:
              patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
              patch("core.readonly_producer.extract_number", return_value="MOCK-001"), \
              patch("core.readonly_producer.search_jav", return_value=meta), \
-             patch("core.readonly_producer._format_data", return_value=fd), \
-             patch("core.readonly_producer._resolve_movie_dir", return_value=(mock_movie_dir, "file:///output/dest/X")), \
+             patch("core.readonly_paths._format_data", return_value=fd), \
+             patch("core.readonly_paths._resolve_movie_dir", return_value=(mock_movie_dir, "file:///output/dest/X")), \
              patch("core.readonly_producer._write_movie_assets", side_effect=fake_write), \
              patch("core.readonly_producer._upsert_db"):
             result = produce_source(source, config, repo)
@@ -3534,8 +3546,8 @@ class TestProduceSourceFailureContract:
              patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
              patch("core.readonly_producer.extract_number", return_value="MOCK-001"), \
              patch("core.readonly_producer.search_jav", return_value=meta), \
-             patch("core.readonly_producer._format_data", return_value=fd), \
-             patch("core.readonly_producer._resolve_movie_dir", return_value=(mock_movie_dir, "file:///output/dest/X")), \
+             patch("core.readonly_paths._format_data", return_value=fd), \
+             patch("core.readonly_paths._resolve_movie_dir", return_value=(mock_movie_dir, "file:///output/dest/X")), \
              patch("core.readonly_producer._write_movie_assets", side_effect=exc), \
              patch("core.readonly_producer._upsert_db", upsert_mock):
             result = produce_source(source, config, repo)
@@ -4003,7 +4015,8 @@ class TestWriteMovieAssetsStrm:
     def test_getter_evaluated_after_nfo_at_write_time(self, tmp_path):
         """五審五次 Codex：strm_mappings_getter 在 NFO 等資產寫完後、_write_strm 前一刻才求值
         （非片處理開頭 snapshot）。否則求值後、封面/NFO 寫檔期間存的新映射會被漏掉。"""
-        from core.readonly_producer import _format_data, _write_movie_assets
+        from core.readonly_paths import _format_data
+        from core.readonly_producer import _write_movie_assets
         movie_dir = str(tmp_path / 'TEST-001')
         meta = dict(_T3_META, title='Title A')
         config = dict(_T3_BASE_CONFIG, external_manager='jellyfin',
@@ -4075,7 +4088,7 @@ class TestWriteMovieAssetsStrmDrift:
     and leaves only the new one (Emby double-entry prevention)."""
 
     def test_title_drift_removes_old_strm_keeps_new(self, tmp_path):
-        from core.readonly_producer import _build_old_base
+        from core.readonly_paths import _build_old_base
         movie_dir = str(tmp_path / 'TEST-001')
         config = dict(_T3_BASE_CONFIG, external_manager='emby',
                       strm_path_mappings={'/src': '/volume1'})
@@ -4094,7 +4107,8 @@ class TestWriteMovieAssetsStrmDrift:
 
     def test_strm_write_failure_preserves_old_strm(self, tmp_path):
         """When _write_strm returns False this run, has_strm gating keeps the old strm."""
-        from core.readonly_producer import _build_old_base, _format_data, _write_movie_assets
+        from core.readonly_paths import _build_old_base, _format_data
+        from core.readonly_producer import _write_movie_assets
         movie_dir = str(tmp_path / 'TEST-001')
         config = dict(_T3_BASE_CONFIG, external_manager='kodi',
                       strm_path_mappings={'/src': '/volume1'})
@@ -4362,7 +4376,7 @@ class TestProduceSourceMediaServerStrmE2E:
         # App lib root; patch it to the tmp output dir so the test never pollutes the
         # real lib folder (resolve_output_root has its own dedicated tests) — same
         # pattern as test_off_flavour_produces_no_strm below.
-        with patch('core.readonly_producer.resolve_output_root', return_value=str(output_dir)):
+        with patch('core.readonly_paths.resolve_output_root', return_value=str(output_dir)):
             before = _snapshot_dir(source_dir)
             result, _repo = _e2e_run_produce_source(source_dir, output_dir, config, self.FILENAMES)
             after = _snapshot_dir(source_dir)
@@ -4411,7 +4425,7 @@ class TestProduceSourceMediaServerStrmE2E:
         # off flavour's resolve_output_root ignores output_path and returns the fixed
         # App lib root; patch it to the tmp output dir so the test never pollutes the
         # real lib folder (resolve_output_root has its own dedicated tests).
-        with patch('core.readonly_producer.resolve_output_root', return_value=str(output_dir)):
+        with patch('core.readonly_paths.resolve_output_root', return_value=str(output_dir)):
             result, _repo = _e2e_run_produce_source(source_dir, output_dir, config, self.FILENAMES)
 
         assert result.created == 2, f"off run must still produce (created={result.created})"
@@ -4585,7 +4599,7 @@ class TestWriteMovieAssetsContainment:
         file_info = {'path': '/src/ABC-001.mp4', 'size': 1_000_000, 'mtime': 1.0}
         repo = MagicMock()
 
-        with patch('core.readonly_producer._resolve_movie_dir',
+        with patch('core.readonly_paths._resolve_movie_dir',
                    return_value=(movie_dir, 'file:///whatever-db-uri')), \
              patch('core.readonly_producer._write_movie_assets',
                    return_value={'nfo_mtime': 1.0, 'cover_fs': '', 'sample_fs': []}) as mock_write, \
@@ -4660,7 +4674,7 @@ class TestProduceOneContainmentCheckpoint:
         ws_before = _snapshot_dir(workspace)
         src_before = _snapshot_dir(source_dir)
 
-        with patch('core.readonly_producer._resolve_movie_dir',
+        with patch('core.readonly_paths._resolve_movie_dir',
                    return_value=(escaping_movie_dir, 'file:///whatever-db-uri')), \
              patch('core.readonly_producer._write_movie_assets') as mock_write:
             with pytest.raises(RuntimeError):
@@ -5329,7 +5343,8 @@ def _t6_resolve_and_write(src_dir, num, config, out_root=None):
     不是子目錄）——AC10「來源磁碟零寫入」的快照斷言只有在輸出不巢狀在來源
     底下時才有意義（否則 output/ 子目錄本身就會讓 before/after 快照不同，
     誤判成寫入了來源）。"""
-    from core.readonly_producer import _build_basename, _format_data, _write_movie_assets, resolve_ingest_plan
+    from core.readonly_paths import _build_basename, _format_data
+    from core.readonly_producer import _write_movie_assets, resolve_ingest_plan
 
     video = src_dir / f'{num}.mp4'
     video.write_bytes(b'FAKE-VIDEO')
@@ -5496,7 +5511,8 @@ class TestMediaServerNfoTagsPointToExistingFiles:
     _BASE = 'TEST-001 Test Movie Title'
 
     def test_jellyfin_tags_point_to_existing_files(self, tmp_path):
-        from core.readonly_producer import _format_data, _write_movie_assets
+        from core.readonly_paths import _format_data
+        from core.readonly_producer import _write_movie_assets
 
         movie_dir = str(tmp_path / 'movie')
         config = dict(_T3_BASE_CONFIG, external_manager='jellyfin')
@@ -5595,7 +5611,8 @@ class TestCollocatedCuratorSidecarPassthrough:
         直接 `shutil.copy2` 再靠寬 except 吞 `SameFileError` 回 None）→ 本測試
         單獨轉紅（poster 變成灰色封面的裁切產物）。
         """
-        from core.readonly_producer import _build_basename, _format_data, _write_movie_assets, resolve_ingest_plan
+        from core.readonly_paths import _build_basename, _format_data
+        from core.readonly_producer import _write_movie_assets, resolve_ingest_plan
 
         num = 'COLLOC-A'
         config = self._collocated_config()
@@ -5779,7 +5796,8 @@ class TestCollocatedCuratorCoverCollision:
     """
 
     def test_curator_same_name_cover_is_not_overwritten_by_promoted_fanart(self, tmp_path):
-        from core.readonly_producer import _build_basename, _format_data, _write_movie_assets, resolve_ingest_plan
+        from core.readonly_paths import _build_basename, _format_data
+        from core.readonly_producer import _write_movie_assets, resolve_ingest_plan
 
         num = 'COLLIDE-A'
         config = dict(_T3_BASE_CONFIG, external_manager='jellyfin', filename_format='{num}')
@@ -5826,7 +5844,8 @@ class TestCollocatedCuratorCoverCollision:
 class TestCuratorFanartPngContentNamedAsJpg:
     def test_png_in_jpg_curator_fanart_crops_correctly_with_focal(self, tmp_path):
         from PIL import Image
-        from core.readonly_producer import _build_basename, _format_data, _write_movie_assets, resolve_ingest_plan
+        from core.readonly_paths import _build_basename, _format_data
+        from core.readonly_producer import _write_movie_assets, resolve_ingest_plan
 
         num = 'FC2-1234567'
         maker = 'S1 NO.1 STYLE'
@@ -6283,7 +6302,8 @@ class TestNfoMtimePositiveAndMutationLock:
 
     def test_full_produce_nfo_mtime_positive(self, tmp_path, temp_db):
         from core.database import VideoRepository
-        from core.readonly_producer import _format_data, _upsert_db, _write_movie_assets
+        from core.readonly_paths import _format_data
+        from core.readonly_producer import _upsert_db, _write_movie_assets
 
         movie_dir = str(tmp_path / 'output' / 'TEST-001')
         fd = _format_data(_T3_META, '/src/TEST-001.mp4', _T3_BASE_CONFIG)
@@ -7220,7 +7240,7 @@ def _gallery_config(directories, path_mappings=None, scraper_cfg=None):
 
 class TestResolveOwningOutputRoot:
     def test_no_readonly_source_returns_none(self, tmp_path):
-        from core.readonly_producer import resolve_owning_output_root
+        from core.readonly_paths import resolve_owning_output_root
         from core.path_utils import to_file_uri
 
         src = tmp_path / "rw"
@@ -7231,7 +7251,7 @@ class TestResolveOwningOutputRoot:
         assert resolve_owning_output_root(canonical, config) is None
 
     def test_no_source_covers_path_at_all_returns_none(self, tmp_path):
-        from core.readonly_producer import resolve_owning_output_root
+        from core.readonly_paths import resolve_owning_output_root
         from core.path_utils import to_file_uri
 
         src = tmp_path / "ro"
@@ -7243,7 +7263,7 @@ class TestResolveOwningOutputRoot:
 
     def test_finds_owning_readonly_source_off_mode_nonempty_root(self, tmp_path):
         from core.database import get_db_path
-        from core.readonly_producer import resolve_owning_output_root
+        from core.readonly_paths import resolve_owning_output_root
         from core.path_utils import to_file_uri
 
         src = tmp_path / "ro"
@@ -7264,7 +7284,7 @@ class TestResolveOwningOutputRoot:
         """media-server flavour + no output_path configured (first-time /
         never-configured) -> (source, '', '') so the router can still name the
         owning source in its own error message, but must reject the write."""
-        from core.readonly_producer import resolve_owning_output_root
+        from core.readonly_paths import resolve_owning_output_root
         from core.path_utils import to_file_uri
 
         src = tmp_path / "ro"
@@ -7287,7 +7307,7 @@ class TestResolveOwningOutputRoot:
         """readonly parent + writable child (longer/more-specific prefix) ->
         the file under the writable child is NOT readonly -> None (router
         falls through to its existing writable code path)."""
-        from core.readonly_producer import resolve_owning_output_root
+        from core.readonly_paths import resolve_owning_output_root
         from core.path_utils import to_file_uri
 
         parent = tmp_path / "ro_parent"
@@ -7304,7 +7324,7 @@ class TestResolveOwningOutputRoot:
     def test_nested_readonly_child_under_writable_parent_still_routes(self, tmp_path):
         """Mirror case: writable parent + readonly child (longer prefix) -> the
         readonly child wins -> routes (not None), owning source is the child."""
-        from core.readonly_producer import resolve_owning_output_root
+        from core.readonly_paths import resolve_owning_output_root
         from core.path_utils import to_file_uri
 
         parent = tmp_path / "rw_parent"
@@ -7326,7 +7346,7 @@ class TestResolveOwningOutputRoot:
         """Self-contradictory config: the SAME path listed both readonly and
         writable (equal-length prefixes) -> ties favor writable (mirrors
         is_path_readonly's best_ro > best_wr, strict inequality) -> None."""
-        from core.readonly_producer import resolve_owning_output_root
+        from core.readonly_paths import resolve_owning_output_root
         from core.path_utils import to_file_uri
 
         src = tmp_path / "contradictory"
@@ -7345,7 +7365,7 @@ class TestResolveOwningOutputRoot:
         source root stops resolving once the config's source path is changed
         to point elsewhere (simulates the user editing the source root in
         settings) — no stale memory of "this used to be readonly"."""
-        from core.readonly_producer import resolve_owning_output_root
+        from core.readonly_paths import resolve_owning_output_root
         from core.path_utils import to_file_uri
 
         old_root = tmp_path / "old_root"
@@ -7369,7 +7389,7 @@ class TestResolveOwningOutputRoot:
         """A source whose path canonicalization raises ValueError must be
         skipped (mirror readonly_source_prefixes' own per-entry try/except),
         not propagate and crash the whole resolution."""
-        from core.readonly_producer import resolve_owning_output_root
+        from core.readonly_paths import resolve_owning_output_root
         from core.path_utils import to_file_uri
 
         good = tmp_path / "ro_good"
@@ -7387,7 +7407,7 @@ class TestResolveOwningOutputRoot:
                 raise ValueError("malformed")
             return _real_canonical_prefix(path, path_mappings)
 
-        monkeypatch.setattr("core.readonly_producer._canonical_source_prefix", _fake_canonical_prefix)
+        monkeypatch.setattr("core.readonly_paths._canonical_source_prefix", _fake_canonical_prefix)
 
         result = resolve_owning_output_root(canonical, config)
         assert result is not None
@@ -8173,7 +8193,8 @@ class TestResolveIngestPlanMakerNormalization:
 
 class TestWriteMovieAssetsUserTags:
     def test_write_movie_assets_writes_user_tags_to_nfo(self, tmp_path):
-        from core.readonly_producer import _format_data, _write_movie_assets
+        from core.readonly_paths import _format_data
+        from core.readonly_producer import _write_movie_assets
 
         movie_dir = tmp_path / "movie"
         movie_dir.mkdir()
@@ -8192,7 +8213,8 @@ class TestWriteMovieAssetsUserTags:
         assert "<user_tag>★4</user_tag>" in content
 
     def test_write_movie_assets_default_user_tags_omits_tag_elements(self, tmp_path):
-        from core.readonly_producer import _format_data, _write_movie_assets
+        from core.readonly_paths import _format_data
+        from core.readonly_producer import _write_movie_assets
 
         movie_dir = tmp_path / "movie_default"
         movie_dir.mkdir()
@@ -8223,7 +8245,7 @@ class TestProduceOneUserTags:
         existing = Video(path="file:///src/TEST-001.mp4", number="TEST-001", title="Test", user_tags=["custom"])
         repo = MagicMock()
 
-        with patch("core.readonly_producer._resolve_movie_dir",
+        with patch("core.readonly_paths._resolve_movie_dir",
                    return_value=(tmp_path / "output" / "TEST-001", "file:///whatever-db-uri")), \
              patch("core.readonly_producer._write_movie_assets",
                    return_value={"nfo_mtime": 1.0, "cover_fs": "", "sample_fs": []}) as mock_write, \
@@ -8246,7 +8268,7 @@ class TestProduceOneUserTags:
         meta = {"number": "TEST-001", "title": "Test"}
         repo = MagicMock()
 
-        with patch("core.readonly_producer._resolve_movie_dir",
+        with patch("core.readonly_paths._resolve_movie_dir",
                    return_value=(tmp_path / "output" / "TEST-001", "file:///whatever-db-uri")), \
              patch("core.readonly_producer._write_movie_assets",
                    return_value={"nfo_mtime": 1.0, "cover_fs": "", "sample_fs": []}) as mock_write, \

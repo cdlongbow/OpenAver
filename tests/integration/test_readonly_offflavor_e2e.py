@@ -207,14 +207,14 @@ def _wire(monkeypatch, config: dict, db_path: Path):
     """
     monkeypatch.setattr("web.routers.scanner.load_config", lambda: config)
     monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
-    monkeypatch.setattr("core.readonly_producer.get_db_path", lambda: db_path)
+    monkeypatch.setattr("core.readonly_paths.get_db_path", lambda: db_path)
     _install_producer_mocks(monkeypatch)
 
 
 def _off_root(src_path: Path, db_path: Path) -> Path:
     """Compute the fixed off-flavor output root for a source (mirrors resolve_output_root's
     off branch) — used by assertions since off mode ignores DirectoryConfig.output_path."""
-    from core.readonly_producer import _derive_source_name
+    from core.readonly_paths import _derive_source_name
     return db_path.parent / "lib" / _derive_source_name(str(src_path))
 
 
@@ -1130,7 +1130,7 @@ def _fake_search_jav_round2(number, source="auto", proxy_url="", javbus_lang=Non
 def _expected_basename(meta, source_fs_path, scraper_cfg):
     """Compute the actual basename the pipeline would produce for `meta` — avoids
     hand-typing a filename string that could silently drift from real behavior."""
-    from core.readonly_producer import _build_basename, _format_data
+    from core.readonly_paths import _build_basename, _format_data
     fd = _format_data(meta, source_fs_path, scraper_cfg)
     return _build_basename(fd, source_fs_path, scraper_cfg)
 
