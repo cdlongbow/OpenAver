@@ -64,10 +64,10 @@ stub 恆回同名 `.jpg`，逐字等價）；`scanner.py` 的 `_cover_base_stem`
 | ② `core/organizer.py:624` | `crop_to_poster` cover → poster | ✅ PR1 已保護（只有 preflight）|
 | ③ `core/enricher.py:300` | `copy2` cover → fanart | ✅ T3 已保護（preflight ＋ `SameFileError` backstop）|
 | ④ `core/enricher.py:316` | `crop_to_poster` cover → poster | ✅ T3 已保護（只有 preflight）|
-| ⑤ `core/readonly_producer.py::_write_media_images` | `copy2` cover → fanart | ✅ T3 已保護（preflight ＋ `SameFileError` backstop）|
-| ⑥ `core/readonly_producer.py::_write_media_images` | `crop_to_poster` cover → poster | ✅ T3 已保護（只有 preflight）|
+| ⑤ `core/readonly_assets.py::_write_media_images` | `copy2` cover → fanart | ✅ T3 已保護（preflight ＋ `SameFileError` backstop）|
+| ⑥ `core/readonly_assets.py::_write_media_images` | `crop_to_poster` cover → poster | ✅ T3 已保護（只有 preflight）|
 | ⑦ `core/organizer.py::organize_file` 的**第三份內聯實作** | 已改為呼叫 `generate_jellyfin_images` | ✅ T3 已消滅（不再是獨立實作，同檔保護 100% 繼承自 ①②）|
-| ⑧ `core/readonly_producer.py::_write_cover_copy` | `copyfile` 來源封面 → 正典封面位置 | ✅ pre-merge red-team 補（2338c62d）＋ round-1 P2 加 `exists(dst)`（a552f674）＋ round-3 P1 加 collision policy：**`dst` 已存在一律不覆寫**|
+| ⑧ `core/readonly_assets.py::_write_cover_copy` | `copyfile` 來源封面 → 正典封面位置 | ✅ pre-merge red-team 補（2338c62d）＋ round-1 P2 加 `exists(dst)`（a552f674）＋ round-3 P1 加 collision policy：**`dst` 已存在一律不覆寫**|
 
 **collision policy（Codex PR#125 round-3 P1，2026-08-05）**：同檔判斷擋得住「src 與 dst
 是同一個檔」，擋不住「src 與 dst 是**兩個不同的 curator 原檔**」。collocated 佈局
@@ -80,14 +80,14 @@ stub 恆回同名 `.jpg`，逐字等價）；`scanner.py` 的 `_cover_base_stem`
 - **來源層**：`resolve_ingest_plan` 的第三元素改為**宣告所有存在的 sidecar**
   （`'fanart'` 不再恆 `None`）——原本那個 `None` 的前提是「`cover_fs` 會等於 fanart
   路徑」，在上述佈局下為假。
-| ⑨ `core/readonly_producer.py::_copy_curator_sidecar` | `copy2` curator **sidecar** → fanart | ✅ round-2 P1 已保護（preflight ＋ `SameFileError` backstop；兩個 slot 共用同一個 choke point）|
+| ⑨ `core/readonly_assets.py::_copy_curator_sidecar` | `copy2` curator **sidecar** → fanart | ✅ round-2 P1 已保護（preflight ＋ `SameFileError` backstop；兩個 slot 共用同一個 choke point）|
 | ⑩ 同上 | `copy2` curator **sidecar** → poster | ✅ 同 ⑨（不再各自 `copy2`）|
 
 （`core/organizer.py:506` 的 `copy2` 在 `crop_to_poster` **內部**——「已是直向、無需
 裁切」的葉節點分支，它的保護 100% 繼承自呼叫端 ②④⑥ 的 preflight，不是獨立寫入點。）
 
 `generate_jellyfin_images` 的呼叫端因此從 2 處變 3 處：`web/routers/scanner.py`
-（既有）、`core/readonly_producer.py::_write_media_images`（既有）、
+（既有）、`core/readonly_assets.py::_write_media_images`（既有）、
 `core/organizer.py::organize_file`（T3 新增，見下方）。
 """
 

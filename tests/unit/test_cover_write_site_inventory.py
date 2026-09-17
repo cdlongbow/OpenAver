@@ -48,7 +48,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 _MODULES = (
     'core/enricher.py',
     'core/organizer.py',
-    'core/readonly_producer.py',
+    'core/readonly_assets.py',
 )
 
 _WRITE_CALLS = ('copy2', 'copyfile', 'crop_to_poster', 'atomic_move')
@@ -72,10 +72,10 @@ _EXPECTED_WRITE_SITES = {
     ('core/organizer.py', 'organize_file', 'atomic_move'): 1,               # 144-T0：影片本體搬進片庫，非衍生圖
     ('core/organizer.py', 'generate_jellyfin_images', 'copy2'): 1,           # ① cover → fanart
     ('core/organizer.py', 'generate_jellyfin_images', 'crop_to_poster'): 1,  # ② cover → poster
-    ('core/readonly_producer.py', '_copy_curator_sidecar', 'copy2'): 1,      # ⑨⑩ curator sidecar → slot
-    ('core/readonly_producer.py', '_write_cover_copy', 'copyfile'): 1,       # ⑧ 來源封面 → 正典位置
-    ('core/readonly_producer.py', '_write_media_images', 'copy2'): 1,        # ⑤ cover → fanart
-    ('core/readonly_producer.py', '_write_media_images', 'crop_to_poster'): 1,  # ⑥ cover → poster
+    ('core/readonly_assets.py', '_copy_curator_sidecar', 'copy2'): 1,      # ⑨⑩ curator sidecar → slot
+    ('core/readonly_assets.py', '_write_cover_copy', 'copyfile'): 1,       # ⑧ 來源封面 → 正典位置
+    ('core/readonly_assets.py', '_write_media_images', 'copy2'): 1,        # ⑤ cover → fanart
+    ('core/readonly_assets.py', '_write_media_images', 'crop_to_poster'): 1,  # ⑥ cover → poster
 }
 
 # 每個 owner **預期的 preflight 次數**（Codex PR#125 round-3 P2）。
@@ -96,9 +96,9 @@ _EXPECTED_WRITE_SITES = {
 _EXPECTED_PREFLIGHTS = {
     ('core/enricher.py', '_write_external_images'): 2,          # ③④ 各一
     ('core/organizer.py', 'generate_jellyfin_images'): 2,       # ①② 各一
-    ('core/readonly_producer.py', '_copy_curator_sidecar'): 1,  # ⑨⑩ 共用同一個 choke point
-    ('core/readonly_producer.py', '_write_cover_copy'): 1,      # ⑧
-    ('core/readonly_producer.py', '_write_media_images'): 2,    # ⑤⑥ 各一
+    ('core/readonly_assets.py', '_copy_curator_sidecar'): 1,  # ⑨⑩ 共用同一個 choke point
+    ('core/readonly_assets.py', '_write_cover_copy'): 1,      # ⑧
+    ('core/readonly_assets.py', '_write_media_images'): 2,    # ⑤⑥ 各一
 }
 
 # 允許「沒有自己的 preflight」的函式，逐條寫明理由。清單之外的每一個寫入點

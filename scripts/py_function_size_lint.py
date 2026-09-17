@@ -219,7 +219,7 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "單一 OS-level event loop 狀態機；拆分會把 win32 handle 的生命週期打散到多個函式，"
         "難以追蹤資源釋放順序。",
     ),
-    ("core/readonly_producer.py", "_write_movie_assets"): (
+    ("core/readonly_assets.py", "_write_movie_assets"): (
         243,
         "109 剛落地的唯讀單片產出主流程，寫入 nfo/cover/poster/fanart 等多個資產，需要維持"
         "同一次 I/O 序列的可推理性（部分失敗時的處置順序）；剛穩定，暫不再拆避免二次擾動。"
