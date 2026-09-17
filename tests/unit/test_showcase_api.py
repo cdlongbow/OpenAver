@@ -35,10 +35,10 @@ def client(make_client, temp_db, showcase_config):
             "core.database.connection.get_db_path",
             "web.routers.showcase.get_db_path",
             "web.routers.showcase.load_config",
-            # test_player_page_returns_html 打 /api/gallery/player（web/routers/scanner.py
-            # video_player()），該端點自己也呼叫 get_db_path() 做分組查詢，未 mock 前
-            # 會連上 output/openaver.db。
-            "web.routers.scanner.get_db_path",
+            # test_player_page_returns_html 打 /api/gallery/player（TASK-150a-T2 起
+            # video_player() 搬到 web/routers/gallery_media.py），該端點自己也呼叫
+            # get_db_path() 做分組查詢，未 mock 前會連上 output/openaver.db。
+            "web.routers.gallery_media.get_db_path",
         ],
         mock_db_path=temp_db,
         config_override=showcase_config,

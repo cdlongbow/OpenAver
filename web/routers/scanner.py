@@ -8,7 +8,6 @@ Scanner API 路由 - 影片列表生成
 - GET  /api/gallery/update-check          — 檢查需要補全 NFO 的影片數量
 - GET  /api/gallery/update                — 執行 NFO 補全更新（SSE 串流）
 - GET  /api/gallery/view                  — 取得產生的 HTML 列表頁面
-- GET  /api/gallery/player                — 影片播放頁面（HTML5 player）
 - GET  /api/gallery/actress-stats         — 查詢指定女優名稱的片數
 - GET  /api/gallery/jellyfin-check        — 檢查多少影片缺少 Jellyfin poster/fanart
 - GET  /api/gallery/jellyfin-update       — 批次產生 Jellyfin poster + fanart（SSE 串流）
@@ -26,7 +25,6 @@ import threading
 import time
 import requests
 from datetime import datetime
-from urllib.parse import quote
 from pathlib import Path
 from typing import Any, Callable, Dict, Generator, List, Optional
 
@@ -41,7 +39,6 @@ from core.gallery_generator import HTMLGenerator
 from core.path_utils import to_file_uri, is_path_under_dir, uri_to_fs_path, coerce_to_file_uri, uri_to_local_fs_path
 from core.nfo_updater import check_cache_needs_update, update_videos_generator
 from core.database import VideoRepository, Video, init_db, get_db_path, migrate_json_to_sqlite
-from core.multipart_group import resolve_group
 from core.focal import requires_face_detection
 from core.focal_trigger import maybe_submit_video_focal
 from core.organizer import generate_jellyfin_images, HEADERS as _EMBED_HEADERS
@@ -1384,122 +1381,6 @@ def thumb_clear():
     """
     thumbnail_cache.clear_all()
     return {"cleared": True}
-
-
-def _render_player_html(
-    *,
-    html_lang_safe: str,
-    filename: str,
-    src: str,
-    hint_text_network: str,
-    hint_text_format: str,
-    extra_style: str = '',
-    video_open_attrs: str = '',
-    video_data_attrs: str = '',
-    extra_body: str = '',
-    extra_script: str = '',
-) -> str:
-    """播放頁 HTML（單檔與分集共用同一份骨架）。
-
-    feature/122 T5 originally 為分集分支抄了一份完整的頁面骨架，只差一條 CSS、
-    兩個 video 屬性、一個 div 和一個 script tag——那份重複會在下次改播放頁樣式
-    或 error hint 時靜默漂移（/simplify reuse 條目）。骨架收成一處，差異走參數。
-
-    所有插入點都由呼叫端**先 escape 過**才傳進來（`html_escape(..., quote=True)`），
-    本函式只做字串組裝、不做 escape，維持與原本兩份 f-string 逐位元組相同的輸出。
-    """
-    return f"""<!DOCTYPE html>
-<html lang="{html_lang_safe}">
-<head>
-    <meta charset="UTF-8">
-    <title>{filename} - OpenAver</title>
-    <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{ background: #000; display: flex; align-items: center; justify-content: center; height: 100vh; }}
-        video {{ max-width: 100%; max-height: 100vh; }}
-        #video-error-hint-network, #video-error-hint-format {{ color: #fff; padding: 1.5rem; text-align: center; max-width: 32rem; line-height: 1.6; }}{extra_style}
-    </style>
-</head>
-<body>
-    <video {video_open_attrs}controls autoplay src="{src}"{video_data_attrs} onerror="this.style.display='none';var c=this.error?this.error.code:0;document.getElementById((c===3||c===4)?'video-error-hint-format':'video-error-hint-network').style.display='flex'"></video>{extra_body}
-    <div id="video-error-hint-network" style="display:none">{hint_text_network}</div>
-    <div id="video-error-hint-format" style="display:none">{hint_text_format}</div>{extra_script}
-</body>
-</html>"""
-
-
-@router.get("/player")
-def video_player(path: str = Query(..., description="影片路徑（file:/// URI 或 FS 路徑）")):
-    """影片播放頁面 — 用 HTML5 <video> 標籤在新分頁播放"""
-    from html import escape as html_escape
-    from core.i18n import t as i18n_t
-
-    video_url = f"/api/gallery/video?path={quote(path, safe='')}"
-
-    # 從路徑取檔名作為標題（escape 防 XSS）
-    filename = path.rsplit('/', 1)[-1].rsplit('\\', 1)[-1]
-    if filename.startswith('file:'):
-        filename = 'Video Player'
-    filename = html_escape(filename)
-
-    # video_url 也做 HTML escape（防禦性，避免 src 屬性注入）
-    video_url_safe = html_escape(video_url)
-
-    config = load_config()
-    locale = (config.get('general') or {}).get('locale') or ''
-    allowed_langs = {"zh-TW", "zh-CN", "ja", "en"}
-    # 本端點唯一的 locale 正規化點，lang 屬性與提示文字都吃它
-    html_lang = locale if isinstance(locale, str) and locale in allowed_langs else "zh-TW"
-    html_lang_safe = html_escape(html_lang)
-    hint_text_network = html_escape(i18n_t('showcase.video.player_unavailable', locale=html_lang))
-    hint_text_format = html_escape(i18n_t('showcase.video.player_unavailable_format', locale=html_lang))
-
-    gallery_config = config.get('gallery', {})
-    path_mappings = gallery_config.get('path_mappings', {})
-
-    group = None
-    try:
-        db_path = get_db_path()
-        if db_path.exists():
-            repo = VideoRepository(db_path)
-            v = repo.get_by_path(path)
-            if v is not None:
-                group = resolve_group(repo, path, path_mappings, folder_source_uri=v.path)
-    except Exception:
-        logger.warning("video_player: 分組查詢失敗，退回單檔播放", exc_info=True)
-        group = None
-
-    if group is not None and len(group.members) > 1:
-        parts_urls = [f"/api/gallery/video?path={quote(m.path, safe='')}" for m in group.members]
-        data_parts_json = html_escape(json.dumps(parts_urls), quote=True)
-        part_label_template = html_escape(i18n_t('showcase.video.part_progress', locale=html_lang), quote=True)
-        first_src = html_escape(parts_urls[0])
-        return HTMLResponse(content=_render_player_html(
-            html_lang_safe=html_lang_safe,
-            filename=filename,
-            src=first_src,
-            hint_text_network=hint_text_network,
-            hint_text_format=hint_text_format,
-            extra_style=(
-                "\n        #oa-player-progress { position: fixed; top: 1rem; left: 1rem;"
-                " z-index: 1; pointer-events: none; color: #fff; font: 14px/1.4 sans-serif; }"
-            ),
-            video_open_attrs='id="oa-player" ',
-            video_data_attrs=(
-                f' data-parts="{data_parts_json}"'
-                f' data-part-label-template="{part_label_template}"'
-            ),
-            extra_body='\n    <div id="oa-player-progress"></div>',
-            extra_script='\n    <script type="module" src="/static/js/pages/player.js"></script>',
-        ))
-
-    return HTMLResponse(content=_render_player_html(
-        html_lang_safe=html_lang_safe,
-        filename=filename,
-        src=video_url_safe,
-        hint_text_network=hint_text_network,
-        hint_text_format=hint_text_format,
-    ))
 
 
 @router.get("/actress-stats")
