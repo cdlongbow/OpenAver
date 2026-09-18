@@ -21,7 +21,7 @@ CLAUDE.md 的路徑處理禁止清單針對的是**跨 Zone 的路徑格式轉�
 `web/routers/scanner.py::_cover_base_stem`（本模組 `cover_base_stem` 的升格前身，
 CD-112-9）本來就在 `path_utils.py` 之外用 `os.path.splitext` + 字串切片；
 `core/database/migrate.py`、`core/enricher.py`、`core/organizer.py`、
-`core/readonly_producer.py` 現有共六處 `Path(...).with_suffix('.jpg')` 也都是同一類
+`core/enrich_contract.py` 等處的 `Path(...).with_suffix('.jpg')` 也都是同一類
 「檔名尾端語意運算」，同樣不在 `path_utils.py` 裡。`path_utils.py` 自身的定位是
 「支援 Windows 本地 / WSL 網路路徑 / Unix 路徑」的**跨環境格式轉換**，不是
 「副檔名／後綴管理」，兩者職責不重疊。
@@ -184,7 +184,7 @@ def same_target_verdict(src: str, dst: str) -> tuple[bool, bool]:
     `result['poster']` / `result['fanart']` 設成 `True`。跳過寫入是對的（安全側，
     見下方 fail-closed 理由不變）；但宣稱成功是假的——目的檔案實際上完全沒有被
     建立。這個假成功會沿著呼叫鏈往下傳導、造成兩個具體後果：
-    1. `core/readonly_producer.py` 唯讀路徑把 `result['poster']`/`result['fanart']`
+    1. `core/readonly_assets.py` 唯讀路徑把 `result['poster']`/`result['fanart']`
        轉成 `generate_nfo(has_poster=..., has_fanart=...)` 的旗標——NFO 因此寫出
        指向**不存在**檔案的 image tag（懸空引用，正是 CD-112-16／AC7 要消滅的
        那一類）。
@@ -213,8 +213,8 @@ def same_target_verdict(src: str, dst: str) -> tuple[bool, bool]:
     的前兩格，因為它們的「同一檔」判斷有實證依據（字串相等或 `samefile` 明確
     回答），不確定的只有「未知 `OSError` 底下 dst 究竟長什麼樣」這一件事。
 
-    供 `organizer.py`（本 PR）、`enricher.py:294`、`readonly_producer.py:763`
-    （T3）共三處呼叫，是 CD-112-8「路徑相等或 `os.path.samefile`」原文的單一
+    呼叫端（不附行號，行號會過期）：`organizer.py`、`enricher.py`、
+    `readonly_assets.py`，是 CD-112-8「路徑相等或 `os.path.samefile`」原文的單一
     真理來源實作（CD-112-1）。外部庫工具（MDCX/Javinizer 等）常把
     `<stem>-poster.jpg` 建成 `<stem>.jpg` 的 hardlink 或 symlink——此時字串不等
     但兩個路徑是同一個 inode，若不攔下，`crop_to_poster` 會**就地覆寫使用者的
