@@ -341,8 +341,8 @@ class EnrichRequest(BaseModel):
     # or 'rescrape' (gear, always-remote). MUST stay optional: existing non-readonly
     # / batch / integration callers never send it and must not 422 (Codex P1-2).
     # Non-readonly files ignore this field entirely (byte-identical); a readonly
-    # file with it omitted defaults to 'ingest' (safe default — never force a
-    # remote overwrite without an explicit gear action).
+    # file with it omitted defaults to 'ingest', except when metadata is also
+    # present — then omitted defaults to 'rescrape' (D-151b-2 / CD-151b-6).
     readonly_action: Optional[Literal['rescrape', 'ingest']] = None
     metadata: Optional[Dict[str, Any]] = None
     allow_number_change: bool = False
@@ -623,7 +623,7 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
     # （resolve_nfo_cover_paths 對唯讀路徑推 source-adjacent 路徑沒有意義，CD-104-10）。
     canonical = coerce_to_file_uri(request.file_path, path_mappings)  # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
     owning = resolve_owning_output_root(canonical, config)
-    action = (request.readonly_action or 'ingest') if owning is not None else None
+    action = (request.readonly_action or ('rescrape' if request.metadata is not None else 'ingest')) if owning is not None else None
     _validate_enrich_request(request, owning, action, canonical)
     if owning is not None:
         source, output_root, output_uri = owning

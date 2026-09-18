@@ -519,29 +519,23 @@ class TestEnrichSingleMetadataIntegration:
         assert "metadata 與 javlibrary 明細網址（detail_url）不可同時提供" in response.json()["detail"]
 
     def test_readonly_ingest_with_metadata_raises_400(self, client, mocker):
-        """DoD-8 (CD-135-12 item 1b): 唯讀來源檔案 ＋ metadata ＋ readonly_action 為 ingest（或未帶）→ 400"""
+        """明確宣告 readonly_action="ingest" 又帶 metadata 才是 400（D-151b-2 保留的例外）。
+
+        未宣告的情形已改為自動推導成 rescrape，那條的正向驗收在
+        tests/integration/test_enrich_single_readonly_metadata.py::TestReadonlyRescrapeMetadataWiring::test_unlabeled_metadata_auto_rescrapes_200。
+        """
         mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
 
-        # 未帶 readonly_action（預設 ingest）
-        resp1 = client.post("/api/enrich-single", json={
-            "file_path": "/ro/ABC-123.mp4",
-            "number": "ABC-123",
-            "mode": "refresh_full",
-            "metadata": {"number": "ABC-123", "title": "標題"},
-        })
-        assert resp1.status_code == 400
-        assert "唯讀來源：metadata 只在 rescrape（重刮）意圖下生效" in resp1.json()["detail"]
-
         # 明確 readonly_action="ingest"
-        resp2 = client.post("/api/enrich-single", json={
+        response = client.post("/api/enrich-single", json={
             "file_path": "/ro/ABC-123.mp4",
             "number": "ABC-123",
             "mode": "refresh_full",
             "readonly_action": "ingest",
             "metadata": {"number": "ABC-123", "title": "標題"},
         })
-        assert resp2.status_code == 400
-        assert "唯讀來源：metadata 只在 rescrape（重刮）意圖下生效" in resp2.json()["detail"]
+        assert response.status_code == 400
+        assert "唯讀來源：metadata 只在 rescrape（重刮）意圖下生效" in response.json()["detail"]
 
     def test_readonly_rescrape_missing_number_or_title_raises_400(self, client, mocker):
         """DoD-8 (CD-135-12 item 3): 唯讀 ＋ rescrape 但 metadata 缺 number 或缺 title → 400"""
