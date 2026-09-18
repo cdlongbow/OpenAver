@@ -1641,6 +1641,90 @@ class TestFocalMutators:
         assert result.crop_mode == 'manual'
 
 
+class TestUpdateCoverPathPreserveFocal:
+    """VideoRepository.update_cover_path_preserve_focal（CD-151b-2 mutator）。
+
+    改名同步 cover_path，繞過 upsert() 的 CASE WHEN，保留 auto_focal/crop_mode/focal_attempted_at。
+    """
+
+    def test_update_cover_path_preserve_focal_keeps_focal_fields_unchanged(self, temp_db):
+        """DoD①：改名同步 cover_path，focal 三欄（auto_focal/crop_mode/focal_attempted_at）逐字不變。"""
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/video_focal_preserve.mp4")
+        cover_a = to_file_uri("/cover_preserve_a.jpg")
+        cover_b = to_file_uri("/cover_preserve_b.jpg")
+
+        repo.upsert(Video(path=path, title="測試影片", cover_path=cover_a))
+        assert repo.update_auto_focal(path, '0.1000,0.2000', cover_a) is True
+        assert repo.update_manual_focal(path, '0.3000,0.6000', cover_a) is True
+
+        before = repo.get_by_path(path)
+        assert before is not None
+        assert before.crop_mode == 'manual'
+        assert before.auto_focal == '0.3000,0.6000'
+        assert before.focal_attempted_at is not None
+
+        success = repo.update_cover_path_preserve_focal(path, cover_b, cover_a)
+        assert success is True
+
+        after = repo.get_by_path(path)
+        assert after is not None
+        assert after.cover_path == cover_b
+        assert after.auto_focal == before.auto_focal
+        assert after.crop_mode == before.crop_mode
+        assert after.focal_attempted_at == before.focal_attempted_at
+
+    def test_update_cover_path_preserve_focal_cas_mismatch_returns_false(self, temp_db):
+        """DoD②：expected_old_cover_path 對不上目前值時回傳 False，且 cover_path 未變。"""
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/video_focal_cas_mismatch.mp4")
+        cover_a = to_file_uri("/cover_cas_a.jpg")
+        cover_b = to_file_uri("/cover_cas_b.jpg")
+        cover_mismatch = to_file_uri("/cover_cas_mismatch.jpg")
+
+        repo.upsert(Video(path=path, title="測試影片", cover_path=cover_a))
+
+        # expected_old_cover_path 不符
+        success = repo.update_cover_path_preserve_focal(path, cover_b, cover_mismatch)
+        assert success is False
+
+        result = repo.get_by_path(path)
+        assert result is not None
+        assert result.cover_path == cover_a
+
+        # path 不存在
+        missing_path = to_file_uri("/nonexistent_video.mp4")
+        assert repo.update_cover_path_preserve_focal(missing_path, cover_b, cover_a) is False
+
+    def test_update_cover_path_preserve_focal_then_upsert_preserves_case_when(self, temp_db):
+        """DoD③：mutator 成功更新 cover_path 後，模擬 upsert 帶新 cover_path 不會被 CASE WHEN 洗掉 focal。"""
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/video_focal_upsert_case_when.mp4")
+        cover_a = to_file_uri("/cover_upsert_a.jpg")
+        cover_b = to_file_uri("/cover_upsert_b.jpg")
+
+        repo.upsert(Video(path=path, title="原片名", cover_path=cover_a))
+        assert repo.update_auto_focal(path, '0.1000,0.2000', cover_a) is True
+        assert repo.update_manual_focal(path, '0.3000,0.6000', cover_a) is True
+
+        before = repo.get_by_path(path)
+        assert before is not None
+
+        assert repo.update_cover_path_preserve_focal(path, cover_b, cover_a) is True
+
+        # 緊接著模擬 scanner/enricher upsert 帶新 cover_path（focal 欄位為預設值）
+        repo.upsert(Video(path=path, title="改名後新片名", cover_path=cover_b))
+
+        result = repo.get_by_path(path)
+        assert result is not None
+        assert result.title == "改名後新片名"
+        assert result.cover_path == cover_b
+        assert result.auto_focal == before.auto_focal == '0.3000,0.6000'
+        assert result.crop_mode == before.crop_mode == 'manual'
+        assert result.focal_attempted_at == before.focal_attempted_at
+        assert result.focal_attempted_at is not None
+
+
 class TestGetEmptyFocalCandidates:
     """VideoRepository.get_empty_focal_candidates（Codex PR#105 P2 scan-backfill 修復用）。
 
