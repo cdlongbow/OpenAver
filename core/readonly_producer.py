@@ -557,6 +557,57 @@ def resolve_ingest_plan(
     return meta, cover_strategy
 
 
+def _resolve_readonly_preserved_fields(
+    meta: dict, movie_dir: str, old_base: str, new_base: str
+) -> bool:
+    """CD-151b-3（spec 第 4 版）：洞二讀回。判準問 meta（== scraper_data）的 key
+    是否存在，不問值是否為空。讀回來源依序找 {old_base}.nfo → {new_base}.nfo，
+    取第一個存在的，選中之後 fail-closed 只驗那一份，絕不回頭換候選。與
+    core.enricher._preserve_nfo_only_fields 平行實作、不 import——唯讀路徑的
+    meta 沒有映射層，寫回的 key 是 _summary/_rating/url（帶底線/不帶底線），
+    與非唯讀映射後的 summary/rating/url 不同形（C-2）。
+
+    Returns:
+        bool: True＝正常（含「候選清單裡沒有東西可讀」）；
+              False＝fail-closed（選中的候選存在但解析失敗）。
+    """
+    if '_summary' in meta and '_rating' in meta and 'url' in meta:
+        return True
+
+    candidates = []
+    if old_base:
+        candidates.append(old_base)
+    if new_base and new_base != old_base:
+        candidates.append(new_base)
+
+    selected = None
+    for base in candidates:
+        nfo_p = Path(movie_dir) / f"{base}.nfo"
+        if nfo_p.exists():
+            selected = nfo_p
+            break
+
+    if selected is None:
+        return True
+
+    _, root = parse_nfo(str(selected))
+    if root is None:
+        return False
+
+    if '_summary' not in meta:
+        meta['_summary'] = nfo_text(root, 'plot')
+    if '_rating' not in meta:
+        raw = nfo_text(root, 'rating')
+        if raw:
+            try:
+                meta['_rating'] = float(raw) / 2.0
+            except ValueError:
+                pass
+    if 'url' not in meta:
+        meta['url'] = nfo_text(root, 'website')
+    return True
+
+
 # ---------------------------------------------------------------------------
 # TASK-104-T1 (CD-104-1): single-file produce primitive — extracted from
 # produce_source's per-file try-block so ingest/rescrape/samples-only callers

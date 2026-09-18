@@ -8287,3 +8287,192 @@ class TestProduceOneUserTags:
                 allocated_this_run=set(), path_mappings={},
             )
         assert mock_write.call_args.kwargs["user_tags"] == []
+
+
+# ---------------------------------------------------------------------------
+# TASK-151b-T2 (CD-151b-3): _resolve_readonly_preserved_fields — 洞二讀回
+# ---------------------------------------------------------------------------
+
+NORMAL_NFO_TEXT = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<movie>\n'
+    '  <plot>A normal summary.</plot>\n'
+    '  <rating>8.0</rating>\n'
+    '  <website>https://example.com/v</website>\n'
+    '</movie>\n'
+)
+
+BROKEN_NFO_TEXT = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<movie>\n'
+    '  <title>ABC-100 New Title</title>\n'
+    '  <plot>truncated content with no closing tag'
+)
+BROKEN_NFO_BYTES = BROKEN_NFO_TEXT.encode("utf-8")
+
+
+class TestResolveReadonlyPreservedFields:
+    def test_all_three_present_skips_disk_io(self, tmp_path):
+        from core.readonly_producer import _resolve_readonly_preserved_fields
+
+        meta = {
+            'number': 'ABC-100', 'title': 'T',
+            '_summary': 'existing', '_rating': 3.0, 'url': 'https://existing',
+        }
+        before = dict(meta)
+
+        with patch.object(Path, 'exists') as mock_exists:
+            result = _resolve_readonly_preserved_fields(
+                meta, str(tmp_path), 'ABC-100', 'ABC-100',
+            )
+
+        assert result is True
+        mock_exists.assert_not_called()
+        assert meta == before
+
+    def test_missing_one_field_old_base_nfo_reads_back_rating_halved(self, tmp_path):
+        from core.readonly_producer import _resolve_readonly_preserved_fields
+
+        (tmp_path / 'ABC-100.nfo').write_text(NORMAL_NFO_TEXT, encoding='utf-8')
+
+        meta = {
+            'number': 'ABC-100', 'title': 'T',
+            '_summary': 'existing summary', 'url': 'https://existing',
+        }
+
+        result = _resolve_readonly_preserved_fields(
+            meta, str(tmp_path), 'ABC-100', 'XYZ-999',
+        )
+
+        assert result is True
+        assert meta['_rating'] == 4.0
+        assert meta['_summary'] == 'existing summary'
+        assert meta['url'] == 'https://existing'
+        # C-2：寫回的 key 必須是帶底線的 `_rating`，不是映射後的 `rating`——
+        # 逐字鎖 meta 的 key 集合，避免「多寫了一個 `rating`」被漏測。
+        assert set(meta.keys()) == {'number', 'title', '_summary', 'url', '_rating'}
+
+    def test_old_base_empty_new_base_missing_returns_true_unchanged(self, tmp_path):
+        from core.readonly_producer import _resolve_readonly_preserved_fields
+
+        meta = {'number': 'ABC-100', 'title': 'T'}
+        before = dict(meta)
+
+        result = _resolve_readonly_preserved_fields(
+            meta, str(tmp_path), '', 'ZZZ-000',
+        )
+
+        assert result is True
+        assert meta == before
+
+    def test_both_candidates_missing_returns_true_unchanged(self, tmp_path):
+        from core.readonly_producer import _resolve_readonly_preserved_fields
+
+        meta = {'number': 'ABC-100', 'title': 'T'}
+        before = dict(meta)
+
+        result = _resolve_readonly_preserved_fields(
+            meta, str(tmp_path), 'AAA-1', 'BBB-2',
+        )
+
+        assert result is True
+        assert meta == before
+
+    def test_old_base_broken_fails_closed_does_not_try_new_base(self, tmp_path):
+        from core.nfo_updater import parse_nfo
+        from core.readonly_producer import _resolve_readonly_preserved_fields
+
+        (tmp_path / 'OLD-1.nfo').write_bytes(BROKEN_NFO_BYTES)
+        (tmp_path / 'NEW-1.nfo').write_text(NORMAL_NFO_TEXT, encoding='utf-8')
+
+        meta = {'number': 'ABC-100', 'title': 'T'}
+
+        with patch('core.readonly_producer.parse_nfo', wraps=parse_nfo) as mock_parse:
+            result = _resolve_readonly_preserved_fields(
+                meta, str(tmp_path), 'OLD-1', 'NEW-1',
+            )
+
+        assert result is False
+        assert mock_parse.call_count == 1
+        called_path = mock_parse.call_args.args[0]
+        assert called_path.endswith('OLD-1.nfo')
+
+    def test_missing_one_field_selected_candidate_broken_returns_false(self, tmp_path):
+        from core.readonly_producer import _resolve_readonly_preserved_fields
+
+        (tmp_path / 'OLD-2.nfo').write_bytes(BROKEN_NFO_BYTES)
+
+        meta = {'number': 'ABC-100', 'title': 'T', '_summary': 'x', '_rating': 1.0}
+
+        result = _resolve_readonly_preserved_fields(
+            meta, str(tmp_path), 'OLD-2', 'NOPE-999',
+        )
+
+        assert result is False
+
+    def test_ac13_old_base_missing_new_base_exists_reads_back(self, tmp_path):
+        from core.readonly_producer import _resolve_readonly_preserved_fields
+
+        (tmp_path / 'NEW-3.nfo').write_text(NORMAL_NFO_TEXT, encoding='utf-8')
+
+        meta = {'number': 'ABC-100', 'title': 'T'}
+
+        result = _resolve_readonly_preserved_fields(
+            meta, str(tmp_path), 'OLD-3', 'NEW-3',
+        )
+
+        assert result is True
+        assert meta['_summary'] == 'A normal summary.'
+        assert meta['_rating'] == 4.0
+        assert meta['url'] == 'https://example.com/v'
+        # C-2：AC-13 這條走的是「讀回成功」主路徑，寫回的 key 必須是帶底線的
+        # `_summary`/`_rating`，不是映射後的 `summary`/`rating`——逐字鎖 key 集合。
+        assert set(meta.keys()) == {'number', 'title', '_summary', '_rating', 'url'}
+
+    def test_old_base_equals_new_base_dedup_checks_once(self, tmp_path):
+        from core.nfo_updater import parse_nfo
+        from core.readonly_producer import _resolve_readonly_preserved_fields
+
+        (tmp_path / 'SAME-1.nfo').write_text(NORMAL_NFO_TEXT, encoding='utf-8')
+
+        meta = {'number': 'ABC-100', 'title': 'T'}
+
+        with patch('core.readonly_producer.parse_nfo', wraps=parse_nfo) as mock_parse, \
+             patch.object(Path, 'exists', autospec=True, wraps=Path.exists) as mock_exists:
+            result = _resolve_readonly_preserved_fields(
+                meta, str(tmp_path), 'SAME-1', 'SAME-1',
+            )
+
+        assert result is True
+        assert mock_parse.call_count == 1
+        assert mock_exists.call_count == 1
+        assert meta['_summary'] == 'A normal summary.'
+        assert meta['_rating'] == 4.0
+        assert meta['url'] == 'https://example.com/v'
+        # C-2：同上，逐字鎖 key 集合，避免無底線的 `summary`/`rating` 混入。
+        assert set(meta.keys()) == {'number', 'title', '_summary', '_rating', 'url'}
+
+    def test_old_base_equals_new_base_dedup_not_checked_twice_when_missing(self, tmp_path):
+        """DoD⑧ 的真正鑑別場景：當候選檔案存在時，第一個候選一命中就 `break`，
+        不管有沒有去重，迴圈都只跑一次、`exists()` 只被呼叫一次——`break` 本身
+        就會遮蔽「有沒有去重」的差異，光靠命中場景測不出來（grok 第 2 輪 review
+        指出的洞）。只有 old_base/new_base 的 `.nfo` 都不存在時，迴圈才會走到底：
+        沒去重＝候選清單 `[SAME-2, SAME-2]`、`exists()` 對同一路徑查兩次；
+        去重＝候選清單只剩一項、`exists()` 只查一次。這裡才是這條差異唯一
+        看得見的地方。"""
+        from core.nfo_updater import parse_nfo
+        from core.readonly_producer import _resolve_readonly_preserved_fields
+
+        meta = {'number': 'ABC-100', 'title': 'T'}
+        before = dict(meta)
+
+        with patch('core.readonly_producer.parse_nfo', wraps=parse_nfo) as mock_parse, \
+             patch.object(Path, 'exists', autospec=True, wraps=Path.exists) as mock_exists:
+            result = _resolve_readonly_preserved_fields(
+                meta, str(tmp_path), 'SAME-2', 'SAME-2',
+            )
+
+        assert result is True
+        assert meta == before
+        assert mock_parse.call_count == 0
+        assert mock_exists.call_count == 1
