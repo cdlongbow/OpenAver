@@ -1706,6 +1706,334 @@ class TestCleanStaleSingletons:
                 f"{suffix} with bracketed old_base not cleaned (glob not escaped)"
 
 
+class TestRenameStaleCoverGroup:
+    """T3（151b，CD-151b-4）：`_rename_stale_cover_group` — 洞一改名機制。
+
+    標題漂移時把舊基底的封面／poster／fanart 搬到新基底；三種既有 DB 語意不變
+    （C-8 零寫入、C-10 真 no-op、①b 錨點缺失整組 no-op），純函式測試——不寫 DB，
+    不呼叫 `_produce_one`（接線是 T4 的事）。
+    """
+
+    def test_new_layout_two_files_renamed(self, tmp_path):
+        from core.readonly_assets import _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'TEST-001 Old'
+        new_base = 'TEST-001 New'
+        poster = d / f'{old_base}-poster.jpg'
+        fanart = d / f'{old_base}-fanart.jpg'
+        poster.write_bytes(b'POSTER BYTES')
+        fanart.write_bytes(b'FANART BYTES')
+        existing = SimpleNamespace(cover_path=to_file_uri(str(fanart), {}))
+
+        outcome = _rename_stale_cover_group(str(d), existing, new_base, {})
+
+        assert not poster.exists()
+        assert not fanart.exists()
+        new_poster = d / f'{new_base}-poster.jpg'
+        new_fanart = d / f'{new_base}-fanart.jpg'
+        assert new_poster.read_bytes() == b'POSTER BYTES'
+        assert new_fanart.read_bytes() == b'FANART BYTES'
+        assert outcome.hard_failure is False
+        assert outcome.moved_pairs == (
+            (str(poster), str(new_poster)),
+            (str(fanart), str(new_fanart)),
+        )
+        assert outcome.new_cover_uri == to_file_uri(str(new_fanart), {})
+
+    def test_old_layout_three_files_renamed(self, tmp_path):
+        from core.readonly_assets import _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'TEST-002 Old'
+        new_base = 'TEST-002 New'
+        cover = d / f'{old_base}.jpg'
+        poster = d / f'{old_base}-poster.jpg'
+        fanart = d / f'{old_base}-fanart.jpg'
+        cover.write_bytes(b'COVER')
+        poster.write_bytes(b'POSTER')
+        fanart.write_bytes(b'FANART')
+        existing = SimpleNamespace(cover_path=to_file_uri(str(cover), {}))
+
+        outcome = _rename_stale_cover_group(str(d), existing, new_base, {})
+
+        assert not cover.exists()
+        assert not poster.exists()
+        assert not fanart.exists()
+        new_cover = d / f'{new_base}.jpg'
+        assert new_cover.read_bytes() == b'COVER'
+        assert (d / f'{new_base}-poster.jpg').read_bytes() == b'POSTER'
+        assert (d / f'{new_base}-fanart.jpg').read_bytes() == b'FANART'
+        assert len(outcome.moved_pairs) == 3
+        assert outcome.hard_failure is False
+        assert outcome.new_cover_uri == to_file_uri(str(new_cover), {})
+
+    def test_off_layout_one_file_renamed(self, tmp_path):
+        from core.readonly_assets import _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'TEST-003 Old'
+        new_base = 'TEST-003 New'
+        cover = d / f'{old_base}.jpg'
+        cover.write_bytes(b'ONLY COVER')
+        existing = SimpleNamespace(cover_path=to_file_uri(str(cover), {}))
+
+        outcome = _rename_stale_cover_group(str(d), existing, new_base, {})
+
+        assert not cover.exists()
+        new_cover = d / f'{new_base}.jpg'
+        assert new_cover.read_bytes() == b'ONLY COVER'
+        assert outcome.moved_pairs == ((str(cover), str(new_cover)),)
+        assert outcome.hard_failure is False
+        assert outcome.new_cover_uri == to_file_uri(str(new_cover), {})
+
+    def test_noop_when_old_stem_equals_new_stem(self, tmp_path):
+        """C-10 早退必須發生在 slot 掃描之前，不只是「最後沒搬」。
+
+        只斷言 atomic_move 零呼叫證明不了這件事——若把 C-10 早退拿掉，撞名預檢
+        （dst 已存在）一樣會讓 atomic_move 維持零呼叫、整條測試照樣綠。這裡額外
+        鎖 os.path.exists 只被呼叫一次（①b 錨點存在性檢查），代表函式在算出
+        old_stem_abs == new_stem_abs 之後立刻 return，完全沒有進入
+        _resolve_slot／撞名預檢那些會再呼叫 os.path.exists 的路徑
+        （grok review 第 2 輪 P3，把 C-10 早退暫時改成 `if not old_stem_abs:`
+        重跑本測試會轉紅，驗證見 MUTATION_EVIDENCE）。
+        """
+        from core.readonly_assets import RenameOutcome, _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        base = 'TEST-004 Same'
+        fanart = d / f'{base}-fanart.jpg'
+        fanart.write_bytes(b'FANART')
+        existing = SimpleNamespace(cover_path=to_file_uri(str(fanart), {}))
+
+        with patch('core.readonly_assets.atomic_move') as mock_move, \
+                patch('core.readonly_assets.os.path.exists', return_value=True) as mock_exists:
+            outcome = _rename_stale_cover_group(str(d), existing, base, {})
+
+        assert mock_move.call_count == 0
+        assert outcome == RenameOutcome(None, False, ())
+        assert fanart.read_bytes() == b'FANART'
+        assert mock_exists.call_count == 1, (
+            "os.path.exists 應只被呼叫一次（①b 錨點檢查）；多於一次代表 C-10 早退"
+            "沒有真的擋在 slot 掃描之前"
+        )
+
+    def test_noop_when_cover_path_outside_movie_dir(self, tmp_path):
+        from core.readonly_assets import RenameOutcome, _rename_stale_cover_group
+
+        movie_dir = tmp_path / 'movie'
+        movie_dir.mkdir()
+        outside_dir = tmp_path / 'outside_source'
+        outside_dir.mkdir()
+        outside_cover = outside_dir / 'SRC-001-fanart.jpg'
+        outside_cover.write_bytes(b'ORIGINAL SOURCE BYTES')
+        before_mtime_ns = outside_cover.stat().st_mtime_ns
+        existing = SimpleNamespace(cover_path=to_file_uri(str(outside_cover), {}))
+
+        outcome = _rename_stale_cover_group(str(movie_dir), existing, 'TEST-005 New', {})
+
+        assert outcome == RenameOutcome(None, False, ())
+        assert outside_cover.read_bytes() == b'ORIGINAL SOURCE BYTES'
+        assert outside_cover.stat().st_mtime_ns == before_mtime_ns, \
+            "C-8 必須是零寫入——外部檔案的 mtime 也不能動（不只內容/路徑）"
+        assert list(movie_dir.iterdir()) == []
+
+    def test_destination_exists_whole_group_untouched(self, tmp_path, caplog):
+        import logging
+
+        from core.readonly_assets import RenameOutcome, _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'TEST-006 Old'
+        new_base = 'TEST-006 New'
+        poster = d / f'{old_base}-poster.jpg'
+        fanart = d / f'{old_base}-fanart.jpg'
+        poster.write_bytes(b'REAL COVER BYTES POSTER')
+        fanart.write_bytes(b'REAL COVER BYTES FANART')
+        decoy = d / f'{new_base}-poster.jpg'
+        decoy.write_bytes(b'DECOY')
+        existing = SimpleNamespace(cover_path=to_file_uri(str(fanart), {}))
+
+        with caplog.at_level(logging.WARNING, logger='OpenAver.core.readonly_assets'):
+            outcome = _rename_stale_cover_group(str(d), existing, new_base, {})
+
+        assert outcome == RenameOutcome(None, False, ())
+        assert poster.read_bytes() == b'REAL COVER BYTES POSTER'
+        assert fanart.read_bytes() == b'REAL COVER BYTES FANART'
+        assert decoy.read_bytes() == b'DECOY'
+        assert not (d / f'{new_base}-fanart.jpg').exists()
+        messages = [r.getMessage() for r in caplog.records]
+        assert any('改名撞名' in m and decoy.name in m for m in messages), (
+            f"缺少撞名 warning log（含撞到的檔名 {decoy.name}）：{messages}"
+        )
+
+    def test_mid_rename_io_failure_reverts(self, tmp_path):
+        from core.atomic_write import atomic_move as _real_atomic_move
+        from core.readonly_assets import RenameOutcome, _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'TEST-007 Old'
+        new_base = 'TEST-007 New'
+        poster = d / f'{old_base}-poster.jpg'
+        fanart = d / f'{old_base}-fanart.jpg'
+        poster.write_bytes(b'REAL COVER BYTES POSTER')
+        fanart.write_bytes(b'REAL COVER BYTES FANART')
+        existing = SimpleNamespace(cover_path=to_file_uri(str(fanart), {}))
+
+        call_count = {'n': 0}
+
+        def flaky(src, dst):
+            call_count['n'] += 1
+            if call_count['n'] == 2:
+                raise OSError("simulated mid-rename failure")
+            _real_atomic_move(src, dst)
+
+        with patch('core.readonly_assets.atomic_move', side_effect=flaky):
+            outcome = _rename_stale_cover_group(str(d), existing, new_base, {})
+
+        assert outcome == RenameOutcome(None, True, ())
+        assert poster.read_bytes() == b'REAL COVER BYTES POSTER'
+        assert fanart.read_bytes() == b'REAL COVER BYTES FANART'
+        assert not (d / f'{new_base}-poster.jpg').exists()
+        assert not (d / f'{new_base}-fanart.jpg').exists()
+
+    def test_orphan_reunites_with_current_basename(self, tmp_path):
+        import hashlib
+
+        from core.readonly_assets import _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'TEST-008 Old'
+        new_base = 'TEST-008 Current'
+        poster = d / f'{old_base}-poster.jpg'
+        fanart = d / f'{old_base}-fanart.jpg'
+        poster.write_bytes(b'ORPHAN POSTER')
+        fanart.write_bytes(b'ORPHAN FANART')
+        poster_sha = hashlib.sha256(poster.read_bytes()).hexdigest()
+        fanart_sha = hashlib.sha256(fanart.read_bytes()).hexdigest()
+        # {new_base}.nfo 已存在（這輪 NFO 早就寫對了，只有圖沒跟上）；
+        # {old_base}.nfo 不存在（已被既有 _clean_stale_singletons 清過，AC-11 already-broken 狀態）。
+        (d / f'{new_base}.nfo').write_bytes(b'<movie></movie>')
+        existing = SimpleNamespace(cover_path=to_file_uri(str(fanart), {}))
+
+        outcome = _rename_stale_cover_group(str(d), existing, new_base, {})
+
+        assert not poster.exists()
+        assert not fanart.exists()
+        new_poster = d / f'{new_base}-poster.jpg'
+        new_fanart = d / f'{new_base}-fanart.jpg'
+        assert hashlib.sha256(new_poster.read_bytes()).hexdigest() == poster_sha
+        assert hashlib.sha256(new_fanart.read_bytes()).hexdigest() == fanart_sha
+        assert not any(p.name.startswith(old_base) for p in d.iterdir())
+        assert outcome.hard_failure is False
+
+    def test_orphan_reunites_old_layout_three_files(self, tmp_path):
+        """AC-11（`TASK-151b-T0.md`「AC-11 已壞狀態設計」表 jellyfin-舊佈局列）：
+
+        升級前就已經踩過洞一 bug、且是舊佈局三檔形狀（`{base}.jpg` + `-poster`
+        + `-fanart`）的片，DB `cover_path` 指向 `-fanart`、`{old_base}.nfo` 已不
+        存在（早被 `_clean_stale_singletons` 清過）、`{new_base}.nfo` 已存在
+        （這輪 NFO 早就寫對了，只有圖沒跟上）。這與 `test_orphan_reunites_with_
+        current_basename`（jellyfin-新佈局，只有 poster/fanart 兩檔）是不同的
+        起始佈局，spec AC-11 明文要求兩種佈局都要覆蓋（grok review 第 2 輪 P3①）。
+        """
+        import hashlib
+
+        from core.readonly_assets import _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'TEST-010 Old'
+        new_base = 'TEST-010 Current'
+        cover = d / f'{old_base}.jpg'
+        poster = d / f'{old_base}-poster.jpg'
+        fanart = d / f'{old_base}-fanart.jpg'
+        cover.write_bytes(b'ORPHAN COVER')
+        poster.write_bytes(b'ORPHAN POSTER')
+        fanart.write_bytes(b'ORPHAN FANART')
+        cover_sha = hashlib.sha256(cover.read_bytes()).hexdigest()
+        poster_sha = hashlib.sha256(poster.read_bytes()).hexdigest()
+        fanart_sha = hashlib.sha256(fanart.read_bytes()).hexdigest()
+        # {old_base}.nfo 不存在（已被清過）；{new_base}.nfo 已存在。
+        (d / f'{new_base}.nfo').write_bytes(b'<movie></movie>')
+        existing = SimpleNamespace(cover_path=to_file_uri(str(fanart), {}))
+
+        outcome = _rename_stale_cover_group(str(d), existing, new_base, {})
+
+        assert not cover.exists()
+        assert not poster.exists()
+        assert not fanart.exists()
+        new_cover = d / f'{new_base}.jpg'
+        new_poster = d / f'{new_base}-poster.jpg'
+        new_fanart = d / f'{new_base}-fanart.jpg'
+        assert hashlib.sha256(new_cover.read_bytes()).hexdigest() == cover_sha
+        assert hashlib.sha256(new_poster.read_bytes()).hexdigest() == poster_sha
+        assert hashlib.sha256(new_fanart.read_bytes()).hexdigest() == fanart_sha
+        assert len(outcome.moved_pairs) == 3
+        assert not any(p.name.startswith(old_base) for p in d.iterdir())
+        assert outcome.hard_failure is False
+        assert outcome.new_cover_uri == to_file_uri(str(new_fanart), {})
+
+    def test_anchor_missing_sibling_exists_untouched(self, tmp_path):
+        from core.readonly_assets import RenameOutcome, _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'TEST-009 Old'
+        sibling = d / f'{old_base}-poster.jpg'
+        sibling.write_bytes(b'SIBLING BYTES')
+        missing_anchor = d / f'{old_base}-fanart.jpg'  # 不存在，cover_path 指到它
+        existing = SimpleNamespace(cover_path=to_file_uri(str(missing_anchor), {}))
+
+        outcome = _rename_stale_cover_group(str(d), existing, 'TEST-009 New', {})
+
+        assert outcome == RenameOutcome(None, False, ())
+        assert sibling.read_bytes() == b'SIBLING BYTES'
+        assert not (d / 'TEST-009 New-poster.jpg').exists()
+
+
+class TestRevertCoverRename:
+    """T3（151b，DoD⑩）：`_revert_cover_rename` 單獨測試——單一 slot 復原失敗
+    不中斷其餘 slot 的復原嘗試，各自 try/except，失敗記 logger.error。"""
+
+    def test_revert_partial_failure_continues_others(self, tmp_path):
+        from core.atomic_write import atomic_move as _real_atomic_move
+        from core.readonly_assets import _revert_cover_rename
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        orig1 = d / 'A-poster.jpg'
+        new1 = d / 'B-poster.jpg'
+        orig2 = d / 'A-fanart.jpg'
+        new2 = d / 'B-fanart.jpg'
+        new1.write_bytes(b'POSTER MOVED')
+        new2.write_bytes(b'FANART MOVED')
+        moved_pairs = ((str(orig1), str(new1)), (str(orig2), str(new2)))
+
+        def flaky(src, dst):
+            if (src, dst) == (str(new1), str(orig1)):
+                raise OSError("simulated revert failure")
+            _real_atomic_move(src, dst)
+
+        with patch('core.readonly_assets.atomic_move', side_effect=flaky), \
+                patch('core.readonly_assets.logger') as mock_logger:
+            _revert_cover_rename(moved_pairs)
+
+        assert new1.exists()
+        assert not orig1.exists()
+        assert orig2.exists()
+        assert orig2.read_bytes() == b'FANART MOVED'
+        assert not new2.exists()
+        mock_logger.error.assert_called_once()
+
+
 class TestWriteMovieAssetsStaleCleanup:
     """T4/T5 integration: _write_movie_assets(old_base=...) round-trips against real files.
 

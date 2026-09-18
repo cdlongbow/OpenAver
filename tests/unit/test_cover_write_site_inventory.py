@@ -85,6 +85,7 @@ _EXPECTED_WRITE_SITES = {
     ('core/readonly_assets.py', '_write_cover_copy', 'copyfile'): 1,       # ⑧ 來源封面 → 正典位置
     ('core/readonly_assets.py', '_write_media_images', 'copy2'): 1,        # ⑤ cover → fanart
     ('core/readonly_assets.py', '_write_media_images', 'crop_to_poster'): 1,  # ⑥ cover → poster
+    ('core/readonly_assets.py', '_move_cover_slot', 'atomic_move'): 1,     # ⑪ 洞一改名 → atomic_move
 }
 
 # 每個 owner **預期的 preflight 次數**（Codex PR#125 round-3 P2）。
@@ -125,6 +126,19 @@ _PREFLIGHT_EXEMPT = {
     ('core/organizer.py', 'crop_to_poster'):
         '葉節點函式：它的每一個呼叫端（②④⑥）都已在呼叫前 preflight，'
         '且它自身整段包在 try/except 裡，SameFileError 只會回 False、不會毀檔。',
+    ('core/readonly_assets.py', '_move_cover_slot'):
+        '`_move_cover_slot` 的 `src`／`dst` 分別錨定在 `old_stem_abs`／`new_stem_abs` 兩個不同的絕對'
+        '路徑 stem 上——`old_stem_abs != new_stem_abs` 由呼叫端 `_rename_stale_cover_group` 的 C-10 '
+        'no-op 判準保證（相等時整個函式提前 return，走不到這裡）；且每一個 `dst` 在進入搬移迴圈之前，'
+        '都已經過 D-151b-6 的整組存在性預檢（`os.path.exists(dst)` 為 `False` 才會進入 `group`）。'
+        '兩個前提合起來：即使 `src`／`dst` 透過 hardlink 共享同一個 inode，`dst` 這個路徑名稱本身在'
+        '預檢當下必須尚不存在——而 hardlink 的定義就是「替既有 inode 建一個新名稱」，若這個名稱已經'
+        '存在指向該 inode，`os.path.exists(dst)` 就會是 `True`，預檢會先擋下整組。'
+        '`same_target_verdict` 防的是「複製到目的地，而目的地其實已經是來源的另一個名字」這種原地'
+        '覆寫風險，本函式的來源與目的地分屬不同 stem、且目的地已被上一層預檢排除存在可能性，'
+        '結構上不會撞上同一種風險。'
+        '⚠️ 與 `organize_file` 那條相同的警告：任何新增的 `atomic_move` 呼叫點都會讓上面'
+        '`_EXPECTED_WRITE_SITES` 的對帳轉紅，屆時必須重新判斷是否需要 preflight，不得沿用本條。',
 }
 
 

@@ -18,17 +18,25 @@ from __future__ import annotations
 import glob
 import os
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 from core import readonly_paths
+from core.atomic_write import atomic_move
 from core.config import STEM_IMAGE_MODES, normalize_external_manager
 from core.cover_attributes import effective_tags
-from core.cover_layout import nfo_image_flag, resolve_cover_target, same_target_verdict
+from core.cover_layout import (
+    cover_base_stem,
+    nfo_image_flag,
+    resolve_cover_target,
+    same_target_verdict,
+)
+from core.gallery_scanner import IMAGE_EXTENSIONS
 from core.logger import get_logger
 from core.nfo_stat import NFO_MTIME_REFRESH, nfo_mtime_or_none
 from core.organizer import crop_to_poster, download_image, generate_jellyfin_images, generate_nfo
-from core.path_utils import to_file_uri
+from core.path_utils import is_fs_path_under_dir, to_file_uri, uri_to_local_fs_path
 
 logger = get_logger(__name__)
 
@@ -744,3 +752,125 @@ def _write_movie_assets(
     # post-write rather than pre-write.
     _clean_stale_singletons(movie_dir, old_base, new_base, has_cover, has_poster, has_fanart, has_strm)
     return {'cover_fs': cover_fs if has_cover else '', 'sample_fs': sample_fs, 'nfo_mtime': nfo_mtime}
+
+
+@dataclass(frozen=True)
+class RenameOutcome:
+    """`_rename_stale_cover_group` 的回傳型別（CD-151b-4）。
+
+    - `new_cover_uri`：改名成功時的新封面 `file:///` URI；no-op／失敗一律 `None`。
+      **不寫 DB**——落地到 `videos.cover_path` 是 T1 的 DB mutator + T4 接線的事。
+    - `hard_failure`：`True` 僅代表「中途 I/O 失敗、已嘗試復原」；三種 no-op
+      （C-10 真 no-op／C-8 錨點在 movie_dir 外／①b 錨點檔本身不存在）一律
+      `False`——它們是安全的零寫入，不是失敗。
+    - `moved_pairs`：正向搬移順序的 `(src, dst)` 絕對路徑 tuple；no-op／失敗
+      一律 `()`。
+    """
+    new_cover_uri: Optional[str]
+    hard_failure: bool
+    moved_pairs: tuple
+
+
+def _move_cover_slot(src: str, dst: str) -> None:
+    """搬一個 slot（正向搬移或復原方向皆呼叫這裡）。src/dst 皆絕對路徑。
+
+    唯一的 `atomic_move` 呼叫 leaf（CD-151b-4 設計決策）——正向搬移、
+    `_revert_cover_rename` 的逐一復原，全部收斂到這一個 module-level 函式，
+    讓 `tests/unit/test_cover_write_site_inventory.py` 的 AST 呼叫堆疊計數
+    （`('core/readonly_assets.py', '_move_cover_slot', 'atomic_move'): 1`）
+    不因為外部呼叫幾次而變動。
+    """
+    atomic_move(src, dst)
+
+
+def _revert_cover_rename(moved_pairs: tuple) -> None:
+    """把 `moved_pairs`（正向搬移順序的 `(src, dst)`）逆序搬回去。
+
+    單一檔案復原失敗不中斷其餘檔案的復原嘗試——每個失敗各自 `logger.error`
+    （非 warning：復原失敗代表半套狀態需要人工介入，不是可忽略的邊界情境）。
+    """
+    for src, dst in reversed(moved_pairs):
+        try:
+            _move_cover_slot(dst, src)
+        except OSError:
+            logger.error("改名復原失敗，人工介入: %s <- %s", src, dst)
+
+
+def _rename_stale_cover_group(
+    movie_dir: str,
+    existing,
+    new_base_name: str,
+    path_mappings: dict,
+) -> RenameOutcome:
+    """洞一改名機制（CD-151b-4）：標題漂移時把舊基底的封面／poster／fanart 搬到
+    `new_base_name`。純函式，不寫 DB、不呼叫 `_produce_one`（接線是 T4 的事）。
+
+    三個固定 slot（`''`／`'-poster'`／`'-fanart'`）逐一列舉，每個 slot 各自逐一
+    試 `IMAGE_EXTENSIONS` 的候選副檔名——**禁止 glob**，避免把使用者自己放在
+    同資料夾、剛好同前綴的檔案一起改名。
+
+    三種 no-op（皆回傳 `RenameOutcome(None, False, ())`）語意不同：
+    - C-10（`old_stem_abs == new_stem_abs`）：完全不碰檔案系統。
+    - C-8/AC-12（錨點在 `movie_dir` 之外）：安全 no-op ＋ warning，
+      本輪其餘流程照常（不是失敗）。
+    - ①b（錨點檔本身不存在）：整組 no-op，連 sibling 的存在性檢查都不做，
+      不挑替代 slot 頂替。
+
+    ⚠️ `os.path.exists(old_cover_fs)`（①b 早退）必須在 `cover_base_stem()`
+    呼叫之前——後者是純字串運算，不查磁碟，錨點檔已被刪除時仍會回傳一個
+    看似合理的 stem，若不先擋，會誤把 sibling 當成錨點去改名（見卡片
+    DoD⑨／mutation 點 4）。
+    """
+    _NOOP = RenameOutcome(None, False, ())
+    if not existing or not getattr(existing, 'cover_path', None):
+        return _NOOP
+
+    old_cover_fs = uri_to_local_fs_path(existing.cover_path, path_mappings)
+
+    if not is_fs_path_under_dir(old_cover_fs, movie_dir):
+        logger.warning("[readonly_assets] 舊封面指到 movie_dir 以外，安全 no-op: %s", old_cover_fs)
+        return _NOOP
+
+    if not os.path.exists(old_cover_fs):
+        logger.warning("[readonly_assets] 舊封面錨點檔已不在磁碟上，安全 no-op: %s", old_cover_fs)
+        return _NOOP
+
+    old_stem_abs = cover_base_stem(old_cover_fs)
+    new_stem_abs = os.path.join(movie_dir, new_base_name)
+    if not old_stem_abs or old_stem_abs == new_stem_abs:
+        return _NOOP
+    old_suffix = old_cover_fs[len(old_stem_abs):]
+
+    def _resolve_slot(stem_suffix):
+        hits = [
+            old_stem_abs + stem_suffix + ext
+            for ext in IMAGE_EXTENSIONS
+            if os.path.exists(old_stem_abs + stem_suffix + ext)
+        ]
+        if len(hits) > 1:
+            logger.warning("[readonly_assets] 同一 slot 多個副檔名同時存在，取第一個、其餘不動: %s", hits)
+        return hits[0] if hits else None
+
+    group = []
+    for stem_suffix in ('', '-poster', '-fanart'):
+        src = _resolve_slot(stem_suffix)
+        if src is not None:
+            ext = src[len(old_stem_abs) + len(stem_suffix):]
+            group.append((src, new_stem_abs + stem_suffix + ext))
+
+    for _src, dst in group:
+        if os.path.exists(dst):
+            logger.warning("[readonly_assets] 改名撞名，整組放棄: %s", dst)
+            return _NOOP
+
+    moved = []
+    try:
+        for src, dst in group:
+            _move_cover_slot(src, dst)
+            moved.append((src, dst))
+    except OSError:
+        _revert_cover_rename(tuple(moved))
+        return RenameOutcome(None, True, ())
+
+    new_cover_fs = new_stem_abs + old_suffix
+    return RenameOutcome(to_file_uri(new_cover_fs, path_mappings), False, tuple(moved))
