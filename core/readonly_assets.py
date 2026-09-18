@@ -27,7 +27,6 @@ from core.atomic_write import atomic_move
 from core.config import STEM_IMAGE_MODES, normalize_external_manager
 from core.cover_attributes import effective_tags
 from core.cover_layout import (
-    cover_base_stem,
     nfo_image_flag,
     resolve_cover_target,
     same_target_verdict,
@@ -796,11 +795,176 @@ def _revert_cover_rename(moved_pairs: tuple) -> None:
             logger.error("改名復原失敗，人工介入: %s <- %s", src, dst)
 
 
+def _list_dir_names_normcased(movie_dir: str) -> Optional[frozenset]:
+    """`movie_dir` 底下所有項目名稱的一次性列舉，`os.path.normcase` 正規化過
+    （Windows 大小寫不敏感，維持 `os.path.exists` 舊語意）。
+
+    唯一呼叫端 `_resolve_cover_group_identity`（第五輪 review 效能修正）：
+    取代舊版對兩套候選各探 `-poster`／`-fanart` × `IMAGE_EXTENSIONS`（最多
+    24 次）的逐檔 `os.path.exists`——`movie_dir` 是單片資料夾、檔案數量有限，
+    一次 `os.scandir` 取全部檔名比逐檔 `stat` 便宜得多，尤其是 NAS／SMB
+    掛載下每次 `stat` 都是一趟網路來回的場景。
+
+    **回傳型別是 `Optional[frozenset]`，兩種結果不可混淆（Codex 第五輪
+    review P2，修正第九輪自己引入的洞）**：
+    - **`frozenset()`（可能是空的）＝掃描成功**：目錄讀得到，「裡面確實
+      沒有 sibling」是已知事實，兩套候選可以合法地被判定成「都沒有磁碟
+      證據」，`old_base_hint` 這時才准補位（off 單封面那格就是靠這個）。
+    - **`None` ＝掃描失敗**（目錄不存在／被刪除／權限被拒／NAS 連線中斷，
+      皆為 `OSError` 子類）：**不知道**目錄裡有什麼，「沒有證據」與「有
+      證據但看不到」無法區分——這不是「兩套都沒有證據」，不准讓
+      `old_base_hint` 裁決。呼叫端看到 `None` 必須立刻整組回 `None`，
+      不進證據比較、不進提示補位（第九輪把這兩種狀態錯誤地壓成同一個，
+      讓失憶的提示在 NAS 暫時性失敗時搶到裁決權，見呼叫端 docstring）。
+
+    **本函式自己不往外拋 `OSError`**——把「失敗」表達成回傳值（`None`）
+    而不是例外，呼叫端才能用一個 `is None` 分支處理，不必包 `try/except`。
+    """
+    try:
+        with os.scandir(movie_dir) as it:
+            return frozenset(os.path.normcase(entry.name) for entry in it)
+    except OSError:
+        return None
+
+
+def _resolve_cover_group_identity(
+    old_cover_fs: str, movie_dir: str, old_base_hint: str
+) -> Optional[tuple[str, str]]:
+    """從錨點檔案路徑解析「片級 stem」與「錨點屬於哪個 slot」（Codex PR#197
+    review P2，151b pre-merge 後的新洞）：`cover_base_stem()` 純字串剝一次
+    `-poster`/`-fanart` 尾碼，分不出「衍生的 sidecar 尾碼」與「尾碼本來就是
+    基底標題的一部分」——例如基底真的叫 `Movie-fanart`、旁邊還有衍生的
+    `Movie-fanart-poster.jpg` / `Movie-fanart-fanart.jpg`：naive 剝法會把
+    `Movie-fanart.jpg` 誤剝成 `Movie`，讓兩個真正的 sidecar 在被誤剝的 stem
+    底下遍尋不著、永遠孤兒留在舊基底，而錯的 sidecar（若恰好存在）被誤當
+    成錨點搬進錯的 slot。`_rename_stale_cover_group` 是把這個二義性變成
+    實際搬檔案＋DB CAS＋NFO 寫入的第一個呼叫端——**分不出來就不要動**，
+    這是本函式存在的唯一理由。
+
+    純函式、唯讀：只呼叫 `os.path.splitext` / `os.path.join` /
+    `os.scandir`，**不搬檔、不寫任何東西**。**不呼叫 `cover_base_stem()`
+    ——本函式就是要取代那個判斷**，兩者並存會製造第二份可能漂移的推導。
+
+    **第五輪 review 效能修正：證據判定一次性列舉目錄，不逐檔 `os.path.exists`**
+    ——舊版對兩套候選各探 `-poster`／`-fanart` × `IMAGE_EXTENSIONS`（6 個），
+    最多 24 次 `os.path.exists`；`movie_dir` 是單片資料夾、檔案數量有限，
+    `os.scandir(movie_dir)` 一次取得全部檔名，剩下全部是記憶體字串比對。
+    這支函式是 `produce_source` 掃全庫的熱路徑——本機是微秒級無感，但在
+    NAS／SMB 掛載下每次 `stat`（`os.path.exists` 底層）都是一趟網路來回，
+    6000 部片規模會是十幾萬次。詳見 `_list_dir_names_normcased` 的實作。
+
+    回傳 `(old_stem_abs, anchor_stem_suffix)`；`anchor_stem_suffix` 是
+    `''`／`'-poster'`／`'-fanart'` 之一，對應 `old_cover_fs` 落在哪個 slot。
+    **無法判定回 `None`**——呼叫端必須整組 no-op，不得猜。
+
+    演算法：
+    1. **`literal`**：`os.path.splitext(old_cover_fs)[0]`，視為 `''` slot。
+    2. **`stripped`**：**只有** `literal` 以 `-poster`／`-fanart` 結尾才成立，
+       剝掉該尾碼、視為對應的 sidecar slot。`literal` 不以那兩者結尾時
+       只有一套候選，**直接採用 `literal`、立即返回、零磁碟 I/O（連
+       `os.scandir` 都不呼叫）、也不看 `old_base_hint`**，不進下面的選擇
+       規則——這是絕大多數呼叫（無 `-poster`/`-fanart` 尾碼疑慮的正常片）
+       的路徑，效能不能被下面的證據蒐集拖慢。
+    3. 選擇規則，依序（**磁碟證據優先於提示**，見下方⚠️為什麼）：
+       a. **列一次目錄取證**（不論有沒有給提示都先算）：`_list_dir_names_
+          normcased` 回傳 `None` ⇒ **掃描失敗**（目錄不在／被刪除／權限被
+          拒／NAS 暫時性失敗，皆為 `OSError` 子類）——**不知道**目錄裡有
+          什麼，不是「沒有證據」，**立刻整組回 `None`，跳過下面 b/c/d
+          全部**，不准讓 `old_base_hint` 裁決（Codex 第五輪 review P2，
+          修正第九輪把「掃描失敗」與「掃描成功但空」錯誤壓成同一個狀態的
+          洞）。掃描成功（回傳一個 `frozenset`，可能是空的）才繼續：目錄裡
+          有 `{literal_basename}-poster{ext}` 或 `{literal_basename}-fanart{ext}`
+          ⇒ 支持 `literal`；目錄裡有 `{stripped_basename}{ext}`（同名封面）
+          或 `{stripped_basename}{other_suffix}{ext}`（另一個 sidecar）
+          ⇒ 支持 `stripped`。副檔名逐一試 `IMAGE_EXTENSIONS`，**仍然禁止
+          glob**（現在是字串比對，本來就用不到）；比對前雙邊都過
+          `os.path.normcase`（Windows 大小寫不敏感，維持既有語意）。
+       b. **恰好一套有證據 → 採它，即使 `old_base_hint` 指向另一套**——
+          證據裁決，提示不得覆蓋。
+       c. **兩套都有證據 → 回 `None`**（歧義；提示不得裁決哪一套對）。
+       d. **掃描成功、兩套都沒有證據 → `old_base_hint` 才准補位**：
+          `os.path.join(movie_dir, old_base_hint)` 精確匹配某個候選的
+          stem 就採它；不匹配（或未給提示）⇒ 回 `None`。這是 off 單封面
+          （零 sibling 可證）那類佈局唯一能消歧的手段。
+
+    ⚠️ **為什麼提示不能優先於磁碟證據（Codex 第四輪 review P2，修正上一輪
+    的錯誤推理）**：上一版本這裡寫的是「提示精確匹配某候選就代表 `old_base`
+    尚未失憶」——**這個推理是錯的**。精確匹配只證明兩個字串相等，不證明
+    `old_base` 本身仍是權威值。反例：舊基底真的叫 `Movie-fanart`（plain
+    `Movie-fanart.jpg` ＋ nested `-poster`／`-fanart` 兩個真 sidecar），
+    使用者把標題改成 `Movie`，**上一輪已經把 DB title 更新成 `Movie`**、
+    但圖還沒跟上（例如上一輪 `_write_movie_assets` 失敗後只有 DB 收斂，
+    圖的改名沒有；或任何其他讓 DB 先行一步的時序）。這一輪 `old_base_hint`
+    == `"Movie"`，**恰好精確匹配 `stripped` 候選的 stem**——但這不是因為
+    `old_base` 是本輪的權威值，是因為它**已經失憶成新標題本身**、而新標題
+    剛好又跟 `stripped` 候選字面相同（`Movie-fanart` 剝掉 `-fanart` 也是
+    `Movie`）。若提示在此優先於證據，會選錯 `stripped`，兩個真正的 nested
+    sidecar 永遠留在舊基底孤兒（`old_stem_abs == new_stem_abs` 觸發 C-10
+    no-op，函式甚至不會嘗試搬移）。**磁碟證據不會說謊**（`literal` 旁真的
+    躺著兩個 nested sidecar），因此證據必須優先；提示只在磁碟上完全沒有
+    任何一套的佐證時，才允許補位猜一個答案——這仍然不違反 D-151b-9（見
+    `_rename_stale_cover_group` docstring 的說明：錨點的權威來源永遠是
+    `existing.cover_path`，`old_base` 從頭到尾只是輔助信號，不曾是唯一
+    依據）。
+    """
+    literal_stem = os.path.splitext(old_cover_fs)[0]
+
+    stripped_stem = None
+    stripped_anchor = ''
+    for suffix in ('-poster', '-fanart'):
+        if literal_stem.endswith(suffix):
+            stripped_stem = literal_stem[: -len(suffix)]
+            stripped_anchor = suffix
+            break
+
+    if stripped_stem is None:
+        return literal_stem, ''
+
+    other_suffix = '-poster' if stripped_anchor == '-fanart' else '-fanart'
+    dir_names = _list_dir_names_normcased(movie_dir)
+    if dir_names is None:
+        # 掃描失敗（NAS 暫時性失敗／權限被拒／目錄消失）——不知道目錄裡有
+        # 什麼，不是「兩套都沒有證據」。立刻整組安全 no-op，不准讓
+        # old_base_hint 裁決（見 _list_dir_names_normcased docstring）。
+        return None
+    literal_basename = os.path.basename(literal_stem)
+    stripped_basename = os.path.basename(stripped_stem)
+    literal_evidence = any(
+        os.path.normcase(literal_basename + sidecar_suffix + ext) in dir_names
+        for sidecar_suffix in ('-poster', '-fanart')
+        for ext in IMAGE_EXTENSIONS
+    )
+    stripped_evidence = any(
+        os.path.normcase(stripped_basename + ext) in dir_names for ext in IMAGE_EXTENSIONS
+    ) or any(
+        os.path.normcase(stripped_basename + other_suffix + ext) in dir_names
+        for ext in IMAGE_EXTENSIONS
+    )
+
+    if literal_evidence and not stripped_evidence:
+        return literal_stem, ''
+    if stripped_evidence and not literal_evidence:
+        return stripped_stem, stripped_anchor
+    if literal_evidence and stripped_evidence:
+        return None
+
+    # 兩套都沒有磁碟證據——只有這裡才准讓提示補位（見上方⚠️：提示不能證明
+    # 自己沒失憶，只能在完全沒有磁碟證據時當最後手段）。
+    if old_base_hint:
+        hint_stem = os.path.join(movie_dir, old_base_hint)
+        if hint_stem == literal_stem:
+            return literal_stem, ''
+        if hint_stem == stripped_stem:
+            return stripped_stem, stripped_anchor
+    return None
+
+
 def _rename_stale_cover_group(
     movie_dir: str,
     existing,
     new_base_name: str,
     path_mappings: dict,
+    old_base: str = '',
 ) -> RenameOutcome:
     """洞一改名機制（CD-151b-4）：標題漂移時把舊基底的封面／poster／fanart 搬到
     `new_base_name`。純函式，不寫 DB、不呼叫 `_produce_one`（接線是 T4 的事）。
@@ -809,17 +973,32 @@ def _rename_stale_cover_group(
     試 `IMAGE_EXTENSIONS` 的候選副檔名——**禁止 glob**，避免把使用者自己放在
     同資料夾、剛好同前綴的檔案一起改名。
 
-    三種 no-op（皆回傳 `RenameOutcome(None, False, ())`）語意不同：
+    `old_base`（Codex PR#197 review P2，151b pre-merge 後新洞；第四輪 review
+    再次修正優先序）：非權威提示，餵給 `_resolve_cover_group_identity`
+    消解「錨點 stem 是否包含衍生尾碼」的二義性（`cover_base_stem()` 的
+    naive 剝法分不出來，見該函式 docstring）。預設 `''`（無提示，只看磁碟
+    證據）。**磁碟證據優先於提示，提示只在磁碟上兩套解釋都沒有證據時才
+    補位**——精確字串匹配不能證明 `old_base` 沒有失憶（見該函式 docstring
+    的反例：舊基底 `Movie-fanart` 在 DB title 已先行改成 `Movie` 之後，
+    提示會「精確匹配」到錯的 `stripped` 候選）。**不違反 D-151b-9**：錨點
+    仍然是 `existing.cover_path`（下面第一步就換算出 `old_cover_fs`），
+    `old_base` 從頭到尾只是輔助信號，從來不是「找到舊圖的唯一依據」。
+
+    四種 no-op（皆回傳 `RenameOutcome(None, False, ())`）語意不同：
     - C-10（`old_stem_abs == new_stem_abs`）：完全不碰檔案系統。
     - C-8/AC-12（錨點在 `movie_dir` 之外）：安全 no-op ＋ warning，
       本輪其餘流程照常（不是失敗）。
     - ①b（錨點檔本身不存在）：整組 no-op，連 sibling 的存在性檢查都不做，
       不挑替代 slot 頂替。
+    - **二義性無法判定**（`_resolve_cover_group_identity` 回 `None`）：整組
+      no-op ＋ warning——literal／stripped 兩套解釋都有磁碟證據、或都沒有，
+      分不出「衍生的 sidecar 尾碼」與「尾碼本來就是基底一部分」，這是破壞性
+      搬檔操作，分不出來就不要動。
 
-    ⚠️ `os.path.exists(old_cover_fs)`（①b 早退）必須在 `cover_base_stem()`
-    呼叫之前——後者是純字串運算，不查磁碟，錨點檔已被刪除時仍會回傳一個
-    看似合理的 stem，若不先擋，會誤把 sibling 當成錨點去改名（見卡片
-    DoD⑨／mutation 點 4）。
+    ⚠️ `os.path.exists(old_cover_fs)`（①b 早退）必須在
+    `_resolve_cover_group_identity()` 呼叫之前——錨點檔已被刪除時，識別仍可能
+    透過磁碟證據算出一個看似合理的 stem，若不先擋，會誤把 sibling 當成錨點去
+    改名（見卡片 DoD⑨／mutation 點 4）。
     """
     _NOOP = RenameOutcome(None, False, ())
     if not existing or not getattr(existing, 'cover_path', None):
@@ -835,9 +1014,16 @@ def _rename_stale_cover_group(
         logger.warning("[readonly_assets] 舊封面錨點檔已不在磁碟上，安全 no-op: %s", old_cover_fs)
         return _NOOP
 
-    old_stem_abs = cover_base_stem(old_cover_fs)
+    identity = _resolve_cover_group_identity(old_cover_fs, movie_dir, old_base)
+    if identity is None:
+        logger.warning(
+            "[readonly_assets] 無法判定舊封面基底（-poster/-fanart 尾碼是衍生或本身一部分二義），安全 no-op: %s",
+            old_cover_fs,
+        )
+        return _NOOP
+    old_stem_abs, anchor_stem_suffix = identity
     new_stem_abs = os.path.join(movie_dir, new_base_name)
-    if not old_stem_abs or old_stem_abs == new_stem_abs:
+    if old_stem_abs == new_stem_abs:
         return _NOOP
     old_suffix = old_cover_fs[len(old_stem_abs):]
     # 窮舉盤點後的重新設計（Codex PR#197 review 第 6 輪的後續，151b-T5 pre-merge
@@ -876,12 +1062,11 @@ def _rename_stale_cover_group(
     # 一律不搬、留在舊基底原地——這不再是「多個候選選一個」的判斷，是「錨點 slot
     # 根本不看候選列表」的必然結果，因此也不再需要單獨的「同一 slot 多個副檔名」
     # warning（那個 warning 描述的是選擇邏輯，新設計沒有選擇可言）。
-    if old_suffix.startswith('-poster'):
-        anchor_stem_suffix = '-poster'
-    elif old_suffix.startswith('-fanart'):
-        anchor_stem_suffix = '-fanart'
-    else:
-        anchor_stem_suffix = ''
+    #
+    # `anchor_stem_suffix`（Codex PR#197 review P2）現在直接來自
+    # `_resolve_cover_group_identity` 的回傳值，不再用 `old_suffix.startswith(...)`
+    # 對映——那個字串前綴比對與這裡的 `old_suffix` 定義同構，換一個地方猜答案不會
+    # 比較準；identity 解析階段已經是唯一真理來源，這裡只單純消費它的結果。
     anchor_dst = new_stem_abs + old_suffix
 
     def _resolve_slot(stem_suffix):

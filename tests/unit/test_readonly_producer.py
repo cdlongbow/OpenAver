@@ -1800,6 +1800,17 @@ class TestRenameStaleCoverGroup:
         _resolve_slot／撞名預檢那些會再呼叫 os.path.exists 的路徑
         （grok review 第 2 輪 P3，把 C-10 早退暫時改成 `if not old_stem_abs:`
         重跑本測試會轉紅，驗證見 MUTATION_EVIDENCE）。
+
+        Codex PR#197 review P2 之後：identity 解析改走 `_resolve_cover_group_identity`
+        （`base` 同時是舊檔案的實際基底、也是傳入的 `new_base_name`——寫實地模擬
+        「標題沒變、原地重跑」）。**第五輪 review 效能修正之後**：磁碟證據判定改用
+        `os.scandir` 一次性列舉目錄、記憶體字串比對，不再逐檔 `os.path.exists`
+        ——本測試斷言的 `os.path.exists` 呼叫僅剩 `_rename_stale_cover_group`
+        開頭①b 錨點存在性檢查那一次，與證據蒐集階段完全無關；即使不傳 `old_base`
+        提示（兩套候選都無 sibling 佐證，落到「無法判定」的 `None`，回傳值恰好
+        一樣是 `_NOOP`）也一樣只呼叫一次 `os.path.exists`（實測見 MUTATION_EVIDENCE）
+        ——傳 `old_base=base` 不是這次能通過的必要條件，只是額外驗證提示補位在
+        C-10 這個特定 fixture 下也同樣正確解出 stripped、零額外 I/O。
         """
         from core.readonly_assets import RenameOutcome, _rename_stale_cover_group
 
@@ -1812,7 +1823,7 @@ class TestRenameStaleCoverGroup:
 
         with patch('core.readonly_assets.atomic_move') as mock_move, \
                 patch('core.readonly_assets.os.path.exists', return_value=True) as mock_exists:
-            outcome = _rename_stale_cover_group(str(d), existing, base, {})
+            outcome = _rename_stale_cover_group(str(d), existing, base, {}, base)
 
         assert mock_move.call_count == 0
         assert outcome == RenameOutcome(None, False, ())
@@ -2205,6 +2216,586 @@ class TestRenameStaleCoverGroup:
         assert poster.read_bytes() == b'POSTER BYTES'
         assert not (d / f'{new_base}.tiff').exists()
         assert not (d / f'{new_base}-poster.jpg').exists()
+
+    # -----------------------------------------------------------------
+    # Codex PR#197 review P2 (151b pre-merge 後新洞)：cover_base_stem() 純字串
+    # 剝一次 -poster/-fanart 尾碼，分不出「衍生的 sidecar 尾碼」與「尾碼本來
+    # 就是基底標題一部分」。以下五格對應卡片「至少要鎖的五格測試」。
+    # -----------------------------------------------------------------
+
+    def test_identity_general_layout_no_hint_resolves_via_sibling_evidence(self, tmp_path):
+        """格①：一般新佈局（DB 指 `-fanart.jpg`、旁有 `-poster.jpg`），不給
+        `old_base` 提示，純靠磁碟 sibling 證據判成 stripped（錨點＝-fanart
+        slot）——行為與 `test_new_layout_two_files_renamed`（現況）逐字相同。
+        """
+        from core.readonly_assets import _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'IDN-001 Old'
+        new_base = 'IDN-001 New'
+        poster = d / f'{old_base}-poster.jpg'
+        fanart = d / f'{old_base}-fanart.jpg'
+        poster.write_bytes(b'POSTER BYTES')
+        fanart.write_bytes(b'FANART BYTES')
+        existing = SimpleNamespace(cover_path=to_file_uri(str(fanart), {}))
+
+        outcome = _rename_stale_cover_group(str(d), existing, new_base, {})
+
+        assert not poster.exists()
+        assert not fanart.exists()
+        new_poster = d / f'{new_base}-poster.jpg'
+        new_fanart = d / f'{new_base}-fanart.jpg'
+        assert new_poster.read_bytes() == b'POSTER BYTES'
+        assert new_fanart.read_bytes() == b'FANART BYTES'
+        assert outcome.hard_failure is False
+        assert outcome.new_cover_uri == to_file_uri(str(new_fanart), {})
+
+    def test_identity_literal_base_ending_in_fanart_with_nested_siblings(self, tmp_path):
+        """格②：基底真的叫 `...Movie-fanart`（plain `Movie-fanart.jpg` ＋
+        nested `Movie-fanart-poster.jpg` ＋ nested `Movie-fanart-fanart.jpg`）
+        → 判成 literal（錨點＝'' slot），三檔都搬到新基底、舊基底零殘留。
+
+        這是 Codex PR#197 review P2 的實測反例：naive `cover_base_stem()`
+        會把 `Movie-fanart.jpg` 誤剝成 `Movie`，讓兩個 nested sidecar 在
+        被誤剝的 stem 底下遍尋不著、永遠孤兒留在舊基底。
+        """
+        from core.readonly_assets import _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'IDN-002 Movie-fanart'
+        new_base = 'IDN-002 New'
+        cover = d / f'{old_base}.jpg'
+        nested_poster = d / f'{old_base}-poster.jpg'
+        nested_fanart = d / f'{old_base}-fanart.jpg'
+        cover.write_bytes(b'PLAIN COVER BYTES')
+        nested_poster.write_bytes(b'NESTED POSTER BYTES')
+        nested_fanart.write_bytes(b'NESTED FANART BYTES')
+        existing = SimpleNamespace(cover_path=to_file_uri(str(cover), {}))
+
+        outcome = _rename_stale_cover_group(str(d), existing, new_base, {})
+
+        assert not cover.exists()
+        assert not nested_poster.exists()
+        assert not nested_fanart.exists()
+        new_cover = d / f'{new_base}.jpg'
+        new_poster_slot = d / f'{new_base}-poster.jpg'
+        new_fanart_slot = d / f'{new_base}-fanart.jpg'
+        assert new_cover.read_bytes() == b'PLAIN COVER BYTES'
+        assert new_poster_slot.read_bytes() == b'NESTED POSTER BYTES'
+        assert new_fanart_slot.read_bytes() == b'NESTED FANART BYTES'
+        assert not any(p.name.startswith(old_base) for p in d.iterdir())
+        assert outcome.hard_failure is False
+        assert outcome.new_cover_uri == to_file_uri(str(new_cover), {})
+
+    def test_identity_hint_resolves_literal_when_base_ends_with_poster(self, tmp_path):
+        """格③：off 單封面且基底本身以 `-poster` 結尾（MDCX/Javinizer 等工具
+        常見標題含 `-poster` 字面），**磁碟上零 sibling 可證**（單封面、無
+        `-poster`/`-fanart` 衍生檔），literal／stripped 兩套解釋都沒有證據
+        ——這是唯一允許 `old_base` 提示補位的情境（Codex 第四輪 review 修正：
+        精確字串匹配不能證明 `old_base` 沒有失憶，見 `_resolve_cover_group_
+        identity` docstring 的反例；提示現在只在磁碟證據完全缺席時才准當
+        最後手段裁決）。
+
+        fixture 已核實只有單一檔案、零 sibling（下面只 write 一個 `cover`），
+        真的落在「兩套都沒證據」那格，不是誤測到別的分支。
+        """
+        from core.readonly_assets import _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'IDN-003 Special-poster'
+        new_base = 'IDN-003 New'
+        cover = d / f'{old_base}.jpg'
+        cover.write_bytes(b'SOLO COVER BYTES')
+        existing = SimpleNamespace(cover_path=to_file_uri(str(cover), {}))
+
+        outcome = _rename_stale_cover_group(str(d), existing, new_base, {}, old_base)
+
+        assert not cover.exists()
+        new_cover = d / f'{new_base}.jpg'
+        assert new_cover.read_bytes() == b'SOLO COVER BYTES'
+        assert not (d / f'{new_base}-poster.jpg').exists()
+        assert outcome.hard_failure is False
+        assert outcome.new_cover_uri == to_file_uri(str(new_cover), {})
+
+    def test_identity_forgotten_hint_falls_back_to_sibling_evidence(self, tmp_path):
+        """格④：已壞狀態、DB title 已失憶（`old_base` 提示等於
+        `new_base_name`，兩個候選 stem 都對不上）→ 提示不生效、退回磁碟
+        sibling 證據判成 stripped（錨點＝-fanart slot，plain 同名封面存在）。
+
+        刻意選「正確答案是 stripped」且**靠同名封面（`stripped + ext`）**
+        作證的佈局——不是格①那種靠「另一個 sidecar」作證、也不是格②那種
+        「正確答案剛好是 literal」的佈局：如果提示不匹配時被誤判成『無條件
+        信任任何非空提示、把它當成 literal 匹配』，這裡會選錯 slot（新封面
+        會落在 `{new_base}.jpg` 而不是 `{new_base}-fanart.jpg`）；如果誤判
+        成用格②那種「答案剛好也是 literal」的佈局，巧合算對抓不到這個 bug
+        ——本格佈局刻意與格①②都不同，鎖的是「同名封面」這條證據（不同於
+        格①鎖的「另一個 sidecar」那條），避免兩格共用同一條判定。
+        """
+        from core.readonly_assets import _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'IDN-004 Old'
+        new_base = 'IDN-004 New'
+        cover = d / f'{old_base}.jpg'
+        fanart = d / f'{old_base}-fanart.jpg'
+        cover.write_bytes(b'PLAIN COVER BYTES')
+        fanart.write_bytes(b'FANART BYTES')
+        existing = SimpleNamespace(cover_path=to_file_uri(str(fanart), {}))
+
+        # 提示已失憶：等於 new_base_name，不匹配 literal（'IDN-004 Old-fanart'）
+        # 也不匹配 stripped（'IDN-004 Old'）
+        outcome = _rename_stale_cover_group(str(d), existing, new_base, {}, new_base)
+
+        assert not cover.exists()
+        assert not fanart.exists()
+        new_cover = d / f'{new_base}.jpg'
+        new_fanart = d / f'{new_base}-fanart.jpg'
+        assert new_cover.read_bytes() == b'PLAIN COVER BYTES'
+        assert new_fanart.read_bytes() == b'FANART BYTES'
+        assert outcome.hard_failure is False
+        assert outcome.new_cover_uri == to_file_uri(str(new_fanart), {})
+
+    def test_identity_ambiguous_both_interpretations_have_evidence_noop(self, tmp_path, caplog):
+        """格⑤：兩套結構同時存在（literal 與 stripped 各自都有磁碟證據），
+        無法判定 → 零搬移、零 CAS，記一行 warning，回傳 `_NOOP` 形狀。
+
+        `stripped` 這邊刻意用**同名封面**（`stripped + ext`）作證，不是格①④
+        用的「另一個 sidecar」——避免這格跟格①④共用同一條判定，鎖的是
+        「literal／stripped 兩套證據同時成立時的最終仲裁」本身，不是任何單
+        一條證據蒐集規則。
+        """
+        import logging
+
+        from core.readonly_assets import RenameOutcome, _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'IDN-005 Movie-fanart'
+        new_base = 'IDN-005 New'
+        cover = d / f'{old_base}.jpg'
+        nested_poster = d / f'{old_base}-poster.jpg'  # 支持 literal
+        stripped_plain_cover = d / 'IDN-005 Movie.jpg'  # 支持 stripped（同名封面）
+        cover.write_bytes(b'PLAIN COVER BYTES')
+        nested_poster.write_bytes(b'NESTED POSTER BYTES')
+        stripped_plain_cover.write_bytes(b'STRIPPED PLAIN COVER BYTES')
+        existing = SimpleNamespace(cover_path=to_file_uri(str(cover), {}))
+
+        with caplog.at_level(logging.WARNING, logger='OpenAver.core.readonly_assets'):
+            outcome = _rename_stale_cover_group(str(d), existing, new_base, {})
+
+        assert outcome == RenameOutcome(None, False, ())
+        assert cover.read_bytes() == b'PLAIN COVER BYTES'
+        assert nested_poster.read_bytes() == b'NESTED POSTER BYTES'
+        assert stripped_plain_cover.read_bytes() == b'STRIPPED PLAIN COVER BYTES'
+        assert not any(p.name.startswith(new_base) for p in d.iterdir())
+        messages = [r.getMessage() for r in caplog.records]
+        assert any('無法判定' in m for m in messages), f"缺少無法判定 warning log：{messages}"
+
+    def test_identity_ambiguous_with_matching_hint_hint_does_not_decide(self, tmp_path, caplog):
+        """Codex 補跑 mutation 存活找到的真缺口：把『兩套都有證據 ⇒ 歧義
+        `None`，提示不得裁決』那格（`if literal_evidence and stripped_evidence:
+        return None`）整個停用，408 條測試全綠——因為格⑤（上面那條）的
+        fixture 剛好沒有給任何 `old_base_hint`，停用該分支後控制流程落到
+        『兩套都沒有證據』那段的提示判斷，`if old_base_hint:` 因為提示是
+        空字串直接跳過，最終仍然 `return None`（函式最後一行），結果巧合
+        正確，完全測不出「提示不得裁決」這條規則本身有沒有被鎖住。
+
+        本格刻意讓 fixture 同時滿足『兩套都有磁碟證據』**且**『`old_base_hint`
+        精確匹配 stripped 候選的 stem』——這是關鍵：有這個精確匹配的提示，
+        才會真正走進『兩套都沒有證據』那個 `if old_base_hint:` 分支的邏輯
+        （如果歧義守衛被拿掉）。若歧義守衛不存在，提示補位那段的
+        `hint_stem == stripped_stem` 會判真，錯誤地回傳 stripped 而不是
+        `None`；有守衛時，證據裁決優先，兩套都有證據必須回傳 `None`，提示
+        完全不該被檢查到。
+        """
+        import logging
+
+        from core.readonly_assets import RenameOutcome, _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'IDN-012 Movie-fanart'
+        new_base = 'IDN-012 New'
+        cover = d / f'{old_base}.jpg'
+        nested_poster = d / f'{old_base}-poster.jpg'  # 支持 literal
+        stripped_plain_cover = d / 'IDN-012 Movie.jpg'  # 支持 stripped（同名封面）
+        cover.write_bytes(b'PLAIN COVER BYTES')
+        nested_poster.write_bytes(b'NESTED POSTER BYTES')
+        stripped_plain_cover.write_bytes(b'STRIPPED PLAIN COVER BYTES')
+        existing = SimpleNamespace(cover_path=to_file_uri(str(cover), {}))
+
+        # 提示精確匹配 stripped 候選的 stem（'IDN-012 Movie'）——若歧義守衛被
+        # 拿掉，提示補位那段會誤把 stripped 當成答案。
+        hint = 'IDN-012 Movie'
+
+        with caplog.at_level(logging.WARNING, logger='OpenAver.core.readonly_assets'):
+            outcome = _rename_stale_cover_group(str(d), existing, new_base, {}, hint)
+
+        assert outcome == RenameOutcome(None, False, ())
+        assert cover.read_bytes() == b'PLAIN COVER BYTES'
+        assert nested_poster.read_bytes() == b'NESTED POSTER BYTES'
+        assert stripped_plain_cover.read_bytes() == b'STRIPPED PLAIN COVER BYTES'
+        assert not any(p.name.startswith(new_base) for p in d.iterdir())
+        messages = [r.getMessage() for r in caplog.records]
+        assert any('無法判定' in m for m in messages), f"缺少無法判定 warning log：{messages}"
+
+    # -----------------------------------------------------------------
+    # Codex 第四輪 review P2：提示精確匹配不能證明 old_base 沒有失憶——反例是
+    # 舊基底 `Movie-fanart` 在 DB title 已先行改成 `Movie` 之後，提示會「精確
+    # 匹配」到錯的 stripped 候選。以下兩格參數化「兩個方向」的失憶碰撞：
+    # 正向（長縮短，提示誤撞 stripped）／反向（短拉長，提示誤撞 literal）。
+    # -----------------------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "case_id,anchor_filename,sibling_filenames,hint,expected_stem_basename,"
+        "expected_anchor_stem_suffix",
+        [
+            pytest.param(
+                'forward',
+                'IDN-006 Movie-fanart.jpg',
+                ('IDN-006 Movie-fanart-poster.jpg', 'IDN-006 Movie-fanart-fanart.jpg'),
+                'IDN-006 Movie',
+                'IDN-006 Movie-fanart',
+                '',
+                id='forward-long-to-short-hint-collides-with-stripped',
+            ),
+            pytest.param(
+                'reverse',
+                'IDN-007 Movie-fanart.jpg',
+                ('IDN-007 Movie-poster.jpg',),
+                'IDN-007 Movie-fanart',
+                'IDN-007 Movie',
+                '-fanart',
+                id='reverse-short-to-long-hint-collides-with-literal',
+            ),
+        ],
+    )
+    def test_identity_amnesia_collision_resolves_via_evidence_not_hint(
+        self, tmp_path, case_id, anchor_filename, sibling_filenames, hint,
+        expected_stem_basename, expected_anchor_stem_suffix,
+    ):
+        """格⑥⑦：提示「精確匹配」某候選，不代表那候選是對的——磁碟證據才是
+        仲裁者，提示只在磁碟上兩套解釋都沒有證據時才准補位。
+
+        **正向**（`forward`）：真實舊基底是 `IDN-006 Movie-fanart`（標題本身
+        就含 `-fanart` 字面），錨點是同名 plain 封面、旁邊兩個 nested sidecar
+        （`-poster`／`-fanart`）證明 literal 才對。DB 上一輪已把 title 改成
+        `IDN-006 Movie`（短標題，剝掉了「-fanart」那段），這一輪的 `old_base`
+        提示因此精確等於 stripped 候選的 stem——**這正是上一輪錯誤推理會誤判
+        的那個反例**：識別若還是選 stripped，兩個真 sidecar 會被判定成「已經
+        在對的位置」（`old_stem_abs == new_stem_abs` 觸發 C-10），永遠孤兒。
+
+        **反向**（`reverse`）：真實舊基底是 `IDN-007 Movie`（短標題），錨點是
+        一張衍生 `-fanart` sidecar，旁邊真正的 `-poster` sidecar 證明 stripped
+        （`IDN-007 Movie`）才對。DB 上一輪已把 title 改成 `IDN-007 Movie-fanart`
+        （長標題，剛好與錨點檔案本身的字面尾碼同形），這一輪的提示因此精確
+        等於 literal 候選的 stem——同一種「提示碰巧撞對候選、但候選是錯的」
+        陷阱，方向相反。
+
+        兩格都直接呼叫 `_resolve_cover_group_identity`：只斷言識別結果，不斷言
+        `_rename_stale_cover_group` 的搬檔結果（兩個方向的實際搬檔結果不對稱
+        ——正向會撞名、反向會成功，各自的端對端行為由下面兩支專屬測試分別
+        實測斷言，不在這裡用參數化硬湊成同一種斷言）。
+        """
+        from core.readonly_assets import _resolve_cover_group_identity
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        anchor = d / anchor_filename
+        anchor.write_bytes(b'ANCHOR BYTES')
+        for name in sibling_filenames:
+            (d / name).write_bytes(b'SIBLING BYTES')
+
+        identity = _resolve_cover_group_identity(str(anchor), str(d), hint)
+
+        expected = (str(d / expected_stem_basename), expected_anchor_stem_suffix)
+        assert identity == expected, (
+            f"{case_id}: 提示（{hint!r}）碰巧精確匹配了錯的候選，識別結果應該"
+            f"仍由磁碟證據仲裁，得到 {expected}，實際 {identity}"
+        )
+
+    def test_identity_amnesia_forward_end_to_end_collides_safe_rejection(self, tmp_path, caplog):
+        """格⑥端對端實測（不是推理）：正向失憶碰撞修正成 literal 之後，改名組是
+        ```
+        IDN-006 Movie-fanart.jpg        → IDN-006 Movie.jpg
+        IDN-006 Movie-fanart-poster.jpg → IDN-006 Movie-poster.jpg
+        IDN-006 Movie-fanart-fanart.jpg → IDN-006 Movie-fanart.jpg   ← dst 等於第一列的 src
+        ```
+        撞名預檢在任何搬移之前跑，那一刻 `IDN-006 Movie-fanart.jpg`（錨點本身）
+        還在磁碟上，所以第三列的 dst 命中撞名 ⇒ **整組零搬移＋warning，回傳
+        `_NOOP` 形狀**——這是安全的拒絕，不是逃生口恢復（三個檔案原樣留在舊
+        基底，沒有任何內容被覆寫或遺失；使用者這一輪逃生口沒有把孤兒歸位，
+        但也沒有製造新的資料風險）。已用 `/tmp` 腳本實測確認過這個結果，不是
+        推理猜的——這裡把同一組 fixture 重放進正式測試鎖住。
+        """
+        import logging
+
+        from core.readonly_assets import RenameOutcome, _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        cover = d / 'IDN-006 Movie-fanart.jpg'
+        nested_poster = d / 'IDN-006 Movie-fanart-poster.jpg'
+        nested_fanart = d / 'IDN-006 Movie-fanart-fanart.jpg'
+        cover.write_bytes(b'PLAIN COVER BYTES')
+        nested_poster.write_bytes(b'NESTED POSTER BYTES')
+        nested_fanart.write_bytes(b'NESTED FANART BYTES')
+        existing = SimpleNamespace(cover_path=to_file_uri(str(cover), {}))
+
+        with caplog.at_level(logging.WARNING, logger='OpenAver.core.readonly_assets'):
+            # 提示已失憶：DB 上一輪已改成短標題，這一輪 target 也是同一個短標題
+            # （重按逃生口、標題沒有再變）。
+            outcome = _rename_stale_cover_group(
+                str(d), existing, 'IDN-006 Movie', {}, 'IDN-006 Movie'
+            )
+
+        assert outcome == RenameOutcome(None, False, ())
+        assert cover.read_bytes() == b'PLAIN COVER BYTES'
+        assert nested_poster.read_bytes() == b'NESTED POSTER BYTES'
+        assert nested_fanart.read_bytes() == b'NESTED FANART BYTES'
+        assert sorted(p.name for p in d.iterdir()) == sorted(
+            [cover.name, nested_poster.name, nested_fanart.name]
+        )
+        messages = [r.getMessage() for r in caplog.records]
+        assert any('撞名' in m for m in messages), f"缺少撞名 warning log：{messages}"
+
+    def test_identity_amnesia_reverse_end_to_end_succeeds(self, tmp_path):
+        """格⑦端對端實測：反向失憶碰撞修正成 stripped 之後，改名組的三個目的
+        檔名彼此不重疊、也不撞到還沒搬移的來源檔——實測確認完整搬移成功
+        （逃生口在這個方向真的把孤兒歸位了，不像正向那格會撞名擋下）。
+        """
+        from core.readonly_assets import _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        anchor = d / 'IDN-007 Movie-fanart.jpg'
+        sibling_poster = d / 'IDN-007 Movie-poster.jpg'
+        anchor.write_bytes(b'ANCHOR FANART BYTES')
+        sibling_poster.write_bytes(b'SIBLING POSTER BYTES')
+        existing = SimpleNamespace(cover_path=to_file_uri(str(anchor), {}))
+
+        outcome = _rename_stale_cover_group(
+            str(d), existing, 'IDN-007 Movie-fanart', {}, 'IDN-007 Movie-fanart'
+        )
+
+        assert not anchor.exists()
+        assert not sibling_poster.exists()
+        new_poster = d / 'IDN-007 Movie-fanart-poster.jpg'
+        new_fanart = d / 'IDN-007 Movie-fanart-fanart.jpg'
+        assert new_poster.read_bytes() == b'SIBLING POSTER BYTES'
+        assert new_fanart.read_bytes() == b'ANCHOR FANART BYTES'
+        assert outcome.hard_failure is False
+        assert outcome.new_cover_uri == to_file_uri(str(new_fanart), {})
+
+    # -----------------------------------------------------------------
+    # 第五輪 review 效能修正：證據判定改用 os.scandir 一次性目錄列舉，不再
+    # 逐檔 os.path.exists（NAS/SMB 上每次 stat 是一趟網路來回）。以下三格
+    # 鎖新機制本身：scandir 讀取失敗的 fail-safe、單一候選早退連目錄都不
+    # 列的零 I/O 保證、以及兩套候選都要看證據時目錄只列舉一次。
+    # -----------------------------------------------------------------
+
+    def test_identity_scandir_oserror_is_safe_noop_not_treated_as_no_evidence(self, tmp_path, caplog):
+        """`os.scandir` 讀取失敗（目錄被刪除／權限被拒，皆為 `OSError` 子類）
+        **不得往外拋**，且**不等於**「兩套候選都沒有磁碟證據」（Codex 第五輪
+        review P2，修正第九輪把這兩種狀態錯誤壓成同一個的洞）：掃描失敗是
+        「不知道目錄裡有什麼」，不是「已知沒有 sibling」，因此**不准落到
+        `old_base_hint` 補位**——`_resolve_cover_group_identity` 收到掃描
+        失敗要立刻回 `None`，跳過證據比較與提示補位兩者。這支測試沒有傳
+        `old_base_hint`（危險路徑——掃描失敗 ＋ 提示精確匹配某候選——由
+        `test_identity_scandir_oserror_with_matching_hint_hint_does_not_decide`
+        單獨鎖），這裡只確認：掃描失敗時最終結果仍是安全 no-op（`_NOOP`），
+        磁碟零寫入，且記一行「無法判定」warning。
+        """
+        import logging
+
+        from core.readonly_assets import RenameOutcome, _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'IDN-008 Old'
+        new_base = 'IDN-008 New'
+        fanart = d / f'{old_base}-fanart.jpg'
+        fanart.write_bytes(b'FANART BYTES')
+        existing = SimpleNamespace(cover_path=to_file_uri(str(fanart), {}))
+
+        with patch(
+            'core.readonly_assets.os.scandir', side_effect=OSError('simulated scandir failure')
+        ), caplog.at_level(logging.WARNING, logger='OpenAver.core.readonly_assets'):
+            outcome = _rename_stale_cover_group(str(d), existing, new_base, {})
+
+        assert outcome == RenameOutcome(None, False, ())
+        assert fanart.read_bytes() == b'FANART BYTES'
+        assert sorted(p.name for p in d.iterdir()) == [fanart.name]
+        messages = [r.getMessage() for r in caplog.records]
+        assert any('無法判定' in m for m in messages), f"缺少無法判定 warning log：{messages}"
+
+    def test_identity_scandir_oserror_with_matching_hint_hint_does_not_decide(self, tmp_path, caplog):
+        """危險路徑（owner 第 11 輪指出的真缺口）：`os.scandir` 讀取失敗
+        **且** `old_base_hint` 恰好精確匹配其中一套候選的 stem。
+
+        `_produce_one` 的生產呼叫現在一定會傳 `old_base`（見卡片接線），
+        所以這條路徑不是理論邊界——是每一輪唯讀片重跑都可能撞到的真實
+        情境：NAS 暫時性失敗、掛載中斷、或權限問題讓 `os.scandir` 拋出，
+        而這一輪的 `old_base` 提示剛好與 stripped 候選同形（例如上一輪
+        DB title 已經先行收斂）。若掃描失敗被誤判成『兩套都沒有證據』，
+        提示會在完全不知道磁碟上真相的情況下獨力裁決，選錯 identity——
+        真正的舊佈局（plain 封面＋兩個 nested sidecar，literal 才對）會
+        被誤判成 stripped，`old_stem_abs == new_stem_abs` 觸發 C-10，
+        函式甚至不會嘗試搬移，兩個真 sidecar 永遠孤兒、DB 也不會被寫入
+        任何新值。**正確行為是掃描失敗當下就整組安全 no-op**：identity
+        直接回 `None`，不進提示補位，磁碟零寫入、`atomic_move` 零呼叫。
+        """
+        import logging
+
+        from core.atomic_write import atomic_move as _real_atomic_move
+        from core.readonly_assets import RenameOutcome, _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'IDN-015 Movie-fanart'
+        new_base = 'IDN-015 New'
+        cover = d / f'{old_base}.jpg'
+        nested_poster = d / f'{old_base}-poster.jpg'
+        nested_fanart = d / f'{old_base}-fanart.jpg'
+        cover.write_bytes(b'PLAIN COVER BYTES')
+        nested_poster.write_bytes(b'NESTED POSTER BYTES')
+        nested_fanart.write_bytes(b'NESTED FANART BYTES')
+        existing = SimpleNamespace(cover_path=to_file_uri(str(cover), {}))
+
+        # 提示恰好精確匹配 stripped 候選的 stem（'IDN-015 Movie'）——真相是
+        # literal 才對（nested sidecar 就在磁碟上），但 scandir 失敗讓函式
+        # 根本看不到，不該讓提示替它決定。
+        hint = 'IDN-015 Movie'
+
+        with patch(
+            'core.readonly_assets.os.scandir', side_effect=OSError('simulated NAS failure')
+        ), patch(
+            'core.readonly_assets.atomic_move', side_effect=_real_atomic_move
+        ) as mock_move, caplog.at_level(logging.WARNING, logger='OpenAver.core.readonly_assets'):
+            outcome = _rename_stale_cover_group(str(d), existing, new_base, {}, hint)
+
+        assert outcome == RenameOutcome(None, False, ())
+        assert mock_move.call_count == 0, "掃描失敗時不准搬任何檔案——atomic_move 必須零呼叫"
+        assert cover.read_bytes() == b'PLAIN COVER BYTES'
+        assert nested_poster.read_bytes() == b'NESTED POSTER BYTES'
+        assert nested_fanart.read_bytes() == b'NESTED FANART BYTES'
+        assert sorted(p.name for p in d.iterdir()) == sorted(
+            [cover.name, nested_poster.name, nested_fanart.name]
+        )
+        messages = [r.getMessage() for r in caplog.records]
+        assert any('無法判定' in m for m in messages), f"缺少無法判定 warning log：{messages}"
+
+    def test_identity_single_candidate_early_exit_zero_scandir_calls(self, tmp_path):
+        """`literal` 不以 `-poster`／`-fanart` 結尾時（絕大多數無尾碼疑慮的
+        正常片），識別必須立即返回、**連 `os.scandir` 都不呼叫**——效能不能
+        被下面的證據蒐集拖慢，這是 99.9% 呼叫會走的路徑。
+        """
+        from core.readonly_assets import _resolve_cover_group_identity
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        cover = d / 'IDN-009 Normal.jpg'
+        cover.write_bytes(b'NORMAL COVER BYTES')
+
+        with patch('core.readonly_assets.os.scandir') as mock_scandir:
+            identity = _resolve_cover_group_identity(str(cover), str(d), '')
+
+        assert identity == (str(d / 'IDN-009 Normal'), '')
+        assert mock_scandir.call_count == 0, (
+            "單一候選（無 -poster/-fanart 尾碼疑慮）不該碰檔案系統，"
+            f"實際呼叫 os.scandir {mock_scandir.call_count} 次"
+        )
+
+    def test_identity_two_candidate_path_scandir_called_exactly_once(self, tmp_path):
+        """兩套候選都需要磁碟證據時，目錄**只列舉一次**——不是舊版那種對
+        兩套候選、每個副檔名各自 `os.path.exists` 的逐檔探法（最多 24 次）。
+        """
+        from core.readonly_assets import _resolve_cover_group_identity
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'IDN-010 Old'
+        fanart = d / f'{old_base}-fanart.jpg'
+        poster = d / f'{old_base}-poster.jpg'
+        fanart.write_bytes(b'FANART BYTES')
+        poster.write_bytes(b'POSTER BYTES')
+
+        real_scandir = os.scandir
+        with patch(
+            'core.readonly_assets.os.scandir', side_effect=lambda p: real_scandir(p)
+        ) as mock_scandir:
+            identity = _resolve_cover_group_identity(str(fanart), str(d), '')
+
+        assert identity == (str(d / old_base), '-fanart')
+        assert mock_scandir.call_count == 1, (
+            f"兩套候選都要看證據時應該只列舉目錄一次，實際呼叫 {mock_scandir.call_count} 次"
+        )
+
+    @pytest.mark.parametrize(
+        "case_id,old_base,anchor_filename,sibling_filename,expected_stem_basename,"
+        "expected_anchor_stem_suffix",
+        [
+            pytest.param(
+                'literal',
+                'IDN-014 Movie-fanart',
+                'IDN-014 Movie-fanart.jpg',
+                'IDN-014 Movie-fanart-POSTER.JPG',
+                'IDN-014 Movie-fanart',
+                '',
+                id='literal-side-query-normcase',
+            ),
+            pytest.param(
+                'stripped',
+                'IDN-011 Old',
+                'IDN-011 Old-fanart.jpg',
+                'IDN-011 Old-POSTER.JPG',
+                'IDN-011 Old',
+                '-fanart',
+                id='stripped-side-query-normcase',
+            ),
+        ],
+    )
+    def test_identity_case_insensitive_match_via_normcase(
+        self, tmp_path, case_id, old_base, anchor_filename, sibling_filename,
+        expected_stem_basename, expected_anchor_stem_suffix,
+    ):
+        """模擬 Windows 大小寫不敏感檔案系統：`patch` 讓 `os.path.normcase`
+        行為像 Windows 的 `str.lower`，磁碟上實際檔名的大小寫與識別建構的
+        候選檔名大小寫不同，仍要能匹配到證據——維持 `os.path.exists` 的舊
+        語意（Windows 上大小寫不敏感）。錨點本身的 `-fanart` 尾碼維持小寫
+        （尾碼偵測那一步本來就是刻意大小寫敏感、繼承自 `cover_base_stem()`，
+        不是這裡要測的東西），只讓 sibling 那一邊的大小寫不同來鎖 evidence
+        比對這一段。
+
+        **兩個方向參數化**（Codex 補跑 mutation 存活找到的部分缺口）：只把
+        `stripped` 查詢端拿掉 `os.path.normcase` 舊版仍全綠——舊版只有
+        `stripped` 這個方向的覆蓋，`literal` 查詢端那個獨立的 `os.path.
+        normcase` 呼叫點完全沒被測到。`literal` 這格的 sibling 是
+        `{anchor 前綴}-POSTER.JPG`（大小寫不同但字首與錨點本身一致），只有
+        literal_evidence 那條查詢用 `os.path.normcase` 才找得到；`stripped`
+        這格沿用原本的 fixture 與斷言，逐字保留。
+        """
+        from core.readonly_assets import _resolve_cover_group_identity
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        anchor = d / anchor_filename
+        sibling = d / sibling_filename
+        anchor.write_bytes(b'ANCHOR BYTES')
+        sibling.write_bytes(b'SIBLING BYTES')
+
+        with patch('core.readonly_assets.os.path.normcase', new=str.lower):
+            identity = _resolve_cover_group_identity(str(anchor), str(d), '')
+
+        expected = (str(d / expected_stem_basename), expected_anchor_stem_suffix)
+        assert identity == expected, (
+            f"{case_id}: 大小寫不同的 sibling 應該仍被 normcase 後的比對找到，"
+            f"期望 {expected}，實際 {identity}"
+        )
 
 
 class TestRevertCoverRename:

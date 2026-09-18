@@ -753,7 +753,12 @@ def _produce_one(
 
     outcome = readonly_assets.RenameOutcome(None, False, ())
     if assets_mode == 'full' and cover_strategy[0] == 'none':
-        outcome = readonly_assets._rename_stale_cover_group(movie_dir_str, existing, new_base_name, path_mappings)
+        # old_base 是非權威提示、不是 D-151b-9 的唯一錨點（錨點仍是 existing.cover_path，
+        # 在被呼叫端內部換算）——只在錨點 stem 有 -poster/-fanart 二義時輔助消歧，失憶
+        # （跨輪次漂移）時自動退回磁碟證據，見 _resolve_cover_group_identity docstring。
+        outcome = readonly_assets._rename_stale_cover_group(
+            movie_dir_str, existing, new_base_name, path_mappings, old_base
+        )
         if outcome.hard_failure:
             raise ReadonlyProduceError("readonly cover rename hard failure")
     # FIX P1 (Codex PR#113 round-6, 2026-07-21; feature/105 T3: extracted to
