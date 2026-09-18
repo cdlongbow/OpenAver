@@ -1998,6 +1998,90 @@ class TestRenameStaleCoverGroup:
         assert sibling.read_bytes() == b'SIBLING BYTES'
         assert not (d / 'TEST-009 New-poster.jpg').exists()
 
+    def test_mixed_extensions_anchor_file_itself_is_moved(self, tmp_path, caplog):
+        """回歸修正②（Codex PR#197 review，第 6 輪修正方向——契約變動，取代
+        第 4 輪的舊斷言）：DB 錨點指 `.png`，同一個 slot 還躺著一個優先序更
+        高的 `.jpg` sibling。D-151b-1 的承諾是「圖的內容一個位元組不動，只
+        是換個名字」——不是「這個 slot 換一張內容相近的圖也算數」。舊修法
+        （讓 `_resolve_slot` 依 `IMAGE_EXTENSIONS` 全域優先序自由選）雖然堵
+        住了「new_cover_uri 指向不存在路徑」，卻把 DB 換指到 sibling 的內容
+        （`.jpg`），比路徑不存在更隱蔽（破圖看得出來，換了一張圖看不出
+        來）。正確行為：錨點那一個 slot 必須優先使用 DB 指向的那個檔本身
+        （`old_cover_fs`）；sibling 刻意留在舊基底原地、不搬、內容不動，
+        記一行 warning（不是清理疏漏）。"""
+        import logging
+
+        from core.readonly_assets import _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'TEST-011 Old'
+        new_base = 'TEST-011 New'
+        old_png = d / f'{old_base}.png'
+        old_jpg = d / f'{old_base}.jpg'
+        old_png.write_bytes(b'ANCHOR PNG BYTES')
+        old_jpg.write_bytes(b'SIBLING JPG BYTES')
+        existing = SimpleNamespace(cover_path=to_file_uri(str(old_png), {}))
+
+        with caplog.at_level(logging.WARNING, logger='OpenAver.core.readonly_assets'):
+            outcome = _rename_stale_cover_group(str(d), existing, new_base, {})
+
+        new_png = d / f'{new_base}.png'
+        new_jpg = d / f'{new_base}.jpg'
+        assert not old_png.exists(), "錨點本檔（DB 指向的那個）必須被搬走"
+        assert new_png.exists() and new_png.read_bytes() == b'ANCHOR PNG BYTES', (
+            "錨點 slot 搬的必須是 DB 指向的那個檔本身，內容一個位元組不動（D-151b-1）"
+        )
+        assert old_jpg.exists() and old_jpg.read_bytes() == b'SIBLING JPG BYTES', (
+            "重複的 sibling 刻意留在舊基底原地，不搬、內容不動"
+        )
+        assert not new_jpg.exists(), "sibling 不該被搬到新基底，new_cover_uri 也不該指向它"
+        assert outcome.new_cover_uri == to_file_uri(str(new_png), {}), (
+            "new_cover_uri 必須指向實際搬動的錨點檔（.png），不是 sibling 的 .jpg"
+        )
+        import os as _os
+        assert _os.path.exists(str(new_png))
+        messages = [r.getMessage() for r in caplog.records]
+        assert any('同一 slot 多個副檔名同時存在' in m for m in messages), (
+            f"缺少混副檔名 warning log：{messages}"
+        )
+
+    def test_poster_anchor_new_layout_new_cover_uri_points_to_poster(self, tmp_path):
+        """回歸守衛（第 5 輪 review）：DB 錨點是 `-poster.jpg`——外部管理器
+        工具（MDCX／Javinizer，`core/gallery_scanner.py` L1.5 明文掃
+        `{stem}-poster`）常見命名，唯讀來源接手這類庫時完全可能只有
+        `-poster`／`-fanart` 兩檔、沒有同名封面本體。`anchor_stem_suffix`
+        的 `-poster` 分支若判斷錯了，`anchor_dst` 會落空（新佈局沒有 `''`
+        slot 可頂替，餵 `to_file_uri(None, ...)`）或誤指到 `-fanart`——
+        `new_cover_uri` 必須正確指向 `{new_base}-poster.jpg`，且該檔真的
+        存在於磁碟上。"""
+        from core.readonly_assets import _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'TEST-012 Old'
+        new_base = 'TEST-012 New'
+        poster = d / f'{old_base}-poster.jpg'
+        fanart = d / f'{old_base}-fanart.jpg'
+        poster.write_bytes(b'POSTER ANCHOR BYTES')
+        fanart.write_bytes(b'FANART SIBLING BYTES')
+        existing = SimpleNamespace(cover_path=to_file_uri(str(poster), {}))
+
+        outcome = _rename_stale_cover_group(str(d), existing, new_base, {})
+
+        new_poster = d / f'{new_base}-poster.jpg'
+        new_fanart = d / f'{new_base}-fanart.jpg'
+        assert not poster.exists()
+        assert not fanart.exists()
+        assert new_poster.exists() and new_poster.read_bytes() == b'POSTER ANCHOR BYTES'
+        assert new_fanart.exists() and new_fanart.read_bytes() == b'FANART SIBLING BYTES'
+        assert outcome.new_cover_uri == to_file_uri(str(new_poster), {}), (
+            "DB 錨點是 -poster 時 new_cover_uri 必須指向 -poster 那個 slot 實際搬到的檔，"
+            "不是 -fanart、也不是不存在的同名封面本體"
+        )
+        import os as _os
+        assert _os.path.exists(str(new_poster))
+
 
 class TestRevertCoverRename:
     """T3（151b，DoD⑩）：`_revert_cover_rename` 單獨測試——單一 slot 復原失敗
@@ -8883,9 +8967,11 @@ def _t4r_setup(tmp_path, repo, meta_a=None, config=None):
     }
 
 
-def _t4r_round2(repo, ctx, meta, cover_strategy, *, download_side_effect=None, generate_nfo_patch=None):
+def _t4r_round2(repo, ctx, meta, cover_strategy, *, download_side_effect=None,
+                 generate_nfo_patch=None, assets_mode='full'):
     """後續一輪真實 _produce_one 呼叫，沿用 ctx['existing']（呼叫端自行決定是否
-    在呼叫之間重新 repo.get_by_path 刷新它——DoD⑧ 刻意不刷新）。"""
+    在呼叫之間重新 repo.get_by_path 刷新它——DoD⑧ 刻意不刷新）。`assets_mode`
+    預設 'full'；補劇照回歸測試傳 'samples_only'。"""
     from contextlib import ExitStack
 
     from core.readonly_producer import _produce_one
@@ -8903,7 +8989,7 @@ def _t4r_round2(repo, ctx, meta, cover_strategy, *, download_side_effect=None, g
         return _produce_one(
             repo, MagicMock(), ctx['config'],
             file_info=ctx['file_info'], meta=dict(meta), cover_strategy=cover_strategy,
-            assets_mode='full', existing=ctx['existing'],
+            assets_mode=assets_mode, existing=ctx['existing'],
             output_root=str(ctx['output_root']), output_uri=ctx['output_uri'],
             allocated_this_run=set(), path_mappings={},
         )
@@ -9367,3 +9453,64 @@ class TestProduceOneReadonlyRename:
         )
         after_db = repo.get_by_path(ctx['src_uri'])
         assert after_db == before_db, "DB 的 cover_path 與 focal 三欄不得被碰"
+
+    def test_samples_only_does_not_trigger_rename_or_readback(self, tmp_path, temp_db):
+        """回歸修正①（Codex PR#197 review，第 4 輪）：`assets_mode='samples_only'`
+        （補劇照）＋ 來源標題與 DB 不同 ＋ `cover_strategy=('none',)` → 洞一改
+        名與洞二讀回都不得介入——`samples_only` 的既有承諾是「只碰
+        extrafanart，不碰 metadata/cover」。修前：封面會被搬到新基底，但
+        `_write_movie_assets` 在 samples_only 早退不寫 NFO、`_upsert_db` 也不
+        更新 title ⇒ NFO 舊名、圖新名、DB 標題舊、cover_path 新——方向反過來
+        的孤兒，比原本要修的 bug 更糟。"""
+        from core.database import VideoRepository
+
+        repo = VideoRepository(temp_db)
+        ctx = _t4r_setup(tmp_path, repo)
+        before_cover_path = ctx['existing'].cover_path
+        before_title = ctx['existing'].title
+
+        meta_b = dict(
+            _T4R_META_A, title='New Title',
+            sample_images=['https://example.com/s1.jpg', 'https://example.com/s2.jpg'],
+        )
+
+        movie_dir, assets = _t4r_round2(repo, ctx, meta_b, ('none',), assets_mode='samples_only')
+
+        d = Path(movie_dir)
+        assert (d / f'{self._OLD_BASE}.nfo').exists(), "舊基底 NFO 不得被清掉"
+        assert (d / f'{self._OLD_BASE}-poster.jpg').exists()
+        assert (d / f'{self._OLD_BASE}-fanart.jpg').exists()
+        assert not (d / f'{self._NEW_BASE}.nfo').exists(), "samples_only 不寫 NFO，新基底不該出現任何檔"
+        assert not (d / f'{self._NEW_BASE}-poster.jpg').exists()
+        assert not (d / f'{self._NEW_BASE}-fanart.jpg').exists()
+
+        v = repo.get_by_path(ctx['src_uri'])
+        assert v.title == before_title, "samples_only 不得更新 title"
+        assert v.cover_path == before_cover_path, "samples_only 不得改名／同步 cover_path"
+        assert len(v.sample_images) == 2, "補劇照本身要正常成功、劇照要真的抓回來"
+
+    def test_samples_only_succeeds_despite_broken_existing_nfo(self, tmp_path, temp_db):
+        """回歸修正①（同上，第二個場景）：既有 NFO 損壞時，補劇照不得被洞二
+        的 fail-closed 誤傷——補劇照根本不寫 NFO，讀回的簡介/評分/來源網址
+        三欄從頭到尾用不到，NFO 好壞與這次補劇照無關。"""
+        from core.database import VideoRepository
+
+        repo = VideoRepository(temp_db)
+        ctx = _t4r_setup(tmp_path, repo)
+
+        nfo_path = ctx['movie_dir'] / f'{self._OLD_BASE}.nfo'
+        assert nfo_path.exists()
+        nfo_path.write_bytes(BROKEN_NFO_BYTES)
+
+        meta_b = dict(
+            _T4R_META_A, title='New Title',
+            sample_images=['https://example.com/s1.jpg'],
+        )
+        for k in ('_summary', '_rating', 'url'):
+            meta_b.pop(k, None)  # 缺欄位才會真的觸發讀回嘗試（見 _resolve_readonly_preserved_fields 的短路判準）
+
+        movie_dir, assets = _t4r_round2(repo, ctx, meta_b, ('none',), assets_mode='samples_only')
+
+        assert len(assets['sample_fs']) == 1, "補劇照不得被無關的 NFO 損壞擋下"
+        sample_path = Path(assets['sample_fs'][0])
+        assert sample_path.exists() and sample_path.read_bytes() == b'FAKE-IMG'

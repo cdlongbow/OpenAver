@@ -840,23 +840,53 @@ def _rename_stale_cover_group(
     if not old_stem_abs or old_stem_abs == new_stem_abs:
         return _NOOP
     old_suffix = old_cover_fs[len(old_stem_abs):]
+    # Codex PR#197 review 回歸修正②（第 6 輪修正方向）：`anchor_stem_suffix`
+    # 判斷 DB 錨點（`old_cover_fs`）屬於哪一個 slot（''／'-poster'／'-fanart'）。
+    # **錨點那一個 slot 的搬移來源，一律優先使用 `old_cover_fs` 本身**（見
+    # `_resolve_slot` 的 `prefer` 參數）——D-151b-1 的承諾是「圖的內容一個位元
+    # 組不動，只是換個名字」，不是「這個 slot 換一張內容相近的圖也算數」。第一版
+    # 修法（讓 `_resolve_slot` 依 `IMAGE_EXTENSIONS` 全域優先序自由選）雖然堵住了
+    # 「new_cover_uri 指向不存在路徑」，但同一個 slot 若同時存在多種副檔名（如
+    # `Old.png` 錨點 + `Old.jpg` sibling），會把 DB 指向 sibling 的內容（`New.jpg`）
+    # 而不是使用者原本指定的那張（`Old.png`）——路徑存在、畫面有圖，但換了一張
+    # 圖，比路徑不存在更隱蔽。**只有錨點那一個 slot 覆寫選擇結果，另外兩個非錨點
+    # slot 維持 `_resolve_slot` 既有的 `IMAGE_EXTENSIONS` 優先序**（不改全域邏輯，
+    # 三個 slot 仍共用同一支 `_resolve_slot`）。sibling（本例的 `Old.jpg`）不搬、
+    # 留在舊基底原地，記一行 warning——這是刻意的殘留，不是清理疏漏。
+    if old_suffix.startswith('-poster'):
+        anchor_stem_suffix = '-poster'
+    elif old_suffix.startswith('-fanart'):
+        anchor_stem_suffix = '-fanart'
+    else:
+        anchor_stem_suffix = ''
 
-    def _resolve_slot(stem_suffix):
+    def _resolve_slot(stem_suffix, prefer=None):
         hits = [
             old_stem_abs + stem_suffix + ext
             for ext in IMAGE_EXTENSIONS
             if os.path.exists(old_stem_abs + stem_suffix + ext)
         ]
         if len(hits) > 1:
+            if prefer is not None and prefer in hits:
+                logger.warning(
+                    "[readonly_assets] 同一 slot 多個副檔名同時存在，錨點 slot 優先採用 DB 指向的那個檔、"
+                    "其餘（含 sibling）不動: %s（採用 %s）", hits, prefer,
+                )
+                return prefer
             logger.warning("[readonly_assets] 同一 slot 多個副檔名同時存在，取第一個、其餘不動: %s", hits)
         return hits[0] if hits else None
 
     group = []
+    anchor_dst = None
     for stem_suffix in ('', '-poster', '-fanart'):
-        src = _resolve_slot(stem_suffix)
+        prefer = old_cover_fs if stem_suffix == anchor_stem_suffix else None
+        src = _resolve_slot(stem_suffix, prefer=prefer)
         if src is not None:
             ext = src[len(old_stem_abs) + len(stem_suffix):]
-            group.append((src, new_stem_abs + stem_suffix + ext))
+            dst = new_stem_abs + stem_suffix + ext
+            group.append((src, dst))
+            if stem_suffix == anchor_stem_suffix:
+                anchor_dst = dst
 
     for _src, dst in group:
         if os.path.exists(dst):
@@ -872,5 +902,8 @@ def _rename_stale_cover_group(
         _revert_cover_rename(tuple(moved))
         return RenameOutcome(None, True, ())
 
-    new_cover_fs = new_stem_abs + old_suffix
-    return RenameOutcome(to_file_uri(new_cover_fs, path_mappings), False, tuple(moved))
+    # anchor_dst 保證非 None：函式開頭已確認 os.path.exists(old_cover_fs)，
+    # `_resolve_slot(anchor_stem_suffix, prefer=old_cover_fs)` 保證命中時優先
+    # 回傳 old_cover_fs 本身（`prefer in hits` 必真，因為 old_cover_fs 就是
+    # hits 候選之一）。
+    return RenameOutcome(to_file_uri(anchor_dst, path_mappings), False, tuple(moved))

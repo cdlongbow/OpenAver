@@ -737,14 +737,22 @@ def _produce_one(
     # preserve 分支）——movie_dir_str 統一轉一次（A-3），new_base_name 提前到
     # 這裡算出（CD-151b-3 第 4 版候選清單需要它），outcome 預設 no-op（非
     # preserve 分支完全不改名，AC-9 離線等價性）。
+    # Codex PR#197 review 回歸修正①：兩段都額外 gate `assets_mode == 'full'`
+    # ——samples_only（補劇照）既有 docstring 早已承諾「只碰 extrafanart，不
+    # 碰 metadata/cover」，讀回與改名都屬於 metadata/cover 範疇。不加這個
+    # gate 時 samples_only 會誤觸改名（封面搬到新基底，但 samples_only 早退
+    # 不寫 NFO、_upsert_db 也不更新 title——NFO 舊名/圖新名/DB 標題舊/
+    # cover_path 新，方向反過來的孤兒）且被無關的 NFO fail-closed 誤傷（補
+    # 劇照根本不寫 NFO，讀回的三欄用不到）。CAS 那段本來就掛在
+    # `outcome.new_cover_uri` 上，改名不觸發它自然不會跑，不需要另外 gate。
     movie_dir_str = str(movie_dir)
     new_base_name = readonly_paths._build_basename(fd, file_info["path"], config)
-    ok = _resolve_readonly_preserved_fields(meta, movie_dir_str, old_base, new_base_name)
+    ok = assets_mode != 'full' or _resolve_readonly_preserved_fields(meta, movie_dir_str, old_base, new_base_name)
     if not ok:
         raise ReadonlyProduceError("readonly preserved-fields read-back failed (fail-closed)")
 
     outcome = readonly_assets.RenameOutcome(None, False, ())
-    if cover_strategy[0] == 'none':
+    if assets_mode == 'full' and cover_strategy[0] == 'none':
         outcome = readonly_assets._rename_stale_cover_group(movie_dir_str, existing, new_base_name, path_mappings)
         if outcome.hard_failure:
             raise ReadonlyProduceError("readonly cover rename hard failure")
