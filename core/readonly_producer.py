@@ -733,6 +733,21 @@ def _produce_one(
     if not is_fs_path_under_dir(str(movie_dir), output_root):
         raise RuntimeError(f"movie_dir 超出 output_root 範圍: {movie_dir}")
     old_base = readonly_paths._build_old_base(existing, file_info["path"], config)  # '' when no prior row/title/number
+    # TASK-151b-T4 (CD-151b-1): 洞二讀回（fail-closed）與洞一改名（gate 在
+    # preserve 分支）——movie_dir_str 統一轉一次（A-3），new_base_name 提前到
+    # 這裡算出（CD-151b-3 第 4 版候選清單需要它），outcome 預設 no-op（非
+    # preserve 分支完全不改名，AC-9 離線等價性）。
+    movie_dir_str = str(movie_dir)
+    new_base_name = readonly_paths._build_basename(fd, file_info["path"], config)
+    ok = _resolve_readonly_preserved_fields(meta, movie_dir_str, old_base, new_base_name)
+    if not ok:
+        raise ReadonlyProduceError("readonly preserved-fields read-back failed (fail-closed)")
+
+    outcome = readonly_assets.RenameOutcome(None, False, ())
+    if cover_strategy[0] == 'none':
+        outcome = readonly_assets._rename_stale_cover_group(movie_dir_str, existing, new_base_name, path_mappings)
+        if outcome.hard_failure:
+            raise ReadonlyProduceError("readonly cover rename hard failure")
     # FIX P1 (Codex PR#113 round-6, 2026-07-21; feature/105 T3: extracted to
     # effective_original_title helper): synthesize the EFFECTIVE original_title
     # ONCE, before writing any asset, so the output NFO
@@ -749,12 +764,33 @@ def _produce_one(
     # _write_movie_assets 在真正落 .strm 那一刻才重讀 fresh strm_path_mappings
     # （見 _write_movie_assets 內部該段落的完整解釋）。strm_mappings_getter=None
     # （既有呼叫）→ 回退凍結 config、零重讀、行為不變。
-    assets = readonly_assets._write_movie_assets(
-        str(movie_dir), meta, fd, file_info["path"], config,
-        cover_strategy=cover_strategy, assets_mode=assets_mode,
-        old_base=old_base, strm_mappings_getter=strm_mappings_getter,
-        user_tags=(existing.user_tags if existing else []),
-    )
+    try:
+        assets = readonly_assets._write_movie_assets(
+            str(movie_dir), meta, fd, file_info["path"], config,
+            cover_strategy=cover_strategy, assets_mode=assets_mode,
+            old_base=old_base, strm_mappings_getter=strm_mappings_getter,
+            user_tags=(existing.user_tags if existing else []),
+        )
+    except Exception:
+        if outcome.new_cover_uri:
+            readonly_assets._revert_cover_rename(outcome.moved_pairs)
+        raise
+
+    # TASK-151b-T4 (CD-151b-1 窗口②): _write_movie_assets 已成功，現在才把改名
+    # 結果落地到 DB（CAS，CD-151b-2）。CAS 回傳 False 與拋出例外兩種失敗形狀
+    # 共用同一個 finally 復原入口；existing.cover_path 只在 cas_ok is True 這條
+    # 路徑上才同步，避免 _upsert_db 稍後拿一個 DB 從未真正接受過的值去比對。
+    if outcome.new_cover_uri:
+        cas_ok = False
+        try:
+            cas_ok = repo.update_cover_path_preserve_focal(src_uri, outcome.new_cover_uri, existing.cover_path)
+        finally:
+            if not cas_ok:
+                readonly_assets._revert_cover_rename(outcome.moved_pairs)
+        if not cas_ok:
+            raise ReadonlyProduceError("readonly cover path CAS failed")
+        existing.cover_path = outcome.new_cover_uri
+
     _upsert_db(
         repo, src_uri, file_info, meta, assets, path_mappings, output_dir_uri,
         assets_mode=assets_mode, existing=existing,

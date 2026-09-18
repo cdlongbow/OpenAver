@@ -8804,3 +8804,566 @@ class TestResolveReadonlyPreservedFields:
         assert meta == before
         assert mock_parse.call_count == 0
         assert mock_exists.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# TASK-151b-T4 (CD-151b-1): _produce_one 接線整合測試 — 讀回／改名／DB CAS
+# 三個機制串起來的整輪行為。全部直接呼叫 _produce_one（不經
+# enrich_one_readonly），真實 tmp_path 檔案 + 真實 VideoRepository(temp_db)，
+# 只 mock download_image / generate_jellyfin_images（避免網路／真圖片處理），
+# generate_nfo 刻意不 mock——用真實實作寫出含 plot/rating/website 的 NFO，
+# 讓「讀回」測試真的有內容可讀。
+# ---------------------------------------------------------------------------
+
+_T4R_META_A = {
+    'number': 'TEST-001',
+    'title': 'Old Title',
+    'cover': 'https://example.com/cover.jpg',
+    'actors': ['Actress A'],
+    'tags': ['tag1'],
+    'date': '2024-01-01',
+    'maker': 'Test Maker',
+    'director': '',
+    'series': '',
+    'label': '',
+    'sample_images': [],
+    'duration': 100,
+    '_summary': 'Round A summary',
+    '_rating': 4.0,
+    'url': 'https://example.com/round-a',
+}
+
+
+def _t4r_dir_snapshot(root: Path) -> dict:
+    """相對路徑 → sha256，用於「呼叫前後輸出資料夾逐位元組相同」斷言。"""
+    import hashlib
+
+    out = {}
+    for p in sorted(root.rglob('*')):
+        if p.is_file():
+            out[str(p.relative_to(root))] = hashlib.sha256(p.read_bytes()).hexdigest()
+    return out
+
+
+def _t4r_setup(tmp_path, repo, meta_a=None, config=None):
+    """Round A：真實 _produce_one 呼叫，建立 old_base 的基線（DB row + 磁碟檔案）。"""
+    from core.readonly_producer import _produce_one
+
+    cfg = config or dict(_T3_BASE_CONFIG)
+    meta_a = dict(meta_a or _T4R_META_A)
+    src_fs = str(tmp_path / 'src' / 'TEST-001.mp4')
+    Path(src_fs).parent.mkdir(parents=True, exist_ok=True)
+    Path(src_fs).write_bytes(b'FAKE-VIDEO-BYTES')
+    output_root = tmp_path / 'output'
+    output_root.mkdir()
+    output_uri = to_file_uri(str(output_root), {})
+    file_info = {'path': src_fs, 'size': 1_000_000, 'mtime': 1.0}
+
+    with patch('core.readonly_assets.download_image', side_effect=_t4_real_download), \
+         patch('core.readonly_assets.generate_jellyfin_images', side_effect=_t4_real_jellyfin):
+        movie_dir, _assets = _produce_one(
+            repo, MagicMock(), cfg,
+            file_info=file_info, meta=dict(meta_a), cover_strategy=_cover_strategy_for(meta_a),
+            assets_mode='full', existing=None,
+            output_root=str(output_root), output_uri=output_uri,
+            allocated_this_run=set(), path_mappings={},
+        )
+
+    src_uri = to_file_uri(src_fs, {})
+    existing = repo.get_by_path(src_uri)
+    return {
+        'output_root': output_root,
+        'output_uri': output_uri,
+        'file_info': file_info,
+        'src_uri': src_uri,
+        'existing': existing,
+        'movie_dir': Path(movie_dir),
+        'config': cfg,
+        'meta_a': meta_a,
+    }
+
+
+def _t4r_round2(repo, ctx, meta, cover_strategy, *, download_side_effect=None, generate_nfo_patch=None):
+    """後續一輪真實 _produce_one 呼叫，沿用 ctx['existing']（呼叫端自行決定是否
+    在呼叫之間重新 repo.get_by_path 刷新它——DoD⑧ 刻意不刷新）。"""
+    from contextlib import ExitStack
+
+    from core.readonly_producer import _produce_one
+
+    with ExitStack() as stack:
+        stack.enter_context(patch(
+            'core.readonly_assets.download_image',
+            side_effect=download_side_effect or _t4_real_download,
+        ))
+        stack.enter_context(patch(
+            'core.readonly_assets.generate_jellyfin_images', side_effect=_t4_real_jellyfin,
+        ))
+        if generate_nfo_patch is not None:
+            stack.enter_context(generate_nfo_patch)
+        return _produce_one(
+            repo, MagicMock(), ctx['config'],
+            file_info=ctx['file_info'], meta=dict(meta), cover_strategy=cover_strategy,
+            assets_mode='full', existing=ctx['existing'],
+            output_root=str(ctx['output_root']), output_uri=ctx['output_uri'],
+            allocated_this_run=set(), path_mappings={},
+        )
+
+
+class TestProduceOneReadonlyRename:
+    """TASK-151b-T4：`_produce_one` 接線（CD-151b-1）——DoD①-⑨。"""
+
+    _OLD_BASE = 'TEST-001 Old Title'
+    _NEW_BASE = 'TEST-001 New Title'
+
+    def test_fail_closed_leaves_output_dir_byte_identical(self, tmp_path, temp_db):
+        """DoD①／mutation 點①：AC-4b 第三種形狀（標題變更＋只缺一欄＋既有
+        NFO 壞掉）→ 整輪失敗，呼叫前後輸出資料夾逐位元組相同（D-151b-10
+        不變式：讀回必須排在任何改名／寫檔之前）。"""
+        from core.database import VideoRepository
+        from core.readonly_producer import ReadonlyProduceError
+
+        repo = VideoRepository(temp_db)
+        ctx = _t4r_setup(tmp_path, repo)
+
+        nfo_path = ctx['movie_dir'] / f'{self._OLD_BASE}.nfo'
+        assert nfo_path.exists(), 'sanity: round A 寫出的舊 NFO 應存在'
+        nfo_path.write_bytes(BROKEN_NFO_BYTES)
+
+        meta_b = dict(_T4R_META_A, title='New Title')
+        meta_b.pop('_summary', None)  # 只缺一欄
+
+        before = _t4r_dir_snapshot(ctx['movie_dir'])
+
+        with pytest.raises(ReadonlyProduceError):
+            _t4r_round2(repo, ctx, meta_b, ('none',))
+
+        after = _t4r_dir_snapshot(ctx['movie_dir'])
+        assert after == before
+
+    def test_produce_one_rename_and_preserve_end_to_end(self, tmp_path, temp_db):
+        """DoD②：正常情境（無讀回失敗）下 AC-1/AC-2 的端到端斷言在
+        `_produce_one` 層級成立——封面改名到新基底、簡介/評分/來源網址讀回
+        舊值、DB title/cover_path 更新。"""
+        from core.database import VideoRepository
+
+        repo = VideoRepository(temp_db)
+        ctx = _t4r_setup(tmp_path, repo)
+
+        meta_b = dict(_T4R_META_A, title='New Title')
+        for k in ('_summary', '_rating', 'url'):
+            meta_b.pop(k, None)
+
+        movie_dir, assets = _t4r_round2(repo, ctx, meta_b, ('none',))
+
+        d = Path(movie_dir)
+        assert d == ctx['movie_dir']
+        assert not any(p.name.startswith(self._OLD_BASE) for p in d.iterdir()), (
+            "old_base 檔案（含 nfo）必須零殘留"
+        )
+        nfo_path = d / f'{self._NEW_BASE}.nfo'
+        assert nfo_path.exists()
+        root = ET.parse(nfo_path).getroot()
+        assert root.findtext('plot') == _T4R_META_A['_summary']
+        assert float(root.findtext('rating')) == _T4R_META_A['_rating'] * 2
+        assert root.findtext('website') == _T4R_META_A['url']
+
+        v = repo.get_by_path(ctx['src_uri'])
+        assert v.title == 'New Title'
+        assert v.cover_path.startswith('file:///')
+        assert self._NEW_BASE in v.cover_path
+        assert self._OLD_BASE not in v.cover_path
+
+    def test_upsert_after_produce_one_preserves_focal_fields(self, tmp_path, temp_db):
+        """DoD③：手動對焦座標（模擬使用者已拖曳過遮罩）在標題漂移＋封面改名
+        這一輪之後不被重置——CAS 先同步 cover_path，`_upsert_db` 的
+        CASE WHEN 比對才會判定「封面沒變」而保留 auto_focal/crop_mode。"""
+        from core.database import VideoRepository
+
+        repo = VideoRepository(temp_db)
+        ctx = _t4r_setup(tmp_path, repo)
+
+        manual_focal = '0.3148,0.2000'
+        ok = repo.update_manual_focal(ctx['src_uri'], manual_focal, ctx['existing'].cover_path)
+        assert ok is True
+        existing_with_focal = repo.get_by_path(ctx['src_uri'])
+        assert existing_with_focal.crop_mode == 'manual'
+        assert existing_with_focal.auto_focal == manual_focal
+        ctx['existing'] = existing_with_focal
+        before_cover_path = existing_with_focal.cover_path
+        before_focal_attempted_at = existing_with_focal.focal_attempted_at
+
+        meta_b = dict(_T4R_META_A, title='New Title')
+
+        _t4r_round2(repo, ctx, meta_b, ('none',))
+
+        v = repo.get_by_path(ctx['src_uri'])
+        assert v.cover_path != before_cover_path, (
+            "sanity: 封面確實改名（cover_path 真的變了），否則這條測不出這支要鎖的機制"
+        )
+        assert v.crop_mode == 'manual'
+        assert v.auto_focal == manual_focal
+        assert v.focal_attempted_at == before_focal_attempted_at
+
+    def test_write_movie_assets_failure_reverts_rename_no_db_write(self, tmp_path, temp_db):
+        """DoD④／mutation 點②：`_write_movie_assets`（NFO 寫入）失敗 → 已搬動
+        的圖片復原、輸出資料夾逐位元組回到呼叫前狀態、DB 完全沒被寫入
+        （CAS 從未被呼叫）。"""
+        from core.database import VideoRepository
+
+        repo = VideoRepository(temp_db)
+        ctx = _t4r_setup(tmp_path, repo)
+
+        meta_b = dict(_T4R_META_A, title='New Title')
+        before_dir = _t4r_dir_snapshot(ctx['movie_dir'])
+        before_db = repo.get_by_path(ctx['src_uri'])
+
+        with patch.object(repo, 'update_cover_path_preserve_focal') as mock_cas:
+            with pytest.raises(RuntimeError):
+                _t4r_round2(
+                    repo, ctx, meta_b, ('none',),
+                    generate_nfo_patch=patch('core.readonly_assets.generate_nfo', return_value=False),
+                )
+        mock_cas.assert_not_called()
+
+        after_dir = _t4r_dir_snapshot(ctx['movie_dir'])
+        assert after_dir == before_dir
+        after_db = repo.get_by_path(ctx['src_uri'])
+        assert after_db == before_db
+
+    def test_non_runtime_error_after_rename_also_reverts(self, tmp_path, temp_db):
+        """加測（第 3 輪 grok review P2）：`except Exception:` 的型別寬度——
+        真實路徑是 NFO 成功寫出**之後**，`core.readonly_assets.nfo_mtime_or_none`
+        透過 `_reraise_nfo_stat_error` 把 `OSError` 原樣再拋（`core/readonly_
+        assets.py` 的 `nfo_mtime = nfo_mtime_or_none(..., on_error=
+        _reraise_nfo_stat_error)`，晚於 `generate_nfo` 成功、晚於改名成功）。
+        DoD④ 注入的是 `RuntimeError`，若實作把 `except Exception:` 收窄成
+        `except RuntimeError:`，DoD④ 測不出來——這條專門補這個型別寬度的洞：
+        已改名的圖必須被復原，DB 完全不被碰。"""
+        import hashlib
+
+        from core.database import VideoRepository
+
+        repo = VideoRepository(temp_db)
+        ctx = _t4r_setup(tmp_path, repo)
+
+        old_poster = ctx['movie_dir'] / f'{self._OLD_BASE}-poster.jpg'
+        old_fanart = ctx['movie_dir'] / f'{self._OLD_BASE}-fanart.jpg'
+        old_poster_sha = hashlib.sha256(old_poster.read_bytes()).hexdigest()
+        old_fanart_sha = hashlib.sha256(old_fanart.read_bytes()).hexdigest()
+        before_db = repo.get_by_path(ctx['src_uri'])
+
+        meta_b = dict(_T4R_META_A, title='New Title')
+
+        with pytest.raises(OSError):
+            _t4r_round2(
+                repo, ctx, meta_b, ('none',),
+                generate_nfo_patch=patch(
+                    'core.readonly_assets.nfo_mtime_or_none',
+                    side_effect=OSError('simulated disk error during nfo stat'),
+                ),
+            )
+
+        assert hashlib.sha256(old_poster.read_bytes()).hexdigest() == old_poster_sha, (
+            "已改名的圖必須被復原回舊基底（非 RuntimeError 的例外也要被 except Exception 接住）"
+        )
+        assert hashlib.sha256(old_fanart.read_bytes()).hexdigest() == old_fanart_sha
+        assert not (ctx['movie_dir'] / f'{self._NEW_BASE}-poster.jpg').exists()
+        assert not (ctx['movie_dir'] / f'{self._NEW_BASE}-fanart.jpg').exists()
+
+        after_db = repo.get_by_path(ctx['src_uri'])
+        assert after_db == before_db
+
+    def test_cas_false_concurrent_write_reverts_photos_keeps_sentinel(self, tmp_path, temp_db):
+        """DoD⑤／mutation 點③④：改名成功後、CAS 呼叫之前，另一個並行流程把
+        DB cover_path 改成 sentinel → CAS 自然回傳 False（compare-and-store
+        沒命中）→ 圖片復原回舊基底、DB 的 sentinel 值不被覆寫（不改回舊值也
+        不改成這輪算出的新值）、該片這一輪失敗。"""
+        import hashlib
+        import sqlite3
+
+        from core.database import VideoRepository
+        from core.readonly_producer import ReadonlyProduceError
+
+        repo = VideoRepository(temp_db)
+        ctx = _t4r_setup(tmp_path, repo)
+
+        old_poster = ctx['movie_dir'] / f'{self._OLD_BASE}-poster.jpg'
+        old_fanart = ctx['movie_dir'] / f'{self._OLD_BASE}-fanart.jpg'
+        old_poster_sha = hashlib.sha256(old_poster.read_bytes()).hexdigest()
+        old_fanart_sha = hashlib.sha256(old_fanart.read_bytes()).hexdigest()
+
+        sentinel_uri = 'file:///sentinel/concurrent-write.jpg'
+        db_path = str(temp_db)
+
+        def _sentinel_then_real(path, new_cover_path, expected_old_cover_path):
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute("UPDATE videos SET cover_path = ? WHERE path = ?", (sentinel_uri, path))
+                conn.commit()
+            finally:
+                conn.close()
+            return VideoRepository.update_cover_path_preserve_focal(
+                repo, path, new_cover_path, expected_old_cover_path,
+            )
+
+        meta_b = dict(_T4R_META_A, title='New Title')
+        before_existing_cover_path = ctx['existing'].cover_path
+
+        with patch.object(repo, 'update_cover_path_preserve_focal', side_effect=_sentinel_then_real):
+            with pytest.raises(ReadonlyProduceError):
+                _t4r_round2(repo, ctx, meta_b, ('none',))
+
+        # cas_ok is False → existing.cover_path（呼叫端手上的 in-memory 物件）
+        # 不准被提前同步；提前同步不會被 DB 狀態斷言抓到（_upsert_db 從未執行），
+        # 只有直接檢查這個物件本身才測得到 mutation 點③。
+        assert ctx['existing'].cover_path == before_existing_cover_path, (
+            "cas_ok is False 時 existing.cover_path 不得被同步"
+        )
+
+        assert old_poster.exists()
+        assert hashlib.sha256(old_poster.read_bytes()).hexdigest() == old_poster_sha
+        assert old_fanart.exists()
+        assert hashlib.sha256(old_fanart.read_bytes()).hexdigest() == old_fanart_sha
+        assert not (ctx['movie_dir'] / f'{self._NEW_BASE}-poster.jpg').exists()
+        assert not (ctx['movie_dir'] / f'{self._NEW_BASE}-fanart.jpg').exists()
+
+        v = repo.get_by_path(ctx['src_uri'])
+        assert v.cover_path == sentinel_uri, "並行流程寫入的值不得被覆寫（不回舊值也不換新值）"
+
+    def test_cas_operational_error_reverts_photos_db_unchanged(self, tmp_path, temp_db):
+        """DoD⑥：CAS 拋出 sqlite3.OperationalError（無並行流程介入）→ 圖片復原
+        （sha256 相同）、DB cover_path/title/focal 三欄與呼叫前逐字相同、原例外
+        原樣往外傳。明確不斷言新基底 .nfo 被復原（accepted residual）。"""
+        import hashlib
+        import sqlite3
+
+        from core.database import VideoRepository
+
+        repo = VideoRepository(temp_db)
+        ctx = _t4r_setup(tmp_path, repo)
+
+        old_poster = ctx['movie_dir'] / f'{self._OLD_BASE}-poster.jpg'
+        old_fanart = ctx['movie_dir'] / f'{self._OLD_BASE}-fanart.jpg'
+        old_poster_sha = hashlib.sha256(old_poster.read_bytes()).hexdigest()
+        old_fanart_sha = hashlib.sha256(old_fanart.read_bytes()).hexdigest()
+        before_db = repo.get_by_path(ctx['src_uri'])
+
+        meta_b = dict(_T4R_META_A, title='New Title')
+
+        with patch.object(
+            repo, 'update_cover_path_preserve_focal',
+            side_effect=sqlite3.OperationalError("database is locked"),
+        ):
+            with pytest.raises(sqlite3.OperationalError):
+                _t4r_round2(repo, ctx, meta_b, ('none',))
+
+        assert hashlib.sha256(old_poster.read_bytes()).hexdigest() == old_poster_sha
+        assert hashlib.sha256(old_fanart.read_bytes()).hexdigest() == old_fanart_sha
+        assert not (ctx['movie_dir'] / f'{self._NEW_BASE}-poster.jpg').exists()
+        assert not (ctx['movie_dir'] / f'{self._NEW_BASE}-fanart.jpg').exists()
+        # 明確不斷言的部分（CD-151b-1「CAS 失敗後的最終狀態」accepted residual）：
+        # 新基底 .nfo 已經真實寫出，不要求也不能要求被復原。
+        assert (ctx['movie_dir'] / f'{self._NEW_BASE}.nfo').exists()
+
+        after_db = repo.get_by_path(ctx['src_uri'])
+        assert after_db.cover_path == before_db.cover_path
+        assert after_db.title == before_db.title
+        assert after_db.auto_focal == before_db.auto_focal
+        assert after_db.crop_mode == before_db.crop_mode
+        assert after_db.focal_attempted_at == before_db.focal_attempted_at
+
+    @pytest.mark.parametrize('strategy_kind', ['download', 'copy'])
+    def test_non_preserve_strategy_never_renames(self, tmp_path, temp_db, strategy_kind):
+        """DoD⑦／mutation 點⑤（第 3 輪 grok review P3 補強）：
+        `cover_strategy[0] != 'none'`（'download' 與 'copy' 兩種都測，卡片字
+        面要求的完整矩陣）時，即使標題有變，改名機制完全不介入——斷言下沉
+        到 `_move_cover_slot`（`atomic_move` 的唯一呼叫 leaf，CD-151b-4）零
+        呼叫，不只是看上層 `_rename_stale_cover_group` 有沒有被呼叫（那支本
+        身用 `wraps=` 讓它照常真跑，不擋路，才能讓 `_move_cover_slot` 的斷言
+        真的有意義——若把它整支 mock 掉，`_move_cover_slot` 天生就不會被呼
+        叫，測不出 gate 被拿掉的差異）。"""
+        from core.database import VideoRepository
+        from core.readonly_assets import _rename_stale_cover_group as _real_rename
+
+        repo = VideoRepository(temp_db)
+        ctx = _t4r_setup(tmp_path, repo)
+
+        if strategy_kind == 'download':
+            meta_b = dict(_T4R_META_A, title='New Title', cover='https://example.com/cover2.jpg')
+            cover_strategy = ('download', meta_b['cover'])
+        else:
+            sidecar = tmp_path / 'sidecar-cover.jpg'
+            sidecar.write_bytes(b'SIDECAR COVER BYTES')
+            meta_b = dict(_T4R_META_A, title='New Title')
+            cover_strategy = ('copy', str(sidecar))
+
+        with patch('core.readonly_assets._rename_stale_cover_group', wraps=_real_rename) as mock_rename, \
+             patch('core.readonly_assets._move_cover_slot') as mock_move_slot:
+            _t4r_round2(repo, ctx, meta_b, cover_strategy)
+
+        mock_rename.assert_not_called()
+        mock_move_slot.assert_not_called()
+
+    def test_cas_exception_then_retry_preserves_three_fields(self, tmp_path, temp_db):
+        """DoD⑧：第一輪 CAS 例外殘留狀態（新基底 .nfo 已寫出、DB title/
+        cover_path 仍舊值）→ 不重建任何東西，對同一個 existing 呼叫第二輪
+        `_produce_one`（CAS 這次正常、meta 只帶部分欄位）→ 候選清單依序找
+        {old_base}.nfo（撲空）→ {new_base}.nfo（命中，第一輪寫出的那份）→
+        簡介/評分/來源網址三欄與第一輪逐字相同，第二輪最終成功。"""
+        import sqlite3
+
+        from core.database import VideoRepository
+
+        repo = VideoRepository(temp_db)
+        ctx = _t4r_setup(tmp_path, repo)
+
+        meta_b = dict(
+            _T4R_META_A, title='New Title',
+            _summary='Round B summary', _rating=2.0, url='https://example.com/round-b',
+        )
+
+        with patch.object(
+            repo, 'update_cover_path_preserve_focal',
+            side_effect=sqlite3.OperationalError("database is locked"),
+        ):
+            with pytest.raises(sqlite3.OperationalError):
+                _t4r_round2(repo, ctx, meta_b, ('none',))
+
+        assert not (ctx['movie_dir'] / f'{self._OLD_BASE}.nfo').exists(), 'sanity: 第一輪已清掉舊 nfo'
+        assert (ctx['movie_dir'] / f'{self._NEW_BASE}.nfo').exists(), 'sanity: 第一輪新 nfo 已真實寫出'
+
+        meta_c = dict(_T4R_META_A, title='New Title')
+        for k in ('_summary', '_rating', 'url'):
+            meta_c.pop(k, None)
+
+        movie_dir, _assets = _t4r_round2(repo, ctx, meta_c, ('none',))
+
+        root = ET.parse(Path(movie_dir) / f'{self._NEW_BASE}.nfo').getroot()
+        assert root.findtext('plot') == meta_b['_summary']
+        assert float(root.findtext('rating')) == meta_b['_rating'] * 2
+        assert root.findtext('website') == meta_b['url']
+
+        v = repo.get_by_path(ctx['src_uri'])
+        assert v.title == 'New Title'
+        assert self._NEW_BASE in v.cover_path
+
+    def test_ac11_escape_hatch_end_to_end_orphan_reclaimed(self, tmp_path, temp_db):
+        """DoD⑨（AC-11 端到端逃生口驗收）：已壞狀態情境（DB 標題已是新標題、
+        cover_path 指向舊基底、磁碟上舊名三張圖仍在——升級前就已經踩過洞一
+        bug 留下的孤兒，舊佈局三檔形狀）——直接呼叫 `_produce_one`（不是直接
+        呼叫 `_rename_stale_cover_group`），這一輪標題不再變 → 孤兒圖被改名
+        歸位、舊名零殘留、DB cover_path 更新為新值、`_produce_one` 本身成功
+        回傳。"""
+        import hashlib
+
+        from core.database import Video, VideoRepository
+        from core.readonly_producer import _produce_one
+
+        repo = VideoRepository(temp_db)
+        src_fs = str(tmp_path / 'src' / 'TEST-001.mp4')
+        Path(src_fs).parent.mkdir(parents=True, exist_ok=True)
+        Path(src_fs).write_bytes(b'FAKE-VIDEO-BYTES')
+        output_root = tmp_path / 'output'
+        output_root.mkdir()
+        output_uri = to_file_uri(str(output_root), {})
+        movie_dir = output_root / 'TEST-001'
+        movie_dir.mkdir()
+
+        old_base = 'TEST-001 Old Title'
+        new_base = 'TEST-001 Current Title'
+
+        cover = movie_dir / f'{old_base}.jpg'
+        poster = movie_dir / f'{old_base}-poster.jpg'
+        fanart = movie_dir / f'{old_base}-fanart.jpg'
+        cover.write_bytes(b'ORPHAN COVER')
+        poster.write_bytes(b'ORPHAN POSTER')
+        fanart.write_bytes(b'ORPHAN FANART')
+        cover_sha = hashlib.sha256(cover.read_bytes()).hexdigest()
+        poster_sha = hashlib.sha256(poster.read_bytes()).hexdigest()
+        fanart_sha = hashlib.sha256(fanart.read_bytes()).hexdigest()
+        # {new_base}.nfo 已存在（上一輪 NFO 早就寫對了，只有圖沒跟上）；
+        # {old_base}.nfo 不存在（已被既有 _clean_stale_singletons 清過）。
+        (movie_dir / f'{new_base}.nfo').write_bytes(b'<movie></movie>')
+
+        src_uri = to_file_uri(src_fs, {})
+        seed = Video(
+            path=src_uri, number='TEST-001', title='Current Title',
+            actresses=['Actress A'], maker='Test Maker', release_date='2024-01-01',
+            cover_path=to_file_uri(str(cover), {}), output_dir=to_file_uri(str(movie_dir), {}),
+        )
+        repo.upsert(seed)
+        existing = repo.get_by_path(src_uri)
+        assert existing.cover_path == to_file_uri(str(cover), {})
+
+        meta = {
+            'number': 'TEST-001', 'title': 'Current Title', 'actors': ['Actress A'],
+            'tags': [], 'date': '2024-01-01', 'maker': 'Test Maker', 'director': '',
+            'series': '', 'label': '', 'sample_images': [], 'duration': 100,
+            '_summary': 's', '_rating': 3.0, 'url': 'https://example.com/u',
+        }
+        file_info = {'path': src_fs, 'size': 1_000_000, 'mtime': 1.0}
+        config = dict(_T3_BASE_CONFIG)
+
+        with patch('core.readonly_assets.download_image', side_effect=_t4_real_download), \
+             patch('core.readonly_assets.generate_jellyfin_images', side_effect=_t4_real_jellyfin):
+            result_movie_dir, _assets = _produce_one(
+                repo, MagicMock(), config,
+                file_info=file_info, meta=meta, cover_strategy=('none',),
+                assets_mode='full', existing=existing,
+                output_root=str(output_root), output_uri=output_uri,
+                allocated_this_run=set(), path_mappings={},
+            )
+
+        assert Path(result_movie_dir) == movie_dir
+        assert not cover.exists()
+        assert not poster.exists()
+        assert not fanart.exists()
+        new_cover = movie_dir / f'{new_base}.jpg'
+        new_poster = movie_dir / f'{new_base}-poster.jpg'
+        new_fanart = movie_dir / f'{new_base}-fanart.jpg'
+        assert hashlib.sha256(new_cover.read_bytes()).hexdigest() == cover_sha
+        assert hashlib.sha256(new_poster.read_bytes()).hexdigest() == poster_sha
+        assert hashlib.sha256(new_fanart.read_bytes()).hexdigest() == fanart_sha
+        assert not any(p.name.startswith(old_base) for p in movie_dir.iterdir())
+
+        v = repo.get_by_path(src_uri)
+        assert v.cover_path == to_file_uri(str(new_cover), {})
+
+    def test_rename_hard_failure_aborts_round_before_any_write(self, tmp_path, temp_db):
+        """加測（第 2 輪 review 抓到的未守分支，D-151b-6）：
+        `_rename_stale_cover_group` 回傳 `hard_failure=True`（改名中途 I/O 失
+        敗、已搬的部分已復原回舊名）時，`_produce_one` 必須在任何後續動作
+        （寫新基底 NFO/.strm、清掉舊基底、CAS、_upsert_db）之前整輪提前失
+        敗——不得讓「NFO 在新名字、圖在舊名字」這個洞一孤兒狀態靜默落地並
+        回報成功。"""
+        from core.database import VideoRepository
+        from core.readonly_assets import RenameOutcome
+        from core.readonly_producer import ReadonlyProduceError, _produce_one
+
+        repo = VideoRepository(temp_db)
+        ctx = _t4r_setup(tmp_path, repo)
+
+        before_dir = _t4r_dir_snapshot(ctx['movie_dir'])
+        before_db = repo.get_by_path(ctx['src_uri'])
+
+        meta_b = dict(_T4R_META_A, title='New Title')
+
+        with patch('core.readonly_assets.download_image', side_effect=_t4_real_download), \
+             patch('core.readonly_assets.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
+             patch('core.readonly_assets._rename_stale_cover_group',
+                   return_value=RenameOutcome(None, True, ())):
+            with pytest.raises(ReadonlyProduceError):
+                _produce_one(
+                    repo, MagicMock(), ctx['config'],
+                    file_info=ctx['file_info'], meta=meta_b, cover_strategy=('none',),
+                    assets_mode='full', existing=ctx['existing'],
+                    output_root=str(ctx['output_root']), output_uri=ctx['output_uri'],
+                    allocated_this_run=set(), path_mappings={},
+                )
+
+        after_dir = _t4r_dir_snapshot(ctx['movie_dir'])
+        assert after_dir == before_dir, (
+            "hard_failure=True 時新基底的 .nfo/.strm 不得被寫出、舊基底不得被清掉"
+        )
+        after_db = repo.get_by_path(ctx['src_uri'])
+        assert after_db == before_db, "DB 的 cover_path 與 focal 三欄不得被碰"
