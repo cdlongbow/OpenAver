@@ -1998,19 +1998,22 @@ class TestRenameStaleCoverGroup:
         assert sibling.read_bytes() == b'SIBLING BYTES'
         assert not (d / 'TEST-009 New-poster.jpg').exists()
 
-    def test_mixed_extensions_anchor_file_itself_is_moved(self, tmp_path, caplog):
-        """回歸修正②（Codex PR#197 review，第 6 輪修正方向——契約變動，取代
-        第 4 輪的舊斷言）：DB 錨點指 `.png`，同一個 slot 還躺著一個優先序更
-        高的 `.jpg` sibling。D-151b-1 的承諾是「圖的內容一個位元組不動，只
-        是換個名字」——不是「這個 slot 換一張內容相近的圖也算數」。舊修法
-        （讓 `_resolve_slot` 依 `IMAGE_EXTENSIONS` 全域優先序自由選）雖然堵
-        住了「new_cover_uri 指向不存在路徑」，卻把 DB 換指到 sibling 的內容
-        （`.jpg`），比路徑不存在更隱蔽（破圖看得出來，換了一張圖看不出
-        來）。正確行為：錨點那一個 slot 必須優先使用 DB 指向的那個檔本身
-        （`old_cover_fs`）；sibling 刻意留在舊基底原地、不搬、內容不動，
-        記一行 warning（不是清理疏漏）。"""
-        import logging
+    def test_mixed_extensions_anchor_file_itself_is_moved(self, tmp_path):
+        """回歸修正②（Codex PR#197 review，第 6 輪修正方向）＋窮舉盤點後的
+        重新設計（151b pre-merge，owner 裁決選項 1）：DB 錨點指 `.png`，同一
+        個 slot 還躺著一個優先序更高的 `.jpg` sibling。D-151b-1 的承諾是
+        「圖的內容一個位元組不動，只是換個名字」——不是「這個 slot 換一張
+        內容相近的圖也算數」。正確行為：錨點那一個 slot 必須搬 DB 指向的
+        那個檔本身（`old_cover_fs`）；sibling 刻意留在舊基底原地、不搬、
+        內容不動。
 
+        **不再斷言 warning log**：舊設計靠 `prefer` 在多個候選裡「選」出
+        錨點，選擇動作值得記一行解釋性 warning；新設計下錨點 slot 直接用
+        已知的 `old_cover_fs`，根本不經過 `_resolve_slot` 的候選列舉，沒有
+        選擇這回事可言，因此也沒有可解釋的東西可記——少的只是一行 debug
+        log，不是產品行為（搬動結果、sibling 原地不動，與舊碼逐字相同）。
+        非錨點 slot 的同則 warning 維持不變，見同 class 內對 `_resolve_slot`
+        的直接單元測試。"""
         from core.readonly_assets import _rename_stale_cover_group
 
         d = tmp_path / 'movie'
@@ -2023,8 +2026,7 @@ class TestRenameStaleCoverGroup:
         old_jpg.write_bytes(b'SIBLING JPG BYTES')
         existing = SimpleNamespace(cover_path=to_file_uri(str(old_png), {}))
 
-        with caplog.at_level(logging.WARNING, logger='OpenAver.core.readonly_assets'):
-            outcome = _rename_stale_cover_group(str(d), existing, new_base, {})
+        outcome = _rename_stale_cover_group(str(d), existing, new_base, {})
 
         new_png = d / f'{new_base}.png'
         new_jpg = d / f'{new_base}.jpg'
@@ -2041,10 +2043,6 @@ class TestRenameStaleCoverGroup:
         )
         import os as _os
         assert _os.path.exists(str(new_png))
-        messages = [r.getMessage() for r in caplog.records]
-        assert any('同一 slot 多個副檔名同時存在' in m for m in messages), (
-            f"缺少混副檔名 warning log：{messages}"
-        )
 
     def test_poster_anchor_new_layout_new_cover_uri_points_to_poster(self, tmp_path):
         """回歸守衛（第 5 輪 review）：DB 錨點是 `-poster.jpg`——外部管理器
@@ -2081,6 +2079,132 @@ class TestRenameStaleCoverGroup:
         )
         import os as _os
         assert _os.path.exists(str(new_poster))
+
+    def test_anchor_extension_not_in_whitelist_moves_verbatim(self, tmp_path):
+        """窮舉盤點格 A=no(錨點副檔名不在 IMAGE_EXTENSIONS)／B=no(無 sibling)。
+
+        舊設計（Codex PR#197 修法二／`prefer` 版）：`_resolve_slot('')` 對
+        `.tiff` 一無所獲（`IMAGE_EXTENSIONS` 沒有 `.tiff`），`hits == []`，
+        `prefer` 派不上用場，這個 slot 完全沒進 `group`，`anchor_dst` 留
+        `None`，函式最後 `to_file_uri(None, ...)` 拋 `AttributeError`
+        （實測見窮舉腳本 Cell3；不是本卡片編造的場景）。新設計：錨點 slot
+        不經過 `IMAGE_EXTENSIONS` 列舉，直接用 `old_cover_fs` 本身，因此不
+        受白名單限制——非影像慣用副檔名的錨點檔一樣原樣搬動、不崩潰。
+        """
+        import hashlib
+
+        from core.readonly_assets import _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'TEST-013 Old'
+        new_base = 'TEST-013 New'
+        anchor = d / f'{old_base}.tiff'
+        anchor.write_bytes(b'ANCHOR TIFF BYTES')
+        anchor_sha = hashlib.sha256(anchor.read_bytes()).hexdigest()
+        existing = SimpleNamespace(cover_path=to_file_uri(str(anchor), {}))
+
+        outcome = _rename_stale_cover_group(str(d), existing, new_base, {})
+
+        assert not anchor.exists()
+        new_anchor = d / f'{new_base}.tiff'
+        assert new_anchor.exists()
+        assert hashlib.sha256(new_anchor.read_bytes()).hexdigest() == anchor_sha
+        assert outcome.hard_failure is False
+        assert outcome.moved_pairs == ((str(anchor), str(new_anchor)),)
+        assert outcome.new_cover_uri == to_file_uri(str(new_anchor), {})
+        import os as _os
+        assert _os.path.exists(str(new_anchor))
+
+    def test_anchor_extension_not_in_whitelist_sibling_left_untouched(self, tmp_path, caplog):
+        """窮舉盤點格 A=no／B=yes（同 slot 有白名單 sibling）——本卡片窮舉才
+        抓到、之前三輪都沒發現的一格：`_resolve_slot('')` 只看得到 sibling
+        （`.jpg` 在 `IMAGE_EXTENSIONS` 裡，`.tiff` 錨點本身根本不進 `hits`
+        候選），`len(hits) == 1`，`prefer` 分支的 `len(hits) > 1` 閘門連檢查
+        都不會檢查——直接回傳那個 sibling，把 DB 換指到 sibling 的內容、
+        真正的錨點檔案整個被忽略、永遠孤兒留在舊基底。比 ③ 的崩潰更隱蔽：
+        沒有例外、沒有 warning，看起來完全正常但圖換了一張。
+
+        新設計：錨點 slot 無條件用 `old_cover_fs` 本身，根本不看 sibling
+        候選列表，因此這個 slot 的 sibling 天生就搬不到——不是「選擇」，是
+        「不列舉」的必然結果。
+        """
+        import hashlib
+        import logging
+
+        from core.readonly_assets import _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'TEST-014 Old'
+        new_base = 'TEST-014 New'
+        anchor = d / f'{old_base}.tiff'
+        sibling = d / f'{old_base}.jpg'
+        anchor.write_bytes(b'ANCHOR TIFF BYTES')
+        sibling.write_bytes(b'SIBLING JPG BYTES')
+        anchor_sha = hashlib.sha256(anchor.read_bytes()).hexdigest()
+        existing = SimpleNamespace(cover_path=to_file_uri(str(anchor), {}))
+
+        with caplog.at_level(logging.WARNING, logger='OpenAver.core.readonly_assets'):
+            outcome = _rename_stale_cover_group(str(d), existing, new_base, {})
+
+        new_anchor = d / f'{new_base}.tiff'
+        new_sibling = d / f'{new_base}.jpg'
+        assert not anchor.exists(), "錨點本檔（DB 指向的那個）必須被搬走"
+        assert hashlib.sha256(new_anchor.read_bytes()).hexdigest() == anchor_sha, (
+            "搬到新基底的必須是錨點本檔內容，不是 sibling 的內容"
+        )
+        assert sibling.exists() and sibling.read_bytes() == b'SIBLING JPG BYTES', (
+            "sibling（白名單副檔名但不是 DB 指向的那個）留在舊基底原地、內容不動"
+        )
+        assert not new_sibling.exists(), "sibling 不該被搬到新基底"
+        assert outcome.hard_failure is False
+        assert outcome.new_cover_uri == to_file_uri(str(new_anchor), {}), (
+            "new_cover_uri 必須指向實際搬動的錨點檔（.tiff），不是 sibling 的 .jpg"
+        )
+        import os as _os
+        assert _os.path.exists(str(new_anchor))
+
+    def test_anchor_extension_not_in_whitelist_mid_rename_failure_reverts(self, tmp_path):
+        """整組原子在「錨點副檔名不在白名單」這格底下仍須成立——這正是 ③
+        （`AttributeError` 崩潰）破掉的那個保證：舊設計在這種配置下，崩潰
+        發生在 `try` 區塊**之外**（成功搬完才崩潰在最後一行的 `to_file_uri`），
+        於是已搬的 slot 完全不會進入 `_revert_cover_rename`。這裡改用會在
+        `try` 區塊**之內**丟 `OSError` 的組態（第二個 slot 的搬移失敗），
+        確認新設計下：(a) 不崩潰、(b) 兩個 slot 都被復原回原位、(c) 回傳值
+        是 `RenameOutcome(None, True, ())`——與白名單副檔名場景（既有
+        `test_mid_rename_io_failure_reverts`）同一種保證，不因錨點副檔名
+        exotic 而失效。
+        """
+        from core.atomic_write import atomic_move as _real_atomic_move
+        from core.readonly_assets import RenameOutcome, _rename_stale_cover_group
+
+        d = tmp_path / 'movie'
+        d.mkdir()
+        old_base = 'TEST-015 Old'
+        new_base = 'TEST-015 New'
+        anchor = d / f'{old_base}.tiff'  # '' slot，anchor_stem_suffix == ''
+        poster = d / f'{old_base}-poster.jpg'
+        anchor.write_bytes(b'ANCHOR TIFF BYTES')
+        poster.write_bytes(b'POSTER BYTES')
+        existing = SimpleNamespace(cover_path=to_file_uri(str(anchor), {}))
+
+        call_count = {'n': 0}
+
+        def flaky(src, dst):
+            call_count['n'] += 1
+            if call_count['n'] == 2:
+                raise OSError("simulated mid-rename failure")
+            _real_atomic_move(src, dst)
+
+        with patch('core.readonly_assets.atomic_move', side_effect=flaky):
+            outcome = _rename_stale_cover_group(str(d), existing, new_base, {})
+
+        assert outcome == RenameOutcome(None, True, ())
+        assert anchor.read_bytes() == b'ANCHOR TIFF BYTES'
+        assert poster.read_bytes() == b'POSTER BYTES'
+        assert not (d / f'{new_base}.tiff').exists()
+        assert not (d / f'{new_base}-poster.jpg').exists()
 
 
 class TestRevertCoverRename:

@@ -840,53 +840,70 @@ def _rename_stale_cover_group(
     if not old_stem_abs or old_stem_abs == new_stem_abs:
         return _NOOP
     old_suffix = old_cover_fs[len(old_stem_abs):]
-    # Codex PR#197 review 回歸修正②（第 6 輪修正方向）：`anchor_stem_suffix`
-    # 判斷 DB 錨點（`old_cover_fs`）屬於哪一個 slot（''／'-poster'／'-fanart'）。
-    # **錨點那一個 slot 的搬移來源，一律優先使用 `old_cover_fs` 本身**（見
-    # `_resolve_slot` 的 `prefer` 參數）——D-151b-1 的承諾是「圖的內容一個位元
-    # 組不動，只是換個名字」，不是「這個 slot 換一張內容相近的圖也算數」。第一版
-    # 修法（讓 `_resolve_slot` 依 `IMAGE_EXTENSIONS` 全域優先序自由選）雖然堵住了
-    # 「new_cover_uri 指向不存在路徑」，但同一個 slot 若同時存在多種副檔名（如
-    # `Old.png` 錨點 + `Old.jpg` sibling），會把 DB 指向 sibling 的內容（`New.jpg`）
-    # 而不是使用者原本指定的那張（`Old.png`）——路徑存在、畫面有圖，但換了一張
-    # 圖，比路徑不存在更隱蔽。**只有錨點那一個 slot 覆寫選擇結果，另外兩個非錨點
-    # slot 維持 `_resolve_slot` 既有的 `IMAGE_EXTENSIONS` 優先序**（不改全域邏輯，
-    # 三個 slot 仍共用同一支 `_resolve_slot`）。sibling（本例的 `Old.jpg`）不搬、
-    # 留在舊基底原地，記一行 warning——這是刻意的殘留，不是清理疏漏。
+    # 窮舉盤點後的重新設計（Codex PR#197 review 第 6 輪的後續，151b-T5 pre-merge
+    # 停損規則觸發：`prefer` 那條縫連三輪各補掉上一輪的洞、又開一個新的——見
+    # `_rename_stale_cover_group` 呼叫端 commit message 的窮舉表）。
+    #
+    # 核心洞見：錨點那一個 slot 要搬的檔案，我們**已經知道**——就是 `old_cover_fs`
+    # 本身，函式開頭的 `os.path.exists(old_cover_fs)` 已經驗過它存在。它完全不需要
+    # 被 `_resolve_slot` 的 `IMAGE_EXTENSIONS` 列舉「找出來」，用列舉去找一個已知
+    # 答案，正是前三輪各種洞的共同根：
+    #   ① 原始版：`new_cover_fs = new_stem_abs + old_suffix` 與 `group` 的實際搬移
+    #     結果脫鉤——若 `_resolve_slot` 選到的候選副檔名跟 `old_suffix` 不同，回傳
+    #     的 URI 指向一個從未被搬到的路徑。
+    #   ② 修法一：改用 `group` 裡錨點 slot 實際選中的 `dst`——但 `_resolve_slot`
+    #     不知道哪個候選才是 DB 真正指的那個，同 slot 多副檔名時可能選到 sibling，
+    #     DB 換指到另一張圖的內容。
+    #   ③ 修法二（`prefer` 參數）：只在 `len(hits) > 1` 時才生效——
+    #     (a) 錨點副檔名不在 `IMAGE_EXTENSIONS`（如 `.tiff`）且同 slot 無其他候選時，
+    #         `hits == []`，`prefer` 派不上用場，slot 整個沒進 `group`，`anchor_dst`
+    #         留 `None`，最終 `to_file_uri(None, ...)` 崩潰、已搬的其餘 slot 不復原。
+    #     (b) 更隱蔽：錨點副檔名不在白名單、但同 slot 恰有一個白名單 sibling時，
+    #         `hits` 長度剛好是 1（只有 sibling 命中，錨點本身的副檔名根本不在
+    #         `IMAGE_EXTENSIONS` 迴圈裡，永遠不會被列進 `hits`），`len(hits) > 1`
+    #         為假，`prefer` 分支完全不會被檢查——直接回傳 `hits[0]`（sibling），
+    #         真正的錨點檔案被整個忽略、永遠留在舊基底孤兒，DB 卻悄悄換指到 sibling
+    #         的內容。這格窮舉盤點才第一次抓到，比 ③(a) 的崩潰更隱蔽（沒有任何
+    #         例外、沒有任何 warning，看起來完全正常）。
+    #
+    # 新設計：錨點 slot 直接、無條件用 `(old_cover_fs, new_stem_abs + old_suffix)`
+    # 這一組 pair——不經過 `_resolve_slot`，因此也不受 `IMAGE_EXTENSIONS` 白名單
+    # 限制、不受同 slot sibling 干擾。`anchor_dst` 因此是一個常數運算式，永遠非
+    # `None`，永遠等於實際搬移的目的地。`_resolve_slot` 縮回只服務另外兩個非錨點
+    # slot 的單純形狀，`prefer` 參數整個消失——減碼優於加碼。
+    #
+    # sibling 處理：不論錨點副檔名在不在白名單，同一 slot 若還有其他副檔名的檔案，
+    # 一律不搬、留在舊基底原地——這不再是「多個候選選一個」的判斷，是「錨點 slot
+    # 根本不看候選列表」的必然結果，因此也不再需要單獨的「同一 slot 多個副檔名」
+    # warning（那個 warning 描述的是選擇邏輯，新設計沒有選擇可言）。
     if old_suffix.startswith('-poster'):
         anchor_stem_suffix = '-poster'
     elif old_suffix.startswith('-fanart'):
         anchor_stem_suffix = '-fanart'
     else:
         anchor_stem_suffix = ''
+    anchor_dst = new_stem_abs + old_suffix
 
-    def _resolve_slot(stem_suffix, prefer=None):
+    def _resolve_slot(stem_suffix):
         hits = [
             old_stem_abs + stem_suffix + ext
             for ext in IMAGE_EXTENSIONS
             if os.path.exists(old_stem_abs + stem_suffix + ext)
         ]
         if len(hits) > 1:
-            if prefer is not None and prefer in hits:
-                logger.warning(
-                    "[readonly_assets] 同一 slot 多個副檔名同時存在，錨點 slot 優先採用 DB 指向的那個檔、"
-                    "其餘（含 sibling）不動: %s（採用 %s）", hits, prefer,
-                )
-                return prefer
             logger.warning("[readonly_assets] 同一 slot 多個副檔名同時存在，取第一個、其餘不動: %s", hits)
         return hits[0] if hits else None
 
     group = []
-    anchor_dst = None
     for stem_suffix in ('', '-poster', '-fanart'):
-        prefer = old_cover_fs if stem_suffix == anchor_stem_suffix else None
-        src = _resolve_slot(stem_suffix, prefer=prefer)
+        if stem_suffix == anchor_stem_suffix:
+            # 錨點 slot：已知答案，不列舉、不受 IMAGE_EXTENSIONS 白名單限制。
+            group.append((old_cover_fs, anchor_dst))
+            continue
+        src = _resolve_slot(stem_suffix)
         if src is not None:
             ext = src[len(old_stem_abs) + len(stem_suffix):]
-            dst = new_stem_abs + stem_suffix + ext
-            group.append((src, dst))
-            if stem_suffix == anchor_stem_suffix:
-                anchor_dst = dst
+            group.append((src, new_stem_abs + stem_suffix + ext))
 
     for _src, dst in group:
         if os.path.exists(dst):
@@ -902,8 +919,6 @@ def _rename_stale_cover_group(
         _revert_cover_rename(tuple(moved))
         return RenameOutcome(None, True, ())
 
-    # anchor_dst 保證非 None：函式開頭已確認 os.path.exists(old_cover_fs)，
-    # `_resolve_slot(anchor_stem_suffix, prefer=old_cover_fs)` 保證命中時優先
-    # 回傳 old_cover_fs 本身（`prefer in hits` 必真，因為 old_cover_fs 就是
-    # hits 候選之一）。
+    # anchor_dst 是常數運算式（new_stem_abs + old_suffix），與錨點 slot 在 group
+    # 裡實際搬移的目的地逐字相同、永遠非 None——不再需要事後從 group 反查。
     return RenameOutcome(to_file_uri(anchor_dst, path_mappings), False, tuple(moved))
