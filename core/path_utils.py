@@ -523,10 +523,14 @@ def is_fs_path_under_dir(fs_path: str, root_fs_path: str) -> bool:
 
     與 is_path_under_dir(path, dir_uri) 的職責分界：
     - is_path_under_dir：吃 file:/// URI，純字串前綴比對，不解析 `..`、不解析
-      symlink，唯一呼叫端 core/readonly_producer.py:418。
+      symlink。呼叫端（不附行號，行號會過期）：core/readonly_paths.py、
+      core/readonly_source.py、core/settings_link.py。
     - is_fs_path_under_dir（本函式）：吃原生 FS path（非 URI），先用
-      os.path.realpath 解析 `..` 與 symlink 再比對，供整理流程的寫入錨點
-      （target_dir / target_path）共用。
+      os.path.realpath 解析 `..` 與 symlink 再比對。呼叫端：整理流程的寫入錨點
+      （core/organizer.py 的 target_dir / target_path）、唯讀來源的輸出夾邊界
+      （core/readonly_producer.py），以及**唯讀來源封面改名前的零寫入邊界**
+      （core/readonly_assets.py::_rename_stale_cover_group，151b／AC-12——
+      這一道擋的是「DB 的 cover_path 指到輸出夾以外」時不得改名使用者的來源檔）。
 
     兩者不得互相取代：硬套 URI 版要在呼叫端各做一次 URI 往返，等於正規化疊加；
     本函式也不得再串接 normalize_path() / to_file_uri()，只做下列這一條鏈。

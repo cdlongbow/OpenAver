@@ -37,8 +37,9 @@ from core.scrapers.fc2_javten import JAVTEN_ORIGIN
 from core.logger import get_logger
 from core.config import load_config, STEM_IMAGE_MODES
 from core.readonly_source import is_path_readonly, readonly_source_prefixes, writable_source_prefixes
+from core.readonly_paths import resolve_owning_output_root
 from core.readonly_producer import (
-    resolve_owning_output_root, _produce_one,  # noqa: PLC2701 — fetch_samples_endpoint 合法把 _produce_one 當 primitive 用，109 已收斂單片/批次兩處；剩這條待未來升格公開名
+    _produce_one,  # noqa: PLC2701 — fetch_samples_endpoint 合法把 _produce_one 當 primitive 用，109 已收斂單片/批次兩處；剩這條待未來升格公開名
     _readonly_enrich_failure,  # noqa: PLC2701 — enrich 端點群需要與 producer 內部共用同一套「唯讀失敗」錯誤形狀建構器，確保所有唯讀相關錯誤 response 的欄位與語意一致，避免 router 層各自兜出不同形狀的錯誤 dict
     enrich_one_readonly, ReadonlyProduceError,
 )
@@ -340,8 +341,8 @@ class EnrichRequest(BaseModel):
     # or 'rescrape' (gear, always-remote). MUST stay optional: existing non-readonly
     # / batch / integration callers never send it and must not 422 (Codex P1-2).
     # Non-readonly files ignore this field entirely (byte-identical); a readonly
-    # file with it omitted defaults to 'ingest' (safe default — never force a
-    # remote overwrite without an explicit gear action).
+    # file with it omitted defaults to 'ingest', except when metadata is also
+    # present — then omitted defaults to 'rescrape' (D-151b-2 / CD-151b-6).
     readonly_action: Optional[Literal['rescrape', 'ingest']] = None
     metadata: Optional[Dict[str, Any]] = None
     allow_number_change: bool = False
@@ -622,7 +623,7 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
     # （resolve_nfo_cover_paths 對唯讀路徑推 source-adjacent 路徑沒有意義，CD-104-10）。
     canonical = coerce_to_file_uri(request.file_path, path_mappings)  # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
     owning = resolve_owning_output_root(canonical, config)
-    action = (request.readonly_action or 'ingest') if owning is not None else None
+    action = (request.readonly_action or ('rescrape' if request.metadata is not None else 'ingest')) if owning is not None else None
     _validate_enrich_request(request, owning, action, canonical)
     if owning is not None:
         source, output_root, output_uri = owning

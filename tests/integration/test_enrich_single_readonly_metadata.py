@@ -114,13 +114,13 @@ def _e2e_wire(mocker, monkeypatch, config, db_path):
     from core.database import VideoRepository as RealRepo
 
     mocker.patch("web.routers.scraper.load_config", return_value=config)
-    monkeypatch.setattr("core.readonly_producer.get_db_path", lambda: db_path)
+    monkeypatch.setattr("core.readonly_paths.get_db_path", lambda: db_path)
     mocker.patch(
         "web.routers.scraper.VideoRepository",
         side_effect=lambda *a, **kw: RealRepo(db_path),
     )
     mocker.patch(
-        "core.readonly_producer.generate_jellyfin_images",
+        "core.readonly_assets.generate_jellyfin_images",
         side_effect=_e2e_fake_generate_jellyfin_images,
     )
 
@@ -154,7 +154,7 @@ class TestReadonlyRescrapeMetadataWiring:
         mock_search = mocker.patch("core.readonly_producer.search_jav")
         mock_search_single = mocker.patch("core.readonly_producer.search_jav_single_source")
         mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
 
         # BE-TEST-10：baseline 在 fixture 建檔之後、client.post 之前取
@@ -218,7 +218,7 @@ class TestReadonlyRescrapeMetadataWiring:
         mocker.patch("core.readonly_producer.search_jav")
         mocker.patch("core.readonly_producer.search_jav_single_source")
         mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
 
         canonical = to_file_uri(str(video))
@@ -249,30 +249,263 @@ class TestReadonlyRescrapeMetadataWiring:
         nfo_text = nfo_files[0].read_text(encoding="utf-8")
         assert "<num>SONE-205</num>" in nfo_text
 
+    def test_unlabeled_metadata_auto_rescrapes_200(
+        self, tmp_path, client, mocker, monkeypatch
+    ):
+        """DoD-1：未帶 readonly_action ＋ 帶 metadata → 自動推導成 rescrape 並回 200。"""
+        from core.path_utils import to_file_uri, uri_to_local_fs_path
+
+        src = tmp_path / "src"
+        src.mkdir()
+        video = src / "ABC-001.mp4"
+        video.write_bytes(b"FAKE-VIDEO")
+
+        db_path = _e2e_init_db(tmp_path)
+        config = _e2e_off_config(src)
+        _e2e_wire(mocker, monkeypatch, config, db_path)
+        mocker.patch("core.readonly_producer.search_jav")
+        mocker.patch("core.readonly_producer.search_jav_single_source")
+        mocker.patch(
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
+        )
+
+        canonical = to_file_uri(str(video))
+        response = client.post("/api/enrich-single", json={
+            "file_path": canonical,
+            "number": "ABC-001",
+            "mode": "refresh_full",
+            "overwrite_existing": True,
+            "metadata": {
+                "number": "ABC-001",
+                "title": "Auto Rescraped Title",
+            },
+        })
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+
+        from core.database import VideoRepository
+        repo = VideoRepository(db_path)
+        row = repo.get_by_path(canonical)
+        assert row is not None
+        assert row.output_dir
+        movie_dir = uri_to_local_fs_path(row.output_dir, {})
+        nfo_files = list(Path(movie_dir).glob("*.nfo"))
+        assert len(nfo_files) == 1
+        nfo_text = nfo_files[0].read_text(encoding="utf-8")
+        assert "<title>[ABC-001]Auto Rescraped Title</title>" in nfo_text
+        assert "<num>ABC-001</num>" in nfo_text
+
+    def test_empty_summary_and_url_clear_nfo_fields(
+        self, tmp_path, client, mocker, monkeypatch
+    ):
+        """DoD⑤ / D-151b-7：metadata._summary="" 與 metadata.url="" → NFO 對應欄位
+        逐字清空（<plot></plot>／<website></website> 仍出現，不是缺標籤、也不是舊值）。"""
+        from core.path_utils import to_file_uri, uri_to_local_fs_path
+
+        src = tmp_path / "src"
+        src.mkdir()
+        video = src / "SONE-205.mp4"
+        video.write_bytes(b"FAKE-VIDEO")
+
+        db_path = _e2e_init_db(tmp_path)
+        config = _e2e_off_config(src)
+        _e2e_wire(mocker, monkeypatch, config, db_path)
+        mocker.patch("core.readonly_producer.search_jav")
+        mocker.patch("core.readonly_producer.search_jav_single_source")
+        mocker.patch(
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
+        )
+
+        canonical = to_file_uri(str(video))
+        response = client.post("/api/enrich-single", json={
+            "file_path": canonical,
+            "number": "SONE-205",
+            "readonly_action": "rescrape",
+            "mode": "refresh_full",
+            "overwrite_existing": True,
+            "metadata": {
+                "number": "SONE-205",
+                "title": "Clear Fields",
+                "_summary": "",
+                "url": "",
+            },
+        })
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+
+        from core.database import VideoRepository
+        repo = VideoRepository(db_path)
+        row = repo.get_by_path(canonical)
+        movie_dir = uri_to_local_fs_path(row.output_dir, {})
+        nfo_files = list(Path(movie_dir).glob("*.nfo"))
+        assert len(nfo_files) == 1
+        nfo_text = nfo_files[0].read_text(encoding="utf-8")
+        assert "<plot></plot>" in nfo_text
+        assert "<website></website>" in nfo_text
+
+    def test_rating_null_omits_rating_tag(
+        self, tmp_path, client, mocker, monkeypatch
+    ):
+        """DoD⑥ / D-151b-7：metadata._rating=null → NFO 裡整個 <rating> 標籤不出現。"""
+        from core.path_utils import to_file_uri, uri_to_local_fs_path
+
+        src = tmp_path / "src"
+        src.mkdir()
+        video = src / "SONE-205.mp4"
+        video.write_bytes(b"FAKE-VIDEO")
+
+        db_path = _e2e_init_db(tmp_path)
+        config = _e2e_off_config(src)
+        _e2e_wire(mocker, monkeypatch, config, db_path)
+        mocker.patch("core.readonly_producer.search_jav")
+        mocker.patch("core.readonly_producer.search_jav_single_source")
+        mocker.patch(
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
+        )
+
+        canonical = to_file_uri(str(video))
+        response = client.post("/api/enrich-single", json={
+            "file_path": canonical,
+            "number": "SONE-205",
+            "readonly_action": "rescrape",
+            "mode": "refresh_full",
+            "overwrite_existing": True,
+            "metadata": {
+                "number": "SONE-205",
+                "title": "Null Rating",
+                "_rating": None,
+            },
+        })
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+
+        from core.database import VideoRepository
+        repo = VideoRepository(db_path)
+        row = repo.get_by_path(canonical)
+        movie_dir = uri_to_local_fs_path(row.output_dir, {})
+        nfo_files = list(Path(movie_dir).glob("*.nfo"))
+        assert len(nfo_files) == 1
+        nfo_text = nfo_files[0].read_text(encoding="utf-8")
+        assert "<rating>" not in nfo_text
+        assert "</rating>" not in nfo_text
+
+    def test_rating_empty_string_rejected_400(
+        self, tmp_path, client, mocker, monkeypatch
+    ):
+        """DoD⑦ / D-151b-7：metadata._rating="" → HTTP 400（字串型別，既有型別檢查）。"""
+        from core.path_utils import to_file_uri
+
+        src = tmp_path / "src"
+        src.mkdir()
+        video = src / "SONE-205.mp4"
+        video.write_bytes(b"FAKE-VIDEO")
+
+        db_path = _e2e_init_db(tmp_path)
+        config = _e2e_off_config(src)
+        _e2e_wire(mocker, monkeypatch, config, db_path)
+        mocker.patch("core.readonly_producer.search_jav")
+        mocker.patch("core.readonly_producer.search_jav_single_source")
+        mocker.patch(
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
+        )
+
+        canonical = to_file_uri(str(video))
+        response = client.post("/api/enrich-single", json={
+            "file_path": canonical,
+            "number": "SONE-205",
+            "readonly_action": "rescrape",
+            "mode": "refresh_full",
+            "overwrite_existing": True,
+            "metadata": {
+                "number": "SONE-205",
+                "title": "Empty Rating String",
+                "_rating": "",
+            },
+        })
+
+        assert response.status_code == 400
+
+    def test_same_rating_submitted_twice_does_not_double(
+        self, tmp_path, client, mocker, monkeypatch
+    ):
+        """DoD⑧ / AC-4：連續兩次提交同一個 _rating 值 → NFO 評分數字不翻倍
+        （寫入 ×2 與讀回 ÷2 倍率對齊；送 4.0 兩次都應寫出 8.0）。"""
+        import xml.etree.ElementTree as ET
+
+        from core.path_utils import to_file_uri, uri_to_local_fs_path
+
+        src = tmp_path / "src"
+        src.mkdir()
+        video = src / "SONE-205.mp4"
+        video.write_bytes(b"FAKE-VIDEO")
+
+        db_path = _e2e_init_db(tmp_path)
+        config = _e2e_off_config(src)
+        _e2e_wire(mocker, monkeypatch, config, db_path)
+        mocker.patch("core.readonly_producer.search_jav")
+        mocker.patch("core.readonly_producer.search_jav_single_source")
+        mocker.patch(
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
+        )
+
+        canonical = to_file_uri(str(video))
+        payload = {
+            "file_path": canonical,
+            "number": "SONE-205",
+            "readonly_action": "rescrape",
+            "mode": "refresh_full",
+            "overwrite_existing": True,
+            "metadata": {
+                "number": "SONE-205",
+                "title": "Stable Rating",
+                "_summary": "plot",
+                "url": "http://example/",
+                "_rating": 4.0,
+            },
+        }
+
+        response1 = client.post("/api/enrich-single", json=payload)
+        assert response1.status_code == 200
+        assert response1.json()["success"] is True
+
+        from core.database import VideoRepository
+        repo = VideoRepository(db_path)
+        row = repo.get_by_path(canonical)
+        movie_dir = uri_to_local_fs_path(row.output_dir, {})
+        nfo_files = list(Path(movie_dir).glob("*.nfo"))
+        assert len(nfo_files) == 1
+        first_rating = ET.parse(str(nfo_files[0])).getroot().find("rating").text
+        assert first_rating == "8.0"
+
+        response2 = client.post("/api/enrich-single", json=payload)
+        assert response2.status_code == 200
+        assert response2.json()["success"] is True
+
+        nfo_files = list(Path(movie_dir).glob("*.nfo"))
+        assert len(nfo_files) == 1
+        second_rating = ET.parse(str(nfo_files[0])).getroot().find("rating").text
+        assert second_rating == "8.0"
+        assert second_rating == first_rating
+
 
 class TestReadonlyRescrapeMetadataRegressionLocks:
     """DoD-3/4/6/7：T1 已擋住的組合，本檔重跑一次作回歸鎖（純測試，非新程式碼）。"""
 
     def test_ingest_with_metadata_rejected_400(self, client, mocker):
-        """DoD-3：readonly_action=ingest（或未帶）＋ metadata → 400（不是 200+success:false）。"""
+        """DoD-3：顯式宣告 readonly_action=ingest 又帶 metadata → 400（自相矛盾，D-151b-2 例外保留）。"""
         mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
 
-        resp1 = client.post("/api/enrich-single", json={
-            "file_path": "/tmp/ro_src/ABC-001.mp4",
-            "number": "ABC-001",
-            "mode": "refresh_full",
-            "metadata": {"number": "ABC-001", "title": "T"},
-        })
-        assert resp1.status_code == 400
-
-        resp2 = client.post("/api/enrich-single", json={
+        response = client.post("/api/enrich-single", json={
             "file_path": "/tmp/ro_src/ABC-001.mp4",
             "number": "ABC-001",
             "mode": "refresh_full",
             "readonly_action": "ingest",
             "metadata": {"number": "ABC-001", "title": "T"},
         })
-        assert resp2.status_code == 400
+        assert response.status_code == 400
 
     def test_missing_number_raises_400(self, client, mocker):
         """DoD-4：metadata 缺 number → 400（不是 500、不是 200）。"""
@@ -526,7 +759,7 @@ class TestReadonlyEnrichWishlistReconcile:
         mocker.patch("core.readonly_producer.search_jav")
         mocker.patch("core.readonly_producer.search_jav_single_source")
         mocker.patch(
-            "core.readonly_producer.download_image",
+            "core.readonly_assets.download_image",
             side_effect=_e2e_download_writes_url_bytes,
         )
 
@@ -587,7 +820,7 @@ class TestReadonlyEnrichWishlistReconcile:
         mocker.patch("core.readonly_producer.search_jav")
         mocker.patch("core.readonly_producer.search_jav_single_source")
         mocker.patch(
-            "core.readonly_producer.download_image",
+            "core.readonly_assets.download_image",
             side_effect=_e2e_download_writes_url_bytes,
         )
 

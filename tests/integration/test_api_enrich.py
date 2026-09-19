@@ -2514,13 +2514,13 @@ class TestReadonlyRoutingE2E:
         from core.database import VideoRepository as RealRepo
 
         mocker.patch("web.routers.scraper.load_config", return_value=config)
-        monkeypatch.setattr("core.readonly_producer.get_db_path", lambda: db_path)
+        monkeypatch.setattr("core.readonly_paths.get_db_path", lambda: db_path)
         mocker.patch(
             "web.routers.scraper.VideoRepository",
             side_effect=lambda *a, **kw: RealRepo(db_path),
         )
         mocker.patch(
-            "core.readonly_producer.generate_jellyfin_images",
+            "core.readonly_assets.generate_jellyfin_images",
             side_effect=_e2e_fake_generate_jellyfin_images,
         )
 
@@ -2554,7 +2554,7 @@ class TestReadonlyRoutingE2E:
         config = _e2e_off_config(src)
         self._wire(mocker, monkeypatch, config, db_path)
         mock_search = mocker.patch("core.readonly_producer.search_jav")
-        mock_download = mocker.patch("core.readonly_producer.download_image")
+        mock_download = mocker.patch("core.readonly_assets.download_image")
 
         before = _e2e_snapshot(src)
 
@@ -2616,7 +2616,7 @@ class TestReadonlyRoutingE2E:
             },
         )
         mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
         resp1 = client.post("/api/enrich-single", json={
             "file_path": canonical, "number": "RG-001", "readonly_action": "ingest",
@@ -2694,7 +2694,7 @@ class TestReadonlyRoutingE2E:
             },
         )
         mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
         resp1 = client.post("/api/enrich-single", json={
             "file_path": canonical, "number": "DL-001", "readonly_action": "ingest",
@@ -2762,7 +2762,7 @@ class TestReadonlyRoutingE2E:
             },
         )
         mock_download = mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
         resp1 = client.post("/api/enrich-single", json={
             "file_path": canonical, "number": "PV-001", "readonly_action": "ingest",
@@ -2841,7 +2841,7 @@ class TestReadonlyRoutingE2E:
             },
         )
         mock_download = mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
         resp1 = client.post("/api/enrich-single", json={
             "file_path": canonical, "number": "WCF-001", "readonly_action": "ingest",
@@ -2899,7 +2899,7 @@ class TestReadonlyRoutingE2E:
             },
         )
         mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
         resp1 = client.post("/api/enrich-single", json={
             "file_path": canonical, "number": "WNF-001", "readonly_action": "ingest",
@@ -3069,7 +3069,7 @@ class TestReadonlyRoutingE2E:
         canonical = to_file_uri(str(video))
 
         mock_search = mocker.patch("core.readonly_producer.search_jav")
-        mock_download = mocker.patch("core.readonly_producer.download_image")
+        mock_download = mocker.patch("core.readonly_assets.download_image")
 
         response = client.post("/api/enrich-single", json={
             "file_path": canonical, "number": "DBO-001", "readonly_action": "ingest",
@@ -3112,7 +3112,7 @@ class TestReadonlyRoutingE2E:
             },
         )
         mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
         resp1 = client.post("/api/enrich-single", json={
             "file_path": canonical, "number": "SM-001", "readonly_action": "ingest",
@@ -3178,7 +3178,7 @@ class TestReadonlyRoutingE2E:
             },
         )
         mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
         resp1 = client.post("/api/enrich-single", json={
             "file_path": canonical, "number": "PR-001", "readonly_action": "ingest",
@@ -3259,7 +3259,7 @@ class TestReadonlyRoutingE2E:
             },
         )
         mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
         resp1 = client.post("/api/enrich-single", json={
             "file_path": canonical, "number": "PC-001", "readonly_action": "ingest",
@@ -3283,7 +3283,7 @@ class TestReadonlyRoutingE2E:
         fake_video.summary = ""
         mocker.patch("web.routers.scraper.fetch_javlib_by_detail_url", return_value=fake_video)
         mock_download = mocker.patch(
-            "core.readonly_producer.download_image", side_effect=_e2e_download_writes_url_bytes,
+            "core.readonly_assets.download_image", side_effect=_e2e_download_writes_url_bytes,
         )
 
         resp2 = client.post("/api/enrich-single", json={
@@ -3385,7 +3385,7 @@ class TestReadonlyRoutingE2E:
         # not_found 分支也會落 _readonly_stub_not_found 真寫（同
         # test_enrich_single_no_meta_has_full_shape 的理由）；本 class 已有現成
         # 的 self._wire(...) helper 負責把 web.routers.scraper.VideoRepository /
-        # core.readonly_producer.get_db_path 都接到 tmp DB，只是這支測試沒呼叫它
+        # core.readonly_paths.get_db_path 都接到 tmp DB，只是這支測試沒呼叫它
         # （未 mock 前寫進 output/openaver.db 的 NS-001 樁列，見
         # REPORT-127b-T3.md §0）。
         db_path = self._init_db(tmp_path)

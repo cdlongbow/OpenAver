@@ -13,7 +13,7 @@
   S3 = core.enricher.enrich_single
   S4 = core.enricher._sync_nfo_mtime
   S5 = core.database.migrate.backfill_readonly_nfo_mtime
-  S6 = core.readonly_producer._write_movie_assets
+  S6 = core.readonly_assets._write_movie_assets
 
 六處各自要對帳兩個計數：「直接讀 mtime」（`.st_mtime` / `.st_mtime_ns` 屬性存取，
 以及 `os.path.getmtime(...)` / 裸名 `getmtime(...)` 呼叫——Opus 審核裁決 2，三種
@@ -108,6 +108,7 @@ DB_INFLOW_PY = REPO_ROOT / "core" / "db_inflow.py"
 ENRICHER_PY = REPO_ROOT / "core" / "enricher.py"
 MIGRATE_PY = REPO_ROOT / "core" / "database" / "migrate.py"
 READONLY_PRODUCER_PY = REPO_ROOT / "core" / "readonly_producer.py"
+READONLY_ASSETS_PY = REPO_ROOT / "core" / "readonly_assets.py"
 
 
 # ============================================================
@@ -461,7 +462,7 @@ REAL_TARGETS = [
     ("S3", ENRICHER_PY, "enrich_single"),
     ("S4", ENRICHER_PY, "_sync_nfo_mtime"),
     ("S5", MIGRATE_PY, "backfill_readonly_nfo_mtime"),
-    ("S6", READONLY_PRODUCER_PY, "_write_movie_assets"),
+    ("S6", READONLY_ASSETS_PY, "_write_movie_assets"),
 ]
 
 # (檔案, 函式名) -> (期望「直接讀 mtime」計數, 期望「委派」計數)
@@ -471,7 +472,7 @@ EXPECTED = {
     (ENRICHER_PY, "enrich_single"): (0, 1),
     (ENRICHER_PY, "_sync_nfo_mtime"): (0, 1),
     (MIGRATE_PY, "backfill_readonly_nfo_mtime"): (0, 1),
-    (READONLY_PRODUCER_PY, "_write_movie_assets"): (0, 1),
+    (READONLY_ASSETS_PY, "_write_movie_assets"): (0, 1),
 }
 
 # (檔案, 函式名) -> 期望政策常數原始名稱（CD-113b-3）
@@ -481,7 +482,7 @@ EXPECTED_POLICY = {
     (ENRICHER_PY, "enrich_single"): "NFO_MTIME_REFRESH",                    # S3
     (ENRICHER_PY, "_sync_nfo_mtime"): "NFO_MTIME_FILL_MISSING",             # S4
     (MIGRATE_PY, "backfill_readonly_nfo_mtime"): "NFO_MTIME_FILL_MISSING",  # S5
-    (READONLY_PRODUCER_PY, "_write_movie_assets"): "NFO_MTIME_REFRESH",     # S6
+    (READONLY_ASSETS_PY, "_write_movie_assets"): "NFO_MTIME_REFRESH",     # S6
 }
 
 

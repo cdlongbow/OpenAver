@@ -21,7 +21,7 @@ CLAUDE.md 的路徑處理禁止清單針對的是**跨 Zone 的路徑格式轉�
 `web/routers/scanner.py::_cover_base_stem`（本模組 `cover_base_stem` 的升格前身，
 CD-112-9）本來就在 `path_utils.py` 之外用 `os.path.splitext` + 字串切片；
 `core/database/migrate.py`、`core/enricher.py`、`core/organizer.py`、
-`core/readonly_producer.py` 現有共六處 `Path(...).with_suffix('.jpg')` 也都是同一類
+`core/enrich_contract.py` 等處的 `Path(...).with_suffix('.jpg')` 也都是同一類
 「檔名尾端語意運算」，同樣不在 `path_utils.py` 裡。`path_utils.py` 自身的定位是
 「支援 Windows 本地 / WSL 網路路徑 / Unix 路徑」的**跨環境格式轉換**，不是
 「副檔名／後綴管理」，兩者職責不重疊。
@@ -64,10 +64,10 @@ stub 恆回同名 `.jpg`，逐字等價）；`scanner.py` 的 `_cover_base_stem`
 | ② `core/organizer.py:624` | `crop_to_poster` cover → poster | ✅ PR1 已保護（只有 preflight）|
 | ③ `core/enricher.py:300` | `copy2` cover → fanart | ✅ T3 已保護（preflight ＋ `SameFileError` backstop）|
 | ④ `core/enricher.py:316` | `crop_to_poster` cover → poster | ✅ T3 已保護（只有 preflight）|
-| ⑤ `core/readonly_producer.py::_write_media_images` | `copy2` cover → fanart | ✅ T3 已保護（preflight ＋ `SameFileError` backstop）|
-| ⑥ `core/readonly_producer.py::_write_media_images` | `crop_to_poster` cover → poster | ✅ T3 已保護（只有 preflight）|
+| ⑤ `core/readonly_assets.py::_write_media_images` | `copy2` cover → fanart | ✅ T3 已保護（preflight ＋ `SameFileError` backstop）|
+| ⑥ `core/readonly_assets.py::_write_media_images` | `crop_to_poster` cover → poster | ✅ T3 已保護（只有 preflight）|
 | ⑦ `core/organizer.py::organize_file` 的**第三份內聯實作** | 已改為呼叫 `generate_jellyfin_images` | ✅ T3 已消滅（不再是獨立實作，同檔保護 100% 繼承自 ①②）|
-| ⑧ `core/readonly_producer.py::_write_cover_copy` | `copyfile` 來源封面 → 正典封面位置 | ✅ pre-merge red-team 補（2338c62d）＋ round-1 P2 加 `exists(dst)`（a552f674）＋ round-3 P1 加 collision policy：**`dst` 已存在一律不覆寫**|
+| ⑧ `core/readonly_assets.py::_write_cover_copy` | `copyfile` 來源封面 → 正典封面位置 | ✅ pre-merge red-team 補（2338c62d）＋ round-1 P2 加 `exists(dst)`（a552f674）＋ round-3 P1 加 collision policy：**`dst` 已存在一律不覆寫**|
 
 **collision policy（Codex PR#125 round-3 P1，2026-08-05）**：同檔判斷擋得住「src 與 dst
 是同一個檔」，擋不住「src 與 dst 是**兩個不同的 curator 原檔**」。collocated 佈局
@@ -80,14 +80,14 @@ stub 恆回同名 `.jpg`，逐字等價）；`scanner.py` 的 `_cover_base_stem`
 - **來源層**：`resolve_ingest_plan` 的第三元素改為**宣告所有存在的 sidecar**
   （`'fanart'` 不再恆 `None`）——原本那個 `None` 的前提是「`cover_fs` 會等於 fanart
   路徑」，在上述佈局下為假。
-| ⑨ `core/readonly_producer.py::_copy_curator_sidecar` | `copy2` curator **sidecar** → fanart | ✅ round-2 P1 已保護（preflight ＋ `SameFileError` backstop；兩個 slot 共用同一個 choke point）|
+| ⑨ `core/readonly_assets.py::_copy_curator_sidecar` | `copy2` curator **sidecar** → fanart | ✅ round-2 P1 已保護（preflight ＋ `SameFileError` backstop；兩個 slot 共用同一個 choke point）|
 | ⑩ 同上 | `copy2` curator **sidecar** → poster | ✅ 同 ⑨（不再各自 `copy2`）|
 
 （`core/organizer.py:506` 的 `copy2` 在 `crop_to_poster` **內部**——「已是直向、無需
 裁切」的葉節點分支，它的保護 100% 繼承自呼叫端 ②④⑥ 的 preflight，不是獨立寫入點。）
 
 `generate_jellyfin_images` 的呼叫端因此從 2 處變 3 處：`web/routers/scanner.py`
-（既有）、`core/readonly_producer.py::_write_media_images`（既有）、
+（既有）、`core/readonly_assets.py::_write_media_images`（既有）、
 `core/organizer.py::organize_file`（T3 新增，見下方）。
 """
 
@@ -184,7 +184,7 @@ def same_target_verdict(src: str, dst: str) -> tuple[bool, bool]:
     `result['poster']` / `result['fanart']` 設成 `True`。跳過寫入是對的（安全側，
     見下方 fail-closed 理由不變）；但宣稱成功是假的——目的檔案實際上完全沒有被
     建立。這個假成功會沿著呼叫鏈往下傳導、造成兩個具體後果：
-    1. `core/readonly_producer.py` 唯讀路徑把 `result['poster']`/`result['fanart']`
+    1. `core/readonly_assets.py` 唯讀路徑把 `result['poster']`/`result['fanart']`
        轉成 `generate_nfo(has_poster=..., has_fanart=...)` 的旗標——NFO 因此寫出
        指向**不存在**檔案的 image tag（懸空引用，正是 CD-112-16／AC7 要消滅的
        那一類）。
@@ -213,8 +213,8 @@ def same_target_verdict(src: str, dst: str) -> tuple[bool, bool]:
     的前兩格，因為它們的「同一檔」判斷有實證依據（字串相等或 `samefile` 明確
     回答），不確定的只有「未知 `OSError` 底下 dst 究竟長什麼樣」這一件事。
 
-    供 `organizer.py`（本 PR）、`enricher.py:294`、`readonly_producer.py:763`
-    （T3）共三處呼叫，是 CD-112-8「路徑相等或 `os.path.samefile`」原文的單一
+    呼叫端（不附行號，行號會過期）：`organizer.py`、`enricher.py`、
+    `readonly_assets.py`，是 CD-112-8「路徑相等或 `os.path.samefile`」原文的單一
     真理來源實作（CD-112-1）。外部庫工具（MDCX/Javinizer 等）常把
     `<stem>-poster.jpg` 建成 `<stem>.jpg` 的 hardlink 或 symlink——此時字串不等
     但兩個路徑是同一個 inode，若不攔下，`crop_to_poster` 會**就地覆寫使用者的

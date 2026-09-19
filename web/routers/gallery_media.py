@@ -22,7 +22,7 @@ from core.config import load_config, iter_gallery_sources, get_gallery_source_pa
 from core.database import get_db_path, VideoRepository
 from core.multipart_group import resolve_group
 from core.video_extensions import get_proxy_extensions
-from core.readonly_producer import resolve_output_root
+from core.readonly_paths import resolve_output_root
 from core import thumbnail_cache
 from core.logger import get_logger
 

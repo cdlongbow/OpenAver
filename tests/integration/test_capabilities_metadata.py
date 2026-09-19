@@ -103,6 +103,26 @@ class TestEnrichSingleMetadataSchema:
         assert "original_title" in desc
         assert "400" in desc or "拒絕" in desc
 
+    def test_metadata_description_does_not_mention_readonly(self, client):
+        """AC-6：capabilities 不新增唯讀相關字樣（今天已無，這是回歸鎖，防手滑）。
+
+        同時鎖 properties 鍵集合：readonly_action 不得出現在 enrich_single 的
+        input_schema.properties 裡（只查 description 會漏掉「加了欄位但 description
+        沒寫唯讀兩字」的洩漏）。
+        """
+        data = client.get("/api/capabilities").json()
+        props = _tool(data, "enrich_single")["input_schema"]["properties"]
+        desc = props["metadata"]["description"]
+        assert "readonly_action" not in desc
+        assert "唯讀" not in desc
+        assert "readonly" not in desc.lower()
+        assert "readonly_action" not in props
+
+    def test_confirmation_required_unchanged_after_t5(self, client):
+        """DoD-4：enrich_single 的 confirmation_required 值與本 task 改動前相同（False）。"""
+        data = client.get("/api/capabilities").json()
+        assert _tool(data, "enrich_single").get("confirmation_required") is False
+
 
 class TestEnrichSingleWriteCoverDescription:
     """DoD-3 / CD-135-17：只改 enrich_single 的 write_cover，另兩處一字不動。"""

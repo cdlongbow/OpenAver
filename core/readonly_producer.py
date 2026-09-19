@@ -21,21 +21,16 @@ Canonical Decisions enforced here:
 
 from __future__ import annotations
 
-import glob
-import hashlib
 import os
-import shutil
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
-from core import thumbnail_cache
-from core.config import STEM_IMAGE_MODES, iter_gallery_sources, normalize_external_manager
-from core.cover_attributes import effective_tags
-from core.cover_layout import nfo_image_flag, resolve_cover_target, same_target_verdict
-from core.database import Video, get_db_path
+from core import readonly_assets, readonly_paths, thumbnail_cache
+from core.config import STEM_IMAGE_MODES, normalize_external_manager
+from core.database import Video
 from core.enrich_contract import (
     EnrichResult,
     apply_cover_preserve,
@@ -56,32 +51,16 @@ from core.nfo_read import (
     nfo_series_name,
     nfo_text,
 )
-from core.nfo_stat import NFO_MTIME_REFRESH, nfo_mtime_or_none
 from core.nfo_updater import parse_nfo
-from core.organizer import (
-    _detect_suffixes,
-    _detect_vr_cluster,
-    _strip_num_prefixes,
-    crop_to_poster,
-    download_image,
-    format_string,
-    generate_jellyfin_images,
-    generate_nfo,
-    sanitize_filename,
-    truncate_title,
-    truncate_to_chars,
-)
+from core.organizer import _strip_num_prefixes
 from core.path_utils import (
-    CURRENT_ENV,
     is_fs_path_under_dir,
     is_path_under_dir,
     normalize_path,
-    reverse_path_mapping,
     to_file_uri,
     uri_to_fs_path,
     uri_to_local_fs_path,
 )
-from core.readonly_source import _canonical_source_prefix
 from core.scraper import search_jav, search_jav_single_source
 from core.video_extensions import get_video_extensions
 
@@ -170,1074 +149,6 @@ def _should_skip(source_uri: str, attempted_index: dict, force: bool = False) ->
     if force:
         return False
     return attempted_index.get(source_uri, 0) > 0
-
-
-# ---------------------------------------------------------------------------
-# TASK-89a-T2: output-root resolution (CD-89a-7)
-# ---------------------------------------------------------------------------
-
-def _derive_source_name(source_path: str) -> str:
-    """Derive an App-managed output-folder name for a readonly source (pure, no I/O).
-
-    basename = sanitize_filename(Path(...).name) — folder-name semantics, `.name`
-    not `.stem` (a source folder called "Movies.Archive" must not be truncated to
-    "Movies").
-
-    A deterministic short code (sha1[:6] of the canonicalized source path) is
-    ALWAYS appended (CD-89a-7 — Opus-pinned Option B, 2026-07-03): the folder name
-    depends ONLY on this source's own path, never on sibling sources, so adding or
-    removing an unrelated source can never flip an existing source's effective
-    output root (that flip would orphan every row already written under it — the
-    exact churn 89a exists to eliminate). Two different sources sharing the same
-    basename therefore never collide; the same source resolves to the same name on
-    every call (stability lock).
-
-    Falls back to ``src-<shortcode>`` when sanitize_filename strips the basename to
-    an empty string (e.g. source path is a drive root ``D:\\`` or a UNC share root)
-    so an empty folder name is never produced.
-    """
-    # uri_to_fs_path already normalizes internally (strip URI prefix → unquote →
-    # normalize_path with a try/except fallback) — do NOT re-run normalize_path
-    # again before handing the result to to_file_uri(). Stacking those two calls
-    # is a banned lint idiom (see test_no_normalize_before_to_file_uri) because a
-    # standalone normalize_path() raises ValueError on foreign-platform path
-    # strings (e.g. a Windows path fed to a Linux CI run), which uri_to_fs_path
-    # already guards against via its own try/except.
-    fs_path = uri_to_fs_path(source_path)  # uri-no-reverse: native config path (DirectoryConfig.path), no DB-mapped namespace
-    canonical = to_file_uri(fs_path)
-    shortcode = hashlib.sha1(canonical.encode()).hexdigest()[:6]
-    basename = sanitize_filename(Path(fs_path).name)
-    if not basename:
-        return f"src-{shortcode}"
-    return f"{basename}-{shortcode}"
-
-
-def resolve_output_root(source, config: dict) -> str:
-    """Resolve the effective output root for a readonly source (CD-89a-7).
-
-    Reads the GLOBAL flavour (config['scraper']['external_manager']), not a
-    per-source field (CD-89a-2: flavour is global).
-
-    - off (or any value not in STEM_IMAGE_MODES) → fixed App-managed folder
-      ``output/lib/<derived-source-name>`` (native FS path string, NOT passed
-      through to_file_uri — callers normalize_path()/to_file_uri() it themselves,
-      matching the existing ``source.output_path`` convention so call sites need
-      minimal changes). Structurally guarantees a non-empty output root so off
-      sources never abort with zero videos produced.
-    - jellyfin/emby/kodi → source.output_path verbatim (may be empty — media-server
-      flavours still require the user to configure it; callers keep their existing
-      empty-string guards unchanged).
-    """
-    external_manager = config.get("scraper", {}).get("external_manager", "off")
-    if external_manager not in STEM_IMAGE_MODES:
-        name = _derive_source_name(source.path)
-        return str(get_db_path().parent / "lib" / name)
-    return source.output_path
-
-
-def resolve_owning_output_root(canonical_uri: str, config: dict) -> Optional[tuple]:
-    """Find the innermost readonly gallery source that owns ``canonical_uri`` and
-    resolve its effective output root (CD-104-5).
-
-    Returns ``(source, output_root, output_uri)`` where ``source`` is the
-    ``DirectoryConfig`` (needed downstream by ``_produce_one``), ``output_root``
-    is a native FS path string (``normalize_path()``-d), and ``output_uri`` is
-    its ``file:///`` form. Returns ``None`` when no readonly source owns the
-    path — the router's signal to fall through to its existing (non-readonly)
-    sidecar-write code path unchanged.
-
-    Longest-canonical-prefix-wins, mirroring ``is_path_readonly``'s nested-
-    source semantics (readonly_source.py) exactly — but resolving to the WHICH
-    source (an object), not just a boolean:
-    - Enumerate readonly sources (``iter_gallery_sources`` + ``.readonly``),
-      canonicalize each with ``_canonical_source_prefix`` (same mapped
-      namespace as DB rows), keep the longest prefix that contains
-      ``canonical_uri``.
-    - No readonly source contains it → ``None`` (not readonly at all).
-    - A writable source's prefix ALSO contains it and is >= as long (ties go to
-      writable, matching ``is_path_readonly``'s ``best_ro > best_wr`` — a
-      strictly-longer readonly prefix wins) → ``None`` (a nested writable
-      override; the file is actually writable, not readonly — do not route).
-    - Otherwise resolve via ``resolve_output_root(source, config)``. An empty
-      result (media-server flavour with no configured ``output_path``) is
-      returned as ``(source, '', '')`` rather than ``None`` — the caller still
-      knows WHICH source owns the file (for its own "未設定輸出路徑" error
-      message) but has to reject the write itself, since an empty root cannot
-      be normalize_path()'d/to_file_uri()'d meaningfully.
-
-    Malformed source paths (``_canonical_source_prefix`` raising ``ValueError``,
-    e.g. bad UNC forms) are skipped for that one source (mirrors
-    ``readonly_source_prefixes``/``writable_source_prefixes``'s own per-entry
-    ``except ValueError: continue`` — one dirty config entry must not sink the
-    whole resolution).
-    """
-    gallery = config.get("gallery", {})
-    path_mappings = gallery.get("path_mappings", {})
-
-    best_source = None
-    best_ro_len = -1
-    for src in iter_gallery_sources(gallery):
-        if not src.readonly or not src.path:
-            continue
-        try:
-            prefix = _canonical_source_prefix(src.path, path_mappings)
-        except ValueError:
-            continue
-        if is_path_under_dir(canonical_uri, prefix) and len(prefix) > best_ro_len:
-            best_ro_len = len(prefix)
-            best_source = src
-
-    if best_source is None:
-        return None
-
-    best_wr_len = -1
-    for src in iter_gallery_sources(gallery):
-        if src.readonly or not src.path:
-            continue
-        try:
-            prefix = _canonical_source_prefix(src.path, path_mappings)
-        except ValueError:
-            continue
-        if is_path_under_dir(canonical_uri, prefix) and len(prefix) > best_wr_len:
-            best_wr_len = len(prefix)
-
-    if best_wr_len >= best_ro_len:
-        return None  # writable override (or a tie — config self-contradiction, favor writable)
-
-    effective = resolve_output_root(best_source, config)
-    if not (effective or "").strip():
-        return (best_source, '', '')
-
-    output_root = normalize_path(effective)
-    output_uri = to_file_uri(output_root, path_mappings)
-    return (best_source, output_root, output_uri)
-
-
-# ---------------------------------------------------------------------------
-# T-2: naming helpers (pure functions). Movie-dir resolution itself
-#       (_resolve_movie_dir, TASK-89a-T3) lives further below since it depends
-#       on _folder_parts defined here.
-# ---------------------------------------------------------------------------
-
-def _format_data(meta: dict, source_fs_path: str, config: dict) -> dict:
-    """Build format_data dict from scraped meta (off-mode flavour).
-
-    Replicates organizer.py:859-877 (off branch):
-    - strip number prefixes from title
-    - truncate title to max_title_length
-    - detect suffix once (off: unfiltered suffix_keywords)
-
-    The same truncated title feeds both _folder_parts and _build_basename
-    so the two never drift (CD-88b-3 / Codex P2).
-    """
-    number = meta['number']
-    title = _strip_num_prefixes(meta.get('title', ''), number)
-    title = truncate_title(title, config.get('max_title_length', 50))
-    fd: dict = {
-        'number': number,
-        'title': title,
-        'actors': meta.get('actors', []),
-        'maker': meta.get('maker', ''),
-        'date': meta.get('date', ''),
-    }
-    fd['suffix'] = _detect_suffixes(
-        os.path.basename(source_fs_path),
-        config.get('suffix_keywords', []),
-    )
-    return fd
-
-
-def _folder_parts(format_data: dict, config: dict) -> list:
-    """Return folder layer strings (max 3) replicating organizer.py:915-933."""
-    layers = config.get('folder_layers') or [
-        p.strip()
-        for p in config.get('folder_format', '{num}').replace('\\', '/').split('/')
-        if p.strip()
-    ]
-    max_chars = min(config.get('max_filename_length', 60), 120)
-    parts = []
-    for layer in layers[:3]:
-        part = truncate_to_chars(format_string(layer, format_data, use_fallback=True), max_chars)
-        if part:
-            parts.append(part)
-    return parts
-
-
-def _build_basename(format_data: dict, source_fs_path: str, config: dict) -> str:
-    """Build filename stem (no extension) replicating organizer off-mode filename block.
-
-    Replicates organizer.py:936-971 (off branch):
-    - suffix taken from format_data['suffix'] (not recomputed)
-    - {suffix} two-pass protection when token present in template
-    - vr_tail appended last
-    - final cap to max_chars
-    - NO multipart / part_tail (off is no-op, CD-88b-3)
-    """
-    original_filename = os.path.basename(source_fs_path)
-    original_ext = os.path.splitext(source_fs_path)[1]
-
-    vr_cluster = _detect_vr_cluster(original_filename)
-    vr_tail = f'_{vr_cluster}' if vr_cluster else ''
-
-    # off mode: part_tail always ''
-    reserve = len(vr_tail)
-
-    max_filename_chars = min(config.get('max_filename_length', 60), 120)
-    max_chars = max_filename_chars - len(original_ext)
-
-    filename_template = config.get('filename_format', '{num} {title}')
-    suffix = format_data.get('suffix', '')
-
-    if suffix and '{suffix}' in filename_template:
-        no_suffix_data = dict(format_data, suffix='')
-        base_without_suffix = format_string(filename_template, no_suffix_data)
-        base_budget = max(0, max_chars - len(suffix) - reserve)
-        if base_budget == 0:
-            filename_base = truncate_to_chars(suffix, max(0, max_chars - reserve))
-        else:
-            base_without_suffix = truncate_to_chars(base_without_suffix, base_budget)
-            filename_base = base_without_suffix + suffix
-    else:
-        filename_base = format_string(filename_template, format_data)
-        filename_base = truncate_to_chars(filename_base, max(0, max_chars - reserve))
-
-    filename_base = filename_base + vr_tail
-    filename_base = truncate_to_chars(filename_base, max_chars)
-    return filename_base
-
-
-# ---------------------------------------------------------------------------
-# TASK-89a-T3 (CD-89a-3): movie-dir resolution — read DB stored value & reuse
-# in place when still valid, else allocate via sanitize_filename(number) +
-# increment. Replaces the old owners/_movie_leaf_base/_movie_dir cover-index
-# reconstruction model.
-# ---------------------------------------------------------------------------
-
-_MAX_INCREMENT = 1000  # guard against a theoretical infinite loop (TASK-89a-T3)
-
-
-def _resolve_movie_dir(
-    repo,
-    source_uri: str,
-    existing,                    # Optional[Video] — caller already ran repo.get_by_path(source_uri)
-    output_root: str,            # fs path (produce_source's existing output_root)
-    output_uri: str,             # to_file_uri(output_root, path_mappings)
-    format_data: dict,           # feeds _folder_parts (parent layers) + format_data['number'] (leaf)
-    config: dict,                # scraper_cfg
-    allocated_this_run: set,     # URIs already handed out THIS produce_source call
-    path_mappings: dict,
-) -> tuple[Path, str]:
-    """Resolve the per-movie directory: read-and-reuse, else allocate + increment.
-
-    Returns (movie_dir_fs_path, output_dir_uri_to_store) (TASK-89a-T3 / CD-89a-3).
-
-    Read-and-reuse: if the DB already has a row for this source whose stored
-    output_dir still falls under the CURRENT output root, keep using that exact
-    directory (idempotent re-scrape, no re-allocation, no orphaning).
-    Otherwise (first time, or the effective output root moved) allocate a new
-    slot: leaf = sanitize_filename(number), incrementing a numeric suffix until
-    a candidate is free in the DB, on disk, and within this run's own
-    allocations.
-    """
-    if existing and existing.output_dir and is_path_under_dir(existing.output_dir, output_uri):
-        movie_dir_uri = existing.output_dir
-        # TASK-89a-T5 (CD-89a-6): mapped-output 定位。uri_to_fs_path 本身不反解
-        # path_mappings，WSL+UNC mapped 輸出根下會定位到錯誤的本機路徑，故在此
-        # targeted 反解。只反解回傳給呼叫端的 fs Path，不反解存回 DB 的 URI
-        # （movie_dir_uri 維持 existing.output_dir 原值），否則下一輪
-        # is_path_under_dir(existing.output_dir, output_uri) 比對會失準。
-        movie_dir_fs = uri_to_fs_path(movie_dir_uri)  # uri-no-reverse: already paired with reverse_path_mapping on next line
-        if CURRENT_ENV == 'wsl' and path_mappings:
-            movie_dir_fs = reverse_path_mapping(movie_dir_fs, path_mappings) or movie_dir_fs
-        return Path(movie_dir_fs), movie_dir_uri
-
-    parts = _folder_parts(format_data, config)
-    base_leaf = sanitize_filename(format_data['number'])
-    n = 1
-    while True:
-        leaf = base_leaf if n == 1 else f"{base_leaf}-{n}"
-        candidate_fs = Path(output_root, *parts, leaf)
-        candidate_uri = to_file_uri(str(candidate_fs), path_mappings)
-        taken = (
-            candidate_uri in allocated_this_run
-            or repo.is_output_dir_taken(candidate_uri, exclude_path=source_uri)
-            or candidate_fs.exists()
-        )
-        if not taken:
-            break
-        n += 1
-        if n > _MAX_INCREMENT:
-            raise RuntimeError(f"movie_dir increment 超過上限: {base_leaf}")
-
-    allocated_this_run.add(candidate_uri)
-    return candidate_fs, candidate_uri
-
-
-# ---------------------------------------------------------------------------
-# TASK-89a-T4 (Codex #3): stale-asset cleanup — reconstruct the previous run's
-# basename from the DB row, then wipe that movie's own old singleton/extrafanart
-# files, so re-scraping with a corrected title overwrites in place instead of
-# piling up `<old>.* + <new>.*` side by side.
-#
-# T5 follow-up (Codex PR review P2): cleanup runs AFTER the corresponding new
-# asset has been written successfully, not before. Singletons (nfo/cover/
-# poster/fanart) are cleaned only once `generate_nfo` has already returned
-# True, and only the assets whose new write actually succeeded (has_cover/
-# has_poster/has_fanart) — so a partial failure (cover download false, or
-# generate_nfo raising) leaves the OLD assets on disk instead of deleting them
-# up front and then failing to produce replacements. Extrafanart is the
-# exception: it's non-critical and each run rewrites the whole set, so it is
-# still cleaned before its own download loop.
-# ---------------------------------------------------------------------------
-
-def _build_old_base(existing, source_fs_path: str, config: dict) -> str:
-    """Reconstruct the basename `_write_movie_assets` used on the PREVIOUS run.
-
-    existing is the Video row already read by produce_source (T3, repo.get_by_path).
-    Returns '' (skip cleanup) when there is nothing to clean up:
-      - existing is None (first generation for this source file)
-      - existing.title is empty (defensive; T3/_upsert_db always writes meta['title'])
-      - existing.number is empty (defensive; search_jav/_upsert_db always writes a
-        non-empty number, but _format_data has no .get for 'number' — guard here
-        rather than let a KeyError/empty leaf surface deep in _build_basename)
-
-    Otherwise, maps the OLD DB fields back onto the same meta-dict shape
-    `_format_data` expects (DB → meta key names differ: actresses→actors,
-    release_date→date) and replays `_format_data` + `_build_basename` against the
-    SAME source_fs_path/config used this run — source_fs_path is the same physical
-    source file both times, so suffix/vr_tail/ext are identical across runs and
-    only the meta-driven parts (title/number/actors/maker/date) can differ.
-
-    existing.title is the RAW scraped title as stored by _upsert_db (meta['title'],
-    not the already-truncated format_data['title']) — running it back through
-    _format_data reapplies the same strip/truncate transform that produced the
-    original basename, so old_base equals what was actually written last time.
-    """
-    if existing is None or not existing.title or not existing.number:
-        return ''
-    old_meta = {
-        'number': existing.number,
-        'title': existing.title,
-        'actors': existing.actresses,
-        'maker': existing.maker,
-        'date': existing.release_date,
-    }
-    old_format_data = _format_data(old_meta, source_fs_path, config)
-    return _build_basename(old_format_data, source_fs_path, config)
-
-
-def _clean_stale_extrafanart(movie_dir: str) -> None:
-    """Delete this movie's own previous-run extrafanart samples (`fanart*.jpg`).
-
-    Called from `_write_movie_assets` BEFORE the extrafanart download loop,
-    whenever old_base is non-empty (caller's responsibility to gate — first
-    generation has nothing to clean). No old_base parameter is needed: the glob
-    is scoped to the fixed `extrafanart/` subdir and the `fanart*.jpg` pattern,
-    independent of basename. Safe to run pre-write because extrafanart is
-    non-critical (a missing sample degrades silently) and each run rewrites the
-    whole set from scratch — unlike the singleton assets below, there is no
-    "old cover/NFO now missing" failure mode to worry about here.
-
-    Never a bare `*.jpg`/`*.*` glob, never rmtree — both would delete files the
-    user placed in the same directory themselves. Missing files are a no-op
-    (unlink(missing_ok=True)); this must never raise.
-    """
-    ef_dir = Path(movie_dir) / 'extrafanart'
-    if not ef_dir.is_dir():
-        return
-    for f in ef_dir.glob('fanart*.jpg'):
-        try:
-            f.unlink(missing_ok=True)
-        except OSError:
-            logger.warning("[readonly_producer] stale extrafanart 清除失敗（略過）: %s", f)
-
-
-def _clean_stale_singletons(
-    movie_dir: str,
-    old_base: str,
-    new_base: str,
-    has_cover: bool,
-    has_poster: bool,
-    has_fanart: bool,
-    has_strm: bool = False,
-) -> None:
-    """Delete this movie's own previous-run singleton assets (nfo/cover/poster/
-    fanart), anchored strictly on old_base.
-
-    Called from `_write_movie_assets` AFTER `generate_nfo` has already returned
-    True — i.e. only once the new NFO write actually succeeded. This is
-    deliberately post-write, not pre-write (T5 follow-up, Codex PR review P2):
-    cleaning before writing would delete the OLD assets even when the new write
-    fails partway (cover download false, or generate_nfo raising), leaving
-    neither the old nor the new assets on disk. Running it after means a failed
-    write always leaves the previous run's assets intact.
-
-    No-op when old_base is '' (first generation — nothing to clean) or
-    old_base == new_base (title unchanged — the new write already overwrote the
-    same-named file in place; deleting here would clobber what generate_nfo /
-    download_image / generate_jellyfin_images just wrote, since this runs after
-    the write completes).
-
-    Each asset is deleted only when this run's corresponding write actually
-    succeeded: `<old_base>.jpg` only when has_cover, `<old_base>-poster.*` only
-    when has_poster, `<old_base>-fanart.*` only when has_fanart, `<old_base>.strm`
-    only when has_strm (TASK-90a-T3, media-server flavour). A transient
-    download/generation failure this run keeps the matching old file on disk
-    rather than leaving a hole. `<old_base>.nfo` is unconditional — this
-    function is only ever called once nfo_ok is already True.
-
-    Deliberately narrow: exact filenames for the singletons (extension glob
-    only for poster/fanart, defensive against a future non-.jpg format). Never
-    a bare `*.jpg`/`*.*` glob, never rmtree — both would delete files the user
-    placed in the same directory themselves. Missing files are a no-op
-    (unlink(missing_ok=True)); this must never raise.
-    """
-    if not old_base or old_base == new_base:
-        return
-    d = Path(movie_dir)
-    # old_base comes from the scraped title and can legally contain glob
-    # metacharacters (sanitize_filename keeps '[' ']' — common in language/sub
-    # tags like "[Chinese Sub]"). Escape before globbing the poster/fanart
-    # extension patterns, else Path.glob treats '[...]' as a char class and
-    # silently misses the file (residual junk survives — a narrow Codex #3
-    # recurrence). The nfo/cover singletons use literal joins, no escape needed.
-    esc = glob.escape(old_base)
-    targets = [d / f"{old_base}.nfo"]
-    if has_cover:
-        targets.append(d / f"{old_base}.jpg")
-    # strm is a media-server flavour extra (TASK-90a-T3): exact filename, no glob
-    # (literal join like nfo/cover, no glob.escape needed). Only cleaned when this
-    # run actually re-wrote the strm (has_strm) — a transient strm write failure
-    # keeps the old <old_base>.strm rather than orphaning it, symmetric with
-    # has_cover/has_poster/has_fanart gating. Prevents a title-drift double
-    # library entry in Emby/Jellyfin (<old>.strm + <new>.strm side by side).
-    if has_strm:
-        targets.append(d / f"{old_base}.strm")
-    if has_poster:
-        targets.extend(d.glob(f"{esc}-poster.*"))
-    if has_fanart:
-        targets.extend(d.glob(f"{esc}-fanart.*"))
-    for target in targets:
-        try:
-            Path(target).unlink(missing_ok=True)
-        except OSError:
-            logger.warning("[readonly_producer] stale asset 清除失敗（略過）: %s", target)
-
-
-# ---------------------------------------------------------------------------
-# TASK-90a-T3: media-server .strm sidecar (CD-90a-2 / CD-90a-6)
-# ---------------------------------------------------------------------------
-
-def _apply_path_mapping(source_fs_path: str, mappings: dict) -> str:
-    """Rewrite a source FS-path prefix to the playback-side namespace.
-
-    strm files are consumed by an external media server (Emby/Jellyfin/Kodi) that
-    may see the same physical storage under a DIFFERENT mount path than OpenAver's
-    host (e.g. OpenAver on Windows sees ``Z:\\115\\x.mp4`` while the media server
-    on the NAS sees ``/volume1/movie/x.mp4``). mappings maps ``local_prefix ->
-    remote_prefix``; the matched prefix is swapped and the remainder appended.
-
-    Matching is done in ``file:///`` URI space: both source and each local_prefix
-    are converged via ``to_file_uri`` (host-independent, never raises, no
-    percent-encoding in this codebase). This fixes two Codex findings:
-
-    - P1 (cross-namespace silent miss): a Windows-display prefix ``C:\\115`` in
-      config now matches a WSL-native source ``/mnt/c/115/x.mp4`` (both converge
-      to ``file:///C:/115``). Raw-string compare would have silently missed and
-      emitted the un-mapped source path.
-    - P2 (trailing separator): a local_prefix with a trailing separator
-      (``/mnt/z/115/``) no longer misses — the URI form is rstrip'd of ``/``.
-
-    A rule matches when the source URI equals the (trailing-slash-stripped) local
-    URI OR the char immediately after it is ``/`` (URIs always use forward-slash,
-    so no OS branch). This stops ``file:///Z:/1150/a`` from wrongly matching a
-    ``file:///Z:/115`` rule. When several rules match, the LONGEST local URI wins
-    (deterministic, independent of dict insertion order). Empty mappings or no
-    match returns source_fs_path unchanged (v1 backward compat).
-
-    CD-90a-6: only source/local_prefix are converged (for MATCHING). The remote
-    result is written VERBATIM and is NEVER normalized — it is a foreign playback
-    namespace (a bare Unix ``/volume1/...`` fed to to_windows_path on a Windows
-    host raises). We only rstrip trailing separators off remote_prefix for join
-    hygiene; the appended remainder is taken from the URI (always forward-slash).
-    """
-    if not mappings:
-        return source_fs_path
-    su = to_file_uri(source_fs_path)  # converge source → file:/// URI (host-independent, no raise)
-    matched = []
-    for local_prefix, remote_prefix in mappings.items():
-        # remote 空的半填規則 skip（PR #93 P2 縱深防禦）：remote='' 會讓下方
-        # `remote.rstrip() + su[len(lu):]` 把 local 前綴剝掉只剩後綴（如 /movie.mp4）、
-        # 破壞 strm 內容。前端已過濾不存半填規則，此處防手改 config.json。只擋空字串；
-        # 非字串 remote 仍照舊流到 rstrip 拋 TypeError → _write_strm best-effort 接（契約不變）。
-        if isinstance(remote_prefix, str) and not remote_prefix.strip():
-            continue
-        lu = to_file_uri(local_prefix).rstrip('/')  # converge + strip trailing sep (P2); URI is always '/'
-        if su == lu or (su.startswith(lu) and su[len(lu):len(lu) + 1] == '/'):
-            matched.append((lu, remote_prefix))
-    if not matched:
-        return source_fs_path
-    lu, remote_prefix = max(matched, key=lambda kv: len(kv[0]))
-    # path-contract-ok: remote 為播放端命名空間、verbatim 寫入不 normalize；僅去尾分隔符做
-    # join 衛生（remainder 由 URI 取、恆前導 '/'）。source/local 收斂到 file:/// URI 供比對修
-    # Codex P1（跨命名空間 C:\ ↔ /mnt/c/ 靜默失效）+ P2（尾分隔符）。
-    return remote_prefix.rstrip('/\\') + su[len(lu):]
-
-
-def _write_strm(base_stem: str, source_fs_path: str, config: dict, strm_mappings: dict = None) -> bool:
-    """Write a single-line ``<base_stem>.strm`` pointing at the source video (best-effort).
-
-    Content = _apply_path_mapping(source_fs_path, mappings) written as one UTF-8
-    line, no BOM. The REMOTE side is written verbatim / never normalized; matching
-    converges source+local_prefix to file:/// URI space (see _apply_path_mapping /
-    CD-90a-6).
-
-    config is the scraper section (produce_source passes scraper_cfg at call site);
-    the mapping table defaults to a SAME-LEVEL read — ``config.get('strm_path_mappings', {})``,
-    NOT via a nested ``config.get('scraper', ...)`` (that would always yield {} and
-    silently disable mappings). This mirrors line ~580's same-level
-    ``config.get('external_manager', 'off')`` read.
-
-    strm_mappings (PR #93 五審四次 P2, option C): when provided (not None), it OVERRIDES
-    ``config['strm_path_mappings']`` — produce_source passes a FRESH per-file read so the
-    generate path uses the current mapping, not the run-start frozen snapshot. This closes
-    the disconnect-tail residual: the SSE watcher clears the generate token the instant it
-    detects a disconnect, but the producer thread only checks should_abort at each per-file
-    checkpoint, so it can finish ONE more file's _write_strm after the token is gone → in that
-    window another tab's settings save could land a new mapping (the strm-mapping gate no
-    longer sees an in-flight generate) and that last file would otherwise write with the STALE
-    frozen mapping and never self-heal. A fresh read makes even that last file use the current
-    mapping. None preserves the legacy read (rewrite_strm + unit tests pass config verbatim).
-
-    Best-effort (spec-90 §90a.2.2): strm is an EXTRA product for external media
-    servers, not an OpenAver-required asset. A write failure logs a warning and
-    returns False — it never raises, never marks the whole movie failed (unlike
-    NFO, which is OpenAver's own required metadata). Returns True on success; the
-    bool also feeds _clean_stale_singletons' has_strm gating.
-    """
-    strm_fs = base_stem + '.strm'
-    try:
-        # mapping + write both inside try: raw config is NOT model_validated on the
-        # read path (_load_config_unlocked returns raw dict), so a hand-edited
-        # config.json with non-str mapping values could make _apply_path_mapping
-        # TypeError. best-effort's promise (§90a.2.2: strm never fails the movie)
-        # must hold even then — catch broadly, warn, return False. Any masked bug
-        # still surfaces via the warning log.
-        mappings = strm_mappings if strm_mappings is not None else config.get('strm_path_mappings', {})
-        mapped = _apply_path_mapping(source_fs_path, mappings)
-        with open(strm_fs, 'w', encoding='utf-8') as f:
-            f.write(mapped)
-        return True
-    except Exception as e:  # noqa: BLE001 — best-effort auxiliary artifact, must never propagate
-        logger.warning("[readonly_producer] strm 寫入失敗（略過，best-effort）: %s (%s)", strm_fs, e)
-        return False
-
-
-# ---------------------------------------------------------------------------
-# T-3: write off-flavor assets + DB upsert (plan §5.2 / §6)
-# ---------------------------------------------------------------------------
-
-def _copy_curator_sidecar(src: str, dst: str, slot: str) -> Optional[bool]:
-    """Curator ``-poster``/``-fanart`` sidecar → the matching output slot,
-    VERBATIM. The single preflight-owning choke point for that copy — both
-    slots in ``_write_media_images`` go through here, neither calls
-    ``shutil.copy2`` on a sidecar itself.
-
-    Tri-state return (there are genuinely three outcomes, and collapsing any
-    two of them is what produced the bug below):
-
-    | 回傳 | 意思 | 呼叫端 |
-    |---|---|---|
-    | ``True``  | ``dst`` 現在持有 curator 原檔的內容 | 記 has_*=True，**不 generate** |
-    | ``False`` | 同一檔但無法確認（未知 ``OSError``）| 記 has_*=False，**不 generate**（fail-closed）|
-    | ``None``  | 沒複製成功、也沒有 curator 原檔會被蓋掉 | **落回 generate 分支** |
-
-    Codex PR#125 round-2 P1 (2026-08-05) — why the preflight is here at all:
-    when the readonly source's output root resolves back onto the source movie
-    directory AND the basename lands on the source stem, ``src`` and ``dst``
-    are the SAME file (the curator's own sidecar IS the output slot). The old
-    code copied first and asked later: ``shutil.copy2`` raised
-    ``SameFileError``, the broad ``except`` swallowed it into "copy failed",
-    and the slot fell through to the generate branch — whose own
-    ``same_target_verdict`` preflight compares ``cover_fs`` vs ``dst``, a
-    DIFFERENT pair that is legitimately "not the same file". So
-    ``crop_to_poster(cover_fs, poster_path)`` cropped the machine cover
-    straight over the curator's hand-picked portrait poster (reproduced:
-    379×538 blue → a crop of the 800×538 red cover, md5 changed). OpenAver's
-    own UI cannot show this — ``find_cover_image``'s L1.5 prefers ``-fanart``
-    — so the damage lands entirely on the Jellyfin/Emby/Kodi side, i.e. the
-    exact surface AC5's curator boundary ("**逐位元組保留 curator 原檔**") and
-    prd.md 技術決策 #6 ("衍生產物不回寫原檔") exist to protect. It is also a
-    REGRESSION of this branch, not a pre-existing bug: before ``_write_cover_copy``
-    learned the same-target case (commit 2338c62d/a552f674) the cover step
-    itself returned ``has_cover=False`` here and ``_write_media_images`` was
-    never reached.
-
-    Why the sidecar copy needs the preflight and not just a ``SameFileError``
-    catch: ``shutil.copyfile``'s internal ``_samefile`` swallows ``OSError``
-    and returns ``False``, so on a filesystem where ``os.path.samefile`` raises
-    (permission denied / some network shares — the case ``same_target_verdict``
-    was built for) ``copy2`` proceeds to open the destination ``'wb'`` and
-    truncates the very file it is reading from. That is the identical
-    corruption CD-112-8 already fenced off at the six ``cover → dst`` write
-    sites; the sidecar copies are ``sidecar → dst`` and were therefore
-    invisible to that inventory's own ``copy2(cover, *)`` grep (see
-    ``core.cover_layout``'s 交棒清單, rows ⑨/⑩).
-
-    ``is_same and certain`` still re-confirms ``dst`` on disk for the same
-    reason ``_write_cover_copy`` does (Codex PR#125 round-1 P2): the
-    ``src == dst`` cell of ``same_target_verdict`` answers by string comparison
-    with zero I/O, and ``src`` here comes from ``resolve_ingest_plan``'s
-    ``.exists()`` several I/O hops away. A sidecar that vanished in between is
-    NOT a passthrough to report as success — but there is also no curator file
-    left to clobber, so that case returns ``None`` (regenerate) rather than
-    ``False``.
-    """
-    is_same, certain = same_target_verdict(src, dst)
-    if is_same:
-        if not certain:
-            logger.warning(
-                f"[!] ingest {slot} 無法確認是否為同一檔（fail-closed，不覆寫、不宣稱成功）: {dst}"
-            )
-            return False
-        # 同一檔＝curator 原檔已經就在輸出位置上，本身就是 verbatim passthrough。
-        return True if os.path.exists(dst) else None
-    try:
-        shutil.copy2(src, dst)
-        return True
-    except shutil.SameFileError:
-        # preflight 之後、copy 之前才變成同一檔（別名 race）的 backstop；必須排在
-        # 下面的寬 except 之前（SameFileError 是 OSError 子類）。
-        return True
-    except Exception as e:  # noqa: BLE001 — mirror the generate path's broad catch; any copy failure falls through to generate
-        logger.warning(f"[!] ingest {slot} 原樣複製失敗，改由封面重建: {e}")
-        return None
-
-
-def _write_media_images(
-    cover_fs: str, base_stem: str, meta: dict, source_media: Optional[dict]
-) -> tuple[bool, bool]:
-    """Write ``-poster``/``-fanart`` images for one movie. Returns
-    ``(has_poster, has_fanart)``.
-
-    ``source_media is None`` (scrape/rescrape, or ingest with no detected
-    curator sidecars): delegates to ``generate_jellyfin_images`` EXACTLY as
-    before this fix — the ONE source of truth for the "generate from cover"
-    path (fanart = copy2(cover); poster = crop_to_poster(cover)) — byte-
-    identical for every caller that doesn't carry a 3rd cover_strategy
-    element (CD scrape/rescrape byte-identity guarantee).
-
-    ``source_media`` is a dict (ingest, curator sidecars detected — see
-    ``resolve_ingest_plan``'s cover-axis docstring): each slot is handled
-    independently.
-      - A detected sidecar (``source_media['poster']`` / ``['fanart']`` not
-        None) is copied VERBATIM via ``_copy_curator_sidecar`` (preflight +
-        ``shutil.copy2``) — byte-identical to the source, no crop/focal. An
-        ``OSError`` (source vanished mid-run) falls back to the SAME generate
-        step the slot would have used had no sidecar been detected at all.
-        When the sidecar IS the output slot (collocated curator library — see
-        ``_copy_curator_sidecar``'s Codex round-2 P1 note) the copy is a no-op
-        that reports success: it must NOT fall through to generate, because
-        the generate branch's own preflight compares ``cover_fs`` vs the slot
-        — a different pair — and would crop the cover over the curator's file.
-      - A missing slot (``None``) always falls back to that generate step —
-        this is the pre-fix behaviour for that slot, unchanged.
-    """
-    number = meta['number']
-    maker = meta.get('maker', '')
-
-    if source_media is None:
-        imgs = generate_jellyfin_images(cover_fs, base_stem, number=number, maker=maker)
-        return imgs.get('poster', False), imgs.get('fanart', False)
-
-    fanart_path = base_stem + '-fanart.jpg'
-    poster_path = base_stem + '-poster.jpg'
-
-    # fanart: verbatim copy of curator sidecar, else generate (copy2 of cover
-    # — matches generate_jellyfin_images's own fanart step byte-for-byte).
-    src_fanart = source_media.get('fanart')
-    has_fanart = _copy_curator_sidecar(src_fanart, fanart_path, 'fanart') if src_fanart else None
-    if has_fanart is None:
-        is_same, certain = same_target_verdict(cover_fs, fanart_path)
-        if is_same:
-            has_fanart = certain
-        else:
-            try:
-                shutil.copy2(cover_fs, fanart_path)
-                has_fanart = True
-            except shutil.SameFileError:
-                has_fanart = True
-            except Exception as e:
-                logger.warning(f"[!] generate_jellyfin_images fanart 複製失敗: {e}")
-                has_fanart = False
-
-    # poster: verbatim copy of curator sidecar, else generate (crop_to_poster
-    # of cover — matches generate_jellyfin_images's own poster step).
-    src_poster = source_media.get('poster')
-    has_poster = _copy_curator_sidecar(src_poster, poster_path, 'poster') if src_poster else None
-    if has_poster is None:
-        is_same, certain = same_target_verdict(cover_fs, poster_path)
-        if is_same:
-            has_poster = certain
-        else:
-            has_poster = crop_to_poster(cover_fs, poster_path, number=number, maker=maker)
-
-    return has_poster, has_fanart
-
-
-def _write_cover_copy(src: str, dst: str) -> bool:
-    """``cover_strategy == ('copy', src)`` cover write. Returns whether ``dst``
-    now holds a valid cover.
-
-    Pre-existing bug found by red-team during 112b pre-merge (2026-08-04):
-    when the readonly source's output root sits inside the source tree AND
-    ``movie_dir``/``base`` land back on the source directory/stem, ``src``
-    and ``dst`` (``resolve_cover_target``'s canonical position) can be the
-    SAME file. This was already reachable pre-112; CD-112-7 (curator
-    ``-fanart`` promoted to cover source when no same-stem cover exists)
-    opened a second path into it. Bare ``shutil.copyfile`` raises
-    ``SameFileError`` (an ``OSError`` subclass) in that case, which the old
-    bare ``except OSError:`` swallowed into ``has_cover=False`` — skipping
-    ALL of poster/fanart generation and writing an empty DB ``cover_path``
-    even though the cover is sitting right there on disk, intact (violates
-    AC5b). Same ``same_target_verdict`` preflight shape as
-    ``generate_jellyfin_images`` (CD-112b-1): ``certain`` — not a bare
-    ``True`` — drives the return value (CD-112-8 safety/honesty split);
-    ``SameFileError`` is a race backstop for "still-distinct-at-preflight,
-    same-by-copy-time" and MUST stay ahead of ``except OSError`` since it
-    subclasses it.
-
-    Codex PR#125 P2 (2026-08-05): the ``is_same`` branch additionally requires
-    ``dst`` to still be on disk. ``same_target_verdict``'s ``src == dst`` cell
-    answers by string comparison alone with zero I/O — it is the ONE cell of the
-    five that can return ``(True, True)`` for a path that does not exist (its own
-    docstring names this residual and says it "**必須重新評估**" once T3 makes
-    string equality the readonly hot path — this is that re-evaluation). The
-    other six ``same_target_verdict`` call sites re-confirm ``dst`` a few lines
-    earlier; this one does not — ``src`` comes from ``cover_strategy[1]``, whose
-    ``.exists()`` check happened back in ``resolve_ingest_plan`` several I/O hops
-    away, so an external delete in between lands here as a **false success**:
-    ``has_cover=True`` → poster/fanart "generated" → NFO writes dangling
-    ``<thumb>``/``<fanart>`` and the DB records a cover that is not there
-    (AC5b/AC7 violation). Reported false success is the categorically worse
-    outcome under CD-112-8, so this call site pays one ``os.path.exists``.
-    The check is deliberately HERE and not inside ``same_target_verdict``:
-    ``os.path.exists`` also returns False on permission errors, which would flip
-    a legitimately-True verdict for the other six call sites (that argument is
-    verbatim in ``cover_layout.same_target_verdict``'s residual note). It is a
-    no-op for the ``samefile``-alias cell, which already proved both paths stat.
-    """
-    is_same, certain = same_target_verdict(src, dst)
-    if is_same:
-        return certain and os.path.exists(dst)
-    if os.path.exists(dst):
-        # Collision policy (Codex PR#125 round-3 P1, 2026-08-05): ``dst`` already
-        # holds a cover, so NEVER overwrite it — report the existing file as the
-        # cover and write nothing.
-        #
-        # Why this is required, not merely nice: in a collocated layout (output
-        # root resolving back onto the source movie directory) a curator library
-        # carrying BOTH ``{stem}.jpg`` and ``{stem}-fanart.jpg`` makes the two
-        # halves of the flip disagree. ``find_cover_image``'s L1 picks the plain
-        # same-stem cover, so CD-112-7 promotes the curator ``-fanart`` to the
-        # copy SOURCE; meanwhile ``resolve_cover_target``'s step ① sees that same
-        # ``{stem}.jpg`` already on disk and returns it as the TARGET. Result:
-        # ``copyfile(curator -fanart → curator {stem}.jpg)`` permanently destroys
-        # the second curator original (reproduced: 800×538 red → 1200×675 blue,
-        # md5 becomes the fanart's). That is a straight breach of prd.md 技術決策
-        # #6 承重牆「衍生產物不回寫原檔」, and it is a REGRESSION of this branch —
-        # ``curator_cover_source`` (the promotion) landed in c4bb5508/T3; before
-        # it, source and target were the same file and the copy was a no-op.
-        #
-        # Blast radius is confined to ingest: ``('copy', …)`` has exactly ONE
-        # producer (the ingest branch of ``resolve_ingest_plan``), whose contract
-        # is local-first / reuse-first — "有 .nfo／封面就地 ingest 零網路". A
-        # deliberate overwrite still has its escape hatch: the gear re-scrape
-        # emits ``('download', url)``, which goes through ``download_image`` and
-        # never reaches this function.
-        #
-        # ``resolve_cover_target`` only ever returns an ALREADY-EXISTING path via
-        # its steps ① / ② — i.e. exactly "a cover is already sitting at a
-        # canonical position". Reusing it is the same 沿用 semantics those two
-        # steps encode; overwriting it would contradict them.
-        return True
-    try:
-        shutil.copyfile(src, dst)
-        return True
-    except shutil.SameFileError:
-        return True
-    except OSError:
-        return False
-
-
-def _reraise_nfo_stat_error(e: OSError) -> None:
-    """S6's on_error callback (CD-113b-5, 不得變體): the `.nfo` just written by
-    this same call must exist — a stat failure here means a real filesystem
-    problem, not "no NFO". Re-raise so it propagates exactly like the
-    unguarded `os.stat()` call it replaces (whole produce fails loudly,
-    never gets silently recorded as nfo_mtime=0). Deliberately NOT shared
-    with `core.database.migrate._reraise_stat_error` — same shape, different
-    module, different caller intent (plan-113b CD-113b-5 / Opus 裁決 1).
-    """
-    raise e
-
-
-def _download_sample(url: str, dest: str, previews: list, idx: int) -> bool:
-    """逐張取劇照：原址優先，該格有代理才退代理（CD-126-3）。
-
-    **用 index 取值，不用裸 `zip()`**——zip 在長度不等時會靜默截斷，等於少下載幾張圖；
-    長度不等的正確語意是「那幾格沒有代理」，不是「少下載」。
-    preview 為空時**連 kwarg 都不傳**（AC-5：非 metatube 來源逐字元相同）。
-    """
-    fallback = previews[idx] if idx < len(previews) else ''
-    if fallback:
-        return download_image(url, dest, fallback_url=fallback)
-    return download_image(url, dest)
-
-
-def _write_movie_assets(
-    movie_dir: str,
-    meta: dict,
-    format_data: dict,
-    source_fs_path: str,
-    config: dict,
-    cover_strategy,
-    assets_mode: str = 'full',
-    old_base: str = '',
-    strm_mappings_getter=None,
-    user_tags: Optional[list[str]] = None,
-) -> dict:
-    """Write nfo + cover + -poster/-fanart + extrafanart to movie_dir.
-
-    full mode (default) returns {'cover_fs': str, 'sample_fs': list[str],
-    'nfo_mtime': float}. cover_fs is '' when the cover step produces no file (see
-    cover_strategy below). nfo_mtime (TASK-104-T1 / CD-104-4) is the real
-    os.stat().st_mtime of the NFO just written — generate_nfo has already raised
-    on failure by the time this is read, so the file is guaranteed to exist.
-
-    Codex PR#113 round-3 (2026-07-21) added a `write_nfo` gate here that let a
-    readonly produce skip the NFO write. REVERTED (owner-confirmed, round-3
-    review): that gate was a P1 data-loss — a title-changing rescrape with
-    write_nfo=False would skip writing `<new_base>.nfo` while
-    `_clean_stale_singletons` still unlinked the OLD `<old_base>.nfo`, losing
-    the NFO entirely while the DB kept a stale nfo_mtime claiming it exists.
-    Readonly produce is a HOLISTIC operation (a library entry always has an
-    NFO) — the router now rejects write_nfo=false for readonly up front (see
-    `_READONLY_NO_NFO_ERROR_MSG` in web/routers/scraper.py) instead of
-    threading a skip flag down here. The NFO is therefore always written,
-    unconditionally, exactly like every other produce caller.
-
-    samples_only mode (TASK-104-T1 / CD-104-1) returns ONLY {'sample_fs':
-    list[str]} — downloads meta['sample_images'] into movie_dir/extrafanart
-    UNCONDITIONALLY (NOT gated on config['download_sample_images']: an explicit
-    supplemental-fetch call means "yes, get samples") and touches NOTHING else —
-    no nfo/cover/poster/fanart/strm, no _clean_stale_extrafanart, no
-    _clean_stale_singletons. Keeps a "fetch more samples" action from ever
-    clobbering metadata/cover it wasn't asked to touch (Codex P1-c).
-
-    cover_strategy (TASK-104-T1 / CD-104-2) replaces the old binary
-    "None=download" rule with an explicit 3-state tuple:
-      ('copy', local_fs_path) — copy a LOCAL file already on disk into cover_fs
-        (ingest, T2: zero network). Copy failure (missing/unreadable source) →
-        has_cover=False, same graceful-failure semantics as a failed download —
-        never raises.
-      ('none',) — do not write a cover at all (ingest has a .nfo but no cover
-        image; must NOT silently fall back to downloading).
-      ('download', remote_url) — has_cover = bool(remote_url) and
-        download_image(remote_url, cover_fs); byte-identical to the pre-T1
-        unconditional-download branch (scrape / gear rescrape, C6).
-    poster/fanart: generate_jellyfin_images(...) runs whenever has_cover is
-    True AND external_manager in STEM_IMAGE_MODES (CD-111-2) AND cover_strategy
-    carries no 3rd element (scrape/rescrape, or ingest with no detected curator
-    sidecars). When cover_strategy is the 3-tuple ingest-copy form (see
-    resolve_ingest_plan docstring), each detected `{stem}-poster`/`{stem}-fanart`
-    sidecar is copied VERBATIM into the output slot instead of being regenerated
-    from the cover; a slot with no detected sidecar still falls back to the
-    generate step. See `_write_media_images` below.
-
-    old_base (TASK-89a-T4, Codex #3; T5 follow-up, Codex PR review P2): when
-    non-empty, this movie's own stale assets from the PREVIOUS run (different
-    title → different basename) are deleted — but only AFTER the corresponding
-    new asset has been written successfully, and only when old_base differs
-    from this run's basename. The singleton assets (nfo/cover/poster/fanart)
-    are cleaned only once generate_nfo has already succeeded, and only the
-    ones whose new write actually succeeded this run — so a write that fails
-    partway (cover download false, generate_nfo raising) leaves the previous
-    run's assets on disk instead of deleting them up front and then failing
-    to produce replacements. (samples_only never reaches this cleanup — see
-    above.)
-
-    Extrafanart is now managed EXCLUSIVELY by the samples_only (補劇照) path
-    (P1 grok-review, pre-merge 2026-07-21): full mode only cleans+rewrites the
-    extrafanart dir when THIS run itself carries new sample_images to write
-    (``old_base and meta.get('sample_images')``) — full-mode ingest/rescrape
-    callers always pass ``meta['sample_images'] == []`` (CD-104-3), so on a
-    FULL-mode re-entry of an already-produced video (gear rescrape / 放大鏡
-    ingest / batch-enrich) this branch is skipped and previously-fetched
-    samples on disk survive untouched. A bare ``if old_base:`` would delete
-    the extrafanart dir on every full-mode re-entry even though full mode
-    never repopulates it, silently wiping 補劇照 output for any video that
-    gets re-produced. Any hypothetical future caller that DOES pass full-mode
-    samples still gets correct clean+rewrite semantics.
-
-    user_tags (TASK-143-T5, CD-143-5): forwarded verbatim to generate_nfo so a
-    rescrape REGENERATES <user_tag> instead of dropping it (the DB row keeps them
-    either way — what was lost is the copy a media server reads). _produce_one
-    must read them BEFORE _upsert_db overwrites the row. None → [] → byte-identical
-    to pre-T5, which is why the ~40 direct test call sites need no change.
-    """
-    os.makedirs(movie_dir, exist_ok=True)
-
-    if assets_mode == 'samples_only':
-        ef_dir = Path(movie_dir) / 'extrafanart'
-        os.makedirs(ef_dir, exist_ok=True)
-        sample_fs: list = []
-        previews = meta.get('preview_sample_images') or []
-        for i, url in enumerate(meta.get('sample_images', []), 1):
-            dest = str(ef_dir / f'fanart{i}.jpg')
-            if _download_sample(url, dest, previews, i - 1):
-                sample_fs.append(dest)
-        return {'sample_fs': sample_fs}
-
-    new_base = base = _build_basename(format_data, source_fs_path, config)
-    base_stem = str(Path(movie_dir) / base)
-
-    # 1) Cover: 3-state strategy (CD-104-2) — see docstring above.
-    external_manager = normalize_external_manager(config.get('external_manager', 'off'))
-    cover_fs = resolve_cover_target(base_stem, external_manager)
-    strategy_kind = cover_strategy[0]
-    if strategy_kind == 'copy':
-        has_cover = _write_cover_copy(cover_strategy[1], cover_fs)
-    elif strategy_kind == 'none':
-        has_cover = False
-    else:  # 'download' — byte-identical to the pre-T1 unconditional branch (C6)
-        remote_url = cover_strategy[1]
-        # CD-126-9：fallback 從 `meta` 取，**不動 cover_strategy tuple 的形狀**——
-        # `cover_strategy[2]` 在 'copy' 種類下已經是 raw_source_media，同一個索引在不同
-        # kind 下代表不同東西，那正是本 branch 要消滅的形狀。
-        #
-        # ⚠️ 隱含耦合（Stage 2 review P3-5）：primary 來自 `cover_strategy[1]`、fallback
-        # 來自 `meta['preview_cover_url']`，**兩個值住在不同容器**。今天成立是因為
-        # `('download', ...)` 只在 `resolve_ingest_plan()` 的兩處產生，兩處都是
-        # `('download', meta['cover'])`。若日後有人讓 'download' 的網址不再等於
-        # `meta['cover']`（例如改吃 NFO 的 <thumb>），直連失敗時會拿**另一張圖**的
-        # 代理網址存成封面——使用者拿到錯的封面且看不出來。下面的 assert 是那條的絆線。
-        # 不加 runtime assert：它會在唯讀產出跑到一半時崩掉，而這條耦合的破裂後果
-        # （封面錯一張）比崩掉輕。真正的防線是「動 resolve_ingest_plan 的人讀到這段」。
-        preview_cover = meta.get('preview_cover_url') or ''
-        has_cover = bool(remote_url) and (
-            download_image(remote_url, cover_fs, fallback_url=preview_cover)
-            if preview_cover
-            else download_image(remote_url, cover_fs)
-        )
-
-    # 2) poster/fanart — media-server flavours only (CD-111-2 fail-closed whitelist); off produces none, matching non-readonly parity.
-    if has_cover and external_manager in STEM_IMAGE_MODES:
-        raw_source_media = (
-            cover_strategy[2]
-            if strategy_kind == 'copy' and len(cover_strategy) > 2
-            else None
-        )
-        # An ingest source with neither a -poster nor a -fanart sidecar detected
-        # (both slots None) is treated identically to "no 3rd element at all" —
-        # falls through to the single generate_jellyfin_images source of truth
-        # below, keeping that path (and every test that mocks
-        # generate_jellyfin_images directly, e.g. TestIngestFourMatrix) byte-
-        # /call-identical to before this fix.
-        source_media = (
-            raw_source_media
-            if raw_source_media and (raw_source_media.get('poster') or raw_source_media.get('fanart'))
-            else None
-        )
-        has_poster, has_fanart = _write_media_images(cover_fs, base_stem, meta, source_media)
-    else:
-        has_poster = has_fanart = False
-
-    # 3) extrafanart — gated only on config key; per-movie dir already exists (no create_folder).
-    # Stale samples from the previous run are cleaned first (whenever old_base is
-    # non-empty) regardless of this run's download_sample_images setting, so a
-    # re-scrape with samples toggled off still shrinks the old set to zero.
-    # P1 grok-review (pre-merge 2026-07-21): gated additionally on
-    # meta.get('sample_images') — see docstring's "Extrafanart is now managed
-    # EXCLUSIVELY by samples_only" note. Without this, a full-mode RE-ENTRY of
-    # an already-produced video (old_base non-empty) with meta['sample_images']
-    # always [] (ingest/rescrape, CD-104-3) would delete extrafanart/ and never
-    # repopulate it — destroying samples fetched by an earlier 補劇照 call.
-    if old_base and meta.get('sample_images'):
-        _clean_stale_extrafanart(movie_dir)
-    sample_fs: list = []
-    if config.get('download_sample_images'):
-        ef_dir = Path(movie_dir) / 'extrafanart'
-        os.makedirs(ef_dir, exist_ok=True)
-        previews = meta.get('preview_sample_images') or []
-        for i, url in enumerate(meta.get('sample_images', []), 1):
-            dest = str(ef_dir / f'fanart{i}.jpg')
-            if _download_sample(url, dest, previews, i - 1):
-                sample_fs.append(dest)
-
-    # 4) NFO — title/fields use full meta (not truncated format_data).
-    # NFO is a REQUIRED off-complete output: a write failure must NOT be silently
-    # treated as success (generate_nfo swallows its own I/O error and returns False).
-    # Raise so produce_source counts the item as failed and skips _upsert_db — DB never
-    # claims a movie was generated when the NFO is missing ("每片成功生成後寫一筆").
-    # Cover/poster/fanart stay best-effort: a missing cover is acceptable per C6
-    # (cold title with no image) and self-heals on the next incremental run.
-    # Always written (P1 revert, round-3 review 2026-07-21) — see the
-    # write_nfo paragraph in this function's docstring for why a skip-NFO
-    # gate is never reintroduced here.
-    meta['tags'] = effective_tags(os.path.basename(source_fs_path), meta.get('tags', []))
-    nfo_fs = base_stem + '.nfo'
-    nfo_ok = generate_nfo(
-        number=meta['number'],
-        title=meta['title'],
-        original_title=meta.get('original_title', ''),
-        actors=meta.get('actors', []),
-        tags=meta.get('tags', []),
-        date=meta.get('date', ''),
-        maker=meta.get('maker', ''),
-        url=meta.get('url', ''),
-        output_path=nfo_fs,
-        has_poster=nfo_image_flag(base_stem, '-poster', has_poster),
-        has_fanart=nfo_image_flag(base_stem, '-fanart', has_fanart),
-        director=meta.get('director', ''),
-        duration=meta.get('duration'),
-        series=meta.get('series', ''),
-        label=meta.get('label', ''),
-        summary=meta.get('_summary', ''),
-        rating=meta.get('_rating'),
-        external_manager=external_manager,
-        user_tags=user_tags or [],
-    )
-    if not nfo_ok:
-        raise RuntimeError(f"NFO write failed: {nfo_fs}")
-    # CD-104-4 (TASK-104-T1): real write mtime, not a hardcoded 0.0 — nfo_ok is
-    # True here so the file is guaranteed to exist (generate_nfo already raised
-    # above otherwise). MUTATION LOCK: replacing this stat with a hardcoded 0.0
-    # is caught by test_readonly_producer.py::TestUpsertDbAssetsMode's
-    # nfo_mtime-positive test (see that file for the mutation-lock comment).
-    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
-    nfo_mtime = nfo_mtime_or_none(Path(nfo_fs), on_error=_reraise_nfo_stat_error)
-
-    # 5) strm sidecar — media-server flavours only (TASK-90a-T3). off / non
-    # media-server → no strm. best-effort: a write failure returns False and
-    # feeds has_strm gating below (transient failure keeps the old strm).
-    # strm_mappings_getter 在此（_write_strm 前一刻、封面/NFO 都寫完後）才求值，讓斷線尾巴那片
-    # 用「真正落 .strm 那一刻」的映射而非片處理開頭的 snapshot（五審五次 Codex）。短路：只在
-    # media-server 分支求值（off 不寫 strm），getter=None → None → _write_strm 回退凍結 config。
-    has_strm = (
-        _write_strm(
-            base_stem, source_fs_path, config,
-            strm_mappings=(strm_mappings_getter() if strm_mappings_getter is not None else None),
-        )
-        if external_manager in STEM_IMAGE_MODES
-        else False
-    )
-
-    # Singleton stale-cleanup runs LAST, only after the new NFO write is confirmed
-    # (T5 follow-up, Codex PR review P2) — see docstring above for why this is
-    # post-write rather than pre-write.
-    _clean_stale_singletons(movie_dir, old_base, new_base, has_cover, has_poster, has_fanart, has_strm)
-    return {'cover_fs': cover_fs if has_cover else '', 'sample_fs': sample_fs, 'nfo_mtime': nfo_mtime}
 
 
 def _upsert_db(
@@ -1646,6 +557,104 @@ def resolve_ingest_plan(
     return meta, cover_strategy
 
 
+def _list_nfo_names(movie_dir: str) -> tuple[str, list]:
+    """CD-151b-12：一次掃描 ``movie_dir`` 底下的 ``.nfo`` 檔名（原始大小寫）。
+
+    Returns:
+        ``('ok', names)`` — 掃描成功（``names`` 可為空 list）
+        ``('missing', [])`` — 目錄不存在（``FileNotFoundError``）
+        ``('unknown', [])`` — 其他 ``OSError``（含 ``entry.is_file()`` 自己拋的）
+    """
+    try:
+        names: list[str] = []
+        with os.scandir(movie_dir) as it:
+            for entry in it:
+                if entry.is_file() and os.path.normcase(entry.name).endswith(
+                    os.path.normcase('.nfo')
+                ):
+                    names.append(entry.name)
+        return ('ok', names)
+    except FileNotFoundError:
+        return ('missing', [])
+    except OSError:
+        return ('unknown', [])
+
+
+def _resolve_readonly_preserved_fields(
+    meta: dict, movie_dir: str, old_base: str, new_base: str,
+    reused_existing_output_dir: bool,
+) -> bool:
+    """CD-151b-3 + CD-151b-12：洞二讀回。判準問 meta（== scraper_data）的 key
+    是否存在，不問值是否為空。定位改成「provenance ＋ 目錄證據」：一次掃描
+    movie_dir 的 .nfo，依決策表七列選檔；選中之後 fail-closed 只驗那一份，
+    絕不回頭換候選。與 core.enricher._preserve_nfo_only_fields 平行實作、
+    不 import——唯讀路徑的 meta 沒有映射層，寫回的 key 是
+    _summary/_rating/url（帶底線/不帶底線），與非唯讀映射後的
+    summary/rating/url 不同形（C-2）。
+
+    Returns:
+        bool: True＝正常（含「掃到 0 份」／「首次產出目錄尚未建立」）；
+              False＝fail-closed（reuse 目錄消失／掃描失敗／≥2 份且候選皆不中／
+              選中的那份解析失敗）。
+    """
+    if '_summary' in meta and '_rating' in meta and 'url' in meta:
+        return True
+
+    status, names = _list_nfo_names(movie_dir)
+    if status == 'missing':
+        if reused_existing_output_dir:
+            logger.warning(
+                "[readonly_producer] reused output_dir vanished: %s", movie_dir,
+            )
+            return False  # fail-closed: reused output_dir vanished
+        return True
+    if status == 'unknown':
+        logger.warning(
+            "[readonly_producer] directory scan failed (unknown): %s", movie_dir,
+        )
+        return False  # fail-closed: directory scan failed (unknown)
+
+    if not names:
+        return True
+
+    if len(names) == 1:
+        selected_name = names[0]
+    else:
+        old_name = f"{old_base}.nfo"
+        new_name = f"{new_base}.nfo"
+        selected_name = None
+        names_by_norm = {os.path.normcase(n): n for n in names}
+        for candidate in (old_name, new_name):
+            hit = names_by_norm.get(os.path.normcase(candidate))
+            if hit is not None:
+                selected_name = hit
+                break
+        if selected_name is None:
+            logger.warning(
+                "[readonly_producer] ambiguous nfo candidates in %s: %s",
+                movie_dir, names,
+            )
+            return False  # fail-closed: ambiguous — neither candidate matched
+
+    selected = Path(movie_dir) / selected_name
+    _, root = parse_nfo(str(selected))
+    if root is None:
+        return False
+
+    if '_summary' not in meta:
+        meta['_summary'] = nfo_text(root, 'plot')
+    if '_rating' not in meta:
+        raw = nfo_text(root, 'rating')
+        if raw:
+            try:
+                meta['_rating'] = float(raw) / 2.0
+            except ValueError:
+                pass
+    if 'url' not in meta:
+        meta['url'] = nfo_text(root, 'website')
+    return True
+
+
 # ---------------------------------------------------------------------------
 # TASK-104-T1 (CD-104-1): single-file produce primitive — extracted from
 # produce_source's per-file try-block so ingest/rescrape/samples-only callers
@@ -1714,8 +723,8 @@ def _produce_one(
     always writes the NFO now.
     """
     src_uri = to_file_uri(file_info["path"], path_mappings)
-    fd = _format_data(meta, file_info["path"], config)
-    movie_dir, output_dir_uri = _resolve_movie_dir(
+    fd = readonly_paths._format_data(meta, file_info["path"], config)
+    movie_dir, output_dir_uri = readonly_paths._resolve_movie_dir(
         repo, src_uri, existing, output_root, output_uri,
         fd, config, allocated_this_run, path_mappings,
     )
@@ -1770,7 +779,42 @@ def _produce_one(
     # stays GREEN (test_readonly_producer.py).
     if not is_fs_path_under_dir(str(movie_dir), output_root):
         raise RuntimeError(f"movie_dir 超出 output_root 範圍: {movie_dir}")
-    old_base = _build_old_base(existing, file_info["path"], config)  # '' when no prior row/title/number
+    old_base = readonly_paths._build_old_base(existing, file_info["path"], config)  # '' when no prior row/title/number
+    # TASK-151b-T4 (CD-151b-1): 洞二讀回（fail-closed）與洞一改名（gate 在
+    # preserve 分支）——movie_dir_str 統一轉一次（A-3），new_base_name 提前到
+    # 這裡算出（CD-151b-3 第 4 版候選清單需要它），outcome 預設 no-op（非
+    # preserve 分支完全不改名，AC-9 離線等價性）。
+    # Codex PR#197 review 回歸修正①：兩段都額外 gate `assets_mode == 'full'`
+    # ——samples_only（補劇照）既有 docstring 早已承諾「只碰 extrafanart，不
+    # 碰 metadata/cover」，讀回與改名都屬於 metadata/cover 範疇。不加這個
+    # gate 時 samples_only 會誤觸改名（封面搬到新基底，但 samples_only 早退
+    # 不寫 NFO、_upsert_db 也不更新 title——NFO 舊名/圖新名/DB 標題舊/
+    # cover_path 新，方向反過來的孤兒）且被無關的 NFO fail-closed 誤傷（補
+    # 劇照根本不寫 NFO，讀回的三欄用不到）。CAS 那段本來就掛在
+    # `outcome.new_cover_uri` 上，改名不觸發它自然不會跑，不需要另外 gate。
+    movie_dir_str = str(movie_dir)
+    new_base_name = readonly_paths._build_basename(fd, file_info["path"], config)
+    # CD-151b-12 provenance 恆等式：reuse 分支回傳的 output_dir_uri 逐字就是
+    # existing.output_dir；不得自行重算路徑判定。
+    reused_existing_output_dir = bool(
+        existing and existing.output_dir and output_dir_uri == existing.output_dir
+    )
+    ok = assets_mode != 'full' or _resolve_readonly_preserved_fields(
+        meta, movie_dir_str, old_base, new_base_name, reused_existing_output_dir,
+    )
+    if not ok:
+        raise ReadonlyProduceError("readonly preserved-fields read-back failed (fail-closed)")
+
+    outcome = readonly_assets.RenameOutcome(None, False, ())
+    if assets_mode == 'full' and cover_strategy[0] == 'none':
+        # old_base 是非權威提示、不是 D-151b-9 的唯一錨點（錨點仍是 existing.cover_path，
+        # 在被呼叫端內部換算）——只在錨點 stem 有 -poster/-fanart 二義時輔助消歧，失憶
+        # （跨輪次漂移）時自動退回磁碟證據，見 _resolve_cover_group_identity docstring。
+        outcome = readonly_assets._rename_stale_cover_group(
+            movie_dir_str, existing, new_base_name, path_mappings, old_base
+        )
+        if outcome.hard_failure:
+            raise ReadonlyProduceError("readonly cover rename hard failure")
     # FIX P1 (Codex PR#113 round-6, 2026-07-21; feature/105 T3: extracted to
     # effective_original_title helper): synthesize the EFFECTIVE original_title
     # ONCE, before writing any asset, so the output NFO
@@ -1787,12 +831,33 @@ def _produce_one(
     # _write_movie_assets 在真正落 .strm 那一刻才重讀 fresh strm_path_mappings
     # （見 _write_movie_assets 內部該段落的完整解釋）。strm_mappings_getter=None
     # （既有呼叫）→ 回退凍結 config、零重讀、行為不變。
-    assets = _write_movie_assets(
-        str(movie_dir), meta, fd, file_info["path"], config,
-        cover_strategy=cover_strategy, assets_mode=assets_mode,
-        old_base=old_base, strm_mappings_getter=strm_mappings_getter,
-        user_tags=(existing.user_tags if existing else []),
-    )
+    try:
+        assets = readonly_assets._write_movie_assets(
+            str(movie_dir), meta, fd, file_info["path"], config,
+            cover_strategy=cover_strategy, assets_mode=assets_mode,
+            old_base=old_base, strm_mappings_getter=strm_mappings_getter,
+            user_tags=(existing.user_tags if existing else []),
+        )
+    except Exception:
+        if outcome.new_cover_uri:
+            readonly_assets._revert_cover_rename(outcome.moved_pairs)
+        raise
+
+    # TASK-151b-T4 (CD-151b-1 窗口②): _write_movie_assets 已成功，現在才把改名
+    # 結果落地到 DB（CAS，CD-151b-2）。CAS 回傳 False 與拋出例外兩種失敗形狀
+    # 共用同一個 finally 復原入口；existing.cover_path 只在 cas_ok is True 這條
+    # 路徑上才同步，避免 _upsert_db 稍後拿一個 DB 從未真正接受過的值去比對。
+    if outcome.new_cover_uri:
+        cas_ok = False
+        try:
+            cas_ok = repo.update_cover_path_preserve_focal(src_uri, outcome.new_cover_uri, existing.cover_path)
+        finally:
+            if not cas_ok:
+                readonly_assets._revert_cover_rename(outcome.moved_pairs)
+        if not cas_ok:
+            raise ReadonlyProduceError("readonly cover path CAS failed")
+        existing.cover_path = outcome.new_cover_uri
+
     _upsert_db(
         repo, src_uri, file_info, meta, assets, path_mappings, output_dir_uri,
         assets_mode=assets_mode, existing=existing,
@@ -2158,7 +1223,7 @@ def produce_source(source, config, repo, *, proxy_url="", on_progress=None, shou
 
     # CD-89a-7: off flavour resolves to a fixed App-managed folder (always non-empty);
     # media-server flavours (jellyfin/emby/kodi) still require source.output_path.
-    effective_output = resolve_output_root(source, config)
+    effective_output = readonly_paths.resolve_output_root(source, config)
     if not (effective_output or "").strip():
         result.aborted_reason = "no_output_path"
         return result

@@ -44,11 +44,20 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# 掃描範圍＝會寫 stem 級衍生圖（正典封面 / -poster / -fanart）的三個模組。
+# 掃描範圍＝會寫 stem 級衍生圖（正典封面 / -poster / -fanart）的模組。TASK-151a-T3
+# 把 `_write_movie_assets` 等資產寫入函式從 `core/readonly_producer.py` 搬到
+# `core/readonly_assets.py`，但 `readonly_producer.py` 本身仍是唯讀 produce 流程
+# 的入口檔、`readonly_paths.py` 也是同一次拆分出來的姊妹模組——三個檔都留在掃描
+# 集合裡，才不會讓「換成新模組」在守衛帳面上被誤讀成「換掉了原本被掃描的檔」。
+# 主 session pre-merge branch review 第 3 輪裁決（2026-09-18）：`4a3cc96d` commit
+# 訊息宣稱「守衛強度零變動」不成立（T3 用 readonly_assets.py 取代、不是新增
+# readonly_producer.py，導致 readonly_producer.py 整個掉出掃描集合），本次修正。
 _MODULES = (
     'core/enricher.py',
     'core/organizer.py',
     'core/readonly_producer.py',
+    'core/readonly_paths.py',
+    'core/readonly_assets.py',
 )
 
 _WRITE_CALLS = ('copy2', 'copyfile', 'crop_to_poster', 'atomic_move')
@@ -72,10 +81,11 @@ _EXPECTED_WRITE_SITES = {
     ('core/organizer.py', 'organize_file', 'atomic_move'): 1,               # 144-T0：影片本體搬進片庫，非衍生圖
     ('core/organizer.py', 'generate_jellyfin_images', 'copy2'): 1,           # ① cover → fanart
     ('core/organizer.py', 'generate_jellyfin_images', 'crop_to_poster'): 1,  # ② cover → poster
-    ('core/readonly_producer.py', '_copy_curator_sidecar', 'copy2'): 1,      # ⑨⑩ curator sidecar → slot
-    ('core/readonly_producer.py', '_write_cover_copy', 'copyfile'): 1,       # ⑧ 來源封面 → 正典位置
-    ('core/readonly_producer.py', '_write_media_images', 'copy2'): 1,        # ⑤ cover → fanart
-    ('core/readonly_producer.py', '_write_media_images', 'crop_to_poster'): 1,  # ⑥ cover → poster
+    ('core/readonly_assets.py', '_copy_curator_sidecar', 'copy2'): 1,      # ⑨⑩ curator sidecar → slot
+    ('core/readonly_assets.py', '_write_cover_copy', 'copyfile'): 1,       # ⑧ 來源封面 → 正典位置
+    ('core/readonly_assets.py', '_write_media_images', 'copy2'): 1,        # ⑤ cover → fanart
+    ('core/readonly_assets.py', '_write_media_images', 'crop_to_poster'): 1,  # ⑥ cover → poster
+    ('core/readonly_assets.py', '_move_cover_slot', 'atomic_move'): 1,     # ⑪ 洞一改名 → atomic_move
 }
 
 # 每個 owner **預期的 preflight 次數**（Codex PR#125 round-3 P2）。
@@ -96,9 +106,9 @@ _EXPECTED_WRITE_SITES = {
 _EXPECTED_PREFLIGHTS = {
     ('core/enricher.py', '_write_external_images'): 2,          # ③④ 各一
     ('core/organizer.py', 'generate_jellyfin_images'): 2,       # ①② 各一
-    ('core/readonly_producer.py', '_copy_curator_sidecar'): 1,  # ⑨⑩ 共用同一個 choke point
-    ('core/readonly_producer.py', '_write_cover_copy'): 1,      # ⑧
-    ('core/readonly_producer.py', '_write_media_images'): 2,    # ⑤⑥ 各一
+    ('core/readonly_assets.py', '_copy_curator_sidecar'): 1,  # ⑨⑩ 共用同一個 choke point
+    ('core/readonly_assets.py', '_write_cover_copy'): 1,      # ⑧
+    ('core/readonly_assets.py', '_write_media_images'): 2,    # ⑤⑥ 各一
 }
 
 # 允許「沒有自己的 preflight」的函式，逐條寫明理由。清單之外的每一個寫入點
@@ -116,6 +126,19 @@ _PREFLIGHT_EXEMPT = {
     ('core/organizer.py', 'crop_to_poster'):
         '葉節點函式：它的每一個呼叫端（②④⑥）都已在呼叫前 preflight，'
         '且它自身整段包在 try/except 裡，SameFileError 只會回 False、不會毀檔。',
+    ('core/readonly_assets.py', '_move_cover_slot'):
+        '`_move_cover_slot` 的 `src`／`dst` 分別錨定在 `old_stem_abs`／`new_stem_abs` 兩個不同的絕對'
+        '路徑 stem 上——`old_stem_abs != new_stem_abs` 由呼叫端 `_rename_stale_cover_group` 的 C-10 '
+        'no-op 判準保證（相等時整個函式提前 return，走不到這裡）；且每一個 `dst` 在進入搬移迴圈之前，'
+        '都已經過 D-151b-6 的整組存在性預檢（`os.path.exists(dst)` 為 `False` 才會進入 `group`）。'
+        '兩個前提合起來：即使 `src`／`dst` 透過 hardlink 共享同一個 inode，`dst` 這個路徑名稱本身在'
+        '預檢當下必須尚不存在——而 hardlink 的定義就是「替既有 inode 建一個新名稱」，若這個名稱已經'
+        '存在指向該 inode，`os.path.exists(dst)` 就會是 `True`，預檢會先擋下整組。'
+        '`same_target_verdict` 防的是「複製到目的地，而目的地其實已經是來源的另一個名字」這種原地'
+        '覆寫風險，本函式的來源與目的地分屬不同 stem、且目的地已被上一層預檢排除存在可能性，'
+        '結構上不會撞上同一種風險。'
+        '⚠️ 與 `organize_file` 那條相同的警告：任何新增的 `atomic_move` 呼叫點都會讓上面'
+        '`_EXPECTED_WRITE_SITES` 的對帳轉紅，屆時必須重新判斷是否需要 preflight，不得沿用本條。',
 }
 
 

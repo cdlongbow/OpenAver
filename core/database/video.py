@@ -1391,6 +1391,37 @@ class VideoRepository:
         finally:
             conn.close()
 
+    def update_cover_path_preserve_focal(
+        self, path: str, new_cover_path: str, expected_old_cover_path: str
+    ) -> bool:
+        """CD-151b-2 mutator：改名同步 cover_path，繞過 upsert() 的 CASE WHEN，
+        完全不碰 auto_focal/crop_mode/focal_attempted_at。本身不 catch 任何例外，
+        由呼叫端（core/readonly_producer.py，T4）接住 sqlite3 例外與 False 兩種
+        失敗形狀。
+
+        Args:
+            path: 影片路徑（DB key，file:/// URI 格式）
+            new_cover_path: 改名後的新 cover_path（DB-key file:/// URI）
+            expected_old_cover_path: 呼叫端觀察到的改名前 cover_path，必須同源
+                （不可用反解後的 FS path），compare-and-store 防 in-flight 併發改寫
+
+        Returns:
+            bool: 是否成功更新（path 不存在、或 cover_path 已不符
+                expected_old_cover_path → False，不拋例外、不新建 row）
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE videos SET cover_path = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE path = ? AND cover_path = ?",
+                (new_cover_path, path, expected_old_cover_path)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
     def reset_focal_to_auto(self, path: str) -> bool:
         """作廢手動焦點、降回未偵測狀態（99a-T1b mutator，CD-4）。
 
