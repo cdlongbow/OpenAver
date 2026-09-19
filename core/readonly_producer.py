@@ -557,39 +557,86 @@ def resolve_ingest_plan(
     return meta, cover_strategy
 
 
-def _resolve_readonly_preserved_fields(
-    meta: dict, movie_dir: str, old_base: str, new_base: str
-) -> bool:
-    """CD-151b-3（spec 第 4 版）：洞二讀回。判準問 meta（== scraper_data）的 key
-    是否存在，不問值是否為空。讀回來源依序找 {old_base}.nfo → {new_base}.nfo，
-    取第一個存在的，選中之後 fail-closed 只驗那一份，絕不回頭換候選。與
-    core.enricher._preserve_nfo_only_fields 平行實作、不 import——唯讀路徑的
-    meta 沒有映射層，寫回的 key 是 _summary/_rating/url（帶底線/不帶底線），
-    與非唯讀映射後的 summary/rating/url 不同形（C-2）。
+def _list_nfo_names(movie_dir: str) -> tuple[str, list]:
+    """CD-151b-12：一次掃描 ``movie_dir`` 底下的 ``.nfo`` 檔名（原始大小寫）。
 
     Returns:
-        bool: True＝正常（含「候選清單裡沒有東西可讀」）；
-              False＝fail-closed（選中的候選存在但解析失敗）。
+        ``('ok', names)`` — 掃描成功（``names`` 可為空 list）
+        ``('missing', [])`` — 目錄不存在（``FileNotFoundError``）
+        ``('unknown', [])`` — 其他 ``OSError``（含 ``entry.is_file()`` 自己拋的）
+    """
+    try:
+        names: list[str] = []
+        with os.scandir(movie_dir) as it:
+            for entry in it:
+                if entry.is_file() and os.path.normcase(entry.name).endswith(
+                    os.path.normcase('.nfo')
+                ):
+                    names.append(entry.name)
+        return ('ok', names)
+    except FileNotFoundError:
+        return ('missing', [])
+    except OSError:
+        return ('unknown', [])
+
+
+def _resolve_readonly_preserved_fields(
+    meta: dict, movie_dir: str, old_base: str, new_base: str,
+    reused_existing_output_dir: bool,
+) -> bool:
+    """CD-151b-3 + CD-151b-12：洞二讀回。判準問 meta（== scraper_data）的 key
+    是否存在，不問值是否為空。定位改成「provenance ＋ 目錄證據」：一次掃描
+    movie_dir 的 .nfo，依決策表七列選檔；選中之後 fail-closed 只驗那一份，
+    絕不回頭換候選。與 core.enricher._preserve_nfo_only_fields 平行實作、
+    不 import——唯讀路徑的 meta 沒有映射層，寫回的 key 是
+    _summary/_rating/url（帶底線/不帶底線），與非唯讀映射後的
+    summary/rating/url 不同形（C-2）。
+
+    Returns:
+        bool: True＝正常（含「掃到 0 份」／「首次產出目錄尚未建立」）；
+              False＝fail-closed（reuse 目錄消失／掃描失敗／≥2 份且候選皆不中／
+              選中的那份解析失敗）。
     """
     if '_summary' in meta and '_rating' in meta and 'url' in meta:
         return True
 
-    candidates = []
-    if old_base:
-        candidates.append(old_base)
-    if new_base and new_base != old_base:
-        candidates.append(new_base)
+    status, names = _list_nfo_names(movie_dir)
+    if status == 'missing':
+        if reused_existing_output_dir:
+            logger.warning(
+                "[readonly_producer] reused output_dir vanished: %s", movie_dir,
+            )
+            return False  # fail-closed: reused output_dir vanished
+        return True
+    if status == 'unknown':
+        logger.warning(
+            "[readonly_producer] directory scan failed (unknown): %s", movie_dir,
+        )
+        return False  # fail-closed: directory scan failed (unknown)
 
-    selected = None
-    for base in candidates:
-        nfo_p = Path(movie_dir) / f"{base}.nfo"
-        if nfo_p.exists():
-            selected = nfo_p
-            break
-
-    if selected is None:
+    if not names:
         return True
 
+    if len(names) == 1:
+        selected_name = names[0]
+    else:
+        old_name = f"{old_base}.nfo"
+        new_name = f"{new_base}.nfo"
+        selected_name = None
+        names_by_norm = {os.path.normcase(n): n for n in names}
+        for candidate in (old_name, new_name):
+            hit = names_by_norm.get(os.path.normcase(candidate))
+            if hit is not None:
+                selected_name = hit
+                break
+        if selected_name is None:
+            logger.warning(
+                "[readonly_producer] ambiguous nfo candidates in %s: %s",
+                movie_dir, names,
+            )
+            return False  # fail-closed: ambiguous — neither candidate matched
+
+    selected = Path(movie_dir) / selected_name
     _, root = parse_nfo(str(selected))
     if root is None:
         return False
@@ -747,7 +794,14 @@ def _produce_one(
     # `outcome.new_cover_uri` 上，改名不觸發它自然不會跑，不需要另外 gate。
     movie_dir_str = str(movie_dir)
     new_base_name = readonly_paths._build_basename(fd, file_info["path"], config)
-    ok = assets_mode != 'full' or _resolve_readonly_preserved_fields(meta, movie_dir_str, old_base, new_base_name)
+    # CD-151b-12 provenance 恆等式：reuse 分支回傳的 output_dir_uri 逐字就是
+    # existing.output_dir；不得自行重算路徑判定。
+    reused_existing_output_dir = bool(
+        existing and existing.output_dir and output_dir_uri == existing.output_dir
+    )
+    ok = assets_mode != 'full' or _resolve_readonly_preserved_fields(
+        meta, movie_dir_str, old_base, new_base_name, reused_existing_output_dir,
+    )
     if not ok:
         raise ReadonlyProduceError("readonly preserved-fields read-back failed (fail-closed)")
 

@@ -9448,13 +9448,13 @@ class TestResolveReadonlyPreservedFields:
         }
         before = dict(meta)
 
-        with patch.object(Path, 'exists') as mock_exists:
+        with patch('core.readonly_producer._list_nfo_names', create=True) as mock_list:
             result = _resolve_readonly_preserved_fields(
-                meta, str(tmp_path), 'ABC-100', 'ABC-100',
+                meta, str(tmp_path), 'ABC-100', 'ABC-100', False,
             )
 
         assert result is True
-        mock_exists.assert_not_called()
+        mock_list.assert_not_called()
         assert meta == before
 
     def test_missing_one_field_old_base_nfo_reads_back_rating_halved(self, tmp_path):
@@ -9468,7 +9468,7 @@ class TestResolveReadonlyPreservedFields:
         }
 
         result = _resolve_readonly_preserved_fields(
-            meta, str(tmp_path), 'ABC-100', 'XYZ-999',
+            meta, str(tmp_path), 'ABC-100', 'XYZ-999', False,
         )
 
         assert result is True
@@ -9486,7 +9486,7 @@ class TestResolveReadonlyPreservedFields:
         before = dict(meta)
 
         result = _resolve_readonly_preserved_fields(
-            meta, str(tmp_path), '', 'ZZZ-000',
+            meta, str(tmp_path), '', 'ZZZ-000', False,
         )
 
         assert result is True
@@ -9499,7 +9499,7 @@ class TestResolveReadonlyPreservedFields:
         before = dict(meta)
 
         result = _resolve_readonly_preserved_fields(
-            meta, str(tmp_path), 'AAA-1', 'BBB-2',
+            meta, str(tmp_path), 'AAA-1', 'BBB-2', False,
         )
 
         assert result is True
@@ -9516,7 +9516,7 @@ class TestResolveReadonlyPreservedFields:
 
         with patch('core.readonly_producer.parse_nfo', wraps=parse_nfo) as mock_parse:
             result = _resolve_readonly_preserved_fields(
-                meta, str(tmp_path), 'OLD-1', 'NEW-1',
+                meta, str(tmp_path), 'OLD-1', 'NEW-1', False,
             )
 
         assert result is False
@@ -9532,7 +9532,7 @@ class TestResolveReadonlyPreservedFields:
         meta = {'number': 'ABC-100', 'title': 'T', '_summary': 'x', '_rating': 1.0}
 
         result = _resolve_readonly_preserved_fields(
-            meta, str(tmp_path), 'OLD-2', 'NOPE-999',
+            meta, str(tmp_path), 'OLD-2', 'NOPE-999', False,
         )
 
         assert result is False
@@ -9545,7 +9545,7 @@ class TestResolveReadonlyPreservedFields:
         meta = {'number': 'ABC-100', 'title': 'T'}
 
         result = _resolve_readonly_preserved_fields(
-            meta, str(tmp_path), 'OLD-3', 'NEW-3',
+            meta, str(tmp_path), 'OLD-3', 'NEW-3', False,
         )
 
         assert result is True
@@ -9557,6 +9557,8 @@ class TestResolveReadonlyPreservedFields:
         assert set(meta.keys()) == {'number', 'title', '_summary', '_rating', 'url'}
 
     def test_old_base_equals_new_base_dedup_checks_once(self, tmp_path):
+        """CD-151b-12：目錄掃描取代逐候選 exists()——不論 old_base 是否等於
+        new_base，永遠只掃一次目錄。"""
         from core.nfo_updater import parse_nfo
         from core.readonly_producer import _resolve_readonly_preserved_fields
 
@@ -9565,14 +9567,15 @@ class TestResolveReadonlyPreservedFields:
         meta = {'number': 'ABC-100', 'title': 'T'}
 
         with patch('core.readonly_producer.parse_nfo', wraps=parse_nfo) as mock_parse, \
-             patch.object(Path, 'exists', autospec=True, wraps=Path.exists) as mock_exists:
+             patch('core.readonly_producer._list_nfo_names',
+                   create=True, return_value=('ok', ['SAME-1.nfo'])) as mock_list:
             result = _resolve_readonly_preserved_fields(
-                meta, str(tmp_path), 'SAME-1', 'SAME-1',
+                meta, str(tmp_path), 'SAME-1', 'SAME-1', False,
             )
 
         assert result is True
         assert mock_parse.call_count == 1
-        assert mock_exists.call_count == 1
+        assert mock_list.call_count == 1
         assert meta['_summary'] == 'A normal summary.'
         assert meta['_rating'] == 4.0
         assert meta['url'] == 'https://example.com/v'
@@ -9580,13 +9583,9 @@ class TestResolveReadonlyPreservedFields:
         assert set(meta.keys()) == {'number', 'title', '_summary', '_rating', 'url'}
 
     def test_old_base_equals_new_base_dedup_not_checked_twice_when_missing(self, tmp_path):
-        """DoD⑧ 的真正鑑別場景：當候選檔案存在時，第一個候選一命中就 `break`，
-        不管有沒有去重，迴圈都只跑一次、`exists()` 只被呼叫一次——`break` 本身
-        就會遮蔽「有沒有去重」的差異，光靠命中場景測不出來（grok 第 2 輪 review
-        指出的洞）。只有 old_base/new_base 的 `.nfo` 都不存在時，迴圈才會走到底：
-        沒去重＝候選清單 `[SAME-2, SAME-2]`、`exists()` 對同一路徑查兩次；
-        去重＝候選清單只剩一項、`exists()` 只查一次。這裡才是這條差異唯一
-        看得見的地方。"""
+        """CD-151b-12：目錄為空時仍只掃一次——掃描取代逐候選 exists()，
+        old_base == new_base 不再有 I/O 去重問題，鑑別點改成「_list_nfo_names
+        恰好呼叫一次」。"""
         from core.nfo_updater import parse_nfo
         from core.readonly_producer import _resolve_readonly_preserved_fields
 
@@ -9594,15 +9593,160 @@ class TestResolveReadonlyPreservedFields:
         before = dict(meta)
 
         with patch('core.readonly_producer.parse_nfo', wraps=parse_nfo) as mock_parse, \
-             patch.object(Path, 'exists', autospec=True, wraps=Path.exists) as mock_exists:
+             patch('core.readonly_producer._list_nfo_names',
+                   create=True, return_value=('ok', [])) as mock_list:
             result = _resolve_readonly_preserved_fields(
-                meta, str(tmp_path), 'SAME-2', 'SAME-2',
+                meta, str(tmp_path), 'SAME-2', 'SAME-2', False,
             )
 
         assert result is True
         assert meta == before
         assert mock_parse.call_count == 0
-        assert mock_exists.call_count == 1
+        assert mock_list.call_count == 1
+
+    def test_missing_dir_reused_output_fails_closed(self, tmp_path):
+        """邊界條件 1／決策表列 2：目錄不存在＋reused_existing_output_dir=True
+        → False＋一次 WARNING。"""
+        from core.readonly_producer import _resolve_readonly_preserved_fields
+
+        missing = tmp_path / 'not-created-yet'
+        meta = {'number': 'ABC-100', 'title': 'T'}
+
+        with patch('core.readonly_producer.logger') as mock_logger:
+            result = _resolve_readonly_preserved_fields(
+                meta, str(missing), 'OLD', 'NEW', True,
+            )
+
+        assert result is False
+        mock_logger.warning.assert_called_once()
+
+    def test_missing_dir_first_generation_succeeds(self, tmp_path):
+        """邊界條件 2／決策表列 3：目錄不存在＋reused_existing_output_dir=False
+        → True（首次產出／骨架 row 必須放行）。"""
+        from core.readonly_producer import _resolve_readonly_preserved_fields
+
+        missing = tmp_path / 'not-created-yet'
+        meta = {'number': 'ABC-100', 'title': 'T'}
+        before = dict(meta)
+
+        result = _resolve_readonly_preserved_fields(
+            meta, str(missing), 'OLD', 'NEW', False,
+        )
+
+        assert result is True
+        assert meta == before
+
+    def test_directory_scan_unknown_error_fails_closed(self, tmp_path):
+        """邊界條件 3／決策表列 4：os.scandir 拋非 FileNotFoundError 的 OSError
+        → False＋WARNING。"""
+        from core.readonly_producer import _resolve_readonly_preserved_fields
+
+        meta = {'number': 'ABC-100', 'title': 'T'}
+
+        with patch('core.readonly_producer.os.scandir',
+                   side_effect=PermissionError('denied')), \
+             patch('core.readonly_producer.logger') as mock_logger:
+            result = _resolve_readonly_preserved_fields(
+                meta, str(tmp_path), 'OLD', 'NEW', False,
+            )
+
+        assert result is False
+        mock_logger.warning.assert_called_once()
+
+    def test_single_nfo_file_name_mismatches_both_candidates_still_selected(self, tmp_path):
+        """邊界條件 5／決策表列 6：恰好 1 份 .nfo，檔名對不上 old/new base
+        → 仍選中並讀回。"""
+        from core.readonly_producer import _resolve_readonly_preserved_fields
+
+        (tmp_path / 'manually-renamed.nfo').write_text(NORMAL_NFO_TEXT, encoding='utf-8')
+
+        meta = {'number': 'ABC-100', 'title': 'T'}
+
+        result = _resolve_readonly_preserved_fields(
+            meta, str(tmp_path), 'OLD-BASE', 'NEW-BASE', False,
+        )
+
+        assert result is True
+        assert meta['_summary'] == 'A normal summary.'
+        assert meta['_rating'] == 4.0
+        assert meta['url'] == 'https://example.com/v'
+
+    def test_multiple_nfo_files_neither_candidate_matches_fails_closed(self, tmp_path):
+        """邊界條件 6／決策表列 7 否定半：≥2 份 .nfo 且 old/new 皆不命中
+        → False＋WARNING。"""
+        from core.readonly_producer import _resolve_readonly_preserved_fields
+
+        (tmp_path / 'orphan-a.nfo').write_text(NORMAL_NFO_TEXT, encoding='utf-8')
+        (tmp_path / 'orphan-b.nfo').write_text(NORMAL_NFO_TEXT, encoding='utf-8')
+
+        meta = {'number': 'ABC-100', 'title': 'T'}
+
+        with patch('core.readonly_producer.logger') as mock_logger:
+            result = _resolve_readonly_preserved_fields(
+                meta, str(tmp_path), 'OLD-BASE', 'NEW-BASE', False,
+            )
+
+        assert result is False
+        mock_logger.warning.assert_called_once()
+
+    def test_directory_scan_entry_is_file_raises_unknown_fails_closed(self, tmp_path):
+        """邊界條件 10：scandir 成功但 entry.is_file() 拋 OSError → 乾淨回傳
+        False＋WARNING（例外不得逸出函式邊界）。"""
+        from core.readonly_producer import _resolve_readonly_preserved_fields
+
+        bad_entry = MagicMock()
+        bad_entry.name = 'x.nfo'
+        bad_entry.is_file.side_effect = OSError('is_file failed')
+
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = [bad_entry]
+        mock_cm.__exit__.return_value = None
+
+        meta = {'number': 'ABC-100', 'title': 'T'}
+
+        with patch('core.readonly_producer.os.scandir', return_value=mock_cm), \
+             patch('core.readonly_producer.logger') as mock_logger:
+            result = _resolve_readonly_preserved_fields(
+                meta, str(tmp_path), 'OLD', 'NEW', False,
+            )
+
+        assert result is False
+        mock_logger.warning.assert_called_once()
+
+    def test_multiple_nfo_files_old_base_wins_when_both_candidates_present(self, tmp_path):
+        """邊界條件 11／決策表列 7 正向鎖：old 與 new 都在且內容不同 → 讀回
+        來自 old_base 那份。"""
+        from core.readonly_producer import _resolve_readonly_preserved_fields
+
+        old_nfo = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<movie>\n'
+            '  <plot>FROM-OLD-BASE</plot>\n'
+            '  <rating>6.0</rating>\n'
+            '  <website>https://from-old</website>\n'
+            '</movie>\n'
+        )
+        new_nfo = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<movie>\n'
+            '  <plot>FROM-NEW-BASE</plot>\n'
+            '  <rating>2.0</rating>\n'
+            '  <website>https://from-new</website>\n'
+            '</movie>\n'
+        )
+        (tmp_path / 'OLD-WIN.nfo').write_text(old_nfo, encoding='utf-8')
+        (tmp_path / 'NEW-WIN.nfo').write_text(new_nfo, encoding='utf-8')
+
+        meta = {'number': 'ABC-100', 'title': 'T'}
+
+        result = _resolve_readonly_preserved_fields(
+            meta, str(tmp_path), 'OLD-WIN', 'NEW-WIN', False,
+        )
+
+        assert result is True
+        assert meta['_summary'] == 'FROM-OLD-BASE'
+        assert meta['_rating'] == 3.0
+        assert meta['url'] == 'https://from-old'
 
 
 # ---------------------------------------------------------------------------
@@ -10229,3 +10373,183 @@ class TestProduceOneReadonlyRename:
         assert len(assets['sample_fs']) == 1, "補劇照不得被無關的 NFO 損壞擋下"
         sample_path = Path(assets['sample_fs'][0])
         assert sample_path.exists() and sample_path.read_bytes() == b'FAKE-IMG'
+
+    def test_produce_one_config_drift_three_fields_preserved(self, tmp_path, temp_db):
+        """邊界條件 7：round A 用 '{num} {title}' 產出可辨識三欄 → 改成
+        '{title} {num}' → round B 缺三欄的 meta 仍逐字讀回 round A 的值。"""
+        from core import readonly_paths
+        from core.database import VideoRepository
+
+        repo = VideoRepository(temp_db)
+        meta_a = dict(
+            _T4R_META_A,
+            _summary='ROUND-A-SUMMARY',
+            _rating=3.5,
+            url='https://round-a',
+        )
+        ctx = _t4r_setup(tmp_path, repo, meta_a=meta_a)
+        src_fs = ctx['file_info']['path']
+
+        # sanity: round A 本輪目標 NFO 真的寫進這三個字面（走產品碼命名，
+        # 不靠 glob 列舉順序——round B 後舊 NFO 可能殘留，見 accepted residual）
+        base_a = readonly_paths._build_basename(
+            readonly_paths._format_data(meta_a, src_fs, ctx['config']),
+            src_fs, ctx['config'],
+        )
+        nfo_a = ctx['movie_dir'] / f'{base_a}.nfo'
+        assert nfo_a.is_file()
+        root_a = ET.parse(nfo_a).getroot()
+        assert root_a.findtext('plot') == 'ROUND-A-SUMMARY'
+        assert float(root_a.findtext('rating')) == 7.0
+        assert root_a.findtext('website') == 'https://round-a'
+
+        ctx['config'] = dict(ctx['config'], filename_format='{title} {num}')
+
+        meta_b = dict(meta_a)
+        for k in ('_summary', '_rating', 'url'):
+            meta_b.pop(k, None)
+
+        movie_dir, _assets = _t4r_round2(repo, ctx, meta_b, ('none',))
+
+        # 明確解析本輪目標 NFO（_clean_stale_singletons 的失準 old_base 可能
+        # 留下 round A 那份——不得靠 glob 列舉順序碰巧取到正確的那一份）
+        base_b = readonly_paths._build_basename(
+            readonly_paths._format_data(meta_b, src_fs, ctx['config']),
+            src_fs, ctx['config'],
+        )
+        nfo_b = Path(movie_dir) / f'{base_b}.nfo'
+        assert nfo_b.is_file()
+        root_b = ET.parse(nfo_b).getroot()
+        assert root_b.findtext('plot') == 'ROUND-A-SUMMARY'
+        assert float(root_b.findtext('rating')) == 7.0
+        assert root_b.findtext('website') == 'https://round-a'
+
+    def test_produce_one_first_generation_missing_dir_meta_incomplete_succeeds(
+        self, tmp_path, temp_db,
+    ):
+        """邊界條件 8：existing=None、輸出目錄尚未建立、meta 缺三欄 →
+        `_produce_one` 整輪正常成功（決策表列 3 的整合層）。"""
+        from core.database import VideoRepository
+        from core.readonly_producer import _produce_one
+
+        repo = VideoRepository(temp_db)
+        src_fs = str(tmp_path / 'src' / 'TEST-001.mp4')
+        Path(src_fs).parent.mkdir(parents=True, exist_ok=True)
+        Path(src_fs).write_bytes(b'FAKE-VIDEO-BYTES')
+        output_root = tmp_path / 'output'
+        output_root.mkdir()
+        output_uri = to_file_uri(str(output_root), {})
+        file_info = {'path': src_fs, 'size': 1_000_000, 'mtime': 1.0}
+
+        meta = dict(_T4R_META_A)
+        for k in ('_summary', '_rating', 'url'):
+            meta.pop(k, None)
+
+        with patch('core.readonly_assets.download_image', side_effect=_t4_real_download), \
+             patch('core.readonly_assets.generate_jellyfin_images', side_effect=_t4_real_jellyfin):
+            movie_dir, assets = _produce_one(
+                repo, MagicMock(), dict(_T3_BASE_CONFIG),
+                file_info=file_info, meta=meta, cover_strategy=_cover_strategy_for(meta),
+                assets_mode='full', existing=None,
+                output_root=str(output_root), output_uri=output_uri,
+                allocated_this_run=set(), path_mappings={},
+            )
+
+        assert Path(movie_dir).is_dir()
+        assert list(Path(movie_dir).glob('*.nfo')), "首次產出必須寫出 NFO"
+        v = repo.get_by_path(to_file_uri(src_fs, {}))
+        assert v is not None
+        assert v.number == 'TEST-001'
+
+    def test_produce_one_output_root_moved_existing_row_missing_dir_succeeds(
+        self, tmp_path, temp_db,
+    ):
+        """CD-151b-12 決策表列 3（有既有 DB 列那半）：output root 搬家後
+        `_resolve_movie_dir` 走 allocate、回傳尚未 mkdir 的新目錄；`existing`
+        非 None 但 `output_dir_uri != existing.output_dir` → 必須放行，不得
+        把「有既有列」誤判成 reuse 而 fail-closed。"""
+        from core.database import Video, VideoRepository
+        from core.readonly_producer import _produce_one
+
+        repo = VideoRepository(temp_db)
+        src_fs = str(tmp_path / 'src' / 'TEST-001.mp4')
+        Path(src_fs).parent.mkdir(parents=True, exist_ok=True)
+        Path(src_fs).write_bytes(b'FAKE-VIDEO-BYTES')
+        src_uri = to_file_uri(src_fs, {})
+
+        old_root = tmp_path / 'old-output'
+        old_movie_dir = old_root / 'TEST-001'
+        old_movie_dir.mkdir(parents=True)
+        (old_movie_dir / 'placeholder.nfo').write_text('<movie/>', encoding='utf-8')
+
+        seed = Video(
+            path=src_uri, number='TEST-001', title='Old Title',
+            actresses=['Actress A'], maker='Test Maker', release_date='2024-01-01',
+            cover_path=to_file_uri(str(old_movie_dir / 'cover.jpg'), {}),
+            output_dir=to_file_uri(str(old_movie_dir), {}),
+        )
+        repo.upsert(seed)
+        existing = repo.get_by_path(src_uri)
+        assert existing is not None
+        assert existing.output_dir == to_file_uri(str(old_movie_dir), {})
+
+        new_root = tmp_path / 'new-output'
+        new_root.mkdir()
+        new_uri = to_file_uri(str(new_root), {})
+        file_info = {'path': src_fs, 'size': 1_000_000, 'mtime': 1.0}
+
+        meta = dict(_T4R_META_A)
+        for k in ('_summary', '_rating', 'url'):
+            meta.pop(k, None)
+
+        with patch('core.readonly_assets.download_image', side_effect=_t4_real_download), \
+             patch('core.readonly_assets.generate_jellyfin_images', side_effect=_t4_real_jellyfin):
+            movie_dir, _assets = _produce_one(
+                repo, MagicMock(), dict(_T3_BASE_CONFIG),
+                file_info=file_info, meta=meta, cover_strategy=_cover_strategy_for(meta),
+                assets_mode='full', existing=existing,
+                output_root=str(new_root), output_uri=new_uri,
+                allocated_this_run=set(), path_mappings={},
+            )
+
+        assert Path(movie_dir).is_dir()
+        assert Path(movie_dir).is_relative_to(new_root)
+        assert list(Path(movie_dir).glob('*.nfo')), "搬家後首次落到新 root 必須成功寫出 NFO"
+        # 明確：本輪 allocate 出的目錄 URI ≠ 舊 existing.output_dir（provenance 前提）
+        assert to_file_uri(str(movie_dir), {}) != existing.output_dir
+        v = repo.get_by_path(src_uri)
+        assert v.output_dir != existing.output_dir
+
+    def test_produce_one_reused_output_dir_vanished_fails_closed(
+        self, tmp_path, temp_db,
+    ):
+        """CD-151b-12 決策表列 2 的整合層：reuse 分支下 movie_dir 被刪掉
+        （NAS 掉線／使用者刪輸出夾）＋ meta 缺三欄 → 必須 raise
+        ReadonlyProduceError，且不得重新寫出一份三欄空的 NFO。"""
+        import shutil
+
+        from core.database import VideoRepository
+        from core.readonly_producer import ReadonlyProduceError
+
+        repo = VideoRepository(temp_db)
+        ctx = _t4r_setup(tmp_path, repo)
+        before_output_dir = ctx['existing'].output_dir
+
+        shutil.rmtree(ctx['movie_dir'])
+        assert not ctx['movie_dir'].exists()
+
+        meta_b = dict(_T4R_META_A)
+        for k in ('_summary', '_rating', 'url'):
+            meta_b.pop(k, None)
+
+        with pytest.raises(ReadonlyProduceError):
+            _t4r_round2(repo, ctx, meta_b, ('none',))
+
+        assert not ctx['movie_dir'].exists(), (
+            "fail-closed 必須發生在任何寫檔之前，被刪的 movie_dir 不得被重建"
+        )
+        # 即使目錄意外被重建，也絕不能留下一份 NFO（三欄空的靜默清空路徑）
+        if ctx['movie_dir'].exists():
+            assert not list(ctx['movie_dir'].glob('*.nfo'))
+        v = repo.get_by_path(ctx['src_uri'])
+        assert v.output_dir == before_output_dir
