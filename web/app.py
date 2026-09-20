@@ -23,6 +23,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from web.static_cache import NoCacheStaticFiles
+from starlette.middleware.gzip import GZipMiddleware
+from web.compression import GZIP_COMPRESS_LEVEL, GZIP_EXCLUDED_CONTENT_TYPES
 from web.auto_organize_scheduler import auto_organize_loop
 from fastapi.templating import Jinja2Templates
 
@@ -176,6 +178,7 @@ app = FastAPI(
 
 # 靜態檔案
 app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
+app.add_middleware(GZipMiddleware, compresslevel=GZIP_COMPRESS_LEVEL, exclude_content_types=GZIP_EXCLUDED_CONTENT_TYPES)
 
 # 模板引擎
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
