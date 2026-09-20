@@ -1,6 +1,20 @@
+"""壓縮設定與 ASGI 中介軟體配置斷言。
+
+[等級鎖守衛設計與異動說明]
+- 本檔曾有第二層「掃描 web/**/*.py 確認無 compresslevel= 接非常數字面值」的文字守衛，
+  已於 Codex PR review 後移除。
+- 移除理由：該守衛使用正則表達式掃描原始文字，不排除註解與 docstring；只要有人在 web/
+  底下合法寫入包含例如 compresslevel 指定為 9 等字樣的解釋性註解，整套測試就會假紅、擋住合法開發。
+- 已知殘留：目前沒有任何自動化守衛阻擋以下兩種硬編碼情境：
+  1. 現有的註冊點（web/app.py 的 app.add_middleware(GZipMiddleware, ...)）被直接換成字面值等級——本檔的常數值斷言只看常數本身是否為 1，看不到呼叫端是否真的引用該常數；行為測試亦無法分辨具體等級。
+  2. 有人在 web/ 別處新增第二個 GZipMiddleware 註冊並硬編碼壓縮等級。
+  以上兩種情形均需仰賴 code review 把關。
+- 目前壓縮等級的防護機制：
+  1. 本檔 test_gzip_compress_level_constant_value 常數值斷言（鎖死為 1）。
+  2. tests/integration/test_response_compression.py 的行為測試（驗證 middleware 已註冊且壓縮行為生效——注意它驗不到「用的是哪個等級」，任何等級都會產生 Content-Encoding）。
+  3. web/compression.py 的設計理由註解。
+"""
 import inspect
-from pathlib import Path
-import re
 from starlette.middleware.gzip import GZipMiddleware
 from web.compression import GZIP_COMPRESS_LEVEL
 
@@ -17,27 +31,6 @@ def test_gzip_compress_level_constant_value():
     assert GZIP_COMPRESS_LEVEL == 1, (
         f"GZIP_COMPRESS_LEVEL 必須鎖死為 1，當前為 {GZIP_COMPRESS_LEVEL}。"
         "level 6/9 在低功耗主機上淨賠或純虧，見 findings-152.md §Q1-a"
-    )
-
-
-def test_gzip_compress_level_no_hardcoded_bypass():
-    """等級鎖第 2 層：文字掃描確認 web/ 目錄無硬編碼 compresslevel= 數值繞過。
-
-    擋住複製貼上官方文件範例、將 compresslevel 改寫成非 GZIP_COMPRESS_LEVEL 字面值的行為。
-    見 findings-152.md §Q1-a。
-    """
-    web_dir = Path(__file__).resolve().parent.parent.parent / "web"
-    pattern = re.compile(r"compresslevel\s*=\s*([^\s,\)]+)")
-    violations = []
-    for py_file in web_dir.glob("**/*.py"):
-        text = py_file.read_text(encoding="utf-8")
-        for m in pattern.finditer(text):
-            val = m.group(1).strip()
-            if val != "GZIP_COMPRESS_LEVEL":
-                violations.append(f"{py_file.name}: {m.group(0)}")
-    assert not violations, (
-        f"發現未透過 GZIP_COMPRESS_LEVEL 常數設定的 compresslevel: {violations}。"
-        "不得硬編碼壓縮等級，見 findings-152.md §Q1-a"
     )
 
 
