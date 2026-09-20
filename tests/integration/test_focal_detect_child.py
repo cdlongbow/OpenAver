@@ -122,3 +122,134 @@ def test_child_flush_true_delivers_ready_without_u_flag():
             p.wait(timeout=5)
         if p.stderr is not None:
             p.stderr.read()
+
+
+# ---------------------------------------------------------------------------
+# TASK-152b-T1b appendices (do not modify the three tests above)
+# ---------------------------------------------------------------------------
+
+
+def _inline_spawn(script: str):
+    """spawn_fn factory: real subprocess via python -u -c <script>."""
+
+    def spawn_fn(fs_path, ratio):
+        del fs_path, ratio
+        return subprocess.Popen(
+            [sys.executable, "-u", "-c", script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=str(REPO_ROOT),
+            env=_spawn_env(),
+            text=True,
+            encoding="utf-8",
+        )
+
+    return spawn_fn
+
+
+def test_real_timeout_kill_classified_as_detect_timeout_not_crashed():
+    """INV-152b-1a(a): parent kill after READY must be detect_timeout, not crashed."""
+    from core.focal.subprocess_runner import run_detection
+
+    script = (
+        "import sys, time\n"
+        "print('READY', flush=True)\n"
+        "time.sleep(2)\n"
+        "print('{\"focal\": [0.1, 0.2]}', flush=True)\n"
+    )
+    outcome = run_detection(
+        SAMPLE,
+        RATIO,
+        job_key="int-timeout",
+        timeout_s=0.3,
+        spawn_fn=_inline_spawn(script),
+    )
+    assert outcome.kind == "ABANDONED"
+    assert outcome.reason == "detect_timeout"
+
+
+def test_real_early_crash_classified_as_crashed_not_startup_timeout():
+    """INV-152b-1a(b): exit before READY must be crashed, not startup_timeout."""
+    from core.focal.subprocess_runner import run_detection
+
+    script = "import sys\nsys.exit(1)\n"
+    outcome = run_detection(
+        SAMPLE,
+        RATIO,
+        job_key="int-crash",
+        timeout_s=2.0,
+        spawn_fn=_inline_spawn(script),
+    )
+    assert outcome.kind == "ABANDONED"
+    assert outcome.reason == "crashed"
+
+
+def test_default_spawn_matches_direct_detect_child_call():
+    """_default_spawn must wire to T1a child; raw focal matches pinned oracle."""
+    from core.focal.subprocess_runner import run_detection
+
+    outcome = run_detection(
+        SAMPLE,
+        RATIO,
+        job_key="int-default",
+        timeout_s=5.0,
+    )
+    assert outcome.kind == "FOUND"
+    assert outcome.focal == (0.47336394430921885, 0.4569366320183266)
+
+
+def test_startup_hang_classified_as_startup_timeout(monkeypatch):
+    """Startup hang (no READY) must be startup_timeout, not crashed/detect_timeout."""
+    import core.focal.subprocess_runner as subprocess_runner
+    from core.focal.subprocess_runner import run_detection
+
+    monkeypatch.setattr(subprocess_runner, "_STARTUP_TIMEOUT_S", 0.3)
+    monkeypatch.setattr(subprocess_runner, "_breaker_streak", 0)
+
+    script = "import time\ntime.sleep(5)\n"
+    outcome = run_detection(
+        SAMPLE,
+        RATIO,
+        job_key="int-startup",
+        timeout_s=5.0,
+        spawn_fn=_inline_spawn(script),
+    )
+    assert outcome.kind == "ABANDONED"
+    assert outcome.reason == "startup_timeout"
+
+
+def test_live_child_with_garbage_first_line_does_not_deadlock_slot_lock():
+    """Live child that prints non-READY must be killed so the slot lock releases."""
+    import threading
+
+    import core.focal.subprocess_runner as subprocess_runner
+    from core.focal.subprocess_runner import run_detection
+
+    subprocess_runner._breaker_streak = 0
+    script = (
+        "import time\n"
+        "print('GARBAGE_NOT_READY', flush=True)\n"
+        "time.sleep(30)\n"
+    )
+    box: dict = {}
+
+    def call():
+        box["outcome"] = run_detection(
+            SAMPLE,
+            RATIO,
+            job_key="int-garbage",
+            timeout_s=1.0,
+            spawn_fn=_inline_spawn(script),
+        )
+
+    t = threading.Thread(target=call, name="focal-garbage-probe")
+    t.start()
+    t.join(timeout=10.0)
+    assert not t.is_alive(), "run_detection deadlocked on live child after garbage line"
+    outcome = box["outcome"]
+    assert outcome.kind == "ABANDONED"
+    assert outcome.reason == "crashed"
+
+    got = subprocess_runner._slot_lock.acquire(timeout=0.5)
+    assert got is True
+    subprocess_runner._slot_lock.release()
