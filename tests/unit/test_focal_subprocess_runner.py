@@ -349,3 +349,43 @@ def test_abandon_precedence_discards_late_result_line():
     late_eof = _classify_event(("eof", None), state2)
     assert _is_abandoned(late_eof, "startup_timeout")
     assert late_eof.reason != "crashed"
+
+
+def test_breaker_rechecked_after_acquiring_slot_lock(monkeypatch):
+    """Streak that opens only after acquire must still short-circuit spawn."""
+    spawn_calls = {"n": 0}
+    real_lock = subprocess_runner._slot_lock
+
+    class TripAfterAcquireLock:
+        """Deterministic seam: trip streak after acquire, before spawn."""
+
+        def acquire(self, *args, **kwargs):
+            ok = real_lock.acquire(*args, **kwargs)
+            if ok:
+                # Outer short-circuit already passed with streak=0; trip the
+                # authoritative under-lock recheck before spawn_fn runs.
+                monkeypatch.setattr(
+                    subprocess_runner,
+                    "_breaker_streak",
+                    subprocess_runner._BREAKER_THRESHOLD,
+                )
+            return ok
+
+        def release(self):
+            return real_lock.release()
+
+    monkeypatch.setattr(subprocess_runner, "_slot_lock", TripAfterAcquireLock())
+
+    def spawn_fn(fs_path, ratio):
+        spawn_calls["n"] += 1
+        return _spawn_ready_then_result((0.1, 0.2))(fs_path, ratio)
+
+    outcome = run_detection(
+        "/fake.jpg", 1.5, job_key="recheck", timeout_s=1.0, spawn_fn=spawn_fn
+    )
+    assert _is_abandoned(outcome, "circuit_open")
+    assert spawn_calls["n"] == 0
+
+    got = subprocess_runner._slot_lock.acquire(timeout=0.1)
+    assert got is True
+    subprocess_runner._slot_lock.release()

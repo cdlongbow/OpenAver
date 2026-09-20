@@ -100,6 +100,9 @@ def _start_reader(stdout, event_q: queue.Queue) -> None:
                     return
                 event_q.put(("line", line.rstrip("\r\n")))
         except Exception:
+            logger.exception(
+                "focal stdout reader failed; treating as child EOF"
+            )
             event_q.put(("eof", None))
 
     threading.Thread(target=_read, name="focal-stdout-reader", daemon=True).start()
@@ -241,6 +244,12 @@ def run_detection(
 
     _slot_lock.acquire()
     try:
+        # Authoritative recheck under the lock: callers that passed the
+        # lock-free short-circuit may still find the streak already open
+        # by the time they enter the critical section.
+        if _breaker_streak >= _BREAKER_THRESHOLD:
+            return _abandoned("circuit_open")
+
         try:
             child = spawn_fn(fs_path, ratio)
         except OSError:
