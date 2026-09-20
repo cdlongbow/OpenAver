@@ -17,6 +17,7 @@ import pytest
 
 from core.path_utils import to_file_uri
 from tests.conftest import MOCK_FOCAL_XY
+from core.focal.subprocess_runner import RunnerOutcome
 
 
 # ---------------------------------------------------------------------------
@@ -996,7 +997,7 @@ class TestWriteMovieAssets:
         baseline_bytes = Path(curator_fanart).read_bytes()
 
         with patch('core.readonly_assets.generate_nfo', side_effect=_t3_generate_nfo_side_effect), \
-             patch('core.organizer.detect_focal', return_value=MOCK_FOCAL_XY):
+             patch('core.organizer.run_detection', return_value=RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)):
             assets = _write_movie_assets(
                 movie_dir, meta, fd, source_fs_path, config,
                 cover_strategy=('copy', curator_fanart),
@@ -1076,7 +1077,7 @@ class TestWriteMovieAssets:
         assert not Path(curator_fanart).exists(), "前提：受測檔案一開始就不存在"
 
         with patch('core.readonly_assets.generate_nfo', side_effect=_t3_generate_nfo_side_effect), \
-             patch('core.organizer.detect_focal', return_value=MOCK_FOCAL_XY):
+             patch('core.organizer.run_detection', return_value=RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)):
             assets = _write_movie_assets(
                 movie_dir, meta, fd, source_fs_path, config,
                 cover_strategy=('copy', curator_fanart),
@@ -1383,8 +1384,8 @@ def _t3_oracle_poster_bytes(focal_xy):
     （gotchas-backend.md #9，101a-T1 已踩過）。
 
     TASK-102c-T1：改吃 focal_xy 參數，不再自己呼叫真 detect_focal——呼叫端須確保
-    patch `core.organizer.detect_focal` 用同一個值，否則 production 端與 oracle 端
-    會對不上。
+    patch `core.organizer.run_detection` 回傳 `RunnerOutcome(kind="FOUND", focal=同一個值)`，
+    否則 production 端與 oracle 端會對不上。
     """
     from core.organizer import _poster_window_ratio
     from core.focal import crop_image_position
@@ -1425,7 +1426,7 @@ class TestWriteMovieAssetsStationWiring:
 
         with patch('core.readonly_assets.download_image', side_effect=_t3_write_face_cover), \
              patch('core.readonly_assets.generate_nfo', side_effect=_t3_generate_nfo_side_effect), \
-             patch('core.organizer.detect_focal', return_value=MOCK_FOCAL_XY):
+             patch('core.organizer.run_detection', return_value=RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)):
             assets = _write_movie_assets(
                 movie_dir, meta, fd, source_fs_path, config,
                 cover_strategy=_cover_strategy_for(meta),
@@ -7009,7 +7010,7 @@ class TestCuratorFanartPngContentNamedAsJpg:
         base_stem = str(Path(movie_dir) / base)
 
         with patch('core.readonly_assets.generate_nfo', side_effect=_t3_generate_nfo_side_effect), \
-             patch('core.organizer.detect_focal', return_value=MOCK_FOCAL_XY):
+             patch('core.organizer.run_detection', return_value=RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)):
             assets = _write_movie_assets(
                 movie_dir, meta, fd, str(video), config, cover_strategy=cover_strategy,
             )

@@ -24,7 +24,8 @@ from core.image_codec import decode_image_payload, looks_like_image
 from core.image_host_policy import codec_for_host
 from core.path_utils import normalize_path, is_fs_path_under_dir
 from core.scrapers.utils import has_chinese, check_subtitle, strip_subtitle_markers, normalize_number_impl
-from core.focal import requires_face_detection, detect_focal
+from core.focal import requires_face_detection
+from core.focal.subprocess_runner import run_detection
 from core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -498,6 +499,9 @@ def _poster_window_ratio(w: int, h: int) -> Optional[float]:
         return (w - int(w / 1.9)) / h
 
 
+_DETECT_TIMEOUT_S = 5.0  # CD-152b-4 / D2: unattended batch path④ hard-cap
+
+
 def crop_to_poster(src_path: str, dst_path: str, number: str = '', maker: str = '') -> bool:
     """
     從橫向封面裁切直向海報（Jellyfin poster）。
@@ -524,7 +528,11 @@ def crop_to_poster(src_path: str, dst_path: str, number: str = '', maker: str = 
 
             focal = None
             if requires_face_detection(normalize_number_impl(number), maker):
-                focal = detect_focal(src_path, r_window)
+                outcome = run_detection(
+                    src_path, r_window, job_key=src_path, timeout_s=_DETECT_TIMEOUT_S,
+                )
+                if outcome.kind == "FOUND":
+                    focal = outcome.focal
 
             rgb = img.convert("RGB")
             if ratio >= 1.0:

@@ -16,6 +16,7 @@ from unittest.mock import patch, MagicMock, call
 
 from core.path_utils import to_file_uri
 from tests.conftest import MOCK_FOCAL_XY
+from core.focal.subprocess_runner import RunnerOutcome
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -3385,8 +3386,8 @@ def _t2_oracle_poster_bytes(focal_xy):
     流程兩次自我比對」（gotchas-backend.md #9，101a-T1 已踩過）。
 
     TASK-102c-T1：改吃 focal_xy 參數，不再自己呼叫真 detect_focal——呼叫端須確保
-    patch `core.organizer.detect_focal` 用同一個值，否則 production 端與 oracle 端
-    會對不上。
+    patch `core.organizer.run_detection` 回傳 `RunnerOutcome(kind="FOUND", focal=同一個值)`，
+    否則 production 端與 oracle 端會對不上。
     """
     from core.organizer import _poster_window_ratio
     from core.focal import crop_image_position
@@ -3434,7 +3435,7 @@ class TestEnrichSingleStationWiring:
             patch("core.enricher.generate_nfo", return_value=True),
             patch("core.enricher.download_image", return_value=False),
             patch("core.enricher.find_subtitle_files", return_value=[]),
-            patch("core.organizer.detect_focal", return_value=MOCK_FOCAL_XY),
+            patch("core.organizer.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)),
         ):
             from core.enricher import enrich_single
             result = enrich_single(

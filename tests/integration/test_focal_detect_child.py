@@ -253,3 +253,35 @@ def test_live_child_with_garbage_first_line_does_not_deadlock_slot_lock():
     got = subprocess_runner._slot_lock.acquire(timeout=0.5)
     assert got is True
     subprocess_runner._slot_lock.release()
+
+
+def test_crop_to_poster_via_runner_matches_direct_detect_focal_bytes(tmp_path):
+    """DoD③：crop_to_poster 經真 spawn run_detection 產出的 poster，
+    與同圖同程序直接呼叫 detect_focal() 獨立算出的期望裁切 JPEG bytes 逐位元相同。
+    """
+    from PIL import Image
+
+    from core.organizer import _poster_window_ratio, crop_to_poster
+
+    src = REPO_ROOT / "tests" / "fixtures" / "actress_photos" / "wide_offcenter_face.jpg"
+    dst = tmp_path / "poster_via_runner.jpg"
+    assert crop_to_poster(str(src), str(dst), number="FC2-1234567") is True
+    assert dst.exists()
+
+    with Image.open(src) as img:
+        w, h = img.size
+    assert h / w < 1.0, "fixture 應落在分支3（橫向）"
+    r_window = _poster_window_ratio(w, h)
+    assert r_window is not None
+
+    focal = detect_focal(str(src), r_window)
+    assert focal is not None
+
+    crop_w = w - int(w / 1.9)
+    x0 = max(min(int(w * focal[0]) - crop_w // 2, w - crop_w), 0)
+    with Image.open(src) as img:
+        expected_cropped = img.convert("RGB").crop((x0, 0, x0 + crop_w, h))
+    expected_path = tmp_path / "poster_oracle.jpg"
+    expected_cropped.save(str(expected_path), "JPEG", quality=95, subsampling=0)
+
+    assert dst.read_bytes() == expected_path.read_bytes()
