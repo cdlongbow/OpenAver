@@ -1,9 +1,9 @@
 """TASK-152a-T4 機制層：合成 ASGI SSE app ＋ 真實 GZipMiddleware。
 
 證明 text/event-stream 回應在 GZipMiddleware 包裹下：
-1. 分塊時序不被壓縮緩衝卡住（收到的 http.response.body 事件數 > 1）。
-2. 不會被加上 Content-Encoding: gzip header。
-3. 內容完全未被壓縮破壞。
+1. 真正承重的是：text/event-stream 在排除清單裡 ⇒ 不出現 Content-Encoding header，各塊原始內容與順序原樣轉發。
+2. 訊息數與 more_body 那兩條斷言目前不承重：starlette 的串流壓縮分支用 Z_SYNC_FLUSH 逐塊沖出，
+   就算壓縮真的發生，訊息數與 more_body 也不會變——它們是留著記錄意圖、並在上游哪天改成緩衝式壓縮時才會發聲。
 """
 
 import asyncio
@@ -13,7 +13,12 @@ from web.compression import GZIP_COMPRESS_LEVEL, GZIP_EXCLUDED_CONTENT_TYPES
 
 
 def test_gzip_middleware_sse_chunking_not_buffered():
-    """合成 ASGI SSE app 發送 3 個 chunk，驗證各 chunk 即時轉發且未被 gzip 壓縮。"""
+    """合成 ASGI SSE app 發送 3 個 chunk，驗證各 chunk 未被 gzip 壓縮且原樣轉發。
+
+    真正承重的是 Content-Encoding 不存在與各塊原始內容比對。
+    訊息數與 more_body 斷言目前不承重（因 starlette 串流壓縮分支採 Z_SYNC_FLUSH 逐塊沖出），
+    保留以記錄意圖，並在未來上游改用緩衝式壓縮時作為防護。
+    """
     chunks = [
         b"data: event 1\n\n",
         b"data: event 2\n\n",

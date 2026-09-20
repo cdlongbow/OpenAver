@@ -1,4 +1,9 @@
-"""TASK-152a-T3: /api/gallery/video range／206 與 application/octet-stream 壓縮安全網。
+"""TASK-152a-T3: 影片 range 位元組正確性、排除清單、與靜態資產 206 短路。
+
+影片端點的 media_type 只有 video/* 與 application/octet-stream，兩者都已在
+排除清單內——那邊的 range 測試驗的是「排除清單生效 + range 切片正確」，
+測不到 206 短路本身。靜態資產（如 text/css）不在排除清單裡，/static 的
+Range 才是 206 短路唯一真正承重的路徑。
 
 所有 range／octet-stream 相關斷言取原始 ASGI wire（自訂 send recorder），
 不用 TestClient／httpx 的 response.content（遇 Content-Encoding: gzip 會自動解壓）。
@@ -7,6 +12,7 @@
 from __future__ import annotations
 
 import random
+from pathlib import Path
 from urllib.parse import quote
 
 import pytest
@@ -180,6 +186,41 @@ def test_full_octet_stream_extensions_not_gzip_compressed(tmp_path, monkeypatch,
     assert recorded["headers"].get("content-type", "").startswith("application/octet-stream")
     assert "content-encoding" not in recorded["headers"]
     assert recorded["body"] == _OCTET_FIXTURE_BODY
+
+
+def test_static_css_range_not_gzip_compressed():
+    """靜態 CSS 的 Range／206 不得被 gzip——這是 206 短路唯一真正承重的路徑。
+
+    影片端點的 media_type（video/*、application/octet-stream）都已在排除清單內，
+    206 短路在那裡被 content-type 排除遮蔽，本檔其他測試分辨不出它有沒有在工作。
+    text/css 不在排除清單裡，所以 /static 的 Range 只剩 206 短路在擋壓縮。
+    """
+    css_path = (
+        Path(__file__).resolve().parents[2]
+        / "web"
+        / "static"
+        / "css"
+        / "pages"
+        / "showcase"
+        / "01-toolbar.css"
+    )
+    css_bytes = css_path.read_bytes()
+    start, end = 0, 999
+    expected = css_bytes[start : end + 1]
+
+    recorded = wire_get(
+        "/static/css/pages/showcase/01-toolbar.css",
+        headers={
+            "Accept-Encoding": "gzip",
+            "Range": f"bytes={start}-{end}",
+        },
+    )
+
+    assert recorded["status"] == 206
+    assert "content-encoding" not in recorded["headers"]
+    assert recorded["headers"].get("content-length") == "1000"
+    assert recorded["headers"].get("content-range") == f"bytes {start}-{end}/{len(css_bytes)}"
+    assert recorded["body"] == expected
 
 
 @pytest.mark.xfail(
