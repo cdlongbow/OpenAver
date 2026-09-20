@@ -8,6 +8,7 @@ module-level 單例 `_worker` / `submit_focal`。
 import threading
 
 from core.focal.detector import format_focal
+from core.focal.subprocess_runner import RunnerOutcome
 from core.focal.worker import FocalWorker, _fingerprint
 
 
@@ -40,8 +41,8 @@ class TestLatestWinsRace:
                 # mid-flight AND a fresh submit(B) for the SAME key lands.
                 store[fs_path] = ("fp_v2",)
                 w.submit("video", "v", fs_path, 2.0, commit)
-                return (0.1, 0.1)  # A's coords -- must be dropped
-            return (0.9, 0.9)  # B's coords -- must be committed
+                return RunnerOutcome(kind="FOUND", focal=(0.1, 0.1))  # A's coords -- must be dropped
+            return RunnerOutcome(kind="FOUND", focal=(0.9, 0.9))  # B's coords -- must be committed
 
         w._detect = fake_detect
 
@@ -71,7 +72,7 @@ class TestDequeueFingerprint:
             committed.append((focal_str, fp))
 
         def fake_detect(fs_path, ratio, work_width):
-            return (0.5, 0.5)
+            return RunnerOutcome(kind="FOUND", focal=(0.5, 0.5))
 
         w = FocalWorker(detect_fn=fake_detect, fingerprint_fn=fp_fn, auto_start=False)
         w.submit("video", "v", path, 1.0, commit)
@@ -99,7 +100,7 @@ class TestNoFaceStillCommits:
         })
 
         def fake_detect(fs_path, ratio, work_width):
-            return None
+            return RunnerOutcome(kind="NO_FACE")
 
         video_committed = []
         actress_committed = []
@@ -134,7 +135,7 @@ class TestCommitDispatch:
         })
 
         def fake_detect(fs_path, ratio, work_width):
-            return (0.3, 0.7)
+            return RunnerOutcome(kind="FOUND", focal=(0.3, 0.7))
 
         recorder = []
 
@@ -167,7 +168,7 @@ class TestStackedSubmit:
         store, fp_fn = _make_fp_store({path: ("fp1",)})
 
         def fake_detect(fs_path, ratio, work_width):
-            return (ratio, ratio)  # encode which submit "won" via ratio
+            return RunnerOutcome(kind="FOUND", focal=(ratio, ratio))  # encode which submit "won" via ratio
 
         committed = []
 
@@ -201,7 +202,7 @@ class TestExceptionIsolation:
             calls["n"] += 1
             if calls["n"] == 1:
                 raise RuntimeError("boom")
-            return (0.5, 0.5)
+            return RunnerOutcome(kind="FOUND", focal=(0.5, 0.5))
 
         committed = []
 
@@ -225,7 +226,7 @@ class TestLazyStart:
 
     def test_first_submit_starts_daemon_thread(self):
         def fake_detect(fs_path, ratio, work_width):
-            return None
+            return RunnerOutcome(kind="NO_FACE")
 
         def fp_fn(fs_path):
             return ("fp",)
@@ -260,3 +261,58 @@ class TestFingerprint:
 
     def test_missing_file_returns_none(self):
         assert _fingerprint("/nonexistent/path/does-not-exist.jpg") is None
+
+
+class TestAbandonedSkipsCommit:
+    """TASK-152b-T2 — ABANDONED must not call job.commit; FOUND/NO_FACE still do."""
+
+    def test_abandoned_result_never_commits(self):
+        path = "/fake/v.jpg"
+        store, fp_fn = _make_fp_store({path: ("fp1",)})
+        committed = []
+
+        def commit(focal_str, fp):
+            committed.append((focal_str, fp))
+
+        def fake_detect(fs_path, ratio, work_width):
+            return RunnerOutcome(kind="ABANDONED", reason="detect_timeout")
+
+        w = FocalWorker(detect_fn=fake_detect, fingerprint_fn=fp_fn, auto_start=False)
+        w.submit("video", "v", path, 1.0, commit)
+        w._process_one()
+
+        assert committed == []
+
+    def test_found_still_commits_exactly_once(self):
+        path = "/fake/v.jpg"
+        store, fp_fn = _make_fp_store({path: ("fp1",)})
+        committed = []
+
+        def commit(focal_str, fp):
+            committed.append((focal_str, fp))
+
+        def fake_detect(fs_path, ratio, work_width):
+            return RunnerOutcome(kind="FOUND", focal=(0.4, 0.6))
+
+        w = FocalWorker(detect_fn=fake_detect, fingerprint_fn=fp_fn, auto_start=False)
+        w.submit("video", "v", path, 1.0, commit)
+        w._process_one()
+
+        assert committed == [(format_focal((0.4, 0.6)), ("fp1",))]
+
+    def test_no_face_still_commits_exactly_once(self):
+        path = "/fake/v.jpg"
+        store, fp_fn = _make_fp_store({path: ("fp1",)})
+        committed = []
+
+        def commit(focal_str, fp):
+            committed.append((focal_str, fp))
+
+        def fake_detect(fs_path, ratio, work_width):
+            return RunnerOutcome(kind="NO_FACE")
+
+        w = FocalWorker(detect_fn=fake_detect, fingerprint_fn=fp_fn, auto_start=False)
+        w.submit("video", "v", path, 1.0, commit)
+        w._process_one()
+
+        assert committed == [('', ("fp1",))]

@@ -24,9 +24,13 @@ import threading
 
 from core.logger import get_logger
 
-from .detector import WORK_WIDTH, detect_focal, format_focal
+from .detector import WORK_WIDTH, format_focal
+from .subprocess_runner import run_detection
 
 logger = get_logger(__name__)
+
+# CD-152b-4 / spec §F2: unattended batch path① hard-cap (5s detect phase).
+_DETECT_TIMEOUT_S = 5.0
 
 
 def _fingerprint(fs_path):
@@ -40,6 +44,20 @@ def _fingerprint(fs_path):
         return (fs_path, st.st_mtime_ns, st.st_size)
     except OSError:
         return None
+
+
+def _run_detection_via_subprocess(fs_path, ratio, work_width):
+    """Default detect_fn: spawn child via subprocess_runner (TASK-152b-T2).
+
+    Signature matches the inject seam `(fs_path, ratio, work_width)`.
+    `work_width` is unused here — the child uses its own WORK_WIDTH; kept so
+    callers of `self._detect(...)` stay unchanged. Returns RunnerOutcome
+    unchanged (three-state channel; do not collapse to tuple/None).
+    """
+    del work_width  # seam arity only; child has its own WORK_WIDTH
+    return run_detection(
+        fs_path, ratio, job_key=fs_path, timeout_s=_DETECT_TIMEOUT_S,
+    )
 
 
 class _Job:
@@ -59,7 +77,12 @@ class FocalWorker:
     `_process_one()` synchronously instead of racing the real thread.
     """
 
-    def __init__(self, detect_fn=detect_focal, fingerprint_fn=_fingerprint, auto_start=True):
+    def __init__(
+        self,
+        detect_fn=_run_detection_via_subprocess,
+        fingerprint_fn=_fingerprint,
+        auto_start=True,
+    ):
         self._detect = detect_fn
         self._fingerprint = fingerprint_fn
         # Test-only seam: when False, submit() never starts the real daemon
@@ -131,10 +154,12 @@ class FocalWorker:
             start_fp = self._fingerprint(job.fs_path)
             if start_fp is None:
                 return  # file gone at dequeue time -> give up this round
-            focal = self._detect(job.fs_path, job.ratio, WORK_WIDTH)
+            outcome = self._detect(job.fs_path, job.ratio, WORK_WIDTH)
+            if outcome.kind == "ABANDONED":
+                return
             end_fp = self._fingerprint(job.fs_path)
             if end_fp == start_fp:
-                job.commit(format_focal(focal), start_fp)
+                job.commit(format_focal(outcome.focal), start_fp)
             # else: image changed mid-detection -> discard. If the change came
             # from a real re-submit (swap), that submit() already re-queued the
             # key (latest-wins). A bare mtime bump with no resubmit is NOT
