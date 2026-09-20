@@ -14,6 +14,7 @@ from unittest.mock import patch, MagicMock
 
 from fastapi.testclient import TestClient
 from core.database import init_db
+from core.focal.subprocess_runner import RunnerOutcome
 from core.path_utils import to_file_uri
 from tests.conftest import MOCK_FOCAL_XY
 
@@ -2271,7 +2272,7 @@ class TestDetectActressFocal:
         _place_fixture_photo(gfriends, "no_face_detected.jpg")
         with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
              patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch("web.routers.actress.detect_focal", return_value=None) as mock_detect:
+             patch("web.routers.actress.run_detection", return_value=RunnerOutcome(kind="NO_FACE")) as mock_detect:
             resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
         assert resp.status_code == 200
         assert resp.json() == {"success": True, "auto_focal": ""}
@@ -2292,17 +2293,17 @@ class TestDetectActressFocal:
         gfriends = tmp_path / "gfriends"
         _place_fixture_photo(gfriends, "narrow_face_top.jpg")
 
-        import web.routers.actress as actress_router
-        real_detect_focal = actress_router.detect_focal
+        from core.focal import detect_focal as real_detect_focal
         calls = []
 
-        def spy(*args, **kwargs):
-            calls.append((args, kwargs))
-            return real_detect_focal(*args, **kwargs)  # 🔴 真的呼叫下去，回真結果
+        def spy(fs_path, ratio, *, job_key, timeout_s):
+            calls.append((fs_path, ratio))
+            focal = real_detect_focal(fs_path, ratio)  # 真的呼叫下去，回真結果
+            return RunnerOutcome(kind="FOUND" if focal is not None else "NO_FACE", focal=focal)
 
         with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
              patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch("web.routers.actress.detect_focal", spy):
+             patch("web.routers.actress.run_detection", spy):
             resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
 
         assert resp.status_code == 200
@@ -2315,8 +2316,7 @@ class TestDetectActressFocal:
 
         # DoD② ratio 傳 0.75（併入自 test_detect_focal_ratio_is_075_via_spy）
         assert len(calls) == 1, "detect_focal 應恰好被呼叫一次"
-        args, kwargs = calls[0]
-        ratio = args[1] if len(args) > 1 else kwargs.get("ratio")
+        _fs_path, ratio = calls[0]
         assert ratio == 0.75
 
     # ---- DoD① detect 純預覽，全程零 DB 寫入 ----
@@ -2330,7 +2330,7 @@ class TestDetectActressFocal:
         _place_fixture_photo(gfriends, "narrow_face_top.jpg")
         with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
              patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch("web.routers.actress.detect_focal", return_value=MOCK_FOCAL_XY):
+             patch("web.routers.actress.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)):
             resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
 
         assert resp.status_code == 200
@@ -2351,7 +2351,7 @@ class TestDetectActressFocal:
         gfriends = tmp_path / "gfriends"
         with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
              patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch("web.routers.actress.detect_focal", return_value=MOCK_FOCAL_XY):
+             patch("web.routers.actress.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)):
             resp_400 = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
 
             _place_fixture_photo(gfriends, "narrow_face_top.jpg")
@@ -2378,6 +2378,46 @@ class TestDetectActressFocal:
         # 既有 detail_url／metatube_status 同類守衛共處 pytest）。
         capabilities_src = Path("web/routers/capabilities.py").read_text(encoding="utf-8")
         assert "detect-focal" not in capabilities_src
+
+    def test_manual_detect_does_not_use_batch_5s_timeout(self, client, tmp_path):
+        """DoD(i)：手動路徑不套路徑①④的批次 5 秒上限——假 run_detection 真 sleep 6s
+        仍正常完成，且 timeout_s != 5.0。"""
+        _save_actress_for_focal(client)
+        gfriends = tmp_path / "gfriends"
+        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
+        captured = {}
+
+        def slow_detect(fs_path, ratio, *, job_key, timeout_s):
+            captured["timeout_s"] = timeout_s
+            time.sleep(6.0)
+            return RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)
+
+        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
+             patch("web.routers.actress.run_detection", side_effect=slow_detect) as spy:
+            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
+
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        assert resp.json()["auto_focal"] == "0.3148,0.2000"
+        spy.assert_called_once()
+        assert captured["timeout_s"] != 5.0
+
+    def test_abandoned_returns_same_shape_as_no_face(self, client, tmp_path):
+        """DoD(ii)：run_detection 回 ABANDONED 時回應形狀等於既有無臉分支。"""
+        _save_actress_for_focal(client)
+        gfriends = tmp_path / "gfriends"
+        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
+        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
+             patch(
+                 "web.routers.actress.run_detection",
+                 return_value=RunnerOutcome(kind="ABANDONED", reason="crashed"),
+             ):
+            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
+
+        assert resp.status_code == 200
+        assert resp.json() == {"success": True, "auto_focal": ""}
 
 
 class TestSetActressFocal:

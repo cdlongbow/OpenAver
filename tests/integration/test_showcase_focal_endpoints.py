@@ -13,8 +13,11 @@ detect_focal 收到的永遠是 row.cover_path 反解的封面 fs（.jpg），
 `TestCropModeRouteRemoved` 回歸鎖）。
 """
 
+import time
+
 import pytest
 from core.database import init_db, VideoRepository, Video
+from core.focal.subprocess_runner import RunnerOutcome
 from core.path_utils import to_file_uri
 
 
@@ -104,7 +107,7 @@ class TestDetectFocalEndpoint:
         """Codex P0 回歸鎖：detect_focal 收到 row.cover_path 反解的封面 fs（.jpg），
         絕非 body path（.mp4）。mutation『改回開 body path』必 RED。"""
         _patch_db_and_config(mocker, focal_endpoint_setup)
-        spy = mocker.patch("web.routers.showcase.detect_focal", return_value=(0.42, 0.5))
+        spy = mocker.patch("web.routers.showcase.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=(0.42, 0.5)))
 
         resp = client.post("/api/showcase/video/detect-focal",
                            json={"path": focal_endpoint_setup["video_uri"]})
@@ -127,7 +130,7 @@ class TestDetectFocalEndpoint:
         """99a-T1a：/detect-focal 改純預覽，不寫 DB。mutation 驗證——若把
         repo.update_auto_focal(...) 加回去，此測試必須變 RED。"""
         _patch_db_and_config(mocker, focal_endpoint_setup)
-        mocker.patch("web.routers.showcase.detect_focal", return_value=(0.42, 0.5))
+        mocker.patch("web.routers.showcase.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=(0.42, 0.5)))
         before = VideoRepository(focal_endpoint_setup["db_path"]).get_by_path(
             focal_endpoint_setup["video_uri"]).auto_focal
         resp = client.post("/api/showcase/video/detect-focal",
@@ -139,7 +142,7 @@ class TestDetectFocalEndpoint:
 
     def test_non_db_path_404_no_detect(self, client, focal_endpoint_setup, mocker):
         _patch_db_and_config(mocker, focal_endpoint_setup)
-        spy = mocker.patch("web.routers.showcase.detect_focal", return_value=(0.4, 0.5))
+        spy = mocker.patch("web.routers.showcase.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=(0.4, 0.5)))
         bogus = to_file_uri(focal_endpoint_setup["video_dir"] + "/not-in-db.mp4", {})
         resp = client.post("/api/showcase/video/detect-focal", json={"path": bogus})
         assert resp.status_code == 404
@@ -157,7 +160,7 @@ class TestDetectFocalEndpoint:
             },
         }
         _patch_db_and_config(mocker, focal_endpoint_setup, config=ro_config)
-        spy = mocker.patch("web.routers.showcase.detect_focal", return_value=(0.4, 0.5))
+        spy = mocker.patch("web.routers.showcase.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=(0.4, 0.5)))
         resp = client.post("/api/showcase/video/detect-focal",
                            json={"path": focal_endpoint_setup["video_uri"]})
         assert resp.status_code == 200
@@ -175,7 +178,7 @@ class TestDetectFocalEndpoint:
             },
         }
         _patch_db_and_config(mocker, focal_endpoint_setup, config=oos_config)
-        spy = mocker.patch("web.routers.showcase.detect_focal", return_value=(0.4, 0.5))
+        spy = mocker.patch("web.routers.showcase.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=(0.4, 0.5)))
         resp = client.post("/api/showcase/video/detect-focal",
                            json={"path": focal_endpoint_setup["video_uri"]})
         assert resp.status_code == 403
@@ -186,7 +189,7 @@ class TestDetectFocalEndpoint:
         cover_path（Codex PR#107 第二輪 P2：detect 失敗路徑前端也要拿得到 token，
         否則使用者拖曳窗子後 confirmMask 會被 fail-closed guard 擋下無法存檔）。"""
         _patch_db_and_config(mocker, focal_endpoint_setup)
-        spy = mocker.patch("web.routers.showcase.detect_focal", return_value=(0.4, 0.5))
+        spy = mocker.patch("web.routers.showcase.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=(0.4, 0.5)))
         resp = client.post("/api/showcase/video/detect-focal",
                            json={"path": focal_endpoint_setup["video_no_cover_uri"]})
         assert resp.status_code == 400
@@ -198,7 +201,7 @@ class TestDetectFocalEndpoint:
     def test_no_face_returns_empty_string(self, client, focal_endpoint_setup, mocker):
         """detect_focal 回 None（無臉）→ auto_focal='' 回傳、不崩（99a-T1a：不再存回 DB）。"""
         _patch_db_and_config(mocker, focal_endpoint_setup)
-        spy = mocker.patch("web.routers.showcase.detect_focal", return_value=None)
+        spy = mocker.patch("web.routers.showcase.run_detection", return_value=RunnerOutcome(kind="NO_FACE"))
         resp = client.post("/api/showcase/video/detect-focal",
                            json={"path": focal_endpoint_setup["video_uri"]})
         assert resp.status_code == 200
@@ -207,6 +210,40 @@ class TestDetectFocalEndpoint:
         # Codex PR 三審 P2：回 None 時輸出與「端點跳過偵測直接回空」無法區分，
         # 必須斷言真的呼叫過偵測（同 test_api_actress no_face 案的 false-green 修法）
         spy.assert_called_once()
+
+    def test_manual_detect_does_not_use_batch_5s_timeout(self, client, focal_endpoint_setup, mocker):
+        """DoD(i)：手動路徑不套路徑①④的批次 5 秒上限——假 run_detection 真 sleep 6s
+        仍正常完成，且 timeout_s != 5.0。"""
+        _patch_db_and_config(mocker, focal_endpoint_setup)
+        captured = {}
+
+        def slow_detect(fs_path, ratio, *, job_key, timeout_s):
+            captured["timeout_s"] = timeout_s
+            time.sleep(6.0)
+            return RunnerOutcome(kind="FOUND", focal=(0.42, 0.5))
+
+        spy = mocker.patch("web.routers.showcase.run_detection", side_effect=slow_detect)
+        resp = client.post("/api/showcase/video/detect-focal",
+                           json={"path": focal_endpoint_setup["video_uri"]})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        assert resp.json()["auto_focal"] == "0.4200,0.5000"
+        spy.assert_called_once()
+        assert captured["timeout_s"] != 5.0
+
+    def test_abandoned_returns_same_shape_as_no_face(self, client, focal_endpoint_setup, mocker):
+        """DoD(ii)：run_detection 回 ABANDONED 時回應形狀等於既有無臉分支。"""
+        _patch_db_and_config(mocker, focal_endpoint_setup)
+        mocker.patch(
+            "web.routers.showcase.run_detection",
+            return_value=RunnerOutcome(kind="ABANDONED", reason="crashed"),
+        )
+        resp = client.post("/api/showcase/video/detect-focal",
+                           json={"path": focal_endpoint_setup["video_uri"]})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        assert resp.json()["auto_focal"] == ""
+        assert resp.json()["cover_path"] == focal_endpoint_setup["cover_uri"]
 
 
 # ============ /video/save-focal mutator（99a-T1a）============
