@@ -221,6 +221,7 @@ class FocalDeviceState(BaseModel):
     disabled: bool = False
     consecutive_timeout_count: int = 0
     judged_at_version: str = ""   # 累積目前這個 streak／disabled 狀態時的 App 版本號
+    set_by_user: bool = False  # True = 使用者決定；自動關閉／版本 reset 不得覆寫
 
 
 class AppConfig(BaseModel):

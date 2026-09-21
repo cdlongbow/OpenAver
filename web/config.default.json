@@ -198,6 +198,7 @@
   "focal_device": {
     "disabled": false,
     "consecutive_timeout_count": 0,
-    "judged_at_version": ""
+    "judged_at_version": "",
+    "set_by_user": false
   }
 }
