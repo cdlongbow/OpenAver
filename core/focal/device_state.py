@@ -8,11 +8,27 @@ immediately; the next write clears streak/disabled before applying the event
 
 from __future__ import annotations
 
+from typing import Callable, Optional
+
 from core.config import load_config, mutate_config
 from core.focal.subprocess_runner import RunnerOutcome
+from core.logger import get_logger
 from core.version import VERSION
 
+logger = get_logger(__name__)
+
 _DISABLE_THRESHOLD = 2
+
+# CD-152c-20：依賴反轉的通知埠。core/ 不可 import web/（import-linter 契約），
+# 所以 web/app.py 在 module level 呼叫 set_notification_sink(emit_notification)
+# 註冊真正的實作；未註冊時是 no-op，純 core 測試與非 web 進入點自然靜音。
+_notification_sink: Optional[Callable[..., None]] = None
+
+
+def set_notification_sink(fn: Callable[..., None]) -> None:
+    """Register the callable record_outcome() uses to emit a disable notice."""
+    global _notification_sink
+    _notification_sink = fn
 
 
 def is_disabled() -> bool:
@@ -59,4 +75,11 @@ def record_outcome(outcome: RunnerOutcome) -> bool:
         fd["judged_at_version"] = VERSION
 
     mutate_config(mutator)
+
+    if just_disabled and _notification_sink is not None:
+        try:
+            _notification_sink("warn", "notif.focal_auto_disabled")
+        except Exception:
+            logger.exception("focal_device notification sink raised; record_outcome result unaffected")
+
     return just_disabled

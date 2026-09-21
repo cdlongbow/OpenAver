@@ -352,3 +352,174 @@ class TestInv152c3ConcurrentMutate:
         persisted = json.loads(core_config.CONFIG_PATH.read_text(encoding="utf-8"))
         assert persisted["focal_device"]["consecutive_timeout_count"] == 1
         assert persisted["general"]["folder_format"] == "{actor}/{maker}"
+
+
+# ---------------------------------------------------------------------------
+# T10 — F6 通知埠：只在 disabled false→true 的那一刻經 sink 發一則
+# (CD-152b-15 / CD-152c-20)
+# ---------------------------------------------------------------------------
+
+
+class TestNotificationSinkTransition:
+    def test_sink_called_once_on_transition_not_on_first_timeout(
+        self, tmp_path, monkeypatch
+    ):
+        """DoD：連續兩次超時湊滿 → sink 恰好被呼叫一次，且發生在第二次那一輪。"""
+        from core.focal import device_state
+        from core.version import VERSION
+
+        _patch_config_paths(tmp_path, monkeypatch)
+        _seed_focal_device(judged_at_version=VERSION)
+        calls: list[tuple] = []
+        monkeypatch.setattr(
+            device_state, "_notification_sink",
+            lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+
+        assert device_state.record_outcome(_abandoned("detect_timeout")) is False
+        assert calls == []  # 第一次超時：還沒轉態，不發
+
+        assert device_state.record_outcome(_abandoned("detect_timeout")) is True
+        assert calls == [(("warn", "notif.focal_auto_disabled"), {})]
+
+    def test_no_notification_without_transition_when_already_disabled(
+        self, tmp_path, monkeypatch
+    ):
+        """DoD：裝置已經是停用狀態，再超時一次 → 沒有轉態，零通知。
+
+        mutation 錨點 M1：record_outcome 裡
+        `if just_disabled and _notification_sink is not None:`。
+        """
+        from core.focal import device_state
+        from core.version import VERSION
+
+        _patch_config_paths(tmp_path, monkeypatch)
+        _seed_focal_device(
+            disabled=True, consecutive_timeout_count=2, judged_at_version=VERSION,
+        )
+        calls: list[tuple] = []
+        monkeypatch.setattr(
+            device_state, "_notification_sink",
+            lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+
+        assert device_state.record_outcome(_abandoned("detect_timeout")) is False
+        assert calls == []
+
+    def test_found_scan_never_notifies(self, tmp_path, monkeypatch):
+        """DoD：全庫有碼片掃描完成（只有 FOUND/NO_FACE，從未超時）→ 零通知。"""
+        from core.focal import device_state
+        from core.version import VERSION
+
+        _patch_config_paths(tmp_path, monkeypatch)
+        _seed_focal_device(judged_at_version=VERSION)
+        calls: list[tuple] = []
+        monkeypatch.setattr(
+            device_state, "_notification_sink",
+            lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+
+        for _ in range(5):
+            assert device_state.record_outcome(_found()) is False
+        assert calls == []
+
+    def test_transition_is_caller_path_agnostic(self, tmp_path, monkeypatch):
+        """DoD：停用由路徑④（海報產生）湊成也一樣發通知。
+
+        record_outcome 本身不知道呼叫端是 worker（路徑①）或 organizer（路徑④）
+        ——判定只吃 outcome 序列，跟哪個模組呼叫無關。這裡用「兩次超時之間夾雜
+        其他事件」模擬跨情境湊成停用（不限單一掃描或單一路徑）。
+        """
+        from core.focal import device_state
+        from core.version import VERSION
+
+        _patch_config_paths(tmp_path, monkeypatch)
+        _seed_focal_device(judged_at_version=VERSION)
+        calls: list[tuple] = []
+        monkeypatch.setattr(
+            device_state, "_notification_sink",
+            lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+
+        assert device_state.record_outcome(_abandoned("detect_timeout")) is False
+        assert device_state.record_outcome(_found()) is False  # 計數歸零，換一個情境
+        assert calls == []
+        assert device_state.record_outcome(_abandoned("detect_timeout")) is False
+        assert device_state.record_outcome(_abandoned("detect_timeout")) is True
+        assert len(calls) == 1
+
+    def test_version_change_resets_then_notifies_again(self, tmp_path, monkeypatch):
+        """DoD：版本變更後重新判定、再次湊滿兩次超時 → 再發一則。"""
+        from core.focal import device_state
+
+        _patch_config_paths(tmp_path, monkeypatch)
+        monkeypatch.setattr(device_state, "VERSION", "0.16.4")
+        _seed_focal_device(
+            disabled=True, consecutive_timeout_count=2, judged_at_version="0.16.3",
+        )
+        calls: list[tuple] = []
+        monkeypatch.setattr(
+            device_state, "_notification_sink",
+            lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+
+        assert device_state.record_outcome(_abandoned("detect_timeout")) is False  # lazy reset，第一次
+        assert calls == []
+        assert device_state.record_outcome(_abandoned("detect_timeout")) is True
+        assert len(calls) == 1
+
+    def test_unregistered_sink_is_silent_noop(self, tmp_path, monkeypatch):
+        """DoD：未註冊 sink 時，record_outcome 走完轉態路徑不拋例外、不發通知。"""
+        from core.focal import device_state
+        from core.version import VERSION
+
+        _patch_config_paths(tmp_path, monkeypatch)
+        _seed_focal_device(judged_at_version=VERSION)
+        monkeypatch.setattr(device_state, "_notification_sink", None)
+
+        device_state.record_outcome(_abandoned("detect_timeout"))
+        assert device_state.record_outcome(_abandoned("detect_timeout")) is True
+
+    def test_raising_sink_does_not_propagate_and_state_stays_usable(
+        self, tmp_path, monkeypatch
+    ):
+        """DoD：sink 拋例外時，偵測 outcome 逐字不變、且不外洩例外。
+
+        record_outcome 內部把 sink 呼叫包在自己的 try/except（CD-152b-9 不變式
+        (c)）——record_outcome 本身不拋出即可，等同 run_detection 收到的
+        on_outcome 回呼「正常完成」。鎖的釋放與下一件工作的 spawn 已由既有的
+        test_focal_subprocess_runner.py::test_on_outcome_raises_preserves_outcome_and_releases_lock
+        （驗的是 on_outcome 真的拋例外，更嚴格的情境）結構性涵蓋。本測試只證
+        「sink 拋例外不會讓 record_outcome 變成那個情境」：緊接著再呼叫一次
+        record_outcome 模擬下一件工作，證明狀態沒有被打壞。
+        """
+        from core.focal import device_state
+        from core.version import VERSION
+
+        _patch_config_paths(tmp_path, monkeypatch)
+        _seed_focal_device(judged_at_version=VERSION)
+
+        def _boom_sink(*args, **kwargs):
+            raise RuntimeError("sink boom (simulated)")
+
+        monkeypatch.setattr(device_state, "_notification_sink", _boom_sink)
+
+        device_state.record_outcome(_abandoned("detect_timeout"))
+        just_disabled = device_state.record_outcome(_abandoned("detect_timeout"))
+        assert just_disabled is True
+        assert _read_focal_device()["disabled"] is True
+
+        assert device_state.record_outcome(_found()) is False
+        assert _read_focal_device()["consecutive_timeout_count"] == 0
+
+    def test_notification_copy_has_no_numbers_and_mentions_manual_escape_hatch(self):
+        """DoD：文案不含張數／具體耗時數字、含手動拖曳逃生口（F6）。"""
+        import json
+        import re
+        from pathlib import Path
+
+        zh = json.loads(Path("locales/zh_TW.json").read_text(encoding="utf-8"))
+        text = zh["notif"]["focal_auto_disabled"]
+
+        assert not re.search(r"\d", text), f"F6 明文禁止張數／耗時數字，實際文案：{text}"
+        assert "拖" in text, f"F6 要求提到手動拖曳的逃生口，實際文案：{text}"

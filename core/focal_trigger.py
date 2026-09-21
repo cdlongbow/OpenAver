@@ -12,7 +12,7 @@
 import os
 
 from core.database import VideoRepository
-from core.focal import requires_face_detection, submit_focal
+from core.focal import device_state, requires_face_detection, submit_focal
 from core.logger import get_logger
 from core.path_utils import to_file_uri
 
@@ -51,6 +51,17 @@ def maybe_submit_video_focal(number, maker, video_path_uri, cover_fs_path, *, co
             return  # 有碼片零成本
         if not cover_fs_path or not os.path.exists(cover_fs_path):
             return  # 無封面檔不排空 job
+        # enqueue 前的純優化（CD-152b-15）：裝置已停用就不排空 job。局部
+        # try/except、fail-open——外層那層 try/except 會把裸拋錯誤變成整支
+        # helper 的 fail-closed（見 module docstring「安全退化」段），is_disabled()
+        # 查詢本身失敗不該連累「排不排 job」這個決定。
+        try:
+            disabled = device_state.is_disabled()
+        except Exception:
+            logger.warning("device_state.is_disabled() 查詢失敗，fail-open 不擋 enqueue: %s", video_path_uri)
+            disabled = False
+        if disabled:
+            return  # 裝置已停用，不排空 job
         # fp 忽略（video 無 fingerprint 欄）；commit 綁 video_path_uri 當 WHERE key、
         # cover_path_uri 在此刻（submit 當下）被 closure 捕獲當 expected_cover_path、
         # db_path 當目標 DB。

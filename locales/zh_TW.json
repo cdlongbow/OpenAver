@@ -905,7 +905,8 @@
     "auto_organize_readonly": "定時整理：最愛資料夾是唯讀來源",
     "auto_organize_failed": "定時整理失敗，請查閱日誌",
     "wishlist_auto_removed": "書籤自動更新",
-    "wishlist_reconcile_failed": "書籤對帳失敗，請查閱日誌"
+    "wishlist_reconcile_failed": "書籤對帳失敗，請查閱日誌",
+    "focal_auto_disabled": "這台機器跑人臉偵測太慢，自動對焦已自動關閉。想對焦的話，在燈箱裡自己拖曳就可以。"
   },
   "similar_mode": {
     "button_aria_label": "探索相似影片",

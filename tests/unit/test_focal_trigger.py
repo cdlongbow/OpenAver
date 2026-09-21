@@ -390,3 +390,59 @@ def test_schedule_focal_does_not_pass_db_path():
 
     _, kwargs = mock_submit.call_args
     assert "db_path" not in kwargs
+
+
+# ─── T10：enqueue 前 is_disabled() 檢查（純優化，CD-152b-15） ────────────────
+
+def test_disabled_device_skips_submit():
+    with (
+        patch("core.focal_trigger.requires_face_detection", return_value=True),
+        patch("core.focal_trigger.os.path.exists", return_value=True),
+        patch("core.focal_trigger.device_state.is_disabled", return_value=True),
+        patch("core.focal_trigger.submit_focal") as mock_submit,
+    ):
+        from core.focal_trigger import maybe_submit_video_focal
+        maybe_submit_video_focal(
+            "SIRO-1234", "", "file:///x/SIRO-1234.mp4", "/x/SIRO-1234.jpg",
+            cover_path_uri="file:///x/SIRO-1234.jpg",
+        )
+
+    mock_submit.assert_not_called()
+
+
+def test_enabled_device_still_submits():
+    with (
+        patch("core.focal_trigger.requires_face_detection", return_value=True),
+        patch("core.focal_trigger.os.path.exists", return_value=True),
+        patch("core.focal_trigger.device_state.is_disabled", return_value=False),
+        patch("core.focal_trigger.submit_focal") as mock_submit,
+        patch("core.focal_trigger.VideoRepository"),
+    ):
+        from core.focal_trigger import maybe_submit_video_focal
+        maybe_submit_video_focal(
+            "SIRO-1234", "", "file:///x/SIRO-1234.mp4", "/x/SIRO-1234.jpg",
+            cover_path_uri="file:///x/SIRO-1234.jpg",
+        )
+
+    mock_submit.assert_called_once()
+
+
+def test_is_disabled_query_failure_fails_open_and_still_submits():
+    """mutation 錨點 M2：`disabled = False`（except 分支）。is_disabled() 查詢本身
+    失敗（例如 config.json 暫時讀取失敗）必須 fail-open——繼續排 job，不能讓
+    純優化的查詢動作變成靜默關閉全站自動對焦。
+    """
+    with (
+        patch("core.focal_trigger.requires_face_detection", return_value=True),
+        patch("core.focal_trigger.os.path.exists", return_value=True),
+        patch("core.focal_trigger.device_state.is_disabled", side_effect=RuntimeError("boom")),
+        patch("core.focal_trigger.submit_focal") as mock_submit,
+        patch("core.focal_trigger.VideoRepository"),
+    ):
+        from core.focal_trigger import maybe_submit_video_focal
+        maybe_submit_video_focal(
+            "SIRO-1234", "", "file:///x/SIRO-1234.mp4", "/x/SIRO-1234.jpg",
+            cover_path_uri="file:///x/SIRO-1234.jpg",
+        )
+
+    mock_submit.assert_called_once()
