@@ -267,6 +267,67 @@ class TestDetectFocalEndpoint:
         assert resp.json()["cover_path"] == focal_endpoint_setup["cover_uri"]
         assert resp.json()["reason"] == "device_disabled"
 
+    def test_disabled_short_circuits_before_runner_lock(self, client, focal_endpoint_setup, mocker):
+        """關掉自動對焦後，點裁切工具不得進 run_detection 全域鎖排隊。
+
+        端點層用 is_disabled_in(config) 短路；本測試餵真的 focal_device config。
+
+        stub 刻意回一個**看得出來的** focal（0.99）而不是拋例外：拋例外會被端點的
+        `except Exception` 收成 500，紅字只剩 `assert 500 == 200`——那跟「端點因為
+        別的原因炸了」長得一模一樣，診斷力是零。回可辨識值的話，短路一旦被拿掉，
+        紅字直接是 `assert '0.9900,0.9900' == ''`，一眼看得出偵測真的跑了。
+        `assert_not_called()` 再補上「一次都不准呼叫」這個不變式本身。
+        """
+        # 選 set_by_user=True：使用者關掉對焦與版本無關，is_disabled_in 直接讀 disabled，
+        # 不依賴 judged_at_version == VERSION（避免 lazy-reset 把測試讀成「未停用」）。
+        disabled_config = {
+            **focal_endpoint_setup["config"],
+            "focal_device": {
+                "disabled": True,
+                "set_by_user": True,
+                "judged_at_version": "",
+                "consecutive_timeout_count": 0,
+            },
+        }
+        _patch_db_and_config(mocker, focal_endpoint_setup, config=disabled_config)
+        spy = mocker.patch(
+            "web.routers.showcase.run_detection",
+            return_value=RunnerOutcome(kind="FOUND", focal=(0.99, 0.99)),
+        )
+
+        resp = client.post("/api/showcase/video/detect-focal",
+                           json={"path": focal_endpoint_setup["video_uri"]})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["auto_focal"] == "", "短路被拿掉了：偵測真的跑了並回了座標"
+        assert body["reason"] == "device_disabled"
+        assert body["cover_path"] == focal_endpoint_setup["cover_uri"]
+        spy.assert_not_called()
+
+    def test_disabled_lookup_failure_fails_open_and_still_detects(self, client, focal_endpoint_setup, mocker):
+        """config 停用查詢失敗 ≠ 硬體算不動：fail-open 繼續偵測，不得 500 / device_disabled。"""
+        from core.focal import device_state
+
+        _patch_db_and_config(mocker, focal_endpoint_setup)
+        mocker.patch.object(
+            device_state, "is_disabled_in", side_effect=OSError("config unreadable"),
+        )
+        spy = mocker.patch(
+            "web.routers.showcase.run_detection",
+            return_value=RunnerOutcome(kind="FOUND", focal=(0.42, 0.5)),
+        )
+
+        resp = client.post("/api/showcase/video/detect-focal",
+                           json={"path": focal_endpoint_setup["video_uri"]})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["auto_focal"] == "0.4200,0.5000"
+        assert body["reason"] == ""
+        assert body["cover_path"] == focal_endpoint_setup["cover_uri"]
+        spy.assert_called_once()
+
     def test_manual_detect_timeout_does_not_contribute(self, client, focal_endpoint_setup, mocker):
         """CD-152d-2b②：前景逾時走 record_manual_outcome（非 record_outcome），reason=too_slow_auto_disabled。"""
         from core.focal import device_state

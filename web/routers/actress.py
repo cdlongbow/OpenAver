@@ -1147,6 +1147,22 @@ async def detect_actress_focal(name: str):
         if photo_fs is None:
             return JSONResponse(status_code=400, content={"success": False, "error": _FOCAL_ERR_NO_PHOTO})
 
+        # 152d-T-D8：同 showcase，停用時不要進 run_detection 的全域鎖排隊。
+        # 這支沒有預先載入的 config，而 is_disabled() 內部會讀檔 + 取鎖 ⇒ 必須 to_thread。
+        # 152d-T-D9：fail-open，鏡射 runner 內 pre_spawn_check 的既有契約
+        # （subprocess_runner.py:309-315）。「config 查詢失敗」與「這台機器算不算得動人臉」
+        # 是兩回事——查不到不可以當成停用，更不可以讓整個請求失敗。
+        try:
+            _focal_disabled = await asyncio.to_thread(device_state.is_disabled)
+        except Exception:
+            logger.warning("focal 停用查詢失敗，fail-open 繼續偵測", exc_info=True)
+            _focal_disabled = False
+        if _focal_disabled:
+            return JSONResponse(
+                status_code=200,
+                content={"success": True, "auto_focal": "", "reason": "device_disabled"},
+            )
+
         decision = {}
 
         def _on_outcome(o):

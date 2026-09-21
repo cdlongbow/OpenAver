@@ -2442,6 +2442,75 @@ class TestDetectActressFocal:
         assert resp.status_code == 200
         assert resp.json() == {"success": True, "auto_focal": "", "reason": "device_disabled"}
 
+    def test_disabled_short_circuits_before_runner_lock(self, client, tmp_path, monkeypatch):
+        """關掉自動對焦後，點裁切工具不得進 run_detection 全域鎖排隊。
+
+        端點層用 await to_thread(is_disabled) 短路；本測試寫真的 focal_device config，
+        並用 assert_not_called() 鎖「一次都不准呼叫」這個不變式。
+        """
+        import core.config as core_config
+        from core.config import save_config
+
+        _save_actress_for_focal(client)
+        gfriends = tmp_path / "gfriends"
+        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
+
+        # 選 set_by_user=True：使用者關掉對焦與版本無關，is_disabled_in 直接讀 disabled，
+        # 不依賴 judged_at_version == VERSION（避免 lazy-reset 把測試讀成「未停用」）。
+        config_path = tmp_path / "config.json"
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+        save_config({
+            "focal_device": {
+                "disabled": True,
+                "set_by_user": True,
+                "judged_at_version": "",
+                "consecutive_timeout_count": 0,
+            }
+        })
+
+        # stub 回一個看得出來的 focal（0.99）而不是拋例外：拋例外會被端點的 except
+        # 收成 500，紅字只剩 `assert 500 == 200`，跟「端點因為別的原因炸了」分不出來。
+        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
+             patch(
+                 "web.routers.actress.run_detection",
+                 return_value=RunnerOutcome(kind="FOUND", focal=(0.99, 0.99)),
+             ) as spy:
+            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["auto_focal"] == "", "短路被拿掉了：偵測真的跑了並回了座標"
+        assert body["reason"] == "device_disabled"
+        assert "cover_path" not in body
+        spy.assert_not_called()
+
+    def test_disabled_lookup_failure_fails_open_and_still_detects(self, client, tmp_path):
+        """config 停用查詢失敗 ≠ 硬體算不動：fail-open 繼續偵測，不得 500 / device_disabled。"""
+        from core.focal import device_state
+
+        _save_actress_for_focal(client)
+        gfriends = tmp_path / "gfriends"
+        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
+
+        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
+             patch.object(device_state, "is_disabled", side_effect=OSError("config unreadable")), \
+             patch(
+                 "web.routers.actress.run_detection",
+                 return_value=RunnerOutcome(kind="FOUND", focal=(0.42, 0.5)),
+             ) as spy:
+            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["auto_focal"] == "0.4200,0.5000"
+        assert body["reason"] == ""
+        spy.assert_called_once()
+
     def test_manual_detect_timeout_does_not_contribute(self, client, tmp_path):
         """CD-152d-2b②：前景逾時走 record_manual_outcome（非 record_outcome），reason=too_slow_auto_disabled。"""
         from core.focal import device_state

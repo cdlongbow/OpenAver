@@ -71,9 +71,9 @@ export function stateLightboxMask() {
 
 
         // 100b-T1（CD-4/§B-1b）：video/actress 兩分支識別資訊統一出口。_maskKind 已由 openMask()
-        // 起手凍結（G4，不在此重判）。actress 分支目前結構性不可達（T1 DoD ③：女優分支無 focal
-        // icon，openMask 永不在 currentLightboxActress 有值時觸發），此處仍完整定義兩分支欄位
-        // 供 T2 銜接（§B-1b 表）。detectEndpoint/focalEndpoint 各自完整字面 URL（Opus 裁決 C：
+        // 起手凍結（G4，不在此重判）。⚠️ 舊註解曾寫「actress 分支目前結構性不可達」——那只在
+        // 100b-T1 完成的當下成立，同日的 100b-T2a／100c-T2 就把 .lb-mask-btn 接進女優分支了
+        // （v0.12.2）。兩分支今天都活著。detectEndpoint/focalEndpoint 各自完整字面 URL（Opus 裁決 C：
         // 不可拼接 base，否則 static_guard_lint.mjs:147 的 detect-focal 規則因字面字串消失而
         // 靜默 RED）。imgEl 對 actress 分支须 null-safe（G3：$refs.pickerCoverImg 在 x-if 內）。
         _maskTarget() {
@@ -116,7 +116,7 @@ export function stateLightboxMask() {
             //     kind 被改成別的分支會讓後續 _maskDragStart 抓到錯的 $refs 元素）。
             //   • 排 `_maskTarget().identity` 之後 → helper 讀到未凍結的 kind，dispatch 到錯分支。
             // 用排序讓該類 race 結構上不可能發生，而非事後補旗標（feedback_order_over_flag_guards）。
-            // T1 階段唯一觸發入口（.lb-mask-btn）只在 video 分支渲染，故此刻恆為 'video'。
+            // （100b-T1 時 .lb-mask-btn 只在 video 分支渲染，此處恆為 'video'；100c-T2 起女優也有。）
             this._maskKind = this.currentLightboxActress ? 'actress' : 'video';
             if (!this._maskTarget().identity) return;
             // 98b-T6 防线：圖未就緒不開（按鈕也 gate _lbFullLoaded，此為 defense-in-depth）。
