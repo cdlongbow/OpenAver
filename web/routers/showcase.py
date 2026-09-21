@@ -7,6 +7,7 @@ Showcase API 路由 - 影片展示資料端點
 """
 
 import os
+import uuid
 from urllib.parse import quote
 
 from fastapi import APIRouter, Query, Request
@@ -26,7 +27,8 @@ from core.path_utils import (
 )
 from core.logger import get_logger
 from core.config import load_config, get_gallery_source_paths
-from core.focal import detect_focal, format_focal, parse_focal
+from core.focal import format_focal, parse_focal
+from core.focal.subprocess_runner import run_detection
 from core import thumbnail_cache
 from core.multipart_group import group_rows, resolve_group
 
@@ -308,6 +310,9 @@ def delete_video(path: str = Query(..., description="file:/// URI")):
     return JSONResponse({"deleted": n})
 
 
+_MANUAL_DETECT_TIMEOUT_S = 600.0  # D2/D9: 手動路徑不套路徑①④的批次 5 秒上限；工程安全網非效能宣稱，見卡片「設計決策」（本 branch 無 F5 停止鈕、DS218 實測最慢完整跑完 53.76s，findings-152 §Q3-a）
+
+
 @router.post("/video/detect-focal")
 def detect_video_focal(req: DetectFocalRequest):
     """使用者主動 force-detect 封面焦點預覽（98b-T4 CD-98b-7 / Codex P0；99a-T1a 改純預覽-only）。
@@ -354,7 +359,10 @@ def detect_video_focal(req: DetectFocalRequest):
             return JSONResponse({"success": False, "error": "找不到封面檔案",
                                  "cover_path": row.cover_path}, status_code=400)
 
-        focal = detect_focal(cover_fs, 0.71)     # 同步；無臉 → None
+        outcome = run_detection(
+            cover_fs, 0.71, job_key=str(uuid.uuid4()), timeout_s=_MANUAL_DETECT_TIMEOUT_S,
+        )
+        focal = outcome.focal if outcome.kind == "FOUND" else None
         auto_focal = format_focal(focal)          # None → ''，純預覽不寫 DB
         return JSONResponse({"success": True, "auto_focal": auto_focal, "cover_path": row.cover_path})
 

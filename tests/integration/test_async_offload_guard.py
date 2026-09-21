@@ -39,6 +39,12 @@ BLOCKING_FUNC_NAMES = frozenset({
     # 的 async body 直接呼叫，此守衛會抓到（_collect_direct_calls 下潛 AsyncFunctionDef
     # 但停在同步 FunctionDef，見該檔案 :70-94）。
     "enrich_one_readonly",
+    # feature/152b：單次阻塞上限拉到 600s 的子程序 runner（core/focal/subprocess_runner.py）。
+    # 現況兩個消費端都正確（actress.py::detect_actress_focal 走
+    # `await asyncio.to_thread(run_detection, ...)`；showcase.py::detect_video_focal
+    # 維持同步 `def` 交 Starlette threadpool）——加進清單是防未來有人把其中一個
+    # 端點改成 async def 又裸呼叫，讓整站凍結最多 10 分鐘。
+    "run_detection",
 })
 
 # Attribute-call 後綴（接在任意物件後 .exists() / .stat() / .iterdir() / .save()）

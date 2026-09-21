@@ -17,6 +17,7 @@ from PIL import Image
 from core.organizer import _detect_suffixes, format_string, organize_file, crop_to_poster, generate_nfo, extract_chinese_title, download_image, truncate_to_chars, truncate_title, _detect_vr_cluster, _is_multipart_kw, _poster_window_ratio, generate_jellyfin_images
 import core.organizer as organizer
 from core.focal import requires_face_detection
+from core.focal.subprocess_runner import RunnerOutcome
 from core.scrapers.utils import normalize_number_impl
 from tests.conftest import MOCK_FOCAL_XY
 
@@ -1458,8 +1459,8 @@ class TestPosterWindowRatioInvariant:
 
 class TestCropToPosterFocalWiring:
     """DoD②：無碼真圖 poster 對準臉——gate 兩支路徑（fixture A/B）各一，
-    分支2/分支3 各一（4 組合）。TASK-102c-T1：改 mock `core.organizer.detect_focal`
-    成固定偏心值（MOCK_FOCAL_XY），只驗 consumer（crop_to_poster）收到焦點座標後
+    分支2/分支3 各一（4 組合）。TASK-102c-T1：改 mock `core.organizer.run_detection`
+    成 `RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)`，只驗 consumer（crop_to_poster）收到焦點座標後
     正確平移窗口的 wiring；真的「pigo 對真圖偵出正確焦點」能力已搬到
     test_focal_detector.py::TestDetectFocal（Layer 1，真跑）。
 
@@ -1475,10 +1476,10 @@ class TestCropToPosterFocalWiring:
         dst = tmp_path / f"poster_{tag}.jpg"
         baseline_dst = tmp_path / f"poster_{tag}_baseline.jpg"
 
-        # TASK-102c-T1：mock core.organizer.detect_focal（consumer binding）成固定偏心值，
-        # 避免真跑 pigo（~4-5s/呼叫）。baseline 呼叫不傳 number/maker，gate=False，不會
-        # 呼叫 detect_focal，不受此 patch 影響。
-        with patch("core.organizer.detect_focal", return_value=MOCK_FOCAL_XY):
+        # TASK-102c-T1：mock core.organizer.run_detection（consumer binding）成
+        # RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)，避免真跑 pigo（~4-5s/呼叫）。
+        # baseline 呼叫不傳 number/maker，gate=False，不會呼叫 run_detection，不受此 patch 影響。
+        with patch("core.organizer.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)):
             result = crop_to_poster(str(src_path), str(dst), **kwargs)
         assert result is True
         assert dst.exists()
@@ -1616,10 +1617,10 @@ class TestCropToPosterByteForByteRegression:
         )
 
     def test_no_face_real_photo_branch3(self, tmp_path):
-        """無臉（分支3）：gate True 但 detect_focal 回 None → 落回原碼（fallback wiring）。
+        """無臉（分支3）：gate True 但 run_detection 回 NO_FACE → 落回原碼（fallback wiring）。
 
-        TASK-102c-T1 方案 A：mock `core.organizer.detect_focal` 成 `return_value=None`，
-        只驗 organizer 收到 None 後的 fallback wiring。「pigo 對這張圖真的判定無臉」
+        TASK-102c-T1 方案 A：mock `core.organizer.run_detection` 成 `RunnerOutcome(kind="NO_FACE")`，
+        只驗 organizer 收到非 FOUND 後的 fallback wiring。「pigo 對這張圖真的判定無臉」
         的能力已搬到 test_focal_detector.py::TestDetectFocal::
         test_detect_focal_no_face_real_photo_returns_none（Layer 1 回歸，真跑）。
         """
@@ -1627,7 +1628,7 @@ class TestCropToPosterByteForByteRegression:
         dst_a = tmp_path / "a.jpg"
         dst_b = tmp_path / "b.jpg"
         assert crop_to_poster(str(src), str(dst_a)) is True
-        with patch("core.organizer.detect_focal", return_value=None) as mock_detect:
+        with patch("core.organizer.run_detection", return_value=RunnerOutcome(kind="NO_FACE")) as mock_detect:
             assert crop_to_poster(str(src), str(dst_b), number="FC2-1234567") is True
         # 反例回 None 與「gate 被跳過、detect_focal 根本沒被呼叫」輸出同 bytes，
         # 光比對 bytes 證不出 wiring；必須額外斷言 mock 真的被呼叫過一次
@@ -1686,7 +1687,7 @@ class TestCropToPosterFocalCropWidth:
         dst = tmp_path / "poster.jpg"
 
         # 焦點固定置中（0.5），gate 用真正無碼番號（FC2-1234567 實測 gate → True）。
-        with patch('core.organizer.detect_focal', return_value=(0.5, 0.5)):
+        with patch('core.organizer.run_detection', return_value=RunnerOutcome(kind="FOUND", focal=(0.5, 0.5))):
             assert crop_to_poster(str(src), str(dst), number="FC2-1234567") is True
 
         with Image.open(dst) as out:
@@ -1699,15 +1700,15 @@ class TestCropToPosterBranch1NoDetection:
     """DoD⑤：分支1（h/w>=1.4，narrow_face_top.jpg 真圖且真有臉）仍 copy2 不裁，
     且完全不觸發人臉偵測（結構保證：分支1提早 return，不進入 gate/偵測邏輯）。
 
-    patch target 必須是 core.organizer.detect_focal（consumer binding，
-    見 gotchas-backend.md §測試 Mock Patch Target；patch core.focal.detect_focal 改不到）。
+    patch target 必須是 core.organizer.run_detection（consumer binding，
+    見 gotchas-backend.md §測試 Mock Patch Target；patch core.focal.subprocess_runner.run_detection 改不到）。
     """
 
     def test_branch1_copy2_no_detection_even_with_gate_true(self, tmp_path):
         src = _FOCAL_FIXTURES_DIR / "narrow_face_top.jpg"
         dst = tmp_path / "poster.jpg"
 
-        with patch('core.organizer.detect_focal') as mock_detect_focal:
+        with patch('core.organizer.run_detection') as mock_detect_focal:
             result = crop_to_poster(str(src), str(dst), number="FC2-1234567")
 
         assert result is True
@@ -5634,8 +5635,8 @@ def _t2_oracle_poster_bytes(fixture_path, focal_xy=MOCK_FOCAL_XY):
     結構性瞎眼（gotchas-backend.md #9，101a-T1 已踩過）。
 
     TASK-102c-T1：改吃 focal_xy 參數（預設 MOCK_FOCAL_XY），不再自己呼叫真
-    detect_focal——呼叫端須確保 patch `core.organizer.detect_focal` 用同一個值，
-    否則 production 端與 oracle 端會對不上。
+    detect_focal——呼叫端須確保 patch `core.organizer.run_detection` 回傳
+    `RunnerOutcome(kind="FOUND", focal=同一個值)`，否則 production 端與 oracle 端會對不上。
     """
     with Image.open(fixture_path) as img:
         w, h = img.size
@@ -5685,7 +5686,7 @@ class TestOrganizeFileStationWiring:
             "url": "",
         }
         with patch("core.organizer.download_image", side_effect=self._mock_download_fixture_face), \
-             patch("core.organizer.detect_focal", return_value=MOCK_FOCAL_XY):
+             patch("core.organizer.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)):
             result = organize_file(str(src), metadata, config)
         assert result["success"] is True, f"organize 失敗: {result.get('error')}"
         assert result.get("poster_path") is not None, "station1 應產生 poster_path"
@@ -6197,3 +6198,40 @@ class TestVideosSchemaHasNoNfoCarrierColumns:
                 f'videos 表出現了 {forbidden!r} 欄位——_summary/_rating 是搜尋結果的 NFO carrier，'
                 f'結構性不應該進 DB（spec §3.3），這是它第一次可能被誤加的機械警報'
             )
+
+
+class TestCropToPosterAbandonedDegrade:
+    """DoD②：路徑④ 收到 ABANDONED 時仍寫出 poster，bytes 與同圖 NO_FACE 退化路逐位元相同。
+
+    ABANDONED 不得早退／跳過寫檔——與 NO_FACE 共用「focal 保持 None」的既有裁切路徑。
+    """
+
+    def _assert_abandoned_matches_no_face(self, tmp_path, reason: str):
+        src = _FOCAL_FIXTURES_DIR / "wide_offcenter_face.jpg"
+        dst_abandoned = tmp_path / f"abandoned_{reason}.jpg"
+        dst_no_face = tmp_path / f"no_face_{reason}.jpg"
+
+        with patch(
+            "core.organizer.run_detection",
+            return_value=RunnerOutcome(kind="ABANDONED", reason=reason),
+        ):
+            result = crop_to_poster(str(src), str(dst_abandoned), number="FC2-1234567")
+        assert result is True
+        assert dst_abandoned.exists()
+
+        with patch(
+            "core.organizer.run_detection",
+            return_value=RunnerOutcome(kind="NO_FACE"),
+        ):
+            assert crop_to_poster(str(src), str(dst_no_face), number="FC2-1234567") is True
+
+        assert dst_abandoned.read_bytes() == dst_no_face.read_bytes()
+
+    def test_abandoned_detect_timeout_matches_no_face(self, tmp_path):
+        self._assert_abandoned_matches_no_face(tmp_path, "detect_timeout")
+
+    def test_abandoned_crashed_matches_no_face(self, tmp_path):
+        self._assert_abandoned_matches_no_face(tmp_path, "crashed")
+
+    def test_abandoned_circuit_open_matches_no_face(self, tmp_path):
+        self._assert_abandoned_matches_no_face(tmp_path, "circuit_open")

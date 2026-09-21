@@ -16,6 +16,7 @@ import asyncio
 import json
 import random
 import re
+import uuid
 from io import BytesIO
 from typing import Optional, List
 from urllib.parse import quote
@@ -35,7 +36,8 @@ from core.actress_photo import (
     download_actress_photo, get_local_photo_path, delete_local_photo,
     crop_video_cover, GFRIENDS_DIR, CONTENT_TYPE_MAP, validate_photo_url,
 )
-from core.focal import detect_focal, format_focal, parse_focal
+from core.focal import format_focal, parse_focal
+from core.focal.subprocess_runner import run_detection
 from core.organizer import sanitize_filename
 from core.path_utils import to_file_uri as to_file_uri, uri_to_fs_path, uri_to_local_fs_path, coerce_to_file_uri
 from core.config import load_config
@@ -1092,6 +1094,7 @@ async def upload_actress_photo(name: str, file: UploadFile = _UPLOAD_FILE_PARAM)
 # X 軸拖曳」的錯框。改這個常數時，務必同時檢查 plan-100b.md CD-2 的前端
 # 常數是否也要跟著動。
 _FOCAL_DETECT_RATIO = 0.75
+_MANUAL_DETECT_TIMEOUT_S = 600.0  # D2/D9: 手動路徑不套路徑①④的批次 5 秒上限；工程安全網非效能宣稱，見卡片「設計決策」（本 branch 無 F5 停止鈕、DS218 實測最慢完整跑完 53.76s，findings-152 §Q3-a）
 
 _FOCAL_ERR_NOT_FOUND = _UPLOAD_ERR_NOT_FOUND  # "查無此女優"（複用既有常數，同語意）
 _FOCAL_ERR_NO_PHOTO = "找不到照片檔案"          # mirror showcase.py:264 的「找不到封面檔案」措辭家族
@@ -1143,7 +1146,11 @@ async def detect_actress_focal(name: str):
         if photo_fs is None:
             return JSONResponse(status_code=400, content={"success": False, "error": _FOCAL_ERR_NO_PHOTO})
 
-        focal = await asyncio.to_thread(detect_focal, str(photo_fs), _FOCAL_DETECT_RATIO)
+        outcome = await asyncio.to_thread(
+            run_detection, str(photo_fs), _FOCAL_DETECT_RATIO,
+            job_key=str(uuid.uuid4()), timeout_s=_MANUAL_DETECT_TIMEOUT_S,
+        )
+        focal = outcome.focal if outcome.kind == "FOUND" else None
         auto_focal = format_focal(focal)  # None → ''，純預覽不寫 DB
         return JSONResponse(status_code=200, content={"success": True, "auto_focal": auto_focal})
     except Exception:

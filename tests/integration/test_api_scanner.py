@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib.parse import quote
 from core.path_utils import to_file_uri
 from tests.conftest import MOCK_FOCAL_XY
+from core.focal.subprocess_runner import RunnerOutcome
 
 # TASK-141a-T5：本檔測的兩支端點（generate_avlist / enrich_single_endpoint）收尾會
 # 無條件呼叫 reconcile_wishlist()，它用無參數 repo ⇒ 解析到真實 DB。逐檔明示 opt-in
@@ -1049,8 +1050,8 @@ def _station4_oracle_poster_bytes(focal_xy=MOCK_FOCAL_XY):
     不可用「呼叫同一站流程兩次自我比對」（gotchas-backend.md #9，101a-T1 已踩過）。
 
     TASK-102c-T1：改吃 focal_xy 參數（預設 MOCK_FOCAL_XY），不再自己呼叫真
-    detect_focal——呼叫端須確保 patch `core.organizer.detect_focal` 用同一個值，
-    否則 production 端與 oracle 端會對不上。
+    detect_focal——呼叫端須確保 patch `core.organizer.run_detection` 回傳
+    `RunnerOutcome(kind="FOUND", focal=同一個值)`，否則 production 端與 oracle 端會對不上。
     """
     from core.organizer import _poster_window_ratio
     from core.focal import crop_image_position
@@ -1116,7 +1117,7 @@ class TestJellyfinUpdateStationWiring:
         monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
         monkeypatch.setattr("web.routers.scanner.load_config", lambda: {"scraper": {"external_manager": "jellyfin"}, "gallery": {"path_mappings": {}}})
 
-        with patch("core.organizer.detect_focal", return_value=MOCK_FOCAL_XY):
+        with patch("core.organizer.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)):
             events = list(generate_jellyfin_images_stream())
         assert any('"type": "done"' in e for e in events), f"SSE 應完成: {events}"
 
@@ -1207,7 +1208,7 @@ class TestPosterBakeStructuralLocks:
         monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
         monkeypatch.setattr("web.routers.scanner.load_config", lambda: {"scraper": {"external_manager": "jellyfin"}, "gallery": {"path_mappings": {}}})
 
-        with patch("core.organizer.detect_focal", return_value=MOCK_FOCAL_XY):
+        with patch("core.organizer.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)):
             events = list(generate_jellyfin_images_stream())
         assert any('"type": "done"' in e for e in events), f"SSE 應完成: {events}"
 
@@ -1234,7 +1235,7 @@ class TestPosterBakeStructuralLocks:
         monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
         monkeypatch.setattr("web.routers.scanner.load_config", lambda: {"scraper": {"external_manager": "jellyfin"}, "gallery": {"path_mappings": {}}})
 
-        with patch("core.organizer.detect_focal", return_value=MOCK_FOCAL_XY):
+        with patch("core.organizer.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)):
             events = list(generate_jellyfin_images_stream())
         assert any('"type": "done"' in e for e in events), f"SSE 應完成: {events}"
 
@@ -1275,7 +1276,7 @@ class TestPosterBakeStructuralLocks:
         monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
         monkeypatch.setattr("web.routers.scanner.load_config", lambda: {"scraper": {"external_manager": "jellyfin"}, "gallery": {"path_mappings": {}}})
 
-        with patch("core.organizer.detect_focal", return_value=MOCK_FOCAL_XY):
+        with patch("core.organizer.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)):
             events = list(generate_jellyfin_images_stream())  # 先烤一次
         assert any('"type": "done"' in e for e in events), f"SSE 應完成: {events}"
 
