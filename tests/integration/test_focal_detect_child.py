@@ -5,14 +5,37 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
+import pytest
+
+import core.focal.subprocess_runner as subprocess_runner
 from core.focal.detector import detect_focal
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SAMPLE = str(REPO_ROOT / "tests" / "fixtures" / "focal" / "sample.jpg")
 RATIO = 1.5
+
+
+# ---------------------------------------------------------------------------
+# Isolation: module-level lock + breaker streak must not leak across tests
+# (P3-1 — mirrors tests/unit/test_focal_subprocess_runner.py's fixture shape;
+# this file's real-spawn tests drive `crashed`/`startup_timeout` ABANDONED
+# outcomes that increment the module-level `_breaker_streak`, which would
+# otherwise leak into later tests in the same pytest session).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_runner_module_state(monkeypatch):
+    monkeypatch.setattr(subprocess_runner, "_breaker_streak", 0)
+    lock = subprocess_runner._slot_lock
+    if lock.acquire(timeout=0):
+        lock.release()
+    else:
+        monkeypatch.setattr(subprocess_runner, "_slot_lock", threading.Lock())
 
 
 def _spawn_env():
@@ -220,12 +243,8 @@ def test_startup_hang_classified_as_startup_timeout(monkeypatch):
 
 def test_live_child_with_garbage_first_line_does_not_deadlock_slot_lock():
     """Live child that prints non-READY must be killed so the slot lock releases."""
-    import threading
-
-    import core.focal.subprocess_runner as subprocess_runner
     from core.focal.subprocess_runner import run_detection
 
-    subprocess_runner._breaker_streak = 0
     script = (
         "import time\n"
         "print('GARBAGE_NOT_READY', flush=True)\n"

@@ -172,19 +172,45 @@ def _classify_event(event, call_state: _CallState) -> RunnerOutcome:
     return parsed
 
 
-def _apply_breaker(outcome: RunnerOutcome) -> None:
+def _apply_breaker(outcome: RunnerOutcome) -> bool:
+    """Update the circuit-breaker streak. Returns True iff this call is the
+    one that pushed the streak from threshold-1 to threshold (the log trigger
+    added by 152b pre-merge branch review P2-2); the increment/reset semantics
+    themselves are unchanged from CD-152b-17."""
     global _breaker_streak
     if outcome.kind in ("FOUND", "NO_FACE"):
         _breaker_streak = 0
-        return
+        return False
     if outcome.kind != "ABANDONED":
-        return
+        return False
     reason = outcome.reason
+    just_tripped = False
     if reason in ("startup_timeout", "crashed"):
         _breaker_streak += 1
+        just_tripped = _breaker_streak == _BREAKER_THRESHOLD
     elif reason == "detect_timeout":
         _breaker_streak = 0
     # circuit_open / skipped_disabled: neither increment nor reset
+    return just_tripped
+
+
+def _log_abandoned(outcome: RunnerOutcome, fs_path: str, just_tripped: bool) -> None:
+    """留一條可事後判讀的線索，說明某次 focal 偵測為何被判 ABANDONED（152b pre-merge branch review P2-2）。
+
+    只加 log，不動控制流／斷路器語意。just_tripped 只在 streak 剛好跨過
+    _BREAKER_THRESHOLD 的那一次為 True，避免斷路器開路後每次呼叫都刷屏。
+    """
+    logger.warning(
+        "focal detection abandoned: reason=%s path=%s streak=%d/%d",
+        outcome.reason, fs_path, _breaker_streak, _BREAKER_THRESHOLD,
+    )
+    if just_tripped:
+        logger.warning(
+            "focal circuit breaker tripped (streak=%d) — automatic focal "
+            "detection is now stopped for the rest of this App session; "
+            "restart the App to recover. path=%s",
+            _breaker_streak, fs_path,
+        )
 
 
 def _run_child_phases(
@@ -236,7 +262,9 @@ def run_detection(
     """Run one focal detection in a child process (CD-152b-3/4/10/17/18)."""
     logger.debug("run_detection job_key=%s path=%s", job_key, fs_path)
     if _breaker_streak >= _BREAKER_THRESHOLD:
-        return _abandoned("circuit_open")
+        outcome = _abandoned("circuit_open")
+        _log_abandoned(outcome, fs_path, just_tripped=False)
+        return outcome
 
     child = None
     need_kill = False
@@ -248,21 +276,26 @@ def run_detection(
         # lock-free short-circuit may still find the streak already open
         # by the time they enter the critical section.
         if _breaker_streak >= _BREAKER_THRESHOLD:
-            return _abandoned("circuit_open")
+            outcome = _abandoned("circuit_open")
+            _log_abandoned(outcome, fs_path, just_tripped=False)
+            return outcome
 
         try:
             child = spawn_fn(fs_path, ratio)
         except OSError:
             logger.exception("focal spawn_fn raised")
             outcome = _abandoned("crashed")
-            _apply_breaker(outcome)
+            just_tripped = _apply_breaker(outcome)
+            _log_abandoned(outcome, fs_path, just_tripped)
             return outcome
 
         outcome = _run_child_phases(child, timeout_s, call_state)
         # Any abandon => terminate before wait (CD-152b-10). Harmless if child
         # already exited; required if it is still alive after garbage stdout.
         need_kill = outcome.kind == "ABANDONED"
-        _apply_breaker(outcome)
+        just_tripped = _apply_breaker(outcome)
+        if outcome.kind == "ABANDONED":
+            _log_abandoned(outcome, fs_path, just_tripped)
         return outcome
     finally:
         if child is not None:

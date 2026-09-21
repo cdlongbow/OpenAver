@@ -6,6 +6,7 @@ All scenarios use a fake spawn_fn / fake process. True OS-pipe races
 from __future__ import annotations
 
 import json
+import logging
 import queue
 import threading
 import time
@@ -159,6 +160,24 @@ def test_detect_completes_before_timeout_delivers_result():
     assert len(commit_spy) == 1
 
 
+def test_child_reports_no_face_classified_as_no_face_and_resets_breaker(monkeypatch):
+    """P3-2：child 回 {"focal": null} 必須真的餵到 run_detection（非手搭
+    RunnerOutcome），涵蓋 :146-148 的 `focal is None → NO_FACE` 分支——回歸成
+    "crashed" 會讓無臉片永遠不蓋 focal_attempted_at（每次掃描重排）且誤計入
+    斷路器（連三張無臉封面就殺掉整個 session 的自動對焦）。"""
+    monkeypatch.setattr(subprocess_runner, "_breaker_streak", 2)
+    outcome = run_detection(
+        "/fake.jpg",
+        1.5,
+        job_key="no-face",
+        timeout_s=2.0,
+        spawn_fn=_spawn_ready_then_result(None),
+    )
+    assert outcome.kind == "NO_FACE"
+    assert outcome.focal is None
+    assert subprocess_runner._breaker_streak == 0
+
+
 def test_reap_completes_before_next_spawn_starts():
     """INV-152b-2: concurrent B must not spawn until A's wait() returns."""
     a_spawned = threading.Event()
@@ -257,6 +276,58 @@ def test_popen_raises_releases_slot_lock_without_wait():
         "/fake.jpg", 1.5, job_key="p4", timeout_s=1.0, spawn_fn=boom
     )
     assert _is_abandoned(outcome4, "circuit_open")
+
+
+def test_circuit_breaker_tripped_log_fires_exactly_once_on_the_crossing_call(caplog):
+    """152b pre-merge branch review P2-2 追加：`_apply_breaker` 的 `just_tripped`
+    必須恰好在 streak 跨過 `_BREAKER_THRESHOLD` 的那一次為 True，其餘時候皆 False。
+    兩種壞掉的形狀都是靜默的：恆 False ⇒ 斷路器跳脫又變回無聲（本輪要修的症狀）；
+    恆 True ⇒ 斷路器開路後每次 circuit_open 短路都再刷一次「tripped」warning。"""
+    logger_name = "OpenAver.core.focal.subprocess_runner"
+    with caplog.at_level(logging.WARNING, logger=logger_name):
+        for i in range(subprocess_runner._BREAKER_THRESHOLD):
+            outcome = run_detection(
+                "/fake.jpg",
+                1.5,
+                job_key=f"trip{i}",
+                timeout_s=1.0,
+                spawn_fn=_spawn_early_eof(),
+            )
+            assert _is_abandoned(outcome, "crashed")
+            tripped_so_far = [
+                r for r in caplog.records if "circuit breaker tripped" in r.getMessage()
+            ]
+            if i < subprocess_runner._BREAKER_THRESHOLD - 1:
+                assert tripped_so_far == [], (
+                    f"tripped log fired too early at call #{i + 1} "
+                    f"(streak={subprocess_runner._breaker_streak})"
+                )
+            else:
+                assert len(tripped_so_far) == 1, (
+                    f"expected exactly 1 tripped log at the crossing call "
+                    f"#{i + 1} (streak={subprocess_runner._breaker_streak}), "
+                    f"got {len(tripped_so_far)}"
+                )
+
+        # 斷路器已開：再呼叫一次會走 circuit_open 短路，「tripped」不應再出現，
+        # 但一般的 "abandoned" 線索仍要留（reason=circuit_open）。
+        caplog.clear()
+        outcome = run_detection(
+            "/fake.jpg",
+            1.5,
+            job_key="after-trip",
+            timeout_s=1.0,
+            spawn_fn=_spawn_early_eof(),
+        )
+        assert _is_abandoned(outcome, "circuit_open")
+        assert not any(
+            "circuit breaker tripped" in r.getMessage() for r in caplog.records
+        ), "tripped log must not repeat on every subsequent circuit_open short-circuit"
+        assert any(
+            "focal detection abandoned" in r.getMessage()
+            and "reason=circuit_open" in r.getMessage()
+            for r in caplog.records
+        )
 
 
 def test_breaker_streak_resets_on_found_between_crashes():
