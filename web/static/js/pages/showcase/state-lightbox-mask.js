@@ -170,11 +170,20 @@ export function stateLightboxMask() {
                 return;
             }
 
-            this._maskSession++;         // 98b P2 fix：新開 session，讓任何舊 session 的 await 後寫入失效
             this._maskDetecting = false; // 98b P2 fix(二)：清舊 session 遺留的偵測態——舊 detect await 的
                                          // finally 因 session 不符會**跳過**清 spinner，若不在此重置，新遮罩
                                          // 會頂著卡死的 spinner（Codex）。新 session 起手一律非偵測中。
             this._maskWinStyle = s;      // 先設幾何（右裁基準，detect resolve 前 / 無臉時的 fallback 終值）
+
+            // 152d-T-D4 插入點 A：SSR 已知已停用 → 直接進手動，不送 detect。
+            // 明確 === false 才跳過；undefined（注入失效／舊快取）必須照送請求（fail-safe）。
+            const focalAutoEnabled = window.__FOCAL_AUTO_ENABLED__;
+            if (focalAutoEnabled === false) {
+                this._maskVisible = true;
+                return;
+            }
+
+            this._maskSession++;         // 98b P2 fix：新開 session，讓任何舊 session 的 await 後寫入失效
 
             // D1（CD-1）：一律 force-detect，僅預覽、不寫 DB。偵測完成後若有臉，_maskFocalX 更新為
             // 偵測 x；無臉則維持右裁基準不變。99a-T5：.lb-mask-window 在 _maskDetecting 為真時不
@@ -255,6 +264,17 @@ export function stateLightboxMask() {
                     }
                     // else：無臉——維持起手基準（video：右裁 x；actress：3/4 置中 0.5，
                     // openMask 起手已算好），不動它。逃生口仍可拖曳 + ✓ 存入（spec §3.7-6）。
+
+                    // 152d-T-D4 插入點 B：reason → 就地提示（CD-152d-4b）。
+                    // failed 走 success:true，必須在此成功分支開口；與下方 catch 同 key 是刻意的。
+                    if (data.reason === 'too_slow_auto_disabled') {
+                        this.showToast(window.t('showcase.lightbox.mask_focal_too_slow_auto_disabled'), 'info');
+                    } else if (data.reason === 'too_slow') {
+                        this.showToast(window.t('showcase.lightbox.mask_focal_too_slow_hint'), 'info');
+                    } else if (data.reason === 'failed') {
+                        this.showToast(window.t('showcase.lightbox.mask_detect_failed'), 'error');
+                    }
+                    // "" / device_disabled / 缺欄 → 靜默
                 }
             } catch (e) {
                 // 偵測失敗只 toast，_maskFocalX 維持右裁基準，不讓 UI 卡在半套態。

@@ -129,6 +129,11 @@ const RULES = [
     pattern: 'top: anchor(--lb-cover center, 50%)',
     note: '[lint-guard 124c-T1] 燈箱箭頭錨定封面：對齊宣告 ＋ 無錨點時的 50% fallback（兩者同一條字面，不可拆）' },
 
+  // ---- [lint-guard 152d-T-D4] showcase SSR ↔ openMask 接線：window.__FOCAL_AUTO_ENABLED__ ----
+  // 模板注入端與 JS 消費端各一條；任一端字串消失 → lint RED（接線斷掉時 pytest/node:test 仍可能全綠）。
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'window.__FOCAL_AUTO_ENABLED__', note: '[lint-guard 152d-T-D4] showcase SSR 注入 window.__FOCAL_AUTO_ENABLED__' },
+  { file: 'web/static/js/pages/showcase/state-lightbox-mask.js', kind: 'required-string', pattern: 'window.__FOCAL_AUTO_ENABLED__', note: '[lint-guard 152d-T-D4] openMask 消費 window.__FOCAL_AUTO_ENABLED__' },
+
   // ---- [TestMaskToggleGuard] 98b-T4 起家、99a-T3 沿用：遮罩綁定 / 生命週期 guard / no-硬編-ratio / endpoint URL ----
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '@click="openMask', note: '[TestMaskToggleGuard] mask toggle icon button 綁 openMask' },
   // 98b P2 fix（Codex）：commit/re-check guard 由 path 比對（_maskVideoPath/sessionPath）

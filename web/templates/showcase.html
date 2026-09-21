@@ -2012,7 +2012,7 @@
 <!-- M2c: 傳遞 config 給 JS -->
 <script>
 window.__SHOWCASE_CONFIG__ = {{ (config.gallery or {}) | tojson | safe }};
-
+window.__FOCAL_AUTO_ENABLED__ = {{ focal_auto_enabled | tojson }};
 </script>
 <script src="/static/js/shared/grid-motion.js"></script>
 <!-- B5: animations.js 在 ESM main.js 之前載入（透過 extra_js defer） -->

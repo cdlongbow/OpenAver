@@ -41,7 +41,7 @@ const localeArg = argv.find((a) => !a.startsWith('--'));
 const LOCALES_DIR = localeArg ? resolve(localeArg) : join(REPO_ROOT, 'locales');
 
 const LOCALE_FILES = { zh_TW: 'zh_TW.json', zh_CN: 'zh_CN.json', en: 'en.json', ja: 'ja.json' };
-const FORBIDDEN_WORDS = ['推薦', '風味']; // 未來擴充只改此陣列（CD-96a-4 / CD-96-11）
+const FORBIDDEN_WORDS = ['推薦', '風味', '太慢', '爛', '跑不動', '效能不足']; // 未來擴充只改此陣列（CD-96a-4 / CD-96-11）
 const ORPHAN_PREVIEW = 10;
 
 // 「靜態掃不到但必須存在」的 key allowlist：承接自 96a-T3 刪除的 i18n pytest class 的
