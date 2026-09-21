@@ -1205,6 +1205,17 @@ const RULES = [
   })),
   { file: 'web/templates/settings.html', kind: 'dup-id', note: '[TestSettingsPanelStructureGuard] test_no_duplicate_ids — 單檔內 id 不可重複' },
 
+  // ---- [lint-guard 152d-T-D3] 人臉自動對焦 toggle 接線 ----
+  // 這顆 toggle 的接線斷掉時前端測試會全綠（npm lint／npm test／pytest pill 全不執行
+  // Alpine @change）。取代 152c `test_toggle_row_has_no_interactive_write_path` 的反向
+  // 斷言（那時鎖「沒有 @change」；現在鎖「有 @change 且掛在 data-focal-auto-pill 那顆上」）。
+  {
+    file: 'web/templates/settings.html', kind: 'tag-scan', mode: 'class-tag',
+    tagPattern: /<input\b(?=[^>]*\bdata-focal-auto-pill\b)[^>]*>/,
+    required: ['@change="setFocalDeviceDisabled($event)"'],
+    note: '[lint-guard 152d-T-D3] data-focal-auto-pill <input> 必須綁 @change="setFocalDeviceDisabled($event)"（接線斷掉時前端測試全綠；取代 152c test_toggle_row_has_no_interactive_write_path）',
+  },
+
   // ---- [TestStatePageCloakGuard] div.state-page 全 x-cloak（tag-scan class-tag multi） ----
   {
     file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',

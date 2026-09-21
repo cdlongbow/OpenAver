@@ -379,6 +379,70 @@ class TestAutoCheckUpdateEndpoint:
         assert "auto_check_update" not in saved.get("general", {})
 
 
+class TestFocalDeviceDisabledEndpoint:
+    """PUT /api/config/focal-device/disabled（TASK-D3 / CD-152d-4）
+
+    專用 toggle 端點：value 必須是 StrictBool；真寫磁碟（disabled + set_by_user）。
+    非 bool（整數 1）→ schema 層 422，磁碟零改動。
+    """
+
+    @pytest.fixture
+    def mock_config_path(self, tmp_path, monkeypatch):
+        config_path = tmp_path / "config.json"
+        default_path = tmp_path / "config.default.json"
+
+        config_data = {
+            "general": {"locale": "zh-TW", "theme": "light", "sidebar_collapsed": False,
+                        "tutorial_completed": False, "font_size": "md", "default_page": "search"},
+            "focal_device": {
+                "disabled": False,
+                "consecutive_timeout_count": 0,
+                "judged_at_version": "",
+                "set_by_user": False,
+            },
+        }
+        config_path.write_text(json.dumps(config_data))
+        default_path.write_text(json.dumps(config_data))
+
+        monkeypatch.setattr("core.config.CONFIG_PATH", config_path)
+        monkeypatch.setattr("core.config.CONFIG_DEFAULT_PATH", default_path)
+        monkeypatch.setattr("web.routers.config._reset_translate_service", lambda: None)
+
+        return config_path
+
+    def test_focal_device_disabled_endpoint_persists_to_disk(self, client, mock_config_path):
+        """oracle (a)：PUT {value: true} → 200 且磁碟 focal_device.disabled/set_by_user 真的改變"""
+        before = json.loads(mock_config_path.read_text())
+        assert before["focal_device"]["disabled"] is False
+        assert before["focal_device"]["set_by_user"] is False
+
+        resp = client.put("/api/config/focal-device/disabled", json={"value": True})
+
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        saved = json.loads(mock_config_path.read_text())
+        assert saved["focal_device"]["disabled"] is True
+        assert saved["focal_device"]["set_by_user"] is True
+
+        # 再開回來：value false → disabled=False，set_by_user 仍 True
+        resp2 = client.put("/api/config/focal-device/disabled", json={"value": False})
+        assert resp2.status_code == 200
+        assert resp2.json()["success"] is True
+        saved2 = json.loads(mock_config_path.read_text())
+        assert saved2["focal_device"]["disabled"] is False
+        assert saved2["focal_device"]["set_by_user"] is True
+
+    def test_focal_device_disabled_endpoint_rejects_non_bool_with_422(self, client, mock_config_path):
+        """PUT {value: 1} (int) → 422（StrictBool），磁碟零改動"""
+        before = json.loads(mock_config_path.read_text())
+
+        resp = client.put("/api/config/focal-device/disabled", json={"value": 1})
+
+        assert resp.status_code == 422
+        after = json.loads(mock_config_path.read_text())
+        assert after == before
+
+
 class TestFullConfigSavePreservesServerMode:
     """P2-1: PUT /api/config（全量儲存）不得改寫 server_mode（toggle-lifecycle 所有權）
 

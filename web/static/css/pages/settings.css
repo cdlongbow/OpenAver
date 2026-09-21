@@ -1659,23 +1659,3 @@ html.theme-transition-active::view-transition-new(root) {
     background: color-mix(in oklch, var(--surface-2) 55%, transparent);
     border-radius: var(--radius-sm);
 }
-
-/* 152c-T9（CD-152c-19）：focal_auto_enabled 為真時，原生 disabled toggle 仍要看起來跟旁邊的其他
-   toggle 一樣正常——不能被 DaisyUI `.toggle:disabled { opacity: .3 }`（node_modules/daisyui/
-   components/toggle.css）壓成半透明。停用態維持原生 disabled 的淡化（那正是「已自動關閉」的視覺
-   語意），只有啟用態靠這個 modifier class 還原 opacity。此檔不在任何 @layer 內，天生蓋過 daisyui
-   的 @layer utilities 規則，選擇器特異性寫高一階只是防禦性作法，非必要條件。*/
-#settings-components .toggle.focal-auto-enabled:disabled {
-    opacity: 1;
-}
-
-/* 同一條 DaisyUI `:disabled` 規則除了壓 opacity，還把滑塊圓點（`::before`）從實心改成空心描邊
-   （`background-color: transparent` ＋ `border: var(--border) solid currentColor`，見 tailwind.css
-   的 `.toggle:disabled`）。只還原 opacity 的話，啟用態會是「不透明但圓點空心」——跟旁邊每一顆
-   toggle 都不一樣，CD-152c-19「看起來跟旁邊那些一樣正常」只達成一半。這裡把圓點還原成 base
-   `.toggle::before` 的實心值。`cursor: not-allowed` 刻意不還原：這一列真的不可互動，還原成
-   pointer 等於承諾一個不存在的互動。*/
-#settings-components .toggle.focal-auto-enabled:disabled::before {
-    background-color: currentcolor;
-    border: none;
-}

@@ -56,13 +56,12 @@ class TestSettingsFocalAutoPill:
         # 讀的是模板檔本身的靜態字面，表達不了「後端狀態 X ⇒ 輸出必須含 A 且不得含 B」
         # 這個跨層條件契約——兩種狀態的文案都寫在同一個模板檔裡，靜態掃描永遠同時看得到。
         assert "checked" in input_tag, f"版本已變更，預期渲染成啟用（checked），實際標籤：{input_tag}"
-        assert "focal-auto-enabled" in input_tag, f"啟用態應帶 focal-auto-enabled modifier class，實際標籤：{input_tag}"
         assert "會自動關閉這個功能" in html, "啟用態浮層文字應包含啟用態說明（會自動關閉這個功能）"
         assert "已自動關閉這台機器的人臉自動對焦" not in html, "停用態說明文字不得出現在啟用態"
 
     def test_matching_version_disabled_renders_unchecked_with_reason(self, client):
         """disabled=True 且 judged_at_version == 目前 VERSION → 維持停用，
-        整排灰掉（無 focal-auto-enabled class）、? 浮層含原因文字。
+        ? 浮層含原因文字。
         """
         _seed_focal_device(disabled=True, judged_at_version=VERSION)
 
@@ -76,33 +75,10 @@ class TestSettingsFocalAutoPill:
         # 讀的是模板檔本身的靜態字面，表達不了「後端狀態 X ⇒ 輸出必須含 A 且不得含 B」
         # 這個跨層條件契約——兩種狀態的文案都寫在同一個模板檔裡，靜態掃描永遠同時看得到。
         assert "checked" not in input_tag, f"版本相同、仍停用，不應 checked，實際標籤：{input_tag}"
-        assert "focal-auto-enabled" not in input_tag, f"停用態不應帶 focal-auto-enabled class，實際標籤：{input_tag}"
         assert "偵測連續兩次超過 5 秒沒算完" in html, "停用原因文字（只講「超過 5 秒」與「已自動關閉」兩件事實，不含實測耗時數字）應出現在 ? 浮層"
         assert "燈箱裡自己拖曳" in html, "原因文字必須寫出逃生口：燈箱手動拖曳對焦"
         assert "已自動關閉" in html
         assert "會自動關閉這個功能" not in html, "啟用態說明不得出現在停用態"
-
-    def test_toggle_row_has_no_interactive_write_path(self, client):
-        """行為驗收（CD-152c-19）：這顆 toggle 沒有任何能觸發寫入的路徑。
-
-        用結構事實的組合取代真瀏覽器點擊測試（Alpine runtime 不在 TestClient 執行）：
-        - 原生 disabled 屬性存在 → 瀏覽器規範保證該 input 不接受 click/keyboard/change
-        - 沒有 x-model → 即使繞過瀏覽器限制，Alpine 也沒有反應路徑寫回 form state
-        - 這個 <input> 標籤本身沒有 @click / @change → 沒有任何指令式 JS 路徑能觸發網路請求
-          （旁邊 ? 按鈕自己的 @click.prevent="toggle()" 只開合浮層，不在這顆 input 標籤內）
-        三者同時成立 = 沒有任何程式碼路徑可以從點這一列產生寫入請求。
-        """
-        resp = client.get("/settings")
-        assert resp.status_code == 200
-        input_tag = _extract_focal_input_tag(resp.text)
-
-        # [lint-guard: pytest-justified] 這四條不是「模板裡有沒有這個字」，是「這顆 input
-        # 同時不具備三條寫入路徑」的組合事實（原生 disabled ＋ 無 x-model ＋ 無 @click/@change）。
-        # 而且錨點是後端渲染出來的那顆 input，不是模板字面——靜態掃描抓不到「哪一顆」。
-        assert "disabled" in input_tag
-        assert "x-model" not in input_tag
-        assert "@click" not in input_tag
-        assert "@change" not in input_tag
 
     def test_focal_pill_anchor_is_unique(self, client):
         """防止錨點哪天變得不唯一、讓 _extract_focal_input_tag 定位又開始抓錯。"""

@@ -9,6 +9,7 @@
 - POST   /api/tutorial-completed        — 標記新手引導已完成
 - POST   /api/tutorial-reset            — 重置新手引導狀態
 - PUT    /api/config/general/{field}    — 更新 general 區塊單一欄位（sidebar_collapsed/theme/font_size）
+- PUT    /api/config/focal-device/disabled — 更新人臉自動對焦使用者開關（StrictBool）
 - GET    /api/version                   — 取得應用程式版本資訊
 - GET    /api/config/format-variables   — 取得刮削路徑/檔名格式可用變數
 - GET    /api/ollama/models             — 取得 Ollama 可用模型列表
@@ -33,6 +34,7 @@ from core.config import (
     reset_config_file,
     iter_gallery_sources,
 )
+from core.focal import device_state
 from core.secret_fields import (
     SECRET_FIELDS,
     read_secret,
@@ -131,12 +133,12 @@ def update_config(config: AppConfig) -> dict:
             def _write_preserving_server_owned(cfg: dict) -> None:
                 current_server_mode = cfg.get("general", {}).get("server_mode", False)
                 payload["general"]["server_mode"] = current_server_mode
-                # focal_device 是**伺服器擁有狀態**：前端沒有任何 UI 會寫它，唯一寫入端是
-                # core.focal.device_state.record_outcome。全量 PUT 若讓前端送來的舊快照覆蓋它，
-                # 一次不相關的存檔（掃描頁改個資料夾）就會把已判定停用的機器打回啟用——代價不是
-                # 資料遺失（它會自己再停用一次），是**重複發一次「自動對焦已停用」側欄通知**，
-                # 違反 spec F6「一次轉態一則」。形狀與上面的 server_mode 相同：鎖內讀磁碟現值 →
-                # 塞回 payload → 讓 cfg.update(payload) 覆蓋其餘欄位。
+                # focal_device 是**伺服器擁有狀態**：前端只透過專用 toggle 端點
+                # PUT /api/config/focal-device/disabled 寫它（另有背景
+                # core.focal.device_state.record_outcome），全量 PUT 一律不接受前端送來的值。
+                # 若讓掃描頁長駐快照覆寫，一次不相關的存檔就會把使用者剛按的 toggle
+                # （或已判定停用）打回舊值——BE-CONFIG-05。形狀與上面的 server_mode 相同：
+                # 鎖內讀磁碟現值 → 塞回 payload → 讓 cfg.update(payload) 覆蓋其餘欄位。
                 # `or` 不是 `.get(key, default)`：後者只堵得住「key 缺席」，堵不住「key 在但值是
                 # 空 dict」——而 load_config 的 migration 只在 key **不存在**時補，寫回一個空 dict
                 # 會焊死一個 migration 永遠修不好的殘缺值（BE-CONFIG-02 的鏡像）。
@@ -318,6 +320,27 @@ def update_general_field(field: str, request: GeneralFieldRequest, raw_request: 
     except Exception as e:
         logger.error("更新設定欄位失敗: %s", e)
         return {"success": False, "error": "更新設定欄位失敗"}
+
+
+class FocalDeviceDisabledRequest(BaseModel):
+    # 純 StrictBool：本端點只有一個 bool 欄位，不需要 GeneralFieldRequest 的
+    # StrictBool|StrictStr union（那是為同時服務 str 欄位）。非 bool → Pydantic 422。
+    value: StrictBool
+
+
+@router.put("/config/focal-device/disabled")
+def update_focal_device_disabled(request: FocalDeviceDisabledRequest) -> dict:
+    """更新人臉自動對焦的使用者開關（輕量端點，供設定頁 toggle 即時同步）
+
+    註：保持同步 def —— body 內 set_disabled_by_user → mutate_config 走檔案 I/O，
+    依 async-offload 守衛須在 Starlette threadpool 執行，不可改 async def 卡 event loop。
+    """
+    try:
+        device_state.set_disabled_by_user(request.value)
+        return {"success": True}
+    except Exception as e:
+        logger.error("更新 focal_device.disabled 失敗: %s", e)
+        return {"success": False, "error": "操作失敗"}
 
 
 @router.get("/config/general/lan-port")

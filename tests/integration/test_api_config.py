@@ -104,6 +104,47 @@ def test_update_config_preserves_newer_focal_device_against_stale_full_save(clie
     assert persisted["gallery"]["output_dir"] == "regression_output"
 
 
+def test_full_put_with_stale_snapshot_preserves_toggle_endpoint_write(client, temp_config_path):
+    """oracle (b)／BE-CONFIG-05 重演（TASK-D3）：先讀 /api/config 拿到 toggle 前快照
+    → 打專用端點把 disabled 切成別的值 → 用第一份快照打全量 PUT /api/config
+    → 磁碟上的 focal_device 仍是端點寫入的新值，不被舊快照回捲。
+
+    與 test_update_config_preserves_newer_focal_device_against_stale_full_save 互補：
+    那支是手動 seed；本支真的走新端點，驗證「端點寫入＋全量 PUT 保留」串起來仍正確。
+    """
+    # 讀「toggle 之前」的快照（前端長駐 this.config 的模擬）
+    snap_resp = client.get("/api/config")
+    assert snap_resp.status_code == 200
+    stale_snapshot = snap_resp.json()["data"]
+    assert stale_snapshot["focal_device"]["disabled"] is False
+
+    # 專用端點把 disabled 切成 true（並設 set_by_user）
+    toggle_resp = client.put("/api/config/focal-device/disabled", json={"value": True})
+    assert toggle_resp.status_code == 200
+    assert toggle_resp.json()["success"] is True
+
+    with open(temp_config_path, 'r', encoding='utf-8') as f:
+        after_toggle = json.load(f)
+    assert after_toggle["focal_device"]["disabled"] is True
+    assert after_toggle["focal_device"]["set_by_user"] is True
+
+    # 用不相關欄位證明全量 PUT 本身有寫入（排除「整份存檔沒生效」假陽性）
+    stale_snapshot = json.loads(json.dumps(stale_snapshot))
+    stale_snapshot["gallery"]["output_dir"] = "oracle_b_stale_save"
+
+    put_resp = client.put("/api/config", json=stale_snapshot)
+    assert put_resp.status_code == 200
+    assert put_resp.json()["success"] is True
+
+    with open(temp_config_path, 'r', encoding='utf-8') as f:
+        persisted = json.load(f)
+
+    # 端點寫入的新值存活，未被舊快照回捲
+    assert persisted["focal_device"]["disabled"] is True
+    assert persisted["focal_device"]["set_by_user"] is True
+    assert persisted["gallery"]["output_dir"] == "oracle_b_stale_save"
+
+
 # ============ 路由改名向後兼容測試 ============
 
 def test_gallery_legacy_redirect(client):
