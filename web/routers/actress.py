@@ -36,7 +36,7 @@ from core.actress_photo import (
     download_actress_photo, get_local_photo_path, delete_local_photo,
     crop_video_cover, GFRIENDS_DIR, CONTENT_TYPE_MAP, validate_photo_url,
 )
-from core.focal import format_focal, parse_focal
+from core.focal import device_state, format_focal, parse_focal
 from core.focal.subprocess_runner import run_detection
 from core.organizer import sanitize_filename
 from core.path_utils import to_file_uri as to_file_uri, uri_to_fs_path, uri_to_local_fs_path, coerce_to_file_uri
@@ -1149,6 +1149,7 @@ async def detect_actress_focal(name: str):
         outcome = await asyncio.to_thread(
             run_detection, str(photo_fs), _FOCAL_DETECT_RATIO,
             job_key=str(uuid.uuid4()), timeout_s=_MANUAL_DETECT_TIMEOUT_S,
+            pre_spawn_check=device_state.is_disabled, on_outcome=None,
         )
         focal = outcome.focal if outcome.kind == "FOUND" else None
         auto_focal = format_focal(focal)  # None → ''，純預覽不寫 DB

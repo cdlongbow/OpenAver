@@ -217,7 +217,7 @@ class TestDetectFocalEndpoint:
         _patch_db_and_config(mocker, focal_endpoint_setup)
         captured = {}
 
-        def slow_detect(fs_path, ratio, *, job_key, timeout_s):
+        def slow_detect(fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None):
             captured["timeout_s"] = timeout_s
             time.sleep(6.0)
             return RunnerOutcome(kind="FOUND", focal=(0.42, 0.5))
@@ -244,6 +244,53 @@ class TestDetectFocalEndpoint:
         assert resp.json()["success"] is True
         assert resp.json()["auto_focal"] == ""
         assert resp.json()["cover_path"] == focal_endpoint_setup["cover_uri"]
+
+    def test_device_disabled_returns_same_shape_as_no_face(self, client, focal_endpoint_setup, mocker):
+        """TASK-5c path②：裝置停用時回應形狀與既有無偵測分支一致。"""
+        from core.focal import device_state
+
+        _patch_db_and_config(mocker, focal_endpoint_setup)
+        mocker.patch.object(device_state, "is_disabled", return_value=True)
+
+        def fake_run(
+            fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
+        ):
+            if pre_spawn_check is not None and pre_spawn_check():
+                return RunnerOutcome(kind="ABANDONED", reason="skipped_disabled")
+            return RunnerOutcome(kind="FOUND", focal=(0.42, 0.5))
+
+        mocker.patch("web.routers.showcase.run_detection", side_effect=fake_run)
+        resp = client.post("/api/showcase/video/detect-focal",
+                           json={"path": focal_endpoint_setup["video_uri"]})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        assert resp.json()["auto_focal"] == ""
+        assert resp.json()["cover_path"] == focal_endpoint_setup["cover_uri"]
+
+    def test_manual_detect_timeout_does_not_contribute(self, client, focal_endpoint_setup, mocker):
+        """TASK-5c path②：手動路徑 detect_timeout 不得呼叫 device_state.record_outcome。"""
+        from core.focal import device_state
+
+        _patch_db_and_config(mocker, focal_endpoint_setup)
+        record_spy = mocker.patch.object(device_state, "record_outcome")
+
+        def fake_run(
+            fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
+        ):
+            outcome = RunnerOutcome(kind="ABANDONED", reason="detect_timeout")
+            if on_outcome is not None:
+                on_outcome(outcome)
+            return outcome
+
+        spy = mocker.patch("web.routers.showcase.run_detection", side_effect=fake_run)
+        resp = client.post("/api/showcase/video/detect-focal",
+                           json={"path": focal_endpoint_setup["video_uri"]})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        assert resp.json()["auto_focal"] == ""
+        assert "on_outcome" in spy.call_args.kwargs, "path② must pass on_outcome= explicitly"
+        assert spy.call_args.kwargs["on_outcome"] is None
+        assert record_spy.call_count == 0
 
 
 # ============ /video/save-focal mutator（99a-T1a）============

@@ -24,6 +24,8 @@ import threading
 
 from core.logger import get_logger
 
+from core.focal import device_state
+
 from .detector import WORK_WIDTH, format_focal
 from .subprocess_runner import run_detection
 
@@ -57,6 +59,7 @@ def _run_detection_via_subprocess(fs_path, ratio, work_width):
     del work_width  # seam arity only; child has its own WORK_WIDTH
     return run_detection(
         fs_path, ratio, job_key=fs_path, timeout_s=_DETECT_TIMEOUT_S,
+        pre_spawn_check=device_state.is_disabled, on_outcome=device_state.record_outcome,
     )
 
 
