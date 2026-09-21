@@ -258,8 +258,20 @@ def run_detection(
     job_key: str,
     timeout_s: float,
     spawn_fn: Callable[..., Any] = _default_spawn,
+    pre_spawn_check: Callable[[], bool] | None = None,
+    on_outcome: Callable[[RunnerOutcome], None] | None = None,
 ) -> RunnerOutcome:
-    """Run one focal detection in a child process (CD-152b-3/4/10/17/18)."""
+    """Run one focal detection in a child process (CD-152b-3/4/10/17/18).
+
+    pre_spawn_check / on_outcome are the 152c device-disable hooks (CD-152b-9).
+    pre_spawn_check runs inside the slot-lock critical section, *after* the
+    authoritative breaker recheck, and returning True short-circuits to
+    ABANDONED("skipped_disabled") without spawning, timing, logging a WARNING or
+    calling on_outcome; its exceptions fail open. on_outcome runs in the finally
+    block after wait() and *before* releasing the slot lock, so the next job sees
+    whatever it recorded; its exceptions are logged and swallowed and never alter
+    the outcome returned to the caller.
+    """
     logger.debug("run_detection job_key=%s path=%s", job_key, fs_path)
     if _breaker_streak >= _BREAKER_THRESHOLD:
         outcome = _abandoned("circuit_open")
@@ -269,6 +281,7 @@ def run_detection(
     child = None
     need_kill = False
     call_state = _CallState()
+    outcome_for_callback: RunnerOutcome | None = None
 
     _slot_lock.acquire()
     try:
@@ -278,7 +291,20 @@ def run_detection(
         if _breaker_streak >= _BREAKER_THRESHOLD:
             outcome = _abandoned("circuit_open")
             _log_abandoned(outcome, fs_path, just_tripped=False)
+            outcome_for_callback = outcome
             return outcome
+
+        if pre_spawn_check is not None:
+            try:
+                disabled = pre_spawn_check()
+            except Exception:
+                logger.warning("focal pre_spawn_check raised; failing open", exc_info=True)
+                disabled = False
+            if disabled:
+                # 故意不設定 outcome_for_callback：skipped_disabled 不得餵給
+                # on_outcome（CD-152b-9）。把賦值「統一」提到每個 return 前面
+                # 會讓裝置停用後的每次 gate 命中都寫一次 config.json。
+                return _abandoned("skipped_disabled")
 
         try:
             child = spawn_fn(fs_path, ratio)
@@ -287,6 +313,7 @@ def run_detection(
             outcome = _abandoned("crashed")
             just_tripped = _apply_breaker(outcome)
             _log_abandoned(outcome, fs_path, just_tripped)
+            outcome_for_callback = outcome
             return outcome
 
         outcome = _run_child_phases(child, timeout_s, call_state)
@@ -296,6 +323,7 @@ def run_detection(
         just_tripped = _apply_breaker(outcome)
         if outcome.kind == "ABANDONED":
             _log_abandoned(outcome, fs_path, just_tripped)
+        outcome_for_callback = outcome
         return outcome
     finally:
         if child is not None:
@@ -305,4 +333,9 @@ def run_detection(
                 child.wait()
             except Exception:
                 logger.exception("focal child wait failed")
+        if on_outcome is not None and outcome_for_callback is not None:
+            try:
+                on_outcome(outcome_for_callback)
+            except Exception:
+                logger.exception("focal on_outcome callback raised")
         _slot_lock.release()
