@@ -217,6 +217,12 @@ class GeneralConfig(BaseModel):
         return v if v in _CLOSE_ACTIONS else "ask"
 
 
+class FocalDeviceState(BaseModel):
+    disabled: bool = False
+    consecutive_timeout_count: int = 0
+    judged_at_version: str = ""   # 累積目前這個 streak／disabled 狀態時的 App 版本號
+
+
 class AppConfig(BaseModel):
     scraper: ScraperConfig = ScraperConfig()
     search: SearchConfig = SearchConfig()
@@ -228,6 +234,7 @@ class AppConfig(BaseModel):
     sources: list[SourceConfig] = Field(default_factory=get_builtin_sources)
     thumbnail_cache_enabled: bool = False  # 縮圖快取開關（feature/71 T2）；預設關閉；top-level additive migration 補缺漏
     metatube: MetatubeConfig = MetatubeConfig()  # CD-63b-3；Pydantic default 自動補缺漏（no migration needed）
+    focal_device: FocalDeviceState = FocalDeviceState()
 
 
 # ============ 載入 / 儲存 ============
@@ -526,6 +533,13 @@ def _load_config_unlocked() -> dict:  # noqa: C901 — config 遷移主流程；
         # 用 not in（非 falsy）：既存 False（使用者曾關閉）為合法值，不可被 True 覆寫。
         if 'auto_check_update' not in gen:
             gen['auto_check_update'] = True
+            need_save = True
+
+        # Additive migration（feature/152c TASK-3）：top-level focal_device 補預設。
+        # load_config() 直接 return raw dict（不 model_validate），故舊 config.json 缺此 key
+        # 時 Pydantic default 不會在 GET /api/config 補上 → 顯式補 FocalDeviceState().model_dump()。
+        if 'focal_device' not in raw_config:
+            raw_config['focal_device'] = FocalDeviceState().model_dump()
             need_save = True
 
         # Save migrated config（已持鎖 → 用 unlocked 版避免自我死鎖）

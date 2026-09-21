@@ -159,9 +159,14 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "所以本條的增量只有佔位那三行。",
     ),
     ("core/config.py", "_load_config_unlocked"): (
-        304,
+        310,
         "config 遷移主流程，每加一個設定欄位都得改它；收斂設計已列 backlog"
-        "（OpenAver架構評估-回應.md §七）。",
+        "（OpenAver架構評估-回應.md §七）。"
+        "2026-09-21（feature/152c T3）304→310：新增 top-level `focal_device` 的 additive "
+        "migration（3 行程式碼 ＋ 3 行說明 BE-CONFIG-02 為何需要它）。這條豁免的基準本來就"
+        "是隨「又多一個設定欄位」線性成長的——函式的 noqa: C901 註解自己寫著「這是它存在的"
+        "理由而非缺陷」。縮回 304 的唯一辦法是把那三行說明刪掉，那等於為了一個數字刪掉"
+        "下一個人最需要的東西。",
     ),
     ("web/routers/scraper.py", "batch_enrich_endpoint"): (
         292,
