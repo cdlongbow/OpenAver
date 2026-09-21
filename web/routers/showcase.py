@@ -310,7 +310,7 @@ def delete_video(path: str = Query(..., description="file:/// URI")):
     return JSONResponse({"deleted": n})
 
 
-_MANUAL_DETECT_TIMEOUT_S = 600.0  # D2/D9: 手動路徑不套路徑①④的批次 5 秒上限；工程安全網非效能宣稱，見卡片「設計決策」（本 branch 無 F5 停止鈕、DS218 實測最慢完整跑完 53.76s，findings-152 §Q3-a）
+_MANUAL_DETECT_TIMEOUT_S = 5.0  # D2/D9: 前景與背景共用同一個 5 秒定義（CD-152d-1），不是批次上限外的安全網
 
 
 @router.post("/video/detect-focal")
@@ -332,6 +332,8 @@ def detect_video_focal(req: DetectFocalRequest):
     `POST /video/save-focal` 存檔時原樣帶回，讓 `update_manual_focal` 的
     compare-and-store 守衛比對「使用者觀察當下」與「存檔當下」的封面是否一致，
     擋掉 rescan/rescrape 換封面卻把舊座標存成新封面 manual 值的 race。
+    成功分支另帶 ``reason``（CD-152d-4b 五值：``""`` / ``device_disabled`` /
+    ``too_slow_auto_disabled`` / ``too_slow`` / ``failed``），供前端區分提示。
     `def`（非 async）→ threadpool；run_detection 同步耗時 x86 約 2.2s、DS218 NAS 實機約 42.7s（19 倍，來源：DS218 POC 實測）。**不進 capabilities（不揭露）。**
     """
     try:
@@ -359,13 +361,26 @@ def detect_video_focal(req: DetectFocalRequest):
             return JSONResponse({"success": False, "error": "找不到封面檔案",
                                  "cover_path": row.cover_path}, status_code=400)
 
+        decision = {}
+
+        def _on_outcome(o):
+            decision["just_disabled"] = device_state.record_manual_outcome(o)
+
         outcome = run_detection(
             cover_fs, 0.71, job_key=str(uuid.uuid4()), timeout_s=_MANUAL_DETECT_TIMEOUT_S,
-            pre_spawn_check=device_state.is_disabled, on_outcome=None,
+            pre_spawn_check=device_state.is_disabled, on_outcome=_on_outcome,
         )
         focal = outcome.focal if outcome.kind == "FOUND" else None
         auto_focal = format_focal(focal)          # None → ''，純預覽不寫 DB
-        return JSONResponse({"success": True, "auto_focal": auto_focal, "cover_path": row.cover_path})
+        reason = device_state.classify_manual_reason(
+            outcome, decision.get("just_disabled", False),
+        )
+        return JSONResponse({
+            "success": True,
+            "auto_focal": auto_focal,
+            "cover_path": row.cover_path,
+            "reason": reason,
+        })
 
     except Exception as e:
         logger.error("偵測焦點失敗: %s", e)

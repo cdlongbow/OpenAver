@@ -13,8 +13,6 @@ detect_focal 收到的永遠是 row.cover_path 反解的封面 fs（.jpg），
 `TestCropModeRouteRemoved` 回歸鎖）。
 """
 
-import time
-
 import pytest
 from core.database import init_db, VideoRepository, Video
 from core.focal.subprocess_runner import RunnerOutcome
@@ -211,15 +209,13 @@ class TestDetectFocalEndpoint:
         # 必須斷言真的呼叫過偵測（同 test_api_actress no_face 案的 false-green 修法）
         spy.assert_called_once()
 
-    def test_manual_detect_does_not_use_batch_5s_timeout(self, client, focal_endpoint_setup, mocker):
-        """DoD(i)：手動路徑不套路徑①④的批次 5 秒上限——假 run_detection 真 sleep 6s
-        仍正常完成，且 timeout_s != 5.0。"""
+    def test_manual_detect_uses_unified_5s_budget(self, client, focal_endpoint_setup, mocker):
+        """CD-152d-1：前景與背景共用同一個 5 秒定義——timeout_s 必須是 5.0。"""
         _patch_db_and_config(mocker, focal_endpoint_setup)
         captured = {}
 
         def slow_detect(fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None):
             captured["timeout_s"] = timeout_s
-            time.sleep(6.0)
             return RunnerOutcome(kind="FOUND", focal=(0.42, 0.5))
 
         spy = mocker.patch("web.routers.showcase.run_detection", side_effect=slow_detect)
@@ -228,11 +224,12 @@ class TestDetectFocalEndpoint:
         assert resp.status_code == 200
         assert resp.json()["success"] is True
         assert resp.json()["auto_focal"] == "0.4200,0.5000"
+        assert resp.json()["reason"] == ""
         spy.assert_called_once()
-        assert captured["timeout_s"] != 5.0
+        assert captured["timeout_s"] == 5.0
 
     def test_abandoned_returns_same_shape_as_no_face(self, client, focal_endpoint_setup, mocker):
-        """DoD(ii)：run_detection 回 ABANDONED 時回應形狀等於既有無臉分支。"""
+        """ABANDONED(crashed) → reason=='failed'，不得被歸成 too_slow 家族（CD-152d-4b）。"""
         _patch_db_and_config(mocker, focal_endpoint_setup)
         mocker.patch(
             "web.routers.showcase.run_detection",
@@ -244,9 +241,10 @@ class TestDetectFocalEndpoint:
         assert resp.json()["success"] is True
         assert resp.json()["auto_focal"] == ""
         assert resp.json()["cover_path"] == focal_endpoint_setup["cover_uri"]
+        assert resp.json()["reason"] == "failed"
 
     def test_device_disabled_returns_same_shape_as_no_face(self, client, focal_endpoint_setup, mocker):
-        """TASK-5c path②：裝置停用時回應形狀與既有無偵測分支一致。"""
+        """裝置已停用 → reason=='device_disabled'（CD-152d-6）。"""
         from core.focal import device_state
 
         _patch_db_and_config(mocker, focal_endpoint_setup)
@@ -266,13 +264,17 @@ class TestDetectFocalEndpoint:
         assert resp.json()["success"] is True
         assert resp.json()["auto_focal"] == ""
         assert resp.json()["cover_path"] == focal_endpoint_setup["cover_uri"]
+        assert resp.json()["reason"] == "device_disabled"
 
     def test_manual_detect_timeout_does_not_contribute(self, client, focal_endpoint_setup, mocker):
-        """TASK-5c path②：手動路徑 detect_timeout 不得呼叫 device_state.record_outcome。"""
+        """CD-152d-2b②：前景逾時走 record_manual_outcome（非 record_outcome），reason=too_slow_auto_disabled。"""
         from core.focal import device_state
 
         _patch_db_and_config(mocker, focal_endpoint_setup)
-        record_spy = mocker.patch.object(device_state, "record_outcome")
+        record_bg_spy = mocker.patch.object(device_state, "record_outcome")
+        record_manual_spy = mocker.patch.object(
+            device_state, "record_manual_outcome", return_value=True,
+        )
 
         def fake_run(
             fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
@@ -288,9 +290,199 @@ class TestDetectFocalEndpoint:
         assert resp.status_code == 200
         assert resp.json()["success"] is True
         assert resp.json()["auto_focal"] == ""
+        assert resp.json()["reason"] == "too_slow_auto_disabled"
         assert "on_outcome" in spy.call_args.kwargs, "path② must pass on_outcome= explicitly"
-        assert spy.call_args.kwargs["on_outcome"] is None
-        assert record_spy.call_count == 0
+        assert spy.call_args.kwargs["on_outcome"] is not None
+        assert record_manual_spy.call_count == 1
+        assert record_bg_spy.call_count == 0
+
+    def test_reason_empty_on_found(self, client, focal_endpoint_setup, mocker):
+        """reason 值域：正常 FOUND → ''。"""
+        _patch_db_and_config(mocker, focal_endpoint_setup)
+        mocker.patch(
+            "web.routers.showcase.run_detection",
+            return_value=RunnerOutcome(kind="FOUND", focal=(0.42, 0.5)),
+        )
+        resp = client.post("/api/showcase/video/detect-focal",
+                           json={"path": focal_endpoint_setup["video_uri"]})
+        assert resp.status_code == 200
+        assert resp.json()["reason"] == ""
+
+    def test_reason_empty_on_no_face(self, client, focal_endpoint_setup, mocker):
+        """reason 值域：NO_FACE → ''。"""
+        _patch_db_and_config(mocker, focal_endpoint_setup)
+        mocker.patch(
+            "web.routers.showcase.run_detection",
+            return_value=RunnerOutcome(kind="NO_FACE"),
+        )
+        resp = client.post("/api/showcase/video/detect-focal",
+                           json={"path": focal_endpoint_setup["video_uri"]})
+        assert resp.status_code == 200
+        assert resp.json()["reason"] == ""
+
+    @pytest.mark.parametrize("abandoned_reason", ["startup_timeout", "crashed", "circuit_open"])
+    def test_reason_failed_for_non_timeout_abandoned(
+        self, client, focal_endpoint_setup, mocker, abandoned_reason,
+    ):
+        """reason 值域：startup_timeout／crashed／circuit_open → 'failed'（不得變 too_slow*）。"""
+        _patch_db_and_config(mocker, focal_endpoint_setup)
+        mocker.patch(
+            "web.routers.showcase.run_detection",
+            return_value=RunnerOutcome(kind="ABANDONED", reason=abandoned_reason),
+        )
+        resp = client.post("/api/showcase/video/detect-focal",
+                           json={"path": focal_endpoint_setup["video_uri"]})
+        assert resp.status_code == 200
+        assert resp.json()["reason"] == "failed"
+        assert resp.json()["reason"] not in ("too_slow", "too_slow_auto_disabled")
+
+    def test_reason_too_slow_when_set_by_user_suppresses(
+        self, client, focal_endpoint_setup, mocker,
+    ):
+        """reason 值域：逾時但 just_disabled=False → 'too_slow'。"""
+        from core.focal import device_state
+
+        _patch_db_and_config(mocker, focal_endpoint_setup)
+        mocker.patch.object(device_state, "record_manual_outcome", return_value=False)
+
+        def fake_run(
+            fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
+        ):
+            outcome = RunnerOutcome(kind="ABANDONED", reason="detect_timeout")
+            if on_outcome is not None:
+                on_outcome(outcome)
+            return outcome
+
+        mocker.patch("web.routers.showcase.run_detection", side_effect=fake_run)
+        resp = client.post("/api/showcase/video/detect-focal",
+                           json={"path": focal_endpoint_setup["video_uri"]})
+        assert resp.status_code == 200
+        assert resp.json()["reason"] == "too_slow"
+
+    def test_manual_timeout_does_not_call_notification_sink(
+        self, client, focal_endpoint_setup, mocker, tmp_path, monkeypatch,
+    ):
+        """前景轉態不呼叫 notification sink——拋例外的 sink 全程未被呼叫，端點仍 200。"""
+        import core.config as core_config
+        from core.config import save_config
+        from core.focal import device_state
+        from core.version import VERSION
+
+        _patch_db_and_config(mocker, focal_endpoint_setup)
+        config_path = tmp_path / "config.json"
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+        save_config({
+            "focal_device": {
+                "disabled": False,
+                "consecutive_timeout_count": 0,
+                "judged_at_version": VERSION,
+                "set_by_user": False,
+            }
+        })
+
+        calls = []
+
+        def _boom_sink(*args, **kwargs):
+            calls.append((args, kwargs))
+            raise RuntimeError("sink must not be called on manual path")
+
+        monkeypatch.setattr(device_state, "_notification_sink", _boom_sink)
+
+        def fake_run(
+            fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
+        ):
+            outcome = RunnerOutcome(kind="ABANDONED", reason="detect_timeout")
+            if on_outcome is not None:
+                on_outcome(outcome)
+            return outcome
+
+        mocker.patch("web.routers.showcase.run_detection", side_effect=fake_run)
+        resp = client.post("/api/showcase/video/detect-focal",
+                           json={"path": focal_endpoint_setup["video_uri"]})
+        assert resp.status_code == 200
+        assert resp.json()["reason"] == "too_slow_auto_disabled"
+        assert calls == []
+        assert device_state.is_disabled() is True
+
+    def test_judgment_happens_inside_on_outcome_before_return(
+        self, client, focal_endpoint_setup, mocker, tmp_path, monkeypatch,
+    ):
+        """判定發生在 on_outcome 內：callback 後、run_detection 返回前，is_disabled 已是 True。"""
+        import core.config as core_config
+        from core.config import save_config
+        from core.focal import device_state
+        from core.version import VERSION
+
+        _patch_db_and_config(mocker, focal_endpoint_setup)
+        config_path = tmp_path / "config.json"
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+        save_config({
+            "focal_device": {
+                "disabled": False,
+                "consecutive_timeout_count": 0,
+                "judged_at_version": VERSION,
+                "set_by_user": False,
+            }
+        })
+
+        probe = {"disabled_after_on_outcome": None}
+
+        def fake_run(
+            fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
+        ):
+            outcome = RunnerOutcome(kind="ABANDONED", reason="detect_timeout")
+            if on_outcome is not None:
+                on_outcome(outcome)
+            probe["disabled_after_on_outcome"] = device_state.is_disabled()
+            return outcome
+
+        mocker.patch("web.routers.showcase.run_detection", side_effect=fake_run)
+        resp = client.post("/api/showcase/video/detect-focal",
+                           json={"path": focal_endpoint_setup["video_uri"]})
+        assert resp.status_code == 200
+        assert probe["disabled_after_on_outcome"] is True
+        assert resp.json()["reason"] == "too_slow_auto_disabled"
+
+    def test_interleaved_set_by_user_yields_too_slow_not_auto_disabled(
+        self, client, focal_endpoint_setup, mocker, tmp_path, monkeypatch,
+    ):
+        """交錯 oracle：偵測期間 set_by_user 變 True → reason=too_slow，設定仍開著。"""
+        import core.config as core_config
+        from core.config import save_config
+        from core.focal import device_state
+        from core.version import VERSION
+
+        _patch_db_and_config(mocker, focal_endpoint_setup)
+        config_path = tmp_path / "config.json"
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+        save_config({
+            "focal_device": {
+                "disabled": False,
+                "consecutive_timeout_count": 0,
+                "judged_at_version": VERSION,
+                "set_by_user": False,
+            }
+        })
+
+        def fake_run(
+            fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
+        ):
+            # 模擬：入口讀到 set_by_user=false，偵測中途使用者在設定頁打開
+            device_state.set_disabled_by_user(False)
+            outcome = RunnerOutcome(kind="ABANDONED", reason="detect_timeout")
+            if on_outcome is not None:
+                on_outcome(outcome)
+            return outcome
+
+        mocker.patch("web.routers.showcase.run_detection", side_effect=fake_run)
+        resp = client.post("/api/showcase/video/detect-focal",
+                           json={"path": focal_endpoint_setup["video_uri"]})
+        assert resp.status_code == 200
+        assert resp.json()["reason"] == "too_slow"
+        assert device_state.is_disabled() is False
 
 
 # ============ /video/save-focal mutator（99a-T1a）============

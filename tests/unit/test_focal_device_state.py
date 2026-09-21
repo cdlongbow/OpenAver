@@ -667,3 +667,75 @@ class TestSetByUser:
         assert after2["set_by_user"] is True  # 仍標記為使用者決定
         assert after2["consecutive_timeout_count"] == before["consecutive_timeout_count"]
         assert after2["judged_at_version"] == before["judged_at_version"]
+
+
+# ---------------------------------------------------------------------------
+# feature/152d TASK-D2 — record_manual_outcome：前景單次逾時判定、不發 sink
+# ---------------------------------------------------------------------------
+
+
+class TestRecordManualOutcome:
+    def test_record_manual_outcome_does_not_call_sink(self, tmp_path, monkeypatch):
+        """前景轉態不呼叫 notification sink（CD-152d-5）——即使 sink 會拋例外也不影響。"""
+        from core.focal import device_state
+        from core.version import VERSION
+
+        _patch_config_paths(tmp_path, monkeypatch)
+        _seed_focal_device(judged_at_version=VERSION)
+
+        calls = []
+
+        def _boom_sink(*args, **kwargs):
+            calls.append((args, kwargs))
+            raise RuntimeError("sink must not be called on manual path")
+
+        monkeypatch.setattr(device_state, "_notification_sink", _boom_sink)
+
+        just = device_state.record_manual_outcome(_abandoned("detect_timeout"))
+        assert just is True
+        assert calls == []
+        assert device_state.is_disabled() is True
+
+    def test_record_manual_outcome_single_timeout_disables(self, tmp_path, monkeypatch):
+        """前景單次 detect_timeout 就翻 disabled（不必累積到背景的 2 次門檻）。"""
+        from core.focal import device_state
+        from core.version import VERSION
+
+        _patch_config_paths(tmp_path, monkeypatch)
+        _seed_focal_device(
+            disabled=False,
+            consecutive_timeout_count=0,
+            judged_at_version=VERSION,
+        )
+
+        just = device_state.record_manual_outcome(_abandoned("detect_timeout"))
+        assert just is True
+        fd = _read_focal_device()
+        assert fd["disabled"] is True
+        assert fd["consecutive_timeout_count"] == 0  # count_timeouts=False：不碰 streak
+        assert fd["judged_at_version"] == VERSION
+        assert device_state.is_disabled() is True
+
+    def test_record_manual_outcome_set_by_user_suppresses_flip_but_stamps_version(
+        self, tmp_path, monkeypatch
+    ):
+        """set_by_user=True 時抑制翻旗標，但仍蓋章 judged_at_version。"""
+        from core.focal import device_state
+        from core.version import VERSION
+
+        _patch_config_paths(tmp_path, monkeypatch)
+        _seed_focal_device(
+            disabled=False,
+            consecutive_timeout_count=0,
+            judged_at_version="old-version",
+            set_by_user=True,
+        )
+
+        just = device_state.record_manual_outcome(_abandoned("detect_timeout"))
+        assert just is False
+        fd = _read_focal_device()
+        assert fd["disabled"] is False
+        assert fd["set_by_user"] is True
+        assert fd["consecutive_timeout_count"] == 0
+        assert fd["judged_at_version"] == VERSION
+        assert device_state.is_disabled() is False

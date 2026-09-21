@@ -139,6 +139,45 @@ def record_outcome(outcome: RunnerOutcome) -> bool:
     return just_disabled
 
 
+def record_manual_outcome(outcome: RunnerOutcome) -> bool:
+    """Apply one manual-detect RunnerOutcome. Returns just_disabled.
+
+    Same shell as ``record_outcome``, but ``count_timeouts=False`` (single
+    timeout flips ``disabled``) and **no** notification sink call (CD-152d-5:
+    the user is staring at the page; no sidebar duplicate).
+    """
+    just_disabled = False
+
+    def mutator(cfg: dict) -> None:
+        nonlocal just_disabled
+        just_disabled = False
+        fd = cfg.setdefault("focal_device", {})
+        just_disabled = _apply_outcome_core(fd, outcome, count_timeouts=False)
+
+    mutate_config(mutator)
+    return just_disabled
+
+
+def classify_manual_reason(outcome: RunnerOutcome, just_disabled: bool) -> str:
+    """Map a manual-detect outcome (+ lock-time decision) to the ``reason`` field.
+
+    Five values per CD-152d-4b. ``just_disabled`` must come from the
+    ``on_outcome`` callback (via ``decision.get("just_disabled", False)``),
+    never from a pre-spawn snapshot.
+    """
+    if outcome.kind in ("FOUND", "NO_FACE"):
+        return ""
+    if outcome.kind == "ABANDONED":
+        if outcome.reason == "skipped_disabled":
+            return "device_disabled"
+        if outcome.reason == "detect_timeout":
+            if just_disabled:
+                return "too_slow_auto_disabled"
+            return "too_slow"
+        return "failed"
+    return "failed"
+
+
 def set_disabled_by_user(disabled: bool) -> None:
     """Persist a user-owned focal enable/disable decision (T-D3 toggle entrypoint).
 
