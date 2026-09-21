@@ -88,7 +88,8 @@ def _apply_outcome_core(
         fd["consecutive_timeout_count"] = 0
 
     if outcome.kind in ("FOUND", "NO_FACE"):
-        fd["consecutive_timeout_count"] = 0
+        if count_timeouts:
+            fd["consecutive_timeout_count"] = 0
     elif outcome.kind == "ABANDONED":
         reason = outcome.reason
         if reason == "detect_timeout":

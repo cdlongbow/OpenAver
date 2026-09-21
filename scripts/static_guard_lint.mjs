@@ -134,6 +134,9 @@ const RULES = [
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'window.__FOCAL_AUTO_ENABLED__', note: '[lint-guard 152d-T-D4] showcase SSR 注入 window.__FOCAL_AUTO_ENABLED__' },
   { file: 'web/static/js/pages/showcase/state-lightbox-mask.js', kind: 'required-string', pattern: 'window.__FOCAL_AUTO_ENABLED__', note: '[lint-guard 152d-T-D4] openMask 消費 window.__FOCAL_AUTO_ENABLED__' },
 
+  // ---- [lint-guard 152d-codex-fix] settings ? 浮層說明文案接線 ----
+  { file: 'web/templates/settings.html', kind: 'required-string', pattern: "t('settings.scraper.focal_help')", note: '[lint-guard 152d-codex-fix] ? 浮層的說明文案接線' },
+
   // ---- [TestMaskToggleGuard] 98b-T4 起家、99a-T3 沿用：遮罩綁定 / 生命週期 guard / no-硬編-ratio / endpoint URL ----
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '@click="openMask', note: '[TestMaskToggleGuard] mask toggle icon button 綁 openMask' },
   // 98b P2 fix（Codex）：commit/re-check guard 由 path 比對（_maskVideoPath/sessionPath）

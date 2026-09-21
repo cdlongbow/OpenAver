@@ -739,3 +739,60 @@ class TestRecordManualOutcome:
         assert fd["consecutive_timeout_count"] == 0
         assert fd["judged_at_version"] == VERSION
         assert device_state.is_disabled() is False
+
+    def test_manual_success_does_not_reset_background_streak(self, tmp_path, monkeypatch):
+        """前景 FOUND 不得清掉背景累積的 consecutive_timeout_count。"""
+        from core.focal import device_state
+        from core.version import VERSION
+
+        _patch_config_paths(tmp_path, monkeypatch)
+        _seed_focal_device(
+            disabled=False,
+            consecutive_timeout_count=1,
+            judged_at_version=VERSION,
+        )
+
+        just = device_state.record_manual_outcome(_found())
+        assert just is False
+        fd = _read_focal_device()
+        assert fd["consecutive_timeout_count"] == 1
+
+    def test_background_threshold_still_reachable_after_manual_success(
+        self, tmp_path, monkeypatch
+    ):
+        """背景逾時→前景成功→背景再逾時，仍能湊到門檻 2 並翻 disabled。"""
+        from core.focal import device_state
+        from core.version import VERSION
+
+        _patch_config_paths(tmp_path, monkeypatch)
+        _seed_focal_device(
+            disabled=False,
+            consecutive_timeout_count=1,
+            judged_at_version=VERSION,
+        )
+
+        assert device_state.record_manual_outcome(_found()) is False
+        assert _read_focal_device()["consecutive_timeout_count"] == 1
+
+        just_disabled = device_state.record_outcome(_abandoned("detect_timeout"))
+        fd = _read_focal_device()
+        assert fd["consecutive_timeout_count"] == 2
+        assert fd["disabled"] is True
+        assert just_disabled is True
+
+    def test_record_outcome_found_still_resets_streak(self, tmp_path, monkeypatch):
+        """背景路徑 FOUND 仍須歸零 streak（迴歸鎖；不得被 count_timeouts 守衛誤傷）。"""
+        from core.focal import device_state
+        from core.version import VERSION
+
+        _patch_config_paths(tmp_path, monkeypatch)
+        _seed_focal_device(
+            disabled=False,
+            consecutive_timeout_count=1,
+            judged_at_version=VERSION,
+        )
+
+        just = device_state.record_outcome(_found())
+        assert just is False
+        fd = _read_focal_device()
+        assert fd["consecutive_timeout_count"] == 0

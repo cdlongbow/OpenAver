@@ -51,18 +51,14 @@ class TestSettingsFocalAutoPill:
         html = resp.text
         input_tag = _extract_focal_input_tag(html)
 
-        # [lint-guard: pytest-justified] 以下對 html／input_tag 的字面斷言驗的是
-        # 「同一份模板在不同 focal_device 狀態下渲染出不同結果」。static_guard_lint
-        # 讀的是模板檔本身的靜態字面，表達不了「後端狀態 X ⇒ 輸出必須含 A 且不得含 B」
-        # 這個跨層條件契約——兩種狀態的文案都寫在同一個模板檔裡，靜態掃描永遠同時看得到。
+        # [lint-guard: pytest-justified] checkbox 狀態是跨層契約：後端 focal_device 狀態
+        # ⇒ 渲染出 checked／未 checked。模板檔的靜態字面同時含兩種可能，static_guard_lint
+        # 分不出「哪一種後端狀態會渲染出哪一種」——? 浮層文案已改狀態無關單一文案，
+        # 改由 scripts/static_guard_lint.mjs 的 required-string 守接線。
         assert "checked" in input_tag, f"版本已變更，預期渲染成啟用（checked），實際標籤：{input_tag}"
-        assert "會自動關閉這個功能" in html, "啟用態浮層文字應包含啟用態說明（會自動關閉這個功能）"
-        assert "已自動關閉這台機器的人臉自動對焦" not in html, "停用態說明文字不得出現在啟用態"
 
-    def test_matching_version_disabled_renders_unchecked_with_reason(self, client):
-        """disabled=True 且 judged_at_version == 目前 VERSION → 維持停用，
-        ? 浮層含原因文字。
-        """
+    def test_matching_version_disabled_renders_unchecked(self, client):
+        """disabled=True 且 judged_at_version == 目前 VERSION → 維持停用（未勾選）。"""
         _seed_focal_device(disabled=True, judged_at_version=VERSION)
 
         resp = client.get("/settings")
@@ -70,15 +66,11 @@ class TestSettingsFocalAutoPill:
         html = resp.text
         input_tag = _extract_focal_input_tag(html)
 
-        # [lint-guard: pytest-justified] 以下對 html／input_tag 的字面斷言驗的是
-        # 「同一份模板在不同 focal_device 狀態下渲染出不同結果」。static_guard_lint
-        # 讀的是模板檔本身的靜態字面，表達不了「後端狀態 X ⇒ 輸出必須含 A 且不得含 B」
-        # 這個跨層條件契約——兩種狀態的文案都寫在同一個模板檔裡，靜態掃描永遠同時看得到。
+        # [lint-guard: pytest-justified] checkbox 狀態是跨層契約：後端 focal_device 狀態
+        # ⇒ 渲染出 checked／未 checked。模板檔的靜態字面同時含兩種可能，static_guard_lint
+        # 分不出「哪一種後端狀態會渲染出哪一種」——? 浮層文案已改狀態無關單一文案，
+        # 改由 scripts/static_guard_lint.mjs 的 required-string 守接線。
         assert "checked" not in input_tag, f"版本相同、仍停用，不應 checked，實際標籤：{input_tag}"
-        assert "偵測連續兩次超過 5 秒沒算完" in html, "停用原因文字（只講「超過 5 秒」與「已自動關閉」兩件事實，不含實測耗時數字）應出現在 ? 浮層"
-        assert "燈箱裡自己拖曳" in html, "原因文字必須寫出逃生口：燈箱手動拖曳對焦"
-        assert "已自動關閉" in html
-        assert "會自動關閉這個功能" not in html, "啟用態說明不得出現在停用態"
 
     def test_focal_pill_anchor_is_unique(self, client):
         """防止錨點哪天變得不唯一、讓 _extract_focal_input_tag 定位又開始抓錯。"""
