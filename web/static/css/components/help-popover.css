@@ -48,6 +48,17 @@
     display: block;
 }
 
+/* 往上展開：用在「卡片最後一列」的 popover。
+   卡片在 dim 主題有 backdrop-filter（fluent-materials.css Rule 14）自成 stacking
+   context，浮層的 z-index:50 逃不出那張卡；往下溢出會被下一張卡片的背景蓋住。
+   往上展開讓浮層整個留在同一張卡內，就不必動材質系統（ui-conventions §2）。 */
+.help-popover--up {
+    top: auto;
+    bottom: 100%;
+    margin-top: 0;
+    margin-bottom: 0.5rem;
+}
+
 /* 多行 i18n 文案（以 \n 斷行，如進階搜尋 5 入口清單）才保留換行 */
 .help-popover__body--multiline {
     white-space: pre-line;
