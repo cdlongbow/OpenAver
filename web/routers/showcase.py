@@ -310,7 +310,7 @@ def delete_video(path: str = Query(..., description="file:/// URI")):
     return JSONResponse({"deleted": n})
 
 
-_MANUAL_DETECT_TIMEOUT_S = 600.0  # D2/D9: 手動路徑不套路徑①④的批次 5 秒上限；工程安全網非效能宣稱，見卡片「設計決策」（本 branch 無 F5 停止鈕、DS218 實測最慢完整跑完 53.76s，findings-152 §Q3-a）
+_MANUAL_DETECT_TIMEOUT_S = 5.0  # D2/D9: 前景與背景共用同一個 5 秒定義（CD-152d-1），不是批次上限外的安全網
 
 
 @router.post("/video/detect-focal")
@@ -332,7 +332,16 @@ def detect_video_focal(req: DetectFocalRequest):
     `POST /video/save-focal` 存檔時原樣帶回，讓 `update_manual_focal` 的
     compare-and-store 守衛比對「使用者觀察當下」與「存檔當下」的封面是否一致，
     擋掉 rescan/rescrape 換封面卻把舊座標存成新封面 manual 值的 race。
-    `def`（非 async）→ threadpool；run_detection 同步耗時 x86 約 2.2s、DS218 NAS 實機約 42.7s（19 倍，來源：DS218 POC 實測）。**不進 capabilities（不揭露）。**
+    成功分支另帶 ``reason``（CD-152d-4b 五值：``""`` / ``device_disabled`` /
+    ``too_slow_auto_disabled`` / ``too_slow`` / ``failed``），供前端區分提示。
+    `def`（非 async）→ threadpool。**這條路徑沒有完整的上限。**
+    有計時預算的只有兩段：`_MANUAL_DETECT_TIMEOUT_S = 5.0`（偵測階段本身）＋ 最長 10 秒的子程序
+    啟動逾時（`_STARTUP_TIMEOUT_S`，寫死在 `core/focal/subprocess_runner.py`，不受本端點傳入的
+    `timeout_s` 影響），兩者相加 15 秒是**名義預算**。總 wall time 另外包含兩段**沒有 timeout**
+    的等待：取全域 `_slot_lock`（`subprocess_runner.py` 裸 acquire）與 kill 之後的 `child.wait()`
+    （已接受的 residual，見 CHANGELOG「封面放在 NAS／網路磁碟上而中途斷線」那條）。
+    ⚠️ 停用狀態已於上方端點層短路，不會走到這裡，所以「關掉之後直接進手動」不受鎖排隊影響。
+    **不進 capabilities（不揭露）。**
     """
     try:
         db_path = get_db_path()
@@ -359,13 +368,48 @@ def detect_video_focal(req: DetectFocalRequest):
             return JSONResponse({"success": False, "error": "找不到封面檔案",
                                  "cover_path": row.cover_path}, status_code=400)
 
+        # 152d-T-D8：停用時在這裡就回，不要進 run_detection ——
+        # pre_spawn_check 跑在全域 _slot_lock 裡面（subprocess_runner.py:298→309），
+        # 進去等於排隊，而文案承諾的是「直接進手動拖曳」。斷路器的兩處檢查又都排在
+        # pre_spawn_check 之前，已停用 + 斷路器已開會回 circuit_open → 前端跳「偵測失敗」。
+        # 重用上面那份 config 快照（同一個 request 內取的，BE-CONFIG-05 的新鮮度要求成立）。
+        # runner 內的 pre_spawn_check 保留不動，封住「這裡判完之後才被關掉」的窄競態。
+        # 152d-T-D9：fail-open，鏡射 runner 內 pre_spawn_check 的既有契約
+        # （subprocess_runner.py:309-315）。「config 查詢失敗」與「這台機器算不算得動人臉」
+        # 是兩回事——查不到不可以當成停用，更不可以讓整個請求失敗。
+        try:
+            _focal_disabled = device_state.is_disabled_in(config)
+        except Exception:
+            logger.warning("focal 停用查詢失敗，fail-open 繼續偵測", exc_info=True)
+            _focal_disabled = False
+        if _focal_disabled:
+            return JSONResponse({
+                "success": True,
+                "auto_focal": "",
+                "cover_path": row.cover_path,
+                "reason": "device_disabled",
+            })
+
+        decision = {}
+
+        def _on_outcome(o):
+            decision["just_disabled"] = device_state.record_manual_outcome(o)
+
         outcome = run_detection(
             cover_fs, 0.71, job_key=str(uuid.uuid4()), timeout_s=_MANUAL_DETECT_TIMEOUT_S,
-            pre_spawn_check=device_state.is_disabled, on_outcome=None,
+            pre_spawn_check=device_state.is_disabled, on_outcome=_on_outcome,
         )
         focal = outcome.focal if outcome.kind == "FOUND" else None
         auto_focal = format_focal(focal)          # None → ''，純預覽不寫 DB
-        return JSONResponse({"success": True, "auto_focal": auto_focal, "cover_path": row.cover_path})
+        reason = device_state.classify_manual_reason(
+            outcome, decision.get("just_disabled", False),
+        )
+        return JSONResponse({
+            "success": True,
+            "auto_focal": auto_focal,
+            "cover_path": row.cover_path,
+            "reason": reason,
+        })
 
     except Exception as e:
         logger.error("偵測焦點失敗: %s", e)

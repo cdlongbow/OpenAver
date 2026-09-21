@@ -2275,7 +2275,7 @@ class TestDetectActressFocal:
              patch("web.routers.actress.run_detection", return_value=RunnerOutcome(kind="NO_FACE")) as mock_detect:
             resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
         assert resp.status_code == 200
-        assert resp.json() == {"success": True, "auto_focal": ""}
+        assert resp.json() == {"success": True, "auto_focal": "", "reason": ""}
         # None 與「端點沒呼叫 detect_focal、直接寫死空字串」輸出同 JSON，光比對回應
         # 證不出 wiring；必須額外斷言 mock 真的被呼叫過一次（同根因見
         # test_organizer.py::test_no_face_real_photo_branch3，Codex PR#110 二審 P2-1）。
@@ -2363,7 +2363,7 @@ class TestDetectActressFocal:
 
         assert set(resp_404.json().keys()) == {"success", "error"}
         assert set(resp_400.json().keys()) == {"success", "error"}
-        assert set(resp_200.json().keys()) == {"success", "auto_focal"}
+        assert set(resp_200.json().keys()) == {"success", "auto_focal", "reason"}
 
         for resp in (resp_404, resp_400, resp_200):
             text = resp.text
@@ -2379,9 +2379,8 @@ class TestDetectActressFocal:
         capabilities_src = Path("web/routers/capabilities.py").read_text(encoding="utf-8")
         assert "detect-focal" not in capabilities_src
 
-    def test_manual_detect_does_not_use_batch_5s_timeout(self, client, tmp_path):
-        """DoD(i)：手動路徑不套路徑①④的批次 5 秒上限——假 run_detection 真 sleep 6s
-        仍正常完成，且 timeout_s != 5.0。"""
+    def test_manual_detect_uses_unified_5s_budget(self, client, tmp_path):
+        """CD-152d-1：前景與背景共用同一個 5 秒定義——timeout_s 必須是 5.0。"""
         _save_actress_for_focal(client)
         gfriends = tmp_path / "gfriends"
         _place_fixture_photo(gfriends, "narrow_face_top.jpg")
@@ -2389,7 +2388,6 @@ class TestDetectActressFocal:
 
         def slow_detect(fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None):
             captured["timeout_s"] = timeout_s
-            time.sleep(6.0)
             return RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)
 
         with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
@@ -2400,11 +2398,12 @@ class TestDetectActressFocal:
         assert resp.status_code == 200
         assert resp.json()["success"] is True
         assert resp.json()["auto_focal"] == "0.3148,0.2000"
+        assert resp.json()["reason"] == ""
         spy.assert_called_once()
-        assert captured["timeout_s"] != 5.0
+        assert captured["timeout_s"] == 5.0
 
     def test_abandoned_returns_same_shape_as_no_face(self, client, tmp_path):
-        """DoD(ii)：run_detection 回 ABANDONED 時回應形狀等於既有無臉分支。"""
+        """ABANDONED(crashed) → reason=='failed'，不得被歸成 too_slow 家族（CD-152d-4b）。"""
         _save_actress_for_focal(client)
         gfriends = tmp_path / "gfriends"
         _place_fixture_photo(gfriends, "narrow_face_top.jpg")
@@ -2417,10 +2416,10 @@ class TestDetectActressFocal:
             resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
 
         assert resp.status_code == 200
-        assert resp.json() == {"success": True, "auto_focal": ""}
+        assert resp.json() == {"success": True, "auto_focal": "", "reason": "failed"}
 
     def test_device_disabled_returns_same_shape_as_no_face(self, client, tmp_path):
-        """TASK-5c path③：裝置停用時回應形狀與既有無偵測分支一致。"""
+        """裝置已停用 → reason=='device_disabled'（CD-152d-6）。"""
         from core.focal import device_state
 
         _save_actress_for_focal(client)
@@ -2441,10 +2440,79 @@ class TestDetectActressFocal:
             resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
 
         assert resp.status_code == 200
-        assert resp.json() == {"success": True, "auto_focal": ""}
+        assert resp.json() == {"success": True, "auto_focal": "", "reason": "device_disabled"}
+
+    def test_disabled_short_circuits_before_runner_lock(self, client, tmp_path, monkeypatch):
+        """關掉自動對焦後，點裁切工具不得進 run_detection 全域鎖排隊。
+
+        端點層用 await to_thread(is_disabled) 短路；本測試寫真的 focal_device config，
+        並用 assert_not_called() 鎖「一次都不准呼叫」這個不變式。
+        """
+        import core.config as core_config
+        from core.config import save_config
+
+        _save_actress_for_focal(client)
+        gfriends = tmp_path / "gfriends"
+        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
+
+        # 選 set_by_user=True：使用者關掉對焦與版本無關，is_disabled_in 直接讀 disabled，
+        # 不依賴 judged_at_version == VERSION（避免 lazy-reset 把測試讀成「未停用」）。
+        config_path = tmp_path / "config.json"
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+        save_config({
+            "focal_device": {
+                "disabled": True,
+                "set_by_user": True,
+                "judged_at_version": "",
+                "consecutive_timeout_count": 0,
+            }
+        })
+
+        # stub 回一個看得出來的 focal（0.99）而不是拋例外：拋例外會被端點的 except
+        # 收成 500，紅字只剩 `assert 500 == 200`，跟「端點因為別的原因炸了」分不出來。
+        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
+             patch(
+                 "web.routers.actress.run_detection",
+                 return_value=RunnerOutcome(kind="FOUND", focal=(0.99, 0.99)),
+             ) as spy:
+            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["auto_focal"] == "", "短路被拿掉了：偵測真的跑了並回了座標"
+        assert body["reason"] == "device_disabled"
+        assert "cover_path" not in body
+        spy.assert_not_called()
+
+    def test_disabled_lookup_failure_fails_open_and_still_detects(self, client, tmp_path):
+        """config 停用查詢失敗 ≠ 硬體算不動：fail-open 繼續偵測，不得 500 / device_disabled。"""
+        from core.focal import device_state
+
+        _save_actress_for_focal(client)
+        gfriends = tmp_path / "gfriends"
+        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
+
+        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
+             patch.object(device_state, "is_disabled", side_effect=OSError("config unreadable")), \
+             patch(
+                 "web.routers.actress.run_detection",
+                 return_value=RunnerOutcome(kind="FOUND", focal=(0.42, 0.5)),
+             ) as spy:
+            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["auto_focal"] == "0.4200,0.5000"
+        assert body["reason"] == ""
+        spy.assert_called_once()
 
     def test_manual_detect_timeout_does_not_contribute(self, client, tmp_path):
-        """TASK-5c path③：手動路徑 detect_timeout 不得呼叫 device_state.record_outcome。"""
+        """CD-152d-2b②：前景逾時走 record_manual_outcome（非 record_outcome），reason=too_slow_auto_disabled。"""
         from core.focal import device_state
 
         _save_actress_for_focal(client)
@@ -2461,15 +2529,210 @@ class TestDetectActressFocal:
 
         with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
              patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
-             patch.object(device_state, "record_outcome") as record_spy, \
+             patch.object(device_state, "record_outcome") as record_bg_spy, \
+             patch.object(device_state, "record_manual_outcome", return_value=True) as record_manual_spy, \
              patch("web.routers.actress.run_detection", side_effect=fake_run) as spy:
             resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
 
         assert resp.status_code == 200
-        assert resp.json() == {"success": True, "auto_focal": ""}
+        assert resp.json() == {
+            "success": True, "auto_focal": "", "reason": "too_slow_auto_disabled",
+        }
         assert "on_outcome" in spy.call_args.kwargs, "path③ must pass on_outcome= explicitly"
-        assert spy.call_args.kwargs["on_outcome"] is None
-        assert record_spy.call_count == 0
+        assert spy.call_args.kwargs["on_outcome"] is not None
+        assert record_manual_spy.call_count == 1
+        assert record_bg_spy.call_count == 0
+
+    def test_reason_empty_on_found(self, client, tmp_path):
+        """reason 值域：正常 FOUND → ''。"""
+        _save_actress_for_focal(client)
+        gfriends = tmp_path / "gfriends"
+        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
+        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
+             patch(
+                 "web.routers.actress.run_detection",
+                 return_value=RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY),
+             ):
+            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
+        assert resp.status_code == 200
+        assert resp.json()["reason"] == ""
+
+    @pytest.mark.parametrize("abandoned_reason", ["startup_timeout", "crashed", "circuit_open"])
+    def test_reason_failed_for_non_timeout_abandoned(self, client, tmp_path, abandoned_reason):
+        """reason 值域：startup_timeout／crashed／circuit_open → 'failed'。"""
+        _save_actress_for_focal(client)
+        gfriends = tmp_path / "gfriends"
+        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
+        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
+             patch(
+                 "web.routers.actress.run_detection",
+                 return_value=RunnerOutcome(kind="ABANDONED", reason=abandoned_reason),
+             ):
+            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
+        assert resp.status_code == 200
+        assert resp.json()["reason"] == "failed"
+        assert resp.json()["reason"] not in ("too_slow", "too_slow_auto_disabled")
+
+    def test_reason_too_slow_when_set_by_user_suppresses(self, client, tmp_path):
+        """reason 值域：逾時但 just_disabled=False → 'too_slow'。"""
+        from core.focal import device_state
+
+        _save_actress_for_focal(client)
+        gfriends = tmp_path / "gfriends"
+        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
+
+        def fake_run(
+            fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
+        ):
+            outcome = RunnerOutcome(kind="ABANDONED", reason="detect_timeout")
+            if on_outcome is not None:
+                on_outcome(outcome)
+            return outcome
+
+        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
+             patch.object(device_state, "record_manual_outcome", return_value=False), \
+             patch("web.routers.actress.run_detection", side_effect=fake_run):
+            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
+        assert resp.status_code == 200
+        assert resp.json()["reason"] == "too_slow"
+
+    def test_manual_timeout_does_not_call_notification_sink(self, client, tmp_path, monkeypatch):
+        """前景轉態不呼叫 notification sink——拋例外的 sink 全程未被呼叫，端點仍 200。"""
+        import core.config as core_config
+        from core.config import save_config
+        from core.focal import device_state
+        from core.version import VERSION
+
+        _save_actress_for_focal(client)
+        gfriends = tmp_path / "gfriends"
+        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
+
+        config_path = tmp_path / "config.json"
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+        save_config({
+            "focal_device": {
+                "disabled": False,
+                "consecutive_timeout_count": 0,
+                "judged_at_version": VERSION,
+                "set_by_user": False,
+            }
+        })
+
+        calls = []
+
+        def _boom_sink(*args, **kwargs):
+            calls.append((args, kwargs))
+            raise RuntimeError("sink must not be called on manual path")
+
+        monkeypatch.setattr(device_state, "_notification_sink", _boom_sink)
+
+        def fake_run(
+            fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
+        ):
+            outcome = RunnerOutcome(kind="ABANDONED", reason="detect_timeout")
+            if on_outcome is not None:
+                on_outcome(outcome)
+            return outcome
+
+        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
+             patch("web.routers.actress.run_detection", side_effect=fake_run):
+            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
+
+        assert resp.status_code == 200
+        assert resp.json()["reason"] == "too_slow_auto_disabled"
+        assert calls == []
+        assert device_state.is_disabled() is True
+
+    def test_judgment_happens_inside_on_outcome_before_return(self, client, tmp_path, monkeypatch):
+        """判定發生在 on_outcome 內：callback 後、run_detection 返回前，is_disabled 已是 True。"""
+        import core.config as core_config
+        from core.config import save_config
+        from core.focal import device_state
+        from core.version import VERSION
+
+        _save_actress_for_focal(client)
+        gfriends = tmp_path / "gfriends"
+        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
+
+        config_path = tmp_path / "config.json"
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+        save_config({
+            "focal_device": {
+                "disabled": False,
+                "consecutive_timeout_count": 0,
+                "judged_at_version": VERSION,
+                "set_by_user": False,
+            }
+        })
+
+        probe = {"disabled_after_on_outcome": None}
+
+        def fake_run(
+            fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
+        ):
+            outcome = RunnerOutcome(kind="ABANDONED", reason="detect_timeout")
+            if on_outcome is not None:
+                on_outcome(outcome)
+            probe["disabled_after_on_outcome"] = device_state.is_disabled()
+            return outcome
+
+        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
+             patch("web.routers.actress.run_detection", side_effect=fake_run):
+            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
+
+        assert resp.status_code == 200
+        assert probe["disabled_after_on_outcome"] is True
+        assert resp.json()["reason"] == "too_slow_auto_disabled"
+
+    def test_interleaved_set_by_user_yields_too_slow_not_auto_disabled(
+        self, client, tmp_path, monkeypatch,
+    ):
+        """交錯 oracle：偵測期間 set_by_user 變 True → reason=too_slow，設定仍開著。"""
+        import core.config as core_config
+        from core.config import save_config
+        from core.focal import device_state
+        from core.version import VERSION
+
+        _save_actress_for_focal(client)
+        gfriends = tmp_path / "gfriends"
+        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
+
+        config_path = tmp_path / "config.json"
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+        save_config({
+            "focal_device": {
+                "disabled": False,
+                "consecutive_timeout_count": 0,
+                "judged_at_version": VERSION,
+                "set_by_user": False,
+            }
+        })
+
+        def fake_run(
+            fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
+        ):
+            device_state.set_disabled_by_user(False)
+            outcome = RunnerOutcome(kind="ABANDONED", reason="detect_timeout")
+            if on_outcome is not None:
+                on_outcome(outcome)
+            return outcome
+
+        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
+             patch("web.routers.actress.run_detection", side_effect=fake_run):
+            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
+
+        assert resp.status_code == 200
+        assert resp.json()["reason"] == "too_slow"
+        assert device_state.is_disabled() is False
 
 
 class TestSetActressFocal:

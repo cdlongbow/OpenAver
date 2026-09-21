@@ -13,7 +13,7 @@
  *   3. orphan（warn）：zh_TW 有但全 codebase 無「靜態」t() 引用的 key（動態/後端 core.i18n
  *      組的 key 靜態掃不到 → 只 warn，不誤殺）。
  *   4. forbidden-word（RED）：四語 leaf 值不得含「推薦」（PRD wording）/「風味」（scanner tone,
- *      CD-96-11）。
+ *      CD-96-11）。另有 focal 語氣規則的 key-scoped 禁詞（見 SCOPED_FORBIDDEN_*）。
  *   5. backend-title-key（RED）：web/routers/*.py 傳給通知中心的 notif.* title_key 必須 ∈ zh_TW leaf-key 集。
  *
  * 掃描標的＝靜態可解析的 t('key') / window.t('key') / w.t('key')（w = window alias）。
@@ -41,7 +41,17 @@ const localeArg = argv.find((a) => !a.startsWith('--'));
 const LOCALES_DIR = localeArg ? resolve(localeArg) : join(REPO_ROOT, 'locales');
 
 const LOCALE_FILES = { zh_TW: 'zh_TW.json', zh_CN: 'zh_CN.json', en: 'en.json', ja: 'ja.json' };
+// FORBIDDEN_WORDS = 全產品詞彙禁令（PRD 拒絕清單）：掃四語全部 leaf value。
+// SCOPED_FORBIDDEN_WORDS = focal 這組文案的語氣規則（CD-152d-4b），只掃 SCOPED_FORBIDDEN_KEYS。
+// 兩套不可以合併——合併就會擋下「尋找燦爛的演出片段」這類合法用詞（「爛」是「燦爛」子字串）。
 const FORBIDDEN_WORDS = ['推薦', '風味']; // 未來擴充只改此陣列（CD-96a-4 / CD-96-11）
+const SCOPED_FORBIDDEN_WORDS = ['太慢', '爛', '跑不動', '效能不足'];
+const SCOPED_FORBIDDEN_KEYS = [
+  'settings.scraper.focal_help',
+  'notif.focal_auto_disabled',
+  'showcase.lightbox.mask_focal_too_slow_auto_disabled',
+  'showcase.lightbox.mask_focal_too_slow_hint',
+];
 const ORPHAN_PREVIEW = 10;
 
 // 「靜態掃不到但必須存在」的 key allowlist：承接自 96a-T3 刪除的 i18n pytest class 的
@@ -98,12 +108,15 @@ function collectLeafKeys(obj, prefix, out) {
   }
 }
 
-function collectLeafValues(obj, out) {
-  for (const v of Object.values(obj)) {
+// 葉節點走訪只有這一份：檢 4（全域禁詞，只要值）與檢 4b（key-scoped 禁詞，要 key＋值）
+// 共用它，免得兩支各自演化出不一樣的「什麼算葉節點」。
+function collectLeafEntries(obj, prefix, out) {
+  for (const [k, v] of Object.entries(obj)) {
+    const full = prefix ? `${prefix}.${k}` : k;
     if (v && typeof v === 'object' && !Array.isArray(v)) {
-      collectLeafValues(v, out);
+      collectLeafEntries(v, full, out);
     } else if (typeof v === 'string') {
-      out.push(v);
+      out.push([full, v]);
     }
   }
 }
@@ -319,17 +332,40 @@ if (backendMissing.length) {
   }
 }
 
-// 檢 4：forbidden-word（RED）— 掃四語全 leaf 值
+// 檢 4：forbidden-word（RED）— 掃四語全 leaf 值（全產品詞彙禁令）
 for (const name of Object.keys(LOCALE_FILES)) {
   const data = localeData[name];
   if (!data) continue; // 讀取失敗已於上方回報；forbidden 只在讀得到時掃
   const values = [];
-  collectLeafValues(data, values);
+  const leafEntries = [];
+  collectLeafEntries(data, '', leafEntries);
+  for (const [, v] of leafEntries) values.push(v);
   for (const word of FORBIDDEN_WORDS) {
     const hits = values.filter((v) => v.includes(word));
     if (hits.length) {
       err(`${name}.json 有 ${hits.length} 個值含禁詞「${word}」（PRD/scanner tone 規則）：`);
       for (const h of hits.slice(0, 5)) console.error(`    "${h.slice(0, 60)}"`);
+    }
+  }
+}
+
+// 檢 4b：focal 語氣規則（RED）— 只掃 SCOPED_FORBIDDEN_KEYS；錯誤訊息印 key
+{
+  const scopedKeySet = new Set(SCOPED_FORBIDDEN_KEYS);
+  for (const name of Object.keys(LOCALE_FILES)) {
+    const data = localeData[name];
+    if (!data) continue;
+    const entries = [];
+    collectLeafEntries(data, '', entries);
+    for (const [key, value] of entries) {
+      if (!scopedKeySet.has(key)) continue;
+      for (const word of SCOPED_FORBIDDEN_WORDS) {
+        if (value.includes(word)) {
+          err(
+            `${name}.json key '${key}' 含 focal 語氣禁詞「${word}」：\"${value.slice(0, 60)}\"`,
+          );
+        }
+      }
     }
   }
 }

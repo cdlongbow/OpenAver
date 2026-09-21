@@ -438,6 +438,31 @@ export function stateConfig() {
                 this.showToast(window.t(val ? 'settings.server_info.toggle_failed' : 'settings.server_info.disable_failed'), 'error');
             }
         },
+        // 不用 base.html configSync：那是外觀同步（debounce/keepalive/吞錯）；這一顆是有行為後果的決定，失敗必須把 checkbox 撥回。
+        async setFocalDeviceDisabled(event) {
+            // checked = 啟用；端點 value = disabled → 取反
+            // await 前快照（同 saveAccessAuth 家規）：event 觸發時 checkbox 已是按下去後的新值，
+            // 失敗要退回按之前，所以回滾寫 !submittedChecked，不是 submittedChecked。
+            const submittedChecked = event.target.checked;
+            const disabled = !submittedChecked;
+            try {
+                const resp = await fetch('/api/config/focal-device/disabled', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ value: disabled })
+                });
+                const result = await resp.json();
+                if (!result.success) {
+                    console.warn('[focalDevice] setFocalDeviceDisabled failed:', result.error);
+                    this.showToast(window.t('settings.scraper.focal_toggle_failed'), 'error');
+                    event.target.checked = !submittedChecked;
+                }
+            } catch (e) {
+                console.warn('[focalDevice] setFocalDeviceDisabled error:', e);
+                this.showToast(window.t('settings.scraper.focal_toggle_failed'), 'error');
+                event.target.checked = !submittedChecked;
+            }
+        },
         async saveAccessAuth() {
             this.accessAuthSaving = true;
             // 在 await 之前把送出的值抓成快照（Codex PR#129 round-3 P2）：事後

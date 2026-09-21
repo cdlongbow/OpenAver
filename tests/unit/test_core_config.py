@@ -613,6 +613,7 @@ class TestMigrationFocalDeviceState:
             "disabled": False,
             "consecutive_timeout_count": 0,
             "judged_at_version": "",
+            "set_by_user": False,
         }
 
         # 全新安裝（無 config.json，從 web/config.default.json 複製）

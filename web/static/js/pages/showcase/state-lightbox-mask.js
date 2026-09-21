@@ -71,9 +71,9 @@ export function stateLightboxMask() {
 
 
         // 100b-T1（CD-4/§B-1b）：video/actress 兩分支識別資訊統一出口。_maskKind 已由 openMask()
-        // 起手凍結（G4，不在此重判）。actress 分支目前結構性不可達（T1 DoD ③：女優分支無 focal
-        // icon，openMask 永不在 currentLightboxActress 有值時觸發），此處仍完整定義兩分支欄位
-        // 供 T2 銜接（§B-1b 表）。detectEndpoint/focalEndpoint 各自完整字面 URL（Opus 裁決 C：
+        // 起手凍結（G4，不在此重判）。⚠️ 舊註解曾寫「actress 分支目前結構性不可達」——那只在
+        // 100b-T1 完成的當下成立，同日的 100b-T2a／100c-T2 就把 .lb-mask-btn 接進女優分支了
+        // （v0.12.2）。兩分支今天都活著。detectEndpoint/focalEndpoint 各自完整字面 URL（Opus 裁決 C：
         // 不可拼接 base，否則 static_guard_lint.mjs:147 的 detect-focal 規則因字面字串消失而
         // 靜默 RED）。imgEl 對 actress 分支须 null-safe（G3：$refs.pickerCoverImg 在 x-if 內）。
         _maskTarget() {
@@ -116,7 +116,7 @@ export function stateLightboxMask() {
             //     kind 被改成別的分支會讓後續 _maskDragStart 抓到錯的 $refs 元素）。
             //   • 排 `_maskTarget().identity` 之後 → helper 讀到未凍結的 kind，dispatch 到錯分支。
             // 用排序讓該類 race 結構上不可能發生，而非事後補旗標（feedback_order_over_flag_guards）。
-            // T1 階段唯一觸發入口（.lb-mask-btn）只在 video 分支渲染，故此刻恆為 'video'。
+            // （100b-T1 時 .lb-mask-btn 只在 video 分支渲染，此處恆為 'video'；100c-T2 起女優也有。）
             this._maskKind = this.currentLightboxActress ? 'actress' : 'video';
             if (!this._maskTarget().identity) return;
             // 98b-T6 防线：圖未就緒不開（按鈕也 gate _lbFullLoaded，此為 defense-in-depth）。
@@ -170,11 +170,12 @@ export function stateLightboxMask() {
                 return;
             }
 
-            this._maskSession++;         // 98b P2 fix：新開 session，讓任何舊 session 的 await 後寫入失效
             this._maskDetecting = false; // 98b P2 fix(二)：清舊 session 遺留的偵測態——舊 detect await 的
                                          // finally 因 session 不符會**跳過**清 spinner，若不在此重置，新遮罩
                                          // 會頂著卡死的 spinner（Codex）。新 session 起手一律非偵測中。
             this._maskWinStyle = s;      // 先設幾何（右裁基準，detect resolve 前 / 無臉時的 fallback 終值）
+
+            this._maskSession++;         // 98b P2 fix：新開 session，讓任何舊 session 的 await 後寫入失效
 
             // D1（CD-1）：一律 force-detect，僅預覽、不寫 DB。偵測完成後若有臉，_maskFocalX 更新為
             // 偵測 x；無臉則維持右裁基準不變。99a-T5：.lb-mask-window 在 _maskDetecting 為真時不
@@ -255,6 +256,17 @@ export function stateLightboxMask() {
                     }
                     // else：無臉——維持起手基準（video：右裁 x；actress：3/4 置中 0.5，
                     // openMask 起手已算好），不動它。逃生口仍可拖曳 + ✓ 存入（spec §3.7-6）。
+
+                    // 152d-T-D4 插入點 B：reason → 就地提示（CD-152d-4b）。
+                    // failed 走 success:true，必須在此成功分支開口；與下方 catch 同 key 是刻意的。
+                    if (data.reason === 'too_slow_auto_disabled') {
+                        this.showToast(window.t('showcase.lightbox.mask_focal_too_slow_auto_disabled'), 'info');
+                    } else if (data.reason === 'too_slow') {
+                        this.showToast(window.t('showcase.lightbox.mask_focal_too_slow_hint'), 'info');
+                    } else if (data.reason === 'failed') {
+                        this.showToast(window.t('showcase.lightbox.mask_detect_failed'), 'error');
+                    }
+                    // "" / device_disabled / 缺欄 → 靜默
                 }
             } catch (e) {
                 // 偵測失敗只 toast，_maskFocalX 維持右裁基準，不讓 UI 卡在半套態。

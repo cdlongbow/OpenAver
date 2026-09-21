@@ -50,6 +50,11 @@ BLOCKING_FUNC_NAMES = frozenset({
     # 臨界區）——加進清單是防 T9 settings_page 把 is_disabled() 忘了包
     # asyncio.to_thread，讓單一設定頁請求卡住整站 event loop。
     "is_disabled", "record_outcome",
+    # feature/152d TASK-D1：set_disabled_by_user 走 mutate_config（同步磁碟寫入）。
+    "set_disabled_by_user",
+    # feature/152d TASK-D2：record_manual_outcome 同樣走 mutate_config（同步磁碟寫入）。
+    # classify_manual_reason 是純函式、不碰 config，故意不加。
+    "record_manual_outcome",
 })
 
 # Attribute-call 後綴（接在任意物件後 .exists() / .stat() / .iterdir() / .save()）

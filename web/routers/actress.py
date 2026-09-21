@@ -1094,7 +1094,7 @@ async def upload_actress_photo(name: str, file: UploadFile = _UPLOAD_FILE_PARAM)
 # X 軸拖曳」的錯框。改這個常數時，務必同時檢查 plan-100b.md CD-2 的前端
 # 常數是否也要跟著動。
 _FOCAL_DETECT_RATIO = 0.75
-_MANUAL_DETECT_TIMEOUT_S = 600.0  # D2/D9: 手動路徑不套路徑①④的批次 5 秒上限；工程安全網非效能宣稱，見卡片「設計決策」（本 branch 無 F5 停止鈕、DS218 實測最慢完整跑完 53.76s，findings-152 §Q3-a）
+_MANUAL_DETECT_TIMEOUT_S = 5.0  # D2/D9: 前景與背景共用同一個 5 秒定義（CD-152d-1），不是批次上限外的安全網
 
 _FOCAL_ERR_NOT_FOUND = _UPLOAD_ERR_NOT_FOUND  # "查無此女優"（複用既有常數，同語意）
 _FOCAL_ERR_NO_PHOTO = "找不到照片檔案"          # mirror showcase.py:264 的「找不到封面檔案」措辭家族
@@ -1123,8 +1123,9 @@ async def detect_actress_focal(name: str):
        400 家族，理由：女優**存在**只是沒照片，404 語意會與「查無此女優」混淆）。
        **不呼叫 detect_focal**（沒有檔案可偵測）。
     3. 偵測（無臉 → `format_focal(None)` == ''，不崩，§3.7-6）。
-    4. 回應恆為 `{"success": bool, "auto_focal": str}`（錯誤時 "error" 取代
-       "auto_focal"）——**無 photo_url/cover_path，無任何 FS 路徑欄位**（DoD⑤）。
+    4. 成功回應為 `{"success": bool, "auto_focal": str, "reason": str}`（錯誤時
+       "error" 取代 "auto_focal"／"reason"）——**無 photo_url/cover_path，無任何
+       FS 路徑欄位**（DoD⑤）。``reason`` 五值見 CD-152d-4b。
 
     `async def` + 顯式 `await asyncio.to_thread(...)`：延續 actress.py 既有
     「新增端點」慣例（`list_photo_candidates`/`actress_crop`/`set_actress_photo`/
@@ -1146,14 +1147,41 @@ async def detect_actress_focal(name: str):
         if photo_fs is None:
             return JSONResponse(status_code=400, content={"success": False, "error": _FOCAL_ERR_NO_PHOTO})
 
+        # 152d-T-D8：同 showcase，停用時不要進 run_detection 的全域鎖排隊。
+        # 這支沒有預先載入的 config，而 is_disabled() 內部會讀檔 + 取鎖 ⇒ 必須 to_thread。
+        # 152d-T-D9：fail-open，鏡射 runner 內 pre_spawn_check 的既有契約
+        # （subprocess_runner.py:309-315）。「config 查詢失敗」與「這台機器算不算得動人臉」
+        # 是兩回事——查不到不可以當成停用，更不可以讓整個請求失敗。
+        try:
+            _focal_disabled = await asyncio.to_thread(device_state.is_disabled)
+        except Exception:
+            logger.warning("focal 停用查詢失敗，fail-open 繼續偵測", exc_info=True)
+            _focal_disabled = False
+        if _focal_disabled:
+            return JSONResponse(
+                status_code=200,
+                content={"success": True, "auto_focal": "", "reason": "device_disabled"},
+            )
+
+        decision = {}
+
+        def _on_outcome(o):
+            decision["just_disabled"] = device_state.record_manual_outcome(o)
+
         outcome = await asyncio.to_thread(
             run_detection, str(photo_fs), _FOCAL_DETECT_RATIO,
             job_key=str(uuid.uuid4()), timeout_s=_MANUAL_DETECT_TIMEOUT_S,
-            pre_spawn_check=device_state.is_disabled, on_outcome=None,
+            pre_spawn_check=device_state.is_disabled, on_outcome=_on_outcome,
         )
         focal = outcome.focal if outcome.kind == "FOUND" else None
         auto_focal = format_focal(focal)  # None → ''，純預覽不寫 DB
-        return JSONResponse(status_code=200, content={"success": True, "auto_focal": auto_focal})
+        reason = device_state.classify_manual_reason(
+            outcome, decision.get("just_disabled", False),
+        )
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "auto_focal": auto_focal, "reason": reason},
+        )
     except Exception:
         logger.exception("[actress] 偵測焦點失敗 name=%s", name)
         return JSONResponse(status_code=500, content={"success": False, "error": _FOCAL_ERR_DETECT_FAILED})

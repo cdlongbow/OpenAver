@@ -493,8 +493,8 @@
       "video_extensions_label": "影片副檔名",
       "video_extensions_hint": "以逗號分隔",
       "focal_pill_label": "人臉自動對焦",
-      "focal_enabled_help": "無碼片的封面會自動找臉，把臉留在裁切框裡。如果這台機器算得太慢（連續兩次超過 5 秒沒算完），會自動關閉這個功能，這一列就會變成未勾選，連在燈箱打開裁切工具時的自動找臉也會一起停；到時候想讓某張封面對到臉，在燈箱裡自己拖曳調整就可以。",
-      "focal_disabled_reason": "偵測連續兩次超過 5 秒沒算完，已自動關閉這台機器的人臉自動對焦。之後在燈箱打開「封面裁切預覽」（女優是對焦裁切）時也不會再自動找臉，裁切框會停在預設位置——想讓某張封面對到臉，在燈箱裡自己拖曳調整就可以。",
+      "focal_help": "無碼封面會自動找臉並留在裁切框裡；這一列可自行開關。關掉後掃描與燈箱的自動找臉都不跑，裁切框停在預設位置，自己拖一下就好。在你還沒動過這個開關之前，如果連續兩次偵測超過 5 秒沒算完，我們會先幫你關起來；你動過之後就一切以你的設定為準。",
+      "focal_toggle_failed": "人臉自動對焦的設定沒有存起來，開關已退回原本的狀態，請稍後再試。",
       "external_manager_label": "外部媒體管理器模式",
       "external_manager_off": "關閉（預設）",
       "external_manager_off_hint": "產生同名封面與 NFO（`{番號}.jpg`、`{番號}.nfo`），供 OpenAver 瀏覽頁使用。NFO 任何媒體庫都讀得到；同名封面僅 Emby 能直接辨識。",
@@ -906,7 +906,7 @@
     "auto_organize_failed": "定時整理失敗，請查閱日誌",
     "wishlist_auto_removed": "書籤自動更新",
     "wishlist_reconcile_failed": "書籤對帳失敗，請查閱日誌",
-    "focal_auto_disabled": "這台機器跑人臉偵測太慢，自動對焦已自動關閉。想對焦的話，在燈箱裡自己拖曳就可以。"
+    "focal_auto_disabled": "找臉連續兩次逾時，已經先幫你關掉自動對焦。想對焦的話，在燈箱裡自己拖曳就可以。"
   },
   "similar_mode": {
     "button_aria_label": "探索相似影片",
@@ -1105,6 +1105,8 @@
       "alias_source_hint": "由 Scanner 同步",
       "mask_toggle": "封面裁切預覽",
       "mask_detect_failed": "焦點偵測失敗，請稍後再試",
+      "mask_focal_too_slow_auto_disabled": "這張封面找臉花了超過 5 秒，已經先幫你關掉自動對焦。想調整位置直接拖就可以，隨時能到設定開回來。",
+      "mask_focal_too_slow_hint": "找臉花了超過 5 秒。先用拖的會快一些——不想每次都等，可以到「設定 → 刮削行為 → 進階刮削設定」關掉自動對焦。",
       "mask_save_failed": "裁切設定儲存失敗，請稍後再試",
       "mask_cover_changed": "封面已變更，請重新開啟裁切工具再試一次",
       "cover_unavailable": "這部片的封面現在讀不到——可能是檔案位置目前無法存取，或者封面檔本身不見了",
