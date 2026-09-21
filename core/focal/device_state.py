@@ -96,12 +96,14 @@ def _apply_outcome_core(
             if count_timeouts:
                 count = int(fd.get("consecutive_timeout_count", 0)) + 1
                 fd["consecutive_timeout_count"] = count
-                if count >= _DISABLE_THRESHOLD and not set_by_user:
-                    was_disabled = bool(fd.get("disabled", False))
-                    fd["disabled"] = True
-                    just_disabled = not was_disabled
-            elif not set_by_user:
-                # T-D2 path: direct disable, do not touch the streak counter.
+                should_disable = count >= _DISABLE_THRESHOLD
+            else:
+                # T-D2 path: one timeout is enough, and the streak counter is not touched.
+                should_disable = True
+            # 一個條件、一個落點：`set_by_user` 的抑制只寫在這裡。兩條路徑（背景連兩次 /
+            # 前景一次）差的只是 should_disable 怎麼算出來，翻旗標這件事不可以有第二份拷貝
+            # ——Codex 第一輪那條 P3 就是同一種漂移（`count_timeouts` 守住了一半忘了另一半）。
+            if should_disable and not set_by_user:
                 was_disabled = bool(fd.get("disabled", False))
                 fd["disabled"] = True
                 just_disabled = not was_disabled

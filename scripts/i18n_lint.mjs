@@ -108,16 +108,8 @@ function collectLeafKeys(obj, prefix, out) {
   }
 }
 
-function collectLeafValues(obj, out) {
-  for (const v of Object.values(obj)) {
-    if (v && typeof v === 'object' && !Array.isArray(v)) {
-      collectLeafValues(v, out);
-    } else if (typeof v === 'string') {
-      out.push(v);
-    }
-  }
-}
-
+// 葉節點走訪只有這一份：檢 4（全域禁詞，只要值）與檢 4b（key-scoped 禁詞，要 key＋值）
+// 共用它，免得兩支各自演化出不一樣的「什麼算葉節點」。
 function collectLeafEntries(obj, prefix, out) {
   for (const [k, v] of Object.entries(obj)) {
     const full = prefix ? `${prefix}.${k}` : k;
@@ -345,7 +337,9 @@ for (const name of Object.keys(LOCALE_FILES)) {
   const data = localeData[name];
   if (!data) continue; // 讀取失敗已於上方回報；forbidden 只在讀得到時掃
   const values = [];
-  collectLeafValues(data, values);
+  const leafEntries = [];
+  collectLeafEntries(data, '', leafEntries);
+  for (const [, v] of leafEntries) values.push(v);
   for (const word of FORBIDDEN_WORDS) {
     const hits = values.filter((v) => v.includes(word));
     if (hits.length) {

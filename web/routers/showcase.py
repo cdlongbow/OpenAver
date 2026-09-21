@@ -334,7 +334,9 @@ def detect_video_focal(req: DetectFocalRequest):
     擋掉 rescan/rescrape 換封面卻把舊座標存成新封面 manual 值的 race。
     成功分支另帶 ``reason``（CD-152d-4b 五值：``""`` / ``device_disabled`` /
     ``too_slow_auto_disabled`` / ``too_slow`` / ``failed``），供前端區分提示。
-    `def`（非 async）→ threadpool；run_detection 同步耗時 x86 約 2.2s、DS218 NAS 實機約 42.7s（19 倍，來源：DS218 POC 實測）。**不進 capabilities（不揭露）。**
+    `def`（非 async）→ threadpool。152d-T-D2 起手動偵測也套 `_MANUAL_DETECT_TIMEOUT_S = 5.0`，
+    所以這條路徑最多佔住 threadpool 5 秒——DS218 實機算一張要 42.7s 那個舊數字已不可能發生
+    （那是 152b 的 600 秒預算時代；留著會讓人以為這裡還會卡幾十秒）。**不進 capabilities（不揭露）。**
     """
     try:
         db_path = get_db_path()
