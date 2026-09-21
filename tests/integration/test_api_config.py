@@ -54,6 +54,56 @@ def test_config_persistence(client, temp_config_path):
     assert saved_data["scraper"]["max_title_length"] == 99
 
 
+def test_update_config_preserves_newer_focal_device_against_stale_full_save(client, temp_config_path):
+    """PR review finding（152c-Codex P2）：全量 PUT 不得用前端持有的舊快照覆蓋背景
+    record_outcome 剛寫入的 focal_device —— 否則已被判定「裝置太慢、自動對焦停用」的機器
+    會被一次不相關的整份存檔（如僅僅改資料夾清單）悄悄打回啟用，且重新湊滿兩次逾時後
+    會再發一次「自動對焦已停用」通知，違反 spec F6「一次轉態一則」。
+    regression for web/routers/config.py::_write_preserving_server_owned 新增的
+    focal_device 保留邏輯（與 server_mode 同一 shape）。
+    """
+    from core.version import VERSION
+
+    # Seed：背景對焦已把裝置判定停用（模擬 core.focal.device_state.record_outcome
+    # 剛落盤的結果）——直接寫檔而非呼叫 record_outcome，維持本測試只驗證
+    # web/routers/config.py 這一層的邊界（record_outcome 本身已有 tests/unit/
+    # test_focal_device_state.py 的 INV-152c-1/2/3 覆蓋）。
+    with open(temp_config_path, 'r', encoding='utf-8') as f:
+        seeded = json.load(f)
+    seeded_focal_device = {
+        "disabled": True,
+        "consecutive_timeout_count": 2,
+        "judged_at_version": VERSION,
+    }
+    seeded["focal_device"] = seeded_focal_device
+    with open(temp_config_path, 'w', encoding='utf-8') as f:
+        json.dump(seeded, f)
+
+    # 前端持有的舊快照：focal_device 停用前的樣子，外加一個「這次存檔真的要改」的
+    # 不相關欄位（gallery.output_dir）——同時證明保留 focal_device 沒有讓整個
+    # cfg.update(payload) 失效（否則第一條斷言在「PUT 整個壞掉、什麼都沒寫」的
+    # 退化實作下也會通過）。
+    stale_payload = json.loads(json.dumps(seeded))
+    stale_payload["focal_device"] = {
+        "disabled": False,
+        "consecutive_timeout_count": 0,
+        "judged_at_version": "",
+    }
+    stale_payload["gallery"]["output_dir"] = "regression_output"
+
+    response = client.put("/api/config", json=stale_payload)
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+
+    with open(temp_config_path, 'r', encoding='utf-8') as f:
+        persisted = json.load(f)
+
+    # focal_device 必須逐字維持 seed 的值 —— 沒有被舊快照覆蓋。
+    assert persisted["focal_device"] == seeded_focal_device
+    # 不相關欄位確實被這次 PUT 更新（承重斷言：排除「整份存檔沒生效」的假陽性）。
+    assert persisted["gallery"]["output_dir"] == "regression_output"
+
+
 # ============ 路由改名向後兼容測試 ============
 
 def test_gallery_legacy_redirect(client):

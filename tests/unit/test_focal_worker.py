@@ -263,6 +263,35 @@ class TestFingerprint:
         assert _fingerprint("/nonexistent/path/does-not-exist.jpg") is None
 
 
+class TestDeviceStateHookWiring:
+    """TASK-5c — path① default detect_fn must pass device_state hooks by identity."""
+
+    def test_default_detect_fn_wires_pre_spawn_check_and_on_outcome(self, monkeypatch):
+        from core.focal import device_state
+        import core.focal.worker as worker_mod
+
+        captured = {}
+
+        def fake_run_detection(
+            fs_path, ratio, *, job_key, timeout_s,
+            pre_spawn_check=None, on_outcome=None, **_kwargs,
+        ):
+            captured["pre_spawn_check"] = pre_spawn_check
+            captured["on_outcome"] = on_outcome
+            return RunnerOutcome(kind="NO_FACE")
+
+        monkeypatch.setattr(worker_mod, "run_detection", fake_run_detection)
+
+        path = "/fake/v.jpg"
+        store, fp_fn = _make_fp_store({path: ("fp1",)})
+        w = FocalWorker(fingerprint_fn=fp_fn, auto_start=False)
+        w.submit("video", "v", path, 1.0, lambda *_a: None)
+        w._process_one()
+
+        assert captured["pre_spawn_check"] is device_state.is_disabled
+        assert captured["on_outcome"] is device_state.record_outcome
+
+
 class TestAbandonedSkipsCommit:
     """TASK-152b-T2 — ABANDONED must not call job.commit; FOUND/NO_FACE still do."""
 

@@ -1041,6 +1041,26 @@
                             </div>
                         </div>
 
+                        {# 人臉自動對焦狀態（152c-T9，CD-152c-19）：伺服器端算好的 focal_auto_enabled，唯讀展示，不可互動 #}
+                        <div class="settings-form-group popover-anchor" x-data="helpPopover">
+                            <label class="settings-label">
+                                <input type="checkbox" data-focal-auto-pill class="toggle toggle-primary {% if focal_auto_enabled %}focal-auto-enabled{% endif %}"
+                                       disabled {% if focal_auto_enabled %}checked{% endif %}>
+                                <span class="label-text">{{ t('settings.scraper.focal_pill_label') }}</span>
+                                <button type="button" class="help-popover-btn"
+                                        @click.prevent="toggle()"
+                                        :aria-expanded="open">
+                                    <i class="bi bi-question-circle"></i>
+                                </button>
+                            </label>
+                            <div x-show="open" x-cloak x-transition
+                                 @click.outside="close()"
+                                 class="help-popover">
+                                <small class="help-popover__body">
+                                    {% if focal_auto_enabled %}{{ t('settings.scraper.focal_enabled_help') }}{% else %}{{ t('settings.scraper.focal_disabled_reason') }}{% endif %}
+                                </small>
+                            </div>
+                        </div>
 
                     </div><!-- /collapsible-content scraperAdvanced -->
 

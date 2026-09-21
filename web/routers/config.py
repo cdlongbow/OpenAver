@@ -27,6 +27,7 @@ import threading
 from core.logger import get_logger
 from core.config import (
     AppConfig,
+    FocalDeviceState,
     load_config,
     mutate_config,
     reset_config_file,
@@ -127,9 +128,19 @@ def update_config(config: AppConfig) -> dict:
             # (Pydantic default → False) or contains a stale/incorrect value.
             # Read the canonical persisted value inside mutate_config so the
             # read-preserve-write is atomic under _config_write_lock.
-            def _write_preserving_server_mode(cfg: dict) -> None:
+            def _write_preserving_server_owned(cfg: dict) -> None:
                 current_server_mode = cfg.get("general", {}).get("server_mode", False)
                 payload["general"]["server_mode"] = current_server_mode
+                # focal_device 是**伺服器擁有狀態**：前端沒有任何 UI 會寫它，唯一寫入端是
+                # core.focal.device_state.record_outcome。全量 PUT 若讓前端送來的舊快照覆蓋它，
+                # 一次不相關的存檔（掃描頁改個資料夾）就會把已判定停用的機器打回啟用——代價不是
+                # 資料遺失（它會自己再停用一次），是**重複發一次「自動對焦已停用」側欄通知**，
+                # 違反 spec F6「一次轉態一則」。形狀與上面的 server_mode 相同：鎖內讀磁碟現值 →
+                # 塞回 payload → 讓 cfg.update(payload) 覆蓋其餘欄位。
+                # `or` 不是 `.get(key, default)`：後者只堵得住「key 缺席」，堵不住「key 在但值是
+                # 空 dict」——而 load_config 的 migration 只在 key **不存在**時補，寫回一個空 dict
+                # 會焊死一個 migration 永遠修不好的殘缺值（BE-CONFIG-02 的鏡像）。
+                payload["focal_device"] = cfg.get("focal_device") or FocalDeviceState().model_dump()
                 # Mask sentinels must be restored against disk under the same
                 # _config_write_lock critical section as server_mode preserve —
                 # handler-side load would be TOCTOU against concurrent writers.
@@ -144,7 +155,7 @@ def update_config(config: AppConfig) -> dict:
                         )
                 cfg.update(payload)
 
-            mutate_config(_write_preserving_server_mode)
+            mutate_config(_write_preserving_server_owned)
             _reset_translate_service()  # 重置翻譯服務，讓新配置生效
             return {"success": True, "message": "設定已儲存"}
         except Exception as e:

@@ -27,7 +27,7 @@ from core.path_utils import (
 )
 from core.logger import get_logger
 from core.config import load_config, get_gallery_source_paths
-from core.focal import format_focal, parse_focal
+from core.focal import device_state, format_focal, parse_focal
 from core.focal.subprocess_runner import run_detection
 from core import thumbnail_cache
 from core.multipart_group import group_rows, resolve_group
@@ -332,7 +332,7 @@ def detect_video_focal(req: DetectFocalRequest):
     `POST /video/save-focal` 存檔時原樣帶回，讓 `update_manual_focal` 的
     compare-and-store 守衛比對「使用者觀察當下」與「存檔當下」的封面是否一致，
     擋掉 rescan/rescrape 換封面卻把舊座標存成新封面 manual 值的 race。
-    `def`（非 async）→ threadpool；detect_focal 同步耗時 x86 約 2.2s、DS218 NAS 實機約 42.7s（19 倍，來源：DS218 POC 實測）。**不進 capabilities（不揭露）。**
+    `def`（非 async）→ threadpool；run_detection 同步耗時 x86 約 2.2s、DS218 NAS 實機約 42.7s（19 倍，來源：DS218 POC 實測）。**不進 capabilities（不揭露）。**
     """
     try:
         db_path = get_db_path()
@@ -361,6 +361,7 @@ def detect_video_focal(req: DetectFocalRequest):
 
         outcome = run_detection(
             cover_fs, 0.71, job_key=str(uuid.uuid4()), timeout_s=_MANUAL_DETECT_TIMEOUT_S,
+            pre_spawn_check=device_state.is_disabled, on_outcome=None,
         )
         focal = outcome.focal if outcome.kind == "FOUND" else None
         auto_focal = format_focal(focal)          # None → ''，純預覽不寫 DB

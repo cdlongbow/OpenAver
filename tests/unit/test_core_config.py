@@ -562,6 +562,92 @@ class TestMigrationThumbnailCacheEnabled:
         )
 
 
+# ============ test_migration_focal_device_state ============
+
+class TestMigrationFocalDeviceState:
+    """focal_device 補齊（feature/152c TASK-3，top-level state）"""
+
+    def test_focal_device_added_when_missing(self, tmp_path, monkeypatch):
+        """舊 config 沒有 focal_device → migration 自動補預設物件且寫回磁碟"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"scraper": {"create_folder": True}})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert "focal_device" in result
+        expected = core_config.FocalDeviceState().model_dump()
+        assert result["focal_device"] == expected
+        # migration 命中 → 已寫回 config.json
+        written = json.loads(config_path.read_text(encoding="utf-8"))
+        assert written.get("focal_device") == expected
+
+    def test_focal_device_not_overwrite_existing(self, tmp_path, monkeypatch):
+        """已存在的 focal_device 不被覆蓋"""
+        existing_device = {
+            "disabled": True,
+            "consecutive_timeout_count": 2,
+            "judged_at_version": "0.16.3",
+        }
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"focal_device": existing_device})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert result.get("focal_device") == existing_device
+        validated = core_config.FocalDeviceState(**result["focal_device"])
+        assert validated.disabled is True
+        assert validated.consecutive_timeout_count == 2
+        assert validated.judged_at_version == "0.16.3"
+
+    def test_focal_device_default(self, tmp_path, monkeypatch):
+        """fresh AppConfig 及全新安裝 → focal_device 預設值吻合 FocalDeviceState default"""
+        dumped = AppConfig().model_dump()
+        assert "focal_device" in dumped
+        expected = core_config.FocalDeviceState().model_dump()
+        assert dumped["focal_device"] == expected
+        assert dumped["focal_device"] == {
+            "disabled": False,
+            "consecutive_timeout_count": 0,
+            "judged_at_version": "",
+        }
+
+        # 全新安裝（無 config.json，從 web/config.default.json 複製）
+        config_path = tmp_path / "config.json"
+        real_default = Path(__file__).resolve().parents[2] / "web" / "config.default.json"
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", real_default)
+
+        assert not config_path.exists(), "測試前提：config.json 不應存在"
+        result = load_config()
+        assert config_path.exists(), "首次啟動必須從 default.json 複製建立 config.json"
+        assert result.get("focal_device") == expected
+        written = json.loads(config_path.read_text(encoding="utf-8"))
+        assert written.get("focal_device") == expected
+
+    def test_focal_device_roundtrip(self, tmp_path, monkeypatch):
+        """改動 focal_device → save_config → load_config 回讀逐字一致"""
+        config_path = tmp_path / "config.json"
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        custom_device = {
+            "disabled": True,
+            "consecutive_timeout_count": 3,
+            "judged_at_version": "0.16.4",
+        }
+        cfg = AppConfig().model_dump()
+        assert "focal_device" in cfg
+        cfg["focal_device"] = custom_device
+        save_config(cfg)
+
+        reloaded = load_config()
+        assert reloaded.get("focal_device") == custom_device
+
+
 # ============ test_save_config_roundtrip ============
 
 class TestSaveConfigRoundtrip:

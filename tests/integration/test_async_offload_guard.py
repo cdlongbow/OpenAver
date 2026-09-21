@@ -45,6 +45,11 @@ BLOCKING_FUNC_NAMES = frozenset({
     # 維持同步 `def` 交 Starlette threadpool）——加進清單是防未來有人把其中一個
     # 端點改成 async def 又裸呼叫，讓整站凍結最多 10 分鐘。
     "run_detection",
+    # feature/152c：device_state.is_disabled / record_outcome 底層讀寫 config.json。
+    # 現況四個入口都正確（傳函式參照進 run_detection，真正執行在 thread / 子程序
+    # 臨界區）——加進清單是防 T9 settings_page 把 is_disabled() 忘了包
+    # asyncio.to_thread，讓單一設定頁請求卡住整站 event loop。
+    "is_disabled", "record_outcome",
 })
 
 # Attribute-call 後綴（接在任意物件後 .exists() / .stat() / .iterdir() / .save()）
@@ -237,6 +242,28 @@ class TestAsyncOffloadGuard:
         found = {(py.stem, n.name) for py, n, _ in _iter_async_route_handlers()}
         missing = [w for w in WHITELIST if w not in found]
         assert not missing, f"WHITELIST 指向不存在的 async 路由（應清理）: {missing}"
+
+    def test_detects_bare_device_state_is_disabled_call(self):
+        """TASK-5c：合成 async def 含 device_state.is_disabled() 裸呼叫必須被擋。
+
+        BE-ASYNC-01 as-built：守衛比對的是被呼叫的名字（Attribute.attr），
+        所以合成碼必須寫成 device_state.is_disabled() 這種形狀。
+        """
+        src = (
+            "async def settings_handler():\n"
+            "    device_state.is_disabled()\n"
+            "    return {'ok': True}\n"
+        )
+        tree = ast.parse(src)
+        func = tree.body[0]
+        assert isinstance(func, ast.AsyncFunctionDef)
+        calls = _collect_direct_calls(func)
+        names = {_call_name(c) for c in calls}
+        assert "is_disabled" in names
+        assert "is_disabled" in BLOCKING_FUNC_NAMES
+        assert any(_is_blocking_call(c) for c in calls), (
+            "synthetic device_state.is_disabled() must be detected as blocking"
+        )
 
 
 class TestConvertedHandlersAreDef:
@@ -470,16 +497,20 @@ class TestConfigWriteSerializationGuard:
         )
 
     def test_update_config_uses_mutate_config_not_save_config(self):
-        """P2-1 守衛：update_config 必須用 mutate_config（preserve server_mode），不得裸呼 save_config。
+        """P2-1 守衛：update_config 必須用 mutate_config（preserve 伺服器擁有欄位），不得裸呼 save_config。
 
         P2-1 修正（config↔listener divergence）：update_config 改為在 mutate_config
-        critical section 內讀取現有 server_mode 後才寫入，確保 full-config save 不會
-        覆寫 toggle-lifecycle 持久化的 server_mode。若有人回退至 save_config，此守衛報錯。
+        critical section 內讀取現有值後才寫入，確保 full-config save 不會覆寫由伺服器自己
+        持有的欄位。若有人回退至 save_config，此守衛報錯。
+
+        152c：保留的欄位從一個變兩個（`general.server_mode` ＋ `focal_device`），局部函式
+        隨之正名為 `_write_preserving_server_owned`。名字寫在這裡是刻意的——它是 `update_config`
+        與那個鎖內 preserve 之間唯一的接線，改名沒同步更新這條就該紅。
         """
         src = (ROUTERS_DIR / "config.py").read_text(encoding="utf-8")
-        assert "mutate_config(_write_preserving_server_mode)" in src, (
-            "config.py::update_config 必須呼叫 mutate_config（_write_preserving_server_mode），"
-            "以保持 server_mode 的 toggle-lifecycle 所有權"
+        assert "mutate_config(_write_preserving_server_owned)" in src, (
+            "config.py::update_config 必須呼叫 mutate_config（_write_preserving_server_owned），"
+            "以保持 server_mode／focal_device 這些伺服器擁有欄位的所有權"
         )
         tree = ast.parse(src, filename="config.py")
         callers = _find_save_config_callers(tree)

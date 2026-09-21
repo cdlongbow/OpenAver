@@ -194,5 +194,10 @@
     "enabled": false,
     "url": "",
     "token": ""
+  },
+  "focal_device": {
+    "disabled": false,
+    "consecutive_timeout_count": 0,
+    "judged_at_version": ""
   }
 }

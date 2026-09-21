@@ -2296,7 +2296,7 @@ class TestDetectActressFocal:
         from core.focal import detect_focal as real_detect_focal
         calls = []
 
-        def spy(fs_path, ratio, *, job_key, timeout_s):
+        def spy(fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None):
             calls.append((fs_path, ratio))
             focal = real_detect_focal(fs_path, ratio)  # 真的呼叫下去，回真結果
             return RunnerOutcome(kind="FOUND" if focal is not None else "NO_FACE", focal=focal)
@@ -2387,7 +2387,7 @@ class TestDetectActressFocal:
         _place_fixture_photo(gfriends, "narrow_face_top.jpg")
         captured = {}
 
-        def slow_detect(fs_path, ratio, *, job_key, timeout_s):
+        def slow_detect(fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None):
             captured["timeout_s"] = timeout_s
             time.sleep(6.0)
             return RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)
@@ -2418,6 +2418,58 @@ class TestDetectActressFocal:
 
         assert resp.status_code == 200
         assert resp.json() == {"success": True, "auto_focal": ""}
+
+    def test_device_disabled_returns_same_shape_as_no_face(self, client, tmp_path):
+        """TASK-5c path③：裝置停用時回應形狀與既有無偵測分支一致。"""
+        from core.focal import device_state
+
+        _save_actress_for_focal(client)
+        gfriends = tmp_path / "gfriends"
+        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
+
+        def fake_run(
+            fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
+        ):
+            if pre_spawn_check is not None and pre_spawn_check():
+                return RunnerOutcome(kind="ABANDONED", reason="skipped_disabled")
+            return RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)
+
+        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
+             patch.object(device_state, "is_disabled", return_value=True), \
+             patch("web.routers.actress.run_detection", side_effect=fake_run):
+            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
+
+        assert resp.status_code == 200
+        assert resp.json() == {"success": True, "auto_focal": ""}
+
+    def test_manual_detect_timeout_does_not_contribute(self, client, tmp_path):
+        """TASK-5c path③：手動路徑 detect_timeout 不得呼叫 device_state.record_outcome。"""
+        from core.focal import device_state
+
+        _save_actress_for_focal(client)
+        gfriends = tmp_path / "gfriends"
+        _place_fixture_photo(gfriends, "narrow_face_top.jpg")
+
+        def fake_run(
+            fs_path, ratio, *, job_key, timeout_s, pre_spawn_check=None, on_outcome=None,
+        ):
+            outcome = RunnerOutcome(kind="ABANDONED", reason="detect_timeout")
+            if on_outcome is not None:
+                on_outcome(outcome)
+            return outcome
+
+        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends), \
+             patch.object(device_state, "record_outcome") as record_spy, \
+             patch("web.routers.actress.run_detection", side_effect=fake_run) as spy:
+            resp = client.post(f"/api/actresses/{ACTRESS_NAME}/detect-focal")
+
+        assert resp.status_code == 200
+        assert resp.json() == {"success": True, "auto_focal": ""}
+        assert "on_outcome" in spy.call_args.kwargs, "path③ must pass on_outcome= explicitly"
+        assert spy.call_args.kwargs["on_outcome"] is None
+        assert record_spy.call_count == 0
 
 
 class TestSetActressFocal:

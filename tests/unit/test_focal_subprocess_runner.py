@@ -460,3 +460,251 @@ def test_breaker_rechecked_after_acquiring_slot_lock(monkeypatch):
     got = subprocess_runner._slot_lock.acquire(timeout=0.1)
     assert got is True
     subprocess_runner._slot_lock.release()
+
+
+# ---------------------------------------------------------------------------
+# TASK-4b: pre_spawn_check / on_outcome hooks
+# ---------------------------------------------------------------------------
+
+
+def test_circuit_open_takes_precedence_over_pre_spawn_check(monkeypatch):
+    """斷路器 authoritative 複檢與 pre_spawn_check 同時成立 → circuit_open，
+    且 pre_spawn_check 呼叫次數為 0（未被呼叫）。"""
+    pre_spawn_calls = {"n": 0}
+    spawn_calls = {"n": 0}
+    real_lock = subprocess_runner._slot_lock
+
+    class TripAfterAcquireLock:
+        """Deterministic seam: trip streak after acquire, before pre_spawn_check."""
+
+        def acquire(self, *args, **kwargs):
+            ok = real_lock.acquire(*args, **kwargs)
+            if ok:
+                monkeypatch.setattr(
+                    subprocess_runner,
+                    "_breaker_streak",
+                    subprocess_runner._BREAKER_THRESHOLD,
+                )
+            return ok
+
+        def release(self):
+            return real_lock.release()
+
+    monkeypatch.setattr(subprocess_runner, "_slot_lock", TripAfterAcquireLock())
+
+    def pre_spawn_check():
+        pre_spawn_calls["n"] += 1
+        return True
+
+    def spawn_fn(fs_path, ratio):
+        spawn_calls["n"] += 1
+        return _spawn_ready_then_result((0.1, 0.2))(fs_path, ratio)
+
+    outcome = run_detection(
+        "/fake.jpg",
+        1.5,
+        job_key="prec",
+        timeout_s=1.0,
+        spawn_fn=spawn_fn,
+        pre_spawn_check=pre_spawn_check,
+    )
+    assert _is_abandoned(outcome, "circuit_open")
+    assert pre_spawn_calls["n"] == 0
+    assert spawn_calls["n"] == 0
+
+
+def test_pre_spawn_check_raises_fails_open_and_warns(caplog):
+    """pre_spawn_check 拋例外 → fail-open、照常 spawn、記一行 WARNING。"""
+    spawn_calls = {"n": 0}
+
+    def pre_spawn_check():
+        raise RuntimeError("check boom")
+
+    def spawn_fn(fs_path, ratio):
+        spawn_calls["n"] += 1
+        return _spawn_ready_then_result((0.1, 0.2))(fs_path, ratio)
+
+    logger_name = "OpenAver.core.focal.subprocess_runner"
+    with caplog.at_level(logging.WARNING, logger=logger_name):
+        outcome = run_detection(
+            "/fake.jpg",
+            1.5,
+            job_key="pcheck-raise",
+            timeout_s=2.0,
+            spawn_fn=spawn_fn,
+            pre_spawn_check=pre_spawn_check,
+        )
+    assert _is_found(outcome, (0.1, 0.2))
+    assert spawn_calls["n"] == 1
+    assert any(
+        "pre_spawn_check" in r.getMessage() and r.levelno == logging.WARNING
+        for r in caplog.records
+    )
+
+
+def test_on_outcome_raises_preserves_outcome_and_releases_lock():
+    """on_outcome 拋例外 → outcome 不變、鎖仍釋放、下一件仍可 spawn。"""
+    first_spawn_calls = {"n": 0}
+    second_spawn_calls = {"n": 0}
+
+    def on_outcome_boom(outcome):
+        raise RuntimeError("callback boom")
+
+    def spawn_first(fs_path, ratio):
+        first_spawn_calls["n"] += 1
+        return _spawn_ready_then_result((0.3, 0.4))(fs_path, ratio)
+
+    def spawn_second(fs_path, ratio):
+        second_spawn_calls["n"] += 1
+        return _spawn_ready_then_result((0.5, 0.6))(fs_path, ratio)
+
+    outcome1 = run_detection(
+        "/a.jpg",
+        1.5,
+        job_key="o1",
+        timeout_s=2.0,
+        spawn_fn=spawn_first,
+        on_outcome=on_outcome_boom,
+    )
+    assert _is_found(outcome1, (0.3, 0.4))
+    assert outcome1.kind == "FOUND"
+    assert outcome1.focal == (0.3, 0.4)
+    assert outcome1.reason is None
+    assert first_spawn_calls["n"] == 1
+
+    got = subprocess_runner._slot_lock.acquire(timeout=0.1)
+    assert got is True
+    subprocess_runner._slot_lock.release()
+
+    outcome2 = run_detection(
+        "/b.jpg",
+        1.5,
+        job_key="o2",
+        timeout_s=2.0,
+        spawn_fn=spawn_second,
+    )
+    assert _is_found(outcome2, (0.5, 0.6))
+    assert second_spawn_calls["n"] == 1
+
+
+def test_skipped_disabled_emits_no_warning_across_n_calls(caplog):
+    """裝置停用連續 N 次 → WARNING 記錄數為 0（不走 _log_abandoned）。"""
+    spawn_calls = {"n": 0}
+
+    def pre_spawn_check():
+        return True
+
+    def spawn_fn(fs_path, ratio):
+        spawn_calls["n"] += 1
+        return _spawn_ready_then_result((0.1, 0.2))(fs_path, ratio)
+
+    logger_name = "OpenAver.core.focal.subprocess_runner"
+    with caplog.at_level(logging.WARNING, logger=logger_name):
+        for i in range(10):
+            outcome = run_detection(
+                "/fake.jpg",
+                1.5,
+                job_key=f"sd-warn{i}",
+                timeout_s=1.0,
+                spawn_fn=spawn_fn,
+                pre_spawn_check=pre_spawn_check,
+            )
+            assert _is_abandoned(outcome, "skipped_disabled")
+
+    assert spawn_calls["n"] == 0
+    assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
+
+
+def test_skipped_disabled_does_not_call_on_outcome():
+    """skipped_disabled 早退絕對不得呼叫 on_outcome（避免無謂 config 寫入）。"""
+    on_outcome_calls = {"n": 0}
+    spawn_calls = {"n": 0}
+
+    def pre_spawn_check():
+        return True
+
+    def on_outcome(outcome):
+        on_outcome_calls["n"] += 1
+
+    def spawn_fn(fs_path, ratio):
+        spawn_calls["n"] += 1
+        return _spawn_ready_then_result((0.1, 0.2))(fs_path, ratio)
+
+    for i in range(10):
+        outcome = run_detection(
+            "/fake.jpg",
+            1.5,
+            job_key=f"sd-cb{i}",
+            timeout_s=1.0,
+            spawn_fn=spawn_fn,
+            pre_spawn_check=pre_spawn_check,
+            on_outcome=on_outcome,
+        )
+        assert _is_abandoned(outcome, "skipped_disabled")
+
+    assert on_outcome_calls["n"] == 0
+    assert spawn_calls["n"] == 0
+
+
+def test_pre_spawn_check_sees_state_written_by_previous_job():
+    """INV-152c-4(a): job④ 必須等到 job① 的 on_outcome 完成後才拿到鎖，
+    且讀到的是新狀態、不 spawn、回傳 skipped_disabled。"""
+    device_disabled = {"v": False}
+    on_outcome_entered = threading.Event()
+    release_on_outcome = threading.Event()
+    pre_spawn_reads: list[bool] = []
+    spawn_calls = {"n": 0}
+    results: dict = {}
+
+    def on_outcome_job1(outcome):
+        device_disabled["v"] = True
+        on_outcome_entered.set()
+        assert release_on_outcome.wait(timeout=5.0), "release_on_outcome timed out"
+
+    def pre_spawn_check_job4():
+        pre_spawn_reads.append(device_disabled["v"])
+        return device_disabled["v"]
+
+    def spawn_fn(fs_path, ratio):
+        spawn_calls["n"] += 1
+        return _spawn_ready_then_result((0.5, 0.5))(fs_path, ratio)
+
+    def run_job1():
+        results["1"] = run_detection(
+            "/a.jpg",
+            1.5,
+            job_key="j1",
+            timeout_s=2.0,
+            spawn_fn=spawn_fn,
+            on_outcome=on_outcome_job1,
+        )
+
+    def run_job4():
+        results["4"] = run_detection(
+            "/b.jpg",
+            1.5,
+            job_key="j4",
+            timeout_s=2.0,
+            spawn_fn=spawn_fn,
+            pre_spawn_check=pre_spawn_check_job4,
+        )
+
+    t1 = threading.Thread(target=run_job1, name="focal-inv4a-j1")
+    t1.start()
+    assert on_outcome_entered.wait(timeout=5.0), "job1 on_outcome never entered"
+
+    t4 = threading.Thread(target=run_job4, name="focal-inv4a-j4")
+    t4.start()
+    time.sleep(0.1)
+    # job4 is waiting on the slot lock; pre_spawn_check must not have run yet
+    assert pre_spawn_reads == []
+
+    release_on_outcome.set()
+    t1.join(timeout=5.0)
+    t4.join(timeout=5.0)
+    assert not t1.is_alive() and not t4.is_alive()
+
+    assert _is_found(results["1"], (0.5, 0.5))
+    assert _is_abandoned(results["4"], "skipped_disabled")
+    assert pre_spawn_reads == [True]
+    assert spawn_calls["n"] == 1

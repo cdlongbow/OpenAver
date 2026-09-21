@@ -38,6 +38,7 @@ setup_logging()
 logger = get_logger(__name__)
 
 from core.config import load_config
+from core.focal import device_state
 from core.database import init_db
 from core.database import backfill_readonly_nfo_mtime
 from core.metatube.state import metatube_state as _mt_startup_state
@@ -206,6 +207,10 @@ from web.routers import notifications as notifications_router
 # TASK-107-P1-T2: import emit_notification at module level so lifespan can call
 # it directly and tests can patch("web.app.emit_notification") at the use-site.
 from web.routers.notifications import emit_notification, start_notification_persistence, stop_notification_persistence
+# feature/152c CD-152c-20：device_state 不可 import web/（import-linter 契約），
+# 改由 web/app.py 在 module level 註冊通知埠——import 這件事在所有進入點
+# （含不啟動 lifespan 的桌面版與 TestClient）都必然發生，比 lifespan 更早、更穩。
+device_state.set_notification_sink(emit_notification)
 from web.routers import similar as similar_router
 from web.routers import settings_link as settings_link_router
 from web.routers import scraper_sources as scraper_sources_router
@@ -674,6 +679,10 @@ async def settings_page(request: Request):
     """設定頁面"""
     context = get_common_context(request)
     context["page"] = "settings"
+    # 用 get_common_context 已載入的那一份 config（:517 → context["config"]），不再讀第二次
+    # 磁碟——同一支函式裡的 proxy_configured / _server_mode 也是這個形狀。純 dict 運算，
+    # 不需要 asyncio.to_thread（BE-ASYNC-01 管的是阻塞 I/O，這行沒有）。
+    context["focal_auto_enabled"] = not device_state.is_disabled_in(context["config"])
     return templates.TemplateResponse(request, "settings.html", context)
 
 
