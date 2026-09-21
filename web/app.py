@@ -671,8 +671,6 @@ async def showcase_page(request: Request):
     """Showcase 頁面"""
     context = get_common_context(request)
     context["page"] = "showcase"
-    # 用 get_common_context 已載入的那一份 config，不再讀第二次磁碟（同 settings_page）。
-    context["focal_auto_enabled"] = not device_state.is_disabled_in(context["config"])
     return templates.TemplateResponse(request, "showcase.html", context)
 
 

@@ -175,14 +175,6 @@ export function stateLightboxMask() {
                                          // 會頂著卡死的 spinner（Codex）。新 session 起手一律非偵測中。
             this._maskWinStyle = s;      // 先設幾何（右裁基準，detect resolve 前 / 無臉時的 fallback 終值）
 
-            // 152d-T-D4 插入點 A：SSR 已知已停用 → 直接進手動，不送 detect。
-            // 明確 === false 才跳過；undefined（注入失效／舊快取）必須照送請求（fail-safe）。
-            const focalAutoEnabled = window.__FOCAL_AUTO_ENABLED__;
-            if (focalAutoEnabled === false) {
-                this._maskVisible = true;
-                return;
-            }
-
             this._maskSession++;         // 98b P2 fix：新開 session，讓任何舊 session 的 await 後寫入失效
 
             // D1（CD-1）：一律 force-detect，僅預覽、不寫 DB。偵測完成後若有臉，_maskFocalX 更新為

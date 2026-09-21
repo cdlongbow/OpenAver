@@ -1,4 +1,4 @@
-// TASK-D4: openMask SSR skip + reason → toast（CD-152d-4b）
+// TASK-D4 reason → toast（CD-152d-4b）+ TASK-D6 停用自動對焦後仍可存裁切回歸。
 // harness 照抄 lb-tag-readonly-toast.test.mjs；另 stub DOM 幾何 API（假綠陷阱②③）。
 
 import { test } from 'node:test';
@@ -51,6 +51,7 @@ const { stateLightboxMask } = await import('../state-lightbox-mask.js');
 const AUTO_DISABLED_KEY = 'showcase.lightbox.mask_focal_too_slow_auto_disabled';
 const HINT_KEY = 'showcase.lightbox.mask_focal_too_slow_hint';
 const FAILED_KEY = 'showcase.lightbox.mask_detect_failed';
+const SAVE_FAILED_KEY = 'showcase.lightbox.mask_save_failed';
 
 function mockFetch(payload) {
     const calls = [];
@@ -103,28 +104,59 @@ function withGeometryStub(fn) {
     })();
 }
 
-test('openMask: SSR focal_auto_enabled=false skips fetch entirely', async () => {
+test('停用自動對焦後：openMask 仍取得 cover token，confirmMask 存得進去（152d-T-D6 回歸鎖）', async () => {
     await withGeometryStub(async () => {
-        const prevFlag = globalThis.window.__FOCAL_AUTO_ENABLED__;
+        const COVER = 'file:///fake/cover.jpg';
+        const calls = [];
         const prevFetch = globalThis.fetch;
-        let fetchCalled = false;
-        globalThis.window.__FOCAL_AUTO_ENABLED__ = false;
-        globalThis.fetch = async () => {
-            fetchCalled = true;
-            assert.fail('fetch must not be called when __FOCAL_AUTO_ENABLED__ === false');
+        globalThis.fetch = async (...args) => {
+            calls.push(args);
+            const url = String(args[0] || '');
+            if (url.includes('/api/showcase/video/detect-focal')) {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({
+                        success: true,
+                        reason: 'device_disabled',
+                        auto_focal: '',
+                        cover_path: COVER,
+                    }),
+                };
+            }
+            if (url.includes('/api/showcase/video/save-focal')) {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ success: true, auto_focal: '0.5000,0.5000' }),
+                };
+            }
+            assert.fail(`unexpected fetch URL: ${url}`);
         };
         try {
             const c = makeComponent();
             await c.openMask();
-            assert.equal(fetchCalled, false, 'fetch must not be called');
-            assert.equal(c._maskVisible, true, 'mask must still open for manual drag');
+            assert.equal(
+                c._maskExpectedCoverPath,
+                COVER,
+                'detect-focal（device_disabled）必須帶回 cover token，否則 confirmMask fail-closed',
+            );
+
+            await c.confirmMask();
+
+            const saveCall = calls.find(([url]) => String(url).includes('/api/showcase/video/save-focal'));
+            assert.ok(saveCall, '必須 POST /api/showcase/video/save-focal');
+            const saveOpts = saveCall[1] || {};
+            assert.equal(saveOpts.method, 'POST');
+            const body = JSON.parse(saveOpts.body);
+            assert.equal(body.expected_cover_path, COVER);
+            assert.equal(
+                c.toasts.filter((t) => t.msg === SAVE_FAILED_KEY).length,
+                0,
+                `不得出現 mask_save_failed，got ${JSON.stringify(c.toasts)}`,
+            );
         } finally {
             globalThis.fetch = prevFetch;
-            if (prevFlag === undefined) {
-                delete globalThis.window.__FOCAL_AUTO_ENABLED__;
-            } else {
-                globalThis.window.__FOCAL_AUTO_ENABLED__ = prevFlag;
-            }
         }
     });
 });

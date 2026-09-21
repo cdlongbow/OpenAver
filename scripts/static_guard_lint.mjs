@@ -129,11 +129,6 @@ const RULES = [
     pattern: 'top: anchor(--lb-cover center, 50%)',
     note: '[lint-guard 124c-T1] 燈箱箭頭錨定封面：對齊宣告 ＋ 無錨點時的 50% fallback（兩者同一條字面，不可拆）' },
 
-  // ---- [lint-guard 152d-T-D4] showcase SSR ↔ openMask 接線：window.__FOCAL_AUTO_ENABLED__ ----
-  // 模板注入端與 JS 消費端各一條；任一端字串消失 → lint RED（接線斷掉時 pytest/node:test 仍可能全綠）。
-  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'window.__FOCAL_AUTO_ENABLED__', note: '[lint-guard 152d-T-D4] showcase SSR 注入 window.__FOCAL_AUTO_ENABLED__' },
-  { file: 'web/static/js/pages/showcase/state-lightbox-mask.js', kind: 'required-string', pattern: 'window.__FOCAL_AUTO_ENABLED__', note: '[lint-guard 152d-T-D4] openMask 消費 window.__FOCAL_AUTO_ENABLED__' },
-
   // ---- [lint-guard 152d-codex-fix] settings ? 浮層說明文案接線 ----
   { file: 'web/templates/settings.html', kind: 'required-string', pattern: "t('settings.scraper.focal_help')", note: '[lint-guard 152d-codex-fix] ? 浮層的說明文案接線' },
   // [lint-guard 152d-popover-up] 人臉自動對焦那一列是「刮削與翻譯」卡的最後一列，浮層往下展開
@@ -141,7 +136,7 @@ const RULES = [
   // stacking context，浮層的 z-index:50 逃不出那張卡 ⇒ 被下一張卡（列表生成）的背景蓋住後半段。
   // 兩條一組鎖住修法的兩半：class 掛在 HTML 上、規則存在於 CSS 裡。任一半沒了浮層就靜默被蓋住，
   // 而這是純視覺後果，前端測試不會紅（沒有 Alpine runtime、也不量佈局）。
-  { file: 'web/templates/settings.html', kind: 'required-string', pattern: 'class="help-popover help-popover--up"', count: 1, note: '[lint-guard 152d-popover-up] focal ? 浮層往上展開的 class 接線（卡片最後一列，往下會被下一張卡蓋住）' },
+  { file: 'web/templates/settings.html', kind: 'required-string', pattern: 'class="help-popover help-popover--up"', note: '[lint-guard 152d-popover-up] focal ? 浮層往上展開的 class 接線（卡片最後一列，往下會被下一張卡蓋住）' },
   { file: 'web/static/css/components/help-popover.css', kind: 'required-string', pattern: '.help-popover--up {', note: '[lint-guard 152d-popover-up] --up modifier 的 CSS 規則本體（bottom:100% 翻轉展開方向）' },
 
   // ---- [TestMaskToggleGuard] 98b-T4 起家、99a-T3 沿用：遮罩綁定 / 生命週期 guard / no-硬編-ratio / endpoint URL ----

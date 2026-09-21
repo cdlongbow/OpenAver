@@ -624,24 +624,3 @@ class TestManualFocalEndpoint:
         result = repo.get_by_path(focal_endpoint_setup["video_uri"])
         assert result.auto_focal == "0.3000,0.6000"
         assert result.crop_mode == "manual"
-
-
-# ============ showcase SSR：focal_auto_enabled 注入（152d TASK-D4）============
-
-class TestShowcaseFocalAutoEnabledInjection:
-    def test_showcase_page_injects_focal_auto_enabled_false_when_disabled(self, client):
-        """SSR 已停用時 /showcase 必須注入 window.__FOCAL_AUTO_ENABLED__ = false;"""
-        device_state.set_disabled_by_user(True)
-        resp = client.get("/showcase")
-        assert resp.status_code == 200
-        # [lint-guard: pytest-justified] 跨層契約：後端 device_state → SSR 注入字面。
-        # static_guard 只能鎖模板含 __FOCAL_AUTO_ENABLED__ 字串，表達不了「狀態 X ⇒ false/true」。
-        assert "window.__FOCAL_AUTO_ENABLED__ = false;" in resp.text
-
-    def test_showcase_page_injects_focal_auto_enabled_true_when_enabled(self, client):
-        """SSR 啟用時 /showcase 必須注入 window.__FOCAL_AUTO_ENABLED__ = true;"""
-        device_state.set_disabled_by_user(False)
-        resp = client.get("/showcase")
-        assert resp.status_code == 200
-        # [lint-guard: pytest-justified] 同上：狀態 → 注入值的跨層契約，非靜態字面掃描可表達。
-        assert "window.__FOCAL_AUTO_ENABLED__ = true;" in resp.text
