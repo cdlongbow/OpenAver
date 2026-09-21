@@ -2212,13 +2212,40 @@ const RULES = [
   // `.toggle:disabled { opacity: .3 }`（node_modules/daisyui/components/toggle.css）壓淡——
   // 那顆 toggle 恆帶原生 disabled（不可互動是刻意的），但 focal_auto_enabled 為真時視覺上要跟
   // 旁邊其他 toggle 一樣正常。停用態維持原生淡化（=「已自動關閉」的視覺語意），不受本規則管轄。
+  // 改 `fn` 的理由（152c pre-merge branch review P3-1）：DaisyUI 的 `:disabled` 除了 opacity，
+  // 還把滑塊圓點 `::before` 改成空心描邊，所以還原要兩個 block。而 `::before` 那個 block 的
+  // selector **字面包含** 主 block 的 selector ⇒ 任何能匹配主 block 的 markers 也會匹配它，
+  // `selector-require` 用 markers 無法把兩者分開（它沒有否定式）。硬拆會讓主規則對 `::before`
+  // block 也要求 opacity:1 而誤紅。⇒ 兩個 block 各自斷言，寫成一條 fn。
   {
     id: 'CG-FOCAL-05',
     file: 'pages/settings.css',
-    kind: 'selector-require',
-    markers: ['.toggle', '.focal-auto-enabled', ':disabled'],
-    pattern: /opacity\s*:\s*1\b/,
-    msg: '.toggle.focal-auto-enabled:disabled must set opacity: 1（還原 DaisyUI 30% 淡化）',
+    kind: 'fn',
+    check(ctx) {
+      const SEL = '.toggle.focal-auto-enabled:disabled';
+      let base = false;
+      let knob = false;
+      // flattenRuleBlocks 而非裸 ctx.blocks：兩個 block 現在在頂層，但有人把它們包進
+      // @media / [data-theme] 時，頂層掃描會報「block 不存在」＝指向錯原因的假紅（:81 註解）。
+      for (const { selector, declarations } of flattenRuleBlocks(ctx.blocks)) {
+        if (!selector.includes(SEL)) continue;
+        if (selector.includes('::before')) {
+          knob = true;
+          if (!/background-color\s*:\s*currentcolor/i.test(declarations)) {
+            ctx.fail(`CG-FOCAL-05: ${SEL}::before must restore background-color: currentcolor`
+              + '（DaisyUI :disabled 把圓點改成 transparent + 描邊，啟用態要還原成實心）'
+              + ` — ${selector}`);
+          }
+        } else {
+          base = true;
+          if (!/opacity\s*:\s*1\b/.test(declarations)) {
+            ctx.fail(`CG-FOCAL-05: ${SEL} must set opacity: 1（還原 DaisyUI 30% 淡化） — ${selector}`);
+          }
+        }
+      }
+      if (!base) ctx.fail(`CG-FOCAL-05: ${SEL} block 不存在（啟用態淡化還原遺失）`);
+      if (!knob) ctx.fail(`CG-FOCAL-05: ${SEL}::before block 不存在（啟用態圓點會是空心描邊）`);
+    },
   },
 
   // ══ 108-T4：touch overlay 移除（T2）+ folder touch-hide（T3）回歸鎖 [lint-guard:108-T4] ══

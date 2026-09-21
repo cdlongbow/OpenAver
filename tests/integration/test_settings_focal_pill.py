@@ -51,9 +51,12 @@ class TestSettingsFocalAutoPill:
         html = resp.text
         input_tag = _extract_focal_input_tag(html)
 
+        # [lint-guard: pytest-justified] 以下對 html／input_tag 的字面斷言驗的是
+        # 「同一份模板在不同 focal_device 狀態下渲染出不同結果」。static_guard_lint
+        # 讀的是模板檔本身的靜態字面，表達不了「後端狀態 X ⇒ 輸出必須含 A 且不得含 B」
+        # 這個跨層條件契約——兩種狀態的文案都寫在同一個模板檔裡，靜態掃描永遠同時看得到。
         assert "checked" in input_tag, f"版本已變更，預期渲染成啟用（checked），實際標籤：{input_tag}"
         assert "focal-auto-enabled" in input_tag, f"啟用態應帶 focal-auto-enabled modifier class，實際標籤：{input_tag}"
-        # [lint-guard: pytest-justified 啟用態 SSR 渲染文案契約，依 focal_device 狀態切換]
         assert "會自動關閉這個功能" in html, "啟用態浮層文字應包含啟用態說明（會自動關閉這個功能）"
         assert "已自動關閉這台機器的人臉自動對焦" not in html, "停用態說明文字不得出現在啟用態"
 
@@ -68,12 +71,15 @@ class TestSettingsFocalAutoPill:
         html = resp.text
         input_tag = _extract_focal_input_tag(html)
 
+        # [lint-guard: pytest-justified] 以下對 html／input_tag 的字面斷言驗的是
+        # 「同一份模板在不同 focal_device 狀態下渲染出不同結果」。static_guard_lint
+        # 讀的是模板檔本身的靜態字面，表達不了「後端狀態 X ⇒ 輸出必須含 A 且不得含 B」
+        # 這個跨層條件契約——兩種狀態的文案都寫在同一個模板檔裡，靜態掃描永遠同時看得到。
         assert "checked" not in input_tag, f"版本相同、仍停用，不應 checked，實際標籤：{input_tag}"
         assert "focal-auto-enabled" not in input_tag, f"停用態不應帶 focal-auto-enabled class，實際標籤：{input_tag}"
         assert "偵測連續兩次超過 5 秒沒算完" in html, "停用原因文字（只講「超過 5 秒」與「已自動關閉」兩件事實，不含實測耗時數字）應出現在 ? 浮層"
         assert "燈箱裡自己拖曳" in html, "原因文字必須寫出逃生口：燈箱手動拖曳對焦"
         assert "已自動關閉" in html
-        # [lint-guard: pytest-justified 停用態 SSR 渲染文案契約，啟用態說明不得外洩]
         assert "會自動關閉這個功能" not in html, "啟用態說明不得出現在停用態"
 
     def test_toggle_row_has_no_interactive_write_path(self, client):
@@ -90,6 +96,9 @@ class TestSettingsFocalAutoPill:
         assert resp.status_code == 200
         input_tag = _extract_focal_input_tag(resp.text)
 
+        # [lint-guard: pytest-justified] 這四條不是「模板裡有沒有這個字」，是「這顆 input
+        # 同時不具備三條寫入路徑」的組合事實（原生 disabled ＋ 無 x-model ＋ 無 @click/@change）。
+        # 而且錨點是後端渲染出來的那顆 input，不是模板字面——靜態掃描抓不到「哪一顆」。
         assert "disabled" in input_tag
         assert "x-model" not in input_tag
         assert "@click" not in input_tag

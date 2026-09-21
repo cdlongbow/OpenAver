@@ -497,16 +497,20 @@ class TestConfigWriteSerializationGuard:
         )
 
     def test_update_config_uses_mutate_config_not_save_config(self):
-        """P2-1 守衛：update_config 必須用 mutate_config（preserve server_mode），不得裸呼 save_config。
+        """P2-1 守衛：update_config 必須用 mutate_config（preserve 伺服器擁有欄位），不得裸呼 save_config。
 
         P2-1 修正（config↔listener divergence）：update_config 改為在 mutate_config
-        critical section 內讀取現有 server_mode 後才寫入，確保 full-config save 不會
-        覆寫 toggle-lifecycle 持久化的 server_mode。若有人回退至 save_config，此守衛報錯。
+        critical section 內讀取現有值後才寫入，確保 full-config save 不會覆寫由伺服器自己
+        持有的欄位。若有人回退至 save_config，此守衛報錯。
+
+        152c：保留的欄位從一個變兩個（`general.server_mode` ＋ `focal_device`），局部函式
+        隨之正名為 `_write_preserving_server_owned`。名字寫在這裡是刻意的——它是 `update_config`
+        與那個鎖內 preserve 之間唯一的接線，改名沒同步更新這條就該紅。
         """
         src = (ROUTERS_DIR / "config.py").read_text(encoding="utf-8")
-        assert "mutate_config(_write_preserving_server_mode)" in src, (
-            "config.py::update_config 必須呼叫 mutate_config（_write_preserving_server_mode），"
-            "以保持 server_mode 的 toggle-lifecycle 所有權"
+        assert "mutate_config(_write_preserving_server_owned)" in src, (
+            "config.py::update_config 必須呼叫 mutate_config（_write_preserving_server_owned），"
+            "以保持 server_mode／focal_device 這些伺服器擁有欄位的所有權"
         )
         tree = ast.parse(src, filename="config.py")
         callers = _find_save_config_callers(tree)

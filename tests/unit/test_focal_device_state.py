@@ -521,5 +521,8 @@ class TestNotificationSinkTransition:
         zh = json.loads(Path("locales/zh_TW.json").read_text(encoding="utf-8"))
         text = zh["notif"]["focal_auto_disabled"]
 
+        # [lint-guard: pytest-justified] i18n fallback 字串 fingerprint（明文例外）：驗的是
+        # locales/zh_TW.json 的值本身，不是 html/js/css 渲染輸出；且兩條都是 spec F6 的
+        # 文案不變式（不得含數字、必須寫出逃生口），不是靜態存在性檢查。
         assert not re.search(r"\d", text), f"F6 明文禁止張數／耗時數字，實際文案：{text}"
         assert "拖" in text, f"F6 要求提到手動拖曳的逃生口，實際文案：{text}"

@@ -389,7 +389,7 @@ class TestFullConfigSavePreservesServerMode:
       that value over a persisted True — leaving the LAN listener running but
       general.server_mode=false in config.json (diverged).
 
-    Fix: update_config() now runs mutate_config(_write_preserving_server_mode) which
+    Fix: update_config() now runs mutate_config(_write_preserving_server_owned) which
     reads the currently-persisted server_mode under the write lock and forces it into the
     payload before writing, regardless of what the incoming body says.
     """

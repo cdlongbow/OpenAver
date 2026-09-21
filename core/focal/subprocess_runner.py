@@ -271,6 +271,18 @@ def run_detection(
     block after wait() and *before* releasing the slot lock, so the next job sees
     whatever it recorded; its exceptions are logged and swallowed and never alter
     the outcome returned to the caller.
+
+    What on_outcome actually receives (stated here because it is decided at five
+    separate return sites and is otherwise only derivable by reading all of them):
+    FOUND / NO_FACE / ABANDONED(startup_timeout|detect_timeout|crashed), plus
+    ABANDONED(circuit_open) from the *in-lock* breaker recheck. It never receives
+    ABANDONED(skipped_disabled) -- deliberate, see the comment at that return --
+    nor circuit_open from the lock-free short-circuit, which returns before the
+    try/finally exists. The two circuit_open sites therefore differ; harmless
+    today because record_outcome no-ops circuit_open either way, and left alone at
+    152c pre-merge rather than rewriting this branch's own mechanism for a
+    zero-user-impact tidy (pre-merge step 0.1). If a future on_outcome consumer
+    cares about circuit_open, make the two sites agree *before* relying on it.
     """
     logger.debug("run_detection job_key=%s path=%s", job_key, fs_path)
     if _breaker_streak >= _BREAKER_THRESHOLD:

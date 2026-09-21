@@ -59,7 +59,7 @@ def test_update_config_preserves_newer_focal_device_against_stale_full_save(clie
     record_outcome 剛寫入的 focal_device —— 否則已被判定「裝置太慢、自動對焦停用」的機器
     會被一次不相關的整份存檔（如僅僅改資料夾清單）悄悄打回啟用，且重新湊滿兩次逾時後
     會再發一次「自動對焦已停用」通知，違反 spec F6「一次轉態一則」。
-    regression for web/routers/config.py::_write_preserving_server_mode 新增的
+    regression for web/routers/config.py::_write_preserving_server_owned 新增的
     focal_device 保留邏輯（與 server_mode 同一 shape）。
     """
     from core.version import VERSION

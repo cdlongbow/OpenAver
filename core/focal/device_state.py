@@ -31,11 +31,25 @@ def set_notification_sink(fn: Callable[..., None]) -> None:
     _notification_sink = fn
 
 
-def is_disabled() -> bool:
-    """True only when persisted disabled flag matches the running App VERSION."""
-    cfg = load_config()
+def is_disabled_in(cfg: dict) -> bool:
+    """Same rule as is_disabled(), answered from a config dict the caller already holds.
+
+    Exists so the "disabled AND judged_at_version == VERSION" rule has exactly one
+    implementation. Callers that already loaded the config (e.g. a page handler that
+    got it from get_common_context) must use this instead of re-deriving the rule —
+    reading fd["disabled"] directly skips the version check and resurrects the stale
+    "disabled" flag that CD-152b-7's lazy reset exists to neutralise.
+
+    ⚠️ The caller owns freshness. Only pass a snapshot taken in the same request /
+    call; a long-lived snapshot answers about the past (see BE-CONFIG-05).
+    """
     fd = cfg.get("focal_device", {})
     return bool(fd.get("disabled", False)) and fd.get("judged_at_version", "") == VERSION
+
+
+def is_disabled() -> bool:
+    """True only when persisted disabled flag matches the running App VERSION."""
+    return is_disabled_in(load_config())
 
 
 def record_outcome(outcome: RunnerOutcome) -> bool:

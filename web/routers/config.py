@@ -128,7 +128,7 @@ def update_config(config: AppConfig) -> dict:
             # (Pydantic default → False) or contains a stale/incorrect value.
             # Read the canonical persisted value inside mutate_config so the
             # read-preserve-write is atomic under _config_write_lock.
-            def _write_preserving_server_mode(cfg: dict) -> None:
+            def _write_preserving_server_owned(cfg: dict) -> None:
                 current_server_mode = cfg.get("general", {}).get("server_mode", False)
                 payload["general"]["server_mode"] = current_server_mode
                 # focal_device 是**伺服器擁有狀態**：前端沒有任何 UI 會寫它，唯一寫入端是
@@ -155,7 +155,7 @@ def update_config(config: AppConfig) -> dict:
                         )
                 cfg.update(payload)
 
-            mutate_config(_write_preserving_server_mode)
+            mutate_config(_write_preserving_server_owned)
             _reset_translate_service()  # 重置翻譯服務，讓新配置生效
             return {"success": True, "message": "設定已儲存"}
         except Exception as e:

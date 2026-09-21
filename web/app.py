@@ -679,7 +679,10 @@ async def settings_page(request: Request):
     """設定頁面"""
     context = get_common_context(request)
     context["page"] = "settings"
-    context["focal_auto_enabled"] = not await asyncio.to_thread(device_state.is_disabled)
+    # 用 get_common_context 已載入的那一份 config（:517 → context["config"]），不再讀第二次
+    # 磁碟——同一支函式裡的 proxy_configured / _server_mode 也是這個形狀。純 dict 運算，
+    # 不需要 asyncio.to_thread（BE-ASYNC-01 管的是阻塞 I/O，這行沒有）。
+    context["focal_auto_enabled"] = not device_state.is_disabled_in(context["config"])
     return templates.TemplateResponse(request, "settings.html", context)
 
 
