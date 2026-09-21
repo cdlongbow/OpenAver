@@ -1659,3 +1659,12 @@ html.theme-transition-active::view-transition-new(root) {
     background: color-mix(in oklch, var(--surface-2) 55%, transparent);
     border-radius: var(--radius-sm);
 }
+
+/* 152c-T9（CD-152c-19）：focal_auto_enabled 為真時，原生 disabled toggle 仍要看起來跟旁邊的其他
+   toggle 一樣正常——不能被 DaisyUI `.toggle:disabled { opacity: .3 }`（node_modules/daisyui/
+   components/toggle.css）壓成半透明。停用態維持原生 disabled 的淡化（那正是「已自動關閉」的視覺
+   語意），只有啟用態靠這個 modifier class 還原 opacity。此檔不在任何 @layer 內，天生蓋過 daisyui
+   的 @layer utilities 規則，選擇器特異性寫高一階只是防禦性作法，非必要條件。*/
+#settings-components .toggle.focal-auto-enabled:disabled {
+    opacity: 1;
+}

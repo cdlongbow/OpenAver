@@ -2208,6 +2208,19 @@ const RULES = [
     },
   },
 
+  // CG-FOCAL-05 ← 152c-T9（CD-152c-19）：啟用態的人臉自動對焦 toggle 不可被 DaisyUI
+  // `.toggle:disabled { opacity: .3 }`（node_modules/daisyui/components/toggle.css）壓淡——
+  // 那顆 toggle 恆帶原生 disabled（不可互動是刻意的），但 focal_auto_enabled 為真時視覺上要跟
+  // 旁邊其他 toggle 一樣正常。停用態維持原生淡化（=「已自動關閉」的視覺語意），不受本規則管轄。
+  {
+    id: 'CG-FOCAL-05',
+    file: 'pages/settings.css',
+    kind: 'selector-require',
+    markers: ['.toggle', '.focal-auto-enabled', ':disabled'],
+    pattern: /opacity\s*:\s*1\b/,
+    msg: '.toggle.focal-auto-enabled:disabled must set opacity: 1（還原 DaisyUI 30% 淡化）',
+  },
+
   // ══ 108-T4：touch overlay 移除（T2）+ folder touch-hide（T3）回歸鎖 [lint-guard:108-T4] ══
   // 兩個相鄰 @media (pointer: coarse) { } block（showcase.css:1126 / :1133）長得幾乎一樣，
   // 若只用整檔字串比對會被第一個（.lightbox-cover .cover-actions，不在 T4 範圍）或註解裡的

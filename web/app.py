@@ -38,6 +38,7 @@ setup_logging()
 logger = get_logger(__name__)
 
 from core.config import load_config
+from core.focal import device_state
 from core.database import init_db
 from core.database import backfill_readonly_nfo_mtime
 from core.metatube.state import metatube_state as _mt_startup_state
@@ -674,6 +675,7 @@ async def settings_page(request: Request):
     """設定頁面"""
     context = get_common_context(request)
     context["page"] = "settings"
+    context["focal_auto_enabled"] = not await asyncio.to_thread(device_state.is_disabled)
     return templates.TemplateResponse(request, "settings.html", context)
 
 
