@@ -11,20 +11,20 @@ core/config.py — 設定載入 / 儲存 / 遷移邏輯
 import json
 import shutil
 import threading
-from pathlib import Path
 from typing import Callable, Dict, Literal, Optional, List
 
 from pydantic import BaseModel, Field, field_validator
 
 from core.atomic_write import atomic_write
+from core.data_root import get_project_root
 from core.logger import get_logger
 from core.source_config import SourceConfig, get_builtin_sources, get_manual_only_sources
 from core.video_extensions import DEFAULT_VIDEO_EXTENSIONS
 
 logger = get_logger(__name__)
 
-# 設定檔路徑（相對於 project root，即此檔案所在 core/ 的上層）
-_PROJECT_ROOT = Path(__file__).parent.parent
+# 設定檔路徑（project root 由 data_root resolver 集中推導；值仍指 web/config.json）
+_PROJECT_ROOT = get_project_root()
 CONFIG_PATH = _PROJECT_ROOT / "web" / "config.json"
 CONFIG_DEFAULT_PATH = _PROJECT_ROOT / "web" / "config.default.json"
 

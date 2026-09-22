@@ -7,7 +7,7 @@ import sys
 import json
 import subprocess
 import webview
-from pathlib import Path
+import core.config as core_config
 from core.path_utils import uri_to_fs_path
 from core.video_extensions import DEFAULT_VIDEO_EXTENSIONS, get_video_extensions
 from core.logger import get_logger
@@ -204,15 +204,10 @@ class Api:
     def _get_video_extensions(self):
         """Get video extensions from config, fallback to DEFAULT_VIDEO_EXTENSIONS"""
         try:
-            possible_paths = [
-                Path(__file__).parent.parent / 'web' / 'config.json',
-                Path(__file__).parent / 'config.json',
-            ]
-            for config_path in possible_paths:
-                if config_path.exists():
-                    with open(config_path, 'r', encoding='utf-8') as f:
-                        config = json.load(f)
-                        return get_video_extensions(config)
+            if core_config.CONFIG_PATH.exists():
+                with open(core_config.CONFIG_PATH, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    return get_video_extensions(config)
         except Exception as e:
             logger.warning(f"[pywebview] _get_video_extensions failed to read config: {e}; falling back to DEFAULT_VIDEO_EXTENSIONS")
         return set(DEFAULT_VIDEO_EXTENSIONS)
@@ -220,16 +215,10 @@ class Api:
     def _get_player_path(self):
         """從設定檔讀取播放器路徑"""
         try:
-            # 嘗試多個可能的設定檔路徑
-            possible_paths = [
-                Path(__file__).parent.parent / 'web' / 'config.json',
-                Path(__file__).parent / 'config.json',
-            ]
-            for config_path in possible_paths:
-                if config_path.exists():
-                    with open(config_path, 'r', encoding='utf-8') as f:
-                        config = json.load(f)
-                        return config.get('showcase', {}).get('player', '')
+            if core_config.CONFIG_PATH.exists():
+                with open(core_config.CONFIG_PATH, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    return config.get('showcase', {}).get('player', '')
         except Exception as e:
             logger.warning(f"[pywebview] _get_player_path failed to read config: {e}; falling back to empty string (OS default player)")
         return ''
@@ -238,15 +227,10 @@ class Api:
 def _load_config_extensions():
     """Load video extensions from config file (for module-level functions)."""
     try:
-        possible_paths = [
-            Path(__file__).parent.parent / 'web' / 'config.json',
-            Path(__file__).parent / 'config.json',
-        ]
-        for config_path in possible_paths:
-            if config_path.exists():
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                    return get_video_extensions(config)
+        if core_config.CONFIG_PATH.exists():
+            with open(core_config.CONFIG_PATH, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                return get_video_extensions(config)
     except Exception as e:
         logger.warning(f"[pywebview] _load_config_extensions failed to read config: {e}; falling back to DEFAULT_VIDEO_EXTENSIONS")
     return set(DEFAULT_VIDEO_EXTENSIONS)

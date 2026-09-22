@@ -280,36 +280,16 @@ def test_open_folder_popen_oserror_logs_error(api_module, api_instance, monkeypa
 
 # ---------------------------------------------------------------------------
 # Logger test 5: _get_video_extensions — json.load raises JSONDecodeError → logger.warning
+# （TASK-153b-T1：改讀 core_config.CONFIG_PATH 後，FakePath monkeypatch 失效；
+#  改成 patch CONFIG_PATH 指向壞 JSON 檔，斷言內容不變）
 # ---------------------------------------------------------------------------
 def test_get_video_extensions_json_error_logs_warning(api_module, api_instance, monkeypatch, tmp_path):
     """_get_video_extensions の JSON parse 失敗 → logger.warning + DEFAULT_VIDEO_EXTENSIONS を返す"""
-    import json as _json
+    import core.config as core_config
 
-    # 壊れた config.json を tmp_path に作る
     bad_config = tmp_path / 'config.json'
     bad_config.write_text('{invalid json', encoding='utf-8')
-
-    original_open = open
-
-    def patched_open(path, *args, **kwargs):
-        if 'config.json' in str(path):
-            raise _json.JSONDecodeError("bad json", "", 0)
-        return original_open(path, *args, **kwargs)
-
-    # Path.exists を True に、open は JSONDecodeError
-    class FakePath:
-        def __init__(self, *a):
-            pass
-        def __truediv__(self, other):
-            return self
-        def exists(self):
-            return True
-        def __str__(self):
-            return 'fake/config.json'
-
-    monkeypatch.setattr(api_module, 'Path', FakePath)
-    import builtins
-    monkeypatch.setattr(builtins, 'open', patched_open)
+    monkeypatch.setattr(core_config, "CONFIG_PATH", bad_config)
 
     mock_logger = MagicMock()
     monkeypatch.setattr(api_module, 'logger', mock_logger)
@@ -326,28 +306,13 @@ def test_get_video_extensions_json_error_logs_warning(api_module, api_instance, 
 # ---------------------------------------------------------------------------
 # Logger test 6: _get_player_path — json.load raises JSONDecodeError → logger.warning
 # ---------------------------------------------------------------------------
-def test_get_player_path_json_error_logs_warning(api_module, api_instance, monkeypatch):
+def test_get_player_path_json_error_logs_warning(api_module, api_instance, monkeypatch, tmp_path):
     """_get_player_path の JSON parse 失敗 → logger.warning + '' を返す"""
-    import json as _json
-    import builtins
+    import core.config as core_config
 
-    class FakePath:
-        def __init__(self, *a):
-            pass
-        def __truediv__(self, other):
-            return self
-        def exists(self):
-            return True
-
-    original_open = builtins.open
-
-    def patched_open(path, *args, **kwargs):
-        if 'config.json' in str(path):
-            raise _json.JSONDecodeError("bad json", "", 0)
-        return original_open(path, *args, **kwargs)
-
-    monkeypatch.setattr(api_module, 'Path', FakePath)
-    monkeypatch.setattr(builtins, 'open', patched_open)
+    bad_config = tmp_path / 'config.json'
+    bad_config.write_text('{invalid json', encoding='utf-8')
+    monkeypatch.setattr(core_config, "CONFIG_PATH", bad_config)
 
     mock_logger = MagicMock()
     monkeypatch.setattr(api_module, 'logger', mock_logger)
@@ -364,28 +329,13 @@ def test_get_player_path_json_error_logs_warning(api_module, api_instance, monke
 # ---------------------------------------------------------------------------
 # Logger test 7: _load_config_extensions — json.load raises JSONDecodeError → logger.warning
 # ---------------------------------------------------------------------------
-def test_load_config_extensions_json_error_logs_warning(api_module, monkeypatch):
+def test_load_config_extensions_json_error_logs_warning(api_module, monkeypatch, tmp_path):
     """_load_config_extensions の JSON parse 失敗 → logger.warning + DEFAULT_VIDEO_EXTENSIONS を返す"""
-    import json as _json
-    import builtins
+    import core.config as core_config
 
-    class FakePath:
-        def __init__(self, *a):
-            pass
-        def __truediv__(self, other):
-            return self
-        def exists(self):
-            return True
-
-    original_open = builtins.open
-
-    def patched_open(path, *args, **kwargs):
-        if 'config.json' in str(path):
-            raise _json.JSONDecodeError("bad json", "", 0)
-        return original_open(path, *args, **kwargs)
-
-    monkeypatch.setattr(api_module, 'Path', FakePath)
-    monkeypatch.setattr(builtins, 'open', patched_open)
+    bad_config = tmp_path / 'config.json'
+    bad_config.write_text('{invalid json', encoding='utf-8')
+    monkeypatch.setattr(core_config, "CONFIG_PATH", bad_config)
 
     mock_logger = MagicMock()
     monkeypatch.setattr(api_module, 'logger', mock_logger)
@@ -397,3 +347,28 @@ def test_load_config_extensions_json_error_logs_warning(api_module, monkeypatch)
     assert '_load_config_extensions' in warning_msg
     assert 'DEFAULT_VIDEO_EXTENSIONS' in warning_msg
     assert result == set(api_module.DEFAULT_VIDEO_EXTENSIONS)
+
+
+# ---------------------------------------------------------------------------
+# TASK-153b-T1: three config readers share core.config.CONFIG_PATH seam
+# ---------------------------------------------------------------------------
+def test_pywebview_config_readers_use_core_config_path_seam(
+    api_module, api_instance, monkeypatch, tmp_path
+):
+    """monkeypatch core_config.CONFIG_PATH → tmp 檔後，三個函式都讀到該檔內容。"""
+    import json
+    import core.config as core_config
+
+    tmp_config = tmp_path / "config.json"
+    tmp_config.write_text(
+        json.dumps({
+            "scraper": {"video_extensions": [".unique_seam_ext"]},
+            "showcase": {"player": "/tmp/unique_seam_player"},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(core_config, "CONFIG_PATH", tmp_config)
+
+    assert api_instance._get_video_extensions() == {".unique_seam_ext"}
+    assert api_instance._get_player_path() == "/tmp/unique_seam_player"
+    assert api_module._load_config_extensions() == {".unique_seam_ext"}

@@ -7,6 +7,7 @@ import json
 import time
 from pathlib import Path
 
+from core.data_root import get_data_root
 from core.logger import get_logger
 from core.database.version_tracker import _RevisionTrackingConnection
 
@@ -15,10 +16,7 @@ logger = get_logger(__name__)
 
 def get_db_path() -> Path:
     """獲取資料庫路徑 (output/openaver.db)"""
-    # 使用專案根目錄下的 output 資料夾
-    # __file__ = core/database/connection.py → 上溯三層才是 repo 根（87a 拆檔後
-    # 本檔比原 core/database.py 深一層；三 .parent 還原 repo-root/output 預設位置）
-    db_dir = Path(__file__).parent.parent.parent / "output"
+    db_dir = get_data_root()
     db_dir.mkdir(parents=True, exist_ok=True)
     return db_dir / "openaver.db"
 
