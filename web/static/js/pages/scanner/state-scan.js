@@ -82,8 +82,12 @@ export function stateScan() {
             return JSON.stringify(this.directories) !== this.folderSnapshot;
         },
 
+        // GET /api/config 的 response-only 解析值（不入 saveConfig payload）
+        resolvedGalleryOutputPath: '',
+
         get outputPathDisplay() {
-            const outputDir = this.config.gallery?.output_dir || 'output';
+            // 後端解析出的實際路徑；空字串＝尚未 loadConfig，不回退字面 'output'
+            const outputDir = this.resolvedGalleryOutputPath || this.config.gallery?.output_dir || '';
             const outputFilename = this.config.gallery?.output_filename || 'gallery_output.html';
             return `${outputDir}/${outputFilename}`;
         },
@@ -277,6 +281,8 @@ export function stateScan() {
                 if (result.success) {
                     this.config = result.data;
                     this.directories = this.config.gallery?.directories || [];
+                    // response-only：後端解析出的實際輸出路徑，供「輸出到」顯示
+                    this.resolvedGalleryOutputPath = result.resolved?.gallery_output_path || '';
 
                     // T7b: 不再需要同步全域變數（core.js 已刪除）
 

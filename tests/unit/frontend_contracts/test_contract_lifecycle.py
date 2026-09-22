@@ -170,3 +170,58 @@ class TestAutoFetchDirtyStateGuard:
         assert "source = 'manual'" in js, \
             "settings.js fetchOpenAIModels() 應含 source = 'manual' 預設參數，避免共享 boolean 競態"
 
+
+
+
+SETTINGS_HTML = Path(__file__).parent.parent.parent.parent / "web" / "templates" / "settings.html"
+
+
+class TestGalleryOutputDirEmptyFollowsDataRoot:
+    """TASK-153b-T3：設定頁空值往返與 resolved placeholder 契約。
+
+    掃描頁 outputPathDisplay 行為由
+    web/static/js/pages/scanner/__tests__/output-path-display.test.mjs 守住。
+    """
+
+    def _config_js(self):
+        return SETTINGS_CONFIG_JS.read_text(encoding="utf-8")
+
+    def _settings_html(self):
+        return SETTINGS_HTML.read_text(encoding="utf-8")
+
+    def test_settings_initial_avlist_output_dir_empty(self):
+        """初始 state 為空字串，避免 loadConfig 前閃字面 output。"""
+        js = self._config_js()
+        assert "avlistOutputDir: ''," in js, \
+            "state-config.js 初始 avlistOutputDir 應為 ''（空＝跟著資料根）"
+
+    def test_settings_load_preserves_empty_output_dir(self):
+        """loadConfig 用 ?? '' 保留空字串。"""
+        js = self._config_js()
+        assert "config.gallery?.output_dir ?? ''" in js, \
+            "state-config.js loadConfig 應以 ?? '' 讀 output_dir，保留合法空值"
+
+    def test_settings_save_sends_trimmed_output_dir_without_fallback(self):
+        """saveConfig 送出 trim() 後的原值，不補 'output'。"""
+        js = self._config_js()
+        assert "output_dir: this.form.avlistOutputDir.trim()," in js, \
+            "state-config.js saveConfig 應送出 trim() 後的空字串，不可再 fallback 成 'output'"
+
+    def test_settings_stores_resolved_gallery_output_path(self):
+        """loadConfig 把 result.resolved.gallery_output_path 存進 state 供 placeholder。"""
+        js = self._config_js()
+        assert "this.resolvedGalleryOutputPath = result.resolved?.gallery_output_path" in js, \
+            "state-config.js loadConfig 應存 resolved.gallery_output_path"
+        assert "resolvedGalleryOutputPath: ''" in js, \
+            "state-config.js 應宣告 resolvedGalleryOutputPath 初值 ''（FE-TIMING-07）"
+
+    def test_settings_html_placeholder_binds_resolved_path(self):
+        html = self._settings_html()
+        assert ':placeholder="resolvedGalleryOutputPath"' in html, \
+            "settings.html 應以 :placeholder 綁定 resolvedGalleryOutputPath"
+
+    def test_settings_handles_gallery_output_in_program_area_reason(self):
+        js = self._config_js()
+        assert "gallery_output_in_program_area" in js, \
+            "state-config.js 應處理 reason === gallery_output_in_program_area"
+        assert "this.showToast(result.error, 'warning')" in js

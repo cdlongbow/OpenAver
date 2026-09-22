@@ -8,6 +8,9 @@ from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).parent.parent
 
+# 資料根定版標記檔名。放此檔（而非 data_layout）以免 config ↔ data_layout 循環 import。
+LAYOUT_MARKER_NAME = ".layout.json"
+
 
 def _default_output_root() -> Path:
     """現有預設 output 目錄（= <project_root>/output）。純路徑推導，無 I/O。"""
@@ -35,3 +38,19 @@ def get_data_root() -> Path:
 def get_project_root() -> Path:
     """回傳專案根目錄。純路徑推導，無 I/O。"""
     return _PROJECT_ROOT
+
+
+def resolve_gallery_output_path(output_dir: str) -> Path:
+    """解析 gallery.output_dir 為絕對 Path。
+
+    空／純空白 → get_data_root()（跟著資料根走）；
+    非空相對值 → get_project_root() / value；
+    非空絕對值 → 原樣。純路徑推導，無 I/O。
+    """
+    value = (output_dir or "").strip()
+    if not value:
+        return get_data_root()
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return path
+    return get_project_root() / value

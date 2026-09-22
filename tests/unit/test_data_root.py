@@ -80,3 +80,31 @@ def test_openaver_data_dir_env_var_is_effective(tmp_path, monkeypatch):
     assert not (env_dir / "openaver.db").exists()
     # default root 仍可獨立取得，供 gate 比較
     assert str(data_root_module.get_default_data_root()) == str(_EXPECTED_OUTPUT)
+
+
+def test_resolve_gallery_output_path_empty_returns_data_root():
+    """空字串 → get_data_root()（跟著資料根走）。"""
+    from core.data_root import resolve_gallery_output_path, get_data_root
+
+    assert resolve_gallery_output_path("") == get_data_root()
+
+
+def test_resolve_gallery_output_path_whitespace_returns_data_root():
+    """純空白 → 等同空值，回 get_data_root()。"""
+    from core.data_root import resolve_gallery_output_path, get_data_root
+
+    assert resolve_gallery_output_path("  ") == get_data_root()
+
+
+def test_resolve_gallery_output_path_relative_uses_project_root():
+    """非空相對值 → get_project_root() / value。"""
+    from core.data_root import resolve_gallery_output_path, get_project_root
+
+    assert resolve_gallery_output_path("custom_dir") == get_project_root() / "custom_dir"
+
+
+def test_resolve_gallery_output_path_absolute_unchanged():
+    """非空絕對值 → 原樣 Path。"""
+    from core.data_root import resolve_gallery_output_path
+
+    assert resolve_gallery_output_path("/abs/path") == Path("/abs/path")

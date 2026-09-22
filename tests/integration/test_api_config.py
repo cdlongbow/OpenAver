@@ -22,7 +22,7 @@ def test_update_config(client, temp_config_path):
     current_config = response.json()["data"]
     
     # 修改設定
-    current_config["gallery"]["output_dir"] = "test_output"
+    current_config["gallery"]["output_dir"] = "../openaver_test_output"
     current_config["gallery"]["output_filename"] = "test.html"
     current_config["general"]["theme"] = "dark"
     
@@ -34,7 +34,7 @@ def test_update_config(client, temp_config_path):
     # 再次獲取驗證
     response = client.get("/api/config")
     new_config = response.json()["data"]
-    assert new_config["gallery"]["output_dir"] == "test_output"
+    assert new_config["gallery"]["output_dir"] == "../openaver_test_output"
     assert new_config["gallery"]["output_filename"] == "test.html"
     assert new_config["general"]["theme"] == "dark"
 
@@ -89,7 +89,7 @@ def test_update_config_preserves_newer_focal_device_against_stale_full_save(clie
         "consecutive_timeout_count": 0,
         "judged_at_version": "",
     }
-    stale_payload["gallery"]["output_dir"] = "regression_output"
+    stale_payload["gallery"]["output_dir"] = "../openaver_regression_output"
 
     response = client.put("/api/config", json=stale_payload)
     assert response.status_code == 200
@@ -101,7 +101,7 @@ def test_update_config_preserves_newer_focal_device_against_stale_full_save(clie
     # focal_device 必須逐字維持 seed 的值 —— 沒有被舊快照覆蓋。
     assert persisted["focal_device"] == seeded_focal_device
     # 不相關欄位確實被這次 PUT 更新（承重斷言：排除「整份存檔沒生效」的假陽性）。
-    assert persisted["gallery"]["output_dir"] == "regression_output"
+    assert persisted["gallery"]["output_dir"] == "../openaver_regression_output"
 
 
 def test_full_put_with_stale_snapshot_preserves_toggle_endpoint_write(client, temp_config_path):
@@ -130,7 +130,7 @@ def test_full_put_with_stale_snapshot_preserves_toggle_endpoint_write(client, te
 
     # 用不相關欄位證明全量 PUT 本身有寫入（排除「整份存檔沒生效」假陽性）
     stale_snapshot = json.loads(json.dumps(stale_snapshot))
-    stale_snapshot["gallery"]["output_dir"] = "oracle_b_stale_save"
+    stale_snapshot["gallery"]["output_dir"] = "../openaver_oracle_b_stale_save"
 
     put_resp = client.put("/api/config", json=stale_snapshot)
     assert put_resp.status_code == 200
@@ -142,7 +142,7 @@ def test_full_put_with_stale_snapshot_preserves_toggle_endpoint_write(client, te
     # 端點寫入的新值存活，未被舊快照回捲
     assert persisted["focal_device"]["disabled"] is True
     assert persisted["focal_device"]["set_by_user"] is True
-    assert persisted["gallery"]["output_dir"] == "oracle_b_stale_save"
+    assert persisted["gallery"]["output_dir"] == "../openaver_oracle_b_stale_save"
 
 
 # ============ 路由改名向後兼容測試 ============

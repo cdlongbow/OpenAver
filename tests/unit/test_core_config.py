@@ -283,6 +283,109 @@ class TestMigrationMinSizeKbToMb:
         assert result["gallery"]["min_size_mb"] == 0
 
 
+class TestNoSeedConfigBeforeLayoutFinalized:
+    """BE-DATA-09：資料根未定版時，load_config 不得在資料根自動建 config.json。"""
+
+    def test_unfinalized_data_root_does_not_write_config(self, tmp_path, monkeypatch):
+        """CONFIG_PATH 在乾淨資料根下、無 .layout.json → 回傳可用設定且不落盤。"""
+        from core.data_root import LAYOUT_MARKER_NAME
+
+        root = tmp_path / "data_root"
+        root.mkdir()
+        config_path = root / "config.json"
+        default_path = tmp_path / "config.default.json"
+        _write_config(default_path, {"general": {"theme": "dark"}, "gallery": {"output_dir": ""}})
+
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", default_path)
+        monkeypatch.setattr(core_config, "get_data_root", lambda: root)
+
+        assert not (root / LAYOUT_MARKER_NAME).exists()
+        assert not config_path.exists()
+
+        result = load_config()
+
+        assert isinstance(result, dict) and result
+        assert result.get("general", {}).get("theme") == "dark"
+        assert not config_path.exists(), (
+            "資料根未定版時 load_config 不得寫出 config.json（BE-DATA-09）；"
+            "否則下次 bootstrap 會判定 root≠legacy 衝突而永久阻斷啟動"
+        )
+
+    def test_finalized_data_root_still_seeds_config(self, tmp_path, monkeypatch):
+        """同一資料根已有 .layout.json → 自動建檔行為與今天相同。"""
+        from core.data_root import LAYOUT_MARKER_NAME
+
+        root = tmp_path / "data_root"
+        root.mkdir()
+        config_path = root / "config.json"
+        default_path = tmp_path / "config.default.json"
+        _write_config(default_path, {"general": {"theme": "light"}, "gallery": {"output_dir": ""}})
+        (root / LAYOUT_MARKER_NAME).write_text("{}", encoding="utf-8")
+
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", default_path)
+        monkeypatch.setattr(core_config, "get_data_root", lambda: root)
+
+        result = load_config()
+
+        assert isinstance(result, dict) and result
+        assert config_path.exists(), "layout 已定版時首次 load_config 仍應從 default 建檔"
+        assert _read_config(config_path).get("general", {}).get("theme") == "light"
+
+
+class TestMigrationGalleryOutputDirSentinel:
+    """gallery.output_dir 字面 'output' → ''（跟著資料根走）；其餘既有值不動。"""
+
+    def test_literal_output_migrates_to_empty_string(self, tmp_path, monkeypatch):
+        from core.data_root import resolve_gallery_output_path
+
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"gallery": {"output_dir": "output"}})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        # migration 前：字面 "output" 解析位置
+        before_resolved = str(resolve_gallery_output_path("output"))
+
+        # 既有 HTML 放在解析後的位置，遷移不得搬動它
+        html_path = Path(before_resolved) / "gallery_output.html"
+        html_path.parent.mkdir(parents=True, exist_ok=True)
+        html_content = b"<html>pre-migration marker</html>"
+        html_path.write_bytes(html_content)
+
+        result = load_config()
+
+        assert result["gallery"]["output_dir"] == ""
+        after_resolved = str(resolve_gallery_output_path(""))
+        assert after_resolved == before_resolved
+        assert html_path.read_bytes() == html_content
+        # 落盤也寫成空字串
+        assert _read_config(config_path)["gallery"]["output_dir"] == ""
+
+    def test_non_sentinel_custom_value_untouched(self, tmp_path, monkeypatch):
+        """既有值不是恰為 'output'（例如已落在程式區的舊自訂值）→ 逐字不動。"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"gallery": {"output_dir": "app/custom"}})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert result["gallery"]["output_dir"] == "app/custom"
+        assert _read_config(config_path)["gallery"]["output_dir"] == "app/custom"
+
+    def test_already_empty_stays_empty(self, tmp_path, monkeypatch):
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"gallery": {"output_dir": ""}})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert result["gallery"]["output_dir"] == ""
+
+
 # ============ test_migration_jellyfin_mode ============
 
 class TestMigrationJellyfinMode:

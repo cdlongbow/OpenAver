@@ -16,8 +16,9 @@ from typing import Callable, Dict, Literal, Optional, List
 from pydantic import BaseModel, Field, field_validator
 
 from core.atomic_write import atomic_write
-from core.data_root import get_data_root, get_project_root
+from core.data_root import LAYOUT_MARKER_NAME, get_data_root, get_project_root
 from core.logger import get_logger
+from core.path_utils import is_fs_path_under_dir
 from core.source_config import SourceConfig, get_builtin_sources, get_manual_only_sources
 from core.video_extensions import DEFAULT_VIDEO_EXTENSIONS
 
@@ -178,7 +179,7 @@ class GalleryConfig(BaseModel):
             return v
         return [{"path": e} if isinstance(e, str) else e for e in v]
 
-    output_dir: str = "output"
+    output_dir: str = ""
     output_filename: str = "gallery_output.html"
     path_mappings: dict = {}
     min_size_mb: int = 0
@@ -246,15 +247,30 @@ def _load_config_unlocked() -> dict:  # noqa: C901 — config 遷移主流程；
     migration 的寫回必須走 _save_config_unlocked（同樣不取鎖），否則在已持鎖的
     critical section 內再 acquire 同一 threading.Lock → 自我死鎖（CD-66b-1）。
     """
-    # 首次啟動：從 config.default.json 初始化
+    # 首次啟動：從 config.default.json 初始化。
+    # BE-DATA-09：若 CONFIG_PATH 已落在資料根內、但 layout 尚未定版（無 .layout.json），
+    # 不得落盤——否則會生出一份與 default／legacy 都不相等的 root config，下次
+    # bootstrap 依 spec §4.2 判定衝突而永久阻斷啟動。改讀 default 進記憶體當本次設定。
+    _defer_disk_seed = False
     if not CONFIG_PATH.exists() and CONFIG_DEFAULT_PATH.exists():
-        shutil.copy2(CONFIG_DEFAULT_PATH, CONFIG_PATH)
-        CONFIG_PATH.chmod(0o600)  # CD-114c-9: copy2 保留 0644，強制 0600
-        logger.info("[Config] 首次啟動，已從 config.default.json 初始化設定")
+        if (
+            is_fs_path_under_dir(str(CONFIG_PATH), str(get_data_root()))
+            and not (get_data_root() / LAYOUT_MARKER_NAME).is_file()
+        ):
+            _defer_disk_seed = True
+            logger.info("[Config] 資料根尚未定版，略過自動建檔（BE-DATA-09）")
+        else:
+            shutil.copy2(CONFIG_DEFAULT_PATH, CONFIG_PATH)
+            CONFIG_PATH.chmod(0o600)  # CD-114c-9: copy2 保留 0644，強制 0600
+            logger.info("[Config] 首次啟動，已從 config.default.json 初始化設定")
 
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-            raw_config = json.load(f)
+    if CONFIG_PATH.exists() or _defer_disk_seed:
+        if _defer_disk_seed:
+            with open(CONFIG_DEFAULT_PATH, 'r', encoding='utf-8') as f:
+                raw_config = json.load(f)
+        else:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                raw_config = json.load(f)
 
         need_save = False
 
@@ -275,6 +291,11 @@ def _load_config_unlocked() -> dict:  # noqa: C901 — config 遷移主流程；
                 # KB -> MB (四捨五入可接受)
                 g['min_size_mb'] = int(round(g.get('min_size_kb', 0) / 1024))
                 del g['min_size_kb']
+                need_save = True
+
+            # Migration: gallery.output_dir 字面 "output" → ""（僅精確相等）
+            if g.get('output_dir') == 'output':
+                g['output_dir'] = ''
                 need_save = True
 
         # Migration: gallery.directories 純字串 → DirectoryConfig 物件（feature/88）
@@ -544,7 +565,8 @@ def _load_config_unlocked() -> dict:  # noqa: C901 — config 遷移主流程；
             need_save = True
 
         # Save migrated config（已持鎖 → 用 unlocked 版避免自我死鎖）
-        if need_save:
+        # _defer_disk_seed：記憶體遷移可跑，但一個字都不准寫回資料根（BE-DATA-09）。
+        if need_save and not _defer_disk_seed:
             _save_config_unlocked(raw_config)
 
         return raw_config

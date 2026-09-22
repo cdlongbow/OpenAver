@@ -16,12 +16,12 @@ from typing import Any, Optional
 from core.atomic_write import atomic_move, atomic_write, create_staging_file
 from core.config import CONFIG_DEFAULT_PATH
 import core.data_root as data_root
+from core.data_root import LAYOUT_MARKER_NAME
 from core.database import init_db
 from core.logger import get_logger
 
 logger = get_logger(__name__)
 
-LAYOUT_MARKER_NAME = ".layout.json"
 LAYOUT_VERSION = 1
 ROOT_CONFIG_NAME = "config.json"
 
