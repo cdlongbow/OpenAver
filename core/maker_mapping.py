@@ -3,7 +3,6 @@ maker_mapping.json shared loader
 
 供 models.py / scraper.py / gallery_scanner.py / search.py 共用。
 模組層僅 import stdlib + core.logger（無 core/ 業務模組），避免循環依賴。
-JavDB fallback 使用函數內部 lazy import。
 """
 
 import json
@@ -94,36 +93,9 @@ def normalize_maker_name(maker) -> str:
     return nm.get(maker, maker)
 
 
-def save_prefix_entry(prefix: str, maker: str) -> None:
-    """
-    只更新 prefix_mapping 層，不動 name_mapping 層；失敗靜默。
-
-    寫入後使 cache 失效（下次 load 重讀）。
-    """
-    global _cache
-
-    try:
-        raw = _load_raw()
-
-        if "_meta" in raw and "prefix_mapping" in raw:
-            # 新格式：只更新 prefix_mapping
-            raw["prefix_mapping"][prefix] = maker
-        else:
-            # 舊格式：直接寫入頂層
-            raw[prefix] = maker
-
-        with open(MAKER_MAPPING_FILE, "w", encoding="utf-8") as f:
-            json.dump(raw, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logger.warning("maker_mapping: 寫入 %s 失敗，略過（%s）", MAKER_MAPPING_FILE, e)
-    finally:
-        # 無論成功失敗，讓 cache 失效（下次 load 重讀）
-        _cache = None
-
-
 def get_maker_by_prefix(number: str) -> str:
     """
-    從 prefix_mapping 查片商名；prefix miss → JavDB fallback + save_prefix_entry。
+    從 prefix_mapping 查片商名；miss（含無字母前綴）一律回傳空字串，不再有 runtime fallback 或寫回。
 
     - 無字母前綴（如 "123"、""）→ 回傳 ""
     """
@@ -133,19 +105,4 @@ def get_maker_by_prefix(number: str) -> str:
         return ""
 
     prefix = match.group(1).upper()
-    if prefix in mapping:
-        return mapping[prefix]
-
-    # JavDB fallback（lazy import 避免循環依賴）
-    try:
-        from core.scrapers import JavDBScraper
-        scraper = JavDBScraper()
-        video = scraper.search(number)
-        if video and video.maker and not re.match(r"^\d{4}(-\d{2}){0,2}$", video.maker):
-            normalized = normalize_maker_name(video.maker)
-            save_prefix_entry(prefix, normalized)
-            return normalized
-    except Exception as e:
-        logger.debug("maker_mapping: JavDB fallback 失敗（%s）", e)
-
-    return ""
+    return mapping.get(prefix, "")
