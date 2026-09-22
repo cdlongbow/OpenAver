@@ -2050,3 +2050,112 @@ class TestShowTableListConfig:
         """邊界 3：舊 config（gallery 內沒有 show_table_list key）→ model_validate 不拋錯，補預設關閉"""
         cfg = GalleryConfig.model_validate({"items_per_page": 90})
         assert cfg.show_table_list is False
+
+
+# ============ TASK-153b-T3fix1：資料根未定版時禁止寫入 config.json（BE-DATA-09） ============
+
+class TestSaveConfigBlockedBeforeLayoutFinalized:
+    """BE-DATA-09 / TASK-153b-T3fix1：資料根未定版時，禁止呼叫 save_config / mutate_config 落盤。"""
+
+    def test_save_config_raises_when_root_not_finalized(self, tmp_path, monkeypatch):
+        """資料根未定版時 save_config 必須 raise ConfigRootNotFinalizedError 且磁碟零寫入。"""
+        from core.data_root import LAYOUT_MARKER_NAME
+
+        root = tmp_path / "data_root"
+        root.mkdir()
+        config_path = root / "config.json"
+
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "get_data_root", lambda: root)
+
+        assert not (root / LAYOUT_MARKER_NAME).exists()
+        before_entries = list(root.iterdir())
+
+        with pytest.raises(core_config.ConfigRootNotFinalizedError):
+            core_config.save_config({"hello": "world"})
+
+        assert not config_path.exists()
+        assert list(root.iterdir()) == before_entries
+
+    def test_save_config_succeeds_when_root_finalized(self, tmp_path, monkeypatch):
+        """資料根已定版時 save_config 正常寫入，行為不變。"""
+        from core.data_root import LAYOUT_MARKER_NAME
+
+        root = tmp_path / "data_root"
+        root.mkdir()
+        config_path = root / "config.json"
+        (root / LAYOUT_MARKER_NAME).write_text("{}", encoding="utf-8")
+
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "get_data_root", lambda: root)
+
+        core_config.save_config({"hello": "world"})
+
+        assert config_path.exists()
+        assert _read_config(config_path) == {"hello": "world"}
+
+    def test_mutate_config_raises_when_root_not_finalized(self, tmp_path, monkeypatch):
+        """資料根未定版時 mutate_config 必須 raise ConfigRootNotFinalizedError 且磁碟零寫入。"""
+        from core.data_root import LAYOUT_MARKER_NAME
+
+        root = tmp_path / "data_root"
+        root.mkdir()
+        config_path = root / "config.json"
+
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "get_data_root", lambda: root)
+
+        assert not (root / LAYOUT_MARKER_NAME).exists()
+        before_entries = list(root.iterdir())
+
+        with pytest.raises(core_config.ConfigRootNotFinalizedError):
+            core_config.mutate_config(lambda cfg: cfg.__setitem__("hello", "world"))
+
+        assert not config_path.exists()
+        assert list(root.iterdir()) == before_entries
+
+    def test_mutate_config_succeeds_when_root_finalized(self, tmp_path, monkeypatch):
+        """資料根已定版時 mutate_config 正常修改並落盤。"""
+        from core.data_root import LAYOUT_MARKER_NAME
+
+        root = tmp_path / "data_root"
+        root.mkdir()
+        config_path = root / "config.json"
+        (root / LAYOUT_MARKER_NAME).write_text("{}", encoding="utf-8")
+        _write_config(config_path, {"initial": "value"})
+
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "get_data_root", lambda: root)
+
+        core_config.mutate_config(lambda cfg: cfg.__setitem__("hello", "world"))
+
+        assert config_path.exists()
+        data = _read_config(config_path)
+        assert data.get("initial") == "value"
+        assert data.get("hello") == "world"
+
+    def test_load_config_migration_writeback_raises_when_root_not_finalized(self, tmp_path, monkeypatch):
+        """pre-existing config.json 觸發 migration 時若未定版，load_config 應 raise 且檔案位元組不變。"""
+        from core.data_root import LAYOUT_MARKER_NAME
+
+        root = tmp_path / "data_root"
+        root.mkdir()
+        config_path = root / "config.json"
+        default_path = tmp_path / "config.default.json"
+
+        raw_payload = {"gallery": {"min_size_kb": 2048, "output_dir": ""}}
+        _write_config(config_path, raw_payload)
+        _write_config(default_path, {"general": {"theme": "dark"}})
+        content_before = config_path.read_bytes()
+
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", default_path)
+        monkeypatch.setattr(core_config, "get_data_root", lambda: root)
+
+        assert not (root / LAYOUT_MARKER_NAME).exists()
+
+        with pytest.raises(core_config.ConfigRootNotFinalizedError):
+            core_config.load_config()
+
+        assert config_path.read_bytes() == content_before
+

@@ -38,6 +38,10 @@ CONFIG_DEFAULT_PATH = _PROJECT_ROOT / "web" / "config.default.json"
 _config_write_lock = threading.Lock()
 
 
+class ConfigRootNotFinalizedError(Exception):
+    """資料根尚未定版時禁止寫入 config.json（BE-DATA-09 / TASK-153b-T3fix1）。"""
+
+
 # 外部管理器模式共用常數（organizer / enricher 引用）
 STEM_IMAGE_MODES = ('jellyfin', 'emby', 'kodi')
 
@@ -588,6 +592,14 @@ def _save_config_unlocked(config: dict) -> None:
     往上傳）。本函式保留的部分：不取鎖（由 caller 持 _config_write_lock）、
     text mode + encoding='utf-8'、以及「例外一路往上拋」的失敗語意。
     """
+    if (
+        is_fs_path_under_dir(str(CONFIG_PATH), str(get_data_root()))
+        and not (get_data_root() / LAYOUT_MARKER_NAME).is_file()
+    ):
+        raise ConfigRootNotFinalizedError(
+            f"資料根尚未定版，禁止寫入設定檔（BE-DATA-09）：{CONFIG_PATH}"
+        )
+
     with atomic_write(CONFIG_PATH, mode='w', encoding='utf-8') as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
 
