@@ -16,7 +16,7 @@ from typing import Callable, Dict, Literal, Optional, List
 from pydantic import BaseModel, Field, field_validator
 
 from core.atomic_write import atomic_write
-from core.data_root import LAYOUT_MARKER_NAME, get_data_root, get_project_root
+from core.data_root import get_data_root, get_project_root, is_layout_finalized
 from core.logger import get_logger
 from core.path_utils import is_fs_path_under_dir
 from core.source_config import SourceConfig, get_builtin_sources, get_manual_only_sources
@@ -259,7 +259,7 @@ def _load_config_unlocked() -> dict:  # noqa: C901 — config 遷移主流程；
     if not CONFIG_PATH.exists() and CONFIG_DEFAULT_PATH.exists():
         if (
             is_fs_path_under_dir(str(CONFIG_PATH), str(get_data_root()))
-            and not (get_data_root() / LAYOUT_MARKER_NAME).is_file()
+            and not is_layout_finalized(get_data_root())
         ):
             _defer_disk_seed = True
             logger.info("[Config] 資料根尚未定版，略過自動建檔（BE-DATA-09）")
@@ -594,7 +594,7 @@ def _save_config_unlocked(config: dict) -> None:
     """
     if (
         is_fs_path_under_dir(str(CONFIG_PATH), str(get_data_root()))
-        and not (get_data_root() / LAYOUT_MARKER_NAME).is_file()
+        and not is_layout_finalized(get_data_root())
     ):
         raise ConfigRootNotFinalizedError(
             f"資料根尚未定版，禁止寫入設定檔（BE-DATA-09）：{CONFIG_PATH}"

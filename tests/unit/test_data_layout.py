@@ -199,7 +199,7 @@ def test_copy_failure_leaves_no_half_written_config(tmp_path, monkeypatch):
     def boom(*a, **k):
         raise OSError("injected copy failure")
 
-    monkeypatch.setattr(shutil, "copy2", boom)
+    monkeypatch.setattr(shutil, "copyfile", boom)
 
     with pytest.raises(DataLayoutError):
         bootstrap_data_layout()
@@ -279,6 +279,48 @@ def test_marker_write_failure_leaves_config_consistent_with_legacy(tmp_path, mon
     assert not marker.exists() or json.loads(marker.read_text()).get("complete") is not True
     cfg = root / "config.json"
     assert (not cfg.exists()) or cfg.read_bytes() == legacy_bytes
+
+
+def test_leftover_config_tmp_keeps_0600_when_cleanup_fails(tmp_path, monkeypatch):
+    """copy 成功後 atomic_move／unlink 皆失敗時，殘留 .config.tmp 必須仍是 0600。
+
+    來源刻意 0644：若誤用 copy2 會把 mode 蓋到 temp，清理失敗後永久留下 0644 設定檔。
+    """
+    from core.data_layout import DataLayoutError, bootstrap_data_layout
+
+    import core.data_layout as layout_mod
+
+    root = tmp_path / "output"
+    root.mkdir()
+    (root / "openaver.db").write_bytes(b"db")
+    legacy = tmp_path / "web" / "config.json"
+    _write_legacy_config(legacy)
+    legacy.chmod(0o644)
+    assert (legacy.stat().st_mode & 0o777) == 0o644
+    _patch_roots(monkeypatch, effective=root, default=root, legacy_config=legacy)
+
+    def failing_atomic_move(src, dest):
+        raise OSError("injected atomic_move failure")
+
+    real_unlink = Path.unlink
+
+    def failing_unlink(self, *args, **kwargs):
+        if self.name.endswith(".config.tmp"):
+            raise OSError("injected unlink failure")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(layout_mod, "atomic_move", failing_atomic_move)
+    monkeypatch.setattr(Path, "unlink", failing_unlink)
+
+    with pytest.raises(DataLayoutError, match="injected atomic_move failure"):
+        bootstrap_data_layout()
+
+    leftovers = sorted(root.glob("*.config.tmp"))
+    assert leftovers, "清理失敗時應留下 .config.tmp 供權限位元檢查"
+    for tmp in leftovers:
+        assert (tmp.stat().st_mode & 0o777) == 0o600, (
+            f"殘留 {tmp.name} mode 必須是 0o600（不得繼承來源 0644）"
+        )
 
 
 # ── mutation：incomplete marker ───────────────────────────────────────
@@ -471,6 +513,109 @@ def test_finalized_legacy_forces_0600_even_when_source_is_0644(tmp_path, monkeyp
     assert mode == 0o600
     # 來源本身不被改寫權限（copy 後再 chmod dest，不動 source）
     assert (legacy.stat().st_mode & 0o777) == 0o644
+
+
+# ── TASK-153b-T3fix2：F3／F2／F1 狀態矩陣補齊 ───────────────────────
+
+def test_finalize_from_legacy_rejects_invalid_legacy_json(tmp_path, monkeypatch):
+    """F3：legacy 不可解析 → DataLayoutError；root config／marker 皆不建立。"""
+    from core.data_layout import bootstrap_data_layout, DataLayoutError
+
+    root = tmp_path / "output"
+    legacy = tmp_path / "web" / "config.json"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text("{invalid json", encoding="utf-8")
+    _patch_roots(monkeypatch, effective=root, default=root, legacy_config=legacy)
+
+    with pytest.raises(DataLayoutError):
+        bootstrap_data_layout()
+
+    assert not (root / "config.json").exists()
+    assert not (root / ".layout.json").exists()
+
+
+def test_bootstrap_rejects_unparseable_marker_json(tmp_path, monkeypatch):
+    """F2：marker 存在但 JSON 損壞 → DataLayoutError（不得誤判成 absent）。"""
+    from core.data_layout import bootstrap_data_layout, DataLayoutError
+
+    root = tmp_path / "output"
+    root.mkdir()
+    (root / "config.json").write_text(
+        json.dumps({"scraper": {}, "search": {}, "gallery": {}}),
+        encoding="utf-8",
+    )
+    (root / ".layout.json").write_text("{not json", encoding="utf-8")
+    legacy = tmp_path / "web" / "config.json"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    _patch_roots(monkeypatch, effective=root, default=root, legacy_config=legacy)
+
+    with pytest.raises(DataLayoutError):
+        bootstrap_data_layout()
+
+
+def test_bootstrap_rejects_marker_with_unknown_version(tmp_path, monkeypatch):
+    """F2：marker version ≠ LAYOUT_VERSION → DataLayoutError。"""
+    from core.data_layout import bootstrap_data_layout, DataLayoutError
+
+    root = tmp_path / "output"
+    root.mkdir()
+    (root / "config.json").write_text(
+        json.dumps({"scraper": {}, "search": {}, "gallery": {}}),
+        encoding="utf-8",
+    )
+    (root / ".layout.json").write_text(
+        json.dumps({"version": 99, "complete": True}),
+        encoding="utf-8",
+    )
+    legacy = tmp_path / "web" / "config.json"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    _patch_roots(monkeypatch, effective=root, default=root, legacy_config=legacy)
+
+    with pytest.raises(DataLayoutError):
+        bootstrap_data_layout()
+
+
+def test_root_config_matching_legacy_resume_forces_0600_even_when_0644(tmp_path, monkeypatch):
+    """F1：hash 相同只補 marker 時，起始 0644 的 root config 必須被修成 0600。"""
+    from core.data_layout import bootstrap_data_layout
+
+    root = tmp_path / "output"
+    root.mkdir()
+    (root / "openaver.db").write_bytes(b"db")
+    legacy = tmp_path / "web" / "config.json"
+    legacy_bytes = _write_legacy_config(legacy)
+    root_config = root / "config.json"
+    root_config.write_bytes(legacy_bytes)
+    root_config.chmod(0o644)
+    assert (root_config.stat().st_mode & 0o777) == 0o644
+    _patch_roots(monkeypatch, effective=root, default=root, legacy_config=legacy)
+
+    result = bootstrap_data_layout()
+    assert result.status == "finalized_legacy"
+    assert (root_config.stat().st_mode & 0o777) == 0o600
+
+
+def test_root_config_without_legacy_resume_forces_0600_even_when_0644(tmp_path, monkeypatch):
+    """F1：legacy 不在、root config 可讀只補 marker 時，起始 0644 亦須修成 0600。"""
+    from core.data_layout import bootstrap_data_layout
+
+    root = tmp_path / "output"
+    root.mkdir()
+    root_config = root / "config.json"
+    root_config.write_text(
+        json.dumps({"scraper": {}, "search": {}, "gallery": {}}),
+        encoding="utf-8",
+    )
+    root_config.chmod(0o644)
+    assert (root_config.stat().st_mode & 0o777) == 0o644
+    legacy = tmp_path / "web" / "config.json"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    # 故意不寫 legacy 檔 → 走「legacy 不在、root config 可讀」分支
+    _patch_roots(monkeypatch, effective=root, default=root, legacy_config=legacy)
+
+    result = bootstrap_data_layout()
+    assert result.status == "finalized_legacy"
+    assert (root_config.stat().st_mode & 0o777) == 0o600
 
 
 # ── 地雷二：啟動順序（呼叫順序記錄，非行號）──────────────────────────

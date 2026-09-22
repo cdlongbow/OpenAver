@@ -11,7 +11,6 @@ import json
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
 
 from core.atomic_write import atomic_move, atomic_write, create_staging_file
 from core.config import CONFIG_DEFAULT_PATH
@@ -22,7 +21,6 @@ from core.logger import get_logger
 
 logger = get_logger(__name__)
 
-LAYOUT_VERSION = 1
 ROOT_CONFIG_NAME = "config.json"
 
 
@@ -50,19 +48,6 @@ def _legacy_config_path() -> Path:
     return data_root.get_project_root() / "web" / "config.json"
 
 
-def _read_marker(root: Path) -> Optional[dict[str, Any]]:
-    marker_path = root / LAYOUT_MARKER_NAME
-    if not marker_path.is_file():
-        return None
-    try:
-        data = json.loads(marker_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return None
-    if not isinstance(data, dict):
-        return None
-    return data
-
-
 def _config_is_readable(path: Path) -> bool:
     if not path.is_file():
         return False
@@ -74,8 +59,7 @@ def _config_is_readable(path: Path) -> bool:
 
 
 def _root_has_valid_layout(root: Path) -> bool:
-    marker = _read_marker(root)
-    if marker is None or marker.get("complete") is not True:
+    if not data_root.is_layout_finalized(root):
         return False
     return _config_is_readable(root / ROOT_CONFIG_NAME)
 
@@ -98,7 +82,9 @@ def _root_has_legacy_data(root: Path) -> bool:
 
 
 def _write_marker(root: Path) -> None:
-    payload = {"version": LAYOUT_VERSION, "complete": True}
+    # 蓋章前強制 root config 0600（所有補 marker 分支的單一收斂點）
+    (root / ROOT_CONFIG_NAME).chmod(0o600)
+    payload = {"version": data_root.LAYOUT_VERSION, "complete": True}
     marker_path = root / LAYOUT_MARKER_NAME
     with atomic_write(marker_path, mode="w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -110,7 +96,7 @@ def _install_config_from_source(source: Path, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp_config_path = create_staging_file(dest.parent, suffix=".config.tmp")
     try:
-        shutil.copy2(source, tmp_config_path)
+        shutil.copyfile(source, tmp_config_path)
         if _sha256(source) != _sha256(tmp_config_path):
             raise DataLayoutError(
                 f"config copy hash mismatch: source={source} tmp={tmp_config_path}"
@@ -133,6 +119,8 @@ def _install_default_config(dest: Path) -> None:
 
 
 def _finalize_from_legacy(root: Path, legacy: Path) -> BootstrapResult:
+    if not _config_is_readable(legacy):
+        raise DataLayoutError(f"legacy config unreadable: {legacy}")
     dest = root / ROOT_CONFIG_NAME
     root.mkdir(parents=True, exist_ok=True)
     try:
@@ -147,12 +135,12 @@ def _finalize_from_legacy(root: Path, legacy: Path) -> BootstrapResult:
 
 def _bootstrap_effective_root(root: Path) -> BootstrapResult:
     """對已通過 external-root gate 的 effective root 做定版。"""
-    marker = _read_marker(root)
+    marker_state = data_root.read_layout_marker_state(root)
     root_config = root / ROOT_CONFIG_NAME
     legacy = _legacy_config_path()
 
     # 已定版
-    if marker is not None and marker.get("complete") is True:
+    if marker_state == data_root.MARKER_STATE_VALID:
         if not _config_is_readable(root_config):
             raise DataLayoutError(
                 f"layout marker complete but root config unreadable: {root_config}"
@@ -160,7 +148,7 @@ def _bootstrap_effective_root(root: Path) -> BootstrapResult:
         return BootstrapResult(status="already_complete", root=root)
 
     # marker 存在但 incomplete／損壞 → fail-closed（不得當已定版）
-    if marker is not None:
+    if marker_state == data_root.MARKER_STATE_INVALID:
         raise DataLayoutError(
             f"incomplete or invalid layout marker at {root / LAYOUT_MARKER_NAME}"
         )
