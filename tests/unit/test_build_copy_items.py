@@ -79,3 +79,23 @@ def test_maker_mapping_is_git_tracked():
     )
     assert result.returncode == 0, result.stderr
 
+
+def test_build_py_readme_does_not_point_to_legacy_web_config():
+    """README in build.py does not point to legacy app\\web\\config.json."""
+    assert r"app\\web\\config.json" not in Path(build.__file__).read_text(encoding="utf-8")
+
+
+def test_build_py_readme_points_to_output_data_root():
+    """README in build.py points to data root app\\output\\."""
+    assert r"app\\output\\" in Path(build.__file__).read_text(encoding="utf-8")
+
+
+def test_build_copy_items_excludes_output():
+    """output directory is not packaged into Windows release ZIP."""
+    assert "output" not in {Path(item).name for item in build.COPY_ITEMS}
+
+
+def test_build_macos_copy_items_excludes_output():
+    """output directory is not packaged into macOS release bundle."""
+    assert "output" not in {Path(item).name for item in build_macos.COPY_ITEMS}
+

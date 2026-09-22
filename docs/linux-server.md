@@ -99,10 +99,10 @@ grep -m1 '__version__' core/version.py
 同網段其他裝置連進來一律拿到 `403 Forbidden`，連登入畫面都看不到。
 
 ```bash
-venv/bin/python -c "from core.config import mutate_config; mutate_config(lambda c: c.setdefault('general', {}).__setitem__('server_mode', True))"
+venv/bin/python -c "from core.data_layout import bootstrap_data_layout; bootstrap_data_layout(); from core.config import mutate_config; mutate_config(lambda c: c.setdefault('general', {}).__setitem__('server_mode', True))"
 ```
 
-這行會建立／更新 `web/config.json`。之後想關掉，把 `True` 改成 `False` 再跑一次即可。
+這行會先把資料位置定版（第一次執行會建立 `output/`；若有舊版留下的 `web/config.json` 會複製一份過去），再建立／更新 `output/config.json`（之後只認這一份）。想關掉的話，把 `True` 改成 `False` 再跑一次即可。
 
 > 🔒 **開啟之前務必看完這段。**
 >
@@ -180,12 +180,12 @@ venv/bin/pip install -r /tmp/openaver-req.txt
 
 > ℹ️ 覆蓋升級只會蓋掉同名檔案，**不會刪掉舊版留下、新版已經移除的檔案**。
 > 那些檔案沒有任何程式碼會去載入它們，放著不影響運作；真的想要一份乾乾淨淨的，
-> 就解壓到新目錄，再把舊的 `web/config.json` 與 `output/` 搬過去。
+> 就解壓到新目錄，再把舊的 `output/` 整個搬過去；如果舊目錄裡還有 `web/config.json`（還沒用新版啟動過的話，設定檔還在那裡），也一起搬到新目錄的 `web/` 底下，第一次啟動時會自動收進 `output/`。
 
 **這裡沒有「一鍵更新」按鈕。** 設定頁上那顆更新鈕只在桌面版有作用，
 從瀏覽器按它會得到 403——那是刻意的安全護欄，不是壞掉。伺服器要升級就是重跑上面這段。
 
-你的**設定與資料庫不會被動到**：`web/config.json` 和 `output/`（資料庫、封面、縮圖都在裡面）
+你的**設定與資料庫不會被動到**：`output/`（設定檔、資料庫、封面、縮圖都在裡面）
 不在原始碼壓縮檔裡，覆蓋解壓不會碰到它們。
 
 ---
@@ -351,8 +351,8 @@ OSError: [Errno 16] Device or resource busy: '/app/web/tmpXXXX.tmp' -> '/app/web
 ```
 
 症狀是**網頁直接 500**，不是「設定沒存到」這種好認的樣子。
-把整個專案目錄掛進去，`config.json` 就是目錄裡的普通檔案，這個問題不存在，
-資料庫（`output/`）也一併留在 host 上。
+把整個專案目錄掛進去，設定檔（`output/config.json`）就是目錄裡的普通檔案，這個問題不存在，
+資料庫與其他資料（同在 `output/`）也一併留在 host 上。
 
 ### 為什麼要設 HOME
 
