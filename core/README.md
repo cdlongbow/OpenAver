@@ -8,7 +8,7 @@
 **影片資訊爬蟲 Facade**
 - 負責調度各來源爬蟲模組（JavBus, JavDB, Jav321, FC2, AVSOX）。
 - 實作了多來源整合搜尋 `search_jav()`。
-- 維護片商對照表 (`maker_mapping.json`) 的載入與更新。
+- 靜態載入片商對照表 (`maker_mapping.json`) 並做名稱/前綴正規化；此表隨版本出貨，沒有 runtime 更新或學習。
 - 實際爬取邏輯已移至 `scrapers/` 子模組。
 
 ### `scrapers/` 子模組
