@@ -23,6 +23,9 @@ logger = get_logger(__name__)
 
 ROOT_CONFIG_NAME = "config.json"
 
+_bootstrap_notification_recorded = False
+_pending_bootstrap_result: BootstrapResult | None = None
+
 
 class DataLayoutError(Exception):
     """資料根 bootstrap 失敗；啟動必須中止（可見出口屬 T4）。"""
@@ -32,7 +35,7 @@ class DataLayoutError(Exception):
 class BootstrapResult:
     """bootstrap_data_layout() 的一次結果。"""
 
-    status: str  # already_complete | finalized_legacy | recovered_existing | fresh
+    status: str  # already_complete | finalized_legacy | recovered_existing | fresh | resumed
     root: Path
 
 
@@ -164,15 +167,11 @@ def _bootstrap_effective_root(root: Path) -> BootstrapResult:
             return BootstrapResult(status="finalized_legacy", root=root)
         if not _config_is_readable(root_config):
             raise DataLayoutError(f"root config exists but is unreadable: {root_config}")
-        # legacy 不在、root config 可讀 → 補 marker；若 root 原本還有其他內容則 recovered
-        only_owned = all(
-            p.name in {ROOT_CONFIG_NAME, LAYOUT_MARKER_NAME} or p.name.endswith(".tmp")
-            for p in root.iterdir()
-        ) if root.exists() else True
+        # legacy 不在、root config 已存在但無 marker → 視為上次啟動中斷重試，不掃描
+        # root 其餘內容、不當成「既有資料已保留」（153b-T4 D4：iterdir 掃描會把 fresh
+        # 裝到一半斷電的空庫誤判成既有片庫）。
         _write_marker(root)
-        if only_owned:
-            return BootstrapResult(status="finalized_legacy", root=root)
-        return BootstrapResult(status="recovered_existing", root=root)
+        return BootstrapResult(status="resumed", root=root)
 
     # 無 marker、無 root config
     root_was_empty = _root_is_empty(root)
@@ -202,6 +201,30 @@ def _bootstrap_effective_root(root: Path) -> BootstrapResult:
 
 
 def bootstrap_data_layout() -> BootstrapResult:
+    result = _bootstrap_data_layout_impl()
+    _record_first_bootstrap_result(result)
+    return result
+
+
+def _record_first_bootstrap_result(result: BootstrapResult) -> None:
+    global _bootstrap_notification_recorded, _pending_bootstrap_result
+    if _bootstrap_notification_recorded:
+        return
+    if result.status == "already_complete":
+        return
+    _bootstrap_notification_recorded = True
+    _pending_bootstrap_result = result
+
+
+def consume_pending_bootstrap_result() -> BootstrapResult | None:
+    """取出並清除本 process 第一個非 already_complete 的 bootstrap 結果，只消費一次。"""
+    global _pending_bootstrap_result
+    result = _pending_bootstrap_result
+    _pending_bootstrap_result = None
+    return result
+
+
+def _bootstrap_data_layout_impl() -> BootstrapResult:
     """入口閘：external-root gate → effective root 定版。
 
     失敗拋 DataLayoutError（或底層 I/O 例外原樣上拋）；成功回 BootstrapResult。

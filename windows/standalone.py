@@ -450,6 +450,24 @@ def _wait_for_server_or_exit(port, logger, server_thread) -> None:
         sys.exit(1)
 
 
+def _bootstrap_data_layout_or_exit(logger) -> None:
+    """資料根定版；失敗 → show_error（不傳 details）→ sys.exit(1)。
+
+    從 main() 抽出以維持 function-size ≤ 200；必須在 port／server thread／視窗之前呼叫。
+    """
+    try:
+        bootstrap_data_layout()
+    except Exception:
+        logger.error("資料根定版失敗", exc_info=True)
+        show_error(
+            "OpenAver 啟動失敗",
+            "OpenAver 啟動失敗：資料位置尚未就緒或已損毀，暫時無法開啟主畫面。詳細原因已寫入 debug.log。",
+            None,
+            logger,
+        )
+        sys.exit(1)
+
+
 def _ensure_webview2_runtime(logger) -> None:
     """Windows-only: verify WebView2 Runtime is installed; prompt + exit(0) if not.
 
@@ -541,6 +559,9 @@ def main():
     # 必須在任何 web.app import 之前設定，確保 get_common_context 能正確判斷。
     os.environ["OPENAVER_STANDALONE"] = "1"
 
+    # 1b. 資料根定版（必須在 port／server thread／視窗之前；失敗即中止啟動）
+    _bootstrap_data_layout_or_exit(logger)
+
     # 2. 尋找可用端口
     try:
         port = find_free_port(PORT, logger)
@@ -554,9 +575,6 @@ def main():
             logger
         )
         sys.exit(1)
-
-    # 2b. 資料根定版（必須在任何 web.app import／server thread 之前；失敗讓例外上拋，可見出口屬 T4）
-    bootstrap_data_layout()
 
     # 3. 在背景 thread 啟動 FastAPI
     logger.info("啟動伺服器...")

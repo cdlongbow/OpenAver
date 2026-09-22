@@ -614,8 +614,33 @@ def test_root_config_without_legacy_resume_forces_0600_even_when_0644(tmp_path, 
     _patch_roots(monkeypatch, effective=root, default=root, legacy_config=legacy)
 
     result = bootstrap_data_layout()
-    assert result.status == "finalized_legacy"
+    assert result.status == "resumed"
     assert (root_config.stat().st_mode & 0o777) == 0o600
+
+
+def test_root_config_without_legacy_and_extra_content_does_not_emit_recovered_notification(
+    tmp_path, monkeypatch,
+):
+    """D4：legacy 不在、root config 可讀且 root 另有內容 → resumed（不掃成 recovered_existing）。"""
+    from core.data_layout import bootstrap_data_layout
+
+    root = tmp_path / "output"
+    root.mkdir()
+    root_config = root / "config.json"
+    root_config.write_text(
+        json.dumps({"scraper": {}, "search": {}, "gallery": {}}),
+        encoding="utf-8",
+    )
+    # 額外內容：模擬 fresh 裝到一半（DB 已建、marker 未寫）
+    (root / "openaver.db").write_bytes(b"partial-install-db")
+    legacy = tmp_path / "web" / "config.json"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    _patch_roots(monkeypatch, effective=root, default=root, legacy_config=legacy)
+
+    result = bootstrap_data_layout()
+    assert result.status == "resumed"
+    assert result.status != "recovered_existing"
+    assert (root / ".layout.json").is_file()
 
 
 # ── 地雷二：啟動順序（呼叫順序記錄，非行號）──────────────────────────
@@ -655,7 +680,12 @@ def test_standalone_bootstrap_runs_before_server_start(monkeypatch):
 async def test_lifespan_bootstrap_runs_before_init_db(monkeypatch):
     """web.app lifespan：bootstrap 必須在 init_db() 之前。"""
     import asyncio
+    import core.data_layout as data_layout_module
     import web.app as webapp
+
+    # 清掉同 process 前面 bootstrap 測試殘留的 pending，避免誤 emit 假通知
+    monkeypatch.setattr(data_layout_module, "_bootstrap_notification_recorded", False)
+    monkeypatch.setattr(data_layout_module, "_pending_bootstrap_result", None)
 
     order: list[str] = []
 
@@ -666,8 +696,10 @@ async def test_lifespan_bootstrap_runs_before_init_db(monkeypatch):
     def fake_init_db(*a, **k):
         order.append("init_db")
 
+    emit_spy = MagicMock()
     monkeypatch.setattr(webapp, "bootstrap_data_layout", fake_bootstrap)
     monkeypatch.setattr(webapp, "init_db", fake_init_db)
+    monkeypatch.setattr(webapp, "emit_notification", emit_spy)
     monkeypatch.setattr(webapp, "start_notification_persistence", lambda: None)
     monkeypatch.setattr(webapp, "ensure_schema", lambda: None)
     monkeypatch.setattr(webapp, "load_config", lambda: {"gallery": {}, "general": {}, "search": {}})
@@ -696,3 +728,4 @@ async def test_lifespan_bootstrap_runs_before_init_db(monkeypatch):
         pass
 
     assert order[:2] == ["bootstrap", "init_db"]
+    emit_spy.assert_not_called()
