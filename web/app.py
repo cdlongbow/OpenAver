@@ -38,6 +38,7 @@ setup_logging()
 logger = get_logger(__name__)
 
 from core.config import load_config
+from core.data_layout import bootstrap_data_layout
 from core.focal import device_state
 from core.database import init_db
 from core.database import backfill_readonly_nfo_mtime
@@ -79,6 +80,8 @@ async def _startup_update_check() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── startup ───────────────────────────────────────────────
+    # 資料根定版必須在 init_db()／任何 request 之前（CD-B2）；失敗讓例外上拋，可見出口屬 T4。
+    bootstrap_data_layout()
     # init_db() 必須在任何 request 前執行：執行 DROP COLUMN migration（v0.8.7：
     # 移除 legacy clip_embedding / clip_model_id），確保 Video.from_row cls(**data)
     # 不會因 legacy schema 欄位收到未知 keyword 而 500。CD-57b-8 contract。

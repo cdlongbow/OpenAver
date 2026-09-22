@@ -20,6 +20,7 @@ WINDOWS_DIR = os.path.dirname(os.path.abspath(__file__))
 if WINDOWS_DIR not in sys.path:
     sys.path.insert(0, WINDOWS_DIR)
 
+from core.data_layout import bootstrap_data_layout
 from core.logger import setup_logging, get_logger
 import webview
 from pywebview_api import api, bind_events
@@ -553,6 +554,9 @@ def main():
             logger
         )
         sys.exit(1)
+
+    # 2b. 資料根定版（必須在任何 web.app import／server thread 之前；失敗讓例外上拋，可見出口屬 T4）
+    bootstrap_data_layout()
 
     # 3. 在背景 thread 啟動 FastAPI
     logger.info("啟動伺服器...")

@@ -1,4 +1,4 @@
-"""tests/unit/test_data_root.py — core.data_root resolver 正向鎖（TASK-153b-T1）。
+"""tests/unit/test_data_root.py — core.data_root resolver 正向鎖（TASK-153b-T1／T2）。
 
 期望值一律由本檔位置字面組出，不得呼叫被測 resolver 同源路徑推算。
 比對左邊必須讀 production 模組真正在用的值（不得自己串）。
@@ -18,7 +18,8 @@ from core.readonly_paths import resolve_output_root
 # tests/unit/test_data_root.py → parents[2] = repo root
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _EXPECTED_OUTPUT = _REPO_ROOT / "output"
-_EXPECTED_CONFIG = _REPO_ROOT / "web" / "config.json"
+# T2：CONFIG_PATH 切到 <root>/config.json；CONFIG_DEFAULT_PATH 仍為程式區 template
+_EXPECTED_CONFIG = _EXPECTED_OUTPUT / "config.json"
 _EXPECTED_CONFIG_DEFAULT = _REPO_ROOT / "web" / "config.default.json"
 _EXPECTED_DB = _EXPECTED_OUTPUT / "openaver.db"
 _EXPECTED_DB_WAL = _EXPECTED_OUTPUT / "openaver.db-wal"
@@ -64,12 +65,18 @@ def test_default_root_matches_existing_output_dir():
     assert str(lib_with_name.parent) == str(_EXPECTED_LIB)
 
 
-def test_openaver_data_dir_env_var_not_effective_in_t1(tmp_path, monkeypatch):
-    """設了 OPENAVER_DATA_DIR 仍解析到既有預設位置，且該路徑底下零建立。"""
+def test_openaver_data_dir_env_var_is_effective(tmp_path, monkeypatch):
+    """OPENAVER_DATA_DIR 生效：get_data_root() 回傳 env 路徑，且 resolver 本身零建立。
+
+    external-root gate（空 override + 本機有舊資料 → 阻斷）由
+    tests/unit/test_data_layout.py::test_external_empty_root_with_local_legacy_is_rejected 鎖住。
+    """
     env_dir = tmp_path / "never_created"
     monkeypatch.setenv("OPENAVER_DATA_DIR", str(env_dir))
 
     root = data_root_module.get_data_root()
-    assert str(root) == str(_EXPECTED_OUTPUT)
+    assert str(root) == str(env_dir)
     assert not env_dir.exists()
     assert not (env_dir / "openaver.db").exists()
+    # default root 仍可獨立取得，供 gate 比較
+    assert str(data_root_module.get_default_data_root()) == str(_EXPECTED_OUTPUT)
