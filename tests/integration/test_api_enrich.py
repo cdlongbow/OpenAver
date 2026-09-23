@@ -174,6 +174,48 @@ class TestEnrichSingleEndpoint:
         assert call_kwargs["write_extrafanart"] is True
         assert call_kwargs["overwrite_existing"] is True
 
+    def test_nfo_title_format_passed(self, client, mocker):
+        """nfo_title_format 正確從 config 轉傳給 enrich_single"""
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value={
+                "search": {"proxy_url": ""},
+                "gallery": {},
+                "scraper": {
+                    "nfo_title_format": "{num}-{title}-{actor}",
+                },
+            },
+        )
+        mock_fn = mocker.patch(
+            "web.routers.scraper.enrich_single",
+            return_value=_ok_result(),
+        )
+
+        client.post("/api/enrich-single", json={
+            "file_path": "/video/SONE-205.mp4",
+            "number": "SONE-205",
+        })
+
+        call_kwargs = mock_fn.call_args.kwargs
+        assert "nfo_title_format" in call_kwargs
+        assert call_kwargs["nfo_title_format"] == "{num}-{title}-{actor}"
+
+    def test_nfo_title_format_default_when_missing_from_config(self, client, mocker):
+        """config 缺少 nfo_title_format 時轉傳預設格式給 enrich_single"""
+        mock_fn = mocker.patch(
+            "web.routers.scraper.enrich_single",
+            return_value=_ok_result(),
+        )
+
+        client.post("/api/enrich-single", json={
+            "file_path": "/video/SONE-205.mp4",
+            "number": "SONE-205",
+        })
+
+        call_kwargs = mock_fn.call_args.kwargs
+        assert "nfo_title_format" in call_kwargs
+        assert call_kwargs["nfo_title_format"] == "[{num}]{title}"
+
     def test_error_from_enricher_propagated(self, client, mocker):
         """enricher 回傳 error → 端點也回傳 success=False"""
         mocker.patch(

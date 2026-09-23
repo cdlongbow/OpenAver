@@ -923,6 +923,54 @@ class TestWriteMovieAssets:
 
         assert captured.get('original_title') == '日本語タイトル'
 
+    def test_write_movie_assets_applies_custom_nfo_title_format(self, tmp_path):
+        """config 提供 nfo_title_format 時應轉傳給 generate_nfo"""
+        from core.readonly_assets import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        fd = _t3_format_data()
+        config = dict(_T3_BASE_CONFIG, nfo_title_format='{num}-{title}')
+        captured: dict = {}
+
+        def capture_nfo(**kwargs):
+            captured.update(kwargs)
+            return _t3_generate_nfo_side_effect(**kwargs)
+
+        with patch('core.readonly_assets.download_image', return_value=True), \
+             patch('core.readonly_assets.generate_jellyfin_images',
+                   return_value={'poster': True, 'fanart': True}), \
+             patch('core.readonly_assets.generate_nfo', side_effect=capture_nfo):
+            _write_movie_assets(
+                movie_dir, _T3_META, fd, '/src/TEST-001.mp4', config,
+                cover_strategy=_cover_strategy_for(_T3_META),
+            )
+
+        assert captured.get('nfo_title_format') == '{num}-{title}'
+
+    def test_write_movie_assets_missing_nfo_title_format_defaults_to_default(self, tmp_path):
+        """config 缺少 nfo_title_format 時應轉傳預設格式 [{num}]{title} 給 generate_nfo"""
+        from core.readonly_assets import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        fd = _t3_format_data()
+        config = dict(_T3_BASE_CONFIG)
+        captured: dict = {}
+
+        def capture_nfo(**kwargs):
+            captured.update(kwargs)
+            return _t3_generate_nfo_side_effect(**kwargs)
+
+        with patch('core.readonly_assets.download_image', return_value=True), \
+             patch('core.readonly_assets.generate_jellyfin_images',
+                   return_value={'poster': True, 'fanart': True}), \
+             patch('core.readonly_assets.generate_nfo', side_effect=capture_nfo):
+            _write_movie_assets(
+                movie_dir, _T3_META, fd, '/src/TEST-001.mp4', config,
+                cover_strategy=_cover_strategy_for(_T3_META),
+            )
+
+        assert captured.get('nfo_title_format') == '[{num}]{title}'
+
     def test_nfo_write_failure_raises(self, tmp_path):
         """generate_nfo returns False (write failed) → _write_movie_assets raises.
 

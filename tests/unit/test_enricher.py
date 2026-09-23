@@ -5463,3 +5463,87 @@ class TestEnrichSinglePreserveTitle:
         nfo_file = video_file.with_suffix(".nfo")
         root = ET.parse(nfo_file).getroot()
         assert root.findtext("title") == "[ABC-123]日文片名"
+
+
+class TestNfoTitleFormatWiring:
+    """TASK-154b-T2: enrich_single nfo_title_format 轉傳測試"""
+
+    def test_enrich_single_applies_custom_nfo_title_format(self):
+        """傳入自訂 nfo_title_format 時應轉傳給 generate_nfo"""
+        video = _make_video()
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("core.enricher.VideoRepository") as mock_repo_cls,
+            patch("core.enricher.generate_nfo") as mock_nfo,
+            patch("core.enricher.download_image", return_value=True),
+        ):
+            mock_repo = MagicMock()
+            mock_repo_cls.return_value = mock_repo
+            mock_repo.get_by_numbers.return_value = {"SONE-205": [video]}
+
+            from core.enricher import enrich_single
+            enrich_single(
+                file_path=FS_PATH,
+                number="SONE-205",
+                write_nfo=True,
+                overwrite_existing=True,
+                nfo_title_format="{num}-{title}",
+            )
+
+        assert mock_nfo.call_args is not None, "generate_nfo 應被呼叫"
+        assert mock_nfo.call_args.kwargs.get("nfo_title_format") == "{num}-{title}"
+
+    def test_enrich_single_missing_nfo_title_format_defaults_to_default(self):
+        """未傳入 nfo_title_format 時 generate_nfo 應收到預設格式 [{num}]{title}"""
+        video = _make_video()
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("core.enricher.VideoRepository") as mock_repo_cls,
+            patch("core.enricher.generate_nfo") as mock_nfo,
+            patch("core.enricher.download_image", return_value=True),
+        ):
+            mock_repo = MagicMock()
+            mock_repo_cls.return_value = mock_repo
+            mock_repo.get_by_numbers.return_value = {"SONE-205": [video]}
+
+            from core.enricher import enrich_single
+            enrich_single(
+                file_path=FS_PATH,
+                number="SONE-205",
+                write_nfo=True,
+                overwrite_existing=True,
+            )
+
+        assert mock_nfo.call_args is not None, "generate_nfo 應被呼叫"
+        assert mock_nfo.call_args.kwargs.get("nfo_title_format") == "[{num}]{title}"
+
+    def test_enrich_single_applies_custom_nfo_title_format_external_manager(self):
+        """external_manager != 'off' 分支也能正確轉傳 nfo_title_format 給 generate_nfo"""
+        video = _make_video()
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("core.enricher.VideoRepository") as mock_repo_cls,
+            patch("core.enricher.generate_nfo") as mock_nfo,
+            patch("core.enricher.download_image", return_value=True),
+            patch("core.enricher._write_cover", return_value=True),
+            patch("core.enricher._write_external_images", return_value={"poster": True, "fanart": True}),
+        ):
+            mock_repo = MagicMock()
+            mock_repo_cls.return_value = mock_repo
+            mock_repo.get_by_numbers.return_value = {"SONE-205": [video]}
+
+            from core.enricher import enrich_single
+            enrich_single(
+                file_path=FS_PATH,
+                number="SONE-205",
+                write_nfo=True,
+                overwrite_existing=True,
+                external_manager="jellyfin",
+                nfo_title_format="{num}-{title}",
+            )
+
+        assert mock_nfo.call_args is not None, "generate_nfo 應被呼叫"
+        assert mock_nfo.call_args.kwargs.get("nfo_title_format") == "{num}-{title}"

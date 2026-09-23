@@ -240,6 +240,7 @@ def _write_nfo(
     has_poster: bool = False,
     has_fanart: bool = False,
     fs_path_for_db: str = None,
+    nfo_title_format: str = '[{num}]{title}',
 ) -> bool:
     if not write_nfo:
         return False
@@ -285,6 +286,7 @@ def _write_nfo(
         external_manager=external_manager,
         has_poster=has_poster,
         has_fanart=has_fanart,
+        nfo_title_format=nfo_title_format,
     )
     return True
 
@@ -514,7 +516,7 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
     javbus_lang: Optional[str] = None,
     scraper_data: Optional[dict] = None,
     path_mappings: dict = None,
-    preserve_title: bool = False,
+    preserve_title: bool = False, nfo_title_format: str = '[{num}]{title}',
 ) -> EnrichResult:
     _empty = EnrichResult(
         success=False,
@@ -691,7 +693,7 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
                 external_manager=external_manager,
                 has_poster=imgs["poster"],
                 has_fanart=imgs["fanart"],
-                fs_path_for_db=fs_path_for_db,
+                fs_path_for_db=fs_path_for_db, nfo_title_format=nfo_title_format,
             )
         except PermissionError:
             _empty.error = "NFO 寫入失敗，請確認目錄寫入權限"
@@ -708,7 +710,7 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
                 overwrite_existing=overwrite_existing,
                 has_subtitle=has_subtitle,
                 user_tags=preserved_user_tags,
-                fs_path_for_db=fs_path_for_db,
+                fs_path_for_db=fs_path_for_db, nfo_title_format=nfo_title_format,
             )
         except PermissionError:
             _empty.error = "NFO 寫入失敗，請確認目錄寫入權限"

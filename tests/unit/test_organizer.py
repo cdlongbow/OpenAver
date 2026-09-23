@@ -6308,3 +6308,105 @@ class TestCropToPosterAbandonedDegrade:
 
     def test_abandoned_circuit_open_matches_no_face(self, tmp_path):
         self._assert_abandoned_matches_no_face(tmp_path, "circuit_open")
+
+
+class TestNfoTitleFormatWiring:
+    """TASK-154b-T2: organize_file NFO 標題接線與截斷修復測試"""
+
+    def test_organize_file_nfo_title_untruncated_but_filename_truncated(self, tmp_path):
+        """CD-154b-5: 標題超過 max_title_length(50) 時，檔名截斷但 NFO <title> 保持完整 60 字元"""
+        src = tmp_path / "ABC-123.mp4"
+        src.write_bytes(b"dummy video")
+
+        long_title = "T" * 60
+        config = {
+            "create_folder": False,
+            "filename_format": "[{num}] {title}",
+            "download_cover": False,
+            "create_nfo": True,
+            "max_title_length": 50,
+            "max_filename_length": 200,
+        }
+        metadata = {
+            "number": "ABC-123",
+            "title": long_title,
+            "actors": [],
+            "tags": [],
+            "maker": "",
+            "date": "2024-01-01",
+            "cover": "",
+            "url": "",
+        }
+
+        result = organize_file(str(src), metadata, config)
+        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
+        assert result.get("new_filename") is not None
+        assert "T" * 60 not in result["new_filename"], "檔名標題應被截斷"
+        assert "T" * 47 + "..." in result["new_filename"], "檔名應包含截斷後的 47 字元加上省略號"
+
+        assert result.get("nfo_path") is not None
+        nfo_content = Path(result["nfo_path"]).read_text(encoding="utf-8")
+        assert f"<title>[ABC-123]{long_title}</title>" in nfo_content, (
+            "NFO 中的 <title> 應包含完整未截斷的 60 字元標題"
+        )
+
+    def test_organize_file_applies_custom_nfo_title_format(self, tmp_path):
+        """自訂 nfo_title_format 應套用到產出的 NFO <title>"""
+        src = tmp_path / "ABC-123.mp4"
+        src.write_bytes(b"dummy video")
+
+        config = {
+            "create_folder": False,
+            "filename_format": "[{num}] {title}",
+            "download_cover": False,
+            "create_nfo": True,
+            "nfo_title_format": "{num}-{title}",
+        }
+        metadata = {
+            "number": "ABC-123",
+            "title": "My Title",
+            "actors": [],
+            "tags": [],
+            "maker": "",
+            "date": "2024-01-01",
+            "cover": "",
+            "url": "",
+        }
+
+        result = organize_file(str(src), metadata, config)
+        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
+        assert result.get("nfo_path") is not None
+        nfo_content = Path(result["nfo_path"]).read_text(encoding="utf-8")
+        assert "<title>ABC-123-My Title</title>" in nfo_content, (
+            "NFO 中的 <title> 應套用自訂格式 {num}-{title}"
+        )
+
+    def test_organize_file_missing_nfo_title_format_defaults_to_default(self, tmp_path):
+        """config 未提供 nfo_title_format 時應 fallback 到預設格式 [{num}]{title}"""
+        src = tmp_path / "ABC-123.mp4"
+        src.write_bytes(b"dummy video")
+
+        config = {
+            "create_folder": False,
+            "filename_format": "[{num}] {title}",
+            "download_cover": False,
+            "create_nfo": True,
+        }
+        metadata = {
+            "number": "ABC-123",
+            "title": "My Title",
+            "actors": [],
+            "tags": [],
+            "maker": "",
+            "date": "2024-01-01",
+            "cover": "",
+            "url": "",
+        }
+
+        result = organize_file(str(src), metadata, config)
+        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
+        assert result.get("nfo_path") is not None
+        nfo_content = Path(result["nfo_path"]).read_text(encoding="utf-8")
+        assert "<title>[ABC-123]My Title</title>" in nfo_content, (
+            "NFO 中的 <title> 應為預設格式 [{num}]{title}"
+        )

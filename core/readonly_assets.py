@@ -716,10 +716,10 @@ def _write_movie_assets(
         duration=meta.get('duration'),
         series=meta.get('series', ''),
         label=meta.get('label', ''),
-        summary=meta.get('_summary', ''),
-        rating=meta.get('_rating'),
+        summary=meta.get('_summary', ''), rating=meta.get('_rating'),
         external_manager=external_manager,
         user_tags=user_tags or [],
+        nfo_title_format=config.get('nfo_title_format', '[{num}]{title}'),
     )
     if not nfo_ok:
         raise RuntimeError(f"NFO write failed: {nfo_fs}")
