@@ -451,20 +451,39 @@ def _wait_for_server_or_exit(port, logger, server_thread) -> None:
 
 
 def _bootstrap_data_layout_or_exit(logger) -> None:
-    """資料根定版；失敗 → show_error（不傳 details）→ sys.exit(1)。
+    """資料根定版；失敗 → 顯示錯誤視窗 → sys.exit(1)。
 
     從 main() 抽出以維持 function-size ≤ 200；必須在 port／server thread／視窗之前呼叫。
+
+    win32 上這裡是 `show_error()` 唯一的 Windows 原生 modal 例外（Codex/CodeRabbit
+    review，153b）：D1（0.14.0／120d-T1）把 `show_error()` 本身的 Windows 平台分派
+    撤回，原因是開機自動啟動的機器啟動失敗時，沒人會按的 modal 會卡住行程、
+    且**當時**那個行程還佔著 port。這裡不適用同一個理由——本函式呼叫點在
+    `find_free_port()` 之前（見 main()），失敗時從未綁定 port；而且資料根壞掉
+    是**每次啟動都會重現**的持續性失敗，不像 port 衝突通常一次性、換個 port 或
+    重試就過。不跳窗的話使用者永遠不知道 App 為什麼打不開，直接違反
+    spec-153 §7／AC-7 的承諾。真實 Windows 打包版（embeddable Python）沒有
+    Tcl/Tk，`show_error()` 的 tkinter 分支在那裡必炸、靜默退化成只寫 log——
+    `pythonw.exe` 沒有主控台，log 沒人看得到。因此 win32 先試原生
+    `_win_message_box()`（僅靠 ctypes，打包版一定有），失敗才退回 `show_error()`
+    當保底。`show_error()` 本身與其他 5 個呼叫點刻意不動，反向守衛
+    `test_show_error_non_windows_skips_win_message_box` 必須維持綠。
     """
     try:
         bootstrap_data_layout()
     except Exception:
         logger.error("資料根定版失敗", exc_info=True)
-        show_error(
-            "OpenAver 啟動失敗",
-            "OpenAver 啟動失敗：資料位置尚未就緒或已損毀，暫時無法開啟主畫面。詳細原因已寫入 debug.log。",
-            None,
-            logger,
-        )
+        title = "OpenAver 啟動失敗"
+        message = "OpenAver 啟動失敗：資料位置尚未就緒或已損毀，暫時無法開啟主畫面。詳細原因已寫入 debug.log。"
+        shown = False
+        if sys.platform == "win32":
+            try:
+                _win_message_box(message, title, yes_no=False)
+                shown = True
+            except Exception:
+                logger.warning("原生訊息視窗顯示失敗，改用 show_error 保底", exc_info=True)
+        if not shown:
+            show_error(title, message, None, logger)
         sys.exit(1)
 
 

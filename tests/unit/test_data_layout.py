@@ -10,7 +10,7 @@ import sqlite3
 import sys
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -936,10 +936,18 @@ async def test_lifespan_bootstrap_runs_before_init_db(monkeypatch):
     monkeypatch.setattr(webapp, "backfill_readonly_nfo_mtime", lambda **k: 0)
     monkeypatch.setattr(webapp, "startup_reconnect", lambda cfg: None)
     monkeypatch.setattr(webapp, "stop_notification_persistence", lambda: None)
+    # CodeRabbit（153b PR #202）：lifespan 實際 await 的是
+    # schedule_reprobe_if_stale()（web/app.py），不是 probe_all_enabled（該名字在
+    # core/source_reachability.py 不存在）；patch 錯名字等於完全沒攔到，真的會
+    # asyncio.create_task 排一個背景 probe，讀真磁碟 config 對真實來源跑
+    # TCP／os.path.exists 探測，違反 tests/unit 全 mock 慣例。AsyncMock：
+    # web/app.py 用 `await source_reachability.schedule_reprobe_if_stale()`，
+    # 同步 Mock 會讓 await 拋 TypeError（只是被上層 broad except 吞掉，測不到
+    # 真正的排程行為）。
     monkeypatch.setattr(
         webapp.source_reachability,
-        "probe_all_enabled",
-        lambda: None,
+        "schedule_reprobe_if_stale",
+        AsyncMock(return_value=None),
         raising=False,
     )
 

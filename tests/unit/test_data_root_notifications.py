@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -51,10 +51,14 @@ def _run_lifespan_with_bootstrap(monkeypatch, fake_bootstrap, emit: Mock):
     monkeypatch.setattr(webapp, "_is_windows_desktop", Mock(return_value=False))
     monkeypatch.setattr(webapp, "_is_mac_desktop", Mock(return_value=False))
     monkeypatch.setattr(webapp, "auto_organize_loop", _noop_loop)
+    # CodeRabbit（153b PR #202）：web/app.py 用 `await
+    # source_reachability.schedule_reprobe_if_stale()`；同步 Mock() 會讓 await
+    # 對它拋 TypeError（被 lifespan 的 broad except 吞掉，靜默通過但完全沒驗到
+    # 排程行為）。AsyncMock 才是正確匹配 async 呼叫契約的替身。
     monkeypatch.setattr(
         webapp.source_reachability,
         "schedule_reprobe_if_stale",
-        Mock(return_value=None),
+        AsyncMock(return_value=None),
         raising=False,
     )
 
