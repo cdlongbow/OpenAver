@@ -159,3 +159,79 @@ class TestReadonlyTagsSurviveRescrape:
         # (c) DB original_title 為本次刮到的新值
         assert row.title == "[TEST-001]中文片名"
         assert row.original_title == "新日文原題"
+
+    def test_readonly_rescrape_preserve_title_scraped_number_mismatch_uses_new_title(
+        self, tmp_db, tmp_path, monkeypatch
+    ):
+        """Codex PR#202 P2：真實前端 confirm 流程不帶 `metadata`（見
+        web/static/js/shared/state-rescrape.js rescrapeConfirm 的 fetch body），
+        後端會獨立重新搜尋一次（core.readonly_producer.resolve_ingest_plan 的
+        rescrape 分支）——這次搜尋回傳的番號可能與既有番號不同（auto 來源可能
+        命中不同 provider／正規化結果，不受前端 numberChanged 檢查保護）。preserve_title=True
+        時仍必須偵測這個不一致並回退新標題，不可把舊標題文字配上新番號寫進
+        NFO／DB。"""
+        import xml.etree.ElementTree as ET
+
+        client, src_dir, out_dir, file_uri = setup_readonly_user_tags_env(
+            tmp_db, tmp_path, monkeypatch, with_source_nfo=False, with_output_nfo=True
+        )
+
+        fake_config = {
+            "gallery": {
+                "directories": [{"path": str(src_dir), "readonly": True, "output_path": ""}],
+                "path_mappings": {},
+            },
+            "scraper": {},
+        }
+        monkeypatch.setattr("web.routers.scraper.load_config", lambda: fake_config)
+        monkeypatch.setattr("web.routers.collection.load_config", lambda: fake_config)
+        monkeypatch.setattr(
+            "web.routers.scraper.VideoRepository",
+            lambda *a, **kw: RealRepo(tmp_db),
+        )
+        monkeypatch.setattr("core.readonly_paths.get_db_path", lambda: tmp_db)
+        monkeypatch.setattr("core.readonly_assets.download_image", lambda *a, **kw: False)
+        monkeypatch.setattr("core.database.connection.get_db_path", lambda: tmp_db)
+        monkeypatch.setattr("core.thumbnail_cache.get_db_path", lambda: tmp_db)
+
+        # 初始狀態：DB 既有列 number="TEST-001"，title="[TEST-001]中文片名"
+        repo = RealRepo(tmp_db)
+        existing = repo.get_by_path(file_uri)
+        existing.title = "[TEST-001]中文片名"
+        existing.original_title = "旧原題"
+        repo.upsert(existing)
+
+        # 獨立重新搜尋（無 metadata）回傳的番號與既有列不同（刮到另一部片）
+        monkeypatch.setattr(
+            "core.readonly_producer.search_jav",
+            lambda *a, **kw: {
+                "number": "OTHER-777",
+                "title": "刮到別部片的新標題",
+                "original_title": "新日文原題",
+            },
+        )
+
+        # 觸發重刮：preserve_title=True，不帶 metadata（鏡射前端 rescrapeConfirm 的真實請求形狀）
+        resp = client.post(
+            "/api/enrich-single",
+            json={
+                "file_path": file_uri,
+                "number": "TEST-001",
+                "readonly_action": "rescrape",
+                "mode": "refresh_full",
+                "overwrite_existing": True,
+                "preserve_title": True,
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+        row = repo.get_by_path(file_uri)
+        assert row is not None
+        output_dir_fs = Path(uri_to_local_fs_path(row.output_dir, {}))
+        nfo_files = list(output_dir_fs.glob("*.nfo"))
+        assert len(nfo_files) >= 1
+        root = ET.parse(nfo_files[0]).getroot()
+        # 番號不一致 → 不保留舊標題，NFO 用新番號＋新標題，不是「[OTHER-777][TEST-001]中文片名」
+        assert root.findtext("title") == "[OTHER-777]刮到別部片的新標題"
+        assert row.title == "刮到別部片的新標題"

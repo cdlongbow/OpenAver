@@ -8833,6 +8833,39 @@ class TestEnrichOneReadonlyEntryPoint:
         assert result.cover_written is True
         assert repo_factory.call_count == 2
 
+    def test_enrich_one_readonly_preserve_title_scraped_number_mismatch_uses_new_title(self):
+        """Codex PR#202 P2：preserve_title=True 但這次刮回的 meta['number'] 與既有番號
+        （number 參數 "ABC-001"）不同（刮到另一部片）→ 不保留 existing.title，
+        傳給 _produce_one 的 meta['title'] 是這次刮到的新標題。"""
+        from pathlib import Path
+        from core.readonly_producer import enrich_one_readonly
+
+        repo = MagicMock()
+        existing = SimpleNamespace(
+            size_bytes=123,
+            mtime=456.0,
+            cover_path="",
+            title="[ABC-001]中文片名",
+        )
+        repo.get_by_path.return_value = existing
+        repo_factory = MagicMock(return_value=repo)
+        meta = {"number": "XYZ-999", "title": "刮到別部片的新標題", "maker": "M", "cover": ""}
+
+        with patch("core.readonly_producer.resolve_ingest_plan",
+                   return_value=(meta, ("download", "http://x/new.jpg"))), \
+             patch("core.readonly_producer._produce_one",
+                   return_value=(Path("/out/XYZ-999"),
+                                 {"cover_fs": "/out/XYZ-999/XYZ-999.jpg", "sample_fs": [], "nfo_mtime": 1.0})) as mock_produce, \
+             patch("core.readonly_producer.compute_has_servable_cover", return_value=True):
+            result = enrich_one_readonly(
+                **self._base_kwargs(repo_factory, preserve_title=True)
+            )
+
+        mock_produce.assert_called_once()
+        passed_meta = mock_produce.call_args.kwargs["meta"]
+        assert passed_meta["title"] == "刮到別部片的新標題"
+        assert result.nfo_written is True
+
     def test_success_without_servable_cover(self):
         from core.readonly_producer import enrich_one_readonly
 

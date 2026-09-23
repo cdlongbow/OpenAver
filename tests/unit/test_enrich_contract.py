@@ -173,6 +173,27 @@ class TestEffectiveTitle:
         assert effective_title({}, None, False, 'ABC-123') == ''
         assert isinstance(effective_title({'title': None}, None, False, 'ABC-123'), str)
 
+    def test_preserve_true_with_scraped_number_mismatch_falls_back_to_new_title(self):
+        """Codex PR#202 P2：preserve=True 但這次刮回的 meta['number'] 與既有番號不同
+        （刮到另一部片，不受前端 numberChanged 檢查保護——唯讀 confirm 是獨立一次重新
+        搜尋，可能命中不同 provider／正規化結果）→ 不保留舊標題，回退新標題。"""
+        existing = SimpleNamespace(title='中文片名')
+        meta = {'title': '刮到別部片的新標題', 'number': 'XYZ-999'}
+        assert effective_title(meta, existing, True, 'ABC-123') == '刮到別部片的新標題'
+
+    def test_preserve_true_with_scraped_number_case_insensitive_match_preserves(self):
+        """meta['number'] 與既有番號僅大小寫不同（視為同一部片）→ 仍保留舊標題。"""
+        existing = SimpleNamespace(title='中文片名')
+        meta = {'title': '新刮到的標題', 'number': 'abc-123'}
+        assert effective_title(meta, existing, True, 'ABC-123') == '中文片名'
+
+    def test_preserve_true_without_meta_number_key_unaffected(self):
+        """非唯讀 enrich_single 的 meta 從不帶 'number' key（_scraper_to_meta 無此欄位）
+        ——比對天然跳過，既有保留行為不變。"""
+        existing = SimpleNamespace(title='中文片名')
+        meta = {'title': '新刮到的標題'}
+        assert effective_title(meta, existing, True, 'ABC-123') == '中文片名'
+
 
 # ── should_preserve_cover ────────────────────────────────────────────────────
 

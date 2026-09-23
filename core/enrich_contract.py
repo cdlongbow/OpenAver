@@ -101,7 +101,22 @@ def effective_original_title(meta, existing) -> str:
 
 
 def effective_title(meta, existing, preserve, number) -> str:
+    """preserve=True 時是否沿用 existing.title（Codex PR#202 P2 修正，154a 收尾）。
+
+    `number` 是呼叫端認定的既有番號（== existing.number，由 router 的番號守衛與前端
+    `numberChanged` 判斷保證）；`meta.get('number')` 是**這次實際刮回**的番號——唯讀
+    路徑（core/readonly_producer.py resolve_ingest_plan 的 rescrape 分支）`meta = scraper_data`
+    verbatim，是否與 `number` 一致並不受任何上游守衛保證（前端 checkbox 可見性只比對
+    「使用者輸入框」與「原片番號」，confirm 當下的重新刮取與 preview 各自獨立一次網路
+    呼叫，auto 來源可能選到不同 provider、正規化結果不同）。非唯讀 `enrich_single` 的
+    meta 從不帶 'number' key（`_scraper_to_meta` 沒有這個欄位），此處比對天然跳過，行為
+    不變。兩者不同 → 視為「刮到另一部片」（spec-154 §「番號被改掉時不出現」的後端對齊），
+    不保留舊標題，回退這次刮到的新標題——避免舊標題文字配上新番號寫進 NFO／DB。
+    """
     if not preserve:
+        return meta.get('title') or ''
+    scraped_number = meta.get('number')
+    if scraped_number and number and str(scraped_number).strip().upper() != str(number).strip().upper():
         return meta.get('title') or ''
     if existing and existing.title and _strip_num_prefixes(existing.title, number):
         return existing.title
