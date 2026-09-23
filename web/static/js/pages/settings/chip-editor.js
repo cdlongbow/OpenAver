@@ -72,6 +72,7 @@ export class ChipEditor {
   constructor(hostEl, opts = {}) {
     this.host = hostEl;
     this.whitelist = opts.whitelist || new Set();
+    this.requiredVars = opts.requiredVars || new Set();
     this.labelFor = opts.labelFor || ((name) => name);
     this.deleteAriaFor = opts.deleteAriaFor || (() => '');
     this.onChange = opts.onChange || (() => {});
@@ -170,6 +171,7 @@ export class ChipEditor {
     const target = e.key === 'Backspace' ? this._nodeBefore(r) : this._nodeAfter(r);
     if (target && target.nodeType === 1 && target.dataset && target.dataset.var) {
       e.preventDefault();
+      if (target.dataset.required === 'true') return;
       target.remove();
       this._emit();
     }
@@ -207,6 +209,11 @@ export class ChipEditor {
     const lab = document.createElement('span');
     lab.className = 'pill-name';
     lab.textContent = this.labelFor(varName);
+    c.appendChild(lab);
+    if (this.requiredVars.has(varName)) {
+      c.dataset.required = 'true';
+      return c;
+    }
     const x = document.createElement('button');
     x.className = 'chip-x';
     x.type = 'button';
@@ -214,7 +221,6 @@ export class ChipEditor {
     x.textContent = '×';
     const aria = this.deleteAriaFor(varName);
     if (aria) x.setAttribute('aria-label', aria);
-    c.appendChild(lab);
     c.appendChild(x);
     return c;
   }

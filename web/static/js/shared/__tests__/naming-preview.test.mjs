@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { stripFolderExcludedTokens, normalizeFolderLayers, buildNamingPreview } from '../naming-preview.js';
+import {
+  stripFolderExcludedTokens, normalizeFolderLayers, buildNamingPreview,
+  formatNfoTitle, buildNfoTitlePreview,
+} from '../naming-preview.js';
 
 // ── 以下 13 個 test 從 pages/settings/__tests__/chip-editor.test.mjs 搬來（CD-146a-13），
 //    僅改 import 來源，斷言與命名逐字保留 ──
@@ -104,4 +107,33 @@ test('〔i3〕空 formatVariables（fetch 失敗降級）不拋錯、folder_ok �
     });
     assert.equal(out, '女優/SSNI-618.mp4');
   });
+});
+
+// ── formatNfoTitle / buildNfoTitlePreview（TASK-154b-T4）────────────────────
+test('formatNfoTitle 對同一個變數出現兩次都要替換', () => {
+  assert.equal(
+    formatNfoTitle('{num}-{actor}-{actor}', { num: 'ABC-123', actor: '三上悠亞' }),
+    'ABC-123-三上悠亞-三上悠亞',
+  );
+});
+
+test('formatNfoTitle 空 actor 保留結尾分隔符（AC-b3）', () => {
+  assert.equal(
+    formatNfoTitle('{num}-{title}-{actor}', { num: 'ABC-123', title: '片名', actor: '' }),
+    'ABC-123-片名-',
+  );
+});
+
+test('formatNfoTitle 預設格式 [{num}]{title}（AC-b1）', () => {
+  assert.equal(
+    formatNfoTitle('[{num}]{title}', { num: 'ABC-123', title: '片名' }),
+    '[ABC-123]片名',
+  );
+});
+
+test('buildNfoTitlePreview 薄包裝呼叫 formatNfoTitle', () => {
+  assert.equal(
+    buildNfoTitlePreview('{num}-{title}', { num: 'SSNI-618', title: '絕對領域' }),
+    'SSNI-618-絕對領域',
+  );
 });

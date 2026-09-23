@@ -994,6 +994,53 @@
                             </div>
                         </div>
 
+                        <!-- NFO 標題格式（154b-T4）：膠囊編輯器 + 必備 {num}/{title} + 兩行預覽。 -->
+                        <div class="settings-form-row">
+                            <label class="row-label">{{ t('settings.scraper.nfo_title_format_label') }}</label>
+                            <div class="flex-1 flex flex-col gap-1 naming-block" x-data="{ open: false }">
+                                <div class="filename-format-row">
+                                    <div class="chip-editor-host flex-1" id="nfoTitleFormat" x-init="mountNfoTitleFormatEditor($el)" x-effect="hydrateNfoTitleFormatEditor()"></div>
+                                    <div class="variable-dropdown">
+                                        <button class="btn-variable" type="button" @click="open = !open" :aria-expanded="open">
+                                            <i class="bi bi-braces"></i> {{ t('settings.action.variable') }}
+                                        </button>
+                                        <div x-show="open" @click.outside="open = false" x-transition class="variable-menu">
+                                            <template x-for="v in namingMenuVars('nfo_title')" :key="v.name">
+                                                <span class="variable-badge" @click="insertNfoTitleFormatVar(v.name); open = false"
+                                                      x-text="v.label" :title="v.name"></span>
+                                            </template>
+                                        </div>
+                                    </div>
+                                    <div class="popover-anchor" x-data="helpPopover">
+                                        <button type="button" class="help-popover-btn"
+                                                @click="toggle()"
+                                                :aria-expanded="open"
+                                                aria-controls="nfoTitleFormatHelp"
+                                                aria-label="{{ t('settings.scraper.nfo_title_format_help_aria') }}">
+                                            <i class="bi bi-question-circle"></i>
+                                        </button>
+                                        <div id="nfoTitleFormatHelp" x-show="open" x-cloak x-transition
+                                             @click.outside="close()"
+                                             class="help-popover">
+                                            <small class="help-popover__body">
+                                                {{ t('settings.scraper.nfo_title_format_help') }}
+                                            </small>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="folder-preview naming-preview">
+                                    <div class="preview-line">
+                                        <i class="bi bi-file-earmark-play"></i>
+                                        <span class="preview-text">{{ t('settings.scraper.preview_prefix') }}: <span x-text="nfoTitleFormatPreviewText"></span></span>
+                                    </div>
+                                    <div class="preview-line preview-line-empty">
+                                        <span class="preview-empty-tag">{{ t('settings.scraper.nfo_title_format_preview_actor_missing_label') }}</span>
+                                        <span class="preview-text" x-text="nfoTitleFormatPreviewTextActorMissing"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="settings-form-row">
                             <label class="row-label">{{ t('settings.scraper.max_title_length_label') }}</label>
                             <div class="input-group-inline">

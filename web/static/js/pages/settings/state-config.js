@@ -1,5 +1,5 @@
 import { ChipEditor } from '@/settings/chip-editor.js';
-import { normalizeFolderLayers, buildNamingPreview } from '@/shared/naming-preview.js';
+import { normalizeFolderLayers, buildNamingPreview, buildNfoTitlePreview } from '@/shared/naming-preview.js';
 
 // 同時啟用來源數上限（前端鏡像；後端真理來源 core/source_config.py:MAX_ENABLED_SOURCES）
 const MAX_ENABLED_SOURCES = 10;
@@ -10,10 +10,12 @@ export function stateConfig() {
     // 與 formatVariables 才需響應（x-for + isDirty / 選單），留在 return 物件（CD-95a-9/12）。
     const naming = {
         filenameEditor: null,   // ChipEditor（檔名格式）
+        nfoTitleFormatEditor: null,  // ChipEditor（NFO 標題格式，154b-T4）
         layerEditors: {},       // { [layerId]: ChipEditor } 各資料夾層
         layerSeq: 0,            // 穩定遞增 id 計數器（禁用 index/value 當 key，CD-95a-12）
         ready: false,           // formatVariables 就緒後才 hydrate 膠囊
         filenameHydrated: false, // one-shot：filename editor 是否已完成首次 hydrate（95a-T8，防重載打斷游標）
+        nfoTitleFormatHydrated: false, // one-shot：NFO 標題格式 editor（154b-T4）
     };
     return {
         // ===== Form State =====
@@ -40,6 +42,7 @@ export function stateConfig() {
             // （後端只用前 3 層，CD-95a-7/12）。id 走 naming.layerSeq，x-for :key="layer.id"。
             folderLayerList: [],
             filenameFormat: '[{num}][{maker}] {title}',
+            nfoTitleFormat: '[{num}]{title}',
             maxTitleLength: 80,
             maxFilenameLength: 200,
             videoExtensions: '.mp4, .avi, .mkv, .wmv, .rmvb, .flv, .mov, .m4v, .ts',
@@ -211,6 +214,18 @@ export function stateConfig() {
         // 空值範例（無演員/無 suffix）：誠實呈現殘留分隔符（U-A2 / CD-95a-11）。
         get folderPreviewTextEmpty() {
             return this._previewWith({ ...this.FOLDER_PREVIEW_DATA, actor: '', actors: '', suffix: '' });
+        },
+
+        // NFO 標題格式預覽（重用 FOLDER_PREVIEW_DATA；演員缺失範例清空 actor/actors）。
+        get nfoTitleFormatPreviewText() {
+            return buildNfoTitlePreview(this.form.nfoTitleFormat, this.FOLDER_PREVIEW_DATA);
+        },
+
+        get nfoTitleFormatPreviewTextActorMissing() {
+            return buildNfoTitlePreview(
+                this.form.nfoTitleFormat,
+                { ...this.FOLDER_PREVIEW_DATA, actor: '', actors: '' },
+            );
         },
 
         // 71-T5: 縮圖快取預估空間（MB）。每張封面縮圖 ~32KB；`|| 0` 防 NaN。
@@ -629,6 +644,7 @@ export function stateConfig() {
             // 否則 one-shot 會擋住 filename editor 的重新載入）。
             this.namingConfigReady = false;
             naming.filenameHydrated = false;
+            naming.nfoTitleFormatHydrated = false;
 
             try {
                 // 命名區變數 SSOT（含 folder_ok 情境旗標）——須在設 folderLayerList（觸發層
@@ -702,6 +718,7 @@ export function stateConfig() {
                         .map(v => ({ id: naming.layerSeq++, value: v }));
 
                     this.form.filenameFormat = config.scraper.filename_format;
+                    this.form.nfoTitleFormat = config.scraper.nfo_title_format || '[{num}]{title}';
                     this.form.maxTitleLength = config.scraper.max_title_length;
                     this.form.maxFilenameLength = config.scraper.max_filename_length;
                     this.form.videoExtensions = config.scraper.video_extensions.join(', ');
@@ -931,6 +948,7 @@ export function stateConfig() {
                     folder_layers: folderLayers,
                     folder_format: folderLayers.join('/'),
                     filename_format: this.form.filenameFormat,
+                    nfo_title_format: this.form.nfoTitleFormat,
                     max_title_length: this.form.maxTitleLength,
                     max_filename_length: this.form.maxFilenameLength,
                     video_extensions: this.form.videoExtensions
@@ -1077,6 +1095,9 @@ export function stateConfig() {
                 } else if (result.reason === 'gallery_output_in_program_area') {
                     // TASK-153b-T3：輸出目錄落在程式區被擋——請使用者改選位置，非「儲存失敗」。
                     this.showToast(result.error, 'warning');
+                } else if (result.reason === 'nfo_title_format_invalid') {
+                    // TASK-154b-T4：NFO 標題格式驗證失敗——原樣顯示後端訊息（同 gallery 前例）。
+                    this.showToast(result.error, 'warning');
                 } else {
                     this.showToast(window.t('settings.toast.save_failed', { error: result.error }), 'error');
                 }
@@ -1219,11 +1240,12 @@ export function stateConfig() {
             return window.t('settings.scraper.chip_delete') + ' ' + this._labelFor(name);
         },
 
-        // 情境變數集：folder 無 {suffix}（folder_ok=false，CD-95a-6/8）；filename 全集。
+        // 情境變數集：folder 無 {suffix}（folder_ok=false，CD-95a-6/8）；
+        // nfo_title 無 {suffix}（CD-154b-10，不借用 folder_ok）；filename 全集。
         _contextVars(context) {
-            return context === 'folder'
-                ? this.formatVariables.filter(v => v.folder_ok)
-                : this.formatVariables;
+            if (context === 'folder') return this.formatVariables.filter(v => v.folder_ok);
+            if (context === 'nfo_title') return this.formatVariables.filter(v => v.name !== '{suffix}');
+            return this.formatVariables;
         },
 
         _whitelistFor(context) {
@@ -1290,6 +1312,30 @@ export function stateConfig() {
 
         insertFilenameVar(name) { naming.filenameEditor?.insertVar(name); },
         insertLayerVar(layerId, name) { naming.layerEditors[layerId]?.insertVar(name); },
+
+        // NFO 標題格式膠囊編輯器（154b-T4）：雙觸發時序鏡射 filename（CD-154b-8）。
+        hydrateNfoTitleFormatEditor() {
+            if (!this.namingConfigReady) return;
+            if (!naming.nfoTitleFormatEditor) return;
+            if (naming.nfoTitleFormatHydrated) return;
+            naming.nfoTitleFormatHydrated = true;
+            naming.nfoTitleFormatEditor.whitelist = this._whitelistFor('nfo_title');
+            naming.nfoTitleFormatEditor.load(this.form.nfoTitleFormat);
+        },
+
+        mountNfoTitleFormatEditor(hostEl) {
+            naming.nfoTitleFormatEditor = new ChipEditor(hostEl, {
+                whitelist: this._whitelistFor('nfo_title'),
+                requiredVars: new Set(['{num}', '{title}']),
+                labelFor: (n) => this._labelFor(n),
+                deleteAriaFor: (n) => this._chipDeleteAria(n),
+                onChange: () => { this.form.nfoTitleFormat = naming.nfoTitleFormatEditor.serialize(); },
+                placeholder: '[{num}]{title}',
+            });
+            this.hydrateNfoTitleFormatEditor();
+        },
+
+        insertNfoTitleFormatVar(name) { naming.nfoTitleFormatEditor?.insertVar(name); },
 
         // 動態層增減（CD-95a-3/7/12）。硬上限 3；刪層 destroy 該 editor + 移除 id 物件（keyed teardown）。
         addFolderLayer() {

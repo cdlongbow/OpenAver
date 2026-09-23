@@ -47,3 +47,25 @@ export function buildNamingPreview({ filenameFormat, createFolder, folderLayerLi
     const folder = folderPreview ? folderPreview + '/' : '';
     return folder + filenamePreview + '.mp4';
 }
+
+/**
+ * NFO 標題格式預覽代換（TASK-154b-T4 / CD-154b-11）。
+ * 扁平 tokens（key 無大括號）→ 字面代換全部出現次數。
+ * JS String.replace(str, val) 只換第一個；這裡用 split/join 換全部。
+ *
+ * @param {string} template
+ * @param {Object<string,string>} tokens
+ * @returns {string}
+ */
+export function formatNfoTitle(template, tokens) {
+    let out = String(template ?? '');
+    for (const [key, val] of Object.entries(tokens || {})) {
+        out = out.split(`{${key}}`).join(val);
+    }
+    return out;
+}
+
+/** 薄包裝：設定頁 NFO 標題預覽。 */
+export function buildNfoTitlePreview(nfoTitleFormat, tokens) {
+    return formatNfoTitle(nfoTitleFormat, tokens);
+}
