@@ -38,6 +38,7 @@ setup_logging()
 logger = get_logger(__name__)
 
 from core.config import load_config
+from core.data_layout import bootstrap_data_layout, consume_pending_bootstrap_result
 from core.focal import device_state
 from core.database import init_db
 from core.database import backfill_readonly_nfo_mtime
@@ -50,6 +51,12 @@ from core import source_reachability
 BASE_DIR = Path(__file__).parent
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
+
+# lifespan bootstrap 失敗的固定 exit code（EX_CONFIG）；避開 uvicorn 常用的 1/2/3
+LIFESPAN_BOOTSTRAP_EXIT_CODE = 78
+_LIFESPAN_BOOTSTRAP_STDERR = (
+    "OpenAver 啟動失敗：資料位置尚未就緒或已損毀，詳細原因請查看 debug.log。"
+)
 
 
 async def _startup_update_check() -> None:
@@ -79,11 +86,28 @@ async def _startup_update_check() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── startup ───────────────────────────────────────────────
+    # 資料根定版必須在 init_db()／任何 request 之前（CD-B2）；失敗走固定 stderr + os._exit。
+    try:
+        bootstrap_data_layout()
+    except Exception as e:
+        logger.error("lifespan: 資料根定版失敗: %s", e, exc_info=True)
+        # ruff T201 禁 print；行為等同 print(..., file=sys.stderr)
+        sys.stderr.write(_LIFESPAN_BOOTSTRAP_STDERR + "\n")
+        sys.stderr.flush()
+        os._exit(LIFESPAN_BOOTSTRAP_EXIT_CODE)
     # init_db() 必須在任何 request 前執行：執行 DROP COLUMN migration（v0.8.7：
     # 移除 legacy clip_embedding / clip_model_id），確保 Video.from_row cls(**data)
     # 不會因 legacy schema 欄位收到未知 keyword 而 500。CD-57b-8 contract。
     init_db()
     start_notification_persistence()
+
+    _pending = consume_pending_bootstrap_result()
+    if _pending is not None:
+        if _pending.status == "finalized_legacy":
+            emit_notification("info", "notif.data_root_finalized", message=str(_pending.root))
+        elif _pending.status == "recovered_existing":
+            emit_notification("warn", "notif.data_root_recovered", message=str(_pending.root))
+        # fresh／resumed：不 emit
 
     # TASK-114a-T2: 認證閘門的 schema 就緒動作，與 init_db() 同一段落一起跑
     # （CD-114a-3：兩者刻意不合併成同一支函式，但啟動時機一致）。idempotent

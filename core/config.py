@@ -11,21 +11,22 @@ core/config.py — 設定載入 / 儲存 / 遷移邏輯
 import json
 import shutil
 import threading
-from pathlib import Path
 from typing import Callable, Dict, Literal, Optional, List
 
 from pydantic import BaseModel, Field, field_validator
 
 from core.atomic_write import atomic_write
+from core.data_root import get_data_root, get_project_root, is_layout_finalized
 from core.logger import get_logger
+from core.path_utils import is_fs_path_under_dir
 from core.source_config import SourceConfig, get_builtin_sources, get_manual_only_sources
 from core.video_extensions import DEFAULT_VIDEO_EXTENSIONS
 
 logger = get_logger(__name__)
 
-# 設定檔路徑（相對於 project root，即此檔案所在 core/ 的上層）
-_PROJECT_ROOT = Path(__file__).parent.parent
-CONFIG_PATH = _PROJECT_ROOT / "web" / "config.json"
+# 設定檔路徑：runtime config 在資料根；default template 仍在程式區
+_PROJECT_ROOT = get_project_root()
+CONFIG_PATH = get_data_root() / "config.json"
 CONFIG_DEFAULT_PATH = _PROJECT_ROOT / "web" / "config.default.json"
 
 # 66 TASK-66b-T1（CD-66b-1）：process-wide config.json 寫入序列化鎖。
@@ -35,6 +36,10 @@ CONFIG_DEFAULT_PATH = _PROJECT_ROOT / "web" / "config.default.json"
 # asyncio.Lock 保護不到；且 plain Lock（非 RLock）—— public locked / private
 # unlocked 嚴格分層，鎖內絕不二次 acquire（mutator 契約禁呼 public API）。
 _config_write_lock = threading.Lock()
+
+
+class ConfigRootNotFinalizedError(Exception):
+    """資料根尚未定版時禁止寫入 config.json（BE-DATA-13 / TASK-153b-T3fix1）。"""
 
 
 # 外部管理器模式共用常數（organizer / enricher 引用）
@@ -178,7 +183,7 @@ class GalleryConfig(BaseModel):
             return v
         return [{"path": e} if isinstance(e, str) else e for e in v]
 
-    output_dir: str = "output"
+    output_dir: str = ""
     output_filename: str = "gallery_output.html"
     path_mappings: dict = {}
     min_size_mb: int = 0
@@ -246,15 +251,30 @@ def _load_config_unlocked() -> dict:  # noqa: C901 — config 遷移主流程；
     migration 的寫回必須走 _save_config_unlocked（同樣不取鎖），否則在已持鎖的
     critical section 內再 acquire 同一 threading.Lock → 自我死鎖（CD-66b-1）。
     """
-    # 首次啟動：從 config.default.json 初始化
+    # 首次啟動：從 config.default.json 初始化。
+    # BE-DATA-13：若 CONFIG_PATH 已落在資料根內、但 layout 尚未定版（無 .layout.json），
+    # 不得落盤——否則會生出一份與 default／legacy 都不相等的 root config，下次
+    # bootstrap 依 spec §4.2 判定衝突而永久阻斷啟動。改讀 default 進記憶體當本次設定。
+    _defer_disk_seed = False
     if not CONFIG_PATH.exists() and CONFIG_DEFAULT_PATH.exists():
-        shutil.copy2(CONFIG_DEFAULT_PATH, CONFIG_PATH)
-        CONFIG_PATH.chmod(0o600)  # CD-114c-9: copy2 保留 0644，強制 0600
-        logger.info("[Config] 首次啟動，已從 config.default.json 初始化設定")
+        if (
+            is_fs_path_under_dir(str(CONFIG_PATH), str(get_data_root()))
+            and not is_layout_finalized(get_data_root())
+        ):
+            _defer_disk_seed = True
+            logger.info("[Config] 資料根尚未定版，略過自動建檔（BE-DATA-13）")
+        else:
+            shutil.copy2(CONFIG_DEFAULT_PATH, CONFIG_PATH)
+            CONFIG_PATH.chmod(0o600)  # CD-114c-9: copy2 保留 0644，強制 0600
+            logger.info("[Config] 首次啟動，已從 config.default.json 初始化設定")
 
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-            raw_config = json.load(f)
+    if CONFIG_PATH.exists() or _defer_disk_seed:
+        if _defer_disk_seed:
+            with open(CONFIG_DEFAULT_PATH, 'r', encoding='utf-8') as f:
+                raw_config = json.load(f)
+        else:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                raw_config = json.load(f)
 
         need_save = False
 
@@ -275,6 +295,11 @@ def _load_config_unlocked() -> dict:  # noqa: C901 — config 遷移主流程；
                 # KB -> MB (四捨五入可接受)
                 g['min_size_mb'] = int(round(g.get('min_size_kb', 0) / 1024))
                 del g['min_size_kb']
+                need_save = True
+
+            # Migration: gallery.output_dir 字面 "output" → ""（僅精確相等）
+            if g.get('output_dir') == 'output':
+                g['output_dir'] = ''
                 need_save = True
 
         # Migration: gallery.directories 純字串 → DirectoryConfig 物件（feature/88）
@@ -544,7 +569,8 @@ def _load_config_unlocked() -> dict:  # noqa: C901 — config 遷移主流程；
             need_save = True
 
         # Save migrated config（已持鎖 → 用 unlocked 版避免自我死鎖）
-        if need_save:
+        # _defer_disk_seed：記憶體遷移可跑，但一個字都不准寫回資料根（BE-DATA-13）。
+        if need_save and not _defer_disk_seed:
             _save_config_unlocked(raw_config)
 
         return raw_config
@@ -566,6 +592,14 @@ def _save_config_unlocked(config: dict) -> None:
     往上傳）。本函式保留的部分：不取鎖（由 caller 持 _config_write_lock）、
     text mode + encoding='utf-8'、以及「例外一路往上拋」的失敗語意。
     """
+    if (
+        is_fs_path_under_dir(str(CONFIG_PATH), str(get_data_root()))
+        and not is_layout_finalized(get_data_root())
+    ):
+        raise ConfigRootNotFinalizedError(
+            f"資料根尚未定版，禁止寫入設定檔（BE-DATA-13）：{CONFIG_PATH}"
+        )
+
     with atomic_write(CONFIG_PATH, mode='w', encoding='utf-8') as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
 

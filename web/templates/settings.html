@@ -1232,7 +1232,7 @@
                             <label class="row-label">{{ t('settings.gallery.output_dir_label') }}</label>
                             <div class="variable-input-group">
                                 <input type="text" class="input input-bordered input-sm flex-1" id="avlistOutputDir"
-                                    x-model="form.avlistOutputDir" placeholder="output">
+                                    x-model="form.avlistOutputDir" :placeholder="resolvedGalleryOutputPath">
                                 <button class="btn btn-sm btn-outline btn-neutral" type="button"
                                     @click="selectOutputFolder()" title="{{ t('settings.gallery.select_folder_title') }}">
                                     <i class="bi bi-folder"></i>

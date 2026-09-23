@@ -369,3 +369,87 @@ def isolate_reconcile_db(tmp_path_factory, monkeypatch):
     monkeypatch.setattr("core.database.connection.get_db_path", lambda: db_path)
     monkeypatch.setattr("core.wishlist_cover_cache.get_db_path", lambda: db_path)
     return db_path
+
+
+# ============ CI 修復：session 開始前把真實預設資料根真的定版一次 ============
+#
+# 為什麼需要：CI 乾淨 checkout 沒有已定版的 `output/`（gitignored，本機早已
+# 定版所以本機看不到這個問題）。第一支用 `with TestClient(app):`（或等價）跑
+# 完整 lifespan 的測試會觸發 `web.app.lifespan` 裡的 `bootstrap_data_layout()`
+# → `core/data_layout.py::_bootstrap_effective_root()` 判定為「無 marker、無
+# root config」的全新安裝 → 落入 fresh 分支的 `init_db(root / "openaver.db")`。
+# 那一行**刻意用顯式路徑**（見該函式「fresh」分支的註解：避免 `get_db_path()`
+# 在 gate／測試 monkeypatch 情境下落到錯誤 root），所以既有測試慣例「patch
+# `core.database.connection.get_db_path`」對它無效 → 對真實 repo 的
+# `output/openaver.db` 呼叫 `sqlite3.connect` → 撞上 G1。對照 gotcha
+# BE-TEST-28（既有測試 patch 打不到內部顯式路徑，G1 才在 PR 前全套炸開）與
+# BE-DATA-13（同一子系統：資料根定版前的寫入陷阱）。本次觸發：GitHub Actions
+# run 35823861647，`tests/integration/test_api_actress_library.py::
+# TestLibraryActressesEndpoint::test_library_non_2xx_when_pairs_query_fails`。
+#
+# 本機為什麼看不到：本機 `output/` 早已定版（config.json ＋ `.layout.json`
+# 都在）⇒ `_bootstrap_effective_root()` 一開頭就落在 `already_complete`，
+# 完全不碰 DB。CI 乾淨樹的第一支「真的跑滿 lifespan」的測試踩進的其實是「無
+# marker、**無** root config」那個分支，才會掉進 fresh／`init_db()`。
+#
+# 三個被 revert 掉的做法，及為什麼不用（由簡入繁，後一個是實測發現前一個仍
+# 不夠才加碼的）：
+#   1. autouse fixture 把 `web.app.bootstrap_data_layout` 整支 stub 成
+#      no-op：需要無條件 `import web.app`（測試多半是在函式本體才
+#      `from web.app import app`，fixture setup 階段看不到那個 import，只能
+#      搶先 import）——但 `web/app.py` import 時會呼叫
+#      `core.logger.setup_logging()`，在 `test_repo_write_guard_subsession.py`
+#      的 pytester 子 session 裡（cwd＝假 repo root）會現生出一個新的
+#      `OpenAver/logs/` 目錄，撞上 G2（`test_flag_marker_combination[...]`
+#      等 7 支測試紅）。
+#   2. session 開始就全域 `os.environ["OPENAVER_DATA_DIR"]` 指到一個預先定版
+#      的 tmp 根：`get_data_root()` 全程活讀 env var，會讓
+#      `test_api_config_endpoints.py::
+#      test_default_data_root_path_rejected_when_under_program_root`（斷言
+#      「未設 OPENAVER_DATA_DIR 時，資料根逐字等於 program_root/output」）的
+#      前提失真而變紅。
+#   3.（實測仍不夠的中間版本）只幫真實預設 root 補一份 `config.json`（不寫
+#      marker），指望「不管哪一支測試第一個真的跑滿 lifespan，都會落進
+#      `_bootstrap_effective_root()` 的 resumed 分支、順手把 marker 寫掉」。
+#      **實測前提不成立**：`pytest tests/ -q --ignore=tests/smoke
+#      --ignore=tests/e2e -m "..."`（＝ check.sh 真正下的那行指令）給 `tests/`
+#      單一目錄時的收集順序，**不是**先跑完整個 `tests/integration/` 才進
+#      `tests/unit/`，而是兩邊的檔案交錯（實測 `tests/unit/
+#      test_auto_organize_scheduler.py` 排在 `tests/integration/
+#      test_api_search.py`／`test_settings_metatube.py` 之後沒錯，但改用
+#      `--collect-only` 拿到的順序去對照式重播，會跟 `pytest tests/`
+#      真正執行時的順序對不上——用**顯式檔案清單**重播出來的順序，跟直接
+#      給 `tests/` 這個目錄让 pytest 自己遞迴收集，兩者不保證一致）。也就是
+#      「總有某一支測試會先幫忙 resumed」這個前提本身就是在賭執行順序，
+#      在這台機器上賭輸：`test_auto_organize_scheduler.py` 兩支＋
+#      `test_dmm_progressive.py`／`test_help_page.py`／
+#      `test_motion_lab_router.py` 共 10 支測試撞上
+#      `ConfigRootNotFinalizedError`（BE-DATA-13 本人）。
+#
+# 前兩者的共同盲點：把「bootstrap 本身」整支繞掉，卻忽略了本專案已經有一大票
+# 測試隱性依賴「CI 這個 process 裡，總有某一支測試會真的把預設資料根定版過
+# 一次」這個全域副作用——繞掉 bootstrap 本身，順帶繞掉了那個副作用。
+# 做法 3 保留了 bootstrap 本身，但只補了一半（config 沒補 marker），仍然把
+# 「誰先跑到」交給執行順序決定。
+#
+# 收斂：**不再賭順序**，在 session 最開頭、G1 的 autouse fixture 還沒對任何
+# 一支測試生效之前（`pytest_configure` 發生在任何測試的 setup 之前，此刻
+# `sqlite3.connect` 完全未被 patch，因為 G1 是 function-scoped fixture），
+# 直接呼叫**真正的** `bootstrap_data_layout()`，把真實預設資料根一次定版到
+# 底（config.json ＋ `.layout.json` ＋ 一顆空 `openaver.db`）——本機開發環境
+# 本來就長這樣，這裡只是讓 CI 乾淨樹在任何測試看到它之前，先經歷一次「跟本機
+# 一樣的『這台機器第一次真的啟動過 App』」，之後不管哪一支測試第一個真的跑滿
+# lifespan，都會落在 `already_complete`，不再碰 DB、不再看執行順序臉色。
+# 已經定版（本機／第二次以後的 CI 執行）時這通呼叫本身就是零 I/O 的
+# already_complete 快速路徑,對「補一份 config.json」的做法零額外成本。
+# `get_data_root()`／`OPENAVER_DATA_DIR` 語意完全沒被動到，`test_data_layout.py`
+# 等直接操作 `core.data_layout`／自己 monkeypatch `data_root.get_data_root`
+# 的測試也完全不受影響（它們從不落在真實預設 root 上）；
+# `test_repo_write_guard_subsession.py` 的 pytester 子 session 複製這份
+# conftest 時，子 process 的 `get_default_data_root()` 仍解析到同一個真實
+# repo 的 `output/`——父 session 這裡已經定版過，子 session 那次呼叫一樣是
+# already_complete，不會再生出新檔案讓 G2 誤報。
+def pytest_configure(config):
+    from core.data_layout import bootstrap_data_layout
+
+    bootstrap_data_layout()

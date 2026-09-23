@@ -43,6 +43,7 @@ from core.focal import requires_face_detection
 from core.focal_trigger import maybe_submit_video_focal
 from core.organizer import generate_jellyfin_images, HEADERS as _EMBED_HEADERS
 from core.config import load_config, iter_gallery_sources, get_gallery_source_paths, STEM_IMAGE_MODES
+from core.data_root import resolve_gallery_output_path
 from core.readonly_producer import produce_source
 from web.routers.gallery_media import safe_realpath
 from core.readonly_source import is_path_readonly, readonly_source_prefixes, writable_source_prefixes
@@ -232,7 +233,7 @@ def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Genera
         gallery_config = config.get('gallery', {})
 
         directories = get_gallery_source_paths(gallery_config)
-        output_dir = gallery_config.get('output_dir', 'output')
+        output_dir = gallery_config.get('output_dir', '') or ''
         output_filename = gallery_config.get('output_filename', 'gallery_output.html')
         path_mappings = gallery_config.get('path_mappings', {})
         min_size_mb = gallery_config.get('min_size_mb', 0)
@@ -254,9 +255,8 @@ def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Genera
         _emit_notif("info", "notif.scanner_started", task_type="scanner_generate")
         logger.info(f"[Gallery] 開始生成，目錄數: {len(directories)}")
 
-        # 確保輸出目錄存在
-        project_root = Path(__file__).parent.parent.parent
-        output_path = project_root / output_dir
+        # 確保輸出目錄存在（空值 → 資料根；相對／絕對值依 resolve_gallery_output_path）
+        output_path = resolve_gallery_output_path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
         html_path = output_path / output_filename
@@ -1082,11 +1082,10 @@ def view_list():
     try:
         config = load_config()
         gallery_config = config.get('gallery', {})
-        output_dir = gallery_config.get('output_dir', 'output')
+        output_dir = gallery_config.get('output_dir', '') or ''
         output_filename = gallery_config.get('output_filename', 'gallery_output.html')
 
-        project_root = Path(__file__).parent.parent.parent
-        html_path = project_root / output_dir / output_filename
+        html_path = resolve_gallery_output_path(output_dir) / output_filename
 
         if not html_path.exists():
             return HTMLResponse(
@@ -1442,7 +1441,7 @@ def generate_from_ids(body: GenerateFromIdsRequest):
 
     config = load_config()
     gallery_config = config.get('gallery', {})
-    output_dir = gallery_config.get('output_dir', 'output')
+    output_dir = gallery_config.get('output_dir', '') or ''
     theme = config.get('general', {}).get('theme', 'light')
     proxy_url = config.get('search', {}).get('proxy_url', '')
 
@@ -1516,9 +1515,8 @@ def generate_from_ids(body: GenerateFromIdsRequest):
                 elif original:  # 有原圖但 embed 失敗
                     embed_failed_count += 1
 
-    # 確保輸出目錄存在
-    project_root = Path(__file__).parent.parent.parent
-    output_path = project_root / output_dir
+    # 確保輸出目錄存在（空值 → 資料根；相對／絕對值依 resolve_gallery_output_path）
+    output_path = resolve_gallery_output_path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')

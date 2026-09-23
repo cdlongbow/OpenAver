@@ -12,6 +12,7 @@ NFO `<genre>` 欄位空白（用戶可見）。
 DB-miss 路徑的 smart_search 呼叫必須帶入從 config['search']['proxy_url'] 讀取的值，
 否則 DMM 在有 proxy 設定時不會被啟用。
 """
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 
@@ -219,3 +220,107 @@ class TestScannerGenerateFromIdsProxyUrl:
         _, kwargs = mock_smart_search.call_args
         assert 'proxy_url' in kwargs
         assert kwargs['proxy_url'] == ''
+
+
+class TestScannerGenerateUsesResolveGalleryOutputPath:
+    """TASK-153b-T3：generate-from-ids 經 resolve_gallery_output_path 落檔。"""
+
+    def test_empty_output_dir_writes_under_data_root(self, client, monkeypatch, tmp_path):
+        """output_dir='' → 寫入 get_data_root() 之下。"""
+        from core.data_root import get_data_root
+        import hashlib
+
+        mock_repo = MagicMock()
+        mock_repo.get_by_numbers.return_value = {}
+
+        data_root = tmp_path / "data_root"
+        data_root.mkdir()
+        monkeypatch.setenv("OPENAVER_DATA_DIR", str(data_root))
+
+        # 既有檔案：產生前後 hash 不變（自訂／空值都不得搬既有檔）
+        existing = data_root / "pre_existing.html"
+        existing.write_bytes(b"<html>keep-me</html>")
+        before_hash = hashlib.sha256(existing.read_bytes()).hexdigest()
+
+        def fake_generate(all_videos, html_path, **kwargs):
+            Path(html_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(html_path).write_text("<html>generated</html>", encoding="utf-8")
+
+        mock_generator = MagicMock()
+        mock_generator.generate.side_effect = fake_generate
+
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {
+            "gallery": {"output_dir": "", "path_mappings": {}},
+            "general": {"theme": "light"},
+            "search": {"proxy_url": ""},
+        })
+
+        scraper_result = {
+            'number': 'SNIS-001',
+            'title': 'Empty Dir',
+            'date': '2026-01-01',
+            'tags': [],
+        }
+
+        with patch('web.routers.scanner.VideoRepository', return_value=mock_repo), \
+             patch('web.routers.scanner.HTMLGenerator', return_value=mock_generator), \
+             patch('web.routers.scanner.smart_search', return_value=[scraper_result]):
+            response = client.post(
+                '/api/gallery/generate-from-ids',
+                json={'numbers': ['SNIS-001']}
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body.get("success") is True
+        html_path = Path(body["html_path"])
+        assert html_path.parent == get_data_root()
+        assert html_path.exists()
+        assert hashlib.sha256(existing.read_bytes()).hexdigest() == before_hash
+
+    def test_absolute_custom_dir_unchanged_and_hash_stable(self, client, monkeypatch, tmp_path):
+        """自訂絕對路徑：寫入該處，既有 HTML hash 不變。"""
+        import hashlib
+
+        mock_repo = MagicMock()
+        mock_repo.get_by_numbers.return_value = {}
+
+        custom = tmp_path / "custom_abs"
+        custom.mkdir()
+        existing = custom / "keep.html"
+        existing.write_bytes(b"<html>stable</html>")
+        before_hash = hashlib.sha256(existing.read_bytes()).hexdigest()
+
+        def fake_generate(all_videos, html_path, **kwargs):
+            Path(html_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(html_path).write_text("<html>generated</html>", encoding="utf-8")
+
+        mock_generator = MagicMock()
+        mock_generator.generate.side_effect = fake_generate
+
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {
+            "gallery": {"output_dir": str(custom), "path_mappings": {}},
+            "general": {"theme": "light"},
+            "search": {"proxy_url": ""},
+        })
+
+        scraper_result = {
+            'number': 'SNIS-002',
+            'title': 'Abs Dir',
+            'date': '2026-01-02',
+            'tags': [],
+        }
+
+        with patch('web.routers.scanner.VideoRepository', return_value=mock_repo), \
+             patch('web.routers.scanner.HTMLGenerator', return_value=mock_generator), \
+             patch('web.routers.scanner.smart_search', return_value=[scraper_result]):
+            response = client.post(
+                '/api/gallery/generate-from-ids',
+                json={'numbers': ['SNIS-002']}
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        html_path = Path(body["html_path"])
+        assert html_path.parent == custom
+        assert hashlib.sha256(existing.read_bytes()).hexdigest() == before_hash

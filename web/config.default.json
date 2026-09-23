@@ -56,7 +56,7 @@
   },
   "gallery": {
     "directories": [],
-    "output_dir": "output",
+    "output_dir": "",
     "output_filename": "gallery_output.html",
     "path_mappings": {},
     "min_size_mb": 0,

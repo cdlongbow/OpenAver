@@ -1356,3 +1356,278 @@ def test_show_webview2_prompt_browser_open_true_logs_info(monkeypatch, caplog):
     assert result is True
     assert _OPENED_TRUE_INFO_MARK in caplog.text
     assert _WEBVIEW2_DOWNLOAD_URL in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# TASK-153b-T4: bootstrap 呼叫順序與失敗可見出口
+# ---------------------------------------------------------------------------
+
+
+def test_main_calls_bootstrap_before_port_and_thread(monkeypatch):
+    """bootstrap 必須在 find_free_port／Thread.start／create_window 之前。"""
+    import threading
+
+    order: list[str] = []
+
+    def fake_bootstrap():
+        order.append("bootstrap")
+        return types.SimpleNamespace(status="already_complete")
+
+    def fake_find_free_port(*_a, **_k):
+        order.append("port")
+        return 49152
+
+    def tracking_start(self):
+        order.append("server")
+
+    def fake_create_window(*_a, **_k):
+        order.append("window")
+        raise SystemExit(0)
+
+    monkeypatch.setattr(standalone, "bootstrap_data_layout", fake_bootstrap)
+    monkeypatch.setattr(standalone, "_ensure_webview2_runtime", lambda logger: None)
+    monkeypatch.setattr(standalone, "find_free_port", fake_find_free_port)
+    monkeypatch.setattr(standalone, "setup_logging", lambda **k: None)
+    monkeypatch.setattr(standalone, "get_logger", lambda name: types.SimpleNamespace(
+        info=lambda *a, **k: None,
+        error=lambda *a, **k: None,
+        warning=lambda *a, **k: None,
+        debug=lambda *a, **k: None,
+    ))
+    monkeypatch.setattr(threading.Thread, "start", tracking_start)
+    monkeypatch.setattr(standalone, "_wait_for_server_or_exit", lambda *a, **k: None)
+    monkeypatch.setattr(standalone.webview, "create_window", fake_create_window)
+    monkeypatch.setattr(standalone.webview, "settings", {}, raising=False)
+
+    with pytest.raises(SystemExit):
+        standalone.main()
+
+    assert order.index("bootstrap") < order.index("port")
+    assert order.index("bootstrap") < order.index("server")
+    assert "window" not in order or order.index("bootstrap") < order.index("window")
+
+
+def test_main_bootstrap_failure_shows_dialog_and_exits_without_server(monkeypatch):
+    """DataLayoutError → show_error(details=None) + sys.exit(1)；port／thread／window 零呼叫。"""
+    import threading
+    from core.data_layout import DataLayoutError
+
+    calls = {"show_error": [], "port": 0, "server": 0, "window": 0}
+
+    def boom():
+        raise DataLayoutError("fixture bootstrap failure")
+
+    def fake_show_error(title, message, details=None, logger=None):
+        calls["show_error"].append(
+            {"title": title, "message": message, "details": details}
+        )
+
+    def fake_find_free_port(*_a, **_k):
+        calls["port"] += 1
+        return 49152
+
+    def tracking_start(self):
+        calls["server"] += 1
+
+    def fake_create_window(*_a, **_k):
+        calls["window"] += 1
+        return None
+
+    monkeypatch.setattr(standalone, "bootstrap_data_layout", boom)
+    monkeypatch.setattr(standalone, "show_error", fake_show_error)
+    monkeypatch.setattr(standalone, "_ensure_webview2_runtime", lambda logger: None)
+    monkeypatch.setattr(standalone, "find_free_port", fake_find_free_port)
+    monkeypatch.setattr(standalone, "setup_logging", lambda **k: None)
+    # keep real get_logger so logger is assigned before the gate
+    monkeypatch.setattr(threading.Thread, "start", tracking_start)
+    monkeypatch.setattr(standalone.webview, "create_window", fake_create_window)
+
+    with pytest.raises(SystemExit) as ei:
+        standalone.main()
+
+    assert ei.value.code == 1
+    assert len(calls["show_error"]) == 1
+    err = calls["show_error"][0]
+    assert "OpenAver" in err["title"]
+    assert "啟動失敗" in err["title"]
+    assert "OpenAver" in err["message"]
+    assert "啟動失敗" in err["message"]
+    assert err["details"] is None
+    assert calls["port"] == 0
+    assert calls["server"] == 0
+    assert calls["window"] == 0
+
+
+def test_main_bootstrap_oserror_shows_dialog_and_exits_without_server(monkeypatch):
+    """OSError（底層 I/O）→ 同樣走 show_error + sys.exit(1)，不得漏出 traceback。"""
+    import threading
+
+    calls = {"show_error": [], "port": 0, "server": 0}
+
+    def boom():
+        raise OSError("disk full fixture")
+
+    def fake_show_error(title, message, details=None, logger=None):
+        calls["show_error"].append(
+            {"title": title, "message": message, "details": details}
+        )
+
+    def fake_find_free_port(*_a, **_k):
+        calls["port"] += 1
+        return 49152
+
+    def tracking_start(self):
+        calls["server"] += 1
+
+    monkeypatch.setattr(standalone, "bootstrap_data_layout", boom)
+    monkeypatch.setattr(standalone, "show_error", fake_show_error)
+    monkeypatch.setattr(standalone, "_ensure_webview2_runtime", lambda logger: None)
+    monkeypatch.setattr(standalone, "find_free_port", fake_find_free_port)
+    monkeypatch.setattr(standalone, "setup_logging", lambda **k: None)
+    monkeypatch.setattr(threading.Thread, "start", tracking_start)
+
+    with pytest.raises(SystemExit) as ei:
+        standalone.main()
+
+    assert ei.value.code == 1
+    assert len(calls["show_error"]) == 1
+    assert calls["show_error"][0]["details"] is None
+
+
+def test_main_bootstrap_failure_win32_uses_native_message_box_not_show_error(monkeypatch):
+    """153b CodeRabbit #5：win32＋資料根失敗 → 走 _win_message_box，show_error 零呼叫。
+
+    D1（0.14.0）撤回的是 show_error() 自己的平台分派；這裡是
+    _bootstrap_data_layout_or_exit 專屬例外（見 windows/standalone.py 該函式
+    docstring），理由是此呼叫點在 find_free_port() 之前、從未佔 port，且資料根
+    壞掉是每次啟動都重現的持續性失敗，不跳窗使用者永遠不知道為什麼打不開。
+    """
+    import threading
+    from core.data_layout import DataLayoutError
+
+    calls = {"box": [], "show_error": [], "port": 0, "server": 0, "window": 0}
+
+    def boom():
+        raise DataLayoutError("fixture bootstrap failure")
+
+    def fake_win_message_box(text, caption, *, yes_no):
+        calls["box"].append({"text": text, "caption": caption, "yes_no": yes_no})
+        return True
+
+    def fake_show_error(title, message, details=None, logger=None):
+        calls["show_error"].append(
+            {"title": title, "message": message, "details": details}
+        )
+
+    def fake_find_free_port(*_a, **_k):
+        calls["port"] += 1
+        return 49152
+
+    def tracking_start(self):
+        calls["server"] += 1
+
+    def fake_create_window(*_a, **_k):
+        calls["window"] += 1
+        return None
+
+    monkeypatch.setattr(standalone.sys, "platform", "win32")
+    monkeypatch.setattr(standalone, "bootstrap_data_layout", boom)
+    monkeypatch.setattr(standalone, "_win_message_box", fake_win_message_box)
+    monkeypatch.setattr(standalone, "show_error", fake_show_error)
+    monkeypatch.setattr(standalone, "_ensure_webview2_runtime", lambda logger: None)
+    monkeypatch.setattr(standalone, "find_free_port", fake_find_free_port)
+    monkeypatch.setattr(standalone, "setup_logging", lambda **k: None)
+    monkeypatch.setattr(threading.Thread, "start", tracking_start)
+    monkeypatch.setattr(standalone.webview, "create_window", fake_create_window)
+
+    with pytest.raises(SystemExit) as ei:
+        standalone.main()
+
+    assert ei.value.code == 1
+    assert len(calls["box"]) == 1
+    assert calls["box"][0]["yes_no"] is False
+    assert "OpenAver" in calls["box"][0]["caption"]
+    assert "啟動失敗" in calls["box"][0]["caption"]
+    assert "OpenAver" in calls["box"][0]["text"]
+    assert calls["show_error"] == []
+    assert calls["port"] == 0
+    assert calls["server"] == 0
+    assert calls["window"] == 0
+
+
+def test_main_bootstrap_failure_win32_falls_back_to_show_error_when_box_fails(monkeypatch):
+    """153b CodeRabbit #5：_win_message_box 失敗（如打包版沒有可用的 ctypes 呼叫路徑）
+    → 退回 show_error 保底，不得讓例外原樣往外炸掉整個啟動流程。
+    """
+    import threading
+    from core.data_layout import DataLayoutError
+
+    calls = {"box": [], "show_error": []}
+
+    def boom():
+        raise DataLayoutError("fixture bootstrap failure")
+
+    def failing_win_message_box(text, caption, *, yes_no):
+        calls["box"].append(1)
+        raise RuntimeError("MessageBoxW failed (fixture)")
+
+    def fake_show_error(title, message, details=None, logger=None):
+        calls["show_error"].append(
+            {"title": title, "message": message, "details": details}
+        )
+
+    monkeypatch.setattr(standalone.sys, "platform", "win32")
+    monkeypatch.setattr(standalone, "bootstrap_data_layout", boom)
+    monkeypatch.setattr(standalone, "_win_message_box", failing_win_message_box)
+    monkeypatch.setattr(standalone, "show_error", fake_show_error)
+    monkeypatch.setattr(standalone, "_ensure_webview2_runtime", lambda logger: None)
+    monkeypatch.setattr(standalone, "find_free_port", lambda *a, **k: 49152)
+    monkeypatch.setattr(standalone, "setup_logging", lambda **k: None)
+    monkeypatch.setattr(threading.Thread, "start", lambda self: None)
+
+    with pytest.raises(SystemExit) as ei:
+        standalone.main()
+
+    assert ei.value.code == 1
+    assert len(calls["box"]) == 1
+    assert len(calls["show_error"]) == 1
+    assert calls["show_error"][0]["details"] is None
+
+
+def test_main_bootstrap_failure_non_win32_uses_show_error_only(monkeypatch):
+    """153b CodeRabbit #5 反向：非 win32 維持既有行為，_win_message_box 零呼叫
+    （show_error() 本身的反向守衛見 test_show_error_non_windows_skips_win_message_box；
+    這支守的是 _bootstrap_data_layout_or_exit 這個新呼叫點不誤把平台分派往下傳）。
+    """
+    import threading
+    from core.data_layout import DataLayoutError
+
+    calls = {"box": [], "show_error": []}
+
+    def boom():
+        raise DataLayoutError("fixture bootstrap failure")
+
+    def unexpected_win_message_box(*_a, **_k):
+        calls["box"].append(1)
+        return True
+
+    def fake_show_error(title, message, details=None, logger=None):
+        calls["show_error"].append(
+            {"title": title, "message": message, "details": details}
+        )
+
+    monkeypatch.setattr(standalone.sys, "platform", "linux")
+    monkeypatch.setattr(standalone, "bootstrap_data_layout", boom)
+    monkeypatch.setattr(standalone, "_win_message_box", unexpected_win_message_box)
+    monkeypatch.setattr(standalone, "show_error", fake_show_error)
+    monkeypatch.setattr(standalone, "_ensure_webview2_runtime", lambda logger: None)
+    monkeypatch.setattr(standalone, "find_free_port", lambda *a, **k: 49152)
+    monkeypatch.setattr(standalone, "setup_logging", lambda **k: None)
+    monkeypatch.setattr(threading.Thread, "start", lambda self: None)
+
+    with pytest.raises(SystemExit) as ei:
+        standalone.main()
+
+    assert ei.value.code == 1
+    assert calls["box"] == []
+    assert len(calls["show_error"]) == 1

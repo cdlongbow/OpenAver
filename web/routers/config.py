@@ -43,7 +43,8 @@ from core.secret_fields import (
 )
 from core.database import VideoRepository, get_db_path, init_db
 from core import thumbnail_cache
-from core.path_utils import uri_to_fs_path, reverse_path_mapping, CURRENT_ENV
+from core.path_utils import uri_to_fs_path, reverse_path_mapping, CURRENT_ENV, is_fs_path_under_dir
+from core.data_root import resolve_gallery_output_path, get_project_root, get_data_root
 from core.generate_state import (
     try_begin_switch,
     end_switch,
@@ -75,8 +76,23 @@ def _reset_translate_service():
 
 @router.get("/config")
 def get_config() -> dict:
-    """取得所有設定（三個不透明憑證以遮罩形狀回傳；CD-114c-2）"""
-    return {"success": True, "data": render_config_secrets(load_config())}
+    """取得所有設定（三個不透明憑證以遮罩形狀回傳；CD-114c-2）
+
+    ``resolved`` 是 response-only 頂層欄位（與 ``data`` 同層），前端不得把它
+    寫進 ``config.gallery`` 再 PUT 回來。
+    """
+    data = render_config_secrets(load_config())
+    gallery = data.get("gallery") or {}
+    return {
+        "success": True,
+        "data": data,
+        "resolved": {
+            "gallery_output_path": str(
+                resolve_gallery_output_path(gallery.get("output_dir", "") or "")
+            ),
+            "data_root": str(get_data_root()),
+        },
+    }
 
 
 @router.put("/config")
@@ -106,6 +122,16 @@ def update_config(config: AppConfig) -> dict:
     ):
         return {"success": False, "reason": "generate_in_progress_strm_mapping",
                 "error": "掃描／產生進行中，請完成後再修改媒體伺服器播放路徑映射。"}
+    # 程式區守衛（TASK-153b-T3 / spec §5.1）：非空自訂值解析後落在 get_project_root()
+    # 之下 → 拒絕。更新時程式區會被整包換掉；要跟著資料根走請留空。
+    custom_output_dir = (config.gallery.output_dir or "").strip()
+    resolved_gallery_path = resolve_gallery_output_path(custom_output_dir)
+    if custom_output_dir and is_fs_path_under_dir(str(resolved_gallery_path), str(get_project_root())):
+        return {
+            "success": False,
+            "reason": "gallery_output_in_program_area",
+            "error": "輸出目錄不可設在程式安裝目錄內。請改選其他位置，或留空以跟隨資料根目錄。",
+        }
     save_token = object()  # 每 request 唯一身份 token（比照 generate 的 _active_tokens）
     reason = try_begin_config_save(save_token)
     if reason is not None:

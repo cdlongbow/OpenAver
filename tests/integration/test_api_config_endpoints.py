@@ -1366,3 +1366,184 @@ class TestRewriteStrmEndpoint:
         assert body["success"] is True          # 未整批中止
         assert body["rewritten"] == 1           # 壞列 skip、好列照改
         assert e_good["strm"].read_text(encoding="utf-8") == env.expected_mapped("ABC-001")
+
+
+class TestGalleryOutputDirProgramAreaGuard:
+    """TASK-153b-T3：gallery.output_dir 程式區守衛 + resolved response-only。"""
+
+    @pytest.fixture
+    def env(self, tmp_path, monkeypatch):
+        config_path = tmp_path / "config.json"
+        default_path = tmp_path / "config.default.json"
+        seed = {
+            "general": {"locale": "zh-TW", "theme": "light", "default_page": "search"},
+            "gallery": {"output_dir": "", "output_filename": "gallery_output.html"},
+            "scraper": {},
+            "search": {},
+            "source_links": {},
+            "translate": {
+                "enabled": False,
+                "provider": "ollama",
+                "batch_size": 10,
+                "ollama": {"url": "http://localhost:11434", "model": "qwen3:8b"},
+                "gemini": {"api_key": "", "model": "gemini-flash-lite-latest"},
+                "openai": {"base_url": "", "api_key": "", "model": "gpt-4o-mini",
+                           "use_custom_model": False},
+            },
+            "showcase": {},
+            "sources": [],
+            "thumbnail_cache_enabled": False,
+            "metatube": {},
+        }
+        config_path.write_text(json.dumps(seed), encoding="utf-8")
+        default_path.write_text(json.dumps(seed), encoding="utf-8")
+        monkeypatch.setattr("core.config.CONFIG_PATH", config_path)
+        monkeypatch.setattr("core.config.CONFIG_DEFAULT_PATH", default_path)
+        monkeypatch.setattr("web.routers.config._reset_translate_service", lambda: None)
+        return {"config_path": config_path, "seed": seed}
+
+    def _payload(self, seed, output_dir):
+        body = json.loads(json.dumps(seed))
+        body.setdefault("gallery", {})["output_dir"] = output_dir
+        return body
+
+    def test_relative_dot_output_rejected(self, client, env):
+        """./output → 落在程式區 → 拒絕。"""
+        resp = client.put("/api/config", json=self._payload(env["seed"], "./output"))
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is False
+        assert body["reason"] == "gallery_output_in_program_area"
+        assert isinstance(body.get("error"), str) and body["error"].strip()
+
+    def test_output_slash_rejected(self, client, env):
+        resp = client.put("/api/config", json=self._payload(env["seed"], "output/"))
+        body = resp.json()
+        assert body["success"] is False
+        assert body["reason"] == "gallery_output_in_program_area"
+        assert body.get("error")
+
+    def test_Output_capital_rejected(self, client, env):
+        """Output（大小寫不同）仍靠路徑 containment 擋下。"""
+        resp = client.put("/api/config", json=self._payload(env["seed"], "Output"))
+        body = resp.json()
+        assert body["success"] is False
+        assert body["reason"] == "gallery_output_in_program_area"
+        assert body.get("error")
+
+    def test_absolute_under_project_root_rejected(self, client, env):
+        from core.data_root import get_project_root
+        abs_under = str(get_project_root() / "output")
+        resp = client.put("/api/config", json=self._payload(env["seed"], abs_under))
+        body = resp.json()
+        assert body["success"] is False
+        assert body["reason"] == "gallery_output_in_program_area"
+        assert body.get("error")
+
+    def test_plain_relative_my_gallery_rejected(self, client, env):
+        """純相對路徑解析後仍在程式區之下 → 拒絕（主 session 覆寫 a）。"""
+        resp = client.put("/api/config", json=self._payload(env["seed"], "my_gallery"))
+        body = resp.json()
+        assert body["success"] is False
+        assert body["reason"] == "gallery_output_in_program_area"
+
+    def test_relative_outside_program_area_accepted(self, client, env):
+        """帶 ../ 跳出程式區的相對值 → 接受。"""
+        resp = client.put("/api/config", json=self._payload(env["seed"], "../openaver_gallery"))
+        body = resp.json()
+        assert body["success"] is True
+        saved = json.loads(env["config_path"].read_text(encoding="utf-8"))
+        assert saved["gallery"]["output_dir"] == "../openaver_gallery"
+
+    def test_absolute_outside_accepted(self, client, env, tmp_path):
+        outside = str(tmp_path / "external_gallery")
+        resp = client.put("/api/config", json=self._payload(env["seed"], outside))
+        body = resp.json()
+        assert body["success"] is True
+        saved = json.loads(env["config_path"].read_text(encoding="utf-8"))
+        assert saved["gallery"]["output_dir"] == outside
+
+    def test_empty_accepted(self, client, env):
+        resp = client.put("/api/config", json=self._payload(env["seed"], ""))
+        body = resp.json()
+        assert body["success"] is True
+        saved = json.loads(env["config_path"].read_text(encoding="utf-8"))
+        assert saved["gallery"]["output_dir"] == ""
+
+    def test_get_resolved_gallery_output_path_empty_follows_data_root(self, client, env):
+        from core.data_root import get_data_root
+        resp = client.get("/api/config")
+        body = resp.json()
+        assert body["success"] is True
+        assert body["data"]["gallery"]["output_dir"] == ""
+        assert "resolved" in body
+        assert body["resolved"]["gallery_output_path"] == str(get_data_root())
+        # resolved 不在 data 裡
+        assert "resolved" not in body["data"]
+        assert "gallery_output_path" not in (body["data"].get("gallery") or {})
+
+    def test_get_config_resolved_includes_stable_data_root(self, client, env, tmp_path):
+        """resolved.data_root 不隨 gallery.output_dir 目前值變動。"""
+        from core.data_root import get_data_root
+
+        outside = str(tmp_path / "custom_gallery_abs")
+        put = client.put("/api/config", json=self._payload(env["seed"], outside))
+        assert put.status_code == 200
+        assert put.json()["success"] is True
+
+        resp = client.get("/api/config")
+        body = resp.json()
+        assert body["success"] is True
+        assert body["data"]["gallery"]["output_dir"] == outside
+        assert body["resolved"]["data_root"] == str(get_data_root())
+        assert body["resolved"]["data_root"] != outside
+        assert body["resolved"]["gallery_output_path"] == outside
+
+    def test_put_config_program_area_rejection_message_omits_cleared_claim(self, client, env):
+        """程式區守衛拒絕文案不得再聲稱「更新時會被清除」。"""
+        resp = client.put("/api/config", json=self._payload(env["seed"], "./output"))
+        body = resp.json()
+        assert body["success"] is False
+        assert body["reason"] == "gallery_output_in_program_area"
+        assert "會被清除" not in body["error"]
+        assert "輸出目錄不可設在程式安裝目錄內。" in body["error"]
+
+    def test_resolved_not_in_put_payload_and_not_on_disk(self, client, env, tmp_path):
+        """GET → 原樣塞進 PUT body 含 resolved → 磁碟 config.json 不含該 key。"""
+        get_body = client.get("/api/config").json()
+        payload = get_body["data"]
+        # 模擬前端誤把頂層 resolved 塞進 payload（或把 gallery_output_path 塞進 gallery）
+        payload["resolved"] = get_body["resolved"]
+        payload.setdefault("gallery", {})["gallery_output_path"] = get_body["resolved"]["gallery_output_path"]
+        # 用程式區外絕對路徑，讓守衛通過
+        outside = str(tmp_path / "ok_gallery")
+        payload["gallery"]["output_dir"] = outside
+
+        resp = client.put("/api/config", json=payload)
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+        on_disk = json.loads(env["config_path"].read_text(encoding="utf-8"))
+        assert "resolved" not in on_disk
+        assert "gallery_output_path" not in on_disk
+        assert "gallery_output_path" not in (on_disk.get("gallery") or {})
+        assert on_disk["gallery"]["output_dir"] == outside
+
+    def test_default_data_root_path_rejected_when_under_program_root(self, client, env):
+        """未設 OPENAVER_DATA_DIR 時，逐字打資料根路徑（= program_root/output）→ 拒絕。"""
+        from core.data_root import get_data_root
+        resp = client.put("/api/config", json=self._payload(env["seed"], str(get_data_root())))
+        body = resp.json()
+        assert body["success"] is False
+        assert body["reason"] == "gallery_output_in_program_area"
+
+    def test_external_data_dir_path_accepted(self, client, env, tmp_path, monkeypatch):
+        """設了 OPENAVER_DATA_DIR 後，逐字打那個 root → 在程式區外 → 接受。"""
+        external = tmp_path / "ext_data_root"
+        external.mkdir()
+        monkeypatch.setenv("OPENAVER_DATA_DIR", str(external))
+        resp = client.put("/api/config", json=self._payload(env["seed"], str(external)))
+        body = resp.json()
+        assert body["success"] is True
+        saved = json.loads(env["config_path"].read_text(encoding="utf-8"))
+        assert saved["gallery"]["output_dir"] == str(external)

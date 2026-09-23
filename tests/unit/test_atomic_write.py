@@ -172,6 +172,38 @@ class TestAtomicWritePrimitive:
 
         assert call_order == ["fdopen_close", "os_replace"]
 
+    def test_fsync_called_before_os_replace(self, tmp_path):
+        """atomic_write(..., fsync=True) 時 os.fsync 必須在 os.replace 之前。"""
+        dest = tmp_path / "out.txt"
+        call_order = []
+        real_fsync = os.fsync
+        real_replace = os.replace
+
+        def spy_fsync(fd):
+            call_order.append("fsync")
+            return real_fsync(fd)
+
+        def spy_replace(src, dst, *args, **kwargs):
+            call_order.append("os_replace")
+            return real_replace(src, dst, *args, **kwargs)
+
+        with patch("core.atomic_write.os.fsync", side_effect=spy_fsync), \
+             patch("core.atomic_write.os.replace", side_effect=spy_replace):
+            with atomic_write(dest, mode="w", fsync=True) as f:
+                f.write("x")
+
+        assert call_order == ["fsync", "os_replace"]
+
+    def test_default_atomic_write_does_not_fsync(self, tmp_path):
+        """預設 atomic_write() 不呼叫 os.fsync（不影響其他 11 個呼叫端）。"""
+        dest = tmp_path / "out.txt"
+        with patch("core.atomic_write.os.fsync") as spy_fsync:
+            with atomic_write(dest, mode="w") as f:
+                f.write("x")
+
+        spy_fsync.assert_not_called()
+        assert dest.read_text() == "x"
+
     def test_fdopen_failure_closes_fd_and_leaves_no_temp_leftover(self, tmp_path):
         """Codex PR review P2：mkstemp 回傳的 fd 在 `os.fdopen()` 接管它之前完全
         由 `atomic_write` 擁有——若呼叫端傳了無效的 mode/encoding 組合

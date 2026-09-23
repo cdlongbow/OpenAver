@@ -658,8 +658,8 @@ If the app won't start, use OpenAver_Debug.bat:
 
 [Notes]
 - First launch may take a moment
-- Config: app\\web\\config.json
-  (Full path example: C:\\Users\\YourName\\OpenAver\\app\\web\\config.json)
+- Config & data: app\\output\\ (config.json, database, covers, thumbnails — preserved across updates)
+  (Full path example: C:\\Users\\YourName\\OpenAver\\app\\output\\)
 - Logs: %USERPROFILE%\\OpenAver\\logs\\debug.log
 
 [Report Issues]
@@ -725,8 +725,8 @@ OpenAver_Debug.bat — 調試模式，命令提示字元顯示完整日誌，同
 
 [注意事項]
 - 首次啟動可能較慢
-- 設定檔：app\\web\\config.json
-  （完整路徑範例：C:\\Users\\你的帳號\\OpenAver\\app\\web\\config.json）
+- 資料與設定：app\\output\\（設定檔、資料庫、封面、縮圖都在這裡，更新時原封不動）
+  （完整路徑範例：C:\\Users\\你的帳號\\OpenAver\\app\\output\\）
 - 記錄檔：%USERPROFILE%\\OpenAver\\logs\\debug.log
 
 [回報問題]

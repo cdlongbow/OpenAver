@@ -54,7 +54,7 @@ export function stateConfig() {
             avlistOrder: 'descending',
             avlistItemsPerPage: 90,
             avlistMinSize: 0,
-            avlistOutputDir: 'output',
+            avlistOutputDir: '',
             avlistOutputFilename: 'gallery_output.html',
             coverBadgesEnabled: false,
             coverBadgeItems: {},
@@ -67,6 +67,10 @@ export function stateConfig() {
             defaultPage: 'search',
             closeAction: 'ask'
         },
+
+        // GET /api/config 的 response-only 解析值（不入 saveConfig payload）
+        // 預設 '' 避免 :placeholder hydrate 前出現 undefined（FE-TIMING-07）
+        resolvedGalleryOutputPath: '',
 
         // ===== i18n State =====
         locale: (window.__locale || 'zh-TW'),
@@ -716,11 +720,14 @@ export function stateConfig() {
                     // 用 `||` 會把 0 吞掉變 90，導致存檔後重開 settings 顯示錯誤。
                     this.form.avlistItemsPerPage = config.gallery?.items_per_page ?? 90;
                     this.form.avlistMinSize = config.gallery?.min_size_mb || 0;
-                    this.form.avlistOutputDir = config.gallery?.output_dir || 'output';
+                    // 空字串＝跟著資料根走；用 ?? 保留合法空值，不可再用 || 'output'（FE-JS-01）
+                    this.form.avlistOutputDir = config.gallery?.output_dir ?? '';
                     this.form.avlistOutputFilename = config.gallery?.output_filename || 'gallery_output.html';
                     this.form.coverBadgesEnabled = config.gallery?.cover_badges?.enabled === true;
                     this.form.coverBadgeItems = { ...(config.gallery?.cover_badges?.items || {}) };
                     this.form.showTableList = config.gallery?.show_table_list === true;
+                    // response-only：後端解析出的實際輸出路徑，供 placeholder 顯示
+                    this.resolvedGalleryOutputPath = result.resolved?.data_root || '';
 
                     // Showcase
                     this.form.viewerPlayer = config.showcase?.player || '';
@@ -980,7 +987,8 @@ export function stateConfig() {
                     default_order: this.form.avlistOrder,
                     items_per_page: this.form.avlistItemsPerPage,
                     min_size_mb: this.form.avlistMinSize || 0,
-                    output_dir: this.form.avlistOutputDir.trim() || 'output',
+                    // 空字串原樣送出（跟著資料根走）；不可再用 || 'output'（FE-JS-01）
+                    output_dir: this.form.avlistOutputDir.trim(),
                     output_filename: this.form.avlistOutputFilename.trim() || 'gallery_output.html',
                     show_table_list: this.form.showTableList,
                     cover_badges: {
@@ -1065,6 +1073,9 @@ export function stateConfig() {
                 } else if (result.reason === 'generate_in_progress_strm_mapping') {
                     // PR #93 五審三次 P2：掃描/產生進行中改到 strm 播放映射被後端擋下。
                     // 直接顯示後端訊息（非「儲存失敗」誤導前綴）——這是「稍後再試」而非錯誤。
+                    this.showToast(result.error, 'warning');
+                } else if (result.reason === 'gallery_output_in_program_area') {
+                    // TASK-153b-T3：輸出目錄落在程式區被擋——請使用者改選位置，非「儲存失敗」。
                     this.showToast(result.error, 'warning');
                 } else {
                     this.showToast(window.t('settings.toast.save_failed', { error: result.error }), 'error');

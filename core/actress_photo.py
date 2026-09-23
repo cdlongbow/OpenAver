@@ -12,14 +12,15 @@ from urllib.parse import urlparse
 from collections import OrderedDict
 
 from core.atomic_write import atomic_write
+from core.data_root import get_data_root
 from core.image_host_policy import download_hosts_for
 from core.logger import get_logger
 from core.organizer import sanitize_filename
 
 logger = get_logger(__name__)
 
-# 照片存放目錄
-GFRIENDS_DIR: Path = Path(__file__).parent.parent / "output" / "Gfriends"
+# 照片存放目錄（import 時由 resolver 導出一次；可被 monkeypatch 覆寫）
+GFRIENDS_DIR: Path = get_data_root() / "Gfriends"
 
 # HTTP 請求基本 headers
 _HEADERS = {
