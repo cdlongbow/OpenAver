@@ -863,6 +863,7 @@ def generate_nfo(
     rating: Optional[float] = None,
     mpaa: str = 'JP-18+',
     external_manager: str = 'off',
+    nfo_title_format: str = '[{num}]{title}',
 ) -> bool:
     """
     生成 NFO 檔案
@@ -921,7 +922,10 @@ def generate_nfo(
     # 顯示標題（belt-and-suspenders：剝除前置番號前綴後組 display_title，B2 FIX B CD-c7）
     _t = title or original_title
     _t = _strip_num_prefixes(_t, number) if _t else _t
-    display_title = f"[{number}]{_t}" if _t else f"[{number}]"
+    from core.nfo_title_format import format_nfo_title  # 延遲：反向模組層 import 會循環
+    display_title = format_nfo_title(nfo_title_format, {
+        'number': number, 'title': _t, 'actors': actors, 'maker': maker, 'date': date,
+    })
 
     poster_suffix = '-poster' if has_poster else ''
     fanart_suffix = '-fanart' if has_fanart else ''
@@ -1013,12 +1017,21 @@ def generate_nfo(
     else:
         external_block = ''
 
+    title_record_block = ''
+    if nfo_title_format != '[{num}]{title}':
+        title_record_block = (
+            f'  <openaver_title_record>\n'
+            f'    <written>{html.escape(display_title)}</written>\n'
+            f'    <body>{html.escape(_t)}</body>\n'
+            f'  </openaver_title_record>\n'
+        )
+
     nfo_content += f'''  <num>{html.escape(number)}</num>
   <release>{html.escape(date)}</release>
   <cover></cover>
   <website>{html.escape(url)}</website>
 {external_block}  <uniqueid type="home" default="true">{html.escape(number)}</uniqueid>
-</movie>'''
+{title_record_block}</movie>'''
 
     try:
         with open(output_path, 'w', encoding='utf-8') as f:

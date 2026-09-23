@@ -17,6 +17,7 @@ from core.nfo_read import (
     nfo_runtime_minutes,
     nfo_series_name,
     nfo_text,
+    nfo_title_record,
 )
 
 
@@ -205,3 +206,56 @@ class TestNfoRuntimeMinutes:
     def test_tag_missing_returns_none(self):
         root = _root("<movie></movie>")
         assert nfo_runtime_minutes(root) is None
+
+
+# ── nfo_title_record ─────────────────────────────────────────────────────
+
+class TestNfoTitleRecord:
+    def test_both_present_returns_tuple(self):
+        root = _root(
+            "<movie><openaver_title_record>"
+            "<written>ABC-123-片名-演員</written>"
+            "<body>片名</body>"
+            "</openaver_title_record></movie>"
+        )
+        assert nfo_title_record(root) == ("ABC-123-片名-演員", "片名")
+
+    def test_missing_record_returns_none(self):
+        root = _root("<movie><title>X</title></movie>")
+        assert nfo_title_record(root) is None
+
+    def test_empty_written_returns_none(self):
+        root = _root(
+            "<movie><openaver_title_record>"
+            "<written></written>"
+            "<body>片名</body>"
+            "</openaver_title_record></movie>"
+        )
+        assert nfo_title_record(root) is None
+
+    def test_empty_body_returns_none(self):
+        root = _root(
+            "<movie><openaver_title_record>"
+            "<written>ABC-123-片名</written>"
+            "<body></body>"
+            "</openaver_title_record></movie>"
+        )
+        assert nfo_title_record(root) is None
+
+    def test_whitespace_only_returns_none(self):
+        root = _root(
+            "<movie><openaver_title_record>"
+            "<written>   </written>"
+            "<body>片名</body>"
+            "</openaver_title_record></movie>"
+        )
+        assert nfo_title_record(root) is None
+
+    def test_strips_whitespace(self):
+        root = _root(
+            "<movie><openaver_title_record>"
+            "<written>  written-val  </written>"
+            "<body>  body-val  </body>"
+            "</openaver_title_record></movie>"
+        )
+        assert nfo_title_record(root) == ("written-val", "body-val")

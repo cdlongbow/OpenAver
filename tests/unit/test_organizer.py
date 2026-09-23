@@ -2361,6 +2361,80 @@ class TestGenerateNfoAdditional:
         assert "<name>女優B</name>" in content
 
 
+class TestGenerateNfoTitleFormat:
+    """generate_nfo() nfo_title_format 參數與記錄行（TASK-154b-T1）。"""
+
+    def test_generate_nfo_default_format_no_title_record(self, tmp_path):
+        """預設格式整份 NFO 不含 <openaver_title_record>（AC-b1）。"""
+        nfo_path = tmp_path / "ABC-123.nfo"
+        result = generate_nfo(
+            number="ABC-123",
+            title="片名",
+            actors=["三上悠亜"],
+            output_path=str(nfo_path),
+            nfo_title_format="[{num}]{title}",
+        )
+        assert result is True
+        content = nfo_path.read_text(encoding="utf-8")
+        assert "<title>[ABC-123]片名</title>" in content
+        assert "openaver_title_record" not in content
+
+    def test_generate_nfo_default_format_omitted_param_no_title_record(self, tmp_path):
+        """省略參數等同預設：無記錄行、標題與舊行為相同。"""
+        nfo_path = tmp_path / "ABC-123.nfo"
+        result = generate_nfo(
+            number="ABC-123",
+            title="片名",
+            actors=["三上悠亜"],
+            output_path=str(nfo_path),
+        )
+        assert result is True
+        content = nfo_path.read_text(encoding="utf-8")
+        assert "<title>[ABC-123]片名</title>" in content
+        assert "openaver_title_record" not in content
+
+    def test_generate_nfo_custom_format_writes_title_and_record(self, tmp_path):
+        """自訂格式寫出新 <title> 與記錄行 <written>/<body>。"""
+        nfo_path = tmp_path / "ABC-123.nfo"
+        result = generate_nfo(
+            number="ABC-123",
+            title="片名",
+            actors=["三上悠亜"],
+            output_path=str(nfo_path),
+            nfo_title_format="{num}-{title}-{actor}",
+        )
+        assert result is True
+        content = nfo_path.read_text(encoding="utf-8")
+        assert "<title>ABC-123-片名-三上悠亜</title>" in content
+        root = ET.fromstring(content)
+        record = root.find("openaver_title_record")
+        assert record is not None
+        assert record.find("written").text == "ABC-123-片名-三上悠亜"
+        assert record.find("body").text == "片名"
+
+    def test_generate_nfo_belt_and_suspenders_not_reversed_by_title_format(self, tmp_path):
+        """寫出端只剝開頭番號，不反推格式；記錄行 <body> 精確等於剝完值。
+
+        邊界條件第 5 條：title 本身帶番號與演員字面時，
+        _strip_num_prefixes 只剝開頭 → body='片名-三上悠亜'；
+        display_title 疊一次演員段（接受的既有落差）。
+        """
+        nfo_path = tmp_path / "ABC-123.nfo"
+        result = generate_nfo(
+            number="ABC-123",
+            title="ABC-123-片名-三上悠亜",
+            actors=["三上悠亜"],
+            output_path=str(nfo_path),
+            nfo_title_format="{num}-{title}-{actor}",
+        )
+        assert result is True
+        content = nfo_path.read_text(encoding="utf-8")
+        root = ET.fromstring(content)
+        body = root.find("openaver_title_record/body").text
+        assert body == "片名-三上悠亜"
+        assert "<title>ABC-123-片名-三上悠亜-三上悠亜</title>" in content
+
+
 class TestGenerateNfoRatingLine:
     """generate_nfo() rating_line 型別防護（TASK-147c-T2）"""
 
@@ -2439,8 +2513,6 @@ class TestGenerateNfoNoUnescapedInterpolation:
     # 綁次數之後，任何**新的一次出現**都會讓對帳不符而轉紅，作者必須回來說明它安全在哪。
     # 次數只在增刪插值時才變動，不隨行號漂移。
     ALLOWED_UNESCAPED = {
-        "_t": (1, "組 display_title 的中間值；使用時才 html.escape(display_title)"),
-        "number": (2, 'display_title 的三元式兩個分支各一次（f"[{number}]{_t}" if _t else f"[{number}]"）；都是中間值，使用時才 html.escape(display_title)'),
         "poster_suffix": (1, "字面常數 '-poster' / ''"),
         "fanart_suffix": (1, "字面常數 '-fanart' / ''"),
         "rating * 2": (1, "有 isinstance 數值守衛 ＋ :.1f 格式 → 只可能是數字"),
@@ -2453,6 +2525,7 @@ class TestGenerateNfoNoUnescapedInterpolation:
         "fanart_tag": (2, "預組 XML 片段（<thumb> 與 <fanart> 各一），內容已 html.escape(basename)"),
         "rating_line": (1, "預組 XML 片段，內容是數字格式化結果"),
         "external_block": (1, "預組 XML 片段，內容組裝時已 html.escape"),
+        "title_record_block": (1, "預組 XML 片段，內容組裝時已 html.escape(display_title)／html.escape(_t)"),
         "e": (1, "logger.error 的例外訊息，不進 XML"),
     }
 
