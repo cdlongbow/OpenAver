@@ -4703,6 +4703,44 @@ class TestT4bNfoToMetaPreviewKeys:
         ]
 
 
+class TestNfoToMetaTitleResolution:
+    """TASK-154b-T3：_nfo_to_meta 改用 resolve_title_body() 解析標題本體。"""
+
+    def test_nfo_to_meta_applies_custom_nfo_title_format(self):
+        """AC-b7：認得其他工具用自訂格式產生的 NFO → 讀出片名本體。"""
+        from core.enricher import _nfo_to_meta
+
+        root = ET.fromstring(
+            "<movie>"
+            "<title>ABC-123-片名-三上悠亜</title>"
+            "<actor><name>三上悠亜</name></actor>"
+            "</movie>"
+        )
+        meta = _nfo_to_meta(
+            root, number='ABC-123', nfo_title_format='{num}-{title}-{actor}'
+        )
+        assert meta['title'] == '片名'
+
+    def test_nfo_to_meta_respects_external_title_edit(self):
+        """AC-b11：記錄行存在但 <title> 被外部改過 → 以外部改過的內容為準。"""
+        from core.enricher import _nfo_to_meta
+
+        root = ET.fromstring(
+            "<movie>"
+            "<title>外部改過的片名</title>"
+            "<actor><name>三上悠亜</name></actor>"
+            "<openaver_title_record>"
+            "<written>ABC-123-片名-三上悠亜</written>"
+            "<body>片名</body>"
+            "</openaver_title_record>"
+            "</movie>"
+        )
+        meta = _nfo_to_meta(
+            root, number='ABC-123', nfo_title_format='{num}-{title}-{actor}'
+        )
+        assert meta['title'] == '外部改過的片名'
+
+
 # ============ TASK-126-T4b review MAJOR-1：fetch_samples_only 這條下載路徑 ============
 #
 # spec §3.2 末條要求「**每條下載路徑**都要有 caller 層級的驗證」，不是「四個入口函式」。

@@ -51,9 +51,10 @@ from core.nfo_read import (
     nfo_runtime_minutes,
     nfo_series_name,
     nfo_text,
+    nfo_title_record,
 )
+from core.nfo_title_format import resolve_title_body
 from core.nfo_updater import parse_nfo
-from core.organizer import _strip_num_prefixes
 from core.path_utils import (
     is_fs_path_under_dir,
     is_path_under_dir,
@@ -274,7 +275,11 @@ def _upsert_db(
 # directly without adding a new resource-lifecycle concern.
 # ---------------------------------------------------------------------------
 
-def _nfo_to_producer_meta(root: ET.Element, fallback_number: str) -> dict:
+def _nfo_to_producer_meta(
+    root: ET.Element,
+    fallback_number: str,
+    nfo_title_format: str = '[{num}]{title}',
+) -> dict:
     """Reverse-map a parsed NFO `<movie>` root into producer-meta shape (CD-104-3b).
 
     Tag-extraction resilience (multi-tag date fallback, genre/tag merge-with-
@@ -315,7 +320,6 @@ def _nfo_to_producer_meta(root: ET.Element, fallback_number: str) -> dict:
     number = nfo_first_text(root, ('num', 'id', 'uniqueid')) or fallback_number or ''
 
     raw_title = nfo_text(root, 'title')
-    title = _strip_num_prefixes(raw_title, number) if raw_title else raw_title
     original_title = nfo_text(root, 'originaltitle')
 
     actors = nfo_actor_names(root)
@@ -323,6 +327,8 @@ def _nfo_to_producer_meta(root: ET.Element, fallback_number: str) -> dict:
     tags = nfo_merged_tags(root)
 
     date = nfo_first_text(root, ('release', 'premiered', 'year'))
+
+    maker = nfo_first_text(root, ('maker', 'studio'))
 
     series = nfo_series_name(root)
 
@@ -338,6 +344,9 @@ def _nfo_to_producer_meta(root: ET.Element, fallback_number: str) -> dict:
         except ValueError:
             rating_val = None
 
+    record = nfo_title_record(root)
+    title = resolve_title_body(raw_title, number, actors, maker, date, nfo_title_format, record) if raw_title else raw_title
+
     return {
         'number': number,
         'title': title,
@@ -345,7 +354,7 @@ def _nfo_to_producer_meta(root: ET.Element, fallback_number: str) -> dict:
         'actors': actors,
         'tags': tags,
         'date': date,
-        'maker': nfo_first_text(root, ('maker', 'studio')),
+        'maker': maker,
         'director': nfo_text(root, 'director'),
         'series': series,
         'label': nfo_text(root, 'label'),
@@ -455,7 +464,7 @@ def resolve_ingest_plan(
 
     if action == 'ingest':
         if valid_nfo:
-            meta = _nfo_to_producer_meta(root, fallback_number=number)
+            meta = _nfo_to_producer_meta(root, fallback_number=number, nfo_title_format=config.get('nfo_title_format', '[{num}]{title}'))
             # Codex PR#113 one-pass alignment (2026-07-21): _nfo_to_producer_meta
             # carries no 'source' key at all — the readonly endpoints derive
             # EnrichResult.source_used from meta.get('source', ''), so an NFO-

@@ -30,8 +30,10 @@ from core.nfo_read import (
     nfo_runtime_minutes,
     nfo_series_name,
     nfo_text,
+    nfo_title_record,
 )
 from core.nfo_stat import NFO_MTIME_FILL_MISSING, NFO_MTIME_REFRESH, nfo_mtime_or_none
+from core.nfo_title_format import resolve_title_body
 from core.nfo_updater import parse_nfo
 from core.organizer import crop_to_poster, download_image, find_subtitle_files, generate_nfo, _strip_num_prefixes
 from core.path_utils import to_file_uri, uri_to_fs_path, uri_to_local_fs_path
@@ -60,17 +62,27 @@ def _reraise_nfo_stat_error(e: OSError) -> None:
 # 保持全庫既有 `from core.enricher import EnrichResult` 匯入零改動（feature/105）。
 
 
-def _nfo_to_meta(root: ET.Element) -> dict:
+def _nfo_to_meta(
+    root: ET.Element,
+    number: str = '',
+    nfo_title_format: str = '[{num}]{title}',
+) -> dict:
+    actresses = nfo_actor_names(root)
+    maker = nfo_first_text(root, ("maker", "studio"))
+    release_date = nfo_first_text(root, ("release", "premiered", "year"))
+    raw_title = nfo_text(root, "title")
+    record = nfo_title_record(root)
+    title = resolve_title_body(raw_title, number, actresses, maker, release_date, nfo_title_format, record)
     return {
-        "title": nfo_text(root, "title"),
+        "title": title,
         "original_title": nfo_text(root, "originaltitle"),
-        "actresses": nfo_actor_names(root),
-        "maker": nfo_first_text(root, ("maker", "studio")),
+        "actresses": actresses,
+        "maker": maker,
         "director": nfo_text(root, "director"),
         "series": nfo_series_name(root),
         "label": nfo_text(root, "label"),
         "tags": nfo_merged_tags(root),
-        "release_date": nfo_first_text(root, ("release", "premiered", "year")),
+        "release_date": release_date,
         "duration": nfo_runtime_minutes(root),
         "cover_url": "",
         # CD-126-2：preview_* 是 metatube 取回路徑的暫態。本地 NFO 沒有代理可言，
@@ -591,7 +603,7 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
             if nfo_p.exists():
                 _, root = parse_nfo(str(nfo_p))
                 if root is not None:
-                    meta = _nfo_to_meta(root)
+                    meta = _nfo_to_meta(root, number, nfo_title_format)
                     source_used = "nfo"
 
         # CD-145a-15：判定 title 是不是掃描時塞進來的佔位值（判定式本體見

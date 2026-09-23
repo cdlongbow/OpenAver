@@ -7771,6 +7771,40 @@ class TestNfoToProducerMeta:
         meta = _nfo_to_producer_meta(root, fallback_number='')
         assert meta['title'] == 'Plain Title'
 
+    def test_nfo_to_producer_meta_applies_custom_nfo_title_format(self):
+        """AC-b7：認得其他工具用自訂格式產生的 NFO → 讀出片名本體。"""
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root(
+            '<movie>'
+            '<title>ABC-123-片名-三上悠亜</title>'
+            '<actor><name>三上悠亜</name></actor>'
+            '</movie>'
+        )
+        meta = _nfo_to_producer_meta(
+            root, fallback_number='ABC-123', nfo_title_format='{num}-{title}-{actor}'
+        )
+        assert meta['title'] == '片名'
+
+    def test_nfo_to_producer_meta_respects_external_title_edit(self):
+        """AC-b11：記錄行存在但 <title> 被外部改過 → 以外部改過的內容為準。"""
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root(
+            '<movie>'
+            '<title>外部改過的片名</title>'
+            '<actor><name>三上悠亜</name></actor>'
+            '<openaver_title_record>'
+            '<written>ABC-123-片名-三上悠亜</written>'
+            '<body>片名</body>'
+            '</openaver_title_record>'
+            '</movie>'
+        )
+        meta = _nfo_to_producer_meta(
+            root, fallback_number='ABC-123', nfo_title_format='{num}-{title}-{actor}'
+        )
+        assert meta['title'] == '外部改過的片名'
+
     def test_rating_divided_by_two(self):
         """Round-trip edge #2: <rating> is raw×2 — the adapter must divide back."""
         from core.readonly_producer import _nfo_to_producer_meta

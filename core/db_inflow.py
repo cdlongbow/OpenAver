@@ -68,7 +68,7 @@ def try_inflow_upsert(
             return "not_linked"
 
         # 步驟 2：掃描影片資訊（傳 path_mappings → canonical path 與 Scanner 一致）
-        scanner = VideoScanner(path_mappings=path_mappings)
+        scanner = VideoScanner(path_mappings=path_mappings, nfo_title_format=config.get('scraper', {}).get('nfo_title_format', '[{num}]{title}'))
         video_info = scanner.scan_file(target_file_path)
 
         if not video_info:
