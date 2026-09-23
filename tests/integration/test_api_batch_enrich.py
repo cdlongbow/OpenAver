@@ -107,6 +107,56 @@ class TestBatchEnrich:
         assert events[2]["summary"]["success"] == 1
         assert events[2]["summary"]["failed"] == 0
 
+    def test_batch_enrich_passes_nfo_title_format_to_enrich_single(self, client, mocker):
+        """batch_enrich 端點將 nfo_title_format 轉傳給 enrich_single"""
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value={
+                "search": {"proxy_url": ""},
+                "gallery": {},
+                "scraper": {
+                    "nfo_title_format": "{num}-{title}-{actor}",
+                },
+            },
+        )
+        captured_calls = []
+
+        def fake_enrich(**kwargs):
+            captured_calls.append(kwargs)
+            return _ok_result()
+
+        mocker.patch("web.routers.scraper.enrich_single", side_effect=fake_enrich)
+
+        response = client.post("/api/batch-enrich", json={
+            "items": [{"file_path": "/video/IPZ-154.mp4", "number": "IPZ-154"}],
+            "mode": "refresh_full",
+        })
+
+        assert response.status_code == 200
+        assert len(captured_calls) == 1
+        assert "nfo_title_format" in captured_calls[0]
+        assert captured_calls[0]["nfo_title_format"] == "{num}-{title}-{actor}"
+
+    def test_batch_enrich_passes_default_nfo_title_format_when_missing(self, client, mocker):
+        """config 缺少 nfo_title_format 時 batch_enrich 轉傳預設格式給 enrich_single"""
+        captured_calls = []
+
+        def fake_enrich(**kwargs):
+            captured_calls.append(kwargs)
+            return _ok_result()
+
+        mocker.patch("web.routers.scraper.enrich_single", side_effect=fake_enrich)
+
+        response = client.post("/api/batch-enrich", json={
+            "items": [{"file_path": "/video/IPZ-154.mp4", "number": "IPZ-154"}],
+            "mode": "refresh_full",
+        })
+
+        assert response.status_code == 200
+        assert len(captured_calls) == 1
+        assert "nfo_title_format" in captured_calls[0]
+        assert captured_calls[0]["nfo_title_format"] == "[{num}]{title}"
+
     def test_batch_done_summary_counts(self, client, mocker):
         """2 筆，1 成功 1 失敗：done.summary.success/failed 正確計數"""
         mocker.patch(

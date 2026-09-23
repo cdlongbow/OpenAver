@@ -17,6 +17,7 @@ from core.enrich_contract import (
     EnrichResult,
     compute_has_servable_cover,
     effective_original_title,
+    effective_title,
     enrich_success,
     should_preserve_cover,
 )
@@ -29,8 +30,10 @@ from core.nfo_read import (
     nfo_runtime_minutes,
     nfo_series_name,
     nfo_text,
+    nfo_title_record,
 )
 from core.nfo_stat import NFO_MTIME_FILL_MISSING, NFO_MTIME_REFRESH, nfo_mtime_or_none
+from core.nfo_title_format import resolve_preserved_title_for_write, resolve_title_body
 from core.nfo_updater import parse_nfo
 from core.organizer import crop_to_poster, download_image, find_subtitle_files, generate_nfo, _strip_num_prefixes
 from core.path_utils import to_file_uri, uri_to_fs_path, uri_to_local_fs_path
@@ -59,17 +62,27 @@ def _reraise_nfo_stat_error(e: OSError) -> None:
 # 保持全庫既有 `from core.enricher import EnrichResult` 匯入零改動（feature/105）。
 
 
-def _nfo_to_meta(root: ET.Element) -> dict:
+def _nfo_to_meta(
+    root: ET.Element,
+    number: str = '',
+    nfo_title_format: str = '[{num}]{title}',
+) -> dict:
+    actresses = nfo_actor_names(root)
+    maker = nfo_first_text(root, ("maker", "studio"))
+    release_date = nfo_first_text(root, ("release", "premiered", "year"))
+    raw_title = nfo_text(root, "title")
+    record = nfo_title_record(root)
+    title = resolve_title_body(raw_title, number, actresses, maker, release_date, nfo_title_format, record)
     return {
-        "title": nfo_text(root, "title"),
+        "title": title,
         "original_title": nfo_text(root, "originaltitle"),
-        "actresses": nfo_actor_names(root),
-        "maker": nfo_first_text(root, ("maker", "studio")),
+        "actresses": actresses,
+        "maker": maker,
         "director": nfo_text(root, "director"),
         "series": nfo_series_name(root),
         "label": nfo_text(root, "label"),
         "tags": nfo_merged_tags(root),
-        "release_date": nfo_first_text(root, ("release", "premiered", "year")),
+        "release_date": release_date,
         "duration": nfo_runtime_minutes(root),
         "cover_url": "",
         # CD-126-2：preview_* 是 metatube 取回路徑的暫態。本地 NFO 沒有代理可言，
@@ -239,6 +252,7 @@ def _write_nfo(
     has_poster: bool = False,
     has_fanart: bool = False,
     fs_path_for_db: str = None,
+    nfo_title_format: str = '[{num}]{title}',
 ) -> bool:
     if not write_nfo:
         return False
@@ -284,6 +298,7 @@ def _write_nfo(
         external_manager=external_manager,
         has_poster=has_poster,
         has_fanart=has_fanart,
+        nfo_title_format=nfo_title_format,
     )
     return True
 
@@ -499,6 +514,25 @@ def _is_filename_placeholder_title(title: str, number: str, fs_path: str) -> boo
     )
 
 
+def _preserved_body_override_from_sidecar(fs_path, existing, preserve_title, nfo_title_format):
+    """CD-154b-12：從來源檔旁 NFO 算出 preserved_body_override；失敗一律 None。"""
+    if not preserve_title:
+        return None
+    try:
+        nfo_p = Path(fs_path).with_suffix(".nfo")
+        if nfo_p.exists():
+            _, root = parse_nfo(str(nfo_p))
+            if root is not None:
+                disk_title = nfo_text(root, "title")
+                record = nfo_title_record(root)
+                return resolve_preserved_title_for_write(
+                    disk_title, existing, nfo_title_format, record)
+    except Exception as e:
+        logger.warning("保留標題：讀取舊 NFO 失敗，照原樣保留 (%s): %s", fs_path, e)
+        return None
+    return None
+
+
 def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes go via _db_upsert → repo.upsert and via repo.update_tags_if_changed — both already invalidate)
     file_path: str,
     number: str,
@@ -513,6 +547,7 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
     javbus_lang: Optional[str] = None,
     scraper_data: Optional[dict] = None,
     path_mappings: dict = None,
+    preserve_title: bool = False, nfo_title_format: str = '[{num}]{title}',
 ) -> EnrichResult:
     _empty = EnrichResult(
         success=False,
@@ -587,7 +622,7 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
             if nfo_p.exists():
                 _, root = parse_nfo(str(nfo_p))
                 if root is not None:
-                    meta = _nfo_to_meta(root)
+                    meta = _nfo_to_meta(root, number, nfo_title_format)
                     source_used = "nfo"
 
         # CD-145a-15：判定 title 是不是掃描時塞進來的佔位值（判定式本體見
@@ -652,6 +687,7 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
     # same preserved value. A refresh_full re-scrape returning an empty original_title
     # must NOT clobber the existing DB/NFO value (mirrors user_tags/cover preserve).
     meta['original_title'] = effective_original_title(meta, existing_record)
+    meta['title'] = effective_title(meta, existing_record, preserve_title, number, preserved_body_override=_preserved_body_override_from_sidecar(fs_path, existing_record, preserve_title, nfo_title_format))
 
     cover_url = meta.get("cover_url", "")
 
@@ -688,7 +724,7 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
                 external_manager=external_manager,
                 has_poster=imgs["poster"],
                 has_fanart=imgs["fanart"],
-                fs_path_for_db=fs_path_for_db,
+                fs_path_for_db=fs_path_for_db, nfo_title_format=nfo_title_format,
             )
         except PermissionError:
             _empty.error = "NFO 寫入失敗，請確認目錄寫入權限"
@@ -705,7 +741,7 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
                 overwrite_existing=overwrite_existing,
                 has_subtitle=has_subtitle,
                 user_tags=preserved_user_tags,
-                fs_path_for_db=fs_path_for_db,
+                fs_path_for_db=fs_path_for_db, nfo_title_format=nfo_title_format,
             )
         except PermissionError:
             _empty.error = "NFO 寫入失敗，請確認目錄寫入權限"

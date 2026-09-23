@@ -4542,12 +4542,12 @@ const RULES = [
     pattern: 'components/help-popover.js',
     note: '[131b-T4] 少這一行，設定頁與掃描頁 8 個 ? 按鈕全部點不出東西——x-data="helpPopover" 找不到定義，Alpine 只會在 console 抱怨，畫面上就是「按了沒反應」',
   },
-  // 8 個掛載點逐一鎖住（既有 :1175-1179 的 help-popover / help-popover-btn 是 min，
+  // 9 個掛載點逐一鎖住（既有 :1175-1179 的 help-popover / help-popover-btn 是 min，
   // 拆掉其中一顆仍會過；count 讓「少一顆」直接紅）。131b branch review P3。
   {
     file: 'web/templates/settings.html', kind: 'structure-count',
-    pattern: 'x-data="helpPopover"', count: 8,
-    note: '[131b-T4] settings 的 8 個 ? 說明浮層各自掛一份 helpPopover——少一顆＝那顆點下去沒反應（console ReferenceError，畫面無事發生）。133b-T1 新增第 7 顆（顯示表格與清單）時同步 +1；152c-T9 新增第 8 顆（人臉自動對焦狀態）時同步 +1',
+    pattern: 'x-data="helpPopover"', count: 9,
+    note: '[131b-T4] settings 的 9 個 ? 說明浮層各自掛一份 helpPopover——少一顆＝那顆點下去沒反應（console ReferenceError，畫面無事發生）。133b-T1 新增第 7 顆（顯示表格與清單）時同步 +1；152c-T9 新增第 8 顆（人臉自動對焦狀態）時同步 +1；154b-T4 新增 NFO 標題格式說明浮層 +1',
   },
   {
     file: 'web/templates/scanner.html', kind: 'structure-count',

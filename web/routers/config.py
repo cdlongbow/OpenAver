@@ -34,6 +34,7 @@ from core.config import (
     reset_config_file,
     iter_gallery_sources,
 )
+from core.nfo_title_format import validate_nfo_title_format
 from core.focal import device_state
 from core.secret_fields import (
     SECRET_FIELDS,
@@ -132,6 +133,9 @@ def update_config(config: AppConfig) -> dict:
             "reason": "gallery_output_in_program_area",
             "error": "輸出目錄不可設在程式安裝目錄內。請改選其他位置，或留空以跟隨資料根目錄。",
         }
+    title_fmt_error = validate_nfo_title_format(config.scraper.nfo_title_format)
+    if title_fmt_error:
+        return {"success": False, "reason": "nfo_title_format_invalid", "error": title_fmt_error}
     save_token = object()  # 每 request 唯一身份 token（比照 generate 的 _active_tokens）
     reason = try_begin_config_save(save_token)
     if reason is not None:

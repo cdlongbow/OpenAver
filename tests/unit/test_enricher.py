@@ -4703,6 +4703,44 @@ class TestT4bNfoToMetaPreviewKeys:
         ]
 
 
+class TestNfoToMetaTitleResolution:
+    """TASK-154b-T3：_nfo_to_meta 改用 resolve_title_body() 解析標題本體。"""
+
+    def test_nfo_to_meta_applies_custom_nfo_title_format(self):
+        """AC-b7：認得其他工具用自訂格式產生的 NFO → 讀出片名本體。"""
+        from core.enricher import _nfo_to_meta
+
+        root = ET.fromstring(
+            "<movie>"
+            "<title>ABC-123-片名-三上悠亜</title>"
+            "<actor><name>三上悠亜</name></actor>"
+            "</movie>"
+        )
+        meta = _nfo_to_meta(
+            root, number='ABC-123', nfo_title_format='{num}-{title}-{actor}'
+        )
+        assert meta['title'] == '片名'
+
+    def test_nfo_to_meta_respects_external_title_edit(self):
+        """AC-b11：記錄行存在但 <title> 被外部改過 → 以外部改過的內容為準。"""
+        from core.enricher import _nfo_to_meta
+
+        root = ET.fromstring(
+            "<movie>"
+            "<title>外部改過的片名</title>"
+            "<actor><name>三上悠亜</name></actor>"
+            "<openaver_title_record>"
+            "<written>ABC-123-片名-三上悠亜</written>"
+            "<body>片名</body>"
+            "</openaver_title_record>"
+            "</movie>"
+        )
+        meta = _nfo_to_meta(
+            root, number='ABC-123', nfo_title_format='{num}-{title}-{actor}'
+        )
+        assert meta['title'] == '外部改過的片名'
+
+
 # ============ TASK-126-T4b review MAJOR-1：fetch_samples_only 這條下載路徑 ============
 #
 # spec §3.2 末條要求「**每條下載路徑**都要有 caller 層級的驗證」，不是「四個入口函式」。
@@ -5342,3 +5380,525 @@ class TestIsFilenamePlaceholderTitle:
         from core.enricher import _is_filename_placeholder_title
         fs_path = f"/video/{stem}.mp4"
         assert _is_filename_placeholder_title(title, "SONE-205", fs_path) is expected
+
+
+# ── TASK-154a-T1: enrich_single preserve_title ───────────────────────────────
+
+class TestEnrichSinglePreserveTitle:
+    """TASK-154a-T1: 非唯讀 enrich_single preserve_title=True 時保留既有標題。"""
+
+    def _scraper_data(self, number="ABC-123"):
+        return {
+            "number": number,
+            "title": "日文片名",
+            "original_title": "新原題",
+            "actors": ["女優A"],
+            "cover": "",
+            "date": "2024-01-01",
+            "maker": "SOD",
+            "director": "監督",
+            "series": "シリーズ",
+            "label": "LABEL",
+            "tags": ["タグ"],
+            "sample_images": [],
+            "duration": 120,
+            "url": "https://www.javbus.com/ABC-123",
+        }
+
+    def test_refresh_full_preserve_title_true_keeps_existing_title(self, tmp_path, mocker):
+        """oracle 1（非唯讀）：preserve_title=True 時，DB title 與 NFO <title> 均保留既有標題（含前綴），其他欄位為新值。"""
+        import xml.etree.ElementTree as ET
+        from core.database import init_db, VideoRepository, Video
+        from core.enricher import enrich_single
+        from core.path_utils import to_file_uri
+
+        db_path = tmp_path / "test_preserve.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+
+        video_file = tmp_path / "ABC-123.mp4"
+        video_file.write_bytes(b"\x00")
+        path_uri = to_file_uri(str(video_file))
+
+        repo.upsert(Video(
+            path=path_uri,
+            number="ABC-123",
+            title="[ABC-123]中文片名",
+            original_title="旧原題",
+            maker="旧片商",
+            actresses=["旧演員"],
+            tags=["旧標籤"],
+        ))
+
+        mocker.patch("core.enricher.VideoRepository", return_value=repo)
+        mocker.patch("core.enricher.search_jav", return_value=self._scraper_data("ABC-123"))
+
+        result = enrich_single(
+            file_path=path_uri,
+            number="ABC-123",
+            mode="refresh_full",
+            write_nfo=True,
+            write_cover=False,
+            write_extrafanart=False,
+            preserve_title=True,
+        )
+        assert result.success, result.error
+
+        # DB title 保留既有值，其他欄位更新為新刮到的值
+        row = repo.get_by_path(path_uri)
+        assert row.title == "[ABC-123]中文片名"
+        assert row.original_title == "新原題"
+        assert row.maker == "SOD"
+        assert row.actresses == ["女優A"]
+        assert row.tags == ["タグ"]
+
+        # NFO <title> 保留既有值，只有一層番號，演員與標籤為新值
+        nfo_file = video_file.with_suffix(".nfo")
+        assert nfo_file.exists()
+        root = ET.parse(nfo_file).getroot()
+        assert root.findtext("title") == "[ABC-123]中文片名"
+        assert root.findtext("originaltitle") == "新原題"
+        assert [a.findtext("name") for a in root.findall("actor")] == ["女優A"]
+        assert [t.text for t in root.findall("tag")] == ["タグ"]
+
+    def test_refresh_full_preserve_title_true_with_number_change_uses_new_title(self, tmp_path, mocker):
+        """非唯讀 enrich_single 真實路徑（不手塞 meta['number']——search_jav 回傳走
+        真正的 `_scraper_to_meta()`，其產出天生沒有 'number' key）。`allow_number_change=true`
+        由 router 守衛放行後把 `number` 參數改成與 existing.number 不同的新番號
+        （模擬使用者/AI 助理把這部片從 ABC-001 改號成 XYZ-002）；preserve_title=True
+        若沒有正確比對 existing.number，會把舊番號 ABC-001 的標題文字配上新番號
+        XYZ-002 寫進 NFO／DB。
+        """
+        import xml.etree.ElementTree as ET
+        from core.database import init_db, VideoRepository, Video
+        from core.enricher import enrich_single
+        from core.path_utils import to_file_uri
+
+        db_path = tmp_path / "test_preserve_number_change.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+
+        video_file = tmp_path / "ABC-001.mp4"
+        video_file.write_bytes(b"\x00")
+        path_uri = to_file_uri(str(video_file))
+
+        repo.upsert(Video(
+            path=path_uri,
+            number="ABC-001",
+            title="[ABC-001]舊片名",
+            original_title="旧原題",
+            maker="旧片商",
+            actresses=["旧演員"],
+            tags=["旧標籤"],
+        ))
+
+        mocker.patch("core.enricher.VideoRepository", return_value=repo)
+        mocker.patch("core.enricher.search_jav", return_value=self._scraper_data("XYZ-002"))
+
+        result = enrich_single(
+            file_path=path_uri,
+            number="XYZ-002",  # allow_number_change=true 放行後，這次真正要寫入的新番號
+            mode="refresh_full",
+            write_nfo=True,
+            write_cover=False,
+            write_extrafanart=False,
+            preserve_title=True,
+        )
+        assert result.success, result.error
+
+        row = repo.get_by_path(path_uri)
+        assert row.number == "XYZ-002"
+        # 番號已變 → 不得保留舊標題「[ABC-001]舊片名」，必須是這次刮到的新標題
+        assert row.title == "日文片名"
+
+        nfo_file = video_file.with_suffix(".nfo")
+        assert nfo_file.exists()
+        root = ET.parse(nfo_file).getroot()
+        assert root.findtext("title") == "[XYZ-002]日文片名"
+
+    def test_refresh_full_preserve_title_false_overwrites_existing_title(self, tmp_path, mocker):
+        """preserve_title=False（或省略）時，覆蓋既有標題。"""
+        import xml.etree.ElementTree as ET
+        from core.database import init_db, VideoRepository, Video
+        from core.enricher import enrich_single
+        from core.path_utils import to_file_uri
+
+        db_path = tmp_path / "test_overwrite.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+
+        video_file = tmp_path / "ABC-123.mp4"
+        video_file.write_bytes(b"\x00")
+        path_uri = to_file_uri(str(video_file))
+
+        repo.upsert(Video(
+            path=path_uri,
+            number="ABC-123",
+            title="[ABC-123]中文片名",
+        ))
+
+        mocker.patch("core.enricher.VideoRepository", return_value=repo)
+        mocker.patch("core.enricher.search_jav", return_value=self._scraper_data("ABC-123"))
+
+        result = enrich_single(
+            file_path=path_uri,
+            number="ABC-123",
+            mode="refresh_full",
+            write_nfo=True,
+            write_cover=False,
+            write_extrafanart=False,
+            preserve_title=False,
+        )
+        assert result.success, result.error
+
+        row = repo.get_by_path(path_uri)
+        assert row.title == "日文片名"
+        nfo_file = video_file.with_suffix(".nfo")
+        root = ET.parse(nfo_file).getroot()
+        assert root.findtext("title") == "[ABC-123]日文片名"
+
+
+class TestEnrichSinglePreservedTitleOverride:
+    """TASK-154b-T6 / CD-154b-12：enrich_single 保留分支讀磁碟 NFO 收斂本體。"""
+
+    def _scraper_data(self, number="ABC-123", title="日文片名", actors=None):
+        return {
+            "number": number,
+            "title": title,
+            "original_title": "新原題",
+            "actors": actors if actors is not None else ["三上悠亜"],
+            "cover": "",
+            "date": "2024-01-01",
+            "maker": "SOD",
+            "director": "監督",
+            "series": "シリーズ",
+            "label": "LABEL",
+            "tags": ["タグ"],
+            "sample_images": [],
+            "duration": 120,
+            "url": "https://www.javbus.com/ABC-123",
+        }
+
+    def test_enrich_single_oracle_a_scanned_body_override_written_once(self, tmp_path, mocker):
+        """oracle (a)：原樣掃入的自訂格式 → DB 寫回本體、NFO 單層不疊演員。"""
+        import xml.etree.ElementTree as ET
+        from core.database import init_db, VideoRepository, Video
+        from core.enricher import enrich_single
+        from core.path_utils import to_file_uri
+
+        db_path = tmp_path / "test_oracle_a.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+
+        video_file = tmp_path / "ABC-123.mp4"
+        video_file.write_bytes(b"\x00")
+        path_uri = to_file_uri(str(video_file))
+        disk_title = "ABC-123-片名-三上悠亜"
+        video_file.with_suffix(".nfo").write_text(
+            f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+            f'<movie>\n  <title>{disk_title}</title>\n  <num>ABC-123</num>\n</movie>\n',
+            encoding="utf-8",
+        )
+
+        repo.upsert(Video(
+            path=path_uri,
+            number="ABC-123",
+            title=disk_title,
+            actresses=["三上悠亜"],
+            maker="",
+            release_date="",
+        ))
+
+        mocker.patch("core.enricher.VideoRepository", return_value=repo)
+        mocker.patch("core.enricher.search_jav", return_value=self._scraper_data())
+
+        result = enrich_single(
+            file_path=path_uri,
+            number="ABC-123",
+            mode="refresh_full",
+            write_nfo=True,
+            write_cover=False,
+            write_extrafanart=False,
+            overwrite_existing=True,
+            preserve_title=True,
+            nfo_title_format="{num}-{title}-{actor}",
+        )
+        assert result.success, result.error
+
+        row = repo.get_by_path(path_uri)
+        assert row.title == "片名"
+        root = ET.parse(video_file.with_suffix(".nfo")).getroot()
+        assert root.findtext("title") == "ABC-123-片名-三上悠亜"
+
+    def test_enrich_single_oracle_b_disk_mismatch_keeps_existing_verbatim(self, tmp_path, mocker):
+        """oracle (b)：DB 是使用者自訂標題、磁碟 NFO 是舊自訂格式 → 保留自訂值。
+
+        若拿掉 disk≠DB 判斷，磁碟會反推出 '片名' 覆寫使用者自訂標題。
+        """
+        import xml.etree.ElementTree as ET
+        from core.database import init_db, VideoRepository, Video
+        from core.enricher import enrich_single
+        from core.path_utils import to_file_uri
+
+        db_path = tmp_path / "test_oracle_b.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+
+        video_file = tmp_path / "ABC-123.mp4"
+        video_file.write_bytes(b"\x00")
+        path_uri = to_file_uri(str(video_file))
+        existing_title = "我的自訂標題"
+        disk_title = "ABC-123-片名-三上悠亜"
+        video_file.with_suffix(".nfo").write_text(
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+            '<movie>\n'
+            f'  <title>{disk_title}</title>\n'
+            '  <num>ABC-123</num>\n'
+            '</movie>\n',
+            encoding="utf-8",
+        )
+
+        repo.upsert(Video(
+            path=path_uri,
+            number="ABC-123",
+            title=existing_title,
+            actresses=["三上悠亜"],
+        ))
+
+        mocker.patch("core.enricher.VideoRepository", return_value=repo)
+        mocker.patch("core.enricher.search_jav", return_value=self._scraper_data())
+
+        result = enrich_single(
+            file_path=path_uri,
+            number="ABC-123",
+            mode="refresh_full",
+            write_nfo=True,
+            write_cover=False,
+            write_extrafanart=False,
+            overwrite_existing=True,
+            preserve_title=True,
+            nfo_title_format="{num}-{title}-{actor}",
+        )
+        assert result.success, result.error
+
+        row = repo.get_by_path(path_uri)
+        assert row.title == existing_title
+        root = ET.parse(video_file.with_suffix(".nfo")).getroot()
+        # generate_nfo 以保留的自訂本體重組顯示標題（不是磁碟反推的「片名」）
+        assert root.findtext("title") == "ABC-123-我的自訂標題-三上悠亜"
+
+    def test_enrich_single_oracle_c_default_format_no_override_db_unchanged(self, tmp_path, mocker):
+        """oracle (c)：預設格式 body==stripped → 不觸發；關鍵斷言是 DB title 逐字不變。"""
+        import xml.etree.ElementTree as ET
+        from core.database import init_db, VideoRepository, Video
+        from core.enricher import enrich_single
+        from core.path_utils import to_file_uri
+
+        db_path = tmp_path / "test_oracle_c.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+
+        video_file = tmp_path / "ABC-123.mp4"
+        video_file.write_bytes(b"\x00")
+        path_uri = to_file_uri(str(video_file))
+        existing_title = "[ABC-123]中文片名"
+        video_file.with_suffix(".nfo").write_text(
+            f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+            f'<movie>\n  <title>{existing_title}</title>\n  <num>ABC-123</num>\n</movie>\n',
+            encoding="utf-8",
+        )
+
+        repo.upsert(Video(
+            path=path_uri,
+            number="ABC-123",
+            title=existing_title,
+        ))
+
+        mocker.patch("core.enricher.VideoRepository", return_value=repo)
+        mocker.patch("core.enricher.search_jav", return_value=self._scraper_data())
+
+        result = enrich_single(
+            file_path=path_uri,
+            number="ABC-123",
+            mode="refresh_full",
+            write_nfo=True,
+            write_cover=False,
+            write_extrafanart=False,
+            overwrite_existing=True,
+            preserve_title=True,
+            nfo_title_format="[{num}]{title}",
+        )
+        assert result.success, result.error
+
+        row = repo.get_by_path(path_uri)
+        assert row.title == existing_title
+        root = ET.parse(video_file.with_suffix(".nfo")).getroot()
+        assert root.findtext("title") == existing_title
+
+    def test_enrich_single_disk_nfo_missing_fails_closed_to_existing_title(self, tmp_path, mocker):
+        """preserve_title=True 但來源旁沒有 NFO → fail-closed，照 154a 原樣保留，不拋例外。"""
+        from core.database import init_db, VideoRepository, Video
+        from core.enricher import enrich_single
+        from core.path_utils import to_file_uri
+
+        db_path = tmp_path / "test_missing_nfo.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+
+        video_file = tmp_path / "ABC-123.mp4"
+        video_file.write_bytes(b"\x00")
+        path_uri = to_file_uri(str(video_file))
+        existing_title = "ABC-123-片名-三上悠亜"
+
+        repo.upsert(Video(
+            path=path_uri,
+            number="ABC-123",
+            title=existing_title,
+            actresses=["三上悠亜"],
+        ))
+
+        mocker.patch("core.enricher.VideoRepository", return_value=repo)
+        mocker.patch("core.enricher.search_jav", return_value=self._scraper_data())
+
+        result = enrich_single(
+            file_path=path_uri,
+            number="ABC-123",
+            mode="refresh_full",
+            write_nfo=True,
+            write_cover=False,
+            write_extrafanart=False,
+            overwrite_existing=True,
+            preserve_title=True,
+            nfo_title_format="{num}-{title}-{actor}",
+        )
+        assert result.success, result.error
+        row = repo.get_by_path(path_uri)
+        assert row.title == existing_title
+
+    def test_enrich_single_disk_nfo_broken_xml_fails_closed(self, tmp_path, mocker):
+        """磁碟 NFO 存在但 XML 截斷 → fail-closed，DB 原樣保留，不讓 enrich_single 炸掉。"""
+        from core.database import init_db, VideoRepository, Video
+        from core.enricher import enrich_single
+        from core.path_utils import to_file_uri
+
+        db_path = tmp_path / "test_broken_nfo.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+
+        video_file = tmp_path / "ABC-123.mp4"
+        video_file.write_bytes(b"\x00")
+        path_uri = to_file_uri(str(video_file))
+        existing_title = "ABC-123-片名-三上悠亜"
+        video_file.with_suffix(".nfo").write_text(
+            "<movie><title>ABC-123-片名-三上悠亜",
+            encoding="utf-8",
+        )
+
+        repo.upsert(Video(
+            path=path_uri,
+            number="ABC-123",
+            title=existing_title,
+            actresses=["三上悠亜"],
+        ))
+
+        mocker.patch("core.enricher.VideoRepository", return_value=repo)
+        mocker.patch("core.enricher.search_jav", return_value=self._scraper_data())
+
+        result = enrich_single(
+            file_path=path_uri,
+            number="ABC-123",
+            mode="refresh_full",
+            write_nfo=True,
+            write_cover=False,
+            write_extrafanart=False,
+            overwrite_existing=True,
+            preserve_title=True,
+            nfo_title_format="{num}-{title}-{actor}",
+        )
+        assert result.success, result.error
+        row = repo.get_by_path(path_uri)
+        assert row.title == existing_title
+
+
+class TestNfoTitleFormatWiring:
+    """TASK-154b-T2: enrich_single nfo_title_format 轉傳測試"""
+
+    def test_enrich_single_applies_custom_nfo_title_format(self):
+        """傳入自訂 nfo_title_format 時應轉傳給 generate_nfo"""
+        video = _make_video()
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("core.enricher.VideoRepository") as mock_repo_cls,
+            patch("core.enricher.generate_nfo") as mock_nfo,
+            patch("core.enricher.download_image", return_value=True),
+        ):
+            mock_repo = MagicMock()
+            mock_repo_cls.return_value = mock_repo
+            mock_repo.get_by_numbers.return_value = {"SONE-205": [video]}
+
+            from core.enricher import enrich_single
+            enrich_single(
+                file_path=FS_PATH,
+                number="SONE-205",
+                write_nfo=True,
+                overwrite_existing=True,
+                nfo_title_format="{num}-{title}",
+            )
+
+        assert mock_nfo.call_args is not None, "generate_nfo 應被呼叫"
+        assert mock_nfo.call_args.kwargs.get("nfo_title_format") == "{num}-{title}"
+
+    def test_enrich_single_missing_nfo_title_format_defaults_to_default(self):
+        """未傳入 nfo_title_format 時 generate_nfo 應收到預設格式 [{num}]{title}"""
+        video = _make_video()
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("core.enricher.VideoRepository") as mock_repo_cls,
+            patch("core.enricher.generate_nfo") as mock_nfo,
+            patch("core.enricher.download_image", return_value=True),
+        ):
+            mock_repo = MagicMock()
+            mock_repo_cls.return_value = mock_repo
+            mock_repo.get_by_numbers.return_value = {"SONE-205": [video]}
+
+            from core.enricher import enrich_single
+            enrich_single(
+                file_path=FS_PATH,
+                number="SONE-205",
+                write_nfo=True,
+                overwrite_existing=True,
+            )
+
+        assert mock_nfo.call_args is not None, "generate_nfo 應被呼叫"
+        assert mock_nfo.call_args.kwargs.get("nfo_title_format") == "[{num}]{title}"
+
+    def test_enrich_single_applies_custom_nfo_title_format_external_manager(self):
+        """external_manager != 'off' 分支也能正確轉傳 nfo_title_format 給 generate_nfo"""
+        video = _make_video()
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("core.enricher.VideoRepository") as mock_repo_cls,
+            patch("core.enricher.generate_nfo") as mock_nfo,
+            patch("core.enricher.download_image", return_value=True),
+            patch("core.enricher._write_cover", return_value=True),
+            patch("core.enricher._write_external_images", return_value={"poster": True, "fanart": True}),
+        ):
+            mock_repo = MagicMock()
+            mock_repo_cls.return_value = mock_repo
+            mock_repo.get_by_numbers.return_value = {"SONE-205": [video]}
+
+            from core.enricher import enrich_single
+            enrich_single(
+                file_path=FS_PATH,
+                number="SONE-205",
+                write_nfo=True,
+                overwrite_existing=True,
+                external_manager="jellyfin",
+                nfo_title_format="{num}-{title}",
+            )
+
+        assert mock_nfo.call_args is not None, "generate_nfo 應被呼叫"
+        assert mock_nfo.call_args.kwargs.get("nfo_title_format") == "{num}-{title}"

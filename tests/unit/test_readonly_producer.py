@@ -923,6 +923,54 @@ class TestWriteMovieAssets:
 
         assert captured.get('original_title') == '日本語タイトル'
 
+    def test_write_movie_assets_applies_custom_nfo_title_format(self, tmp_path):
+        """config 提供 nfo_title_format 時應轉傳給 generate_nfo"""
+        from core.readonly_assets import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        fd = _t3_format_data()
+        config = dict(_T3_BASE_CONFIG, nfo_title_format='{num}-{title}')
+        captured: dict = {}
+
+        def capture_nfo(**kwargs):
+            captured.update(kwargs)
+            return _t3_generate_nfo_side_effect(**kwargs)
+
+        with patch('core.readonly_assets.download_image', return_value=True), \
+             patch('core.readonly_assets.generate_jellyfin_images',
+                   return_value={'poster': True, 'fanart': True}), \
+             patch('core.readonly_assets.generate_nfo', side_effect=capture_nfo):
+            _write_movie_assets(
+                movie_dir, _T3_META, fd, '/src/TEST-001.mp4', config,
+                cover_strategy=_cover_strategy_for(_T3_META),
+            )
+
+        assert captured.get('nfo_title_format') == '{num}-{title}'
+
+    def test_write_movie_assets_missing_nfo_title_format_defaults_to_default(self, tmp_path):
+        """config 缺少 nfo_title_format 時應轉傳預設格式 [{num}]{title} 給 generate_nfo"""
+        from core.readonly_assets import _write_movie_assets
+
+        movie_dir = str(tmp_path / 'output' / 'TEST-001')
+        fd = _t3_format_data()
+        config = dict(_T3_BASE_CONFIG)
+        captured: dict = {}
+
+        def capture_nfo(**kwargs):
+            captured.update(kwargs)
+            return _t3_generate_nfo_side_effect(**kwargs)
+
+        with patch('core.readonly_assets.download_image', return_value=True), \
+             patch('core.readonly_assets.generate_jellyfin_images',
+                   return_value={'poster': True, 'fanart': True}), \
+             patch('core.readonly_assets.generate_nfo', side_effect=capture_nfo):
+            _write_movie_assets(
+                movie_dir, _T3_META, fd, '/src/TEST-001.mp4', config,
+                cover_strategy=_cover_strategy_for(_T3_META),
+            )
+
+        assert captured.get('nfo_title_format') == '[{num}]{title}'
+
     def test_nfo_write_failure_raises(self, tmp_path):
         """generate_nfo returns False (write failed) → _write_movie_assets raises.
 
@@ -7723,6 +7771,40 @@ class TestNfoToProducerMeta:
         meta = _nfo_to_producer_meta(root, fallback_number='')
         assert meta['title'] == 'Plain Title'
 
+    def test_nfo_to_producer_meta_applies_custom_nfo_title_format(self):
+        """AC-b7：認得其他工具用自訂格式產生的 NFO → 讀出片名本體。"""
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root(
+            '<movie>'
+            '<title>ABC-123-片名-三上悠亜</title>'
+            '<actor><name>三上悠亜</name></actor>'
+            '</movie>'
+        )
+        meta = _nfo_to_producer_meta(
+            root, fallback_number='ABC-123', nfo_title_format='{num}-{title}-{actor}'
+        )
+        assert meta['title'] == '片名'
+
+    def test_nfo_to_producer_meta_respects_external_title_edit(self):
+        """AC-b11：記錄行存在但 <title> 被外部改過 → 以外部改過的內容為準。"""
+        from core.readonly_producer import _nfo_to_producer_meta
+
+        root = _nfo_root(
+            '<movie>'
+            '<title>外部改過的片名</title>'
+            '<actor><name>三上悠亜</name></actor>'
+            '<openaver_title_record>'
+            '<written>ABC-123-片名-三上悠亜</written>'
+            '<body>片名</body>'
+            '</openaver_title_record>'
+            '</movie>'
+        )
+        meta = _nfo_to_producer_meta(
+            root, fallback_number='ABC-123', nfo_title_format='{num}-{title}-{actor}'
+        )
+        assert meta['title'] == '外部改過的片名'
+
     def test_rating_divided_by_two(self):
         """Round-trip edge #2: <rating> is raw×2 — the adapter must divide back."""
         from core.readonly_producer import _nfo_to_producer_meta
@@ -8798,6 +8880,321 @@ class TestEnrichOneReadonlyEntryPoint:
         # main repo + focal repo (cover_written=True triggers a 2nd, INDEPENDENT
         # repo_factory() call — "致命細節 1", never a reuse of the main repo var)
         assert repo_factory.call_count == 2
+
+    def test_enrich_one_readonly_preserve_title_true_passes_existing_title_to_produce_one(self):
+        """oracle 1（唯讀）：preserve_title=True 時，傳給 _produce_one 的 meta['title'] 是保留值。"""
+        from pathlib import Path
+        from core.readonly_producer import enrich_one_readonly
+
+        repo = MagicMock()
+        existing = SimpleNamespace(
+            size_bytes=123,
+            mtime=456.0,
+            cover_path="",
+            title="[ABC-001]中文片名",
+            number="ABC-001",
+        )
+        repo.get_by_path.return_value = existing
+        repo_factory = MagicMock(return_value=repo)
+        meta = {"number": "ABC-001", "title": "新刮到的日文片名", "maker": "M", "cover": ""}
+
+        with patch("core.readonly_producer.resolve_ingest_plan",
+                   return_value=(meta, ("download", "http://x/new.jpg"))), \
+             patch("core.readonly_producer._produce_one",
+                   return_value=(Path("/out/ABC-001"),
+                                 {"cover_fs": "/out/ABC-001/ABC-001.jpg", "sample_fs": [], "nfo_mtime": 1.0})) as mock_produce, \
+             patch("core.readonly_producer.compute_has_servable_cover", return_value=True):
+            result = enrich_one_readonly(
+                **self._base_kwargs(repo_factory, preserve_title=True)
+            )
+
+        mock_produce.assert_called_once()
+        passed_meta = mock_produce.call_args.kwargs["meta"]
+        assert passed_meta["title"] == "[ABC-001]中文片名"
+        assert passed_meta["maker"] == "M"
+        assert result.nfo_written is True
+        assert result.cover_written is True
+        assert repo_factory.call_count == 2
+
+    def test_enrich_one_readonly_preserve_title_number_change_uses_new_title_even_when_scraper_echoes_target(self):
+        """`allow_number_change=true` 把這部片從 existing.number（'ABC-001'）改成
+        新番號 'XYZ-999'（number 參數＝這次真正要寫入 DB／NFO 的番號），且來源忠實
+        刮回使用者要求的目標番號（meta['number'] == 'XYZ-999' == number 參數——這是
+        允許改號時最常見的情境）。比對必須落在 `existing.number` vs `number`：若誤
+        比對 `meta.get('number')` vs `number`（二者相等）會判成同一部片、繼續保留
+        existing.title，把舊標題文字配上新番號寫進 NFO／DB。"""
+        from pathlib import Path
+        from core.readonly_producer import enrich_one_readonly
+
+        repo = MagicMock()
+        existing = SimpleNamespace(
+            size_bytes=123,
+            mtime=456.0,
+            cover_path="",
+            title="[ABC-001]中文片名",
+            number="ABC-001",
+        )
+        repo.get_by_path.return_value = existing
+        repo_factory = MagicMock(return_value=repo)
+        meta = {"number": "XYZ-999", "title": "刮到新片的標題", "maker": "M", "cover": ""}
+
+        with patch("core.readonly_producer.resolve_ingest_plan",
+                   return_value=(meta, ("download", "http://x/new.jpg"))), \
+             patch("core.readonly_producer._produce_one",
+                   return_value=(Path("/out/XYZ-999"),
+                                 {"cover_fs": "/out/XYZ-999/XYZ-999.jpg", "sample_fs": [], "nfo_mtime": 1.0})) as mock_produce, \
+             patch("core.readonly_producer.compute_has_servable_cover", return_value=True):
+            result = enrich_one_readonly(
+                **self._base_kwargs(repo_factory, number="XYZ-999", preserve_title=True)
+            )
+
+        mock_produce.assert_called_once()
+        passed_meta = mock_produce.call_args.kwargs["meta"]
+        assert passed_meta["title"] == "刮到新片的標題"
+        assert result.nfo_written is True
+
+    def _existing_for_preserve(self, tmp_path, *, title, number="ABC-123",
+                               actresses=None, disk_title=None, record_body=None,
+                               output_name="out"):
+        """Build existing stub + optional real old NFO under output_dir for CD-154b-12."""
+        from core import readonly_paths
+        from core.path_utils import to_file_uri
+
+        out_dir = tmp_path / output_name
+        out_dir.mkdir(parents=True, exist_ok=True)
+        existing = SimpleNamespace(
+            size_bytes=123,
+            mtime=456.0,
+            cover_path="",
+            title=title,
+            number=number,
+            actresses=actresses if actresses is not None else ["三上悠亜"],
+            maker="",
+            release_date="",
+            output_dir=to_file_uri(str(out_dir)),
+        )
+        if disk_title is not None:
+            src_fs = str(tmp_path / "src" / f"{number}.mp4")
+            old_base = readonly_paths._build_old_base(existing, src_fs, {})
+            assert old_base, "fixture requires non-empty old_base"
+            record_xml = ""
+            if record_body is not None:
+                record_xml = (
+                    "  <openaver_title_record>\n"
+                    f"    <written>{disk_title}</written>\n"
+                    f"    <body>{record_body}</body>\n"
+                    "  </openaver_title_record>\n"
+                )
+            (out_dir / f"{old_base}.nfo").write_text(
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+                "<movie>\n"
+                f"  <title>{disk_title}</title>\n"
+                f"  <num>{number}</num>\n"
+                f"{record_xml}"
+                "</movie>\n",
+                encoding="utf-8",
+            )
+        return existing, out_dir
+
+    def test_enrich_one_readonly_oracle_a_override_depends_on_old_nfo_content(self, tmp_path):
+        """oracle (a)：唯讀路徑讀到舊 NFO 內容後，meta['title'] 隨磁碟內容變成本體。"""
+        from core.readonly_producer import enrich_one_readonly
+
+        existing, _ = self._existing_for_preserve(
+            tmp_path,
+            title="ABC-123-片名-三上悠亜",
+            disk_title="ABC-123-片名-三上悠亜",
+        )
+        repo = MagicMock()
+        repo.get_by_path.return_value = existing
+        repo_factory = MagicMock(return_value=repo)
+        meta = {"number": "ABC-123", "title": "新刮到的日文片名", "maker": "M", "cover": ""}
+        src = tmp_path / "src"
+        src.mkdir()
+        video = src / "ABC-123.mp4"
+        video.write_bytes(b"\x00")
+        file_uri = to_file_uri(str(video))
+
+        with patch("core.readonly_producer.resolve_ingest_plan",
+                   return_value=(meta, ("download", "http://x/new.jpg"))), \
+             patch("core.readonly_producer._produce_one",
+                   return_value=(Path("/out/ABC-123"),
+                                 {"cover_fs": "/out/ABC-123/ABC-123.jpg", "sample_fs": [], "nfo_mtime": 1.0})) as mock_produce, \
+             patch("core.readonly_producer.compute_has_servable_cover", return_value=True):
+            result = enrich_one_readonly(**self._base_kwargs(
+                repo_factory,
+                canonical=file_uri,
+                file_path=file_uri,
+                number="ABC-123",
+                preserve_title=True,
+                scraper_cfg={"nfo_title_format": "{num}-{title}-{actor}"},
+            ))
+
+        mock_produce.assert_called_once()
+        assert mock_produce.call_args.kwargs["meta"]["title"] == "片名"
+        assert result.success is True
+
+    def test_enrich_one_readonly_oracle_b_disk_mismatch_keeps_existing_verbatim(self, tmp_path):
+        """oracle (b)：DB 是使用者自訂標題、舊 NFO 是自訂格式舊標題 → meta 保留自訂值。
+
+        若拿掉 disk≠DB 判斷，磁碟會反推出 '片名' 覆寫使用者自訂標題。
+        """
+        from core.readonly_producer import enrich_one_readonly
+
+        existing_title = "我的自訂標題"
+        existing, _ = self._existing_for_preserve(
+            tmp_path,
+            title=existing_title,
+            disk_title="ABC-123-片名-三上悠亜",
+        )
+        repo = MagicMock()
+        repo.get_by_path.return_value = existing
+        repo_factory = MagicMock(return_value=repo)
+        meta = {"number": "ABC-123", "title": "新刮到的日文片名", "maker": "M", "cover": ""}
+        src = tmp_path / "src"
+        src.mkdir()
+        video = src / "ABC-123.mp4"
+        video.write_bytes(b"\x00")
+        file_uri = to_file_uri(str(video))
+
+        with patch("core.readonly_producer.resolve_ingest_plan",
+                   return_value=(meta, ("download", "http://x/new.jpg"))), \
+             patch("core.readonly_producer._produce_one",
+                   return_value=(Path("/out/ABC-123"),
+                                 {"cover_fs": "/out/ABC-123/ABC-123.jpg", "sample_fs": [], "nfo_mtime": 1.0})) as mock_produce, \
+             patch("core.readonly_producer.compute_has_servable_cover", return_value=True):
+            result = enrich_one_readonly(**self._base_kwargs(
+                repo_factory,
+                canonical=file_uri,
+                file_path=file_uri,
+                number="ABC-123",
+                preserve_title=True,
+                scraper_cfg={"nfo_title_format": "{num}-{title}-{actor}"},
+            ))
+
+        assert mock_produce.call_args.kwargs["meta"]["title"] == existing_title
+        assert result.success is True
+
+    def test_enrich_one_readonly_oracle_c_default_format_no_override(self, tmp_path):
+        """oracle (c)：預設格式 body==stripped → 不觸發；meta['title'] 保留 DB 原值。"""
+        from core.readonly_producer import enrich_one_readonly
+
+        existing_title = "[ABC-123]中文片名"
+        existing, _ = self._existing_for_preserve(
+            tmp_path,
+            title=existing_title,
+            actresses=[],
+            disk_title=existing_title,
+        )
+        repo = MagicMock()
+        repo.get_by_path.return_value = existing
+        repo_factory = MagicMock(return_value=repo)
+        meta = {"number": "ABC-123", "title": "新刮到的日文片名", "maker": "M", "cover": ""}
+        src = tmp_path / "src"
+        src.mkdir()
+        video = src / "ABC-123.mp4"
+        video.write_bytes(b"\x00")
+        file_uri = to_file_uri(str(video))
+
+        with patch("core.readonly_producer.resolve_ingest_plan",
+                   return_value=(meta, ("download", "http://x/new.jpg"))), \
+             patch("core.readonly_producer._produce_one",
+                   return_value=(Path("/out/ABC-123"),
+                                 {"cover_fs": "/out/ABC-123/ABC-123.jpg", "sample_fs": [], "nfo_mtime": 1.0})) as mock_produce, \
+             patch("core.readonly_producer.compute_has_servable_cover", return_value=True):
+            result = enrich_one_readonly(**self._base_kwargs(
+                repo_factory,
+                canonical=file_uri,
+                file_path=file_uri,
+                number="ABC-123",
+                preserve_title=True,
+                scraper_cfg={"nfo_title_format": "[{num}]{title}"},
+            ))
+
+        assert mock_produce.call_args.kwargs["meta"]["title"] == existing_title
+        assert result.success is True
+
+    def test_enrich_one_readonly_old_nfo_missing_fails_closed(self, tmp_path):
+        """舊 NFO 不存在 → fail-closed，meta['title'] 原樣保留 existing.title。"""
+        from core.readonly_producer import enrich_one_readonly
+
+        existing_title = "ABC-123-片名-三上悠亜"
+        existing, _ = self._existing_for_preserve(
+            tmp_path,
+            title=existing_title,
+            disk_title=None,  # 不寫舊 NFO
+        )
+        repo = MagicMock()
+        repo.get_by_path.return_value = existing
+        repo_factory = MagicMock(return_value=repo)
+        meta = {"number": "ABC-123", "title": "新刮到的日文片名", "maker": "M", "cover": ""}
+        src = tmp_path / "src"
+        src.mkdir()
+        video = src / "ABC-123.mp4"
+        video.write_bytes(b"\x00")
+        file_uri = to_file_uri(str(video))
+
+        with patch("core.readonly_producer.resolve_ingest_plan",
+                   return_value=(meta, ("download", "http://x/new.jpg"))), \
+             patch("core.readonly_producer._produce_one",
+                   return_value=(Path("/out/ABC-123"),
+                                 {"cover_fs": "/out/ABC-123/ABC-123.jpg", "sample_fs": [], "nfo_mtime": 1.0})) as mock_produce, \
+             patch("core.readonly_producer.compute_has_servable_cover", return_value=True):
+            result = enrich_one_readonly(**self._base_kwargs(
+                repo_factory,
+                canonical=file_uri,
+                file_path=file_uri,
+                number="ABC-123",
+                preserve_title=True,
+                scraper_cfg={"nfo_title_format": "{num}-{title}-{actor}"},
+            ))
+
+        assert mock_produce.call_args.kwargs["meta"]["title"] == existing_title
+        assert result.success is True
+
+    def test_enrich_one_readonly_legacy_import_residual_still_stacks_actor_segment(self, tmp_path):
+        """鎖住已知限制的現況，CD-154b-12 明確不涵蓋，未來擴充判準時這條測試需要跟著改期望值，不是回歸。
+
+        §3 殘留 4：existing.title 已被剝過番號、disk 是預設格式改寫過 → 不相等分支，
+        保留 existing 原值；後續 generate_nfo 用新格式會疊出第二段演員名（已知現況）。
+        """
+        from core.readonly_producer import enrich_one_readonly
+
+        existing_title = "片名-三上悠亜"
+        existing, _ = self._existing_for_preserve(
+            tmp_path,
+            title=existing_title,
+            disk_title="[ABC-123]片名-三上悠亜",
+        )
+        repo = MagicMock()
+        repo.get_by_path.return_value = existing
+        repo_factory = MagicMock(return_value=repo)
+        meta = {"number": "ABC-123", "title": "新刮到的日文片名", "maker": "M", "cover": "",
+                "actors": ["三上悠亜"]}
+        src = tmp_path / "src"
+        src.mkdir()
+        video = src / "ABC-123.mp4"
+        video.write_bytes(b"\x00")
+        file_uri = to_file_uri(str(video))
+
+        with patch("core.readonly_producer.resolve_ingest_plan",
+                   return_value=(meta, ("download", "http://x/new.jpg"))), \
+             patch("core.readonly_producer._produce_one",
+                   return_value=(Path("/out/ABC-123"),
+                                 {"cover_fs": "/out/ABC-123/ABC-123.jpg", "sample_fs": [], "nfo_mtime": 1.0})) as mock_produce, \
+             patch("core.readonly_producer.compute_has_servable_cover", return_value=True):
+            result = enrich_one_readonly(**self._base_kwargs(
+                repo_factory,
+                canonical=file_uri,
+                file_path=file_uri,
+                number="ABC-123",
+                preserve_title=True,
+                scraper_cfg={"nfo_title_format": "{num}-{title}-{actor}"},
+            ))
+
+        # 不相等 → 保留 existing 原值（CD-154b-12 不涵蓋此殘留）
+        assert mock_produce.call_args.kwargs["meta"]["title"] == existing_title
+        assert result.success is True
 
     def test_success_without_servable_cover(self):
         from core.readonly_producer import enrich_one_readonly

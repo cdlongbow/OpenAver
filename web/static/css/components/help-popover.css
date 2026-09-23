@@ -59,6 +59,16 @@
     margin-bottom: 0.5rem;
 }
 
+/* 往左展開：用在「錨點貼齊最右側」的 popover（進階刮削設定「NFO 標題格式」列
+   最右邊那顆 `?`）。同檔預設 `left: 0` 會讓浮層從錨點往右長，`max-width:
+   calc(100vw - 2rem)` 只在錨點貼齊視窗左緣時才擋得住溢出——錨點在最右側時
+   浮層右緣仍會超出視窗（1280px／1024px 實測皆溢出 231px）。形狀照
+   `auto-organize-panel.css` 的 `right: 0; left: auto;` 寫法。 */
+.help-popover--left {
+    left: auto;
+    right: 0;
+}
+
 /* 多行 i18n 文案（以 \n 斷行，如進階搜尋 5 入口清單）才保留換行 */
 .help-popover__body--multiline {
     white-space: pre-line;

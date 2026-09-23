@@ -16,6 +16,7 @@ from core.enrich_contract import (
     compute_has_servable_cover,
     cover_uri_is_servable,
     effective_original_title,
+    effective_title,
     enrich_success,
     should_preserve_cover,
 )
@@ -129,6 +130,111 @@ class TestEffectiveOriginalTitle:
         assert effective_original_title({'original_title': ''}, SimpleNamespace(original_title=None)) == ''
         # 型別鎖：任何輸入組合回傳皆為 str（不得回 None）
         assert isinstance(effective_original_title({}, SimpleNamespace(original_title=None)), str)
+
+
+# ── effective_title ──────────────────────────────────────────────────────────
+
+class TestEffectiveTitle:
+    """重刮且使用者勾選保留標題時，維持 DB 既有標題值（含 [番號] 前綴）。5 邊界：
+    1. preserve=True + existing.title 非空且剝完非空 → existing.title 原值逐字
+    2. preserve=True + existing is None → meta['title']
+    3. preserve=True + existing.title 剝完為空 → meta['title']
+    4. preserve=False → meta['title'] 恆等映射
+    5. meta['title'] None/缺 key → ''（恆為 str）
+    """
+
+    def test_preserve_true_with_existing_title_returns_existing_verbatim(self):
+        """preserve=True 且 existing.title 剝完非空 → 回傳 existing.title 原值逐字（含前綴）。"""
+        existing = SimpleNamespace(title='[ABC-123]中文片名', number='ABC-123')
+        meta = {'title': '日文片名'}
+        assert effective_title(meta, existing, True, 'ABC-123') == '[ABC-123]中文片名'
+
+    def test_preserve_true_with_none_existing_falls_back_to_meta_title(self):
+        """preserve=True 且 existing is None → 回退 meta.get('title') or ''。"""
+        meta = {'title': '新片名'}
+        assert effective_title(meta, None, True, 'ABC-123') == '新片名'
+        assert effective_title({}, None, True, 'ABC-123') == ''
+
+    def test_preserve_true_with_stripped_empty_falls_back_to_meta_title(self):
+        """preserve=True 且 existing.title 剝完前綴為空字串（如 '[ABC-123]'）→ 回退 meta.get('title') or ''。"""
+        existing = SimpleNamespace(title='[ABC-123]', number='ABC-123')
+        meta = {'title': '新刮到的標題'}
+        assert effective_title(meta, existing, True, 'ABC-123') == '新刮到的標題'
+
+    def test_preserve_false_or_default_returns_meta_title(self):
+        """preserve=False → 恆回傳 meta.get('title') or ''，不保留 existing。"""
+        existing = SimpleNamespace(title='[ABC-123]中文片名', number='ABC-123')
+        meta = {'title': '日文新片名'}
+        assert effective_title(meta, existing, False, 'ABC-123') == '日文新片名'
+
+    def test_title_none_or_missing_normalized_to_empty_str(self):
+        """meta['title'] 為 None 或缺 key → 回傳 ''（恆為 str）。"""
+        assert effective_title({'title': None}, None, False, 'ABC-123') == ''
+        assert effective_title({}, None, False, 'ABC-123') == ''
+        assert isinstance(effective_title({'title': None}, None, False, 'ABC-123'), str)
+
+    def test_preserve_true_with_existing_number_mismatch_falls_back_to_new_title(self):
+        """preserve=True 但這次要寫入的番號（`number` 參數）與這部片既有的
+        `existing.number` 不同（`allow_number_change=true` 把片改成另一個番號）
+        → 不保留舊標題，回退新標題。刻意讓 meta['number'] 與目標 number 相等
+        （來源忠實刮回使用者要求的新番號，這是允許改號時的常見情境）以證明
+        比對必須落在 `existing.number` vs number，比對 meta['number'] 會誤放行。"""
+        existing = SimpleNamespace(title='中文片名', number='ABC-123')
+        meta = {'title': '刮到別部片的新標題', 'number': 'XYZ-999'}
+        assert effective_title(meta, existing, True, 'XYZ-999') == '刮到別部片的新標題'
+
+    def test_preserve_true_with_existing_number_case_insensitive_match_preserves(self):
+        """existing.number 與要寫入的 number 僅大小寫不同（視為同一部片）→ 仍保留舊標題。"""
+        existing = SimpleNamespace(title='中文片名', number='abc-123')
+        meta = {'title': '新刮到的標題', 'number': 'ABC-123'}
+        assert effective_title(meta, existing, True, 'ABC-123') == '中文片名'
+
+    def test_preserve_true_without_meta_number_key_still_gated_by_existing_number(self):
+        """非唯讀 enrich_single 的 meta 從不帶 'number' key（_scraper_to_meta 無此欄位）——
+        閘門不看 meta['number']，改比對 existing.number vs number：番號不變則保留。"""
+        existing = SimpleNamespace(title='中文片名', number='ABC-123')
+        meta = {'title': '新刮到的標題'}
+        assert effective_title(meta, existing, True, 'ABC-123') == '中文片名'
+
+    def test_preserve_true_with_scraped_number_mismatch_existing_matches_number_falls_back(self):
+        """existing.number == number（請求番號＝原片番號，前端 numberChanged 檢查會放行）
+        但這次唯讀來源獨立重新搜尋回來的 meta['number'] 與兩者不同（刮到另一部片，
+        不受前端檢查保護）→ 仍須回退新標題，不得只看 existing vs number 就放行。"""
+        existing = SimpleNamespace(title='中文片名', number='TEST-001')
+        meta = {'title': '刮到別部片的新標題', 'number': 'OTHER-777'}
+        assert effective_title(meta, existing, True, 'TEST-001') == '刮到別部片的新標題'
+
+    def test_preserve_true_with_all_three_numbers_agreeing_preserves(self):
+        """existing.number、number、meta['number'] 三者一致（大小寫不敏感）→ 保留舊標題。"""
+        existing = SimpleNamespace(title='中文片名', number='abc-123')
+        meta = {'title': '新刮到的標題', 'number': 'Abc-123'}
+        assert effective_title(meta, existing, True, 'ABC-123') == '中文片名'
+
+    def test_preserve_true_without_meta_number_key_but_existing_number_changed_falls_back(self):
+        """同上情境（meta 無 'number' key）但 existing.number 與要寫入的 number 不同
+        （allow_number_change=true）→ 舊版比對只看 meta['number']（缺 key）恆短路為
+        False、永遠保留舊標題（即 Codex 指出的非唯讀路徑必然失效）；新版比對
+        existing.number 正確回退新標題。"""
+        existing = SimpleNamespace(title='中文片名', number='ABC-123')
+        meta = {'title': '刮到新片的標題'}
+        assert effective_title(meta, existing, True, 'XYZ-999') == '刮到新片的標題'
+
+    def test_preserve_true_with_override_returns_override_verbatim(self):
+        """CD-154b-12：preserve=True 且 preserved_body_override 非 None → 回傳 override 逐字。"""
+        existing = SimpleNamespace(title='ABC-123-片名-三上悠亜', number='ABC-123')
+        meta = {'title': '新標題'}
+        assert effective_title(
+            meta, existing, True, 'ABC-123', preserved_body_override='片名',
+        ) == '片名'
+
+    def test_preserve_true_without_override_falls_back_to_existing_branch(self):
+        """CD-154b-12：preserve=True 且 override 為 None／未傳 → 既有 existing.title 分支零回歸。"""
+        existing = SimpleNamespace(title='ABC-123-片名-三上悠亜', number='ABC-123')
+        meta = {'title': '新標題'}
+        assert effective_title(meta, existing, True, 'ABC-123') == 'ABC-123-片名-三上悠亜'
+        assert effective_title(
+            meta, existing, True, 'ABC-123', preserved_body_override=None,
+        ) == 'ABC-123-片名-三上悠亜'
 
 
 # ── should_preserve_cover ────────────────────────────────────────────────────

@@ -278,7 +278,7 @@ def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Genera
         yield _sse_event({"type": "log", "level": "info", "message": f"資料庫筆數: {repo.count()}"})
 
         # 初始化掃描器
-        scanner = VideoScanner(path_mappings=path_mappings)
+        scanner = VideoScanner(path_mappings=path_mappings, nfo_title_format=config.get('scraper', {}).get('nfo_title_format', '[{num}]{title}'))
 
         total_dirs = len(directories)
         total_inserted = 0

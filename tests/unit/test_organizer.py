@@ -2361,6 +2361,80 @@ class TestGenerateNfoAdditional:
         assert "<name>女優B</name>" in content
 
 
+class TestGenerateNfoTitleFormat:
+    """generate_nfo() nfo_title_format 參數與記錄行（TASK-154b-T1）。"""
+
+    def test_generate_nfo_default_format_no_title_record(self, tmp_path):
+        """預設格式整份 NFO 不含 <openaver_title_record>（AC-b1）。"""
+        nfo_path = tmp_path / "ABC-123.nfo"
+        result = generate_nfo(
+            number="ABC-123",
+            title="片名",
+            actors=["三上悠亜"],
+            output_path=str(nfo_path),
+            nfo_title_format="[{num}]{title}",
+        )
+        assert result is True
+        content = nfo_path.read_text(encoding="utf-8")
+        assert "<title>[ABC-123]片名</title>" in content
+        assert "openaver_title_record" not in content
+
+    def test_generate_nfo_default_format_omitted_param_no_title_record(self, tmp_path):
+        """省略參數等同預設：無記錄行、標題與舊行為相同。"""
+        nfo_path = tmp_path / "ABC-123.nfo"
+        result = generate_nfo(
+            number="ABC-123",
+            title="片名",
+            actors=["三上悠亜"],
+            output_path=str(nfo_path),
+        )
+        assert result is True
+        content = nfo_path.read_text(encoding="utf-8")
+        assert "<title>[ABC-123]片名</title>" in content
+        assert "openaver_title_record" not in content
+
+    def test_generate_nfo_custom_format_writes_title_and_record(self, tmp_path):
+        """自訂格式寫出新 <title> 與記錄行 <written>/<body>。"""
+        nfo_path = tmp_path / "ABC-123.nfo"
+        result = generate_nfo(
+            number="ABC-123",
+            title="片名",
+            actors=["三上悠亜"],
+            output_path=str(nfo_path),
+            nfo_title_format="{num}-{title}-{actor}",
+        )
+        assert result is True
+        content = nfo_path.read_text(encoding="utf-8")
+        assert "<title>ABC-123-片名-三上悠亜</title>" in content
+        root = ET.fromstring(content)
+        record = root.find("openaver_title_record")
+        assert record is not None
+        assert record.find("written").text == "ABC-123-片名-三上悠亜"
+        assert record.find("body").text == "片名"
+
+    def test_generate_nfo_belt_and_suspenders_not_reversed_by_title_format(self, tmp_path):
+        """寫出端只剝開頭番號，不反推格式；記錄行 <body> 精確等於剝完值。
+
+        邊界條件第 5 條：title 本身帶番號與演員字面時，
+        _strip_num_prefixes 只剝開頭 → body='片名-三上悠亜'；
+        display_title 疊一次演員段（接受的既有落差）。
+        """
+        nfo_path = tmp_path / "ABC-123.nfo"
+        result = generate_nfo(
+            number="ABC-123",
+            title="ABC-123-片名-三上悠亜",
+            actors=["三上悠亜"],
+            output_path=str(nfo_path),
+            nfo_title_format="{num}-{title}-{actor}",
+        )
+        assert result is True
+        content = nfo_path.read_text(encoding="utf-8")
+        root = ET.fromstring(content)
+        body = root.find("openaver_title_record/body").text
+        assert body == "片名-三上悠亜"
+        assert "<title>ABC-123-片名-三上悠亜-三上悠亜</title>" in content
+
+
 class TestGenerateNfoRatingLine:
     """generate_nfo() rating_line 型別防護（TASK-147c-T2）"""
 
@@ -2439,8 +2513,6 @@ class TestGenerateNfoNoUnescapedInterpolation:
     # 綁次數之後，任何**新的一次出現**都會讓對帳不符而轉紅，作者必須回來說明它安全在哪。
     # 次數只在增刪插值時才變動，不隨行號漂移。
     ALLOWED_UNESCAPED = {
-        "_t": (1, "組 display_title 的中間值；使用時才 html.escape(display_title)"),
-        "number": (2, 'display_title 的三元式兩個分支各一次（f"[{number}]{_t}" if _t else f"[{number}]"）；都是中間值，使用時才 html.escape(display_title)'),
         "poster_suffix": (1, "字面常數 '-poster' / ''"),
         "fanart_suffix": (1, "字面常數 '-fanart' / ''"),
         "rating * 2": (1, "有 isinstance 數值守衛 ＋ :.1f 格式 → 只可能是數字"),
@@ -2453,6 +2525,7 @@ class TestGenerateNfoNoUnescapedInterpolation:
         "fanart_tag": (2, "預組 XML 片段（<thumb> 與 <fanart> 各一），內容已 html.escape(basename)"),
         "rating_line": (1, "預組 XML 片段，內容是數字格式化結果"),
         "external_block": (1, "預組 XML 片段，內容組裝時已 html.escape"),
+        "title_record_block": (1, "預組 XML 片段，內容組裝時已 html.escape(display_title)／html.escape(_t)"),
         "e": (1, "logger.error 的例外訊息，不進 XML"),
     }
 
@@ -6235,3 +6308,105 @@ class TestCropToPosterAbandonedDegrade:
 
     def test_abandoned_circuit_open_matches_no_face(self, tmp_path):
         self._assert_abandoned_matches_no_face(tmp_path, "circuit_open")
+
+
+class TestNfoTitleFormatWiring:
+    """TASK-154b-T2: organize_file NFO 標題接線與截斷修復測試"""
+
+    def test_organize_file_nfo_title_untruncated_but_filename_truncated(self, tmp_path):
+        """CD-154b-5: 標題超過 max_title_length(50) 時，檔名截斷但 NFO <title> 保持完整 60 字元"""
+        src = tmp_path / "ABC-123.mp4"
+        src.write_bytes(b"dummy video")
+
+        long_title = "T" * 60
+        config = {
+            "create_folder": False,
+            "filename_format": "[{num}] {title}",
+            "download_cover": False,
+            "create_nfo": True,
+            "max_title_length": 50,
+            "max_filename_length": 200,
+        }
+        metadata = {
+            "number": "ABC-123",
+            "title": long_title,
+            "actors": [],
+            "tags": [],
+            "maker": "",
+            "date": "2024-01-01",
+            "cover": "",
+            "url": "",
+        }
+
+        result = organize_file(str(src), metadata, config)
+        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
+        assert result.get("new_filename") is not None
+        assert "T" * 60 not in result["new_filename"], "檔名標題應被截斷"
+        assert "T" * 47 + "..." in result["new_filename"], "檔名應包含截斷後的 47 字元加上省略號"
+
+        assert result.get("nfo_path") is not None
+        nfo_content = Path(result["nfo_path"]).read_text(encoding="utf-8")
+        assert f"<title>[ABC-123]{long_title}</title>" in nfo_content, (
+            "NFO 中的 <title> 應包含完整未截斷的 60 字元標題"
+        )
+
+    def test_organize_file_applies_custom_nfo_title_format(self, tmp_path):
+        """自訂 nfo_title_format 應套用到產出的 NFO <title>"""
+        src = tmp_path / "ABC-123.mp4"
+        src.write_bytes(b"dummy video")
+
+        config = {
+            "create_folder": False,
+            "filename_format": "[{num}] {title}",
+            "download_cover": False,
+            "create_nfo": True,
+            "nfo_title_format": "{num}-{title}",
+        }
+        metadata = {
+            "number": "ABC-123",
+            "title": "My Title",
+            "actors": [],
+            "tags": [],
+            "maker": "",
+            "date": "2024-01-01",
+            "cover": "",
+            "url": "",
+        }
+
+        result = organize_file(str(src), metadata, config)
+        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
+        assert result.get("nfo_path") is not None
+        nfo_content = Path(result["nfo_path"]).read_text(encoding="utf-8")
+        assert "<title>ABC-123-My Title</title>" in nfo_content, (
+            "NFO 中的 <title> 應套用自訂格式 {num}-{title}"
+        )
+
+    def test_organize_file_missing_nfo_title_format_defaults_to_default(self, tmp_path):
+        """config 未提供 nfo_title_format 時應 fallback 到預設格式 [{num}]{title}"""
+        src = tmp_path / "ABC-123.mp4"
+        src.write_bytes(b"dummy video")
+
+        config = {
+            "create_folder": False,
+            "filename_format": "[{num}] {title}",
+            "download_cover": False,
+            "create_nfo": True,
+        }
+        metadata = {
+            "number": "ABC-123",
+            "title": "My Title",
+            "actors": [],
+            "tags": [],
+            "maker": "",
+            "date": "2024-01-01",
+            "cover": "",
+            "url": "",
+        }
+
+        result = organize_file(str(src), metadata, config)
+        assert result["success"] is True, f"organize 失敗: {result.get('error')}"
+        assert result.get("nfo_path") is not None
+        nfo_content = Path(result["nfo_path"]).read_text(encoding="utf-8")
+        assert "<title>[ABC-123]My Title</title>" in nfo_content, (
+            "NFO 中的 <title> 應為預設格式 [{num}]{title}"
+        )

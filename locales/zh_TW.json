@@ -482,6 +482,10 @@
       "preview_empty_tag": "空值範例",
       "preview_prefix": "預覽",
       "filename_format_label": "檔案命名格式",
+      "nfo_title_format_label": "NFO 標題格式",
+      "nfo_title_format_help": "這一列只決定 NFO 裡的標題（Jellyfin／Emby／Kodi 海報牆上看到的名字），不影響檔名、資料夾，也不影響 OpenAver 自己畫面上顯示的片名。",
+      "nfo_title_format_help_aria": "NFO 標題格式說明",
+      "nfo_title_format_preview_actor_missing_label": "演員資料缺失",
       "max_title_length_label": "標題長度限制",
       "unit_chars": "字元",
       "max_filename_length_label": "檔名長度限制",
@@ -952,7 +956,8 @@
       "version_prev_aria": "上一個版本",
       "version_next_aria": "下一個版本",
       "adopt_version": "採用此版本",
-      "adopt_switch_source": "替換此版本"
+      "adopt_switch_source": "替換此版本",
+      "preserve_title": "保留目前標題：「{title}」"
     },
     "placeholder": {
       "search": "搜尋番號、女優、標題..."

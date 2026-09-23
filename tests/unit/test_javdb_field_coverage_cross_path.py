@@ -430,7 +430,9 @@ def test_scan_path_field_coverage(tmp_path: Path):
     # 驗證轉入 DB Video 模型後欄位一致
     video = Video.from_video_info(info)
     assert video.number == "ABC-123"
-    assert video.title == "[ABC-123]一般標題"
+    # CD-154b-6：掃描端改用 resolve_title_body() 讀回，預設格式無 title_record
+    # 時走步驟 3 剝掉 `[番號]` 方括號前綴，DB 存的是本體。
+    assert video.title == "一般標題"
     assert video.director == "導演名"
     assert video.duration == 120
     assert video.label == "廠牌名"

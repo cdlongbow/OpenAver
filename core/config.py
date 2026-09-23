@@ -70,6 +70,7 @@ class ScraperConfig(BaseModel):
     folder_layers: List[str] = ["{actor}"]
     folder_format: str = "{actor}"
     filename_format: str = "{num} {title}"
+    nfo_title_format: str = "[{num}]{title}"
     download_cover: bool = True
     cover_filename: str = "poster.jpg"
     create_nfo: bool = True
@@ -566,6 +567,10 @@ def _load_config_unlocked() -> dict:  # noqa: C901 — config 遷移主流程；
         # 時 Pydantic default 不會在 GET /api/config 補上 → 顯式補 FocalDeviceState().model_dump()。
         if 'focal_device' not in raw_config:
             raw_config['focal_device'] = FocalDeviceState().model_dump()
+            need_save = True
+
+        if 'scraper' in raw_config and 'nfo_title_format' not in raw_config['scraper']:
+            raw_config['scraper']['nfo_title_format'] = '[{num}]{title}'
             need_save = True
 
         # Save migrated config（已持鎖 → 用 unlocked 版避免自我死鎖）

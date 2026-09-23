@@ -37,6 +37,7 @@ from core.enrich_contract import (
     compute_has_servable_cover,
     cover_uri_is_servable,
     effective_original_title,
+    effective_title,
     enrich_success,
 )
 from core.focal import requires_face_detection
@@ -50,9 +51,10 @@ from core.nfo_read import (
     nfo_runtime_minutes,
     nfo_series_name,
     nfo_text,
+    nfo_title_record,
 )
+from core.nfo_title_format import resolve_preserved_title_for_write, resolve_title_body
 from core.nfo_updater import parse_nfo
-from core.organizer import _strip_num_prefixes
 from core.path_utils import (
     is_fs_path_under_dir,
     is_path_under_dir,
@@ -273,7 +275,11 @@ def _upsert_db(
 # directly without adding a new resource-lifecycle concern.
 # ---------------------------------------------------------------------------
 
-def _nfo_to_producer_meta(root: ET.Element, fallback_number: str) -> dict:
+def _nfo_to_producer_meta(
+    root: ET.Element,
+    fallback_number: str,
+    nfo_title_format: str = '[{num}]{title}',
+) -> dict:
     """Reverse-map a parsed NFO `<movie>` root into producer-meta shape (CD-104-3b).
 
     Tag-extraction resilience (multi-tag date fallback, genre/tag merge-with-
@@ -314,7 +320,6 @@ def _nfo_to_producer_meta(root: ET.Element, fallback_number: str) -> dict:
     number = nfo_first_text(root, ('num', 'id', 'uniqueid')) or fallback_number or ''
 
     raw_title = nfo_text(root, 'title')
-    title = _strip_num_prefixes(raw_title, number) if raw_title else raw_title
     original_title = nfo_text(root, 'originaltitle')
 
     actors = nfo_actor_names(root)
@@ -322,6 +327,8 @@ def _nfo_to_producer_meta(root: ET.Element, fallback_number: str) -> dict:
     tags = nfo_merged_tags(root)
 
     date = nfo_first_text(root, ('release', 'premiered', 'year'))
+
+    maker = nfo_first_text(root, ('maker', 'studio'))
 
     series = nfo_series_name(root)
 
@@ -337,6 +344,9 @@ def _nfo_to_producer_meta(root: ET.Element, fallback_number: str) -> dict:
         except ValueError:
             rating_val = None
 
+    record = nfo_title_record(root)
+    title = resolve_title_body(raw_title, number, actors, maker, date, nfo_title_format, record) if raw_title else raw_title
+
     return {
         'number': number,
         'title': title,
@@ -344,7 +354,7 @@ def _nfo_to_producer_meta(root: ET.Element, fallback_number: str) -> dict:
         'actors': actors,
         'tags': tags,
         'date': date,
-        'maker': nfo_first_text(root, ('maker', 'studio')),
+        'maker': maker,
         'director': nfo_text(root, 'director'),
         'series': series,
         'label': nfo_text(root, 'label'),
@@ -454,7 +464,7 @@ def resolve_ingest_plan(
 
     if action == 'ingest':
         if valid_nfo:
-            meta = _nfo_to_producer_meta(root, fallback_number=number)
+            meta = _nfo_to_producer_meta(root, fallback_number=number, nfo_title_format=config.get('nfo_title_format', '[{num}]{title}'))
             # Codex PR#113 one-pass alignment (2026-07-21): _nfo_to_producer_meta
             # carries no 'source' key at all — the readonly endpoints derive
             # EnrichResult.source_used from meta.get('source', ''), so an NFO-
@@ -983,6 +993,30 @@ class ReadonlyProduceError(Exception):
     """
 
 
+def _preserved_body_override_from_old_nfo(
+    existing, fs_path, scraper_cfg, path_mappings, preserve_title,
+):
+    """CD-154b-12：從輸出夾舊 NFO 算出 preserved_body_override；失敗一律 None。"""
+    if not preserve_title:
+        return None
+    try:
+        nfo_title_format = scraper_cfg.get('nfo_title_format', '[{num}]{title}')
+        old_base = readonly_paths._build_old_base(existing, fs_path, scraper_cfg)
+        if old_base:
+            old_nfo_path = Path(uri_to_local_fs_path(existing.output_dir, path_mappings)) / (old_base + '.nfo')
+            if old_nfo_path.exists():
+                _, root = parse_nfo(str(old_nfo_path))
+                if root is not None:
+                    disk_title = nfo_text(root, "title")
+                    record = nfo_title_record(root)
+                    return resolve_preserved_title_for_write(
+                        disk_title, existing, nfo_title_format, record)
+    except Exception as e:
+        logger.warning("保留標題：讀取舊 NFO 失敗，照原樣保留 (%s): %s", fs_path, e)
+        return None
+    return None
+
+
 def enrich_one_readonly(
     *,
     repo_factory,            # Callable[[], repo]；caller 傳入自己的 VideoRepository binding
@@ -1003,6 +1037,7 @@ def enrich_one_readonly(
     overwrite_existing: bool,
     after_produce: Optional[Callable[[], None]] = None,
     focal_before_cover_recheck: bool = False,
+    preserve_title: bool = False,
 ) -> EnrichResult:
     """單片/批次唯讀 enrich 共用的「產出核心」——薄搬移自
     `web/routers/scraper.py` 單片 enrich 端點（POST /enrich-single）的唯讀分支
@@ -1074,6 +1109,7 @@ def enrich_one_readonly(
     # step 4
     repo = repo_factory()
     existing = repo.get_by_path(canonical)
+    meta['title'] = effective_title(meta, existing, preserve_title, number, preserved_body_override=_preserved_body_override_from_old_nfo(existing, fs_path, scraper_cfg, path_mappings, preserve_title))
     # Codex PR#113 P2#3（round 2，owner-confirmed 全面對齊；round 6 修正）：
     # readonly enrich 對齊非唯讀 core.enricher._write_cover 的 skip 語意
     # （os.path.exists(cover) and not overwrite_existing）——fill_missing

@@ -29,6 +29,20 @@ import {
     shouldFallbackToCover,
 } from '@/shared/cover-fallback.js';
 
+// 僅供 node:test 直接測邊界；其他頁面不得 import
+export function stripNumPrefixes(title, number) {
+    if (!title || !number) return title || '';
+    const escaped = String(number).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp('^(?:\\[' + escaped + '\\]|' + escaped + '(?![0-9A-Za-z]))[\\s\\-_]*', 'i');
+    let s = String(title);
+    while (s) {
+        const nxt = s.replace(pattern, '');
+        if (nxt === s) break;
+        s = nxt;
+    }
+    return s;
+}
+
 export function rescrapeState() {
     return {
         // ── 彈窗狀態（平鋪，對齊 partial 綁定 + mockup） ──
@@ -71,6 +85,7 @@ export function rescrapeState() {
         rescrapeCandidates: [],            // CD-86-6：多版本候選陣列；單版本/非 javlib 為 []
         rescrapeVersionIdx: 0,             // 當前 preview 游標
         rescrapeCfWaiting: false,          // 70-T6: CF 等待態（polling 中）
+        rescrapePreserveTitle: true,       // 154a-T2: 保留標題勾選
         _cfPollHandle: null,               // 70-T6: setInterval handle；null = 未 polling
         _cfPollSourceId: null,             // T4: 這次 CF poll 的觸發來源；cancelCfPoll 零參數讀它
 
@@ -97,6 +112,7 @@ export function rescrapeState() {
             this.rescrapeVersionIdx = 0;
             this.rescrapeLoadingSource = null;
             this.rescrapeNotFound = false;
+            this.rescrapePreserveTitle = true;
             this._rescrapeVideo = video;
             this._switchTarget = null;     // 62c-3：每次開窗先清；switch-source 入口由 openSwitchSourcePicker 隨後捕捉
         },
@@ -412,6 +428,30 @@ export function rescrapeState() {
         },
 
         /**
+         * 154a-T2: 取得當前影片標題剝除番號前綴後的片名本體。
+         */
+        rescrapeCurrentTitleStripped() {
+            return stripNumPrefixes(this._rescrapeVideo?.title || '', this._rescrapeVideo?.number || '');
+        },
+
+        /**
+         * 154a-T2: 是否顯示「保留目前標題」勾選（lightbox 入口 + 兩側皆剝前綴比較）。
+         */
+        rescrapeShowPreserveTitle() {
+            if (this.rescrapeEntryPoint !== 'lightbox') return false;
+            if (!this._rescrapeVideo || !this.rescrapePreview) return false;
+            const numberChanged = (this.rescrapeNumber || '').trim().toUpperCase() !== (this._rescrapeVideo.number || '').toUpperCase();
+            if (numberChanged) return false;
+            const currentStripped = this.rescrapeCurrentTitleStripped().trim();
+            if (!currentStripped) return false;
+            const newStripped = stripNumPrefixes(
+                this.rescrapePreview.title || '',
+                this.rescrapePreview.number || this.rescrapeNumber || '',
+            ).trim();
+            return currentStripped !== newStripped;
+        },
+
+        /**
          * ✓ commit — 自包含覆蓋寫入（POST /api/enrich-single）。鏡像 enrichVideo。
          * CD-86-9/14：search 入口採用選定版本進搜尋結果，不打 enrich-single，不顯示不可逆警告。
          */
@@ -477,6 +517,7 @@ export function rescrapeState() {
                         write_cover: true,
                         detail_url: this.rescrapePreview?.url || null,  // CD-86-13: 取 .url 非 .detail_url
                         readonly_action: 'rescrape',                    // T4: 無條件送（非唯讀端後端忽略，CD-104-5）
+                        preserve_title: this.rescrapeShowPreserveTitle() && this.rescrapePreserveTitle,
                     }),
                 });
                 const result = await resp.json();

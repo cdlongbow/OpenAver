@@ -1547,3 +1547,83 @@ class TestGalleryOutputDirProgramAreaGuard:
         assert body["success"] is True
         saved = json.loads(env["config_path"].read_text(encoding="utf-8"))
         assert saved["gallery"]["output_dir"] == str(external)
+
+
+class TestNfoTitleFormatConfigGuard:
+    """TASK-154b-T5：PUT /api/config 驗證 NFO 標題格式。"""
+
+    @pytest.fixture
+    def env(self, tmp_path, monkeypatch):
+        config_path = tmp_path / "config.json"
+        default_path = tmp_path / "config.default.json"
+        seed = {
+            "general": {"locale": "zh-TW", "theme": "light", "default_page": "search"},
+            "gallery": {"output_dir": "", "output_filename": "gallery_output.html"},
+            "scraper": {},
+            "search": {},
+            "source_links": {},
+            "translate": {
+                "enabled": False,
+                "provider": "ollama",
+                "batch_size": 10,
+                "ollama": {"url": "http://localhost:11434", "model": "qwen3:8b"},
+                "gemini": {"api_key": "", "model": "gemini-flash-lite-latest"},
+                "openai": {"base_url": "", "api_key": "", "model": "gpt-4o-mini",
+                           "use_custom_model": False},
+            },
+            "showcase": {},
+            "sources": [],
+            "thumbnail_cache_enabled": False,
+            "metatube": {},
+        }
+        config_path.write_text(json.dumps(seed), encoding="utf-8")
+        default_path.write_text(json.dumps(seed), encoding="utf-8")
+        monkeypatch.setattr("core.config.CONFIG_PATH", config_path)
+        monkeypatch.setattr("core.config.CONFIG_DEFAULT_PATH", default_path)
+        monkeypatch.setattr("web.routers.config._reset_translate_service", lambda: None)
+        return {"config_path": config_path, "seed": seed}
+
+    def _payload(self, seed, nfo_title_format):
+        body = json.loads(json.dumps(seed))
+        body.setdefault("scraper", {})["nfo_title_format"] = nfo_title_format
+        return body
+
+    def test_put_config_rejects_invalid_nfo_title_format(self, client, env):
+        """缺 {num} → 驗證拒絕、返回 reason 與 error，且設定未落地。"""
+        resp = client.put("/api/config", json=self._payload(env["seed"], "{title}"))
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is False
+        assert body["reason"] == "nfo_title_format_invalid"
+        assert body["error"] == "格式必須包含恰好一個 {num}"
+
+        # 重新 GET 確認設定未落地
+        get_resp = client.get("/api/config")
+        assert get_resp.status_code == 200
+        assert get_resp.json()["data"]["scraper"]["nfo_title_format"] != "{title}"
+
+    def test_put_config_rejects_duplicate_num_in_nfo_title_format(self, client, env):
+        """{num} 出現兩次 → 驗證拒絕、返回 reason 與 error，且設定未落地。"""
+        resp = client.put("/api/config", json=self._payload(env["seed"], "[{num}]{title}][{num}]"))
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is False
+        assert body["reason"] == "nfo_title_format_invalid"
+        assert body["error"] == "{num} 只能出現一次"
+
+        # 重新 GET 確認設定未落地
+        get_resp = client.get("/api/config")
+        assert get_resp.status_code == 200
+        assert get_resp.json()["data"]["scraper"]["nfo_title_format"] != "[{num}]{title}][{num}]"
+
+    def test_put_config_accepts_reordered_custom_nfo_title_format(self, client, env):
+        """合法格式（順序互換＋含額外變數）→ 存檔成功並可讀回。"""
+        custom_fmt = "{title}-{num}-{actor}-{maker}-{date}"
+        resp = client.put("/api/config", json=self._payload(env["seed"], custom_fmt))
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+
+        get_resp = client.get("/api/config")
+        assert get_resp.status_code == 200
+        assert get_resp.json()["data"]["scraper"]["nfo_title_format"] == custom_fmt

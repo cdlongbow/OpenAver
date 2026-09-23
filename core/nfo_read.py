@@ -1,6 +1,6 @@
 """nfo_read.py — shared, stateless NFO tag-extraction primitives (CD-113a-2).
 
-Six pure functions that collapse the "fallback chain / any-depth / merge-
+Seven pure functions that collapse the "fallback chain / any-depth / merge-
 dedup" resilience rules that used to be hand-written three times independently
 in `core.enricher._nfo_to_meta`, `core.gallery_scanner.VideoScanner.parse_nfo`,
 and `core.readonly_producer._nfo_to_producer_meta` (spec-113 §2.5 / F-1) into
@@ -166,3 +166,23 @@ def nfo_runtime_minutes(root: ET.Element) -> int | None:
         return int(text)
     except ValueError:
         return None
+
+
+def nfo_title_record(root: ET.Element) -> tuple[str, str] | None:
+    """Read `<openaver_title_record>`'s `<written>` / `<body>` texts.
+
+    Returns `(written, body)` only when both stripped texts are non-empty;
+    otherwise `None` (record absent, either child missing, or either text
+    empty/whitespace-only). Pure XML extraction — no title-format business
+    logic (CD-154b-6).
+    """
+    record = root.find("openaver_title_record")
+    if record is None:
+        return None
+    written_elem = record.find("written")
+    body_elem = record.find("body")
+    written = (written_elem.text or "").strip() if written_elem is not None else ""
+    body = (body_elem.text or "").strip() if body_elem is not None else ""
+    if written and body:
+        return (written, body)
+    return None

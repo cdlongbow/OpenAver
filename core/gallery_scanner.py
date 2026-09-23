@@ -27,8 +27,10 @@ from core.nfo_read import (
     nfo_runtime_minutes,
     nfo_series_name,
     nfo_text,
+    nfo_title_record,
 )
 from core.nfo_stat import NFO_MTIME_REFRESH, nfo_mtime_or_none
+from core.nfo_title_format import resolve_title_body
 from core.nfo_utils import sanitize_nfo_bytes
 from core.path_utils import normalize_path, to_file_uri, uri_to_fs_path, uri_to_local_fs_path
 from core.scrapers.utils import FC2_TOKEN_PATTERN, normalize_number_impl
@@ -261,8 +263,9 @@ class VideoScanner:
          lambda m: f"HEYZO-{m.group(3)}"),
     ]
 
-    def __init__(self, path_mappings: dict = None):
+    def __init__(self, path_mappings: dict = None, nfo_title_format: str = '[{num}]{title}'):
         self.path_mappings = path_mappings or {}
+        self.nfo_title_format = nfo_title_format
         self.prefix_mapping = load_prefix_mapping()
         self.name_mapping = load_name_mapping()
         # key: dir path str → (sorted videos list, sorted images list)
@@ -332,9 +335,6 @@ class VideoScanner:
 
             info = VideoInfo()
 
-            # 標題
-            info.title = nfo_text(root, 'title')
-
             # 原始標題
             info.originaltitle = nfo_text(root, 'originaltitle')
 
@@ -348,7 +348,13 @@ class VideoScanner:
             info.date = nfo_first_text(root, ('release', 'premiered', 'year'))
 
             # 演員
-            info.actor = ','.join(nfo_actor_names(root))
+            actors = nfo_actor_names(root)
+            info.actor = ','.join(actors)
+
+            # 標題（需在番號/片商/日期/演員之後，resolve_title_body 依賴這些值）
+            raw_title = nfo_text(root, 'title')
+            record = nfo_title_record(root)
+            info.title = resolve_title_body(raw_title, info.num, actors, info.maker, info.date, self.nfo_title_format, record)
 
             # 類型/標籤
             info.genre = ','.join(nfo_merged_tags(root))

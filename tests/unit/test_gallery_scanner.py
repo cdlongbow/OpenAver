@@ -72,6 +72,49 @@ class TestGalleryScanner:
         info = scanner.parse_nfo(str(nfo_path))
         assert info is None
 
+    def test_parse_nfo_applies_custom_nfo_title_format(self, tmp_path):
+        """AC-b7：認得其他工具用自訂格式產生的 NFO → 讀出片名本體。"""
+        scanner = VideoScanner(nfo_title_format='{num}-{title}-{actor}')
+        # parse_nfo 的 number 來自 NFO 自身的 <num>，不像 enricher/producer 可由呼叫端傳入。
+        xml_content = """<?xml version="1.0" encoding="utf-8"?>
+        <movie>
+            <title>ABC-123-片名-三上悠亜</title>
+            <num>ABC-123</num>
+            <actor>
+                <name>三上悠亜</name>
+            </actor>
+        </movie>
+        """
+        nfo_path = tmp_path / "custom.nfo"
+        nfo_path.write_text(xml_content, encoding="utf-8")
+
+        info = scanner.parse_nfo(str(nfo_path))
+        assert info is not None
+        assert info.title == '片名'
+
+    def test_parse_nfo_respects_external_title_edit(self, tmp_path):
+        """AC-b11：記錄行存在但 <title> 被外部改過 → 以外部改過的內容為準。"""
+        scanner = VideoScanner(nfo_title_format='{num}-{title}-{actor}')
+        xml_content = """<?xml version="1.0" encoding="utf-8"?>
+        <movie>
+            <title>外部改過的片名</title>
+            <num>ABC-123</num>
+            <actor>
+                <name>三上悠亜</name>
+            </actor>
+            <openaver_title_record>
+                <written>ABC-123-片名-三上悠亜</written>
+                <body>片名</body>
+            </openaver_title_record>
+        </movie>
+        """
+        nfo_path = tmp_path / "edited.nfo"
+        nfo_path.write_text(xml_content, encoding="utf-8")
+
+        info = scanner.parse_nfo(str(nfo_path))
+        assert info is not None
+        assert info.title == '外部改過的片名'
+
     def test_parse_filename_fallback_naming_format(self, scanner):
         # 歷史行為：曾經有 9 條命名格式樣板，139-T2 已整條刪除。
         # 它們對**真實檔名**從未命中（re.escape 把 [ ( 跳脫之後只 unescape < >，

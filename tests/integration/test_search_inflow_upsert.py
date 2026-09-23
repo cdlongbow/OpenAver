@@ -208,8 +208,8 @@ def test_scrape_single_video_scanner_receives_path_mappings(client):
 
     assert resp.status_code == 200
     assert resp.json()["db_sync_status"] == "synced"
-    # VideoScanner 必須以 path_mappings= 構建
-    MockScanner.assert_called_once_with(path_mappings=path_mappings)
+    # VideoScanner 必須以 path_mappings= 與 nfo_title_format= 構建
+    MockScanner.assert_called_once_with(path_mappings=path_mappings, nfo_title_format='[{num}]{title}')
 
 
 # ─── case 4: missing new_filename ─────────────────────────────────────────────

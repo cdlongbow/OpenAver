@@ -863,6 +863,7 @@ def generate_nfo(
     rating: Optional[float] = None,
     mpaa: str = 'JP-18+',
     external_manager: str = 'off',
+    nfo_title_format: str = '[{num}]{title}',
 ) -> bool:
     """
     生成 NFO 檔案
@@ -921,7 +922,10 @@ def generate_nfo(
     # 顯示標題（belt-and-suspenders：剝除前置番號前綴後組 display_title，B2 FIX B CD-c7）
     _t = title or original_title
     _t = _strip_num_prefixes(_t, number) if _t else _t
-    display_title = f"[{number}]{_t}" if _t else f"[{number}]"
+    from core.nfo_title_format import format_nfo_title  # 延遲：反向模組層 import 會循環
+    display_title = format_nfo_title(nfo_title_format, {
+        'number': number, 'title': _t, 'actors': actors, 'maker': maker, 'date': date,
+    })
 
     poster_suffix = '-poster' if has_poster else ''
     fanart_suffix = '-fanart' if has_fanart else ''
@@ -1013,12 +1017,21 @@ def generate_nfo(
     else:
         external_block = ''
 
+    title_record_block = ''
+    if nfo_title_format != '[{num}]{title}':
+        title_record_block = (
+            f'  <openaver_title_record>\n'
+            f'    <written>{html.escape(display_title)}</written>\n'
+            f'    <body>{html.escape(_t)}</body>\n'
+            f'  </openaver_title_record>\n'
+        )
+
     nfo_content += f'''  <num>{html.escape(number)}</num>
   <release>{html.escape(date)}</release>
   <cover></cover>
   <website>{html.escape(url)}</website>
 {external_block}  <uniqueid type="home" default="true">{html.escape(number)}</uniqueid>
-</movie>'''
+{title_record_block}</movie>'''
 
     try:
         with open(output_path, 'w', encoding='utf-8') as f:
@@ -1422,7 +1435,7 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
         user_tags = metadata.get('user_tags', [])
         if generate_nfo(
             number=number,
-            title=format_data['title'],
+            title=title,
             original_title=original_title,  # 日文原始標題
             actors=actors,
             tags=tags,
@@ -1441,9 +1454,9 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
             label=metadata.get('label', ''),
             # 63c-5：metadata 是 raw search_jav 結果 dict，summary/rating 走 _ 前綴 carrier
             # （兩條路徑現在都帶值；該剝除機制已於 0.15.16 退場）
-            summary=metadata.get('_summary', ''),
-            rating=metadata.get('_rating'),
+            summary=metadata.get('_summary', ''), rating=metadata.get('_rating'),
             external_manager=ext_mode,
+            nfo_title_format=config.get('nfo_title_format', '[{num}]{title}'),
         ):
             result['nfo_path'] = nfo_path
 

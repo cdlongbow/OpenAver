@@ -1891,6 +1891,37 @@ class TestGenerateAvlistCleanupPass:
             "若未呼叫，Scanner UI 主路徑不會清孤兒（Canonical Decision #4 雙流程覆蓋未達成）"
         )
 
+    def test_generate_avlist_passes_nfo_title_format_to_scanner(self, client, tmp_path, monkeypatch):
+        """generate_avlist() 必須把 scraper.nfo_title_format 傳進 VideoScanner。"""
+        from unittest.mock import patch
+
+        scan_dir = tmp_path / "videos"
+        scan_dir.mkdir()
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {
+            "gallery": {
+                "directories": [str(scan_dir)],
+                "output_dir": str(output_dir),
+                "path_mappings": {},
+                "min_size_mb": 0,
+            },
+            "general": {"theme": "light"},
+            "scraper": {
+                "video_extensions": [".mp4"],
+                "nfo_title_format": "{num}-{title}",
+            },
+        })
+
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
+
+        with patch("web.routers.scanner.VideoScanner") as MockScanner:
+            response = client.get('/api/gallery/generate')
+
+        assert response.status_code == 200
+        assert MockScanner.call_args.kwargs['nfo_title_format'] == '{num}-{title}'
+
 
 class TestClearCacheThumbnailInvalidation:
     """feature/71 T8 邊界1：clear_cache → thumbnail_cache.clear_all() 連動清整個 thumb/。"""

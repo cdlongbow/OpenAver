@@ -346,6 +346,7 @@ class EnrichRequest(BaseModel):
     readonly_action: Optional[Literal['rescrape', 'ingest']] = None
     metadata: Optional[Dict[str, Any]] = None
     allow_number_change: bool = False
+    preserve_title: bool = False
 
 
 class BatchEnrichItem(BaseModel):
@@ -677,7 +678,7 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
                 path_mappings=path_mappings, action=action, proxy_url=proxy_url,
                 scraper_data=scraper_data, scrape_source=request.source,
                 javbus_lang=request.javbus_lang, write_cover=resolved_write_cover,
-                overwrite_existing=request.overwrite_existing,
+                overwrite_existing=request.overwrite_existing, preserve_title=request.preserve_title,
                 after_produce=lambda: thumbnail_cache.invalidate(canonical),
             )
             if result.success:
@@ -778,12 +779,12 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
             write_cover=resolved_write_cover,
             write_extrafanart=request.write_extrafanart,
             overwrite_existing=request.overwrite_existing,
-            external_manager=config.get("scraper", {}).get("external_manager", "off"),
+            external_manager=config.get("scraper", {}).get("external_manager", "off"), nfo_title_format=config.get("scraper", {}).get("nfo_title_format", '[{num}]{title}'),
             proxy_url=proxy_url,
             source=request.source,
             javbus_lang=request.javbus_lang,
             scraper_data=scraper_data,
-            path_mappings=path_mappings,
+            path_mappings=path_mappings, preserve_title=request.preserve_title,
         )
         # feature/71 T8: 換封面成功 → 失效舊縮圖（下次進畫面時重生，CD-9 / spec 2.A.7）。
         # request.file_path 已是 DB 的 file:/// URI（前端送 currentLightboxVideo.path /
@@ -1147,7 +1148,7 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                             write_cover=request.write_cover,
                             write_extrafanart=request.write_extrafanart,
                             overwrite_existing=request.overwrite_existing,
-                            external_manager=config.get("scraper", {}).get("external_manager", "off"),
+                            external_manager=config.get("scraper", {}).get("external_manager", "off"), nfo_title_format=config.get("scraper", {}).get("nfo_title_format", '[{num}]{title}'),
                             proxy_url=proxy_url,
                             source=es if es != "auto" else None,
                             javbus_lang=el,

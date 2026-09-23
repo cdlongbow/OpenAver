@@ -159,7 +159,7 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "所以本條的增量只有佔位那三行。",
     ),
     ("core/config.py", "_load_config_unlocked"): (
-        331,
+        335,
         "config 遷移主流程，每加一個設定欄位都得改它；收斂設計已列 backlog"
         "（OpenAver架構評估-回應.md §七）。"
         "2026-09-21（feature/152c T3）304→310：新增 top-level `focal_device` 的 additive "
@@ -172,7 +172,8 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "migration，與 152c 同形）。"
         "2026-09-23（feature/153b T3 round 2）315→331：另外加入資料根未定版時不落盤的 "
         "BE-DATA-13 守衛（約 16 行，含說明註解）——CONFIG_PATH 已在資料根內且無 "
-        ".layout.json 時改讀 default 進記憶體，避免 bootstrap 前自動建檔造成永久啟動衝突。",
+        ".layout.json 時改讀 default 進記憶體，避免 bootstrap 前自動建檔造成永久啟動衝突。"
+        "2026-09-24（feature/154b T5）331→335：新增 scraper.nfo_title_format 的 additive migration（3 行程式碼 ＋ 1 行間隔空行）。",
     ),
     ("web/routers/scraper.py", "batch_enrich_endpoint"): (
         292,
@@ -197,7 +198,7 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "inline 進條件而非新增變數，唯讀側註解同步精簡，淨回收 2 行——棘輪同步收緊。",
     ),
     ("core/enricher.py", "enrich_single"): (
-        284,
+        286,
         "單片 enrich 主流程，含多個 write_* flag（nfo/cover/extrafanart/overwrite_existing/"
         "external_manager）的正交組合分支，是核心編排函式；已標記 ranker-invalidate-ok，flag "
         "組合邏輯搬到別處會打散單一事務語意。"
@@ -211,7 +212,8 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "（只因缺封面而進來、佔位標題而進來）——這兩條 source_used 停在 \"db\"，:722 的 _db_upsert "
         "gate 不會跑，必須就地補記 scrape_attempted_at，否則那些片會永遠賴在待補清單上。"
         "新增 12 行裡 7 行是註解，記的是「為什麼這裡要手動補記」；抽 helper 會再次撞上上一段"
-        "已經寫明的 scope 問題（現在是四個狀態不是三個），刪註解則是拿最容易寫錯的地方換行數。",
+        "已經寫明的 scope 問題（現在是四個狀態不是三個），刪註解則是拿最容易寫錯的地方換行數。"
+        " ／ 284→286（feature/154-nfo-title 154a-T1）：重刮可選保留目前標題——新增 preserve_title 參數與一行 effective_title() 呼叫，鏡射既有 effective_original_title 單點插入，拆出去反而打散同一段 meta 組裝。",
     ),
     ("core/database/video.py", "VideoRepository.repath"): (
         242,

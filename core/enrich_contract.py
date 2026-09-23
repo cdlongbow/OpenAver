@@ -13,6 +13,7 @@ import os
 from dataclasses import dataclass
 from typing import List, Optional
 
+from core.organizer import _strip_num_prefixes
 from core.path_utils import uri_to_local_fs_path
 
 
@@ -97,6 +98,34 @@ def effective_original_title(meta, existing) -> str:
     傳 Python None，故尾端 `or ''` 把 None（與 '')正規化成 ''——否則 None 會被注入
     meta['original_title']、下游 generate_nfo 的 html.escape(None) 拋 AttributeError。"""
     return meta.get('original_title') or (existing.original_title if existing else '') or ''
+
+
+def _numbers_agree(*numbers) -> bool:
+    """所有非空番號（大小寫不敏感）是否一致；忽略空值；0 或 1 個非空值視為一致。"""
+    normalized = {str(n).strip().upper() for n in numbers if n}
+    return len(normalized) <= 1
+
+
+def effective_title(meta, existing, preserve, number, preserved_body_override: Optional[str] = None) -> str:
+    """preserve=True 時是否沿用 existing.title。
+
+    三個番號來源——`existing.number`（改動前既有番號）、`number`（這次要寫入的
+    番號）、`meta.get('number')`（這次實際刮回的番號，非唯讀路徑通常無此欄位）——
+    只要有值的都必須大小寫不敏感一致，才視為同一部片、保留舊標題；任一對不同
+    （改號、或刮到另一部片）都回退這次刮到的新標題。
+
+    `preserved_body_override` 非 None 時，在番號比對通過後優先回傳它（蓋過
+    existing.title 原樣保留）。
+    """
+    if not preserve:
+        return meta.get('title') or ''
+    if not _numbers_agree(existing.number if existing else None, number, meta.get('number')):
+        return meta.get('title') or ''
+    if preserved_body_override is not None:
+        return preserved_body_override
+    if existing and existing.title and _strip_num_prefixes(existing.title, number):
+        return existing.title
+    return meta.get('title') or ''
 
 
 def compute_has_servable_cover(repo, path_uri, path_mappings) -> bool:
