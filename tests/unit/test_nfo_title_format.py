@@ -5,8 +5,11 @@ TASK-154b-T1: format_nfo_title / validate_nfo_title_format / resolve_title_body
 純函式契約測試。
 """
 
+from types import SimpleNamespace
+
 from core.nfo_title_format import (
     format_nfo_title,
+    resolve_preserved_title_for_write,
     resolve_title_body,
     validate_nfo_title_format,
 )
@@ -158,3 +161,64 @@ class TestResolveTitleBody:
             record=None,
         )
         assert result == '完全不像格式的片名'
+
+
+# ── resolve_preserved_title_for_write ────────────────────────────────────
+
+class TestResolvePreservedTitleForWrite:
+    """TASK-154b-T6 / CD-154b-12：保留分支「原樣掃入」vs「刮削本體」判準。"""
+
+    def test_resolve_preserved_title_oracle_a_override_when_scanned_body_shorter_than_stripped(self):
+        """oracle (a)：原樣掃入的自訂格式 → body 短於 _strip_num_prefixes → 回傳 body。"""
+        existing = SimpleNamespace(
+            title='ABC-123-片名-三上悠亜',
+            number='ABC-123',
+            actresses=['三上悠亜'],
+            maker='',
+            release_date='',
+        )
+        result = resolve_preserved_title_for_write(
+            disk_title='ABC-123-片名-三上悠亜',
+            existing=existing,
+            nfo_title_format='{num}-{title}-{actor}',
+            record=None,
+        )
+        assert result == '片名'
+
+    def test_resolve_preserved_title_oracle_b_disk_mismatch_keeps_existing_verbatim(self):
+        """oracle (b)：DB 已是使用者自訂標題、磁碟 NFO 仍是舊自訂格式 → 不相等，回傳 None。
+
+        資料刻意讓「若拿掉 disk_title != existing.title 判斷」時，磁碟反推 body='片名'
+        會 ≠ _strip_num_prefixes(existing.title)——少了這道判斷就會覆寫使用者自訂標題。
+        """
+        existing = SimpleNamespace(
+            title='我的自訂標題',
+            number='ABC-123',
+            actresses=['三上悠亜'],
+            maker='',
+            release_date='',
+        )
+        result = resolve_preserved_title_for_write(
+            disk_title='ABC-123-片名-三上悠亜',
+            existing=existing,
+            nfo_title_format='{num}-{title}-{actor}',
+            record=None,
+        )
+        assert result is None
+
+    def test_resolve_preserved_title_oracle_c_no_override_when_body_equals_stripped(self):
+        """oracle (c)：預設格式、body 與剝法一致 → 不觸發 override，回傳 None。"""
+        existing = SimpleNamespace(
+            title='[ABC-123]中文片名',
+            number='ABC-123',
+            actresses=[],
+            maker='',
+            release_date='',
+        )
+        result = resolve_preserved_title_for_write(
+            disk_title='[ABC-123]中文片名',
+            existing=existing,
+            nfo_title_format='[{num}]{title}',
+            record=None,
+        )
+        assert result is None

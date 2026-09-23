@@ -105,3 +105,28 @@ def resolve_title_body(
             return candidate
     # 步驟 5：都不符合 → 原樣保留，只去掉開頭番號（今天的既有行為，含裸番號）
     return _strip_num_prefixes(raw_title, number)
+
+
+def resolve_preserved_title_for_write(disk_title, existing, nfo_title_format, record=None) -> Optional[str]:
+    """CD-154b-12：保留重刮時是否用「格式反推本體」覆寫 DB title。
+
+    呼叫端負責讀磁碟 NFO 取得 disk_title／record；本函式不做 I/O。
+    回傳非 None 的 body 時，effective_title 應優先採用；回傳 None 時走 154a 原樣保留。
+    """
+    if existing is None or not existing.title:
+        return None
+    if disk_title != existing.title:
+        return None
+    body = resolve_title_body(
+        disk_title,
+        existing.number,
+        existing.actresses,
+        existing.maker,
+        existing.release_date,
+        nfo_title_format,
+        record,
+    )
+    stripped = _strip_num_prefixes(existing.title, existing.number)
+    if body != stripped:
+        return body
+    return None

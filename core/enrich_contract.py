@@ -100,7 +100,7 @@ def effective_original_title(meta, existing) -> str:
     return meta.get('original_title') or (existing.original_title if existing else '') or ''
 
 
-def effective_title(meta, existing, preserve, number) -> str:
+def effective_title(meta, existing, preserve, number, preserved_body_override: Optional[str] = None) -> str:
     """preserve=True 時是否沿用 existing.title（Codex PR#202 P2 修正，154a 收尾）。
 
     `number` 是呼叫端認定的既有番號（== existing.number，由 router 的番號守衛與前端
@@ -112,12 +112,17 @@ def effective_title(meta, existing, preserve, number) -> str:
     meta 從不帶 'number' key（`_scraper_to_meta` 沒有這個欄位），此處比對天然跳過，行為
     不變。兩者不同 → 視為「刮到另一部片」（spec-154 §「番號被改掉時不出現」的後端對齊），
     不保留舊標題，回退這次刮到的新標題——避免舊標題文字配上新番號寫進 NFO／DB。
+
+    `preserved_body_override`（CD-154b-12）：呼叫端從磁碟 NFO 算出的「格式反推本體」；
+    非 None 時在番號比對通過後優先回傳它（蓋過 existing.title 原樣保留）。
     """
     if not preserve:
         return meta.get('title') or ''
     scraped_number = meta.get('number')
     if scraped_number and number and str(scraped_number).strip().upper() != str(number).strip().upper():
         return meta.get('title') or ''
+    if preserved_body_override is not None:
+        return preserved_body_override
     if existing and existing.title and _strip_num_prefixes(existing.title, number):
         return existing.title
     return meta.get('title') or ''

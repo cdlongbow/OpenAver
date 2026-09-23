@@ -194,6 +194,23 @@ class TestEffectiveTitle:
         meta = {'title': '新刮到的標題'}
         assert effective_title(meta, existing, True, 'ABC-123') == '中文片名'
 
+    def test_preserve_true_with_override_returns_override_verbatim(self):
+        """CD-154b-12：preserve=True 且 preserved_body_override 非 None → 回傳 override 逐字。"""
+        existing = SimpleNamespace(title='ABC-123-片名-三上悠亜')
+        meta = {'title': '新標題'}
+        assert effective_title(
+            meta, existing, True, 'ABC-123', preserved_body_override='片名',
+        ) == '片名'
+
+    def test_preserve_true_without_override_falls_back_to_existing_branch(self):
+        """CD-154b-12：preserve=True 且 override 為 None／未傳 → 既有 existing.title 分支零回歸。"""
+        existing = SimpleNamespace(title='ABC-123-片名-三上悠亜')
+        meta = {'title': '新標題'}
+        assert effective_title(meta, existing, True, 'ABC-123') == 'ABC-123-片名-三上悠亜'
+        assert effective_title(
+            meta, existing, True, 'ABC-123', preserved_body_override=None,
+        ) == 'ABC-123-片名-三上悠亜'
+
 
 # ── should_preserve_cover ────────────────────────────────────────────────────
 

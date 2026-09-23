@@ -53,7 +53,7 @@ from core.nfo_read import (
     nfo_text,
     nfo_title_record,
 )
-from core.nfo_title_format import resolve_title_body
+from core.nfo_title_format import resolve_preserved_title_for_write, resolve_title_body
 from core.nfo_updater import parse_nfo
 from core.path_utils import (
     is_fs_path_under_dir,
@@ -993,6 +993,30 @@ class ReadonlyProduceError(Exception):
     """
 
 
+def _preserved_body_override_from_old_nfo(
+    existing, fs_path, scraper_cfg, path_mappings, preserve_title,
+):
+    """CD-154b-12：從輸出夾舊 NFO 算出 preserved_body_override；失敗一律 None。"""
+    if not preserve_title:
+        return None
+    try:
+        nfo_title_format = scraper_cfg.get('nfo_title_format', '[{num}]{title}')
+        old_base = readonly_paths._build_old_base(existing, fs_path, scraper_cfg)
+        if old_base:
+            old_nfo_path = Path(uri_to_local_fs_path(existing.output_dir, path_mappings)) / (old_base + '.nfo')
+            if old_nfo_path.exists():
+                _, root = parse_nfo(str(old_nfo_path))
+                if root is not None:
+                    disk_title = nfo_text(root, "title")
+                    record = nfo_title_record(root)
+                    return resolve_preserved_title_for_write(
+                        disk_title, existing, nfo_title_format, record)
+    except Exception as e:
+        logger.warning("保留標題：讀取舊 NFO 失敗，照原樣保留 (%s): %s", fs_path, e)
+        return None
+    return None
+
+
 def enrich_one_readonly(
     *,
     repo_factory,            # Callable[[], repo]；caller 傳入自己的 VideoRepository binding
@@ -1085,7 +1109,7 @@ def enrich_one_readonly(
     # step 4
     repo = repo_factory()
     existing = repo.get_by_path(canonical)
-    meta['title'] = effective_title(meta, existing, preserve_title, number)
+    meta['title'] = effective_title(meta, existing, preserve_title, number, preserved_body_override=_preserved_body_override_from_old_nfo(existing, fs_path, scraper_cfg, path_mappings, preserve_title))
     # Codex PR#113 P2#3（round 2，owner-confirmed 全面對齊；round 6 修正）：
     # readonly enrich 對齊非唯讀 core.enricher._write_cover 的 skip 語意
     # （os.path.exists(cover) and not overwrite_existing）——fill_missing

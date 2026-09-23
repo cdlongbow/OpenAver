@@ -33,7 +33,7 @@ from core.nfo_read import (
     nfo_title_record,
 )
 from core.nfo_stat import NFO_MTIME_FILL_MISSING, NFO_MTIME_REFRESH, nfo_mtime_or_none
-from core.nfo_title_format import resolve_title_body
+from core.nfo_title_format import resolve_preserved_title_for_write, resolve_title_body
 from core.nfo_updater import parse_nfo
 from core.organizer import crop_to_poster, download_image, find_subtitle_files, generate_nfo, _strip_num_prefixes
 from core.path_utils import to_file_uri, uri_to_fs_path, uri_to_local_fs_path
@@ -514,6 +514,25 @@ def _is_filename_placeholder_title(title: str, number: str, fs_path: str) -> boo
     )
 
 
+def _preserved_body_override_from_sidecar(fs_path, existing, preserve_title, nfo_title_format):
+    """CD-154b-12：從來源檔旁 NFO 算出 preserved_body_override；失敗一律 None。"""
+    if not preserve_title:
+        return None
+    try:
+        nfo_p = Path(fs_path).with_suffix(".nfo")
+        if nfo_p.exists():
+            _, root = parse_nfo(str(nfo_p))
+            if root is not None:
+                disk_title = nfo_text(root, "title")
+                record = nfo_title_record(root)
+                return resolve_preserved_title_for_write(
+                    disk_title, existing, nfo_title_format, record)
+    except Exception as e:
+        logger.warning("保留標題：讀取舊 NFO 失敗，照原樣保留 (%s): %s", fs_path, e)
+        return None
+    return None
+
+
 def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes go via _db_upsert → repo.upsert and via repo.update_tags_if_changed — both already invalidate)
     file_path: str,
     number: str,
@@ -668,7 +687,7 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
     # same preserved value. A refresh_full re-scrape returning an empty original_title
     # must NOT clobber the existing DB/NFO value (mirrors user_tags/cover preserve).
     meta['original_title'] = effective_original_title(meta, existing_record)
-    meta['title'] = effective_title(meta, existing_record, preserve_title, number)
+    meta['title'] = effective_title(meta, existing_record, preserve_title, number, preserved_body_override=_preserved_body_override_from_sidecar(fs_path, existing_record, preserve_title, nfo_title_format))
 
     cover_url = meta.get("cover_url", "")
 
