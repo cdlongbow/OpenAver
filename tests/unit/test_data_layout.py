@@ -419,6 +419,65 @@ def test_both_roots_empty_allows_fresh_on_external(tmp_path, monkeypatch):
     assert (external / ".layout.json").is_file()
 
 
+def test_external_finalized_marker_missing_config_recovers_without_touching_default(
+    tmp_path, monkeypatch
+):
+    """override 已定版但 config 缺失 + default 有舊資料 → recovered_existing；兩邊舊位元組不變。"""
+    from core.config import CONFIG_DEFAULT_PATH
+    from core.data_layout import bootstrap_data_layout
+
+    default_root = tmp_path / "output"
+    default_before = _seed_full_legacy_root(default_root)
+    external = tmp_path / "data"
+    external.mkdir()
+    db_bytes = b"external-db-must-survive-missing-config"
+    (external / "openaver.db").write_bytes(db_bytes)
+    (external / ".layout.json").write_text(
+        json.dumps({"version": 1, "complete": True}),
+        encoding="utf-8",
+    )
+    legacy = tmp_path / "web" / "config.json"
+    legacy_bytes = _write_legacy_config(legacy)
+    _patch_roots(monkeypatch, effective=external, default=default_root, legacy_config=legacy)
+
+    result = bootstrap_data_layout()
+
+    assert result.status == "recovered_existing"
+    assert result.root == external
+    cfg = external / "config.json"
+    assert cfg.is_file()
+    assert (cfg.stat().st_mode & 0o777) == 0o600
+    assert cfg.read_bytes() == CONFIG_DEFAULT_PATH.read_bytes()
+    assert (external / "openaver.db").read_bytes() == db_bytes
+    assert legacy.read_bytes() == legacy_bytes
+    assert _tree_manifest(default_root) == default_before
+
+
+def test_external_finalized_marker_damaged_config_still_raises(tmp_path, monkeypatch):
+    """override 已定版 + config 損壞 → DataLayoutError；損壞檔位元組不變。"""
+    from core.data_layout import bootstrap_data_layout, DataLayoutError
+
+    default_root = tmp_path / "output"
+    _seed_full_legacy_root(default_root)
+    external = tmp_path / "data"
+    external.mkdir()
+    damaged = b"{not-valid-json-external"
+    cfg = external / "config.json"
+    cfg.write_bytes(damaged)
+    (external / ".layout.json").write_text(
+        json.dumps({"version": 1, "complete": True}),
+        encoding="utf-8",
+    )
+    legacy = tmp_path / "web" / "config.json"
+    _write_legacy_config(legacy)
+    _patch_roots(monkeypatch, effective=external, default=default_root, legacy_config=legacy)
+
+    with pytest.raises(DataLayoutError, match="root config unreadable"):
+        bootstrap_data_layout()
+
+    assert cfg.read_bytes() == damaged
+
+
 def test_already_complete_ignores_legacy_config(tmp_path, monkeypatch):
     """有效 marker + 可讀 root config → already_complete，不讀／不改 legacy。"""
     from core.data_layout import bootstrap_data_layout
@@ -439,6 +498,177 @@ def test_already_complete_ignores_legacy_config(tmp_path, monkeypatch):
     assert result.status == "already_complete"
     assert legacy.read_bytes() == legacy_bytes
     assert json.loads((root / "config.json").read_text())["search"]["search_filter"] == "root-only"
+
+
+def test_marker_valid_config_missing_rebuilds_default_and_recovers(tmp_path, monkeypatch):
+    """有效 marker + config 不存在 → default 重建、recovered_existing；legacy／DB 不變。"""
+    from core.config import CONFIG_DEFAULT_PATH
+    from core.data_layout import bootstrap_data_layout
+    import core.data_layout as layout_mod
+
+    root = tmp_path / "output"
+    root.mkdir()
+    db = root / "openaver.db"
+    db_bytes = b"existing-db-must-survive-config-rebuild"
+    db.write_bytes(db_bytes)
+    (root / ".layout.json").write_text(
+        json.dumps({"version": 1, "complete": True}),
+        encoding="utf-8",
+    )
+    legacy = tmp_path / "web" / "config.json"
+    legacy_bytes = _write_legacy_config(
+        legacy, {"search": {"search_filter": "legacy-must-not-be-copied"}}
+    )
+    _patch_roots(monkeypatch, effective=root, default=root, legacy_config=legacy)
+
+    init_calls: list = []
+    monkeypatch.setattr(layout_mod, "init_db", lambda *a, **k: init_calls.append((a, k)))
+
+    result = bootstrap_data_layout()
+
+    assert result.status == "recovered_existing"
+    assert init_calls == []
+    assert db.read_bytes() == db_bytes
+    assert legacy.read_bytes() == legacy_bytes
+    cfg = root / "config.json"
+    assert cfg.is_file()
+    assert (cfg.stat().st_mode & 0o777) == 0o600
+    assert cfg.read_bytes() == CONFIG_DEFAULT_PATH.read_bytes()
+    assert json.loads(cfg.read_text(encoding="utf-8")) != json.loads(
+        legacy_bytes.decode("utf-8")
+    )
+
+
+def test_marker_valid_config_damaged_still_raises_and_preserves_bytes(tmp_path, monkeypatch):
+    """有效 marker + config 存在但損壞 → 仍阻斷；位元組不變。"""
+    from core.data_layout import bootstrap_data_layout, DataLayoutError
+
+    root = tmp_path / "output"
+    root.mkdir()
+    damaged = b"{not-valid-json"
+    cfg = root / "config.json"
+    cfg.write_bytes(damaged)
+    (root / ".layout.json").write_text(
+        json.dumps({"version": 1, "complete": True}),
+        encoding="utf-8",
+    )
+    legacy = tmp_path / "web" / "config.json"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    _patch_roots(monkeypatch, effective=root, default=root, legacy_config=legacy)
+
+    with pytest.raises(DataLayoutError, match="root config unreadable"):
+        bootstrap_data_layout()
+
+    assert cfg.read_bytes() == damaged
+
+
+def test_install_config_from_source_fsyncs_before_atomic_move(tmp_path, monkeypatch):
+    """_install_config_from_source：staging temp 的 os.fsync 必須在 atomic_move 之前。"""
+    import os
+
+    import core.data_layout as layout_mod
+
+    source = tmp_path / "source.json"
+    source.write_text('{"ok": true}\n', encoding="utf-8")
+    dest = tmp_path / "dest" / "config.json"
+    dest.parent.mkdir()
+
+    call_order: list[str] = []
+    real_fsync = os.fsync
+    real_atomic_move = layout_mod.atomic_move
+
+    def spy_fsync(fd):
+        call_order.append("fsync")
+        return real_fsync(fd)
+
+    def spy_atomic_move(src, dest_path):
+        call_order.append("atomic_move")
+        return real_atomic_move(src, dest_path)
+
+    # data_layout 以 `import os` 使用同一模組物件；實作後 os.fsync 會被這支 spy 接到。
+    monkeypatch.setattr(os, "fsync", spy_fsync)
+    monkeypatch.setattr(layout_mod, "atomic_move", spy_atomic_move)
+
+    layout_mod._install_config_from_source(source, dest)
+
+    assert "fsync" in call_order
+    assert "atomic_move" in call_order
+    assert call_order.index("fsync") < call_order.index("atomic_move")
+    assert dest.is_file()
+
+
+def test_install_config_from_source_opens_writable_fd_for_fsync(tmp_path, monkeypatch):
+    """fsync 前的 os.open 必須帶寫入權限（Windows FlushFileBuffers 需要可寫 handle）。"""
+    import os
+
+    import core.data_layout as layout_mod
+
+    source = tmp_path / "source.json"
+    source.write_text('{"ok": true}\n', encoding="utf-8")
+    dest = tmp_path / "dest" / "config.json"
+    dest.parent.mkdir()
+
+    # 只收「已存在的 staging temp」那次 open（排除 mkstemp 的 O_CREAT 建檔，
+    # 否則 mkstemp 自帶 O_RDWR 會讓 O_RDONLY 回歸假綠）。
+    fsync_open_flags: list[int] = []
+    real_open = os.open
+
+    def spy_open(path, flags, *args, **kwargs):
+        path_s = str(path)
+        if path_s.endswith(".config.tmp") and not (flags & os.O_CREAT):
+            fsync_open_flags.append(flags)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(layout_mod.os, "open", spy_open)
+
+    layout_mod._install_config_from_source(source, dest)
+
+    assert fsync_open_flags, "應有一次對 staging .config.tmp 的 fsync 用 os.open"
+    assert all(f & (os.O_RDWR | os.O_WRONLY) for f in fsync_open_flags), (
+        "Windows 的 fsync 需要可寫 handle；"
+        f"got fsync-open flags={fsync_open_flags!r}（應含 O_RDWR 或 O_WRONLY）"
+    )
+    assert dest.is_file()
+
+
+def test_write_marker_fsyncs_before_os_replace(tmp_path, monkeypatch):
+    """_write_marker 必須以 fsync=True 寫 marker，且 fsync 在 .layout.json 的 os.replace 之前。"""
+    import os
+    from unittest.mock import patch
+
+    import core.data_layout as layout_mod
+    from core.data_root import LAYOUT_MARKER_NAME
+
+    root = tmp_path / "output"
+    root.mkdir()
+    (root / "config.json").write_text('{"gallery": {}}\n', encoding="utf-8")
+    marker_dest = (root / LAYOUT_MARKER_NAME).resolve()
+
+    call_order: list[str] = []
+    real_fsync = os.fsync
+    real_replace = os.replace
+
+    def spy_fsync(fd):
+        call_order.append("fsync")
+        return real_fsync(fd)
+
+    def spy_replace(src, dst, *args, **kwargs):
+        call_order.append(f"os_replace:{Path(dst).resolve()}")
+        return real_replace(src, dst, *args, **kwargs)
+
+    with patch("core.atomic_write.os.fsync", side_effect=spy_fsync), patch(
+        "core.atomic_write.os.replace", side_effect=spy_replace
+    ):
+        layout_mod._write_marker(root)
+
+    marker_events = [e for e in call_order if e.startswith("os_replace:") and Path(e.split(":", 1)[1]) == marker_dest]
+    assert marker_events, f"應有對 {marker_dest} 的 os.replace，got {call_order}"
+    marker_replace = marker_events[0]
+    assert "fsync" in call_order, f"_write_marker 必須觸發 fsync，got {call_order}"
+    assert call_order.index("fsync") < call_order.index(marker_replace), (
+        f"fsync 必須在 marker os.replace 之前，got {call_order}"
+    )
+    assert marker_dest.is_file()
 
 
 def test_root_config_matching_legacy_resumes_marker_only(tmp_path, monkeypatch):

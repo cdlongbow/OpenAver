@@ -1482,6 +1482,32 @@ class TestGalleryOutputDirProgramAreaGuard:
         assert "resolved" not in body["data"]
         assert "gallery_output_path" not in (body["data"].get("gallery") or {})
 
+    def test_get_config_resolved_includes_stable_data_root(self, client, env, tmp_path):
+        """resolved.data_root 不隨 gallery.output_dir 目前值變動。"""
+        from core.data_root import get_data_root
+
+        outside = str(tmp_path / "custom_gallery_abs")
+        put = client.put("/api/config", json=self._payload(env["seed"], outside))
+        assert put.status_code == 200
+        assert put.json()["success"] is True
+
+        resp = client.get("/api/config")
+        body = resp.json()
+        assert body["success"] is True
+        assert body["data"]["gallery"]["output_dir"] == outside
+        assert body["resolved"]["data_root"] == str(get_data_root())
+        assert body["resolved"]["data_root"] != outside
+        assert body["resolved"]["gallery_output_path"] == outside
+
+    def test_put_config_program_area_rejection_message_omits_cleared_claim(self, client, env):
+        """程式區守衛拒絕文案不得再聲稱「更新時會被清除」。"""
+        resp = client.put("/api/config", json=self._payload(env["seed"], "./output"))
+        body = resp.json()
+        assert body["success"] is False
+        assert body["reason"] == "gallery_output_in_program_area"
+        assert "會被清除" not in body["error"]
+        assert "輸出目錄不可設在程式安裝目錄內。" in body["error"]
+
     def test_resolved_not_in_put_payload_and_not_on_disk(self, client, env, tmp_path):
         """GET → 原樣塞進 PUT body 含 resolved → 磁碟 config.json 不含該 key。"""
         get_body = client.get("/api/config").json()

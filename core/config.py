@@ -39,7 +39,7 @@ _config_write_lock = threading.Lock()
 
 
 class ConfigRootNotFinalizedError(Exception):
-    """資料根尚未定版時禁止寫入 config.json（BE-DATA-09 / TASK-153b-T3fix1）。"""
+    """資料根尚未定版時禁止寫入 config.json（BE-DATA-13 / TASK-153b-T3fix1）。"""
 
 
 # 外部管理器模式共用常數（organizer / enricher 引用）
@@ -252,7 +252,7 @@ def _load_config_unlocked() -> dict:  # noqa: C901 — config 遷移主流程；
     critical section 內再 acquire 同一 threading.Lock → 自我死鎖（CD-66b-1）。
     """
     # 首次啟動：從 config.default.json 初始化。
-    # BE-DATA-09：若 CONFIG_PATH 已落在資料根內、但 layout 尚未定版（無 .layout.json），
+    # BE-DATA-13：若 CONFIG_PATH 已落在資料根內、但 layout 尚未定版（無 .layout.json），
     # 不得落盤——否則會生出一份與 default／legacy 都不相等的 root config，下次
     # bootstrap 依 spec §4.2 判定衝突而永久阻斷啟動。改讀 default 進記憶體當本次設定。
     _defer_disk_seed = False
@@ -262,7 +262,7 @@ def _load_config_unlocked() -> dict:  # noqa: C901 — config 遷移主流程；
             and not is_layout_finalized(get_data_root())
         ):
             _defer_disk_seed = True
-            logger.info("[Config] 資料根尚未定版，略過自動建檔（BE-DATA-09）")
+            logger.info("[Config] 資料根尚未定版，略過自動建檔（BE-DATA-13）")
         else:
             shutil.copy2(CONFIG_DEFAULT_PATH, CONFIG_PATH)
             CONFIG_PATH.chmod(0o600)  # CD-114c-9: copy2 保留 0644，強制 0600
@@ -569,7 +569,7 @@ def _load_config_unlocked() -> dict:  # noqa: C901 — config 遷移主流程；
             need_save = True
 
         # Save migrated config（已持鎖 → 用 unlocked 版避免自我死鎖）
-        # _defer_disk_seed：記憶體遷移可跑，但一個字都不准寫回資料根（BE-DATA-09）。
+        # _defer_disk_seed：記憶體遷移可跑，但一個字都不准寫回資料根（BE-DATA-13）。
         if need_save and not _defer_disk_seed:
             _save_config_unlocked(raw_config)
 
@@ -597,7 +597,7 @@ def _save_config_unlocked(config: dict) -> None:
         and not is_layout_finalized(get_data_root())
     ):
         raise ConfigRootNotFinalizedError(
-            f"資料根尚未定版，禁止寫入設定檔（BE-DATA-09）：{CONFIG_PATH}"
+            f"資料根尚未定版，禁止寫入設定檔（BE-DATA-13）：{CONFIG_PATH}"
         )
 
     with atomic_write(CONFIG_PATH, mode='w', encoding='utf-8') as f:

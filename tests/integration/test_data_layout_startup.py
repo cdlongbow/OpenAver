@@ -134,3 +134,61 @@ def test_direct_uvicorn_preprovisioned_root_serves_200(tmp_path):
             except subprocess.TimeoutExpired:
                 p.kill()
                 p.wait(timeout=5)
+
+
+def test_direct_uvicorn_marker_valid_config_missing_recovers_and_serves_200(tmp_path):
+    """已定版 marker 但 config.json 缺失 → 自我修復後 GET / 回 200，config 重建為 0600。"""
+    root = tmp_path / "recover_root"
+    root.mkdir()
+    # 只放有效 marker（不放假 DB：lifespan 後續 init_db 需要可開啟的 sqlite）
+    (root / LAYOUT_MARKER_NAME).write_text(
+        json.dumps({"version": LAYOUT_VERSION, "complete": True}, ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+    assert not (root / "config.json").exists()
+
+    port = _free_port()
+    p = subprocess.Popen(
+        _uvicorn_cmd(port),
+        cwd=str(REPO_ROOT),
+        env=_spawn_env(root),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    url = f"http://127.0.0.1:{port}/"
+    deadline = time.monotonic() + 20
+    last_exc: Exception | None = None
+    try:
+        while time.monotonic() < deadline:
+            if p.poll() is not None:
+                stdout, stderr = p.communicate(timeout=5)
+                pytest.fail(
+                    f"uvicorn exited early code={p.returncode}\n"
+                    f"stdout={stdout!r}\nstderr={stderr!r}"
+                )
+            try:
+                with opener.open(url, timeout=1) as resp:
+                    if resp.status == 200:
+                        break
+            except (urllib.error.URLError, urllib.error.HTTPError, OSError) as exc:
+                last_exc = exc
+            time.sleep(0.2)
+        else:
+            pytest.fail(
+                f"timed out waiting for GET / 200; last_exc={last_exc!r}"
+            )
+    finally:
+        if p.poll() is None:
+            p.terminate()
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait(timeout=5)
+
+    cfg = root / "config.json"
+    assert cfg.is_file(), "bootstrap 應重建缺失的 config.json"
+    assert (cfg.stat().st_mode & 0o777) == 0o600

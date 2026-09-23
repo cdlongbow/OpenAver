@@ -176,6 +176,7 @@ class TestAutoFetchDirtyStateGuard:
 SETTINGS_HTML = Path(__file__).parent.parent.parent.parent / "web" / "templates" / "settings.html"
 
 
+# [lint-guard: migrate → static_guard_lint]
 class TestGalleryOutputDirEmptyFollowsDataRoot:
     """TASK-153b-T3：設定頁空值往返與 resolved placeholder 契約。
 
@@ -208,10 +209,11 @@ class TestGalleryOutputDirEmptyFollowsDataRoot:
             "state-config.js saveConfig 應送出 trim() 後的空字串，不可再 fallback 成 'output'"
 
     def test_settings_stores_resolved_gallery_output_path(self):
-        """loadConfig 把 result.resolved.gallery_output_path 存進 state 供 placeholder。"""
+        """loadConfig 把 result.resolved.data_root 存進 state 供 placeholder（153b-T6：
+        來源從會隨目前值變動的 gallery_output_path 換成穩定的 data_root）。"""
         js = self._config_js()
-        assert "this.resolvedGalleryOutputPath = result.resolved?.gallery_output_path" in js, \
-            "state-config.js loadConfig 應存 resolved.gallery_output_path"
+        assert "this.resolvedGalleryOutputPath = result.resolved?.data_root" in js, \
+            "state-config.js loadConfig 應存 resolved.data_root"
         assert "resolvedGalleryOutputPath: ''" in js, \
             "state-config.js 應宣告 resolvedGalleryOutputPath 初值 ''（FE-TIMING-07）"
 

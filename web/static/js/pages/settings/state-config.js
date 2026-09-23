@@ -727,7 +727,7 @@ export function stateConfig() {
                     this.form.coverBadgeItems = { ...(config.gallery?.cover_badges?.items || {}) };
                     this.form.showTableList = config.gallery?.show_table_list === true;
                     // response-only：後端解析出的實際輸出路徑，供 placeholder 顯示
-                    this.resolvedGalleryOutputPath = result.resolved?.gallery_output_path || '';
+                    this.resolvedGalleryOutputPath = result.resolved?.data_root || '';
 
                     // Showcase
                     this.form.viewerPlayer = config.showcase?.player || '';

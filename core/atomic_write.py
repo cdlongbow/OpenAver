@@ -32,6 +32,7 @@ def atomic_write(
     mode: str = "wb",
     encoding: Optional[str] = None,
     suffix: str = ".tmp",
+    fsync: bool = False,
 ) -> Iterator[IO]:
     """Yield an open file handle whose content lands at `dest` atomically.
 
@@ -52,6 +53,10 @@ def atomic_write(
     because whether a missing directory is an error or a routine first write
     differs per caller. `suffix` reaches `mkstemp` verbatim; pass the real
     extension when something downstream sniffs the temp name.
+
+    ``fsync=True`` flushes and ``os.fsync``s the temp fd before replace
+    (opt-in for data-root marker durability; default stays off for NAS/HDD
+    batch callers — TASK-153b-T6 / O1).
 
     Deliberately NOT here (spec-113 §2.5 — each stays with the caller):
     locking, deleting old sibling files after a successful write, turning
@@ -75,6 +80,9 @@ def atomic_write(
             raise
         with f:
             yield f
+            if fsync:
+                f.flush()
+                os.fsync(f.fileno())
         # fd 已由上面的 with 關閉 → 安全 replace（Windows file-lock 前提）
         os.replace(tmp, dest)
     except BaseException:

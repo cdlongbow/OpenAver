@@ -98,6 +98,43 @@ def test_recovered_existing_emits_warn_with_required_literals(monkeypatch):
         assert needle in zh
 
 
+def test_marker_valid_config_missing_records_recovered_existing(
+    tmp_path, monkeypatch
+):
+    """真 bootstrap：已定版 marker、無 config、有 DB → consume 得 recovered_existing。"""
+    import json
+
+    import core.config as core_config
+    import core.data_root as data_root_module
+    from core.data_layout import bootstrap_data_layout, consume_pending_bootstrap_result
+
+    root = tmp_path / "notif_recover_root"
+    root.mkdir()
+    (root / "openaver.db").write_bytes(b"db-for-recovered-existing-notification")
+    (root / ".layout.json").write_text(
+        json.dumps({"version": 1, "complete": True}),
+        encoding="utf-8",
+    )
+    legacy = tmp_path / "web" / "config.json"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("OPENAVER_DATA_DIR", str(root))
+    monkeypatch.setattr(data_root_module, "get_data_root", lambda: root)
+    monkeypatch.setattr(data_root_module, "get_default_data_root", lambda: root)
+    monkeypatch.setattr(
+        data_root_module, "get_project_root", lambda: legacy.parent.parent
+    )
+    monkeypatch.setattr(core_config, "CONFIG_PATH", root / "config.json")
+
+    result = bootstrap_data_layout()
+    assert result.status == "recovered_existing"
+
+    pending = consume_pending_bootstrap_result()
+    assert pending is not None
+    assert pending.status == "recovered_existing"
+    assert pending.root == root
+
+
 def test_desktop_double_bootstrap_emits_only_once(monkeypatch):
     """standalone 先記一次非 already_complete，lifespan 再記 already_complete → emit 恰一次。"""
     root = Path("/tmp/openaver-data-root-desktop-double")

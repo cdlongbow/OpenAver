@@ -760,7 +760,8 @@ export function stateScan() {
             // output_path 編輯）。後者不會設 configDirty，若不納入 gate，readonly/輸出路徑的
             // 編輯不會存檔，generate 會用舊的持久化設定 → readonly 路徑永遠不執行（PR#91 ①）。
             if (this.configDirty || this.isFolderDirty) {
-                await this.saveConfig();
+                const saved = await this.saveConfig();
+                if (!saved) return;
             }
 
             // 重置狀態

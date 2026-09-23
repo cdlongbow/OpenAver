@@ -44,7 +44,7 @@ from core.secret_fields import (
 from core.database import VideoRepository, get_db_path, init_db
 from core import thumbnail_cache
 from core.path_utils import uri_to_fs_path, reverse_path_mapping, CURRENT_ENV, is_fs_path_under_dir
-from core.data_root import resolve_gallery_output_path, get_project_root
+from core.data_root import resolve_gallery_output_path, get_project_root, get_data_root
 from core.generate_state import (
     try_begin_switch,
     end_switch,
@@ -90,6 +90,7 @@ def get_config() -> dict:
             "gallery_output_path": str(
                 resolve_gallery_output_path(gallery.get("output_dir", "") or "")
             ),
+            "data_root": str(get_data_root()),
         },
     }
 
@@ -129,7 +130,7 @@ def update_config(config: AppConfig) -> dict:
         return {
             "success": False,
             "reason": "gallery_output_in_program_area",
-            "error": "輸出目錄不可設在程式安裝目錄內，更新時會被清除。請改選其他位置，或留空以跟隨資料根目錄。",
+            "error": "輸出目錄不可設在程式安裝目錄內。請改選其他位置，或留空以跟隨資料根目錄。",
         }
     save_token = object()  # 每 request 唯一身份 token（比照 generate 的 _active_tokens）
     reason = try_begin_config_save(save_token)

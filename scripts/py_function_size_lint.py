@@ -171,7 +171,7 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "migration（與既有 min_size_kb 同一個 `if 'gallery' in raw_config` 區塊的 additive "
         "migration，與 152c 同形）。"
         "2026-09-23（feature/153b T3 round 2）315→331：另外加入資料根未定版時不落盤的 "
-        "BE-DATA-09 守衛（約 16 行，含說明註解）——CONFIG_PATH 已在資料根內且無 "
+        "BE-DATA-13 守衛（約 16 行，含說明註解）——CONFIG_PATH 已在資料根內且無 "
         ".layout.json 時改讀 default 進記憶體，避免 bootstrap 前自動建檔造成永久啟動衝突。",
     ),
     ("web/routers/scraper.py", "batch_enrich_endpoint"): (

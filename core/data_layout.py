@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -89,7 +90,7 @@ def _write_marker(root: Path) -> None:
     (root / ROOT_CONFIG_NAME).chmod(0o600)
     payload = {"version": data_root.LAYOUT_VERSION, "complete": True}
     marker_path = root / LAYOUT_MARKER_NAME
-    with atomic_write(marker_path, mode="w", encoding="utf-8") as f:
+    with atomic_write(marker_path, mode="w", encoding="utf-8", fsync=True) as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
         f.write("\n")
 
@@ -100,6 +101,12 @@ def _install_config_from_source(source: Path, dest: Path) -> None:
     tmp_config_path = create_staging_file(dest.parent, suffix=".config.tmp")
     try:
         shutil.copyfile(source, tmp_config_path)
+        # O_RDWR：Windows FlushFileBuffers 要求可寫 handle；內容不寫入（只 fsync）。
+        fd = os.open(str(tmp_config_path), os.O_RDWR)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
         if _sha256(source) != _sha256(tmp_config_path):
             raise DataLayoutError(
                 f"config copy hash mismatch: source={source} tmp={tmp_config_path}"
@@ -144,6 +151,14 @@ def _bootstrap_effective_root(root: Path) -> BootstrapResult:
 
     # 已定版
     if marker_state == data_root.MARKER_STATE_VALID:
+        if not root_config.is_file():
+            try:
+                _install_default_config(root_config)
+            except DataLayoutError:
+                raise
+            except OSError as e:
+                raise DataLayoutError(f"default config install failed: {e}") from e
+            return BootstrapResult(status="recovered_existing", root=root)
         if not _config_is_readable(root_config):
             raise DataLayoutError(
                 f"layout marker complete but root config unreadable: {root_config}"
@@ -233,7 +248,14 @@ def _bootstrap_data_layout_impl() -> BootstrapResult:
     default_root = data_root.get_default_data_root()
 
     # CD-B5：external root 不隱式移植
-    if override_root != default_root and not _root_has_valid_layout(override_root) and _root_has_legacy_data(default_root):
+    # marker 已定版但 config 缺失仍算「可自我修復的已定版根」，不得被這道閘擋下
+    # （TASK-153b-T6：交給 _bootstrap_effective_root 重建 default config）。
+    if (
+        override_root != default_root
+        and not _root_has_valid_layout(override_root)
+        and not data_root.is_layout_finalized(override_root)
+        and _root_has_legacy_data(default_root)
+    ):
         raise DataLayoutError(
             "OPENAVER_DATA_DIR points to an empty/incomplete root while the "
             "default data root still has existing data; provision the external "
@@ -241,13 +263,16 @@ def _bootstrap_data_layout_impl() -> BootstrapResult:
         )
 
     if override_root != default_root:
+        # marker 已定版 → 一律走 _bootstrap_effective_root（含 config 缺失自我修復／
+        # 損壞阻斷／already_complete）。不可再靠 _root_has_valid_layout 短路，
+        # 否則「有 marker 無 config」會被下一行 non-empty 閘誤判成未定版。
+        if data_root.is_layout_finalized(override_root):
+            return _bootstrap_effective_root(override_root)
         # override 非空但無有效 layout（且上面沒擋——代表 default 也空）→ 仍阻斷
         if not _root_is_empty(override_root) and not _root_has_valid_layout(override_root):
             raise DataLayoutError(
                 f"external data root is non-empty without a valid layout: {override_root}"
             )
-        # 兩邊都空、或 override 已有有效 layout → 繼續對 override 定版
-        if _root_has_valid_layout(override_root):
-            return BootstrapResult(status="already_complete", root=override_root)
+        # 兩邊都空 → 繼續對 override 定版
 
     return _bootstrap_effective_root(override_root)

@@ -284,7 +284,7 @@ class TestMigrationMinSizeKbToMb:
 
 
 class TestNoSeedConfigBeforeLayoutFinalized:
-    """BE-DATA-09：資料根未定版時，load_config 不得在資料根自動建 config.json。"""
+    """BE-DATA-13：資料根未定版時，load_config 不得在資料根自動建 config.json。"""
 
     def test_unfinalized_data_root_does_not_write_config(self, tmp_path, monkeypatch):
         """CONFIG_PATH 在乾淨資料根下、無 .layout.json → 回傳可用設定且不落盤。"""
@@ -308,7 +308,7 @@ class TestNoSeedConfigBeforeLayoutFinalized:
         assert isinstance(result, dict) and result
         assert result.get("general", {}).get("theme") == "dark"
         assert not config_path.exists(), (
-            "資料根未定版時 load_config 不得寫出 config.json（BE-DATA-09）；"
+            "資料根未定版時 load_config 不得寫出 config.json（BE-DATA-13）；"
             "否則下次 bootstrap 會判定 root≠legacy 衝突而永久阻斷啟動"
         )
 
@@ -356,7 +356,7 @@ class TestNoSeedConfigBeforeLayoutFinalized:
         assert isinstance(result, dict) and result
         assert result.get("general", {}).get("theme") == "dark"
         assert not config_path.exists(), (
-            "marker 損毀時 load_config 不得寫出 config.json（BE-DATA-09）；"
+            "marker 損毀時 load_config 不得寫出 config.json（BE-DATA-13）；"
             "須與 marker 缺席走同一 defer 路徑"
         )
 
@@ -2079,10 +2079,10 @@ class TestShowTableListConfig:
         assert cfg.show_table_list is False
 
 
-# ============ TASK-153b-T3fix1：資料根未定版時禁止寫入 config.json（BE-DATA-09） ============
+# ============ TASK-153b-T3fix1：資料根未定版時禁止寫入 config.json（BE-DATA-13） ============
 
 class TestSaveConfigBlockedBeforeLayoutFinalized:
-    """BE-DATA-09 / TASK-153b-T3fix1：資料根未定版時，禁止呼叫 save_config / mutate_config 落盤。"""
+    """BE-DATA-13 / TASK-153b-T3fix1：資料根未定版時，禁止呼叫 save_config / mutate_config 落盤。"""
 
     def test_save_config_raises_when_root_not_finalized(self, tmp_path, monkeypatch):
         """資料根未定版時 save_config 必須 raise ConfigRootNotFinalizedError 且磁碟零寫入。"""
