@@ -17,6 +17,7 @@ from core.enrich_contract import (
     EnrichResult,
     compute_has_servable_cover,
     effective_original_title,
+    effective_title,
     enrich_success,
     should_preserve_cover,
 )
@@ -513,6 +514,7 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
     javbus_lang: Optional[str] = None,
     scraper_data: Optional[dict] = None,
     path_mappings: dict = None,
+    preserve_title: bool = False,
 ) -> EnrichResult:
     _empty = EnrichResult(
         success=False,
@@ -652,6 +654,7 @@ def enrich_single(  # ranker-invalidate-ok: (no literal SQL here; corpus writes 
     # same preserved value. A refresh_full re-scrape returning an empty original_title
     # must NOT clobber the existing DB/NFO value (mirrors user_tags/cover preserve).
     meta['original_title'] = effective_original_title(meta, existing_record)
+    meta['title'] = effective_title(meta, existing_record, preserve_title, number)
 
     cover_url = meta.get("cover_url", "")
 

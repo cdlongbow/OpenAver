@@ -5342,3 +5342,124 @@ class TestIsFilenamePlaceholderTitle:
         from core.enricher import _is_filename_placeholder_title
         fs_path = f"/video/{stem}.mp4"
         assert _is_filename_placeholder_title(title, "SONE-205", fs_path) is expected
+
+
+# ── TASK-154a-T1: enrich_single preserve_title ───────────────────────────────
+
+class TestEnrichSinglePreserveTitle:
+    """TASK-154a-T1: 非唯讀 enrich_single preserve_title=True 時保留既有標題。"""
+
+    def _scraper_data(self, number="ABC-123"):
+        return {
+            "number": number,
+            "title": "日文片名",
+            "original_title": "新原題",
+            "actors": ["女優A"],
+            "cover": "",
+            "date": "2024-01-01",
+            "maker": "SOD",
+            "director": "監督",
+            "series": "シリーズ",
+            "label": "LABEL",
+            "tags": ["タグ"],
+            "sample_images": [],
+            "duration": 120,
+            "url": "https://www.javbus.com/ABC-123",
+        }
+
+    def test_refresh_full_preserve_title_true_keeps_existing_title(self, tmp_path, mocker):
+        """oracle 1（非唯讀）：preserve_title=True 時，DB title 與 NFO <title> 均保留既有標題（含前綴），其他欄位為新值。"""
+        import xml.etree.ElementTree as ET
+        from core.database import init_db, VideoRepository, Video
+        from core.enricher import enrich_single
+        from core.path_utils import to_file_uri
+
+        db_path = tmp_path / "test_preserve.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+
+        video_file = tmp_path / "ABC-123.mp4"
+        video_file.write_bytes(b"\x00")
+        path_uri = to_file_uri(str(video_file))
+
+        repo.upsert(Video(
+            path=path_uri,
+            number="ABC-123",
+            title="[ABC-123]中文片名",
+            original_title="旧原題",
+            maker="旧片商",
+            actresses=["旧演員"],
+            tags=["旧標籤"],
+        ))
+
+        mocker.patch("core.enricher.VideoRepository", return_value=repo)
+        mocker.patch("core.enricher.search_jav", return_value=self._scraper_data("ABC-123"))
+
+        result = enrich_single(
+            file_path=path_uri,
+            number="ABC-123",
+            mode="refresh_full",
+            write_nfo=True,
+            write_cover=False,
+            write_extrafanart=False,
+            preserve_title=True,
+        )
+        assert result.success, result.error
+
+        # DB title 保留既有值，其他欄位更新為新刮到的值
+        row = repo.get_by_path(path_uri)
+        assert row.title == "[ABC-123]中文片名"
+        assert row.original_title == "新原題"
+        assert row.maker == "SOD"
+        assert row.actresses == ["女優A"]
+        assert row.tags == ["タグ"]
+
+        # NFO <title> 保留既有值，只有一層番號，演員與標籤為新值
+        nfo_file = video_file.with_suffix(".nfo")
+        assert nfo_file.exists()
+        root = ET.parse(nfo_file).getroot()
+        assert root.findtext("title") == "[ABC-123]中文片名"
+        assert root.findtext("originaltitle") == "新原題"
+        assert [a.findtext("name") for a in root.findall("actor")] == ["女優A"]
+        assert [t.text for t in root.findall("tag")] == ["タグ"]
+
+    def test_refresh_full_preserve_title_false_overwrites_existing_title(self, tmp_path, mocker):
+        """preserve_title=False（或省略）時，覆蓋既有標題。"""
+        import xml.etree.ElementTree as ET
+        from core.database import init_db, VideoRepository, Video
+        from core.enricher import enrich_single
+        from core.path_utils import to_file_uri
+
+        db_path = tmp_path / "test_overwrite.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+
+        video_file = tmp_path / "ABC-123.mp4"
+        video_file.write_bytes(b"\x00")
+        path_uri = to_file_uri(str(video_file))
+
+        repo.upsert(Video(
+            path=path_uri,
+            number="ABC-123",
+            title="[ABC-123]中文片名",
+        ))
+
+        mocker.patch("core.enricher.VideoRepository", return_value=repo)
+        mocker.patch("core.enricher.search_jav", return_value=self._scraper_data("ABC-123"))
+
+        result = enrich_single(
+            file_path=path_uri,
+            number="ABC-123",
+            mode="refresh_full",
+            write_nfo=True,
+            write_cover=False,
+            write_extrafanart=False,
+            preserve_title=False,
+        )
+        assert result.success, result.error
+
+        row = repo.get_by_path(path_uri)
+        assert row.title == "日文片名"
+        nfo_file = video_file.with_suffix(".nfo")
+        root = ET.parse(nfo_file).getroot()
+        assert root.findtext("title") == "[ABC-123]日文片名"

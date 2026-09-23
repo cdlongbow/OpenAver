@@ -37,6 +37,7 @@ from core.enrich_contract import (
     compute_has_servable_cover,
     cover_uri_is_servable,
     effective_original_title,
+    effective_title,
     enrich_success,
 )
 from core.focal import requires_face_detection
@@ -1003,6 +1004,7 @@ def enrich_one_readonly(
     overwrite_existing: bool,
     after_produce: Optional[Callable[[], None]] = None,
     focal_before_cover_recheck: bool = False,
+    preserve_title: bool = False,
 ) -> EnrichResult:
     """單片/批次唯讀 enrich 共用的「產出核心」——薄搬移自
     `web/routers/scraper.py` 單片 enrich 端點（POST /enrich-single）的唯讀分支
@@ -1074,6 +1076,7 @@ def enrich_one_readonly(
     # step 4
     repo = repo_factory()
     existing = repo.get_by_path(canonical)
+    meta['title'] = effective_title(meta, existing, preserve_title, number)
     # Codex PR#113 P2#3（round 2，owner-confirmed 全面對齊；round 6 修正）：
     # readonly enrich 對齊非唯讀 core.enricher._write_cover 的 skip 語意
     # （os.path.exists(cover) and not overwrite_existing）——fill_missing

@@ -16,6 +16,7 @@ from core.enrich_contract import (
     compute_has_servable_cover,
     cover_uri_is_servable,
     effective_original_title,
+    effective_title,
     enrich_success,
     should_preserve_cover,
 )
@@ -129,6 +130,48 @@ class TestEffectiveOriginalTitle:
         assert effective_original_title({'original_title': ''}, SimpleNamespace(original_title=None)) == ''
         # 型別鎖：任何輸入組合回傳皆為 str（不得回 None）
         assert isinstance(effective_original_title({}, SimpleNamespace(original_title=None)), str)
+
+
+# ── effective_title ──────────────────────────────────────────────────────────
+
+class TestEffectiveTitle:
+    """重刮且使用者勾選保留標題時，維持 DB 既有標題值（含 [番號] 前綴）。5 邊界：
+    1. preserve=True + existing.title 非空且剝完非空 → existing.title 原值逐字
+    2. preserve=True + existing is None → meta['title']
+    3. preserve=True + existing.title 剝完為空 → meta['title']
+    4. preserve=False → meta['title'] 恆等映射
+    5. meta['title'] None/缺 key → ''（恆為 str）
+    """
+
+    def test_preserve_true_with_existing_title_returns_existing_verbatim(self):
+        """preserve=True 且 existing.title 剝完非空 → 回傳 existing.title 原值逐字（含前綴）。"""
+        existing = SimpleNamespace(title='[ABC-123]中文片名')
+        meta = {'title': '日文片名'}
+        assert effective_title(meta, existing, True, 'ABC-123') == '[ABC-123]中文片名'
+
+    def test_preserve_true_with_none_existing_falls_back_to_meta_title(self):
+        """preserve=True 且 existing is None → 回退 meta.get('title') or ''。"""
+        meta = {'title': '新片名'}
+        assert effective_title(meta, None, True, 'ABC-123') == '新片名'
+        assert effective_title({}, None, True, 'ABC-123') == ''
+
+    def test_preserve_true_with_stripped_empty_falls_back_to_meta_title(self):
+        """preserve=True 且 existing.title 剝完前綴為空字串（如 '[ABC-123]'）→ 回退 meta.get('title') or ''。"""
+        existing = SimpleNamespace(title='[ABC-123]')
+        meta = {'title': '新刮到的標題'}
+        assert effective_title(meta, existing, True, 'ABC-123') == '新刮到的標題'
+
+    def test_preserve_false_or_default_returns_meta_title(self):
+        """preserve=False → 恆回傳 meta.get('title') or ''，不保留 existing。"""
+        existing = SimpleNamespace(title='[ABC-123]中文片名')
+        meta = {'title': '日文新片名'}
+        assert effective_title(meta, existing, False, 'ABC-123') == '日文新片名'
+
+    def test_title_none_or_missing_normalized_to_empty_str(self):
+        """meta['title'] 為 None 或缺 key → 回傳 ''（恆為 str）。"""
+        assert effective_title({'title': None}, None, False, 'ABC-123') == ''
+        assert effective_title({}, None, False, 'ABC-123') == ''
+        assert isinstance(effective_title({'title': None}, None, False, 'ABC-123'), str)
 
 
 # ── should_preserve_cover ────────────────────────────────────────────────────

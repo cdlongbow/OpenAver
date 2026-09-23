@@ -90,3 +90,72 @@ class TestReadonlyTagsSurviveRescrape:
 
         # DB 值沒有被這次重刮改變（維持保留語意）
         assert repo.get_by_path(file_uri).user_tags == ["SURVIVE"]
+
+    def test_readonly_rescrape_preserve_title_keeps_title_single_prefix(self, tmp_db, tmp_path, monkeypatch):
+        """TASK-154a-T1: 唯讀重刮 preserve_title=True 時，保留既有標題（只有一層番號前綴），其他欄位為新值。"""
+        import xml.etree.ElementTree as ET
+
+        client, src_dir, out_dir, file_uri = setup_readonly_user_tags_env(
+            tmp_db, tmp_path, monkeypatch, with_source_nfo=False, with_output_nfo=True
+        )
+
+        fake_config = {
+            "gallery": {
+                "directories": [{"path": str(src_dir), "readonly": True, "output_path": ""}],
+                "path_mappings": {},
+            },
+            "scraper": {},
+        }
+        monkeypatch.setattr("web.routers.scraper.load_config", lambda: fake_config)
+        monkeypatch.setattr("web.routers.collection.load_config", lambda: fake_config)
+        monkeypatch.setattr(
+            "web.routers.scraper.VideoRepository",
+            lambda *a, **kw: RealRepo(tmp_db),
+        )
+        monkeypatch.setattr("core.readonly_paths.get_db_path", lambda: tmp_db)
+        monkeypatch.setattr("core.readonly_assets.download_image", lambda *a, **kw: False)
+        monkeypatch.setattr("core.database.connection.get_db_path", lambda: tmp_db)
+        monkeypatch.setattr("core.thumbnail_cache.get_db_path", lambda: tmp_db)
+
+        # 初始狀態：DB 既有列 title="[TEST-001]中文片名"，original_title="旧原題"
+        repo = RealRepo(tmp_db)
+        existing = repo.get_by_path(file_uri)
+        existing.title = "[TEST-001]中文片名"
+        existing.original_title = "旧原題"
+        repo.upsert(existing)
+
+        # 觸發重刮：preserve_title=True，scraper 回傳 title="日文片名", original_title="新日文原題"
+        resp = client.post(
+            "/api/enrich-single",
+            json={
+                "file_path": file_uri,
+                "number": "TEST-001",
+                "readonly_action": "rescrape",
+                "mode": "refresh_full",
+                "overwrite_existing": True,
+                "preserve_title": True,
+                "metadata": {
+                    "number": "TEST-001",
+                    "title": "日文片名",
+                    "original_title": "新日文原題",
+                },
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+        # (a) 輸出 NFO <title> == "[TEST-001]中文片名"（只有一層）
+        # (c) NFO <originaltitle> 為本次刮到的新值
+        row = repo.get_by_path(file_uri)
+        assert row is not None
+        output_dir_fs = Path(uri_to_local_fs_path(row.output_dir, {}))
+        nfo_files = list(output_dir_fs.glob("*.nfo"))
+        assert len(nfo_files) >= 1
+        root = ET.parse(nfo_files[0]).getroot()
+        assert root.findtext("title") == "[TEST-001]中文片名"
+        assert root.findtext("originaltitle") == "新日文原題"
+
+        # (b) DB title 逐字 == "[TEST-001]中文片名"
+        # (c) DB original_title 為本次刮到的新值
+        assert row.title == "[TEST-001]中文片名"
+        assert row.original_title == "新日文原題"

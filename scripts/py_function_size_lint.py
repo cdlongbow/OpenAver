@@ -197,7 +197,7 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "inline 進條件而非新增變數，唯讀側註解同步精簡，淨回收 2 行——棘輪同步收緊。",
     ),
     ("core/enricher.py", "enrich_single"): (
-        284,
+        286,
         "單片 enrich 主流程，含多個 write_* flag（nfo/cover/extrafanart/overwrite_existing/"
         "external_manager）的正交組合分支，是核心編排函式；已標記 ranker-invalidate-ok，flag "
         "組合邏輯搬到別處會打散單一事務語意。"
@@ -211,7 +211,8 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "（只因缺封面而進來、佔位標題而進來）——這兩條 source_used 停在 \"db\"，:722 的 _db_upsert "
         "gate 不會跑，必須就地補記 scrape_attempted_at，否則那些片會永遠賴在待補清單上。"
         "新增 12 行裡 7 行是註解，記的是「為什麼這裡要手動補記」；抽 helper 會再次撞上上一段"
-        "已經寫明的 scope 問題（現在是四個狀態不是三個），刪註解則是拿最容易寫錯的地方換行數。",
+        "已經寫明的 scope 問題（現在是四個狀態不是三個），刪註解則是拿最容易寫錯的地方換行數。"
+        " ／ 284→286（feature/154-nfo-title 154a-T1）：重刮可選保留目前標題——新增 preserve_title 參數與一行 effective_title() 呼叫，鏡射既有 effective_original_title 單點插入，拆出去反而打散同一段 meta 組裝。",
     ),
     ("core/database/video.py", "VideoRepository.repath"): (
         242,

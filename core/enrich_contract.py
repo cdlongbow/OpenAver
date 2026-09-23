@@ -13,6 +13,7 @@ import os
 from dataclasses import dataclass
 from typing import List, Optional
 
+from core.organizer import _strip_num_prefixes
 from core.path_utils import uri_to_local_fs_path
 
 
@@ -97,6 +98,14 @@ def effective_original_title(meta, existing) -> str:
     傳 Python None，故尾端 `or ''` 把 None（與 '')正規化成 ''——否則 None 會被注入
     meta['original_title']、下游 generate_nfo 的 html.escape(None) 拋 AttributeError。"""
     return meta.get('original_title') or (existing.original_title if existing else '') or ''
+
+
+def effective_title(meta, existing, preserve, number) -> str:
+    if not preserve:
+        return meta.get('title') or ''
+    if existing and existing.title and _strip_num_prefixes(existing.title, number):
+        return existing.title
+    return meta.get('title') or ''
 
 
 def compute_has_servable_cover(repo, path_uri, path_mappings) -> bool:

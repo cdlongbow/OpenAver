@@ -3607,3 +3607,218 @@ class TestExistingExtrafanartPreserved:
         assert len(uris_arg) == 2
         mock_dl.assert_not_called()
         assert result.success is True
+
+
+# ── TASK-154a-T1: /api/enrich-single preserve_title 端到端契約 ─────────────────
+
+class TestApiEnrichPreserveTitle:
+    """TASK-154a-T1: /api/enrich-single 端到端 preserve_title 契約（唯讀／非唯讀分支與掃描讀回）。"""
+
+    def test_enrich_single_endpoint_passes_preserve_title_to_readonly_branch(self, client, mocker):
+        """唯讀分支：/api/enrich-single 帶 preserve_title=True 時傳遞給 enrich_one_readonly。"""
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=_readonly_gallery_config("/tmp/ro_src"),
+        )
+        mocker.patch("web.routers.scraper.resolve_nfo_cover_paths")
+        mocker.patch(
+            "web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub()
+        )
+        mock_enrich_ro = mocker.patch("web.routers.scraper.enrich_one_readonly")
+        from core.enrich_contract import EnrichResult
+        mock_enrich_ro.return_value = EnrichResult(
+            success=True, nfo_written=True, cover_written=False,
+            extrafanart_written=0, fields_filled=[], source_used="test", error=None
+        )
+
+        resp = client.post("/api/enrich-single", json={
+            "file_path": "/tmp/ro_src/ABC-001.mp4",
+            "number": "ABC-001",
+            "mode": "refresh_full",
+            "preserve_title": True,
+        })
+        assert resp.status_code == 200
+        mock_enrich_ro.assert_called_once()
+        assert mock_enrich_ro.call_args.kwargs["preserve_title"] is True
+
+    def test_enrich_single_endpoint_omitted_preserve_title_defaults_false(self, client, mocker):
+        """既有請求（未帶 preserve_title）：不 422，預設 preserve_title=False。"""
+        mocker.patch("web.routers.scraper.load_config", return_value={"video_dirs": ["/videos"]})
+        mocker.patch("web.routers.scraper.resolve_nfo_cover_paths", return_value=("/videos/ABC-001.nfo", "/videos/ABC-001.jpg"))
+        mock_enrich = mocker.patch("web.routers.scraper.enrich_single")
+        from core.enrich_contract import EnrichResult
+        mock_enrich.return_value = EnrichResult(
+            success=True, nfo_written=True, cover_written=False,
+            extrafanart_written=0, fields_filled=[], source_used="test", error=None
+        )
+
+        resp = client.post("/api/enrich-single", json={
+            "file_path": "/videos/ABC-001.mp4",
+            "number": "ABC-001",
+            "mode": "refresh_full",
+        })
+        assert resp.status_code == 200
+        mock_enrich.assert_called_once()
+        assert mock_enrich.call_args.kwargs["preserve_title"] is False
+
+    def test_enrich_single_endpoint_passes_preserve_title_true_to_enrich_single(self, client, mocker):
+        """非唯讀分支：/api/enrich-single 帶 preserve_title=True 時傳遞給 enrich_single。"""
+        mocker.patch("web.routers.scraper.load_config", return_value={"video_dirs": ["/videos"]})
+        mocker.patch("web.routers.scraper.resolve_nfo_cover_paths", return_value=("/videos/ABC-001.nfo", "/videos/ABC-001.jpg"))
+        mock_enrich = mocker.patch("web.routers.scraper.enrich_single")
+        from core.enrich_contract import EnrichResult
+        mock_enrich.return_value = EnrichResult(
+            success=True, nfo_written=True, cover_written=False,
+            extrafanart_written=0, fields_filled=[], source_used="test", error=None
+        )
+
+        resp = client.post("/api/enrich-single", json={
+            "file_path": "/videos/ABC-001.mp4",
+            "number": "ABC-001",
+            "mode": "refresh_full",
+            "preserve_title": True,
+        })
+        assert resp.status_code == 200
+        mock_enrich.assert_called_once()
+        assert mock_enrich.call_args.kwargs["preserve_title"] is True
+
+    def test_oracle_3_rescrape_then_scan_preserves_title_verbatim(self, tmp_path, mocker):
+        """oracle 3: 非唯讀路徑重刮 preserve_title=True 後，以 gallery_scanner 掃描讀回，DB title 逐字不變。
+        同時驗證 DoD: original_title / maker / actors 等其他欄位仍是新值。"""
+        from core.database import init_db, VideoRepository, Video
+        from core.enricher import enrich_single
+        from core.gallery_scanner import VideoScanner
+        from core.path_utils import to_file_uri
+
+        db_path = tmp_path / "oracle3.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+
+        video_file = tmp_path / "ABC-123.mp4"
+        video_file.write_bytes(b"\x00")
+        path_uri = to_file_uri(str(video_file))
+
+        # 初始狀態：DB title 為 [ABC-123]中文片名
+        repo.upsert(Video(
+            path=path_uri,
+            number="ABC-123",
+            title="[ABC-123]中文片名",
+            original_title="旧原題",
+            maker="旧片商",
+            actresses=["旧女優"],
+            tags=["旧標籤"],
+        ))
+
+        scraper_meta = {
+            "number": "ABC-123",
+            "title": "日文片名",
+            "original_title": "新原題",
+            "actors": ["女優A"],
+            "cover": "",
+            "date": "2024-01-01",
+            "maker": "SOD",
+            "director": "監督",
+            "series": "シリーズ",
+            "label": "LABEL",
+            "tags": ["標籤A"],
+            "sample_images": [],
+            "duration": 120,
+            "url": "https://www.javbus.com/ABC-123",
+        }
+
+        mocker.patch("core.enricher.VideoRepository", return_value=repo)
+        mocker.patch("core.enricher.search_jav", return_value=scraper_meta)
+
+        # 重刮
+        result = enrich_single(
+            file_path=path_uri,
+            number="ABC-123",
+            mode="refresh_full",
+            write_nfo=True,
+            write_cover=False,
+            write_extrafanart=False,
+            preserve_title=True,
+        )
+        assert result.success is True
+
+        # 重刮後 DB 檢查
+        row_after_enrich = repo.get_by_path(path_uri)
+        assert row_after_enrich.title == "[ABC-123]中文片名"
+        assert row_after_enrich.original_title == "新原題"
+        assert row_after_enrich.maker == "SOD"
+        assert row_after_enrich.actresses == ["女優A"]
+        assert row_after_enrich.tags == ["標籤A"]
+
+        # 模擬 scanner 掃描 NFO 讀回
+        nfo_file = video_file.with_suffix(".nfo")
+        assert nfo_file.exists()
+        scanner = VideoScanner(repo)
+        nfo_info = scanner.parse_nfo(str(nfo_file))
+        assert nfo_info is not None
+        assert nfo_info.title == "[ABC-123]中文片名"
+        assert nfo_info.actor == "女優A"
+        assert nfo_info.genre == "標籤A"
+
+        # 掃描讀回寫入 DB
+        repo.upsert(Video(
+            path=path_uri,
+            number=nfo_info.num or "ABC-123",
+            title=nfo_info.title,
+            original_title=nfo_info.originaltitle,
+            maker=nfo_info.maker,
+            actresses=[a.strip() for a in nfo_info.actor.split(',') if a.strip()] if nfo_info.actor else [],
+            tags=[g.strip() for g in nfo_info.genre.split(',') if g.strip()] if nfo_info.genre else [],
+        ))
+        row_after_scan = repo.get_by_path(path_uri)
+        assert row_after_scan.title == "[ABC-123]中文片名"
+        assert row_after_scan.original_title == "新原題"
+        assert row_after_scan.maker == "SOD"
+        assert row_after_scan.actresses == ["女優A"]
+        assert row_after_scan.tags == ["標籤A"]
+
+    def test_preserve_title_existing_none_falls_back_to_new_title(self, tmp_path, mocker):
+        """existing=None 時，preserve_title=True 回退新 title，不寫出空標題。"""
+        from core.database import init_db, VideoRepository
+        from core.enricher import enrich_single
+        from core.path_utils import to_file_uri
+
+        db_path = tmp_path / "oracle_none.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+
+        video_file = tmp_path / "ABC-123.mp4"
+        video_file.write_bytes(b"\x00")
+        path_uri = to_file_uri(str(video_file))
+
+        # DB 中無此紀錄 (existing=None)
+        scraper_meta = {
+            "number": "ABC-123",
+            "title": "新刮到的標題",
+            "original_title": "新原題",
+            "actors": ["女優A"],
+            "cover": "",
+            "date": "2024-01-01",
+            "maker": "SOD",
+            "director": "監督",
+            "series": "シリーズ",
+            "label": "LABEL",
+            "tags": ["標籤A"],
+            "sample_images": [],
+            "duration": 120,
+            "url": "https://www.javbus.com/ABC-123",
+        }
+        mocker.patch("core.enricher.VideoRepository", return_value=repo)
+        mocker.patch("core.enricher.search_jav", return_value=scraper_meta)
+
+        result = enrich_single(
+            file_path=path_uri,
+            number="ABC-123",
+            mode="refresh_full",
+            write_nfo=True,
+            write_cover=False,
+            write_extrafanart=False,
+            preserve_title=True,
+        )
+        assert result.success is True
+        row = repo.get_by_path(path_uri)
+        assert row.title == "新刮到的標題"
