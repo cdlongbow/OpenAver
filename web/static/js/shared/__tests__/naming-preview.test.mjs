@@ -131,6 +131,20 @@ test('formatNfoTitle 預設格式 [{num}]{title}（AC-b1）', () => {
   );
 });
 
+test('formatNfoTitle 片名含 {actor} 字面不可被二次代換', () => {
+  assert.equal(
+    formatNfoTitle('[{num}]{title}', { num: 'ABC-123', title: '片名 {actor}', actor: '三上悠亞' }),
+    '[ABC-123]片名 {actor}',
+  );
+});
+
+test('formatNfoTitle 片名含 {num} 字面不可被二次代換', () => {
+  assert.equal(
+    formatNfoTitle('{title}-{num}', { title: '片名{num}', num: 'ABC-123' }),
+    '片名{num}-ABC-123',
+  );
+});
+
 test('buildNfoTitlePreview 薄包裝呼叫 formatNfoTitle', () => {
   assert.equal(
     buildNfoTitlePreview('{num}-{title}', { num: 'SSNI-618', title: '絕對領域' }),

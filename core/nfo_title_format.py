@@ -13,33 +13,32 @@ from typing import Optional
 from core.organizer import _strip_num_prefixes
 
 
+_PLACEHOLDER_RE = re.compile(r'\{(num|title|actor|actors|maker|date|year|month|day)\}')
+
+
 def format_nfo_title(template: str, data: dict) -> str:
-    """依模板代換 NFO 顯示標題；空值一律空字串，不做 sanitize／strip／fallback。"""
-    result = template
+    """依模板代換 NFO 顯示標題；空值一律空字串，不做 sanitize／strip／fallback。
 
-    result = result.replace('{num}', data.get('number', ''))
-
-    title = data.get('title', '') or ''
-    result = result.replace('{title}', title)
-
+    單趟 regex 代換：代換值本身若含 `{actor}` 之類的字面（例如片名
+    本身就是「片名 {actor}」），逐變數 `.replace()` 鏈式代換會把「已插入的內容」
+    當成下一輪的代換來源再代換一次，等同二次改寫使用者資料，違反「片名原字元
+    保留」。`re.sub` 只掃描原始字串一次，代換值不會被回頭重新掃描，天然避免
+    這個問題；未知的 `{xxx}`（不在白名單內）保持原樣，與修正前行為一致。
+    """
     actors = data.get('actors', []) or []
-    if actors:
-        result = result.replace('{actor}', actors[0])
-        result = result.replace('{actors}', ', '.join(actors))
-    else:
-        result = result.replace('{actor}', '')
-        result = result.replace('{actors}', '')
-
-    maker = data.get('maker', '') or ''
-    result = result.replace('{maker}', maker)
-
     date = data.get('date', '') or ''
-    result = result.replace('{date}', date)
-    result = result.replace('{year}', date[:4] if date else '')
-    result = result.replace('{month}', date[5:7] if len(date) >= 7 else '')
-    result = result.replace('{day}', date[8:10] if len(date) >= 10 else '')
-
-    return result
+    values = {
+        'num': data.get('number', ''),
+        'title': data.get('title', '') or '',
+        'actor': actors[0] if actors else '',
+        'actors': ', '.join(actors) if actors else '',
+        'maker': data.get('maker', '') or '',
+        'date': date,
+        'year': date[:4] if date else '',
+        'month': date[5:7] if len(date) >= 7 else '',
+        'day': date[8:10] if len(date) >= 10 else '',
+    }
+    return _PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], template)
 
 
 def validate_nfo_title_format(template: str) -> Optional[str]:

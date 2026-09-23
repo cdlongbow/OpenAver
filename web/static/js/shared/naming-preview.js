@@ -51,18 +51,25 @@ export function buildNamingPreview({ filenameFormat, createFolder, folderLayerLi
 /**
  * NFO 標題格式預覽代換（TASK-154b-T4 / CD-154b-11）。
  * 扁平 tokens（key 無大括號）→ 字面代換全部出現次數。
- * JS String.replace(str, val) 只換第一個；這裡用 split/join 換全部。
+ *
+ * 單趟 regex 代換：逐 key `split/join` 鏈式代換時，若某個 token
+ * 的值本身含有 `{otherKey}` 字面（例如片名本身就是「片名 {actor}」），後續
+ * 那一輪 split/join 會把「已插入的片名內容」當成代換來源再代換一次，等同
+ * 二次改寫使用者資料。改成單一 regex 對原始 template 一次性 `replace`，代換
+ * 值不會被回頭重新掃描；不在 tokens 裡的 `{xxx}` 保持原樣，與修正前行為一致。
  *
  * @param {string} template
  * @param {Object<string,string>} tokens
  * @returns {string}
  */
 export function formatNfoTitle(template, tokens) {
-    let out = String(template ?? '');
-    for (const [key, val] of Object.entries(tokens || {})) {
-        out = out.split(`{${key}}`).join(val);
-    }
-    return out;
+    const t = tokens || {};
+    const keys = Object.keys(t);
+    const str = String(template ?? '');
+    if (keys.length === 0) return str;
+    const escaped = keys.map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    const re = new RegExp(`\\{(${escaped.join('|')})\\}`, 'g');
+    return str.replace(re, (_match, key) => t[key]);
 }
 
 /** 薄包裝：設定頁 NFO 標題預覽。 */

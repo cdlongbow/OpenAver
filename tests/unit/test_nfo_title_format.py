@@ -51,6 +51,32 @@ class TestFormatNfoTitle:
         }
         assert format_nfo_title('{num}-{title}-{actor}', data) == 'ABC-123-片名-'
 
+    def test_title_containing_literal_placeholder_not_double_substituted(self):
+        """片名本身含 `{actor}` 字面，不可被後續變數代換二次改寫。
+
+        單趟 regex 代換前，逐變數 `.replace()` 鏈式代換會把已插入的片名內容
+        當成下一輪代換來源，等同二次改寫使用者資料（片名原字元保留違例）。
+        """
+        data = {
+            'number': 'ABC-123',
+            'title': '片名 {actor}',
+            'actors': ['三上悠亜'],
+            'maker': '',
+            'date': '',
+        }
+        assert format_nfo_title('[{num}]{title}', data) == '[ABC-123]片名 {actor}'
+
+    def test_title_containing_literal_num_placeholder_not_double_substituted(self):
+        """片名含 `{num}` 字面，同理不可被二次改寫。"""
+        data = {
+            'number': 'ABC-123',
+            'title': '片名{num}',
+            'actors': [],
+            'maker': '',
+            'date': '',
+        }
+        assert format_nfo_title('{title}-{num}', data) == '片名{num}-ABC-123'
+
 
 # ── validate_nfo_title_format ────────────────────────────────────────────
 
