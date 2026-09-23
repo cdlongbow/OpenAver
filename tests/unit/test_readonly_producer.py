@@ -8892,6 +8892,7 @@ class TestEnrichOneReadonlyEntryPoint:
             mtime=456.0,
             cover_path="",
             title="[ABC-001]中文片名",
+            number="ABC-001",
         )
         repo.get_by_path.return_value = existing
         repo_factory = MagicMock(return_value=repo)
@@ -8915,10 +8916,13 @@ class TestEnrichOneReadonlyEntryPoint:
         assert result.cover_written is True
         assert repo_factory.call_count == 2
 
-    def test_enrich_one_readonly_preserve_title_scraped_number_mismatch_uses_new_title(self):
-        """Codex PR#202 P2：preserve_title=True 但這次刮回的 meta['number'] 與既有番號
-        （number 參數 "ABC-001"）不同（刮到另一部片）→ 不保留 existing.title，
-        傳給 _produce_one 的 meta['title'] 是這次刮到的新標題。"""
+    def test_enrich_one_readonly_preserve_title_number_change_uses_new_title_even_when_scraper_echoes_target(self):
+        """`allow_number_change=true` 把這部片從 existing.number（'ABC-001'）改成
+        新番號 'XYZ-999'（number 參數＝這次真正要寫入 DB／NFO 的番號），且來源忠實
+        刮回使用者要求的目標番號（meta['number'] == 'XYZ-999' == number 參數——這是
+        允許改號時最常見的情境）。比對必須落在 `existing.number` vs `number`：若誤
+        比對 `meta.get('number')` vs `number`（二者相等）會判成同一部片、繼續保留
+        existing.title，把舊標題文字配上新番號寫進 NFO／DB。"""
         from pathlib import Path
         from core.readonly_producer import enrich_one_readonly
 
@@ -8928,10 +8932,11 @@ class TestEnrichOneReadonlyEntryPoint:
             mtime=456.0,
             cover_path="",
             title="[ABC-001]中文片名",
+            number="ABC-001",
         )
         repo.get_by_path.return_value = existing
         repo_factory = MagicMock(return_value=repo)
-        meta = {"number": "XYZ-999", "title": "刮到別部片的新標題", "maker": "M", "cover": ""}
+        meta = {"number": "XYZ-999", "title": "刮到新片的標題", "maker": "M", "cover": ""}
 
         with patch("core.readonly_producer.resolve_ingest_plan",
                    return_value=(meta, ("download", "http://x/new.jpg"))), \
@@ -8940,12 +8945,12 @@ class TestEnrichOneReadonlyEntryPoint:
                                  {"cover_fs": "/out/XYZ-999/XYZ-999.jpg", "sample_fs": [], "nfo_mtime": 1.0})) as mock_produce, \
              patch("core.readonly_producer.compute_has_servable_cover", return_value=True):
             result = enrich_one_readonly(
-                **self._base_kwargs(repo_factory, preserve_title=True)
+                **self._base_kwargs(repo_factory, number="XYZ-999", preserve_title=True)
             )
 
         mock_produce.assert_called_once()
         passed_meta = mock_produce.call_args.kwargs["meta"]
-        assert passed_meta["title"] == "刮到別部片的新標題"
+        assert passed_meta["title"] == "刮到新片的標題"
         assert result.nfo_written is True
 
     def _existing_for_preserve(self, tmp_path, *, title, number="ABC-123",

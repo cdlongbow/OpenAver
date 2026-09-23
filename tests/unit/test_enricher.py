@@ -5461,6 +5461,61 @@ class TestEnrichSinglePreserveTitle:
         assert [a.findtext("name") for a in root.findall("actor")] == ["女優A"]
         assert [t.text for t in root.findall("tag")] == ["タグ"]
 
+    def test_refresh_full_preserve_title_true_with_number_change_uses_new_title(self, tmp_path, mocker):
+        """非唯讀 enrich_single 真實路徑（不手塞 meta['number']——search_jav 回傳走
+        真正的 `_scraper_to_meta()`，其產出天生沒有 'number' key）。`allow_number_change=true`
+        由 router 守衛放行後把 `number` 參數改成與 existing.number 不同的新番號
+        （模擬使用者/AI 助理把這部片從 ABC-001 改號成 XYZ-002）；preserve_title=True
+        若沒有正確比對 existing.number，會把舊番號 ABC-001 的標題文字配上新番號
+        XYZ-002 寫進 NFO／DB。
+        """
+        import xml.etree.ElementTree as ET
+        from core.database import init_db, VideoRepository, Video
+        from core.enricher import enrich_single
+        from core.path_utils import to_file_uri
+
+        db_path = tmp_path / "test_preserve_number_change.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+
+        video_file = tmp_path / "ABC-001.mp4"
+        video_file.write_bytes(b"\x00")
+        path_uri = to_file_uri(str(video_file))
+
+        repo.upsert(Video(
+            path=path_uri,
+            number="ABC-001",
+            title="[ABC-001]舊片名",
+            original_title="旧原題",
+            maker="旧片商",
+            actresses=["旧演員"],
+            tags=["旧標籤"],
+        ))
+
+        mocker.patch("core.enricher.VideoRepository", return_value=repo)
+        mocker.patch("core.enricher.search_jav", return_value=self._scraper_data("XYZ-002"))
+
+        result = enrich_single(
+            file_path=path_uri,
+            number="XYZ-002",  # allow_number_change=true 放行後，這次真正要寫入的新番號
+            mode="refresh_full",
+            write_nfo=True,
+            write_cover=False,
+            write_extrafanart=False,
+            preserve_title=True,
+        )
+        assert result.success, result.error
+
+        row = repo.get_by_path(path_uri)
+        assert row.number == "XYZ-002"
+        # 番號已變 → 不得保留舊標題「[ABC-001]舊片名」，必須是這次刮到的新標題
+        assert row.title == "日文片名"
+
+        nfo_file = video_file.with_suffix(".nfo")
+        assert nfo_file.exists()
+        root = ET.parse(nfo_file).getroot()
+        assert root.findtext("title") == "[XYZ-002]日文片名"
+
     def test_refresh_full_preserve_title_false_overwrites_existing_title(self, tmp_path, mocker):
         """preserve_title=False（或省略）時，覆蓋既有標題。"""
         import xml.etree.ElementTree as ET

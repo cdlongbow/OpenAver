@@ -101,25 +101,18 @@ def effective_original_title(meta, existing) -> str:
 
 
 def effective_title(meta, existing, preserve, number, preserved_body_override: Optional[str] = None) -> str:
-    """preserve=True 時是否沿用 existing.title（Codex PR#202 P2 修正，154a 收尾）。
+    """preserve=True 時是否沿用 existing.title。
 
-    `number` 是呼叫端認定的既有番號（== existing.number，由 router 的番號守衛與前端
-    `numberChanged` 判斷保證）；`meta.get('number')` 是**這次實際刮回**的番號——唯讀
-    路徑（core/readonly_producer.py resolve_ingest_plan 的 rescrape 分支）`meta = scraper_data`
-    verbatim，是否與 `number` 一致並不受任何上游守衛保證（前端 checkbox 可見性只比對
-    「使用者輸入框」與「原片番號」，confirm 當下的重新刮取與 preview 各自獨立一次網路
-    呼叫，auto 來源可能選到不同 provider、正規化結果不同）。非唯讀 `enrich_single` 的
-    meta 從不帶 'number' key（`_scraper_to_meta` 沒有這個欄位），此處比對天然跳過，行為
-    不變。兩者不同 → 視為「刮到另一部片」（spec-154 §「番號被改掉時不出現」的後端對齊），
-    不保留舊標題，回退這次刮到的新標題——避免舊標題文字配上新番號寫進 NFO／DB。
+    `number` 是這次實際要寫入 DB／NFO 的番號；`existing.number` 是這部片改動前的
+    既有番號。兩者不同（大小寫不敏感）→ 視為把片改成另一部片的番號，不保留舊標題，
+    回退這次刮到的新標題。`existing.number` 為空時不套此判斷（沿用既有保留邏輯）。
 
-    `preserved_body_override`（CD-154b-12）：呼叫端從磁碟 NFO 算出的「格式反推本體」；
-    非 None 時在番號比對通過後優先回傳它（蓋過 existing.title 原樣保留）。
+    `preserved_body_override` 非 None 時，在番號比對通過後優先回傳它（蓋過
+    existing.title 原樣保留）。
     """
     if not preserve:
         return meta.get('title') or ''
-    scraped_number = meta.get('number')
-    if scraped_number and number and str(scraped_number).strip().upper() != str(number).strip().upper():
+    if existing and existing.number and number and str(existing.number).strip().upper() != str(number).strip().upper():
         return meta.get('title') or ''
     if preserved_body_override is not None:
         return preserved_body_override
