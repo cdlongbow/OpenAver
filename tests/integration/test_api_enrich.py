@@ -3725,7 +3725,11 @@ class TestApiEnrichPreserveTitle:
         assert mock_enrich.call_args.kwargs["preserve_title"] is True
 
     def test_oracle_3_rescrape_then_scan_preserves_title_verbatim(self, tmp_path, mocker):
-        """oracle 3: 非唯讀路徑重刮 preserve_title=True 後，以 gallery_scanner 掃描讀回，DB title 逐字不變。
+        """oracle 3: 非唯讀路徑重刮 preserve_title=True 後，以 gallery_scanner 掃描讀回，
+        DB title 的片名本體保持使用者原值。CD-154b-6 順便根治 CD-154a-1：掃描端改用
+        resolve_title_body() 讀回，預設格式（無 title_record）走步驟 3 剝掉 `[番號]`
+        方括號前綴，DB 存的是本體「中文片名」而非原樣疊了番號的
+        「[ABC-123]中文片名」——不再是逐字不變，是「番號前綴不再重複入庫」。
         同時驗證 DoD: original_title / maker / actors 等其他欄位仍是新值。"""
         from core.database import init_db, VideoRepository, Video
         from core.enricher import enrich_single
@@ -3797,7 +3801,9 @@ class TestApiEnrichPreserveTitle:
         scanner = VideoScanner(repo)
         nfo_info = scanner.parse_nfo(str(nfo_file))
         assert nfo_info is not None
-        assert nfo_info.title == "[ABC-123]中文片名"
+        # CD-154b-6：預設格式無 title_record → resolve_title_body() 步驟 3 剝掉
+        # `[番號]` 方括號前綴，掃描存回的是本體，不再疊一層番號。
+        assert nfo_info.title == "中文片名"
         assert nfo_info.actor == "女優A"
         assert nfo_info.genre == "標籤A"
 
@@ -3812,7 +3818,7 @@ class TestApiEnrichPreserveTitle:
             tags=[g.strip() for g in nfo_info.genre.split(',') if g.strip()] if nfo_info.genre else [],
         ))
         row_after_scan = repo.get_by_path(path_uri)
-        assert row_after_scan.title == "[ABC-123]中文片名"
+        assert row_after_scan.title == "中文片名"
         assert row_after_scan.original_title == "新原題"
         assert row_after_scan.maker == "SOD"
         assert row_after_scan.actresses == ["女優A"]

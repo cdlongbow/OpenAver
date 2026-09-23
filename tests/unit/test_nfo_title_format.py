@@ -149,6 +149,19 @@ class TestResolveTitleBody:
         )
         assert result == '片名'
 
+    def test_step3_bracket_prefix_with_leftover_bare_number_stripped(self):
+        """步驟 3：舊版疊層寫法 `[番號]番號 片名` → 剝完方括號後再剝殘留裸番號。"""
+        result = resolve_title_body(
+            raw_title='[ABC-123]ABC-123 片名',
+            number='ABC-123',
+            actors=[],
+            maker='',
+            date='',
+            nfo_title_format='[{num}]{title}',
+            record=None,
+        )
+        assert result == '片名'
+
     def test_resolve_title_body_step3_bracket_only_not_bare_number(self):
         """步驟 3 只認方括號；裸番號格式交給步驟 4 反推（AC-b7 oracle）。"""
         result = resolve_title_body(

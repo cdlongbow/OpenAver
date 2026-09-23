@@ -93,7 +93,9 @@ def resolve_title_body(
     # 步驟 3：符合預設格式 [{num}]{title}——只認方括號前綴
     bracket_stripped = _strip_bracket_num_prefix(raw_title, number)
     if bracket_stripped != raw_title:         # 有剝到方括號前綴才算「符合預設格式」
-        return bracket_stripped
+        # 疊層情形（如舊版寫出的 `[ABC-123]ABC-123 片名`）：方括號剝完後
+        # 開頭可能還殘留一段裸番號，需再剝一次才是真正的片名本體。
+        return _strip_num_prefixes(bracket_stripped, number)
     # 步驟 4：符合目前格式（完全吻合才剝）
     data = {'number': number, 'title': '__BODY__', 'actors': actors, 'maker': maker, 'date': date}
     templated = format_nfo_title(nfo_title_format, data)

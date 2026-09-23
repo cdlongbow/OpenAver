@@ -251,6 +251,11 @@ _TOOLS: list[dict] = [
                     "enum": ["zh-tw", "ja", "en"],
                     "description": "JavBus 語系（覆蓋 config 設定；source=auto 或 source=javbus 時生效）",
                 },
+                "preserve_title": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "true 時保留這部片目前的標題，不用新刮到的標題取代；新刮到的番號與原片不同時仍改用新標題。只影響標題，其他欄位照常更新。",
+                },
             },
             "required": ["file_path", "number"],
         },
@@ -303,6 +308,11 @@ _TOOLS: list[dict] = [
                 },
                 "write_nfo": {"type": "boolean", "default": True},
                 "write_cover": {"type": "boolean", "default": True},
+                "preserve_title": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "true 時保留這部片目前的標題，不用新刮到的標題取代；新刮到的番號與原片不同時仍改用新標題。只影響標題，其他欄位照常更新。",
+                },
             },
             "required": ["file_path", "number", "source", "mode", "overwrite_existing"],
         },
