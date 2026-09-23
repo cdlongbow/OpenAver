@@ -196,6 +196,20 @@ class TestEffectiveTitle:
         meta = {'title': '新刮到的標題'}
         assert effective_title(meta, existing, True, 'ABC-123') == '中文片名'
 
+    def test_preserve_true_with_scraped_number_mismatch_existing_matches_number_falls_back(self):
+        """existing.number == number（請求番號＝原片番號，前端 numberChanged 檢查會放行）
+        但這次唯讀來源獨立重新搜尋回來的 meta['number'] 與兩者不同（刮到另一部片，
+        不受前端檢查保護）→ 仍須回退新標題，不得只看 existing vs number 就放行。"""
+        existing = SimpleNamespace(title='中文片名', number='TEST-001')
+        meta = {'title': '刮到別部片的新標題', 'number': 'OTHER-777'}
+        assert effective_title(meta, existing, True, 'TEST-001') == '刮到別部片的新標題'
+
+    def test_preserve_true_with_all_three_numbers_agreeing_preserves(self):
+        """existing.number、number、meta['number'] 三者一致（大小寫不敏感）→ 保留舊標題。"""
+        existing = SimpleNamespace(title='中文片名', number='abc-123')
+        meta = {'title': '新刮到的標題', 'number': 'Abc-123'}
+        assert effective_title(meta, existing, True, 'ABC-123') == '中文片名'
+
     def test_preserve_true_without_meta_number_key_but_existing_number_changed_falls_back(self):
         """同上情境（meta 無 'number' key）但 existing.number 與要寫入的 number 不同
         （allow_number_change=true）→ 舊版比對只看 meta['number']（缺 key）恆短路為

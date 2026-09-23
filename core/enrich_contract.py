@@ -100,19 +100,26 @@ def effective_original_title(meta, existing) -> str:
     return meta.get('original_title') or (existing.original_title if existing else '') or ''
 
 
+def _numbers_agree(*numbers) -> bool:
+    """所有非空番號（大小寫不敏感）是否一致；忽略空值；0 或 1 個非空值視為一致。"""
+    normalized = {str(n).strip().upper() for n in numbers if n}
+    return len(normalized) <= 1
+
+
 def effective_title(meta, existing, preserve, number, preserved_body_override: Optional[str] = None) -> str:
     """preserve=True 時是否沿用 existing.title。
 
-    `number` 是這次實際要寫入 DB／NFO 的番號；`existing.number` 是這部片改動前的
-    既有番號。兩者不同（大小寫不敏感）→ 視為把片改成另一部片的番號，不保留舊標題，
-    回退這次刮到的新標題。`existing.number` 為空時不套此判斷（沿用既有保留邏輯）。
+    三個番號來源——`existing.number`（改動前既有番號）、`number`（這次要寫入的
+    番號）、`meta.get('number')`（這次實際刮回的番號，非唯讀路徑通常無此欄位）——
+    只要有值的都必須大小寫不敏感一致，才視為同一部片、保留舊標題；任一對不同
+    （改號、或刮到另一部片）都回退這次刮到的新標題。
 
     `preserved_body_override` 非 None 時，在番號比對通過後優先回傳它（蓋過
     existing.title 原樣保留）。
     """
     if not preserve:
         return meta.get('title') or ''
-    if existing and existing.number and number and str(existing.number).strip().upper() != str(number).strip().upper():
+    if not _numbers_agree(existing.number if existing else None, number, meta.get('number')):
         return meta.get('title') or ''
     if preserved_body_override is not None:
         return preserved_body_override
