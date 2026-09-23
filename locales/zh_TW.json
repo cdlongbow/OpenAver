@@ -952,7 +952,8 @@
       "version_prev_aria": "上一個版本",
       "version_next_aria": "下一個版本",
       "adopt_version": "採用此版本",
-      "adopt_switch_source": "替換此版本"
+      "adopt_switch_source": "替換此版本",
+      "preserve_title": "保留目前標題：「{title}」"
     },
     "placeholder": {
       "search": "搜尋番號、女優、標題..."

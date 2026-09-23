@@ -196,6 +196,12 @@
       <div class="rescrape-caption" x-show="rescrapeEntryPoint === 'lightbox'">
         <i class="bi bi-exclamation-octagon-fill" aria-hidden="true"></i> {{ t('showcase.rescrape.overwrite_warning') }}
       </div>
+      <div x-show="rescrapeShowPreserveTitle()">
+        <label>
+          <input type="checkbox" class="toggle toggle-sm toggle-primary" x-model="rescrapePreserveTitle">
+          <span x-text="t('showcase.rescrape.preserve_title', { title: rescrapeCurrentTitleStripped() })"></span>
+        </label>
+      </div>
       {# lightbox 入口：✗/✓ 兩圓鈕 #}
       <div class="rescrape-confirm-row" x-show="rescrapeEntryPoint === 'lightbox'">
         <button type="button" class="rescrape-confirm-btn cancel" @click="rescrapeBackToPick()"
