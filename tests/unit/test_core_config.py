@@ -2232,3 +2232,25 @@ class TestSaveConfigBlockedBeforeLayoutFinalized:
 
         assert config_path.read_bytes() == content_before
 
+
+# ============ test_nfo_title_format ============
+
+class TestNfoTitleFormatConfig:
+    """NFO 標題格式 schema 預設值與 migration（TASK-154b-T5）"""
+
+    def test_scraper_config_nfo_title_format_default(self):
+        from core.config import ScraperConfig
+        assert ScraperConfig().nfo_title_format == '[{num}]{title}'
+
+    def test_load_config_backfills_missing_nfo_title_format(self, tmp_path, monkeypatch):
+        """舊 config.json 含 scraper 但無 nfo_title_format → load_config 補預設值並寫回。"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"scraper": {"create_folder": True}})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert result["scraper"]["nfo_title_format"] == '[{num}]{title}'
+        written = json.loads(config_path.read_text(encoding="utf-8"))
+        assert written["scraper"]["nfo_title_format"] == '[{num}]{title}'

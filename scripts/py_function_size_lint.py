@@ -159,7 +159,7 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "所以本條的增量只有佔位那三行。",
     ),
     ("core/config.py", "_load_config_unlocked"): (
-        331,
+        335,
         "config 遷移主流程，每加一個設定欄位都得改它；收斂設計已列 backlog"
         "（OpenAver架構評估-回應.md §七）。"
         "2026-09-21（feature/152c T3）304→310：新增 top-level `focal_device` 的 additive "
@@ -172,7 +172,8 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "migration，與 152c 同形）。"
         "2026-09-23（feature/153b T3 round 2）315→331：另外加入資料根未定版時不落盤的 "
         "BE-DATA-13 守衛（約 16 行，含說明註解）——CONFIG_PATH 已在資料根內且無 "
-        ".layout.json 時改讀 default 進記憶體，避免 bootstrap 前自動建檔造成永久啟動衝突。",
+        ".layout.json 時改讀 default 進記憶體，避免 bootstrap 前自動建檔造成永久啟動衝突。"
+        "2026-09-24（feature/154b T5）331→335：新增 scraper.nfo_title_format 的 additive migration（3 行程式碼 ＋ 1 行間隔空行）。",
     ),
     ("web/routers/scraper.py", "batch_enrich_endpoint"): (
         292,
