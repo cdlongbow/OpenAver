@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('insights.page_title') }} - OpenAver{% endblock %}
+
+{% block pre_alpine_module %}
+<script type="module" src="/static/js/pages/insights/main.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="insights-container page-layer" x-data="libraryInsights">
+    <section class="card">
+        <div class="card-body">
+            <span x-text="totalCount">0</span>
+        </div>
+    </section>
+</div>
+{% endblock %}

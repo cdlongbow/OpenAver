@@ -5159,6 +5159,9 @@ const RULES = [
     scope: { anchor: /Alpine\.store\('ui'/, window: 800 },
     note: '[TASK-150b-T3 CD-150b-7 #6] fallback 的 observe() 必須同步回報 isIntersecting: true（pass-through 語意）。規則 4 只鎖「有沒有賦值」，這條鎖「賦值的東西會不會真的讓卡片載圖」——兩者缺一都會讓 shim 在 IO 不可用時變成擺設',
   },
+  // ---- [TestInsightsESMGuard] insights.html pre_alpine_module wiring (156a-T2) ----
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'pre_alpine_module', note: '[TestInsightsESMGuard] test_insights_html_has_pre_alpine_module (block)' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'insights/main.js', note: '[TestInsightsESMGuard] test_insights_html_has_pre_alpine_module (main.js script)' },
 ];
 
 // ---- helpers ----

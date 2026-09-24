@@ -700,6 +700,14 @@ async def showcase_page(request: Request):
     return templates.TemplateResponse(request, "showcase.html", context)
 
 
+@app.get("/insights")
+async def insights_page(request: Request):
+    """片庫分析頁面"""
+    context = get_common_context(request)
+    context["page"] = "insights"
+    return templates.TemplateResponse(request, "insights.html", context)
+
+
 @app.get("/settings")
 async def settings_page(request: Request):
     """設定頁面"""
