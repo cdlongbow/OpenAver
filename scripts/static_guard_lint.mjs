@@ -5175,6 +5175,10 @@ const RULES = [
   { file: 'web/templates/base.html', kind: 'required-string', pattern: 'href="/insights"', count: 2, note: '[TestInsightsSidebarGuard] test_sidebar_insights_link_present — offcanvas 與 desktop sidebar 各一處' },
   { file: 'web/templates/base.html', kind: 'required-string', pattern: 'M6 2.5A.5.5 0 0 1 6.5 2h3a.5.5 0 0 1 .5.5V14H6z', count: 2, note: '[TestInsightsSidebarGuard] test_sidebar_insights_icon_svg_present — 頒獎台 icon 的 path 資料，兩處插入點逐字相同' },
   { file: 'web/templates/base.html', kind: 'forbidden-string', pattern: 'stroke=', note: '[TestInsightsSidebarGuard] test_sidebar_insights_icon_is_filled_not_stroked — CD-156-7：頒獎台 icon 必須是 fill=currentColor 實心路徑，不是 stroke 線條（base.html 目前全檔零既有 stroke= 用法，已用 grep -c "stroke=" web/templates/base.html 確認為 0，此規則對全檔有效、不需 scope）' },
+
+  // ---- [TestInsightsVendorGuard] insights.html 載入 ECharts UMD (156a-T5, CD-156-6) ----
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'src="/static/vendor/echarts/echarts.min.js"', note: '[TestInsightsVendorGuard] test_insights_html_loads_echarts_script' },
+  { file: 'web/templates/insights.html', kind: 'forbidden-string', pattern: '<script type="module" src="/static/vendor/echarts/echarts.min.js"', note: '[TestInsightsVendorGuard] test_insights_echarts_script_not_module — UMD build 不能用 type=module 載入' },
 ];
 
 // ---- helpers ----

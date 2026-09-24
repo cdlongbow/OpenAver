@@ -14,9 +14,9 @@
  * （「沒被抓到」與「沒有 bug」永遠分不出來）。這裡一律 `JSON.parse`，零手刻解析。
  *
  * 兩條獨立掃描路徑（**不是一次遞迴走完**）：
- *   A. 遞迴掃 `web/static/vendor/**`  → 對帳 manifest.vendor[]（15 筆）
- *      該目錄下的物理檔案有 16 個，多出來的那個是 manifest.json 自己（CD-12 具名排除）。
- *   B. 單獨檢查 `core/focal/facefinder` → 對帳 manifest.facefinder（第 16 筆）
+ *   A. 遞迴掃 `web/static/vendor/**`  → 對帳 manifest.vendor[]（16 筆）
+ *      該目錄下的物理檔案有 17 個，多出來的那個是 manifest.json 自己（CD-12 具名排除）。
+ *   B. 單獨檢查 `core/focal/facefinder` → 對帳 manifest.facefinder（第 17 筆）
  *      **不得寫成遞迴掃 `core/focal/`**——同目錄的 pigo.py／detector.py／gate.py 是
  *      持續維護的移植碼，不是「與磁碟逐位元組對帳」的標的（CD-2）。
  *
@@ -330,7 +330,7 @@ function main() {
     }
   }
 
-  // ---- 逐筆對帳（vendor 15 筆） ----
+  // ---- 逐筆對帳（vendor 16 筆） ----
   // 進 reconcileEntry() 之前先確認 path 可用（review P3）——不合格的這一筆記錯誤後
   // 直接 continue，不讓一筆壞資料的 TypeError 把其餘筆的檢查一起悶掉。
   let okCount = 0;
@@ -339,7 +339,7 @@ function main() {
     if (reconcileEntry(entry, 'vendor')) okCount += 1;
   }
 
-  // ---- 路徑 B：單獨檢查 core/focal/facefinder（第 16 筆，非遞迴） ----
+  // ---- 路徑 B：單獨檢查 core/focal/facefinder（第 17 筆，非遞迴） ----
   // facefinder 同樣走 reconcileEntry()，同一個 TypeError 風險要一起擋（review P3）。
   if (facefinder.path !== FACEFINDER_REL) {
     err(`facefinder.path 應為 ${FACEFINDER_REL}，實際為 ${facefinder.path}`);
