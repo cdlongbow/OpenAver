@@ -4542,6 +4542,17 @@ const RULES = [
     pattern: 'components/help-popover.js',
     note: '[131b-T4] 少這一行，設定頁與掃描頁 8 個 ? 按鈕全部點不出東西——x-data="helpPopover" 找不到定義，Alpine 只會在 console 抱怨，畫面上就是「按了沒反應」',
   },
+  // ==== [155b-T2] Number Drilldown 共用元件掛載 ====
+  {
+    file: 'web/templates/base.html', kind: 'required-string',
+    pattern: 'components/number-drilldown.js',
+    note: '[155b-T2] 少這一行，掃描頁數字按了沒反應——x-data="numberDrilldown" 找不到定義，Alpine 只會在 console 抱怨',
+  },
+  {
+    file: 'web/templates/base.html', kind: 'required-string',
+    pattern: 'components/number-drilldown.css',
+    note: '[155b-T2] 少這一行，數字清單浮層無樣式——結構在、看起來像沒套 CSS 的裸 HTML',
+  },
   // 9 個掛載點逐一鎖住（既有 :1175-1179 的 help-popover / help-popover-btn 是 min，
   // 拆掉其中一顆仍會過；count 讓「少一顆」直接紅）。131b branch review P3。
   {
