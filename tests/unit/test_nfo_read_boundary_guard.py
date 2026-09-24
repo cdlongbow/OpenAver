@@ -487,12 +487,15 @@ class TestFalsePositiveGuards:
     def test_nfo_updater_parse_nfo_does_not_collide_with_gallery_scanner(self):
         """core.nfo_updater.parse_nfo 與 core.gallery_scanner.VideoScanner.parse_nfo
         同名但不同檔案——各自 parse 各自的 AST tree，B 的定位不會誤中此函式。"""
-        updater_func = _find_func(_tree(NFO_UPDATER_PY), "parse_nfo")
+        updater_tree = _tree(NFO_UPDATER_PY)
+        updater_func = _find_func(updater_tree, "parse_nfo")
         assert updater_func is not None
-        assert updater_func.lineno == 162  # nfo_updater.py 的簽名純位置參數版本
-        scanner_func = _find_func(_tree(GALLERY_SCANNER_PY), "parse_nfo")
+        # 模組層函式（不是 method）——不寫死行號：155b 在上方加兩行就讓舊的 `lineno == 162` 假紅
+        assert updater_func in updater_tree.body
+        scanner_tree = _tree(GALLERY_SCANNER_PY)
+        scanner_func = _find_func(scanner_tree, "parse_nfo")
         assert scanner_func is not None
-        assert scanner_func.lineno != updater_func.lineno
+        assert scanner_func not in scanner_tree.body  # VideoScanner.parse_nfo 是 class method
 
 
 # ============================================================
