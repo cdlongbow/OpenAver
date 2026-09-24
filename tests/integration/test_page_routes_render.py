@@ -37,12 +37,14 @@ def _isolated_access_auth(tmp_path, monkeypatch):
 PAGE_ROUTES = [
     "/search",
     "/showcase",
+    "/insights",
     "/scanner",
     "/settings",
     "/help",
     "/design-system",
     "/motion-lab",
 ]
+
 
 
 @pytest.fixture(scope="module")
@@ -59,6 +61,17 @@ def test_page_route_renders_200(client, route):
         f"{route} 回 {resp.status_code}（TemplateResponse 渲染失敗 / 簽名漂移？）"
     assert b"<html" in resp.content.lower() or b"<!doctype" in resp.content.lower(), \
         f"{route} 回 200 但非 HTML 文件"
+
+
+def test_insights_page_context_is_insights(client, mocker):
+    """/insights 頁面路由 context["page"] 必須為 "insights"（驅動 base.html body class 與側欄 active）"""
+    import web.app as web_app
+    spy = mocker.spy(web_app.templates, "TemplateResponse")
+    resp = client.get("/insights")
+    assert resp.status_code == 200
+    assert spy.call_args.args[1] == "insights.html"
+    assert spy.call_args.args[2]["page"] == "insights"
+
 
 
 # ── 81b-T5：help curl base_url server-aware 注入矩陣 ─────────────────────────
