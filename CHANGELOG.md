@@ -60,7 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 已知限制
 
-- **本版新增的文字只有繁體中文**，en／ja／ko 待補，那三種語言的介面下會先以繁體中文顯示
+- **本版新增的文字只有繁體中文**，en／ja／zh_CN 待補，那三種語言的介面下會先以繁體中文顯示
   （「NFO 與封面都缺」的簡體中文已同步）。
 - caribbeancom 的舊資料通道已經停用，每次查詢都會先試一次舊通道再改讀網頁，多一次網路往返；
   結果正確，只是稍慢。

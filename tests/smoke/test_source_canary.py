@@ -152,7 +152,8 @@ def _probe_d2pass_site(site: str, number: str, scraper) -> bool:
             resp = scraper._session.get(url, timeout=10)
             return resp.status_code == 200
         return scraper._fetch_json(site, movie_id) is not None
-    except Exception:
+    except Exception as e:
+        print(f"[canary] d2pass/{site}/{number} probe 例外: {type(e).__name__}: {e}")
         return False
 
 
