@@ -1616,6 +1616,19 @@
     "body": "更新功能開發中..."
   },
   "insights": {
-    "page_title": "片庫分析"
+    "page_title": "片庫分析",
+    "row": {
+      "years": "年份",
+      "makers": "片商",
+      "actress_top20": "女優 Top 20",
+      "tags": "標籤",
+      "age": "年齡",
+      "director": "導演",
+      "series": "系列",
+      "deep_dive": "深入：女優與片商",
+      "gantt": "主要片商年表",
+      "actress_distribution": "女優片商分布",
+      "costar": "與她同片"
+    }
   }
 }

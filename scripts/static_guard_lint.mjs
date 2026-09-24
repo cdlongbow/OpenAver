@@ -5162,6 +5162,14 @@ const RULES = [
   // ---- [TestInsightsESMGuard] insights.html pre_alpine_module wiring (156a-T2) ----
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'pre_alpine_module', note: '[TestInsightsESMGuard] test_insights_html_has_pre_alpine_module (block)' },
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'insights/main.js', note: '[TestInsightsESMGuard] test_insights_html_has_pre_alpine_module (main.js script)' },
+
+  // ---- [TestInsightsBrandTileGuard] OpenAver 格右上角空位不得渲染按鈕 (156a-T3, CD-156-7.1) ----
+  {
+    file: 'web/templates/insights.html', kind: 'forbidden-string',
+    pattern: ['<button', '<a ', 'role="button"'],
+    scope: { anchor: /class="insights-brand-actions"/, window: 80 },
+    note: '[TestInsightsBrandTileGuard] test_insights_brand_actions_has_no_button — CD-156-7.1：156 不做匯出，右上角只留空位不放可點擊元素',
+  },
 ];
 
 // ---- helpers ----

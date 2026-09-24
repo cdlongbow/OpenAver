@@ -1,0 +1,250 @@
+/* Insights - 片庫分析頁面 CSS (156a-T3) */
+
+/* Page Container */
+.insights-container {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding-block: 0.5rem 1.5rem;
+    padding-inline: var(--layer-inset);
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+/* Fluent Card Styling (settings.css:19-46) */
+.insights-container .card {
+    border: 1px solid var(--stroke-default);
+    border-radius: var(--radius-lg);
+    box-shadow:
+        inset 0 1px 0 color-mix(in oklch, var(--color-base-content) 8%, transparent),
+        var(--fluent-shadow-4);
+    overflow: hidden;
+    background: color-mix(in oklch, var(--color-base-200) 80%, transparent);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+}
+
+[data-theme="dim"] .insights-container .card {
+    background: color-mix(in oklch, var(--color-base-200) 60%, transparent);
+}
+
+.insights-container .card-head {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 0.5rem 0.75rem 0.25rem;
+    gap: 0.5rem;
+}
+
+.insights-container .card-head h2 {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    margin: 0;
+    white-space: nowrap;
+    color: var(--text-primary);
+}
+
+.insights-container .card-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+    padding: 0.25rem 0.75rem 0.5rem;
+    display: flex;
+    flex-direction: column;
+    color: var(--text-primary);
+}
+
+/* ===== Row 1: 常駐四格 ===== */
+.insights-container .row1 {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.insights-container .row1 .card {
+    min-height: 100px;
+}
+
+.insights-container .row1 .card-body {
+    justify-content: center;
+    padding: 0.5rem 0.75rem;
+}
+
+/* OpenAver 品牌格 */
+.insights-brand-card .card-body {
+    position: relative;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.insights-brand-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.insights-brand-row img {
+    width: 1.25rem;
+    height: 1.25rem;
+    flex: 0 0 auto;
+}
+
+.insights-brand-row .title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 格子右上角空位：固定尺寸約 32×32px，不渲染按鈕 */
+.insights-brand-actions {
+    width: 32px;
+    height: 32px;
+    flex: 0 0 32px;
+}
+
+/* ===== Row 2: 年份長條 + 片商甜甜圈 ===== */
+.insights-container .row2 {
+    display: grid;
+    grid-template-columns: 3fr 2fr;
+    gap: 0.5rem;
+    align-items: stretch;
+    min-width: 0;
+}
+
+.insights-container .years-chart-wrap {
+    flex: 1 1 auto;
+    min-height: 220px;
+    position: relative;
+}
+
+.insights-container .donut-chart-wrap {
+    flex: 1 1 auto;
+    min-height: 220px;
+    position: relative;
+}
+
+.insights-container .echart {
+    width: 100%;
+    height: 100%;
+}
+
+/* ===== Row 3: 女優 Top20 + 標籤 treemap ===== */
+.insights-container .row3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    align-items: stretch;
+    min-width: 0;
+}
+
+.insights-container .top20-list {
+    flex: 1 1 auto;
+    min-height: 360px;
+}
+
+.insights-container .treemap-chart-wrap {
+    flex: 1 1 auto;
+    min-height: 360px;
+    position: relative;
+}
+
+/* ===== Row 4: 年齡 / 導演 / 系列 ===== */
+.insights-container .row4 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.insights-container .age-chart-wrap,
+.insights-container .bar-chart-wrap {
+    flex: 1 1 auto;
+    min-height: 200px;
+    position: relative;
+}
+
+/* ===== Section Divider ===== */
+.insights-container .section-divider {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    padding: 0.25rem 0.25rem 0;
+    letter-spacing: 0.02em;
+}
+
+/* ===== Row 5: 主要片商年表（全寬） ===== */
+.insights-container .row5 {
+    display: grid;
+    grid-template-columns: 1fr;
+    min-width: 0;
+}
+
+.insights-container .gantt-card {
+    grid-column: 1 / -1;
+    width: 100%;
+}
+
+.insights-container .gantt-wrap {
+    flex: 1 1 auto;
+    min-height: 120px;
+    overflow: auto;
+}
+
+.insights-container .gantt-table {
+    display: grid;
+    width: 100%;
+}
+
+.insights-container .gantt-note {
+    font-size: 0.6875rem;
+    color: var(--text-muted);
+    padding-top: 0.25rem;
+    flex: 0 0 auto;
+}
+
+/* ===== Row 6: 女優片商分布 / 與她同片 ===== */
+.insights-container .row6 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.insights-container .list-rows {
+    flex: 1 1 auto;
+    min-height: 120px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ===== 響應式斷點 ===== */
+@media (max-width: 1024px) {
+    .insights-container .row1 {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .insights-container .row2,
+    .insights-container .row3,
+    .insights-container .row4,
+    .insights-container .row6 {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 640px) {
+    .insights-container .row1 {
+        grid-template-columns: 1fr;
+    }
+}
