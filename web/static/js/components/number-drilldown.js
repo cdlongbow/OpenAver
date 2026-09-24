@@ -56,14 +56,23 @@ export function numberDrilldown() {
             return this._items.map((it) => this.rowId(it)).join('\n');
         },
 
+        // 回傳 execCommand('copy') 是否真的成功；例外一律視為失敗。
+        // textarea 一定移除（finally），不因例外殘留在 DOM 上。
         _fallbackCopy(text) {
             const ta = document.createElement('textarea');
             ta.value = text;
             ta.style.cssText = 'position:fixed;top:-9999px';
             document.body.appendChild(ta);
             ta.select();
-            try { document.execCommand('copy'); } catch (e) { /* noop */ }
-            ta.remove();
+            let ok = false;
+            try {
+                ok = document.execCommand('copy');
+            } catch (e) {
+                ok = false;
+            } finally {
+                ta.remove();
+            }
+            return ok;
         },
 
         copy() {
@@ -71,14 +80,20 @@ export function numberDrilldown() {
             const onSuccess = () => {
                 showToast(window.t('common.number_drilldown.copy_toast', { count: this.count }), 'success');
             };
-            if (navigator.clipboard?.writeText) {
-                navigator.clipboard.writeText(text).then(onSuccess).catch(() => {
-                    this._fallbackCopy(text);
+            const onFailure = () => {
+                showToast(window.t('common.number_drilldown.copy_failed'), 'error');
+            };
+            const runFallback = () => {
+                if (this._fallbackCopy(text)) {
                     onSuccess();
-                });
+                } else {
+                    onFailure();
+                }
+            };
+            if (navigator.clipboard?.writeText) {
+                navigator.clipboard.writeText(text).then(onSuccess).catch(runFallback);
             } else {
-                this._fallbackCopy(text);
-                onSuccess();
+                runFallback();
             }
         },
     };

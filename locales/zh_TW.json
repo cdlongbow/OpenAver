@@ -44,6 +44,7 @@
     "number_drilldown": {
       "copy_button": "複製清單",
       "copy_toast": "已複製 {count} 部",
+      "copy_failed": "複製失敗，請手動選取清單文字複製",
       "close": "關閉",
       "count": "共 {count} 部"
     }
