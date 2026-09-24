@@ -732,7 +732,7 @@
       "jellyfin_checking": "检查中...",
       "jellyfin_check_done_ok": "已检查，全部正常",
       "btn_done": "已完成",
-      "missing_both_prefix": "缺 NFO+封面:",
+      "missing_both_prefix": "NFO 和封面都缺:",
       "missing_nfo_prefix": "缺 NFO:",
       "missing_cover_prefix": "缺封面:",
       "missing_suffix": "部",
