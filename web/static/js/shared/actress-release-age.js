@@ -76,3 +76,15 @@ export function resolveFavoriteActressAge(rawActressName, video, actresses, name
         durationMinutes: video.duration,
     });
 }
+
+export function computeActorAgesMap(video, actresses, nameToGroup) {
+    var ages = {};
+    if (!video || !video.actresses) return ages;
+    var names = video.actresses.split(',').map(function (n) { return n.trim(); }).filter(Boolean);
+    for (var i = 0; i < names.length; i++) {
+        var age = resolveFavoriteActressAge(names[i], video, actresses, nameToGroup);
+        if (age != null) ages[names[i]] = age;
+    }
+    return ages;
+}
+

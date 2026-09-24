@@ -23,6 +23,7 @@ let _actressesLoadPromise = null;
  */
 function _clearActressesOnLoadFailure(self) {
     _actresses.splice(0, _actresses.length);
+    self._refreshCardActorAges?.();
     _filteredActresses.splice(0, _filteredActresses.length);
     self.actressCount = 0;
     self.filteredActressCount = 0;
@@ -55,6 +56,7 @@ async function _fetchActressesAndApply() {
         // 45: alias map（冪等，init 可能已載入）
         await _loadAliasMap();
         this.applyActressFilterAndSort();
+        this._refreshCardActorAges?.();
         // CD-149b-2②：_setActressesLoaded(true) 從 finally 移到成功路徑。
         _setActressesLoaded(true);
         // CD-149b-3/6 第 6 個刷新點：`?.` 而非裸呼叫——至少 8 個既有測試檔單獨用 stateActress()
@@ -1246,10 +1248,12 @@ export function stateActress() {
         // :1011 搜尋頁收藏路徑同款去重寫法），唯一收斂點是 applyActressFilterAndSort()。
         // 不得為了「當場看得到」而繞過篩選：不清空 actressSearch、不移除 actressPills、
         // 不直接 push 進 paginatedActresses。
+        // 155a：新增 _actresses 的 push/splice 時要同時呼叫 this._refreshCardActorAges?.()（CD-155a-4）。
         _libAddToWall(actress) {
             if (!actress || !actress.name) return;
             if (_actresses.find(function (a) { return a.name === actress.name; })) return;
             _actresses.push(actress);
+            this._refreshCardActorAges?.();
             this.applyActressFilterAndSort();
         },
 
@@ -1289,6 +1293,7 @@ export function stateActress() {
                     this.showToast(window.t('showcase.actress.addTimeout'), 'error');
                 } else if (data.success) {
                     _actresses.push(data.actress);
+                    this._refreshCardActorAges?.();
                     this.applyActressFilterAndSort();
                     this.showToast(window.t('showcase.actress.addSuccess'), 'success');
                 } else {
@@ -1321,6 +1326,7 @@ export function stateActress() {
                     this._matchedActress = actress;
                     if (!_actresses.find(function(a) { return a.name === actress.name; })) {
                         _actresses.push(actress);
+                        this._refreshCardActorAges?.();
                         this.applyActressFilterAndSort();
                     }
                     if (resp.status === 200) {
@@ -1367,6 +1373,7 @@ export function stateActress() {
                 if (data.success) {
                     const idx = _actresses.findIndex(a => a.name === name);
                     if (idx >= 0) _actresses.splice(idx, 1);
+                    this._refreshCardActorAges?.();
                     this.applyActressFilterAndSort();
                     // stale guard: lightbox switched to a different actress during request
                     if (this.currentLightboxActress?.name !== name) {

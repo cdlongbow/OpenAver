@@ -12,6 +12,7 @@ import { POSTER_CROP_MAX_W } from '@/shared/breakpoints.js';
 import { serializePills, deserializePills } from '@/shared/pill-filter.js';
 import { computeBadges, resolveEnabledIds } from '@/shared/cover-badges.js';
 import { formatPartLabel } from '@/shared/part-label.js';
+import { computeActorAgesMap } from '@/shared/actress-release-age.js';
 
 // 53a codex F3: $persist 對 localStorage 壞 JSON 沒 try/catch（會在 Alpine init 階段拋錯炸整頁），
 // 必須在 Alpine.data 註冊前先清掃壞值，讓 $persist fallback 走預設物件
@@ -209,6 +210,11 @@ export function _recomputeAllBadges() {
     for (var i = 0; i < _videos.length; i++) {
         _recomputeVideoBadges(_videos[i], enabledIds);
     }
+}
+
+export function _recomputeCardActorAges(video) {
+    if (!video) return;
+    video._cardActorAges = computeActorAgesMap(video, _actresses, _nameToGroup);
 }
 
 // 41c B-lite: 無封面 placeholder SVG (cover 載入失敗時 handleCoverError 換上)
