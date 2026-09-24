@@ -607,7 +607,7 @@
                                       x-show="(video.user_rating || 0) > 0"></span>
                                 <span class="av-num" x-text="video.number"></span>
                             </span>
-                            <span class="av-actress" x-text="video.actresses || t('showcase.grid.unknown_actor')"></span>
+                            <span class="av-actress"><span x-text="video.actresses || t('showcase.grid.unknown_actor')"></span><span class="lb-actor-age" x-show="singleActorAge(video) != null" x-text="' (' + singleActorAge(video) + t('showcase.unit.age_suffix') + ')'"></span></span>
                         </div>
                         <div class="footer-hover" x-show="!infoVisible">
                             <div class="hover-title" x-text="video.title || t('showcase.grid.unknown_title')"></div>

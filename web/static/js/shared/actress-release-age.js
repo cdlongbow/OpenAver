@@ -88,3 +88,10 @@ export function computeActorAgesMap(video, actresses, nameToGroup) {
     return ages;
 }
 
+export function singleActorAge(video) {
+    if (!video || !video.actresses) return null;
+    var names = video.actresses.split(',').map(function (n) { return n.trim(); }).filter(Boolean);
+    if (names.length !== 1) return null;
+    var age = video._cardActorAges && video._cardActorAges[names[0]];
+    return age != null ? age : null;
+}

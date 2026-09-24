@@ -11,6 +11,7 @@ const {
     computeActressAgeForVideo,
     resolveFavoriteActressAge,
     computeActorAgesMap,
+    singleActorAge,
 } = mod;
 
 // ── 常數匯出 ─────────────────────────────────────────────────────────────
@@ -262,3 +263,55 @@ test('computeActorAgesMap 契約：多女優混合、別名命中、片長 >= 23
     assert.deepStrictEqual(computeActorAgesMap({ actresses: '   ' }, actresses, nameToGroup), {});
 });
 
+// ── 邊界條件 (TASK-155a-T3) ─────────────────────────────────────────────
+
+test('singleActorAge 單人且有年齡回傳年齡', () => {
+    const video = {
+        actresses: '明里つむぎ',
+        _cardActorAges: { '明里つむぎ': 24 },
+    };
+    assert.strictEqual(singleActorAge(video), 24);
+
+    // 尾端逗號＋空白，trim 後仍為單人
+    const trailingCommaVideo = {
+        actresses: '明里つむぎ, ',
+        _cardActorAges: { '明里つむぎ': 24 },
+    };
+    assert.strictEqual(singleActorAge(trailingCommaVideo), 24);
+});
+
+test('singleActorAge 兩人以上回傳 null', () => {
+    const video = {
+        actresses: '明里つむぎ, 三上悠亜',
+        _cardActorAges: { '明里つむぎ': 24, '三上悠亜': 27 },
+    };
+    assert.strictEqual(singleActorAge(video), null);
+});
+
+test('singleActorAge 單人但未列入 _cardActorAges 時回傳 null', () => {
+    const emptyMapVideo = {
+        actresses: '明里つむぎ',
+        _cardActorAges: {},
+    };
+    assert.strictEqual(singleActorAge(emptyMapVideo), null);
+
+    const undefinedMapVideo = {
+        actresses: '明里つむぎ',
+    };
+    assert.strictEqual(singleActorAge(undefinedMapVideo), null);
+
+    const notInMapVideo = {
+        actresses: '明里つむぎ',
+        _cardActorAges: { '三上悠亜': 27 },
+    };
+    assert.strictEqual(singleActorAge(notInMapVideo), null);
+});
+
+test('singleActorAge video 或 actresses 為 falsy／空字串時回傳 null', () => {
+    assert.strictEqual(singleActorAge(null), null);
+    assert.strictEqual(singleActorAge(undefined), null);
+    assert.strictEqual(singleActorAge({}), null);
+    assert.strictEqual(singleActorAge({ actresses: null }), null);
+    assert.strictEqual(singleActorAge({ actresses: '' }), null);
+    assert.strictEqual(singleActorAge({ actresses: '   ' }), null);
+});
