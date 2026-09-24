@@ -12,6 +12,25 @@ from .models import Video, Actress, ScraperConfig
 from .utils import rate_limit
 
 
+def _extract_spec_block(html_text: str, label: str) -> Optional[str]:
+    """精確錨定 <span class="spec-title">{label}</span> 到下一個 </li> 之間的內容。
+
+    取代裸子字串 re.search(label...) 的錯誤做法——裸字串會撈到頁面別處（meta description／
+    導覽選單）第一個同名子字串，見 CD-155c-2。找不到錨點回 None。
+    """
+    m = re.search(
+        r'<span class="spec-title">' + re.escape(label) + r'</span>(.*?)</li>',
+        html_text, re.DOTALL
+    )
+    return m.group(1) if m else None
+
+
+def _extract_actress_names(block: str) -> list[str]:
+    """從 spec block 抓 itemprop="name" 包裝的女優名字（支援多位）。"""
+    names = re.findall(r'<span itemprop="name">([^<]+)</span>', block)
+    return [n.strip() for n in names if n.strip()]
+
+
 class D2PassScraper(BaseScraper):
     """
     D2Pass 聯合爬蟲 — 共享 JSON API，不同 base URL
@@ -250,19 +269,19 @@ class D2PassScraper(BaseScraper):
                 h, mn, _s = int(m.group(1)), int(m.group(2)), int(m.group(3))
                 duration = h * 60 + mn
 
-            # Series — シリーズ 後的 <a> 文字
+            # Series — 精確錨定 <span class="spec-title">シリーズ</span> 到下一個 </li>（CD-155c-2／3）
             series = ''
-            m = re.search(r'シリーズ.*?<a[^>]*>([^<]+)</a>', html_text, re.DOTALL)
-            if m:
-                series = m.group(1).strip()
+            series_block = _extract_spec_block(html_text, 'シリーズ')
+            if series_block:
+                m = re.search(r'<a[^>]*>([^<]+)</a>', series_block)
+                if m:
+                    series = m.group(1).strip()
 
-            # Actresses — 出演 後的 </li> 區間內所有 <a> 文字
+            # Actresses — 精確錨定 <span class="spec-title">出演</span>，抓 itemprop="name"（CD-155c-2／4）
             actresses: list[Actress] = []
-            m = re.search(r'出演(.*?)</li>', html_text, re.DOTALL)
-            if m:
-                block = m.group(1)
-                names = re.findall(r'<a[^>]*>([^<]+)</a>', block)
-                actresses = [Actress(name=n.strip()) for n in names if n.strip()]
+            actor_block = _extract_spec_block(html_text, '出演')
+            if actor_block:
+                actresses = [Actress(name=n) for n in _extract_actress_names(actor_block)]
 
             # Tags — タグ 後的 </li> 區間內所有 <a> 文字
             tags: list[str] = []
