@@ -182,7 +182,7 @@ pytest tests/smoke/test_source_canary.py tests/smoke/test_extra_paths_live.py -v
 
 | 檔案 | 測試內容 | 前提條件 |
 |------|----------|----------|
-| `test_source_canary.py` | 8 源金絲雀連通性 | 網路 |
+| `test_source_canary.py` | 各來源金絲雀連通性（d2pass 三站分開） | 網路 |
 | `test_extra_paths_live.py` | 桶 C 獨特 live 路徑（fan-out / 女優 / 多語言等） | 網路 |
 | `test_jellyfin_compat.py` | Jellyfin 相容性 | 網路 |
 | `test_translate_live.py` | Ollama 翻譯 | Ollama 服務 |

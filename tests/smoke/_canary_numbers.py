@@ -26,8 +26,6 @@ CANARY_NUMBERS: dict[str, list[str]] = {
     "dmm": ["SONE-205", "MIDV-018", "MIDV-139", "SONE-103", "SSIS-500"],
 
     # 無碼
-    "d2pass": ["010120-001", "031515-828", "120415_201", "010122_001"],
-    # 分隔符語義顯著（- = caribbean / _ = 1pondo），逐字比；混放兩站覆蓋 site-order 偵測
     "heyzo": ["HEYZO-0783", "HEYZO-1000", "HEYZO-1500", "HEYZO-2000", "HEYZO-2300"],
     "fc2": ["FC2-PPV-1723984", "FC2-PPV-2200414", "FC2-PPV-2781063", "FC2-PPV-2865434"],
     # fc2 INPUT 用 FC2-PPV- 形式（scraper 接受）；輸出 .number=FC2-{id}（無 PPV），numbers_match 橋接
@@ -35,3 +33,25 @@ CANARY_NUMBERS: dict[str, list[str]] = {
     "avsox": ["051119-917", "062719-001", "120415_201", "n0762", "k0874"],
     # 通用無碼聚合站（US5 復活，轉打 JSON API）；caribbean / 1pondo / Tokyo Hot 混放，混 hyphen/底線型
 }
+
+
+# D2Pass 三站各自的常青番號＋預期女優（155c）。獨立於 CANARY_NUMBERS（CD-155c-7），
+# 元素是 (番號, 預期女優) tuple。2026-09-24 現場實測，caribbeancom 三例出自 issue #193。
+D2PASS_ACTRESS_CANARY: dict[str, list[tuple[str, str]]] = {
+    "1pondo": [
+        ("120415_201", "大空美緒"),
+        ("123125_001", "南条いちか"),
+    ],
+    "caribbeancom": [
+        ("051515-877", "波多野結衣"),   # issue #193
+        ("100519-001", "小野寺梨紗"),   # issue #193
+        ("080815-941", "藤井なな"),     # issue #193
+        ("010120-001", "如月結衣"),     # 舊 CANARY_NUMBERS["d2pass"] 沿用番號
+        ("031515-828", "上原亜衣"),     # 舊 CANARY_NUMBERS["d2pass"] 沿用番號
+    ],
+    "10musume": [
+        ("122211_01", "植村あさみ"),    # publication_date=2011-12-22
+        ("122715_01", "木村愛理"),      # publication_date=2015-12-27
+    ],
+}
+
