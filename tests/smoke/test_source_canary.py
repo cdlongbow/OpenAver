@@ -1,4 +1,4 @@
-"""Live smoke canary — 8 source health check (TASK-73b-T3).
+"""Live smoke canary — per-source health check (TASK-73b-T3; d2pass split per site in 155c-T2).
 
 Wires the T1 pure decision-core (`classify_one` / `quorum_verdict`) and the T2
 evergreen number list (`CANARY_NUMBERS`) into a live smoke suite: one
@@ -18,9 +18,9 @@ verdict mapping:
 """
 import pytest
 
-from tests.smoke._canary_core import classify_one, quorum_verdict, GROUP_A
+from tests.smoke._canary_core import classify_one, quorum_verdict, GROUP_A, numbers_match
 from core.scrapers.errors import SourceBlocked, SourceUnreachable
-from tests.smoke._canary_numbers import CANARY_NUMBERS
+from tests.smoke._canary_numbers import CANARY_NUMBERS, D2PASS_ACTRESS_CANARY
 from tests.smoke._probe import _probe_reachable
 from core.scrapers import (
     JavBusScraper,
@@ -121,8 +121,84 @@ def test_heyzo_canary():
     _run_canary("heyzo", HEYZOScraper())
 
 
-def test_d2pass_canary():
-    _run_canary("d2pass", D2PassScraper())
+def _classify_d2pass_one(video, probe_reachable, expected_number, expected_actress) -> str:
+    """單筆 d2pass 判定（CD-155c-9）：video 非 None 時番號／標題／封面／預期女優四項全過
+    才是 "pass"，任一不過即 "fail"；video 為 None 時比照 Group A 既有語意用 probe 分
+    "fail"（可達卻空）／"skip"（不可達）。自成一體，不呼叫 classify_one 本體（CD-155c-6）。
+    """
+    if video is not None:
+        actress_names = {a.name for a in video.actresses}
+        if not numbers_match(video.number, expected_number, "d2pass"):
+            return "fail"
+        if not video.title:
+            return "fail"
+        if not video.cover_url:
+            return "fail"
+        if expected_actress not in actress_names:
+            return "fail"
+        return "pass"
+    return "fail" if probe_reachable else "skip"
+
+
+def _probe_d2pass_site(site: str, number: str, scraper) -> bool:
+    """d2pass 三站專用 reachability probe（CD-155c-8）：caribbeancom 打 HTML 詳情頁（JSON
+    API 已死，見 CD-155c-1），200 視為可達；1pondo/10musume JSON API 仍活，沿用
+    scraper._fetch_json。CONTRACT（比照 _probe.py 檔頭）：永不拋出，任何例外一律回 False。
+    """
+    try:
+        movie_id = scraper.normalize_number(number)
+        if site == "caribbeancom":
+            url = scraper.SITE_DETAIL_URL[site].format(id=movie_id)
+            resp = scraper._session.get(url, timeout=10)
+            return resp.status_code == 200
+        return scraper._fetch_json(site, movie_id) is not None
+    except Exception as e:
+        print(f"[canary] d2pass/{site}/{number} probe 例外: {type(e).__name__}: {e}")
+        return False
+
+
+def _run_d2pass_canary(site: str) -> None:
+    """D2Pass 單站 canary：迴圈 D2PASS_ACTRESS_CANARY[site] -> 判定 -> quorum -> pytest 結果。
+
+    自成一體（CD-155c-6），不共用 `_run_canary`／`_probe_reachable`；例外處理逐段照抄
+    `_run_canary`（TimeoutError -> skip；SourceUnreachable/SourceBlocked -> video=None 走
+    probe；其他 Exception -> 記 "fail" 並 continue，避免迴圈中止漏驗後面的番號）。
+    """
+    scraper = D2PassScraper()
+    results = []
+    for number, expected_actress in D2PASS_ACTRESS_CANARY[site]:
+        try:
+            video = scraper.search(number)
+        except TimeoutError:
+            results.append("skip")
+            continue
+        except (SourceUnreachable, SourceBlocked):
+            video = None
+        except Exception as e:
+            print(f"[canary] d2pass/{site}/{number} 映射失敗: {type(e).__name__}: {e}")
+            results.append("fail")
+            continue
+        probe = _probe_d2pass_site(site, number, scraper) if video is None else None
+        results.append(_classify_d2pass_one(video, probe, number, expected_actress))
+
+    verdict, reason = quorum_verdict(results)
+    if verdict == "green":
+        return
+    if verdict == "skip":
+        pytest.skip(f"d2pass/{site}: {reason}")
+    pytest.fail(f"d2pass/{site}: {reason}")
+
+
+def test_d2pass_1pondo_canary():
+    _run_d2pass_canary("1pondo")
+
+
+def test_d2pass_caribbeancom_canary():
+    _run_d2pass_canary("caribbeancom")
+
+
+def test_d2pass_10musume_canary():
+    _run_d2pass_canary("10musume")
 
 
 def test_avsox_canary():

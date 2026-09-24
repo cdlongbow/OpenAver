@@ -520,6 +520,7 @@ class TestJellyfinCheck:
         data = response.json()
         assert data['success'] is True
         assert data['data']['need_update'] == 5
+        assert data['data']['items'] == check_result['items']
 
     def test_jellyfin_check_no_updates(self, client, monkeypatch):
         """DB 存在，check_jellyfin_images_needed 回傳 need_update: 0"""
@@ -600,6 +601,38 @@ class TestJellyfinCheck:
             f"實際: {result}"
         )
         assert result['items'] == []
+
+    def test_jellyfin_images_needed_items_include_path(self, tmp_path):
+        """check_jellyfin_images_needed() 回傳的每筆 item 包含 path (Zone 2 URI)"""
+        from core.database import init_db, VideoRepository, Video
+        from core.path_utils import to_file_uri
+        from web.routers.scanner import check_jellyfin_images_needed
+
+        video_dir = tmp_path / "movies"
+        video_dir.mkdir()
+        cover = video_dir / "v1.jpg"
+        cover.write_bytes(b'\xff\xd8\xff' + b'\x00' * 50)
+        # 不建立 v1-poster.jpg 與 v1-fanart.jpg，使其落入 need_update.append 分支
+
+        video_path = "file:///movies/v1.mp4"
+        cover_uri = to_file_uri(str(cover))
+
+        db_path = tmp_path / "t.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+        repo.upsert_batch([
+            Video(path=video_path, number="SONE-001", maker="片商A", mtime=1.0,
+                  cover_path=cover_uri),
+        ])
+
+        result = check_jellyfin_images_needed(repo, {})
+
+        assert result['need_update'] == 1
+        assert len(result['items']) == 1
+        item = result['items'][0]
+        assert item['path'] == video_path
+        assert item['number'] == "SONE-001"
+        assert item['maker'] == "片商A"
 
     def test_jellyfin_check_uses_to_thread(self):
         """靜態掃描確認 scanner.py 使用 asyncio.to_thread 包裝 _check_jellyfin_needed helper，
@@ -1448,6 +1481,41 @@ class TestMissingCheckAPI:
         assert data['data']['missing_cover'] == 1
         assert data['data']['total_missing'] == 4
         assert len(data['data']['items']) == 4
+
+    def test_missing_check_category_matches_counts(self, client, tmp_path, monkeypatch):
+        """混合缺失類型：item['category'] 正確標記 both/nfo/cover 且與各計數一致"""
+        from unittest.mock import patch
+        from core.database import Video
+        from core.path_utils import to_file_uri
+        videos = [
+            # missing both
+            Video(path=to_file_uri(str(tmp_path / "a.mp4")), number="AAA-001",
+                  cover_path="", nfo_mtime=0.0),
+            Video(path=to_file_uri(str(tmp_path / "b.mp4")), number="BBB-002",
+                  cover_path="", nfo_mtime=0.0),
+            # missing nfo only
+            Video(path=to_file_uri(str(tmp_path / "c.mp4")), number="CCC-003",
+                  cover_path="/covers/c.jpg", nfo_mtime=0.0),
+            # missing cover only
+            Video(path=to_file_uri(str(tmp_path / "d.mp4")), number="DDD-004",
+                  cover_path="", nfo_mtime=1234567890.0),
+            # complete
+            Video(path=to_file_uri(str(tmp_path / "e.mp4")), number="EEE-005",
+                  cover_path="/covers/e.jpg", nfo_mtime=1234567890.0),
+        ]
+        db_path = self._make_db(tmp_path, videos)
+        with patch('web.routers.scanner.get_db_path', return_value=db_path):
+            resp = client.get('/api/gallery/missing-check')
+        assert resp.status_code == 200
+        data = resp.json()
+        items_by_num = {i['number']: i for i in data['data']['items']}
+        assert items_by_num['AAA-001']['category'] == 'both'
+        assert items_by_num['BBB-002']['category'] == 'both'
+        assert items_by_num['CCC-003']['category'] == 'nfo'
+        assert items_by_num['DDD-004']['category'] == 'cover'
+        assert sum(1 for i in data['data']['items'] if i['category'] == 'both') == data['data']['missing_both']
+        assert sum(1 for i in data['data']['items'] if i['category'] == 'nfo') == data['data']['missing_nfo']
+        assert sum(1 for i in data['data']['items'] if i['category'] == 'cover') == data['data']['missing_cover']
 
     def test_null_number_excluded(self, client, tmp_path, monkeypatch):
         """number IS NULL 的記錄不計入 items（無法補完）"""

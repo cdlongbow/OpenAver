@@ -10,6 +10,8 @@ const {
     computeAgeAtDate,
     computeActressAgeForVideo,
     resolveFavoriteActressAge,
+    computeActorAgesMap,
+    singleActorAge,
 } = mod;
 
 // ── 常數匯出 ─────────────────────────────────────────────────────────────
@@ -188,4 +190,128 @@ test('resolveFavoriteActressAge 找不到、缺值、空陣列等邊界安全回
     // 缺 nameToGroup（fallback 至單一名稱查表）
     assert.strictEqual(resolveFavoriteActressAge('安齋らら', video, actresses, null), 26);
     assert.strictEqual(resolveFavoriteActressAge('安齋らら', video, actresses, undefined), 26);
+});
+
+// ── computeActorAgesMap 契約測試（TASK-155a-T1 CD-155a-2）──────────────────
+
+test('computeActorAgesMap 契約：多女優混合、別名命中、片長 >= 239 回空 map、片長缺失正常算、falsy 邊界', () => {
+    assert.strictEqual(typeof computeActorAgesMap, 'function');
+
+    const actresses = [
+        { name: '柚木ティナ', birth: '1986-10-29' },
+        { name: '安齋らら', birth: null }, // 收藏但無生日
+        { name: '河北彩伽', birth: '1999-04-24' },
+    ];
+    const nameToGroup = {
+        'rio（柚木ティナ）': ['柚木ティナ', 'Rio（柚木ティナ）'],
+        '柚木ティナ': ['柚木ティナ', 'Rio（柚木ティナ）'],
+        '河北彩花': ['河北彩伽', '河北彩花'],
+        '河北彩伽': ['河北彩伽', '河北彩花'],
+    };
+
+    // 1. 多女優混合：Rio（柚木ティナ）(命中別名且有生日=33)、安齋らら(收藏但無生日=null不收錄)、未知女優(非收藏=null不收錄)、河北彩花(命中別名且有生日=20)
+    const multiVideo = {
+        actresses: 'Rio（柚木ティナ）, 安齋らら, 未知女優, 河北彩花',
+        release_date: '2020-01-15',
+        duration: 120,
+    };
+    const multiResult = computeActorAgesMap(multiVideo, actresses, nameToGroup);
+    assert.deepStrictEqual(multiResult, {
+        'Rio（柚木ティナ）': 33,
+        '河北彩花': 20,
+    });
+
+    // 2. 片長已知且 >= 239 分鐘回傳空 map
+    const longVideo = {
+        actresses: 'Rio（柚木ティナ）, 河北彩花',
+        release_date: '2020-01-15',
+        duration: 239,
+    };
+    assert.deepStrictEqual(computeActorAgesMap(longVideo, actresses, nameToGroup), {});
+
+    const superLongVideo = {
+        actresses: 'Rio（柚木ティナ）',
+        release_date: '2020-01-15',
+        duration: 300,
+    };
+    assert.deepStrictEqual(computeActorAgesMap(superLongVideo, actresses, nameToGroup), {});
+
+    // 3. 片長不明（duration 為 null 或缺欄位）仍正常算出年齡（spec v1.2，非「短於 239」）
+    const nullDurationVideo = {
+        actresses: 'Rio（柚木ティナ）',
+        release_date: '2020-01-15',
+        duration: null,
+    };
+    assert.deepStrictEqual(computeActorAgesMap(nullDurationVideo, actresses, nameToGroup), {
+        'Rio（柚木ティナ）': 33,
+    });
+
+    const missingDurationVideo = {
+        actresses: 'Rio（柚木ティナ）',
+        release_date: '2020-01-15',
+    };
+    assert.deepStrictEqual(computeActorAgesMap(missingDurationVideo, actresses, nameToGroup), {
+        'Rio（柚木ティナ）': 33,
+    });
+
+    // 4. video / video.actresses falsy 回傳空 map（不拋錯）
+    assert.deepStrictEqual(computeActorAgesMap(null, actresses, nameToGroup), {});
+    assert.deepStrictEqual(computeActorAgesMap(undefined, actresses, nameToGroup), {});
+    assert.deepStrictEqual(computeActorAgesMap({}, actresses, nameToGroup), {});
+    assert.deepStrictEqual(computeActorAgesMap({ actresses: null }, actresses, nameToGroup), {});
+    assert.deepStrictEqual(computeActorAgesMap({ actresses: '' }, actresses, nameToGroup), {});
+    assert.deepStrictEqual(computeActorAgesMap({ actresses: '   ' }, actresses, nameToGroup), {});
+});
+
+// ── 邊界條件 (TASK-155a-T3) ─────────────────────────────────────────────
+
+test('singleActorAge 單人且有年齡回傳年齡', () => {
+    const video = {
+        actresses: '明里つむぎ',
+        _cardActorAges: { '明里つむぎ': 24 },
+    };
+    assert.strictEqual(singleActorAge(video), 24);
+
+    // 尾端逗號＋空白，trim 後仍為單人
+    const trailingCommaVideo = {
+        actresses: '明里つむぎ, ',
+        _cardActorAges: { '明里つむぎ': 24 },
+    };
+    assert.strictEqual(singleActorAge(trailingCommaVideo), 24);
+});
+
+test('singleActorAge 兩人以上回傳 null', () => {
+    const video = {
+        actresses: '明里つむぎ, 三上悠亜',
+        _cardActorAges: { '明里つむぎ': 24, '三上悠亜': 27 },
+    };
+    assert.strictEqual(singleActorAge(video), null);
+});
+
+test('singleActorAge 單人但未列入 _cardActorAges 時回傳 null', () => {
+    const emptyMapVideo = {
+        actresses: '明里つむぎ',
+        _cardActorAges: {},
+    };
+    assert.strictEqual(singleActorAge(emptyMapVideo), null);
+
+    const undefinedMapVideo = {
+        actresses: '明里つむぎ',
+    };
+    assert.strictEqual(singleActorAge(undefinedMapVideo), null);
+
+    const notInMapVideo = {
+        actresses: '明里つむぎ',
+        _cardActorAges: { '三上悠亜': 27 },
+    };
+    assert.strictEqual(singleActorAge(notInMapVideo), null);
+});
+
+test('singleActorAge video 或 actresses 為 falsy／空字串時回傳 null', () => {
+    assert.strictEqual(singleActorAge(null), null);
+    assert.strictEqual(singleActorAge(undefined), null);
+    assert.strictEqual(singleActorAge({}), null);
+    assert.strictEqual(singleActorAge({ actresses: null }), null);
+    assert.strictEqual(singleActorAge({ actresses: '' }), null);
+    assert.strictEqual(singleActorAge({ actresses: '   ' }), null);
 });

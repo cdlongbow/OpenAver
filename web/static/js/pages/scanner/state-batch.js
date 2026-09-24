@@ -35,18 +35,36 @@ export function stateBatch() {
         _flushTimer: null,          // TASK-94 Codex P1：最後一片補足 dwell 的 setTimeout handle（cleanup/run-start 清）
 
         // ===== T10: Missing Pill Computed =====
-        get missingPillLabel() {
-            const parts = [];
-            if (this.missingBothCount > 0) {
-                parts.push(window.t('scanner.stats.missing_both_prefix') + ' ' + this.missingBothCount + window.t('scanner.stats.missing_suffix'));
-            }
-            if (this.missingNfoCount > 0) {
-                parts.push(window.t('scanner.stats.missing_nfo_prefix') + ' ' + this.missingNfoCount + window.t('scanner.stats.missing_suffix'));
-            }
-            if (this.missingCoverCount > 0) {
-                parts.push(window.t('scanner.stats.missing_cover_prefix') + ' ' + this.missingCoverCount + window.t('scanner.stats.missing_suffix'));
-            }
-            return parts.join(' ');
+        // TASK-155b-T4: numberDrilldown items／payload（both→nfo→cover）
+        get missingBothDrilldownItems() {
+            return this.missingItems.filter(i => i.category === 'both').map(i => ({
+                    number: i.number,
+                    path: i.file_path,
+                    note: window.t('scanner.stats.missing_both_tag'),
+                }));
+        },
+        get missingNfoDrilldownItems() {
+            return this.missingItems.filter(i => i.category === 'nfo').map(i => ({
+                    number: i.number,
+                    path: i.file_path,
+                    note: window.t('scanner.stats.missing_nfo_tag'),
+                }));
+        },
+        get missingCoverDrilldownItems() {
+            return this.missingItems.filter(i => i.category === 'cover').map(i => ({
+                    number: i.number,
+                    path: i.file_path,
+                    note: window.t('scanner.stats.missing_cover_tag'),
+                }));
+        },
+        get missingBothDrilldownPayload() {
+            return { title: window.t('scanner.stats.missing_both_prefix'), items: this.missingBothDrilldownItems, footnote: window.t('scanner.stats.missing_list_footnote') };
+        },
+        get missingNfoDrilldownPayload() {
+            return { title: window.t('scanner.stats.missing_nfo_prefix'), items: this.missingNfoDrilldownItems, footnote: window.t('scanner.stats.missing_list_footnote') };
+        },
+        get missingCoverDrilldownPayload() {
+            return { title: window.t('scanner.stats.missing_cover_prefix'), items: this.missingCoverDrilldownItems, footnote: window.t('scanner.stats.missing_list_footnote') };
         },
 
         get missingEnrichButtonText() {

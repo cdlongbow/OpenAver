@@ -56,7 +56,7 @@ const { stateVideos } = await import('../state-videos.js');
 // 117-T5：_actresses / _filteredActresses 是 module-level 共享陣列（測試間互相污染）——
 // 每個測試前都要重置。_actressesLoaded 走 setter；讀取用 live binding（同一模組實例）。
 const stateBase = await import('../state-base.js');
-const { _actresses, _filteredActresses, _setActresses } = stateBase;
+const { _actresses, _filteredActresses, _setActresses, _setFilteredVideos } = stateBase;
 // init() factory 本體（與命名空間物件 stateBase 撞名，另取別名）——
 // 頂層 `this.$persist(...)` 需要綁定一個提供 $persist 的假 this（照抄 pill-match.test.mjs）。
 const stateBaseFactory = stateBase.stateBase;
@@ -318,3 +318,84 @@ test('P2 修法不擋合法重試：hero-card 分支載入失敗（_actressesLoa
         mock.restore();
     }
 });
+
+// ── CD-155a-4：卡片發行時年齡延遲補算與失敗清空 ───────────────────────────
+
+function makeVideosActressComponent(overrides = {}) {
+    return Object.assign({}, stateVideos(), stateActress(), {
+        showToast() {},
+        showFavoriteActresses: false,
+        $nextTick() {},
+        mode: 'grid',
+        perPage: 120,
+        page: 1,
+        ...overrides,
+    });
+}
+
+test('收藏清單延遲到位後，已在牆上的卡片經 paginatedVideos 補上年齡', async () => {
+    resetActresses();
+    stateBase._setActressesLoaded(false);
+    const v1 = { id: 1, actresses: '明里つむぎ', release_date: '2020-06-15', duration: 60 };
+    _setFilteredVideos([v1]);
+
+    const c = makeVideosActressComponent();
+    c.updatePagination();
+
+    // 模擬 Proxy 元素替身（身分與 _filteredVideos 原始物件不同）
+    const proxyElements = c.paginatedVideos.map(v => ({ ...v }));
+    c.paginatedVideos = proxyElements;
+
+    const mock = mockFetchSequence([
+        () => okResp([{ name: '明里つむぎ', birth: '1990-06-15' }]),
+    ]);
+    try {
+        await c.loadActresses();
+        // 斷言：陣列參照不變
+        assert.strictEqual(c.paginatedVideos, proxyElements, 'paginatedVideos 陣列參照不得被替換');
+        // 斷言：替身元素寫入年齡
+        assert.deepStrictEqual(c.paginatedVideos[0]._cardActorAges, { '明里つむぎ': 30 });
+    } finally {
+        mock.restore();
+    }
+});
+
+test('收藏清單載入失敗後，牆上卡片的年齡清空、不殘留舊值', async () => {
+    resetActresses();
+    stateBase._setActressesLoaded(false);
+    const v1 = { id: 1, actresses: '明里つむぎ', release_date: '2020-06-15', duration: 60 };
+    _setFilteredVideos([v1]);
+
+    const c = makeVideosActressComponent();
+    c.updatePagination();
+
+    // 先模擬一次成功載入
+    const mock1 = mockFetchSequence([
+        () => okResp([{ name: '明里つむぎ', birth: '1990-06-15' }]),
+    ]);
+    try {
+        await c.loadActresses();
+    } finally {
+        mock1.restore();
+    }
+
+    // 建立帶有年齡的替身元素陣列
+    const proxyElements = c.paginatedVideos.map(v => ({ ...v }));
+    c.paginatedVideos = proxyElements;
+    // 確保一開始替身已有年齡
+    assert.deepStrictEqual(c.paginatedVideos[0]._cardActorAges, { '明里つむぎ': 30 });
+
+    // 下一次載入失敗（回傳 notOkResp() 500）
+    stateBase._setActressesLoaded(false);
+    const mock2 = mockFetchSequence([
+        () => notOkResp(),
+    ]);
+    try {
+        await c.loadActresses();
+        // 斷言：牆上卡片年齡清空成空 map，不殘留舊年齡
+        assert.deepStrictEqual(c.paginatedVideos[0]._cardActorAges, {});
+    } finally {
+        mock2.restore();
+    }
+});
+

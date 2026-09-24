@@ -10,12 +10,13 @@
  * 從 state-base.js import 共用大陣列（F1：移出 Alpine reactive scope）。
  */
 
-import { _filteredVideos, _filteredActresses, _killLightboxTimelines, _NO_COVER_PLACEHOLDER, _recomputeVideoBadges, _actresses, _nameToGroup } from '@/showcase/state-base.js';
+import { _filteredVideos, _filteredActresses, _killLightboxTimelines, _NO_COVER_PLACEHOLDER, _recomputeVideoBadges, _recomputeCardActorAges, _actresses, _nameToGroup } from '@/showcase/state-base.js';
 import { POSTER_CROP_MAX_W } from '@/shared/breakpoints.js';
 import { detectSwipe } from '@/shared/swipe.js';
 import { isHorizontalWheel, isVerticalWheel, createWheelNav } from '@/shared/wheel-nav.js';
 import { shouldShowEnrichButton } from '@/shared/enrich-gate.js';
-import { resolveFavoriteActressAge } from '@/shared/actress-release-age.js';
+import { computeActorAgesMap } from '@/shared/actress-release-age.js';
+
 
 // 120a-T1：.lb-full @error 的遲到事件判定。比較對象是 Alpine :src 寫入的相對路徑
 // 字串（getAttribute('src')），不是 IDL .src（瀏覽器已解析成絕對 URL）。
@@ -150,16 +151,7 @@ export function stateLightbox() {
         // this._lbActorAges（新物件參照——Alpine 的 proxy set 攔截靠參照變化，原地 mutate 偵測
         // 不到，見 mutation 點①）。
         _refreshLbActorAges() {
-            var video = this.currentLightboxVideo;
-            var nextAges = {};
-            if (video && video.actresses) {
-                var names = video.actresses.split(',').map(function (n) { return n.trim(); }).filter(Boolean);
-                for (var i = 0; i < names.length; i++) {
-                    var age = resolveFavoriteActressAge(names[i], video, _actresses, _nameToGroup);
-                    if (age != null) nextAges[names[i]] = age;
-                }
-            }
-            this._lbActorAges = { ...nextAges };
+            this._lbActorAges = { ...computeActorAgesMap(this.currentLightboxVideo, _actresses, _nameToGroup) };
         },
 
         // 120a-T1：.lb-full 原圖載入失敗。第一行 AC-A6 短路（DB 無封面 cover_full_url
@@ -959,6 +951,7 @@ export function stateLightbox() {
                     if (data.video.cover_url) video._imgLoaded = false;
                     Object.assign(video, data.video);
                     _recomputeVideoBadges(video);
+                    _recomputeCardActorAges(video);
                     // BUGfix-lightbox-cover-stale: 若燈箱正開在這支影片，重置 blur-up overlay，
                     // 讓 cover_full_url（已 bust）重新觸發 @load → _lbFullLoaded 淡入。
                     // 用 === video 守住：燈箱開在別支影片時不誤 reset。

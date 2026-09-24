@@ -40,6 +40,13 @@
       "err_not_a_directory": "這不是資料夾",
       "err_permission_denied": "沒有權限讀取這個資料夾",
       "err_generic": "這個資料夾讀不到"
+    },
+    "number_drilldown": {
+      "copy_button": "複製清單",
+      "copy_toast": "已複製 {count} 部",
+      "copy_failed": "複製失敗，請手動選取清單文字複製",
+      "close": "關閉",
+      "count": "共 {count} 部"
     }
   },
   "desktop": {
@@ -739,10 +746,14 @@
       "jellyfin_checking": "檢查中...",
       "jellyfin_check_done_ok": "已檢查，全部正常",
       "btn_done": "已完成",
-      "missing_both_prefix": "缺 NFO+封面檔案:",
+      "missing_both_prefix": "NFO 與封面都缺:",
       "missing_nfo_prefix": "缺 NFO 檔案:",
       "missing_cover_prefix": "缺封面檔案:",
-      "missing_suffix": "片",
+      "missing_both_tag": "都缺",
+      "missing_nfo_tag": "缺 NFO",
+      "missing_cover_tag": "缺封面",
+      "nfo_field_note_prefix": "缺：",
+      "missing_suffix": "部",
       "missing_enrich_idle": "一鍵補完",
       "missing_enrich_loading": "補完中...",
       "missing_enrich_preparing": "準備中...",
@@ -776,7 +787,15 @@
       "log_disconnected": "連線中斷",
       "missing_enrich_connection_failed": "連線失敗: {message}",
       "missing_enrich_item_failed": "失敗: {number} — {error}",
-      "missing_enrich_error_prefix": "錯誤: {message}"
+      "missing_enrich_error_prefix": "錯誤: {message}",
+      "missing_list_footnote": "不含已補過但查無結果的片，也不含看不出番號的片；要重試請開燈箱 ⚙ 進階重刮。",
+      "nfo_field_title": "標題",
+      "nfo_field_date": "日期",
+      "nfo_field_actor": "演員",
+      "nfo_field_genre": "類別",
+      "nfo_field_maker": "片商",
+      "nfo_field_director": "導演",
+      "nfo_field_duration": "片長"
     },
     "alias": {
       "section_title": "女優別名管理",

@@ -108,7 +108,8 @@ def check_cache_needs_update(cache: Dict[str, dict]) -> Dict:
         'no_genre': 0,
         'no_maker': 0,
         'has_nfo_count': 0,  # 有 NFO 的影片數
-        'paths': []  # 需要更新的影片路徑
+        'paths': [],  # 需要更新的影片路徑
+        'items': []  # 每筆 {path, number, missing}
     }
 
     for path, data in cache.items():
@@ -128,6 +129,7 @@ def check_cache_needs_update(cache: Dict[str, dict]) -> Dict:
         if need:
             stats['need_update'] += 1
             stats['paths'].append(path)
+            stats['items'].append({'path': path, 'number': info.get('num', ''), 'missing': missing})
 
             for field in missing:
                 key = f'no_{field}'

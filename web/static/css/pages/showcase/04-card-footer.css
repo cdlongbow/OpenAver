@@ -17,6 +17,10 @@
     transition: opacity var(--fluent-duration-fast) var(--fluent-ease-standard);
 }
 
+/* 155a-T3：收合態單人片年齡放在 .av-actress 內（維持 .footer-default 只有兩個 flex 子元素，
+   海報／窄螢幕隱藏 .av-actress 時一併隱藏）；自己宣告淡色，不繼承 .av-actress 的 --text-secondary（FE-CSS-02）。 */
+.footer-default .av-actress .lb-actor-age { color: var(--text-muted); }
+
 /* 123-T5：.footer-default 是 flex + space-between，2 個既有子元素（.av-num/.av-actress）
    靠 space-between 推到兩端。星标若直接當第 3 個裸 flex 子元素，space-between 會把
    3 者平均分佈，星标跑最左、.av-num 被推到中間，跟「星在番號正前方」的需求不符。

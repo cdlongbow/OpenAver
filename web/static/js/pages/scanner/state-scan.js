@@ -65,10 +65,12 @@ export function stateScan() {
         // ===== T7b: NFO Update =====
         nfoNeedUpdateCount: 0,
         nfoUpdatePaths: [],
+        nfoUpdateItems: [],
         nfoUpdateVisible: false,
 
         // ===== T6d: Jellyfin Image Update =====
         jellyfinImageCount: 0,
+        jellyfinItems: [],
         jellyfinImageVisible: false,
         jellyfinCheckState: 'idle',   // T2(40c): 'idle' | 'checking' | 'done'
         _jellyfinCheckController: null,
@@ -147,6 +149,24 @@ export function stateScan() {
                 return '<i class="bi bi-images"></i> ' + window.t('scanner.stats.jellyfin_idle');
             }
             return '<i class="bi bi-check-lg"></i> ' + window.t('scanner.stats.btn_done');
+        },
+
+        // TASK-155b-T4: numberDrilldown items／payload（NFO 欄位不全／jellyfin）
+        get nfoUpdateDrilldownItems() {
+            return this.nfoUpdateItems.map(i => ({
+                    number: i.number,
+                    path: i.path,
+                    note: window.t('scanner.stats.nfo_field_note_prefix') + i.missing.map(f => window.t('scanner.stats.nfo_field_' + f)).join('、'),
+                }));
+        },
+        get nfoUpdateDrilldownPayload() {
+            return { title: window.t('scanner.stats.nfo_prefix'), items: this.nfoUpdateDrilldownItems, footnote: '' };
+        },
+        get jellyfinDrilldownItems() {
+            return this.jellyfinItems.map(i => ({ number: i.number, path: i.path }));
+        },
+        get jellyfinDrilldownPayload() {
+            return { title: window.t('scanner.stats.jellyfin_prefix'), items: this.jellyfinDrilldownItems, footnote: '' };
         },
 
         // ===== Lifecycle =====
@@ -407,9 +427,11 @@ export function stateScan() {
                 }
                 if (data.data.need_update > 0) {
                     this.jellyfinImageCount = data.data.need_update;
+                    this.jellyfinItems = data.data.items ?? [];
                     this.jellyfinImageVisible = true;
                 } else {
                     this.jellyfinImageCount = 0;
+                    this.jellyfinItems = [];
                     this.jellyfinImageVisible = false;
                 }
                 this.jellyfinCheckState = 'done';
@@ -805,10 +827,12 @@ export function stateScan() {
                         if (data.session_update && data.session_update.count > 0) {
                             this.nfoNeedUpdateCount = data.session_update.count;
                             this.nfoUpdatePaths = data.session_update.paths;
+                            this.nfoUpdateItems = data.session_update.items ?? [];
                             this.nfoUpdateVisible = true;
                         } else {
                             this.nfoNeedUpdateCount = 0;
                             this.nfoUpdatePaths = [];
+                            this.nfoUpdateItems = [];
                             this.nfoUpdateVisible = false;
                         }
 
@@ -1014,6 +1038,7 @@ export function stateScan() {
                         // T3(40c) Codex fix: update 完成後重設 jellyfin check 狀態，讓觸發列重新出現
                         this.jellyfinImageVisible = false;
                         this.jellyfinImageCount = 0;
+                        this.jellyfinItems = [];
                         this.jellyfinCheckState = 'idle';
 
                         this.showToast(window.t('scanner.toast.jellyfin_update_done'), 'success');

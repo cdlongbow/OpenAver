@@ -13,8 +13,8 @@
  * `:is(#ds-gallery-components, .ds-gallery-composition) .xxx` 作用域選擇器裡
  * （theme.css:1376/1390/1403，tailwind.css 同形狀），overlay 掛在 document.body
  * 下不在這個作用域內，少了這個 class 卡片會渲染出來但完全沒有樣式。
- * 兩段文字之間的分隔一律用半形空格（' '，U+0020）——對齊真卡片
- * state-batch.js:36 parts.join(' ') 的既有寫法，不得用全形空格（U+3000）。
+ * 兩段文字之間的分隔一律用半形空格（' '，U+0020），不得用全形空格（U+3000）——
+ * 真卡片（scanner.html 缺失列，155b-T4 起每段拆成可點數字）在畫面上也是半形間隔。
  */
 export function buildStep3MockCard(t) {
     return (

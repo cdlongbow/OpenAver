@@ -838,7 +838,7 @@ _TOOLS: list[dict] = [
         },
         "output_schema": {
             "success": "boolean",
-            "data": "{need_update: integer} — 缺少外部媒體管理器圖片的影片數量",
+            "data": "{need_update: integer, items: [{cover_path, base_stem, number, maker, path}]} — 缺少外部媒體管理器圖片的影片數量及清單",
         },
         "side_effect": False,
         "confirmation_required": False,

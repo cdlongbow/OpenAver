@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from '_macros/number_drilldown.html' import number_drilldown_panel %}
 
 {% block title %}{{ t('scanner.page_title') }} - OpenAver{% endblock %}
 
@@ -226,9 +227,15 @@
         </div>
         <!-- NFO Update Section (separate row) -->
         <div class="nfo-update-row" id="statNeedUpdate" x-show="nfoUpdateVisible">
-            <span class="nfo-badge">
+            <span class="nfo-badge" x-data="numberDrilldown" @click.outside="close()">
                 <i class="bi bi-exclamation-circle"></i>
-                {{ t('scanner.stats.nfo_prefix') }} <strong id="updateCount" x-text="nfoNeedUpdateCount"></strong> {{ t('scanner.stats.nfo_suffix') }}
+                {{ t('scanner.stats.nfo_prefix') }}
+                <button type="button" class="number-drilldown-number-btn" id="updateCount"
+                        :aria-expanded="open"
+                        @click="toggle(nfoUpdateDrilldownPayload)"
+                        x-text="nfoNeedUpdateCount"></button>
+                {{ t('scanner.stats.nfo_suffix') }}
+                {{ number_drilldown_panel() }}
             </span>
             <button class="btn-nfo-update" @click="runNfoUpdate()" id="btnUpdate"
                     x-bind:disabled="nfoUpdateButtonDisabled"
@@ -240,7 +247,45 @@
         <div class="nfo-update-row" x-show="missingPillVisible">
             <span class="nfo-badge">
                 <i class="bi bi-file-earmark-x"></i>
-                <span x-text="missingPillLabel"></span>
+                <span x-show="missingBothCount > 0">
+                    {{ t('scanner.stats.missing_both_prefix') }}
+                    <span class="number-drilldown-anchor"
+                          x-data="numberDrilldown"
+                          @click.outside="close()">
+                        <button type="button" class="number-drilldown-number-btn"
+                                :aria-expanded="open"
+                                @click="toggle(missingBothDrilldownPayload)"
+                                x-text="missingBothCount"></button>
+                        {{ number_drilldown_panel() }}
+                    </span>
+                    {{ t('scanner.stats.missing_suffix') }}
+                </span>
+                <span x-show="missingNfoCount > 0">
+                    {{ t('scanner.stats.missing_nfo_prefix') }}
+                    <span class="number-drilldown-anchor"
+                          x-data="numberDrilldown"
+                          @click.outside="close()">
+                        <button type="button" class="number-drilldown-number-btn"
+                                :aria-expanded="open"
+                                @click="toggle(missingNfoDrilldownPayload)"
+                                x-text="missingNfoCount"></button>
+                        {{ number_drilldown_panel() }}
+                    </span>
+                    {{ t('scanner.stats.missing_suffix') }}
+                </span>
+                <span x-show="missingCoverCount > 0">
+                    {{ t('scanner.stats.missing_cover_prefix') }}
+                    <span class="number-drilldown-anchor"
+                          x-data="numberDrilldown"
+                          @click.outside="close()">
+                        <button type="button" class="number-drilldown-number-btn"
+                                :aria-expanded="open"
+                                @click="toggle(missingCoverDrilldownPayload)"
+                                x-text="missingCoverCount"></button>
+                        {{ number_drilldown_panel() }}
+                    </span>
+                    {{ t('scanner.stats.missing_suffix') }}
+                </span>
             </span>
             <button class="btn-nfo-update" @click="runMissingEnrich()"
                     x-bind:disabled="isBusy || missingItems.length === 0"
@@ -296,7 +341,17 @@
         <div class="nfo-update-row" x-show="jellyfinImageVisible">
             <span class="nfo-badge" x-data="helpPopover">
                 <i class="bi bi-image"></i>
-                {{ t('scanner.stats.jellyfin_prefix') }} <strong x-text="jellyfinImageCount"></strong> {{ t('scanner.stats.jellyfin_suffix') }}
+                {{ t('scanner.stats.jellyfin_prefix') }}
+                <span class="number-drilldown-anchor"
+                      x-data="numberDrilldown"
+                      @click.outside="close()">
+                    <button type="button" class="number-drilldown-number-btn"
+                            :aria-expanded="open"
+                            @click="toggle(jellyfinDrilldownPayload)"
+                            x-text="jellyfinImageCount"></button>
+                    {{ number_drilldown_panel() }}
+                </span>
+                {{ t('scanner.stats.jellyfin_suffix') }}
                 <button type="button" class="help-popover-btn"
                         @click="toggle()"
                         :aria-expanded="open">

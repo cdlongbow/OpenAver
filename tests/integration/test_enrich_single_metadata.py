@@ -194,6 +194,105 @@ class TestEnrichSingleMetadataIntegration:
         assert saved_video.release_date == "2024-05-01"
         assert saved_video.duration == 120
 
+    def test_ac_c5_refresh_full_overwrites_actresses_and_series_from_wrong_old_record(self, client, mocker, tmp_path):
+        """AC-c5 / CD-155c-10: 進階重刮（refresh_full）覆蓋既有錯誤的女優（ログイン）與系列（VIP動画）。
+
+        即使 preserve_title=True，重刮後 NFO 與 DB upsert 都必須換成新刮削到的女優與系列，
+        舊的錯誤值不得殘留；同時舊標題保留生效。
+        """
+        from core.organizer import generate_nfo
+
+        number = "051515-877"
+        mp4_path = tmp_path / f"{number}.mp4"
+        mp4_path.write_bytes(b"\x00" * 16)
+        nfo_path = tmp_path / f"{number}.nfo"
+
+        old_title = "舊保留標題"
+        old_actors = ["ログイン"]
+        old_series = "VIP動画"
+
+        generate_nfo(
+            number=number,
+            title=old_title,
+            actors=old_actors,
+            series=old_series,
+            output_path=str(nfo_path),
+        )
+
+        mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)
+        mocker.patch("web.routers.scraper.VideoRepository").return_value.get_by_path.return_value = None
+
+        new_title = "新刮削標題"
+        new_actors = ["波多野結衣"]
+        new_series = "〇〇を我慢できたら生中出し"
+
+        mock_search = mocker.patch("core.enricher.search_jav")
+        mock_search.return_value = {
+            "number": number,
+            "title": new_title,
+            "actors": new_actors,
+            "series": new_series,
+            "cover": "",
+            "source": "javdb",
+        }
+        mock_download = mocker.patch("core.enricher.download_image", return_value=True)
+
+        old_video = Video(
+            path=to_file_uri(str(mp4_path)),
+            number=number,
+            title=old_title,
+            actresses=old_actors,
+            series=old_series,
+        )
+
+        mock_repo_cls = mocker.patch("core.enricher.VideoRepository")
+        mock_repo = MagicMock()
+        mock_repo_cls.return_value = mock_repo
+        mock_repo.db_path = ":memory:"
+        mock_repo.get_by_path.return_value = old_video
+        mock_repo.get_by_numbers.return_value = {}
+
+        req_payload = {
+            "file_path": str(mp4_path),
+            "number": number,
+            "mode": "refresh_full",
+            "overwrite_existing": True,
+            "write_nfo": True,
+            "write_cover": True,
+            "readonly_action": "rescrape",
+            "preserve_title": True,
+        }
+
+        response = client.post("/api/enrich-single", json=req_payload)
+
+        # 斷言 1: HTTP 200 且 success is True
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+
+        # 斷言 2: NFO 檔案被寫出，且女優與系列被新值覆蓋、不留舊值；title 仍為舊標題（保留生效）
+        assert nfo_path.exists(), "NFO 檔案應被真實寫出"
+        root = ET.fromstring(nfo_path.read_text(encoding="utf-8"))
+        assert root.findtext("title") == f"[{number}]{old_title}"
+        actor_names = [a.findtext("name") for a in root.findall("actor")]
+        assert actor_names == new_actors
+        assert "ログイン" not in actor_names
+        assert root.findtext("set/name") == new_series
+        assert root.findtext("set/name") != old_series
+
+        # 斷言 3: search_jav 被呼叫一次，download_image 零呼叫（cover 為空）
+        mock_search.assert_called_once()
+        mock_download.assert_not_called()
+
+        # 斷言 4: DB upsert 收到欄位值等於新刮削值，不留舊值；title 仍為舊標題（保留生效）
+        assert mock_repo.upsert.call_count == 1
+        saved_video = mock_repo.upsert.call_args[0][0]
+        assert saved_video.title == old_title
+        assert saved_video.actresses == new_actors
+        assert "ログイン" not in saved_video.actresses
+        assert saved_video.series == new_series
+        assert saved_video.series != old_series
+
     def test_mode_gate_non_readonly_fill_missing_raises_400(self, client, mocker):
         """DoD-2 (CD-135-1 / M1): 非唯讀路徑 ＋ 帶 metadata ＋ mode=fill_missing → 400"""
         mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=None)

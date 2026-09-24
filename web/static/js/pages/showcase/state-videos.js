@@ -6,7 +6,7 @@
  * 從 state-base.js import 共用大陣列（F1：移出 Alpine reactive scope）。
  */
 
-import { _videos, _filteredVideos, _nameToGroup, _tagToGroup, _setVideos, _setFilteredVideos, _recomputeAllBadges } from '@/showcase/state-base.js';
+import { _videos, _filteredVideos, _nameToGroup, _tagToGroup, _setVideos, _setFilteredVideos, _recomputeAllBadges, _recomputeCardActorAges } from '@/showcase/state-base.js';
 import { applyCellFocal } from '@/shared/focal-cell.js';
 import { openLocal } from '@/shared/open-local.js';
 import { normalizePillValue, buildPillPredicate } from '@/shared/pill-filter.js';
@@ -842,18 +842,27 @@ export function stateVideos() {
                 this.perPage = 120;
             }
             const perPage = Math.max(0, parseInt(this.perPage) || 0);
+            var slice;
             if (perPage === 0) {
-                this.paginatedVideos = _filteredVideos.slice();
+                slice = _filteredVideos.slice();
                 this.totalPages = 1;
                 this.page = 1;
             } else {
                 this.totalPages = Math.max(1, Math.ceil(_filteredVideos.length / perPage));
-                // clamp page 到有效範圍
                 if (this.page > this.totalPages) this.page = this.totalPages;
                 if (this.page < 1) this.page = 1;
                 const start = (this.page - 1) * perPage;
-                this.paginatedVideos = _filteredVideos.slice(start, start + perPage);
+                slice = _filteredVideos.slice(start, start + perPage);
             }
+            slice.forEach(_recomputeCardActorAges);
+            this.paginatedVideos = slice;
+        },
+
+        // 155a CD-155a-4：收藏清單變動後補算「已經在牆上」的卡片年齡。必須經由 this.paginatedVideos
+        // 讀出的 Proxy 元素寫入（Proxy set 才會觸發已渲染卡片重繪）；不可改呼叫 updatePagination()——
+        // 同 key 的原始物件重新賦值不會讓 keyed x-for 重跑卡片內的 binding（主 session 實測）。
+        _refreshCardActorAges() {
+            (this.paginatedVideos || []).forEach(_recomputeCardActorAges);
         },
 
         // --- 播放影片 (PyWebView 整合) ---

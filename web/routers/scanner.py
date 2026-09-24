@@ -557,7 +557,8 @@ def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Genera
                 session_stats = check_cache_needs_update(session_cache)
                 session_update = {
                     "count": session_stats['need_update'],
-                    "paths": session_stats['paths']
+                    "paths": session_stats['paths'],
+                    "items": session_stats['items'],
                 }
                 if session_update['count'] > 0:
                     yield _sse_event({
@@ -987,10 +988,13 @@ def check_missing():
             item = {"file_path": v.path, "number": v.number}
             if not has_nfo and not has_cover:
                 missing_both += 1
+                item["category"] = "both"
             elif not has_nfo:
                 missing_nfo += 1
+                item["category"] = "nfo"
             else:
                 missing_cover += 1
+                item["category"] = "cover"
             items.append(item)
 
         total_missing = missing_both + missing_nfo + missing_cover
@@ -1164,6 +1168,7 @@ def check_jellyfin_images_needed(repo: VideoRepository, path_mappings: dict = No
                 'base_stem': base_stem,
                 'number': v.number or '',
                 'maker': v.maker or '',
+                'path': v.path,
             })
     return {'need_update': len(need_update), 'items': need_update}
 
@@ -1307,9 +1312,9 @@ async def jellyfin_image_check():
         result = await asyncio.to_thread(_check_jellyfin_needed)
 
         if result is None:
-            return {"success": True, "data": {"need_update": 0}}
+            return {"success": True, "data": {"need_update": 0, "items": []}}
 
-        return {"success": True, "data": {"need_update": result['need_update']}}
+        return {"success": True, "data": {"need_update": result['need_update'], "items": result['items']}}
     except Exception as e:
         logger.error("檢查 Jellyfin 圖片狀態失敗: %s", e)
         return {"success": False, "error": "檢查圖片狀態失敗"}

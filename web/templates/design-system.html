@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from '_macros/number_drilldown.html' import number_drilldown_panel %}
 
 {% block title %}Design System - OpenAver{% endblock %}
 
@@ -44,6 +45,7 @@
         <a href="#ds-modals">Modals</a>
         <a href="#ds-toasts">Toasts</a>
         <a href="#ds-help-elements">Help Elements</a>
+        <a href="#ds-number-drilldown">Number Drilldown</a>
         <a href="#ds-progress">Progress & Feedback</a>
         <a href="#ds-navigation">Navigation</a>
         <a href="#ds-rotating-border">Rotating Border</a>
@@ -2351,6 +2353,73 @@ this.showToast('已複製', 'success', 2500)   // 委派給 store，由 shared/s
             </div>
         </section>
 
+        <!-- 區塊: Number Drilldown 定案版（TASK-155b-T2）
+             真元件 numberDrilldown + macro；假資料沿用 T1 形狀。 -->
+        <section id="ds-number-drilldown" class="ds-section glass">
+            <h2>Number Drilldown</h2>
+            <p class="ds-note">掃描頁只給數字的地方點得開：標題＋部數＋複製，內部捲動；Esc／點外面關閉。</p>
+
+            <div class="ds-subsection">
+                <h3>定案：貼在數字旁的小浮層</h3>
+                <p class="ds-desc">仿掃描頁統計列，點任一數字後浮層在該統計列下方展開。每列顯示識別字（番號或檔名）＋選填 note。</p>
+                <div class="number-drilldown-mock-stats">
+                    <div class="number-drilldown-stat-line">
+                        NFO 與封面都缺:
+                        <span class="number-drilldown-anchor"
+                              x-data="numberDrilldown"
+                              @click.outside="close()">
+                            <button type="button" class="number-drilldown-number-btn"
+                                    :aria-expanded="open"
+                                    @click="toggle({ title: 'NFO 與封面都缺', items: ndDemo('both'), footnote: t('scanner.stats.missing_list_footnote') })">[12]</button>
+                            {{ number_drilldown_panel() }}
+                        </span>
+                        ・ 缺 NFO:
+                        <span class="number-drilldown-anchor"
+                              x-data="numberDrilldown"
+                              @click.outside="close()">
+                            <button type="button" class="number-drilldown-number-btn"
+                                    :aria-expanded="open"
+                                    @click="toggle({ title: '缺 NFO', items: ndDemo('nfo'), footnote: t('scanner.stats.missing_list_footnote') })">[48]</button>
+                            {{ number_drilldown_panel() }}
+                        </span>
+                        ・ 缺封面:
+                        <span class="number-drilldown-anchor"
+                              x-data="numberDrilldown"
+                              @click.outside="close()">
+                            <button type="button" class="number-drilldown-number-btn"
+                                    :aria-expanded="open"
+                                    @click="toggle({ title: '缺封面', items: ndDemo('cover'), footnote: t('scanner.stats.missing_list_footnote') })">[73]</button>
+                            {{ number_drilldown_panel() }}
+                        </span>
+                    </div>
+                    <div class="number-drilldown-stat-line"
+                         x-data="numberDrilldown"
+                         @click.outside="close()">
+                        NFO 欄位不全:
+                        <button type="button" class="number-drilldown-number-btn"
+                                :aria-expanded="open"
+                                @click="toggle({ title: 'NFO 欄位不全', items: ndDemo('nfoIncomplete') })">[6]</button> 部
+                        {{ number_drilldown_panel() }}
+                    </div>
+                    <div class="number-drilldown-stat-line"
+                         x-data="numberDrilldown"
+                         @click.outside="close()">
+                        外部媒體管理器封面缺失:
+                        <button type="button" class="number-drilldown-number-btn"
+                                :aria-expanded="open"
+                                @click="toggle({ title: '外部媒體管理器封面缺失', items: ndDemo('jellyfin') })">[4]</button> 部
+                        {{ number_drilldown_panel() }}
+                    </div>
+                </div>
+            </div>
+
+            <div class="toast toast-end toast-top z-[9999]" x-show="$store.toast.visible" x-cloak x-transition>
+                <div class="alert" :class="`alert-${$store.toast.type}`">
+                    <span x-text="$store.toast.message"></span>
+                </div>
+            </div>
+        </section>
+
         <!-- 區塊 8: Progress & Feedback (accent-bar 樣式) -->
         <section id="ds-progress" class="ds-section accent-bar">
             <h2>Progress & Feedback</h2>
@@ -3774,6 +3843,50 @@ this.showToast('已複製', 'success', 2500)   // 委派給 store，由 shared/s
 
 <!-- TOC Active State Script + Dynamic Color Hex -->
 <script>
+// ── Number Drilldown 定案版假資料（TASK-155b-T2）──────────────────────────
+// 只供 /design-system 展示；正式元件是 web/static/js/components/number-drilldown.js。
+function ndBuildItems(count, prefix, startAt) {
+    return Array.from({ length: count }, (_, i) => {
+        const n = String(startAt + i).padStart(3, '0');
+        return {
+            number: `${prefix}-${n}`,
+            path: `file:///C:/AVtest/${prefix}-${n}.mp4`,
+            note: '',
+        };
+    });
+}
+
+const ND_DEMO = (() => {
+    const both = ndBuildItems(12, 'ABP', 1);
+    const nfo = ndBuildItems(48, 'SSIS', 100);
+    const cover = ndBuildItems(73, 'MIDE', 500);
+    cover[0] = { ...cover[0], path: 'file:///D:/影片收藏/MIDE-500.mp4' };
+    return {
+        both,
+        nfo,
+        cover,
+        nfoIncomplete: [
+            { number: 'ABP-201', path: 'file:///C:/AVtest/ABP-201.mp4', note: '缺：導演、片長' },
+            { number: 'SSIS-333', path: 'file:///C:/AVtest/SSIS-333.mp4', note: '缺：發行日期' },
+            { number: 'MIDE-601', path: 'file:///C:/AVtest/MIDE-601.mp4', note: '缺：導演' },
+            { number: 'STARS-402', path: 'file:///C:/AVtest/STARS-402.mp4', note: '缺：類別、標籤' },
+            { number: 'IPX-777', path: 'file:///C:/AVtest/IPX-777.mp4', note: '缺：片長' },
+            { number: 'PRED-333', path: 'file:///C:/AVtest/PRED-333.mp4', note: '缺：導演、類別' },
+        ],
+        jellyfin: [
+            { number: 'WAAA-158', path: 'file:///C:/AVtest/WAAA-158.mp4', note: '' },
+            { number: 'JUL-888', path: 'file:///C:/AVtest/JUL-888.mp4', note: '' },
+            { number: 'CAWD-500', path: 'file:///C:/AVtest/CAWD-500.mp4', note: '' },
+            { number: '', path: 'file:///C:/AVtest/無番號片.mp4', note: '' },
+        ],
+    };
+})();
+
+function ndDemo(key) {
+    return ND_DEMO[key] || [];
+}
+
+
 document.addEventListener('DOMContentLoaded', function() {
     // TOC Active State
     const tocLinks = document.querySelectorAll('.ds-toc a');

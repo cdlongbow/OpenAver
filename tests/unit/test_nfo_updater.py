@@ -14,6 +14,7 @@ import core.path_utils as path_utils
 from core.nfo_updater import (
     add_actor,
     add_tags_and_genres,
+    check_cache_needs_update,
     get_nfo_path_from_video,
     needs_update,
     update_nfo_file,
@@ -864,3 +865,62 @@ class TestGetNfoPathPathMappingReverse:
 
         missing_path = str(video_dir / "missing.mp4")
         assert get_nfo_path_from_video(missing_path) is None
+
+
+# ============================================================
+# check_cache_needs_update() 測試
+# ============================================================
+
+class TestCheckCacheNeedsUpdateItems:
+    """check_cache_needs_update() 對 items 清單與欄位完整度的判斷"""
+
+    def test_check_cache_needs_update_items_include_path_number_missing(self):
+        """只缺 director 時 missing 含 director，items 包含 path/number/missing 且不影響既有計數"""
+        cache = {
+            'file:///movies/TEST-001.mp4': {
+                'nfo_mtime': 1234567890.0,
+                'info': make_base_info(num='TEST-001', director=''),
+            }
+        }
+        stats = check_cache_needs_update(cache)
+        assert stats['need_update'] == 1
+        assert stats['no_title'] == 0
+        assert stats['no_date'] == 0
+        assert stats['no_actor'] == 0
+        assert stats['no_genre'] == 0
+        assert stats['no_maker'] == 0
+        assert len(stats['items']) == 1
+        item = stats['items'][0]
+        assert item['path'] == 'file:///movies/TEST-001.mp4'
+        assert item['number'] == 'TEST-001'
+        assert item['missing'] == ['director']
+
+    def test_check_cache_needs_update_duration_zero_not_in_items(self):
+        """duration=0 是有效值，不列入 missing 且其餘齊全時不進入 items"""
+        cache = {
+            'file:///movies/TEST-002.mp4': {
+                'nfo_mtime': 1234567890.0,
+                'info': make_base_info(num='TEST-002', duration=0),
+            }
+        }
+        stats = check_cache_needs_update(cache)
+        assert stats['need_update'] == 0
+        assert stats['paths'] == []
+        assert stats['items'] == []
+
+    def test_check_cache_needs_update_items_in_same_order_as_paths(self):
+        """items 的順序與 paths 同序"""
+        cache = {
+            'file:///movies/A.mp4': {
+                'nfo_mtime': 1234567890.0,
+                'info': make_base_info(num='A-001', title=''),
+            },
+            'file:///movies/B.mp4': {
+                'nfo_mtime': 1234567890.0,
+                'info': make_base_info(num='B-002', director=''),
+            },
+        }
+        stats = check_cache_needs_update(cache)
+        assert stats['need_update'] == 2
+        assert [i['path'] for i in stats['items']] == stats['paths']
+        assert stats['paths'] == ['file:///movies/A.mp4', 'file:///movies/B.mp4']

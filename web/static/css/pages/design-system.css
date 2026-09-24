@@ -185,6 +185,11 @@
     z-index: 1; /* 提升到噪點層之上 */
 }
 
+/* 數字清單浮層開著時，把所在 section 墊到後面 section 之上 */
+.ds-section:has(.number-drilldown-number-btn[aria-expanded="true"]) {
+    z-index: 2;
+}
+
 /* 樣式 A：透明玻璃 + 細描邊 */
 .ds-section.glass {
     background: color-mix(in oklch, var(--color-base-200) 70%, transparent);
