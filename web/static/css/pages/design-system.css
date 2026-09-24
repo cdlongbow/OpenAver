@@ -2874,3 +2874,251 @@
     align-items: center;
     gap: 12px;
 }
+
+/* ==================== Number Drilldown (155b-T1 候選樣板) ====================
+   owner 在 /design-system#ds-number-drilldown 選定位置／每列內容／複製格式後，
+   T2 才建立正式共用元件 web/static/js/components/number-drilldown.js（本頁不
+   引入該元件，純展示，見 CLAUDE.md「獨立元件 vs mergeState 分片」④）。
+   FE-CSS-24 決策：`.ds-section.glass`（見本檔 .ds-section.glass 規則）本身沒有
+   backdrop-filter，不會建立困住浮層 z-index 的 stacking context；為保險仍在
+   .ds-dd-stat-line 開啟時把 z-index 拉高，不做 teleport-to-body 這種較大改動。
+   第二輪修正（防視窗溢出）：浮層改成相對整條 .ds-dd-stat-line 定位＋寬度
+   min(28rem, 100%)，不是相對單一觸發鈕的 .ds-dd-anchor＋90vw——後者在觸發鈕
+   貼近視窗右緣時仍會溢出（90vw 只保證不超過視窗寬度，不保證從觸發鈕往右量
+   放得下），前者用「統計列本身在版面內」這個既有事實把右緣鎖死，不需要 JS
+   量測 getBoundingClientRect 再決定要不要翻成 right: 0。 */
+
+.ds-dd-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    align-items: flex-end;
+}
+
+.ds-dd-control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+}
+
+.ds-dd-control-label {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.ds-dd-segmented {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    border-radius: var(--fluent-radius-lg);
+    background: color-mix(in oklch, var(--surface-1) 60%, transparent);
+    border: 1px solid var(--stroke-subtle);
+}
+
+.ds-dd-segment {
+    padding: 0.375rem 0.75rem;
+    border-radius: calc(var(--fluent-radius-lg) - 2px);
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: color var(--fluent-duration-fast) var(--fluent-ease-standard),
+                background var(--fluent-duration-fast) var(--fluent-ease-standard),
+                box-shadow var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+
+.ds-dd-segment:hover:not(.is-active) {
+    color: var(--text-primary);
+    background: color-mix(in oklch, var(--surface-2) 50%, transparent);
+}
+
+.ds-dd-segment.is-active {
+    background: var(--surface-2);
+    color: var(--text-primary);
+    box-shadow: var(--fluent-shadow-2);
+}
+
+.ds-dd-segment:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+}
+
+/* ── 候選 A/B 共用的假統計列 ── */
+.ds-dd-mock-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 1rem 1.25rem;
+    background: color-mix(in oklch, var(--surface-1) 50%, transparent);
+    border-radius: var(--fluent-radius-lg);
+    border: 1px solid var(--stroke-subtle);
+}
+
+/* position: relative 讓浮層以「整條統計列」為定位基準（不是單一觸發鈕的 .ds-dd-anchor）——
+   第二輪修正（防視窗溢出）：統計列本身在版面內、寬度不會超出視窗，浮層再以它為 100% 上限，
+   右緣就保證 <= 統計列右緣 <= 視窗右緣，不必量測座標翻轉 right: 0。 */
+.ds-dd-stat-line {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.375rem;
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+/* FE-CSS-24 保險：開啟時把這一整條統計列的 stacking 拉到本節其他兄弟內容之上 */
+.ds-dd-stat-line.is-open {
+    z-index: 20;
+}
+
+.ds-dd-anchor {
+    display: inline-flex;
+    align-items: center;
+}
+
+.ds-dd-number-btn {
+    background: none;
+    border: none;
+    padding: 0 0.125rem;
+    margin: 0;
+    font: inherit;
+    font-weight: 600;
+    color: var(--color-primary);
+    cursor: pointer;
+    border-radius: var(--fluent-radius-sm);
+}
+
+.ds-dd-number-btn:hover {
+    text-decoration: underline;
+}
+
+.ds-dd-number-btn:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+}
+
+/* 候選 A：貼齊 help-popover 視覺語彙（ui-cheatsheet.md「Popover」：radius 8px／
+   shadow16／Acrylic，dim 主題走 fluent-materials.css Rule 39）。
+   寬度改成 min(28rem, 100%)——100% 是 .ds-dd-stat-line（新的定位基準）的寬度，
+   保證浮層右緣不超出該統計列（=不超出版面／視窗），取代原本固定的 90vw
+   （90vw 在觸發鈕本身貼近視窗右緣時仍會溢出，因為它只保證「不超過視窗寬度」，
+   不保證「從觸發鈕位置往右量還放得下」）。 */
+.ds-dd-popover {
+    width: min(28rem, 100%);
+    top: 100%;
+    left: 0;
+    margin-top: 0.5rem;
+}
+
+/* ── 清單本體（候選 A、B 共用結構，CD-155b-4：頭與捲動區同層 sibling，不用 sticky）── */
+.ds-dd-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.ds-dd-list-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* 清單標題。候選 B 用 <h3>（dialog 的可及名稱），會吃到本頁 `.ds-subsection h3`
+ * 的 demo 裝飾（(0,1,1)：accent 色、0.8rem、margin-bottom 1rem、`//` 前綴），
+ * 所以用 (0,2,0) 寫死，讓 A、B 兩個候選的頂端列逐值相同——選定的就是 T2 要做的版型 */
+.ds-dd-list-head > .ds-dd-list-title {
+    margin: 0;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    letter-spacing: normal;
+}
+
+.ds-dd-list-head > .ds-dd-list-title::before {
+    content: none;
+}
+
+.ds-dd-list-count {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    margin-right: auto;
+}
+
+.ds-dd-copy-btn {
+    display: inline-flex;
+    align-items: center;
+    background: none;
+    border: none;
+    padding: 0.25rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-radius: var(--fluent-radius-sm);
+}
+
+.ds-dd-copy-btn:hover {
+    color: var(--text-primary);
+    background: color-mix(in oklch, var(--surface-2) 60%, transparent);
+}
+
+.ds-dd-copy-btn:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+}
+
+.ds-dd-list-scroll {
+    max-height: min(20rem, 50vh);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    padding-right: 0.25rem;
+}
+
+.ds-dd-list-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    padding: 0.375rem 0.5rem;
+    border-radius: var(--fluent-radius-sm);
+    background: color-mix(in oklch, var(--surface-1) 40%, transparent);
+}
+
+.ds-dd-row-id {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+}
+
+.ds-dd-row-badge {
+    display: inline-block;
+    align-self: flex-start;
+    font-size: 0.7rem;
+    padding: 0.0625rem 0.5rem;
+    border-radius: var(--fluent-radius-sm);
+    background: color-mix(in oklch, var(--color-primary) 15%, transparent);
+    color: var(--text-secondary);
+}
+
+.ds-dd-row-path {
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+}
+
+.ds-dd-row-note {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.ds-dd-footnote {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin: 0.25rem 0 0 0;
+}

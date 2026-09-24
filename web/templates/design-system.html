@@ -44,6 +44,7 @@
         <a href="#ds-modals">Modals</a>
         <a href="#ds-toasts">Toasts</a>
         <a href="#ds-help-elements">Help Elements</a>
+        <a href="#ds-number-drilldown">Number Drilldown</a>
         <a href="#ds-progress">Progress & Feedback</a>
         <a href="#ds-navigation">Navigation</a>
         <a href="#ds-rotating-border">Rotating Border</a>
@@ -2351,6 +2352,313 @@ this.showToast('已複製', 'success', 2500)   // 委派給 store，由 shared/s
             </div>
         </section>
 
+        <!-- 區塊: Number Drilldown 候選樣板（TASK-155b-T1，owner hard-gate）
+             本 section 純展示假資料，不引用／不建立 web/static/js/components/number-drilldown.js
+             （T2 才建正式共用元件，見 plan-155b.md CD-155b-1～5）。 -->
+        <section id="ds-number-drilldown" class="ds-section glass" x-data="ddDemo()">
+            <h2>Number Drilldown</h2>
+            <p class="ds-note">掃描頁只給數字的地方點得開，選定位置／每列內容／複製格式。</p>
+
+            <!-- 控制列：A、B 兩個候選都讀同一組選擇 -->
+            <div class="ds-subsection">
+                <h3>控制列（候選 A、B 共用）</h3>
+                <p class="ds-desc">切換後同時影響下面兩個候選的清單列與複製預覽。</p>
+                <div class="ds-dd-controls">
+                    <div class="ds-dd-control-group">
+                        <span class="ds-dd-control-label">每列內容</span>
+                        <div class="ds-dd-segmented" role="radiogroup" aria-label="每列內容">
+                            <button type="button" class="ds-dd-segment" role="radio"
+                                    :class="{ 'is-active': rowMode === 'number' }"
+                                    :aria-checked="rowMode === 'number'"
+                                    @click="rowMode = 'number'">只有番號</button>
+                            <button type="button" class="ds-dd-segment" role="radio"
+                                    :class="{ 'is-active': rowMode === 'category' }"
+                                    :aria-checked="rowMode === 'category'"
+                                    @click="rowMode = 'category'">番號＋分類</button>
+                            <button type="button" class="ds-dd-segment" role="radio"
+                                    :class="{ 'is-active': rowMode === 'path' }"
+                                    :aria-checked="rowMode === 'path'"
+                                    @click="rowMode = 'path'">番號＋路徑</button>
+                        </div>
+                    </div>
+                    <div class="ds-dd-control-group">
+                        <span class="ds-dd-control-label">複製格式</span>
+                        <div class="ds-dd-segmented" role="radiogroup" aria-label="複製格式">
+                            <button type="button" class="ds-dd-segment" role="radio"
+                                    :class="{ 'is-active': copyMode === 'number' }"
+                                    :aria-checked="copyMode === 'number'"
+                                    @click="copyMode = 'number'">一行一個番號</button>
+                            <button type="button" class="ds-dd-segment" role="radio"
+                                    :class="{ 'is-active': copyMode === 'path' }"
+                                    :aria-checked="copyMode === 'path'"
+                                    @click="copyMode = 'path'">番號＋路徑（Tab 分隔）</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 候選 A：貼在數字旁的小浮層 -->
+            <div class="ds-subsection">
+                <h3>候選 A：貼在數字旁的小浮層</h3>
+                <p class="ds-desc">仿掃描頁統計列，點任一數字後浮層在該數字下方展開。</p>
+                <div class="ds-dd-mock-stats">
+                    <div class="ds-dd-stat-line" :class="{ 'is-open': ['both', 'nfo', 'cover'].includes(openKey) }">
+                        NFO 與封面都缺:
+                        <span class="ds-dd-anchor"
+                              @click.outside="closePopover('both')">
+                            <button type="button" class="ds-dd-number-btn"
+                                    :aria-expanded="openKey === 'both'"
+                                    @click="togglePopover('both')">[12]</button>
+                            <div class="ds-dd-popover help-popover" x-show="openKey === 'both'" x-cloak x-transition
+                                 x-trap="openKey === 'both'"
+                                 @keydown.escape.window="openKey === 'both' && closePopover('both')">
+                                <div class="ds-dd-list">
+                                    <div class="ds-dd-list-head">
+                                        <span class="ds-dd-list-title">NFO 與封面都缺</span>
+                                        <span class="ds-dd-list-count" x-text="`共 ${groups.both.items.length} 部`"></span>
+                                        <button type="button" class="ds-dd-copy-btn" title="複製清單"
+                                                @click="copyGroup('both')">
+                                            <i class="bi bi-clipboard"></i>
+                                        </button>
+                                    </div>
+                                    <div class="ds-dd-list-scroll">
+                                        <template x-for="it in groups.both.items" :key="it.path">
+                                            <div class="ds-dd-list-row">
+                                                <span class="ds-dd-row-id" x-text="rowId(it)"></span>
+                                                <span class="ds-dd-row-badge" x-show="rowMode === 'category'">都缺</span>
+                                                <span class="ds-dd-row-path" x-show="rowMode === 'path'"
+                                                      x-text="window.pathToDisplay(it.path)"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                    <p class="ds-dd-footnote">不含已補過但查無結果的片，也不含看不出番號的片；要重試請開燈箱 ⚙ 進階重刮。</p>
+                                </div>
+                            </div>
+                        </span>
+                        ・ 缺 NFO:
+                        <span class="ds-dd-anchor"
+                              @click.outside="closePopover('nfo')">
+                            <button type="button" class="ds-dd-number-btn"
+                                    :aria-expanded="openKey === 'nfo'"
+                                    @click="togglePopover('nfo')">[48]</button>
+                            <div class="ds-dd-popover help-popover" x-show="openKey === 'nfo'" x-cloak x-transition
+                                 x-trap="openKey === 'nfo'"
+                                 @keydown.escape.window="openKey === 'nfo' && closePopover('nfo')">
+                                <div class="ds-dd-list">
+                                    <div class="ds-dd-list-head">
+                                        <span class="ds-dd-list-title">缺 NFO</span>
+                                        <span class="ds-dd-list-count" x-text="`共 ${groups.nfo.items.length} 部`"></span>
+                                        <button type="button" class="ds-dd-copy-btn" title="複製清單"
+                                                @click="copyGroup('nfo')">
+                                            <i class="bi bi-clipboard"></i>
+                                        </button>
+                                    </div>
+                                    <div class="ds-dd-list-scroll">
+                                        <template x-for="it in groups.nfo.items" :key="it.path">
+                                            <div class="ds-dd-list-row">
+                                                <span class="ds-dd-row-id" x-text="rowId(it)"></span>
+                                                <span class="ds-dd-row-badge" x-show="rowMode === 'category'">缺 NFO</span>
+                                                <span class="ds-dd-row-path" x-show="rowMode === 'path'"
+                                                      x-text="window.pathToDisplay(it.path)"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                    <p class="ds-dd-footnote">不含已補過但查無結果的片，也不含看不出番號的片；要重試請開燈箱 ⚙ 進階重刮。</p>
+                                </div>
+                            </div>
+                        </span>
+                        ・ 缺封面:
+                        <span class="ds-dd-anchor"
+                              @click.outside="closePopover('cover')">
+                            <button type="button" class="ds-dd-number-btn"
+                                    :aria-expanded="openKey === 'cover'"
+                                    @click="togglePopover('cover')">[73]</button>
+                            <div class="ds-dd-popover help-popover" x-show="openKey === 'cover'" x-cloak x-transition
+                                 x-trap="openKey === 'cover'"
+                                 @keydown.escape.window="openKey === 'cover' && closePopover('cover')">
+                                <div class="ds-dd-list">
+                                    <div class="ds-dd-list-head">
+                                        <span class="ds-dd-list-title">缺封面</span>
+                                        <span class="ds-dd-list-count" x-text="`共 ${groups.cover.items.length} 部`"></span>
+                                        <button type="button" class="ds-dd-copy-btn" title="複製清單"
+                                                @click="copyGroup('cover')">
+                                            <i class="bi bi-clipboard"></i>
+                                        </button>
+                                    </div>
+                                    <div class="ds-dd-list-scroll">
+                                        <template x-for="it in groups.cover.items" :key="it.path">
+                                            <div class="ds-dd-list-row">
+                                                <span class="ds-dd-row-id" x-text="rowId(it)"></span>
+                                                <span class="ds-dd-row-badge" x-show="rowMode === 'category'">缺封面</span>
+                                                <span class="ds-dd-row-path" x-show="rowMode === 'path'"
+                                                      x-text="window.pathToDisplay(it.path)"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                    <p class="ds-dd-footnote">不含已補過但查無結果的片，也不含看不出番號的片；要重試請開燈箱 ⚙ 進階重刮。</p>
+                                </div>
+                            </div>
+                        </span>
+                    </div>
+                    <div class="ds-dd-stat-line" :class="{ 'is-open': openKey === 'nfoIncomplete' }">
+                        NFO 欄位不全:
+                        <span class="ds-dd-anchor"
+                              @click.outside="closePopover('nfoIncomplete')">
+                            <button type="button" class="ds-dd-number-btn"
+                                    :aria-expanded="openKey === 'nfoIncomplete'"
+                                    @click="togglePopover('nfoIncomplete')">[6]</button> 部
+                            <div class="ds-dd-popover help-popover" x-show="openKey === 'nfoIncomplete'" x-cloak x-transition
+                                 x-trap="openKey === 'nfoIncomplete'"
+                                 @keydown.escape.window="openKey === 'nfoIncomplete' && closePopover('nfoIncomplete')">
+                                <div class="ds-dd-list">
+                                    <div class="ds-dd-list-head">
+                                        <span class="ds-dd-list-title">NFO 欄位不全</span>
+                                        <span class="ds-dd-list-count" x-text="`共 ${groups.nfoIncomplete.items.length} 部`"></span>
+                                        <button type="button" class="ds-dd-copy-btn" title="複製清單"
+                                                @click="copyGroup('nfoIncomplete')">
+                                            <i class="bi bi-clipboard"></i>
+                                        </button>
+                                    </div>
+                                    <div class="ds-dd-list-scroll">
+                                        <template x-for="it in groups.nfoIncomplete.items" :key="it.path">
+                                            <div class="ds-dd-list-row">
+                                                <span class="ds-dd-row-id" x-text="rowId(it)"></span>
+                                                <span class="ds-dd-row-path" x-show="rowMode === 'path'"
+                                                      x-text="window.pathToDisplay(it.path)"></span>
+                                                <span class="ds-dd-row-note" x-text="it.note"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </div>
+                        </span>
+                    </div>
+                    <div class="ds-dd-stat-line" :class="{ 'is-open': openKey === 'jellyfin' }">
+                        外部媒體管理器封面缺失:
+                        <span class="ds-dd-anchor"
+                              @click.outside="closePopover('jellyfin')">
+                            <button type="button" class="ds-dd-number-btn"
+                                    :aria-expanded="openKey === 'jellyfin'"
+                                    @click="togglePopover('jellyfin')">[4]</button> 部
+                            <div class="ds-dd-popover help-popover" x-show="openKey === 'jellyfin'" x-cloak x-transition
+                                 x-trap="openKey === 'jellyfin'"
+                                 @keydown.escape.window="openKey === 'jellyfin' && closePopover('jellyfin')">
+                                <div class="ds-dd-list">
+                                    <div class="ds-dd-list-head">
+                                        <span class="ds-dd-list-title">外部媒體管理器封面缺失</span>
+                                        <span class="ds-dd-list-count" x-text="`共 ${groups.jellyfin.items.length} 部`"></span>
+                                        <button type="button" class="ds-dd-copy-btn" title="複製清單"
+                                                @click="copyGroup('jellyfin')">
+                                            <i class="bi bi-clipboard"></i>
+                                        </button>
+                                    </div>
+                                    <div class="ds-dd-list-scroll">
+                                        <template x-for="it in groups.jellyfin.items" :key="it.path">
+                                            <div class="ds-dd-list-row">
+                                                <span class="ds-dd-row-id" x-text="rowId(it)"></span>
+                                                <span class="ds-dd-row-path" x-show="rowMode === 'path'"
+                                                      x-text="window.pathToDisplay(it.path)"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </div>
+                        </span>
+                    </div>
+                </div>
+                <div class="ds-note" style="margin-top: 1rem;">
+                    <strong>FE-CSS-24 決策：</strong>
+                    <code>.ds-section.glass</code> 本身沒有套用 <code>backdrop-filter</code>（實測 <code>design-system.css</code>
+                    的 <code>.ds-section.glass</code> 規則只有 <code>color-mix</code> 背景），不會建立會困住浮層 <code>z-index</code>
+                    的 stacking context；為保險仍在 <code>.ds-dd-stat-line</code> 開啟時把 <code>z-index</code> 拉高（見
+                    <code>design-system.css</code> <code>.ds-dd-stat-line.is-open</code>），不做把 mock 移出 glass 容器或
+                    teleport-to-body 這種較大的重構。
+                </div>
+                <div class="ds-note" style="margin-top: 0.5rem;">
+                    <strong>第二輪修正（防視窗溢出）：</strong>
+                    浮層改成相對 <code>.ds-dd-stat-line</code>（整條統計列）定位，不是相對單一觸發鈕的
+                    <code>.ds-dd-anchor</code>——寬度 <code>min(28rem, 100%)</code> 的 <code>100%</code> 是統計列本身的寬度，
+                    而統計列本來就在版面內、不會超出視窗，所以浮層的右緣永遠 ≤ 統計列右緣 ≤ 視窗右緣，不需要
+                    JS 量測 <code>getBoundingClientRect</code> 來判斷要不要翻成 <code>right: 0</code>。
+                </div>
+            </div>
+
+            <!-- 候選 B：畫面正中的視窗 -->
+            <div class="ds-subsection">
+                <h3>候選 B：畫面正中的視窗</h3>
+                <p class="ds-desc">同一組假資料數字，點下去改開置中 modal（沿用 <code>#ds-modals</code> 既有 <code>&lt;dialog&gt;</code> demo 形狀）。</p>
+                <div class="ds-dd-mock-stats">
+                    <div class="ds-dd-stat-line">
+                        NFO 與封面都缺:
+                        <button type="button" class="ds-dd-number-btn" @click="openModal('both')">[12]</button>
+                        ・ 缺 NFO:
+                        <button type="button" class="ds-dd-number-btn" @click="openModal('nfo')">[48]</button>
+                        ・ 缺封面:
+                        <button type="button" class="ds-dd-number-btn" @click="openModal('cover')">[73]</button>
+                    </div>
+                    <div class="ds-dd-stat-line">
+                        NFO 欄位不全:
+                        <button type="button" class="ds-dd-number-btn" @click="openModal('nfoIncomplete')">[6]</button> 部
+                    </div>
+                    <div class="ds-dd-stat-line">
+                        外部媒體管理器封面缺失:
+                        <button type="button" class="ds-dd-number-btn" @click="openModal('jellyfin')">[4]</button> 部
+                    </div>
+                </div>
+
+                <dialog x-ref="ddModalB" class="modal fluent-modal" @close="modalGroup = null">
+                    <div class="modal-box fluent-modal-box">
+                        <div class="ds-dd-list">
+                            <div class="ds-dd-list-head">
+                                <h3 class="ds-dd-list-title" x-text="groups[modalGroup]?.title"></h3>
+                                <span class="ds-dd-list-count"
+                                      x-text="modalGroup ? `共 ${groups[modalGroup].items.length} 部` : ''"></span>
+                                <button type="button" class="ds-dd-copy-btn" title="複製清單"
+                                        @click="modalGroup && copyGroup(modalGroup)">
+                                    <i class="bi bi-clipboard"></i>
+                                </button>
+                            </div>
+                            <div class="ds-dd-list-scroll">
+                                <template x-for="it in (groups[modalGroup]?.items || [])" :key="it.path">
+                                    <div class="ds-dd-list-row">
+                                        <span class="ds-dd-row-id" x-text="rowId(it)"></span>
+                                        <span class="ds-dd-row-badge"
+                                              x-show="rowMode === 'category' && groups[modalGroup]?.badge"
+                                              x-text="groups[modalGroup]?.badge"></span>
+                                        <span class="ds-dd-row-path" x-show="rowMode === 'path'"
+                                              x-text="window.pathToDisplay(it.path)"></span>
+                                        <span class="ds-dd-row-note" x-show="it.note" x-text="it.note"></span>
+                                    </div>
+                                </template>
+                            </div>
+                            <p class="ds-dd-footnote" x-show="groups[modalGroup]?.hasFootnote"
+                               x-text="'不含已補過但查無結果的片，也不含看不出番號的片；要重試請開燈箱 ⚙ 進階重刮。'"></p>
+                        </div>
+                        <div class="modal-action fluent-modal-actions">
+                            <button type="button" class="btn btn-ghost" @click="$refs.ddModalB.close()">關閉</button>
+                        </div>
+                    </div>
+                    <form method="dialog" class="modal-backdrop">
+                        <button>close</button>
+                    </form>
+                </dialog>
+            </div>
+
+            <!-- 複製內容預覽 -->
+            <div class="ds-subsection">
+                <h3>複製內容預覽</h3>
+                <p class="ds-desc">目前複製格式下按複製會得到的文字（以「缺封面」73 部為例，只顯示前 8 行）。</p>
+                <pre class="ds-code" x-text="previewText"></pre>
+            </div>
+
+            <!-- Toast 回饋（沿用全站 Alpine.store('toast'），本頁其餘 demo 未接容器，這裡補一份讓複製有可見回饋） -->
+            <div class="toast toast-end toast-top z-[9999]" x-show="$store.toast.visible" x-cloak x-transition>
+                <div class="alert" :class="`alert-${$store.toast.type}`">
+                    <span x-text="$store.toast.message"></span>
+                </div>
+            </div>
+        </section>
+
         <!-- 區塊 8: Progress & Feedback (accent-bar 樣式) -->
         <section id="ds-progress" class="ds-section accent-bar">
             <h2>Progress & Feedback</h2>
@@ -3774,6 +4082,115 @@ this.showToast('已複製', 'success', 2500)   // 委派給 store，由 shared/s
 
 <!-- TOC Active State Script + Dynamic Color Hex -->
 <script>
+// ── Number Drilldown 候選樣板（TASK-155b-T1）──────────────────────────────
+// 只供 /design-system 展示假資料，不是正式共用元件（T2 才建
+// web/static/js/components/number-drilldown.js）。函式名一律 dd 開頭，避免撞到
+// 全域；`ddDemo()` 供 `x-data="ddDemo()"` 取用。
+function ddFileName(path) {
+    const display = window.pathToDisplay(path);
+    const idx = Math.max(display.lastIndexOf('/'), display.lastIndexOf('\\'));
+    return idx >= 0 ? display.slice(idx + 1) : display;
+}
+
+function ddBuildItems(count, prefix, startAt) {
+    return Array.from({ length: count }, (_, i) => {
+        const n = String(startAt + i).padStart(3, '0');
+        return {
+            number: `${prefix}-${n}`,
+            path: `file:///C:/AVtest/${prefix}-${n}.mp4`,
+            note: '',
+        };
+    });
+}
+
+function ddDemo() {
+    return {
+        rowMode: 'number',   // 'number' | 'category' | 'path'
+        copyMode: 'number',  // 'number' | 'path'
+        openKey: null,       // 候選 A：目前開著的浮層 key
+        modalGroup: null,    // 候選 B：目前 modal 顯示哪一組
+        groups: {
+            both: { title: 'NFO 與封面都缺', badge: '都缺', hasFootnote: true, items: [] },
+            nfo: { title: '缺 NFO', badge: '缺 NFO', hasFootnote: true, items: [] },
+            cover: { title: '缺封面', badge: '缺封面', hasFootnote: true, items: [] },
+            nfoIncomplete: { title: 'NFO 欄位不全', badge: null, hasFootnote: false, items: [] },
+            jellyfin: { title: '外部媒體管理器封面缺失', badge: null, hasFootnote: false, items: [] },
+        },
+
+        init() {
+            this.groups.both.items = ddBuildItems(12, 'ABP', 1);
+            this.groups.nfo.items = ddBuildItems(48, 'SSIS', 100);
+            const coverItems = ddBuildItems(73, 'MIDE', 500);
+            coverItems[0] = { ...coverItems[0], path: 'file:///D:/影片收藏/MIDE-500.mp4' };
+            this.groups.cover.items = coverItems;
+            this.groups.nfoIncomplete.items = [
+                { number: 'ABP-201', path: 'file:///C:/AVtest/ABP-201.mp4', note: '缺：導演、片長' },
+                { number: 'SSIS-333', path: 'file:///C:/AVtest/SSIS-333.mp4', note: '缺：發行日期' },
+                { number: 'MIDE-601', path: 'file:///C:/AVtest/MIDE-601.mp4', note: '缺：導演' },
+                { number: 'STARS-402', path: 'file:///C:/AVtest/STARS-402.mp4', note: '缺：類別、標籤' },
+                { number: 'IPX-777', path: 'file:///C:/AVtest/IPX-777.mp4', note: '缺：片長' },
+                { number: 'PRED-333', path: 'file:///C:/AVtest/PRED-333.mp4', note: '缺：導演、類別' },
+            ];
+            this.groups.jellyfin.items = [
+                { number: 'WAAA-158', path: 'file:///C:/AVtest/WAAA-158.mp4', note: '' },
+                { number: 'JUL-888', path: 'file:///C:/AVtest/JUL-888.mp4', note: '' },
+                { number: 'CAWD-500', path: 'file:///C:/AVtest/CAWD-500.mp4', note: '' },
+                { number: '', path: 'file:///C:/AVtest/無番號片.mp4', note: '' },
+            ];
+        },
+
+        rowId(it) {
+            return it.number || ddFileName(it.path);
+        },
+
+        togglePopover(key) {
+            this.openKey = this.openKey === key ? null : key;
+        },
+        closePopover(key) {
+            if (this.openKey === key) this.openKey = null;
+        },
+
+        openModal(key) {
+            this.modalGroup = key;
+            this.$nextTick(() => this.$refs.ddModalB.showModal());
+        },
+
+        buildCopyText(key) {
+            const items = this.groups[key].items;
+            if (this.copyMode === 'number') {
+                return items.map((it) => this.rowId(it)).join('\n');
+            }
+            return items.map((it) => `${this.rowId(it)}\t${window.pathToDisplay(it.path)}`).join('\n');
+        },
+
+        _fallbackCopy(text) {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;top:-9999px';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch (e) { /* noop：demo 頁面複製失敗不影響展示 */ }
+            ta.remove();
+        },
+
+        copyGroup(key) {
+            const text = this.buildCopyText(key);
+            if (navigator.clipboard?.writeText) {
+                navigator.clipboard.writeText(text).catch(() => this._fallbackCopy(text));
+            } else {
+                this._fallbackCopy(text);
+            }
+            Alpine.store('toast').show(`已複製 ${this.groups[key].items.length} 部`, 'success', 2500);
+        },
+
+        get previewText() {
+            const lines = this.buildCopyText('cover').split('\n');
+            const head = lines.slice(0, 8).join('\n');
+            return lines.length > 8 ? `${head}\n…（共 ${lines.length} 行）` : head;
+        },
+    };
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     // TOC Active State
     const tocLinks = document.querySelectorAll('.ds-toc a');
