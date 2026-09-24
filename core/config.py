@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 from core.atomic_write import atomic_write
 from core.data_root import get_data_root, get_project_root, is_layout_finalized
 from core.logger import get_logger
-from core.path_utils import is_fs_path_under_dir
+from core.path_utils import is_fs_path_under_dir, coerce_to_file_uri
 from core.source_config import SourceConfig, get_builtin_sources, get_manual_only_sources
 from core.video_extensions import DEFAULT_VIDEO_EXTENSIONS
 
@@ -696,3 +696,25 @@ def get_gallery_source_paths(gallery_config) -> List[str]:
     行為與舊「純字串 directories 清單」逐位元等價。
     """
     return [d.path for d in iter_gallery_sources(gallery_config)]
+
+
+def get_configured_gallery_dirs(config: dict) -> tuple[set, dict]:
+    """從 config 取出 configured_dir_uris 與 path_mappings（列表與單筆端點共用）。
+
+    升格自 web.routers.showcase._get_configured_dirs（CD-156-2.1）：簽名與回傳值
+    逐字不變，供 showcase／insights 共用，避免兩份母體篩選邏輯。
+    """
+    gallery_config = config.get('gallery', {})
+    path_mappings = gallery_config.get('path_mappings', {})
+
+    configured_dir_uris: set = set()
+    for p in get_gallery_source_paths(gallery_config):
+        try:
+            # coerce_to_file_uri：來源 path 可能已是 file:/// URI（DirectoryConfig.path
+            # schema「FS 路徑或 URI」）。已是 URI 就原樣回，避免 to_file_uri 二次包成
+            # file:///file:/// 把 readonly 來源的列從 Showcase 過濾掉（PR#91 P2-D 同源）。
+            configured_dir_uris.add(coerce_to_file_uri(p, path_mappings))  # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
+        except ValueError:
+            continue
+
+    return configured_dir_uris, path_mappings
