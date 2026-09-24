@@ -47,6 +47,12 @@
     margin-bottom: 0.25rem;
 }
 
+/* 155a：名字＋發行時年齡視為不可拆單位，斷行只能發生在女優之間（CD-155a-6）。
+   .info-row 是 color: var(--text-secondary)，子層若不自己宣告 color 會繼承
+   secondary 色，蓋不過去（FE-CSS-02）。 */
+.card-info .info-actor-unit { white-space: nowrap; }
+.card-info .lb-actor-age { color: var(--text-muted); }
+
 .card-info .info-row b {
     color: var(--text-primary);
     font-weight: 500;
