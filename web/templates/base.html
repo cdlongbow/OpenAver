@@ -241,10 +241,17 @@
             background-color: var(--accent);
         }
 
-        .sidebar .nav-link i {
+        .sidebar .nav-link i,
+        .sidebar .nav-link svg {
             width: 24px;
             flex-shrink: 0;
             text-align: center;
+        }
+
+        .sidebar .nav-link svg,
+        .offcanvas-nav .nav-link svg {
+            display: inline-block;
+            vertical-align: -0.125em;
         }
 
         .sidebar .nav-link .nav-text {
@@ -355,7 +362,8 @@
             background-color: var(--accent);
         }
 
-        .offcanvas-nav .nav-link i {
+        .offcanvas-nav .nav-link i,
+        .offcanvas-nav .nav-link svg {
             width: 24px;
             margin-right: 0.5rem;
         }
@@ -593,6 +601,15 @@
                         <i class="bi bi-collection-play"></i> {{ t('nav.showcase') }}
                     </a>
                 </li>
+                <li class="nav-item">
+                    <a class="nav-link {% if page == 'insights' %}active{% endif %}" href="/insights"
+                       @click="handleNavClick($event, $el.href)">
+                        <svg viewBox="0 0 16 16" width="1em" height="1em" fill="currentColor" aria-hidden="true">
+                            <path d="M6 2.5A.5.5 0 0 1 6.5 2h3a.5.5 0 0 1 .5.5V14H6zM7 3v11h2V3zM1 7.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5V14H1zM2 8v6h2V8zm9 1.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5V14h-4zm1 .5v4h2v-4z"/>
+                            <path d="M0 14.5a.5.5 0 0 1 .5-.5h15a.5.5 0 0 1 0 1H.5a.5.5 0 0 1-.5-.5"/>
+                        </svg> {{ t('nav.insights') }}
+                    </a>
+                </li>
                 <li class="nav-item mt-3">
                     <a class="nav-link {% if page == 'help' %}active{% endif %}" href="/help"
                        @click="handleNavClick($event, $el.href)">
@@ -652,6 +669,16 @@
                    @click="handleNavClick($event, $el.href)">
                     <i class="bi bi-collection-play"></i>
                     <span class="nav-text">{{ t('nav.showcase') }}</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link {% if page == 'insights' %}active{% endif %}" href="/insights" title="{{ t('nav.insights') }}"
+                   @click="handleNavClick($event, $el.href)">
+                    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="currentColor" aria-hidden="true">
+                        <path d="M6 2.5A.5.5 0 0 1 6.5 2h3a.5.5 0 0 1 .5.5V14H6zM7 3v11h2V3zM1 7.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5V14H1zM2 8v6h2V8zm9 1.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5V14h-4zm1 .5v4h2v-4z"/>
+                        <path d="M0 14.5a.5.5 0 0 1 .5-.5h15a.5.5 0 0 1 0 1H.5a.5.5 0 0 1-.5-.5"/>
+                    </svg>
+                    <span class="nav-text">{{ t('nav.insights') }}</span>
                 </a>
             </li>
             <!-- 53b-T7: desktop 鈴鐺在底部組最上方（mt-auto 推至底，Bell → Help → Settings） -->
