@@ -1,15 +1,23 @@
 // TASK-156b-T1: setRecords / getRecords / buildMakerColorSlots / buildMainMakerYearMap 契約。
+// TASK-156b-T2: periodRecords / scopeRecords / aggregateYears 契約 + §4.2 wiring。
 // 純函式、零 window / Alpine；邊界條件各至少一條真斷言。
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+const agg = await import('../aggregate.js');
 const {
     setRecords,
     getRecords,
     buildMakerColorSlots,
     buildMainMakerYearMap,
-} = await import('../aggregate.js');
+} = agg;
+const {
+    periodRecords,
+    scopeRecords,
+    aggregateYears,
+    UNKNOWN_KEY,
+} = agg;
 
 function rec(opts) {
     return {
@@ -204,4 +212,333 @@ test('buildMainMakerYearMap: year 為 null 的片完全不影響任何女優|年
     assert.equal(map['Eve|2024'], 'SOD');
     // 不得出現 null year 的 key
     assert.equal(Object.keys(map).some((k) => k.includes('|null') || k.endsWith('|')), false);
+});
+
+// ── periodRecords / scopeRecords（TASK-156b-T2）──────────────────────
+
+test('scopeRecords: focus=null 時與 periodRecords 回傳內容逐項相同', () => {
+    const records = [
+        rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
+        rec({ year: null, actresses: ['Bob'], maker: 'Moodyz' }),
+        rec({ year: 2021, actresses: ['Carol'], maker: 'SOD' }),
+    ];
+    const period = { type: 'all' };
+    assert.deepStrictEqual(
+        scopeRecords(records, period, null),
+        periodRecords(records, period),
+    );
+    const yearPeriod = { type: 'year', year: 2020 };
+    assert.deepStrictEqual(
+        scopeRecords(records, yearPeriod, null),
+        periodRecords(records, yearPeriod),
+    );
+});
+
+test('periodRecords: type=all 保留 year===null；type=year 排除 null 與非該年', () => {
+    const nullRec = rec({ year: null, actresses: ['Alice'], maker: 'SOD' });
+    const y2020 = rec({ year: 2020, actresses: ['Bob'], maker: 'Moodyz' });
+    const y2021 = rec({ year: 2021, actresses: ['Carol'], maker: 'SOD' });
+    const records = [nullRec, y2020, y2021];
+
+    const all = periodRecords(records, { type: 'all' });
+    assert.equal(all.length, 3);
+    assert.ok(all.includes(nullRec));
+
+    const only2020 = periodRecords(records, { type: 'year', year: 2020 });
+    assert.deepStrictEqual(only2020, [y2020]);
+    assert.equal(only2020.includes(nullRec), false);
+    assert.equal(only2020.includes(y2021), false);
+});
+
+test('scopeRecords: actress 焦點含多人片任一人命中；maker 焦點嚴格比對', () => {
+    const multi = rec({ year: 2020, actresses: ['Alice', 'Bob'], maker: 'SOD' });
+    const onlyBob = rec({ year: 2021, actresses: ['Bob'], maker: 'Moodyz' });
+    const onlyAlice = rec({ year: 2022, actresses: ['Alice'], maker: 'IdeaPocket' });
+    const records = [multi, onlyBob, onlyAlice];
+
+    const byActress = scopeRecords(records, { type: 'all' }, { type: 'actress', value: 'Alice' });
+    assert.deepStrictEqual(byActress, [multi, onlyAlice]);
+
+    const byMaker = scopeRecords(records, { type: 'all' }, { type: 'maker', value: 'SOD' });
+    assert.deepStrictEqual(byMaker, [multi]);
+});
+
+// ── aggregateYears（TASK-156b-T2）────────────────────────────────────
+
+test('aggregateYears: 無焦點時 categories 尾端固定有 UNKNOWN_KEY（即使沒有 year===null）', () => {
+    const records = [
+        rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
+        rec({ year: 2022, actresses: ['Bob'], maker: 'Moodyz' }),
+    ];
+    const result = aggregateYears(records, { type: 'all' }, null);
+    assert.deepStrictEqual(result.categories, ['2020', '2021', '2022', UNKNOWN_KEY]);
+    assert.equal(result.series.length, 1);
+    assert.equal(result.series[0].name, null);
+    assert.deepStrictEqual(result.series[0].data, [1, 0, 1, 0]);
+    assert.deepStrictEqual(result.dimmed, [false, false, false, false]);
+});
+
+test('aggregateYears: 有焦點時只有 base 真有 year===null 才出現 UNKNOWN_KEY', () => {
+    const withNull = [
+        rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
+        rec({ year: 2021, actresses: ['Alice'], maker: 'SOD' }),
+        rec({ year: null, actresses: ['Alice'], maker: 'SOD' }),
+    ];
+    const withNullResult = aggregateYears(
+        withNull, { type: 'all' }, { type: 'maker', value: 'SOD' },
+    );
+    assert.ok(withNullResult.categories.includes(UNKNOWN_KEY));
+    assert.equal(withNullResult.categories[withNullResult.categories.length - 1], UNKNOWN_KEY);
+
+    const noNull = [
+        rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
+        rec({ year: 2021, actresses: ['Alice'], maker: 'SOD' }),
+    ];
+    const noNullResult = aggregateYears(
+        noNull, { type: 'all' }, { type: 'maker', value: 'SOD' },
+    );
+    assert.equal(noNullResult.categories.includes(UNKNOWN_KEY), false);
+    assert.deepStrictEqual(noNullResult.categories, ['2020', '2021']);
+});
+
+test('aggregateYears: 有焦點時橫軸涵蓋到最後一年即使該年沒有片（空年保留空位）', () => {
+    // Alice：2019 與 2021 有片、2020 空年；mutation 把 <= 改 < 會丟掉最後一年 2021
+    const records = [
+        rec({ year: 2019, actresses: ['Alice'], maker: 'SOD' }),
+        rec({ year: 2021, actresses: ['Alice'], maker: 'Moodyz' }),
+        rec({ year: 2020, actresses: ['Bob'], maker: 'SOD' }), // 非焦點，不影響範圍
+    ];
+    const result = aggregateYears(
+        records, { type: 'all' }, { type: 'actress', value: 'Alice' },
+    );
+    assert.deepStrictEqual(result.categories, ['2019', '2020', '2021']);
+    // 2020 空位：各 series 該格皆 0
+    const idx2020 = result.categories.indexOf('2020');
+    for (const s of result.series) {
+        assert.equal(s.data[idx2020], 0);
+    }
+    assert.equal(result.categories.includes('2021'), true);
+});
+
+test('aggregateYears: 選年份時其他年數值不變只淡化', () => {
+    const records = [
+        rec({ year: 2019, actresses: ['Alice'], maker: 'SOD' }),
+        rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
+        rec({ year: 2021, actresses: ['Alice'], maker: 'Moodyz' }),
+        rec({ year: null, actresses: ['Alice'], maker: 'SOD' }),
+    ];
+    const focus = { type: 'actress', value: 'Alice' };
+    const allPeriod = aggregateYears(records, { type: 'all' }, focus);
+    const yearPeriod = aggregateYears(records, { type: 'year', year: 2020 }, focus);
+
+    assert.equal(allPeriod.series.length, yearPeriod.series.length);
+    for (let i = 0; i < allPeriod.series.length; i++) {
+        assert.equal(allPeriod.series[i].name, yearPeriod.series[i].name);
+        assert.deepStrictEqual(allPeriod.series[i].data, yearPeriod.series[i].data);
+    }
+    assert.deepStrictEqual(allPeriod.dimmed, [false, false, false, false]);
+    assert.deepStrictEqual(yearPeriod.dimmed, [true, false, true, true]);
+});
+
+test('aggregateYears: 無焦點 series 長度 1、name null；categories=min..max+UNKNOWN_KEY', () => {
+    const records = [
+        rec({ year: 2021, actresses: ['A'], maker: 'SOD' }),
+        rec({ year: 2023, actresses: ['B'], maker: 'Moodyz' }),
+        rec({ year: null, actresses: ['C'], maker: 'SOD' }),
+    ];
+    const result = aggregateYears(records, { type: 'all' }, null);
+    assert.deepStrictEqual(result.categories, ['2021', '2022', '2023', UNKNOWN_KEY]);
+    assert.equal(result.series.length, 1);
+    assert.equal(result.series[0].name, null);
+    assert.deepStrictEqual(result.series[0].data, [1, 0, 1, 1]);
+});
+
+test('aggregateYears: 片商焦點 base 空時回傳空 categories/series/dimmed', () => {
+    const records = [
+        rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
+    ];
+    const result = aggregateYears(
+        records, { type: 'all' }, { type: 'maker', value: 'MissingStudio' },
+    );
+    assert.deepStrictEqual(result, { categories: [], series: [], dimmed: [] });
+});
+
+test('aggregateYears: 片商焦點 categories/series 正值斷言（含空年與 UNKNOWN）', () => {
+    // M：2020×2、2022×1、year=null×1；2021 無片（空位）；混入其他片商不得影響
+    const M = 'M';
+    const records = [
+        rec({ year: 2020, actresses: ['A1'], maker: M }),
+        rec({ year: 2020, actresses: ['A2'], maker: M }),
+        rec({ year: 2022, actresses: ['A3'], maker: M }),
+        rec({ year: null, actresses: ['A4'], maker: M }),
+        rec({ year: 2021, actresses: ['B1'], maker: 'Other' }),
+        rec({ year: 2020, actresses: ['B2'], maker: 'Other' }),
+        rec({ year: null, actresses: ['B3'], maker: 'Other' }),
+    ];
+    const result = aggregateYears(
+        records, { type: 'all' }, { type: 'maker', value: M },
+    );
+    assert.deepStrictEqual(result.categories, ['2020', '2021', '2022', UNKNOWN_KEY]);
+    assert.equal(result.series.length, 1);
+    assert.equal(result.series[0].name, 'M');
+    assert.deepStrictEqual(result.series[0].data, [2, 0, 1, 1]);
+    assert.deepStrictEqual(result.dimmed, [false, false, false, false]);
+});
+
+test('aggregateYears: 女優焦點 series 依 maker 分桶排序；year===null 進對應 maker 的 UNKNOWN 年', () => {
+    // Moodyz×2、SOD×2（同分名稱遞增 SOD < Moodyz？ 'Moodyz' < 'SOD' 字串序）
+    // 計數：SOD 3（含 1 筆 year null）、Moodyz 2 → SOD 先
+    const records = [
+        rec({ year: 2020, actresses: ['Alice'], maker: 'Moodyz' }),
+        rec({ year: 2020, actresses: ['Alice'], maker: 'Moodyz' }),
+        rec({ year: 2021, actresses: ['Alice'], maker: 'SOD' }),
+        rec({ year: 2021, actresses: ['Alice'], maker: 'SOD' }),
+        rec({ year: null, actresses: ['Alice'], maker: 'SOD' }),
+        // 另一女優不進 base
+        rec({ year: 2020, actresses: ['Bob'], maker: 'IdeaPocket' }),
+    ];
+    const result = aggregateYears(
+        records, { type: 'all' }, { type: 'actress', value: 'Alice' },
+    );
+    assert.deepStrictEqual(result.categories, ['2020', '2021', UNKNOWN_KEY]);
+    assert.equal(result.series.length, 2);
+    assert.equal(result.series[0].name, 'SOD');
+    assert.deepStrictEqual(result.series[0].data, [0, 2, 1]);
+    assert.equal(result.series[1].name, 'Moodyz');
+    assert.deepStrictEqual(result.series[1].data, [2, 0, 0]);
+    // 不得另開獨立 UNKNOWN series
+    assert.equal(result.series.some((s) => s.name === UNKNOWN_KEY), false);
+});
+
+test('aggregateYears: 女優焦點同分時依片商名稱字串遞增', () => {
+    const records = [
+        rec({ year: 2020, actresses: ['Alice'], maker: 'Zebra' }),
+        rec({ year: 2020, actresses: ['Alice'], maker: 'Apple' }),
+    ];
+    const result = aggregateYears(
+        records, { type: 'all' }, { type: 'actress', value: 'Alice' },
+    );
+    assert.deepStrictEqual(result.series.map((s) => s.name), ['Apple', 'Zebra']);
+});
+
+test('aggregateYears: dimmed 對 year 期間只有 String(Y) 為 false，其餘含 UNKNOWN 皆 true', () => {
+    const records = [
+        rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
+        rec({ year: 2021, actresses: ['Bob'], maker: 'SOD' }),
+        rec({ year: null, actresses: ['Carol'], maker: 'SOD' }),
+    ];
+    const allDimmed = aggregateYears(records, { type: 'all' }, null);
+    assert.deepStrictEqual(allDimmed.dimmed, [false, false, false]);
+
+    const yearDimmed = aggregateYears(records, { type: 'year', year: 2020 }, null);
+    assert.deepStrictEqual(yearDimmed.dimmed, [false, true, true]);
+    assert.equal(yearDimmed.categories[yearDimmed.categories.length - 1], UNKNOWN_KEY);
+});
+
+test('aggregateYears: maker 未知桶用 UNKNOWN_KEY，不產生顯示字串', () => {
+    const records = [
+        rec({ year: 2020, actresses: ['Alice'], maker: null }),
+        rec({ year: 2021, actresses: ['Alice'], maker: 'SOD' }),
+    ];
+    const result = aggregateYears(
+        records, { type: 'all' }, { type: 'actress', value: 'Alice' },
+    );
+    assert.equal(result.series.some((s) => s.name === UNKNOWN_KEY), true);
+    assert.equal(result.series.some((s) => s.name === 'SOD'), true);
+});
+
+// ── §4.2 wiring 15 格 checklist ──────────────────────────────────────
+
+test('§4.2 wiring: 5 卡群組 × 3 焦點 = 15 格 checklist', () => {
+    const M = 'SOD';
+    const A = 'Alice';
+    // 手算常數用的 fixture（含 id，方便集合比對）
+    // r1: 2020 Alice SOD
+    // r2: 2021 Alice+Bob Moodyz
+    // r3: 2022 Bob Moodyz
+    // r4: null Alice SOD
+    // r5: 2020 Carol IdeaPocket
+    const records = [
+        { id: 'r1', year: 2020, actresses: [A], maker: M },
+        { id: 'r2', year: 2021, actresses: [A, 'Bob'], maker: 'Moodyz' },
+        { id: 'r3', year: 2022, actresses: ['Bob'], maker: 'Moodyz' },
+        { id: 'r4', year: null, actresses: [A], maker: M },
+        { id: 'r5', year: 2020, actresses: ['Carol'], maker: 'IdeaPocket' },
+    ];
+    const period = { type: 'all' };
+    const focusM = { type: 'maker', value: M };
+    const focusA = { type: 'actress', value: A };
+    const idsOf = (list) => list.map((r) => r.id);
+
+    // 手算期望常數（不得由被測函式回填）
+    const IDS_PERIOD_ALL = ['r1', 'r2', 'r3', 'r4', 'r5'];
+    const IDS_SCOPE_MAKER = ['r1', 'r4'];
+    const IDS_SCOPE_ACTRESS = ['r1', 'r2', 'r4'];
+    const YEARS_NONE = {
+        categories: ['2020', '2021', '2022', UNKNOWN_KEY],
+        series: [{ name: null, data: [2, 1, 1, 1] }],
+        dimmed: [false, false, false, false],
+    };
+    // maker SOD base = r1(2020)+r4(null) → 只有 2020..2020 + UNKNOWN
+    const YEARS_MAKER = {
+        categories: ['2020', UNKNOWN_KEY],
+        series: [{ name: 'SOD', data: [1, 1] }],
+        dimmed: [false, false],
+    };
+    // actress Alice base = r1(SOD 2020)+r2(Moodyz 2021)+r4(SOD null)
+    // maker 計數 SOD=2 > Moodyz=1
+    const YEARS_ACTRESS = {
+        categories: ['2020', '2021', UNKNOWN_KEY],
+        series: [
+            { name: 'SOD', data: [1, 0, 1] },
+            { name: 'Moodyz', data: [0, 1, 0] },
+        ],
+        dimmed: [false, false, false],
+    };
+
+    // ── 年份（3）── 手算常數
+    assert.deepStrictEqual(aggregateYears(records, period, null), YEARS_NONE);
+    assert.deepStrictEqual(aggregateYears(records, period, focusM), YEARS_MAKER);
+    assert.deepStrictEqual(aggregateYears(records, period, focusA), YEARS_ACTRESS);
+
+    // ── 片商圓餅（3）──
+    // 無焦點 → periodRecords
+    assert.deepStrictEqual(idsOf(periodRecords(records, period)), IDS_PERIOD_ALL);
+    // 片商焦點 → periodRecords（期間全貌，忽略 focus）
+    assert.deepStrictEqual(idsOf(periodRecords(records, period)), IDS_PERIOD_ALL);
+    // 女優焦點 → scopeRecords(actress)
+    assert.deepStrictEqual(idsOf(scopeRecords(records, period, focusA)), IDS_SCOPE_ACTRESS);
+
+    // ── 女優 Top20（3）──
+    // 無焦點 → periodRecords
+    assert.deepStrictEqual(idsOf(periodRecords(records, period)), IDS_PERIOD_ALL);
+    // 片商焦點 → scopeRecords(maker)
+    assert.deepStrictEqual(idsOf(scopeRecords(records, period, focusM)), IDS_SCOPE_MAKER);
+    // 女優焦點 → periodRecords（期間全貌，忽略 focus）
+    assert.deepStrictEqual(idsOf(periodRecords(records, period)), IDS_PERIOD_ALL);
+
+    // ── 標籤／年齡／導演／系列（3）──
+    assert.deepStrictEqual(idsOf(periodRecords(records, period)), IDS_PERIOD_ALL);
+    assert.deepStrictEqual(idsOf(scopeRecords(records, period, focusM)), IDS_SCOPE_MAKER);
+    assert.deepStrictEqual(idsOf(scopeRecords(records, period, focusA)), IDS_SCOPE_ACTRESS);
+
+    // ── 年表／分布表（3）──
+    assert.deepStrictEqual(idsOf(periodRecords(records, period)), IDS_PERIOD_ALL);
+    assert.deepStrictEqual(idsOf(scopeRecords(records, period, focusM)), IDS_SCOPE_MAKER);
+    // 女優焦點 → periodRecords（期間全貌，忽略 focus）
+    assert.deepStrictEqual(idsOf(periodRecords(records, period)), IDS_PERIOD_ALL);
+
+    // 三個「期間全貌」格（片商圓餅×片商焦點、女優Top20×女優焦點、年表×女優焦點）：
+    // 卡片取用 periodRecords（不吃 focus）。三種焦點 UI 狀態下 id 集合皆＝手寫全庫常數；
+    // 有焦點時若誤改成 scopeRecords，會偏離 IDS_PERIOD_ALL。
+    for (const focus of [null, focusM, focusA]) {
+        const overviewIds = idsOf(periodRecords(records, period));
+        assert.deepStrictEqual(overviewIds, IDS_PERIOD_ALL);
+        if (focus !== null) {
+            assert.notDeepStrictEqual(
+                idsOf(scopeRecords(records, period, focus)),
+                IDS_PERIOD_ALL,
+            );
+        }
+    }
 });

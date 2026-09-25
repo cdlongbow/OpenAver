@@ -1,10 +1,14 @@
 /**
- * aggregate.js — 片庫分析聚合純函式（TASK-156b-T1）
+ * aggregate.js — 片庫分析聚合純函式（TASK-156b-T1 / T2）
  *
  * 純函式，零 window / Alpine / DOM。
- * 交付：setRecords / getRecords（模組級狀態骨架）＋
- * buildMakerColorSlots / buildMainMakerYearMap（CD-156-3）。
+ * T1：setRecords / getRecords / buildMakerColorSlots / buildMainMakerYearMap
+ * T2：periodRecords / scopeRecords / aggregateYears + UNKNOWN_KEY
  */
+
+/** 年份「未知」分類與片商「未知」桶的內部鍵；畫面顯示文字由 charts.js（T3）做 i18n 映射。 */
+export const UNKNOWN_KEY = '__unknown__';
+
 
 export var _records = [];
 
@@ -78,4 +82,148 @@ export function buildMainMakerYearMap(records) {
         });
     });
     return result;
+}
+
+/**
+ * 依 period 篩選紀錄。
+ * {type:'all'} 保留 year===null；{type:'year',year:N} 只留 year===N。
+ */
+export function periodRecords(records, period) {
+    if (period === undefined) period = { type: 'all' };
+    var list = records || [];
+    if (!period || period.type === 'all') return list.slice();
+    if (period.type === 'year') {
+        return list.filter(function (r) { return r.year === period.year; });
+    }
+    return list.slice();
+}
+
+/**
+ * period 篩選後再依 focus 過濾。focus===null 時等同 periodRecords。
+ */
+export function scopeRecords(records, period, focus) {
+    if (period === undefined) period = { type: 'all' };
+    if (focus === undefined) focus = null;
+    var base = periodRecords(records, period);
+    if (!focus) return base;
+    if (focus.type === 'actress') {
+        return base.filter(function (r) {
+            return (r.actresses || []).includes(focus.value);
+        });
+    }
+    if (focus.type === 'maker') {
+        return base.filter(function (r) { return r.maker === focus.value; });
+    }
+    return base;
+}
+
+function _yearRange(base) {
+    var years = [];
+    var hasNull = false;
+    base.forEach(function (r) {
+        if (r.year == null) { hasNull = true; return; }
+        years.push(r.year);
+    });
+    if (!years.length) return { years: [], hasNull: hasNull };
+    var minYear = Math.min.apply(null, years);
+    var maxYear = Math.max.apply(null, years);
+    var range = [];
+    for (let y = minYear; y <= maxYear; y++) { range.push(y); }
+    return { years: range, hasNull: hasNull };
+}
+
+function _buildDimmed(categories, period) {
+    if (!period || period.type === 'all') {
+        return categories.map(function () { return false; });
+    }
+    var target = String(period.year);
+    return categories.map(function (c) { return c !== target; });
+}
+
+/**
+ * 年份長條資料整形。基底永遠用 scopeRecords(records,{type:'all'},focus)；
+ * period 只影響 dimmed，不影響 series[].data 數值。
+ */
+export function aggregateYears(records, period, focus) {
+    if (period === undefined) period = { type: 'all' };
+    if (focus === undefined) focus = null;
+
+    const base = scopeRecords(records, { type: 'all' }, focus);
+
+    if (focus && focus.type === 'maker') {
+        if (!base.length) return { categories: [], series: [], dimmed: [] };
+        var makerRange = _yearRange(base);
+        var makerCats = makerRange.years.map(String);
+        if (makerRange.hasNull) makerCats = makerCats.concat([UNKNOWN_KEY]);
+        var makerCounts = {};
+        makerRange.years.forEach(function (y) { makerCounts[y] = 0; });
+        var makerUnknown = 0;
+        base.forEach(function (r) {
+            if (r.year == null) { makerUnknown += 1; return; }
+            makerCounts[r.year] = (makerCounts[r.year] || 0) + 1;
+        });
+        var makerData = makerRange.years.map(function (y) { return makerCounts[y] || 0; });
+        if (makerRange.hasNull) makerData = makerData.concat([makerUnknown]);
+        return {
+            categories: makerCats,
+            series: [{ name: focus.value, data: makerData }],
+            dimmed: _buildDimmed(makerCats, period),
+        };
+    }
+
+    if (focus && focus.type === 'actress') {
+        if (!base.length) return { categories: [], series: [], dimmed: [] };
+        var actRange = _yearRange(base);
+        var actCats = actRange.years.map(String);
+        if (actRange.hasNull) actCats = actCats.concat([UNKNOWN_KEY]);
+
+        var byYear = {};
+        actRange.years.forEach(function (y) { byYear[y] = {}; });
+        var makerTotals = {};
+        var unknownByMaker = {};
+        base.forEach(function (r) {
+            var mk = r.maker || UNKNOWN_KEY;
+            makerTotals[mk] = (makerTotals[mk] || 0) + 1;
+            if (r.year == null) {
+                unknownByMaker[mk] = (unknownByMaker[mk] || 0) + 1;
+                return;
+            }
+            if (!byYear[r.year]) byYear[r.year] = {};
+            byYear[r.year][mk] = (byYear[r.year][mk] || 0) + 1;
+        });
+        var makers = Object.keys(makerTotals);
+        makers.sort(function (a, b) {
+            return makerTotals[b] - makerTotals[a] || (a < b ? -1 : 1);
+        });
+        var actSeries = makers.map(function (mk) {
+            var data = actRange.years.map(function (y) {
+                return (byYear[y] && byYear[y][mk]) || 0;
+            });
+            if (actRange.hasNull) data = data.concat([unknownByMaker[mk] || 0]);
+            return { name: mk, data: data };
+        });
+        return {
+            categories: actCats,
+            series: actSeries,
+            dimmed: _buildDimmed(actCats, period),
+        };
+    }
+
+    // 無焦點：全庫 min..max + 尾端固定 UNKNOWN_KEY
+    var noneRange = _yearRange(base);
+    var noneCats = noneRange.years.map(String).concat([UNKNOWN_KEY]);
+    var noneCounts = {};
+    noneRange.years.forEach(function (y) { noneCounts[y] = 0; });
+    var noneUnknown = 0;
+    base.forEach(function (r) {
+        if (r.year == null) { noneUnknown += 1; return; }
+        noneCounts[r.year] = (noneCounts[r.year] || 0) + 1;
+    });
+    var noneData = noneRange.years.map(function (y) { return noneCounts[y] || 0; });
+    noneData = noneData.concat([noneUnknown]);
+    return {
+        categories: noneCats,
+        series: [{ name: null, data: noneData }],
+        dimmed: _buildDimmed(noneCats, period),
+    };
 }
