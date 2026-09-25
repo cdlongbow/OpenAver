@@ -290,19 +290,124 @@ class TestInsightsActressFavorites:
             assert value["auto_focal"] == ""
             assert value["crop_mode"] == "auto"
 
-    def test_favorite_without_birth_excluded_entirely(
+    def test_favorite_without_birth_included_with_null_birth(
         self, client, insights_setup, mocker
     ):
-        """birth 為 None／空字串的收藏女優整筆排除（不是塞 null）。"""
+        """birth 為 None／空字串的收藏女優仍整筆保留（不排除），birth 序列化為 null（不是 "" 或 0）。
+
+        比照燈箱 resolveFavoriteActressAge：actresses.find() 找到人就是找到人，
+        沒生日只是 computeActressAgeForVideo() 算不出年齡（回 null），不會把這個人從
+        清單裡拿掉——插畫女優本人（含她的照片）仍應存在，只是沒有生日可顯示。
+        """
         snap = _get_snapshot(client, mocker, insights_setup)
         body = snap.json()
         favs = body["actressFavorites"]
-        assert "無生日" not in favs
-        assert "空生日" not in favs
-        # 也沒有以她們為 key、value 為 null 的怪形狀
-        for key, value in favs.items():
-            assert value is not None
-            assert value.get("birth")
+        assert "無生日" in favs
+        assert favs["無生日"]["birth"] is None
+        assert favs["無生日"]["photoName"] == "無生日"
+        assert "空生日" in favs
+        assert favs["空生日"]["birth"] is None
+        assert favs["空生日"]["photoName"] == "空生日"
+
+    def test_favorite_group_first_wins_even_without_birth(
+        self, client, insights_setup, mocker
+    ):
+        """同組內字母序在前的收藏沒有生日、字母序在後的有生日 → 勝出仍是前者。
+
+        使用者情境：收藏了同一位女優的兩筆別名紀錄，較早（字母序較前）那筆還沒補生日；
+        依「標準排序，沒照片沒生日也只能不顯示」的裁決，分析頁不能退而求其次改採後面
+        那筆有生日的紀錄——那樣算出來的年齡是另一筆資料的生日，會與燈箱對不上。
+        """
+        actress_repo = ActressRepository(insights_setup["db_path"])
+        actress_repo.save(Actress(name="位一", birth=None))
+        actress_repo.save(Actress(name="位二", birth="1999-09-09"))
+        AliasRepository(insights_setup["db_path"]).add("群主二", aliases=["位一", "位二"])
+
+        snap = _get_snapshot(client, mocker, insights_setup)
+        body = snap.json()
+        fav = body["actressFavorites"]["群主二"]
+        assert fav["photoName"] == "位一"
+        assert fav["birth"] is None
+
+
+# ============ 別名比對大小寫（比照燈箱 nameToGroup 小寫 key） ============
+
+class TestInsightsAliasCaseInsensitive:
+    """別名比對要與燈箱（showcase _loadAliasMap/_loadTagAliasMap + resolveFavoriteActressAge）
+    同一套小寫 key 對法，不是逐字大小寫比對。"""
+
+    def test_actress_alias_lookup_is_case_insensitive(
+        self, client, insights_setup, mocker
+    ):
+        """影片存的女優名稱大小寫與別名 primary 不同（'alice' vs 'Alice'）→ 仍合併成 primary。"""
+        case_uri = to_file_uri(str(insights_setup["video_dir"] / "CASE-001.mp4"), {})
+        VideoRepository(insights_setup["db_path"]).upsert_batch([
+            Video(
+                path=case_uri,
+                number="CASE-001",
+                title="Case Insensitive",
+                actresses=["alice"],
+                release_date="2021-05-05",
+                duration=80,
+            )
+        ])
+        AliasRepository(insights_setup["db_path"]).add("Alice", aliases=[])
+
+        snap = _get_snapshot(client, mocker, insights_setup)
+        body = snap.json()
+        record = next(r for r in body["records"] if r.get("date") == "2021-05-05")
+        assert record["actresses"] == ["Alice"]
+
+    def test_favorite_differing_only_in_case_does_not_join_group(
+        self, client, insights_setup, mocker
+    ):
+        """組查找用小寫 key，但燈箱找收藏是 `group.indexOf(a.name)` 逐字比對：
+        別名組 ['Alice']、收藏名 'alice' → 燈箱對不上 → 快照也不得把她歸到 'Alice'。"""
+        ActressRepository(insights_setup["db_path"]).save(
+            Actress(name="alice", birth="1992-02-02")
+        )
+        AliasRepository(insights_setup["db_path"]).add("Alice", aliases=[])
+
+        snap = _get_snapshot(client, mocker, insights_setup)
+        body = snap.json()
+        assert "Alice" not in body["actressFavorites"]
+        assert body["actressFavorites"]["alice"]["photoName"] == "alice"
+
+    def test_favorite_exact_member_joins_group_via_case_insensitive_lookup(
+        self, client, insights_setup, mocker
+    ):
+        """收藏名逐字等於組員（別名 'ALICE'）→ 歸到 primary 'Alice'。"""
+        ActressRepository(insights_setup["db_path"]).save(
+            Actress(name="ALICE", birth="1992-02-02")
+        )
+        AliasRepository(insights_setup["db_path"]).add("Alice", aliases=["ALICE"])
+
+        snap = _get_snapshot(client, mocker, insights_setup)
+        body = snap.json()
+        assert body["actressFavorites"]["Alice"]["photoName"] == "ALICE"
+
+    def test_tag_alias_lookup_is_case_insensitive(
+        self, client, insights_setup, mocker
+    ):
+        """標籤別名比對同樣大小寫不敏感（比照 showcase _loadTagAliasMap）。"""
+        case_uri = to_file_uri(str(insights_setup["video_dir"] / "TAGCASE-001.mp4"), {})
+        VideoRepository(insights_setup["db_path"]).upsert_batch([
+            Video(
+                path=case_uri,
+                number="TAGCASE-001",
+                title="Tag Case Insensitive",
+                actresses=[],
+                release_date="2021-07-07",
+                tags=["hd"],
+                duration=70,
+            )
+        ])
+        TagAliasRepository(insights_setup["db_path"]).add("HD", aliases=[])
+
+        snap = _get_snapshot(client, mocker, insights_setup)
+        body = snap.json()
+        record = next(r for r in body["records"] if r.get("date") == "2021-07-07")
+        assert record["tags"] == ["HD"]
 
 
 # ============ ETag / 304 ============

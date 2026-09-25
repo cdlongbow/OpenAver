@@ -66,7 +66,13 @@ def _release_parts(raw: object) -> tuple[int | None, str | None, str | None]:
 
 
 def _build_alias_lookup(records) -> dict[str, tuple[str, list[str]]]:
-    """name -> (primary_name, names_list)；names_list = [primary] + aliases。"""
+    """name.lower() -> (primary_name, names_list)；names_list = [primary] + aliases。
+
+    key 一律小寫（`.lower()`，鏡射前端 `n.toLowerCase()`——
+    `web/static/js/pages/showcase/state-base.js` `_loadAliasMap`/`_loadTagAliasMap`
+    與 `web/static/js/shared/actress-release-age.js` `resolveFavoriteActressAge` 的
+    `nameToGroup` 比對慣例），value 內的 primary/別名字面維持原樣（顯示用）。
+    """
     lookup: dict[str, tuple[str, list[str]]] = {}
     for record in records:
         primary = str(record.primary_name or "").strip()
@@ -77,21 +83,21 @@ def _build_alias_lookup(records) -> dict[str, tuple[str, list[str]]]:
         ]
         names_list = [primary, *aliases]
         pair = (primary, names_list)
-        lookup[primary] = pair
+        lookup[primary.lower()] = pair
         for alias in aliases:
-            lookup[alias] = pair
+            lookup[alias.lower()] = pair
     return lookup
 
 
 def _canonical_list(values, lookup: dict[str, tuple[str, list[str]]]) -> list[str]:
-    """別名合併後去重，保留首次出現的 primary 順序。"""
+    """別名合併後去重，保留首次出現的 primary 順序（比對小寫 key，顯示用原樣 primary）。"""
     result: list[str] = []
     seen: set[str] = set()
     for raw in values or []:
         name = str(raw).strip()
         if not name:
             continue
-        primary, _ = lookup.get(name, (name, [name]))
+        primary, _ = lookup.get(name.lower(), (name, [name]))
         if primary in seen:
             continue
         seen.add(primary)
@@ -169,13 +175,16 @@ def get_insights_snapshot(request: Request):
 
         favorites_by_primary: dict[str, dict] = {}
         for a in ActressRepository(db_path).get_all():          # 已是 ORDER BY name
-            if not a.birth:
-                continue
-            primary, _ = actress_lookup.get(a.name, (a.name, [a.name]))
+            primary, names_list = actress_lookup.get(a.name.lower(), (a.name, [a.name]))
+            if a.name not in names_list:                   # 燈箱 group.indexOf(a.name) 是逐字比對，只差大小寫的收藏對不上組
+                primary = a.name
             if primary in favorites_by_primary:            # 同組已有更早（字母序更前）的收藏命中，跳過
                 continue
+            # first-wins：依標準排序（ORDER BY name）取同組第一個收藏，不論有無生日
+            # ——比照燈箱 resolveFavoriteActressAge：actresses.find() 只挑第一個，
+            # 沒生日就是不顯示年齡，不會退而求其次改選同組後面那個有生日的。
             favorites_by_primary[primary] = {
-                "birth": a.birth,
+                "birth": a.birth or None,
                 "photoName": a.name,
                 "auto_focal": a.auto_focal,
                 "crop_mode": a.crop_mode,
