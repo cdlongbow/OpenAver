@@ -58,13 +58,13 @@
                               @mouseenter="scheduleOpenPreview(focus.value, $el)"
                               @mouseleave="cancelOpenPreview()"
                               @click.stop="openPreview(focus.value, $el)">
-                            <template x-if="actressHasPhoto(focus.value)">
+                            <template x-if="actressHasPhoto(focus.value) && !photoFailed[focus.value]">
                                 <img :src="focusPhotoUrl()"
                                      alt=""
                                      loading="lazy"
-                                     @error="$el.style.display='none'; $el.parentNode.textContent = focusInitial()">
+                                     @error="markPhotoFailed(focus.value)">
                             </template>
-                            <template x-if="!actressHasPhoto(focus.value)">
+                            <template x-if="!actressHasPhoto(focus.value) || photoFailed[focus.value]">
                                 <span x-text="focusInitial()"></span>
                             </template>
                         </span>
@@ -136,13 +136,13 @@
                                   @click.stop="openPreview(row.name, $el)"
                                   @mouseenter="scheduleOpenPreview(row.name, $el)"
                                   @mouseleave="cancelOpenPreview()">
-                                <template x-if="actressHasPhoto(row.name)">
+                                <template x-if="actressHasPhoto(row.name) && !photoFailed[row.name]">
                                     <img :src="actressPhotoUrl(row.name)"
                                          alt=""
                                          loading="lazy"
-                                         @error="$el.style.display='none'; $el.parentNode.textContent = row.name.charAt(0)">
+                                         @error="markPhotoFailed(row.name)">
                                 </template>
-                                <template x-if="!actressHasPhoto(row.name)">
+                                <template x-if="!actressHasPhoto(row.name) || photoFailed[row.name]">
                                     <span x-text="row.name.charAt(0)"></span>
                                 </template>
                             </span>

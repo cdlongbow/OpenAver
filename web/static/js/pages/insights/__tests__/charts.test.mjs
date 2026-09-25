@@ -35,7 +35,29 @@ const {
     shouldAnimate,
     formatRgbaChannels,
     computeDonutStartAngle,
+    escapeHtml,
 } = await import('../charts.js');
+
+// ── escapeHtml（P3-1：tooltip renderMode:'html' 自訂 formatter XSS 修正）───
+
+test('escapeHtml: <img onerror> payload 被拆解，不再是可執行的標籤', () => {
+    const out = escapeHtml('<img src=x onerror="window.__xss=1">');
+    assert.equal(out, '&lt;img src=x onerror=&quot;window.__xss=1&quot;&gt;');
+    assert.ok(!out.includes('<img'));
+});
+
+test('escapeHtml: & 被 escape 成 &amp;（且不二次 escape 既有 entity 以外的字元）', () => {
+    assert.equal(escapeHtml('A & B'), 'A &amp; B');
+});
+
+test('escapeHtml: 雙引號與單引號分別 escape 成 &quot; / &#39;', () => {
+    assert.equal(escapeHtml(`"quoted" 'single'`), '&quot;quoted&quot; &#39;single&#39;');
+});
+
+test('escapeHtml: null/undefined 回傳空字串，不丟例外', () => {
+    assert.equal(escapeHtml(null), '');
+    assert.equal(escapeHtml(undefined), '');
+});
 
 // ── resolveYearBarColorMode ──────────────────────────────────────────
 

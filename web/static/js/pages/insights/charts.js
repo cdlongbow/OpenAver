@@ -145,6 +145,20 @@ function tKey(key, params) {
     return key;
 }
 
+/**
+ * ECharts tooltip 走 renderMode:'html'，自訂 formatter 回傳的字串會被當 innerHTML
+ * 插入（P3-1）；tag／片商名等來自本機資料，不可信任，插進 tooltip 前一律先過這支。
+ * 刻意的 `<br/>` 是呼叫端字面接的，不經過這支，不受影響。
+ */
+export function escapeHtml(str) {
+    return String(str == null ? '' : str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function labelForCategory(cat) {
     return cat === UNKNOWN_KEY ? tKey('insights.unknown') : cat;
 }
@@ -874,7 +888,7 @@ export function updateDonutChart(state) {
                             ? labelForDonutKey(d.name)
                             : labelForDonutKey(d.maker);
                     return (
-                        title +
+                        escapeHtml(title) +
                         '<br/>' +
                         (d.value || 0).toLocaleString('zh-Hant') +
                         '（' +
@@ -1082,7 +1096,7 @@ export function updateTagsChart(state) {
                 textStyle: { fontSize: 11 },
                 formatter: function (p) {
                     return tKey('insights.tags.tooltip', {
-                        name: p.name,
+                        name: escapeHtml(p.name),
                         count: (p.value || 0).toLocaleString('zh-Hant'),
                         pct: (p.data && p.data._pct) || '0%',
                     });

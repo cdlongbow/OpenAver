@@ -216,6 +216,9 @@ export function aggregateYears(records, period, focus) {
     }
 
     // 無焦點：全庫 min..max + 尾端固定 UNKNOWN_KEY
+    // P3-2：base 真的一筆都沒有時不得只剩單一 UNKNOWN_KEY 空格——比照上面 maker/actress
+    // 焦點分支已有的早退寫法，讓呼叫端的「沒有資料」分支正確接手。
+    if (!base.length) return { categories: [], series: [], dimmed: [] };
     var noneRange = _yearRange(base);
     var noneCats = noneRange.years.map(String).concat([UNKNOWN_KEY]);
     var noneCounts = {};

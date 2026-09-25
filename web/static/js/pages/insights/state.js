@@ -87,9 +87,18 @@ export function libraryInsightsState() {
         top20Rows: [],
         previewActress: null,
         previewAnchorRect: null,
+        // P3-3：以女優名為 key，記錄該人頭像照片曾經載入失敗——取代舊版
+        // @error 直接改寫 DOM textContent 的寫法（會把 x-if 錨點一併砍掉，
+        // Alpine 之後永遠無法再插回新內容）。焦點格與 Top20 共用同一份。
+        photoFailed: {},
 
         // 模板 @load / $watch 呼叫（同 showcase 揭露慣例）
         applyCellFocal,
+
+        markPhotoFailed(name) {
+            if (!name) return;
+            this.photoFailed[name] = true;
+        },
 
         recomputeScopedCount() {
             this.scopedCount = scopeRecords(
@@ -446,6 +455,9 @@ export function libraryInsightsState() {
                 setMainMakerYearMap(buildMainMakerYearMap(getRecords()));
                 this.snapshot = rest;
                 this.snapshotError = null;
+                // P3-3：新快照可能代表照片檔已落地（或 bfcache 還原後重試機會）；
+                // 舊的失敗記錄不該永久卡住，讓 x-if 有機會重新嘗試載入。
+                this.photoFailed = {};
                 this.recomputeScopedCount();
                 this.recomputeTop20();
 

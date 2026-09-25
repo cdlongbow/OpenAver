@@ -360,6 +360,11 @@ test('aggregateYears: 無焦點 series 長度 1、name null；categories=min..ma
     assert.deepStrictEqual(result.series[0].data, [1, 0, 1, 1]);
 });
 
+test('aggregateYears: 無焦點且全庫零筆記錄時回傳空 categories/series/dimmed（P3-2：不得只剩單一 UNKNOWN_KEY 空格）', () => {
+    const result = aggregateYears([], { type: 'all' }, null);
+    assert.deepStrictEqual(result, { categories: [], series: [], dimmed: [] });
+});
+
 test('aggregateYears: 片商焦點 base 空時回傳空 categories/series/dimmed', () => {
     const records = [
         rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
