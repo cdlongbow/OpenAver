@@ -23,16 +23,63 @@
                 <div class="insights-brand-actions"></div>
             </div>
         </section>
-        <section class="card">
+        <section class="card" id="tileCount">
             <div class="card-body">
-                <span x-text="totalCount">0</span>
+                <div x-show="snapshotError" class="insights-tile-error">
+                    <div class="insights-tile-value">—</div>
+                    <div class="insights-tile-error-msg" x-text="t('insights.snapshot_error')"></div>
+                </div>
+                <div x-show="!snapshotError" class="insights-big-number">
+                    <span class="insights-tile-value" x-text="Number(scopedCount).toLocaleString()"></span>
+                    <span class="insights-tile-unit" x-text="t('insights.unit')"></span>
+                </div>
             </div>
         </section>
-        <section class="card">
-            <div class="card-body" id="tileYear"></div>
+        <section class="card" id="tileYear">
+            <div class="card-body">
+                <div x-show="period && period.type === 'year'" class="insights-year-value">
+                    <span class="insights-tile-value" x-text="period.year"></span>
+                    <button type="button"
+                            class="insights-x-btn"
+                            :title="t('insights.clear_year')"
+                            @click="clearPeriod()">×</button>
+                </div>
+                <div x-show="!period || period.type !== 'year'"
+                     class="insights-muted-big"
+                     x-text="t('insights.all_years')"></div>
+            </div>
         </section>
-        <section class="card">
-            <div class="card-body" id="tileFocus"></div>
+        <section class="card" id="tileFocus">
+            <div class="card-body">
+                <div x-show="focus" class="insights-focus-row">
+                    <template x-if="focus && focus.type === 'actress'">
+                        <span class="insights-focus-avatar">
+                            <img :src="focusPhotoUrl()"
+                                 alt=""
+                                 loading="lazy"
+                                 @error="$el.style.display='none'; $el.parentNode.textContent = focusInitial()">
+                        </span>
+                    </template>
+                    <template x-if="focus && focus.type === 'maker'">
+                        <span class="insights-focus-avatar mk"
+                              :style="focusMakerColor() ? ('background:' + focusMakerColor()) : ''"></span>
+                    </template>
+                    <div class="insights-focus-main">
+                        <div class="insights-focus-type"
+                             x-text="focus && focus.type === 'actress' ? t('insights.focus_type_actress') : t('insights.focus_type_maker')"></div>
+                        <div class="insights-tile-value insights-focus-name"
+                             :title="focus && focus.value"
+                             x-text="focus && focus.value"></div>
+                    </div>
+                    <button type="button"
+                            class="insights-x-btn"
+                            :title="t('insights.clear_focus')"
+                            @click="clearFocus()">×</button>
+                </div>
+                <div x-show="!focus"
+                     class="insights-muted-big"
+                     x-text="t('insights.all_focus')"></div>
+            </div>
         </section>
     </div>
 
