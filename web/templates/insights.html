@@ -95,7 +95,10 @@
         </section>
         <section class="card donut-card">
             <div class="card-head">
-                <h2>{{ t('insights.row.makers') }}</h2>
+                <div class="donut-head-text">
+                    <h2 x-text="donutTitle()"></h2>
+                    <div class="donut-legend">{{ t('insights.donut.legend') }}</div>
+                </div>
             </div>
             <div class="card-body">
                 <div class="donut-chart-wrap"><div id="donutChart" class="echart"></div></div>

@@ -1,13 +1,17 @@
 /**
- * aggregate.js — 片庫分析聚合純函式（TASK-156b-T1 / T2）
+ * aggregate.js — 片庫分析聚合純函式（TASK-156b-T1 / T2 / T4）
  *
  * 純函式，零 window / Alpine / DOM。
  * T1：setRecords / getRecords / buildMakerColorSlots / buildMainMakerYearMap
  * T2：periodRecords / scopeRecords / aggregateYears + UNKNOWN_KEY
+ * T4：buildMakerDonutData / classifyRecordAgainstMainMaker + REST_KEY
  */
 
 /** 年份「未知」分類與片商「未知」桶的內部鍵；畫面顯示文字由 charts.js（T3）做 i18n 映射。 */
 export const UNKNOWN_KEY = '__unknown__';
+
+/** 具名片商排名太後面被歸併的內部鍵（與 UNKNOWN_KEY 語意不同，不可混用）。 */
+export const REST_KEY = '__rest__';
 
 
 export var _records = [];
@@ -226,4 +230,76 @@ export function aggregateYears(records, period, focus) {
         series: [{ name: null, data: noneData }],
         dimmed: _buildDimmed(noneCats, period),
     };
+}
+
+/**
+ * 片級分類：主要片商作品 / 其他作品 / 無法判定。
+ * 呼叫端保證 record.maker 已知且等於當前展開的具名片商。
+ */
+export function classifyRecordAgainstMainMaker(record, mainMakerYearMap) {
+    var actresses = (record && record.actresses) || [];
+    if (record.year == null || actresses.length === 0) return 'undetermined';
+    var isMain = actresses.some(function (n) {
+        return mainMakerYearMap[n + '|' + record.year] === record.maker;
+    });
+    return isMain ? 'main' : 'other';
+}
+
+/**
+ * 片商雙層圓餅資料。對傳入的 records 局部排名取前 8 名具名；
+ * 第 9 名以後併入 REST_KEY；maker null/空字串併入 UNKNOWN_KEY。
+ * 不呼叫 getRecords()／buildMakerColorSlots()。
+ */
+export function buildMakerDonutData(records, mainMakerYearMap) {
+    var list = records || [];
+    var total = list.length;
+    var counts = new Map();
+    var unknownCount = 0;
+    list.forEach(function (r) {
+        var mk = r && r.maker;
+        if (mk == null || mk === '') {
+            unknownCount += 1;
+            return;
+        }
+        counts.set(mk, (counts.get(mk) || 0) + 1);
+    });
+    var named = Array.from(counts.entries());
+    named.sort(function (a, b) { return b[1] - a[1] || (a[0] < b[0] ? -1 : 1); });
+    var top = named.slice(0, 8);
+    var restCount = named.slice(8).reduce(function (s, e) { return s + e[1]; }, 0);
+
+    var inner = top.map(function (e) {
+        return { name: e[0], value: e[1], kind: 'named' };
+    });
+    inner.push({ name: REST_KEY, value: restCount, kind: 'rest' });
+    inner.push({ name: UNKNOWN_KEY, value: unknownCount, kind: 'unknown' });
+
+    var outer = [];
+    var map = mainMakerYearMap || {};
+    top.forEach(function (e) {
+        var mkName = e[0];
+        var cnt = { main: 0, other: 0, undetermined: 0 };
+        list.forEach(function (r) {
+            if (!r || r.maker !== mkName) return;
+            var cls = classifyRecordAgainstMainMaker(r, map);
+            cnt[cls] += 1;
+        });
+        if (cnt.main) {
+            outer.push({ maker: mkName, value: cnt.main, kind: 'main' });
+        }
+        if (cnt.other) {
+            outer.push({ maker: mkName, value: cnt.other, kind: 'other' });
+        }
+        if (cnt.undetermined) {
+            outer.push({ maker: mkName, value: cnt.undetermined, kind: 'undetermined' });
+        }
+    });
+    if (restCount) {
+        outer.push({ maker: REST_KEY, value: restCount, kind: 'rest' });
+    }
+    if (unknownCount) {
+        outer.push({ maker: UNKNOWN_KEY, value: unknownCount, kind: 'unknown' });
+    }
+
+    return { total: total, inner: inner, outer: outer };
 }

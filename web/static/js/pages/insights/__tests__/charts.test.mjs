@@ -34,6 +34,7 @@ const {
     resolveYearBarColorMode,
     shouldAnimate,
     formatRgbaChannels,
+    computeDonutStartAngle,
 } = await import('../charts.js');
 
 // ── resolveYearBarColorMode ──────────────────────────────────────────
@@ -77,5 +78,39 @@ test('formatRgbaChannels: a<255 時回傳 rgba()，alpha 為 a/255', () => {
     assert.equal(
         formatRgbaChannels(10, 20, 30, 128),
         'rgba(10, 20, 30, ' + (128 / 255) + ')',
+    );
+});
+
+// ── computeDonutStartAngle（TASK-156b-T4）────────────────────────────
+
+test('computeDonutStartAngle: 目標片商存在 → 該扇形中點置於正上方（90°）', () => {
+    // values 25+25+50；目標第二塊：sum_before=25, half=12.5 → offset=37.5°
+    // startAngle = 90 + 360 * 37.5/100 = 90 + 135 = 225
+    const inner = [
+        { name: 'A', value: 25 },
+        { name: 'B', value: 25 },
+        { name: 'C', value: 50 },
+    ];
+    assert.equal(computeDonutStartAngle(inner, 'B'), 225);
+});
+
+test('computeDonutStartAngle: 目標為 null → 回傳預設 90（原位）', () => {
+    const inner = [
+        { name: 'A', value: 10 },
+        { name: 'B', value: 20 },
+    ];
+    assert.equal(computeDonutStartAngle(inner, null), 90);
+});
+
+test('computeDonutStartAngle: 目標不在 inner／total===0 → 回傳預設 90', () => {
+    const inner = [
+        { name: 'A', value: 10 },
+        { name: 'B', value: 20 },
+    ];
+    assert.equal(computeDonutStartAngle(inner, 'Z'), 90);
+    assert.equal(computeDonutStartAngle([], 'A'), 90);
+    assert.equal(
+        computeDonutStartAngle([{ name: 'A', value: 0 }, { name: 'B', value: 0 }], 'A'),
+        90,
     );
 });

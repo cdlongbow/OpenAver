@@ -17,6 +17,9 @@ const {
     scopeRecords,
     aggregateYears,
     UNKNOWN_KEY,
+    REST_KEY,
+    buildMakerDonutData,
+    classifyRecordAgainstMainMaker,
 } = agg;
 
 function rec(opts) {
@@ -541,4 +544,174 @@ test('§4.2 wiring: 5 卡群組 × 3 焦點 = 15 格 checklist', () => {
             );
         }
     }
+});
+
+// ── TASK-156b-T4: buildMakerDonutData / classifyRecordAgainstMainMaker ──
+
+test('buildMakerDonutData: 局部第 9 名（含）以後併入 REST_KEY，不個別列名', () => {
+    // 10 家具名片商計數 10..1；局部前 8 具名，第 9／10 名併入 REST
+    const makers = [
+        'M10', 'M09', 'M08', 'M07', 'M06', 'M05', 'M04', 'M03', 'M02', 'M01',
+    ];
+    const records = [];
+    makers.forEach((name, i) => {
+        const count = 10 - i;
+        for (let n = 0; n < count; n++) {
+            records.push(rec({ maker: name, actresses: [`A${i}-${n}`], year: 2020 }));
+        }
+    });
+    const result = buildMakerDonutData(records, {});
+    const named = result.inner.filter((e) => e.kind === 'named');
+    assert.equal(named.length, 8);
+    assert.deepStrictEqual(
+        named.map((e) => e.name),
+        ['M10', 'M09', 'M08', 'M07', 'M06', 'M05', 'M04', 'M03'],
+    );
+    const rest = result.inner.find((e) => e.kind === 'rest');
+    assert.ok(rest);
+    assert.equal(rest.name, REST_KEY);
+    // M02 count=2 + M01 count=1
+    assert.equal(rest.value, 3);
+    assert.equal(
+        result.inner.some((e) => e.name === 'M02' || e.name === 'M01'),
+        false,
+    );
+});
+
+test('buildMakerDonutData: maker 為 null/空字串的紀錄全部併入 UNKNOWN_KEY', () => {
+    const records = [
+        rec({ maker: 'SOD', year: 2020 }),
+        rec({ maker: null, year: 2020 }),
+        rec({ maker: '', year: 2021 }),
+        rec({ maker: null, year: 2022 }),
+    ];
+    const result = buildMakerDonutData(records, {});
+    const unknown = result.inner.find((e) => e.kind === 'unknown');
+    assert.ok(unknown);
+    assert.equal(unknown.name, UNKNOWN_KEY);
+    assert.equal(unknown.value, 3);
+    const named = result.inner.filter((e) => e.kind === 'named');
+    assert.equal(named.length, 1);
+    assert.equal(named[0].name, 'SOD');
+    assert.equal(named[0].value, 1);
+});
+
+test('buildMakerDonutData: inner 三部分 value 總和恆等於 total（REST/UNKNOWN 為 0 仍各佔一筆）', () => {
+    const records = [
+        rec({ maker: 'SOD', year: 2020 }),
+        rec({ maker: 'Moodyz', year: 2021 }),
+    ];
+    const result = buildMakerDonutData(records, {});
+    assert.equal(result.total, 2);
+    assert.equal(result.inner.length, 4); // 2 named + rest + unknown
+    const rest = result.inner.find((e) => e.kind === 'rest');
+    const unknown = result.inner.find((e) => e.kind === 'unknown');
+    assert.ok(rest);
+    assert.ok(unknown);
+    assert.equal(rest.value, 0);
+    assert.equal(unknown.value, 0);
+    const sum = result.inner.reduce((s, e) => s + e.value, 0);
+    assert.equal(sum, result.total);
+});
+
+test('buildMakerDonutData: outer 只對具名前 8 名分類；零計數桶不輸出；REST/UNKNOWN 不細分', () => {
+    // SOD: 2 main + 1 other + 1 undetermined；Moodyz: 1 other only
+    const map = {
+        'Alice|2020': 'SOD',
+        'Alice|2021': 'SOD',
+    };
+    const records = [
+        rec({ maker: 'SOD', year: 2020, actresses: ['Alice'] }), // main
+        rec({ maker: 'SOD', year: 2021, actresses: ['Alice'] }), // main
+        rec({ maker: 'SOD', year: 2022, actresses: ['Alice'] }), // other (no map hit)
+        rec({ maker: 'SOD', year: null, actresses: ['Alice'] }), // undetermined
+        rec({ maker: 'Moodyz', year: 2020, actresses: ['Bob'] }), // other
+        rec({ maker: null, year: 2020, actresses: ['Carol'] }), // unknown
+        // rest makers to force a rest bucket
+        rec({ maker: 'R9', year: 2020 }),
+    ];
+    // Pad 7 more makers so R9 is 9th → REST (SOD, Moodyz + 7 pad + R9 = 10 named)
+    for (let i = 1; i <= 7; i++) {
+        for (let n = 0; n < 3; n++) {
+            records.push(rec({ maker: `Pad${i}`, year: 2020, actresses: [`P${i}-${n}`] }));
+        }
+    }
+    // counts: Pad1..7 = 3 each, SOD = 4, Moodyz = 1, R9 = 1 → top8 = Pads + SOD (Moodyz+R9 → rest)
+    const result = buildMakerDonutData(records, map);
+    const namedNames = result.inner
+        .filter((e) => e.kind === 'named')
+        .map((e) => e.name);
+    assert.equal(namedNames.length, 8);
+    assert.equal(namedNames.includes('SOD'), true);
+    assert.equal(namedNames.includes('Moodyz'), false);
+    assert.equal(namedNames.includes('R9'), false);
+
+    // outer for SOD: main/other/undetermined all non-zero
+    const sodOuter = result.outer.filter((e) => e.maker === 'SOD');
+    assert.deepStrictEqual(
+        sodOuter.map((e) => e.kind).sort(),
+        ['main', 'other', 'undetermined'],
+    );
+    assert.equal(sodOuter.find((e) => e.kind === 'main').value, 2);
+    assert.equal(sodOuter.find((e) => e.kind === 'other').value, 1);
+    assert.equal(sodOuter.find((e) => e.kind === 'undetermined').value, 1);
+
+    // Moodyz not in top8 → no per-maker outer rows
+    assert.equal(result.outer.some((e) => e.maker === 'Moodyz'), false);
+
+    // REST / UNKNOWN: one undivided row each (value > 0)
+    const restOuter = result.outer.filter((e) => e.kind === 'rest');
+    const unkOuter = result.outer.filter((e) => e.kind === 'unknown');
+    assert.equal(restOuter.length, 1);
+    assert.equal(restOuter[0].maker, REST_KEY);
+    assert.equal(restOuter[0].value, result.inner.find((e) => e.kind === 'rest').value);
+    assert.equal(unkOuter.length, 1);
+    assert.equal(unkOuter[0].maker, UNKNOWN_KEY);
+    assert.equal(unkOuter[0].value, 1);
+});
+
+test('classifyRecordAgainstMainMaker: year==null 時即使其他年命中仍為 undetermined', () => {
+    const map = { 'Alice|2020': 'SOD' };
+    const got = classifyRecordAgainstMainMaker(
+        rec({ maker: 'SOD', year: null, actresses: ['Alice'] }),
+        map,
+    );
+    assert.equal(got, 'undetermined');
+});
+
+test('classifyRecordAgainstMainMaker: 多人片任一人命中即為 main', () => {
+    const map = { 'Alice|2020': 'SOD' };
+    const got = classifyRecordAgainstMainMaker(
+        rec({ maker: 'SOD', year: 2020, actresses: ['Bob', 'Alice', 'Carol'] }),
+        map,
+    );
+    assert.equal(got, 'main');
+});
+
+test('classifyRecordAgainstMainMaker: 主要片商年命中時分類為 main（主要片商作品），不誤判為 other', () => {
+    const map = { 'Alice|2020': 'SOD' };
+    assert.equal(
+        classifyRecordAgainstMainMaker(
+            rec({ maker: 'SOD', year: 2020, actresses: ['Alice'] }),
+            map,
+        ),
+        'main',
+    );
+    assert.equal(
+        classifyRecordAgainstMainMaker(
+            rec({ maker: 'SOD', year: 2021, actresses: ['Alice'] }),
+            map,
+        ),
+        'other',
+    );
+});
+
+test('classifyRecordAgainstMainMaker: actresses 為空 → undetermined', () => {
+    assert.equal(
+        classifyRecordAgainstMainMaker(
+            rec({ maker: 'SOD', year: 2020, actresses: [] }),
+            { 'Alice|2020': 'SOD' },
+        ),
+        'undetermined',
+    );
 });

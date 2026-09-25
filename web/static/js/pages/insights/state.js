@@ -11,14 +11,20 @@ import {
     getRecords,
     scopeRecords,
     buildMakerColorSlots,
+    buildMainMakerYearMap,
 } from './aggregate.js';
 import {
     setMakerColorSlots,
+    setMainMakerYearMap,
     initYearsChart,
     updateYearsChart,
+    initDonutChart,
+    updateDonutChart,
     disposeAll,
     areChartsAlive,
     reinitYearsAfterDispose,
+    reinitDonutAfterDispose,
+    getDonutChart,
     resizeAll,
     colorForMakerName,
 } from './charts.js';
@@ -53,6 +59,10 @@ export function libraryInsightsState() {
             updateYearsChart({ period: this.period, focus: this.focus });
         },
 
+        redrawDonut() {
+            updateDonutChart({ period: this.period, focus: this.focus });
+        },
+
         clearPeriod() {
             // 只改 reactive 欄位；$watch('period') 是唯一重繪入口
             this.period = { type: 'all' };
@@ -60,6 +70,27 @@ export function libraryInsightsState() {
 
         clearFocus() {
             this.focus = null;
+        },
+
+        /**
+         * D156-12：片商焦點時標題後綴＝期間標籤（全庫／該年）；其餘不加後綴。
+         */
+        donutTitle() {
+            const base =
+                typeof window !== 'undefined' && typeof window.t === 'function'
+                    ? window.t('insights.row.makers')
+                    : 'insights.row.makers';
+            if (!this.focus || this.focus.type !== 'maker') return base;
+            let periodLabel;
+            if (this.period && this.period.type === 'year') {
+                periodLabel = String(this.period.year);
+            } else {
+                periodLabel =
+                    typeof window !== 'undefined' && typeof window.t === 'function'
+                        ? window.t('insights.donut.library_wide')
+                        : 'insights.donut.library_wide';
+            }
+            return base + ' · ' + periodLabel;
         },
 
         focusPhotoUrl() {
@@ -92,6 +123,18 @@ export function libraryInsightsState() {
             };
         },
 
+        _donutCallbacks() {
+            const self = this;
+            return {
+                getPeriod: () => self.period,
+                getFocus: () => self.focus,
+                setFocus: (next) => {
+                    // $watch('focus') 是唯一重繪入口
+                    self.focus = next;
+                },
+            };
+        },
+
         _onPageShow(event) {
             if (!event || event.persisted !== true) return;
             // 快照失敗時從未建圖——不要在 bfcache 還原時建空圖表
@@ -105,6 +148,18 @@ export function libraryInsightsState() {
                     if (!areChartsAlive()) {
                         initYearsChart(el, this._yearsCallbacks());
                         updateYearsChart({
+                            period: this.period,
+                            focus: this.focus,
+                        });
+                    }
+                }
+                const donutEl = document.getElementById('donutChart');
+                if (donutEl) {
+                    reinitDonutAfterDispose();
+                    const donut = getDonutChart();
+                    if (!donut || donut.isDisposed()) {
+                        initDonutChart(donutEl, this._donutCallbacks());
+                        updateDonutChart({
                             period: this.period,
                             focus: this.focus,
                         });
@@ -136,10 +191,12 @@ export function libraryInsightsState() {
             this.$watch('period', () => {
                 this.recomputeScopedCount();
                 this.redrawYears();
+                this.redrawDonut();
             });
             this.$watch('focus', () => {
                 this.recomputeScopedCount();
                 this.redrawYears();
+                this.redrawDonut();
             });
 
             if (window.__registerPage) {
@@ -169,6 +226,7 @@ export function libraryInsightsState() {
 
                 setRecords(records);
                 setMakerColorSlots(buildMakerColorSlots(getRecords()));
+                setMainMakerYearMap(buildMainMakerYearMap(getRecords()));
                 this.snapshot = rest;
                 this.snapshotError = null;
                 this.recomputeScopedCount();
@@ -177,6 +235,14 @@ export function libraryInsightsState() {
                 if (el) {
                     initYearsChart(el, this._yearsCallbacks());
                     updateYearsChart({
+                        period: this.period,
+                        focus: this.focus,
+                    });
+                }
+                const donutEl = document.getElementById('donutChart');
+                if (donutEl) {
+                    initDonutChart(donutEl, this._donutCallbacks());
+                    updateDonutChart({
                         period: this.period,
                         focus: this.focus,
                     });

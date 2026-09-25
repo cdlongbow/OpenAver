@@ -1640,6 +1640,12 @@
       "gantt": "主要片商年表",
       "actress_distribution": "女優片商分布",
       "costar": "與她同片"
+    },
+    "donut": {
+      "legend": "內圈 片商占比 · 外圈 主要片商作品／其他作品",
+      "other": "其他",
+      "unknown": "未知",
+      "library_wide": "全庫"
     }
   }
 }
