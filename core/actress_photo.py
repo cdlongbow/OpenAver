@@ -13,6 +13,7 @@ from collections import OrderedDict
 
 from core.atomic_write import atomic_write
 from core.data_root import get_data_root
+from core.database.version_tracker import bump_showcase_revision
 from core.image_host_policy import download_hosts_for
 from core.logger import get_logger
 from core.organizer import sanitize_filename
@@ -174,6 +175,10 @@ def download_actress_photo(name: str, photo_url: str, photo_source: str) -> bool
                 )
 
         logger.info("[actress_photo] 下載完成：%s", final_path)
+        # 純檔案 I/O，不經過 DB commit → 不會自動 bump revision（PR#207 Codex P2）。
+        # 手動 bump，讓依賴 get_showcase_revision() 的 ETag（如 insights.py hasPhoto）
+        # 對得上這次落地的照片檔。
+        bump_showcase_revision()
         return True
 
     except Exception as e:
@@ -233,8 +238,15 @@ def delete_local_photo(name: str) -> bool:
     """
     try:
         safe_name = sanitize_filename(name)
+        deleted_any = False
         for file in GFRIENDS_DIR.glob(f"{safe_name}.*"):
             file.unlink()
+            deleted_any = True
+        if deleted_any:
+            # 同上：純檔案 I/O，手動 bump 讓 ETag 對得上刪除後的檔案狀態（PR#207
+            # Codex P2）。只在真的刪到東西時才 bump——無檔可刪的 idempotent no-op
+            # 不算「變動」，不必多耗一次 ETag 失效。
+            bump_showcase_revision()
         return True
     except Exception as e:
         logger.warning(f"[actress_photo] 刪除失敗 ({name}): {e}")

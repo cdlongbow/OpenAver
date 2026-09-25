@@ -587,6 +587,44 @@ class TestInsightsSnapshotETag:
         makers = {r.get("maker") for r in second.json()["records"]}
         assert "Outside Maker" in makers
 
+    def test_reverse_etag_actress_photo_written_between_requests_returns_200(
+        self, client, insights_setup, mocker, tmp_path
+    ):
+        """反向 ETag 缺口（Codex P2, PR#207）：add_favorite 先 repo.save 落地收藏
+        （web/routers/actress.py:287）、才下載／寫入照片檔（:310-312，純檔案 I/O，
+        不經 DB commit）。若快照剛好夾在兩者之間被抓到舊 ETag，之後即使照片已經
+        落地，沒有 bump_showcase_revision() 的話同一個 revision/db_fingerprint 會
+        讓伺服器誤回 304，前端沿用舊的 hasPhoto=False，預覽格被壓掉直到不相干的
+        DB 寫入才會更新。這裡直接呼叫落地出口 `_write_actress_photo`（與
+        `download_actress_photo` 共用同一套「寫檔成功後手動 bump」邏輯），在兩次
+        GET 之間真的把照片檔案寫進 GFRIENDS_DIR，驗證 bump 真的生效。
+
+        修前紅（未呼叫 bump_showcase_revision 時）：
+            assert second.status_code == 200
+        AssertionError: assert 304 == 200
+        """
+        gfriends_dir = tmp_path / "gfriends"
+        gfriends_dir.mkdir()
+        mocker.patch("core.actress_photo.GFRIENDS_DIR", gfriends_dir)
+        mocker.patch("web.routers.actress.GFRIENDS_DIR", gfriends_dir)
+
+        first = _get_snapshot(client, mocker, insights_setup)
+        assert first.status_code == 200
+        etag = first.headers["etag"]
+        assert first.json()["actressFavorites"]["新名"]["hasPhoto"] is False
+
+        from web.routers.actress import _write_actress_photo
+        _write_actress_photo("舊名", b"fake-jpeg-bytes", ".jpg")
+
+        second = _get_snapshot(client, mocker, insights_setup, if_none_match=etag)
+        assert second.status_code == 200, (
+            "照片檔已經落地但只帶 If-None-Match 卻回 304——使用者剛收藏完、照片其實"
+            "已經下載好了，片庫分析頁的預覽格卻仍顯示壓字版，要等到不相干的 DB 寫入"
+            "才會意外更新"
+        )
+        assert second.headers["etag"] != etag
+        assert second.json()["actressFavorites"]["新名"]["hasPhoto"] is True
+
     def test_empty_db_returns_shell_without_etag(
         self, client, insights_setup, mocker, tmp_path
     ):
