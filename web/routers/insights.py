@@ -26,6 +26,7 @@ from core.database.version_tracker import (
     get_showcase_revision,
 )
 from core.path_utils import is_path_under_dir, uri_to_local_fs_path
+from core.actress_photo import get_local_photo_path
 from core.logger import get_logger
 from core.config import (
     load_config,
@@ -246,9 +247,15 @@ def get_insights_snapshot(request: Request):
             # first-wins：依標準排序（ORDER BY name）取同組第一個收藏，不論有無生日
             # ——比照燈箱 resolveFavoriteActressAge：actresses.find() 只挑第一個，
             # 沒生日就是不顯示年齡，不會退而求其次改選同組後面那個有生日的。
+            # hasPhoto：收藏存在不代表本機有照片檔（來源沒圖／下載失敗時 add_favorite
+            # 仍會先 repo.save 落地收藏，見 web/routers/actress.py 的 favorite 流程）；
+            # 沿用 _actress_to_response 同一支 get_local_photo_path 判斷式（單一真理來源），
+            # 不自己拼路徑。每次照片變動的端點都伴隨一次 repo.save（bump revision），
+            # 故此欄位不會讓 ETag 對不上實際檔案狀態。
             favorites_by_primary[primary] = {
                 "birth": a.birth or None,
                 "photoName": a.name,
+                "hasPhoto": get_local_photo_path(a.name) is not None,
                 "auto_focal": a.auto_focal,
                 "crop_mode": a.crop_mode,
             }

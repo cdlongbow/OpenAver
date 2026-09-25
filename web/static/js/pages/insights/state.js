@@ -39,6 +39,9 @@ import { applyCellFocal } from '../../shared/focal-cell.js';
 let _pageshowBound = false;
 let _pageAlive = false;
 let _previewTimer = null;
+// bfcache 還原時可能重啟一次新的 fetch（見 _onPageShow）；離頁前的舊 fetch若晚
+// 回來，token 比對讓它被丟棄，不會蓋掉新那次的結果（排序優先於旗標守衛）。
+let _loadToken = 0;
 
 /** 預覽浮層實測尺寸（160 寬照片 + 名字列）；與 .insights-preview CSS 對齊。 */
 const PREVIEW_POPUP = { width: 160, height: 224 };
@@ -141,8 +144,13 @@ export function libraryInsightsState() {
         },
 
         _hasPreviewPhoto(name) {
+            // 收藏存在不代表本機有照片檔（來源沒圖／下載失敗時收藏仍會落地，
+            // 見 web/routers/insights.py favorites_by_primary 的 hasPhoto 計算）；
+            // spec §3.4.1「只有收藏女優有照片；沒照片的人只顯示首字，不出現預覽」
+            // 要看後端算好的 hasPhoto，不能只看「是不是收藏」。
             const favs = this.snapshot && this.snapshot.actressFavorites;
-            return !!(favs && name && favs[name]);
+            const fav = favs && name && favs[name];
+            return !!(fav && fav.hasPhoto);
         },
 
         openPreview(name, anchorEl) {
@@ -240,6 +248,18 @@ export function libraryInsightsState() {
 
         actressHasPhoto(name) {
             return this._hasPreviewPhoto(name);
+        },
+
+        /**
+         * spec §3.1 片數格：主數字下方小字「全庫 N 部」——固定用 logicalTitles
+         * （全庫邏輯片數，不隨 period／focus 縮），不是 scopedCount。
+         */
+        totalCountLabel() {
+            const n = this.snapshot ? this.snapshot.logicalTitles : 0;
+            const nStr = Number(n).toLocaleString();
+            return typeof window !== 'undefined' && typeof window.t === 'function'
+                ? window.t('insights.total_count', { n: nStr })
+                : 'insights.total_count';
         },
 
         clearPeriod() {
@@ -347,6 +367,14 @@ export function libraryInsightsState() {
             if (!event || event.persisted !== true) return;
             // 快照失敗時從未建圖——不要在 bfcache 還原時建空圖表
             if (this.snapshotError) return;
+            // Finding 2：離頁前快照尚未載完（fetch 仍在飛）時，cleanup 已把
+            // _pageAlive 設 false，該次回應會被 _loadSnapshot 丟棄——bfcache 還原
+            // 回這頁不會自動重跑 init()，此時 this.snapshot 仍是 null 且非
+            // snapshotError，要在這裡重新發起一次載入，否則永遠停在空畫面。
+            if (this.snapshot === null) {
+                _pageAlive = true;
+                return this._loadSnapshot();
+            }
             if (!areChartsAlive()) {
                 const el = document.getElementById('yearsChart');
                 if (el) {
@@ -387,6 +415,69 @@ export function libraryInsightsState() {
                 }
             } else {
                 resizeAll();
+            }
+        },
+
+        /**
+         * 抓快照＋建圖，供 init() 首次載入與 _onPageShow() bfcache 還原後重載共用。
+         * token 是這次呼叫的序號；resolve 時序號被後一次呼叫蓋過（或 _pageAlive
+         * 已被 cleanup 設 false）就丟棄，不寫入 this.*（Finding 2 的競態修法）。
+         */
+        async _loadSnapshot() {
+            const token = ++_loadToken;
+            try {
+                const resp = await fetch('/api/insights/snapshot');
+                if (!_pageAlive || token !== _loadToken) return;
+                if (!resp.ok) {
+                    this.snapshotError = true;
+                    this.snapshot = null;
+                    this.scopedCount = 0;
+                    return;
+                }
+                const data = await resp.json();
+                if (!_pageAlive || token !== _loadToken) return;
+
+                const records = data.records || [];
+                const rest = { ...data };
+                delete rest.records;
+
+                setRecords(records);
+                setMakerColorSlots(buildMakerColorSlots(getRecords()));
+                setMainMakerYearMap(buildMainMakerYearMap(getRecords()));
+                this.snapshot = rest;
+                this.snapshotError = null;
+                this.recomputeScopedCount();
+                this.recomputeTop20();
+
+                const el = document.getElementById('yearsChart');
+                if (el) {
+                    initYearsChart(el, this._yearsCallbacks());
+                    updateYearsChart({
+                        period: this.period,
+                        focus: this.focus,
+                    });
+                }
+                const donutEl = document.getElementById('donutChart');
+                if (donutEl) {
+                    initDonutChart(donutEl, this._donutCallbacks());
+                    updateDonutChart({
+                        period: this.period,
+                        focus: this.focus,
+                    });
+                }
+                const tagsEl = document.getElementById('tagsChart');
+                if (tagsEl) {
+                    initTagsChart(tagsEl, this._tagsCallbacks());
+                    updateTagsChart({
+                        period: this.period,
+                        focus: this.focus,
+                    });
+                }
+            } catch {
+                if (!_pageAlive || token !== _loadToken) return;
+                this.snapshotError = true;
+                this.snapshot = null;
+                this.scopedCount = 0;
             }
         },
 
@@ -432,60 +523,7 @@ export function libraryInsightsState() {
                 });
             }
 
-            try {
-                const resp = await fetch('/api/insights/snapshot');
-                if (!_pageAlive) return;
-                if (!resp.ok) {
-                    this.snapshotError = true;
-                    this.snapshot = null;
-                    this.scopedCount = 0;
-                    return;
-                }
-                const data = await resp.json();
-                if (!_pageAlive) return;
-
-                const records = data.records || [];
-                const rest = { ...data };
-                delete rest.records;
-
-                setRecords(records);
-                setMakerColorSlots(buildMakerColorSlots(getRecords()));
-                setMainMakerYearMap(buildMainMakerYearMap(getRecords()));
-                this.snapshot = rest;
-                this.snapshotError = null;
-                this.recomputeScopedCount();
-                this.recomputeTop20();
-
-                const el = document.getElementById('yearsChart');
-                if (el) {
-                    initYearsChart(el, this._yearsCallbacks());
-                    updateYearsChart({
-                        period: this.period,
-                        focus: this.focus,
-                    });
-                }
-                const donutEl = document.getElementById('donutChart');
-                if (donutEl) {
-                    initDonutChart(donutEl, this._donutCallbacks());
-                    updateDonutChart({
-                        period: this.period,
-                        focus: this.focus,
-                    });
-                }
-                const tagsEl = document.getElementById('tagsChart');
-                if (tagsEl) {
-                    initTagsChart(tagsEl, this._tagsCallbacks());
-                    updateTagsChart({
-                        period: this.period,
-                        focus: this.focus,
-                    });
-                }
-            } catch {
-                if (!_pageAlive) return;
-                this.snapshotError = true;
-                this.snapshot = null;
-                this.scopedCount = 0;
-            }
+            await this._loadSnapshot();
         },
     };
 }

@@ -277,10 +277,11 @@ class TestInsightsActressFavorites:
     def test_actress_favorites_value_key_whitelist_exact(
         self, client, insights_setup, mocker
     ):
-        """每個 value 的 key 集合逐字等於 {birth, photoName, auto_focal, crop_mode}。"""
+        """每個 value 的 key 集合逐字等於 {birth, photoName, hasPhoto, auto_focal, crop_mode}。"""
+        mocker.patch("web.routers.insights.get_local_photo_path", return_value=None)
         snap = _get_snapshot(client, mocker, insights_setup)
         body = snap.json()
-        expected = {"birth", "photoName", "auto_focal", "crop_mode"}
+        expected = {"birth", "photoName", "hasPhoto", "auto_focal", "crop_mode"}
         assert body["actressFavorites"], "應至少有收藏女優進入表"
         for primary, value in body["actressFavorites"].items():
             assert set(value.keys()) == expected, (
@@ -289,6 +290,36 @@ class TestInsightsActressFavorites:
             # 預設焦點欄位原樣輸出（不是當缺值丟掉）
             assert value["auto_focal"] == ""
             assert value["crop_mode"] == "auto"
+
+    def test_has_photo_true_when_local_photo_path_resolves(
+        self, client, insights_setup, mocker
+    ):
+        """收藏女優本機有照片檔（get_local_photo_path 回非 None）→ hasPhoto=True，
+        且查找鍵用 photoName（fixture A：primary=新名，photoName=舊名）而非 primary。"""
+        def fake_get_local_photo_path(name):
+            from pathlib import Path
+            return Path("/fake/舊名.jpg") if name == "舊名" else None
+
+        mocker.patch(
+            "web.routers.insights.get_local_photo_path",
+            side_effect=fake_get_local_photo_path,
+        )
+        snap = _get_snapshot(client, mocker, insights_setup)
+        body = snap.json()
+        assert body["actressFavorites"]["新名"]["hasPhoto"] is True
+
+    def test_has_photo_false_when_local_photo_path_missing(
+        self, client, insights_setup, mocker
+    ):
+        """收藏女優本機沒有照片檔（get_local_photo_path 回 None）→ hasPhoto=False。
+
+        使用者流程：收藏一位女優時來源沒圖或下載失敗，收藏紀錄仍落地（見
+        web/routers/actress.py add_favorite），本端點不得謊報她「有照片」。
+        """
+        mocker.patch("web.routers.insights.get_local_photo_path", return_value=None)
+        snap = _get_snapshot(client, mocker, insights_setup)
+        body = snap.json()
+        assert body["actressFavorites"]["新名"]["hasPhoto"] is False
 
     def test_favorite_without_birth_included_with_null_birth(
         self, client, insights_setup, mocker

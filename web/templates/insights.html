@@ -33,6 +33,7 @@
                     <span class="insights-tile-value" x-text="Number(scopedCount).toLocaleString()"></span>
                     <span class="insights-tile-unit" x-text="t('insights.unit')"></span>
                 </div>
+                <div x-show="!snapshotError" class="insights-tile-sub" x-text="totalCountLabel()"></div>
             </div>
         </section>
         <section class="card" id="tileYear">
@@ -57,10 +58,15 @@
                               @mouseenter="scheduleOpenPreview(focus.value, $el)"
                               @mouseleave="cancelOpenPreview()"
                               @click.stop="openPreview(focus.value, $el)">
-                            <img :src="focusPhotoUrl()"
-                                 alt=""
-                                 loading="lazy"
-                                 @error="$el.style.display='none'; $el.parentNode.textContent = focusInitial()">
+                            <template x-if="actressHasPhoto(focus.value)">
+                                <img :src="focusPhotoUrl()"
+                                     alt=""
+                                     loading="lazy"
+                                     @error="$el.style.display='none'; $el.parentNode.textContent = focusInitial()">
+                            </template>
+                            <template x-if="!actressHasPhoto(focus.value)">
+                                <span x-text="focusInitial()"></span>
+                            </template>
                         </span>
                     </template>
                     <template x-if="focus && focus.type === 'maker'">
@@ -244,6 +250,7 @@
             <img :src="previewPhotoUrl()"
                  alt=""
                  @load="applyCellFocal($el, previewFavorite(), '--insights-preview-ratio')"
+                 @error="closePreview()"
                  x-init="$watch('previewActress', () => applyCellFocal($el, previewFavorite(), '--insights-preview-ratio'));
                          $watch('snapshot && snapshot.actressFavorites && snapshot.actressFavorites[previewActress] && snapshot.actressFavorites[previewActress].auto_focal', () => applyCellFocal($el, previewFavorite(), '--insights-preview-ratio'));
                          $watch('snapshot && snapshot.actressFavorites && snapshot.actressFavorites[previewActress] && snapshot.actressFavorites[previewActress].crop_mode', () => applyCellFocal($el, previewFavorite(), '--insights-preview-ratio'))">

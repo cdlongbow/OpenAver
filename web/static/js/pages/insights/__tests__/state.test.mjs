@@ -83,6 +83,137 @@ test('computePreviewPosition: 錨點貼近視窗上緣時，top 不得為負', (
     assertInside(pos, VIEWPORT, POPUP);
 });
 
+test('actressHasPhoto: 收藏存在但 hasPhoto=false（來源沒圖／下載失敗）→ 回 false', () => {
+    // Finding 1：收藏落地不代表本機有照片檔，見 web/routers/insights.py
+    // favorites_by_primary 的 hasPhoto 計算（get_local_photo_path）。
+    const state = libraryInsightsState();
+    state.snapshot = {
+        actressFavorites: {
+            '無圖女優': { photoName: '無圖女優', hasPhoto: false, auto_focal: '', crop_mode: 'auto' },
+        },
+    };
+    assert.equal(state.actressHasPhoto('無圖女優'), false);
+});
+
+test('actressHasPhoto: hasPhoto=true → 回 true', () => {
+    const state = libraryInsightsState();
+    state.snapshot = {
+        actressFavorites: {
+            '有圖女優': { photoName: '有圖女優', hasPhoto: true, auto_focal: '', crop_mode: 'auto' },
+        },
+    };
+    assert.equal(state.actressHasPhoto('有圖女優'), true);
+});
+
+test('openPreview: hasPhoto=false 時不開預覽（spec §3.4.1「不出現預覽」）', () => {
+    const state = libraryInsightsState();
+    state.snapshot = {
+        actressFavorites: {
+            '無圖女優': { photoName: '無圖女優', hasPhoto: false, auto_focal: '', crop_mode: 'auto' },
+        },
+    };
+    state.openPreview('無圖女優', null);
+    assert.equal(state.previewActress, null);
+});
+
+test('openPreview: hasPhoto=true 時正常開預覽', () => {
+    const state = libraryInsightsState();
+    state.snapshot = {
+        actressFavorites: {
+            '有圖女優': { photoName: '有圖女優', hasPhoto: true, auto_focal: '', crop_mode: 'auto' },
+        },
+    };
+    state.openPreview('有圖女優', null);
+    assert.equal(state.previewActress, '有圖女優');
+});
+
+test('_onPageShow: bfcache 還原時快照仍未載入完成（離頁前 fetch 被丟棄）→ 重新 fetch 並填入資料', async () => {
+    // Finding 2：真實流程是 sidebar 點擊觸發 page-lifecycle.js 的 leavePage() →
+    // 同步呼叫這裡註冊的 cleanup（_pageAlive=false），發生在快照 fetch 尚未回應時；
+    // 之後瀏覽器把這頁存進 bfcache，使用者按上一頁回來只會收到 pageshow(persisted)，
+    // 不會重跑 init()——若這裡不重新 fetch，畫面永遠停在空的。
+    let cleanupFn = null;
+    globalThis.window.__registerPage = (handlers) => {
+        cleanupFn = handlers.cleanup;
+    };
+
+    let fetchCalls = 0;
+    let resolveFirst;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = () => {
+        fetchCalls += 1;
+        if (fetchCalls === 1) {
+            return new Promise((resolve) => {
+                resolveFirst = resolve;
+            });
+        }
+        return Promise.resolve({
+            ok: true,
+            json: async () => ({
+                records: [],
+                logicalTitles: 5,
+                physicalRows: 5,
+                years: [],
+                actressFavorites: {},
+            }),
+        });
+    };
+
+    const state = libraryInsightsState();
+    state.$watch = () => {};
+    const initPromise = state.init(); // 發起 fetch #1（掛著不回）
+
+    assert.equal(typeof cleanupFn, 'function', 'init() 應註冊 __registerPage cleanup');
+    cleanupFn(); // 模擬使用者在快照載完前離頁
+
+    // 離頁前的 fetch #1 這時才回來（fetch 不會因為 cleanup 被取消）
+    resolveFirst({
+        ok: true,
+        json: async () => ({
+            records: [{ maker: 'stale' }],
+            logicalTitles: 999,
+            physicalRows: 999,
+            years: [],
+            actressFavorites: {},
+        }),
+    });
+    await initPromise;
+
+    assert.equal(state.snapshot, null, '離頁後才回來的回應不該寫入 snapshot');
+    assert.equal(state.snapshotError, null);
+
+    // bfcache 還原：pageshow(persisted) 觸發，此時快照仍是 null 且非 snapshotError
+    await state._onPageShow({ persisted: true });
+
+    assert.equal(fetchCalls, 2, '應重新發起一次 fetch，不是停在空畫面等不到的舊回應');
+    assert.ok(state.snapshot, 'bfcache 還原後應該有 snapshot 資料');
+    assert.equal(state.snapshot.logicalTitles, 5);
+
+    globalThis.fetch = originalFetch;
+    delete globalThis.window.__registerPage;
+});
+
+test('totalCountLabel: 用 logicalTitles（全庫片數）而非 scopedCount（目前範圍片數）', () => {
+    // Finding 3：spec §3.1 片數格下方小字固定顯示「全庫 N 部」，不隨期間／焦點縮。
+    const state = libraryInsightsState();
+    state.snapshot = { logicalTitles: 2103 };
+    state.scopedCount = 12; // 目前範圍（期間 ∩ 焦點）片數，不應影響這個小字
+    globalThis.window.t = (key, params) => {
+        assert.equal(key, 'insights.total_count');
+        return '全庫 ' + params.n + ' 部';
+    };
+    assert.equal(state.totalCountLabel(), '全庫 2,103 部');
+    globalThis.window.t = (key) => key;
+});
+
+test('totalCountLabel: snapshot 未載入時回 0（不拋錯）', () => {
+    const state = libraryInsightsState();
+    state.snapshot = null;
+    globalThis.window.t = (key, params) => '全庫 ' + params.n + ' 部';
+    assert.equal(state.totalCountLabel(), '全庫 0 部');
+    globalThis.window.t = (key) => key;
+});
+
 test('previewPositionStyle: viewport 以 clientWidth 為準（不含捲軸）', () => {
     // 模擬 390 視窗、捲軸佔 15px：innerWidth=390、clientWidth=375（CDP #19 實況）
     globalThis.window.innerWidth = 390;
