@@ -1618,6 +1618,16 @@
   },
   "insights": {
     "page_title": "片庫分析",
+    "snapshot_error": "讀取失敗，請重新整理頁面",
+    "unknown": "未知",
+    "no_data": "沒有資料",
+    "unit": "部",
+    "all_years": "全部年份",
+    "all_focus": "全部",
+    "clear_year": "清除年份",
+    "clear_focus": "清除焦點",
+    "focus_type_actress": "女優",
+    "focus_type_maker": "片商",
     "row": {
       "years": "年份",
       "makers": "片商",
@@ -1630,6 +1640,19 @@
       "gantt": "主要片商年表",
       "actress_distribution": "女優片商分布",
       "costar": "與她同片"
-    }
+    },
+    "donut": {
+      "legend": "內圈 片商占比 · 外圈 主要片商作品／其他作品",
+      "other": "其他",
+      "unknown": "未知",
+      "library_wide": "全庫"
+    },
+    "tags": {
+      "coverage": "涵蓋 {pct}",
+      "almost_all": "幾乎每部都有：",
+      "empty": "沒有可顯示的標籤",
+      "tooltip": "{name}<br>片數 {count}<br>涵蓋 {pct}"
+    },
+    "total_count": "全庫 {n} 部"
   }
 }

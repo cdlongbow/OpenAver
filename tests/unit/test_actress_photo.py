@@ -15,6 +15,7 @@ from core.actress_photo import (
     get_local_photo_path,
     delete_local_photo,
 )
+from core.database.version_tracker import get_showcase_revision
 
 
 @pytest.fixture
@@ -122,6 +123,50 @@ def test_delete_photo_then_get_returns_none(gfriends_dir):
 
     # 現在應回 None
     assert get_local_photo_path("青山あかね") is None
+
+
+# -------------------------------------------------------------------
+# Test 5b: delete_local_photo 的 showcase revision bump（PR#207 Codex P2）
+# -------------------------------------------------------------------
+def test_delete_local_photo_success_bumps_revision(gfriends_dir):
+    """delete_local_photo() 真的刪掉既有照片檔 → revision 前後不同。
+
+    純檔案 I/O 不經過 DB commit，不會被 `_RevisionTrackingConnection.commit()`
+    自動 bump；若這裡沒有手動呼叫 `bump_showcase_revision()`，依賴
+    `get_showcase_revision()` 的 ETag（如 web/routers/insights.py 的
+    `hasPhoto`）會對不上刪除後的檔案狀態。
+    """
+    mock_resp = make_mock_response(status_code=200, content_type="image/jpeg")
+    with patch("core.actress_photo.requests.get", return_value=mock_resp):
+        download_actress_photo(
+            "刪除revision測試", "https://raw.githubusercontent.com/photo.jpg", "gfriends"
+        )
+    assert get_local_photo_path("刪除revision測試") is not None
+
+    revision_before = get_showcase_revision()
+    deleted = delete_local_photo("刪除revision測試")
+    assert deleted is True
+    assert get_showcase_revision() != revision_before
+
+
+def test_delete_local_photo_noop_or_failure_does_not_bump_revision(gfriends_dir):
+    """delete_local_photo() 沒有真的刪到東西（無檔可刪的 idempotent no-op，
+    或內部拋例外回 False）→ revision 不變，不該把「什麼都沒變」誤標成「有變動」。
+    """
+    revision_before = get_showcase_revision()
+
+    # 無檔可刪：idempotent no-op，回 True 但沒有實際刪除
+    deleted = delete_local_photo("從未存在的女優")
+    assert deleted is True
+    assert get_showcase_revision() == revision_before
+
+    # 內部拋例外：回 False
+    with patch(
+        "core.actress_photo.sanitize_filename", side_effect=RuntimeError("boom")
+    ):
+        deleted = delete_local_photo("不存在的人")
+    assert deleted is False
+    assert get_showcase_revision() == revision_before
 
 
 # -------------------------------------------------------------------

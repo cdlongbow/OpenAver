@@ -23,16 +23,75 @@
                 <div class="insights-brand-actions"></div>
             </div>
         </section>
-        <section class="card">
+        <section class="card" id="tileCount">
             <div class="card-body">
-                <span x-text="totalCount">0</span>
+                <div x-show="snapshotError" class="insights-tile-error">
+                    <div class="insights-tile-value">—</div>
+                    <div class="insights-tile-error-msg" x-text="t('insights.snapshot_error')"></div>
+                </div>
+                <div x-show="!snapshotError" class="insights-big-number">
+                    <span class="insights-tile-value" x-text="Number(scopedCount).toLocaleString()"></span>
+                    <span class="insights-tile-unit" x-text="t('insights.unit')"></span>
+                </div>
+                <div x-show="!snapshotError" class="insights-tile-sub" x-text="totalCountLabel()"></div>
             </div>
         </section>
-        <section class="card">
-            <div class="card-body" id="tileYear"></div>
+        <section class="card" id="tileYear">
+            <div class="card-body">
+                <div x-show="period && period.type === 'year'" class="insights-year-value">
+                    <span class="insights-tile-value" x-text="period.year"></span>
+                    <button type="button"
+                            class="insights-x-btn"
+                            :title="t('insights.clear_year')"
+                            @click="clearPeriod()">×</button>
+                </div>
+                <div x-show="!period || period.type !== 'year'"
+                     class="insights-muted-big"
+                     x-text="t('insights.all_years')"></div>
+            </div>
         </section>
-        <section class="card">
-            <div class="card-body" id="tileFocus"></div>
+        <section class="card" id="tileFocus">
+            <div class="card-body">
+                <div x-show="focus" class="insights-focus-row">
+                    <template x-if="focus && focus.type === 'actress'">
+                        <span class="insights-focus-avatar"
+                              @mouseenter="scheduleOpenPreview(focus.value, $el)"
+                              @mouseleave="cancelOpenPreview()"
+                              @click.stop="openPreview(focus.value, $el)">
+                            <template x-if="actressHasPhoto(focus.value) && !photoFailed[focus.value]">
+                                <img :src="focusPhotoUrl()"
+                                     alt=""
+                                     loading="lazy"
+                                     @error="markPhotoFailed(focus.value)">
+                            </template>
+                            <template x-if="!actressHasPhoto(focus.value) || photoFailed[focus.value]">
+                                <span x-text="focusInitial()"></span>
+                            </template>
+                        </span>
+                    </template>
+                    <template x-if="focus && focus.type === 'maker'">
+                        <span class="insights-focus-avatar mk"
+                              :style="focusMakerColor() ? ('background:' + focusMakerColor()) : ''"></span>
+                    </template>
+                    <div class="insights-focus-main">
+                        <div class="insights-focus-type"
+                             x-text="focus && focus.type === 'actress' ? t('insights.focus_type_actress') : t('insights.focus_type_maker')"></div>
+                        <div class="insights-tile-value insights-focus-name"
+                             :title="focus && focus.value"
+                             x-text="focus && focus.value"
+                             @mouseenter="focus && focus.type === 'actress' && scheduleOpenPreview(focus.value, $el)"
+                             @mouseleave="focus && focus.type === 'actress' && cancelOpenPreview()"
+                             @click.stop="focus && focus.type === 'actress' && openPreview(focus.value, $el)"></div>
+                    </div>
+                    <button type="button"
+                            class="insights-x-btn"
+                            :title="t('insights.clear_focus')"
+                            @click="clearFocus()">×</button>
+                </div>
+                <div x-show="!focus"
+                     class="insights-muted-big"
+                     x-text="t('insights.all_focus')"></div>
+            </div>
         </section>
     </div>
 
@@ -48,7 +107,10 @@
         </section>
         <section class="card donut-card">
             <div class="card-head">
-                <h2>{{ t('insights.row.makers') }}</h2>
+                <div class="donut-head-text">
+                    <h2 x-text="donutTitle()"></h2>
+                    <div class="donut-legend">{{ t('insights.donut.legend') }}</div>
+                </div>
             </div>
             <div class="card-body">
                 <div class="donut-chart-wrap"><div id="donutChart" class="echart"></div></div>
@@ -60,15 +122,52 @@
     <div class="row3">
         <section class="card top20-card">
             <div class="card-head">
-                <h2>{{ t('insights.row.actress_top20') }}</h2>
+                <h2 x-text="top20Title"></h2>
             </div>
             <div class="card-body">
-                <div class="list-rows top20-list" id="top20List"></div>
+                <div class="list-rows top20-list" id="top20List">
+                    <template x-for="(row, index) in top20Rows" :key="row.name">
+                        <div class="top20-row"
+                             :class="{ 'is-active': focus && focus.type === 'actress' && focus.value === row.name }"
+                             @click="toggleActressFocus(row.name)">
+                            <span class="top20-rank" x-text="row.rank"></span>
+                            <span class="top20-avatar"
+                                  :class="{ 'is-top3': index < 3 }"
+                                  @click.stop="openPreview(row.name, $el)"
+                                  @mouseenter="scheduleOpenPreview(row.name, $el)"
+                                  @mouseleave="cancelOpenPreview()">
+                                <template x-if="actressHasPhoto(row.name) && !photoFailed[row.name]">
+                                    <img :src="actressPhotoUrl(row.name)"
+                                         alt=""
+                                         loading="lazy"
+                                         @error="markPhotoFailed(row.name)">
+                                </template>
+                                <template x-if="!actressHasPhoto(row.name) || photoFailed[row.name]">
+                                    <span x-text="row.name.charAt(0)"></span>
+                                </template>
+                            </span>
+                            <span class="top20-name top20-text"
+                                  :title="row.name"
+                                  x-text="row.name"
+                                  @mouseenter="scheduleOpenPreview(row.name, $el)"
+                                  @mouseleave="cancelOpenPreview()"></span>
+                            <span class="top20-bar-wrap">
+                                <span class="top20-bar"
+                                      :style="'width:' + (top20Rows[0] && top20Rows[0].count ? Math.round(row.count / top20Rows[0].count * 100) : 0) + '%'"></span>
+                            </span>
+                            <span class="top20-count top20-text" x-text="row.count"></span>
+                        </div>
+                    </template>
+                    <div x-show="!top20Rows.length"
+                         class="top20-empty"
+                         x-text="t('insights.no_data')"></div>
+                </div>
             </div>
         </section>
         <section class="card treemap-card">
             <div class="card-head">
                 <h2>{{ t('insights.row.tags') }}</h2>
+                <span class="tags-coverage-hint" id="tagsHint"></span>
             </div>
             <div class="card-body">
                 <div class="tags-pulled" id="tagsPulled"></div>
@@ -139,6 +238,24 @@
                 <div class="list-rows" id="costarList"></div>
             </div>
         </section>
+    </div>
+
+    <!-- 全頁共用女優照片預覽浮層（TASK-156b-T5 / CD-156-10） -->
+    <div class="insights-preview"
+         x-show="previewActress"
+         x-cloak
+         :style="previewPositionStyle()"
+         @keydown.escape.window="closePreview()">
+        <div class="insights-preview-photo">
+            <img :src="previewPhotoUrl()"
+                 alt=""
+                 @load="applyCellFocal($el, previewFavorite(), '--insights-preview-ratio')"
+                 @error="closePreview()"
+                 x-init="$watch('previewActress', () => applyCellFocal($el, previewFavorite(), '--insights-preview-ratio'));
+                         $watch('snapshot && snapshot.actressFavorites && snapshot.actressFavorites[previewActress] && snapshot.actressFavorites[previewActress].auto_focal', () => applyCellFocal($el, previewFavorite(), '--insights-preview-ratio'));
+                         $watch('snapshot && snapshot.actressFavorites && snapshot.actressFavorites[previewActress] && snapshot.actressFavorites[previewActress].crop_mode', () => applyCellFocal($el, previewFavorite(), '--insights-preview-ratio'))">
+        </div>
+        <div class="insights-preview-name" x-text="previewActress"></div>
     </div>
 </div>
 {% endblock %}

@@ -51,6 +51,14 @@ def _bump_showcase_revision() -> None:
         _revision += 1
 
 
+def bump_showcase_revision() -> None:
+    """公開版 `_bump_showcase_revision`，給**非 DB 寫入、但會改變 API 回應內容**的
+    檔案操作呼叫（例如女優照片檔落地／刪除）——這類變動不會經過
+    `_RevisionTrackingConnection.commit()`，若不手動 bump，ETag 會對不上實際檔案
+    狀態（見 web/routers/insights.py `hasPhoto` 欄位、PR#207 Codex P2）。"""
+    _bump_showcase_revision()
+
+
 def get_showcase_revision() -> int:
     with _lock:
         return _revision

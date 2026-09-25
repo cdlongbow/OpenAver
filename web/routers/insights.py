@@ -26,6 +26,7 @@ from core.database.version_tracker import (
     get_showcase_revision,
 )
 from core.path_utils import is_path_under_dir, uri_to_local_fs_path
+from core.actress_photo import get_local_photo_path
 from core.logger import get_logger
 from core.config import (
     load_config,
@@ -33,6 +34,7 @@ from core.config import (
     get_configured_gallery_dirs,
 )
 from core.multipart_group import group_rows
+from core.cover_attributes import manifest_payload
 
 logger = get_logger(__name__)
 
@@ -87,6 +89,67 @@ def _build_alias_lookup(records) -> dict[str, tuple[str, list[str]]]:
         for alias in aliases:
             lookup[alias.lower()] = pair
     return lookup
+
+
+def _merge_badge_alias_manifest(
+    tag_lookup: dict[str, tuple[str, list[str]]],
+) -> dict[str, tuple[str, list[str]]]:
+    """將 cover-badge 的 5 組別名合併進 tag_lookup（CD-156-11 使用者別名群組優先權）。"""
+    user_tag_lookup = dict(tag_lookup)
+    merged: dict[str, tuple[str, list[str]]] = dict(tag_lookup)
+
+    for rule in manifest_payload():
+        canonical_tag = rule["canonical_tag"]
+        match_aliases = rule.get("match_aliases", [])
+        members = [canonical_tag] + list(match_aliases)
+
+        hit_groups: list[tuple[str, list[str]]] = []
+        seen_primaries: set[str] = set()
+        for m in members:
+            key = m.lower()
+            if key in user_tag_lookup:
+                primary, group = user_tag_lookup[key]
+                if primary not in seen_primaries:
+                    seen_primaries.add(primary)
+                    hit_groups.append((primary, group))
+
+        num_hits = len(hit_groups)
+        if num_hits == 0:
+            names_list: list[str] = []
+            seen_lower: set[str] = set()
+            for m in members:
+                m_low = m.lower()
+                if m_low not in seen_lower:
+                    seen_lower.add(m_low)
+                    names_list.append(m)
+            pair = (canonical_tag, names_list)
+            for m in members:
+                merged[m.lower()] = pair
+
+        elif num_hits == 1:
+            primary, names_list = hit_groups[0]
+            existing_lowers = {n.lower() for n in names_list}
+            pair = (primary, names_list)
+            for m in members:
+                m_low = m.lower()
+                if m_low not in existing_lowers:
+                    existing_lowers.add(m_low)
+                    names_list.append(m)
+                merged[m_low] = pair
+
+        else:
+            host_primary, host_names_list = hit_groups[0]
+            host_lowers = {n.lower() for n in host_names_list}
+            pair = (host_primary, host_names_list)
+            for m in members:
+                m_low = m.lower()
+                if m_low not in user_tag_lookup:
+                    if m_low not in host_lowers:
+                        host_lowers.add(m_low)
+                        host_names_list.append(m)
+                    merged[m_low] = pair
+
+    return merged
 
 
 def _canonical_list(values, lookup: dict[str, tuple[str, list[str]]]) -> list[str]:
@@ -166,6 +229,7 @@ def get_insights_snapshot(request: Request):
 
         actress_lookup = _build_alias_lookup(AliasRepository(db_path).get_all())
         tag_lookup = _build_alias_lookup(TagAliasRepository(db_path).get_all())
+        tag_lookup = _merge_badge_alias_manifest(tag_lookup)
 
         records = [
             _serialize_record(g.members[0], actress_lookup, tag_lookup)
@@ -183,9 +247,15 @@ def get_insights_snapshot(request: Request):
             # first-wins：依標準排序（ORDER BY name）取同組第一個收藏，不論有無生日
             # ——比照燈箱 resolveFavoriteActressAge：actresses.find() 只挑第一個，
             # 沒生日就是不顯示年齡，不會退而求其次改選同組後面那個有生日的。
+            # hasPhoto：收藏存在不代表本機有照片檔（來源沒圖／下載失敗時 add_favorite
+            # 仍會先 repo.save 落地收藏，見 web/routers/actress.py 的 favorite 流程）；
+            # 沿用 _actress_to_response 同一支 get_local_photo_path 判斷式（單一真理來源），
+            # 不自己拼路徑。每次照片變動的端點都伴隨一次 repo.save（bump revision），
+            # 故此欄位不會讓 ETag 對不上實際檔案狀態。
             favorites_by_primary[primary] = {
                 "birth": a.birth or None,
                 "photoName": a.name,
+                "hasPhoto": get_local_photo_path(a.name) is not None,
                 "auto_focal": a.auto_focal,
                 "crop_mode": a.crop_mode,
             }

@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from PIL import Image
 from core.atomic_write import atomic_write
+from core.database.version_tracker import bump_showcase_revision
 from core.maker_mapping import load_prefix_mapping
 
 from core.database import (
@@ -668,6 +669,10 @@ def _write_actress_photo(name: str, crop_bytes: bytes, ext: str = ".jpg") -> Non
     dest = GFRIENDS_DIR / f"{safe}{ext}"
     with atomic_write(dest, suffix=ext) as f:
         f.write(crop_bytes)
+    # 純檔案 I/O，不經過 DB commit → 不會自動 bump revision（PR#207 Codex P2）。
+    # 寫檔成功（os.replace 已落地）即手動 bump，讓 ETag（insights.py hasPhoto）對
+    # 得上這次新圖；下方清舊副檔名殘檔是 best-effort、不影響「新圖已裝好」這件事。
+    bump_showcase_revision()
     # 🔴 清舊檔必須在 os.replace 成功「之後」（TASK-100a-T2 review finding）：
     # 原本是先 glob 刪光 {safe}.* 再寫入 → 寫檔失敗時舊照片已經沒了，使用者的
     # 照片直接消失。而 spec-100 §3.3 的失敗矩陣（CD-4 pre-invalidate 的整個賣點）
