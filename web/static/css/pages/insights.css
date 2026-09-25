@@ -294,6 +294,158 @@
     min-height: 360px;
 }
 
+/* Top20 列（TASK-156b-T5）——名字與片數共用字級來源 */
+.insights-container {
+    --top20-text-size: 0.8125rem;
+    --insights-preview-ratio: 0.8;
+}
+
+.insights-container .top20-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0.125rem;
+    border-bottom: 1px solid var(--stroke-subtle);
+    cursor: pointer;
+    min-width: 0;
+}
+
+.insights-container .top20-row:last-child {
+    border-bottom: none;
+}
+
+.insights-container .top20-row:hover {
+    background: color-mix(in oklch, var(--color-primary) 6%, transparent);
+}
+
+.insights-container .top20-row.is-active {
+    background: color-mix(in oklch, var(--color-primary) 12%, transparent);
+}
+
+.insights-container .top20-rank {
+    width: 1.25rem;
+    flex: 0 0 auto;
+    font-size: 0.6875rem;
+    color: var(--text-muted);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.insights-container .top20-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+    overflow: hidden;
+    background: var(--surface-2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+}
+
+.insights-container .top20-avatar.is-top3 {
+    width: 48px;
+    height: 48px;
+    font-size: 1rem;
+}
+
+.insights-container .top20-row:has(.top20-avatar.is-top3) {
+    padding-block: 0.375rem;
+}
+
+.insights-container .top20-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.insights-container .top20-text {
+    font-size: var(--top20-text-size);
+    font-weight: 700;
+}
+
+.insights-container .top20-name {
+    width: 6.875rem;
+    flex: 0 0 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.insights-container .top20-bar-wrap {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 0.8125rem;
+    background: var(--stroke-subtle);
+    border-radius: var(--radius-xs);
+    overflow: hidden;
+}
+
+.insights-container .top20-bar {
+    display: block;
+    height: 100%;
+    background: var(--color-primary);
+    border-radius: var(--radius-xs);
+}
+
+.insights-container .top20-count {
+    width: 2.5rem;
+    flex: 0 0 auto;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.insights-container .top20-empty {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    padding: 0.75rem 0.25rem;
+}
+
+/* 全頁共用照片預覽浮層（position:fixed，不佔文件流） */
+.insights-preview {
+    position: fixed;
+    z-index: 40;
+    width: 160px;
+    pointer-events: none;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    box-shadow: var(--fluent-shadow-16);
+    background: var(--surface-1);
+    border: 1px solid var(--stroke-default);
+    box-sizing: border-box;
+}
+
+.insights-preview-photo {
+    width: 160px;
+    height: 200px;
+    overflow: hidden;
+    background: var(--surface-2);
+}
+
+.insights-preview-photo img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.insights-preview-name {
+    box-sizing: border-box;
+    height: 22px;
+    padding: 0 0.5rem;
+    display: flex;
+    align-items: center;
+    font-size: 0.8125rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .insights-container .treemap-chart-wrap {
     flex: 1 1 auto;
     min-height: 360px;

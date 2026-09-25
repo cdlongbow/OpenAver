@@ -20,11 +20,13 @@ const {
     REST_KEY,
     buildMakerDonutData,
     classifyRecordAgainstMainMaker,
+    buildActressTop20,
 } = agg;
 
 function rec(opts) {
     return {
         year: opts.year === undefined ? 2020 : opts.year,
+        month: opts.month === undefined ? null : opts.month,
         actresses: opts.actresses === undefined ? ['Alice'] : opts.actresses,
         maker: opts.maker === undefined ? 'SOD' : opts.maker,
     };
@@ -714,4 +716,127 @@ test('classifyRecordAgainstMainMaker: actresses 為空 → undetermined', () => 
         ),
         'undetermined',
     );
+});
+
+// ── buildActressTop20 (TASK-156b-T5) ─────────────────────────────────
+
+test('buildActressTop20: 排序＝count 遞減 → monthCount 遞減 → name 遞增', () => {
+    const records = [
+        rec({ actresses: ['Carol'], month: '2020-01' }),
+        rec({ actresses: ['Alice'], month: '2020-01' }),
+        rec({ actresses: ['Alice'], month: '2020-02' }),
+        rec({ actresses: ['Bob'], month: '2020-01' }),
+        rec({ actresses: ['Bob'], month: '2020-02' }),
+        rec({ actresses: ['Bob'], month: '2020-03' }),
+    ];
+    // Alice:2/2, Bob:3/3, Carol:1/1 → Bob, Alice, Carol
+    const { rows } = buildActressTop20(records, null);
+    assert.deepEqual(rows.map((r) => r.name), ['Bob', 'Alice', 'Carol']);
+    assert.deepEqual(rows.map((r) => r.rank), [1, 2, 3]);
+});
+
+test('buildActressTop20: 片數相同時依不同發行月份數降冪排序', () => {
+    // 兩人皆 3 片；Bob 跨 3 月、Alice 跨 1 月 → monthCount 讓 Bob 在前。
+    // 名字序會把 Alice 放前面，故拿掉 monthCount 這一層會讓本測試轉紅。
+    const records = [
+        rec({ actresses: ['Bob'], month: '2020-01' }),
+        rec({ actresses: ['Bob'], month: '2020-02' }),
+        rec({ actresses: ['Bob'], month: '2020-03' }),
+        rec({ actresses: ['Alice'], month: '2020-01' }),
+        rec({ actresses: ['Alice'], month: '2020-01' }),
+        rec({ actresses: ['Alice'], month: '2020-01' }),
+    ];
+    const { rows } = buildActressTop20(records, null);
+    assert.equal(rows[0].name, 'Bob');
+    assert.equal(rows[0].count, 3);
+    assert.equal(rows[0].monthCount, 3);
+    assert.equal(rows[1].name, 'Alice');
+    assert.equal(rows[1].count, 3);
+    assert.equal(rows[1].monthCount, 1);
+});
+
+test('buildActressTop20: count／monthCount 都相同時依名字字串遞增', () => {
+    const records = [
+        rec({ actresses: ['Bob'], month: '2020-01' }),
+        rec({ actresses: ['Alice'], month: '2020-01' }),
+    ];
+    const { rows } = buildActressTop20(records, null);
+    assert.deepEqual(rows.map((r) => r.name), ['Alice', 'Bob']);
+});
+
+test('buildActressTop20: monthCount 只算相異 month；month===null 計入 count 不計入 monthCount', () => {
+    const records = [
+        rec({ actresses: ['Alice'], month: '2020-01' }),
+        rec({ actresses: ['Alice'], month: '2020-01' }), // 同月再一部 → monthCount 仍 1
+        rec({ actresses: ['Alice'], month: null }), // 計 count，不計 monthCount
+    ];
+    const { rows } = buildActressTop20(records, null);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].count, 3);
+    assert.equal(rows[0].monthCount, 1);
+});
+
+test('buildActressTop20: 女優排名剛好第 20 名時不附加額外列', () => {
+    const records = [];
+    // 21 人：A01..A21 各 21..1 片，全部同月 → A20 剛好 rank 20
+    for (let i = 1; i <= 21; i++) {
+        const name = 'A' + String(i).padStart(2, '0');
+        const count = 22 - i; // A01=21 ... A20=2, A21=1
+        for (let n = 0; n < count; n++) {
+            records.push(rec({ actresses: [name], month: '2020-01' }));
+        }
+    }
+    const focus = { type: 'actress', value: 'A20' };
+    const { rows } = buildActressTop20(records, focus);
+    assert.equal(rows.length, 20);
+    assert.equal(rows[19].name, 'A20');
+    assert.equal(rows[19].rank, 20);
+    assert.equal(rows.filter((r) => r.name === 'A20').length, 1);
+});
+
+test('buildActressTop20: focus 女優 rank>20 時附加真實排名列', () => {
+    const records = [];
+    for (let i = 1; i <= 25; i++) {
+        const name = 'A' + String(i).padStart(2, '0');
+        const count = 26 - i;
+        for (let n = 0; n < count; n++) {
+            records.push(rec({ actresses: [name], month: '2020-01' }));
+        }
+    }
+    // A25 片數最少 → rank 25
+    const focus = { type: 'actress', value: 'A25' };
+    const { rows } = buildActressTop20(records, focus);
+    assert.equal(rows.length, 21);
+    assert.equal(rows[20].name, 'A25');
+    assert.equal(rows[20].rank, 25);
+});
+
+test('buildActressTop20: focus 女優在 records 完全無紀錄時不附加', () => {
+    const records = [
+        rec({ actresses: ['Alice'], month: '2020-01' }),
+        rec({ actresses: ['Bob'], month: '2020-01' }),
+    ];
+    const { rows } = buildActressTop20(records, { type: 'actress', value: 'Ghost' });
+    assert.equal(rows.length, 2);
+    assert.equal(rows.some((r) => r.name === 'Ghost'), false);
+});
+
+test('buildActressTop20: 女優總數少於 20 時回傳實際總數', () => {
+    const records = [
+        rec({ actresses: ['Alice'], month: '2020-01' }),
+        rec({ actresses: ['Bob'], month: '2020-01' }),
+        rec({ actresses: ['Carol'], month: '2020-01' }),
+    ];
+    const { rows } = buildActressTop20(records, null);
+    assert.equal(rows.length, 3);
+});
+
+test('buildActressTop20: 多人片每位女優各計一次；maker 焦點不附加列', () => {
+    const records = [
+        rec({ actresses: ['Alice', 'Bob'], month: '2020-01' }),
+    ];
+    const { rows } = buildActressTop20(records, { type: 'maker', value: 'SOD' });
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].count, 1);
+    assert.equal(rows[1].count, 1);
 });

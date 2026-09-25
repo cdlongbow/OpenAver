@@ -5,6 +5,7 @@
  * T1：setRecords / getRecords / buildMakerColorSlots / buildMainMakerYearMap
  * T2：periodRecords / scopeRecords / aggregateYears + UNKNOWN_KEY
  * T4：buildMakerDonutData / classifyRecordAgainstMainMaker + REST_KEY
+ * T5：buildActressTop20
  */
 
 /** 年份「未知」分類與片商「未知」桶的內部鍵；畫面顯示文字由 charts.js（T3）做 i18n 映射。 */
@@ -302,4 +303,61 @@ export function buildMakerDonutData(records, mainMakerYearMap) {
     }
 
     return { total: total, inner: inner, outer: outer };
+}
+
+/**
+ * 女優 Top20 排名。對傳入的 records 展開 actresses 計數；
+ * 排序：count 遞減 → monthCount 遞減 → name 遞增。
+ * monthCount ＝相異非 null 的 record.month 個數。
+ * 若 focus 為女優且她的真實 rank > 20，附加她那一列。
+ * 不呼叫 getRecords()。
+ */
+export function buildActressTop20(records, focus) {
+    var counts = new Map();
+    (records || []).forEach(function (r) {
+        var names = (r && r.actresses) || [];
+        var seenInRecord = new Set();
+        names.forEach(function (name) {
+            if (!name || seenInRecord.has(name)) return;
+            seenInRecord.add(name);
+            var entry = counts.get(name);
+            if (!entry) {
+                entry = { name: name, count: 0, months: new Set() };
+                counts.set(name, entry);
+            }
+            entry.count += 1;
+            if (r.month != null && r.month !== '') {
+                entry.months.add(r.month);
+            }
+        });
+    });
+
+    var all = Array.from(counts.values()).map(function (e) {
+        return {
+            name: e.name,
+            count: e.count,
+            monthCount: e.months.size,
+        };
+    });
+    all.sort(function (a, b) {
+        return b.count - a.count || b.monthCount - a.monthCount || (a.name < b.name ? -1 : 1);
+    });
+    all.forEach(function (row, i) {
+        row.rank = i + 1;
+    });
+
+    var rows = all.slice(0, 20);
+    var herRank = 0;
+    var herRow = null;
+    if (focus && focus.type === 'actress' && focus.value) {
+        for (var i = 0; i < all.length; i++) {
+            if (all[i].name === focus.value) {
+                herRank = all[i].rank;
+                herRow = all[i];
+                break;
+            }
+        }
+    }
+    if (focus && focus.type === 'actress' && herRank > 20) { rows.push(herRow); }
+    return { rows: rows };
 }
