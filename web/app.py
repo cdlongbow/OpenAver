@@ -243,6 +243,7 @@ from web.routers import cf as cf_router
 from web.routers import diagnostics as diagnostics_router
 from web.routers import access as access_router
 from web.routers import wishlist as wishlist_router
+from web.routers import insights as insights_router
 # Module-level imports for startup_reconnect / _fire_probe so that
 # patch("web.app.startup_reconnect") / patch("web.app._fire_probe") target the
 # correct use-site binding (TASK-63e-1; function-local import would defeat patch).
@@ -276,6 +277,7 @@ app.include_router(cf_router.router)
 app.include_router(diagnostics_router.router)
 app.include_router(access_router.router)
 app.include_router(wishlist_router.router)
+app.include_router(insights_router.router)
 
 
 @app.exception_handler(RequestValidationError)
@@ -696,6 +698,14 @@ async def showcase_page(request: Request):
     context = get_common_context(request)
     context["page"] = "showcase"
     return templates.TemplateResponse(request, "showcase.html", context)
+
+
+@app.get("/insights")
+async def insights_page(request: Request):
+    """片庫分析頁面"""
+    context = get_common_context(request)
+    context["page"] = "insights"
+    return templates.TemplateResponse(request, "insights.html", context)
 
 
 @app.get("/settings")

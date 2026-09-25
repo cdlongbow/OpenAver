@@ -23,10 +23,9 @@ from core.database.version_tracker import (
 from core.path_utils import (
     is_path_under_dir,
     uri_to_local_fs_path,
-    coerce_to_file_uri,
 )
 from core.logger import get_logger
-from core.config import load_config, get_gallery_source_paths
+from core.config import load_config, get_gallery_source_paths, get_configured_gallery_dirs
 from core.focal import device_state, format_focal, parse_focal
 from core.focal.subprocess_runner import run_detection
 from core import thumbnail_cache
@@ -122,24 +121,6 @@ def _serialize_group(group, path_mappings: dict, enabled: bool = False) -> dict:
     return base
 
 
-def _get_configured_dirs(config: dict) -> tuple[set, dict]:
-    """從 config 取出 configured_dir_uris 與 path_mappings（列表與單筆端點共用）"""
-    gallery_config = config.get('gallery', {})
-    path_mappings = gallery_config.get('path_mappings', {})
-
-    configured_dir_uris: set = set()
-    for p in get_gallery_source_paths(gallery_config):
-        try:
-            # coerce_to_file_uri：來源 path 可能已是 file:/// URI（DirectoryConfig.path
-            # schema「FS 路徑或 URI」）。已是 URI 就原樣回，避免 to_file_uri 二次包成
-            # file:///file:/// 把 readonly 來源的列從 Showcase 過濾掉（PR#91 P2-D 同源）。
-            configured_dir_uris.add(coerce_to_file_uri(p, path_mappings))  # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
-        except ValueError:
-            continue
-
-    return configured_dir_uris, path_mappings
-
-
 def _etag_matches(if_none_match: str, etag: str) -> bool:
     """比對 `If-None-Match` 語意（抄 Starlette `StaticFiles.is_not_modified()` 的比對方式，
     不 import 該函式本身——它綁定 `FileResponse` 用的 `Headers` 型別，這裡是手寫 JSON 端點）。
@@ -177,7 +158,7 @@ def get_videos(request: Request):
         # 只取「當前設定資料夾」底下的記錄（DB 保留全部當 cache）
         config = load_config()
         gallery_config = config.get('gallery', {})
-        configured_dir_uris, path_mappings = _get_configured_dirs(config)
+        configured_dir_uris, path_mappings = get_configured_gallery_dirs(config)
         thumb_enabled = config.get('thumbnail_cache_enabled', False)
 
         projection = {
@@ -233,7 +214,7 @@ def get_video(path: str = Query(..., description="file:/// URI")):
         repo = VideoRepository(db_path)
 
         config = load_config()
-        configured_dir_uris, path_mappings = _get_configured_dirs(config)
+        configured_dir_uris, path_mappings = get_configured_gallery_dirs(config)
 
         if not any(is_path_under_dir(path, uri) for uri in configured_dir_uris):
             return JSONResponse({"success": False, "error": "video not found"}, status_code=404)
@@ -292,7 +273,7 @@ def delete_video(path: str = Query(..., description="file:/// URI")):
     group = None
     try:
         config = load_config()
-        _, path_mappings = _get_configured_dirs(config)
+        _, path_mappings = get_configured_gallery_dirs(config)
         group = resolve_group(repo, path, path_mappings)
     except Exception:
         logger.warning("delete_video: 分組反解失敗，退回單路徑刪除", exc_info=True)
@@ -356,7 +337,7 @@ def detect_video_focal(req: DetectFocalRequest):
             return JSONResponse({"success": False, "error": "找不到影片"}, status_code=404)
 
         config = load_config()
-        configured_dir_uris, path_mappings = _get_configured_dirs(config)
+        configured_dir_uris, path_mappings = get_configured_gallery_dirs(config)
 
         in_scope = any(is_path_under_dir(row.path, uri) for uri in configured_dir_uris)
         if not in_scope:
@@ -451,7 +432,7 @@ def set_manual_focal(req: ManualFocalRequest):
             return JSONResponse({"success": False, "error": "找不到影片"}, status_code=404)
 
         config = load_config()
-        configured_dir_uris, _path_mappings = _get_configured_dirs(config)
+        configured_dir_uris, _path_mappings = get_configured_gallery_dirs(config)
 
         in_scope = any(is_path_under_dir(row.path, uri) for uri in configured_dir_uris)
         if not in_scope:

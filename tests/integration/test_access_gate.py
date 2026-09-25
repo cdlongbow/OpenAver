@@ -120,6 +120,7 @@ class TestDenyByDefault:
         ("GET", "/scanner"),
         ("GET", "/gallery"),
         ("GET", "/showcase"),
+        ("GET", "/insights"),
         ("GET", "/settings"),
         ("GET", "/help"),
         ("GET", "/design-system"),
@@ -127,7 +128,7 @@ class TestDenyByDefault:
         ("GET", "/static/css/theme.css"),
     ]
 
-    # 23 支 router 代表端點（每個 router 註冊各抽一支，見 task card「router
+    # 24 支 router 代表端點（每個 router 註冊各抽一支，見 task card「router
     # prefix 清單」）。
     ROUTER_ENDPOINTS = [
         ("GET", "/api/proxy-image"),
@@ -153,6 +154,7 @@ class TestDenyByDefault:
         ("POST", "/api/settings/metatube/connect"),
         ("GET", "/api/cf/status"),
         ("POST", "/api/client-log"),
+        ("GET", "/api/insights/snapshot"),
     ]
 
     # 4 支具名 API（CD-114a-8 明點；/api/capabilities 與上表重複抽樣，刻意

@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('insights.page_title') }} - OpenAver{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/pages/insights.css">
+{% endblock %}
+
+{% block pre_alpine_module %}
+<script type="module" src="/static/js/pages/insights/main.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="insights-container page-layer" x-data="libraryInsights">
+    <!-- Row 1: 常駐四格 -->
+    <div class="row1">
+        <section class="card insights-brand-card">
+            <div class="card-body">
+                <div class="insights-brand-row">
+                    <img src="/static/favicon.svg" alt="Logo">
+                    <span class="title">OpenAver</span>
+                </div>
+                <div class="insights-brand-actions"></div>
+            </div>
+        </section>
+        <section class="card">
+            <div class="card-body">
+                <span x-text="totalCount">0</span>
+            </div>
+        </section>
+        <section class="card">
+            <div class="card-body" id="tileYear"></div>
+        </section>
+        <section class="card">
+            <div class="card-body" id="tileFocus"></div>
+        </section>
+    </div>
+
+    <!-- Row 2：年份長條 + 片商甜甜圈 -->
+    <div class="row2">
+        <section class="card row2-years">
+            <div class="card-head">
+                <h2>{{ t('insights.row.years') }}</h2>
+            </div>
+            <div class="card-body">
+                <div class="years-chart-wrap"><div id="yearsChart" class="echart"></div></div>
+            </div>
+        </section>
+        <section class="card donut-card">
+            <div class="card-head">
+                <h2>{{ t('insights.row.makers') }}</h2>
+            </div>
+            <div class="card-body">
+                <div class="donut-chart-wrap"><div id="donutChart" class="echart"></div></div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Row 3：女優 Top20 + 標籤 treemap -->
+    <div class="row3">
+        <section class="card top20-card">
+            <div class="card-head">
+                <h2>{{ t('insights.row.actress_top20') }}</h2>
+            </div>
+            <div class="card-body">
+                <div class="list-rows top20-list" id="top20List"></div>
+            </div>
+        </section>
+        <section class="card treemap-card">
+            <div class="card-head">
+                <h2>{{ t('insights.row.tags') }}</h2>
+            </div>
+            <div class="card-body">
+                <div class="tags-pulled" id="tagsPulled"></div>
+                <div class="treemap-chart-wrap"><div id="tagsChart" class="echart"></div></div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Row 4：年齡 / 導演 / 系列 -->
+    <div class="row4">
+        <section class="card row4-card">
+            <div class="card-head">
+                <h2>{{ t('insights.row.age') }}</h2>
+            </div>
+            <div class="card-body">
+                <div class="age-chart-wrap"><div id="ageChart" class="echart"></div></div>
+            </div>
+        </section>
+        <section class="card row4-card">
+            <div class="card-head">
+                <h2>{{ t('insights.row.director') }}</h2>
+            </div>
+            <div class="card-body">
+                <div class="bar-chart-wrap"><div id="directorChart" class="echart"></div></div>
+            </div>
+        </section>
+        <section class="card row4-card">
+            <div class="card-head">
+                <h2>{{ t('insights.row.series') }}</h2>
+            </div>
+            <div class="card-body">
+                <div class="bar-chart-wrap"><div id="seriesChart" class="echart"></div></div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Section Divider -->
+    <div class="section-divider">{{ t('insights.row.deep_dive') }}</div>
+
+    <!-- Row 5：主要片商年表（全寬） -->
+    <div class="row5">
+        <section class="card gantt-card">
+            <div class="card-head">
+                <h2>{{ t('insights.row.gantt') }}</h2>
+            </div>
+            <div class="card-body">
+                <div class="gantt-wrap"><div class="gantt-table" id="ganttTable"></div></div>
+                <div class="gantt-note" id="ganttNote"></div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Row 6：女優片商分布 / 與她同片 -->
+    <div class="row6" id="row6">
+        <section class="card">
+            <div class="card-head">
+                <h2 id="soloTitle">{{ t('insights.row.actress_distribution') }}</h2>
+            </div>
+            <div class="card-body">
+                <div class="list-rows" id="soloList"></div>
+            </div>
+        </section>
+        <section class="card" id="costarCard">
+            <div class="card-head">
+                <h2 id="costarTitle">{{ t('insights.row.costar') }}</h2>
+            </div>
+            <div class="card-body">
+                <div class="list-rows" id="costarList"></div>
+            </div>
+        </section>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/vendor/echarts/echarts.min.js"></script>
+{% endblock %}

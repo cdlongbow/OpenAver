@@ -165,6 +165,17 @@
       "license": "MIT",
       "vendored_date": "2026-06-21",
       "banner_added": false
+    },
+    {
+      "path": "web/static/vendor/echarts/echarts.min.js",
+      "package": "echarts",
+      "version": "6.1.0",
+      "upstream_url": "https://cdn.jsdelivr.net/npm/echarts@6.1.0/dist/echarts.min.js",
+      "upstream_sha256": "b66b25aeb4df84e33199dc21694014d336d222cbd9deb0e5a7c14bd6aa0d0fd0",
+      "local_sha256": "b66b25aeb4df84e33199dc21694014d336d222cbd9deb0e5a7c14bd6aa0d0fd0",
+      "license": "Apache-2.0",
+      "vendored_date": "2026-09-25",
+      "banner_added": false
     }
   ],
   "facefinder": {

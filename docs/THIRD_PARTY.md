@@ -11,7 +11,7 @@
 **重新取得任何一個檔案**——每個檔案的上游 URL 都在 manifest 裡，所以不必逐檔抄指令：
 
 ```bash
-# 重新下載全部 16 個第三方檔案（含 core/focal/facefinder）到原位
+# 重新下載全部 17 個第三方檔案（含 core/focal/facefinder）到原位
 python3 -c "
 import json, urllib.request
 m = json.load(open('web/static/vendor/manifest.json'))
@@ -27,16 +27,16 @@ for e in m['vendor'] + [m['facefinder']]:
 
 三個區塊：
 
-1. [前端 vendor（15 檔）](#1-前端-vendor15-檔)
+1. [前端 vendor（16 檔）](#1-前端-vendor16-檔)
 2. [`core/focal/` 的第三方物件（4 個）](#2-corefocal-的第三方物件4-個)
 3. [生成物：`tailwind.css`](#3-生成物tailwindcss)
 
 ---
 
-## 1. 前端 vendor（15 檔）
+## 1. 前端 vendor（16 檔）
 
-全部位於 `web/static/vendor/`，由 `web/templates/base.html` 以 `<script>` / `<link>` 直接載入（無打包步驟）。
-15 檔**全部與上游逐位元組相同**，唯一的例外是我們替 Alpine 六檔加的一行檔頭註解（見下方說明）。
+全部位於 `web/static/vendor/`，以 `<script>` / `<link>` 直接載入（無打包步驟）：除 ECharts 只由 `web/templates/insights.html` 載入外，其餘都由 `web/templates/base.html` 載入。
+16 檔**全部與上游逐位元組相同**，唯一的例外是我們替 Alpine 六檔加的一行檔頭註解（見下方說明）。
 
 ### Alpine.js 3.15.12 — MIT
 
@@ -87,6 +87,19 @@ curl -sSL -o web/static/vendor/bootstrap-icons/bootstrap-icons.css \
   https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css
 curl -sSL -o web/static/vendor/bootstrap-icons/fonts/bootstrap-icons.woff2 \
   https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/fonts/bootstrap-icons.woff2
+```
+
+### Apache ECharts 6.1.0 — Apache-2.0
+
+`echarts/` 底下 1 檔：`echarts.min.js`
+
+- 上游：<https://echarts.apache.org>　·　授權：Apache-2.0 — <https://www.apache.org/licenses/LICENSE-2.0>
+- Vendored：2026-09-25　·　檔內自帶上游 banner，我們未改動
+- 只由 `web/templates/insights.html` 載入（片庫分析頁），不進 `base.html`
+
+```bash
+curl -sSL -o web/static/vendor/echarts/echarts.min.js \
+  https://cdn.jsdelivr.net/npm/echarts@6.1.0/dist/echarts.min.js
 ```
 
 ---
