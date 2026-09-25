@@ -11,6 +11,7 @@ import {
     REST_KEY,
     getRecords,
     aggregateYears,
+    aggregateTags,
     buildMakerColorSlots,
     periodRecords,
     scopeRecords,
@@ -36,6 +37,8 @@ let _donutLastGoodSize = { w: 280, h: 220 };
 let _yearsCallbacks = null;
 /** @type {{ getPeriod: Function, getFocus: Function, setFocus: Function }|null} */
 let _donutCallbacks = null;
+/** @type {{ getPeriod: Function, getFocus: Function }|null} */
+let _tagsCallbacks = null;
 
 // ── 純函式（node:test 可測）──────────────────────────────────────────
 
@@ -135,9 +138,9 @@ function readPrefersReducedMotion() {
     );
 }
 
-function tKey(key) {
+function tKey(key, params) {
     if (typeof window !== 'undefined' && typeof window.t === 'function') {
-        return window.t(key);
+        return window.t(key, params);
     }
     return key;
 }
@@ -260,6 +263,20 @@ export function reinitDonutAfterDispose() {
     updateDonutChart({
         period: _donutCallbacks.getPeriod(),
         focus: _donutCallbacks.getFocus(),
+    });
+}
+
+/**
+ * bfcache 還原：標籤樹圖與 years/donut 同一套 callbacks 生命週期。
+ */
+export function reinitTagsAfterDispose() {
+    const el = document.getElementById('tagsChart');
+    if (!el || typeof window.echarts === 'undefined') return;
+    if (!_tagsCallbacks) return;
+    initTagsChart(el, _tagsCallbacks);
+    updateTagsChart({
+        period: _tagsCallbacks.getPeriod(),
+        focus: _tagsCallbacks.getFocus(),
     });
 }
 
@@ -906,5 +923,201 @@ export function updateDonutChart(state) {
             ],
         },
         { replaceMerge: ['series'] },
+    );
+}
+
+// ── 標籤矩形樹圖（TASK-156b-T6）─────────────────────────────────────
+
+function _pctLabel(n, d) {
+    if (!d) return '0%';
+    return Math.round((n / d) * 100) + '%';
+}
+
+function _isDimTheme() {
+    return (
+        typeof document !== 'undefined' &&
+        document.documentElement.getAttribute('data-theme') === 'dim'
+    );
+}
+
+/**
+ * @param {HTMLElement} containerEl
+ * @param {{ getPeriod: Function, getFocus: Function }} callbacks
+ */
+export function initTagsChart(containerEl, callbacks) {
+    if (!containerEl || typeof window.echarts === 'undefined') return;
+    _tagsCallbacks = callbacks;
+
+    let chart = _charts.get('tags');
+    if (chart && !chart.isDisposed()) {
+        chart.dispose();
+    }
+    chart = window.echarts.init(containerEl);
+    _charts.set('tags', chart);
+
+    const prevRo = _observers.get('tags');
+    if (prevRo) prevRo.disconnect();
+    const ro = new ResizeObserver(() => {
+        const c = _charts.get('tags');
+        if (c && !c.isDisposed()) c.resize();
+    });
+    ro.observe(containerEl);
+    _observers.set('tags', ro);
+}
+
+export function getTagsChart() {
+    return _charts.get('tags') || null;
+}
+
+/**
+ * §4.2 wiring：無焦點 periodRecords；片商／女優焦點 scopeRecords。
+ * 刻意不設 animationDurationUpdate（含 0）——ECharts 6.1.0 treemap 在
+ * animationDurationUpdate:0 ＋版面驟縮時會把格子算成 NaN。
+ * @param {{ period: object, focus: object|null }} state
+ */
+export function updateTagsChart(state) {
+    const chart = _charts.get('tags');
+    if (!chart || chart.isDisposed()) return;
+
+    const period = state.period || { type: 'all' };
+    const focus = state.focus || null;
+    const allRecords = getRecords();
+
+    let dataRecords;
+    if (focus && (focus.type === 'maker' || focus.type === 'actress')) {
+        dataRecords = scopeRecords(allRecords, period, focus);
+    } else {
+        dataRecords = periodRecords(allRecords, period);
+    }
+
+    const agg = aggregateTags(dataRecords);
+    const total = agg.total;
+    const reduceMotion = readPrefersReducedMotion();
+    const animate = shouldAnimate(reduceMotion);
+
+    const hintEl = document.getElementById('tagsHint');
+    if (hintEl) {
+        hintEl.textContent = tKey('insights.tags.coverage', {
+            pct: _pctLabel(agg.withTagCount, total),
+        });
+    }
+
+    const pulledEl = document.getElementById('tagsPulled');
+    if (pulledEl) {
+        if (agg.pulled.length && total) {
+            const prefix = tKey('insights.tags.almost_all');
+            const parts = agg.pulled.map(function (e) {
+                return e[0] + ' ' + Math.round((e[1] / total) * 100) + '%';
+            });
+            pulledEl.textContent = prefix + parts.join('、');
+        } else {
+            pulledEl.textContent = '';
+        }
+    }
+
+    if (!agg.rest.length) {
+        chart.clear();
+        chart.setOption(
+            {
+                animation: animate,
+                animationDuration: 250,
+                graphic: [
+                    {
+                        type: 'text',
+                        left: 'center',
+                        top: 'middle',
+                        style: {
+                            text: tKey('insights.tags.empty'),
+                            fontSize: 11,
+                            fill: cssVar('--text-muted'),
+                        },
+                    },
+                ],
+                series: [],
+            },
+            true,
+        );
+        return;
+    }
+
+    const top40 = agg.rest;
+    const maxV = top40[0][1];
+    const minV = top40[top40.length - 1][1];
+    const borderColor = surfaceBorder();
+    const isDim = _isDimTheme();
+    const lLo = isDim ? 70 : 90;
+    const lHi = isDim ? 40 : 60;
+
+    const data = top40.map(function (e) {
+        const t =
+            maxV > minV ? (e[1] - minV) / (maxV - minV) : 1;
+        const lightness = Math.round(lLo + (lHi - lLo) * t);
+        const color = resolveColor(
+            'oklch(' + lightness + '% 0.045 250)',
+        );
+        const textColor = lightness >= 60 ? '#1c1c1c' : '#f2f2f2';
+        return {
+            name: e[0],
+            value: e[1],
+            _pct: _pctLabel(e[1], total),
+            itemStyle: { color: color },
+            label: { color: textColor },
+        };
+    });
+
+    try {
+        chart.dispatchAction({ type: 'hideTip' });
+    } catch {
+        /* ignore */
+    }
+
+    // notMerge:true；刻意不設 animationDurationUpdate（NaN 規避）。
+    chart.setOption(
+        {
+            animation: animate,
+            animationDuration: 250,
+            graphic: [],
+            tooltip: {
+                trigger: 'item',
+                textStyle: { fontSize: 11 },
+                formatter: function (p) {
+                    return tKey('insights.tags.tooltip', {
+                        name: p.name,
+                        count: (p.value || 0).toLocaleString('zh-Hant'),
+                        pct: (p.data && p.data._pct) || '0%',
+                    });
+                },
+            },
+            series: [
+                {
+                    type: 'treemap',
+                    roam: false,
+                    nodeClick: false,
+                    breadcrumb: { show: false },
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                    visibleMin: 30,
+                    label: {
+                        show: true,
+                        formatter: function (p) {
+                            return p.name + '\n' + p.value;
+                        },
+                        fontSize: 11,
+                        overflow: 'truncate',
+                    },
+                    upperLabel: { show: false },
+                    itemStyle: {
+                        borderColor: borderColor,
+                        borderWidth: 1,
+                        gapWidth: 1,
+                    },
+                    emphasis: { label: { show: true } },
+                    data: data,
+                },
+            ],
+        },
+        true,
     );
 }

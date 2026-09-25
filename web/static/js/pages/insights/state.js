@@ -22,11 +22,15 @@ import {
     updateYearsChart,
     initDonutChart,
     updateDonutChart,
+    initTagsChart,
+    updateTagsChart,
     disposeAll,
     areChartsAlive,
     reinitYearsAfterDispose,
     reinitDonutAfterDispose,
+    reinitTagsAfterDispose,
     getDonutChart,
+    getTagsChart,
     resizeAll,
     colorForMakerName,
 } from './charts.js';
@@ -98,6 +102,10 @@ export function libraryInsightsState() {
 
         redrawDonut() {
             updateDonutChart({ period: this.period, focus: this.focus });
+        },
+
+        redrawTags() {
+            updateTagsChart({ period: this.period, focus: this.focus });
         },
 
         /**
@@ -327,6 +335,14 @@ export function libraryInsightsState() {
             };
         },
 
+        _tagsCallbacks() {
+            const self = this;
+            return {
+                getPeriod: () => self.period,
+                getFocus: () => self.focus,
+            };
+        },
+
         _onPageShow(event) {
             if (!event || event.persisted !== true) return;
             // 快照失敗時從未建圖——不要在 bfcache 還原時建空圖表
@@ -352,6 +368,18 @@ export function libraryInsightsState() {
                     if (!donut || donut.isDisposed()) {
                         initDonutChart(donutEl, this._donutCallbacks());
                         updateDonutChart({
+                            period: this.period,
+                            focus: this.focus,
+                        });
+                    }
+                }
+                const tagsEl = document.getElementById('tagsChart');
+                if (tagsEl) {
+                    reinitTagsAfterDispose();
+                    const tags = getTagsChart();
+                    if (!tags || tags.isDisposed()) {
+                        initTagsChart(tagsEl, this._tagsCallbacks());
+                        updateTagsChart({
                             period: this.period,
                             focus: this.focus,
                         });
@@ -384,12 +412,14 @@ export function libraryInsightsState() {
                 this.recomputeScopedCount();
                 this.redrawYears();
                 this.redrawDonut();
+                this.redrawTags();
                 this.recomputeTop20();
             });
             this.$watch('focus', () => {
                 this.recomputeScopedCount();
                 this.redrawYears();
                 this.redrawDonut();
+                this.redrawTags();
                 this.recomputeTop20();
             });
 
@@ -438,6 +468,14 @@ export function libraryInsightsState() {
                 if (donutEl) {
                     initDonutChart(donutEl, this._donutCallbacks());
                     updateDonutChart({
+                        period: this.period,
+                        focus: this.focus,
+                    });
+                }
+                const tagsEl = document.getElementById('tagsChart');
+                if (tagsEl) {
+                    initTagsChart(tagsEl, this._tagsCallbacks());
+                    updateTagsChart({
                         period: this.period,
                         focus: this.focus,
                     });

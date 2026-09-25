@@ -6,6 +6,7 @@
  * T2：periodRecords / scopeRecords / aggregateYears + UNKNOWN_KEY
  * T4：buildMakerDonutData / classifyRecordAgainstMainMaker + REST_KEY
  * T5：buildActressTop20
+ * T6：aggregateTags
  */
 
 /** 年份「未知」分類與片商「未知」桶的內部鍵；畫面顯示文字由 charts.js（T3）做 i18n 映射。 */
@@ -360,4 +361,50 @@ export function buildActressTop20(records, focus) {
     }
     if (focus && focus.type === 'actress' && herRank > 20) { rows.push(herRow); }
     return { rows: rows };
+}
+
+/**
+ * 標籤矩形樹圖資料整形。
+ * >50% 涵蓋率標籤進 pulled（上方一行文字）；其餘取前 40 進 rest（樹圖面積）。
+ * 標籤字面原樣計數（同片用 Set 去重）；不做別名／大小寫合併。
+ * total===0 時 pulled/rest 皆空、coverage=0，不除以零。
+ *
+ * @param {Array<{tags?: string[]}>} records
+ * @returns {{
+ *   total: number,
+ *   withTagCount: number,
+ *   coverage: number,
+ *   pulled: Array<[string, number]>,
+ *   rest: Array<[string, number]>,
+ * }}
+ */
+export function aggregateTags(records) {
+    var list = records || [];
+    var total = list.length;
+    var map = new Map();
+    list.forEach(function (r) {
+        var seen = new Set();
+        ((r && r.tags) || []).forEach(function (t) {
+            if (seen.has(t)) return;
+            seen.add(t);
+            map.set(t, (map.get(t) || 0) + 1);
+        });
+    });
+    var named = Array.from(map.entries()).sort(function (a, b) {
+        return b[1] - a[1] || (a[0] < b[0] ? -1 : 1);
+    });
+    var pulled = named.filter(function (e) { return total && (e[1] / total) > 0.5; });
+    var rest = named.filter(function (e) { return !(total && (e[1] / total) > 0.5); });
+    var top = rest.slice(0, 40);
+    var withTagCount = list.filter(function (r) {
+        return r && r.tags && r.tags.length;
+    }).length;
+    var coverage = total ? withTagCount / total : 0;
+    return {
+        total: total,
+        withTagCount: withTagCount,
+        coverage: coverage,
+        pulled: pulled,
+        rest: top,
+    };
 }

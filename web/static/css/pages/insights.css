@@ -446,6 +446,25 @@
     text-overflow: ellipsis;
 }
 
+.insights-container .treemap-card .tags-coverage-hint {
+    font-size: 0.6875rem;
+    color: var(--text-muted);
+    text-align: right;
+    white-space: nowrap;
+}
+
+.insights-container .tags-pulled {
+    font-size: 0.6875rem;
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    margin-bottom: 0.125rem;
+    line-height: 1.4;
+}
+
+.insights-container .tags-pulled:empty {
+    display: none;
+}
+
 .insights-container .treemap-chart-wrap {
     flex: 1 1 auto;
     min-height: 360px;

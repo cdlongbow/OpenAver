@@ -21,6 +21,7 @@ const {
     buildMakerDonutData,
     classifyRecordAgainstMainMaker,
     buildActressTop20,
+    aggregateTags,
 } = agg;
 
 function rec(opts) {
@@ -29,6 +30,7 @@ function rec(opts) {
         month: opts.month === undefined ? null : opts.month,
         actresses: opts.actresses === undefined ? ['Alice'] : opts.actresses,
         maker: opts.maker === undefined ? 'SOD' : opts.maker,
+        tags: opts.tags === undefined ? [] : opts.tags,
     };
 }
 
@@ -839,4 +841,104 @@ test('buildActressTop20: 多人片每位女優各計一次；maker 焦點不附�
     assert.equal(rows.length, 2);
     assert.equal(rows[0].count, 1);
     assert.equal(rows[1].count, 1);
+});
+
+// ── aggregateTags（TASK-156b-T6）─────────────────────────────────────
+
+test('aggregateTags: total===0 時 pulled/rest 皆為空陣列且不拋錯', () => {
+    const result = aggregateTags([]);
+    assert.deepEqual(result.pulled, []);
+    assert.deepEqual(result.rest, []);
+    assert.equal(result.total, 0);
+    assert.equal(result.withTagCount, 0);
+    assert.equal(result.coverage, 0);
+});
+
+test('aggregateTags: 涵蓋率恰好 50% 的標籤不進 pulled（仍可能進樹圖）', () => {
+    // 4 部片；「半標」出現在恰好 2 部 → 50%，嚴格大於才進 pulled
+    const records = [
+        rec({ tags: ['半標', '稀有'] }),
+        rec({ tags: ['半標'] }),
+        rec({ tags: ['稀有'] }),
+        rec({ tags: [] }),
+    ];
+    const result = aggregateTags(records);
+    assert.equal(result.pulled.some((e) => e[0] === '半標'), false);
+    assert.equal(result.rest.some((e) => e[0] === '半標'), true);
+    // 「稀有」也是 2/4 = 50%，同樣不進 pulled
+    assert.equal(result.pulled.some((e) => e[0] === '稀有'), false);
+});
+
+test('aggregateTags: 涵蓋率 >50% 的標籤進 pulled、不進 rest', () => {
+    // 4 部片；「常見」出現 3 部 → 75% > 50%
+    const records = [
+        rec({ tags: ['常見', '少見'] }),
+        rec({ tags: ['常見'] }),
+        rec({ tags: ['常見'] }),
+        rec({ tags: ['少見'] }),
+    ];
+    const result = aggregateTags(records);
+    assert.deepEqual(result.pulled.map((e) => e[0]), ['常見']);
+    assert.equal(result.pulled[0][1], 3);
+    assert.equal(result.rest.some((e) => e[0] === '常見'), false);
+    assert.equal(result.rest.some((e) => e[0] === '少見'), true);
+});
+
+test('aggregateTags: 同片重複標籤字面只算一次', () => {
+    const records = [
+        rec({ tags: ['A', 'A', 'A'] }),
+        rec({ tags: ['B'] }),
+    ];
+    const result = aggregateTags(records);
+    // A 只算 1 次（1/2 = 50%，不進 pulled）；B 也是 1/2
+    const aEntry = result.rest.find((e) => e[0] === 'A');
+    assert.ok(aEntry);
+    assert.equal(aEntry[1], 1);
+});
+
+test('aggregateTags: rest 超過 40 筆時只取前 40 筆', () => {
+    // 50 個相異標籤各出現 1 次於不同片；另加 10 部無標籤把 total 拉高，
+    // 使每個標籤涵蓋率 = 1/60 < 50%，全部進 rest。
+    const records = [];
+    for (let i = 0; i < 50; i++) {
+        const name = 'T' + String(i).padStart(2, '0');
+        records.push(rec({ tags: [name] }));
+    }
+    for (let i = 0; i < 10; i++) {
+        records.push(rec({ tags: [] }));
+    }
+    const result = aggregateTags(records);
+    assert.equal(result.rest.length, 40);
+    assert.equal(result.pulled.length, 0);
+    // 同計數時字典序遞增；前 40 應是 T00..T39
+    assert.equal(result.rest[0][0], 'T00');
+    assert.equal(result.rest[39][0], 'T39');
+});
+
+test('aggregateTags: withTagCount 與 coverage 正確；標籤字面原樣保留', () => {
+    const records = [
+        rec({ tags: ['字幕'] }),
+        rec({ tags: ['中字'] }),
+        rec({ tags: [] }),
+        rec({ tags: ['字幕', '中字'] }),
+    ];
+    const result = aggregateTags(records);
+    assert.equal(result.total, 4);
+    assert.equal(result.withTagCount, 3);
+    assert.equal(result.coverage, 0.75);
+    // 前端不做合併：兩個字面各自一筆
+    const names = result.rest.map((e) => e[0]).sort();
+    assert.deepEqual(names, ['中字', '字幕']);
+});
+
+test('aggregateTags: 同計數時依字典序遞增排序', () => {
+    const records = [
+        rec({ tags: ['Zebra'] }),
+        rec({ tags: ['Apple'] }),
+        rec({ tags: ['Mango'] }),
+        rec({ tags: [] }),
+    ];
+    const result = aggregateTags(records);
+    // 各 1 次 → 字典序 Apple, Mango, Zebra
+    assert.deepEqual(result.rest.map((e) => e[0]), ['Apple', 'Mango', 'Zebra']);
 });
