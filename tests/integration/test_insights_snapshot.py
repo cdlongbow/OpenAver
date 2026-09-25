@@ -602,3 +602,161 @@ class TestInsightsRecordShape:
         assert fixture_a["duration"] == 120
         assert fixture_a["director"] == "Dir A"
         assert fixture_a["series"] == "Series A"
+
+
+# ============ Tag Badge Alias Merge (CD-156-11) ============
+
+class TestInsightsTagBadgeAliasMerge:
+    """封面徽章（cover-badge）別名群組併入片庫分析標籤快照（CD-156-11）。"""
+
+    def test_badge_alias_merge_canonicalizes_no_user_group_variants(
+        self, client, insights_setup, mocker
+    ):
+        """邊界 1：無使用者別名群組，片庫含「中文字幕」「字幕」「中字」三種字面
+        → 快照 tags[] 全部 canonicalize 成「中文字幕」且去重。"""
+        v1_uri = to_file_uri(str(insights_setup["video_dir"] / "SUB-001.mp4"), {})
+        v2_uri = to_file_uri(str(insights_setup["video_dir"] / "SUB-002.mp4"), {})
+        v3_uri = to_file_uri(str(insights_setup["video_dir"] / "SUB-003.mp4"), {})
+        VideoRepository(insights_setup["db_path"]).upsert_batch([
+            Video(
+                path=v1_uri,
+                number="SUB-001",
+                title="Sub 1",
+                release_date="2023-01-01",
+                tags=["中文字幕"],
+                duration=60,
+            ),
+            Video(
+                path=v2_uri,
+                number="SUB-002",
+                title="Sub 2",
+                release_date="2023-01-02",
+                tags=["字幕"],
+                duration=60,
+            ),
+            Video(
+                path=v3_uri,
+                number="SUB-003",
+                title="Sub 3",
+                release_date="2023-01-03",
+                tags=["中字", "字幕"],
+                duration=60,
+            ),
+        ])
+
+        snap = _get_snapshot(client, mocker, insights_setup)
+        records_by_date = {r["date"]: r for r in snap.json()["records"] if r.get("date")}
+        assert records_by_date["2023-01-01"]["tags"] == ["中文字幕"]
+        assert records_by_date["2023-01-02"]["tags"] == ["中文字幕"]
+        assert records_by_date["2023-01-03"]["tags"] == ["中文字幕"]
+
+    def test_badge_alias_merge_case_insensitive_leak_variant(
+        self, client, insights_setup, mocker
+    ):
+        """邊界 2：大小寫變體（leak／LEAK）無使用者群組
+        → 兩部片快照 tags[] 都 canonicalize 成「無碼流出」。"""
+        v1_uri = to_file_uri(str(insights_setup["video_dir"] / "LEAK-001.mp4"), {})
+        v2_uri = to_file_uri(str(insights_setup["video_dir"] / "LEAK-002.mp4"), {})
+        VideoRepository(insights_setup["db_path"]).upsert_batch([
+            Video(
+                path=v1_uri,
+                number="LEAK-001",
+                title="Leak 1",
+                release_date="2023-02-01",
+                tags=["leak"],
+                duration=60,
+            ),
+            Video(
+                path=v2_uri,
+                number="LEAK-002",
+                title="Leak 2",
+                release_date="2023-02-02",
+                tags=["LEAK"],
+                duration=60,
+            ),
+        ])
+
+        snap = _get_snapshot(client, mocker, insights_setup)
+        records_by_date = {r["date"]: r for r in snap.json()["records"] if r.get("date")}
+        assert records_by_date["2023-02-01"]["tags"] == ["無碼流出"]
+        assert records_by_date["2023-02-02"]["tags"] == ["無碼流出"]
+
+    def test_badge_alias_merge_preserves_user_group_primary_single_hit(
+        self, client, insights_setup, mocker
+    ):
+        """邊界 3：使用者已建立別名群組 primary="字幕組"、aliases=["字幕"]，
+        片庫標籤 "字幕" 與 "中字"（無使用者群組）
+        → 都 canonicalize 成 "字幕組"，primary 不被 badge 的 "中文字幕" 蓋掉。"""
+        TagAliasRepository(insights_setup["db_path"]).add("字幕組", aliases=["字幕"])
+        v1_uri = to_file_uri(str(insights_setup["video_dir"] / "GRP1-001.mp4"), {})
+        v2_uri = to_file_uri(str(insights_setup["video_dir"] / "GRP1-002.mp4"), {})
+        VideoRepository(insights_setup["db_path"]).upsert_batch([
+            Video(
+                path=v1_uri,
+                number="GRP1-001",
+                title="Grp1 1",
+                release_date="2023-03-01",
+                tags=["字幕"],
+                duration=60,
+            ),
+            Video(
+                path=v2_uri,
+                number="GRP1-002",
+                title="Grp1 2",
+                release_date="2023-03-02",
+                tags=["中字"],
+                duration=60,
+            ),
+        ])
+
+        snap = _get_snapshot(client, mocker, insights_setup)
+        records_by_date = {r["date"]: r for r in snap.json()["records"] if r.get("date")}
+        assert records_by_date["2023-03-01"]["tags"] == ["字幕組"]
+        assert records_by_date["2023-03-02"]["tags"] == ["字幕組"]
+
+    def test_badge_alias_merge_keeps_two_user_groups_separate_first_hit_wins(
+        self, client, insights_setup, mocker
+    ):
+        """邊界 4：兩個使用者群組 primary="官方字幕"（aliases=["字幕"]）
+        與 primary="手動翻譯"（aliases=["中字"]），
+        片庫標籤分別為 "字幕"、"中字"、"中文字幕"
+        → "字幕" 轉為 "官方字幕"；"中字" 轉為 "手動翻譯"；"中文字幕" 依 members 掃描順序
+        併入先命中的 "手動翻譯"，兩使用者群組不合併。"""
+        TagAliasRepository(insights_setup["db_path"]).add("官方字幕", aliases=["字幕"])
+        TagAliasRepository(insights_setup["db_path"]).add("手動翻譯", aliases=["中字"])
+        v1_uri = to_file_uri(str(insights_setup["video_dir"] / "GRP2-001.mp4"), {})
+        v2_uri = to_file_uri(str(insights_setup["video_dir"] / "GRP2-002.mp4"), {})
+        v3_uri = to_file_uri(str(insights_setup["video_dir"] / "GRP2-003.mp4"), {})
+        VideoRepository(insights_setup["db_path"]).upsert_batch([
+            Video(
+                path=v1_uri,
+                number="GRP2-001",
+                title="Grp2 1",
+                release_date="2023-04-01",
+                tags=["字幕"],
+                duration=60,
+            ),
+            Video(
+                path=v2_uri,
+                number="GRP2-002",
+                title="Grp2 2",
+                release_date="2023-04-02",
+                tags=["中字"],
+                duration=60,
+            ),
+            Video(
+                path=v3_uri,
+                number="GRP2-003",
+                title="Grp2 3",
+                release_date="2023-04-03",
+                tags=["中文字幕"],
+                duration=60,
+            ),
+        ])
+
+        snap = _get_snapshot(client, mocker, insights_setup)
+        records_by_date = {r["date"]: r for r in snap.json()["records"] if r.get("date")}
+        assert records_by_date["2023-04-01"]["tags"] == ["官方字幕"]
+        assert records_by_date["2023-04-02"]["tags"] == ["手動翻譯"]
+        assert records_by_date["2023-04-03"]["tags"] == ["手動翻譯"]
+

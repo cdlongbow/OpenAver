@@ -33,6 +33,7 @@ from core.config import (
     get_configured_gallery_dirs,
 )
 from core.multipart_group import group_rows
+from core.cover_attributes import manifest_payload
 
 logger = get_logger(__name__)
 
@@ -87,6 +88,67 @@ def _build_alias_lookup(records) -> dict[str, tuple[str, list[str]]]:
         for alias in aliases:
             lookup[alias.lower()] = pair
     return lookup
+
+
+def _merge_badge_alias_manifest(
+    tag_lookup: dict[str, tuple[str, list[str]]],
+) -> dict[str, tuple[str, list[str]]]:
+    """將 cover-badge 的 5 組別名合併進 tag_lookup（CD-156-11 使用者別名群組優先權）。"""
+    user_tag_lookup = dict(tag_lookup)
+    merged: dict[str, tuple[str, list[str]]] = dict(tag_lookup)
+
+    for rule in manifest_payload():
+        canonical_tag = rule["canonical_tag"]
+        match_aliases = rule.get("match_aliases", [])
+        members = [canonical_tag] + list(match_aliases)
+
+        hit_groups: list[tuple[str, list[str]]] = []
+        seen_primaries: set[str] = set()
+        for m in members:
+            key = m.lower()
+            if key in user_tag_lookup:
+                primary, group = user_tag_lookup[key]
+                if primary not in seen_primaries:
+                    seen_primaries.add(primary)
+                    hit_groups.append((primary, group))
+
+        num_hits = len(hit_groups)
+        if num_hits == 0:
+            names_list: list[str] = []
+            seen_lower: set[str] = set()
+            for m in members:
+                m_low = m.lower()
+                if m_low not in seen_lower:
+                    seen_lower.add(m_low)
+                    names_list.append(m)
+            pair = (canonical_tag, names_list)
+            for m in members:
+                merged[m.lower()] = pair
+
+        elif num_hits == 1:
+            primary, names_list = hit_groups[0]
+            existing_lowers = {n.lower() for n in names_list}
+            pair = (primary, names_list)
+            for m in members:
+                m_low = m.lower()
+                if m_low not in existing_lowers:
+                    existing_lowers.add(m_low)
+                    names_list.append(m)
+                merged[m_low] = pair
+
+        else:
+            host_primary, host_names_list = hit_groups[0]
+            host_lowers = {n.lower() for n in host_names_list}
+            pair = (host_primary, host_names_list)
+            for m in members:
+                m_low = m.lower()
+                if m_low not in user_tag_lookup:
+                    if m_low not in host_lowers:
+                        host_lowers.add(m_low)
+                        host_names_list.append(m)
+                    merged[m_low] = pair
+
+    return merged
 
 
 def _canonical_list(values, lookup: dict[str, tuple[str, list[str]]]) -> list[str]:
@@ -166,6 +228,7 @@ def get_insights_snapshot(request: Request):
 
         actress_lookup = _build_alias_lookup(AliasRepository(db_path).get_all())
         tag_lookup = _build_alias_lookup(TagAliasRepository(db_path).get_all())
+        tag_lookup = _merge_badge_alias_manifest(tag_lookup)
 
         records = [
             _serialize_record(g.members[0], actress_lookup, tag_lookup)
