@@ -1109,20 +1109,26 @@ N/A — 書籤牆／燈箱純瀏覽器互動，不依賴原生 picker。「加�
    - **驗**：`#tileYear`／`#tileFocus` 初始顯示淡色「全部」（`insights.all_years` /
      `insights.all_focus`），非 raw i18n key
 3. **[MCP] 圖表渲染**：依序確認以下 echart 容器存在且有內容（`canvas` 或
-   `getBoundingClientRect().height > 0`）：`#yearsChart`、`#donutChart`、`#top20List .top20-row`
-   （count > 0）、`#tagsChart`、`#ageChart`、`#directorChart`、`#seriesChart`、
+   `getBoundingClientRect().height > 0`）：`#yearsChart`、`#donutChart`、
+   `.top20-row3-wrap .podium-slot, .top20-row3-wrap .rest20-row`
+   （合計 count > 0，TASK-156d-T2 起 Top 20 拆成頒獎台＋第 4–20 名兩張卡，原本用來定位第一名的
+   舊清單容器 id 已移除）、
+   `#tagsChart`、`#ageChart`、`#directorChart`、`#seriesChart`、
    `.gantt-card .gantt-table`（或 `.gantt-empty` 若無資料）、`#row6 .solo-row`（或 `.solo-empty`）
-   - **驗**：至少 `#yearsChart`／`#donutChart`／`#top20List` 三者非空（片庫非空的前提下）
+   - **驗**：至少 `#yearsChart`／`#donutChart`／`.top20-row3-wrap .podium-slot, .top20-row3-wrap .rest20-row` 三者非空（片庫非空的前提下）
    - 若某卡片顯示「沒有資料」（`insights.no_data`）而非空白/報錯，視為 PASS（資料真的沒有）
 4. **[MCP] 點年份長條設定焦點**：`#yearsChart` 內找一根長條點擊（ECharts canvas 點擊座標，
    或退而求其次用 `dispatchAction` 驗證邏輯；若 canvas 座標點擊不可靠，記錄實際點法）
    - **驗**：點擊後 `#tileYear` 顯示該年份數字、多一顆 `×` 清除鈕
    - **驗**：點 `×`（`insights.clear_year`）→ `#tileYear` 回到「全部」
-5. **[MCP] 點 Top-20 列設定女優焦點**：`#top20List .top20-row:first-child` 點擊
+5. **[MCP] 點頒獎台設定女優焦點**：`.top20-row3-wrap .podium-slot--center`（第 1 名台座，一定存在
+   只要範圍內有女優）點擊
    - **驗**：`#tileFocus` 顯示該女優名字（`insights.focus_type_actress`）與 `×`
-   - **驗**：`#costarCard`（「與她同片」）從 `x-show` 隱藏變成可見，`#costarList` 有列或
+   - **驗**：`#costarCard`（「與她同片」，TASK-156d-T3 起搬到 row3 左半格、與 `.top20-row3-wrap`
+     循序淡出淡入互斥顯示）從 `is-hidden`（`display:none`）變成可見，`#costarList` 有列或
      顯示 empty 態
-   - **驗**：點 `#tileFocus` 的 `×`（`insights.clear_focus`）→ 焦點清除，`#costarCard` 隱藏
+   - **驗**：點 `#tileFocus` 的 `×`（`insights.clear_focus`）→ 焦點清除，`#costarCard` 隱藏，
+     `.top20-row3-wrap` 同時恢復可見（settle 後互斥顯示）
 6. **[MCP] 主要片商年表 年/年齡 toggle**：`.insights-gantt-toggle` 兩顆按鈕
    - **驗**：預設 `year` 高亮（`is-on`），點「年齡」按鈕 → class 切到年齡那顆、
      `.gantt-table` 內容改變（軸從年份換成歲數）或顯示 `.gantt-empty`
