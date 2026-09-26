@@ -374,25 +374,27 @@ export function libraryInsightsState() {
         },
 
         /**
-         * 修正 3（第 3 輪，P2 效能回歸）：只需要欄數，不該經由 ganttView()
-         * 取（那會連 25 列的格子都建一次）。直接用 axis 函式算橫軸長度——
-         * 年份模式全庫只需算一次（不隨 period/focus 變，`getRecords()` 整個
-         * session 內只在換快照時變）；年齡模式仍要讀 `this.ganttRows` 取得
-         * 目前候選名單，維持 period/focus 變動時的依賴追蹤。
+         * 修正 3（第 3 輪，P2 效能回歸）：年份模式只需要欄數，不該經由
+         * ganttView() 取（那會連 25 列的格子都建一次）。直接用
+         * ganttYearAxis() 算橫軸長度——全庫只需算一次（不隨 period/focus
+         * 變，`getRecords()` 整個 session 內只在換快照時變）。
+         *
+         * 修正 4（第 4 輪，P3 效能回歸）：年齡模式當初也比照年份模式自己
+         * 重跑 ganttAgeEligibility／ganttAgeAxis 避開 ganttView()，但這個
+         * 顧慮在 ganttView() 加了單筆 tick 快取（`_ganttViewCache`，見該
+         * 模組級變數註解）之後已經過時——同一次 tick 內模板本來就會經
+         * 表頭／列 x-for 呼叫 ganttView(axis) 把格子建一次，這裡改讀
+         * `this.ganttView(axis).axis.length` 只是把那次計算提前觸發，
+         * 命中同一把快取、不會多花一次全庫掃描。實測 6521 筆真實片庫、
+         * 真實 actressFavorites（23/25 頂尖女優落在年齡合格名單）：改前
+         * 切到年齡軸一次完整 tick 約 31–41ms，改後約 5–9ms。
          */
         ganttGridStyle(axis) {
-            const all = getRecords();
             let n;
             if (axis === 'age') {
-                const favs =
-                    (this.snapshot && this.snapshot.actressFavorites) || {};
-                const names = (this.ganttRows || []).map(function (r) {
-                    return r.name;
-                });
-                const elig = ganttAgeEligibility(names, all, favs);
-                n = ganttAgeAxis(elig.eligibleNames, all, favs).length;
+                n = this.ganttView(axis).axis.length;
             } else {
-                n = ganttYearAxis(all).length;
+                n = ganttYearAxis(getRecords()).length;
             }
             return (
                 'grid-template-columns: var(--gantt-name-w) repeat(' +
