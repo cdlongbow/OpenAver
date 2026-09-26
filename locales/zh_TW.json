@@ -1653,6 +1653,9 @@
       "empty": "沒有可顯示的標籤",
       "tooltip": "{name}<br>片數 {count}<br>涵蓋 {pct}"
     },
+    "age": {
+      "median": "中位數 {age}"
+    },
     "total_count": "全庫 {n} 部"
   }
 }

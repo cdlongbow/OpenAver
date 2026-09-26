@@ -12,6 +12,7 @@ import {
     getRecords,
     aggregateYears,
     aggregateTags,
+    aggregateAge,
     buildMakerColorSlots,
     periodRecords,
     scopeRecords,
@@ -39,6 +40,8 @@ let _yearsCallbacks = null;
 let _donutCallbacks = null;
 /** @type {{ getPeriod: Function, getFocus: Function }|null} */
 let _tagsCallbacks = null;
+/** @type {{ getPeriod: Function, getFocus: Function, getFavorites: Function }|null} */
+let _ageCallbacks = null;
 
 // ── 純函式（node:test 可測）──────────────────────────────────────────
 
@@ -291,6 +294,21 @@ export function reinitTagsAfterDispose() {
     updateTagsChart({
         period: _tagsCallbacks.getPeriod(),
         focus: _tagsCallbacks.getFocus(),
+    });
+}
+
+/**
+ * bfcache 還原：年齡長條與 tags 同一套 callbacks 生命週期。
+ */
+export function reinitAgeAfterDispose() {
+    const el = document.getElementById('ageChart');
+    if (!el || typeof window.echarts === 'undefined') return;
+    if (!_ageCallbacks) return;
+    initAgeChart(el, _ageCallbacks);
+    updateAgeChart({
+        period: _ageCallbacks.getPeriod(),
+        focus: _ageCallbacks.getFocus(),
+        favorites: _ageCallbacks.getFavorites(),
     });
 }
 
@@ -1134,4 +1152,162 @@ export function updateTagsChart(state) {
         },
         true,
     );
+}
+
+// ── 年齡分布長條（TASK-156c-T1）─────────────────────────────────────
+
+/**
+ * @param {HTMLElement} containerEl
+ * @param {{ getPeriod: Function, getFocus: Function, getFavorites: Function }} callbacks
+ */
+export function initAgeChart(containerEl, callbacks) {
+    if (!containerEl || typeof window.echarts === 'undefined') return;
+    _ageCallbacks = callbacks;
+
+    let chart = _charts.get('age');
+    if (chart && !chart.isDisposed()) {
+        chart.dispose();
+    }
+    chart = window.echarts.init(containerEl);
+    _charts.set('age', chart);
+
+    const prevRo = _observers.get('age');
+    if (prevRo) prevRo.disconnect();
+    const ro = new ResizeObserver(() => {
+        const c = _charts.get('age');
+        if (c && !c.isDisposed()) c.resize();
+    });
+    ro.observe(containerEl);
+    _observers.set('age', ro);
+}
+
+export function getAgeChart() {
+    return _charts.get('age') || null;
+}
+
+/**
+ * §4.2 wiring：無焦點 periodRecords；片商／女優焦點 scopeRecords。
+ * setOption 用預設 merge＋固定 series id 'age'，讓長條長度過渡；
+ * 只有算不出任何年齡的空分支才 clear()。
+ * @param {{ period: object, focus: object|null, favorites?: object|null }} state
+ */
+export function updateAgeChart(state) {
+    const chart = _charts.get('age');
+    if (!chart || chart.isDisposed()) return;
+
+    const period = state.period || { type: 'all' };
+    const focus = state.focus || null;
+    const favorites = state.favorites || null;
+    const allRecords = getRecords();
+
+    let dataRecords;
+    if (focus && (focus.type === 'maker' || focus.type === 'actress')) {
+        dataRecords = scopeRecords(allRecords, period, focus);
+    } else {
+        dataRecords = periodRecords(allRecords, period);
+    }
+
+    const agg = aggregateAge(dataRecords, favorites, focus);
+    const total = agg.total;
+    const reduceMotion = readPrefersReducedMotion();
+    const animate = shouldAnimate(reduceMotion);
+
+    const hintEl = document.getElementById('ageHint');
+    if (hintEl) {
+        hintEl.textContent = tKey('insights.tags.coverage', {
+            pct: _pctLabel(agg.recordsWithAge, total),
+        });
+    }
+
+    if (!agg.pairCount) {
+        chart.clear();
+        chart.setOption({
+            animation: animate,
+            animationDuration: 250,
+            graphic: [
+                {
+                    type: 'text',
+                    left: 'center',
+                    top: 'middle',
+                    style: {
+                        text: tKey('insights.no_data'),
+                        fontSize: 11,
+                        fill: cssVar('--text-muted'),
+                    },
+                },
+            ],
+        });
+        return;
+    }
+
+    const categories = agg.categories;
+    const counts = agg.counts;
+    const median = agg.median;
+    const barColor = cssVar('--color-primary');
+    const medianIdx = categories.indexOf(String(Math.round(median)));
+
+    try {
+        chart.dispatchAction({ type: 'hideTip' });
+    } catch {
+        /* ignore */
+    }
+
+    chart.setOption({
+        animation: animate,
+        animationDuration: 250,
+        animationDurationUpdate: 400,
+        graphic: [],
+        grid: { left: 8, right: 8, top: 26, bottom: 20, containLabel: true },
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'shadow' },
+            textStyle: { fontSize: 11 },
+        },
+        xAxis: {
+            type: 'category',
+            data: categories,
+            axisLine: { lineStyle: { color: cssVar('--stroke-default') } },
+            axisLabel: {
+                fontSize: 10,
+                color: cssVar('--text-muted'),
+                interval: categories.length > 25 ? 1 : 0,
+            },
+            axisTick: { show: false },
+        },
+        yAxis: {
+            type: 'value',
+            splitLine: { lineStyle: { color: cssVar('--stroke-subtle') } },
+            axisLabel: { fontSize: 11, color: cssVar('--text-muted') },
+        },
+        series: [
+            {
+                id: 'age',
+                type: 'bar',
+                data: counts,
+                barMaxWidth: 18,
+                itemStyle: {
+                    color: barColor,
+                    borderRadius: [2, 2, 0, 0],
+                },
+                markLine: {
+                    silent: true,
+                    symbol: 'none',
+                    lineStyle: {
+                        color: cssVar('--color-secondary'),
+                        type: 'dashed',
+                    },
+                    label: {
+                        formatter: tKey('insights.age.median', { age: median }),
+                        fontSize: 10,
+                        color: cssVar('--text-secondary'),
+                    },
+                    data: [
+                        {
+                            xAxis: medianIdx >= 0 ? medianIdx : 0,
+                        },
+                    ],
+                },
+            },
+        ],
+    });
 }

@@ -22,6 +22,7 @@ const {
     classifyRecordAgainstMainMaker,
     buildActressTop20,
     aggregateTags,
+    aggregateAge,
 } = agg;
 
 function rec(opts) {
@@ -31,7 +32,13 @@ function rec(opts) {
         actresses: opts.actresses === undefined ? ['Alice'] : opts.actresses,
         maker: opts.maker === undefined ? 'SOD' : opts.maker,
         tags: opts.tags === undefined ? [] : opts.tags,
+        date: opts.date === undefined ? null : opts.date,
+        duration: opts.duration === undefined ? null : opts.duration,
     };
+}
+
+function favs(map) {
+    return map;
 }
 
 // ── setRecords / getRecords ──────────────────────────────────────────
@@ -946,4 +953,162 @@ test('aggregateTags: 同計數時依字典序遞增排序', () => {
     const result = aggregateTags(records);
     // 各 1 次 → 字典序 Apple, Mango, Zebra
     assert.deepEqual(result.rest.map((e) => e[0]), ['Apple', 'Mango', 'Zebra']);
+});
+
+// ── aggregateAge（TASK-156c-T1）─────────────────────────────────────
+
+test('aggregateAge: duration=239 的片不計年齡，仍計入分母', () => {
+    const records = [
+        rec({
+            actresses: ['Alice'],
+            date: '2020-06-01',
+            duration: 239,
+        }),
+    ];
+    const favorites = favs({ Alice: { birth: '1998-01-01' } });
+    const result = aggregateAge(records, favorites, null);
+    assert.equal(result.total, 1);
+    assert.equal(result.recordsWithAge, 0);
+    assert.equal(result.pairCount, 0);
+    assert.equal(result.coverage, 0);
+    assert.equal(result.median, null);
+});
+
+test('aggregateAge: 以 records[].actresses 的 primary 名直接查 favorites', () => {
+    // favorites 以 primary 名為 key；actresses 陣列已是 primary（後端覆蓋別名）
+    const records = [
+        rec({
+            actresses: ['Alice'],
+            date: '2020-01-01',
+            duration: 120,
+        }),
+    ];
+    const favorites = favs({ Alice: { birth: '1998-01-01' } });
+    const result = aggregateAge(records, favorites, null);
+    assert.equal(result.pairCount, 1);
+    assert.equal(result.recordsWithAge, 1);
+    assert.equal(result.median, 22);
+    assert.equal(result.histogram[22], 1);
+});
+
+test('aggregateAge: 只有年／年月（無完整 date）的片不計年齡但計入分母', () => {
+    const records = [
+        rec({
+            actresses: ['Alice'],
+            year: 2020,
+            month: '2020-06',
+            date: null,
+            duration: 120,
+        }),
+    ];
+    const favorites = favs({ Alice: { birth: '1998-01-01' } });
+    const result = aggregateAge(records, favorites, null);
+    assert.equal(result.total, 1);
+    assert.equal(result.recordsWithAge, 0);
+    assert.equal(result.pairCount, 0);
+    assert.equal(result.coverage, 0);
+});
+
+test('aggregateAge: duration=null 照算年齡', () => {
+    const records = [
+        rec({
+            actresses: ['Alice'],
+            date: '2020-01-01',
+            duration: null,
+        }),
+    ];
+    const favorites = favs({ Alice: { birth: '1998-01-01' } });
+    const result = aggregateAge(records, favorites, null);
+    assert.equal(result.pairCount, 1);
+    assert.equal(result.recordsWithAge, 1);
+    assert.equal(result.median, 22);
+});
+
+test('aggregateAge: 同片兩位收藏女優都算出年齡時涵蓋率分子只計一次', () => {
+    // 片 1：兩位收藏女優都算出年齡 → pairCount+=2、recordsWithAge 只 +1
+    // 片 2：無生日 → 不得進分子（鎖 if (recordHasAge) 守衛；拿掉 if 會讓本測試轉紅）
+    const records = [
+        rec({
+            actresses: ['Alice', 'Bob'],
+            date: '2020-06-01',
+            duration: 120,
+        }),
+        rec({
+            actresses: ['Carol'],
+            date: '2020-06-01',
+            duration: 120,
+        }),
+    ];
+    const favorites = favs({
+        Alice: { birth: '1998-01-01' },
+        Bob: { birth: '1995-01-01' },
+        // Carol 刻意不在 favorites → 無有效年齡
+    });
+    const result = aggregateAge(records, favorites, null);
+    assert.equal(result.total, 2);
+    assert.equal(result.pairCount, 2);
+    assert.equal(result.recordsWithAge, 1);
+    assert.equal(result.coverage, 0.5);
+});
+
+test('aggregateAge: date="2021-02-31"（日曆不合法）回 null，不計年齡但計入分母', () => {
+    const records = [
+        rec({
+            actresses: ['Alice'],
+            date: '2021-02-31',
+            duration: 120,
+        }),
+    ];
+    const favorites = favs({ Alice: { birth: '1998-01-01' } });
+    const result = aggregateAge(records, favorites, null);
+    assert.equal(result.total, 1);
+    assert.equal(result.recordsWithAge, 0);
+    assert.equal(result.pairCount, 0);
+    assert.equal(result.coverage, 0);
+    assert.equal(result.median, null);
+});
+
+test('aggregateAge: 女優焦點時只算她本人；同片其他收藏女優（共演者）不進 histogram／pairCount', () => {
+    const records = [
+        rec({
+            actresses: ['Alice', 'Bob'],
+            date: '2020-06-01',
+            duration: 120,
+        }),
+    ];
+    const favorites = favs({
+        Alice: { birth: '1998-01-01' }, // age 22 on 2020-06-01
+        Bob: { birth: '1995-01-01' },   // age 25 — 共演者，焦點 Alice 時不得計入
+    });
+    const result = aggregateAge(
+        records,
+        favorites,
+        { type: 'actress', value: 'Alice' },
+    );
+    assert.equal(result.pairCount, 1);
+    assert.equal(result.recordsWithAge, 1);
+    assert.equal(result.median, 22);
+    assert.equal(result.histogram[22], 1);
+    assert.equal(result.histogram[25], undefined);
+});
+
+test('aggregateAge: 偶數個有效配對時中位數可為 .5', () => {
+    // 兩筆配對年齡 24、25 → median = 24.5
+    const records = [
+        rec({
+            actresses: ['Alice'],
+            date: '2020-06-01',
+            duration: 120,
+        }),
+        rec({
+            actresses: ['Alice'],
+            date: '2021-06-01',
+            duration: 120,
+        }),
+    ];
+    const favorites = favs({ Alice: { birth: '1996-06-01' } });
+    // 2020-06-01 → 24；2021-06-01 → 25
+    const result = aggregateAge(records, favorites, null);
+    assert.equal(result.pairCount, 2);
+    assert.equal(result.median, 24.5);
 });

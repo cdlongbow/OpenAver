@@ -24,13 +24,17 @@ import {
     updateDonutChart,
     initTagsChart,
     updateTagsChart,
+    initAgeChart,
+    updateAgeChart,
     disposeAll,
     areChartsAlive,
     reinitYearsAfterDispose,
     reinitDonutAfterDispose,
     reinitTagsAfterDispose,
+    reinitAgeAfterDispose,
     getDonutChart,
     getTagsChart,
+    getAgeChart,
     resizeAll,
     colorForMakerName,
 } from './charts.js';
@@ -118,6 +122,14 @@ export function libraryInsightsState() {
 
         redrawTags() {
             updateTagsChart({ period: this.period, focus: this.focus });
+        },
+
+        redrawAge() {
+            updateAgeChart({
+                period: this.period,
+                focus: this.focus,
+                favorites: this.snapshot && this.snapshot.actressFavorites,
+            });
         },
 
         /**
@@ -372,6 +384,16 @@ export function libraryInsightsState() {
             };
         },
 
+        _ageCallbacks() {
+            const self = this;
+            return {
+                getPeriod: () => self.period,
+                getFocus: () => self.focus,
+                getFavorites: () =>
+                    self.snapshot && self.snapshot.actressFavorites,
+            };
+        },
+
         _onPageShow(event) {
             if (!event || event.persisted !== true) return;
             // 快照失敗時從未建圖——不要在 bfcache 還原時建空圖表
@@ -419,6 +441,21 @@ export function libraryInsightsState() {
                         updateTagsChart({
                             period: this.period,
                             focus: this.focus,
+                        });
+                    }
+                }
+                const ageEl = document.getElementById('ageChart');
+                if (ageEl) {
+                    reinitAgeAfterDispose();
+                    const age = getAgeChart();
+                    if (!age || age.isDisposed()) {
+                        initAgeChart(ageEl, this._ageCallbacks());
+                        updateAgeChart({
+                            period: this.period,
+                            focus: this.focus,
+                            favorites:
+                                this.snapshot &&
+                                this.snapshot.actressFavorites,
                         });
                     }
                 }
@@ -485,6 +522,16 @@ export function libraryInsightsState() {
                         focus: this.focus,
                     });
                 }
+                const ageEl = document.getElementById('ageChart');
+                if (ageEl) {
+                    initAgeChart(ageEl, this._ageCallbacks());
+                    updateAgeChart({
+                        period: this.period,
+                        focus: this.focus,
+                        favorites:
+                            this.snapshot && this.snapshot.actressFavorites,
+                    });
+                }
             } catch {
                 if (!_pageAlive || token !== _loadToken) return;
                 this.snapshotError = true;
@@ -516,6 +563,7 @@ export function libraryInsightsState() {
                 this.redrawYears();
                 this.redrawDonut();
                 this.redrawTags();
+                this.redrawAge();
                 this.recomputeTop20();
             });
             this.$watch('focus', () => {
@@ -523,6 +571,7 @@ export function libraryInsightsState() {
                 this.redrawYears();
                 this.redrawDonut();
                 this.redrawTags();
+                this.redrawAge();
                 this.recomputeTop20();
             });
 

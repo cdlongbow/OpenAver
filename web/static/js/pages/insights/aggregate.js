@@ -7,7 +7,10 @@
  * T4：buildMakerDonutData / classifyRecordAgainstMainMaker + REST_KEY
  * T5：buildActressTop20
  * T6：aggregateTags
+ * T156c-T1：aggregateAge
  */
+
+import { computeActressAgeForVideo } from '../../shared/actress-release-age.js';
 
 /** 年份「未知」分類與片商「未知」桶的內部鍵；畫面顯示文字由 charts.js（T3）做 i18n 映射。 */
 export const UNKNOWN_KEY = '__unknown__';
@@ -409,5 +412,110 @@ export function aggregateTags(records) {
         coverage: coverage,
         pulled: pulled,
         rest: top,
+    };
+}
+
+/**
+ * 收藏女優發行當天年齡分布。
+ * 單位＝（片, 收藏女優）配對；同片多位各算一筆。女優焦點時只算她本人。
+ * 年齡一律走 computeActressAgeForVideo（含 239 合輯規則與日曆合法性）。
+ * 涵蓋率＝至少一配對算出年齡的片數 ÷ scope 片數；中位數＝配對中位數（偶數取平均）。
+ * 直方圖 1 歲一格，範圍＝有資料的最小～最大連續。
+ *
+ * @param {Array<{actresses?: string[], date?: string|null, duration?: number|null}>} records
+ * @param {Record<string, {birth?: string|null}>|null|undefined} favorites
+ * @param {{type: string, value: string}|null|undefined} focus
+ * @returns {{
+ *   total: number,
+ *   recordsWithAge: number,
+ *   coverage: number,
+ *   pairCount: number,
+ *   median: number|null,
+ *   histogram: Record<number, number>,
+ *   categories: string[],
+ *   counts: number[],
+ * }}
+ */
+export function aggregateAge(records, favorites, focus) {
+    var list = records || [];
+    var total = list.length;
+    var favs = favorites || {};
+    var focusActress = focus && focus.type === 'actress' ? focus.value : null;
+    var ages = [];
+    var recordsWithAge = 0;
+
+    list.forEach(function (r) {
+        var recordHasAge = false;
+        var names = focusActress
+            ? [focusActress]
+            : ((r && r.actresses) || []);
+        var seen = new Set();
+        names.forEach(function (name) {
+            if (seen.has(name)) return;
+            seen.add(name);
+            if (
+                focusActress &&
+                (!(r && r.actresses) || r.actresses.indexOf(name) === -1)
+            ) {
+                return;
+            }
+            var fav = favs[name];
+            if (!fav || !fav.birth) return;
+            var age = computeActressAgeForVideo({
+                birth: fav.birth,
+                releaseDate: r && r.date,
+                durationMinutes: r && r.duration,
+            });
+            if (age != null) {
+                ages.push(age);
+                recordHasAge = true;
+            }
+        });
+        if (recordHasAge) recordsWithAge += 1;
+    });
+
+    var pairCount = ages.length;
+    var coverage = total ? recordsWithAge / total : 0;
+
+    var median = null;
+    if (ages.length) {
+        var sorted = ages.slice().sort(function (a, b) { return a - b; });
+        var mid = Math.floor(sorted.length / 2);
+        median = sorted.length % 2
+            ? sorted[mid]
+            : (sorted[mid - 1] + sorted[mid]) / 2;
+    }
+
+    var histogram = {};
+    var categories = [];
+    var counts = [];
+    if (ages.length) {
+        var minA = ages[0];
+        var maxA = ages[0];
+        for (var i = 1; i < ages.length; i++) {
+            if (ages[i] < minA) minA = ages[i];
+            if (ages[i] > maxA) maxA = ages[i];
+        }
+        for (var a = minA; a <= maxA; a++) {
+            histogram[a] = 0;
+        }
+        ages.forEach(function (age) {
+            histogram[age] += 1;
+        });
+        for (var a2 = minA; a2 <= maxA; a2++) {
+            categories.push(String(a2));
+            counts.push(histogram[a2]);
+        }
+    }
+
+    return {
+        total: total,
+        recordsWithAge: recordsWithAge,
+        coverage: coverage,
+        pairCount: pairCount,
+        median: median,
+        histogram: histogram,
+        categories: categories,
+        counts: counts,
     };
 }
