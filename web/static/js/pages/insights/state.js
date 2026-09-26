@@ -144,6 +144,17 @@ export function libraryInsightsState() {
             ).length;
         },
 
+        isPeriodEmpty(types) {
+            return !!(
+                this.focus &&
+                types.indexOf(this.focus.type) !== -1 &&
+                this.scopedCount === 0 &&
+                !this.snapshotError &&
+                this.snapshot &&
+                this.snapshot.logicalTitles > 0
+            );
+        },
+
         redrawYears() {
             updateYearsChart({ period: this.period, focus: this.focus });
         },

@@ -36,6 +36,7 @@ const {
     formatRgbaChannels,
     computeDonutStartAngle,
     escapeHtml,
+    rangeEmptyText,
 } = await import('../charts.js');
 
 // ── escapeHtml（P3-1：tooltip renderMode:'html' 自訂 formatter XSS 修正）───
@@ -136,3 +137,34 @@ test('computeDonutStartAngle: 目標不在 inner／total===0 → 回傳預設 90
         90,
     );
 });
+
+// ── rangeEmptyText（TASK-156c-T6）────────────────────────────────────
+
+test('rangeEmptyText: count>0 時一律回 null，即使焦點在 narrowFocusTypes 內', () => {
+    assert.equal(
+        rangeEmptyText(5, { type: 'actress', value: 'Alice' }, ['actress']),
+        null,
+    );
+});
+
+test('rangeEmptyText: 無焦點時回傳 null（沿用既有沒有資料文字）', () => {
+    assert.equal(
+        rangeEmptyText(0, null, ['actress']),
+        null,
+    );
+});
+
+test('rangeEmptyText: 圓餅在片商焦點下不算範圍縮小，回傳 null', () => {
+    assert.equal(
+        rangeEmptyText(0, { type: 'maker', value: 'SOD' }, ['actress']),
+        null,
+    );
+});
+
+test('rangeEmptyText: 焦點命中 narrowFocusTypes 且 count===0 時回傳 period_empty', () => {
+    assert.equal(
+        rangeEmptyText(0, { type: 'actress', value: 'Alice' }, ['actress']),
+        'insights.period_empty',
+    );
+});
+

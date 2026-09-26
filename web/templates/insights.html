@@ -160,7 +160,7 @@
                     </template>
                     <div x-show="!top20Rows.length"
                          class="top20-empty"
-                         x-text="t('insights.no_data')"></div>
+                         x-text="isPeriodEmpty(['maker']) ? t('insights.period_empty') : t('insights.no_data')"></div>
                 </div>
             </div>
         </section>
@@ -238,7 +238,7 @@
             <div class="card-body">
                 <div x-show="!ganttRows.length"
                      class="gantt-empty"
-                     x-text="t('insights.no_data')"></div>
+                     x-text="isPeriodEmpty(['maker']) ? t('insights.period_empty') : t('insights.no_data')"></div>
                 <template x-if="ganttRows.length">
                     <div>
                         <div class="gantt-wrap">
@@ -359,8 +359,8 @@
                         </div>
                     </template>
                     <div x-show="!soloRows.length"
-                         class="top20-empty"
-                         x-text="t('insights.no_data')"></div>
+                         class="solo-empty"
+                         x-text="isPeriodEmpty(['maker']) ? t('insights.period_empty') : t('insights.no_data')"></div>
                 </div>
             </div>
         </section>
@@ -415,8 +415,8 @@
                         </div>
                     </template>
                     <div x-show="!costarRows.length"
-                         class="top20-empty"
-                         x-text="t('insights.no_data')"></div>
+                         class="costar-empty"
+                         x-text="isPeriodEmpty(['actress']) ? t('insights.period_empty') : t('insights.no_data')"></div>
                 </div>
             </div>
         </section>

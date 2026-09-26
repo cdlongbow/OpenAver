@@ -232,3 +232,42 @@ test('previewPositionStyle: viewport 以 clientWidth 為準（不含捲軸）', 
     // 證明不是誤用 innerWidth：若用 390 夾限，此錨點會得到 left=225
     assert.notEqual(left, 225);
 });
+
+// ── isPeriodEmpty（TASK-156c-T6）─────────────────────────────────────
+
+test('isPeriodEmpty: scopedCount>0 時回傳 false', () => {
+    const state = libraryInsightsState();
+    state.snapshot = { logicalTitles: 100 };
+    state.snapshotError = null;
+    state.focus = { type: 'maker', value: 'SOD' };
+    state.scopedCount = 5;
+    assert.equal(state.isPeriodEmpty(['maker']), false);
+});
+
+test('isPeriodEmpty: snapshotError 為真時回傳 false', () => {
+    const state = libraryInsightsState();
+    state.snapshot = { logicalTitles: 100 };
+    state.snapshotError = 'error';
+    state.focus = { type: 'maker', value: 'SOD' };
+    state.scopedCount = 0;
+    assert.equal(state.isPeriodEmpty(['maker']), false);
+});
+
+test('isPeriodEmpty: snapshot.logicalTitles===0（空片庫）時回傳 false', () => {
+    const state = libraryInsightsState();
+    state.snapshot = { logicalTitles: 0 };
+    state.snapshotError = null;
+    state.focus = { type: 'maker', value: 'SOD' };
+    state.scopedCount = 0;
+    assert.equal(state.isPeriodEmpty(['maker']), false);
+});
+
+test('isPeriodEmpty: 條件滿足時回傳 true', () => {
+    const state = libraryInsightsState();
+    state.snapshot = { logicalTitles: 100 };
+    state.snapshotError = null;
+    state.focus = { type: 'maker', value: 'SOD' };
+    state.scopedCount = 0;
+    assert.equal(state.isPeriodEmpty(['maker']), true);
+});
+

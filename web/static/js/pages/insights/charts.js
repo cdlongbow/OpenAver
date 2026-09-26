@@ -151,6 +151,14 @@ function tKey(key, params) {
     return key;
 }
 
+export function rangeEmptyText(count, focus, narrowFocusTypes) {
+    if (count > 0) return null;
+    if (!focus) return null;
+    if (narrowFocusTypes.indexOf(focus.type) === -1) return null;
+    return tKey('insights.period_empty');
+}
+
+
 /**
  * ECharts tooltip 走 renderMode:'html'，自訂 formatter 回傳的字串會被當 innerHTML
  * 插入（P3-1）；tag／片商名等來自本機資料，不可信任，插進 tooltip 前一律先過這支。
@@ -722,7 +730,10 @@ export function updateDonutChart(state) {
                     left: 'center',
                     top: 'middle',
                     style: {
-                        text: tKey('insights.no_data'),
+                        text:
+                            rangeEmptyText(dataRecords.length, focus, [
+                                'actress',
+                            ]) || tKey('insights.no_data'),
                         fontSize: 11,
                         fill: cssVar('--text-muted'),
                     },
@@ -1081,7 +1092,11 @@ export function updateTagsChart(state) {
                         left: 'center',
                         top: 'middle',
                         style: {
-                            text: tKey('insights.tags.empty'),
+                            text:
+                                rangeEmptyText(dataRecords.length, focus, [
+                                    'actress',
+                                    'maker',
+                                ]) || tKey('insights.tags.empty'),
                             fontSize: 11,
                             fill: cssVar('--text-muted'),
                         },
@@ -1253,7 +1268,11 @@ export function updateAgeChart(state) {
                     left: 'center',
                     top: 'middle',
                     style: {
-                        text: tKey('insights.no_data'),
+                        text:
+                            rangeEmptyText(dataRecords.length, focus, [
+                                'actress',
+                                'maker',
+                            ]) || tKey('insights.no_data'),
                         fontSize: 11,
                         fill: cssVar('--text-muted'),
                     },
@@ -1409,7 +1428,11 @@ export function updateFieldBarChart(state, field) {
                     left: 'center',
                     top: 'middle',
                     style: {
-                        text: tKey('insights.no_data'),
+                        text:
+                            rangeEmptyText(dataRecords.length, focus, [
+                                'actress',
+                                'maker',
+                            ]) || tKey('insights.no_data'),
                         fontSize: 11,
                         fill: cssVar('--text-muted'),
                     },

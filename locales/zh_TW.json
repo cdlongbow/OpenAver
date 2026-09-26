@@ -1621,6 +1621,7 @@
     "snapshot_error": "讀取失敗，請重新整理頁面",
     "unknown": "未知",
     "no_data": "沒有資料",
+    "period_empty": "這個期間沒有符合的片",
     "unit": "部",
     "all_years": "全部年份",
     "all_focus": "全部",
