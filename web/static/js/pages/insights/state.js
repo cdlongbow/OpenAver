@@ -14,6 +14,14 @@ import {
     buildMakerColorSlots,
     buildMainMakerYearMap,
     buildActressTop20,
+    buildGanttRows,
+    ganttYearAxis,
+    buildGanttYearCells,
+    ganttAgeEligibility,
+    ganttAgeAxis,
+    buildGanttAgeCells,
+    buildSoloRows,
+    buildCostarRows,
 } from './aggregate.js';
 import {
     setMakerColorSlots,
@@ -24,13 +32,21 @@ import {
     updateDonutChart,
     initTagsChart,
     updateTagsChart,
+    initAgeChart,
+    updateAgeChart,
+    initFieldBarChart,
+    updateFieldBarChart,
     disposeAll,
     areChartsAlive,
     reinitYearsAfterDispose,
     reinitDonutAfterDispose,
     reinitTagsAfterDispose,
+    reinitAgeAfterDispose,
+    reinitFieldBarAfterDispose,
     getDonutChart,
     getTagsChart,
+    getAgeChart,
+    getFieldBarChart,
     resizeAll,
     colorForMakerName,
 } from './charts.js';
@@ -42,6 +58,19 @@ let _previewTimer = null;
 // bfcache 還原時可能重啟一次新的 fetch（見 _onPageShow）；離頁前的舊 fetch若晚
 // 回來，token 比對讓它被丟棄，不會蓋掉新那次的結果（排序優先於旗標守衛）。
 let _loadToken = 0;
+/** 主要片商年 map；_loadSnapshot 建一次，與 setMainMakerYearMap 同一物件參考。 */
+let _mainMakerYearMap = {};
+/**
+ * 修正 3（第 3 輪，P2 效能回歸）：ganttView() 單筆快取。模板同一次 reactive
+ * tick 內會對同一個 axis 呼叫 ganttView() 好幾次（表頭 x-for／列 x-for／
+ * gantt-note 的 x-show＋x-text），每次都重新對 25 列各掃一輪全庫 records
+ * 建格子——實測 6521 筆片庫一次 tick 吃 65–80ms。鍵＝axis＋this.ganttRows
+ * 參考＋this.period 參考＋favorites 參考，四者皆相同（===）才視為同一次
+ * tick、直接回快取；鍵不同（period/focus 換了、favorites 換了、切了軸）
+ * 才真的重算。存模組級變數、不進 Alpine reactive proxy——快取物件本身沒有
+ * 必要被 Alpine 追蹤，包成 reactive 只會多繞一層 Proxy 開銷。
+ */
+let _ganttViewCache = null;
 
 /** 預覽浮層實測尺寸（160 寬照片 + 名字列）；與 .insights-preview CSS 對齊。 */
 const PREVIEW_POPUP = { width: 160, height: 224 };
@@ -85,8 +114,15 @@ export function libraryInsightsState() {
         focus: null,
         scopedCount: 0,
         top20Rows: [],
+        ganttRows: [],
+        // 修正 1（第 2 輪）：圖例名單存進 reactive 欄位，見 ganttLegendMakers() 註解。
+        ganttLegend: [],
+        soloRows: [],
+        costarRows: [],
         previewActress: null,
         previewAnchorRect: null,
+        // 模板色點／格子塗色直接呼叫（charts.js 匯出）
+        colorForMakerName,
         // P3-3：以女優名為 key，記錄該人頭像照片曾經載入失敗——取代舊版
         // @error 直接改寫 DOM textContent 的寫法（會把 x-if 錨點一併砍掉，
         // Alpine 之後永遠無法再插回新內容）。焦點格與 Top20 共用同一份。
@@ -108,6 +144,17 @@ export function libraryInsightsState() {
             ).length;
         },
 
+        isPeriodEmpty(types) {
+            return !!(
+                this.focus &&
+                types.indexOf(this.focus.type) !== -1 &&
+                this.scopedCount === 0 &&
+                !this.snapshotError &&
+                this.snapshot &&
+                this.snapshot.logicalTitles > 0
+            );
+        },
+
         redrawYears() {
             updateYearsChart({ period: this.period, focus: this.focus });
         },
@@ -118,6 +165,28 @@ export function libraryInsightsState() {
 
         redrawTags() {
             updateTagsChart({ period: this.period, focus: this.focus });
+        },
+
+        redrawAge() {
+            updateAgeChart({
+                period: this.period,
+                focus: this.focus,
+                favorites: this.snapshot && this.snapshot.actressFavorites,
+            });
+        },
+
+        redrawDirector() {
+            updateFieldBarChart(
+                { period: this.period, focus: this.focus },
+                'director',
+            );
+        },
+
+        redrawSeries() {
+            updateFieldBarChart(
+                { period: this.period, focus: this.focus },
+                'series',
+            );
         },
 
         /**
@@ -133,6 +202,205 @@ export function libraryInsightsState() {
                 records = periodRecords(all, this.period);
             }
             this.top20Rows = buildActressTop20(records, focus).rows;
+        },
+
+        recomputeGantt() {
+            this.ganttRows = buildGanttRows(
+                getRecords(),
+                _mainMakerYearMap,
+                this.period,
+                this.focus,
+            );
+        },
+
+        /**
+         * TASK-156c-T4／CD-156c-1／2／5：女優片商分布列表。
+         * 呼叫順序在 recomputeGantt() 之後——ganttNames 依賴這次剛算好的
+         * this.ganttRows（互斥名單），不是上一輪殘留的舊值。
+         * `this.ganttLegend` 是全庫前 8 色票名稱陣列（reactive，T3 存好），
+         * 不是舊版模組級 `_makerColorSlots` 物件——避免重建非 reactive 變數
+         * 讓模板讀到 stale 資料（見 T3「圖例不渲染」的教訓）。
+         * segments 一次算好存進 soloRows，模板只讀結果（FE perf 慣例同 T3）。
+         */
+        recomputeSolo() {
+            const ganttNames = (this.ganttRows || []).map(function (r) {
+                return r.name;
+            });
+            this.soloRows = buildSoloRows(
+                getRecords(),
+                _mainMakerYearMap,
+                this.period,
+                this.focus,
+                ganttNames,
+                this.ganttLegend,
+            );
+        },
+
+        /**
+         * TASK-156c-T5 / CD-156c-1 / 6：與她同片搭檔列表。
+         * 呼叫順序在 recomputeSolo() 之後。
+         */
+        recomputeCostar() {
+            const focus = this.focus;
+            const focusName =
+                focus && focus.type === 'actress' ? focus.value : '';
+            this.costarRows = buildCostarRows(
+                getRecords(),
+                this.period,
+                focus,
+            ).map(function (row) {
+                return { name: row.name, count: row.count, self: focusName };
+            });
+        },
+
+        /**
+         * 年表顯示組裝。axis==='age' 時從 ganttRows 再濾沒生日的列。
+         * 修正 3（第 3 輪）：同一次 tick 內對同一 axis 的重複呼叫共用
+         * `_ganttViewCache`（見該模組級變數註解）；`this.ganttRows`／
+         * `this.period` 仍要在快取判斷之前讀出來，讓 Alpine 對這個 getter
+         * 的依賴追蹤不因為加了快取而漏掉 period/focus 變動。
+         */
+        ganttView(axis) {
+            const rowsRef = this.ganttRows;
+            const periodRef = this.period;
+            const favs =
+                (this.snapshot && this.snapshot.actressFavorites) || {};
+            if (
+                _ganttViewCache &&
+                _ganttViewCache.axis === axis &&
+                _ganttViewCache.rowsRef === rowsRef &&
+                _ganttViewCache.periodRef === periodRef &&
+                _ganttViewCache.favs === favs
+            ) {
+                return _ganttViewCache.result;
+            }
+            const all = getRecords();
+            let result;
+            if (axis === 'age') {
+                const names = (this.ganttRows || []).map(function (r) {
+                    return r.name;
+                });
+                const elig = ganttAgeEligibility(names, all, favs);
+                const ageAxis = ganttAgeAxis(elig.eligibleNames, all, favs);
+                const eligSet = new Set(elig.eligibleNames);
+                const rows = (this.ganttRows || [])
+                    .filter(function (r) {
+                        return eligSet.has(r.name);
+                    })
+                    .map(function (r) {
+                        return {
+                            name: r.name,
+                            appended: !!r.appended,
+                            cells: buildGanttAgeCells(
+                                r.name,
+                                all,
+                                favs,
+                                _mainMakerYearMap,
+                                ageAxis,
+                            ),
+                        };
+                    });
+                result = {
+                    axis: ageAxis,
+                    rows: rows,
+                    skippedCount: elig.skippedCount,
+                };
+            } else {
+                const yearAxis = ganttYearAxis(all);
+                const yearRows = (this.ganttRows || []).map(function (r) {
+                    return {
+                        name: r.name,
+                        appended: !!r.appended,
+                        cells: buildGanttYearCells(
+                            r.name,
+                            all,
+                            _mainMakerYearMap,
+                            yearAxis,
+                        ),
+                    };
+                });
+                result = { axis: yearAxis, rows: yearRows, skippedCount: 0 };
+            }
+            _ganttViewCache = {
+                axis: axis,
+                rowsRef: rowsRef,
+                periodRef: periodRef,
+                favs: favs,
+                result: result,
+            };
+            return result;
+        },
+
+        ganttCellTitle(cell, axis) {
+            if (!cell || cell.state === 'empty') return '';
+            const tFn =
+                typeof window !== 'undefined' && typeof window.t === 'function'
+                    ? window.t
+                    : null;
+            const label =
+                axis === 'age'
+                    ? tFn
+                        ? tFn('insights.gantt.age_label', { age: cell.age })
+                        : String(cell.age)
+                    : String(cell.year);
+            if (cell.state === 'main') {
+                return tFn
+                    ? tFn('insights.gantt.tooltip_main', {
+                        label: label,
+                        total: cell.filmCount,
+                        maker: cell.maker,
+                        count: cell.makerCount,
+                    })
+                    : label;
+            }
+            return tFn
+                ? tFn('insights.gantt.tooltip_dot', {
+                    label: label,
+                    total: cell.filmCount,
+                })
+                : label;
+        },
+
+        /**
+         * 修正 1（第 2 輪，真瀏覽器重現）：舊版直接讀模組級非 reactive
+         * 變數 `_makerColorSlots`——模板首次渲染（快照載完前）算出 []，
+         * 之後 `_loadSnapshot` 寫入 `_makerColorSlots` 不是 Alpine 追蹤的
+         * 依賴，x-for 永遠不會重跑，圖例恆空（0 個 .gantt-legend-item）。
+         * 改讀 reactive 欄位 `this.ganttLegend`（`_loadSnapshot` 寫入時
+         * 觸發依賴），排序改在 `_loadSnapshot` 算好存進去，這裡只回傳。
+         */
+        ganttLegendMakers() {
+            return this.ganttLegend;
+        },
+
+        /**
+         * 修正 3（第 3 輪，P2 效能回歸）：年份模式只需要欄數，不該經由
+         * ganttView() 取（那會連 25 列的格子都建一次）。直接用
+         * ganttYearAxis() 算橫軸長度——全庫只需算一次（不隨 period/focus
+         * 變，`getRecords()` 整個 session 內只在換快照時變）。
+         *
+         * 修正 4（第 4 輪，P3 效能回歸）：年齡模式當初也比照年份模式自己
+         * 重跑 ganttAgeEligibility／ganttAgeAxis 避開 ganttView()，但這個
+         * 顧慮在 ganttView() 加了單筆 tick 快取（`_ganttViewCache`，見該
+         * 模組級變數註解）之後已經過時——同一次 tick 內模板本來就會經
+         * 表頭／列 x-for 呼叫 ganttView(axis) 把格子建一次，這裡改讀
+         * `this.ganttView(axis).axis.length` 只是把那次計算提前觸發，
+         * 命中同一把快取、不會多花一次全庫掃描。實測 6521 筆真實片庫、
+         * 真實 actressFavorites（23/25 頂尖女優落在年齡合格名單）：改前
+         * 切到年齡軸一次完整 tick 約 31–41ms，改後約 5–9ms。
+         */
+        ganttGridStyle(axis) {
+            let n;
+            if (axis === 'age') {
+                n = this.ganttView(axis).axis.length;
+            } else {
+                n = ganttYearAxis(getRecords()).length;
+            }
+            return (
+                'grid-template-columns: var(--gantt-name-w) repeat(' +
+                n +
+                ', var(--gantt-cell-w))'
+            );
         },
 
         /**
@@ -281,45 +549,115 @@ export function libraryInsightsState() {
         },
 
         /**
-         * D156-12：片商焦點時標題後綴＝期間標籤（全庫／該年）；其餘不加後綴。
+         * CD-156c-8：焦點 type 落在 focusTypes（字串或陣列）時加期間後綴。
          */
-        donutTitle() {
-            const base =
+        _titleWithPeriod(baseKey, focusTypes) {
+            const tFn =
                 typeof window !== 'undefined' && typeof window.t === 'function'
-                    ? window.t('insights.row.makers')
-                    : 'insights.row.makers';
-            if (!this.focus || this.focus.type !== 'maker') return base;
+                    ? window.t
+                    : null;
+            const base = tFn ? tFn(baseKey) : baseKey;
+            const types = Array.isArray(focusTypes)
+                ? focusTypes
+                : [focusTypes];
+            if (
+                !this.focus ||
+                types.indexOf(this.focus.type) === -1
+            ) {
+                return base;
+            }
             let periodLabel;
             if (this.period && this.period.type === 'year') {
                 periodLabel = String(this.period.year);
             } else {
-                periodLabel =
-                    typeof window !== 'undefined' && typeof window.t === 'function'
-                        ? window.t('insights.donut.library_wide')
-                        : 'insights.donut.library_wide';
+                periodLabel = tFn
+                    ? tFn('insights.donut.library_wide')
+                    : 'insights.donut.library_wide';
             }
             return base + ' · ' + periodLabel;
+        },
+
+        /**
+         * D156-12：片商焦點時標題後綴＝期間標籤（全庫／該年）；其餘不加後綴。
+         */
+        donutTitle() {
+            return this._titleWithPeriod('insights.row.makers', 'maker');
         },
 
         /**
          * D156-12：女優焦點時標題後綴＝期間標籤（全庫／該年）；其餘不加後綴。
          */
         get top20Title() {
-            const base =
+            return this._titleWithPeriod(
+                'insights.row.actress_top20',
+                'actress',
+            );
+        },
+
+        get ganttTitle() {
+            return this._titleWithPeriod('insights.row.gantt', 'actress');
+        },
+
+        /**
+         * CD-156c-8：女優或片商焦點都加期間後綴（`_titleWithPeriod` 第二參數
+         * 已設計成接受陣列）。
+         */
+        get soloTitle() {
+            return this._titleWithPeriod('insights.row.actress_distribution', [
+                'actress',
+                'maker',
+            ]);
+        },
+
+        /**
+         * CD-156c-5：尾端「N 部 · M 家」。M＝相異具名 maker 個數（不含未知），
+         * 即使被併進 other 段也算一家（見 aggregate.js buildSoloRows 註解）。
+         */
+        soloRowLabel(row) {
+            const tFn =
                 typeof window !== 'undefined' && typeof window.t === 'function'
-                    ? window.t('insights.row.actress_top20')
-                    : 'insights.row.actress_top20';
-            if (!this.focus || this.focus.type !== 'actress') return base;
-            let periodLabel;
-            if (this.period && this.period.type === 'year') {
-                periodLabel = String(this.period.year);
-            } else {
-                periodLabel =
-                    typeof window !== 'undefined' && typeof window.t === 'function'
-                        ? window.t('insights.donut.library_wide')
-                        : 'insights.donut.library_wide';
-            }
-            return base + ' · ' + periodLabel;
+                    ? window.t
+                    : null;
+            return tFn
+                ? tFn('insights.solo.count_label', {
+                    n: row.total,
+                    m: row.namedMakerCount,
+                })
+                : row.total + ' / ' + row.namedMakerCount;
+        },
+
+        /**
+         * CD-156c-5：「其他」段 tooltip，列出被併入的具名片商（最多 15 家）。
+         */
+        soloOtherTitle(seg) {
+            const tFn =
+                typeof window !== 'undefined' && typeof window.t === 'function'
+                    ? window.t
+                    : null;
+            const others = seg.others || [];
+            const list =
+                others
+                    .slice(0, 15)
+                    .map(function (o) {
+                        return o.maker;
+                    })
+                    .join('、') + (others.length > 15 ? '…' : '');
+            return tFn
+                ? tFn('insights.solo.other_title', { n: others.length, list: list })
+                : list;
+        },
+
+        /**
+         * CD-156c-6：尾端「N 部」。
+         */
+        costarRowLabel(row) {
+            const tFn =
+                typeof window !== 'undefined' && typeof window.t === 'function'
+                    ? window.t
+                    : null;
+            return tFn
+                ? tFn('insights.costar.count_label', { n: row.count })
+                : String(row.count);
         },
 
         focusPhotoUrl() {
@@ -365,6 +703,24 @@ export function libraryInsightsState() {
         },
 
         _tagsCallbacks() {
+            const self = this;
+            return {
+                getPeriod: () => self.period,
+                getFocus: () => self.focus,
+            };
+        },
+
+        _ageCallbacks() {
+            const self = this;
+            return {
+                getPeriod: () => self.period,
+                getFocus: () => self.focus,
+                getFavorites: () =>
+                    self.snapshot && self.snapshot.actressFavorites,
+            };
+        },
+
+        _fieldCallbacks() {
             const self = this;
             return {
                 getPeriod: () => self.period,
@@ -422,6 +778,47 @@ export function libraryInsightsState() {
                         });
                     }
                 }
+                const ageEl = document.getElementById('ageChart');
+                if (ageEl) {
+                    reinitAgeAfterDispose();
+                    const age = getAgeChart();
+                    if (!age || age.isDisposed()) {
+                        initAgeChart(ageEl, this._ageCallbacks());
+                        updateAgeChart({
+                            period: this.period,
+                            focus: this.focus,
+                            favorites:
+                                this.snapshot &&
+                                this.snapshot.actressFavorites,
+                        });
+                    }
+                }
+                const directorEl = document.getElementById('directorChart');
+                if (directorEl) {
+                    reinitFieldBarAfterDispose('director');
+                    const director = getFieldBarChart('director');
+                    if (!director || director.isDisposed()) {
+                        initFieldBarChart(
+                            directorEl,
+                            'director',
+                            this._fieldCallbacks(),
+                        );
+                        this.redrawDirector();
+                    }
+                }
+                const seriesEl = document.getElementById('seriesChart');
+                if (seriesEl) {
+                    reinitFieldBarAfterDispose('series');
+                    const series = getFieldBarChart('series');
+                    if (!series || series.isDisposed()) {
+                        initFieldBarChart(
+                            seriesEl,
+                            'series',
+                            this._fieldCallbacks(),
+                        );
+                        this.redrawSeries();
+                    }
+                }
             } else {
                 resizeAll();
             }
@@ -451,8 +848,21 @@ export function libraryInsightsState() {
                 delete rest.records;
 
                 setRecords(records);
-                setMakerColorSlots(buildMakerColorSlots(getRecords()));
-                setMainMakerYearMap(buildMainMakerYearMap(getRecords()));
+                var slots = buildMakerColorSlots(getRecords());
+                setMakerColorSlots(slots);
+                this.ganttLegend = Object.keys(slots)
+                    .map(function (name) {
+                        return { name: name, slot: slots[name] };
+                    })
+                    .sort(function (a, b) {
+                        return a.slot - b.slot || (a.name < b.name ? -1 : 1);
+                    })
+                    .map(function (e) {
+                        return e.name;
+                    });
+                var mmMap = buildMainMakerYearMap(getRecords());
+                setMainMakerYearMap(mmMap);
+                _mainMakerYearMap = mmMap;
                 this.snapshot = rest;
                 this.snapshotError = null;
                 // P3-3：新快照可能代表照片檔已落地（或 bfcache 還原後重試機會）；
@@ -460,6 +870,9 @@ export function libraryInsightsState() {
                 this.photoFailed = {};
                 this.recomputeScopedCount();
                 this.recomputeTop20();
+                this.recomputeGantt();
+                this.recomputeSolo();
+                this.recomputeCostar();
 
                 const el = document.getElementById('yearsChart');
                 if (el) {
@@ -484,6 +897,34 @@ export function libraryInsightsState() {
                         period: this.period,
                         focus: this.focus,
                     });
+                }
+                const ageEl = document.getElementById('ageChart');
+                if (ageEl) {
+                    initAgeChart(ageEl, this._ageCallbacks());
+                    updateAgeChart({
+                        period: this.period,
+                        focus: this.focus,
+                        favorites:
+                            this.snapshot && this.snapshot.actressFavorites,
+                    });
+                }
+                const directorEl = document.getElementById('directorChart');
+                if (directorEl) {
+                    initFieldBarChart(
+                        directorEl,
+                        'director',
+                        this._fieldCallbacks(),
+                    );
+                    this.redrawDirector();
+                }
+                const seriesEl = document.getElementById('seriesChart');
+                if (seriesEl) {
+                    initFieldBarChart(
+                        seriesEl,
+                        'series',
+                        this._fieldCallbacks(),
+                    );
+                    this.redrawSeries();
                 }
             } catch {
                 if (!_pageAlive || token !== _loadToken) return;
@@ -516,14 +957,26 @@ export function libraryInsightsState() {
                 this.redrawYears();
                 this.redrawDonut();
                 this.redrawTags();
+                this.redrawAge();
+                this.redrawDirector();
+                this.redrawSeries();
                 this.recomputeTop20();
+                this.recomputeGantt();
+                this.recomputeSolo();
+                this.recomputeCostar();
             });
             this.$watch('focus', () => {
                 this.recomputeScopedCount();
                 this.redrawYears();
                 this.redrawDonut();
                 this.redrawTags();
+                this.redrawAge();
+                this.redrawDirector();
+                this.redrawSeries();
                 this.recomputeTop20();
+                this.recomputeGantt();
+                this.recomputeSolo();
+                this.recomputeCostar();
             });
 
             if (window.__registerPage) {

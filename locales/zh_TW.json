@@ -1621,6 +1621,7 @@
     "snapshot_error": "讀取失敗，請重新整理頁面",
     "unknown": "未知",
     "no_data": "沒有資料",
+    "period_empty": "這個期間沒有符合的片",
     "unit": "部",
     "all_years": "全部年份",
     "all_focus": "全部",
@@ -1652,6 +1653,22 @@
       "almost_all": "幾乎每部都有：",
       "empty": "沒有可顯示的標籤",
       "tooltip": "{name}<br>片數 {count}<br>涵蓋 {pct}"
+    },
+    "age": {
+      "median": "中位數 {age}"
+    },
+    "gantt": {
+      "age_label": "{age} 歲",
+      "tooltip_main": "{label} · 收藏 {total} 部，其中 {maker} {count} 部",
+      "tooltip_dot": "{label} · 收藏 {total} 部",
+      "skipped_note": "{n} 位無生日資料已略過"
+    },
+    "solo": {
+      "count_label": "{n} 部 · {m} 家",
+      "other_title": "其他 {n} 家：{list}"
+    },
+    "costar": {
+      "count_label": "{n} 部"
     },
     "total_count": "全庫 {n} 部"
   }

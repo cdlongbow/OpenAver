@@ -160,7 +160,7 @@
                     </template>
                     <div x-show="!top20Rows.length"
                          class="top20-empty"
-                         x-text="t('insights.no_data')"></div>
+                         x-text="isPeriodEmpty(['maker']) ? t('insights.period_empty') : t('insights.no_data')"></div>
                 </div>
             </div>
         </section>
@@ -181,6 +181,7 @@
         <section class="card row4-card">
             <div class="card-head">
                 <h2>{{ t('insights.row.age') }}</h2>
+                <span class="tags-coverage-hint" id="ageHint"></span>
             </div>
             <div class="card-body">
                 <div class="age-chart-wrap"><div id="ageChart" class="echart"></div></div>
@@ -189,6 +190,7 @@
         <section class="card row4-card">
             <div class="card-head">
                 <h2>{{ t('insights.row.director') }}</h2>
+                <span class="tags-coverage-hint" id="directorHint"></span>
             </div>
             <div class="card-body">
                 <div class="bar-chart-wrap"><div id="directorChart" class="echart"></div></div>
@@ -197,6 +199,7 @@
         <section class="card row4-card">
             <div class="card-head">
                 <h2>{{ t('insights.row.series') }}</h2>
+                <span class="tags-coverage-hint" id="seriesHint"></span>
             </div>
             <div class="card-body">
                 <div class="bar-chart-wrap"><div id="seriesChart" class="echart"></div></div>
@@ -209,33 +212,212 @@
 
     <!-- Row 5：主要片商年表（全寬） -->
     <div class="row5">
-        <section class="card gantt-card">
+        <section class="card gantt-card" x-data="{ ganttAxis: 'year' }">
             <div class="card-head">
-                <h2>{{ t('insights.row.gantt') }}</h2>
+                <h2 x-text="ganttTitle"></h2>
+                <div class="gantt-legend">
+                    <template x-for="mk in ganttLegendMakers()" :key="mk">
+                        <span class="gantt-legend-item">
+                            <span class="gantt-legend-dot"
+                                  :style="'background:' + colorForMakerName(mk)"></span>
+                            <span x-text="mk"></span>
+                        </span>
+                    </template>
+                </div>
+                <div class="insights-gantt-toggle" role="group">
+                    <button type="button"
+                            :class="{ 'is-on': ganttAxis === 'year' }"
+                            @click="ganttAxis = 'year'"
+                            x-text="t('insights.row.years')"></button>
+                    <button type="button"
+                            :class="{ 'is-on': ganttAxis === 'age' }"
+                            @click="ganttAxis = 'age'"
+                            x-text="t('insights.row.age')"></button>
+                </div>
             </div>
             <div class="card-body">
-                <div class="gantt-wrap"><div class="gantt-table" id="ganttTable"></div></div>
-                <div class="gantt-note" id="ganttNote"></div>
+                <div x-show="!ganttRows.length"
+                     class="gantt-empty"
+                     x-text="isPeriodEmpty(['maker']) ? t('insights.period_empty') : t('insights.no_data')"></div>
+                <template x-if="ganttRows.length">
+                    <div>
+                        <div class="gantt-wrap">
+                            <div class="gantt-table">
+                                <div class="gantt-row gantt-head-row"
+                                     :style="ganttGridStyle(ganttAxis)">
+                                    <div class="gantt-name-cell gantt-head-label"></div>
+                                    <template x-for="col in ganttView(ganttAxis).axis"
+                                              :key="'h-' + col">
+                                        <div class="gantt-head-cell"
+                                             :class="{
+                                                 'is-selected': ganttAxis === 'year'
+                                                     && period
+                                                     && period.type === 'year'
+                                                     && period.year === col
+                                             }"
+                                             x-text="col"></div>
+                                    </template>
+                                </div>
+                                <template x-for="row in ganttView(ganttAxis).rows"
+                                          :key="row.name">
+                                    <div class="gantt-row"
+                                         :class="{
+                                             'is-active': focus
+                                                 && focus.type === 'actress'
+                                                 && focus.value === row.name
+                                         }"
+                                         :style="ganttGridStyle(ganttAxis)"
+                                         @click="toggleActressFocus(row.name)">
+                                        <div class="gantt-name-cell">
+                                            <span class="gantt-avatar"
+                                                  @click.stop="openPreview(row.name, $el)"
+                                                  @mouseenter="scheduleOpenPreview(row.name, $el)"
+                                                  @mouseleave="cancelOpenPreview()">
+                                                <template x-if="actressHasPhoto(row.name) && !photoFailed[row.name]">
+                                                    <img :src="actressPhotoUrl(row.name)"
+                                                         alt=""
+                                                         loading="lazy"
+                                                         @error="markPhotoFailed(row.name)">
+                                                </template>
+                                                <template x-if="!actressHasPhoto(row.name) || photoFailed[row.name]">
+                                                    <span x-text="row.name.charAt(0)"></span>
+                                                </template>
+                                            </span>
+                                            <span class="gantt-name"
+                                                  :title="row.name"
+                                                  x-text="row.name"
+                                                  @mouseenter="scheduleOpenPreview(row.name, $el)"
+                                                  @mouseleave="cancelOpenPreview()"></span>
+                                        </div>
+                                        <template x-for="cell in row.cells"
+                                                  :key="(cell.year != null ? cell.year : cell.age)">
+                                            <div :class="'gantt-cell gantt-cell--' + cell.state + (
+                                                     ganttAxis === 'year'
+                                                         && period
+                                                         && period.type === 'year'
+                                                         && period.year === cell.year
+                                                         ? ' is-selected' : ''
+                                                 )"
+                                                 :style="cell.state === 'main'
+                                                     ? ('background:' + colorForMakerName(cell.maker))
+                                                     : ''"
+                                                 :title="ganttCellTitle(cell, ganttAxis)"></div>
+                                        </template>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                        <div class="gantt-note"
+                             x-show="ganttAxis === 'age' && ganttView(ganttAxis).skippedCount"
+                             x-text="t('insights.gantt.skipped_note', { n: ganttView(ganttAxis).skippedCount })"></div>
+                    </div>
+                </template>
             </div>
         </section>
     </div>
 
     <!-- Row 6：女優片商分布 / 與她同片 -->
-    <div class="row6" id="row6">
+    <div class="row6" id="row6" :class="{ 'solo-only': !(focus && focus.type === 'actress') }">
         <section class="card">
             <div class="card-head">
-                <h2 id="soloTitle">{{ t('insights.row.actress_distribution') }}</h2>
+                <h2 id="soloTitle" x-text="soloTitle"></h2>
             </div>
             <div class="card-body">
-                <div class="list-rows" id="soloList"></div>
+                <div class="list-rows" id="soloList">
+                    <template x-for="row in soloRows" :key="row.name">
+                        <div class="solo-row"
+                             :class="{ 'is-active': focus && focus.type === 'actress' && focus.value === row.name }"
+                             @click="toggleActressFocus(row.name)">
+                            <span class="solo-avatar"
+                                  @click.stop="openPreview(row.name, $el)"
+                                  @mouseenter="scheduleOpenPreview(row.name, $el)"
+                                  @mouseleave="cancelOpenPreview()">
+                                <template x-if="actressHasPhoto(row.name) && !photoFailed[row.name]">
+                                    <img :src="actressPhotoUrl(row.name)"
+                                         alt=""
+                                         loading="lazy"
+                                         @error="markPhotoFailed(row.name)">
+                                </template>
+                                <template x-if="!actressHasPhoto(row.name) || photoFailed[row.name]">
+                                    <span x-text="row.name.charAt(0)"></span>
+                                </template>
+                            </span>
+                            <span class="solo-name"
+                                  :title="row.name"
+                                  x-text="row.name"
+                                  @mouseenter="scheduleOpenPreview(row.name, $el)"
+                                  @mouseleave="cancelOpenPreview()"></span>
+                            <span class="solo-bar-wrap">
+                                <template x-for="seg in row.segments" :key="seg.kind + '-' + (seg.maker || '')">
+                                    <span class="solo-segment"
+                                          :class="'solo-segment--' + seg.kind"
+                                          :style="'width:' + (row.total ? Math.round(seg.count / row.total * 100) : 0) + '%' + (seg.kind === 'named' ? (';background:' + colorForMakerName(seg.maker)) : '')"
+                                          :title="seg.kind === 'other' ? soloOtherTitle(seg) : null"></span>
+                                </template>
+                            </span>
+                            <span class="solo-end" x-text="soloRowLabel(row)"></span>
+                        </div>
+                    </template>
+                    <div x-show="!soloRows.length"
+                         class="solo-empty"
+                         x-text="isPeriodEmpty(['maker']) ? t('insights.period_empty') : t('insights.no_data')"></div>
+                </div>
             </div>
         </section>
-        <section class="card" id="costarCard">
+        <section class="card" id="costarCard" x-show="focus && focus.type === 'actress'">
             <div class="card-head">
                 <h2 id="costarTitle">{{ t('insights.row.costar') }}</h2>
             </div>
             <div class="card-body">
-                <div class="list-rows" id="costarList"></div>
+                <div class="list-rows" id="costarList">
+                    <template x-for="row in costarRows" :key="row.name">
+                        <div class="costar-row"
+                             :class="{ 'is-active': focus && focus.type === 'actress' && focus.value === row.name }"
+                             @click="toggleActressFocus(row.name)">
+                            <span class="costar-avatars">
+                                <span class="costar-avatar"
+                                      @click.stop="openPreview(row.self, $el)"
+                                      @mouseenter="scheduleOpenPreview(row.self, $el)"
+                                      @mouseleave="cancelOpenPreview()">
+                                    <template x-if="actressHasPhoto(row.self) && !photoFailed[row.self]">
+                                        <img :src="actressPhotoUrl(row.self)"
+                                             alt=""
+                                             loading="lazy"
+                                             @error="markPhotoFailed(row.self)">
+                                    </template>
+                                    <template x-if="!actressHasPhoto(row.self) || photoFailed[row.self]">
+                                        <span x-text="row.self.charAt(0)"></span>
+                                    </template>
+                                </span>
+                                <span class="costar-avatar"
+                                      @click.stop="openPreview(row.name, $el)"
+                                      @mouseenter="scheduleOpenPreview(row.name, $el)"
+                                      @mouseleave="cancelOpenPreview()">
+                                    <template x-if="actressHasPhoto(row.name) && !photoFailed[row.name]">
+                                        <img :src="actressPhotoUrl(row.name)"
+                                             alt=""
+                                             loading="lazy"
+                                             @error="markPhotoFailed(row.name)">
+                                    </template>
+                                    <template x-if="!actressHasPhoto(row.name) || photoFailed[row.name]">
+                                        <span x-text="row.name.charAt(0)"></span>
+                                    </template>
+                                </span>
+                            </span>
+                            <span class="costar-names"
+                                  :title="row.self + ' × ' + row.name"
+                                  x-text="row.self + ' × ' + row.name"></span>
+                            <span class="costar-bar-wrap">
+                                <span class="costar-bar"
+                                      :style="'width:' + (costarRows[0] && costarRows[0].count ? Math.round(row.count / costarRows[0].count * 100) : 0) + '%'"></span>
+                            </span>
+                            <span class="costar-end" x-text="costarRowLabel(row)"></span>
+                        </div>
+                    </template>
+                    <div x-show="!costarRows.length"
+                         class="costar-empty"
+                         x-text="isPeriodEmpty(['actress']) ? t('insights.period_empty') : t('insights.no_data')"></div>
+                </div>
             </div>
         </section>
     </div>
