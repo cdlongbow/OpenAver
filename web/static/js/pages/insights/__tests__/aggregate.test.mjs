@@ -24,6 +24,12 @@ const {
     aggregateTags,
     aggregateAge,
     aggregateFieldTop8,
+    buildGanttRows,
+    ganttYearAxis,
+    buildGanttYearCells,
+    ganttAgeEligibility,
+    ganttAgeAxis,
+    buildGanttAgeCells,
 } = agg;
 
 function rec(opts) {
@@ -1182,4 +1188,244 @@ test('aggregateFieldTop8: top 最多 8 筆', () => {
     assert.deepEqual(res.top[7], ['Director_03', 3]);
     assert.equal(res.top.some((e) => e[0] === 'Director_02'), false);
     assert.equal(res.top.some((e) => e[0] === 'Director_01'), false);
+});
+
+// ── buildGanttRows / ganttYearAxis / buildGanttYearCells ─────────────
+// ── ganttAgeEligibility / ganttAgeAxis / buildGanttAgeCells ──────────
+
+test('buildGanttRows: 選了年份＋片商焦點時只列同一組(y,mk)交集，不得OR判斷', () => {
+    // A|2023→S1、A|2020→Moodyz；選 2023＋Moodyz 時同一組 entry 不符 → 不出現
+    const map = {
+        'Alice|2023': 'S1',
+        'Alice|2020': 'Moodyz',
+    };
+    const records = [
+        rec({ year: 2023, actresses: ['Alice'], maker: 'S1' }),
+        rec({ year: 2020, actresses: ['Alice'], maker: 'Moodyz' }),
+    ];
+    const none = buildGanttRows(
+        records,
+        map,
+        { type: 'year', year: 2023 },
+        { type: 'maker', value: 'Moodyz' },
+    );
+    assert.equal(none.some((r) => r.name === 'Alice'), false);
+
+    // period=all／period=2023 無 focus／focus=Moodyz 無 period／period=2023+focus=S1 → 都出現
+    assert.equal(
+        buildGanttRows(records, map, { type: 'all' }, null).some((r) => r.name === 'Alice'),
+        true,
+    );
+    assert.equal(
+        buildGanttRows(records, map, { type: 'year', year: 2023 }, null).some(
+            (r) => r.name === 'Alice',
+        ),
+        true,
+    );
+    assert.equal(
+        buildGanttRows(records, map, { type: 'all' }, { type: 'maker', value: 'Moodyz' }).some(
+            (r) => r.name === 'Alice',
+        ),
+        true,
+    );
+    assert.equal(
+        buildGanttRows(
+            records,
+            map,
+            { type: 'year', year: 2023 },
+            { type: 'maker', value: 'S1' },
+        ).some((r) => r.name === 'Alice'),
+        true,
+    );
+});
+
+test('buildGanttRows: mainCount 遞減，同分時 name 字串遞增', () => {
+    const map = {
+        'Carol|2020': 'SOD',
+        'Bob|2020': 'SOD',
+        'Alice|2020': 'SOD',
+    };
+    // Carol 3 部 main、Bob/Alice 各 1 部；同分 Alice < Bob
+    const records = [
+        rec({ year: 2020, actresses: ['Carol'], maker: 'SOD' }),
+        rec({ year: 2020, actresses: ['Carol'], maker: 'SOD' }),
+        rec({ year: 2020, actresses: ['Carol'], maker: 'SOD' }),
+        rec({ year: 2020, actresses: ['Bob'], maker: 'SOD' }),
+        rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
+    ];
+    const rows = buildGanttRows(records, map, { type: 'all' }, null);
+    assert.deepEqual(
+        rows.map((r) => r.name),
+        ['Carol', 'Alice', 'Bob'],
+    );
+    assert.deepEqual(
+        rows.map((r) => r.mainCount),
+        [3, 1, 1],
+    );
+});
+
+test('buildGanttRows: 片商焦點排序只用「期間∩焦點片商」內的主要片數，不含她在其他片商的主要片數', () => {
+    // A 只在 Y 有主要片商年（5 部）；B 在 Y 有 4 部、在 Z 另有 10 部主要片商作品。
+    // 焦點 Y 時排序只能看「期間∩Y」範圍內的片數：A(5) > B(4)，A 必須排第一。
+    // 若誤用 periodRecords（不濾片商）算 scoped，B 會把 Z 的 10 部也算進去
+    // （14 > 5）而排到 A 前面——排序變成回答錯的問題。
+    const map = {
+        'A|2020': 'Y',
+        'B|2021': 'Y',
+        'B|2022': 'Z',
+    };
+    const records = [];
+    for (let i = 0; i < 5; i++) {
+        records.push(rec({ year: 2020, actresses: ['A'], maker: 'Y' }));
+    }
+    for (let i = 0; i < 4; i++) {
+        records.push(rec({ year: 2021, actresses: ['B'], maker: 'Y' }));
+    }
+    for (let i = 0; i < 10; i++) {
+        records.push(rec({ year: 2022, actresses: ['B'], maker: 'Z' }));
+    }
+    const rows = buildGanttRows(records, map, { type: 'all' }, { type: 'maker', value: 'Y' });
+    assert.deepEqual(
+        rows.map((r) => r.name),
+        ['A', 'B'],
+    );
+    assert.equal(rows.find((r) => r.name === 'A').mainCount, 5);
+    assert.equal(rows.find((r) => r.name === 'B').mainCount, 4);
+});
+
+test('buildGanttRows: 女優焦點且她不在前25名時附加她那一列', () => {
+    const map = {};
+    const records = [];
+    // 25 位候選人各有一個主要片商年；Zoe 不在其中但有片
+    for (let i = 1; i <= 25; i++) {
+        const name = `Act${String(i).padStart(2, '0')}`;
+        map[`${name}|2020`] = 'SOD';
+        records.push(rec({ year: 2020, actresses: [name], maker: 'SOD' }));
+    }
+    records.push(rec({ year: 2021, actresses: ['Zoe'], maker: 'Moodyz' }));
+
+    const withAppend = buildGanttRows(
+        records,
+        map,
+        { type: 'all' },
+        { type: 'actress', value: 'Zoe' },
+    );
+    assert.equal(withAppend.length, 26);
+    const last = withAppend[withAppend.length - 1];
+    assert.equal(last.name, 'Zoe');
+    assert.equal(last.appended, true);
+
+    // 已在前 25 → 不重複附加
+    const already = buildGanttRows(
+        records,
+        map,
+        { type: 'all' },
+        { type: 'actress', value: 'Act01' },
+    );
+    assert.equal(already.filter((r) => r.name === 'Act01').length, 1);
+    assert.equal(already.some((r) => r.appended), false);
+
+    // records 裡完全沒有她的片 → 不附加
+    const missing = buildGanttRows(
+        records,
+        map,
+        { type: 'all' },
+        { type: 'actress', value: 'Ghost' },
+    );
+    assert.equal(missing.some((r) => r.name === 'Ghost'), false);
+});
+
+test('buildGanttYearCells: 主要片商年→main、有片非主要→dot、無片→empty', () => {
+    const map = { 'Alice|2020': 'SOD' };
+    const records = [
+        rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
+        rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
+        rec({ year: 2021, actresses: ['Alice'], maker: 'Moodyz' }),
+    ];
+    const cells = buildGanttYearCells('Alice', records, map, [2020, 2021, 2022]);
+    assert.equal(cells.length, 3);
+    assert.equal(cells[0].state, 'main');
+    assert.equal(cells[0].maker, 'SOD');
+    assert.equal(cells[0].filmCount, 2);
+    assert.equal(cells[0].makerCount, 2);
+    assert.equal(cells[1].state, 'dot');
+    assert.equal(cells[1].filmCount, 1);
+    assert.equal(cells[2].state, 'empty');
+    assert.equal(cells[2].filmCount, 0);
+});
+
+test('ganttAgeEligibility: 沒有生日資料的女優計入略過人數且不進名單', () => {
+    const names = ['HasBirth', 'NoFav', 'NullBirth', 'AllLong'];
+    const favorites = favs({
+        HasBirth: { birth: '1990-01-01' },
+        NullBirth: { birth: null },
+        // AllLong 有 birth，即使所有片都算不出年齡也不算略過
+        AllLong: { birth: '1990-01-01' },
+    });
+    const records = [
+        rec({
+            actresses: ['AllLong'],
+            date: '2020-01-01',
+            duration: 239,
+        }),
+    ];
+    const res = ganttAgeEligibility(names, records, favorites);
+    assert.deepEqual(res.eligibleNames, ['HasBirth', 'AllLong']);
+    assert.equal(res.skippedCount, 2);
+});
+
+test('buildGanttAgeCells: 主要片商年同歲→main、有片非主要→dot、無片→empty', () => {
+    // birth 1990-06-01；2020-06-01 → 30；2021-06-01 → 31
+    const favorites = favs({ Alice: { birth: '1990-06-01' } });
+    const map = { 'Alice|2020': 'SOD' };
+    const records = [
+        rec({
+            year: 2020,
+            actresses: ['Alice'],
+            maker: 'SOD',
+            date: '2020-06-01',
+            duration: 120,
+        }),
+        rec({
+            year: 2021,
+            actresses: ['Alice'],
+            maker: 'Moodyz',
+            date: '2021-06-01',
+            duration: 120,
+        }),
+    ];
+    const cells = buildGanttAgeCells('Alice', records, favorites, map, [30, 31, 32]);
+    assert.equal(cells[0].state, 'main');
+    assert.equal(cells[0].age, 30);
+    assert.equal(cells[0].maker, 'SOD');
+    assert.equal(cells[0].filmCount, 1);
+    assert.equal(cells[0].makerCount, 1);
+    assert.equal(cells[1].state, 'dot');
+    assert.equal(cells[1].age, 31);
+    assert.equal(cells[1].filmCount, 1);
+    assert.equal(cells[2].state, 'empty');
+    assert.equal(cells[2].filmCount, 0);
+});
+
+test('ganttYearAxis: 全庫有年份紀錄的 min..max 連續，忽略 null', () => {
+    const records = [
+        rec({ year: 2022 }),
+        rec({ year: null }),
+        rec({ year: 2020 }),
+        rec({ year: 2020 }),
+    ];
+    assert.deepEqual(ganttYearAxis(records), [2020, 2021, 2022]);
+    assert.deepEqual(ganttYearAxis([]), []);
+});
+
+test('ganttAgeAxis: 顯示中各列年齡 min..max 連續', () => {
+    const favorites = favs({
+        A: { birth: '1990-01-01' },
+        B: { birth: '1995-01-01' },
+    });
+    const records = [
+        rec({ actresses: ['A'], date: '2020-01-01', duration: 100 }), // 30
+        rec({ actresses: ['B'], date: '2020-01-01', duration: 100 }), // 25
+    ];
+    assert.deepEqual(ganttAgeAxis(['A', 'B'], records, favorites), [25, 26, 27, 28, 29, 30]);
 });

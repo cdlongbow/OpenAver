@@ -212,13 +212,106 @@
 
     <!-- Row 5：主要片商年表（全寬） -->
     <div class="row5">
-        <section class="card gantt-card">
+        <section class="card gantt-card" x-data="{ ganttAxis: 'year' }">
             <div class="card-head">
-                <h2>{{ t('insights.row.gantt') }}</h2>
+                <h2 x-text="ganttTitle"></h2>
+                <div class="gantt-legend">
+                    <template x-for="mk in ganttLegendMakers()" :key="mk">
+                        <span class="gantt-legend-item">
+                            <span class="gantt-legend-dot"
+                                  :style="'background:' + colorForMakerName(mk)"></span>
+                            <span x-text="mk"></span>
+                        </span>
+                    </template>
+                </div>
+                <div class="insights-gantt-toggle" role="group">
+                    <button type="button"
+                            :class="{ 'is-on': ganttAxis === 'year' }"
+                            @click="ganttAxis = 'year'"
+                            x-text="t('insights.row.years')"></button>
+                    <button type="button"
+                            :class="{ 'is-on': ganttAxis === 'age' }"
+                            @click="ganttAxis = 'age'"
+                            x-text="t('insights.row.age')"></button>
+                </div>
             </div>
             <div class="card-body">
-                <div class="gantt-wrap"><div class="gantt-table" id="ganttTable"></div></div>
-                <div class="gantt-note" id="ganttNote"></div>
+                <div x-show="!ganttRows.length"
+                     class="gantt-empty"
+                     x-text="t('insights.no_data')"></div>
+                <template x-if="ganttRows.length">
+                    <div>
+                        <div class="gantt-wrap">
+                            <div class="gantt-table">
+                                <div class="gantt-row gantt-head-row"
+                                     :style="ganttGridStyle(ganttAxis)">
+                                    <div class="gantt-name-cell gantt-head-label"></div>
+                                    <template x-for="col in ganttView(ganttAxis).axis"
+                                              :key="'h-' + col">
+                                        <div class="gantt-head-cell"
+                                             :class="{
+                                                 'is-selected': ganttAxis === 'year'
+                                                     && period
+                                                     && period.type === 'year'
+                                                     && period.year === col
+                                             }"
+                                             x-text="col"></div>
+                                    </template>
+                                </div>
+                                <template x-for="row in ganttView(ganttAxis).rows"
+                                          :key="row.name">
+                                    <div class="gantt-row"
+                                         :class="{
+                                             'is-active': focus
+                                                 && focus.type === 'actress'
+                                                 && focus.value === row.name
+                                         }"
+                                         :style="ganttGridStyle(ganttAxis)"
+                                         @click="toggleActressFocus(row.name)">
+                                        <div class="gantt-name-cell">
+                                            <span class="gantt-avatar"
+                                                  @click.stop="openPreview(row.name, $el)"
+                                                  @mouseenter="scheduleOpenPreview(row.name, $el)"
+                                                  @mouseleave="cancelOpenPreview()">
+                                                <template x-if="actressHasPhoto(row.name) && !photoFailed[row.name]">
+                                                    <img :src="actressPhotoUrl(row.name)"
+                                                         alt=""
+                                                         loading="lazy"
+                                                         @error="markPhotoFailed(row.name)">
+                                                </template>
+                                                <template x-if="!actressHasPhoto(row.name) || photoFailed[row.name]">
+                                                    <span x-text="row.name.charAt(0)"></span>
+                                                </template>
+                                            </span>
+                                            <span class="gantt-name"
+                                                  :title="row.name"
+                                                  x-text="row.name"
+                                                  @mouseenter="scheduleOpenPreview(row.name, $el)"
+                                                  @mouseleave="cancelOpenPreview()"></span>
+                                        </div>
+                                        <template x-for="cell in row.cells"
+                                                  :key="(cell.year != null ? cell.year : cell.age)">
+                                            <div :class="'gantt-cell gantt-cell--' + cell.state + (
+                                                     ganttAxis === 'year'
+                                                         && period
+                                                         && period.type === 'year'
+                                                         && period.year === cell.year
+                                                         ? ' is-selected' : ''
+                                                 )"
+                                                 :style="cell.state === 'main'
+                                                     ? ('background:' + colorForMakerName(cell.maker))
+                                                     : ''"
+                                                 :title="ganttCellTitle(cell, ganttAxis)"></div>
+                                        </template>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                        <div class="gantt-note"
+                             x-show="ganttAxis === 'age' && ganttView(ganttAxis).skippedCount"
+                             x-text="t('insights.gantt.skipped_note', { n: ganttView(ganttAxis).skippedCount })"></div>
+                    </div>
+                </template>
             </div>
         </section>
     </div>

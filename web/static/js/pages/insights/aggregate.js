@@ -8,6 +8,8 @@
  * T5：buildActressTop20
  * T6：aggregateTags
  * T156c-T1：aggregateAge
+ * T156c-T3：buildGanttRows / ganttYearAxis / buildGanttYearCells /
+ *           ganttAgeEligibility / ganttAgeAxis / buildGanttAgeCells
  */
 
 import { computeActressAgeForVideo } from '../../shared/actress-release-age.js';
@@ -551,4 +553,225 @@ export function aggregateFieldTop8(records, field) {
         coverage: coverage,
         top: top,
     };
+}
+
+/**
+ * 主要片商年表列選取。
+ * 候選＝mainMakerYearMap 裡至少一組 (y, mk) 同時符合 period／maker 焦點（交集）；
+ * 女優焦點忽略 focus，只看 period。排序＝範圍內 classify==='main' 片數遞減、name 遞增，取 25；
+ * 女優焦點且她不在前 25、但 records 有她的片 → 附加末列。
+ * 不呼叫 getRecords()。
+ */
+export function buildGanttRows(records, mainMakerYearMap, period, focus) {
+    if (period === undefined) period = { type: 'all' };
+    if (focus === undefined) focus = null;
+    var map = mainMakerYearMap || {};
+    var yearFocus = period && period.type === 'year' ? period.year : null;
+    var makerFocus = focus && focus.type === 'maker' ? focus.value : null;
+
+    var candidateSet = new Set();
+    Object.keys(map).forEach(function (key) {
+        var sep = key.lastIndexOf('|');
+        if (sep < 0) return;
+        var name = key.slice(0, sep);
+        var y = Number(key.slice(sep + 1));
+        var e = { year: y, maker: map[key] };
+        if (yearFocus != null && e.year !== yearFocus) return;
+        if (makerFocus != null && e.maker !== makerFocus) return;
+        candidateSet.add(name);
+    });
+
+    var scoped;
+    if (focus && focus.type === 'maker') {
+        scoped = scopeRecords(records, period, focus);
+    } else {
+        scoped = periodRecords(records, period);
+    }
+
+    function mainCountFor(name) {
+        var c = 0;
+        scoped.forEach(function (r) {
+            if (!r || (r.actresses || []).indexOf(name) === -1) return;
+            if (classifyRecordAgainstMainMaker(r, map) === 'main') c += 1;
+        });
+        return c;
+    }
+
+    var rows = Array.from(candidateSet).map(function (name) {
+        return { name: name, mainCount: mainCountFor(name) };
+    });
+    rows.sort(function (a, b) {
+        return b.mainCount - a.mainCount || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    });
+    var top = rows.slice(0, 25);
+
+    if (focus && focus.type === 'actress' && focus.value) {
+        var herName = focus.value;
+        var already = top.some(function (r) { return r.name === herName; });
+        if (!already) {
+            var hasFilm = (records || []).some(function (r) {
+                return r && (r.actresses || []).indexOf(herName) !== -1;
+            });
+            if (hasFilm) {
+                top.push({
+                    name: herName,
+                    mainCount: mainCountFor(herName),
+                    appended: true,
+                });
+            }
+        }
+    }
+    return top;
+}
+
+/**
+ * 年表年份橫軸：全庫有年份紀錄的 min..max 連續，忽略 null／period／focus。
+ * 不呼叫 getRecords()。
+ */
+export function ganttYearAxis(records) {
+    var years = [];
+    (records || []).forEach(function (r) {
+        if (r && r.year != null) years.push(r.year);
+    });
+    if (!years.length) return [];
+    var minY = Math.min.apply(null, years);
+    var maxY = Math.max.apply(null, years);
+    var range = [];
+    for (var y = minY; y <= maxY; y++) range.push(y);
+    return range;
+}
+
+/**
+ * 年表年份格子。empty＝無片；main＝該年是她的主要片商年；否則 dot。
+ * 不呼叫 getRecords()。
+ */
+export function buildGanttYearCells(name, records, mainMakerYearMap, yearAxis) {
+    var map = mainMakerYearMap || {};
+    var byYear = new Map();
+    (records || []).forEach(function (r) {
+        if (!r || r.year == null) return;
+        if ((r.actresses || []).indexOf(name) === -1) return;
+        if (!byYear.has(r.year)) byYear.set(r.year, []);
+        byYear.get(r.year).push(r);
+    });
+    return (yearAxis || []).map(function (year) {
+        var films = byYear.get(year) || [];
+        if (!films.length) {
+            return { year: year, state: 'empty', maker: null, filmCount: 0, makerCount: 0 };
+        }
+        var mainMk = map[name + '|' + year];
+        if (mainMk) {
+            var makerCount = 0;
+            films.forEach(function (r) {
+                if (r.maker === mainMk) makerCount += 1;
+            });
+            return {
+                year: year,
+                state: 'main',
+                maker: mainMk,
+                filmCount: films.length,
+                makerCount: makerCount,
+            };
+        }
+        return { year: year, state: 'dot', maker: null, filmCount: films.length, makerCount: 0 };
+    });
+}
+
+/**
+ * 年齡模式資格：favorites[name] 不存在或無 birth → 略過；有 birth 即合格
+ * （即使所有片算不出年齡也不算略過）。不呼叫 getRecords()。
+ */
+export function ganttAgeEligibility(names, records, favorites) {
+    var favs = favorites || {};
+    var eligibleNames = [];
+    var skipped = 0;
+    (names || []).forEach(function (name) {
+        var fav = favs[name];
+        if (!fav || !fav.birth) { skipped += 1; return; }
+        eligibleNames.push(name);
+    });
+    return { eligibleNames: eligibleNames, skippedCount: skipped };
+}
+
+/**
+ * 年齡模式橫軸：顯示中各列年齡的 min..max 連續。
+ * 年齡一律走 computeActressAgeForVideo。不呼叫 getRecords()。
+ */
+export function ganttAgeAxis(eligibleNames, records, favorites) {
+    var favs = favorites || {};
+    var nameSet = new Set(eligibleNames || []);
+    var ages = [];
+    (records || []).forEach(function (r) {
+        if (!r) return;
+        var seen = new Set();
+        (r.actresses || []).forEach(function (name) {
+            if (!nameSet.has(name) || seen.has(name)) return;
+            seen.add(name);
+            var fav = favs[name];
+            if (!fav || !fav.birth) return;
+            var age = computeActressAgeForVideo({
+                birth: fav.birth,
+                releaseDate: r.date,
+                durationMinutes: r.duration,
+            });
+            if (age != null) ages.push(age);
+        });
+    });
+    if (!ages.length) return [];
+    var minA = Math.min.apply(null, ages);
+    var maxA = Math.max.apply(null, ages);
+    var range = [];
+    for (var a = minA; a <= maxA; a++) range.push(a);
+    return range;
+}
+
+/**
+ * 年表年齡格子。某歲有片且至少一部落在她自己的主要片商年且片商相同 → main；
+ * 有片否則 → dot；無片 → empty。不呼叫 getRecords()。
+ */
+export function buildGanttAgeCells(name, records, favorites, mainMakerYearMap, ageAxis) {
+    var map = mainMakerYearMap || {};
+    var favs = favorites || {};
+    var fav = favs[name];
+    var byAge = new Map();
+    if (fav && fav.birth) {
+        (records || []).forEach(function (r) {
+            if (!r || (r.actresses || []).indexOf(name) === -1) return;
+            var age = computeActressAgeForVideo({
+                birth: fav.birth,
+                releaseDate: r.date,
+                durationMinutes: r.duration,
+            });
+            if (age == null) return;
+            if (!byAge.has(age)) byAge.set(age, []);
+            byAge.get(age).push(r);
+        });
+    }
+    return (ageAxis || []).map(function (age) {
+        var films = byAge.get(age) || [];
+        if (!films.length) {
+            return { age: age, state: 'empty', maker: null, filmCount: 0, makerCount: 0 };
+        }
+        var mainMk = null;
+        films.forEach(function (r) {
+            if (mainMk) return;
+            if (r.year == null) return;
+            var mk = map[name + '|' + r.year];
+            if (mk && mk === r.maker) mainMk = mk;
+        });
+        if (mainMk) {
+            var makerCount = 0;
+            films.forEach(function (r) {
+                if (r.maker === mainMk) makerCount += 1;
+            });
+            return {
+                age: age,
+                state: 'main',
+                maker: mainMk,
+                filmCount: films.length,
+                makerCount: makerCount,
+            };
+        }
+        return { age: age, state: 'dot', maker: null, filmCount: films.length, makerCount: 0 };
+    });
 }
