@@ -30,6 +30,7 @@ const {
     ganttAgeEligibility,
     ganttAgeAxis,
     buildGanttAgeCells,
+    buildSoloRows,
 } = agg;
 
 function rec(opts) {
@@ -1428,4 +1429,175 @@ test('ganttAgeAxis: 顯示中各列年齡 min..max 連續', () => {
         rec({ actresses: ['B'], date: '2020-01-01', duration: 100 }), // 25
     ];
     assert.deepEqual(ganttAgeAxis(['A', 'B'], records, favorites), [25, 26, 27, 28, 29, 30]);
+});
+
+// ── buildSoloRows（TASK-156c-T4） ─────────────────────────────────────
+
+test('buildSoloRows: 先篩再取 25——原始片數前3名因主要片商佔比過半被篩掉，結果從第4名起仍取滿25位', () => {
+    const map = {};
+    const records = [];
+    // 片數前 3 名：每人 6 部，其中 4 部是主要片商作品（ratio 0.667）→ 被篩掉
+    ['Top1', 'Top2', 'Top3'].forEach((name) => {
+        map[`${name}|2020`] = 'M';
+        for (let i = 0; i < 4; i++) {
+            records.push(rec({ year: 2020, actresses: [name], maker: 'M' }));
+        }
+        for (let i = 0; i < 2; i++) {
+            records.push(rec({ year: 2020, actresses: [name], maker: 'Other' }));
+        }
+    });
+    // 剩下 25 位候選人：各 1 部、無主要片商作品（ratio 0）
+    const restNames = [];
+    for (let i = 1; i <= 25; i++) {
+        const name = `Rest${String(i).padStart(2, '0')}`;
+        restNames.push(name);
+        records.push(rec({ year: 2020, actresses: [name], maker: 'Other' }));
+    }
+    const rows = buildSoloRows(records, map, { type: 'all' }, null, [], []);
+    assert.equal(rows.length, 25);
+    assert.equal(rows.some((r) => r.name.startsWith('Top')), false);
+    assert.deepEqual(
+        rows.map((r) => r.name).sort(),
+        restNames.sort(),
+    );
+});
+
+test('buildSoloRows: 片商焦點時候選池限定在該片商有片的人，但 total/segments 用期間全貌', () => {
+    const map = {};
+    const records = [];
+    // 她在片商 Y 只有 1 部，其餘 9 部散在其他具名片商（共 10 部，ratio 0）
+    records.push(rec({ year: 2020, actresses: ['Solo'], maker: 'Y' }));
+    ['B', 'C', 'D', 'E', 'F', 'G', 'H'].forEach((mk) => {
+        records.push(rec({ year: 2020, actresses: ['Solo'], maker: mk }));
+    });
+    records.push(rec({ year: 2020, actresses: ['Solo'], maker: 'A' }));
+    records.push(rec({ year: 2020, actresses: ['Solo'], maker: 'A' }));
+    // 干擾：另一位女優只在片商 Z 有片，片商焦點是 Y 時不該出現
+    records.push(rec({ year: 2020, actresses: ['Other'], maker: 'Z' }));
+
+    const rows = buildSoloRows(
+        records,
+        map,
+        { type: 'all' },
+        { type: 'maker', value: 'Y' },
+        [],
+        ['Y', 'A'],
+    );
+    assert.equal(rows.some((r) => r.name === 'Other'), false);
+    const solo = rows.find((r) => r.name === 'Solo');
+    assert.ok(solo, 'Solo 應該上榜');
+    assert.equal(solo.total, 10);
+    assert.ok(solo.segments.length >= 2);
+});
+
+test('buildSoloRows: 主要片商佔比恰好 50% 不列，49%（如 24/49）列入', () => {
+    const map = {};
+    const records = [];
+    // Half：10 部，5 部主要（ratio 0.5）→ 排除
+    map['Half|2020'] = 'M';
+    for (let i = 0; i < 5; i++) {
+        records.push(rec({ year: 2020, actresses: ['Half'], maker: 'M' }));
+    }
+    for (let i = 0; i < 5; i++) {
+        records.push(rec({ year: 2020, actresses: ['Half'], maker: 'Other' }));
+    }
+    // Under：49 部，24 部主要（ratio≈0.4898）→ 列入
+    map['Under|2020'] = 'N';
+    for (let i = 0; i < 24; i++) {
+        records.push(rec({ year: 2020, actresses: ['Under'], maker: 'N' }));
+    }
+    for (let i = 0; i < 25; i++) {
+        records.push(rec({ year: 2020, actresses: ['Under'], maker: 'Other' }));
+    }
+    const rows = buildSoloRows(records, map, { type: 'all' }, null, [], []);
+    assert.equal(rows.some((r) => r.name === 'Half'), false);
+    const under = rows.find((r) => r.name === 'Under');
+    assert.ok(under, 'Under 應該上榜');
+    assert.equal(under.total, 49);
+    assert.equal(under.mainCount, 24);
+});
+
+test('buildSoloRows: 候選符合條件但在年表名單(ganttNames)裡 → 不得出現在結果', () => {
+    const map = {};
+    const records = [
+        rec({ year: 2020, actresses: ['InGantt'], maker: 'Other' }),
+        rec({ year: 2020, actresses: ['NotInGantt'], maker: 'Other' }),
+    ];
+    const rows = buildSoloRows(records, map, { type: 'all' }, null, ['InGantt'], []);
+    assert.equal(rows.some((r) => r.name === 'InGantt'), false);
+    assert.equal(rows.some((r) => r.name === 'NotInGantt'), true);
+});
+
+test('buildSoloRows: 橫跨 8 個以上具名片商時段數上限 10，namedMakerCount 不含未知', () => {
+    const map = {};
+    const records = [];
+    const topMakers = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M8'];
+    topMakers.forEach((mk) => {
+        records.push(rec({ year: 2020, actresses: ['Wide'], maker: mk }));
+    });
+    records.push(rec({ year: 2020, actresses: ['Wide'], maker: 'M9' })); // 不在前 8 → 併入 other
+    records.push(rec({ year: 2020, actresses: ['Wide'], maker: null })); // 未知
+
+    const rows = buildSoloRows(records, map, { type: 'all' }, null, [], topMakers);
+    const wide = rows.find((r) => r.name === 'Wide');
+    assert.ok(wide);
+    assert.equal(wide.segments.length, 10); // 8 named + 1 other + 1 unknown
+    assert.equal(wide.namedMakerCount, 9); // 8 top + 1 併入 other 的，不含未知
+    assert.equal(wide.segments.filter((s) => s.kind === 'unknown').length, 1);
+    assert.equal(wide.segments.filter((s) => s.kind === 'other').length, 1);
+});
+
+test('buildSoloRows: 女優焦點且她不符合篩選條件但有紀錄 → 附加末列；已在前25不重複；無紀錄不附加', () => {
+    const map = {};
+    const records = [];
+    // 25 位候選人各 1 部，皆符合條件
+    const names = [];
+    for (let i = 1; i <= 25; i++) {
+        const name = `Cand${String(i).padStart(2, '0')}`;
+        names.push(name);
+        records.push(rec({ year: 2020, actresses: [name], maker: 'Other' }));
+    }
+    // ExcludedByRatio：主要片商佔比過半，本來不會上榜
+    map['ExcludedByRatio|2020'] = 'M';
+    for (let i = 0; i < 4; i++) {
+        records.push(rec({ year: 2020, actresses: ['ExcludedByRatio'], maker: 'M' }));
+    }
+    records.push(rec({ year: 2020, actresses: ['ExcludedByRatio'], maker: 'Other' }));
+
+    const withAppend = buildSoloRows(
+        records,
+        map,
+        { type: 'all' },
+        { type: 'actress', value: 'ExcludedByRatio' },
+        [],
+        [],
+    );
+    assert.equal(withAppend.length, 26);
+    const last = withAppend[withAppend.length - 1];
+    assert.equal(last.name, 'ExcludedByRatio');
+    assert.equal(last.appended, true);
+    assert.equal(last.total, 5);
+
+    // 已在前 25 → 不重複附加
+    const already = buildSoloRows(
+        records,
+        map,
+        { type: 'all' },
+        { type: 'actress', value: 'Cand01' },
+        [],
+        [],
+    );
+    assert.equal(already.filter((r) => r.name === 'Cand01').length, 1);
+    assert.equal(already.some((r) => r.appended), false);
+
+    // periodRecords 裡完全沒有她的紀錄 → 不附加
+    const missing = buildSoloRows(
+        records,
+        map,
+        { type: 'all' },
+        { type: 'actress', value: 'Ghost' },
+        [],
+        [],
+    );
+    assert.equal(missing.some((r) => r.name === 'Ghost'), false);
 });

@@ -20,6 +20,7 @@ import {
     ganttAgeEligibility,
     ganttAgeAxis,
     buildGanttAgeCells,
+    buildSoloRows,
 } from './aggregate.js';
 import {
     setMakerColorSlots,
@@ -115,6 +116,7 @@ export function libraryInsightsState() {
         ganttRows: [],
         // 修正 1（第 2 輪）：圖例名單存進 reactive 欄位，見 ganttLegendMakers() 註解。
         ganttLegend: [],
+        soloRows: [],
         previewActress: null,
         previewAnchorRect: null,
         // 模板色點／格子塗色直接呼叫（charts.js 匯出）
@@ -195,6 +197,29 @@ export function libraryInsightsState() {
                 _mainMakerYearMap,
                 this.period,
                 this.focus,
+            );
+        },
+
+        /**
+         * TASK-156c-T4／CD-156c-1／2／5：女優片商分布列表。
+         * 呼叫順序在 recomputeGantt() 之後——ganttNames 依賴這次剛算好的
+         * this.ganttRows（互斥名單），不是上一輪殘留的舊值。
+         * `this.ganttLegend` 是全庫前 8 色票名稱陣列（reactive，T3 存好），
+         * 不是舊版模組級 `_makerColorSlots` 物件——避免重建非 reactive 變數
+         * 讓模板讀到 stale 資料（見 T3「圖例不渲染」的教訓）。
+         * segments 一次算好存進 soloRows，模板只讀結果（FE perf 慣例同 T3）。
+         */
+        recomputeSolo() {
+            const ganttNames = (this.ganttRows || []).map(function (r) {
+                return r.name;
+            });
+            this.soloRows = buildSoloRows(
+                getRecords(),
+                _mainMakerYearMap,
+                this.period,
+                this.focus,
+                ganttNames,
+                this.ganttLegend,
             );
         },
 
@@ -541,6 +566,55 @@ export function libraryInsightsState() {
             return this._titleWithPeriod('insights.row.gantt', 'actress');
         },
 
+        /**
+         * CD-156c-8：女優或片商焦點都加期間後綴（`_titleWithPeriod` 第二參數
+         * 已設計成接受陣列）。
+         */
+        get soloTitle() {
+            return this._titleWithPeriod('insights.row.actress_distribution', [
+                'actress',
+                'maker',
+            ]);
+        },
+
+        /**
+         * CD-156c-5：尾端「N 部 · M 家」。M＝相異具名 maker 個數（不含未知），
+         * 即使被併進 other 段也算一家（見 aggregate.js buildSoloRows 註解）。
+         */
+        soloRowLabel(row) {
+            const tFn =
+                typeof window !== 'undefined' && typeof window.t === 'function'
+                    ? window.t
+                    : null;
+            return tFn
+                ? tFn('insights.solo.count_label', {
+                    n: row.total,
+                    m: row.namedMakerCount,
+                })
+                : row.total + ' / ' + row.namedMakerCount;
+        },
+
+        /**
+         * CD-156c-5：「其他」段 tooltip，列出被併入的具名片商（最多 15 家）。
+         */
+        soloOtherTitle(seg) {
+            const tFn =
+                typeof window !== 'undefined' && typeof window.t === 'function'
+                    ? window.t
+                    : null;
+            const others = seg.others || [];
+            const list =
+                others
+                    .slice(0, 15)
+                    .map(function (o) {
+                        return o.maker;
+                    })
+                    .join('、') + (others.length > 15 ? '…' : '');
+            return tFn
+                ? tFn('insights.solo.other_title', { n: others.length, list: list })
+                : list;
+        },
+
         focusPhotoUrl() {
             if (!this.focus || this.focus.type !== 'actress') return '';
             return _photoUrl(
@@ -752,6 +826,7 @@ export function libraryInsightsState() {
                 this.recomputeScopedCount();
                 this.recomputeTop20();
                 this.recomputeGantt();
+                this.recomputeSolo();
 
                 const el = document.getElementById('yearsChart');
                 if (el) {
@@ -841,6 +916,7 @@ export function libraryInsightsState() {
                 this.redrawSeries();
                 this.recomputeTop20();
                 this.recomputeGantt();
+                this.recomputeSolo();
             });
             this.$watch('focus', () => {
                 this.recomputeScopedCount();
@@ -852,6 +928,7 @@ export function libraryInsightsState() {
                 this.redrawSeries();
                 this.recomputeTop20();
                 this.recomputeGantt();
+                this.recomputeSolo();
             });
 
             if (window.__registerPage) {

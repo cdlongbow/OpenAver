@@ -317,13 +317,51 @@
     </div>
 
     <!-- Row 6：女優片商分布 / 與她同片 -->
-    <div class="row6" id="row6">
+    <div class="row6" id="row6" :class="{ 'solo-only': !(focus && focus.type === 'actress') }">
         <section class="card">
             <div class="card-head">
-                <h2 id="soloTitle">{{ t('insights.row.actress_distribution') }}</h2>
+                <h2 id="soloTitle" x-text="soloTitle"></h2>
             </div>
             <div class="card-body">
-                <div class="list-rows" id="soloList"></div>
+                <div class="list-rows" id="soloList">
+                    <template x-for="row in soloRows" :key="row.name">
+                        <div class="solo-row"
+                             :class="{ 'is-active': focus && focus.type === 'actress' && focus.value === row.name }"
+                             @click="toggleActressFocus(row.name)">
+                            <span class="solo-avatar"
+                                  @click.stop="openPreview(row.name, $el)"
+                                  @mouseenter="scheduleOpenPreview(row.name, $el)"
+                                  @mouseleave="cancelOpenPreview()">
+                                <template x-if="actressHasPhoto(row.name) && !photoFailed[row.name]">
+                                    <img :src="actressPhotoUrl(row.name)"
+                                         alt=""
+                                         loading="lazy"
+                                         @error="markPhotoFailed(row.name)">
+                                </template>
+                                <template x-if="!actressHasPhoto(row.name) || photoFailed[row.name]">
+                                    <span x-text="row.name.charAt(0)"></span>
+                                </template>
+                            </span>
+                            <span class="solo-name"
+                                  :title="row.name"
+                                  x-text="row.name"
+                                  @mouseenter="scheduleOpenPreview(row.name, $el)"
+                                  @mouseleave="cancelOpenPreview()"></span>
+                            <span class="solo-bar-wrap">
+                                <template x-for="seg in row.segments" :key="seg.kind + '-' + (seg.maker || '')">
+                                    <span class="solo-segment"
+                                          :class="'solo-segment--' + seg.kind"
+                                          :style="'width:' + (row.total ? Math.round(seg.count / row.total * 100) : 0) + '%' + (seg.kind === 'named' ? (';background:' + colorForMakerName(seg.maker)) : '')"
+                                          :title="seg.kind === 'other' ? soloOtherTitle(seg) : null"></span>
+                                </template>
+                            </span>
+                            <span class="solo-end" x-text="soloRowLabel(row)"></span>
+                        </div>
+                    </template>
+                    <div x-show="!soloRows.length"
+                         class="top20-empty"
+                         x-text="t('insights.no_data')"></div>
+                </div>
             </div>
         </section>
         <section class="card" id="costarCard">

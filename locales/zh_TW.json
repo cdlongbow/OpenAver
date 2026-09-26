@@ -1662,6 +1662,10 @@
       "tooltip_dot": "{label} · 收藏 {total} 部",
       "skipped_note": "{n} 位無生日資料已略過"
     },
+    "solo": {
+      "count_label": "{n} 部 · {m} 家",
+      "other_title": "其他 {n} 家：{list}"
+    },
     "total_count": "全庫 {n} 部"
   }
 }

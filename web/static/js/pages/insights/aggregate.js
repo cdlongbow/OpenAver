@@ -10,6 +10,7 @@
  * T156c-T1：aggregateAge
  * T156c-T3：buildGanttRows / ganttYearAxis / buildGanttYearCells /
  *           ganttAgeEligibility / ganttAgeAxis / buildGanttAgeCells
+ * T156c-T4：buildSoloRows
  */
 
 import { computeActressAgeForVideo } from '../../shared/actress-release-age.js';
@@ -774,4 +775,143 @@ export function buildGanttAgeCells(name, records, favorites, mainMakerYearMap, a
         }
         return { age: age, state: 'dot', maker: null, filmCount: films.length, makerCount: 0 };
     });
+}
+
+/**
+ * 女優片商分布列表（TASK-156c-T4，CD-156c-1／2／5／8）。
+ *
+ * 候選池（誰可以上榜）：片商焦點時看 scopeRecords(該片商)，否則看 periodRecords。
+ * 每位候選的 total／mainCount／segments 一律用 periodRecords 算「她期間內全部
+ * 片商」——候選池可以因片商焦點縮小，但長條畫的是她的全貌（Q2(a) 裁決，見
+ * TASK-156c-T4.md「設計決策」段；不採 POC renderSolo() 候選/count 同源的舊邏輯）。
+ * `topMakerNames`＝全庫前 8 色票的片商名稱陣列（呼叫端傳 state.js 的
+ * `this.ganttLegend`，不是 `buildMakerColorSlots()` 回傳的 slot 物件——
+ * `_makerColorSlots` 模組級變數已在 T3 移除，改用 reactive `ganttLegend`）。
+ * 不呼叫 getRecords()。
+ */
+export function buildSoloRows(records, mainMakerYearMap, period, focus, ganttNames, topMakerNames) {
+    if (period === undefined) period = { type: 'all' };
+    if (focus === undefined) focus = null;
+    var all = records || [];
+    var map = mainMakerYearMap || {};
+    var ganttSet = new Set(ganttNames || []);
+    var namedSet = new Set(topMakerNames || []);
+    var periodScope = periodRecords(all, period);
+
+    /*
+     * P2 效能修正（review finding，真實片庫 6521 部實測 48ms→單趟後 <10ms）：
+     * 原本每位候選都對 periodScope 全掃一遍（O(候選數 × periodScope 長度)）。
+     * classifyRecordAgainstMainMaker(r, map) 與 r.maker 都只看 record 本身、
+     * 不依賴「現在在算哪個名字」，同一筆片對片中每位女優的結果必然相同——
+     * 改成單趟掃 periodScope、對每筆片算一次 isMain／mk，再攤給片中每位
+     * （去重同一片重複列名）女優累加，效果與逐名重掃完全一致。
+     * 比照同檔 buildActressTop20 的單趟 Map 累加形狀。
+     */
+    var statsMap = new Map();
+    periodScope.forEach(function (r) {
+        if (!r) return;
+        var names = r.actresses || [];
+        var isMain = classifyRecordAgainstMainMaker(r, map) === 'main';
+        var mk = (r.maker == null || r.maker === '') ? null : r.maker;
+        var seenInRecord = new Set();
+        names.forEach(function (name) {
+            if (!name || seenInRecord.has(name)) return;
+            seenInRecord.add(name);
+            var entry = statsMap.get(name);
+            if (!entry) {
+                entry = { total: 0, mainCount: 0, makerCounts: new Map() };
+                statsMap.set(name, entry);
+            }
+            entry.total += 1;
+            if (isMain) entry.mainCount += 1;
+            entry.makerCounts.set(mk, (entry.makerCounts.get(mk) || 0) + 1);
+        });
+    });
+
+    function statsFor(name) {
+        return statsMap.get(name) || { total: 0, mainCount: 0, makerCounts: new Map() };
+    }
+
+    function buildSegments(makerCounts) {
+        var named = [];
+        var otherParts = [];
+        var unknownCount = 0;
+        makerCounts.forEach(function (count, mk) {
+            if (mk === null) {
+                unknownCount += count;
+            } else if (namedSet.has(mk)) {
+                named.push({ kind: 'named', maker: mk, count: count });
+            } else {
+                otherParts.push({ maker: mk, count: count });
+            }
+        });
+        var namedMakerCount = named.length + otherParts.length;
+        var segments = named.slice();
+        if (otherParts.length) {
+            otherParts.sort(function (a, b) {
+                return b.count - a.count || (a.maker < b.maker ? -1 : 1);
+            });
+            var otherSum = otherParts.reduce(function (s, e) { return s + e.count; }, 0);
+            segments.push({ kind: 'other', count: otherSum, others: otherParts });
+        }
+        if (unknownCount > 0) {
+            segments.push({ kind: 'unknown', count: unknownCount });
+        }
+        var kindRank = { named: 0, other: 1, unknown: 2 };
+        segments.sort(function (a, b) {
+            if (b.count !== a.count) return b.count - a.count;
+            if (kindRank[a.kind] !== kindRank[b.kind]) return kindRank[a.kind] - kindRank[b.kind];
+            if (a.kind === 'named' && b.kind === 'named') {
+                return a.maker < b.maker ? -1 : a.maker > b.maker ? 1 : 0;
+            }
+            return 0;
+        });
+        return { segments: segments, namedMakerCount: namedMakerCount };
+    }
+
+    function buildRow(name, st) {
+        var built = buildSegments(st.makerCounts);
+        return {
+            name: name,
+            total: st.total,
+            mainCount: st.mainCount,
+            namedMakerCount: built.namedMakerCount,
+            segments: built.segments,
+        };
+    }
+
+    var poolRecords = (focus && focus.type === 'maker') ? scopeRecords(all, period, focus) : periodRecords(all, period);
+    var poolNames = new Set();
+    poolRecords.forEach(function (r) {
+        (r.actresses || []).forEach(function (name) {
+            if (name) poolNames.add(name);
+        });
+    });
+
+    var candidates = [];
+    poolNames.forEach(function (name) {
+        if (ganttSet.has(name)) return;
+        var st = statsFor(name);
+        var ratio = st.total ? st.mainCount / st.total : 0;
+        if (ratio >= 0.5) return;
+        candidates.push(buildRow(name, st));
+    });
+    candidates.sort(function (a, b) {
+        return b.total - a.total || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    });
+    var top = candidates.slice(0, 25);
+
+    if (focus && focus.type === 'actress' && focus.value) {
+        var herName = focus.value;
+        var already = top.some(function (r) { return r.name === herName; });
+        if (!already) {
+            var herStats = statsFor(herName);
+            if (herStats.total > 0) {
+                var herRow = buildRow(herName, herStats);
+                herRow.appended = true;
+                top.push(herRow);
+            }
+        }
+    }
+    return top;
 }

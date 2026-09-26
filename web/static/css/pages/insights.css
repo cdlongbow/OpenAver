@@ -723,12 +723,116 @@
     min-width: 0;
 }
 
+/* CD-156c-1／CD-156c-6：同片卡尚未有顯示條件時（無女優焦點）分布表獨佔一欄，
+   內部改兩欄排列——形狀照 POC feature/156-library-insights/poc/index.sonnet4.html
+   第 247-248 行。#costarCard 本體是 T5 範圍，本卡不加 x-show。 */
+.insights-container .row6.solo-only {
+    grid-template-columns: 1fr;
+}
+
+.insights-container .row6.solo-only .list-rows {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 16px;
+    align-content: start;
+}
+
 .insights-container .list-rows {
     flex: 1 1 auto;
     min-height: 120px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
+}
+
+/* 女優片商分布列（TASK-156c-T4）——DOM/CSS 形狀照 POC 同檔 .solo-row 系列，
+   class 名改用 .solo-segment 避免與其他卡撞名。 */
+.insights-container .solo-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 2px;
+    border-bottom: 1px solid var(--stroke-subtle);
+    cursor: pointer;
+    min-width: 0;
+}
+
+.insights-container .solo-row:last-child {
+    border-bottom: none;
+}
+
+.insights-container .solo-row:hover {
+    background: color-mix(in oklch, var(--color-primary) 6%, transparent);
+}
+
+.insights-container .solo-row.is-active {
+    background: color-mix(in oklch, var(--color-primary) 12%, transparent);
+}
+
+.insights-container .solo-avatar {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+    overflow: hidden;
+    background: var(--surface-2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.625rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+}
+
+.insights-container .solo-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.insights-container .solo-name {
+    width: 5.25rem;
+    flex: 0 0 auto;
+    font-size: 0.75rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.insights-container .solo-bar-wrap {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 0.75rem;
+    background: var(--stroke-subtle);
+    border-radius: var(--radius-xs);
+    overflow: hidden;
+    display: flex;
+}
+
+.insights-container .solo-segment {
+    height: 100%;
+}
+
+.insights-container .solo-segment:not(:last-child) {
+    border-right: 2px solid var(--surface-1);
+    box-sizing: border-box;
+}
+
+.insights-container .solo-segment--other {
+    background: color-mix(in oklch, var(--color-base-content) 22%, transparent);
+}
+
+.insights-container .solo-segment--unknown {
+    background: color-mix(in oklch, var(--color-base-content) 12%, transparent);
+}
+
+.insights-container .solo-end {
+    width: 5.75rem;
+    flex: 0 0 auto;
+    text-align: right;
+    font-size: 0.6875rem;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
 }
 
 /* ===== 響應式斷點 ===== */
