@@ -23,6 +23,7 @@ const {
     buildActressTop20,
     aggregateTags,
     aggregateAge,
+    aggregateFieldTop8,
 } = agg;
 
 function rec(opts) {
@@ -1111,4 +1112,74 @@ test('aggregateAge: 偶數個有效配對時中位數可為 .5', () => {
     const result = aggregateAge(records, favorites, null);
     assert.equal(result.pairCount, 2);
     assert.equal(result.median, 24.5);
+});
+
+// ── aggregateFieldTop8 ───────────────────────────────────────────────
+
+test('aggregateFieldTop8: 空字串不進排名但仍計入 total', () => {
+    const records = [
+        { director: '' },
+        { director: null },
+        { director: '庵野秀明' },
+    ];
+    const res = aggregateFieldTop8(records, 'director');
+    assert.equal(res.total, 3);
+    assert.equal(res.withValueCount, 1);
+    assert.equal(res.coverage, 1 / 3);
+    assert.deepEqual(res.top, [['庵野秀明', 1]]);
+});
+
+test('aggregateFieldTop8: 全部片都缺該欄位時 top 為空且 coverage 為 0', () => {
+    const records = [
+        { director: null },
+        { director: '' },
+        { director: undefined },
+    ];
+    const res = aggregateFieldTop8(records, 'director');
+    assert.equal(res.total, 3);
+    assert.equal(res.withValueCount, 0);
+    assert.equal(res.coverage, 0);
+    assert.deepEqual(res.top, []);
+});
+
+test('aggregateFieldTop8: total 為 0 時涵蓋率回 0，不除以零', () => {
+    const res = aggregateFieldTop8([], 'director');
+    assert.equal(res.total, 0);
+    assert.equal(res.withValueCount, 0);
+    assert.equal(res.coverage, 0);
+    assert.deepEqual(res.top, []);
+});
+
+test('aggregateFieldTop8: 兩個名字計數相同依名字字典序遞增排序', () => {
+    const records = [
+        { series: 'Tokyo Hot' },
+        { series: 'Attackers Best' },
+    ];
+    const res = aggregateFieldTop8(records, 'series');
+    assert.equal(res.total, 2);
+    assert.equal(res.withValueCount, 2);
+    assert.equal(res.coverage, 1);
+    assert.deepEqual(res.top, [
+        ['Attackers Best', 1],
+        ['Tokyo Hot', 1],
+    ]);
+});
+
+test('aggregateFieldTop8: top 最多 8 筆', () => {
+    const records = [];
+    for (let i = 1; i <= 10; i++) {
+        const name = `Director_${String(i).padStart(2, '0')}`;
+        for (let j = 0; j < i; j++) {
+            records.push({ director: name });
+        }
+    }
+    const res = aggregateFieldTop8(records, 'director');
+    assert.equal(res.total, 55);
+    assert.equal(res.withValueCount, 55);
+    assert.equal(res.coverage, 1);
+    assert.equal(res.top.length, 8);
+    assert.deepEqual(res.top[0], ['Director_10', 10]);
+    assert.deepEqual(res.top[7], ['Director_03', 3]);
+    assert.equal(res.top.some((e) => e[0] === 'Director_02'), false);
+    assert.equal(res.top.some((e) => e[0] === 'Director_01'), false);
 });

@@ -26,15 +26,19 @@ import {
     updateTagsChart,
     initAgeChart,
     updateAgeChart,
+    initFieldBarChart,
+    updateFieldBarChart,
     disposeAll,
     areChartsAlive,
     reinitYearsAfterDispose,
     reinitDonutAfterDispose,
     reinitTagsAfterDispose,
     reinitAgeAfterDispose,
+    reinitFieldBarAfterDispose,
     getDonutChart,
     getTagsChart,
     getAgeChart,
+    getFieldBarChart,
     resizeAll,
     colorForMakerName,
 } from './charts.js';
@@ -130,6 +134,20 @@ export function libraryInsightsState() {
                 focus: this.focus,
                 favorites: this.snapshot && this.snapshot.actressFavorites,
             });
+        },
+
+        redrawDirector() {
+            updateFieldBarChart(
+                { period: this.period, focus: this.focus },
+                'director',
+            );
+        },
+
+        redrawSeries() {
+            updateFieldBarChart(
+                { period: this.period, focus: this.focus },
+                'series',
+            );
         },
 
         /**
@@ -394,6 +412,14 @@ export function libraryInsightsState() {
             };
         },
 
+        _fieldCallbacks() {
+            const self = this;
+            return {
+                getPeriod: () => self.period,
+                getFocus: () => self.focus,
+            };
+        },
+
         _onPageShow(event) {
             if (!event || event.persisted !== true) return;
             // 快照失敗時從未建圖——不要在 bfcache 還原時建空圖表
@@ -457,6 +483,32 @@ export function libraryInsightsState() {
                                 this.snapshot &&
                                 this.snapshot.actressFavorites,
                         });
+                    }
+                }
+                const directorEl = document.getElementById('directorChart');
+                if (directorEl) {
+                    reinitFieldBarAfterDispose('director');
+                    const director = getFieldBarChart('director');
+                    if (!director || director.isDisposed()) {
+                        initFieldBarChart(
+                            directorEl,
+                            'director',
+                            this._fieldCallbacks(),
+                        );
+                        this.redrawDirector();
+                    }
+                }
+                const seriesEl = document.getElementById('seriesChart');
+                if (seriesEl) {
+                    reinitFieldBarAfterDispose('series');
+                    const series = getFieldBarChart('series');
+                    if (!series || series.isDisposed()) {
+                        initFieldBarChart(
+                            seriesEl,
+                            'series',
+                            this._fieldCallbacks(),
+                        );
+                        this.redrawSeries();
                     }
                 }
             } else {
@@ -532,6 +584,24 @@ export function libraryInsightsState() {
                             this.snapshot && this.snapshot.actressFavorites,
                     });
                 }
+                const directorEl = document.getElementById('directorChart');
+                if (directorEl) {
+                    initFieldBarChart(
+                        directorEl,
+                        'director',
+                        this._fieldCallbacks(),
+                    );
+                    this.redrawDirector();
+                }
+                const seriesEl = document.getElementById('seriesChart');
+                if (seriesEl) {
+                    initFieldBarChart(
+                        seriesEl,
+                        'series',
+                        this._fieldCallbacks(),
+                    );
+                    this.redrawSeries();
+                }
             } catch {
                 if (!_pageAlive || token !== _loadToken) return;
                 this.snapshotError = true;
@@ -564,6 +634,8 @@ export function libraryInsightsState() {
                 this.redrawDonut();
                 this.redrawTags();
                 this.redrawAge();
+                this.redrawDirector();
+                this.redrawSeries();
                 this.recomputeTop20();
             });
             this.$watch('focus', () => {
@@ -572,6 +644,8 @@ export function libraryInsightsState() {
                 this.redrawDonut();
                 this.redrawTags();
                 this.redrawAge();
+                this.redrawDirector();
+                this.redrawSeries();
                 this.recomputeTop20();
             });
 

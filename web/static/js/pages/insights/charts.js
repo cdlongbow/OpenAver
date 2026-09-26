@@ -13,6 +13,7 @@ import {
     aggregateYears,
     aggregateTags,
     aggregateAge,
+    aggregateFieldTop8,
     buildMakerColorSlots,
     periodRecords,
     scopeRecords,
@@ -42,6 +43,8 @@ let _donutCallbacks = null;
 let _tagsCallbacks = null;
 /** @type {{ getPeriod: Function, getFocus: Function, getFavorites: Function }|null} */
 let _ageCallbacks = null;
+/** @type {Map<string, { getPeriod: Function, getFocus: Function }>} */
+const _fieldCallbacks = new Map();
 
 // ── 純函式（node:test 可測）──────────────────────────────────────────
 
@@ -310,6 +313,25 @@ export function reinitAgeAfterDispose() {
         focus: _ageCallbacks.getFocus(),
         favorites: _ageCallbacks.getFavorites(),
     });
+}
+
+/**
+ * bfcache 還原：導演／系列長條圖生命週期。
+ * @param {string} field
+ */
+export function reinitFieldBarAfterDispose(field) {
+    const el = document.getElementById(field + 'Chart');
+    if (!el || typeof window.echarts === 'undefined') return;
+    const callbacks = _fieldCallbacks.get(field);
+    if (!callbacks) return;
+    initFieldBarChart(el, field, callbacks);
+    updateFieldBarChart(
+        {
+            period: callbacks.getPeriod(),
+            focus: callbacks.getFocus(),
+        },
+        field,
+    );
 }
 
 /**
@@ -1226,6 +1248,7 @@ export function updateAgeChart(state) {
             animationDuration: 250,
             graphic: [
                 {
+                    id: 'insightsEmptyText',
                     type: 'text',
                     left: 'center',
                     top: 'middle',
@@ -1256,7 +1279,7 @@ export function updateAgeChart(state) {
         animation: animate,
         animationDuration: 250,
         animationDurationUpdate: 400,
-        graphic: [],
+        graphic: [{ id: 'insightsEmptyText', type: 'text', style: { text: '' } }],
         grid: { left: 8, right: 8, top: 26, bottom: 20, containLabel: true },
         tooltip: {
             trigger: 'axis',
@@ -1310,4 +1333,147 @@ export function updateAgeChart(state) {
             },
         ],
     });
+}
+
+// ── 導演／系列水平長條（TASK-156c-T2）───────────────────────────────
+
+/**
+ * @param {HTMLElement} containerEl
+ * @param {string} field
+ * @param {{ getPeriod: Function, getFocus: Function }} callbacks
+ */
+export function initFieldBarChart(containerEl, field, callbacks) {
+    if (!containerEl || typeof window.echarts === 'undefined') return;
+    _fieldCallbacks.set(field, callbacks);
+
+    let chart = _charts.get(field);
+    if (chart && !chart.isDisposed()) {
+        chart.dispose();
+    }
+    chart = window.echarts.init(containerEl);
+    _charts.set(field, chart);
+
+    const prevRo = _observers.get(field);
+    if (prevRo) prevRo.disconnect();
+    const ro = new ResizeObserver(() => {
+        const c = _charts.get(field);
+        if (c && !c.isDisposed()) c.resize();
+    });
+    ro.observe(containerEl);
+    _observers.set(field, ro);
+}
+
+/**
+ * §4.2 wiring：無焦點 periodRecords；片商／女優焦點 scopeRecords。
+ * setOption 用預設 merge＋固定 series id field，讓長條長度過渡；
+ * 只有 0% 涵蓋的空分支才 clear()。
+ * @param {{ period: object, focus: object|null }} state
+ * @param {string} field
+ */
+export function updateFieldBarChart(state, field) {
+    const chart = _charts.get(field);
+    if (!chart || chart.isDisposed()) return;
+
+    const period = state.period || { type: 'all' };
+    const focus = state.focus || null;
+    const allRecords = getRecords();
+
+    let dataRecords;
+    if (focus && (focus.type === 'maker' || focus.type === 'actress')) {
+        dataRecords = scopeRecords(allRecords, period, focus);
+    } else {
+        dataRecords = periodRecords(allRecords, period);
+    }
+
+    const agg = aggregateFieldTop8(dataRecords, field);
+    const total = agg.total;
+    const reduceMotion = readPrefersReducedMotion();
+    const animate = shouldAnimate(reduceMotion);
+
+    const hintEl = document.getElementById(field + 'Hint');
+    if (hintEl) {
+        hintEl.textContent = tKey('insights.tags.coverage', {
+            pct: _pctLabel(agg.withValueCount, total),
+        });
+    }
+
+    if (!agg.top.length) {
+        chart.clear();
+        chart.setOption({
+            animation: animate,
+            animationDuration: 250,
+            graphic: [
+                {
+                    id: 'insightsEmptyText',
+                    type: 'text',
+                    left: 'center',
+                    top: 'middle',
+                    style: {
+                        text: tKey('insights.no_data'),
+                        fontSize: 11,
+                        fill: cssVar('--text-muted'),
+                    },
+                },
+            ],
+        });
+        return;
+    }
+
+    const categories = agg.top.map((e) => e[0]);
+    const counts = agg.top.map((e) => e[1]);
+    const barColor = cssVar('--color-primary');
+
+    try {
+        chart.dispatchAction({ type: 'hideTip' });
+    } catch {
+        /* ignore */
+    }
+
+    chart.setOption({
+        animation: animate,
+        animationDuration: 250,
+        animationDurationUpdate: 400,
+        graphic: [{ id: 'insightsEmptyText', type: 'text', style: { text: '' } }],
+        grid: { left: 8, right: 16, top: 12, bottom: 20, containLabel: true },
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'shadow' },
+            textStyle: { fontSize: 11 },
+        },
+        xAxis: {
+            type: 'value',
+            minInterval: 1,
+            splitLine: { lineStyle: { color: cssVar('--stroke-subtle') } },
+            axisLabel: { fontSize: 10, color: cssVar('--text-muted') },
+        },
+        yAxis: {
+            type: 'category',
+            inverse: true,
+            data: categories,
+            axisLine: { lineStyle: { color: cssVar('--stroke-default') } },
+            axisTick: { show: false },
+            axisLabel: {
+                fontSize: 10,
+                color: cssVar('--text-muted'),
+                width: 80,
+                overflow: 'truncate',
+            },
+        },
+        series: [
+            {
+                id: field,
+                type: 'bar',
+                data: counts,
+                barMaxWidth: 16,
+                itemStyle: {
+                    color: barColor,
+                    borderRadius: [0, 2, 2, 0],
+                },
+            },
+        ],
+    });
+}
+
+export function getFieldBarChart(field) {
+    return _charts.get(field) || null;
 }

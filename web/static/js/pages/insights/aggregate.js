@@ -519,3 +519,36 @@ export function aggregateAge(records, favorites, focus) {
         counts: counts,
     };
 }
+
+/**
+ * 欄位前 8 名統計（導演／系列）。
+ * 回傳 { total, withValueCount, coverage, top: [[name, count], ...] }。
+ * record[field] 為 null 或空字串不進 top 排名但計入 total。
+ * @param {object[]} records
+ * @param {string} field
+ */
+export function aggregateFieldTop8(records, field) {
+    var counts = new Map();
+    var total = 0;
+    var withValueCount = 0;
+    (records || []).forEach(function (r) {
+        if (!r) return;
+        total++;
+        var v = r[field];
+        if (v == null || v === '') return;
+        withValueCount++;
+        counts.set(v, (counts.get(v) || 0) + 1);
+    });
+    var named = Array.from(counts.entries());
+    named.sort(function (a, b) {
+        return b[1] - a[1] || (a[0] < b[0] ? -1 : 1);
+    });
+    var top = named.slice(0, 8);
+    var coverage = total ? withValueCount / total : 0;
+    return {
+        total: total,
+        withValueCount: withValueCount,
+        coverage: coverage,
+        top: top,
+    };
+}
