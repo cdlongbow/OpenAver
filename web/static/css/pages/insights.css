@@ -659,10 +659,10 @@
 
 .insights-container .gantt-table {
     --gantt-name-w: 7.5rem;
-    --gantt-cell-w: 1.5rem;
+    --gantt-cell-min-w: 1.5rem;
     display: flex;
     flex-direction: column;
-    width: max-content;
+    width: 100%;
     min-width: 100%;
     font-size: 0.6875rem;
 }
@@ -724,8 +724,7 @@
 }
 
 .insights-container .gantt-head-cell {
-    width: var(--gantt-cell-w);
-    min-width: var(--gantt-cell-w);
+    min-width: var(--gantt-cell-min-w);
     text-align: center;
     color: var(--text-muted);
     font-size: 0.625rem;
@@ -733,20 +732,22 @@
     white-space: nowrap;
 }
 
-.insights-container .gantt-head-cell.is-selected,
-.insights-container .gantt-cell.is-selected {
+.insights-container .gantt-head-cell.is-selected {
     background: color-mix(in oklch, var(--color-primary) 10%, transparent);
 }
 
 .insights-container .gantt-cell {
-    width: var(--gantt-cell-w);
-    min-width: var(--gantt-cell-w);
+    min-width: var(--gantt-cell-min-w);
     height: 1.375rem;
     border-bottom: 1px solid var(--stroke-subtle);
     display: flex;
     align-items: center;
     justify-content: center;
     box-sizing: border-box;
+}
+
+.insights-container .gantt-cell.is-dimmed {
+    opacity: 0.35;
 }
 
 .insights-container .gantt-cell--main {

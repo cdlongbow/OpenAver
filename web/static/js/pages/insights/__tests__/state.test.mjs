@@ -31,6 +31,19 @@ globalThis.document = globalThis.document || {
 };
 
 const { computePreviewPosition, libraryInsightsState } = await import('../state.js');
+const { setRecords } = await import('../aggregate.js');
+
+function rec(opts) {
+    return {
+        year: opts.year === undefined ? 2020 : opts.year,
+        month: opts.month === undefined ? null : opts.month,
+        actresses: opts.actresses === undefined ? ['Alice'] : opts.actresses,
+        maker: opts.maker === undefined ? 'SOD' : opts.maker,
+        tags: opts.tags === undefined ? [] : opts.tags,
+        date: opts.date === undefined ? null : opts.date,
+        duration: opts.duration === undefined ? null : opts.duration,
+    };
+}
 
 const POPUP = { width: 160, height: 224 };
 const VIEWPORT = { width: 1440, height: 900 };
@@ -424,3 +437,24 @@ test('_maybePlayPinPulse: DOM 渲染第一列確實是她（年份軸／年齡�
     globalThis.document.querySelector = origQuerySelector;
 });
 
+
+// ── ganttGridStyle（TASK-156d-T5：年表撐滿卡寬）─────────────────────────
+
+test('ganttGridStyle: 年份軸用 minmax(floor,1fr) 分配剩餘寬度而非固定寬度', () => {
+    setRecords([
+        rec({ year: 2020 }),
+        rec({ year: 2021 }),
+        rec({ year: 2022 }),
+    ]);
+    const state = libraryInsightsState();
+    const style = state.ganttGridStyle('year');
+    assert.match(
+        style,
+        /minmax\(var\(--gantt-cell-min-w\), 1fr\)/,
+        `should use minmax(var(--gantt-cell-min-w), 1fr) to stretch columns; got: ${style}`,
+    );
+    assert.ok(
+        style.indexOf('var(--gantt-cell-w))') === -1,
+        `should not fall back to fixed var(--gantt-cell-w) column width; got: ${style}`,
+    );
+});

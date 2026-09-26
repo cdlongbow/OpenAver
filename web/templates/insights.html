@@ -445,11 +445,9 @@
                                         <template x-for="cell in row.cells"
                                                   :key="(cell.year != null ? cell.year : cell.age)">
                                             <div :class="'gantt-cell gantt-cell--' + cell.state + (
-                                                     ganttAxis === 'year'
-                                                         && period
-                                                         && period.type === 'year'
-                                                         && period.year === cell.year
-                                                         ? ' is-selected' : ''
+                                                     ganttAxis === 'year' && period && period.type === 'year'
+                                                         ? (period.year === cell.year ? ' is-selected' : ' is-dimmed')
+                                                         : ''
                                                  )"
                                                  :style="cell.state === 'main'
                                                      ? ('background:' + colorForMakerName(cell.maker))

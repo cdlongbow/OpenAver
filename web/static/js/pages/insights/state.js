@@ -474,7 +474,7 @@ export function libraryInsightsState() {
             return (
                 'grid-template-columns: var(--gantt-name-w) repeat(' +
                 n +
-                ', var(--gantt-cell-w))'
+                ', minmax(var(--gantt-cell-min-w), 1fr))'
             );
         },
 
