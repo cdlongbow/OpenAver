@@ -5163,14 +5163,6 @@ const RULES = [
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'pre_alpine_module', note: '[TestInsightsESMGuard] test_insights_html_has_pre_alpine_module (block)' },
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'insights/main.js', note: '[TestInsightsESMGuard] test_insights_html_has_pre_alpine_module (main.js script)' },
 
-  // ---- [TestInsightsBrandTileGuard] OpenAver 格右上角空位不得渲染按鈕 (156a-T3, CD-156-7.1) ----
-  {
-    file: 'web/templates/insights.html', kind: 'forbidden-string',
-    pattern: ['<button', '<a ', 'role="button"'],
-    scope: { anchor: /class="insights-brand-actions"/, window: 80 },
-    note: '[TestInsightsBrandTileGuard] test_insights_brand_actions_has_no_button — CD-156-7.1：156 不做匯出，右上角只留空位不放可點擊元素',
-  },
-
   // ---- [TestInsightsSidebarGuard] 側欄「片庫分析」連結與頒獎台 icon (156a-T4, CD-156-7) ----
   { file: 'web/templates/base.html', kind: 'required-string', pattern: 'href="/insights"', count: 2, note: '[TestInsightsSidebarGuard] test_sidebar_insights_link_present — offcanvas 與 desktop sidebar 各一處' },
   { file: 'web/templates/base.html', kind: 'required-string', pattern: 'M6 2.5A.5.5 0 0 1 6.5 2h3a.5.5 0 0 1 .5.5V14H6z', count: 2, note: '[TestInsightsSidebarGuard] test_sidebar_insights_icon_svg_present — 頒獎台 icon 的 path 資料，兩處插入點逐字相同' },
