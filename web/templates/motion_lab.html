@@ -1458,6 +1458,12 @@
                 @click="onPlayWhitelistPulse($refs)">
             <i class="bi bi-play-fill"></i> Play Pulse
         </button>
+        <button class="control-btn primary"
+                x-show="tab === 'special-motion'"
+                x-cloak
+                @click="onPlayPinPulse($refs)">
+            <i class="bi bi-play-fill"></i> Play Pin Pulse
+        </button>
 
         <!-- ===== 99a-T5: Focal 焦點編輯星空等待 loop 控制項 ===== -->
         <button class="control-btn primary"
@@ -2348,6 +2354,17 @@
                     </div>
                     <div class="special-motion-stage">
                         <div class="special-motion-dot" x-ref="whitelistPulseEl"></div>
+                    </div>
+                </div>
+
+                <!-- 6. TASK-156d-T4: OpenAver.motion.playPulse 她那列置頂強調亮起 -->
+                <div class="special-motion-item">
+                    <div class="special-motion-label">
+                        <span class="special-motion-name">OpenAver.motion.playPulse 置頂強調亮起</span>
+                        <code class="special-motion-ease">fluent + clearProps 0.4s</code>
+                    </div>
+                    <div class="special-motion-stage">
+                        <div class="special-motion-box" x-ref="pinPulseEl"></div>
                     </div>
                 </div>
 

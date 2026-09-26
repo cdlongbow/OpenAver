@@ -192,6 +192,47 @@ playModal: function (element, opts) {
 },
 
 /**
+ * 一次性強調亮起（她那列被置頂到第一列時的提示動效）
+ *
+ * TASK-156d-T4／CD-156d-3：一次性 `backgroundColor` 淡出強調，提示「在這裡」；
+ * 純裝飾性，不影響 `.is-active` 既有、會持續套用的高亮 class。PRM 開啟時
+ * `_shouldAnimate()===false` → 直接不播放，不需要任何 `gsap.set` 收尾。
+ * 色票沿用既有「`fromTo(backgroundColor)` → `transparent` → `clearProps`」樣板
+ * （`web/static/js/pages/search/animations.js` `playOrganizeSuccess` 的 row flash）：
+ * GSAP 內建顏色解析只認 hex/rgb/rgba/hsl，不認得 `--color-primary` 實際使用的
+ * `oklch()`／`color-mix()`，故用固定 rgba literal 而非 CSS 變數。
+ *
+ * @param {Element} element - 要強調亮起的那一列 DOM 元素
+ * @param {Object} [opts]
+ * @param {number} [opts.duration=0.4] - 動畫秒數（CD-156d-3：<=0.4s）
+ * @param {string} [opts.color] - 起始強調色（預設克制藍，淡出至 transparent）
+ * @param {string} [opts.ease='fluent']
+ * @param {Object} [opts.ctx] - createContext() 回傳的 context，供頁面離開時回收
+ * @param {Function} [opts.onComplete]
+ */
+playPulse: function (element, opts) {
+    opts = opts || {};
+    if (!element) return null;
+    if (!this._shouldAnimate()) {
+        if (typeof opts.onComplete === 'function') opts.onComplete();
+        return null;
+    }
+    var fromColor = opts.color || 'rgba(96, 165, 250, 0.28)';
+    return this._run(opts.ctx, function () {
+        return gsap.fromTo(element,
+            { backgroundColor: fromColor },
+            {
+                backgroundColor: 'transparent',
+                duration: opts.duration || 0.4,
+                ease: opts.ease || 'fluent',
+                clearProps: 'backgroundColor',
+                onComplete: opts.onComplete || null
+            }
+        );
+    });
+},
+
+/**
  * 清除元素 inline GSAP props（替代直接呼叫 `gsap.set(el, { clearProps })`）。
  * 用於 timeline.kill() 後同步重置 transform/opacity 等殘留，防連點 stutter。
  * 不觸發動畫，純 sync prop 重置。

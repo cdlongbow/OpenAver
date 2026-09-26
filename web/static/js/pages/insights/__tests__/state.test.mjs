@@ -350,3 +350,77 @@ test('isActressFocused: 無焦點（focus === null）時回傳 false', () => {
     assert.equal(state.isActressFocused, false);
 });
 
+// ── _maybePlayPinPulse（TASK-156d-T4／review P2，定稿輪數 2）───────────
+// review 發現：年表切到「年齡」軸時，ganttView('age') 會用 ganttAgeEligibility
+// 濾掉沒生日的女優；她若無生日，this.ganttRows[0] 仍是她（資料層置頂沒問題），
+// 但 DOM 實際渲染的年表列裡完全沒有她，原本的邏輯會盲抓 DOM 第一列（那是別人）
+// 播放強調亮起。修法：`ganttAxis` 是 `.gantt-card` 巢狀 x-data 的子層狀態，父層
+// 元件讀不到（`this.ganttAxis` 恆 undefined），改成直接讀 DOM 實際渲染出來的
+// 第一列名字（`.gantt-name` 文字），核對是否等於這次要置頂的名字。
+
+function makeGanttRowEl(name) {
+    return {
+        querySelector(sel) {
+            if (sel === '.gantt-name') return { textContent: name };
+            return null;
+        },
+    };
+}
+
+test('_maybePlayPinPulse: 年齡軸下她的列被濾掉（無生日）→ DOM 第一列渲染的是別人 → 不對年表動手，分布表仍照常播放', () => {
+    globalThis.window.OpenAver = globalThis.window.OpenAver || {};
+    const pulsed = [];
+    globalThis.window.OpenAver.motion = { playPulse: (el) => pulsed.push(el) };
+    // 模擬年齡軸把她濾掉：DOM 實際渲染出來的第一列是「別人」，不是她。
+    const ganttEl = makeGanttRowEl('別人');
+    const soloEl = { tag: 'solo-row-dom-1' };
+    const origQuerySelector = globalThis.document.querySelector;
+    globalThis.document.querySelector = (sel) => {
+        if (sel.indexOf('gantt-row') !== -1) return ganttEl;
+        if (sel.indexOf('solo-row') !== -1) return soloEl;
+        return null;
+    };
+
+    const state = libraryInsightsState();
+    state.$nextTick = (fn) => fn();
+    state.focus = { type: 'actress', value: '無生日女優' };
+    state.ganttRows = [{ name: '無生日女優', pinned: true }];
+    state.soloRows = [{ name: '無生日女優', pinned: true }];
+
+    state._maybePlayPinPulse();
+
+    assert.deepEqual(
+        pulsed,
+        [soloEl],
+        '年表渲染第一列不是她時只有分布表播放，不得對年表 DOM 第一列（別人）動手',
+    );
+
+    globalThis.document.querySelector = origQuerySelector;
+});
+
+test('_maybePlayPinPulse: DOM 渲染第一列確實是她（年份軸／年齡軸但她有生日皆同理）→ 年表與分布表都照常播放', () => {
+    globalThis.window.OpenAver = globalThis.window.OpenAver || {};
+    const pulsed = [];
+    globalThis.window.OpenAver.motion = { playPulse: (el) => pulsed.push(el) };
+    const ganttEl = makeGanttRowEl('有生日女優');
+    const soloEl = { tag: 'solo-row-dom-2' };
+    const origQuerySelector = globalThis.document.querySelector;
+    globalThis.document.querySelector = (sel) => {
+        if (sel.indexOf('gantt-row') !== -1) return ganttEl;
+        if (sel.indexOf('solo-row') !== -1) return soloEl;
+        return null;
+    };
+
+    const state = libraryInsightsState();
+    state.$nextTick = (fn) => fn();
+    state.focus = { type: 'actress', value: '有生日女優' };
+    state.ganttRows = [{ name: '有生日女優', pinned: true }];
+    state.soloRows = [{ name: '有生日女優', pinned: true }];
+
+    state._maybePlayPinPulse();
+
+    assert.deepEqual(pulsed, [ganttEl, soloEl], '渲染第一列吻合時，年表與分布表都應播放一次');
+
+    globalThis.document.querySelector = origQuerySelector;
+});
+

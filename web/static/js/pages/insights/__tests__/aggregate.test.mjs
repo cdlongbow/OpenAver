@@ -1313,9 +1313,10 @@ test('buildGanttRows: 女優焦點且她不在前25名時附加她那一列', ()
         { type: 'actress', value: 'Zoe' },
     );
     assert.equal(withAppend.length, 26);
-    const last = withAppend[withAppend.length - 1];
-    assert.equal(last.name, 'Zoe');
-    assert.equal(last.appended, true);
+    const first = withAppend[0];
+    assert.equal(first.name, 'Zoe');
+    assert.equal(first.appended, true);
+    assert.equal(first.pinned, true);
 
     // 已在前 25 → 不重複附加
     const already = buildGanttRows(
@@ -1335,6 +1336,81 @@ test('buildGanttRows: 女優焦點且她不在前25名時附加她那一列', ()
         { type: 'actress', value: 'Ghost' },
     );
     assert.equal(missing.some((r) => r.name === 'Ghost'), false);
+});
+
+// ── buildGanttRows: 她那列置頂（TASK-156d-T4） ───────────────────────
+
+test('buildGanttRows: 女優焦點且她在自然排序內時直接置頂在 index 0，其餘相對順序不變', () => {
+    const map = {};
+    const records = [];
+    // 3 位候選人，mainCount 遞減：Top01(3) > Top02(2) > Top03(1)
+    for (let i = 1; i <= 3; i++) {
+        const name = `Top0${i}`;
+        const count = 4 - i;
+        for (let j = 0; j < count; j++) {
+            map[`${name}|2020`] = 'SOD';
+            records.push(rec({ year: 2020, actresses: [name], maker: 'SOD' }));
+        }
+    }
+    const noFocus = buildGanttRows(records, map, { type: 'all' }, null);
+    assert.deepEqual(noFocus.map((r) => r.name), ['Top01', 'Top02', 'Top03']);
+
+    const pinned = buildGanttRows(
+        records,
+        map,
+        { type: 'all' },
+        { type: 'actress', value: 'Top03' },
+    );
+    assert.equal(pinned.length, 3);
+    assert.equal(pinned[0].name, 'Top03');
+    assert.equal(pinned[0].pinned, true);
+    assert.equal(pinned[0].appended, undefined);
+    assert.deepEqual(pinned.slice(1).map((r) => r.name), ['Top01', 'Top02']);
+});
+
+test('buildGanttRows: 女優焦點且她 rank 外附加時，附加列直接置頂在 index 0（不是末列）', () => {
+    const map = {};
+    const records = [];
+    for (let i = 1; i <= 25; i++) {
+        const name = `Act${String(i).padStart(2, '0')}`;
+        map[`${name}|2020`] = 'SOD';
+        records.push(rec({ year: 2020, actresses: [name], maker: 'SOD' }));
+    }
+    records.push(rec({ year: 2021, actresses: ['Zoe'], maker: 'Moodyz' }));
+
+    const pinned = buildGanttRows(
+        records,
+        map,
+        { type: 'all' },
+        { type: 'actress', value: 'Zoe' },
+    );
+    assert.equal(pinned.length, 26);
+    assert.equal(pinned[0].name, 'Zoe');
+    assert.equal(pinned[0].pinned, true);
+    assert.equal(pinned[0].appended, true);
+    assert.deepEqual(
+        pinned.slice(1).map((r) => r.name),
+        Array.from({ length: 25 }, (_, i) => `Act${String(i + 1).padStart(2, '0')}`),
+    );
+});
+
+test('buildGanttRows: 無焦點／片商焦點不觸發置頂，pinned 欄位不存在', () => {
+    const map = { 'Alice|2020': 'SOD', 'Bob|2020': 'SOD' };
+    const records = [
+        rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
+        rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
+        rec({ year: 2020, actresses: ['Bob'], maker: 'SOD' }),
+    ];
+    const noFocus = buildGanttRows(records, map, { type: 'all' }, null);
+    assert.equal(noFocus.some((r) => r.pinned), false);
+
+    const makerFocus = buildGanttRows(
+        records,
+        map,
+        { type: 'all' },
+        { type: 'maker', value: 'SOD' },
+    );
+    assert.equal(makerFocus.some((r) => r.pinned), false);
 });
 
 test('buildGanttYearCells: 主要片商年→main、有片非主要→dot、無片→empty', () => {
@@ -1574,10 +1650,11 @@ test('buildSoloRows: 女優焦點且她不符合篩選條件但有紀錄 → 附
         [],
     );
     assert.equal(withAppend.length, 26);
-    const last = withAppend[withAppend.length - 1];
-    assert.equal(last.name, 'ExcludedByRatio');
-    assert.equal(last.appended, true);
-    assert.equal(last.total, 5);
+    const first = withAppend[0];
+    assert.equal(first.name, 'ExcludedByRatio');
+    assert.equal(first.appended, true);
+    assert.equal(first.pinned, true);
+    assert.equal(first.total, 5);
 
     // 已在前 25 → 不重複附加
     const already = buildSoloRows(
@@ -1601,6 +1678,88 @@ test('buildSoloRows: 女優焦點且她不符合篩選條件但有紀錄 → 附
         [],
     );
     assert.equal(missing.some((r) => r.name === 'Ghost'), false);
+});
+
+// ── buildSoloRows: 她那列置頂（TASK-156d-T4） ────────────────────────
+
+test('buildSoloRows: 女優焦點且她在自然排序內時直接置頂在 index 0，其餘相對順序不變', () => {
+    const map = {};
+    const records = [];
+    // 3 位候選人，total 遞減：Top01(3) > Top02(2) > Top03(1)，全部片商 Other 不觸發主要片商篩除
+    for (let i = 1; i <= 3; i++) {
+        const name = `Top0${i}`;
+        const count = 4 - i;
+        for (let j = 0; j < count; j++) {
+            records.push(rec({ year: 2020, actresses: [name], maker: 'Other' }));
+        }
+    }
+    const noFocus = buildSoloRows(records, map, { type: 'all' }, null, [], []);
+    assert.deepEqual(noFocus.map((r) => r.name), ['Top01', 'Top02', 'Top03']);
+
+    const pinned = buildSoloRows(
+        records,
+        map,
+        { type: 'all' },
+        { type: 'actress', value: 'Top03' },
+        [],
+        [],
+    );
+    assert.equal(pinned.length, 3);
+    assert.equal(pinned[0].name, 'Top03');
+    assert.equal(pinned[0].pinned, true);
+    assert.equal(pinned[0].appended, undefined);
+    assert.deepEqual(pinned.slice(1).map((r) => r.name), ['Top01', 'Top02']);
+});
+
+test('buildSoloRows: 女優焦點且她 rank 外附加時，附加列直接置頂在 index 0（不是末列）', () => {
+    const map = {};
+    const records = [];
+    const names = [];
+    for (let i = 1; i <= 25; i++) {
+        const name = `Cand${String(i).padStart(2, '0')}`;
+        names.push(name);
+        records.push(rec({ year: 2020, actresses: [name], maker: 'Other' }));
+    }
+    map['ExcludedByRatio|2020'] = 'M';
+    for (let i = 0; i < 4; i++) {
+        records.push(rec({ year: 2020, actresses: ['ExcludedByRatio'], maker: 'M' }));
+    }
+    records.push(rec({ year: 2020, actresses: ['ExcludedByRatio'], maker: 'Other' }));
+
+    const pinned = buildSoloRows(
+        records,
+        map,
+        { type: 'all' },
+        { type: 'actress', value: 'ExcludedByRatio' },
+        [],
+        [],
+    );
+    assert.equal(pinned.length, 26);
+    assert.equal(pinned[0].name, 'ExcludedByRatio');
+    assert.equal(pinned[0].pinned, true);
+    assert.equal(pinned[0].appended, true);
+    assert.deepEqual(pinned.slice(1).map((r) => r.name), names);
+});
+
+test('buildSoloRows: 無焦點／片商焦點不觸發置頂，pinned 欄位不存在', () => {
+    const map = {};
+    const records = [
+        rec({ year: 2020, actresses: ['Alice'], maker: 'Other' }),
+        rec({ year: 2020, actresses: ['Alice'], maker: 'Other' }),
+        rec({ year: 2020, actresses: ['Bob'], maker: 'Other' }),
+    ];
+    const noFocus = buildSoloRows(records, map, { type: 'all' }, null, [], []);
+    assert.equal(noFocus.some((r) => r.pinned), false);
+
+    const makerFocus = buildSoloRows(
+        records,
+        map,
+        { type: 'all' },
+        { type: 'maker', value: 'Other' },
+        [],
+        [],
+    );
+    assert.equal(makerFocus.some((r) => r.pinned), false);
 });
 
 // ── buildCostarRows ──────────────────────────────────────────────────

@@ -71,6 +71,15 @@ let _mainMakerYearMap = {};
  * 必要被 Alpine 追蹤，包成 reactive 只會多繞一層 Proxy 開銷。
  */
 let _ganttViewCache = null;
+/**
+ * TASK-156d-T4／CD-156d-3：上一次觸發過強調亮起的置頂名字（年表／分布表各自
+ * 一份，可能不同步——例如她在年表自然排序內不觸發，但在分布表是 rank 外附加）。
+ * 純粹的一次性比較用內部旗標，不是要被模板讀取的資料，故放模組級 `let`，
+ * 不進 Alpine reactive 屬性。非女優焦點時歸零成 `null`（見 `_maybePlayPinPulse`
+ * 註解——這保證清除焦點後重新選回同一人仍會重新觸發一次）。
+ */
+let _lastPinnedGanttName = null;
+let _lastPinnedSoloName = null;
 
 /** 預覽浮層實測尺寸（160 寬照片 + 名字列）；與 .insights-preview CSS 對齊。 */
 const PREVIEW_POPUP = { width: 160, height: 224 };
@@ -240,6 +249,66 @@ export function libraryInsightsState() {
                 ganttNames,
                 this.ganttLegend,
             );
+        },
+
+        /**
+         * TASK-156d-T4／CD-156d-3：她那列置頂後的一次性強調亮起。掛在既有三個
+         * `recomputeGantt()+recomputeSolo()` 呼叫點之後（`_loadSnapshot` 成功、
+         * `$watch('period')`、`$watch('focus')`）。年表／分布表各自獨立判斷、
+         * 各自獨立比對 `_lastPinnedGanttName`/`_lastPinnedSoloName`（她可能在
+         * 其中一張卡是自然排序內置頂、另一張是 rank 外附加置頂，兩者不必同步）。
+         * 非女優焦點／片商焦點時視為「無置頂」，把記錄值歸零成 `null`——這保證
+         * 「清除焦點後重新選回同一人」仍會重新觸發一次強調亮起（同一人連續兩次
+         * 被置頂才不重播）。
+         *
+         * review P2（定稿輪數 2）：年表切到「年齡」軸時，`ganttView('age')` 會用
+         * `ganttAgeEligibility` 濾掉沒生日的女優——她若無生日，`this.ganttRows[0]`
+         * 仍是她（`pinned===true`，資料層置頂沒問題），但 DOM 實際渲染出來的第一列
+         * 會是別人。**`ganttAxis` 是 `.gantt-card` 自己巢狀 `x-data="{ ganttAxis:
+         * 'year' }"` 的子層狀態，不在這個父層元件上**——`this.ganttAxis` 在這裡
+         * 讀不到值（恆為 `undefined`），呼叫 `this.ganttView(this.ganttAxis)` 只會
+         * 一直落到年份分支，驗不出年齡軸的過濾（definite 輪 1 的錯誤修法，已改正）。
+         * 改成直接讀 DOM 實際渲染出來的第一列名字（瀏覽器已經套用了不論哪個軸的
+         * 過濾結果，不需要重新猜是哪個軸），核對是否等於這次要置頂的名字，不符合
+         * 就跳過年表那一條 `playPulse`（不對 DOM 第一列動手，那是別人的列），
+         * 分布表（`soloRows` 沒有年齡篩選）不受影響、照常播放。
+         */
+        _maybePlayPinPulse() {
+            const isActress = !!(this.focus && this.focus.type === 'actress');
+            const ganttFirst = (this.ganttRows || [])[0];
+            const soloFirst = (this.soloRows || [])[0];
+            const ganttName =
+                isActress && ganttFirst && ganttFirst.pinned === true
+                    ? ganttFirst.name
+                    : null;
+            const soloName =
+                isActress && soloFirst && soloFirst.pinned === true
+                    ? soloFirst.name
+                    : null;
+
+            const ganttChanged = ganttName !== _lastPinnedGanttName;
+            const soloChanged = soloName !== _lastPinnedSoloName;
+            _lastPinnedGanttName = ganttName;
+            _lastPinnedSoloName = soloName;
+
+            if (!ganttChanged && !soloChanged) return;
+            this.$nextTick(() => {
+                const motion = window.OpenAver.motion;
+                if (ganttChanged && ganttName) {
+                    const el = document.querySelector(
+                        '.gantt-table .gantt-row:not(.gantt-head-row)',
+                    );
+                    const nameEl = el && el.querySelector('.gantt-name');
+                    const renderedName = nameEl
+                        ? nameEl.textContent.trim()
+                        : null;
+                    if (el && renderedName === ganttName) motion.playPulse(el);
+                }
+                if (soloChanged && soloName) {
+                    const el = document.querySelector('#soloList .solo-row');
+                    if (el) motion.playPulse(el);
+                }
+            });
         },
 
         /**
@@ -1000,6 +1069,7 @@ export function libraryInsightsState() {
                 this.recomputeTop20();
                 this.recomputeGantt();
                 this.recomputeSolo();
+                this._maybePlayPinPulse();
                 this.recomputeCostar();
 
                 const el = document.getElementById('yearsChart');
@@ -1091,6 +1161,7 @@ export function libraryInsightsState() {
                 this.recomputeTop20();
                 this.recomputeGantt();
                 this.recomputeSolo();
+                this._maybePlayPinPulse();
                 this.recomputeCostar();
             });
             this.$watch('focus', (value, oldValue) => {
@@ -1104,6 +1175,7 @@ export function libraryInsightsState() {
                 this.recomputeTop20();
                 this.recomputeGantt();
                 this.recomputeSolo();
+                this._maybePlayPinPulse();
                 this.recomputeCostar();
                 this._handleActressFocusChange(oldValue);
             });

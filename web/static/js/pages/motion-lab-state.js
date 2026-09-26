@@ -211,6 +211,13 @@ function motionLabPage() {
             window.MotionLab.playSpecialMotionPulseDemo(refs.whitelistPulseEl, this.params);
         },
 
+        // TASK-156d-T4：直接呼叫 window.OpenAver.motion.playPulse（adapter primitive），
+        // 不經 window.MotionLab.playXxxDemo 那層——那層是給裸 GSAP 白名單示範用的。
+        onPlayPinPulse(refs) {
+            if (typeof window.OpenAver === 'undefined' || !window.OpenAver.motion) return;
+            window.OpenAver.motion.playPulse(refs.pinPulseEl);
+        },
+
         // 99a-T5: Focal 焦點編輯 detect-first 星空等待迴圈 demo——真跑 window.GhostFly.
         // playFocalDetectWait/stopFocalDetectWait（與 showcase.html state-lightbox.js openMask
         // 生產路徑同一份函式），非重寫假 demo。_focalWaitHandle 保留 playFocalDetectWait 回傳值
