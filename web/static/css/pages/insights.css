@@ -835,6 +835,96 @@
     font-variant-numeric: tabular-nums;
 }
 
+/* CD-156c-6：自然高度，不被左欄分布表拉伸 */
+.insights-container #costarCard {
+    align-self: start;
+}
+
+/* 與她同片（TASK-156c-T5 / CD-156c-1／6） */
+.insights-container .costar-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 2px;
+    border-bottom: 1px solid var(--stroke-subtle);
+    cursor: pointer;
+    min-width: 0;
+}
+
+.insights-container .costar-row:last-child {
+    border-bottom: none;
+}
+
+.insights-container .costar-row:hover {
+    background: color-mix(in oklch, var(--color-primary) 6%, transparent);
+}
+
+.insights-container .costar-row.is-active {
+    background: color-mix(in oklch, var(--color-primary) 12%, transparent);
+}
+
+.insights-container .costar-avatars {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex: 0 0 auto;
+}
+
+.insights-container .costar-avatar {
+    width: 22px;
+    height: 22px;
+    border-radius: var(--radius-pill);
+    flex: 0 0 auto;
+    overflow: hidden;
+    background: var(--surface-2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.625rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+}
+
+.insights-container .costar-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.insights-container .costar-names {
+    width: 9.5rem;
+    flex: 0 0 auto;
+    font-size: 0.75rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.insights-container .costar-bar-wrap {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 0.75rem;
+    background: var(--stroke-subtle);
+    border-radius: var(--radius-xs);
+    overflow: hidden;
+}
+
+.insights-container .costar-bar {
+    display: block;
+    height: 100%;
+    background: var(--color-primary);
+    border-radius: var(--radius-xs);
+}
+
+.insights-container .costar-end {
+    width: 4rem;
+    flex: 0 0 auto;
+    text-align: right;
+    font-size: 0.6875rem;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
 /* ===== 響應式斷點 ===== */
 @media (max-width: 1024px) {
     .insights-container .row1 {

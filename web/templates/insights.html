@@ -364,12 +364,60 @@
                 </div>
             </div>
         </section>
-        <section class="card" id="costarCard">
+        <section class="card" id="costarCard" x-show="focus && focus.type === 'actress'">
             <div class="card-head">
                 <h2 id="costarTitle">{{ t('insights.row.costar') }}</h2>
             </div>
             <div class="card-body">
-                <div class="list-rows" id="costarList"></div>
+                <div class="list-rows" id="costarList">
+                    <template x-for="row in costarRows" :key="row.name">
+                        <div class="costar-row"
+                             :class="{ 'is-active': focus && focus.type === 'actress' && focus.value === row.name }"
+                             @click="toggleActressFocus(row.name)">
+                            <span class="costar-avatars">
+                                <span class="costar-avatar"
+                                      @click.stop="openPreview(row.self, $el)"
+                                      @mouseenter="scheduleOpenPreview(row.self, $el)"
+                                      @mouseleave="cancelOpenPreview()">
+                                    <template x-if="actressHasPhoto(row.self) && !photoFailed[row.self]">
+                                        <img :src="actressPhotoUrl(row.self)"
+                                             alt=""
+                                             loading="lazy"
+                                             @error="markPhotoFailed(row.self)">
+                                    </template>
+                                    <template x-if="!actressHasPhoto(row.self) || photoFailed[row.self]">
+                                        <span x-text="row.self.charAt(0)"></span>
+                                    </template>
+                                </span>
+                                <span class="costar-avatar"
+                                      @click.stop="openPreview(row.name, $el)"
+                                      @mouseenter="scheduleOpenPreview(row.name, $el)"
+                                      @mouseleave="cancelOpenPreview()">
+                                    <template x-if="actressHasPhoto(row.name) && !photoFailed[row.name]">
+                                        <img :src="actressPhotoUrl(row.name)"
+                                             alt=""
+                                             loading="lazy"
+                                             @error="markPhotoFailed(row.name)">
+                                    </template>
+                                    <template x-if="!actressHasPhoto(row.name) || photoFailed[row.name]">
+                                        <span x-text="row.name.charAt(0)"></span>
+                                    </template>
+                                </span>
+                            </span>
+                            <span class="costar-names"
+                                  :title="row.self + ' × ' + row.name"
+                                  x-text="row.self + ' × ' + row.name"></span>
+                            <span class="costar-bar-wrap">
+                                <span class="costar-bar"
+                                      :style="'width:' + (costarRows[0] && costarRows[0].count ? Math.round(row.count / costarRows[0].count * 100) : 0) + '%'"></span>
+                            </span>
+                            <span class="costar-end" x-text="costarRowLabel(row)"></span>
+                        </div>
+                    </template>
+                    <div x-show="!costarRows.length"
+                         class="top20-empty"
+                         x-text="t('insights.no_data')"></div>
+                </div>
             </div>
         </section>
     </div>

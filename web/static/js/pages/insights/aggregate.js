@@ -915,3 +915,39 @@ export function buildSoloRows(records, mainMakerYearMap, period, focus, ganttNam
     }
     return top;
 }
+
+/**
+ * TASK-156c-T5 / CD-156c-1 / 6：與她同片搭檔列表。
+ *
+ * 只在女優焦點時計算，範圍為 scopeRecords(records, period, focus)。
+ * 每部紀錄去重女優名單後，僅採計 2～4 人片。
+ * 統計非焦點女優的合作次數，依次數遞減、名字遞增排序，取前 15 名。
+ */
+export function buildCostarRows(records, period, focus) {
+    if (!focus || focus.type !== 'actress' || !focus.value) return [];
+    var herName = focus.value;
+    var scoped = scopeRecords(records, period, focus);
+    var counts = new Map();
+    scoped.forEach(function (r) {
+        var seenInRecord = new Set();
+        var names = [];
+        ((r && r.actresses) || []).forEach(function (name) {
+            if (!name || seenInRecord.has(name)) return;
+            seenInRecord.add(name);
+            names.push(name);
+        });
+        if (names.length < 2 || names.length > 4) return;
+        names.forEach(function (name) {
+            if (name === herName) return;
+            counts.set(name, (counts.get(name) || 0) + 1);
+        });
+    });
+    var list = Array.from(counts.entries()).map(function (entry) {
+        return { name: entry[0], count: entry[1] };
+    });
+    list.sort(function (a, b) {
+        return b.count - a.count || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    });
+    return list.slice(0, 15);
+}
+

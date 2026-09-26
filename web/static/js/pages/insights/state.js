@@ -21,6 +21,7 @@ import {
     ganttAgeAxis,
     buildGanttAgeCells,
     buildSoloRows,
+    buildCostarRows,
 } from './aggregate.js';
 import {
     setMakerColorSlots,
@@ -117,6 +118,7 @@ export function libraryInsightsState() {
         // 修正 1（第 2 輪）：圖例名單存進 reactive 欄位，見 ganttLegendMakers() 註解。
         ganttLegend: [],
         soloRows: [],
+        costarRows: [],
         previewActress: null,
         previewAnchorRect: null,
         // 模板色點／格子塗色直接呼叫（charts.js 匯出）
@@ -221,6 +223,23 @@ export function libraryInsightsState() {
                 ganttNames,
                 this.ganttLegend,
             );
+        },
+
+        /**
+         * TASK-156c-T5 / CD-156c-1 / 6：與她同片搭檔列表。
+         * 呼叫順序在 recomputeSolo() 之後。
+         */
+        recomputeCostar() {
+            const focus = this.focus;
+            const focusName =
+                focus && focus.type === 'actress' ? focus.value : '';
+            this.costarRows = buildCostarRows(
+                getRecords(),
+                this.period,
+                focus,
+            ).map(function (row) {
+                return { name: row.name, count: row.count, self: focusName };
+            });
         },
 
         /**
@@ -615,6 +634,19 @@ export function libraryInsightsState() {
                 : list;
         },
 
+        /**
+         * CD-156c-6：尾端「N 部」。
+         */
+        costarRowLabel(row) {
+            const tFn =
+                typeof window !== 'undefined' && typeof window.t === 'function'
+                    ? window.t
+                    : null;
+            return tFn
+                ? tFn('insights.costar.count_label', { n: row.count })
+                : String(row.count);
+        },
+
         focusPhotoUrl() {
             if (!this.focus || this.focus.type !== 'actress') return '';
             return _photoUrl(
@@ -827,6 +859,7 @@ export function libraryInsightsState() {
                 this.recomputeTop20();
                 this.recomputeGantt();
                 this.recomputeSolo();
+                this.recomputeCostar();
 
                 const el = document.getElementById('yearsChart');
                 if (el) {
@@ -917,6 +950,7 @@ export function libraryInsightsState() {
                 this.recomputeTop20();
                 this.recomputeGantt();
                 this.recomputeSolo();
+                this.recomputeCostar();
             });
             this.$watch('focus', () => {
                 this.recomputeScopedCount();
@@ -929,6 +963,7 @@ export function libraryInsightsState() {
                 this.recomputeTop20();
                 this.recomputeGantt();
                 this.recomputeSolo();
+                this.recomputeCostar();
             });
 
             if (window.__registerPage) {

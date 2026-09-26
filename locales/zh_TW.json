@@ -1666,6 +1666,9 @@
       "count_label": "{n} 部 · {m} 家",
       "other_title": "其他 {n} 家：{list}"
     },
+    "costar": {
+      "count_label": "{n} 部"
+    },
     "total_count": "全庫 {n} 部"
   }
 }

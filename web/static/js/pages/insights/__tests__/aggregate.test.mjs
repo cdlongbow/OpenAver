@@ -31,6 +31,7 @@ const {
     ganttAgeAxis,
     buildGanttAgeCells,
     buildSoloRows,
+    buildCostarRows,
 } = agg;
 
 function rec(opts) {
@@ -1601,3 +1602,95 @@ test('buildSoloRows: 女優焦點且她不符合篩選條件但有紀錄 → 附
     );
     assert.equal(missing.some((r) => r.name === 'Ghost'), false);
 });
+
+// ── buildCostarRows ──────────────────────────────────────────────────
+
+test('buildCostarRows: 5人以上不計入', () => {
+    const records = [
+        rec({ actresses: ['Alice', 'Bob', 'Carol', 'Dave', 'Eve'] }), // 5 人片
+        rec({ actresses: ['Alice', 'Bob', 'Carol', 'Dave', 'Eve', 'Frank'] }), // 6 人片
+    ];
+    const got = buildCostarRows(records, { type: 'all' }, { type: 'actress', value: 'Alice' });
+    assert.deepEqual(got, []);
+});
+
+test('buildCostarRows: 片商焦點回空陣列', () => {
+    const records = [
+        rec({ actresses: ['Alice', 'Bob'], maker: 'SOD' }),
+    ];
+    const got = buildCostarRows(records, { type: 'all' }, { type: 'maker', value: 'SOD' });
+    assert.deepEqual(got, []);
+});
+
+test('buildCostarRows: 無焦點回空陣列', () => {
+    const records = [
+        rec({ actresses: ['Alice', 'Bob'] }),
+    ];
+    assert.deepEqual(buildCostarRows(records, { type: 'all' }, null), []);
+    assert.deepEqual(buildCostarRows(records, { type: 'all' }, undefined), []);
+    assert.deepEqual(buildCostarRows(records, { type: 'all' }, { type: 'actress', value: '' }), []);
+});
+
+test('buildCostarRows: 1人的片不計入', () => {
+    const records = [
+        rec({ actresses: ['Alice'] }),
+    ];
+    const got = buildCostarRows(records, { type: 'all' }, { type: 'actress', value: 'Alice' });
+    assert.deepEqual(got, []);
+});
+
+test('buildCostarRows: 2～4人的片正常計入所有非焦點搭檔', () => {
+    const records = [
+        rec({ actresses: ['Alice', 'Bob'] }), // 2 人片
+        rec({ actresses: ['Alice', 'Bob', 'Carol'] }), // 3 人片
+        rec({ actresses: ['Alice', 'Carol', 'Dave', 'Eve'] }), // 4 人片
+    ];
+    const got = buildCostarRows(records, { type: 'all' }, { type: 'actress', value: 'Alice' });
+    assert.deepEqual(got, [
+        { name: 'Bob', count: 2 },
+        { name: 'Carol', count: 2 },
+        { name: 'Dave', count: 1 },
+        { name: 'Eve', count: 1 },
+    ]);
+});
+
+test('buildCostarRows: 同片重複名字去重後只算一次人數與合作', () => {
+    const records = [
+        rec({ actresses: ['Alice', 'Alice', 'Bob'] }),
+        rec({ actresses: ['Alice', 'Bob', 'Carol', 'Dave', 'Alice', 'Bob'] }),
+    ];
+    const got = buildCostarRows(records, { type: 'all' }, { type: 'actress', value: 'Alice' });
+    assert.deepEqual(got, [
+        { name: 'Bob', count: 2 },
+        { name: 'Carol', count: 1 },
+        { name: 'Dave', count: 1 },
+    ]);
+});
+
+test('buildCostarRows: 排序規則為 count 遞減且 name 字串遞增', () => {
+    const records = [
+        rec({ actresses: ['Alice', 'Zara'] }),
+        rec({ actresses: ['Alice', 'Bob'] }),
+        rec({ actresses: ['Alice', 'Carol'] }),
+        rec({ actresses: ['Alice', 'Carol'] }),
+    ];
+    const got = buildCostarRows(records, { type: 'all' }, { type: 'actress', value: 'Alice' });
+    assert.deepEqual(got, [
+        { name: 'Carol', count: 2 },
+        { name: 'Bob', count: 1 },
+        { name: 'Zara', count: 1 },
+    ]);
+});
+
+test('buildCostarRows: 超過15位符合資格的搭檔只取前15位', () => {
+    const records = [];
+    for (let i = 1; i <= 20; i++) {
+        const costarName = `Partner${String(i).padStart(2, '0')}`;
+        records.push(rec({ actresses: ['Alice', costarName] }));
+    }
+    const got = buildCostarRows(records, { type: 'all' }, { type: 'actress', value: 'Alice' });
+    assert.equal(got.length, 15);
+    assert.equal(got[0].name, 'Partner01');
+    assert.equal(got[14].name, 'Partner15');
+});
+
