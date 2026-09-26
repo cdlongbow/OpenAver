@@ -271,3 +271,62 @@ test('isPeriodEmpty: 條件滿足時回傳 true', () => {
     assert.equal(state.isPeriodEmpty(['maker']), true);
 });
 
+// ── podiumRows / restRows（TASK-156d-T2）─────────────────────────────
+
+test('podiumRows/restRows: top20Rows 只有 2 筆（女優總數 <3）→ podiumRows 回傳 2 筆，restRows 為空', () => {
+    const state = libraryInsightsState();
+    state.top20Rows = [
+        { rank: 1, name: 'A', count: 10 },
+        { rank: 2, name: 'B', count: 8 },
+    ];
+    assert.deepEqual(state.podiumRows.map((r) => r.name), ['A', 'B']);
+    assert.deepEqual(state.restRows, []);
+});
+
+test('podiumRows/restRows: top20Rows 為空（0 位女優）→ 兩者皆為空陣列', () => {
+    const state = libraryInsightsState();
+    state.top20Rows = [];
+    assert.deepEqual(state.podiumRows, []);
+    assert.deepEqual(state.restRows, []);
+});
+
+test('podiumRows/restRows: 焦點女優 rank>20 附加列（真實名次 37）→ 落在 restRows，podiumRows 不受影響', () => {
+    const state = libraryInsightsState();
+    state.top20Rows = [
+        { rank: 1, name: 'A', count: 10 },
+        { rank: 2, name: 'B', count: 9 },
+        { rank: 3, name: 'C', count: 8 },
+        { rank: 4, name: 'D', count: 7 },
+        { rank: 37, name: '焦點女優', count: 1 },
+    ];
+    assert.equal(state.podiumRows.length, 3);
+    assert.ok(!state.podiumRows.some((r) => r.name === '焦點女優'));
+    const focusRow = state.restRows.find((r) => r.name === '焦點女優');
+    assert.ok(focusRow, '焦點女優應出現在 restRows');
+    assert.equal(focusRow.rank, 37, '名次要顯示真實名次，不是 21');
+});
+
+test('podiumRows/restRows: 焦點女優 rank<=3（本來就在頒獎台上）→ podiumRows 含她、restRows 不含她', () => {
+    const state = libraryInsightsState();
+    state.top20Rows = [
+        { rank: 1, name: 'A', count: 10 },
+        { rank: 2, name: '焦點女優', count: 9 },
+        { rank: 3, name: 'C', count: 8 },
+    ];
+    assert.ok(state.podiumRows.some((r) => r.name === '焦點女優'));
+    assert.ok(!state.restRows.some((r) => r.name === '焦點女優'));
+});
+
+test('podiumRows/restRows: top20Rows 剛好 20 筆滿額且焦點女優 rank===20 → 落在 restRows', () => {
+    const state = libraryInsightsState();
+    const rows = [];
+    for (let i = 1; i <= 20; i += 1) {
+        rows.push({ rank: i, name: 'name' + i, count: 21 - i });
+    }
+    state.top20Rows = rows;
+    assert.equal(state.podiumRows.length, 3);
+    assert.equal(state.restRows.length, 17);
+    const row20 = state.restRows.find((r) => r.rank === 20);
+    assert.ok(row20, 'rank===20 應落在 restRows');
+});
+

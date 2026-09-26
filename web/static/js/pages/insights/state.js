@@ -594,6 +594,22 @@ export function libraryInsightsState() {
             );
         },
 
+        /**
+         * TASK-156d-T2：Top20 拆兩張卡——頒獎台（前三名，固定 3 插槽）。
+         * 焦點女優 rank<=3 天然落在這裡，不需要額外分支（CD-156d-1）。
+         */
+        get podiumRows() {
+            return (this.top20Rows || []).filter((r) => r.rank <= 3);
+        },
+
+        /**
+         * TASK-156d-T2：Top20 拆兩張卡——精簡名單（第 4–20 名 ＋ 焦點女優
+         * rank>20 的附加列，附加列的 rank 是她的真實名次，天然 >3）。
+         */
+        get restRows() {
+            return (this.top20Rows || []).filter((r) => r.rank > 3);
+        },
+
         get ganttTitle() {
             return this._titleWithPeriod('insights.row.gantt', 'actress');
         },
