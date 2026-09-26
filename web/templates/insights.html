@@ -252,8 +252,71 @@
     </div>
 
     <!-- Row 3：女優 Top20 + 標籤 treemap -->
+    <!-- TASK-156d-T3／CD-156d-2：左半格是可切換佔用者的插槽——副本 A（頒獎台＋名單）
+         與「與她同片」共用同一個插槽，任何時刻只有一個顯示（:class 開關，不用 x-show，
+         FE-ALPINE-17）。 -->
     <div class="row3">
-        {{ insights_top20_group() }}
+        <div class="row3-top20-slot">
+            <div class="top20-row3-wrap" x-ref="top20Row3El" :class="{ 'is-hidden': !showTop20InRow3 }">
+                {{ insights_top20_group() }}
+            </div>
+            <section class="card" id="costarCard" x-ref="costarEl" :class="{ 'is-hidden': !showCostar }">
+                <div class="card-head">
+                    <h2 id="costarTitle">{{ t('insights.row.costar') }}</h2>
+                </div>
+                <div class="card-body">
+                    <div class="list-rows" id="costarList">
+                        <template x-for="row in costarRows" :key="row.name">
+                            <div class="costar-row"
+                                 :class="{ 'is-active': focus && focus.type === 'actress' && focus.value === row.name }"
+                                 @click="toggleActressFocus(row.name)">
+                                <span class="costar-avatars">
+                                    <span class="costar-avatar"
+                                          @click.stop="openPreview(row.self, $el)"
+                                          @mouseenter="scheduleOpenPreview(row.self, $el)"
+                                          @mouseleave="cancelOpenPreview()">
+                                        <template x-if="actressHasPhoto(row.self) && !photoFailed[row.self]">
+                                            <img :src="actressPhotoUrl(row.self)"
+                                                 alt=""
+                                                 loading="lazy"
+                                                 @error="markPhotoFailed(row.self)">
+                                        </template>
+                                        <template x-if="!actressHasPhoto(row.self) || photoFailed[row.self]">
+                                            <span x-text="row.self.charAt(0)"></span>
+                                        </template>
+                                    </span>
+                                    <span class="costar-avatar"
+                                          @click.stop="openPreview(row.name, $el)"
+                                          @mouseenter="scheduleOpenPreview(row.name, $el)"
+                                          @mouseleave="cancelOpenPreview()">
+                                        <template x-if="actressHasPhoto(row.name) && !photoFailed[row.name]">
+                                            <img :src="actressPhotoUrl(row.name)"
+                                                 alt=""
+                                                 loading="lazy"
+                                                 @error="markPhotoFailed(row.name)">
+                                        </template>
+                                        <template x-if="!actressHasPhoto(row.name) || photoFailed[row.name]">
+                                            <span x-text="row.name.charAt(0)"></span>
+                                        </template>
+                                    </span>
+                                </span>
+                                <span class="costar-names"
+                                      :title="row.self + ' × ' + row.name"
+                                      x-text="row.self + ' × ' + row.name"></span>
+                                <span class="costar-bar-wrap">
+                                    <span class="costar-bar"
+                                          :style="'width:' + (costarRows[0] && costarRows[0].count ? Math.round(row.count / costarRows[0].count * 100) : 0) + '%'"></span>
+                                </span>
+                                <span class="costar-end" x-text="costarRowLabel(row)"></span>
+                            </div>
+                        </template>
+                        <div x-show="!costarRows.length"
+                             class="costar-empty"
+                             x-text="isPeriodEmpty(['actress']) ? t('insights.period_empty') : t('insights.no_data')"></div>
+                    </div>
+                </div>
+            </section>
+        </div>
         <section class="card treemap-card">
             <div class="card-head">
                 <h2>{{ t('insights.row.tags') }}</h2>
@@ -406,8 +469,8 @@
         </section>
     </div>
 
-    <!-- Row 6：女優片商分布 / 與她同片 -->
-    <div class="row6" id="row6" :class="{ 'solo-only': !(focus && focus.type === 'actress') }">
+    <!-- Row 6：女優片商分布（「與她同片」TASK-156d-T3 搬進 row3 左半格，與副本 A 共用插槽） -->
+    <div class="row6" id="row6">
         <section class="card">
             <div class="card-head">
                 <h2 id="soloTitle" x-text="soloTitle"></h2>
@@ -454,62 +517,12 @@
                 </div>
             </div>
         </section>
-        <section class="card" id="costarCard" x-show="focus && focus.type === 'actress'">
-            <div class="card-head">
-                <h2 id="costarTitle">{{ t('insights.row.costar') }}</h2>
-            </div>
-            <div class="card-body">
-                <div class="list-rows" id="costarList">
-                    <template x-for="row in costarRows" :key="row.name">
-                        <div class="costar-row"
-                             :class="{ 'is-active': focus && focus.type === 'actress' && focus.value === row.name }"
-                             @click="toggleActressFocus(row.name)">
-                            <span class="costar-avatars">
-                                <span class="costar-avatar"
-                                      @click.stop="openPreview(row.self, $el)"
-                                      @mouseenter="scheduleOpenPreview(row.self, $el)"
-                                      @mouseleave="cancelOpenPreview()">
-                                    <template x-if="actressHasPhoto(row.self) && !photoFailed[row.self]">
-                                        <img :src="actressPhotoUrl(row.self)"
-                                             alt=""
-                                             loading="lazy"
-                                             @error="markPhotoFailed(row.self)">
-                                    </template>
-                                    <template x-if="!actressHasPhoto(row.self) || photoFailed[row.self]">
-                                        <span x-text="row.self.charAt(0)"></span>
-                                    </template>
-                                </span>
-                                <span class="costar-avatar"
-                                      @click.stop="openPreview(row.name, $el)"
-                                      @mouseenter="scheduleOpenPreview(row.name, $el)"
-                                      @mouseleave="cancelOpenPreview()">
-                                    <template x-if="actressHasPhoto(row.name) && !photoFailed[row.name]">
-                                        <img :src="actressPhotoUrl(row.name)"
-                                             alt=""
-                                             loading="lazy"
-                                             @error="markPhotoFailed(row.name)">
-                                    </template>
-                                    <template x-if="!actressHasPhoto(row.name) || photoFailed[row.name]">
-                                        <span x-text="row.name.charAt(0)"></span>
-                                    </template>
-                                </span>
-                            </span>
-                            <span class="costar-names"
-                                  :title="row.self + ' × ' + row.name"
-                                  x-text="row.self + ' × ' + row.name"></span>
-                            <span class="costar-bar-wrap">
-                                <span class="costar-bar"
-                                      :style="'width:' + (costarRows[0] && costarRows[0].count ? Math.round(row.count / costarRows[0].count * 100) : 0) + '%'"></span>
-                            </span>
-                            <span class="costar-end" x-text="costarRowLabel(row)"></span>
-                        </div>
-                    </template>
-                    <div x-show="!costarRows.length"
-                         class="costar-empty"
-                         x-text="isPeriodEmpty(['actress']) ? t('insights.period_empty') : t('insights.no_data')"></div>
-                </div>
-            </div>
-        </section>
+    </div>
+
+    <!-- Row 7：女優焦點期間頁尾多出現的頒獎台＋名單全貌（TASK-156d-T3／CD-156d-2 副本 B，
+         與 row3 副本 A 同一份資料、獨立可見性，不互斥） -->
+    <div class="row7" x-ref="row7El" :class="{ 'is-hidden': !showTop20InRow7 }">
+        {{ insights_top20_group() }}
     </div>
 
     <!-- 全頁共用女優照片預覽浮層（TASK-156b-T5 / CD-156-10） -->

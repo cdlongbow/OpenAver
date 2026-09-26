@@ -136,6 +136,9 @@ playStagger: function (elements, opts) {
  *
  * 用法：OpenAver.motion.playFadeTo(elements, { opacity: 0, duration: 0.2, ease: 'fluent' })
  * 若 reduced-motion 啟用則直接設定最終值不播動畫。
+ * `fromOpacity`（TASK-156d-T3）：只在會播動畫時（`_shouldAnimate()===true`）於建立
+ * tween 之前同步 `gsap.set(elements,{opacity:fromOpacity})` 一次，讓呼叫端能表達
+ * 「先跳到起始值再淡入」；reduced-motion 時忽略，直接落到目標值（不播中間態）。
  */
 playFadeTo: function (elements, opts) {
     opts = opts || {};
@@ -145,6 +148,9 @@ playFadeTo: function (elements, opts) {
         if (typeof opts.onComplete === 'function') opts.onComplete();
         return null;
     }
+    if (opts.fromOpacity !== undefined) {
+        gsap.set(elements, { opacity: opts.fromOpacity });
+    }
     return this._run(opts.ctx, function () {
         return gsap.to(elements, {
             opacity: targetOpacity,
@@ -153,6 +159,18 @@ playFadeTo: function (elements, opts) {
             onComplete: opts.onComplete || null
         });
     });
+},
+
+/**
+ * 中斷指定元素上所有進行中的 GSAP tween（薄包 `gsap.killTweensOf`）。
+ * TASK-156d-T3／CD-156d-2 步驟 4：快速連續觸發焦點切換時，頁面呼叫這支
+ * （不直接呼叫 `gsap.killTweensOf`——承接事實 #13）清掉上一輪未播完的動畫，
+ * 再重新從頭開始這一輪的淡出淡入序列。
+ * @param {Element|Element[]|string} targets
+ */
+killTweens: function (targets) {
+    if (typeof gsap === 'undefined' || !targets) return;
+    gsap.killTweensOf(targets);
 },
 
 /** Modal 彈出動畫 */

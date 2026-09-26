@@ -330,3 +330,23 @@ test('podiumRows/restRows: top20Rows 剛好 20 筆滿額且焦點女優 rank===2
     assert.ok(row20, 'rank===20 應落在 restRows');
 });
 
+// ── isActressFocused（TASK-156d-T3）───────────────────────────────────
+
+test('isActressFocused: true only when focus.type is actress', () => {
+    const state = libraryInsightsState();
+    state.focus = { type: 'actress', value: '明里つむぎ' };
+    assert.equal(state.isActressFocused, true);
+});
+
+test('isActressFocused: focus.type === "maker" 時回傳 false', () => {
+    const state = libraryInsightsState();
+    state.focus = { type: 'maker', value: 'SOD' };
+    assert.equal(state.isActressFocused, false);
+});
+
+test('isActressFocused: 無焦點（focus === null）時回傳 false', () => {
+    const state = libraryInsightsState();
+    state.focus = null;
+    assert.equal(state.isActressFocused, false);
+});
+

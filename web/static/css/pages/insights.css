@@ -290,6 +290,67 @@
     min-width: 0;
 }
 
+/* TASK-156d-T3／CD-156d-2：row3 左半格是單一 grid item（.row3-top20-slot），
+   內部兩個佔用者（副本 A wrapper／#costarCard）任何時刻只顯示一個，用 :class
+   切換 .is-hidden，不用 x-show（FE-ALPINE-17：vendored Alpine 的 x-show 結構上
+   晚一幀且一翻轉就立即 display:none，來不及讓淡出播完）。 */
+.insights-container .row3-top20-slot {
+    display: flex;
+    min-width: 0;
+}
+
+/* .top20-row3-wrap 本身不建立盒子——讓既有 .top20-group（T2 已定，flex column，
+   本卡不重寫）直接當 .row3-top20-slot 的 flex item，沿用 align-items:stretch
+   預設行為，與 T3 之前「.top20-group 直接是 row3 grid item」時的伸展行為一致。 */
+.insights-container .top20-row3-wrap {
+    display: contents;
+}
+
+/* 三個可切換顯示元素共用的顯示開關（row3 副本 A wrapper／#costarCard／row7 副本 B
+   wrapper）。用 !important 蓋過 .top20-row3-wrap 的 display:contents 與 .card 的
+   display:flex（沿用既有 [x-cloak]{display:none!important} 慣例，見 input.css:182）。 */
+.insights-container .is-hidden {
+    display: none !important;
+}
+
+/* 156d-T3 定稿輪數 2 修正（主 session 用幾何 oracle 抓到）：row3-top20-slot 是
+   flex row，單一可見佔用者（.top20-group／#costarCard）預設主軸（水平）尺寸是
+   content-based shrink-to-fit，不會自動撐滿整格寬度——先前只有 costarCard 露餡
+   （縮在左上角，右側與下方全是空洞；.top20-group 的內容湊巧夠寬，目測沒發現同一個
+   問題），兩者都明確 width:100% 才不靠內容寬度巧合。
+   高度：原本 #costarCard 有一條「CD-156c-6：align-self:start，自然高度不被拉伸」
+   規則，那是舊 row6（costarCard 與分布表並列兩個 grid item）的產物；T3 搬進
+   row3-top20-slot 後，同一時刻只有一個可見佔用者，不再有「被更高的鄰居拉伸」的
+   問題，align-self:start 反而擋住桌面 --top20-slot-h 固定高度該有的撐滿行為，
+   已整條移除——移除後預設 align-items:stretch 生效：桌面（插槽有 height:
+   var(--top20-slot-h)）撐滿固定格，窄螢幕（插槽無固定高度、單一可見項）stretch
+   對唯一項是 no-op，等同自然高度，兩種斷點各自正確、不需要額外的 media query。 */
+.insights-container .row3-top20-slot .top20-group,
+.insights-container .row3-top20-slot #costarCard {
+    width: 100%;
+}
+
+/* D156d-9：row3 左半格桌面固定高度、窄螢幕自然高度（真互斥，FE-CSS-22，與下方
+   @media (max-width:1024px) 不重疊，1024／1025 邊界各驗一次）。calc() 由既有 rem
+   常數組成，不是量出來的 px 魔術數字；使用者放大瀏覽器字級時要等比例放大，
+   17 列不能因此擠出捲動。組成（1440 寬 CDP 實測校準）：
+   頒獎台卡（頭 + .podium min-height 9.25rem + 內距）＋精簡名單卡頭與內距＋
+   17 列 × 單列實測高度＋兩卡間 gap（.top20-group 0.5rem）。 */
+@media (min-width: 1025px) {
+    .insights-container {
+        /* 頒獎台卡（head+podium+內距）＋精簡名單卡自己的 head/內距與 list-rows
+           以外的開銷合計 17rem（CDP 實測校準：100% 字級時 17*2.5625rem 只給
+           .rest20-list 留出 655px 可用高度，比 17 列實際內容 697px 少 42px，
+           在此把開銷項從 13.5rem 調到 17rem 補回這段落差＋留一點餘裕）＋
+           17 列 × 單列實測高度 2.5625rem＋兩卡間 gap 0.5rem。 */
+        --top20-slot-h: calc(17rem + 17 * 2.5625rem + 0.5rem);
+    }
+
+    .insights-container .row3-top20-slot {
+        height: var(--top20-slot-h);
+    }
+}
+
 /* Top20 列（TASK-156b-T5）——名字與片數共用字級來源 */
 .insights-container {
     --top20-text-size: 0.8125rem;
@@ -785,22 +846,19 @@
     flex: 0 0 auto;
 }
 
-/* ===== Row 6: 女優片商分布 / 與她同片 ===== */
+/* ===== Row 6: 女優片商分布（「與她同片」TASK-156d-T3 搬進 row3 左半格插槽） ===== */
+/* TASK-156d-T3：row6 現在只剩分布表一張卡（「與她同片」搬去 row3 跟副本 A 共用插槽），
+   永遠獨佔整列——原本只在無女優焦點時（用一個現已移除的條件 class）套用的單欄＋
+   內部兩欄排列，現在是唯一狀態，直接併入 base rule（CD-156c-1／CD-156c-6 的排版
+   形狀不變，只是不再需要那個條件 class）。 */
 .insights-container .row6 {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
     gap: 0.5rem;
     min-width: 0;
 }
 
-/* CD-156c-1／CD-156c-6：同片卡尚未有顯示條件時（無女優焦點）分布表獨佔一欄，
-   內部改兩欄排列——形狀照 POC feature/156-library-insights/poc/index.sonnet4.html
-   第 247-248 行。#costarCard 本體是 T5 範圍，本卡不加 x-show。 */
-.insights-container .row6.solo-only {
-    grid-template-columns: 1fr;
-}
-
-.insights-container .row6.solo-only .list-rows {
+.insights-container .row6 .list-rows {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0 16px;
@@ -905,11 +963,6 @@
     font-variant-numeric: tabular-nums;
 }
 
-/* CD-156c-6：自然高度，不被左欄分布表拉伸 */
-.insights-container #costarCard {
-    align-self: start;
-}
-
 /* 與她同片（TASK-156c-T5 / CD-156c-1／6） */
 .insights-container .costar-row {
     display: flex;
@@ -1000,6 +1053,15 @@
     font-size: 0.8125rem;
     color: var(--text-muted);
     padding: 0.75rem 0.25rem;
+}
+
+/* ===== Row 7：女優焦點期間頁尾多出現的頒獎台＋名單全貌
+   （TASK-156d-T3／CD-156d-2 副本 B，與 row3 副本 A 同一份資料、獨立可見性、不互斥） =====
+   全寬版面不需要重寫 .top20-group 內部排版——.rest20-row 的 .top20-name 已在 T2
+   套用 flex:1 1 auto（Codex review P2 修正），.podium 本身 justify-content:center，
+   兩者在全寬容器下自然依既有規則撐開／置中，不需要額外 grid-template-columns。 */
+.insights-container .row7 {
+    min-width: 0;
 }
 
 /* ===== 響應式斷點 ===== */

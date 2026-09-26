@@ -114,6 +114,12 @@ export function libraryInsightsState() {
         focus: null,
         scopedCount: 0,
         top20Rows: [],
+        // TASK-156d-T3／CD-156d-2：row3 左半格＋row7 三個可切換顯示旗標（不用 x-show，
+        // FE-ALPINE-17——vendored Alpine 的 x-show 晚一幀且一翻轉就立即 display:none，
+        // 淡出播不完）。初始狀態＝無焦點：副本 A 顯示、與她同片／row7 副本 B 隱藏。
+        showTop20InRow3: true,
+        showCostar: false,
+        showTop20InRow7: false,
         ganttRows: [],
         // 修正 1（第 2 輪）：圖例名單存進 reactive 欄位，見 ganttLegendMakers() 註解。
         ganttLegend: [],
@@ -420,6 +426,104 @@ export function libraryInsightsState() {
             }
         },
 
+        /**
+         * TASK-156d-T3／CD-156d-2：`$watch('focus')` 的唯一動效/捲動 sink。
+         * `isActressFocused` 翻轉時才觸發 row3 左半格佔用者循序淡出淡入
+         * ＋row7 副本 B 獨立淡出淡入；只換人（沒有翻轉）不觸發淡出淡入，只捲動。
+         * 讀 `this.focus`（reactive）而非把它複製成本地閉包變數跨 `$nextTick` 使用
+         * ——CD-156d-2 步驟 4 逐字要求，快速連續觸發時才能永遠依「當下最新」值判斷。
+         */
+        _handleActressFocusChange(oldValue) {
+            const wasActress = !!(oldValue && oldValue.type === 'actress');
+            const isNowActress = this.isActressFocused;
+            const switchedActress =
+                isNowActress &&
+                wasActress &&
+                oldValue.value !== (this.focus && this.focus.value);
+
+            // CD-156d-6：false→true，或維持 true 但換成不同的人 → 捲回頂端。
+            // true→false（含清除）不捲動。
+            if (isNowActress && (!wasActress || switchedActress)) {
+                window.scrollTo({
+                    top: 0,
+                    behavior: window.OpenAver.prefersReducedMotion ? 'auto' : 'smooth',
+                });
+            }
+
+            // CD-156d-2 步驟 3：isActressFocused 沒有翻轉（同為女優焦點換人／片商焦點）
+            // 不觸發任何淡出淡入，內容已由本輪 $watch 其餘 recompute 呼叫直接算好。
+            if (wasActress === isNowActress) return;
+
+            const motion = window.OpenAver.motion;
+            const top20El = this.$refs.top20Row3El;
+            const costarEl = this.$refs.costarEl;
+            const row7El = this.$refs.row7El;
+            // CD-156d-2 步驟 4：每次新觸發前先對這次牽涉到的全部元素 killTweens，
+            // 再永遠依當下最新 isActressFocused 從步驟 1/2 重新開始。
+            motion.killTweens([top20El, costarEl, row7El].filter(Boolean));
+
+            if (isNowActress) {
+                // 步驟 1：進入焦點——costarEl 先淡出既有的 row3 副本 A。
+                motion.playFadeTo(top20El, {
+                    opacity: 0,
+                    duration: 0.25,
+                    onComplete: () => {
+                        // CD-156d-5 不變式 2：隱藏後清掉殘留 inline opacity:0，
+                        // 讓 style.opacity 回到 ''（下次淡入前用 fromOpacity 強制起始值）。
+                        motion.clearProps(top20El, 'opacity');
+                        this.showTop20InRow3 = false;
+                        this.showCostar = true;
+                        this.$nextTick(() => {
+                            motion.playFadeTo(costarEl, {
+                                fromOpacity: 0,
+                                opacity: 1,
+                                duration: 0.25,
+                            });
+                        });
+                    },
+                });
+                // row7 副本 B 同時獨立處理：立即顯示、$nextTick 內淡入。
+                this.showTop20InRow7 = true;
+                this.$nextTick(() => {
+                    motion.playFadeTo(row7El, {
+                        fromOpacity: 0,
+                        opacity: 1,
+                        duration: 0.5,
+                    });
+                });
+            } else {
+                // 步驟 2：離開焦點（含清除）——對稱：costarEl 先完全淡出才切回
+                // 副本 A 並淡入。
+                motion.playFadeTo(costarEl, {
+                    opacity: 0,
+                    duration: 0.25,
+                    onComplete: () => {
+                        // CD-156d-5 不變式 2：隱藏後清掉殘留 inline opacity:0。
+                        motion.clearProps(costarEl, 'opacity');
+                        this.showCostar = false;
+                        this.showTop20InRow3 = true;
+                        this.$nextTick(() => {
+                            motion.playFadeTo(top20El, {
+                                fromOpacity: 0,
+                                opacity: 1,
+                                duration: 0.25,
+                            });
+                        });
+                    },
+                });
+                // row7 副本 B 同時獨立淡出後才隱藏。
+                motion.playFadeTo(row7El, {
+                    opacity: 0,
+                    duration: 0.5,
+                    onComplete: () => {
+                        // CD-156d-5 不變式 2：隱藏後清掉殘留 inline opacity:0。
+                        motion.clearProps(row7El, 'opacity');
+                        this.showTop20InRow7 = false;
+                    },
+                });
+            }
+        },
+
         _hasPreviewPhoto(name) {
             // 收藏存在不代表本機有照片檔（來源沒圖／下載失敗時收藏仍會落地，
             // 見 web/routers/insights.py favorites_by_primary 的 hasPhoto 計算）；
@@ -608,6 +712,14 @@ export function libraryInsightsState() {
          */
         get restRows() {
             return (this.top20Rows || []).filter((r) => r.rank > 3);
+        },
+
+        /**
+         * TASK-156d-T3／CD-156d-2：row3 左半格佔用者切換（頒獎台＋名單 ↔ 與她同片）
+         * 只在女優焦點時觸發；片商焦點與無焦點視覺上相同（顯示頒獎台＋名單）。
+         */
+        get isActressFocused() {
+            return !!(this.focus && this.focus.type === 'actress');
         },
 
         get ganttTitle() {
@@ -981,7 +1093,7 @@ export function libraryInsightsState() {
                 this.recomputeSolo();
                 this.recomputeCostar();
             });
-            this.$watch('focus', () => {
+            this.$watch('focus', (value, oldValue) => {
                 this.recomputeScopedCount();
                 this.redrawYears();
                 this.redrawDonut();
@@ -993,6 +1105,7 @@ export function libraryInsightsState() {
                 this.recomputeGantt();
                 this.recomputeSolo();
                 this.recomputeCostar();
+                this._handleActressFocusChange(oldValue);
             });
 
             if (window.__registerPage) {
