@@ -1464,6 +1464,12 @@
                 @click="onPlayPinPulse($refs)">
             <i class="bi bi-play-fill"></i> Play Pin Pulse
         </button>
+        <button class="control-btn primary"
+                x-show="tab === 'special-motion'"
+                x-cloak
+                @click="onPlayPodiumRise($refs)">
+            <i class="bi bi-play-fill"></i> Play Podium Rise
+        </button>
 
         <!-- ===== 99a-T5: Focal 焦點編輯星空等待 loop 控制項 ===== -->
         <button class="control-btn primary"
@@ -2368,6 +2374,28 @@
                     </div>
                 </div>
 
+                <!-- 7. TASK-156d-T6: OpenAver.motion.playRise 頒獎台進場 -->
+                <div class="special-motion-item">
+                    <div class="special-motion-label">
+                        <span class="special-motion-name">OpenAver.motion.playRise 頒獎台進場</span>
+                        <code class="special-motion-ease">fluent-decel + stagger 0.08s</code>
+                    </div>
+                    <div class="special-motion-stage special-motion-podium-stage">
+                        <div class="special-motion-podium-col">
+                            <div class="special-motion-box special-motion-box--item" x-ref="podiumRiseItem2"></div>
+                            <div class="special-motion-box special-motion-box--stand special-motion-box--stand-2" x-ref="podiumRiseStand2"></div>
+                        </div>
+                        <div class="special-motion-podium-col">
+                            <div class="special-motion-box special-motion-box--item" x-ref="podiumRiseItem1"></div>
+                            <div class="special-motion-box special-motion-box--stand special-motion-box--stand-1" x-ref="podiumRiseStand1"></div>
+                        </div>
+                        <div class="special-motion-podium-col">
+                            <div class="special-motion-box special-motion-box--item" x-ref="podiumRiseItem3"></div>
+                            <div class="special-motion-box special-motion-box--stand special-motion-box--stand-3" x-ref="podiumRiseStand3"></div>
+                        </div>
+                    </div>
+                </div>
+
             </div>
 
             <!-- 跳過條目說明 -->
@@ -2997,6 +3025,44 @@
     border-radius: 50%;
     background: var(--accent-secondary);
     opacity: 0.9;
+}
+
+.special-motion-podium-stage {
+    gap: 12px;
+    align-items: flex-end;
+    padding-bottom: 8px;
+}
+
+.special-motion-podium-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.special-motion-box--item {
+    width: 24px;
+    height: 20px;
+    border-radius: var(--fluent-radius-sm);
+    background: var(--color-primary);
+    opacity: 0.9;
+}
+
+.special-motion-box--stand {
+    width: 32px;
+    transform-origin: bottom;
+}
+
+.special-motion-box--stand-1 {
+    height: 36px;
+}
+
+.special-motion-box--stand-2 {
+    height: 26px;
+}
+
+.special-motion-box--stand-3 {
+    height: 18px;
 }
 
 .special-motion-skip-section {

@@ -30,7 +30,7 @@ globalThis.document = globalThis.document || {
     },
 };
 
-const { computePreviewPosition, libraryInsightsState } = await import('../state.js');
+const { computePreviewPosition, libraryInsightsState, shouldPlayPodiumEntrance } = await import('../state.js');
 const { setRecords } = await import('../aggregate.js');
 
 function rec(opts) {
@@ -457,4 +457,19 @@ test('ganttGridStyle: 年份軸用 minmax(floor,1fr) 分配剩餘寬度而非固
         style.indexOf('var(--gantt-cell-w))') === -1,
         `should not fall back to fixed var(--gantt-cell-w) column width; got: ${style}`,
     );
+});
+
+
+// ── shouldPlayPodiumEntrance（TASK-156d-T6：頒獎台一次性進場動效）──────────
+
+test('shouldPlayPodiumEntrance: 尚未播放且頒獎台有資料 → 播放', () => {
+    assert.equal(shouldPlayPodiumEntrance(false, 3), true);
+});
+
+test('shouldPlayPodiumEntrance: 已播放過 → 不重播', () => {
+    assert.equal(shouldPlayPodiumEntrance(true, 3), false);
+});
+
+test('shouldPlayPodiumEntrance: podiumRows 為空（尚未算出頒獎台名單）時不播放', () => {
+    assert.equal(shouldPlayPodiumEntrance(false, 0), false);
 });

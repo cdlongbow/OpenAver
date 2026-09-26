@@ -80,6 +80,7 @@ let _ganttViewCache = null;
  */
 let _lastPinnedGanttName = null;
 let _lastPinnedSoloName = null;
+let _podiumEntrancePlayed = false;
 
 /** 預覽浮層實測尺寸（160 寬照片 + 名字列）；與 .insights-preview CSS 對齊。 */
 const PREVIEW_POPUP = { width: 160, height: 224 };
@@ -113,6 +114,10 @@ export function computePreviewPosition(anchor, viewport, popup) {
     if (top + popup.height > viewport.height) top = viewport.height - popup.height - gap;
     if (top < 0) top = 0;
     return { left: left, top: top };
+}
+
+export function shouldPlayPodiumEntrance(alreadyPlayed, podiumRowsLength) {
+    return !alreadyPlayed && podiumRowsLength > 0;
 }
 
 export function libraryInsightsState() {
@@ -309,6 +314,24 @@ export function libraryInsightsState() {
                     if (el) motion.playPulse(el);
                 }
             });
+        },
+
+        _playPodiumEntrance() {
+            const wrap = this.$refs.top20Row3El;
+            if (!wrap) return;
+            const slots = Array.from(wrap.querySelectorAll('.podium-slot'));
+            const groups = slots
+                .map(function (slot) {
+                    return {
+                        stand: slot.querySelector('.podium-stand'),
+                        items: Array.from(
+                            slot.querySelectorAll('.podium-avatar, .podium-name, .podium-count'),
+                        ),
+                    };
+                })
+                .filter(function (g) { return !!g.stand; });
+            if (!groups.length) return;
+            window.OpenAver.motion.playRise(groups);
         },
 
         /**
@@ -1071,6 +1094,10 @@ export function libraryInsightsState() {
                 this.recomputeSolo();
                 this._maybePlayPinPulse();
                 this.recomputeCostar();
+                if (shouldPlayPodiumEntrance(_podiumEntrancePlayed, this.podiumRows.length)) {
+                    _podiumEntrancePlayed = true;
+                    this.$nextTick(() => this._playPodiumEntrance());
+                }
 
                 const el = document.getElementById('yearsChart');
                 if (el) {

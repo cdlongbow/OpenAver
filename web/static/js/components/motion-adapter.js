@@ -233,6 +233,62 @@ playPulse: function (element, opts) {
 },
 
 /**
+ * 頒獎台進場動效：每個名次一組，台座＋該名次的頭像/名字/片數同時起步、依名次順序 stagger。
+ * groups 陣列順序＝視覺順序（2→1→3），由呼叫端保證。
+ * @param {Array<{stand: Element, items?: Element[]}>} groups - 名次組清單
+ * @param {Object} [opts]
+ * @param {number} [opts.duration=0.28] - 單組動畫秒數
+ * @param {number} [opts.stagger=0.08] - 組間錯開秒數
+ * @param {string} [opts.ease='fluent-decel']
+ * @param {Object} [opts.ctx] - createContext() 回傳的 context，供頁面離開時回收
+ * @param {Function} [opts.onComplete]
+ */
+playRise: function (groups, opts) {
+    opts = opts || {};
+    var list = groups && groups.length ? groups : [];
+    if (!list.length) return null;
+    var stands = list.map(function (g) { return g.stand; }).filter(Boolean);
+    var items = [];
+    list.forEach(function (g) {
+        (g.items || []).forEach(function (el) { if (el) items.push(el); });
+    });
+    var duration = opts.duration !== undefined ? opts.duration : 0.28;
+    var stagger = opts.stagger !== undefined ? opts.stagger : 0.08;
+    var ease = opts.ease || 'fluent-decel';
+    if (!this._shouldAnimate()) {
+        gsap.set(stands, { clearProps: 'transform,transformOrigin' });
+        gsap.set(items, { clearProps: 'transform,opacity' });
+        if (typeof opts.onComplete === 'function') opts.onComplete();
+        return null;
+    }
+    return this._run(opts.ctx, function () {
+        var tl = gsap.timeline({ onComplete: opts.onComplete || null });
+        list.forEach(function (g, i) {
+            var startTime = i * stagger;
+            if (g.stand) {
+                tl.fromTo(g.stand, { scaleY: 0 }, {
+                    scaleY: 1,
+                    duration: duration,
+                    transformOrigin: 'bottom',
+                    ease: ease,
+                    clearProps: 'transform,transformOrigin'
+                }, startTime);
+            }
+            if (g.items && g.items.length) {
+                tl.fromTo(g.items, { opacity: 0, y: 8 }, {
+                    opacity: 1,
+                    y: 0,
+                    duration: duration,
+                    ease: ease,
+                    clearProps: 'transform,opacity'
+                }, startTime);
+            }
+        });
+        return tl;
+    });
+},
+
+/**
  * 清除元素 inline GSAP props（替代直接呼叫 `gsap.set(el, { clearProps })`）。
  * 用於 timeline.kill() 後同步重置 transform/opacity 等殘留，防連點 stutter。
  * 不觸發動畫，純 sync prop 重置。
