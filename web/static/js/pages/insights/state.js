@@ -22,6 +22,8 @@ import {
     buildGanttAgeCells,
     buildSoloRows,
     buildCostarRows,
+    podiumPositionClass,
+    classifyTop20Transition,
 } from './aggregate.js';
 import {
     setMakerColorSlots,
@@ -81,6 +83,64 @@ let _ganttViewCache = null;
 let _lastPinnedGanttName = null;
 let _lastPinnedSoloName = null;
 let _podiumEntrancePlayed = false;
+/** TASK-156e-T1b／CD-156e-2：還在播的 Top20 換位相關動畫（Flip／淡入／掉榜替身）。 */
+let _top20ActiveAnims = new Set();
+/** TASK-156e-T1b／CD-156e-3：156d 淡出淡入換卡世代號與進行中鏈計數。 */
+let _costarSwapGen = 0;
+let _costarSwapPendingChains = 0;
+
+/**
+ * TASK-156e-T1b／CD-156e-2：登記／自清 wrapper。
+ * kind: 'flip' | 'fade'
+ */
+function _playTop20TrackedAnim(kind, createFn, opts) {
+    let anim;
+    const userOnComplete = opts && opts.onComplete;
+    const mergedOpts = Object.assign({}, opts, {
+        onComplete: () => {
+            _top20ActiveAnims.delete(anim);
+            if (userOnComplete) userOnComplete();
+        },
+    });
+    anim = createFn(mergedOpts);
+    if (anim) { anim._top20Kind = kind; _top20ActiveAnims.add(anim); }
+    return anim;
+}
+
+/** TASK-156e-T1b／CD-156e-2 規則 1/2：新一輪換位只收斂非 Flip。 */
+function _settleTop20NonFlipAnims() {
+    Array.from(_top20ActiveAnims).forEach(anim => {
+        if (anim._top20Kind === 'flip') return; // 交給下一次 flipCapture()
+        if (typeof anim.progress === 'function') anim.progress(1);
+    });
+}
+
+/** TASK-156e-T1b／CD-156e-2 規則 3：換卡時收斂全部（不含片數 playCountUp）。 */
+function _forceSettleAllTop20Anims() {
+    Array.from(_top20ActiveAnims).forEach(anim => {
+        if (typeof anim.progress === 'function') anim.progress(1);
+    });
+}
+
+/**
+ * 掉榜替身掛到 body 前剝掉 Alpine 綁定，避免 MutationObserver 在無
+ * scope 下把 clone 當新元件初始化（噴 podiumPositionClass／row is not defined）。
+ */
+function _stripAlpineForGhost(root) {
+    if (!root) return;
+    root.querySelectorAll('template').forEach((t) => t.remove());
+    const stripAlpineAttrs = (el) => {
+        Array.from(el.attributes).forEach((attr) => {
+            const n = attr.name;
+            if (n.startsWith('x-') || n.startsWith(':') || n.startsWith('@')) {
+                el.removeAttribute(n);
+            }
+        });
+    };
+    stripAlpineAttrs(root);
+    root.querySelectorAll('*').forEach(stripAlpineAttrs);
+    root.removeAttribute('data-flip-id');
+}
 
 /** 預覽浮層實測尺寸（160 寬照片 + 名字列）；與 .insights-preview CSS 對齊。 */
 const PREVIEW_POPUP = { width: 160, height: 224 };
@@ -220,7 +280,7 @@ export function libraryInsightsState() {
         /**
          * §4.2：無焦點／女優焦點 → periodRecords；片商焦點 → scopeRecords(maker)。
          */
-        recomputeTop20() {
+        _computeTop20Rows() {
             const all = getRecords();
             const focus = this.focus;
             let records;
@@ -229,7 +289,11 @@ export function libraryInsightsState() {
             } else {
                 records = periodRecords(all, this.period);
             }
-            this.top20Rows = buildActressTop20(records, focus).rows;
+            return buildActressTop20(records, focus).rows;
+        },
+
+        recomputeTop20() {
+            this.top20Rows = this._computeTop20Rows();
         },
 
         recomputeGantt() {
@@ -324,20 +388,37 @@ export function libraryInsightsState() {
             });
         },
 
+        // TASK-156e-T1a：供 macro `:class` 綁定（aggregate 純函式）
+        podiumPositionClass,
+
         _playPodiumEntrance() {
+            // TASK-156e-T1a／CD-156e-1 v3：台座層與人員層分離後，依視覺順序
+            // 左2→中1→右3 組 {stand, items} 傳給 playRise（簽名不變）。
             const wrap = this.$refs.top20Row3El;
             if (!wrap) return;
-            const slots = Array.from(wrap.querySelectorAll('.podium-slot'));
-            const groups = slots
-                .map(function (slot) {
-                    return {
-                        stand: slot.querySelector('.podium-stand'),
-                        items: Array.from(
-                            slot.querySelectorAll('.podium-avatar, .podium-name, .podium-count'),
-                        ),
-                    };
-                })
-                .filter(function (g) { return !!g.stand; });
+            const visualRanks = [2, 1, 3];
+            const groups = [];
+            for (let i = 0; i < visualRanks.length; i++) {
+                const rank = visualRanks[i];
+                const stand = wrap.querySelector('.podium-stand--' + rank);
+                if (!stand) continue;
+                const row = (this.podiumRows || []).find(function (r) {
+                    return r.rank === rank;
+                });
+                let items = [];
+                if (row && row.name) {
+                    const flipId = 'podium-' + row.name;
+                    const person = Array.from(wrap.querySelectorAll('.podium-slot')).find(
+                        function (el) { return el.getAttribute('data-flip-id') === flipId; },
+                    );
+                    if (person) {
+                        items = Array.from(
+                            person.querySelectorAll('.podium-avatar, .podium-name, .podium-count'),
+                        );
+                    }
+                }
+                groups.push({ stand: stand, items: items });
+            }
             if (!groups.length) return;
             window.OpenAver.motion.playRise(groups);
         },
@@ -586,6 +667,7 @@ export function libraryInsightsState() {
             const isNowCostarVisible = this.costarVisible;
             if (wasCostarVisible === isNowCostarVisible) return;
 
+            this._forceSettleAllTop20Anims();
             const motion = window.OpenAver.motion;
             const top20El = this.$refs.top20Row3El;
             const costarEl = this.$refs.costarEl;
@@ -593,6 +675,12 @@ export function libraryInsightsState() {
             // CD-156d-2 步驟 4：每次新觸發前先對這次牽涉到的全部元素 killTweens，
             // 再永遠依當下最新 isActressFocused 從步驟 1/2 重新開始。
             motion.killTweens([top20El, costarEl, row7El].filter(Boolean));
+            const gen = ++_costarSwapGen;
+            _costarSwapPendingChains = 2;
+            const chainDone = () => {
+                if (gen !== _costarSwapGen) return;
+                _costarSwapPendingChains -= 1;
+            };
 
             if (isNowCostarVisible) {
                 // 步驟 1：進入焦點——costarEl 先淡出既有的 row3 副本 A。
@@ -610,6 +698,7 @@ export function libraryInsightsState() {
                                 fromOpacity: 0,
                                 opacity: 1,
                                 duration: 0.25,
+                                onComplete: chainDone,
                             });
                         });
                     },
@@ -621,6 +710,7 @@ export function libraryInsightsState() {
                         fromOpacity: 0,
                         opacity: 1,
                         duration: 0.5,
+                        onComplete: chainDone,
                     });
                 });
             } else {
@@ -639,6 +729,7 @@ export function libraryInsightsState() {
                                 fromOpacity: 0,
                                 opacity: 1,
                                 duration: 0.25,
+                                onComplete: chainDone,
                             });
                         });
                     },
@@ -651,9 +742,163 @@ export function libraryInsightsState() {
                         // CD-156d-5 不變式 2：隱藏後清掉殘留 inline opacity:0。
                         motion.clearProps(row7El, 'opacity');
                         this.showTop20InRow7 = false;
+                        chainDone();
                     },
                 });
             }
+        },
+
+        isCostarSwapInProgress() {
+            return _costarSwapPendingChains > 0;
+        },
+
+        _forceSettleAllTop20Anims() {
+            _forceSettleAllTop20Anims();
+        },
+
+        _settleTop20NonFlipAnims() {
+            _settleTop20NonFlipAnims();
+        },
+
+        /**
+         * TASK-156e-T1b／CD-156e-2：Top20 換位——三個 Flip＋分類手動淡入淡出。
+         * 呼叫前呼叫方已確認 costarVisible 未翻轉且 isCostarSwapInProgress()===false。
+         */
+        _playTop20Reorder(visibleWrap) {
+            this._settleTop20NonFlipAnims();
+            const motion = window.OpenAver.motion;
+            if (!visibleWrap) {
+                this.recomputeTop20();
+                return;
+            }
+
+            const oldRows = (this.top20Rows || []).slice();
+            const newRows = this._computeTop20Rows();
+            const classified = classifyTop20Transition(oldRows, newRows);
+
+            const rowStayerEls = classified.rowStayers
+                .map((r) => visibleWrap.querySelector(`[data-flip-id="rest-${r.name}"]`))
+                .filter(Boolean);
+            const podiumReshuffleEls = classified.podiumReshuffle
+                .map((r) => visibleWrap.querySelector(`[data-flip-id="podium-${r.name}"]`))
+                .filter(Boolean);
+            const crossStructureEls = classified.crossStructureMovers
+                .map((r) => visibleWrap.querySelector(`[data-flip-id="avatar-${r.name}"]`))
+                .filter(Boolean);
+
+            const dropoutClones = [];
+            if (!window.OpenAver.prefersReducedMotion) {
+                classified.droppedOut.forEach((d) => {
+                    const sel = d.wasPodium
+                        ? `[data-flip-id="podium-${d.name}"]`
+                        : `[data-flip-id="rest-${d.name}"]`;
+                    const el = visibleWrap.querySelector(sel);
+                    if (!el) return;
+                    const rect = el.getBoundingClientRect();
+                    const clone = el.cloneNode(true);
+                    _stripAlpineForGhost(clone);
+                    clone.setAttribute('data-top20-dropout-ghost', d.name);
+                    clone.style.position = 'absolute';
+                    clone.style.left = (rect.left + window.scrollX) + 'px';
+                    clone.style.top = (rect.top + window.scrollY) + 'px';
+                    clone.style.width = rect.width + 'px';
+                    clone.style.height = rect.height + 'px';
+                    clone.style.margin = '0';
+                    clone.style.pointerEvents = 'none';
+                    clone.style.zIndex = '40';
+                    dropoutClones.push(clone);
+                });
+            }
+
+            const rowState = motion.flipCapture(rowStayerEls);
+            const podiumState = motion.flipCapture(podiumReshuffleEls);
+            const avatarState = motion.flipCapture(crossStructureEls);
+            const costarSwapGenAtCapture = _costarSwapGen;
+            this.recomputeTop20();
+            this.$nextTick(() => {
+                if (_costarSwapGen !== costarSwapGenAtCapture) return;
+                const flipDur = 0.4;
+                _playTop20TrackedAnim('flip', (o) => motion.flipFrom(rowState, o), {
+                    targets: visibleWrap.querySelectorAll('[data-flip-id^="rest-"]'),
+                    nested: true,
+                    duration: flipDur,
+                });
+                _playTop20TrackedAnim('flip', (o) => motion.flipFrom(podiumState, o), {
+                    targets: visibleWrap.querySelectorAll('[data-flip-id^="podium-"]'),
+                    nested: true,
+                    duration: flipDur,
+                });
+                // absolute:true 只鎖在跨結構移動者——若 targets 用
+                // [data-flip-id^="avatar-"] 全選，Flip 會把名單裡所有頭像抽成
+                // absolute，390 單欄容器高度瞬間塌陷（CD-156e-7 不變式 6）。
+                const avatarTargets = classified.crossStructureMovers
+                    .map((r) => visibleWrap.querySelector(`[data-flip-id="avatar-${r.name}"]`))
+                    .filter(Boolean);
+                _playTop20TrackedAnim('flip', (o) => motion.flipFrom(avatarState, o), {
+                    targets: avatarTargets,
+                    nested: true,
+                    absolute: true,
+                    fade: true,
+                    duration: flipDur,
+                });
+
+                classified.brandNewEntrants.forEach((r) => {
+                    const el = visibleWrap.querySelector(`[data-flip-id="rest-${r.name}"]`);
+                    if (!el) return;
+                    _playTop20TrackedAnim('fade', (o) => motion.playEnter(el, o), {
+                        y: 0,
+                        overwrite: 'auto',
+                        onComplete: () => motion.clearProps(el, 'opacity'),
+                    });
+                });
+                classified.podiumNewEntrants.forEach((r) => {
+                    const el = visibleWrap.querySelector(`[data-flip-id="podium-${r.name}"]`);
+                    if (!el) return;
+                    _playTop20TrackedAnim('fade', (o) => motion.playEnter(el, o), {
+                        y: 0,
+                        overwrite: 'auto',
+                        onComplete: () => motion.clearProps(el, 'opacity'),
+                    });
+                });
+
+                const newByName = new Map(newRows.map((r) => [r.name, r]));
+                classified.crossStructureMovers.forEach((r) => {
+                    const newRow = newByName.get(r.name);
+                    if (!newRow) return;
+                    if (newRow.rank <= 3) {
+                        const slot = visibleWrap.querySelector(`[data-flip-id="podium-${r.name}"]`);
+                        if (!slot) return;
+                        const els = slot.querySelectorAll('.podium-name, .podium-count');
+                        _playTop20TrackedAnim('fade', (o) => motion.playFadeTo(els, o), {
+                            fromOpacity: 0,
+                            opacity: 1,
+                            duration: motion.DURATION.fast,
+                            overwrite: 'auto',
+                            onComplete: () => motion.clearProps(els, 'opacity'),
+                        });
+                    } else {
+                        const row = visibleWrap.querySelector(`[data-flip-id="rest-${r.name}"]`);
+                        if (!row) return;
+                        const els = row.querySelectorAll('.top20-rank, .top20-name, .top20-count');
+                        _playTop20TrackedAnim('fade', (o) => motion.playFadeTo(els, o), {
+                            fromOpacity: 0,
+                            opacity: 1,
+                            duration: motion.DURATION.fast,
+                            overwrite: 'auto',
+                            onComplete: () => motion.clearProps(els, 'opacity'),
+                        });
+                    }
+                });
+
+                dropoutClones.forEach((clone) => {
+                    document.body.appendChild(clone);
+                    _playTop20TrackedAnim('fade', (o) => motion.playFadeTo(clone, o), {
+                        opacity: 0,
+                        duration: motion.DURATION.fast,
+                        onComplete: () => clone.remove(),
+                    });
+                });
+            });
         },
 
         _hasPreviewPhoto(name) {
@@ -1239,7 +1484,14 @@ export function libraryInsightsState() {
                 // 這段同步，period 路徑漏掉）。isActressFocused 不因為換期間
                 // 而改變，wasCostarVisible 只需要「舊 costarRows.length」。
                 // 不捲動——CD-156d-6 明確只認 focus 翻轉。
+                // TASK-156e-T1b／CD-156e-3：先算更新前 costarVisible、提早
+                // recomputeCostar，再依「未翻轉且無進行中淡出淡入」決定是否
+                // 包 Flip（否則直接 recomputeTop20）。
                 const oldCostarRowsLength = this.costarRows.length;
+                const wasCostarVisible = computeCostarVisible(
+                    this.isActressFocused,
+                    oldCostarRowsLength,
+                );
                 this.recomputeScopedCount();
                 this.redrawYears();
                 this.redrawDonut();
@@ -1247,12 +1499,22 @@ export function libraryInsightsState() {
                 this.redrawAge();
                 this.redrawDirector();
                 this.redrawSeries();
-                this.recomputeTop20();
+                this.recomputeCostar();
+                if (
+                    wasCostarVisible === this.costarVisible &&
+                    !this.isCostarSwapInProgress()
+                ) {
+                    const visibleWrap = this.costarVisible
+                        ? this.$refs.row7El
+                        : this.$refs.top20Row3El;
+                    this._playTop20Reorder(visibleWrap);
+                } else {
+                    this.recomputeTop20();
+                }
                 this.recomputeGantt();
                 this.recomputeSolo();
                 this._maybePlayPinPulse();
-                this.recomputeCostar();
-                this._syncCostarVisibility(computeCostarVisible(this.isActressFocused, oldCostarRowsLength));
+                this._syncCostarVisibility(wasCostarVisible);
             });
             this.$watch('focus', (value, oldValue) => {
                 // TASK-156d-T9／CD-156d-10b：在 recomputeCostar() 覆寫 this.costarRows
@@ -1260,7 +1522,13 @@ export function libraryInsightsState() {
                 // 用（見該函式內部註解——讀 this.showCostar 當代理值在「同一位女優
                 // 快速二連點、第二次點擊發生在第一次動畫 onComplete 之前」的情境會
                 // 是 stale 的，因為 showCostar 只在 onComplete 才寫入）。
+                // TASK-156e-T1b／CD-156e-3：與 period watcher 共用統一不變式。
                 const oldCostarRowsLength = this.costarRows.length;
+                const wasActress = !!(oldValue && oldValue.type === 'actress');
+                const wasCostarVisible = computeCostarVisible(
+                    wasActress,
+                    oldCostarRowsLength,
+                );
                 this.recomputeScopedCount();
                 this.redrawYears();
                 this.redrawDonut();
@@ -1268,11 +1536,21 @@ export function libraryInsightsState() {
                 this.redrawAge();
                 this.redrawDirector();
                 this.redrawSeries();
-                this.recomputeTop20();
+                this.recomputeCostar();
+                if (
+                    wasCostarVisible === this.costarVisible &&
+                    !this.isCostarSwapInProgress()
+                ) {
+                    const visibleWrap = this.costarVisible
+                        ? this.$refs.row7El
+                        : this.$refs.top20Row3El;
+                    this._playTop20Reorder(visibleWrap);
+                } else {
+                    this.recomputeTop20();
+                }
                 this.recomputeGantt();
                 this.recomputeSolo();
                 this._maybePlayPinPulse();
-                this.recomputeCostar();
                 this._handleActressFocusChange(oldValue, oldCostarRowsLength);
             });
 
