@@ -21,82 +21,47 @@
             <h2 x-text="top20Title"></h2>
         </div>
         <div class="card-body">
+            {# TASK-156e-T1a／CD-156e-1 v3 方案 A：台座層（固定位置 x-if）＋人員層（x-for :key=name） #}
             <div class="podium">
-                <template x-if="podiumRows.find(r => r.rank === 2)">
-                    <div class="podium-slot podium-slot--left"
-                         :class="{ 'is-active': focus && focus.type === 'actress' && focus.value === podiumRows.find(r => r.rank === 2).name }"
-                         @click="toggleActressFocus(podiumRows.find(r => r.rank === 2).name)">
-                        <span class="podium-avatar"
-                              @click.stop="openPreview(podiumRows.find(r => r.rank === 2).name, $el)"
-                              @mouseenter="scheduleOpenPreview(podiumRows.find(r => r.rank === 2).name, $el)"
-                              @mouseleave="cancelOpenPreview()">
-                            <template x-if="actressHasPhoto(podiumRows.find(r => r.rank === 2).name) && !photoFailed[podiumRows.find(r => r.rank === 2).name]">
-                                <img :src="actressPhotoUrl(podiumRows.find(r => r.rank === 2).name)"
-                                     alt=""
-                                     loading="lazy"
-                                     @error="markPhotoFailed(podiumRows.find(r => r.rank === 2).name)">
-                            </template>
-                            <template x-if="!actressHasPhoto(podiumRows.find(r => r.rank === 2).name) || photoFailed[podiumRows.find(r => r.rank === 2).name]">
-                                <span x-text="podiumRows.find(r => r.rank === 2).name.charAt(0)"></span>
-                            </template>
-                        </span>
-                        <span class="podium-name"
-                              :title="podiumRows.find(r => r.rank === 2).name"
-                              x-text="podiumRows.find(r => r.rank === 2).name"></span>
-                        <span class="podium-count" x-text="podiumRows.find(r => r.rank === 2).count"></span>
+                <div class="podium-stands">
+                    <template x-if="podiumRows.find(r => r.rank === 2)">
                         <span class="podium-stand podium-stand--2"><span class="podium-rank">2</span></span>
-                    </div>
-                </template>
-                <template x-if="podiumRows.find(r => r.rank === 1)">
-                    <div class="podium-slot podium-slot--center"
-                         :class="{ 'is-active': focus && focus.type === 'actress' && focus.value === podiumRows.find(r => r.rank === 1).name }"
-                         @click="toggleActressFocus(podiumRows.find(r => r.rank === 1).name)">
-                        <span class="podium-avatar"
-                              @click.stop="openPreview(podiumRows.find(r => r.rank === 1).name, $el)"
-                              @mouseenter="scheduleOpenPreview(podiumRows.find(r => r.rank === 1).name, $el)"
-                              @mouseleave="cancelOpenPreview()">
-                            <template x-if="actressHasPhoto(podiumRows.find(r => r.rank === 1).name) && !photoFailed[podiumRows.find(r => r.rank === 1).name]">
-                                <img :src="actressPhotoUrl(podiumRows.find(r => r.rank === 1).name)"
-                                     alt=""
-                                     loading="lazy"
-                                     @error="markPhotoFailed(podiumRows.find(r => r.rank === 1).name)">
-                            </template>
-                            <template x-if="!actressHasPhoto(podiumRows.find(r => r.rank === 1).name) || photoFailed[podiumRows.find(r => r.rank === 1).name]">
-                                <span x-text="podiumRows.find(r => r.rank === 1).name.charAt(0)"></span>
-                            </template>
-                        </span>
-                        <span class="podium-name"
-                              :title="podiumRows.find(r => r.rank === 1).name"
-                              x-text="podiumRows.find(r => r.rank === 1).name"></span>
-                        <span class="podium-count" x-text="podiumRows.find(r => r.rank === 1).count"></span>
+                    </template>
+                    <template x-if="podiumRows.find(r => r.rank === 1)">
                         <span class="podium-stand podium-stand--1"><span class="podium-rank">1</span></span>
-                    </div>
-                </template>
-                <template x-if="podiumRows.find(r => r.rank === 3)">
-                    <div class="podium-slot podium-slot--right"
-                         :class="{ 'is-active': focus && focus.type === 'actress' && focus.value === podiumRows.find(r => r.rank === 3).name }"
-                         @click="toggleActressFocus(podiumRows.find(r => r.rank === 3).name)">
-                        <span class="podium-avatar"
-                              @click.stop="openPreview(podiumRows.find(r => r.rank === 3).name, $el)"
-                              @mouseenter="scheduleOpenPreview(podiumRows.find(r => r.rank === 3).name, $el)"
-                              @mouseleave="cancelOpenPreview()">
-                            <template x-if="actressHasPhoto(podiumRows.find(r => r.rank === 3).name) && !photoFailed[podiumRows.find(r => r.rank === 3).name]">
-                                <img :src="actressPhotoUrl(podiumRows.find(r => r.rank === 3).name)"
-                                     alt=""
-                                     loading="lazy"
-                                     @error="markPhotoFailed(podiumRows.find(r => r.rank === 3).name)">
-                            </template>
-                            <template x-if="!actressHasPhoto(podiumRows.find(r => r.rank === 3).name) || photoFailed[podiumRows.find(r => r.rank === 3).name]">
-                                <span x-text="podiumRows.find(r => r.rank === 3).name.charAt(0)"></span>
-                            </template>
-                        </span>
-                        <span class="podium-name"
-                              :title="podiumRows.find(r => r.rank === 3).name"
-                              x-text="podiumRows.find(r => r.rank === 3).name"></span>
-                        <span class="podium-count" x-text="podiumRows.find(r => r.rank === 3).count"></span>
+                    </template>
+                    <template x-if="podiumRows.find(r => r.rank === 3)">
                         <span class="podium-stand podium-stand--3"><span class="podium-rank">3</span></span>
-                    </div>
-                </template>
+                    </template>
+                </div>
+                <div class="podium-people">
+                    <template x-for="row in podiumRows" :key="row.name">
+                        <div class="podium-slot"
+                             :class="'podium-slot--' + podiumPositionClass(row.rank) + (focus && focus.type === 'actress' && focus.value === row.name ? ' is-active' : '')"
+                             :data-flip-id="'podium-' + row.name"
+                             @click="flyAndFocusActress(row.name, $event)">
+                            <span class="podium-avatar"
+                                  :data-flip-id="'avatar-' + row.name"
+                                  @click.stop="openPreview(row.name, $el)"
+                                  @mouseenter="scheduleOpenPreview(row.name, $el)"
+                                  @mouseleave="cancelOpenPreview()">
+                                <template x-if="actressHasPhoto(row.name) && !photoFailed[row.name]">
+                                    <img :src="actressPhotoUrl(row.name)"
+                                         alt=""
+                                         loading="lazy"
+                                         @error="markPhotoFailed(row.name)">
+                                </template>
+                                <template x-if="!actressHasPhoto(row.name) || photoFailed[row.name]">
+                                    <span x-text="row.name.charAt(0)"></span>
+                                </template>
+                            </span>
+                            <span class="podium-name"
+                                  :title="row.name"
+                                  x-text="row.name"></span>
+                            <span class="podium-count" x-text="topDisplayCount(row)"></span>
+                        </div>
+                    </template>
+                </div>
                 <div x-show="!podiumRows.length"
                      class="top20-empty"
                      x-text="isPeriodEmpty(['maker']) ? t('insights.period_empty') : t('insights.no_data')"></div>
@@ -112,9 +77,11 @@
                 <template x-for="row in restRows" :key="row.name">
                     <div class="rest20-row"
                          :class="{ 'is-active': focus && focus.type === 'actress' && focus.value === row.name }"
-                         @click="toggleActressFocus(row.name)">
+                         :data-flip-id="'rest-' + row.name"
+                         @click="flyAndFocusActress(row.name, $event)">
                         <span class="top20-rank" x-text="row.rank"></span>
                         <span class="top20-avatar"
+                              :data-flip-id="'avatar-' + row.name"
                               @click.stop="openPreview(row.name, $el)"
                               @mouseenter="scheduleOpenPreview(row.name, $el)"
                               @mouseleave="cancelOpenPreview()">
@@ -133,7 +100,7 @@
                               x-text="row.name"
                               @mouseenter="scheduleOpenPreview(row.name, $el)"
                               @mouseleave="cancelOpenPreview()"></span>
-                        <span class="top20-count top20-text" x-text="row.count"></span>
+                        <span class="top20-count top20-text" x-text="topDisplayCount(row)"></span>
                     </div>
                 </template>
                 <div x-show="!restRows.length"
@@ -163,7 +130,7 @@
                     <div class="insights-tile-error-msg" x-text="t('insights.snapshot_error')"></div>
                 </div>
                 <div x-show="!snapshotError" class="insights-big-number">
-                    <span class="insights-tile-value" x-text="Number(scopedCount).toLocaleString()"></span>
+                    <span class="insights-tile-value" x-text="Number(displayScopedCount).toLocaleString()"></span>
                     <span class="insights-tile-unit" x-text="t('insights.unit')"></span>
                 </div>
                 <div x-show="!snapshotError" class="insights-tile-sub" x-text="totalCountLabel()"></div>
@@ -269,9 +236,10 @@
                         <template x-for="row in costarRows" :key="row.name">
                             <div class="costar-row"
                                  :class="{ 'is-active': focus && focus.type === 'actress' && focus.value === row.name }"
-                                 @click="toggleActressFocus(row.name)">
+                                 @click="flyAndFocusActress(row.name, $event)">
                                 <span class="costar-avatars">
                                     <span class="costar-avatar"
+                                          :data-costar-role="'self'"
                                           @click.stop="openPreview(row.self, $el)"
                                           @mouseenter="scheduleOpenPreview(row.self, $el)"
                                           @mouseleave="cancelOpenPreview()">
@@ -286,6 +254,7 @@
                                         </template>
                                     </span>
                                     <span class="costar-avatar"
+                                          :data-costar-role="'other'"
                                           @click.stop="openPreview(row.name, $el)"
                                           @mouseenter="scheduleOpenPreview(row.name, $el)"
                                           @mouseleave="cancelOpenPreview()">
@@ -420,7 +389,7 @@
                                                  && focus.value === row.name
                                          }"
                                          :style="ganttGridStyle(ganttAxis)"
-                                         @click="toggleActressFocus(row.name)">
+                                         @click="flyAndFocusActress(row.name, $event)">
                                         <div class="gantt-name-cell">
                                             <span class="gantt-avatar"
                                                   @click.stop="openPreview(row.name, $el)"
@@ -478,7 +447,7 @@
                     <template x-for="row in soloRows" :key="row.name">
                         <div class="solo-row"
                              :class="{ 'is-active': focus && focus.type === 'actress' && focus.value === row.name }"
-                             @click="toggleActressFocus(row.name)">
+                             @click="flyAndFocusActress(row.name, $event)">
                             <span class="solo-avatar"
                                   @click.stop="openPreview(row.name, $el)"
                                   @mouseenter="scheduleOpenPreview(row.name, $el)"

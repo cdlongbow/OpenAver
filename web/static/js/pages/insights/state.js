@@ -22,6 +22,9 @@ import {
     buildGanttAgeCells,
     buildSoloRows,
     buildCostarRows,
+    podiumPositionClass,
+    classifyTop20Transition,
+    diffTop20Counts,
 } from './aggregate.js';
 import {
     setMakerColorSlots,
@@ -81,6 +84,72 @@ let _ganttViewCache = null;
 let _lastPinnedGanttName = null;
 let _lastPinnedSoloName = null;
 let _podiumEntrancePlayed = false;
+/** TASK-156e-T1b／CD-156e-2：還在播的 Top20 換位相關動畫（Flip／淡入／掉榜替身）。 */
+let _top20ActiveAnims = new Set();
+/** TASK-156e-T1b／CD-156e-3：156d 淡出淡入換卡世代號與進行中鏈計數。 */
+let _costarSwapGen = 0;
+let _costarSwapPendingChains = 0;
+/** TASK-156e-T2／CD-156e-5：同時最多一個頭像飛行替身。 */
+let _activeAvatarGhost = null;
+/** TASK-156e-T3／CD-156e-6：頁首片數補間 handle＋世代號（連點防護）。 */
+let _scopedCountTween = null;
+let _scopedCountGen = 0;
+/** TASK-156e-T3／CD-156e-6：Top20 每人一份片數補間 handle＋世代號（key＝女優名）。 */
+let _top20CountTweens = {};
+let _top20CountGens = {};
+
+/**
+ * TASK-156e-T1b／CD-156e-2：登記／自清 wrapper。
+ * kind: 'flip' | 'fade'
+ */
+function _playTop20TrackedAnim(kind, createFn, opts) {
+    let anim;
+    const userOnComplete = opts && opts.onComplete;
+    const mergedOpts = Object.assign({}, opts, {
+        onComplete: () => {
+            _top20ActiveAnims.delete(anim);
+            if (userOnComplete) userOnComplete();
+        },
+    });
+    anim = createFn(mergedOpts);
+    if (anim) { anim._top20Kind = kind; _top20ActiveAnims.add(anim); }
+    return anim;
+}
+
+/** TASK-156e-T1b／CD-156e-2 規則 1/2：新一輪換位只收斂非 Flip。 */
+function _settleTop20NonFlipAnims() {
+    Array.from(_top20ActiveAnims).forEach(anim => {
+        if (anim._top20Kind === 'flip') return; // 交給下一次 flipCapture()
+        if (typeof anim.progress === 'function') anim.progress(1);
+    });
+}
+
+/** TASK-156e-T1b／CD-156e-2 規則 3：換卡時收斂全部（不含片數 playCountUp）。 */
+function _forceSettleAllTop20Anims() {
+    Array.from(_top20ActiveAnims).forEach(anim => {
+        if (typeof anim.progress === 'function') anim.progress(1);
+    });
+}
+
+/**
+ * 飛行／掉榜替身掛到 body 前剝掉 Alpine 綁定，避免 MutationObserver 在無
+ * scope 下把 clone 當新元件初始化（噴 podiumPositionClass／row is not defined）。
+ */
+function _stripAlpineForGhost(root) {
+    if (!root) return;
+    root.querySelectorAll('template').forEach((t) => t.remove());
+    const stripAlpineAttrs = (el) => {
+        Array.from(el.attributes).forEach((attr) => {
+            const n = attr.name;
+            if (n.startsWith('x-') || n.startsWith(':') || n.startsWith('@')) {
+                el.removeAttribute(n);
+            }
+        });
+    };
+    stripAlpineAttrs(root);
+    root.querySelectorAll('*').forEach(stripAlpineAttrs);
+    root.removeAttribute('data-flip-id');
+}
 
 /** 預覽浮層實測尺寸（160 寬照片 + 名字列）；與 .insights-preview CSS 對齊。 */
 const PREVIEW_POPUP = { width: 160, height: 224 };
@@ -135,6 +204,9 @@ export function libraryInsightsState() {
         period: { type: 'all' },
         focus: null,
         scopedCount: 0,
+        // TASK-156e-T3／CD-156e-6：顯示層（補間只碰這裡；真相欄位 scopedCount／row.count 不變）
+        displayScopedCount: 0,
+        top20DisplayCounts: {},
         top20Rows: [],
         // TASK-156d-T3／CD-156d-2：row3 左半格＋row7 三個可切換顯示旗標（不用 x-show，
         // FE-ALPINE-17——vendored Alpine 的 x-show 晚一幀且一翻轉就立即 display:none，
@@ -170,6 +242,16 @@ export function libraryInsightsState() {
                 this.period,
                 this.focus,
             ).length;
+        },
+
+        /**
+         * TASK-156e-T3／CD-156e-6：Top20 片數顯示值。
+         * 補間進行中讀 top20DisplayCounts；否則 fallback 真相值 row.count。
+         */
+        topDisplayCount(row) {
+            if (!row) return '';
+            const v = this.top20DisplayCounts[row.name];
+            return v === undefined ? row.count : v;
         },
 
         isPeriodEmpty(types) {
@@ -220,7 +302,7 @@ export function libraryInsightsState() {
         /**
          * §4.2：無焦點／女優焦點 → periodRecords；片商焦點 → scopeRecords(maker)。
          */
-        recomputeTop20() {
+        _computeTop20Rows() {
             const all = getRecords();
             const focus = this.focus;
             let records;
@@ -229,7 +311,11 @@ export function libraryInsightsState() {
             } else {
                 records = periodRecords(all, this.period);
             }
-            this.top20Rows = buildActressTop20(records, focus).rows;
+            return buildActressTop20(records, focus).rows;
+        },
+
+        recomputeTop20() {
+            this.top20Rows = this._computeTop20Rows();
         },
 
         recomputeGantt() {
@@ -324,20 +410,37 @@ export function libraryInsightsState() {
             });
         },
 
+        // TASK-156e-T1a：供 macro `:class` 綁定（aggregate 純函式）
+        podiumPositionClass,
+
         _playPodiumEntrance() {
+            // TASK-156e-T1a／CD-156e-1 v3：台座層與人員層分離後，依視覺順序
+            // 左2→中1→右3 組 {stand, items} 傳給 playRise（簽名不變）。
             const wrap = this.$refs.top20Row3El;
             if (!wrap) return;
-            const slots = Array.from(wrap.querySelectorAll('.podium-slot'));
-            const groups = slots
-                .map(function (slot) {
-                    return {
-                        stand: slot.querySelector('.podium-stand'),
-                        items: Array.from(
-                            slot.querySelectorAll('.podium-avatar, .podium-name, .podium-count'),
-                        ),
-                    };
-                })
-                .filter(function (g) { return !!g.stand; });
+            const visualRanks = [2, 1, 3];
+            const groups = [];
+            for (let i = 0; i < visualRanks.length; i++) {
+                const rank = visualRanks[i];
+                const stand = wrap.querySelector('.podium-stand--' + rank);
+                if (!stand) continue;
+                const row = (this.podiumRows || []).find(function (r) {
+                    return r.rank === rank;
+                });
+                let items = [];
+                if (row && row.name) {
+                    const flipId = 'podium-' + row.name;
+                    const person = Array.from(wrap.querySelectorAll('.podium-slot')).find(
+                        function (el) { return el.getAttribute('data-flip-id') === flipId; },
+                    );
+                    if (person) {
+                        items = Array.from(
+                            person.querySelectorAll('.podium-avatar, .podium-name, .podium-count'),
+                        );
+                    }
+                }
+                groups.push({ stand: stand, items: items });
+            }
             if (!groups.length) return;
             window.OpenAver.motion.playRise(groups);
         },
@@ -527,6 +630,208 @@ export function libraryInsightsState() {
         },
 
         /**
+         * TASK-156e-T2／CD-156e-5：五入口共用——設女優焦點並從頭像起飛到焦點格。
+         * 清除焦點／找不到頭像時只走 toggle，不飛。
+         */
+        flyAndFocusActress(name, event) {
+            const isClearing = this.focus && this.focus.type === 'actress' && this.focus.value === name;
+            if (isClearing) {
+                if (_activeAvatarGhost) {
+                    // 字面與 _flyAvatarToFocusTile 開頭的 remove 分開，mutation from 才唯一
+                    const staleGhost = _activeAvatarGhost.el;
+                    staleGhost.remove();
+                    _activeAvatarGhost = null;
+                }
+                const clearingTarget = document.querySelector('#tileFocus .insights-focus-avatar:not(.mk)');
+                if (clearingTarget) {
+                    clearingTarget.removeAttribute('data-avatar-fly-hidden');
+                    clearingTarget.style.opacity = '1';
+                }
+                this.toggleActressFocus(name);
+                return;
+            }
+            let sourceEl = null;
+            const currentTarget = event && event.currentTarget;
+            if (currentTarget && typeof currentTarget.querySelector === 'function') {
+                let selector = null;
+                if (currentTarget.matches('.podium-slot')) selector = '.podium-avatar';
+                else if (currentTarget.matches('.rest20-row')) selector = '.top20-avatar';
+                else if (currentTarget.matches('.gantt-row')) selector = '.gantt-avatar';
+                else if (currentTarget.matches('.solo-row')) selector = '.solo-avatar';
+                else if (currentTarget.matches('.costar-row')) selector = '[data-costar-role="other"]';
+                if (selector) sourceEl = currentTarget.querySelector(selector);
+            }
+            if (!sourceEl) { this.toggleActressFocus(name); return; }
+            const sourceRect = sourceEl.getBoundingClientRect();
+            // getComputedStyle 回傳 live CSSStyleDeclaration；toggle 後 Alpine 可能拆掉
+            // 來源節點，之後讀屬性會變空字串。toggle 前拍成純物件快照。
+            const liveStyle = getComputedStyle(sourceEl);
+            const sourceStyle = {
+                borderRadius: liveStyle.borderRadius,
+                backgroundColor: liveStyle.backgroundColor,
+                color: liveStyle.color,
+                fontSize: liveStyle.fontSize,
+                fontWeight: liveStyle.fontWeight,
+                lineHeight: liveStyle.lineHeight,
+                fontFamily: liveStyle.fontFamily,
+                display: liveStyle.display,
+                alignItems: liveStyle.alignItems,
+                justifyContent: liveStyle.justifyContent,
+                overflow: liveStyle.overflow,
+                boxSizing: liveStyle.boxSizing,
+            };
+            // TASK-156e-F2：ghost 改掛 .insights-container（document.querySelector，
+            // 不用 this.$root——見 _flyAvatarToFocusTile 內註解）而非 body，座標從
+            // 「文件相對」改成「容器相對」——減容器 getBoundingClientRect()，不受
+            // window 捲動影響，容器又是 position:relative 的定位祖先。
+            const container = document.querySelector('.insights-container');
+            const containerRect = container.getBoundingClientRect();
+            const sourceContainerRect = {
+                top: sourceRect.top - containerRect.top,
+                left: sourceRect.left - containerRect.left,
+                width: sourceRect.width,
+                height: sourceRect.height,
+            };
+            // TASK-156e-F2：來源 <img>（若有）的 object-fit/object-position 快照——
+            // ghost 掛回 .insights-container 後雖然能吃到 XXX-avatar img 的 class
+            // 規則，但飛行途中 ghost 尺寸由 GSAP 直接 tween 根節點的 inline
+            // top/left/width/height，這裡另外把 img 對應值直接套上，雙重保險
+            // 確保裁切／置中與來源一致，不依賴 class 規則的載入時序。
+            const sourceImgEl = sourceEl.querySelector('img');
+            const sourceImgStyle = sourceImgEl
+                ? (() => {
+                    const imgLiveStyle = getComputedStyle(sourceImgEl);
+                    return {
+                        objectFit: imgLiveStyle.objectFit,
+                        objectPosition: imgLiveStyle.objectPosition,
+                    };
+                })()
+                : null;
+            // 必須在 toggle 前 clone：焦點一變，與她同片列會重算重繪，
+            // 來源節點在 $nextTick 時可能已被 Alpine 拆掉／清空。
+            const sourceClone = sourceEl.cloneNode(true);
+            this.toggleActressFocus(name);
+            // 雙 rAF：等 Alpine 插入焦點格 + 一幀 layout（costar 進場等）後再量終點，
+            // 避免 targetContainerRect 與真實落點差幾 px。
+            this.$nextTick(() => {
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        this._flyAvatarToFocusTile(sourceClone, sourceContainerRect, sourceStyle, sourceImgStyle);
+                    });
+                });
+            });
+        },
+
+        /**
+         * TASK-156e-T2／CD-156e-5／F2：建立容器相對（.insights-container，見下方
+         * 「不用 this.$root」註解）的 ghost，飛向焦點格頭像。sourceRect 是點擊當下
+         * 換算好的容器相對座標。
+         */
+        _flyAvatarToFocusTile(sourceEl, sourceRect, sourceStyle, sourceImgStyle) {
+            if (_activeAvatarGhost) {
+                _activeAvatarGhost.el.remove();
+                _activeAvatarGhost = null;
+            }
+
+            const target = document.querySelector('#tileFocus .insights-focus-avatar:not(.mk)');
+            if (!target) return;
+
+            const motion = window.OpenAver && window.OpenAver.motion;
+            if (!motion || !motion._shouldAnimate()) {
+                target.removeAttribute('data-avatar-fly-hidden');
+                target.style.opacity = '1';
+                return;
+            }
+            if (!window.AvatarFly || typeof window.AvatarFly.playFlyToFocus !== 'function') {
+                return;
+            }
+            // TASK-156e-F2：不用 this.$root——Alpine 的 $root magic 綁在「觸發這次
+            // expression 求值的 el」，事件來源若在焦點切換當下被 Alpine 重繪／拆掉
+            // （costar-row 的 x-if 分支），later async 再讀 this.$root 會是
+            // undefined（實測：costar 入口重現，podium/rest/gantt/solo 不會，
+            // 因為它們的來源列不會在同一輪 focus 變更中被整段換掉）。改用
+            // document.querySelector 拿穩定 DOM 參照，跟 state.js:1755 既有寫法一致。
+            const container = document.querySelector('.insights-container');
+            if (!container) return;
+
+            target.setAttribute('data-avatar-fly-hidden', 'true');
+            target.style.opacity = '0';
+
+            // sourceEl 可能已是 flyAndFocusActress 預先做好的 clone。
+            const ghost = sourceEl.cloneNode(true);
+            // 去掉 Alpine <template x-if> 殘留與 x-/:/@ 屬性——ghost 掛回
+            // .insights-container 後若被 Alpine 再評估，row 未定義會把已渲染的
+            // <img>/<span> 清掉，留下空白替身。
+            _stripAlpineForGhost(ghost);
+            ghost.setAttribute('data-avatar-fly-ghost', 'true');
+            ghost.style.position = 'absolute';
+            ghost.style.top = sourceRect.top + 'px';
+            ghost.style.left = sourceRect.left + 'px';
+            ghost.style.width = sourceRect.width + 'px';
+            ghost.style.height = sourceRect.height + 'px';
+            ghost.style.margin = '0';
+            ghost.style.pointerEvents = 'none';
+            ghost.style.zIndex = '2000';
+            ghost.style.willChange = 'top, left, width, height';
+            ghost.style.opacity = '1';
+            ghost.style.borderRadius = sourceStyle.borderRadius;
+            ghost.style.backgroundColor = sourceStyle.backgroundColor;
+            ghost.style.fontSize = sourceStyle.fontSize;
+            ghost.style.fontWeight = sourceStyle.fontWeight;
+            ghost.style.color = sourceStyle.color;
+            ghost.style.display = sourceStyle.display;
+            ghost.style.alignItems = sourceStyle.alignItems;
+            ghost.style.justifyContent = sourceStyle.justifyContent;
+            ghost.style.overflow = sourceStyle.overflow;
+            ghost.style.boxSizing = sourceStyle.boxSizing;
+            // TASK-156e-F2：巢狀 <img> 的裁切規則（object-fit/object-position）與
+            // 100% 滿版尺寸直接套到 img 本身——不能只靠 ghost 根節點吃 class
+            // 規則，因為 XXX-avatar img 的 width/height:100% 需要「父層當下的
+            // tween 尺寸」才會對，這裡明寫成 inline style 雙重保險。
+            const ghostImgEl = ghost.querySelector('img');
+            if (ghostImgEl && sourceImgStyle) {
+                ghostImgEl.style.width = '100%';
+                ghostImgEl.style.height = '100%';
+                ghostImgEl.style.objectFit = sourceImgStyle.objectFit;
+                ghostImgEl.style.objectPosition = sourceImgStyle.objectPosition;
+            }
+            container.appendChild(ghost);
+
+            const containerRectForTarget = container.getBoundingClientRect();
+            const targetViewport = target.getBoundingClientRect();
+            const targetContainerRect = {
+                top: targetViewport.top - containerRectForTarget.top,
+                left: targetViewport.left - containerRectForTarget.left,
+                width: targetViewport.width,
+                height: targetViewport.height,
+            };
+
+            const focusName = this.focus && this.focus.type === 'actress' ? this.focus.value : null;
+            _activeAvatarGhost = { el: ghost, name: focusName };
+            window.AvatarFly.playFlyToFocus(ghost, targetContainerRect, {
+                onComplete: () => {
+                    if (!(_activeAvatarGhost && _activeAvatarGhost.el === ghost)) return;
+                    // 補間結束後對齊到「此刻」焦點格（layout 可能在飛行中微移），
+                    // 留一幀給取樣再移除，滿足落地誤差 <2px。
+                    // 用 inline style（不直呼 gsap——pages/insights 禁令）。
+                    const live = target.getBoundingClientRect();
+                    const liveContainerRect = document.querySelector('.insights-container').getBoundingClientRect();
+                    ghost.style.top = (live.top - liveContainerRect.top) + 'px';
+                    ghost.style.left = (live.left - liveContainerRect.left) + 'px';
+                    ghost.style.width = live.width + 'px';
+                    ghost.style.height = live.height + 'px';
+                    requestAnimationFrame(() => {
+                        if (!(_activeAvatarGhost && _activeAvatarGhost.el === ghost)) return;
+                        ghost.remove();
+                        target.removeAttribute('data-avatar-fly-hidden');
+                        target.style.opacity = '1';
+                        _activeAvatarGhost = null;
+                    });
+                },
+            });
+        },
+
+        /**
          * TASK-156d-T3／CD-156d-2：`$watch('focus')` 的唯一動效/捲動 sink。
          * TASK-156d-T9／CD-156d-10b：`costarVisible` 翻轉時才觸發 row3 左半格
          * 佔用者循序淡出淡入＋row7 副本 B 獨立淡出淡入（女優焦點但零共演時
@@ -586,6 +891,7 @@ export function libraryInsightsState() {
             const isNowCostarVisible = this.costarVisible;
             if (wasCostarVisible === isNowCostarVisible) return;
 
+            this._forceSettleAllTop20Anims();
             const motion = window.OpenAver.motion;
             const top20El = this.$refs.top20Row3El;
             const costarEl = this.$refs.costarEl;
@@ -593,6 +899,12 @@ export function libraryInsightsState() {
             // CD-156d-2 步驟 4：每次新觸發前先對這次牽涉到的全部元素 killTweens，
             // 再永遠依當下最新 isActressFocused 從步驟 1/2 重新開始。
             motion.killTweens([top20El, costarEl, row7El].filter(Boolean));
+            const gen = ++_costarSwapGen;
+            _costarSwapPendingChains = 2;
+            const chainDone = () => {
+                if (gen !== _costarSwapGen) return;
+                _costarSwapPendingChains -= 1;
+            };
 
             if (isNowCostarVisible) {
                 // 步驟 1：進入焦點——costarEl 先淡出既有的 row3 副本 A。
@@ -610,6 +922,7 @@ export function libraryInsightsState() {
                                 fromOpacity: 0,
                                 opacity: 1,
                                 duration: 0.25,
+                                onComplete: chainDone,
                             });
                         });
                     },
@@ -621,6 +934,7 @@ export function libraryInsightsState() {
                         fromOpacity: 0,
                         opacity: 1,
                         duration: 0.5,
+                        onComplete: chainDone,
                     });
                 });
             } else {
@@ -639,6 +953,7 @@ export function libraryInsightsState() {
                                 fromOpacity: 0,
                                 opacity: 1,
                                 duration: 0.25,
+                                onComplete: chainDone,
                             });
                         });
                     },
@@ -651,9 +966,238 @@ export function libraryInsightsState() {
                         // CD-156d-5 不變式 2：隱藏後清掉殘留 inline opacity:0。
                         motion.clearProps(row7El, 'opacity');
                         this.showTop20InRow7 = false;
+                        chainDone();
                     },
                 });
             }
+        },
+
+        /**
+         * TASK-156e-T3／CD-156e-6：頁首片數＋Top20 片數顯示層補間（連點防護）。
+         * `$watch('period')`／`$watch('focus')` 共用；呼叫方在既有 Flip if/else
+         * 之後傳入更新前的 `oldTop20Rows` 快照。
+         */
+        _playCountUps(oldTop20Rows) {
+            const oldDisplay = this.displayScopedCount;
+            this.recomputeScopedCount();
+            if (_scopedCountTween) { _scopedCountTween.kill(); _scopedCountTween = null; }
+            const target = this.scopedCount;
+            if (oldDisplay === target) {
+                this.displayScopedCount = target;
+            } else {
+                const gen = ++_scopedCountGen;
+                const motion = window.OpenAver.motion;
+                _scopedCountTween = motion.playCountUp({
+                    from: oldDisplay,
+                    to: target,
+                    onUpdate: (v) => { this.displayScopedCount = v; },
+                    onComplete: () => {
+                        if (gen !== _scopedCountGen) return;
+                        _scopedCountTween = null;
+                    },
+                });
+            }
+            {
+                const diffs = diffTop20Counts(oldTop20Rows, this.top20Rows);
+                const newNames = new Set(this.top20Rows.map((r) => r.name));
+                Object.keys(this.top20DisplayCounts).forEach((name) => {
+                    if (newNames.has(name)) return; // 還在榜上，不動她
+                    if (_top20CountTweens[name]) {
+                        _top20CountTweens[name].kill();
+                        delete _top20CountTweens[name];
+                    }
+                    delete _top20CountGens[name];
+                    delete this.top20DisplayCounts[name];
+                });
+                diffs.forEach((d) => {
+                    if (!(d.name in this.top20DisplayCounts)) {
+                        this.top20DisplayCounts[d.name] = d.from;
+                    }
+                });
+                const motion = window.OpenAver.motion;
+                this.$nextTick(() => {
+                    diffs.forEach((d) => {
+                        if (_top20CountTweens[d.name]) {
+                            _top20CountTweens[d.name].kill();
+                        }
+                        const gen = (_top20CountGens[d.name] || 0) + 1;
+                        _top20CountGens[d.name] = gen;
+                        const fromVal = this.top20DisplayCounts[d.name];
+                        _top20CountTweens[d.name] = motion.playCountUp({
+                            from: fromVal,
+                            to: d.to,
+                            duration: motion.DURATION.medium,
+                            onUpdate: (v) => { this.top20DisplayCounts[d.name] = v; },
+                            onComplete: () => {
+                                if (_top20CountGens[d.name] !== gen) return;
+                                delete this.top20DisplayCounts[d.name];
+                                delete _top20CountTweens[d.name];
+                            },
+                        });
+                    });
+                });
+            }
+        },
+
+        isCostarSwapInProgress() {
+            return _costarSwapPendingChains > 0;
+        },
+
+        _forceSettleAllTop20Anims() {
+            _forceSettleAllTop20Anims();
+        },
+
+        _settleTop20NonFlipAnims() {
+            _settleTop20NonFlipAnims();
+        },
+
+        /**
+         * TASK-156e-T1b／CD-156e-2：Top20 換位——三個 Flip＋分類手動淡入淡出。
+         * 呼叫前呼叫方已確認 costarVisible 未翻轉且 isCostarSwapInProgress()===false。
+         */
+        _playTop20Reorder(visibleWrap) {
+            this._settleTop20NonFlipAnims();
+            const motion = window.OpenAver.motion;
+            if (!visibleWrap) {
+                this.recomputeTop20();
+                return;
+            }
+
+            const oldRows = (this.top20Rows || []).slice();
+            const newRows = this._computeTop20Rows();
+            const classified = classifyTop20Transition(oldRows, newRows);
+
+            const rowStayerEls = classified.rowStayers
+                .map((r) => visibleWrap.querySelector(`[data-flip-id="rest-${CSS.escape(r.name)}"]`))
+                .filter(Boolean);
+            const podiumReshuffleEls = classified.podiumReshuffle
+                .map((r) => visibleWrap.querySelector(`[data-flip-id="podium-${CSS.escape(r.name)}"]`))
+                .filter(Boolean);
+            const crossStructureEls = classified.crossStructureMovers
+                .map((r) => visibleWrap.querySelector(`[data-flip-id="avatar-${CSS.escape(r.name)}"]`))
+                .filter(Boolean);
+
+            // TASK-156e-F2：掛回 .insights-container（document.querySelector，不用
+            // this.$root——見 _flyAvatarToFocusTile 內註解：$watch('focus') 觸發的
+            // 重繪可能讓 Alpine 對這輪 expression 求值綁的 $root 變 undefined）而非
+            // document.body，讓替身繼續吃得到 insights.css 全部以 .insights-container
+            // 為前綴的規則（圓角／尺寸／字級／flex 版面）；宣告在最外層，下面
+            // dropoutClones.forEach 的 container.appendChild 也要用同一個參照。
+            const container = document.querySelector('.insights-container');
+            const dropoutClones = [];
+            if (!window.OpenAver.prefersReducedMotion) {
+                const containerRect = container.getBoundingClientRect();
+                classified.droppedOut.forEach((d) => {
+                    const sel = d.wasPodium
+                        ? `[data-flip-id="podium-${CSS.escape(d.name)}"]`
+                        : `[data-flip-id="rest-${CSS.escape(d.name)}"]`;
+                    const el = visibleWrap.querySelector(sel);
+                    if (!el) return;
+                    const rect = el.getBoundingClientRect();
+                    const clone = el.cloneNode(true);
+                    _stripAlpineForGhost(clone);
+                    clone.setAttribute('data-top20-dropout-ghost', d.name);
+                    clone.style.position = 'absolute';
+                    clone.style.left = (rect.left - containerRect.left) + 'px';
+                    clone.style.top = (rect.top - containerRect.top) + 'px';
+                    clone.style.width = rect.width + 'px';
+                    clone.style.height = rect.height + 'px';
+                    clone.style.margin = '0';
+                    clone.style.pointerEvents = 'none';
+                    clone.style.zIndex = '40';
+                    dropoutClones.push(clone);
+                });
+            }
+
+            const rowState = motion.flipCapture(rowStayerEls);
+            const podiumState = motion.flipCapture(podiumReshuffleEls);
+            const avatarState = motion.flipCapture(crossStructureEls);
+            const costarSwapGenAtCapture = _costarSwapGen;
+            this.recomputeTop20();
+            this.$nextTick(() => {
+                if (_costarSwapGen !== costarSwapGenAtCapture) return;
+                const flipDur = 0.4;
+                _playTop20TrackedAnim('flip', (o) => motion.flipFrom(rowState, o), {
+                    targets: visibleWrap.querySelectorAll('[data-flip-id^="rest-"]'),
+                    nested: true,
+                    duration: flipDur,
+                });
+                _playTop20TrackedAnim('flip', (o) => motion.flipFrom(podiumState, o), {
+                    targets: visibleWrap.querySelectorAll('[data-flip-id^="podium-"]'),
+                    nested: true,
+                    duration: flipDur,
+                });
+                // absolute:true 只鎖在跨結構移動者——若 targets 用
+                // [data-flip-id^="avatar-"] 全選，Flip 會把名單裡所有頭像抽成
+                // absolute，390 單欄容器高度瞬間塌陷（CD-156e-7 不變式 6）。
+                const avatarTargets = classified.crossStructureMovers
+                    .map((r) => visibleWrap.querySelector(`[data-flip-id="avatar-${CSS.escape(r.name)}"]`))
+                    .filter(Boolean);
+                _playTop20TrackedAnim('flip', (o) => motion.flipFrom(avatarState, o), {
+                    targets: avatarTargets,
+                    nested: true,
+                    absolute: true,
+                    fade: true,
+                    duration: flipDur,
+                });
+
+                classified.brandNewEntrants.forEach((r) => {
+                    const el = visibleWrap.querySelector(`[data-flip-id="rest-${CSS.escape(r.name)}"]`);
+                    if (!el) return;
+                    _playTop20TrackedAnim('fade', (o) => motion.playEnter(el, o), {
+                        y: 0,
+                        overwrite: 'auto',
+                        onComplete: () => motion.clearProps(el, 'opacity'),
+                    });
+                });
+                classified.podiumNewEntrants.forEach((r) => {
+                    const el = visibleWrap.querySelector(`[data-flip-id="podium-${CSS.escape(r.name)}"]`);
+                    if (!el) return;
+                    _playTop20TrackedAnim('fade', (o) => motion.playEnter(el, o), {
+                        y: 0,
+                        overwrite: 'auto',
+                        onComplete: () => motion.clearProps(el, 'opacity'),
+                    });
+                });
+
+                const newByName = new Map(newRows.map((r) => [r.name, r]));
+                classified.crossStructureMovers.forEach((r) => {
+                    const newRow = newByName.get(r.name);
+                    if (!newRow) return;
+                    if (newRow.rank <= 3) {
+                        const slot = visibleWrap.querySelector(`[data-flip-id="podium-${CSS.escape(r.name)}"]`);
+                        if (!slot) return;
+                        const els = slot.querySelectorAll('.podium-name, .podium-count');
+                        _playTop20TrackedAnim('fade', (o) => motion.playFadeTo(els, o), {
+                            fromOpacity: 0,
+                            opacity: 1,
+                            duration: motion.DURATION.fast,
+                            overwrite: 'auto',
+                            onComplete: () => motion.clearProps(els, 'opacity'),
+                        });
+                    } else {
+                        const row = visibleWrap.querySelector(`[data-flip-id="rest-${CSS.escape(r.name)}"]`);
+                        if (!row) return;
+                        const els = row.querySelectorAll('.top20-rank, .top20-name, .top20-count');
+                        _playTop20TrackedAnim('fade', (o) => motion.playFadeTo(els, o), {
+                            fromOpacity: 0,
+                            opacity: 1,
+                            duration: motion.DURATION.fast,
+                            overwrite: 'auto',
+                            onComplete: () => motion.clearProps(els, 'opacity'),
+                        });
+                    }
+                });
+
+                dropoutClones.forEach((clone) => {
+                    container.appendChild(clone);
+                    _playTop20TrackedAnim('fade', (o) => motion.playFadeTo(clone, o), {
+                        opacity: 0,
+                        duration: motion.DURATION.fast,
+                        onComplete: () => clone.remove(),
+                    });
+                });
+            });
         },
 
         _hasPreviewPhoto(name) {
@@ -1105,6 +1649,7 @@ export function libraryInsightsState() {
                     this.snapshotError = true;
                     this.snapshot = null;
                     this.scopedCount = 0;
+                    this.displayScopedCount = 0;
                     return;
                 }
                 const data = await resp.json();
@@ -1136,6 +1681,7 @@ export function libraryInsightsState() {
                 // 舊的失敗記錄不該永久卡住，讓 x-if 有機會重新嘗試載入。
                 this.photoFailed = {};
                 this.recomputeScopedCount();
+                this.displayScopedCount = this.scopedCount;
                 this.recomputeTop20();
                 this.recomputeGantt();
                 this.recomputeSolo();
@@ -1209,6 +1755,7 @@ export function libraryInsightsState() {
                 this.snapshotError = true;
                 this.snapshot = null;
                 this.scopedCount = 0;
+                this.displayScopedCount = 0;
             }
         },
 
@@ -1239,20 +1786,39 @@ export function libraryInsightsState() {
                 // 這段同步，period 路徑漏掉）。isActressFocused 不因為換期間
                 // 而改變，wasCostarVisible 只需要「舊 costarRows.length」。
                 // 不捲動——CD-156d-6 明確只認 focus 翻轉。
+                // TASK-156e-T1b／CD-156e-3：先算更新前 costarVisible、提早
+                // recomputeCostar，再依「未翻轉且無進行中淡出淡入」決定是否
+                // 包 Flip（否則直接 recomputeTop20）。
                 const oldCostarRowsLength = this.costarRows.length;
-                this.recomputeScopedCount();
+                const wasCostarVisible = computeCostarVisible(
+                    this.isActressFocused,
+                    oldCostarRowsLength,
+                );
                 this.redrawYears();
                 this.redrawDonut();
                 this.redrawTags();
                 this.redrawAge();
                 this.redrawDirector();
                 this.redrawSeries();
-                this.recomputeTop20();
+                this.recomputeCostar();
+                // TASK-156e-T3：Top20 片數補間——先快照舊榜，再跑既有 Flip if/else
+                const oldTop20Rows = this.top20Rows;
+                if (
+                    wasCostarVisible === this.costarVisible &&
+                    !this.isCostarSwapInProgress()
+                ) {
+                    const visibleWrap = this.costarVisible
+                        ? this.$refs.row7El
+                        : this.$refs.top20Row3El;
+                    this._playTop20Reorder(visibleWrap);
+                } else {
+                    this.recomputeTop20();
+                }
+                this._playCountUps(oldTop20Rows);
                 this.recomputeGantt();
                 this.recomputeSolo();
                 this._maybePlayPinPulse();
-                this.recomputeCostar();
-                this._syncCostarVisibility(computeCostarVisible(this.isActressFocused, oldCostarRowsLength));
+                this._syncCostarVisibility(wasCostarVisible);
             });
             this.$watch('focus', (value, oldValue) => {
                 // TASK-156d-T9／CD-156d-10b：在 recomputeCostar() 覆寫 this.costarRows
@@ -1260,19 +1826,37 @@ export function libraryInsightsState() {
                 // 用（見該函式內部註解——讀 this.showCostar 當代理值在「同一位女優
                 // 快速二連點、第二次點擊發生在第一次動畫 onComplete 之前」的情境會
                 // 是 stale 的，因為 showCostar 只在 onComplete 才寫入）。
+                // TASK-156e-T1b／CD-156e-3：與 period watcher 共用統一不變式。
                 const oldCostarRowsLength = this.costarRows.length;
-                this.recomputeScopedCount();
+                const wasActress = !!(oldValue && oldValue.type === 'actress');
+                const wasCostarVisible = computeCostarVisible(
+                    wasActress,
+                    oldCostarRowsLength,
+                );
                 this.redrawYears();
                 this.redrawDonut();
                 this.redrawTags();
                 this.redrawAge();
                 this.redrawDirector();
                 this.redrawSeries();
-                this.recomputeTop20();
+                this.recomputeCostar();
+                // TASK-156e-T3：Top20 片數補間——先快照舊榜，再跑既有 Flip if/else
+                const oldTop20Rows = this.top20Rows;
+                if (
+                    wasCostarVisible === this.costarVisible &&
+                    !this.isCostarSwapInProgress()
+                ) {
+                    const visibleWrap = this.costarVisible
+                        ? this.$refs.row7El
+                        : this.$refs.top20Row3El;
+                    this._playTop20Reorder(visibleWrap);
+                } else {
+                    this.recomputeTop20();
+                }
+                this._playCountUps(oldTop20Rows);
                 this.recomputeGantt();
                 this.recomputeSolo();
                 this._maybePlayPinPulse();
-                this.recomputeCostar();
                 this._handleActressFocusChange(oldValue, oldCostarRowsLength);
             });
 

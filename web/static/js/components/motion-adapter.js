@@ -89,6 +89,7 @@ playEnter: function (elements, opts) {
             duration: opts.duration || motion.DURATION.emphasis,
             stagger: opts.stagger || 0,
             ease: opts.ease || 'fluent-decel',
+            overwrite: opts.overwrite,
             onComplete: opts.onComplete || null
         });
     });
@@ -156,6 +157,7 @@ playFadeTo: function (elements, opts) {
             opacity: targetOpacity,
             duration: opts.duration || motion.DURATION.medium,
             ease: opts.ease || 'fluent',
+            overwrite: opts.overwrite,
             onComplete: opts.onComplete || null
         });
     });
@@ -298,6 +300,75 @@ playRise: function (groups, opts) {
 clearProps: function (element, props) {
     if (!element || typeof gsap === 'undefined') return;
     gsap.set(element, { clearProps: props });
+},
+
+/**
+ * GSAP Flip 狀態捕捉（薄包 `Flip.getState`）。
+ * TASK-156e-T1a／CD-156e-1：頁面不直接呼叫 `Flip.getState`，一律經由此 primitive。
+ * `kill:true` 是 GSAP 官方預設，呼叫端不必手動傳。
+ * @param {Element|Element[]|string} targets
+ * @returns {*} Flip state（供後續 `flipFrom` 使用）
+ */
+flipCapture: function (targets) {
+    if (typeof Flip === 'undefined' || !targets) return null;
+    if (!this._shouldAnimate()) return null;
+    return Flip.getState(targets);
+},
+
+/**
+ * GSAP Flip 動畫播放（薄包 `Flip.from`）。
+ * TASK-156e-T1a／CD-156e-1：`opts` 原樣透傳（`absolute`／`fade`／`nested`／
+ * `duration`／`targets` 等由呼叫端決定）。PRM 開啟時跳過動畫並觸發 `onComplete`。
+ * @param {*} state - `flipCapture` 回傳的 Flip state
+ * @param {Object} [opts]
+ * @returns {*} Flip timeline，或 PRM 時 `null`
+ */
+flipFrom: function (state, opts) {
+    opts = opts || {};
+    if (typeof Flip === 'undefined') return null;
+    if (!state || !this._shouldAnimate()) {
+        if (typeof opts.onComplete === 'function') opts.onComplete();
+        return null;
+    }
+    return Flip.from(state, opts);
+},
+
+/**
+ * 數值補間（count-up／count-down）。
+ * TASK-156e-T3／CD-156e-6：`(opts)` shape（目標是 JS 數值，不是 DOM 元素）。
+ * PRM 或 from===to 時同步呼叫一次 onUpdate(to)+onComplete() 後回傳 null。
+ * `snap:{v:1}` 確保 onUpdate 收到的永遠是整數。
+ * @param {Object} [opts]
+ * @param {number} opts.from
+ * @param {number} opts.to
+ * @param {number} [opts.duration]
+ * @param {string} [opts.ease]
+ * @param {Function} [opts.onUpdate]
+ * @param {Function} [opts.onComplete]
+ * @param {Object} [opts.ctx]
+ * @returns {*} GSAP tween，或 PRM／相等時 `null`
+ */
+playCountUp: function (opts) {
+    opts = opts || {};
+    var from = opts.from, to = opts.to;
+    if (!this._shouldAnimate() || from === to) {
+        if (typeof opts.onUpdate === 'function') opts.onUpdate(to);
+        if (typeof opts.onComplete === 'function') opts.onComplete();
+        return null;
+    }
+    var obj = { v: from };
+    return this._run(opts.ctx, function () {
+        return gsap.to(obj, {
+            v: to,
+            duration: opts.duration || motion.DURATION.medium,
+            ease: opts.ease || 'fluent',
+            snap: { v: 1 },
+            onUpdate: function () {
+                if (typeof opts.onUpdate === 'function') opts.onUpdate(Math.round(obj.v));
+            },
+            onComplete: opts.onComplete || null,
+        });
+    });
 },
 
 /**

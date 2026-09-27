@@ -963,3 +963,62 @@ export function buildCostarRows(records, period, focus) {
     return list.slice(0, 15);
 }
 
+
+/**
+ * TASK-156e-T1a / CD-156e-1 v3：Top20 換位分類（純函式，不碰 DOM）。
+ * 六個互斥分類供後續 Flip／淡入淡出分流。
+ */
+export function classifyTop20Transition(oldRows, newRows) {
+    var oldByName = new Map((oldRows || []).map(function (r) { return [r.name, r]; }));
+    var newByName = new Map((newRows || []).map(function (r) { return [r.name, r]; }));
+    var isPodium = function (r) { return r.rank <= 3; };
+    var rowStayers = [], podiumReshuffle = [], crossStructureMovers = [],
+        droppedOut = [], brandNewEntrants = [], podiumNewEntrants = [];
+    oldByName.forEach(function (oldRow, name) {
+        var newRow = newByName.get(name);
+        if (!newRow) { droppedOut.push({ name: name, wasPodium: isPodium(oldRow) }); return; }
+        if (isPodium(oldRow) && isPodium(newRow)) {
+            if (oldRow.rank !== newRow.rank) podiumReshuffle.push({ name: name });
+            return; // rank 相同 → 無動作
+        }
+        if (!isPodium(oldRow) && !isPodium(newRow)) { rowStayers.push({ name: name }); return; }
+        crossStructureMovers.push({ name: name }); // 一個 podium 一個不是 → 跨結構
+    });
+    newByName.forEach(function (newRow, name) {
+        if (oldByName.has(name)) return;
+        if (isPodium(newRow)) { podiumNewEntrants.push({ name: name }); }
+        else { brandNewEntrants.push({ name: name }); }
+    });
+    return { rowStayers: rowStayers, podiumReshuffle: podiumReshuffle,
+             crossStructureMovers: crossStructureMovers, droppedOut: droppedOut,
+             brandNewEntrants: brandNewEntrants, podiumNewEntrants: podiumNewEntrants };
+}
+
+/**
+ * TASK-156e-T1a：頒獎台 rank → 視覺位置 class 後綴。
+ * 1→center、2→left、3→right。
+ */
+export function podiumPositionClass(rank) {
+    if (rank === 1) return 'center';
+    if (rank === 2) return 'left';
+    if (rank === 3) return 'right';
+    return '';
+}
+
+/**
+ * TASK-156e-T3／CD-156e-6：比對兩份 Top20，回傳片數有變動的人。
+ * 只走訪 newRows；新進榜者（oldMap 沒有）天然排除；同名同 count 不進結果。
+ * @param {Array<{name:string,count:number}>|null|undefined} oldRows
+ * @param {Array<{name:string,count:number}>|null|undefined} newRows
+ * @returns {Array<{name:string,from:number,to:number}>}
+ */
+export function diffTop20Counts(oldRows, newRows) {
+    const oldMap = new Map((oldRows || []).map((r) => [r.name, r.count]));
+    const out = [];
+    (newRows || []).forEach((r) => {
+        if (oldMap.has(r.name) && oldMap.get(r.name) !== r.count) {
+            out.push({ name: r.name, from: oldMap.get(r.name), to: r.count });
+        }
+    });
+    return out;
+}

@@ -17,6 +17,12 @@
 
 /* Page Container */
 .insights-container {
+    /* TASK-156e-F2：掉榜替身／飛行頭像改掛這裡當直接子元素，
+       用 position:absolute + 容器相對座標飛行/淡出。position:relative 只建立
+       定位祖先，不影響 flex 版面；.insights-preview 是 position:fixed（不吃
+       transform/filter 以外的祖先影響），.gantt-name-cell 的 position:sticky
+       吃的是更近的 .gantt-wrap（overflow:auto）scroll 容器，兩者都不受影響。 */
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
@@ -424,16 +430,56 @@
     padding: 0.75rem 0.25rem;
 }
 
-/* 頒獎台（D156d-2：固定 3 插槽，寫死左2／中1／右3；三階台座固定高度不按比例，
-   動效留給 T6，本卡只做靜態呈現） */
+/* 頒獎台（TASK-156e-T1a／CD-156e-1 v3 方案 A：台座層＋人員層 CSS Grid 疊放；
+   人員層 flex + order 視覺重排成左2／中1／右3） */
 .insights-container .podium {
     flex: 1 1 auto;
     min-height: 148px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    padding-top: 0.5rem;
+    position: relative;
+}
+
+.insights-container .podium-stands,
+.insights-container .podium-people {
+    grid-column: 1;
+    grid-row: 1;
     display: flex;
     align-items: flex-end;
     justify-content: center;
     gap: 1rem;
-    padding-top: 0.5rem;
+    min-width: 0;
+    width: 100%;
+}
+
+.insights-container .podium-stands {
+    z-index: 0;
+    pointer-events: none;
+}
+
+.insights-container .podium-people {
+    z-index: 1;
+}
+
+.insights-container .podium-stand--2 {
+    order: 1;
+}
+
+.insights-container .podium-stand--1 {
+    order: 2;
+}
+
+.insights-container .podium-stand--3 {
+    order: 3;
+}
+
+.insights-container .podium > .top20-empty {
+    grid-column: 1;
+    grid-row: 1;
+    align-self: center;
+    justify-self: center;
 }
 
 .insights-container .podium-slot {
@@ -446,6 +492,24 @@
     cursor: pointer;
     border-radius: var(--radius-md);
     padding: 0.25rem 0.25rem 0;
+    box-sizing: border-box;
+}
+
+/* FE-CSS-27：人員節點 order（必須在 .podium-slot 之後，避免被 shorthand padding 蓋掉）。
+   padding-bottom = 對應台座高度 + 原 slot gap(0.25rem)，讓頭像/名字/片數貼在台座上緣上方。 */
+.insights-container .podium-slot--left {
+    order: 1;
+    padding-bottom: calc(56px + 0.25rem);
+}
+
+.insights-container .podium-slot--center {
+    order: 2;
+    padding-bottom: calc(72px + 0.25rem);
+}
+
+.insights-container .podium-slot--right {
+    order: 3;
+    padding-bottom: calc(40px + 0.25rem);
 }
 
 .insights-container .podium-slot:hover {
@@ -486,16 +550,19 @@
     font-variant-numeric: tabular-nums;
 }
 
-/* 台座是獨立可定位元素（不與頭像/名字/片數合併），供 T6 直接掛 scaleY 動效；
-   三階固定高度（8pt grid），中間最高，不按名次片數比例。 */
+/* 台座是獨立可定位元素（不與頭像/名字/片數合併），供進場 scaleY 動效；
+   三階固定高度（8pt grid），中間最高，不按名次片數比例。
+   方案 A 下台座寬度與人員節點同寬（5.5rem），不再吃父層 100%。 */
 .insights-container .podium-stand {
-    width: 100%;
+    width: 5.5rem;
+    flex: 0 0 5.5rem;
     display: flex;
     align-items: flex-start;
     justify-content: center;
     padding-top: 0.375rem;
     border-radius: var(--radius-xs) var(--radius-xs) 0 0;
     background: color-mix(in oklch, var(--color-primary) 16%, var(--surface-2));
+    box-sizing: border-box;
 }
 
 .insights-container .podium-stand--1 {
