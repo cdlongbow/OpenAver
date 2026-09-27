@@ -117,6 +117,13 @@ IMAGE_HOSTS: tuple[ImageHost, ...] = (
         consumers=("download",),
         photo_source="wiki",
     ),
+    ImageHost(
+        host="faws.xcity.jp",
+        match="exact",
+        schemes=("http", "https"),
+        consumers=("download",),   # 只給 download 消費端，不給 proxy
+        photo_source="xcity",
+    ),
     # ---- proxy-only exact ----
     ImageHost(
         host="pics.dmm.co.jp",

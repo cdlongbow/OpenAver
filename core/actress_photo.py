@@ -47,6 +47,7 @@ REFERER_MAP: dict[str, str] = {
     "gfriends": "https://github.com/gfriends/gfriends",
     "wiki": "https://ja.wikipedia.org/",
     "minnano": "https://www.minnano-av.com/",
+    "xcity": "https://xcity.jp/",
 }
 
 

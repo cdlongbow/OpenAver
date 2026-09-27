@@ -18,6 +18,7 @@ from core.image_host_policy import (
     proxy_dynamic_hosts,
     proxy_rules,
 )
+from core.actress_photo import REFERER_MAP, validate_photo_url
 from core.metatube.state import metatube_state
 
 
@@ -265,7 +266,7 @@ def test_cf_javfree_me_in_static_proxy_exact():
 
 def test_registry_truth_table_download_and_proxy_consumers():
     """Walk every IMAGE_HOSTS row × (download, proxy) + one live dynamic row."""
-    assert len(IMAGE_HOSTS) == 29  # +1 tp.spfcas.com (TASK-132b-T4)
+    assert len(IMAGE_HOSTS) == 30  # +1 tp.spfcas.com (TASK-132b-T4)
 
     for entry in IMAGE_HOSTS:
         download_allowed = "download" in entry.consumers
@@ -395,3 +396,22 @@ def test_nested_preview_target_residual_dns_name_resolving_private_is_not_covere
         "若這條轉紅，代表已經加了 DNS 解析或簽章——請更新本測試與 "
         "nested_preview_target_allowed() 的殘留說明"
     )
+
+
+def test_download_hosts_for_xcity():
+    """TASK-157-T2: xcity 圖床白名單只放行 faws.xcity.jp，只給 download 消費端。"""
+    assert download_hosts_for("xcity") == {"faws.xcity.jp"}
+
+
+def test_validate_photo_url_xcity():
+    """TASK-157-T2: validate_photo_url 對 xcity host 正確放行/拒絕。"""
+    assert validate_photo_url(
+        "https://faws.xcity.jp/actress/large/image/person/12345.jpg", "xcity"
+    ) is True
+    assert validate_photo_url("https://evil.example.com/x.jpg", "xcity") is False
+
+
+def test_referer_map_xcity():
+    """TASK-157-T2: REFERER_MAP 新增 xcity 對應值。"""
+    assert REFERER_MAP["xcity"] == "https://xcity.jp/"
+
