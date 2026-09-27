@@ -24,7 +24,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, UploadFile, File, Query, HTTPException
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from PIL import Image
 from core.atomic_write import atomic_write
 from core.database.version_tracker import bump_showcase_revision
@@ -139,7 +139,14 @@ def _validate_actress_submit_fields(payload: dict) -> None:
             raise HTTPException(400, detail=f"{k} 為保留欄位，AI 不可透過此端點寫入")
         if k == "photo":
             if v is not None:
-                raise HTTPException(400, detail="照片提交尚未支援")
+                if not isinstance(v, dict) or not isinstance(v.get("source"), str) or v["source"] not in CLOUD_SOURCES | {"local_crop"}:
+                    raise HTTPException(400, detail="照片來源不合法")
+                if v["source"] in CLOUD_SOURCES:
+                    url = v.get("url")
+                    if not isinstance(url, str) or not url or not validate_photo_url(url, v["source"]):
+                        raise HTTPException(400, detail="照片來源網址不合法")
+                elif not isinstance(v.get("video_path"), str) or not v["video_path"]:
+                    raise HTTPException(400, detail="照片影片路徑不合法")
         elif k == "tags":
             if not isinstance(v, list) or not all(isinstance(item, str) for item in v):
                 raise HTTPException(400, detail="tags 型別錯誤，必須是字串列表")
@@ -428,24 +435,12 @@ def preview_actress(req: PreviewActressRequest):
 # 端點九之三：POST /api/actresses/{name} — 提交審過的女優文字資料
 # ---------------------------------------------------------------------------
 
-@router.post("/{name}")
-def submit_actress(name: str, payload: dict):
-    name = name.strip()
-    if not name:
-        raise HTTPException(400, detail="女優名字不可為空")
-
-    _validate_actress_submit_fields(payload)
-    fields = {k: v for k, v in payload.items() if k != "photo"}
-    if "height" in fields and fields["height"] != "":
-        fields["height"] = f"{int(str(fields['height']).removesuffix('cm'))}cm"
-    for key in _ACTRESS_SUBMIT_MEASURES:
-        if key in fields and fields[key] is not None:
-            fields[key] = _safe_int(fields[key])
-    fields["primary_text_source"] = "ai"
-
+def _save_actress_submission(name: str, fields: dict):
+    """Run the submit DB read/write sequence in a worker thread."""
     init_db()
     repo = ActressRepository()
-    if repo.exists(name):
+    old_actress = repo.get_by_name(name)
+    if old_actress is not None:
         if not repo.update_fields(name, fields):
             logger.error("[actress] AI 提交更新失敗 name=%s", name)
             raise HTTPException(500, detail="操作失敗")
@@ -457,7 +452,54 @@ def submit_actress(name: str, payload: dict):
         repo.save(Actress(name=name, **fields))
 
     actress = repo.get_by_name(name)
-    return {"success": True, "actress": _actress_to_response(actress)}
+    return repo, old_actress, actress
+
+
+def _compensate_actress_submission(repo: ActressRepository, name: str,
+                                   old_actress: Optional[Actress], fields: dict) -> None:
+    """Restore text only when the photo operation failed before installing a file."""
+    try:
+        if old_actress is None:
+            restored = repo.delete_by_name(name)
+        else:
+            old_fields = {key: getattr(old_actress, key) for key in fields}
+            restored = repo.update_fields(name, old_fields)
+        if not restored:
+            logger.warning("[actress] AI 提交補償未完成 name=%s", name)
+    except Exception:
+        logger.warning("[actress] AI 提交補償失敗 name=%s", name, exc_info=True)
+
+
+@router.post("/{name}")
+async def submit_actress(name: str, payload: dict):
+    name = name.strip()
+    if not name:
+        raise HTTPException(400, detail="女優名字不可為空")
+
+    _validate_actress_submit_fields(payload)
+    photo_req = None
+    if payload.get("photo") is not None:
+        try:
+            photo_req = SetActressPhotoRequest.model_validate(payload["photo"])
+        except ValidationError:
+            raise HTTPException(400, detail="照片欄位格式錯誤") from None
+    fields = {k: v for k, v in payload.items() if k != "photo"}
+    if "height" in fields and fields["height"] != "":
+        fields["height"] = f"{int(str(fields['height']).removesuffix('cm'))}cm"
+    for key in _ACTRESS_SUBMIT_MEASURES:
+        if key in fields and fields[key] is not None:
+            fields[key] = _safe_int(fields[key])
+    fields["primary_text_source"] = "ai"
+
+    repo, old_actress, actress = await asyncio.to_thread(_save_actress_submission, name, fields)
+    if photo_req is not None:
+        _, err, photo_installed = await _apply_photo_change(repo, actress, name, photo_req)
+        if err:
+            if not photo_installed:
+                await asyncio.to_thread(_compensate_actress_submission, repo, name, old_actress, fields)
+            return err
+        actress = await asyncio.to_thread(repo.get_by_name, name)
+    return {"success": True, "actress": await asyncio.to_thread(_actress_to_response, actress)}
 
 
 # ---------------------------------------------------------------------------
@@ -960,6 +1002,97 @@ _SET_PHOTO_ERR_FAILED = "設定照片失敗，請稍後再試"
 _SET_PHOTO_ERR_INVALID_URL = "照片來源網址不合法"
 
 
+async def _apply_photo_change(repo: ActressRepository, actress: Actress, name: str,
+                              req: SetActressPhotoRequest):
+    """Return (URL, error, installed); only pre-install errors permit compensation."""
+    if req.source not in CLOUD_SOURCES and req.source != "local_crop":
+        return None, JSONResponse(status_code=400, content={"error": "unknown_source"}), False
+
+    if req.source in CLOUD_SOURCES:
+        if not req.url:
+            return None, JSONResponse(status_code=400, content={"error": "url_required"}), False
+        # 🔴 白名單驗證必須在清焦點「之前」（Codex P2）：validate_photo_url 是純函式、
+        # 零 side effect、不做任何 I/O，而 download_actress_photo 內部也會再驗一次
+        # （SSRF 防禦不依賴呼叫端，此處是提前擋，不是取代）。不提前擋的話，一個
+        # 白名單外的 URL 會先把使用者的手動焦點清掉、才發現這個請求注定失敗
+        # → 舊圖留著但焦點無聲消失。
+        # 這與 local_crop 分支「clear_focal 插在 crop 成功之後」是同一條原則
+        # （TASK-100a-T3 Opus 裁決）：**不為一次注定失敗的操作先清掉焦點**。
+        # T3 當時只把該原則套用到 local_crop，漏了 cloud 這條同構的路徑。
+        # 可達性：set_actress_photo 已揭露於 capabilities（:964，side_effect），
+        # AI agent 可直接 POST 任意 url —— 不是只有 UI 那條可信路徑。
+        # CD-8：新增路徑一律固定中文（不因為旁邊的 url_required／unknown_source
+        # 是舊碼 snake_case 就跟著新增一條違規——TASK-100a-T3 已裁決過同一件事）。
+        if not validate_photo_url(req.url, req.source):
+            logger.warning("[actress] set_photo URL 不在白名單 source=%s", req.source)
+            return None, JSONResponse(status_code=400, content={"error": _SET_PHOTO_ERR_INVALID_URL}), False
+        # 🔴 CD-4 pre-invalidate：cloud 分支插入點——download_actress_photo 之前。
+        err = await _pre_invalidate_focal(repo, name, ctx="set_photo", err_msg=_SET_PHOTO_ERR_FAILED)
+        if err:
+            return None, err, False
+        ok = await asyncio.to_thread(download_actress_photo, name, req.url, req.source)
+        if not ok:
+            return None, JSONResponse(status_code=500, content={"error": "download_failed"}), False
+
+    elif req.source == "local_crop":
+        if not req.video_path:
+            return None, JSONResponse(status_code=400, content={"error": "video_path_required"}), False
+        # file:/// URI → FS path（禁止手動 strip）
+        video_fs_path = uri_to_fs_path(req.video_path)  # uri-no-reverse: comparison-only, matched against DB v.path below, no disk I/O
+        # 從 DB 取該影片的 cover_path
+        videos = await asyncio.to_thread(_get_actress_videos, name)
+        # Fix 3 (T3): v.path 在 DB 存 file:/// URI（gallery_scanner 用 to_file_uri 寫入），
+        # 比對前雙邊都正規化為 FS path，避免 URI vs FS path 永遠 fail
+        match = next(
+            (v for v in videos if uri_to_fs_path(str(v.path)) == video_fs_path),  # uri-no-reverse: comparison-only, no disk I/O
+            None,
+        )
+        if match is None or not match.cover_path:
+            return None, JSONResponse(status_code=404, content={"error": "video_or_cover_not_found"}), False
+        # Fix 3 (T3): match.cover_path 也是 URI，傳給 crop_video_cover 前先轉 FS path
+        path_mappings = (await asyncio.to_thread(load_config)).get('gallery', {}).get('path_mappings', {})
+        cover_fs_path = uri_to_local_fs_path(str(match.cover_path), path_mappings) if match.cover_path else ""
+        if not cover_fs_path:
+            return None, JSONResponse(status_code=404, content={"error": "video_or_cover_not_found"}), False
+        # crop → bytes
+        crop_bytes = await asyncio.to_thread(
+            crop_video_cover, cover_fs_path, req.crop_spec or "v1"
+        )
+        if crop_bytes is None:
+            return None, JSONResponse(status_code=500, content={"error": "crop_failed"}), False
+        # 🔴 CD-4 pre-invalidate：local_crop 分支插入點——crop 成功之後、寫入之前。
+        err = await _pre_invalidate_focal(repo, name, ctx="set_photo", err_msg=_SET_PHOTO_ERR_FAILED)
+        if err:
+            return None, err, False
+        # glob 刪舊副檔名 + 寫入
+        # 🔴 PR#108 Codex P2-B：比照 upload_actress_photo（:898-902）補外層 try/except——
+        # local_crop 分支原本完全沒有，_write_actress_photo 內部例外（含清舊檔殘留的
+        # PermissionError 等）會逸出成未捕捉例外、FastAPI 回裸文字 500，而非本檔統一的
+        # 錯誤信封格式。錯誤信封對齊：照片家族一律裸 dict `{"error": ...}`（非 upload
+        # 端點也用同一 _SET_PHOTO_ERR_FAILED 固定中文，與 CD-8 一致）。
+        try:
+            await asyncio.to_thread(_write_actress_photo, name, crop_bytes)
+        except Exception:
+            logger.exception("[actress] set_photo local_crop 寫檔失敗 name=%s", name)
+            return None, JSONResponse(status_code=500, content={"error": _SET_PHOTO_ERR_FAILED}), False
+
+    # 更新 photo_source + 回傳（CD-7）
+    err = await _persist_photo_source(
+        repo, actress, req.source, ctx="set_photo", err_msg=_SET_PHOTO_ERR_FAILED)
+    if err:
+        return None, err, True
+
+    # CD-6：logical slot vs physical path，寫檔/下載後不可假設 {safe}.jpg，一律重
+    # 解析（cloud 分支副檔名由 Content-Type 決定，core/actress_photo.py）。重解析
+    # 可能回 None（GFRIENDS_DIR 綁定不一致／外部同時刪除）——不 guard 會 None.stat()
+    # 拋 AttributeError（mirror T2 review finding）。
+    photo_url, err = await _photo_url_with_fp_cache_bust(
+        name, ctx="set_photo", err_msg=_SET_PHOTO_ERR_FAILED)
+    if err:
+        return None, err, True
+    return photo_url, None, True
+
+
 @router.post("/{name}/photo")
 async def set_actress_photo(name: str, req: SetActressPhotoRequest):
     """
@@ -986,89 +1119,7 @@ async def set_actress_photo(name: str, req: SetActressPhotoRequest):
     if actress is None:
         return JSONResponse(status_code=404, content={"error": "not_found"})
 
-    if req.source not in CLOUD_SOURCES and req.source != "local_crop":
-        return JSONResponse(status_code=400, content={"error": "unknown_source"})
-
-    if req.source in CLOUD_SOURCES:
-        if not req.url:
-            return JSONResponse(status_code=400, content={"error": "url_required"})
-        # 🔴 白名單驗證必須在清焦點「之前」（Codex P2）：validate_photo_url 是純函式、
-        # 零 side effect、不做任何 I/O，而 download_actress_photo 內部也會再驗一次
-        # （SSRF 防禦不依賴呼叫端，此處是提前擋，不是取代）。不提前擋的話，一個
-        # 白名單外的 URL 會先把使用者的手動焦點清掉、才發現這個請求注定失敗
-        # → 舊圖留著但焦點無聲消失。
-        # 這與 local_crop 分支「clear_focal 插在 crop 成功之後」是同一條原則
-        # （TASK-100a-T3 Opus 裁決）：**不為一次注定失敗的操作先清掉焦點**。
-        # T3 當時只把該原則套用到 local_crop，漏了 cloud 這條同構的路徑。
-        # 可達性：set_actress_photo 已揭露於 capabilities（:964，side_effect），
-        # AI agent 可直接 POST 任意 url —— 不是只有 UI 那條可信路徑。
-        # CD-8：新增路徑一律固定中文（不因為旁邊的 url_required／unknown_source
-        # 是舊碼 snake_case 就跟著新增一條違規——TASK-100a-T3 已裁決過同一件事）。
-        if not validate_photo_url(req.url, req.source):
-            logger.warning("[actress] set_photo URL 不在白名單 source=%s", req.source)
-            return JSONResponse(status_code=400, content={"error": _SET_PHOTO_ERR_INVALID_URL})
-        # 🔴 CD-4 pre-invalidate：cloud 分支插入點——download_actress_photo 之前。
-        err = await _pre_invalidate_focal(repo, name, ctx="set_photo", err_msg=_SET_PHOTO_ERR_FAILED)
-        if err:
-            return err
-        ok = await asyncio.to_thread(download_actress_photo, name, req.url, req.source)
-        if not ok:
-            return JSONResponse(status_code=500, content={"error": "download_failed"})
-
-    elif req.source == "local_crop":
-        if not req.video_path:
-            return JSONResponse(status_code=400, content={"error": "video_path_required"})
-        # file:/// URI → FS path（禁止手動 strip）
-        video_fs_path = uri_to_fs_path(req.video_path)  # uri-no-reverse: comparison-only, matched against DB v.path below, no disk I/O
-        # 從 DB 取該影片的 cover_path
-        videos = await asyncio.to_thread(_get_actress_videos, name)
-        # Fix 3 (T3): v.path 在 DB 存 file:/// URI（gallery_scanner 用 to_file_uri 寫入），
-        # 比對前雙邊都正規化為 FS path，避免 URI vs FS path 永遠 fail
-        match = next(
-            (v for v in videos if uri_to_fs_path(str(v.path)) == video_fs_path),  # uri-no-reverse: comparison-only, no disk I/O
-            None,
-        )
-        if match is None or not match.cover_path:
-            return JSONResponse(status_code=404, content={"error": "video_or_cover_not_found"})
-        # Fix 3 (T3): match.cover_path 也是 URI，傳給 crop_video_cover 前先轉 FS path
-        path_mappings = (await asyncio.to_thread(load_config)).get('gallery', {}).get('path_mappings', {})
-        cover_fs_path = uri_to_local_fs_path(str(match.cover_path), path_mappings) if match.cover_path else ""
-        if not cover_fs_path:
-            return JSONResponse(status_code=404, content={"error": "video_or_cover_not_found"})
-        # crop → bytes
-        crop_bytes = await asyncio.to_thread(
-            crop_video_cover, cover_fs_path, req.crop_spec or "v1"
-        )
-        if crop_bytes is None:
-            return JSONResponse(status_code=500, content={"error": "crop_failed"})
-        # 🔴 CD-4 pre-invalidate：local_crop 分支插入點——crop 成功之後、寫入之前。
-        err = await _pre_invalidate_focal(repo, name, ctx="set_photo", err_msg=_SET_PHOTO_ERR_FAILED)
-        if err:
-            return err
-        # glob 刪舊副檔名 + 寫入
-        # 🔴 PR#108 Codex P2-B：比照 upload_actress_photo（:898-902）補外層 try/except——
-        # local_crop 分支原本完全沒有，_write_actress_photo 內部例外（含清舊檔殘留的
-        # PermissionError 等）會逸出成未捕捉例外、FastAPI 回裸文字 500，而非本檔統一的
-        # 錯誤信封格式。錯誤信封對齊：照片家族一律裸 dict `{"error": ...}`（非 upload
-        # 端點也用同一 _SET_PHOTO_ERR_FAILED 固定中文，與 CD-8 一致）。
-        try:
-            await asyncio.to_thread(_write_actress_photo, name, crop_bytes)
-        except Exception:
-            logger.exception("[actress] set_photo local_crop 寫檔失敗 name=%s", name)
-            return JSONResponse(status_code=500, content={"error": _SET_PHOTO_ERR_FAILED})
-
-    # 更新 photo_source + 回傳（CD-7）
-    err = await _persist_photo_source(
-        repo, actress, req.source, ctx="set_photo", err_msg=_SET_PHOTO_ERR_FAILED)
-    if err:
-        return err
-
-    # CD-6：logical slot vs physical path，寫檔/下載後不可假設 {safe}.jpg，一律重
-    # 解析（cloud 分支副檔名由 Content-Type 決定，core/actress_photo.py）。重解析
-    # 可能回 None（GFRIENDS_DIR 綁定不一致／外部同時刪除）——不 guard 會 None.stat()
-    # 拋 AttributeError（mirror T2 review finding）。
-    photo_url, err = await _photo_url_with_fp_cache_bust(
-        name, ctx="set_photo", err_msg=_SET_PHOTO_ERR_FAILED)
+    photo_url, err, _ = await _apply_photo_change(repo, actress, name, req)
     if err:
         return err
     return JSONResponse(status_code=200, content={

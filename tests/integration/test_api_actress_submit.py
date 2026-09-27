@@ -2,8 +2,12 @@
 
 import pytest
 from fastapi.testclient import TestClient
+from unittest.mock import patch
+from urllib.parse import quote
 
-from core.database import Actress, ActressRepository, AliasRepository, init_db
+from core.database import Actress, ActressRepository, AliasRepository, Video, VideoRepository, init_db
+from core.organizer import sanitize_filename
+from core.path_utils import to_file_uri
 
 
 NAME = "三上悠亜"
@@ -203,3 +207,176 @@ def test_submit_actress_existing_photo_subroute_still_reachable(client):
 
     assert response.status_code == 404
     assert response.json().get("error") == "not_found"
+
+
+def test_submit_actress_text_and_photo_together_both_persist_invariant_a(client, db_path, tmp_path):
+    repo = ActressRepository(db_path)
+    repo.save(Actress(name=NAME, height="155cm", photo_source="wiki",
+                      auto_focal="0.2000,0.3000", crop_mode="manual"))
+    photos = tmp_path / "photos"
+    photos.mkdir()
+
+    def download(name, url, source):
+        (photos / f"{sanitize_filename(name)}.jpg").write_bytes(b"new photo")
+        return True
+
+    with patch("web.routers.actress.download_actress_photo", side_effect=download), \
+         patch("core.actress_photo.GFRIENDS_DIR", photos):
+        response = client.post(URL, json={"height": "160cm", "photo": {
+            "source": "graphis", "url": "https://www.graphis.ne.jp/new.jpg"}})
+
+    assert response.status_code == 200
+    stored = repo.get_by_name(NAME)
+    assert (stored.height, stored.photo_source) == ("160cm", "graphis")
+    assert (stored.auto_focal, stored.crop_mode) == ("", "auto")
+    assert response.json()["actress"]["photo_url"] == f"/api/actresses/photo/{quote(NAME)}"
+
+
+def test_submit_actress_create_with_photo_saves_row_before_photo(client, db_path, tmp_path):
+    photos = tmp_path / "photos"
+    photos.mkdir()
+
+    def download(name, url, source):
+        assert ActressRepository(db_path).exists(name)
+        (photos / f"{sanitize_filename(name)}.jpg").write_bytes(b"new photo")
+        return True
+
+    with patch("web.routers.actress.download_actress_photo", side_effect=download), \
+         patch("core.actress_photo.GFRIENDS_DIR", photos):
+        response = client.post(URL, json={"nickname": "新人", "photo": {
+            "source": "graphis", "url": "https://www.graphis.ne.jp/new.jpg"}})
+
+    assert response.status_code == 200
+    stored = ActressRepository(db_path).get_by_name(NAME)
+    assert (stored.nickname, stored.photo_source) == ("新人", "graphis")
+    assert response.json()["actress"]["photo_url"] == f"/api/actresses/photo/{quote(NAME)}"
+
+
+@pytest.mark.parametrize("photo", [None])
+def test_submit_actress_null_photo_skips_photo_helpers(client, db_path, photo):
+    repo = ActressRepository(db_path)
+    repo.save(Actress(name=NAME, photo_source="wiki", auto_focal="0.2000,0.3000",
+                      crop_mode="manual"))
+    with patch("web.routers.actress.validate_photo_url") as validate, \
+         patch("web.routers.actress._pre_invalidate_focal") as clear, \
+         patch("web.routers.actress.download_actress_photo") as download:
+        assert client.post(URL, json={"nickname": "保留", "photo": photo}).status_code == 200
+        assert client.post(URL, json={"nickname": "再次保留"}).status_code == 200
+        validate.assert_not_called()
+        clear.assert_not_called()
+        download.assert_not_called()
+    stored = repo.get_by_name(NAME)
+    assert (stored.photo_source, stored.auto_focal, stored.crop_mode) == (
+        "wiki", "0.2000,0.3000", "manual")
+
+
+@pytest.mark.parametrize("photo", [
+    {"source": "invalid", "url": "https://www.graphis.ne.jp/a.jpg"},
+    {"source": "graphis", "url": "https://evil.example.com/a.jpg"},
+    {"source": "graphis"},
+    {"source": "local_crop"},
+])
+def test_submit_actress_invalid_photo_rejects_before_any_write(client, db_path, photo):
+    repo = ActressRepository(db_path)
+    repo.save(Actress(name=NAME, height="155cm", photo_source="wiki",
+                      auto_focal="0.2000,0.3000", crop_mode="manual"))
+    with patch("web.routers.actress._pre_invalidate_focal") as clear, \
+         patch.object(ActressRepository, "update_fields", autospec=True) as update, \
+         patch.object(ActressRepository, "save", autospec=True) as save:
+        response = client.post(URL, json={"height": "160cm", "photo": photo})
+        clear.assert_not_called()
+        update.assert_not_called()
+        save.assert_not_called()
+    assert response.status_code == 400
+    stored = repo.get_by_name(NAME)
+    assert (stored.height, stored.photo_source, stored.auto_focal) == (
+        "155cm", "wiki", "0.2000,0.3000")
+
+
+def test_submit_actress_download_failure_rolls_back_update_invariant_b(client, db_path):
+    repo = ActressRepository(db_path)
+    repo.save(Actress(name=NAME, height="155cm", nickname="原名", photo_source="wiki"))
+    with patch("web.routers.actress.download_actress_photo", return_value=False):
+        response = client.post(URL, json={"height": "160cm", "nickname": "新名", "photo": {
+            "source": "graphis", "url": "https://www.graphis.ne.jp/new.jpg"}})
+    assert response.status_code == 500
+    stored = ActressRepository(db_path).get_by_name(NAME)
+    assert (stored.height, stored.nickname, stored.photo_source) == ("155cm", "原名", "wiki")
+
+
+def test_submit_actress_download_failure_removes_created_row_invariant_b(client, db_path, tmp_path):
+    photos = tmp_path / "photos"
+    photos.mkdir()
+    with patch("web.routers.actress.download_actress_photo", return_value=False), \
+         patch("core.actress_photo.GFRIENDS_DIR", photos):
+        response = client.post(URL, json={"nickname": "新名", "photo": {
+            "source": "graphis", "url": "https://www.graphis.ne.jp/new.jpg"}})
+    assert response.status_code == 500
+    assert ActressRepository(db_path).exists(NAME) is False
+    assert list(photos.iterdir()) == []
+
+
+def test_submit_actress_local_crop_write_failure_rolls_back_update(client, db_path, tmp_path):
+    repo = ActressRepository(db_path)
+    repo.save(Actress(name=NAME, height="155cm", photo_source="wiki"))
+    video_path = tmp_path / "video.mp4"
+    cover_path = tmp_path / "cover.jpg"
+    VideoRepository(db_path).upsert(Video(path=to_file_uri(str(video_path)), title="測試",
+                                         actresses=[NAME], cover_path=to_file_uri(str(cover_path))))
+    with patch("web.routers.actress.crop_video_cover", return_value=b"crop"), \
+         patch("web.routers.actress._write_actress_photo", side_effect=OSError("disk full")):
+        response = client.post(URL, json={"height": "160cm", "photo": {
+            "source": "local_crop", "video_path": to_file_uri(str(video_path))}})
+    assert response.status_code == 500
+    stored = repo.get_by_name(NAME)
+    assert (stored.height, stored.photo_source) == ("155cm", "wiki")
+
+
+def test_submit_actress_local_crop_updates_photo_and_focal(client, db_path, tmp_path):
+    repo = ActressRepository(db_path)
+    repo.save(Actress(name=NAME, photo_source="wiki"))
+    assert repo.update_manual_focal(NAME, "0.2000,0.3000")
+    video_path = tmp_path / "video.mp4"
+    cover_path = tmp_path / "cover.jpg"
+    VideoRepository(db_path).upsert(Video(path=to_file_uri(str(video_path)), title="測試",
+                                         actresses=[NAME], cover_path=to_file_uri(str(cover_path))))
+    photos = tmp_path / "photos"
+    photos.mkdir()
+    with patch("web.routers.actress.crop_video_cover", return_value=b"new crop"), \
+         patch("web.routers.actress.GFRIENDS_DIR", photos), \
+         patch("core.actress_photo.GFRIENDS_DIR", photos):
+        response = client.post(URL, json={"photo": {
+            "source": "local_crop", "video_path": to_file_uri(str(video_path))}})
+    assert response.status_code == 200
+    stored = repo.get_by_name(NAME)
+    assert (stored.photo_source, stored.auto_focal, stored.crop_mode) == ("local_crop", "", "auto")
+    assert (photos / f"{sanitize_filename(NAME)}.jpg").read_bytes() == b"new crop"
+
+
+def test_submit_actress_photo_persist_failure_keeps_created_row_and_text(client, db_path, tmp_path):
+    photos = tmp_path / "photos"
+    photos.mkdir()
+    original_save = ActressRepository.save
+    saves = 0
+
+    def save_then_fail(repo, actress):
+        nonlocal saves
+        saves += 1
+        if saves == 2:
+            raise OSError("sqlite write failed")
+        return original_save(repo, actress)
+
+    def download(name, url, source):
+        (photos / f"{sanitize_filename(name)}.jpg").write_bytes(b"new photo")
+        return True
+
+    with patch.object(ActressRepository, "save", autospec=True, side_effect=save_then_fail), \
+         patch("web.routers.actress.download_actress_photo", side_effect=download), \
+         patch("core.actress_photo.GFRIENDS_DIR", photos):
+        response = client.post(URL, json={"nickname": "新名", "photo": {
+            "source": "graphis", "url": "https://www.graphis.ne.jp/new.jpg"}})
+    assert response.status_code == 500
+    assert saves == 2
+    stored = ActressRepository(db_path).get_by_name(NAME)
+    assert (stored.nickname, stored.primary_text_source) == ("新名", "ai")
+    assert (photos / f"{sanitize_filename(NAME)}.jpg").read_bytes() == b"new photo"
