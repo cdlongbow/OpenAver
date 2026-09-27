@@ -175,6 +175,25 @@ def _fetch_all_sources(name: str, makers: list = None) -> dict:
     }, timed_out=any_timed_out)
 
 
+def get_actress_profile_preview(name: str, makers: list = None) -> dict:
+    sources = _fetch_all_sources(name, makers)
+    return {"name": name, "sources": sources}
+
+
+def _sources_to_photo_candidates(sources: dict) -> list:
+    candidates = []
+    if (sources.get("graphis") or {}).get("prof_url"):
+        candidates.append({"source": "graphis", "url": sources["graphis"]["prof_url"]})
+    if (sources.get("wiki") or {}).get("photo_url"):
+        candidates.append({"source": "wiki", "url": sources["wiki"]["photo_url"]})
+    xcity_url = (sources.get("xcity") or {}).get("photo_url")
+    if xcity_url:
+        candidates.append({"source": "xcity", "url": xcity_url})
+    if sources.get("gfriends"):
+        candidates.append({"source": "gfriends", "url": sources["gfriends"]})
+    return candidates
+
+
 def get_actress_profile(name: str, makers: list = None) -> ProfileResult:
     """Return a merged actress profile and preserve the legacy return shape."""
     import time

@@ -18,6 +18,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+from core.scrapers.actress import orchestrator
 from core.scrapers.actress.orchestrator import get_actress_profile, get_cached_profile, ProfileResult, _cache, _CACHE_TTL, _compute_age_from_birth
 
 # ---------------------------------------------------------------------------
@@ -693,3 +694,49 @@ class TestMeaningfulTextFilter:
         assert result.data["text"] == {"aliases": ["松嶋真麻", "別名2"]}
         assert result.data["all_sources"]["wiki"]["other_names"] == ["松嶋真麻", "別名2"]
         assert result.timed_out is False
+
+
+def test_get_actress_profile_preview_does_not_pollute_cache():
+    name = "某女優"
+    first_sources = {"xcity": {"photo_url": "https://faws.xcity.jp/first.jpg"},
+                     "wiki": None, "graphis": None, "gfriends": None}
+    second_sources = {"xcity": {"photo_url": "https://faws.xcity.jp/second.jpg"},
+                      "wiki": None, "graphis": None, "gfriends": None}
+    cache_size_before = len(_cache)
+    cache_before = dict(_cache)
+
+    with patch.object(orchestrator, "_fetch_all_sources", side_effect=[first_sources, second_sources]) as fetch:
+        first = orchestrator.get_actress_profile_preview(name)
+        second = orchestrator.get_actress_profile_preview(name)
+
+    assert first == {"name": name, "sources": first_sources}
+    assert second == {"name": name, "sources": second_sources}
+    assert fetch.call_count == 2
+    assert len(_cache) == cache_size_before
+    assert _cache == cache_before
+    assert orchestrator._normalize_name(name) not in _cache
+
+
+def test_sources_to_photo_candidates_xcity_only():
+    sources = {"xcity": {"photo_url": "https://faws.xcity.jp/x.jpg"},
+               "wiki": None, "graphis": None, "gfriends": None}
+
+    assert orchestrator._sources_to_photo_candidates(sources) == [
+        {"source": "xcity", "url": "https://faws.xcity.jp/x.jpg"}
+    ]
+
+
+def test_sources_to_photo_candidates_no_photos():
+    sources = {"xcity": {"photo_url": ""}, "wiki": {},
+               "graphis": {"prof_url": None}, "gfriends": None}
+
+    assert orchestrator._sources_to_photo_candidates(sources) == []
+
+
+def test_get_actress_profile_preview_all_sources_miss():
+    sources = {"xcity": None, "wiki": None, "graphis": None, "gfriends": None}
+
+    with patch.object(orchestrator, "_fetch_all_sources", return_value=sources):
+        result = orchestrator.get_actress_profile_preview("某女優")
+
+    assert result == {"name": "某女優", "sources": sources}
