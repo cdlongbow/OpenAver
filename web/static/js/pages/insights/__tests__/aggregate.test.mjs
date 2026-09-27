@@ -2055,3 +2055,43 @@ test('podiumPositionClass: rank 2 回傳 left', () => {
 test('podiumPositionClass: rank 3 回傳 right', () => {
     assert.equal(agg.podiumPositionClass(3), 'right');
 });
+
+// ── diffTop20Counts (TASK-156e-T3) ───────────────────────────────────
+
+test('diffTop20Counts: 兩筆同名不同 count 各自正確算出 from/to', () => {
+    const oldRows = [
+        { name: 'A', count: 10 },
+        { name: 'B', count: 8 },
+    ];
+    const newRows = [
+        { name: 'A', count: 12 },
+        { name: 'B', count: 5 },
+    ];
+    const diffs = agg.diffTop20Counts(oldRows, newRows);
+    assert.deepEqual(diffs, [
+        { name: 'A', from: 10, to: 12 },
+        { name: 'B', from: 8, to: 5 },
+    ]);
+});
+
+test('diffTop20Counts: 同名同 count 不產生 diff', () => {
+    const oldRows = [{ name: 'A', count: 10 }];
+    const newRows = [{ name: 'A', count: 10 }];
+    assert.deepEqual(agg.diffTop20Counts(oldRows, newRows), []);
+});
+
+test('diffTop20Counts: 新名字（不在 oldRows）不產生 diff', () => {
+    const oldRows = [{ name: 'A', count: 10 }];
+    const newRows = [
+        { name: 'A', count: 10 },
+        { name: 'Newcomer', count: 3 },
+    ];
+    assert.deepEqual(agg.diffTop20Counts(oldRows, newRows), []);
+});
+
+test('diffTop20Counts: oldRows 為空回傳空陣列', () => {
+    const newRows = [{ name: 'A', count: 10 }];
+    assert.deepEqual(agg.diffTop20Counts([], newRows), []);
+    assert.deepEqual(agg.diffTop20Counts(null, newRows), []);
+    assert.deepEqual(agg.diffTop20Counts(undefined, newRows), []);
+});

@@ -24,6 +24,7 @@ import {
     buildCostarRows,
     podiumPositionClass,
     classifyTop20Transition,
+    diffTop20Counts,
 } from './aggregate.js';
 import {
     setMakerColorSlots,
@@ -90,6 +91,12 @@ let _costarSwapGen = 0;
 let _costarSwapPendingChains = 0;
 /** TASK-156e-T2／CD-156e-5：同時最多一個頭像飛行替身。 */
 let _activeAvatarGhost = null;
+/** TASK-156e-T3／CD-156e-6：頁首片數補間 handle＋世代號（連點防護）。 */
+let _scopedCountTween = null;
+let _scopedCountGen = 0;
+/** TASK-156e-T3／CD-156e-6：Top20 每人一份片數補間 handle＋世代號（key＝女優名）。 */
+let _top20CountTweens = {};
+let _top20CountGens = {};
 
 /**
  * TASK-156e-T1b／CD-156e-2：登記／自清 wrapper。
@@ -197,6 +204,9 @@ export function libraryInsightsState() {
         period: { type: 'all' },
         focus: null,
         scopedCount: 0,
+        // TASK-156e-T3／CD-156e-6：顯示層（補間只碰這裡；真相欄位 scopedCount／row.count 不變）
+        displayScopedCount: 0,
+        top20DisplayCounts: {},
         top20Rows: [],
         // TASK-156d-T3／CD-156d-2：row3 左半格＋row7 三個可切換顯示旗標（不用 x-show，
         // FE-ALPINE-17——vendored Alpine 的 x-show 晚一幀且一翻轉就立即 display:none，
@@ -232,6 +242,16 @@ export function libraryInsightsState() {
                 this.period,
                 this.focus,
             ).length;
+        },
+
+        /**
+         * TASK-156e-T3／CD-156e-6：Top20 片數顯示值。
+         * 補間進行中讀 top20DisplayCounts；否則 fallback 真相值 row.count。
+         */
+        topDisplayCount(row) {
+            if (!row) return '';
+            const v = this.top20DisplayCounts[row.name];
+            return v === undefined ? row.count : v;
         },
 
         isPeriodEmpty(types) {
@@ -908,6 +928,73 @@ export function libraryInsightsState() {
             }
         },
 
+        /**
+         * TASK-156e-T3／CD-156e-6：頁首片數＋Top20 片數顯示層補間（連點防護）。
+         * `$watch('period')`／`$watch('focus')` 共用；呼叫方在既有 Flip if/else
+         * 之後傳入更新前的 `oldTop20Rows` 快照。
+         */
+        _playCountUps(oldTop20Rows) {
+            const oldDisplay = this.displayScopedCount;
+            this.recomputeScopedCount();
+            if (_scopedCountTween) { _scopedCountTween.kill(); _scopedCountTween = null; }
+            const target = this.scopedCount;
+            if (oldDisplay === target) {
+                this.displayScopedCount = target;
+            } else {
+                const gen = ++_scopedCountGen;
+                const motion = window.OpenAver.motion;
+                _scopedCountTween = motion.playCountUp({
+                    from: oldDisplay,
+                    to: target,
+                    onUpdate: (v) => { this.displayScopedCount = v; },
+                    onComplete: () => {
+                        if (gen !== _scopedCountGen) return;
+                        _scopedCountTween = null;
+                    },
+                });
+            }
+            {
+                const diffs = diffTop20Counts(oldTop20Rows, this.top20Rows);
+                const newNames = new Set(this.top20Rows.map((r) => r.name));
+                Object.keys(this.top20DisplayCounts).forEach((name) => {
+                    if (newNames.has(name)) return; // 還在榜上，不動她
+                    if (_top20CountTweens[name]) {
+                        _top20CountTweens[name].kill();
+                        delete _top20CountTweens[name];
+                    }
+                    delete _top20CountGens[name];
+                    delete this.top20DisplayCounts[name];
+                });
+                diffs.forEach((d) => {
+                    if (!(d.name in this.top20DisplayCounts)) {
+                        this.top20DisplayCounts[d.name] = d.from;
+                    }
+                });
+                const motion = window.OpenAver.motion;
+                this.$nextTick(() => {
+                    diffs.forEach((d) => {
+                        if (_top20CountTweens[d.name]) {
+                            _top20CountTweens[d.name].kill();
+                        }
+                        const gen = (_top20CountGens[d.name] || 0) + 1;
+                        _top20CountGens[d.name] = gen;
+                        const fromVal = this.top20DisplayCounts[d.name];
+                        _top20CountTweens[d.name] = motion.playCountUp({
+                            from: fromVal,
+                            to: d.to,
+                            duration: motion.DURATION.medium,
+                            onUpdate: (v) => { this.top20DisplayCounts[d.name] = v; },
+                            onComplete: () => {
+                                if (_top20CountGens[d.name] !== gen) return;
+                                delete this.top20DisplayCounts[d.name];
+                                delete _top20CountTweens[d.name];
+                            },
+                        });
+                    });
+                });
+            }
+        },
+
         isCostarSwapInProgress() {
             return _costarSwapPendingChains > 0;
         },
@@ -1510,6 +1597,7 @@ export function libraryInsightsState() {
                     this.snapshotError = true;
                     this.snapshot = null;
                     this.scopedCount = 0;
+                    this.displayScopedCount = 0;
                     return;
                 }
                 const data = await resp.json();
@@ -1541,6 +1629,7 @@ export function libraryInsightsState() {
                 // 舊的失敗記錄不該永久卡住，讓 x-if 有機會重新嘗試載入。
                 this.photoFailed = {};
                 this.recomputeScopedCount();
+                this.displayScopedCount = this.scopedCount;
                 this.recomputeTop20();
                 this.recomputeGantt();
                 this.recomputeSolo();
@@ -1614,6 +1703,7 @@ export function libraryInsightsState() {
                 this.snapshotError = true;
                 this.snapshot = null;
                 this.scopedCount = 0;
+                this.displayScopedCount = 0;
             }
         },
 
@@ -1652,7 +1742,6 @@ export function libraryInsightsState() {
                     this.isActressFocused,
                     oldCostarRowsLength,
                 );
-                this.recomputeScopedCount();
                 this.redrawYears();
                 this.redrawDonut();
                 this.redrawTags();
@@ -1660,6 +1749,8 @@ export function libraryInsightsState() {
                 this.redrawDirector();
                 this.redrawSeries();
                 this.recomputeCostar();
+                // TASK-156e-T3：Top20 片數補間——先快照舊榜，再跑既有 Flip if/else
+                const oldTop20Rows = this.top20Rows;
                 if (
                     wasCostarVisible === this.costarVisible &&
                     !this.isCostarSwapInProgress()
@@ -1671,6 +1762,7 @@ export function libraryInsightsState() {
                 } else {
                     this.recomputeTop20();
                 }
+                this._playCountUps(oldTop20Rows);
                 this.recomputeGantt();
                 this.recomputeSolo();
                 this._maybePlayPinPulse();
@@ -1689,7 +1781,6 @@ export function libraryInsightsState() {
                     wasActress,
                     oldCostarRowsLength,
                 );
-                this.recomputeScopedCount();
                 this.redrawYears();
                 this.redrawDonut();
                 this.redrawTags();
@@ -1697,6 +1788,8 @@ export function libraryInsightsState() {
                 this.redrawDirector();
                 this.redrawSeries();
                 this.recomputeCostar();
+                // TASK-156e-T3：Top20 片數補間——先快照舊榜，再跑既有 Flip if/else
+                const oldTop20Rows = this.top20Rows;
                 if (
                     wasCostarVisible === this.costarVisible &&
                     !this.isCostarSwapInProgress()
@@ -1708,6 +1801,7 @@ export function libraryInsightsState() {
                 } else {
                     this.recomputeTop20();
                 }
+                this._playCountUps(oldTop20Rows);
                 this.recomputeGantt();
                 this.recomputeSolo();
                 this._maybePlayPinPulse();

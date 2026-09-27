@@ -501,3 +501,24 @@ test('costarVisible getter: 反映 isActressFocused 與 costarRows.length', () =
     state.focus = { type: 'maker', value: 'SOD' };
     assert.equal(state.costarVisible, false, '片商焦點時應為 false');
 });
+
+// ── topDisplayCount (TASK-156e-T3) ───────────────────────────────────
+
+test('topDisplayCount: displayMap 有對應 key → 回傳該值', () => {
+    const state = libraryInsightsState();
+    state.top20DisplayCounts = { Alice: 7 };
+    assert.equal(state.topDisplayCount({ name: 'Alice', count: 12 }), 7);
+});
+
+test('topDisplayCount: 沒有 key → fallback row.count', () => {
+    const state = libraryInsightsState();
+    state.top20DisplayCounts = {};
+    assert.equal(state.topDisplayCount({ name: 'Alice', count: 12 }), 12);
+});
+
+test('topDisplayCount: row 為 null/undefined → 回傳空字串', () => {
+    const state = libraryInsightsState();
+    state.top20DisplayCounts = { Alice: 7 };
+    assert.equal(state.topDisplayCount(null), '');
+    assert.equal(state.topDisplayCount(undefined), '');
+});

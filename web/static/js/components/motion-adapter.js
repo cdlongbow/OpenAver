@@ -334,6 +334,44 @@ flipFrom: function (state, opts) {
 },
 
 /**
+ * 數值補間（count-up／count-down）。
+ * TASK-156e-T3／CD-156e-6：`(opts)` shape（目標是 JS 數值，不是 DOM 元素）。
+ * PRM 或 from===to 時同步呼叫一次 onUpdate(to)+onComplete() 後回傳 null。
+ * `snap:{v:1}` 確保 onUpdate 收到的永遠是整數。
+ * @param {Object} [opts]
+ * @param {number} opts.from
+ * @param {number} opts.to
+ * @param {number} [opts.duration]
+ * @param {string} [opts.ease]
+ * @param {Function} [opts.onUpdate]
+ * @param {Function} [opts.onComplete]
+ * @param {Object} [opts.ctx]
+ * @returns {*} GSAP tween，或 PRM／相等時 `null`
+ */
+playCountUp: function (opts) {
+    opts = opts || {};
+    var from = opts.from, to = opts.to;
+    if (!this._shouldAnimate() || from === to) {
+        if (typeof opts.onUpdate === 'function') opts.onUpdate(to);
+        if (typeof opts.onComplete === 'function') opts.onComplete();
+        return null;
+    }
+    var obj = { v: from };
+    return this._run(opts.ctx, function () {
+        return gsap.to(obj, {
+            v: to,
+            duration: opts.duration || motion.DURATION.medium,
+            ease: opts.ease || 'fluent',
+            snap: { v: 1 },
+            onUpdate: function () {
+                if (typeof opts.onUpdate === 'function') opts.onUpdate(Math.round(obj.v));
+            },
+            onComplete: opts.onComplete || null,
+        });
+    });
+},
+
+/**
  * @private 在 context 內執行動畫（確保 ctx.revert() 能回收）
  * 如果沒傳 ctx，動畫仍會播放，只是不受 context 管理
  */

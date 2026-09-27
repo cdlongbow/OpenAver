@@ -58,7 +58,7 @@
                             <span class="podium-name"
                                   :title="row.name"
                                   x-text="row.name"></span>
-                            <span class="podium-count" x-text="row.count"></span>
+                            <span class="podium-count" x-text="topDisplayCount(row)"></span>
                         </div>
                     </template>
                 </div>
@@ -100,7 +100,7 @@
                               x-text="row.name"
                               @mouseenter="scheduleOpenPreview(row.name, $el)"
                               @mouseleave="cancelOpenPreview()"></span>
-                        <span class="top20-count top20-text" x-text="row.count"></span>
+                        <span class="top20-count top20-text" x-text="topDisplayCount(row)"></span>
                     </div>
                 </template>
                 <div x-show="!restRows.length"
@@ -130,7 +130,7 @@
                     <div class="insights-tile-error-msg" x-text="t('insights.snapshot_error')"></div>
                 </div>
                 <div x-show="!snapshotError" class="insights-big-number">
-                    <span class="insights-tile-value" x-text="Number(scopedCount).toLocaleString()"></span>
+                    <span class="insights-tile-value" x-text="Number(displayScopedCount).toLocaleString()"></span>
                     <span class="insights-tile-unit" x-text="t('insights.unit')"></span>
                 </div>
                 <div x-show="!snapshotError" class="insights-tile-sub" x-text="totalCountLabel()"></div>

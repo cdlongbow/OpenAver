@@ -1004,3 +1004,21 @@ export function podiumPositionClass(rank) {
     if (rank === 3) return 'right';
     return '';
 }
+
+/**
+ * TASK-156e-T3／CD-156e-6：比對兩份 Top20，回傳片數有變動的人。
+ * 只走訪 newRows；新進榜者（oldMap 沒有）天然排除；同名同 count 不進結果。
+ * @param {Array<{name:string,count:number}>|null|undefined} oldRows
+ * @param {Array<{name:string,count:number}>|null|undefined} newRows
+ * @returns {Array<{name:string,from:number,to:number}>}
+ */
+export function diffTop20Counts(oldRows, newRows) {
+    const oldMap = new Map((oldRows || []).map((r) => [r.name, r.count]));
+    const out = [];
+    (newRows || []).forEach((r) => {
+        if (oldMap.has(r.name) && oldMap.get(r.name) !== r.count) {
+            out.push({ name: r.name, from: oldMap.get(r.name), to: r.count });
+        }
+    });
+    return out;
+}
