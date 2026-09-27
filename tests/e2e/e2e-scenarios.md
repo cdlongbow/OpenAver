@@ -1124,9 +1124,11 @@ N/A — 書籤牆／燈箱純瀏覽器互動，不依賴原生 picker。「加�
 5. **[MCP] 點頒獎台設定女優焦點**：`.top20-row3-wrap .podium-slot--center`（第 1 名台座，一定存在
    只要範圍內有女優）點擊
    - **驗**：`#tileFocus` 顯示該女優名字（`insights.focus_type_actress`）與 `×`
-   - **驗**：`#costarCard`（「與她同片」，TASK-156d-T3 起搬到 row3 左半格、與 `.top20-row3-wrap`
-     循序淡出淡入互斥顯示）從 `is-hidden`（`display:none`）變成可見，`#costarList` 有列或
-     顯示 empty 態
+   - **驗**：若該女優有共演作品，`#costarCard`（「與她同片」，TASK-156d-T3 起搬到 row3
+     左半格、與 `.top20-row3-wrap` 循序淡出淡入互斥顯示）從 `is-hidden`
+     （`display:none`）變成可見、`#costarList` 有列；若她沒有共演作品
+     （TASK-156d-T9 起），`#costarCard` 不出現，`.top20-row3-wrap`（頒獎台＋名單）
+     維持顯示，不應出現空白的「與她同片」卡片
    - **驗**：點 `#tileFocus` 的 `×`（`insights.clear_focus`）→ 焦點清除，`#costarCard` 隱藏，
      `.top20-row3-wrap` 同時恢復可見（settle 後互斥顯示）
 6. **[MCP] 主要片商年表 年/年齡 toggle**：`.insights-gantt-toggle` 兩顆按鈕

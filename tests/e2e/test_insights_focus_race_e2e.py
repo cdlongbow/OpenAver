@@ -182,6 +182,17 @@ def _click_mid_tween(page: Page, watch_ref: str, click_name: str,
 
     條件逾時或點擊當下的 opacity 不在範圍內 ⇒ AssertionError（測試失敗，不是
     skip——時序失誤要可見，不能被吞掉）。
+
+    TASK-156d-T9 修正既有假綠陷阱：先前這裡沒有 `scrollIntoView`（不像
+    `_FIND_GANTT_CELL_JS`），但第一次點擊已觸發 CD-156d-6 的
+    `window.scrollTo({top:0})`——在窄螢幕（單欄版面，row5 年表常落在文件
+    Y>900px，超過一個視窗高度）下，頁面捲回頂端後目標列會被推出視窗外，
+    這裡量到的 `getBoundingClientRect()` y 座標會大於 `innerHeight`，
+    `page.mouse.click` 點在視窗外等於沒點到，導致 focus 沒有如預期切換
+    （`test_narrow_width_settles_to_baseline_position` 實測 100% 重現，CDP
+    量測見執行紀錄：390×900 視窗下 row5.top≈3294px）。`scrollIntoView`
+    預設是瞬間捲動（頁面沒有全域 `scroll-behavior:smooth`），不佔用補間
+    觀察窗口的時間預算，比照 `_FIND_GANTT_CELL_JS` 補回這一步即可。
     """
     page.wait_for_function(
         """(args) => {
@@ -207,6 +218,7 @@ def _click_mid_tween(page: Page, watch_ref: str, click_name: str,
                 const nameEl = row.querySelector('.gantt-name');
                 if (nameEl && nameEl.textContent.trim() === name) {
                     const cell = row.querySelector('.gantt-cell') || row;
+                    cell.scrollIntoView({ block: 'center', inline: 'center' });
                     const r = cell.getBoundingClientRect();
                     coords = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
                     break;
@@ -438,19 +450,64 @@ def _skip_if_insufficient(names: list, need: int) -> None:
         )
 
 
+def _costar_rows_length(page: Page) -> int:
+    return page.evaluate(
+        """() => {
+            const root = document.querySelector('%s');
+            const data = window.Alpine && Alpine.$data(root);
+            return data ? (data.costarRows || []).length : 0;
+        }"""
+        % ALPINE_ROOT_SELECTOR
+    )
+
+
+def _classify_by_costar(
+    page: Page, names: list, need_with: int = 0, need_without: int = 0
+) -> tuple:
+    """TASK-156d-T9：`costarVisible`（CD-156d-10a）只在女優焦點且
+    `costarRows.length>0` 時為 true——本檔既有測試靠「中途攔截補間」驗證
+    `_handleActressFocusChange`，若挑到零共演的女優，`costarVisible` 不會翻轉、
+    根本不會播放任何淡出淡入，`_click_mid_tween` 會等不到補間中途（見卡片
+    「繼承的陷阱」段）。單一輪依序探測每位候選女優（聚焦→讀 `costarRows.length`
+    →清除焦點）、同時收集「有共演」與「零共演」兩個桶，找齊兩邊 need 就提早
+    停止；每次探測完都清除焦點並等待 settle，讓頁面回到探測前的無焦點狀態，
+    不污染呼叫方接下來的測試流程（呼叫方接手時頁面必為 idle／無焦點）。
+    """
+    with_costar: list = []
+    without_costar: list = []
+    for name in names:
+        if len(with_costar) >= need_with and len(without_costar) >= need_without:
+            break
+        _click_gantt_actress_raw(page, name)
+        _wait_settled(page)
+        length = _costar_rows_length(page)
+        if length > 0:
+            with_costar.append(name)
+        else:
+            without_costar.append(name)
+        _click_gantt_actress_raw(page, name)  # 清除焦點，恢復無焦點狀態。
+        _wait_settled(page)
+    return with_costar, without_costar
+
+
 # ── 情境 1：淡出中中斷（卡片指定 mutation 目標測試） ──────────────────────────
 
 def test_interrupt_during_fade_out_matches_direct_set(page: Page, base_url: str) -> None:
     """淡出中中斷：點擊聚焦後，觀察 top20Row3El 的 inline opacity 落回 (0,1)
     開區間（代表淡出 tween 正在跑、display 尚未切換）就立刻再點同一位（清除）。
     settle 後畫面應與「從未點擊過」的基準快照一致（不變式 1）。
+
+    TASK-156d-T9：淡出淡入現在由 `costarVisible`（非 `isActressFocused`）翻轉
+    觸發，零共演女優不會播放任何動畫——目標必須先過濾成「有共演」的女優，
+    否則 `_click_mid_tween` 會等不到補間中途（見卡片「繼承的陷阱」段）。
     """
     names = _load_ready(page, base_url)
-    _skip_if_insufficient(names, 1)
+    with_costar, _ = _classify_by_costar(page, names, need_with=1)
+    _skip_if_insufficient(with_costar, 1)
     baseline_state = _snapshot(page)
     baseline_geo = _geometry(page)
 
-    target = names[0]
+    target = with_costar[0]
     _click_gantt_actress_raw(page, target)
     _click_mid_tween(page, "top20Row3El", target)  # 中途點同一位＝清除
     _wait_settled(page)
@@ -467,13 +524,16 @@ def test_interrupt_during_fade_in_matches_direct_set(page: Page, base_url: str) 
     """淡入中中斷：觀察 costarEl 的 inline opacity 落回 (0,1) 開區間（代表
     display 已切換、costarEl 正在淡入)才立刻再點同一位（清除）。settle 後畫面
     應與基準快照一致。
+
+    TASK-156d-T9：同上——目標必須先過濾成「有共演」的女優。
     """
     names = _load_ready(page, base_url)
-    _skip_if_insufficient(names, 1)
+    with_costar, _ = _classify_by_costar(page, names, need_with=1)
+    _skip_if_insufficient(with_costar, 1)
     baseline_state = _snapshot(page)
     baseline_geo = _geometry(page)
 
-    target = names[0]
+    target = with_costar[0]
     _click_gantt_actress_raw(page, target)
     _click_mid_tween(page, "costarEl", target)  # 中途點同一位＝清除
     _wait_settled(page)
@@ -501,13 +561,19 @@ def test_rapid_triple_click_then_clear_matches_baseline(page: Page, base_url: st
     review「至少一次點擊要斷言落在 tween 中途」——後續切 c、清除兩次點擊不需要
     精準時序（`wasActress===isNowActress` 的換人本身對動畫是 no-op，只有這裡的
     b 需要真的打中還在跑的舊 tween 才算「連點打斷」）。
+
+    TASK-156d-T9：a/b/c 三位都必須「有共演」——a 自己的進場需要真的觸發
+    `costarVisible` 翻轉（否則沒有 tween 可觀察）；切到 b／c 時若對方零共演，
+    `costarVisible` 會從 true 翻轉成 false，觸發全新的「離開」動畫（殺掉 a
+    還在跑的 tween），跟本測試原本設計的「換人對動畫是 no-op」語意不符。
     """
     names = _load_ready(page, base_url)
-    _skip_if_insufficient(names, 3)
+    with_costar, _ = _classify_by_costar(page, names, need_with=3)
+    _skip_if_insufficient(with_costar, 3)
     baseline_state = _snapshot(page)
     baseline_geo = _geometry(page)
 
-    a, b, c = names[0], names[1], names[2]
+    a, b, c = with_costar[0], with_costar[1], with_costar[2]
     _click_gantt_actress_raw(page, a)
     _click_mid_tween(page, "costarEl", b)  # 中途切成 b（真正命中補間中途的那一擊）
     _click_gantt_actress_raw(page, c)  # 再切成 c（`_wait_scroll_settled` 已排除
@@ -535,10 +601,15 @@ def test_switch_actress_mid_animation_matches_direct_set(page: Page, base_url: s
     settle 後應完全等同「reload 後直接進場點 B 一次（未經過 A）」的對照組
     （focus/顯示旗標/三個 ref 元素狀態/各列表渲染順序全部一致），且捲動被觸發過
     （`window.scrollTo` 呼叫次數 > 0）。
+
+    TASK-156d-T9：a／b 都必須「有共演」，理由同上——若 b 零共演，切換到 b
+    會觸發 `costarVisible` 真正翻轉（離開動畫），不再是本測試要驗的
+    `wasActress===isNowActress` no-op 分支。
     """
     names = _load_ready(page, base_url)
-    _skip_if_insufficient(names, 2)
-    a, b = names[0], names[1]
+    with_costar, _ = _classify_by_costar(page, names, need_with=2)
+    _skip_if_insufficient(with_costar, 2)
+    a, b = with_costar[0], with_costar[1]
 
     _install_scroll_spy(page)
     _click_gantt_actress_raw(page, a)
@@ -574,13 +645,16 @@ def test_narrow_width_settles_to_baseline_position(page: Page, base_url: str) ->
     """不變式 4 窄螢幕子句：<=1024px 只要求 settle 後位置與「該寬度下的靜態位置」
     相同（不要求逐幀不動）。本檔對照組＝基準快照本身就是同寬度下未聚焦的靜態
     位置，settle 後（=清除後）理當回到同一組數字。
+
+    TASK-156d-T9：目標必須先過濾成「有共演」的女優（理由同淡出/淡入中斷）。
     """
     names = _load_ready(page, base_url, width=MOBILE)
-    _skip_if_insufficient(names, 1)
+    with_costar, _ = _classify_by_costar(page, names, need_with=1)
+    _skip_if_insufficient(with_costar, 1)
     baseline_state = _snapshot(page)
     baseline_geo = _geometry(page)
 
-    target = names[0]
+    target = with_costar[0]
     _click_gantt_actress_raw(page, target)
     _click_mid_tween(page, "top20Row3El", target)
     _wait_settled(page)
@@ -634,3 +708,229 @@ def test_prm_rapid_clicks_settle_instantly_and_match_baseline(page: Page, base_u
     settled_geo = _geometry(page)
     _assert_state_equal(settled_state, baseline_state, "PRM 連點")
     _assert_geometry_equal(settled_geo, baseline_geo)
+
+
+# ── TASK-156d-T9：沒有共演時顯示 Top20 而非空卡 ──────────────────────────────
+# CD-156d-10a／10b：`costarVisible = isActressFocused && costarRows.length > 0`；
+# 零共演女優 settle 後應顯示 Top20（`showTop20InRow3=true`），`costarEl`
+# 不顯示，也不播放任何淡出淡入（`costarVisible` 從 false 到 false，沒有翻轉）。
+
+
+def test_no_costar_actress_shows_top20_not_empty_costar_card(
+    page: Page, base_url: str
+) -> None:
+    """邊界條件 1：焦點一位 `costarRows.length===0` 的女優——row3 左半格顯示
+    Top20（`showTop20InRow3=true`），`costarEl` 不顯示（`showCostar=false`，
+    computed `display==='none'`），row7 不顯示（`showTop20InRow7=false`），
+    畫面上沒有空白的「與她同片」卡片。
+    """
+    names = _load_ready(page, base_url)
+    _, without_costar = _classify_by_costar(page, names, need_without=1)
+    _skip_if_insufficient(without_costar, 1)
+    target = without_costar[0]
+
+    _click_gantt_actress_raw(page, target)
+    _wait_settled(page)
+
+    state = _snapshot(page)
+    assert state["focus"] == {"type": "actress", "value": target}, (
+        f"focus 應為 {target!r}，實際 {state['focus']!r}"
+    )
+    assert state["showTop20InRow3"] is True, "零共演女優應顯示 Top20，不是空的與她同片卡"
+    assert state["showCostar"] is False, "零共演女優不應顯示與她同片卡"
+    assert state["showTop20InRow7"] is False, "零共演女優不應觸發 row7 顯示"
+    assert state["costarEl"]["display"] == "none", (
+        f"costarEl computed display 應為 none，實際 {state['costarEl']['display']!r}"
+        "（畫面上不該出現空白的『與她同片』卡片）"
+    )
+    assert state["top20Row3El"]["display"] != "none", "row3 左半格應顯示 Top20"
+
+
+def test_switch_between_costar_and_no_costar_actress_matches_direct_set(
+    page: Page, base_url: str
+) -> None:
+    """邊界條件 2：A（有共演）→B（沒共演）在動畫中途切換，settle 後必須與
+    『reload 後直接點 B 一次』的對照組一致（不能因為在補間中途攔截，讓
+    costarEl 卡在半途或顯示空白的『與她同片』卡——CD-156d-10b
+    `wasCostarVisible`/`isNowCostarVisible` 判斷）；B→A 相反方向同理，沿用
+    T7 的『直接設定終值』對照組手法（`_assert_state_equal`／
+    `_assert_geometry_equal`）。
+    """
+    names = _load_ready(page, base_url)
+    with_costar, without_costar = _classify_by_costar(
+        page, names, need_with=1, need_without=1
+    )
+    _skip_if_insufficient(with_costar, 1)
+    _skip_if_insufficient(without_costar, 1)
+    a, b = with_costar[0], without_costar[0]
+
+    # 第一段：A 進場（costarEl 淡入中途）切成零共演的 B（觸發真正的離開動畫）。
+    _click_gantt_actress_raw(page, a)
+    _click_mid_tween(page, "costarEl", b)
+    _wait_settled(page)
+    switched_to_b_state = _snapshot(page)
+    switched_to_b_geo = _geometry(page)
+
+    # 對照組：reload 後直接點 B 一次。
+    reference_names = _load_ready(page, base_url)
+    assert b in reference_names, f"reload 後年表找不到目標 {b!r}（片庫資料應一致）"
+    _click_gantt_actress_raw(page, b)
+    _wait_settled(page)
+    reference_b_state = _snapshot(page)
+    reference_b_geo = _geometry(page)
+
+    assert switched_to_b_state["focus"] == {"type": "actress", "value": b}, (
+        f"settle 後 focus 應為 B（{b!r}），實際 {switched_to_b_state['focus']!r}"
+    )
+    assert switched_to_b_state["showCostar"] is False, (
+        "零共演女優 settle 後不應顯示與她同片卡（空卡）"
+    )
+    _assert_state_equal(switched_to_b_state, reference_b_state, "A進場中途切成零共演B")
+    _assert_geometry_equal(switched_to_b_geo, reference_b_geo)
+
+    # 第二段：從 B（此刻頁面已聚焦 B、無殘留動畫）切回有共演的 A。
+    _click_gantt_actress_raw(page, a)
+    _wait_settled(page)
+    switched_to_a_state = _snapshot(page)
+    switched_to_a_geo = _geometry(page)
+
+    # 對照組：reload 後直接點 A 一次。
+    reference_names_a = _load_ready(page, base_url)
+    assert a in reference_names_a, f"reload 後年表找不到目標 {a!r}（片庫資料應一致）"
+    _click_gantt_actress_raw(page, a)
+    _wait_settled(page)
+    reference_a_state = _snapshot(page)
+    reference_a_geo = _geometry(page)
+
+    assert switched_to_a_state["focus"] == {"type": "actress", "value": a}, (
+        f"settle 後 focus 應為 A（{a!r}），實際 {switched_to_a_state['focus']!r}"
+    )
+    _assert_state_equal(switched_to_a_state, reference_a_state, "B切回有共演A")
+    _assert_geometry_equal(switched_to_a_geo, reference_a_geo)
+
+
+# ── TASK-156d-T9：CD-156d-10c——女優焦點時 row4 移到 row3 之前 ────────────────
+
+
+def _row_order_geometry(page: Page) -> dict:
+    """row3／row4 的文件座標 top（`getBoundingClientRect().top + scrollY`），
+    先強制捲回頂端避免當下捲動位置汙染量測（比照 `_geometry` 的做法）。
+    """
+    page.evaluate("() => window.scrollTo(0, 0)")
+    return page.evaluate(
+        """() => {
+            const top = (sel) => {
+                const el = document.querySelector(sel);
+                return el ? el.getBoundingClientRect().top + window.scrollY : null;
+            };
+            return { row3_top: top('.row3'), row4_top: top('.row4') };
+        }"""
+    )
+
+
+def _visible_direct_children_order(page: Page) -> list:
+    """回傳 `.insights-container` 目前「可見」（computed `display !== 'none'`）
+    的直接子元素，依渲染文件座標 top 由小到大排序後的 class 名稱清單（取
+    `className` 第一個 token 當識別碼）。
+
+    TASK-156d-T9 round 2 review 抓到的假綠陷阱：只驗 `row3.top`／`row4.top`
+    兩者的相對關係，量不到「容器其他直接子元素沒有明確 `order` 基準值、
+    預設 order:0 飄到最前面」這類問題——`.section-divider`（純文字分隔列，
+    DOM 位置在 row4 與 row5 之間）就是實例：它一開始沒有 order 宣告，實際
+    渲染跑到最頂端、蓋過 row1（CDP 實測 section-divider.top=32 < row1.top=60）。
+    這支 helper 窮舉全部可見直接子元素（不只 row3/row4），讓測試斷言「完整
+    渲染順序」而非「兩個點的相對關係」，才擋得住這類遺漏。
+    `.insights-preview`（照片預覽浮層）是 `position:fixed`，不參與 flex
+    排版；正常測試流程從未觸發預覽，應維持 `display:none`，不特別排除——
+    若它意外可見，讓斷言直接失敗比默默過濾掉更安全。
+    """
+    page.evaluate("() => window.scrollTo(0, 0)")
+    return page.evaluate(
+        """() => {
+            const root = document.querySelector('%s');
+            const kids = Array.from(root.children).filter(
+                (el) => getComputedStyle(el).display !== 'none'
+            );
+            const withTop = kids.map((el) => ({
+                cls: (el.className || '').split(' ')[0],
+                top: el.getBoundingClientRect().top + window.scrollY,
+            }));
+            withTop.sort((a, b) => a.top - b.top);
+            return withTop.map((k) => k.cls);
+        }"""
+        % ALPINE_ROOT_SELECTOR
+    )
+
+
+# CD-156d-10c：無焦點（片商焦點視覺上相同）時 `.insights-container` 可見直接
+# 子元素的完整渲染順序＝DOM 順序；女優焦點時 row3/row4 對調、多出 row7，其餘
+# （含 `.section-divider` 夾在 row3/row4 那組之後、row5 之前）不變。
+NO_FOCUS_VISIBLE_ORDER = [
+    "row1", "row2", "row3", "row4", "section-divider", "row5", "row6",
+]
+ACTRESS_FOCUS_VISIBLE_ORDER = [
+    "row1", "row2", "row4", "row3", "section-divider", "row5", "row6", "row7",
+]
+
+
+def test_row4_reorders_with_actress_focus(page: Page, base_url: str) -> None:
+    """CD-156d-10c／10d：女優焦點時 row4（年齡/導演/系列）應排在 row3（標籤
+    樹圖）之前（`row4.top < row3.top`）；無焦點（片商焦點視覺上相同——兩者
+    皆不套用 `is-actress-focused`）時維持 row4 在 row3 之後
+    （`row4.top > row3.top`）。1440／390 兩個寬度都要驗證（純 CSS `order`，
+    不分寬度）。同時驗證 row4 移動後 age/director/series 三個圖表 canvas
+    仍正常渲染（非空白）。
+
+    round 2 review 追加：`.insights-container` 全部可見直接子元素（不只
+    row3/row4）的完整渲染順序都要符合預期——擋住「某個直接子元素沒有明確
+    `order` 基準值、飄到最前面」這類回歸（`.section-divider` 實例）。
+
+    契約測試名稱（mutation 區塊指定，不得改名）。
+    """
+    for width in (DESKTOP, MOBILE):
+        names = _load_ready(page, base_url, width=width)
+        _skip_if_insufficient(names, 1)
+
+        no_focus_geo = _row_order_geometry(page)
+        assert no_focus_geo["row4_top"] > no_focus_geo["row3_top"], (
+            f"寬度 {width}px 無焦點時 row4.top 應大於 row3.top，"
+            f"實際 row4={no_focus_geo['row4_top']}, row3={no_focus_geo['row3_top']}"
+        )
+        no_focus_order = _visible_direct_children_order(page)
+        assert no_focus_order == NO_FOCUS_VISIBLE_ORDER, (
+            f"寬度 {width}px 無焦點時 .insights-container 可見直接子元素渲染順序"
+            f"不符預期，實際 {no_focus_order!r}，預期 {NO_FOCUS_VISIBLE_ORDER!r}"
+        )
+
+        target = names[0]
+        _click_gantt_actress_raw(page, target)
+        _wait_settled(page)
+        actress_geo = _row_order_geometry(page)
+        assert actress_geo["row4_top"] < actress_geo["row3_top"], (
+            f"寬度 {width}px 女優焦點時 row4.top 應小於 row3.top，"
+            f"實際 row4={actress_geo['row4_top']}, row3={actress_geo['row3_top']}"
+        )
+        actress_order = _visible_direct_children_order(page)
+        assert actress_order == ACTRESS_FOCUS_VISIBLE_ORDER, (
+            f"寬度 {width}px 女優焦點時 .insights-container 可見直接子元素渲染"
+            f"順序不符預期，實際 {actress_order!r}，"
+            f"預期 {ACTRESS_FOCUS_VISIBLE_ORDER!r}"
+        )
+
+        canvases_ok = page.evaluate(
+            """() => {
+                return ['ageChart', 'directorChart', 'seriesChart'].every((id) => {
+                    const el = document.getElementById(id);
+                    const canvas = el && el.querySelector('canvas');
+                    return !!(canvas && canvas.width > 0 && canvas.height > 0);
+                });
+            }"""
+        )
+        assert canvases_ok, (
+            f"寬度 {width}px：row4 移動後 age/director/series 三個圖表 canvas "
+            "應存在且非空白"
+        )
+
+        # 清除焦點，下一輪寬度重新載入前歸零。
+        _click_gantt_actress_raw(page, target)
+        _wait_settled(page)

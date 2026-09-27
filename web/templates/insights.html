@@ -146,7 +146,7 @@
 {% endmacro %}
 
 {% block content %}
-<div class="insights-container page-layer" x-data="libraryInsights">
+<div class="insights-container page-layer" x-data="libraryInsights" :class="{ 'is-actress-focused': isActressFocused }">
     <!-- Row 1: 常駐四格 -->
     <div class="row1">
         <section class="card insights-brand-card">

@@ -1065,6 +1065,29 @@
     min-width: 0;
 }
 
+/* TASK-156d-T9／CD-156d-10c：女優焦點時 row4（年齡/導演/系列）移到 row2 之後、
+   row3（標籤樹圖）之前；片商焦點或無焦點時維持現況（row4 在 row3 之後）。
+   `.insights-container` 是 flex column，全部「直接子元素」都先給明確基準
+   order（與目前 DOM 順序一致，視覺零改變），只交換 row3／row4 的 order 值——
+   只改 row4 一條規則會讓它排到所有預設 order:0 的 row 最前面，不是插入
+   row2／row3 之間。純 CSS 幾何屬性，不分寬度（見 CD-156d-10d），不加動畫。
+   `.insights-container` 的直接子元素共 9 個：row1-row7、`.section-divider`
+   （純文字分隔列，在 row4 與 row5 之間）、`.insights-preview`（女優照片
+   預覽浮層，`position:fixed`——不參與 flex 排版，out-of-flow，不受 order
+   影響，不需要給值）。`.section-divider` 的 order 固定在 row3/row4 那組
+   （3/4）之後、row5（6）之前，兩種模式下都夾在正確位置，不隨女優焦點切換。 */
+.insights-container .row1 { order: 1; }
+.insights-container .row2 { order: 2; }
+.insights-container .row3 { order: 3; }
+.insights-container .row4 { order: 4; }
+.insights-container .section-divider { order: 5; }
+.insights-container .row5 { order: 6; }
+.insights-container .row6 { order: 7; }
+.insights-container .row7 { order: 8; }
+
+.insights-container.is-actress-focused .row3 { order: 4; }
+.insights-container.is-actress-focused .row4 { order: 3; }
+
 /* ===== 響應式斷點 ===== */
 @media (max-width: 1024px) {
     .insights-container .row1 {

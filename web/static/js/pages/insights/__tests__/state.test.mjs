@@ -30,7 +30,7 @@ globalThis.document = globalThis.document || {
     },
 };
 
-const { computePreviewPosition, libraryInsightsState, shouldPlayPodiumEntrance } = await import('../state.js');
+const { computePreviewPosition, libraryInsightsState, shouldPlayPodiumEntrance, computeCostarVisible } = await import('../state.js');
 const { setRecords } = await import('../aggregate.js');
 
 function rec(opts) {
@@ -472,4 +472,32 @@ test('shouldPlayPodiumEntrance: 已播放過 → 不重播', () => {
 
 test('shouldPlayPodiumEntrance: podiumRows 為空（尚未算出頒獎台名單）時不播放', () => {
     assert.equal(shouldPlayPodiumEntrance(false, 0), false);
+});
+
+
+// ── computeCostarVisible（TASK-156d-T9／CD-156d-10a：沒有共演不顯示空卡）──
+
+test('computeCostarVisible: 無焦點 → false', () => {
+    assert.equal(computeCostarVisible(false, 5), false);
+});
+
+test('computeCostarVisible: 女優焦點且有共演 → true', () => {
+    assert.equal(computeCostarVisible(true, 3), true);
+});
+
+test('computeCostarVisible: 女優焦點但零共演 → false', () => {
+    assert.equal(computeCostarVisible(true, 0), false);
+});
+
+test('costarVisible getter: 反映 isActressFocused 與 costarRows.length', () => {
+    const state = libraryInsightsState();
+    state.focus = { type: 'actress', value: '明里つむぎ' };
+    state.costarRows = [];
+    assert.equal(state.costarVisible, false, '零共演時應為 false');
+
+    state.costarRows = [{ name: 'B', count: 1, self: '明里つむぎ' }];
+    assert.equal(state.costarVisible, true, '有共演時應為 true');
+
+    state.focus = { type: 'maker', value: 'SOD' };
+    assert.equal(state.costarVisible, false, '片商焦點時應為 false');
 });

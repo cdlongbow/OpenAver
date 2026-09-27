@@ -120,6 +120,14 @@ export function shouldPlayPodiumEntrance(alreadyPlayed, podiumRowsLength) {
     return !alreadyPlayed && podiumRowsLength > 0;
 }
 
+/**
+ * TASK-156d-T9／CD-156d-10a：row3 左半格是否顯示「與她同片」卡的衍生旗標。
+ * 女優焦點但零共演時仍應為 false（改顯示 Top20），避免空白的「與她同片」卡。
+ */
+export function computeCostarVisible(isActressFocused, costarRowsLength) {
+    return isActressFocused && costarRowsLength > 0;
+}
+
 export function libraryInsightsState() {
     return {
         snapshot: null,
@@ -520,12 +528,26 @@ export function libraryInsightsState() {
 
         /**
          * TASK-156d-T3／CD-156d-2：`$watch('focus')` 的唯一動效/捲動 sink。
-         * `isActressFocused` 翻轉時才觸發 row3 左半格佔用者循序淡出淡入
-         * ＋row7 副本 B 獨立淡出淡入；只換人（沒有翻轉）不觸發淡出淡入，只捲動。
+         * TASK-156d-T9／CD-156d-10b：`costarVisible` 翻轉時才觸發 row3 左半格
+         * 佔用者循序淡出淡入＋row7 副本 B 獨立淡出淡入（女優焦點但零共演時
+         * `costarVisible` 維持 false，不播放）；捲動邏輯仍依 `isActressFocused`
+         * 翻轉（CD-156d-10e，不變）。
          * 讀 `this.focus`（reactive）而非把它複製成本地閉包變數跨 `$nextTick` 使用
          * ——CD-156d-2 步驟 4 逐字要求，快速連續觸發時才能永遠依「當下最新」值判斷。
+         *
+         * `oldCostarRowsLength`：呼叫方（`$watch('focus')`）在 `recomputeCostar()`
+         * 覆寫 `this.costarRows` 之前先讀出來的舊值長度。**不能改用 `this.showCostar`
+         * 當 `wasCostarVisible` 的代理值**——`showCostar` 只在動畫 `onComplete` 才被
+         * 寫入，若同一位女優被快速連點兩次、第二次點擊發生在第一次進場動畫的
+         * onComplete 觸發之前，`showCostar` 仍是 stale 的舊值（false），會讓這次
+         * 翻轉被誤判成「沒有翻轉」而略過 killTweens／leave 序列，導致第一次動畫
+         * 的 onComplete 之後仍把畫面切成「顯示與她同片」——即使焦點已經被第二次
+         * 點擊清除。這個迴歸由 `test_interrupt_during_fade_out_matches_direct_set`
+         * 抓到（100% 重現，非計時抖動）。改用「當下這輪 `$watch` 開始時、尚未被
+         * 覆寫的 `costarRows.length`」＋`wasActress` 算 `wasCostarVisible`，兩者
+         * 都是同步值，不受動畫完成時機影響。
          */
-        _handleActressFocusChange(oldValue) {
+        _handleActressFocusChange(oldValue, oldCostarRowsLength) {
             const wasActress = !!(oldValue && oldValue.type === 'actress');
             const isNowActress = this.isActressFocused;
             const switchedActress =
@@ -542,9 +564,12 @@ export function libraryInsightsState() {
                 });
             }
 
-            // CD-156d-2 步驟 3：isActressFocused 沒有翻轉（同為女優焦點換人／片商焦點）
-            // 不觸發任何淡出淡入，內容已由本輪 $watch 其餘 recompute 呼叫直接算好。
-            if (wasActress === isNowActress) return;
+            // TASK-156d-T9／CD-156d-10b：淡出淡入的觸發條件是 costarVisible 翻轉，
+            // 不是 isActressFocused 翻轉——女優焦點但零共演時 costarVisible 維持
+            // false，不應播放任何動畫。
+            const wasCostarVisible = computeCostarVisible(wasActress, oldCostarRowsLength);
+            const isNowCostarVisible = this.costarVisible;
+            if (wasCostarVisible === isNowCostarVisible) return;
 
             const motion = window.OpenAver.motion;
             const top20El = this.$refs.top20Row3El;
@@ -554,7 +579,7 @@ export function libraryInsightsState() {
             // 再永遠依當下最新 isActressFocused 從步驟 1/2 重新開始。
             motion.killTweens([top20El, costarEl, row7El].filter(Boolean));
 
-            if (isNowActress) {
+            if (isNowCostarVisible) {
                 // 步驟 1：進入焦點——costarEl 先淡出既有的 row3 副本 A。
                 motion.playFadeTo(top20El, {
                     opacity: 0,
@@ -812,6 +837,13 @@ export function libraryInsightsState() {
          */
         get isActressFocused() {
             return !!(this.focus && this.focus.type === 'actress');
+        },
+
+        /**
+         * TASK-156d-T9／CD-156d-10a：命名可讀性用 getter，模板不需要直接綁定。
+         */
+        get costarVisible() {
+            return computeCostarVisible(this.isActressFocused, this.costarRows.length);
         },
 
         get ganttTitle() {
@@ -1192,6 +1224,12 @@ export function libraryInsightsState() {
                 this.recomputeCostar();
             });
             this.$watch('focus', (value, oldValue) => {
+                // TASK-156d-T9／CD-156d-10b：在 recomputeCostar() 覆寫 this.costarRows
+                // 之前先記錄舊值長度，供 _handleActressFocusChange 算 wasCostarVisible
+                // 用（見該函式內部註解——讀 this.showCostar 當代理值在「同一位女優
+                // 快速二連點、第二次點擊發生在第一次動畫 onComplete 之前」的情境會
+                // 是 stale 的，因為 showCostar 只在 onComplete 才寫入）。
+                const oldCostarRowsLength = this.costarRows.length;
                 this.recomputeScopedCount();
                 this.redrawYears();
                 this.redrawDonut();
@@ -1204,7 +1242,7 @@ export function libraryInsightsState() {
                 this.recomputeSolo();
                 this._maybePlayPinPulse();
                 this.recomputeCostar();
-                this._handleActressFocusChange(oldValue);
+                this._handleActressFocusChange(oldValue, oldCostarRowsLength);
             });
 
             if (window.__registerPage) {
