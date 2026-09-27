@@ -621,6 +621,12 @@ export function buildGanttRows(records, mainMakerYearMap, period, focus) {
                 });
             }
         }
+        var herIdx = top.findIndex(function (r) { return r.name === herName; });
+        if (herIdx !== -1) {
+            var herRow = top.splice(herIdx, 1)[0];
+            herRow.pinned = true;
+            top.unshift(herRow);
+        }
     }
     return top;
 }
@@ -911,6 +917,12 @@ export function buildSoloRows(records, mainMakerYearMap, period, focus, ganttNam
                 herRow.appended = true;
                 top.push(herRow);
             }
+        }
+        var herIdx = top.findIndex(function (r) { return r.name === herName; });
+        if (herIdx !== -1) {
+            var herRow = top.splice(herIdx, 1)[0];
+            herRow.pinned = true;
+            top.unshift(herRow);
         }
     }
     return top;

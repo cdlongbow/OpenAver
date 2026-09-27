@@ -90,42 +90,27 @@
     padding: 0.5rem 0.75rem;
 }
 
-/* OpenAver 品牌格 */
-.insights-brand-card .card-body {
-    position: relative;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-}
-
+/* OpenAver 品牌格：滿版字樣，視覺份量對齊旁邊片數數字（156d-T1 / CD-156d-8）
+   .card-body 沿用 base（column + stretch）＋ .row1 .card-body 的 justify-content:center
+   垂直置中；不再需要 row-direction/space-between（原本服務「文字 vs 空按鈕位」兩個子元素，
+   移除空按鈕位後只剩一個子元素，交給 stretch 預設值即可滿版寬度）。*/
 .insights-brand-row {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
     min-width: 0;
 }
 
-.insights-brand-row img {
-    width: 1.25rem;
-    height: 1.25rem;
-    flex: 0 0 auto;
-}
-
 .insights-brand-row .title {
-    font-size: 0.875rem;
-    font-weight: 600;
+    /* vw-based 線性擬合（非任意值）：對這格 .card-body 內容寬（扣 padding）在 1025–1440
+       三個實測寬度做最小平方回歸，目標是文字 scrollWidth 落在內容寬 80%–100%（spec-156d
+       §3.1，主 session 2026-09-27 裁決）。斷點切換時內容寬跳變（4欄→2欄→1欄，格子變寬），
+       字級隨之跳變是該跳變的必然結果，不是校準誤差。 */
+    font-size: clamp(2rem, calc(4.475vw - 13.06px), 3.3rem);
+    font-weight: 700;
     color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-}
-
-/* 格子右上角空位：固定尺寸約 32×32px，不渲染按鈕 */
-.insights-brand-actions {
-    width: 32px;
-    height: 32px;
-    flex: 0 0 32px;
 }
 
 /* 常駐四格共用字級（片數數字／年份選中值／焦點名字）——單一 class，spec §3.1 */
@@ -287,7 +272,7 @@
     height: 100%;
 }
 
-/* ===== Row 3: 女優 Top20 + 標籤 treemap ===== */
+/* ===== Row 3: 女優 Top20（頒獎台＋精簡名單）+ 標籤 treemap ===== */
 .insights-container .row3 {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -296,37 +281,90 @@
     min-width: 0;
 }
 
-.insights-container .top20-list {
-    flex: 1 1 auto;
-    min-height: 360px;
+/* TASK-156d-T2：row3 左半格從單一 top20-card 拆成頒獎台／精簡名單兩張卡，
+   兩卡在 row3 的 1fr 欄位裡當一個 grid item，內部自己上下堆疊。 */
+.insights-container .top20-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+/* TASK-156d-T3／CD-156d-2：row3 左半格是單一 grid item（.row3-top20-slot），
+   內部兩個佔用者（副本 A wrapper／#costarCard）任何時刻只顯示一個，用 :class
+   切換 .is-hidden，不用 x-show（FE-ALPINE-17：vendored Alpine 的 x-show 結構上
+   晚一幀且一翻轉就立即 display:none，來不及讓淡出播完）。 */
+.insights-container .row3-top20-slot {
+    display: flex;
+    min-width: 0;
+}
+
+/* P3 修正（156d Codex review）：原本這裡是 display:contents，讓既有 .top20-group
+   （T2 已定，flex column，本卡不重寫）直接當 .row3-top20-slot 的 flex item——但
+   display:contents 沒有可繪製的盒子，`_handleActressFocusChange`（state.js）對
+   它 `motion.playFadeTo(opacity)` 完全沒有視覺效果（CDP 實測：子元素
+   `.podium-slot` 的 computed opacity 全程仍是 1，wrapper 自己的 opacity 補間
+   降到 0 後直接跳 display:none，使用者看到的是「舊卡片維持不透明到動畫結束那
+   一瞬間直接消失」，不是淡出）。改 display:flex 讓 wrapper 自己有盒子承接
+   opacity；width:100% 補回主軸（水平）尺寸（理由同下方 .top20-group/#costarCard
+   的 width:100% 規則）。.row3-top20-slot 預設 align-items:stretch 依然讓這個
+   wrapper 桌面撐滿 --top20-slot-h、窄螢幕維持自然高度，wrapper 內部同一個
+   stretch 再把高度傳給唯一子元素 .top20-group（它沒有覆寫 height/align-self）
+   ——1440／390 寬 CDP 實測修正前後幾何零差異。 */
+.insights-container .top20-row3-wrap {
+    display: flex;
+    width: 100%;
+}
+
+/* 三個可切換顯示元素共用的顯示開關（row3 副本 A wrapper／#costarCard／row7 副本 B
+   wrapper）。用 !important 蓋過 .top20-row3-wrap／.card 的 display:flex（沿用
+   既有 [x-cloak]{display:none!important} 慣例，見 input.css:182）。 */
+.insights-container .is-hidden {
+    display: none !important;
+}
+
+/* 156d-T3 定稿輪數 2 修正（主 session 用幾何 oracle 抓到）：row3-top20-slot 是
+   flex row，單一可見佔用者（.top20-group／#costarCard）預設主軸（水平）尺寸是
+   content-based shrink-to-fit，不會自動撐滿整格寬度——先前只有 costarCard 露餡
+   （縮在左上角，右側與下方全是空洞；.top20-group 的內容湊巧夠寬，目測沒發現同一個
+   問題），兩者都明確 width:100% 才不靠內容寬度巧合。
+   高度：原本 #costarCard 有一條「CD-156c-6：align-self:start，自然高度不被拉伸」
+   規則，那是舊 row6（costarCard 與分布表並列兩個 grid item）的產物；T3 搬進
+   row3-top20-slot 後，同一時刻只有一個可見佔用者，不再有「被更高的鄰居拉伸」的
+   問題，align-self:start 反而擋住桌面 --top20-slot-h 固定高度該有的撐滿行為，
+   已整條移除——移除後預設 align-items:stretch 生效：桌面（插槽有 height:
+   var(--top20-slot-h)）撐滿固定格，窄螢幕（插槽無固定高度、單一可見項）stretch
+   對唯一項是 no-op，等同自然高度，兩種斷點各自正確、不需要額外的 media query。 */
+.insights-container .row3-top20-slot .top20-group,
+.insights-container .row3-top20-slot #costarCard {
+    width: 100%;
+}
+
+/* D156d-9：row3 左半格桌面固定高度、窄螢幕自然高度（真互斥，FE-CSS-22，與下方
+   @media (max-width:1024px) 不重疊，1024／1025 邊界各驗一次）。calc() 由既有 rem
+   常數組成，不是量出來的 px 魔術數字；使用者放大瀏覽器字級時要等比例放大，
+   17 列不能因此擠出捲動。組成（1440 寬 CDP 實測校準）：
+   頒獎台卡（頭 + .podium min-height 9.25rem + 內距）＋精簡名單卡頭與內距＋
+   17 列 × 單列實測高度＋兩卡間 gap（.top20-group 0.5rem）。 */
+@media (min-width: 1025px) {
+    .insights-container {
+        /* 頒獎台卡（head+podium+內距）＋精簡名單卡自己的 head/內距與 list-rows
+           以外的開銷合計 17rem（CDP 實測校準：100% 字級時 17*2.5625rem 只給
+           .rest20-list 留出 655px 可用高度，比 17 列實際內容 697px 少 42px，
+           在此把開銷項從 13.5rem 調到 17rem 補回這段落差＋留一點餘裕）＋
+           17 列 × 單列實測高度 2.5625rem＋兩卡間 gap 0.5rem。 */
+        --top20-slot-h: calc(17rem + 17 * 2.5625rem + 0.5rem);
+    }
+
+    .insights-container .row3-top20-slot {
+        height: var(--top20-slot-h);
+    }
 }
 
 /* Top20 列（TASK-156b-T5）——名字與片數共用字級來源 */
 .insights-container {
     --top20-text-size: 0.8125rem;
     --insights-preview-ratio: 0.8;
-}
-
-.insights-container .top20-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.25rem 0.125rem;
-    border-bottom: 1px solid var(--stroke-subtle);
-    cursor: pointer;
-    min-width: 0;
-}
-
-.insights-container .top20-row:last-child {
-    border-bottom: none;
-}
-
-.insights-container .top20-row:hover {
-    background: color-mix(in oklch, var(--color-primary) 6%, transparent);
-}
-
-.insights-container .top20-row.is-active {
-    background: color-mix(in oklch, var(--color-primary) 12%, transparent);
 }
 
 .insights-container .top20-rank {
@@ -353,17 +391,8 @@
     color: var(--text-secondary);
 }
 
-.insights-container .top20-avatar.is-top3 {
-    width: 48px;
-    height: 48px;
-    font-size: 1rem;
-}
-
-.insights-container .top20-row:has(.top20-avatar.is-top3) {
-    padding-block: 0.375rem;
-}
-
-.insights-container .top20-avatar img {
+.insights-container .top20-avatar img,
+.insights-container .podium-avatar img {
     width: 100%;
     height: 100%;
     object-fit: cover;
@@ -382,22 +411,6 @@
     white-space: nowrap;
 }
 
-.insights-container .top20-bar-wrap {
-    flex: 1 1 auto;
-    min-width: 0;
-    height: 0.8125rem;
-    background: var(--stroke-subtle);
-    border-radius: var(--radius-xs);
-    overflow: hidden;
-}
-
-.insights-container .top20-bar {
-    display: block;
-    height: 100%;
-    background: var(--color-primary);
-    border-radius: var(--radius-xs);
-}
-
 .insights-container .top20-count {
     width: 2.5rem;
     flex: 0 0 auto;
@@ -409,6 +422,134 @@
     font-size: 0.8125rem;
     color: var(--text-muted);
     padding: 0.75rem 0.25rem;
+}
+
+/* 頒獎台（D156d-2：固定 3 插槽，寫死左2／中1／右3；三階台座固定高度不按比例，
+   動效留給 T6，本卡只做靜態呈現） */
+.insights-container .podium {
+    flex: 1 1 auto;
+    min-height: 148px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 1rem;
+    padding-top: 0.5rem;
+}
+
+.insights-container .podium-slot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+    width: 5.5rem;
+    min-width: 0;
+    cursor: pointer;
+    border-radius: var(--radius-md);
+    padding: 0.25rem 0.25rem 0;
+}
+
+.insights-container .podium-slot:hover {
+    background: color-mix(in oklch, var(--color-primary) 6%, transparent);
+}
+
+.insights-container .podium-slot.is-active {
+    background: color-mix(in oklch, var(--color-primary) 12%, transparent);
+}
+
+.insights-container .podium-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+    overflow: hidden;
+    background: var(--surface-2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+}
+
+.insights-container .podium-name {
+    font-size: var(--top20-text-size);
+    font-weight: 700;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.insights-container .podium-count {
+    font-size: 0.6875rem;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+/* 台座是獨立可定位元素（不與頭像/名字/片數合併），供 T6 直接掛 scaleY 動效；
+   三階固定高度（8pt grid），中間最高，不按名次片數比例。 */
+.insights-container .podium-stand {
+    width: 100%;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 0.375rem;
+    border-radius: var(--radius-xs) var(--radius-xs) 0 0;
+    background: color-mix(in oklch, var(--color-primary) 16%, var(--surface-2));
+}
+
+.insights-container .podium-stand--1 {
+    height: 72px;
+    background: color-mix(in oklch, var(--color-primary) 26%, var(--surface-2));
+}
+
+.insights-container .podium-stand--2 {
+    height: 56px;
+}
+
+.insights-container .podium-stand--3 {
+    height: 40px;
+}
+
+.insights-container .podium-rank {
+    font-size: 0.875rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+/* 精簡名單（第 4–20 名）——形狀照舊 top20 排行列，拿掉長條相關兩個節點 */
+.insights-container .rest20-list {
+    flex: 1 1 auto;
+    min-height: 220px;
+}
+
+.insights-container .rest20-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0.125rem;
+    border-bottom: 1px solid var(--stroke-subtle);
+    cursor: pointer;
+    min-width: 0;
+}
+
+.insights-container .rest20-row:last-child {
+    border-bottom: none;
+}
+
+.insights-container .rest20-row:hover {
+    background: color-mix(in oklch, var(--color-primary) 6%, transparent);
+}
+
+.insights-container .rest20-row.is-active {
+    background: color-mix(in oklch, var(--color-primary) 12%, transparent);
+}
+
+/* Codex review P2（156d-T2）：拿掉長條後 .rest20-row 沒有東西撐開列寬，片數貼不到右緣。
+   只在 .rest20-row 範圍內覆寫，不動共用的 .top20-name 全域規則（其他呼叫處维持原寬）。 */
+.insights-container .rest20-row .top20-name {
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 /* 全頁共用照片預覽浮層（position:fixed，不佔文件流） */
@@ -528,10 +669,10 @@
 
 .insights-container .gantt-table {
     --gantt-name-w: 7.5rem;
-    --gantt-cell-w: 1.5rem;
+    --gantt-cell-min-w: 1.5rem;
     display: flex;
     flex-direction: column;
-    width: max-content;
+    width: 100%;
     min-width: 100%;
     font-size: 0.6875rem;
 }
@@ -593,8 +734,7 @@
 }
 
 .insights-container .gantt-head-cell {
-    width: var(--gantt-cell-w);
-    min-width: var(--gantt-cell-w);
+    min-width: var(--gantt-cell-min-w);
     text-align: center;
     color: var(--text-muted);
     font-size: 0.625rem;
@@ -602,20 +742,22 @@
     white-space: nowrap;
 }
 
-.insights-container .gantt-head-cell.is-selected,
-.insights-container .gantt-cell.is-selected {
+.insights-container .gantt-head-cell.is-selected {
     background: color-mix(in oklch, var(--color-primary) 10%, transparent);
 }
 
 .insights-container .gantt-cell {
-    width: var(--gantt-cell-w);
-    min-width: var(--gantt-cell-w);
+    min-width: var(--gantt-cell-min-w);
     height: 1.375rem;
     border-bottom: 1px solid var(--stroke-subtle);
     display: flex;
     align-items: center;
     justify-content: center;
     box-sizing: border-box;
+}
+
+.insights-container .gantt-cell.is-dimmed {
+    opacity: 0.35;
 }
 
 .insights-container .gantt-cell--main {
@@ -715,22 +857,19 @@
     flex: 0 0 auto;
 }
 
-/* ===== Row 6: 女優片商分布 / 與她同片 ===== */
+/* ===== Row 6: 女優片商分布（「與她同片」TASK-156d-T3 搬進 row3 左半格插槽） ===== */
+/* TASK-156d-T3：row6 現在只剩分布表一張卡（「與她同片」搬去 row3 跟副本 A 共用插槽），
+   永遠獨佔整列——原本只在無女優焦點時（用一個現已移除的條件 class）套用的單欄＋
+   內部兩欄排列，現在是唯一狀態，直接併入 base rule（CD-156c-1／CD-156c-6 的排版
+   形狀不變，只是不再需要那個條件 class）。 */
 .insights-container .row6 {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
     gap: 0.5rem;
     min-width: 0;
 }
 
-/* CD-156c-1／CD-156c-6：同片卡尚未有顯示條件時（無女優焦點）分布表獨佔一欄，
-   內部改兩欄排列——形狀照 POC feature/156-library-insights/poc/index.sonnet4.html
-   第 247-248 行。#costarCard 本體是 T5 範圍，本卡不加 x-show。 */
-.insights-container .row6.solo-only {
-    grid-template-columns: 1fr;
-}
-
-.insights-container .row6.solo-only .list-rows {
+.insights-container .row6 .list-rows {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0 16px;
@@ -835,11 +974,6 @@
     font-variant-numeric: tabular-nums;
 }
 
-/* CD-156c-6：自然高度，不被左欄分布表拉伸 */
-.insights-container #costarCard {
-    align-self: start;
-}
-
 /* 與她同片（TASK-156c-T5 / CD-156c-1／6） */
 .insights-container .costar-row {
     display: flex;
@@ -932,6 +1066,38 @@
     padding: 0.75rem 0.25rem;
 }
 
+/* ===== Row 7：女優焦點期間頁尾多出現的頒獎台＋名單全貌
+   （TASK-156d-T3／CD-156d-2 副本 B，與 row3 副本 A 同一份資料、獨立可見性、不互斥） =====
+   全寬版面不需要重寫 .top20-group 內部排版——.rest20-row 的 .top20-name 已在 T2
+   套用 flex:1 1 auto（Codex review P2 修正），.podium 本身 justify-content:center，
+   兩者在全寬容器下自然依既有規則撐開／置中，不需要額外 grid-template-columns。 */
+.insights-container .row7 {
+    min-width: 0;
+}
+
+/* TASK-156d-T9／CD-156d-10c：女優焦點時 row4（年齡/導演/系列）移到 row2 之後、
+   row3（標籤樹圖）之前；片商焦點或無焦點時維持現況（row4 在 row3 之後）。
+   `.insights-container` 是 flex column，全部「直接子元素」都先給明確基準
+   order（與目前 DOM 順序一致，視覺零改變），只交換 row3／row4 的 order 值——
+   只改 row4 一條規則會讓它排到所有預設 order:0 的 row 最前面，不是插入
+   row2／row3 之間。純 CSS 幾何屬性，不分寬度（見 CD-156d-10d），不加動畫。
+   `.insights-container` 的直接子元素共 9 個：row1-row7、`.section-divider`
+   （純文字分隔列，在 row4 與 row5 之間）、`.insights-preview`（女優照片
+   預覽浮層，`position:fixed`——不參與 flex 排版，out-of-flow，不受 order
+   影響，不需要給值）。`.section-divider` 的 order 固定在 row3/row4 那組
+   （3/4）之後、row5（6）之前，兩種模式下都夾在正確位置，不隨女優焦點切換。 */
+.insights-container .row1 { order: 1; }
+.insights-container .row2 { order: 2; }
+.insights-container .row3 { order: 3; }
+.insights-container .row4 { order: 4; }
+.insights-container .section-divider { order: 5; }
+.insights-container .row5 { order: 6; }
+.insights-container .row6 { order: 7; }
+.insights-container .row7 { order: 8; }
+
+.insights-container.is-actress-focused .row3 { order: 4; }
+.insights-container.is-actress-focused .row4 { order: 3; }
+
 /* ===== 響應式斷點 ===== */
 @media (max-width: 1024px) {
     .insights-container .row1 {
@@ -943,6 +1109,16 @@
     .insights-container .row4,
     .insights-container .row6 {
         grid-template-columns: 1fr;
+    }
+
+    /* ≤1024（2 欄／1 欄皆含，640 斷點的同一條規則合併於此——max-width:640 恆蘊含
+       max-width:1024，不需重複宣告）：不再用內容寬回歸撐滿比例（640 單欄時內容寬暴衝到
+       551px，回歸值會把字級推到 99px，跟旁邊固定 44px 的「2,103」不成比例、還把整列拉爆）。
+       改成「份量與片數數字相當」：上限落在 .insights-tile-value 實際 computed 44px 的
+       1.0–1.25 倍（44–55px）之間，用純 rem/vw clamp 表達，不用回歸 calc（主 session
+       2026-09-27 二次裁決）。 */
+    .insights-brand-row .title {
+        font-size: clamp(2.25rem, 5vw, 3rem);
     }
 }
 

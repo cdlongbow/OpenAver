@@ -71,6 +71,16 @@ let _mainMakerYearMap = {};
  * 必要被 Alpine 追蹤，包成 reactive 只會多繞一層 Proxy 開銷。
  */
 let _ganttViewCache = null;
+/**
+ * TASK-156d-T4／CD-156d-3：上一次觸發過強調亮起的置頂名字（年表／分布表各自
+ * 一份，可能不同步——例如她在年表自然排序內不觸發，但在分布表是 rank 外附加）。
+ * 純粹的一次性比較用內部旗標，不是要被模板讀取的資料，故放模組級 `let`，
+ * 不進 Alpine reactive 屬性。非女優焦點時歸零成 `null`（見 `_maybePlayPinPulse`
+ * 註解——這保證清除焦點後重新選回同一人仍會重新觸發一次）。
+ */
+let _lastPinnedGanttName = null;
+let _lastPinnedSoloName = null;
+let _podiumEntrancePlayed = false;
 
 /** 預覽浮層實測尺寸（160 寬照片 + 名字列）；與 .insights-preview CSS 對齊。 */
 const PREVIEW_POPUP = { width: 160, height: 224 };
@@ -106,6 +116,18 @@ export function computePreviewPosition(anchor, viewport, popup) {
     return { left: left, top: top };
 }
 
+export function shouldPlayPodiumEntrance(alreadyPlayed, podiumRowsLength) {
+    return !alreadyPlayed && podiumRowsLength > 0;
+}
+
+/**
+ * TASK-156d-T9／CD-156d-10a：row3 左半格是否顯示「與她同片」卡的衍生旗標。
+ * 女優焦點但零共演時仍應為 false（改顯示 Top20），避免空白的「與她同片」卡。
+ */
+export function computeCostarVisible(isActressFocused, costarRowsLength) {
+    return isActressFocused && costarRowsLength > 0;
+}
+
 export function libraryInsightsState() {
     return {
         snapshot: null,
@@ -114,6 +136,12 @@ export function libraryInsightsState() {
         focus: null,
         scopedCount: 0,
         top20Rows: [],
+        // TASK-156d-T3／CD-156d-2：row3 左半格＋row7 三個可切換顯示旗標（不用 x-show，
+        // FE-ALPINE-17——vendored Alpine 的 x-show 晚一幀且一翻轉就立即 display:none，
+        // 淡出播不完）。初始狀態＝無焦點：副本 A 顯示、與她同片／row7 副本 B 隱藏。
+        showTop20InRow3: true,
+        showCostar: false,
+        showTop20InRow7: false,
         ganttRows: [],
         // 修正 1（第 2 輪）：圖例名單存進 reactive 欄位，見 ganttLegendMakers() 註解。
         ganttLegend: [],
@@ -234,6 +262,84 @@ export function libraryInsightsState() {
                 ganttNames,
                 this.ganttLegend,
             );
+        },
+
+        /**
+         * TASK-156d-T4／CD-156d-3：她那列置頂後的一次性強調亮起。掛在既有三個
+         * `recomputeGantt()+recomputeSolo()` 呼叫點之後（`_loadSnapshot` 成功、
+         * `$watch('period')`、`$watch('focus')`）。年表／分布表各自獨立判斷、
+         * 各自獨立比對 `_lastPinnedGanttName`/`_lastPinnedSoloName`（她可能在
+         * 其中一張卡是自然排序內置頂、另一張是 rank 外附加置頂，兩者不必同步）。
+         * 非女優焦點／片商焦點時視為「無置頂」，把記錄值歸零成 `null`——這保證
+         * 「清除焦點後重新選回同一人」仍會重新觸發一次強調亮起（同一人連續兩次
+         * 被置頂才不重播）。
+         *
+         * review P2（定稿輪數 2）：年表切到「年齡」軸時，`ganttView('age')` 會用
+         * `ganttAgeEligibility` 濾掉沒生日的女優——她若無生日，`this.ganttRows[0]`
+         * 仍是她（`pinned===true`，資料層置頂沒問題），但 DOM 實際渲染出來的第一列
+         * 會是別人。**`ganttAxis` 是 `.gantt-card` 自己巢狀 `x-data="{ ganttAxis:
+         * 'year' }"` 的子層狀態，不在這個父層元件上**——`this.ganttAxis` 在這裡
+         * 讀不到值（恆為 `undefined`），呼叫 `this.ganttView(this.ganttAxis)` 只會
+         * 一直落到年份分支，驗不出年齡軸的過濾（definite 輪 1 的錯誤修法，已改正）。
+         * 改成直接讀 DOM 實際渲染出來的第一列名字（瀏覽器已經套用了不論哪個軸的
+         * 過濾結果，不需要重新猜是哪個軸），核對是否等於這次要置頂的名字，不符合
+         * 就跳過年表那一條 `playPulse`（不對 DOM 第一列動手，那是別人的列），
+         * 分布表（`soloRows` 沒有年齡篩選）不受影響、照常播放。
+         */
+        _maybePlayPinPulse() {
+            const isActress = !!(this.focus && this.focus.type === 'actress');
+            const ganttFirst = (this.ganttRows || [])[0];
+            const soloFirst = (this.soloRows || [])[0];
+            const ganttName =
+                isActress && ganttFirst && ganttFirst.pinned === true
+                    ? ganttFirst.name
+                    : null;
+            const soloName =
+                isActress && soloFirst && soloFirst.pinned === true
+                    ? soloFirst.name
+                    : null;
+
+            const ganttChanged = ganttName !== _lastPinnedGanttName;
+            const soloChanged = soloName !== _lastPinnedSoloName;
+            _lastPinnedGanttName = ganttName;
+            _lastPinnedSoloName = soloName;
+
+            if (!ganttChanged && !soloChanged) return;
+            this.$nextTick(() => {
+                const motion = window.OpenAver.motion;
+                if (ganttChanged && ganttName) {
+                    const el = document.querySelector(
+                        '.gantt-table .gantt-row:not(.gantt-head-row)',
+                    );
+                    const nameEl = el && el.querySelector('.gantt-name');
+                    const renderedName = nameEl
+                        ? nameEl.textContent.trim()
+                        : null;
+                    if (el && renderedName === ganttName) motion.playPulse(el);
+                }
+                if (soloChanged && soloName) {
+                    const el = document.querySelector('#soloList .solo-row');
+                    if (el) motion.playPulse(el);
+                }
+            });
+        },
+
+        _playPodiumEntrance() {
+            const wrap = this.$refs.top20Row3El;
+            if (!wrap) return;
+            const slots = Array.from(wrap.querySelectorAll('.podium-slot'));
+            const groups = slots
+                .map(function (slot) {
+                    return {
+                        stand: slot.querySelector('.podium-stand'),
+                        items: Array.from(
+                            slot.querySelectorAll('.podium-avatar, .podium-name, .podium-count'),
+                        ),
+                    };
+                })
+                .filter(function (g) { return !!g.stand; });
+            if (!groups.length) return;
+            window.OpenAver.motion.playRise(groups);
         },
 
         /**
@@ -399,7 +505,7 @@ export function libraryInsightsState() {
             return (
                 'grid-template-columns: var(--gantt-name-w) repeat(' +
                 n +
-                ', var(--gantt-cell-w))'
+                ', minmax(var(--gantt-cell-min-w), 1fr))'
             );
         },
 
@@ -417,6 +523,136 @@ export function libraryInsightsState() {
                 this.focus = null;
             } else {
                 this.focus = { type: 'actress', value: name };
+            }
+        },
+
+        /**
+         * TASK-156d-T3／CD-156d-2：`$watch('focus')` 的唯一動效/捲動 sink。
+         * TASK-156d-T9／CD-156d-10b：`costarVisible` 翻轉時才觸發 row3 左半格
+         * 佔用者循序淡出淡入＋row7 副本 B 獨立淡出淡入（女優焦點但零共演時
+         * `costarVisible` 維持 false，不播放）；捲動邏輯仍依 `isActressFocused`
+         * 翻轉（CD-156d-10e，不變）。
+         * 讀 `this.focus`（reactive）而非把它複製成本地閉包變數跨 `$nextTick` 使用
+         * ——CD-156d-2 步驟 4 逐字要求，快速連續觸發時才能永遠依「當下最新」值判斷。
+         *
+         * `oldCostarRowsLength`：呼叫方（`$watch('focus')`）在 `recomputeCostar()`
+         * 覆寫 `this.costarRows` 之前先讀出來的舊值長度。**不能改用 `this.showCostar`
+         * 當 `wasCostarVisible` 的代理值**——`showCostar` 只在動畫 `onComplete` 才被
+         * 寫入，若同一位女優被快速連點兩次、第二次點擊發生在第一次進場動畫的
+         * onComplete 觸發之前，`showCostar` 仍是 stale 的舊值（false），會讓這次
+         * 翻轉被誤判成「沒有翻轉」而略過 killTweens／leave 序列，導致第一次動畫
+         * 的 onComplete 之後仍把畫面切成「顯示與她同片」——即使焦點已經被第二次
+         * 點擊清除。這個迴歸由 `test_interrupt_during_fade_out_matches_direct_set`
+         * 抓到（100% 重現，非計時抖動）。改用「當下這輪 `$watch` 開始時、尚未被
+         * 覆寫的 `costarRows.length`」＋`wasActress` 算 `wasCostarVisible`，兩者
+         * 都是同步值，不受動畫完成時機影響。
+         *
+         * TASK-156d-T9 round 3：捲動判斷（`wasActress`/`isNowActress`/
+         * `switchedActress`）只在這裡（focus 專屬），淡出淡入本體抽成
+         * `_syncCostarVisibility()` 讓 `$watch('period')` 也能呼叫——period
+         * 改變不捲動（CD-156d-6 只認 focus 翻轉）。
+         */
+        _handleActressFocusChange(oldValue, oldCostarRowsLength) {
+            const wasActress = !!(oldValue && oldValue.type === 'actress');
+            const isNowActress = this.isActressFocused;
+            const switchedActress =
+                isNowActress &&
+                wasActress &&
+                oldValue.value !== (this.focus && this.focus.value);
+
+            // CD-156d-6：false→true，或維持 true 但換成不同的人 → 捲回頂端。
+            // true→false（含清除）不捲動。
+            if (isNowActress && (!wasActress || switchedActress)) {
+                window.scrollTo({
+                    top: 0,
+                    behavior: window.OpenAver.prefersReducedMotion ? 'auto' : 'smooth',
+                });
+            }
+
+            this._syncCostarVisibility(computeCostarVisible(wasActress, oldCostarRowsLength));
+        },
+
+        /**
+         * TASK-156d-T9 round 3：`costarVisible` 翻轉時的淡出淡入本體，從
+         * `_handleActressFocusChange` 抽出——`$watch('focus')` 與
+         * `$watch('period')` 共用同一份（CD-156d-10b 的 kill-tweens／
+         * 依當下最新值重新開始／不變式 2 全部照舊，不因為呼叫方是誰而不同）。
+         * 呼叫方只需要傳「翻轉前」的 `costarVisible`（用當下已知的
+         * `isActressFocused` ＋翻轉前的 `costarRows.length` 算出），不捲動——
+         * 捲動邏輯留在 `_handleActressFocusChange`，因為 CD-156d-6 明確只認
+         * focus 翻轉，`period` 改變不捲動。
+         */
+        _syncCostarVisibility(wasCostarVisible) {
+            const isNowCostarVisible = this.costarVisible;
+            if (wasCostarVisible === isNowCostarVisible) return;
+
+            const motion = window.OpenAver.motion;
+            const top20El = this.$refs.top20Row3El;
+            const costarEl = this.$refs.costarEl;
+            const row7El = this.$refs.row7El;
+            // CD-156d-2 步驟 4：每次新觸發前先對這次牽涉到的全部元素 killTweens，
+            // 再永遠依當下最新 isActressFocused 從步驟 1/2 重新開始。
+            motion.killTweens([top20El, costarEl, row7El].filter(Boolean));
+
+            if (isNowCostarVisible) {
+                // 步驟 1：進入焦點——costarEl 先淡出既有的 row3 副本 A。
+                motion.playFadeTo(top20El, {
+                    opacity: 0,
+                    duration: 0.25,
+                    onComplete: () => {
+                        // CD-156d-5 不變式 2：隱藏後清掉殘留 inline opacity:0，
+                        // 讓 style.opacity 回到 ''（下次淡入前用 fromOpacity 強制起始值）。
+                        motion.clearProps(top20El, 'opacity');
+                        this.showTop20InRow3 = false;
+                        this.showCostar = true;
+                        this.$nextTick(() => {
+                            motion.playFadeTo(costarEl, {
+                                fromOpacity: 0,
+                                opacity: 1,
+                                duration: 0.25,
+                            });
+                        });
+                    },
+                });
+                // row7 副本 B 同時獨立處理：立即顯示、$nextTick 內淡入。
+                this.showTop20InRow7 = true;
+                this.$nextTick(() => {
+                    motion.playFadeTo(row7El, {
+                        fromOpacity: 0,
+                        opacity: 1,
+                        duration: 0.5,
+                    });
+                });
+            } else {
+                // 步驟 2：離開焦點（含清除）——對稱：costarEl 先完全淡出才切回
+                // 副本 A 並淡入。
+                motion.playFadeTo(costarEl, {
+                    opacity: 0,
+                    duration: 0.25,
+                    onComplete: () => {
+                        // CD-156d-5 不變式 2：隱藏後清掉殘留 inline opacity:0。
+                        motion.clearProps(costarEl, 'opacity');
+                        this.showCostar = false;
+                        this.showTop20InRow3 = true;
+                        this.$nextTick(() => {
+                            motion.playFadeTo(top20El, {
+                                fromOpacity: 0,
+                                opacity: 1,
+                                duration: 0.25,
+                            });
+                        });
+                    },
+                });
+                // row7 副本 B 同時獨立淡出後才隱藏。
+                motion.playFadeTo(row7El, {
+                    opacity: 0,
+                    duration: 0.5,
+                    onComplete: () => {
+                        // CD-156d-5 不變式 2：隱藏後清掉殘留 inline opacity:0。
+                        motion.clearProps(row7El, 'opacity');
+                        this.showTop20InRow7 = false;
+                    },
+                });
             }
         },
 
@@ -592,6 +828,37 @@ export function libraryInsightsState() {
                 'insights.row.actress_top20',
                 'actress',
             );
+        },
+
+        /**
+         * TASK-156d-T2：Top20 拆兩張卡——頒獎台（前三名，固定 3 插槽）。
+         * 焦點女優 rank<=3 天然落在這裡，不需要額外分支（CD-156d-1）。
+         */
+        get podiumRows() {
+            return (this.top20Rows || []).filter((r) => r.rank <= 3);
+        },
+
+        /**
+         * TASK-156d-T2：Top20 拆兩張卡——精簡名單（第 4–20 名 ＋ 焦點女優
+         * rank>20 的附加列，附加列的 rank 是她的真實名次，天然 >3）。
+         */
+        get restRows() {
+            return (this.top20Rows || []).filter((r) => r.rank > 3);
+        },
+
+        /**
+         * TASK-156d-T3／CD-156d-2：row3 左半格佔用者切換（頒獎台＋名單 ↔ 與她同片）
+         * 只在女優焦點時觸發；片商焦點與無焦點視覺上相同（顯示頒獎台＋名單）。
+         */
+        get isActressFocused() {
+            return !!(this.focus && this.focus.type === 'actress');
+        },
+
+        /**
+         * TASK-156d-T9／CD-156d-10a：命名可讀性用 getter，模板不需要直接綁定。
+         */
+        get costarVisible() {
+            return computeCostarVisible(this.isActressFocused, this.costarRows.length);
         },
 
         get ganttTitle() {
@@ -872,7 +1139,18 @@ export function libraryInsightsState() {
                 this.recomputeTop20();
                 this.recomputeGantt();
                 this.recomputeSolo();
+                this._maybePlayPinPulse();
                 this.recomputeCostar();
+                // TASK-156d-T9 round 3 audit：這裡不需要呼叫 _syncCostarVisibility()
+                // ——this.focus 只能被 toggleActressFocus()／clearFocus()／donut 片商
+                // 點擊回呼寫入，三者都要點擊已渲染的 UI 才觸發，而這些 UI 在首次快照成功
+                // 前不存在，所以 _loadSnapshot() 執行到這裡時 this.focus 必為初始
+                // 值 null，costarVisible 恆 false，跟預設顯示旗標（showTop20InRow3:
+                // true／showCostar:false）已經一致，沒有「翻轉」可同步。
+                if (shouldPlayPodiumEntrance(_podiumEntrancePlayed, this.podiumRows.length)) {
+                    _podiumEntrancePlayed = true;
+                    this.$nextTick(() => this._playPodiumEntrance());
+                }
 
                 const el = document.getElementById('yearsChart');
                 if (el) {
@@ -953,6 +1231,15 @@ export function libraryInsightsState() {
 
             // $watch 是 period／focus 變更後唯一的 recompute + 重繪入口
             this.$watch('period', () => {
+                // TASK-156d-T9 round 3：period 改變時 buildCostarRows() 用新
+                // period 重新過濾，同一位焦點女優在不同年份可能從「有共演」變
+                // 「零共演」（或相反）——costarVisible 因此翻轉，跟 focus 改變
+                // 一樣要跑淡出淡入＋切換 row3/row7 顯示旗標，否則會卡在空白的
+                // 「與她同片」卡（round 3 review 抓到：只有 focus 路徑呼叫了
+                // 這段同步，period 路徑漏掉）。isActressFocused 不因為換期間
+                // 而改變，wasCostarVisible 只需要「舊 costarRows.length」。
+                // 不捲動——CD-156d-6 明確只認 focus 翻轉。
+                const oldCostarRowsLength = this.costarRows.length;
                 this.recomputeScopedCount();
                 this.redrawYears();
                 this.redrawDonut();
@@ -963,9 +1250,17 @@ export function libraryInsightsState() {
                 this.recomputeTop20();
                 this.recomputeGantt();
                 this.recomputeSolo();
+                this._maybePlayPinPulse();
                 this.recomputeCostar();
+                this._syncCostarVisibility(computeCostarVisible(this.isActressFocused, oldCostarRowsLength));
             });
-            this.$watch('focus', () => {
+            this.$watch('focus', (value, oldValue) => {
+                // TASK-156d-T9／CD-156d-10b：在 recomputeCostar() 覆寫 this.costarRows
+                // 之前先記錄舊值長度，供 _handleActressFocusChange 算 wasCostarVisible
+                // 用（見該函式內部註解——讀 this.showCostar 當代理值在「同一位女優
+                // 快速二連點、第二次點擊發生在第一次動畫 onComplete 之前」的情境會
+                // 是 stale 的，因為 showCostar 只在 onComplete 才寫入）。
+                const oldCostarRowsLength = this.costarRows.length;
                 this.recomputeScopedCount();
                 this.redrawYears();
                 this.redrawDonut();
@@ -976,7 +1271,9 @@ export function libraryInsightsState() {
                 this.recomputeTop20();
                 this.recomputeGantt();
                 this.recomputeSolo();
+                this._maybePlayPinPulse();
                 this.recomputeCostar();
+                this._handleActressFocusChange(oldValue, oldCostarRowsLength);
             });
 
             if (window.__registerPage) {

@@ -30,7 +30,20 @@ globalThis.document = globalThis.document || {
     },
 };
 
-const { computePreviewPosition, libraryInsightsState } = await import('../state.js');
+const { computePreviewPosition, libraryInsightsState, shouldPlayPodiumEntrance, computeCostarVisible } = await import('../state.js');
+const { setRecords } = await import('../aggregate.js');
+
+function rec(opts) {
+    return {
+        year: opts.year === undefined ? 2020 : opts.year,
+        month: opts.month === undefined ? null : opts.month,
+        actresses: opts.actresses === undefined ? ['Alice'] : opts.actresses,
+        maker: opts.maker === undefined ? 'SOD' : opts.maker,
+        tags: opts.tags === undefined ? [] : opts.tags,
+        date: opts.date === undefined ? null : opts.date,
+        duration: opts.duration === undefined ? null : opts.duration,
+    };
+}
 
 const POPUP = { width: 160, height: 224 };
 const VIEWPORT = { width: 1440, height: 900 };
@@ -271,3 +284,220 @@ test('isPeriodEmpty: 條件滿足時回傳 true', () => {
     assert.equal(state.isPeriodEmpty(['maker']), true);
 });
 
+// ── podiumRows / restRows（TASK-156d-T2）─────────────────────────────
+
+test('podiumRows/restRows: top20Rows 只有 2 筆（女優總數 <3）→ podiumRows 回傳 2 筆，restRows 為空', () => {
+    const state = libraryInsightsState();
+    state.top20Rows = [
+        { rank: 1, name: 'A', count: 10 },
+        { rank: 2, name: 'B', count: 8 },
+    ];
+    assert.deepEqual(state.podiumRows.map((r) => r.name), ['A', 'B']);
+    assert.deepEqual(state.restRows, []);
+});
+
+test('podiumRows/restRows: top20Rows 為空（0 位女優）→ 兩者皆為空陣列', () => {
+    const state = libraryInsightsState();
+    state.top20Rows = [];
+    assert.deepEqual(state.podiumRows, []);
+    assert.deepEqual(state.restRows, []);
+});
+
+test('podiumRows/restRows: 焦點女優 rank>20 附加列（真實名次 37）→ 落在 restRows，podiumRows 不受影響', () => {
+    const state = libraryInsightsState();
+    state.top20Rows = [
+        { rank: 1, name: 'A', count: 10 },
+        { rank: 2, name: 'B', count: 9 },
+        { rank: 3, name: 'C', count: 8 },
+        { rank: 4, name: 'D', count: 7 },
+        { rank: 37, name: '焦點女優', count: 1 },
+    ];
+    assert.equal(state.podiumRows.length, 3);
+    assert.ok(!state.podiumRows.some((r) => r.name === '焦點女優'));
+    const focusRow = state.restRows.find((r) => r.name === '焦點女優');
+    assert.ok(focusRow, '焦點女優應出現在 restRows');
+    assert.equal(focusRow.rank, 37, '名次要顯示真實名次，不是 21');
+});
+
+test('podiumRows/restRows: 焦點女優 rank<=3（本來就在頒獎台上）→ podiumRows 含她、restRows 不含她', () => {
+    const state = libraryInsightsState();
+    state.top20Rows = [
+        { rank: 1, name: 'A', count: 10 },
+        { rank: 2, name: '焦點女優', count: 9 },
+        { rank: 3, name: 'C', count: 8 },
+    ];
+    assert.ok(state.podiumRows.some((r) => r.name === '焦點女優'));
+    assert.ok(!state.restRows.some((r) => r.name === '焦點女優'));
+});
+
+test('podiumRows/restRows: top20Rows 剛好 20 筆滿額且焦點女優 rank===20 → 落在 restRows', () => {
+    const state = libraryInsightsState();
+    const rows = [];
+    for (let i = 1; i <= 20; i += 1) {
+        rows.push({ rank: i, name: 'name' + i, count: 21 - i });
+    }
+    state.top20Rows = rows;
+    assert.equal(state.podiumRows.length, 3);
+    assert.equal(state.restRows.length, 17);
+    const row20 = state.restRows.find((r) => r.rank === 20);
+    assert.ok(row20, 'rank===20 應落在 restRows');
+});
+
+// ── isActressFocused（TASK-156d-T3）───────────────────────────────────
+
+test('isActressFocused: true only when focus.type is actress', () => {
+    const state = libraryInsightsState();
+    state.focus = { type: 'actress', value: '明里つむぎ' };
+    assert.equal(state.isActressFocused, true);
+});
+
+test('isActressFocused: focus.type === "maker" 時回傳 false', () => {
+    const state = libraryInsightsState();
+    state.focus = { type: 'maker', value: 'SOD' };
+    assert.equal(state.isActressFocused, false);
+});
+
+test('isActressFocused: 無焦點（focus === null）時回傳 false', () => {
+    const state = libraryInsightsState();
+    state.focus = null;
+    assert.equal(state.isActressFocused, false);
+});
+
+// ── _maybePlayPinPulse（TASK-156d-T4／review P2，定稿輪數 2）───────────
+// review 發現：年表切到「年齡」軸時，ganttView('age') 會用 ganttAgeEligibility
+// 濾掉沒生日的女優；她若無生日，this.ganttRows[0] 仍是她（資料層置頂沒問題），
+// 但 DOM 實際渲染的年表列裡完全沒有她，原本的邏輯會盲抓 DOM 第一列（那是別人）
+// 播放強調亮起。修法：`ganttAxis` 是 `.gantt-card` 巢狀 x-data 的子層狀態，父層
+// 元件讀不到（`this.ganttAxis` 恆 undefined），改成直接讀 DOM 實際渲染出來的
+// 第一列名字（`.gantt-name` 文字），核對是否等於這次要置頂的名字。
+
+function makeGanttRowEl(name) {
+    return {
+        querySelector(sel) {
+            if (sel === '.gantt-name') return { textContent: name };
+            return null;
+        },
+    };
+}
+
+test('_maybePlayPinPulse: 年齡軸下她的列被濾掉（無生日）→ DOM 第一列渲染的是別人 → 不對年表動手，分布表仍照常播放', () => {
+    globalThis.window.OpenAver = globalThis.window.OpenAver || {};
+    const pulsed = [];
+    globalThis.window.OpenAver.motion = { playPulse: (el) => pulsed.push(el) };
+    // 模擬年齡軸把她濾掉：DOM 實際渲染出來的第一列是「別人」，不是她。
+    const ganttEl = makeGanttRowEl('別人');
+    const soloEl = { tag: 'solo-row-dom-1' };
+    const origQuerySelector = globalThis.document.querySelector;
+    globalThis.document.querySelector = (sel) => {
+        if (sel.indexOf('gantt-row') !== -1) return ganttEl;
+        if (sel.indexOf('solo-row') !== -1) return soloEl;
+        return null;
+    };
+
+    const state = libraryInsightsState();
+    state.$nextTick = (fn) => fn();
+    state.focus = { type: 'actress', value: '無生日女優' };
+    state.ganttRows = [{ name: '無生日女優', pinned: true }];
+    state.soloRows = [{ name: '無生日女優', pinned: true }];
+
+    state._maybePlayPinPulse();
+
+    assert.deepEqual(
+        pulsed,
+        [soloEl],
+        '年表渲染第一列不是她時只有分布表播放，不得對年表 DOM 第一列（別人）動手',
+    );
+
+    globalThis.document.querySelector = origQuerySelector;
+});
+
+test('_maybePlayPinPulse: DOM 渲染第一列確實是她（年份軸／年齡軸但她有生日皆同理）→ 年表與分布表都照常播放', () => {
+    globalThis.window.OpenAver = globalThis.window.OpenAver || {};
+    const pulsed = [];
+    globalThis.window.OpenAver.motion = { playPulse: (el) => pulsed.push(el) };
+    const ganttEl = makeGanttRowEl('有生日女優');
+    const soloEl = { tag: 'solo-row-dom-2' };
+    const origQuerySelector = globalThis.document.querySelector;
+    globalThis.document.querySelector = (sel) => {
+        if (sel.indexOf('gantt-row') !== -1) return ganttEl;
+        if (sel.indexOf('solo-row') !== -1) return soloEl;
+        return null;
+    };
+
+    const state = libraryInsightsState();
+    state.$nextTick = (fn) => fn();
+    state.focus = { type: 'actress', value: '有生日女優' };
+    state.ganttRows = [{ name: '有生日女優', pinned: true }];
+    state.soloRows = [{ name: '有生日女優', pinned: true }];
+
+    state._maybePlayPinPulse();
+
+    assert.deepEqual(pulsed, [ganttEl, soloEl], '渲染第一列吻合時，年表與分布表都應播放一次');
+
+    globalThis.document.querySelector = origQuerySelector;
+});
+
+
+// ── ganttGridStyle（TASK-156d-T5：年表撐滿卡寬）─────────────────────────
+
+test('ganttGridStyle: 年份軸用 minmax(floor,1fr) 分配剩餘寬度而非固定寬度', () => {
+    setRecords([
+        rec({ year: 2020 }),
+        rec({ year: 2021 }),
+        rec({ year: 2022 }),
+    ]);
+    const state = libraryInsightsState();
+    const style = state.ganttGridStyle('year');
+    assert.match(
+        style,
+        /minmax\(var\(--gantt-cell-min-w\), 1fr\)/,
+        `should use minmax(var(--gantt-cell-min-w), 1fr) to stretch columns; got: ${style}`,
+    );
+    assert.ok(
+        style.indexOf('var(--gantt-cell-w))') === -1,
+        `should not fall back to fixed var(--gantt-cell-w) column width; got: ${style}`,
+    );
+});
+
+
+// ── shouldPlayPodiumEntrance（TASK-156d-T6：頒獎台一次性進場動效）──────────
+
+test('shouldPlayPodiumEntrance: 尚未播放且頒獎台有資料 → 播放', () => {
+    assert.equal(shouldPlayPodiumEntrance(false, 3), true);
+});
+
+test('shouldPlayPodiumEntrance: 已播放過 → 不重播', () => {
+    assert.equal(shouldPlayPodiumEntrance(true, 3), false);
+});
+
+test('shouldPlayPodiumEntrance: podiumRows 為空（尚未算出頒獎台名單）時不播放', () => {
+    assert.equal(shouldPlayPodiumEntrance(false, 0), false);
+});
+
+
+// ── computeCostarVisible（TASK-156d-T9／CD-156d-10a：沒有共演不顯示空卡）──
+
+test('computeCostarVisible: 無焦點 → false', () => {
+    assert.equal(computeCostarVisible(false, 5), false);
+});
+
+test('computeCostarVisible: 女優焦點且有共演 → true', () => {
+    assert.equal(computeCostarVisible(true, 3), true);
+});
+
+test('computeCostarVisible: 女優焦點但零共演 → false', () => {
+    assert.equal(computeCostarVisible(true, 0), false);
+});
+
+test('costarVisible getter: 反映 isActressFocused 與 costarRows.length', () => {
+    const state = libraryInsightsState();
+    state.focus = { type: 'actress', value: '明里つむぎ' };
+    state.costarRows = [];
+    assert.equal(state.costarVisible, false, '零共演時應為 false');
+
+    state.costarRows = [{ name: 'B', count: 1, self: '明里つむぎ' }];
+    assert.equal(state.costarVisible, true, '有共演時應為 true');
+
+    state.focus = { type: 'maker', value: 'SOD' };
+    assert.equal(state.costarVisible, false, '片商焦點時應為 false');
+});

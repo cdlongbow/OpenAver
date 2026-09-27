@@ -136,6 +136,9 @@ playStagger: function (elements, opts) {
  *
  * 用法：OpenAver.motion.playFadeTo(elements, { opacity: 0, duration: 0.2, ease: 'fluent' })
  * 若 reduced-motion 啟用則直接設定最終值不播動畫。
+ * `fromOpacity`（TASK-156d-T3）：只在會播動畫時（`_shouldAnimate()===true`）於建立
+ * tween 之前同步 `gsap.set(elements,{opacity:fromOpacity})` 一次，讓呼叫端能表達
+ * 「先跳到起始值再淡入」；reduced-motion 時忽略，直接落到目標值（不播中間態）。
  */
 playFadeTo: function (elements, opts) {
     opts = opts || {};
@@ -145,6 +148,9 @@ playFadeTo: function (elements, opts) {
         if (typeof opts.onComplete === 'function') opts.onComplete();
         return null;
     }
+    if (opts.fromOpacity !== undefined) {
+        gsap.set(elements, { opacity: opts.fromOpacity });
+    }
     return this._run(opts.ctx, function () {
         return gsap.to(elements, {
             opacity: targetOpacity,
@@ -153,6 +159,18 @@ playFadeTo: function (elements, opts) {
             onComplete: opts.onComplete || null
         });
     });
+},
+
+/**
+ * 中斷指定元素上所有進行中的 GSAP tween（薄包 `gsap.killTweensOf`）。
+ * TASK-156d-T3／CD-156d-2 步驟 4：快速連續觸發焦點切換時，頁面呼叫這支
+ * （不直接呼叫 `gsap.killTweensOf`——承接事實 #13）清掉上一輪未播完的動畫，
+ * 再重新從頭開始這一輪的淡出淡入序列。
+ * @param {Element|Element[]|string} targets
+ */
+killTweens: function (targets) {
+    if (typeof gsap === 'undefined' || !targets) return;
+    gsap.killTweensOf(targets);
 },
 
 /** Modal 彈出動畫 */
@@ -170,6 +188,103 @@ playModal: function (element, opts) {
             ease: opts.ease || 'fluent-decel',
             onComplete: opts.onComplete || null
         });
+    });
+},
+
+/**
+ * 一次性強調亮起（她那列被置頂到第一列時的提示動效）
+ *
+ * TASK-156d-T4／CD-156d-3：一次性 `backgroundColor` 淡出強調，提示「在這裡」；
+ * 純裝飾性，不影響 `.is-active` 既有、會持續套用的高亮 class。PRM 開啟時
+ * `_shouldAnimate()===false` → 直接不播放，不需要任何 `gsap.set` 收尾。
+ * 色票沿用既有「`fromTo(backgroundColor)` → `transparent` → `clearProps`」樣板
+ * （`web/static/js/pages/search/animations.js` `playOrganizeSuccess` 的 row flash）：
+ * GSAP 內建顏色解析只認 hex/rgb/rgba/hsl，不認得 `--color-primary` 實際使用的
+ * `oklch()`／`color-mix()`，故用固定 rgba literal 而非 CSS 變數。
+ *
+ * @param {Element} element - 要強調亮起的那一列 DOM 元素
+ * @param {Object} [opts]
+ * @param {number} [opts.duration=0.4] - 動畫秒數（CD-156d-3：<=0.4s）
+ * @param {string} [opts.color] - 起始強調色（預設克制藍，淡出至 transparent）
+ * @param {string} [opts.ease='fluent']
+ * @param {Object} [opts.ctx] - createContext() 回傳的 context，供頁面離開時回收
+ * @param {Function} [opts.onComplete]
+ */
+playPulse: function (element, opts) {
+    opts = opts || {};
+    if (!element) return null;
+    if (!this._shouldAnimate()) {
+        if (typeof opts.onComplete === 'function') opts.onComplete();
+        return null;
+    }
+    var fromColor = opts.color || 'rgba(96, 165, 250, 0.28)';
+    return this._run(opts.ctx, function () {
+        return gsap.fromTo(element,
+            { backgroundColor: fromColor },
+            {
+                backgroundColor: 'transparent',
+                duration: opts.duration || 0.4,
+                ease: opts.ease || 'fluent',
+                clearProps: 'backgroundColor',
+                onComplete: opts.onComplete || null
+            }
+        );
+    });
+},
+
+/**
+ * 頒獎台進場動效：每個名次一組，台座＋該名次的頭像/名字/片數同時起步、依名次順序 stagger。
+ * groups 陣列順序＝視覺順序（2→1→3），由呼叫端保證。
+ * @param {Array<{stand: Element, items?: Element[]}>} groups - 名次組清單
+ * @param {Object} [opts]
+ * @param {number} [opts.duration=0.28] - 單組動畫秒數
+ * @param {number} [opts.stagger=0.08] - 組間錯開秒數
+ * @param {string} [opts.ease='fluent-decel']
+ * @param {Object} [opts.ctx] - createContext() 回傳的 context，供頁面離開時回收
+ * @param {Function} [opts.onComplete]
+ */
+playRise: function (groups, opts) {
+    opts = opts || {};
+    var list = groups && groups.length ? groups : [];
+    if (!list.length) return null;
+    var stands = list.map(function (g) { return g.stand; }).filter(Boolean);
+    var items = [];
+    list.forEach(function (g) {
+        (g.items || []).forEach(function (el) { if (el) items.push(el); });
+    });
+    var duration = opts.duration !== undefined ? opts.duration : 0.28;
+    var stagger = opts.stagger !== undefined ? opts.stagger : 0.08;
+    var ease = opts.ease || 'fluent-decel';
+    if (!this._shouldAnimate()) {
+        gsap.set(stands, { clearProps: 'transform,transformOrigin' });
+        gsap.set(items, { clearProps: 'transform,opacity' });
+        if (typeof opts.onComplete === 'function') opts.onComplete();
+        return null;
+    }
+    return this._run(opts.ctx, function () {
+        var tl = gsap.timeline({ onComplete: opts.onComplete || null });
+        list.forEach(function (g, i) {
+            var startTime = i * stagger;
+            if (g.stand) {
+                tl.fromTo(g.stand, { scaleY: 0 }, {
+                    scaleY: 1,
+                    duration: duration,
+                    transformOrigin: 'bottom',
+                    ease: ease,
+                    clearProps: 'transform,transformOrigin'
+                }, startTime);
+            }
+            if (g.items && g.items.length) {
+                tl.fromTo(g.items, { opacity: 0, y: 8 }, {
+                    opacity: 1,
+                    y: 0,
+                    duration: duration,
+                    ease: ease,
+                    clearProps: 'transform,opacity'
+                }, startTime);
+            }
+        });
+        return tl;
     });
 },
 
