@@ -104,6 +104,7 @@ _ACTRESS_FOCAL_PRESERVE = frozenset({
     'name', 'auto_focal', 'crop_mode',
     'photo_fp_path', 'photo_fp_mtime_ns', 'photo_fp_size',
 })
+_JSON_COLUMNS = frozenset({'tags'})
 
 
 class ActressRepository:
@@ -217,6 +218,38 @@ class ActressRepository:
                 "updated_at = CURRENT_TIMESTAMP WHERE name = ?",
                 (focal, name)
             )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def update_fields(self, name: str, fields: dict) -> bool:
+        """部分更新指定欄位（CD-157-6，AI 審稿提交端點的 UPDATE 路徑用）。
+
+        呼叫端（router 層）已完成白名單驗證，本方法只做原子寫入，不重做驗證。
+
+        Returns:
+            bool: 是否成功更新（name 不存在 → False；fields 為空 → True，no-op）
+        """
+        assert not (set(fields) & _ACTRESS_FOCAL_PRESERVE)
+        if not fields:
+            return True
+
+        columns = list(fields.keys())
+        values = []
+        for col in columns:
+            val = fields[col]
+            if col in _JSON_COLUMNS:
+                val = json.dumps(val, ensure_ascii=False)
+            values.append(val)
+
+        set_clause = ', '.join(f"{col} = ?" for col in columns)
+        sql = f"UPDATE actresses SET {set_clause}, updated_at = CURRENT_TIMESTAMP WHERE name = ?"
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(sql, values + [name])
             conn.commit()
             return cursor.rowcount > 0
         finally:
