@@ -112,7 +112,7 @@ def test_delete_photo_then_get_returns_none(gfriends_dir):
     # 先下載一張
     mock_resp = make_mock_response(status_code=200, content_type="image/png")
     with patch("core.actress_photo.requests.get", return_value=mock_resp):
-        download_actress_photo("青山あかね", "https://www.minnano-av.com/photo.png", "minnano")
+        download_actress_photo("青山あかね", "https://faws.xcity.jp/actress/large/image/person/1/photo.jpg", "xcity")
 
     # 確認下載成功
     assert get_local_photo_path("青山あかね") is not None

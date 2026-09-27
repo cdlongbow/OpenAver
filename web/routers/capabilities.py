@@ -623,7 +623,7 @@ _TOOLS: list[dict] = [
     },
     {
         "name": "proxy_image",
-        "description": "代理下載遠端圖片 — 解決 Cloudflare / 防盜鏈問題。搜尋結果的 cover 和 sample_images URL 是遠端直連，AI agent 直接 curl 會被擋。必須透過此端點下載。URL 必須屬於 SSRF 白名單域名（scraper 圖片來源 javbus / dmm / javdb / jav321 等，以及女優圖片 cdn.jsdelivr.net / upload.wikimedia.org / graphis.ne.jp / minnano-av.com），外部圖床一律須為 https。另：若使用者目前**已連線** metatube，該台伺服器的圖片端點（path 必須以 /v1/images/ 開頭）亦放行，scheme 依其設定的 base_url（LAN 自架可能是 http）；未連線時該放行即消失。非白名單 host、非法 path、或跟隨 redirect 的來源一律回 403/404。",
+        "description": "代理下載遠端圖片 — 解決 Cloudflare / 防盜鏈問題。搜尋結果的 cover 和 sample_images URL 是遠端直連，AI agent 直接 curl 會被擋。必須透過此端點下載。URL 必須屬於 SSRF 白名單域名（scraper 圖片來源 javbus / dmm / javdb / jav321 等，以及女優圖片 cdn.jsdelivr.net / upload.wikimedia.org / graphis.ne.jp / xcity.jp），外部圖床一律須為 https。另：若使用者目前**已連線** metatube，該台伺服器的圖片端點（path 必須以 /v1/images/ 開頭）亦放行，scheme 依其設定的 base_url（LAN 自架可能是 http）；未連線時該放行即消失。非白名單 host、非法 path、或跟隨 redirect 的來源一律回 403/404。",
         "method": "GET",
         "path": "/api/proxy-image",
         "input_schema": {
@@ -1083,7 +1083,7 @@ _TOOLS: list[dict] = [
         "name": "list_actress_photo_candidates",
         "description": (
             "串流回傳女優候選照片列表（SSE）。"
-            "從 4 個雲端來源（graphis/gfriends/wiki/minnano）並行抓取，"
+            "從 4 個雲端來源（graphis/gfriends/wiki/xcity）並行抓取，"
             "加上本機影片封面 crop，最多 6 張。"
             "每張照片準備好立即 push，前端即時展示。不修改資料庫。"
         ),
@@ -1115,7 +1115,7 @@ _TOOLS: list[dict] = [
     {
         "name": "set_actress_photo",
         "description": (
-            "替換女優本機照片。接受雲端 URL（graphis/gfriends/wiki/minnano）或本機影片封面 crop（local_crop）。"
+            "替換女優本機照片。接受雲端 URL（graphis/gfriends/wiki/xcity）或本機影片封面 crop（local_crop）。"
             "⚠️ side effect：覆蓋本機照片檔案（先 glob 刪除舊副檔名再寫入新圖）。"
             "可逆 — 隨時可再換；但舊檔案無備份。"
             "執行前必須先確認用戶選擇的來源與 URL。"
@@ -1128,7 +1128,7 @@ _TOOLS: list[dict] = [
                 "name": {"type": "string", "description": "女優名稱（URL path parameter，需 URL encode）"},
                 "source": {
                     "type": "string",
-                    "enum": ["graphis", "gfriends", "wiki", "minnano", "local_crop"],
+                    "enum": ["graphis", "gfriends", "wiki", "xcity", "local_crop"],
                     "description": "照片來源識別碼",
                 },
                 "url": {"type": "string", "description": "雲端照片 URL（source 為雲端來源時必填）"},

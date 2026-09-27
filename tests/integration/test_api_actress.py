@@ -46,7 +46,7 @@ MOCK_PROFILE = {
     "photo_url": "https://example.com/photo.jpg",
     "photo_source": "gfriends",
     "img": "https://example.com/photo.jpg",
-    "primary_text_source": "minnano",
+    "primary_text_source": "xcity",
 }
 
 ACTRESS_NAME = "三上悠亜"
@@ -578,7 +578,7 @@ class TestPhotoCandidates:
             client.get(f"/api/actresses/{ACTRESS_NAME}/photo-candidates")
 
         # 4 來源全部嘗試
-        assert set(called_sources) == {"graphis", "gfriends", "wiki", "minnano"}
+        assert set(called_sources) == {"graphis", "gfriends", "wiki", "xcity"}
 
     def test_photo_candidates_excludes_current_source(self, client):
         """photo_source='gfriends' 時 gfriends 不會被呼叫，剩 3 來源並行"""
@@ -596,7 +596,7 @@ class TestPhotoCandidates:
 
         assert resp.status_code == 200
         assert "gfriends" not in called_sources
-        assert set(called_sources) == {"graphis", "wiki", "minnano"}
+        assert set(called_sources) == {"graphis", "wiki", "xcity"}
 
     def test_photo_candidates_local_crop_tries_all_four(self, client):
         """photo_source='local_crop' 時 4 雲端來源全試"""
@@ -612,7 +612,7 @@ class TestPhotoCandidates:
              patch("web.routers.actress._get_random_videos_with_covers", return_value=[]):
             client.get(f"/api/actresses/{ACTRESS_NAME}/photo-candidates")
 
-        assert set(called_sources) == {"graphis", "gfriends", "wiki", "minnano"}
+        assert set(called_sources) == {"graphis", "gfriends", "wiki", "xcity"}
 
 
 # ---------------------------------------------------------------------------
@@ -1055,12 +1055,12 @@ class TestSetActressPhoto:
         gfriends.mkdir()
         with patch(
             "web.routers.actress.download_actress_photo",
-            side_effect=self._cloud_download_writer(gfriends, b"\xff\xd8\xff\xe0FAKE_MINNANO"),
+            side_effect=self._cloud_download_writer(gfriends, b"\xff\xd8\xff\xe0FAKE_XCITY"),
         ), patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
                 patch("core.actress_photo.GFRIENDS_DIR", gfriends):
             resp = client.post(
                 f"/api/actresses/{ACTRESS_NAME}/photo",
-                json={"source": "minnano", "url": "https://www.minnano-av.com/photo.jpg"},
+                json={"source": "xcity", "url": "https://faws.xcity.jp/actress/large/image/person/1/photo.jpg"},
             )
 
         assert resp.status_code == 200

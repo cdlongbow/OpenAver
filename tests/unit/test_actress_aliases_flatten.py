@@ -2,7 +2,7 @@
 Unit tests for _flatten_aliases helper in web/routers/actress.py
 
 Tests the 6 specified cases:
-1. dict list (minnano format) → extract "ja" field
+1. dict list 格式 → extract "ja" field
 2. string list (wiki format) → pass-through unchanged
 3. empty list → []
 4. None → []
@@ -15,8 +15,8 @@ from web.routers.actress import _flatten_aliases
 
 
 class TestFlattenAliases:
-    def test_dict_list_minnano_format(self):
-        """minnano scraper 回傳 dict list，應取出 ja 欄"""
+    def test_dict_list_format(self):
+        """dict-list 格式來源回傳 dict list，應取出 ja 欄"""
         raw = [{"ja": "笹川そら", "hiragana": "ささがわそら", "romaji": "Sasagawa Sora"}]
         assert _flatten_aliases(raw) == ["笹川そら"]
 

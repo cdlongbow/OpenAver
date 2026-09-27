@@ -1,6 +1,6 @@
 """Live smoke canary — actress source health check (TASK-118a-T12).
 
-Four independent sources: minnano_av / wiki_ja / graphis / gfriends. Each has
+Four independent sources: xcity / wiki_ja / graphis / gfriends. Each has
 its own `test_{source}_canary` function; a dead source never drags down the
 other three (owner hard constraint — see TASK-118a-T12 §技術要點).
 
@@ -29,7 +29,7 @@ scrape/lookup entry points. Must NOT be collected by the standard PR command
 import pytest
 import requests
 
-from core.scrapers.actress.minnano_av import scrape_minnano_av
+from core.scrapers.actress.xcity import scrape_xcity
 from core.scrapers.actress.wiki_ja import scrape_wiki_ja
 from core.scrapers.actress.graphis import scrape_graphis_photo
 from core.scrapers.actress.gfriends import lookup_gfriends
@@ -38,11 +38,16 @@ from core.actress_photo import validate_photo_url
 
 pytestmark = pytest.mark.smoke
 
-# Evergreen names — 2026-08-14 research: 12/12 live hits across all 4 sources
-# (see TASK-118a-T12 §3×4 實測矩陣). No replacements needed at this time.
+# Existing evergreen names stay shared by wiki, graphis, and gfriends canaries.
+# Xcity checks these names against birthdays recorded on 2026-09-28.
 EVERGREEN_NAMES = ["三上悠亜", "波多野結衣", "明日花キララ"]
+XCITY_EVERGREEN = [
+    ("三上悠亜", "1993-08-16"),
+    ("波多野結衣", "1988-05-24"),
+    ("明日花キララ", "1988-10-02"),
+]
 
-# Bare `requests` UA gets 403'd by minnano-av.com / ja.wikipedia.org (research
+# Bare `requests` UA gets 403'd by ja.wikipedia.org (research
 # finding, TASK-118a-T12 §探測設計) — probes must look like a real browser.
 _BROWSER_UA = {
     "User-Agent": (
@@ -70,10 +75,10 @@ _GFRIENDS_PROBE_URL = "https://cdn.jsdelivr.net/gh/gfriends/gfriends@master/READ
 # connection refused, timeout, TLS error, ...) -> return False (=
 # "unreachable" -> skip), never propagate.
 
-def _probe_minnano_av() -> bool:
+def _probe_xcity() -> bool:
     try:
         resp = requests.get(
-            "https://www.minnano-av.com", headers=_BROWSER_UA, timeout=_PROBE_TIMEOUT
+            "https://xcity.jp/idol/", headers=_BROWSER_UA, timeout=_PROBE_TIMEOUT
         )
         return resp.status_code == 200
     except Exception:
@@ -157,14 +162,21 @@ def _run_actress_canary(source_label, probe_fn, probe_desc, fetch_fn, usable_fn)
 # ========== Per-source canaries (four independent functions, no parametrize —
 # a dead source must not drag down the other three) ==========
 
-def test_minnano_av_canary():
-    _run_actress_canary(
-        "minnano_av",
-        probe_fn=_probe_minnano_av,
-        probe_desc="https://www.minnano-av.com",
-        fetch_fn=scrape_minnano_av,
-        usable_fn=_has_meaningful_text,
-    )
+def _xcity_usable(result, expected_birth) -> bool:
+    return bool(result and result.get("birth") == expected_birth)
+
+
+def test_xcity_canary():
+    probe_reachable = _probe_xcity()
+    results = [
+        _classify(
+            scrape_xcity(name),
+            lambda r, eb=expected_birth: _xcity_usable(r, eb),
+            probe_reachable,
+        )
+        for name, expected_birth in XCITY_EVERGREEN
+    ]
+    _verdict(results, "xcity", "https://xcity.jp/idol/")
 
 
 def _wiki_ja_usable(result) -> bool:

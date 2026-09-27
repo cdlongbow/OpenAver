@@ -864,7 +864,7 @@ def _make_graphis_result(name="桜空もも", **overrides):
 
 def test_get_actress_profile_gfriends_wins():
     """gfriends 圖片勝出：graphis 無 prof_url 時，gfriends 應成為 photo cascade 的 winner。
-    T4.3 note: orchestrator photo cascade = graphis prof_url → gfriends → wiki → minnano.
+    T4.3 note: orchestrator photo cascade = graphis prof_url → gfriends → wiki → xcity.
     To let gfriends win, graphis must have prof_url=None."""
     from core.scrapers.actress.orchestrator import get_actress_profile, _cache
 
@@ -888,8 +888,7 @@ def test_get_actress_profile_gfriends_wins():
 def test_get_actress_profile_graphis_text_wins():
     """graphis 文字欄位優先（age/height/cup）
     NOTE (T4.2 semantic shift): Post-T3 orchestrator has no javbus route.
-    After T4.3 adds minnano/wiki mocks → None, graphis wins the C1 cascade as the
-    only available text source (not "beats javbus" anymore, just "graphis fallback").
+    With xcity/wiki mocks → None, graphis supplies the available text fields.
     age == 28 is still correct: _compute_age_from_birth('1997-12-03') under frozen 2026-04-11.
     """
     from core.scrapers.actress.orchestrator import get_actress_profile, _cache

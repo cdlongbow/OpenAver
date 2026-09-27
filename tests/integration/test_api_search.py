@@ -1202,14 +1202,6 @@ class TestProxyImageSSRF:
         assert response.status_code == 200
         mock_get.assert_called_once()
 
-    def test_allow_minnano_av_subdomain(self, client):
-        """www.minnano-av.com（minnano-av.com root domain）應通過 → 200"""
-        url = 'https://www.minnano-av.com/actress/photo.jpg'
-        with patch('web.routers.search.requests.get', return_value=self._make_mock_response()) as mock_get:
-            response = client.get('/api/proxy-image', params={'url': url})
-        assert response.status_code == 200
-        mock_get.assert_called_once()
-
     def test_allow_jdbstatic_cdn_numbered_subdomain(self, client):
         """c0.jdbstatic.com / c1.jdbstatic.com 等 JavDB CDN（jdbstatic.com root domain）應通過 → 200
 
@@ -2210,4 +2202,3 @@ class TestAutoOrganizeEndpoints:
                 task = getattr(app.state, "auto_organize_task", None)
                 assert task is not None, "lifespan must create auto_organize_task"
                 assert not task.done()
-

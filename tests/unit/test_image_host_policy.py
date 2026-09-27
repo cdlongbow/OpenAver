@@ -42,10 +42,7 @@ def test_download_hosts_for_matches_reconciliation_table():
         "upload.wikimedia.org",
         "ja.wikipedia.org",
     }
-    assert download_hosts_for("minnano") == {
-        "www.minnano-av.com",
-        "minnano-av.com",
-    }
+    assert download_hosts_for("xcity") == {"faws.xcity.jp"}
 
 
 def test_proxy_rules_matches_reconciliation_table():
@@ -62,8 +59,6 @@ def test_proxy_rules_matches_reconciliation_table():
         "data.graphis.ne.jp",
         "www.graphis.ne.jp",
         "graphis.ne.jp",
-        "www.minnano-av.com",
-        "minnano-av.com",
         "file.netcdn.space",
         "cf.javfree.me",  # TASK-113c-T3a: §1.4 sole enumerated new host
         "tp.spfcas.com",  # TASK-132b-T4: javdb App API image host
@@ -125,7 +120,7 @@ def test_download_hosts_for_unknown_source_fail_closed():
 
 def test_download_hosts_for_exact_only_no_root_match():
     """Every download-side host comes from match=='exact' entries only."""
-    for source in ("graphis", "gfriends", "wiki", "minnano"):
+    for source in ("graphis", "gfriends", "wiki", "xcity"):
         hosts = download_hosts_for(source)
         for host in hosts:
             matching = [
@@ -233,7 +228,7 @@ def test_download_hosts_for_unaffected_by_metatube_connection():
     """AC5b: download_hosts_for() four sources unchanged while metatube is connected."""
     before = {
         src: download_hosts_for(src)
-        for src in ("graphis", "gfriends", "wiki", "minnano")
+        for src in ("graphis", "gfriends", "wiki", "xcity")
     }
     metatube_state.connect("http://127.0.0.1:8900", "", ["FANZA"])
     try:
@@ -266,7 +261,7 @@ def test_cf_javfree_me_in_static_proxy_exact():
 
 def test_registry_truth_table_download_and_proxy_consumers():
     """Walk every IMAGE_HOSTS row × (download, proxy) + one live dynamic row."""
-    assert len(IMAGE_HOSTS) == 30  # +1 tp.spfcas.com (TASK-132b-T4)
+    assert len(IMAGE_HOSTS) == 28  # T4 removes two obsolete source hosts
 
     for entry in IMAGE_HOSTS:
         download_allowed = "download" in entry.consumers
@@ -277,7 +272,7 @@ def test_registry_truth_table_download_and_proxy_consumers():
             assert entry.host in download_hosts_for(entry.photo_source)
         else:
             # not selected by any known photo_source download view
-            for src in ("graphis", "gfriends", "wiki", "minnano"):
+            for src in ("graphis", "gfriends", "wiki", "xcity"):
                 assert entry.host not in download_hosts_for(src)
 
         exact, roots = proxy_rules()
@@ -298,7 +293,7 @@ def test_registry_truth_table_download_and_proxy_consumers():
         d = dyn[0]
         assert "proxy" in d.consumers
         assert "download" not in d.consumers
-        for src in ("graphis", "gfriends", "wiki", "minnano"):
+        for src in ("graphis", "gfriends", "wiki", "xcity"):
             assert d.host not in download_hosts_for(src)
         # not in static proxy_rules host strings (hostname alone may collide
         # only if a static entry used the same host — 10.0.0.5 won't)
@@ -414,4 +409,3 @@ def test_validate_photo_url_xcity():
 def test_referer_map_xcity():
     """TASK-157-T2: REFERER_MAP 新增 xcity 對應值。"""
     assert REFERER_MAP["xcity"] == "https://xcity.jp/"
-

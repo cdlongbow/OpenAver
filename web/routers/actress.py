@@ -64,7 +64,7 @@ class FavoriteRequest(BaseModel):
 
 
 class SetActressPhotoRequest(BaseModel):
-    source: str                          # "graphis"|"gfriends"|"wiki"|"minnano"|"local_crop"
+    source: str                          # "graphis"|"gfriends"|"wiki"|"xcity"|"local_crop"
     url: Optional[str] = None            # 雲端來源：照片 URL（必填）
     video_path: Optional[str] = None     # local_crop：影片 file:/// URI（必填）
     crop_spec: Optional[str] = "v1"      # local_crop：裁切規格（預設 v1）
@@ -117,7 +117,7 @@ def _flatten_aliases(raw) -> list:
     """
     將 aliases 欄位統一轉為純字串 list。
 
-    minnano scraper 回傳 dict list（每筆含 ja/hiragana/romaji），
+    dict-list 格式來源回傳 dict list（每筆含 ja/hiragana/romaji），
     wiki scraper 回傳純字串 list。
     前端需要純字串 list，此 helper 統一兩種格式。
 
@@ -429,9 +429,9 @@ def _fetch_single_source(name: str, source: str) -> Optional[str]:
             from core.scrapers.actress.wiki_ja import scrape_wiki_ja
             r = scrape_wiki_ja(name)
             return r.get("photo_url") if r else None
-        elif source == "minnano":
-            from core.scrapers.actress.minnano_av import scrape_minnano_av
-            r = scrape_minnano_av(name)
+        elif source == "xcity":
+            from core.scrapers.actress.xcity import scrape_xcity
+            r = scrape_xcity(name)
             return r.get("photo_url") if r else None
         else:
             return None
@@ -489,7 +489,7 @@ async def list_photo_candidates(name: str, attempt: int = Query(0, ge=0)):
         )
 
     current_source = actress.photo_source
-    cloud_sources = [s for s in ["graphis", "gfriends", "wiki", "minnano"] if s != current_source]
+    cloud_sources = [s for s in ["graphis", "gfriends", "wiki", "xcity"] if s != current_source]
 
     def _resolve_query_names(n: str) -> list:
         # CD-2：序位 0 = 請求的 name（URL path param），不是 record.primary_name。
@@ -820,7 +820,7 @@ async def actress_crop(path: str, spec: str = "v1"):
 # NOTE：必須定義在 GET /{name} 之前！
 # ---------------------------------------------------------------------------
 
-CLOUD_SOURCES = {"graphis", "gfriends", "wiki", "minnano"}
+CLOUD_SOURCES = {"graphis", "gfriends", "wiki", "xcity"}
 
 # CD-8（AGENTS.md:33）：T3 在本端點新增的失敗路徑一律固定中文；既有 7 個
 # snake_case 錯誤字面（not_found/unknown_source/... ）是舊碼遺留，範圍外不動
@@ -834,7 +834,7 @@ _SET_PHOTO_ERR_INVALID_URL = "照片來源網址不合法"
 async def set_actress_photo(name: str, req: SetActressPhotoRequest):
     """
     設定女優照片。
-    - 雲端來源（graphis/gfriends/wiki/minnano）：先清焦點成功，才下載並覆蓋本機照片
+    - 雲端來源（graphis/gfriends/wiki/xcity）：先清焦點成功，才下載並覆蓋本機照片
     - local_crop：crop 出候選 bytes 後，先清焦點成功，才寫入 GFRIENDS_DIR
 
     CD-4 pre-invalidate（承重，spec §3.3 唯一「不做就會比現況更差」的項目）：換圖

@@ -1348,7 +1348,7 @@
                 <!-- 以下沿用原內部 children，class 不變 -->
                 <div class="picker-current-source"
                      x-show="_pickerCurrentSource">
-                    <span x-text="t('showcase.actress.picker.current_source').replace('{source}', t('showcase.actress.picker.source_' + _pickerCurrentSource) || _pickerCurrentSource)"></span>
+                    <span x-text="t('showcase.actress.picker.current_source').replace('{source}', window.__i18n?.showcase?.actress?.picker?.['source_' + _pickerCurrentSource] || _pickerCurrentSource)"></span>
                 </div>
                 <!-- 100b-T4（CD-8／裁決 5）：.picker-candidate-card 是 <div>，HTML `disabled`
                      只對 form control 生效——掛在 div 上會被瀏覽器靜默忽略（看起來鎖了、其實
