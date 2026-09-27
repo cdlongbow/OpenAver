@@ -546,6 +546,11 @@ export function libraryInsightsState() {
          * 抓到（100% 重現，非計時抖動）。改用「當下這輪 `$watch` 開始時、尚未被
          * 覆寫的 `costarRows.length`」＋`wasActress` 算 `wasCostarVisible`，兩者
          * 都是同步值，不受動畫完成時機影響。
+         *
+         * TASK-156d-T9 round 3：捲動判斷（`wasActress`/`isNowActress`/
+         * `switchedActress`）只在這裡（focus 專屬），淡出淡入本體抽成
+         * `_syncCostarVisibility()` 讓 `$watch('period')` 也能呼叫——period
+         * 改變不捲動（CD-156d-6 只認 focus 翻轉）。
          */
         _handleActressFocusChange(oldValue, oldCostarRowsLength) {
             const wasActress = !!(oldValue && oldValue.type === 'actress');
@@ -564,10 +569,20 @@ export function libraryInsightsState() {
                 });
             }
 
-            // TASK-156d-T9／CD-156d-10b：淡出淡入的觸發條件是 costarVisible 翻轉，
-            // 不是 isActressFocused 翻轉——女優焦點但零共演時 costarVisible 維持
-            // false，不應播放任何動畫。
-            const wasCostarVisible = computeCostarVisible(wasActress, oldCostarRowsLength);
+            this._syncCostarVisibility(computeCostarVisible(wasActress, oldCostarRowsLength));
+        },
+
+        /**
+         * TASK-156d-T9 round 3：`costarVisible` 翻轉時的淡出淡入本體，從
+         * `_handleActressFocusChange` 抽出——`$watch('focus')` 與
+         * `$watch('period')` 共用同一份（CD-156d-10b 的 kill-tweens／
+         * 依當下最新值重新開始／不變式 2 全部照舊，不因為呼叫方是誰而不同）。
+         * 呼叫方只需要傳「翻轉前」的 `costarVisible`（用當下已知的
+         * `isActressFocused` ＋翻轉前的 `costarRows.length` 算出），不捲動——
+         * 捲動邏輯留在 `_handleActressFocusChange`，因為 CD-156d-6 明確只認
+         * focus 翻轉，`period` 改變不捲動。
+         */
+        _syncCostarVisibility(wasCostarVisible) {
             const isNowCostarVisible = this.costarVisible;
             if (wasCostarVisible === isNowCostarVisible) return;
 
@@ -1126,6 +1141,12 @@ export function libraryInsightsState() {
                 this.recomputeSolo();
                 this._maybePlayPinPulse();
                 this.recomputeCostar();
+                // TASK-156d-T9 round 3 audit：這裡不需要呼叫 _syncCostarVisibility()
+                // ——this.focus 只能被 toggleActressFocus()／clearFocus()／donut 片商
+                // 點擊回呼寫入，三者都要點擊已渲染的 UI 才觸發，而這些 UI 在首次快照成功
+                // 前不存在，所以 _loadSnapshot() 執行到這裡時 this.focus 必為初始
+                // 值 null，costarVisible 恆 false，跟預設顯示旗標（showTop20InRow3:
+                // true／showCostar:false）已經一致，沒有「翻轉」可同步。
                 if (shouldPlayPodiumEntrance(_podiumEntrancePlayed, this.podiumRows.length)) {
                     _podiumEntrancePlayed = true;
                     this.$nextTick(() => this._playPodiumEntrance());
@@ -1210,6 +1231,15 @@ export function libraryInsightsState() {
 
             // $watch 是 period／focus 變更後唯一的 recompute + 重繪入口
             this.$watch('period', () => {
+                // TASK-156d-T9 round 3：period 改變時 buildCostarRows() 用新
+                // period 重新過濾，同一位焦點女優在不同年份可能從「有共演」變
+                // 「零共演」（或相反）——costarVisible 因此翻轉，跟 focus 改變
+                // 一樣要跑淡出淡入＋切換 row3/row7 顯示旗標，否則會卡在空白的
+                // 「與她同片」卡（round 3 review 抓到：只有 focus 路徑呼叫了
+                // 這段同步，period 路徑漏掉）。isActressFocused 不因為換期間
+                // 而改變，wasCostarVisible 只需要「舊 costarRows.length」。
+                // 不捲動——CD-156d-6 明確只認 focus 翻轉。
+                const oldCostarRowsLength = this.costarRows.length;
                 this.recomputeScopedCount();
                 this.redrawYears();
                 this.redrawDonut();
@@ -1222,6 +1252,7 @@ export function libraryInsightsState() {
                 this.recomputeSolo();
                 this._maybePlayPinPulse();
                 this.recomputeCostar();
+                this._syncCostarVisibility(computeCostarVisible(this.isActressFocused, oldCostarRowsLength));
             });
             this.$watch('focus', (value, oldValue) => {
                 // TASK-156d-T9／CD-156d-10b：在 recomputeCostar() 覆寫 this.costarRows

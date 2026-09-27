@@ -474,6 +474,19 @@ def _costar_rows_length(page: Page) -> int:
     )
 
 
+def _read_period(page: Page) -> dict:
+    """讀 `this.period`（`_snapshot()` 沒有這個欄位——它是既有共用 helper，
+    本卡 round 3 新測試才需要直接讀 period，不擴大共用 helper 的形狀）。"""
+    return page.evaluate(
+        """() => {
+            const root = document.querySelector('%s');
+            const data = window.Alpine && Alpine.$data(root);
+            return data ? data.period : null;
+        }"""
+        % ALPINE_ROOT_SELECTOR
+    )
+
+
 def _classify_by_costar(
     page: Page, names: list, need_with: int = 0, need_without: int = 0
 ) -> tuple:
@@ -757,6 +770,169 @@ def test_no_costar_actress_shows_top20_not_empty_costar_card(
         "（畫面上不該出現空白的『與她同片』卡片）"
     )
     assert state["top20Row3El"]["display"] != "none", "row3 左半格應顯示 Top20"
+
+
+# ── TASK-156d-T9 round 3：period 改變也要同步 costarVisible ────────────────────
+# review 抓到的回歸：`$watch('period')` 只呼叫了 `recomputeCostar()`，沒有跑
+# CD-156d-10b 的翻轉判斷——同一位有共演的女優，選到一個她零共演的年份時，
+# 「與她同片」空卡會卡在畫面上不會換回 Top20；反方向（零共演年份→有共演年份）
+# 也不會換回來。修法把翻轉判斷抽成 `_syncCostarVisibility()`，`period` watcher
+# 也呼叫（不捲動，CD-156d-6 明確只認 focus 翻轉）。
+
+
+def _click_year_bar(page: Page, year: int) -> bool:
+    """在 `#yearsChart` 上用真滑鼠點擊該年份的長條，觸發 `charts.js` 既有的點擊
+    handler（`_yearsCallbacks.setPeriod(...)`）。該 handler 只檢查點擊像素是否
+    落在 grid 座標系內、再用 `convertFromPixel` 反算類別軸 index——不檢查是否
+    真的點在長條本身的可見高度內，所以這裡的 y 座標取 grid 垂直置中即可，
+    filmCount===0（那一年沒有任何片，長條高度為 0）的年份一樣點得到。若當前
+    `period` 已經是這個年份，點擊會照 `charts.js` 既有邏輯切回 `{type:'all'}`
+    （跟真人使用者「再點一次同一根長條＝取消篩選」的既有行為一致）。
+    找不到該年份的類別軸 index（不在 x 軸範圍內）回傳 False。
+    """
+    coords = page.evaluate(
+        """(year) => {
+            const el = document.getElementById('yearsChart');
+            const chart = window.echarts && window.echarts.getInstanceByDom(el);
+            if (!chart) return null;
+            const opt = chart.getOption();
+            const cats = opt.xAxis[0].data;
+            const idx = cats.indexOf(String(year));
+            if (idx < 0) return null;
+            const px = chart.convertToPixel({ xAxisIndex: 0 }, idx);
+            const gridRect = chart.getModel().getComponent('grid').coordinateSystem.getRect();
+            const py = gridRect.y + gridRect.height / 2;
+            const rect = el.getBoundingClientRect();
+            return { x: rect.left + px, y: rect.top + py };
+        }""",
+        year,
+    )
+    if not coords:
+        return False
+    page.mouse.click(coords["x"], coords["y"])
+    return True
+
+
+def _find_actress_year_costar_flip(page: Page, names: list):
+    """依序聚焦候選女優，讀她在「全部年份」下的 `costarRows.length`（>0 才繼續
+    往下找）；再用既有的 `ganttView('year')`（`state.js` 年表視圖，逐格
+    `filmCount`）取出她「有片」的年份清單，逐一點年份長條讀
+    `costarRows.length`，找到一個 `===0`（她那年有片但沒有共演）即回傳
+    `(name, zero_year)`。每個候選試完都清回全部年份／清除焦點，讓頁面回到
+    探測前的狀態，不污染呼叫方接下來的測試流程。全部候選都試過仍找不到就回
+    傳 `None`（呼叫方 `pytest.skip()`，不可假 PASS）。
+    """
+    for name in names:
+        _click_gantt_actress_raw(page, name)
+        _wait_settled(page)
+        all_costar_len = _costar_rows_length(page)
+        if all_costar_len == 0:
+            _click_gantt_actress_raw(page, name)  # 清除焦點
+            _wait_settled(page)
+            continue
+
+        years = page.evaluate(
+            """(name) => {
+                const root = document.querySelector('%s');
+                const data = window.Alpine && Alpine.$data(root);
+                const v = data.ganttView('year');
+                const row = (v.rows || []).find((r) => r.name === name);
+                if (!row) return [];
+                return row.cells.filter((c) => c.filmCount > 0).map((c) => c.year);
+            }"""
+            % ALPINE_ROOT_SELECTOR,
+            name,
+        )
+        zero_year = None
+        for y in years:
+            if not _click_year_bar(page, y):
+                continue
+            _wait_settled(page)
+            if _costar_rows_length(page) == 0:
+                zero_year = y
+                break
+
+        # 恢復探測前狀態：回全部年份（若目前卡在某個年份）、清除焦點。
+        if page.evaluate(
+            """() => {
+                const root = document.querySelector('%s');
+                const data = window.Alpine && Alpine.$data(root);
+                return data.period && data.period.type === 'year';
+            }"""
+            % ALPINE_ROOT_SELECTOR
+        ):
+            page.click("#tileYear .insights-x-btn")
+            _wait_settled(page)
+        _click_gantt_actress_raw(page, name)  # 清除焦點
+        _wait_settled(page)
+
+        if zero_year is not None:
+            return name, zero_year
+    return None
+
+
+def test_period_change_syncs_costar_card_for_focused_actress(
+    page: Page, base_url: str
+) -> None:
+    """round 3 回歸守衛：女優焦點且當下有共演 → 選一個她零共演的年份，settle
+    後必須換成 Top20（`showTop20InRow3=true`、`showCostar=false`、
+    `showTop20InRow7=false`），不能卡在空白的「與她同片」卡；接著清除年份篩選
+    （回全部年份），「與她同片」卡必須換回來（`showCostar=true`）。
+
+    動態挑選女優與年份（見 `_find_actress_year_costar_flip`）；片庫資料湊不出
+    這種組合就 `pytest.skip()`，不可假 PASS。
+    """
+    names = _load_ready(page, base_url)
+    found = _find_actress_year_costar_flip(page, names)
+    if found is None:
+        pytest.skip(
+            "片庫資料湊不出『同一位女優在某年有共演、另一年有片但零共演』的組合"
+        )
+    name, zero_year = found
+
+    _click_gantt_actress_raw(page, name)
+    _wait_settled(page)
+    focused_state = _snapshot(page)
+    assert focused_state["showCostar"] is True, (
+        f"{name!r} 全部年份下應已顯示與她同片卡（前置條件：探測階段已確認 "
+        "costarRows.length>0）"
+    )
+
+    assert _click_year_bar(page, zero_year), f"yearsChart 找不到年份 {zero_year} 的類別軸座標"
+    _wait_settled(page)
+    zero_year_period = _read_period(page)
+    zero_year_state = _snapshot(page)
+    assert zero_year_period == {"type": "year", "year": zero_year}, (
+        f"period 應切到 {{'type': 'year', 'year': {zero_year}}}，"
+        f"實際 {zero_year_period!r}"
+    )
+    assert zero_year_state["showTop20InRow3"] is True, (
+        f"{name!r} 在 {zero_year} 年零共演，row3 左半格應換回 Top20"
+    )
+    assert zero_year_state["showCostar"] is False, (
+        f"{name!r} 在 {zero_year} 年零共演，不應繼續顯示與她同片卡（空卡）"
+    )
+    assert zero_year_state["showTop20InRow7"] is False, (
+        f"{name!r} 在 {zero_year} 年零共演，row7 不應顯示"
+    )
+    assert zero_year_state["costarEl"]["display"] == "none", (
+        f"costarEl computed display 應為 none，實際 "
+        f"{zero_year_state['costarEl']['display']!r}"
+    )
+
+    # 回全部年份：與她同片卡必須換回來。
+    page.click("#tileYear .insights-x-btn")
+    _wait_settled(page)
+    back_period = _read_period(page)
+    back_state = _snapshot(page)
+    assert back_period == {"type": "all"}, (
+        f"清除年份篩選後 period 應回到 {{'type': 'all'}}，實際 {back_period!r}"
+    )
+    assert back_state["showCostar"] is True, (
+        f"{name!r} 清除年份篩選回全部年份（有共演）後，與她同片卡應換回來"
+    )
+    assert back_state["showTop20InRow3"] is False, "與她同片卡顯示時 row3 左半格不應同時顯示 Top20"
+    assert back_state["costarEl"]["display"] != "none", "與她同片卡應可見"
 
 
 def test_switch_between_costar_and_no_costar_actress_matches_direct_set(
