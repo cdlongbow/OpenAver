@@ -39,7 +39,7 @@
                         <div class="podium-slot"
                              :class="'podium-slot--' + podiumPositionClass(row.rank) + (focus && focus.type === 'actress' && focus.value === row.name ? ' is-active' : '')"
                              :data-flip-id="'podium-' + row.name"
-                             @click="toggleActressFocus(row.name)">
+                             @click="flyAndFocusActress(row.name, $event)">
                             <span class="podium-avatar"
                                   :data-flip-id="'avatar-' + row.name"
                                   @click.stop="openPreview(row.name, $el)"
@@ -78,7 +78,7 @@
                     <div class="rest20-row"
                          :class="{ 'is-active': focus && focus.type === 'actress' && focus.value === row.name }"
                          :data-flip-id="'rest-' + row.name"
-                         @click="toggleActressFocus(row.name)">
+                         @click="flyAndFocusActress(row.name, $event)">
                         <span class="top20-rank" x-text="row.rank"></span>
                         <span class="top20-avatar"
                               :data-flip-id="'avatar-' + row.name"
@@ -236,9 +236,10 @@
                         <template x-for="row in costarRows" :key="row.name">
                             <div class="costar-row"
                                  :class="{ 'is-active': focus && focus.type === 'actress' && focus.value === row.name }"
-                                 @click="toggleActressFocus(row.name)">
+                                 @click="flyAndFocusActress(row.name, $event)">
                                 <span class="costar-avatars">
                                     <span class="costar-avatar"
+                                          :data-costar-role="'self'"
                                           @click.stop="openPreview(row.self, $el)"
                                           @mouseenter="scheduleOpenPreview(row.self, $el)"
                                           @mouseleave="cancelOpenPreview()">
@@ -253,6 +254,7 @@
                                         </template>
                                     </span>
                                     <span class="costar-avatar"
+                                          :data-costar-role="'other'"
                                           @click.stop="openPreview(row.name, $el)"
                                           @mouseenter="scheduleOpenPreview(row.name, $el)"
                                           @mouseleave="cancelOpenPreview()">
@@ -387,7 +389,7 @@
                                                  && focus.value === row.name
                                          }"
                                          :style="ganttGridStyle(ganttAxis)"
-                                         @click="toggleActressFocus(row.name)">
+                                         @click="flyAndFocusActress(row.name, $event)">
                                         <div class="gantt-name-cell">
                                             <span class="gantt-avatar"
                                                   @click.stop="openPreview(row.name, $el)"
@@ -445,7 +447,7 @@
                     <template x-for="row in soloRows" :key="row.name">
                         <div class="solo-row"
                              :class="{ 'is-active': focus && focus.type === 'actress' && focus.value === row.name }"
-                             @click="toggleActressFocus(row.name)">
+                             @click="flyAndFocusActress(row.name, $event)">
                             <span class="solo-avatar"
                                   @click.stop="openPreview(row.name, $el)"
                                   @mouseenter="scheduleOpenPreview(row.name, $el)"

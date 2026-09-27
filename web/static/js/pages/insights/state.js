@@ -88,6 +88,8 @@ let _top20ActiveAnims = new Set();
 /** TASK-156e-T1b／CD-156e-3：156d 淡出淡入換卡世代號與進行中鏈計數。 */
 let _costarSwapGen = 0;
 let _costarSwapPendingChains = 0;
+/** TASK-156e-T2／CD-156e-5：同時最多一個頭像飛行替身。 */
+let _activeAvatarGhost = null;
 
 /**
  * TASK-156e-T1b／CD-156e-2：登記／自清 wrapper。
@@ -123,7 +125,7 @@ function _forceSettleAllTop20Anims() {
 }
 
 /**
- * 掉榜替身掛到 body 前剝掉 Alpine 綁定，避免 MutationObserver 在無
+ * 飛行／掉榜替身掛到 body 前剝掉 Alpine 綁定，避免 MutationObserver 在無
  * scope 下把 clone 當新元件初始化（噴 podiumPositionClass／row is not defined）。
  */
 function _stripAlpineForGhost(root) {
@@ -605,6 +607,164 @@ export function libraryInsightsState() {
             } else {
                 this.focus = { type: 'actress', value: name };
             }
+        },
+
+        /**
+         * TASK-156e-T2／CD-156e-5：五入口共用——設女優焦點並從頭像起飛到焦點格。
+         * 清除焦點／找不到頭像時只走 toggle，不飛。
+         */
+        flyAndFocusActress(name, event) {
+            const isClearing = this.focus && this.focus.type === 'actress' && this.focus.value === name;
+            if (isClearing) {
+                if (_activeAvatarGhost) {
+                    // 字面與 _flyAvatarToFocusTile 開頭的 remove 分開，mutation from 才唯一
+                    const staleGhost = _activeAvatarGhost.el;
+                    staleGhost.remove();
+                    _activeAvatarGhost = null;
+                }
+                const clearingTarget = document.querySelector('#tileFocus .insights-focus-avatar:not(.mk)');
+                if (clearingTarget) {
+                    clearingTarget.removeAttribute('data-avatar-fly-hidden');
+                    clearingTarget.style.opacity = '1';
+                }
+                this.toggleActressFocus(name);
+                return;
+            }
+            let sourceEl = null;
+            const currentTarget = event && event.currentTarget;
+            if (currentTarget && typeof currentTarget.querySelector === 'function') {
+                let selector = null;
+                if (currentTarget.matches('.podium-slot')) selector = '.podium-avatar';
+                else if (currentTarget.matches('.rest20-row')) selector = '.top20-avatar';
+                else if (currentTarget.matches('.gantt-row')) selector = '.gantt-avatar';
+                else if (currentTarget.matches('.solo-row')) selector = '.solo-avatar';
+                else if (currentTarget.matches('.costar-row')) selector = '[data-costar-role="other"]';
+                if (selector) sourceEl = currentTarget.querySelector(selector);
+            }
+            if (!sourceEl) { this.toggleActressFocus(name); return; }
+            const sourceRect = sourceEl.getBoundingClientRect();
+            // getComputedStyle 回傳 live CSSStyleDeclaration；toggle 後 Alpine 可能拆掉
+            // 來源節點，之後讀屬性會變空字串。toggle 前拍成純物件快照。
+            const liveStyle = getComputedStyle(sourceEl);
+            const sourceStyle = {
+                borderRadius: liveStyle.borderRadius,
+                backgroundColor: liveStyle.backgroundColor,
+                color: liveStyle.color,
+                fontSize: liveStyle.fontSize,
+                fontWeight: liveStyle.fontWeight,
+                lineHeight: liveStyle.lineHeight,
+                fontFamily: liveStyle.fontFamily,
+                display: liveStyle.display,
+                alignItems: liveStyle.alignItems,
+                justifyContent: liveStyle.justifyContent,
+                overflow: liveStyle.overflow,
+                boxSizing: liveStyle.boxSizing,
+            };
+            const sourceDocRect = {
+                top: sourceRect.top + window.scrollY,
+                left: sourceRect.left + window.scrollX,
+                width: sourceRect.width,
+                height: sourceRect.height,
+            };
+            // 必須在 toggle 前 clone：焦點一變，與她同片列會重算重繪，
+            // 來源節點在 $nextTick 時可能已被 Alpine 拆掉／清空。
+            const sourceClone = sourceEl.cloneNode(true);
+            this.toggleActressFocus(name);
+            // 雙 rAF：等 Alpine 插入焦點格 + 一幀 layout（costar 進場等）後再量終點，
+            // 避免 targetDocRect 與真實落點差幾 px。
+            this.$nextTick(() => {
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        this._flyAvatarToFocusTile(sourceClone, sourceDocRect, sourceStyle);
+                    });
+                });
+            });
+        },
+
+        /**
+         * TASK-156e-T2／CD-156e-5：建立 document-relative ghost，飛向焦點格頭像。
+         * sourceRect 已是點擊當下換算好的文件座標。
+         */
+        _flyAvatarToFocusTile(sourceEl, sourceRect, sourceStyle) {
+            if (_activeAvatarGhost) {
+                _activeAvatarGhost.el.remove();
+                _activeAvatarGhost = null;
+            }
+
+            const target = document.querySelector('#tileFocus .insights-focus-avatar:not(.mk)');
+            if (!target) return;
+
+            const motion = window.OpenAver && window.OpenAver.motion;
+            if (!motion || !motion._shouldAnimate()) {
+                target.removeAttribute('data-avatar-fly-hidden');
+                target.style.opacity = '1';
+                return;
+            }
+            if (!window.AvatarFly || typeof window.AvatarFly.playFlyToFocus !== 'function') {
+                return;
+            }
+
+            target.setAttribute('data-avatar-fly-hidden', 'true');
+            target.style.opacity = '0';
+
+            // sourceEl 可能已是 flyAndFocusActress 預先做好的 clone。
+            const ghost = sourceEl.cloneNode(true);
+            // 去掉 Alpine <template x-if> 殘留與 x-/:/@ 屬性——ghost 掛到 body 後若被
+            // Alpine 再評估，row 未定義會把已渲染的 <img>/<span> 清掉，留下空白替身。
+            _stripAlpineForGhost(ghost);
+            ghost.setAttribute('data-avatar-fly-ghost', 'true');
+            ghost.style.position = 'absolute';
+            ghost.style.top = sourceRect.top + 'px';
+            ghost.style.left = sourceRect.left + 'px';
+            ghost.style.width = sourceRect.width + 'px';
+            ghost.style.height = sourceRect.height + 'px';
+            ghost.style.margin = '0';
+            ghost.style.pointerEvents = 'none';
+            ghost.style.zIndex = '2000';
+            ghost.style.willChange = 'top, left, width, height';
+            ghost.style.opacity = '1';
+            ghost.style.borderRadius = sourceStyle.borderRadius;
+            ghost.style.backgroundColor = sourceStyle.backgroundColor;
+            ghost.style.fontSize = sourceStyle.fontSize;
+            ghost.style.fontWeight = sourceStyle.fontWeight;
+            ghost.style.color = sourceStyle.color;
+            ghost.style.display = sourceStyle.display;
+            ghost.style.alignItems = sourceStyle.alignItems;
+            ghost.style.justifyContent = sourceStyle.justifyContent;
+            ghost.style.overflow = sourceStyle.overflow;
+            ghost.style.boxSizing = sourceStyle.boxSizing;
+            document.body.appendChild(ghost);
+
+            const targetViewport = target.getBoundingClientRect();
+            const targetDocRect = {
+                top: targetViewport.top + window.scrollY,
+                left: targetViewport.left + window.scrollX,
+                width: targetViewport.width,
+                height: targetViewport.height,
+            };
+
+            const focusName = this.focus && this.focus.type === 'actress' ? this.focus.value : null;
+            _activeAvatarGhost = { el: ghost, name: focusName };
+            window.AvatarFly.playFlyToFocus(ghost, targetDocRect, {
+                onComplete: () => {
+                    if (!(_activeAvatarGhost && _activeAvatarGhost.el === ghost)) return;
+                    // 補間結束後對齊到「此刻」焦點格（layout 可能在飛行中微移），
+                    // 留一幀給取樣再移除，滿足落地誤差 <2px。
+                    // 用 inline style（不直呼 gsap——pages/insights 禁令）。
+                    const live = target.getBoundingClientRect();
+                    ghost.style.top = (live.top + window.scrollY) + 'px';
+                    ghost.style.left = (live.left + window.scrollX) + 'px';
+                    ghost.style.width = live.width + 'px';
+                    ghost.style.height = live.height + 'px';
+                    requestAnimationFrame(() => {
+                        if (!(_activeAvatarGhost && _activeAvatarGhost.el === ghost)) return;
+                        ghost.remove();
+                        target.removeAttribute('data-avatar-fly-hidden');
+                        target.style.opacity = '1';
+                        _activeAvatarGhost = null;
+                    });
+                },
+            });
         },
 
         /**
