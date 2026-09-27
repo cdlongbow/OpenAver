@@ -1201,8 +1201,11 @@ async def upload_actress_photo(name: str, file: UploadFile = _UPLOAD_FILE_PARAM)
     的中途失敗污染；clear_focal 失敗（含拋例外）→ 500，不得觸碰檔案寫入。
     不跑自動偵測、不寫焦點、無等待（CD-1）——要對焦走 POST /{name}/focal（T4）。
 
-    CD-13：不揭露進 web/routers/capabilities.py——multipart binary body，
-    AI agent 與 server 未必同機，無法從本機路徑上傳，揭露也用不起來（spec §4-4）。
+    已揭露進 web/routers/capabilities.py 為 upload_actress_photo（TASK-157-T8／
+    CD-157-9）。舊版本假設「AI agent 與 server 未必同機，無法從本機路徑上傳」
+    不成立：正確用法是 AI 自己下載圖片 bytes 後以 multipart 上傳，與是否同機
+    無關，任何 HTTP client（含 AI agent 自己發的 multipart request）都不需要
+    與 server 共享檔案系統。
     """
     # 1. 大小（CD-10）：.size 可讀就先擋；.size 為 None（理論上真實 multipart 解析器
     # 恆設為非 None，此分支防禦不可信任的呼叫端）則讀出後用 len(data) 判斷。

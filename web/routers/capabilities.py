@@ -1399,6 +1399,168 @@ _TOOLS: list[dict] = [
         "retry_safe": True,
         "_example_template": "curl '{base}/api/scraper-sources'",
     },
+    {
+        "name": "preview_actress_sources",
+        "description": (
+            "查詢女優的四個資料來源（xcity/wiki/graphis/gfriends），"
+            "每個來源的結果分開回傳，不合併、不挑贏家，讓 AI 自己比對後決定"
+            "要用哪個值。若這位女優已收藏，一併回傳目前存在片庫裡的值（current）"
+            "供比對；若未收藏，current 為 null。照片候選看本端點回應的"
+            "photo_candidates 欄位（不論是否已收藏都有效，未收藏的女優沒有"
+            "獨立的照片候選端點可用）。完全不寫入：不收藏、不存檔、不下載照片。"
+            "下一步：把預覽結果對照、自己上網補查後，呼叫 submit_actress 交回"
+            "審過的版本。"
+        ),
+        "method": "POST",
+        "path": "/api/actresses/preview",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "女優名（日文）"},
+            },
+            "required": ["name"],
+        },
+        "output_schema": {
+            "name": "string — 查詢的女優名",
+            "sources": (
+                "{xcity, wiki, graphis, gfriends} — 各來源各自的原始欄位 dict，"
+                "查無/下架/例外時該來源為 null，彼此獨立不合併"
+            ),
+            "current": "Actress|null — 若已收藏，片庫目前的值；未收藏為 null",
+            "photo_candidates": "[{source, url}] — 各來源可選照片，皆無照片時為空陣列",
+            "alias_of": "string（可選）— 只有查詢名字是某已收藏女優的別名時才出現，值為正確的女優名",
+        },
+        "side_effect": False,
+        "confirmation_required": False,
+        "retry_safe": True,
+        "_example_template": (
+            "curl -X POST '{base}/api/actresses/preview' "
+            "-H 'Content-Type: application/json' "
+            "-d '{{\"name\": \"三上悠亜\"}}'"
+        ),
+    },
+    {
+        "name": "submit_actress",
+        "description": (
+            "提交審過的女優資料，寫入片庫。⚠️ 會覆蓋該女優既有的對應欄位"
+            "（沒帶的欄位不動、帶空值會清空該欄位）；若同時提交 photo，會覆蓋"
+            "現有照片並重設對焦位置；若這位女優尚未收藏，會直接建立收藏"
+            "（不會走自動抓取，寫進去的就是提交的內容）。"
+            "tags 等清單型欄位是整份取代，不是加一個/刪一個——要新增/刪除"
+            "先呼叫 preview_actress_sources 或既有查詢端點讀現值，在清單上改，"
+            "再整份交回。"
+            "不可寫的內部欄位（帶了就 400，不靜默忽略）："
+            "photo_source / primary_text_source / auto_focal / crop_mode / "
+            "photo_fp_path / photo_fp_mtime_ns / photo_fp_size / aliases / "
+            "name / created_at / updated_at。"
+            "別名不在這條流程裡——要新增/刪除別名，走既有的 "
+            "POST /api/actress-aliases/{name}/alias。"
+            "身分守衛：提交的名字若是某位已收藏女優的別名，一律擋下並告知"
+            "正確名字，不會靜默轉向到別人身上。"
+            "photo.source 只能是 graphis/gfriends/wiki/xcity/local_crop 五選一。"
+            "graphis/gfriends/wiki/xcity（雲端來源）：photo.url 必填，且必須是該"
+            "來源既有白名單允許的 host，不合法會 400；若圖片來自這四個網站以外，"
+            "請改用 upload_actress_photo 端點自行下載後上傳，不要嘗試把任意網址"
+            "塞進 photo.url（會被拒絕）。local_crop：photo.video_path 必填"
+            "（該片必須已經在你的片庫裡，file:/// URI），photo.crop_spec 選填"
+            "（預設 \"v1\"），此分支不使用 photo.url。"
+            "提交前的欄位驗證失敗一律回 400，body 為 {\"detail\": \"<單一錯誤訊息字串>\"}"
+            "（保留欄位/未知欄位/型別或範圍錯誤/別名擋下時 detail 會點名正確名字），此時片庫零寫入；"
+            "照片處理階段（下載、裁切、寫檔）失敗可能回 404 或 500 與 {\"error\": ...}，文字欄位與新建立的收藏會還原，"
+            "但原照片的對焦設定可能已被清除、需要重新調整；成功時回 {\"success\": true, \"actress\": <完整女優資料，"
+            "與 GET /api/actresses/{name} 相同形狀>}。"
+        ),
+        "method": "POST",
+        "path": "/api/actresses/{name}",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "女優名稱（URL path parameter，需 URL encode，前後空白會自動去除）。若是既有收藏女優的別名會被 400 擋下，不會靜默轉向"},
+                "name_en": {"type": "string", "description": "英文名；沒帶=不動，帶空字串=清空"},
+                "birth": {"type": "string", "description": "生日，需符合 YYYY-MM-DD 且是合法曆法日期；沒帶=不動，空字串=清空"},
+                "height": {"type": "string", "description": "身高，請傳字串，例如 \"158cm\" 或 \"158\"，正規化為 \"{n}cm\"，需落在 100~220"},
+                "cup": {"type": "string", "description": "罩杯，單一大寫字母（如 \"D\"），不支援雙字母記法"},
+                "hometown": {"type": "string", "description": "出身地"},
+                "hobby": {"type": "string", "description": "興趣"},
+                "agency": {"type": "string", "description": "所屬事務所"},
+                "debut_work": {"type": "string", "description": "出道作品"},
+                "nickname": {"type": "string", "description": "暱稱"},
+                "blog_url": {"type": "string", "description": "部落格網址"},
+                "official_url": {"type": "string", "description": "官方網站網址"},
+                "bust": {"type": "integer", "description": "胸圍 cm，也接受數字字串如 \"83\"，需落在 50~150"},
+                "waist": {"type": "integer", "description": "腰圍 cm，也接受數字字串，需落在 40~120"},
+                "hip": {"type": "integer", "description": "臀圍 cm，也接受數字字串，需落在 50~150"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "標籤，整份取代（不是加一個/刪一個）"},
+                "photo": {
+                    "type": "object",
+                    "description": (
+                        "不帶此欄位或帶 null=照片與對焦位置都不動。帶了非 null 物件才換照片，"
+                        "對焦依既有換照片規則處理。source 為雲端來源時 url 必填且需過白名單；"
+                        "source 為 local_crop 時 video_path 必填、不使用 url；"
+                        "白名單外的圖片改用 upload_actress_photo。"
+                    ),
+                    "properties": {
+                        "source": {
+                            "type": "string",
+                            "enum": ["graphis", "gfriends", "wiki", "xcity", "local_crop"],
+                        },
+                        "url": {"type": "string", "description": "source 為 graphis/gfriends/wiki/xcity 時必填，且必須是該來源既有白名單允許的 host；source=local_crop 時不使用"},
+                        "video_path": {"type": "string", "description": "source=local_crop 時必填，該影片必須已存在於你的片庫裡（file:/// URI）"},
+                        "crop_spec": {"type": "string", "description": "source=local_crop 時可選，預設 \"v1\""},
+                    },
+                },
+            },
+            "required": ["name"],
+        },
+        "output_schema": {
+            "success": "boolean",
+            "actress": "Actress — 與 GET /api/actresses/{name} 相同的完整女優資料（primary_text_source 已被伺服器覆寫為 \"ai\"）",
+        },
+        "side_effect": True,
+        "confirmation_required": True,
+        "idempotent": False,
+        "retry_safe": False,
+        "_example_template": (
+            "curl -X POST '{base}/api/actresses/%E4%B8%89%E4%B8%8A%E6%82%A0%E4%BA%9C' "
+            "-H 'Content-Type: application/json' "
+            "-d '{{\"height\": \"158cm\"}}'"
+        ),
+    },
+    {
+        "name": "upload_actress_photo",
+        "description": (
+            "上傳任意來源的圖片檔案取代女優照片（multipart，非 URL）。"
+            "⚠️ 會覆蓋現有照片並重設對焦位置，不可復原（舊檔無備份）。"
+            "AI 從 graphis/gfriends/wiki/xcity 白名單以外的網站找到想要的照片時，"
+            "走這條路：自己下載該圖片的 bytes，再用本端點以 multipart/form-data "
+            "上傳，不要嘗試把該網址交給 submit_actress/set_actress_photo 的 url "
+            "欄位（會被白名單拒絕）。上限：檔案 10MB、像素 50M；格式需為 "
+            "JPEG/PNG/WEBP/GIF 之一。這位女優必須已經收藏（先呼叫 submit_actress "
+            "或既有收藏功能），未收藏會回 404，本端點不會替你自動建立收藏。"
+        ),
+        "method": "POST",
+        "path": "/api/actresses/{name}/photo/upload",
+        "input_schema": {
+            "type": "object",
+            "description": "multipart/form-data body（非 JSON），欄位如下",
+            "properties": {
+                "name": {"type": "string", "description": "女優名稱（URL path parameter，需 URL encode）"},
+                "file": {"type": "string", "format": "binary", "description": "圖片檔案（multipart form field，JPEG/PNG/WEBP/GIF，≤10MB，≤50M 像素）"},
+            },
+            "required": ["name", "file"],
+        },
+        "output_schema": {
+            "photo_url": "string — 新照片路徑，含 ?t=timestamp cache-bust query",
+        },
+        "side_effect": True,
+        "confirmation_required": True,
+        "idempotent": False,
+        "retry_safe": False,
+        "_example_template": (
+            "curl -X POST '{base}/api/actresses/%E4%B8%89%E4%B8%8A%E6%82%A0%E4%BA%9C/photo/upload' "
+            "-F 'file=@photo.jpg'"
+        ),
+    },
 ]
 
 
