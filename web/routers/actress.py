@@ -17,11 +17,12 @@ import json
 import random
 import re
 import uuid
+from datetime import datetime
 from io import BytesIO
 from typing import Optional, List
 from urllib.parse import quote
 
-from fastapi import APIRouter, UploadFile, File, Query
+from fastapi import APIRouter, UploadFile, File, Query, HTTPException
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from PIL import Image
@@ -117,6 +118,63 @@ def _safe_int(v) -> Optional[int]:
         return int(stripped) if stripped else None
     except (ValueError, TypeError):
         return None
+
+
+_ACTRESS_SUBMIT_STR_FIELDS = frozenset({
+    "name_en", "birth", "height", "cup", "hometown", "hobby",
+    "agency", "debut_work", "nickname", "blog_url", "official_url",
+})
+_ACTRESS_SUBMIT_MEASURES = {"bust": (50, 150), "waist": (40, 120), "hip": (50, 150)}
+_ACTRESS_SUBMIT_RESERVED = frozenset({
+    "photo_source", "primary_text_source", "auto_focal", "crop_mode",
+    "photo_fp_path", "photo_fp_mtime_ns", "photo_fp_size", "aliases",
+    "name", "created_at", "updated_at",
+})
+
+
+def _validate_actress_submit_fields(payload: dict) -> None:
+    """提交前逐欄驗證；任何一項錯誤都在 DB 寫入前擋回。"""
+    for k, v in payload.items():
+        if k in _ACTRESS_SUBMIT_RESERVED:
+            raise HTTPException(400, detail=f"{k} 為保留欄位，AI 不可透過此端點寫入")
+        if k == "photo":
+            if v is not None:
+                raise HTTPException(400, detail="照片提交尚未支援")
+        elif k == "tags":
+            if not isinstance(v, list) or not all(isinstance(item, str) for item in v):
+                raise HTTPException(400, detail="tags 型別錯誤，必須是字串列表")
+        elif k == "height":
+            if v != "":
+                if isinstance(v, bool) or not (
+                    isinstance(v, int) or
+                    isinstance(v, str) and re.fullmatch(r"\d+(?:cm)?", v)
+                ):
+                    raise HTTPException(400, detail="height 格式錯誤")
+                height = int(str(v).removesuffix("cm"))
+                if not 100 <= height <= 220:
+                    raise HTTPException(400, detail="height 超出合理範圍")
+        elif k in _ACTRESS_SUBMIT_MEASURES:
+            if v is not None:
+                if isinstance(v, bool) or not isinstance(v, (int, str)):
+                    raise HTTPException(400, detail=f"{k} 型別錯誤")
+                number = _safe_int(v)
+                lower, upper = _ACTRESS_SUBMIT_MEASURES[k]
+                if number is None or not lower <= number <= upper:
+                    raise HTTPException(400, detail=f"{k} 超出合理範圍或格式錯誤")
+        elif k in _ACTRESS_SUBMIT_STR_FIELDS:
+            if not isinstance(v, str):
+                raise HTTPException(400, detail=f"{k} 型別錯誤，必須是字串")
+            if k == "birth" and v:
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+                    raise HTTPException(400, detail="birth 日期格式錯誤")
+                try:
+                    datetime.strptime(v, "%Y-%m-%d")
+                except ValueError:
+                    raise HTTPException(400, detail="birth 日期無效") from None
+            if k == "cup" and v and not re.fullmatch(r"[A-Z]", v):
+                raise HTTPException(400, detail="cup 格式錯誤")
+        else:
+            raise HTTPException(400, detail=f"包含未知欄位: {k}")
 
 
 def _flatten_aliases(raw) -> list:
@@ -364,6 +422,42 @@ def preview_actress(req: PreviewActressRequest):
             result["alias_of"] = alias_record.primary_name
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# 端點九之三：POST /api/actresses/{name} — 提交審過的女優文字資料
+# ---------------------------------------------------------------------------
+
+@router.post("/{name}")
+def submit_actress(name: str, payload: dict):
+    name = name.strip()
+    if not name:
+        raise HTTPException(400, detail="女優名字不可為空")
+
+    _validate_actress_submit_fields(payload)
+    fields = {k: v for k, v in payload.items() if k != "photo"}
+    if "height" in fields and fields["height"] != "":
+        fields["height"] = f"{int(str(fields['height']).removesuffix('cm'))}cm"
+    for key in _ACTRESS_SUBMIT_MEASURES:
+        if key in fields and fields[key] is not None:
+            fields[key] = _safe_int(fields[key])
+    fields["primary_text_source"] = "ai"
+
+    init_db()
+    repo = ActressRepository()
+    if repo.exists(name):
+        if not repo.update_fields(name, fields):
+            logger.error("[actress] AI 提交更新失敗 name=%s", name)
+            raise HTTPException(500, detail="操作失敗")
+    else:
+        alias_record = AliasRepository().find_by_alias(name)
+        if alias_record and repo.exists(alias_record.primary_name):
+            primary_name = alias_record.primary_name
+            raise HTTPException(400, detail=f"{name} 是 {primary_name} 的別名，請改用「{primary_name}」提交")
+        repo.save(Actress(name=name, **fields))
+
+    actress = repo.get_by_name(name)
+    return {"success": True, "actress": _actress_to_response(actress)}
 
 
 # ---------------------------------------------------------------------------
