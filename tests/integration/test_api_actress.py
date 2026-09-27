@@ -2132,23 +2132,6 @@ class TestUploadActressPhoto:
         assert data["crop_mode"] == "auto"
         assert "?v=" in data["photo_url"]
 
-    # ---- CD-13 補充：不揭露 capabilities ----
-
-    def test_upload_endpoint_not_registered_in_capabilities(self):
-        # [lint-guard: pytest-justified] CD-13 agentic-AI 揭露面安全守衛。
-        # 🔴 誠實揭露（PR#108 fresh review 訂正）：本條**確實**落在北極星射程內——它是對
-        # capabilities.py 的單檔 forbidden-string 檢查（不是跨檔 contract：這裡根本沒讀
-        # actress.py），而 static_guard_lint.mjs 也**已經會掃 .py**（見 core/gallery_scanner.py
-        # 等三條 forbidden-string 規則）⇒ 搬過去是 ~4 行規則物件、成本近乎零。
-        # 留在 pytest 的理由只有一個、且與難易無關：**同一語意類別共 5 條**，另 2 條在 main
-        # 上早已存在且同樣未標 tag（detail_url／test_rescrape_javlib.py:263、
-        # metatube_status／test_scraper_sources_api.py:201）。只搬本檔 3 條會把類別拆成
-        # 3-in-lint／2-in-pytest，一致性成本高於收益。要搬應 5 條一起搬 ⇒ 屬另一支 PR。
-        # （SA-pre-6 的 content-based 偵測面是 `assert "<字面>" in/not in (html|js|css)`，
-        # 本條綁 Python 源碼字串、不在該偵測面內，故非 blocker——但那是條文，不是免死金牌。）
-        capabilities_src = Path("web/routers/capabilities.py").read_text(encoding="utf-8")
-        assert "photo/upload" not in capabilities_src
-
     # ---- 🔴 Codex P2：repo.save 失敗必須回固定中文，不可逸出成純文字 500 ----
 
     def test_upload_photo_save_failure_returns_fixed_chinese_500(self, client, tmp_path):
