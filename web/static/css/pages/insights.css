@@ -17,6 +17,12 @@
 
 /* Page Container */
 .insights-container {
+    /* TASK-156e-F2：掉榜替身／飛行頭像改掛這裡當直接子元素，
+       用 position:absolute + 容器相對座標飛行/淡出。position:relative 只建立
+       定位祖先，不影響 flex 版面；.insights-preview 是 position:fixed（不吃
+       transform/filter 以外的祖先影響），.gantt-name-cell 的 position:sticky
+       吃的是更近的 .gantt-wrap（overflow:auto）scroll 容器，兩者都不受影響。 */
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: 0.5rem;

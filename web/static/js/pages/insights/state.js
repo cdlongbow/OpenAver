@@ -680,32 +680,54 @@ export function libraryInsightsState() {
                 overflow: liveStyle.overflow,
                 boxSizing: liveStyle.boxSizing,
             };
-            const sourceDocRect = {
-                top: sourceRect.top + window.scrollY,
-                left: sourceRect.left + window.scrollX,
+            // TASK-156e-F2：ghost 改掛 .insights-container（document.querySelector，
+            // 不用 this.$root——見 _flyAvatarToFocusTile 內註解）而非 body，座標從
+            // 「文件相對」改成「容器相對」——減容器 getBoundingClientRect()，不受
+            // window 捲動影響，容器又是 position:relative 的定位祖先。
+            const container = document.querySelector('.insights-container');
+            const containerRect = container.getBoundingClientRect();
+            const sourceContainerRect = {
+                top: sourceRect.top - containerRect.top,
+                left: sourceRect.left - containerRect.left,
                 width: sourceRect.width,
                 height: sourceRect.height,
             };
+            // TASK-156e-F2：來源 <img>（若有）的 object-fit/object-position 快照——
+            // ghost 掛回 .insights-container 後雖然能吃到 XXX-avatar img 的 class
+            // 規則，但飛行途中 ghost 尺寸由 GSAP 直接 tween 根節點的 inline
+            // top/left/width/height，這裡另外把 img 對應值直接套上，雙重保險
+            // 確保裁切／置中與來源一致，不依賴 class 規則的載入時序。
+            const sourceImgEl = sourceEl.querySelector('img');
+            const sourceImgStyle = sourceImgEl
+                ? (() => {
+                    const imgLiveStyle = getComputedStyle(sourceImgEl);
+                    return {
+                        objectFit: imgLiveStyle.objectFit,
+                        objectPosition: imgLiveStyle.objectPosition,
+                    };
+                })()
+                : null;
             // 必須在 toggle 前 clone：焦點一變，與她同片列會重算重繪，
             // 來源節點在 $nextTick 時可能已被 Alpine 拆掉／清空。
             const sourceClone = sourceEl.cloneNode(true);
             this.toggleActressFocus(name);
             // 雙 rAF：等 Alpine 插入焦點格 + 一幀 layout（costar 進場等）後再量終點，
-            // 避免 targetDocRect 與真實落點差幾 px。
+            // 避免 targetContainerRect 與真實落點差幾 px。
             this.$nextTick(() => {
                 requestAnimationFrame(() => {
                     requestAnimationFrame(() => {
-                        this._flyAvatarToFocusTile(sourceClone, sourceDocRect, sourceStyle);
+                        this._flyAvatarToFocusTile(sourceClone, sourceContainerRect, sourceStyle, sourceImgStyle);
                     });
                 });
             });
         },
 
         /**
-         * TASK-156e-T2／CD-156e-5：建立 document-relative ghost，飛向焦點格頭像。
-         * sourceRect 已是點擊當下換算好的文件座標。
+         * TASK-156e-T2／CD-156e-5／F2：建立容器相對（.insights-container，見下方
+         * 「不用 this.$root」註解）的 ghost，飛向焦點格頭像。sourceRect 是點擊當下
+         * 換算好的容器相對座標。
          */
-        _flyAvatarToFocusTile(sourceEl, sourceRect, sourceStyle) {
+        _flyAvatarToFocusTile(sourceEl, sourceRect, sourceStyle, sourceImgStyle) {
             if (_activeAvatarGhost) {
                 _activeAvatarGhost.el.remove();
                 _activeAvatarGhost = null;
@@ -723,14 +745,23 @@ export function libraryInsightsState() {
             if (!window.AvatarFly || typeof window.AvatarFly.playFlyToFocus !== 'function') {
                 return;
             }
+            // TASK-156e-F2：不用 this.$root——Alpine 的 $root magic 綁在「觸發這次
+            // expression 求值的 el」，事件來源若在焦點切換當下被 Alpine 重繪／拆掉
+            // （costar-row 的 x-if 分支），later async 再讀 this.$root 會是
+            // undefined（實測：costar 入口重現，podium/rest/gantt/solo 不會，
+            // 因為它們的來源列不會在同一輪 focus 變更中被整段換掉）。改用
+            // document.querySelector 拿穩定 DOM 參照，跟 state.js:1755 既有寫法一致。
+            const container = document.querySelector('.insights-container');
+            if (!container) return;
 
             target.setAttribute('data-avatar-fly-hidden', 'true');
             target.style.opacity = '0';
 
             // sourceEl 可能已是 flyAndFocusActress 預先做好的 clone。
             const ghost = sourceEl.cloneNode(true);
-            // 去掉 Alpine <template x-if> 殘留與 x-/:/@ 屬性——ghost 掛到 body 後若被
-            // Alpine 再評估，row 未定義會把已渲染的 <img>/<span> 清掉，留下空白替身。
+            // 去掉 Alpine <template x-if> 殘留與 x-/:/@ 屬性——ghost 掛回
+            // .insights-container 後若被 Alpine 再評估，row 未定義會把已渲染的
+            // <img>/<span> 清掉，留下空白替身。
             _stripAlpineForGhost(ghost);
             ghost.setAttribute('data-avatar-fly-ghost', 'true');
             ghost.style.position = 'absolute';
@@ -753,27 +784,40 @@ export function libraryInsightsState() {
             ghost.style.justifyContent = sourceStyle.justifyContent;
             ghost.style.overflow = sourceStyle.overflow;
             ghost.style.boxSizing = sourceStyle.boxSizing;
-            document.body.appendChild(ghost);
+            // TASK-156e-F2：巢狀 <img> 的裁切規則（object-fit/object-position）與
+            // 100% 滿版尺寸直接套到 img 本身——不能只靠 ghost 根節點吃 class
+            // 規則，因為 XXX-avatar img 的 width/height:100% 需要「父層當下的
+            // tween 尺寸」才會對，這裡明寫成 inline style 雙重保險。
+            const ghostImgEl = ghost.querySelector('img');
+            if (ghostImgEl && sourceImgStyle) {
+                ghostImgEl.style.width = '100%';
+                ghostImgEl.style.height = '100%';
+                ghostImgEl.style.objectFit = sourceImgStyle.objectFit;
+                ghostImgEl.style.objectPosition = sourceImgStyle.objectPosition;
+            }
+            container.appendChild(ghost);
 
+            const containerRectForTarget = container.getBoundingClientRect();
             const targetViewport = target.getBoundingClientRect();
-            const targetDocRect = {
-                top: targetViewport.top + window.scrollY,
-                left: targetViewport.left + window.scrollX,
+            const targetContainerRect = {
+                top: targetViewport.top - containerRectForTarget.top,
+                left: targetViewport.left - containerRectForTarget.left,
                 width: targetViewport.width,
                 height: targetViewport.height,
             };
 
             const focusName = this.focus && this.focus.type === 'actress' ? this.focus.value : null;
             _activeAvatarGhost = { el: ghost, name: focusName };
-            window.AvatarFly.playFlyToFocus(ghost, targetDocRect, {
+            window.AvatarFly.playFlyToFocus(ghost, targetContainerRect, {
                 onComplete: () => {
                     if (!(_activeAvatarGhost && _activeAvatarGhost.el === ghost)) return;
                     // 補間結束後對齊到「此刻」焦點格（layout 可能在飛行中微移），
                     // 留一幀給取樣再移除，滿足落地誤差 <2px。
                     // 用 inline style（不直呼 gsap——pages/insights 禁令）。
                     const live = target.getBoundingClientRect();
-                    ghost.style.top = (live.top + window.scrollY) + 'px';
-                    ghost.style.left = (live.left + window.scrollX) + 'px';
+                    const liveContainerRect = document.querySelector('.insights-container').getBoundingClientRect();
+                    ghost.style.top = (live.top - liveContainerRect.top) + 'px';
+                    ghost.style.left = (live.left - liveContainerRect.left) + 'px';
                     ghost.style.width = live.width + 'px';
                     ghost.style.height = live.height + 'px';
                     requestAnimationFrame(() => {
@@ -1024,21 +1068,29 @@ export function libraryInsightsState() {
             const classified = classifyTop20Transition(oldRows, newRows);
 
             const rowStayerEls = classified.rowStayers
-                .map((r) => visibleWrap.querySelector(`[data-flip-id="rest-${r.name}"]`))
+                .map((r) => visibleWrap.querySelector(`[data-flip-id="rest-${CSS.escape(r.name)}"]`))
                 .filter(Boolean);
             const podiumReshuffleEls = classified.podiumReshuffle
-                .map((r) => visibleWrap.querySelector(`[data-flip-id="podium-${r.name}"]`))
+                .map((r) => visibleWrap.querySelector(`[data-flip-id="podium-${CSS.escape(r.name)}"]`))
                 .filter(Boolean);
             const crossStructureEls = classified.crossStructureMovers
-                .map((r) => visibleWrap.querySelector(`[data-flip-id="avatar-${r.name}"]`))
+                .map((r) => visibleWrap.querySelector(`[data-flip-id="avatar-${CSS.escape(r.name)}"]`))
                 .filter(Boolean);
 
+            // TASK-156e-F2：掛回 .insights-container（document.querySelector，不用
+            // this.$root——見 _flyAvatarToFocusTile 內註解：$watch('focus') 觸發的
+            // 重繪可能讓 Alpine 對這輪 expression 求值綁的 $root 變 undefined）而非
+            // document.body，讓替身繼續吃得到 insights.css 全部以 .insights-container
+            // 為前綴的規則（圓角／尺寸／字級／flex 版面）；宣告在最外層，下面
+            // dropoutClones.forEach 的 container.appendChild 也要用同一個參照。
+            const container = document.querySelector('.insights-container');
             const dropoutClones = [];
             if (!window.OpenAver.prefersReducedMotion) {
+                const containerRect = container.getBoundingClientRect();
                 classified.droppedOut.forEach((d) => {
                     const sel = d.wasPodium
-                        ? `[data-flip-id="podium-${d.name}"]`
-                        : `[data-flip-id="rest-${d.name}"]`;
+                        ? `[data-flip-id="podium-${CSS.escape(d.name)}"]`
+                        : `[data-flip-id="rest-${CSS.escape(d.name)}"]`;
                     const el = visibleWrap.querySelector(sel);
                     if (!el) return;
                     const rect = el.getBoundingClientRect();
@@ -1046,8 +1098,8 @@ export function libraryInsightsState() {
                     _stripAlpineForGhost(clone);
                     clone.setAttribute('data-top20-dropout-ghost', d.name);
                     clone.style.position = 'absolute';
-                    clone.style.left = (rect.left + window.scrollX) + 'px';
-                    clone.style.top = (rect.top + window.scrollY) + 'px';
+                    clone.style.left = (rect.left - containerRect.left) + 'px';
+                    clone.style.top = (rect.top - containerRect.top) + 'px';
                     clone.style.width = rect.width + 'px';
                     clone.style.height = rect.height + 'px';
                     clone.style.margin = '0';
@@ -1079,7 +1131,7 @@ export function libraryInsightsState() {
                 // [data-flip-id^="avatar-"] 全選，Flip 會把名單裡所有頭像抽成
                 // absolute，390 單欄容器高度瞬間塌陷（CD-156e-7 不變式 6）。
                 const avatarTargets = classified.crossStructureMovers
-                    .map((r) => visibleWrap.querySelector(`[data-flip-id="avatar-${r.name}"]`))
+                    .map((r) => visibleWrap.querySelector(`[data-flip-id="avatar-${CSS.escape(r.name)}"]`))
                     .filter(Boolean);
                 _playTop20TrackedAnim('flip', (o) => motion.flipFrom(avatarState, o), {
                     targets: avatarTargets,
@@ -1090,7 +1142,7 @@ export function libraryInsightsState() {
                 });
 
                 classified.brandNewEntrants.forEach((r) => {
-                    const el = visibleWrap.querySelector(`[data-flip-id="rest-${r.name}"]`);
+                    const el = visibleWrap.querySelector(`[data-flip-id="rest-${CSS.escape(r.name)}"]`);
                     if (!el) return;
                     _playTop20TrackedAnim('fade', (o) => motion.playEnter(el, o), {
                         y: 0,
@@ -1099,7 +1151,7 @@ export function libraryInsightsState() {
                     });
                 });
                 classified.podiumNewEntrants.forEach((r) => {
-                    const el = visibleWrap.querySelector(`[data-flip-id="podium-${r.name}"]`);
+                    const el = visibleWrap.querySelector(`[data-flip-id="podium-${CSS.escape(r.name)}"]`);
                     if (!el) return;
                     _playTop20TrackedAnim('fade', (o) => motion.playEnter(el, o), {
                         y: 0,
@@ -1113,7 +1165,7 @@ export function libraryInsightsState() {
                     const newRow = newByName.get(r.name);
                     if (!newRow) return;
                     if (newRow.rank <= 3) {
-                        const slot = visibleWrap.querySelector(`[data-flip-id="podium-${r.name}"]`);
+                        const slot = visibleWrap.querySelector(`[data-flip-id="podium-${CSS.escape(r.name)}"]`);
                         if (!slot) return;
                         const els = slot.querySelectorAll('.podium-name, .podium-count');
                         _playTop20TrackedAnim('fade', (o) => motion.playFadeTo(els, o), {
@@ -1124,7 +1176,7 @@ export function libraryInsightsState() {
                             onComplete: () => motion.clearProps(els, 'opacity'),
                         });
                     } else {
-                        const row = visibleWrap.querySelector(`[data-flip-id="rest-${r.name}"]`);
+                        const row = visibleWrap.querySelector(`[data-flip-id="rest-${CSS.escape(r.name)}"]`);
                         if (!row) return;
                         const els = row.querySelectorAll('.top20-rank, .top20-name, .top20-count');
                         _playTop20TrackedAnim('fade', (o) => motion.playFadeTo(els, o), {
@@ -1138,7 +1190,7 @@ export function libraryInsightsState() {
                 });
 
                 dropoutClones.forEach((clone) => {
-                    document.body.appendChild(clone);
+                    container.appendChild(clone);
                     _playTop20TrackedAnim('fade', (o) => motion.playFadeTo(clone, o), {
                         opacity: 0,
                         duration: motion.DURATION.fast,
