@@ -45,6 +45,8 @@ from core.config import load_config
 from core.scrapers.actress.orchestrator import (
     get_cached_profile,
     get_actress_profile,
+    get_actress_profile_preview,
+    _sources_to_photo_candidates,  # noqa: PLC2701 — 預覽端點回應要附照片候選，CD-157-2 規定由 orchestrator 的純函式產生，不在 router 重寫一份
     _compute_age_from_birth as _compute_age,  # noqa: PLC2701 — actress router 的回應組裝（_actress_to_response）需要即時算年齡，直接借用 orchestrator 內部同一套生日換算邏輯，避免在 router 層重寫一份容易漂移的年齡計算；尚未升格為公開名
 )
 from core.logger import get_logger
@@ -61,6 +63,10 @@ router = APIRouter(prefix="/api/actresses", tags=["actresses"])
 class FavoriteRequest(BaseModel):
     name: str
     makers: Optional[List[str]] = None
+
+
+class PreviewActressRequest(BaseModel):
+    name: str
 
 
 class SetActressPhotoRequest(BaseModel):
@@ -328,6 +334,36 @@ def add_favorite(req: FavoriteRequest):
             "covered_names": sorted(covered_names),
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/actresses/preview — 只讀預覽四個來源與片庫目前資料
+# ---------------------------------------------------------------------------
+
+@router.post("/preview")
+def preview_actress(req: PreviewActressRequest):
+    name = req.name.strip()
+    if not name:
+        return JSONResponse(
+            status_code=422,
+            content={"error": "invalid_name", "message": "name 不可為空"}
+        )
+
+    preview = get_actress_profile_preview(name)
+    repo = ActressRepository()
+    actress = repo.get_by_name(name)
+    result = {
+        "name": name,
+        "sources": preview["sources"],
+        "current": _actress_to_response(actress) if actress else None,
+        "photo_candidates": _sources_to_photo_candidates(preview["sources"]),
+    }
+    if actress is None:
+        alias_record = AliasRepository().find_by_alias(name)
+        if alias_record and repo.exists(alias_record.primary_name):
+            result["alias_of"] = alias_record.primary_name
+
+    return result
 
 
 # ---------------------------------------------------------------------------

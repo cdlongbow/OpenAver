@@ -297,6 +297,115 @@ class TestAddFavorite:
 # T2: GET /api/actresses/{name} — 查詢已收藏女優
 # ---------------------------------------------------------------------------
 
+class TestPreviewActress:
+    """POST /api/actresses/preview 只讀預覽。"""
+
+    @staticmethod
+    def _preview(client, name, sources=None):
+        if sources is None:
+            sources = {"xcity": None, "wiki": None, "graphis": None, "gfriends": None}
+        with patch("web.routers.actress.get_actress_profile_preview", create=True) as mock_preview:
+            mock_preview.return_value = {"name": name, "sources": sources}
+            response = client.post("/api/actresses/preview", json={"name": name})
+        mock_preview.assert_called_once_with(name)
+        return response
+
+    def test_preview_favorited_actress_has_current_no_alias_of(self, client):
+        from core.database import Actress, ActressRepository
+
+        ActressRepository().save(Actress(name=ACTRESS_NAME, name_en="Yua Mikami"))
+        response = self._preview(client, ACTRESS_NAME)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["name"] == ACTRESS_NAME
+        assert data["current"]["name_en"] == "Yua Mikami"
+        assert data["current"]["is_favorite"] is True
+        assert "alias_of" not in data
+        assert data["photo_candidates"] == []
+
+    def test_preview_unfavorited_non_alias_has_null_current(self, client):
+        name = "全新女優"
+        response = self._preview(client, name)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["name"] == name
+        assert data["current"] is None
+        assert "alias_of" not in data
+        assert data["photo_candidates"] == []
+
+    def test_preview_unfavorited_alias_of_favorited_primary(self, client):
+        from core.database import Actress, ActressRepository, AliasRepository
+
+        ActressRepository().save(Actress(name=ACTRESS_NAME))
+        AliasRepository().add(primary_name=ACTRESS_NAME, aliases=["鬼頭桃菜"])
+        response = self._preview(client, "鬼頭桃菜")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["current"] is None
+        assert data["alias_of"] == ACTRESS_NAME
+
+    def test_preview_orphan_alias_primary_not_favorited_no_alias_of(self, client):
+        from core.database import AliasRepository
+
+        AliasRepository().add(primary_name="未收藏主名", aliases=["孤兒別名"])
+        response = self._preview(client, "孤兒別名")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["current"] is None
+        assert "alias_of" not in data
+
+    def test_preview_unfavorited_actress_photo_candidates_nonempty(self, client):
+        sources = {
+            "xcity": None,
+            "wiki": {"photo_url": "https://example.com/wiki.jpg"},
+            "graphis": None,
+            "gfriends": None,
+        }
+        response = self._preview(client, "有照片女優", sources)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["current"] is None
+        assert data["photo_candidates"] == [
+            {"source": "wiki", "url": "https://example.com/wiki.jpg"}
+        ]
+
+    def test_preview_unfavorited_actress_photo_candidates_empty(self, client):
+        response = self._preview(client, "無照片女優")
+
+        assert response.status_code == 200
+        assert response.json()["photo_candidates"] == []
+
+    @pytest.mark.parametrize("missing_source", ["xcity", "wiki", "graphis", "gfriends"])
+    def test_preview_sources_keep_four_keys_with_individual_none(self, client, missing_source):
+        sources = {
+            "xcity": {"photo_url": "https://example.com/xcity.jpg"},
+            "wiki": {"photo_url": "https://example.com/wiki.jpg"},
+            "graphis": {"prof_url": "https://example.com/graphis.jpg"},
+            "gfriends": "https://example.com/gfriends.jpg",
+        }
+        sources[missing_source] = None
+        response = self._preview(client, "來源部分缺失", sources)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert set(data["sources"]) == {"xcity", "wiki", "graphis", "gfriends"}
+        assert data["sources"] == sources
+        assert data["sources"][missing_source] is None
+
+    def test_preview_blank_name_returns_422_without_fetch(self, client):
+        with patch("web.routers.actress.get_actress_profile_preview", create=True) as mock_preview:
+            response = client.post("/api/actresses/preview", json={"name": "   "})
+
+        assert response.status_code == 422
+        assert response.json() == {"error": "invalid_name", "message": "name 不可為空"}
+        mock_preview.assert_not_called()
+
+
 class TestGetActress:
     """GET /api/actresses/{name} 測試"""
 
