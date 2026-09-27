@@ -264,7 +264,7 @@ def _scroll_call_count(page: Page) -> int:
 def _snapshot(page: Page) -> dict:
     """讀 focus + 三個可切換顯示旗標 + 各列表渲染順序（名字清單）+ 三個動畫目標
     元素的 computed display / computed opacity / inline opacity / inline
-    backgroundColor。
+    backgroundColor / rectArea。
     """
     return page.evaluate(
         """() => {
@@ -275,11 +275,13 @@ def _snapshot(page: Page) -> dict:
                 const el = document.querySelector(`[x-ref="${ref}"]`);
                 if (!el) return null;
                 const cs = getComputedStyle(el);
+                const r = el.getBoundingClientRect();
                 return {
                     display: cs.display,
                     computedOpacity: cs.opacity,
                     inlineOpacity: el.style.opacity,
                     inlineBg: el.style.backgroundColor,
+                    rectArea: r.width * r.height,
                 };
             };
             return {
@@ -418,6 +420,17 @@ def _assert_state_equal(actual: dict, expected: dict, label: str) -> None:
             assert a["computedOpacity"] == "1", (
                 f"{label}: {ref} 可見（display={a['display']!r}）但 computed "
                 f"opacity={a['computedOpacity']!r}（應為 '1'，殘留半透明）"
+            )
+            # P3 修正回歸守衛（Codex review）：可見元素必須有實際渲染盒子，
+            # 否則 `_handleActressFocusChange` 對它 playFadeTo(opacity) 補間會是
+            # 沒有視覺效果的假動畫（display:contents 曾經就是這樣，見
+            # insights.css `.top20-row3-wrap` 註解）——這條斷言不依賴修法內部
+            # 實作細節，只要求「淡出淡入動畫作用的目標必須是有真實渲染盒子的
+            # 元素」。
+            assert a["rectArea"] > 0, (
+                f"{label}: {ref} 可見（display={a['display']!r}）但沒有實際渲染"
+                "盒子（rect area=0）——opacity 補間會作用在一個沒有畫面的元素"
+                "上，不是真的視覺淡出淡入（display:contents 之類會有這個問題）"
             )
         assert a["inlineBg"] in ("", "rgba(0, 0, 0, 0)"), (
             f"{label}: {ref} 殘留 backgroundColor={a['inlineBg']!r}（不變式 2）"

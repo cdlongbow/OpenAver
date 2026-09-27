@@ -299,16 +299,26 @@
     min-width: 0;
 }
 
-/* .top20-row3-wrap 本身不建立盒子——讓既有 .top20-group（T2 已定，flex column，
-   本卡不重寫）直接當 .row3-top20-slot 的 flex item，沿用 align-items:stretch
-   預設行為，與 T3 之前「.top20-group 直接是 row3 grid item」時的伸展行為一致。 */
+/* P3 修正（156d Codex review）：原本這裡是 display:contents，讓既有 .top20-group
+   （T2 已定，flex column，本卡不重寫）直接當 .row3-top20-slot 的 flex item——但
+   display:contents 沒有可繪製的盒子，`_handleActressFocusChange`（state.js）對
+   它 `motion.playFadeTo(opacity)` 完全沒有視覺效果（CDP 實測：子元素
+   `.podium-slot` 的 computed opacity 全程仍是 1，wrapper 自己的 opacity 補間
+   降到 0 後直接跳 display:none，使用者看到的是「舊卡片維持不透明到動畫結束那
+   一瞬間直接消失」，不是淡出）。改 display:flex 讓 wrapper 自己有盒子承接
+   opacity；width:100% 補回主軸（水平）尺寸（理由同下方 .top20-group/#costarCard
+   的 width:100% 規則）。.row3-top20-slot 預設 align-items:stretch 依然讓這個
+   wrapper 桌面撐滿 --top20-slot-h、窄螢幕維持自然高度，wrapper 內部同一個
+   stretch 再把高度傳給唯一子元素 .top20-group（它沒有覆寫 height/align-self）
+   ——1440／390 寬 CDP 實測修正前後幾何零差異。 */
 .insights-container .top20-row3-wrap {
-    display: contents;
+    display: flex;
+    width: 100%;
 }
 
 /* 三個可切換顯示元素共用的顯示開關（row3 副本 A wrapper／#costarCard／row7 副本 B
-   wrapper）。用 !important 蓋過 .top20-row3-wrap 的 display:contents 與 .card 的
-   display:flex（沿用既有 [x-cloak]{display:none!important} 慣例，見 input.css:182）。 */
+   wrapper）。用 !important 蓋過 .top20-row3-wrap／.card 的 display:flex（沿用
+   既有 [x-cloak]{display:none!important} 慣例，見 input.css:182）。 */
 .insights-container .is-hidden {
     display: none !important;
 }
