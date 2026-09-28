@@ -15,6 +15,7 @@
                 <i class="bi bi-gear"></i> {{ t('settings.header.title') }}
             </h4>
             <!-- Server Mode Toggle (80a-T3) — 81b-T1: 從 actions 末尾搬到標題側 -->
+            {% if not is_synology %}
             <div class="settings-server-mode">
                 <div class="settings-sources-segmented" role="group" :aria-label="window.t('settings.mode.label')">
                     <button type="button"
@@ -31,6 +32,7 @@
                     </button>
                 </div>
             </div>
+            {% endif %}
             <!-- T5: 存取密碼保護（114a）-->
             <div class="settings-access-auth">
                 <label class="settings-access-auth-checkbox-row">

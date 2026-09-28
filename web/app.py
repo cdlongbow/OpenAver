@@ -45,6 +45,7 @@ from core.database import backfill_readonly_nfo_mtime
 from core.metatube.state import metatube_state as _mt_startup_state
 from core.access_auth import ensure_schema, load_snapshot, snapshot, verify_ticket
 from core import source_reachability
+from core.platform_info import is_synology
 
 
 # 路徑設定
@@ -623,6 +624,7 @@ def get_common_context(request: Request) -> dict:
         "t": _t_bound,
         "is_windows_desktop": _is_windows_desktop(),
         "is_desktop": _is_windows_desktop() or _is_mac_desktop(),
+        "is_synology": is_synology(),
     }
 
 

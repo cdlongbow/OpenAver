@@ -343,6 +343,38 @@ class TestServerModeToggleAPI:
         assert data["success"] is True, "loopback 應通過 guard（success=True）"
         assert stop_called, "loopback disable：lan_listener.stop 應被呼叫"
 
+    def test_synology_blocks_server_mode_put_even_loopback(self, client, mock_config_path, monkeypatch):
+        """CD-159-6/159-T7: is_synology()=True 時 server_mode PUT 無條件被擋，即使是 loopback 呼叫。"""
+        monkeypatch.setenv("OPENAVER_SYNOLOGY", "1")
+
+        resp = client.put("/api/config/general/server_mode", json={"value": False})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is False
+        assert data["reason"] == "synology_fixed"
+
+    def test_synology_reset_keeps_server_mode_and_listener(self, client, mock_config_path, monkeypatch):
+        """Synology 重設後仍允許 LAN 存取，且不停止既有 listener。"""
+        monkeypatch.setenv("OPENAVER_SYNOLOGY", "1")
+        saved = json.loads(mock_config_path.read_text())
+        saved["general"]["server_mode"] = True
+        mock_config_path.write_text(json.dumps(saved))
+        stop_called = []
+        monkeypatch.setattr(
+            "web.lan_listener.lan_listener.stop",
+            lambda *a, **k: stop_called.append(True),
+        )
+
+        resp = client.delete("/api/config")
+
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        assert json.loads(mock_config_path.read_text())["general"]["server_mode"] is True
+        assert client.get("/api/config").json()["data"]["general"]["server_mode"] is True
+        assert not stop_called
+
+
     def test_toggle_serialized_by_lock(self, mock_config_path, monkeypatch):
         """Codex P2：toggle 交易由 _server_mode_toggle_lock 序列化。
 
