@@ -108,6 +108,15 @@ IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
 DEFAULT_CACHE_FILE = "gallery_cache.json"
 
 
+_NAS_SYSTEM_DIR_NAMES = {'#recycle', '#snapshot', '@eadir'}
+
+
+def is_nas_system_dir_name(name: str) -> bool:
+    """CD-159-1／CD-159-2 共用：NAS（Synology）系統目錄判斷，索引層（scan_recursive）
+    與顯示層（browse_dir）共用同一份規則，避免各自維護排除清單而漂移。"""
+    return name.lower() in _NAS_SYSTEM_DIR_NAMES or name.startswith('@')
+
+
 def fast_scan_directory(
     directory: str,
     extensions: set,
@@ -178,6 +187,8 @@ def fast_scan_directory(
                 for entry in entries:
                     try:
                         if entry.is_dir(follow_symlinks=False):
+                            if is_nas_system_dir_name(entry.name):
+                                continue
                             scan_recursive(entry.path)
                         elif entry.is_file(follow_symlinks=False):
                             ext = os.path.splitext(entry.name)[1].lower()

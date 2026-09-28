@@ -7,6 +7,24 @@ from core.path_utils import to_file_uri
 class TestBrowseDirAPI:
     """測試 GET /api/gallery/browse-dir 端點"""
 
+    def test_browse_dir_excludes_nas_system_dirs(self, client, tmp_path):
+        work_dir = tmp_path / "scan"
+        (work_dir / "#recycle" / "x").mkdir(parents=True)
+        (work_dir / "@eaDir" / "片.mp4").mkdir(parents=True)
+        (work_dir / "#SNAPSHOT" / "y").mkdir(parents=True)
+        (work_dir / "@appstore").mkdir()
+        (work_dir / "normal").mkdir()
+        (work_dir / "#recycle" / "x" / "片.mp4").touch()
+        (work_dir / "@eaDir" / "片.mp4" / "thumb.jpg").touch()
+        (work_dir / "#SNAPSHOT" / "y" / "片.mp4").touch()
+        (work_dir / "normal" / "片2.mp4").touch()
+
+        resp = client.get(f"/api/gallery/browse-dir?path={quote(str(work_dir))}")
+        assert resp.status_code == 200
+        names = [entry["name"] for entry in resp.json()["entries"]]
+        assert names == ["normal"]
+        assert all(not name.startswith('@') for name in names)
+
     def test_browse_dir_success_normal(self, client, tmp_path):
         """正常目錄列舉：回傳 200，entries 依名稱不分大小寫排序，包含子目錄不含檔案，parent_path 正確。"""
         work_dir = tmp_path / "normal_test"
