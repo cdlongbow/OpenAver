@@ -83,7 +83,9 @@ def test_resolved_folder_is_served_without_listing_files(client, monkeypatch):
     使用者流程：還沒設過最愛資料夾的人打開「自動整理」面板 → 灰字要顯示
     「按下『就用這個資料夾』會變成哪個路徑」。舊做法是去列那個資料夾拿它的名字，
     下載夾大的人會看到面板卡著不出現。這裡直接證明沒有人去 iterdir。
+    候選路徑只有桌面版才有（非桌面版不假裝有 Downloads），所以以桌面版環境跑。
     """
+    monkeypatch.setenv("OPENAVER_STANDALONE", "1")
     monkeypatch.setattr(
         "web.routers.search.load_config",
         lambda: {"search": {"favorite_folder": "", "auto_organize": {"enabled": False}}},
