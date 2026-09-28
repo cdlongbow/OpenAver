@@ -225,13 +225,31 @@ def _run_readonly_source(src, config, repo, proxy_url, summary, reachable: bool 
         yield from _yield_source_summary(result)
 
 
+def _permission_denied_warning(directory: str) -> str:
+    """權限不足時共用的掃描警告（Synology 附 DSM 指引）。"""
+    warning = f"  {directory}: 沒有權限讀取，跳過刪除偵測以免誤刪"
+    if is_synology():
+        warning += f"；{DSM_PERMISSION_HINT}"
+    return warning
+
+
+def _scan_root_skip_message(directory: str, normalized_dir: str) -> Optional[str]:
+    """根目錄不可存取時回傳警告；可存取時回傳 None。"""
+    try:
+        os.stat(normalized_dir)
+    except (FileNotFoundError, NotADirectoryError):
+        return f"資料夾不存在: {directory}"
+    except PermissionError:
+        return _permission_denied_warning(directory)
+    except (OSError, ValueError):  # 與 os.path.exists 一致：畸形路徑也只跳過這個來源
+        return f"資料夾不存在: {directory}"
+    return None
+
+
 def _skipped_scan_warning(directory: str, root: str, skipped_paths: dict[str, OSError]) -> str:
     """掃描有路徑被跳過時的 SSE 警告：根目錄本身沒權限 → 講「沒有權限」（Synology 附 DSM 指引）；其餘維持泛用句（159-T10a）"""
     if isinstance(skipped_paths.get(root), PermissionError):
-        warning = f"  {directory}: 沒有權限讀取，跳過刪除偵測以免誤刪"
-        if is_synology():
-            warning += f"；{DSM_PERMISSION_HINT}"
-        return warning
+        return _permission_denied_warning(directory)
     return f"  {directory}: {len(skipped_paths)} 個路徑讀取失敗，跳過刪除偵測以免誤刪（詳見 debug.log）"
 
 
@@ -351,9 +369,9 @@ def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Genera
                 "current": idx,
                 "total": total_dirs + 1  # +1 for generating
             })
-
-            if not os.path.exists(normalized_dir):
-                yield _sse_event({"type": "log", "level": "warn", "message": f"資料夾不存在: {directory}"})
+            skip_message = _scan_root_skip_message(directory, normalized_dir)
+            if skip_message is not None:
+                yield _sse_event({"type": "log", "level": "warn", "message": skip_message})
                 continue
 
             try:

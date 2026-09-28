@@ -34,6 +34,67 @@ class TestScannerAPI:
         reason="chmod 000 requires POSIX non-root DAC enforcement",
     )
     @pytest.mark.parametrize("synology", [False, True])
+    def test_scan_root_parent_dir_permission_denied_distinguished_from_missing(
+        self, client, tmp_path, monkeypatch, parse_sse_events, synology,
+    ):
+        from core.database import init_db, VideoRepository, Video
+        from core.platform_info import DSM_PERMISSION_HINT
+
+        scan_dir = tmp_path / "parent" / "videos"
+        scan_dir.mkdir(parents=True)
+        video = scan_dir / "existing.mp4"
+        video.write_bytes(b"video")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        db_path = tmp_path / "test.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+        uri = to_file_uri(str(video))
+        repo.upsert(Video(path=uri, number="EXIST-001", title="既存影片", mtime=video.stat().st_mtime, nfo_mtime=0.0))
+        before = len(repo.get_mtime_index())
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
+        monkeypatch.setattr("web.routers.scanner.is_synology", lambda: synology)
+
+        def messages(directory):
+            monkeypatch.setattr("web.routers.scanner.load_config", lambda: {
+                "gallery": {"directories": [str(directory)], "output_dir": str(output_dir),
+                            "path_mappings": {}, "min_size_mb": 0},
+                "general": {"theme": "light"},
+                "scraper": {"video_extensions": [".mp4"]},
+            })
+            response = client.get("/api/gallery/generate")
+            assert response.status_code == 200
+            return [e.get("message", "") for e in parse_sse_events(response.text) if e.get("type") == "log"]
+
+        scan_dir.parent.chmod(0o000)
+        try:
+            assert not os.path.exists(scan_dir)
+            with pytest.raises(PermissionError):
+                os.stat(scan_dir)
+            denied_messages = messages(scan_dir)
+            assert any("沒有權限讀取" in m for m in denied_messages), denied_messages
+            assert not any("資料夾不存在" in m for m in denied_messages)
+            assert any(DSM_PERMISSION_HINT in m for m in denied_messages) is synology
+            assert len(repo.get_mtime_index()) == before
+        finally:
+            scan_dir.parent.chmod(0o700)
+
+        restored_messages = messages(scan_dir)
+        assert any("找到 1 個檔案" in m for m in restored_messages)
+        assert not any("沒有權限" in m for m in restored_messages)
+        assert len(repo.get_mtime_index()) == before
+        assert uri in repo.get_mtime_index()
+
+        missing_messages = messages(tmp_path / "never_created")
+        assert any("資料夾不存在" in m for m in missing_messages)
+        assert not any("沒有權限" in m for m in missing_messages)
+        assert len(repo.get_mtime_index()) == before
+
+    @pytest.mark.skipif(
+        os.name != "posix" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+        reason="chmod 000 requires POSIX non-root DAC enforcement",
+    )
+    @pytest.mark.parametrize("synology", [False, True])
     def test_scan_root_unreadable_dir_shows_permission_denied_message(
         self, client, tmp_path, monkeypatch, parse_sse_events, synology,
     ):
