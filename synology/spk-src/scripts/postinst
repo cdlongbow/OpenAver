@@ -11,6 +11,9 @@ echo "### [postinst] id=$(id) PKGDEST=${SYNOPKG_PKGDEST} OLD=${SYNOPKG_OLD_PKGVE
 
 # 資料根已定版（升級／重裝）⇒ 什麼都不種，使用者的設定就在那裡。
 if [ -f "$DATA/.layout.json" ]; then
+    if [ -z "$SYNOPKG_OLD_PKGVER" ]; then
+        touch "$DATA/.reset_access_auth"
+    fi
     echo "### [postinst] data root finalized at $DATA — skip seeding" >&2
     exit 0
 fi

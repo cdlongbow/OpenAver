@@ -10,7 +10,7 @@ import sqlite3
 import sys
 import threading
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
@@ -102,6 +102,62 @@ def _patch_roots(monkeypatch, *, effective: Path, default: Path, legacy_config: 
 
 
 # ── DoD：既有資料零破壞 ───────────────────────────────────────────────
+
+def test_consume_reset_access_auth_marker_when_present(tmp_path, monkeypatch):
+    import core.data_layout as layout_mod
+    import core.data_root as data_root_module
+
+    root = tmp_path / "output"
+    root.mkdir()
+    marker = root / ".reset_access_auth"
+    marker.touch()
+    set_auth = Mock()
+    monkeypatch.setattr(data_root_module, "get_data_root", lambda: root)
+    monkeypatch.setattr(layout_mod, "set_auth", set_auth)
+
+    assert layout_mod.consume_reset_access_auth_marker() is True
+    set_auth.assert_called_once_with(False, "")
+    assert not marker.exists()
+
+
+def test_consume_reset_access_auth_marker_noop_when_marker_absent(tmp_path, monkeypatch):
+    import core.data_layout as layout_mod
+    import core.data_root as data_root_module
+
+    root = tmp_path / "output"
+    root.mkdir()
+    set_auth = Mock()
+    monkeypatch.setattr(data_root_module, "get_data_root", lambda: root)
+    monkeypatch.setattr(layout_mod, "set_auth", set_auth)
+
+    assert layout_mod.consume_reset_access_auth_marker() is False
+    set_auth.assert_not_called()
+    assert list(root.iterdir()) == []
+
+
+def test_consume_reset_access_auth_marker_unlink_failure_keeps_auth(tmp_path, monkeypatch):
+    import core.data_layout as layout_mod
+    import core.data_root as data_root_module
+
+    root = tmp_path / "output"
+    root.mkdir()
+    marker = root / ".reset_access_auth"
+    marker.touch()
+    set_auth = Mock()
+    monkeypatch.setattr(data_root_module, "get_data_root", lambda: root)
+    monkeypatch.setattr(layout_mod, "set_auth", set_auth)
+
+    def fail_unlink(self, *args, **kwargs):
+        assert self == marker
+        raise OSError("injected unlink failure")
+
+    monkeypatch.setattr(Path, "unlink", fail_unlink)
+
+    with pytest.raises(OSError, match="injected unlink failure"):
+        layout_mod.consume_reset_access_auth_marker()
+    set_auth.assert_not_called()
+    assert marker.exists()
+
 
 def test_bootstrap_preserves_existing_root_tree_byte_for_byte(tmp_path, monkeypatch):
     """完整舊佈局跑 bootstrap 後，既有項目（含未知檔）與 legacy config 逐位元組不變。"""

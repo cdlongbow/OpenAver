@@ -66,6 +66,17 @@ def _run_lifespan_with_bootstrap(monkeypatch, fake_bootstrap, emit: Mock):
         pass
 
 
+def test_lifespan_consumes_reset_access_auth_marker_once(monkeypatch):
+    consume = Mock()
+    monkeypatch.setattr(webapp, "consume_reset_access_auth_marker", consume, raising=False)
+    _run_lifespan_with_bootstrap(
+        monkeypatch,
+        _recording_bootstrap("already_complete", Path("/tmp/openaver-data-root-reset-fixture")),
+        Mock(),
+    )
+    consume.assert_called_once_with()
+
+
 def test_finalized_legacy_emits_once_with_root_path(monkeypatch):
     root = Path("/tmp/openaver-data-root-finalized-fixture")
     emit = Mock()

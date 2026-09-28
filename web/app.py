@@ -38,7 +38,7 @@ setup_logging()
 logger = get_logger(__name__)
 
 from core.config import load_config
-from core.data_layout import bootstrap_data_layout, consume_pending_bootstrap_result
+from core.data_layout import bootstrap_data_layout, consume_pending_bootstrap_result, consume_reset_access_auth_marker
 from core.focal import device_state
 from core.database import init_db
 from core.database import backfill_readonly_nfo_mtime
@@ -114,6 +114,11 @@ async def lifespan(app: FastAPI):
     # （CD-114a-3：兩者刻意不合併成同一支函式，但啟動時機一致）。idempotent
     # CREATE TABLE IF NOT EXISTS + 首次 load_snapshot() 暖 cache。
     ensure_schema()
+
+    try:
+        consume_reset_access_auth_marker()
+    except Exception:
+        logger.warning("lifespan: consume_reset_access_auth_marker failed unexpectedly", exc_info=True)
 
     # TASK-104: one-time heal for pre-0.12.6 readonly rows whose nfo_mtime was
     # hardcoded to 0.0 even though the sibling .nfo was really written next to

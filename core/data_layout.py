@@ -13,6 +13,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.access_auth import set_auth
 from core.atomic_write import atomic_move, atomic_write, create_staging_file
 from core.config import CONFIG_DEFAULT_PATH
 import core.data_root as data_root
@@ -23,6 +24,7 @@ from core.logger import get_logger
 logger = get_logger(__name__)
 
 ROOT_CONFIG_NAME = "config.json"
+RESET_ACCESS_AUTH_MARKER_NAME = ".reset_access_auth"
 
 _bootstrap_notification_recorded = False
 _pending_bootstrap_result: BootstrapResult | None = None
@@ -237,6 +239,16 @@ def consume_pending_bootstrap_result() -> BootstrapResult | None:
     result = _pending_bootstrap_result
     _pending_bootstrap_result = None
     return result
+
+
+def consume_reset_access_auth_marker() -> bool:
+    """重裝後清除存取密碼，成功時消耗標記。"""
+    marker_path = data_root.get_data_root() / RESET_ACCESS_AUTH_MARKER_NAME
+    if not marker_path.is_file():
+        return False
+    marker_path.unlink()
+    set_auth(False, "")
+    return True
 
 
 def _bootstrap_data_layout_impl() -> BootstrapResult:
