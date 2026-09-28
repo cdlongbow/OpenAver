@@ -157,6 +157,23 @@ class TestServerModeToggleAPI:
         assert data["lan_port"] == 49200
         assert data["lan_ip"] == "192.168.1.50"
 
+    def test_get_lan_port_synology_uses_request_server_port(self, client, mock_config_path, monkeypatch):
+        """Synology 回傳此請求的主服務埠，不受停止中的 LAN listener 影響。"""
+        import web.lan_listener as _ll_mod
+
+        monkeypatch.setenv("OPENAVER_SYNOLOGY", "1")
+        monkeypatch.setattr(_ll_mod.lan_listener.__class__, "is_running", property(lambda self: False))
+        monkeypatch.setattr(_ll_mod.lan_listener.__class__, "lan_port", property(lambda self: None))
+        monkeypatch.setattr(_ll_mod, "get_lan_ip", lambda: "192.168.1.50")
+
+        resp = client.get("/api/config/general/lan-port")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["lan_port"] == 80
+        assert data["lan_ip"] == "192.168.1.50"
+        assert data["public_exposure"] is False
+
     def test_get_lan_port_stopped(self, client, mock_config_path, monkeypatch):
         """GET lan-port，listener is_running=False だが IP は取得可能
         → {lan_port: null, lan_ip: "192.168.1.50"}（P2-3: lan_ip は running に依存しない）

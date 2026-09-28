@@ -382,18 +382,22 @@ def update_focal_device_disabled(request: FocalDeviceDisabledRequest) -> dict:
 
 
 @router.get("/config/general/lan-port")
-def get_lan_port() -> dict:
-    """取得 LAN listener 目前使用的 port + LAN IP（server mode 啟用中回值，否則 null）
+def get_lan_port(request: Request) -> dict:
+    """取得目前可連線的 port + LAN IP（Synology 使用主服務埠）。
 
     lan_ip 獨立於 listener 狀態：IP 可偵測→回真值，IP 不可偵測→回 null。
     搭配前端 `?? null` 清除邏輯：listener 停止但 IP 可偵測 → lanIp 保留、lanPort
     null → 顯示「listener_down」；IP 真的無法偵測 → lanIp null → 顯示「no_lan_ip」。
     """
     from web.lan_listener import lan_listener, get_lan_ip, is_public_exposure
-    running = lan_listener.is_running
+    if is_synology():
+        lan_port = request.scope["server"][1]
+    else:
+        running = lan_listener.is_running
+        lan_port = lan_listener.lan_port if running else None
     _lan_ip = get_lan_ip()
     return {
-        "lan_port": lan_listener.lan_port if running else None,
+        "lan_port": lan_port,
         "lan_ip": _lan_ip,  # 獨立於 running：null 僅在 IP 真的無法偵測時
         "public_exposure": is_public_exposure(_lan_ip),
     }
