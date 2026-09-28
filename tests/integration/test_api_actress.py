@@ -46,7 +46,7 @@ MOCK_PROFILE = {
     "photo_url": "https://example.com/photo.jpg",
     "photo_source": "gfriends",
     "img": "https://example.com/photo.jpg",
-    "primary_text_source": "minnano",
+    "primary_text_source": "xcity",
 }
 
 ACTRESS_NAME = "三上悠亜"
@@ -296,6 +296,156 @@ class TestAddFavorite:
 # ---------------------------------------------------------------------------
 # T2: GET /api/actresses/{name} — 查詢已收藏女優
 # ---------------------------------------------------------------------------
+
+class TestPreviewActress:
+    """POST /api/actresses/preview 只讀預覽。"""
+
+    @staticmethod
+    def _preview(client, name, sources=None):
+        if sources is None:
+            sources = {"xcity": None, "wiki": None, "graphis": None, "gfriends": None}
+        with patch("web.routers.actress.get_actress_profile_preview", create=True) as mock_preview:
+            mock_preview.return_value = {"name": name, "sources": sources}
+            response = client.post("/api/actresses/preview", json={"name": name})
+        mock_preview.assert_called_once_with(name)
+        return response
+
+    def test_preview_favorited_actress_has_current_no_alias_of(self, client):
+        from core.database import Actress, ActressRepository
+
+        ActressRepository().save(Actress(name=ACTRESS_NAME, name_en="Yua Mikami"))
+        response = self._preview(client, ACTRESS_NAME)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["name"] == ACTRESS_NAME
+        assert data["current"]["name_en"] == "Yua Mikami"
+        assert data["current"]["is_favorite"] is True
+        assert "alias_of" not in data
+        assert data["photo_candidates"] == []
+
+    def test_preview_unfavorited_non_alias_has_null_current(self, client):
+        name = "全新女優"
+        response = self._preview(client, name)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["name"] == name
+        assert data["current"] is None
+        assert "alias_of" not in data
+        assert data["photo_candidates"] == []
+
+    def test_preview_unfavorited_alias_of_favorited_primary(self, client):
+        """PR #211 第三輪 v2：命中已收藏 primary 的別名時，`current` 改回 primary
+        的資料（`_actress_to_response` 形狀），不再是 null——即使查詢的別名自己
+        沒有既有 row。"""
+        from core.database import Actress, ActressRepository, AliasRepository
+
+        ActressRepository().save(Actress(name=ACTRESS_NAME, name_en="Yua Mikami"))
+        AliasRepository().add(primary_name=ACTRESS_NAME, aliases=["鬼頭桃菜"])
+        response = self._preview(client, "鬼頭桃菜")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["alias_of"] == ACTRESS_NAME
+        assert data["current"] is not None
+        assert data["current"]["name"] == ACTRESS_NAME
+        assert data["current"]["name_en"] == "Yua Mikami"
+        assert data["current"]["is_favorite"] is True
+
+    def test_preview_alias_with_own_orphan_row_still_returns_primary_current(self, client):
+        """alias 自己意外也有一筆既有 row（例如曾被單獨收藏過，之後才被同步成
+        某個已收藏 primary 的別名）：`current` 仍要回 primary 的資料，不是這筆
+        別名自己的孤兒 row——與 submit_actress／upload_actress_photo／
+        set_actress_photo 用同一個 `_favorited_primary_for_alias` 判準，三處
+        不該漂移。"""
+        from core.database import Actress, ActressRepository, AliasRepository
+
+        primary, alias = ACTRESS_NAME, "鬼頭桃菜"
+        ActressRepository().save(Actress(name=primary, name_en="PrimaryName"))
+        ActressRepository().save(Actress(name=alias, name_en="AliasOwnRowName"))
+        AliasRepository().add(primary_name=primary, aliases=[alias])
+        response = self._preview(client, alias)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["alias_of"] == primary
+        assert data["current"]["name"] == primary
+        assert data["current"]["name_en"] == "PrimaryName"
+
+    def test_preview_orphan_alias_primary_not_favorited_no_alias_of(self, client):
+        from core.database import AliasRepository
+
+        AliasRepository().add(primary_name="未收藏主名", aliases=["孤兒別名"])
+        response = self._preview(client, "孤兒別名")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["current"] is None
+        assert "alias_of" not in data
+
+    def test_preview_unfavorited_actress_photo_candidates_nonempty(self, client):
+        sources = {
+            "xcity": None,
+            "wiki": {"photo_url": "https://example.com/wiki.jpg"},
+            "graphis": None,
+            "gfriends": None,
+        }
+        response = self._preview(client, "有照片女優", sources)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["current"] is None
+        assert data["photo_candidates"] == [
+            {"source": "wiki", "url": "https://example.com/wiki.jpg"}
+        ]
+
+    def test_preview_unfavorited_actress_photo_candidates_empty(self, client):
+        response = self._preview(client, "無照片女優")
+
+        assert response.status_code == 200
+        assert response.json()["photo_candidates"] == []
+
+    @pytest.mark.parametrize("missing_source", ["xcity", "wiki", "graphis", "gfriends"])
+    def test_preview_sources_keep_four_keys_with_individual_none(self, client, missing_source):
+        sources = {
+            "xcity": {"photo_url": "https://example.com/xcity.jpg"},
+            "wiki": {"photo_url": "https://example.com/wiki.jpg"},
+            "graphis": {"prof_url": "https://example.com/graphis.jpg"},
+            "gfriends": "https://example.com/gfriends.jpg",
+        }
+        sources[missing_source] = None
+        response = self._preview(client, "來源部分缺失", sources)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert set(data["sources"]) == {"xcity", "wiki", "graphis", "gfriends"}
+        assert data["sources"] == sources
+        assert data["sources"][missing_source] is None
+
+    def test_preview_blank_name_returns_422_without_fetch(self, client):
+        """PR #211 第三輪 v2：空白名字訊息改為固定中文（原本是英文 snake_case
+        `invalid_name`），與其餘新增路徑一律固定中文的規則一致。"""
+        with patch("web.routers.actress.get_actress_profile_preview", create=True) as mock_preview:
+            response = client.post("/api/actresses/preview", json={"name": "   "})
+
+        assert response.status_code == 422
+        assert response.json() == {"error": "女優名字不可為空"}
+        mock_preview.assert_not_called()
+
+    def test_preview_unexpected_exception_returns_fixed_chinese_500(self, client):
+        """PR #211 第三輪 v2：preview_actress 整支原本無任何 try/except，DB 或
+        orchestrator 非預期例外會逸出成裸文字 500。改為 log 後回固定中文 JSON
+        500，不洩漏例外內容（str(e)）。"""
+        with patch("web.routers.actress.get_actress_profile_preview",
+                   side_effect=RuntimeError("boom - secret detail")):
+            response = client.post("/api/actresses/preview", json={"name": ACTRESS_NAME})
+
+        assert response.status_code == 500
+        body = response.json()
+        assert body == {"error": "操作失敗"}
+        assert "boom" not in str(body) and "RuntimeError" not in str(body)
+
 
 class TestGetActress:
     """GET /api/actresses/{name} 測試"""
@@ -578,7 +728,7 @@ class TestPhotoCandidates:
             client.get(f"/api/actresses/{ACTRESS_NAME}/photo-candidates")
 
         # 4 來源全部嘗試
-        assert set(called_sources) == {"graphis", "gfriends", "wiki", "minnano"}
+        assert set(called_sources) == {"graphis", "gfriends", "wiki", "xcity"}
 
     def test_photo_candidates_excludes_current_source(self, client):
         """photo_source='gfriends' 時 gfriends 不會被呼叫，剩 3 來源並行"""
@@ -596,7 +746,7 @@ class TestPhotoCandidates:
 
         assert resp.status_code == 200
         assert "gfriends" not in called_sources
-        assert set(called_sources) == {"graphis", "wiki", "minnano"}
+        assert set(called_sources) == {"graphis", "wiki", "xcity"}
 
     def test_photo_candidates_local_crop_tries_all_four(self, client):
         """photo_source='local_crop' 時 4 雲端來源全試"""
@@ -612,7 +762,7 @@ class TestPhotoCandidates:
              patch("web.routers.actress._get_random_videos_with_covers", return_value=[]):
             client.get(f"/api/actresses/{ACTRESS_NAME}/photo-candidates")
 
-        assert set(called_sources) == {"graphis", "gfriends", "wiki", "minnano"}
+        assert set(called_sources) == {"graphis", "gfriends", "wiki", "xcity"}
 
 
 # ---------------------------------------------------------------------------
@@ -1055,12 +1205,12 @@ class TestSetActressPhoto:
         gfriends.mkdir()
         with patch(
             "web.routers.actress.download_actress_photo",
-            side_effect=self._cloud_download_writer(gfriends, b"\xff\xd8\xff\xe0FAKE_MINNANO"),
+            side_effect=self._cloud_download_writer(gfriends, b"\xff\xd8\xff\xe0FAKE_XCITY"),
         ), patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
                 patch("core.actress_photo.GFRIENDS_DIR", gfriends):
             resp = client.post(
                 f"/api/actresses/{ACTRESS_NAME}/photo",
-                json={"source": "minnano", "url": "https://www.minnano-av.com/photo.jpg"},
+                json={"source": "xcity", "url": "https://faws.xcity.jp/actress/large/image/person/1/photo.jpg"},
             )
 
         assert resp.status_code == 200
@@ -1620,6 +1770,12 @@ class TestSetActressPhoto:
              patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
              patch("core.actress_photo.GFRIENDS_DIR", gfriends):
             mock_alias_repo_cls.return_value.resolve.return_value = {ACTRESS_NAME, "別名A"}
+            # PR #211 第三輪 v3：set_actress_photo 新增的身分守衛會呼叫
+            # AliasRepository().find_by_alias(name)；本測試整個 mock 掉
+            # AliasRepository class，不明確設定的話會回未配置的 MagicMock，
+            # 讓 repo.exists(MagicMock) 炸 sqlite3.ProgrammingError——與本測試
+            # 要驗的 local_crop resolve 對稱性無關，明確設 None 關掉守衛分支。
+            mock_alias_repo_cls.return_value.find_by_alias.return_value = None
             real_video_repo = VideoRepository()
             mock_video_repo_cls.return_value.get_videos_by_actress_names.side_effect = (
                 real_video_repo.get_videos_by_actress_names
@@ -1635,6 +1791,38 @@ class TestSetActressPhoto:
         mock_video_repo_cls.return_value.get_videos_by_actress_names.assert_called_once()
         called_names = mock_video_repo_cls.return_value.get_videos_by_actress_names.call_args[0][0]
         assert set(called_names) == {ACTRESS_NAME, "別名A"}
+
+    # ---- 🔴 PR #211 第三輪 v3：身分守衛新擴及本端點 ----
+
+    def test_set_actress_photo_alias_of_favorited_primary_rejected_even_with_own_row(self, client, tmp_db):
+        """alias 自己意外也有一筆既有 row（例如曾被單獨收藏過，之後才被同步成
+        某個已收藏 primary 的別名）時，舊版 `set_actress_photo` 完全沒有 alias
+        檢查——只用字面 name 查 `_load_actress` 找得到那筆孤兒 row 就直接放行
+        換圖，繞過 submit_actress／upload_actress_photo 那套「一律擋下並告知
+        正確名字」的身分守衛。
+
+        mutation：拿掉 set_actress_photo 裡的 `_favorited_primary_for_alias`
+        呼叫 → 本測試必紅（200 而非 400，且 alias 的孤兒 row 被換圖覆寫）。
+        """
+        from core.database import Actress, ActressRepository, AliasRepository
+
+        primary = ACTRESS_NAME
+        alias = "鬼頭桃菜"
+        self._save_actress(client)  # 收藏 primary（初始 photo_source='gfriends'）
+        repo = ActressRepository(tmp_db)
+        repo.save(Actress(name=alias, photo_source="wiki"))
+        AliasRepository(tmp_db).sync_from_favorite(primary, [alias])
+
+        resp = client.post(
+            f"/api/actresses/{alias}/photo",
+            json={"source": "graphis", "url": "https://www.graphis.ne.jp/photo.jpg"},
+        )
+
+        assert resp.status_code == 400
+        assert primary in resp.json()["error"]
+        # 孤兒 row 與 primary row 都必須原封不動——沒有任何寫入發生
+        assert repo.get_by_name(alias).photo_source == "wiki"
+        assert repo.get_by_name(primary).photo_source == "gfriends"
 
 
 # ---------------------------------------------------------------------------
@@ -2023,32 +2211,19 @@ class TestUploadActressPhoto:
         assert data["crop_mode"] == "auto"
         assert "?v=" in data["photo_url"]
 
-    # ---- CD-13 補充：不揭露 capabilities ----
-
-    def test_upload_endpoint_not_registered_in_capabilities(self):
-        # [lint-guard: pytest-justified] CD-13 agentic-AI 揭露面安全守衛。
-        # 🔴 誠實揭露（PR#108 fresh review 訂正）：本條**確實**落在北極星射程內——它是對
-        # capabilities.py 的單檔 forbidden-string 檢查（不是跨檔 contract：這裡根本沒讀
-        # actress.py），而 static_guard_lint.mjs 也**已經會掃 .py**（見 core/gallery_scanner.py
-        # 等三條 forbidden-string 規則）⇒ 搬過去是 ~4 行規則物件、成本近乎零。
-        # 留在 pytest 的理由只有一個、且與難易無關：**同一語意類別共 5 條**，另 2 條在 main
-        # 上早已存在且同樣未標 tag（detail_url／test_rescrape_javlib.py:263、
-        # metatube_status／test_scraper_sources_api.py:201）。只搬本檔 3 條會把類別拆成
-        # 3-in-lint／2-in-pytest，一致性成本高於收益。要搬應 5 條一起搬 ⇒ 屬另一支 PR。
-        # （SA-pre-6 的 content-based 偵測面是 `assert "<字面>" in/not in (html|js|css)`，
-        # 本條綁 Python 源碼字串、不在該偵測面內，故非 blocker——但那是條文，不是免死金牌。）
-        capabilities_src = Path("web/routers/capabilities.py").read_text(encoding="utf-8")
-        assert "photo/upload" not in capabilities_src
-
-    # ---- 🔴 Codex P2：repo.save 失敗必須回固定中文，不可逸出成純文字 500 ----
+    # ---- 🔴 Codex P2：repo.update_fields 失敗必須回固定中文，不可逸出成純文字 500 ----
 
     def test_upload_photo_save_failure_returns_fixed_chinese_500(self, client, tmp_path):
-        """repo.save 拋例外若逸出 async 路由 → Starlette 預設 handler 回**純文字**
-        "Internal Server Error"（web/app.py 只註冊 RequestValidationError、無
-        catch-all）→ 不是 JSON、更不是 AGENTS.md:33 要求的固定中文。
+        """repo.update_fields 拋例外若逸出 async 路由 → Starlette 預設 handler 回
+        **純文字** "Internal Server Error"（web/app.py 只註冊 RequestValidationError、
+        無 catch-all）→ 不是 JSON、更不是 AGENTS.md:33 要求的固定中文。
 
         T4 的 set_actress_focal 本來就有這個 guard，T2/T3 漏了——同一 branch 內部
         的不對稱。mutation：拿掉 _persist_photo_source 的 try/except → 必紅。
+
+        🔴 157-post-merge-1：_persist_photo_source 已從整份 `repo.save(actress)`
+        改成單欄 `repo.update_fields(actress.name, {...})`（避免踩掉並發寫入的
+        其他欄位），故這裡改 patch `update_fields.side_effect`。
         """
         self._save_actress(client)
         gfriends = tmp_path / "gfriends"
@@ -2058,7 +2233,7 @@ class TestUploadActressPhoto:
             repo_cls.return_value.get_by_name.return_value = MagicMock(
                 name=ACTRESS_NAME, auto_focal="", crop_mode="auto", photo_source="gfriends")
             repo_cls.return_value.clear_focal.return_value = True
-            repo_cls.return_value.save.side_effect = RuntimeError("disk full")
+            repo_cls.return_value.update_fields.side_effect = RuntimeError("disk full")
             resp = client.post(
                 f"/api/actresses/{ACTRESS_NAME}/photo/upload",
                 files={"file": ("photo.jpg", self._make_jpeg_bytes(), "image/jpeg")},
@@ -2158,6 +2333,37 @@ class TestUploadActressPhoto:
         actress = ActressRepository().get_by_name(ACTRESS_NAME)
         assert actress.photo_source == "upload"
 
+    # ---- 🔴 157-post-merge-2：alias 身分守衛必須擋在任何寫入之前 ----
+
+    def test_upload_photo_alias_of_favorited_primary_rejected_even_with_own_row(self, client, tmp_db):
+        """alias 自己意外也有一筆既有 row（例如曾被單獨收藏過，之後才被同步成某個
+        已收藏 primary 的別名）時，舊版 `upload_actress_photo` 只用字面 name 查
+        `_load_actress` 找得到那筆孤兒 row 就直接放行上傳，完全沒有 alias 檢查——
+        繞過 submit_actress 那套「一律擋下並告知正確名字」的身分守衛。
+
+        mutation：拿掉 upload_actress_photo 裡的 `_favorited_primary_for_alias` 呼叫 →
+        本測試必紅（200 而非 400，且 alias 的孤兒 row 被覆寫）。
+        """
+        from core.database import Actress, ActressRepository, AliasRepository
+
+        primary = ACTRESS_NAME
+        alias = "鬼頭桃菜"
+        self._save_actress(client)  # 收藏 primary（初始 photo_source='gfriends'）
+        repo = ActressRepository(tmp_db)
+        repo.save(Actress(name=alias, photo_source="wiki"))
+        AliasRepository(tmp_db).sync_from_favorite(primary, [alias])
+
+        resp = client.post(
+            f"/api/actresses/{alias}/photo/upload",
+            files={"file": ("photo.jpg", self._make_jpeg_bytes(), "image/jpeg")},
+        )
+
+        assert resp.status_code == 400
+        assert primary in resp.json()["detail"]
+        # 孤兒 row 與 primary row 都必須原封不動——沒有任何寫入發生
+        assert repo.get_by_name(alias).photo_source == "wiki"
+        assert repo.get_by_name(primary).photo_source == "gfriends"
+
     def test_upload_photo_serves_new_image_when_stale_sibling_survives(self, client, tmp_path):
         """🔴 PR#108 Codex 三審 P2（端對端）：清舊檔失敗留下舊 .jpg 時，
         GET /photo/{name} 必須送出**剛上傳的 PNG**，不是舊 JPEG。
@@ -2208,6 +2414,26 @@ class TestUploadActressPhoto:
         # 🔴 承重：送出的是新 PNG，不是字母序在前的舊 JPEG
         assert photo.headers["content-type"] == "image/png"
         assert photo.content == png_bytes
+
+    # ---- 🔴 PR #211 第三輪 v2：整段主體防護（前段原本沒有任何 try/except） ----
+
+    def test_upload_photo_unexpected_exception_returns_fixed_chinese_500(self, client):
+        """upload_actress_photo 前段（女優載入）原本沒有 try/except 包住，DB 或
+        其他非預期例外會逸出成裸文字 500。改為整段防護：HTTPException（別名
+        擋下）放行，其餘例外一律 log 後回既有固定中文 `_ERR_UPLOAD_FAILED`，
+        不洩漏例外內容。"""
+        self._save_actress(client)
+        with patch("web.routers.actress._load_actress",
+                   side_effect=RuntimeError("boom - secret detail")):
+            resp = client.post(
+                f"/api/actresses/{ACTRESS_NAME}/photo/upload",
+                files={"file": ("photo.jpg", self._make_jpeg_bytes(), "image/jpeg")},
+            )
+
+        assert resp.status_code == 500
+        body = resp.json()
+        assert body == {"error": _ERR_UPLOAD_FAILED}
+        assert "boom" not in str(body) and "RuntimeError" not in str(body)
 
 
 # ---------------------------------------------------------------------------
@@ -2889,6 +3115,47 @@ class TestWriteActressPhoto:
 
         # 例外後不留 temp 殘檔
         assert list(gfriends.glob("tmp*")) == []
+
+
+# ---------------------------------------------------------------------------
+# 157-post-merge-1: _persist_photo_source 改單欄寫入，不可覆蓋並發寫入的其他欄位
+# ---------------------------------------------------------------------------
+
+class TestPersistPhotoSourceConcurrentWrite:
+    """`_persist_photo_source` 的 `actress` 參數是呼叫端在 request 較早時間點讀出
+    的快照，之後經過至少一次 `await`（clear_focal / 下載 / 裁切 / 寫檔）才走到這
+    裡。若同一段時間內有另一個 writer 改了這筆女優的其他文字欄位，舊版
+    `actress.photo_source = source` 後整份 `repo.save(actress)` 會把那些欄位覆寫
+    回呼叫端手上的舊快照值，等於憑空吃掉別人剛寫的東西。
+
+    mutation：把 `_persist_photo_source` 改回 `repo.save(actress)` → 本測試必紅
+    （height 被踩回舊快照的 '158cm'，而不是併發寫入的 '170cm'）。
+    """
+
+    def test_persist_photo_source_does_not_revert_concurrent_field_write(self, tmp_db, monkeypatch):
+        import asyncio
+        from core.database import Actress, ActressRepository
+        from web.routers.actress import _persist_photo_source
+
+        monkeypatch.setattr("core.database.connection.get_db_path", lambda: tmp_db)
+        repo = ActressRepository(tmp_db)
+        repo.save(Actress(name=ACTRESS_NAME, height="158cm", photo_source="wiki"))
+
+        # 呼叫端在 request 較早時間點讀出的快照（模擬 _load_actress 讀到的舊版本）
+        stale_actress = repo.get_by_name(ACTRESS_NAME)
+
+        # 模擬另一個 writer 在這之後、_persist_photo_source 真正執行之前，
+        # 改了與照片無關的文字欄位
+        assert repo.update_fields(ACTRESS_NAME, {"height": "170cm"})
+
+        err = asyncio.run(_persist_photo_source(
+            repo, stale_actress, "graphis", ctx="test", err_msg="持久化失敗"))
+
+        assert err is None
+        stored = repo.get_by_name(ACTRESS_NAME)
+        assert stored.photo_source == "graphis"
+        assert stored.height == "170cm", (
+            "併發寫入的 height 被 _persist_photo_source 用舊快照覆蓋回去了")
 
 
 # ---------------------------------------------------------------------------

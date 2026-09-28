@@ -211,7 +211,7 @@ class TestSearchOnline:
         assert "アリス" in data["suggested_aliases"]
 
     def test_success_with_dict_aliases_flattened(self, client, mock_repo, monkeypatch):
-        """minnano 格式 dict list aliases → _flatten_aliases 轉為 str list"""
+        """dict-list 格式 aliases → _flatten_aliases 轉為 str list"""
         profile_data = {
             "name": "橋本ありな",
             "text": {

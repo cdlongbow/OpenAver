@@ -6,7 +6,7 @@ Covers: C1 text cascade, C3 photo cascade, C4 return shape, TD-1 age fix,
         cache TTL, legacy flat↔nested consistency.
 
 Patch targets (source-module paths):
-    core.scrapers.actress.minnano_av.scrape_minnano_av
+    core.scrapers.actress.xcity.scrape_xcity
     core.scrapers.actress.wiki_ja.scrape_wiki_ja
     core.scrapers.actress.graphis.scrape_graphis_photo
     core.scrapers.actress.gfriends.lookup_gfriends
@@ -18,12 +18,13 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+from core.scrapers.actress import orchestrator
 from core.scrapers.actress.orchestrator import get_actress_profile, get_cached_profile, ProfileResult, _cache, _CACHE_TTL, _compute_age_from_birth
 
 # ---------------------------------------------------------------------------
 # Patch target constants
 # ---------------------------------------------------------------------------
-_PATCH_MINNANO  = 'core.scrapers.actress.minnano_av.scrape_minnano_av'
+_PATCH_XCITY  = 'core.scrapers.actress.xcity.scrape_xcity'
 _PATCH_WIKI     = 'core.scrapers.actress.wiki_ja.scrape_wiki_ja'
 _PATCH_GRAPHIS  = 'core.scrapers.actress.graphis.scrape_graphis_photo'
 _PATCH_GFRIENDS = 'core.scrapers.actress.gfriends.lookup_gfriends'
@@ -35,12 +36,9 @@ _ACTRESS_NAME = "明里つむぎ"
 # Mock data factories
 # ---------------------------------------------------------------------------
 
-def _make_minnano(name="明里つむぎ", birth="1998-03-31", **kwargs):
+def _make_xcity(name="明里つむぎ", birth="1998-03-31", **kwargs):
     return {
         "name_ja": name,
-        "name_hiragana": "あかりつむぎ",
-        "name_romaji": "Akari Tsumugi",
-        "aliases": [],
         "birth": birth,
         "hometown": "神奈川県",
         "height": "157cm",
@@ -49,13 +47,8 @@ def _make_minnano(name="明里つむぎ", birth="1998-03-31", **kwargs):
         "hip": "83cm",
         "cup": "B",
         "blood": "O",
-        "agency": "S1",
         "hobby": "スポーツ",
-        "debut_work": "...",
-        "blog_url": "",
-        "official_url": "",
-        "tags": [],
-        "photo_url": "https://www.minnano-av.com/p_actress_125_125/016/273627.jpg",
+        "photo_url": "https://xcity.jp/idol/photo/273627.jpg",
         **kwargs,
     }
 
@@ -140,12 +133,12 @@ def _frozen_dt_class(frozen: datetime):
 class TestHappyPath:
 
     def test_all_four_routes_not_none(self):
-        minnano = _make_minnano()
+        xcity = _make_xcity()
         wiki    = _make_wiki()
         graphis = _make_graphis()
         gfurl   = _make_gfriends_url()
 
-        with patch(_PATCH_MINNANO, return_value=minnano), \
+        with patch(_PATCH_XCITY, return_value=xcity), \
              patch(_PATCH_WIKI, return_value=wiki), \
              patch(_PATCH_GRAPHIS, return_value=graphis), \
              patch(_PATCH_GFRIENDS, return_value=gfurl):
@@ -155,29 +148,31 @@ class TestHappyPath:
         assert result.data is not None
         assert result.timed_out is False
 
-    def test_primary_text_source_minnano(self):
-        minnano = _make_minnano()
+    def test_primary_text_source_xcity(self):
+        xcity = _make_xcity()
         wiki    = _make_wiki()
         graphis = _make_graphis()
         gfurl   = _make_gfriends_url()
 
-        with patch(_PATCH_MINNANO, return_value=minnano), \
+        with patch(_PATCH_XCITY, return_value=xcity), \
              patch(_PATCH_WIKI, return_value=wiki), \
              patch(_PATCH_GRAPHIS, return_value=graphis), \
              patch(_PATCH_GFRIENDS, return_value=gfurl):
             result = get_actress_profile(_ACTRESS_NAME)
 
-        assert result.data["primary_text_source"] == "minnano"
-        assert result.data["text"] == minnano
+        assert result.data["primary_text_source"] == "xcity"
+        assert result.data["text"]["birth"] == xcity["birth"]
+        assert result.data["text"]["nickname"] == wiki["nickname"]
+        assert result.data["text"]["name_en"] == graphis["name_en"]
         assert result.timed_out is False
 
     def test_photo_cascade_graphis_wins(self):
-        minnano = _make_minnano()
+        xcity = _make_xcity()
         wiki    = _make_wiki()
         graphis = _make_graphis()
         gfurl   = _make_gfriends_url()
 
-        with patch(_PATCH_MINNANO, return_value=minnano), \
+        with patch(_PATCH_XCITY, return_value=xcity), \
              patch(_PATCH_WIKI, return_value=wiki), \
              patch(_PATCH_GRAPHIS, return_value=graphis), \
              patch(_PATCH_GFRIENDS, return_value=gfurl):
@@ -189,34 +184,34 @@ class TestHappyPath:
         assert result.timed_out is False
 
     def test_all_sources_dict(self):
-        minnano = _make_minnano()
+        xcity = _make_xcity()
         wiki    = _make_wiki()
         graphis = _make_graphis()
         gfurl   = _make_gfriends_url()
 
-        with patch(_PATCH_MINNANO, return_value=minnano), \
+        with patch(_PATCH_XCITY, return_value=xcity), \
              patch(_PATCH_WIKI, return_value=wiki), \
              patch(_PATCH_GRAPHIS, return_value=graphis), \
              patch(_PATCH_GFRIENDS, return_value=gfurl):
             result = get_actress_profile(_ACTRESS_NAME)
 
-        assert result.data["all_sources"]["minnano"] == minnano
+        assert result.data["all_sources"]["xcity"] == xcity
         assert result.data["all_sources"]["wiki"] == wiki
         assert result.data["all_sources"]["graphis"] == graphis
         assert result.data["all_sources"]["gfriends"] == gfurl
         assert result.timed_out is False
 
     def test_legacy_flat_name_and_img(self):
-        minnano = _make_minnano()
+        xcity = _make_xcity()
         graphis = _make_graphis()
 
-        with patch(_PATCH_MINNANO, return_value=minnano), \
+        with patch(_PATCH_XCITY, return_value=xcity), \
              patch(_PATCH_WIKI, return_value=None), \
              patch(_PATCH_GRAPHIS, return_value=graphis), \
              patch(_PATCH_GFRIENDS, return_value=None):
             result = get_actress_profile(_ACTRESS_NAME)
 
-        assert result.data["name"] == minnano["name_ja"]
+        assert result.data["name"] == xcity["name_ja"]
         assert result.data["img"] == result.data["photo_url"]
         assert result.timed_out is False
 
@@ -227,36 +222,62 @@ class TestHappyPath:
 
 class TestC1Cascade:
 
-    def test_minnano_none_wiki_wins(self):
+    def test_merge_text_fields_xcity_wins_over_wiki_when_both_have_value(self):
+        xcity = _make_xcity(hometown="", height="160cm")
+        wiki = _make_wiki(hometown="東京都", height="155cm")
+
+        with patch(_PATCH_XCITY, return_value=xcity), \
+             patch(_PATCH_WIKI, return_value=wiki), \
+             patch(_PATCH_GRAPHIS, return_value=None), \
+             patch(_PATCH_GFRIENDS, return_value=None):
+            result = get_actress_profile(_ACTRESS_NAME)
+
+        assert result.data["text"]["hometown"] == "東京都"
+        assert result.data["text"]["height"] == "160cm"
+
+    def test_merge_aliases_from_wiki_other_names(self):
+        wiki = _make_wiki(other_names=["別名1", "別名2"])
+
+        with patch(_PATCH_XCITY, return_value=None), \
+             patch(_PATCH_WIKI, return_value=wiki), \
+             patch(_PATCH_GRAPHIS, return_value=None), \
+             patch(_PATCH_GFRIENDS, return_value=None):
+            result = get_actress_profile(_ACTRESS_NAME)
+
+        assert result.data["text"]["aliases"] == ["別名1", "別名2"]
+
+    def test_xcity_none_wiki_wins(self):
         wiki    = _make_wiki()
         graphis = _make_graphis()
         gfurl   = _make_gfriends_url()
 
-        with patch(_PATCH_MINNANO, return_value=None), \
+        with patch(_PATCH_XCITY, return_value=None), \
              patch(_PATCH_WIKI, return_value=wiki), \
              patch(_PATCH_GRAPHIS, return_value=graphis), \
              patch(_PATCH_GFRIENDS, return_value=gfurl):
             result = get_actress_profile(_ACTRESS_NAME)
 
         assert result.data["primary_text_source"] == "wiki"
-        assert result.data["text"] == wiki
+        assert result.data["text"]["birth"] == wiki["birth"]
+        assert result.data["text"]["name_en"] == graphis["name_en"]
         assert result.data["name"] == wiki["name_ja"]
         # Photo cascade: Graphis still wins because it has prof_url
         assert result.data["photo_source"] == "graphis"
         assert result.timed_out is False
 
-    def test_minnano_wiki_none_graphis_wins(self):
+    def test_xcity_wiki_none_graphis_wins(self):
         graphis = _make_graphis()
         gfurl   = _make_gfriends_url()
 
-        with patch(_PATCH_MINNANO, return_value=None), \
+        with patch(_PATCH_XCITY, return_value=None), \
              patch(_PATCH_WIKI, return_value=None), \
              patch(_PATCH_GRAPHIS, return_value=graphis), \
              patch(_PATCH_GFRIENDS, return_value=gfurl):
             result = get_actress_profile(_ACTRESS_NAME)
 
         assert result.data["primary_text_source"] == "graphis"
-        assert result.data["text"] == graphis
+        assert result.data["text"]["name_en"] == graphis["name_en"]
+        assert result.data["text"]["height"] == graphis["height"]
         # Bug 2 fix: name falls back to queried name (text.name is "" in _make_graphis,
         # so the final fallback is the queried `name` arg)
         assert result.data["name"] == _ACTRESS_NAME  # queried name fallback via text.name or name arg
@@ -267,7 +288,7 @@ class TestC1Cascade:
         assert result.timed_out is False
 
     def test_all_four_none_returns_none(self):
-        with patch(_PATCH_MINNANO, return_value=None), \
+        with patch(_PATCH_XCITY, return_value=None), \
              patch(_PATCH_WIKI, return_value=None), \
              patch(_PATCH_GRAPHIS, return_value=None), \
              patch(_PATCH_GFRIENDS, return_value=None):
@@ -285,12 +306,12 @@ class TestC1Cascade:
 class TestPhotoCascade:
 
     def test_graphis_no_prof_url_gfriends_wins(self):
-        minnano = _make_minnano()
+        xcity = _make_xcity()
         # Graphis present but prof_url missing/empty
         graphis = _make_graphis(prof_url="")
         gfurl   = _make_gfriends_url()
 
-        with patch(_PATCH_MINNANO, return_value=minnano), \
+        with patch(_PATCH_XCITY, return_value=xcity), \
              patch(_PATCH_WIKI, return_value=None), \
              patch(_PATCH_GRAPHIS, return_value=graphis), \
              patch(_PATCH_GFRIENDS, return_value=gfurl):
@@ -304,7 +325,7 @@ class TestPhotoCascade:
     def test_graphis_none_gfriends_none_wiki_wins(self):
         wiki = _make_wiki()
 
-        with patch(_PATCH_MINNANO, return_value=None), \
+        with patch(_PATCH_XCITY, return_value=None), \
              patch(_PATCH_WIKI, return_value=wiki), \
              patch(_PATCH_GRAPHIS, return_value=None), \
              patch(_PATCH_GFRIENDS, return_value=None):
@@ -314,17 +335,17 @@ class TestPhotoCascade:
         assert result.data["photo_url"] == wiki["photo_url"]
         assert result.timed_out is False
 
-    def test_only_minnano_has_photo(self):
-        minnano = _make_minnano()
+    def test_only_xcity_has_photo(self):
+        xcity = _make_xcity()
 
-        with patch(_PATCH_MINNANO, return_value=minnano), \
+        with patch(_PATCH_XCITY, return_value=xcity), \
              patch(_PATCH_WIKI, return_value=None), \
              patch(_PATCH_GRAPHIS, return_value=None), \
              patch(_PATCH_GFRIENDS, return_value=None):
             result = get_actress_profile(_ACTRESS_NAME)
 
-        assert result.data["photo_source"] == "minnano"
-        assert result.data["photo_url"] == minnano["photo_url"]
+        assert result.data["photo_source"] == "xcity"
+        assert result.data["photo_url"] == xcity["photo_url"]
         assert result.timed_out is False
 
 
@@ -334,11 +355,11 @@ class TestPhotoCascade:
 
 class TestTD1Age:
 
-    def _call_with_frozen_now(self, frozen_now: datetime, minnano_birth):
-        minnano = _make_minnano(birth=minnano_birth)
+    def _call_with_frozen_now(self, frozen_now: datetime, xcity_birth):
+        xcity = _make_xcity(birth=xcity_birth)
         FrozenDT = _frozen_dt_class(frozen_now)
 
-        with patch(_PATCH_MINNANO, return_value=minnano), \
+        with patch(_PATCH_XCITY, return_value=xcity), \
              patch(_PATCH_WIKI, return_value=None), \
              patch(_PATCH_GRAPHIS, return_value=None), \
              patch(_PATCH_GFRIENDS, return_value=None), \
@@ -360,8 +381,8 @@ class TestTD1Age:
         assert result.timed_out is False
 
     def test_age_none_when_birth_none(self):
-        minnano = _make_minnano(birth=None)
-        with patch(_PATCH_MINNANO, return_value=minnano), \
+        xcity = _make_xcity(birth=None)
+        with patch(_PATCH_XCITY, return_value=xcity), \
              patch(_PATCH_WIKI, return_value=None), \
              patch(_PATCH_GRAPHIS, return_value=None), \
              patch(_PATCH_GFRIENDS, return_value=None):
@@ -372,8 +393,8 @@ class TestTD1Age:
         assert result.timed_out is False
 
     def test_age_none_when_birth_invalid(self):
-        minnano = _make_minnano(birth="invalid-format")
-        with patch(_PATCH_MINNANO, return_value=minnano), \
+        xcity = _make_xcity(birth="invalid-format")
+        with patch(_PATCH_XCITY, return_value=xcity), \
              patch(_PATCH_WIKI, return_value=None), \
              patch(_PATCH_GRAPHIS, return_value=None), \
              patch(_PATCH_GFRIENDS, return_value=None):
@@ -385,11 +406,11 @@ class TestTD1Age:
 
     def test_age_not_read_from_graphis_stale_field(self):
         # Graphis has age=999; orchestrator must compute from birth, not read 999
-        minnano = _make_minnano(birth="1998-03-31")
+        xcity = _make_xcity(birth="1998-03-31")
         graphis = _make_graphis()  # age=999 is baked in by factory
         FrozenDT = _frozen_dt_class(datetime(2026, 1, 1))
 
-        with patch(_PATCH_MINNANO, return_value=minnano), \
+        with patch(_PATCH_XCITY, return_value=xcity), \
              patch(_PATCH_WIKI, return_value=None), \
              patch(_PATCH_GRAPHIS, return_value=graphis), \
              patch(_PATCH_GFRIENDS, return_value=None), \
@@ -401,10 +422,10 @@ class TestTD1Age:
         assert result.timed_out is False
 
     def test_age_consistency_age_equals_current_age(self):
-        minnano = _make_minnano(birth="1995-06-15")
+        xcity = _make_xcity(birth="1995-06-15")
         FrozenDT = _frozen_dt_class(datetime(2026, 7, 1))
 
-        with patch(_PATCH_MINNANO, return_value=minnano), \
+        with patch(_PATCH_XCITY, return_value=xcity), \
              patch(_PATCH_WIKI, return_value=None), \
              patch(_PATCH_GRAPHIS, return_value=None), \
              patch(_PATCH_GFRIENDS, return_value=None), \
@@ -450,16 +471,14 @@ class TestLegacyFlatConsistency:
         assert data["age"] == data["current_age"]
         text = data.get("text")
         if text is not None:
-            # name cascades: text.name_ja → text.name → queried name arg
-            expected_name = text.get("name_ja") or text.get("name") or _ACTRESS_NAME
-            assert data["name"] == expected_name
+            assert data["name"] == _ACTRESS_NAME
             assert data["birth"] == text.get("birth")
 
     def test_consistency_full_happy_path(self):
-        minnano = _make_minnano()
+        xcity = _make_xcity()
         graphis = _make_graphis()
 
-        with patch(_PATCH_MINNANO, return_value=minnano), \
+        with patch(_PATCH_XCITY, return_value=xcity), \
              patch(_PATCH_WIKI, return_value=None), \
              patch(_PATCH_GRAPHIS, return_value=graphis), \
              patch(_PATCH_GFRIENDS, return_value=None):
@@ -472,7 +491,7 @@ class TestLegacyFlatConsistency:
         wiki    = _make_wiki()
         graphis = _make_graphis()
 
-        with patch(_PATCH_MINNANO, return_value=None), \
+        with patch(_PATCH_XCITY, return_value=None), \
              patch(_PATCH_WIKI, return_value=wiki), \
              patch(_PATCH_GRAPHIS, return_value=graphis), \
              patch(_PATCH_GFRIENDS, return_value=None):
@@ -481,10 +500,10 @@ class TestLegacyFlatConsistency:
         self._assert_consistency(result.data)
         assert result.timed_out is False
 
-    def test_consistency_only_minnano(self):
-        minnano = _make_minnano()
+    def test_consistency_only_xcity(self):
+        xcity = _make_xcity()
 
-        with patch(_PATCH_MINNANO, return_value=minnano), \
+        with patch(_PATCH_XCITY, return_value=xcity), \
              patch(_PATCH_WIKI, return_value=None), \
              patch(_PATCH_GRAPHIS, return_value=None), \
              patch(_PATCH_GFRIENDS, return_value=None):
@@ -502,12 +521,12 @@ class TestCacheTTL:
 
     def test_cache_hit_returns_stale_result(self):
         """Second call within TTL returns cached result; scrapers called only once."""
-        minnano_first  = _make_minnano(name="初回結果")
-        minnano_second = _make_minnano(name="二回目結果")
+        xcity_first  = _make_xcity(name="初回結果")
+        xcity_second = _make_xcity(name="二回目結果")
 
-        mock_minnano = MagicMock(side_effect=[minnano_first, minnano_second])
+        mock_xcity = MagicMock(side_effect=[xcity_first, xcity_second])
 
-        with patch(_PATCH_MINNANO, mock_minnano), \
+        with patch(_PATCH_XCITY, mock_xcity), \
              patch(_PATCH_WIKI, return_value=None), \
              patch(_PATCH_GRAPHIS, return_value=None), \
              patch(_PATCH_GFRIENDS, return_value=None):
@@ -515,9 +534,10 @@ class TestCacheTTL:
             result2 = get_actress_profile(_ACTRESS_NAME)
 
         # Scraper should have been called exactly once (cache hit on second call)
-        assert mock_minnano.call_count == 1
+        assert mock_xcity.call_count == 1
         # Both results should be identical (from cache)
-        assert result1.data["name"] == result2.data["name"] == "初回結果"
+        assert result1.data["all_sources"]["xcity"]["name_ja"] == "初回結果"
+        assert result2.data == result1.data
         assert result1.timed_out is False
         assert result2.timed_out is False
 
@@ -532,18 +552,18 @@ class TestCacheTTL:
             "timestamp": time.time() - _CACHE_TTL - 10,  # expired
         }
 
-        minnano = _make_minnano(name="fresh")
-        mock_minnano = MagicMock(return_value=minnano)
+        xcity = _make_xcity(name="fresh")
+        mock_xcity = MagicMock(return_value=xcity)
 
-        with patch(_PATCH_MINNANO, mock_minnano), \
+        with patch(_PATCH_XCITY, mock_xcity), \
              patch(_PATCH_WIKI, return_value=None), \
              patch(_PATCH_GRAPHIS, return_value=None), \
              patch(_PATCH_GFRIENDS, return_value=None):
             result = get_actress_profile(_ACTRESS_NAME)
 
         # Fresh scraper should have been called
-        assert mock_minnano.call_count == 1
-        assert result.data["name"] == "fresh"
+        assert mock_xcity.call_count == 1
+        assert result.data["all_sources"]["xcity"]["name_ja"] == "fresh"
         assert result.timed_out is False
 
 
@@ -573,7 +593,7 @@ class TestMeaningfulTextFilter:
         }
         graphis = _make_graphis()  # has birth, height, BWH, etc.
 
-        with patch(_PATCH_MINNANO, return_value=None), \
+        with patch(_PATCH_XCITY, return_value=None), \
              patch(_PATCH_WIKI, return_value=wiki_shell), \
              patch(_PATCH_GRAPHIS, return_value=graphis), \
              patch(_PATCH_GFRIENDS, return_value=None):
@@ -582,35 +602,27 @@ class TestMeaningfulTextFilter:
         assert result.data is not None
         # Graphis (with real data) must win C1, not the wiki shell
         assert result.data["primary_text_source"] == "graphis"
-        assert result.data["text"] == graphis
+        assert result.data["text"]["name_en"] == graphis["name_en"]
         # But wiki dict is still stored in all_sources for reference
         assert result.data["all_sources"]["wiki"] == wiki_shell
         assert result.timed_out is False
 
-    def test_minnano_shell_does_not_suppress_wiki(self):
-        """Parallel safety: if minnano returns a shell (no meaningful text), wiki wins."""
-        minnano_shell = {
+    def test_xcity_shell_does_not_suppress_wiki(self):
+        """Parallel safety: if xcity returns a shell (no meaningful text), wiki wins."""
+        xcity_shell = {
             "name_ja": _ACTRESS_NAME,
-            "name_hiragana": "",
-            "name_romaji": "",
-            "aliases": [],
             "birth": "",
             "hometown": "",
             "height": "",
             "bust": "", "waist": "", "hip": "",
             "cup": "",
             "blood": "",
-            "agency": "",
             "hobby": "",
-            "debut_work": "",
-            "blog_url": "",
-            "official_url": "",
-            "tags": [],
-            "photo_url": "https://www.minnano-av.com/shell.jpg",
+            "photo_url": "https://xcity.jp/idol/shell.jpg",
         }
         wiki = _make_wiki()
 
-        with patch(_PATCH_MINNANO, return_value=minnano_shell), \
+        with patch(_PATCH_XCITY, return_value=xcity_shell), \
              patch(_PATCH_WIKI, return_value=wiki), \
              patch(_PATCH_GRAPHIS, return_value=None), \
              patch(_PATCH_GFRIENDS, return_value=None):
@@ -622,19 +634,19 @@ class TestMeaningfulTextFilter:
 
     def test_all_shells_no_text_source(self):
         """All text sources return shells (no meaningful text) → primary_text_source None.
-        minnano_shell/wiki_shell are truthy dicts, so orchestrator edge-case guard
+        xcity_shell/wiki_shell are truthy dicts, so orchestrator edge-case guard
         (not any([...])) does NOT fire early-return None. Result is non-None but
         primary_text_source=None and text=None; name falls back to queried arg."""
-        minnano_shell = {"name_ja": _ACTRESS_NAME}
+        xcity_shell = {"name_ja": _ACTRESS_NAME}
         wiki_shell = {"name_ja": _ACTRESS_NAME}
 
-        with patch(_PATCH_MINNANO, return_value=minnano_shell), \
+        with patch(_PATCH_XCITY, return_value=xcity_shell), \
              patch(_PATCH_WIKI, return_value=wiki_shell), \
              patch(_PATCH_GRAPHIS, return_value=None), \
              patch(_PATCH_GFRIENDS, return_value=None):
             result = get_actress_profile(_ACTRESS_NAME)
 
-        # minnano_shell is truthy → not any([...]) guard does not fire
+        # xcity_shell is truthy → not any([...]) guard does not fire
         # but neither shell has meaningful text, so cascade picks no text source
         assert result.data is not None
         assert result.data["primary_text_source"] is None
@@ -642,77 +654,6 @@ class TestMeaningfulTextFilter:
         assert result.data["current_age"] is None
         # Bug 2 fix: name falls back to queried arg when text is None
         assert result.data["name"] == _ACTRESS_NAME
-        assert result.timed_out is False
-
-    def test_minnano_aliases_only_wins_c1_over_wiki(self):
-        """Codex 2nd review: Minnano's C1 primary value is aliases/agency/debut_work/
-        tags/blog_url/official_url — not just birth/BWH. A Minnano result that has
-        ONLY aliases (no birth/size) must still win C1 cascade over a richer Wiki.
-
-        Regression for the Codex review where _MEANINGFUL_TEXT_FIELDS was missing
-        Minnano-only fields, causing valid Minnano results to be treated as shells."""
-        minnano_aliases_only = {
-            "name_ja": _ACTRESS_NAME,
-            "name_hiragana": "あかりつむぎ",
-            "name_romaji": "Akari Tsumugi",
-            "aliases": [  # 9 known aliases — classic Phase 43 auto-populate target
-                {"ja": "別名1", "hiragana": "べつめい1", "romaji": "Betsumei 1"},
-                {"ja": "別名2", "hiragana": "べつめい2", "romaji": "Betsumei 2"},
-            ],
-            "birth": "",         # intentionally empty — Minnano parser failed to grab
-            "hometown": "",
-            "height": "", "bust": "", "waist": "", "hip": "", "cup": "", "blood": "",
-            "agency": "",        # also empty
-            "hobby": "",
-            "debut_work": "",
-            "blog_url": "", "official_url": "",
-            "tags": [],
-            "photo_url": "",
-        }
-        wiki = _make_wiki()  # has birth, height, BWH — "richer" in the Wiki sense
-
-        with patch(_PATCH_MINNANO, return_value=minnano_aliases_only), \
-             patch(_PATCH_WIKI, return_value=wiki), \
-             patch(_PATCH_GRAPHIS, return_value=None), \
-             patch(_PATCH_GFRIENDS, return_value=None):
-            result = get_actress_profile(_ACTRESS_NAME)
-
-        assert result.data is not None
-        # C1 cascade: Minnano wins because aliases is non-empty (C1 primary value proposition)
-        assert result.data["primary_text_source"] == "minnano"
-        assert result.data["text"] == minnano_aliases_only
-        # Phase 43 auto-populate consumers reach aliases via all_sources.minnano.aliases
-        assert len(result.data["all_sources"]["minnano"]["aliases"]) == 2
-        # Wiki is still stored for reference but not the text source
-        assert result.data["all_sources"]["wiki"] == wiki
-        assert result.timed_out is False
-
-    def test_minnano_agency_only_wins_c1(self):
-        """Same logic as above but with only agency field populated — proves the
-        whole Minnano-specific field set is honored, not just aliases."""
-        minnano_agency_only = {
-            "name_ja": _ACTRESS_NAME,
-            "name_hiragana": "", "name_romaji": "",
-            "aliases": [],
-            "birth": "", "hometown": "",
-            "height": "", "bust": "", "waist": "", "hip": "", "cup": "", "blood": "",
-            "agency": "プレステージ",  # only this
-            "hobby": "", "debut_work": "",
-            "blog_url": "", "official_url": "",
-            "tags": [],
-            "photo_url": "",
-        }
-        graphis = _make_graphis()
-
-        with patch(_PATCH_MINNANO, return_value=minnano_agency_only), \
-             patch(_PATCH_WIKI, return_value=None), \
-             patch(_PATCH_GRAPHIS, return_value=graphis), \
-             patch(_PATCH_GFRIENDS, return_value=None):
-            result = get_actress_profile(_ACTRESS_NAME)
-
-        assert result.data is not None
-        assert result.data["primary_text_source"] == "minnano"
-        assert result.data["text"]["agency"] == "プレステージ"
         assert result.timed_out is False
 
     def test_wiki_other_names_only_wins_c1(self):
@@ -724,7 +665,7 @@ class TestMeaningfulTextFilter:
         C1 cascade even though the parser deliberately preserved it for Phase 43
         alias ingestion.
 
-        Regression: when minnano/graphis/gfriends all miss, a wiki dict with only
+        Regression: when xcity/graphis/gfriends all miss, a wiki dict with only
         other_names populated MUST win C1 as primary text source (not None).
         """
         wiki_other_names_only = {
@@ -740,7 +681,7 @@ class TestMeaningfulTextFilter:
             "photo_license": "",
         }
 
-        with patch(_PATCH_MINNANO, return_value=None), \
+        with patch(_PATCH_XCITY, return_value=None), \
              patch(_PATCH_WIKI, return_value=wiki_other_names_only), \
              patch(_PATCH_GRAPHIS, return_value=None), \
              patch(_PATCH_GFRIENDS, return_value=None):
@@ -750,6 +691,52 @@ class TestMeaningfulTextFilter:
             "alias-only wiki must not collapse result to None"
         assert result.data["primary_text_source"] == "wiki", \
             "wiki with only other_names must win C1 cascade when other sources miss"
-        assert result.data["text"] == wiki_other_names_only
+        assert result.data["text"] == {"aliases": ["松嶋真麻", "別名2"]}
         assert result.data["all_sources"]["wiki"]["other_names"] == ["松嶋真麻", "別名2"]
         assert result.timed_out is False
+
+
+def test_get_actress_profile_preview_does_not_pollute_cache():
+    name = "某女優"
+    first_sources = {"xcity": {"photo_url": "https://faws.xcity.jp/first.jpg"},
+                     "wiki": None, "graphis": None, "gfriends": None}
+    second_sources = {"xcity": {"photo_url": "https://faws.xcity.jp/second.jpg"},
+                      "wiki": None, "graphis": None, "gfriends": None}
+    cache_size_before = len(_cache)
+    cache_before = dict(_cache)
+
+    with patch.object(orchestrator, "_fetch_all_sources", side_effect=[first_sources, second_sources]) as fetch:
+        first = orchestrator.get_actress_profile_preview(name)
+        second = orchestrator.get_actress_profile_preview(name)
+
+    assert first == {"name": name, "sources": first_sources}
+    assert second == {"name": name, "sources": second_sources}
+    assert fetch.call_count == 2
+    assert len(_cache) == cache_size_before
+    assert _cache == cache_before
+    assert orchestrator._normalize_name(name) not in _cache
+
+
+def test_sources_to_photo_candidates_xcity_only():
+    sources = {"xcity": {"photo_url": "https://faws.xcity.jp/x.jpg"},
+               "wiki": None, "graphis": None, "gfriends": None}
+
+    assert orchestrator._sources_to_photo_candidates(sources) == [
+        {"source": "xcity", "url": "https://faws.xcity.jp/x.jpg"}
+    ]
+
+
+def test_sources_to_photo_candidates_no_photos():
+    sources = {"xcity": {"photo_url": ""}, "wiki": {},
+               "graphis": {"prof_url": None}, "gfriends": None}
+
+    assert orchestrator._sources_to_photo_candidates(sources) == []
+
+
+def test_get_actress_profile_preview_all_sources_miss():
+    sources = {"xcity": None, "wiki": None, "graphis": None, "gfriends": None}
+
+    with patch.object(orchestrator, "_fetch_all_sources", return_value=sources):
+        result = orchestrator.get_actress_profile_preview("某女優")
+
+    assert result == {"name": "某女優", "sources": sources}

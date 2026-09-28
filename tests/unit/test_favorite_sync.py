@@ -28,7 +28,7 @@ def _make_profile(name="橋本ありな", aliases=None):
         "name_en": "Arina Hashimoto",
         "photo_url": None,
         "photo_source": None,
-        "primary_text_source": "minnano",
+        "primary_text_source": "xcity",
         "text": {
             "birth": "1998-08-19",
             "aliases": aliases or [],
@@ -57,7 +57,7 @@ def _make_actress_mock(name="橋本ありな", aliases=None):
     actress.blog_url = None
     actress.official_url = None
     actress.photo_source = None
-    actress.primary_text_source = "minnano"
+    actress.primary_text_source = "xcity"
     actress.auto_focal = ''
     actress.crop_mode = 'auto'
     actress.created_at = datetime(2026, 4, 13)

@@ -17,13 +17,14 @@ import json
 import random
 import re
 import uuid
+from datetime import datetime
 from io import BytesIO
 from typing import Optional, List
 from urllib.parse import quote
 
-from fastapi import APIRouter, UploadFile, File, Query
+from fastapi import APIRouter, UploadFile, File, Query, HTTPException
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from PIL import Image
 from core.atomic_write import atomic_write
 from core.database.version_tracker import bump_showcase_revision
@@ -45,6 +46,8 @@ from core.config import load_config
 from core.scrapers.actress.orchestrator import (
     get_cached_profile,
     get_actress_profile,
+    get_actress_profile_preview,
+    _sources_to_photo_candidates,  # noqa: PLC2701 — 預覽端點回應要附照片候選，CD-157-2 規定由 orchestrator 的純函式產生，不在 router 重寫一份
     _compute_age_from_birth as _compute_age,  # noqa: PLC2701 — actress router 的回應組裝（_actress_to_response）需要即時算年齡，直接借用 orchestrator 內部同一套生日換算邏輯，避免在 router 層重寫一份容易漂移的年齡計算；尚未升格為公開名
 )
 from core.logger import get_logger
@@ -63,8 +66,12 @@ class FavoriteRequest(BaseModel):
     makers: Optional[List[str]] = None
 
 
+class PreviewActressRequest(BaseModel):
+    name: str
+
+
 class SetActressPhotoRequest(BaseModel):
-    source: str                          # "graphis"|"gfriends"|"wiki"|"minnano"|"local_crop"
+    source: str                          # "graphis"|"gfriends"|"wiki"|"xcity"|"local_crop"
     url: Optional[str] = None            # 雲端來源：照片 URL（必填）
     video_path: Optional[str] = None     # local_crop：影片 file:/// URI（必填）
     crop_spec: Optional[str] = "v1"      # local_crop：裁切規格（預設 v1）
@@ -113,11 +120,80 @@ def _safe_int(v) -> Optional[int]:
         return None
 
 
+_ACTRESS_SUBMIT_STR_FIELDS = frozenset({
+    "name_en", "birth", "height", "cup", "hometown", "hobby",
+    "agency", "debut_work", "nickname", "blog_url", "official_url",
+})
+_ACTRESS_SUBMIT_MEASURES = {"bust": (50, 150), "waist": (40, 120), "hip": (50, 150)}
+_ACTRESS_SUBMIT_RESERVED = frozenset({
+    "photo_source", "primary_text_source", "auto_focal", "crop_mode",
+    "photo_fp_path", "photo_fp_mtime_ns", "photo_fp_size", "aliases",
+    "name", "created_at", "updated_at",
+})
+
+
+def _validate_actress_submit_fields(payload: dict) -> None:
+    """提交前逐欄驗證；任何一項錯誤都在 DB 寫入前擋回。"""
+    for k, v in payload.items():
+        if k in _ACTRESS_SUBMIT_RESERVED:
+            raise HTTPException(400, detail=f"{k} 為保留欄位，AI 不可透過此端點寫入")
+        if k == "photo":
+            if v is not None:
+                if not isinstance(v, dict) or not isinstance(v.get("source"), str) or v["source"] not in CLOUD_SOURCES | {"local_crop"}:
+                    raise HTTPException(400, detail="照片來源不合法")
+                if v["source"] in CLOUD_SOURCES:
+                    url = v.get("url")
+                    if not isinstance(url, str) or not url or not validate_photo_url(url, v["source"]):
+                        raise HTTPException(400, detail="照片來源網址不合法")
+                elif not isinstance(v.get("video_path"), str) or not v["video_path"]:
+                    raise HTTPException(400, detail="照片影片路徑不合法")
+        elif k == "tags":
+            if not isinstance(v, list) or not all(isinstance(item, str) for item in v):
+                raise HTTPException(400, detail="tags 型別錯誤，必須是字串列表")
+        elif k == "height":
+            if v != "":
+                # TASK-157-F4：\d+ 不限位數，4301+ 位數字字串會讓下面 int() 撞上
+                # Python 3.11+ 的 int-string 轉換位數上限（sys.int_info.default_max_str_digits
+                # = 4300）丟出未接住的 ValueError → 500。身高合理範圍最多 3 位數
+                # （100–220cm），\d{1,3} 同時擋掉超長字串與超出範圍的數字，
+                # 不必再另外包 try/except 重複判一次。
+                if isinstance(v, bool) or not (
+                    (isinstance(v, int) and -999 <= v <= 999) or
+                    (isinstance(v, str) and re.fullmatch(r"\d{1,3}(?:cm)?", v))
+                ):
+                    raise HTTPException(400, detail="height 格式錯誤")
+                height = int(str(v).removesuffix("cm"))
+                if not 100 <= height <= 220:
+                    raise HTTPException(400, detail="height 超出合理範圍")
+        elif k in _ACTRESS_SUBMIT_MEASURES:
+            if v is not None:
+                if isinstance(v, bool) or not isinstance(v, (int, str)):
+                    raise HTTPException(400, detail=f"{k} 型別錯誤")
+                number = _safe_int(v)
+                lower, upper = _ACTRESS_SUBMIT_MEASURES[k]
+                if number is None or not lower <= number <= upper:
+                    raise HTTPException(400, detail=f"{k} 超出合理範圍或格式錯誤")
+        elif k in _ACTRESS_SUBMIT_STR_FIELDS:
+            if not isinstance(v, str):
+                raise HTTPException(400, detail=f"{k} 型別錯誤，必須是字串")
+            if k == "birth" and v:
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+                    raise HTTPException(400, detail="birth 日期格式錯誤")
+                try:
+                    datetime.strptime(v, "%Y-%m-%d")
+                except ValueError:
+                    raise HTTPException(400, detail="birth 日期無效") from None
+            if k == "cup" and v and not re.fullmatch(r"[A-Z]", v):
+                raise HTTPException(400, detail="cup 格式錯誤")
+        else:
+            raise HTTPException(400, detail=f"包含未知欄位: {k}")
+
+
 def _flatten_aliases(raw) -> list:
     """
     將 aliases 欄位統一轉為純字串 list。
 
-    minnano scraper 回傳 dict list（每筆含 ja/hiragana/romaji），
+    dict-list 格式來源回傳 dict list（每筆含 ja/hiragana/romaji），
     wiki scraper 回傳純字串 list。
     前端需要純字串 list，此 helper 統一兩種格式。
 
@@ -331,6 +407,179 @@ def add_favorite(req: FavoriteRequest):
 
 
 # ---------------------------------------------------------------------------
+# POST /api/actresses/preview — 只讀預覽四個來源與片庫目前資料
+# ---------------------------------------------------------------------------
+
+@router.post("/preview")
+def preview_actress(req: PreviewActressRequest):
+    try:
+        name = req.name.strip()
+        if not name:
+            return JSONResponse(status_code=422, content={"error": "女優名字不可為空"})
+
+        preview = get_actress_profile_preview(name)
+        repo = ActressRepository()
+        # 🔴 PR #211 第三輪 v2：alias 判斷不再只在「name 自己沒有 row」時才跑——
+        # 命中已收藏 primary 的別名時（不論該別名是否自有 row），alias_of 一律
+        # 附上，current 回 primary 的資料（各來源 sources 仍以請求的別名抓取，
+        # 不受影響）。與 submit_actress 用同一個 _favorited_primary_for_alias
+        # 判準，避免兩處漂移。
+        primary_name = _favorited_primary_for_alias(repo, name)
+        if primary_name:
+            primary_actress = repo.get_by_name(primary_name)
+            result = {
+                "name": name,
+                "sources": preview["sources"],
+                "current": _actress_to_response(primary_actress) if primary_actress else None,
+                "photo_candidates": _sources_to_photo_candidates(preview["sources"]),
+                "alias_of": primary_name,
+            }
+        else:
+            actress = repo.get_by_name(name)
+            result = {
+                "name": name,
+                "sources": preview["sources"],
+                "current": _actress_to_response(actress) if actress else None,
+                "photo_candidates": _sources_to_photo_candidates(preview["sources"]),
+            }
+        return result
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("[actress] preview_actress 失敗 name=%s", req.name)
+        return JSONResponse(status_code=500, content={"error": "操作失敗"})
+
+
+# ---------------------------------------------------------------------------
+# 端點九之三：POST /api/actresses/{name} — 提交審過的女優文字資料
+# ---------------------------------------------------------------------------
+
+def _favorited_primary_for_alias(repo: ActressRepository, name: str) -> Optional[str]:
+    """CD-157 alias 身分判準（preview_actress／submit_actress／upload_actress_photo／
+    set_actress_photo 共用）。
+
+    若 `name` 是某位「已收藏」女優的別名，回傳該 primary 的名字；否則 None。
+    判準是 alias 記錄存在 **且** 其 primary_name 目前已收藏
+    （`repo.exists`）——orphan alias group（primary 尚未收藏）不受影響，仍可
+    用 alias 本名建立新收藏（見 test_submit_actress_orphan_alias_group_creates_new_actress）。
+
+    🔴 PR #211 Codex P2-2：呼叫端必須在**觸碰任何 row 之前**（含判斷該 name
+    自己有沒有既有 row）就先跑這條檢查——`name` 自己是否已有一筆 actresses row
+    與「它是不是別人的別名」是兩件獨立的事：舊版把這條檢查塞在「name 自己沒有
+    row」的分支裡，若 name 意外自己也有一筆 row（例如曾被單獨收藏過，之後才
+    被同步成某個 primary 的別名），該分支永遠不會執行，等於直接放行覆寫/新增
+    到這個「別名自己的 row」，繞過「一律擋下並告知正確名字」的身分守衛。
+
+    只回傳 primary 名稱或 None——訊息文字由各呼叫端自己組（PR #211 第三輪
+    v2：preview 需要 alias_of／current，submit／upload／set_actress_photo 需要
+    各自的 400 擋下訊息，欄位形狀不同，不該共用同一個「訊息字串」）。
+    """
+    alias_record = AliasRepository().find_by_alias(name)
+    if alias_record and repo.exists(alias_record.primary_name):
+        return alias_record.primary_name
+    return None
+
+
+def _save_actress_submission(name: str, fields: dict):
+    """Run the submit DB read/write sequence in a worker thread."""
+    init_db()
+    repo = ActressRepository()
+    primary_name = _favorited_primary_for_alias(repo, name)
+    if primary_name:
+        raise HTTPException(
+            400, detail=f"{name} 是 {primary_name} 的別名，請改用「{primary_name}」提交")
+
+    old_actress = repo.get_by_name(name)
+    if old_actress is not None:
+        if not repo.update_fields(name, fields):
+            logger.error("[actress] AI 提交更新失敗 name=%s", name)
+            raise HTTPException(500, detail="操作失敗")
+    else:
+        repo.save(Actress(name=name, **fields))
+
+    actress = repo.get_by_name(name)
+    return repo, old_actress, actress
+
+
+def _compensate_actress_submission(repo: ActressRepository, name: str,
+                                   old_actress: Optional[Actress], fields: dict) -> None:
+    """Restore text only when the photo operation failed before installing a file."""
+    try:
+        if old_actress is None:
+            restored = repo.delete_by_name(name)
+        else:
+            old_fields = {key: getattr(old_actress, key) for key in fields}
+            restored = repo.update_fields(name, old_fields)
+        if not restored:
+            logger.warning("[actress] AI 提交補償未完成 name=%s", name)
+    except Exception:
+        logger.warning("[actress] AI 提交補償失敗 name=%s", name, exc_info=True)
+
+
+@router.post("/{name}")
+async def submit_actress(name: str, payload: dict):
+    # 🔴 PR #211 第三輪 delta review P3：整個函式主體包在一個外層 try/except——
+    # name 正規化／`_validate_actress_submit_fields`／`SetActressPhotoRequest`
+    # 驗證／欄位正規化（`int()`/`_safe_int` 等）原本完全沒有防護，這些都發生在
+    # `_save_actress_submission` 之前、片庫**零寫入**，非預期例外（不是下面已
+    # 明確 raise 的 HTTPException）逸出會回裸文字 500（違反 AGENTS.md:81），且
+    # 因為還沒寫過任何東西，不需要補償。HTTPException 原樣放行（400 驗證／
+    # 別名擋下／500 update_fields 回 False 都是本函式既有的正常控制流）；其餘
+    # 例外一律 log 後回固定中文 JSON 500，body 形狀沿用 `{"detail": ...}`
+    # （不是照片家族用的 `{"error": ...}`）。
+    try:
+        name = name.strip()
+        if not name:
+            raise HTTPException(400, detail="女優名字不可為空")
+
+        _validate_actress_submit_fields(payload)
+        photo_req = None
+        if payload.get("photo") is not None:
+            try:
+                photo_req = SetActressPhotoRequest.model_validate(payload["photo"])
+            except ValidationError:
+                raise HTTPException(400, detail="照片欄位格式錯誤") from None
+        fields = {k: v for k, v in payload.items() if k != "photo"}
+        if "height" in fields and fields["height"] != "":
+            fields["height"] = f"{int(str(fields['height']).removesuffix('cm'))}cm"
+        for key in _ACTRESS_SUBMIT_MEASURES:
+            if key in fields and fields[key] is not None:
+                fields[key] = _safe_int(fields[key])
+        fields["primary_text_source"] = "ai"
+
+        try:
+            repo, old_actress, actress = await asyncio.to_thread(_save_actress_submission, name, fields)
+        except HTTPException:
+            raise
+        except Exception:
+            # P3-2（PR #211 review）：_save_actress_submission 在 worker thread 跑 DB
+            # 讀寫，非預期例外（sqlite locked／disk full）若不接住，asyncio.to_thread
+            # 會原樣逸出到這個 async route。同一種 body 形狀 `{"detail": ...}`，沿用
+            # 同一函式內既有的 `raise HTTPException(500, detail="操作失敗")`（:477）。
+            logger.exception("[actress] AI 提交寫入失敗 name=%s", name)
+            return JSONResponse(status_code=500, content={"detail": "操作失敗"})
+
+        # 🔴 PR #211 第三輪 v3（owner 拍板保守補償）：`rollback_safe` 只在
+        # `_apply_photo_change` 五個「確定尚未觸碰任何照片檔」的 return 點為
+        # True，其餘一律 False（狀態不明或已寫檔，不補償）。照片安裝後的重讀／
+        # `_actress_to_response` 也在同一段外層防護內——此時文字已寫入成功，
+        # 例外時只回固定中文 500，不做補償。
+        if photo_req is not None:
+            _, err, rollback_safe = await _apply_photo_change(repo, actress, name, photo_req)
+            if err:
+                if rollback_safe:
+                    await asyncio.to_thread(_compensate_actress_submission, repo, name, old_actress, fields)
+                return _translate_submit_photo_err(err)
+            actress = await asyncio.to_thread(repo.get_by_name, name)
+        return {"success": True, "actress": await asyncio.to_thread(_actress_to_response, actress)}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("[actress] AI 提交處理失敗 name=%s", name)
+        return JSONResponse(status_code=500, content={"detail": "操作失敗"})
+
+
+# ---------------------------------------------------------------------------
 # 端點四：GET /api/actresses/photo/{name} — 本地照片 binary response
 # NOTE：必須定義在 GET /{name} 之前！
 # ---------------------------------------------------------------------------
@@ -429,9 +678,9 @@ def _fetch_single_source(name: str, source: str) -> Optional[str]:
             from core.scrapers.actress.wiki_ja import scrape_wiki_ja
             r = scrape_wiki_ja(name)
             return r.get("photo_url") if r else None
-        elif source == "minnano":
-            from core.scrapers.actress.minnano_av import scrape_minnano_av
-            r = scrape_minnano_av(name)
+        elif source == "xcity":
+            from core.scrapers.actress.xcity import scrape_xcity
+            r = scrape_xcity(name)
             return r.get("photo_url") if r else None
         else:
             return None
@@ -489,7 +738,7 @@ async def list_photo_candidates(name: str, attempt: int = Query(0, ge=0)):
         )
 
     current_source = actress.photo_source
-    cloud_sources = [s for s in ["graphis", "gfriends", "wiki", "minnano"] if s != current_source]
+    cloud_sources = [s for s in ["graphis", "gfriends", "wiki", "xcity"] if s != current_source]
 
     def _resolve_query_names(n: str) -> list:
         # CD-2：序位 0 = 請求的 name（URL path param），不是 record.primary_name。
@@ -734,8 +983,17 @@ async def _pre_invalidate_focal(repo: ActressRepository, name: str, *, ctx: str,
 async def _persist_photo_source(repo: ActressRepository, actress, source: str, *, ctx: str, err_msg: str):
     """CD-7：photo_source 持久化（換主圖的三個入口共用）。
 
-    只回 response 不持久化 → 重載後顯示舊來源。`_ACTRESS_FOCAL_PRESERVE` 保住
-    focal 五欄不被 save() 覆寫，故這裡 save() 不會踩掉 clear_focal 剛寫的值。
+    只回 response 不持久化 → 重載後顯示舊來源。
+
+    🔴 單欄寫入（PR #211 Codex P2-1）：`actress` 是呼叫端在本次 request 較早
+    時間點讀出的快照，之後經過至少一次 `await`（clear_focal / 下載 / 裁切 /
+    寫檔）才走到這裡——若同一段時間內有另一個 writer 改了這筆女優的其他文字
+    欄位（例如另一個 request 同時提交 height/birth），原本 `actress.photo_source
+    = source` 後整份 `repo.save(actress)` 會把那些欄位覆寫回呼叫端手上的舊快照
+    值，等於憑空吃掉別人剛寫的東西。改用 `repo.update_fields` 只動
+    `photo_source` 這一欄，其餘欄位不論是誰、什麼時候寫的都不會被踩。
+    `photo_source` 不在 `_ACTRESS_FOCAL_PRESERVE` 白名單內，`update_fields` 可以
+    正常寫它。
 
     **為何要 try/except**（Codex P2）：DB 寫入失敗若逸出 async 路由，Starlette 的
     預設 handler 會回**純文字 "Internal Server Error"**（`web/app.py` 只註冊了
@@ -749,9 +1007,16 @@ async def _persist_photo_source(repo: ActressRepository, actress, source: str, *
     """
     actress.photo_source = source
     try:
-        await asyncio.to_thread(repo.save, actress)
+        updated = await asyncio.to_thread(
+            repo.update_fields, actress.name, {"photo_source": source})
     except Exception:
         logger.exception("[actress] %s photo_source 持久化失敗 name=%s", ctx, actress.name)
+        return JSONResponse(status_code=500, content={"error": err_msg})
+    if not updated:
+        # 與同檔案 clear_focal 呼叫端（:906）同一種防禦式失敗處理：name 在驗證與
+        # 寫入之間被刪除的 race——理論上極窄，但既然 update_fields 回了 bool 就不
+        # 該吞掉，行為對齊「回 False 視為失敗」而非靜默假裝成功。
+        logger.warning("[actress] %s photo_source update_fields 回 False name=%s", ctx, actress.name)
         return JSONResponse(status_code=500, content={"error": err_msg})
     return None
 
@@ -820,7 +1085,7 @@ async def actress_crop(path: str, spec: str = "v1"):
 # NOTE：必須定義在 GET /{name} 之前！
 # ---------------------------------------------------------------------------
 
-CLOUD_SOURCES = {"graphis", "gfriends", "wiki", "minnano"}
+CLOUD_SOURCES = {"graphis", "gfriends", "wiki", "xcity"}
 
 # CD-8（AGENTS.md:33）：T3 在本端點新增的失敗路徑一律固定中文；既有 7 個
 # snake_case 錯誤字面（not_found/unknown_source/... ）是舊碼遺留，範圍外不動
@@ -829,12 +1094,155 @@ CLOUD_SOURCES = {"graphis", "gfriends", "wiki", "minnano"}
 _SET_PHOTO_ERR_FAILED = "設定照片失敗，請稍後再試"
 _SET_PHOTO_ERR_INVALID_URL = "照片來源網址不合法"
 
+# P3-1（PR #211 review）：_apply_photo_change 是 set_actress_photo（UI 端點）與
+# submit_actress（AI-facing API 端點）共用的函式。set_actress_photo 沿用下列
+# snake_case code 是 TASK-100a-T3 已裁決的「範圍外不動」——UI 前端只判斷
+# resp.ok／status code，從不讀 body.error 內容，故沿用不影響任何前端契約
+# （已核對 web/static/js、web/templates 全庫無任何字面比對）。但 submit_actress
+# 是 AI 呼叫的 API contract，AGENTS.md:81 要求新增／AI 呼叫路徑一律回固定中文，
+# 不可把內部 code 原樣透給呼叫端——故只在 submit_actress 收到 err 之後做轉譯，
+# 不動 _apply_photo_change 本體（set_actress_photo 既有測試仍斷言舊 code）。
+_SUBMIT_PHOTO_ERR_ZH = {
+    "unknown_source": "不支援的照片來源",
+    "url_required": "缺少照片網址",
+    "video_path_required": "缺少對應的影片路徑",
+    "video_or_cover_not_found": "找不到對應的影片或封面",
+    "crop_failed": "裁切照片失敗，請稍後再試",
+    "download_failed": "下載照片失敗，請稍後再試",
+}
+
+
+def _translate_submit_photo_err(err: JSONResponse) -> JSONResponse:
+    """把 _apply_photo_change 回傳的舊 snake_case code 轉成固定中文，只給
+    submit_actress 用（見上方模組層註解）。非上表涵蓋的 code（例如已經是固定
+    中文的 _SET_PHOTO_ERR_FAILED／_SET_PHOTO_ERR_INVALID_URL）原樣放行，避免
+    重複轉譯或誤改其他欄位。
+    """
+    body = json.loads(bytes(err.body))
+    zh = _SUBMIT_PHOTO_ERR_ZH.get(body.get("error"))
+    if zh is None:
+        return err
+    body["error"] = zh
+    return JSONResponse(status_code=err.status_code, content=body)
+
+
+async def _apply_photo_change(repo: ActressRepository, actress: Actress, name: str,
+                              req: SetActressPhotoRequest):
+    """Return (URL, error, rollback_safe).
+
+    v3（owner 拍板，PR #211 第三輪 followup2）：不追蹤「照片是否已安裝」，改追蹤
+    「這個失敗是否確定發生在任何寫檔／clear_focal 之前」——`rollback_safe=True`
+    只用於五個明確、在第一個寫入動作之前就 return 的分支：unknown_source／
+    url_required／照片網址不合法／local_crop 缺 video_path／找不到對應影片或
+    封面（兩個 return 點）。其餘一律 False（含 download_failed／crop_failed／
+    local_crop 寫檔失敗／photo_source 持久化失敗／照片路徑重解析失敗／任何非
+    預期例外）——這些狀態不明或已經動過檔案，submit_actress 不補償回滾文字。
+    整段主體包 try/except：HTTPException 原樣放行（目前本函式內部一律回傳
+    JSONResponse，不主動 raise，但呼叫的子函式若意外 raise 也要放行控制流）；
+    其他非預期例外 log 後轉既有固定中文 JSON 500，rollback_safe=False（狀態不
+    明，不補償）。
+    """
+    try:
+        if req.source not in CLOUD_SOURCES and req.source != "local_crop":
+            return None, JSONResponse(status_code=400, content={"error": "unknown_source"}), True
+
+        if req.source in CLOUD_SOURCES:
+            if not req.url:
+                return None, JSONResponse(status_code=400, content={"error": "url_required"}), True
+            # 🔴 白名單驗證必須在清焦點「之前」（Codex P2）：validate_photo_url 是純函式、
+            # 零 side effect、不做任何 I/O，而 download_actress_photo 內部也會再驗一次
+            # （SSRF 防禦不依賴呼叫端，此處是提前擋，不是取代）。不提前擋的話，一個
+            # 白名單外的 URL 會先把使用者的手動焦點清掉、才發現這個請求注定失敗
+            # → 舊圖留著但焦點無聲消失。
+            # 這與 local_crop 分支「clear_focal 插在 crop 成功之後」是同一條原則
+            # （TASK-100a-T3 Opus 裁決）：**不為一次注定失敗的操作先清掉焦點**。
+            # T3 當時只把該原則套用到 local_crop，漏了 cloud 這條同構的路徑。
+            # 可達性：set_actress_photo 已揭露於 capabilities（:964，side_effect），
+            # AI agent 可直接 POST 任意 url —— 不是只有 UI 那條可信路徑。
+            # CD-8：新增路徑一律固定中文（不因為旁邊的 url_required／unknown_source
+            # 是舊碼 snake_case 就跟著新增一條違規——TASK-100a-T3 已裁決過同一件事）。
+            if not validate_photo_url(req.url, req.source):
+                logger.warning("[actress] set_photo URL 不在白名單 source=%s", req.source)
+                return None, JSONResponse(status_code=400, content={"error": _SET_PHOTO_ERR_INVALID_URL}), True
+            # 🔴 CD-4 pre-invalidate：cloud 分支插入點——download_actress_photo 之前。
+            err = await _pre_invalidate_focal(repo, name, ctx="set_photo", err_msg=_SET_PHOTO_ERR_FAILED)
+            if err:
+                return None, err, False
+            ok = await asyncio.to_thread(download_actress_photo, name, req.url, req.source)
+            if not ok:
+                return None, JSONResponse(status_code=500, content={"error": "download_failed"}), False
+
+        elif req.source == "local_crop":
+            if not req.video_path:
+                return None, JSONResponse(status_code=400, content={"error": "video_path_required"}), True
+            # file:/// URI → FS path（禁止手動 strip）
+            video_fs_path = uri_to_fs_path(req.video_path)  # uri-no-reverse: comparison-only, matched against DB v.path below, no disk I/O
+            # 從 DB 取該影片的 cover_path
+            videos = await asyncio.to_thread(_get_actress_videos, name)
+            # Fix 3 (T3): v.path 在 DB 存 file:/// URI（gallery_scanner 用 to_file_uri 寫入），
+            # 比對前雙邊都正規化為 FS path，避免 URI vs FS path 永遠 fail
+            match = next(
+                (v for v in videos if uri_to_fs_path(str(v.path)) == video_fs_path),  # uri-no-reverse: comparison-only, no disk I/O
+                None,
+            )
+            if match is None or not match.cover_path:
+                return None, JSONResponse(status_code=404, content={"error": "video_or_cover_not_found"}), True
+            # Fix 3 (T3): match.cover_path 也是 URI，傳給 crop_video_cover 前先轉 FS path
+            path_mappings = (await asyncio.to_thread(load_config)).get('gallery', {}).get('path_mappings', {})
+            cover_fs_path = uri_to_local_fs_path(str(match.cover_path), path_mappings) if match.cover_path else ""
+            if not cover_fs_path:
+                return None, JSONResponse(status_code=404, content={"error": "video_or_cover_not_found"}), True
+            # crop → bytes
+            crop_bytes = await asyncio.to_thread(
+                crop_video_cover, cover_fs_path, req.crop_spec or "v1"
+            )
+            if crop_bytes is None:
+                # crop_failed 早於任何寫入，但 owner 保守語義刻意排除在補償白名單外
+                # （final3.txt：符合 owner 選擇的保守語義，不因它「其實也在寫入前」而放行）。
+                return None, JSONResponse(status_code=500, content={"error": "crop_failed"}), False
+            # 🔴 CD-4 pre-invalidate：local_crop 分支插入點——crop 成功之後、寫入之前。
+            err = await _pre_invalidate_focal(repo, name, ctx="set_photo", err_msg=_SET_PHOTO_ERR_FAILED)
+            if err:
+                return None, err, False
+            # glob 刪舊副檔名 + 寫入
+            # 🔴 PR#108 Codex P2-B：比照 upload_actress_photo（:898-902）補外層 try/except——
+            # local_crop 分支原本完全沒有，_write_actress_photo 內部例外（含清舊檔殘留的
+            # PermissionError 等）會逸出成未捕捉例外、FastAPI 回裸文字 500，而非本檔統一的
+            # 錯誤信封格式。錯誤信封對齊：照片家族一律裸 dict `{"error": ...}`（非 upload
+            # 端點也用同一 _SET_PHOTO_ERR_FAILED 固定中文，與 CD-8 一致）。
+            try:
+                await asyncio.to_thread(_write_actress_photo, name, crop_bytes)
+            except Exception:
+                logger.exception("[actress] set_photo local_crop 寫檔失敗 name=%s", name)
+                return None, JSONResponse(status_code=500, content={"error": _SET_PHOTO_ERR_FAILED}), False
+
+        # 更新 photo_source + 回傳（CD-7）——此時檔案已寫入，失敗一律 rollback_safe=False。
+        err = await _persist_photo_source(
+            repo, actress, req.source, ctx="set_photo", err_msg=_SET_PHOTO_ERR_FAILED)
+        if err:
+            return None, err, False
+
+        # CD-6：logical slot vs physical path，寫檔/下載後不可假設 {safe}.jpg，一律重
+        # 解析（cloud 分支副檔名由 Content-Type 決定，core/actress_photo.py）。重解析
+        # 可能回 None（GFRIENDS_DIR 綁定不一致／外部同時刪除）——不 guard 會 None.stat()
+        # 拋 AttributeError（mirror T2 review finding）。
+        photo_url, err = await _photo_url_with_fp_cache_bust(
+            name, ctx="set_photo", err_msg=_SET_PHOTO_ERR_FAILED)
+        if err:
+            return None, err, False
+        return photo_url, None, False
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("[actress] set_photo 未預期例外 name=%s", name)
+        return None, JSONResponse(status_code=500, content={"error": _SET_PHOTO_ERR_FAILED}), False
+
 
 @router.post("/{name}/photo")
 async def set_actress_photo(name: str, req: SetActressPhotoRequest):
     """
     設定女優照片。
-    - 雲端來源（graphis/gfriends/wiki/minnano）：先清焦點成功，才下載並覆蓋本機照片
+    - 雲端來源（graphis/gfriends/wiki/xcity）：先清焦點成功，才下載並覆蓋本機照片
     - local_crop：crop 出候選 bytes 後，先清焦點成功，才寫入 GFRIENDS_DIR
 
     CD-4 pre-invalidate（承重，spec §3.3 唯一「不做就會比現況更差」的項目）：換圖
@@ -853,92 +1261,21 @@ async def set_actress_photo(name: str, req: SetActressPhotoRequest):
     DB round-trip），與 T2 上傳端點回應對稱（plan-100b CD-10 需要）。
     """
     repo, actress = await asyncio.to_thread(_load_actress, name)
+    # 🔴 PR #211 第三輪 v3：身分守衛擴及本端點（原本只有 submit_actress／
+    # upload_actress_photo 擋，set_actress_photo 完全沒查）——在判斷「女優是否
+    # 存在」之前先查別名，命中已收藏 primary 一律 400 並點名正確名字，不讓
+    # 「別名自己意外也有一筆孤兒 row」的換圖請求悄悄寫進那筆孤兒 row。
+    # 承認邊界：UI 換照片（showcase picker）只會用女優牆上的本名呼叫，全域
+    # 唯一性檢查下本名不會同時是他人別名，故不影響 UI 既有流程；此守衛只在
+    # 「異常狀態」（同名 row 恰好也是另一位已收藏女優的別名）時才會擋下。
+    primary_name = await asyncio.to_thread(_favorited_primary_for_alias, repo, name)
+    if primary_name:
+        return JSONResponse(status_code=400, content={
+            "error": f"{name} 是 {primary_name} 的別名，請改用「{primary_name}」提交"})
     if actress is None:
         return JSONResponse(status_code=404, content={"error": "not_found"})
 
-    if req.source not in CLOUD_SOURCES and req.source != "local_crop":
-        return JSONResponse(status_code=400, content={"error": "unknown_source"})
-
-    if req.source in CLOUD_SOURCES:
-        if not req.url:
-            return JSONResponse(status_code=400, content={"error": "url_required"})
-        # 🔴 白名單驗證必須在清焦點「之前」（Codex P2）：validate_photo_url 是純函式、
-        # 零 side effect、不做任何 I/O，而 download_actress_photo 內部也會再驗一次
-        # （SSRF 防禦不依賴呼叫端，此處是提前擋，不是取代）。不提前擋的話，一個
-        # 白名單外的 URL 會先把使用者的手動焦點清掉、才發現這個請求注定失敗
-        # → 舊圖留著但焦點無聲消失。
-        # 這與 local_crop 分支「clear_focal 插在 crop 成功之後」是同一條原則
-        # （TASK-100a-T3 Opus 裁決）：**不為一次注定失敗的操作先清掉焦點**。
-        # T3 當時只把該原則套用到 local_crop，漏了 cloud 這條同構的路徑。
-        # 可達性：set_actress_photo 已揭露於 capabilities（:964，side_effect），
-        # AI agent 可直接 POST 任意 url —— 不是只有 UI 那條可信路徑。
-        # CD-8：新增路徑一律固定中文（不因為旁邊的 url_required／unknown_source
-        # 是舊碼 snake_case 就跟著新增一條違規——TASK-100a-T3 已裁決過同一件事）。
-        if not validate_photo_url(req.url, req.source):
-            logger.warning("[actress] set_photo URL 不在白名單 source=%s", req.source)
-            return JSONResponse(status_code=400, content={"error": _SET_PHOTO_ERR_INVALID_URL})
-        # 🔴 CD-4 pre-invalidate：cloud 分支插入點——download_actress_photo 之前。
-        err = await _pre_invalidate_focal(repo, name, ctx="set_photo", err_msg=_SET_PHOTO_ERR_FAILED)
-        if err:
-            return err
-        ok = await asyncio.to_thread(download_actress_photo, name, req.url, req.source)
-        if not ok:
-            return JSONResponse(status_code=500, content={"error": "download_failed"})
-
-    elif req.source == "local_crop":
-        if not req.video_path:
-            return JSONResponse(status_code=400, content={"error": "video_path_required"})
-        # file:/// URI → FS path（禁止手動 strip）
-        video_fs_path = uri_to_fs_path(req.video_path)  # uri-no-reverse: comparison-only, matched against DB v.path below, no disk I/O
-        # 從 DB 取該影片的 cover_path
-        videos = await asyncio.to_thread(_get_actress_videos, name)
-        # Fix 3 (T3): v.path 在 DB 存 file:/// URI（gallery_scanner 用 to_file_uri 寫入），
-        # 比對前雙邊都正規化為 FS path，避免 URI vs FS path 永遠 fail
-        match = next(
-            (v for v in videos if uri_to_fs_path(str(v.path)) == video_fs_path),  # uri-no-reverse: comparison-only, no disk I/O
-            None,
-        )
-        if match is None or not match.cover_path:
-            return JSONResponse(status_code=404, content={"error": "video_or_cover_not_found"})
-        # Fix 3 (T3): match.cover_path 也是 URI，傳給 crop_video_cover 前先轉 FS path
-        path_mappings = (await asyncio.to_thread(load_config)).get('gallery', {}).get('path_mappings', {})
-        cover_fs_path = uri_to_local_fs_path(str(match.cover_path), path_mappings) if match.cover_path else ""
-        if not cover_fs_path:
-            return JSONResponse(status_code=404, content={"error": "video_or_cover_not_found"})
-        # crop → bytes
-        crop_bytes = await asyncio.to_thread(
-            crop_video_cover, cover_fs_path, req.crop_spec or "v1"
-        )
-        if crop_bytes is None:
-            return JSONResponse(status_code=500, content={"error": "crop_failed"})
-        # 🔴 CD-4 pre-invalidate：local_crop 分支插入點——crop 成功之後、寫入之前。
-        err = await _pre_invalidate_focal(repo, name, ctx="set_photo", err_msg=_SET_PHOTO_ERR_FAILED)
-        if err:
-            return err
-        # glob 刪舊副檔名 + 寫入
-        # 🔴 PR#108 Codex P2-B：比照 upload_actress_photo（:898-902）補外層 try/except——
-        # local_crop 分支原本完全沒有，_write_actress_photo 內部例外（含清舊檔殘留的
-        # PermissionError 等）會逸出成未捕捉例外、FastAPI 回裸文字 500，而非本檔統一的
-        # 錯誤信封格式。錯誤信封對齊：照片家族一律裸 dict `{"error": ...}`（非 upload
-        # 端點也用同一 _SET_PHOTO_ERR_FAILED 固定中文，與 CD-8 一致）。
-        try:
-            await asyncio.to_thread(_write_actress_photo, name, crop_bytes)
-        except Exception:
-            logger.exception("[actress] set_photo local_crop 寫檔失敗 name=%s", name)
-            return JSONResponse(status_code=500, content={"error": _SET_PHOTO_ERR_FAILED})
-
-    # 更新 photo_source + 回傳（CD-7）
-    err = await _persist_photo_source(
-        repo, actress, req.source, ctx="set_photo", err_msg=_SET_PHOTO_ERR_FAILED)
-    if err:
-        return err
-
-    # CD-6：logical slot vs physical path，寫檔/下載後不可假設 {safe}.jpg，一律重
-    # 解析（cloud 分支副檔名由 Content-Type 決定，core/actress_photo.py）。重解析
-    # 可能回 None（GFRIENDS_DIR 綁定不一致／外部同時刪除）——不 guard 會 None.stat()
-    # 拋 AttributeError（mirror T2 review finding）。
-    photo_url, err = await _photo_url_with_fp_cache_bust(
-        name, ctx="set_photo", err_msg=_SET_PHOTO_ERR_FAILED)
+    photo_url, err, _ = await _apply_photo_change(repo, actress, name, req)
     if err:
         return err
     return JSONResponse(status_code=200, content={
@@ -1020,65 +1357,85 @@ async def upload_actress_photo(name: str, file: UploadFile = _UPLOAD_FILE_PARAM)
     的中途失敗污染；clear_focal 失敗（含拋例外）→ 500，不得觸碰檔案寫入。
     不跑自動偵測、不寫焦點、無等待（CD-1）——要對焦走 POST /{name}/focal（T4）。
 
-    CD-13：不揭露進 web/routers/capabilities.py——multipart binary body，
-    AI agent 與 server 未必同機，無法從本機路徑上傳，揭露也用不起來（spec §4-4）。
+    已揭露進 web/routers/capabilities.py 為 upload_actress_photo（TASK-157-T8／
+    CD-157-9）。舊版本假設「AI agent 與 server 未必同機，無法從本機路徑上傳」
+    不成立：正確用法是 AI 自己下載圖片 bytes 後以 multipart 上傳，與是否同機
+    無關，任何 HTTP client（含 AI agent 自己發的 multipart request）都不需要
+    與 server 共享檔案系統。
+
+    整段主體包 try/except（PR #211 第三輪 followup）：本端點前段（大小／格式／
+    女優載入）原本完全沒有防護，DB 或其他非預期例外會逸出成裸文字 500。
+    HTTPException（別名擋下的 400）原樣放行；其他例外一律 log 後回既有固定
+    中文 `_UPLOAD_ERR_FAILED`，不洩漏例外內容。
     """
-    # 1. 大小（CD-10）：.size 可讀就先擋；.size 為 None（理論上真實 multipart 解析器
-    # 恆設為非 None，此分支防禦不可信任的呼叫端）則讀出後用 len(data) 判斷。
-    if file.size is not None and file.size > _UPLOAD_MAX_BYTES:
-        return JSONResponse(status_code=413, content={"error": _UPLOAD_ERR_TOO_LARGE})
-    data = await file.read()
-    if len(data) > _UPLOAD_MAX_BYTES:
-        return JSONResponse(status_code=413, content={"error": _UPLOAD_ERR_TOO_LARGE})
-
-    # 2. Content-Type 白名單（複用 core.actress_photo.CONTENT_TYPE_MAP 的 key 集合，
-    # 不重新定義一份）——粗篩，不需要讀 bytes 內容，故在 Image.open() 之前執行。
-    if file.content_type not in CONTENT_TYPE_MAP:
-        return JSONResponse(status_code=415, content={"error": _UPLOAD_ERR_UNSUPPORTED_FORMAT})
-
-    # 3. 像素上限 + 真實格式（CD-9/CD-5）——PIL 解碼須過 asyncio.to_thread
-    # （async-offload 守衛：Image.open/.verify() 是阻塞呼叫，不可裸跑在 event loop 上）。
-    err_status, err_msg, ext = await asyncio.to_thread(_validate_uploaded_photo, data)
-    if err_status is not None:
-        return JSONResponse(status_code=err_status, content={"error": err_msg})
-
-    # 4. 女優存在
-    repo, actress = await asyncio.to_thread(_load_actress, name)
-    if actress is None:
-        return JSONResponse(status_code=404, content={"error": _UPLOAD_ERR_NOT_FOUND})
-
-    # 🔴 CD-4 pre-invalidate：先清焦點，成功後才安裝新圖。失敗（含拋例外）一律視為
-    # 失敗，函式在此直接 return，絕不執行 _write_actress_photo——此時女優已確認存在，
-    # clear_focal 理論上不該回 False（唯一情境是驗證與寫入之間女優被刪除的 race，
-    # spec §1.4 明示接受），不論哪種失敗原因行為必須一致：不寫檔、不動 DB 其他欄位，
-    # 舊照片與舊焦點原封不動。
-    err = await _pre_invalidate_focal(repo, name, ctx="upload", err_msg=_UPLOAD_ERR_FAILED)
-    if err:
-        return err
-
     try:
-        await asyncio.to_thread(_write_actress_photo, name, data, ext)
+        # 1. 大小（CD-10）：.size 可讀就先擋；.size 為 None（理論上真實 multipart 解析器
+        # 恆設為非 None，此分支防禦不可信任的呼叫端）則讀出後用 len(data) 判斷。
+        if file.size is not None and file.size > _UPLOAD_MAX_BYTES:
+            return JSONResponse(status_code=413, content={"error": _UPLOAD_ERR_TOO_LARGE})
+        data = await file.read()
+        if len(data) > _UPLOAD_MAX_BYTES:
+            return JSONResponse(status_code=413, content={"error": _UPLOAD_ERR_TOO_LARGE})
+
+        # 2. Content-Type 白名單（複用 core.actress_photo.CONTENT_TYPE_MAP 的 key 集合，
+        # 不重新定義一份）——粗篩，不需要讀 bytes 內容，故在 Image.open() 之前執行。
+        if file.content_type not in CONTENT_TYPE_MAP:
+            return JSONResponse(status_code=415, content={"error": _UPLOAD_ERR_UNSUPPORTED_FORMAT})
+
+        # 3. 像素上限 + 真實格式（CD-9/CD-5）——PIL 解碼須過 asyncio.to_thread
+        # （async-offload 守衛：Image.open/.verify() 是阻塞呼叫，不可裸跑在 event loop 上）。
+        err_status, err_msg, ext = await asyncio.to_thread(_validate_uploaded_photo, data)
+        if err_status is not None:
+            return JSONResponse(status_code=err_status, content={"error": err_msg})
+
+        # 4. 女優存在 + 別名擋下（CD-157 身分守衛，同 submit_actress 的判準，
+        # PR #211 Codex P2-2）——必須在任何寫入之前執行，且不論 name 自己有沒有
+        # 一筆既有 row 都要查，理由見 _favorited_primary_for_alias 的 docstring。
+        repo, actress = await asyncio.to_thread(_load_actress, name)
+        primary_name = await asyncio.to_thread(_favorited_primary_for_alias, repo, name)
+        if primary_name:
+            raise HTTPException(
+                400, detail=f"{name} 是 {primary_name} 的別名，請改用「{primary_name}」提交")
+        if actress is None:
+            return JSONResponse(status_code=404, content={"error": _UPLOAD_ERR_NOT_FOUND})
+
+        # 🔴 CD-4 pre-invalidate：先清焦點，成功後才安裝新圖。失敗（含拋例外）一律視為
+        # 失敗，函式在此直接 return，絕不執行 _write_actress_photo——此時女優已確認存在，
+        # clear_focal 理論上不該回 False（唯一情境是驗證與寫入之間女優被刪除的 race，
+        # spec §1.4 明示接受），不論哪種失敗原因行為必須一致：不寫檔、不動 DB 其他欄位，
+        # 舊照片與舊焦點原封不動。
+        err = await _pre_invalidate_focal(repo, name, ctx="upload", err_msg=_UPLOAD_ERR_FAILED)
+        if err:
+            return err
+
+        try:
+            await asyncio.to_thread(_write_actress_photo, name, data, ext)
+        except Exception:
+            logger.exception("[actress] upload 寫檔失敗 name=%s", name)
+            return JSONResponse(status_code=500, content={"error": _UPLOAD_ERR_FAILED})
+
+        # CD-7：photo_source 必須持久化；clear_focal 語意已知（''/'auto'），直接寫死，
+        # 不多一次 DB round-trip 只為了讀已知的值。
+        err = await _persist_photo_source(
+            repo, actress, "upload", ctx="upload", err_msg=_UPLOAD_ERR_FAILED)
+        if err:
+            return err
+
+        photo_url, err = await _photo_url_with_fp_cache_bust(
+            name, ctx="upload", err_msg=_UPLOAD_ERR_FAILED)
+        if err:
+            return err
+        return JSONResponse(status_code=200, content={
+            "photo_url": photo_url,
+            "photo_source": "upload",
+            "auto_focal": "",
+            "crop_mode": "auto",
+        })
+    except HTTPException:
+        raise
     except Exception:
-        logger.exception("[actress] upload 寫檔失敗 name=%s", name)
+        logger.exception("[actress] upload_actress_photo 未預期例外 name=%s", name)
         return JSONResponse(status_code=500, content={"error": _UPLOAD_ERR_FAILED})
-
-    # CD-7：photo_source 必須持久化；clear_focal 語意已知（''/'auto'），直接寫死，
-    # 不多一次 DB round-trip 只為了讀已知的值。
-    err = await _persist_photo_source(
-        repo, actress, "upload", ctx="upload", err_msg=_UPLOAD_ERR_FAILED)
-    if err:
-        return err
-
-    photo_url, err = await _photo_url_with_fp_cache_bust(
-        name, ctx="upload", err_msg=_UPLOAD_ERR_FAILED)
-    if err:
-        return err
-    return JSONResponse(status_code=200, content={
-        "photo_url": photo_url,
-        "photo_source": "upload",
-        "auto_focal": "",
-        "crop_mode": "auto",
-    })
 
 
 # ---------------------------------------------------------------------------

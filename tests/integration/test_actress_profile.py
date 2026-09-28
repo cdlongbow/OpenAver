@@ -180,7 +180,7 @@ def test_get_actress_profile_both_sources():
             'cup': 'G',
         }
 
-    with patch('core.scrapers.actress.minnano_av.scrape_minnano_av', return_value=None), \
+    with patch('core.scrapers.actress.xcity.scrape_xcity', return_value=None), \
          patch('core.scrapers.actress.wiki_ja.scrape_wiki_ja', return_value=None), \
          patch('core.scrapers.actress.graphis.scrape_graphis_photo', side_effect=mock_graphis), \
          patch('core.scrapers.actress.gfriends.lookup_gfriends', return_value=None):
@@ -192,7 +192,7 @@ def test_get_actress_profile_both_sources():
         assert result.data['img'] == 'https://graphis.ne.jp/prof.jpg'
         assert result.data['backdrop'] == 'https://graphis.ne.jp/model.jpg'
 
-        # graphis text wins cascade (minnano/wiki mocked None by T4.3)
+        # Graphis supplies text when xcity and wiki return nothing.
         assert result.data['birth'] == '1997-12-03'   # from graphis (via text cascade)
         assert result.data['age'] == 28                # TD-1: from birth 1997-12-03 + frozen 2026-04-11
         assert result.data['height'] == '160cm'
@@ -213,7 +213,7 @@ def test_get_actress_profile_graphis_only():
             'backdrop_url': 'https://graphis.ne.jp/model.jpg'
         }
 
-    with patch('core.scrapers.actress.minnano_av.scrape_minnano_av', return_value=None), \
+    with patch('core.scrapers.actress.xcity.scrape_xcity', return_value=None), \
          patch('core.scrapers.actress.wiki_ja.scrape_wiki_ja', return_value=None), \
          patch('core.scrapers.actress.graphis.scrape_graphis_photo', side_effect=mock_graphis), \
          patch('core.scrapers.actress.gfriends.lookup_gfriends', return_value=None):
@@ -231,7 +231,7 @@ def test_get_actress_profile_both_fail():
     """測試雙來源都失敗（Mock）"""
     from core.scrapers.actress.orchestrator import get_actress_profile, _cache
 
-    with patch('core.scrapers.actress.minnano_av.scrape_minnano_av', return_value=None), \
+    with patch('core.scrapers.actress.xcity.scrape_xcity', return_value=None), \
          patch('core.scrapers.actress.wiki_ja.scrape_wiki_ja', return_value=None), \
          patch('core.scrapers.actress.graphis.scrape_graphis_photo', return_value=None), \
          patch('core.scrapers.actress.gfriends.lookup_gfriends', return_value=None):
@@ -256,7 +256,7 @@ def test_get_actress_profile_cache_hit():
             'backdrop_url': 'https://graphis.ne.jp/model.jpg'
         }
 
-    with patch('core.scrapers.actress.minnano_av.scrape_minnano_av', return_value=None) as minnano_mock, \
+    with patch('core.scrapers.actress.xcity.scrape_xcity', return_value=None), \
          patch('core.scrapers.actress.wiki_ja.scrape_wiki_ja', return_value=None) as wiki_mock, \
          patch('core.scrapers.actress.graphis.scrape_graphis_photo', side_effect=mock_graphis) as graphis_mock, \
          patch('core.scrapers.actress.gfriends.lookup_gfriends', return_value=None):
@@ -292,7 +292,7 @@ def test_get_actress_profile_cache_expired():
         return fixed_time[0]
 
     with patch('time.time', side_effect=mock_time), \
-         patch('core.scrapers.actress.minnano_av.scrape_minnano_av', return_value=None), \
+         patch('core.scrapers.actress.xcity.scrape_xcity', return_value=None), \
          patch('core.scrapers.actress.wiki_ja.scrape_wiki_ja', return_value=None), \
          patch('core.scrapers.actress.graphis.scrape_graphis_photo', side_effect=mock_graphis) as graphis_mock, \
          patch('core.scrapers.actress.gfriends.lookup_gfriends', return_value=None):
@@ -322,7 +322,7 @@ def test_get_actress_profile_cache_name_normalization():
             'backdrop_url': 'https://graphis.ne.jp/model.jpg'
         }
 
-    with patch('core.scrapers.actress.minnano_av.scrape_minnano_av', return_value=None), \
+    with patch('core.scrapers.actress.xcity.scrape_xcity', return_value=None), \
          patch('core.scrapers.actress.wiki_ja.scrape_wiki_ja', return_value=None), \
          patch('core.scrapers.actress.graphis.scrape_graphis_photo', side_effect=mock_graphis) as graphis_mock, \
          patch('core.scrapers.actress.gfriends.lookup_gfriends', return_value=None):
@@ -864,13 +864,13 @@ def _make_graphis_result(name="桜空もも", **overrides):
 
 def test_get_actress_profile_gfriends_wins():
     """gfriends 圖片勝出：graphis 無 prof_url 時，gfriends 應成為 photo cascade 的 winner。
-    T4.3 note: orchestrator photo cascade = graphis prof_url → gfriends → wiki → minnano.
+    T4.3 note: orchestrator photo cascade = graphis prof_url → gfriends → wiki → xcity.
     To let gfriends win, graphis must have prof_url=None."""
     from core.scrapers.actress.orchestrator import get_actress_profile, _cache
 
     gfriends_url = 'https://cdn.jsdelivr.net/gh/gfriends/gfriends@master/Content/7-S1/桜空もも.jpg'
 
-    with patch('core.scrapers.actress.minnano_av.scrape_minnano_av', return_value=None), \
+    with patch('core.scrapers.actress.xcity.scrape_xcity', return_value=None), \
          patch('core.scrapers.actress.wiki_ja.scrape_wiki_ja', return_value=None), \
          patch('core.scrapers.actress.graphis.scrape_graphis_photo', return_value=_make_graphis_result(prof_url=None)), \
          patch('core.scrapers.actress.gfriends.lookup_gfriends', return_value=gfriends_url):
@@ -888,13 +888,12 @@ def test_get_actress_profile_gfriends_wins():
 def test_get_actress_profile_graphis_text_wins():
     """graphis 文字欄位優先（age/height/cup）
     NOTE (T4.2 semantic shift): Post-T3 orchestrator has no javbus route.
-    After T4.3 adds minnano/wiki mocks → None, graphis wins the C1 cascade as the
-    only available text source (not "beats javbus" anymore, just "graphis fallback").
+    With xcity/wiki mocks → None, graphis supplies the available text fields.
     age == 28 is still correct: _compute_age_from_birth('1997-12-03') under frozen 2026-04-11.
     """
     from core.scrapers.actress.orchestrator import get_actress_profile, _cache
 
-    with patch('core.scrapers.actress.minnano_av.scrape_minnano_av', return_value=None), \
+    with patch('core.scrapers.actress.xcity.scrape_xcity', return_value=None), \
          patch('core.scrapers.actress.wiki_ja.scrape_wiki_ja', return_value=None), \
          patch('core.scrapers.actress.graphis.scrape_graphis_photo', return_value=_make_graphis_result(age=28, height='160cm', cup='G')), \
          patch('core.scrapers.actress.gfriends.lookup_gfriends', return_value=None):
@@ -913,7 +912,7 @@ def test_get_actress_profile_name_en():
     """graphis name_en 正確傳遞到最終結果"""
     from core.scrapers.actress.orchestrator import get_actress_profile, _cache
 
-    with patch('core.scrapers.actress.minnano_av.scrape_minnano_av', return_value=None), \
+    with patch('core.scrapers.actress.xcity.scrape_xcity', return_value=None), \
          patch('core.scrapers.actress.wiki_ja.scrape_wiki_ja', return_value=None), \
          patch('core.scrapers.actress.graphis.scrape_graphis_photo', return_value=_make_graphis_result(name_en='Momo Sakurazora')), \
          patch('core.scrapers.actress.gfriends.lookup_gfriends', return_value=None):
@@ -933,7 +932,7 @@ def test_get_actress_profile_birth_from_graphis():
     # Graphis result has birth='1997-12-03' (added by T4.2) but no hometown
     graphis = _make_graphis_result()
 
-    with patch('core.scrapers.actress.minnano_av.scrape_minnano_av', return_value=None), \
+    with patch('core.scrapers.actress.xcity.scrape_xcity', return_value=None), \
          patch('core.scrapers.actress.wiki_ja.scrape_wiki_ja', return_value=None), \
          patch('core.scrapers.actress.graphis.scrape_graphis_photo', return_value=graphis), \
          patch('core.scrapers.actress.gfriends.lookup_gfriends', return_value=None):
@@ -954,7 +953,7 @@ def test_get_actress_profile_gfriends_only():
 
     gfriends_url = 'https://cdn.jsdelivr.net/gh/gfriends/gfriends@master/Content/7-S1/桜空もも.jpg'
 
-    with patch('core.scrapers.actress.minnano_av.scrape_minnano_av', return_value=None), \
+    with patch('core.scrapers.actress.xcity.scrape_xcity', return_value=None), \
          patch('core.scrapers.actress.wiki_ja.scrape_wiki_ja', return_value=None), \
          patch('core.scrapers.actress.graphis.scrape_graphis_photo', return_value=None), \
          patch('core.scrapers.actress.gfriends.lookup_gfriends', return_value=gfriends_url):

@@ -594,7 +594,7 @@ export function searchStateBase() {
             const name = this.actressProfile?.name;
             if (!src || !name) return null;
             if (src === 'wiki') return `https://ja.wikipedia.org/wiki/${encodeURIComponent(name)}`;
-            if (src === 'minnano') return `https://www.minnano-av.com/search_result.php?search_scope=actress&search_word=${encodeURIComponent(name)}`;
+            if (src === 'xcity') return `https://xcity.jp/idol/?genre=%2Fidol%2F&q=${encodeURIComponent(name)}&sg=idol`;
             return null;
         },
 

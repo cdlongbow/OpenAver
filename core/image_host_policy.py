@@ -82,18 +82,11 @@ IMAGE_HOSTS: tuple[ImageHost, ...] = (
         photo_source="wiki",
     ),
     ImageHost(
-        host="www.minnano-av.com",
+        host="faws.xcity.jp",
         match="exact",
         schemes=("http", "https"),
         consumers=("download", "proxy"),
-        photo_source="minnano",
-    ),
-    ImageHost(
-        host="minnano-av.com",
-        match="exact",
-        schemes=("http", "https"),
-        consumers=("download", "proxy"),
-        photo_source="minnano",
+        photo_source="xcity",
     ),
     # ---- download-only (exact; not proxied) ----
     ImageHost(

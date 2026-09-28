@@ -2,9 +2,9 @@
 女優爬蟲 Orchestrator — 四來源並行抓取（Phase 42b T3）
 
 Routes:
-    C1 text  : Minnano → Wikipedia → Graphis → None
-    C2 parallel: minnano + wiki + graphis + gfriends (max_workers=4, 5s budget)
-    C3 photo : Graphis prof_url → gfriends URL → Wiki photo_url → Minnano photo_url → None
+    C1 text  : per-field XCity → Wikipedia → Graphis merge
+    C2 parallel: xcity + wiki + graphis + gfriends (max_workers=4, 5s budget)
+    C3 photo : Graphis prof_url → gfriends URL → Wiki photo_url → XCity photo_url → None
     C4 return: nested new fields + legacy flat shortcuts
     TD-1     : current_age computed from text.birth, never read from source
 """
@@ -19,22 +19,46 @@ ProfileResult = namedtuple("ProfileResult", ["data", "timed_out"])
 
 logger = get_logger(__name__)
 
-# Fields that count as "meaningful text" for C1 cascade eligibility.
-# A source dict needs at least one of these to be considered text-authoritative.
-# The list is the UNION of text-profile fields across all three sources (Minnano,
-# Wiki, Graphis) — a source wins C1 if it provides ANY non-empty profile datum.
+# Fields that count as meaningful source text for callers inspecting raw results.
 _MEANINGFUL_TEXT_FIELDS = (
-    # Common / Wiki / Graphis / Minnano — physical + biographical
+    # Physical + biographical
     "birth", "height", "bust", "waist", "hip", "cup", "blood",
     "hometown", "hobby",
-    # Wiki-specific — includes other_names so alias-only infoboxes participate
-    # in C1 cascade (mirrors wiki_ja._parse_wiki_ja_html meaningful_fields guard;
-    # see test_bieimei_only_infobox_returns_dict_not_none)
+    # Wiki-specific, including alias-only infoboxes
     "nickname", "exclusive_makers", "debut_year", "other_names",
-    # Minnano-specific — the C1 primary value proposition
-    # (Minnano is chosen as C1 primary mostly because of these richer fields)
-    "aliases", "agency", "debut_work", "tags", "blog_url", "official_url",
 )
+
+_FIELD_MERGE_PRIORITY = ("xcity", "wiki", "graphis")  # 依序找第一個非空值
+_COMMON_FIELDS = ("name_en", "birth", "height", "bust", "waist", "hip", "cup",
+                  "hometown", "hobby")  # 不含 blood，見下方說明
+_WIKI_ONLY_FIELDS = ("nickname",)  # 不含 exclusive_makers/debut_year，見下方說明
+
+
+def _merge_text_fields(sources: dict) -> dict:
+    merged = {}
+    for field in _COMMON_FIELDS:
+        for src in _FIELD_MERGE_PRIORITY:
+            val = (sources.get(src) or {}).get(field)
+            if val:  # 空字串/None 都視為沒有值，往下一個來源找
+                merged[field] = val
+                break
+    for field in _WIKI_ONLY_FIELDS:
+        val = (sources.get("wiki") or {}).get(field)
+        if val:
+            merged[field] = val
+    # aliases 例外：唯一供應端是 wiki 的 other_names（見下方說明）
+    other_names = (sources.get("wiki") or {}).get("other_names")
+    if other_names:
+        merged["aliases"] = other_names
+    return merged
+
+
+class _FetchedSources(dict):
+    """Four source values plus timeout state for the legacy ProfileResult."""
+
+    def __init__(self, *args, timed_out=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.timed_out = timed_out
 
 
 def _has_meaningful_text(result: Optional[Dict]) -> bool:
@@ -87,41 +111,18 @@ def get_cached_profile(name: str) -> Optional[dict]:
     return None
 
 
-def get_actress_profile(name: str, makers: list = None) -> ProfileResult:
-    """
-    取得女優完整資料（minnano + wiki + graphis + gfriends 四來源並行）
-
-    Phase 42b T3: 4-route parallel with C1 cascade, C4 mixed return shape, TD-1 age fix.
-    Phase 43 T3: 回傳 ProfileResult namedtuple（data, timed_out）。
-
-    Args:
-        name: 女優名稱（日文）
-        makers: 片商名稱列表（從搜尋結果統計，用於 gfriends 查表）
-
-    Returns:
-        ProfileResult(data=dict, timed_out=False) 若有資料；
-        ProfileResult(data=None, timed_out=True) 若全部 timeout；
-        ProfileResult(data=None, timed_out=False) 若全部 miss（非 timeout）。
-    """
+def _fetch_all_sources(name: str, makers: list = None) -> dict:
+    """Fetch four raw sources in parallel within a shared five-second budget."""
     import time
     from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
-    from core.scrapers.actress.minnano_av import scrape_minnano_av
+    from core.scrapers.actress.xcity import scrape_xcity
     from core.scrapers.actress.wiki_ja import scrape_wiki_ja
     from core.scrapers.actress.graphis import scrape_graphis_photo
     from core.scrapers.actress.gfriends import lookup_gfriends
 
-    # Cache 檢查
-    cache_key = _normalize_name(name)
-    if cache_key in _cache:
-        cached = _cache[cache_key]
-        if time.time() - cached['timestamp'] < _CACHE_TTL:
-            return ProfileResult(data=cached['data'], timed_out=False)
-        else:
-            del _cache[cache_key]  # 過期清理
-
     # 並行抓取（4 routes，嚴格 5s 上限，shutdown 不等待背景執行緒）
     executor = ThreadPoolExecutor(max_workers=4)
-    minnano_future  = executor.submit(scrape_minnano_av, name)
+    xcity_future    = executor.submit(scrape_xcity, name)
     wiki_future     = executor.submit(scrape_wiki_ja, name)
     graphis_future  = executor.submit(scrape_graphis_photo, name)
     gfriends_future = executor.submit(lookup_gfriends, name, makers)
@@ -130,12 +131,12 @@ def get_actress_profile(name: str, makers: list = None) -> ProfileResult:
     any_timed_out = False
 
     try:
-        minnano_result = minnano_future.result(timeout=5)
+        xcity_result = xcity_future.result(timeout=5)
     except FuturesTimeoutError:
-        minnano_result = None
+        xcity_result = None
         any_timed_out = True
     except Exception:
-        minnano_result = None
+        xcity_result = None
 
     remaining = max(0, 5 - (time.time() - start))
     try:
@@ -166,35 +167,79 @@ def get_actress_profile(name: str, makers: list = None) -> ProfileResult:
 
     executor.shutdown(wait=False)
 
-    # Edge case: all routes returned nothing
-    if not any([minnano_result, wiki_result, graphis_result, gfriends_url]):
-        return ProfileResult(data=None, timed_out=any_timed_out)
+    return _FetchedSources({
+        "xcity": xcity_result or None,
+        "wiki": wiki_result or None,
+        "graphis": graphis_result or None,
+        "gfriends": gfriends_url or None,
+    }, timed_out=any_timed_out)
 
-    # C1 — text primary source cascade: Minnano → Wikipedia → Graphis → None
-    # Each source must have meaningful text fields to be eligible (not just name_ja shell)
-    if _has_meaningful_text(minnano_result):
-        primary_text_source = "minnano"
-        text = minnano_result
-    elif _has_meaningful_text(wiki_result):
-        primary_text_source = "wiki"
-        text = wiki_result
-    elif _has_meaningful_text(graphis_result):
-        primary_text_source = "graphis"
-        text = graphis_result
-    else:
-        primary_text_source = None
-        text = None
+
+def get_actress_profile_preview(name: str, makers: list = None) -> dict:
+    sources = _fetch_all_sources(name, makers)
+    return {"name": name, "sources": sources}
+
+
+def _sources_to_photo_candidates(sources: dict) -> list:
+    candidates = []
+    if (sources.get("graphis") or {}).get("prof_url"):
+        candidates.append({"source": "graphis", "url": sources["graphis"]["prof_url"]})
+    if (sources.get("wiki") or {}).get("photo_url"):
+        candidates.append({"source": "wiki", "url": sources["wiki"]["photo_url"]})
+    xcity_url = (sources.get("xcity") or {}).get("photo_url")
+    if xcity_url:
+        candidates.append({"source": "xcity", "url": xcity_url})
+    if sources.get("gfriends"):
+        candidates.append({"source": "gfriends", "url": sources["gfriends"]})
+    return candidates
+
+
+def get_actress_profile(name: str, makers: list = None) -> ProfileResult:
+    """Return a merged actress profile and preserve the legacy return shape."""
+    import time
+
+    # Cache 檢查
+    cache_key = _normalize_name(name)
+    if cache_key in _cache:
+        cached = _cache[cache_key]
+        if time.time() - cached['timestamp'] < _CACHE_TTL:
+            return ProfileResult(data=cached['data'], timed_out=False)
+        else:
+            del _cache[cache_key]  # 過期清理
+
+    sources = _fetch_all_sources(name, makers)
+    xcity_result = sources["xcity"]
+    wiki_result = sources["wiki"]
+    graphis_result = sources["graphis"]
+    gfriends_url = sources["gfriends"]
+
+    # Edge case: all routes returned nothing
+    if not any(sources.values()):
+        return ProfileResult(data=None, timed_out=sources.timed_out)
+
+    # C1 — each field takes the first non-empty value in source priority order.
+    merged = _merge_text_fields(sources)
+    text = merged or None
+    primary_text_source = None
+    for src in _FIELD_MERGE_PRIORITY:
+        raw = sources[src] or {}
+        if any(raw.get(field) for field in _COMMON_FIELDS) or (
+            src == "wiki" and (any(raw.get(field) for field in _WIKI_ONLY_FIELDS)
+                               or raw.get("other_names"))
+        ):
+            primary_text_source = src
+            break
 
     # Photo cascade (decoupled from text):
-    # Graphis prof_url → gfriends URL → Wiki photo_url → Minnano photo_url → None
+    # Graphis prof_url → gfriends URL → Wiki photo_url → XCity photo_url → None
     if graphis_result and graphis_result.get("prof_url"):
         photo_url, photo_source = graphis_result["prof_url"], "graphis"
     elif gfriends_url:
         photo_url, photo_source = gfriends_url, "gfriends"
     elif wiki_result and wiki_result.get("photo_url"):
         photo_url, photo_source = wiki_result["photo_url"], "wiki"
-    elif minnano_result and minnano_result.get("photo_url"):
-        photo_url, photo_source = minnano_result["photo_url"], "minnano"
+    elif xcity_result and xcity_result.get("photo_url"):
+        photo_url, photo_source = xcity_result["photo_url"], "xcity"
     else:
         photo_url, photo_source = None, None
 
@@ -207,18 +252,13 @@ def get_actress_profile(name: str, makers: list = None) -> ProfileResult:
     # C4 — mixed return shape: new nested fields + legacy flat shortcuts
     result = {
         # === NEW nested fields (Phase 43 consumers) ===
-        "primary_text_source": primary_text_source,   # "minnano"|"wiki"|"graphis"|None
-        "text": text,                                  # raw dict from chosen source, or None
+        "primary_text_source": primary_text_source,   # "xcity"|"wiki"|"graphis"|None
+        "text": text,                                  # merged text fields, or None
         "photo_url": photo_url,                        # winner of photo cascade, or None
-        "photo_source": photo_source,                  # "graphis"|"gfriends"|"wiki"|"minnano"|None
+        "photo_source": photo_source,                  # "graphis"|"gfriends"|"wiki"|"xcity"|None
         "backdrop_url": backdrop_url,                  # Graphis-only, or None
         "current_age": current_age,                    # int or None (TD-1 fix)
-        "all_sources": {
-            "minnano":  minnano_result or None,        # dict or None
-            "wiki":     wiki_result    or None,        # dict or None
-            "graphis":  graphis_result or None,        # dict or None
-            "gfriends": gfriends_url   or None,        # str URL or None
-        },
+        "all_sources": dict(sources),                  # four unmerged dict/dict/dict/str values
 
         # === LEGACY flat shortcuts (derived) ===
         # Existing template/JS/test assertions depend on these keys.

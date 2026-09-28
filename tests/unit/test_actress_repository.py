@@ -358,3 +358,83 @@ def test_get_by_name_and_get_all_smoke_with_dynamic_columns(repo):
 
     all_actresses = repo.get_all()
     assert len(all_actresses) == 2
+
+
+# ---------------------------------------------------------------------------
+# TASK-157-T5: update_fields（CD-157-6）
+# ---------------------------------------------------------------------------
+
+def test_update_fields_only_changes_given_column(repo):
+    actress = Actress(name="深田えいみ", height="158cm", cup="G", tags=["美少女"])
+    repo.save(actress)
+
+    assert repo.update_fields("深田えいみ", {"height": "160cm"}) is True
+
+    result = repo.get_by_name("深田えいみ")
+    assert result is not None
+    assert result.height == "160cm"
+    assert result.cup == "G"
+    assert result.tags == ["美少女"]
+
+
+def test_update_fields_empty_dict_is_noop(repo):
+    actress = Actress(name="三上悠亞", height="159cm")
+    repo.save(actress)
+
+    first = repo.get_by_name("三上悠亞")
+    assert first is not None
+
+    time.sleep(1.1)
+
+    assert repo.update_fields("三上悠亞", {}) is True
+
+    second = repo.get_by_name("三上悠亞")
+    assert second is not None
+    assert second.height == "159cm"
+    assert second.updated_at == first.updated_at
+
+
+def test_update_fields_rejects_focal_fields(repo):
+    actress = Actress(name="橋本ありな", height="160cm")
+    repo.save(actress)
+
+    first = repo.get_by_name("橋本ありな")
+    assert first is not None
+
+    with pytest.raises(AssertionError):
+        repo.update_fields("橋本ありな", {"auto_focal": "0.5,0.5"})
+
+    second = repo.get_by_name("橋本ありな")
+    assert second is not None
+    assert second.auto_focal == first.auto_focal
+    assert second.height == first.height
+
+
+def test_update_fields_tags_roundtrip_append(repo):
+    actress = Actress(name="夢乃あいか", tags=["美少女"])
+    repo.save(actress)
+
+    assert repo.update_fields("夢乃あいか", {"tags": ["美少女", "スレンダー"]}) is True
+
+    result = repo.get_by_name("夢乃あいか")
+    assert result is not None
+    assert isinstance(result.tags, list)
+    assert result.tags == ["美少女", "スレンダー"]
+
+
+def test_update_fields_tags_roundtrip_clear(repo):
+    actress = Actress(name="新ありな", tags=["美少女", "企畫"])
+    repo.save(actress)
+
+    assert repo.update_fields("新ありな", {"tags": []}) is True
+
+    result = repo.get_by_name("新ありな")
+    assert result is not None
+    assert isinstance(result.tags, list)
+    assert result.tags == []
+
+
+def test_update_fields_missing_name_returns_false(repo):
+    assert repo.update_fields("不存在的女優", {"height": "160cm"}) is False
+    assert repo.get_by_name("不存在的女優") is None
+

@@ -174,7 +174,7 @@ def test_local_candidates_no_alias_single_name(client):
 
 def test_cloud_sources_use_primary_name_only(client):
     """
-    雲端 scraper（graphis / gfriends / wiki / minnano）的 _fetch_single_source
+    雲端 scraper（graphis / gfriends / wiki / xcity）的 _fetch_single_source
     應收到 URL path param（即 "alice"），不被 alias set 污染。
 
     本測試涵蓋 attempt 省略/0 情境；attempt>0 的雲端換名輪替行為見
@@ -664,6 +664,13 @@ class TestActressPathMappingsReverse:
             mock_actress_repo_cls.return_value.get_by_name.return_value = mock_actress
             mock_actress_repo_cls.return_value.save = MagicMock()
             mock_alias_repo_cls.return_value.resolve.return_value = {"alice"}
+            # PR #211 第三輪 v3：set_actress_photo 新增的身分守衛會呼叫
+            # AliasRepository().find_by_alias(name)；本測試整個 mock 掉
+            # AliasRepository class，不明確設定的話會回未配置的 MagicMock（連帶
+            # mock_actress_repo_cls.return_value.exists(...) 也回真值 MagicMock），
+            # 讓守衛誤判成「這是別人的別名」回 400——與本測試要驗的 WSL/UNC 路徑
+            # 反解無關，明確設 None 關掉守衛分支。
+            mock_alias_repo_cls.return_value.find_by_alias.return_value = None
             mock_video_repo_cls.return_value.get_videos_by_actress_names.return_value = [mock_video]
 
             response = client.post(

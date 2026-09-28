@@ -84,6 +84,9 @@ EXPECTED_TOOL_NAMES = {
     "tags_top",
     "scraper_sources_list",
     "video_rescrape_with_source",
+    "preview_actress_sources",
+    "submit_actress",
+    "upload_actress_photo",
 }
 
 REQUIRED_TOOL_FIELDS = [
@@ -132,7 +135,7 @@ class TestCapabilitiesEndpoint:
 
     def test_tools_count_is_40(self, client):
         data = client.get("/api/capabilities").json()
-        assert len(data["tools"]) == 41
+        assert len(data["tools"]) == 44
 
     def test_all_tool_names_present(self, client):
         data = client.get("/api/capabilities").json()
@@ -151,6 +154,16 @@ class TestCapabilitiesEndpoint:
         data = client.get("/api/capabilities").json()
         tool = next(t for t in data["tools"] if t["name"] == "favorite_actress")
         assert "併發 2" in tool["description"] or "序列呼叫" in tool["description"]
+
+    def test_submit_actress_and_upload_confirmation_required_true(self, client):
+        """submit_actress／upload_actress_photo 皆是覆蓋性寫入，AI 呼叫前必須先取得使用者確認。"""
+        data = client.get("/api/capabilities").json()
+        tools = {t["name"]: t for t in data["tools"]}
+        for name in ("submit_actress", "upload_actress_photo"):
+            assert tools[name].get("confirmation_required") is True, name
+        assert "upload_actress_photo" in tools["submit_actress"]["description"]
+        assert "10MB" in tools["upload_actress_photo"]["description"]
+        assert "50M" in tools["upload_actress_photo"]["description"]
 
     def test_no_server_mode_toggle_exposed(self, client):
         """AC-A7（TASK-80a-T5）：LAN 伺服器模式翻轉**不得**揭露給 AI agent。
