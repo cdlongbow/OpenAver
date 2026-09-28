@@ -25,6 +25,7 @@ from core.path_utils import (
     uri_to_local_fs_path,
 )
 from core.logger import get_logger
+from core.platform_info import DSM_PERMISSION_HINT, is_synology
 from core.config import load_config, get_gallery_source_paths, get_configured_gallery_dirs
 from core.focal import device_state, format_focal, parse_focal
 from core.focal.subprocess_runner import run_detection
@@ -467,7 +468,7 @@ async def get_source_status():
     out = []
     seen_displays = set()
     for path, status in snapshot.items():
-        if status != 'unreachable':
+        if status not in ("unreachable", "no_permission"):
             continue
         host = unc_host(path)
         display = host if host else path
@@ -476,6 +477,7 @@ async def get_source_status():
         if display in seen_displays:
             continue
         seen_displays.add(display)
-        out.append({"path": path, "display": display, "status": status})
+        out.append({"path": path, "display": display, "status": status,
+                    "reason": status,
+                    "dsm_hint": DSM_PERMISSION_HINT if status == "no_permission" and is_synology() else None})
     return out
-

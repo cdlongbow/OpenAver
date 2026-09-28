@@ -281,6 +281,28 @@ test('DoD2: 1／2／3 個來源 → 對應 i18n key、插值與 title', () => {
     assert.equal(c3.title, '\\\\host-a、D:\\Videos、/mnt/nas');
 });
 
+test('permission footer renders new text only when every source lacks permission', () => {
+    const block = extractUnreachablePillBlock(SHOWCASE_HTML);
+    const small = block.match(/<template\s+x-if="unreachableSources\.length\s*<=\s*2">([\s\S]*?)<\/template>/);
+    const large = block.match(/<template\s+x-if="unreachableSources\.length\s*>\s*2">([\s\S]*?)<\/template>/);
+    assert.ok(small && large);
+    const render = (branch, sources) => {
+        const expression = branch.match(/x-text="([^"]+)"/)?.[1];
+        assert.ok(expression, 'footer branch should contain x-text');
+        return new Function('unreachableSources', 't', `return ${expression};`)(sources, tKey);
+    };
+    const denied = (display, dsm_hint = null) => ({ display, reason: 'no_permission', dsm_hint });
+    const gone = (display) => ({ display, reason: 'unreachable', dsm_hint: null });
+    assert.equal(render(small[1], [denied('/a')]), '沒有權限讀取：/a');
+    assert.equal(render(small[1], [denied('/a', 'DSM 指引')]), '沒有權限讀取：/a DSM 指引');
+    assert.equal(render(small[1], [denied('/a'), denied('/b')]), '沒有權限讀取：/a、/b');
+    assert.equal(render(small[1], [denied('/a'), gone('/b')]), '無法存取：/a、/b');
+    assert.equal(render(large[1], [denied('/a'), denied('/b'), denied('/c')]), '3 個位置沒有權限讀取');
+    assert.equal(render(large[1], [denied('/a', 'DSM 指引'), denied('/b'), denied('/c')]), '3 個位置沒有權限讀取 DSM 指引');
+    assert.equal(render(large[1], [denied('/a'), gone('/b'), denied('/c')]), '3 個位置無法存取');
+    assert.equal(render(large[1], [gone('/a'), gone('/b'), gone('/c')]), '3 個位置無法存取');
+});
+
 // ===== DoD 3：fetch reject → 維持 []、不拋未捕捉例外 =====
 
 test('DoD3: fetch reject → unreachableSources 維持 [] 且不拋未捕捉例外', async () => {

@@ -5024,12 +5024,14 @@ const RULES = [
   },
 
   // ---- [TASK-142-T1 CD-13] source_reachability 探測只碰根路徑，禁止目錄遍歷／開檔 ----
-  // 陣列語意：任一命中即報錯。探測手段封閉清單只有 TCP 445 與 os.path.exists(root)。
+  // 陣列語意：任一命中即報錯。探測手段封閉清單只有 TCP 445 與「開根目錄本身」。
+  // 159-T10a（CD-159-9）：exists 換成 `with os.scandir(root):` 開了就關、不迭代——
+  // 權限不足時才分得出來。仍禁止的是「列出內容」：把 scandir 綁成迭代器（`as it`）或 for 迭代。
   {
     file: 'core/source_reachability.py',
     kind: 'forbidden-string',
-    pattern: ['listdir', 'scandir', '.walk(', 'open('],
-    note: '[TASK-142-T1 CD-13] core/source_reachability.py 不得出現 listdir／scandir／.walk(／open(（探測只碰根路徑本身，spec F1 驗收 7）',
+    pattern: ['listdir', /scandir\([^)]*\)\s+as\b/, /\bin\s+os\.scandir/, '.walk(', 'open('],
+    note: '[TASK-142-T1 CD-13／159-T10a] core/source_reachability.py 不得列出來源夾內容（listdir／scandir 迭代／.walk(／open(；只准 `with os.scandir(root):` 開了就關，spec-142 F1 驗收 7）',
   },
 
   // ---- [TASK-143-T6 CD-143-7] readonly_producer 番號表單一來源，禁止自建 NUM_PATTERNS ----

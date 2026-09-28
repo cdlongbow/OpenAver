@@ -29,6 +29,86 @@ def reset_buffer():
 class TestScannerAPI:
     """測試 scanner.py 相關 endpoints"""
 
+    @pytest.mark.skipif(
+        os.name != "posix" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+        reason="chmod 000 requires POSIX non-root DAC enforcement",
+    )
+    @pytest.mark.parametrize("synology", [False, True])
+    def test_scan_root_unreadable_dir_shows_permission_denied_message(
+        self, client, tmp_path, monkeypatch, parse_sse_events, synology,
+    ):
+        from core.database import init_db, VideoRepository, Video
+        from core.path_utils import to_file_uri
+        from core.platform_info import DSM_PERMISSION_HINT
+
+        scan_dir = tmp_path / "videos"
+        scan_dir.mkdir()
+        video = scan_dir / "existing.mp4"
+        video.write_bytes(b"video")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        db_path = tmp_path / "test.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+        uri = to_file_uri(str(video))
+        repo.upsert(Video(path=uri, number="EXIST-001", title="既存影片", mtime=video.stat().st_mtime, nfo_mtime=0.0))
+        before = len(repo.get_mtime_index())
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
+        monkeypatch.setattr("web.routers.scanner.is_synology", lambda: synology)
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {
+            "gallery": {"directories": [str(scan_dir)], "output_dir": str(output_dir),
+                        "path_mappings": {}, "min_size_mb": 0},
+            "general": {"theme": "light"},
+            "scraper": {"video_extensions": [".mp4"]},
+        })
+
+        def messages():
+            response = client.get("/api/gallery/generate")
+            assert response.status_code == 200
+            return [e.get("message", "") for e in parse_sse_events(response.text) if e.get("type") == "log"]
+
+        scan_dir.chmod(0o000)
+        try:
+            assert os.path.exists(scan_dir)
+            with pytest.raises(PermissionError):
+                with os.scandir(scan_dir):
+                    pass
+            denied_messages = messages()
+            assert any("沒有權限" in m for m in denied_messages)
+            assert not any("資料夾不存在" in m for m in denied_messages)
+            assert any(DSM_PERMISSION_HINT in m for m in denied_messages) is synology
+            assert len(repo.get_mtime_index()) == before
+        finally:
+            scan_dir.chmod(0o700)
+
+        restored_messages = messages()
+        assert not any("沒有權限" in m for m in restored_messages)
+        assert len(repo.get_mtime_index()) == before
+        assert uri in repo.get_mtime_index()
+
+        child = scan_dir / "child"
+        child.mkdir()
+        child.chmod(0o000)
+        try:
+            child_messages = messages()
+            assert any("讀取失敗，跳過刪除偵測" in m for m in child_messages)
+            assert not any("沒有權限" in m for m in child_messages)
+            assert len(repo.get_mtime_index()) == before
+        finally:
+            child.chmod(0o700)
+
+        # A different root error retains the generic warning. This also locks
+        # the reason check instead of merely checking that a path was skipped.
+        def other_error(directory, extensions, min_size_bytes, on_skip=None):
+            on_skip(str(scan_dir), OSError(206, "long path"))
+            return []
+
+        monkeypatch.setattr("web.routers.scanner.fast_scan_directory", other_error)
+        generic_messages = messages()
+        assert any("讀取失敗，跳過刪除偵測" in m for m in generic_messages)
+        assert not any("沒有權限" in m for m in generic_messages)
+        assert len(repo.get_mtime_index()) == before
+
     def test_get_video_success(self, client, tmp_path, monkeypatch):
         """測試取得影片成功（路徑在允許名單內）"""
         # 1. 準備影片檔
@@ -3733,4 +3813,3 @@ class TestGenerateAvlistWishlistReconcile:
         assert len(reconcile_calls) >= 1, (
             "abort 路徑仍應觸發 reconcile_wishlist（已掃到的片是真的已入手）"
         )
-

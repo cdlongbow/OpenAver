@@ -165,6 +165,23 @@ def test_dod4_all_ok_or_unknown_returns_empty(monkeypatch: pytest.MonkeyPatch) -
     assert resp_empty.json() == []
 
 
+@pytest.mark.parametrize("synology", [False, True])
+def test_no_permission_source_included_with_reason(monkeypatch: pytest.MonkeyPatch, synology: bool) -> None:
+    from core.platform_info import DSM_PERMISSION_HINT
+
+    monkeypatch.setattr(sr, "get_snapshot", lambda: {"/denied": "no_permission", "/gone": "unreachable", "/ok": "ok"})
+    monkeypatch.setattr(sr, "schedule_reprobe_if_stale", AsyncMock())
+    monkeypatch.setattr("web.routers.showcase.is_synology", lambda: synology)
+    data = TestClient(app, client=("127.0.0.1", 50000)).get("/api/showcase/source-status").json()
+    denied = next(item for item in data if item["path"] == "/denied")
+    assert denied["status"] == "no_permission"
+    assert denied["reason"] == "no_permission"
+    assert denied["dsm_hint"] == (DSM_PERMISSION_HINT if synology else None)
+    gone = next(item for item in data if item["path"] == "/gone")
+    assert gone["reason"] == "unreachable"
+    assert gone["dsm_hint"] is None
+
+
 def test_dod5_unreachable_sources_display_format(monkeypatch: pytest.MonkeyPatch) -> None:
     """DoD 5: unreachable UNC formats to \\\\<host>, non-UNC to raw path."""
     mock_snapshot = {

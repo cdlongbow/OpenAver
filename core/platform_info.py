@@ -1,6 +1,8 @@
 """core/platform_info.py — 平台環境訊號偵測模組（TASK-159-T3）"""
 import os
 
+DSM_PERMISSION_HINT = "控制台 → 共用資料夾 → 編輯 → 權限 → 系統內部使用者 → openaver-svc 勾可讀寫"
+
 
 def is_synology() -> bool:
     """判斷這台機器是不是從 spk 裝起來的 Synology 版。
