@@ -5,6 +5,7 @@ test_user_tags_api.py — POST/GET /api/user-tags 端點整合測試
 TDD-lite：先從邊界條件 E1–E9 提取 RED 測試 → 實作 GREEN。
 """
 
+import os
 import sqlite3
 import pytest
 from pathlib import Path
@@ -847,3 +848,63 @@ class TestT4ReadonlyUserTags:
         data = resp.json()
         assert data["nfo_updated"] is False
         assert data["readonly_no_output"] is False
+
+
+class TestT10bNfoWriteBlocked:
+    """非唯讀 sidecar 寫入失敗提示，及唯讀來源反向鎖。"""
+
+    @pytest.mark.skipif(os.name != "posix" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+                        reason="chmod 0444 needs POSIX non-root DAC enforcement")
+    def test_nfo_write_blocked_true_when_sidecar_readonly_write_fails(
+        self, client, tmp_db, tmp_path
+    ):
+        from core.database import VideoRepository
+
+        video_path = tmp_path / "T10B-001.mp4"
+        video_path.write_bytes(b"fake-video")
+        nfo_path = video_path.with_suffix(".nfo")
+        nfo_path.write_bytes(_MINIMAL_NFO)
+        nfo_path.chmod(0o444)
+        file_uri = to_file_uri(str(video_path))
+
+        resp = client.post("/api/user-tags", json={"file_path": file_uri, "add": ["T10B"]})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["nfo_write_blocked"] is True
+        assert data["nfo_updated"] is False
+        assert data["readonly_no_output"] is False
+        assert "T10B" in VideoRepository(tmp_db).get_by_path(file_uri).user_tags
+
+    def test_nfo_write_blocked_false_when_sidecar_absent(self, client, tmp_path):
+        video_path = tmp_path / "T10B-002.mp4"
+        video_path.write_bytes(b"fake-video")
+
+        resp = client.post("/api/user-tags", json={
+            "file_path": to_file_uri(str(video_path)), "add": ["T10B"],
+        })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["nfo_updated"] is False
+        assert data["nfo_write_blocked"] is False
+        assert data["readonly_no_output"] is False
+
+    def test_nfo_write_blocked_false_for_readonly_source(
+        self, tmp_db, tmp_path, monkeypatch
+    ):
+        client, _src_dir, _out_dir, file_uri = setup_readonly_user_tags_env(
+            tmp_db, tmp_path, monkeypatch,
+            with_source_nfo=True, with_output_nfo=False,
+        )
+
+        resp = client.post("/api/user-tags", json={"file_path": file_uri, "add": ["T10B"]})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["nfo_write_blocked"] is False
+        assert data["nfo_updated"] is False
+        assert data["readonly_no_output"] is True

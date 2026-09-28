@@ -43,6 +43,7 @@ const { stateLightboxTags: stateLightbox } = await import('../state-lightbox-tag
 
 const PATH = 'file:////tmp/openaver-ro-cdp-t4-test/T4-STUB.mp4';
 const TOAST_KEY = 'showcase.lightbox.tag_nfo_not_written';
+const BLOCKED_KEY = 'showcase.lightbox.tag_nfo_write_blocked';
 
 function mockFetch(payload) {
     const prev = globalThis.fetch;
@@ -147,6 +148,36 @@ test('confirmAddLbTag: 欄位缺省（非唯讀）→ 不顯示 tag_nfo_not_writ
             0,
             `unexpected toast calls: ${JSON.stringify(c.toasts)}`,
         );
+    } finally {
+        mock.restore();
+    }
+});
+
+test('confirmAddLbTag: nfo_write_blocked true → showToast(tag_nfo_write_blocked, info)', async () => {
+    const mock = mockFetch({
+        success: true, user_tags: ['EXISTING', 'TESTTAG'], nfo_updated: false,
+        readonly_no_output: false, nfo_write_blocked: true,
+    });
+    try {
+        const c = makeComponent();
+        await c.confirmAddLbTag();
+        assert.deepEqual(c.toasts, [{ msg: BLOCKED_KEY, kind: 'info' }]);
+        assert.deepEqual(c.currentLightboxVideo.user_tags, ['EXISTING', 'TESTTAG']);
+    } finally {
+        mock.restore();
+    }
+});
+
+test('removeLbUserTag: nfo_write_blocked true → showToast(tag_nfo_write_blocked, info)', async () => {
+    const mock = mockFetch({
+        success: true, user_tags: [], nfo_updated: false,
+        readonly_no_output: false, nfo_write_blocked: true,
+    });
+    try {
+        const c = makeComponent();
+        await c.removeLbUserTag('EXISTING');
+        assert.deepEqual(c.toasts, [{ msg: BLOCKED_KEY, kind: 'info' }]);
+        assert.deepEqual(c.currentLightboxVideo.user_tags, []);
     } finally {
         mock.restore();
     }

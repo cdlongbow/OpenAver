@@ -55,6 +55,9 @@ export function stateLightboxTags() {
                     if (data.readonly_no_output) {
                         this.showToast(window.t('showcase.lightbox.tag_nfo_not_written'), 'info');
                     }
+                    if (data.nfo_write_blocked) {
+                        this.showToast(window.t('showcase.lightbox.tag_nfo_write_blocked'), 'info');
+                    }
                 } else {
                     throw new Error(data.error || 'API failed');
                 }
@@ -91,6 +94,9 @@ export function stateLightboxTags() {
                     _recomputeVideoBadges(this.currentLightboxVideo);
                     if (data.readonly_no_output) {
                         this.showToast(window.t('showcase.lightbox.tag_nfo_not_written'), 'info');
+                    }
+                    if (data.nfo_write_blocked) {
+                        this.showToast(window.t('showcase.lightbox.tag_nfo_write_blocked'), 'info');
                     }
                 } else {
                     throw new Error(data.error || 'API failed');
