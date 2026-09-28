@@ -283,6 +283,7 @@
       "scrape_complete_dup": "批次整理完成：成功 {success}，失敗 {failed}，重複 {duplicate}",
       "no_search_results": "此檔案沒有搜尋結果",
       "scrape_failed": "{filename} 整理失敗",
+      "scrape_failed_reason": "{filename} 整理失敗：{reason}",
       "no_valid_files": "無有效影片檔案（無法識別番號）",
       "load_failed": "載入失敗，請重試",
       "translate_failed": "翻譯失敗，請重試",

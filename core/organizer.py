@@ -27,6 +27,7 @@ from core.scrapers.utils import has_chinese, check_subtitle, strip_subtitle_mark
 from core.focal import device_state, requires_face_detection
 from core.focal.subprocess_runner import run_detection
 from core.logger import get_logger
+from core.platform_info import is_synology, DSM_PERMISSION_HINT
 
 logger = get_logger(__name__)
 
@@ -1079,6 +1080,14 @@ def find_subtitle_files(video_path: str) -> List[str]:
     return results
 
 
+def _permission_error_message() -> str:
+    """`os.makedirs` 因權限被拒時的錯誤訊息；Synology 版附加 DSM 操作指引（CD-159-11）。"""
+    msg = '無法建立資料夾，請確認目標路徑的寫入權限'
+    if is_synology():
+        msg += '（' + DSM_PERMISSION_HINT + '）'
+    return msg
+
+
 def _containment_error(candidate_fs_path: str, root_fs_path: str) -> Optional[str]:
     """
     整理流程的寫入錨點防線（CD-110b-8 抽出的小函式，供 organize_file 呼叫兩次）。
@@ -1339,7 +1348,7 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
             try:
                 os.makedirs(target_dir, exist_ok=True)
             except PermissionError:
-                result['error'] = '無法建立資料夾，請確認目標路徑的寫入權限'
+                result['error'] = _permission_error_message()
                 return result
             result['new_folder'] = target_dir
 

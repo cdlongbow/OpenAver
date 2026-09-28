@@ -568,7 +568,10 @@ export function searchStateBatch() {
                 });
             } else {
                 console.error('[Scrape]', file.filename, result.error);
-                this.showToast(window.t('search.toast.scrape_failed', { filename: file.filename }), 'error');
+                const message = result.error
+                    ? window.t('search.toast.scrape_failed_reason', { filename: file.filename, reason: result.error })
+                    : window.t('search.toast.scrape_failed', { filename: file.filename });
+                this.showToast(message, 'error');
                 file.scrapeStatus = 'failed';
                 // 動畫：失敗 shake
                 this.$nextTick(() => {
