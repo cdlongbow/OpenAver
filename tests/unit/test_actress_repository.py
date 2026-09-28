@@ -1,5 +1,4 @@
 """Tests for Actress dataclass and ActressRepository in core/database.py"""
-import time
 import pytest
 from pathlib import Path
 
@@ -43,16 +42,28 @@ def test_get_by_name_not_found(repo):
 # ---------------------------------------------------------------------------
 
 def test_save_upsert_preserves_created_at(repo):
+    from datetime import datetime
+    from core.database import get_connection
+
     actress = Actress(name="三上悠亞", height="157cm")
     repo.save(actress)
 
     first = repo.get_by_name("三上悠亞")
     assert first is not None
-    created_at_first = first.created_at
-    updated_at_first = first.updated_at
 
-    # 稍等確保 CURRENT_TIMESTAMP 有機會不同
-    time.sleep(1.1)
+    # 直接把 created_at/updated_at 改寫成明確的過去固定值，取代原本的固定 1.1 秒等待：
+    # 第二次 save() 的 updated_at 必為「現在」，保證嚴格大於這個過去值，
+    # 不依賴真實時間流逝或 CURRENT_TIMESTAMP 的秒級精度。
+    old_ts = "2000-01-01 00:00:00"
+    conn = get_connection(repo.db_path)
+    try:
+        conn.execute(
+            "UPDATE actresses SET created_at = ?, updated_at = ? WHERE name = ?",
+            (old_ts, old_ts, "三上悠亞"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
     actress2 = Actress(name="三上悠亞", height="158cm")
     repo.save(actress2)
@@ -60,10 +71,10 @@ def test_save_upsert_preserves_created_at(repo):
     second = repo.get_by_name("三上悠亞")
     assert second is not None
     assert second.height == "158cm"
-    # created_at 不變
-    assert second.created_at == created_at_first
-    # updated_at 應更新（或至少不早於第一次）
-    assert second.updated_at >= updated_at_first
+    # created_at 不變（save() 的 ON CONFLICT 不更新 created_at 欄位，比對寫入後的舊值）
+    assert second.created_at == datetime.fromisoformat(old_ts)
+    # updated_at 應更新，且嚴格大於改寫前寫入的舊值
+    assert second.updated_at > datetime.fromisoformat(old_ts)
 
 
 # ---------------------------------------------------------------------------
@@ -378,20 +389,35 @@ def test_update_fields_only_changes_given_column(repo):
 
 
 def test_update_fields_empty_dict_is_noop(repo):
+    from datetime import datetime
+    from core.database import get_connection
+
     actress = Actress(name="三上悠亞", height="159cm")
     repo.save(actress)
 
     first = repo.get_by_name("三上悠亞")
     assert first is not None
 
-    time.sleep(1.1)
+    # 直接把 updated_at 改寫成明確的過去固定值，取代原本的固定 1.1 秒等待：
+    # 若 update_fields({}) 誤觸發 UPDATE，CURRENT_TIMESTAMP 必為「現在」，
+    # 與這個過去值必有可觀察差異，不依賴真實時間流逝或秒級精度。
+    old_ts = "2000-01-01 00:00:00"
+    conn = get_connection(repo.db_path)
+    try:
+        conn.execute(
+            "UPDATE actresses SET updated_at = ? WHERE name = ?",
+            (old_ts, "三上悠亞"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
     assert repo.update_fields("三上悠亞", {}) is True
 
     second = repo.get_by_name("三上悠亞")
     assert second is not None
     assert second.height == "159cm"
-    assert second.updated_at == first.updated_at
+    assert second.updated_at == datetime.fromisoformat(old_ts)
 
 
 def test_update_fields_rejects_focal_fields(repo):
