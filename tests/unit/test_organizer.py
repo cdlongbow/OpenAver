@@ -1488,9 +1488,10 @@ class TestCropToPosterFocalWiring:
             w, h = img.size
         r_window = _poster_window_ratio(w, h)
         assert r_window is not None
-        # 比例若傳錯、mock 仍回固定焦點，bytes 比對抓不到，所以直接鎖呼叫參數（158-T9 刪除 test_focal_detect_child 真 spawn 對照測試後的承接）。
+        # 比例若傳錯、mock 仍回固定焦點，bytes 比對抓不到，所以直接鎖呼叫參數（158-T9 刪除 test_focal_detect_child 真 spawn 對照測試後的承接），並鎖逾時數值（它是產品端的 5 秒上限，錯了背景偵測不是全放棄就是拖太久）。
         mock_detect.assert_called_once()
         assert mock_detect.call_args.args[:2] == (str(src_path), r_window)
+        assert mock_detect.call_args.kwargs["timeout_s"] == organizer._DETECT_TIMEOUT_S
 
         focal = MOCK_FOCAL_XY
 
