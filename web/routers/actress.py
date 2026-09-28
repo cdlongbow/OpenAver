@@ -440,20 +440,42 @@ def preview_actress(req: PreviewActressRequest):
 # 端點九之三：POST /api/actresses/{name} — 提交審過的女優文字資料
 # ---------------------------------------------------------------------------
 
+def _alias_conflict_detail(repo: ActressRepository, name: str) -> Optional[str]:
+    """CD-157 alias 擋下（身分守衛，submit_actress／upload_actress_photo 共用）。
+
+    若 `name` 是某位「已收藏」女優的別名，回傳擋下用的 400 detail 字串；否則
+    None。判準是 alias 記錄存在 **且** 其 primary_name 目前已收藏
+    （`repo.exists`）——orphan alias group（primary 尚未收藏）不受影響，仍可
+    用 alias 本名建立新收藏（見 test_submit_actress_orphan_alias_group_creates_new_actress）。
+
+    🔴 PR #211 Codex P2-2：呼叫端必須在**觸碰任何 row 之前**（含判斷該 name
+    自己有沒有既有 row）就先跑這條檢查——`name` 自己是否已有一筆 actresses row
+    與「它是不是別人的別名」是兩件獨立的事：舊版把這條檢查塞在「name 自己沒有
+    row」的分支裡，若 name 意外自己也有一筆 row（例如曾被單獨收藏過，之後才
+    被同步成某個 primary 的別名），該分支永遠不會執行，等於直接放行覆寫/新增
+    到這個「別名自己的 row」，繞過「一律擋下並告知正確名字」的身分守衛。
+    """
+    alias_record = AliasRepository().find_by_alias(name)
+    if alias_record and repo.exists(alias_record.primary_name):
+        primary_name = alias_record.primary_name
+        return f"{name} 是 {primary_name} 的別名，請改用「{primary_name}」提交"
+    return None
+
+
 def _save_actress_submission(name: str, fields: dict):
     """Run the submit DB read/write sequence in a worker thread."""
     init_db()
     repo = ActressRepository()
+    alias_detail = _alias_conflict_detail(repo, name)
+    if alias_detail:
+        raise HTTPException(400, detail=alias_detail)
+
     old_actress = repo.get_by_name(name)
     if old_actress is not None:
         if not repo.update_fields(name, fields):
             logger.error("[actress] AI 提交更新失敗 name=%s", name)
             raise HTTPException(500, detail="操作失敗")
     else:
-        alias_record = AliasRepository().find_by_alias(name)
-        if alias_record and repo.exists(alias_record.primary_name):
-            primary_name = alias_record.primary_name
-            raise HTTPException(400, detail=f"{name} 是 {primary_name} 的別名，請改用「{primary_name}」提交")
         repo.save(Actress(name=name, **fields))
 
     actress = repo.get_by_name(name)
@@ -911,8 +933,17 @@ async def _pre_invalidate_focal(repo: ActressRepository, name: str, *, ctx: str,
 async def _persist_photo_source(repo: ActressRepository, actress, source: str, *, ctx: str, err_msg: str):
     """CD-7：photo_source 持久化（換主圖的三個入口共用）。
 
-    只回 response 不持久化 → 重載後顯示舊來源。`_ACTRESS_FOCAL_PRESERVE` 保住
-    focal 五欄不被 save() 覆寫，故這裡 save() 不會踩掉 clear_focal 剛寫的值。
+    只回 response 不持久化 → 重載後顯示舊來源。
+
+    🔴 單欄寫入（PR #211 Codex P2-1）：`actress` 是呼叫端在本次 request 較早
+    時間點讀出的快照，之後經過至少一次 `await`（clear_focal / 下載 / 裁切 /
+    寫檔）才走到這裡——若同一段時間內有另一個 writer 改了這筆女優的其他文字
+    欄位（例如另一個 request 同時提交 height/birth），原本 `actress.photo_source
+    = source` 後整份 `repo.save(actress)` 會把那些欄位覆寫回呼叫端手上的舊快照
+    值，等於憑空吃掉別人剛寫的東西。改用 `repo.update_fields` 只動
+    `photo_source` 這一欄，其餘欄位不論是誰、什麼時候寫的都不會被踩。
+    `photo_source` 不在 `_ACTRESS_FOCAL_PRESERVE` 白名單內，`update_fields` 可以
+    正常寫它。
 
     **為何要 try/except**（Codex P2）：DB 寫入失敗若逸出 async 路由，Starlette 的
     預設 handler 會回**純文字 "Internal Server Error"**（`web/app.py` 只註冊了
@@ -926,9 +957,16 @@ async def _persist_photo_source(repo: ActressRepository, actress, source: str, *
     """
     actress.photo_source = source
     try:
-        await asyncio.to_thread(repo.save, actress)
+        updated = await asyncio.to_thread(
+            repo.update_fields, actress.name, {"photo_source": source})
     except Exception:
         logger.exception("[actress] %s photo_source 持久化失敗 name=%s", ctx, actress.name)
+        return JSONResponse(status_code=500, content={"error": err_msg})
+    if not updated:
+        # 與同檔案 clear_focal 呼叫端（:906）同一種防禦式失敗處理：name 在驗證與
+        # 寫入之間被刪除的 race——理論上極窄，但既然 update_fields 回了 bool 就不
+        # 該吞掉，行為對齊「回 False 視為失敗」而非靜默假裝成功。
+        logger.warning("[actress] %s photo_source update_fields 回 False name=%s", ctx, actress.name)
         return JSONResponse(status_code=500, content={"error": err_msg})
     return None
 
@@ -1231,8 +1269,13 @@ async def upload_actress_photo(name: str, file: UploadFile = _UPLOAD_FILE_PARAM)
     if err_status is not None:
         return JSONResponse(status_code=err_status, content={"error": err_msg})
 
-    # 4. 女優存在
+    # 4. 女優存在 + 別名擋下（CD-157 身分守衛，同 submit_actress 的判準與訊息，
+    # PR #211 Codex P2-2）——必須在任何寫入之前執行，且不論 name 自己有沒有
+    # 一筆既有 row 都要查，理由見 _alias_conflict_detail 的 docstring。
     repo, actress = await asyncio.to_thread(_load_actress, name)
+    alias_detail = await asyncio.to_thread(_alias_conflict_detail, repo, name)
+    if alias_detail:
+        raise HTTPException(400, detail=alias_detail)
     if actress is None:
         return JSONResponse(status_code=404, content={"error": _UPLOAD_ERR_NOT_FOUND})
 

@@ -175,6 +175,27 @@ def test_submit_actress_alias_identity_name_rejected_with_correct_name(client, d
     assert repo.get_by_name(primary).name_en == "Before"
 
 
+def test_submit_actress_alias_with_own_orphan_row_still_rejected_with_correct_name(client, db_path):
+    """157-post-merge-2：alias 自己意外也有一筆既有 row（例如曾被單獨收藏過，之後
+    才被同步成某個已收藏 primary 的別名）時，舊版的 alias 檢查只長在
+    `_save_actress_submission` 的「name 自己沒有 row」分支裡——alias 自己有 row
+    會直接跳過那個分支，放行覆寫這筆孤兒 row，繞過「一律擋下並告知正確名字」的
+    身分守衛。與既有的 ..._alias_identity_name_rejected_with_correct_name
+    (alias 沒有自己的 row) 互補，涵蓋 alias 自己也有 row 的情況。"""
+    primary, alias = "三上悠亜", "鬼頭桃菜"
+    repo = ActressRepository(db_path)
+    repo.save(Actress(name=primary, name_en="PrimaryBefore"))
+    repo.save(Actress(name=alias, name_en="AliasOwnRowBefore"))
+    AliasRepository(db_path).sync_from_favorite(primary, [alias])
+
+    response = client.post(f"/api/actresses/{alias}", json={"name_en": "Wrong"})
+
+    assert response.status_code == 400
+    assert primary in response.json()["detail"]
+    assert repo.get_by_name(alias).name_en == "AliasOwnRowBefore"
+    assert repo.get_by_name(primary).name_en == "PrimaryBefore"
+
+
 def test_submit_actress_orphan_alias_group_creates_new_actress(client, db_path):
     alias = "孤兒別名"
     AliasRepository(db_path).sync_from_favorite("未收藏本名", [alias])
@@ -358,29 +379,31 @@ def test_submit_actress_local_crop_updates_photo_and_focal(client, db_path, tmp_
 
 
 def test_submit_actress_photo_persist_failure_keeps_created_row_and_text(client, db_path, tmp_path):
+    """photo_source 持久化階段（_persist_photo_source）失敗 → 文字欄位與新建立的
+    收藏不還原（已寫入成功），僅照片檔案本身與新建立的收藏可能狀態不一致。
+
+    🔴 157-post-merge-1：`_persist_photo_source` 已從整份 `repo.save(actress)`
+    改成單欄 `repo.update_fields(actress.name, {...})`（PR #211 Codex P2-1，
+    避免踩掉並發寫入的其他欄位），故這裡改 patch `update_fields` 在照片持久化
+    這一步失敗——`_save_actress_submission` 建立新 row 時仍呼叫的是 `save()`，
+    不受影響。
+    """
     photos = tmp_path / "photos"
     photos.mkdir()
-    original_save = ActressRepository.save
-    saves = 0
 
-    def save_then_fail(repo, actress):
-        nonlocal saves
-        saves += 1
-        if saves == 2:
-            raise OSError("sqlite write failed")
-        return original_save(repo, actress)
+    def update_fields_fail(repo, name, fields):
+        raise OSError("sqlite write failed")
 
     def download(name, url, source):
         (photos / f"{sanitize_filename(name)}.jpg").write_bytes(b"new photo")
         return True
 
-    with patch.object(ActressRepository, "save", autospec=True, side_effect=save_then_fail), \
+    with patch.object(ActressRepository, "update_fields", autospec=True, side_effect=update_fields_fail), \
          patch("web.routers.actress.download_actress_photo", side_effect=download), \
          patch("core.actress_photo.GFRIENDS_DIR", photos):
         response = client.post(URL, json={"nickname": "新名", "photo": {
             "source": "graphis", "url": "https://www.graphis.ne.jp/new.jpg"}})
     assert response.status_code == 500
-    assert saves == 2
     stored = ActressRepository(db_path).get_by_name(NAME)
     assert (stored.nickname, stored.primary_text_source) == ("新名", "ai")
     assert (photos / f"{sanitize_filename(NAME)}.jpg").read_bytes() == b"new photo"

@@ -1543,7 +1543,9 @@ _TOOLS: list[dict] = [
             "上傳，不要嘗試把該網址交給 submit_actress/set_actress_photo 的 url "
             "欄位（會被白名單拒絕）。上限：檔案 10MB、像素 50M；格式需為 "
             "JPEG/PNG/WEBP/GIF 之一。這位女優必須已經收藏（先呼叫 submit_actress "
-            "或既有收藏功能），未收藏會回 404，本端點不會替你自動建立收藏。"
+            "或既有收藏功能），未收藏會回 404，本端點不會替你自動建立收藏；"
+            "若這個名字是某位已收藏女優的別名，一律回 400 並告知正確名字，不會"
+            "靜默轉向到別人身上。"
         ),
         "method": "POST",
         "path": "/api/actresses/{name}/photo/upload",

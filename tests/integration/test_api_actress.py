@@ -2132,15 +2132,19 @@ class TestUploadActressPhoto:
         assert data["crop_mode"] == "auto"
         assert "?v=" in data["photo_url"]
 
-    # ---- 🔴 Codex P2：repo.save 失敗必須回固定中文，不可逸出成純文字 500 ----
+    # ---- 🔴 Codex P2：repo.update_fields 失敗必須回固定中文，不可逸出成純文字 500 ----
 
     def test_upload_photo_save_failure_returns_fixed_chinese_500(self, client, tmp_path):
-        """repo.save 拋例外若逸出 async 路由 → Starlette 預設 handler 回**純文字**
-        "Internal Server Error"（web/app.py 只註冊 RequestValidationError、無
-        catch-all）→ 不是 JSON、更不是 AGENTS.md:33 要求的固定中文。
+        """repo.update_fields 拋例外若逸出 async 路由 → Starlette 預設 handler 回
+        **純文字** "Internal Server Error"（web/app.py 只註冊 RequestValidationError、
+        無 catch-all）→ 不是 JSON、更不是 AGENTS.md:33 要求的固定中文。
 
         T4 的 set_actress_focal 本來就有這個 guard，T2/T3 漏了——同一 branch 內部
         的不對稱。mutation：拿掉 _persist_photo_source 的 try/except → 必紅。
+
+        🔴 157-post-merge-1：_persist_photo_source 已從整份 `repo.save(actress)`
+        改成單欄 `repo.update_fields(actress.name, {...})`（避免踩掉並發寫入的
+        其他欄位），故這裡改 patch `update_fields.side_effect`。
         """
         self._save_actress(client)
         gfriends = tmp_path / "gfriends"
@@ -2150,7 +2154,7 @@ class TestUploadActressPhoto:
             repo_cls.return_value.get_by_name.return_value = MagicMock(
                 name=ACTRESS_NAME, auto_focal="", crop_mode="auto", photo_source="gfriends")
             repo_cls.return_value.clear_focal.return_value = True
-            repo_cls.return_value.save.side_effect = RuntimeError("disk full")
+            repo_cls.return_value.update_fields.side_effect = RuntimeError("disk full")
             resp = client.post(
                 f"/api/actresses/{ACTRESS_NAME}/photo/upload",
                 files={"file": ("photo.jpg", self._make_jpeg_bytes(), "image/jpeg")},
@@ -2249,6 +2253,37 @@ class TestUploadActressPhoto:
         from core.database import ActressRepository
         actress = ActressRepository().get_by_name(ACTRESS_NAME)
         assert actress.photo_source == "upload"
+
+    # ---- 🔴 157-post-merge-2：alias 身分守衛必須擋在任何寫入之前 ----
+
+    def test_upload_photo_alias_of_favorited_primary_rejected_even_with_own_row(self, client, tmp_db):
+        """alias 自己意外也有一筆既有 row（例如曾被單獨收藏過，之後才被同步成某個
+        已收藏 primary 的別名）時，舊版 `upload_actress_photo` 只用字面 name 查
+        `_load_actress` 找得到那筆孤兒 row 就直接放行上傳，完全沒有 alias 檢查——
+        繞過 submit_actress 那套「一律擋下並告知正確名字」的身分守衛。
+
+        mutation：拿掉 upload_actress_photo 裡的 `_alias_conflict_detail` 呼叫 →
+        本測試必紅（200 而非 400，且 alias 的孤兒 row 被覆寫）。
+        """
+        from core.database import Actress, ActressRepository, AliasRepository
+
+        primary = ACTRESS_NAME
+        alias = "鬼頭桃菜"
+        self._save_actress(client)  # 收藏 primary（初始 photo_source='gfriends'）
+        repo = ActressRepository(tmp_db)
+        repo.save(Actress(name=alias, photo_source="wiki"))
+        AliasRepository(tmp_db).sync_from_favorite(primary, [alias])
+
+        resp = client.post(
+            f"/api/actresses/{alias}/photo/upload",
+            files={"file": ("photo.jpg", self._make_jpeg_bytes(), "image/jpeg")},
+        )
+
+        assert resp.status_code == 400
+        assert primary in resp.json()["detail"]
+        # 孤兒 row 與 primary row 都必須原封不動——沒有任何寫入發生
+        assert repo.get_by_name(alias).photo_source == "wiki"
+        assert repo.get_by_name(primary).photo_source == "gfriends"
 
     def test_upload_photo_serves_new_image_when_stale_sibling_survives(self, client, tmp_path):
         """🔴 PR#108 Codex 三審 P2（端對端）：清舊檔失敗留下舊 .jpg 時，
@@ -2981,6 +3016,47 @@ class TestWriteActressPhoto:
 
         # 例外後不留 temp 殘檔
         assert list(gfriends.glob("tmp*")) == []
+
+
+# ---------------------------------------------------------------------------
+# 157-post-merge-1: _persist_photo_source 改單欄寫入，不可覆蓋並發寫入的其他欄位
+# ---------------------------------------------------------------------------
+
+class TestPersistPhotoSourceConcurrentWrite:
+    """`_persist_photo_source` 的 `actress` 參數是呼叫端在 request 較早時間點讀出
+    的快照，之後經過至少一次 `await`（clear_focal / 下載 / 裁切 / 寫檔）才走到這
+    裡。若同一段時間內有另一個 writer 改了這筆女優的其他文字欄位，舊版
+    `actress.photo_source = source` 後整份 `repo.save(actress)` 會把那些欄位覆寫
+    回呼叫端手上的舊快照值，等於憑空吃掉別人剛寫的東西。
+
+    mutation：把 `_persist_photo_source` 改回 `repo.save(actress)` → 本測試必紅
+    （height 被踩回舊快照的 '158cm'，而不是併發寫入的 '170cm'）。
+    """
+
+    def test_persist_photo_source_does_not_revert_concurrent_field_write(self, tmp_db, monkeypatch):
+        import asyncio
+        from core.database import Actress, ActressRepository
+        from web.routers.actress import _persist_photo_source
+
+        monkeypatch.setattr("core.database.connection.get_db_path", lambda: tmp_db)
+        repo = ActressRepository(tmp_db)
+        repo.save(Actress(name=ACTRESS_NAME, height="158cm", photo_source="wiki"))
+
+        # 呼叫端在 request 較早時間點讀出的快照（模擬 _load_actress 讀到的舊版本）
+        stale_actress = repo.get_by_name(ACTRESS_NAME)
+
+        # 模擬另一個 writer 在這之後、_persist_photo_source 真正執行之前，
+        # 改了與照片無關的文字欄位
+        assert repo.update_fields(ACTRESS_NAME, {"height": "170cm"})
+
+        err = asyncio.run(_persist_photo_source(
+            repo, stale_actress, "graphis", ctx="test", err_msg="持久化失敗"))
+
+        assert err is None
+        stored = repo.get_by_name(ACTRESS_NAME)
+        assert stored.photo_source == "graphis"
+        assert stored.height == "170cm", (
+            "併發寫入的 height 被 _persist_photo_source 用舊快照覆蓋回去了")
 
 
 # ---------------------------------------------------------------------------
