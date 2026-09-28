@@ -33,11 +33,19 @@ def shares():
                 pass
     return out
 
-def has_existing_data(path=LAYOUT_JSON_PATH):
-    try:
-        return os.path.exists(path)
-    except Exception:
-        return False
+def has_existing_data(candidates=None):
+    """var 底下的 symlink 只在安裝完成後才建立，重裝時精靈跑在安裝之前讀不到，退回檢查真實落點 @appdata。"""
+    if candidates is None:
+        candidates = [LAYOUT_JSON_PATH] + [
+            "/volume%d/@appdata/OpenAver/data/.layout.json" % n for n in range(1, 9)
+        ]
+    for path in candidates:
+        try:
+            if os.path.exists(path):
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def build_items(pairs, existing_data):

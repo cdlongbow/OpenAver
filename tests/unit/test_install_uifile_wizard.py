@@ -63,3 +63,29 @@ def test_has_existing_data_permission_error_falls_back_to_first_install(monkeypa
 
     monkeypatch.setattr(module.os.path, "exists", deny)
     assert module.has_existing_data() is False
+
+
+def test_has_existing_data_var_path_true(tmp_path):
+    module = _load_module()
+    var_path = tmp_path / "var_data" / ".layout.json"
+    var_path.parent.mkdir(parents=True)
+    var_path.write_text("{}", encoding="utf-8")
+    appdata_path = tmp_path / "volume1" / "@appdata" / "OpenAver" / "data" / ".layout.json"
+    assert module.has_existing_data(candidates=[str(var_path), str(appdata_path)]) is True
+
+
+def test_has_existing_data_appdata_fallback_true(tmp_path):
+    module = _load_module()
+    var_path = tmp_path / "var_data" / ".layout.json"
+    appdata_path = tmp_path / "volume1" / "@appdata" / "OpenAver" / "data" / ".layout.json"
+    appdata_path.parent.mkdir(parents=True)
+    appdata_path.write_text("{}", encoding="utf-8")
+    assert module.has_existing_data(candidates=[str(var_path), str(appdata_path)]) is True
+
+
+def test_has_existing_data_neither_path_false(tmp_path):
+    module = _load_module()
+    var_path = tmp_path / "var_data" / ".layout.json"
+    appdata_path = tmp_path / "volume1" / "@appdata" / "OpenAver" / "data" / ".layout.json"
+    assert module.has_existing_data(candidates=[str(var_path), str(appdata_path)]) is False
+
