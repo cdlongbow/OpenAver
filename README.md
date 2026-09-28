@@ -103,6 +103,8 @@ irm https://raw.githubusercontent.com/slive777/OpenAver/main/install.ps1 | iex
 
 > 🐧 **Linux**：無官方安裝程式，可自架區網伺服器用瀏覽器操作，步驟見 [`docs/linux-server.md`](docs/linux-server.md)。
 
+> 🗄️ **Synology NAS**：手動安裝 `.spk`（beta），步驟見 [`docs/synology.md`](docs/synology.md)。
+
 ---
 
 ## 四個頁面
