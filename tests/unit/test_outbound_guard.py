@@ -158,12 +158,10 @@ def test_inline_violation_fails_immediately(pytester, monkeypatch):
     wrapper 必須在真正呼叫原生 `connect` 之前就拋出，讓該測試 FAILED。
 
     mutation 標的：把 `tests/_outbound_guard.py::evaluate_connect` 的
-    loopback 判斷那行改成恆 `True`——這支注入測試會變成 passed（因為
-    `_guarded_connect` 判斷放行、呼叫真的 `original_connect`，對
-    192.0.2.1:80 的連線會卡在系統層 timeout 或立刻 ECONNREFUSED，但那是連線
-    失敗不是防線失敗，測試不會再出現 `outbound_guard` 字樣），
-    `test_probe_inline_tcp_connect_to_non_loopback_fails` 因此不再 FAILED，
-    本測試的 `assert_outcomes(failed=1)` 隨之紅。
+    loopback 判斷那行改成恆 `True`——若放行呼叫到真的 `original_connect`，
+    內層 probe 設了 2 秒逾時，mutation 下改走真的 connect（2 秒逾時）：
+    連不上 → 內層仍 failed 但訊息不含 outbound_guard，第二條斷言紅；萬一該位址
+    被路由且接受連線 → 內層 passed，assert_outcomes(failed=1) 紅。
     """
     _set_subsession_env(monkeypatch)
     _install_live_conftest(pytester)
@@ -172,6 +170,7 @@ def test_inline_violation_fails_immediately(pytester, monkeypatch):
 
         def test_probe_inline_tcp_connect_to_non_loopback_fails():
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(2)
             s.connect(("192.0.2.1", 80))
     """))
 
@@ -272,6 +271,7 @@ def test_background_thread_violation_caught_by_teardown(pytester, monkeypatch):
         def test_probe_background_thread_violation_unnoticed():
             def _worker():
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(2)
                 s.connect(("192.0.2.1", 80))
 
             t = threading.Thread(target=_worker)
@@ -292,9 +292,10 @@ def test_background_thread_violation_caught_by_teardown(pytester, monkeypatch):
 
 def test_smoke_marker_not_patched(pytester, monkeypatch):
     """回歸鎖：`smoke` marker 的測試完全不受防線影響，即使直接跑該檔（不經
-    `-m "not smoke"` 排除）也要連得到外站等級的邏輯路徑——這裡不真的連外，
-    只驗證 fixture 對掛 `smoke` marker 的測試完全不 patch（真連得到外站已由
-    手動驗證涵蓋，不在本支機械測試範圍內）。
+    `-m "not smoke"` 排除）也要放行——這支會真的嘗試一次連線到 RFC 5737
+    文件保留位址（192.0.2.1:1），1 秒逾時；無路由或丟包時都在 1 秒內以 OSError
+    結束（錯誤種類依網路而異），兩種都是 OSError 且不含 outbound_guard，藉此
+    證明防線沒介入（真連得到外站已由手動驗證涵蓋，不在本支機械測試範圍內）。
     """
     _set_subsession_env(monkeypatch)
     _install_live_conftest(pytester)
@@ -305,10 +306,10 @@ def test_smoke_marker_not_patched(pytester, monkeypatch):
 
         @pytest.mark.smoke
         def test_probe_smoke_marker_connect_not_intercepted():
-            # 防線不 patch 時，這裡呼叫到的是原生 connect——對一個沒有人在
-            # 監聽的本機高位埠嘗試連線會得到 ConnectionRefusedError（或
-            # 平台等價的錯誤），而不是 OutboundConnectionViolation。這足以
-            # 證明 wrapper 沒有介入這次呼叫。
+            # 防線不 patch 時，這裡呼叫到的是原生 connect——真的嘗試一次連線到
+            # RFC 5737 文件保留位址（192.0.2.1:1），1 秒逾時；無路由或丟包時都在
+            # 1 秒內以 OSError 結束（錯誤種類依網路而異），兩種都是 OSError 且不含
+            # outbound_guard，藉此證明 wrapper 沒有介入這次呼叫。
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(1)
             try:
@@ -326,7 +327,12 @@ def test_smoke_marker_not_patched(pytester, monkeypatch):
 
 def test_unmarked_test_under_smoke_dir_not_patched(pytester, monkeypatch):
     """回歸鎖：放在 `smoke/` 目錄底下、但**沒標** `smoke` marker 的測試也不受防線影響
-    （漏標 marker 的手動 smoke 測試不該假紅）。"""
+    （漏標 marker 的手動 smoke 測試不該假紅）。
+
+    這支會真的嘗試一次連線到 RFC 5737 文件保留位址（192.0.2.1:1），1 秒逾時；
+    無路由或丟包時都在 1 秒內以 OSError 結束（錯誤種類依網路而異），兩種都是
+    OSError 且不含 outbound_guard，藉此證明防線沒介入。
+    """
     _set_subsession_env(monkeypatch)
     _install_live_conftest(pytester)
     pytester.mkdir("smoke")
