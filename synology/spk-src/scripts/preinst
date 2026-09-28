@@ -1,0 +1,7 @@
+#!/bin/bash
+# 架構閘（findings-145 §K15）：九台 armv7 機種裝得起來但服務起不來 ⇒ 在這裡擋。
+# 這裡的訊息只進 /var/log/packages/<pkg>.log；使用者看得到的說明在精靈頁。
+case "$(uname -m)" in
+  aarch64|x86_64) exit 0 ;;
+  *) echo "OpenAver 需要 64 位元 CPU（aarch64 / x86_64），這台是 $(uname -m)" >&2; exit 1 ;;
+esac

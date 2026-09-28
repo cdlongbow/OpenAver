@@ -97,3 +97,5 @@ coverage.xml
 # 127b-T4 已逐筆清掉、T5 的 conftest 守衛（G1/G2）擋住復發，這兩行留著當最後一道網。
 <MagicMock*
 <Mock*
+synology/cache/
+synology/out/

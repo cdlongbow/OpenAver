@@ -1,0 +1,48 @@
+#!/bin/bash
+PKG="${SYNOPKG_PKGNAME:-OpenAver}"
+DEST="${SYNOPKG_PKGDEST:-/var/packages/$PKG/target}"
+APP="$DEST/app"
+PY="$DEST/python-$(uname -m)/bin/python3"    # 胖包：用 uname -m 挑直譯器
+VAR="/var/packages/$PKG/var"                 # @appdata：升級／卸載都保留（findings-145 §I5-a）
+PID="$VAR/openaver.pid"
+LOG="$VAR/openaver.log"
+PORT=8765
+
+export HOME="$VAR"                           # package user 沒有家目錄（findings-145 §7 必修 #1）
+export OPENAVER_DATA_DIR="$VAR/data"         # 153：資料根不住在會被升級清掉的 app/
+export PYTHONDONTWRITEBYTECODE=1
+
+start_daemon() {
+    mkdir -p "$VAR"
+    if [ ! -x "$PY" ]; then
+        echo "[start] 這台機器的架構是 $(uname -m)，套件裡沒有對應的直譯器（找不到 $PY）" >> "$LOG"
+        exit 1
+    fi
+    cd "$APP" || exit 1
+    "$PY" -m uvicorn web.app:app --host 0.0.0.0 --port "$PORT" --log-level info \
+        >> "$LOG" 2>&1 &
+    echo $! > "$PID"
+}
+
+stop_daemon() {
+    if [ -f "$PID" ]; then
+        kill "$(cat "$PID")" 2>/dev/null
+        for _ in $(seq 1 20); do
+            kill -0 "$(cat "$PID")" 2>/dev/null || break
+            sleep 1
+        done
+        rm -f "$PID"
+    fi
+}
+
+daemon_status() {
+    [ -f "$PID" ] && kill -0 "$(cat "$PID")" 2>/dev/null
+}
+
+case "$1" in
+    start)   daemon_status && exit 0; start_daemon; exit 0 ;;
+    stop)    stop_daemon; exit 0 ;;
+    status)  daemon_status && exit 0 || exit 3 ;;
+    log)     echo "$LOG"; exit 0 ;;
+    *)       exit 1 ;;
+esac
