@@ -320,18 +320,25 @@ def test_submit_actress_invalid_photo_rejects_before_any_write(client, db_path, 
         "155cm", "wiki", "0.2000,0.3000")
 
 
-def test_submit_actress_download_failure_rolls_back_update_invariant_b(client, db_path):
+def test_submit_actress_download_failure_keeps_text_invariant_b(client, db_path):
+    """PR #211 第三輪 v3（owner 拍板保守補償）：download_failed 發生在下載嘗試
+    之後——不在白名單的五個「確定尚未觸碰任何照片檔」的 return 點內，故不再
+    補償回滾文字。文字欄位（及 photo_source，因為還沒走到持久化那步）維持
+    提交時的新值，500 回固定中文。"""
     repo = ActressRepository(db_path)
     repo.save(Actress(name=NAME, height="155cm", nickname="原名", photo_source="wiki"))
     with patch("web.routers.actress.download_actress_photo", return_value=False):
         response = client.post(URL, json={"height": "160cm", "nickname": "新名", "photo": {
             "source": "graphis", "url": "https://www.graphis.ne.jp/new.jpg"}})
     assert response.status_code == 500
+    assert response.json() == {"error": "下載照片失敗，請稍後再試"}
     stored = ActressRepository(db_path).get_by_name(NAME)
-    assert (stored.height, stored.nickname, stored.photo_source) == ("155cm", "原名", "wiki")
+    assert (stored.height, stored.nickname, stored.photo_source) == ("160cm", "新名", "wiki")
 
 
-def test_submit_actress_download_failure_removes_created_row_invariant_b(client, db_path, tmp_path):
+def test_submit_actress_download_failure_keeps_created_row_invariant_b(client, db_path, tmp_path):
+    """同上：新建立的收藏不再因 download_failed 被刪除；照片檔案本身因下載
+    失敗仍未寫入（download_actress_photo 回 False 代表沒有 bytes 落地）。"""
     photos = tmp_path / "photos"
     photos.mkdir()
     with patch("web.routers.actress.download_actress_photo", return_value=False), \
@@ -339,11 +346,16 @@ def test_submit_actress_download_failure_removes_created_row_invariant_b(client,
         response = client.post(URL, json={"nickname": "新名", "photo": {
             "source": "graphis", "url": "https://www.graphis.ne.jp/new.jpg"}})
     assert response.status_code == 500
-    assert ActressRepository(db_path).exists(NAME) is False
+    stored = ActressRepository(db_path).get_by_name(NAME)
+    assert stored is not None
+    assert stored.nickname == "新名"
     assert list(photos.iterdir()) == []
 
 
-def test_submit_actress_local_crop_write_failure_rolls_back_update(client, db_path, tmp_path):
+def test_submit_actress_local_crop_write_failure_keeps_text(client, db_path, tmp_path):
+    """PR #211 第三輪 v3：local_crop 寫檔失敗（`_write_actress_photo` 拋例外）發生在
+    crop 成功、clear_focal 成功之後——不在白名單的五個 pre-write return 點內，
+    故不再補償回滾文字，維持既有『照片已經動過、狀態不明』一律不還原的保守語義。"""
     repo = ActressRepository(db_path)
     repo.save(Actress(name=NAME, height="155cm", photo_source="wiki"))
     video_path = tmp_path / "video.mp4"
@@ -355,8 +367,9 @@ def test_submit_actress_local_crop_write_failure_rolls_back_update(client, db_pa
         response = client.post(URL, json={"height": "160cm", "photo": {
             "source": "local_crop", "video_path": to_file_uri(str(video_path))}})
     assert response.status_code == 500
+    assert response.json() == {"error": "設定照片失敗，請稍後再試"}
     stored = repo.get_by_name(NAME)
-    assert (stored.height, stored.photo_source) == ("155cm", "wiki")
+    assert (stored.height, stored.photo_source) == ("160cm", "wiki")
 
 
 def test_submit_actress_local_crop_updates_photo_and_focal(client, db_path, tmp_path):
@@ -425,6 +438,119 @@ def test_submit_actress_download_failure_body_is_fixed_chinese_not_code(client, 
     body = response.json()
     assert body.get("error") != "download_failed"
     assert body == {"error": "下載照片失敗，請稍後再試"}
+
+
+def test_submit_actress_video_or_cover_not_found_rolls_back_text(client, db_path):
+    """PR #211 第三輪 v3：找不到對應的影片或封面（video_or_cover_not_found）是
+    白名單五種 pre-write 失敗之一——確定發生在寫入照片檔案之前，文字欄位與
+    photo_source 皆會回滾（與 download_failed／local_crop 寫檔失敗這類『狀態
+    不明』的失敗相反）。"""
+    repo = ActressRepository(db_path)
+    repo.save(Actress(name=NAME, height="155cm", nickname="原名", photo_source="wiki"))
+    response = client.post(URL, json={"height": "160cm", "nickname": "新名", "photo": {
+        "source": "local_crop", "video_path": to_file_uri("/nonexistent/video.mp4")}})
+    assert response.status_code == 404
+    assert response.json() == {"error": "找不到對應的影片或封面"}
+    stored = repo.get_by_name(NAME)
+    assert (stored.height, stored.nickname, stored.photo_source) == ("155cm", "原名", "wiki")
+
+
+def test_submit_actress_crop_failed_keeps_text(client, db_path, tmp_path):
+    """PR #211 delta review：crop_failed（`crop_video_cover` 回 None）發生在
+    crop 嘗試之後——不在五個白名單 pre-write return 點內（owner 保守語義刻意
+    排除，見 `_apply_photo_change` docstring：與 crop_failed 早於任何寫入無
+    關，就是不給它補償），故文字欄位維持提交時的新值，不回滾，500 回固定
+    中文（非 snake_case `crop_failed`）。"""
+    repo = ActressRepository(db_path)
+    repo.save(Actress(name=NAME, height="155cm", photo_source="wiki"))
+    video_path = tmp_path / "video.mp4"
+    cover_path = tmp_path / "cover.jpg"
+    VideoRepository(db_path).upsert(Video(path=to_file_uri(str(video_path)), title="測試",
+                                         actresses=[NAME], cover_path=to_file_uri(str(cover_path))))
+    with patch("web.routers.actress.crop_video_cover", return_value=None):
+        response = client.post(URL, json={"height": "160cm", "photo": {
+            "source": "local_crop", "video_path": to_file_uri(str(video_path))}})
+    assert response.status_code == 500
+    assert response.json() == {"error": "裁切照片失敗，請稍後再試"}
+    stored = repo.get_by_name(NAME)
+    assert (stored.height, stored.photo_source) == ("160cm", "wiki")
+
+
+def test_submit_actress_early_stage_unexpected_exception_returns_fixed_chinese_500(client, db_path):
+    """PR #211 delta review P3：name 正規化／`_validate_actress_submit_fields`／
+    `SetActressPhotoRequest` 驗證／欄位正規化都發生在 `_save_actress_submission`
+    之前，片庫**零寫入**——非預期例外（不是下面既有 raise 的 HTTPException）
+    必須被外層 guard 接住，回固定中文 JSON 500，不需要補償（本來就還沒寫過
+    任何東西）。"""
+    with patch("web.routers.actress._validate_actress_submit_fields",
+               side_effect=RuntimeError("boom - secret detail")):
+        response = client.post(URL, json={"nickname": "新名"})
+    assert response.status_code == 500
+    body = response.json()
+    assert body == {"detail": "操作失敗"}
+    assert "boom" not in str(body) and "RuntimeError" not in str(body)
+    assert ActressRepository(db_path).get_by_name(NAME) is None
+
+
+def test_submit_actress_photo_step_unexpected_exception_keeps_text(client, db_path):
+    """PR #211 第三輪 v3：`_apply_photo_change` 內部非預期例外（不在五個白名單
+    pre-write return 點內，例如 download_actress_photo 本身拋例外而非回傳
+    False）一律轉既有固定中文 500，rollback_safe 為 False（狀態不明，不補償）
+    ——文字欄位維持提交時的新值，不回滾。（不可用 validate_photo_url 觸發：
+    `_validate_actress_submit_fields` 在進入 `_save_actress_submission`／
+    `_apply_photo_change` 之前就已經呼叫過同一個函式做欄位驗證，patch 全域
+    會連帶炸掉那個無關的早期驗證。）
+    """
+    repo = ActressRepository(db_path)
+    repo.save(Actress(name=NAME, height="155cm", nickname="原名", photo_source="wiki"))
+    with patch("web.routers.actress.download_actress_photo", side_effect=RuntimeError("boom")):
+        response = client.post(URL, json={"height": "160cm", "nickname": "新名", "photo": {
+            "source": "graphis", "url": "https://www.graphis.ne.jp/new.jpg"}})
+    assert response.status_code == 500
+    body = response.json()
+    assert body == {"error": "設定照片失敗，請稍後再試"}
+    assert "RuntimeError" not in str(body) and "boom" not in str(body)
+    stored = repo.get_by_name(NAME)
+    assert (stored.height, stored.nickname, stored.photo_source) == ("160cm", "新名", "wiki")
+
+
+def test_submit_actress_post_photo_reread_exception_returns_fixed_chinese_no_rollback(client, db_path, tmp_path):
+    """PR #211 第三輪 v3：照片已安裝成功之後，伺服器重新讀取最新資料準備組裝
+    回應這一步（`repo.get_by_name` 第三次呼叫）若失敗，不做補償（安裝本身已
+    成功），回固定中文 JSON 500 `{"detail": "操作失敗"}`——與其餘照片家族
+    `{"error": ...}` 不同 body 形狀，因為這不是照片錯誤，是既有 submit_actress
+    外層例外防護的既有 body 形狀。"""
+    repo = ActressRepository(db_path)
+    repo.save(Actress(name=NAME, height="155cm", nickname="原名", photo_source="wiki"))
+    photos = tmp_path / "photos"
+    photos.mkdir()
+
+    def download(name, url, source):
+        (photos / f"{sanitize_filename(name)}.jpg").write_bytes(b"new photo")
+        return True
+
+    real_get_by_name = ActressRepository.get_by_name
+    call_count = {"n": 0}
+
+    def get_by_name_side_effect(self, name_arg):
+        call_count["n"] += 1
+        if call_count["n"] == 3:
+            raise sqlite3.OperationalError("database is locked")
+        return real_get_by_name(self, name_arg)
+
+    with patch("web.routers.actress.download_actress_photo", side_effect=download), \
+         patch("core.actress_photo.GFRIENDS_DIR", photos), \
+         patch.object(ActressRepository, "get_by_name", autospec=True,
+                       side_effect=get_by_name_side_effect):
+        response = client.post(URL, json={"height": "160cm", "nickname": "新名", "photo": {
+            "source": "graphis", "url": "https://www.graphis.ne.jp/new.jpg"}})
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "操作失敗"}
+    stored = ActressRepository(db_path).get_by_name(NAME)
+    # 文字欄位已在第二次 get_by_name（_save_actress_submission 尾端）之前成功
+    # 寫入，不因後續重讀失敗而還原——安裝流程本身沒有失敗。
+    assert (stored.height, stored.nickname) == ("160cm", "新名")
 
 
 def test_submit_actress_unexpected_db_error_returns_fixed_chinese_500(client, db_path):
