@@ -425,7 +425,9 @@
       "reveal": "顯示密碼",
       "saved": "密碼設定已儲存",
       "save_failed": "密碼設定儲存失敗，請稍後再試。",
-      "pin_invalid": "密碼必須是 4 位英文或數字"
+      "pin_invalid": "密碼必須是 4 位英文或數字",
+      "unset_hint": "目前沒有密碼保護，你可以在這裡設定",
+      "need_login_hint": "需要先登入才能修改"
     },
     "switch_mode_confirm": {
       "title": "切換媒體伺服器模式",

@@ -96,6 +96,7 @@ export function stateConfig() {
         // 而且會把使用者剛打的 PIN 一起丟掉。（Codex PR#129 review P2）
         accessAuthEnabledSaved: false,
         accessAuthPinRevealed: false,  // 伺服器旗標：這個瀏覽器能不能看到真值（loopback 才 true）
+        accessAuthCanEdit: false,      // GET 完成前保守鎖住 PIN 與儲存鈕
         accessAuthPinVisible: false,   // 前端顯示旗標：眼睛按鈕目前是否顯示明碼（純 UI，不影響資料）
         accessAuthSaving: false,       // Save 按鈕 in-flight 旗標，防雙擊送出
 
@@ -414,6 +415,21 @@ export function stateConfig() {
         serverUrlDisplay() {
             if (!this.lanIp || !this.lanPort) return null;
             return `${this.lanIp}:${this.lanPort}`;
+        },
+
+        accessAuthPinDisabled() {
+            return !this.serverMode || this.accessAuthSaving || !this.accessAuthCanEdit;
+        },
+
+        accessAuthSaveDisabled() {
+            return !this.serverMode || this.accessAuthSaving || !this.accessAuthCanEdit
+                || (this.accessAuthEnabled && !/^[0-9A-Za-z]{4}$/.test(this.accessAuthPin));
+        },
+
+        accessAuthStatusHintKey() {
+            if (!this.accessAuthEnabledSaved) return 'settings.access_auth.unset_hint';
+            if (!this.accessAuthCanEdit) return 'settings.access_auth.need_login_hint';
+            return '';
         },
 
         requestServerModeChange(val) {
@@ -784,6 +800,7 @@ export function stateConfig() {
                             this.accessAuthEnabledSaved = authResult.enabled;
                             this.accessAuthPin = authResult.pin;
                             this.accessAuthPinRevealed = authResult.pin_revealed;
+                            this.accessAuthCanEdit = authResult.can_edit;
                         }
                     } catch (e) {
                         console.warn('[accessAuth] loadConfig: GET /api/access/settings failed:', e);

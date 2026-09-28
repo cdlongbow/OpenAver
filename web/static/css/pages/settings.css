@@ -1368,6 +1368,11 @@ html.theme-transition-active::view-transition-new(root) {
     cursor: not-allowed;
 }
 
+#settings-components .settings-access-auth-status-hint {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
 /* 手機：這組 nowrap 的 min-content 是 470px，容器一旦比它窄就會撐出整頁橫向捲軸
    （實測 480px 下 documentElement.scrollWidth 518 > 480）。臨界點約在 vw 566px
    （container = vw − 96），取 600px 留餘裕，在那之下改成組內換行。桌機維持 nowrap，
