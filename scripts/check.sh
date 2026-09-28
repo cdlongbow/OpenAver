@@ -30,7 +30,7 @@ echo "▶ no-raw-sqlite-connect"; python scripts/no_raw_sqlite_connect_lint.py
 # --- CI job: test ---
 if [[ $FAST -eq 0 ]]; then
   echo "▶ pytest"
-  pytest tests/ -q --ignore=tests/smoke --ignore=tests/e2e -m "not smoke and not e2e"
+  pytest tests/ -q -n 2 --ignore=tests/smoke --ignore=tests/e2e -m "not smoke and not e2e"
 fi
 
 echo "✅ all green"
