@@ -19,8 +19,20 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+from pathlib import Path
 
 _LOCAL_NAMES = ("localhost", "testserver", "0.0.0.0")
+_EXEMPT_TOP_DIRS = ("smoke", "e2e")
+
+
+def is_exempt_path(test_path, tests_root) -> bool:
+    """`tests/smoke/`、`tests/e2e/` 底下的測試本來就要連外（專案的測試放置規則），
+    不論有沒有標 marker 都不攔——漏標 marker 不該讓手動跑 smoke 假紅。"""
+    try:
+        rel = Path(test_path).resolve().relative_to(Path(tests_root).resolve())
+    except ValueError:
+        return False
+    return bool(rel.parts) and rel.parts[0] in _EXEMPT_TOP_DIRS
 
 
 def _is_local_host(host) -> bool:

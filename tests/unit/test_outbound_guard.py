@@ -83,6 +83,27 @@ class TestEvaluateConnect:
         assert _og.evaluate_connect((), socket.SOCK_STREAM) is False
 
 
+class TestIsExemptPath:
+    """`tests/smoke`、`tests/e2e` 底下的測試不論 marker 一律豁免；其他目錄不豁免。"""
+
+    @pytest.mark.parametrize(
+        "rel",
+        ["smoke/test_x.py", "e2e/test_y.py", "smoke/sub/test_z.py"],
+    )
+    def test_exempt_dirs(self, tmp_path, rel):
+        assert _og.is_exempt_path(tmp_path / "tests" / rel, tmp_path / "tests") is True
+
+    @pytest.mark.parametrize(
+        "rel",
+        ["unit/test_x.py", "integration/test_y.py", "smokey/test_z.py", "unit/smoke/test_w.py"],
+    )
+    def test_other_dirs_not_exempt(self, tmp_path, rel):
+        assert _og.is_exempt_path(tmp_path / "tests" / rel, tmp_path / "tests") is False
+
+    def test_outside_tests_root_not_exempt(self, tmp_path):
+        assert _og.is_exempt_path(tmp_path / "other" / "smoke" / "test_x.py", tmp_path / "tests") is False
+
+
 class TestEvaluateGetaddrinfo:
     """`evaluate_getaddrinfo(host)` 的放行判定。"""
 
@@ -301,3 +322,29 @@ def test_smoke_marker_not_patched(pytester, monkeypatch):
     result = pytester.runpytest_subprocess("-q")
 
     result.assert_outcomes(passed=1)
+
+
+def test_unmarked_test_under_smoke_dir_not_patched(pytester, monkeypatch):
+    """回歸鎖：放在 `smoke/` 目錄底下、但**沒標** `smoke` marker 的測試也不受防線影響
+    （漏標 marker 的手動 smoke 測試不該假紅）。"""
+    _set_subsession_env(monkeypatch)
+    _install_live_conftest(pytester)
+    pytester.mkdir("smoke")
+    pytester.path.joinpath("smoke", "test_probe_unmarked.py").write_text(textwrap.dedent("""
+        import socket
+
+        def test_probe_unmarked_smoke_dir_connect_not_intercepted():
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(1)
+            try:
+                s.connect(("192.0.2.1", 1))
+            except OSError as exc:
+                assert "outbound_guard" not in str(exc)
+            finally:
+                s.close()
+    """), encoding="utf-8")
+
+    result = pytester.runpytest_subprocess("-q")
+
+    result.assert_outcomes(passed=1)
+

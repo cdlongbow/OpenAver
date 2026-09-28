@@ -387,6 +387,7 @@ def _outbound_connection_guard(request, monkeypatch):
     if (
         request.node.get_closest_marker("smoke") is not None
         or request.node.get_closest_marker("e2e") is not None
+        or _og.is_exempt_path(request.node.path, Path(__file__).parent)
     ):
         yield
         return
