@@ -1107,6 +1107,25 @@ const RULES = [
   { file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'longPressCancel', scope: /<button\b[^>]*\bid="btnSubmit"[^>]*>/, note: '[TestSearchSubmitBtnNoLongPress] #btnSubmit tag no long-press' },
   { file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'longPressClickGuard', scope: /<button\b[^>]*\bid="btnSubmit"[^>]*>/, note: '[TestSearchSubmitBtnNoLongPress] #btnSubmit tag no long-press' },
 
+  // ---- [T8-LoadMoreListModeSearchGuard]（TASK-158-T8，遷移自 wishlist-state.test.mjs
+  // 舊 node:test「search.html Load More 按鈕 x-show 含 listMode === 'search'」，CD-158-4③
+  // 更正錨點：這段 x-show 掛在外層 <div class="text-center py-4">，不是 <button>——scope
+  // 用 lookahead 錨定同一個 <div> 的 x-show 值以 hasMoreResults 開頭（全檔唯一 token），
+  // 與 :3023 TestOutputPathVisibilityGuard 同一種「錨定 x-show 值」寫法，不比對整個 class
+  // 屬性，故不受屬性順序影響（FE-GUARD-17 雙向驗收：合法重排仍綠）----
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: "listMode === 'search'",
+    scope: /<div\b(?=[^>]*\sx-show="hasMoreResults[^"]*")[^>]*>/,
+    note: "[T8-LoadMoreListModeSearchGuard] Load More <div> 的 x-show 需含 listMode === 'search'（scope 錨定 hasMoreResults token，CD-158-4③）",
+  },
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: "displayMode === 'grid'",
+    scope: /<div\b(?=[^>]*\sx-show="hasMoreResults[^"]*")[^>]*>/,
+    note: "[T8-LoadMoreGridOnlyGuard] Load More <div> 的 x-show 需含 displayMode === 'grid'（清單／詳細模式不該出現封面牆的載入更多）",
+  },
+
   // ---- [TestUS1IdPreserved] ----
   { file: 'web/templates/search.html', kind: 'required-string', pattern: 'id="resultActors"', note: '[TestUS1IdPreserved] result id preserved' },
   { file: 'web/templates/search.html', kind: 'required-string', pattern: 'id="resultDate"', note: '[TestUS1IdPreserved] result id preserved' },
