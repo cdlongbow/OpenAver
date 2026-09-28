@@ -518,13 +518,27 @@ async def submit_actress(name: str, payload: dict):
             fields[key] = _safe_int(fields[key])
     fields["primary_text_source"] = "ai"
 
-    repo, old_actress, actress = await asyncio.to_thread(_save_actress_submission, name, fields)
+    try:
+        repo, old_actress, actress = await asyncio.to_thread(_save_actress_submission, name, fields)
+    except HTTPException:
+        raise
+    except Exception:
+        # P3-2（PR #211 review）：_save_actress_submission 在 worker thread 跑 DB
+        # 讀寫，非預期例外（sqlite locked／disk full）若不接住，asyncio.to_thread
+        # 會原樣逸出到這個 async route，Starlette 沒有 catch-all handler，最終
+        # 回裸文字 "Internal Server Error"（違反 AGENTS.md:81）。HTTPException
+        # 是本函式既有的正常控制流（400 驗證／別名擋下／500 update_fields 回
+        # False），原樣放行；其餘例外一律 log 後回固定中文 JSON 500，body 形狀
+        # 沿用同一函式內既有的 `raise HTTPException(500, detail="操作失敗")`
+        # （:477）—— `{"detail": ...}`，不是照片家族用的 `{"error": ...}`。
+        logger.exception("[actress] AI 提交寫入失敗 name=%s", name)
+        return JSONResponse(status_code=500, content={"detail": "操作失敗"})
     if photo_req is not None:
         _, err, photo_installed = await _apply_photo_change(repo, actress, name, photo_req)
         if err:
             if not photo_installed:
                 await asyncio.to_thread(_compensate_actress_submission, repo, name, old_actress, fields)
-            return err
+            return _translate_submit_photo_err(err)
         actress = await asyncio.to_thread(repo.get_by_name, name)
     return {"success": True, "actress": await asyncio.to_thread(_actress_to_response, actress)}
 
@@ -1043,6 +1057,37 @@ CLOUD_SOURCES = {"graphis", "gfriends", "wiki", "xcity"}
 # 再新增一條 snake_case 違規）。
 _SET_PHOTO_ERR_FAILED = "設定照片失敗，請稍後再試"
 _SET_PHOTO_ERR_INVALID_URL = "照片來源網址不合法"
+
+# P3-1（PR #211 review）：_apply_photo_change 是 set_actress_photo（UI 端點）與
+# submit_actress（AI-facing API 端點）共用的函式。set_actress_photo 沿用下列
+# snake_case code 是 TASK-100a-T3 已裁決的「範圍外不動」——UI 前端只判斷
+# resp.ok／status code，從不讀 body.error 內容，故沿用不影響任何前端契約
+# （已核對 web/static/js、web/templates 全庫無任何字面比對）。但 submit_actress
+# 是 AI 呼叫的 API contract，AGENTS.md:81 要求新增／AI 呼叫路徑一律回固定中文，
+# 不可把內部 code 原樣透給呼叫端——故只在 submit_actress 收到 err 之後做轉譯，
+# 不動 _apply_photo_change 本體（set_actress_photo 既有測試仍斷言舊 code）。
+_SUBMIT_PHOTO_ERR_ZH = {
+    "unknown_source": "不支援的照片來源",
+    "url_required": "缺少照片網址",
+    "video_path_required": "缺少對應的影片路徑",
+    "video_or_cover_not_found": "找不到對應的影片或封面",
+    "crop_failed": "裁切照片失敗，請稍後再試",
+    "download_failed": "下載照片失敗，請稍後再試",
+}
+
+
+def _translate_submit_photo_err(err: JSONResponse) -> JSONResponse:
+    """把 _apply_photo_change 回傳的舊 snake_case code 轉成固定中文，只給
+    submit_actress 用（見上方模組層註解）。非上表涵蓋的 code（例如已經是固定
+    中文的 _SET_PHOTO_ERR_FAILED／_SET_PHOTO_ERR_INVALID_URL）原樣放行，避免
+    重複轉譯或誤改其他欄位。
+    """
+    body = json.loads(bytes(err.body))
+    zh = _SUBMIT_PHOTO_ERR_ZH.get(body.get("error"))
+    if zh is None:
+        return err
+    body["error"] = zh
+    return JSONResponse(status_code=err.status_code, content=body)
 
 
 async def _apply_photo_change(repo: ActressRepository, actress: Actress, name: str,

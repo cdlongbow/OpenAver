@@ -1,5 +1,7 @@
 """AI 女優審稿提交端點：驗證、身分與部分更新的 DB round-trip。"""
 
+import sqlite3
+
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch
@@ -407,3 +409,37 @@ def test_submit_actress_photo_persist_failure_keeps_created_row_and_text(client,
     stored = ActressRepository(db_path).get_by_name(NAME)
     assert (stored.nickname, stored.primary_text_source) == ("新名", "ai")
     assert (photos / f"{sanitize_filename(NAME)}.jpg").read_bytes() == b"new photo"
+
+
+def test_submit_actress_download_failure_body_is_fixed_chinese_not_code(client, db_path):
+    """P3-1（PR #211 review）：submit_actress 是 AI 呼叫的 API path（AGENTS.md:81
+    要求固定中文，不可外洩內部 snake_case code）。`_apply_photo_change` 是與 UI
+    端點 set_actress_photo 共用的函式，該端點沿用舊 code 是 TASK-100a-T3 已裁決
+    「範圍外不動」——但 submit_actress 這條路徑必須把 code 轉譯成固定中文，不能
+    直接把 `{"error": "download_failed"}` 回給呼叫端。
+    """
+    with patch("web.routers.actress.download_actress_photo", return_value=False):
+        response = client.post(URL, json={"photo": {
+            "source": "graphis", "url": "https://www.graphis.ne.jp/new.jpg"}})
+    assert response.status_code == 500
+    body = response.json()
+    assert body.get("error") != "download_failed"
+    assert body == {"error": "下載照片失敗，請稍後再試"}
+
+
+def test_submit_actress_unexpected_db_error_returns_fixed_chinese_500(client, db_path):
+    """P3-2（PR #211 review）：`_save_actress_submission` 在 worker thread 裡跑，
+    非預期例外（sqlite locked／disk full）目前會直接逸出 `asyncio.to_thread`，
+    Starlette 沒有 catch-all handler，最終回裸文字 "Internal Server Error"（違反
+    AGENTS.md:81「固定中文 JSON」）。必須外層 try/except 接住（HTTPException 原樣
+    放行，因為它本身就是 400/500 的正常控制流），非 HTTPException 的例外一律
+    log 後回固定中文 JSON 500——與同一端點既有的 `raise HTTPException(500,
+    detail="操作失敗")`（_save_actress_submission 內 update_fields 失敗那條）同一種
+    body 形狀 `{"detail": ...}`，不是照片家族用的 `{"error": ...}`。
+    """
+    with patch("web.routers.actress._save_actress_submission",
+               side_effect=sqlite3.OperationalError("database is locked")):
+        response = client.post(URL, json={"nickname": "新名"})
+    assert response.status_code == 500
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json() == {"detail": "操作失敗"}
