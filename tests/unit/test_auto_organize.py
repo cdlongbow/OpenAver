@@ -76,6 +76,18 @@ def default_organize_success(cover_path="/cover/x.jpg"):
     }
 
 
+def test_round_returns_folder_not_configured_when_resolve_returns_empty(mocker):
+    config = make_config("")
+    mocker.patch("core.auto_organize.resolve_favorite_folder", return_value="")
+    list_files = mocker.patch("core.auto_organize.list_favorite_video_files", return_value=[])
+    mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
+
+    result = run_one_round(config)
+
+    assert result == {"folder_not_configured": True}
+    list_files.assert_not_called()
+
+
 # ===========================================================================
 # DoD-1 / DoD-2：四部片統計 ＋ 回傳 schema 逐欄相符（含 M6）
 # ===========================================================================

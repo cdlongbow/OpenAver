@@ -749,6 +749,9 @@ def get_favorite_files() -> dict:
             "folder": original_folder
         }
 
+    if not folder:
+        return {"success": False, "error": "favorite_folder_unset", "folder": ""}
+
     folder_path = Path(folder)
     if not folder_path.exists():
         return {
@@ -1016,6 +1019,8 @@ def use_resolved_auto_organize_folder() -> dict:
     """
     config = load_config()
     resolved = resolve_favorite_folder(config)
+    if not resolved:
+        return {"success": False, "error": "favorite_folder_unset"}
 
     def _mut(cfg):
         cfg.setdefault("search", {})["favorite_folder"] = resolved

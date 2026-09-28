@@ -120,6 +120,7 @@
       "run_now_started": "已開始，完成後側欄會有通知",
       "run_now_busy": "已經有一輪在進行中",
       "use_resolved_folder": "就用這個資料夾",
+      "folder_not_configured": "尚未設定最愛資料夾",
       "folder_warning": "請指向下載器的完成資料夾，不要指到下載中的資料夾",
       "running": "目前正在執行一輪",
       "config_failed": "操作失敗，請稍後再試"

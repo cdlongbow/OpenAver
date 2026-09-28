@@ -9,6 +9,7 @@ import pytest
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock, call, ANY
+from bs4 import BeautifulSoup
 
 
 def load_fixture(filename: str) -> dict:
@@ -827,6 +828,24 @@ class TestFilterFiles:
 
 class TestFavoriteFiles:
     """Test /api/search/favorite-files"""
+
+    def test_favorite_files_unset_non_desktop_returns_error_without_scanning_cwd(
+        self, client, monkeypatch, mocker
+    ):
+        from core import config as core_config
+
+        monkeypatch.delenv("OPENAVER_STANDALONE", raising=False)
+        core_config.mutate_config(
+            lambda cfg: cfg.setdefault("search", {}).update({"favorite_folder": ""})
+        )
+        list_files = mocker.patch("core.favorite_scan.list_favorite_video_files", return_value=[])
+
+        response = client.get("/api/search/favorite-files")
+
+        assert response.status_code == 200
+        assert response.json()["success"] is False
+        assert response.json()["error"] == "favorite_folder_unset"
+        list_files.assert_not_called()
 
     def test_get_favorite_files_success(self, client, tmp_path, monkeypatch):
         """測試取得我的最愛資料夾檔案成功"""
@@ -2117,6 +2136,55 @@ class TestAutoOrganizeEndpoints:
         assert data["success"] is True
         assert data["folder"] == str(fav)
         assert core_config.load_config()["search"]["favorite_folder"] == str(fav)
+
+    def test_status_unset_non_desktop_returns_empty_resolved_folder(self, client, monkeypatch):
+        from core import config as core_config
+
+        monkeypatch.delenv("OPENAVER_STANDALONE", raising=False)
+        core_config.mutate_config(
+            lambda cfg: cfg.setdefault("search", {}).update({"favorite_folder": ""})
+        )
+
+        response = client.get("/api/search/auto-organize/status")
+
+        assert response.status_code == 200
+        assert response.json()["resolved_folder"] == ""
+
+    # [lint-guard: pytest-justified] 模板 x-show 與 autoOrganizePanel() 欄位名的跨檔 Alpine state 契約＋i18n 文字
+    def test_panel_renders_unset_message_and_conditional_action(self, client):
+        response = client.get("/search")
+        assert response.status_code == 200
+        dom = BeautifulSoup(response.text, "html.parser")
+        panel = dom.select_one('[x-data="autoOrganizePanel"]')
+        assert panel is not None
+        message = panel.select_one('.auto-organize-panel__unset')
+        assert message is not None
+        assert message.get('x-show') == '!folderIsSet && !resolvedFolder'
+        assert '尚未設定最愛資料夾' in message.get_text()
+        link = message.select_one('a[href="/settings"]')
+        assert link is not None
+        assert link.get_text(strip=True) == "前往設定"
+        action = panel.select_one('button[x-text="window.t(\'search.auto_organize.use_resolved_folder\')"]')
+        assert action is not None
+        assert action.parent.get('x-show') == '!folderIsSet && resolvedFolder'
+
+    def test_use_resolved_folder_unset_non_desktop_returns_error_and_does_not_write_config(
+        self, client, monkeypatch
+    ):
+        from core import config as core_config
+
+        monkeypatch.delenv("OPENAVER_STANDALONE", raising=False)
+        core_config.mutate_config(
+            lambda cfg: cfg.setdefault("search", {}).update({"favorite_folder": ""})
+        )
+        before = core_config.CONFIG_PATH.read_bytes()
+
+        response = client.post("/api/search/auto-organize/use-resolved-folder")
+
+        assert response.status_code == 200
+        assert response.json() == {"success": False, "error": "favorite_folder_unset"}
+        assert core_config.CONFIG_PATH.read_bytes() == before
+        assert core_config.load_config()["search"]["favorite_folder"] == ""
 
     def test_run_now_returns_immediately_even_when_round_is_slow(
         self, client, mocker, tmp_path

@@ -5,6 +5,7 @@
 與 core/auto_organize.py 共用——core 不可 import web，方向只能是「web 呼叫
 core」（BE-LINT-01）。兩個既有呼叫點都改呼叫這裡，回應形狀與行為零改動。
 """
+import os
 from pathlib import Path
 
 from core.path_utils import expand_env_vars, get_environment
@@ -15,6 +16,8 @@ def resolve_favorite_folder(config: dict) -> str:
     """算出最愛資料夾的實際路徑（純計算，對應原 733-747）。"""
     original_folder = config.get('search', {}).get('favorite_folder', '').strip()
     if not original_folder:
+        if os.environ.get("OPENAVER_STANDALONE") != "1":
+            return ""
         if get_environment() == 'wsl':
             return expand_env_vars('%USERPROFILE%\\Downloads')
         return str(Path.home() / "Downloads")
