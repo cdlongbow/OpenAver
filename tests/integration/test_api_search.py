@@ -490,7 +490,8 @@ class TestSearchStreamSSE:
         # 內容，全數 mock 掉即可）。
         with patch('web.routers.search.smart_search', side_effect=mock_smart_search), \
              patch('core.database.ActressRepository.get_by_name', return_value=None), \
-             patch('core.database.connection.get_db_path', return_value=tmp_path / "test.db"):
+             patch('core.database.connection.get_db_path', return_value=tmp_path / "test.db"), \
+             patch('web.routers.search._fetch_actress_profile_with_db', return_value=None):
             response = client.get('/api/search/stream?q=三上悠亜')
 
         events = parse_sse_events(response.text)
@@ -1967,6 +1968,7 @@ class TestAutoOrganizeHooks:
         from web.routers import search as search_module
         spy_mark = mocker.spy(search_module, "mark_manual_activity")
         spy_abort = mocker.spy(search_module, "request_abort")
+        mocker.patch.object(search_module, "smart_search", return_value=[])
 
         client.get("/api/search/stream?q=AB")
 
@@ -1978,6 +1980,7 @@ class TestAutoOrganizeHooks:
         from web.routers import scraper as scraper_module
         spy_mark = mocker.spy(scraper_module.auto_organize_state, "mark_manual_activity")
         spy_abort = mocker.spy(scraper_module.auto_organize_state, "request_abort")
+        mocker.patch.object(scraper_module, "smart_search", return_value=[])
 
         client.post(
             "/api/scrape-single",

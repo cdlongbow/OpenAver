@@ -133,7 +133,8 @@ class TestDMMProbePayloadVariables:
         with patch.object(dmm_scraper._session, 'post', mock_post), \
              patch.object(dmm_scraper, '_probe_genres', return_value=([], "")), \
              patch.object(dmm_scraper, '_probe_sample_images', return_value=[]), \
-             patch.object(dmm_scraper, '_probe_review', return_value=None):
+             patch.object(dmm_scraper, '_probe_review', return_value=None), \
+             patch.object(dmm_scraper, '_fetch_tags_from_html', return_value=[]):
             dmm_scraper._fetch_by_id("cid123")
 
         # 第一個 POST 即 DETAIL_QUERY（子 probe 已 mock 掉，不會發 POST）
