@@ -303,17 +303,36 @@ def test_aborted_after_none_falls_through_to_event_threshold(monkeypatch):
 # ---------------------------------------------------------------------------
 
 async def test_folder_probe_respects_timeout(monkeypatch):
-    """DoD-8 / M6：exists 探測必須有 wait_for 上限；逾時 → folder_unreachable。"""
+    """DoD-8 / M6：exists 探測必須有 wait_for 上限；逾時 → folder_unreachable。
+
+    兩個保障不能拿掉：① 只讓目標路徑變慢（`sched.os` 就是全域 `os`，無差別 patch
+    會讓 pytest 自己的 `os.path.exists` 也跟著睡而掛住）；② 擋住 `run_one_round`
+    （逾時被拿掉時探測會回 True 並往下走，不擋就會跑進真實刮削而掛住）。
+    """
     monkeypatch.setattr(sched, "_FOLDER_EXISTS_TIMEOUT_S", 0.05)
     monkeypatch.setattr(sched, "load_config", lambda: {"search": {"favorite_folder": "/nas/fav",
                                         "auto_organize": {"enabled": True}}})
     monkeypatch.setattr(sched, "resolve_favorite_folder", lambda _c: "/nas/fav")
 
-    def slow_exists(_path):
-        time.sleep(0.5)
-        return True
+    # 🔴 只對「我們這一條路徑」變慢：`sched.os` 就是全域 `os` 模組，無差別 patch
+    # 會讓 pytest 自己的每一次 `os.path.exists` 也睡 0.5 秒。
+    _real_exists = os.path.exists
 
-    monkeypatch.setattr(sched.os.path, "exists", slow_exists)
+    def _slow_only_for_target(path):
+        if path == "/nas/fav":
+            time.sleep(0.5)
+            return True
+        return _real_exists(path)
+
+    monkeypatch.setattr(sched.os.path, "exists", _slow_only_for_target)
+    # 逾時被拿掉時（mutation）探測會回 True 並往下走到 run_one_round——
+    # 那支必須也被擋住，否則 mutation 那一輪會跑進真實刮削而掛住，
+    # gate 就看不到「逾時測試轉紅」而是看到逾時。
+    monkeypatch.setattr(sched, "run_one_round", lambda *a, **kw: {
+        "added": [], "cover_missing": [], "failed": [],
+        "skipped": {"has_nfo": 0, "memory_hit": 0, "duplicate": []},
+        "newly_recorded": 0, "wishlist_removed": [], "aborted_after": None,
+    })
 
     t0 = time.perf_counter()
     result = await sched._prepare_and_run("schedule")
@@ -532,70 +551,6 @@ def test_auto_organize_interval_constant():
 # ===========================================================================
 
 class TestProbeTimeoutAndLoopSurvival:
-    def test_folder_probe_has_a_timeout(self, monkeypatch):
-        """資料夾探測必須有逾時上限，否則 NAS 睡著時整條排程會掛住。
-
-        🔴 `asyncio.to_thread()` 自己**永遠不會**拋 `TimeoutError`——少了
-        `asyncio.wait_for` 那一層，`except asyncio.TimeoutError` 是死碼，
-        而 `os.path.exists()` 會卡在 worker thread 上幾十秒到幾分鐘。
-        spec §F6 明文要避免的就是這件事（「否則 NAS 睡著時一次 exists() 卡幾十秒，
-        整個網頁介面跟著沒反應，使用者以為當掉去砍程序」）。
-
-        做法：讓探測永遠不返回（模擬睡著的 NAS），斷言 `_prepare_and_run`
-        仍在**遠小於**那個 sleep 的時間內回到「連不到」的結論。
-        """
-        import asyncio as _asyncio
-        import time as _time
-        from web import auto_organize_scheduler as aos
-
-        monkeypatch.setattr(aos, "_FOLDER_EXISTS_TIMEOUT_S", 0.2)
-        monkeypatch.setattr(aos, "load_config", lambda: {"search": {"favorite_folder": "/nas/asleep",
-                                                "auto_organize": {"enabled": True}}})
-        monkeypatch.setattr(aos, "resolve_favorite_folder", lambda _cfg: "/nas/asleep")
-
-        # 🔴 只對「我們這一條路徑」變慢：`aos.os` 就是全域 `os` 模組，
-        # 無差別 patch 會讓 pytest 自己的每一次 `os.path.exists` 也睡 3 秒，整支測試掛住
-        # （第一版就是這樣寫的，當場掛給我看）。
-        _real_exists = os.path.exists
-
-        def _slow_only_for_target(path):
-            if path == "/nas/asleep":
-                # 3 秒（不是 30）：`asyncio.to_thread` 開的 thread **無法被取消**，
-                # `asyncio.run()` 收尾時會等 executor 關閉——sleep 多久這支測試就慢多久。
-                # 3 秒足以與 0.2 秒的逾時拉開一個數量級。
-                _time.sleep(3)
-                return True
-            return _real_exists(path)
-
-        monkeypatch.setattr(aos.os.path, "exists", _slow_only_for_target)
-        # 逾時被拿掉時（mutation）探測會回 True 並往下走到 run_one_round——
-        # 那支必須也被擋住，否則 mutation 那一輪會跑進真實刮削而掛住，
-        # gate 就看不到「逾時測試轉紅」而是看到逾時。
-        monkeypatch.setattr(aos, "run_one_round", lambda *a, **kw: {
-            "added": [], "cover_missing": [], "failed": [],
-            "skipped": {"has_nfo": 0, "memory_hit": 0, "duplicate": []},
-            "newly_recorded": 0, "wishlist_removed": [], "aborted_after": None,
-        })
-
-        # 🔴 必須在 coroutine **裡面**量：`asyncio.run()` 收尾時會 join 那條
-        # 還在 sleep 的 executor thread（`to_thread` 開的 thread 無法取消），
-        # 所以量在 `asyncio.run(...)` 外面會把那 3 秒也算進去——那不是排程被卡住，
-        # 是測試自己量錯了地方（第一版就是這樣，量到 3.0s 卻誤判實作有問題）。
-        measured = {}
-
-        async def _timed():
-            t0 = _time.perf_counter()
-            res = await aos._prepare_and_run("schedule")
-            measured["elapsed"] = _time.perf_counter() - t0
-            return res
-
-        result = _asyncio.run(_timed())
-
-        assert result.get("folder_unreachable") is True
-        assert measured["elapsed"] < 1.0, (
-            f"探測花了 {measured['elapsed']:.1f}s——沒有逾時上限，NAS 睡著時整條排程會被卡住"
-        )
-
     def test_loop_survives_an_exception_from_one_round(self, monkeypatch):
         """單輪的例外絕不能殺掉 loop。
 

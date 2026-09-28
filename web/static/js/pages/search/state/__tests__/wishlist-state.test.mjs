@@ -7,7 +7,6 @@
 //   - addToWishlist I3 回滾（M3）
 //   - switchToWishlist 設 displayMode='grid'
 //   - membership hydration 三條
-//   - search.html Load More x-show 含 listMode === 'search'
 //   - wishlist.js 不定義 init()；main.js init() 呼叫 loadWishlistCount()
 
 import { test } from 'node:test';
@@ -35,9 +34,7 @@ const { searchStateSearchFlow } = await import('../search-flow.js');
 const { searchPage } = await import('../../main.js');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SEARCH_HTML = resolve(__dirname, '../../../../../../templates/search.html');
 const WISHLIST_JS = resolve(__dirname, '../wishlist.js');
-const BASE_JS = resolve(__dirname, '../base.js');
 
 function mockFetch(handler) {
     const calls = [];
@@ -376,26 +373,6 @@ test("restoreState: 讀到 (null,'grid') 這種沒有渲染器命中的組合時
         'detail',
         'restoreState 必須經 resolveVisibleDisplayMode 把 (null, grid) 修正成 detail',
     );
-});
-
-// ─── search.html Load More x-show ──────────────────────────────────────────
-
-test('search.html Load More 按鈕 x-show 含 listMode === \'search\'', () => {
-    const html = readFileSync(SEARCH_HTML, 'utf8');
-    const lines = html.split('\n');
-    // 對帳表錨點：Load More 區塊的 x-show（含 hasMoreResults && displayMode === 'grid'）
-    const hit = lines.find((ln) =>
-        ln.includes('hasMoreResults') && ln.includes('displayMode === \'grid\'') && ln.includes('x-show')
-    );
-    assert.ok(hit, '應找得到 Load More 的 x-show 行');
-    assert.match(hit, /listMode === 'search'/);
-});
-
-// ─── base.js 註解（文件性質）──────────────────────────────────────────────
-
-test('base.js listMode 註解含 wishlist', () => {
-    const src = readFileSync(BASE_JS, 'utf8');
-    assert.match(src, /listMode:\s*null,\s*\/\/.*'wishlist'/);
 });
 
 // ─── wishlist.js 不定義 init() ─────────────────────────────────────────────

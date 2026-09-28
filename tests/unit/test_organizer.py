@@ -1479,7 +1479,7 @@ class TestCropToPosterFocalWiring:
         # TASK-102c-T1：mock core.organizer.run_detection（consumer binding）成
         # RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)，避免真跑 pigo（~4-5s/呼叫）。
         # baseline 呼叫不傳 number/maker，gate=False，不會呼叫 run_detection，不受此 patch 影響。
-        with patch("core.organizer.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)):
+        with patch("core.organizer.run_detection", return_value=RunnerOutcome(kind="FOUND", focal=MOCK_FOCAL_XY)) as mock_detect:
             result = crop_to_poster(str(src_path), str(dst), **kwargs)
         assert result is True
         assert dst.exists()
@@ -1488,6 +1488,10 @@ class TestCropToPosterFocalWiring:
             w, h = img.size
         r_window = _poster_window_ratio(w, h)
         assert r_window is not None
+        # 比例若傳錯、mock 仍回固定焦點，bytes 比對抓不到，所以直接鎖呼叫參數（158-T9 刪除 test_focal_detect_child 真 spawn 對照測試後的承接），並鎖逾時數值（它是產品端的 5 秒上限，錯了背景偵測不是全放棄就是拖太久）。
+        mock_detect.assert_called_once()
+        assert mock_detect.call_args.args[:2] == (str(src_path), r_window)
+        assert mock_detect.call_args.kwargs["timeout_s"] == organizer._DETECT_TIMEOUT_S
 
         focal = MOCK_FOCAL_XY
 

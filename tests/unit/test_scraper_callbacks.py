@@ -13,6 +13,13 @@ from unittest.mock import patch, MagicMock, call
 from concurrent.futures import ThreadPoolExecutor
 
 
+@pytest.fixture(autouse=True)
+def _no_request_delay(monkeypatch):
+    """本檔把 REQUEST_DELAY 歸零（只影響本檔）：外站呼叫都已 mock，節流秒數
+    沒有驗證對象，不歸零只是白等。"""
+    monkeypatch.setattr("core.scraper.REQUEST_DELAY", 0)
+
+
 # ============ Fixtures ============
 
 def make_mock_scraper_prefix(ids):

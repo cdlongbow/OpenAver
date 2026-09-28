@@ -1,9 +1,11 @@
 import pytest
+import socket
 import sqlite3
 from pathlib import Path
 import json
 from core import config as core_config
 import _repo_write_guard as _rwg
+import _outbound_guard as _og
 
 # TASK-127b-T5：`pytester` 子 session 的 mutation 自驗（`test_repo_write_guard_
 # subsession.py`）——pytest 的硬性要求是這行必須放在 root conftest。本專案沒有
@@ -340,6 +342,113 @@ def _g2_repo_root_snapshot(request):
             )
 
 
+#: 外連防線的 per-test 違規累積器——獨立 StashKey，不與 G1 的
+#: `_G1_ACCUMULATOR_STASH_KEY` 共用容器（避免把 DB 違規與 outbound 違規混在
+#: 同一份報告裡）。
+_OUTBOUND_ACCUMULATOR_STASH_KEY = pytest.StashKey[list]()
+
+
+@pytest.fixture(autouse=True)
+def _outbound_connection_guard(request, monkeypatch):
+    """patch `socket.socket.connect`／`.connect_ex`／`socket.getaddrinfo`，
+    白名單制拒絕非本機連線；只攔 Python socket 層（`curl_cffi` 的 libcurl 不經過這裡）。
+
+    `smoke`／`e2e` marker 的測試完全不受影響：fixture 開頭直接判斷、不 patch
+    任何東西就 `yield; return`——這是「`-m` 整批排除」與「直接執行
+    `pytest tests/smoke/...`」兩種呼叫方式下都成立的唯一辦法（root conftest 的
+    autouse fixture 在沒有 `-m` 篩選時，對 `tests/smoke/` 底下的測試照樣生效）。
+
+    雙層拋出（照抄 G1 `_g1_repo_write_guard` 的設計，見
+    `tests/_repo_write_guard.py::RepoWriteGuardViolation` docstring）：
+      inline：wrapper 判斷拒絕時立即拋 `OutboundConnectionViolation`
+        （`BaseException` 子類，穿透 `except Exception`——產品碼如
+        `core/scrapers/dmm.py::_fetch_tags_from_html` 的
+        `except Exception: return []` 會吞掉一般 `Exception`）。
+      teardown 保險層：per-test 累積器記錄「無論 inline 有沒有拋出成功」都先
+        `.append()`；teardown 補刀涵蓋兩種 inline 傳不到測試本體的情況：
+        (a) 違規發生在背景 `threading.Thread`（未捕捉例外只會被 Python 預設的
+        `threading.excepthook` 印到 stderr，不會傳回主測試執行緒，主執行緒的
+        `call` 階段完全不知情、繼續判定 passed）；
+        (b) 呼叫鏈上有 `except BaseException`／裸 `except:`（比
+        `except Exception` 更寬，理論上少見但不能假設不存在）。
+      `list.append()` 在 CPython 受 GIL 保護，多執行緒併發呼叫不需要額外加鎖
+      （同 G1 `ViolationAccumulator` 的既有假設，本 fixture 沿用，不升級成
+      `threading.Lock`）。
+
+    teardown 判斷「call 階段是否已經因此失敗」重用 root conftest 既有的
+    `pytest_runtest_makereport` wrapper hook（把 `rep_setup`／`rep_call` 存到
+    node 上）——不需要為外連防線再寫一份，邏輯與 G1 的 `already_failed` 判斷
+    完全對稱。
+
+    **不做成 marker opt-out 白名單**（例如 `@pytest.mark.allow_outbound`）：
+    本專案的 unit／integration 測試不應該有任何合法情境需要連外，那正是
+    smoke／e2e 存在的理由。
+    """
+    if (
+        request.node.get_closest_marker("smoke") is not None
+        or request.node.get_closest_marker("e2e") is not None
+        or _og.is_exempt_path(request.node.path, Path(__file__).parent)
+    ):
+        yield
+        return
+
+    nodeid = request.node.nodeid
+    accumulator: list = []
+    request.node.stash[_OUTBOUND_ACCUMULATOR_STASH_KEY] = accumulator
+
+    def _violation_message(host_or_addr, *, teardown: bool = False) -> str:
+        prefix = "[outbound_guard] teardown 保險：" if teardown else "[outbound_guard] "
+        return (
+            f"{prefix}測試嘗試連到非本機主機：nodeid={nodeid} "
+            f"host={host_or_addr}\n"
+            "怎麼修：mock 搜尋/刮削入口（例如 patch 'core.scraper.smart_search' "
+            "或對應 scraper 的 .search()），不要 mock 到 session.get/post 這一層"
+            "以下——那樣會把 hook／路由邏輯的真實路徑也繞掉"
+        )
+
+    original_connect = socket.socket.connect
+    original_connect_ex = socket.socket.connect_ex
+    original_getaddrinfo = socket.getaddrinfo
+
+    def _guarded_connect(self, addr):
+        if not _og.evaluate_connect(addr, self.type):
+            accumulator.append(str(addr))
+            raise _og.OutboundConnectionViolation(_violation_message(addr))
+        return original_connect(self, addr)
+
+    def _guarded_connect_ex(self, addr):
+        if not _og.evaluate_connect(addr, self.type):
+            accumulator.append(str(addr))
+            raise _og.OutboundConnectionViolation(_violation_message(addr))
+        return original_connect_ex(self, addr)
+
+    def _guarded_getaddrinfo(host, *args, **kwargs):
+        if not _og.evaluate_getaddrinfo(host):
+            accumulator.append(str(host))
+            raise _og.OutboundConnectionViolation(_violation_message(host))
+        return original_getaddrinfo(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket.socket, "connect", _guarded_connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", _guarded_connect_ex)
+    monkeypatch.setattr(socket, "getaddrinfo", _guarded_getaddrinfo)
+
+    yield
+
+    if accumulator:
+        rep_setup = getattr(request.node, "rep_setup", None)
+        rep_call = getattr(request.node, "rep_call", None)
+        already_failed = bool(
+            (rep_setup is not None and rep_setup.failed)
+            or (rep_call is not None and rep_call.failed)
+        )
+        if not already_failed:
+            hosts = ", ".join(accumulator)
+            raise _og.OutboundConnectionViolation(
+                _violation_message(hosts, teardown=True)
+                + f"\n累積到 {len(accumulator)} 筆違規，但 setup／call 兩個階段"
+                "都沒有因此失敗——代表違規發生在背景執行緒，或被某處"
+                "except BaseException／裸 except: 吞掉了。"
+            )
 
 
 # ============ TASK-141a-T5：對帳 hook 的 DB 隔離（named fixture，非 autouse）====

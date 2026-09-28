@@ -3380,6 +3380,9 @@ class TestReadonlyRoutingE2E:
         mock_enrich = mocker.patch(
             "web.routers.scraper.enrich_single", return_value=_ok_result()
         )
+        mocker.patch(
+            "web.routers.scraper.search_jav", return_value=None
+        )
 
         response = client.post("/api/batch-enrich", json={
             "items": [

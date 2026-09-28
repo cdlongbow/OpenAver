@@ -263,13 +263,20 @@ async def test_concurrent_schedule_reprobe_creates_single_task(sr):
 
 
 @pytest.mark.asyncio
-async def test_pending_exists_dedup_across_ttl_cycles(sr):
-    """⑧ exists 真阻塞去重：第二輪呼叫數仍為 1；放行後第三輪才變 2（不變式 I4）。"""
+async def test_pending_exists_dedup_across_ttl_cycles(sr, monkeypatch):
+    """⑧ exists 真阻塞去重：第二輪呼叫數仍為 1；放行後第三輪才變 2（不變式 I4）。
+
+    `_EXISTS_WAIT_S` 只在本測試內縮短（產品常數不動）：縮短只影響等多久，
+    future 仍真的 pending，第二輪仍不得重複提交。
+    """
+    monkeypatch.setattr(sr, "_EXISTS_WAIT_S", 0.3)
     block = threading.Event()
+    entered = threading.Event()
     call_count = {"n": 0}
 
     def blocking_exists(_path):
         call_count["n"] += 1
+        entered.set()
         block.wait(timeout=30)
         # Return True (exists) so round-3's first probe is affirmative and does
         # not fire the negative-retry second exists() — DoD ⑧ locks call count,
@@ -285,10 +292,13 @@ async def test_pending_exists_dedup_across_ttl_cycles(sr):
         patch.object(sr.os.path, "exists", side_effect=blocking_exists),
         patch.object(sr.asyncio, "sleep", new_callable=AsyncMock),
     ):
-        # Round 1: 5s timeout → unknown; future stays pending.
+        # Round 1: short timeout → unknown; future stays pending.
         await sr.schedule_reprobe_if_stale()
         await sr._reprobe_task
         assert sr.get_snapshot().get(path) == "unknown"
+        # 等 worker 真的進入阻塞函式再數呼叫次數：timeout 很短，忙碌的機器上
+        # executor 可能還沒開始跑，直接斷言會偶發紅。
+        assert entered.wait(timeout=5.0)
         assert call_count["n"] == 1
 
         # Round 2: push TTL stale; pending future still unfinished → no new exists.

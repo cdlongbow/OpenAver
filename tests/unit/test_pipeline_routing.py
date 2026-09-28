@@ -183,6 +183,7 @@ class TestPipeline:
         # 新的 class 物件，而 core/scraper.py 仍持有舊的 ⇒ patch 打在新的上、被測程式跑的是
         # 舊的真實 scraper（會發真網路請求）。從 core.scraper 取，identity 保證與被測程式一致。
         from core.scraper import JavDBScraper
+        from core.scraper import D2PassScraper
         from core.scrapers.fc2_official import FC2OfficialScraper
         from core.scrapers.avsox import AVSOXScraper
         dmm_video = _make_video("dmm", "SONE-205")
@@ -196,6 +197,7 @@ class TestPipeline:
              patch.object(JavDBScraper, 'search', return_value=None), \
              patch.object(FC2OfficialScraper, 'search', return_value=None), \
              patch.object(AVSOXScraper, 'search', return_value=None), \
+             patch.object(D2PassScraper, 'search', return_value=None), \
              patch('core.scrapers.dmm.rate_limit'):
             result = search_jav("SONE-205", proxy_url="http://proxy:8080")
 
