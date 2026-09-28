@@ -152,9 +152,14 @@ def _validate_actress_submit_fields(payload: dict) -> None:
                 raise HTTPException(400, detail="tags 型別錯誤，必須是字串列表")
         elif k == "height":
             if v != "":
+                # TASK-157-F4：\d+ 不限位數，4301+ 位數字字串會讓下面 int() 撞上
+                # Python 3.11+ 的 int-string 轉換位數上限（sys.int_info.default_max_str_digits
+                # = 4300）丟出未接住的 ValueError → 500。身高合理範圍最多 3 位數
+                # （100–220cm），\d{1,3} 同時擋掉超長字串與超出範圍的數字，
+                # 不必再另外包 try/except 重複判一次。
                 if isinstance(v, bool) or not (
-                    isinstance(v, int) or
-                    isinstance(v, str) and re.fullmatch(r"\d+(?:cm)?", v)
+                    (isinstance(v, int) and -999 <= v <= 999) or
+                    (isinstance(v, str) and re.fullmatch(r"\d{1,3}(?:cm)?", v))
                 ):
                     raise HTTPException(400, detail="height 格式錯誤")
                 height = int(str(v).removesuffix("cm"))

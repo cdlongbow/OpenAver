@@ -2,7 +2,7 @@
 
 import re
 from typing import Dict, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -102,8 +102,17 @@ def _parse_xcity_detail_html(html: str, name: str) -> Optional[Dict]:
             src = photo.get("src", "").strip()
             if src.startswith("//"):
                 src = "https:" + src
-            if src:
+            # xcity 用一張共用的 "No Image" GIF 頂替沒有照片的女優（如 idol 11000/12000）；
+            # 這張佔位圖不是她的照片，過濾掉比留著「有 photo_url 但其實是無圖示」更正確。
+            if src and urlparse(src).path != "/actress/large/image/noimage.gif":
                 result["photo_url"] = src
+
+        # 除了 name_ja（呼叫端傳入的查詢名，非本頁解析所得）以外，本頁完全沒有任何
+        # 可用資料（無文字欄位、無真實照片）——視同沒找到，讓 orchestrator 的
+        # any(sources.values()) 判斷不被這種「有頁面但無內容」的空殼字典擋住，
+        # 本地封面裁圖 fallback（TASK-122-T10）才有機會跑。
+        if len(result) <= 1:
+            return None
         return result
     except Exception:
         logger.exception("[xcity] Detail parse failed for %s", name)

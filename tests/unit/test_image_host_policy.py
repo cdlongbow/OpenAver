@@ -17,6 +17,7 @@ from core.image_host_policy import (
     nested_preview_target_allowed,
     proxy_dynamic_hosts,
     proxy_rules,
+    proxy_verdict,
 )
 from core.actress_photo import REFERER_MAP, validate_photo_url
 from core.metatube.state import metatube_state
@@ -62,6 +63,7 @@ def test_proxy_rules_matches_reconciliation_table():
         "file.netcdn.space",
         "cf.javfree.me",  # TASK-113c-T3a: §1.4 sole enumerated new host
         "tp.spfcas.com",  # TASK-132b-T4: javdb App API image host
+        "faws.xcity.jp",  # TASK-157-F2: 換照片/預覽的女優照片也要能走 proxy 顯示
     })
     assert set(roots) == {
         "javbus.com",
@@ -394,8 +396,36 @@ def test_nested_preview_target_residual_dns_name_resolving_private_is_not_covere
 
 
 def test_download_hosts_for_xcity():
-    """TASK-157-T2: xcity 圖床白名單只放行 faws.xcity.jp，只給 download 消費端。"""
+    """TASK-157-T2: xcity 圖床白名單只放行 faws.xcity.jp（download 消費端視角）。
+    TASK-157-F2 更新：faws.xcity.jp 同時也開放 proxy 消費端（見
+    test_faws_xcity_jp_is_proxy_allowed），download_hosts_for() 只問 download
+    這一側，不受影響。"""
     assert download_hosts_for("xcity") == {"faws.xcity.jp"}
+
+
+def test_faws_xcity_jp_is_proxy_allowed():
+    """TASK-157-F2: 女優換照片／預覽（未收藏時）要能透過 /api/proxy-image 顯示
+    xcity 來源的照片，faws.xcity.jp 必須同時開放 download 與 proxy 消費端
+    ——main 分支的對應項 minnano-av.com 就是 (download, proxy) 都給，xcity 頂
+    替它時若漏掉 proxy 會是功能倒退（157 branch review F2）。"""
+    matches = [e for e in IMAGE_HOSTS if e.host == "faws.xcity.jp"]
+    assert len(matches) == 1
+    entry = matches[0]
+    assert entry.consumers == ("download", "proxy")
+    exact, roots = proxy_rules()
+    assert "faws.xcity.jp" in exact
+    assert "faws.xcity.jp" not in roots
+
+    # This is the actual gate web/routers/search.py's /api/proxy-image calls
+    # (proxy_verdict()) — assert on the real entry point, not just the
+    # exact/roots export shape, since that's what a 403 vs 200 depends on.
+    verdict = proxy_verdict("https://faws.xcity.jp/actress/large/image/person/11000.jpg")
+    assert verdict.allowed is True
+    assert verdict.reason is None
+
+    http_verdict = proxy_verdict("http://faws.xcity.jp/actress/large/image/person/11000.jpg")
+    assert http_verdict.allowed is False
+    assert http_verdict.reason == "scheme 不符"
 
 
 def test_validate_photo_url_xcity():

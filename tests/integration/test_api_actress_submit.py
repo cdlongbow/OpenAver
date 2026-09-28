@@ -126,6 +126,10 @@ def test_submit_actress_unknown_field_rejected_400(client, db_path):
 @pytest.mark.parametrize("field,value", [
     ("birth", "2024-13-40"), ("birth", "2024-1-01"),
     ("height", "99cm"), ("height", "221"), ("height", "tall"),
+    # TASK-157-F4: 舊版 \d+ 正則不限位數，4301+ 位數字字串會讓 int() 撞上
+    # Python 3.11+ 的 int-string 轉換位數上限，丟出未接住的 ValueError → 500，
+    # 而不是預期中的 400。\d{1,3} 邊界應該在正則本身就擋下，不必等 int() 出錯。
+    ("height", "9" * 5000),
     ("bust", 49), ("waist", "121cm"), ("hip", 151),
     ("cup", "AA"), ("cup", "a"), ("tags", ["ok", 3]),
     ("name_en", 42),
