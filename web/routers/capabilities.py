@@ -1138,8 +1138,10 @@ _TOOLS: list[dict] = [
             "required": ["name", "source"],
         },
         "output_schema": {
-            "photo_url": "string — 新照片路徑，含 ?t=timestamp cache-bust query",
-            "photo_source": "string — 實際使用的來源識別碼",
+            "photo_url": "string — 新照片路徑，含 ?v={mtime_ns}-{size} cache-bust query",
+            "photo_source": "string — 實際使用的來源識別碼（與 request 的 source 相同）",
+            "auto_focal": "string — 固定為空字串（換照片不跑自動偵測，不寫入焦點）",
+            "crop_mode": "string — 固定為 \"auto\"",
         },
         "side_effect": True,
         "confirmation_required": True,
@@ -1466,9 +1468,14 @@ _TOOLS: list[dict] = [
             "（預設 \"v1\"），此分支不使用 photo.url。"
             "提交前的欄位驗證失敗一律回 400，body 為 {\"detail\": \"<單一錯誤訊息字串>\"}"
             "（保留欄位/未知欄位/型別或範圍錯誤/別名擋下時 detail 會點名正確名字），此時片庫零寫入；"
-            "照片處理階段（下載、裁切、寫檔）失敗可能回 404 或 500 與 {\"error\": ...}，文字欄位與新建立的收藏會還原，"
-            "但原照片的對焦設定可能已被清除、需要重新調整；成功時回 {\"success\": true, \"actress\": <完整女優資料，"
-            "與 GET /api/actresses/{name} 相同形狀>}。"
+            "照片處理階段是否還原視失敗時機而定：找不到影片/封面（404）或下載、裁切、寫檔本身"
+            "失敗（500）——這些都發生在照片檔案寫入之前，文字欄位與新建立的收藏會還原，但原照片的"
+            "對焦設定可能已被清除、需要重新調整；若照片檔案已經寫入成功、之後才失敗"
+            "（僅剩 photo_source 持久化或照片路徑重新解析失敗兩種情況，一律回 500），則不會還原"
+            "——文字欄位與新照片可能都已生效，請先確認實際狀態再決定是否重試：文字欄位看 GET /api/actresses/{name}，"
+            "照片另取 GET /api/actresses/photo/{name} 看圖片本身（此時女優資料裡的照片來源可能仍是舊值），"
+            "不要直接重試；以上錯誤 body 皆為 {\"error\": ...}；成功時回 {\"success\": true, "
+            "\"actress\": <完整女優資料，與 GET /api/actresses/{name} 相同形狀>}。"
         ),
         "method": "POST",
         "path": "/api/actresses/{name}",
@@ -1550,7 +1557,10 @@ _TOOLS: list[dict] = [
             "required": ["name", "file"],
         },
         "output_schema": {
-            "photo_url": "string — 新照片路徑，含 ?t=timestamp cache-bust query",
+            "photo_url": "string — 新照片路徑，含 ?v={mtime_ns}-{size} cache-bust query",
+            "photo_source": "string — 固定為 \"upload\"",
+            "auto_focal": "string — 固定為空字串（上傳不跑自動偵測，不寫入焦點）",
+            "crop_mode": "string — 固定為 \"auto\"",
         },
         "side_effect": True,
         "confirmation_required": True,
