@@ -562,10 +562,14 @@ class TestSearchStreamSSE:
             return results
 
         # 同 actress_mode_events 理由：3 筆同演員觸發 _fetch_actress_profile_with_db，
-        # init_db()/AliasRepository()/ActressRepository() 未 mock 前連上 output/openaver.db。
+        # init_db()/AliasRepository()/ActressRepository() 未 mock 前連上 output/openaver.db；
+        # _fetch_actress_profile_with_db 本身直接 mock 掉（同 actress_mode_events
+        # fixture 的做法），DB miss 後才會 fallback 呼叫 get_actress_profile 連 xcity/
+        # wikipedia/graphis，直接擋在 _fetch_actress_profile_with_db 這層最乾淨。
         with patch('web.routers.search.smart_search', side_effect=mock_smart_search), \
              patch('core.database.ActressRepository.get_by_name', return_value=None), \
-             patch('core.database.connection.get_db_path', return_value=tmp_path / "test.db"):
+             patch('core.database.connection.get_db_path', return_value=tmp_path / "test.db"), \
+             patch('web.routers.search._fetch_actress_profile_with_db', return_value=None):
             response = client.get('/api/search/stream?q=三上悠亜')
 
         events = parse_sse_events(response.text)
