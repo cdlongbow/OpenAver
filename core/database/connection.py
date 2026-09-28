@@ -87,6 +87,27 @@ def _migrate_old_aliases(rows: list) -> list:
     ]
 
 
+def _ensure_notifications_schema(cursor: sqlite3.Cursor) -> None:
+    """建立通知表並補舊庫缺少的連結欄位。"""
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            id TEXT PRIMARY KEY,
+            timestamp REAL NOT NULL,
+            level TEXT NOT NULL,
+            title_key TEXT NOT NULL,
+            message TEXT DEFAULT '',
+            task_type TEXT,
+            is_read INTEGER DEFAULT 0,
+            url TEXT
+        )
+    """)
+    existing_notification_cols = {
+        row[1] for row in cursor.execute("PRAGMA table_info(notifications)").fetchall()
+    }
+    if 'url' not in existing_notification_cols:
+        cursor.execute("ALTER TABLE notifications ADD COLUMN url TEXT")
+
+
 def init_db(db_path: Path = None) -> None:
     """初始化資料庫 Schema"""
     conn = get_connection(db_path)
@@ -253,18 +274,7 @@ def init_db(db_path: Path = None) -> None:
         CREATE INDEX IF NOT EXISTS idx_wishlist_created_at ON wishlist(created_at)
     """)
 
-    # 創建通知表格
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS notifications (
-            id TEXT PRIMARY KEY,
-            timestamp REAL NOT NULL,
-            level TEXT NOT NULL,
-            title_key TEXT NOT NULL,
-            message TEXT DEFAULT '',
-            task_type TEXT,
-            is_read INTEGER DEFAULT 0
-        )
-    """)
+    _ensure_notifications_schema(cursor)
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS organize_failures (

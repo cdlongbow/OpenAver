@@ -853,7 +853,14 @@
                             <div class="text-sm font-medium leading-tight"
                                  x-text="window.t ? window.t(item.title_key) : item.title_key"></div>
                             <template x-if="item.message">
-                                <div class="text-xs text-base-content/60 mt-0.5" x-text="item.message"></div>
+                                <div class="text-xs text-base-content/60 mt-0.5">
+                                    <template x-if="item.url">
+                                        <a :href="item.url" target="_blank" rel="noopener"><span x-text="item.message"></span></a>
+                                    </template>
+                                    <template x-if="!item.url">
+                                        <span x-text="item.message"></span>
+                                    </template>
+                                </div>
                             </template>
                             <div class="text-xs text-base-content/40 mt-0.5"
                                  x-text="formatTimestamp(item.timestamp)"></div>

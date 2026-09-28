@@ -15,8 +15,8 @@ def insert_notification(row: dict, db_path: Optional[Path] = None) -> None:
         conn.execute(
             """
             INSERT OR REPLACE INTO notifications (
-                id, timestamp, level, title_key, message, task_type, is_read
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                id, timestamp, level, title_key, message, task_type, is_read, url
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row["id"],
@@ -26,6 +26,7 @@ def insert_notification(row: dict, db_path: Optional[Path] = None) -> None:
                 row.get("message") or "",
                 row.get("task_type"),
                 1 if row.get("is_read") else 0,
+                row.get("url"),
             ),
         )
         # `rowid DESC` 是承重的，不是裝飾（PR review 實測復現）：`timestamp` 是 REAL，
@@ -65,7 +66,7 @@ def load_recent_notifications(limit: int = 50, db_path: Optional[Path] = None) -
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT id, timestamp, level, title_key, message, task_type, is_read
+            SELECT id, timestamp, level, title_key, message, task_type, is_read, url
             FROM notifications
             ORDER BY timestamp DESC, rowid DESC
             LIMIT ?
@@ -82,6 +83,7 @@ def load_recent_notifications(limit: int = 50, db_path: Optional[Path] = None) -
                 "message": r[4],
                 "task_type": r[5],
                 "is_read": bool(r[6]),
+                "url": r[7] or None,
             }
             for r in rows
         ]

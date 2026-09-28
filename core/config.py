@@ -216,6 +216,7 @@ class GeneralConfig(BaseModel):
     server_mode: bool = False  # LAN 伺服器模式開關（feature/80）
     close_action: Literal["ask", "tray", "exit"] = "ask"  # 視窗關閉行為（feature/82）
     auto_check_update: bool = True  # 啟動時檢查更新（feature/107）
+    last_notified_update_version: str = ""
 
     @field_validator("close_action", mode="before")
     @classmethod
@@ -245,6 +246,18 @@ class AppConfig(BaseModel):
 
 
 # ============ 載入 / 儲存 ============
+
+def _backfill_update_config_fields(gen: dict) -> bool:
+    """補齊舊設定檔的更新檢查欄位；保留既有 False／版本值。"""
+    changed = False
+    if 'auto_check_update' not in gen:
+        gen['auto_check_update'] = True
+        changed = True
+    if 'last_notified_update_version' not in gen:
+        gen['last_notified_update_version'] = ''
+        changed = True
+    return changed
+
 
 def _load_config_unlocked() -> dict:  # noqa: C901 — config 遷移主流程；每加一個設定欄位的向後相容 migration 就得在此多開一支分支，這是它存在的理由而非缺陷；收斂設計已列 backlog（見 OpenAver架構評估-回應.md §七）
     """載入設定（含 migration / first-init），**不取鎖** —— caller 須已持有 _config_write_lock。
@@ -554,12 +567,8 @@ def _load_config_unlocked() -> dict:  # noqa: C901 — config 遷移主流程；
             gen['close_action'] = 'ask'
             need_save = True
 
-        # Additive migration（feature/107 P1-T1）：general.auto_check_update 補預設。
-        # load_config() return raw dict（不 model_validate），舊 config 缺此 key 時 Pydantic default
-        # 不 backfill → 顯式補 True。gen 已由上方 close_action 段保證是 dict，直接複用。
-        # 用 not in（非 falsy）：既存 False（使用者曾關閉）為合法值，不可被 True 覆寫。
-        if 'auto_check_update' not in gen:
-            gen['auto_check_update'] = True
+        # load_config 回傳 raw dict，需顯式補齊新欄位。
+        if _backfill_update_config_fields(gen):
             need_save = True
 
         # Additive migration（feature/152c TASK-3）：top-level focal_device 補預設。

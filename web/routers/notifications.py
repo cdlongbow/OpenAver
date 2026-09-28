@@ -55,6 +55,7 @@ def emit_notification(
     title_key: str,
     message: str = "",
     task_type: Optional[str] = None,
+    url: Optional[str] = None,
 ) -> None:
     """後端各處呼叫此函式新增一筆通知。
     設計為極度輕量（只做 deque.appendleft 與 queue.put_nowait），不可拋出例外。
@@ -67,6 +68,7 @@ def emit_notification(
         "title_key": title_key,
         "message": message,
         "task_type": task_type,
+        "url": url,
     }
     with _lock:
         # CD-144-2 的去重只比對**還沒被看過**的那幾筆。
@@ -290,4 +292,3 @@ async def clear_notifications():
         _read_ids.clear()
         _write_queue.put_nowait({"op": "clear"})
     return {"ok": True, "cleared_count": count}
-

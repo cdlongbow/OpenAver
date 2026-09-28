@@ -164,6 +164,7 @@ def update_config(config: AppConfig) -> dict:
             def _write_preserving_server_owned(cfg: dict) -> None:
                 current_server_mode = cfg.get("general", {}).get("server_mode", False)
                 payload["general"]["server_mode"] = current_server_mode
+                payload["general"]["last_notified_update_version"] = cfg.get("general", {}).get("last_notified_update_version", "")
                 # focal_device 是**伺服器擁有狀態**：前端只透過專用 toggle 端點
                 # PUT /api/config/focal-device/disabled 寫它（另有背景
                 # core.focal.device_state.record_outcome），全量 PUT 一律不接受前端送來的值。

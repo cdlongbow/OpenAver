@@ -170,6 +170,31 @@ def test_notification_persists_across_restart(client, tmp_path, monkeypatch):
     assert body["unread_count"] == 1
 
 
+def test_notification_url_persists_across_restart(client, tmp_path, monkeypatch):
+    """GET 可見 URL，writer flush 後重新載入 DB 也保有 URL。"""
+    from core.database.connection import init_db
+    from core.database.notifications import load_recent_notifications
+    import web.routers.notifications as notif_mod
+
+    test_db = tmp_path / "url_persist_test.db"
+    monkeypatch.setattr("core.database.connection.get_db_path", lambda: test_db)
+    init_db(test_db)
+    notif_mod.start_notification_persistence()
+    notif_mod.emit_notification(
+        "info", "notif.update_available", message="v9.9.9", url="https://example.com/release"
+    )
+    assert client.get("/api/notifications").json()["items"][0]["url"] == "https://example.com/release"
+    notif_mod._write_queue.join()
+    notif_mod.stop_notification_persistence()
+    with notif_mod._lock:
+        notif_mod._notifications.clear()
+        notif_mod._read_ids.clear()
+    rows = load_recent_notifications(db_path=test_db)
+    assert rows[0]["url"] == "https://example.com/release"
+    notif_mod.start_notification_persistence()
+    assert client.get("/api/notifications").json()["items"][0]["url"] == "https://example.com/release"
+
+
 def test_notification_clear_persists_across_restart(client, tmp_path, monkeypatch):
     """DoD-6 (M6): DELETE /api/notifications 清空後重啟，抽屜仍為空，不得從 DB 復活。"""
     from core.database.connection import init_db
@@ -302,4 +327,3 @@ def test_start_persistence_idempotent(tmp_path, monkeypatch):
     start_notification_persistence()
     assert notif_mod._writer_thread is first_thread
     assert len(notif_mod._notifications) == 1
-
