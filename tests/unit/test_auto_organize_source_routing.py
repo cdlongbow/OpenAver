@@ -9,39 +9,6 @@ from core.auto_organize import run_one_round
 from core.database.connection import init_db
 
 
-# CD-147d-2 列出的 27 個 CASES（I-147d-2；逐字複製自
-# tests/integration/test_scrape_single_source_routing.py::_INVARIANT_CASES）
-_INVARIANT_CASES = [
-    "SONE-205",
-    "sone-205",
-    " SONE-205 ",
-    "SONE-103-UC",
-    "SONE-103_UC",
-    "200GANA-3360",
-    "259LUXU-1234",
-    "7IPZ-154",
-    "FC2-PPV-1234567",
-    "FC2-1234567",
-    "HEYZO-1234",
-    "T28-103",
-    "3DSVR-1774",
-    "34ID-017",
-    "MIDA-649",
-    "n1234",
-    "ABP-123-C",
-    "ABC-123.mp4",
-    "[ABC-123] title",
-    "1pondo-123456_001",
-    "carib-123456-789",
-    "fc2 12",
-    "深田えいみ",
-    "2024",
-    "IPZZ-03",
-    "SONE",
-    "",
-]
-
-
 # ---------------------------------------------------------------------------
 # 共用 fixture / helper（照抄 tests/unit/test_auto_organize.py）
 # ---------------------------------------------------------------------------
@@ -236,9 +203,8 @@ class TestAutoOrganizeSourceRouting:
         mock_search.assert_not_called()
 
 
-@pytest.mark.parametrize("case", _INVARIANT_CASES)
-def test_guard_functions_agree_across_modules(case):
-    """哨兵：兩邊 import 的是同一個 is_number_format 函式物件（恆真式）。
+def test_guard_functions_agree_across_modules():
+    """哨兵：兩邊 import 的是同一個 is_number_format 函式物件（任一端改綁別的函式就紅）。
 
     這條不是 I-147d-2。I-147d-2（兩條入庫路徑對同一 number 選到同一個上游函式）
     由兩邊各自的 mock-and-assert-call 測試守住。本測試只防「未來有人把某一邊
@@ -248,4 +214,4 @@ def test_guard_functions_agree_across_modules(case):
     import core.auto_organize as ao_mod
     import web.routers.scraper as ws_mod
 
-    assert ao_mod.is_number_format(case) == ws_mod.is_number_format(case)
+    assert ao_mod.is_number_format is ws_mod.is_number_format
