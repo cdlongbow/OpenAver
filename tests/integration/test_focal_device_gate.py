@@ -246,8 +246,9 @@ class TestRunDetectionCallSitesAllPassDeviceGate:
     照樣 spawn、照樣空等幾十秒」，而全部測試都是綠的。那正是這支 branch 存在的理由被靜默
     繞過。
 
-    ⚠️ 兩種呼叫形狀都要涵蓋：四個呼叫端裡有一個是
-    `asyncio.to_thread(run_detection, ...)`（`web/routers/actress.py`），它**不是**
+    ⚠️ 兩種呼叫形狀都要涵蓋：四個呼叫端裡有兩個是
+    `asyncio.to_thread(run_detection, ...)`（`web/routers/actress.py`）與
+    `executor.submit(run_detection, ...)`（`web/routers/showcase.py`），它們**不是**
     `run_detection(` 的字面形狀——只比對 Call.func 名字的守衛會漏掉它而不自知。
     """
 
@@ -277,10 +278,11 @@ class TestRunDetectionCallSitesAllPassDeviceGate:
                         (isinstance(func, ast.Name) and func.id == "run_detection")
                         or (isinstance(func, ast.Attribute) and func.attr == "run_detection")
                     )
-                    # 形狀 B：asyncio.to_thread(run_detection, ...) —— 名字在第一個位置引數上
+                    # 形狀 B：asyncio.to_thread(run_detection, ...)／executor.submit(run_detection, ...)
+                    # —— 名字在第一個位置引數上（showcase.py 的手動偵測走 submit 以套 5 秒回應上限）
                     via_thread = (
                         isinstance(func, ast.Attribute)
-                        and func.attr == "to_thread"
+                        and func.attr in ("to_thread", "submit")
                         and node.args
                         and isinstance(node.args[0], ast.Name)
                         and node.args[0].id == "run_detection"

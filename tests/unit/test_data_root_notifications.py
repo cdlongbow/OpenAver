@@ -43,6 +43,7 @@ def _run_lifespan_with_bootstrap(monkeypatch, fake_bootstrap, emit: Mock):
     monkeypatch.setattr(webapp, "ensure_schema", Mock())
     monkeypatch.setattr(webapp, "backfill_readonly_nfo_mtime", Mock(return_value=0))
     monkeypatch.setattr(webapp, "startup_reconnect", Mock(return_value=None))
+    monkeypatch.setattr(webapp, "check_update", AsyncMock(return_value={"has_update": False}))
     monkeypatch.setattr(
         webapp,
         "load_config",
@@ -90,6 +91,20 @@ def test_finalized_legacy_emits_once_with_root_path(monkeypatch):
     assert len(data_root_calls) == 1
     assert data_root_calls[0].args[0] == "info"
     assert data_root_calls[0].kwargs.get("message") == str(root)
+
+
+def test_finalized_legacy_skipped_when_is_synology(monkeypatch):
+    root = Path("/tmp/openaver-data-root-finalized-fixture")
+    emit = Mock()
+    monkeypatch.setattr(webapp, "is_synology", lambda: True)
+    _run_lifespan_with_bootstrap(
+        monkeypatch, _recording_bootstrap("finalized_legacy", root), emit
+    )
+
+    data_root_calls = [
+        c for c in emit.call_args_list if c.args and c.args[1] == "notif.data_root_finalized"
+    ]
+    assert data_root_calls == []
 
 
 def test_recovered_existing_emits_warn_with_required_literals(monkeypatch):
@@ -152,6 +167,7 @@ def test_marker_valid_config_missing_records_recovered_existing(
 
 def test_desktop_double_bootstrap_emits_only_once(monkeypatch):
     """standalone 先記一次非 already_complete，lifespan 再記 already_complete → emit 恰一次。"""
+    monkeypatch.setattr(webapp, "is_synology", lambda: False)
     root = Path("/tmp/openaver-data-root-desktop-double")
     data_layout_module._record_first_bootstrap_result(
         BootstrapResult(status="finalized_legacy", root=root)

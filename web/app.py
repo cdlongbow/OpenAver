@@ -122,7 +122,7 @@ async def lifespan(app: FastAPI):
 
     _pending = consume_pending_bootstrap_result()
     if _pending is not None:
-        if _pending.status == "finalized_legacy":
+        if _pending.status == "finalized_legacy" and not is_synology():
             emit_notification("info", "notif.data_root_finalized", message=str(_pending.root))
         elif _pending.status == "recovered_existing":
             emit_notification("warn", "notif.data_root_recovered", message=str(_pending.root))

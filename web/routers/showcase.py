@@ -8,6 +8,7 @@ Showcase API 路由 - 影片展示資料端點
 
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote
 
 from fastapi import APIRouter, Query, Request
@@ -293,6 +294,8 @@ def delete_video(path: str = Query(..., description="file:/// URI")):
 
 
 _MANUAL_DETECT_TIMEOUT_S = 5.0  # D2/D9: 前景與背景共用同一個 5 秒定義（CD-152d-1），不是批次上限外的安全網
+_MANUAL_DETECT_WALL_BUDGET_S = 5.0
+_manual_detect_executor = ThreadPoolExecutor(max_workers=1)
 
 
 @router.post("/video/detect-focal")
@@ -316,7 +319,8 @@ def detect_video_focal(req: DetectFocalRequest):
     擋掉 rescan/rescrape 換封面卻把舊座標存成新封面 manual 值的 race。
     成功分支另帶 ``reason``（CD-152d-4b 五值：``""`` / ``device_disabled`` /
     ``too_slow_auto_disabled`` / ``too_slow`` / ``failed``），供前端區分提示。
-    `def`（非 async）→ threadpool。**這條路徑沒有完整的上限。**
+    `def`（非 async）→ threadpool。使用者回應有 5 秒 wall budget（`_MANUAL_DETECT_WALL_BUDGET_S`，
+    逾時回 ``too_slow``）；以下描述的是**背景執行緒**的時間，不是 HTTP 回應會等多久：
     有計時預算的只有兩段：`_MANUAL_DETECT_TIMEOUT_S = 5.0`（偵測階段本身）＋ 最長 10 秒的子程序
     啟動逾時（`_STARTUP_TIMEOUT_S`，寫死在 `core/focal/subprocess_runner.py`，不受本端點傳入的
     `timeout_s` 影響），兩者相加 15 秒是**名義預算**。總 wall time 另外包含兩段**沒有 timeout**
@@ -377,10 +381,17 @@ def detect_video_focal(req: DetectFocalRequest):
         def _on_outcome(o):
             decision["just_disabled"] = device_state.record_manual_outcome(o)
 
-        outcome = run_detection(
+        future = _manual_detect_executor.submit(
+            run_detection,
             cover_fs, 0.71, job_key=str(uuid.uuid4()), timeout_s=_MANUAL_DETECT_TIMEOUT_S,
             pre_spawn_check=device_state.is_disabled, on_outcome=_on_outcome,
         )
+        try:
+            outcome = future.result(timeout=_MANUAL_DETECT_WALL_BUDGET_S)
+        except TimeoutError:
+            return JSONResponse({
+                "success": True, "auto_focal": "", "cover_path": row.cover_path, "reason": "too_slow",
+            })
         focal = outcome.focal if outcome.kind == "FOUND" else None
         auto_focal = format_focal(focal)          # None → ''，純預覽不寫 DB
         reason = device_state.classify_manual_reason(
