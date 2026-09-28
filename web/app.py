@@ -742,13 +742,14 @@ async def help_page(request: Request):
     if snap is None:
         snap = await asyncio.to_thread(load_snapshot)
     # 兩個旗標刻意分開（Codex PR review P2）：
-    #   `show_agent_auth` 守的是**祕密**（token 面板）→ 必須加上
-    #       loopback 條件，遠端裝置即使已通過 PIN 也不該拿到 token 真值。
+    #   `show_agent_auth` 守的是**祕密**（token 面板）→ 密碼開啟時，
+    #       只有本機或已用密碼登入的瀏覽器（cookie）可看到 token 真值。
     #   `auth_enabled` 守的是**事實陳述**（安全提示那句文案）→ 只看認證開沒開。
     # 兩者綁在一起的後果是：一台剛剛才輸完密碼的家人手機，打開說明頁看到的是
     # 「本程式不設帳號密碼」——它剛做的事就否證了這句話。而那句文案裡沒有任何
     # 祕密，持票人也早就知道認證是開著的（他才剛輸過），不存在洩漏面。
-    show_agent_auth = snap.enabled and _is_loopback_host(client_host)
+    authed = verify_ticket(request.cookies.get("sid"))
+    show_agent_auth = snap.enabled and (_is_loopback_host(client_host) or authed)
     context["show_agent_auth"] = show_agent_auth
     context["auth_enabled"] = snap.enabled
     if show_agent_auth:

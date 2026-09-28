@@ -94,20 +94,21 @@ class TestLoopbackAuthEnabledShowsRealToken:
         assert real_token.encode() in resp.content
 
 
-class TestNonLoopbackNeverSeesRealToken:
+class TestNonLoopbackTokenVisibility:
     # [lint-guard: pytest-justified] 安全指紋 ＋ 跨層 contract：斷言「已通過 PIN 的
     # 遠端裝置渲染出來的 /help 不含 oav_ 也不含面板錨點」。這是 request 狀態的函式，
     # 模板源碼裡那些字串永遠存在，static_guard_lint 只會永遠通過。
-    def test_remote_authed_request_gets_no_token_no_anchor(self, server_mode_true):
+    def test_remote_authed_request_now_gets_token_and_anchor(self, server_mode_true):
         access_auth.set_auth(True, "AB12")
+        real_token = access_auth.snapshot().agent_token
         browser_token = access_auth.attempt_pin("AB12")
         assert browser_token is not None
         client = TestClient(app, client=REMOTE_CLIENT)
         client.cookies.set("sid", browser_token)
         resp = client.get("/help")
         assert resp.status_code == 200
-        assert ANCHOR_CLASS.encode() not in resp.content
-        assert b"oav_" not in resp.content
+        assert ANCHOR_CLASS.encode() in resp.content
+        assert real_token.encode() in resp.content
         # plan §4 T4 的機械面之一：非 loopback 不得拿到 token，也不得拿到 agent
         # curl 的形狀。理由見 TestAuthDisabledByteIdentical 那條同款斷言的註解。
         assert b"Authorization: Bearer" not in resp.content
@@ -121,6 +122,7 @@ class TestNonLoopbackNeverSeesRealToken:
         句話。token 面板該不該顯示（守祕密）與這句話該怎麼寫（陳述事實）是兩個
         問題，本測試釘住它們不會再被合併成一個旗標。"""
         access_auth.set_auth(True, "AB12")
+        real_token = access_auth.snapshot().agent_token
         browser_token = access_auth.attempt_pin("AB12")
         assert browser_token is not None
         client = TestClient(app, client=REMOTE_CLIENT)
@@ -129,9 +131,9 @@ class TestNonLoopbackNeverSeesRealToken:
         assert resp.status_code == 200
         assert "已設定密碼保護" in resp.text
         assert "本程式不設帳號密碼" not in resp.text
-        # 同一個回應仍然不得夾帶 token（兩個旗標分開之後這條更需要正向釘住）
-        assert ANCHOR_CLASS.encode() not in resp.content
-        assert b"oav_" not in resp.content
+        # 安全提示與 token 面板應同時出現。
+        assert ANCHOR_CLASS.encode() in resp.content
+        assert real_token.encode() in resp.content
 
     def test_auth_disabled_keeps_the_original_security_copy(self):
         """反向：認證關閉時仍是原本那句（AC8——那句話在關閉時完全正確）。"""
