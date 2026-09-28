@@ -171,3 +171,62 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # ============ Synology beta (aarch64 + x86_64) ============
+  build-synology:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install Pillow
+        run: pip install pillow
+
+      - name: Set package versions
+        id: ver
+        run: |
+          app_version=$(python -c "from core.version import VERSION; print(VERSION)")
+          build_number=$(printf "%04d" "${{ github.run_number }}")
+          echo "app_version=$app_version" >> "$GITHUB_OUTPUT"
+          echo "spk_version=$app_version-$build_number" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Synology Python interpreters
+        uses: actions/cache@v5
+        with:
+          path: synology/cache/
+          key: synology-python-3.12.14-20260901-aarch64-x86_64
+
+      - name: Fetch Synology Python interpreters
+        run: bash scripts/fetch_synology_python.sh
+
+      - name: Build Synology package
+        run: bash synology/build_spk.sh "${{ steps.ver.outputs.spk_version }}" "$GITHUB_SHA" "aarch64 x86_64"
+
+      - name: Run artifact audit
+        run: python scripts/audit_spk_artifact.py synology/out/*.spk --strict
+
+      - name: Rename release asset
+        run: |
+            cp synology/out/OpenAver-${{ steps.ver.outputs.spk_version }}-fat.spk OpenAver-v${{ steps.ver.outputs.app_version }}-Synology-beta.spk
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: OpenAver-Synology
+          path: OpenAver-v${{ steps.ver.outputs.app_version }}-Synology-beta.spk
+          retention-days: 30
+
+      - name: Upload to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: OpenAver-v${{ steps.ver.outputs.app_version }}-Synology-beta.spk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
