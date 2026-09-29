@@ -25,6 +25,14 @@ start_daemon() {
     echo $! > "$PID"
 }
 
+# PID 檔裡的數字可能已被 DSM 其他程序重用：cmdline 同時含 uvicorn 與 web.app:app 才算是我們的；
+# 讀不到（程序不存在）就不是。
+pid_is_ours() {
+    local cmd
+    cmd="$(tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null)" || return 1
+    [[ "$cmd" == *uvicorn* && "$cmd" == *web.app:app* ]]
+}
+
 # 等 pid 消失，最多 $1 秒；已死回 0，逾時仍活回 1
 wait_gone() {
     local i
@@ -41,6 +49,12 @@ stop_daemon() {
     [ -f "$PID" ] || return 0
     local pid
     pid="$(cat "$PID")"
+    if ! pid_is_ours "$pid"; then
+        # 殘留的舊 PID 檔（程序已死，或 PID 被別的程序重用）：不送任何訊號
+        echo "[stop] PID 檔指向的不是 OpenAver（pid $pid），視為殘留並刪除" >> "$LOG" 2>/dev/null
+        rm -f "$PID"
+        return 0
+    fi
     kill "$pid" 2>/dev/null
     if ! wait_gone "$pid" "${OPENAVER_STOP_WAIT:-20}"; then
         echo "[stop] SIGTERM 後逾時，改送 SIGKILL（pid $pid）" >> "$LOG" 2>/dev/null
@@ -55,7 +69,10 @@ stop_daemon() {
 }
 
 daemon_status() {
-    [ -f "$PID" ] && kill -0 "$(cat "$PID")" 2>/dev/null
+    local pid
+    [ -f "$PID" ] || return 1
+    pid="$(cat "$PID")"
+    kill -0 "$pid" 2>/dev/null && pid_is_ours "$pid"
 }
 
 case "$1" in
