@@ -69,7 +69,7 @@ def build_items(pairs, existing_data):
         "<br><b>安裝完成後還有一步，OpenAver 沒有辦法代勞：</b><br>"
         "Synology 不允許第三方套件自行變更資料夾權限，所以請到<br>"
         "<b>控制台 → 共用資料夾 →（上面選的那個）→ 編輯 → 權限 →"
-        " 左上下拉選「系統內部使用者」→ 勾選 <code>" + PKGUSER + "</code> → 可讀寫</b><br>"
+        " 左上下拉選「系統內部使用者帳號」→ 勾選 <code>" + PKGUSER + "</code> → 可讀寫</b><br>"
         "沒有做這一步，OpenAver 會掃到 0 部影片。<br>"
         "（Jellyfin、Plex、Emby 在 Synology 上同樣需要這一步，而且它們要勾兩個。）")})
     return items

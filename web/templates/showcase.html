@@ -1964,8 +1964,8 @@
             </template>
         </div>
 
-        <!-- Center: shortcut hint（永遠顯示）-->
-        <div class="footer-center">
+        <!-- Center: shortcut hint（左側在講 DSM 授權步驟時讓位——那句很長，疊在快捷鍵上會讀不完）-->
+        <div class="footer-center" x-show="!unreachableSources.some(s => s.dsm_hint)">
             <span class="hint-text">
                 <kbd>A</kbd> {{ t('showcase.shortcut.switch_mode') }} ·
                 <kbd>S</kbd> {{ t('showcase.shortcut.toggle_info') }} ·
