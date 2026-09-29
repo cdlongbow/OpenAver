@@ -4,7 +4,7 @@ DEST="${SYNOPKG_PKGDEST:-/var/packages/$PKG/target}"
 APP="$DEST/app"
 PY="$DEST/python-$(uname -m)/bin/python3"    # 胖包：用 uname -m 挑直譯器
 VAR="/var/packages/$PKG/var"                 # @appdata：升級／卸載都保留（findings-145 §I5-a）
-PID="$VAR/openaver.pid"
+PID="${OPENAVER_PID_FILE:-$VAR/openaver.pid}"   # 測試可覆寫；預設不變
 LOG="$VAR/openaver.log"
 PORT=8765
 
@@ -25,15 +25,33 @@ start_daemon() {
     echo $! > "$PID"
 }
 
+# 等 pid 消失，最多 $1 秒；已死回 0，逾時仍活回 1
+wait_gone() {
+    local i
+    for ((i = 0; i < $2; i++)); do
+        kill -0 "$1" 2>/dev/null || return 0
+        sleep 1
+    done
+    ! kill -0 "$1" 2>/dev/null
+}
+
+# 程序確實不在了才刪 PID 檔並回 0；SIGKILL 後仍活著（例如 D 狀態）就保留 PID 檔、回 1，
+# 讓之後還管得到它（不會讓 DSM 起第二個程序去搶 8765）。
 stop_daemon() {
-    if [ -f "$PID" ]; then
-        kill "$(cat "$PID")" 2>/dev/null
-        for _ in $(seq 1 20); do
-            kill -0 "$(cat "$PID")" 2>/dev/null || break
-            sleep 1
-        done
-        rm -f "$PID"
+    [ -f "$PID" ] || return 0
+    local pid
+    pid="$(cat "$PID")"
+    kill "$pid" 2>/dev/null
+    if ! wait_gone "$pid" "${OPENAVER_STOP_WAIT:-20}"; then
+        echo "[stop] SIGTERM 後逾時，改送 SIGKILL（pid $pid）" >> "$LOG" 2>/dev/null
+        kill -9 "$pid" 2>/dev/null
+        if ! wait_gone "$pid" "${OPENAVER_KILL_WAIT:-5}"; then
+            echo "[stop] SIGKILL 後程序仍在（pid $pid），保留 PID 檔" >> "$LOG" 2>/dev/null
+            return 1
+        fi
     fi
+    rm -f "$PID"
+    return 0
 }
 
 daemon_status() {
@@ -42,7 +60,7 @@ daemon_status() {
 
 case "$1" in
     start)   daemon_status && exit 0; start_daemon; exit 0 ;;
-    stop)    stop_daemon; exit 0 ;;
+    stop)    stop_daemon; exit $? ;;
     status)  daemon_status && exit 0 || exit 3 ;;
     log)     echo "$LOG"; exit 0 ;;
     *)       exit 1 ;;
