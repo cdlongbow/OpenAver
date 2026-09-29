@@ -159,6 +159,31 @@ def test_consume_reset_access_auth_marker_unlink_failure_keeps_auth(tmp_path, mo
     assert marker.exists()
 
 
+def test_consume_reset_access_auth_marker_set_auth_failure_restores_marker(tmp_path, monkeypatch):
+    import core.data_layout as layout_mod
+    import core.data_root as data_root_module
+
+    root = tmp_path / "output"
+    root.mkdir()
+    marker = root / ".reset_access_auth"
+    marker.touch()
+    monkeypatch.setattr(data_root_module, "get_data_root", lambda: root)
+    monkeypatch.setattr(
+        layout_mod, "set_auth",
+        Mock(side_effect=sqlite3.OperationalError("database is locked")),
+    )
+
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        layout_mod.consume_reset_access_auth_marker()
+    assert marker.exists()  # 下次重啟會重試
+
+    ok = Mock()
+    monkeypatch.setattr(layout_mod, "set_auth", ok)
+    assert layout_mod.consume_reset_access_auth_marker() is True
+    ok.assert_called_once_with(False, "")
+    assert not marker.exists()
+
+
 def test_bootstrap_preserves_existing_root_tree_byte_for_byte(tmp_path, monkeypatch):
     """完整舊佈局跑 bootstrap 後，既有項目（含未知檔）與 legacy config 逐位元組不變。"""
     from core.data_layout import bootstrap_data_layout

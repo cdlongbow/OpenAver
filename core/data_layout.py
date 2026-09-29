@@ -242,12 +242,24 @@ def consume_pending_bootstrap_result() -> BootstrapResult | None:
 
 
 def consume_reset_access_auth_marker() -> bool:
-    """重裝後清除存取密碼，成功時消耗標記。"""
+    """重裝後清除存取密碼，成功時消耗標記。
+
+    順序固定「先刪標記、再清密碼」，兩個失敗方向：
+    - 刪標記失敗：直接上拋、不清密碼（否則使用者之後設的新密碼每次重啟都被清）。
+    - 清密碼失敗：盡力把標記重建回來讓下次重啟重試，再上拋原例外。
+    """
     marker_path = data_root.get_data_root() / RESET_ACCESS_AUTH_MARKER_NAME
     if not marker_path.is_file():
         return False
     marker_path.unlink()
-    set_auth(False, "")
+    try:
+        set_auth(False, "")
+    except Exception:
+        try:
+            marker_path.touch()
+        except OSError:
+            logger.warning("failed to restore reset-access-auth marker", exc_info=True)
+        raise
     return True
 
 
