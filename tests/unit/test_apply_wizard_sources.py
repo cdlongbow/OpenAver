@@ -43,7 +43,7 @@ def _fixture(tmp_path, *, layout=True, directories=None):
     os.symlink(target, shares / "我的 影片")
     legacy = tmp_path / "legacy.json"
     kwargs = dict(data_dir=str(data), legacy_cfg=str(legacy), default_cfg=str(default),
-                  mapping_path=str(mapping), shares_root=str(shares))
+                  mapping_path=str(mapping), shares_root=str(shares), app_dir=str(ROOT))
     env = {"wizard_library_share": "我的 影片", "pkgwizard_share_0": "true"}
     return cfg, kwargs, env, target
 
@@ -83,6 +83,56 @@ def test_merge_case_differs_keeps_both():
 def test_merge_trailing_slashes_are_duplicates(existing, new_path):
     result = _load_module().merge_directories({"gallery": {"directories": existing}}, [new_path])
     assert result["gallery"]["directories"] == existing
+
+
+@pytest.mark.parametrize("uri,fs_path", [
+    ("file:///volume1/av", "/volume1/av"),
+    ("file:////volume1/av", "/volume1/av"),
+    ("file:////volume1/AV#1", "/volume1/AV#1"),
+    ("file:///volume1/a?b", "/volume1/a?b"),
+    ("file:///volume1/AV%231", "/volume1/AV#1"),
+])
+def test_merge_file_uri_readonly_source_not_duplicated(uri, fs_path):
+    existing = {"path": uri, "readonly": True, "output_path": "/volume1/output"}
+    result = _load_module().merge_directories({"gallery": {"directories": [existing]}},
+                                               [fs_path], app_dir=str(ROOT))
+    assert result["gallery"]["directories"] == [existing]
+    assert result["gallery"]["directories"][0]["readonly"] is True
+
+
+def test_merge_file_uri_percent_encoded_space_not_duplicated():
+    existing = "file:///volume1/oa%20中文"
+    result = _load_module().merge_directories({"gallery": {"directories": [existing]}}, ["/volume1/oa 中文"])
+    assert result["gallery"]["directories"] == [existing]
+
+
+def test_merge_fs_path_and_new_file_uri_not_duplicated():
+    existing = "/volume1/av"
+    result = _load_module().merge_directories({"gallery": {"directories": [existing]}},
+                                               ["file:///volume1/av/"], app_dir=str(ROOT))
+    assert result["gallery"]["directories"] == [existing]
+
+
+def test_merge_uri_import_failure_preserves_all_sources(tmp_path, capsys):
+    existing = {"path": "file:///volume1/av", "readonly": True, "output_path": "/volume1/output"}
+    cfg = {"gallery": {"directories": [existing]}, "access": {"key": "keep"}}
+    result = _load_module().merge_directories(cfg, ["/volume1/av", "/volume1/new"], app_dir=str(tmp_path))
+    assert result == cfg
+    assert "URI" in capsys.readouterr().err
+
+
+def test_merge_uri_parse_failure_preserves_all_sources(monkeypatch, capsys):
+    from core import path_utils
+
+    def boom(_path):
+        raise ValueError("unreadable URI")
+
+    monkeypatch.setattr(path_utils, "uri_to_fs_path", boom)
+    existing = {"path": "file:///volume1/av", "readonly": True, "output_path": "/volume1/output"}
+    cfg = {"gallery": {"directories": [existing]}, "access": {"key": "keep"}}
+    result = _load_module().merge_directories(cfg, ["/volume1/av", "/volume1/new"], app_dir=str(ROOT))
+    assert result == cfg
+    assert "unreadable URI" in capsys.readouterr().err
 
 
 def test_library_and_extra_same_path_appears_once(tmp_path):
@@ -206,6 +256,7 @@ def test_postinst_references_existing_helper():
     assert 'if [ ! -f "$HELPER" ]; then' in text
     assert 'echo "### [postinst] helper 找不到：$HELPER" >&2' in text
     assert "SYNOPKG_PKGDEST}/scripts" not in text
+    assert '"${SYNOPKG_PKGDEST}/app" >&2 || true' in text
     assert SCRIPT.is_file()
 
 
@@ -240,6 +291,15 @@ def test_seed_without_wizard_env_still_sets_server_mode(tmp_path):
     cfg = json.loads(Path(kwargs["legacy_cfg"]).read_text(encoding="utf-8"))
     assert cfg["general"]["server_mode"] is True
     assert cfg["gallery"]["directories"] == []
+
+
+def test_seed_without_core_import_still_sets_server_mode(tmp_path):
+    mod = _load_module()
+    _, kwargs, env, _ = _fixture(tmp_path, layout=False)
+    kwargs["app_dir"] = str(tmp_path / "app_without_core")
+    assert mod.run(env, **kwargs) == 0
+    cfg = json.loads(Path(kwargs["legacy_cfg"]).read_text(encoding="utf-8"))
+    assert cfg["general"]["server_mode"] is True
 
 
 def test_main_reinstall_writes_config(tmp_path):

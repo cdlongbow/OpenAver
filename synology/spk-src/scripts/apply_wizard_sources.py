@@ -39,15 +39,33 @@ def _path(item):
     return item["path"] if isinstance(item, dict) else item
 
 
-def merge_directories(cfg, paths):
+def _comparison_key(path, app_dir=None):
+    # Share core.path_utils.uri_to_fs_path with the app's same-location check.
+    if path.startswith("file://"):
+        try:
+            if app_dir is not None and not os.path.isfile(os.path.join(app_dir, "core", "path_utils.py")):
+                raise ImportError(f"core.path_utils unavailable in {app_dir}")
+            from core.path_utils import uri_to_fs_path
+            path = uri_to_fs_path(path)
+        except Exception as exc:
+            _log(f"URI 來源路徑解析失敗：{exc}")
+            return None
+    return path.rstrip("/")
+
+
+def merge_directories(cfg, paths, app_dir=None):
     """Preserve every existing entry and append only new normalized paths."""
     result = copy.deepcopy(cfg)
     gallery = result.setdefault("gallery", {})
     existing = gallery.get("directories", [])
     merged = list(existing)
-    seen = {_path(item).rstrip("/") for item in existing}
+    seen = {_comparison_key(_path(item), app_dir) for item in existing}
+    if None in seen:
+        return result
     for path in paths:
-        normalized = path.rstrip("/")
+        normalized = _comparison_key(path, app_dir)
+        if normalized is None:
+            return result
         if normalized not in seen:
             merged.append({"path": path, "readonly": False, "output_path": ""})
             seen.add(normalized)
@@ -68,13 +86,13 @@ def _write_atomic(path, cfg):
             os.unlink(temporary)
 
 
-def apply(config_path, paths):
+def apply(config_path, paths, app_dir=None):
     """Merge and atomically replace an existing JSON object config."""
     with open(config_path, encoding="utf-8") as stream:
         cfg = json.load(stream)
     if not isinstance(cfg, dict):
         raise ValueError("config is not a JSON object")
-    _write_atomic(config_path, merge_directories(cfg, paths))
+    _write_atomic(config_path, merge_directories(cfg, paths, app_dir))
 
 
 def _read_mapping(mapping_path):
@@ -89,20 +107,21 @@ def _read_mapping(mapping_path):
         return {}
 
 
-def _seed_legacy(default_cfg, legacy_cfg, paths):
+def _seed_legacy(default_cfg, legacy_cfg, paths, app_dir=None):
     with open(default_cfg, encoding="utf-8") as stream:
         cfg = json.load(stream)
     if not isinstance(cfg, dict):
         raise ValueError("default config is not a JSON object")
     cfg.setdefault("general", {})["server_mode"] = True
-    merged = merge_directories(cfg, paths)
+    merged = merge_directories(cfg, paths, app_dir)
     _write_atomic(legacy_cfg, merged)
     _log(f"seed legacy config: server_mode=True directories={merged['gallery']['directories']}")
 
 
-def run(env, *, data_dir, legacy_cfg, default_cfg, mapping_path, shares_root):
+def run(env, *, data_dir, legacy_cfg, default_cfg, mapping_path, shares_root, app_dir):
     """Apply wizard selections without ever failing package installation."""
     try:
+        sys.path.insert(0, app_dir)
         finalized = os.path.isfile(os.path.join(data_dir, ".layout.json"))
         active = bool(env.get("wizard_library_share", ""))
         if env.get("SYNOPKG_OLD_PKGVER", ""):
@@ -116,20 +135,21 @@ def run(env, *, data_dir, legacy_cfg, default_cfg, mapping_path, shares_root):
             if not os.path.isfile(config_path):
                 _log(f"資料設定找不到或無權限：{config_path}")
                 return 0
-            apply(config_path, paths)
+            apply(config_path, paths, app_dir)
         else:
-            _seed_legacy(default_cfg, legacy_cfg, paths)
+            _seed_legacy(default_cfg, legacy_cfg, paths, app_dir)
     except Exception as exc:
         _log(f"套用精靈來源失敗：{exc}")
     return 0
 
 
 def main():
-    if len(sys.argv) != 6:
+    if len(sys.argv) != 7:
         _log("套用精靈來源失敗：路徑參數不足")
         return 0
     return run(os.environ, data_dir=sys.argv[1], legacy_cfg=sys.argv[2],
-               default_cfg=sys.argv[3], mapping_path=sys.argv[4], shares_root=sys.argv[5])
+               default_cfg=sys.argv[3], mapping_path=sys.argv[4], shares_root=sys.argv[5],
+               app_dir=sys.argv[6])
 
 
 if __name__ == "__main__":

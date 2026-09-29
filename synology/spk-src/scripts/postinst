@@ -28,6 +28,7 @@ if [ ! -f "$HELPER" ]; then
 else
     "$PY_BIN" "$HELPER" \
         "$DATA" "$LEGACY_CFG" "$DEFAULT" \
-        "/tmp/openaver_wizard_shares.json" "/var/packages/${SYNOPKG_PKGNAME}/shares" >&2 || true
+        "/tmp/openaver_wizard_shares.json" "/var/packages/${SYNOPKG_PKGNAME}/shares" \
+        "${SYNOPKG_PKGDEST}/app" >&2 || true
 fi
 exit 0
