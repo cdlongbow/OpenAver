@@ -320,7 +320,8 @@ def detect_video_focal(req: DetectFocalRequest):
     成功分支另帶 ``reason``（CD-152d-4b 五值：``""`` / ``device_disabled`` /
     ``too_slow_auto_disabled`` / ``too_slow`` / ``failed``），供前端區分提示。
     `def`（非 async）→ threadpool。使用者回應有 5 秒 wall budget（`_MANUAL_DETECT_WALL_BUDGET_S`，
-    逾時回 ``too_slow``）；以下描述的是**背景執行緒**的時間，不是 HTTP 回應會等多久：
+    逾時回 ``still_detecting``：背景那輪還在跑，這裡不記帳——它之後照既有規則記；
+    等待時間含排隊與子程序啟動，不能當成「偵測本身太慢」停用）；以下描述的是**背景執行緒**的時間，不是 HTTP 回應會等多久：
     有計時預算的只有兩段：`_MANUAL_DETECT_TIMEOUT_S = 5.0`（偵測階段本身）＋ 最長 10 秒的子程序
     啟動逾時（`_STARTUP_TIMEOUT_S`，寫死在 `core/focal/subprocess_runner.py`，不受本端點傳入的
     `timeout_s` 影響），兩者相加 15 秒是**名義預算**。總 wall time 另外包含兩段**沒有 timeout**
@@ -390,7 +391,7 @@ def detect_video_focal(req: DetectFocalRequest):
             outcome = future.result(timeout=_MANUAL_DETECT_WALL_BUDGET_S)
         except TimeoutError:
             return JSONResponse({
-                "success": True, "auto_focal": "", "cover_path": row.cover_path, "reason": "too_slow",
+                "success": True, "auto_focal": "", "cover_path": row.cover_path, "reason": "still_detecting",
             })
         focal = outcome.focal if outcome.kind == "FOUND" else None
         auto_focal = format_focal(focal)          # None → ''，純預覽不寫 DB

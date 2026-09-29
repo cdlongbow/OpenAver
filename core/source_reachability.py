@@ -293,16 +293,24 @@ async def _probe_exists_with_retry(path: str) -> str:
 
 
 def _scandir_probe(path: str) -> bool | str | None:
-    """Return final probe semantics after opening the directory itself."""
+    """Return final probe semantics after opening the directory itself.
+
+    PermissionError -> "permission_denied"; NotADirectoryError -> False
+    (a file exists there: reachable, same as ``os.path.exists`` on main);
+    FileNotFoundError and any other OSError (NAS down: WinError 64/1222/1231,
+    EHOSTDOWN/EIO ...) -> True (missing), matching main's exists() behaviour.
+    """
     try:
         with os.scandir(path):
             return False
     except PermissionError:
         return "permission_denied"
+    except NotADirectoryError:
+        return False
     except FileNotFoundError:
         return True
     except OSError:
-        return None
+        return True
 
 
 async def _exists_probe(path: str) -> bool | str | None:

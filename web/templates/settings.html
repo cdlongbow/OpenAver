@@ -526,7 +526,7 @@
                             <div class="variable-input-group" style="position:relative;">
                                 <input type="text" class="input input-bordered input-sm flex-1" id="searchFavoriteFolder"
                                     x-model="form.searchFavoriteFolder"
-                                    placeholder="{{ t('settings.search.favorite_folder_placeholder') }}">
+                                    placeholder="{{ t('settings.search.favorite_folder_placeholder') if is_desktop else t('settings.search.favorite_folder_placeholder_server') }}">
                                 <button type="button"
                                     class="btn btn-sm btn-outline"
                                     :title="t('settings.favorite_folder.pick_from_scanner')"

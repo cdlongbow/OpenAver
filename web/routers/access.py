@@ -171,7 +171,8 @@ def update_access_settings(request: AccessSettingsRequest, raw_request: Request)
             "success": False, "reason": "invalid_pin",
             "error": "密碼必須是 4 位英文或數字",
         })
-    if not snap.enabled and request.enabled:
+    if request.enabled:
+        # 首次設定與已登入者改密碼共用：set_auth 撤銷了所有票，重發一張讓呼叫端不被登出。
         token = attempt_pin(request.pin)
         response = JSONResponse({"success": True})
         if token is not None:

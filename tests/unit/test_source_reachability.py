@@ -76,6 +76,20 @@ async def test_permission_denied_short_circuits_without_retry(sr):
         sleep.assert_not_awaited()
 
 
+def test_scandir_probe_other_oserror_is_missing(sr):
+    """NAS 斷線類錯誤（EHOSTDOWN 等）＝ main 的 exists()=False ＝ missing（True）。"""
+    import errno as _errno
+
+    with patch.object(sr.os, "scandir", side_effect=OSError(_errno.EHOSTDOWN, "host down")):
+        assert sr._scandir_probe("/mnt/nas") is True
+
+
+def test_scandir_probe_not_a_directory_is_reachable(sr):
+    """路徑是檔案：main 的 exists()=True ＝可達（False）。"""
+    with patch.object(sr.os, "scandir", side_effect=NotADirectoryError(20, "not a dir")):
+        assert sr._scandir_probe("/mnt/file") is False
+
+
 @pytest.mark.asyncio
 @pytest.mark.skipif(os.name != "posix" or (hasattr(os, "geteuid") and os.geteuid() == 0),
                     reason="chmod 000 requires POSIX non-root DAC enforcement")

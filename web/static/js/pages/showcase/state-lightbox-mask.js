@@ -263,6 +263,9 @@ export function stateLightboxMask() {
                         this.showToast(window.t('showcase.lightbox.mask_focal_too_slow_auto_disabled'), 'info');
                     } else if (data.reason === 'too_slow') {
                         this.showToast(window.t('showcase.lightbox.mask_focal_too_slow_hint'), 'info');
+                    } else if (data.reason === 'still_detecting') {
+                        // 159 pre-merge：5 秒外殼到了但背景那輪還在跑——結局未定，文案不能先說「已關掉」或「可以去關」。
+                        this.showToast(window.t('showcase.lightbox.mask_focal_still_detecting'), 'info');
                     } else if (data.reason === 'failed') {
                         this.showToast(window.t('showcase.lightbox.mask_detect_failed'), 'error');
                     }

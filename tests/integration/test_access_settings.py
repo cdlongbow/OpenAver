@@ -510,6 +510,7 @@ def test_j1_j3_password_semantics_full_flow(auth_db, server_mode_true):
 
     help_response = client.get("/help")
     assert help_response.status_code == 200
+    # [lint-guard: pytest-justified] 安全指紋：SSR 後的 /help 依「已通過 PIN／token 撤銷」而變，lint 掃不到執行期結果。
     assert b"help-agent-token-panel" in help_response.content
 
     client.cookies.set("sid", old_token)
@@ -526,6 +527,35 @@ def test_j1_j3_password_semantics_full_flow(auth_db, server_mode_true):
     assert reopened.status_code == 200
     assert reopened.headers["set-cookie"].startswith("sid=")
     assert access_auth.get_auth_settings(True) == {"enabled": True, "pin": "9999"}
+
+
+def test_remote_authed_password_change_keeps_caller_logged_in(
+    auth_db, server_mode_true, tmp_path, monkeypatch
+):
+    """已登入的遠端瀏覽器改密碼：拿到新 cookie、不被登出；舊 cookie 失效。"""
+    monkeypatch.setattr("web.routers.showcase.get_db_path", lambda: tmp_path / "showcase.db")
+    access_auth.set_auth(True, "1234")
+    old_token = access_auth.attempt_pin("1234")
+    assert old_token is not None
+    client = _remote_authed_client(old_token)
+
+    changed = client.put(SETTINGS_PATH, json={"enabled": True, "pin": "5678"})
+    assert changed.status_code == 200
+    assert changed.headers["set-cookie"].startswith("sid=")
+    new_token = changed.headers["set-cookie"].split(";", 1)[0].split("=", 1)[1]
+    assert new_token and new_token != old_token
+    assert access_auth.verify_ticket(new_token) is True
+    assert access_auth.verify_ticket(old_token) is False
+
+    fresh = TestClient(app, client=REMOTE_CLIENT)
+    fresh.cookies.set("sid", new_token)
+    ok = fresh.get("/api/showcase/videos")
+    assert ok.headers["content-type"].startswith("application/json")
+
+    stale = TestClient(app, client=REMOTE_CLIENT)
+    stale.cookies.set("sid", old_token)
+    denied = stale.get("/api/showcase/videos")
+    assert not (denied.status_code == 200 and denied.headers["content-type"].startswith("application/json"))
 
 
 def test_get_can_edit_reveal_reachable_matrix(

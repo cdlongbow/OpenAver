@@ -111,6 +111,16 @@ test('狀態③：enabled=true, can_edit=false → PIN 鎖定、儲存鎖定、�
     assert.equal(fakeThis.accessAuthStatusHintKey(), 'settings.access_auth.need_login_hint');
 });
 
+test('狀態④：serverMode=false（桌面單機）→ 不出現任何密碼提示', () => {
+    const fakeThis = makeFakeThis();
+    fakeThis.serverMode = false;
+    fakeThis.accessAuthEnabled = false;
+    fakeThis.accessAuthEnabledSaved = false;
+    fakeThis.accessAuthCanEdit = true;
+    assert.equal(fakeThis.accessAuthPinDisabled(), true);
+    assert.equal(fakeThis.accessAuthStatusHintKey(), '');
+});
+
 test('loadConfig 讀入 GET 回應的 can_edit 存進 accessAuthCanEdit', async () => {
     const fakeThis = makeFakeThis();
     fakeThis.accessAuthCanEdit = true;

@@ -265,7 +265,7 @@ class TestDetectFocalEndpoint:
         assert resp.json()["success"] is True
         assert resp.json()["auto_focal"] == ""
         assert resp.json()["cover_path"] == focal_endpoint_setup["cover_uri"]
-        assert resp.json()["reason"] == "too_slow"
+        assert resp.json()["reason"] == "still_detecting"
         assert fake_executor.submitted
         from web.routers import showcase
         assert fake_executor.future.timeout == showcase._MANUAL_DETECT_WALL_BUDGET_S == 5.0

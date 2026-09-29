@@ -427,6 +427,7 @@ export function stateConfig() {
         },
 
         accessAuthStatusHintKey() {
+            if (!this.serverMode) return '';  // 單機模式密碼開關停用，不提示「可以在這裡設定」
             if (!this.accessAuthEnabledSaved) return 'settings.access_auth.unset_hint';
             if (!this.accessAuthCanEdit) return 'settings.access_auth.need_login_hint';
             return '';
