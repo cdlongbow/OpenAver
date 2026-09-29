@@ -32,6 +32,7 @@ max-complexity = 30
 "build_macos.py" = ["T201"]
 "scripts/audit_build_artifact.py" = ["T201"]  # CLI build 工具，print 為正常輸出（同 build.py）
 "scripts/audit_spk_artifact.py" = ["T201"]  # CLI 產物稽核工具，print 為正常輸出（同 audit_build_artifact.py）
+"synology/spk-src/scripts/apply_wizard_sources.py" = ["T201"]  # postinst 階段的 stdlib-only 腳本，app 未啟動、無 core.logger；print(file=sys.stderr) 進 DSM 套件 log（比照 audit_spk_artifact.py）
 "scripts/verify_artifact_imports.py" = ["T201"]  # 產物 import sweep 守衛，print 即輸出（跑在 embedded python，stdlib-only）
 "scripts/py_function_size_lint.py" = ["T201"]  # 規模閘守衛，print 即輸出（比照 audit_build_artifact.py／verify_artifact_imports.py）
 "scripts/no_raw_sqlite_connect_lint.py" = ["T201"]  # 同一形狀的守衛腳本，print 即輸出（比照 py_function_size_lint.py）
