@@ -229,6 +229,48 @@ class TestDetectFocalEndpoint:
         spy.assert_called_once()
         assert captured["timeout_s"] == 5.0
 
+    def test_manual_detect_wall_budget_returns_too_slow_without_real_wait(
+        self, client, focal_endpoint_setup, mocker,
+    ):
+        _patch_db_and_config(mocker, focal_endpoint_setup)
+
+        class TimeoutFuture:
+            def __init__(self):
+                self.timeout = None
+
+            def result(self, timeout=None):
+                self.timeout = timeout
+                raise TimeoutError()
+
+        class TimeoutExecutor:
+            def __init__(self):
+                self.future = TimeoutFuture()
+                self.submitted = False
+
+            def submit(self, fn, *args, **kwargs):
+                self.submitted = True
+                return self.future
+
+        fake_executor = TimeoutExecutor()
+        mocker.patch("web.routers.showcase._manual_detect_executor", fake_executor, create=True)
+        mocker.patch(
+            "web.routers.showcase.run_detection",
+            return_value=RunnerOutcome(kind="FOUND", focal=(0.42, 0.5)),
+        )
+        record = mocker.patch.object(device_state, "record_manual_outcome")
+
+        resp = client.post("/api/showcase/video/detect-focal",
+                           json={"path": focal_endpoint_setup["video_uri"]})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        assert resp.json()["auto_focal"] == ""
+        assert resp.json()["cover_path"] == focal_endpoint_setup["cover_uri"]
+        assert resp.json()["reason"] == "still_detecting"
+        assert fake_executor.submitted
+        from web.routers import showcase
+        assert fake_executor.future.timeout == showcase._MANUAL_DETECT_WALL_BUDGET_S == 5.0
+        record.assert_not_called()
+
     def test_abandoned_returns_same_shape_as_no_face(self, client, focal_endpoint_setup, mocker):
         """ABANDONED(crashed) → reason=='failed'，不得被歸成 too_slow 家族（CD-152d-4b）。"""
         _patch_db_and_config(mocker, focal_endpoint_setup)

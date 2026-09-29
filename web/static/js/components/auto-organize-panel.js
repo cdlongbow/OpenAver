@@ -20,6 +20,7 @@ export function autoOrganizePanel() {
         enabled: false,
         folderPath: '',
         folderIsSet: false,
+        resolvedFolder: '',
         loading: false,
         running: false,
 
@@ -148,11 +149,12 @@ export function autoOrganizePanel() {
                 this.running = !!data.running;
                 this.enabled = !!data.enabled;
                 this.folderIsSet = !!data.folder_is_set;
+                this.resolvedFolder = data.resolved_folder || '';
                 // 已設定就顯示設定值；還沒設就顯示「按下去會變成什麼」的候選值，
                 // 兩者同源於後端的 resolve_favorite_folder()，所以灰字與實際生效值保證一致。
                 this.folderPath = data.folder_is_set
                     ? (data.folder || '')
-                    : (data.resolved_folder || '');
+                    : this.resolvedFolder;
             } catch (_e) {
                 // 失敗不擋面板開合：面板照樣展開，只是欄位停在目前值
             }

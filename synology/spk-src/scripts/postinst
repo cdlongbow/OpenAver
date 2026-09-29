@@ -1,0 +1,45 @@
+#!/bin/bash
+# 升級時 DSM 也會叫這支（findings-145 §K6）⇒ 不能假設是首裝。
+# 不做 chown：DSM 自己會把 target/var 交給 package user（§K4：舊版那段從未生效）。
+VAR="/var/packages/${SYNOPKG_PKGNAME}/var"
+DATA="$VAR/data"
+LEGACY_CFG="${SYNOPKG_PKGDEST}/app/web/config.json"
+DEFAULT="${SYNOPKG_PKGDEST}/app/web/config.default.json"
+PY_BIN="${SYNOPKG_PKGDEST}/python-$(uname -m)/bin/python3"
+
+echo "### [postinst] id=$(id) PKGDEST=${SYNOPKG_PKGDEST} OLD=${SYNOPKG_OLD_PKGVER:-} NEW=${SYNOPKG_PKGVER:-}" >&2
+
+# 資料根已定版（升級／重裝）⇒ 什麼都不種，使用者的設定就在那裡。
+if [ -f "$DATA/.layout.json" ]; then
+    if [ -z "$SYNOPKG_OLD_PKGVER" ]; then
+        touch "$DATA/.reset_access_auth"
+    fi
+    echo "### [postinst] data root finalized at $DATA — skip seeding" >&2
+    exit 0
+fi
+
+# 首裝：種一份「舊位置」的 config（app/web/config.json），由 153 的 bootstrap 在第一次啟動時
+# 以 finalized_legacy 路徑搬進空的資料根。
+# ⚠️ 不可直接寫進 $DATA：空根裡只多一個 config.json 會被 data_layout 判成
+#    「non-empty without a valid layout」而拒絕啟動。
+# server_mode=true 是硬需求：否則所有非 loopback 請求 403，而那顆開關只收 loopback（J1）。
+"$PY_BIN" - "$DEFAULT" "$LEGACY_CFG" >&2 <<'PYEOF'
+import json, os, sys
+src, dst = sys.argv[1], sys.argv[2]
+cfg = json.load(open(src, encoding='utf-8'))
+cfg.setdefault('general', {})['server_mode'] = True
+try:
+    m = json.load(open("/tmp/openaver_wizard_shares.json", encoding="utf-8"))
+except Exception as e:
+    print(f"### [postinst] 沒有精靈對照檔（{e}）"); m = {}
+picked = [p for k, p in m.items() if str(os.environ.get(k, "")).lower() in ("true", "1", "yes", "on")]
+dirs = cfg.setdefault('gallery', {}).setdefault('directories', [])
+for p in picked:
+    if p not in dirs:
+        dirs.append(p)
+print(f"### [postinst] seed legacy config: server_mode=True directories={dirs}")
+with open(dst, 'w', encoding='utf-8') as f:
+    json.dump(cfg, f, ensure_ascii=False, indent=2)
+os.chmod(dst, 0o600)
+PYEOF
+exit 0

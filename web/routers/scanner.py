@@ -32,7 +32,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
 from starlette.background import BackgroundTask
 
-from core.gallery_scanner import VideoScanner, fast_scan_directory, VideoInfo, _run_sample_images_cleanup_pass  # noqa: PLC2701 — scanner 的 rescan 端點需要在特定時機主動觸發 gallery_scanner 內部的樣本圖清理 pass（該 pass 平常只在 scanner 自身流程內被呼叫），避免把整段清理邏輯複製一份到 router 層
+from core.gallery_scanner import VideoScanner, fast_scan_directory, VideoInfo, _run_sample_images_cleanup_pass, is_nas_system_dir_name  # noqa: PLC2701 — scanner 的 rescan 端點需要在特定時機主動觸發 gallery_scanner 內部的樣本圖清理 pass（該 pass 平常只在 scanner 自身流程內被呼叫），避免把整段清理邏輯複製一份到 router 層
 from core.cover_layout import cover_base_stem
 from core.video_extensions import get_video_extensions
 from core.gallery_generator import HTMLGenerator
@@ -53,6 +53,7 @@ from core.scraper import smart_search
 from core.source_settings import is_uncensored_mode_effective
 from pydantic import BaseModel
 from core.logger import get_logger
+from core.platform_info import DSM_PERMISSION_HINT, is_synology
 from web.routers.notifications import emit_notification as _emit_notif
 from core.wishlist_reconcile import reconcile_wishlist, format_wishlist_removed_message
 
@@ -224,6 +225,34 @@ def _run_readonly_source(src, config, repo, proxy_url, summary, reachable: bool 
         yield from _yield_source_summary(result)
 
 
+def _permission_denied_warning(directory: str) -> str:
+    """權限不足時共用的掃描警告（Synology 附 DSM 指引）。"""
+    warning = f"  {directory}: 沒有權限讀取，跳過刪除偵測以免誤刪"
+    if is_synology():
+        warning += f"；{DSM_PERMISSION_HINT}"
+    return warning
+
+
+def _scan_root_skip_message(directory: str, normalized_dir: str) -> Optional[str]:
+    """根目錄不可存取時回傳警告；可存取時回傳 None。"""
+    try:
+        os.stat(normalized_dir)
+    except (FileNotFoundError, NotADirectoryError):
+        return f"資料夾不存在: {directory}"
+    except PermissionError:
+        return _permission_denied_warning(directory)
+    except (OSError, ValueError):  # 與 os.path.exists 一致：畸形路徑也只跳過這個來源
+        return f"資料夾不存在: {directory}"
+    return None
+
+
+def _skipped_scan_warning(directory: str, root: str, skipped_paths: dict[str, OSError]) -> str:
+    """掃描有路徑被跳過時的 SSE 警告：根目錄本身沒權限 → 講「沒有權限」（Synology 附 DSM 指引）；其餘維持泛用句（159-T10a）"""
+    if isinstance(skipped_paths.get(root), PermissionError):
+        return _permission_denied_warning(directory)
+    return f"  {directory}: {len(skipped_paths)} 個路徑讀取失敗，跳過刪除偵測以免誤刪（詳見 debug.log）"
+
+
 def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Generator[str, None, None]:  # noqa: C901 — avlist SSE 生成主流程；109 已判定為「列 backlog、現在別搬」（60–100 處測試 patch target 焊死該函式，拆分成本由測試面而非邏輯面決定）
     """產生影片列表（SSE 串流）- 使用 SQLite 儲存"""
 
@@ -340,9 +369,9 @@ def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Genera
                 "current": idx,
                 "total": total_dirs + 1  # +1 for generating
             })
-
-            if not os.path.exists(normalized_dir):
-                yield _sse_event({"type": "log", "level": "warn", "message": f"資料夾不存在: {directory}"})
+            skip_message = _scan_root_skip_message(directory, normalized_dir)
+            if skip_message is not None:
+                yield _sse_event({"type": "log", "level": "warn", "message": skip_message})
                 continue
 
             try:
@@ -351,12 +380,12 @@ def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Genera
                 video_extensions = get_video_extensions(config)
                 # a5 Codex fix: 收集因 OSError/PermissionError 被跳過的路徑
                 # （含 Windows 長路徑觸發的 OSError — 這些 entry 根本不會進 all_files）
-                skipped_paths: list[str] = []
+                skipped_paths: dict[str, OSError] = {}  # path → 例外（159-T10a：分辨「沒有權限」）
                 all_files = fast_scan_directory(
                     normalized_dir,
                     video_extensions,
                     min_size_bytes,
-                    on_skip=lambda p, _e: skipped_paths.append(p),  # noqa: B023 — skipped_paths consumed synchronously within same iteration, not deferred
+                    on_skip=lambda p, e: skipped_paths.__setitem__(p, e),  # noqa: B023 — callback consumed synchronously within same iteration, not deferred
                 )
 
                 if not all_files and not skipped_paths:
@@ -401,7 +430,7 @@ def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Genera
                     yield _sse_event({
                         "type": "log",
                         "level": "warn",
-                        "message": f"  {directory}: {len(skipped_paths)} 個路徑讀取失敗，跳過刪除偵測以免誤刪（詳見 debug.log）"
+                        "message": _skipped_scan_warning(directory, normalized_dir, skipped_paths)
                     })
                 else:
                     normalized_dir_uri = to_file_uri(normalized_dir, path_mappings)
@@ -1642,6 +1671,8 @@ def browse_dir(path: Optional[str] = Query(None), expand: Optional[str] = Query(
             for entry in it:
                 try:
                     if entry.is_dir():
+                        if is_nas_system_dir_name(entry.name):
+                            continue
                         entries.append({"name": entry.name, "path": entry.path})
                     elif expand == "videos" and entry.is_file():
                         ext = os.path.splitext(entry.name)[1].lower()

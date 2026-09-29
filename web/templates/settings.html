@@ -15,6 +15,7 @@
                 <i class="bi bi-gear"></i> {{ t('settings.header.title') }}
             </h4>
             <!-- Server Mode Toggle (80a-T3) — 81b-T1: 從 actions 末尾搬到標題側 -->
+            {% if not is_synology %}
             <div class="settings-server-mode">
                 <div class="settings-sources-segmented" role="group" :aria-label="window.t('settings.mode.label')">
                     <button type="button"
@@ -31,6 +32,7 @@
                     </button>
                 </div>
             </div>
+            {% endif %}
             <!-- T5: 存取密碼保護（114a）-->
             <div class="settings-access-auth">
                 <label class="settings-access-auth-checkbox-row">
@@ -70,7 +72,7 @@
                            :title="window.t('settings.access_auth.pin_label')"
                            x-model="accessAuthPin"
                            @input="accessAuthPin = accessAuthPin.normalize('NFKC')"
-                           :disabled="!serverMode || accessAuthSaving">
+                           :disabled="accessAuthPinDisabled()">
                     <button type="button"
                             class="settings-access-auth-reveal-btn"
                             :disabled="!accessAuthPinRevealed"
@@ -82,7 +84,7 @@
                 </div>
                 <button type="button"
                         class="settings-access-auth-save-btn btn btn-sm btn-outline"
-                        :disabled="!serverMode || accessAuthSaving || (accessAuthEnabled && !/^[0-9A-Za-z]{4}$/.test(accessAuthPin))"
+                        :disabled="accessAuthSaveDisabled()"
                         @click="saveAccessAuth()">
                     <span x-show="accessAuthSaving" class="loading loading-spinner loading-sm"></span>
                     <template x-if="!accessAuthSaving">
@@ -90,6 +92,9 @@
                     </template>
                     <span x-text="accessAuthSaving ? '' : ' ' + window.t('settings.access_auth.save')"></span>
                 </button>
+                <div class="settings-access-auth-status-hint"
+                     x-show="accessAuthStatusHintKey()" x-cloak
+                     x-text="window.t(accessAuthStatusHintKey())"></div>
             </div>
             <!-- 81b-T1: 連線資訊 inline 區塊（ip:port + 複製 icon + ? popover）；
                  x-cloak 防 Alpine boot 前 FOUC（同原第二排 .settings-server-info 理由）-->
@@ -521,7 +526,7 @@
                             <div class="variable-input-group" style="position:relative;">
                                 <input type="text" class="input input-bordered input-sm flex-1" id="searchFavoriteFolder"
                                     x-model="form.searchFavoriteFolder"
-                                    placeholder="{{ t('settings.search.favorite_folder_placeholder') }}">
+                                    placeholder="{{ t('settings.search.favorite_folder_placeholder') if is_desktop else t('settings.search.favorite_folder_placeholder_server') }}">
                                 <button type="button"
                                     class="btn btn-sm btn-outline"
                                     :title="t('settings.favorite_folder.pick_from_scanner')"

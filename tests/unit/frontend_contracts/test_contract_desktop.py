@@ -415,6 +415,37 @@ class TestSettingsCloseActionSelect:
             )
 
 
+# [lint-guard: pytest-justified] 跨檔 Alpine state 方法與模板呼叫及 i18n key 的 wiring 契約。
+class TestAccessAuthStateWiring:
+    """159-T6：密碼設定三狀態的模板呼叫與來源語系接線。"""
+
+    def test_pin_input_calls_access_auth_pin_disabled(self):
+        content = SETTINGS_HTML.read_text(encoding="utf-8")
+        tag = re.search(r'<input\b[^>]*class="settings-access-auth-pin-input"[^>]*>', content, re.DOTALL)
+        assert tag, "找不到存取密碼 PIN input"
+        assert ':disabled="accessAuthPinDisabled()"' in tag.group(0)
+
+    def test_save_button_calls_access_auth_save_disabled(self):
+        content = SETTINGS_HTML.read_text(encoding="utf-8")
+        tag = re.search(r'<button\b[^>]*class="settings-access-auth-save-btn[^\"]*"[^>]*>', content, re.DOTALL)
+        assert tag, "找不到存取密碼儲存鈕"
+        assert ':disabled="accessAuthSaveDisabled()"' in tag.group(0)
+
+    def test_status_hint_calls_access_auth_status_hint_key(self):
+        content = SETTINGS_HTML.read_text(encoding="utf-8")
+        tag = re.search(r'<div\b[^>]*class="settings-access-auth-status-hint"[^>]*>', content, re.DOTALL)
+        assert tag, "找不到存取密碼狀態提示 div"
+        assert 'x-show="accessAuthStatusHintKey()"' in tag.group(0)
+        assert 'x-text="window.t(accessAuthStatusHintKey())"' in tag.group(0)
+
+    def test_source_locale_has_status_hint_keys(self):
+        import json
+        data = json.loads(ZH_TW_JSON.read_text(encoding="utf-8"))
+        auth = data["settings"]["access_auth"]
+        assert "unset_hint" in auth
+        assert "need_login_hint" in auth
+
+
 class TestHelpUpdateButtonGuard:
     """84-T3: Help 頁「更新」按鈕 + confirm modal 靜態守衛
 

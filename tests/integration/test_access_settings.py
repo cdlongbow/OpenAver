@@ -87,6 +87,7 @@ class TestGetAccessSettings:
             "enabled": False,
             "pin": "",
             "pin_revealed": True,
+            "can_edit": True,
         }
 
     def test_a2_enabled_loopback_reveals_real_pin(self, loopback_client):
@@ -98,9 +99,10 @@ class TestGetAccessSettings:
             "enabled": True,
             "pin": "0042",
             "pin_revealed": True,
+            "can_edit": True,
         }
 
-    def test_a3_enabled_remote_masks_pin(self, remote_client, server_mode_true):
+    def test_a3_enabled_remote_authed_reveals_pin(self, remote_client, server_mode_true):
         access_auth.set_auth(True, "0042")
         token = access_auth.attempt_pin("0042")
         assert token is not None
@@ -110,8 +112,9 @@ class TestGetAccessSettings:
         assert r.json() == {
             "success": True,
             "enabled": True,
-            "pin": "••••",
-            "pin_revealed": False,
+            "pin": "0042",
+            "pin_revealed": True,
+            "can_edit": True,
         }
 
     def test_a4_enabled_mapped_loopback_reveals_real_pin(self, mapped_client):
@@ -123,6 +126,7 @@ class TestGetAccessSettings:
             "enabled": True,
             "pin": "0042",
             "pin_revealed": True,
+            "can_edit": True,
         }
 
     def test_a5_disabled_loopback(self, loopback_client):
@@ -134,6 +138,7 @@ class TestGetAccessSettings:
             "enabled": False,
             "pin": "",
             "pin_revealed": True,
+            "can_edit": True,
         }
 
     def test_a6_disabled_remote_masks_pin(self, remote_client):
@@ -145,6 +150,7 @@ class TestGetAccessSettings:
             "enabled": False,
             "pin": "••••",
             "pin_revealed": False,
+            "can_edit": True,
         }
 
 
@@ -163,21 +169,17 @@ class TestPutR4:
             "pin": "1234",
         }
 
-    def test_b2_remote_forbidden_no_write(self, remote_client):
+    def test_b2_remote_unauthed_password_off_now_succeeds(self, remote_client):
         before = access_auth.get_auth_settings(True)
         assert before == {"enabled": False, "pin": ""}
         r = remote_client.put(
             SETTINGS_PATH, json={"enabled": True, "pin": "1234"}
         )
-        assert r.status_code == 403
-        assert r.json() == {
-            "success": False,
-            "reason": "remote_forbidden",
-            "error": "認證設定僅能在主機本機變更",
-        }
+        assert r.status_code == 200
+        assert r.json() == {"success": True}
         assert access_auth.get_auth_settings(True) == {
-            "enabled": False,
-            "pin": "",
+            "enabled": True,
+            "pin": "1234",
         }
 
     def test_b3_mapped_loopback_passes_r4(self, mapped_client):
@@ -359,14 +361,27 @@ class TestR5RevokeAll:
 
 
 class TestLifecycleSymmetry:
-    def test_e1_r4_reject_no_side_effects(self, remote_client):
-        before = access_auth.get_auth_settings(True)
-        assert before == {"enabled": False, "pin": ""}
-        r = remote_client.put(
-            SETTINGS_PATH, json={"enabled": True, "pin": "1234"}
+    def test_e1_masked_by_access_gate_has_no_side_effects(
+        self, remote_client, loopback_client
+    ):
+        access_auth.set_auth(True, "1111")
+        put_response = remote_client.put(
+            SETTINGS_PATH, json={"enabled": False, "pin": ""}
         )
-        assert r.status_code == 403
-        assert access_auth.get_auth_settings(True) == before
+        assert put_response.status_code == 200
+        assert put_response.headers["content-type"].startswith("text/html")
+        # [lint-guard: pytest-justified] 安全指紋：未登入的遠端請求被 access_gate 換成登入頁，斷言回應不帶 API JSON（執行期行為，lint 掃不到）。
+        assert "success" not in put_response.text
+
+        get_response = remote_client.get(SETTINGS_PATH)
+        assert get_response.status_code == 200
+        assert get_response.headers["content-type"].startswith("text/html")
+        assert "success" not in get_response.text
+
+        local_response = loopback_client.get(SETTINGS_PATH)
+        assert local_response.status_code == 200
+        assert local_response.json()["enabled"] is True
+        assert local_response.json()["pin"] == "1111"
 
     def test_e2_invalid_pin_no_write_no_revoke(self, loopback_client):
         access_auth.set_auth(True, "1111")
@@ -472,3 +487,114 @@ class TestCD114a9ConfigResetIndependent:
             == {"enabled": True, "pin": "6666"}
             and access_auth.verify_ticket(token) is True
         )
+
+
+def test_j1_j3_password_semantics_full_flow(auth_db, server_mode_true):
+    client = TestClient(app, client=REMOTE_CLIENT)
+
+    opened = client.put(SETTINGS_PATH, json={"enabled": True, "pin": "1234"})
+    assert opened.status_code == 200
+    assert opened.headers["set-cookie"].startswith("sid=")
+    old_token = client.cookies.get("sid")
+    assert old_token is not None
+
+    changed = client.put(SETTINGS_PATH, json={"enabled": True, "pin": "5678"})
+    assert changed.status_code == 200
+    assert access_auth.verify_ticket(old_token) is False
+
+    verified = client.post("/api/access/verify", json={"pin": "5678"})
+    assert verified.status_code == 200
+    assert verified.headers["set-cookie"].startswith("sid=")
+    new_token = client.cookies.get("sid")
+    assert new_token is not None
+    assert new_token != old_token
+
+    help_response = client.get("/help")
+    assert help_response.status_code == 200
+    # [lint-guard: pytest-justified] 安全指紋：SSR 後的 /help 依「已通過 PIN／token 撤銷」而變，lint 掃不到執行期結果。
+    assert b"help-agent-token-panel" in help_response.content
+
+    client.cookies.set("sid", old_token)
+    revoked_response = client.get("/help")
+    assert revoked_response.status_code == 200
+    # [lint-guard: pytest-justified] 同上：token 撤銷後同一份 /help 的 SSR 結果不得再帶 token 面板。
+    assert b"help-agent-token-panel" not in revoked_response.content
+
+    client.cookies.set("sid", new_token)
+    closed = client.put(SETTINGS_PATH, json={"enabled": False, "pin": ""})
+    assert closed.status_code == 200
+    assert closed.json() == {"success": True}
+    client.cookies.delete("sid")
+    reopened = client.put(SETTINGS_PATH, json={"enabled": True, "pin": "9999"})
+    assert reopened.status_code == 200
+    assert reopened.headers["set-cookie"].startswith("sid=")
+    assert access_auth.get_auth_settings(True) == {"enabled": True, "pin": "9999"}
+
+
+def test_remote_authed_password_change_keeps_caller_logged_in(
+    auth_db, server_mode_true, tmp_path, monkeypatch
+):
+    """已登入的遠端瀏覽器改密碼：拿到新 cookie、不被登出；舊 cookie 失效。"""
+    monkeypatch.setattr("web.routers.showcase.get_db_path", lambda: tmp_path / "showcase.db")
+    access_auth.set_auth(True, "1234")
+    old_token = access_auth.attempt_pin("1234")
+    assert old_token is not None
+    client = _remote_authed_client(old_token)
+
+    changed = client.put(SETTINGS_PATH, json={"enabled": True, "pin": "5678"})
+    assert changed.status_code == 200
+    assert changed.headers["set-cookie"].startswith("sid=")
+    new_token = changed.headers["set-cookie"].split(";", 1)[0].split("=", 1)[1]
+    assert new_token and new_token != old_token
+    assert access_auth.verify_ticket(new_token) is True
+    assert access_auth.verify_ticket(old_token) is False
+
+    fresh = TestClient(app, client=REMOTE_CLIENT)
+    fresh.cookies.set("sid", new_token)
+    ok = fresh.get("/api/showcase/videos")
+    assert ok.headers["content-type"].startswith("application/json")
+
+    stale = TestClient(app, client=REMOTE_CLIENT)
+    stale.cookies.set("sid", old_token)
+    denied = stale.get("/api/showcase/videos")
+    assert not (denied.status_code == 200 and denied.headers["content-type"].startswith("application/json"))
+
+
+def test_get_can_edit_reveal_reachable_matrix(
+    loopback_client, remote_client, server_mode_true
+):
+    access_auth.set_auth(True, "0042")
+    local = loopback_client.get(SETTINGS_PATH)
+    assert local.status_code == 200
+    assert local.json()["can_edit"] is True
+    assert local.json()["pin"] == "0042"
+    assert local.json()["pin_revealed"] is True
+
+    token = access_auth.attempt_pin("0042")
+    assert token is not None
+    remote_authed = _remote_authed_client(token).get(SETTINGS_PATH)
+    assert remote_authed.status_code == 200
+    assert remote_authed.json()["can_edit"] is True
+    assert remote_authed.json()["pin"] == "0042"
+    assert remote_authed.json()["pin_revealed"] is True
+
+    bearer_client = TestClient(app, client=REMOTE_CLIENT)
+    bearer_update = bearer_client.put(
+        SETTINGS_PATH,
+        json={"enabled": True, "pin": "0042"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert bearer_update.status_code == 200
+    assert bearer_update.json() == {"success": True}
+
+    access_auth.set_auth(False, "")
+    remote_open = remote_client.get(SETTINGS_PATH)
+    assert remote_open.status_code == 200
+    assert remote_open.json()["can_edit"] is True
+    assert remote_open.json()["pin"] == "••••"
+    assert remote_open.json()["pin_revealed"] is False
+
+    no_op = remote_client.put(SETTINGS_PATH, json={"enabled": False, "pin": ""})
+    assert no_op.status_code == 200
+    assert no_op.json() == {"success": True}
+    assert "set-cookie" not in no_op.headers

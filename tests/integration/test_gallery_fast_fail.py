@@ -97,6 +97,24 @@ def test_unreachable_writable_source_image_fast_fails_404(
     assert "cache-control" not in resp.headers
 
 
+def test_no_permission_writable_source_image_fast_fails_404(client, tmp_path, mocker):
+    src = tmp_path / "writable"
+    src.mkdir()
+    img = _jpeg(src / "poster.jpg")
+    native = uri_to_fs_path(str(src))
+    mocker.patch(
+        "web.routers.gallery_media.load_config",
+        return_value={"gallery": {"directories": [{"path": str(src), "readonly": False, "output_path": ""}], "path_mappings": {}}},
+    )
+    mocker.patch("core.source_reachability.get_snapshot", return_value={native: "no_permission"})
+    mocker.patch("os.path.exists", side_effect=_exists_side_effect(str(img), str(src)))
+
+    resp = client.get("/api/gallery/image", params={"path": str(img)})
+    assert resp.status_code == 404
+    assert resp.text == "來源目前無法存取"
+    assert "cache-control" not in resp.headers
+
+
 # ── DoD 2 / Integration B ──────────────────────────────────────────────
 
 

@@ -257,3 +257,25 @@ test('openMask: reason=device_disabled stays silent (no toast)', async () => {
         }
     });
 });
+
+test('openMask: reason=still_detecting shows the undecided-outcome toast, not the two too_slow texts', async () => {
+    await withGeometryStub(async () => {
+        const mock = mockFetch({
+            success: true,
+            auto_focal: '',
+            reason: 'still_detecting',
+            cover_path: 'file:///cover.jpg',
+        });
+        try {
+            const c = makeComponent();
+            await c.openMask();
+            assert.ok(
+                c.toasts.some((t) => t.msg === 'showcase.lightbox.mask_focal_still_detecting' && t.kind === 'info'),
+                `expected still_detecting/info, got ${JSON.stringify(c.toasts)}`,
+            );
+            assert.equal(c.toasts.filter((t) => t.msg === HINT_KEY || t.msg === AUTO_DISABLED_KEY).length, 0);
+        } finally {
+            mock.restore();
+        }
+    });
+});

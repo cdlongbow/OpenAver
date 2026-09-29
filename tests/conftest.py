@@ -451,6 +451,33 @@ def _outbound_connection_guard(request, monkeypatch):
             )
 
 
+# ============ 159-T11：app 啟動時的新版檢查不連 GitHub（autouse）====
+#
+# 啟動檢查不再只限桌面版 ⇒ 在 Linux 上跑的每支 `with TestClient(app)` 都會在背景
+# 打 api.github.com（被上面的對外連線守衛擋下、teardown 報錯），順手還會 emit 通知、
+# 寫 config。預設換成「沒有新版」；要測這條路的測試自己再 patch `web.app.check_update`
+# （測試內的 patch 晚於本 fixture，會蓋過它）。smoke／e2e 不動。
+@pytest.fixture(autouse=True)
+def _no_startup_update_network(request, monkeypatch):
+    if request.node.get_closest_marker("smoke") or request.node.get_closest_marker("e2e"):
+        yield
+        return
+    # 只 patch 已載入的 web.app，不主動 import：import 本身有副作用（建資料根），
+    # 守衛自測會把本 conftest 複製到暫存 repo 跑，主動 import 會在那裡長出檔案。
+    # 用到 app 的測試都在模組層 `from web.app import app`，收集階段就已載入。
+    import sys as _sys
+    _web_app = _sys.modules.get("web.app")
+    if _web_app is None:
+        yield
+        return
+
+    async def _fake_check_update():
+        return {"has_update": False, "current_version": "", "latest_version": ""}
+
+    monkeypatch.setattr(_web_app, "check_update", _fake_check_update)
+    yield
+
+
 # ============ TASK-141a-T5：對帳 hook 的 DB 隔離（named fixture，非 autouse）====
 #
 # 為什麼需要它：141a-T5 讓 `generate_avlist()` 與 `enrich_single_endpoint()` 在收尾

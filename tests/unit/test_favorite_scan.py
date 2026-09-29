@@ -23,6 +23,7 @@ class TestResolveFavoriteFolder:
         assert resolve_favorite_folder(config) == str(tmp_path)
 
     def test_empty_folder_wsl_uses_windows_downloads(self, monkeypatch):
+        monkeypatch.setenv("OPENAVER_STANDALONE", "1")
         monkeypatch.setattr("core.favorite_scan.get_environment", lambda: "wsl")
         monkeypatch.setattr(
             "core.favorite_scan.expand_env_vars",
@@ -32,18 +33,26 @@ class TestResolveFavoriteFolder:
         assert resolve_favorite_folder(config) == "/mnt/c/Users/fake/Downloads"
 
     def test_empty_folder_non_wsl_uses_home_downloads(self, monkeypatch):
+        monkeypatch.setenv("OPENAVER_STANDALONE", "1")
         monkeypatch.setattr("core.favorite_scan.get_environment", lambda: "linux")
         config = {"search": {"favorite_folder": ""}}
         assert resolve_favorite_folder(config) == str(Path.home() / "Downloads")
 
     def test_missing_search_section_treated_as_empty(self, monkeypatch):
+        monkeypatch.setenv("OPENAVER_STANDALONE", "1")
         monkeypatch.setattr("core.favorite_scan.get_environment", lambda: "linux")
         assert resolve_favorite_folder({}) == str(Path.home() / "Downloads")
 
     def test_whitespace_only_folder_treated_as_empty(self, monkeypatch):
+        monkeypatch.setenv("OPENAVER_STANDALONE", "1")
         monkeypatch.setattr("core.favorite_scan.get_environment", lambda: "linux")
         config = {"search": {"favorite_folder": "   "}}
         assert resolve_favorite_folder(config) == str(Path.home() / "Downloads")
+
+    def test_non_desktop_unset_returns_empty_string(self, monkeypatch):
+        monkeypatch.delenv("OPENAVER_STANDALONE", raising=False)
+        config = {"search": {"favorite_folder": ""}}
+        assert resolve_favorite_folder(config) == ""
 
 
 class TestListFavoriteVideoFiles:

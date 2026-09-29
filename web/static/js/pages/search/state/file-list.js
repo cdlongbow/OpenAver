@@ -590,7 +590,12 @@ export function searchStateFileList() {
 
             if (!result.success) {
                 console.error('[LoadFavorite]', result.error);
-                this.showToast(window.t('search.toast.load_failed'), 'error');
+                if (result.error === 'favorite_folder_unset') {
+                    // 非桌面版沒有系統下載資料夾可退，講「尚未設定」而不是「載入失敗」
+                    this.showToast(window.t('search.auto_organize.folder_not_configured'), 'warning');
+                } else {
+                    this.showToast(window.t('search.toast.load_failed'), 'error');
+                }
                 return;
             }
 

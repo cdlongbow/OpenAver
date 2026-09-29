@@ -30,21 +30,24 @@ def _patches(*, check_update_result=None, check_update_exc=None,
         cu.return_value = check_update_result
     emit = Mock()
     load = Mock(return_value=config if config is not None else {"general": {"auto_check_update": True}})
-    return cu, emit, load, is_win, is_mac
+    def mutate(writer):
+        writer(load.return_value)
+    return cu, emit, load, Mock(side_effect=mutate), is_win, is_mac
 
 
-def _apply(cu, emit, load, is_win, is_mac):
+def _apply(cu, emit, load, mutate, is_win, is_mac):
     return [
         patch.object(webapp, "check_update", cu),
         patch.object(webapp, "emit_notification", emit),
         patch.object(webapp, "load_config", load),
+        patch.object(webapp, "mutate_config", mutate, create=True),
         patch.object(webapp, "_is_windows_desktop", Mock(return_value=is_win)),
         patch.object(webapp, "_is_mac_desktop", Mock(return_value=is_mac)),
     ]
 
 
-async def _run(cu, emit, load, is_win, is_mac):
-    ctxs = _apply(cu, emit, load, is_win, is_mac)
+async def _run(cu, emit, load, mutate, is_win, is_mac):
+    ctxs = _apply(cu, emit, load, mutate, is_win, is_mac)
     for c in ctxs:
         c.start()
     try:
@@ -56,89 +59,105 @@ async def _run(cu, emit, load, is_win, is_mac):
 
 async def test_has_update_emits_once():
     """桌面 + flag on + 有新版 → emit 恰一次，args=("info","notif.update_available")、message="v9.9.9"。"""
-    cu, emit, load, is_win, is_mac = _patches(
+    cu, emit, load, mutate, is_win, is_mac = _patches(
         check_update_result={
             "success": True, "has_update": True,
             "current_version": "1.0.0", "latest_version": "9.9.9",
             "download_url": "https://example.com",
         }
     )
-    await _run(cu, emit, load, is_win, is_mac)
+    await _run(cu, emit, load, mutate, is_win, is_mac)
     cu.assert_awaited_once()
-    emit.assert_called_once_with("info", "notif.update_available", message="v9.9.9")
+    emit.assert_called_once_with("info", "notif.update_available", message="v9.9.9", url="https://example.com")
 
 
 async def test_up_to_date_no_emit():
     """桌面 + flag on + 已最新（has_update False）→ 無 emit。"""
-    cu, emit, load, is_win, is_mac = _patches(
+    cu, emit, load, mutate, is_win, is_mac = _patches(
         check_update_result={
             "success": True, "has_update": False,
             "current_version": "9.9.9", "latest_version": "9.9.9",
         }
     )
-    await _run(cu, emit, load, is_win, is_mac)
+    await _run(cu, emit, load, mutate, is_win, is_mac)
     cu.assert_awaited_once()
     emit.assert_not_called()
 
 
 async def test_404_no_latest_version_no_emit():
     """404 分支（has_update False、無 latest_version）→ 無 emit、不 KeyError。"""
-    cu, emit, load, is_win, is_mac = _patches(
+    cu, emit, load, mutate, is_win, is_mac = _patches(
         check_update_result={"success": True, "has_update": False, "current_version": "1.0.0"}
     )
-    await _run(cu, emit, load, is_win, is_mac)
+    await _run(cu, emit, load, mutate, is_win, is_mac)
     cu.assert_awaited_once()
     emit.assert_not_called()
 
 
 async def test_flag_off_check_update_not_called():
     """開關關（auto_check_update False）→ check_update 未被呼叫、無 emit。"""
-    cu, emit, load, is_win, is_mac = _patches(
+    cu, emit, load, mutate, is_win, is_mac = _patches(
         check_update_result={"success": True, "has_update": True, "latest_version": "9.9.9"},
         config={"general": {"auto_check_update": False}},
     )
-    await _run(cu, emit, load, is_win, is_mac)
+    await _run(cu, emit, load, mutate, is_win, is_mac)
     cu.assert_not_awaited()
     cu.assert_not_called()
     emit.assert_not_called()
 
 
-async def test_non_desktop_check_update_not_called():
-    """非桌面（両 is_desktop False）→ check_update 未被呼叫、無 emit。"""
-    cu, emit, load, is_win, is_mac = _patches(
+async def test_non_desktop_check_update_called():
+    """非桌面也會檢查新版並通知。"""
+    cu, emit, load, mutate, is_win, is_mac = _patches(
         check_update_result={"success": True, "has_update": True, "latest_version": "9.9.9"},
         is_win=False, is_mac=False,
     )
-    await _run(cu, emit, load, is_win, is_mac)
-    cu.assert_not_awaited()
-    cu.assert_not_called()
-    emit.assert_not_called()
+    await _run(cu, emit, load, mutate, is_win, is_mac)
+    cu.assert_awaited_once()
+    emit.assert_called_once_with("info", "notif.update_available", message="v9.9.9", url="")
 
 
 async def test_check_update_raises_does_not_propagate():
     """check_update 拋例外 → _startup_update_check 不外拋（正常返回）、無 emit。"""
-    cu, emit, load, is_win, is_mac = _patches(check_update_exc=RuntimeError("boom"))
+    cu, emit, load, mutate, is_win, is_mac = _patches(check_update_exc=RuntimeError("boom"))
     # 不應拋出 —— 若外拋，await 這行會 raise，測試 fail。
-    await _run(cu, emit, load, is_win, is_mac)
+    await _run(cu, emit, load, mutate, is_win, is_mac)
     emit.assert_not_called()
 
 
 async def test_error_dict_no_emit():
     """check_update 回 error dict（success False）→ 不 emit、不 crash。"""
-    cu, emit, load, is_win, is_mac = _patches(
+    cu, emit, load, mutate, is_win, is_mac = _patches(
         check_update_result={"success": False, "error": "連線逾時"}
     )
-    await _run(cu, emit, load, is_win, is_mac)
+    await _run(cu, emit, load, mutate, is_win, is_mac)
     cu.assert_awaited_once()
     emit.assert_not_called()
 
 
 async def test_missing_flag_key_defaults_true():
     """config general 缺 auto_check_update → .get(..., True) 落預設 True → 桌面下照常查。"""
-    cu, emit, load, is_win, is_mac = _patches(
+    cu, emit, load, mutate, is_win, is_mac = _patches(
         check_update_result={"success": True, "has_update": True, "latest_version": "9.9.9"},
         config={},
     )
-    await _run(cu, emit, load, is_win, is_mac)
+    await _run(cu, emit, load, mutate, is_win, is_mac)
     cu.assert_awaited_once()
-    emit.assert_called_once_with("info", "notif.update_available", message="v9.9.9")
+    emit.assert_called_once_with("info", "notif.update_available", message="v9.9.9", url="")
+
+
+def test_maybe_notify_update_dedup_same_version_only_once():
+    config = {"general": {"auto_check_update": True, "last_notified_update_version": ""}}
+    cu, emit, load, mutate, is_win, is_mac = _patches(config=config)
+    result = {"has_update": True, "latest_version": "9.9.9", "download_url": "https://example.com"}
+    ctxs = _apply(cu, emit, load, mutate, is_win, is_mac)
+    for ctx in ctxs:
+        ctx.start()
+    try:
+        webapp._maybe_notify_update(result)
+        webapp._maybe_notify_update(result)
+    finally:
+        for ctx in ctxs:
+            ctx.stop()
+    emit.assert_called_once_with("info", "notif.update_available", message="v9.9.9", url="https://example.com")
+    assert config["general"]["last_notified_update_version"] == "9.9.9"

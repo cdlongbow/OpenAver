@@ -4,6 +4,30 @@ from core.gallery_scanner import VideoScanner
 from core.path_utils import to_file_uri
 
 
+def test_fast_scan_directory_skips_nas_system_dirs(tmp_path):
+    from core.gallery_scanner import fast_scan_directory, is_nas_system_dir_name
+
+    scan_root = tmp_path / "scan"
+    (scan_root / "#recycle" / "x").mkdir(parents=True)
+    (scan_root / "@eaDir" / "片.mp4").mkdir(parents=True)
+    (scan_root / "#SNAPSHOT" / "y").mkdir(parents=True)
+    (scan_root / "@appstore").mkdir()
+    (scan_root / "normal").mkdir()
+    (scan_root / "#recycle" / "x" / "片.mp4").touch()
+    (scan_root / "@eaDir" / "片.mp4" / "thumb.jpg").touch()
+    (scan_root / "@eaDir" / "片.mp4").joinpath("影片.mp4").touch()
+    (scan_root / "#SNAPSHOT" / "y" / "片.mp4").touch()
+    (scan_root / "@appstore" / "片.mp4").touch()
+    normal_video = scan_root / "normal" / "片2.mp4"
+    normal_video.touch()
+
+    results = fast_scan_directory(str(scan_root), {'.mp4'}, 0)
+    paths = [item['path'] for item in results]
+    assert paths == [str(normal_video)]
+    assert all(is_nas_system_dir_name(name) for name in ('#RECYCLE', '@EaDir', '#Snapshot', '@whatever'))
+    assert all(not is_nas_system_dir_name(name) for name in ('normal', 'AVtest'))
+
+
 class TestGalleryScanner:
     @pytest.fixture
     def scanner(self):

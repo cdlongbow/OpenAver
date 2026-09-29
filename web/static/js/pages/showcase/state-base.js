@@ -298,7 +298,7 @@ export function stateBase() {
         videoCount: 0,        // _videos.length 的 reactive scalar
         filteredCount: 0,     // _filteredVideos.length 的 reactive scalar
         paginatedVideos: [],  // 當前頁顯示的影片
-        unreachableSources: [],  // TASK-142-T4: /api/showcase/source-status（只含 unreachable）
+        unreachableSources: [],  // /api/showcase/source-status（unreachable / no_permission）
 
         // Card Info 展開狀態 (M3i)
         infoVisible: false,

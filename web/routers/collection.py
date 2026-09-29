@@ -810,6 +810,7 @@ def post_user_tags(request: UserTagsRequest) -> dict:
 
     # 4. Surgical NFO update — 唯讀來源改寫輸出夾那份，來源零寫入（CD-143-4）
     nfo_updated = False
+    nfo_exists = False
     is_readonly = resolve_owning_output_root(file_path, config) is not None
     if is_readonly:
         # 樁列（從未成功 produce、輸出夾沒有東西）直接跳過，nfo_updated 維持 False
@@ -825,6 +826,7 @@ def post_user_tags(request: UserTagsRequest) -> dict:
     else:
         try:
             nfo_path = str(Path(local_fs_path).with_suffix(".nfo"))
+            nfo_exists = Path(nfo_path).exists()
             nfo_updated = update_nfo_user_tags(nfo_path, merged_tags)
         except Exception as e:
             logger.warning("[user-tags] NFO 寫入失敗（忽略）: %s", e)
@@ -839,7 +841,8 @@ def post_user_tags(request: UserTagsRequest) -> dict:
     # 那就直接從結果導出。`update_nfo_user_tags` 的 False 只有「檔案不存在」與「解析／
     # 寫入失敗」兩種來源（沒有「不需要改所以回 False」），所以不會誤報。
     readonly_no_output = is_readonly and not nfo_updated
-    return {"success": True, "user_tags": merged_tags, "nfo_updated": nfo_updated, "readonly_no_output": readonly_no_output}
+    nfo_write_blocked = (not is_readonly) and nfo_exists and not nfo_updated
+    return {"success": True, "user_tags": merged_tags, "nfo_updated": nfo_updated, "readonly_no_output": readonly_no_output, "nfo_write_blocked": nfo_write_blocked}
 
 
 @user_tags_router.get("/user-tags")

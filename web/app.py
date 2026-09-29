@@ -37,14 +37,15 @@ setup_logging()
 
 logger = get_logger(__name__)
 
-from core.config import load_config
-from core.data_layout import bootstrap_data_layout, consume_pending_bootstrap_result
+from core.config import load_config, mutate_config
+from core.data_layout import bootstrap_data_layout, consume_pending_bootstrap_result, consume_reset_access_auth_marker
 from core.focal import device_state
 from core.database import init_db
 from core.database import backfill_readonly_nfo_mtime
 from core.metatube.state import metatube_state as _mt_startup_state
 from core.access_auth import ensure_schema, load_snapshot, snapshot, verify_ticket
 from core import source_reachability
+from core.platform_info import is_synology
 
 
 # 路徑設定
@@ -59,28 +60,46 @@ _LIFESPAN_BOOTSTRAP_STDERR = (
 )
 
 
-async def _startup_update_check() -> None:
-    """TASK-107-P1-T2: 桌面 App 啟動時背景復用 check_update() 查一次 GitHub，
-    只有真的有新版時 emit 一則 info 通知。失敗全靜默、絕不外拋（不 crash 啟動）。
+def _maybe_notify_update(result: dict) -> None:
+    """同一最新版本只發一次通知，並在設定鎖內保存已通知版本。"""
+    if not result.get("has_update"):
+        return
+    latest = result.get("latest_version")
+    cfg = load_config()
+    if latest and latest != cfg.get("general", {}).get("last_notified_update_version", ""):
+        emit_notification(
+            "info", "notif.update_available",
+            message=f"v{latest}", url=result.get("download_url", ""),
+        )
+        def _remember(config: dict) -> None:
+            config.setdefault("general", {})["last_notified_update_version"] = latest
+        mutate_config(_remember)
 
-    gate 順序（AC-A4）：desktop gate 與 flag gate 都在 await check_update() 之前，
-    任一 gate 不過即 return，check_update() 完全不被呼叫、零網路請求。
-    config 一律 dict 存取（CD-107-4，禁 _cfg.general.xxx，否則 AttributeError 被吞）。
-    """
+
+async def _startup_update_check() -> None:
+    """啟動時背景檢查新版；任何錯誤只記錄，不阻斷啟動。"""
     try:
         _cfg = load_config()  # raw dict
-        if not (_is_windows_desktop() or _is_mac_desktop()):
-            return  # gate 1：非桌面 → 零網路
         if not _cfg.get("general", {}).get("auto_check_update", True):
-            return  # gate 2：開關關 → 零網路
+            return
         result = await check_update()  # 復用端點函式，check_update() 本體不動
-        if result.get("has_update") and result.get("latest_version"):
-            emit_notification(
-                "info", "notif.update_available",
-                message=f"v{result['latest_version']}",
-            )
+        _maybe_notify_update(result)
     except Exception:
         logger.warning("lifespan: startup update check failed", exc_info=True)
+
+
+async def _periodic_update_check_loop() -> None:
+    """非桌面版每 24 小時重查一次；啟動當下已由 startup task 查過。"""
+    if _is_windows_desktop() or _is_mac_desktop():
+        return
+    while True:
+        await asyncio.sleep(86400)
+        try:
+            cfg = load_config()
+            if cfg.get("general", {}).get("auto_check_update", True):
+                _maybe_notify_update(await check_update())
+        except Exception:
+            logger.warning("lifespan: periodic update check failed", exc_info=True)
 
 
 @asynccontextmanager
@@ -103,7 +122,7 @@ async def lifespan(app: FastAPI):
 
     _pending = consume_pending_bootstrap_result()
     if _pending is not None:
-        if _pending.status == "finalized_legacy":
+        if _pending.status == "finalized_legacy" and not is_synology():
             emit_notification("info", "notif.data_root_finalized", message=str(_pending.root))
         elif _pending.status == "recovered_existing":
             emit_notification("warn", "notif.data_root_recovered", message=str(_pending.root))
@@ -113,6 +132,11 @@ async def lifespan(app: FastAPI):
     # （CD-114a-3：兩者刻意不合併成同一支函式，但啟動時機一致）。idempotent
     # CREATE TABLE IF NOT EXISTS + 首次 load_snapshot() 暖 cache。
     ensure_schema()
+
+    try:
+        consume_reset_access_auth_marker()
+    except Exception:
+        logger.warning("lifespan: consume_reset_access_auth_marker failed unexpectedly", exc_info=True)
 
     # TASK-104: one-time heal for pre-0.12.6 readonly rows whose nfo_mtime was
     # hardcoded to 0.0 even though the sibling .nfo was really written next to
@@ -153,6 +177,7 @@ async def lifespan(app: FastAPI):
     # create_task 回傳值須保留強引用（event loop 只持 weak ref），否則 task 可能
     # 執行中途被 GC 回收 —— 存 app.state（app 已建立、比 module global 乾淨，無需 global）。
     app.state.startup_check_task = asyncio.create_task(_startup_update_check())
+    app.state.periodic_update_check_task = asyncio.create_task(_periodic_update_check_loop())
 
     # TASK-144-T5: 12 小時排程 loop；create_task 回傳值須保留強引用（同上一段理由，
     # event loop 只持 weak ref，task 可能執行中途被 GC 回收）。
@@ -167,6 +192,13 @@ async def lifespan(app: FastAPI):
     # ── shutdown ──────────────────────────────────────────────
     # 每一步各自 try/except（同 startup 的既有精神）：通知 drain 失敗不可擋住
     # 排程 task 的 cancel，反之亦然。
+    try:
+        app.state.periodic_update_check_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await app.state.periodic_update_check_task
+    except Exception:
+        logger.warning("lifespan: periodic_update_check_task shutdown failed unexpectedly", exc_info=True)
+
     try:
         app.state.auto_organize_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -623,6 +655,7 @@ def get_common_context(request: Request) -> dict:
         "t": _t_bound,
         "is_windows_desktop": _is_windows_desktop(),
         "is_desktop": _is_windows_desktop() or _is_mac_desktop(),
+        "is_synology": is_synology(),
     }
 
 
@@ -742,13 +775,14 @@ async def help_page(request: Request):
     if snap is None:
         snap = await asyncio.to_thread(load_snapshot)
     # 兩個旗標刻意分開（Codex PR review P2）：
-    #   `show_agent_auth` 守的是**祕密**（token 面板）→ 必須加上
-    #       loopback 條件，遠端裝置即使已通過 PIN 也不該拿到 token 真值。
+    #   `show_agent_auth` 守的是**祕密**（token 面板）→ 密碼開啟時，
+    #       只有本機或已用密碼登入的瀏覽器（cookie）可看到 token 真值。
     #   `auth_enabled` 守的是**事實陳述**（安全提示那句文案）→ 只看認證開沒開。
     # 兩者綁在一起的後果是：一台剛剛才輸完密碼的家人手機，打開說明頁看到的是
     # 「本程式不設帳號密碼」——它剛做的事就否證了這句話。而那句文案裡沒有任何
     # 祕密，持票人也早就知道認證是開著的（他才剛輸過），不存在洩漏面。
-    show_agent_auth = snap.enabled and _is_loopback_host(client_host)
+    authed = verify_ticket(request.cookies.get("sid"))
+    show_agent_auth = snap.enabled and (_is_loopback_host(client_host) or authed)
     context["show_agent_auth"] = show_agent_auth
     context["auth_enabled"] = snap.enabled
     if show_agent_auth:

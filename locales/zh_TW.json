@@ -120,6 +120,7 @@
       "run_now_started": "已開始，完成後側欄會有通知",
       "run_now_busy": "已經有一輪在進行中",
       "use_resolved_folder": "就用這個資料夾",
+      "folder_not_configured": "尚未設定最愛資料夾",
       "folder_warning": "請指向下載器的完成資料夾，不要指到下載中的資料夾",
       "running": "目前正在執行一輪",
       "config_failed": "操作失敗，請稍後再試"
@@ -145,6 +146,7 @@
       "advanced_search_cta": "使用番號進階搜尋",
       "tag_api_failed": "標籤儲存失敗，請稍後再試",
       "tag_nfo_not_written": "標籤已存，但媒體伺服器讀的那份 NFO 沒有更新",
+      "tag_nfo_write_blocked": "標籤已存，但沒有權限寫入 NFO",
       "no_data": "找不到資料",
       "search_failed": "搜尋失敗",
       "network_error": "網路錯誤，請重試",
@@ -281,6 +283,7 @@
       "scrape_complete_dup": "批次整理完成：成功 {success}，失敗 {failed}，重複 {duplicate}",
       "no_search_results": "此檔案沒有搜尋結果",
       "scrape_failed": "{filename} 整理失敗",
+      "scrape_failed_reason": "{filename} 整理失敗：{reason}",
       "no_valid_files": "無有效影片檔案（無法識別番號）",
       "load_failed": "載入失敗，請重試",
       "translate_failed": "翻譯失敗，請重試",
@@ -424,7 +427,9 @@
       "reveal": "顯示密碼",
       "saved": "密碼設定已儲存",
       "save_failed": "密碼設定儲存失敗，請稍後再試。",
-      "pin_invalid": "密碼必須是 4 位英文或數字"
+      "pin_invalid": "密碼必須是 4 位英文或數字",
+      "unset_hint": "目前沒有密碼保護，你可以在這裡設定",
+      "need_login_hint": "需要先登入才能修改"
     },
     "switch_mode_confirm": {
       "title": "切換媒體伺服器模式",
@@ -454,6 +459,7 @@
       "favorite_folder_label": "我的最愛資料夾",
       "favorite_folder_hint": "一鍵載入常用資料夾。請指向下載器的完成資料夾，不要指到下載中的資料夾",
       "favorite_folder_placeholder": "留空 = 系統下載資料夾",
+      "favorite_folder_placeholder_server": "留空 = 不使用最愛資料夾",
       "favorite_folder_example_prefix": "範例：C:\\Users\\&lt;你的使用者名稱&gt;\\下載"
     },
     "translate": {
@@ -1085,7 +1091,9 @@
       "pill_actresses_middle": "個條件的",
       "pill_actresses_suffix": "位",
       "source_unreachable_list": "無法存取：{list}",
-      "source_unreachable_count": "{n} 個位置無法存取"
+      "source_unreachable_count": "{n} 個位置無法存取",
+      "source_no_permission_list": "沒有權限讀取：{list}",
+      "source_no_permission_count": "{n} 個位置沒有權限讀取"
     },
     "nav": {
       "prev_page": "上一頁",
@@ -1127,12 +1135,14 @@
       "tag_placeholder": "標籤名稱",
       "tag_api_failed": "標籤儲存失敗，請稍後再試",
       "tag_nfo_not_written": "標籤已存，但媒體伺服器讀的那份 NFO 沒有更新",
+      "tag_nfo_write_blocked": "標籤已存，但沒有權限寫入 NFO",
       "user_tags_label": "自訂標籤",
       "alias_label": "別名",
       "alias_source_hint": "由 Scanner 同步",
       "mask_toggle": "封面裁切預覽",
       "mask_detect_failed": "焦點偵測失敗，請稍後再試",
       "mask_focal_too_slow_auto_disabled": "這張封面找臉花了超過 5 秒，已經先幫你關掉自動對焦。想調整位置直接拖就可以，隨時能到設定開回來。",
+      "mask_focal_still_detecting": "5 秒內還沒找到臉，先用拖的會快一些。這台機器如果真的算不動，自動對焦會自己關掉，可以到「設定 → 刮削行為 → 進階刮削設定」查看。",
       "mask_focal_too_slow_hint": "找臉花了超過 5 秒。先用拖的會快一些——不想每次都等，可以到「設定 → 刮削行為 → 進階刮削設定」關掉自動對焦。",
       "mask_save_failed": "裁切設定儲存失敗，請稍後再試",
       "mask_cover_changed": "封面已變更，請重新開啟裁切工具再試一次",

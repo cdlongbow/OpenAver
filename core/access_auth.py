@@ -360,11 +360,11 @@ def set_auth(enabled: bool, pin: str) -> None:
     well-formed.
 
     On every successful write (Opus 補充 E'), the retry-lockout counters
-    are also cleared. `set_auth` is loopback-only (R4, enforced by the web
-    layer's `_is_loopback_host()` gate on the PUT endpoint) so this is not
-    a bypass an attacker can reach — it is the only way an owner can
-    immediately un-stick a family member who got locked out, instead of
-    making them wait out the escalation ladder (up to an hour).
+    are also cleared. The caller PUT /api/access/settings allows local or
+    authenticated requests, and any source when the password is currently
+    off. The latter cannot bypass password protection because none is active.
+    Clearing retry-lockout counters lets the owner immediately un-stick a
+    family member instead of waiting out the escalation ladder (up to an hour).
     """
     canonical = _canonical_pin(pin)
     if enabled and canonical is None:

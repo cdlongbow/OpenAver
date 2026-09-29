@@ -1,0 +1,84 @@
+#!/bin/bash
+PKG="${SYNOPKG_PKGNAME:-OpenAver}"
+DEST="${SYNOPKG_PKGDEST:-/var/packages/$PKG/target}"
+APP="$DEST/app"
+PY="$DEST/python-$(uname -m)/bin/python3"    # 胖包：用 uname -m 挑直譯器
+VAR="/var/packages/$PKG/var"                 # @appdata：升級／卸載都保留（findings-145 §I5-a）
+PID="${OPENAVER_PID_FILE:-$VAR/openaver.pid}"   # 測試可覆寫；預設不變
+LOG="$VAR/openaver.log"
+PORT=8765
+
+export HOME="$VAR"                           # package user 沒有家目錄（findings-145 §7 必修 #1）
+export OPENAVER_DATA_DIR="$VAR/data"         # 153：資料根不住在會被升級清掉的 app/
+export OPENAVER_SYNOLOGY=1
+export PYTHONDONTWRITEBYTECODE=1
+
+start_daemon() {
+    mkdir -p "$VAR"
+    if [ ! -x "$PY" ]; then
+        echo "[start] 這台機器的架構是 $(uname -m)，套件裡沒有對應的直譯器（找不到 $PY）" >> "$LOG"
+        exit 1
+    fi
+    cd "$APP" || exit 1
+    "$PY" -m uvicorn web.app:app --host 0.0.0.0 --port "$PORT" --log-level info \
+        >> "$LOG" 2>&1 &
+    echo $! > "$PID"
+}
+
+# PID 檔裡的數字可能已被 DSM 其他程序重用：cmdline 同時含 uvicorn 與 web.app:app 才算是我們的；
+# 讀不到（程序不存在）就不是。
+pid_is_ours() {
+    local cmd
+    cmd="$(tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null)" || return 1
+    [[ "$cmd" == *uvicorn* && "$cmd" == *web.app:app* ]]
+}
+
+# 等 pid 消失，最多 $1 秒；已死回 0，逾時仍活回 1
+wait_gone() {
+    local i
+    for ((i = 0; i < $2; i++)); do
+        kill -0 "$1" 2>/dev/null || return 0
+        sleep 1
+    done
+    ! kill -0 "$1" 2>/dev/null
+}
+
+# 程序確實不在了才刪 PID 檔並回 0；SIGKILL 後仍活著（例如 D 狀態）就保留 PID 檔、回 1，
+# 讓之後還管得到它（不會讓 DSM 起第二個程序去搶 8765）。
+stop_daemon() {
+    [ -f "$PID" ] || return 0
+    local pid
+    pid="$(cat "$PID")"
+    if ! pid_is_ours "$pid"; then
+        # 殘留的舊 PID 檔（程序已死，或 PID 被別的程序重用）：不送任何訊號
+        echo "[stop] PID 檔指向的不是 OpenAver（pid $pid），視為殘留並刪除" >> "$LOG" 2>/dev/null
+        rm -f "$PID"
+        return 0
+    fi
+    kill "$pid" 2>/dev/null
+    if ! wait_gone "$pid" "${OPENAVER_STOP_WAIT:-20}"; then
+        echo "[stop] SIGTERM 後逾時，改送 SIGKILL（pid $pid）" >> "$LOG" 2>/dev/null
+        kill -9 "$pid" 2>/dev/null
+        if ! wait_gone "$pid" "${OPENAVER_KILL_WAIT:-5}"; then
+            echo "[stop] SIGKILL 後程序仍在（pid $pid），保留 PID 檔" >> "$LOG" 2>/dev/null
+            return 1
+        fi
+    fi
+    rm -f "$PID"
+    return 0
+}
+
+daemon_status() {
+    local pid
+    [ -f "$PID" ] || return 1
+    pid="$(cat "$PID")"
+    kill -0 "$pid" 2>/dev/null && pid_is_ours "$pid"
+}
+
+case "$1" in
+    start)   daemon_status && exit 0; start_daemon; exit 0 ;;
+    stop)    stop_daemon; exit $? ;;
+    status)  daemon_status && exit 0 || exit 3 ;;
+    log)     echo "$LOG"; exit 0 ;;
+    *)       exit 1 ;;
+esac

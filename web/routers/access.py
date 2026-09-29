@@ -27,7 +27,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, StrictBool, StrictStr
 
-from core.access_auth import attempt_pin, get_auth_settings, set_auth
+from core.access_auth import attempt_pin, get_auth_settings, load_snapshot, set_auth, snapshot, verify_ticket
 from core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -122,38 +122,47 @@ async def verify_pin(request: Request) -> Response:
 def get_access_settings(raw_request: Request) -> dict:
     """R4 之外：GET 無 loopback 限制，任何能打到這支端點的呼叫者
     （loopback，或已通過 PIN 驗證的遠端持票人）都能看到 enabled 狀態；
-    PIN 真值只給 loopback（spec §4.1），reveal 完全由呼叫端來源決定，
-    core 層不判斷位址。"""
+    PIN 真值只給 loopback 或已登入（cookie／bearer）的呼叫者；
+    reveal 由 web 層判斷，core 層不判斷位址或票證。"""
     # 延遲 import，避免與 web.app → access router 的循環依賴（同 verify_pin /
     # motion_lab.py 先例）。PLC2701 仍以 noqa 標明跨模組私有名依賴理由。
-    from web.app import _is_loopback_host  # noqa: PLC2701 — access.py 的 GET/PUT settings 端點需要與 T2 middleware 共用同一套本機判斷（CD-114a-5），避免在 router 層照抄一份字面值判斷（config.py:221 的手寫 tuple 就是這樣才產生 §1.4 記錄的既有 residual：不認 ::ffff:127.0.0.1）
+    from web.app import _bearer_token, _is_loopback_host  # noqa: PLC2701 — 與 middleware 共用判斷
 
     _client = raw_request.client
     _client_host = _client.host if _client else None
-    reveal = _is_loopback_host(_client_host)
+    snap = snapshot() or load_snapshot()
+    authed = verify_ticket(raw_request.cookies.get("sid")) or verify_ticket(_bearer_token(raw_request))
+    reveal = _is_loopback_host(_client_host) or authed
+    can_edit = not snap.enabled or _is_loopback_host(_client_host) or authed
     result = get_auth_settings(reveal)
     return {
         "success": True,
         "enabled": result["enabled"],
         "pin": result["pin"],
         "pin_revealed": reveal,
+        "can_edit": can_edit,
     }
 
 
 @router.put("/settings")
 def update_access_settings(request: AccessSettingsRequest, raw_request: Request):
     # 延遲 import，避免與 web.app → access router 的循環依賴（同 get_access_settings）。
-    from web.app import _is_loopback_host  # noqa: PLC2701 — access.py 的 GET/PUT settings 端點需要與 T2 middleware 共用同一套本機判斷（CD-114a-5），避免在 router 層照抄一份字面值判斷（config.py:221 的手寫 tuple 就是這樣才產生 §1.4 記錄的既有 residual：不認 ::ffff:127.0.0.1）
+    from web.app import _bearer_token, _is_loopback_host  # noqa: PLC2701 — 與 middleware 共用判斷
 
     _client = raw_request.client
     _client_host = _client.host if _client else None
-    if not _is_loopback_host(_client_host):
-        logger.warning(
-            "拒絕非本機變更認證設定（來源 %s）：僅主機可變更", _client_host
-        )
+    snap = snapshot() or load_snapshot()
+    authed = verify_ticket(raw_request.cookies.get("sid")) or verify_ticket(_bearer_token(raw_request))
+    if _is_loopback_host(_client_host):
+        pass
+    elif authed:
+        pass
+    elif not snap.enabled:
+        pass
+    else:
         return JSONResponse(status_code=403, content={
-            "success": False, "reason": "remote_forbidden",
-            "error": "認證設定僅能在主機本機變更",
+            "success": False, "reason": "need_login",
+            "error": "請先登入",
         })
     try:
         set_auth(request.enabled, request.pin)
@@ -162,4 +171,18 @@ def update_access_settings(request: AccessSettingsRequest, raw_request: Request)
             "success": False, "reason": "invalid_pin",
             "error": "密碼必須是 4 位英文或數字",
         })
+    if request.enabled:
+        # 首次設定與已登入者改密碼共用：set_auth 撤銷了所有票，重發一張讓呼叫端不被登出。
+        token = attempt_pin(request.pin)
+        response = JSONResponse({"success": True})
+        if token is not None:
+            response.set_cookie(
+                "sid",
+                token,
+                max_age=_COOKIE_MAX_AGE_SECONDS,
+                path="/",
+                httponly=True,
+                samesite="lax",
+            )
+        return response
     return {"success": True}

@@ -385,6 +385,9 @@ export function searchStateResultCard() {
                 if (data.readonly_no_output) {
                     this.showToast(window.t('search.error.tag_nfo_not_written'), 'info');
                 }
+                if (data.nfo_write_blocked) {
+                    this.showToast(window.t('search.error.tag_nfo_write_blocked'), 'info');
+                }
             } else {
                 this.showToast(window.t('search.error.tag_api_failed'), 'error');
             }
@@ -423,6 +426,9 @@ export function searchStateResultCard() {
                 // 燈箱那側同一條（state-lightbox.js）；這裡不補會讓同一個靜默失敗從搜尋頁復活。
                 if (data.readonly_no_output) {
                     this.showToast(window.t('search.error.tag_nfo_not_written'), 'info');
+                }
+                if (data.nfo_write_blocked) {
+                    this.showToast(window.t('search.error.tag_nfo_write_blocked'), 'info');
                 }
             } else {
                 this.showToast(window.t('search.error.tag_api_failed'), 'error');

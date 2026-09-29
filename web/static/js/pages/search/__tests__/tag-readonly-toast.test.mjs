@@ -19,6 +19,7 @@ register(new URL('./alias-loader.mjs', import.meta.url), import.meta.url);
 const { searchStateResultCard } = await import('../state/result-card.js');
 
 const TOAST_KEY = 'search.error.tag_nfo_not_written';
+const BLOCKED_KEY = 'search.error.tag_nfo_write_blocked';
 
 function makeThis(responsePayload, toasts) {
     const file = { path: 'file:////tmp/ro-src/T4-STUB.mp4', user_tags: [] };
@@ -75,4 +76,28 @@ test('removeUserTag: readonly_no_output 不存在 → 不跳提示', async () =>
     await ctx.removeUserTag.call(ctx, 'TESTTAG');
 
     assert.equal(toasts.length, 0);
+});
+
+test('confirmAddTag: nfo_write_blocked=true → 跳出「沒有權限寫入 NFO」提示', async () => {
+    const toasts = [];
+    const ctx = makeThis(
+        { success: true, user_tags: ['TESTTAG'], nfo_updated: false, readonly_no_output: false, nfo_write_blocked: true },
+        toasts,
+    );
+    await ctx.confirmAddTag.call(ctx);
+
+    assert.deepEqual(ctx._file.user_tags, ['TESTTAG']);
+    assert.deepEqual(toasts, [[BLOCKED_KEY, 'info']]);
+});
+
+test('removeUserTag: nfo_write_blocked=true → 跳出「沒有權限寫入 NFO」提示', async () => {
+    const toasts = [];
+    const ctx = makeThis(
+        { success: true, user_tags: [], nfo_updated: false, readonly_no_output: false, nfo_write_blocked: true },
+        toasts,
+    );
+    await ctx.removeUserTag.call(ctx, 'TESTTAG');
+
+    assert.deepEqual(ctx._file.user_tags, []);
+    assert.deepEqual(toasts, [[BLOCKED_KEY, 'info']]);
 });

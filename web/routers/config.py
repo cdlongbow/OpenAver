@@ -57,6 +57,7 @@ from core.readonly_source import is_path_readonly, _canonical_source_prefix  # n
 from core.readonly_assets import _write_strm  # noqa: PLC2701 — .strm 重寫端點直接呼叫 producer 內部的單片寫入 primitive，比對 _produce_one 已收斂的單片/批次雙呼叫點模式（109），避免在 router 層重寫一份 .strm 寫入邏輯
 from core.source_config import MAX_ENABLED_SOURCES
 from core.translate_service import LANGUAGE_PROMPTS
+from core.platform_info import is_synology
 
 logger = get_logger(__name__)
 
@@ -163,6 +164,7 @@ def update_config(config: AppConfig) -> dict:
             def _write_preserving_server_owned(cfg: dict) -> None:
                 current_server_mode = cfg.get("general", {}).get("server_mode", False)
                 payload["general"]["server_mode"] = current_server_mode
+                payload["general"]["last_notified_update_version"] = cfg.get("general", {}).get("last_notified_update_version", "")
                 # focal_device 是**伺服器擁有狀態**：前端只透過專用 toggle 端點
                 # PUT /api/config/focal-device/disabled 寫它（另有背景
                 # core.focal.device_state.record_outcome），全量 PUT 一律不接受前端送來的值。
@@ -201,14 +203,16 @@ def update_config(config: AppConfig) -> dict:
 def reset_config() -> dict:
     """恢復原廠設定 - 刪除 config.json"""
     try:
-        # reset 清除 server_mode（defaults → false）→ listener 必須同步停止，否則
-        # runtime（listener 跑）≠ persisted 分離。clear+stop 與 toggle 交易共用
-        # _server_mode_toggle_lock 序列化（Codex P2），防 reset 與併發 enable 交錯。
-        # stop() idempotent：listener 未跑時 no-op，安全。
+        # reset 與 toggle 交易共用鎖，防 reset 與併發 enable 交錯。
+        # Synology 必須維持 server_mode=true 與既有 listener；其他平台清除
+        # server_mode（defaults → false）後同步 stop，避免 runtime/persisted 分離。
         from web.lan_listener import lan_listener
         with _server_mode_toggle_lock:
             reset_config_file()  # 鎖內 exists/unlink，無 TOCTOU（CD-66b-1）
-            lan_listener.stop()
+            if is_synology():
+                mutate_config(lambda cfg: cfg.setdefault("general", {}).update({"server_mode": True}))
+            else:
+                lan_listener.stop()
         _reset_translate_service()  # 清除舊服務實例（與 server_mode 無關，鎖外）
         return {"success": True, "message": "已恢復預設設定"}
     except Exception as e:
@@ -272,6 +276,10 @@ def update_general_field(field: str, request: GeneralFieldRequest, raw_request: 
         # help data-attr 也誤算 true → 使用者關閉卻被當開啟。非 bool → 400。
         if field == "auto_check_update" and not isinstance(request.value, bool):
             raise HTTPException(status_code=400, detail="auto_check_update 必須為布林值")
+
+        if field == "server_mode" and is_synology():
+            return {"success": False, "reason": "synology_fixed",
+                    "error": "Synology 版伺服器模式為固定值，無法變更"}
 
         # server_mode 是主機決定，遠端連入的客人不得切換（spec「遠端自鎖不防護」的更乾淨版本）。
         # 僅允許 loopback 來源切換；fail-closed：client None → 視為非 loopback → 拒絕。
@@ -374,18 +382,22 @@ def update_focal_device_disabled(request: FocalDeviceDisabledRequest) -> dict:
 
 
 @router.get("/config/general/lan-port")
-def get_lan_port() -> dict:
-    """取得 LAN listener 目前使用的 port + LAN IP（server mode 啟用中回值，否則 null）
+def get_lan_port(request: Request) -> dict:
+    """取得目前可連線的 port + LAN IP（Synology 使用主服務埠）。
 
     lan_ip 獨立於 listener 狀態：IP 可偵測→回真值，IP 不可偵測→回 null。
     搭配前端 `?? null` 清除邏輯：listener 停止但 IP 可偵測 → lanIp 保留、lanPort
     null → 顯示「listener_down」；IP 真的無法偵測 → lanIp null → 顯示「no_lan_ip」。
     """
     from web.lan_listener import lan_listener, get_lan_ip, is_public_exposure
-    running = lan_listener.is_running
+    if is_synology():
+        lan_port = request.scope["server"][1]
+    else:
+        running = lan_listener.is_running
+        lan_port = lan_listener.lan_port if running else None
     _lan_ip = get_lan_ip()
     return {
-        "lan_port": lan_listener.lan_port if running else None,
+        "lan_port": lan_port,
         "lan_ip": _lan_ip,  # 獨立於 running：null 僅在 IP 真的無法偵測時
         "public_exposure": is_public_exposure(_lan_ip),
     }

@@ -54,6 +54,38 @@ def test_config_persistence(client, temp_config_path):
     assert saved_data["scraper"]["max_title_length"] == 99
 
 
+def test_update_config_preserves_last_notified_update_version_against_stale_full_save(client, temp_config_path):
+    """背景已記住新版時，設定頁舊快照的全量 PUT 不得回捲它。"""
+    stale_payload = client.get("/api/config").json()["data"]
+    with open(temp_config_path, encoding="utf-8") as f:
+        seeded = json.load(f)
+    seeded["general"]["last_notified_update_version"] = "9.9.9"
+    with open(temp_config_path, "w", encoding="utf-8") as f:
+        json.dump(seeded, f)
+    stale_payload["general"]["last_notified_update_version"] = ""
+    stale_payload["general"]["theme"] = "dark"
+
+    response = client.put("/api/config", json=stale_payload)
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    with open(temp_config_path, encoding="utf-8") as f:
+        persisted = json.load(f)
+    assert persisted["general"]["last_notified_update_version"] == "9.9.9"
+    assert persisted["general"]["theme"] == "dark"
+
+
+def test_old_config_backfills_last_notified_update_version(client, temp_config_path):
+    """舊設定檔缺 key 時 GET 應補空字串。"""
+    with open(temp_config_path, encoding="utf-8") as f:
+        old_config = json.load(f)
+    old_config["general"].pop("last_notified_update_version", None)
+    with open(temp_config_path, "w", encoding="utf-8") as f:
+        json.dump(old_config, f)
+    response = client.get("/api/config")
+    assert response.status_code == 200
+    assert response.json()["data"]["general"]["last_notified_update_version"] == ""
+
+
 def test_update_config_preserves_newer_focal_device_against_stale_full_save(client, temp_config_path):
     """PR review finding（152c-Codex P2）：全量 PUT 不得用前端持有的舊快照覆蓋背景
     record_outcome 剛寫入的 focal_device —— 否則已被判定「裝置太慢、自動對焦停用」的機器
@@ -212,4 +244,3 @@ class TestTranslateConfigRoundTrip:
         assert openai_cfg["api_key"] == mask_secret("sk-test-roundtrip")
         assert _load_config()["translate"]["openai"]["api_key"] == "sk-test-roundtrip"
         assert openai_cfg["model"] == "gpt-4o"
-

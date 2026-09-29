@@ -82,6 +82,8 @@ def run_one_round(
     path_mappings = gallery_config.get('path_mappings', {})  # 整輪只取一次（DoD-7）
 
     folder = resolve_favorite_folder(config)
+    if not folder:
+        return {"folder_not_configured": True}
 
     # 唯讀 guard：對「最愛資料夾」本身判一次，不逐檔判（CD-144-7）
     ro_prefixes = readonly_source_prefixes(gallery_config, path_mappings)

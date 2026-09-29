@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import socket
 import threading
 import time
@@ -53,12 +54,60 @@ async def test_no_sources_makes_no_probe_calls(sr):
         patch.object(sr, "iter_gallery_sources", return_value=[]),
         patch.object(sr.socket, "create_connection") as mock_conn,
         patch.object(sr.os.path, "exists") as mock_exists,
+        patch.object(sr.os, "scandir") as mock_scandir,
     ):
         await sr.schedule_reprobe_if_stale()
         await sr._reprobe_task
         assert mock_conn.call_count == 0
         assert mock_exists.call_count == 0
+        assert mock_scandir.call_count == 0
         assert sr.get_snapshot() == {}
+
+
+@pytest.mark.asyncio
+async def test_permission_denied_short_circuits_without_retry(sr):
+    with (
+        patch.object(sr.os, "scandir", side_effect=PermissionError(13, "denied")) as scan,
+        patch.object(sr.asyncio, "sleep", new_callable=AsyncMock) as sleep,
+    ):
+        assert await sr._exists_probe("/denied") == "permission_denied"
+        assert await sr._probe_exists_with_retry("/denied") == "no_permission"
+        assert scan.call_count == 2
+        sleep.assert_not_awaited()
+
+
+def test_scandir_probe_other_oserror_is_missing(sr):
+    """NAS 斷線類錯誤（EHOSTDOWN 等）＝ main 的 exists()=False ＝ missing（True）。"""
+    import errno as _errno
+
+    with patch.object(sr.os, "scandir", side_effect=OSError(_errno.EHOSTDOWN, "host down")):
+        assert sr._scandir_probe("/mnt/nas") is True
+
+
+def test_scandir_probe_not_a_directory_is_reachable(sr):
+    """路徑是檔案：main 的 exists()=True ＝可達（False）。"""
+    with patch.object(sr.os, "scandir", side_effect=NotADirectoryError(20, "not a dir")):
+        assert sr._scandir_probe("/mnt/file") is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "posix" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+                    reason="chmod 000 requires POSIX non-root DAC enforcement")
+async def test_chmod_000_exists_probe_reports_permission_denied(sr, tmp_path):
+    source = tmp_path / "denied"
+    source.mkdir()
+    source.chmod(0o000)
+    try:
+        assert os.path.exists(source) is True
+        assert await sr._exists_probe(str(source)) == "permission_denied"
+    finally:
+        source.chmod(0o700)
+
+
+def test_no_permission_snapshot_uses_degraded_ttl(sr):
+    with sr._lock:
+        sr._snapshot = {"/denied": "no_permission"}
+        assert sr._current_ttl_locked() == sr._TTL_DEGRADED
 
 
 # ── DoD ② ──────────────────────────────────────────────────────────────
@@ -274,14 +323,14 @@ async def test_pending_exists_dedup_across_ttl_cycles(sr, monkeypatch):
     entered = threading.Event()
     call_count = {"n": 0}
 
-    def blocking_exists(_path):
+    def blocking_scandir(_path):
         call_count["n"] += 1
         entered.set()
         block.wait(timeout=30)
-        # Return True (exists) so round-3's first probe is affirmative and does
+        # Return False (ok) so round-3's first probe is affirmative and does
         # not fire the negative-retry second exists() — DoD ⑧ locks call count,
         # not the final status after release.
-        return True
+        return False
 
     path = "/mnt/dead-nfs"
     sources = _sources(path)
@@ -289,7 +338,7 @@ async def test_pending_exists_dedup_across_ttl_cycles(sr, monkeypatch):
     with (
         patch.object(sr, "load_config", return_value={"gallery": {}}),
         patch.object(sr, "iter_gallery_sources", return_value=sources),
-        patch.object(sr.os.path, "exists", side_effect=blocking_exists),
+        patch.object(sr, "_scandir_probe", side_effect=blocking_scandir),
         patch.object(sr.asyncio, "sleep", new_callable=AsyncMock),
     ):
         # Round 1: short timeout → unknown; future stays pending.

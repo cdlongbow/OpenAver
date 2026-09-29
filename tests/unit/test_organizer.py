@@ -879,6 +879,45 @@ class TestOrganizeErrorHandling:
         assert "access denied" not in (result["error"] or "")
         assert "PermissionError" not in (result["error"] or "")
 
+    def test_permission_error_includes_dsm_hint_when_synology(self, tmp_path, monkeypatch):
+        """
+        is_synology() 為 True 時，PermissionError 訊息附加 DSM 操作指引（CD-159-11）。
+        """
+        from core.platform_info import DSM_PERMISSION_HINT
+        monkeypatch.setattr("core.organizer.is_synology", lambda: True)
+
+        src = tmp_path / "SONE-205.mp4"
+        src.write_bytes(b"test")
+
+        config = {
+            "create_folder": True,
+            "folder_layers": ["{actor}"],
+            "filename_format": "[{num}] {title}",
+            "download_cover": False,
+            "cover_filename": "poster.jpg",
+            "create_nfo": False,
+            "max_title_length": 50,
+            "max_filename_length": 60,
+            "suffix_keywords": [],
+        }
+        metadata = {
+            "number": "SONE-205",
+            "title": "Test Title",
+            "actors": ["三上悠亞"],
+            "tags": [],
+            "maker": "S1",
+            "date": "2024-01-15",
+            "cover": "",
+            "url": "",
+        }
+
+        with patch("core.organizer.os.makedirs", side_effect=PermissionError("access denied")):
+            result = organize_file(str(src), metadata, config)
+
+        assert result["success"] is False
+        assert "無法建立資料夾，請確認目標路徑的寫入權限" in result["error"]
+        assert DSM_PERMISSION_HINT in result["error"]
+
     def test_general_exception_returns_fixed_message(self, tmp_path):
         """
         shutil.move 拋出一般 Exception 時：

@@ -2,7 +2,7 @@
 
 Probe means are a closed set of two (CD-2):
   - UNC ``\\\\host\\...`` → TCP connect to port 445 (2s timeout)
-  - everything else → ``os.path.exists(root)`` in a worker thread (5s wait)
+  - everything else → ``os.scandir(root)`` in a worker thread (5s wait)
 
 Public API:
   - ``get_snapshot()`` — pure memory read; safe from sync threadpool endpoints
@@ -73,7 +73,7 @@ def _current_ttl_locked() -> float:
     """Pick the snapshot TTL from the *last* snapshot (caller must hold ``_lock``)."""
     return (
         _TTL_DEGRADED
-        if any(status == "unreachable" for status in _snapshot.values())
+        if any(status in ("unreachable", "no_permission") for status in _snapshot.values())
         else _TTL_HEALTHY
     )
 
@@ -244,6 +244,8 @@ async def _probe_with_retry(probe, target: str) -> str:
     """
     for attempt in (1, 2):
         result = await probe(target)
+        if isinstance(result, str):
+            return result
         if result is None:
             return "unknown"
         if result is False:
@@ -286,11 +288,33 @@ async def _tcp_probe(host: str) -> bool | None:
 
 
 async def _probe_exists_with_retry(path: str) -> str:
-    return await _probe_with_retry(_exists_probe, path)
+    result = await _probe_with_retry(_exists_probe, path)
+    return "no_permission" if result == "permission_denied" else result
 
 
-async def _exists_probe(path: str) -> bool | None:
-    """Return False=exists(ok), True=missing(negative), None=unknown/pending.
+def _scandir_probe(path: str) -> bool | str | None:
+    """Return final probe semantics after opening the directory itself.
+
+    PermissionError -> "permission_denied"; NotADirectoryError -> False
+    (a file exists there: reachable, same as ``os.path.exists`` on main);
+    FileNotFoundError and any other OSError (NAS down: WinError 64/1222/1231,
+    EHOSTDOWN/EIO ...) -> True (missing), matching main's exists() behaviour.
+    """
+    try:
+        with os.scandir(path):
+            return False
+    except PermissionError:
+        return "permission_denied"
+    except NotADirectoryError:
+        return False
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return True
+
+
+async def _exists_probe(path: str) -> bool | str | None:
+    """Return False=ok, True=missing, permission_denied, or None=unknown/pending.
 
     Per-path dedup via ``_pending_exists``: a timed-out ``exists`` keeps its
     future so the same path cannot enqueue a second worker thread.
@@ -303,7 +327,7 @@ async def _exists_probe(path: str) -> bool | None:
             _pending_exists.pop(path, None)
 
         future: asyncio.Future = asyncio.ensure_future(
-            asyncio.to_thread(os.path.exists, path)
+            asyncio.to_thread(_scandir_probe, path)
         )
         _pending_exists[path] = future
 
@@ -329,8 +353,7 @@ async def _exists_probe(path: str) -> bool | None:
             # 與「這次剛好問不出來」在 debug.log 裡分不出來。
             logger.warning("_exists_probe: unexpected failure for %s", path, exc_info=True)
             return None
-        # exists True → affirmative (False); missing → negative (True)
-        return False if result else True
+        return result
     finally:
         with _lock:
             if future.done() and _pending_exists.get(path) is future:
@@ -348,12 +371,12 @@ def is_path_on_unreachable_source(file_uri: str, gallery_config: dict) -> bool:
 
     snapshot = get_snapshot()
     # CD-8 healthy-path short-circuit: no unreachable → do not iterate sources.
-    if not any(v == "unreachable" for v in snapshot.values()):
+    if not any(v in ("unreachable", "no_permission") for v in snapshot.values()):
         return False
     path_mappings = gallery_config.get("path_mappings", {})
     for src in iter_gallery_sources(gallery_config):
         native = uri_to_fs_path(src.path)  # uri-no-reverse
-        if snapshot.get(native) != "unreachable":
+        if snapshot.get(native) not in ("unreachable", "no_permission"):
             continue
         prefix = _canonical_source_prefix(src.path, path_mappings)
         if is_path_under_dir(file_uri, prefix):
