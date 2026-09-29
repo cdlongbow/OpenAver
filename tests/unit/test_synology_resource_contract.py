@@ -1,10 +1,13 @@
 """Contract tests for Synology conf/resource and its integration with privilege and wizard."""
 
+import importlib.util
 import json
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 RESOURCE_PATH = Path(__file__).resolve().parents[2] / "synology/spk-src/conf/resource"
 PRIVILEGE_PATH = Path(__file__).resolve().parents[2] / "synology/spk-src/conf/privilege"
+WIZARD_PATH = Path(__file__).resolve().parents[2] / "synology/spk-src/WIZARD_UIFILES/install_uifile.sh"
 
 WIZARD_KEY = "wizard_library_share"
 EXPECTED_RW_USERS = ["openaver-svc"]
@@ -12,6 +15,21 @@ EXPECTED_RW_USERS = ["openaver-svc"]
 
 def _load_resource():
     return json.loads(RESOURCE_PATH.read_text(encoding="utf-8"))
+
+
+def _load_wizard():
+    spec = importlib.util.spec_from_file_location(
+        "install_uifile_resource_contract", WIZARD_PATH,
+        loader=SourceFileLoader("install_uifile_resource_contract", str(WIZARD_PATH)),
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_wizard_combobox_key_is_wizard_key():
+    items = _load_wizard().build_items([], False)
+    assert [s["key"] for it in items if it.get("type") == "combobox" for s in it["subitems"]] == [WIZARD_KEY]
 
 
 def test_resource_is_valid_json_with_single_share():
