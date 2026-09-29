@@ -249,6 +249,7 @@ def test_atomic_write_failure_keeps_original_no_temp(tmp_path, monkeypatch):
     assert set(os.listdir(data)) == names
 
 
+# [lint-guard: pytest-justified] postinst（shell）↔ helper 路徑的跨檔契約，前端 lint 管不到 shell
 def test_postinst_references_existing_helper():
     text = POSTINST.read_text(encoding="utf-8")
     assert 'HELPER="$(dirname "$0")/apply_wizard_sources.py"' in text

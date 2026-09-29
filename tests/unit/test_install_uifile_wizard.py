@@ -82,6 +82,7 @@ def test_build_items_library_combobox_shape(capsys, monkeypatch, existing_data, 
     assert "這台 NAS 無法安裝 OpenAver" in module.build_items(pairs, existing_data)[0]["desc"]
 
 
+# [lint-guard: pytest-justified] 斷言的是 Python 函式 build_items() 產出的精靈文案（授權承諾），不是靜態 HTML/JS/CSS
 @pytest.mark.parametrize("existing_data", [False, True])
 def test_build_items_copy_anchors(existing_data):
     module = _load_module()
