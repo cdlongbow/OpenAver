@@ -370,6 +370,7 @@ class TestLifecycleSymmetry:
         )
         assert put_response.status_code == 200
         assert put_response.headers["content-type"].startswith("text/html")
+        # [lint-guard: pytest-justified] 安全指紋：未登入的遠端請求被 access_gate 換成登入頁，斷言回應不帶 API JSON（執行期行為，lint 掃不到）。
         assert "success" not in put_response.text
 
         get_response = remote_client.get(SETTINGS_PATH)
@@ -516,6 +517,7 @@ def test_j1_j3_password_semantics_full_flow(auth_db, server_mode_true):
     client.cookies.set("sid", old_token)
     revoked_response = client.get("/help")
     assert revoked_response.status_code == 200
+    # [lint-guard: pytest-justified] 同上：token 撤銷後同一份 /help 的 SSR 結果不得再帶 token 面板。
     assert b"help-agent-token-panel" not in revoked_response.content
 
     client.cookies.set("sid", new_token)

@@ -37,6 +37,7 @@ class TestSettingsSynologyServerModeGate:
         resp = client.get("/settings")
         assert resp.status_code == 200
 
+        # [lint-guard: pytest-justified] 開關出不出現取決於執行期環境變數 OPENAVER_SYNOLOGY 與 Jinja 渲染結果，靜態 lint 掃不到。
         is_visible = SERVER_MODE_ANCHOR in resp.text
         assert is_visible == expect_visible, (
             f"OPENAVER_SYNOLOGY={synology_env!r} 時，.settings-server-mode "
