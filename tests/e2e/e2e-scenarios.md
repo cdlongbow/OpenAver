@@ -1189,6 +1189,32 @@ N/A — 書籤牆／燈箱純瀏覽器互動，不依賴原生 picker。「加�
 
 ---
 
+## US20: 設定頁 LAN 密碼 ＋ 掃描權限訊息 ＋ 搜尋空狀態「只讀那一層」（v0.16.9 ~ v0.16.12 新增）
+
+**故事**：主人在設定頁直接設定區網密碼（不必再手改設定檔）；掃描遇到沒權限的資料夾時看到明確的「沒有權限讀取」而不是空白；搜尋頁空狀態明講加入資料夾「只讀那一層、不含子資料夾」。
+
+### Setup
+
+- Dev server 已啟動。全程唯讀：**不按設定頁「儲存」、不切伺服器模式確認、不設密碼、不掃描**。
+
+### Steps
+
+1. **[MCP] 搜尋空狀態措辭**：`/search` 的 `#emptyState .empty-explainer` 第一行
+   - **驗**：含「只讀那一層、不含子資料夾」，非 raw key `search.empty.explain_add`
+2. **[MCP] 設定頁 LAN 密碼區塊渲染**：`/settings` 看到模式切換（單機／伺服器）與「需要密碼才能連線」（`settings.access_auth.label`）
+   - **驗**：無 raw i18n key、console 無 error；只看不點（切換伺服器會跳確認並可能寫 config）
+3. **[人工][寫 config]** 伺服器模式下設定密碼 → 儲存 → 另一台裝置需輸入密碼；改密碼後舊裝置被踢（與 US8 銜接）
+4. **[人工]** 掃描來源指到無讀取權限的資料夾 → 掃描結果出現「沒有權限讀取」（需準備 disposable 無權限目錄）
+5. **[人工]** 燈箱女優照片挑選器出現 xcity 來源（需要網路與收藏女優）
+6. **[人工]** Synology 安裝／啟停 script（僅 DSM 實機／vDSM 可驗）
+
+### Regression 偵測點
+
+- 搜尋空狀態顯示舊文字（含子資料夾）或 raw key → locales 未同步
+- 設定頁密碼區塊出現 raw key → `settings.access_auth.*` 缺 key
+
+---
+
 ## Appendix C: Capabilities Smoke（Optional, curl-only）
 
 > 純 curl/API 測試，非 browser user story，**不算 milestone 必跑**。

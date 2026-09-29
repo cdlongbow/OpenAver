@@ -120,6 +120,7 @@
       "run_now_started": "Started — you'll get a notification in the sidebar when it's done",
       "run_now_busy": "A run is already in progress",
       "use_resolved_folder": "Use This Folder",
+      "folder_not_configured": "Favorite folder not set yet",
       "folder_warning": "Point this to your downloader's completed folder, not the one it downloads into",
       "running": "Currently running",
       "config_failed": "Action failed, please try again later"
@@ -127,7 +128,7 @@
     "empty": {
       "hint": "Enter an ID to search, or add video files",
       "drag_hint": "You can also drag and drop files or folders",
-      "explain_add": "Add / drag in: lists titles and fetches metadata first — nothing is touched until you press \"Organize.\"",
+      "explain_add": "Add / drag in: reads only that folder, not its subfolders — lists titles and fetches metadata first; nothing is touched until you press \"Organize.\"",
       "explain_favorite_unset": "Favorites: Point it at a folder (usually your downloader's completed folder) to list the videos inside with one click.",
       "explain_favorite_set_prefix": "Favorites: Lists videos in ",
       "explain_favorite_set_suffix": "; unorganized ones get their metadata fetched automatically.",
@@ -145,6 +146,7 @@
       "advanced_search_cta": "Advanced Search by ID",
       "tag_api_failed": "Failed to save tag, please try again later",
       "tag_nfo_not_written": "Tag saved, but the NFO your media server reads wasn't updated",
+      "tag_nfo_write_blocked": "Tag saved, but there's no permission to write the NFO",
       "no_data": "No data found",
       "search_failed": "Search failed",
       "network_error": "Network error, please retry",
@@ -281,6 +283,7 @@
       "scrape_complete_dup": "Batch organize complete: {success} succeeded, {failed} failed, {duplicate} duplicates",
       "no_search_results": "No search results for this file",
       "scrape_failed": "Failed to organize {filename}",
+      "scrape_failed_reason": "Failed to organize {filename}: {reason}",
       "no_valid_files": "No valid video files (could not identify number)",
       "load_failed": "Load failed. Please try again.",
       "translate_failed": "Translation failed. Please try again.",
@@ -424,7 +427,9 @@
       "reveal": "Show password",
       "saved": "Password settings saved",
       "save_failed": "Could not save the password settings. Please try again later.",
-      "pin_invalid": "The password must be 4 letters or digits"
+      "pin_invalid": "The password must be 4 letters or digits",
+      "unset_hint": "No password protection right now — you can set one here",
+      "need_login_hint": "Log in first to change this"
     },
     "switch_mode_confirm": {
       "title": "Switch media server mode",
@@ -454,6 +459,7 @@
       "favorite_folder_label": "Favorite Folder",
       "favorite_folder_hint": "Load a commonly used folder with one click",
       "favorite_folder_placeholder": "Leave blank = system Downloads folder",
+      "favorite_folder_placeholder_server": "Leave blank = don't use a favorite folder",
       "favorite_folder_example_prefix": "Example: C:\\Users\\&lt;your username&gt;\\Downloads"
     },
     "translate": {
@@ -1085,7 +1091,9 @@
       "pill_actresses_middle": "filters —",
       "pill_actresses_suffix": "actresses",
       "source_unreachable_list": "Unreachable: {list}",
-      "source_unreachable_count": "{n} location(s) unreachable"
+      "source_unreachable_count": "{n} location(s) unreachable",
+      "source_no_permission_list": "No permission to read: {list}",
+      "source_no_permission_count": "{n} location(s) without read permission"
     },
     "nav": {
       "prev_page": "Previous",
@@ -1127,12 +1135,14 @@
       "tag_placeholder": "Tag name",
       "tag_api_failed": "Failed to save tag, please try again",
       "tag_nfo_not_written": "Tag saved, but the NFO your media server reads wasn't updated",
+      "tag_nfo_write_blocked": "Tag saved, but there's no permission to write the NFO",
       "user_tags_label": "Custom Tags",
       "alias_label": "Aliases",
       "alias_source_hint": "Synced from Scanner",
       "mask_toggle": "Cover crop preview",
       "mask_detect_failed": "Focal detection failed. Please try again later.",
       "mask_focal_too_slow_auto_disabled": "Detecting the face on this cover took longer than 5 seconds, so we've turned off Auto Face Focus for you. Just drag to adjust the position directly — you can turn it back on anytime in Settings.",
+      "mask_focal_still_detecting": "No face found within 5 seconds — dragging it yourself will be faster. If this machine really can't keep up, Auto Face Focus will turn itself off; you can check under \"Settings → Scraping → Advanced Scrape Settings.\"",
       "mask_focal_too_slow_hint": "Detecting the face took longer than 5 seconds. Dragging it yourself will be faster — if you don't want to wait every time, you can turn off Auto Face Focus under \"Settings → Scraping → Advanced Scrape Settings.\"",
       "mask_save_failed": "Failed to save crop settings. Please try again later.",
       "mask_cover_changed": "Cover has changed. Please reopen the crop tool and try again.",
@@ -1227,6 +1237,7 @@
         "source_graphis": "Graphis",
         "source_gfriends": "gfriends",
         "source_wiki": "Wiki",
+        "source_xcity": "Xcity",
         "source_upload": "Upload",
         "upload_btn": "Upload your own photo",
         "upload_too_large": "Image too large (max 10MB file, 50M pixels)",
@@ -1632,6 +1643,7 @@
       "years": "Year",
       "makers": "Makers",
       "actress_top20": "Top 20 Actresses",
+      "actress_top20_rest": "#4–20",
       "tags": "Tags",
       "age": "Age",
       "director": "Director",

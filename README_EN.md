@@ -3,7 +3,7 @@ one-line install (Windows/macOS). Reads NFO + covers already organized by JavSP/
 Jellyfin/Emby without re-scraping. Cover-wall browser with actress as a first-class entity
 (cup/age/height sort, cross-language alias) plus a library-insights dashboard. 8 built-in scrape
 sources (JavBus/Jav321/JavDB/DMM/D2Pass/HEYZO/FC2/AVSOX) + optional Metatube federation (30+).
-Optionally exports NFO + covers to Jellyfin/Emby/Kodi. AI-operable REST API, 8,000+ tests, MIT. -->
+Optionally exports NFO + covers to Jellyfin/Emby/Kodi. AI-operable REST API, 9,000+ tests, MIT. -->
 
 <h1 align="center">OpenAver</h1>
 
@@ -17,7 +17,7 @@ Optionally exports NFO + covers to Jellyfin/Emby/Kodi. AI-operable REST API, 8,0
 ![Downloads](https://img.shields.io/github/downloads/slive777/OpenAver/total?color=success)
 ![Stars](https://img.shields.io/github/stars/slive777/OpenAver)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
-![Tests](https://img.shields.io/github/actions/workflow/status/slive777/OpenAver/test.yml?label=tests%208%2C000%2B)
+![Tests](https://img.shields.io/github/actions/workflow/status/slive777/OpenAver/test.yml?label=tests%209%2C000%2B)
 
 English | **[繁體中文](README.md)**
 
@@ -102,6 +102,8 @@ Download from [GitHub Releases](https://github.com/slive777/OpenAver/releases/la
 The first time you open it, an onboarding tour walks you through picking a folder and pressing "Generate" — no need to read the docs first.
 
 > 🐧 **Linux**: No official installer, but you can set it up yourself as a LAN server and use it from a browser — see [`docs/linux-server.md`](docs/linux-server.md).
+
+> 🗄️ **Synology NAS**: Install the `.spk` manually (beta) — see [`docs/synology.md`](docs/synology.md).
 
 ---
 
@@ -261,7 +263,7 @@ Yes — it minimizes to the system tray and keeps running; click the icon to reo
 | **Animation** | GSAP 3.14+ + Motion Adapter (reduced-motion support) |
 | **Desktop** | PyWebView (Windows/macOS) |
 | **Database** | SQLite (WAL mode) |
-| **Testing** | Pytest (8,000+ tests) |
+| **Testing** | Pytest (9,000+ tests) |
 
 ### Run from Source
 

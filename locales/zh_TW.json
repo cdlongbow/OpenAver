@@ -128,7 +128,7 @@
     "empty": {
       "hint": "輸入番號搜尋，或加入影片檔案",
       "drag_hint": "也可直接拖入檔案或資料夾",
-      "explain_add": "加入／拖入：先列出來查資料，按「整理」前不動任何檔案。",
+      "explain_add": "加入／拖入：只讀那一層、不含子資料夾，先列出來查資料，按「整理」前不動任何檔案。",
       "explain_favorite_unset": "我的最愛：指定一個資料夾（通常是下載完成夾），一鍵列出裡面的影片。",
       "explain_favorite_set_prefix": "我的最愛：列出 ",
       "explain_favorite_set_suffix": " 裡的影片，還沒整理的會自動查資料。",

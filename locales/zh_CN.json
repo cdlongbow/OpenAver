@@ -120,6 +120,7 @@
       "run_now_started": "已开始，完成后侧栏会有通知",
       "run_now_busy": "已经有一轮在进行中",
       "use_resolved_folder": "就用这个文件夹",
+      "folder_not_configured": "尚未设置我的最爱文件夹",
       "folder_warning": "请指向下载器的完成文件夹，不要指到下载中的文件夹",
       "running": "目前正在执行一轮",
       "config_failed": "操作失败，请稍后再试"
@@ -127,7 +128,7 @@
     "empty": {
       "hint": "输入番号搜索，或加入视频文件",
       "drag_hint": "也可直接拖入文件或文件夹",
-      "explain_add": "加入／拖入：先列出来查资料，按「整理」前不动任何文件。",
+      "explain_add": "加入／拖入：只读那一层、不含子文件夹，先列出来查资料，按「整理」前不动任何文件。",
       "explain_favorite_unset": "我的最爱：指定一个文件夹（通常是下载完成夹），一键列出里面的视频。",
       "explain_favorite_set_prefix": "我的最爱：列出 ",
       "explain_favorite_set_suffix": " 里的视频，还没整理的会自动查资料。",
@@ -145,6 +146,7 @@
       "advanced_search_cta": "使用番号高级搜索",
       "tag_api_failed": "标签保存失败，请稍后再试",
       "tag_nfo_not_written": "标签已保存，但媒体服务器读取的那份 NFO 没有更新",
+      "tag_nfo_write_blocked": "标签已保存，但没有权限写入 NFO",
       "no_data": "找不到数据",
       "search_failed": "搜索失败",
       "network_error": "网络错误，请重试",
@@ -281,6 +283,7 @@
       "scrape_complete_dup": "批量整理完成：成功 {success}，失败 {failed}，重复 {duplicate}",
       "no_search_results": "此文件没有搜索结果",
       "scrape_failed": "{filename} 整理失败",
+      "scrape_failed_reason": "{filename} 整理失败：{reason}",
       "no_valid_files": "无有效视频文件（无法识别番号）",
       "load_failed": "加载失败，请重试",
       "translate_failed": "翻译失败，请重试",
@@ -424,7 +427,9 @@
       "reveal": "显示密码",
       "saved": "密码设置已保存",
       "save_failed": "密码设置保存失败，请稍后再试。",
-      "pin_invalid": "密码必须是 4 位英文或数字"
+      "pin_invalid": "密码必须是 4 位英文或数字",
+      "unset_hint": "目前没有密码保护，你可以在这里设置",
+      "need_login_hint": "需要先登录才能修改"
     },
     "switch_mode_confirm": {
       "title": "切换媒体服务器模式",
@@ -454,6 +459,7 @@
       "favorite_folder_label": "我的最爱文件夹",
       "favorite_folder_hint": "一键载入常用文件夹",
       "favorite_folder_placeholder": "留空 = 系统下载文件夹",
+      "favorite_folder_placeholder_server": "留空 = 不使用我的最爱文件夹",
       "favorite_folder_example_prefix": "示例：C:\\Users\\&lt;你的用户名&gt;\\Downloads"
     },
     "translate": {
@@ -1085,7 +1091,9 @@
       "pill_actresses_middle": "个条件的",
       "pill_actresses_suffix": "位",
       "source_unreachable_list": "无法访问：{list}",
-      "source_unreachable_count": "{n} 个位置无法访问"
+      "source_unreachable_count": "{n} 个位置无法访问",
+      "source_no_permission_list": "没有权限读取：{list}",
+      "source_no_permission_count": "{n} 个位置没有权限读取"
     },
     "nav": {
       "prev_page": "上一页",
@@ -1127,12 +1135,14 @@
       "tag_placeholder": "标签名称",
       "tag_api_failed": "标签保存失败，请稍后再试",
       "tag_nfo_not_written": "标签已保存，但媒体服务器读取的那份 NFO 没有更新",
+      "tag_nfo_write_blocked": "标签已保存，但没有权限写入 NFO",
       "user_tags_label": "自定义标签",
       "alias_label": "别名",
       "alias_source_hint": "由 Scanner 同步",
       "mask_toggle": "封面裁切预览",
       "mask_detect_failed": "焦点检测失败，请稍后再试",
       "mask_focal_too_slow_auto_disabled": "这张封面找脸花了超过 5 秒，已经先帮你关掉自动对焦。想调整位置直接拖就可以，随时能到设置开回来。",
+      "mask_focal_still_detecting": "5 秒内还没找到脸，先用拖的会快一些。这台机器如果真的算不动，自动对焦会自己关掉，可以到「设置 → 刮削行为 → 高级刮削设置」查看。",
       "mask_focal_too_slow_hint": "找脸花了超过 5 秒。先用拖的会快一些——不想每次都等，可以到「设置 → 刮削行为 → 高级刮削设置」关掉自动对焦。",
       "mask_save_failed": "裁切设置保存失败，请稍后再试",
       "mask_cover_changed": "封面已变更，请重新打开裁切工具再试一次",
@@ -1227,6 +1237,7 @@
         "source_graphis": "Graphis",
         "source_gfriends": "gfriends",
         "source_wiki": "Wiki",
+        "source_xcity": "Xcity",
         "source_upload": "上传",
         "upload_btn": "上传自己的照片",
         "upload_too_large": "图片太大（文件上限 10MB、尺寸上限 50M 像素）",
@@ -1632,6 +1643,7 @@
       "years": "年份",
       "makers": "片商",
       "actress_top20": "女优 Top 20",
+      "actress_top20_rest": "第 4–20 名",
       "tags": "标签",
       "age": "年龄",
       "director": "导演",
