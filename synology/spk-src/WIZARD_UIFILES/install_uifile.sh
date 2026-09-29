@@ -55,23 +55,52 @@ def build_items(pairs, existing_data):
         items.append({"desc": "<b>這台 NAS 無法安裝 OpenAver。</b><br>OpenAver 需要 64 位元處理器，這台是 "
                       + os.uname().machine + "（例如 DS218j／DS216j 等 32 位元機種）。按下一步後安裝會失敗。"})
     if existing_data:
-        items.append({"desc": "偵測到既有資料，將沿用原本的設定。"})
+        items.append({"desc": "偵測到既有資料，設定都會保留；這裡選的資料夾會加進掃描來源，OpenAver 也會自動取得它的讀寫權限。"})
+        items.append({"desc": "重新安裝會清除區網密碼，裝好後請重新設定。"})
     else:
-        items.append({"desc": "選擇你的影片片庫在哪個共用資料夾。OpenAver 會把它設成掃描來源，裝好就能直接用。"})
-        if pairs:
-            items.append({"type": "multiselect",
-                          "subitems": [{"key": f"pkgwizard_share_{i}", "desc": n, "defaultValue": False}
-                                       for i, (n, p) in enumerate(pairs)]})
-        else:
-            items.append({"desc": "（找不到共用資料夾，裝好之後可以在掃描頁自己加）"})
+        items.append({"desc": "選擇你的影片片庫在哪個共用資料夾。OpenAver 會自動取得這個資料夾的讀寫權限，並設成掃描來源，裝好就能直接用。"})
 
+    items.append({
+        "type": "combobox",
+        "desc": "選擇影片片庫所在的共用資料夾：",
+        "subitems": [{
+            "key": "wizard_library_share",
+            "desc": "片庫",
+            "mode": "remote",
+            "editable": False,
+            "valueField": "name",
+            "displayField": "name",
+            "api_store": {
+                "api": "SYNO.Core.Share",
+                "method": "list",
+                "version": 1,
+                "baseParams": {
+                    "limit": -1,
+                    "offset": 0,
+                    "shareType": "local",
+                    "additional": ["vol_path", "is_usb_share"],
+                },
+                "root": "shares",
+                "idProperty": "name",
+                "fields": ["name", "vol_path", "is_usb_share"],
+            },
+            "validator": {"allowBlank": False},
+        }],
+    })
+    items.append({"desc": "請確認上面選的是你的影片資料夾——它會被授予讀寫權限。"})
+    items.append({"desc": "下拉是空的？請先到控制台建立共用資料夾，再重新安裝 OpenAver。"})
+    items.append({"desc": "還有其他共用資料夾也放了影片？勾起來一併加進掃描來源："})
+    if pairs:
+        items.append({"type": "multiselect",
+                      "subitems": [{"key": f"pkgwizard_share_{i}", "desc": n, "defaultValue": False}
+                                   for i, (n, p) in enumerate(pairs)]})
+    else:
+        items.append({"desc": "（沒有其他可勾選的共用資料夾）"})
+    items.append({"desc": "勾選的這些 OpenAver 無法自動授權，裝好後請到控制台手動授權，步驟見說明文件。"})
     items.append({"desc": (
-        "<br><b>安裝完成後還有一步，OpenAver 沒有辦法代勞：</b><br>"
-        "Synology 不允許第三方套件自行變更資料夾權限，所以請到<br>"
-        "<b>控制台 → 共用資料夾 →（上面選的那個）→ 編輯 → 權限 →"
-        " 左上下拉選「系統內部使用者帳號」→ 勾選 <code>" + PKGUSER + "</code> → 可讀寫</b><br>"
-        "沒有做這一步，OpenAver 會掃到 0 部影片。<br>"
-        "（Jellyfin、Plex、Emby 在 Synology 上同樣需要這一步，而且它們要勾兩個。）")})
+        "選為『片庫』的資料夾會授予 OpenAver 讀寫權限。"
+        "套件裝著的期間，在控制台拿掉這個權限，下次 OpenAver 啟動時會自動加回來。"
+        "要收回：先移除套件，再到控制台拿掉 <code>" + PKGUSER + "</code> 的權限（移除套件不會自動收回）。")})
     return items
 
 

@@ -1,9 +1,12 @@
 """Synology install wizard items for first install and reinstall."""
 
-import importlib.util
 import builtins
+import importlib.util
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "synology/spk-src/WIZARD_UIFILES/install_uifile.sh"
@@ -20,7 +23,9 @@ def _load_module():
     return module
 
 
-def test_build_items_existing_data_true_omits_multiselect(capsys, monkeypatch):
+@pytest.mark.parametrize("existing_data", [False, True])
+@pytest.mark.parametrize("pairs", [[], [("share1", "/volume1/share1")]])
+def test_build_items_library_combobox_shape(capsys, monkeypatch, existing_data, pairs):
     opened = []
     original_open = builtins.open
 
@@ -34,24 +39,100 @@ def test_build_items_existing_data_true_omits_multiselect(capsys, monkeypatch):
     assert capsys.readouterr().out == ""
     assert opened == []
     assert callable(getattr(module, "build_items", None))
-    items = module.build_items(pairs=[], existing_data=True)
-    assert not any(item.get("type") == "multiselect" for item in items)
-    assert any("偵測到既有資料" in item.get("desc", "") for item in items)
-    assert not any("選擇你的影片片庫" in item.get("desc", "") for item in items)
-    assert not any("找不到共用資料夾" in item.get("desc", "") for item in items)
-    assert any("系統內部使用者" in item.get("desc", "") for item in items)
-    with_shares = module.build_items([("share1", "/volume1/share1")], existing_data=True)
-    assert not any(item.get("type") == "multiselect" for item in with_shares)
+    items = module.build_items(pairs, existing_data)
+    comboboxes = [item for item in items if item.get("type") == "combobox"]
+    assert len(comboboxes) == 1
+    combobox = comboboxes[0]
+    assert set(combobox) == {"type", "desc", "subitems"}
+    assert len(combobox["subitems"]) == 1
+    subitem = combobox["subitems"][0]
+    assert subitem == {
+        "key": subitem["key"],
+        "desc": "片庫",
+        "mode": "remote",
+        "editable": False,
+        "valueField": "name",
+        "displayField": "name",
+        "api_store": {
+            "api": "SYNO.Core.Share",
+            "method": "list",
+            "version": 1,
+            "baseParams": {
+                "limit": -1,
+                "offset": 0,
+                "shareType": "local",
+                "additional": ["vol_path", "is_usb_share"],
+            },
+            "root": "shares",
+            "idProperty": "name",
+            "fields": ["name", "vol_path", "is_usb_share"],
+        },
+        "validator": {"allowBlank": False},
+    }
+    multiselects = [item for item in items if item.get("type") == "multiselect"]
+    assert len(multiselects) == (1 if pairs else 0)
+    if pairs:
+        assert multiselects[0]["subitems"] == [
+            {"key": "pkgwizard_share_0", "desc": "share1", "defaultValue": False},
+        ]
+    else:
+        assert "下拉是空的" in " ".join(item.get("desc", "") for item in items)
+
+    monkeypatch.setattr(module.os, "uname", lambda: SimpleNamespace(machine="armv7l"))
+    assert "這台 NAS 無法安裝 OpenAver" in module.build_items(pairs, existing_data)[0]["desc"]
 
 
-def test_build_items_new_install_keeps_multiselect_and_empty_message():
+# [lint-guard: pytest-justified] 斷言的是 Python 函式 build_items() 產出的精靈文案（授權承諾），不是靜態 HTML/JS/CSS
+@pytest.mark.parametrize("existing_data", [False, True])
+def test_build_items_copy_anchors(existing_data):
     module = _load_module()
-    assert callable(getattr(module, "build_items", None))
-    items = module.build_items([("share1", "/volume1/share1")], existing_data=False)
-    assert any(item.get("type") == "multiselect" for item in items)
-    assert any("選擇你的影片片庫" in item.get("desc", "") for item in items)
-    empty_items = module.build_items([], existing_data=False)
-    assert any("找不到共用資料夾" in item.get("desc", "") for item in empty_items)
+    items = module.build_items([("share1", "/volume1/share1")], existing_data)
+    copy = " ".join(item.get("desc", "") for item in items)
+    for anchor in (
+        "自動取得", "讀寫權限", "會被授予讀寫權限",
+        "無法自動授權，裝好後請到控制台手動授權",
+        "在控制台拿掉這個權限，下次 OpenAver 啟動時會自動加回來",
+        "要收回：先移除套件", "openaver-svc",
+    ):
+        assert anchor in copy
+    for obsolete in ("Synology 不允許", "系統內部使用者", "Jellyfin"):
+        assert obsolete not in copy
+    if existing_data:
+        for anchor in ("偵測到既有資料", "加進", "區網密碼"):
+            assert anchor in copy
+    else:
+        for absent in ("偵測到既有資料", "區網密碼"):
+            assert absent not in copy
+
+
+def test_shares_single_entry_error_keeps_others(monkeypatch):
+    module = _load_module()
+    original_isdir = module.os.path.isdir
+
+    def fake_isdir(path):
+        if path == "/volume1":
+            return True
+        if path == "/volume1/bad":
+            raise OSError("bad entry")
+        if path.startswith("/volume1/"):
+            return True
+        if path.startswith("/volume"):
+            return False
+        return original_isdir(path)
+
+    original_listdir = module.os.listdir
+
+    def fake_listdir(path):
+        if path == "/volume1":
+            return ["@eaDir", "#recycle", "OpenAver", "bad", "good", "中文 空白"]
+        return original_listdir(path)
+
+    monkeypatch.setattr(module.os.path, "isdir", fake_isdir)
+    monkeypatch.setattr(module.os, "listdir", fake_listdir)
+    assert module.shares() == [
+        ("good", "/volume1/good"),
+        ("中文 空白", "/volume1/中文 空白"),
+    ]
 
 
 def test_has_existing_data_permission_error_falls_back_to_first_install(monkeypatch):
