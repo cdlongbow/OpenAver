@@ -15,6 +15,7 @@
 
 import { computeActressAgeForVideo } from '../../shared/actress-release-age.js';
 import { normalizePillValue } from '../../shared/pill-filter.js';
+import { normalizePeriod, periodContainsYear, scopeRecords as selScopeRecords } from './selection.js';
 
 /** 年份「未知」分類與片商「未知」桶的內部鍵；畫面顯示文字由 charts.js（T3）做 i18n 映射。 */
 export const UNKNOWN_KEY = '__unknown__';
@@ -155,22 +156,34 @@ export function periodRecords(records, period) {
 }
 
 /**
- * period 篩選後再依 focus 過濾。focus===null 時等同 periodRecords。
+ * 舊 (period, focus) → sel。T5a 拔舊簽名時整段移除。
+ * period 只會是 {type:'all'|'year'}；focus 只會是 null／{type:'actress'|'maker', value}。
  */
-export function scopeRecords(records, period, focus) {
-    if (period === undefined) period = { type: 'all' };
-    if (focus === undefined) focus = null;
-    var base = periodRecords(records, period);
-    if (!focus) return base;
-    if (focus.type === 'actress') {
-        return base.filter(function (r) {
-            return (r.actresses || []).includes(focus.value);
-        });
-    }
-    if (focus.type === 'maker') {
-        return base.filter(function (r) { return r.maker === focus.value; });
-    }
-    return base;
+export function legacyToSel(period, focus) {
+    return {
+        period: normalizePeriod(period),
+        actress: focus && focus.type === 'actress' ? focus.value : null,
+        maker: focus && focus.type === 'maker' ? focus.value : null,
+    };
+}
+
+/** 是 sel：物件、有 period 鍵、沒有 type 鍵（Proxy 包過也成立，只用 in 判斷）。 */
+function _isSel(x) {
+    return !!x && typeof x === 'object' && ('period' in x) && !('type' in x);
+}
+
+function _resolveSel(a, b) {
+    return _isSel(a) ? a : legacyToSel(a, b);
+}
+
+/**
+ * 轉接入口：scopeRecords(records, sel, skipDim) 或舊 scopeRecords(records, period, focus)。
+ * 實際篩選邏輯在 selection.js。
+ */
+export function scopeRecords(records, a, b) {
+    if (_isSel(a)) return selScopeRecords(records, a, b);
+    if (typeof b === 'string') return selScopeRecords(records, legacyToSel(a, null), b);
+    return selScopeRecords(records, legacyToSel(a, b), null);
 }
 
 function _yearRange(base) {
@@ -192,21 +205,20 @@ function _buildDimmed(categories, period) {
     if (!period || period.type === 'all') {
         return categories.map(function () { return false; });
     }
-    var target = String(period.year);
-    return categories.map(function (c) { return c !== target; });
+    return categories.map(function (c) { return !periodContainsYear(period, c === UNKNOWN_KEY ? null : Number(c)); });
 }
 
 /**
  * 年份長條資料整形。基底永遠用 scopeRecords(records,{type:'all'},focus)；
  * period 只影響 dimmed，不影響 series[].data 數值。
  */
-export function aggregateYears(records, period, focus) {
-    if (period === undefined) period = { type: 'all' };
-    if (focus === undefined) focus = null;
+export function aggregateYears(records, a, b) {
+    const sel = _resolveSel(a, b);
+    const period = sel.period;
 
-    const base = scopeRecords(records, { type: 'all' }, focus);
+    const base = scopeRecords(records, sel, 'period');
 
-    if (focus && focus.type === 'maker') {
+    if (sel.actress == null && sel.maker != null) {
         if (!base.length) return { categories: [], series: [], dimmed: [] };
         var makerRange = _yearRange(base);
         var makerCats = makerRange.years.map(String);
@@ -222,12 +234,12 @@ export function aggregateYears(records, period, focus) {
         if (makerRange.hasNull) makerData = makerData.concat([makerUnknown]);
         return {
             categories: makerCats,
-            series: [{ name: focus.value, data: makerData }],
+            series: [{ name: sel.maker, data: makerData }],
             dimmed: _buildDimmed(makerCats, period),
         };
     }
 
-    if (focus && focus.type === 'actress') {
+    if (sel.actress != null) {
         if (!base.length) return { categories: [], series: [], dimmed: [] };
         var actRange = _yearRange(base);
         var actCats = actRange.years.map(String);
@@ -366,7 +378,8 @@ export function buildMakerDonutData(records, mainMakerYearMap) {
  * 若 focus 為女優且她的真實 rank > 20，附加她那一列。
  * 不呼叫 getRecords()。
  */
-export function buildActressTop20(records, focus) {
+export function buildActressTop20(records, a) {
+    var herActress = _isSel(a) ? a.actress : legacyToSel(undefined, a).actress;
     var counts = new Map();
     (records || []).forEach(function (r) {
         var names = (r && r.actresses) || [];
@@ -403,16 +416,16 @@ export function buildActressTop20(records, focus) {
     var rows = all.slice(0, 20);
     var herRank = 0;
     var herRow = null;
-    if (focus && focus.type === 'actress' && focus.value) {
+    if (herActress) {
         for (var i = 0; i < all.length; i++) {
-            if (all[i].name === focus.value) {
+            if (all[i].name === herActress) {
                 herRank = all[i].rank;
                 herRow = all[i];
                 break;
             }
         }
     }
-    if (focus && focus.type === 'actress' && herRank > 20) { rows.push(herRow); }
+    if (herActress && herRank > 20) { rows.push(herRow); }
     return { rows: rows };
 }
 
@@ -483,11 +496,11 @@ export function aggregateTags(records) {
  *   counts: number[],
  * }}
  */
-export function aggregateAge(records, favorites, focus) {
+export function aggregateAge(records, favorites, a) {
     var list = records || [];
     var total = list.length;
     var favs = favorites || {};
-    var focusActress = focus && focus.type === 'actress' ? focus.value : null;
+    var focusActress = _isSel(a) ? a.actress : legacyToSel(undefined, a).actress;
     var ages = [];
     var recordsWithAge = 0;
 
@@ -607,12 +620,9 @@ export function aggregateFieldTop8(records, field) {
  * 女優焦點且她不在前 25、但 records 有她的片 → 附加末列。
  * 不呼叫 getRecords()。
  */
-export function buildGanttRows(records, mainMakerYearMap, period, focus) {
-    if (period === undefined) period = { type: 'all' };
-    if (focus === undefined) focus = null;
+export function buildGanttRows(records, mainMakerYearMap, a, b) {
+    var sel = _resolveSel(a, b);
     var map = mainMakerYearMap || {};
-    var yearFocus = period && period.type === 'year' ? period.year : null;
-    var makerFocus = focus && focus.type === 'maker' ? focus.value : null;
 
     var candidateSet = new Set();
     Object.keys(map).forEach(function (key) {
@@ -621,17 +631,11 @@ export function buildGanttRows(records, mainMakerYearMap, period, focus) {
         var name = key.slice(0, sep);
         var y = Number(key.slice(sep + 1));
         var e = { year: y, maker: map[key] };
-        if (yearFocus != null && e.year !== yearFocus) return;
-        if (makerFocus != null && e.maker !== makerFocus) return;
+        if (!periodContainsYear(sel.period, e.year) || (sel.maker != null && e.maker !== sel.maker)) return;
         candidateSet.add(name);
     });
 
-    var scoped;
-    if (focus && focus.type === 'maker') {
-        scoped = scopeRecords(records, period, focus);
-    } else {
-        scoped = periodRecords(records, period);
-    }
+    var scoped = scopeRecords(records, sel, 'actress');
 
     function mainCountFor(name) {
         var c = 0;
@@ -650,8 +654,8 @@ export function buildGanttRows(records, mainMakerYearMap, period, focus) {
     });
     var top = rows.slice(0, 25);
 
-    if (focus && focus.type === 'actress' && focus.value) {
-        var herName = focus.value;
+    if (sel.actress) {
+        var herName = sel.actress;
         var already = top.some(function (r) { return r.name === herName; });
         if (!already) {
             var hasFilm = (records || []).some(function (r) {
@@ -839,14 +843,22 @@ export function buildGanttAgeCells(name, records, favorites, mainMakerYearMap, a
  * `_makerColorSlots` 模組級變數已在 T3 移除，改用 reactive `ganttLegend`）。
  * 不呼叫 getRecords()。
  */
-export function buildSoloRows(records, mainMakerYearMap, period, focus, ganttNames, topMakerNames) {
-    if (period === undefined) period = { type: 'all' };
-    if (focus === undefined) focus = null;
+export function buildSoloRows(records, mainMakerYearMap, a, b, c, d) {
+    var sel, ganttNames, topMakerNames;
+    if (_isSel(a) || Array.isArray(b)) {
+        sel = _resolveSel(a, undefined);
+        ganttNames = b;
+        topMakerNames = c;
+    } else {
+        sel = legacyToSel(a, b);
+        ganttNames = c;
+        topMakerNames = d;
+    }
     var all = records || [];
     var map = mainMakerYearMap || {};
     var ganttSet = new Set(ganttNames || []);
     var namedSet = new Set(topMakerNames || []);
-    var periodScope = periodRecords(all, period);
+    var periodScope = periodRecords(all, sel.period);
 
     /*
      * P2 效能修正（review finding，真實片庫 6521 部實測 48ms→單趟後 <10ms）：
@@ -930,7 +942,7 @@ export function buildSoloRows(records, mainMakerYearMap, period, focus, ganttNam
         };
     }
 
-    var poolRecords = (focus && focus.type === 'maker') ? scopeRecords(all, period, focus) : periodRecords(all, period);
+    var poolRecords = scopeRecords(all, sel, 'actress');
     var poolNames = new Set();
     poolRecords.forEach(function (r) {
         (r.actresses || []).forEach(function (name) {
@@ -951,8 +963,8 @@ export function buildSoloRows(records, mainMakerYearMap, period, focus, ganttNam
     });
     var top = candidates.slice(0, 25);
 
-    if (focus && focus.type === 'actress' && focus.value) {
-        var herName = focus.value;
+    if (sel.actress) {
+        var herName = sel.actress;
         var already = top.some(function (r) { return r.name === herName; });
         if (!already) {
             var herStats = statsFor(herName);
@@ -979,10 +991,11 @@ export function buildSoloRows(records, mainMakerYearMap, period, focus, ganttNam
  * 每部紀錄去重女優名單後，僅採計 2～4 人片。
  * 統計非焦點女優的合作次數，依次數遞減、名字遞增排序，取前 15 名。
  */
-export function buildCostarRows(records, period, focus) {
-    if (!focus || focus.type !== 'actress' || !focus.value) return [];
-    var herName = focus.value;
-    var scoped = scopeRecords(records, period, focus);
+export function buildCostarRows(records, a, b) {
+    var sel = _resolveSel(a, b);
+    if (!sel.actress) return [];
+    var herName = sel.actress;
+    var scoped = scopeRecords(records, sel, null);
     var counts = new Map();
     scoped.forEach(function (r) {
         var seenInRecord = new Set();

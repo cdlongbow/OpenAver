@@ -47,6 +47,15 @@ function rec(opts) {
     };
 }
 
+// 測試用手組 sel（刻意不經 aggregate.js 的 legacyToSel，避免轉接層壞掉時兩邊一起壞）。
+function selOf(period, focus) {
+    return {
+        period: period || { type: 'all' },
+        actress: focus && focus.type === 'actress' ? focus.value : null,
+        maker: focus && focus.type === 'maker' ? focus.value : null,
+    };
+}
+
 function favs(map) {
     return map;
 }
@@ -379,12 +388,12 @@ test('scopeRecords: focus=null 時與 periodRecords 回傳內容逐項相同', (
     ];
     const period = { type: 'all' };
     assert.deepStrictEqual(
-        scopeRecords(records, period, null),
+        scopeRecords(records, selOf(period, null), null),
         periodRecords(records, period),
     );
     const yearPeriod = { type: 'year', year: 2020 };
     assert.deepStrictEqual(
-        scopeRecords(records, yearPeriod, null),
+        scopeRecords(records, selOf(yearPeriod, null), null),
         periodRecords(records, yearPeriod),
     );
 });
@@ -411,10 +420,10 @@ test('scopeRecords: actress 焦點含多人片任一人命中；maker 焦點嚴�
     const onlyAlice = rec({ year: 2022, actresses: ['Alice'], maker: 'IdeaPocket' });
     const records = [multi, onlyBob, onlyAlice];
 
-    const byActress = scopeRecords(records, { type: 'all' }, { type: 'actress', value: 'Alice' });
+    const byActress = scopeRecords(records, selOf({ type: 'all' }, { type: 'actress', value: 'Alice' }), null);
     assert.deepStrictEqual(byActress, [multi, onlyAlice]);
 
-    const byMaker = scopeRecords(records, { type: 'all' }, { type: 'maker', value: 'SOD' });
+    const byMaker = scopeRecords(records, selOf({ type: 'all' }, { type: 'maker', value: 'SOD' }), null);
     assert.deepStrictEqual(byMaker, [multi]);
 });
 
@@ -425,7 +434,7 @@ test('aggregateYears: 無焦點時 categories 尾端固定有 UNKNOWN_KEY（即�
         rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
         rec({ year: 2022, actresses: ['Bob'], maker: 'Moodyz' }),
     ];
-    const result = aggregateYears(records, { type: 'all' }, null);
+    const result = aggregateYears(records, selOf({ type: 'all' }, null));
     assert.deepStrictEqual(result.categories, ['2020', '2021', '2022', UNKNOWN_KEY]);
     assert.equal(result.series.length, 1);
     assert.equal(result.series[0].name, null);
@@ -440,7 +449,7 @@ test('aggregateYears: 有焦點時只有 base 真有 year===null 才出現 UNKNO
         rec({ year: null, actresses: ['Alice'], maker: 'SOD' }),
     ];
     const withNullResult = aggregateYears(
-        withNull, { type: 'all' }, { type: 'maker', value: 'SOD' },
+        withNull, selOf({ type: 'all' }, { type: 'maker', value: 'SOD' }),
     );
     assert.ok(withNullResult.categories.includes(UNKNOWN_KEY));
     assert.equal(withNullResult.categories[withNullResult.categories.length - 1], UNKNOWN_KEY);
@@ -450,7 +459,7 @@ test('aggregateYears: 有焦點時只有 base 真有 year===null 才出現 UNKNO
         rec({ year: 2021, actresses: ['Alice'], maker: 'SOD' }),
     ];
     const noNullResult = aggregateYears(
-        noNull, { type: 'all' }, { type: 'maker', value: 'SOD' },
+        noNull, selOf({ type: 'all' }, { type: 'maker', value: 'SOD' }),
     );
     assert.equal(noNullResult.categories.includes(UNKNOWN_KEY), false);
     assert.deepStrictEqual(noNullResult.categories, ['2020', '2021']);
@@ -464,7 +473,7 @@ test('aggregateYears: 有焦點時橫軸涵蓋到最後一年即使該年沒有�
         rec({ year: 2020, actresses: ['Bob'], maker: 'SOD' }), // 非焦點，不影響範圍
     ];
     const result = aggregateYears(
-        records, { type: 'all' }, { type: 'actress', value: 'Alice' },
+        records, selOf({ type: 'all' }, { type: 'actress', value: 'Alice' }),
     );
     assert.deepStrictEqual(result.categories, ['2019', '2020', '2021']);
     // 2020 空位：各 series 該格皆 0
@@ -483,8 +492,8 @@ test('aggregateYears: 選年份時其他年數值不變只淡化', () => {
         rec({ year: null, actresses: ['Alice'], maker: 'SOD' }),
     ];
     const focus = { type: 'actress', value: 'Alice' };
-    const allPeriod = aggregateYears(records, { type: 'all' }, focus);
-    const yearPeriod = aggregateYears(records, { type: 'year', year: 2020 }, focus);
+    const allPeriod = aggregateYears(records, selOf({ type: 'all' }, focus));
+    const yearPeriod = aggregateYears(records, selOf({ type: 'year', year: 2020 }, focus));
 
     assert.equal(allPeriod.series.length, yearPeriod.series.length);
     for (let i = 0; i < allPeriod.series.length; i++) {
@@ -501,7 +510,7 @@ test('aggregateYears: 無焦點 series 長度 1、name null；categories=min..ma
         rec({ year: 2023, actresses: ['B'], maker: 'Moodyz' }),
         rec({ year: null, actresses: ['C'], maker: 'SOD' }),
     ];
-    const result = aggregateYears(records, { type: 'all' }, null);
+    const result = aggregateYears(records, selOf({ type: 'all' }, null));
     assert.deepStrictEqual(result.categories, ['2021', '2022', '2023', UNKNOWN_KEY]);
     assert.equal(result.series.length, 1);
     assert.equal(result.series[0].name, null);
@@ -509,7 +518,7 @@ test('aggregateYears: 無焦點 series 長度 1、name null；categories=min..ma
 });
 
 test('aggregateYears: 無焦點且全庫零筆記錄時回傳空 categories/series/dimmed（P3-2：不得只剩單一 UNKNOWN_KEY 空格）', () => {
-    const result = aggregateYears([], { type: 'all' }, null);
+    const result = aggregateYears([], selOf({ type: 'all' }, null));
     assert.deepStrictEqual(result, { categories: [], series: [], dimmed: [] });
 });
 
@@ -518,7 +527,7 @@ test('aggregateYears: 片商焦點 base 空時回傳空 categories/series/dimmed
         rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
     ];
     const result = aggregateYears(
-        records, { type: 'all' }, { type: 'maker', value: 'MissingStudio' },
+        records, selOf({ type: 'all' }, { type: 'maker', value: 'MissingStudio' }),
     );
     assert.deepStrictEqual(result, { categories: [], series: [], dimmed: [] });
 });
@@ -536,7 +545,7 @@ test('aggregateYears: 片商焦點 categories/series 正值斷言（含空年與
         rec({ year: null, actresses: ['B3'], maker: 'Other' }),
     ];
     const result = aggregateYears(
-        records, { type: 'all' }, { type: 'maker', value: M },
+        records, selOf({ type: 'all' }, { type: 'maker', value: M }),
     );
     assert.deepStrictEqual(result.categories, ['2020', '2021', '2022', UNKNOWN_KEY]);
     assert.equal(result.series.length, 1);
@@ -558,7 +567,7 @@ test('aggregateYears: 女優焦點 series 依 maker 分桶排序；year===null �
         rec({ year: 2020, actresses: ['Bob'], maker: 'IdeaPocket' }),
     ];
     const result = aggregateYears(
-        records, { type: 'all' }, { type: 'actress', value: 'Alice' },
+        records, selOf({ type: 'all' }, { type: 'actress', value: 'Alice' }),
     );
     assert.deepStrictEqual(result.categories, ['2020', '2021', UNKNOWN_KEY]);
     assert.equal(result.series.length, 2);
@@ -576,7 +585,7 @@ test('aggregateYears: 女優焦點同分時依片商名稱字串遞增', () => {
         rec({ year: 2020, actresses: ['Alice'], maker: 'Apple' }),
     ];
     const result = aggregateYears(
-        records, { type: 'all' }, { type: 'actress', value: 'Alice' },
+        records, selOf({ type: 'all' }, { type: 'actress', value: 'Alice' }),
     );
     assert.deepStrictEqual(result.series.map((s) => s.name), ['Apple', 'Zebra']);
 });
@@ -587,10 +596,10 @@ test('aggregateYears: dimmed 對 year 期間只有 String(Y) 為 false，其餘�
         rec({ year: 2021, actresses: ['Bob'], maker: 'SOD' }),
         rec({ year: null, actresses: ['Carol'], maker: 'SOD' }),
     ];
-    const allDimmed = aggregateYears(records, { type: 'all' }, null);
+    const allDimmed = aggregateYears(records, selOf({ type: 'all' }, null));
     assert.deepStrictEqual(allDimmed.dimmed, [false, false, false]);
 
-    const yearDimmed = aggregateYears(records, { type: 'year', year: 2020 }, null);
+    const yearDimmed = aggregateYears(records, selOf({ type: 'year', year: 2020 }, null));
     assert.deepStrictEqual(yearDimmed.dimmed, [false, true, true]);
     assert.equal(yearDimmed.categories[yearDimmed.categories.length - 1], UNKNOWN_KEY);
 });
@@ -601,7 +610,7 @@ test('aggregateYears: maker 未知桶用 UNKNOWN_KEY，不產生顯示字串', (
         rec({ year: 2021, actresses: ['Alice'], maker: 'SOD' }),
     ];
     const result = aggregateYears(
-        records, { type: 'all' }, { type: 'actress', value: 'Alice' },
+        records, selOf({ type: 'all' }, { type: 'actress', value: 'Alice' }),
     );
     assert.equal(result.series.some((s) => s.name === UNKNOWN_KEY), true);
     assert.equal(result.series.some((s) => s.name === 'SOD'), true);
@@ -657,9 +666,9 @@ test('§4.2 wiring: 5 卡群組 × 3 焦點 = 15 格 checklist', () => {
     };
 
     // ── 年份（3）── 手算常數
-    assert.deepStrictEqual(aggregateYears(records, period, null), YEARS_NONE);
-    assert.deepStrictEqual(aggregateYears(records, period, focusM), YEARS_MAKER);
-    assert.deepStrictEqual(aggregateYears(records, period, focusA), YEARS_ACTRESS);
+    assert.deepStrictEqual(aggregateYears(records, selOf(period, null)), YEARS_NONE);
+    assert.deepStrictEqual(aggregateYears(records, selOf(period, focusM)), YEARS_MAKER);
+    assert.deepStrictEqual(aggregateYears(records, selOf(period, focusA)), YEARS_ACTRESS);
 
     // ── 片商圓餅（3）──
     // 無焦點 → periodRecords
@@ -667,24 +676,24 @@ test('§4.2 wiring: 5 卡群組 × 3 焦點 = 15 格 checklist', () => {
     // 片商焦點 → periodRecords（期間全貌，忽略 focus）
     assert.deepStrictEqual(idsOf(periodRecords(records, period)), IDS_PERIOD_ALL);
     // 女優焦點 → scopeRecords(actress)
-    assert.deepStrictEqual(idsOf(scopeRecords(records, period, focusA)), IDS_SCOPE_ACTRESS);
+    assert.deepStrictEqual(idsOf(scopeRecords(records, selOf(period, focusA), null)), IDS_SCOPE_ACTRESS);
 
     // ── 女優 Top20（3）──
     // 無焦點 → periodRecords
     assert.deepStrictEqual(idsOf(periodRecords(records, period)), IDS_PERIOD_ALL);
     // 片商焦點 → scopeRecords(maker)
-    assert.deepStrictEqual(idsOf(scopeRecords(records, period, focusM)), IDS_SCOPE_MAKER);
+    assert.deepStrictEqual(idsOf(scopeRecords(records, selOf(period, focusM), null)), IDS_SCOPE_MAKER);
     // 女優焦點 → periodRecords（期間全貌，忽略 focus）
     assert.deepStrictEqual(idsOf(periodRecords(records, period)), IDS_PERIOD_ALL);
 
     // ── 標籤／年齡／導演／系列（3）──
     assert.deepStrictEqual(idsOf(periodRecords(records, period)), IDS_PERIOD_ALL);
-    assert.deepStrictEqual(idsOf(scopeRecords(records, period, focusM)), IDS_SCOPE_MAKER);
-    assert.deepStrictEqual(idsOf(scopeRecords(records, period, focusA)), IDS_SCOPE_ACTRESS);
+    assert.deepStrictEqual(idsOf(scopeRecords(records, selOf(period, focusM), null)), IDS_SCOPE_MAKER);
+    assert.deepStrictEqual(idsOf(scopeRecords(records, selOf(period, focusA), null)), IDS_SCOPE_ACTRESS);
 
     // ── 年表／分布表（3）──
     assert.deepStrictEqual(idsOf(periodRecords(records, period)), IDS_PERIOD_ALL);
-    assert.deepStrictEqual(idsOf(scopeRecords(records, period, focusM)), IDS_SCOPE_MAKER);
+    assert.deepStrictEqual(idsOf(scopeRecords(records, selOf(period, focusM), null)), IDS_SCOPE_MAKER);
     // 女優焦點 → periodRecords（期間全貌，忽略 focus）
     assert.deepStrictEqual(idsOf(periodRecords(records, period)), IDS_PERIOD_ALL);
 
@@ -696,7 +705,7 @@ test('§4.2 wiring: 5 卡群組 × 3 焦點 = 15 格 checklist', () => {
         assert.deepStrictEqual(overviewIds, IDS_PERIOD_ALL);
         if (focus !== null) {
             assert.notDeepStrictEqual(
-                idsOf(scopeRecords(records, period, focus)),
+                idsOf(scopeRecords(records, selOf(period, focus), null)),
                 IDS_PERIOD_ALL,
             );
         }
@@ -885,7 +894,7 @@ test('buildActressTop20: 排序＝count 遞減 → monthCount 遞減 → name �
         rec({ actresses: ['Bob'], month: '2020-03' }),
     ];
     // Alice:2/2, Bob:3/3, Carol:1/1 → Bob, Alice, Carol
-    const { rows } = buildActressTop20(records, null);
+    const { rows } = buildActressTop20(records, selOf(undefined, null));
     assert.deepEqual(rows.map((r) => r.name), ['Bob', 'Alice', 'Carol']);
     assert.deepEqual(rows.map((r) => r.rank), [1, 2, 3]);
 });
@@ -901,7 +910,7 @@ test('buildActressTop20: 片數相同時依不同發行月份數降冪排序', (
         rec({ actresses: ['Alice'], month: '2020-01' }),
         rec({ actresses: ['Alice'], month: '2020-01' }),
     ];
-    const { rows } = buildActressTop20(records, null);
+    const { rows } = buildActressTop20(records, selOf(undefined, null));
     assert.equal(rows[0].name, 'Bob');
     assert.equal(rows[0].count, 3);
     assert.equal(rows[0].monthCount, 3);
@@ -915,7 +924,7 @@ test('buildActressTop20: count／monthCount 都相同時依名字字串遞增', 
         rec({ actresses: ['Bob'], month: '2020-01' }),
         rec({ actresses: ['Alice'], month: '2020-01' }),
     ];
-    const { rows } = buildActressTop20(records, null);
+    const { rows } = buildActressTop20(records, selOf(undefined, null));
     assert.deepEqual(rows.map((r) => r.name), ['Alice', 'Bob']);
 });
 
@@ -925,7 +934,7 @@ test('buildActressTop20: monthCount 只算相異 month；month===null 計入 cou
         rec({ actresses: ['Alice'], month: '2020-01' }), // 同月再一部 → monthCount 仍 1
         rec({ actresses: ['Alice'], month: null }), // 計 count，不計 monthCount
     ];
-    const { rows } = buildActressTop20(records, null);
+    const { rows } = buildActressTop20(records, selOf(undefined, null));
     assert.equal(rows.length, 1);
     assert.equal(rows[0].count, 3);
     assert.equal(rows[0].monthCount, 1);
@@ -942,7 +951,7 @@ test('buildActressTop20: 女優排名剛好第 20 名時不附加額外列', () 
         }
     }
     const focus = { type: 'actress', value: 'A20' };
-    const { rows } = buildActressTop20(records, focus);
+    const { rows } = buildActressTop20(records, selOf(undefined, focus));
     assert.equal(rows.length, 20);
     assert.equal(rows[19].name, 'A20');
     assert.equal(rows[19].rank, 20);
@@ -960,7 +969,7 @@ test('buildActressTop20: focus 女優 rank>20 時附加真實排名列', () => {
     }
     // A25 片數最少 → rank 25
     const focus = { type: 'actress', value: 'A25' };
-    const { rows } = buildActressTop20(records, focus);
+    const { rows } = buildActressTop20(records, selOf(undefined, focus));
     assert.equal(rows.length, 21);
     assert.equal(rows[20].name, 'A25');
     assert.equal(rows[20].rank, 25);
@@ -971,7 +980,7 @@ test('buildActressTop20: focus 女優在 records 完全無紀錄時不附加', (
         rec({ actresses: ['Alice'], month: '2020-01' }),
         rec({ actresses: ['Bob'], month: '2020-01' }),
     ];
-    const { rows } = buildActressTop20(records, { type: 'actress', value: 'Ghost' });
+    const { rows } = buildActressTop20(records, selOf(undefined, { type: 'actress', value: 'Ghost' }));
     assert.equal(rows.length, 2);
     assert.equal(rows.some((r) => r.name === 'Ghost'), false);
 });
@@ -982,7 +991,7 @@ test('buildActressTop20: 女優總數少於 20 時回傳實際總數', () => {
         rec({ actresses: ['Bob'], month: '2020-01' }),
         rec({ actresses: ['Carol'], month: '2020-01' }),
     ];
-    const { rows } = buildActressTop20(records, null);
+    const { rows } = buildActressTop20(records, selOf(undefined, null));
     assert.equal(rows.length, 3);
 });
 
@@ -990,7 +999,7 @@ test('buildActressTop20: 多人片每位女優各計一次；maker 焦點不附�
     const records = [
         rec({ actresses: ['Alice', 'Bob'], month: '2020-01' }),
     ];
-    const { rows } = buildActressTop20(records, { type: 'maker', value: 'SOD' });
+    const { rows } = buildActressTop20(records, selOf(undefined, { type: 'maker', value: 'SOD' }));
     assert.equal(rows.length, 2);
     assert.equal(rows[0].count, 1);
     assert.equal(rows[1].count, 1);
@@ -1107,7 +1116,7 @@ test('aggregateAge: duration=239 的片不計年齡，仍計入分母', () => {
         }),
     ];
     const favorites = favs({ Alice: { birth: '1998-01-01' } });
-    const result = aggregateAge(records, favorites, null);
+    const result = aggregateAge(records, favorites, selOf(undefined, null));
     assert.equal(result.total, 1);
     assert.equal(result.recordsWithAge, 0);
     assert.equal(result.pairCount, 0);
@@ -1125,7 +1134,7 @@ test('aggregateAge: 以 records[].actresses 的 primary 名直接查 favorites',
         }),
     ];
     const favorites = favs({ Alice: { birth: '1998-01-01' } });
-    const result = aggregateAge(records, favorites, null);
+    const result = aggregateAge(records, favorites, selOf(undefined, null));
     assert.equal(result.pairCount, 1);
     assert.equal(result.recordsWithAge, 1);
     assert.equal(result.median, 22);
@@ -1143,7 +1152,7 @@ test('aggregateAge: 只有年／年月（無完整 date）的片不計年齡但�
         }),
     ];
     const favorites = favs({ Alice: { birth: '1998-01-01' } });
-    const result = aggregateAge(records, favorites, null);
+    const result = aggregateAge(records, favorites, selOf(undefined, null));
     assert.equal(result.total, 1);
     assert.equal(result.recordsWithAge, 0);
     assert.equal(result.pairCount, 0);
@@ -1159,7 +1168,7 @@ test('aggregateAge: duration=null 照算年齡', () => {
         }),
     ];
     const favorites = favs({ Alice: { birth: '1998-01-01' } });
-    const result = aggregateAge(records, favorites, null);
+    const result = aggregateAge(records, favorites, selOf(undefined, null));
     assert.equal(result.pairCount, 1);
     assert.equal(result.recordsWithAge, 1);
     assert.equal(result.median, 22);
@@ -1185,7 +1194,7 @@ test('aggregateAge: 同片兩位收藏女優都算出年齡時涵蓋率分子只
         Bob: { birth: '1995-01-01' },
         // Carol 刻意不在 favorites → 無有效年齡
     });
-    const result = aggregateAge(records, favorites, null);
+    const result = aggregateAge(records, favorites, selOf(undefined, null));
     assert.equal(result.total, 2);
     assert.equal(result.pairCount, 2);
     assert.equal(result.recordsWithAge, 1);
@@ -1201,7 +1210,7 @@ test('aggregateAge: date="2021-02-31"（日曆不合法）回 null，不計年�
         }),
     ];
     const favorites = favs({ Alice: { birth: '1998-01-01' } });
-    const result = aggregateAge(records, favorites, null);
+    const result = aggregateAge(records, favorites, selOf(undefined, null));
     assert.equal(result.total, 1);
     assert.equal(result.recordsWithAge, 0);
     assert.equal(result.pairCount, 0);
@@ -1223,8 +1232,7 @@ test('aggregateAge: 女優焦點時只算她本人；同片其他收藏女優（
     });
     const result = aggregateAge(
         records,
-        favorites,
-        { type: 'actress', value: 'Alice' },
+        favorites, selOf(undefined, { type: 'actress', value: 'Alice' }),
     );
     assert.equal(result.pairCount, 1);
     assert.equal(result.recordsWithAge, 1);
@@ -1249,7 +1257,7 @@ test('aggregateAge: 偶數個有效配對時中位數可為 .5', () => {
     ];
     const favorites = favs({ Alice: { birth: '1996-06-01' } });
     // 2020-06-01 → 24；2021-06-01 → 25
-    const result = aggregateAge(records, favorites, null);
+    const result = aggregateAge(records, favorites, selOf(undefined, null));
     assert.equal(result.pairCount, 2);
     assert.equal(result.median, 24.5);
 });
@@ -1339,25 +1347,23 @@ test('buildGanttRows: 選了年份＋片商焦點時只列同一組(y,mk)交集�
     ];
     const none = buildGanttRows(
         records,
-        map,
-        { type: 'year', year: 2023 },
-        { type: 'maker', value: 'Moodyz' },
+        map, selOf({ type: 'year', year: 2023 }, { type: 'maker', value: 'Moodyz' }),
     );
     assert.equal(none.some((r) => r.name === 'Alice'), false);
 
     // period=all／period=2023 無 focus／focus=Moodyz 無 period／period=2023+focus=S1 → 都出現
     assert.equal(
-        buildGanttRows(records, map, { type: 'all' }, null).some((r) => r.name === 'Alice'),
+        buildGanttRows(records, map, selOf({ type: 'all' }, null)).some((r) => r.name === 'Alice'),
         true,
     );
     assert.equal(
-        buildGanttRows(records, map, { type: 'year', year: 2023 }, null).some(
+        buildGanttRows(records, map, selOf({ type: 'year', year: 2023 }, null)).some(
             (r) => r.name === 'Alice',
         ),
         true,
     );
     assert.equal(
-        buildGanttRows(records, map, { type: 'all' }, { type: 'maker', value: 'Moodyz' }).some(
+        buildGanttRows(records, map, selOf({ type: 'all' }, { type: 'maker', value: 'Moodyz' })).some(
             (r) => r.name === 'Alice',
         ),
         true,
@@ -1365,9 +1371,7 @@ test('buildGanttRows: 選了年份＋片商焦點時只列同一組(y,mk)交集�
     assert.equal(
         buildGanttRows(
             records,
-            map,
-            { type: 'year', year: 2023 },
-            { type: 'maker', value: 'S1' },
+            map, selOf({ type: 'year', year: 2023 }, { type: 'maker', value: 'S1' }),
         ).some((r) => r.name === 'Alice'),
         true,
     );
@@ -1387,7 +1391,7 @@ test('buildGanttRows: mainCount 遞減，同分時 name 字串遞增', () => {
         rec({ year: 2020, actresses: ['Bob'], maker: 'SOD' }),
         rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
     ];
-    const rows = buildGanttRows(records, map, { type: 'all' }, null);
+    const rows = buildGanttRows(records, map, selOf({ type: 'all' }, null));
     assert.deepEqual(
         rows.map((r) => r.name),
         ['Carol', 'Alice', 'Bob'],
@@ -1418,7 +1422,7 @@ test('buildGanttRows: 片商焦點排序只用「期間∩焦點片商」內的�
     for (let i = 0; i < 10; i++) {
         records.push(rec({ year: 2022, actresses: ['B'], maker: 'Z' }));
     }
-    const rows = buildGanttRows(records, map, { type: 'all' }, { type: 'maker', value: 'Y' });
+    const rows = buildGanttRows(records, map, selOf({ type: 'all' }, { type: 'maker', value: 'Y' }));
     assert.deepEqual(
         rows.map((r) => r.name),
         ['A', 'B'],
@@ -1440,9 +1444,7 @@ test('buildGanttRows: 女優焦點且她不在前25名時附加她那一列', ()
 
     const withAppend = buildGanttRows(
         records,
-        map,
-        { type: 'all' },
-        { type: 'actress', value: 'Zoe' },
+        map, selOf({ type: 'all' }, { type: 'actress', value: 'Zoe' }),
     );
     assert.equal(withAppend.length, 26);
     const first = withAppend[0];
@@ -1453,9 +1455,7 @@ test('buildGanttRows: 女優焦點且她不在前25名時附加她那一列', ()
     // 已在前 25 → 不重複附加
     const already = buildGanttRows(
         records,
-        map,
-        { type: 'all' },
-        { type: 'actress', value: 'Act01' },
+        map, selOf({ type: 'all' }, { type: 'actress', value: 'Act01' }),
     );
     assert.equal(already.filter((r) => r.name === 'Act01').length, 1);
     assert.equal(already.some((r) => r.appended), false);
@@ -1463,9 +1463,7 @@ test('buildGanttRows: 女優焦點且她不在前25名時附加她那一列', ()
     // records 裡完全沒有她的片 → 不附加
     const missing = buildGanttRows(
         records,
-        map,
-        { type: 'all' },
-        { type: 'actress', value: 'Ghost' },
+        map, selOf({ type: 'all' }, { type: 'actress', value: 'Ghost' }),
     );
     assert.equal(missing.some((r) => r.name === 'Ghost'), false);
 });
@@ -1484,14 +1482,12 @@ test('buildGanttRows: 女優焦點且她在自然排序內時直接置頂在 ind
             records.push(rec({ year: 2020, actresses: [name], maker: 'SOD' }));
         }
     }
-    const noFocus = buildGanttRows(records, map, { type: 'all' }, null);
+    const noFocus = buildGanttRows(records, map, selOf({ type: 'all' }, null));
     assert.deepEqual(noFocus.map((r) => r.name), ['Top01', 'Top02', 'Top03']);
 
     const pinned = buildGanttRows(
         records,
-        map,
-        { type: 'all' },
-        { type: 'actress', value: 'Top03' },
+        map, selOf({ type: 'all' }, { type: 'actress', value: 'Top03' }),
     );
     assert.equal(pinned.length, 3);
     assert.equal(pinned[0].name, 'Top03');
@@ -1512,9 +1508,7 @@ test('buildGanttRows: 女優焦點且她 rank 外附加時，附加列直接置�
 
     const pinned = buildGanttRows(
         records,
-        map,
-        { type: 'all' },
-        { type: 'actress', value: 'Zoe' },
+        map, selOf({ type: 'all' }, { type: 'actress', value: 'Zoe' }),
     );
     assert.equal(pinned.length, 26);
     assert.equal(pinned[0].name, 'Zoe');
@@ -1533,14 +1527,12 @@ test('buildGanttRows: 無焦點／片商焦點不觸發置頂，pinned 欄位不
         rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
         rec({ year: 2020, actresses: ['Bob'], maker: 'SOD' }),
     ];
-    const noFocus = buildGanttRows(records, map, { type: 'all' }, null);
+    const noFocus = buildGanttRows(records, map, selOf({ type: 'all' }, null));
     assert.equal(noFocus.some((r) => r.pinned), false);
 
     const makerFocus = buildGanttRows(
         records,
-        map,
-        { type: 'all' },
-        { type: 'maker', value: 'SOD' },
+        map, selOf({ type: 'all' }, { type: 'maker', value: 'SOD' }),
     );
     assert.equal(makerFocus.some((r) => r.pinned), false);
 });
@@ -1662,7 +1654,7 @@ test('buildSoloRows: 先篩再取 25——原始片數前3名因主要片商佔�
         restNames.push(name);
         records.push(rec({ year: 2020, actresses: [name], maker: 'Other' }));
     }
-    const rows = buildSoloRows(records, map, { type: 'all' }, null, [], []);
+    const rows = buildSoloRows(records, map, selOf({ type: 'all' }, null), [], []);
     assert.equal(rows.length, 25);
     assert.equal(rows.some((r) => r.name.startsWith('Top')), false);
     assert.deepEqual(
@@ -1686,9 +1678,7 @@ test('buildSoloRows: 片商焦點時候選池限定在該片商有片的人，�
 
     const rows = buildSoloRows(
         records,
-        map,
-        { type: 'all' },
-        { type: 'maker', value: 'Y' },
+        map, selOf({ type: 'all' }, { type: 'maker', value: 'Y' }),
         [],
         ['Y', 'A'],
     );
@@ -1718,7 +1708,7 @@ test('buildSoloRows: 主要片商佔比恰好 50% 不列，49%（如 24/49）列
     for (let i = 0; i < 25; i++) {
         records.push(rec({ year: 2020, actresses: ['Under'], maker: 'Other' }));
     }
-    const rows = buildSoloRows(records, map, { type: 'all' }, null, [], []);
+    const rows = buildSoloRows(records, map, selOf({ type: 'all' }, null), [], []);
     assert.equal(rows.some((r) => r.name === 'Half'), false);
     const under = rows.find((r) => r.name === 'Under');
     assert.ok(under, 'Under 應該上榜');
@@ -1732,7 +1722,7 @@ test('buildSoloRows: 候選符合條件但在年表名單(ganttNames)裡 → 不
         rec({ year: 2020, actresses: ['InGantt'], maker: 'Other' }),
         rec({ year: 2020, actresses: ['NotInGantt'], maker: 'Other' }),
     ];
-    const rows = buildSoloRows(records, map, { type: 'all' }, null, ['InGantt'], []);
+    const rows = buildSoloRows(records, map, selOf({ type: 'all' }, null), ['InGantt'], []);
     assert.equal(rows.some((r) => r.name === 'InGantt'), false);
     assert.equal(rows.some((r) => r.name === 'NotInGantt'), true);
 });
@@ -1747,7 +1737,7 @@ test('buildSoloRows: 橫跨 8 個以上具名片商時段數上限 10，namedMak
     records.push(rec({ year: 2020, actresses: ['Wide'], maker: 'M9' })); // 不在前 8 → 併入 other
     records.push(rec({ year: 2020, actresses: ['Wide'], maker: null })); // 未知
 
-    const rows = buildSoloRows(records, map, { type: 'all' }, null, [], topMakers);
+    const rows = buildSoloRows(records, map, selOf({ type: 'all' }, null), [], topMakers);
     const wide = rows.find((r) => r.name === 'Wide');
     assert.ok(wide);
     assert.equal(wide.segments.length, 10); // 8 named + 1 other + 1 unknown
@@ -1775,9 +1765,7 @@ test('buildSoloRows: 女優焦點且她不符合篩選條件但有紀錄 → 附
 
     const withAppend = buildSoloRows(
         records,
-        map,
-        { type: 'all' },
-        { type: 'actress', value: 'ExcludedByRatio' },
+        map, selOf({ type: 'all' }, { type: 'actress', value: 'ExcludedByRatio' }),
         [],
         [],
     );
@@ -1791,9 +1779,7 @@ test('buildSoloRows: 女優焦點且她不符合篩選條件但有紀錄 → 附
     // 已在前 25 → 不重複附加
     const already = buildSoloRows(
         records,
-        map,
-        { type: 'all' },
-        { type: 'actress', value: 'Cand01' },
+        map, selOf({ type: 'all' }, { type: 'actress', value: 'Cand01' }),
         [],
         [],
     );
@@ -1803,9 +1789,7 @@ test('buildSoloRows: 女優焦點且她不符合篩選條件但有紀錄 → 附
     // periodRecords 裡完全沒有她的紀錄 → 不附加
     const missing = buildSoloRows(
         records,
-        map,
-        { type: 'all' },
-        { type: 'actress', value: 'Ghost' },
+        map, selOf({ type: 'all' }, { type: 'actress', value: 'Ghost' }),
         [],
         [],
     );
@@ -1825,14 +1809,12 @@ test('buildSoloRows: 女優焦點且她在自然排序內時直接置頂在 inde
             records.push(rec({ year: 2020, actresses: [name], maker: 'Other' }));
         }
     }
-    const noFocus = buildSoloRows(records, map, { type: 'all' }, null, [], []);
+    const noFocus = buildSoloRows(records, map, selOf({ type: 'all' }, null), [], []);
     assert.deepEqual(noFocus.map((r) => r.name), ['Top01', 'Top02', 'Top03']);
 
     const pinned = buildSoloRows(
         records,
-        map,
-        { type: 'all' },
-        { type: 'actress', value: 'Top03' },
+        map, selOf({ type: 'all' }, { type: 'actress', value: 'Top03' }),
         [],
         [],
     );
@@ -1860,9 +1842,7 @@ test('buildSoloRows: 女優焦點且她 rank 外附加時，附加列直接置�
 
     const pinned = buildSoloRows(
         records,
-        map,
-        { type: 'all' },
-        { type: 'actress', value: 'ExcludedByRatio' },
+        map, selOf({ type: 'all' }, { type: 'actress', value: 'ExcludedByRatio' }),
         [],
         [],
     );
@@ -1880,14 +1860,12 @@ test('buildSoloRows: 無焦點／片商焦點不觸發置頂，pinned 欄位不�
         rec({ year: 2020, actresses: ['Alice'], maker: 'Other' }),
         rec({ year: 2020, actresses: ['Bob'], maker: 'Other' }),
     ];
-    const noFocus = buildSoloRows(records, map, { type: 'all' }, null, [], []);
+    const noFocus = buildSoloRows(records, map, selOf({ type: 'all' }, null), [], []);
     assert.equal(noFocus.some((r) => r.pinned), false);
 
     const makerFocus = buildSoloRows(
         records,
-        map,
-        { type: 'all' },
-        { type: 'maker', value: 'Other' },
+        map, selOf({ type: 'all' }, { type: 'maker', value: 'Other' }),
         [],
         [],
     );
@@ -1901,7 +1879,7 @@ test('buildCostarRows: 5人以上不計入', () => {
         rec({ actresses: ['Alice', 'Bob', 'Carol', 'Dave', 'Eve'] }), // 5 人片
         rec({ actresses: ['Alice', 'Bob', 'Carol', 'Dave', 'Eve', 'Frank'] }), // 6 人片
     ];
-    const got = buildCostarRows(records, { type: 'all' }, { type: 'actress', value: 'Alice' });
+    const got = buildCostarRows(records, selOf({ type: 'all' }, { type: 'actress', value: 'Alice' }));
     assert.deepEqual(got, []);
 });
 
@@ -1909,7 +1887,7 @@ test('buildCostarRows: 片商焦點回空陣列', () => {
     const records = [
         rec({ actresses: ['Alice', 'Bob'], maker: 'SOD' }),
     ];
-    const got = buildCostarRows(records, { type: 'all' }, { type: 'maker', value: 'SOD' });
+    const got = buildCostarRows(records, selOf({ type: 'all' }, { type: 'maker', value: 'SOD' }));
     assert.deepEqual(got, []);
 });
 
@@ -1917,16 +1895,16 @@ test('buildCostarRows: 無焦點回空陣列', () => {
     const records = [
         rec({ actresses: ['Alice', 'Bob'] }),
     ];
-    assert.deepEqual(buildCostarRows(records, { type: 'all' }, null), []);
-    assert.deepEqual(buildCostarRows(records, { type: 'all' }, undefined), []);
-    assert.deepEqual(buildCostarRows(records, { type: 'all' }, { type: 'actress', value: '' }), []);
+    assert.deepEqual(buildCostarRows(records, selOf({ type: 'all' }, null)), []);
+    assert.deepEqual(buildCostarRows(records, selOf({ type: 'all' }, undefined)), []);
+    assert.deepEqual(buildCostarRows(records, selOf({ type: 'all' }, { type: 'actress', value: '' })), []);
 });
 
 test('buildCostarRows: 1人的片不計入', () => {
     const records = [
         rec({ actresses: ['Alice'] }),
     ];
-    const got = buildCostarRows(records, { type: 'all' }, { type: 'actress', value: 'Alice' });
+    const got = buildCostarRows(records, selOf({ type: 'all' }, { type: 'actress', value: 'Alice' }));
     assert.deepEqual(got, []);
 });
 
@@ -1936,7 +1914,7 @@ test('buildCostarRows: 2～4人的片正常計入所有非焦點搭檔', () => {
         rec({ actresses: ['Alice', 'Bob', 'Carol'] }), // 3 人片
         rec({ actresses: ['Alice', 'Carol', 'Dave', 'Eve'] }), // 4 人片
     ];
-    const got = buildCostarRows(records, { type: 'all' }, { type: 'actress', value: 'Alice' });
+    const got = buildCostarRows(records, selOf({ type: 'all' }, { type: 'actress', value: 'Alice' }));
     assert.deepEqual(got, [
         { name: 'Bob', count: 2 },
         { name: 'Carol', count: 2 },
@@ -1950,7 +1928,7 @@ test('buildCostarRows: 同片重複名字去重後只算一次人數與合作', 
         rec({ actresses: ['Alice', 'Alice', 'Bob'] }),
         rec({ actresses: ['Alice', 'Bob', 'Carol', 'Dave', 'Alice', 'Bob'] }),
     ];
-    const got = buildCostarRows(records, { type: 'all' }, { type: 'actress', value: 'Alice' });
+    const got = buildCostarRows(records, selOf({ type: 'all' }, { type: 'actress', value: 'Alice' }));
     assert.deepEqual(got, [
         { name: 'Bob', count: 2 },
         { name: 'Carol', count: 1 },
@@ -1965,7 +1943,7 @@ test('buildCostarRows: 排序規則為 count 遞減且 name 字串遞增', () =>
         rec({ actresses: ['Alice', 'Carol'] }),
         rec({ actresses: ['Alice', 'Carol'] }),
     ];
-    const got = buildCostarRows(records, { type: 'all' }, { type: 'actress', value: 'Alice' });
+    const got = buildCostarRows(records, selOf({ type: 'all' }, { type: 'actress', value: 'Alice' }));
     assert.deepEqual(got, [
         { name: 'Carol', count: 2 },
         { name: 'Bob', count: 1 },
@@ -1979,7 +1957,7 @@ test('buildCostarRows: 超過15位符合資格的搭檔只取前15位', () => {
         const costarName = `Partner${String(i).padStart(2, '0')}`;
         records.push(rec({ actresses: ['Alice', costarName] }));
     }
-    const got = buildCostarRows(records, { type: 'all' }, { type: 'actress', value: 'Alice' });
+    const got = buildCostarRows(records, selOf({ type: 'all' }, { type: 'actress', value: 'Alice' }));
     assert.equal(got.length, 15);
     assert.equal(got[0].name, 'Partner01');
     assert.equal(got[14].name, 'Partner15');
@@ -2226,4 +2204,182 @@ test('diffTop20Counts: oldRows 為空回傳空陣列', () => {
     assert.deepEqual(agg.diffTop20Counts([], newRows), []);
     assert.deepEqual(agg.diffTop20Counts(null, newRows), []);
     assert.deepEqual(agg.diffTop20Counts(undefined, newRows), []);
+});
+
+// ── TASK-161a-T2b：sel／skipDim 簽名 ＋ 舊簽名轉接層 ───────────────────
+
+function many(n, opts) {
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(rec(opts));
+    return out;
+}
+
+// Alice：2023 是 S1 主要片商年（4 部全 S1）、2020 是 Moodyz 主要片商年（4 部全 Moodyz），
+// 2021 另有 2 部 S1（不構成主要片商年）。Carol：2023 是 Moodyz 主要片商年。
+// 另有 Bob／Cat／Dan 與 Alice 同片，一部無年份。
+function fx() {
+    return [
+        ...many(2, { year: 2023, maker: 'S1', actresses: ['Alice', 'Bob'] }),
+        ...many(2, { year: 2023, maker: 'S1', actresses: ['Alice'] }),
+        ...many(4, { year: 2020, maker: 'Moodyz', actresses: ['Alice'] }),
+        ...many(2, { year: 2021, maker: 'S1', actresses: ['Alice'] }),
+        ...many(4, { year: 2023, maker: 'Moodyz', actresses: ['Carol'] }),
+        rec({ year: 2023, maker: 'Moodyz', actresses: ['Alice', 'Cat'] }),
+        rec({ year: 2022, maker: 'S1', actresses: ['Alice', 'Dan'] }),
+        rec({ year: null, maker: 'S1', actresses: ['Carol'] }),
+    ];
+}
+
+const ALL = { type: 'all' };
+const Y = (year) => ({ type: 'year', year });
+const R = (from, to) => ({ type: 'range', from, to });
+
+test('legacyToSel: 舊 (period, focus) 對應成 sel 三個欄位', () => {
+    const { legacyToSel } = agg;
+    assert.deepEqual(legacyToSel(ALL, null), { period: ALL, actress: null, maker: null });
+    assert.deepEqual(
+        legacyToSel(Y(2023), { type: 'actress', value: 'Alice' }),
+        { period: Y(2023), actress: 'Alice', maker: null },
+    );
+    assert.deepEqual(
+        legacyToSel(ALL, { type: 'maker', value: 'S1' }),
+        { period: ALL, actress: null, maker: 'S1' },
+    );
+    assert.deepEqual(legacyToSel(undefined, undefined), { period: ALL, actress: null, maker: null });
+    assert.deepEqual(legacyToSel(null, null), { period: ALL, actress: null, maker: null });
+});
+
+test('aggregateYears: 女優∩片商時 series 恰 1 條且名稱＝該片商', () => {
+    const records = fx();
+    const res = aggregateYears(records, { period: ALL, actress: 'Alice', maker: 'Moodyz' });
+    assert.equal(res.series.length, 1);
+    assert.equal(res.series[0].name, 'Moodyz');
+    // Alice 在 Moodyz 共 5 部（2020×4＋2023×1），不是她全部 12 部，也不是 Moodyz 全部 9 部
+    assert.equal(res.series[0].data.reduce((a, b) => a + b, 0), 5);
+    // 對照：只選女優時她有兩家片商
+    const onlyActress = aggregateYears(records, { period: ALL, actress: 'Alice', maker: null });
+    assert.deepEqual(onlyActress.series.map((s) => s.name).sort(), ['Moodyz', 'S1']);
+});
+
+test('aggregateYears: dimmed 吃 range，期間只影響 dimmed 不影響 series 數值', () => {
+    const records = fx();
+    const all = aggregateYears(records, { period: ALL, actress: null, maker: null });
+    const range = aggregateYears(records, { period: R(2020, 2021), actress: null, maker: null });
+    const year = aggregateYears(records, { period: Y(2023), actress: null, maker: null });
+    assert.deepEqual(all.categories, ['2020', '2021', '2022', '2023', UNKNOWN_KEY]);
+    assert.deepEqual(range.series, all.series);
+    assert.deepEqual(year.series, all.series);
+    assert.deepEqual(all.dimmed, [false, false, false, false, false]);
+    assert.deepEqual(range.dimmed, [false, false, true, true, true]);
+    assert.deepEqual(year.dimmed, [true, true, true, false, true]);
+});
+
+test('buildGanttRows: 期間∩片商必須同一個 (y,mk) 同時成立，不是各自成立', () => {
+    const records = fx();
+    const map = buildMainMakerYearMap(records);
+    assert.equal(map['Alice|2023'], 'S1');
+    assert.equal(map['Alice|2020'], 'Moodyz');
+    const names = (sel) => buildGanttRows(records, map, sel).map((r) => r.name).sort();
+    assert.deepEqual(names({ period: Y(2023), actress: null, maker: 'Moodyz' }), ['Carol']);
+    assert.deepEqual(names({ period: Y(2023), actress: null, maker: 'S1' }), ['Alice']);
+    assert.deepEqual(names({ period: R(2019, 2023), actress: null, maker: 'Moodyz' }), ['Alice', 'Carol']);
+});
+
+test('buildSoloRows: 誰上榜＝期間∩片商，長條比例＝期間全貌', () => {
+    const records = [
+        ...many(2, { year: 2023, maker: 'S1', actresses: ['Eve'] }),
+        ...many(3, { year: 2023, maker: 'Moodyz', actresses: ['Eve'] }),
+        ...many(3, { year: 2023, maker: 'Moodyz', actresses: ['Fay'] }),
+        ...many(1, { year: 2019, maker: 'S1', actresses: ['Gus'] }),
+    ];
+    const map = buildMainMakerYearMap(records);
+    const sel = { period: Y(2023), actress: null, maker: 'S1' };
+    const rows = buildSoloRows(records, map, sel, [], []);
+    const names = rows.map((r) => r.name);
+    assert.deepEqual(names, ['Eve']);
+    // Eve 的列畫的是她 2023 全貌 5 部，不是只有 S1 的 2 部
+    assert.equal(rows[0].total, 5);
+    const range = buildSoloRows(records, map, { period: R(2019, 2023), actress: null, maker: 'S1' }, [], []);
+    assert.deepEqual(range.map((r) => r.name).sort(), ['Eve', 'Gus']);
+});
+
+test('buildCostarRows: 範圍＝期間∩女優∩片商，沒選女優回空', () => {
+    const records = fx();
+    assert.deepEqual(buildCostarRows(records, { period: ALL, actress: null, maker: 'S1' }), []);
+    assert.deepEqual(buildCostarRows(records, { period: ALL, actress: null, maker: null }), []);
+    const got = buildCostarRows(records, { period: Y(2023), actress: 'Alice', maker: 'S1' });
+    assert.deepEqual(got, [{ name: 'Bob', count: 2 }]);
+    const wide = buildCostarRows(records, { period: Y(2023), actress: 'Alice', maker: null });
+    assert.deepEqual(wide, [{ name: 'Bob', count: 2 }, { name: 'Cat', count: 1 }]);
+});
+
+test('scopeRecords（aggregate 匯出）: 同時吃 (sel, skipDim) 與舊 (period, focus)', () => {
+    const records = fx();
+    const sel = { period: Y(2023), actress: 'Alice', maker: 'S1' };
+    assert.equal(scopeRecords(records, sel, null).length, 4);
+    assert.equal(scopeRecords(records, sel, 'maker').length, 5);
+    assert.equal(scopeRecords(records, sel, 'period').length, 7);
+    const mk = { period: Y(2023), actress: 'Alice', maker: 'Moodyz' };
+    assert.equal(scopeRecords(records, mk, null).length, 1);
+    assert.equal(scopeRecords(records, mk, 'actress').length, 5);
+    assert.deepEqual(
+        scopeRecords(records, Y(2023), { type: 'actress', value: 'Alice' }),
+        scopeRecords(records, { period: Y(2023), actress: 'Alice', maker: null }, null),
+    );
+    assert.deepEqual(scopeRecords(records, undefined, null), records);
+});
+
+test('轉接層: 每支匯出函式舊簽名輸出＝新簽名輸出', () => {
+    const records = fx();
+    const map = buildMainMakerYearMap(records);
+    const favorites = { Alice: { birth: '1995-01-01' } };
+    const periods = [undefined, ALL, Y(2023), Y(2020)];
+    const focuses = [null, undefined, { type: 'actress', value: 'Alice' }, { type: 'maker', value: 'Moodyz' }];
+    for (const period of periods) {
+        for (const focus of focuses) {
+            const sel = {
+                period: period || ALL,
+                actress: focus && focus.type === 'actress' ? focus.value : null,
+                maker: focus && focus.type === 'maker' ? focus.value : null,
+            };
+            const px = new Proxy(sel, {});
+            const label = JSON.stringify([period, focus]);
+            assert.deepEqual(aggregateYears(records, period, focus), aggregateYears(records, sel), label);
+            assert.deepEqual(aggregateYears(records, px), aggregateYears(records, sel), label + ' proxy');
+            assert.deepEqual(buildActressTop20(records, focus), buildActressTop20(records, sel), label);
+            assert.deepEqual(aggregateAge(records, favorites, focus), aggregateAge(records, favorites, sel), label);
+            assert.deepEqual(buildGanttRows(records, map, period, focus), buildGanttRows(records, map, sel), label);
+            assert.deepEqual(buildGanttRows(records, map, px), buildGanttRows(records, map, sel), label + ' proxy');
+            assert.deepEqual(
+                buildSoloRows(records, map, period, focus, ['Carol'], ['S1']),
+                buildSoloRows(records, map, sel, ['Carol'], ['S1']),
+                label,
+            );
+            assert.deepEqual(
+                buildSoloRows(records, map, px, ['Carol'], ['S1']),
+                buildSoloRows(records, map, sel, ['Carol'], ['S1']),
+                label + ' proxy',
+            );
+            assert.deepEqual(buildCostarRows(records, period, focus), buildCostarRows(records, sel), label);
+            assert.deepEqual(scopeRecords(records, period, focus), scopeRecords(records, sel, null), label);
+        }
+    }
+    // 舊簽名點女優時確實有東西（防「兩邊都空」的假綠）
+    assert.ok(buildCostarRows(records, ALL, { type: 'actress', value: 'Alice' }).length > 0);
+});
+
+test('buildGanttRows: 女優焦點下候選人主要片數與排序看期間∩片商全貌，不只看她本人的片', () => {
+    const records = [
+        ...many(2, { year: 2021, maker: 'S1', actresses: ['Focus'] }),
+        ...many(5, { year: 2023, maker: 'S1', actresses: ['Zed'] }),
+        ...many(4, { year: 2022, maker: 'S1', actresses: ['Amy'] }),
+        ...many(4, { year: 2023, maker: 'S1', actresses: ['Bob'] }),
+    ];
+    const map = buildMainMakerYearMap(records);
+    // 只選女優：列序＝她置頂，其餘依主要片數（Zed 5 > Amy 4 ＝ Bob 4），與依名字排序相反
+    const a = buildGanttRows(records, map, { period: ALL, actress: 'Focus', maker: null });
+    assert.deepEqual(a.map((r) => [r.name, r.mainCount]), [['Focus', 0], ['Zed', 5], ['Amy', 4], ['Bob', 4]]);
+    // 女優∩片商∩期間（2023∩S1）：候選只剩 2023 的 S1 主要片商年，主要片數仍看全貌
+    const b = buildGanttRows(records, map, { period: Y(2023), actress: 'Focus', maker: 'S1' });
+    assert.deepEqual(b.map((r) => [r.name, r.mainCount]), [['Focus', 0], ['Zed', 5], ['Bob', 4]]);
 });
