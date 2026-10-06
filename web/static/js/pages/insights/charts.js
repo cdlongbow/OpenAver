@@ -28,7 +28,7 @@ const _charts = new Map();
 const _observers = new Map();
 /** @type {string[]} */
 let _lastYearCats = [];
-/** @type {{startIdx:number,curIdx:number,onDocUp:Function}|null} 年份拖曳手勢狀態（不進 Alpine／sel） */
+/** @type {{startIdx:number,curIdx:number,byTouch:boolean,onDocUp:Function,lastSpanKey:string}|null} 年份拖曳手勢狀態（不進 Alpine／sel） */
 let _yearsDrag = null;
 /** @type {Record<string, number>} */
 let _makerSlots = {};
@@ -180,6 +180,103 @@ export function resolveDragResult(startIdx, endIdx, cats) {
     return { kind: 'range', from: Math.min(a, b), to: Math.max(a, b) };
 }
 
+/** 年份拖曳預覽蓋板的固定 id（只切 invisible，不 remove；FE-JS-05）。 */
+export const YEARS_DRAG_PREVIEW_ID = 'years-drag-hl';
+
+/** 預覽蓋板填色（與 selectedColor 同為 token＋color-mix，一層平塗）。 */
+const YEARS_DRAG_PREVIEW_FILL_EXPR = 'color-mix(in oklch, var(--color-primary) 18%, transparent)';
+
+/** zr 事件是否來自觸控（zrByTouch 標記，或 event.type 以 touch 開頭作備案）。 */
+export function isTouchZrEvent(ev) {
+    if (!ev) return false;
+    if (ev.zrByTouch === true) return true;
+    const type = ev.event && ev.event.type;
+    return typeof type === 'string' && type.startsWith('touch');
+}
+
+/** 手勢提交結果：觸控拖過多欄（range）→ 無動作；同欄 tap 仍是 point。 */
+export function resolveGestureResult(startIdx, endIdx, cats, byTouch) {
+    const r = resolveDragResult(startIdx, endIdx, cats);
+    if (byTouch && r && r.kind === 'range') return null;
+    return r;
+}
+
+/** 預覽跨度：只有這次拖曳放開會成為 range 才有值，否則 null。夾限與 resolveDragResult 同源。 */
+export function resolveDragPreviewSpan(startIdx, endIdx, cats) {
+    const r = resolveDragResult(startIdx, endIdx, cats);
+    if (!r || r.kind !== 'range') return null;
+    const list = Array.isArray(cats) ? cats : [];
+    const fromIdx = list.indexOf(String(r.from));
+    const toIdx = list.indexOf(String(r.to));
+    if (fromIdx < 0 || toIdx < 0) return null;
+    return { fromIdx, toIdx };
+}
+
+/** 預覽矩形：吸附欄界、涵蓋 from 到 to 兩端整欄、高度＝整個圖高。 */
+export function dragPreviewRect(span, centerX0, band, height) {
+    if (!span || !(band > 0)) return null;
+    const x = centerX0 + span.fromIdx * band - band / 2;
+    return { x, width: (span.toIdx - span.fromIdx + 1) * band, height };
+}
+
+/** 預覽 graphic 元素：id 固定、invisible 每次明寫、不帶 action 欄位、不吃事件。 */
+export function buildDragPreviewGraphic(rect, fill) {
+    return {
+        id: YEARS_DRAG_PREVIEW_ID,
+        type: 'rect',
+        silent: true, // 預覽不吃事件
+        invisible: rect == null,
+        shape: {
+            x: rect ? rect.x : 0,
+            y: 0,
+            width: rect ? rect.width : 0,
+            height: rect ? rect.height : 0,
+        },
+        style: { fill },
+    };
+}
+
+/** 收掉進行中的年份拖曳（唯一的 document mouseup 移除點；可重複呼叫）。 */
+export function cancelYearsDrag() {
+    const drag = _yearsDrag;
+    if (!drag) return;
+    document.removeEventListener('mouseup', drag.onDocUp);
+    _yearsDrag = null;
+}
+
+/** 開始年份拖曳：先收掉舊手勢，再掛 document 層 mouseup。 */
+export function beginYearsDrag(startIdx, byTouch, onDocUp) {
+    cancelYearsDrag();
+    _yearsDrag = { startIdx, curIdx: startIdx, byTouch: byTouch === true, onDocUp, lastSpanKey: '' };
+    document.addEventListener('mouseup', onDocUp);
+}
+
+/** 手勢狀態拷貝（不含 onDocUp）；無手勢回 null。 */
+export function getYearsDragState() {
+    if (!_yearsDrag) return null;
+    return {
+        startIdx: _yearsDrag.startIdx,
+        curIdx: _yearsDrag.curIdx,
+        byTouch: _yearsDrag.byTouch,
+    };
+}
+
+/** 設定預覽（span＝null 收起）；merge 模式、不帶第二參數、不傳 series。 */
+function _setYearsPreview(c, span) {
+    if (!c || c.isDisposed()) return;
+    const fill = resolveColor(YEARS_DRAG_PREVIEW_FILL_EXPR);
+    let rect = null;
+    if (span) {
+        const centerX0 = c.convertToPixel({ seriesIndex: 0 }, [0, 0])[0];
+        const band =
+            _lastYearCats.length > 1
+                ? Math.abs(c.convertToPixel({ seriesIndex: 0 }, [1, 0])[0] - centerX0)
+                : c.getWidth();
+        rect = dragPreviewRect(span, centerX0, band, c.getHeight());
+    }
+    c.setOption({ graphic: [buildDragPreviewGraphic(rect, fill)] });
+}
+
 /**
  * 空狀態 key 的唯一入口（CD-161a-2）：count＝該卡範圍內的片數
  * （scopeRecords(records, sel, skipDim).length），不是聚合後的筆數。
@@ -291,6 +388,7 @@ export function disposeAll() {
             /* ignore */
         }
     }
+    cancelYearsDrag(); // disposeAll：清掉年份拖曳的 document 監聽
     _charts.clear();
     // 保留 _yearsCallbacks：bfcache 還原後 reinit 還要用同一組 getter/setter
 }
@@ -379,6 +477,7 @@ export function reinitFieldBarAfterDispose(field) {
 export function initYearsChart(containerEl, callbacks) {
     if (!containerEl || typeof window.echarts === 'undefined') return;
     _yearsCallbacks = callbacks;
+    cancelYearsDrag(); // initYearsChart：重建實例前收掉進行中的手勢
 
     let chart = _charts.get('years');
     if (chart && !chart.isDisposed()) {
@@ -416,10 +515,16 @@ export function initYearsChart(containerEl, callbacks) {
     const finishDrag = () => {
         const drag = _yearsDrag;
         if (!drag) return; // 冪等：zr mouseup 與 document mouseup 只收尾一次
-        _yearsDrag = null;
-        document.removeEventListener('mouseup', drag.onDocUp);
+        // 無條件先收預覽（單點／同範圍重選不會重繪，否則預覽會卡在畫面上）
+        _setYearsPreview(_charts.get('years'), null);
+        cancelYearsDrag();
         if (!_yearsCallbacks) return;
-        const result = resolveDragResult(drag.startIdx, drag.curIdx, _lastYearCats);
+        const result = resolveGestureResult(
+            drag.startIdx,
+            drag.curIdx,
+            _lastYearCats,
+            drag.byTouch,
+        );
         if (!result) return;
         if (result.kind === 'range') {
             _yearsCallbacks.setPeriod({ type: 'range', from: result.from, to: result.to });
@@ -442,10 +547,8 @@ export function initYearsChart(containerEl, callbacks) {
         const { pixel, idx } = pixelToIdx(c, ev);
         if (!pixel || !c.containPixel('grid', pixel)) return;
         if (resolveDragResult(idx, idx, _lastYearCats) === null) return;
-        if (_yearsDrag) document.removeEventListener('mouseup', _yearsDrag.onDocUp);
         const onDocUp = () => finishDrag();
-        _yearsDrag = { startIdx: idx, curIdx: idx, onDocUp };
-        document.addEventListener('mouseup', onDocUp);
+        beginYearsDrag(idx, isTouchZrEvent(ev), onDocUp);
     });
 
     chart.getZr().on('mousemove', (ev) => {
@@ -454,6 +557,12 @@ export function initYearsChart(containerEl, callbacks) {
         if (!c || c.isDisposed()) return;
         const { idx } = pixelToIdx(c, ev);
         if (Number.isFinite(idx)) _yearsDrag.curIdx = idx;
+        if (_yearsDrag.byTouch) return; // 觸控不做預覽
+        const span = resolveDragPreviewSpan(_yearsDrag.startIdx, _yearsDrag.curIdx, _lastYearCats);
+        const key = span ? span.fromIdx + '-' + span.toIdx : '';
+        if (key === _yearsDrag.lastSpanKey) return;
+        _yearsDrag.lastSpanKey = key;
+        _setYearsPreview(c, span);
     });
 
     chart.getZr().on('mouseup', (ev) => {
@@ -674,7 +783,7 @@ export function updateYearsChart(state) {
             animation: animate,
             animationDuration: 250,
             animationDurationUpdate: 400,
-            graphic: [],
+            graphic: [buildDragPreviewGraphic(null, resolveColor('color-mix(in oklch, var(--color-primary) 18%, transparent)'))],
             grid: { left: 4, right: 8, top: 8, bottom: 20, containLabel: true },
             tooltip: {
                 trigger: 'axis',

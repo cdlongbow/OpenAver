@@ -27,6 +27,7 @@ import {
 import {
     emptySel,
     normalizePeriod,
+    periodContainsYear,
     toggleActress,
     toggleMaker,
     scopeRecords,
@@ -1486,6 +1487,11 @@ export function libraryInsightsState() {
         // 年份格顯示值：單年 2023、範圍 2019–2023、全部＝空字串（模板另顯示淡色「全部年份」）
         periodTileLabel() {
             return periodLabel(this.sel.period, '');
+        },
+
+        // 年表年份欄淡化：年份在目前期間內（單年／範圍含兩端；all 恆 true）
+        isYearInSel(year) {
+            return periodContainsYear(this.sel.period, Number(year));
         },
 
         _yearsCallbacks() {

@@ -389,8 +389,8 @@
                                         <div class="gantt-head-cell"
                                              :class="{
                                                  'is-selected': ganttAxis === 'year'
-                                                     && sel.period.type === 'year'
-                                                     && sel.period.year === col
+                                                     && sel.period.type !== 'all'
+                                                     && isYearInSel(col)
                                              }"
                                              x-text="col"></div>
                                     </template>
@@ -427,8 +427,8 @@
                                         <template x-for="cell in row.cells"
                                                   :key="(cell.year != null ? cell.year : cell.age)">
                                             <div :class="'gantt-cell gantt-cell--' + cell.state + (
-                                                     ganttAxis === 'year' && sel.period.type === 'year'
-                                                         ? (sel.period.year === cell.year ? ' is-selected' : ' is-dimmed')
+                                                     ganttAxis === 'year' && sel.period.type !== 'all'
+                                                         ? (isYearInSel(cell.year) ? ' is-selected' : ' is-dimmed')
                                                          : ''
                                                  )"
                                                  :style="cell.state === 'main'

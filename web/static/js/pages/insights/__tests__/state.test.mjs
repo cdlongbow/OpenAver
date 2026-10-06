@@ -668,6 +668,22 @@ test('periodTileLabel: range 顯示 2019–2023、單年顯示年份、all 為�
     assert.equal(state.periodTileLabel(), '');
 });
 
+test('isYearInSel: 單年與範圍含兩端、範圍外為 false、all 為 true', () => {
+    const state = libraryInsightsState();
+    state.sel = selOf();
+    assert.equal(state.isYearInSel(2021), true);
+    state.sel = selOf({ period: { type: 'year', year: 2021 } });
+    assert.equal(state.isYearInSel(2021), true);
+    assert.equal(state.isYearInSel(2020), false);
+    assert.equal(state.isYearInSel('2021'), true);
+    state.sel = selOf({ period: { type: 'range', from: 2019, to: 2023 } });
+    assert.equal(state.isYearInSel(2019), true);
+    assert.equal(state.isYearInSel(2023), true);
+    assert.equal(state.isYearInSel(2018), false);
+    assert.equal(state.isYearInSel(2024), false);
+    assert.equal(state.isYearInSel('2021'), true);
+});
+
 // ── topDisplayCount (TASK-156e-T3) ───────────────────────────────────
 
 test('topDisplayCount: displayMap 有對應 key → 回傳該值', () => {

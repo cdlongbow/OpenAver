@@ -5211,6 +5211,15 @@ const RULES = [
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: "t('insights.all_actress')", scope: { anchor: /id="tileActress"/, window: 2500 }, note: '[161a-T5b] #tileActress 未選時顯示淡色「全部女優」：寫成別的字＝使用者分不出兩格' },
   { file: 'web/templates/insights.html', kind: 'forbidden-string', pattern: 'tileFocus', note: '[161a-T5b] 頂排無 #tileFocus（insights.html）：舊的單一焦點格已拆成 #tileActress／#tileMaker' },
   { file: 'web/static/js/pages/insights/state.js', kind: 'forbidden-string', pattern: 'tileFocus', note: '[161a-T5b] 頂排無 #tileFocus（state.js）：舊的單一焦點格已拆成 #tileActress／#tileMaker' },
+
+  // ---- [161a-T6b] 年份拖曳：預覽蓋板、年表淡化、觸控降級、dispose 清理 ----
+  { file: 'web/static/js/pages/insights/charts.js', kind: 'forbidden-string', pattern: "getZr().on('click'", note: '[161a-T6b] charts.js 年份圖不得有 click 監聽：單點與範圍都由 mousedown→mouseup 手勢提交，加回 click 會在拖完範圍後多觸發一次單點、把剛選的範圍改成單年' },
+  { file: 'web/static/js/pages/insights/charts.js', kind: 'required-string', pattern: "document.addEventListener('mouseup'", note: '[161a-T6b] charts.js 拖曳要掛 document 層 mouseup：沒掛則滑鼠拖出畫布才放開時收不了尾，手勢卡住' },
+  { file: 'web/static/js/pages/insights/charts.js', kind: 'required-string', pattern: 'cancelYearsDrag(); // initYearsChart', note: '[161a-T6b] charts.js initYearsChart 重建前要 cancelYearsDrag：少了它，bfcache 還原重建年份圖時舊手勢與 document 監聽沒收掉' },
+  { file: 'web/static/js/pages/insights/charts.js', kind: 'forbidden-string', pattern: '$action', note: "[161a-T6b] charts.js 不得用 $action:'remove'：在全新圖上 remove 會丟錯被吞掉、整頁空白（FE-JS-05），預覽只切 invisible" },
+  { file: 'web/static/js/pages/insights/charts.js', kind: 'required-string', pattern: 'graphic: [buildDragPreviewGraphic(null, ', note: '[161a-T6b] updateYearsChart 每次重繪都帶預覽 graphic：少了它，重繪後預覽不會被重設成隱藏、提交範圍後高亮可能殘留' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'isYearInSel(', note: '[161a-T6b] insights.html 年表年份欄淡化吃範圍：模板消費 isYearInSel，沒用到則選範圍後年表沒有任何年份被標成選中' },
+  { file: 'web/templates/insights.html', kind: 'forbidden-string', pattern: 'sel.period.year ===', note: '[161a-T6b] insights.html 年表年份欄淡化吃範圍：只認單年 sel.period.year 會讓範圍內的欄全被淡化' },
 ];
 
 // ---- helpers ----

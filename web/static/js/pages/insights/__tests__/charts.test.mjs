@@ -38,6 +38,16 @@ const {
     escapeHtml,
     emptyKeyForCard,
     resolveDragResult,
+    isTouchZrEvent,
+    resolveGestureResult,
+    resolveDragPreviewSpan,
+    dragPreviewRect,
+    buildDragPreviewGraphic,
+    YEARS_DRAG_PREVIEW_ID,
+    beginYearsDrag,
+    cancelYearsDrag,
+    getYearsDragState,
+    disposeAll,
 } = await import('../charts.js');
 const { UNKNOWN_KEY } = await import('../aggregate.js');
 
@@ -227,4 +237,91 @@ test('resolveDragResult: 夾限後兩端同欄正規化成單點，不產生 fro
 test('resolveDragResult: 終點算不出來（NaN／null）視為沒移動', () => {
     assert.deepEqual(resolveDragResult(3, NaN, dragCats), { kind: 'point', year: 2021 });
     assert.deepEqual(resolveDragResult(3, null, dragCats), { kind: 'point', year: 2021 });
+});
+
+// ── TASK-161a-T6b：預覽蓋板／觸控降級／dispose 清理 ───────────────────────
+
+test('isTouchZrEvent: zrByTouch 標記或 touch* 事件型別都算觸控，滑鼠事件與空值不算', () => {
+    assert.equal(isTouchZrEvent({ zrByTouch: true }), true);
+    assert.equal(isTouchZrEvent({ event: { type: 'touchstart' } }), true);
+    assert.equal(isTouchZrEvent({ event: { type: 'touchmove' } }), true);
+    assert.equal(isTouchZrEvent({ event: { type: 'mousedown', button: 0 } }), false);
+    assert.equal(isTouchZrEvent({ zrByTouch: undefined, event: { button: 0 } }), false);
+    assert.equal(isTouchZrEvent(null), false);
+    assert.equal(isTouchZrEvent(undefined), false);
+    assert.equal(isTouchZrEvent({}), false);
+});
+
+test('resolveGestureResult: 觸控拖過多欄不產生範圍，同欄 tap 仍是單點，滑鼠不受影響', () => {
+    assert.equal(resolveGestureResult(1, 4, dragCats, true), null);
+    assert.deepEqual(resolveGestureResult(2, 2, dragCats, true), { kind: 'point', year: 2020 });
+    assert.deepEqual(resolveGestureResult(1, 4, dragCats, false), {
+        kind: 'range',
+        from: 2019,
+        to: 2022,
+    });
+});
+
+test('resolveDragPreviewSpan: 只有拖成範圍才有預覽，單點與無效起點為 null，反向拖與正向拖同範圍', () => {
+    assert.equal(resolveDragPreviewSpan(2, 2, dragCats), null);
+    assert.equal(resolveDragPreviewSpan(6, 2, dragCats), null);
+    assert.equal(resolveDragPreviewSpan(-1, 2, dragCats), null);
+    assert.deepEqual(resolveDragPreviewSpan(1, 4, dragCats), { fromIdx: 1, toIdx: 4 });
+    assert.deepEqual(resolveDragPreviewSpan(4, 1, dragCats), { fromIdx: 1, toIdx: 4 });
+    assert.deepEqual(resolveDragPreviewSpan(2, 6, dragCats), { fromIdx: 2, toIdx: 5 });
+    assert.deepEqual(resolveDragPreviewSpan(2, 99, dragCats), { fromIdx: 2, toIdx: 5 });
+    assert.deepEqual(resolveDragPreviewSpan(2, -5, dragCats), { fromIdx: 0, toIdx: 2 });
+});
+
+test('dragPreviewRect: 邊緣吸附欄界並涵蓋 from 到 to 兩端的整欄', () => {
+    assert.deepEqual(dragPreviewRect({ fromIdx: 1, toIdx: 3 }, 50, 100, 200), {
+        x: 100,
+        width: 300,
+        height: 200,
+    });
+    assert.equal(dragPreviewRect(null, 50, 100, 200), null);
+    assert.equal(dragPreviewRect({ fromIdx: 1, toIdx: 3 }, 50, 0, 200), null);
+    assert.equal(dragPreviewRect({ fromIdx: 1, toIdx: 3 }, 50, -5, 200), null);
+});
+
+test('buildDragPreviewGraphic: id 固定，無預覽時 invisible 為 true 且不帶 $action', () => {
+    const hidden = buildDragPreviewGraphic(null, 'rgba(1,2,3,0.18)');
+    const shown = buildDragPreviewGraphic({ x: 100, width: 300, height: 200 }, 'rgba(1,2,3,0.18)');
+    assert.equal(YEARS_DRAG_PREVIEW_ID, 'years-drag-hl');
+    assert.equal(hidden.id, 'years-drag-hl');
+    assert.equal(shown.id, 'years-drag-hl');
+    assert.equal(hidden.invisible, true);
+    assert.equal(shown.invisible, false);
+    assert.equal(hidden.silent, true);
+    assert.equal(shown.silent, true);
+    assert.ok(!('$action' in hidden));
+    assert.ok(!('$action' in shown));
+    assert.deepEqual(hidden.shape, { x: 0, y: 0, width: 0, height: 0 });
+    assert.deepEqual(shown.shape, { x: 100, y: 0, width: 300, height: 200 });
+    assert.equal(shown.style.fill, 'rgba(1,2,3,0.18)');
+    assert.ok(!('stroke' in shown.style));
+});
+
+test('cancelYearsDrag／disposeAll: dispose 後 document mouseup 監聽被移除且手勢狀態清空', () => {
+    const doc = globalThis.document;
+    const oldAdd = doc.addEventListener;
+    const oldRemove = doc.removeEventListener;
+    const adds = [];
+    const removes = [];
+    doc.addEventListener = (...a) => adds.push(a);
+    doc.removeEventListener = (...a) => removes.push(a);
+    try {
+        const fn = () => {};
+        beginYearsDrag(2, false, fn);
+        assert.deepEqual(adds, [['mouseup', fn]]);
+        assert.deepEqual(getYearsDragState(), { startIdx: 2, curIdx: 2, byTouch: false });
+        disposeAll();
+        assert.deepEqual(removes, [['mouseup', fn]]);
+        assert.equal(getYearsDragState(), null);
+        cancelYearsDrag();
+        assert.equal(removes.length, 1);
+    } finally {
+        doc.addEventListener = oldAdd;
+        doc.removeEventListener = oldRemove;
+    }
 });
