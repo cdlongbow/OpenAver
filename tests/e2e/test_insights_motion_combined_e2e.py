@@ -47,10 +47,11 @@ def _end_snap(page: Page) -> dict:
                     (r) => ({ name: r.name, rank: r.rank, count: r.count })),
                 scopedCount: data.scopedCount,
                 displayScopedCount: data.displayScopedCount,
-                focusName: (data.focus && data.focus.type === 'actress')
-                    ? data.focus.value : null,
-                focus: data.focus
-                    ? { type: data.focus.type, value: data.focus.value } : null,
+                focusName: data.sel.actress != null ? data.sel.actress : null,
+                focus: data.sel.actress != null
+                    ? { type: 'actress', value: data.sel.actress }
+                    : (data.sel.maker != null
+                        ? { type: 'maker', value: data.sel.maker } : null),
             };
         }""" % ALPINE
     )

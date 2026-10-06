@@ -5192,6 +5192,16 @@ const RULES = [
   // ---- [TestInsightsVendorGuard] insights.html 載入 ECharts UMD (156a-T5, CD-156-6) ----
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'src="/static/vendor/echarts/echarts.min.js"', note: '[TestInsightsVendorGuard] test_insights_html_loads_echarts_script' },
   { file: 'web/templates/insights.html', kind: 'forbidden-string', pattern: '<script type="module" src="/static/vendor/echarts/echarts.min.js"', note: '[TestInsightsVendorGuard] test_insights_echarts_script_not_module — UMD build 不能用 type=module 載入' },
+
+  // ---- [161a-T5a] 單一 sel 狀態貫穿分析頁 ----
+  { file: 'web/static/js/pages/insights/state.js', kind: 'structure-count', pattern: "this.$watch('sel',", count: 1, note: "[161a-T5a] state.js 重繪入口只有一個 $watch('sel')（CD-161a-3）：兩個以上＝某個條件的變更會重繪兩次，零個＝點女優／片商不重繪任何一張卡" },
+  { file: 'web/static/js/pages/insights/state.js', kind: 'forbidden-string', pattern: "$watch('period'", note: "[161a-T5a] state.js 重繪入口只有一個 $watch('sel')：不得殘留舊的 $watch('period')" },
+  { file: 'web/static/js/pages/insights/state.js', kind: 'forbidden-string', pattern: "$watch('focus'", note: "[161a-T5a] state.js 重繪入口只有一個 $watch('sel')：不得殘留舊的 $watch('focus')" },
+  { file: 'web/static/js/pages/insights/charts.js', kind: 'required-string', pattern: '_donutCallbacks.toggleMaker(name)', note: '[161a-T5a] charts.js 圓餅點擊寫 sel.maker：點圓餅必須經 toggleMaker 回呼設到那家片商' },
+  { file: 'web/static/js/pages/insights/charts.js', kind: 'required-string', pattern: 'const opacity = _opacityForIndex(dimmed, i);', note: '[161a-T5a] charts.js 年份長條單 series 的淡化吃 agg.dimmed（range 可用）：改成固定 1 ＝選了年份（或範圍）後範圍外的欄不再淡化' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: `x-show="sel.period.type !== 'all'"`, scope: { anchor: /id="tileYear"/, window: 600 }, note: '[161a-T5a] #tileYear 期間非 all（含範圍）就顯示年份值與 ×：只認 year 會讓範圍選取後年份格變回「全部年份」、× 消失' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'periodTileLabel()', note: '[161a-T5a] 模板消費的新接線：年份格顯示值（periodTileLabel）' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'cardEmptyKey(', count: 5, note: '[161a-T5a] 模板消費的新接線：五張卡的空狀態文字都走 cardEmptyKey（模板現有 5 處，下限）' },
 ];
 
 // ---- helpers ----

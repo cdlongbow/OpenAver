@@ -79,14 +79,22 @@ REF_NAMES = ("top20Row3El", "costarEl", "row7El")
 
 # F1：「打在補間中途」的判定窗口——嚴格排除兩端點（0/1/''），避免把「剛好取樣到
 # 起點或終點那一幀」誤判成命中中途。
+# 161a-T5a：分析頁改單一 sel 後，點擊到補間開始約晚 30ms、補間開始後主執行緒又被
+# 卡更久，ease-out 的可見段只剩收尾 1~2 幀（opacity 0.1 以下），真實時間下的取樣窗口
+# 不穩（基準版 3/3 過、本分支 0/5 過）。判定窗口 (0.02, 0.98) 不動，改成把 GSAP 全域
+# 時間軸放慢（MID_TWEEN_TIME_SCALE），讓同一段補間的中途停留時間拉長到好取樣。
+# 只影響「補間跑多快」，不改任何終態斷言（settle 後與直設基準的比對、位置容差）。
 MID_TWEEN_LOW = 0.02
 MID_TWEEN_HIGH = 0.98
+MID_TWEEN_TIME_SCALE = 0.5
 MID_TWEEN_WAIT_TIMEOUT_MS = 2_000
 
 
 # ── 共用 helper ───────────────────────────────────────────────────────────────
 
-def _load_ready(page: Page, base_url: str, width: int = DESKTOP, height: int = 900) -> list:
+def _load_ready(
+    page: Page, base_url: str, width: int = DESKTOP, height: int = 900, slow: bool = False
+) -> list:
     """導到 /insights、等 Alpine hydrate + 快照載完（ganttRows 非空）、
     等 T6 頒獎台進場動效播完，回傳目前 `ganttRows` 的女優名字清單（依渲染順序）。
     """
@@ -107,6 +115,13 @@ def _load_ready(page: Page, base_url: str, width: int = DESKTOP, height: int = 9
         timeout=15_000,
     )
     page.wait_for_timeout(PODIUM_ENTRANCE_SETTLE_MS)
+    if slow:
+        # 只有「抓補間中途」的測試才放慢（頒獎台進場播完之後）：淡出淡入補間變長，
+        # 中途窗口才抓得穩（見 MID_TWEEN_TIME_SCALE）。其餘測試維持真實速度。
+        page.evaluate(
+            "(k) => { if (window.gsap) window.gsap.globalTimeline.timeScale(k); }",
+            MID_TWEEN_TIME_SCALE,
+        )
     return page.evaluate(
         """() => {
             const root = document.querySelector('%s');
@@ -285,7 +300,7 @@ def _snapshot(page: Page) -> dict:
                 };
             };
             return {
-                focus: data.focus ? { type: data.focus.type, value: data.focus.value } : null,
+                focus: data.sel.actress != null ? { type: 'actress', value: data.sel.actress } : (data.sel.maker != null ? { type: 'maker', value: data.sel.maker } : null),
                 showTop20InRow3: !!data.showTop20InRow3,
                 showCostar: !!data.showCostar,
                 showTop20InRow7: !!data.showTop20InRow7,
@@ -475,13 +490,13 @@ def _costar_rows_length(page: Page) -> int:
 
 
 def _read_period(page: Page) -> dict:
-    """讀 `this.period`（`_snapshot()` 沒有這個欄位——它是既有共用 helper，
+    """讀 `this.sel.period`（`_snapshot()` 沒有這個欄位——它是既有共用 helper，
     本卡 round 3 新測試才需要直接讀 period，不擴大共用 helper 的形狀）。"""
     return page.evaluate(
         """() => {
             const root = document.querySelector('%s');
             const data = window.Alpine && Alpine.$data(root);
-            return data ? data.period : null;
+            return data ? data.sel.period : null;
         }"""
         % ALPINE_ROOT_SELECTOR
     )
@@ -527,7 +542,7 @@ def test_interrupt_during_fade_out_matches_direct_set(page: Page, base_url: str)
     觸發，零共演女優不會播放任何動畫——目標必須先過濾成「有共演」的女優，
     否則 `_click_mid_tween` 會等不到補間中途（見卡片「繼承的陷阱」段）。
     """
-    names = _load_ready(page, base_url)
+    names = _load_ready(page, base_url, slow=True)
     with_costar, _ = _classify_by_costar(page, names, need_with=1)
     _skip_if_insufficient(with_costar, 1)
     baseline_state = _snapshot(page)
@@ -553,7 +568,7 @@ def test_interrupt_during_fade_in_matches_direct_set(page: Page, base_url: str) 
 
     TASK-156d-T9：同上——目標必須先過濾成「有共演」的女優。
     """
-    names = _load_ready(page, base_url)
+    names = _load_ready(page, base_url, slow=True)
     with_costar, _ = _classify_by_costar(page, names, need_with=1)
     _skip_if_insufficient(with_costar, 1)
     baseline_state = _snapshot(page)
@@ -593,7 +608,7 @@ def test_rapid_triple_click_then_clear_matches_baseline(page: Page, base_url: st
     `costarVisible` 會從 true 翻轉成 false，觸發全新的「離開」動畫（殺掉 a
     還在跑的 tween），跟本測試原本設計的「換人對動畫是 no-op」語意不符。
     """
-    names = _load_ready(page, base_url)
+    names = _load_ready(page, base_url, slow=True)
     with_costar, _ = _classify_by_costar(page, names, need_with=3)
     _skip_if_insufficient(with_costar, 3)
     baseline_state = _snapshot(page)
@@ -632,7 +647,7 @@ def test_switch_actress_mid_animation_matches_direct_set(page: Page, base_url: s
     會觸發 `costarVisible` 真正翻轉（離開動畫），不再是本測試要驗的
     `wasActress===isNowActress` no-op 分支。
     """
-    names = _load_ready(page, base_url)
+    names = _load_ready(page, base_url, slow=True)
     with_costar, _ = _classify_by_costar(page, names, need_with=2)
     _skip_if_insufficient(with_costar, 2)
     a, b = with_costar[0], with_costar[1]
@@ -674,7 +689,7 @@ def test_narrow_width_settles_to_baseline_position(page: Page, base_url: str) ->
 
     TASK-156d-T9：目標必須先過濾成「有共演」的女優（理由同淡出/淡入中斷）。
     """
-    names = _load_ready(page, base_url, width=MOBILE)
+    names = _load_ready(page, base_url, slow=True, width=MOBILE)
     with_costar, _ = _classify_by_costar(page, names, need_with=1)
     _skip_if_insufficient(with_costar, 1)
     baseline_state = _snapshot(page)
@@ -857,7 +872,7 @@ def _find_actress_year_costar_flip(page: Page, names: list):
             """() => {
                 const root = document.querySelector('%s');
                 const data = window.Alpine && Alpine.$data(root);
-                return data.period && data.period.type === 'year';
+                return data.sel.period && data.sel.period.type === 'year';
             }"""
             % ALPINE_ROOT_SELECTOR
         ):
@@ -945,7 +960,7 @@ def test_switch_between_costar_and_no_costar_actress_matches_direct_set(
     T7 的『直接設定終值』對照組手法（`_assert_state_equal`／
     `_assert_geometry_equal`）。
     """
-    names = _load_ready(page, base_url)
+    names = _load_ready(page, base_url, slow=True)
     with_costar, without_costar = _classify_by_costar(
         page, names, need_with=1, need_without=1
     )

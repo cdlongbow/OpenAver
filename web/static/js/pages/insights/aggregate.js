@@ -15,7 +15,7 @@
 
 import { computeActressAgeForVideo } from '../../shared/actress-release-age.js';
 import { normalizePillValue } from '../../shared/pill-filter.js';
-import { normalizePeriod, periodContainsYear, scopeRecords as selScopeRecords } from './selection.js';
+import { periodContainsYear, scopeRecords } from './selection.js';
 
 /** 年份「未知」分類與片商「未知」桶的內部鍵；畫面顯示文字由 charts.js（T3）做 i18n 映射。 */
 export const UNKNOWN_KEY = '__unknown__';
@@ -143,7 +143,8 @@ export function buildMainMakerYearMap(records) {
 
 /**
  * 依 period 篩選紀錄。
- * {type:'all'} 保留 year===null；{type:'year',year:N} 只留 year===N。
+ * {type:'all'} 保留 year===null；{type:'year',year:N} 只留 year===N；
+ * {type:'range',from,to} 只留範圍內（含兩端），排除 year 為 null。
  */
 export function periodRecords(records, period) {
     if (period === undefined) period = { type: 'all' };
@@ -152,38 +153,7 @@ export function periodRecords(records, period) {
     if (period.type === 'year') {
         return list.filter(function (r) { return r.year === period.year; });
     }
-    return list.slice();
-}
-
-/**
- * 舊 (period, focus) → sel。T5a 拔舊簽名時整段移除。
- * period 只會是 {type:'all'|'year'}；focus 只會是 null／{type:'actress'|'maker', value}。
- */
-export function legacyToSel(period, focus) {
-    return {
-        period: normalizePeriod(period),
-        actress: focus && focus.type === 'actress' ? focus.value : null,
-        maker: focus && focus.type === 'maker' ? focus.value : null,
-    };
-}
-
-/** 是 sel：物件、有 period 鍵、沒有 type 鍵（Proxy 包過也成立，只用 in 判斷）。 */
-function _isSel(x) {
-    return !!x && typeof x === 'object' && ('period' in x) && !('type' in x);
-}
-
-function _resolveSel(a, b) {
-    return _isSel(a) ? a : legacyToSel(a, b);
-}
-
-/**
- * 轉接入口：scopeRecords(records, sel, skipDim) 或舊 scopeRecords(records, period, focus)。
- * 實際篩選邏輯在 selection.js。
- */
-export function scopeRecords(records, a, b) {
-    if (_isSel(a)) return selScopeRecords(records, a, b);
-    if (typeof b === 'string') return selScopeRecords(records, legacyToSel(a, null), b);
-    return selScopeRecords(records, legacyToSel(a, b), null);
+    return list.filter(function (r) { return periodContainsYear(period, r.year); });
 }
 
 function _yearRange(base) {
@@ -209,11 +179,10 @@ function _buildDimmed(categories, period) {
 }
 
 /**
- * 年份長條資料整形。基底永遠用 scopeRecords(records,{type:'all'},focus)；
+ * 年份長條資料整形。基底永遠用 scopeRecords(records, sel, 'period')；
  * period 只影響 dimmed，不影響 series[].data 數值。
  */
-export function aggregateYears(records, a, b) {
-    const sel = _resolveSel(a, b);
+export function aggregateYears(records, sel) {
     const period = sel.period;
 
     const base = scopeRecords(records, sel, 'period');
@@ -375,11 +344,11 @@ export function buildMakerDonutData(records, mainMakerYearMap) {
  * 女優 Top20 排名。對傳入的 records 展開 actresses 計數；
  * 排序：count 遞減 → monthCount 遞減 → name 遞增。
  * monthCount ＝相異非 null 的 record.month 個數。
- * 若 focus 為女優且她的真實 rank > 20，附加她那一列。
+ * 若 sel 選了女優且她的真實 rank > 20，附加她那一列。
  * 不呼叫 getRecords()。
  */
-export function buildActressTop20(records, a) {
-    var herActress = _isSel(a) ? a.actress : legacyToSel(undefined, a).actress;
+export function buildActressTop20(records, sel) {
+    var herActress = sel ? sel.actress : null;
     var counts = new Map();
     (records || []).forEach(function (r) {
         var names = (r && r.actresses) || [];
@@ -484,7 +453,7 @@ export function aggregateTags(records) {
  *
  * @param {Array<{actresses?: string[], date?: string|null, duration?: number|null}>} records
  * @param {Record<string, {birth?: string|null}>|null|undefined} favorites
- * @param {{type: string, value: string}|null|undefined} focus
+ * @param {{actress?: string|null}|null|undefined} sel
  * @returns {{
  *   total: number,
  *   recordsWithAge: number,
@@ -496,11 +465,11 @@ export function aggregateTags(records) {
  *   counts: number[],
  * }}
  */
-export function aggregateAge(records, favorites, a) {
+export function aggregateAge(records, favorites, sel) {
     var list = records || [];
     var total = list.length;
     var favs = favorites || {};
-    var focusActress = _isSel(a) ? a.actress : legacyToSel(undefined, a).actress;
+    var focusActress = sel ? sel.actress : null;
     var ages = [];
     var recordsWithAge = 0;
 
@@ -616,12 +585,11 @@ export function aggregateFieldTop8(records, field) {
 /**
  * 主要片商年表列選取。
  * 候選＝mainMakerYearMap 裡至少一組 (y, mk) 同時符合 period／maker 焦點（交集）；
- * 女優焦點忽略 focus，只看 period。排序＝範圍內 classify==='main' 片數遞減、name 遞增，取 25；
+ * 女優條件不影響候選，只看期間與片商。排序＝範圍內 classify==='main' 片數遞減、name 遞增，取 25；
  * 女優焦點且她不在前 25、但 records 有她的片 → 附加末列。
  * 不呼叫 getRecords()。
  */
-export function buildGanttRows(records, mainMakerYearMap, a, b) {
-    var sel = _resolveSel(a, b);
+export function buildGanttRows(records, mainMakerYearMap, sel) {
     var map = mainMakerYearMap || {};
 
     var candidateSet = new Set();
@@ -680,7 +648,7 @@ export function buildGanttRows(records, mainMakerYearMap, a, b) {
 }
 
 /**
- * 年表年份橫軸：全庫有年份紀錄的 min..max 連續，忽略 null／period／focus。
+ * 年表年份橫軸：全庫有年份紀錄的 min..max 連續，忽略 null／期間／女優／片商條件。
  * 不呼叫 getRecords()。
  */
 export function ganttYearAxis(records) {
@@ -843,17 +811,7 @@ export function buildGanttAgeCells(name, records, favorites, mainMakerYearMap, a
  * `_makerColorSlots` 模組級變數已在 T3 移除，改用 reactive `ganttLegend`）。
  * 不呼叫 getRecords()。
  */
-export function buildSoloRows(records, mainMakerYearMap, a, b, c, d) {
-    var sel, ganttNames, topMakerNames;
-    if (_isSel(a) || Array.isArray(b)) {
-        sel = _resolveSel(a, undefined);
-        ganttNames = b;
-        topMakerNames = c;
-    } else {
-        sel = legacyToSel(a, b);
-        ganttNames = c;
-        topMakerNames = d;
-    }
+export function buildSoloRows(records, mainMakerYearMap, sel, ganttNames, topMakerNames) {
     var all = records || [];
     var map = mainMakerYearMap || {};
     var ganttSet = new Set(ganttNames || []);
@@ -987,12 +945,11 @@ export function buildSoloRows(records, mainMakerYearMap, a, b, c, d) {
 /**
  * TASK-156c-T5 / CD-156c-1 / 6：與她同片搭檔列表。
  *
- * 只在女優焦點時計算，範圍為 scopeRecords(records, period, focus)。
+ * 只在女優焦點時計算，範圍為 scopeRecords(records, sel, null)。
  * 每部紀錄去重女優名單後，僅採計 2～4 人片。
  * 統計非焦點女優的合作次數，依次數遞減、名字遞增排序，取前 15 名。
  */
-export function buildCostarRows(records, a, b) {
-    var sel = _resolveSel(a, b);
+export function buildCostarRows(records, sel) {
     if (!sel.actress) return [];
     var herName = sel.actress;
     var scoped = scopeRecords(records, sel, null);

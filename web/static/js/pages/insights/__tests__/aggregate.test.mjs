@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const agg = await import('../aggregate.js');
+const { scopeRecords } = await import('../selection.js');
 const {
     setRecords,
     getRecords,
@@ -15,7 +16,6 @@ const {
 } = agg;
 const {
     periodRecords,
-    scopeRecords,
     aggregateYears,
     UNKNOWN_KEY,
     REST_KEY,
@@ -47,7 +47,7 @@ function rec(opts) {
     };
 }
 
-// 測試用手組 sel（刻意不經 aggregate.js 的 legacyToSel，避免轉接層壞掉時兩邊一起壞）。
+// 測試用手組 sel。
 function selOf(period, focus) {
     return {
         period: period || { type: 'all' },
@@ -412,6 +412,20 @@ test('periodRecords: type=all 保留 year===null；type=year 排除 null 與非�
     assert.deepStrictEqual(only2020, [y2020]);
     assert.equal(only2020.includes(nullRec), false);
     assert.equal(only2020.includes(y2021), false);
+});
+
+test('periodRecords: range 只留範圍內（含兩端）、排除 year 為 null', () => {
+    const nullRec = rec({ year: null });
+    const y2018 = rec({ year: 2018 });
+    const y2019 = rec({ year: 2019 });
+    const y2021 = rec({ year: 2021 });
+    const y2023 = rec({ year: 2023 });
+    const y2024 = rec({ year: 2024 });
+    const records = [nullRec, y2018, y2019, y2021, y2023, y2024];
+    assert.deepStrictEqual(
+        periodRecords(records, { type: 'range', from: 2019, to: 2023 }),
+        [y2019, y2021, y2023],
+    );
 });
 
 test('scopeRecords: actress 焦點含多人片任一人命中；maker 焦點嚴格比對', () => {
@@ -2206,7 +2220,7 @@ test('diffTop20Counts: oldRows 為空回傳空陣列', () => {
     assert.deepEqual(agg.diffTop20Counts(undefined, newRows), []);
 });
 
-// ── TASK-161a-T2b：sel／skipDim 簽名 ＋ 舊簽名轉接層 ───────────────────
+// ── TASK-161a-T2b／T5a：sel／skipDim 簽名 ───────────────────
 
 function many(n, opts) {
     const out = [];
@@ -2233,21 +2247,6 @@ function fx() {
 const ALL = { type: 'all' };
 const Y = (year) => ({ type: 'year', year });
 const R = (from, to) => ({ type: 'range', from, to });
-
-test('legacyToSel: 舊 (period, focus) 對應成 sel 三個欄位', () => {
-    const { legacyToSel } = agg;
-    assert.deepEqual(legacyToSel(ALL, null), { period: ALL, actress: null, maker: null });
-    assert.deepEqual(
-        legacyToSel(Y(2023), { type: 'actress', value: 'Alice' }),
-        { period: Y(2023), actress: 'Alice', maker: null },
-    );
-    assert.deepEqual(
-        legacyToSel(ALL, { type: 'maker', value: 'S1' }),
-        { period: ALL, actress: null, maker: 'S1' },
-    );
-    assert.deepEqual(legacyToSel(undefined, undefined), { period: ALL, actress: null, maker: null });
-    assert.deepEqual(legacyToSel(null, null), { period: ALL, actress: null, maker: null });
-});
 
 test('aggregateYears: 女優∩片商時 series 恰 1 條且名稱＝該片商', () => {
     const records = fx();
@@ -2311,61 +2310,6 @@ test('buildCostarRows: 範圍＝期間∩女優∩片商，沒選女優回空', 
     assert.deepEqual(got, [{ name: 'Bob', count: 2 }]);
     const wide = buildCostarRows(records, { period: Y(2023), actress: 'Alice', maker: null });
     assert.deepEqual(wide, [{ name: 'Bob', count: 2 }, { name: 'Cat', count: 1 }]);
-});
-
-test('scopeRecords（aggregate 匯出）: 同時吃 (sel, skipDim) 與舊 (period, focus)', () => {
-    const records = fx();
-    const sel = { period: Y(2023), actress: 'Alice', maker: 'S1' };
-    assert.equal(scopeRecords(records, sel, null).length, 4);
-    assert.equal(scopeRecords(records, sel, 'maker').length, 5);
-    assert.equal(scopeRecords(records, sel, 'period').length, 7);
-    const mk = { period: Y(2023), actress: 'Alice', maker: 'Moodyz' };
-    assert.equal(scopeRecords(records, mk, null).length, 1);
-    assert.equal(scopeRecords(records, mk, 'actress').length, 5);
-    assert.deepEqual(
-        scopeRecords(records, Y(2023), { type: 'actress', value: 'Alice' }),
-        scopeRecords(records, { period: Y(2023), actress: 'Alice', maker: null }, null),
-    );
-    assert.deepEqual(scopeRecords(records, undefined, null), records);
-});
-
-test('轉接層: 每支匯出函式舊簽名輸出＝新簽名輸出', () => {
-    const records = fx();
-    const map = buildMainMakerYearMap(records);
-    const favorites = { Alice: { birth: '1995-01-01' } };
-    const periods = [undefined, ALL, Y(2023), Y(2020)];
-    const focuses = [null, undefined, { type: 'actress', value: 'Alice' }, { type: 'maker', value: 'Moodyz' }];
-    for (const period of periods) {
-        for (const focus of focuses) {
-            const sel = {
-                period: period || ALL,
-                actress: focus && focus.type === 'actress' ? focus.value : null,
-                maker: focus && focus.type === 'maker' ? focus.value : null,
-            };
-            const px = new Proxy(sel, {});
-            const label = JSON.stringify([period, focus]);
-            assert.deepEqual(aggregateYears(records, period, focus), aggregateYears(records, sel), label);
-            assert.deepEqual(aggregateYears(records, px), aggregateYears(records, sel), label + ' proxy');
-            assert.deepEqual(buildActressTop20(records, focus), buildActressTop20(records, sel), label);
-            assert.deepEqual(aggregateAge(records, favorites, focus), aggregateAge(records, favorites, sel), label);
-            assert.deepEqual(buildGanttRows(records, map, period, focus), buildGanttRows(records, map, sel), label);
-            assert.deepEqual(buildGanttRows(records, map, px), buildGanttRows(records, map, sel), label + ' proxy');
-            assert.deepEqual(
-                buildSoloRows(records, map, period, focus, ['Carol'], ['S1']),
-                buildSoloRows(records, map, sel, ['Carol'], ['S1']),
-                label,
-            );
-            assert.deepEqual(
-                buildSoloRows(records, map, px, ['Carol'], ['S1']),
-                buildSoloRows(records, map, sel, ['Carol'], ['S1']),
-                label + ' proxy',
-            );
-            assert.deepEqual(buildCostarRows(records, period, focus), buildCostarRows(records, sel), label);
-            assert.deepEqual(scopeRecords(records, period, focus), scopeRecords(records, sel, null), label);
-        }
-    }
-    // 舊簽名點女優時確實有東西（防「兩邊都空」的假綠）
-    assert.ok(buildCostarRows(records, ALL, { type: 'actress', value: 'Alice' }).length > 0);
 });
 
 test('buildGanttRows: 女優焦點下候選人主要片數與排序看期間∩片商全貌，不只看她本人的片', () => {

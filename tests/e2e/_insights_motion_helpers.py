@@ -104,12 +104,12 @@ def click_year_bar(page: Page, year: int) -> bool:
     page.mouse.click(coords["x"], coords["y"])
     return True
 def reset_period_all(page: Page) -> None:
-    period = alpine(page, "data.period ? {...data.period} : null")
+    period = alpine(page, "data.sel ? {...data.sel.period} : null")
     if period and period.get("type") == "year":
         page.click("#tileYear .insights-x-btn")
         page.wait_for_function(
             "() => { const d = Alpine.$data(document.querySelector('%s'));"
-            " return !!(d && d.period && d.period.type === 'all'); }" % ALPINE, timeout=3_000)
+            " return !!(d && d.sel && d.sel.period.type === 'all'); }" % ALPINE, timeout=3_000)
         page.wait_for_timeout(40)
 def click_donut_named_maker(page: Page) -> str | None:
     coords = page.evaluate("""() => {

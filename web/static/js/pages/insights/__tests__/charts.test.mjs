@@ -36,7 +36,7 @@ const {
     formatRgbaChannels,
     computeDonutStartAngle,
     escapeHtml,
-    rangeEmptyText,
+    emptyKeyForCard,
 } = await import('../charts.js');
 
 // ── escapeHtml（P3-1：tooltip renderMode:'html' 自訂 formatter XSS 修正）───
@@ -69,14 +69,14 @@ test('resolveYearBarColorMode: 無焦點 → neutral', () => {
 
 test('resolveYearBarColorMode: 片商焦點仍是中性計數色（不得誤判為女優焦點才有的分類色）', () => {
     assert.equal(
-        resolveYearBarColorMode({ type: 'maker', value: 'SOD' }),
+        resolveYearBarColorMode({ period: { type: 'all' }, actress: null, maker: 'SOD' }),
         'neutral',
     );
 });
 
 test('resolveYearBarColorMode: 女優焦點 → byMaker', () => {
     assert.equal(
-        resolveYearBarColorMode({ type: 'actress', value: 'Alice' }),
+        resolveYearBarColorMode({ period: { type: 'all' }, actress: 'Alice', maker: null }),
         'byMaker',
     );
 });
@@ -138,33 +138,54 @@ test('computeDonutStartAngle: 目標不在 inner／total===0 → 回傳預設 90
     );
 });
 
-// ── rangeEmptyText（TASK-156c-T6）────────────────────────────────────
+// ── emptyKeyForCard（TASK-156c-T6／161a-T5a：舊版型別白名單寫法已刪）────────
 
-test('rangeEmptyText: count>0 時一律回 null，即使焦點在 narrowFocusTypes 內', () => {
+const ALL_PERIOD = { type: 'all' };
+const cRec = (year, actresses, maker) => ({ year, actresses, maker });
+const cSel = (over) => ({ period: ALL_PERIOD, actress: null, maker: null, ...over });
+
+test('emptyKeyForCard: count>0 時一律不是 period_empty，即使有女優條件', () => {
+    const records = [cRec(2020, ['Alice'], 'SOD')];
     assert.equal(
-        rangeEmptyText(5, { type: 'actress', value: 'Alice' }, ['actress']),
-        null,
+        emptyKeyForCard(records, cSel({ actress: 'Alice' }), 'maker'),
+        'insights.no_data',
     );
 });
 
-test('rangeEmptyText: 無焦點時回傳 null（沿用既有沒有資料文字）', () => {
+test('emptyKeyForCard: 無條件時回傳 no_data（沿用既有沒有資料文字）', () => {
+    assert.equal(emptyKeyForCard([], cSel(), null), 'insights.no_data');
+});
+
+test('emptyKeyForCard: 圓餅在只選片商下不算範圍縮小，回傳 no_data', () => {
     assert.equal(
-        rangeEmptyText(0, null, ['actress']),
-        null,
+        emptyKeyForCard([], cSel({ maker: 'SOD' }), 'maker'),
+        'insights.no_data',
     );
 });
 
-test('rangeEmptyText: 圓餅在片商焦點下不算範圍縮小，回傳 null', () => {
+test('emptyKeyForCard: 女優條件且 count===0 時回傳 period_empty', () => {
+    const records = [cRec(2020, ['Bob'], 'SOD')];
     assert.equal(
-        rangeEmptyText(0, { type: 'maker', value: 'SOD' }, ['actress']),
-        null,
-    );
-});
-
-test('rangeEmptyText: 焦點命中 narrowFocusTypes 且 count===0 時回傳 period_empty', () => {
-    assert.equal(
-        rangeEmptyText(0, { type: 'actress', value: 'Alice' }, ['actress']),
+        emptyKeyForCard(records, cSel({ actress: 'Alice' }), 'maker'),
         'insights.period_empty',
     );
 });
 
+test('emptyKeyForCard: count 取該卡範圍內的片數，不是整體範圍', () => {
+    // A 沒有 S1 的片、S1 有別人（B）的片；2020 年有片
+    const records = [
+        cRec(2020, ['A'], 'M1'),
+        cRec(2021, ['B'], 'S1'),
+    ];
+    const both = cSel({ actress: 'A', maker: 'S1' });
+    // Top 20 類（skip actress）：範圍＝期間∩片商，B 的片在 → 有東西，不是 period_empty
+    assert.equal(emptyKeyForCard(records, both, 'actress'), 'insights.no_data');
+    // 看自己那一維全貌之外的卡（不跳維度）：A∩S1 = 0 → period_empty
+    assert.equal(emptyKeyForCard(records, both, null), 'insights.period_empty');
+    // 圓餅（skip maker）：期間∩女優 A 有 M1 的片 → 不是 period_empty
+    assert.equal(emptyKeyForCard(records, both, 'maker'), 'insights.no_data');
+    // 只選一年、該年有片：任一卡都不是 period_empty
+    const year2020 = cSel({ period: { type: 'year', year: 2020 } });
+    assert.equal(emptyKeyForCard(records, year2020, null), 'insights.no_data');
+    assert.equal(emptyKeyForCard(records, year2020, 'maker'), 'insights.no_data');
+});

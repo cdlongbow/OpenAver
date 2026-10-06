@@ -9,8 +9,6 @@
 import {
     setRecords,
     getRecords,
-    scopeRecords,
-    periodRecords,
     buildMakerColorSlots,
     buildMainMakerYearMap,
     buildActressTop20,
@@ -26,6 +24,15 @@ import {
     classifyTop20Transition,
     diffTop20Counts,
 } from './aggregate.js';
+import {
+    emptySel,
+    normalizePeriod,
+    toggleActress,
+    toggleMaker,
+    scopeRecords,
+    periodLabel,
+    suffixLabel,
+} from './selection.js';
 import {
     setMakerColorSlots,
     setMainMakerYearMap,
@@ -52,6 +59,7 @@ import {
     getFieldBarChart,
     resizeAll,
     colorForMakerName,
+    emptyKeyForCard,
 } from './charts.js';
 import { applyCellFocal } from '../../shared/focal-cell.js';
 
@@ -68,8 +76,8 @@ let _mainMakerYearMap = {};
  * tick 內會對同一個 axis 呼叫 ganttView() 好幾次（表頭 x-for／列 x-for／
  * gantt-note 的 x-show＋x-text），每次都重新對 25 列各掃一輪全庫 records
  * 建格子——實測 6521 筆片庫一次 tick 吃 65–80ms。鍵＝axis＋this.ganttRows
- * 參考＋this.period 參考＋favorites 參考，四者皆相同（===）才視為同一次
- * tick、直接回快取；鍵不同（period/focus 換了、favorites 換了、切了軸）
+ * 參考＋this.sel 參考＋favorites 參考，四者皆相同（===）才視為同一次
+ * tick、直接回快取；鍵不同（sel 換了、favorites 換了、切了軸）
  * 才真的重算。存模組級變數、不進 Alpine reactive proxy——快取物件本身沒有
  * 必要被 Alpine 追蹤，包成 reactive 只會多繞一層 Proxy 開銷。
  */
@@ -201,8 +209,9 @@ export function libraryInsightsState() {
     return {
         snapshot: null,
         snapshotError: null,
-        period: { type: 'all' },
-        focus: null,
+        // TASK-161a-T5a／CD-161a-1：期間＋女優＋片商三個條件合成單一 reactive 欄位；
+        // 每次變更整個物件換新（不 mutate），$watch('sel') 才會觸發。
+        sel: emptySel(),
         scopedCount: 0,
         // TASK-156e-T3／CD-156e-6：顯示層（補間只碰這裡；真相欄位 scopedCount／row.count 不變）
         displayScopedCount: 0,
@@ -239,8 +248,8 @@ export function libraryInsightsState() {
         recomputeScopedCount() {
             this.scopedCount = scopeRecords(
                 getRecords(),
-                this.period,
-                this.focus,
+                this.sel,
+                null,
             ).length;
         },
 
@@ -254,64 +263,61 @@ export function libraryInsightsState() {
             return v === undefined ? row.count : v;
         },
 
-        isPeriodEmpty(types) {
-            return !!(
-                this.focus &&
-                types.indexOf(this.focus.type) !== -1 &&
-                this.scopedCount === 0 &&
-                !this.snapshotError &&
-                this.snapshot &&
-                this.snapshot.logicalTitles > 0
-            );
+        /**
+         * 空狀態文字 key。skipDim＝該卡「不吃」的那一維（見 CD-161a-2 逐卡表）；
+         * 快照失敗／無快照／全庫 0 部一律 no_data。count 的來源只走
+         * emptyKeyForCard（該卡範圍內的片數），不傳聚合後的筆數。
+         */
+        cardEmptyKey(skipDim) {
+            if (
+                this.snapshotError ||
+                !this.snapshot ||
+                !(this.snapshot.logicalTitles > 0)
+            ) {
+                return 'insights.no_data';
+            }
+            return emptyKeyForCard(getRecords(), this.sel, skipDim);
         },
 
         redrawYears() {
-            updateYearsChart({ period: this.period, focus: this.focus });
+            updateYearsChart({ sel: this.sel });
         },
 
         redrawDonut() {
-            updateDonutChart({ period: this.period, focus: this.focus });
+            updateDonutChart({ sel: this.sel });
         },
 
         redrawTags() {
-            updateTagsChart({ period: this.period, focus: this.focus });
+            updateTagsChart({ sel: this.sel });
         },
 
         redrawAge() {
             updateAgeChart({
-                period: this.period,
-                focus: this.focus,
+                sel: this.sel,
                 favorites: this.snapshot && this.snapshot.actressFavorites,
             });
         },
 
         redrawDirector() {
             updateFieldBarChart(
-                { period: this.period, focus: this.focus },
+                { sel: this.sel },
                 'director',
             );
         },
 
         redrawSeries() {
             updateFieldBarChart(
-                { period: this.period, focus: this.focus },
+                { sel: this.sel },
                 'series',
             );
         },
 
         /**
-         * §4.2：無焦點／女優焦點 → periodRecords；片商焦點 → scopeRecords(maker)。
+         * §4.2：Top 20 誰上榜＝期間∩片商（女優條件不縮榜，只影響置頂附加列）。
          */
         _computeTop20Rows() {
-            const all = getRecords();
-            const focus = this.focus;
-            let records;
-            if (focus && focus.type === 'maker') {
-                records = scopeRecords(all, this.period, focus);
-            } else {
-                records = periodRecords(all, this.period);
-            }
-            return buildActressTop20(records, focus).rows;
+            const records = scopeRecords(getRecords(), this.sel, 'actress');
+            return buildActressTop20(records, this.sel).rows;
         },
 
         recomputeTop20() {
@@ -322,8 +328,7 @@ export function libraryInsightsState() {
             this.ganttRows = buildGanttRows(
                 getRecords(),
                 _mainMakerYearMap,
-                this.period,
-                this.focus,
+                this.sel,
             );
         },
 
@@ -343,8 +348,7 @@ export function libraryInsightsState() {
             this.soloRows = buildSoloRows(
                 getRecords(),
                 _mainMakerYearMap,
-                this.period,
-                this.focus,
+                this.sel,
                 ganttNames,
                 this.ganttLegend,
             );
@@ -353,10 +357,10 @@ export function libraryInsightsState() {
         /**
          * TASK-156d-T4／CD-156d-3：她那列置頂後的一次性強調亮起。掛在既有三個
          * `recomputeGantt()+recomputeSolo()` 呼叫點之後（`_loadSnapshot` 成功、
-         * `$watch('period')`、`$watch('focus')`）。年表／分布表各自獨立判斷、
+         * `$watch('sel')`）。年表／分布表各自獨立判斷、
          * 各自獨立比對 `_lastPinnedGanttName`/`_lastPinnedSoloName`（她可能在
          * 其中一張卡是自然排序內置頂、另一張是 rank 外附加置頂，兩者不必同步）。
-         * 非女優焦點／片商焦點時視為「無置頂」，把記錄值歸零成 `null`——這保證
+         * 沒選女優時視為「無置頂」，把記錄值歸零成 `null`——這保證
          * 「清除焦點後重新選回同一人」仍會重新觸發一次強調亮起（同一人連續兩次
          * 被置頂才不重播）。
          *
@@ -373,7 +377,7 @@ export function libraryInsightsState() {
          * 分布表（`soloRows` 沒有年齡篩選）不受影響、照常播放。
          */
         _maybePlayPinPulse() {
-            const isActress = !!(this.focus && this.focus.type === 'actress');
+            const isActress = this.sel.actress != null;
             const ganttFirst = (this.ganttRows || [])[0];
             const soloFirst = (this.soloRows || [])[0];
             const ganttName =
@@ -450,13 +454,10 @@ export function libraryInsightsState() {
          * 呼叫順序在 recomputeSolo() 之後。
          */
         recomputeCostar() {
-            const focus = this.focus;
-            const focusName =
-                focus && focus.type === 'actress' ? focus.value : '';
+            const focusName = this.sel.actress != null ? this.sel.actress : '';
             this.costarRows = buildCostarRows(
                 getRecords(),
-                this.period,
-                focus,
+                this.sel,
             ).map(function (row) {
                 return { name: row.name, count: row.count, self: focusName };
             });
@@ -466,19 +467,19 @@ export function libraryInsightsState() {
          * 年表顯示組裝。axis==='age' 時從 ganttRows 再濾沒生日的列。
          * 修正 3（第 3 輪）：同一次 tick 內對同一 axis 的重複呼叫共用
          * `_ganttViewCache`（見該模組級變數註解）；`this.ganttRows`／
-         * `this.period` 仍要在快取判斷之前讀出來，讓 Alpine 對這個 getter
-         * 的依賴追蹤不因為加了快取而漏掉 period/focus 變動。
+         * `this.sel` 仍要在快取判斷之前讀出來，讓 Alpine 對這個 getter
+         * 的依賴追蹤不因為加了快取而漏掉條件變動。
          */
         ganttView(axis) {
             const rowsRef = this.ganttRows;
-            const periodRef = this.period;
+            const selRef = this.sel;
             const favs =
                 (this.snapshot && this.snapshot.actressFavorites) || {};
             if (
                 _ganttViewCache &&
                 _ganttViewCache.axis === axis &&
                 _ganttViewCache.rowsRef === rowsRef &&
-                _ganttViewCache.periodRef === periodRef &&
+                _ganttViewCache.selRef === selRef &&
                 _ganttViewCache.favs === favs
             ) {
                 return _ganttViewCache.result;
@@ -533,7 +534,7 @@ export function libraryInsightsState() {
             _ganttViewCache = {
                 axis: axis,
                 rowsRef: rowsRef,
-                periodRef: periodRef,
+                selRef: selRef,
                 favs: favs,
                 result: result,
             };
@@ -585,7 +586,7 @@ export function libraryInsightsState() {
         /**
          * 修正 3（第 3 輪，P2 效能回歸）：年份模式只需要欄數，不該經由
          * ganttView() 取（那會連 25 列的格子都建一次）。直接用
-         * ganttYearAxis() 算橫軸長度——全庫只需算一次（不隨 period/focus
+         * ganttYearAxis() 算橫軸長度——全庫只需算一次（不隨條件
          * 變，`getRecords()` 整個 session 內只在換快照時變）。
          *
          * 修正 4（第 4 輪，P3 效能回歸）：年齡模式當初也比照年份模式自己
@@ -613,20 +614,20 @@ export function libraryInsightsState() {
         },
 
         /**
-         * 與圓餅 setFocus 同一 sink：寫 this.focus，由 $watch('focus') 重繪。
-         * 業務鍵字串比對（FE-ALPINE-14）。
+         * 設女優條件（再點同一位清掉）。寫 this.sel（整個換新），由 $watch('sel') 重繪。
+         * 業務鍵字串比對（FE-ALPINE-14）。T5a 暫時單焦點：設女優時清掉片商（T5b 刪此互斥）。
          */
         toggleActressFocus(name) {
             if (!name) return;
-            if (
-                this.focus &&
-                this.focus.type === 'actress' &&
-                this.focus.value === name
-            ) {
-                this.focus = null;
-            } else {
-                this.focus = { type: 'actress', value: name };
-            }
+            this.sel = { ...toggleActress(this.sel, name), maker: null };
+        },
+
+        /**
+         * 設片商條件（圓餅點擊；再點同一家清掉）。T5a 暫時單焦點：設片商時清掉女優。
+         */
+        toggleMakerFocus(name) {
+            if (!name) return;
+            this.sel = { ...toggleMaker(this.sel, name), actress: null };
         },
 
         /**
@@ -634,7 +635,7 @@ export function libraryInsightsState() {
          * 清除焦點／找不到頭像時只走 toggle，不飛。
          */
         flyAndFocusActress(name, event) {
-            const isClearing = this.focus && this.focus.type === 'actress' && this.focus.value === name;
+            const isClearing = this.sel.actress === name;
             if (isClearing) {
                 if (_activeAvatarGhost) {
                     // 字面與 _flyAvatarToFocusTile 開頭的 remove 分開，mutation from 才唯一
@@ -749,7 +750,7 @@ export function libraryInsightsState() {
             // expression 求值的 el」，事件來源若在焦點切換當下被 Alpine 重繪／拆掉
             // （costar-row 的 x-if 分支），later async 再讀 this.$root 會是
             // undefined（實測：costar 入口重現，podium/rest/gantt/solo 不會，
-            // 因為它們的來源列不會在同一輪 focus 變更中被整段換掉）。改用
+            // 因為它們的來源列不會在同一輪條件變更中被整段換掉）。改用
             // document.querySelector 拿穩定 DOM 參照，跟 state.js:1755 既有寫法一致。
             const container = document.querySelector('.insights-container');
             if (!container) return;
@@ -806,7 +807,7 @@ export function libraryInsightsState() {
                 height: targetViewport.height,
             };
 
-            const focusName = this.focus && this.focus.type === 'actress' ? this.focus.value : null;
+            const focusName = this.sel.actress != null ? this.sel.actress : null;
             _activeAvatarGhost = { el: ghost, name: focusName };
             window.AvatarFly.playFlyToFocus(ghost, targetContainerRect, {
                 onComplete: () => {
@@ -832,15 +833,15 @@ export function libraryInsightsState() {
         },
 
         /**
-         * TASK-156d-T3／CD-156d-2：`$watch('focus')` 的唯一動效/捲動 sink。
+         * TASK-156d-T3／CD-156d-2：`$watch('sel')` 的唯一動效/捲動 sink。
          * TASK-156d-T9／CD-156d-10b：`costarVisible` 翻轉時才觸發 row3 左半格
          * 佔用者循序淡出淡入＋row7 副本 B 獨立淡出淡入（女優焦點但零共演時
          * `costarVisible` 維持 false，不播放）；捲動邏輯仍依 `isActressFocused`
          * 翻轉（CD-156d-10e，不變）。
-         * 讀 `this.focus`（reactive）而非把它複製成本地閉包變數跨 `$nextTick` 使用
+         * 讀 `this.sel`（reactive）而非把它複製成本地閉包變數跨 `$nextTick` 使用
          * ——CD-156d-2 步驟 4 逐字要求，快速連續觸發時才能永遠依「當下最新」值判斷。
          *
-         * `oldCostarRowsLength`：呼叫方（`$watch('focus')`）在 `recomputeCostar()`
+         * `oldCostarRowsLength`：呼叫方（`$watch('sel')`）在 `recomputeCostar()`
          * 覆寫 `this.costarRows` 之前先讀出來的舊值長度。**不能改用 `this.showCostar`
          * 當 `wasCostarVisible` 的代理值**——`showCostar` 只在動畫 `onComplete` 才被
          * 寫入，若同一位女優被快速連點兩次、第二次點擊發生在第一次進場動畫的
@@ -853,17 +854,16 @@ export function libraryInsightsState() {
          * 都是同步值，不受動畫完成時機影響。
          *
          * TASK-156d-T9 round 3：捲動判斷（`wasActress`/`isNowActress`/
-         * `switchedActress`）只在這裡（focus 專屬），淡出淡入本體抽成
-         * `_syncCostarVisibility()` 讓 `$watch('period')` 也能呼叫——period
-         * 改變不捲動（CD-156d-6 只認 focus 翻轉）。
+         * `switchedActress`）只在這裡：女優格換人才捲，只換期間／片商、
+         * 清掉女優都不捲（CD-156d-6）。`oldValue` 是舊的 sel 形狀。
          */
         _handleActressFocusChange(oldValue, oldCostarRowsLength) {
-            const wasActress = !!(oldValue && oldValue.type === 'actress');
+            const wasActress = !!(oldValue && oldValue.actress != null);
             const isNowActress = this.isActressFocused;
             const switchedActress =
                 isNowActress &&
                 wasActress &&
-                oldValue.value !== (this.focus && this.focus.value);
+                oldValue.actress !== this.sel.actress;
 
             // CD-156d-6：false→true，或維持 true 但換成不同的人 → 捲回頂端。
             // true→false（含清除）不捲動。
@@ -879,13 +879,13 @@ export function libraryInsightsState() {
 
         /**
          * TASK-156d-T9 round 3：`costarVisible` 翻轉時的淡出淡入本體，從
-         * `_handleActressFocusChange` 抽出——`$watch('focus')` 與
-         * `$watch('period')` 共用同一份（CD-156d-10b 的 kill-tweens／
+         * `_handleActressFocusChange` 抽出——女優格換人與只換期間／片商
+         * 共用同一份（CD-156d-10b 的 kill-tweens／
          * 依當下最新值重新開始／不變式 2 全部照舊，不因為呼叫方是誰而不同）。
          * 呼叫方只需要傳「翻轉前」的 `costarVisible`（用當下已知的
          * `isActressFocused` ＋翻轉前的 `costarRows.length` 算出），不捲動——
          * 捲動邏輯留在 `_handleActressFocusChange`，因為 CD-156d-6 明確只認
-         * focus 翻轉，`period` 改變不捲動。
+         * 女優格換人，期間／片商改變不捲動。
          */
         _syncCostarVisibility(wasCostarVisible) {
             const isNowCostarVisible = this.costarVisible;
@@ -974,7 +974,7 @@ export function libraryInsightsState() {
 
         /**
          * TASK-156e-T3／CD-156e-6：頁首片數＋Top20 片數顯示層補間（連點防護）。
-         * `$watch('period')`／`$watch('focus')` 共用；呼叫方在既有 Flip if/else
+         * `$watch('sel')` 呼叫；呼叫方在既有 Flip if/else
          * 之後傳入更新前的 `oldTop20Rows` 快照。
          */
         _playCountUps(oldTop20Rows) {
@@ -1078,7 +1078,7 @@ export function libraryInsightsState() {
                 .filter(Boolean);
 
             // TASK-156e-F2：掛回 .insights-container（document.querySelector，不用
-            // this.$root——見 _flyAvatarToFocusTile 內註解：$watch('focus') 觸發的
+            // this.$root——見 _flyAvatarToFocusTile 內註解：$watch('sel') 觸發的
             // 重繪可能讓 Alpine 對這輪 expression 求值綁的 $root 變 undefined）而非
             // document.body，讓替身繼續吃得到 insights.css 全部以 .insights-container
             // 為前綴的規則（圓角／尺寸／字級／flex 版面）；宣告在最外層，下面
@@ -1309,7 +1309,7 @@ export function libraryInsightsState() {
 
         /**
          * spec §3.1 片數格：主數字下方小字「全庫 N 部」——固定用 logicalTitles
-         * （全庫邏輯片數，不隨 period／focus 縮），不是 scopedCount。
+         * （全庫邏輯片數，不隨期間／女優／片商條件縮），不是 scopedCount。
          */
         totalCountLabel() {
             const n = this.snapshot ? this.snapshot.logicalTitles : 0;
@@ -1320,57 +1320,45 @@ export function libraryInsightsState() {
         },
 
         clearPeriod() {
-            // 只改 reactive 欄位；$watch('period') 是唯一重繪入口
-            this.period = { type: 'all' };
+            // 只改 reactive 欄位（整個換新）；$watch('sel') 是唯一重繪入口
+            this.sel = { ...this.sel, period: { type: 'all' } };
         },
 
+        // 清掉女優與片商兩個條件，保留期間
         clearFocus() {
-            this.focus = null;
+            this.sel = { ...this.sel, actress: null, maker: null };
         },
 
         /**
-         * CD-156c-8：焦點 type 落在 focusTypes（字串或陣列）時加期間後綴。
+         * CD-156c-8／CD-161a-2：suffixDims 內任一維有條件時加期間後綴
+         * （全庫／單年／範圍），後綴文字由 selection.js 的 suffixLabel 產生。
          */
-        _titleWithPeriod(baseKey, focusTypes) {
+        _titleWithPeriod(baseKey, suffixDims) {
             const tFn =
                 typeof window !== 'undefined' && typeof window.t === 'function'
                     ? window.t
                     : null;
             const base = tFn ? tFn(baseKey) : baseKey;
-            const types = Array.isArray(focusTypes)
-                ? focusTypes
-                : [focusTypes];
-            if (
-                !this.focus ||
-                types.indexOf(this.focus.type) === -1
-            ) {
-                return base;
-            }
-            let periodLabel;
-            if (this.period && this.period.type === 'year') {
-                periodLabel = String(this.period.year);
-            } else {
-                periodLabel = tFn
-                    ? tFn('insights.donut.library_wide')
-                    : 'insights.donut.library_wide';
-            }
-            return base + ' · ' + periodLabel;
+            const allLabel = tFn
+                ? tFn('insights.donut.library_wide')
+                : 'insights.donut.library_wide';
+            return base + suffixLabel(this.sel, suffixDims, allLabel);
         },
 
         /**
-         * D156-12：片商焦點時標題後綴＝期間標籤（全庫／該年）；其餘不加後綴。
+         * D156-12：選了片商時標題後綴＝期間標籤（全庫／該年／範圍）；其餘不加後綴。
          */
         donutTitle() {
-            return this._titleWithPeriod('insights.row.makers', 'maker');
+            return this._titleWithPeriod('insights.row.makers', ['maker']);
         },
 
         /**
-         * D156-12：女優焦點時標題後綴＝期間標籤（全庫／該年）；其餘不加後綴。
+         * D156-12：選了女優時標題後綴＝期間標籤（全庫／該年／範圍）；其餘不加後綴。
          */
         get top20Title() {
             return this._titleWithPeriod(
                 'insights.row.actress_top20',
-                'actress',
+                ['actress'],
             );
         },
 
@@ -1395,7 +1383,7 @@ export function libraryInsightsState() {
          * 只在女優焦點時觸發；片商焦點與無焦點視覺上相同（顯示頒獎台＋名單）。
          */
         get isActressFocused() {
-            return !!(this.focus && this.focus.type === 'actress');
+            return this.sel.actress != null;
         },
 
         /**
@@ -1406,7 +1394,7 @@ export function libraryInsightsState() {
         },
 
         get ganttTitle() {
-            return this._titleWithPeriod('insights.row.gantt', 'actress');
+            return this._titleWithPeriod('insights.row.gantt', ['actress']);
         },
 
         /**
@@ -1472,31 +1460,36 @@ export function libraryInsightsState() {
         },
 
         focusPhotoUrl() {
-            if (!this.focus || this.focus.type !== 'actress') return '';
+            if (this.sel.actress == null) return '';
             return _photoUrl(
-                this.focus.value,
+                this.sel.actress,
                 this.snapshot && this.snapshot.actressFavorites,
             );
         },
 
         focusMakerColor() {
-            if (!this.focus || this.focus.type !== 'maker') return '';
-            return colorForMakerName(this.focus.value);
+            if (this.sel.actress != null || this.sel.maker == null) return '';
+            return colorForMakerName(this.sel.maker);
         },
 
         focusInitial() {
-            if (!this.focus || !this.focus.value) return '';
-            return String(this.focus.value).charAt(0);
+            const name = this.sel.actress != null ? this.sel.actress : this.sel.maker;
+            if (!name) return '';
+            return String(name).charAt(0);
+        },
+
+        // 年份格顯示值：單年 2023、範圍 2019–2023、全部＝空字串（模板另顯示淡色「全部年份」）
+        periodTileLabel() {
+            return periodLabel(this.sel.period, '');
         },
 
         _yearsCallbacks() {
             const self = this;
             return {
-                getPeriod: () => self.period,
-                getFocus: () => self.focus,
+                getSel: () => self.sel,
                 setPeriod: (next) => {
-                    // $watch('period') 會接 recompute + 重繪
-                    self.period = next;
+                    // $watch('sel') 會接 recompute + 重繪
+                    self.sel = { ...self.sel, period: normalizePeriod(next) };
                 },
             };
         },
@@ -1504,11 +1497,10 @@ export function libraryInsightsState() {
         _donutCallbacks() {
             const self = this;
             return {
-                getPeriod: () => self.period,
-                getFocus: () => self.focus,
-                setFocus: (next) => {
-                    // $watch('focus') 是唯一重繪入口（與 toggleActressFocus 同一 sink）
-                    self.focus = next;
+                getSel: () => self.sel,
+                toggleMaker: (name) => {
+                    // 與 toggleActressFocus 同一 sink：寫 sel，$watch('sel') 重繪
+                    self.toggleMakerFocus(name);
                 },
             };
         },
@@ -1516,16 +1508,14 @@ export function libraryInsightsState() {
         _tagsCallbacks() {
             const self = this;
             return {
-                getPeriod: () => self.period,
-                getFocus: () => self.focus,
+                getSel: () => self.sel,
             };
         },
 
         _ageCallbacks() {
             const self = this;
             return {
-                getPeriod: () => self.period,
-                getFocus: () => self.focus,
+                getSel: () => self.sel,
                 getFavorites: () =>
                     self.snapshot && self.snapshot.actressFavorites,
             };
@@ -1534,8 +1524,7 @@ export function libraryInsightsState() {
         _fieldCallbacks() {
             const self = this;
             return {
-                getPeriod: () => self.period,
-                getFocus: () => self.focus,
+                getSel: () => self.sel,
             };
         },
 
@@ -1560,8 +1549,7 @@ export function libraryInsightsState() {
                     if (!areChartsAlive()) {
                         initYearsChart(el, this._yearsCallbacks());
                         updateYearsChart({
-                            period: this.period,
-                            focus: this.focus,
+                            sel: this.sel,
                         });
                     }
                 }
@@ -1572,8 +1560,7 @@ export function libraryInsightsState() {
                     if (!donut || donut.isDisposed()) {
                         initDonutChart(donutEl, this._donutCallbacks());
                         updateDonutChart({
-                            period: this.period,
-                            focus: this.focus,
+                            sel: this.sel,
                         });
                     }
                 }
@@ -1584,8 +1571,7 @@ export function libraryInsightsState() {
                     if (!tags || tags.isDisposed()) {
                         initTagsChart(tagsEl, this._tagsCallbacks());
                         updateTagsChart({
-                            period: this.period,
-                            focus: this.focus,
+                            sel: this.sel,
                         });
                     }
                 }
@@ -1596,8 +1582,7 @@ export function libraryInsightsState() {
                     if (!age || age.isDisposed()) {
                         initAgeChart(ageEl, this._ageCallbacks());
                         updateAgeChart({
-                            period: this.period,
-                            focus: this.focus,
+                            sel: this.sel,
                             favorites:
                                 this.snapshot &&
                                 this.snapshot.actressFavorites,
@@ -1688,10 +1673,10 @@ export function libraryInsightsState() {
                 this._maybePlayPinPulse();
                 this.recomputeCostar();
                 // TASK-156d-T9 round 3 audit：這裡不需要呼叫 _syncCostarVisibility()
-                // ——this.focus 只能被 toggleActressFocus()／clearFocus()／donut 片商
-                // 點擊回呼寫入，三者都要點擊已渲染的 UI 才觸發，而這些 UI 在首次快照成功
-                // 前不存在，所以 _loadSnapshot() 執行到這裡時 this.focus 必為初始
-                // 值 null，costarVisible 恆 false，跟預設顯示旗標（showTop20InRow3:
+                // ——this.sel 只能被 toggleActressFocus()／clearFocus()／donut 片商
+                // 點擊回呼／年份圖點擊寫入，都要點擊已渲染的 UI 才觸發，而這些 UI 在首次快照成功
+                // 前不存在，所以 _loadSnapshot() 執行到這裡時 this.sel 必為初始
+                // 值（未選女優），costarVisible 恆 false，跟預設顯示旗標（showTop20InRow3:
                 // true／showCostar:false）已經一致，沒有「翻轉」可同步。
                 if (shouldPlayPodiumEntrance(_podiumEntrancePlayed, this.podiumRows.length)) {
                     _podiumEntrancePlayed = true;
@@ -1702,32 +1687,28 @@ export function libraryInsightsState() {
                 if (el) {
                     initYearsChart(el, this._yearsCallbacks());
                     updateYearsChart({
-                        period: this.period,
-                        focus: this.focus,
+                        sel: this.sel,
                     });
                 }
                 const donutEl = document.getElementById('donutChart');
                 if (donutEl) {
                     initDonutChart(donutEl, this._donutCallbacks());
                     updateDonutChart({
-                        period: this.period,
-                        focus: this.focus,
+                        sel: this.sel,
                     });
                 }
                 const tagsEl = document.getElementById('tagsChart');
                 if (tagsEl) {
                     initTagsChart(tagsEl, this._tagsCallbacks());
                     updateTagsChart({
-                        period: this.period,
-                        focus: this.focus,
+                        sel: this.sel,
                     });
                 }
                 const ageEl = document.getElementById('ageChart');
                 if (ageEl) {
                     initAgeChart(ageEl, this._ageCallbacks());
                     updateAgeChart({
-                        period: this.period,
-                        focus: this.focus,
+                        sel: this.sel,
                         favorites:
                             this.snapshot && this.snapshot.actressFavorites,
                     });
@@ -1776,59 +1757,18 @@ export function libraryInsightsState() {
 
             _pageAlive = true;
 
-            // $watch 是 period／focus 變更後唯一的 recompute + 重繪入口
-            this.$watch('period', () => {
-                // TASK-156d-T9 round 3：period 改變時 buildCostarRows() 用新
-                // period 重新過濾，同一位焦點女優在不同年份可能從「有共演」變
-                // 「零共演」（或相反）——costarVisible 因此翻轉，跟 focus 改變
-                // 一樣要跑淡出淡入＋切換 row3/row7 顯示旗標，否則會卡在空白的
-                // 「與她同片」卡（round 3 review 抓到：只有 focus 路徑呼叫了
-                // 這段同步，period 路徑漏掉）。isActressFocused 不因為換期間
-                // 而改變，wasCostarVisible 只需要「舊 costarRows.length」。
-                // 不捲動——CD-156d-6 明確只認 focus 翻轉。
-                // TASK-156e-T1b／CD-156e-3：先算更新前 costarVisible、提早
-                // recomputeCostar，再依「未翻轉且無進行中淡出淡入」決定是否
-                // 包 Flip（否則直接 recomputeTop20）。
-                const oldCostarRowsLength = this.costarRows.length;
-                const wasCostarVisible = computeCostarVisible(
-                    this.isActressFocused,
-                    oldCostarRowsLength,
-                );
-                this.redrawYears();
-                this.redrawDonut();
-                this.redrawTags();
-                this.redrawAge();
-                this.redrawDirector();
-                this.redrawSeries();
-                this.recomputeCostar();
-                // TASK-156e-T3：Top20 片數補間——先快照舊榜，再跑既有 Flip if/else
-                const oldTop20Rows = this.top20Rows;
-                if (
-                    wasCostarVisible === this.costarVisible &&
-                    !this.isCostarSwapInProgress()
-                ) {
-                    const visibleWrap = this.costarVisible
-                        ? this.$refs.row7El
-                        : this.$refs.top20Row3El;
-                    this._playTop20Reorder(visibleWrap);
-                } else {
-                    this.recomputeTop20();
-                }
-                this._playCountUps(oldTop20Rows);
-                this.recomputeGantt();
-                this.recomputeSolo();
-                this._maybePlayPinPulse();
-                this._syncCostarVisibility(wasCostarVisible);
-            });
-            this.$watch('focus', (value, oldValue) => {
+            // $watch('sel') 是期間／女優／片商任一條件變更後唯一的 recompute + 重繪入口
+            // （CD-161a-3：原本分開的期間、女優兩份監看本體合併，差異由 old／new 推得）。
+            this.$watch('sel', (value, oldValue) => {
                 // TASK-156d-T9／CD-156d-10b：在 recomputeCostar() 覆寫 this.costarRows
                 // 之前先記錄舊值長度，供 _handleActressFocusChange 算 wasCostarVisible
                 // 用（見該函式內部註解——讀 this.showCostar 當代理值在「同一位女優
                 // 快速二連點、第二次點擊發生在第一次動畫 onComplete 之前」的情境會
                 // 是 stale 的，因為 showCostar 只在 onComplete 才寫入）。
-                // TASK-156e-T1b／CD-156e-3：與 period watcher 共用統一不變式。
+                // 同一位女優換期間／片商時 buildCostarRows() 重新過濾，costarVisible
+                // 可能翻轉，一樣要跑淡出淡入——wasActress 與現在相同、只差舊 costarRows。
                 const oldCostarRowsLength = this.costarRows.length;
-                const wasActress = !!(oldValue && oldValue.type === 'actress');
+                const wasActress = !!(oldValue && oldValue.actress != null);
                 const wasCostarVisible = computeCostarVisible(
                     wasActress,
                     oldCostarRowsLength,

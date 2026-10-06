@@ -15,10 +15,9 @@ import {
     aggregateAge,
     aggregateFieldTop8,
     buildMakerColorSlots,
-    periodRecords,
-    scopeRecords,
     buildMakerDonutData,
 } from './aggregate.js';
+import { emptyKey, emptySel, periodContainsYear, scopeRecords } from './selection.js';
 
 /** @type {'split'|'clone'} spike 選定值——見 TASK-156b-T3 執行紀錄 */
 export const YEARS_DIVIDE_SHAPE = 'split';
@@ -35,21 +34,21 @@ let _makerSlots = {};
 let _mainMakerYearMap = {};
 /** @type {{w:number,h:number}} */
 let _donutLastGoodSize = { w: 280, h: 220 };
-/** @type {{ getPeriod: Function, setPeriod: Function, getFocus: Function, setFocus?: Function }|null} */
+/** @type {{ getSel: Function, setPeriod: Function }|null} */
 let _yearsCallbacks = null;
-/** @type {{ getPeriod: Function, getFocus: Function, setFocus: Function }|null} */
+/** @type {{ getSel: Function, toggleMaker: Function }|null} */
 let _donutCallbacks = null;
-/** @type {{ getPeriod: Function, getFocus: Function }|null} */
+/** @type {{ getSel: Function }|null} */
 let _tagsCallbacks = null;
-/** @type {{ getPeriod: Function, getFocus: Function, getFavorites: Function }|null} */
+/** @type {{ getSel: Function, getFavorites: Function }|null} */
 let _ageCallbacks = null;
-/** @type {Map<string, { getPeriod: Function, getFocus: Function }>} */
+/** @type {Map<string, { getSel: Function }>} */
 const _fieldCallbacks = new Map();
 
 // ── 純函式（node:test 可測）──────────────────────────────────────────
 
-export function resolveYearBarColorMode(focus) {
-    return focus && focus.type === 'actress' ? 'byMaker' : 'neutral';
+export function resolveYearBarColorMode(sel) {
+    return sel && sel.actress != null ? 'byMaker' : 'neutral';
 }
 
 export function shouldAnimate(prefersReducedMotion) {
@@ -151,13 +150,19 @@ function tKey(key, params) {
     return key;
 }
 
-export function rangeEmptyText(count, focus, narrowFocusTypes) {
-    if (count > 0) return null;
-    if (!focus) return null;
-    if (narrowFocusTypes.indexOf(focus.type) === -1) return null;
-    return tKey('insights.period_empty');
+/**
+ * 空狀態 key 的唯一入口（CD-161a-2）：count＝該卡範圍內的片數
+ * （scopeRecords(records, sel, skipDim).length），不是聚合後的筆數。
+ * skipDim：年份長條 'period'、圓餅 'maker'、其餘 null。
+ */
+export function emptyKeyForCard(records, sel, skipDim) {
+    return emptyKey(sel, skipDim, scopeRecords(records, sel, skipDim).length) || 'insights.no_data';
 }
 
+// period_empty 照原樣顯示；其餘落回該卡自己的「沒有資料」文字。
+function _emptyText(key, fallbackKey) {
+    return key === 'insights.period_empty' ? tKey(key) : tKey(fallbackKey);
+}
 
 /**
  * ECharts tooltip 走 renderMode:'html'，自訂 formatter 回傳的字串會被當 innerHTML
@@ -275,8 +280,7 @@ export function reinitYearsAfterDispose() {
     if (!_yearsCallbacks) return;
     initYearsChart(el, _yearsCallbacks);
     updateYearsChart({
-        period: _yearsCallbacks.getPeriod(),
-        focus: _yearsCallbacks.getFocus(),
+        sel: _yearsCallbacks.getSel(),
     });
 }
 
@@ -289,8 +293,7 @@ export function reinitDonutAfterDispose() {
     if (!_donutCallbacks) return;
     initDonutChart(el, _donutCallbacks);
     updateDonutChart({
-        period: _donutCallbacks.getPeriod(),
-        focus: _donutCallbacks.getFocus(),
+        sel: _donutCallbacks.getSel(),
     });
 }
 
@@ -303,8 +306,7 @@ export function reinitTagsAfterDispose() {
     if (!_tagsCallbacks) return;
     initTagsChart(el, _tagsCallbacks);
     updateTagsChart({
-        period: _tagsCallbacks.getPeriod(),
-        focus: _tagsCallbacks.getFocus(),
+        sel: _tagsCallbacks.getSel(),
     });
 }
 
@@ -317,8 +319,7 @@ export function reinitAgeAfterDispose() {
     if (!_ageCallbacks) return;
     initAgeChart(el, _ageCallbacks);
     updateAgeChart({
-        period: _ageCallbacks.getPeriod(),
-        focus: _ageCallbacks.getFocus(),
+        sel: _ageCallbacks.getSel(),
         favorites: _ageCallbacks.getFavorites(),
     });
 }
@@ -335,8 +336,7 @@ export function reinitFieldBarAfterDispose(field) {
     initFieldBarChart(el, field, callbacks);
     updateFieldBarChart(
         {
-            period: callbacks.getPeriod(),
-            focus: callbacks.getFocus(),
+            sel: callbacks.getSel(),
         },
         field,
     );
@@ -344,7 +344,7 @@ export function reinitFieldBarAfterDispose(field) {
 
 /**
  * @param {HTMLElement} containerEl
- * @param {{ getPeriod: Function, setPeriod: Function, getFocus: Function }} callbacks
+ * @param {{ getSel: Function, setPeriod: Function }} callbacks
  */
 export function initYearsChart(containerEl, callbacks) {
     if (!containerEl || typeof window.echarts === 'undefined') return;
@@ -386,7 +386,8 @@ export function initYearsChart(containerEl, callbacks) {
         if (catName === undefined || catName === UNKNOWN_KEY) return;
         const y = parseInt(catName, 10);
         if (Number.isNaN(y)) return;
-        const cur = _yearsCallbacks.getPeriod();
+        const sel = _yearsCallbacks.getSel();
+        const cur = sel && sel.period;
         if (cur && cur.type === 'year' && cur.year === y) {
             _yearsCallbacks.setPeriod({ type: 'all' });
         } else {
@@ -439,23 +440,23 @@ function _opacityForIndex(dimmed, i) {
 }
 
 /**
- * @param {{ period: object, focus: object|null }} state
+ * @param {{ sel: object }} state
  */
 export function updateYearsChart(state) {
     const chart = _charts.get('years');
     if (!chart || chart.isDisposed()) return;
 
-    const period = state.period || { type: 'all' };
-    const focus = state.focus || null;
+    const sel = state.sel || emptySel();
+    const period = sel.period || { type: 'all' };
     const records = getRecords();
-    const agg = aggregateYears(records, period, focus);
+    const agg = aggregateYears(records, sel);
     const categories = agg.categories || [];
     const dimmed = agg.dimmed || [];
     _lastYearCats = categories.slice();
 
     const reduceMotion = readPrefersReducedMotion();
     const animate = shouldAnimate(reduceMotion);
-    const colorMode = resolveYearBarColorMode(focus);
+    const colorMode = resolveYearBarColorMode(sel);
 
     const normalColor = cssVar('--color-primary');
     const selectedColor = resolveColor(
@@ -552,12 +553,12 @@ export function updateYearsChart(state) {
                 : _makerKeysFromAggSeries(agg.series);
 
         const src = (agg.series && agg.series[0] && agg.series[0].data) || [];
-        const anySelected = period.type === 'year';
+        const anySelected = period.type !== 'all';
         const data = src.map((v, i) => {
             const cat = categories[i];
             const selected =
-                anySelected && cat !== UNKNOWN_KEY && Number(cat) === period.year;
-            const opacity = anySelected && !selected ? 0.35 : 1;
+                anySelected && cat !== UNKNOWN_KEY && periodContainsYear(period, Number(cat));
+            const opacity = _opacityForIndex(dimmed, i);
             const isUnknown = cat === UNKNOWN_KEY;
             return {
                 value: v,
@@ -575,8 +576,8 @@ export function updateYearsChart(state) {
             {
                 id: 'years-total',
                 name:
-                    focus && focus.type === 'maker'
-                        ? focus.value
+                    sel.maker != null
+                        ? sel.maker
                         : tKey('insights.row.years'),
                 type: 'bar',
                 barMaxWidth: 26,
@@ -631,7 +632,7 @@ export function updateYearsChart(state) {
 
 /**
  * @param {HTMLElement} containerEl
- * @param {{ getPeriod: Function, getFocus: Function, setFocus: Function }} callbacks
+ * @param {{ getSel: Function, toggleMaker: Function }} callbacks
  */
 export function initDonutChart(containerEl, callbacks) {
     if (!containerEl || typeof window.echarts === 'undefined') return;
@@ -653,8 +654,7 @@ export function initDonutChart(containerEl, callbacks) {
             // 半徑依容器像素重算——resize 後補一次 setOption
             if (_donutCallbacks) {
                 updateDonutChart({
-                    period: _donutCallbacks.getPeriod(),
-                    focus: _donutCallbacks.getFocus(),
+                    sel: _donutCallbacks.getSel(),
                 });
             }
         }
@@ -663,11 +663,11 @@ export function initDonutChart(containerEl, callbacks) {
     _observers.set('donut', ro);
 
     chart.on('click', (params) => {
-        if (!_donutCallbacks || typeof _donutCallbacks.setFocus !== 'function') {
+        if (!_donutCallbacks || typeof _donutCallbacks.toggleMaker !== 'function') {
             return;
         }
         // 只接受內圈（seriesIndex 0）具名扇形；rest／unknown 無效果。
-        // 不做 actress-focus 早退（D156-6：女優焦點下點片商直接切換）。
+        // 不做女優條件早退（D156-6：選了女優時點片商直接切換）。
         if (params.seriesIndex !== 0) return;
         const data = params.data;
         if (!data || data.kind !== 'named' || !data.name) return;
@@ -679,12 +679,7 @@ export function initDonutChart(containerEl, callbacks) {
         } catch {
             /* ignore */
         }
-        const cur = _donutCallbacks.getFocus();
-        if (cur && cur.type === 'maker' && cur.value === name) {
-            _donutCallbacks.setFocus(null);
-        } else {
-            _donutCallbacks.setFocus({ type: 'maker', value: name });
-        }
+        _donutCallbacks.toggleMaker(name);
     });
 }
 
@@ -693,27 +688,18 @@ export function getDonutChart() {
 }
 
 /**
- * §4.2 wiring：無焦點／片商焦點 → periodRecords；女優焦點 → scopeRecords。
- * @param {{ period: object, focus: object|null }} state
+ * §4.2 wiring：圓餅看期間∩女優（skipDim 'maker'），選了片商只高亮。
+ * @param {{ sel: object }} state
  */
 export function updateDonutChart(state) {
     const chart = _charts.get('donut');
     if (!chart || chart.isDisposed()) return;
 
-    const period = state.period || { type: 'all' };
-    const focus = state.focus || null;
+    const sel = state.sel || emptySel();
     const allRecords = getRecords();
 
-    let dataRecords;
-    let highlightKey = null;
-    if (focus && focus.type === 'actress') {
-        dataRecords = scopeRecords(allRecords, period, focus);
-    } else {
-        dataRecords = periodRecords(allRecords, period);
-        if (focus && focus.type === 'maker') {
-            highlightKey = focus.value;
-        }
-    }
+    const dataRecords = scopeRecords(allRecords, sel, 'maker');
+    const highlightKey = sel.maker != null ? sel.maker : null;
 
     const donut = buildMakerDonutData(dataRecords, _mainMakerYearMap);
     const total = donut.total;
@@ -730,10 +716,7 @@ export function updateDonutChart(state) {
                     left: 'center',
                     top: 'middle',
                     style: {
-                        text:
-                            rangeEmptyText(dataRecords.length, focus, [
-                                'actress',
-                            ]) || tKey('insights.no_data'),
+                        text: tKey(emptyKeyForCard(allRecords, sel, 'maker')),
                         fontSize: 11,
                         fill: cssVar('--text-muted'),
                     },
@@ -1007,7 +990,7 @@ function _isDimTheme() {
 
 /**
  * @param {HTMLElement} containerEl
- * @param {{ getPeriod: Function, getFocus: Function }} callbacks
+ * @param {{ getSel: Function }} callbacks
  */
 export function initTagsChart(containerEl, callbacks) {
     if (!containerEl || typeof window.echarts === 'undefined') return;
@@ -1035,25 +1018,18 @@ export function getTagsChart() {
 }
 
 /**
- * §4.2 wiring：無焦點 periodRecords；片商／女優焦點 scopeRecords。
+ * §4.2 wiring：範圍＝期間∩女優∩片商（scopeRecords，不跳維度）。
  * 刻意不設 animationDurationUpdate（含 0）——ECharts 6.1.0 treemap 在
  * animationDurationUpdate:0 ＋版面驟縮時會把格子算成 NaN。
- * @param {{ period: object, focus: object|null }} state
+ * @param {{ sel: object }} state
  */
 export function updateTagsChart(state) {
     const chart = _charts.get('tags');
     if (!chart || chart.isDisposed()) return;
 
-    const period = state.period || { type: 'all' };
-    const focus = state.focus || null;
+    const sel = state.sel || emptySel();
     const allRecords = getRecords();
-
-    let dataRecords;
-    if (focus && (focus.type === 'maker' || focus.type === 'actress')) {
-        dataRecords = scopeRecords(allRecords, period, focus);
-    } else {
-        dataRecords = periodRecords(allRecords, period);
-    }
+    const dataRecords = scopeRecords(allRecords, sel, null);
 
     const agg = aggregateTags(dataRecords);
     const total = agg.total;
@@ -1092,11 +1068,10 @@ export function updateTagsChart(state) {
                         left: 'center',
                         top: 'middle',
                         style: {
-                            text:
-                                rangeEmptyText(dataRecords.length, focus, [
-                                    'actress',
-                                    'maker',
-                                ]) || tKey('insights.tags.empty'),
+                            text: _emptyText(
+                                emptyKeyForCard(allRecords, sel, null),
+                                'insights.tags.empty',
+                            ),
                             fontSize: 11,
                             fill: cssVar('--text-muted'),
                         },
@@ -1195,7 +1170,7 @@ export function updateTagsChart(state) {
 
 /**
  * @param {HTMLElement} containerEl
- * @param {{ getPeriod: Function, getFocus: Function, getFavorites: Function }} callbacks
+ * @param {{ getSel: Function, getFavorites: Function }} callbacks
  */
 export function initAgeChart(containerEl, callbacks) {
     if (!containerEl || typeof window.echarts === 'undefined') return;
@@ -1223,28 +1198,21 @@ export function getAgeChart() {
 }
 
 /**
- * §4.2 wiring：無焦點 periodRecords；片商／女優焦點 scopeRecords。
+ * §4.2 wiring：範圍＝期間∩女優∩片商（scopeRecords，不跳維度）。
  * setOption 用預設 merge＋固定 series id 'age'，讓長條長度過渡；
  * 只有算不出任何年齡的空分支才 clear()。
- * @param {{ period: object, focus: object|null, favorites?: object|null }} state
+ * @param {{ sel: object, favorites?: object|null }} state
  */
 export function updateAgeChart(state) {
     const chart = _charts.get('age');
     if (!chart || chart.isDisposed()) return;
 
-    const period = state.period || { type: 'all' };
-    const focus = state.focus || null;
+    const sel = state.sel || emptySel();
     const favorites = state.favorites || null;
     const allRecords = getRecords();
+    const dataRecords = scopeRecords(allRecords, sel, null);
 
-    let dataRecords;
-    if (focus && (focus.type === 'maker' || focus.type === 'actress')) {
-        dataRecords = scopeRecords(allRecords, period, focus);
-    } else {
-        dataRecords = periodRecords(allRecords, period);
-    }
-
-    const agg = aggregateAge(dataRecords, favorites, focus);
+    const agg = aggregateAge(dataRecords, favorites, sel);
     const total = agg.total;
     const reduceMotion = readPrefersReducedMotion();
     const animate = shouldAnimate(reduceMotion);
@@ -1268,11 +1236,10 @@ export function updateAgeChart(state) {
                     left: 'center',
                     top: 'middle',
                     style: {
-                        text:
-                            rangeEmptyText(dataRecords.length, focus, [
-                                'actress',
-                                'maker',
-                            ]) || tKey('insights.no_data'),
+                        text: _emptyText(
+                            emptyKeyForCard(allRecords, sel, null),
+                            'insights.no_data',
+                        ),
                         fontSize: 11,
                         fill: cssVar('--text-muted'),
                     },
@@ -1359,7 +1326,7 @@ export function updateAgeChart(state) {
 /**
  * @param {HTMLElement} containerEl
  * @param {string} field
- * @param {{ getPeriod: Function, getFocus: Function }} callbacks
+ * @param {{ getSel: Function }} callbacks
  */
 export function initFieldBarChart(containerEl, field, callbacks) {
     if (!containerEl || typeof window.echarts === 'undefined') return;
@@ -1383,26 +1350,19 @@ export function initFieldBarChart(containerEl, field, callbacks) {
 }
 
 /**
- * §4.2 wiring：無焦點 periodRecords；片商／女優焦點 scopeRecords。
+ * §4.2 wiring：範圍＝期間∩女優∩片商（scopeRecords，不跳維度）。
  * setOption 用預設 merge＋固定 series id field，讓長條長度過渡；
  * 只有 0% 涵蓋的空分支才 clear()。
- * @param {{ period: object, focus: object|null }} state
+ * @param {{ sel: object }} state
  * @param {string} field
  */
 export function updateFieldBarChart(state, field) {
     const chart = _charts.get(field);
     if (!chart || chart.isDisposed()) return;
 
-    const period = state.period || { type: 'all' };
-    const focus = state.focus || null;
+    const sel = state.sel || emptySel();
     const allRecords = getRecords();
-
-    let dataRecords;
-    if (focus && (focus.type === 'maker' || focus.type === 'actress')) {
-        dataRecords = scopeRecords(allRecords, period, focus);
-    } else {
-        dataRecords = periodRecords(allRecords, period);
-    }
+    const dataRecords = scopeRecords(allRecords, sel, null);
 
     const agg = aggregateFieldTop8(dataRecords, field);
     const total = agg.total;
@@ -1428,11 +1388,10 @@ export function updateFieldBarChart(state, field) {
                     left: 'center',
                     top: 'middle',
                     style: {
-                        text:
-                            rangeEmptyText(dataRecords.length, focus, [
-                                'actress',
-                                'maker',
-                            ]) || tKey('insights.no_data'),
+                        text: _emptyText(
+                            emptyKeyForCard(allRecords, sel, null),
+                            'insights.no_data',
+                        ),
                         fontSize: 11,
                         fill: cssVar('--text-muted'),
                     },

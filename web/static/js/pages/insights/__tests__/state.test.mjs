@@ -33,6 +33,11 @@ globalThis.document = globalThis.document || {
 const { computePreviewPosition, libraryInsightsState, shouldPlayPodiumEntrance, computeCostarVisible } = await import('../state.js');
 const { setRecords } = await import('../aggregate.js');
 
+// 測試用手組 sel（三條件，預設全空）
+function selOf(over) {
+    return { period: { type: 'all' }, actress: null, maker: null, ...over };
+}
+
 function rec(opts) {
     return {
         year: opts.year === undefined ? 2020 : opts.year,
@@ -246,42 +251,50 @@ test('previewPositionStyle: viewport 以 clientWidth 為準（不含捲軸）', 
     assert.notEqual(left, 225);
 });
 
-// ── isPeriodEmpty（TASK-156c-T6）─────────────────────────────────────
+// ── cardEmptyKey（TASK-156c-T6／161a-T5a：舊版型別白名單寫法已刪）──────────
 
-test('isPeriodEmpty: scopedCount>0 時回傳 false', () => {
-    const state = libraryInsightsState();
-    state.snapshot = { logicalTitles: 100 };
-    state.snapshotError = null;
-    state.focus = { type: 'maker', value: 'SOD' };
-    state.scopedCount = 5;
-    assert.equal(state.isPeriodEmpty(['maker']), false);
+test('cardEmptyKey: 該卡範圍內有片時回傳 no_data（不是 period_empty）', () => {
+    setRecords([rec({ maker: 'SOD' })]);
+    try {
+        const state = libraryInsightsState();
+        state.snapshot = { logicalTitles: 100 };
+        state.snapshotError = null;
+        state.sel = selOf({ maker: 'SOD' });
+        assert.equal(state.cardEmptyKey('actress'), 'insights.no_data');
+    } finally {
+        setRecords([]);
+    }
 });
 
-test('isPeriodEmpty: snapshotError 為真時回傳 false', () => {
+test('cardEmptyKey: snapshotError 為真時回傳 no_data', () => {
+    setRecords([]);
     const state = libraryInsightsState();
     state.snapshot = { logicalTitles: 100 };
     state.snapshotError = 'error';
-    state.focus = { type: 'maker', value: 'SOD' };
-    state.scopedCount = 0;
-    assert.equal(state.isPeriodEmpty(['maker']), false);
+    state.sel = selOf({ maker: 'SOD' });
+    assert.equal(state.cardEmptyKey('actress'), 'insights.no_data');
 });
 
-test('isPeriodEmpty: snapshot.logicalTitles===0（空片庫）時回傳 false', () => {
+test('cardEmptyKey: snapshot.logicalTitles===0（空片庫）時回傳 no_data', () => {
+    setRecords([]);
     const state = libraryInsightsState();
     state.snapshot = { logicalTitles: 0 };
     state.snapshotError = null;
-    state.focus = { type: 'maker', value: 'SOD' };
-    state.scopedCount = 0;
-    assert.equal(state.isPeriodEmpty(['maker']), false);
+    state.sel = selOf({ maker: 'SOD' });
+    assert.equal(state.cardEmptyKey('actress'), 'insights.no_data');
 });
 
-test('isPeriodEmpty: 條件滿足時回傳 true', () => {
-    const state = libraryInsightsState();
-    state.snapshot = { logicalTitles: 100 };
-    state.snapshotError = null;
-    state.focus = { type: 'maker', value: 'SOD' };
-    state.scopedCount = 0;
-    assert.equal(state.isPeriodEmpty(['maker']), true);
+test('cardEmptyKey: 條件滿足時回傳 period_empty', () => {
+    setRecords([rec({ maker: 'Moodyz' })]);
+    try {
+        const state = libraryInsightsState();
+        state.snapshot = { logicalTitles: 100 };
+        state.snapshotError = null;
+        state.sel = selOf({ maker: 'SOD' });
+        assert.equal(state.cardEmptyKey('actress'), 'insights.period_empty');
+    } finally {
+        setRecords([]);
+    }
 });
 
 // ── podiumRows / restRows（TASK-156d-T2）─────────────────────────────
@@ -347,19 +360,19 @@ test('podiumRows/restRows: top20Rows 剛好 20 筆滿額且焦點女優 rank===2
 
 test('isActressFocused: true only when focus.type is actress', () => {
     const state = libraryInsightsState();
-    state.focus = { type: 'actress', value: '明里つむぎ' };
+    state.sel = selOf({ actress: '明里つむぎ' });
     assert.equal(state.isActressFocused, true);
 });
 
 test('isActressFocused: focus.type === "maker" 時回傳 false', () => {
     const state = libraryInsightsState();
-    state.focus = { type: 'maker', value: 'SOD' };
+    state.sel = selOf({ maker: 'SOD' });
     assert.equal(state.isActressFocused, false);
 });
 
 test('isActressFocused: 無焦點（focus === null）時回傳 false', () => {
     const state = libraryInsightsState();
-    state.focus = null;
+    state.sel = selOf();
     assert.equal(state.isActressFocused, false);
 });
 
@@ -396,7 +409,7 @@ test('_maybePlayPinPulse: 年齡軸下她的列被濾掉（無生日）→ DOM �
 
     const state = libraryInsightsState();
     state.$nextTick = (fn) => fn();
-    state.focus = { type: 'actress', value: '無生日女優' };
+    state.sel = selOf({ actress: '無生日女優' });
     state.ganttRows = [{ name: '無生日女優', pinned: true }];
     state.soloRows = [{ name: '無生日女優', pinned: true }];
 
@@ -426,7 +439,7 @@ test('_maybePlayPinPulse: DOM 渲染第一列確實是她（年份軸／年齡�
 
     const state = libraryInsightsState();
     state.$nextTick = (fn) => fn();
-    state.focus = { type: 'actress', value: '有生日女優' };
+    state.sel = selOf({ actress: '有生日女優' });
     state.ganttRows = [{ name: '有生日女優', pinned: true }];
     state.soloRows = [{ name: '有生日女優', pinned: true }];
 
@@ -491,15 +504,98 @@ test('computeCostarVisible: 女優焦點但零共演 → false', () => {
 
 test('costarVisible getter: 反映 isActressFocused 與 costarRows.length', () => {
     const state = libraryInsightsState();
-    state.focus = { type: 'actress', value: '明里つむぎ' };
+    state.sel = selOf({ actress: '明里つむぎ' });
     state.costarRows = [];
     assert.equal(state.costarVisible, false, '零共演時應為 false');
 
     state.costarRows = [{ name: 'B', count: 1, self: '明里つむぎ' }];
     assert.equal(state.costarVisible, true, '有共演時應為 true');
 
-    state.focus = { type: 'maker', value: 'SOD' };
+    state.sel = selOf({ maker: 'SOD' });
     assert.equal(state.costarVisible, false, '片商焦點時應為 false');
+});
+
+// ── TASK-161a-T5a：單一 sel 狀態 ─────────────────────────────────────
+
+test('_handleActressFocusChange: 只在女優格換人時捲回頂端（換期間／換片商／清除都不捲）', () => {
+    const scrolls = [];
+    const origScrollTo = globalThis.window.scrollTo;
+    const origOpenAver = globalThis.window.OpenAver;
+    globalThis.window.scrollTo = (opt) => scrolls.push(opt);
+    globalThis.window.OpenAver = { prefersReducedMotion: true };
+    try {
+        const run = (oldSel, newSel) => {
+            const state = libraryInsightsState();
+            state._syncCostarVisibility = () => {};
+            state.sel = newSel;
+            scrolls.length = 0;
+            state._handleActressFocusChange(oldSel, 0);
+            return scrolls.length;
+        };
+        // 沒女優 → 有女優、換成另一位：捲
+        assert.equal(run(selOf(), selOf({ actress: 'A' })), 1);
+        assert.equal(run(selOf({ actress: 'A' }), selOf({ actress: 'B' })), 1);
+        // 同一位女優只換期間、只加片商、清掉女優：不捲
+        assert.equal(
+            run(selOf({ actress: 'A' }), selOf({ actress: 'A', period: { type: 'year', year: 2020 } })),
+            0,
+        );
+        assert.equal(run(selOf({ actress: 'A' }), selOf({ actress: 'A', maker: 'S1' })), 0);
+        assert.equal(run(selOf({ actress: 'A' }), selOf()), 0);
+        // 只選片商、換片商：不捲
+        assert.equal(run(selOf({ maker: 'S1' }), selOf({ maker: 'S2' })), 0);
+    } finally {
+        globalThis.window.scrollTo = origScrollTo;
+        globalThis.window.OpenAver = origOpenAver;
+    }
+});
+
+test('ganttView: 快取鍵認整個 sel，只換片商或只換期間也必須重算', () => {
+    setRecords([rec({ year: 2020, actresses: ['Alice'] }), rec({ year: 2021, actresses: ['Alice'] })]);
+    try {
+        const state = libraryInsightsState();
+        state.snapshot = { actressFavorites: {} };
+        state.ganttRows = [{ name: 'Alice' }];
+        state.sel = selOf({ actress: 'Alice' });
+        const first = state.ganttView('year');
+        assert.equal(state.ganttView('year'), first, 'sel 沒變時命中快取');
+        state.sel = { ...state.sel, maker: 'SOD' };
+        const afterMaker = state.ganttView('year');
+        assert.notEqual(afterMaker, first, '只換片商必須重算');
+        state.sel = { ...state.sel, period: { type: 'year', year: 2020 } };
+        const afterPeriod = state.ganttView('year');
+        assert.notEqual(afterPeriod, afterMaker, '只換期間必須重算');
+    } finally {
+        setRecords([]);
+    }
+});
+
+test('toggleMakerFocus／toggleActressFocus: 單焦點互斥，期間保留', () => {
+    const state = libraryInsightsState();
+    const period = { type: 'range', from: 2019, to: 2023 };
+    state.sel = selOf({ period, actress: 'A' });
+    state.toggleMakerFocus('S1');
+    assert.deepEqual(state.sel, { period, actress: null, maker: 'S1' });
+    state.toggleActressFocus('B');
+    assert.deepEqual(state.sel, { period, actress: 'B', maker: null });
+    state.toggleActressFocus('B');
+    assert.deepEqual(state.sel, { period, actress: null, maker: null });
+    state.toggleMakerFocus('S1');
+    state.toggleMakerFocus('S1');
+    assert.deepEqual(state.sel, { period, actress: null, maker: null });
+    state.sel = selOf({ period, actress: 'A' });
+    state.clearFocus();
+    assert.deepEqual(state.sel, { period, actress: null, maker: null });
+});
+
+test('periodTileLabel: range 顯示 2019–2023、單年顯示年份、all 為空字串', () => {
+    const state = libraryInsightsState();
+    state.sel = selOf({ period: { type: 'range', from: 2019, to: 2023 } });
+    assert.equal(state.periodTileLabel(), '2019–2023');
+    state.sel = selOf({ period: { type: 'year', year: 2023 } });
+    assert.equal(state.periodTileLabel(), '2023');
+    state.sel = selOf();
+    assert.equal(state.periodTileLabel(), '');
 });
 
 // ── topDisplayCount (TASK-156e-T3) ───────────────────────────────────

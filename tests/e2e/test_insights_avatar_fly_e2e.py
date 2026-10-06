@@ -22,7 +22,7 @@ def _classify(page: Page) -> dict:
 def _ghost_count(page: Page) -> int:
     return page.evaluate("() => document.querySelectorAll('%s').length" % GHOST)
 def _focus(page: Page):
-    return alpine(page, "data.focus ? {type:data.focus.type,value:data.focus.value} : null")
+    return alpine(page, "data.sel.actress != null ? {type:'actress',value:data.sel.actress} : (data.sel.maker != null ? {type:'maker',value:data.sel.maker} : null)")
 def _wait_fly_settled(page: Page, timeout: int = 2_000) -> None:
     page.wait_for_function(
         "() => { if (document.querySelectorAll('%s').length > 0) return false;"
