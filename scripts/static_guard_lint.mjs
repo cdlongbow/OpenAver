@@ -5220,6 +5220,10 @@ const RULES = [
   { file: 'web/static/js/pages/insights/charts.js', kind: 'required-string', pattern: 'graphic: [buildDragPreviewGraphic(null, ', note: '[161a-T6b] updateYearsChart 每次重繪都帶預覽 graphic：少了它，重繪後預覽不會被重設成隱藏、提交範圍後高亮可能殘留' },
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'isYearInSel(', note: '[161a-T6b] insights.html 年表年份欄淡化吃範圍：模板消費 isYearInSel，沒用到則選範圍後年表沒有任何年份被標成選中' },
   { file: 'web/templates/insights.html', kind: 'forbidden-string', pattern: 'sel.period.year ===', note: '[161a-T6b] insights.html 年表年份欄淡化吃範圍：只認單年 sel.period.year 會讓範圍內的欄全被淡化' },
+  // ---- [161a-T7] 片數格跳轉接線 ----
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: '@click="goBrowse()"', scope: { anchor: /id="tileCount"/, window: 1200 }, note: '[161a-T7] #tileCount 的 click 接 goBrowse：沒接＝片數格看起來可點、手形游標也有，但點下去什麼都沒發生' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: "t('insights.count_open_browse')", scope: { anchor: /id="tileCount"/, window: 1200 }, note: '[161a-T7] #tileCount tooltip 用 insights.count_open_browse：寫成別的字＝使用者不知道點了會去哪' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: "'is-clickable': canGoBrowse", scope: { anchor: /id="tileCount"/, window: 1200 }, note: '[161a-T7] #tileCount 可點樣式只在 canGoBrowse 時：寫成恆真＝片數 0 的格子仍顯示手形與 hover 淡染' },
 ];
 
 // ---- helpers ----

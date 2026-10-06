@@ -110,8 +110,10 @@
     /* vw-based 線性擬合（非任意值）：對這格 .card-body 內容寬（扣 padding）在 1025–1440
        三個實測寬度做最小平方回歸，目標是文字 scrollWidth 落在內容寬 80%–100%（spec-156d
        §3.1，主 session 2026-09-27 裁決）。斷點切換時內容寬跳變（4欄→2欄→1欄，格子變寬），
-       字級隨之跳變是該跳變的必然結果，不是校準誤差。 */
-    font-size: clamp(2rem, calc(4.475vw - 13.06px), 3.3rem);
+       字級隨之跳變是該跳變的必然結果，不是校準誤差。
+       161a-T7：頂排由四格改五格，格寬縮小，係數依 1025／1280／1440 實測（文字寬約 4.95×字級）重擬合，
+       目標 scrollWidth ≈ 內容寬 91%。 */
+    font-size: clamp(1.5rem, calc(3.7vw - 12.5px), 3.3rem);
     font-weight: 700;
     color: var(--text-primary);
     white-space: nowrap;
@@ -138,6 +140,39 @@
     font-size: 0.875rem;
     font-weight: 600;
     color: var(--text-secondary);
+}
+
+/* TASK-161a-T7：片數格可點態（游標＋既有淡染＋陰影升一階；停用態不另寫規則） */
+.insights-container #tileCount {
+    cursor: default;
+}
+
+.insights-container #tileCount.is-clickable {
+    cursor: pointer;
+    transition: box-shadow var(--duration-fast) var(--fluent-ease-standard);
+}
+
+.insights-container #tileCount.is-clickable:hover {
+    background-image: linear-gradient(
+        color-mix(in oklch, var(--color-primary) 6%, transparent),
+        color-mix(in oklch, var(--color-primary) 6%, transparent)
+    );
+    box-shadow:
+        inset 0 1px 0 color-mix(in oklch, var(--color-base-content) 8%, transparent),
+        var(--fluent-shadow-8);
+}
+
+/* 「↗」只在可點時顯示（純符號、aria-hidden；不用 x-show，FE-ALPINE-17） */
+.insights-container #tileCount .insights-open-arrow {
+    display: none;
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--text-muted);
+}
+
+.insights-container #tileCount.is-clickable .insights-open-arrow {
+    display: inline;
 }
 
 .insights-container .insights-tile-error-msg {
@@ -1163,6 +1198,10 @@
 @media (max-width: 1024px) {
     .insights-container .row1 {
         grid-template-columns: repeat(2, 1fr);
+    }
+
+    .insights-container .row1 > :last-child {
+        grid-column: 1 / -1;
     }
 
     .insights-container .row2,

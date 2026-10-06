@@ -704,3 +704,132 @@ test('topDisplayCount: row 為 null/undefined → 回傳空字串', () => {
     assert.equal(state.topDisplayCount(null), '');
     assert.equal(state.topDisplayCount(undefined), '');
 });
+
+// ── canGoBrowse / goBrowse (TASK-161a-T7) ────────────────────────────
+
+// 安裝 localStorage／location／console.warn 的記錄器，回傳 { calls, warns, restore }
+function installBrowseStubs({ stored = null, setItemThrows = false } = {}) {
+    const calls = [];
+    const warns = [];
+    const lsDesc = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    const locDesc = Object.getOwnPropertyDescriptor(globalThis, 'location');
+    const origWarn = console.warn;
+    const fake = {
+        getItem(k) { calls.push(['getItem', k]); return stored; },
+        setItem(k, v) {
+            if (setItemThrows) throw new Error('quota');
+            calls.push(['setItem', k, v]);
+        },
+    };
+    Object.defineProperty(globalThis, 'localStorage', { value: fake, configurable: true, writable: true });
+    Object.defineProperty(globalThis, 'location', {
+        value: { assign(url) { calls.push(['assign', url]); } },
+        configurable: true,
+        writable: true,
+    });
+    console.warn = (...args) => { warns.push(args); };
+    const restore = () => {
+        console.warn = origWarn;
+        if (lsDesc) Object.defineProperty(globalThis, 'localStorage', lsDesc);
+        else delete globalThis.localStorage;
+        if (locDesc) Object.defineProperty(globalThis, 'location', locDesc);
+        else delete globalThis.location;
+    };
+    return { calls, warns, restore };
+}
+
+test('canGoBrowse: 片數為 0、快照失敗、尚未載入時為 false，有片時為 true', () => {
+    const fresh = libraryInsightsState();
+    assert.equal(fresh.canGoBrowse, false);
+
+    const state = libraryInsightsState();
+    state.snapshotError = null;
+    state.scopedCount = 5;
+    assert.equal(state.canGoBrowse, true);
+    state.scopedCount = 0;
+    assert.equal(state.canGoBrowse, false);
+    state.snapshotError = true;
+    state.scopedCount = 5;
+    assert.equal(state.canGoBrowse, false);
+});
+
+test('goBrowse: 片數為 0 或快照失敗時不寫入也不導航', () => {
+    const stub = installBrowseStubs();
+    try {
+        const state = libraryInsightsState();
+        state.snapshotError = null;
+        state.scopedCount = 0;
+        state.goBrowse();
+        assert.deepEqual(stub.calls, []);
+        state.snapshotError = true;
+        state.scopedCount = 5;
+        state.goBrowse();
+        assert.deepEqual(stub.calls, []);
+    } finally {
+        stub.restore();
+    }
+});
+
+test('goBrowse: 寫入失敗時不導航', () => {
+    const stub = installBrowseStubs({ setItemThrows: true });
+    try {
+        const state = libraryInsightsState();
+        state.snapshotError = null;
+        state.scopedCount = 5;
+        assert.doesNotThrow(() => state.goBrowse());
+        assert.equal(stub.calls.filter((c) => c[0] === 'assign').length, 0);
+        assert.equal(stub.warns.length, 1);
+    } finally {
+        stub.restore();
+    }
+});
+
+test('goBrowse: 先寫入 showcase_state 再導向 /showcase，保留既有排序與卡型、整組換成目前條件', () => {
+    const old = JSON.stringify({
+        sort: 'x', cardShape: 'poster', infoVisible: true, search: 'abc',
+        pills: [{ dim: 'actress', value: '舊' }],
+    });
+    const stub = installBrowseStubs({ stored: old });
+    try {
+        const state = libraryInsightsState();
+        state.snapshotError = null;
+        state.scopedCount = 12;
+        state.sel = { period: { type: 'year', year: 2023 }, actress: 'A', maker: 'M' };
+        state.goBrowse();
+        const writes = stub.calls.filter((c) => c[0] === 'setItem' || c[0] === 'assign');
+        assert.equal(writes.length, 2);
+        assert.equal(writes[0][0], 'setItem');
+        assert.equal(writes[0][1], 'showcase_state');
+        assert.deepEqual(writes[1], ['assign', '/showcase']);
+        const saved = JSON.parse(writes[0][2]);
+        assert.equal(saved.pills.length, 3);
+        const dims = saved.pills.map((p) => p.dim).sort();
+        assert.deepEqual(dims, ['actress', 'maker', 'release']);
+        const rel = saved.pills.find((p) => p.dim === 'release');
+        assert.equal(rel.op, '=');
+        assert.equal(rel.value, '2023');
+        assert.equal(saved.search, '');
+        assert.equal(saved.page, 1);
+        assert.equal(saved.showFavoriteActresses, false);
+        assert.equal(saved.sort, 'x');
+        assert.equal(saved.cardShape, 'poster');
+        assert.equal(saved.infoVisible, true);
+    } finally {
+        stub.restore();
+    }
+
+    // 無條件也能跳
+    const stub2 = installBrowseStubs({ stored: old });
+    try {
+        const state = libraryInsightsState();
+        state.snapshotError = null;
+        state.scopedCount = 2103;
+        state.sel = selOf({});
+        state.goBrowse();
+        const set = stub2.calls.find((c) => c[0] === 'setItem');
+        assert.deepEqual(JSON.parse(set[2]).pills, []);
+        assert.equal(stub2.calls.filter((c) => c[0] === 'assign').length, 1);
+    } finally {
+        stub2.restore();
+    }
+});

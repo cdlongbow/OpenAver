@@ -63,6 +63,7 @@ import {
     emptyKeyForCard,
 } from './charts.js';
 import { applyCellFocal } from '../../shared/focal-cell.js';
+import { applyHandoff } from '../../shared/showcase-handoff.js';
 
 let _pageshowBound = false;
 let _pageAlive = false;
@@ -252,6 +253,29 @@ export function libraryInsightsState() {
                 this.sel,
                 null,
             ).length;
+        },
+
+        /**
+         * TASK-161a-T7：片數格可點判定（唯一一處）。
+         * 讀真相欄位 scopedCount，不讀補間中的 displayScopedCount。
+         */
+        get canGoBrowse() {
+            return !this.snapshotError && this.scopedCount > 0;
+        },
+
+        /**
+         * TASK-161a-T7／CD-161a-5：把目前 sel 寫進 showcase_state 後同步導向瀏覽頁。
+         * 寫入失敗＝不導航，只 console.warn（I-handoff-1：寫入必須先於導航完成）。
+         */
+        goBrowse() {
+            if (!this.canGoBrowse) return;
+            try {
+                localStorage.setItem('showcase_state', applyHandoff(localStorage.getItem('showcase_state'), this.sel));
+            } catch (e) {
+                console.warn('goBrowse: 無法寫入 showcase_state，不導航', e);
+                return;
+            }
+            window.location.assign('/showcase');
         },
 
         /**

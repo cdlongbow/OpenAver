@@ -123,7 +123,16 @@
                 </div>
             </div>
         </section>
-        <section class="card" id="tileCount">
+        <section class="card"
+                 id="tileCount"
+                 role="button"
+                 :tabindex="canGoBrowse ? 0 : -1"
+                 :aria-disabled="canGoBrowse ? 'false' : 'true'"
+                 :class="{ 'is-clickable': canGoBrowse }"
+                 :title="canGoBrowse ? t('insights.count_open_browse') : ''"
+                 @click="goBrowse()"
+                 @keydown.enter.prevent="goBrowse()"
+                 @keydown.space.prevent="goBrowse()">
             <div class="card-body">
                 <div x-show="snapshotError" class="insights-tile-error">
                     <div class="insights-tile-value">—</div>
@@ -132,6 +141,7 @@
                 <div x-show="!snapshotError" class="insights-big-number">
                     <span class="insights-tile-value" x-text="Number(displayScopedCount).toLocaleString()"></span>
                     <span class="insights-tile-unit" x-text="t('insights.unit')"></span>
+                    <span class="insights-open-arrow" aria-hidden="true">↗</span>
                 </div>
                 <div x-show="!snapshotError" class="insights-tile-sub" x-text="totalCountLabel()"></div>
             </div>
