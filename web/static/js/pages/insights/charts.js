@@ -28,6 +28,8 @@ const _charts = new Map();
 const _observers = new Map();
 /** @type {string[]} */
 let _lastYearCats = [];
+/** @type {{startIdx:number,curIdx:number,onDocUp:Function}|null} 年份拖曳手勢狀態（不進 Alpine／sel） */
+let _yearsDrag = null;
 /** @type {Record<string, number>} */
 let _makerSlots = {};
 /** @type {Record<string, string>} 全庫主要片商年 map（init 算一次，重繪複用） */
@@ -148,6 +150,34 @@ function tKey(key, params) {
         return window.t(key, params);
     }
     return key;
+}
+
+/**
+ * 年份拖曳手勢的判定（CD-161a-4）。cats 與 _lastYearCats 同形（未知欄 UNKNOWN_KEY 在尾端）。
+ * 回傳 null（無動作）｜{kind:'point', year}｜{kind:'range', from, to}（from<to）。
+ * 起點不是真實年份欄 → null；終點夾在 [0, 最後一個真實年份欄]，非有限數視為沒移動；
+ * 夾限後兩端同欄 → 單點。
+ */
+export function resolveDragResult(startIdx, endIdx, cats) {
+    const list = Array.isArray(cats) ? cats : [];
+    const isReal = (i) =>
+        Number.isInteger(i) &&
+        i >= 0 &&
+        i < list.length &&
+        list[i] !== UNKNOWN_KEY &&
+        Number.isFinite(parseInt(list[i], 10));
+    let lastReal = -1;
+    for (let i = 0; i < list.length; i++) {
+        if (isReal(i)) lastReal = i;
+    }
+    if (!isReal(startIdx)) return null;
+    let end = Number.isFinite(endIdx) ? Math.round(endIdx) : startIdx;
+    end = Math.max(0, Math.min(end, lastReal));
+    if (!isReal(end)) return null;
+    const a = parseInt(list[startIdx], 10);
+    const b = parseInt(list[end], 10);
+    if (a === b) return { kind: 'point', year: a };
+    return { kind: 'range', from: Math.min(a, b), to: Math.max(a, b) };
 }
 
 /**
@@ -368,31 +398,72 @@ export function initYearsChart(containerEl, callbacks) {
 
     // 每次 init 都掛在新實例上（dispose 後舊 listener 隨實例消失）
     // 整支長條「柱身以外空白」也要能點到——用 getZr 原始像素，不是 series click。
-    chart.getZr().on('click', (ev) => {
-        const c = _charts.get('years');
-        if (!c || c.isDisposed() || !_yearsCallbacks) return;
-        // zrender 事件：優先 offsetX/Y；少數版本掛在 ev.event
+    // 單點與範圍由同一個手勢辨識器（mousedown→mousemove→mouseup）提交，不用 click。
+
+    // 像素 → 欄索引（可能 NaN／null）；不擋 grid 外，交給 resolveDragResult 夾限
+    const pixelToIdx = (c, ev) => {
         const oe = ev && ev.event ? ev.event : ev;
         const ox = oe && oe.offsetX != null ? oe.offsetX : ev.offsetX;
         const oy = oe && oe.offsetY != null ? oe.offsetY : ev.offsetY;
-        if (ox == null || oy == null) return;
-        const pointInPixel = [ox, oy];
-        if (!c.containPixel('grid', pointInPixel)) return;
-        const pointInGrid = c.convertFromPixel({ seriesIndex: 0 }, pointInPixel);
+        if (ox == null || oy == null) return { pixel: null, idx: NaN };
+        const pixel = [ox, oy];
+        const pointInGrid = c.convertFromPixel({ seriesIndex: 0 }, pixel);
         let idx = Array.isArray(pointInGrid) ? pointInGrid[0] : pointInGrid;
-        if (typeof idx === 'number') idx = Math.round(idx);
-        if (idx == null || idx < 0 || idx >= _lastYearCats.length) return;
-        const catName = _lastYearCats[idx];
-        if (catName === undefined || catName === UNKNOWN_KEY) return;
-        const y = parseInt(catName, 10);
-        if (Number.isNaN(y)) return;
+        idx = typeof idx === 'number' ? Math.round(idx) : NaN;
+        return { pixel, idx };
+    };
+
+    const finishDrag = () => {
+        const drag = _yearsDrag;
+        if (!drag) return; // 冪等：zr mouseup 與 document mouseup 只收尾一次
+        _yearsDrag = null;
+        document.removeEventListener('mouseup', drag.onDocUp);
+        if (!_yearsCallbacks) return;
+        const result = resolveDragResult(drag.startIdx, drag.curIdx, _lastYearCats);
+        if (!result) return;
+        if (result.kind === 'range') {
+            _yearsCallbacks.setPeriod({ type: 'range', from: result.from, to: result.to });
+            return;
+        }
         const sel = _yearsCallbacks.getSel();
         const cur = sel && sel.period;
-        if (cur && cur.type === 'year' && cur.year === y) {
+        if (cur && cur.type === 'year' && cur.year === result.year) {
             _yearsCallbacks.setPeriod({ type: 'all' });
         } else {
-            _yearsCallbacks.setPeriod({ type: 'year', year: y });
+            _yearsCallbacks.setPeriod({ type: 'year', year: result.year });
         }
+    };
+
+    chart.getZr().on('mousedown', (ev) => {
+        const c = _charts.get('years');
+        if (!c || c.isDisposed() || !_yearsCallbacks) return;
+        const oe = ev && ev.event ? ev.event : ev;
+        if (oe && oe.button != null && oe.button !== 0) return;
+        const { pixel, idx } = pixelToIdx(c, ev);
+        if (!pixel || !c.containPixel('grid', pixel)) return;
+        if (resolveDragResult(idx, idx, _lastYearCats) === null) return;
+        if (_yearsDrag) document.removeEventListener('mouseup', _yearsDrag.onDocUp);
+        const onDocUp = () => finishDrag();
+        _yearsDrag = { startIdx: idx, curIdx: idx, onDocUp };
+        document.addEventListener('mouseup', onDocUp);
+    });
+
+    chart.getZr().on('mousemove', (ev) => {
+        if (!_yearsDrag) return;
+        const c = _charts.get('years');
+        if (!c || c.isDisposed()) return;
+        const { idx } = pixelToIdx(c, ev);
+        if (Number.isFinite(idx)) _yearsDrag.curIdx = idx;
+    });
+
+    chart.getZr().on('mouseup', (ev) => {
+        if (!_yearsDrag) return;
+        const c = _charts.get('years');
+        if (c && !c.isDisposed()) {
+            const { idx } = pixelToIdx(c, ev);
+            if (Number.isFinite(idx)) _yearsDrag.curIdx = idx;
+        }
+        finishDrag();
     });
 }
 

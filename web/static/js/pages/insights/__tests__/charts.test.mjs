@@ -37,7 +37,9 @@ const {
     computeDonutStartAngle,
     escapeHtml,
     emptyKeyForCard,
+    resolveDragResult,
 } = await import('../charts.js');
+const { UNKNOWN_KEY } = await import('../aggregate.js');
 
 // ── escapeHtml（P3-1：tooltip renderMode:'html' 自訂 formatter XSS 修正）───
 
@@ -188,4 +190,41 @@ test('emptyKeyForCard: count 取該卡範圍內的片數，不是整體範圍', 
     const year2020 = cSel({ period: { type: 'year', year: 2020 } });
     assert.equal(emptyKeyForCard(records, year2020, null), 'insights.no_data');
     assert.equal(emptyKeyForCard(records, year2020, 'maker'), 'insights.no_data');
+});
+
+// ── resolveDragResult（TASK-161a-T6a：年份拖曳手勢的純判定）──────────────
+
+const dragCats = ['2018', '2019', '2020', '2021', '2022', '2023', UNKNOWN_KEY];
+
+test('resolveDragResult: 同欄放開視為單點，不論中途拖去哪裡', () => {
+    assert.deepEqual(resolveDragResult(2, 2, dragCats), { kind: 'point', year: 2020 });
+});
+
+test('resolveDragResult: 反向拖與正向拖結果相同', () => {
+    const fwd = resolveDragResult(1, 4, dragCats);
+    const rev = resolveDragResult(4, 1, dragCats);
+    assert.deepEqual(fwd, { kind: 'range', from: 2019, to: 2022 });
+    assert.deepEqual(rev, fwd);
+});
+
+test('resolveDragResult: 起於未知欄（或無效起點）不產生任何結果', () => {
+    for (const start of [6, null, -1, 99, 1.5]) {
+        assert.equal(resolveDragResult(start, 2, dragCats), null, 'start=' + start);
+    }
+});
+
+test('resolveDragResult: 終點在未知欄或畫布外時夾在最後一個真實年份欄', () => {
+    assert.deepEqual(resolveDragResult(2, 6, dragCats), { kind: 'range', from: 2020, to: 2023 });
+    assert.deepEqual(resolveDragResult(2, 99, dragCats), { kind: 'range', from: 2020, to: 2023 });
+    assert.deepEqual(resolveDragResult(2, -5, dragCats), { kind: 'range', from: 2018, to: 2020 });
+});
+
+test('resolveDragResult: 夾限後兩端同欄正規化成單點，不產生 from===to 的範圍', () => {
+    assert.deepEqual(resolveDragResult(5, 6, dragCats), { kind: 'point', year: 2023 });
+    assert.deepEqual(resolveDragResult(5, 99, dragCats), { kind: 'point', year: 2023 });
+});
+
+test('resolveDragResult: 終點算不出來（NaN／null）視為沒移動', () => {
+    assert.deepEqual(resolveDragResult(3, NaN, dragCats), { kind: 'point', year: 2021 });
+    assert.deepEqual(resolveDragResult(3, null, dragCats), { kind: 'point', year: 2021 });
 });
