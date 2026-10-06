@@ -234,7 +234,7 @@ export function libraryInsightsState() {
         colorForMakerName,
         // P3-3：以女優名為 key，記錄該人頭像照片曾經載入失敗——取代舊版
         // @error 直接改寫 DOM textContent 的寫法（會把 x-if 錨點一併砍掉，
-        // Alpine 之後永遠無法再插回新內容）。焦點格與 Top20 共用同一份。
+        // Alpine 之後永遠無法再插回新內容）。女優格與 Top20 共用同一份。
         photoFailed: {},
 
         // 模板 @load / $watch 呼叫（同 showcase 揭露慣例）
@@ -615,23 +615,23 @@ export function libraryInsightsState() {
 
         /**
          * 設女優條件（再點同一位清掉）。寫 this.sel（整個換新），由 $watch('sel') 重繪。
-         * 業務鍵字串比對（FE-ALPINE-14）。T5a 暫時單焦點：設女優時清掉片商（T5b 刪此互斥）。
+         * 業務鍵字串比對（FE-ALPINE-14）。女優與片商各自獨立、可同時有值（疊加）。
          */
         toggleActressFocus(name) {
             if (!name) return;
-            this.sel = { ...toggleActress(this.sel, name), maker: null };
+            this.sel = toggleActress(this.sel, name);
         },
 
         /**
-         * 設片商條件（圓餅點擊；再點同一家清掉）。T5a 暫時單焦點：設片商時清掉女優。
+         * 設片商條件（圓餅點擊；再點同一家清掉）。不動女優條件（疊加）。
          */
         toggleMakerFocus(name) {
             if (!name) return;
-            this.sel = { ...toggleMaker(this.sel, name), actress: null };
+            this.sel = toggleMaker(this.sel, name);
         },
 
         /**
-         * TASK-156e-T2／CD-156e-5：五入口共用——設女優焦點並從頭像起飛到焦點格。
+         * TASK-156e-T2／CD-156e-5：五入口共用——設女優焦點並從頭像起飛到女優格（#tileActress）。
          * 清除焦點／找不到頭像時只走 toggle，不飛。
          */
         flyAndFocusActress(name, event) {
@@ -643,7 +643,7 @@ export function libraryInsightsState() {
                     staleGhost.remove();
                     _activeAvatarGhost = null;
                 }
-                const clearingTarget = document.querySelector('#tileFocus .insights-focus-avatar:not(.mk)');
+                const clearingTarget = document.querySelector('#tileActress .insights-focus-avatar:not(.mk)');
                 if (clearingTarget) {
                     clearingTarget.removeAttribute('data-avatar-fly-hidden');
                     clearingTarget.style.opacity = '1';
@@ -712,7 +712,7 @@ export function libraryInsightsState() {
             // 來源節點在 $nextTick 時可能已被 Alpine 拆掉／清空。
             const sourceClone = sourceEl.cloneNode(true);
             this.toggleActressFocus(name);
-            // 雙 rAF：等 Alpine 插入焦點格 + 一幀 layout（costar 進場等）後再量終點，
+            // 雙 rAF：等 Alpine 插入女優格頭像 + 一幀 layout（costar 進場等）後再量終點，
             // 避免 targetContainerRect 與真實落點差幾 px。
             this.$nextTick(() => {
                 requestAnimationFrame(() => {
@@ -725,7 +725,7 @@ export function libraryInsightsState() {
 
         /**
          * TASK-156e-T2／CD-156e-5／F2：建立容器相對（.insights-container，見下方
-         * 「不用 this.$root」註解）的 ghost，飛向焦點格頭像。sourceRect 是點擊當下
+         * 「不用 this.$root」註解）的 ghost，飛向女優格頭像。sourceRect 是點擊當下
          * 換算好的容器相對座標。
          */
         _flyAvatarToFocusTile(sourceEl, sourceRect, sourceStyle, sourceImgStyle) {
@@ -734,7 +734,7 @@ export function libraryInsightsState() {
                 _activeAvatarGhost = null;
             }
 
-            const target = document.querySelector('#tileFocus .insights-focus-avatar:not(.mk)');
+            const target = document.querySelector('#tileActress .insights-focus-avatar:not(.mk)');
             if (!target) return;
 
             const motion = window.OpenAver && window.OpenAver.motion;
@@ -812,7 +812,7 @@ export function libraryInsightsState() {
             window.AvatarFly.playFlyToFocus(ghost, targetContainerRect, {
                 onComplete: () => {
                     if (!(_activeAvatarGhost && _activeAvatarGhost.el === ghost)) return;
-                    // 補間結束後對齊到「此刻」焦點格（layout 可能在飛行中微移），
+                    // 補間結束後對齊到「此刻」女優格（layout 可能在飛行中微移），
                     // 留一幀給取樣再移除，滿足落地誤差 <2px。
                     // 用 inline style（不直呼 gsap——pages/insights 禁令）。
                     const live = target.getBoundingClientRect();
@@ -1324,9 +1324,14 @@ export function libraryInsightsState() {
             this.sel = { ...this.sel, period: { type: 'all' } };
         },
 
-        // 清掉女優與片商兩個條件，保留期間
-        clearFocus() {
-            this.sel = { ...this.sel, actress: null, maker: null };
+        // 女優格的 ×：只清女優，保留期間與片商
+        clearActress() {
+            this.sel = { ...this.sel, actress: null };
+        },
+
+        // 片商格的 ×：只清片商，保留期間與女優
+        clearMaker() {
+            this.sel = { ...this.sel, maker: null };
         },
 
         /**
@@ -1468,12 +1473,12 @@ export function libraryInsightsState() {
         },
 
         focusMakerColor() {
-            if (this.sel.actress != null || this.sel.maker == null) return '';
+            if (this.sel.maker == null) return '';
             return colorForMakerName(this.sel.maker);
         },
 
         focusInitial() {
-            const name = this.sel.actress != null ? this.sel.actress : this.sel.maker;
+            const name = this.sel.actress;
             if (!name) return '';
             return String(name).charAt(0);
         },
@@ -1673,7 +1678,7 @@ export function libraryInsightsState() {
                 this._maybePlayPinPulse();
                 this.recomputeCostar();
                 // TASK-156d-T9 round 3 audit：這裡不需要呼叫 _syncCostarVisibility()
-                // ——this.sel 只能被 toggleActressFocus()／clearFocus()／donut 片商
+                // ——this.sel 只能被 toggleActressFocus()／clearActress()／clearMaker()／donut 片商
                 // 點擊回呼／年份圖點擊寫入，都要點擊已渲染的 UI 才觸發，而這些 UI 在首次快照成功
                 // 前不存在，所以 _loadSnapshot() 執行到這裡時 this.sel 必為初始
                 // 值（未選女優），costarVisible 恆 false，跟預設顯示旗標（showTop20InRow3:

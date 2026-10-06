@@ -5202,6 +5202,15 @@ const RULES = [
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: `x-show="sel.period.type !== 'all'"`, scope: { anchor: /id="tileYear"/, window: 600 }, note: '[161a-T5a] #tileYear 期間非 all（含範圍）就顯示年份值與 ×：只認 year 會讓範圍選取後年份格變回「全部年份」、× 消失' },
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'periodTileLabel()', note: '[161a-T5a] 模板消費的新接線：年份格顯示值（periodTileLabel）' },
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'cardEmptyKey(', count: 5, note: '[161a-T5a] 模板消費的新接線：五張卡的空狀態文字都走 cardEmptyKey（模板現有 5 處，下限）' },
+
+  // ---- [161a-T5b] 頂排拆女優格／片商格、兩條件疊加 ----
+  { file: 'web/static/js/pages/insights/state.js', kind: 'required-string', pattern: '#tileActress .insights-focus-avatar:not(.mk)', count: 2, note: '[161a-T5b] state.js 頭像飛行目標是 #tileActress（清除分支與 _flyAvatarToFocusTile 各一處）：指到別格＝替身飛不到頭像、卡在半空' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: '@click="clearMaker()"', scope: { anchor: /id="tileMaker"/, window: 2500 }, note: '[161a-T5b] #tileMaker 的 × 接 clearMaker：接成別的＝按片商格的 × 清掉別的條件' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: '@click="clearActress()"', scope: { anchor: /id="tileActress"/, window: 2500 }, note: '[161a-T5b] #tileActress 的 × 接 clearActress：接成別的＝按女優格的 × 清掉別的條件' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: "t('insights.all_maker')", scope: { anchor: /id="tileMaker"/, window: 2500 }, note: '[161a-T5b] #tileMaker 未選時顯示淡色「全部片商」：寫成別的字＝使用者分不出兩格' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: "t('insights.all_actress')", scope: { anchor: /id="tileActress"/, window: 2500 }, note: '[161a-T5b] #tileActress 未選時顯示淡色「全部女優」：寫成別的字＝使用者分不出兩格' },
+  { file: 'web/templates/insights.html', kind: 'forbidden-string', pattern: 'tileFocus', note: '[161a-T5b] 頂排無 #tileFocus（insights.html）：舊的單一焦點格已拆成 #tileActress／#tileMaker' },
+  { file: 'web/static/js/pages/insights/state.js', kind: 'forbidden-string', pattern: 'tileFocus', note: '[161a-T5b] 頂排無 #tileFocus（state.js）：舊的單一焦點格已拆成 #tileActress／#tileMaker' },
 ];
 
 // ---- helpers ----

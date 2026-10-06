@@ -1634,11 +1634,7 @@
     "period_empty": "这个期间没有符合的片",
     "unit": "部",
     "all_years": "全部年份",
-    "all_focus": "全部",
     "clear_year": "清除年份",
-    "clear_focus": "清除焦点",
-    "focus_type_actress": "女优",
-    "focus_type_maker": "片商",
     "row": {
       "years": "年份",
       "makers": "片商",

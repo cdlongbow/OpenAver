@@ -1103,11 +1103,11 @@ N/A — 書籤牆／燈箱純瀏覽器互動，不依賴原生 picker。「加�
 1. **[MCP] Sidebar 導航**：`/showcase` 頁展開側欄，找「瀏覽」下方頒獎台圖示的新連結
    （`nav.insights`，`href="/insights"`）→ 點擊
    - **驗**：導向 `/insights`，`.insights-container[x-data="libraryInsights"]` 存在
-2. **[MCP] 常駐四格**：讀 `#tileCount .insights-tile-value`、`#tileYear`、`#tileFocus`
+2. **[MCP] 常駐五格**：讀 `#tileCount .insights-tile-value`、`#tileYear`、`#tileActress`、`#tileMaker`
    - **驗**：`#tileCount` 顯示非 `—` 的數字（`snapshotError` 為 false 時），下方有一行
      「全庫 N 部」（`totalCountLabel()`）
-   - **驗**：`#tileYear`／`#tileFocus` 初始顯示淡色「全部」（`insights.all_years` /
-     `insights.all_focus`），非 raw i18n key
+   - **驗**：`#tileYear`／`#tileActress`／`#tileMaker` 初始各顯示淡色「全部年份」「全部女優」「全部片商」
+     （`insights.all_years` / `insights.all_actress` / `insights.all_maker`），非 raw i18n key
 3. **[MCP] 圖表渲染**：依序確認以下 echart 容器存在且有內容（`canvas` 或
    `getBoundingClientRect().height > 0`）：`#yearsChart`、`#donutChart`、
    `.top20-row3-wrap .podium-slot, .top20-row3-wrap .rest20-row`
@@ -1123,13 +1123,13 @@ N/A — 書籤牆／燈箱純瀏覽器互動，不依賴原生 picker。「加�
    - **驗**：點 `×`（`insights.clear_year`）→ `#tileYear` 回到「全部」
 5. **[MCP] 點頒獎台設定女優焦點**：`.top20-row3-wrap .podium-slot--center`（第 1 名台座，一定存在
    只要範圍內有女優）點擊
-   - **驗**：`#tileFocus` 顯示該女優名字（`insights.focus_type_actress`）與 `×`
+   - **驗**：`#tileActress` 顯示該女優名字與 `×`（`insights.clear_actress`），`#tileMaker` 仍是淡色「全部片商」
    - **驗**：若該女優有共演作品，`#costarCard`（「與她同片」，TASK-156d-T3 起搬到 row3
      左半格、與 `.top20-row3-wrap` 循序淡出淡入互斥顯示）從 `is-hidden`
      （`display:none`）變成可見、`#costarList` 有列；若她沒有共演作品
      （TASK-156d-T9 起），`#costarCard` 不出現，`.top20-row3-wrap`（頒獎台＋名單）
      維持顯示，不應出現空白的「與她同片」卡片
-   - **驗**：點 `#tileFocus` 的 `×`（`insights.clear_focus`）→ 焦點清除，`#costarCard` 隱藏，
+   - **驗**：點 `#tileActress` 的 `×`（`insights.clear_actress`）→ 女優條件清除（`#tileMaker` 若有值則保留），`#costarCard` 隱藏，
      `.top20-row3-wrap` 同時恢復可見（settle 後互斥顯示）
 6. **[MCP] 主要片商年表 年/年齡 toggle**：`.insights-gantt-toggle` 兩顆按鈕
    - **驗**：預設 `year` 高亮（`is-on`），點「年齡」按鈕 → class 切到年齡那顆、
@@ -1178,7 +1178,7 @@ N/A — 書籤牆／燈箱純瀏覽器互動，不依賴原生 picker。「加�
 
 - `/insights` 進頁後圖表容器空白且無 `no_data`/`period_empty` 文案 → ECharts 初始化失敗或
   資料契約壞了
-- 點年份/女優後 `#tileYear`/`#tileFocus` 沒有反應，或 `×` 按了焦點沒清 → 焦點狀態機壞了
+- 點年份/女優後 `#tileYear`/`#tileActress`/`#tileMaker` 沒有反應，或 `×` 按了條件沒清、按了清到別格（女優與片商應疊加、各自只清自己） → 條件狀態機壞了
 - 選了年份後長條數字被改成 0（而非用亮暗表示選取）→ 違反「數字永遠顯示完整歷年收藏」的設計
 - 從 `/showcase` bfcache 返回 `/insights` 白頁或圖表消失 → 上次載入中途離開的清理沒做好
 - 燈箱／封面牆年齡格式跑掉（不是 ` (NNy)`）、或兩位以上女優的封面牆卡片底部（眼睛關閉時）

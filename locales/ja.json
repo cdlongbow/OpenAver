@@ -1634,11 +1634,7 @@
     "period_empty": "この期間に該当する作品はありません",
     "unit": "本",
     "all_years": "すべての年",
-    "all_focus": "すべて",
     "clear_year": "年をクリア",
-    "clear_focus": "フォーカスをクリア",
-    "focus_type_actress": "女優",
-    "focus_type_maker": "メーカー",
     "row": {
       "years": "年別",
       "makers": "メーカー",

@@ -32,6 +32,7 @@ globalThis.document = globalThis.document || {
 
 const { computePreviewPosition, libraryInsightsState, shouldPlayPodiumEntrance, computeCostarVisible } = await import('../state.js');
 const { setRecords } = await import('../aggregate.js');
+const { refreshMakerColorSlots } = await import('../charts.js');
 
 // 測試用手組 sel（三條件，預設全空）
 function selOf(over) {
@@ -570,22 +571,91 @@ test('ganttView: 快取鍵認整個 sel，只換片商或只換期間也必須�
     }
 });
 
-test('toggleMakerFocus／toggleActressFocus: 單焦點互斥，期間保留', () => {
+test('toggleMakerFocus／toggleActressFocus: 疊加不互斥，期間與另一條件保留', () => {
     const state = libraryInsightsState();
     const period = { type: 'range', from: 2019, to: 2023 };
     state.sel = selOf({ period, actress: 'A' });
     state.toggleMakerFocus('S1');
+    assert.deepEqual(state.sel, { period, actress: 'A', maker: 'S1' });
+    state.toggleActressFocus('A');
     assert.deepEqual(state.sel, { period, actress: null, maker: 'S1' });
     state.toggleActressFocus('B');
-    assert.deepEqual(state.sel, { period, actress: 'B', maker: null });
+    assert.deepEqual(state.sel, { period, actress: 'B', maker: 'S1' });
     state.toggleActressFocus('B');
-    assert.deepEqual(state.sel, { period, actress: null, maker: null });
-    state.toggleMakerFocus('S1');
     state.toggleMakerFocus('S1');
     assert.deepEqual(state.sel, { period, actress: null, maker: null });
-    state.sel = selOf({ period, actress: 'A' });
-    state.clearFocus();
-    assert.deepEqual(state.sel, { period, actress: null, maker: null });
+});
+
+test('clearActress／clearMaker: 各自只清自己那一條件，期間保留', () => {
+    const state = libraryInsightsState();
+    const period = { type: 'year', year: 2021 };
+    state.sel = selOf({ period, actress: 'A', maker: 'S1' });
+    state.clearActress();
+    assert.deepEqual(state.sel, { period, actress: null, maker: 'S1' });
+    state.sel = selOf({ period, actress: 'A', maker: 'S1' });
+    state.clearMaker();
+    assert.deepEqual(state.sel, { period, actress: 'A', maker: null });
+});
+
+test('costarVisible getter: 加選片商使與她同片 0 筆時為 false，清掉片商後恢復', () => {
+    setRecords([
+        rec({ actresses: ['A', 'B'], maker: 'X' }),
+        rec({ actresses: ['A'], maker: 'Y' }),
+    ]);
+    try {
+        const state = libraryInsightsState();
+        state.sel = selOf({ actress: 'A' });
+        state.recomputeCostar();
+        assert.equal(state.costarRows.length, 1, '只選 A：與 B 同片');
+        assert.equal(state.costarVisible, true);
+        state.toggleMakerFocus('Y');
+        state.recomputeCostar();
+        assert.equal(state.costarRows.length, 0, '加選 Y：A 在 Y 沒有同片');
+        assert.equal(state.costarVisible, false);
+        state.clearMaker();
+        state.recomputeCostar();
+        assert.equal(state.costarVisible, true, '清掉片商後恢復');
+        state.sel = selOf({ maker: 'X' });
+        state.recomputeCostar();
+        assert.equal(state.costarVisible, false, '只有片商恆 false');
+    } finally {
+        setRecords([]);
+    }
+});
+
+test('focusMakerColor／focusInitial: 片商色點不受女優條件影響，頭像字母只取女優', () => {
+    setRecords([rec({ actresses: ['Alice'], maker: 'SOD' })]);
+    const hadGcs = Object.prototype.hasOwnProperty.call(globalThis, 'getComputedStyle');
+    const oldGcs = globalThis.getComputedStyle;
+    // node 無 DOM：色票解析要 getComputedStyle，給固定回傳讓「有值／空」可斷言
+    globalThis.getComputedStyle = () => ({ color: 'rgb(10, 20, 30)' });
+    const oldCreate = document.createElement;
+    document.createElement = () => ({
+        style: {},
+        appendChild() {},
+        getContext: () => ({
+            fillRect() {},
+            getImageData: () => ({ data: [10, 20, 30, 255] }),
+        }),
+    });
+    try {
+        refreshMakerColorSlots();
+        const state = libraryInsightsState();
+        state.sel = selOf({ maker: 'SOD' });
+        const solo = state.focusMakerColor();
+        assert.ok(solo, '只選片商：色票非空');
+        state.sel = selOf({ actress: 'Alice', maker: 'SOD' });
+        assert.equal(state.focusMakerColor(), solo, '疊加女優後色點不變');
+        assert.equal(state.focusInitial(), 'A', '字母取女優首字');
+        state.sel = selOf({ maker: 'SOD' });
+        assert.equal(state.focusInitial(), '', '只有片商時不取字母');
+        state.sel = selOf({ actress: 'Alice' });
+        assert.equal(state.focusMakerColor(), '', '無片商回空');
+    } finally {
+        document.createElement = oldCreate;
+        if (hadGcs) globalThis.getComputedStyle = oldGcs; else delete globalThis.getComputedStyle;
+        setRecords([]);
+    }
 });
 
 test('periodTileLabel: range 顯示 2019–2023、單年顯示年份、all 為空字串', () => {

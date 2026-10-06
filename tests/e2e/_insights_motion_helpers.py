@@ -4,7 +4,7 @@ from playwright.sync_api import Page
 ALPINE = '[x-data="libraryInsights"]'
 DESKTOP, MOBILE = 1440, 390
 GHOST = "[data-avatar-fly-ghost]"
-FOCUS_AV = "#tileFocus .insights-focus-avatar:not(.mk)"
+ACTRESS_TILE_AV = "#tileActress .insights-focus-avatar:not(.mk)"
 SETTLE_MS = 3_500
 ACTIVE_FLIP = """(t) => {
     if (!t || t === 'none' || t === '') return false;
@@ -62,7 +62,7 @@ def wait_settled(page: Page, timeout: int = SETTLE_MS) -> None:
             { window.__oaSettleN = 0; return false; }
         window.__oaSettleN = (window.__oaSettleN || 0) + 1;
         return window.__oaSettleN >= 3;
-    }""" % (ACTIVE_FLIP, ALPINE, GHOST, FOCUS_AV), timeout=timeout)
+    }""" % (ACTIVE_FLIP, ALPINE, GHOST, ACTRESS_TILE_AV), timeout=timeout)
     page.wait_for_timeout(50)
 def residue(page: Page) -> dict:
     return page.evaluate("""() => {

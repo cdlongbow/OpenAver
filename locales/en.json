@@ -1634,11 +1634,7 @@
     "period_empty": "No matching videos in this period",
     "unit": "videos",
     "all_years": "All Years",
-    "all_focus": "All",
     "clear_year": "Clear Year",
-    "clear_focus": "Clear Focus",
-    "focus_type_actress": "Actress",
-    "focus_type_maker": "Maker",
     "row": {
       "years": "Year",
       "makers": "Makers",
