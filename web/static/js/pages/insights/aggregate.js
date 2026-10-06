@@ -14,6 +14,7 @@
  */
 
 import { computeActressAgeForVideo } from '../../shared/actress-release-age.js';
+import { normalizePillValue } from '../../shared/pill-filter.js';
 
 /** 年份「未知」分類與片商「未知」桶的內部鍵；畫面顯示文字由 charts.js（T3）做 i18n 映射。 */
 export const UNKNOWN_KEY = '__unknown__';
@@ -27,10 +28,53 @@ export var _records = [];
 export function setRecords(records) {
     _records.length = 0;
     for (const item of (records || [])) _records.push(item);
+    canonicalizeMakers(_records);
 }
 
 export function getRecords() {
     return _records;
+}
+
+/**
+ * 片商大小寫／全半形／空白合併（TASK-161a-T2a）。
+ * 就地改寫 records[].maker 為該組最常見的原始寫法，平手取字串遞增最小者。
+ */
+export function canonicalizeMakers(records) {
+    if (!records || records.length === 0) return;
+    var groups = new Map();
+    records.forEach(function (r) {
+        var mk = r && r.maker;
+        if (mk == null || mk === '') return;
+        var key = normalizePillValue(mk);
+        if (key === '') return;
+        var counts = groups.get(key);
+        if (!counts) {
+            counts = new Map();
+            groups.set(key, counts);
+        }
+        counts.set(mk, (counts.get(mk) || 0) + 1);
+    });
+
+    var canonical = new Map();
+    groups.forEach(function (counts) {
+        var best = null;
+        var bestN = -1;
+        counts.forEach(function (n, s) {
+            if (n > bestN || (n === bestN && s < best)) { best = s; bestN = n; }
+        });
+        counts.forEach(function (_, s) {
+            canonical.set(s, best);
+        });
+    });
+
+    records.forEach(function (r) {
+        var mk = r && r.maker;
+        if (!mk) return;
+        var target = canonical.get(mk);
+        if (target !== undefined) {
+            r.maker = target;
+        }
+    });
 }
 
 /**

@@ -9,6 +9,7 @@ const agg = await import('../aggregate.js');
 const {
     setRecords,
     getRecords,
+    canonicalizeMakers,
     buildMakerColorSlots,
     buildMainMakerYearMap,
 } = agg;
@@ -71,6 +72,137 @@ test('setRecords/getRecords: 內容逐項相同但不是同一個陣列 referenc
     setRecords([rec({ maker: 'IdeaPocket' })]);
     assert.equal(getRecords().length, 1);
     assert.equal(getRecords()[0].maker, 'IdeaPocket');
+});
+
+// ── canonicalizeMakers ────────────────────────────────────────────────
+
+test('canonicalizeMakers: 顯示寫法取組內出現最多次者', () => {
+    const records = [
+        rec({ maker: 'MOODYZ' }),
+        rec({ maker: 'Moodyz' }),
+        rec({ maker: 'Moodyz' }),
+        rec({ maker: 'Moodyz' }),
+    ];
+    canonicalizeMakers(records);
+    assert.equal(records[0].maker, 'Moodyz');
+    assert.equal(records[1].maker, 'Moodyz');
+    assert.equal(records[2].maker, 'Moodyz');
+    assert.equal(records[3].maker, 'Moodyz');
+});
+
+test('canonicalizeMakers: 次數相同時取字串遞增最小者', () => {
+    const records = [
+        rec({ maker: 'alpha' }),
+        rec({ maker: 'Alpha' }),
+        rec({ maker: 'alpha' }),
+        rec({ maker: 'Alpha' }),
+    ];
+    canonicalizeMakers(records);
+    assert.equal(records[0].maker, 'Alpha');
+    assert.equal(records[1].maker, 'Alpha');
+    assert.equal(records[2].maker, 'Alpha');
+    assert.equal(records[3].maker, 'Alpha');
+});
+
+test('canonicalizeMakers: MOODYZ／Moodyz／ＭＯＯＤＹＺ／前後空白合成一家', () => {
+    const records = [
+        rec({ maker: 'Moodyz' }),
+        rec({ maker: 'Moodyz' }),
+        rec({ maker: 'MOODYZ' }),
+        rec({ maker: 'ＭＯＯＤＹＺ' }),
+        rec({ maker: ' moodyz ' }),
+    ];
+    canonicalizeMakers(records);
+    assert.equal(records[0].maker, 'Moodyz');
+    assert.equal(records[1].maker, 'Moodyz');
+    assert.equal(records[2].maker, 'Moodyz');
+    assert.equal(records[3].maker, 'Moodyz');
+    assert.equal(records[4].maker, 'Moodyz');
+});
+
+test('canonicalizeMakers: null、空字串與全空白不分組、不被改寫', () => {
+    const records = [
+        rec({ maker: null }),
+        rec({ maker: '' }),
+        rec({ maker: '   ' }),
+        rec({ maker: '\t' }),
+    ];
+    canonicalizeMakers(records);
+    assert.equal(records[0].maker, null);
+    assert.equal(records[1].maker, '');
+    assert.equal(records[2].maker, '   ');
+    assert.equal(records[3].maker, '\t');
+});
+
+test('canonicalizeMakers: 字面不同的別名仍是兩家', () => {
+    const records = [
+        rec({ maker: 'カリビアンコム' }),
+        rec({ maker: 'カリビアンコム( Caribbeancom )' }),
+    ];
+    canonicalizeMakers(records);
+    assert.equal(records[0].maker, 'カリビアンコム');
+    assert.equal(records[1].maker, 'カリビアンコム( Caribbeancom )');
+});
+
+test('canonicalizeMakers: 合併後 buildMakerColorSlots 與 buildMakerDonutData 各只有一塊', () => {
+    try {
+        setRecords([
+            rec({ maker: 'Moodyz' }),
+            rec({ maker: 'Moodyz' }),
+            rec({ maker: 'MOODYZ' }),
+            rec({ maker: 'ＭＯＯＤＹＺ' }),
+        ]);
+        const recs = getRecords();
+        const slots = buildMakerColorSlots(recs);
+        assert.deepEqual(Object.keys(slots), ['Moodyz']);
+        assert.equal(slots['Moodyz'], 0);
+
+        const donut = buildMakerDonutData(recs, {});
+        const named = donut.inner.filter((e) => e.kind === 'named');
+        assert.equal(named.length, 1);
+        assert.equal(named[0].name, 'Moodyz');
+        assert.equal(named[0].value, 4);
+    } finally {
+        setRecords([]);
+    }
+});
+
+test('setRecords: 進場一次合併片商，getRecords 讀到合併後的值', () => {
+    try {
+        setRecords([
+            rec({ maker: 'MOODYZ' }),
+            rec({ maker: 'Moodyz' }),
+            rec({ maker: 'Moodyz' }),
+        ]);
+        const got = getRecords();
+        assert.equal(got.length, 3);
+        assert.equal(got[0].maker, 'Moodyz');
+        assert.equal(got[1].maker, 'Moodyz');
+        assert.equal(got[2].maker, 'Moodyz');
+    } finally {
+        setRecords([]);
+    }
+});
+
+test('setRecords: 連續兩次設定不殘留上一批的合併結果（module singleton）', () => {
+    try {
+        setRecords([
+            rec({ maker: 'Moodyz' }),
+            rec({ maker: 'MOODYZ' }),
+        ]);
+        setRecords([
+            rec({ maker: 'S1' }),
+            rec({ maker: 's1' }),
+            rec({ maker: 'S1' }),
+        ]);
+        const got = getRecords();
+        assert.equal(got.length, 3);
+        assert.equal(got[0].maker, 'S1');
+        assert.equal(got[1].maker, 'S1');
+        assert.equal(got[2].maker, 'S1');
+    } finally {
+        setRecords([]);
+    }
 });
 
 // ── buildMakerColorSlots ─────────────────────────────────────────────
