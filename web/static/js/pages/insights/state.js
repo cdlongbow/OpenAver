@@ -32,6 +32,7 @@ import {
     periodContainsYear,
     toggleActress,
     toggleMaker,
+    toggleGanttCell,
     scopeRecords,
     periodLabel,
     suffixLabel,
@@ -662,11 +663,33 @@ export function libraryInsightsState() {
             this.sel = toggleMaker(this.sel, name);
         },
 
+        _commitFocusSel(name, nextSel) {
+            if (nextSel) { this.sel = nextSel; return; }
+            this.toggleActressFocus(name);
+        },
+
+        ganttCellClick(name, cell, axis, event) {
+            this.cancelOpenPreview(); // 格子點擊先收預覽（四分支皆適用）
+            const year = (axis === 'year' && cell && cell.filmCount > 0) ? cell.year : null;
+            if (year === null && this.sel.actress === name) return;
+            const rowEl = event.currentTarget.closest('.gantt-row');
+            if (year === null) {
+                this.flyAndFocusActress(name, { currentTarget: rowEl });
+                return;
+            }
+            const nextSel = toggleGanttCell(this.sel, name, year);
+            if (this.sel.actress === name) {
+                this.sel = nextSel;
+                return;
+            }
+            this.flyAndFocusActress(name, { currentTarget: rowEl }, nextSel);
+        },
+
         /**
          * TASK-156e-T2／CD-156e-5：五入口共用——設女優焦點並從頭像起飛到女優格（#tileActress）。
          * 清除焦點／找不到頭像時只走 toggle，不飛。
          */
-        flyAndFocusActress(name, event) {
+        flyAndFocusActress(name, event, nextSel) {
             this.cancelOpenPreview();
             const isClearing = this.sel.actress === name;
             if (isClearing) {
@@ -681,7 +704,7 @@ export function libraryInsightsState() {
                     clearingTarget.removeAttribute('data-avatar-fly-hidden');
                     clearingTarget.style.opacity = '1';
                 }
-                this.toggleActressFocus(name);
+                this._commitFocusSel(name, nextSel);
                 return;
             }
             let sourceEl = null;
@@ -695,7 +718,7 @@ export function libraryInsightsState() {
                 else if (currentTarget.matches('.costar-row')) selector = '[data-costar-role="other"]';
                 if (selector) sourceEl = currentTarget.querySelector(selector);
             }
-            if (!sourceEl) { this.toggleActressFocus(name); return; }
+            if (!sourceEl) { this._commitFocusSel(name, nextSel); return; }
             const sourceRect = sourceEl.getBoundingClientRect();
             // getComputedStyle 回傳 live CSSStyleDeclaration；toggle 後 Alpine 可能拆掉
             // 來源節點，之後讀屬性會變空字串。toggle 前拍成純物件快照。
@@ -744,7 +767,7 @@ export function libraryInsightsState() {
             // 必須在 toggle 前 clone：焦點一變，與她同片列會重算重繪，
             // 來源節點在 $nextTick 時可能已被 Alpine 拆掉／清空。
             const sourceClone = sourceEl.cloneNode(true);
-            this.toggleActressFocus(name);
+            this._commitFocusSel(name, nextSel);
             // 雙 rAF：等 Alpine 插入女優格頭像 + 一幀 layout（costar 進場等）後再量終點，
             // 避免 targetContainerRect 與真實落點差幾 px。
             this.$nextTick(() => {

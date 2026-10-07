@@ -5255,6 +5255,16 @@ const RULES = [
   { file: "web/static/js/pages/insights/state.js", kind: "required-string", pattern: "if (!isHoverPointer(ev)) return;", note: "[161b-T5] scheduleOpenPreview 第一行以 isHoverPointer 擋觸控" },
   { file: "web/static/js/pages/insights/state.js", kind: "required-string", pattern: "this.cancelOpenPreview();", scope: { anchor: /flyAndFocusActress\(name, event/, window: 200 }, note: "[161b-T5] flyAndFocusActress 進入先 cancelOpenPreview" },
 
+  // ---- [161b-T6] 年表格子選女優與年份 ----
+  { file: "web/templates/insights.html", kind: "required-string", pattern: "@click.stop=\"ganttCellClick(row.name, cell, ganttAxis, $event)\"", note: "[161b-T6] 年表格子 click 接 ganttCellClick 並 .stop（不冒泡到列）" },
+  { file: "web/static/js/pages/insights/state.js", kind: "required-string", pattern: "toggleGanttCell(this.sel, name, year)", note: "[161b-T6] 年表格子 click 接 ganttCellClick 並 .stop（不冒泡到列）" },
+  { file: "web/static/js/pages/insights/state.js", kind: "required-string", pattern: ".closest('.gantt-row')", note: "[161b-T6] 年表格子 click 接 ganttCellClick 並 .stop（不冒泡到列）" },
+  { file: "web/static/js/pages/insights/state.js", kind: "required-string", pattern: "flyAndFocusActress(name, event, nextSel) {", note: "[161b-T6] flyAndFocusActress 三個提交出口一律走 _commitFocusSel" },
+  { file: "web/static/js/pages/insights/state.js", kind: "structure-count", pattern: "this._commitFocusSel(name, nextSel)", count: 3, note: "[161b-T6] flyAndFocusActress 三個提交出口一律走 _commitFocusSel" },
+  { file: "web/static/js/pages/insights/state.js", kind: "structure-count", pattern: "this.toggleActressFocus(name);", count: 1, note: "[161b-T6] flyAndFocusActress 三個提交出口一律走 _commitFocusSel" },
+  { file: "web/static/js/pages/insights/state.js", kind: "structure-count", pattern: "{ currentTarget: rowEl }", count: 2, note: "[161b-T6] 年表格子 click 接 ganttCellClick 並 .stop（不冒泡到列）" },
+  { file: "web/static/css/pages/insights.css", kind: "required-string", pattern: "cursor: pointer;", scope: { anchor: /\.gantt-row:not\(\.gantt-head-row\)/, window: 80 }, note: "[161b-T6] 年表資料列（排除表頭列）游標為 pointer" },
+
 ];
 
 // ---- helpers ----

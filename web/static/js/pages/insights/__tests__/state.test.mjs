@@ -182,6 +182,91 @@ test('flyAndFocusActress: 進入先收掉已開的預覽（hover 後直接點選
     assert.equal(state.sel.actress, '她');
 });
 
+// TASK-161b-T6：以 setter 計算整份 sel 提交次數。
+function ganttClickState() {
+    const state = libraryInsightsState();
+    state.sel = { period: { type: 'all' }, actress: null, maker: null };
+    let current = state.sel;
+    let commits = 0;
+    Object.defineProperty(state, 'sel', {
+        get: () => current,
+        set: (value) => { current = value; commits += 1; },
+    });
+    return { state, commits: () => commits };
+}
+
+test('ganttCellClick: 無片格或年齡軸且她已被選中，完全無動作（不飛行、sel 零次提交、預覽收掉）', () => {
+    for (const [cell, axis] of [
+        [{ year: 2022, state: 'empty', filmCount: 0 }, 'year'],
+        [{ age: 25, state: 'main', filmCount: 2 }, 'age'],
+    ]) {
+        const { state, commits } = ganttClickState();
+        state.sel.actress = '她';
+        state.previewActress = 'x';
+        const before = structuredClone(state.sel);
+        const calls = [];
+        state.flyAndFocusActress = (...args) => calls.push(args);
+        state.ganttCellClick('她', cell, axis, { currentTarget: { closest: () => ({}) } });
+        assert.deepEqual(calls, []);
+        assert.equal(commits(), 0);
+        assert.deepEqual(state.sel, before);
+        assert.equal(state.previewActress, null);
+    }
+});
+
+test('ganttCellClick: 無片格且尚未選她，呼叫 flyAndFocusActress 不帶 nextSel 並傳列元素', () => {
+    const { state, commits } = ganttClickState();
+    const row = {};
+    const calls = [];
+    state.flyAndFocusActress = (...args) => calls.push(args);
+    state.ganttCellClick('她', { year: 2022, state: 'empty', filmCount: 0 }, 'year', {
+        currentTarget: { closest: (selector) => { assert.equal(selector, '.gantt-row'); return row; } },
+    });
+    assert.deepEqual(calls, [['她', { currentTarget: row }]]);
+    assert.equal(commits(), 0);
+});
+
+test('ganttCellClick: 有片格且她已被選中，不飛行、sel 恰提交一次；再點同格只取消年份、片商不變', () => {
+    const { state, commits } = ganttClickState();
+    state.sel.actress = '她';
+    state.sel.maker = '片商';
+    state.sel.period = { type: 'range', from: 2019, to: 2023 };
+    const calls = [];
+    state.flyAndFocusActress = (...args) => calls.push(args);
+    const cell = { year: 2021, state: 'main', filmCount: 3 };
+    const event = { currentTarget: { closest: () => ({}) } };
+    state.ganttCellClick('她', cell, 'year', event);
+    assert.equal(commits(), 1);
+    assert.deepEqual(state.sel, { actress: '她', period: { type: 'year', year: 2021 }, maker: '片商' });
+    state.ganttCellClick('她', cell, 'year', event);
+    assert.equal(commits(), 2);
+    assert.deepEqual(state.sel, { actress: '她', period: { type: 'all' }, maker: '片商' });
+    assert.deepEqual(calls, []);
+});
+
+test('ganttCellClick: 有片格且未選她，一次提交女優＋年份；來源頭像不存在時仍正確提交一次', () => {
+    for (const maker of [null, '片商']) {
+        const { state, commits } = ganttClickState();
+        state.sel.maker = maker;
+        const fakeRow = { matches: (s) => s === '.gantt-row', querySelector: () => null };
+        const event = { currentTarget: { closest: () => fakeRow } };
+        state.ganttCellClick('她', { year: 2021, state: 'main', filmCount: 3 }, 'year', event);
+        assert.equal(commits(), 1);
+        assert.deepEqual(state.sel, { actress: '她', period: { type: 'year', year: 2021 }, maker });
+    }
+});
+
+test('flyAndFocusActress: 帶 nextSel 時清除分支與找不到來源的提前返回都提交 nextSel', () => {
+    for (const actress of ['她', null]) {
+        const { state, commits } = ganttClickState();
+        state.sel.actress = actress;
+        const nextSel = { actress: '她', period: { type: 'year', year: 2021 }, maker: '片商' };
+        state.flyAndFocusActress('她', null, nextSel);
+        assert.deepEqual(state.sel, nextSel);
+        assert.equal(commits(), 1);
+    }
+});
+
 test('_onPageShow: bfcache 還原時快照仍未載入完成（離頁前 fetch 被丟棄）→ 重新 fetch 並填入資料', async () => {
     // Finding 2：真實流程是 sidebar 點擊觸發 page-lifecycle.js 的 leavePage() →
     // 同步呼叫這裡註冊的 cleanup（_pageAlive=false），發生在快照 fetch 尚未回應時；

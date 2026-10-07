@@ -834,6 +834,10 @@
     align-items: center;
 }
 
+.insights-container .gantt-row:not(.gantt-head-row) {
+    cursor: pointer;
+}
+
 .insights-container .gantt-row.is-active .gantt-name-cell {
     font-weight: 700;
     color: var(--text-primary);

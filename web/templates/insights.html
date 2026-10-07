@@ -446,6 +446,7 @@
                                                  :style="cell.state === 'main'
                                                      ? ('background:' + colorForMakerName(cell.maker))
                                                      : ''"
+                                                 @click.stop="ganttCellClick(row.name, cell, ganttAxis, $event)"
                                                  :title="ganttCellTitle(cell, ganttAxis)"></div>
                                         </template>
                                     </div>
