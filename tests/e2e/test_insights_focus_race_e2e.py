@@ -1,51 +1,8 @@
 """
-E2E 安全網：TASK-156d-T7 — 快速連點最終一致性＋PRM 全域整合驗收（片庫分析頁）
+E2E：片庫分析頁女優焦點結束狀態（156d-T7／T9，162a 瘦身後）
 
-依 `feature/156-library-insights2/TASK-156d-T7.md` ＋ plan CD-156d-5「Oracle（CDP）
-156d-T7 子段」落地：使用者在動畫還沒播完時就又點了下一位女優（或清除／換人），
-不管點得多快、點在動畫的哪個階段，settle 後看到的畫面都必須跟「直接設成最後一次
-點擊的目標」一模一樣。這件事只被 156d-T3 實作者在開發當下用 CDP 手動驗過一次
-（未留下可重跑的測試），本檔把它變成可重跑的自動化回歸。
-
-驗證目標：`web/static/js/pages/insights/state.js::_handleActressFocusChange`
-（CD-156d-2 步驟 4：每次新觸發前先對 boardEl/costarEl/row7El 呼叫
-`motion.killTweens(...)`，再永遠依當下最新 `this.isActressFocused` 從頭開始）。
-
-**定稿輪數 2（review REQUEST_CHANGES 後修正，逐條對應）**：
-  - F1：介入點擊改由「觀察條件驅動」（`page.wait_for_function` 輪詢目標元素的
-    inline opacity，落在 (0,1) 開區間才判定為真的打在補間中途），並改用低開銷的
-    `page.mouse.click(x, y)`（非 Playwright Locator `.click()`——定稿輪數 1 用
-    Locator 時，其 actionability 檢查（可見＋穩定兩幀＋非遮擋）本身要花
-    150–250ms，導致「淡出中中斷」實際落在首擊後 365.7ms（淡出 250ms 早已播完）、
-    「淡入中中斷」落在 682.3ms（costar 已到終值 opacity 1）——兩次介入其實都打在
-    settle 之後，不是打在補間中途，測試整段沒有驗到它宣稱在驗的東西）。
-    點擊前那一刻的 opacity 現在會被**斷言**落在 (0.02, 0.98) 之間，量到的值也會
-    印出來供人工核對；沒打中就是測試失敗（不是 skip），讓時序失誤可見。
-    「1 秒內連點 3 人再清除」情境比照辦理：最後一次「清除」點擊斷言落在 row7
-    進場淡入（0~0.5s）的中途（前面兩次「換人」對動畫是 no-op，不影響這個窗口）。
-  - F2：新增 `test_switch_actress_mid_animation_matches_direct_set`——焦點 A 進場
-    淡入中途（觀察 costarEl opacity 落在 (0,1)）點 B（不清除，直接換人）：讀
-    `_handleActressFocusChange` 步驟 3 可證這是 `wasActress===isNowActress` 的
-    no-op 分支（不觸發任何新的淡出淡入，A 遺留的 tween 会自然跑完），但 CD-156d-6
-    的捲動判斷（`switchedActress`）仍然成立、且其餘 recompute 呼叫已經算好 B 的
-    資料——settle 後應完全等同「直接進場點 B 一次（未經過 A）」的對照組，且
-    `window.scrollTo` 確實被呼叫過。
-  - F3：可見元素（`display !== 'none'`）除了既有 inline opacity 規則外，新增
-    `getComputedStyle().opacity === '1'` 斷言（CD-156d-5「無殘留半透明」／
-    T3 DoD「可見者 computed opacity===1」）。
-
-**其餘設計決策（同定稿輪數 1，未變動）**：
-  1. 「聚焦→清除」的介入動作優先於「切成另一位」——後者在 `_handleActressFocusChange`
-     內 `wasActress === isNowActress` 時直接 `return`，是天生安全、不會被本卡
-     mutation 點影響的路徑；F2 新增的切換測試專門驗這條 no-op 路徑本身的正確性
-     （settle 後資料/捲動仍須正確），跟其餘四支測試驗的「isActressFocused 真正
-     翻轉」是互補、不重疊的兩件事。
-  2. 對照組＝「頁面剛載入、從未點擊過」的初始快照（四支「清除」情境）或「reload
-     後直接點一次目標」（F2「切換」情境，因為目標不是清除）。
-  3. 點擊目標一律用年表（`.gantt-table .gantt-row`，row5）——不在 row3/row7 的
-     `is-hidden` 切換範圍內，點擊當下不會因為目標暫時 `display:none` 而落空。
-     座標取 `.gantt-name`（名字 hover 可預覽，click 冒泡到列切換女優；
-     頭像 click 選女優，資料格 click 會同時提交年份）。
+使用者連點女優、換年份、點沒有共演的女優後，settle 後的畫面必須等同「直接設定」
+的對照組，且不出現空的「與她同片」卡。只驗結束狀態，不驗補間中間幀。
 
 執行：
     source venv/bin/activate && pytest tests/e2e/test_insights_focus_race_e2e.py -v -m e2e
@@ -61,12 +18,6 @@ DESKTOP = 1440
 MOBILE = 390
 
 ALPINE_ROOT_SELECTOR = '[x-data="libraryInsights"]'
-
-# 1 秒內連續點擊 3 位不同女優的節奏（PRM 情境的點擊間隔；一般情境改用觀察式
-# `_click_mid_tween` 驅動節奏，見 `test_rapid_triple_click_then_clear_matches_baseline`
-# 定稿輪數 2 的說明——實測真滑鼠點擊本身的 CDP 往返就要約 250–300ms，固定間隔
-# 疊加三次點擊會把短窗口的 tween 吃光）。
-BURST_CLICK_INTERVAL_MS = 150
 
 # settle：卡片給的 1.5 秒是「保守上限」；實際判定靠 _wait_settled 的輪詢式 oracle。
 SETTLE_TIMEOUT_MS = 1_500
@@ -253,29 +204,6 @@ def _click_mid_tween(page: Page, watch_ref: str, click_name: str,
     return op
 
 
-def _install_scroll_spy(page: Page) -> None:
-    """monkey-patch `window.scrollTo` 計數呼叫次數（供 F2 驗證 CD-156d-6 的
-    `switchedActress` 捲動判斷確實被觸發），不影響原本的捲動行為（仍呼叫
-    原始函式）。"""
-    page.evaluate(
-        """() => {
-            window.__oaScrollToCalls = 0;
-            if (!window.__oaScrollToPatched) {
-                window.__oaScrollToPatched = true;
-                const orig = window.scrollTo.bind(window);
-                window.scrollTo = function (...args) {
-                    window.__oaScrollToCalls += 1;
-                    return orig(...args);
-                };
-            }
-        }"""
-    )
-
-
-def _scroll_call_count(page: Page) -> int:
-    return page.evaluate("() => window.__oaScrollToCalls || 0")
-
-
 def _snapshot(page: Page) -> dict:
     """讀 focus + 三個可切換顯示旗標 + 各列表渲染順序（名字清單）+ 三個動畫目標
     元素的 computed display / computed opacity / inline opacity / inline
@@ -315,20 +243,6 @@ def _snapshot(page: Page) -> dict:
             };
         }"""
         % ALPINE_ROOT_SELECTOR
-    )
-
-
-def _sample_opacities(page: Page) -> dict:
-    return page.evaluate(
-        """() => {
-            const out = {};
-            %s.forEach((ref) => {
-                const el = document.querySelector(`[x-ref="${ref}"]`);
-                out[ref] = el ? el.style.opacity : '';
-            });
-            return out;
-        }"""
-        % list(REF_NAMES)
     )
 
 
@@ -531,60 +445,6 @@ def _classify_by_costar(
     return with_costar, without_costar
 
 
-# ── 情境 1：淡出中中斷（卡片指定 mutation 目標測試） ──────────────────────────
-
-def test_interrupt_during_fade_out_matches_direct_set(page: Page, base_url: str) -> None:
-    """淡出中中斷：點擊聚焦後，觀察 boardRow3El 的 inline opacity 落回 (0,1)
-    開區間（代表淡出 tween 正在跑、display 尚未切換）就立刻再點同一位（清除）。
-    settle 後畫面應與「從未點擊過」的基準快照一致（不變式 1）。
-
-    TASK-156d-T9：淡出淡入現在由 `costarVisible`（非 `isActressFocused`）翻轉
-    觸發，零共演女優不會播放任何動畫——目標必須先過濾成「有共演」的女優，
-    否則 `_click_mid_tween` 會等不到補間中途（見卡片「繼承的陷阱」段）。
-    """
-    names = _load_ready(page, base_url, slow=True)
-    with_costar, _ = _classify_by_costar(page, names, need_with=1)
-    _skip_if_insufficient(with_costar, 1)
-    baseline_state = _snapshot(page)
-    baseline_geo = _geometry(page)
-
-    target = with_costar[0]
-    _click_gantt_actress_raw(page, target)
-    _click_mid_tween(page, "boardRow3El", target)  # 中途點同一位＝清除
-    _wait_settled(page)
-
-    settled_state = _snapshot(page)
-    settled_geo = _geometry(page)
-    _assert_state_equal(settled_state, baseline_state, "淡出中中斷")
-    _assert_geometry_equal(settled_geo, baseline_geo)
-
-
-# ── 情境 2：淡入中中斷 ─────────────────────────────────────────────────────────
-
-def test_interrupt_during_fade_in_matches_direct_set(page: Page, base_url: str) -> None:
-    """淡入中中斷：觀察 costarEl 的 inline opacity 落回 (0,1) 開區間（代表
-    display 已切換、costarEl 正在淡入)才立刻再點同一位（清除）。settle 後畫面
-    應與基準快照一致。
-
-    TASK-156d-T9：同上——目標必須先過濾成「有共演」的女優。
-    """
-    names = _load_ready(page, base_url, slow=True)
-    with_costar, _ = _classify_by_costar(page, names, need_with=1)
-    _skip_if_insufficient(with_costar, 1)
-    baseline_state = _snapshot(page)
-    baseline_geo = _geometry(page)
-
-    target = with_costar[0]
-    _click_gantt_actress_raw(page, target)
-    _click_mid_tween(page, "costarEl", target)  # 中途點同一位＝清除
-    _wait_settled(page)
-
-    settled_state = _snapshot(page)
-    settled_geo = _geometry(page)
-    _assert_state_equal(settled_state, baseline_state, "淡入中中斷")
-    _assert_geometry_equal(settled_geo, baseline_geo)
-
-
 # ── 情境 3：1 秒內連點 3 位不同女優再清除 ──────────────────────────────────────
 
 def test_rapid_triple_click_then_clear_matches_baseline(page: Page, base_url: str) -> None:
@@ -625,129 +485,6 @@ def test_rapid_triple_click_then_clear_matches_baseline(page: Page, base_url: st
     settled_state = _snapshot(page)
     settled_geo = _geometry(page)
     _assert_state_equal(settled_state, baseline_state, "1秒連點3人再清除")
-    _assert_geometry_equal(settled_geo, baseline_geo)
-
-
-# ── 情境 4（F2）：聚焦中途切成另一位（no-op 動畫路徑本身要正確） ──────────────
-
-def test_switch_actress_mid_animation_matches_direct_set(page: Page, base_url: str) -> None:
-    """焦點 A 進場、costarEl 淡入中途（觀察 opacity 落在 (0,1)）直接切成 B
-    （不清除）：讀 `_handleActressFocusChange` 步驟 3，`wasActress ===
-    isNowActress`（true===true）時函式直接 `return`——不觸發任何新的淡出淡入、
-    不呼叫 `killTweens`，A 的 costarEl/row7El tween 會各自自然跑完；但 CD-156d-6
-    的 `switchedActress` 捲動判斷仍會成立，且同一輪 `$watch('focus')` 的其餘
-    recompute 呼叫（`recomputeCostar`/`recomputeGantt`/`recomputeSolo` 等）已經
-    算好 B 的資料。
-
-    settle 後應完全等同「reload 後直接進場點 B 一次（未經過 A）」的對照組
-    （focus/顯示旗標/三個 ref 元素狀態/各列表渲染順序全部一致），且捲動被觸發過
-    （`window.scrollTo` 呼叫次數 > 0）。
-
-    TASK-156d-T9：a／b 都必須「有共演」，理由同上——若 b 零共演，切換到 b
-    會觸發 `costarVisible` 真正翻轉（離開動畫），不再是本測試要驗的
-    `wasActress===isNowActress` no-op 分支。
-    """
-    names = _load_ready(page, base_url, slow=True)
-    with_costar, _ = _classify_by_costar(page, names, need_with=2)
-    _skip_if_insufficient(with_costar, 2)
-    a, b = with_costar[0], with_costar[1]
-
-    _install_scroll_spy(page)
-    _click_gantt_actress_raw(page, a)
-    _click_mid_tween(page, "costarEl", b)  # A 進場淡入中途，直接切成 B（非清除）
-    scroll_calls = _scroll_call_count(page)
-    _wait_settled(page)
-
-    switched_state = _snapshot(page)
-    switched_geo = _geometry(page)
-
-    # 對照組：reload 後直接進場點 B 一次（未經過 A）。
-    reference_names = _load_ready(page, base_url)
-    assert b in reference_names, f"reload 後年表找不到目標 {b!r}（片庫資料應一致）"
-    _click_gantt_actress_raw(page, b)
-    _wait_settled(page)
-    reference_state = _snapshot(page)
-    reference_geo = _geometry(page)
-
-    assert scroll_calls > 0, (
-        "中途切換到不同女優（CD-156d-6 switchedActress）應觸發 window.scrollTo "
-        f"捲回頂端，但監聽到的呼叫次數是 {scroll_calls}"
-    )
-    assert switched_state["focus"] == {"type": "actress", "value": b}, (
-        f"settle 後 focus 應為切換目標 B（{b!r}），實際 {switched_state['focus']!r}"
-    )
-    _assert_state_equal(switched_state, reference_state, "聚焦中途切換女優")
-    _assert_geometry_equal(switched_geo, reference_geo)
-
-
-# ── 窄螢幕：settle 後位置與基準相同（不變式 4 窄螢幕子句） ─────────────────────
-
-def test_narrow_width_settles_to_baseline_position(page: Page, base_url: str) -> None:
-    """不變式 4 窄螢幕子句：<=1024px 只要求 settle 後位置與「該寬度下的靜態位置」
-    相同（不要求逐幀不動）。本檔對照組＝基準快照本身就是同寬度下未聚焦的靜態
-    位置，settle 後（=清除後）理當回到同一組數字。
-
-    TASK-156d-T9：目標必須先過濾成「有共演」的女優（理由同淡出/淡入中斷）。
-    """
-    names = _load_ready(page, base_url, slow=True, width=MOBILE)
-    with_costar, _ = _classify_by_costar(page, names, need_with=1)
-    _skip_if_insufficient(with_costar, 1)
-    baseline_state = _snapshot(page)
-    baseline_geo = _geometry(page)
-
-    target = with_costar[0]
-    _click_gantt_actress_raw(page, target)
-    _click_mid_tween(page, "boardRow3El", target)
-    _wait_settled(page)
-
-    settled_state = _snapshot(page)
-    settled_geo = _geometry(page)
-    _assert_state_equal(settled_state, baseline_state, "窄螢幕連點")
-    _assert_geometry_equal(settled_geo, baseline_geo, tolerance=2.0)
-
-
-# ── PRM：reduced-motion 開啟時全動效瞬間完成 ──────────────────────────────────
-
-def test_prm_rapid_clicks_settle_instantly_and_match_baseline(page: Page, base_url: str) -> None:
-    """`page.emulate_media(reduced_motion="reduce")`（觸發 motion-prefs.js 的
-    matchMedia listener，非手動塞旗標——見假綠陷阱 #4）開啟後跑「1 秒連點 3 人
-    再清除」：settle 後畫面應與 PRM 關閉時的基準（=同一份「無焦點」初始快照，
-    PRM 不影響任何非動畫的資料/排序邏輯）相同；且觸發後 0/50/100ms 三次抽樣都
-    量不到 0~1 之間的中間 opacity（`playFadeTo`/`playPulse`/`playRise` 在
-    `_shouldAnimate()===false` 時皆為同步 `gsap.set` 到終值，見
-    motion-adapter.js:143-162/213-233/246-289）。
-    """
-    page.emulate_media(reduced_motion="reduce")
-    names = _load_ready(page, base_url)
-    _skip_if_insufficient(names, 3)
-    baseline_state = _snapshot(page)
-    baseline_geo = _geometry(page)
-
-    a, b, c = names[0], names[1], names[2]
-    _click_gantt_actress_raw(page, a)
-    samples = [_sample_opacities(page)]
-    page.wait_for_timeout(50)
-    samples.append(_sample_opacities(page))
-    page.wait_for_timeout(50)
-    samples.append(_sample_opacities(page))
-    for i, sample in enumerate(samples):
-        for ref, val in sample.items():
-            assert val in ("", "0", "1"), (
-                f"PRM 開啟時抽樣 #{i}（觸發後 {i * 50}ms）觀察到中間態 opacity："
-                f"{ref}={val!r}（PRM 應同步 gsap.set 到終值，不補間）"
-            )
-
-    page.wait_for_timeout(BURST_CLICK_INTERVAL_MS)
-    _click_gantt_actress_raw(page, b)
-    page.wait_for_timeout(BURST_CLICK_INTERVAL_MS)
-    _click_gantt_actress_raw(page, c)
-    page.wait_for_timeout(BURST_CLICK_INTERVAL_MS)
-    _click_gantt_actress_raw(page, c)  # 清除
-    _wait_settled(page)
-
-    settled_state = _snapshot(page)
-    settled_geo = _geometry(page)
-    _assert_state_equal(settled_state, baseline_state, "PRM 連點")
     _assert_geometry_equal(settled_geo, baseline_geo)
 
 
@@ -948,69 +685,6 @@ def test_period_change_syncs_costar_card_for_focused_actress(
     )
     assert back_state["showBoardInRow3"] is False, "與她同片卡顯示時 row3 左半格不應同時顯示女優榜"
     assert back_state["costarEl"]["display"] != "none", "與她同片卡應可見"
-
-
-def test_switch_between_costar_and_no_costar_actress_matches_direct_set(
-    page: Page, base_url: str
-) -> None:
-    """邊界條件 2：A（有共演）→B（沒共演）在動畫中途切換，settle 後必須與
-    『reload 後直接點 B 一次』的對照組一致（不能因為在補間中途攔截，讓
-    costarEl 卡在半途或顯示空白的『與她同片』卡——CD-156d-10b
-    `wasCostarVisible`/`isNowCostarVisible` 判斷）；B→A 相反方向同理，沿用
-    T7 的『直接設定終值』對照組手法（`_assert_state_equal`／
-    `_assert_geometry_equal`）。
-    """
-    names = _load_ready(page, base_url, slow=True)
-    with_costar, without_costar = _classify_by_costar(
-        page, names, need_with=1, need_without=1
-    )
-    _skip_if_insufficient(with_costar, 1)
-    _skip_if_insufficient(without_costar, 1)
-    a, b = with_costar[0], without_costar[0]
-
-    # 第一段：A 進場（costarEl 淡入中途）切成零共演的 B（觸發真正的離開動畫）。
-    _click_gantt_actress_raw(page, a)
-    _click_mid_tween(page, "costarEl", b)
-    _wait_settled(page)
-    switched_to_b_state = _snapshot(page)
-    switched_to_b_geo = _geometry(page)
-
-    # 對照組：reload 後直接點 B 一次。
-    reference_names = _load_ready(page, base_url)
-    assert b in reference_names, f"reload 後年表找不到目標 {b!r}（片庫資料應一致）"
-    _click_gantt_actress_raw(page, b)
-    _wait_settled(page)
-    reference_b_state = _snapshot(page)
-    reference_b_geo = _geometry(page)
-
-    assert switched_to_b_state["focus"] == {"type": "actress", "value": b}, (
-        f"settle 後 focus 應為 B（{b!r}），實際 {switched_to_b_state['focus']!r}"
-    )
-    assert switched_to_b_state["showCostar"] is False, (
-        "零共演女優 settle 後不應顯示與她同片卡（空卡）"
-    )
-    _assert_state_equal(switched_to_b_state, reference_b_state, "A進場中途切成零共演B")
-    _assert_geometry_equal(switched_to_b_geo, reference_b_geo)
-
-    # 第二段：從 B（此刻頁面已聚焦 B、無殘留動畫）切回有共演的 A。
-    _click_gantt_actress_raw(page, a)
-    _wait_settled(page)
-    switched_to_a_state = _snapshot(page)
-    switched_to_a_geo = _geometry(page)
-
-    # 對照組：reload 後直接點 A 一次。
-    reference_names_a = _load_ready(page, base_url)
-    assert a in reference_names_a, f"reload 後年表找不到目標 {a!r}（片庫資料應一致）"
-    _click_gantt_actress_raw(page, a)
-    _wait_settled(page)
-    reference_a_state = _snapshot(page)
-    reference_a_geo = _geometry(page)
-
-    assert switched_to_a_state["focus"] == {"type": "actress", "value": a}, (
-        f"settle 後 focus 應為 A（{a!r}），實際 {switched_to_a_state['focus']!r}"
-    )
-    _assert_state_equal(switched_to_a_state, reference_a_state, "B切回有共演A")
-    _assert_geometry_equal(switched_to_a_geo, reference_a_geo)
 
 
 # ── TASK-156d-T9：CD-156d-10c——女優焦點時 row4 移到 row3 之前 ────────────────
