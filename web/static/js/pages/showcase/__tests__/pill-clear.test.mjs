@@ -56,6 +56,7 @@ export async function resolve(specifier, context, nextResolve) {
 register(`data:text/javascript,${encodeURIComponent(loaderCode)}`, import.meta.url);
 
 const { stateVideos } = await import('../state-videos.js');
+const { stateBase } = await import('../state-base.js');
 await import('../state-base.js');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -214,6 +215,53 @@ test('clearAllFilters：女優牆一次點擊恰好 1 次 saveState', () => {
     assert.equal(c.actressFilterCalls, 1);
     assert.equal(c.animateCalls, 0);
     assert.equal(c.heroCalls, 0);
+});
+
+/** stateBase 在 factory 內用 this.$persist；node harness 需 stub（比照 pill-entry / pill-persist）。 */
+function makeBase() {
+    return stateBase.call({ $persist: (obj) => ({ as: () => obj }) });
+}
+
+// ===== _hasActiveFilterForCurrentTab 判準（129-T1a：依分頁二選一）=====
+
+test('_hasActiveFilterForCurrentTab：影片牆只看 search/pills，女優牆狀態不得讓它為真', () => {
+    const pred = makeBase()._hasActiveFilterForCurrentTab;
+    assert.equal(typeof pred, 'function');
+
+    const base = { showFavoriteActresses: false, search: '', actressSearch: '', pills: [], actressPills: [] };
+    assert.equal(pred.call({ ...base, search: 'x' }), true, '影片牆僅 search');
+    assert.equal(
+        pred.call({ ...base, pills: [{ dim: 'maker', value: 'M' }] }),
+        true,
+        '影片牆僅 pills',
+    );
+    assert.equal(pred.call({ ...base, actressSearch: 'y' }), false, '影片牆有 actressSearch 不得為真');
+    assert.equal(
+        pred.call({ ...base, actressPills: [{ dim: 'age', op: '=', value: '37' }] }),
+        false,
+        '影片牆有 actressPills 不得為真',
+    );
+    assert.equal(pred.call(base), false, '影片牆全空');
+});
+
+test('_hasActiveFilterForCurrentTab：女優牆只看 actressSearch/actressPills，影片牆狀態不得讓它為真', () => {
+    const pred = makeBase()._hasActiveFilterForCurrentTab;
+    assert.equal(typeof pred, 'function');
+
+    const base = { showFavoriteActresses: true, search: '', actressSearch: '', pills: [], actressPills: [] };
+    assert.equal(pred.call({ ...base, actressSearch: 'y' }), true, '女優牆僅 actressSearch');
+    assert.equal(
+        pred.call({ ...base, actressPills: [{ dim: 'age', op: '=', value: '37' }] }),
+        true,
+        '女優牆僅 actressPills',
+    );
+    assert.equal(pred.call({ ...base, search: 'x' }), false, '女優牆有 search 不得為真');
+    assert.equal(
+        pred.call({ ...base, pills: [{ dim: 'maker', value: 'M' }] }),
+        false,
+        '女優牆有 pills 不得為真',
+    );
+    assert.equal(pred.call(base), false, '女優牆全空');
 });
 
 // ===== clearSearch 已刪 =====
