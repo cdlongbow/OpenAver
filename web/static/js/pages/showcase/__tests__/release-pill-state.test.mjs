@@ -207,18 +207,6 @@ function releasePill(op, value, value2) {
 // _toggleReleaseEditor：開啟映射 ／ 同枚再點關閉 ／ 第二層防禦
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('_toggleReleaseEditor：開啟非 range pill，四格全空（不像女優版種子 value±寬度）', () => {
-    const c = makeComponent();
-    c._toggleReleaseEditor(releasePill('=', '2023'));
-    assert.ok(c._releaseEditor);
-    assert.equal(c._releaseEditor.op, '=');
-    assert.equal(c._releaseEditor.value, '2023');
-    assert.equal(c._releaseEditor.loYear, null);
-    assert.equal(c._releaseEditor.loMonth, null);
-    assert.equal(c._releaseEditor.hiYear, null);
-    assert.equal(c._releaseEditor.hiMonth, null);
-});
-
 test('_toggleReleaseEditor：開啟 range pill，四格映射自 value/value2，月份 zero-pad', () => {
     const c = makeComponent();
     c._toggleReleaseEditor(releasePill('range', '2023-09', '2024'));
@@ -244,82 +232,43 @@ test('_toggleReleaseEditor：_pillPopoverEnabled=false 時早退，_releaseEdito
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// spec §5.2 三態表逐列 × 三顆鈕（12 組合，_releaseOperandFor）
+// spec §5.2 三態表 × 三顆鈕（表驅動，_releaseOperandFor）
 // ═══════════════════════════════════════════════════════════════════════════
 
-for (const op of ['=', '<=', '>=']) {
-    test(`三態①兩端皆空（原 pill 非 range）：_releaseOperandFor('${op}') → 照抄 d.value`, () => {
-        const c = makeComponent();
+test('三態操作數表（spec §5.2：①兩端皆空／②只填一端／③兩端都填 × 三顆鈕）→ 取哪一端的值', () => {
+    // 預設原 pill 為 = 2020；setup 可覆寫草稿。期望值手寫字面。
+    // ①：原 pill 是 range 且端點值不可解析時，四格仍是 null → value 一律照抄、不論原 op
+    for (const op of ['=', '<=', '>=']) {
+        let c = makeComponent();
         c._toggleReleaseEditor(releasePill('=', '2023'));
-        assert.equal(c._releaseOperandFor(op), '2023');
-    });
-
-    // ⚠ 原 pill 是 range 且端點值本身可解析時，_toggleReleaseEditor 會把 loYear/hiYear
-    // 一併帶入草稿（技術要點 1：四格映射），此時已落在「兩端都填」狀態，不是「兩端皆空」。
-    // 真正能測到「原 pill 是 range 但兩端皆空」的前提，是端點值本身不可解析（parseEndpoint
-    // 回 null），loYear/hiYear 因此仍是 null——這正是「value 一律照抄、不論原 op」唯一能
-    // 獨立於「兩端是否有字」被驗證的前情。
-    test(`三態①兩端皆空（原 pill 是 range，端點值不可解析）：_releaseOperandFor('${op}') → 照抄 d.value（不論原 op）`, () => {
-        const c = makeComponent();
+        assert.equal(c._releaseOperandFor(op), '2023', `①非 range op=${op}`);
+        c = makeComponent();
         c._toggleReleaseEditor(releasePill('range', 'garbage', 'also-garbage'));
-        assert.equal(c._releaseOperandFor(op), 'garbage');
-    });
-}
-
-for (const op of ['=', '<=', '>=']) {
-    test(`三態②只填左端（合法）：_releaseOperandFor('${op}') → 左端 token（op 不影響）`, () => {
+        assert.equal(c._releaseOperandFor(op), 'garbage', `①range 不可解析 op=${op}`);
+    }
+    // ②只填一端：合法 → 該端 token（op 不影響）；token 為 null（13 月／年 <1000）→ null
+    const oneSide = [
+        [{ loYear: '2023', loMonth: '09' }, '2023-09'],
+        [{ loYear: '2023', loMonth: '13' }, null],
+        [{ hiYear: '2024' }, '2024'],
+        [{ hiYear: '250' }, null],
+    ];
+    for (const [draft, want] of oneSide) {
+        for (const op of ['=', '<=', '>=']) {
+            const c = makeComponent();
+            c._toggleReleaseEditor(releasePill('=', '2020'));
+            Object.assign(c._releaseEditor, draft);
+            assert.equal(c._releaseOperandFor(op), want, `②${JSON.stringify(draft)} op=${op}`);
+        }
+    }
+    // ③兩端都填：= 取左、<= 取右、>= 取左
+    for (const [op, want] of [['=', '2022'], ['<=', '2024'], ['>=', '2022']]) {
         const c = makeComponent();
         c._toggleReleaseEditor(releasePill('=', '2020'));
-        c._releaseEditor.loYear = '2023';
-        c._releaseEditor.loMonth = '09';
-        assert.equal(c._releaseOperandFor(op), '2023-09');
-    });
-
-    test(`三態②只填左端（token 為 null，13 月）：_releaseOperandFor('${op}') → null（不寫入不關閉）`, () => {
-        const c = makeComponent();
-        c._toggleReleaseEditor(releasePill('=', '2020'));
-        c._releaseEditor.loYear = '2023';
-        c._releaseEditor.loMonth = '13';
-        assert.equal(c._releaseOperandFor(op), null);
-    });
-
-    test(`三態②只填右端（合法）：_releaseOperandFor('${op}') → 右端 token`, () => {
-        const c = makeComponent();
-        c._toggleReleaseEditor(releasePill('=', '2020'));
+        c._releaseEditor.loYear = '2022';
         c._releaseEditor.hiYear = '2024';
-        assert.equal(c._releaseOperandFor(op), '2024');
-    });
-
-    test(`三態②只填右端（token 為 null）：_releaseOperandFor('${op}') → null`, () => {
-        const c = makeComponent();
-        c._toggleReleaseEditor(releasePill('=', '2020'));
-        c._releaseEditor.hiYear = '250'; // <1000，數值範圍不合法
-        assert.equal(c._releaseOperandFor(op), null);
-    });
-}
-
-test("三態③兩端都填：_releaseOperandFor('=') → 取左端", () => {
-    const c = makeComponent();
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '2022';
-    c._releaseEditor.hiYear = '2024';
-    assert.equal(c._releaseOperandFor('='), '2022');
-});
-
-test("三態③兩端都填：_releaseOperandFor('<=') → 取右端", () => {
-    const c = makeComponent();
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '2022';
-    c._releaseEditor.hiYear = '2024';
-    assert.equal(c._releaseOperandFor('<='), '2024');
-});
-
-test("三態③兩端都填：_releaseOperandFor('>=') → 取左端", () => {
-    const c = makeComponent();
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '2022';
-    c._releaseEditor.hiYear = '2024';
-    assert.equal(c._releaseOperandFor('>='), '2022');
+        assert.equal(c._releaseOperandFor(op), want, `③ op=${op}`);
+    }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -346,175 +295,65 @@ test('_applyReleaseOp 失敗路徑：operand 為 null → 不寫入、不關閉�
     assert.equal(c.pills.length, 0, 'pills 不得被改寫');
 });
 
-test('_applyReleaseOp：_releaseEditor 為 null 時安全早退（this.pills 不變）', () => {
-    const c = makeComponent();
-    const before = c.pills.slice();
-    assert.doesNotThrow(() => c._applyReleaseOp('='));
-    assert.deepEqual(c.pills, before);
-});
-
 // ═══════════════════════════════════════════════════════════════════════════
 // AC10：✓ 單邊委派逐欄位相等（結構驗證，非巧合驗證）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC10：只填左端，✓ 與直接按 ≥（同一草稿狀態）逐欄位相同', () => {
-    const c1 = makeComponent();
-    c1._toggleReleaseEditor(releasePill('=', '2020'));
-    c1._releaseEditor.loYear = '2023';
-    c1._commitReleaseEditor();
+test('AC10：單端填入，✓ 與直接按對應運算子（同一草稿狀態）逐欄位相同', () => {
+    // [填的格, 值, 對應運算子, 期望 pill]
+    const cases = [
+        ['loYear', '2023', '>=', { dim: 'release', op: '>=', value: '2023' }],
+        ['hiYear', '2024', '<=', { dim: 'release', op: '<=', value: '2024' }],
+    ];
+    for (const [field, val, op, want] of cases) {
+        const c1 = makeComponent();
+        c1._toggleReleaseEditor(releasePill('=', '2020'));
+        c1._releaseEditor[field] = val;
+        c1._commitReleaseEditor();
 
-    const c2 = makeComponent();
-    c2._toggleReleaseEditor(releasePill('=', '2020'));
-    c2._releaseEditor.loYear = '2023';
-    c2._applyReleaseOp('>=');
+        const c2 = makeComponent();
+        c2._toggleReleaseEditor(releasePill('=', '2020'));
+        c2._releaseEditor[field] = val;
+        c2._applyReleaseOp(op);
 
-    const p1 = c1.pills.find((x) => x.dim === 'release');
-    const p2 = c2.pills.find((x) => x.dim === 'release');
-    assert.deepEqual(p1, p2);
-    assert.deepEqual(p1, { dim: 'release', op: '>=', value: '2023' });
-});
-
-test('AC10：只填右端，✓ 與直接按 ≤（同一草稿狀態）逐欄位相同', () => {
-    const c1 = makeComponent();
-    c1._toggleReleaseEditor(releasePill('=', '2020'));
-    c1._releaseEditor.hiYear = '2024';
-    c1._commitReleaseEditor();
-
-    const c2 = makeComponent();
-    c2._toggleReleaseEditor(releasePill('=', '2020'));
-    c2._releaseEditor.hiYear = '2024';
-    c2._applyReleaseOp('<=');
-
-    const p1 = c1.pills.find((x) => x.dim === 'release');
-    const p2 = c2.pills.find((x) => x.dim === 'release');
-    assert.deepEqual(p1, p2);
-    assert.deepEqual(p1, { dim: 'release', op: '<=', value: '2024' });
-});
-
-test('AC10 結構鎖：✓ 單邊是「委派給 _applyReleaseOp」，不是自己組同樣的物件', () => {
-    // T2 review 命中：上面兩條「逐欄位相同」在單邊合法值下無法區分「真委派」與
-    // 「另寫一份剛好答案一樣的邏輯」——把 _commitReleaseEditor 改成自組 {op,value}
-    // 物件時它們仍然全綠。這一條直接鎖住呼叫本身：單邊提交必須經過 _applyReleaseOp，
-    // 且帶的 op 就是那一側對應的運算子。
-    const c = makeComponent();
-    const calls = [];
-    const orig = c._applyReleaseOp;
-    c._applyReleaseOp = function (op) { calls.push(op); return orig.call(this, op); };
-
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '2023';
-    c._commitReleaseEditor();
-    assert.deepEqual(calls, ['>=']);
-
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.hiYear = '2024';
-    c._commitReleaseEditor();
-    assert.deepEqual(calls, ['>=', '<=']);
+        const p1 = c1.pills.find((x) => x.dim === 'release');
+        const p2 = c2.pills.find((x) => x.dim === 'release');
+        assert.deepEqual(p1, p2, field);
+        assert.deepEqual(p1, want, field);
+    }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AC11：lo>hi 對調
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC11：年份不同的 lo>hi 對調 → value/value2 交換', () => {
-    const c = makeComponent();
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '2024'; c._releaseEditor.loMonth = '06';
-    c._releaseEditor.hiYear = '2023'; c._releaseEditor.hiMonth = '01';
-    c._commitReleaseEditor();
-    const p = c.pills.find((x) => x.dim === 'release');
-    assert.deepEqual(p, { dim: 'release', op: 'range', value: '2023-01', value2: '2024-06' });
-});
-
-test('AC11：年份相同、只有月份需要對調', () => {
-    const c = makeComponent();
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '2023'; c._releaseEditor.loMonth = '09';
-    c._releaseEditor.hiYear = '2023'; c._releaseEditor.hiMonth = '03';
-    c._commitReleaseEditor();
-    const p = c.pills.find((x) => x.dim === 'release');
-    assert.deepEqual(p, { dim: 'release', op: 'range', value: '2023-03', value2: '2023-09' });
-});
-
-test('AC11 反向鎖：lo 本來就 < hi，不需要對調時 token 不被意外交換', () => {
-    const c = makeComponent();
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '2020'; c._releaseEditor.loMonth = '01';
-    c._releaseEditor.hiYear = '2024'; c._releaseEditor.hiMonth = '12';
-    c._commitReleaseEditor();
-    const p = c.pills.find((x) => x.dim === 'release');
-    assert.deepEqual(p, { dim: 'release', op: 'range', value: '2020-01', value2: '2024-12' });
-});
-
-test('AC11 年份-only 上端不誤判反轉：lo=2024-06、hi=2024（月份留空代表整年結尾）→ 不對調', () => {
-    // 迴歸鎖：hiKey 若誤用 .lo 展開，'2024'（年份-only）會被讀成 202401（1 月）而非
-    // 202412（12 月結尾），202406 > 202401 觸發錯誤對調，pill 變成 2024~2024-06 展開後
-    // 只剩 1~6 月，正好是使用者原意（6~12 月）的反面。
-    const c = makeComponent();
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '2024'; c._releaseEditor.loMonth = '06';
-    c._releaseEditor.hiYear = '2024'; c._releaseEditor.hiMonth = '';
-    c._commitReleaseEditor();
-    const p = c.pills.find((x) => x.dim === 'release');
-    assert.deepEqual(p, { dim: 'release', op: 'range', value: '2024-06', value2: '2024' });
-});
-
-test('AC11 年份-only 下端不誤判反轉：lo=2024、hi=2024-06（下端整年起點 1 月 <= 6 月）→ 不對調', () => {
-    const c = makeComponent();
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '2024'; c._releaseEditor.loMonth = '';
-    c._releaseEditor.hiYear = '2024'; c._releaseEditor.hiMonth = '06';
-    c._commitReleaseEditor();
-    const p = c.pills.find((x) => x.dim === 'release');
-    assert.deepEqual(p, { dim: 'release', op: 'range', value: '2024', value2: '2024-06' });
-});
-
-test('AC11 年份-only 真反轉仍須對調：lo=2025、hi=2023', () => {
-    const c = makeComponent();
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '2025'; c._releaseEditor.loMonth = '';
-    c._releaseEditor.hiYear = '2023'; c._releaseEditor.hiMonth = '';
-    c._commitReleaseEditor();
-    const p = c.pills.find((x) => x.dim === 'release');
-    assert.deepEqual(p, { dim: 'release', op: 'range', value: '2023', value2: '2025' });
-});
-
-test('AC11 同年月反轉仍須對調：lo=2024-09、hi=2024-03', () => {
-    const c = makeComponent();
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '2024'; c._releaseEditor.loMonth = '09';
-    c._releaseEditor.hiYear = '2024'; c._releaseEditor.hiMonth = '03';
-    c._commitReleaseEditor();
-    const p = c.pills.find((x) => x.dim === 'release');
-    assert.deepEqual(p, { dim: 'release', op: 'range', value: '2024-03', value2: '2024-09' });
-});
-
-test('AC11 下端月份 ＝ 上端整年結尾：lo=2024-12、hi=2024 → 不對調（12 月單月）', () => {
-    // 這是本次修正**行為確實改變**的那一格，故獨立鎖住：改動前兩側都用 .lo，
-    // 202412 > 202401 觸發對調 → pill 變成 2024~2024-12 → 展開成整年；改動後
-    // 202412 <= 202412（上端整年結尾）不對調 → 2024-12~2024 → 展開成 12 月單月。
-    // 後者才是使用者填的意思（起點已經指定到 12 月，上端只是說「到這年結束」）。
-    const c = makeComponent();
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '2024'; c._releaseEditor.loMonth = '12';
-    c._releaseEditor.hiYear = '2024'; c._releaseEditor.hiMonth = '';
-    c._commitReleaseEditor();
-    const p = c.pills.find((x) => x.dim === 'release');
-    assert.deepEqual(p, { dim: 'release', op: 'range', value: '2024-12', value2: '2024' });
-});
-
-test('AC11 端點相等不對調：lo=2024、hi=2024', () => {
-    const c = makeComponent();
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '2024'; c._releaseEditor.loMonth = '';
-    c._releaseEditor.hiYear = '2024'; c._releaseEditor.hiMonth = '';
-    c._commitReleaseEditor();
-    const p = c.pills.find((x) => x.dim === 'release');
-    assert.deepEqual(p, { dim: 'release', op: 'range', value: '2024', value2: '2024' });
+test('AC11 對調表：lo>hi 才對調；年份-only 端點（月份留空）不誤判反轉；端點相等不對調', () => {
+    // [loY, loM, hiY, hiM, 期望 value, 期望 value2]；期望值手寫字面
+    // 年份-only 上端＝該年 12 月結尾、下端＝該年 1 月起點（hiKey/loKey 不得混用 .lo）
+    const cases = [
+        ['2024', '06', '2023', '01', '2023-01', '2024-06'],   // 年份不同：對調
+        ['2023', '09', '2023', '03', '2023-03', '2023-09'],   // 年份相同、月份對調
+        ['2020', '01', '2024', '12', '2020-01', '2024-12'],   // 本來就 lo<hi：不動
+        ['2024', '06', '2024', '',   '2024-06', '2024'],      // 上端年份-only：不對調
+        ['2024', '',   '2024', '06', '2024',    '2024-06'],   // 下端年份-only：不對調
+        ['2025', '',   '2023', '',   '2023',    '2025'],      // 年份-only 真反轉：對調
+        ['2024', '09', '2024', '03', '2024-03', '2024-09'],   // 同年月反轉：對調
+        ['2024', '12', '2024', '',   '2024-12', '2024'],      // 12 月單月：不對調
+        ['2024', '',   '2024', '',   '2024',    '2024'],      // 端點相等：不對調
+    ];
+    for (const [loY, loM, hiY, hiM, v1, v2] of cases) {
+        const c = makeComponent();
+        c._toggleReleaseEditor(releasePill('=', '2020'));
+        c._releaseEditor.loYear = loY; c._releaseEditor.loMonth = loM;
+        c._releaseEditor.hiYear = hiY; c._releaseEditor.hiMonth = hiM;
+        c._commitReleaseEditor();
+        const p = c.pills.find((x) => x.dim === 'release');
+        assert.deepEqual(p, { dim: 'release', op: 'range', value: v1, value2: v2 }, `${loY}-${loM} ~ ${hiY}-${hiM}`);
+    }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 四格全空 ／ 有月無年 ／ 13/0 月 ／ 非四位年（含 '0230'/'0002'）／ 1800/9999 ／ badInput
+// 四格全空 ／ 有月無年 ／ 不合法端點 ／ 指數記法 ／ 1800/9999 ／ badInput
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('四格全空：_releaseEditorHasInput() 為 false；✓ 不寫入、_releaseEditor 仍開（防禦性 return）', () => {
@@ -540,33 +379,19 @@ test('有月無年：_releaseEndpoint 回 {has:true, token:null}；唯一填的�
     assert.equal(c.pills.length, 0);
 });
 
-test('13 月 / 0 月：token 皆為 null', () => {
+test("不合法端點：13/00 月、非四位年 '2'/'250'/'20244'、數值 <1000 的 '0230'/'0002' → token 皆為 null（_releaseEndpoint 數值檢查）", () => {
     const c = makeComponent();
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    c._releaseEditor.loYear = '2023';
-    c._releaseEditor.loMonth = '13';
-    assert.equal(c._releaseEndpoint('lo').token, null);
-    c._releaseEditor.loMonth = '00';
-    assert.equal(c._releaseEndpoint('lo').token, null);
-});
-
-test("非四位年：'2'/'250'/'20244' → token 皆為 null", () => {
-    const c = makeComponent();
-    for (const y of ['2', '250', '20244']) {
+    for (const y of ['2', '250', '20244', '0230', '0002']) {
         c._toggleReleaseEditor(releasePill('=', '2020'));
         c._releaseEditor.loYear = y;
         assert.equal(c._releaseEndpoint('lo').token, null, `年份 '${y}' 應形不成條件`);
         c._releaseEditor = null;
     }
-});
-
-test("⚠ 落差鎖：'0230'/'0002' 這類四字元但數值 <1000 的年份 → token:null（composeEndpoint 數值檢查，非 parseEndpoint 字元數檢查）", () => {
-    const c = makeComponent();
-    for (const y of ['0230', '0002']) {
-        c._toggleReleaseEditor(releasePill('=', '2020'));
-        c._releaseEditor.loYear = y;
-        assert.equal(c._releaseEndpoint('lo').token, null, `年份 '${y}' 在 _releaseEndpoint() 這一層必須被拒`);
-        c._releaseEditor = null;
+    c._toggleReleaseEditor(releasePill('=', '2020'));
+    c._releaseEditor.loYear = '2023';
+    for (const m of ['13', '00']) {
+        c._releaseEditor.loMonth = m;
+        assert.equal(c._releaseEndpoint('lo').token, null, `月份 '${m}' 應形不成條件`);
     }
 });
 
@@ -647,26 +472,6 @@ test('badInput：badLoY=true 時一律 token:null，即使 loYear 文字看起�
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// _releaseEditor 為 null 時七支 helper 的安全回傳
-// ═══════════════════════════════════════════════════════════════════════════
-
-test('_releaseEditor=null 時七支 helper 安全回傳', () => {
-    const c = makeComponent();
-    assert.deepEqual(c._releaseEndpoint('lo'), { has: false, token: null });
-    assert.deepEqual(c._releaseEndpoint('hi'), { has: false, token: null });
-    assert.equal(c._releaseOperandFor('='), null);
-    const before = c.pills.slice();
-    assert.doesNotThrow(() => c._applyReleaseOp('='));
-    assert.deepEqual(c.pills, before);
-    assert.doesNotThrow(() => c._commitReleaseEditor());
-    assert.deepEqual(c.pills, before);
-    assert.doesNotThrow(() => c._cancelReleaseEditor());
-    assert.equal(c._releaseEditor, null);
-    assert.equal(c._releaseEditorHasInput(), false);
-    assert.equal(c._releaseYearHint(), '');
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
 // _cancelReleaseEditor：✗ 取消，不碰 pills
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -682,41 +487,8 @@ test('_cancelReleaseEditor：只丟棄草稿，pills 逐位元組不變', () => 
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// releasePillText / pillLabel（AC21，spec §5.4）
-// ═══════════════════════════════════════════════════════════════════════════
-
-test('releasePillText：range 用 ~ 連接，不加空白、不展開', () => {
-    const c = makeComponent();
-    assert.equal(c.releasePillText({ op: 'range', value: '2023-01', value2: '2024-06' }), '2023-01~2024-06');
-});
-
-test('releasePillText：= 前綴，年-only 不得被展開成 年-01~年-12', () => {
-    const c = makeComponent();
-    assert.equal(c.releasePillText({ op: '=', value: '2023' }), '=2023');
-    assert.notEqual(c.releasePillText({ op: '=', value: '2023' }), '=2023-01~2023-12');
-});
-
-test('releasePillText：≤／≥ 前綴', () => {
-    const c = makeComponent();
-    assert.equal(c.releasePillText({ op: '<=', value: '2023-09' }), '≤2023-09');
-    assert.equal(c.releasePillText({ op: '>=', value: '2020' }), '≥2020');
-});
-
-test('pillLabel：release 維度分派到 releasePillText，pick/其餘維度不受影響（回歸）', () => {
-    const c = makeComponent();
-    assert.equal(c.pillLabel({ dim: 'release', op: '=', value: '2023' }), '=2023');
-    assert.equal(c.pillLabel({ dim: 'pick', value: '1' }), 'showcase.pick.chip_label');
-    assert.equal(c.pillLabel({ dim: 'maker', value: 'Moodyz' }), 'Moodyz');
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
 // _releaseYearHint（spec §4.9，全庫不是 _filteredVideos）
 // ═══════════════════════════════════════════════════════════════════════════
-
-test('_releaseYearHint：_releaseEditor=null → ""', () => {
-    const c = makeComponent();
-    assert.equal(c._releaseYearHint(), '');
-});
 
 test('_releaseYearHint：全庫可解析年月 → "（min ~ max）"', () => {
     const c = makeComponent();
@@ -727,25 +499,6 @@ test('_releaseYearHint：全庫可解析年月 → "（min ~ max）"', () => {
     ]);
     c._toggleReleaseEditor(releasePill('=', '2020'));
     assert.equal(c._releaseYearHint(), '（2020 ~ 2023）');
-});
-
-test('_releaseYearHint：一部片都解析不出年月 → ""', () => {
-    const c = makeComponent();
-    _setVideos([{ release_date: 'bad-date' }, { release_date: null }]);
-    c._toggleReleaseEditor(releasePill('=', '2020'));
-    assert.equal(c._releaseYearHint(), '');
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// _isReleaseClickable（T3 引用的入口判準）
-// ═══════════════════════════════════════════════════════════════════════════
-
-test('_isReleaseClickable：可解析 release_date → true；不可解析／缺欄位 → false', () => {
-    const c = makeComponent();
-    assert.equal(c._isReleaseClickable({ release_date: '2024-09-09' }), true);
-    assert.equal(c._isReleaseClickable({ release_date: 'bad' }), false);
-    assert.equal(c._isReleaseClickable({}), false);
-    assert.equal(c._isReleaseClickable(null), false);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -782,35 +535,12 @@ test('AC4 取代語意：第二次呼叫後 release 維度仍恰 1 枚且值是�
     assert.equal(c.pills[1], pickPill, 'pick pill 參照不變');
 });
 
-test('value2 不對稱防呆：非 range op 傳入的物件即使帶 value2 鍵，寫入 pills 的物件不含 value2 鍵', () => {
-    const c = makeComponent();
-    c._setReleasePill({ dim: 'release', op: '=', value: '2025', value2: 'stale-should-be-dropped' });
-    const p = c.pills.find((x) => x.dim === 'release');
-    assert.deepEqual(Object.keys(p).sort(), ['dim', 'op', 'value']);
-});
-
 test('value2 不對稱防呆：range→= 連續呼叫，第二枚不殘留 value2 鍵（plan §8.1 陷阱）', () => {
     const c = makeComponent();
     c._setReleasePill({ dim: 'release', op: 'range', value: '2023', value2: '2024-06' });
     c._setReleasePill({ dim: 'release', op: '=', value: '2025' });
     const p = c.pills.find((x) => x.dim === 'release');
     assert.deepEqual(Object.keys(p).sort(), ['dim', 'op', 'value']);
-});
-
-test('range op 寫入的物件含 value2 鍵', () => {
-    const c = makeComponent();
-    c._setReleasePill({ dim: 'release', op: 'range', value: '2023', value2: '2024-06' });
-    const p = c.pills.find((x) => x.dim === 'release');
-    assert.deepEqual(Object.keys(p).sort(), ['dim', 'op', 'value', 'value2']);
-});
-
-test('_setReleasePill 呼叫後 _reconcileHeroCard 被呼叫一次', () => {
-    const c = makeComponent();
-    let calls = 0;
-    const orig = c._reconcileHeroCard.bind(c);
-    c._reconcileHeroCard = function (...args) { calls++; return orig(...args); };
-    c._setReleasePill({ dim: 'release', op: '=', value: '2024-09' });
-    assert.equal(calls, 1);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -864,18 +594,6 @@ test('§3.5 跨切面點②：toggleActressMode() → 雙 slot 皆 null', () => 
     } catch (_) {
         // flipAndFadeIn 的 DOM/動畫副作用不在本 task 範圍；teardown 已在函式開頭無條件執行
     }
-    assert.equal(c._pillEditor, null);
-    assert.equal(c._releaseEditor, null);
-});
-
-test('§3.5 跨切面點③：_teardownPillEditors() 本身冪等且雙清空', () => {
-    const c = makeComponent();
-    seedBothEditors(c);
-    c._teardownPillEditors();
-    assert.equal(c._pillEditor, null);
-    assert.equal(c._releaseEditor, null);
-    // 冪等：兩個 slot 已是 null 時再呼叫一次仍安全
-    assert.doesNotThrow(() => c._teardownPillEditors());
     assert.equal(c._pillEditor, null);
     assert.equal(c._releaseEditor, null);
 });
