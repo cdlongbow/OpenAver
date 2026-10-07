@@ -5224,6 +5224,49 @@ const RULES = [
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: '@click="goBrowse()"', scope: { anchor: /id="tileCount"/, window: 1200 }, note: '[161a-T7] #tileCount 的 click 接 goBrowse：沒接＝片數格看起來可點、手形游標也有，但點下去什麼都沒發生' },
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: "t('insights.count_open_browse')", scope: { anchor: /id="tileCount"/, window: 1200 }, note: '[161a-T7] #tileCount tooltip 用 insights.count_open_browse：寫成別的字＝使用者不知道點了會去哪' },
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: "'is-clickable': canGoBrowse", scope: { anchor: /id="tileCount"/, window: 1200 }, note: '[161a-T7] #tileCount 可點樣式只在 canGoBrowse 時：寫成恆真＝片數 0 的格子仍顯示手形與 hover 淡染' },
+
+  // ---- [161b-T3] 響應式頒獎台人數與標題接線 ----
+  { file: "web/static/js/pages/insights/state.js", kind: "forbidden-string", pattern: "rank <= 3", note: "[161b-T3] state.js 不得寫死頒獎台人數 3" },
+  { file: "web/static/js/pages/insights/state.js", kind: "forbidden-string", pattern: "rank > 3", note: "[161b-T3] state.js 不得寫死頒獎台人數 3" },
+  { file: "web/static/js/pages/insights/aggregate.js", kind: "forbidden-string", pattern: "rank <= 3", note: "[161b-T3] aggregate.js 不得寫死頒獎台人數 3" },
+  { file: "web/static/js/pages/insights/aggregate.js", kind: "forbidden-string", pattern: "rank > 3", note: "[161b-T3] aggregate.js 不得寫死頒獎台人數 3" },
+  { file: "web/static/js/pages/insights/state.js", kind: "required-string", pattern: "classifyBoardTransition(oldRows, newRows, this.podiumSize)", note: "[161b-T3] 分類要傳 podiumSize" },
+  { file: "web/templates/insights.html", kind: "required-string", pattern: "podiumPositionClass(row.rank, podiumSize)", note: "[161b-T3] 頒獎台位置 class 要傳 podiumSize" },
+  { file: "web/templates/insights.html", kind: "required-string", pattern: "'podium--5': podiumSize === 5", note: "[161b-T3] .podium 掛 podium--5" },
+  { file: "web/templates/insights.html", kind: "required-string", pattern: "'is-podium-3': podiumSize === 3", note: "[161b-T3] 根容器掛 is-podium-3" },
+  { file: "web/templates/insights.html", kind: "required-string", pattern: "<h2 x-text=\"boardRestTitle\"></h2>", note: "[161b-T3] 名單卡標題接 boardRestTitle" },
+
+  // ---- [161b-T4] 五人頒獎台與桌面名單列數 ----
+  { file: "web/static/css/pages/insights.css", kind: "required-string", pattern: "        --board-slot-h: calc(17rem + var(--board-rest-rows) * 2.5625rem + 0.5rem);", note: "[161b-T4] 桌面固定高度的列數吃 --board-rest-rows" },
+  { file: "web/static/css/pages/insights.css", kind: "required-string", pattern: "    --board-rest-rows: 22;", note: "[161b-T4] is-podium-3 時名單列數為 22" },
+  { file: "web/static/css/pages/insights.css", kind: "required-string", pattern: "    --board-rest-rows: 20;", note: "[161b-T4] 預設名單列數為 20" },
+  { file: "web/static/css/pages/insights.css", kind: "required-string", pattern: "    min-width: calc(5 * var(--board-text-size) + 0.75rem);", note: "[161b-T4] 5 人槽最小寬保證 5 個全形字" },
+  { file: "web/static/css/pages/insights.css", kind: "required-string", pattern: "    flex: 0 1 5.5rem;", note: "[161b-T4] 5 人槽可縮不可長" },
+  { file: "web/static/css/pages/insights.css", kind: "required-string", pattern: "    column-gap: 0.5rem;", note: "[161b-T4] 5 人版台座與人員層間距 0.5rem" },
+
+  // ---- [161b-T5] 頭像選人與 pointer hover 預覽 ----
+  { file: "web/templates/insights.html", kind: "structure-count", pattern: "@click.stop=\"openPreview(", count: 2, note: "[161b-T5] 頭像 click 開預覽只剩頂排與 costar self 兩處" },
+  { file: "web/templates/insights.html", kind: "structure-count", pattern: "@click.stop=\"sel.actress && openPreview(", count: 1, note: "[161b-T5] 頂排名字維持 click 開預覽" },
+  { file: "web/templates/insights.html", kind: "structure-count", pattern: "@pointerenter=\"scheduleOpenPreview(row.name, $el, $event)\"", count: 9, note: "[161b-T5] 九處頭像與名字 hover 走 pointerenter 並傳 $event" },
+  { file: "web/templates/insights.html", kind: "structure-count", pattern: "@pointerleave=\"cancelOpenPreview()\"", count: 9, note: "[161b-T5] 九處 pointerleave 收預覽" },
+  { file: "web/templates/insights.html", kind: "forbidden-string", pattern: "@mouseenter=\"scheduleOpenPreview(row.name", note: "[161b-T5] 列表頭像不得殘留 mouseenter 排程預覽" },
+  { file: "web/static/js/pages/insights/state.js", kind: "required-string", pattern: "if (!isHoverPointer(ev)) return;", note: "[161b-T5] scheduleOpenPreview 第一行以 isHoverPointer 擋觸控" },
+  { file: "web/static/js/pages/insights/state.js", kind: "required-string", pattern: "this.cancelOpenPreview();", scope: { anchor: /flyAndFocusActress\(name, event/, window: 200 }, note: "[161b-T5] flyAndFocusActress 進入先 cancelOpenPreview" },
+
+  // ---- [161b-T6] 年表格子選女優與年份 ----
+  { file: "web/templates/insights.html", kind: "required-string", pattern: "@click.stop=\"ganttCellClick(row.name, cell, ganttAxis, $event)\"", note: "[161b-T6] 年表格子 click 接 ganttCellClick 並 .stop（不冒泡到列）" },
+  { file: "web/static/js/pages/insights/state.js", kind: "required-string", pattern: "toggleGanttCell(this.sel, name, year)", note: "[161b-T6] 格子點擊的年份轉換走 toggleGanttCell" },
+  { file: "web/static/js/pages/insights/state.js", kind: "required-string", pattern: ".closest('.gantt-row')", note: "[161b-T6] 格子點擊由所在列取得飛行來源列" },
+  { file: "web/static/js/pages/insights/state.js", kind: "required-string", pattern: "flyAndFocusActress(name, event, nextSel) {", note: "[161b-T6] flyAndFocusActress 三個提交出口一律走 _commitFocusSel" },
+  { file: "web/static/js/pages/insights/state.js", kind: "structure-count", pattern: "this._commitFocusSel(name, nextSel)", count: 3, note: "[161b-T6] flyAndFocusActress 三個提交出口一律走 _commitFocusSel" },
+  { file: "web/static/js/pages/insights/state.js", kind: "structure-count", pattern: "this.toggleActressFocus(name);", count: 1, note: "[161b-T6] flyAndFocusActress 三個提交出口一律走 _commitFocusSel" },
+  { file: "web/static/js/pages/insights/state.js", kind: "structure-count", pattern: "{ currentTarget: rowEl }", count: 2, note: "[161b-T6] 年表格子 click 接 ganttCellClick 並 .stop（不冒泡到列）" },
+  { file: "web/static/css/pages/insights.css", kind: "required-string", pattern: "cursor: pointer;", scope: { anchor: /\.gantt-row:not\(\.gantt-head-row\)/, window: 80 }, note: "[161b-T6] 年表資料列（排除表頭列）游標為 pointer" },
+
+  // ---- [161b-T9] 片數格常駐淡染與可點箭頭字色 ----
+  { file: "web/static/css/pages/insights.css", kind: "required-string", pattern: "color-mix(in oklch, var(--color-primary) 3%, transparent),", scope: { anchor: /#tileCount\.is-clickable\.is-scoped \{/, window: 400 }, note: "[161b-T9] 片數格可點態平常就帶 3% 主色底" },
+  { file: "web/static/css/pages/insights.css", kind: "required-string", pattern: "color: var(--text-primary); /* ↗ 與數字同字色 */", scope: { anchor: /#tileCount\.is-clickable\.is-scoped \.insights-open-arrow \{/, window: 200 }, note: "[161b-T9] 可點時 ↗ 用正常字色" },
+
 ];
 
 // ---- helpers ----

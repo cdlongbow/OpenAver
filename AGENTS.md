@@ -121,6 +121,8 @@ line what category — do not expand them.
   - browser/platform built-in text
   - **`design-system` and `motion-lab` page demo content** — these are internal dev-reference pages (not in main nav, not user-facing), and demo labels often contain Fluent design tokens (`fluent-decel`, `Acrylic 30px`, `--surface-1` etc.) that should not be translated. Page chrome (nav / page title) still goes through i18n; only demo body text is exempt.
 - At milestone/release, all 4 locales must have identical key sets.
+  - **"Milestone/release" means the milestone sync on `main` (`🎯 milestone:` commit) or the release step (tagging `vX.Y.Z`) — never a feature-branch PR.** A feature PR that bumps `core/version.py` and adds a CHANGELOG entry is still a development PR; the version bump does **not** turn it into a release, and the 4-locale parity rule does **not** apply to it.
+  - In a feature PR, these are expected and **not findings**: new keys present only in `zh_TW.json`; obsolete keys removed from all 4 locales without replacements in `zh_CN.json` / `ja.json` / `en.json`; users of those locales seeing the `zh_TW` fallback text until the milestone sync. (Locales are overlaid on `zh_TW`, so nothing breaks — the text is just untranslated.)
 
 ### General code quality
 

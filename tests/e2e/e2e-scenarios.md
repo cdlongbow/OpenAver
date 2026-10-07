@@ -1085,7 +1085,7 @@ N/A — 書籤牆／燈箱純瀏覽器互動，不依賴原生 picker。「加�
 ## US19: 片庫分析頁 ＋ 發行時年齡 ＋ 掃描頁數字點得開（v0.16.0 ~ v0.16.8 新增）
 
 **故事**：主人切到側欄新出現的「片庫分析」（頒獎台圖示）看整個片庫的分布——歷年片數、
-片商占比、女優 Top 20、標籤樹圖；點一根年份長條或一列女優，整頁縮成那個範圍再看一次，
+片商占比、女優 Top 25、標籤樹圖；點一根年份長條或一列女優，整頁縮成那個範圍再看一次，
 下半部深挖收藏女優發行時幾歲、導演／系列排行、每位女優歷年主要片商、誰其實散在很多家、
 選了女優之後她最常跟誰同片。同一批版本也讓瀏覽頁的封面牆與燈箱直接看得到收藏女優「拍
 這部片時幾歲」、掃描頁那些只給一個數字的地方點下去看得到清單，以及重刮視窗多一個「保留
@@ -1110,27 +1110,27 @@ N/A — 書籤牆／燈箱純瀏覽器互動，不依賴原生 picker。「加�
      （`insights.all_years` / `insights.all_actress` / `insights.all_maker`），非 raw i18n key
 3. **[MCP] 圖表渲染**：依序確認以下 echart 容器存在且有內容（`canvas` 或
    `getBoundingClientRect().height > 0`）：`#yearsChart`、`#donutChart`、
-   `.top20-row3-wrap .podium-slot, .top20-row3-wrap .rest20-row`
-   （合計 count > 0，TASK-156d-T2 起 Top 20 拆成頒獎台＋第 4–20 名兩張卡，原本用來定位第一名的
+   `.board-row3-wrap .podium-slot, .board-row3-wrap .board-rest-row`
+   （合計 count > 0，TASK-161b 起 Top 25 為頒獎台＋第 6–25 名（窄螢幕 3 人頒獎台為第 4–25 名）兩張卡，原本用來定位第一名的
    舊清單容器 id 已移除）、
    `#tagsChart`、`#ageChart`、`#directorChart`、`#seriesChart`、
    `.gantt-card .gantt-table`（或 `.gantt-empty` 若無資料）、`#row6 .solo-row`（或 `.solo-empty`）
-   - **驗**：至少 `#yearsChart`／`#donutChart`／`.top20-row3-wrap .podium-slot, .top20-row3-wrap .rest20-row` 三者非空（片庫非空的前提下）
+   - **驗**：至少 `#yearsChart`／`#donutChart`／`.board-row3-wrap .podium-slot, .board-row3-wrap .board-rest-row` 三者非空（片庫非空的前提下）
    - 若某卡片顯示「沒有資料」（`insights.no_data`）而非空白/報錯，視為 PASS（資料真的沒有）
 4. **[MCP] 點年份長條設定焦點**：`#yearsChart` 內找一根長條點擊（ECharts canvas 點擊座標，
    或退而求其次用 `dispatchAction` 驗證邏輯；若 canvas 座標點擊不可靠，記錄實際點法）
    - **驗**：點擊後 `#tileYear` 顯示該年份數字、多一顆 `×` 清除鈕
    - **驗**：點 `×`（`insights.clear_year`）→ `#tileYear` 回到「全部」
-5. **[MCP] 點頒獎台設定女優焦點**：`.top20-row3-wrap .podium-slot--center`（第 1 名台座，一定存在
+5. **[MCP] 點頒獎台設定女優焦點**：`.board-row3-wrap .podium-slot--center`（第 1 名台座，一定存在
    只要範圍內有女優）點擊
    - **驗**：`#tileActress` 顯示該女優名字與 `×`（`insights.clear_actress`），`#tileMaker` 仍是淡色「全部片商」
    - **驗**：若該女優有共演作品，`#costarCard`（「與她同片」，TASK-156d-T3 起搬到 row3
-     左半格、與 `.top20-row3-wrap` 循序淡出淡入互斥顯示）從 `is-hidden`
+     左半格、與 `.board-row3-wrap` 循序淡出淡入互斥顯示）從 `is-hidden`
      （`display:none`）變成可見、`#costarList` 有列；若她沒有共演作品
-     （TASK-156d-T9 起），`#costarCard` 不出現，`.top20-row3-wrap`（頒獎台＋名單）
+     （TASK-156d-T9 起），`#costarCard` 不出現，`.board-row3-wrap`（頒獎台＋名單）
      維持顯示，不應出現空白的「與她同片」卡片
    - **驗**：點 `#tileActress` 的 `×`（`insights.clear_actress`）→ 女優條件清除（`#tileMaker` 若有值則保留），`#costarCard` 隱藏，
-     `.top20-row3-wrap` 同時恢復可見（settle 後互斥顯示）
+     `.board-row3-wrap` 同時恢復可見（settle 後互斥顯示）
 6. **[MCP] 主要片商年表 年/年齡 toggle**：`.insights-gantt-toggle` 兩顆按鈕
    - **驗**：預設 `year` 高亮（`is-on`），點「年齡」按鈕 → class 切到年齡那顆、
      `.gantt-table` 內容改變（軸從年份換成歲數）或顯示 `.gantt-empty`
@@ -1167,6 +1167,12 @@ N/A — 書籤牆／燈箱純瀏覽器互動，不依賴原生 picker。「加�
 13. **[MCP] 說明頁批次搜尋 help 文字**：`/help` 找 `help.batch.add_folder` 對應段落
     - **驗**：文字包含「只讀這一層」／「不往子資料夾找」的措辭（不是舊版「批次搜尋整個
       資料夾（含子目錄）」），且不是 raw i18n key
+
+14. **[MCP] 161b 頭像／年表格子／五人頒獎台**：五入口（頒獎台、名單、年表、女優片商分布、「與她同片」other）分別找有／無照片女優，真點頭像。
+    - **驗**：女優格顯示她、無照片預覽；前四入口重新定位可見頭像再點取消 →「全部女優」。有照片頭像 hover 出預覽、移開消失；觸控 tap 只選女優、不出預覽。缺照片狀態或共演前提寫明 N/A。
+    - **驗**：年份軸有片格一次提交女優＋年份，片數與快照獨立計數一致；已有年份／真拖曳範圍時改點另一年格子 → 換成該年；再點同格只清年份。已選女優點無片格／年齡軸格不改條件、不飛頭像；未選點無片格只選她；已選片商保持不變。
+    - **驗**：1440／1180／390 各重載，只數可見副本：頒獎台 5／5／3、名單 20／20／22；標題「女優 Top 25」與「第 6–25 名」／「第 6–25 名」／「第 4–25 名」。逐元素右緣不超過 innerWidth；三個寬度各暫換可見名字為「あいうえお」驗 scrollWidth ≤ clientWidth；再換「あいうえおかきくけこ」驗 scrollWidth > clientWidth 且 text-overflow 為 ellipsis，量完還原原文字。
+    - **完成**：清除女優、年份、片商條件；本步全程唯讀。
 
 ### 完成後 state
 

@@ -11,19 +11,22 @@
 {% endblock %}
 
 {#
-  TASK-156d-T2：女優 Top20 拆兩張卡——頒獎台（前 3 名）＋精簡名單（第 4–20 名）。
+  TASK-156d-T2：女優榜拆兩張卡——頒獎台（前 3 名）＋精簡名單（第 4–20 名）。
   包成 macro 是為 T3 的第二次呼叫（row7）預作準備（CD-156d-2），本 task 只呼叫一次（row3）。
 #}
-{% macro insights_top20_group() %}
-<div class="top20-group">
-    <section class="card top20-podium-card">
+{% macro insights_board_group() %}
+<div class="board-group">
+    <section class="card board-podium-card">
         <div class="card-head">
-            <h2 x-text="top20Title"></h2>
+            <h2 x-text="boardTitle"></h2>
         </div>
         <div class="card-body">
             {# TASK-156e-T1a／CD-156e-1 v3 方案 A：台座層（固定位置 x-if）＋人員層（x-for :key=name） #}
-            <div class="podium">
+            <div class="podium" :class="{ 'podium--5': podiumSize === 5 }">
                 <div class="podium-stands">
+                    <template x-if="podiumRows.find(r => r.rank === 4)">
+                        <span class="podium-stand podium-stand--4"><span class="podium-rank">4</span></span>
+                    </template>
                     <template x-if="podiumRows.find(r => r.rank === 2)">
                         <span class="podium-stand podium-stand--2"><span class="podium-rank">2</span></span>
                     </template>
@@ -33,18 +36,20 @@
                     <template x-if="podiumRows.find(r => r.rank === 3)">
                         <span class="podium-stand podium-stand--3"><span class="podium-rank">3</span></span>
                     </template>
+                    <template x-if="podiumRows.find(r => r.rank === 5)">
+                        <span class="podium-stand podium-stand--5"><span class="podium-rank">5</span></span>
+                    </template>
                 </div>
                 <div class="podium-people">
                     <template x-for="row in podiumRows" :key="row.name">
                         <div class="podium-slot"
-                             :class="'podium-slot--' + podiumPositionClass(row.rank) + (sel.actress === row.name ? ' is-active' : '')"
+                             :class="'podium-slot--' + podiumPositionClass(row.rank, podiumSize) + (sel.actress === row.name ? ' is-active' : '')"
                              :data-flip-id="'podium-' + row.name"
                              @click="flyAndFocusActress(row.name, $event)">
                             <span class="podium-avatar"
                                   :data-flip-id="'avatar-' + row.name"
-                                  @click.stop="openPreview(row.name, $el)"
-                                  @mouseenter="scheduleOpenPreview(row.name, $el)"
-                                  @mouseleave="cancelOpenPreview()">
+                                  @pointerenter="scheduleOpenPreview(row.name, $el, $event)"
+                                  @pointerleave="cancelOpenPreview()">
                                 <template x-if="actressHasPhoto(row.name) && !photoFailed[row.name]">
                                     <img :src="actressPhotoUrl(row.name)"
                                          alt=""
@@ -55,7 +60,7 @@
                                     <span x-text="row.name.charAt(0)"></span>
                                 </template>
                             </span>
-                            <span class="podium-name"
+                            <span class="podium-name" @pointerenter="scheduleOpenPreview(row.name, $el, $event)" @pointerleave="cancelOpenPreview()"
                                   :title="row.name"
                                   x-text="row.name"></span>
                             <span class="podium-count" x-text="topDisplayCount(row)"></span>
@@ -63,28 +68,27 @@
                     </template>
                 </div>
                 <div x-show="!podiumRows.length"
-                     class="top20-empty"
+                     class="board-empty"
                      x-text="t(cardEmptyKey('actress'))"></div>
             </div>
         </div>
     </section>
-    <section class="card top20-rest-card">
+    <section class="card board-rest-card">
         <div class="card-head">
-            <h2>{{ t('insights.row.actress_top20_rest') }}</h2>
+            <h2 x-text="boardRestTitle"></h2>
         </div>
         <div class="card-body">
-            <div class="list-rows rest20-list">
+            <div class="list-rows board-rest-list">
                 <template x-for="row in restRows" :key="row.name">
-                    <div class="rest20-row"
+                    <div class="board-rest-row"
                          :class="{ 'is-active': sel.actress === row.name }"
                          :data-flip-id="'rest-' + row.name"
                          @click="flyAndFocusActress(row.name, $event)">
-                        <span class="top20-rank" x-text="row.rank"></span>
-                        <span class="top20-avatar"
+                        <span class="board-rank" x-text="row.rank"></span>
+                        <span class="board-avatar"
                               :data-flip-id="'avatar-' + row.name"
-                              @click.stop="openPreview(row.name, $el)"
-                              @mouseenter="scheduleOpenPreview(row.name, $el)"
-                              @mouseleave="cancelOpenPreview()">
+                              @pointerenter="scheduleOpenPreview(row.name, $el, $event)"
+                              @pointerleave="cancelOpenPreview()">
                             <template x-if="actressHasPhoto(row.name) && !photoFailed[row.name]">
                                 <img :src="actressPhotoUrl(row.name)"
                                      alt=""
@@ -95,16 +99,16 @@
                                 <span x-text="row.name.charAt(0)"></span>
                             </template>
                         </span>
-                        <span class="top20-name top20-text"
+                        <span class="board-name board-text"
                               :title="row.name"
                               x-text="row.name"
-                              @mouseenter="scheduleOpenPreview(row.name, $el)"
-                              @mouseleave="cancelOpenPreview()"></span>
-                        <span class="top20-count top20-text" x-text="topDisplayCount(row)"></span>
+                              @pointerenter="scheduleOpenPreview(row.name, $el, $event)"
+                              @pointerleave="cancelOpenPreview()"></span>
+                        <span class="board-count board-text" x-text="topDisplayCount(row)"></span>
                     </div>
                 </template>
                 <div x-show="!restRows.length"
-                     class="top20-empty"
+                     class="board-empty"
                      x-text="t(cardEmptyKey('actress'))"></div>
             </div>
         </div>
@@ -113,7 +117,7 @@
 {% endmacro %}
 
 {% block content %}
-<div class="insights-container page-layer" x-data="libraryInsights" :class="{ 'is-actress-focused': isActressFocused }">
+<div class="insights-container page-layer" x-data="libraryInsights" :class="{ 'is-actress-focused': isActressFocused, 'is-podium-3': podiumSize === 3 }">
     <!-- Row 1: 常駐五格 -->
     <div class="row1">
         <section class="card insights-brand-card">
@@ -128,7 +132,7 @@
                  role="button"
                  :tabindex="canGoBrowse ? 0 : -1"
                  :aria-disabled="canGoBrowse ? 'false' : 'true'"
-                 :class="{ 'is-clickable': canGoBrowse }"
+                 :class="{ 'is-clickable': canGoBrowse, 'is-scoped': canGoBrowse && hasScope }"
                  :title="canGoBrowse ? t('insights.count_open_browse') : ''"
                  @click="goBrowse()"
                  @keydown.enter.prevent="goBrowse()"
@@ -244,14 +248,14 @@
         </section>
     </div>
 
-    <!-- Row 3：女優 Top20 + 標籤 treemap -->
+    <!-- Row 3：女優榜 + 標籤 treemap -->
     <!-- TASK-156d-T3／CD-156d-2：左半格是可切換佔用者的插槽——副本 A（頒獎台＋名單）
          與「與她同片」共用同一個插槽，任何時刻只有一個顯示（:class 開關，不用 x-show，
          FE-ALPINE-17）。 -->
     <div class="row3">
-        <div class="row3-top20-slot">
-            <div class="top20-row3-wrap" x-ref="top20Row3El" :class="{ 'is-hidden': !showTop20InRow3 }">
-                {{ insights_top20_group() }}
+        <div class="row3-board-slot">
+            <div class="board-row3-wrap" x-ref="boardRow3El" :class="{ 'is-hidden': !showBoardInRow3 }">
+                {{ insights_board_group() }}
             </div>
             <section class="card" id="costarCard" x-ref="costarEl" :class="{ 'is-hidden': !showCostar }">
                 <div class="card-head">
@@ -281,9 +285,8 @@
                                     </span>
                                     <span class="costar-avatar"
                                           :data-costar-role="'other'"
-                                          @click.stop="openPreview(row.name, $el)"
-                                          @mouseenter="scheduleOpenPreview(row.name, $el)"
-                                          @mouseleave="cancelOpenPreview()">
+                                          @pointerenter="scheduleOpenPreview(row.name, $el, $event)"
+                                          @pointerleave="cancelOpenPreview()">
                                         <template x-if="actressHasPhoto(row.name) && !photoFailed[row.name]">
                                             <img :src="actressPhotoUrl(row.name)"
                                                  alt=""
@@ -415,9 +418,8 @@
                                          @click="flyAndFocusActress(row.name, $event)">
                                         <div class="gantt-name-cell">
                                             <span class="gantt-avatar"
-                                                  @click.stop="openPreview(row.name, $el)"
-                                                  @mouseenter="scheduleOpenPreview(row.name, $el)"
-                                                  @mouseleave="cancelOpenPreview()">
+                                                  @pointerenter="scheduleOpenPreview(row.name, $el, $event)"
+                                                  @pointerleave="cancelOpenPreview()">
                                                 <template x-if="actressHasPhoto(row.name) && !photoFailed[row.name]">
                                                     <img :src="actressPhotoUrl(row.name)"
                                                          alt=""
@@ -431,8 +433,8 @@
                                             <span class="gantt-name"
                                                   :title="row.name"
                                                   x-text="row.name"
-                                                  @mouseenter="scheduleOpenPreview(row.name, $el)"
-                                                  @mouseleave="cancelOpenPreview()"></span>
+                                                  @pointerenter="scheduleOpenPreview(row.name, $el, $event)"
+                                                  @pointerleave="cancelOpenPreview()"></span>
                                         </div>
                                         <template x-for="cell in row.cells"
                                                   :key="(cell.year != null ? cell.year : cell.age)">
@@ -444,6 +446,7 @@
                                                  :style="cell.state === 'main'
                                                      ? ('background:' + colorForMakerName(cell.maker))
                                                      : ''"
+                                                 @click.stop="ganttCellClick(row.name, cell, ganttAxis, $event)"
                                                  :title="ganttCellTitle(cell, ganttAxis)"></div>
                                         </template>
                                     </div>
@@ -472,9 +475,8 @@
                              :class="{ 'is-active': sel.actress === row.name }"
                              @click="flyAndFocusActress(row.name, $event)">
                             <span class="solo-avatar"
-                                  @click.stop="openPreview(row.name, $el)"
-                                  @mouseenter="scheduleOpenPreview(row.name, $el)"
-                                  @mouseleave="cancelOpenPreview()">
+                                  @pointerenter="scheduleOpenPreview(row.name, $el, $event)"
+                                  @pointerleave="cancelOpenPreview()">
                                 <template x-if="actressHasPhoto(row.name) && !photoFailed[row.name]">
                                     <img :src="actressPhotoUrl(row.name)"
                                          alt=""
@@ -488,8 +490,8 @@
                             <span class="solo-name"
                                   :title="row.name"
                                   x-text="row.name"
-                                  @mouseenter="scheduleOpenPreview(row.name, $el)"
-                                  @mouseleave="cancelOpenPreview()"></span>
+                                  @pointerenter="scheduleOpenPreview(row.name, $el, $event)"
+                                  @pointerleave="cancelOpenPreview()"></span>
                             <span class="solo-bar-wrap">
                                 <template x-for="seg in row.segments" :key="seg.kind + '-' + (seg.maker || '')">
                                     <span class="solo-segment"
@@ -511,8 +513,8 @@
 
     <!-- Row 7：女優焦點期間頁尾多出現的頒獎台＋名單全貌（TASK-156d-T3／CD-156d-2 副本 B，
          與 row3 副本 A 同一份資料、獨立可見性，不互斥） -->
-    <div class="row7" x-ref="row7El" :class="{ 'is-hidden': !showTop20InRow7 }">
-        {{ insights_top20_group() }}
+    <div class="row7" x-ref="row7El" :class="{ 'is-hidden': !showBoardInRow7 }">
+        {{ insights_board_group() }}
     </div>
 
     <!-- 全頁共用女優照片預覽浮層（TASK-156b-T5 / CD-156-10） -->

@@ -5,7 +5,7 @@
  * T1：setRecords / getRecords / buildMakerColorSlots / buildMainMakerYearMap
  * T2：periodRecords / scopeRecords / aggregateYears + UNKNOWN_KEY
  * T4：buildMakerDonutData / classifyRecordAgainstMainMaker + REST_KEY
- * T5：buildActressTop20
+ * T5：buildActressBoard
  * T6：aggregateTags
  * T156c-T1：aggregateAge
  * T156c-T3：buildGanttRows / ganttYearAxis / buildGanttYearCells /
@@ -22,6 +22,24 @@ export const UNKNOWN_KEY = '__unknown__';
 
 /** 具名片商排名太後面被歸併的內部鍵（與 UNKNOWN_KEY 語意不同，不可混用）。 */
 export const REST_KEY = '__rest__';
+
+/** 女優榜列出的前 N 名（TASK-161b-T2 / CD-161b-5）。 */
+export const ACTRESS_TOP_N = 25;
+
+var PODIUM5_SINGLE_MIN = 560;
+var PODIUM5_SINGLE_MAX = 1024;
+var PODIUM5_DUAL_MIN = 1160;
+
+/**
+ * 視窗寬度 → 頒獎台人數（TASK-161b-T2 / CD-161b-3）。
+ * 560..1024（單欄）或 >=1160（雙欄）回 5；其餘（含非數字/NaN/undefined）回 3。
+ */
+export function podiumSizeForViewport(innerWidth) {
+    if (typeof innerWidth !== 'number' || Number.isNaN(innerWidth)) return 3;
+    if (innerWidth >= PODIUM5_SINGLE_MIN && innerWidth <= PODIUM5_SINGLE_MAX) return 5;
+    if (innerWidth >= PODIUM5_DUAL_MIN) return 5;
+    return 3;
+}
 
 
 export var _records = [];
@@ -341,13 +359,13 @@ export function buildMakerDonutData(records, mainMakerYearMap) {
 }
 
 /**
- * 女優 Top20 排名。對傳入的 records 展開 actresses 計數；
+ * 女優榜排名。對傳入的 records 展開 actresses 計數；
  * 排序：count 遞減 → monthCount 遞減 → name 遞增。
  * monthCount ＝相異非 null 的 record.month 個數。
- * 若 sel 選了女優且她的真實 rank > 20，附加她那一列。
+ * 若 sel 選了女優且她的真實 rank > 25，附加她那一列。
  * 不呼叫 getRecords()。
  */
-export function buildActressTop20(records, sel) {
+export function buildActressBoard(records, sel) {
     var herActress = sel ? sel.actress : null;
     var counts = new Map();
     (records || []).forEach(function (r) {
@@ -382,7 +400,7 @@ export function buildActressTop20(records, sel) {
         row.rank = i + 1;
     });
 
-    var rows = all.slice(0, 20);
+    var rows = all.slice(0, ACTRESS_TOP_N);
     var herRank = 0;
     var herRow = null;
     if (herActress) {
@@ -394,7 +412,7 @@ export function buildActressTop20(records, sel) {
             }
         }
     }
-    if (herActress && herRank > 20) { rows.push(herRow); }
+    if (herActress && herRank > ACTRESS_TOP_N) { rows.push(herRow); }
     return { rows: rows };
 }
 
@@ -825,7 +843,7 @@ export function buildSoloRows(records, mainMakerYearMap, sel, ganttNames, topMak
      * 不依賴「現在在算哪個名字」，同一筆片對片中每位女優的結果必然相同——
      * 改成單趟掃 periodScope、對每筆片算一次 isMain／mk，再攤給片中每位
      * （去重同一片重複列名）女優累加，效果與逐名重掃完全一致。
-     * 比照同檔 buildActressTop20 的單趟 Map 累加形狀。
+     * 比照同檔 buildActressBoard 的單趟 Map 累加形狀。
      */
     var statsMap = new Map();
     periodScope.forEach(function (r) {
@@ -979,13 +997,16 @@ export function buildCostarRows(records, sel) {
 
 
 /**
- * TASK-156e-T1a / CD-156e-1 v3：Top20 換位分類（純函式，不碰 DOM）。
+ * TASK-156e-T1a / CD-156e-1 v3 / TASK-161b-T2：女優榜換位分類（純函式，不碰 DOM）。
  * 六個互斥分類供後續 Flip／淡入淡出分流。
+ * @param {Array} oldRows
+ * @param {Array} newRows
+ * @param {number} podiumSize 頒獎台人數（3 或 5），必填無預設值
  */
-export function classifyTop20Transition(oldRows, newRows) {
+export function classifyBoardTransition(oldRows, newRows, podiumSize) {
     var oldByName = new Map((oldRows || []).map(function (r) { return [r.name, r]; }));
     var newByName = new Map((newRows || []).map(function (r) { return [r.name, r]; }));
-    var isPodium = function (r) { return r.rank <= 3; };
+    var isPodium = function (r) { return r.rank <= podiumSize; };
     var rowStayers = [], podiumReshuffle = [], crossStructureMovers = [],
         droppedOut = [], brandNewEntrants = [], podiumNewEntrants = [];
     oldByName.forEach(function (oldRow, name) {
@@ -1009,24 +1030,26 @@ export function classifyTop20Transition(oldRows, newRows) {
 }
 
 /**
- * TASK-156e-T1a：頒獎台 rank → 視覺位置 class 後綴。
- * 1→center、2→left、3→right。
+ * TASK-156e-T1a / TASK-161b-T2：頒獎台 rank → 視覺位置 class 後綴。
+ * 1→center、2→left、3→right；podiumSize===5 時 4→far-left、5→far-right。
  */
-export function podiumPositionClass(rank) {
+export function podiumPositionClass(rank, podiumSize) {
     if (rank === 1) return 'center';
     if (rank === 2) return 'left';
     if (rank === 3) return 'right';
+    if (podiumSize === 5 && rank === 4) return 'far-left';
+    if (podiumSize === 5 && rank === 5) return 'far-right';
     return '';
 }
 
 /**
- * TASK-156e-T3／CD-156e-6：比對兩份 Top20，回傳片數有變動的人。
+ * TASK-156e-T3／CD-156e-6：比對兩份女優榜，回傳片數有變動的人。
  * 只走訪 newRows；新進榜者（oldMap 沒有）天然排除；同名同 count 不進結果。
  * @param {Array<{name:string,count:number}>|null|undefined} oldRows
  * @param {Array<{name:string,count:number}>|null|undefined} newRows
  * @returns {Array<{name:string,from:number,to:number}>}
  */
-export function diffTop20Counts(oldRows, newRows) {
+export function diffBoardCounts(oldRows, newRows) {
     const oldMap = new Map((oldRows || []).map((r) => [r.name, r.count]));
     const out = [];
     (newRows || []).forEach((r) => {

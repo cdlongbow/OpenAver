@@ -45,14 +45,14 @@ def wait_settled(page: Page, timeout: int = SETTLE_MS) -> None:
         if (!d) return false;
         const flipBusy = [...document.querySelectorAll('[data-flip-id]')]
             .some(el => isActive(el.style.transform));
-        const drop = document.querySelectorAll('[data-top20-dropout-ghost]').length;
+        const drop = document.querySelectorAll('[data-board-dropout-ghost]').length;
         const fly = document.querySelectorAll('%s').length;
         const t = document.querySelector('%s');
         const flyOk = !t || (!t.hasAttribute('data-avatar-fly-hidden')
             && (t.style.opacity === '' || t.style.opacity === '1'));
         const countOk = d.displayScopedCount === d.scopedCount
-            && Object.keys(d.top20DisplayCounts || {}).length === 0;
-        const opOk = ['top20Row3El','costarEl','row7El'].every(ref => {
+            && Object.keys(d.boardDisplayCounts || {}).length === 0;
+        const opOk = ['boardRow3El','costarEl','row7El'].every(ref => {
             const el = document.querySelector(`[x-ref="${ref}"]`);
             if (!el) return true;
             const op = el.style.opacity;
@@ -72,7 +72,7 @@ def residue(page: Page) -> dict:
                 id: el.getAttribute('data-flip-id'), transform: el.style.transform });
         });
         return { transforms,
-            dropoutGhosts: document.querySelectorAll('[data-top20-dropout-ghost]').length,
+            dropoutGhosts: document.querySelectorAll('[data-board-dropout-ghost]').length,
             avatarGhosts: document.querySelectorAll('%s').length };
     }""" % (ACTIVE_FLIP, GHOST))
 def assert_no_residue(page: Page, label: str = "") -> None:
@@ -144,7 +144,7 @@ def click_gantt_actress(page: Page, name: str) -> None:
             '.gantt-table .gantt-row:not(.gantt-head-row)')) {
             const n = row.querySelector('.gantt-name');
             if (!n || n.textContent.trim() !== name) continue;
-            const cell = row.querySelector('.gantt-cell') || row;
+            const cell = row.querySelector('.gantt-name') || row;
             cell.scrollIntoView({ block: 'center', inline: 'center' });
             const r = cell.getBoundingClientRect();
             return { found: true, x: r.left + r.width / 2, y: r.top + r.height / 2 };
@@ -178,7 +178,7 @@ def discover_year_chain(page: Page, need: int = 2) -> list:
                 continue
             page.wait_for_timeout(40)
             tops[y] = alpine(
-                page, "(data.top20Rows||[]).map(r=>({name:r.name,rank:r.rank}))")
+                page, "(data.boardRows||[]).map(r=>({name:r.name,rank:r.rank}))")
         reset_period_all(page)
     finally:
         set_prm(page, False)
@@ -195,6 +195,6 @@ def discover_year_chain(page: Page, need: int = 2) -> list:
         if movers(keyed[i], keyed[i + 1]):
             return [keyed[i], keyed[i + 1]]
     return []
-def top20_list(page: Page) -> list:
+def board_list(page: Page) -> list:
     return alpine(page,
-        "(data.top20Rows||[]).map(r=>({name:r.name,rank:r.rank,count:r.count}))") or []
+        "(data.boardRows||[]).map(r=>({name:r.name,rank:r.rank,count:r.count}))") or []

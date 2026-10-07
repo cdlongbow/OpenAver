@@ -1,6 +1,6 @@
 """E2E：TASK-156e-T4 收窄版 — 三項疊加結束狀態（1440/390 × 淺/深）。
 
-換年份 → 馬上點 Top20 名單列 → 再換年份 → 真 click 片商扇區 → settle。
+換年份 → 馬上點女優榜名單列 → 再換年份 → 真 click 片商扇區 → settle。
 斷言：pageerror=0、無殘留替身／非單位 transform、390 無水平捲軸、最終＝PRM 對照組。
 """
 from __future__ import annotations
@@ -43,7 +43,7 @@ def _end_snap(page: Page) -> dict:
         """() => {
             const data = Alpine.$data(document.querySelector('%s'));
             return {
-                top20: (data.top20Rows || []).map(
+                board: (data.boardRows || []).map(
                     (r) => ({ name: r.name, rank: r.rank, count: r.count })),
                 scopedCount: data.scopedCount,
                 displayScopedCount: data.displayScopedCount,
@@ -84,14 +84,14 @@ def _click_year(page: Page, year: int) -> bool:
     return click_year_bar(page, year)
 
 
-def _visible_top20_name(page: Page) -> str | None:
+def _visible_board_name(page: Page) -> str | None:
     return page.evaluate(
         """() => {
-            for (const sel of ['.rest20-row', '.podium-slot']) {
+            for (const sel of ['.board-rest-row', '.podium-slot']) {
                 for (const row of document.querySelectorAll(sel)) {
                     const rr = row.getBoundingClientRect();
                     if (rr.width < 1 || rr.height < 1) continue;
-                    const el = row.querySelector('.top20-name, .podium-name');
+                    const el = row.querySelector('.board-name, .podium-name');
                     const name = el && el.textContent.trim();
                     if (name) return name;
                 }
@@ -101,17 +101,17 @@ def _visible_top20_name(page: Page) -> str | None:
     )
 
 
-def _click_top20_list(page: Page, name: str) -> None:
+def _click_board_list(page: Page, name: str) -> None:
     wait_scroll_settled(page)
     coords = page.evaluate(
         """(name) => {
-            for (const sel of ['.rest20-row', '.podium-slot']) {
+            for (const sel of ['.board-rest-row', '.podium-slot']) {
                 for (const row of document.querySelectorAll(sel)) {
                     const rr = row.getBoundingClientRect();
                     if (rr.width < 1 || rr.height < 1) continue;
-                    const nameEl = row.querySelector('.top20-name, .podium-name');
+                    const nameEl = row.querySelector('.board-name, .podium-name');
                     if (!nameEl || nameEl.textContent.trim() !== name) continue;
-                    const av = row.querySelector('.top20-avatar, .podium-avatar');
+                    const av = row.querySelector('.board-avatar, .podium-avatar');
                     nameEl.scrollIntoView({ block: 'center', inline: 'nearest' });
                     const nr = nameEl.getBoundingClientRect();
                     let x = nr.left + Math.min(
@@ -131,7 +131,7 @@ def _click_top20_list(page: Page, name: str) -> None:
         }""",
         name,
     )
-    assert coords.get("found"), f"可見 Top20 名單找不到女優 {name!r}"
+    assert coords.get("found"), f"可見女優榜名單找不到女優 {name!r}"
     page.mouse.click(coords["x"], coords["y"])
 
 
@@ -152,9 +152,9 @@ def _run_sequence(page: Page, y1: int, preferred_y2: int | None,
     if sample_overflow:
         bad.extend(_sample_overflow(page, n=3, interval_ms=80))
     if actress is None:
-        actress = _visible_top20_name(page)
-    assert actress, "換年後找不到可見 Top20 名單列女優"
-    _click_top20_list(page, actress)
+        actress = _visible_board_name(page)
+    assert actress, "換年後找不到可見女優榜名單列女優"
+    _click_board_list(page, actress)
     page.wait_for_timeout(80)
     focused = _end_snap(page)["focusName"] or actress
     if sample_overflow:
@@ -196,7 +196,7 @@ def test_combined_end_state_after_year_actress_year(
 
     chain = discover_year_chain(page, need=2)
     if len(chain) < 1:
-        pytest.skip("片庫湊不出會造成 Top20 名次變動的年份")
+        pytest.skip("片庫湊不出會造成女優榜名次變動的年份")
     y1 = chain[0]
     preferred_y2 = chain[1] if len(chain) >= 2 else None
 
@@ -204,7 +204,7 @@ def test_combined_end_state_after_year_actress_year(
         page, y1, preferred_y2, None, sample_overflow=(width == 390),
     )
 
-    # 接手 top20 dropout-ghost 回歸：真 click 片商扇區 → settle
+    # 接手女優榜 dropout-ghost 回歸：真 click 片商扇區 → settle
     maker = click_donut_named_maker(page)
     if not maker:
         pytest.skip("片庫湊不出可點的片商扇形")
@@ -232,10 +232,10 @@ def test_combined_end_state_after_year_actress_year(
 
     baseline = _prm_baseline(
         page, base_url, width, theme, y1, y2, actress, maker)
-    # 片商焦點後 Top20／scopedCount 應與 PRM 同序列一致
-    assert actual["top20"] == baseline["top20"], (
-        f"Top20 與 PRM 對照組不一致：\nactual={actual['top20']!r}\n"
-        f"baseline={baseline['top20']!r}"
+    # 片商焦點後女優榜／scopedCount 應與 PRM 同序列一致
+    assert actual["board"] == baseline["board"], (
+        f"女優榜與 PRM 對照組不一致：\nactual={actual['board']!r}\n"
+        f"baseline={baseline['board']!r}"
     )
     assert actual["scopedCount"] == baseline["scopedCount"], (
         f"頁首片數不一致：{actual['scopedCount']} vs {baseline['scopedCount']}"

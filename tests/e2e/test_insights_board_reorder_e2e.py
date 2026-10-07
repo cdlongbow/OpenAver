@@ -1,4 +1,4 @@
-"""E2E：156e Top20 換位 — 粗顆粒結束狀態（不 hook state.js、不窄窗介入）。"""
+"""E2E：156e 女優榜換位 — 粗顆粒結束狀態（不 hook state.js、不窄窗介入）。"""
 from __future__ import annotations
 
 import pytest
@@ -17,7 +17,7 @@ from tests.e2e._insights_motion_helpers import (
     discover_year_chain,
     load_ready,
     set_prm,
-    top20_list,
+    board_list,
     wait_settled,
 )
 
@@ -90,25 +90,25 @@ def _prm_baseline(page: Page, base_url: str, year: int, width: int = DESKTOP) ->
     set_prm(page, True)
     assert click_year_bar(page, year), f"baseline 找不到 {year}"
     wait_settled(page)
-    return {"top20": top20_list(page), "row4Top": _row4_top(page)}
+    return {"board": board_list(page), "row4Top": _row4_top(page)}
 
 
 def _visibility_flags(page: Page) -> dict:
     return alpine(page, """({
-        showTop20InRow3: !!data.showTop20InRow3,
-        showTop20InRow7: !!data.showTop20InRow7,
+        showBoardInRow3: !!data.showBoardInRow3,
+        showBoardInRow7: !!data.showBoardInRow7,
         showCostar: !!data.showCostar,
         costarVisible: !!data.costarVisible,
     })""")
 
 
-def test_top20_year_change_animates_then_matches_prm(page: Page, base_url: str) -> None:
+def test_board_year_change_animates_then_matches_prm(page: Page, base_url: str) -> None:
     """換年份：settle 前粗取樣見位移；settle 後名單＝PRM、無殘留、pageerror=0。"""
     errors = attach_pageerrors(page)
     load_ready(page, base_url)
     chain = discover_year_chain(page, need=2)
     if len(chain) < 1:
-        pytest.skip("片庫湊不出會造成 Top20 名次變動的年份")
+        pytest.skip("片庫湊不出會造成女優榜名次變動的年份")
     year = chain[-1]
 
     before = _flip_positions(page)
@@ -121,13 +121,13 @@ def test_top20_year_change_animates_then_matches_prm(page: Page, base_url: str) 
 
     assert_no_residue(page, "year-change")
     assert errors == [], f"pageerror 非 0：{errors!r}"
-    actual = top20_list(page)
+    actual = board_list(page)
     baseline = _prm_baseline(page, base_url, year)
-    assert actual == baseline["top20"], (
-        f"Top20 與 PRM 不一致：\nactual={actual!r}\nbaseline={baseline['top20']!r}")
+    assert actual == baseline["board"], (
+        f"女優榜與 PRM 不一致：\nactual={actual!r}\nbaseline={baseline['board']!r}")
 
 
-def test_top20_actress_focus_costar_swap_settles_clean(page: Page, base_url: str) -> None:
+def test_board_actress_focus_costar_swap_settles_clean(page: Page, base_url: str) -> None:
     """女優焦點造成共演卡換入：settle 後無殘留，row3/row7 恰一份可見。"""
     load_ready(page, base_url)
     name = discover_actress_with_costar(page)
@@ -140,13 +140,13 @@ def test_top20_actress_focus_costar_swap_settles_clean(page: Page, base_url: str
     flags = _visibility_flags(page)
     assert flags["costarVisible"] is True
     assert flags["showCostar"] is True
-    assert flags["showTop20InRow3"] != flags["showTop20InRow7"], (
+    assert flags["showBoardInRow3"] != flags["showBoardInRow7"], (
         f"row3/row7 應恰一份可見：{flags!r}")
-    assert flags["showTop20InRow7"] is True
-    assert flags["showTop20InRow3"] is False
+    assert flags["showBoardInRow7"] is True
+    assert flags["showBoardInRow3"] is False
 
 
-def test_top20_mobile_row4_matches_prm_after_year_change(
+def test_board_mobile_row4_matches_prm_after_year_change(
     page: Page, base_url: str,
 ) -> None:
     """390 寬換年份：settle 後 row4.top 與 PRM 對照組一致（誤差 <1px）。"""

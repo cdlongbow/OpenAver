@@ -152,6 +152,13 @@
     transition: box-shadow var(--duration-fast) var(--fluent-ease-standard);
 }
 
+.insights-container #tileCount.is-clickable.is-scoped {
+    background-image: linear-gradient(
+        color-mix(in oklch, var(--color-primary) 3%, transparent),
+        color-mix(in oklch, var(--color-primary) 3%, transparent)
+    );
+}
+
 .insights-container #tileCount.is-clickable:hover {
     background-image: linear-gradient(
         color-mix(in oklch, var(--color-primary) 6%, transparent),
@@ -173,6 +180,10 @@
 
 .insights-container #tileCount.is-clickable .insights-open-arrow {
     display: inline;
+}
+
+.insights-container #tileCount.is-clickable.is-scoped .insights-open-arrow {
+    color: var(--text-primary); /* ↗ 與數字同字色 */
 }
 
 .insights-container .insights-tile-error-msg {
@@ -307,7 +318,7 @@
     height: 100%;
 }
 
-/* ===== Row 3: 女優 Top20（頒獎台＋精簡名單）+ 標籤 treemap ===== */
+/* ===== Row 3: 女優榜（頒獎台＋精簡名單）+ 標籤 treemap ===== */
 .insights-container .row3 {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -316,93 +327,99 @@
     min-width: 0;
 }
 
-/* TASK-156d-T2：row3 左半格從單一 top20-card 拆成頒獎台／精簡名單兩張卡，
+/* TASK-156d-T2：row3 左半格從單一 board-card 拆成頒獎台／精簡名單兩張卡，
    兩卡在 row3 的 1fr 欄位裡當一個 grid item，內部自己上下堆疊。 */
-.insights-container .top20-group {
+.insights-container .board-group {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
     min-width: 0;
 }
 
-/* TASK-156d-T3／CD-156d-2：row3 左半格是單一 grid item（.row3-top20-slot），
+/* TASK-156d-T3／CD-156d-2：row3 左半格是單一 grid item（.row3-board-slot），
    內部兩個佔用者（副本 A wrapper／#costarCard）任何時刻只顯示一個，用 :class
    切換 .is-hidden，不用 x-show（FE-ALPINE-17：vendored Alpine 的 x-show 結構上
    晚一幀且一翻轉就立即 display:none，來不及讓淡出播完）。 */
-.insights-container .row3-top20-slot {
+.insights-container .row3-board-slot {
     display: flex;
     min-width: 0;
 }
 
-/* P3 修正（156d Codex review）：原本這裡是 display:contents，讓既有 .top20-group
-   （T2 已定，flex column，本卡不重寫）直接當 .row3-top20-slot 的 flex item——但
+/* P3 修正（156d Codex review）：原本這裡是 display:contents，讓既有 .board-group
+   （T2 已定，flex column，本卡不重寫）直接當 .row3-board-slot 的 flex item——但
    display:contents 沒有可繪製的盒子，`_handleActressFocusChange`（state.js）對
    它 `motion.playFadeTo(opacity)` 完全沒有視覺效果（CDP 實測：子元素
    `.podium-slot` 的 computed opacity 全程仍是 1，wrapper 自己的 opacity 補間
    降到 0 後直接跳 display:none，使用者看到的是「舊卡片維持不透明到動畫結束那
    一瞬間直接消失」，不是淡出）。改 display:flex 讓 wrapper 自己有盒子承接
-   opacity；width:100% 補回主軸（水平）尺寸（理由同下方 .top20-group/#costarCard
-   的 width:100% 規則）。.row3-top20-slot 預設 align-items:stretch 依然讓這個
-   wrapper 桌面撐滿 --top20-slot-h、窄螢幕維持自然高度，wrapper 內部同一個
-   stretch 再把高度傳給唯一子元素 .top20-group（它沒有覆寫 height/align-self）
+   opacity；width:100% 補回主軸（水平）尺寸（理由同下方 .board-group/#costarCard
+   的 width:100% 規則）。.row3-board-slot 預設 align-items:stretch 依然讓這個
+   wrapper 桌面撐滿 --board-slot-h、窄螢幕維持自然高度，wrapper 內部同一個
+   stretch 再把高度傳給唯一子元素 .board-group（它沒有覆寫 height/align-self）
    ——1440／390 寬 CDP 實測修正前後幾何零差異。 */
-.insights-container .top20-row3-wrap {
+.insights-container .board-row3-wrap {
     display: flex;
     width: 100%;
 }
 
 /* 三個可切換顯示元素共用的顯示開關（row3 副本 A wrapper／#costarCard／row7 副本 B
-   wrapper）。用 !important 蓋過 .top20-row3-wrap／.card 的 display:flex（沿用
+   wrapper）。用 !important 蓋過 .board-row3-wrap／.card 的 display:flex（沿用
    既有 [x-cloak]{display:none!important} 慣例，見 input.css:182）。 */
 .insights-container .is-hidden {
     display: none !important;
 }
 
-/* 156d-T3 定稿輪數 2 修正（主 session 用幾何 oracle 抓到）：row3-top20-slot 是
-   flex row，單一可見佔用者（.top20-group／#costarCard）預設主軸（水平）尺寸是
+/* 156d-T3 定稿輪數 2 修正（主 session 用幾何 oracle 抓到）：row3-board-slot 是
+   flex row，單一可見佔用者（.board-group／#costarCard）預設主軸（水平）尺寸是
    content-based shrink-to-fit，不會自動撐滿整格寬度——先前只有 costarCard 露餡
-   （縮在左上角，右側與下方全是空洞；.top20-group 的內容湊巧夠寬，目測沒發現同一個
+   （縮在左上角，右側與下方全是空洞；.board-group 的內容湊巧夠寬，目測沒發現同一個
    問題），兩者都明確 width:100% 才不靠內容寬度巧合。
    高度：原本 #costarCard 有一條「CD-156c-6：align-self:start，自然高度不被拉伸」
    規則，那是舊 row6（costarCard 與分布表並列兩個 grid item）的產物；T3 搬進
-   row3-top20-slot 後，同一時刻只有一個可見佔用者，不再有「被更高的鄰居拉伸」的
-   問題，align-self:start 反而擋住桌面 --top20-slot-h 固定高度該有的撐滿行為，
+   row3-board-slot 後，同一時刻只有一個可見佔用者，不再有「被更高的鄰居拉伸」的
+   問題，align-self:start 反而擋住桌面 --board-slot-h 固定高度該有的撐滿行為，
    已整條移除——移除後預設 align-items:stretch 生效：桌面（插槽有 height:
-   var(--top20-slot-h)）撐滿固定格，窄螢幕（插槽無固定高度、單一可見項）stretch
+   var(--board-slot-h)）撐滿固定格，窄螢幕（插槽無固定高度、單一可見項）stretch
    對唯一項是 no-op，等同自然高度，兩種斷點各自正確、不需要額外的 media query。 */
-.insights-container .row3-top20-slot .top20-group,
-.insights-container .row3-top20-slot #costarCard {
+.insights-container .row3-board-slot .board-group,
+.insights-container .row3-board-slot #costarCard {
     width: 100%;
 }
 
 /* D156d-9：row3 左半格桌面固定高度、窄螢幕自然高度（真互斥，FE-CSS-22，與下方
    @media (max-width:1024px) 不重疊，1024／1025 邊界各驗一次）。calc() 由既有 rem
    常數組成，不是量出來的 px 魔術數字；使用者放大瀏覽器字級時要等比例放大，
-   17 列不能因此擠出捲動。組成（1440 寬 CDP 實測校準）：
+   名單列不能因此擠出捲動。組成（1440 寬 CDP 實測校準）：
    頒獎台卡（頭 + .podium min-height 9.25rem + 內距）＋精簡名單卡頭與內距＋
-   17 列 × 單列實測高度＋兩卡間 gap（.top20-group 0.5rem）。 */
+   名單列數由 --board-rest-rows 決定，乘以單列實測高度＋兩卡間 gap（.board-group 0.5rem）。 */
 @media (min-width: 1025px) {
     .insights-container {
         /* 頒獎台卡（head+podium+內距）＋精簡名單卡自己的 head/內距與 list-rows
-           以外的開銷合計 17rem（CDP 實測校準：100% 字級時 17*2.5625rem 只給
-           .rest20-list 留出 655px 可用高度，比 17 列實際內容 697px 少 42px，
-           在此把開銷項從 13.5rem 調到 17rem 補回這段落差＋留一點餘裕）＋
-           17 列 × 單列實測高度 2.5625rem＋兩卡間 gap 0.5rem。 */
-        --top20-slot-h: calc(17rem + 17 * 2.5625rem + 0.5rem);
+           以外的開銷合計 17rem（CDP 實測校準，補回名單內容高度落差並留一點餘裕）＋
+           由 --board-rest-rows 決定的名單列數 × 單列實測高度 2.5625rem＋兩卡間 gap 0.5rem。 */
+        --board-slot-h: calc(17rem + var(--board-rest-rows) * 2.5625rem + 0.5rem);
     }
 
-    .insights-container .row3-top20-slot {
-        height: var(--top20-slot-h);
+    .insights-container .row3-board-slot {
+        height: var(--board-slot-h);
     }
 }
 
-/* Top20 列（TASK-156b-T5）——名字與片數共用字級來源 */
+/* 女優榜列（TASK-156b-T5）——名字與片數共用字級來源 */
 .insights-container {
-    --top20-text-size: 0.8125rem;
+    --board-rest-rows: 20;
+}
+
+.insights-container.is-podium-3 {
+    --board-rest-rows: 22;
+}
+
+.insights-container {
+    --board-text-size: 0.8125rem;
     --insights-preview-ratio: 0.8;
 }
 
-.insights-container .top20-rank {
+.insights-container .board-rank {
     width: 1.25rem;
     flex: 0 0 auto;
     font-size: 0.6875rem;
@@ -411,7 +428,7 @@
     font-variant-numeric: tabular-nums;
 }
 
-.insights-container .top20-avatar {
+.insights-container .board-avatar {
     width: 32px;
     height: 32px;
     border-radius: 50%;
@@ -426,19 +443,19 @@
     color: var(--text-secondary);
 }
 
-.insights-container .top20-avatar img,
+.insights-container .board-avatar img,
 .insights-container .podium-avatar img {
     width: 100%;
     height: 100%;
     object-fit: cover;
 }
 
-.insights-container .top20-text {
-    font-size: var(--top20-text-size);
+.insights-container .board-text {
+    font-size: var(--board-text-size);
     font-weight: 700;
 }
 
-.insights-container .top20-name {
+.insights-container .board-name {
     width: 6.875rem;
     flex: 0 0 auto;
     overflow: hidden;
@@ -446,14 +463,14 @@
     white-space: nowrap;
 }
 
-.insights-container .top20-count {
+.insights-container .board-count {
     width: 2.5rem;
     flex: 0 0 auto;
     text-align: right;
     font-variant-numeric: tabular-nums;
 }
 
-.insights-container .top20-empty {
+.insights-container .board-empty {
     font-size: 0.8125rem;
     color: var(--text-muted);
     padding: 0.75rem 0.25rem;
@@ -504,7 +521,7 @@
     order: 3;
 }
 
-.insights-container .podium > .top20-empty {
+.insights-container .podium > .board-empty {
     grid-column: 1;
     grid-row: 1;
     align-self: center;
@@ -565,7 +582,7 @@
 }
 
 .insights-container .podium-name {
-    font-size: var(--top20-text-size);
+    font-size: var(--board-text-size);
     font-weight: 700;
     max-width: 100%;
     overflow: hidden;
@@ -613,13 +630,61 @@
     color: var(--text-primary);
 }
 
-/* 精簡名單（第 4–20 名）——形狀照舊 top20 排行列，拿掉長條相關兩個節點 */
-.insights-container .rest20-list {
+/* TASK-161b-T4：五人版兩層共用間距與槽寬，三人版沿用既有宣告。 */
+.insights-container .podium--5 .podium-stands,
+.insights-container .podium--5 .podium-people {
+    column-gap: 0.5rem;
+}
+
+.insights-container .podium--5 .podium-slot,
+.insights-container .podium--5 .podium-stand {
+    width: auto;
+    flex: 0 1 5.5rem;
+    min-width: calc(5 * var(--board-text-size) + 0.75rem);
+}
+
+.insights-container .podium--5 .podium-slot--far-left {
+    order: 0;
+    padding-bottom: calc(24px + 0.25rem);
+}
+
+.insights-container .podium--5 .podium-slot--left {
+    order: 1;
+    padding-bottom: calc(56px + 0.25rem);
+}
+
+.insights-container .podium--5 .podium-slot--center {
+    order: 2;
+    padding-bottom: calc(72px + 0.25rem);
+}
+
+.insights-container .podium--5 .podium-slot--right {
+    order: 3;
+    padding-bottom: calc(40px + 0.25rem);
+}
+
+.insights-container .podium--5 .podium-slot--far-right {
+    order: 4;
+    padding-bottom: calc(24px + 0.25rem);
+}
+
+.insights-container .podium--5 .podium-stand--4 {
+    height: 24px;
+    order: 0;
+}
+
+.insights-container .podium--5 .podium-stand--5 {
+    height: 24px;
+    order: 4;
+}
+
+/* 精簡名單（第 4–20 名）——形狀照舊女優榜排行列，拿掉長條相關兩個節點 */
+.insights-container .board-rest-list {
     flex: 1 1 auto;
     min-height: 220px;
 }
 
-.insights-container .rest20-row {
+.insights-container .board-rest-row {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -629,21 +694,21 @@
     min-width: 0;
 }
 
-.insights-container .rest20-row:last-child {
+.insights-container .board-rest-row:last-child {
     border-bottom: none;
 }
 
-.insights-container .rest20-row:hover {
+.insights-container .board-rest-row:hover {
     background: color-mix(in oklch, var(--color-primary) 6%, transparent);
 }
 
-.insights-container .rest20-row.is-active {
+.insights-container .board-rest-row.is-active {
     background: color-mix(in oklch, var(--color-primary) 12%, transparent);
 }
 
-/* Codex review P2（156d-T2）：拿掉長條後 .rest20-row 沒有東西撐開列寬，片數貼不到右緣。
-   只在 .rest20-row 範圍內覆寫，不動共用的 .top20-name 全域規則（其他呼叫處维持原寬）。 */
-.insights-container .rest20-row .top20-name {
+/* Codex review P2（156d-T2）：拿掉長條後 .board-rest-row 沒有東西撐開列寬，片數貼不到右緣。
+   只在 .board-rest-row 範圍內覆寫，不動共用的 .board-name 全域規則（其他呼叫處维持原寬）。 */
+.insights-container .board-rest-row .board-name {
     flex: 1 1 auto;
     min-width: 0;
 }
@@ -776,6 +841,10 @@
 .insights-container .gantt-row {
     display: grid;
     align-items: center;
+}
+
+.insights-container .gantt-row:not(.gantt-head-row) {
+    cursor: pointer;
 }
 
 .insights-container .gantt-row.is-active .gantt-name-cell {
@@ -1164,7 +1233,7 @@
 
 /* ===== Row 7：女優焦點期間頁尾多出現的頒獎台＋名單全貌
    （TASK-156d-T3／CD-156d-2 副本 B，與 row3 副本 A 同一份資料、獨立可見性、不互斥） =====
-   全寬版面不需要重寫 .top20-group 內部排版——.rest20-row 的 .top20-name 已在 T2
+   全寬版面不需要重寫 .board-group 內部排版——.board-rest-row 的 .board-name 已在 T2
    套用 flex:1 1 auto（Codex review P2 修正），.podium 本身 justify-content:center，
    兩者在全寬容器下自然依既有規則撐開／置中，不需要額外 grid-template-columns。 */
 .insights-container .row7 {

@@ -4,7 +4,7 @@ import pytest
 from playwright.sync_api import Page
 from tests.e2e._insights_motion_helpers import (
     ALPINE, alpine, chart_years, click_donut_named_maker, click_year_bar,
-    load_ready, reset_period_all, set_prm, top20_list, wait_settled,
+    load_ready, reset_period_all, set_prm, board_list, wait_settled,
 )
 pytestmark = pytest.mark.e2e
 def _scoped(page: Page) -> dict:
@@ -100,13 +100,13 @@ def _list_makers(page: Page) -> list:
             .filter(d => d && d.kind === 'named' && d.name && d.value > 0)
             .map(d => ({ name: d.name, value: d.value }));
     }""")
-def _dom_top20_counts(page: Page) -> dict:
-    """讀可見 Top20 列顯示的片數文字 → {name: int}。"""
+def _dom_board_counts(page: Page) -> dict:
+    """讀可見女優榜列顯示的片數文字 → {name: int}。"""
     return page.evaluate("""() => {
         const out = {};
-        document.querySelectorAll('.podium-slot, .rest20-row').forEach(row => {
-            const nameEl = row.querySelector('.podium-name, .top20-name');
-            const countEl = row.querySelector('.podium-count, .top20-count');
+        document.querySelectorAll('.podium-slot, .board-rest-row').forEach(row => {
+            const nameEl = row.querySelector('.podium-name, .board-name');
+            const countEl = row.querySelector('.podium-count, .board-count');
             if (!nameEl || !countEl) return;
             const name = nameEl.textContent.trim();
             const raw = countEl.textContent.trim().replace(/,/g, '');
@@ -189,7 +189,7 @@ def test_count_up_first_load_shows_final(page: Page, base_url: str) -> None:
     _assert_locale(_tile(page), after["scopedCount"])
 
 def test_count_up_rapid_two_years_settles_clean(page: Page, base_url: str) -> None:
-    """快速連換兩個年份：settle 後頁首＝scopedCount，Top20 列顯示＝row.count。"""
+    """快速連換兩個年份：settle 後頁首＝scopedCount，女優榜列顯示＝row.count。"""
     load_ready(page, base_url)
     info = _discover_count_years(page)
     by = info["by_year"]
@@ -208,8 +208,8 @@ def test_count_up_rapid_two_years_settles_clean(page: Page, base_url: str) -> No
     after = _scoped(page)
     assert after["displayScopedCount"] == after["scopedCount"] == by[y2]
     _assert_locale(_tile(page), by[y2])
-    rows = top20_list(page)
-    displayed = _dom_top20_counts(page)
+    rows = board_list(page)
+    displayed = _dom_board_counts(page)
     for row in rows:
         name, count = row["name"], row["count"]
         if name in displayed:

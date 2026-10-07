@@ -146,6 +146,127 @@ test('openPreview: hasPhoto=true 時正常開預覽', () => {
     assert.equal(state.previewActress, '有圖女優');
 });
 
+test('scheduleOpenPreview: touch 事件不排程預覽，mouse／pen／缺省照常排程', () => {
+    const state = libraryInsightsState();
+    state.snapshot = {
+        actressFavorites: {
+            '有圖女優': { photoName: '有圖女優', hasPhoto: true, auto_focal: '', crop_mode: 'auto' },
+        },
+    };
+    const originalSetTimeout = globalThis.setTimeout;
+    let scheduled = 0;
+    globalThis.setTimeout = () => { scheduled += 1; return scheduled; };
+    try {
+        const counts = [];
+        for (const pointerType of ['touch', 'mouse', 'pen', '']) {
+            scheduled = 0;
+            state.scheduleOpenPreview('有圖女優', null, { pointerType });
+            counts.push(scheduled);
+            state.cancelOpenPreview();
+        }
+        scheduled = 0;
+        state.scheduleOpenPreview('有圖女優', null);
+        counts.push(scheduled);
+        assert.deepEqual(counts, [0, 1, 1, 1, 1]);
+    } finally {
+        globalThis.setTimeout = originalSetTimeout;
+        state.cancelOpenPreview();
+    }
+});
+
+test('flyAndFocusActress: 進入先收掉已開的預覽（hover 後直接點選人不殘留）', () => {
+    const state = libraryInsightsState();
+    state.previewActress = '某人';
+    state.flyAndFocusActress('她', null);
+    assert.equal(state.previewActress, null);
+    assert.equal(state.sel.actress, '她');
+});
+
+// TASK-161b-T6：以 setter 計算整份 sel 提交次數。
+function ganttClickState() {
+    const state = libraryInsightsState();
+    state.sel = { period: { type: 'all' }, actress: null, maker: null };
+    let current = state.sel;
+    let commits = 0;
+    Object.defineProperty(state, 'sel', {
+        get: () => current,
+        set: (value) => { current = value; commits += 1; },
+    });
+    return { state, commits: () => commits };
+}
+
+test('ganttCellClick: 無片格或年齡軸且她已被選中，完全無動作（不飛行、sel 零次提交、預覽收掉）', () => {
+    for (const [cell, axis] of [
+        [{ year: 2022, state: 'empty', filmCount: 0 }, 'year'],
+        [{ age: 25, state: 'main', filmCount: 2 }, 'age'],
+    ]) {
+        const { state, commits } = ganttClickState();
+        state.sel.actress = '她';
+        state.previewActress = 'x';
+        const before = structuredClone(state.sel);
+        const calls = [];
+        state.flyAndFocusActress = (...args) => calls.push(args);
+        state.ganttCellClick('她', cell, axis, { currentTarget: { closest: () => ({}) } });
+        assert.deepEqual(calls, []);
+        assert.equal(commits(), 0);
+        assert.deepEqual(state.sel, before);
+        assert.equal(state.previewActress, null);
+    }
+});
+
+test('ganttCellClick: 無片格且尚未選她，呼叫 flyAndFocusActress 不帶 nextSel 並傳列元素', () => {
+    const { state, commits } = ganttClickState();
+    const row = {};
+    const calls = [];
+    state.flyAndFocusActress = (...args) => calls.push(args);
+    state.ganttCellClick('她', { year: 2022, state: 'empty', filmCount: 0 }, 'year', {
+        currentTarget: { closest: (selector) => { assert.equal(selector, '.gantt-row'); return row; } },
+    });
+    assert.deepEqual(calls, [['她', { currentTarget: row }]]);
+    assert.equal(commits(), 0);
+});
+
+test('ganttCellClick: 有片格且她已被選中，不飛行、sel 恰提交一次；再點同格只取消年份、片商不變', () => {
+    const { state, commits } = ganttClickState();
+    state.sel.actress = '她';
+    state.sel.maker = '片商';
+    state.sel.period = { type: 'range', from: 2019, to: 2023 };
+    const calls = [];
+    state.flyAndFocusActress = (...args) => calls.push(args);
+    const cell = { year: 2021, state: 'main', filmCount: 3 };
+    const event = { currentTarget: { closest: () => ({}) } };
+    state.ganttCellClick('她', cell, 'year', event);
+    assert.equal(commits(), 1);
+    assert.deepEqual(state.sel, { actress: '她', period: { type: 'year', year: 2021 }, maker: '片商' });
+    state.ganttCellClick('她', cell, 'year', event);
+    assert.equal(commits(), 2);
+    assert.deepEqual(state.sel, { actress: '她', period: { type: 'all' }, maker: '片商' });
+    assert.deepEqual(calls, []);
+});
+
+test('ganttCellClick: 有片格且未選她，一次提交女優＋年份；來源頭像不存在時仍正確提交一次', () => {
+    for (const maker of [null, '片商']) {
+        const { state, commits } = ganttClickState();
+        state.sel.maker = maker;
+        const fakeRow = { matches: (s) => s === '.gantt-row', querySelector: () => null };
+        const event = { currentTarget: { closest: () => fakeRow } };
+        state.ganttCellClick('她', { year: 2021, state: 'main', filmCount: 3 }, 'year', event);
+        assert.equal(commits(), 1);
+        assert.deepEqual(state.sel, { actress: '她', period: { type: 'year', year: 2021 }, maker });
+    }
+});
+
+test('flyAndFocusActress: 帶 nextSel 時清除分支與找不到來源的提前返回都提交 nextSel', () => {
+    for (const actress of ['她', null]) {
+        const { state, commits } = ganttClickState();
+        state.sel.actress = actress;
+        const nextSel = { actress: '她', period: { type: 'year', year: 2021 }, maker: '片商' };
+        state.flyAndFocusActress('她', null, nextSel);
+        assert.deepEqual(state.sel, nextSel);
+        assert.equal(commits(), 1);
+    }
+});
+
 test('_onPageShow: bfcache 還原時快照仍未載入完成（離頁前 fetch 被丟棄）→ 重新 fetch 並填入資料', async () => {
     // Finding 2：真實流程是 sidebar 點擊觸發 page-lifecycle.js 的 leavePage() →
     // 同步呼叫這裡註冊的 cleanup（_pageAlive=false），發生在快照 fetch 尚未回應時；
@@ -300,9 +421,9 @@ test('cardEmptyKey: 條件滿足時回傳 period_empty', () => {
 
 // ── podiumRows / restRows（TASK-156d-T2）─────────────────────────────
 
-test('podiumRows/restRows: top20Rows 只有 2 筆（女優總數 <3）→ podiumRows 回傳 2 筆，restRows 為空', () => {
+test('podiumRows/restRows: boardRows 只有 2 筆（女優總數 <3）→ podiumRows 回傳 2 筆，restRows 為空', () => {
     const state = libraryInsightsState();
-    state.top20Rows = [
+    state.boardRows = [
         { rank: 1, name: 'A', count: 10 },
         { rank: 2, name: 'B', count: 8 },
     ];
@@ -310,32 +431,26 @@ test('podiumRows/restRows: top20Rows 只有 2 筆（女優總數 <3）→ podium
     assert.deepEqual(state.restRows, []);
 });
 
-test('podiumRows/restRows: top20Rows 為空（0 位女優）→ 兩者皆為空陣列', () => {
+test('podiumRows/restRows: boardRows 為空（0 位女優）→ 兩者皆為空陣列', () => {
     const state = libraryInsightsState();
-    state.top20Rows = [];
+    state.boardRows = [];
     assert.deepEqual(state.podiumRows, []);
     assert.deepEqual(state.restRows, []);
 });
 
-test('podiumRows/restRows: 焦點女優 rank>20 附加列（真實名次 37）→ 落在 restRows，podiumRows 不受影響', () => {
+test('podiumRows/restRows: 焦點女優 rank>25 附加列（真實名次 37）→ 落在 restRows，podiumRows 不受影響', () => {
     const state = libraryInsightsState();
-    state.top20Rows = [
-        { rank: 1, name: 'A', count: 10 },
-        { rank: 2, name: 'B', count: 9 },
-        { rank: 3, name: 'C', count: 8 },
-        { rank: 4, name: 'D', count: 7 },
-        { rank: 37, name: '焦點女優', count: 1 },
-    ];
+    state.boardRows = [...rankingRows(), { rank: 37, name: '焦點女優', count: 1 }];
     assert.equal(state.podiumRows.length, 3);
     assert.ok(!state.podiumRows.some((r) => r.name === '焦點女優'));
     const focusRow = state.restRows.find((r) => r.name === '焦點女優');
     assert.ok(focusRow, '焦點女優應出現在 restRows');
-    assert.equal(focusRow.rank, 37, '名次要顯示真實名次，不是 21');
+    assert.equal(focusRow.rank, 37, '名次要顯示真實名次，不是 26');
 });
 
 test('podiumRows/restRows: 焦點女優 rank<=3（本來就在頒獎台上）→ podiumRows 含她、restRows 不含她', () => {
     const state = libraryInsightsState();
-    state.top20Rows = [
+    state.boardRows = [
         { rank: 1, name: 'A', count: 10 },
         { rank: 2, name: '焦點女優', count: 9 },
         { rank: 3, name: 'C', count: 8 },
@@ -344,17 +459,17 @@ test('podiumRows/restRows: 焦點女優 rank<=3（本來就在頒獎台上）→
     assert.ok(!state.restRows.some((r) => r.name === '焦點女優'));
 });
 
-test('podiumRows/restRows: top20Rows 剛好 20 筆滿額且焦點女優 rank===20 → 落在 restRows', () => {
+test('podiumRows/restRows: boardRows 剛好 25 筆滿額且焦點女優 rank===25 → 落在 restRows', () => {
     const state = libraryInsightsState();
     const rows = [];
-    for (let i = 1; i <= 20; i += 1) {
-        rows.push({ rank: i, name: 'name' + i, count: 21 - i });
+    for (let i = 1; i <= 25; i += 1) {
+        rows.push({ rank: i, name: 'name' + i, count: 26 - i });
     }
-    state.top20Rows = rows;
+    state.boardRows = rows;
     assert.equal(state.podiumRows.length, 3);
-    assert.equal(state.restRows.length, 17);
-    const row20 = state.restRows.find((r) => r.rank === 20);
-    assert.ok(row20, 'rank===20 應落在 restRows');
+    assert.equal(state.restRows.length, 22);
+    const row25 = state.restRows.find((r) => r.rank === 25);
+    assert.ok(row25, 'rank===25 應落在 restRows');
 });
 
 // ── isActressFocused（TASK-156d-T3）───────────────────────────────────
@@ -688,19 +803,19 @@ test('isYearInSel: 單年與範圍含兩端、範圍外為 false、all 為 true'
 
 test('topDisplayCount: displayMap 有對應 key → 回傳該值', () => {
     const state = libraryInsightsState();
-    state.top20DisplayCounts = { Alice: 7 };
+    state.boardDisplayCounts = { Alice: 7 };
     assert.equal(state.topDisplayCount({ name: 'Alice', count: 12 }), 7);
 });
 
 test('topDisplayCount: 沒有 key → fallback row.count', () => {
     const state = libraryInsightsState();
-    state.top20DisplayCounts = {};
+    state.boardDisplayCounts = {};
     assert.equal(state.topDisplayCount({ name: 'Alice', count: 12 }), 12);
 });
 
 test('topDisplayCount: row 為 null/undefined → 回傳空字串', () => {
     const state = libraryInsightsState();
-    state.top20DisplayCounts = { Alice: 7 };
+    state.boardDisplayCounts = { Alice: 7 };
     assert.equal(state.topDisplayCount(null), '');
     assert.equal(state.topDisplayCount(undefined), '');
 });
@@ -737,6 +852,21 @@ function installBrowseStubs({ stored = null, setItemThrows = false } = {}) {
     };
     return { calls, warns, restore };
 }
+
+test('hasScope: 全部為 false，只有年份／女優／片商／範圍為 true', () => {
+    const state = libraryInsightsState();
+    const cases = [
+        [selOf({}), false],
+        [selOf({ period: { type: 'year', year: 2020 } }), true],
+        [selOf({ actress: 'Alice' }), true],
+        [selOf({ maker: 'SOD' }), true],
+        [selOf({ period: { type: 'range', from: 2019, to: 2021 } }), true],
+    ];
+    for (const [sel, expected] of cases) {
+        state.sel = sel;
+        assert.equal(state.hasScope, expected, JSON.stringify(sel));
+    }
+});
 
 test('canGoBrowse: 片數為 0、快照失敗、尚未載入時為 false，有片時為 true', () => {
     const fresh = libraryInsightsState();
@@ -831,5 +961,255 @@ test('goBrowse: 先寫入 showcase_state 再導向 /showcase，保留既有排�
         assert.equal(stub2.calls.filter((c) => c[0] === 'assign').length, 1);
     } finally {
         stub2.restore();
+    }
+});
+
+// TASK-161b-T3：以可觀察分流驗證 podiumSize 接線。
+function rankingRows() {
+    return Array.from({ length: 25 }, (_, i) => ({ rank: i + 1, name: 'name' + (i + 1), count: 25 - i }));
+}
+
+function observeReorder(podiumSize, oldRank, newRank) {
+    const saved = { OpenAver: window.OpenAver, document: globalThis.document, CSS: globalThis.CSS };
+    const captures = [];
+    const selectors = [];
+    const fades = [];
+    const elements = new Map();
+    const wrap = {
+        querySelector(selector) {
+            selectors.push(selector);
+            if (!elements.has(selector)) elements.set(selector, {
+                selector,
+                getBoundingClientRect: () => ({ left: 0, top: 0, width: 10, height: 10 }),
+                cloneNode: () => ({}),
+                querySelectorAll: (childSelector) => [{ selector, childSelector }],
+            });
+            return elements.get(selector);
+        },
+        querySelectorAll(selector) { selectors.push(selector); return []; },
+    };
+    try {
+        globalThis.CSS = { escape: (value) => value };
+        globalThis.document = { querySelector: () => ({ getBoundingClientRect: () => ({}) }) };
+        window.OpenAver = { prefersReducedMotion: true, motion: {
+            flipCapture: (els) => { captures.push(els); return {}; },
+            flipFrom() {}, playEnter() {}, clearProps() {},
+            playFadeTo: (els) => { fades.push(els); }, DURATION: { fast: 0 },
+        } };
+        const state = libraryInsightsState();
+        state.podiumSize = podiumSize;
+        state.boardRows = [{ name: 'A', rank: oldRank, count: 1 }];
+        state._computeBoardRows = () => [{ name: 'A', rank: newRank, count: 1 }];
+        state.$nextTick = (fn) => fn();
+        state._settleBoardNonFlipAnims = () => {};
+        state._playBoardReorder(wrap);
+        return { captures, selectors, fades };
+    } finally {
+        window.OpenAver = saved.OpenAver;
+        globalThis.document = saved.document;
+        globalThis.CSS = saved.CSS;
+    }
+}
+
+test('podiumRows/restRows: podiumSize=5 時頒獎台 5 人、名單從第 6 名起，榜外附加列落在名單', () => {
+    const state = libraryInsightsState();
+    assert.equal(state.podiumSize, 3);
+    state.podiumSize = 5;
+    state.boardRows = [...rankingRows(), { rank: 37, name: 'focus', count: 1 }];
+    assert.deepEqual(state.podiumRows.map((r) => r.rank), Array.from({ length: 5 }, (_, i) => i + 1));
+    assert.equal(state.restRows[0].rank, 6);
+    assert.equal(state.restRows.length, 21);
+    assert.equal(state.restRows.at(-1).rank, 37);
+});
+
+test('podiumRows/restRows: podiumSize=3 時頒獎台 3 人、名單從第 4 名起，榜外附加列落在名單', () => {
+    const state = libraryInsightsState();
+    assert.equal(state.podiumSize, 3);
+    state.podiumSize = 3;
+    state.boardRows = [...rankingRows(), { rank: 37, name: 'focus', count: 1 }];
+    assert.deepEqual(state.podiumRows.map((r) => r.rank), Array.from({ length: 3 }, (_, i) => i + 1));
+    assert.equal(state.restRows[0].rank, 4);
+    assert.equal(state.restRows.length, 23);
+    assert.equal(state.restRows.at(-1).rank, 37);
+});
+
+test('_playBoardReorder: podiumSize 傳給分類（5 人版 4→5 名走頒獎台換位、3 人版同輸入走名單換位）', () => {
+    const wide = observeReorder(5, 4, 5);
+    const narrow = observeReorder(3, 4, 5);
+    assert.equal(wide.captures[1][0]?.selector, '[data-flip-id="podium-A"]');
+    assert.equal(wide.captures[0].length, 0);
+    assert.equal(narrow.captures[0][0]?.selector, '[data-flip-id="rest-A"]');
+    assert.equal(narrow.captures[1].length, 0);
+});
+
+test('_playBoardReorder: podiumSize=5 時名單第 6 名升到第 4 名，淡入走頒獎台名字區', () => {
+    const wide = observeReorder(5, 6, 4);
+    const narrow = observeReorder(3, 6, 4);
+    assert.equal(wide.fades[0]?.[0].selector, '[data-flip-id="podium-A"]');
+    assert.equal(wide.fades[0]?.[0].childSelector, '.podium-name, .podium-count');
+    assert.equal(narrow.fades.length, 0);
+    assert.equal(narrow.captures[0][0]?.selector, '[data-flip-id="rest-A"]');
+});
+
+test('_playPodiumEntrance: podiumSize=5 時台座依 4／2／1／3／5 順序進場，3 人版為 2／1／3', () => {
+    const saved = window.OpenAver;
+    try {
+        const groups = [];
+        window.OpenAver = { motion: { playRise: (value) => groups.push(value) } };
+        const state = libraryInsightsState();
+        state.$refs = { boardRow3El: { querySelector: (selector) => selector, querySelectorAll: () => [] } };
+        state.boardRows = rankingRows();
+        state.podiumSize = 5;
+        state._playPodiumEntrance();
+        state.podiumSize = 3;
+        state._playPodiumEntrance();
+        assert.deepEqual(groups.map((g) => g.map((v) => v.stand)), [
+            [4, 2, 1, 3, 5].map((r) => '.podium-stand--' + r),
+            [2, 1, 3].map((r) => '.podium-stand--' + r),
+        ]);
+    } finally { window.OpenAver = saved; }
+});
+
+test('boardTitle／boardRestTitle: 新 key 帶 {n}／{from,to} 參數，起訖隨 podiumSize', () => {
+    const saved = window.t;
+    try {
+        const calls = [];
+        window.t = (key, params) => { calls.push([key, params]); return key; };
+        const state = libraryInsightsState();
+        assert.equal(state.boardTitle, 'insights.row.actress_top');
+        assert.deepEqual(calls[0], ['insights.row.actress_top', { n: 25 }]);
+        state.podiumSize = 5;
+        assert.equal(state.boardRestTitle, 'insights.row.actress_top_rest');
+        assert.deepEqual(calls.at(-1), ['insights.row.actress_top_rest', { from: 6, to: 25 }]);
+        state.podiumSize = 3;
+        assert.equal(state.boardRestTitle, 'insights.row.actress_top_rest');
+        assert.deepEqual(calls.at(-1), ['insights.row.actress_top_rest', { from: 4, to: 25 }]);
+    } finally { window.t = saved; }
+});
+
+test('podiumSize: 初值依視窗寬、resize 跨門檻才寫入、cleanup 拆監聽', async () => {
+    const keys = ['innerWidth', 'addEventListener', 'removeEventListener', 'requestAnimationFrame', 'cancelAnimationFrame', '__registerPage'];
+    const saved = Object.fromEntries(keys.map((key) => [key, Object.getOwnPropertyDescriptor(window, key)]));
+    try {
+        delete window.innerWidth;
+        assert.equal(libraryInsightsState().podiumSize, 3);
+        for (const [width, expected] of [[390, 3], [559, 3], [560, 5], [1024, 5], [1025, 3], [1159, 3], [1160, 5], [1440, 5]]) {
+            window.innerWidth = width;
+            assert.equal(libraryInsightsState().podiumSize, expected);
+        }
+        let handler, cleanup, frame;
+        const removed = [];
+        window.addEventListener = (type, fn, options) => {
+            if (type === 'resize') { handler = fn; assert.equal(options.passive, true); }
+        };
+        window.removeEventListener = (type, fn) => removed.push([type, fn]);
+        window.__registerPage = (entry) => { cleanup = entry.cleanup; };
+        window.requestAnimationFrame = (fn) => { assert.equal(frame, undefined); frame = fn; return 1; };
+        const flushFrame = () => {
+            const fn = frame;
+            frame = undefined;
+            fn();
+        };
+        window.cancelAnimationFrame = () => { frame = null; };
+        const state = libraryInsightsState();
+        const rows = rankingRows();
+        state.boardRows = rows;
+        state.$watch = () => {};
+        state._loadSnapshot = async () => {};
+        state._playBoardReorder = () => assert.fail('resize 不應播換位');
+        state.recomputeBoard = () => assert.fail('resize 不應重算榜');
+        let value = state.podiumSize, writes = 0;
+        Object.defineProperty(state, 'podiumSize', { get: () => value, set: (v) => { value = v; writes++; } });
+        await state.init();
+        handler(); flushFrame();
+        assert.equal(writes, 0);
+        window.innerWidth = 1159; handler(); flushFrame();
+        assert.equal(value, 3); assert.equal(writes, 1);
+        handler(); flushFrame(); assert.equal(writes, 1);
+        window.innerWidth = 1160; handler(); flushFrame();
+        assert.equal(value, 5); assert.equal(writes, 2);
+        window.innerWidth = 559; handler(); flushFrame();
+        assert.equal(value, 3);
+        window.innerWidth = 560; handler(); flushFrame();
+        assert.equal(value, 5);
+        assert.equal(state.boardRows, rows);
+        assert.equal(state.podiumRows.length, 5);
+        window.requestAnimationFrame = (fn) => { assert.equal(frame, undefined); frame = fn; return 2; };
+        handler(); handler();
+        assert.equal(typeof frame, 'function');
+        cleanup();
+        assert.ok(removed.some(([type, fn]) => type === 'resize' && fn === handler));
+        assert.equal(frame, null);
+    } finally {
+        for (const key of keys) {
+            if (saved[key]) Object.defineProperty(window, key, saved[key]);
+            else delete window[key];
+        }
+    }
+});
+
+
+test('cleanup 後經 pageshow 還原，resize 監聽重新生效且 podiumSize 依當下寬度重算；重複還原不會重複掛監聽', async () => {
+    const keys = ['innerWidth', 'addEventListener', 'removeEventListener', 'requestAnimationFrame', 'cancelAnimationFrame', '__registerPage'];
+    const saved = Object.fromEntries(keys.map((key) => [key, Object.getOwnPropertyDescriptor(window, key)]));
+    const listeners = new Set();
+    let cleanup, frame, registrations = 0, bindings = 0;
+    let state;
+    try {
+        window.innerWidth = 1440;
+        window.addEventListener = (type, fn) => {
+            if (type === 'resize') { listeners.add(fn); bindings++; }
+        };
+        window.removeEventListener = (type, fn) => { if (type === 'resize') listeners.delete(fn); };
+        window.requestAnimationFrame = (fn) => { assert.equal(frame, undefined); frame = fn; return 1; };
+        window.cancelAnimationFrame = () => { frame = undefined; };
+        window.__registerPage = (entry) => { cleanup = entry.cleanup; registrations++; };
+        state = libraryInsightsState();
+        state.$watch = () => {};
+        state._loadSnapshot = async () => {};
+        state._playBoardReorder = () => assert.fail('還原不應播換位');
+        state.recomputeBoard = () => assert.fail('還原不應重算榜');
+        await state.init();
+        const leave = () => {
+            const fn = cleanup;
+            cleanup = undefined; // 真實 lifecycle cleanup 後清空 hooks。
+            fn();
+        };
+        assert.equal(listeners.size, 1);
+        leave();
+        assert.equal(listeners.size, 0);
+        window.innerWidth = 390;
+        await state._onPageShow({ persisted: false });
+        assert.equal(listeners.size, 0);
+        await state._onPageShow({ persisted: true });
+        assert.equal(listeners.size, 1, 'pageshow 必須重掛 resize');
+        assert.equal(state.podiumSize, 3);
+        assert.equal(registrations, 2, '還原必須重新註冊下次離頁的 cleanup');
+        let value = state.podiumSize, writes = 0;
+        Object.defineProperty(state, 'podiumSize', { get: () => value, set: (v) => { value = v; writes++; } });
+        await state._onPageShow({ persisted: true });
+        assert.equal(bindings, 2, '重複還原不得重複掛 resize');
+        assert.equal(writes, 0, '相同寬度不得重寫人數');
+        window.innerWidth = 1160;
+        for (const fn of listeners) fn();
+        const pending = frame;
+        frame = undefined;
+        pending();
+        assert.equal(state.podiumSize, 5);
+        assert.equal(writes, 1);
+        leave();
+        assert.equal(listeners.size, 0, '再次離頁仍須解除監聽');
+        state.snapshotError = true;
+        window.innerWidth = 559;
+        await state._onPageShow({ persisted: true });
+        assert.equal(listeners.size, 1, '快照錯誤不應阻止 resize 還原');
+        assert.equal(state.podiumSize, 3);
+        leave();
+    } finally {
+        if (cleanup) cleanup();
+        for (const key of keys) {
+            if (saved[key]) Object.defineProperty(window, key, saved[key]);
+            else delete window[key];
+        }
     }
 });

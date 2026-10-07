@@ -1643,8 +1643,8 @@
     "row": {
       "years": "年份",
       "makers": "片商",
-      "actress_top20": "女優 Top 20",
-      "actress_top20_rest": "第 4–20 名",
+      "actress_top": "女優 Top {n}",
+      "actress_top_rest": "第 {from}–{to} 名",
       "tags": "標籤",
       "age": "年齡",
       "director": "導演",

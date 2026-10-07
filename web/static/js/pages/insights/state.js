@@ -7,11 +7,13 @@
  */
 
 import {
+    ACTRESS_TOP_N,
+    podiumSizeForViewport,
     setRecords,
     getRecords,
     buildMakerColorSlots,
     buildMainMakerYearMap,
-    buildActressTop20,
+    buildActressBoard,
     buildGanttRows,
     ganttYearAxis,
     buildGanttYearCells,
@@ -21,8 +23,8 @@ import {
     buildSoloRows,
     buildCostarRows,
     podiumPositionClass,
-    classifyTop20Transition,
-    diffTop20Counts,
+    classifyBoardTransition,
+    diffBoardCounts,
 } from './aggregate.js';
 import {
     emptySel,
@@ -30,9 +32,11 @@ import {
     periodContainsYear,
     toggleActress,
     toggleMaker,
+    toggleGanttCell,
     scopeRecords,
     periodLabel,
     suffixLabel,
+    isHoverPointer,
 } from './selection.js';
 import {
     setMakerColorSlots,
@@ -94,8 +98,8 @@ let _ganttViewCache = null;
 let _lastPinnedGanttName = null;
 let _lastPinnedSoloName = null;
 let _podiumEntrancePlayed = false;
-/** TASK-156e-T1b／CD-156e-2：還在播的 Top20 換位相關動畫（Flip／淡入／掉榜替身）。 */
-let _top20ActiveAnims = new Set();
+/** TASK-156e-T1b／CD-156e-2：還在播的女優榜換位相關動畫（Flip／淡入／掉榜替身）。 */
+let _boardActiveAnims = new Set();
 /** TASK-156e-T1b／CD-156e-3：156d 淡出淡入換卡世代號與進行中鏈計數。 */
 let _costarSwapGen = 0;
 let _costarSwapPendingChains = 0;
@@ -104,39 +108,39 @@ let _activeAvatarGhost = null;
 /** TASK-156e-T3／CD-156e-6：頁首片數補間 handle＋世代號（連點防護）。 */
 let _scopedCountTween = null;
 let _scopedCountGen = 0;
-/** TASK-156e-T3／CD-156e-6：Top20 每人一份片數補間 handle＋世代號（key＝女優名）。 */
-let _top20CountTweens = {};
-let _top20CountGens = {};
+/** TASK-156e-T3／CD-156e-6：女優榜每人一份片數補間 handle＋世代號（key＝女優名）。 */
+let _boardCountTweens = {};
+let _boardCountGens = {};
 
 /**
  * TASK-156e-T1b／CD-156e-2：登記／自清 wrapper。
  * kind: 'flip' | 'fade'
  */
-function _playTop20TrackedAnim(kind, createFn, opts) {
+function _playBoardTrackedAnim(kind, createFn, opts) {
     let anim;
     const userOnComplete = opts && opts.onComplete;
     const mergedOpts = Object.assign({}, opts, {
         onComplete: () => {
-            _top20ActiveAnims.delete(anim);
+            _boardActiveAnims.delete(anim);
             if (userOnComplete) userOnComplete();
         },
     });
     anim = createFn(mergedOpts);
-    if (anim) { anim._top20Kind = kind; _top20ActiveAnims.add(anim); }
+    if (anim) { anim._boardKind = kind; _boardActiveAnims.add(anim); }
     return anim;
 }
 
 /** TASK-156e-T1b／CD-156e-2 規則 1/2：新一輪換位只收斂非 Flip。 */
-function _settleTop20NonFlipAnims() {
-    Array.from(_top20ActiveAnims).forEach(anim => {
-        if (anim._top20Kind === 'flip') return; // 交給下一次 flipCapture()
+function _settleBoardNonFlipAnims() {
+    Array.from(_boardActiveAnims).forEach(anim => {
+        if (anim._boardKind === 'flip') return; // 交給下一次 flipCapture()
         if (typeof anim.progress === 'function') anim.progress(1);
     });
 }
 
 /** TASK-156e-T1b／CD-156e-2 規則 3：換卡時收斂全部（不含片數 playCountUp）。 */
-function _forceSettleAllTop20Anims() {
-    Array.from(_top20ActiveAnims).forEach(anim => {
+function _forceSettleAllBoardAnims() {
+    Array.from(_boardActiveAnims).forEach(anim => {
         if (typeof anim.progress === 'function') anim.progress(1);
     });
 }
@@ -201,13 +205,16 @@ export function shouldPlayPodiumEntrance(alreadyPlayed, podiumRowsLength) {
 
 /**
  * TASK-156d-T9／CD-156d-10a：row3 左半格是否顯示「與她同片」卡的衍生旗標。
- * 女優焦點但零共演時仍應為 false（改顯示 Top20），避免空白的「與她同片」卡。
+ * 女優焦點但零共演時仍應為 false（改顯示女優榜），避免空白的「與她同片」卡。
  */
 export function computeCostarVisible(isActressFocused, costarRowsLength) {
     return isActressFocused && costarRowsLength > 0;
 }
 
 export function libraryInsightsState() {
+    let podiumResizeHandler = null;
+    let resizePending = false;
+    let resizeFrame = null;
     return {
         snapshot: null,
         snapshotError: null,
@@ -217,14 +224,15 @@ export function libraryInsightsState() {
         scopedCount: 0,
         // TASK-156e-T3／CD-156e-6：顯示層（補間只碰這裡；真相欄位 scopedCount／row.count 不變）
         displayScopedCount: 0,
-        top20DisplayCounts: {},
-        top20Rows: [],
+        boardDisplayCounts: {},
+        boardRows: [],
+        podiumSize: podiumSizeForViewport(typeof window !== 'undefined' ? window.innerWidth : undefined),
         // TASK-156d-T3／CD-156d-2：row3 左半格＋row7 三個可切換顯示旗標（不用 x-show，
         // FE-ALPINE-17——vendored Alpine 的 x-show 晚一幀且一翻轉就立即 display:none，
         // 淡出播不完）。初始狀態＝無焦點：副本 A 顯示、與她同片／row7 副本 B 隱藏。
-        showTop20InRow3: true,
+        showBoardInRow3: true,
         showCostar: false,
-        showTop20InRow7: false,
+        showBoardInRow7: false,
         ganttRows: [],
         // 修正 1（第 2 輪）：圖例名單存進 reactive 欄位，見 ganttLegendMakers() 註解。
         ganttLegend: [],
@@ -236,7 +244,7 @@ export function libraryInsightsState() {
         colorForMakerName,
         // P3-3：以女優名為 key，記錄該人頭像照片曾經載入失敗——取代舊版
         // @error 直接改寫 DOM textContent 的寫法（會把 x-if 錨點一併砍掉，
-        // Alpine 之後永遠無法再插回新內容）。女優格與 Top20 共用同一份。
+        // Alpine 之後永遠無法再插回新內容）。女優格與女優榜共用同一份。
         photoFailed: {},
 
         // 模板 @load / $watch 呼叫（同 showcase 揭露慣例）
@@ -253,6 +261,10 @@ export function libraryInsightsState() {
                 this.sel,
                 null,
             ).length;
+        },
+
+        get hasScope() {
+            return normalizePeriod(this.sel.period).type !== 'all' || Boolean(this.sel.actress || this.sel.maker);
         },
 
         /**
@@ -279,12 +291,12 @@ export function libraryInsightsState() {
         },
 
         /**
-         * TASK-156e-T3／CD-156e-6：Top20 片數顯示值。
-         * 補間進行中讀 top20DisplayCounts；否則 fallback 真相值 row.count。
+         * TASK-156e-T3／CD-156e-6：女優榜片數顯示值。
+         * 補間進行中讀 boardDisplayCounts；否則 fallback 真相值 row.count。
          */
         topDisplayCount(row) {
             if (!row) return '';
-            const v = this.top20DisplayCounts[row.name];
+            const v = this.boardDisplayCounts[row.name];
             return v === undefined ? row.count : v;
         },
 
@@ -338,15 +350,15 @@ export function libraryInsightsState() {
         },
 
         /**
-         * §4.2：Top 20 誰上榜＝期間∩片商（女優條件不縮榜，只影響置頂附加列）。
+         * §4.2：Top N 誰上榜＝期間∩片商（女優條件不縮榜，只影響置頂附加列）。
          */
-        _computeTop20Rows() {
+        _computeBoardRows() {
             const records = scopeRecords(getRecords(), this.sel, 'actress');
-            return buildActressTop20(records, this.sel).rows;
+            return buildActressBoard(records, this.sel).rows;
         },
 
-        recomputeTop20() {
-            this.top20Rows = this._computeTop20Rows();
+        recomputeBoard() {
+            this.boardRows = this._computeBoardRows();
         },
 
         recomputeGantt() {
@@ -444,10 +456,10 @@ export function libraryInsightsState() {
 
         _playPodiumEntrance() {
             // TASK-156e-T1a／CD-156e-1 v3：台座層與人員層分離後，依視覺順序
-            // 左2→中1→右3 組 {stand, items} 傳給 playRise（簽名不變）。
-            const wrap = this.$refs.top20Row3El;
+            // 依三人／五人台座視覺順序組 {stand, items} 傳給 playRise（簽名不變）。
+            const wrap = this.$refs.boardRow3El;
             if (!wrap) return;
-            const visualRanks = [2, 1, 3];
+            const visualRanks = this.podiumSize === 5 ? [4, 2, 1, 3, 5] : [2, 1, 3];
             const groups = [];
             for (let i = 0; i < visualRanks.length; i++) {
                 const rank = visualRanks[i];
@@ -655,11 +667,34 @@ export function libraryInsightsState() {
             this.sel = toggleMaker(this.sel, name);
         },
 
+        _commitFocusSel(name, nextSel) {
+            if (nextSel) { this.sel = nextSel; return; }
+            this.toggleActressFocus(name);
+        },
+
+        ganttCellClick(name, cell, axis, event) {
+            this.cancelOpenPreview(); // 格子點擊先收預覽（四分支皆適用）
+            const year = (axis === 'year' && cell && cell.filmCount > 0) ? cell.year : null;
+            if (year === null && this.sel.actress === name) return;
+            const rowEl = event.currentTarget.closest('.gantt-row');
+            if (year === null) {
+                this.flyAndFocusActress(name, { currentTarget: rowEl });
+                return;
+            }
+            const nextSel = toggleGanttCell(this.sel, name, year);
+            if (this.sel.actress === name) {
+                this.sel = nextSel;
+                return;
+            }
+            this.flyAndFocusActress(name, { currentTarget: rowEl }, nextSel);
+        },
+
         /**
          * TASK-156e-T2／CD-156e-5：五入口共用——設女優焦點並從頭像起飛到女優格（#tileActress）。
          * 清除焦點／找不到頭像時只走 toggle，不飛。
          */
-        flyAndFocusActress(name, event) {
+        flyAndFocusActress(name, event, nextSel) {
+            this.cancelOpenPreview();
             const isClearing = this.sel.actress === name;
             if (isClearing) {
                 if (_activeAvatarGhost) {
@@ -673,7 +708,7 @@ export function libraryInsightsState() {
                     clearingTarget.removeAttribute('data-avatar-fly-hidden');
                     clearingTarget.style.opacity = '1';
                 }
-                this.toggleActressFocus(name);
+                this._commitFocusSel(name, nextSel);
                 return;
             }
             let sourceEl = null;
@@ -681,13 +716,13 @@ export function libraryInsightsState() {
             if (currentTarget && typeof currentTarget.querySelector === 'function') {
                 let selector = null;
                 if (currentTarget.matches('.podium-slot')) selector = '.podium-avatar';
-                else if (currentTarget.matches('.rest20-row')) selector = '.top20-avatar';
+                else if (currentTarget.matches('.board-rest-row')) selector = '.board-avatar';
                 else if (currentTarget.matches('.gantt-row')) selector = '.gantt-avatar';
                 else if (currentTarget.matches('.solo-row')) selector = '.solo-avatar';
                 else if (currentTarget.matches('.costar-row')) selector = '[data-costar-role="other"]';
                 if (selector) sourceEl = currentTarget.querySelector(selector);
             }
-            if (!sourceEl) { this.toggleActressFocus(name); return; }
+            if (!sourceEl) { this._commitFocusSel(name, nextSel); return; }
             const sourceRect = sourceEl.getBoundingClientRect();
             // getComputedStyle 回傳 live CSSStyleDeclaration；toggle 後 Alpine 可能拆掉
             // 來源節點，之後讀屬性會變空字串。toggle 前拍成純物件快照。
@@ -736,7 +771,7 @@ export function libraryInsightsState() {
             // 必須在 toggle 前 clone：焦點一變，與她同片列會重算重繪，
             // 來源節點在 $nextTick 時可能已被 Alpine 拆掉／清空。
             const sourceClone = sourceEl.cloneNode(true);
-            this.toggleActressFocus(name);
+            this._commitFocusSel(name, nextSel);
             // 雙 rAF：等 Alpine 插入女優格頭像 + 一幀 layout（costar 進場等）後再量終點，
             // 避免 targetContainerRect 與真實落點差幾 px。
             this.$nextTick(() => {
@@ -916,14 +951,14 @@ export function libraryInsightsState() {
             const isNowCostarVisible = this.costarVisible;
             if (wasCostarVisible === isNowCostarVisible) return;
 
-            this._forceSettleAllTop20Anims();
+            this._forceSettleAllBoardAnims();
             const motion = window.OpenAver.motion;
-            const top20El = this.$refs.top20Row3El;
+            const boardEl = this.$refs.boardRow3El;
             const costarEl = this.$refs.costarEl;
             const row7El = this.$refs.row7El;
             // CD-156d-2 步驟 4：每次新觸發前先對這次牽涉到的全部元素 killTweens，
             // 再永遠依當下最新 isActressFocused 從步驟 1/2 重新開始。
-            motion.killTweens([top20El, costarEl, row7El].filter(Boolean));
+            motion.killTweens([boardEl, costarEl, row7El].filter(Boolean));
             const gen = ++_costarSwapGen;
             _costarSwapPendingChains = 2;
             const chainDone = () => {
@@ -933,14 +968,14 @@ export function libraryInsightsState() {
 
             if (isNowCostarVisible) {
                 // 步驟 1：進入焦點——costarEl 先淡出既有的 row3 副本 A。
-                motion.playFadeTo(top20El, {
+                motion.playFadeTo(boardEl, {
                     opacity: 0,
                     duration: 0.25,
                     onComplete: () => {
                         // CD-156d-5 不變式 2：隱藏後清掉殘留 inline opacity:0，
                         // 讓 style.opacity 回到 ''（下次淡入前用 fromOpacity 強制起始值）。
-                        motion.clearProps(top20El, 'opacity');
-                        this.showTop20InRow3 = false;
+                        motion.clearProps(boardEl, 'opacity');
+                        this.showBoardInRow3 = false;
                         this.showCostar = true;
                         this.$nextTick(() => {
                             motion.playFadeTo(costarEl, {
@@ -953,7 +988,7 @@ export function libraryInsightsState() {
                     },
                 });
                 // row7 副本 B 同時獨立處理：立即顯示、$nextTick 內淡入。
-                this.showTop20InRow7 = true;
+                this.showBoardInRow7 = true;
                 this.$nextTick(() => {
                     motion.playFadeTo(row7El, {
                         fromOpacity: 0,
@@ -972,9 +1007,9 @@ export function libraryInsightsState() {
                         // CD-156d-5 不變式 2：隱藏後清掉殘留 inline opacity:0。
                         motion.clearProps(costarEl, 'opacity');
                         this.showCostar = false;
-                        this.showTop20InRow3 = true;
+                        this.showBoardInRow3 = true;
                         this.$nextTick(() => {
-                            motion.playFadeTo(top20El, {
+                            motion.playFadeTo(boardEl, {
                                 fromOpacity: 0,
                                 opacity: 1,
                                 duration: 0.25,
@@ -990,7 +1025,7 @@ export function libraryInsightsState() {
                     onComplete: () => {
                         // CD-156d-5 不變式 2：隱藏後清掉殘留 inline opacity:0。
                         motion.clearProps(row7El, 'opacity');
-                        this.showTop20InRow7 = false;
+                        this.showBoardInRow7 = false;
                         chainDone();
                     },
                 });
@@ -998,11 +1033,11 @@ export function libraryInsightsState() {
         },
 
         /**
-         * TASK-156e-T3／CD-156e-6：頁首片數＋Top20 片數顯示層補間（連點防護）。
+         * TASK-156e-T3／CD-156e-6：頁首片數＋女優榜片數顯示層補間（連點防護）。
          * `$watch('sel')` 呼叫；呼叫方在既有 Flip if/else
-         * 之後傳入更新前的 `oldTop20Rows` 快照。
+         * 之後傳入更新前的 `oldBoardRows` 快照。
          */
-        _playCountUps(oldTop20Rows) {
+        _playCountUps(oldBoardRows) {
             const oldDisplay = this.displayScopedCount;
             this.recomputeScopedCount();
             if (_scopedCountTween) { _scopedCountTween.kill(); _scopedCountTween = null; }
@@ -1023,40 +1058,40 @@ export function libraryInsightsState() {
                 });
             }
             {
-                const diffs = diffTop20Counts(oldTop20Rows, this.top20Rows);
-                const newNames = new Set(this.top20Rows.map((r) => r.name));
-                Object.keys(this.top20DisplayCounts).forEach((name) => {
+                const diffs = diffBoardCounts(oldBoardRows, this.boardRows);
+                const newNames = new Set(this.boardRows.map((r) => r.name));
+                Object.keys(this.boardDisplayCounts).forEach((name) => {
                     if (newNames.has(name)) return; // 還在榜上，不動她
-                    if (_top20CountTweens[name]) {
-                        _top20CountTweens[name].kill();
-                        delete _top20CountTweens[name];
+                    if (_boardCountTweens[name]) {
+                        _boardCountTweens[name].kill();
+                        delete _boardCountTweens[name];
                     }
-                    delete _top20CountGens[name];
-                    delete this.top20DisplayCounts[name];
+                    delete _boardCountGens[name];
+                    delete this.boardDisplayCounts[name];
                 });
                 diffs.forEach((d) => {
-                    if (!(d.name in this.top20DisplayCounts)) {
-                        this.top20DisplayCounts[d.name] = d.from;
+                    if (!(d.name in this.boardDisplayCounts)) {
+                        this.boardDisplayCounts[d.name] = d.from;
                     }
                 });
                 const motion = window.OpenAver.motion;
                 this.$nextTick(() => {
                     diffs.forEach((d) => {
-                        if (_top20CountTweens[d.name]) {
-                            _top20CountTweens[d.name].kill();
+                        if (_boardCountTweens[d.name]) {
+                            _boardCountTweens[d.name].kill();
                         }
-                        const gen = (_top20CountGens[d.name] || 0) + 1;
-                        _top20CountGens[d.name] = gen;
-                        const fromVal = this.top20DisplayCounts[d.name];
-                        _top20CountTweens[d.name] = motion.playCountUp({
+                        const gen = (_boardCountGens[d.name] || 0) + 1;
+                        _boardCountGens[d.name] = gen;
+                        const fromVal = this.boardDisplayCounts[d.name];
+                        _boardCountTweens[d.name] = motion.playCountUp({
                             from: fromVal,
                             to: d.to,
                             duration: motion.DURATION.medium,
-                            onUpdate: (v) => { this.top20DisplayCounts[d.name] = v; },
+                            onUpdate: (v) => { this.boardDisplayCounts[d.name] = v; },
                             onComplete: () => {
-                                if (_top20CountGens[d.name] !== gen) return;
-                                delete this.top20DisplayCounts[d.name];
-                                delete _top20CountTweens[d.name];
+                                if (_boardCountGens[d.name] !== gen) return;
+                                delete this.boardDisplayCounts[d.name];
+                                delete _boardCountTweens[d.name];
                             },
                         });
                     });
@@ -1068,29 +1103,29 @@ export function libraryInsightsState() {
             return _costarSwapPendingChains > 0;
         },
 
-        _forceSettleAllTop20Anims() {
-            _forceSettleAllTop20Anims();
+        _forceSettleAllBoardAnims() {
+            _forceSettleAllBoardAnims();
         },
 
-        _settleTop20NonFlipAnims() {
-            _settleTop20NonFlipAnims();
+        _settleBoardNonFlipAnims() {
+            _settleBoardNonFlipAnims();
         },
 
         /**
-         * TASK-156e-T1b／CD-156e-2：Top20 換位——三個 Flip＋分類手動淡入淡出。
+         * TASK-156e-T1b／CD-156e-2：女優榜換位——三個 Flip＋分類手動淡入淡出。
          * 呼叫前呼叫方已確認 costarVisible 未翻轉且 isCostarSwapInProgress()===false。
          */
-        _playTop20Reorder(visibleWrap) {
-            this._settleTop20NonFlipAnims();
+        _playBoardReorder(visibleWrap) {
+            this._settleBoardNonFlipAnims();
             const motion = window.OpenAver.motion;
             if (!visibleWrap) {
-                this.recomputeTop20();
+                this.recomputeBoard();
                 return;
             }
 
-            const oldRows = (this.top20Rows || []).slice();
-            const newRows = this._computeTop20Rows();
-            const classified = classifyTop20Transition(oldRows, newRows);
+            const oldRows = (this.boardRows || []).slice();
+            const newRows = this._computeBoardRows();
+            const classified = classifyBoardTransition(oldRows, newRows, this.podiumSize);
 
             const rowStayerEls = classified.rowStayers
                 .map((r) => visibleWrap.querySelector(`[data-flip-id="rest-${CSS.escape(r.name)}"]`))
@@ -1121,7 +1156,7 @@ export function libraryInsightsState() {
                     const rect = el.getBoundingClientRect();
                     const clone = el.cloneNode(true);
                     _stripAlpineForGhost(clone);
-                    clone.setAttribute('data-top20-dropout-ghost', d.name);
+                    clone.setAttribute('data-board-dropout-ghost', d.name);
                     clone.style.position = 'absolute';
                     clone.style.left = (rect.left - containerRect.left) + 'px';
                     clone.style.top = (rect.top - containerRect.top) + 'px';
@@ -1138,16 +1173,16 @@ export function libraryInsightsState() {
             const podiumState = motion.flipCapture(podiumReshuffleEls);
             const avatarState = motion.flipCapture(crossStructureEls);
             const costarSwapGenAtCapture = _costarSwapGen;
-            this.recomputeTop20();
+            this.recomputeBoard();
             this.$nextTick(() => {
                 if (_costarSwapGen !== costarSwapGenAtCapture) return;
                 const flipDur = 0.4;
-                _playTop20TrackedAnim('flip', (o) => motion.flipFrom(rowState, o), {
+                _playBoardTrackedAnim('flip', (o) => motion.flipFrom(rowState, o), {
                     targets: visibleWrap.querySelectorAll('[data-flip-id^="rest-"]'),
                     nested: true,
                     duration: flipDur,
                 });
-                _playTop20TrackedAnim('flip', (o) => motion.flipFrom(podiumState, o), {
+                _playBoardTrackedAnim('flip', (o) => motion.flipFrom(podiumState, o), {
                     targets: visibleWrap.querySelectorAll('[data-flip-id^="podium-"]'),
                     nested: true,
                     duration: flipDur,
@@ -1158,7 +1193,7 @@ export function libraryInsightsState() {
                 const avatarTargets = classified.crossStructureMovers
                     .map((r) => visibleWrap.querySelector(`[data-flip-id="avatar-${CSS.escape(r.name)}"]`))
                     .filter(Boolean);
-                _playTop20TrackedAnim('flip', (o) => motion.flipFrom(avatarState, o), {
+                _playBoardTrackedAnim('flip', (o) => motion.flipFrom(avatarState, o), {
                     targets: avatarTargets,
                     nested: true,
                     absolute: true,
@@ -1169,7 +1204,7 @@ export function libraryInsightsState() {
                 classified.brandNewEntrants.forEach((r) => {
                     const el = visibleWrap.querySelector(`[data-flip-id="rest-${CSS.escape(r.name)}"]`);
                     if (!el) return;
-                    _playTop20TrackedAnim('fade', (o) => motion.playEnter(el, o), {
+                    _playBoardTrackedAnim('fade', (o) => motion.playEnter(el, o), {
                         y: 0,
                         overwrite: 'auto',
                         onComplete: () => motion.clearProps(el, 'opacity'),
@@ -1178,7 +1213,7 @@ export function libraryInsightsState() {
                 classified.podiumNewEntrants.forEach((r) => {
                     const el = visibleWrap.querySelector(`[data-flip-id="podium-${CSS.escape(r.name)}"]`);
                     if (!el) return;
-                    _playTop20TrackedAnim('fade', (o) => motion.playEnter(el, o), {
+                    _playBoardTrackedAnim('fade', (o) => motion.playEnter(el, o), {
                         y: 0,
                         overwrite: 'auto',
                         onComplete: () => motion.clearProps(el, 'opacity'),
@@ -1189,11 +1224,11 @@ export function libraryInsightsState() {
                 classified.crossStructureMovers.forEach((r) => {
                     const newRow = newByName.get(r.name);
                     if (!newRow) return;
-                    if (newRow.rank <= 3) {
+                    if (newRow.rank <= this.podiumSize) {
                         const slot = visibleWrap.querySelector(`[data-flip-id="podium-${CSS.escape(r.name)}"]`);
                         if (!slot) return;
                         const els = slot.querySelectorAll('.podium-name, .podium-count');
-                        _playTop20TrackedAnim('fade', (o) => motion.playFadeTo(els, o), {
+                        _playBoardTrackedAnim('fade', (o) => motion.playFadeTo(els, o), {
                             fromOpacity: 0,
                             opacity: 1,
                             duration: motion.DURATION.fast,
@@ -1203,8 +1238,8 @@ export function libraryInsightsState() {
                     } else {
                         const row = visibleWrap.querySelector(`[data-flip-id="rest-${CSS.escape(r.name)}"]`);
                         if (!row) return;
-                        const els = row.querySelectorAll('.top20-rank, .top20-name, .top20-count');
-                        _playTop20TrackedAnim('fade', (o) => motion.playFadeTo(els, o), {
+                        const els = row.querySelectorAll('.board-rank, .board-name, .board-count');
+                        _playBoardTrackedAnim('fade', (o) => motion.playFadeTo(els, o), {
                             fromOpacity: 0,
                             opacity: 1,
                             duration: motion.DURATION.fast,
@@ -1216,7 +1251,7 @@ export function libraryInsightsState() {
 
                 dropoutClones.forEach((clone) => {
                     container.appendChild(clone);
-                    _playTop20TrackedAnim('fade', (o) => motion.playFadeTo(clone, o), {
+                    _playBoardTrackedAnim('fade', (o) => motion.playFadeTo(clone, o), {
                         opacity: 0,
                         duration: motion.DURATION.fast,
                         onComplete: () => clone.remove(),
@@ -1255,7 +1290,8 @@ export function libraryInsightsState() {
             this.previewAnchorRect = rect;
         },
 
-        scheduleOpenPreview(name, anchorEl) {
+        scheduleOpenPreview(name, anchorEl, ev) {
+            if (!isHoverPointer(ev)) return;
             if (!this._hasPreviewPhoto(name)) return;
             if (_previewTimer) {
                 clearTimeout(_previewTimer);
@@ -1363,12 +1399,12 @@ export function libraryInsightsState() {
          * CD-156c-8／CD-161a-2：suffixDims 內任一維有條件時加期間後綴
          * （全庫／單年／範圍），後綴文字由 selection.js 的 suffixLabel 產生。
          */
-        _titleWithPeriod(baseKey, suffixDims) {
+        _titleWithPeriod(baseKey, suffixDims, params) {
             const tFn =
                 typeof window !== 'undefined' && typeof window.t === 'function'
                     ? window.t
                     : null;
-            const base = tFn ? tFn(baseKey) : baseKey;
+            const base = tFn ? tFn(baseKey, params) : baseKey;
             const allLabel = tFn
                 ? tFn('insights.donut.library_wide')
                 : 'insights.donut.library_wide';
@@ -1385,27 +1421,29 @@ export function libraryInsightsState() {
         /**
          * D156-12：選了女優時標題後綴＝期間標籤（全庫／該年／範圍）；其餘不加後綴。
          */
-        get top20Title() {
+        get boardTitle() {
             return this._titleWithPeriod(
-                'insights.row.actress_top20',
+                'insights.row.actress_top',
                 ['actress'],
+                { n: ACTRESS_TOP_N },
             );
         },
 
-        /**
-         * TASK-156d-T2：Top20 拆兩張卡——頒獎台（前三名，固定 3 插槽）。
-         * 焦點女優 rank<=3 天然落在這裡，不需要額外分支（CD-156d-1）。
-         */
-        get podiumRows() {
-            return (this.top20Rows || []).filter((r) => r.rank <= 3);
+        get boardRestTitle() {
+            return window.t('insights.row.actress_top_rest', {
+                from: this.podiumSize + 1,
+                to: ACTRESS_TOP_N,
+            });
         },
 
-        /**
-         * TASK-156d-T2：Top20 拆兩張卡——精簡名單（第 4–20 名 ＋ 焦點女優
-         * rank>20 的附加列，附加列的 rank 是她的真實名次，天然 >3）。
-         */
+        /** 頒獎台人數由視窗欄位決定，焦點女優按真實名次自然分流。 */
+        get podiumRows() {
+            return (this.boardRows || []).filter((r) => r.rank <= this.podiumSize);
+        },
+
+        /** 精簡名單包含頒獎台以外的榜內列與榜外焦點女優附加列。 */
         get restRows() {
-            return (this.top20Rows || []).filter((r) => r.rank > 3);
+            return (this.boardRows || []).filter((r) => r.rank > this.podiumSize);
         },
 
         /**
@@ -1565,6 +1603,10 @@ export function libraryInsightsState() {
 
         _onPageShow(event) {
             if (!event || event.persisted !== true) return;
+            // 側欄離頁已 cleanup；bfcache 不重跑 init，還原監聽及下次離頁的 hooks。
+            if (this._bindPodiumResize()) this._registerInsightsCleanup();
+            const size = podiumSizeForViewport(window.innerWidth);
+            if (size !== this.podiumSize) this.podiumSize = size;
             // 快照失敗時從未建圖——不要在 bfcache 還原時建空圖表
             if (this.snapshotError) return;
             // Finding 2：離頁前快照尚未載完（fetch 仍在飛）時，cleanup 已把
@@ -1702,7 +1744,7 @@ export function libraryInsightsState() {
                 this.photoFailed = {};
                 this.recomputeScopedCount();
                 this.displayScopedCount = this.scopedCount;
-                this.recomputeTop20();
+                this.recomputeBoard();
                 this.recomputeGantt();
                 this.recomputeSolo();
                 this._maybePlayPinPulse();
@@ -1711,7 +1753,7 @@ export function libraryInsightsState() {
                 // ——this.sel 只能被 toggleActressFocus()／clearActress()／clearMaker()／donut 片商
                 // 點擊回呼／年份圖點擊寫入，都要點擊已渲染的 UI 才觸發，而這些 UI 在首次快照成功
                 // 前不存在，所以 _loadSnapshot() 執行到這裡時 this.sel 必為初始
-                // 值（未選女優），costarVisible 恆 false，跟預設顯示旗標（showTop20InRow3:
+                // 值（未選女優），costarVisible 恆 false，跟預設顯示旗標（showBoardInRow3:
                 // true／showCostar:false）已經一致，沒有「翻轉」可同步。
                 if (shouldPlayPodiumEntrance(_podiumEntrancePlayed, this.podiumRows.length)) {
                     _podiumEntrancePlayed = true;
@@ -1775,7 +1817,45 @@ export function libraryInsightsState() {
             }
         },
 
+        _bindPodiumResize() {
+            if (podiumResizeHandler) return false;
+            podiumResizeHandler = () => {
+                if (resizePending) return;
+                resizePending = true;
+                const frame = requestAnimationFrame(() => {
+                    resizePending = false;
+                    resizeFrame = null;
+                    const size = podiumSizeForViewport(window.innerWidth);
+                    if (size !== this.podiumSize) this.podiumSize = size;
+                });
+                resizeFrame = frame;
+            };
+            window.addEventListener('resize', podiumResizeHandler, { passive: true });
+            return true;
+        },
+
+        _unbindPodiumResize() {
+            if (podiumResizeHandler) window.removeEventListener('resize', podiumResizeHandler);
+            podiumResizeHandler = null;
+            if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+            resizePending = false;
+            resizeFrame = null;
+        },
+
+        _registerInsightsCleanup() {
+            if (window.__registerPage) {
+                window.__registerPage({
+                    cleanup: () => {
+                        this._unbindPodiumResize();
+                        _pageAlive = false;
+                        disposeAll();
+                    },
+                });
+            }
+        },
+
         async init() {
+            this._bindPodiumResize();
             // pageshow：模組生命週期內只註冊一次；不進 __registerPage cleanup
             if (!_pageshowBound) {
                 _pageshowBound = true;
@@ -1815,34 +1895,27 @@ export function libraryInsightsState() {
                 this.redrawDirector();
                 this.redrawSeries();
                 this.recomputeCostar();
-                // TASK-156e-T3：Top20 片數補間——先快照舊榜，再跑既有 Flip if/else
-                const oldTop20Rows = this.top20Rows;
+                // TASK-156e-T3：女優榜片數補間——先快照舊榜，再跑既有 Flip if/else
+                const oldBoardRows = this.boardRows;
                 if (
                     wasCostarVisible === this.costarVisible &&
                     !this.isCostarSwapInProgress()
                 ) {
                     const visibleWrap = this.costarVisible
                         ? this.$refs.row7El
-                        : this.$refs.top20Row3El;
-                    this._playTop20Reorder(visibleWrap);
+                        : this.$refs.boardRow3El;
+                    this._playBoardReorder(visibleWrap);
                 } else {
-                    this.recomputeTop20();
+                    this.recomputeBoard();
                 }
-                this._playCountUps(oldTop20Rows);
+                this._playCountUps(oldBoardRows);
                 this.recomputeGantt();
                 this.recomputeSolo();
                 this._maybePlayPinPulse();
                 this._handleActressFocusChange(oldValue, oldCostarRowsLength);
             });
 
-            if (window.__registerPage) {
-                window.__registerPage({
-                    cleanup: () => {
-                        _pageAlive = false;
-                        disposeAll();
-                    },
-                });
-            }
+            this._registerInsightsCleanup();
 
             await this._loadSnapshot();
         },

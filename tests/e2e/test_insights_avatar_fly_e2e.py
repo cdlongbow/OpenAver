@@ -41,15 +41,16 @@ def _click_row_not_avatar(page: Page, row_sel: str, name: str, avatar_sel: str) 
     wait_scroll_settled(page)
     c = page.evaluate("""([rowSel, name, avatarSel]) => {
         for (const row of document.querySelectorAll(rowSel)) {
+            if (row.offsetParent === null) continue;
             const avatar = row.querySelector(avatarSel);
             if (!avatar) continue;
             const nameEl = row.querySelector(
-                '.podium-name,.top20-name,.solo-name,.gantt-name,.costar-name');
+                '.podium-name,.board-name,.solo-name,.gantt-name,.costar-name');
             const match = nameEl ? nameEl.textContent.trim() === name
                 : (row.textContent || '').includes(name);
             if (!match) continue;
             const clickEl = nameEl
-                || row.querySelector('.podium-count,.top20-count,.gantt-cell') || row;
+                || row.querySelector('.podium-count,.board-count,.gantt-cell') || row;
             clickEl.scrollIntoView({ block: 'center', inline: 'nearest' });
             const ar = avatar.getBoundingClientRect(), cr = clickEl.getBoundingClientRect();
             let x = cr.left + Math.min(cr.width * 0.5, Math.max(8, cr.width - 8));
@@ -112,7 +113,7 @@ def _pick_target(page: Page, pool: list) -> str | None:
     return pool[0]
 ENTRIES = [
     ("podium", ".podium-slot", ".podium-avatar", "podium"),
-    ("rest20", ".rest20-row", ".top20-avatar", "rest"),
+    ("board-rest", ".board-rest-row", ".board-avatar", "rest"),
     ("costar", ".costar-row", '[data-costar-role="other"]', "costar"),
     ("gantt", ".gantt-table .gantt-row:not(.gantt-head-row)", ".gantt-avatar", "gantt"),
     ("solo", ".solo-row", ".solo-avatar", "solo"),
@@ -193,18 +194,20 @@ def test_avatar_fly_non_flying_paths_no_ghost(page: Page, base_url: str) -> None
     page.click("#tileMaker .insights-x-btn")
     page.wait_for_timeout(100)
     assert _focus(page) == NO_FOCUS
+    # 161b 起此路徑會選人並飛行。
     _click_avatar_only(
         page, ".gantt-table .gantt-row:not(.gantt-head-row)", target, ".gantt-avatar")
-    page.wait_for_timeout(300)
-    assert _focus(page) == NO_FOCUS
-    assert max(_ghost_count(page) for _ in range(4)) == 0
+    _wait_fly_settled(page)
+    wait_settled(page)
+    assert _focus(page) == {"actress": target, "maker": None}, "點頭像應選中女優且不開預覽（spec-161b §3）"
+    _assert_landed(page, target)
     preview = page.evaluate("""() => {
         const el = document.querySelector('.insights-preview');
         if (!el) return false;
         const cs = getComputedStyle(el);
         return cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0';
     }""")
-    assert preview, "點頭像應打開預覽浮層"
+    assert not preview, "點頭像應選中女優且不開預覽（spec-161b §3）"
 
 def test_avatar_fly_prm_skips_ghost(page: Page, base_url: str) -> None:
     """PRM：不出現 ghost。"""
@@ -230,7 +233,17 @@ def test_avatar_fly_rapid_clicks_third_wins(page: Page, base_url: str) -> None:
         pytest.skip(f"精簡名單女優不足 3 位（{len(pool)}）")
     a, b, c = pool[0], pool[1], pool[2]
     def _click_rest(name: str) -> None:
-        _click_row_not_avatar(page, ".rest20-row", name, ".top20-avatar")
+        coords = page.evaluate("""name => {
+            const el = [...document.querySelectorAll('.board-rest-row .board-name')]
+                .filter(e => e.offsetParent !== null && e.textContent.trim() === name).at(-1);
+            if (!el) return null;
+            el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+            const r = el.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+            const hit = document.elementFromPoint(x, y);
+            return { x, y, ok: !!hit && el.contains(hit) };
+        }""", name)
+        assert coords and coords["ok"], f"可見名單名字被遮擋：{name!r} / {coords}"
+        page.mouse.click(coords["x"], coords["y"])
     _click_rest(a)
     page.wait_for_timeout(60)
     _click_rest(b)
