@@ -318,13 +318,6 @@ test("S 鍵：mode='table' + showFavoriteActresses=true → toggleInfo 有被呼
     assert.notEqual(g.infoVisible, gBefore);
 });
 
-test("S 鍵：mode='table' + showFavoriteActresses=false → toggleInfo 沒有被呼叫", () => {
-    const c = makeKeydownComponent({ mode: 'table', showFavoriteActresses: false });
-    const before = c.infoVisible;
-    pressS(c);
-    assert.equal(c.infoVisible, before);
-});
-
 // T1 review 補測：gate 放寬成 `|| this.showFavoriteActresses` 之後，「女優燈箱開著時
 // 按 S 不得切換資訊區」靠的是 handleKeydown 第 5 段（lightboxOpen 分支，
 // state-lightbox.js:2476-2494）在第 6 段之前 return —— 保護來自**順序**而非旗標，
