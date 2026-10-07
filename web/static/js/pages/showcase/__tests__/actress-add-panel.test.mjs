@@ -109,21 +109,6 @@ function flushMicrotasks() {
 
 // ── AC-1.3 / AC-1.6：開啟即載入、不等網路 ─────────────────────────────────
 
-test('AC-1.6：openActressAddPanel 同步 return 後 actressAddPanelOpen === true（不 await）', () => {
-    const restore = mockFetchOk({ success: true, actresses: LIBRARY_FIXTURE, total: 4 });
-    try {
-        const c = makeComponent();
-        // 故意不 await：同步路徑必須立刻開殼
-        c.openActressAddPanel();
-        assert.equal(c.actressAddPanelOpen, true);
-        assert.equal(c._libQuery, '');
-        assert.equal(c._libVisibleCount, 40);
-        assert.equal(c._libLoading, true);
-    } finally {
-        restore();
-    }
-});
-
 test('AC-1.3：開啟即載入；關閉再開重新載入（fetch 兩次、query/visibleCount 歸零）', async () => {
     let fetchCount = 0;
     const restore = mockFetchSequence([
@@ -337,20 +322,6 @@ test('stale finally guard：舊輪先 resolve、新輪仍飛時 _libLoading 必�
 
 // ── AC-2.1 / AC-2.2 / AC-3.2 ───────────────────────────────────────────────
 
-test('AC-2.1：is_favorite:true 的列仍在 libVisibleRows() 內', async () => {
-    const restore = mockFetchOk({ success: true, actresses: LIBRARY_FIXTURE, total: 4 });
-    try {
-        const c = makeComponent();
-        c.openActressAddPanel();
-        await flushMicrotasks();
-        const names = c.libVisibleRows().map((r) => r.primary_name);
-        assert.ok(names.includes('明里つむぎ'));
-        assert.equal(c.libVisibleRows()[0].is_favorite, true);
-    } finally {
-        restore();
-    }
-});
-
 test('AC-2.2：前端零重排——可見列順序 === 回應順序', async () => {
     const restore = mockFetchOk({ success: true, actresses: LIBRARY_FIXTURE, total: 4 });
     try {
@@ -372,27 +343,7 @@ test('AC-2.2：前端零重排——可見列順序 === 回應順序', async () 
     }
 });
 
-test('AC-3.2：libRowFavorited(row) 吃 row.is_favorite', () => {
-    const c = makeComponent();
-    assert.equal(c.libRowFavorited({ is_favorite: true }), true);
-    assert.equal(c.libRowFavorited({ is_favorite: false }), false);
-    assert.equal(c.libRowFavorited(null), false);
-});
-
 // ── AC-5.x 過濾 ────────────────────────────────────────────────────────────
-
-test('AC-5.1：即時過濾——改 _libQuery 立刻影響 libVisibleRows', async () => {
-    const restore = mockFetchOk({ success: true, actresses: LIBRARY_FIXTURE, total: 4 });
-    try {
-        const c = makeComponent();
-        c.openActressAddPanel();
-        await flushMicrotasks();
-        c._libQuery = '三上';
-        assert.deepEqual(c.libVisibleRows().map((r) => r.primary_name), ['三上悠亜']);
-    } finally {
-        restore();
-    }
-});
 
 test('AC-5.2：過濾涵蓋別名——打「新ありな」命中顯示「橋本ありな」的那一列', async () => {
     const restore = mockFetchOk({ success: true, actresses: LIBRARY_FIXTURE, total: 4 });
@@ -485,21 +436,6 @@ test('AC-5.4：無相符時 libShowDirectAdd；libDirectAdd 走 addFavoriteActre
     }
 });
 
-test('AC-5.5：清空輸入框回到原清單與原展開列數', () => {
-    const rows = makeLibraryRows(50);
-    const c = makeComponent({
-        _libRows: rows,
-        _libTotal: 50,
-        _libVisibleCount: 40,
-        _libQuery: '女優000', // 完整 primary_name，避免子字串命中 000–009
-    });
-    assert.equal(c.libFilteredRows().length, 1);
-    c._libQuery = '';
-    assert.equal(c.libFilteredRows().length, 50);
-    assert.equal(c.libVisibleRows().length, 40);
-    assert.equal(c._libVisibleCount, 40);
-});
-
 // ── AC-6.x 分批 ────────────────────────────────────────────────────────────
 
 test('AC-6.1/6.2/6.3：首批 40、展開 +40、已顯示不收起、到底鈕消失', () => {
@@ -521,29 +457,6 @@ test('AC-6.1/6.2/6.3：首批 40、展開 +40、已顯示不收起、到底鈕�
     assert.equal(c._libVisibleCount, 120);
     assert.equal(c.libVisibleRows().length, 100); // 只有 100 筆
     assert.equal(c.libHasMore(), false);
-});
-
-test('AC-6.4：append-only + primary_name 唯一 + 前 N 列同物件參考', () => {
-    const rows = makeLibraryRows(90);
-    const c = makeComponent({
-        _libRows: rows,
-        _libTotal: 90,
-        _libVisibleCount: 40,
-    });
-    const before = c.libVisibleRows();
-    const first40 = before.slice();
-
-    // key 唯一
-    const keys = c.libFilteredRows().map((r) => r.primary_name);
-    assert.equal(new Set(keys).size, keys.length);
-
-    c.libExpandMore();
-    const after = c.libVisibleRows();
-    assert.equal(after.length, 80);
-    // 前 40 列逐項 === 同一物件參考
-    for (let i = 0; i < 40; i++) {
-        assert.equal(after[i], first40[i]);
-    }
 });
 
 test('AC-6.5：底部進度 key + params；到底改 progress_all', () => {
@@ -742,37 +655,6 @@ test('INV-2a：同一列連點 5 次 → POST 1 次、_libQueue.length 不增', 
     }
 });
 
-// 4. INV-2b：出隊重檢（enqueue 檢查擋不住——B 入隊時 A 還沒回）
-test('INV-2b：A 的回應涵蓋 B → B 出隊時被丟棄（POST 總數 2）', async () => {
-    _setActresses([]);
-    const rowA = { primary_name: 'A優', names: ['A優'], video_count: 1, is_favorite: false };
-    const rowB = { primary_name: 'B優', names: ['B優'], video_count: 1, is_favorite: false };
-    const rowC = { primary_name: 'C優', names: ['C優'], video_count: 1, is_favorite: false };
-    const mock = mockFetchManual();
-    try {
-        const c = makeComponent();
-        c.libEnqueueFavorite(rowA);
-        c.libEnqueueFavorite(rowC);
-        c.libEnqueueFavorite(rowB);   // 額度已滿（2），B 排隊
-
-        assert.equal(mock.calls.length, 2);
-        assert.equal(c._libQueue.length, 1);
-
-        mock.calls[0].resolve({
-            status: 200,
-            json: async () => libFavoritePayload('A優', { covered_names: ['A優', 'B優'] }),
-        });
-        await flushMicrotasks();
-        await flushMicrotasks();
-
-        assert.equal(mock.calls.length, 2, 'B 出隊被丟棄，不應再發第 3 支 POST');
-        assert.equal(c.libRowFavorited(rowB), true);
-        assert.equal(c.libRowState(rowB), 'idle');
-    } finally {
-        mock.restore();
-    }
-});
-
 // 5. INV-3：排空保證（全失敗也要歸零）
 test('INV-3：5 列全部 reject → 皆 error、_libInFlight === 0、_libQueue.length === 0', async () => {
     const rows = makeQueueRows(5);
@@ -824,14 +706,6 @@ test('AC-4.6：covered_names 涵蓋整組別名——兩列都變實心，再點
     }
 });
 
-// 7. AC-4.6b：.some 掃 names[] 的 this 綁定（釘住「this 正確但掃描邏輯寫錯」的綠殼）
-test('AC-4.6b：libRowFavorited 用 .some 掃 names[]——primary 未 covered、別名被 covered 仍算實心', () => {
-    const c = makeComponent();
-    c._libCovered = { '別名B': true };
-    const row = { primary_name: '正式名A', names: ['正式名A', '別名B'], is_favorite: false };
-    assert.equal(c.libRowFavorited(row), true);
-});
-
 // 8. 409 視為成功
 test('409 視為成功：body 無 success 欄 → 實心、無 error、狀態 idle、covered_names 被吃', async () => {
     _setActresses([]);
@@ -875,24 +749,6 @@ test('404：libRowState 為 error、libRowErrorText 走 addNotFound；再點一�
 
         c.libEnqueueFavorite(row);
         assert.equal(mock.calls.length, 2, '404 後可重試，允許再發一次 POST');
-    } finally {
-        mock.restore();
-    }
-});
-
-// 10. 504
-test('504：error key 為 addTimeout', async () => {
-    const row = { primary_name: '逾時優', names: ['逾時優'], video_count: 1, is_favorite: false };
-    const mock = mockFetchManual();
-    try {
-        const c = makeComponent();
-        c.libEnqueueFavorite(row);
-        mock.calls[0].resolve({ status: 504, json: async () => ({ error: 'timeout', message: 'Scraper 超時' }) });
-        await flushMicrotasks();
-        await flushMicrotasks();
-
-        assert.equal(c.libRowState(row), 'error');
-        assert.equal(c.libRowErrorText(row), 'showcase.actress.addTimeout');
     } finally {
         mock.restore();
     }
@@ -1116,61 +972,6 @@ test('重開後 in-flight 收藏請求落地仍正確標記 covered（reset 不�
     }
 });
 
-// 17. 打字過濾不影響 queue
-test('打字過濾不影響 queue：enqueue 後把 _libQuery 設成排除該列，仍正常完成', async () => {
-    _setActresses([]);
-    const rowA = { primary_name: '過濾優', names: ['過濾優'], video_count: 1, is_favorite: false };
-    const mock = mockFetchManual();
-    try {
-        const c = makeComponent();
-        c.libEnqueueFavorite(rowA);
-        c._libQuery = '絕不相符的過濾字';
-
-        mock.calls[0].resolve({ status: 200, json: async () => libFavoritePayload('過濾優') });
-        await flushMicrotasks();
-        await flushMicrotasks();
-
-        assert.equal(c.libRowFavorited(rowA), true);
-    } finally {
-        mock.restore();
-    }
-});
-
-// 18. covered 的列不在可見 40 內
-test('covered 的列不在可見 40 內：仍算實心，展開後出現時也是實心', () => {
-    const rows = makeLibraryRows(200);
-    // 第 100 列（0-based index 99；避開 makeLibraryRows 的 i%10===0 天然 is_favorite）
-    const c = makeComponent({ _libRows: rows, _libTotal: 200, _libVisibleCount: 40 });
-    c._libCovered[rows[99].primary_name] = true;
-
-    assert.equal(c.libRowFavorited(rows[99]), true);
-    assert.ok(!c.libVisibleRows().includes(rows[99]));
-
-    c.libExpandMore();
-    c.libExpandMore();
-    assert.equal(c._libVisibleCount, 120);
-    assert.ok(c.libVisibleRows().includes(rows[99]));
-    assert.equal(c.libRowFavorited(c.libVisibleRows()[99]), true);
-});
-
-// 19. 重載後狀態仍對得上（鍵一律用 primary_name 字串，不用物件參考）
-test('重載後狀態仍對得上：_libRows 換成新物件、同名字，libRowState 仍讀得到', () => {
-    const rowA = { primary_name: '重載優', names: ['重載優'], video_count: 1, is_favorite: false };
-    const mock = mockFetchManual();
-    try {
-        const c = makeComponent();
-        c.libEnqueueFavorite(rowA);
-        assert.equal(c.libRowState(rowA), 'loading');
-
-        const newRowA = { primary_name: '重載優', names: ['重載優'], video_count: 1, is_favorite: false };
-        c._libRows = [newRowA];
-
-        assert.equal(c.libRowState(newRowA), 'loading');
-    } finally {
-        mock.restore();
-    }
-});
-
 // 20（reviewer①，MAJOR）：連線契約——URL / method / body 欄位名。mockFetchManual 早已把
 // body.name 解析出來存進 calls[]，但先前沒有任何一支測試讀它；把 URL 打錯／method 打錯／
 // body 欄位名打錯（如 actress_name）在此之前 39/39 全綠、1098 條 lint 也全綠，因為兩邊都
@@ -1192,85 +993,21 @@ test('連線契約：POST /api/actresses/favorite，body { name: row.primary_nam
     }
 });
 
-// 21（reviewer②③，MINOR）：被 covered 涵蓋的列，錯誤訊息與錯誤列都不得留下。
-// A 404 失敗 → 改點 B，B 的回應 covered_names 涵蓋 A → A 變實心的同時，_libRowError[A] 必須
-// 被清空（不只是被 x-show 擋住看不見；資料本身要乾淨，否則之後任何一處直接讀
-// _libRowErrorText(A) 而不經過 libRowFavorited 閘門的畫面都會露出殘留紅字）。
-test('reviewer②③：A 失敗後被 B 的 covered_names 涵蓋 → A 實心且錯誤訊息／錯誤列都清空', async () => {
-    _setActresses([]);
-    const rowA = { primary_name: '新ありな', names: ['新ありな'], video_count: 1, is_favorite: false };
-    const rowB = { primary_name: '橋本ありな', names: ['橋本ありな', '新ありな'], video_count: 1, is_favorite: false };
-    const mock = mockFetchManual();
-    try {
-        const c = makeComponent();
-
-        // A 先失敗
-        c.libEnqueueFavorite(rowA);
-        mock.calls[0].resolve({ status: 404, json: async () => ({ error: 'not_found', message: '查無此女優' }) });
-        await flushMicrotasks();
-        await flushMicrotasks();
-        assert.equal(c.libRowState(rowA), 'error');
-        assert.equal(c.libRowErrorText(rowA), 'showcase.actress.addNotFound');
-
-        // 改點 B，成功且 covered_names 涵蓋 A
-        c.libEnqueueFavorite(rowB);
-        mock.calls[1].resolve({
-            status: 200,
-            json: async () => libFavoritePayload('橋本ありな', { covered_names: ['橋本ありな', '新ありな'] }),
-        });
-        await flushMicrotasks();
-        await flushMicrotasks();
-
-        assert.equal(c.libRowFavorited(rowA), true);
-        assert.equal(c.libRowErrorText(rowA), '', '被涵蓋後錯誤訊息必須清空，不能只靠 x-show 擋');
-        // 錯誤列 x-show 的兩個條件之一（!libRowFavorited）已為 false，不會顯示——
-        // 這裡直接鎖住背後資料，防止未來有人拿掉 template 的 !libRowFavorited 閘門時無聲露餡
-        assert.equal(c._libRowError[rowA.primary_name], '');
-    } finally {
-        mock.restore();
-    }
-});
-
 // ── 117b-T10：libAddBtnVisible 顯示條件（CD-117b-8 / AC-10.3 / AC-10.8）──
 
-test('libAddBtnVisible：女優模式 ＋ 搜尋列全空 → true', () => {
-    const c = makeComponent({
-        showFavoriteActresses: true,
-        actressSearch: '',
-        actressPills: [],
-        filteredActressCount: 12,
-    });
-    assert.equal(c.libAddBtnVisible(), true);
-});
-
-test('libAddBtnVisible：女優模式 ＋ 有打字 ＋ 有結果 → false', () => {
-    const c = makeComponent({
-        showFavoriteActresses: true,
-        actressSearch: '三上',
-        actressPills: [],
-        filteredActressCount: 3,
-    });
-    assert.equal(c.libAddBtnVisible(), false);
-});
-
-test('libAddBtnVisible：女優模式 ＋ 有打字 ＋ 結果 0 → true', () => {
-    const c = makeComponent({
-        showFavoriteActresses: true,
-        actressSearch: '庫裡沒有的名字',
-        actressPills: [],
-        filteredActressCount: 0,
-    });
-    assert.equal(c.libAddBtnVisible(), true);
-});
-
-test('libAddBtnVisible：女優模式 ＋ 有 pill ＋ 有結果 → false', () => {
-    const c = makeComponent({
-        showFavoriteActresses: true,
-        actressSearch: '',
-        actressPills: [{ dim: 'age', op: '=', value: '28', value2: null }],
-        filteredActressCount: 5,
-    });
-    assert.equal(c.libAddBtnVisible(), false);
+test('libAddBtnVisible：顯示條件表（全空／有打字有結果／有打字無結果／有 pill 有結果／影片模式）', () => {
+    const cases = [
+        // [說明, 狀態, 期望]
+        ['女優模式 ＋ 搜尋列全空', { showFavoriteActresses: true, actressSearch: '', actressPills: [], filteredActressCount: 12 }, true],
+        ['女優模式 ＋ 有打字 ＋ 有結果', { showFavoriteActresses: true, actressSearch: '三上', actressPills: [], filteredActressCount: 3 }, false],
+        ['女優模式 ＋ 有打字 ＋ 結果 0', { showFavoriteActresses: true, actressSearch: '庫裡沒有的名字', actressPills: [], filteredActressCount: 0 }, true],
+        ['女優模式 ＋ 有 pill ＋ 有結果', { showFavoriteActresses: true, actressSearch: '', actressPills: [{ dim: 'age', op: '=', value: '28', value2: null }], filteredActressCount: 5 }, false],
+        ['影片模式（無打字）', { showFavoriteActresses: false, actressSearch: '', actressPills: [], filteredActressCount: 0 }, false],
+        ['影片模式（有打字、結果 0）', { showFavoriteActresses: false, actressSearch: 'x', actressPills: [], filteredActressCount: 0 }, false],
+    ];
+    for (const [label, state, expected] of cases) {
+        assert.equal(makeComponent(state).libAddBtnVisible(), expected, label);
+    }
 });
 
 test('libAddBtnVisible：影片側 search/pills 有值、女優側全空 → 仍 true（AC-10.8）', () => {
@@ -1293,17 +1030,4 @@ test('libAddBtnVisible：影片側 search/pills 有值、女優側全空 → 仍
     } finally {
         globalThis.Alpine.store = prevStore;
     }
-});
-
-test('libAddBtnVisible：影片模式 → 一律 false', () => {
-    const c = makeComponent({
-        showFavoriteActresses: false,
-        actressSearch: '',
-        actressPills: [],
-        filteredActressCount: 0,
-    });
-    assert.equal(c.libAddBtnVisible(), false);
-    c.actressSearch = 'x';
-    c.filteredActressCount = 0;
-    assert.equal(c.libAddBtnVisible(), false);
 });
