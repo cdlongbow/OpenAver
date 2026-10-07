@@ -272,6 +272,9 @@ test('browseDirUp does nothing when parent_path is null', async () => {
     } finally {
         restore();
 
+    }
+});
+
 test('browseDirUp navigates to empty-string parent (Windows drive list)', async () => {
     const urls = [];
     const restore = mockFetch(async (url) => {
