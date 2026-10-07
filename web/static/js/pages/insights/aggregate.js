@@ -14,6 +14,8 @@
  */
 
 import { computeActressAgeForVideo } from '../../shared/actress-release-age.js';
+import { normalizePillValue } from '../../shared/pill-filter.js';
+import { periodContainsYear, scopeRecords } from './selection.js';
 
 /** 年份「未知」分類與片商「未知」桶的內部鍵；畫面顯示文字由 charts.js（T3）做 i18n 映射。 */
 export const UNKNOWN_KEY = '__unknown__';
@@ -27,10 +29,53 @@ export var _records = [];
 export function setRecords(records) {
     _records.length = 0;
     for (const item of (records || [])) _records.push(item);
+    canonicalizeMakers(_records);
 }
 
 export function getRecords() {
     return _records;
+}
+
+/**
+ * 片商大小寫／全半形／空白合併（TASK-161a-T2a）。
+ * 就地改寫 records[].maker 為該組最常見的原始寫法，平手取字串遞增最小者。
+ */
+export function canonicalizeMakers(records) {
+    if (!records || records.length === 0) return;
+    var groups = new Map();
+    records.forEach(function (r) {
+        var mk = r && r.maker;
+        if (mk == null || mk === '') return;
+        var key = normalizePillValue(mk);
+        if (key === '') return;
+        var counts = groups.get(key);
+        if (!counts) {
+            counts = new Map();
+            groups.set(key, counts);
+        }
+        counts.set(mk, (counts.get(mk) || 0) + 1);
+    });
+
+    var canonical = new Map();
+    groups.forEach(function (counts) {
+        var best = null;
+        var bestN = -1;
+        counts.forEach(function (n, s) {
+            if (n > bestN || (n === bestN && s < best)) { best = s; bestN = n; }
+        });
+        counts.forEach(function (_, s) {
+            canonical.set(s, best);
+        });
+    });
+
+    records.forEach(function (r) {
+        var mk = r && r.maker;
+        if (!mk) return;
+        var target = canonical.get(mk);
+        if (target !== undefined) {
+            r.maker = target;
+        }
+    });
 }
 
 /**
@@ -98,7 +143,8 @@ export function buildMainMakerYearMap(records) {
 
 /**
  * 依 period 篩選紀錄。
- * {type:'all'} 保留 year===null；{type:'year',year:N} 只留 year===N。
+ * {type:'all'} 保留 year===null；{type:'year',year:N} 只留 year===N；
+ * {type:'range',from,to} 只留範圍內（含兩端），排除 year 為 null。
  */
 export function periodRecords(records, period) {
     if (period === undefined) period = { type: 'all' };
@@ -107,26 +153,7 @@ export function periodRecords(records, period) {
     if (period.type === 'year') {
         return list.filter(function (r) { return r.year === period.year; });
     }
-    return list.slice();
-}
-
-/**
- * period 篩選後再依 focus 過濾。focus===null 時等同 periodRecords。
- */
-export function scopeRecords(records, period, focus) {
-    if (period === undefined) period = { type: 'all' };
-    if (focus === undefined) focus = null;
-    var base = periodRecords(records, period);
-    if (!focus) return base;
-    if (focus.type === 'actress') {
-        return base.filter(function (r) {
-            return (r.actresses || []).includes(focus.value);
-        });
-    }
-    if (focus.type === 'maker') {
-        return base.filter(function (r) { return r.maker === focus.value; });
-    }
-    return base;
+    return list.filter(function (r) { return periodContainsYear(period, r.year); });
 }
 
 function _yearRange(base) {
@@ -148,21 +175,19 @@ function _buildDimmed(categories, period) {
     if (!period || period.type === 'all') {
         return categories.map(function () { return false; });
     }
-    var target = String(period.year);
-    return categories.map(function (c) { return c !== target; });
+    return categories.map(function (c) { return !periodContainsYear(period, c === UNKNOWN_KEY ? null : Number(c)); });
 }
 
 /**
- * 年份長條資料整形。基底永遠用 scopeRecords(records,{type:'all'},focus)；
+ * 年份長條資料整形。基底永遠用 scopeRecords(records, sel, 'period')；
  * period 只影響 dimmed，不影響 series[].data 數值。
  */
-export function aggregateYears(records, period, focus) {
-    if (period === undefined) period = { type: 'all' };
-    if (focus === undefined) focus = null;
+export function aggregateYears(records, sel) {
+    const period = sel.period;
 
-    const base = scopeRecords(records, { type: 'all' }, focus);
+    const base = scopeRecords(records, sel, 'period');
 
-    if (focus && focus.type === 'maker') {
+    if (sel.actress == null && sel.maker != null) {
         if (!base.length) return { categories: [], series: [], dimmed: [] };
         var makerRange = _yearRange(base);
         var makerCats = makerRange.years.map(String);
@@ -178,12 +203,12 @@ export function aggregateYears(records, period, focus) {
         if (makerRange.hasNull) makerData = makerData.concat([makerUnknown]);
         return {
             categories: makerCats,
-            series: [{ name: focus.value, data: makerData }],
+            series: [{ name: sel.maker, data: makerData }],
             dimmed: _buildDimmed(makerCats, period),
         };
     }
 
-    if (focus && focus.type === 'actress') {
+    if (sel.actress != null) {
         if (!base.length) return { categories: [], series: [], dimmed: [] };
         var actRange = _yearRange(base);
         var actCats = actRange.years.map(String);
@@ -319,10 +344,11 @@ export function buildMakerDonutData(records, mainMakerYearMap) {
  * 女優 Top20 排名。對傳入的 records 展開 actresses 計數；
  * 排序：count 遞減 → monthCount 遞減 → name 遞增。
  * monthCount ＝相異非 null 的 record.month 個數。
- * 若 focus 為女優且她的真實 rank > 20，附加她那一列。
+ * 若 sel 選了女優且她的真實 rank > 20，附加她那一列。
  * 不呼叫 getRecords()。
  */
-export function buildActressTop20(records, focus) {
+export function buildActressTop20(records, sel) {
+    var herActress = sel ? sel.actress : null;
     var counts = new Map();
     (records || []).forEach(function (r) {
         var names = (r && r.actresses) || [];
@@ -359,16 +385,16 @@ export function buildActressTop20(records, focus) {
     var rows = all.slice(0, 20);
     var herRank = 0;
     var herRow = null;
-    if (focus && focus.type === 'actress' && focus.value) {
+    if (herActress) {
         for (var i = 0; i < all.length; i++) {
-            if (all[i].name === focus.value) {
+            if (all[i].name === herActress) {
                 herRank = all[i].rank;
                 herRow = all[i];
                 break;
             }
         }
     }
-    if (focus && focus.type === 'actress' && herRank > 20) { rows.push(herRow); }
+    if (herActress && herRank > 20) { rows.push(herRow); }
     return { rows: rows };
 }
 
@@ -427,7 +453,7 @@ export function aggregateTags(records) {
  *
  * @param {Array<{actresses?: string[], date?: string|null, duration?: number|null}>} records
  * @param {Record<string, {birth?: string|null}>|null|undefined} favorites
- * @param {{type: string, value: string}|null|undefined} focus
+ * @param {{actress?: string|null}|null|undefined} sel
  * @returns {{
  *   total: number,
  *   recordsWithAge: number,
@@ -439,11 +465,11 @@ export function aggregateTags(records) {
  *   counts: number[],
  * }}
  */
-export function aggregateAge(records, favorites, focus) {
+export function aggregateAge(records, favorites, sel) {
     var list = records || [];
     var total = list.length;
     var favs = favorites || {};
-    var focusActress = focus && focus.type === 'actress' ? focus.value : null;
+    var focusActress = sel ? sel.actress : null;
     var ages = [];
     var recordsWithAge = 0;
 
@@ -559,16 +585,12 @@ export function aggregateFieldTop8(records, field) {
 /**
  * 主要片商年表列選取。
  * 候選＝mainMakerYearMap 裡至少一組 (y, mk) 同時符合 period／maker 焦點（交集）；
- * 女優焦點忽略 focus，只看 period。排序＝範圍內 classify==='main' 片數遞減、name 遞增，取 25；
+ * 女優條件不影響候選，只看期間與片商。排序＝範圍內 classify==='main' 片數遞減、name 遞增，取 25；
  * 女優焦點且她不在前 25、但 records 有她的片 → 附加末列。
  * 不呼叫 getRecords()。
  */
-export function buildGanttRows(records, mainMakerYearMap, period, focus) {
-    if (period === undefined) period = { type: 'all' };
-    if (focus === undefined) focus = null;
+export function buildGanttRows(records, mainMakerYearMap, sel) {
     var map = mainMakerYearMap || {};
-    var yearFocus = period && period.type === 'year' ? period.year : null;
-    var makerFocus = focus && focus.type === 'maker' ? focus.value : null;
 
     var candidateSet = new Set();
     Object.keys(map).forEach(function (key) {
@@ -577,17 +599,11 @@ export function buildGanttRows(records, mainMakerYearMap, period, focus) {
         var name = key.slice(0, sep);
         var y = Number(key.slice(sep + 1));
         var e = { year: y, maker: map[key] };
-        if (yearFocus != null && e.year !== yearFocus) return;
-        if (makerFocus != null && e.maker !== makerFocus) return;
+        if (!periodContainsYear(sel.period, e.year) || (sel.maker != null && e.maker !== sel.maker)) return;
         candidateSet.add(name);
     });
 
-    var scoped;
-    if (focus && focus.type === 'maker') {
-        scoped = scopeRecords(records, period, focus);
-    } else {
-        scoped = periodRecords(records, period);
-    }
+    var scoped = scopeRecords(records, sel, 'actress');
 
     function mainCountFor(name) {
         var c = 0;
@@ -606,8 +622,8 @@ export function buildGanttRows(records, mainMakerYearMap, period, focus) {
     });
     var top = rows.slice(0, 25);
 
-    if (focus && focus.type === 'actress' && focus.value) {
-        var herName = focus.value;
+    if (sel.actress) {
+        var herName = sel.actress;
         var already = top.some(function (r) { return r.name === herName; });
         if (!already) {
             var hasFilm = (records || []).some(function (r) {
@@ -632,7 +648,7 @@ export function buildGanttRows(records, mainMakerYearMap, period, focus) {
 }
 
 /**
- * 年表年份橫軸：全庫有年份紀錄的 min..max 連續，忽略 null／period／focus。
+ * 年表年份橫軸：全庫有年份紀錄的 min..max 連續，忽略 null／期間／女優／片商條件。
  * 不呼叫 getRecords()。
  */
 export function ganttYearAxis(records) {
@@ -795,14 +811,12 @@ export function buildGanttAgeCells(name, records, favorites, mainMakerYearMap, a
  * `_makerColorSlots` 模組級變數已在 T3 移除，改用 reactive `ganttLegend`）。
  * 不呼叫 getRecords()。
  */
-export function buildSoloRows(records, mainMakerYearMap, period, focus, ganttNames, topMakerNames) {
-    if (period === undefined) period = { type: 'all' };
-    if (focus === undefined) focus = null;
+export function buildSoloRows(records, mainMakerYearMap, sel, ganttNames, topMakerNames) {
     var all = records || [];
     var map = mainMakerYearMap || {};
     var ganttSet = new Set(ganttNames || []);
     var namedSet = new Set(topMakerNames || []);
-    var periodScope = periodRecords(all, period);
+    var periodScope = periodRecords(all, sel.period);
 
     /*
      * P2 效能修正（review finding，真實片庫 6521 部實測 48ms→單趟後 <10ms）：
@@ -886,7 +900,7 @@ export function buildSoloRows(records, mainMakerYearMap, period, focus, ganttNam
         };
     }
 
-    var poolRecords = (focus && focus.type === 'maker') ? scopeRecords(all, period, focus) : periodRecords(all, period);
+    var poolRecords = scopeRecords(all, sel, 'actress');
     var poolNames = new Set();
     poolRecords.forEach(function (r) {
         (r.actresses || []).forEach(function (name) {
@@ -907,8 +921,8 @@ export function buildSoloRows(records, mainMakerYearMap, period, focus, ganttNam
     });
     var top = candidates.slice(0, 25);
 
-    if (focus && focus.type === 'actress' && focus.value) {
-        var herName = focus.value;
+    if (sel.actress) {
+        var herName = sel.actress;
         var already = top.some(function (r) { return r.name === herName; });
         if (!already) {
             var herStats = statsFor(herName);
@@ -931,14 +945,14 @@ export function buildSoloRows(records, mainMakerYearMap, period, focus, ganttNam
 /**
  * TASK-156c-T5 / CD-156c-1 / 6：與她同片搭檔列表。
  *
- * 只在女優焦點時計算，範圍為 scopeRecords(records, period, focus)。
+ * 只在女優焦點時計算，範圍為 scopeRecords(records, sel, null)。
  * 每部紀錄去重女優名單後，僅採計 2～4 人片。
  * 統計非焦點女優的合作次數，依次數遞減、名字遞增排序，取前 15 名。
  */
-export function buildCostarRows(records, period, focus) {
-    if (!focus || focus.type !== 'actress' || !focus.value) return [];
-    var herName = focus.value;
-    var scoped = scopeRecords(records, period, focus);
+export function buildCostarRows(records, sel) {
+    if (!sel.actress) return [];
+    var herName = sel.actress;
+    var scoped = scopeRecords(records, sel, null);
     var counts = new Map();
     scoped.forEach(function (r) {
         var seenInRecord = new Set();

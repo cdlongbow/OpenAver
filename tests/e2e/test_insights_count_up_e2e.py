@@ -160,7 +160,7 @@ def test_count_up_maker_focus_animates_to_scoped(page: Page, base_url: str) -> N
     page.wait_for_function(
         """() => {
             const d = Alpine.$data(document.querySelector('%s'));
-            return !!(d && d.focus && d.focus.type === 'maker');
+            return !!(d && d.sel && d.sel.maker);
         }""" % ALPINE, timeout=3_000)
     wait_settled(page)
     samples = _stop_sampler(page)

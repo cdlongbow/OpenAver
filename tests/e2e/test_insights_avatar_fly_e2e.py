@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from playwright.sync_api import Page
 from tests.e2e._insights_motion_helpers import (
-    ALPINE, FOCUS_AV, GHOST, alpine, click_donut_named_maker,
+    ALPINE, ACTRESS_TILE_AV, GHOST, alpine, click_donut_named_maker,
     click_gantt_actress, load_ready, set_prm, wait_scroll_settled, wait_settled,
 )
 pytestmark = pytest.mark.e2e
@@ -21,21 +21,22 @@ def _classify(page: Page) -> dict:
     }""" % ALPINE)
 def _ghost_count(page: Page) -> int:
     return page.evaluate("() => document.querySelectorAll('%s').length" % GHOST)
+NO_FOCUS = {"actress": None, "maker": None}
 def _focus(page: Page):
-    return alpine(page, "data.focus ? {type:data.focus.type,value:data.focus.value} : null")
+    return alpine(page, "({actress: data.sel.actress, maker: data.sel.maker})")
 def _wait_fly_settled(page: Page, timeout: int = 2_000) -> None:
     page.wait_for_function(
         "() => { if (document.querySelectorAll('%s').length > 0) return false;"
         " const t = document.querySelector('%s'); if (!t) return true;"
         " if (t.hasAttribute('data-avatar-fly-hidden')) return false;"
         " const op = t.style.opacity; return op === '' || op === '1'; }"
-        % (GHOST, FOCUS_AV), timeout=timeout)
+        % (GHOST, ACTRESS_TILE_AV), timeout=timeout)
     page.wait_for_timeout(50)
 def _focus_avatar_ok(page: Page) -> dict:
     return page.evaluate(
         "() => { const el = document.querySelector('%s'); if (!el) return {exists:false};"
         " return {exists:true, opacity:el.style.opacity,"
-        " hiddenAttr:el.hasAttribute('data-avatar-fly-hidden')}; }" % FOCUS_AV)
+        " hiddenAttr:el.hasAttribute('data-avatar-fly-hidden')}; }" % ACTRESS_TILE_AV)
 def _click_row_not_avatar(page: Page, row_sel: str, name: str, avatar_sel: str) -> None:
     wait_scroll_settled(page)
     c = page.evaluate("""([rowSel, name, avatarSel]) => {
@@ -82,7 +83,7 @@ def _click_avatar_only(page: Page, row_sel: str, name: str, avatar_sel: str) -> 
     page.mouse.click(c["x"], c["y"])
 def _assert_landed(page: Page, name: str) -> None:
     assert _ghost_count(page) == 0
-    assert _focus(page) == {"type": "actress", "value": name}
+    assert _focus(page) == {"actress": name, "maker": None}
     snap = _focus_avatar_ok(page)
     assert snap.get("exists")
     assert not snap.get("hiddenAttr")
@@ -172,30 +173,30 @@ def test_avatar_fly_non_flying_paths_no_ghost(page: Page, base_url: str) -> None
         page.wait_for_timeout(300)
     click_gantt_actress(page, target)
     page.wait_for_timeout(200)
-    assert _focus(page) is None
+    assert _focus(page) == NO_FOCUS
     assert max(_ghost_count(page) for _ in range(4)) == 0
     click_gantt_actress(page, target)
     try:
         _wait_fly_settled(page, timeout=1_500)
     except Exception:
         page.wait_for_timeout(300)
-    page.click("#tileFocus .insights-x-btn")
+    page.click("#tileActress .insights-x-btn")
     page.wait_for_timeout(200)
-    assert _focus(page) is None
+    assert _focus(page) == NO_FOCUS
     assert max(_ghost_count(page) for _ in range(4)) == 0
     maker = click_donut_named_maker(page)
     if not maker:
         pytest.skip("片庫湊不出可點的片商扇形")
     page.wait_for_timeout(250)
-    focus = _focus(page)
-    assert focus and focus["type"] == "maker" and focus["value"] == maker
+    assert _focus(page) == {"actress": None, "maker": maker}
     assert max(_ghost_count(page) for _ in range(4)) == 0
-    page.click("#tileFocus .insights-x-btn")
+    page.click("#tileMaker .insights-x-btn")
     page.wait_for_timeout(100)
+    assert _focus(page) == NO_FOCUS
     _click_avatar_only(
         page, ".gantt-table .gantt-row:not(.gantt-head-row)", target, ".gantt-avatar")
     page.wait_for_timeout(300)
-    assert _focus(page) is None
+    assert _focus(page) == NO_FOCUS
     assert max(_ghost_count(page) for _ in range(4)) == 0
     preview = page.evaluate("""() => {
         const el = document.querySelector('.insights-preview');
@@ -215,7 +216,7 @@ def test_avatar_fly_prm_skips_ghost(page: Page, base_url: str) -> None:
     page.wait_for_timeout(120)
     samples = [_ghost_count(page) for _ in range(8)]
     assert max(samples) == 0, f"PRM 不應建立 ghost：{samples}"
-    assert _focus(page) == {"type": "actress", "value": target}
+    assert _focus(page) == {"actress": target, "maker": None}
     snap = _focus_avatar_ok(page)
     assert snap.get("exists") and not snap.get("hiddenAttr")
     assert snap.get("opacity") in ("", "1")

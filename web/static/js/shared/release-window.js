@@ -25,6 +25,9 @@ var RELEASE_KEY_RE = /^(\d{4})-(\d{2})/;
 // pill 端點：嚴格形狀，年份恰四位、月份（若存在）恰兩位，見檔頭說明。
 var ENDPOINT_RE = /^(\d{4})(?:-(\d{2}))?$/;
 
+// 影片端（年份-only）：與後端 _RELEASE_RE 年份規則一致（無尾錨）。
+var RELEASE_YEAR_RE = /^(19\d{2}|20\d{2}|21\d{2})/;
+
 /**
  * parseReleaseKey(releaseDate) → number | null
  * 影片端取值：'2024-09-09' → 202409；只有年份／畸形字串／非字串 → null。
@@ -36,6 +39,17 @@ export function parseReleaseKey(releaseDate) {
     var month = parseInt(m[2], 10);
     if (month < 1 || month > 12) return null;
     return parseInt(m[1], 10) * 100 + month;
+}
+
+/**
+ * parseReleaseYearOnly(releaseDate) → number | null
+ * 影片端年份-only 取值：與後端 _RELEASE_RE 同規則，'2015' → 2015；非字串／非合法年份 → null。
+ */
+export function parseReleaseYearOnly(releaseDate) {
+    if (typeof releaseDate !== 'string') return null;
+    var m = RELEASE_YEAR_RE.exec(releaseDate);
+    if (!m) return null;
+    return parseInt(m[1], 10);
 }
 
 /**
@@ -100,8 +114,12 @@ export function expandPill(pill) {
 export function matchesReleasePill(video, w) {
     if (!w) return false;
     var key = parseReleaseKey(video && video.release_date);
-    if (key == null) return false;
-    return key >= w.lo && key <= w.hi;
+    if (key != null) {
+        return key >= w.lo && key <= w.hi;
+    }
+    var y = parseReleaseYearOnly(video && video.release_date);
+    if (y == null) return false;
+    return w.lo <= y * 100 + 1 && w.hi >= y * 100 + 12;
 }
 
 /**

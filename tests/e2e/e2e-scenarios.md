@@ -1103,11 +1103,11 @@ N/A — 書籤牆／燈箱純瀏覽器互動，不依賴原生 picker。「加�
 1. **[MCP] Sidebar 導航**：`/showcase` 頁展開側欄，找「瀏覽」下方頒獎台圖示的新連結
    （`nav.insights`，`href="/insights"`）→ 點擊
    - **驗**：導向 `/insights`，`.insights-container[x-data="libraryInsights"]` 存在
-2. **[MCP] 常駐四格**：讀 `#tileCount .insights-tile-value`、`#tileYear`、`#tileFocus`
+2. **[MCP] 常駐五格**：讀 `#tileCount .insights-tile-value`、`#tileYear`、`#tileActress`、`#tileMaker`
    - **驗**：`#tileCount` 顯示非 `—` 的數字（`snapshotError` 為 false 時），下方有一行
      「全庫 N 部」（`totalCountLabel()`）
-   - **驗**：`#tileYear`／`#tileFocus` 初始顯示淡色「全部」（`insights.all_years` /
-     `insights.all_focus`），非 raw i18n key
+   - **驗**：`#tileYear`／`#tileActress`／`#tileMaker` 初始各顯示淡色「全部年份」「全部女優」「全部片商」
+     （`insights.all_years` / `insights.all_actress` / `insights.all_maker`），非 raw i18n key
 3. **[MCP] 圖表渲染**：依序確認以下 echart 容器存在且有內容（`canvas` 或
    `getBoundingClientRect().height > 0`）：`#yearsChart`、`#donutChart`、
    `.top20-row3-wrap .podium-slot, .top20-row3-wrap .rest20-row`
@@ -1123,13 +1123,13 @@ N/A — 書籤牆／燈箱純瀏覽器互動，不依賴原生 picker。「加�
    - **驗**：點 `×`（`insights.clear_year`）→ `#tileYear` 回到「全部」
 5. **[MCP] 點頒獎台設定女優焦點**：`.top20-row3-wrap .podium-slot--center`（第 1 名台座，一定存在
    只要範圍內有女優）點擊
-   - **驗**：`#tileFocus` 顯示該女優名字（`insights.focus_type_actress`）與 `×`
+   - **驗**：`#tileActress` 顯示該女優名字與 `×`（`insights.clear_actress`），`#tileMaker` 仍是淡色「全部片商」
    - **驗**：若該女優有共演作品，`#costarCard`（「與她同片」，TASK-156d-T3 起搬到 row3
      左半格、與 `.top20-row3-wrap` 循序淡出淡入互斥顯示）從 `is-hidden`
      （`display:none`）變成可見、`#costarList` 有列；若她沒有共演作品
      （TASK-156d-T9 起），`#costarCard` 不出現，`.top20-row3-wrap`（頒獎台＋名單）
      維持顯示，不應出現空白的「與她同片」卡片
-   - **驗**：點 `#tileFocus` 的 `×`（`insights.clear_focus`）→ 焦點清除，`#costarCard` 隱藏，
+   - **驗**：點 `#tileActress` 的 `×`（`insights.clear_actress`）→ 女優條件清除（`#tileMaker` 若有值則保留），`#costarCard` 隱藏，
      `.top20-row3-wrap` 同時恢復可見（settle 後互斥顯示）
 6. **[MCP] 主要片商年表 年/年齡 toggle**：`.insights-gantt-toggle` 兩顆按鈕
    - **驗**：預設 `year` 高亮（`is-on`），點「年齡」按鈕 → class 切到年齡那顆、
@@ -1178,7 +1178,7 @@ N/A — 書籤牆／燈箱純瀏覽器互動，不依賴原生 picker。「加�
 
 - `/insights` 進頁後圖表容器空白且無 `no_data`/`period_empty` 文案 → ECharts 初始化失敗或
   資料契約壞了
-- 點年份/女優後 `#tileYear`/`#tileFocus` 沒有反應，或 `×` 按了焦點沒清 → 焦點狀態機壞了
+- 點年份/女優後 `#tileYear`/`#tileActress`/`#tileMaker` 沒有反應，或 `×` 按了條件沒清、按了清到別格（女優與片商應疊加、各自只清自己） → 條件狀態機壞了
 - 選了年份後長條數字被改成 0（而非用亮暗表示選取）→ 違反「數字永遠顯示完整歷年收藏」的設計
 - 從 `/showcase` bfcache 返回 `/insights` 白頁或圖表消失 → 上次載入中途離開的清理沒做好
 - 燈箱／封面牆年齡格式跑掉（不是 ` (NNy)`）、或兩位以上女優的封面牆卡片底部（眼睛關閉時）
@@ -1186,6 +1186,20 @@ N/A — 書籤牆／燈箱純瀏覽器互動，不依賴原生 picker。「加�
 - 掃描頁數字 popover 點不開、或開了抓不到清單列 → `numberDrilldown` payload 契約壞了
 - 重刮預覽標題相同時仍顯示「保留標題」勾選 → `rescrapeShowPreserveTitle()` 判斷條件壞了
 - `/help` 批次搜尋段落仍寫「含子目錄」等舊文字 → i18n key 沒同步新行為
+
+### 161a：分析頁選條件 → 點片數 → 瀏覽頁牆上就是那 N 部（自動化：`tests/e2e/test_insights_crossfilter_e2e.py`）
+
+條件與期望值全部現場從 `/api/insights/snapshot`、`/api/showcase/videos` 獨立算（不寫死名字或數字）；兩側斷言＝分析頁 `scopedCount`＝瀏覽頁 `filteredCount`＝頁尾 `.footer-count b`，牆上可見卡數＝`min(filteredCount, perPage)`。導覽請求 URL 在點擊當下量，必須恰為 `/showcase`；分析頁階段不得有非 GET 的同源 `/api/` 請求（開機診斷 beacon `/api/client-log` 除外）。
+
+1. **無條件**：不選任何條件點片數 → 瀏覽頁片數＝快照總筆數。
+2. **只女優**：點年表第一列女優、點片數 → 瀏覽頁只剩一顆女優標籤，片數＝快照中該女優的筆數。
+3. **片商大小寫合併**：點圓餅上寫法不只一種的最大片商（圓餅同一片商只有一塊）→ 瀏覽頁片數＝各寫法合計。
+4. **只有年份**：點含「發行日只有年份」片的那一年 → 瀏覽頁片數＝發行日以該年開頭的全部片（含只有年份者）。
+5. **三條件＋年份拖曳**：女優＋片商＋在年份長條真拖曳一段 → 瀏覽頁標籤恰為女優／片商／年份範圍三顆，片數一致；拖不出範圍＝測試失敗，不退化成單擊。
+6. **舊狀態被取代、偏好保留**：瀏覽頁原本留有搜尋字、第 3 頁、無效標籤 → 跳轉後只剩本次條件、輸入框空、第 1 頁；排序／卡型／資訊區原樣保留。
+7. **0 部不可點**：選女優再點她 0 部的那一年 → 片數格 `aria-disabled=true`，點了不跳頁、`showcase_state` 不變。
+
+前提資料缺（沒有只有年份的片、沒有多寫法片商、找不到 0 部組合）一律 `pytest.fail`，不 skip。
 
 ---
 

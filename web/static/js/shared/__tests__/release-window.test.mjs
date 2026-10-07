@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 
 import {
     parseReleaseKey,
+    parseReleaseYearOnly,
     parseEndpoint,
     expandPill,
     matchesReleasePill,
@@ -190,7 +191,6 @@ test('matchesReleasePill：w 為 null → false（fail-closed，不是 fail-open
 
 test('matchesReleasePill：video.release_date 解析不出年月 → false（fail-closed）', () => {
     const w = { lo: 202401, hi: 202412 };
-    assert.equal(matchesReleasePill({ release_date: '2015' }, w), false);
     assert.equal(matchesReleasePill({ release_date: null }, w), false);
     assert.equal(matchesReleasePill({}, w), false);
 });
@@ -222,6 +222,76 @@ test('matchesReleasePill：-Infinity 端點對極端小整數仍成立比較', (
 test('matchesReleasePill：+Infinity 端點對任何合法 key 皆成立右側比較', () => {
     const w = { lo: 202401, hi: Infinity };
     assert.equal(matchesReleasePill({ release_date: '9999-12-01' }, w), true);
+});
+
+// ===== parseReleaseYearOnly & matchesReleasePill (year-only) =====
+
+test('parseReleaseYearOnly：輸入表', () => {
+    const table = [
+        ['2015', 2015],
+        ['2015-03', 2015],
+        ['2015-03-09', 2015],
+        ['2015-13-01', 2015],
+        ['20150301', 2015],
+        ['1900', 1900],
+        ['2100', 2100],
+        ['1899', null],
+        ['2200', null],
+        ['abcd', null],
+        ['', null],
+        [null, null],
+    ];
+    for (const [raw, expected] of table) {
+        assert.equal(parseReleaseYearOnly(raw), expected, `failed for raw: ${raw}`);
+    }
+});
+
+test('年份-only：窗口涵蓋整年才算', () => {
+    const wEq = expandPill({ op: '=', value: '2015' });
+    const wRange = expandPill({ op: 'range', value: '2014', value2: '2016' });
+    const wGte = expandPill({ op: '>=', value: '2015' });
+    const wLte = expandPill({ op: '<=', value: '2015' });
+
+    assert.equal(matchesReleasePill({ release_date: '2015' }, wEq), true);
+    assert.equal(matchesReleasePill({ release_date: '2015' }, wRange), true);
+    assert.equal(matchesReleasePill({ release_date: '2015' }, wGte), true);
+    assert.equal(matchesReleasePill({ release_date: '2015' }, wLte), true);
+
+    assert.equal(matchesReleasePill({ release_date: '2015-13-01' }, wEq), true);
+    assert.equal(matchesReleasePill({ release_date: '20150301' }, wEq), true);
+});
+
+test('年份-only：窗口只涵蓋部分月份不算', () => {
+    const wPartRange = expandPill({ op: 'range', value: '2015-03', value2: '2015-06' });
+    const wGtePart = expandPill({ op: '>=', value: '2015-03' });
+    const wLtePart = expandPill({ op: '<=', value: '2015-06' });
+    const wOtherYear = expandPill({ op: '=', value: '2014' });
+    const wNextYear = expandPill({ op: '>=', value: '2016' });
+
+    assert.equal(matchesReleasePill({ release_date: '2015' }, wPartRange), false);
+    assert.equal(matchesReleasePill({ release_date: '2015' }, wGtePart), false);
+    assert.equal(matchesReleasePill({ release_date: '2015' }, wLtePart), false);
+    assert.equal(matchesReleasePill({ release_date: '2015' }, wOtherYear), false);
+    assert.equal(matchesReleasePill({ release_date: '2015' }, wNextYear), false);
+
+    assert.equal(matchesReleasePill({ release_date: '2015-13-01' }, wPartRange), false);
+    assert.equal(matchesReleasePill({ release_date: '20150301' }, wPartRange), false);
+});
+
+test('年份-only：解析不出年份／空值不算', () => {
+    const w = expandPill({ op: '<=', value: '2099' });
+    assert.equal(matchesReleasePill({ release_date: '1899' }, w), false);
+    assert.equal(matchesReleasePill({ release_date: '2200' }, w), false);
+    assert.equal(matchesReleasePill({ release_date: '' }, w), false);
+    assert.equal(matchesReleasePill({ release_date: null }, w), false);
+    assert.equal(matchesReleasePill({}, w), false);
+});
+
+test('年份-only：有合法年月的片不受影響', () => {
+    const wRange = expandPill({ op: 'range', value: '2015-03', value2: '2015-06' });
+    const wEq = expandPill({ op: '=', value: '2014' });
+    assert.equal(matchesReleasePill({ release_date: '2015-03-09' }, wRange), true);
+    assert.equal(matchesReleasePill({ release_date: '2015-03-09' }, wEq), false);
 });
 
 // ===== composeEndpoint =====

@@ -47,10 +47,8 @@ def _end_snap(page: Page) -> dict:
                     (r) => ({ name: r.name, rank: r.rank, count: r.count })),
                 scopedCount: data.scopedCount,
                 displayScopedCount: data.displayScopedCount,
-                focusName: (data.focus && data.focus.type === 'actress')
-                    ? data.focus.value : null,
-                focus: data.focus
-                    ? { type: data.focus.type, value: data.focus.value } : null,
+                focusName: data.sel.actress != null ? data.sel.actress : null,
+                focus: { actress: data.sel.actress, maker: data.sel.maker },
             };
         }""" % ALPINE
     )
@@ -220,10 +218,13 @@ def test_combined_end_state_after_year_actress_year(
         assert _overflow_ok(page), "settle 後仍有水平捲軸"
 
     actual = _end_snap(page)
-    assert actual["focus"] and actual["focus"]["type"] == "maker", (
-        f"片商焦點應生效，實際 {actual['focus']!r}"
+    # 疊加：片商條件生效（以實際點到的為準），女優條件仍在
+    assert actual["focus"]["maker"] == maker, (
+        f"片商條件應生效，實際 {actual['focus']!r}"
     )
-    assert actual["focus"]["value"] == maker
+    assert actual["focus"]["actress"] == actress, (
+        f"女優條件應保留（疊加不互斥），實際 {actual['focus']!r}"
+    )
     assert actual["displayScopedCount"] == actual["scopedCount"], (
         f"頁首顯示未追上真相：display={actual['displayScopedCount']} "
         f"truth={actual['scopedCount']}"

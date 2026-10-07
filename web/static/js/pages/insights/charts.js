@@ -15,10 +15,9 @@ import {
     aggregateAge,
     aggregateFieldTop8,
     buildMakerColorSlots,
-    periodRecords,
-    scopeRecords,
     buildMakerDonutData,
 } from './aggregate.js';
+import { emptyKey, emptySel, periodContainsYear, scopeRecords } from './selection.js';
 
 /** @type {'split'|'clone'} spike 選定值——見 TASK-156b-T3 執行紀錄 */
 export const YEARS_DIVIDE_SHAPE = 'split';
@@ -29,27 +28,29 @@ const _charts = new Map();
 const _observers = new Map();
 /** @type {string[]} */
 let _lastYearCats = [];
+/** @type {{startIdx:number,curIdx:number,byTouch:boolean,onDocUp:Function,lastSpanKey:string}|null} 年份拖曳手勢狀態（不進 Alpine／sel） */
+let _yearsDrag = null;
 /** @type {Record<string, number>} */
 let _makerSlots = {};
 /** @type {Record<string, string>} 全庫主要片商年 map（init 算一次，重繪複用） */
 let _mainMakerYearMap = {};
 /** @type {{w:number,h:number}} */
 let _donutLastGoodSize = { w: 280, h: 220 };
-/** @type {{ getPeriod: Function, setPeriod: Function, getFocus: Function, setFocus?: Function }|null} */
+/** @type {{ getSel: Function, setPeriod: Function }|null} */
 let _yearsCallbacks = null;
-/** @type {{ getPeriod: Function, getFocus: Function, setFocus: Function }|null} */
+/** @type {{ getSel: Function, toggleMaker: Function }|null} */
 let _donutCallbacks = null;
-/** @type {{ getPeriod: Function, getFocus: Function }|null} */
+/** @type {{ getSel: Function }|null} */
 let _tagsCallbacks = null;
-/** @type {{ getPeriod: Function, getFocus: Function, getFavorites: Function }|null} */
+/** @type {{ getSel: Function, getFavorites: Function }|null} */
 let _ageCallbacks = null;
-/** @type {Map<string, { getPeriod: Function, getFocus: Function }>} */
+/** @type {Map<string, { getSel: Function }>} */
 const _fieldCallbacks = new Map();
 
 // ── 純函式（node:test 可測）──────────────────────────────────────────
 
-export function resolveYearBarColorMode(focus) {
-    return focus && focus.type === 'actress' ? 'byMaker' : 'neutral';
+export function resolveYearBarColorMode(sel) {
+    return sel && sel.actress != null ? 'byMaker' : 'neutral';
 }
 
 export function shouldAnimate(prefersReducedMotion) {
@@ -151,13 +152,144 @@ function tKey(key, params) {
     return key;
 }
 
-export function rangeEmptyText(count, focus, narrowFocusTypes) {
-    if (count > 0) return null;
-    if (!focus) return null;
-    if (narrowFocusTypes.indexOf(focus.type) === -1) return null;
-    return tKey('insights.period_empty');
+/**
+ * 年份拖曳手勢的判定（CD-161a-4）。cats 與 _lastYearCats 同形（未知欄 UNKNOWN_KEY 在尾端）。
+ * 回傳 null（無動作）｜{kind:'point', year}｜{kind:'range', from, to}（from<to）。
+ * 起點不是真實年份欄 → null；終點夾在 [0, 最後一個真實年份欄]，非有限數視為沒移動；
+ * 夾限後兩端同欄 → 單點。
+ */
+export function resolveDragResult(startIdx, endIdx, cats) {
+    const list = Array.isArray(cats) ? cats : [];
+    const isReal = (i) =>
+        Number.isInteger(i) &&
+        i >= 0 &&
+        i < list.length &&
+        list[i] !== UNKNOWN_KEY &&
+        Number.isFinite(parseInt(list[i], 10));
+    let lastReal = -1;
+    for (let i = 0; i < list.length; i++) {
+        if (isReal(i)) lastReal = i;
+    }
+    if (!isReal(startIdx)) return null;
+    let end = Number.isFinite(endIdx) ? Math.round(endIdx) : startIdx;
+    end = Math.max(0, Math.min(end, lastReal));
+    if (!isReal(end)) return null;
+    const a = parseInt(list[startIdx], 10);
+    const b = parseInt(list[end], 10);
+    if (a === b) return { kind: 'point', year: a };
+    return { kind: 'range', from: Math.min(a, b), to: Math.max(a, b) };
 }
 
+/** 年份拖曳預覽蓋板的固定 id（只切 invisible，不 remove；FE-JS-05）。 */
+export const YEARS_DRAG_PREVIEW_ID = 'years-drag-hl';
+
+/** 預覽蓋板填色（與 selectedColor 同為 token＋color-mix，一層平塗）。 */
+const YEARS_DRAG_PREVIEW_FILL_EXPR = 'color-mix(in oklch, var(--color-primary) 18%, transparent)';
+
+/** zr 事件是否來自觸控（zrByTouch 標記，或 event.type 以 touch 開頭作備案）。 */
+export function isTouchZrEvent(ev) {
+    if (!ev) return false;
+    if (ev.zrByTouch === true) return true;
+    const type = ev.event && ev.event.type;
+    return typeof type === 'string' && type.startsWith('touch');
+}
+
+/** 手勢提交結果：觸控拖過多欄（range）→ 無動作；同欄 tap 仍是 point。 */
+export function resolveGestureResult(startIdx, endIdx, cats, byTouch) {
+    const r = resolveDragResult(startIdx, endIdx, cats);
+    if (byTouch && r && r.kind === 'range') return null;
+    return r;
+}
+
+/** 預覽跨度：只有這次拖曳放開會成為 range 才有值，否則 null。夾限與 resolveDragResult 同源。 */
+export function resolveDragPreviewSpan(startIdx, endIdx, cats) {
+    const r = resolveDragResult(startIdx, endIdx, cats);
+    if (!r || r.kind !== 'range') return null;
+    const list = Array.isArray(cats) ? cats : [];
+    const fromIdx = list.indexOf(String(r.from));
+    const toIdx = list.indexOf(String(r.to));
+    if (fromIdx < 0 || toIdx < 0) return null;
+    return { fromIdx, toIdx };
+}
+
+/** 預覽矩形：吸附欄界、涵蓋 from 到 to 兩端整欄、高度＝整個圖高。 */
+export function dragPreviewRect(span, centerX0, band, height) {
+    if (!span || !(band > 0)) return null;
+    const x = centerX0 + span.fromIdx * band - band / 2;
+    return { x, width: (span.toIdx - span.fromIdx + 1) * band, height };
+}
+
+/** 預覽 graphic 元素：id 固定、invisible 每次明寫、不帶 action 欄位、不吃事件。 */
+export function buildDragPreviewGraphic(rect, fill) {
+    return {
+        id: YEARS_DRAG_PREVIEW_ID,
+        type: 'rect',
+        silent: true, // 預覽不吃事件
+        invisible: rect == null,
+        shape: {
+            x: rect ? rect.x : 0,
+            y: 0,
+            width: rect ? rect.width : 0,
+            height: rect ? rect.height : 0,
+        },
+        style: { fill },
+    };
+}
+
+/** 收掉進行中的年份拖曳（唯一的 document mouseup 移除點；可重複呼叫）。 */
+export function cancelYearsDrag() {
+    const drag = _yearsDrag;
+    if (!drag) return;
+    document.removeEventListener('mouseup', drag.onDocUp);
+    _yearsDrag = null;
+}
+
+/** 開始年份拖曳：先收掉舊手勢，再掛 document 層 mouseup。 */
+export function beginYearsDrag(startIdx, byTouch, onDocUp) {
+    cancelYearsDrag();
+    _yearsDrag = { startIdx, curIdx: startIdx, byTouch: byTouch === true, onDocUp, lastSpanKey: '' };
+    document.addEventListener('mouseup', onDocUp);
+}
+
+/** 手勢狀態拷貝（不含 onDocUp）；無手勢回 null。 */
+export function getYearsDragState() {
+    if (!_yearsDrag) return null;
+    return {
+        startIdx: _yearsDrag.startIdx,
+        curIdx: _yearsDrag.curIdx,
+        byTouch: _yearsDrag.byTouch,
+    };
+}
+
+/** 設定預覽（span＝null 收起）；merge 模式、不帶第二參數、不傳 series。 */
+function _setYearsPreview(c, span) {
+    if (!c || c.isDisposed()) return;
+    const fill = resolveColor(YEARS_DRAG_PREVIEW_FILL_EXPR);
+    let rect = null;
+    if (span) {
+        const centerX0 = c.convertToPixel({ seriesIndex: 0 }, [0, 0])[0];
+        const band =
+            _lastYearCats.length > 1
+                ? Math.abs(c.convertToPixel({ seriesIndex: 0 }, [1, 0])[0] - centerX0)
+                : c.getWidth();
+        rect = dragPreviewRect(span, centerX0, band, c.getHeight());
+    }
+    c.setOption({ graphic: [buildDragPreviewGraphic(rect, fill)] });
+}
+
+/**
+ * 空狀態 key 的唯一入口（CD-161a-2）：count＝該卡範圍內的片數
+ * （scopeRecords(records, sel, skipDim).length），不是聚合後的筆數。
+ * skipDim：年份長條 'period'、圓餅 'maker'、其餘 null。
+ */
+export function emptyKeyForCard(records, sel, skipDim) {
+    return emptyKey(sel, skipDim, scopeRecords(records, sel, skipDim).length) || 'insights.no_data';
+}
+
+// period_empty 照原樣顯示；其餘落回該卡自己的「沒有資料」文字。
+function _emptyText(key, fallbackKey) {
+    return key === 'insights.period_empty' ? tKey(key) : tKey(fallbackKey);
+}
 
 /**
  * ECharts tooltip 走 renderMode:'html'，自訂 formatter 回傳的字串會被當 innerHTML
@@ -256,6 +388,7 @@ export function disposeAll() {
             /* ignore */
         }
     }
+    cancelYearsDrag(); // disposeAll：清掉年份拖曳的 document 監聽
     _charts.clear();
     // 保留 _yearsCallbacks：bfcache 還原後 reinit 還要用同一組 getter/setter
 }
@@ -275,8 +408,7 @@ export function reinitYearsAfterDispose() {
     if (!_yearsCallbacks) return;
     initYearsChart(el, _yearsCallbacks);
     updateYearsChart({
-        period: _yearsCallbacks.getPeriod(),
-        focus: _yearsCallbacks.getFocus(),
+        sel: _yearsCallbacks.getSel(),
     });
 }
 
@@ -289,8 +421,7 @@ export function reinitDonutAfterDispose() {
     if (!_donutCallbacks) return;
     initDonutChart(el, _donutCallbacks);
     updateDonutChart({
-        period: _donutCallbacks.getPeriod(),
-        focus: _donutCallbacks.getFocus(),
+        sel: _donutCallbacks.getSel(),
     });
 }
 
@@ -303,8 +434,7 @@ export function reinitTagsAfterDispose() {
     if (!_tagsCallbacks) return;
     initTagsChart(el, _tagsCallbacks);
     updateTagsChart({
-        period: _tagsCallbacks.getPeriod(),
-        focus: _tagsCallbacks.getFocus(),
+        sel: _tagsCallbacks.getSel(),
     });
 }
 
@@ -317,8 +447,7 @@ export function reinitAgeAfterDispose() {
     if (!_ageCallbacks) return;
     initAgeChart(el, _ageCallbacks);
     updateAgeChart({
-        period: _ageCallbacks.getPeriod(),
-        focus: _ageCallbacks.getFocus(),
+        sel: _ageCallbacks.getSel(),
         favorites: _ageCallbacks.getFavorites(),
     });
 }
@@ -335,8 +464,7 @@ export function reinitFieldBarAfterDispose(field) {
     initFieldBarChart(el, field, callbacks);
     updateFieldBarChart(
         {
-            period: callbacks.getPeriod(),
-            focus: callbacks.getFocus(),
+            sel: callbacks.getSel(),
         },
         field,
     );
@@ -344,11 +472,12 @@ export function reinitFieldBarAfterDispose(field) {
 
 /**
  * @param {HTMLElement} containerEl
- * @param {{ getPeriod: Function, setPeriod: Function, getFocus: Function }} callbacks
+ * @param {{ getSel: Function, setPeriod: Function }} callbacks
  */
 export function initYearsChart(containerEl, callbacks) {
     if (!containerEl || typeof window.echarts === 'undefined') return;
     _yearsCallbacks = callbacks;
+    cancelYearsDrag(); // initYearsChart：重建實例前收掉進行中的手勢
 
     let chart = _charts.get('years');
     if (chart && !chart.isDisposed()) {
@@ -368,30 +497,82 @@ export function initYearsChart(containerEl, callbacks) {
 
     // 每次 init 都掛在新實例上（dispose 後舊 listener 隨實例消失）
     // 整支長條「柱身以外空白」也要能點到——用 getZr 原始像素，不是 series click。
-    chart.getZr().on('click', (ev) => {
-        const c = _charts.get('years');
-        if (!c || c.isDisposed() || !_yearsCallbacks) return;
-        // zrender 事件：優先 offsetX/Y；少數版本掛在 ev.event
+    // 單點與範圍由同一個手勢辨識器（mousedown→mousemove→mouseup）提交，不用 click。
+
+    // 像素 → 欄索引（可能 NaN／null）；不擋 grid 外，交給 resolveDragResult 夾限
+    const pixelToIdx = (c, ev) => {
         const oe = ev && ev.event ? ev.event : ev;
         const ox = oe && oe.offsetX != null ? oe.offsetX : ev.offsetX;
         const oy = oe && oe.offsetY != null ? oe.offsetY : ev.offsetY;
-        if (ox == null || oy == null) return;
-        const pointInPixel = [ox, oy];
-        if (!c.containPixel('grid', pointInPixel)) return;
-        const pointInGrid = c.convertFromPixel({ seriesIndex: 0 }, pointInPixel);
+        if (ox == null || oy == null) return { pixel: null, idx: NaN };
+        const pixel = [ox, oy];
+        const pointInGrid = c.convertFromPixel({ seriesIndex: 0 }, pixel);
         let idx = Array.isArray(pointInGrid) ? pointInGrid[0] : pointInGrid;
-        if (typeof idx === 'number') idx = Math.round(idx);
-        if (idx == null || idx < 0 || idx >= _lastYearCats.length) return;
-        const catName = _lastYearCats[idx];
-        if (catName === undefined || catName === UNKNOWN_KEY) return;
-        const y = parseInt(catName, 10);
-        if (Number.isNaN(y)) return;
-        const cur = _yearsCallbacks.getPeriod();
-        if (cur && cur.type === 'year' && cur.year === y) {
+        idx = typeof idx === 'number' ? Math.round(idx) : NaN;
+        return { pixel, idx };
+    };
+
+    const finishDrag = () => {
+        const drag = _yearsDrag;
+        if (!drag) return; // 冪等：zr mouseup 與 document mouseup 只收尾一次
+        // 無條件先收預覽（單點／同範圍重選不會重繪，否則預覽會卡在畫面上）
+        _setYearsPreview(_charts.get('years'), null);
+        cancelYearsDrag();
+        if (!_yearsCallbacks) return;
+        const result = resolveGestureResult(
+            drag.startIdx,
+            drag.curIdx,
+            _lastYearCats,
+            drag.byTouch,
+        );
+        if (!result) return;
+        if (result.kind === 'range') {
+            _yearsCallbacks.setPeriod({ type: 'range', from: result.from, to: result.to });
+            return;
+        }
+        const sel = _yearsCallbacks.getSel();
+        const cur = sel && sel.period;
+        if (cur && cur.type === 'year' && cur.year === result.year) {
             _yearsCallbacks.setPeriod({ type: 'all' });
         } else {
-            _yearsCallbacks.setPeriod({ type: 'year', year: y });
+            _yearsCallbacks.setPeriod({ type: 'year', year: result.year });
         }
+    };
+
+    chart.getZr().on('mousedown', (ev) => {
+        const c = _charts.get('years');
+        if (!c || c.isDisposed() || !_yearsCallbacks) return;
+        const oe = ev && ev.event ? ev.event : ev;
+        if (oe && oe.button != null && oe.button !== 0) return;
+        const { pixel, idx } = pixelToIdx(c, ev);
+        if (!pixel || !c.containPixel('grid', pixel)) return;
+        if (resolveDragResult(idx, idx, _lastYearCats) === null) return;
+        const onDocUp = () => finishDrag();
+        beginYearsDrag(idx, isTouchZrEvent(ev), onDocUp);
+    });
+
+    chart.getZr().on('mousemove', (ev) => {
+        if (!_yearsDrag) return;
+        const c = _charts.get('years');
+        if (!c || c.isDisposed()) return;
+        const { idx } = pixelToIdx(c, ev);
+        if (Number.isFinite(idx)) _yearsDrag.curIdx = idx;
+        if (_yearsDrag.byTouch) return; // 觸控不做預覽
+        const span = resolveDragPreviewSpan(_yearsDrag.startIdx, _yearsDrag.curIdx, _lastYearCats);
+        const key = span ? span.fromIdx + '-' + span.toIdx : '';
+        if (key === _yearsDrag.lastSpanKey) return;
+        _yearsDrag.lastSpanKey = key;
+        _setYearsPreview(c, span);
+    });
+
+    chart.getZr().on('mouseup', (ev) => {
+        if (!_yearsDrag) return;
+        const c = _charts.get('years');
+        if (c && !c.isDisposed()) {
+            const { idx } = pixelToIdx(c, ev);
+            if (Number.isFinite(idx)) _yearsDrag.curIdx = idx;
+        }
+        finishDrag();
     });
 }
 
@@ -439,23 +620,23 @@ function _opacityForIndex(dimmed, i) {
 }
 
 /**
- * @param {{ period: object, focus: object|null }} state
+ * @param {{ sel: object }} state
  */
 export function updateYearsChart(state) {
     const chart = _charts.get('years');
     if (!chart || chart.isDisposed()) return;
 
-    const period = state.period || { type: 'all' };
-    const focus = state.focus || null;
+    const sel = state.sel || emptySel();
+    const period = sel.period || { type: 'all' };
     const records = getRecords();
-    const agg = aggregateYears(records, period, focus);
+    const agg = aggregateYears(records, sel);
     const categories = agg.categories || [];
     const dimmed = agg.dimmed || [];
     _lastYearCats = categories.slice();
 
     const reduceMotion = readPrefersReducedMotion();
     const animate = shouldAnimate(reduceMotion);
-    const colorMode = resolveYearBarColorMode(focus);
+    const colorMode = resolveYearBarColorMode(sel);
 
     const normalColor = cssVar('--color-primary');
     const selectedColor = resolveColor(
@@ -552,12 +733,12 @@ export function updateYearsChart(state) {
                 : _makerKeysFromAggSeries(agg.series);
 
         const src = (agg.series && agg.series[0] && agg.series[0].data) || [];
-        const anySelected = period.type === 'year';
+        const anySelected = period.type !== 'all';
         const data = src.map((v, i) => {
             const cat = categories[i];
             const selected =
-                anySelected && cat !== UNKNOWN_KEY && Number(cat) === period.year;
-            const opacity = anySelected && !selected ? 0.35 : 1;
+                anySelected && cat !== UNKNOWN_KEY && periodContainsYear(period, Number(cat));
+            const opacity = _opacityForIndex(dimmed, i);
             const isUnknown = cat === UNKNOWN_KEY;
             return {
                 value: v,
@@ -575,8 +756,8 @@ export function updateYearsChart(state) {
             {
                 id: 'years-total',
                 name:
-                    focus && focus.type === 'maker'
-                        ? focus.value
+                    sel.maker != null
+                        ? sel.maker
                         : tKey('insights.row.years'),
                 type: 'bar',
                 barMaxWidth: 26,
@@ -602,7 +783,7 @@ export function updateYearsChart(state) {
             animation: animate,
             animationDuration: 250,
             animationDurationUpdate: 400,
-            graphic: [],
+            graphic: [buildDragPreviewGraphic(null, resolveColor('color-mix(in oklch, var(--color-primary) 18%, transparent)'))],
             grid: { left: 4, right: 8, top: 8, bottom: 20, containLabel: true },
             tooltip: {
                 trigger: 'axis',
@@ -631,7 +812,7 @@ export function updateYearsChart(state) {
 
 /**
  * @param {HTMLElement} containerEl
- * @param {{ getPeriod: Function, getFocus: Function, setFocus: Function }} callbacks
+ * @param {{ getSel: Function, toggleMaker: Function }} callbacks
  */
 export function initDonutChart(containerEl, callbacks) {
     if (!containerEl || typeof window.echarts === 'undefined') return;
@@ -653,8 +834,7 @@ export function initDonutChart(containerEl, callbacks) {
             // 半徑依容器像素重算——resize 後補一次 setOption
             if (_donutCallbacks) {
                 updateDonutChart({
-                    period: _donutCallbacks.getPeriod(),
-                    focus: _donutCallbacks.getFocus(),
+                    sel: _donutCallbacks.getSel(),
                 });
             }
         }
@@ -663,11 +843,11 @@ export function initDonutChart(containerEl, callbacks) {
     _observers.set('donut', ro);
 
     chart.on('click', (params) => {
-        if (!_donutCallbacks || typeof _donutCallbacks.setFocus !== 'function') {
+        if (!_donutCallbacks || typeof _donutCallbacks.toggleMaker !== 'function') {
             return;
         }
         // 只接受內圈（seriesIndex 0）具名扇形；rest／unknown 無效果。
-        // 不做 actress-focus 早退（D156-6：女優焦點下點片商直接切換）。
+        // 不做女優條件早退（D156-6：選了女優時點片商直接切換）。
         if (params.seriesIndex !== 0) return;
         const data = params.data;
         if (!data || data.kind !== 'named' || !data.name) return;
@@ -679,12 +859,7 @@ export function initDonutChart(containerEl, callbacks) {
         } catch {
             /* ignore */
         }
-        const cur = _donutCallbacks.getFocus();
-        if (cur && cur.type === 'maker' && cur.value === name) {
-            _donutCallbacks.setFocus(null);
-        } else {
-            _donutCallbacks.setFocus({ type: 'maker', value: name });
-        }
+        _donutCallbacks.toggleMaker(name);
     });
 }
 
@@ -693,27 +868,18 @@ export function getDonutChart() {
 }
 
 /**
- * §4.2 wiring：無焦點／片商焦點 → periodRecords；女優焦點 → scopeRecords。
- * @param {{ period: object, focus: object|null }} state
+ * §4.2 wiring：圓餅看期間∩女優（skipDim 'maker'），選了片商只高亮。
+ * @param {{ sel: object }} state
  */
 export function updateDonutChart(state) {
     const chart = _charts.get('donut');
     if (!chart || chart.isDisposed()) return;
 
-    const period = state.period || { type: 'all' };
-    const focus = state.focus || null;
+    const sel = state.sel || emptySel();
     const allRecords = getRecords();
 
-    let dataRecords;
-    let highlightKey = null;
-    if (focus && focus.type === 'actress') {
-        dataRecords = scopeRecords(allRecords, period, focus);
-    } else {
-        dataRecords = periodRecords(allRecords, period);
-        if (focus && focus.type === 'maker') {
-            highlightKey = focus.value;
-        }
-    }
+    const dataRecords = scopeRecords(allRecords, sel, 'maker');
+    const highlightKey = sel.maker != null ? sel.maker : null;
 
     const donut = buildMakerDonutData(dataRecords, _mainMakerYearMap);
     const total = donut.total;
@@ -730,10 +896,7 @@ export function updateDonutChart(state) {
                     left: 'center',
                     top: 'middle',
                     style: {
-                        text:
-                            rangeEmptyText(dataRecords.length, focus, [
-                                'actress',
-                            ]) || tKey('insights.no_data'),
+                        text: tKey(emptyKeyForCard(allRecords, sel, 'maker')),
                         fontSize: 11,
                         fill: cssVar('--text-muted'),
                     },
@@ -1007,7 +1170,7 @@ function _isDimTheme() {
 
 /**
  * @param {HTMLElement} containerEl
- * @param {{ getPeriod: Function, getFocus: Function }} callbacks
+ * @param {{ getSel: Function }} callbacks
  */
 export function initTagsChart(containerEl, callbacks) {
     if (!containerEl || typeof window.echarts === 'undefined') return;
@@ -1035,25 +1198,18 @@ export function getTagsChart() {
 }
 
 /**
- * §4.2 wiring：無焦點 periodRecords；片商／女優焦點 scopeRecords。
+ * §4.2 wiring：範圍＝期間∩女優∩片商（scopeRecords，不跳維度）。
  * 刻意不設 animationDurationUpdate（含 0）——ECharts 6.1.0 treemap 在
  * animationDurationUpdate:0 ＋版面驟縮時會把格子算成 NaN。
- * @param {{ period: object, focus: object|null }} state
+ * @param {{ sel: object }} state
  */
 export function updateTagsChart(state) {
     const chart = _charts.get('tags');
     if (!chart || chart.isDisposed()) return;
 
-    const period = state.period || { type: 'all' };
-    const focus = state.focus || null;
+    const sel = state.sel || emptySel();
     const allRecords = getRecords();
-
-    let dataRecords;
-    if (focus && (focus.type === 'maker' || focus.type === 'actress')) {
-        dataRecords = scopeRecords(allRecords, period, focus);
-    } else {
-        dataRecords = periodRecords(allRecords, period);
-    }
+    const dataRecords = scopeRecords(allRecords, sel, null);
 
     const agg = aggregateTags(dataRecords);
     const total = agg.total;
@@ -1092,11 +1248,10 @@ export function updateTagsChart(state) {
                         left: 'center',
                         top: 'middle',
                         style: {
-                            text:
-                                rangeEmptyText(dataRecords.length, focus, [
-                                    'actress',
-                                    'maker',
-                                ]) || tKey('insights.tags.empty'),
+                            text: _emptyText(
+                                emptyKeyForCard(allRecords, sel, null),
+                                'insights.tags.empty',
+                            ),
                             fontSize: 11,
                             fill: cssVar('--text-muted'),
                         },
@@ -1195,7 +1350,7 @@ export function updateTagsChart(state) {
 
 /**
  * @param {HTMLElement} containerEl
- * @param {{ getPeriod: Function, getFocus: Function, getFavorites: Function }} callbacks
+ * @param {{ getSel: Function, getFavorites: Function }} callbacks
  */
 export function initAgeChart(containerEl, callbacks) {
     if (!containerEl || typeof window.echarts === 'undefined') return;
@@ -1223,28 +1378,21 @@ export function getAgeChart() {
 }
 
 /**
- * §4.2 wiring：無焦點 periodRecords；片商／女優焦點 scopeRecords。
+ * §4.2 wiring：範圍＝期間∩女優∩片商（scopeRecords，不跳維度）。
  * setOption 用預設 merge＋固定 series id 'age'，讓長條長度過渡；
  * 只有算不出任何年齡的空分支才 clear()。
- * @param {{ period: object, focus: object|null, favorites?: object|null }} state
+ * @param {{ sel: object, favorites?: object|null }} state
  */
 export function updateAgeChart(state) {
     const chart = _charts.get('age');
     if (!chart || chart.isDisposed()) return;
 
-    const period = state.period || { type: 'all' };
-    const focus = state.focus || null;
+    const sel = state.sel || emptySel();
     const favorites = state.favorites || null;
     const allRecords = getRecords();
+    const dataRecords = scopeRecords(allRecords, sel, null);
 
-    let dataRecords;
-    if (focus && (focus.type === 'maker' || focus.type === 'actress')) {
-        dataRecords = scopeRecords(allRecords, period, focus);
-    } else {
-        dataRecords = periodRecords(allRecords, period);
-    }
-
-    const agg = aggregateAge(dataRecords, favorites, focus);
+    const agg = aggregateAge(dataRecords, favorites, sel);
     const total = agg.total;
     const reduceMotion = readPrefersReducedMotion();
     const animate = shouldAnimate(reduceMotion);
@@ -1268,11 +1416,10 @@ export function updateAgeChart(state) {
                     left: 'center',
                     top: 'middle',
                     style: {
-                        text:
-                            rangeEmptyText(dataRecords.length, focus, [
-                                'actress',
-                                'maker',
-                            ]) || tKey('insights.no_data'),
+                        text: _emptyText(
+                            emptyKeyForCard(allRecords, sel, null),
+                            'insights.no_data',
+                        ),
                         fontSize: 11,
                         fill: cssVar('--text-muted'),
                     },
@@ -1359,7 +1506,7 @@ export function updateAgeChart(state) {
 /**
  * @param {HTMLElement} containerEl
  * @param {string} field
- * @param {{ getPeriod: Function, getFocus: Function }} callbacks
+ * @param {{ getSel: Function }} callbacks
  */
 export function initFieldBarChart(containerEl, field, callbacks) {
     if (!containerEl || typeof window.echarts === 'undefined') return;
@@ -1383,26 +1530,19 @@ export function initFieldBarChart(containerEl, field, callbacks) {
 }
 
 /**
- * §4.2 wiring：無焦點 periodRecords；片商／女優焦點 scopeRecords。
+ * §4.2 wiring：範圍＝期間∩女優∩片商（scopeRecords，不跳維度）。
  * setOption 用預設 merge＋固定 series id field，讓長條長度過渡；
  * 只有 0% 涵蓋的空分支才 clear()。
- * @param {{ period: object, focus: object|null }} state
+ * @param {{ sel: object }} state
  * @param {string} field
  */
 export function updateFieldBarChart(state, field) {
     const chart = _charts.get(field);
     if (!chart || chart.isDisposed()) return;
 
-    const period = state.period || { type: 'all' };
-    const focus = state.focus || null;
+    const sel = state.sel || emptySel();
     const allRecords = getRecords();
-
-    let dataRecords;
-    if (focus && (focus.type === 'maker' || focus.type === 'actress')) {
-        dataRecords = scopeRecords(allRecords, period, focus);
-    } else {
-        dataRecords = periodRecords(allRecords, period);
-    }
+    const dataRecords = scopeRecords(allRecords, sel, null);
 
     const agg = aggregateFieldTop8(dataRecords, field);
     const total = agg.total;
@@ -1428,11 +1568,10 @@ export function updateFieldBarChart(state, field) {
                     left: 'center',
                     top: 'middle',
                     style: {
-                        text:
-                            rangeEmptyText(dataRecords.length, focus, [
-                                'actress',
-                                'maker',
-                            ]) || tKey('insights.no_data'),
+                        text: _emptyText(
+                            emptyKeyForCard(allRecords, sel, null),
+                            'insights.no_data',
+                        ),
                         fontSize: 11,
                         fill: cssVar('--text-muted'),
                     },

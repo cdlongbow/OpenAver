@@ -5192,6 +5192,38 @@ const RULES = [
   // ---- [TestInsightsVendorGuard] insights.html 載入 ECharts UMD (156a-T5, CD-156-6) ----
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'src="/static/vendor/echarts/echarts.min.js"', note: '[TestInsightsVendorGuard] test_insights_html_loads_echarts_script' },
   { file: 'web/templates/insights.html', kind: 'forbidden-string', pattern: '<script type="module" src="/static/vendor/echarts/echarts.min.js"', note: '[TestInsightsVendorGuard] test_insights_echarts_script_not_module — UMD build 不能用 type=module 載入' },
+
+  // ---- [161a-T5a] 單一 sel 狀態貫穿分析頁 ----
+  { file: 'web/static/js/pages/insights/state.js', kind: 'structure-count', pattern: "this.$watch('sel',", count: 1, note: "[161a-T5a] state.js 重繪入口只有一個 $watch('sel')（CD-161a-3）：兩個以上＝某個條件的變更會重繪兩次，零個＝點女優／片商不重繪任何一張卡" },
+  { file: 'web/static/js/pages/insights/state.js', kind: 'forbidden-string', pattern: "$watch('period'", note: "[161a-T5a] state.js 重繪入口只有一個 $watch('sel')：不得殘留舊的 $watch('period')" },
+  { file: 'web/static/js/pages/insights/state.js', kind: 'forbidden-string', pattern: "$watch('focus'", note: "[161a-T5a] state.js 重繪入口只有一個 $watch('sel')：不得殘留舊的 $watch('focus')" },
+  { file: 'web/static/js/pages/insights/charts.js', kind: 'required-string', pattern: '_donutCallbacks.toggleMaker(name)', note: '[161a-T5a] charts.js 圓餅點擊寫 sel.maker：點圓餅必須經 toggleMaker 回呼設到那家片商' },
+  { file: 'web/static/js/pages/insights/charts.js', kind: 'required-string', pattern: 'const opacity = _opacityForIndex(dimmed, i);', note: '[161a-T5a] charts.js 年份長條單 series 的淡化吃 agg.dimmed（range 可用）：改成固定 1 ＝選了年份（或範圍）後範圍外的欄不再淡化' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: `x-show="sel.period.type !== 'all'"`, scope: { anchor: /id="tileYear"/, window: 600 }, note: '[161a-T5a] #tileYear 期間非 all（含範圍）就顯示年份值與 ×：只認 year 會讓範圍選取後年份格變回「全部年份」、× 消失' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'periodTileLabel()', note: '[161a-T5a] 模板消費的新接線：年份格顯示值（periodTileLabel）' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'cardEmptyKey(', count: 5, note: '[161a-T5a] 模板消費的新接線：五張卡的空狀態文字都走 cardEmptyKey（模板現有 5 處，下限）' },
+
+  // ---- [161a-T5b] 頂排拆女優格／片商格、兩條件疊加 ----
+  { file: 'web/static/js/pages/insights/state.js', kind: 'required-string', pattern: '#tileActress .insights-focus-avatar:not(.mk)', count: 2, note: '[161a-T5b] state.js 頭像飛行目標是 #tileActress（清除分支與 _flyAvatarToFocusTile 各一處）：指到別格＝替身飛不到頭像、卡在半空' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: '@click="clearMaker()"', scope: { anchor: /id="tileMaker"/, window: 2500 }, note: '[161a-T5b] #tileMaker 的 × 接 clearMaker：接成別的＝按片商格的 × 清掉別的條件' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: '@click="clearActress()"', scope: { anchor: /id="tileActress"/, window: 2500 }, note: '[161a-T5b] #tileActress 的 × 接 clearActress：接成別的＝按女優格的 × 清掉別的條件' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: "t('insights.all_maker')", scope: { anchor: /id="tileMaker"/, window: 2500 }, note: '[161a-T5b] #tileMaker 未選時顯示淡色「全部片商」：寫成別的字＝使用者分不出兩格' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: "t('insights.all_actress')", scope: { anchor: /id="tileActress"/, window: 2500 }, note: '[161a-T5b] #tileActress 未選時顯示淡色「全部女優」：寫成別的字＝使用者分不出兩格' },
+  { file: 'web/templates/insights.html', kind: 'forbidden-string', pattern: 'tileFocus', note: '[161a-T5b] 頂排無 #tileFocus（insights.html）：舊的單一焦點格已拆成 #tileActress／#tileMaker' },
+  { file: 'web/static/js/pages/insights/state.js', kind: 'forbidden-string', pattern: 'tileFocus', note: '[161a-T5b] 頂排無 #tileFocus（state.js）：舊的單一焦點格已拆成 #tileActress／#tileMaker' },
+
+  // ---- [161a-T6b] 年份拖曳：預覽蓋板、年表淡化、觸控降級、dispose 清理 ----
+  { file: 'web/static/js/pages/insights/charts.js', kind: 'forbidden-string', pattern: "getZr().on('click'", note: '[161a-T6b] charts.js 年份圖不得有 click 監聽：單點與範圍都由 mousedown→mouseup 手勢提交，加回 click 會在拖完範圍後多觸發一次單點、把剛選的範圍改成單年' },
+  { file: 'web/static/js/pages/insights/charts.js', kind: 'required-string', pattern: "document.addEventListener('mouseup'", note: '[161a-T6b] charts.js 拖曳要掛 document 層 mouseup：沒掛則滑鼠拖出畫布才放開時收不了尾，手勢卡住' },
+  { file: 'web/static/js/pages/insights/charts.js', kind: 'required-string', pattern: 'cancelYearsDrag(); // initYearsChart', note: '[161a-T6b] charts.js initYearsChart 重建前要 cancelYearsDrag：少了它，bfcache 還原重建年份圖時舊手勢與 document 監聽沒收掉' },
+  { file: 'web/static/js/pages/insights/charts.js', kind: 'forbidden-string', pattern: '$action', note: "[161a-T6b] charts.js 不得用 $action:'remove'：在全新圖上 remove 會丟錯被吞掉、整頁空白（FE-JS-05），預覽只切 invisible" },
+  { file: 'web/static/js/pages/insights/charts.js', kind: 'required-string', pattern: 'graphic: [buildDragPreviewGraphic(null, ', note: '[161a-T6b] updateYearsChart 每次重繪都帶預覽 graphic：少了它，重繪後預覽不會被重設成隱藏、提交範圍後高亮可能殘留' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: 'isYearInSel(', note: '[161a-T6b] insights.html 年表年份欄淡化吃範圍：模板消費 isYearInSel，沒用到則選範圍後年表沒有任何年份被標成選中' },
+  { file: 'web/templates/insights.html', kind: 'forbidden-string', pattern: 'sel.period.year ===', note: '[161a-T6b] insights.html 年表年份欄淡化吃範圍：只認單年 sel.period.year 會讓範圍內的欄全被淡化' },
+  // ---- [161a-T7] 片數格跳轉接線 ----
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: '@click="goBrowse()"', scope: { anchor: /id="tileCount"/, window: 1200 }, note: '[161a-T7] #tileCount 的 click 接 goBrowse：沒接＝片數格看起來可點、手形游標也有，但點下去什麼都沒發生' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: "t('insights.count_open_browse')", scope: { anchor: /id="tileCount"/, window: 1200 }, note: '[161a-T7] #tileCount tooltip 用 insights.count_open_browse：寫成別的字＝使用者不知道點了會去哪' },
+  { file: 'web/templates/insights.html', kind: 'required-string', pattern: "'is-clickable': canGoBrowse", scope: { anchor: /id="tileCount"/, window: 1200 }, note: '[161a-T7] #tileCount 可點樣式只在 canGoBrowse 時：寫成恆真＝片數 0 的格子仍顯示手形與 hover 淡染' },
 ];
 
 // ---- helpers ----

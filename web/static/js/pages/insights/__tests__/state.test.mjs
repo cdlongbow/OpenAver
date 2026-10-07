@@ -32,6 +32,12 @@ globalThis.document = globalThis.document || {
 
 const { computePreviewPosition, libraryInsightsState, shouldPlayPodiumEntrance, computeCostarVisible } = await import('../state.js');
 const { setRecords } = await import('../aggregate.js');
+const { refreshMakerColorSlots } = await import('../charts.js');
+
+// 測試用手組 sel（三條件，預設全空）
+function selOf(over) {
+    return { period: { type: 'all' }, actress: null, maker: null, ...over };
+}
 
 function rec(opts) {
     return {
@@ -246,42 +252,50 @@ test('previewPositionStyle: viewport 以 clientWidth 為準（不含捲軸）', 
     assert.notEqual(left, 225);
 });
 
-// ── isPeriodEmpty（TASK-156c-T6）─────────────────────────────────────
+// ── cardEmptyKey（TASK-156c-T6／161a-T5a：舊版型別白名單寫法已刪）──────────
 
-test('isPeriodEmpty: scopedCount>0 時回傳 false', () => {
-    const state = libraryInsightsState();
-    state.snapshot = { logicalTitles: 100 };
-    state.snapshotError = null;
-    state.focus = { type: 'maker', value: 'SOD' };
-    state.scopedCount = 5;
-    assert.equal(state.isPeriodEmpty(['maker']), false);
+test('cardEmptyKey: 該卡範圍內有片時回傳 no_data（不是 period_empty）', () => {
+    setRecords([rec({ maker: 'SOD' })]);
+    try {
+        const state = libraryInsightsState();
+        state.snapshot = { logicalTitles: 100 };
+        state.snapshotError = null;
+        state.sel = selOf({ maker: 'SOD' });
+        assert.equal(state.cardEmptyKey('actress'), 'insights.no_data');
+    } finally {
+        setRecords([]);
+    }
 });
 
-test('isPeriodEmpty: snapshotError 為真時回傳 false', () => {
+test('cardEmptyKey: snapshotError 為真時回傳 no_data', () => {
+    setRecords([]);
     const state = libraryInsightsState();
     state.snapshot = { logicalTitles: 100 };
     state.snapshotError = 'error';
-    state.focus = { type: 'maker', value: 'SOD' };
-    state.scopedCount = 0;
-    assert.equal(state.isPeriodEmpty(['maker']), false);
+    state.sel = selOf({ maker: 'SOD' });
+    assert.equal(state.cardEmptyKey('actress'), 'insights.no_data');
 });
 
-test('isPeriodEmpty: snapshot.logicalTitles===0（空片庫）時回傳 false', () => {
+test('cardEmptyKey: snapshot.logicalTitles===0（空片庫）時回傳 no_data', () => {
+    setRecords([]);
     const state = libraryInsightsState();
     state.snapshot = { logicalTitles: 0 };
     state.snapshotError = null;
-    state.focus = { type: 'maker', value: 'SOD' };
-    state.scopedCount = 0;
-    assert.equal(state.isPeriodEmpty(['maker']), false);
+    state.sel = selOf({ maker: 'SOD' });
+    assert.equal(state.cardEmptyKey('actress'), 'insights.no_data');
 });
 
-test('isPeriodEmpty: 條件滿足時回傳 true', () => {
-    const state = libraryInsightsState();
-    state.snapshot = { logicalTitles: 100 };
-    state.snapshotError = null;
-    state.focus = { type: 'maker', value: 'SOD' };
-    state.scopedCount = 0;
-    assert.equal(state.isPeriodEmpty(['maker']), true);
+test('cardEmptyKey: 條件滿足時回傳 period_empty', () => {
+    setRecords([rec({ maker: 'Moodyz' })]);
+    try {
+        const state = libraryInsightsState();
+        state.snapshot = { logicalTitles: 100 };
+        state.snapshotError = null;
+        state.sel = selOf({ maker: 'SOD' });
+        assert.equal(state.cardEmptyKey('actress'), 'insights.period_empty');
+    } finally {
+        setRecords([]);
+    }
 });
 
 // ── podiumRows / restRows（TASK-156d-T2）─────────────────────────────
@@ -347,19 +361,19 @@ test('podiumRows/restRows: top20Rows 剛好 20 筆滿額且焦點女優 rank===2
 
 test('isActressFocused: true only when focus.type is actress', () => {
     const state = libraryInsightsState();
-    state.focus = { type: 'actress', value: '明里つむぎ' };
+    state.sel = selOf({ actress: '明里つむぎ' });
     assert.equal(state.isActressFocused, true);
 });
 
 test('isActressFocused: focus.type === "maker" 時回傳 false', () => {
     const state = libraryInsightsState();
-    state.focus = { type: 'maker', value: 'SOD' };
+    state.sel = selOf({ maker: 'SOD' });
     assert.equal(state.isActressFocused, false);
 });
 
 test('isActressFocused: 無焦點（focus === null）時回傳 false', () => {
     const state = libraryInsightsState();
-    state.focus = null;
+    state.sel = selOf();
     assert.equal(state.isActressFocused, false);
 });
 
@@ -396,7 +410,7 @@ test('_maybePlayPinPulse: 年齡軸下她的列被濾掉（無生日）→ DOM �
 
     const state = libraryInsightsState();
     state.$nextTick = (fn) => fn();
-    state.focus = { type: 'actress', value: '無生日女優' };
+    state.sel = selOf({ actress: '無生日女優' });
     state.ganttRows = [{ name: '無生日女優', pinned: true }];
     state.soloRows = [{ name: '無生日女優', pinned: true }];
 
@@ -426,7 +440,7 @@ test('_maybePlayPinPulse: DOM 渲染第一列確實是她（年份軸／年齡�
 
     const state = libraryInsightsState();
     state.$nextTick = (fn) => fn();
-    state.focus = { type: 'actress', value: '有生日女優' };
+    state.sel = selOf({ actress: '有生日女優' });
     state.ganttRows = [{ name: '有生日女優', pinned: true }];
     state.soloRows = [{ name: '有生日女優', pinned: true }];
 
@@ -491,15 +505,183 @@ test('computeCostarVisible: 女優焦點但零共演 → false', () => {
 
 test('costarVisible getter: 反映 isActressFocused 與 costarRows.length', () => {
     const state = libraryInsightsState();
-    state.focus = { type: 'actress', value: '明里つむぎ' };
+    state.sel = selOf({ actress: '明里つむぎ' });
     state.costarRows = [];
     assert.equal(state.costarVisible, false, '零共演時應為 false');
 
     state.costarRows = [{ name: 'B', count: 1, self: '明里つむぎ' }];
     assert.equal(state.costarVisible, true, '有共演時應為 true');
 
-    state.focus = { type: 'maker', value: 'SOD' };
+    state.sel = selOf({ maker: 'SOD' });
     assert.equal(state.costarVisible, false, '片商焦點時應為 false');
+});
+
+// ── TASK-161a-T5a：單一 sel 狀態 ─────────────────────────────────────
+
+test('_handleActressFocusChange: 只在女優格換人時捲回頂端（換期間／換片商／清除都不捲）', () => {
+    const scrolls = [];
+    const origScrollTo = globalThis.window.scrollTo;
+    const origOpenAver = globalThis.window.OpenAver;
+    globalThis.window.scrollTo = (opt) => scrolls.push(opt);
+    globalThis.window.OpenAver = { prefersReducedMotion: true };
+    try {
+        const run = (oldSel, newSel) => {
+            const state = libraryInsightsState();
+            state._syncCostarVisibility = () => {};
+            state.sel = newSel;
+            scrolls.length = 0;
+            state._handleActressFocusChange(oldSel, 0);
+            return scrolls.length;
+        };
+        // 沒女優 → 有女優、換成另一位：捲
+        assert.equal(run(selOf(), selOf({ actress: 'A' })), 1);
+        assert.equal(run(selOf({ actress: 'A' }), selOf({ actress: 'B' })), 1);
+        // 同一位女優只換期間、只加片商、清掉女優：不捲
+        assert.equal(
+            run(selOf({ actress: 'A' }), selOf({ actress: 'A', period: { type: 'year', year: 2020 } })),
+            0,
+        );
+        assert.equal(run(selOf({ actress: 'A' }), selOf({ actress: 'A', maker: 'S1' })), 0);
+        assert.equal(run(selOf({ actress: 'A' }), selOf()), 0);
+        // 只選片商、換片商：不捲
+        assert.equal(run(selOf({ maker: 'S1' }), selOf({ maker: 'S2' })), 0);
+    } finally {
+        globalThis.window.scrollTo = origScrollTo;
+        globalThis.window.OpenAver = origOpenAver;
+    }
+});
+
+test('ganttView: 快取鍵認整個 sel，只換片商或只換期間也必須重算', () => {
+    setRecords([rec({ year: 2020, actresses: ['Alice'] }), rec({ year: 2021, actresses: ['Alice'] })]);
+    try {
+        const state = libraryInsightsState();
+        state.snapshot = { actressFavorites: {} };
+        state.ganttRows = [{ name: 'Alice' }];
+        state.sel = selOf({ actress: 'Alice' });
+        const first = state.ganttView('year');
+        assert.equal(state.ganttView('year'), first, 'sel 沒變時命中快取');
+        state.sel = { ...state.sel, maker: 'SOD' };
+        const afterMaker = state.ganttView('year');
+        assert.notEqual(afterMaker, first, '只換片商必須重算');
+        state.sel = { ...state.sel, period: { type: 'year', year: 2020 } };
+        const afterPeriod = state.ganttView('year');
+        assert.notEqual(afterPeriod, afterMaker, '只換期間必須重算');
+    } finally {
+        setRecords([]);
+    }
+});
+
+test('toggleMakerFocus／toggleActressFocus: 疊加不互斥，期間與另一條件保留', () => {
+    const state = libraryInsightsState();
+    const period = { type: 'range', from: 2019, to: 2023 };
+    state.sel = selOf({ period, actress: 'A' });
+    state.toggleMakerFocus('S1');
+    assert.deepEqual(state.sel, { period, actress: 'A', maker: 'S1' });
+    state.toggleActressFocus('A');
+    assert.deepEqual(state.sel, { period, actress: null, maker: 'S1' });
+    state.toggleActressFocus('B');
+    assert.deepEqual(state.sel, { period, actress: 'B', maker: 'S1' });
+    state.toggleActressFocus('B');
+    state.toggleMakerFocus('S1');
+    assert.deepEqual(state.sel, { period, actress: null, maker: null });
+});
+
+test('clearActress／clearMaker: 各自只清自己那一條件，期間保留', () => {
+    const state = libraryInsightsState();
+    const period = { type: 'year', year: 2021 };
+    state.sel = selOf({ period, actress: 'A', maker: 'S1' });
+    state.clearActress();
+    assert.deepEqual(state.sel, { period, actress: null, maker: 'S1' });
+    state.sel = selOf({ period, actress: 'A', maker: 'S1' });
+    state.clearMaker();
+    assert.deepEqual(state.sel, { period, actress: 'A', maker: null });
+});
+
+test('costarVisible getter: 加選片商使與她同片 0 筆時為 false，清掉片商後恢復', () => {
+    setRecords([
+        rec({ actresses: ['A', 'B'], maker: 'X' }),
+        rec({ actresses: ['A'], maker: 'Y' }),
+    ]);
+    try {
+        const state = libraryInsightsState();
+        state.sel = selOf({ actress: 'A' });
+        state.recomputeCostar();
+        assert.equal(state.costarRows.length, 1, '只選 A：與 B 同片');
+        assert.equal(state.costarVisible, true);
+        state.toggleMakerFocus('Y');
+        state.recomputeCostar();
+        assert.equal(state.costarRows.length, 0, '加選 Y：A 在 Y 沒有同片');
+        assert.equal(state.costarVisible, false);
+        state.clearMaker();
+        state.recomputeCostar();
+        assert.equal(state.costarVisible, true, '清掉片商後恢復');
+        state.sel = selOf({ maker: 'X' });
+        state.recomputeCostar();
+        assert.equal(state.costarVisible, false, '只有片商恆 false');
+    } finally {
+        setRecords([]);
+    }
+});
+
+test('focusMakerColor／focusInitial: 片商色點不受女優條件影響，頭像字母只取女優', () => {
+    setRecords([rec({ actresses: ['Alice'], maker: 'SOD' })]);
+    const hadGcs = Object.prototype.hasOwnProperty.call(globalThis, 'getComputedStyle');
+    const oldGcs = globalThis.getComputedStyle;
+    // node 無 DOM：色票解析要 getComputedStyle，給固定回傳讓「有值／空」可斷言
+    globalThis.getComputedStyle = () => ({ color: 'rgb(10, 20, 30)' });
+    const oldCreate = document.createElement;
+    document.createElement = () => ({
+        style: {},
+        appendChild() {},
+        getContext: () => ({
+            fillRect() {},
+            getImageData: () => ({ data: [10, 20, 30, 255] }),
+        }),
+    });
+    try {
+        refreshMakerColorSlots();
+        const state = libraryInsightsState();
+        state.sel = selOf({ maker: 'SOD' });
+        const solo = state.focusMakerColor();
+        assert.ok(solo, '只選片商：色票非空');
+        state.sel = selOf({ actress: 'Alice', maker: 'SOD' });
+        assert.equal(state.focusMakerColor(), solo, '疊加女優後色點不變');
+        assert.equal(state.focusInitial(), 'A', '字母取女優首字');
+        state.sel = selOf({ maker: 'SOD' });
+        assert.equal(state.focusInitial(), '', '只有片商時不取字母');
+        state.sel = selOf({ actress: 'Alice' });
+        assert.equal(state.focusMakerColor(), '', '無片商回空');
+    } finally {
+        document.createElement = oldCreate;
+        if (hadGcs) globalThis.getComputedStyle = oldGcs; else delete globalThis.getComputedStyle;
+        setRecords([]);
+    }
+});
+
+test('periodTileLabel: range 顯示 2019–2023、單年顯示年份、all 為空字串', () => {
+    const state = libraryInsightsState();
+    state.sel = selOf({ period: { type: 'range', from: 2019, to: 2023 } });
+    assert.equal(state.periodTileLabel(), '2019–2023');
+    state.sel = selOf({ period: { type: 'year', year: 2023 } });
+    assert.equal(state.periodTileLabel(), '2023');
+    state.sel = selOf();
+    assert.equal(state.periodTileLabel(), '');
+});
+
+test('isYearInSel: 單年與範圍含兩端、範圍外為 false、all 為 true', () => {
+    const state = libraryInsightsState();
+    state.sel = selOf();
+    assert.equal(state.isYearInSel(2021), true);
+    state.sel = selOf({ period: { type: 'year', year: 2021 } });
+    assert.equal(state.isYearInSel(2021), true);
+    assert.equal(state.isYearInSel(2020), false);
+    assert.equal(state.isYearInSel('2021'), true);
+    state.sel = selOf({ period: { type: 'range', from: 2019, to: 2023 } });
+    assert.equal(state.isYearInSel(2019), true);
+    assert.equal(state.isYearInSel(2023), true);
+    assert.equal(state.isYearInSel(2018), false);
+    assert.equal(state.isYearInSel(2024), false);
+    assert.equal(state.isYearInSel('2021'), true);
 });
 
 // ── topDisplayCount (TASK-156e-T3) ───────────────────────────────────
@@ -521,4 +703,133 @@ test('topDisplayCount: row 為 null/undefined → 回傳空字串', () => {
     state.top20DisplayCounts = { Alice: 7 };
     assert.equal(state.topDisplayCount(null), '');
     assert.equal(state.topDisplayCount(undefined), '');
+});
+
+// ── canGoBrowse / goBrowse (TASK-161a-T7) ────────────────────────────
+
+// 安裝 localStorage／location／console.warn 的記錄器，回傳 { calls, warns, restore }
+function installBrowseStubs({ stored = null, setItemThrows = false } = {}) {
+    const calls = [];
+    const warns = [];
+    const lsDesc = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    const locDesc = Object.getOwnPropertyDescriptor(globalThis, 'location');
+    const origWarn = console.warn;
+    const fake = {
+        getItem(k) { calls.push(['getItem', k]); return stored; },
+        setItem(k, v) {
+            if (setItemThrows) throw new Error('quota');
+            calls.push(['setItem', k, v]);
+        },
+    };
+    Object.defineProperty(globalThis, 'localStorage', { value: fake, configurable: true, writable: true });
+    Object.defineProperty(globalThis, 'location', {
+        value: { assign(url) { calls.push(['assign', url]); } },
+        configurable: true,
+        writable: true,
+    });
+    console.warn = (...args) => { warns.push(args); };
+    const restore = () => {
+        console.warn = origWarn;
+        if (lsDesc) Object.defineProperty(globalThis, 'localStorage', lsDesc);
+        else delete globalThis.localStorage;
+        if (locDesc) Object.defineProperty(globalThis, 'location', locDesc);
+        else delete globalThis.location;
+    };
+    return { calls, warns, restore };
+}
+
+test('canGoBrowse: 片數為 0、快照失敗、尚未載入時為 false，有片時為 true', () => {
+    const fresh = libraryInsightsState();
+    assert.equal(fresh.canGoBrowse, false);
+
+    const state = libraryInsightsState();
+    state.snapshotError = null;
+    state.scopedCount = 5;
+    assert.equal(state.canGoBrowse, true);
+    state.scopedCount = 0;
+    assert.equal(state.canGoBrowse, false);
+    state.snapshotError = true;
+    state.scopedCount = 5;
+    assert.equal(state.canGoBrowse, false);
+});
+
+test('goBrowse: 片數為 0 或快照失敗時不寫入也不導航', () => {
+    const stub = installBrowseStubs();
+    try {
+        const state = libraryInsightsState();
+        state.snapshotError = null;
+        state.scopedCount = 0;
+        state.goBrowse();
+        assert.deepEqual(stub.calls, []);
+        state.snapshotError = true;
+        state.scopedCount = 5;
+        state.goBrowse();
+        assert.deepEqual(stub.calls, []);
+    } finally {
+        stub.restore();
+    }
+});
+
+test('goBrowse: 寫入失敗時不導航', () => {
+    const stub = installBrowseStubs({ setItemThrows: true });
+    try {
+        const state = libraryInsightsState();
+        state.snapshotError = null;
+        state.scopedCount = 5;
+        assert.doesNotThrow(() => state.goBrowse());
+        assert.equal(stub.calls.filter((c) => c[0] === 'assign').length, 0);
+        assert.equal(stub.warns.length, 1);
+    } finally {
+        stub.restore();
+    }
+});
+
+test('goBrowse: 先寫入 showcase_state 再導向 /showcase，保留既有排序與卡型、整組換成目前條件', () => {
+    const old = JSON.stringify({
+        sort: 'x', cardShape: 'poster', infoVisible: true, search: 'abc',
+        pills: [{ dim: 'actress', value: '舊' }],
+    });
+    const stub = installBrowseStubs({ stored: old });
+    try {
+        const state = libraryInsightsState();
+        state.snapshotError = null;
+        state.scopedCount = 12;
+        state.sel = { period: { type: 'year', year: 2023 }, actress: 'A', maker: 'M' };
+        state.goBrowse();
+        const writes = stub.calls.filter((c) => c[0] === 'setItem' || c[0] === 'assign');
+        assert.equal(writes.length, 2);
+        assert.equal(writes[0][0], 'setItem');
+        assert.equal(writes[0][1], 'showcase_state');
+        assert.deepEqual(writes[1], ['assign', '/showcase']);
+        const saved = JSON.parse(writes[0][2]);
+        assert.equal(saved.pills.length, 3);
+        const dims = saved.pills.map((p) => p.dim).sort();
+        assert.deepEqual(dims, ['actress', 'maker', 'release']);
+        const rel = saved.pills.find((p) => p.dim === 'release');
+        assert.equal(rel.op, '=');
+        assert.equal(rel.value, '2023');
+        assert.equal(saved.search, '');
+        assert.equal(saved.page, 1);
+        assert.equal(saved.showFavoriteActresses, false);
+        assert.equal(saved.sort, 'x');
+        assert.equal(saved.cardShape, 'poster');
+        assert.equal(saved.infoVisible, true);
+    } finally {
+        stub.restore();
+    }
+
+    // 無條件也能跳
+    const stub2 = installBrowseStubs({ stored: old });
+    try {
+        const state = libraryInsightsState();
+        state.snapshotError = null;
+        state.scopedCount = 2103;
+        state.sel = selOf({});
+        state.goBrowse();
+        const set = stub2.calls.find((c) => c[0] === 'setItem');
+        assert.deepEqual(JSON.parse(set[2]).pills, []);
+        assert.equal(stub2.calls.filter((c) => c[0] === 'assign').length, 1);
+    } finally {
+        stub2.restore();
+    }
 });

@@ -4,7 +4,7 @@ from playwright.sync_api import Page
 ALPINE = '[x-data="libraryInsights"]'
 DESKTOP, MOBILE = 1440, 390
 GHOST = "[data-avatar-fly-ghost]"
-FOCUS_AV = "#tileFocus .insights-focus-avatar:not(.mk)"
+ACTRESS_TILE_AV = "#tileActress .insights-focus-avatar:not(.mk)"
 SETTLE_MS = 3_500
 ACTIVE_FLIP = """(t) => {
     if (!t || t === 'none' || t === '') return false;
@@ -62,7 +62,7 @@ def wait_settled(page: Page, timeout: int = SETTLE_MS) -> None:
             { window.__oaSettleN = 0; return false; }
         window.__oaSettleN = (window.__oaSettleN || 0) + 1;
         return window.__oaSettleN >= 3;
-    }""" % (ACTIVE_FLIP, ALPINE, GHOST, FOCUS_AV), timeout=timeout)
+    }""" % (ACTIVE_FLIP, ALPINE, GHOST, ACTRESS_TILE_AV), timeout=timeout)
     page.wait_for_timeout(50)
 def residue(page: Page) -> dict:
     return page.evaluate("""() => {
@@ -104,12 +104,12 @@ def click_year_bar(page: Page, year: int) -> bool:
     page.mouse.click(coords["x"], coords["y"])
     return True
 def reset_period_all(page: Page) -> None:
-    period = alpine(page, "data.period ? {...data.period} : null")
+    period = alpine(page, "data.sel ? {...data.sel.period} : null")
     if period and period.get("type") == "year":
         page.click("#tileYear .insights-x-btn")
         page.wait_for_function(
             "() => { const d = Alpine.$data(document.querySelector('%s'));"
-            " return !!(d && d.period && d.period.type === 'all'); }" % ALPINE, timeout=3_000)
+            " return !!(d && d.sel && d.sel.period.type === 'all'); }" % ALPINE, timeout=3_000)
         page.wait_for_timeout(40)
 def click_donut_named_maker(page: Page) -> str | None:
     coords = page.evaluate("""() => {
