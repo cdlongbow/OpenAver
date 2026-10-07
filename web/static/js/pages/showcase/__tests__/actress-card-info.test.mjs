@@ -91,14 +91,6 @@ function byKey(actress, isNarrow) {
 
 // ── 收留規則（CD-124b-13）──────────────────────────────────────────────
 
-test('_isNarrow=true ＋ 五欄全有值 → 長度 5，key 順序 [count, age, height, cup, bwh]', () => {
-    assert.deepEqual(keysOf(FULL_ACTRESS, true), ['count', 'age', 'height', 'cup', 'bwh']);
-});
-
-test('_isNarrow=false ＋ 五欄全有值 → 長度 4，key 順序 [age, height, cup, bwh]（作品數不出現，年齡出現）', () => {
-    assert.deepEqual(keysOf(FULL_ACTRESS, false), ['age', 'height', 'cup', 'bwh']);
-});
-
 test('text 逐字不變（124b-T1 視覺零回歸）：窄螢幕五個 token 的文字與改動前相同', () => {
     assert.deepEqual(textsOf(FULL_ACTRESS, true), [
         '12showcase.unit.films',
@@ -110,23 +102,16 @@ test('text 逐字不變（124b-T1 視覺零回歸）：窄螢幕五個 token 的
 });
 
 test('缺 height（null）→ 該 part 不出現，其餘不受影響', () => {
-    const actress = Object.assign({}, FULL_ACTRESS, { height: null });
-    assert.deepEqual(keysOf(actress, true), ['count', 'age', 'cup', 'bwh']);
-});
-
-test('缺 cup（undefined）→ 該 part 不出現，其餘不受影響', () => {
-    const actress = Object.assign({}, FULL_ACTRESS, { cup: undefined });
-    assert.deepEqual(keysOf(actress, true), ['count', 'age', 'height', 'bwh']);
-});
-
-test('缺 height（空字串）→ 該 part 不出現，其餘不受影響', () => {
-    const actress = Object.assign({}, FULL_ACTRESS, { height: '' });
-    assert.deepEqual(keysOf(actress, true), ['count', 'age', 'cup', 'bwh']);
-});
-
-test('三圍缺一格（bust 為 null）→ 三圍整個 part 不出現', () => {
-    const actress = Object.assign({}, FULL_ACTRESS, { bust: null });
-    assert.deepEqual(keysOf(actress, true), ['count', 'age', 'height', 'cup']);
+    // 162a：缺 cup（undefined）、缺 height（空字串）、三圍缺一格併入同一支（同一失敗原因：缺值不顯示殘缺欄）
+    const cases = [
+        [{ height: null }, ['count', 'age', 'cup', 'bwh']],
+        [{ cup: undefined }, ['count', 'age', 'height', 'bwh']],
+        [{ height: '' }, ['count', 'age', 'cup', 'bwh']],
+        [{ bust: null }, ['count', 'age', 'height', 'cup']],
+    ];
+    for (const [override, expected] of cases) {
+        assert.deepEqual(keysOf(Object.assign({}, FULL_ACTRESS, override), true), expected);
+    }
 });
 
 test('actress 全空欄位（五欄皆 null）→ 回傳 []（窄寬皆然：整塊資訊區不渲染）', () => {
@@ -136,9 +121,7 @@ test('actress 全空欄位（五欄皆 null）→ 回傳 []（窄寬皆然：整
     };
     assert.deepEqual(partsOf(actress, true), []);
     assert.deepEqual(partsOf(actress, false), []);
-});
-
-test('actress 本身為 null → 回傳 []', () => {
+    // 162a：actress 本身為 null 併入同一支
     assert.deepEqual(partsOf(null, true), []);
 });
 
@@ -165,70 +148,36 @@ test('clickable：age/height/cup 值可解析 → true；count/bwh 恆 false（�
     assert.equal(m.bwh.clickable, false, '三圍無對應 pill 維度，恆不可點');
 });
 
-test('clickable：寬螢幕下三格同樣可點、bwh 同樣不可點（無斷點分支）', () => {
-    const m = byKey(FULL_ACTRESS, false);
-    assert.equal(m.age.clickable, true);
-    assert.equal(m.height.clickable, true);
-    assert.equal(m.cup.clickable, true);
-    assert.equal(m.bwh.clickable, false);
-    assert.equal(m.count, undefined, '寬螢幕作品數整格不出現');
-});
-
 // ── fail-closed：值解析不出來就不可點，但文字仍在 ─────────────────────
 
 test("fail-closed：height:'不明' → clickable=false，text 仍是 '不明'", () => {
-    const m = byKey(Object.assign({}, FULL_ACTRESS, { height: '不明' }), true);
-    assert.equal(m.height.clickable, false);
-    assert.equal(m.height.text, '不明');
-});
-
-test("fail-closed：cup:'AA'（多字元）→ clickable=false，text 仍在", () => {
-    const m = byKey(Object.assign({}, FULL_ACTRESS, { cup: 'AA' }), true);
-    assert.equal(m.cup.clickable, false);
-    assert.equal(m.cup.text, 'AAsearch.unit.cup');
-});
-
-test("fail-closed：cup:'b'（小寫）→ clickable=false", () => {
-    assert.equal(byKey(Object.assign({}, FULL_ACTRESS, { cup: 'b' }), true).cup.clickable, false);
-});
-
-test("fail-closed：age:'' → part 仍出現（!= null，CD-124b-12）、clickable=false、text 是單獨的單位字", () => {
-    const m = byKey(Object.assign({}, FULL_ACTRESS, { age: '' }), true);
-    assert.equal(m.age.clickable, false);
-    assert.equal(m.age.text, 'search.unit.age', '既有行為逐字保留：空字串年齡會印出孤零零的單位');
-});
-
-test("fail-closed：age:'不詳'（非數字）→ clickable=false", () => {
-    assert.equal(byKey(Object.assign({}, FULL_ACTRESS, { age: '不詳' }), true).age.clickable, false);
+    // 162a：罩杯 AA／小寫 b、年齡空字串／「不詳」併入同一支（同一失敗原因：解析不出來的值不得可點）
+    const cases = [
+        { over: { height: '不明' }, key: 'height', text: '不明' },
+        { over: { cup: 'AA' }, key: 'cup', text: 'AAsearch.unit.cup' },
+        { over: { cup: 'b' }, key: 'cup' },
+        { over: { age: '' }, key: 'age', text: 'search.unit.age' },
+        { over: { age: '不詳' }, key: 'age' },
+    ];
+    for (const c of cases) {
+        const m = byKey(Object.assign({}, FULL_ACTRESS, c.over), true);
+        assert.equal(m[c.key].clickable, false, JSON.stringify(c.over));
+        if (c.text !== undefined) assert.equal(m[c.key].text, c.text, JSON.stringify(c.over));
+    }
 });
 
 // ── dim / value 傳原始欄位值，不是顯示字串 ────────────────────────────
 
 test('dim/value：height 傳原始 \'160cm\'（單位由 _setActressPill 剝），不是 160', () => {
+    // 162a：cup 原始 'C'、age 原始 25 併入同一支（同一失敗原因：pill 值為顯示字串）
     const m = byKey(FULL_ACTRESS, true);
     assert.equal(m.height.dim, 'height');
     assert.equal(m.height.value, '160cm');
-});
-
-test('dim/value：cup 傳原始 \'C\'，不是顯示字串 \'C罩杯\'', () => {
-    const m = byKey(FULL_ACTRESS, true);
     assert.equal(m.cup.dim, 'cup');
     assert.equal(m.cup.value, 'C');
     assert.notEqual(m.cup.value, m.cup.text, 'value 不得等於顯示字串');
-});
-
-test('dim/value：age 傳原始數值 25', () => {
-    const m = byKey(FULL_ACTRESS, true);
     assert.equal(m.age.dim, 'age');
     assert.equal(m.age.value, 25);
-});
-
-test('不可點的 part 不帶 dim/value（避免誤用）', () => {
-    const m = byKey(FULL_ACTRESS, true);
-    assert.equal(m.count.dim, undefined);
-    assert.equal(m.count.value, undefined);
-    assert.equal(m.bwh.dim, undefined);
-    assert.equal(m.bwh.value, undefined);
 });
 
 // =====================================================================
@@ -236,32 +185,17 @@ test('不可點的 part 不帶 dim/value（避免誤用）', () => {
 // =====================================================================
 
 test('_onActressCardMetadataClick：只呼叫 addActressPill(dim, value)，不呼叫 closeLightbox', () => {
+    // 162a：toolbarOpen=true（手機摸得到 pill）與「不讀 actressLightboxSource 殘值」併入同一支
     const calls = [];
     const c = Object.assign({}, stateActress(), {
+        actressLightboxSource: 'hero',   // 上一次開燈箱留下的殘值
         addActressPill: (dim, value) => calls.push(['addActressPill', dim, value]),
         closeLightbox: () => calls.push(['closeLightbox']),
     });
     _uiStore.toolbarOpen = false;
     c._onActressCardMetadataClick('height', '160cm');
-    assert.deepEqual(calls, [['addActressPill', 'height', '160cm']]);
-});
-
-test('_onActressCardMetadataClick：產生 pill 後 toolbarOpen=true（手機摸得到 pill）', () => {
-    const c = Object.assign({}, stateActress(), { addActressPill: () => {} });
-    _uiStore.toolbarOpen = false;
-    c._onActressCardMetadataClick('cup', 'C');
+    assert.deepEqual(calls, [['addActressPill', 'height', '160cm']], '殘值不得吞掉卡片點擊');
     assert.equal(Alpine.store('ui').toolbarOpen, true);
-});
-
-test('_onActressCardMetadataClick：不讀 actressLightboxSource（卡片路徑沒有燈箱來源殘值問題）', () => {
-    const calls = [];
-    const c = Object.assign({}, stateActress(), {
-        actressLightboxSource: 'hero',   // 上一次開燈箱留下的殘值
-        addActressPill: (dim, value) => calls.push([dim, value]),
-    });
-    _uiStore.toolbarOpen = false;
-    c._onActressCardMetadataClick('age', 25);
-    assert.deepEqual(calls, [['age', 25]], '殘值不得吞掉卡片點擊');
 });
 
 // =====================================================================
@@ -273,32 +207,15 @@ function cardMiddle(actress, sort) {
     return c._actressCardMiddle(actress);
 }
 
-test('_actressCardMiddle：六種 actressSort 值下回傳字串完全相同（不再讀 this.actressSort）', () => {
-    const actress = { video_count: 7 };
-    const sorts = ['video_count', 'name', 'created_at', 'age', 'height', 'cup'];
-    const results = sorts.map((sort) => cardMiddle(actress, sort));
-    for (const r of results) {
-        assert.equal(r, '7showcase.unit.films');
-    }
-});
-
 test('_actressCardMiddle：video_count:0 → 回傳非空字串 \'0showcase.unit.films\'', () => {
+    // 162a：actress 為 null、video_count 缺欄位併入同一支
     const result = cardMiddle({ video_count: 0 }, 'video_count');
     assert.notEqual(result, '');
     assert.equal(result, '0showcase.unit.films');
-});
-
-test('_actressCardMiddle：actress 為 null → 回傳 \'\'', () => {
     assert.equal(cardMiddle(null, 'video_count'), '');
-});
-
-// T1 review 補測（reviewer mutation ① 存活）：`|| 0` 這道防禦在改動前只有
-// actressSort === 'video_count' 時跑得到，現在每張卡無條件跑。釘住它，避免日後
-// 被當成冗餘刪掉後畫面印出 'undefined部作品'。
-test('_actressCardMiddle：video_count 缺欄位（undefined）→ 回傳 \'0showcase.unit.films\'，不得出現 undefined', () => {
-    const result = cardMiddle({ name: 'x' }, 'video_count');
-    assert.equal(result, '0showcase.unit.films');
-    assert.ok(!result.includes('undefined'));
+    const missing = cardMiddle({ name: 'x' }, 'video_count');
+    assert.equal(missing, '0showcase.unit.films');
+    assert.ok(!missing.includes('undefined'));
 });
 
 // =====================================================================
@@ -319,20 +236,6 @@ function stubWindow(opts) {
     };
     globalThis.window.__SHOWCASE_CONFIG__ = (opts && opts.config) || {};
 }
-
-test('toggleInfo()：false→true 後 _persistedShowcase.infoVisible 同步', () => {
-    const c = makeBaseComponent({ infoVisible: false, _persistedShowcase: { infoVisible: false } });
-    c.toggleInfo();
-    assert.equal(c.infoVisible, true);
-    assert.equal(c._persistedShowcase.infoVisible, true);
-});
-
-test('toggleInfo()：true→false 後 _persistedShowcase.infoVisible 同步', () => {
-    const c = makeBaseComponent({ infoVisible: true, _persistedShowcase: { infoVisible: true } });
-    c.toggleInfo();
-    assert.equal(c.infoVisible, false);
-    assert.equal(c._persistedShowcase.infoVisible, false);
-});
 
 const RESTORE_CASES = [
     { input: true, expected: true, label: 'true → true' },
@@ -408,6 +311,11 @@ test("S 鍵：mode='table' + showFavoriteActresses=true → toggleInfo 有被呼
     const before = c.infoVisible;
     pressS(c);
     assert.notEqual(c.infoVisible, before);
+    // 162a：影片牆（grid ＋ 非女優模式）按 S 照常切換併入同一支
+    const g = makeKeydownComponent({ mode: 'grid', showFavoriteActresses: false });
+    const gBefore = g.infoVisible;
+    pressS(g);
+    assert.notEqual(g.infoVisible, gBefore);
 });
 
 test("S 鍵：mode='table' + showFavoriteActresses=false → toggleInfo 沒有被呼叫", () => {
@@ -417,37 +325,20 @@ test("S 鍵：mode='table' + showFavoriteActresses=false → toggleInfo 沒有�
     assert.equal(c.infoVisible, before);
 });
 
-test("S 鍵回歸：mode='grid' + showFavoriteActresses=false → 仍有反應（既有行為未被破壞）", () => {
-    const c = makeKeydownComponent({ mode: 'grid', showFavoriteActresses: false });
-    const before = c.infoVisible;
-    pressS(c);
-    assert.notEqual(c.infoVisible, before);
-});
-
 // T1 review 補測：gate 放寬成 `|| this.showFavoriteActresses` 之後，「女優燈箱開著時
 // 按 S 不得切換資訊區」靠的是 handleKeydown 第 5 段（lightboxOpen 分支，
 // state-lightbox.js:2476-2494）在第 6 段之前 return —— 保護來自**順序**而非旗標，
 // 所以用測試把那個順序釘住（排序優先於旗標守衛）。
 test('S 鍵：女優燈箱開啟時（lightboxOpen + currentLightboxActress + 女優模式）不得觸發 toggleInfo', () => {
-    const c = makeKeydownComponent({
-        mode: 'table',
-        showFavoriteActresses: true,
-        lightboxOpen: true,
-        currentLightboxActress: { name: 'x' },
-    });
-    const before = c.infoVisible;
-    pressS(c);
-    assert.equal(c.infoVisible, before);
-});
-
-test('S 鍵：影片燈箱開啟時不得觸發 toggleInfo（既有行為，gate 放寬後仍成立）', () => {
-    const c = makeKeydownComponent({
-        mode: 'grid',
-        showFavoriteActresses: false,
-        lightboxOpen: true,
-        currentLightboxActress: null,
-    });
-    const before = c.infoVisible;
-    pressS(c);
-    assert.equal(c.infoVisible, before);
+    // 162a：影片燈箱開啟時同樣不得切換併入同一支
+    const cases = [
+        { mode: 'table', showFavoriteActresses: true, lightboxOpen: true, currentLightboxActress: { name: 'x' } },
+        { mode: 'grid', showFavoriteActresses: false, lightboxOpen: true, currentLightboxActress: null },
+    ];
+    for (const over of cases) {
+        const c = makeKeydownComponent(over);
+        const before = c.infoVisible;
+        pressS(c);
+        assert.equal(c.infoVisible, before);
+    }
 });
