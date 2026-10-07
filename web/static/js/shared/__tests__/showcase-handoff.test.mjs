@@ -63,3 +63,12 @@ test('handoff: applyHandoff 保留 sort/order/mode/cardShape/infoVisible/actress
     assert.equal(r.foo, 1);
 });
 
+test('handoff: 無條件時 pills 為空陣列並仍清舊條件', () => {
+    for (const sel of [null, undefined, {}, { period: { type: 'all' } }]) {
+        const r = JSON.parse(applyHandoff(JSON.stringify(OLD), sel));
+        assert.deepStrictEqual(r.pills, []);
+        assert.equal(r.search, '');
+        assert.equal(r.page, 1);
+        assert.equal(r.showFavoriteActresses, false);
+    }
+});
