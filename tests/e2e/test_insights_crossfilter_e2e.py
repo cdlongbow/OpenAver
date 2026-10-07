@@ -198,3 +198,38 @@ def test_handoff_replaces_old_showcase_state_keeps_prefs(page: Page, base_url: s
     assert [(p["dim"], p["value"]) for p in b["pills"]] == [("actress", name)], b["pills"]
     assert (b["search"], b["page"], b["fav"]) == ("", 1, False)
     assert (b["sort"], b["order"], b["shape"], b["info"]) == ("num", "asc", "poster", True)
+
+def test_zero_count_tile_does_not_navigate(page: Page, base_url: str):
+    reqs = _open(page, base_url)
+    recs = _records(page, base_url)
+    years = chart_years(page)
+    names = alpine(page, "(data.ganttRows||[]).slice(0, 40).map(r => r.name)")
+    pick = None
+    for n in names:
+        ay = {r["year"] for r in recs if n in (r["actresses"] or []) and r["year"]}
+        gaps = [y for y in years if min(ay) < y < max(ay) and y not in ay]
+        if gaps:
+            pick = (n, gaps[0])
+            break
+    if not pick:
+        pytest.fail("前提缺：ganttRows 前 40 名中找不到「年表範圍內有一年 0 部」的女優")
+    click_gantt_actress(page, pick[0])
+    wait_settled(page)
+    assert click_year_bar(page, pick[1])
+    wait_settled(page)
+    assert alpine(page, "data.scopedCount") == 0 == _oracle(recs, _sel(page))
+    assert page.get_attribute("#tileCount", "aria-disabled") == "true"
+    before = page.evaluate("() => localStorage.getItem('showcase_state')")
+    docs: list = []
+    page.on("request", lambda q: docs.append(q.url) if (
+        q.resource_type == "document" and "/showcase" in q.url) else None)
+    page.evaluate("""() => { sessionStorage.removeItem('__t8_unload');
+        addEventListener('beforeunload', () => sessionStorage.setItem('__t8_unload', '1')); }""")
+    for _ in range(2):
+        page.click("#tileCount", force=True)  # aria-disabled 會被 Playwright 當 disabled，強制真滑鼠點
+        page.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
+    page.wait_for_load_state("load")
+    assert not docs, f"出現導向 /showcase 的 document 請求：{docs}"
+    assert page.evaluate("() => sessionStorage.getItem('__t8_unload')") is None, "頁面被卸載（導航發生）"
+    assert page.evaluate("() => location.pathname") == "/insights" and not reqs
+    assert page.evaluate("() => localStorage.getItem('showcase_state')") == before
