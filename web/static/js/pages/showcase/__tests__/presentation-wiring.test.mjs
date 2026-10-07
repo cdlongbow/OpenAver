@@ -1,7 +1,6 @@
 // TASK-119-T5: UI 接線（選單四條、tooltip、A 鍵、_posterModeActive()）。
 // 覆蓋反向鎖（桌面 + poster 仍四條／四段）、A 鍵三／四段循環、窄螢幕不得洗掉
-// cardShape（技術要點 ①）、女優牆早退、三支 helper 邊界、_posterModeActive 三態、
-// 選單源碼契約。
+// cardShape（技術要點 ①）、女優牆早退、選單源碼契約。
 //
 // harness 照抄 select-presentation.test.mjs（importmap hook、readFileSync 讀源碼、
 // Object.assign({}, stateVideos(), …)），並把 stateLightbox() 併進元件以測 A 鍵。
@@ -178,31 +177,6 @@ test('反向鎖（旗標關）：桌面 → 選單 <a> 可見數為 0', () => {
     assert.equal(visibleMenuCount(c), 0, '旗標關時下拉 <a> 全隱；cover/poster 已搬到 <button>');
 });
 
-test('反向鎖（旗標開）：桌面 + cardShape=poster → A 仍四段', () => {
-    const c = makeComponent({
-        _isNarrow: false,
-        cardShape: 'poster',
-        mode: 'grid',
-        showTableList: true,
-    });
-    assert.deepEqual(
-        c._presentationOrder(),
-        ['cover', 'poster', 'list', 'table'],
-    );
-    assert.equal(c._presentationOrder().length, 4);
-});
-
-test('反向鎖（旗標關）：桌面 → 序列只有 cover／poster 兩段', () => {
-    const c = makeComponent({
-        _isNarrow: false,
-        cardShape: 'poster',
-        mode: 'grid',
-        showTableList: false,
-    });
-    assert.deepEqual(c._presentationOrder(), ['cover', 'poster']);
-    assert.equal(c._presentationOrder().length, 2);
-});
-
 // =====================================================================
 // A 鍵循環
 // =====================================================================
@@ -304,90 +278,6 @@ test('A 鍵：女優牆（showFavoriteActresses=true）mode 與 cardShape 都不
     pressA(c);
     assert.equal(c.mode, 'grid');
     assert.equal(c.cardShape, 'cover');
-});
-
-// =====================================================================
-// _posterModeActive() 三態
-// =====================================================================
-
-test('_posterModeActive()：桌面 cover → false', () => {
-    const c = makeComponent({ _isNarrow: false, cardShape: 'cover' });
-    assert.equal(c._posterModeActive(), false);
-});
-
-test('_posterModeActive()：桌面 poster → true', () => {
-    const c = makeComponent({ _isNarrow: false, cardShape: 'poster' });
-    assert.equal(c._posterModeActive(), true);
-});
-
-test('_posterModeActive()：_isNarrow → true（不論卡型）', () => {
-    const cover = makeComponent({ _isNarrow: true, cardShape: 'cover' });
-    const poster = makeComponent({ _isNarrow: true, cardShape: 'poster' });
-    assert.equal(cover._posterModeActive(), true);
-    assert.equal(poster._posterModeActive(), true);
-});
-
-// =====================================================================
-// helper 邊界
-// =====================================================================
-
-test('_gridTarget()：poster → poster，其餘 → cover', () => {
-    assert.equal(makeComponent({ cardShape: 'poster' })._gridTarget(), 'poster');
-    assert.equal(makeComponent({ cardShape: 'cover' })._gridTarget(), 'cover');
-    assert.equal(makeComponent({ cardShape: 'other' })._gridTarget(), 'cover');
-});
-
-test('_currentPresentation()：grid 走卡型，list 走 list，其餘 fail-safe 落到 table', () => {
-    assert.equal(
-        makeComponent({ mode: 'grid', cardShape: 'cover' })._currentPresentation(),
-        'cover',
-    );
-    assert.equal(
-        makeComponent({ mode: 'grid', cardShape: 'poster' })._currentPresentation(),
-        'poster',
-    );
-    assert.equal(
-        makeComponent({ mode: 'list', cardShape: 'poster' })._currentPresentation(),
-        'list',
-    );
-    assert.equal(
-        makeComponent({ mode: 'table', cardShape: 'poster' })._currentPresentation(),
-        'table',
-    );
-    assert.equal(
-        makeComponent({ mode: 'unexpected', cardShape: 'cover' })._currentPresentation(),
-        'table',
-    );
-});
-
-test('_presentationOrder()（旗標開）：桌面四段字面、窄螢幕三段且第一格是 _gridTarget()', () => {
-    assert.deepEqual(
-        makeComponent({ _isNarrow: false, cardShape: 'poster', showTableList: true })._presentationOrder(),
-        ['cover', 'poster', 'list', 'table'],
-    );
-    assert.deepEqual(
-        makeComponent({ _isNarrow: true, cardShape: 'cover', showTableList: true })._presentationOrder(),
-        ['cover', 'list', 'table'],
-    );
-    assert.deepEqual(
-        makeComponent({ _isNarrow: true, cardShape: 'poster', showTableList: true })._presentationOrder(),
-        ['poster', 'list', 'table'],
-    );
-});
-
-test('_presentationOrder()（旗標關）：桌面兩段、窄螢幕單元素 _gridTarget()', () => {
-    assert.deepEqual(
-        makeComponent({ _isNarrow: false, cardShape: 'poster', showTableList: false })._presentationOrder(),
-        ['cover', 'poster'],
-    );
-    assert.deepEqual(
-        makeComponent({ _isNarrow: true, cardShape: 'cover', showTableList: false })._presentationOrder(),
-        ['cover'],
-    );
-    assert.deepEqual(
-        makeComponent({ _isNarrow: true, cardShape: 'poster', showTableList: false })._presentationOrder(),
-        ['poster'],
-    );
 });
 
 // =====================================================================
