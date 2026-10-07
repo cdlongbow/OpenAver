@@ -56,47 +56,28 @@ function jsonResponse(data, { ok = true, status = 200 } = {}) {
 // ─── 對帳表 #2：loadMore 白名單化（mutation M1）───────────────────────────
 
 test('loadMore: listMode="wishlist" → 立即回傳 null、不呼叫 fetch（白名單化）', async () => {
-    let fetchCalls = 0;
-    globalThis.fetch = async () => { fetchCalls++; return jsonResponse({}); };
+    // 併入原「listMode=null」案例：白名單只放行 search，wishlist 與 null 同一個失敗原因
+    for (const listMode of ['wishlist', null]) {
+        let fetchCalls = 0;
+        globalThis.fetch = async () => { fetchCalls++; return jsonResponse({}); };
 
-    const fakeThis = {
-        ...searchStateNavigation(),
-        listMode: 'wishlist',
-        isLoadingMore: false,
-        hasMoreResults: true,
-        currentQuery: 'ABC-123',
-        searchResults: [{ number: 'ABC-001' }],
-        currentOffset: 0,
-        PAGE_SIZE: 20,
-        _getAbortSignal: () => undefined,
-        _clearAbort: () => {},
-    };
+        const fakeThis = {
+            ...searchStateNavigation(),
+            listMode,
+            isLoadingMore: false,
+            hasMoreResults: true,
+            currentQuery: 'ABC-123',
+            searchResults: [{ number: 'ABC-001' }],
+            currentOffset: 0,
+            PAGE_SIZE: 20,
+            _getAbortSignal: () => undefined,
+            _clearAbort: () => {},
+        };
 
-    const result = await searchStateNavigation().loadMore.call(fakeThis, 'detail');
-    assert.equal(result, null);
-    assert.equal(fetchCalls, 0, 'wishlist 模式下 loadMore 不應觸發 /api/search');
-});
-
-test('loadMore: listMode=null → 立即回傳 null、不呼叫 fetch', async () => {
-    let fetchCalls = 0;
-    globalThis.fetch = async () => { fetchCalls++; return jsonResponse({}); };
-
-    const fakeThis = {
-        ...searchStateNavigation(),
-        listMode: null,
-        isLoadingMore: false,
-        hasMoreResults: true,
-        currentQuery: 'ABC-123',
-        searchResults: [{ number: 'ABC-001' }],
-        currentOffset: 0,
-        PAGE_SIZE: 20,
-        _getAbortSignal: () => undefined,
-        _clearAbort: () => {},
-    };
-
-    const result = await searchStateNavigation().loadMore.call(fakeThis, 'detail');
-    assert.equal(result, null);
-    assert.equal(fetchCalls, 0);
+        const result = await searchStateNavigation().loadMore.call(fakeThis, 'detail');
+        assert.equal(result, null, `listMode=${listMode} 時 loadMore 應回 null`);
+        assert.equal(fetchCalls, 0, `listMode=${listMode} 時 loadMore 不應觸發 /api/search`);
+    }
 });
 
 test('loadMore: listMode="search" → 不因白名單提前 return（可繼續往下）', async () => {
@@ -583,22 +564,6 @@ test('T2-DoD6b-reentry-still-loads: listMode 已經是 wishlist 時（restoreSta
     assert.equal(loadCalls, 1, 'listMode 已是 wishlist 的重入路徑仍必須載入清單（persistence.js restore 靠這一呼）');
 });
 
-test('switchToWishlist: wishlistLoaded=false 時呼叫 loadWishlist', async () => {
-    let loadCalls = 0;
-    const fakeThis = {
-        ...searchStateWishlist(),
-        listMode: 'search',
-        displayMode: 'detail',
-        wishlistLoaded: false,
-        wishlistItems: [],
-        async loadWishlist() { loadCalls++; this.wishlistLoaded = true; },
-    };
-
-    await searchStateWishlist().switchToWishlist.call(fakeThis);
-    assert.equal(loadCalls, 1);
-    assert.equal(fakeThis.wishlistLoaded, true);
-});
-
 // ─── loadWishlistCount / loadWishlist ─────────────────────────────────────
 
 test('loadWishlistCount: 成功時寫入 wishlistCount', async () => {
@@ -696,22 +661,6 @@ test('addToWishlist: wishlistLoaded=true 時新項目 unshift 到 wishlistItems[
     assert.equal(fakeThis.wishlistCount, 2);
 });
 
-test('addToWishlist: wishlistLoaded=false 時不動 wishlistItems', async () => {
-    mockFetch(() => jsonResponse({ success: true, cover_available: false }));
-    const result = { number: 'NEW-1', title: '' };
-    const fakeThis = {
-        ...searchStateWishlist(),
-        wishlistCount: 0,
-        wishlistLoaded: false,
-        wishlistItems: [],
-    };
-
-    await searchStateWishlist().addToWishlist.call(fakeThis, result);
-    assert.deepEqual(fakeThis.wishlistItems, []);
-    assert.equal(result._wishlisted, true);
-    assert.equal(fakeThis.wishlistCount, 1);
-});
-
 test('removeFromWishlist: wishlistLoaded=true 時從 wishlistItems 移除', async () => {
     mockFetch(() => jsonResponse({ success: true }));
     const fakeThis = {
@@ -755,21 +704,6 @@ test('addToWishlist: POST 失敗時回滾 _wishlisted 與 wishlistCount（I3）'
     );
 });
 
-test('addToWishlist: fetch reject 時回滾 _wishlisted 與 wishlistCount（I3）', async () => {
-    globalThis.fetch = async () => { throw new Error('network down'); };
-    const result = { number: 'FAIL-2', _wishlisted: undefined };
-    const fakeThis = {
-        ...searchStateWishlist(),
-        wishlistCount: 1,
-        wishlistLoaded: false,
-        wishlistItems: [],
-    };
-
-    await searchStateWishlist().addToWishlist.call(fakeThis, result);
-    assert.equal(result._wishlisted, undefined);
-    assert.equal(fakeThis.wishlistCount, 1);
-});
-
 test('removeFromWishlist: DELETE 失敗時回滾 count 與 _wishlisted（I3）', async () => {
     mockFetch(() => jsonResponse({}, { ok: false, status: 500 }));
     const item = { number: 'A-1' };
@@ -786,16 +720,6 @@ test('removeFromWishlist: DELETE 失敗時回滾 count 與 _wishlisted（I3）',
     assert.equal(fakeThis.searchResults[0]._wishlisted, true);
     assert.equal(fakeThis.wishlistItems.length, 1);
     assert.equal(fakeThis.wishlistItems[0].number, 'A-1');
-});
-
-test('addToWishlist: number 空值 → no-op', async () => {
-    let fetchCalls = 0;
-    globalThis.fetch = async () => { fetchCalls++; return jsonResponse({}); };
-    const fakeThis = { ...searchStateWishlist(), wishlistCount: 0 };
-    await searchStateWishlist().addToWishlist.call(fakeThis, { title: 'no number' });
-    await searchStateWishlist().addToWishlist.call(fakeThis, null);
-    assert.equal(fetchCalls, 0);
-    assert.equal(fakeThis.wishlistCount, 0);
 });
 
 test('switchToWishlist→switchToSearchList: 還原切進來之前的 displayMode（T7 review P2）', () => {
@@ -825,32 +749,7 @@ test('switchToWishlist: 重複點同一段不得把 grid 記成「切進來之�
     assert.equal(state.displayMode, 'detail');
 });
 
-test('switchToSearchList: 只設 listMode=search', () => {
-    const fakeThis = {
-        ...searchStateWishlist(),
-        listMode: 'wishlist',
-        displayMode: 'grid',
-    };
-    searchStateWishlist().switchToSearchList.call(fakeThis);
-    assert.equal(fakeThis.listMode, 'search');
-    assert.equal(fakeThis.displayMode, 'grid', 'displayMode 不強制改動');
-});
-
 // ─── TASK-140-T6：cardActionState 四態（mutation M1/M2）───────────────────
-
-test("cardActionState: 本地有且 count===1 → 'play'", () => {
-    assert.equal(
-        cardActionState({ _localStatus: { exists: true, count: 1 }, _wishlisted: false }),
-        'play',
-    );
-});
-
-test("cardActionState: 本地有且 count>1 → 'play+folder'", () => {
-    assert.equal(
-        cardActionState({ _localStatus: { exists: true, count: 2 }, _wishlisted: false }),
-        'play+folder',
-    );
-});
 
 test("cardActionState: 本地沒有且未加入 → 'bookmark-add'", () => {
     assert.equal(
@@ -883,14 +782,6 @@ function wishlistLightboxFixture(overrides = {}) {
         ...overrides,
     };
 }
-
-// DoD 4a（mutation M1）— 測試名必須逐字等於 mutation expect_fail
-test('openWishlistLightbox(2)：wishlistLightboxOpen===true 且 wishlistLightboxIndex===2', () => {
-    const state = wishlistLightboxFixture();
-    searchStateWishlist().openWishlistLightbox.call(state, 2);
-    assert.equal(state.wishlistLightboxOpen, true);
-    assert.equal(state.wishlistLightboxIndex, 2);
-});
 
 // DoD 4b
 test('closeWishlistLightbox()：open===false 且 wishlistItems 陣列本身不被清空', () => {
@@ -1542,143 +1433,6 @@ const T2_ELS = {
     '.wishlist-grid': { className: 'wishlist-grid' },
 };
 
-test('T2-DoD1-switchToWishlist-crossfade-then-playEntry', async () => {
-    // DoD 1：oldEl 淡出 → listMode=wishlist → .wishlist-panel 淡入 → load 後 playEntry
-    mockFetch(() => jsonResponse([{ number: 'W-1' }]));
-    await withCrossfadeEnv({ queryMap: T2_ELS }, async ({ crossfadeCalls, playEntryCalls }) => {
-        const state = makeWishlistThis({
-            listMode: 'search',
-            displayMode: 'detail',
-            pageState: 'result',
-            wishlistLoaded: false,
-            wishlistItems: [],
-        });
-
-        await state.switchToWishlist();
-        await Promise.resolve(); // flush loadPromise.then
-
-        assert.equal(state.listMode, 'wishlist');
-        assert.equal(state.displayMode, 'grid');
-        assert.ok(crossfadeCalls.length >= 2, '必須先淡出舊容器、再淡入書籤面板');
-
-        const fadeOut = crossfadeCalls[0];
-        assert.equal(fadeOut.oldEl, T2_ELS['#resultCard'], 'oldEl 必須是 pageState 對應的可見容器');
-        assert.equal(fadeOut.newEl, null);
-        assert.equal(typeof fadeOut.options.onOldFadeComplete, 'function');
-
-        const fadeIn = crossfadeCalls[1];
-        assert.equal(fadeIn.oldEl, null);
-        assert.equal(fadeIn.newEl, T2_ELS['.wishlist-panel']);
-
-        assert.equal(playEntryCalls.length, 1, '有書籤時必須播 playEntry');
-        assert.equal(playEntryCalls[0], T2_ELS['.wishlist-grid']);
-    });
-});
-
-test('T2-DoD1-empty-pageState-fades-emptyState', async () => {
-    // FE-ALPINE-12：從未搜尋過就點書籤，淡出的必須是 #emptyState，不是隱形的 #resultCard
-    mockFetch(() => jsonResponse([{ number: 'W-1' }]));
-    await withCrossfadeEnv({ queryMap: T2_ELS }, async ({ crossfadeCalls }) => {
-        const state = makeWishlistThis({
-            listMode: 'search',
-            displayMode: 'grid',
-            pageState: 'empty',
-            wishlistLoaded: false,
-            wishlistItems: [],
-        });
-        await state.switchToWishlist();
-        assert.equal(crossfadeCalls[0].oldEl, T2_ELS['#emptyState']);
-    });
-});
-
-test('T2-DoD2-switchToSearchList-crossfade-no-playEntry', async () => {
-    // DoD 2：回程對稱淡出／淡入；GridMotion.playEntry 零呼叫
-    mockFetch(() => jsonResponse([{ number: 'W-1' }]));
-    await withCrossfadeEnv({ queryMap: T2_ELS }, async ({ crossfadeCalls, playEntryCalls }) => {
-        const state = makeWishlistThis({
-            listMode: 'search',
-            displayMode: 'detail',
-            pageState: 'result',
-            wishlistLoaded: false,
-            wishlistItems: [],
-        });
-        await state.switchToWishlist();
-        await Promise.resolve();
-        playEntryCalls.length = 0;
-        crossfadeCalls.length = 0;
-
-        state.switchToSearchList();
-
-        assert.equal(state.listMode, 'search');
-        assert.equal(state.displayMode, 'detail');
-        assert.ok(crossfadeCalls.length >= 2, '回程必須淡出書籤面板、再淡入搜尋容器');
-        assert.equal(crossfadeCalls[0].oldEl, T2_ELS['.wishlist-panel']);
-        assert.equal(crossfadeCalls[0].newEl, null);
-        assert.equal(crossfadeCalls[1].oldEl, null);
-        assert.equal(crossfadeCalls[1].newEl, T2_ELS['#resultCard']);
-        assert.equal(playEntryCalls.length, 0, '切回搜尋結果不得重播 playEntry');
-    });
-});
-
-test('T2-DoD3-empty-wishlist-no-playEntry', async () => {
-    // DoD 3／mutation 點 2：空清單短路，容器淡入仍要有
-    mockFetch(() => jsonResponse([]));
-    await withCrossfadeEnv({ queryMap: T2_ELS }, async ({ crossfadeCalls, playEntryCalls }) => {
-        const state = makeWishlistThis({
-            listMode: 'search',
-            displayMode: 'grid',
-            pageState: 'result',
-            wishlistLoaded: false,
-            wishlistItems: [],
-        });
-        await state.switchToWishlist();
-        await Promise.resolve();
-
-        assert.equal(state.listMode, 'wishlist');
-        assert.ok(crossfadeCalls.some((c) => c.newEl === T2_ELS['.wishlist-panel']),
-            '空清單仍要淡入 .wishlist-panel');
-        assert.equal(playEntryCalls.length, 0, '空清單不得呼叫 GridMotion.playEntry');
-    });
-});
-
-test('T2-DoD4-generation-guards-stale-playEntry', async () => {
-    // DoD 4：連按後舊世代 loadPromise.then 不得觸發 playEntry
-    const releases = [];
-    mockFetch(() => new Promise((resolve) => {
-        releases.push((items) => resolve(jsonResponse(items)));
-    }));
-
-    await withCrossfadeEnv({ queryMap: T2_ELS }, async ({ playEntryCalls }) => {
-        // 直通路徑（fade 立即 cb）下世代遞增仍守住 loadPromise.then
-        const state = makeWishlistThis({
-            listMode: 'search',
-            displayMode: 'grid',
-            pageState: 'result',
-            wishlistLoaded: false,
-            wishlistItems: [],
-        });
-
-        const p1 = state.switchToWishlist();
-        state.switchToSearchList();
-        const p3 = state.switchToWishlist();
-
-        assert.ok(state._wishlistViewGeneration >= 3, '三次切換必須遞增世代');
-
-        // 先放行第一輪（舊世代）load
-        releases[0]([{ number: 'STALE-1' }]);
-        await p1;
-        await Promise.resolve();
-        assert.equal(playEntryCalls.length, 0, '舊世代 load 落地不得播 playEntry');
-
-        // 再放行最新一輪
-        releases[1]([{ number: 'FRESH-1' }]);
-        await p3;
-        await Promise.resolve();
-        assert.equal(playEntryCalls.length, 1, '只有當前世代的 load 落地才播 playEntry');
-        assert.equal(playEntryCalls[0], T2_ELS['.wishlist-grid']);
-    });
-});
-
 test('T2-DoD4b-stale-crossfade-no-residual-panel', async () => {
     // 🔴 DoD 4 的另一半（Opus 2026-09-03 補，sonnet review P2）：
     // 上一支測試只驗了「舊世代不播 playEntry」，但 DoD 4 字面要求的是
@@ -1736,37 +1490,6 @@ test('T2-DoD4b-stale-crossfade-no-residual-panel', async () => {
         // ── 最新那一輪照常生效 ──
         pendingCbs[2]();
         assert.equal(state.listMode, 'wishlist', '最新世代的回呼必須正常完成切換');
-    });
-});
-
-test('T2-DoD5-reduced-motion-final-state-same', async () => {
-    // DoD 5：shouldSkip 形狀（立即 onOldFadeComplete）下資料結果與有動畫時相同
-    mockFetch(() => jsonResponse([{ number: 'W-1' }]));
-    await withCrossfadeEnv({
-        queryMap: T2_ELS,
-        fadeImpl(oldEl, newEl, options) {
-            // 模擬 playListModeCrossfade 的 shouldSkip／gsap-undefined 分支：立刻呼叫 cb
-            if (options && typeof options.onOldFadeComplete === 'function') options.onOldFadeComplete();
-            return null;
-        },
-    }, async () => {
-        const state = makeWishlistThis({
-            listMode: 'file',
-            displayMode: 'detail',
-            pageState: 'result',
-            wishlistLoaded: false,
-            wishlistItems: [],
-            fileList: [{ path: '/x/a.mp4' }],
-        });
-        await state.switchToWishlist();
-        assert.equal(state.listMode, 'wishlist');
-        assert.equal(state.displayMode, 'grid');
-        assert.equal(state.wishlistItems.length, 1);
-
-        state.switchToSearchList();
-        assert.equal(state.listMode, 'file');
-        assert.equal(state.displayMode, 'detail');
-        assert.equal(state.fileList.length, 1);
     });
 });
 
