@@ -22,8 +22,11 @@
         </div>
         <div class="card-body">
             {# TASK-156e-T1a／CD-156e-1 v3 方案 A：台座層（固定位置 x-if）＋人員層（x-for :key=name） #}
-            <div class="podium">
+            <div class="podium" :class="{ 'podium--5': podiumSize === 5 }">
                 <div class="podium-stands">
+                    <template x-if="podiumRows.find(r => r.rank === 4)">
+                        <span class="podium-stand podium-stand--4"><span class="podium-rank">4</span></span>
+                    </template>
                     <template x-if="podiumRows.find(r => r.rank === 2)">
                         <span class="podium-stand podium-stand--2"><span class="podium-rank">2</span></span>
                     </template>
@@ -33,11 +36,14 @@
                     <template x-if="podiumRows.find(r => r.rank === 3)">
                         <span class="podium-stand podium-stand--3"><span class="podium-rank">3</span></span>
                     </template>
+                    <template x-if="podiumRows.find(r => r.rank === 5)">
+                        <span class="podium-stand podium-stand--5"><span class="podium-rank">5</span></span>
+                    </template>
                 </div>
                 <div class="podium-people">
                     <template x-for="row in podiumRows" :key="row.name">
                         <div class="podium-slot"
-                             :class="'podium-slot--' + podiumPositionClass(row.rank) + (sel.actress === row.name ? ' is-active' : '')"
+                             :class="'podium-slot--' + podiumPositionClass(row.rank, podiumSize) + (sel.actress === row.name ? ' is-active' : '')"
                              :data-flip-id="'podium-' + row.name"
                              @click="flyAndFocusActress(row.name, $event)">
                             <span class="podium-avatar"
@@ -70,7 +76,7 @@
     </section>
     <section class="card top20-rest-card">
         <div class="card-head">
-            <h2>{{ t('insights.row.actress_top20_rest') }}</h2>
+            <h2 x-text="top20RestTitle"></h2>
         </div>
         <div class="card-body">
             <div class="list-rows rest20-list">
@@ -113,7 +119,7 @@
 {% endmacro %}
 
 {% block content %}
-<div class="insights-container page-layer" x-data="libraryInsights" :class="{ 'is-actress-focused': isActressFocused }">
+<div class="insights-container page-layer" x-data="libraryInsights" :class="{ 'is-actress-focused': isActressFocused, 'is-podium-3': podiumSize === 3 }">
     <!-- Row 1: 常駐五格 -->
     <div class="row1">
         <section class="card insights-brand-card">

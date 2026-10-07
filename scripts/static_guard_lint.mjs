@@ -5224,6 +5224,20 @@ const RULES = [
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: '@click="goBrowse()"', scope: { anchor: /id="tileCount"/, window: 1200 }, note: '[161a-T7] #tileCount 的 click 接 goBrowse：沒接＝片數格看起來可點、手形游標也有，但點下去什麼都沒發生' },
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: "t('insights.count_open_browse')", scope: { anchor: /id="tileCount"/, window: 1200 }, note: '[161a-T7] #tileCount tooltip 用 insights.count_open_browse：寫成別的字＝使用者不知道點了會去哪' },
   { file: 'web/templates/insights.html', kind: 'required-string', pattern: "'is-clickable': canGoBrowse", scope: { anchor: /id="tileCount"/, window: 1200 }, note: '[161a-T7] #tileCount 可點樣式只在 canGoBrowse 時：寫成恆真＝片數 0 的格子仍顯示手形與 hover 淡染' },
+
+  // ---- [161b-T3] 響應式頒獎台人數與標題接線 ----
+  { file: "web/static/js/pages/insights/state.js", kind: "forbidden-string", pattern: "rank <= 3", note: "[161b-T3] state.js 不得寫死頒獎台人數 3" },
+  { file: "web/static/js/pages/insights/state.js", kind: "forbidden-string", pattern: "rank > 3", note: "[161b-T3] state.js 不得寫死頒獎台人數 3" },
+  { file: "web/static/js/pages/insights/aggregate.js", kind: "forbidden-string", pattern: "rank <= 3", note: "[161b-T3] aggregate.js 不得寫死頒獎台人數 3" },
+  { file: "web/static/js/pages/insights/aggregate.js", kind: "forbidden-string", pattern: "rank > 3", note: "[161b-T3] aggregate.js 不得寫死頒獎台人數 3" },
+  { file: "web/static/js/pages/insights/state.js", kind: "forbidden-string", pattern: "actress_top20", note: "[161b-T3] 不得殘留舊女優榜標題 key" },
+  { file: "web/templates/insights.html", kind: "forbidden-string", pattern: "actress_top20", note: "[161b-T3] 不得殘留舊女優榜標題 key" },
+  { file: "web/static/js/pages/insights/state.js", kind: "required-string", pattern: "classifyTop20Transition(oldRows, newRows, this.podiumSize)", note: "[161b-T3] 分類要傳 podiumSize" },
+  { file: "web/templates/insights.html", kind: "required-string", pattern: "podiumPositionClass(row.rank, podiumSize)", note: "[161b-T3] 頒獎台位置 class 要傳 podiumSize" },
+  { file: "web/templates/insights.html", kind: "required-string", pattern: "'podium--5': podiumSize === 5", note: "[161b-T3] .podium 掛 podium--5" },
+  { file: "web/templates/insights.html", kind: "required-string", pattern: "'is-podium-3': podiumSize === 3", note: "[161b-T3] 根容器掛 is-podium-3" },
+  { file: "web/templates/insights.html", kind: "required-string", pattern: "<h2 x-text=\"top20RestTitle\"></h2>", note: "[161b-T3] 名單卡標題接 top20RestTitle" },
+
 ];
 
 // ---- helpers ----

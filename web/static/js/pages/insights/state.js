@@ -7,6 +7,8 @@
  */
 
 import {
+    ACTRESS_TOP_N,
+    podiumSizeForViewport,
     setRecords,
     getRecords,
     buildMakerColorSlots,
@@ -208,6 +210,9 @@ export function computeCostarVisible(isActressFocused, costarRowsLength) {
 }
 
 export function libraryInsightsState() {
+    let podiumResizeHandler = null;
+    let resizePending = false;
+    let resizeFrame = null;
     return {
         snapshot: null,
         snapshotError: null,
@@ -219,6 +224,7 @@ export function libraryInsightsState() {
         displayScopedCount: 0,
         top20DisplayCounts: {},
         top20Rows: [],
+        podiumSize: podiumSizeForViewport(typeof window !== 'undefined' ? window.innerWidth : undefined),
         // TASK-156d-T3／CD-156d-2：row3 左半格＋row7 三個可切換顯示旗標（不用 x-show，
         // FE-ALPINE-17——vendored Alpine 的 x-show 晚一幀且一翻轉就立即 display:none，
         // 淡出播不完）。初始狀態＝無焦點：副本 A 顯示、與她同片／row7 副本 B 隱藏。
@@ -338,7 +344,7 @@ export function libraryInsightsState() {
         },
 
         /**
-         * §4.2：Top 20 誰上榜＝期間∩片商（女優條件不縮榜，只影響置頂附加列）。
+         * §4.2：Top N 誰上榜＝期間∩片商（女優條件不縮榜，只影響置頂附加列）。
          */
         _computeTop20Rows() {
             const records = scopeRecords(getRecords(), this.sel, 'actress');
@@ -444,10 +450,10 @@ export function libraryInsightsState() {
 
         _playPodiumEntrance() {
             // TASK-156e-T1a／CD-156e-1 v3：台座層與人員層分離後，依視覺順序
-            // 左2→中1→右3 組 {stand, items} 傳給 playRise（簽名不變）。
+            // 依三人／五人台座視覺順序組 {stand, items} 傳給 playRise（簽名不變）。
             const wrap = this.$refs.top20Row3El;
             if (!wrap) return;
-            const visualRanks = [2, 1, 3];
+            const visualRanks = this.podiumSize === 5 ? [4, 2, 1, 3, 5] : [2, 1, 3];
             const groups = [];
             for (let i = 0; i < visualRanks.length; i++) {
                 const rank = visualRanks[i];
@@ -1090,7 +1096,7 @@ export function libraryInsightsState() {
 
             const oldRows = (this.top20Rows || []).slice();
             const newRows = this._computeTop20Rows();
-            const classified = classifyTop20Transition(oldRows, newRows);
+            const classified = classifyTop20Transition(oldRows, newRows, this.podiumSize);
 
             const rowStayerEls = classified.rowStayers
                 .map((r) => visibleWrap.querySelector(`[data-flip-id="rest-${CSS.escape(r.name)}"]`))
@@ -1189,7 +1195,7 @@ export function libraryInsightsState() {
                 classified.crossStructureMovers.forEach((r) => {
                     const newRow = newByName.get(r.name);
                     if (!newRow) return;
-                    if (newRow.rank <= 3) {
+                    if (newRow.rank <= this.podiumSize) {
                         const slot = visibleWrap.querySelector(`[data-flip-id="podium-${CSS.escape(r.name)}"]`);
                         if (!slot) return;
                         const els = slot.querySelectorAll('.podium-name, .podium-count');
@@ -1363,12 +1369,12 @@ export function libraryInsightsState() {
          * CD-156c-8／CD-161a-2：suffixDims 內任一維有條件時加期間後綴
          * （全庫／單年／範圍），後綴文字由 selection.js 的 suffixLabel 產生。
          */
-        _titleWithPeriod(baseKey, suffixDims) {
+        _titleWithPeriod(baseKey, suffixDims, params) {
             const tFn =
                 typeof window !== 'undefined' && typeof window.t === 'function'
                     ? window.t
                     : null;
-            const base = tFn ? tFn(baseKey) : baseKey;
+            const base = tFn ? tFn(baseKey, params) : baseKey;
             const allLabel = tFn
                 ? tFn('insights.donut.library_wide')
                 : 'insights.donut.library_wide';
@@ -1387,25 +1393,27 @@ export function libraryInsightsState() {
          */
         get top20Title() {
             return this._titleWithPeriod(
-                'insights.row.actress_top20',
+                'insights.row.actress_top',
                 ['actress'],
+                { n: ACTRESS_TOP_N },
             );
         },
 
-        /**
-         * TASK-156d-T2：Top20 拆兩張卡——頒獎台（前三名，固定 3 插槽）。
-         * 焦點女優 rank<=3 天然落在這裡，不需要額外分支（CD-156d-1）。
-         */
-        get podiumRows() {
-            return (this.top20Rows || []).filter((r) => r.rank <= 3);
+        get top20RestTitle() {
+            return window.t('insights.row.actress_top_rest', {
+                from: this.podiumSize + 1,
+                to: ACTRESS_TOP_N,
+            });
         },
 
-        /**
-         * TASK-156d-T2：Top20 拆兩張卡——精簡名單（第 4–20 名 ＋ 焦點女優
-         * rank>20 的附加列，附加列的 rank 是她的真實名次，天然 >3）。
-         */
+        /** 頒獎台人數由視窗欄位決定，焦點女優按真實名次自然分流。 */
+        get podiumRows() {
+            return (this.top20Rows || []).filter((r) => r.rank <= this.podiumSize);
+        },
+
+        /** 精簡名單包含頒獎台以外的榜內列與榜外焦點女優附加列。 */
         get restRows() {
-            return (this.top20Rows || []).filter((r) => r.rank > 3);
+            return (this.top20Rows || []).filter((r) => r.rank > this.podiumSize);
         },
 
         /**
@@ -1565,6 +1573,10 @@ export function libraryInsightsState() {
 
         _onPageShow(event) {
             if (!event || event.persisted !== true) return;
+            // 側欄離頁已 cleanup；bfcache 不重跑 init，還原監聽及下次離頁的 hooks。
+            if (this._bindPodiumResize()) this._registerInsightsCleanup();
+            const size = podiumSizeForViewport(window.innerWidth);
+            if (size !== this.podiumSize) this.podiumSize = size;
             // 快照失敗時從未建圖——不要在 bfcache 還原時建空圖表
             if (this.snapshotError) return;
             // Finding 2：離頁前快照尚未載完（fetch 仍在飛）時，cleanup 已把
@@ -1775,7 +1787,45 @@ export function libraryInsightsState() {
             }
         },
 
+        _bindPodiumResize() {
+            if (podiumResizeHandler) return false;
+            podiumResizeHandler = () => {
+                if (resizePending) return;
+                resizePending = true;
+                const frame = requestAnimationFrame(() => {
+                    resizePending = false;
+                    resizeFrame = null;
+                    const size = podiumSizeForViewport(window.innerWidth);
+                    if (size !== this.podiumSize) this.podiumSize = size;
+                });
+                resizeFrame = frame;
+            };
+            window.addEventListener('resize', podiumResizeHandler, { passive: true });
+            return true;
+        },
+
+        _unbindPodiumResize() {
+            if (podiumResizeHandler) window.removeEventListener('resize', podiumResizeHandler);
+            podiumResizeHandler = null;
+            if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+            resizePending = false;
+            resizeFrame = null;
+        },
+
+        _registerInsightsCleanup() {
+            if (window.__registerPage) {
+                window.__registerPage({
+                    cleanup: () => {
+                        this._unbindPodiumResize();
+                        _pageAlive = false;
+                        disposeAll();
+                    },
+                });
+            }
+        },
+
         async init() {
+            this._bindPodiumResize();
             // pageshow：模組生命週期內只註冊一次；不進 __registerPage cleanup
             if (!_pageshowBound) {
                 _pageshowBound = true;
@@ -1835,14 +1885,7 @@ export function libraryInsightsState() {
                 this._handleActressFocusChange(oldValue, oldCostarRowsLength);
             });
 
-            if (window.__registerPage) {
-                window.__registerPage({
-                    cleanup: () => {
-                        _pageAlive = false;
-                        disposeAll();
-                    },
-                });
-            }
+            this._registerInsightsCleanup();
 
             await this._loadSnapshot();
         },
