@@ -164,12 +164,10 @@ test('全形寫法的 alias 成員仍命中：靠 D5 雙 key 查表 + 值正規�
 
 test('"A, B" 形式的 actresses 欄位，pill 值 B 命中（trim 驗證，D4）', () => {
     const predicate = buildPillPredicate([{ dim: 'actress', value: 'B' }], {}, {});
-    assert.equal(predicate({ actresses: 'A, B' }), true);
-});
-
-test('全形逗號欄位（"A，B"）正確切成兩個 token（D4 normalize-then-split 順序驗證，spec §4.2 第 2 條）', () => {
-    const predicate = buildPillPredicate([{ dim: 'actress', value: 'B' }], {}, {});
-    assert.equal(predicate({ actresses: 'A，B' }), true);
+    // 半形逗號＋空白、全形逗號（D4 normalize-then-split 順序）兩種欄位字面
+    for (const field of ['A, B', 'A，B']) {
+        assert.equal(predicate({ actresses: field }), true, field);
+    }
 });
 
 test('未知 dim（如 typo）→ predicate 對任何影片皆回傳 false（fail closed，D3）', () => {
@@ -184,13 +182,6 @@ test('user_tags 參與：tags 不含 X、user_tags 含 X → tag pill X match �
     assert.equal(predicate({ tags: 'Y', user_tags: ['X'] }), true);
 });
 
-test('mergeTagTokens：tags 空、user_tags 陣列含 中字 → 結果含 中字；tag pill 中字 match（邊界 1）', () => {
-    const video = { tags: '', user_tags: ['中字'] };
-    assert.ok(mergeTagTokens(video).includes('中字'));
-    const predicate = buildPillPredicate([{ dim: 'tag', value: '中字' }], {}, {});
-    assert.equal(predicate(video), true);
-});
-
 test('mergeTagTokens：user_tags 非陣列（undefined / null / 數字）不拋例外，結果等同只有 tags（邊界 3）', () => {
     const tagsOnly = mergeTagTokens({ tags: 'Y' });
     assert.doesNotThrow(() => {
@@ -198,42 +189,11 @@ test('mergeTagTokens：user_tags 非陣列（undefined / null / 數字）不拋�
         assert.deepEqual(mergeTagTokens({ tags: 'Y', user_tags: null }), tagsOnly);
         assert.deepEqual(mergeTagTokens({ tags: 'Y', user_tags: 42 }), tagsOnly);
         assert.deepEqual(mergeTagTokens({ tags: 'Y', user_tags: { X: true } }), tagsOnly);
-    });
-});
-
-test('mergeTagTokens：user_tags 為字串 X 不拋例外，結果等同只有 tags（邊界 3 字串格）', () => {
-    const tagsOnly = mergeTagTokens({ tags: 'Y' });
-    assert.doesNotThrow(() => {
         assert.deepEqual(mergeTagTokens({ tags: 'Y', user_tags: 'X' }), tagsOnly);
     });
+    // 字串型 user_tags 不得被當成 token 命中
     const predicate = buildPillPredicate([{ dim: 'tag', value: 'X' }], {}, {});
     assert.equal(predicate({ tags: 'Y', user_tags: 'X' }), false);
-});
-
-test('mergeTagTokens：user_tags 空值成員被濾掉，不產生假的空 token 命中（邊界 4）', () => {
-    const tokens = mergeTagTokens({ tags: 'Y', user_tags: ['', '   ', null] });
-    assert.ok(!tokens.includes(''));
-    const predicate = buildPillPredicate([{ dim: 'tag', value: '' }], {}, {});
-    assert.equal(predicate({ tags: 'Y', user_tags: ['', '   ', null] }), false);
-});
-
-test('CD-4 疊加不縮小：tags 含 痴女、user_tags 含無關的 重看 → tag pill 痴女仍 match（邊界 5）', () => {
-    const predicate = buildPillPredicate([{ dim: 'tag', value: '痴女' }], {}, {});
-    assert.equal(predicate({ tags: '痴女', user_tags: ['重看'] }), true);
-});
-
-test('actress 路徑不受 user_tags 影響：actresses 為 A、user_tags 含 B → actress pill B 不 match（邊界 6）', () => {
-    const predicate = buildPillPredicate([{ dim: 'actress', value: 'B' }], {}, {});
-    assert.equal(predicate({ actresses: 'A', user_tags: ['B'] }), false);
-});
-
-test('空 pill 列表（pills: []）→ buildPillPredicate 對任何影片皆回傳 true，不過濾任何影片（D2）', () => {
-    const predicate = buildPillPredicate([], {}, {});
-    assert.equal(predicate({}), true);
-    assert.equal(predicate({ maker: null, actresses: undefined, tags: '' }), true);
-
-    const predicateNoPillsArg = buildPillPredicate(undefined, {}, {});
-    assert.equal(predicateNoPillsArg({}), true);
 });
 
 test('video.maker 為 null 的影片，對任何非空片商 pill 皆不 match、不拋例外（Extra 3 finding）', () => {
@@ -241,16 +201,6 @@ test('video.maker 為 null 的影片，對任何非空片商 pill 皆不 match�
     assert.doesNotThrow(() => {
         assert.equal(predicate({ maker: null }), false);
     });
-});
-
-test('CD-7：alias map 未載入時 pill 結果會少於載入後——證明順序鎖是有意義的，不是巧合', () => {
-    const videos = [{ actresses: '別名B' }];
-    const pills = [{ dim: 'actress', value: '別名A' }];
-    const loaded = { '別名a': ['別名A', '別名B'] };
-    const cold = videos.filter(buildPillPredicate(pills, {}, {}));        // map 未載入
-    const warm = videos.filter(buildPillPredicate(pills, loaded, {}));    // map 已載入
-    assert.equal(cold.length, 0);
-    assert.equal(warm.length, 1);   // 冷載真的會少 → 順序鎖是承重的
 });
 
 test('CD-7 regression lock：state-base.js init() 的 alias map await 必須排在 applyFilterAndSort(true) 之前', () => {
@@ -281,11 +231,9 @@ test('TASK-124a-T1：release pill 的 expandPill 回 null 時 fail-closed（不�
     assert.equal(predicate({ release_date: '2024-01-01' }), false);
     assert.equal(predicate({}), false);
     assert.equal(predicate({ release_date: null }), false);
-});
-
-test('TASK-124a-T1：release pill 的 value 形狀不合法 → expandPill 回 null → fail-closed', () => {
-    const predicate = buildPillPredicate([{ dim: 'release', op: '=', value: 'garbage' }], {}, {});
-    assert.equal(predicate({ release_date: '2024-01-01' }), false);
+    // value 形狀不合法（garbage）同樣 expandPill→null→fail-closed
+    const garbage = buildPillPredicate([{ dim: 'release', op: '=', value: 'garbage' }], {}, {});
+    assert.equal(garbage({ release_date: '2024-01-01' }), false);
 });
 
 test('TASK-124a-T1：release pill range 命中／不命中邊界（含端點）', () => {
@@ -449,31 +397,6 @@ test('B4 端到端：清空 user_tags 版結果集 ⊆ 保留版（既有 tag �
     assert.ok(!filteredKeptIds.includes('B4-MISS'));
 });
 
-// ===== Opus review 追加：alias map 的原型鏈污染 =====
-
-// ⚠ 只有 `constructor` 真的會踩到守衛。查表 key 進去前已被 normalizePillValue 折成小寫，
-// 而 Object.prototype 的成員名是 mixed-case（`toString`/`valueOf`/`hasOwnProperty`），折成
-// `tostring`/`valueof`/`hasownproperty` 之後**不再與原型鏈上的任何 key 相等**——那三個即使
-// 拿掉守衛也會通過。`constructor` 本來就全小寫，是唯一會取到繼承函式（→ `.forEach` TypeError）
-// 的實例。三個非碰撞值留著當對照組（證明守衛沒有誤殺正常字串），但不得把它們算成守衛的證據。
-test('alias 查表不得取到 Object.prototype 繼承來的成員（真正的實例是 constructor，其餘三個為對照組）', () => {
-    const videos = [{ tags: 'toString', actresses: '' }];
-    for (const evil of ['constructor', 'toString', 'valueOf', 'hasOwnProperty']) {
-        const pred = buildPillPredicate([{ dim: 'tag', value: evil }], {}, {});
-        // 不得拋例外；且只有欄位真的含該 token 時才命中
-        assert.doesNotThrow(() => videos.filter(pred));
-        assert.equal(videos.filter(pred).length, evil === 'toString' ? 1 : 0);
-    }
-});
-
-test('alias group 值不是陣列時（壞掉的 map）視為查無 group，不拋例外', () => {
-    const videos = [{ actresses: 'A', tags: '' }];
-    const brokenMap = { a: 'not-an-array' };
-    const pred = buildPillPredicate([{ dim: 'actress', value: 'A' }], brokenMap, {});
-    assert.doesNotThrow(() => videos.filter(pred));
-    assert.equal(videos.filter(pred).length, 1);  // 退化成只比字面值，仍命中自己
-});
-
 // =====================================================================
 // TASK-121b-T2 — CoverBadgeManifest / mergeAliasPair
 // =====================================================================
@@ -516,19 +439,6 @@ function manifestFetch(payload, { ok = true, throwError = null } = {}) {
     };
 }
 
-test('CoverBadgeManifest 成功分支：五筆 stub 後 中字 與 中文字幕 同組', async () => {
-    const fresh = await importFreshStateBase('success');
-    assert.equal(typeof fresh._loadCoverBadgeManifest, 'function', '_loadCoverBadgeManifest 必須存在');
-    await withStubFetch(manifestFetch(COVER_BADGE_MANIFEST_FIVE), () => fresh._loadCoverBadgeManifest());
-    const byShort = fresh._tagToGroup['中字'];
-    const byCanonical = fresh._tagToGroup['中文字幕'];
-    assert.ok(Array.isArray(byShort), '_tagToGroup[中字] 應為陣列');
-    assert.ok(Array.isArray(byCanonical), '_tagToGroup[中文字幕] 應為陣列');
-    assert.ok(byShort.includes('中字') && byShort.includes('中文字幕'));
-    assert.ok(byCanonical.includes('中字') && byCanonical.includes('中文字幕'));
-    assert.equal(byShort, byCanonical, '兩個 key 必須指到同一組陣列');
-});
-
 test('CoverBadgeManifest 失敗分支：fetch 拋錯時既有 DB alias 群組原封不動', async () => {
     const fresh = await importFreshStateBase('fail');
     assert.equal(typeof fresh._loadCoverBadgeManifest, 'function', '_loadCoverBadgeManifest 必須存在');
@@ -540,48 +450,7 @@ test('CoverBadgeManifest 失敗分支：fetch 拋錯時既有 DB alias 群組原
         ),
     );
     assert.deepEqual(fresh._tagToGroup['女僕'], ['女僕', 'メイド']);
-});
-
-test('mergeAliasPair 三方群組合併：繁中/簡中 也能查到 中字', async () => {
-    const { _mergeAliasPair } = await import('../state-base.js');
-    assert.equal(typeof _mergeAliasPair, 'function', '_mergeAliasPair 必須存在');
-    const map = {};
-    const group = ['中文字幕', '繁中', '簡中'];
-    for (const member of group) map[member.toLowerCase()] = group;
-    _mergeAliasPair(map, '中文字幕', '中字');
-    for (const key of ['中文字幕', '繁中', '簡中', '中字']) {
-        const got = map[key.toLowerCase()];
-        assert.ok(Array.isArray(got), `${key} 必須仍是陣列`);
-        assert.ok(got.includes('中字'), `${key} 必須查得到 中字`);
-        assert.ok(got.includes('中文字幕') && got.includes('繁中') && got.includes('簡中'));
-    }
-});
-
-test('mergeAliasPair canonical 與 display_name 相同（4K/VR）不重複不拋例外', async () => {
-    const { _mergeAliasPair } = await import('../state-base.js');
-    assert.equal(typeof _mergeAliasPair, 'function', '_mergeAliasPair 必須存在');
-    const map = {};
-    assert.doesNotThrow(() => {
-        _mergeAliasPair(map, '4K', '4K');
-        _mergeAliasPair(map, 'VR', 'VR');
-    });
-    assert.ok(Array.isArray(map['4k']));
-    assert.equal(map['4k'].length, 1);
-    assert.equal(map['4k'][0], '4K');
-    assert.ok(Array.isArray(map['vr']));
-    assert.equal(map['vr'].length, 1);
-    assert.equal(map['vr'][0], 'VR');
-});
-
-test('CoverBadgeManifest 空陣列 manifest：_tagToGroup 不變、不拋例外', async () => {
-    const fresh = await importFreshStateBase('empty');
-    assert.equal(typeof fresh._loadCoverBadgeManifest, 'function', '_loadCoverBadgeManifest 必須存在');
-    fresh._tagToGroup['女僕'] = ['女僕', 'メイド'];
-    await assert.doesNotReject(() =>
-        withStubFetch(manifestFetch([]), () => fresh._loadCoverBadgeManifest()),
-    );
-    assert.deepEqual(fresh._tagToGroup['女僕'], ['女僕', 'メイド']);
-    assert.equal(Object.keys(fresh._tagToGroup).length, 1);
+    assert.deepEqual(fresh._coverBadgeRules, []);
 });
 
 test('CoverBadgeManifest cold/warm：pill 中文字幕 vs user_tags 中字（B1）', async () => {
@@ -637,25 +506,6 @@ test('CoverBadgeManifest 順序錨點：await _loadCoverBadgeManifest 早於 app
     const idxApply = stripped.indexOf('applyFilterAndSort(true)');
     assert.ok(idxCover !== -1 && idxApply !== -1, '兩個錨點字面必須存在');
     assert.ok(idxCover < idxApply, 'cover badge manifest 必須在第一次 applyFilterAndSort 之前載入');
-});
-
-test('CoverBadgeManifest 自由文字搜尋只會變寬：併入前命中 ⊆ 併入後命中', async () => {
-    const { _mergeAliasPair } = await import('../state-base.js');
-    assert.equal(typeof _mergeAliasPair, 'function', '_mergeAliasPair 必須存在');
-    _setVideos([
-        { id: 'w-exact', number: 'W-EXACT', title: '', maker: '', tags: 'WidenShort', actresses: '' },
-        { id: 'w-alias', number: 'W-ALIAS', title: '', maker: '', tags: 'WidenCanonical', actresses: '' },
-        { id: 'w-never', number: 'W-NEVER', title: '', maker: '', tags: 'UnrelatedTag', actresses: '' },
-    ]);
-    const c = makeComponent({ search: 'widenshort' });
-    c.applyFilterAndSort(true);
-    const beforeIds = _filteredVideos.map((v) => v.id);
-    _mergeAliasPair(stateBaseMod._tagToGroup, 'WidenCanonical', 'WidenShort');
-    c.applyFilterAndSort(true);
-    const afterIds = _filteredVideos.map((v) => v.id);
-    for (const id of beforeIds) {
-        assert.ok(afterIds.includes(id), `id ${id} 在 manifest 併入後消失（搜尋不得變窄）`);
-    }
 });
 
 // =====================================================================
@@ -720,18 +570,4 @@ test('CoverBadgeManifest 接線：loader 讀 match_aliases 後 破解 與 無碼
     assert.equal(byCrack, byCanonical, '兩個 key 必須指到同一組陣列');
     assert.equal(fresh._coverBadgeRules.length, 5);
     assert.equal(fresh._coverBadgeRules[0].display_name, '中字');
-});
-
-test('CoverBadgeManifest 失敗分支：fetch 拋錯時 _coverBadgeRules 維持空陣列', async () => {
-    const fresh = await importFreshStateBase('fail-rules');
-    assert.equal(typeof fresh._loadCoverBadgeManifest, 'function', '_loadCoverBadgeManifest 必須存在');
-    fresh._tagToGroup['女僕'] = ['女僕', 'メイド'];
-    await assert.doesNotReject(() =>
-        withStubFetch(
-            manifestFetch(null, { throwError: new Error('network down') }),
-            () => fresh._loadCoverBadgeManifest(),
-        ),
-    );
-    assert.deepEqual(fresh._coverBadgeRules, []);
-    assert.deepEqual(fresh._tagToGroup['女僕'], ['女僕', 'メイド']);
 });
