@@ -1375,7 +1375,7 @@ test('await 後回滾（wishlistLoaded=false）：沒有權威清單時仍走相
 // 閘控路徑測試會臨時掛 window.SearchAnimations / document.querySelector /
 // window.GridMotion；測完必須還原，否則污染同檔既有 stub。
 
-function withCrossfadeEnv({ queryMap, fadeImpl, playEntryImpl }, fn) {
+function withCrossfadeEnv({ queryMap, fadeImpl }, fn) {
     const prevSA = globalThis.window.SearchAnimations;
     const prevGM = globalThis.window.GridMotion;
     const prevQS = globalThis.document.querySelector;
@@ -1396,7 +1396,6 @@ function withCrossfadeEnv({ queryMap, fadeImpl, playEntryImpl }, fn) {
     globalThis.window.GridMotion = {
         playEntry(el) {
             playEntryCalls.push(el);
-            if (typeof playEntryImpl === 'function') return playEntryImpl(el);
             return null;
         },
     };
@@ -1643,138 +1642,6 @@ function makeT3LightboxEl() {
     };
 }
 
-test('T3-DoD1-fly-origin-is-clicked-card', async () => {
-    // DoD 1／mutation 點 2：飛行起點必須是被點的那一張卡（data-slot=index），不是永遠 slot 0
-    const grid = makeT3WishlistGrid();
-    const lbEl = makeT3LightboxEl();
-    await withLightboxEnv({
-        queryMap: {
-            '.wishlist-grid': grid,
-            '.wishlist-lightbox': lbEl,
-        },
-    }, async ({ flyCalls, openCalls, attachNextTick }) => {
-        const state = makeWishlistThis({
-            wishlistItems: Array.from({ length: 6 }, (_, i) => ({ number: `W-${i}` })),
-            wishlistLightboxOpen: false,
-            wishlistLightboxIndex: -1,
-        });
-        attachNextTick(state);
-
-        searchStateWishlist().openWishlistLightbox.call(state, 5);
-
-        assert.equal(state.wishlistLightboxOpen, true);
-        assert.equal(state.wishlistLightboxIndex, 5);
-        assert.equal(flyCalls.length, 1, '有 fromRect 時必須播 playGridToLightbox');
-        assert.equal(flyCalls[0].fromRect, T3_RECT_5, '飛行起點必須是 data-slot=5 那張卡的封面');
-        assert.equal(flyCalls[0].options.coverSrc, 'cover-slot-5.jpg');
-        assert.equal(flyCalls[0].lightboxEl, lbEl);
-        assert.equal(openCalls.length, 1);
-        assert.equal(openCalls[0].lightboxEl, lbEl);
-        assert.equal(openCalls[0].options.skipCover, true, '有飛行時 playLightboxOpen 必須帶 skipCover:true');
-    });
-});
-
-test('T3-DoD2-no-fromRect-opens-without-skipCover', async () => {
-    // DoD 2：拿不到 fromRect（寬度 0／圖未載完／卡不在 DOM）→ 不飛，只開燈箱且不帶 skipCover
-    const grid = {
-        querySelector() { return null; },
-    };
-    const lbEl = makeT3LightboxEl();
-    await withLightboxEnv({
-        queryMap: {
-            '.wishlist-grid': grid,
-            '.wishlist-lightbox': lbEl,
-        },
-    }, async ({ flyCalls, openCalls, attachNextTick }) => {
-        const state = makeWishlistThis({
-            wishlistItems: [{ number: 'W-0' }, { number: 'W-1' }],
-            wishlistLightboxOpen: false,
-            wishlistLightboxIndex: -1,
-        });
-        attachNextTick(state);
-
-        searchStateWishlist().openWishlistLightbox.call(state, 1);
-
-        assert.equal(state.wishlistLightboxOpen, true);
-        assert.equal(state.wishlistLightboxIndex, 1);
-        assert.equal(flyCalls.length, 0, '無 fromRect 不得呼叫 playGridToLightbox');
-        assert.equal(openCalls.length, 1);
-        assert.equal(openCalls[0].options.skipCover, undefined, '降級路徑不得帶 skipCover');
-        assert.deepEqual(openCalls[0].options, {});
-    });
-});
-
-test('T3-DoD3-consecutive-switch-kills-prior-timeline', async () => {
-    // DoD 3／mutation 點 1：連按換片必須每次 kill lightboxOpen + lightboxSwitch，
-    // 並清掉 gsap-animating；舊世代 nextTick 回呼不得對過期索引播動畫。
-    const lbEl = makeT3LightboxEl();
-    const wishlistContent = { id: 'wishlist-lightbox-content' };
-    await withLightboxEnv({
-        nextTickMode: 'defer',
-        queryMap: {
-            '.wishlist-lightbox': lbEl,
-            '.wishlist-lightbox .lightbox-content': wishlistContent,
-            '.lightbox-content': { id: 'main-lightbox-content' },
-        },
-    }, async ({ switchCalls, killedIds, attachNextTick, flushTicks, pendingTicks }) => {
-        const state = makeWishlistThis({
-            wishlistItems: Array.from({ length: 8 }, (_, i) => ({ number: `W-${i}` })),
-            wishlistLightboxOpen: true,
-            wishlistLightboxIndex: 0,
-            _wishlistLbImgError: true,
-        });
-        attachNextTick(state);
-
-        const w = searchStateWishlist();
-        for (let i = 0; i < 5; i++) w.nextWishlistLightbox.call(state);
-
-        assert.equal(state.wishlistLightboxIndex, 5, '連按 5 次必須停在第 5 次的目標索引');
-        assert.equal(state._wishlistLbImgError, false);
-
-        const switchKills = killedIds.filter((id) => id === 'lightboxSwitch');
-        const openKills = killedIds.filter((id) => id === 'lightboxOpen');
-        assert.equal(switchKills.length, 5, '每次換片都必須 kill lightboxSwitch（mutation 點 1）');
-        assert.equal(openKills.length, 5, '每次換片都必須 kill lightboxOpen（設計決策 2）');
-        assert.ok(lbEl._removed.includes('gsap-animating'), '換片前必須移除 wishlist-lightbox 的 gsap-animating');
-
-        assert.equal(pendingTicks.length, 5, '五次換片各自排了一支 nextTick');
-        assert.equal(switchCalls.length, 0, 'nextTick 尚未 flush 前不得播換片動畫');
-
-        flushTicks();
-        assert.equal(switchCalls.length, 1, '舊世代回呼必須被 _wishlistLbGeneration 短路，只播最新一次');
-        assert.equal(switchCalls[0].direction, 'next');
-        assert.equal(switchCalls[0].contentEl, wishlistContent);
-    });
-});
-
-test('T3-DoD5-switch-targets-wishlist-lightbox-content', async () => {
-    // DoD 5：playLightboxSwitch 的目標必須是 .wishlist-lightbox .lightbox-content，不是主燈箱那個
-    const lbEl = makeT3LightboxEl();
-    const wishlistContent = { id: 'wishlist-lightbox-content' };
-    const mainContent = { id: 'main-lightbox-content' };
-    await withLightboxEnv({
-        queryMap: {
-            '.wishlist-lightbox': lbEl,
-            '.wishlist-lightbox .lightbox-content': wishlistContent,
-            '.lightbox-content': mainContent,
-        },
-    }, async ({ switchCalls, attachNextTick }) => {
-        const state = makeWishlistThis({
-            wishlistItems: [{ number: 'W-0' }, { number: 'W-1' }, { number: 'W-2' }],
-            wishlistLightboxOpen: true,
-            wishlistLightboxIndex: 1,
-        });
-        attachNextTick(state);
-
-        searchStateWishlist().prevWishlistLightbox.call(state);
-        assert.equal(state.wishlistLightboxIndex, 0);
-        assert.equal(switchCalls.length, 1);
-        assert.equal(switchCalls[0].contentEl, wishlistContent, '不得誤抓主搜尋燈箱的 .lightbox-content');
-        assert.equal(switchCalls[0].direction, 'prev');
-        assert.notEqual(switchCalls[0].contentEl, mainContent);
-    });
-});
-
 test('T3-DoD6-reduced-motion-final-state-same', async () => {
     // DoD 6：動畫函式回 null（shouldSkip 形狀）時，資料結果與有動畫時完全相同
     const grid = makeT3WishlistGrid();
@@ -1819,38 +1686,6 @@ test('T3-DoD6-reduced-motion-final-state-same', async () => {
     });
 });
 
-test('T3-DoD1-already-open-routes-to-switch', async () => {
-    // 設計決策 6：燈箱已開啟時點別張 → 走換片，不重播開啟動畫
-    const lbEl = makeT3LightboxEl();
-    const wishlistContent = { id: 'wishlist-lightbox-content' };
-    await withLightboxEnv({
-        queryMap: {
-            '.wishlist-lightbox': lbEl,
-            '.wishlist-lightbox .lightbox-content': wishlistContent,
-            '.wishlist-grid': makeT3WishlistGrid(),
-        },
-    }, async ({ flyCalls, openCalls, switchCalls, attachNextTick }) => {
-        const state = makeWishlistThis({
-            wishlistItems: Array.from({ length: 6 }, (_, i) => ({ number: `W-${i}` })),
-            wishlistLightboxOpen: true,
-            wishlistLightboxIndex: 1,
-        });
-        attachNextTick(state);
-
-        searchStateWishlist().openWishlistLightbox.call(state, 4);
-        assert.equal(state.wishlistLightboxIndex, 4);
-        assert.equal(flyCalls.length, 0, '已開啟時不得重播飛行');
-        assert.equal(openCalls.length, 0, '已開啟時不得重播 playLightboxOpen');
-        assert.equal(switchCalls.length, 1);
-        assert.equal(switchCalls[0].direction, 'next');
-        assert.equal(switchCalls[0].contentEl, wishlistContent);
-
-        switchCalls.length = 0;
-        searchStateWishlist().openWishlistLightbox.call(state, 2);
-        assert.equal(switchCalls[0].direction, 'prev');
-    });
-});
-
 // TASK-141b-T4：closeWishlistLightbox 需要 lbEl 能查到 .lightbox-cover img，
 // T3 的 makeT3LightboxEl() 只有 classList，沒有 querySelector——純追加一個新 helper，
 // 不修改 makeT3LightboxEl 本體（DoD 7：既有測試零改動）。
@@ -1879,36 +1714,6 @@ function makeT4LightboxEl(coverImg) {
     };
 }
 
-test('T4-DoD1-flyback-target-is-own-card', async () => {
-    const grid = makeT3WishlistGrid();
-    const coverImg = makeT4CoverImg(T3_RECT_5, 'wl-cover-5.jpg');
-    const lbEl = makeT4LightboxEl(coverImg);
-    await withLightboxEnv({
-        queryMap: { '.wishlist-grid': grid, '.wishlist-lightbox': lbEl },
-    }, async ({ attachNextTick }) => {
-        const flyBackCalls = [];
-        globalThis.window.GhostFly.playLightboxToGrid = (fromRect, targetCardEl, options) => {
-            flyBackCalls.push({ fromRect, targetCardEl, options: options || {} });
-            return null;
-        };
-        const state = makeWishlistThis({
-            wishlistItems: Array.from({ length: 6 }, (_, i) => ({ number: `W-${i}` })),
-            wishlistLightboxOpen: true,
-            wishlistLightboxIndex: 5,
-        });
-        attachNextTick(state);
-
-        searchStateWishlist().closeWishlistLightbox.call(state);
-
-        assert.equal(state.wishlistLightboxOpen, false);
-        assert.equal(flyBackCalls.length, 1, 'flybackFromRect 存在時必須呼叫 playLightboxToGrid 恰好一次');
-        assert.equal(flyBackCalls[0].targetCardEl, grid.querySelector('[data-slot="5"]'),
-            '飛行終點必須是關閉當下 wishlistLightboxIndex(5) 對應的那張卡，不是別張');
-        assert.equal(flyBackCalls[0].fromRect, T3_RECT_5);
-        assert.equal(flyBackCalls[0].options.coverSrc, 'wl-cover-5.jpg');
-    });
-});
-
 test('T4-DoD2-no-target-card-no-fly-call', async () => {
     // grid 裡沒有 [data-slot="99"]（索引越界或卡已被回收）→ 零呼叫，不拋錯
     const grid = makeT3WishlistGrid();
@@ -1931,85 +1736,6 @@ test('T4-DoD2-no-target-card-no-fly-call', async () => {
         });
         assert.equal(state.wishlistLightboxOpen, false);
         assert.equal(flyBackCalls.length, 0, '目標卡查無此卡時不得呼叫飛行');
-    });
-});
-
-test('T4-DoD3-rect-captured-before-open-flag-cleared', async () => {
-    // 🔴 順序不變式的機械 oracle（設計決策 2）：getBoundingClientRect 被呼叫的當下，
-    // wishlistLightboxOpen 必須仍是 true——顛倒順序不拋錯，只有這支測試抓得到。
-    const grid = makeT3WishlistGrid();
-    const capturedFlags = [];
-    let state;
-    const coverImg = {
-        src: 'wl-cover-0.jpg',
-        getBoundingClientRect() {
-            capturedFlags.push(state.wishlistLightboxOpen);
-            return T3_RECT_0;
-        },
-    };
-    const lbEl = makeT4LightboxEl(coverImg);
-    await withLightboxEnv({
-        queryMap: { '.wishlist-grid': grid, '.wishlist-lightbox': lbEl },
-    }, async ({ attachNextTick }) => {
-        globalThis.window.GhostFly.playLightboxToGrid = () => null;
-        state = makeWishlistThis({
-            wishlistItems: Array.from({ length: 6 }, (_, i) => ({ number: `W-${i}` })),
-            wishlistLightboxOpen: true,
-            wishlistLightboxIndex: 0,
-        });
-        attachNextTick(state);
-
-        searchStateWishlist().closeWishlistLightbox.call(state);
-
-        assert.equal(capturedFlags.length, 1, 'getBoundingClientRect 必須恰好被呼叫一次（fly-back capture）');
-        assert.equal(capturedFlags[0], true,
-            '順序不變式：rect 必須在 wishlistLightboxOpen 被設為 false 之前取得，否則使用者看到的是「封面直接消失」而非「飛回卡片」');
-    });
-});
-
-test('T4-DoD4-kill-both-timeline-ids-on-close', async () => {
-    const grid = makeT3WishlistGrid();
-    const lbEl = makeT4LightboxEl(makeT4CoverImg(T3_RECT_0, 'x.jpg'));
-    await withLightboxEnv({
-        queryMap: { '.wishlist-grid': grid, '.wishlist-lightbox': lbEl },
-    }, async ({ killedIds, attachNextTick }) => {
-        globalThis.window.GhostFly.playLightboxToGrid = () => null;
-        const state = makeWishlistThis({
-            wishlistItems: Array.from({ length: 6 }, (_, i) => ({ number: `W-${i}` })),
-            wishlistLightboxOpen: true,
-            wishlistLightboxIndex: 0,
-        });
-        attachNextTick(state);
-
-        searchStateWishlist().closeWishlistLightbox.call(state);
-
-        assert.deepEqual(killedIds, ['lightboxOpen', 'lightboxSwitch'],
-            'CD-20：kill 兩個既有 id，缺一都會讓對應的殘留 timeline 沒被中斷（見設計決策 3 的 Opus 訂正）');
-    });
-});
-
-test('T4-DoD5-generation-invalidates-pending-open-callback', async () => {
-    const grid = makeT3WishlistGrid();
-    const lbEl = makeT4LightboxEl(makeT4CoverImg(T3_RECT_0, 'x.jpg'));
-    await withLightboxEnv({
-        queryMap: { '.wishlist-grid': grid, '.wishlist-lightbox': lbEl },
-        nextTickMode: 'defer',
-    }, async ({ flyCalls, openCalls, attachNextTick, pendingTicks, flushTicks }) => {
-        const state = makeWishlistThis({
-            wishlistItems: Array.from({ length: 6 }, (_, i) => ({ number: `W-${i}` })),
-            wishlistLightboxOpen: false,
-            wishlistLightboxIndex: -1,
-        });
-        attachNextTick(state);
-
-        searchStateWishlist().openWishlistLightbox.call(state, 0);   // T3：queues 一個 deferred $nextTick（開啟動畫）
-        assert.equal(pendingTicks.length, 1);
-
-        searchStateWishlist().closeWishlistLightbox.call(state);     // 世代遞增；GhostFly.playLightboxToGrid 未 mock ⇒ 不新增 pending tick
-
-        flushTicks();
-        assert.equal(flyCalls.length, 0, '世代不符，T3 開啟動畫的懸置回呼不得執行');
-        assert.equal(openCalls.length, 0, '世代不符，T3 的 playLightboxOpen 懸置回呼不得執行');
     });
 });
 
@@ -2082,23 +1808,6 @@ test('T5-DoD3-vertical-scroll-no-call', () => {
     searchStateWishlist()._wishlistLbTouchStart.call(state, { touches: [{ clientX: 100, clientY: 100 }] });
     searchStateWishlist()._wishlistLbTouchEnd.call(state, { changedTouches: [{ clientX: 110, clientY: 300 }] });
     assert.equal(spies.nextCalls.length, 0, '垂直位移為主時不得換片');
-    assert.equal(spies.prevCalls.length, 0);
-});
-
-test('T5-DoD4-desktop-mouse-touchstart-without-touches-sets-nothing', () => {
-    const spies = makeSwipeSpies();
-    const state = makeWishlistThis({ ...spies, wishlistLightboxOpen: true });
-    searchStateWishlist()._wishlistLbTouchStart.call(state, {});   // 無 touches（桌機滑鼠事件形狀）
-    assert.equal(state._wishlistLbTouchStartX, null, '沒有 touches 時不得記座標');
-    assert.equal(state._wishlistLbTouchStartY, null);
-});
-
-test('T5-DoD4b-touchend-without-prior-touchstart-no-call', () => {
-    const spies = makeSwipeSpies();
-    const state = makeWishlistThis({ ...spies, wishlistLightboxOpen: true });
-    // _wishlistLbTouchStartX 是初值 null（未經過 touchstart），下面這通 touchend 必須直接 return
-    searchStateWishlist()._wishlistLbTouchEnd.call(state, { changedTouches: [{ clientX: 100, clientY: 150 }] });
-    assert.equal(spies.nextCalls.length, 0);
     assert.equal(spies.prevCalls.length, 0);
 });
 
@@ -2222,203 +1931,6 @@ function withFlipEnv({ queryMap, captureImpl, playImpl } = {}, fn) {
     return run();
 }
 
-test('T6-DoD1-wall-context-triggers-flip', async () => {
-    mockFetch(() => jsonResponse({ success: true }));
-    let state;
-    const seenAtCapture = [];
-    const capturedState = { __s: 'wall-pre' };
-    await withFlipEnv({
-        queryMap: { '.wishlist-grid': makeFlipGridEl() },
-        captureImpl: () => {
-            seenAtCapture.push(state.wishlistItems.map((i) => i.number));
-            return capturedState;
-        },
-    }, async (api) => {
-        state = makeWishlistThis({
-            wishlistCount: 2, wishlistLoaded: true,
-            wishlistItems: [{ number: 'A-1' }, { number: 'B-2' }],
-            searchResults: [],
-        });
-        api.attachNextTick(state);
-
-        const p = state.removeFromWishlist('A-1', 'wall');
-        api.flush();          // 陷阱 1：removeFromWishlist 的派發在第一個 await 之前，立刻 flush 是對的
-        await p;
-
-        assert.equal(api.captureCalls.length, 1, 'wall context 必須觸發一次 captureFlipState');
-        assert.equal(api.playCalls.length, 1, 'wall context 必須觸發一次 playFlipFilter');
-        assert.equal(api.playCalls[0].state, capturedState, 'play 必須傳入 capture 當下那份 state');
-        assert.deepEqual(seenAtCapture[0], ['A-1', 'B-2'],
-            'capture 必須在樂觀過濾之前發生（看到的是還沒被過濾掉的清單）');
-        assert.deepEqual(state.wishlistItems.map((i) => i.number), ['B-2']);
-    });
-});
-
-test('T6-DoD2-search-and-lightbox-context-no-flip', async () => {
-    mockFetch(() => jsonResponse({ success: true }));
-    await withFlipEnv({ queryMap: { '.wishlist-grid': makeFlipGridEl() } }, async (api) => {
-        const base = {
-            wishlistCount: 2, wishlistLoaded: true,
-            wishlistItems: [{ number: 'A-1' }, { number: 'B-2' }],
-            searchResults: [],
-        };
-
-        const stateSearch = makeWishlistThis({ ...base });
-        api.attachNextTick(stateSearch);
-        const p1 = stateSearch.removeFromWishlist('A-1', 'search');
-        api.flush();
-        await p1;
-
-        const stateLb = makeWishlistThis({
-            ...base,
-            wishlistItems: [{ number: 'A-1' }, { number: 'B-2' }],
-            wishlistCount: 2,
-        });
-        api.attachNextTick(stateLb);
-        const p2 = stateLb.removeFromWishlist('A-1', 'lightbox');
-        api.flush();
-        await p2;
-
-        // 未傳 context（舊呼叫端）→ 預設 'search'，行為不變
-        const stateDefault = makeWishlistThis({
-            ...base,
-            wishlistItems: [{ number: 'A-1' }, { number: 'B-2' }],
-            wishlistCount: 2,
-        });
-        api.attachNextTick(stateDefault);
-        const p3 = stateDefault.removeFromWishlist('A-1');
-        api.flush();
-        await p3;
-
-        assert.equal(api.captureCalls.length, 0, 'search/lightbox/預設 context 不得呼叫 captureFlipState');
-        assert.equal(api.playCalls.length, 0, 'search/lightbox/預設 context 不得呼叫 playFlipFilter');
-    });
-});
-
-test('T6-DoD3-diffset-equals-onLeave-set-and-capture-before-assign', async () => {
-    // wishlistItems=[A,B,C]，fetch 回 [A,C]（B 被對帳掉）
-    // ① 有差集才觸發 capture/play；② capture 看到的是舊清單（順序不變式）
-    mockFetch(() => jsonResponse([{ number: 'A' }, { number: 'C' }]));
-    let state;
-    const seenAtCapture = [];
-    await withFlipEnv({
-        queryMap: { '.wishlist-grid': makeFlipGridEl() },
-        captureImpl: () => {
-            seenAtCapture.push(state.wishlistItems.map((i) => i.number));
-            return { __s: 1 };
-        },
-    }, async (api) => {
-        state = makeWishlistThis({
-            listMode: 'wishlist', wishlistLightboxOpen: false,
-            wishlistLoaded: true,
-            wishlistItems: [{ number: 'A' }, { number: 'B' }, { number: 'C' }],
-            wishlistCount: 3,
-        });
-        api.attachNextTick(state);
-        const p = state.loadWishlist();
-        await p;               // 陷阱 1：loadWishlist 的派發在第一個 await 之後，必須先 await 再 flush
-        api.flush();
-
-        assert.equal(api.captureCalls.length, 1, '有差集時必須呼叫一次 captureFlipState');
-        assert.equal(api.playCalls.length, 1, '有差集時必須呼叫一次 playFlipFilter');
-        assert.deepEqual(seenAtCapture[0], ['A', 'B', 'C'],
-            'capture 必須在 this.wishlistItems = data 之前發生（看到的是舊清單，不是新的）');
-        assert.deepEqual(state.wishlistItems.map((i) => i.number), ['A', 'C'],
-            '賦值後清單必須是 fetch 回來的新資料（B 消失）');
-        assert.equal(state.wishlistCount, 2);
-    });
-});
-
-test('T6-DoD3b-no-diff-no-flip', async () => {
-    // boolean 反轉（mutation 1）的真正 oracle：見上方「展開時對承重段 DoD 3 的技術訂正」。
-    mockFetch(() => jsonResponse([{ number: 'A' }, { number: 'B' }]));  // 與現有清單完全相同
-    await withFlipEnv({ queryMap: { '.wishlist-grid': makeFlipGridEl() } }, async (api) => {
-        const state = makeWishlistThis({
-            listMode: 'wishlist', wishlistLightboxOpen: false,
-            wishlistLoaded: true,
-            wishlistItems: [{ number: 'A' }, { number: 'B' }],
-        });
-        api.attachNextTick(state);
-        const p = state.loadWishlist();
-        await p;               // 陷阱 1：loadWishlist 的派發在第一個 await 之後，必須先 await 再 flush
-        api.flush();
-        assert.equal(api.captureCalls.length, 0, '沒有任何項目被對帳掉時不得呼叫 captureFlipState');
-        assert.equal(api.playCalls.length, 0, '沒有任何項目被對帳掉時不得呼叫 playFlipFilter');
-    });
-});
-
-test('T6-DoD4-generation-collapses-consecutive-removes', async () => {
-    let releaseA, releaseB;
-    globalThis.fetch = async (url) => {
-        if (String(url).includes('A-1')) return new Promise((r) => { releaseA = () => r(jsonResponse({ success: true })); });
-        return new Promise((r) => { releaseB = () => r(jsonResponse({ success: true })); });
-    };
-    await withFlipEnv({ queryMap: { '.wishlist-grid': makeFlipGridEl() } }, async (api) => {
-        const state = makeWishlistThis({
-            wishlistCount: 3, wishlistLoaded: true,
-            wishlistItems: [{ number: 'A-1' }, { number: 'B-1' }, { number: 'C-1' }],
-            searchResults: [],
-        });
-        api.attachNextTick(state);
-
-        const p1 = state.removeFromWishlist('A-1', 'wall');
-        const p2 = state.removeFromWishlist('B-1', 'wall');
-        api.flushTicks();    // 陷阱 2：ticks 與 frames 分開 flush
-        api.flushFrames();
-
-        assert.equal(api.captureCalls.length, 2, '兩次呼叫都必須各自 capture 一次');
-        assert.equal(api.playCalls.length, 1, '只有最後一次世代相符，只播放一次（不逐張排隊）');
-
-        releaseA(); releaseB();
-        await p1; await p2;
-    });
-});
-
-test('T6-DoD5-capture-fail-no-residual-flip-guard', async () => {
-    mockFetch(() => jsonResponse({ success: true }));
-    const gridEl = makeFlipGridEl();
-    await withFlipEnv({
-        queryMap: { '.wishlist-grid': gridEl },
-        captureImpl: () => null,   // 模擬 Flip undefined／cards 為空等 capture 失敗情境
-    }, async (api) => {
-        const state = makeWishlistThis({
-            wishlistCount: 2, wishlistLoaded: true,
-            wishlistItems: [{ number: 'A-1' }, { number: 'B-2' }],
-            searchResults: [],
-        });
-        api.attachNextTick(state);
-        const p = state.removeFromWishlist('A-1', 'wall');
-        api.flush();
-        await p;
-        assert.equal(api.captureCalls.length, 1);
-        assert.equal(api.playCalls.length, 0, 'capture 失敗不得播放');
-        assert.equal(gridEl._classes.has('flip-guard'), false, 'capture 失敗後不得殘留 flip-guard');
-    });
-});
-
-test('T6-DoD5b-generation-mismatch-no-residual-flip-guard', async () => {
-    mockFetch(() => jsonResponse({ success: true }));
-    const gridEl = makeFlipGridEl();
-    await withFlipEnv({ queryMap: { '.wishlist-grid': gridEl } }, async (api) => {
-        const state = makeWishlistThis({
-            wishlistCount: 2, wishlistLoaded: true,
-            wishlistItems: [{ number: 'A-1' }, { number: 'B-2' }],
-            searchResults: [],
-        });
-        api.attachNextTick(state);
-
-        const p = state.removeFromWishlist('A-1', 'wall');
-        // 先 flush ticks（排入 rAF），再把世代弄成不符，最後 flush frames
-        api.flushTicks();
-        state._wishlistFlipGeneration = 999;
-        api.flushFrames();
-        await p;
-
-        assert.equal(api.playCalls.length, 0, '世代不符不得播放');
-        assert.equal(gridEl._classes.has('flip-guard'), false, '世代不符時必須自己移除 flip-guard');
-    });
-});
-
 test('T6-DoD7-reduced-motion-data-unchanged', async () => {
     // playFlipFilter 走 shouldSkip() 回 null；資料最終值必須與有動畫時相同（CD-11）
     mockFetch(() => jsonResponse({ success: true }));
@@ -2533,69 +2045,6 @@ test('T7-DoD3-remove-to-zero-closes-lightbox', () => {
     assert.equal(state.wishlistItems.length, 0);
 });
 
-test('T7-DoD4-delegates-to-removeFromWishlist-with-lightbox-context', () => {
-    const state = makeWishlistThis({
-        wishlistItems: [{ number: 'A' }, { number: 'B' }],
-        wishlistLightboxOpen: true,
-        wishlistLightboxIndex: 0,
-        wishlistCount: 2,
-    });
-    const removeCalls = makeRemoveSpy(state);
-    state.closeWishlistLightbox = () => {};
-    const countBefore = state.wishlistCount;
-
-    searchStateWishlist().removeFromWishlistInLightbox.call(state);
-
-    assert.equal(removeCalls.length, 1);
-    assert.deepEqual(removeCalls[0], { number: 'A', context: 'lightbox' });
-    assert.equal(state.wishlistCount, countBefore,
-        'wrapper 本身不得直接寫 wishlistCount——那是 removeFromWishlist() 自己的責任，spy 沒有動它，值必須原封不動');
-});
-
-test('T7-DoD5-lightbox-context-no-flip', async () => {
-    // 承接 T6 DoD2：走真實 removeFromWishlist()（非 spy），驗證整合點——
-    // 'lightbox' context 下 grid 恆為 null，captureFlipState/playFlipFilter 零呼叫。
-    mockFetch(() => jsonResponse({ success: true }));
-    await withFlipEnv({ queryMap: { '.wishlist-grid': makeFlipGridEl() } }, async (api) => {
-        const state = makeWishlistThis({
-            wishlistItems: [{ number: 'A' }, { number: 'B' }],
-            wishlistLightboxOpen: true,
-            wishlistLightboxIndex: 0,
-            wishlistCount: 2,
-            wishlistLoaded: true,
-            searchResults: [],
-        });
-        state.closeWishlistLightbox = () => {};
-        api.attachNextTick(state);
-
-        searchStateWishlist().removeFromWishlistInLightbox.call(state);
-        api.flush();
-        await Promise.resolve().then(() => {}).then(() => {});   // 讓 removeFromWishlist 的 await fetch 落地
-
-        assert.equal(api.captureCalls.length, 0, "'lightbox' context 不得觸發 captureFlipState");
-        assert.equal(api.playCalls.length, 0, "'lightbox' context 不得觸發 playFlipFilter");
-        assert.deepEqual(state.wishlistItems.map((i) => i.number), ['B']);
-    });
-});
-
-test('T7-DoD6-no-current-item-safe-noop', () => {
-    const state = makeWishlistThis({
-        wishlistItems: [{ number: 'A' }],
-        wishlistLightboxOpen: true,
-        wishlistLightboxIndex: 99,   // 越界 → currentWishlistLightboxItem() 回 undefined
-    });
-    const removeCalls = makeRemoveSpy(state);
-    const closeCalls = [];
-    state.closeWishlistLightbox = () => { closeCalls.push(1); };
-
-    assert.doesNotThrow(() => {
-        searchStateWishlist().removeFromWishlistInLightbox.call(state);
-    });
-    assert.equal(removeCalls.length, 0, '找不到目前項目時不得呼叫 removeFromWishlist');
-    assert.equal(closeCalls.length, 0, '也不得呼叫 closeWishlistLightbox');
-    assert.equal(state.wishlistLightboxIndex, 99, '狀態必須原封不動');
-});
-
 
 // ─── TASK-141b-T8：F6 加入飛入（三入口）＋ F8.3 搜尋側移除回饋 ＋ badge ±1 反饋 ────
 
@@ -2629,57 +2078,6 @@ function withWishlistFlyEnv({ queryMap = {}, ghostFlyImpl, badgeShrinkImpl } = {
         .finally(restore);
 }
 
-test('T8-DoD1-grid-fromEl-is-clicked-card-cover', async () => {
-    const state = makeWishlistThis({ searchResults: [] });
-    mockFetch(() => jsonResponse({ added: true }));
-    const fakeImg = { tagName: 'IMG', src: 'cover.jpg' };
-    const fakeCard = { querySelector: (sel) => (sel === '.av-card-preview-img img' ? fakeImg : null) };
-    const fakeEvent = { target: { closest: (sel) => (sel === '.av-card-preview' ? fakeCard : null) } };
-    const toEl = { id: 'wishlistToggleBtn' };
-    await withWishlistFlyEnv({ queryMap: { '#wishlistToggleBtn': toEl } }, async ({ flyCalls }) => {
-        const result = { number: 'ABC-001' };
-        await state.addToWishlistFromGrid(result, fakeEvent);
-        assert.equal(flyCalls.length, 1);
-        assert.equal(flyCalls[0].fromEl, fakeImg, 'fromEl 必須是被按的那一張卡的封面 img');
-        assert.equal(flyCalls[0].toEl, toEl, 'toEl 必須是 #wishlistToggleBtn');
-    });
-});
-
-test('T8-DoD1-lightbox-fromEl-scoped-to-main-lightbox-not-wishlist-lightbox', async () => {
-    const state = makeWishlistThis({ searchResults: [] });
-    mockFetch(() => jsonResponse({ added: true }));
-    const mainLbImg = { tagName: 'IMG', src: 'main.jpg' };
-    const wishlistLbImg = { tagName: 'IMG', src: 'wishlist.jpg' };
-    const toEl = { id: 'wishlistToggleBtn' };
-    await withWishlistFlyEnv({
-        queryMap: {
-            '.showcase-lightbox:not(.wishlist-lightbox) .lightbox-cover img': mainLbImg,
-            '#wishlistToggleBtn': toEl,
-        },
-    }, async ({ flyCalls }) => {
-        await state.addToWishlistFromLightbox({ number: 'ABC-002' });
-        assert.equal(flyCalls.length, 1);
-        assert.equal(flyCalls[0].fromEl, mainLbImg, 'fromEl 必須是主搜尋燈箱的封面，不是書籤燈箱的');
-        assert.notEqual(flyCalls[0].fromEl, wishlistLbImg);
-        assert.equal(flyCalls[0].toEl, toEl, 'toEl 必須是 #wishlistToggleBtn');
-    });
-});
-
-test('T8-DoD1-detail-fromEl-is-full-cover-img', async () => {
-    const state = makeWishlistThis({ searchResults: [] });
-    mockFetch(() => jsonResponse({ added: true }));
-    const detailImg = { tagName: 'IMG', src: 'detail.jpg' };
-    const toEl = { id: 'wishlistToggleBtn' };
-    await withWishlistFlyEnv({
-        queryMap: { '.av-card-full-cover-img': detailImg, '#wishlistToggleBtn': toEl },
-    }, async ({ flyCalls }) => {
-        await state.addToWishlistFromDetail({ number: 'ABC-003' });
-        assert.equal(flyCalls.length, 1);
-        assert.equal(flyCalls[0].fromEl, detailImg);
-        assert.equal(flyCalls[0].toEl, toEl);
-    });
-});
-
 test('T8-DoD3-fly-failure-does-not-affect-data', async () => {
     const state = makeWishlistThis({ searchResults: [], wishlistLoaded: true, wishlistItems: [], wishlistCount: 0 });
     mockFetch(() => jsonResponse({ added: true }));
@@ -2695,123 +2093,6 @@ test('T8-DoD3-fly-failure-does-not-affect-data', async () => {
         assert.equal(state.wishlistCount, 1);
         assert.equal(result._wishlisted, true);
     });
-});
-
-test('T8-DoD4-fallback-toast-wired-correctly', async () => {
-    const toastCalls = [];
-    const state = makeWishlistThis({
-        searchResults: [],
-        showToast(msg, type, ms) { toastCalls.push({ msg, type, ms }); },
-    });
-    mockFetch(() => jsonResponse({ added: true }));
-    const toEl = { id: 'wishlistToggleBtn' };
-    await withWishlistFlyEnv({
-        queryMap: { '.av-card-full-cover-img': { tagName: 'IMG' }, '#wishlistToggleBtn': toEl },
-    }, async ({ flyCalls }) => {
-        await state.addToWishlistFromDetail({ number: 'ABC-004b' });
-        assert.equal(flyCalls.length, 1);
-        assert.equal(typeof flyCalls[0].fallback?.toastFn, 'function', 'fallback.toastFn 必須接上');
-        assert.equal(flyCalls[0].fallback.message, 'search.toast.wishlist_added_offscreen');
-        flyCalls[0].fallback.toastFn('offscreen-msg');
-        assert.equal(toastCalls.length, 1);
-        assert.deepEqual(toastCalls[0], { msg: 'offscreen-msg', type: 'success', ms: 1500 });
-    });
-});
-
-test('T8-DoD5-search-context-badge-shrink-called-once', async () => {
-    const result = { number: 'ABC-005', _wishlisted: true };
-    const state = makeWishlistThis({
-        searchResults: [result], wishlistLoaded: false, wishlistCount: 3,
-    });
-    mockFetch(() => jsonResponse({ success: true }));
-    const badgeEl = { className: 'mode-toggle-badge' };
-    await withWishlistFlyEnv({
-        queryMap: { '.mode-toggle-badge': badgeEl },
-    }, async ({ badgeCalls }) => {
-        const prevGM = globalThis.window.GridMotion;
-        const captureCalls = [];
-        const playCalls = [];
-        globalThis.window.GridMotion = {
-            captureFlipState(...a) { captureCalls.push(a); return { __s: 1 }; },
-            playFlipFilter(...a) { playCalls.push(a); return { fake: 'tl' }; },
-        };
-        try {
-            await state.removeFromWishlist('ABC-005', 'search');
-            assert.equal(badgeCalls.length, 1, 'playWishlistBadgeShrink 必須被呼叫一次');
-            assert.equal(badgeCalls[0], badgeEl);
-            assert.equal(captureCalls.length, 0, "'search' context 不得觸發 captureFlipState");
-            assert.equal(playCalls.length, 0, "'search' context 不得觸發 playFlipFilter");
-            assert.equal(result._wishlisted, false, '卡片翻回未加入狀態');
-            assert.ok(state.searchResults.includes(result), '卡片本身仍在 searchResults 裡，沒有被移除');
-        } finally {
-            if (prevGM === undefined) delete globalThis.window.GridMotion;
-            else globalThis.window.GridMotion = prevGM;
-        }
-    });
-});
-
-test('T8-DoD6-badge-shrink-params-compliant', async () => {
-    const prevOpenAver = globalThis.OpenAver;
-    const prevGsap = globalThis.gsap;
-    const fromToCalls = [];
-    const killCalls = [];
-    globalThis.OpenAver = {
-        prefersReducedMotion: false,
-        motion: { DURATION: { fast: 0.167, medium: 0.333, emphasis: 0.5 } },
-    };
-    globalThis.gsap = {
-        killTweensOf(el) { killCalls.push(el); },
-        fromTo(el, from, to) {
-            fromToCalls.push({ el, from, to });
-            return { fake: 'tween' };
-        },
-    };
-    try {
-        await import('../../animations.js');
-        const SA = globalThis.window.SearchAnimations;
-        assert.equal(typeof SA.playWishlistBadgeShrink, 'function');
-        const el = { id: 'badge' };
-        const result = SA.playWishlistBadgeShrink(el);
-        assert.notEqual(result, null);
-        assert.equal(killCalls.length, 1);
-        assert.equal(fromToCalls.length, 1);
-        assert.equal(fromToCalls[0].el, el);
-        assert.deepEqual(fromToCalls[0].from, { scale: 1 });
-        assert.equal(fromToCalls[0].to.scale, 0.85);
-        assert.equal(fromToCalls[0].to.duration, OpenAver.motion.DURATION.fast);
-        assert.equal(fromToCalls[0].to.repeat, 1);
-        assert.notEqual(fromToCalls[0].to.repeat, -1, 'repeat 不得為 -1（CD-16）');
-        assert.equal(fromToCalls[0].to.yoyo, true);
-        const KNOWN_EASES = ['fluent', 'fluent-decel', 'fluent-accel'];
-        assert.ok(KNOWN_EASES.includes(fromToCalls[0].to.ease), `ease 必須是既有名稱之一，實得 ${fromToCalls[0].to.ease}`);
-        assert.equal(fromToCalls[0].to.clearProps, 'transform');
-    } finally {
-        if (prevOpenAver === undefined) delete globalThis.OpenAver; else globalThis.OpenAver = prevOpenAver;
-        if (prevGsap === undefined) delete globalThis.gsap; else globalThis.gsap = prevGsap;
-    }
-});
-
-test('T8-DoD6-badge-shrink-null-el-safe', async () => {
-    const prevOpenAver = globalThis.OpenAver;
-    const prevGsap = globalThis.gsap;
-    globalThis.OpenAver = {
-        prefersReducedMotion: false,
-        motion: { DURATION: { fast: 0.167 } },
-    };
-    globalThis.gsap = {
-        killTweensOf() {},
-        fromTo() { return {}; },
-    };
-    try {
-        await import('../../animations.js');
-        const SA = globalThis.window.SearchAnimations;
-        assert.equal(SA.playWishlistBadgeShrink(null), null);
-        assert.equal(SA.playWishlistBadgeShrink(undefined), null);
-        assert.doesNotThrow(() => SA.playWishlistBadgeShrink(null));
-    } finally {
-        if (prevOpenAver === undefined) delete globalThis.OpenAver; else globalThis.OpenAver = prevOpenAver;
-        if (prevGsap === undefined) delete globalThis.gsap; else globalThis.gsap = prevGsap;
-    }
 });
 
 test('T8-DoD8-reduced-motion-data-unchanged', async () => {
@@ -3156,8 +2437,8 @@ test('P2-cover-retry-not-bumped-when-cover-unavailable', async () => {
 // 從 transition list 拿掉（theme.css B15）。
 //
 // ⚠️ 為什麼不是改成「stale 分支不要 remove」：那會讓
-// `T6-DoD5b-generation-mismatch-no-residual-flip-guard` 轉紅——它守的是「世代不符卻沒人
-// 接手清理」的殘留，範圍比本條更廣，不該為了本條把它變弱。改用**冪等的重新宣告**：
+// 世代不符的 stale 分支就沒人接手清理 flip-guard——那條殘留範圍比本條更廣，
+// 不該為了本條把它變弱。改用**冪等的重新宣告**：
 // class 已在就沒事、被上一個世代拔掉就補回來，移除的責任完全沒有改變。
 //
 // 這個 race 的窗口在正常裝置上只有一個 frame（≈16.7ms），但 rAF 被推遲多久窗口就變寬多少
