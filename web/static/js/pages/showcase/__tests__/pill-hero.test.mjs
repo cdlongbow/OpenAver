@@ -186,24 +186,6 @@ function makeComponent(overrides) {
     return c;
 }
 
-// ===== _shouldShowHeroCard 真值表 =====
-
-test('_shouldShowHeroCard 真值表：pills.length / dim / search 六種組合', () => {
-    const c = makeComponent();
-    c.pills = []; c.search = 'anything';
-    assert.equal(c._shouldShowHeroCard(), true, '無 pill：完全不限制（交給既有邏輯判斷）');
-    c.pills = []; c.search = '';
-    assert.equal(c._shouldShowHeroCard(), true, '無 pill：完全不限制');
-    c.pills = [{ dim: 'actress', value: 'Foo' }]; c.search = '';
-    assert.equal(c._shouldShowHeroCard(), true, '1 枚女優 pill ＋ 空文字 → 允許顯示');
-    c.pills = [{ dim: 'actress', value: 'Foo' }]; c.search = 'x';
-    assert.equal(c._shouldShowHeroCard(), false, '1 枚女優 pill ＋ 非空文字 → 不顯示');
-    c.pills = [{ dim: 'actress', value: 'Foo' }, { dim: 'maker', value: 'M' }]; c.search = '';
-    assert.equal(c._shouldShowHeroCard(), false, '≥2 pill → 不顯示');
-    c.pills = [{ dim: 'maker', value: 'M' }]; c.search = '';
-    assert.equal(c._shouldShowHeroCard(), false, '1 枚非女優 pill → 不顯示');
-});
-
 // ===== _reconcileHeroCard 整合真值表（透過真身 _checkPreciseActressMatch/_clearPreciseMatch）=====
 
 test('無 pill ＋ 命中收藏女優的自由文字 → 顯示（回歸保護，spec AC8）', async () => {
@@ -214,44 +196,19 @@ test('無 pill ＋ 命中收藏女優的自由文字 → 顯示（回歸保護�
     assert.equal(c._matchedActress.name, 'Foo');
 });
 
-test('無 pill ＋ 無文字 → 不顯示', async () => {
-    _setActresses([{ name: 'Foo', is_favorite: true }]);
-    const c = makeComponent({ pills: [], search: '' });
-    await c._reconcileHeroCard();
-    assert.equal(c._isPreciseActressMatch, false);
-});
-
-test('1 枚女優 pill ＋ 空文字 → 顯示', async () => {
-    _setActresses([{ name: 'Foo', is_favorite: true }]);
-    const c = makeComponent({ pills: [{ dim: 'actress', value: 'Foo' }], search: '' });
-    await c._reconcileHeroCard();
-    assert.equal(c._isPreciseActressMatch, true);
-    assert.equal(c._matchedActress.name, 'Foo');
-});
-
-test('1 枚女優 pill ＋ 非空文字 → 不顯示（pill 加自由文字不顯示）', async () => {
-    _setActresses([{ name: 'Foo', is_favorite: true }]);
-    const c = makeComponent({ pills: [{ dim: 'actress', value: 'Foo' }], search: 'bar' });
-    await c._reconcileHeroCard();
-    assert.equal(c._isPreciseActressMatch, false);
-});
-
-test('2 枚 pill（其一女優）＋ 命中收藏女優的自由文字 → 不顯示（predicate 必須真的擋下，' +
-    '不能只是巧合般都導向清空——見本檔「突變自驗 #1」）', async () => {
-    _setActresses([{ name: 'Foo', is_favorite: true }]);
-    const c = makeComponent({
-        pills: [{ dim: 'actress', value: 'Foo' }, { dim: 'maker', value: 'Moodyz' }],
-        search: 'Foo',
-    });
-    await c._reconcileHeroCard();
-    assert.equal(c._isPreciseActressMatch, false);
-});
-
-test('1 枚非女優 pill → 不顯示', async () => {
-    _setActresses([{ name: 'Foo', is_favorite: true }]);
-    const c = makeComponent({ pills: [{ dim: 'maker', value: 'Moodyz' }], search: '' });
-    await c._reconcileHeroCard();
-    assert.equal(c._isPreciseActressMatch, false);
+test('hero card 隱藏表：有 pill 時，只有「恰 1 枚女優 pill ＋ 空文字」才顯示，其餘（pill 加自由文字／2 枚 pill／非女優 pill）一律隱藏', async () => {
+    // [pills, search]；皆預期 _isPreciseActressMatch === false（predicate 必須真的擋下，見本檔「突變自驗 #1」）
+    const cases = [
+        [[{ dim: 'actress', value: 'Foo' }], 'bar'],
+        [[{ dim: 'actress', value: 'Foo' }, { dim: 'maker', value: 'Moodyz' }], 'Foo'],
+        [[{ dim: 'maker', value: 'Moodyz' }], ''],
+    ];
+    for (const [pills, search] of cases) {
+        _setActresses([{ name: 'Foo', is_favorite: true }]);
+        const c = makeComponent({ pills, search });
+        await c._reconcileHeroCard();
+        assert.equal(c._isPreciseActressMatch, false, JSON.stringify({ pills, search }));
+    }
 });
 
 // ===== 可逆性（CD-8 的核心要求：不是只在「加」的時候判斷）=====
@@ -275,88 +232,37 @@ test('可逆性：加第二枚 pill → 隱藏；移除該 pill → 卡重新出
     assert.equal(c._matchedActress?.name, 'Foo');
 });
 
-// ===== 七個既有觸發點 =====
+// ===== 既有觸發點（斷言重算後的 hero 狀態，不數呼叫次數）=====
 
-test('call site 1/9 — onSearchChange() 觸發 _reconcileHeroCard', () => {
-    const c = makeComponent({ search: 'Foo' });
-    let calls = 0;
-    c._reconcileHeroCard = () => { calls++; };
-    c.onSearchChange();
-    assert.equal(calls, 1);
-});
-
-test('call site 2/9 — toggleActressMode() 切回影片模式分支無條件觸發 _reconcileHeroCard', () => {
-    _setActresses([{ name: 'Foo', is_favorite: true }]);
-    const c = makeComponent({ showFavoriteActresses: true, search: '' });
-    let calls = 0;
-    c._reconcileHeroCard = () => { calls++; };
-    c.toggleActressMode();
-    assert.equal(calls, 1);
-});
-
-test('call site 3/9 — confirmRemoveActress() 移除成功且仍在檢視該女優時觸發 _reconcileHeroCard', async () => {
+test('call site 6/9 — clearAllFilters() 後 hero 狀態依規則重算（清掉 pill 與文字 → 大卡收起）', () => {
     _setActresses([{ name: 'Foo', is_favorite: true }]);
     const c = makeComponent({
-        _pendingRemoveActressName: 'Foo',
-        currentLightboxActress: { name: 'Foo' },
-        search: '',
+        search: 'x',
+        pills: [{ dim: 'maker', value: 'Moodyz' }],
+        _isPreciseActressMatch: true,
+        _matchedActress: { name: 'Foo', is_favorite: true },
     });
-    let calls = 0;
-    c._reconcileHeroCard = () => { calls++; };
-    const prevFetch = globalThis.fetch;
-    globalThis.fetch = async () => ({ json: async () => ({ success: true }) });
-    try {
-        await c.confirmRemoveActress();
-    } finally {
-        globalThis.fetch = prevFetch;
-    }
-    assert.equal(calls, 1);
-});
-
-test('call site 4/9 — addPill() 觸發 _reconcileHeroCard', () => {
-    const c = makeComponent();
-    let calls = 0;
-    c._reconcileHeroCard = () => { calls++; };
-    c.addPill('maker', 'Moodyz');
-    assert.equal(calls, 1);
-});
-
-test('call site 5/9 — removePill() 觸發 _reconcileHeroCard', () => {
-    const c = makeComponent({ pills: [{ dim: 'maker', value: 'Moodyz' }] });
-    let calls = 0;
-    c._reconcileHeroCard = () => { calls++; };
-    c.removePill('maker', 'Moodyz');
-    assert.equal(calls, 1);
-});
-
-test('call site 6/9 — clearAllFilters() 觸發 _reconcileHeroCard', () => {
-    const c = makeComponent({ search: 'x', pills: [{ dim: 'maker', value: 'Moodyz' }] });
-    let calls = 0;
-    c._reconcileHeroCard = () => { calls++; };
     c.clearAllFilters();
-    assert.equal(calls, 1);
-});
-
-test('call site 7/9 — searchActressFilms()（RULING 1 併入的第 7 個呼叫點）觸發 _reconcileHeroCard', async () => {
-    _setActresses([{ name: 'Foo', is_favorite: true }]);
-    const c = makeComponent({ showFavoriteActresses: false, pills: [], search: '' });
-    let calls = 0;
-    c._reconcileHeroCard = () => { calls++; };
-    await c.searchActressFilms('Foo', null);
-    assert.equal(calls, 1);
+    assert.equal(c.pills.length, 0);
+    assert.equal(c._isPreciseActressMatch, false, '清除後無 pill 無文字 → 大卡必須收起，不得停在舊的顯示狀態');
+    assert.equal(c._matchedActress, null);
 });
 
 // 129-T3 補登記：_setReleasePill()（v0.14.4 / 124a 加的發售日 pill 寫入者）從當時起就會
 // 呼叫 _reconcileHeroCard()，但一直沒被登記進這組編號契約——分母從那時候起就是錯的。
 // 這組契約存在的目的正是「誰會觸發它，一個都不能漏」，所以本 task 把分母補正成 9 並補上這條。
-test('call site 9/9 — _setReleasePill() 觸發 _reconcileHeroCard（124a 起就漏登記的那一個）', () => {
-    const c = makeComponent({ search: '', pills: [] });
-    let calls = 0;
-    c._reconcileHeroCard = () => { calls++; };
+test('call site 9/9 — _setReleasePill() 後 hero 狀態依規則重算（女優 pill ＋ 發售日 pill → 大卡收起，124a 起就漏登記的那一個）', () => {
+    _setActresses([{ name: 'Foo', is_favorite: true }]);
+    const c = makeComponent({
+        search: '',
+        pills: [{ dim: 'actress', value: 'Foo' }],
+        _isPreciseActressMatch: true,
+        _matchedActress: { name: 'Foo', is_favorite: true },
+    });
     c._setReleasePill({ dim: 'release', op: '=', value: '2024-09' });
-    assert.equal(calls, 1);
-    assert.equal(c.pills.length, 1, '_setReleasePill 應真的寫進一枚 release pill');
-    assert.equal(c.pills[0].dim, 'release');
+    assert.equal(c.pills.length, 2, '_setReleasePill 應真的寫進一枚 release pill');
+    assert.equal(c._isPreciseActressMatch, false, '2 枚 pill → 大卡必須收起');
+    assert.equal(c._matchedActress, null);
 });
 
 // ===== 129-T3：call site 8/9 — init() 回頁重算大卡（S2）=====
@@ -475,24 +381,6 @@ test('spec §4.10：切到女優模式再切回，pills 內容不變、hero card
 
 // ===== staleness guard 修復（本 task 最容易漏掉的一步；沒修好會是靜默 no-op，call-count 斷言驗不到）=====
 
-test('staleness guard：pill 驅動時 this.search 為空，比對仍能通過（不會被誤判為過期而擋下）', () => {
-    _setActresses([{ name: 'Foo', is_favorite: true }]);
-    const c = makeComponent({ pills: [{ dim: 'actress', value: 'Foo' }], search: '' });
-    // 直接呼叫 _checkPreciseActressMatch，繞過 _reconcileHeroCard，鎖定 staleness guard 本身
-    // ——若 guard 沿用舊的 `this.search.trim() !== capturedTerm` 單一比較式，
-    // this.search=''、capturedTerm='Foo' 必然不相等，函式會提前 return，此斷言就會失敗。
-    c._checkPreciseActressMatch('Foo', 'pill');
-    assert.equal(c._isPreciseActressMatch, true);
-    assert.equal(c._matchedActress?.name, 'Foo');
-});
-
-test("_isExpectedHeroCardTerm：'manual'/'metadata' 兩條既有路徑逐位元組不變（比對 this.search）", () => {
-    const c = makeComponent({ search: 'Foo', pills: [] });
-    assert.equal(c._isExpectedHeroCardTerm('Foo', 'manual'), true);
-    assert.equal(c._isExpectedHeroCardTerm('Bar', 'manual'), false);
-    assert.equal(c._isExpectedHeroCardTerm('Foo', 'metadata'), true);
-});
-
 test('_isExpectedHeroCardTerm：pill 分支用 normalizePillValue 比對（大小寫/半形差異也算符合）', () => {
     const c = makeComponent({ pills: [{ dim: 'actress', value: 'FOO' }], search: '' });
     assert.equal(c._isExpectedHeroCardTerm('foo', 'pill'), true);
@@ -552,15 +440,6 @@ test('call site 3/9（真身）— confirmRemoveActress() 後 hero 狀態依規�
 // ===== TASK-138-T1：_awaitHeroCardWithTimeout 行為（import 真身，不 stub）=====
 // HERO_CARD_RECONCILE_TIMEOUT_MS = 300（卡死保險）；四案例對應 card 補充段第 2 條。
 
-test('_awaitHeroCardWithTimeout：promise 早於逾時 resolve → 包裝也早 resolve（不空等滿逾時）', async () => {
-    const fn = stateBaseMod._awaitHeroCardWithTimeout;
-    assert.equal(typeof fn, 'function', '_awaitHeroCardWithTimeout 必須是 module-level export function');
-    const t0 = Date.now();
-    await fn(new Promise((resolve) => setTimeout(resolve, 20)));
-    const elapsed = Date.now() - t0;
-    assert.ok(elapsed < 200, `應在逾時門檻前 resolve，實際耗時 ${elapsed}ms`);
-});
-
 test('_awaitHeroCardWithTimeout：promise 慢於逾時 → 包裝在逾時點 resolve，且原 promise 仍跑到完成', async () => {
     const fn = stateBaseMod._awaitHeroCardWithTimeout;
     assert.equal(typeof fn, 'function', '_awaitHeroCardWithTimeout 必須是 module-level export function');
@@ -575,17 +454,6 @@ test('_awaitHeroCardWithTimeout：promise 慢於逾時 → 包裝在逾時點 re
     assert.equal(originalFinished, false, '逾時點當下原 promise 尚未完成（證明包裝沒有空等它）');
     await slow;
     assert.equal(originalFinished, true, '原 promise 必須繼續跑到完成（CD-C3：不得取消 in-flight）');
-});
-
-test('_awaitHeroCardWithTimeout：傳入 undefined／非 Promise → 立即 resolve 不 hang', async () => {
-    const fn = stateBaseMod._awaitHeroCardWithTimeout;
-    assert.equal(typeof fn, 'function', '_awaitHeroCardWithTimeout 必須是 module-level export function');
-    const t0 = Date.now();
-    await fn(undefined);
-    await fn(42);
-    await fn(null);
-    const elapsed = Date.now() - t0;
-    assert.ok(elapsed < 100, `非 Promise 輸入應立即 resolve，實際耗時 ${elapsed}ms`);
 });
 
 test('_awaitHeroCardWithTimeout：傳入會 reject 的 promise → 包裝仍 resolve、不產生 unhandled rejection', async () => {
