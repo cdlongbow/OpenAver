@@ -144,7 +144,7 @@ def click_gantt_actress(page: Page, name: str) -> None:
             '.gantt-table .gantt-row:not(.gantt-head-row)')) {
             const n = row.querySelector('.gantt-name');
             if (!n || n.textContent.trim() !== name) continue;
-            const cell = row.querySelector('.gantt-cell') || row;
+            const cell = row.querySelector('.gantt-name') || row;
             cell.scrollIntoView({ block: 'center', inline: 'center' });
             const r = cell.getBoundingClientRect();
             return { found: true, x: r.left + r.width / 2, y: r.top + r.height / 2 };

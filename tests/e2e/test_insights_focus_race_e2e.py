@@ -44,8 +44,8 @@ E2E 安全網：TASK-156d-T7 — 快速連點最終一致性＋PRM 全域整合�
      後直接點一次目標」（F2「切換」情境，因為目標不是清除）。
   3. 點擊目標一律用年表（`.gantt-table .gantt-row`，row5）——不在 row3/row7 的
      `is-hidden` 切換範圍內，點擊當下不會因為目標暫時 `display:none` 而落空。
-     座標取 `.gantt-cell`（資料格，非頭像——頭像有 `@click.stop`，點下去不會
-     冒泡到列本身的 `@click="toggleActressFocus(...)"`）。
+     座標取 `.gantt-name`（名字 hover 可預覽，click 冒泡到列切換女優；
+     頭像 click 選女優，資料格 click 會同時提交年份）。
 
 執行：
     source venv/bin/activate && pytest tests/e2e/test_insights_focus_race_e2e.py -v -m e2e
@@ -139,7 +139,7 @@ _FIND_GANTT_CELL_JS = """(name) => {
     for (const row of rows) {
         const nameEl = row.querySelector('.gantt-name');
         if (nameEl && nameEl.textContent.trim() === name) {
-            const cell = row.querySelector('.gantt-cell') || row;
+            const cell = row.querySelector('.gantt-name') || row;
             cell.scrollIntoView({ block: 'center', inline: 'center' });
             const r = cell.getBoundingClientRect();
             return { x: r.left + r.width / 2, y: r.top + r.height / 2, found: true };
@@ -232,7 +232,7 @@ def _click_mid_tween(page: Page, watch_ref: str, click_name: str,
             for (const row of rows) {
                 const nameEl = row.querySelector('.gantt-name');
                 if (nameEl && nameEl.textContent.trim() === name) {
-                    const cell = row.querySelector('.gantt-cell') || row;
+                    const cell = row.querySelector('.gantt-name') || row;
                     cell.scrollIntoView({ block: 'center', inline: 'center' });
                     const r = cell.getBoundingClientRect();
                     coords = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
