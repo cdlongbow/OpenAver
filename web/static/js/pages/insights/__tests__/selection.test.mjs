@@ -9,6 +9,8 @@ const {
     toggleYear,
     toggleActress,
     toggleMaker,
+    toggleGanttCell,
+    isHoverPointer,
     scopeRecords,
     emptyKey,
     periodLabel,
@@ -333,3 +335,157 @@ test('selection: suffixLabel 只在 suffixDims 有值時加期間', () => {
     const selNone = { period: { type: 'year', year: 2021 }, actress: null, maker: null };
     assert.equal(suffixLabel(selNone, ['actress', 'maker'], '全庫'), '');
 });
+
+// ── 17. selection: toggleGanttCell 有片格把女優與年份一起設成單一年（表第 1–5、7 列） ──
+
+test('selection: toggleGanttCell 有片格把女優與年份一起設成單一年（表第 1–5、7 列）', () => {
+    const cases = [
+        // 1: null／all
+        { sel: { actress: null, period: { type: 'all' } }, name: 'A', year: 2021, expActress: 'A', expPeriod: { type: 'year', year: 2021 } },
+        // 2: B／all
+        { sel: { actress: 'B', period: { type: 'all' } }, name: 'A', year: 2021, expActress: 'A', expPeriod: { type: 'year', year: 2021 } },
+        // 3: A／all
+        { sel: { actress: 'A', period: { type: 'all' } }, name: 'A', year: 2021, expActress: 'A', expPeriod: { type: 'year', year: 2021 } },
+        // 4: A／range 2019–2023
+        { sel: { actress: 'A', period: { type: 'range', from: 2019, to: 2023 } }, name: 'A', year: 2022, expActress: 'A', expPeriod: { type: 'year', year: 2022 } },
+        // 5: A／range 2019–2023
+        { sel: { actress: 'A', period: { type: 'range', from: 2019, to: 2023 } }, name: 'A', year: 2015, expActress: 'A', expPeriod: { type: 'year', year: 2015 } },
+        // 7: A／year 2020
+        { sel: { actress: 'A', period: { type: 'year', year: 2020 } }, name: 'A', year: 2021, expActress: 'A', expPeriod: { type: 'year', year: 2021 } },
+    ];
+    for (const c of cases) {
+        const out = toggleGanttCell(c.sel, c.name, c.year);
+        assert.equal(out.actress, c.expActress);
+        assert.deepEqual(out.period, c.expPeriod);
+    }
+});
+
+// ── 18. selection: toggleGanttCell 再點同一格只取消年份、女優保留（表第 6 列） ──────
+
+test('selection: toggleGanttCell 再點同一格只取消年份、女優保留（表第 6 列）', () => {
+    const sel = { actress: 'A', period: { type: 'year', year: 2021 } };
+    const out = toggleGanttCell(sel, 'A', 2021);
+    assert.equal(out.actress, 'A');
+    assert.deepEqual(out.period, { type: 'all' });
+});
+
+// ── 19. selection: toggleGanttCell 年份同但女優不是她時不取消年份（表第 8 列） ────────
+
+test('selection: toggleGanttCell 年份同但女優不是她時不取消年份（表第 8 列）', () => {
+    const sel = { actress: 'B', period: { type: 'year', year: 2021 } };
+    const out = toggleGanttCell(sel, 'A', 2021);
+    assert.equal(out.actress, 'A');
+    assert.deepEqual(out.period, { type: 'year', year: 2021 });
+});
+
+// ── 20. selection: toggleGanttCell year 為 null 且尚未選她時只選女優、年份不動（表第 9、10b 列） ──
+
+test('selection: toggleGanttCell year 為 null 且尚未選她時只選女優、年份不動（表第 9、10b 列）', () => {
+    // 9: null／year 2019
+    const sel9 = { actress: null, period: { type: 'year', year: 2019 } };
+    const out9 = toggleGanttCell(sel9, 'A', null);
+    assert.equal(out9.actress, 'A');
+    assert.deepEqual(out9.period, { type: 'year', year: 2019 });
+
+    // 10b: B／year 2019
+    const sel10b = { actress: 'B', period: { type: 'year', year: 2019 } };
+    const out10b = toggleGanttCell(sel10b, 'A', null);
+    assert.equal(out10b.actress, 'A');
+    assert.deepEqual(out10b.period, { type: 'year', year: 2019 });
+});
+
+// ── 21. selection: toggleGanttCell year 為 null 且她已被選中時永遠不取消女優（表第 10 列） ──
+
+test('selection: toggleGanttCell year 為 null 且她已被選中時永遠不取消女優（表第 10 列）', () => {
+    const sel = { actress: 'A', period: { type: 'year', year: 2019 } };
+    const out = toggleGanttCell(sel, 'A', null);
+    assert.notEqual(out, sel);
+    assert.equal(out.actress, 'A');
+    assert.deepEqual(out.period, { type: 'year', year: 2019 });
+});
+
+// ── 22. selection: toggleGanttCell 任何列都不動 maker（表第 11 列） ─────────────────
+
+test('selection: toggleGanttCell 任何列都不動 maker（表第 11 列）', () => {
+    const cases = [
+        // 1
+        { sel: { actress: null, period: { type: 'all' }, maker: 'M' }, name: 'A', year: 2021, expActress: 'A', expPeriod: { type: 'year', year: 2021 } },
+        // 2
+        { sel: { actress: 'B', period: { type: 'all' }, maker: 'M' }, name: 'A', year: 2021, expActress: 'A', expPeriod: { type: 'year', year: 2021 } },
+        // 3
+        { sel: { actress: 'A', period: { type: 'all' }, maker: 'M' }, name: 'A', year: 2021, expActress: 'A', expPeriod: { type: 'year', year: 2021 } },
+        // 4
+        { sel: { actress: 'A', period: { type: 'range', from: 2019, to: 2023 }, maker: 'M' }, name: 'A', year: 2022, expActress: 'A', expPeriod: { type: 'year', year: 2022 } },
+        // 5
+        { sel: { actress: 'A', period: { type: 'range', from: 2019, to: 2023 }, maker: 'M' }, name: 'A', year: 2015, expActress: 'A', expPeriod: { type: 'year', year: 2015 } },
+        // 6
+        { sel: { actress: 'A', period: { type: 'year', year: 2021 }, maker: 'M' }, name: 'A', year: 2021, expActress: 'A', expPeriod: { type: 'all' } },
+        // 7
+        { sel: { actress: 'A', period: { type: 'year', year: 2020 }, maker: 'M' }, name: 'A', year: 2021, expActress: 'A', expPeriod: { type: 'year', year: 2021 } },
+        // 8
+        { sel: { actress: 'B', period: { type: 'year', year: 2021 }, maker: 'M' }, name: 'A', year: 2021, expActress: 'A', expPeriod: { type: 'year', year: 2021 } },
+        // 9
+        { sel: { actress: null, period: { type: 'year', year: 2019 }, maker: 'M' }, name: 'A', year: null, expActress: 'A', expPeriod: { type: 'year', year: 2019 } },
+        // 10
+        { sel: { actress: 'A', period: { type: 'year', year: 2019 }, maker: 'M' }, name: 'A', year: null, expActress: 'A', expPeriod: { type: 'year', year: 2019 } },
+        // 10b
+        { sel: { actress: 'B', period: { type: 'year', year: 2019 }, maker: 'M' }, name: 'A', year: null, expActress: 'A', expPeriod: { type: 'year', year: 2019 } },
+    ];
+    for (const c of cases) {
+        const out = toggleGanttCell(c.sel, c.name, c.year);
+        assert.equal(out.maker, 'M');
+        assert.equal(out.actress, c.expActress);
+        assert.deepEqual(out.period, c.expPeriod);
+    }
+});
+
+// ── 23. selection: toggleGanttCell Proxy 或凍結的 sel 結果正確、輸入未被改、回傳新物件（表第 12 列） ──
+
+test('selection: toggleGanttCell Proxy 或凍結的 sel 結果正確、輸入未被改、回傳新物件（表第 12 列）', () => {
+    // 1. deepProxy
+    const rawSel = {
+        actress: 'A',
+        period: { type: 'year', year: 2021 },
+        maker: 'SOD',
+    };
+    const proxySel = deepProxy(rawSel);
+    assert.notEqual(proxySel.period, rawSel.period);
+
+    const outProxy = toggleGanttCell(proxySel, 'A', 2021);
+    assert.notEqual(outProxy, proxySel);
+    assert.notEqual(outProxy, rawSel);
+    assert.equal(outProxy.actress, 'A');
+    assert.deepEqual(outProxy.period, { type: 'all' });
+    assert.equal(outProxy.maker, 'SOD');
+
+    assert.equal(rawSel.actress, 'A');
+    assert.deepEqual(rawSel.period, { type: 'year', year: 2021 });
+
+    // 2. Object.freeze
+    const frozenSel = Object.freeze({
+        actress: 'B',
+        period: Object.freeze({ type: 'range', from: 2019, to: 2023 }),
+        maker: 'Moodyz',
+    });
+    let outFrozen;
+    assert.doesNotThrow(() => {
+        outFrozen = toggleGanttCell(frozenSel, 'A', 2022);
+    });
+    assert.notEqual(outFrozen, frozenSel);
+    assert.equal(outFrozen.actress, 'A');
+    assert.deepEqual(outFrozen.period, { type: 'year', year: 2022 });
+    assert.equal(outFrozen.maker, 'Moodyz');
+    assert.equal(frozenSel.actress, 'B');
+});
+
+// ── 24. selection: isHoverPointer undefined／mouse／pen／空字串回 true，touch 回 false ──
+
+test('selection: isHoverPointer undefined／mouse／pen／空字串回 true，touch 回 false', () => {
+    assert.equal(isHoverPointer(undefined), true);
+    assert.equal(isHoverPointer(null), true);
+    assert.equal(isHoverPointer({ pointerType: 'mouse' }), true);
+    assert.equal(isHoverPointer({ pointerType: 'pen' }), true);
+    assert.equal(isHoverPointer({ pointerType: '' }), true);
+    assert.equal(isHoverPointer({ pointerType: 'touch' }), false);
+});
+

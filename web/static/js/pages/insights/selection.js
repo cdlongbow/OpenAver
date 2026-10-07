@@ -100,3 +100,17 @@ export function suffixLabel(sel, suffixDims, allLabel) {
     if (!hasAny) return '';
     return ' · ' + periodLabel(sel.period, allLabel);
 }
+
+export function toggleGanttCell(sel, name, year) {
+    const base = sel || emptySel();
+    const period = normalizePeriod(base.period);
+    if (year == null) return { ...base, period, actress: name };
+    if (base.actress === name && period.type === 'year' && period.year === year) return { ...base, period: { type: 'all' }, actress: name };
+    return { ...base, period: { type: 'year', year }, actress: name };
+}
+
+export function isHoverPointer(ev) {
+    if (!ev) return true;
+    return ev.pointerType !== 'touch';
+}
+
