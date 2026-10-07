@@ -155,7 +155,7 @@ OpenAver has four main pages:
 
 ### 📊 Insights: turn your whole library into charts
 
-- **See your library's shape at a glance, then dig deeper**: total count/year/focus at the top, then a per-year bar chart, a two-ring maker pie chart, an actress Top 20, and a tag treemap; one level deeper is actress age-on-release distribution, top directors/series, a per-actress maker timeline, and who she's most often paired with.
+- **See your library's shape at a glance, then dig deeper**: total count/year/focus at the top, then a per-year bar chart, a two-ring maker pie chart, an actress Top 25, and a tag treemap; one level deeper is actress age-on-release distribution, top directors/series, a per-actress maker timeline, and who she's most often paired with.
 - **Click anything to narrow the view**: click a year, an actress, or a maker and every chart narrows to that scope; click again to clear it.
 
 ### 📀 Read-only sources: videos on a NAS stay untouched and still reach your media player
