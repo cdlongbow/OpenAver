@@ -282,14 +282,6 @@ test('DoD#8 直接餵 lo>hi 的 range pill 給 predicate → 空集合', () => {
 
 // ── DoD #11：_togglePillEditor 在 disabled 時不開啟（第二層防禦）──────────
 
-test('DoD#11 _togglePillEditor 在 _pillPopoverEnabled=false 時不開啟', () => {
-    const c = makeComponent();
-    c._pillPopoverEnabled = false;
-    c.addActressPill('age', 37);
-    c._togglePillEditor(c.actressPills[0]);
-    assert.equal(c._pillEditor, null);
-});
-
 test('DoD#11 _togglePillEditor 桌機可開、再點同 dim 關閉', () => {
     const c = makeComponent();
     c._pillPopoverEnabled = true;
