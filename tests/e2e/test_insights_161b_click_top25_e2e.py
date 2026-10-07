@@ -2,7 +2,7 @@
 import re
 import pytest
 from tests.e2e._insights_motion_helpers import (
-    alpine, load_ready, wait_scroll_settled, wait_settled,
+    alpine, click_donut_named_maker, load_ready, wait_scroll_settled, wait_settled,
 )
 pytestmark = pytest.mark.e2e
 ENTRIES = {
@@ -110,3 +110,32 @@ def test_gantt_film_cell_commits_actress_year_count(page, base_url):
     want = sum(r['year'] == year and name in (r['actresses'] or []) for r in recs)
     assert re.sub(r'\D', '', page.locator('#tileCount .insights-big-number .insights-tile-value').inner_text()) == str(want)
     _assert_year(page, name, year)
+
+def test_gantt_same_film_cell_clears_only_year(page, base_url):
+    _open(page, base_url)
+    name, cells = _gantt(page)
+    _click(page, _cell(page, name, cells[0]))
+    _assert_year(page, name, cells[0]['year'])
+    _click(page, _cell(page, name, cells[0]))
+    assert _sel(page) == {'actress': name, 'maker': None, 'period': {'type': 'all'}}
+    assert name in page.locator('#tileActress').inner_text()
+    assert '全部年份' in page.locator('#tileYear').inner_text()
+
+def test_gantt_film_cell_keeps_maker(page, base_url, monkeypatch):
+    _open(page, base_url)
+    _xy(page, page.locator('#donutChart'))
+    original = page.mouse.click
+    def checked(x, y):
+        assert page.evaluate('([x,y]) => !!document.elementFromPoint(x,y)?.closest("#donutChart")', [x, y])
+        original(x, y)
+    with monkeypatch.context() as patch:
+        patch.setattr(page.mouse, 'click', checked)
+        maker = click_donut_named_maker(page)
+    if not maker:
+        pytest.skip('圓餅缺 named 片商扇區')
+    wait_settled(page)
+    assert _sel(page)['maker'] == maker
+    name, cells = _gantt(page)
+    _click(page, _cell(page, name, cells[0]))
+    assert _sel(page)['maker'] == maker
+    _assert_year(page, name, cells[0]['year'])
