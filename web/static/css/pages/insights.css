@@ -388,7 +388,7 @@
            .rest20-list 留出 655px 可用高度，比 17 列實際內容 697px 少 42px，
            在此把開銷項從 13.5rem 調到 17rem 補回這段落差＋留一點餘裕）＋
            17 列 × 單列實測高度 2.5625rem＋兩卡間 gap 0.5rem。 */
-        --top20-slot-h: calc(17rem + 17 * 2.5625rem + 0.5rem);
+        --top20-slot-h: calc(17rem + var(--top20-rest-rows) * 2.5625rem + 0.5rem);
     }
 
     .insights-container .row3-top20-slot {
@@ -397,6 +397,14 @@
 }
 
 /* Top20 列（TASK-156b-T5）——名字與片數共用字級來源 */
+.insights-container {
+    --top20-rest-rows: 20;
+}
+
+.insights-container.is-podium-3 {
+    --top20-rest-rows: 22;
+}
+
 .insights-container {
     --top20-text-size: 0.8125rem;
     --insights-preview-ratio: 0.8;
@@ -611,6 +619,54 @@
     font-size: 0.875rem;
     font-weight: 700;
     color: var(--text-primary);
+}
+
+/* TASK-161b-T4：五人版兩層共用間距與槽寬，三人版沿用既有宣告。 */
+.insights-container .podium--5 .podium-stands,
+.insights-container .podium--5 .podium-people {
+    column-gap: 0.5rem;
+}
+
+.insights-container .podium--5 .podium-slot,
+.insights-container .podium--5 .podium-stand {
+    width: auto;
+    flex: 0 1 5.5rem;
+    min-width: calc(5 * var(--top20-text-size) + 0.75rem);
+}
+
+.insights-container .podium--5 .podium-slot--far-left {
+    order: 0;
+    padding-bottom: calc(24px + 0.25rem);
+}
+
+.insights-container .podium--5 .podium-slot--left {
+    order: 1;
+    padding-bottom: calc(56px + 0.25rem);
+}
+
+.insights-container .podium--5 .podium-slot--center {
+    order: 2;
+    padding-bottom: calc(72px + 0.25rem);
+}
+
+.insights-container .podium--5 .podium-slot--right {
+    order: 3;
+    padding-bottom: calc(40px + 0.25rem);
+}
+
+.insights-container .podium--5 .podium-slot--far-right {
+    order: 4;
+    padding-bottom: calc(24px + 0.25rem);
+}
+
+.insights-container .podium--5 .podium-stand--4 {
+    height: 24px;
+    order: 0;
+}
+
+.insights-container .podium--5 .podium-stand--5 {
+    height: 24px;
+    order: 4;
 }
 
 /* 精簡名單（第 4–20 名）——形狀照舊 top20 排行列，拿掉長條相關兩個節點 */

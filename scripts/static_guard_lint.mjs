@@ -5238,6 +5238,14 @@ const RULES = [
   { file: "web/templates/insights.html", kind: "required-string", pattern: "'is-podium-3': podiumSize === 3", note: "[161b-T3] 根容器掛 is-podium-3" },
   { file: "web/templates/insights.html", kind: "required-string", pattern: "<h2 x-text=\"top20RestTitle\"></h2>", note: "[161b-T3] 名單卡標題接 top20RestTitle" },
 
+  // ---- [161b-T4] 五人頒獎台與桌面名單列數 ----
+  { file: "web/static/css/pages/insights.css", kind: "required-string", pattern: "        --top20-slot-h: calc(17rem + var(--top20-rest-rows) * 2.5625rem + 0.5rem);", note: "[161b-T4] 桌面固定高度的列數吃 --top20-rest-rows" },
+  { file: "web/static/css/pages/insights.css", kind: "required-string", pattern: "    --top20-rest-rows: 22;", note: "[161b-T4] is-podium-3 時名單列數為 22" },
+  { file: "web/static/css/pages/insights.css", kind: "required-string", pattern: "    --top20-rest-rows: 20;", note: "[161b-T4] 預設名單列數為 20" },
+  { file: "web/static/css/pages/insights.css", kind: "required-string", pattern: "    min-width: calc(5 * var(--top20-text-size) + 0.75rem);", note: "[161b-T4] 5 人槽最小寬保證 5 個全形字" },
+  { file: "web/static/css/pages/insights.css", kind: "required-string", pattern: "    flex: 0 1 5.5rem;", note: "[161b-T4] 5 人槽可縮不可長" },
+  { file: "web/static/css/pages/insights.css", kind: "required-string", pattern: "    column-gap: 0.5rem;", note: "[161b-T4] 5 人版台座與人員層間距 0.5rem" },
+
 ];
 
 // ---- helpers ----
