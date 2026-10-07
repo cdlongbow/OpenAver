@@ -152,6 +152,13 @@
     transition: box-shadow var(--duration-fast) var(--fluent-ease-standard);
 }
 
+.insights-container #tileCount.is-clickable.is-scoped {
+    background-image: linear-gradient(
+        color-mix(in oklch, var(--color-primary) 3%, transparent),
+        color-mix(in oklch, var(--color-primary) 3%, transparent)
+    );
+}
+
 .insights-container #tileCount.is-clickable:hover {
     background-image: linear-gradient(
         color-mix(in oklch, var(--color-primary) 6%, transparent),
@@ -173,6 +180,10 @@
 
 .insights-container #tileCount.is-clickable .insights-open-arrow {
     display: inline;
+}
+
+.insights-container #tileCount.is-clickable.is-scoped .insights-open-arrow {
+    color: var(--text-primary); /* ↗ 與數字同字色 */
 }
 
 .insights-container .insights-tile-error-msg {

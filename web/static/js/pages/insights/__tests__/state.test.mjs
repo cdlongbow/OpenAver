@@ -853,6 +853,21 @@ function installBrowseStubs({ stored = null, setItemThrows = false } = {}) {
     return { calls, warns, restore };
 }
 
+test('hasScope: 全部為 false，只有年份／女優／片商／範圍為 true', () => {
+    const state = libraryInsightsState();
+    const cases = [
+        [selOf({}), false],
+        [selOf({ period: { type: 'year', year: 2020 } }), true],
+        [selOf({ actress: 'Alice' }), true],
+        [selOf({ maker: 'SOD' }), true],
+        [selOf({ period: { type: 'range', from: 2019, to: 2021 } }), true],
+    ];
+    for (const [sel, expected] of cases) {
+        state.sel = sel;
+        assert.equal(state.hasScope, expected, JSON.stringify(sel));
+    }
+});
+
 test('canGoBrowse: 片數為 0、快照失敗、尚未載入時為 false，有片時為 true', () => {
     const fresh = libraryInsightsState();
     assert.equal(fresh.canGoBrowse, false);

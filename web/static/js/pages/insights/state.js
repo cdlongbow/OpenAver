@@ -263,6 +263,10 @@ export function libraryInsightsState() {
             ).length;
         },
 
+        get hasScope() {
+            return normalizePeriod(this.sel.period).type !== 'all' || Boolean(this.sel.actress || this.sel.maker);
+        },
+
         /**
          * TASK-161a-T7：片數格可點判定（唯一一處）。
          * 讀真相欄位 scopedCount，不讀補間中的 displayScopedCount。

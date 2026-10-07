@@ -60,7 +60,7 @@
                                     <span x-text="row.name.charAt(0)"></span>
                                 </template>
                             </span>
-                            <span class="podium-name"
+                            <span class="podium-name" @pointerenter="scheduleOpenPreview(row.name, $el, $event)" @pointerleave="cancelOpenPreview()"
                                   :title="row.name"
                                   x-text="row.name"></span>
                             <span class="podium-count" x-text="topDisplayCount(row)"></span>
@@ -132,7 +132,7 @@
                  role="button"
                  :tabindex="canGoBrowse ? 0 : -1"
                  :aria-disabled="canGoBrowse ? 'false' : 'true'"
-                 :class="{ 'is-clickable': canGoBrowse }"
+                 :class="{ 'is-clickable': canGoBrowse, 'is-scoped': canGoBrowse && hasScope }"
                  :title="canGoBrowse ? t('insights.count_open_browse') : ''"
                  @click="goBrowse()"
                  @keydown.enter.prevent="goBrowse()"

@@ -5247,8 +5247,8 @@ const RULES = [
   // ---- [161b-T5] 頭像選人與 pointer hover 預覽 ----
   { file: "web/templates/insights.html", kind: "structure-count", pattern: "@click.stop=\"openPreview(", count: 2, note: "[161b-T5] 頭像 click 開預覽只剩頂排與 costar self 兩處" },
   { file: "web/templates/insights.html", kind: "structure-count", pattern: "@click.stop=\"sel.actress && openPreview(", count: 1, note: "[161b-T5] 頂排名字維持 click 開預覽" },
-  { file: "web/templates/insights.html", kind: "structure-count", pattern: "@pointerenter=\"scheduleOpenPreview(row.name, $el, $event)\"", count: 8, note: "[161b-T5] 八處頭像與名字 hover 走 pointerenter 並傳 $event" },
-  { file: "web/templates/insights.html", kind: "structure-count", pattern: "@pointerleave=\"cancelOpenPreview()\"", count: 8, note: "[161b-T5] 八處 pointerleave 收預覽" },
+  { file: "web/templates/insights.html", kind: "structure-count", pattern: "@pointerenter=\"scheduleOpenPreview(row.name, $el, $event)\"", count: 9, note: "[161b-T5] 九處頭像與名字 hover 走 pointerenter 並傳 $event" },
+  { file: "web/templates/insights.html", kind: "structure-count", pattern: "@pointerleave=\"cancelOpenPreview()\"", count: 9, note: "[161b-T5] 九處 pointerleave 收預覽" },
   { file: "web/templates/insights.html", kind: "forbidden-string", pattern: "@mouseenter=\"scheduleOpenPreview(row.name", note: "[161b-T5] 列表頭像不得殘留 mouseenter 排程預覽" },
   { file: "web/static/js/pages/insights/state.js", kind: "required-string", pattern: "if (!isHoverPointer(ev)) return;", note: "[161b-T5] scheduleOpenPreview 第一行以 isHoverPointer 擋觸控" },
   { file: "web/static/js/pages/insights/state.js", kind: "required-string", pattern: "this.cancelOpenPreview();", scope: { anchor: /flyAndFocusActress\(name, event/, window: 200 }, note: "[161b-T5] flyAndFocusActress 進入先 cancelOpenPreview" },
@@ -5262,6 +5262,10 @@ const RULES = [
   { file: "web/static/js/pages/insights/state.js", kind: "structure-count", pattern: "this.toggleActressFocus(name);", count: 1, note: "[161b-T6] flyAndFocusActress 三個提交出口一律走 _commitFocusSel" },
   { file: "web/static/js/pages/insights/state.js", kind: "structure-count", pattern: "{ currentTarget: rowEl }", count: 2, note: "[161b-T6] 年表格子 click 接 ganttCellClick 並 .stop（不冒泡到列）" },
   { file: "web/static/css/pages/insights.css", kind: "required-string", pattern: "cursor: pointer;", scope: { anchor: /\.gantt-row:not\(\.gantt-head-row\)/, window: 80 }, note: "[161b-T6] 年表資料列（排除表頭列）游標為 pointer" },
+
+  // ---- [161b-T9] 片數格常駐淡染與可點箭頭字色 ----
+  { file: "web/static/css/pages/insights.css", kind: "required-string", pattern: "color-mix(in oklch, var(--color-primary) 3%, transparent),", scope: { anchor: /#tileCount\.is-clickable\.is-scoped \{/, window: 400 }, note: "[161b-T9] 片數格可點態平常就帶 3% 主色底" },
+  { file: "web/static/css/pages/insights.css", kind: "required-string", pattern: "color: var(--text-primary); /* ↗ 與數字同字色 */", scope: { anchor: /#tileCount\.is-clickable\.is-scoped \.insights-open-arrow \{/, window: 200 }, note: "[161b-T9] 可點時 ↗ 用正常字色" },
 
 ];
 
