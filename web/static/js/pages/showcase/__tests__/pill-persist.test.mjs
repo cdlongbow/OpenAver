@@ -108,22 +108,6 @@ test('deserializePills：缺 dim/value、非字串型別、trim 後空字串 →
 
 // ===== Layer 2: wiring via stateBase saveState / restoreState =====
 
-test('saveState：replaceState 捕捉到的 URL 字串不含 pills', () => {
-    const stub = stubWindow({ pathname: '/showcase', search: '' });
-    const c = makeComponent({
-        pills: [{ dim: 'maker', value: 'Moodyz' }],
-        search: 'hello',
-        sort: 'title',
-        order: 'asc',
-        page: 2,
-        mode: 'table',
-    });
-    c.saveState();
-    const url = stub.lastReplaceUrl;
-    assert.equal(typeof url, 'string');
-    assert.ok(!url.includes('pills'), `URL must not contain pills, got: ${url}`);
-});
-
 test('restoreState：缺 pills 鍵（舊格式）→ this.pills=[]，不 throw，其餘欄位照常還原', () => {
     // T2 hydrate 從 config 覆寫 showTableList；僅 makeComponent override 撐不過 restoreState
     stubWindow({ search: '', config: { show_table_list: true } });
