@@ -271,7 +271,6 @@ test('browseDirUp does nothing when parent_path is null', async () => {
         assert.equal(called, 0);
     } finally {
         restore();
-
     }
 });
 
