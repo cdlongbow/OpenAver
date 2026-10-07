@@ -173,6 +173,14 @@ test('flyAndFocusActress: 帶 nextSel 時清除分支與找不到來源的提前
     }
 });
 
+test('flyAndFocusActress: 進入先收掉已開的預覽（hover 後直接點選人不殘留）', () => {
+    const state = libraryInsightsState();
+    state.previewActress = '某人';
+    state.flyAndFocusActress('她', null);
+    assert.equal(state.previewActress, null);
+    assert.equal(state.sel.actress, '她');
+});
+
 test('_onPageShow: bfcache 還原時快照仍未載入完成（離頁前 fetch 被丟棄）→ 重新 fetch 並填入資料', async () => {
     // Finding 2：真實流程是 sidebar 點擊觸發 page-lifecycle.js 的 leavePage() →
     // 同步呼叫這裡註冊的 cleanup（_pageAlive=false），發生在快照 fetch 尚未回應時；
