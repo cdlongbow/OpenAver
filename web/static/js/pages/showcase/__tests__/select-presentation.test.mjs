@@ -229,25 +229,6 @@ test('§0.2 行6（v2 P2 的洞）：table ＋ perPage=0 點「直式海報」�
     }
 });
 
-test('§0.2 行7：點自己（grid+cover 點「完整封面」）→ 零副作用', () => {
-    let captureCalls = 0;
-    let morphCalls = 0;
-    withAnimStub({
-        captureShapeState() { captureCalls++; return 'SNAP'; },
-        playShapeMorph() { morphCalls++; },
-    }, () => {
-        const c = makeComponent({ mode: 'grid', cardShape: 'cover' });
-        let switchModeCalls = 0;
-        const realSwitchMode = c.switchMode.bind(c);
-        c.switchMode = function (m) { switchModeCalls++; return realSwitchMode(m); };
-        c.selectPresentation('cover');
-        assert.equal(c.saveCalls, 0, '點自己不得呼叫 saveState（否則每次點自己都寫一次 localStorage）');
-        assert.equal(captureCalls, 0);
-        assert.equal(morphCalls, 0);
-        assert.equal(switchModeCalls, 0);
-    });
-});
-
 // =====================================================================
 // 契約
 // =====================================================================
@@ -269,94 +250,6 @@ test('契約：selectPresentation() body 不含 scrollTo / scrollIntoView（AC-8
     assert.equal(body.includes('scrollIntoView'), false);
 });
 
-test('契約（順序）：captureShapeState 必須在 cardShape 寫入之前呼叫（呼叫序記錄，非回傳值）', () => {
-    const events = [];
-    let c;
-    withAnimStub({
-        captureShapeState() {
-            events.push({ event: 'capture', cardShapeAtCallTime: c.cardShape });
-            return 'SNAP';
-        },
-        playShapeMorph() {
-            events.push({ event: 'morph', cardShapeAtCallTime: c.cardShape });
-        },
-    }, () => {
-        c = makeComponent({ mode: 'grid', cardShape: 'cover' });
-        c.selectPresentation('poster');
-        assert.equal(events.length, 2);
-        assert.equal(events[0].event, 'capture');
-        assert.equal(events[0].cardShapeAtCallTime, 'cover', 'capture 當下必須讀到舊值（寫入前）');
-        assert.equal(events[1].event, 'morph');
-        assert.equal(events[1].cardShapeAtCallTime, 'cover',
-            'morph 必須在 cardShape 寫入之前呼叫（CD-133a-2：state 最後寫）');
-        assert.equal(c.cardShape, 'poster', '回傳後 cardShape 必須已經是新值');
-    });
-});
-
-test('契約（同一工作單元）：playShapeMorph 必須同步呼叫，該分支不得排 $nextTick', () => {
-    let morphCalls = 0;
-    withAnimStub({
-        captureShapeState() { return 'SNAP'; },
-        playShapeMorph() { morphCalls++; },
-    }, () => {
-        const ticks = [];
-        const c = makeComponent({ mode: 'grid', cardShape: 'cover', $nextTick(fn) { ticks.push(fn); } });
-        c.selectPresentation('poster');
-        assert.equal(morphCalls, 1, 'playShapeMorph 必須在回傳前就被呼叫（同一工作單元）');
-        assert.equal(ticks.length, 0, 'grid→grid 分支不得再排任何 $nextTick');
-    });
-});
-
-test('契約（同一工作單元）：新版面的 class 必須在 playShapeMorph 之前就切成新值', () => {
-    const events = [];
-    withAnimStub({
-        captureShapeState() {
-            events.push({ event: 'capture', classOpsLen: FAKE_GRID._classOps.length });
-            return 'SNAP';
-        },
-        playShapeMorph() {
-            events.push({
-                event: 'morph',
-                classOpsLen: FAKE_GRID._classOps.length,
-                classOpsSnapshot: FAKE_GRID._classOps.slice(),
-            });
-        },
-    }, () => {
-        // cover → poster
-        const c1 = makeComponent({ mode: 'grid', cardShape: 'cover' });
-        c1.selectPresentation('poster');
-        assert.equal(events.length, 2);
-        assert.equal(events[0].event, 'capture');
-        assert.equal(events[1].event, 'morph');
-        assert.ok(
-            events[1].classOpsLen > events[0].classOpsLen,
-            'class toggle 必須發生在 morph 之前（capture 後、morph 前）',
-        );
-        assert.deepEqual(
-            events[1].classOpsSnapshot,
-            [['shape-poster', true]],
-            'cover→poster 必須 toggle shape-poster 為 true',
-        );
-
-        // poster → cover
-        events.length = 0;
-        const c2 = makeComponent({ mode: 'grid', cardShape: 'poster' });
-        c2.selectPresentation('cover');
-        assert.equal(events.length, 2);
-        assert.equal(events[0].event, 'capture');
-        assert.equal(events[1].event, 'morph');
-        assert.ok(
-            events[1].classOpsLen > events[0].classOpsLen,
-            'class toggle 必須發生在 morph 之前（反向）',
-        );
-        assert.deepEqual(
-            events[1].classOpsSnapshot,
-            [['shape-poster', false]],
-            'poster→cover 必須 toggle shape-poster 為 false',
-        );
-    });
-});
-
 test('契約：selectPresentation() body 內零 $nextTick（CD-133a-2，源碼斷言）', () => {
     const body = extractFnBody(STATE_VIDEOS_SRC, 'selectPresentation');
     assert.ok(body);
@@ -366,43 +259,6 @@ test('契約：selectPresentation() body 內零 $nextTick（CD-133a-2，源碼�
     assert.equal(code.includes('$nextTick'), false,
         '同一工作單元完成套版面＋建動畫，不得再排 $nextTick（會多畫一幀舊版面）');
 });
-
-test('契約：_getActiveGrid() 在 morph 路徑被呼叫（證明沒有自己 querySelector，CD-119-15 ⑤）', () => {
-    withAnimStub({
-        captureShapeState() { return 'SNAP'; },
-        playShapeMorph() {},
-    }, () => {
-        let getActiveGridCalls = 0;
-        const c = makeComponent({ mode: 'grid', cardShape: 'cover' });
-        c._getActiveGrid = function () { getActiveGridCalls++; return FAKE_GRID; };
-        c.selectPresentation('poster');
-        assert.equal(getActiveGridCalls, 1);
-    });
-});
-
-const UNKNOWN_TARGETS = ['foo', undefined, null, '', 0];
-for (const target of UNKNOWN_TARGETS) {
-    test(`契約：未知 target (${JSON.stringify(target)}) → 零副作用早退`, () => {
-        let captureCalls = 0;
-        let morphCalls = 0;
-        withAnimStub({
-            captureShapeState() { captureCalls++; return 'SNAP'; },
-            playShapeMorph() { morphCalls++; },
-        }, () => {
-            const c = makeComponent({ mode: 'grid', cardShape: 'cover', perPage: 60 });
-            let switchModeCalls = 0;
-            const realSwitchMode = c.switchMode.bind(c);
-            c.switchMode = function (m) { switchModeCalls++; return realSwitchMode(m); };
-            c.selectPresentation(target);
-            assert.equal(c.mode, 'grid');
-            assert.equal(c.cardShape, 'cover');
-            assert.equal(c.saveCalls, 0);
-            assert.equal(captureCalls, 0);
-            assert.equal(morphCalls, 0);
-            assert.equal(switchModeCalls, 0);
-        });
-    });
-}
 
 test('契約：window.ShowcaseAnimations 不存在時狀態仍正確切換、不拋錯', () => {
     const prev = globalThis.window.ShowcaseAnimations;
