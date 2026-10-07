@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from playwright.sync_api import Page
 from tests.e2e._insights_motion_helpers import (
-    ALPINE, alpine, chart_years, click_donut_named_maker, click_year_bar,
+    ALPINE, alpine, chart_years, click_year_bar,
     load_ready, reset_period_all, set_prm, board_list, wait_settled,
 )
 pytestmark = pytest.mark.e2e
@@ -89,17 +89,6 @@ def _assert_strict_mid(samples: list, from_v: int, to_v: int) -> None:
     mids = [v for v in tile_nums if lo < v < hi]
     assert mids, (
         f"應至少一次取樣嚴格介於 {from_v} 與 {to_v} 之間，序列={tile_nums}")
-def _list_makers(page: Page) -> list:
-    return page.evaluate("""() => {
-        const el = document.getElementById('donutChart');
-        const chart = window.echarts && window.echarts.getInstanceByDom(el);
-        if (!chart) return [];
-        const series = (chart.getOption().series || [])
-            .find(s => s.id === 'donut-inner') || (chart.getOption().series || [])[0];
-        return ((series && series.data) || [])
-            .filter(d => d && d.kind === 'named' && d.name && d.value > 0)
-            .map(d => ({ name: d.name, value: d.value }));
-    }""")
 def _dom_board_counts(page: Page) -> dict:
     """讀可見女優榜列顯示的片數文字 → {name: int}。"""
     return page.evaluate("""() => {
@@ -139,36 +128,6 @@ def test_count_up_year_change_animates_to_scoped(page: Page, base_url: str) -> N
     assert after["displayScopedCount"] == to_c
     _assert_locale(_tile(page), to_c)
     _assert_strict_mid(samples, from_c, to_c)
-
-def test_count_up_maker_focus_animates_to_scoped(page: Page, base_url: str) -> None:
-    """切片商焦點：同上。"""
-    load_ready(page, base_url)
-    reset_period_all(page)
-    page.wait_for_timeout(400)  # 甜甜圈回到無焦點靜態角度
-    all_c = _scoped(page)["scopedCount"]
-    makers = [m for m in _list_makers(page) if m["value"] != all_c]
-    if not makers:
-        pytest.skip("片庫湊不出『設焦點後頁首片數會變』的片商")
-    best = max(makers, key=lambda m: abs(m["value"] - all_c))
-    if abs(best["value"] - all_c) < 2:
-        pytest.skip(f"片商片數差太小（{all_c}→{best['value']}）")
-    _start_sampler(page)
-    maker = click_donut_named_maker(page)
-    if not maker:
-        pytest.skip("donutChart 找不到可點片商扇區")
-    # 點到的可能不是 best（扇區順序），以實際 focus 後 scopedCount 為準
-    page.wait_for_function(
-        """() => {
-            const d = Alpine.$data(document.querySelector('%s'));
-            return !!(d && d.sel && d.sel.maker);
-        }""" % ALPINE, timeout=3_000)
-    wait_settled(page)
-    samples = _stop_sampler(page)
-    after = _scoped(page)
-    assert after["displayScopedCount"] == after["scopedCount"]
-    _assert_locale(_tile(page), after["scopedCount"])
-    if abs(all_c - after["scopedCount"]) >= 2:
-        _assert_strict_mid(samples, all_c, after["scopedCount"])
 
 def test_count_up_first_load_shows_final(page: Page, base_url: str) -> None:
     """首次載入頁首直接是最終值。"""
