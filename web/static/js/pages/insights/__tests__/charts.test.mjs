@@ -46,9 +46,18 @@ const { UNKNOWN_KEY } = await import('../aggregate.js');
 // ── escapeHtml（P3-1：tooltip renderMode:'html' 自訂 formatter XSS 修正）───
 
 test('escapeHtml: <img onerror> payload 被拆解，不再是可執行的標籤', () => {
-    const out = escapeHtml('<img src=x onerror="window.__xss=1">');
-    assert.equal(out, '&lt;img src=x onerror=&quot;window.__xss=1&quot;&gt;');
-    assert.ok(!out.includes('<img'));
+    // 表驅動：每個轉義字元類別一列（標籤、&、雙／單引號、null／undefined）
+    const cases = [
+        { input: '<img src=x onerror="window.__xss=1">', exp: '&lt;img src=x onerror=&quot;window.__xss=1&quot;&gt;' },
+        { input: 'A & B', exp: 'A &amp; B' },
+        { input: `"quoted" 'single'`, exp: '&quot;quoted&quot; &#39;single&#39;' },
+        { input: null, exp: '' },
+        { input: undefined, exp: '' },
+    ];
+    for (const c of cases) {
+        assert.equal(escapeHtml(c.input), c.exp, String(c.input));
+    }
+    assert.ok(!escapeHtml(cases[0].input).includes('<img'));
 });
 
 // ── shouldAnimate ────────────────────────────────────────────────────
