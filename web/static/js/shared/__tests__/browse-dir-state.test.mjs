@@ -205,7 +205,7 @@ test('remembers last path per trigger point', async () => {
 // ── error handling keeps entries ───────────────────────────────────────────
 
 test('unknown error code and fetch throw both map to err_generic', async () => {
-    // 162a：404 not_found（原「non-2xx maps error code and keeps previous entries」）併入同一支
+    // 162a：404 not_found（原獨立測試：非 2xx 對應錯誤碼並保留原清單）併入同一支
     const cases = [
         { label: '404 not_found', impl: async () => errJson(404, 'not_found'), key: 'common.browse_dir.err_not_found' },
         { label: '500 weird_code', impl: async () => errJson(500, 'weird_code'), key: 'common.browse_dir.err_generic' },
