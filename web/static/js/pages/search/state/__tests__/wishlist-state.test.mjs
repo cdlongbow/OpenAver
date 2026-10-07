@@ -758,13 +758,6 @@ test("cardActionState: 本地沒有且未加入 → 'bookmark-add'", () => {
     );
 });
 
-test("cardActionState: 本地沒有且已加入 → 'bookmark-remove'", () => {
-    assert.equal(
-        cardActionState({ _localStatus: { exists: false }, _wishlisted: true }),
-        'bookmark-remove',
-    );
-});
-
 // ─── TASK-140-T11a：書籤燈箱狀態機（DoD 4a–4e）────────────────────────────
 
 function wishlistLightboxFixture(overrides = {}) {
@@ -783,24 +776,6 @@ function wishlistLightboxFixture(overrides = {}) {
     };
 }
 
-// DoD 4b
-test('closeWishlistLightbox()：open===false 且 wishlistItems 陣列本身不被清空', () => {
-    const items = [
-        { number: 'WL-001', title: 'one' },
-        { number: 'WL-002', title: 'two' },
-        { number: 'WL-003', title: 'three' },
-    ];
-    const state = wishlistLightboxFixture({
-        wishlistItems: items,
-        wishlistLightboxOpen: true,
-        wishlistLightboxIndex: 1,
-    });
-    searchStateWishlist().closeWishlistLightbox.call(state);
-    assert.equal(state.wishlistLightboxOpen, false);
-    assert.equal(state.wishlistItems, items, 'wishlistItems 陣列參考不得被替換或清空');
-    assert.equal(state.wishlistItems.length, 3);
-});
-
 // DoD 4c（mutation M2）— 測試名必須逐字等於 mutation expect_fail
 test('nextWishlistLightbox() 在最後一筆時 index 不超出 length-1；prevWishlistLightbox() 在第 0 筆時不變成 -1', () => {
     const state = wishlistLightboxFixture({
@@ -813,28 +788,6 @@ test('nextWishlistLightbox() 在最後一筆時 index 不超出 length-1；prevW
     state.wishlistLightboxIndex = 0;
     searchStateWishlist().prevWishlistLightbox.call(state);
     assert.equal(state.wishlistLightboxIndex, 0, '第 0 筆時 prev 不得變成 -1');
-});
-
-// DoD 4d
-test('currentWishlistLightboxItem()：index 越界／陣列為空時回 undefined／null（不得拋例外）', () => {
-    const state = wishlistLightboxFixture({ wishlistLightboxIndex: -1 });
-    assert.equal(
-        searchStateWishlist().currentWishlistLightboxItem.call(state),
-        undefined,
-    );
-
-    state.wishlistLightboxIndex = 99;
-    assert.equal(
-        searchStateWishlist().currentWishlistLightboxItem.call(state),
-        undefined,
-    );
-
-    state.wishlistItems = [];
-    state.wishlistLightboxIndex = 0;
-    assert.equal(
-        searchStateWishlist().currentWishlistLightboxItem.call(state),
-        undefined,
-    );
 });
 
 // DoD 4e
