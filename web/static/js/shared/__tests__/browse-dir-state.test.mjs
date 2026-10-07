@@ -258,6 +258,20 @@ test('browseDirCrumbs for Windows paths prepends drives', () => {
 
 // ── up / navigate null ─────────────────────────────────────────────────────
 
+test('browseDirUp does nothing when parent_path is null', async () => {
+    let called = 0;
+    const restore = mockFetch(async () => {
+        called++;
+        return okJson({ current_path: '/', parent_path: null, entries: [] });
+    });
+    try {
+        const s = makeState({ browseDirParentPath: null, browseDirCurrentPath: '/' });
+        s.browseDirUp();
+        await flush();
+        assert.equal(called, 0);
+    } finally {
+        restore();
+
 test('browseDirUp navigates to empty-string parent (Windows drive list)', async () => {
     const urls = [];
     const restore = mockFetch(async (url) => {
