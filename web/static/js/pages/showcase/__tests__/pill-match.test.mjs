@@ -196,6 +196,12 @@ test('mergeTagTokens：user_tags 非陣列（undefined / null / 數字）不拋�
     assert.equal(predicate({ tags: 'Y', user_tags: 'X' }), false);
 });
 
+test('actress 路徑不受 user_tags 影響：actresses 為 A、user_tags 含 B → actress pill B 不 match（邊界 6）', () => {
+    const predicate = buildPillPredicate([{ dim: 'actress', value: 'B' }], {}, {});
+    assert.equal(predicate({ actresses: 'A', user_tags: ['B'] }), false);
+});
+
+
 test('video.maker 為 null 的影片，對任何非空片商 pill 皆不 match、不拋例外（Extra 3 finding）', () => {
     const predicate = buildPillPredicate([{ dim: 'maker', value: 'S1' }], {}, {});
     assert.doesNotThrow(() => {
