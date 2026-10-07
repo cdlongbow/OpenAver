@@ -45,12 +45,12 @@ def _click_row_not_avatar(page: Page, row_sel: str, name: str, avatar_sel: str) 
             const avatar = row.querySelector(avatarSel);
             if (!avatar) continue;
             const nameEl = row.querySelector(
-                '.podium-name,.top20-name,.solo-name,.gantt-name,.costar-name');
+                '.podium-name,.board-name,.solo-name,.gantt-name,.costar-name');
             const match = nameEl ? nameEl.textContent.trim() === name
                 : (row.textContent || '').includes(name);
             if (!match) continue;
             const clickEl = nameEl
-                || row.querySelector('.podium-count,.top20-count,.gantt-cell') || row;
+                || row.querySelector('.podium-count,.board-count,.gantt-cell') || row;
             clickEl.scrollIntoView({ block: 'center', inline: 'nearest' });
             const ar = avatar.getBoundingClientRect(), cr = clickEl.getBoundingClientRect();
             let x = cr.left + Math.min(cr.width * 0.5, Math.max(8, cr.width - 8));
@@ -113,7 +113,7 @@ def _pick_target(page: Page, pool: list) -> str | None:
     return pool[0]
 ENTRIES = [
     ("podium", ".podium-slot", ".podium-avatar", "podium"),
-    ("rest20", ".rest20-row", ".top20-avatar", "rest"),
+    ("board-rest", ".board-rest-row", ".board-avatar", "rest"),
     ("costar", ".costar-row", '[data-costar-role="other"]', "costar"),
     ("gantt", ".gantt-table .gantt-row:not(.gantt-head-row)", ".gantt-avatar", "gantt"),
     ("solo", ".solo-row", ".solo-avatar", "solo"),
@@ -234,7 +234,7 @@ def test_avatar_fly_rapid_clicks_third_wins(page: Page, base_url: str) -> None:
     a, b, c = pool[0], pool[1], pool[2]
     def _click_rest(name: str) -> None:
         coords = page.evaluate("""name => {
-            const el = [...document.querySelectorAll('.rest20-row .top20-name')]
+            const el = [...document.querySelectorAll('.board-rest-row .board-name')]
                 .filter(e => e.offsetParent !== null && e.textContent.trim() === name).at(-1);
             if (!el) return null;
             el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });

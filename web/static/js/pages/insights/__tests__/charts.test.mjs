@@ -190,7 +190,7 @@ test('emptyKeyForCard: count 取該卡範圍內的片數，不是整體範圍', 
         cRec(2021, ['B'], 'S1'),
     ];
     const both = cSel({ actress: 'A', maker: 'S1' });
-    // Top 20 類（skip actress）：範圍＝期間∩片商，B 的片在 → 有東西，不是 period_empty
+    // 女優榜類（skip actress）：範圍＝期間∩片商，B 的片在 → 有東西，不是 period_empty
     assert.equal(emptyKeyForCard(records, both, 'actress'), 'insights.no_data');
     // 看自己那一維全貌之外的卡（不跳維度）：A∩S1 = 0 → period_empty
     assert.equal(emptyKeyForCard(records, both, null), 'insights.period_empty');

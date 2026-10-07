@@ -23,7 +23,7 @@ const {
     podiumSizeForViewport,
     buildMakerDonutData,
     classifyRecordAgainstMainMaker,
-    buildActressTop20,
+    buildActressBoard,
     aggregateTags,
     aggregateAge,
     aggregateFieldTop8,
@@ -694,7 +694,7 @@ test('§4.2 wiring: 5 卡群組 × 3 焦點 = 15 格 checklist', () => {
     // 女優焦點 → scopeRecords(actress)
     assert.deepStrictEqual(idsOf(scopeRecords(records, selOf(period, focusA), null)), IDS_SCOPE_ACTRESS);
 
-    // ── 女優 Top20（3）──
+    // ── 女優榜（3）──
     // 無焦點 → periodRecords
     assert.deepStrictEqual(idsOf(periodRecords(records, period)), IDS_PERIOD_ALL);
     // 片商焦點 → scopeRecords(maker)
@@ -713,7 +713,7 @@ test('§4.2 wiring: 5 卡群組 × 3 焦點 = 15 格 checklist', () => {
     // 女優焦點 → periodRecords（期間全貌，忽略 focus）
     assert.deepStrictEqual(idsOf(periodRecords(records, period)), IDS_PERIOD_ALL);
 
-    // 三個「期間全貌」格（片商圓餅×片商焦點、女優Top20×女優焦點、年表×女優焦點）：
+    // 三個「期間全貌」格（片商圓餅×片商焦點、女優榜×女優焦點、年表×女優焦點）：
     // 卡片取用 periodRecords（不吃 focus）。三種焦點 UI 狀態下 id 集合皆＝手寫全庫常數；
     // 有焦點時若誤改成 scopeRecords，會偏離 IDS_PERIOD_ALL。
     for (const focus of [null, focusM, focusA]) {
@@ -898,9 +898,9 @@ test('classifyRecordAgainstMainMaker: actresses 為空 → undetermined', () => 
     );
 });
 
-// ── buildActressTop20 (TASK-156b-T5) ─────────────────────────────────
+// ── buildActressBoard (TASK-156b-T5) ─────────────────────────────────
 
-test('buildActressTop20: 排序＝count 遞減 → monthCount 遞減 → name 遞增', () => {
+test('buildActressBoard: 排序＝count 遞減 → monthCount 遞減 → name 遞增', () => {
     const records = [
         rec({ actresses: ['Carol'], month: '2020-01' }),
         rec({ actresses: ['Alice'], month: '2020-01' }),
@@ -910,12 +910,12 @@ test('buildActressTop20: 排序＝count 遞減 → monthCount 遞減 → name �
         rec({ actresses: ['Bob'], month: '2020-03' }),
     ];
     // Alice:2/2, Bob:3/3, Carol:1/1 → Bob, Alice, Carol
-    const { rows } = buildActressTop20(records, selOf(undefined, null));
+    const { rows } = buildActressBoard(records, selOf(undefined, null));
     assert.deepEqual(rows.map((r) => r.name), ['Bob', 'Alice', 'Carol']);
     assert.deepEqual(rows.map((r) => r.rank), [1, 2, 3]);
 });
 
-test('buildActressTop20: 片數相同時依不同發行月份數降冪排序', () => {
+test('buildActressBoard: 片數相同時依不同發行月份數降冪排序', () => {
     // 兩人皆 3 片；Bob 跨 3 月、Alice 跨 1 月 → monthCount 讓 Bob 在前。
     // 名字序會把 Alice 放前面，故拿掉 monthCount 這一層會讓本測試轉紅。
     const records = [
@@ -926,7 +926,7 @@ test('buildActressTop20: 片數相同時依不同發行月份數降冪排序', (
         rec({ actresses: ['Alice'], month: '2020-01' }),
         rec({ actresses: ['Alice'], month: '2020-01' }),
     ];
-    const { rows } = buildActressTop20(records, selOf(undefined, null));
+    const { rows } = buildActressBoard(records, selOf(undefined, null));
     assert.equal(rows[0].name, 'Bob');
     assert.equal(rows[0].count, 3);
     assert.equal(rows[0].monthCount, 3);
@@ -935,22 +935,22 @@ test('buildActressTop20: 片數相同時依不同發行月份數降冪排序', (
     assert.equal(rows[1].monthCount, 1);
 });
 
-test('buildActressTop20: count／monthCount 都相同時依名字字串遞增', () => {
+test('buildActressBoard: count／monthCount 都相同時依名字字串遞增', () => {
     const records = [
         rec({ actresses: ['Bob'], month: '2020-01' }),
         rec({ actresses: ['Alice'], month: '2020-01' }),
     ];
-    const { rows } = buildActressTop20(records, selOf(undefined, null));
+    const { rows } = buildActressBoard(records, selOf(undefined, null));
     assert.deepEqual(rows.map((r) => r.name), ['Alice', 'Bob']);
 });
 
-test('buildActressTop20: monthCount 只算相異 month；month===null 計入 count 不計入 monthCount', () => {
+test('buildActressBoard: monthCount 只算相異 month；month===null 計入 count 不計入 monthCount', () => {
     const records = [
         rec({ actresses: ['Alice'], month: '2020-01' }),
         rec({ actresses: ['Alice'], month: '2020-01' }), // 同月再一部 → monthCount 仍 1
         rec({ actresses: ['Alice'], month: null }), // 計 count，不計 monthCount
     ];
-    const { rows } = buildActressTop20(records, selOf(undefined, null));
+    const { rows } = buildActressBoard(records, selOf(undefined, null));
     assert.equal(rows.length, 1);
     assert.equal(rows[0].count, 3);
     assert.equal(rows[0].monthCount, 1);
@@ -960,7 +960,7 @@ test('ACTRESS_TOP_N: 匯出且為 25', () => {
     assert.equal(ACTRESS_TOP_N, 25);
 });
 
-test('buildActressTop20: 女優排名剛好第 25 名時不附加額外列', () => {
+test('buildActressBoard: 女優排名剛好第 25 名時不附加額外列', () => {
     const records = [];
     // 26 人：A01..A26 各 26..1 片，全部同月 → A25 剛好 rank 25
     for (let i = 1; i <= 26; i++) {
@@ -971,14 +971,14 @@ test('buildActressTop20: 女優排名剛好第 25 名時不附加額外列', () 
         }
     }
     const focus = { type: 'actress', value: 'A25' };
-    const { rows } = buildActressTop20(records, selOf(undefined, focus));
+    const { rows } = buildActressBoard(records, selOf(undefined, focus));
     assert.equal(rows.length, 25);
     assert.equal(rows[24].name, 'A25');
     assert.equal(rows[24].rank, 25);
     assert.equal(rows.filter((r) => r.name === 'A25').length, 1);
 });
 
-test('buildActressTop20: 選中第 24 名（N-1）時不附加，rows 長 25', () => {
+test('buildActressBoard: 選中第 24 名（N-1）時不附加，rows 長 25', () => {
     const records = [];
     for (let i = 1; i <= 26; i++) {
         const name = 'A' + String(i).padStart(2, '0');
@@ -988,14 +988,14 @@ test('buildActressTop20: 選中第 24 名（N-1）時不附加，rows 長 25', (
         }
     }
     const focus = { type: 'actress', value: 'A24' };
-    const { rows } = buildActressTop20(records, selOf(undefined, focus));
+    const { rows } = buildActressBoard(records, selOf(undefined, focus));
     assert.equal(rows.length, 25);
     assert.equal(rows[23].name, 'A24');
     assert.equal(rows[23].rank, 24);
     assert.equal(rows.filter((r) => r.name === 'A24').length, 1);
 });
 
-test('buildActressTop20: focus 女優 rank>25 時附加真實排名列', () => {
+test('buildActressBoard: focus 女優 rank>25 時附加真實排名列', () => {
     const records = [];
     for (let i = 1; i <= 26; i++) {
         const name = 'A' + String(i).padStart(2, '0');
@@ -1006,38 +1006,38 @@ test('buildActressTop20: focus 女優 rank>25 時附加真實排名列', () => {
     }
     // A26 片數最少 → rank 26
     const focus = { type: 'actress', value: 'A26' };
-    const { rows } = buildActressTop20(records, selOf(undefined, focus));
+    const { rows } = buildActressBoard(records, selOf(undefined, focus));
     assert.equal(rows.length, 26);
     assert.equal(rows[25].name, 'A26');
     assert.equal(rows[25].rank, 26);
     assert.ok(rows.length <= ACTRESS_TOP_N + 1);
 });
 
-test('buildActressTop20: focus 女優在 records 完全無紀錄時不附加', () => {
+test('buildActressBoard: focus 女優在 records 完全無紀錄時不附加', () => {
     const records = [
         rec({ actresses: ['Alice'], month: '2020-01' }),
         rec({ actresses: ['Bob'], month: '2020-01' }),
     ];
-    const { rows } = buildActressTop20(records, selOf(undefined, { type: 'actress', value: 'Ghost' }));
+    const { rows } = buildActressBoard(records, selOf(undefined, { type: 'actress', value: 'Ghost' }));
     assert.equal(rows.length, 2);
     assert.equal(rows.some((r) => r.name === 'Ghost'), false);
 });
 
-test('buildActressTop20: 女優總數少於 25 時回傳實際總數', () => {
+test('buildActressBoard: 女優總數少於 25 時回傳實際總數', () => {
     const records = [
         rec({ actresses: ['Alice'], month: '2020-01' }),
         rec({ actresses: ['Bob'], month: '2020-01' }),
         rec({ actresses: ['Carol'], month: '2020-01' }),
     ];
-    const { rows } = buildActressTop20(records, selOf(undefined, null));
+    const { rows } = buildActressBoard(records, selOf(undefined, null));
     assert.equal(rows.length, 3);
 });
 
-test('buildActressTop20: 多人片每位女優各計一次；maker 焦點不附加列', () => {
+test('buildActressBoard: 多人片每位女優各計一次；maker 焦點不附加列', () => {
     const records = [
         rec({ actresses: ['Alice', 'Bob'], month: '2020-01' }),
     ];
-    const { rows } = buildActressTop20(records, selOf(undefined, { type: 'maker', value: 'SOD' }));
+    const { rows } = buildActressBoard(records, selOf(undefined, { type: 'maker', value: 'SOD' }));
     assert.equal(rows.length, 2);
     assert.equal(rows[0].count, 1);
     assert.equal(rows[1].count, 1);
@@ -2002,13 +2002,13 @@ test('buildCostarRows: 超過15位符合資格的搭檔只取前15位', () => {
 });
 
 
-// ── classifyTop20Transition / podiumPositionClass (TASK-156e-T1a) ─────
+// ── classifyBoardTransition / podiumPositionClass (TASK-156e-T1a) ─────
 
 function namesOf(arr) {
     return (arr || []).map((x) => x.name).sort();
 }
 
-test('classifyTop20Transition: 純列內換名次歸類為 rowStayers', () => {
+test('classifyBoardTransition: 純列內換名次歸類為 rowStayers', () => {
     const oldRows = [
         { name: 'A', rank: 1 },
         { name: 'B', rank: 2 },
@@ -2023,7 +2023,7 @@ test('classifyTop20Transition: 純列內換名次歸類為 rowStayers', () => {
         { name: 'E', rank: 4 },
         { name: 'D', rank: 5 },
     ];
-    const got = agg.classifyTop20Transition(oldRows, newRows, 3);
+    const got = agg.classifyBoardTransition(oldRows, newRows, 3);
     assert.deepEqual(namesOf(got.rowStayers), ['D', 'E']);
     assert.deepEqual(got.podiumReshuffle, []);
     assert.deepEqual(got.crossStructureMovers, []);
@@ -2032,7 +2032,7 @@ test('classifyTop20Transition: 純列內換名次歸類為 rowStayers', () => {
     assert.deepEqual(got.podiumNewEntrants, []);
 });
 
-test('classifyTop20Transition: 頒獎台內部 1↔2 互換兩人皆進 podiumReshuffle', () => {
+test('classifyBoardTransition: 頒獎台內部 1↔2 互換兩人皆進 podiumReshuffle', () => {
     const oldRows = [
         { name: 'A', rank: 1 },
         { name: 'B', rank: 2 },
@@ -2043,7 +2043,7 @@ test('classifyTop20Transition: 頒獎台內部 1↔2 互換兩人皆進 podiumRe
         { name: 'A', rank: 2 },
         { name: 'C', rank: 3 },
     ];
-    const got = agg.classifyTop20Transition(oldRows, newRows, 3);
+    const got = agg.classifyBoardTransition(oldRows, newRows, 3);
     assert.deepEqual(namesOf(got.podiumReshuffle), ['A', 'B']);
     assert.deepEqual(got.rowStayers, []);
     assert.deepEqual(got.crossStructureMovers, []);
@@ -2052,7 +2052,7 @@ test('classifyTop20Transition: 頒獎台內部 1↔2 互換兩人皆進 podiumRe
     assert.deepEqual(got.podiumNewEntrants, []);
 });
 
-test('classifyTop20Transition: 名單升上頒獎台歸類為 crossStructureMovers', () => {
+test('classifyBoardTransition: 名單升上頒獎台歸類為 crossStructureMovers', () => {
     const oldRows = [
         { name: 'A', rank: 1 },
         { name: 'B', rank: 2 },
@@ -2065,7 +2065,7 @@ test('classifyTop20Transition: 名單升上頒獎台歸類為 crossStructureMove
         { name: 'C', rank: 3 },
         { name: 'A', rank: 4 },
     ];
-    const got = agg.classifyTop20Transition(oldRows, newRows, 3);
+    const got = agg.classifyBoardTransition(oldRows, newRows, 3);
     assert.deepEqual(namesOf(got.crossStructureMovers), ['A', 'D']);
     assert.ok(!got.rowStayers.some((x) => x.name === 'D'));
     assert.ok(!got.podiumReshuffle.some((x) => x.name === 'D'));
@@ -2074,7 +2074,7 @@ test('classifyTop20Transition: 名單升上頒獎台歸類為 crossStructureMove
     assert.deepEqual(got.podiumNewEntrants, []);
 });
 
-test('classifyTop20Transition: 頒獎台掉到名單歸類為 crossStructureMovers', () => {
+test('classifyBoardTransition: 頒獎台掉到名單歸類為 crossStructureMovers', () => {
     const oldRows = [
         { name: 'A', rank: 1 },
         { name: 'B', rank: 2 },
@@ -2087,13 +2087,13 @@ test('classifyTop20Transition: 頒獎台掉到名單歸類為 crossStructureMove
         { name: 'C', rank: 3 },
         { name: 'A', rank: 4 },
     ];
-    const got = agg.classifyTop20Transition(oldRows, newRows, 3);
+    const got = agg.classifyBoardTransition(oldRows, newRows, 3);
     assert.ok(got.crossStructureMovers.some((x) => x.name === 'A'));
     assert.ok(!got.rowStayers.some((x) => x.name === 'A'));
     assert.ok(!got.podiumReshuffle.some((x) => x.name === 'A'));
 });
 
-test('classifyTop20Transition: 全新進榜落名單歸類為 brandNewEntrants', () => {
+test('classifyBoardTransition: 全新進榜落名單歸類為 brandNewEntrants', () => {
     const oldRows = [
         { name: 'A', rank: 1 },
         { name: 'B', rank: 2 },
@@ -2106,13 +2106,13 @@ test('classifyTop20Transition: 全新進榜落名單歸類為 brandNewEntrants',
         { name: 'C', rank: 3 },
         { name: 'E', rank: 4 },
     ];
-    const got = agg.classifyTop20Transition(oldRows, newRows, 3);
+    const got = agg.classifyBoardTransition(oldRows, newRows, 3);
     assert.deepEqual(namesOf(got.brandNewEntrants), ['E']);
     assert.deepEqual(namesOf(got.droppedOut), ['D']);
     assert.deepEqual(got.podiumNewEntrants, []);
 });
 
-test('classifyTop20Transition: 全新進榜落頒獎台歸類為 podiumNewEntrants', () => {
+test('classifyBoardTransition: 全新進榜落頒獎台歸類為 podiumNewEntrants', () => {
     const oldRows = [
         { name: 'A', rank: 1 },
         { name: 'B', rank: 2 },
@@ -2125,13 +2125,13 @@ test('classifyTop20Transition: 全新進榜落頒獎台歸類為 podiumNewEntran
         { name: 'C', rank: 3 },
         { name: 'D', rank: 4 },
     ];
-    const got = agg.classifyTop20Transition(oldRows, newRows, 3);
+    const got = agg.classifyBoardTransition(oldRows, newRows, 3);
     assert.deepEqual(namesOf(got.podiumNewEntrants), ['E']);
     assert.deepEqual(got.droppedOut, [{ name: 'A', wasPodium: true }]);
     assert.deepEqual(got.brandNewEntrants, []);
 });
 
-test('classifyTop20Transition: 完全掉出 Top20 且 wasPodium 正確', () => {
+test('classifyBoardTransition: 完全掉出女優榜且 wasPodium 正確', () => {
     const oldRows = [
         { name: 'A', rank: 1 },
         { name: 'B', rank: 2 },
@@ -2144,7 +2144,7 @@ test('classifyTop20Transition: 完全掉出 Top20 且 wasPodium 正確', () => {
         { name: 'B', rank: 2 },
         { name: 'C', rank: 3 },
     ];
-    const got = agg.classifyTop20Transition(oldRows, newRows, 3);
+    const got = agg.classifyBoardTransition(oldRows, newRows, 3);
     assert.deepEqual(
         got.droppedOut.slice().sort((a, b) => (a.name < b.name ? -1 : 1)),
         [
@@ -2153,7 +2153,7 @@ test('classifyTop20Transition: 完全掉出 Top20 且 wasPodium 正確', () => {
         ],
     );
 
-    const got2 = agg.classifyTop20Transition(
+    const got2 = agg.classifyBoardTransition(
         [{ name: 'A', rank: 1 }, { name: 'B', rank: 4 }],
         [{ name: 'B', rank: 4 }],
         3,
@@ -2161,7 +2161,7 @@ test('classifyTop20Transition: 完全掉出 Top20 且 wasPodium 正確', () => {
     assert.deepEqual(got2.droppedOut, [{ name: 'A', wasPodium: true }]);
 });
 
-test('classifyTop20Transition: 交叉情境 podiumReshuffle 與 crossStructureMovers 互斥', () => {
+test('classifyBoardTransition: 交叉情境 podiumReshuffle 與 crossStructureMovers 互斥', () => {
     // A↔B 頒獎台內部換位；C 從名單升上台；D 從台上掉到名單
     const oldRows = [
         { name: 'A', rank: 1 },
@@ -2175,7 +2175,7 @@ test('classifyTop20Transition: 交叉情境 podiumReshuffle 與 crossStructureMo
         { name: 'C', rank: 3 },
         { name: 'D', rank: 4 },
     ];
-    const got = agg.classifyTop20Transition(oldRows, newRows, 3);
+    const got = agg.classifyBoardTransition(oldRows, newRows, 3);
     assert.deepEqual(namesOf(got.podiumReshuffle), ['A', 'B']);
     assert.deepEqual(namesOf(got.crossStructureMovers), ['C', 'D']);
     assert.deepEqual(got.rowStayers, []);
@@ -2193,18 +2193,18 @@ test('classifyTop20Transition: 交叉情境 podiumReshuffle 與 crossStructureMo
     assert.equal(new Set(allNames).size, allNames.length);
 });
 
-test('classifyTop20Transition: podiumSize=5 時 4→6 名跨結構（3 人版同輸入為 rowStayers）', () => {
+test('classifyBoardTransition: podiumSize=5 時 4→6 名跨結構（3 人版同輸入為 rowStayers）', () => {
     const oldRows = [{ name: 'A', rank: 4 }];
     const newRows = [{ name: 'A', rank: 6 }];
-    const got5 = agg.classifyTop20Transition(oldRows, newRows, 5);
+    const got5 = agg.classifyBoardTransition(oldRows, newRows, 5);
     assert.deepEqual(namesOf(got5.crossStructureMovers), ['A']);
     assert.deepEqual(got5.rowStayers, []);
-    const got3 = agg.classifyTop20Transition(oldRows, newRows, 3);
+    const got3 = agg.classifyBoardTransition(oldRows, newRows, 3);
     assert.deepEqual(namesOf(got3.rowStayers), ['A']);
     assert.deepEqual(got3.crossStructureMovers, []);
 });
 
-test('classifyTop20Transition: podiumSize=5 時頒獎台內 4↔5 互換進 podiumReshuffle（3 人版為 rowStayers）', () => {
+test('classifyBoardTransition: podiumSize=5 時頒獎台內 4↔5 互換進 podiumReshuffle（3 人版為 rowStayers）', () => {
     const oldRows = [
         { name: 'A', rank: 4 },
         { name: 'B', rank: 5 },
@@ -2213,15 +2213,15 @@ test('classifyTop20Transition: podiumSize=5 時頒獎台內 4↔5 互換進 podi
         { name: 'B', rank: 4 },
         { name: 'A', rank: 5 },
     ];
-    const got5 = agg.classifyTop20Transition(oldRows, newRows, 5);
+    const got5 = agg.classifyBoardTransition(oldRows, newRows, 5);
     assert.deepEqual(namesOf(got5.podiumReshuffle), ['A', 'B']);
     assert.deepEqual(got5.rowStayers, []);
-    const got3 = agg.classifyTop20Transition(oldRows, newRows, 3);
+    const got3 = agg.classifyBoardTransition(oldRows, newRows, 3);
     assert.deepEqual(namesOf(got3.rowStayers), ['A', 'B']);
     assert.deepEqual(got3.podiumReshuffle, []);
 });
 
-test('classifyTop20Transition: podiumSize=5 時 rank 4／5 掉出榜 wasPodium 為 true、新進榜 rank 5 為 podiumNewEntrants', () => {
+test('classifyBoardTransition: podiumSize=5 時 rank 4／5 掉出榜 wasPodium 為 true、新進榜 rank 5 為 podiumNewEntrants', () => {
     const oldRows = [
         { name: 'A', rank: 4 },
         { name: 'B', rank: 5 },
@@ -2229,7 +2229,7 @@ test('classifyTop20Transition: podiumSize=5 時 rank 4／5 掉出榜 wasPodium �
     const newRows = [
         { name: 'C', rank: 5 },
     ];
-    const got5 = agg.classifyTop20Transition(oldRows, newRows, 5);
+    const got5 = agg.classifyBoardTransition(oldRows, newRows, 5);
     assert.deepEqual(
         got5.droppedOut.slice().sort((a, b) => (a.name < b.name ? -1 : 1)),
         [
@@ -2241,7 +2241,7 @@ test('classifyTop20Transition: podiumSize=5 時 rank 4／5 掉出榜 wasPodium �
     assert.deepEqual(got5.brandNewEntrants, []);
 });
 
-test('classifyTop20Transition: podiumSize=5 時名次 1–3 的歸類與 3 人版相同', () => {
+test('classifyBoardTransition: podiumSize=5 時名次 1–3 的歸類與 3 人版相同', () => {
     const oldRows = [
         { name: 'A', rank: 1 },
         { name: 'B', rank: 2 },
@@ -2252,8 +2252,8 @@ test('classifyTop20Transition: podiumSize=5 時名次 1–3 的歸類與 3 人�
         { name: 'A', rank: 2 },
         { name: 'C', rank: 3 },
     ];
-    const got3 = agg.classifyTop20Transition(oldRows, newRows, 3);
-    const got5 = agg.classifyTop20Transition(oldRows, newRows, 5);
+    const got3 = agg.classifyBoardTransition(oldRows, newRows, 3);
+    const got5 = agg.classifyBoardTransition(oldRows, newRows, 5);
     assert.deepEqual(got5, got3);
     assert.deepEqual(namesOf(got5.podiumReshuffle), ['A', 'B']);
 });
@@ -2316,9 +2316,9 @@ test('podiumSizeForViewport: undefined／NaN／"abc" 回 3', () => {
     assert.equal(podiumSizeForViewport('abc'), 3);
 });
 
-// ── diffTop20Counts (TASK-156e-T3) ───────────────────────────────────
+// ── diffBoardCounts (TASK-156e-T3) ───────────────────────────────────
 
-test('diffTop20Counts: 兩筆同名不同 count 各自正確算出 from/to', () => {
+test('diffBoardCounts: 兩筆同名不同 count 各自正確算出 from/to', () => {
     const oldRows = [
         { name: 'A', count: 10 },
         { name: 'B', count: 8 },
@@ -2327,33 +2327,33 @@ test('diffTop20Counts: 兩筆同名不同 count 各自正確算出 from/to', () 
         { name: 'A', count: 12 },
         { name: 'B', count: 5 },
     ];
-    const diffs = agg.diffTop20Counts(oldRows, newRows);
+    const diffs = agg.diffBoardCounts(oldRows, newRows);
     assert.deepEqual(diffs, [
         { name: 'A', from: 10, to: 12 },
         { name: 'B', from: 8, to: 5 },
     ]);
 });
 
-test('diffTop20Counts: 同名同 count 不產生 diff', () => {
+test('diffBoardCounts: 同名同 count 不產生 diff', () => {
     const oldRows = [{ name: 'A', count: 10 }];
     const newRows = [{ name: 'A', count: 10 }];
-    assert.deepEqual(agg.diffTop20Counts(oldRows, newRows), []);
+    assert.deepEqual(agg.diffBoardCounts(oldRows, newRows), []);
 });
 
-test('diffTop20Counts: 新名字（不在 oldRows）不產生 diff', () => {
+test('diffBoardCounts: 新名字（不在 oldRows）不產生 diff', () => {
     const oldRows = [{ name: 'A', count: 10 }];
     const newRows = [
         { name: 'A', count: 10 },
         { name: 'Newcomer', count: 3 },
     ];
-    assert.deepEqual(agg.diffTop20Counts(oldRows, newRows), []);
+    assert.deepEqual(agg.diffBoardCounts(oldRows, newRows), []);
 });
 
-test('diffTop20Counts: oldRows 為空回傳空陣列', () => {
+test('diffBoardCounts: oldRows 為空回傳空陣列', () => {
     const newRows = [{ name: 'A', count: 10 }];
-    assert.deepEqual(agg.diffTop20Counts([], newRows), []);
-    assert.deepEqual(agg.diffTop20Counts(null, newRows), []);
-    assert.deepEqual(agg.diffTop20Counts(undefined, newRows), []);
+    assert.deepEqual(agg.diffBoardCounts([], newRows), []);
+    assert.deepEqual(agg.diffBoardCounts(null, newRows), []);
+    assert.deepEqual(agg.diffBoardCounts(undefined, newRows), []);
 });
 
 // ── TASK-161a-T2b／T5a：sel／skipDim 簽名 ───────────────────

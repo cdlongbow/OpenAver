@@ -8,7 +8,7 @@ E2E 安全網：TASK-156d-T7 — 快速連點最終一致性＋PRM 全域整合�
 （未留下可重跑的測試），本檔把它變成可重跑的自動化回歸。
 
 驗證目標：`web/static/js/pages/insights/state.js::_handleActressFocusChange`
-（CD-156d-2 步驟 4：每次新觸發前先對 top20El/costarEl/row7El 呼叫
+（CD-156d-2 步驟 4：每次新觸發前先對 boardEl/costarEl/row7El 呼叫
 `motion.killTweens(...)`，再永遠依當下最新 `this.isActressFocused` 從頭開始）。
 
 **定稿輪數 2（review REQUEST_CHANGES 後修正，逐條對應）**：
@@ -71,11 +71,11 @@ BURST_CLICK_INTERVAL_MS = 150
 # settle：卡片給的 1.5 秒是「保守上限」；實際判定靠 _wait_settled 的輪詢式 oracle。
 SETTLE_TIMEOUT_MS = 1_500
 # T6 頒獎台進場動效（playRise）只在首次載入播一次，動的是子元素 transform，跟本檔
-# 要驗證的 killTweens 目標（top20El/costarEl/row7El 的 opacity）並非同一組屬性，
+# 要驗證的 killTweens 目標（boardEl/costarEl/row7El 的 opacity）並非同一組屬性，
 # 但先讓它播完可以讓測試意圖單純、不與本檔無關的動畫時序糾纏。
 PODIUM_ENTRANCE_SETTLE_MS = 900
 
-REF_NAMES = ("top20Row3El", "costarEl", "row7El")
+REF_NAMES = ("boardRow3El", "costarEl", "row7El")
 
 # F1：「打在補間中途」的判定窗口——嚴格排除兩端點（0/1/''），避免把「剛好取樣到
 # 起點或終點那一幀」誤判成命中中途。
@@ -301,15 +301,15 @@ def _snapshot(page: Page) -> dict:
             };
             return {
                 focus: data.sel.actress != null ? { type: 'actress', value: data.sel.actress } : (data.sel.maker != null ? { type: 'maker', value: data.sel.maker } : null),
-                showTop20InRow3: !!data.showTop20InRow3,
+                showBoardInRow3: !!data.showBoardInRow3,
                 showCostar: !!data.showCostar,
-                showTop20InRow7: !!data.showTop20InRow7,
+                showBoardInRow7: !!data.showBoardInRow7,
                 podiumNames: (data.podiumRows || []).map(r => r.rank + ':' + r.name),
                 restNames: (data.restRows || []).map(r => r.name),
                 ganttNames: (data.ganttRows || []).map(r => r.name),
                 soloNames: (data.soloRows || []).map(r => r.name),
                 costarNames: (data.costarRows || []).map(r => r.self + '×' + r.name),
-                top20Row3El: readEl('top20Row3El'),
+                boardRow3El: readEl('boardRow3El'),
                 costarEl: readEl('costarEl'),
                 row7El: readEl('row7El'),
             };
@@ -367,7 +367,7 @@ def _geometry(page: Page) -> dict:
 
 
 def _wait_settled(page: Page, timeout: int = SETTLE_TIMEOUT_MS) -> None:
-    """輪詢式 settle 判定：top20Row3El/costarEl/row7El 的 inline `style.opacity`
+    """輪詢式 settle 判定：boardRow3El/costarEl/row7El 的 inline `style.opacity`
     連續 3 次輪詢（Playwright 預設用 requestAnimationFrame 輪詢）都落在
     `''`/`'0'`/`'1'`（非補間中間值）才判定為 settle——GSAP tween 進行中每一幀
     都會寫入非這三個值之一的 inline opacity，連續 3 幀都不是代表已無 tween 在跑。
@@ -399,7 +399,7 @@ def _assert_state_equal(actual: dict, expected: dict, label: str) -> None:
     assert actual["focus"] == expected["focus"], (
         f"{label}: focus 不一致，實際 {actual['focus']!r}，預期 {expected['focus']!r}"
     )
-    for key in ("showTop20InRow3", "showCostar", "showTop20InRow7"):
+    for key in ("showBoardInRow3", "showCostar", "showBoardInRow7"):
         assert actual[key] == expected[key], (
             f"{label}: {key} 不一致，實際 {actual[key]!r}，預期 {expected[key]!r}"
         )
@@ -407,7 +407,7 @@ def _assert_state_equal(actual: dict, expected: dict, label: str) -> None:
         assert actual[key] == expected[key], (
             f"{label}: {key} 順序/內容不一致，實際 {actual[key]!r}，預期 {expected[key]!r}"
         )
-    for ref in ("top20Row3El", "costarEl", "row7El"):
+    for ref in ("boardRow3El", "costarEl", "row7El"):
         a, e = actual[ref], expected[ref]
         assert a is not None and e is not None, f"{label}: {ref} 元素缺失"
         assert (a["display"] == "none") == (e["display"] == "none"), (
@@ -439,7 +439,7 @@ def _assert_state_equal(actual: dict, expected: dict, label: str) -> None:
             # P3 修正回歸守衛（Codex review）：可見元素必須有實際渲染盒子，
             # 否則 `_handleActressFocusChange` 對它 playFadeTo(opacity) 補間會是
             # 沒有視覺效果的假動畫（display:contents 曾經就是這樣，見
-            # insights.css `.top20-row3-wrap` 註解）——這條斷言不依賴修法內部
+            # insights.css `.board-row3-wrap` 註解）——這條斷言不依賴修法內部
             # 實作細節，只要求「淡出淡入動畫作用的目標必須是有真實渲染盒子的
             # 元素」。
             assert a["rectArea"] > 0, (
@@ -450,12 +450,12 @@ def _assert_state_equal(actual: dict, expected: dict, label: str) -> None:
         assert a["inlineBg"] in ("", "rgba(0, 0, 0, 0)"), (
             f"{label}: {ref} 殘留 backgroundColor={a['inlineBg']!r}（不變式 2）"
         )
-    # 不變式 3：同一插槽（top20Row3El／costarEl）settle 後不得同時有排版。
-    top20_visible = actual["top20Row3El"]["display"] != "none"
+    # 不變式 3：同一插槽（boardRow3El／costarEl）settle 後不得同時有排版。
+    board_visible = actual["boardRow3El"]["display"] != "none"
     costar_visible = actual["costarEl"]["display"] != "none"
-    assert not (top20_visible and costar_visible), (
-        f"{label}: top20Row3El 與 costarEl settle 後同時可見"
-        f"（top20Row3El={actual['top20Row3El']}, costarEl={actual['costarEl']}）"
+    assert not (board_visible and costar_visible), (
+        f"{label}: boardRow3El 與 costarEl settle 後同時可見"
+        f"（boardRow3El={actual['boardRow3El']}, costarEl={actual['costarEl']}）"
     )
 
 
@@ -534,7 +534,7 @@ def _classify_by_costar(
 # ── 情境 1：淡出中中斷（卡片指定 mutation 目標測試） ──────────────────────────
 
 def test_interrupt_during_fade_out_matches_direct_set(page: Page, base_url: str) -> None:
-    """淡出中中斷：點擊聚焦後，觀察 top20Row3El 的 inline opacity 落回 (0,1)
+    """淡出中中斷：點擊聚焦後，觀察 boardRow3El 的 inline opacity 落回 (0,1)
     開區間（代表淡出 tween 正在跑、display 尚未切換）就立刻再點同一位（清除）。
     settle 後畫面應與「從未點擊過」的基準快照一致（不變式 1）。
 
@@ -550,7 +550,7 @@ def test_interrupt_during_fade_out_matches_direct_set(page: Page, base_url: str)
 
     target = with_costar[0]
     _click_gantt_actress_raw(page, target)
-    _click_mid_tween(page, "top20Row3El", target)  # 中途點同一位＝清除
+    _click_mid_tween(page, "boardRow3El", target)  # 中途點同一位＝清除
     _wait_settled(page)
 
     settled_state = _snapshot(page)
@@ -597,7 +597,7 @@ def test_rapid_triple_click_then_clear_matches_baseline(page: Page, base_url: st
     row7（僅 0.5s 窗口），會在點擊 b／c 的路上就把窗口耗盡（實測 c 點下去時
     row7 opacity 已是 0.9994，下一輪就到 1，`_click_mid_tween` 直接 timeout——
     見定稿輪數 2 執行紀錄）。改把斷言放在**第二次**點擊（a→b，觀察 costarEl）：
-    這是 a 自己的進場序列最先進入、視窗最寬裕的一段（top20 淡出 0.25s 播完後
+    這是 a 自己的進場序列最先進入、視窗最寬裕的一段（女優榜淡出 0.25s 播完後
     costarEl 才開始淡入，接在第一次點擊的 CDP 往返之後正好落入這段），滿足
     review「至少一次點擊要斷言落在 tween 中途」——後續切 c、清除兩次點擊不需要
     精準時序（`wasActress===isNowActress` 的換人本身對動畫是 no-op，只有這裡的
@@ -697,7 +697,7 @@ def test_narrow_width_settles_to_baseline_position(page: Page, base_url: str) ->
 
     target = with_costar[0]
     _click_gantt_actress_raw(page, target)
-    _click_mid_tween(page, "top20Row3El", target)
+    _click_mid_tween(page, "boardRow3El", target)
     _wait_settled(page)
 
     settled_state = _snapshot(page)
@@ -751,18 +751,18 @@ def test_prm_rapid_clicks_settle_instantly_and_match_baseline(page: Page, base_u
     _assert_geometry_equal(settled_geo, baseline_geo)
 
 
-# ── TASK-156d-T9：沒有共演時顯示 Top20 而非空卡 ──────────────────────────────
+# ── TASK-156d-T9：沒有共演時顯示女優榜而非空卡 ──────────────────────────────
 # CD-156d-10a／10b：`costarVisible = isActressFocused && costarRows.length > 0`；
-# 零共演女優 settle 後應顯示 Top20（`showTop20InRow3=true`），`costarEl`
+# 零共演女優 settle 後應顯示女優榜（`showBoardInRow3=true`），`costarEl`
 # 不顯示，也不播放任何淡出淡入（`costarVisible` 從 false 到 false，沒有翻轉）。
 
 
-def test_no_costar_actress_shows_top20_not_empty_costar_card(
+def test_no_costar_actress_shows_board_not_empty_costar_card(
     page: Page, base_url: str
 ) -> None:
     """邊界條件 1：焦點一位 `costarRows.length===0` 的女優——row3 左半格顯示
-    Top20（`showTop20InRow3=true`），`costarEl` 不顯示（`showCostar=false`，
-    computed `display==='none'`），row7 不顯示（`showTop20InRow7=false`），
+    女優榜（`showBoardInRow3=true`），`costarEl` 不顯示（`showCostar=false`，
+    computed `display==='none'`），row7 不顯示（`showBoardInRow7=false`），
     畫面上沒有空白的「與她同片」卡片。
     """
     names = _load_ready(page, base_url)
@@ -777,20 +777,20 @@ def test_no_costar_actress_shows_top20_not_empty_costar_card(
     assert state["focus"] == {"type": "actress", "value": target}, (
         f"focus 應為 {target!r}，實際 {state['focus']!r}"
     )
-    assert state["showTop20InRow3"] is True, "零共演女優應顯示 Top20，不是空的與她同片卡"
+    assert state["showBoardInRow3"] is True, "零共演女優應顯示女優榜，不是空的與她同片卡"
     assert state["showCostar"] is False, "零共演女優不應顯示與她同片卡"
-    assert state["showTop20InRow7"] is False, "零共演女優不應觸發 row7 顯示"
+    assert state["showBoardInRow7"] is False, "零共演女優不應觸發 row7 顯示"
     assert state["costarEl"]["display"] == "none", (
         f"costarEl computed display 應為 none，實際 {state['costarEl']['display']!r}"
         "（畫面上不該出現空白的『與她同片』卡片）"
     )
-    assert state["top20Row3El"]["display"] != "none", "row3 左半格應顯示 Top20"
+    assert state["boardRow3El"]["display"] != "none", "row3 左半格應顯示女優榜"
 
 
 # ── TASK-156d-T9 round 3：period 改變也要同步 costarVisible ────────────────────
 # review 抓到的回歸：`$watch('period')` 只呼叫了 `recomputeCostar()`，沒有跑
 # CD-156d-10b 的翻轉判斷——同一位有共演的女優，選到一個她零共演的年份時，
-# 「與她同片」空卡會卡在畫面上不會換回 Top20；反方向（零共演年份→有共演年份）
+# 「與她同片」空卡會卡在畫面上不會換回女優榜；反方向（零共演年份→有共演年份）
 # 也不會換回來。修法把翻轉判斷抽成 `_syncCostarVisibility()`，`period` watcher
 # 也呼叫（不捲動，CD-156d-6 明確只認 focus 翻轉）。
 
@@ -890,8 +890,8 @@ def test_period_change_syncs_costar_card_for_focused_actress(
     page: Page, base_url: str
 ) -> None:
     """round 3 回歸守衛：女優焦點且當下有共演 → 選一個她零共演的年份，settle
-    後必須換成 Top20（`showTop20InRow3=true`、`showCostar=false`、
-    `showTop20InRow7=false`），不能卡在空白的「與她同片」卡；接著清除年份篩選
+    後必須換成女優榜（`showBoardInRow3=true`、`showCostar=false`、
+    `showBoardInRow7=false`），不能卡在空白的「與她同片」卡；接著清除年份篩選
     （回全部年份），「與她同片」卡必須換回來（`showCostar=true`）。
 
     動態挑選女優與年份（見 `_find_actress_year_costar_flip`）；片庫資料湊不出
@@ -921,13 +921,13 @@ def test_period_change_syncs_costar_card_for_focused_actress(
         f"period 應切到 {{'type': 'year', 'year': {zero_year}}}，"
         f"實際 {zero_year_period!r}"
     )
-    assert zero_year_state["showTop20InRow3"] is True, (
-        f"{name!r} 在 {zero_year} 年零共演，row3 左半格應換回 Top20"
+    assert zero_year_state["showBoardInRow3"] is True, (
+        f"{name!r} 在 {zero_year} 年零共演，row3 左半格應換回女優榜"
     )
     assert zero_year_state["showCostar"] is False, (
         f"{name!r} 在 {zero_year} 年零共演，不應繼續顯示與她同片卡（空卡）"
     )
-    assert zero_year_state["showTop20InRow7"] is False, (
+    assert zero_year_state["showBoardInRow7"] is False, (
         f"{name!r} 在 {zero_year} 年零共演，row7 不應顯示"
     )
     assert zero_year_state["costarEl"]["display"] == "none", (
@@ -946,7 +946,7 @@ def test_period_change_syncs_costar_card_for_focused_actress(
     assert back_state["showCostar"] is True, (
         f"{name!r} 清除年份篩選回全部年份（有共演）後，與她同片卡應換回來"
     )
-    assert back_state["showTop20InRow3"] is False, "與她同片卡顯示時 row3 左半格不應同時顯示 Top20"
+    assert back_state["showBoardInRow3"] is False, "與她同片卡顯示時 row3 左半格不應同時顯示女優榜"
     assert back_state["costarEl"]["display"] != "none", "與她同片卡應可見"
 
 

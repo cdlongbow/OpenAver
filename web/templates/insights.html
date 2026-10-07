@@ -11,14 +11,14 @@
 {% endblock %}
 
 {#
-  TASK-156d-T2：女優 Top20 拆兩張卡——頒獎台（前 3 名）＋精簡名單（第 4–20 名）。
+  TASK-156d-T2：女優榜拆兩張卡——頒獎台（前 3 名）＋精簡名單（第 4–20 名）。
   包成 macro 是為 T3 的第二次呼叫（row7）預作準備（CD-156d-2），本 task 只呼叫一次（row3）。
 #}
-{% macro insights_top20_group() %}
-<div class="top20-group">
-    <section class="card top20-podium-card">
+{% macro insights_board_group() %}
+<div class="board-group">
+    <section class="card board-podium-card">
         <div class="card-head">
-            <h2 x-text="top20Title"></h2>
+            <h2 x-text="boardTitle"></h2>
         </div>
         <div class="card-body">
             {# TASK-156e-T1a／CD-156e-1 v3 方案 A：台座層（固定位置 x-if）＋人員層（x-for :key=name） #}
@@ -68,24 +68,24 @@
                     </template>
                 </div>
                 <div x-show="!podiumRows.length"
-                     class="top20-empty"
+                     class="board-empty"
                      x-text="t(cardEmptyKey('actress'))"></div>
             </div>
         </div>
     </section>
-    <section class="card top20-rest-card">
+    <section class="card board-rest-card">
         <div class="card-head">
-            <h2 x-text="top20RestTitle"></h2>
+            <h2 x-text="boardRestTitle"></h2>
         </div>
         <div class="card-body">
-            <div class="list-rows rest20-list">
+            <div class="list-rows board-rest-list">
                 <template x-for="row in restRows" :key="row.name">
-                    <div class="rest20-row"
+                    <div class="board-rest-row"
                          :class="{ 'is-active': sel.actress === row.name }"
                          :data-flip-id="'rest-' + row.name"
                          @click="flyAndFocusActress(row.name, $event)">
-                        <span class="top20-rank" x-text="row.rank"></span>
-                        <span class="top20-avatar"
+                        <span class="board-rank" x-text="row.rank"></span>
+                        <span class="board-avatar"
                               :data-flip-id="'avatar-' + row.name"
                               @pointerenter="scheduleOpenPreview(row.name, $el, $event)"
                               @pointerleave="cancelOpenPreview()">
@@ -99,16 +99,16 @@
                                 <span x-text="row.name.charAt(0)"></span>
                             </template>
                         </span>
-                        <span class="top20-name top20-text"
+                        <span class="board-name board-text"
                               :title="row.name"
                               x-text="row.name"
                               @pointerenter="scheduleOpenPreview(row.name, $el, $event)"
                               @pointerleave="cancelOpenPreview()"></span>
-                        <span class="top20-count top20-text" x-text="topDisplayCount(row)"></span>
+                        <span class="board-count board-text" x-text="topDisplayCount(row)"></span>
                     </div>
                 </template>
                 <div x-show="!restRows.length"
-                     class="top20-empty"
+                     class="board-empty"
                      x-text="t(cardEmptyKey('actress'))"></div>
             </div>
         </div>
@@ -248,14 +248,14 @@
         </section>
     </div>
 
-    <!-- Row 3：女優 Top20 + 標籤 treemap -->
+    <!-- Row 3：女優榜 + 標籤 treemap -->
     <!-- TASK-156d-T3／CD-156d-2：左半格是可切換佔用者的插槽——副本 A（頒獎台＋名單）
          與「與她同片」共用同一個插槽，任何時刻只有一個顯示（:class 開關，不用 x-show，
          FE-ALPINE-17）。 -->
     <div class="row3">
-        <div class="row3-top20-slot">
-            <div class="top20-row3-wrap" x-ref="top20Row3El" :class="{ 'is-hidden': !showTop20InRow3 }">
-                {{ insights_top20_group() }}
+        <div class="row3-board-slot">
+            <div class="board-row3-wrap" x-ref="boardRow3El" :class="{ 'is-hidden': !showBoardInRow3 }">
+                {{ insights_board_group() }}
             </div>
             <section class="card" id="costarCard" x-ref="costarEl" :class="{ 'is-hidden': !showCostar }">
                 <div class="card-head">
@@ -513,8 +513,8 @@
 
     <!-- Row 7：女優焦點期間頁尾多出現的頒獎台＋名單全貌（TASK-156d-T3／CD-156d-2 副本 B，
          與 row3 副本 A 同一份資料、獨立可見性，不互斥） -->
-    <div class="row7" x-ref="row7El" :class="{ 'is-hidden': !showTop20InRow7 }">
-        {{ insights_top20_group() }}
+    <div class="row7" x-ref="row7El" :class="{ 'is-hidden': !showBoardInRow7 }">
+        {{ insights_board_group() }}
     </div>
 
     <!-- 全頁共用女優照片預覽浮層（TASK-156b-T5 / CD-156-10） -->

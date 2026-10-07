@@ -7,7 +7,7 @@ from tests.e2e._insights_motion_helpers import (
 )
 pytestmark = pytest.mark.e2e
 ENTRIES = {
-    'podium': '.podium-slot .podium-avatar', 'rest20': '.rest20-row .top20-avatar',
+    'podium': '.podium-slot .podium-avatar', 'board-rest': '.board-rest-row .board-avatar',
     'gantt': '.gantt-row .gantt-avatar', 'solo': '#soloList .solo-avatar',
     'costar': '#costarList [data-costar-role="other"]',
 }
@@ -28,7 +28,7 @@ def _xy(page, loc):
         const x = r.left + r.width / 2, y = r.top + r.height / 2;
         const hit = document.elementFromPoint(x, y);
         return {x, y, ok: e.offsetParent !== null && !!hit &&
-            (e.closest('.podium-slot,.rest20-row,.gantt-row,.solo-row,.costar-row') || e).contains(hit)};
+            (e.closest('.podium-slot,.board-rest-row,.gantt-row,.solo-row,.costar-row') || e).contains(hit)};
     }""")
     assert c['ok'], f'真點擊目標被遮擋：{c}'
     return c['x'], c['y']
@@ -234,8 +234,8 @@ def test_top25_responsive_visible_layout(page, base_url, width, podium, rest, ti
     def visible(selector):
         return page.locator(selector).evaluate_all('es => es.filter(e => e.offsetParent !== null).length')
     assert visible('.podium-slot') == podium
-    assert visible('.rest20-row') == rest
-    assert page.evaluate("""() => [...document.querySelectorAll('.podium-slot,.top20-podium-card')]
+    assert visible('.board-rest-row') == rest
+    assert page.evaluate("""() => [...document.querySelectorAll('.podium-slot,.board-podium-card')]
         .filter(e => e.offsetParent !== null).every(e => e.getBoundingClientRect().right <= innerWidth)""")
     name = page.locator('.podium-name:visible').first
     original = name.inner_text()
@@ -246,5 +246,5 @@ def test_top25_responsive_visible_layout(page, base_url, width, podium, rest, ti
         assert overflow['sw'] > overflow['cw'] and overflow['ellipsis'] == 'ellipsis', overflow
     finally:
         name.evaluate('(e, text) => { e.textContent = text; }', original)
-    assert page.locator('.top20-podium-card h2').evaluate_all('es => es.filter(e => e.offsetParent !== null).map(e => e.textContent)') == ['女優 Top 25']
-    assert page.locator('.top20-rest-card h2').evaluate_all('es => es.filter(e => e.offsetParent !== null).map(e => e.textContent)') == [title]
+    assert page.locator('.board-podium-card h2').evaluate_all('es => es.filter(e => e.offsetParent !== null).map(e => e.textContent)') == ['女優 Top 25']
+    assert page.locator('.board-rest-card h2').evaluate_all('es => es.filter(e => e.offsetParent !== null).map(e => e.textContent)') == [title]
