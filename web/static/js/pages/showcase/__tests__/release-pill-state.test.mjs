@@ -472,6 +472,26 @@ test('badInput：badLoY=true 時一律 token:null，即使 loYear 文字看起�
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// _releaseEditor 為 null 時七支 helper 的安全回傳
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('_releaseEditor=null 時七支 helper 安全回傳', () => {
+    const c = makeComponent();
+    assert.deepEqual(c._releaseEndpoint('lo'), { has: false, token: null });
+    assert.deepEqual(c._releaseEndpoint('hi'), { has: false, token: null });
+    assert.equal(c._releaseOperandFor('='), null);
+    const before = c.pills.slice();
+    assert.doesNotThrow(() => c._applyReleaseOp('='));
+    assert.deepEqual(c.pills, before);
+    assert.doesNotThrow(() => c._commitReleaseEditor());
+    assert.deepEqual(c.pills, before);
+    assert.doesNotThrow(() => c._cancelReleaseEditor());
+    assert.equal(c._releaseEditor, null);
+    assert.equal(c._releaseEditorHasInput(), false);
+    assert.equal(c._releaseYearHint(), '');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // _cancelReleaseEditor：✗ 取消，不碰 pills
 // ═══════════════════════════════════════════════════════════════════════════
 
