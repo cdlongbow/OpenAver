@@ -85,6 +85,27 @@ test('TASK-124a-T1：round-trip — serializePills → deserializePills 帶 op/v
     assert.deepEqual(deserializePills(serializePills(pills)), pills);
 });
 
+test('deserializePills：缺 dim/value、非字串型別、trim 後空字串 → 丟棄', () => {
+    const out = deserializePills([
+        { value: 'Moodyz' },
+        { dim: 'maker' },
+        { dim: 1, value: 'Moodyz' },
+        { dim: 'maker', value: 2 },
+        { dim: true, value: 'Moodyz' },
+        { dim: 'maker', value: false },
+        { dim: ['maker'], value: 'Moodyz' },
+        { dim: 'maker', value: ['Moodyz'] },
+        { dim: { a: 1 }, value: 'Moodyz' },
+        { dim: 'maker', value: { a: 1 } },
+        { dim: '   ', value: 'Moodyz' },
+        { dim: 'maker', value: '   ' },
+        { dim: '', value: 'Moodyz' },
+        { dim: 'maker', value: '' },
+        { dim: ' maker ', value: ' Moodyz ' },
+    ]);
+    assert.deepEqual(out, [{ dim: 'maker', value: 'Moodyz' }]);
+});
+
 // ===== Layer 2: wiring via stateBase saveState / restoreState =====
 
 test('saveState：replaceState 捕捉到的 URL 字串不含 pills', () => {
