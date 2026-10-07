@@ -209,7 +209,7 @@ class TestShowcaseResponseShape:
         assert full["label"] == "S1"
         assert full["part_tokens"] == []
         assert len(full["sample_images"]) == 2
-        for url, name in zip(full["sample_images"], ["fanart1.jpg", "fanart2.jpg"]):
+        for url, name in zip(full["sample_images"], ["fanart1.jpg", "fanart2.jpg"], strict=True):
             assert url.startswith("/api/gallery/image?path=")
             assert name in url
 
