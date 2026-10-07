@@ -549,6 +549,35 @@ test('buildGanttRows: 選了年份＋片商焦點時只列同一組(y,mk)交集�
     );
 });
 
+test('buildGanttRows: 片商焦點排序只用「期間∩焦點片商」內的主要片數，不含她在其他片商的主要片數', () => {
+    // A 只在 Y 有主要片商年（5 部）；B 在 Y 有 4 部、在 Z 另有 10 部主要片商作品。
+    // 焦點 Y 時排序只能看「期間∩Y」範圍內的片數：A(5) > B(4)，A 必須排第一。
+    // 若誤用 periodRecords（不濾片商）算 scoped，B 會把 Z 的 10 部也算進去
+    // （14 > 5）而排到 A 前面——排序變成回答錯的問題。
+    const map = {
+        'A|2020': 'Y',
+        'B|2021': 'Y',
+        'B|2022': 'Z',
+    };
+    const records = [];
+    for (let i = 0; i < 5; i++) {
+        records.push(rec({ year: 2020, actresses: ['A'], maker: 'Y' }));
+    }
+    for (let i = 0; i < 4; i++) {
+        records.push(rec({ year: 2021, actresses: ['B'], maker: 'Y' }));
+    }
+    for (let i = 0; i < 10; i++) {
+        records.push(rec({ year: 2022, actresses: ['B'], maker: 'Z' }));
+    }
+    const rows = buildGanttRows(records, map, selOf({ type: 'all' }, { type: 'maker', value: 'Y' }));
+    assert.deepEqual(
+        rows.map((r) => r.name),
+        ['A', 'B'],
+    );
+    assert.equal(rows.find((r) => r.name === 'A').mainCount, 5);
+    assert.equal(rows.find((r) => r.name === 'B').mainCount, 4);
+});
+
 test('buildGanttRows: 女優焦點且她不在前25名時附加她那一列', () => {
     const map = {};
     const records = [];
@@ -892,3 +921,18 @@ test('buildCostarRows: 範圍＝期間∩女優∩片商，沒選女優回空', 
     assert.deepEqual(wide, [{ name: 'Bob', count: 2 }, { name: 'Cat', count: 1 }]);
 });
 
+test('buildGanttRows: 女優焦點下候選人主要片數與排序看期間∩片商全貌，不只看她本人的片', () => {
+    const records = [
+        ...many(2, { year: 2021, maker: 'S1', actresses: ['Focus'] }),
+        ...many(5, { year: 2023, maker: 'S1', actresses: ['Zed'] }),
+        ...many(4, { year: 2022, maker: 'S1', actresses: ['Amy'] }),
+        ...many(4, { year: 2023, maker: 'S1', actresses: ['Bob'] }),
+    ];
+    const map = buildMainMakerYearMap(records);
+    // 只選女優：列序＝她置頂，其餘依主要片數（Zed 5 > Amy 4 ＝ Bob 4），與依名字排序相反
+    const a = buildGanttRows(records, map, { period: ALL, actress: 'Focus', maker: null });
+    assert.deepEqual(a.map((r) => [r.name, r.mainCount]), [['Focus', 0], ['Zed', 5], ['Amy', 4], ['Bob', 4]]);
+    // 女優∩片商∩期間（2023∩S1）：候選只剩 2023 的 S1 主要片商年，主要片數仍看全貌
+    const b = buildGanttRows(records, map, { period: Y(2023), actress: 'Focus', maker: 'S1' });
+    assert.deepEqual(b.map((r) => [r.name, r.mainCount]), [['Focus', 0], ['Zed', 5], ['Bob', 4]]);
+});
