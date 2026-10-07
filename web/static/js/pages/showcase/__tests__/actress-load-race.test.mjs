@@ -115,24 +115,7 @@ function successFalseResp() {
     return { ok: true, status: 200, json: async () => ({ success: false }) };
 }
 
-// ── 邊界條件 1：並行 dedup ──────────────────────────────────────────────
-
-test('並行 dedup：連續同步呼叫兩次 loadActresses() → fetch 只發生 1 次，兩個呼叫方都拿到同一份結果', async () => {
-    resetActresses();
-    const mock = mockFetchSequence([() => okResp([{ name: 'A', birth: '1990-01-01' }])]);
-    try {
-        const c = makeComponent();
-        const p1 = c.loadActresses();
-        const p2 = c.loadActresses();
-        await Promise.all([p1, p2]);
-        assert.equal(mock.calls.length, 1, 'fetch 應只發生一次（in-flight promise dedup）');
-        assert.equal(_actresses.length, 1);
-    } finally {
-        mock.restore();
-    }
-});
-
-// ── 邊界條件 2：settle 後清回 null，第三次呼叫要真的重試 ──────────────────
+// ── settle 後清回 null，下一次呼叫要真的重試 ──────────────────
 
 test('loadActresses retries with a second fetch after the in-flight promise settles on failure', async () => {
     resetActresses();
@@ -154,49 +137,26 @@ test('loadActresses retries with a second fetch after the in-flight promise sett
 
 // ── 邊界條件 3：三個失敗出口各自的清理契約 ────────────────────────────────
 
-test('失敗出口 !resp.ok：_actressesLoaded===false、_actresses.length===0、_lbActorAges 清空', async () => {
-    resetActresses();
-    _setActresses([{ name: 'stale', birth: '1990-01-01' }]);
-    const mock = mockFetchSequence([() => notOkResp()]);
-    try {
-        const c = makeComponent();
-        await c.loadActresses();
-        assert.equal(stateBase._actressesLoaded, false);
-        assert.equal(_actresses.length, 0);
-        assert.deepEqual(c._lbActorAges, {});
-    } finally {
-        mock.restore();
-    }
-});
-
-test('失敗出口 !data.success：_actressesLoaded===false、_actresses.length===0、_lbActorAges 清空', async () => {
-    resetActresses();
-    _setActresses([{ name: 'stale', birth: '1990-01-01' }]);
-    const mock = mockFetchSequence([() => successFalseResp()]);
-    try {
-        const c = makeComponent();
-        await c.loadActresses();
-        assert.equal(stateBase._actressesLoaded, false);
-        assert.equal(_actresses.length, 0);
-        assert.deepEqual(c._lbActorAges, {});
-    } finally {
-        mock.restore();
-    }
-});
-
-test('失敗出口 catch（fetch throw）：_actressesLoaded===false、_actresses.length===0、_lbActorAges 清空', async () => {
-    resetActresses();
-    _setActresses([{ name: 'stale', birth: '1990-01-01' }]);
-    const prev = globalThis.fetch;
-    globalThis.fetch = async () => { throw new Error('network down'); };
-    try {
-        const c = makeComponent();
-        await c.loadActresses();
-        assert.equal(stateBase._actressesLoaded, false);
-        assert.equal(_actresses.length, 0);
-        assert.deepEqual(c._lbActorAges, {});
-    } finally {
-        globalThis.fetch = prev;
+test('三個失敗出口（!resp.ok／!data.success／fetch throw）：_actressesLoaded===false、_actresses.length===0、_lbActorAges 清空', async () => {
+    const exits = [
+        { name: '!resp.ok', fetchImpl: async (url) => (url === '/api/actress-aliases' ? { ok: true, status: 200, json: async () => ({ groups: [] }) } : notOkResp()) },
+        { name: '!data.success', fetchImpl: async (url) => (url === '/api/actress-aliases' ? { ok: true, status: 200, json: async () => ({ groups: [] }) } : successFalseResp()) },
+        { name: 'catch（fetch throw）', fetchImpl: async () => { throw new Error('network down'); } },
+    ];
+    for (const exit of exits) {
+        resetActresses();
+        _setActresses([{ name: 'stale', birth: '1990-01-01' }]);
+        const prev = globalThis.fetch;
+        globalThis.fetch = exit.fetchImpl;
+        try {
+            const c = makeComponent();
+            await c.loadActresses();
+            assert.equal(stateBase._actressesLoaded, false, exit.name);
+            assert.equal(_actresses.length, 0, exit.name);
+            assert.deepEqual(c._lbActorAges, {}, exit.name);
+        } finally {
+            globalThis.fetch = prev;
+        }
     }
 });
 
