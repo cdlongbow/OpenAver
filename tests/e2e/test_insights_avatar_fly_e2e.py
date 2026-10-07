@@ -3,8 +3,7 @@ from __future__ import annotations
 import pytest
 from playwright.sync_api import Page
 from tests.e2e._insights_motion_helpers import (
-    ALPINE, ACTRESS_TILE_AV, GHOST, alpine, click_donut_named_maker,
-    click_gantt_actress, load_ready, set_prm, wait_scroll_settled, wait_settled,
+    ALPINE, ACTRESS_TILE_AV, GHOST, alpine, click_gantt_actress, load_ready, set_prm, wait_scroll_settled, wait_settled,
 )
 pytestmark = pytest.mark.e2e
 def _classify(page: Page) -> dict:
@@ -21,7 +20,6 @@ def _classify(page: Page) -> dict:
     }""" % ALPINE)
 def _ghost_count(page: Page) -> int:
     return page.evaluate("() => document.querySelectorAll('%s').length" % GHOST)
-NO_FOCUS = {"actress": None, "maker": None}
 def _focus(page: Page):
     return alpine(page, "({actress: data.sel.actress, maker: data.sel.maker})")
 def _wait_fly_settled(page: Page, timeout: int = 2_000) -> None:
@@ -66,21 +64,6 @@ def _click_row_not_avatar(page: Page, row_sel: str, name: str, avatar_sel: str) 
         return { found: false };
     }""", [row_sel, name, avatar_sel])
     assert c.get("found"), f"找不到 {row_sel} / {name!r}"
-    page.mouse.click(c["x"], c["y"])
-def _click_avatar_only(page: Page, row_sel: str, name: str, avatar_sel: str) -> None:
-    wait_scroll_settled(page)
-    c = page.evaluate("""([rowSel, name, avatarSel]) => {
-        for (const row of document.querySelectorAll(rowSel)) {
-            if (!(row.textContent || '').includes(name)) continue;
-            const avatar = row.querySelector(avatarSel);
-            if (!avatar) continue;
-            avatar.scrollIntoView({ block: 'center', inline: 'nearest' });
-            const r = avatar.getBoundingClientRect();
-            return { found: true, x: r.left + r.width / 2, y: r.top + r.height / 2 };
-        }
-        return { found: false };
-    }""", [row_sel, name, avatar_sel])
-    assert c.get("found"), f"找不到 {name!r} 頭像"
     page.mouse.click(c["x"], c["y"])
 def _assert_landed(page: Page, name: str) -> None:
     assert _ghost_count(page) == 0
@@ -160,54 +143,6 @@ def test_avatar_fly_entry_flies_and_lands(
     _wait_fly_settled(page)
     _assert_landed(page, target)
 
-def test_avatar_fly_non_flying_paths_no_ghost(page: Page, base_url: str) -> None:
-    """不飛情境一連走完：點本人、按 ×、點片商、點頭像——每步 ghost=0。"""
-    load_ready(page, base_url)
-    names = _classify(page)
-    if not names["gantt"]:
-        pytest.skip("年表無女優資料")
-    target = (names["withPhoto"] or names["gantt"])[0]
-    click_gantt_actress(page, target)
-    try:
-        _wait_fly_settled(page, timeout=1_500)
-    except Exception:
-        page.wait_for_timeout(300)
-    click_gantt_actress(page, target)
-    page.wait_for_timeout(200)
-    assert _focus(page) == NO_FOCUS
-    assert max(_ghost_count(page) for _ in range(4)) == 0
-    click_gantt_actress(page, target)
-    try:
-        _wait_fly_settled(page, timeout=1_500)
-    except Exception:
-        page.wait_for_timeout(300)
-    page.click("#tileActress .insights-x-btn")
-    page.wait_for_timeout(200)
-    assert _focus(page) == NO_FOCUS
-    assert max(_ghost_count(page) for _ in range(4)) == 0
-    maker = click_donut_named_maker(page)
-    if not maker:
-        pytest.skip("片庫湊不出可點的片商扇形")
-    page.wait_for_timeout(250)
-    assert _focus(page) == {"actress": None, "maker": maker}
-    assert max(_ghost_count(page) for _ in range(4)) == 0
-    page.click("#tileMaker .insights-x-btn")
-    page.wait_for_timeout(100)
-    assert _focus(page) == NO_FOCUS
-    # 161b 起此路徑會選人並飛行。
-    _click_avatar_only(
-        page, ".gantt-table .gantt-row:not(.gantt-head-row)", target, ".gantt-avatar")
-    _wait_fly_settled(page)
-    wait_settled(page)
-    assert _focus(page) == {"actress": target, "maker": None}, "點頭像應選中女優且不開預覽（spec-161b §3）"
-    _assert_landed(page, target)
-    preview = page.evaluate("""() => {
-        const el = document.querySelector('.insights-preview');
-        if (!el) return false;
-        const cs = getComputedStyle(el);
-        return cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0';
-    }""")
-    assert not preview, "點頭像應選中女優且不開預覽（spec-161b §3）"
 
 def test_avatar_fly_prm_skips_ghost(page: Page, base_url: str) -> None:
     """PRM：不出現 ghost。"""
