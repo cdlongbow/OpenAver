@@ -440,6 +440,15 @@ test('call site 3/9（真身）— confirmRemoveActress() 後 hero 狀態依規�
 // ===== TASK-138-T1：_awaitHeroCardWithTimeout 行為（import 真身，不 stub）=====
 // HERO_CARD_RECONCILE_TIMEOUT_MS = 300（卡死保險）；四案例對應 card 補充段第 2 條。
 
+test('_awaitHeroCardWithTimeout：promise 早於逾時 resolve → 包裝也早 resolve（不空等滿逾時）', async () => {
+    const fn = stateBaseMod._awaitHeroCardWithTimeout;
+    assert.equal(typeof fn, 'function', '_awaitHeroCardWithTimeout 必須是 module-level export function');
+    const t0 = Date.now();
+    await fn(new Promise((resolve) => setTimeout(resolve, 20)));
+    const elapsed = Date.now() - t0;
+    assert.ok(elapsed < 200, `應在逾時門檻前 resolve，實際耗時 ${elapsed}ms`);
+});
+
 test('_awaitHeroCardWithTimeout：promise 慢於逾時 → 包裝在逾時點 resolve，且原 promise 仍跑到完成', async () => {
     const fn = stateBaseMod._awaitHeroCardWithTimeout;
     assert.equal(typeof fn, 'function', '_awaitHeroCardWithTimeout 必須是 module-level export function');
@@ -454,6 +463,17 @@ test('_awaitHeroCardWithTimeout：promise 慢於逾時 → 包裝在逾時點 re
     assert.equal(originalFinished, false, '逾時點當下原 promise 尚未完成（證明包裝沒有空等它）');
     await slow;
     assert.equal(originalFinished, true, '原 promise 必須繼續跑到完成（CD-C3：不得取消 in-flight）');
+});
+
+test('_awaitHeroCardWithTimeout：傳入 undefined／非 Promise → 立即 resolve 不 hang', async () => {
+    const fn = stateBaseMod._awaitHeroCardWithTimeout;
+    assert.equal(typeof fn, 'function', '_awaitHeroCardWithTimeout 必須是 module-level export function');
+    const t0 = Date.now();
+    await fn(undefined);
+    await fn(42);
+    await fn(null);
+    const elapsed = Date.now() - t0;
+    assert.ok(elapsed < 100, `非 Promise 輸入應立即 resolve，實際耗時 ${elapsed}ms`);
 });
 
 test('_awaitHeroCardWithTimeout：傳入會 reject 的 promise → 包裝仍 resolve、不產生 unhandled rejection', async () => {
