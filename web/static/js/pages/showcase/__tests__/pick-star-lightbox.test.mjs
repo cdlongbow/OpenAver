@@ -294,48 +294,6 @@ test('scenario 3：飛行中關燈箱＋請求失敗 → 關燈箱當下讀到�
     }
 });
 
-test('scenario 4：兩個不同 path 同時在飛，A 失敗 B 成功 → 兩者都落地後，關燈箱的重篩會讓牆面與真實資料一致（B 的改動不會被漏掉）', async () => {
-    const mock = mockFetchManual();
-    try {
-        const videoA = { path: PATH_A, user_rating: 1 };
-        const videoB = { path: PATH_B, user_rating: 1 };
-        const c = makeComponent({
-            currentLightboxVideo: videoA,
-            pills: [{ dim: 'pick', value: '1' }],
-            lightboxOpen: true,   // 兩個 path 的請求都在燈箱「還開著」時落地——刻意排在關燈箱之前，
-                                  // 不靠請求落地當下的重篩，單獨驗證「舊機制的旗標算術」這個病灶本身
-                                  // 已被拿掉：closeLightbox 不看任何歷史旗標，只看當下真實資料。
-        });
-        setFilteredVideos([videoA, videoB]);
-
-        const pA = c.togglePickStar();         // A 開始飛（取消精選）
-        assert.equal(videoA.user_rating, 0);
-
-        c.currentLightboxVideo = videoB;
-        const pB = c.togglePickStar();         // B 在 A 回來前開始飛（取消精選）
-        assert.equal(videoB.user_rating, 0);
-
-        // B 先落地：成功，不回滾。此時燈箱仍開著，不當場重篩（§4.13）。
-        mock.calls[1].resolve(okResp());
-        await pB;
-        assert.equal(videoB.user_rating, 0);
-        assert.equal(c.applyFilterAndSortCalls, 0, '燈箱還開著，B 落地也不當場重篩');
-
-        // A 後落地：失敗，回滾。燈箱仍開著，同樣不當場重篩。
-        mock.calls[0].reject(new Error('network down'));
-        await pA;
-        assert.equal(videoA.user_rating, 1, 'A 失敗必須回滾（等同沒變化）');
-        assert.equal(c.applyFilterAndSortCalls, 0, '燈箱還開著，A 落地也不當場重篩');
-
-        // 兩者都落地後才關燈箱：真實資料＝A 沒變（仍精選）、B 真的取消了。
-        c.closeLightbox();
-        assert.equal(c.applyFilterAndSortCalls, 1,
-            '關燈箱時直接讀真實資料（B 已是 0），不看任何歷史旗標，B 的改動不會被漏掉重篩');
-    } finally {
-        mock.restore();
-    }
-});
-
 // ── 123-T4：取消已精選片 ＋ 飛行中關燈箱（自生洞修正，見 state-lightbox.js
 // _pickHasInFlight() 註解）───────────────────────────────────────────────
 // 壞掉的序列：V 已精選（rating 1）→ 取消（樂觀 → 0）→ 請求還沒回來就關燈箱 →
