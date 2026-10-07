@@ -48,9 +48,8 @@
                              @click="flyAndFocusActress(row.name, $event)">
                             <span class="podium-avatar"
                                   :data-flip-id="'avatar-' + row.name"
-                                  @click.stop="openPreview(row.name, $el)"
-                                  @mouseenter="scheduleOpenPreview(row.name, $el)"
-                                  @mouseleave="cancelOpenPreview()">
+                                  @pointerenter="scheduleOpenPreview(row.name, $el, $event)"
+                                  @pointerleave="cancelOpenPreview()">
                                 <template x-if="actressHasPhoto(row.name) && !photoFailed[row.name]">
                                     <img :src="actressPhotoUrl(row.name)"
                                          alt=""
@@ -88,9 +87,8 @@
                         <span class="top20-rank" x-text="row.rank"></span>
                         <span class="top20-avatar"
                               :data-flip-id="'avatar-' + row.name"
-                              @click.stop="openPreview(row.name, $el)"
-                              @mouseenter="scheduleOpenPreview(row.name, $el)"
-                              @mouseleave="cancelOpenPreview()">
+                              @pointerenter="scheduleOpenPreview(row.name, $el, $event)"
+                              @pointerleave="cancelOpenPreview()">
                             <template x-if="actressHasPhoto(row.name) && !photoFailed[row.name]">
                                 <img :src="actressPhotoUrl(row.name)"
                                      alt=""
@@ -104,8 +102,8 @@
                         <span class="top20-name top20-text"
                               :title="row.name"
                               x-text="row.name"
-                              @mouseenter="scheduleOpenPreview(row.name, $el)"
-                              @mouseleave="cancelOpenPreview()"></span>
+                              @pointerenter="scheduleOpenPreview(row.name, $el, $event)"
+                              @pointerleave="cancelOpenPreview()"></span>
                         <span class="top20-count top20-text" x-text="topDisplayCount(row)"></span>
                     </div>
                 </template>
@@ -287,9 +285,8 @@
                                     </span>
                                     <span class="costar-avatar"
                                           :data-costar-role="'other'"
-                                          @click.stop="openPreview(row.name, $el)"
-                                          @mouseenter="scheduleOpenPreview(row.name, $el)"
-                                          @mouseleave="cancelOpenPreview()">
+                                          @pointerenter="scheduleOpenPreview(row.name, $el, $event)"
+                                          @pointerleave="cancelOpenPreview()">
                                         <template x-if="actressHasPhoto(row.name) && !photoFailed[row.name]">
                                             <img :src="actressPhotoUrl(row.name)"
                                                  alt=""
@@ -421,9 +418,8 @@
                                          @click="flyAndFocusActress(row.name, $event)">
                                         <div class="gantt-name-cell">
                                             <span class="gantt-avatar"
-                                                  @click.stop="openPreview(row.name, $el)"
-                                                  @mouseenter="scheduleOpenPreview(row.name, $el)"
-                                                  @mouseleave="cancelOpenPreview()">
+                                                  @pointerenter="scheduleOpenPreview(row.name, $el, $event)"
+                                                  @pointerleave="cancelOpenPreview()">
                                                 <template x-if="actressHasPhoto(row.name) && !photoFailed[row.name]">
                                                     <img :src="actressPhotoUrl(row.name)"
                                                          alt=""
@@ -437,8 +433,8 @@
                                             <span class="gantt-name"
                                                   :title="row.name"
                                                   x-text="row.name"
-                                                  @mouseenter="scheduleOpenPreview(row.name, $el)"
-                                                  @mouseleave="cancelOpenPreview()"></span>
+                                                  @pointerenter="scheduleOpenPreview(row.name, $el, $event)"
+                                                  @pointerleave="cancelOpenPreview()"></span>
                                         </div>
                                         <template x-for="cell in row.cells"
                                                   :key="(cell.year != null ? cell.year : cell.age)">
@@ -478,9 +474,8 @@
                              :class="{ 'is-active': sel.actress === row.name }"
                              @click="flyAndFocusActress(row.name, $event)">
                             <span class="solo-avatar"
-                                  @click.stop="openPreview(row.name, $el)"
-                                  @mouseenter="scheduleOpenPreview(row.name, $el)"
-                                  @mouseleave="cancelOpenPreview()">
+                                  @pointerenter="scheduleOpenPreview(row.name, $el, $event)"
+                                  @pointerleave="cancelOpenPreview()">
                                 <template x-if="actressHasPhoto(row.name) && !photoFailed[row.name]">
                                     <img :src="actressPhotoUrl(row.name)"
                                          alt=""
@@ -494,8 +489,8 @@
                             <span class="solo-name"
                                   :title="row.name"
                                   x-text="row.name"
-                                  @mouseenter="scheduleOpenPreview(row.name, $el)"
-                                  @mouseleave="cancelOpenPreview()"></span>
+                                  @pointerenter="scheduleOpenPreview(row.name, $el, $event)"
+                                  @pointerleave="cancelOpenPreview()"></span>
                             <span class="solo-bar-wrap">
                                 <template x-for="seg in row.segments" :key="seg.kind + '-' + (seg.maker || '')">
                                     <span class="solo-segment"

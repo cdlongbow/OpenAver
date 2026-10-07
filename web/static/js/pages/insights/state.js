@@ -35,6 +35,7 @@ import {
     scopeRecords,
     periodLabel,
     suffixLabel,
+    isHoverPointer,
 } from './selection.js';
 import {
     setMakerColorSlots,
@@ -666,6 +667,7 @@ export function libraryInsightsState() {
          * 清除焦點／找不到頭像時只走 toggle，不飛。
          */
         flyAndFocusActress(name, event) {
+            this.cancelOpenPreview();
             const isClearing = this.sel.actress === name;
             if (isClearing) {
                 if (_activeAvatarGhost) {
@@ -1261,7 +1263,8 @@ export function libraryInsightsState() {
             this.previewAnchorRect = rect;
         },
 
-        scheduleOpenPreview(name, anchorEl) {
+        scheduleOpenPreview(name, anchorEl, ev) {
+            if (!isHoverPointer(ev)) return;
             if (!this._hasPreviewPhoto(name)) return;
             if (_previewTimer) {
                 clearTimeout(_previewTimer);

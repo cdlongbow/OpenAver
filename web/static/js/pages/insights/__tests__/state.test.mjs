@@ -146,6 +146,42 @@ test('openPreview: hasPhoto=true 時正常開預覽', () => {
     assert.equal(state.previewActress, '有圖女優');
 });
 
+test('scheduleOpenPreview: touch 事件不排程預覽，mouse／pen／缺省照常排程', () => {
+    const state = libraryInsightsState();
+    state.snapshot = {
+        actressFavorites: {
+            '有圖女優': { photoName: '有圖女優', hasPhoto: true, auto_focal: '', crop_mode: 'auto' },
+        },
+    };
+    const originalSetTimeout = globalThis.setTimeout;
+    let scheduled = 0;
+    globalThis.setTimeout = () => { scheduled += 1; return scheduled; };
+    try {
+        const counts = [];
+        for (const pointerType of ['touch', 'mouse', 'pen', '']) {
+            scheduled = 0;
+            state.scheduleOpenPreview('有圖女優', null, { pointerType });
+            counts.push(scheduled);
+            state.cancelOpenPreview();
+        }
+        scheduled = 0;
+        state.scheduleOpenPreview('有圖女優', null);
+        counts.push(scheduled);
+        assert.deepEqual(counts, [0, 1, 1, 1, 1]);
+    } finally {
+        globalThis.setTimeout = originalSetTimeout;
+        state.cancelOpenPreview();
+    }
+});
+
+test('flyAndFocusActress: 進入先收掉已開的預覽（hover 後直接點選人不殘留）', () => {
+    const state = libraryInsightsState();
+    state.previewActress = '某人';
+    state.flyAndFocusActress('她', null);
+    assert.equal(state.previewActress, null);
+    assert.equal(state.sel.actress, '她');
+});
+
 test('_onPageShow: bfcache 還原時快照仍未載入完成（離頁前 fetch 被丟棄）→ 重新 fetch 並填入資料', async () => {
     // Finding 2：真實流程是 sidebar 點擊觸發 page-lifecycle.js 的 leavePage() →
     // 同步呼叫這裡註冊的 cleanup（_pageAlive=false），發生在快照 fetch 尚未回應時；

@@ -5246,6 +5246,15 @@ const RULES = [
   { file: "web/static/css/pages/insights.css", kind: "required-string", pattern: "    flex: 0 1 5.5rem;", note: "[161b-T4] 5 人槽可縮不可長" },
   { file: "web/static/css/pages/insights.css", kind: "required-string", pattern: "    column-gap: 0.5rem;", note: "[161b-T4] 5 人版台座與人員層間距 0.5rem" },
 
+  // ---- [161b-T5] 頭像選人與 pointer hover 預覽 ----
+  { file: "web/templates/insights.html", kind: "structure-count", pattern: "@click.stop=\"openPreview(", count: 2, note: "[161b-T5] 頭像 click 開預覽只剩頂排與 costar self 兩處" },
+  { file: "web/templates/insights.html", kind: "structure-count", pattern: "@click.stop=\"sel.actress && openPreview(", count: 1, note: "[161b-T5] 頂排名字維持 click 開預覽" },
+  { file: "web/templates/insights.html", kind: "structure-count", pattern: "@pointerenter=\"scheduleOpenPreview(row.name, $el, $event)\"", count: 8, note: "[161b-T5] 八處頭像與名字 hover 走 pointerenter 並傳 $event" },
+  { file: "web/templates/insights.html", kind: "structure-count", pattern: "@pointerleave=\"cancelOpenPreview()\"", count: 8, note: "[161b-T5] 八處 pointerleave 收預覽" },
+  { file: "web/templates/insights.html", kind: "forbidden-string", pattern: "@mouseenter=\"scheduleOpenPreview(row.name", note: "[161b-T5] 列表頭像不得殘留 mouseenter 排程預覽" },
+  { file: "web/static/js/pages/insights/state.js", kind: "required-string", pattern: "if (!isHoverPointer(ev)) return;", note: "[161b-T5] scheduleOpenPreview 第一行以 isHoverPointer 擋觸控" },
+  { file: "web/static/js/pages/insights/state.js", kind: "required-string", pattern: "this.cancelOpenPreview();", scope: { anchor: /flyAndFocusActress\(name, event/, window: 200 }, note: "[161b-T5] flyAndFocusActress 進入先 cancelOpenPreview" },
+
 ];
 
 // ---- helpers ----
