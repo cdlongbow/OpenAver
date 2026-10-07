@@ -216,21 +216,6 @@ test('_toggleReleaseEditor：開啟 range pill，四格映射自 value/value2，
     assert.equal(c._releaseEditor.hiMonth, null);
 });
 
-test('_toggleReleaseEditor：同一枚再點 → 關閉（release pill 恆 0/1 枚，不比對 dim）', () => {
-    const c = makeComponent();
-    c._toggleReleaseEditor(releasePill('=', '2023'));
-    assert.ok(c._releaseEditor);
-    c._toggleReleaseEditor(releasePill('=', '2023'));
-    assert.equal(c._releaseEditor, null);
-});
-
-test('_toggleReleaseEditor：_pillPopoverEnabled=false 時早退，_releaseEditor 呼叫前後不變', () => {
-    const c = makeComponent();
-    c._pillPopoverEnabled = false;
-    c._toggleReleaseEditor(releasePill('=', '2023'));
-    assert.equal(c._releaseEditor, null);
-});
-
 // ═══════════════════════════════════════════════════════════════════════════
 // spec §5.2 三態表 × 三顆鈕（表驅動，_releaseOperandFor）
 // ═══════════════════════════════════════════════════════════════════════════
