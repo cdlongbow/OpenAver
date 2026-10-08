@@ -8708,6 +8708,18 @@ const RULES = [
   //
   //
 
+  // ---- 162c-FIX4（本地實剪驗證補回） ----
+  { file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: /<div(?=[^>]*(?<![\w:-])x-show="!video\.cover_url")[^>]*\bclass="[^"]*\bav-card-no-cover\b/,
+    note: '[lint-guard 162c-test_grid_has_no_cover_div] 使用者開片牆 → 無圖片佔位元素須掛 x-show="!video.cover_url"，否則每張有封面的卡都疊上「無圖片」圖示與字 — 遷自 tests/unit/test_frontend_lint.py（本地實剪驗證補回）' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: /^[ \t]*cancelSwitchMode\s*\([^)]*\)\s*\{/m, stripLineComments: true,
+    note: '[lint-guard 162c-test_state_config_defines_methods_and_stubs] 使用者在設定頁切外部管理器模式 → 確認窗按取消／Esc／點背景須有 cancelSwitchMode，否則丟 TypeError、視窗關不掉只能重整 — 遷自 tests/unit/frontend_contracts/test_contract_code_shape.py（本地實剪驗證補回）' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: /^[ \t]*async\s+confirmSwitchMode\s*\([^)]*\)\s*\{/m, stripLineComments: true,
+    note: '[lint-guard 162c-test_state_config_defines_methods_and_stubs] 使用者在設定頁切外部管理器模式 → 確認窗按確認須有 confirmSwitchMode，否則丟 TypeError、視窗關不掉只能重整 — 遷自 tests/unit/frontend_contracts/test_contract_code_shape.py（本地實剪驗證補回）' },
+  // ---- 162c-FIX4 迄 ----
+
 ];
 
 // ---- helpers ----
