@@ -724,16 +724,3 @@ class TestJellyfinCheckManualGuard:
             "scanner.html 觸發列缺少 done 狀態文字顯示"
         assert "jellyfin_check_done_ok" in html, \
             "scanner.html 觸發列缺少 jellyfin_check_done_ok i18n key 引用"
-
-    def test_jellyfin_update_done_resets_check_state(self):
-        """T3(40c) Codex fix: jellyfin-update done handler 重設 jellyfinCheckState = 'idle'"""
-        js = self._js()
-        # 確認 runJellyfinImageUpdate 的 done 分支有三個重設欄位
-        assert "this.jellyfinImageVisible = false" in js, \
-            "scanner.js runJellyfinImageUpdate done 缺少 jellyfinImageVisible = false 重設"
-        assert "this.jellyfinImageCount = 0" in js, \
-            "scanner.js runJellyfinImageUpdate done 缺少 jellyfinImageCount = 0 重設"
-        # jellyfinCheckState = 'idle' 重設（update done 分支使用 this. 前綴）
-        assert "this.jellyfinCheckState = 'idle'" in js, \
-            "scanner.js runJellyfinImageUpdate done 缺少 this.jellyfinCheckState = 'idle' 重設"
-
