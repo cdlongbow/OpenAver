@@ -7128,6 +7128,119 @@ const RULES = [
   //
   // ---- 162c-B29 起 ----
   // （162c-B29 專屬子區段：只在此兩行之間追加）
+
+  // 162c: (module) test_lightbox_keydown_guards_delete_modal
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: 'deleteVideoModalOpen',
+    scope: { anchor: /handleKeydown\s*\(\s*e\s*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_lightbox_keydown_guards_delete_modal] 燈箱刪除確認框開著時按 Esc／方向鍵 → handleKeydown 須參考 deleteVideoModalOpen 以免 Esc 連燈箱一起關、方向鍵換片 — 遷自 test_frontend_offline_guards.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: 'cancelDeleteVideo',
+    scope: { anchor: /handleKeydown\s*\(\s*e\s*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_lightbox_keydown_guards_delete_modal] 燈箱刪除確認框開著時按 Esc → handleKeydown 須呼叫 cancelDeleteVideo 只關確認框 — 遷自 test_frontend_offline_guards.py',
+  },
+
+  // 162c: TestServerModeConfirm
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: 'serverModeConfirmOpen',
+    note: '[lint-guard 162c-test_modal_exists_in_settings_html] 按伺服器模式開關 → settings.html 須有 serverModeConfirmOpen 確認框標記 — 遷自 test_settings_server_mode_confirm.py',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: 'confirmServerModeChange()',
+    note: '[lint-guard 162c-test_modal_has_confirm_and_cancel_buttons] 確認框按確認 → 須有 confirmServerModeChange() handler — 遷自 test_settings_server_mode_confirm.py',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: 'cancelServerModeChange()',
+    note: '[lint-guard 162c-test_modal_has_confirm_and_cancel_buttons] 確認框按取消 → 須有 cancelServerModeChange() handler — 遷自 test_settings_server_mode_confirm.py',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string',
+    pattern: '"title":',
+    scope: /"server_mode_confirm"\s*:\s*\{([^}]*)\}/,
+    note: '[lint-guard 162c-test_i18n_keys_in_zh_tw] 開伺服器模式確認框 → zh_TW server_mode_confirm 區塊須有 title 鍵 — 遷自 test_settings_server_mode_confirm.py',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string',
+    pattern: '"title_on":',
+    scope: /"server_mode_confirm"\s*:\s*\{([^}]*)\}/,
+    note: '[lint-guard 162c-test_i18n_keys_in_zh_tw] 開伺服器模式確認框 → zh_TW server_mode_confirm 區塊須有 title_on 鍵 — 遷自 test_settings_server_mode_confirm.py',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string',
+    pattern: '"body_on":',
+    scope: /"server_mode_confirm"\s*:\s*\{([^}]*)\}/,
+    note: '[lint-guard 162c-test_i18n_keys_in_zh_tw] 開伺服器模式確認框 → zh_TW server_mode_confirm 區塊須有 body_on 鍵 — 遷自 test_settings_server_mode_confirm.py',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string',
+    pattern: '"body_off":',
+    scope: /"server_mode_confirm"\s*:\s*\{([^}]*)\}/,
+    note: '[lint-guard 162c-test_i18n_keys_in_zh_tw] 開伺服器模式確認框 → zh_TW server_mode_confirm 區塊須有 body_off 鍵 — 遷自 test_settings_server_mode_confirm.py',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string',
+    pattern: '"confirm":',
+    scope: /"server_mode_confirm"\s*:\s*\{([^}]*)\}/,
+    note: '[lint-guard 162c-test_i18n_keys_in_zh_tw] 開伺服器模式確認框 → zh_TW server_mode_confirm 區塊須有 confirm 鍵 — 遷自 test_settings_server_mode_confirm.py',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string',
+    pattern: '"confirm_on":',
+    scope: /"server_mode_confirm"\s*:\s*\{([^}]*)\}/,
+    note: '[lint-guard 162c-test_i18n_keys_in_zh_tw] 開伺服器模式確認框 → zh_TW server_mode_confirm 區塊須有 confirm_on 鍵 — 遷自 test_settings_server_mode_confirm.py',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: 'server_mode_confirm.title_on',
+    note: '[lint-guard 162c-test_modal_title_is_conditional_x_text] 確認框標題 on 分支須綁 server_mode_confirm.title_on — 遷自 test_settings_server_mode_confirm.py',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: "server_mode_confirm.title'",
+    note: '[lint-guard 162c-test_modal_title_is_conditional_x_text] 確認框標題 off 分支須綁 server_mode_confirm.title — 遷自 test_settings_server_mode_confirm.py',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: 'server_mode_confirm.confirm_on',
+    note: '[lint-guard 162c-test_modal_confirm_button_is_conditional_x_text] 確認按鈕 on 分支須綁 server_mode_confirm.confirm_on — 遷自 test_settings_server_mode_confirm.py',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: "server_mode_confirm.confirm'",
+    note: '[lint-guard 162c-test_modal_confirm_button_is_conditional_x_text] 確認按鈕 off 分支須綁 server_mode_confirm.confirm — 遷自 test_settings_server_mode_confirm.py',
+  },
+  {
+    file: 'web/static/js/pages/settings/state-ui.js', kind: 'required-string',
+    pattern: 'serverModeConfirmOpen',
+    note: '[lint-guard 162c-test_state_ui_has_confirm_state] state-ui.js 須宣告 serverModeConfirmOpen — 遷自 test_settings_server_mode_confirm.py',
+  },
+  {
+    file: 'web/static/js/pages/settings/state-ui.js', kind: 'required-string',
+    pattern: 'serverModeConfirmValue',
+    note: '[lint-guard 162c-test_state_ui_has_confirm_state] state-ui.js 須宣告 serverModeConfirmValue — 遷自 test_settings_server_mode_confirm.py',
+  },
+  {
+    file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: 'requestServerModeChange',
+    note: '[lint-guard 162c-test_state_config_has_three_methods] 設定頁按開關 → state-config 須有 requestServerModeChange 方法 — 遷自 test_settings_server_mode_confirm.py',
+  },
+  {
+    file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: 'confirmServerModeChange',
+    note: '[lint-guard 162c-test_state_config_has_three_methods] 確認框按確認 → state-config 須有 confirmServerModeChange 方法 — 遷自 test_settings_server_mode_confirm.py',
+  },
+  {
+    file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: 'cancelServerModeChange',
+    note: '[lint-guard 162c-test_state_config_has_three_methods] 確認框按取消 → state-config 須有 cancelServerModeChange 方法 — 遷自 test_settings_server_mode_confirm.py',
+  },
+
   // ---- 162c-B29 迄 ----
   //
   //
