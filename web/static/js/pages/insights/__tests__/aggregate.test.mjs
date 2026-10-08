@@ -1243,3 +1243,14 @@ test('buildGanttRows: 女優焦點下候選人主要片數與排序看期間∩�
     const b = buildGanttRows(records, map, { period: Y(2023), actress: 'Focus', maker: 'S1' });
     assert.deepEqual(b.map((r) => [r.name, r.mainCount]), [['Focus', 0], ['Zed', 5], ['Bob', 4]]);
 });
+
+test('podiumSizeForViewport：手機／窄視窗頒獎台人數錯（該 3 人顯示 5 人或相反）→ 斷點邊界表', () => {
+    const { podiumSizeForViewport } = agg;
+    const table = [
+        [559, 3], [560, 5], [1024, 5], [1025, 3], [1159, 3], [1160, 5],
+        [NaN, 3], [undefined, 3],
+    ];
+    for (const [w, want] of table) {
+        assert.equal(podiumSizeForViewport(w), want, `innerWidth=${w}`);
+    }
+});
