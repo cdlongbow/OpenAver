@@ -5884,6 +5884,202 @@ const RULES = [
   //
   // ---- 162c-B10 起 ----
   // （162c-B10 專屬子區段：只在此兩行之間追加）
+  // 162c: TestRescrapeVersionStateGuard
+  {
+    file: 'web/static/js/pages/search/state/advanced-picker.js', kind: 'required-string',
+    pattern: 'this._commitSearchResults(',
+    scope: { anchor: /async\s+advancedSearch\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_advanced_search_delegates_to_helper] 進階搜尋成功須委派 _commitSearchResults — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: ['rescrapeCandidates: []', 'rescrapeVersionIdx: 0'],
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_candidates_state_keys_present] 重刮多版本狀態鍵須平鋪宣告 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: ['rescrapeHasVersions', 'rescrapeVersionGo'],
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_version_methods_present] 重刮多版本切換方法須存在 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: 'manual_only',
+    scope: { anchor: /rescrapeEntryPoint\s*===\s*['"]search['"]/, window: 400 },
+    note: '[lint-guard 162c-test_search_javlib_does_not_early_return_advancedSearch] search 入口 early return 須依 manual_only 分流 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: /rescrapeStep\s*=\s*['"]preview['"]/,
+    // 判定表 if-form scope；尾加 \s*\)\s*\{ 釘在 :294 裸 switch-source){（排除 :258 auto short-circuit），
+    // 使 switch-source anchor 改名／:297 分叉破壞皆紅，不落到 :348 showcase。
+    scope: /rescrapeEntryPoint\s*===\s*['"]switch-source['"]\s*\)\s*\{[\s\S]*?if\s*\(\s*data\.candidates\s*&&\s*data\.candidates\.length\s*>\s*1\s*\)([\s\S]{0,900})/,
+    note: '[lint-guard 162c-test_switch_source_takes_candidates_first] switch-source 多版本 if 分叉須進 preview（test_switch_source_multiversion_enters_preview） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: /t\.arr\s*\[\s*t\.idx\s*\]\s*=[^=]/,
+    scope: /rescrapeConfirm\s*\(\s*\)[\s\S]*?rescrapeEntryPoint\s*===\s*['"]switch-source['"]([\s\S]{0,1100})/,
+    note: '[lint-guard 162c-test_switch_source_confirm_branch_present] rescrapeConfirm switch-source 須 in-place 賦值 t.arr[t.idx]= — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'forbidden-string',
+    pattern: '_commitSearchResults',
+    scope: /rescrapeConfirm\s*\(\s*\)[\s\S]*?rescrapeEntryPoint\s*===\s*['"]switch-source['"]([\s\S]{0,1100})/,
+    note: '[lint-guard 162c-test_switch_source_confirm_branch_present] rescrapeConfirm switch-source 不得呼叫 _commitSearchResults — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: /detail_url\s*:\s*this\.rescrapePreview\?\.url/,
+    scope: { anchor: /async\s+rescrapeConfirm\s*\(\s*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_confirm_lightbox_detail_url_from_url_field] rescrapeConfirm detail_url 須取 rescrapePreview.url — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: /_commitSearchResults\s*\??\.?\s*\(/,
+    scope: { anchor: /async\s+rescrapeConfirm\s*\(\s*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_confirm_search_calls_commit_helper] rescrapeConfirm search 分支須呼叫 _commitSearchResults — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: 'rescrapeCandidates',
+    scope: { anchor: /closeRescrape\s*\(\s*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_close_rescrape_resets_candidates] closeRescrape 須 reset rescrapeCandidates — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: 'rescrapeCandidates',
+    scope: { anchor: /rescrapeBackToPick\s*\(\s*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_back_to_pick_resets_candidates] rescrapeBackToPick 須 reset rescrapeCandidates — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: /rescrapeStep\s*=\s*['"]preview['"]/,
+    scope: /else\s+if\s*\(\s*data\s*&&\s*data\.success\s*\)\s*\{([\s\S]*?)this\.rescrapeNotFound\s*=\s*true/,
+    note: '[lint-guard 162c-test_javlib_single_version_search_falls_through_to_preview] data.success 單版本須進 preview — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'forbidden-string',
+    pattern: /_commitSearchResults\s*\??\.?\s*\(/,
+    scope: /else\s+if\s*\(\s*data\s*&&\s*data\.success\s*\)\s*\{([\s\S]*?)this\.rescrapeNotFound\s*=\s*true/,
+    note: '[lint-guard 162c-test_javlib_single_version_search_falls_through_to_preview] data.success 單版本不得呼叫 _commitSearchResults — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'forbidden-string',
+    pattern: /\bcloseRescrape\s*\(/,
+    scope: /else\s+if\s*\(\s*data\s*&&\s*data\.success\s*\)\s*\{([\s\S]*?)this\.rescrapeNotFound\s*=\s*true/,
+    note: '[lint-guard 162c-test_javlib_single_version_search_falls_through_to_preview] data.success 單版本不得呼叫 closeRescrape — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: /\bthis\.currentQuery\s*=/,
+    scope: /rescrapeConfirm\b[\s\S]*?rescrapeEntryPoint\s*===\s*['"]search['"]([\s\S]*?)_commitSearchResults/,
+    note: '[lint-guard 162c-test_javlib_confirm_search_syncs_current_query] rescrapeConfirm search 採用前須同步 currentQuery — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestSettingsQuickToggleGuard
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: /(?<![\w:-])x-model="form\.downloadSampleImages"/,
+    scope: /class="settings-quick-toggle-row"([\s\S]*?)id="sec-search"/,
+    note: '[lint-guard 162c-test_download_sample_images_in_quick_toggle_row] 下載劇照開關須在 quick-toggle 列內 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'forbidden-string',
+    pattern: [
+      /(?<![\w:-])x-model="form\.advancedSearchEnabled"/,
+      /(?<![\w:-])id="advancedSearchToggle"/,
+    ],
+    note: '[lint-guard 162c-test_advanced_search_toggle_removed_from_quick_toggle_row] 進階搜尋 toggle 已退役不得殘留 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: /(?<![\w:-])x-model="form\.thumbnailCacheEnabled"/,
+    scope: /class="settings-quick-toggle-row"([\s\S]*?)id="sec-search"/,
+    note: '[lint-guard 162c-test_thumbnail_cache_enabled_in_quick_toggle_row] 縮圖快取開關須在 quick-toggle 列內 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: ['x-data="helpPopover"', 'class="help-popover"'],
+    scope: /(<div class="settings-form-group popover-anchor"(?:(?!<div class="settings-form-group popover-anchor")[\s\S])*?x-model="form\.thumbnailCacheEnabled"(?:(?!<div class="settings-form-group popover-anchor"|id="sec-search")[\s\S])*)/,
+    note: '[lint-guard 162c-test_thumbnail_cache_has_help_popover_state] 縮圖快取 wrapper 須自帶 helpPopover — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: /<input\b(?=[^>]*(?<![\w:-])@change="onThumbCacheToggleChange\(\)")(?=[^>]*(?<![\w:-])x-model="form\.thumbnailCacheEnabled")[^>]*>/,
+    scope: /class="settings-quick-toggle-row"([\s\S]*?)id="sec-search"/,
+    note: '[lint-guard 162c-test_thumbnail_cache_toggle_has_change_interceptor] 縮圖快取 toggle 同 input 須綁 @change=onThumbCacheToggleChange — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: [
+      'settings.thumbnail_cache.disable_modal.title',
+      'confirmThumbCacheDisable()',
+      'cancelThumbCacheDisable()',
+    ],
+    scope: /<dialog\b[^>]*thumbCacheDisableConfirmOpen[^>]*>([\s\S]*?)<\/dialog>/,
+    note: '[lint-guard 162c-test_thumb_cache_disable_modal_contract] disable modal 須含 title／confirm／cancel — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: 'fluent-modal',
+    scope: /(<dialog\b[^>]*thumbCacheDisableConfirmOpen[^>]*>)/,
+    note: '[lint-guard 162c-test_thumb_cache_disable_modal_contract] disable modal 開標籤須含 fluent-modal — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/settings/state-ui.js', kind: 'required-string',
+    pattern: 'thumbCacheDisableConfirmOpen: false',
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_thumb_cache_disable_state_stub_declared] state-ui 須宣告 thumbCacheDisableConfirmOpen stub — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: [
+      '_triggerThumbClear',
+      '/api/gallery/thumb/clear',
+      'cancelThumbCacheDisable',
+      'confirmThumbCacheDisable',
+    ],
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_thumb_cache_disable_handlers_in_state_config] disable 流程三件＋clear 端點須存在 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: /prevThumbEnabled\b[\s\S]*thumbnailCacheEnabled\s*===\s*false/,
+    note: '[lint-guard 162c-test_thumb_cache_disable_clear_gated_on_save_success] clear 須綁 prevThumbEnabled→false 條件 — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestSettingsDmmProxyContract
+  {
+    file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: 'proxyUrl',
+    scope: { anchor: /isDmmAvailable\s*\(\s*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_is_dmm_available_reads_proxy_url] isDmmAvailable 本體須讀 proxyUrl — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'structure-count',
+    pattern: /(?<![\w:-])x-model="form\.proxyUrl"/,
+    count: 1,
+    note: '[lint-guard 162c-test_proxy_url_x_model_in_sources_card] proxy x-model 恰 1 次（搬移非複製） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'order',
+    items: [
+      { pattern: 'id="sec-search"' },
+      { pattern: /(?<![\w:-])x-model="form\.proxyUrl"/ },
+      { pattern: 'id="sec-gallery"' },
+      { pattern: 'class="collapsible-content"' },
+    ],
+    pairs: [[0, 1], [1, 2], [1, 3]],
+    note: '[lint-guard 162c-test_proxy_url_x_model_in_sources_card] proxy x-model 須在 sec-search 內、sec-gallery／摺疊前 — 遷自 test_frontend_lint.py',
+  },
   // ---- 162c-B10 迄 ----
   //
   //
