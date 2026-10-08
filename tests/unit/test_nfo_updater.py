@@ -725,6 +725,19 @@ class TestCheckCacheNeedsUpdateItems:
         assert item['number'] == 'TEST-001'
         assert item['missing'] == ['director']
 
+    def test_check_cache_needs_update_duration_zero_not_in_items(self):
+        """duration=0 是有效值，不列入 missing 且其餘齊全時不進入 items"""
+        cache = {
+            'file:///movies/TEST-002.mp4': {
+                'nfo_mtime': 1234567890.0,
+                'info': make_base_info(num='TEST-002', duration=0),
+            }
+        }
+        stats = check_cache_needs_update(cache)
+        assert stats['need_update'] == 0
+        assert stats['paths'] == []
+        assert stats['items'] == []
+
     def test_check_cache_needs_update_items_in_same_order_as_paths(self):
         """items 的順序與 paths 同序"""
         cache = {
