@@ -7459,6 +7459,10 @@ const RULES = [
     note: '[lint-guard 162c-test_settings_server_info_warning_key] 使用者開啟伺服器模式 → 若安全警語被拿掉，不會被告知區網內任何裝置都連得進來 — 遷自 test_contract_api_routes.py' },
 
   { file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: /(?<![\w:-])@click="copyServerUrl\(\)"/,
+    note: '[lint-guard 162c-test_settings_server_info_copy_button] 使用者按區網網址旁的複製鈕 → 剪貼簿要真的寫入網址 — 遷自 test_contract_api_routes.py（D-C 誤刪補回，Codex T4 P2）' },
+
+  { file: 'web/templates/settings.html', kind: 'required-string',
     pattern: [
       'settings.server_info.listener_down',
       /(?<![\w:-])x-if="!serverUrl\(\) && lanIp"/,
