@@ -5558,6 +5558,34 @@ const RULES = [
   //
   // ---- 162c-B08 起 ----
   // （162c-B08 專屬子區段：只在此兩行之間追加）
+
+  // 162c: TestAnimationHookup
+  { file: 'web/static/js/pages/search/animations.js', kind: 'required-string', pattern: 'prefersReducedMotion', note: '[lint-guard 162c-test_animations_js_has_reduced_motion_guard] 開啟系統「減少動態」的使用者進搜尋頁 → 仍被播放進場／轉場動畫（減少動態偏好被無視） — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/animations.js', kind: 'required-string', pattern: 'av-card-full-cover', scope: { anchor: /playSlideIn: function/, window: 800 }, note: '[lint-guard 162c-test_play_slide_in_kills_child_tweens] 使用者在詳情頁連續切上一部／下一部 → 子元素殘留上一輪動畫，封面或資訊區閃爍、停在半透明位置（playSlideIn 沒一併打斷封面／資訊的子 tween） — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/animations.js', kind: 'required-string', pattern: 'av-card-full-info', scope: { anchor: /playSlideIn: function/, window: 800 }, note: '[lint-guard 162c-test_play_slide_in_kills_child_tweens] 使用者在詳情頁連續切上一部／下一部 → 子元素殘留上一輪動畫，封面或資訊區閃爍、停在半透明位置（playSlideIn 沒一併打斷封面／資訊的子 tween） — 遷自 test_frontend_lint.py' },
+
+  // 162c: TestFailedSlotC30Guard
+  { file: 'web/static/js/pages/search/state/navigation.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /navigate\s*\(/, window: 500 }, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/grid-mode.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /prevLightboxVideo\s*\(/, window: 800 }, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/grid-mode.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /nextLightboxVideo\s*\(/, window: 800 }, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /navIndicatorText\s*\(/, window: 500 }, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /canGoPrev\s*\(/, window: 300 }, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /canGoNext\s*\(/, window: 300 }, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /showNavigation\s*\(/, window: 300 }, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /fileCountText\s*\(/, window: 500 }, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/search.html', kind: 'required-string', pattern: ['hasVisiblePrev()', 'hasVisibleNext()'], note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string', anyOf: true, pattern: ['currentResult', 'this.searchResults[this.currentIndex]'], scope: /([\s\S]{0,200}firstValid[\s\S]{0,200})/, note: '[lint-guard 162c-test_repoint_is_conditional] 使用者搜尋多筆番號、串流中途已自行點選某筆有效結果 → 串流結束時被無條件拉回第一筆（或原停在失敗空白項卻沒被導向有效項），看到錯的那一筆 — 遷自 test_frontend_lint.py' },
+
+  // 162c: TestLightboxModeNormalization
+  { file: 'web/static/js/pages/search/state/persistence.js', kind: 'required-string', pattern: ['lightboxOpen', '= false', 'actressProfile', 'lightboxIndex'], scope: { anchor: /restoreState\s*\(\s*\)/, window: 3000 }, note: '[lint-guard 162c-test_lightbox_mode_normalization_contains] 使用者在女優（hero）搜尋頁重新整理 → 還原後燈箱殘留開著，或打開女優燈箱時沒有女優資料（空白燈箱、關不掉或內容錯） — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/grid-mode.js', kind: 'required-string', pattern: /if\s*\(\s*!this\.actressProfile\s*\)\s*return/, scope: { anchor: /openActressLightbox\s*\(\s*\)/, window: 300 }, note: '[lint-guard 162c-test_lightbox_mode_normalization_contains] 使用者在女優（hero）搜尋頁重新整理 → 還原後燈箱殘留開著，或打開女優燈箱時沒有女優資料（空白燈箱、關不掉或內容錯） — 遷自 test_frontend_lint.py' },
+
+  // 162c: TestShowcaseAnimationsGuard
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'structure-count', pattern: 'gsap.getById(', count: 2, note: '[lint-guard 162c-test_core_js_no_direct_gsap_getById] showcase core 不得在 _killLightboxTimelines 之外直接呼叫 gsap.getById（整檔 exact 2＝函式體內兩處） — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'structure-count', pattern: 'gsap.getById(', count: 2, scope: { anchor: /export function _killLightboxTimelines\s*\(options\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-test_core_js_no_direct_gsap_getById] showcase core 不得在 _killLightboxTimelines 之外直接呼叫 gsap.getById（函式體內 exact 2） — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'forbidden-string', pattern: 'gsap.getById(', note: '[lint-guard 162c-test_core_js_no_direct_gsap_getById] showcase state-videos.js 不得直接呼叫 gsap.getById( — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: 'gsap.getById(', note: '[lint-guard 162c-test_core_js_no_direct_gsap_getById] showcase state-lightbox.js 不得直接呼叫 gsap.getById( — 遷自 test_frontend_lint.py' },
+
   // ---- 162c-B08 迄 ----
   //
   //
