@@ -6470,6 +6470,157 @@ const RULES = [
   //
   // ---- 162c-B16 起 ----
   // （162c-B16 專屬子區段：只在此兩行之間追加）
+  // 162c: TestGhostFlyGuards
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string',
+    pattern: /var\s+coverEl\s*=/,
+    scope: { anchor: /playGridToLightbox\s*:\s*function\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_open_hide_and_restore_target_is_cover_container] 使用者點縮圖開燈箱 → 封面疊出兩張圖（重影）閃一下 — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string', anyOf: true,
+    pattern: ["closest('.lightbox-cover')", "querySelector('.lightbox-cover')"],
+    scope: { anchor: /playGridToLightbox\s*:\s*function\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_open_hide_and_restore_target_is_cover_container] 使用者點縮圖開燈箱 → 封面疊出兩張圖（重影）閃一下 — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string',
+    pattern: /coverEl\.setAttribute\(\s*'data-ghost-hidden'/,
+    scope: { anchor: /playGridToLightbox\s*:\s*function\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_open_hide_and_restore_target_is_cover_container] 使用者點縮圖開燈箱 → 封面疊出兩張圖（重影）閃一下 — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string',
+    pattern: /gsap\.set\(\s*coverEl\s*,\s*\{\s*opacity:\s*0/,
+    scope: { anchor: /playGridToLightbox\s*:\s*function\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_open_hide_and_restore_target_is_cover_container] 使用者點縮圖開燈箱 → 封面疊出兩張圖（重影）閃一下 — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string',
+    pattern: /cleanupGhost\(\s*ghost\s*,\s*coverEl/,
+    scope: { anchor: /playGridToLightbox\s*:\s*function\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_open_hide_and_restore_target_is_cover_container] 使用者點縮圖開燈箱 → 封面疊出兩張圖（重影）閃一下 — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string',
+    pattern: /var\s+coverEl\s*=/,
+    scope: { anchor: /playLightboxToGrid\s*:\s*function\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_close_hide_and_restore_target_is_cover_container] 使用者關燈箱 → 封面疊出兩張圖（重影）或殘留透明封面 — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string', anyOf: true,
+    pattern: ["closest('.lightbox-cover')", "querySelector('.lightbox-cover')"],
+    scope: { anchor: /playLightboxToGrid\s*:\s*function\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_close_hide_and_restore_target_is_cover_container] 使用者關燈箱 → 封面疊出兩張圖（重影）或殘留透明封面 — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string',
+    pattern: /coverEl\.setAttribute\(\s*'data-ghost-hidden'/,
+    scope: { anchor: /playLightboxToGrid\s*:\s*function\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_close_hide_and_restore_target_is_cover_container] 使用者關燈箱 → 封面疊出兩張圖（重影）或殘留透明封面 — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string',
+    pattern: /gsap\.set\(\s*coverEl\s*,\s*\{\s*opacity:\s*0/,
+    scope: { anchor: /playLightboxToGrid\s*:\s*function\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_close_hide_and_restore_target_is_cover_container] 使用者關燈箱 → 封面疊出兩張圖（重影）或殘留透明封面 — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string',
+    pattern: /gsap\.set\(\s*coverEl\s*,\s*\{\s*opacity:\s*1/,
+    scope: { anchor: /playLightboxToGrid\s*:\s*function\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_close_hide_and_restore_target_is_cover_container] 使用者關燈箱 → 封面疊出兩張圖（重影）或殘留透明封面 — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string',
+    pattern: /cleanupGhost\(\s*ghost\s*,\s*targetImg\s*,\s*coverEl/,
+    scope: { anchor: /playLightboxToGrid\s*:\s*function\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_close_hide_and_restore_target_is_cover_container] 使用者關燈箱 → 封面疊出兩張圖（重影）或殘留透明封面 — 遷自 test_contract_animation.py',
+  },
+
+  // 162c: TestModeToggleFadeOutGuard
+  {
+    file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string',
+    pattern: /playModeCrossfade\s*:\s*function\s*\(\s*oldMode\s*,\s*newMode\s*,\s*params\s*,\s*callbacks\s*\)/,
+    note: '[lint-guard 162c-test_play_mode_crossfade_has_callbacks_param] 使用者按「女優／影片模式」切換 → 第四參數 callbacks 被拔掉後 onOldFadeComplete 永不被呼叫（呼叫端只檢查 fade 是 function、不進 fallback），旗標翻轉不發生，模式切不過去 — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'structure-count',
+    pattern: '_animGeneration',
+    min: 2,
+    scope: { anchor: /(?:^|\n)\s*(?:async\s+)?toggleActressMode\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_toggle_actress_mode_animgen_guard] 使用者快速連按女優／影片模式切換 → 舊的淡出 callback 事後翻旗標，畫面停在與按鈕相反的模式（無聲的錯，只在快速連點時發生） — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: /(?:function\s+\w*FadeIn\w*|var\s+\w*FadeIn\w*\s*=\s*function|\w*FadeIn\w*\s*=\s*function)/,
+    scope: { anchor: /(?:^|\n)\s*(?:async\s+)?toggleActressMode\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_toggle_actress_mode_handles_animations_unavailable] 動畫腳本載入失敗時使用者按「女優模式」→ 淡出 callback 永不觸發 → 模式永遠切不過去（按了沒反應） — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: /(?:typeof\s+\w+\s*===\s*['"]function['"]|window\.ShowcaseAnimations\s*&&\s*window\.ShowcaseAnimations\.playModeCrossfade)/,
+    scope: { anchor: /(?:^|\n)\s*(?:async\s+)?toggleActressMode\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_toggle_actress_mode_handles_animations_unavailable] 動畫腳本載入失敗時使用者按「女優模式」→ 淡出 callback 永不觸發 → 模式永遠切不過去（按了沒反應） — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'structure-count',
+    pattern: /\bflipAndFadeIn\b/,
+    min: 3,
+    scope: { anchor: /(?:^|\n)\s*(?:async\s+)?toggleActressMode\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_toggle_actress_mode_handles_animations_unavailable] 動畫腳本載入失敗時使用者按「女優模式」→ 淡出 callback 永不觸發 → 模式永遠切不過去（按了沒反應） — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string', anyOf: true,
+    pattern: ['prefersReducedMotion', 'playContainerFadeIn'],
+    scope: { anchor: /(?:^|\n)\s*(?:async\s+)?toggleActressMode\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_toggle_actress_mode_reduced_motion_guard_on_fade_in] 開啟「減少動態」的使用者切換女優／影片模式 → 仍被播放淡入動畫（偏好被無視） — 遷自 test_contract_animation.py',
+  },
+
+  // 162c: TestDirReadonlyUIGuard
+  {
+    file: 'web/templates/scanner.html', kind: 'required-string',
+    pattern: /(?<![\w:-])x-show="dir\.readonly &&/,
+    note: '[lint-guard 162c-test_scanner_html_output_row_xshow] 使用者在掃描頁 → 輸出夾列改用 x-if 或沒綁 dir.readonly → 非唯讀來源也顯示輸出夾欄、或切換時輸入框內容丟失 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string',
+    pattern: "output_path: ''",
+    count: 2,
+    note: '[lint-guard 162c-test_state_scan_push_has_output_path] 使用者在掃描頁新增資料夾 → push 物件缺 output_path 欄 → 之後填輸出夾時屬性延遲建立，儲存序列化鍵序不穩（dirty 判定可能誤判） — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestRewriteStrmConfirmGuard
+  {
+    file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: 'settings.scraper.strm_mapping.rewrite_failed',
+    count: 2,
+    scope: /async confirmRewriteStrm\(\)[\s\S]*?(?=cancelRewriteStrm\(\))/,
+    note: '[lint-guard 162c-test_config_js_confirm_calls_real_endpoint_and_toast] 使用者在設定頁改 strm 映射並確認改寫 → 改寫失敗（回 success:false 或網路例外）卻沒跳錯誤 toast → 使用者以為既有 .strm 已更新、其實沒改（無聲的錯） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string',
+    pattern: ['"title"', '"body"', '"cancel"', '"confirm"'],
+    scope: { anchor: /"rewrite_confirm"\s*:\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_zh_tw_json_has_rewrite_keys] 使用者在設定頁確認改寫 .strm 時 → zh_TW 缺 rewrite_confirm／rewrite_done／rewrite_failed 字串 → 確認視窗或 toast 顯示原始鍵名（標籤文案） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string',
+    pattern: /"body"\s*:\s*"[^"]*\{count\}/,
+    scope: { anchor: /"rewrite_confirm"\s*:\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_zh_tw_json_has_rewrite_keys] 使用者在設定頁確認改寫 .strm 時 → zh_TW 缺 rewrite_confirm／rewrite_done／rewrite_failed 字串 → 確認視窗或 toast 顯示原始鍵名（標籤文案） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string',
+    pattern: /"rewrite_done"\s*:\s*"[^"]*\{count\}/,
+    note: '[lint-guard 162c-test_zh_tw_json_has_rewrite_keys] 使用者在設定頁確認改寫 .strm 時 → zh_TW 缺 rewrite_confirm／rewrite_done／rewrite_failed 字串 → 確認視窗或 toast 顯示原始鍵名（標籤文案） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string',
+    pattern: /"rewrite_failed"\s*:\s*"[^"]+"/,
+    note: '[lint-guard 162c-test_zh_tw_json_has_rewrite_keys] 使用者在設定頁確認改寫 .strm 時 → zh_TW 缺 rewrite_confirm／rewrite_done／rewrite_failed 字串 → 確認視窗或 toast 顯示原始鍵名（標籤文案） — 遷自 test_frontend_lint.py',
+  },
   // ---- 162c-B16 迄 ----
   //
   //
