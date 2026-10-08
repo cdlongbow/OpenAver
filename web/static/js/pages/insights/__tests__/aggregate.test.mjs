@@ -151,6 +151,16 @@ test('buildMainMakerYearMap: 4 部中 3 部同片商（3/4=75%）不計入主要
     assert.equal(map.hasOwnProperty('Bob|2021'), false);
 });
 
+test('buildMainMakerYearMap: 3 部全同片商（100%）未達至少 4 部門檻不計入', () => {
+    const records = [
+        rec({ year: 2025, actresses: ['Fran'], maker: 'SOD' }),
+        rec({ year: 2025, actresses: ['Fran'], maker: 'SOD' }),
+        rec({ year: 2025, actresses: ['Fran'], maker: 'SOD' }),
+    ];
+    const map = buildMainMakerYearMap(records);
+    assert.equal(map.hasOwnProperty('Fran|2025'), false);
+});
+
 test('buildMainMakerYearMap: 跨多家片商時回傳計數最高者（最高者非陣列首現）', () => {
     // Alpha 先出現 1 部；Gamma 後出現但累積到 5 部。total=6、5/6≈83% 命中，
     // 且比值刻意避開剛好 80% 邊界（留給上一條 mutation 鎖專用）。

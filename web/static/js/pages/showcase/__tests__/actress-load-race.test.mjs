@@ -122,7 +122,8 @@ test('並行 dedup：連續同步呼叫兩次 loadActresses()，後發的請求�
     // 第二次 fetch（若 dedup 失效才會發出）會失敗並清空清單；dedup 正常時只有第一次成功的請求
     const mock = mockFetchSequence([
         () => okResp([{ name: 'A', birth: '1990-01-01' }]),
-        () => notOkResp(),
+        // 延後才回失敗：去重失效時失敗結算在成功之後，才會清掉清單
+        () => new Promise((r) => setTimeout(() => r(notOkResp()), 20)),
     ]);
     try {
         const c = makeComponent();
