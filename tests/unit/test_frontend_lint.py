@@ -1821,21 +1821,6 @@ class TestCoverLoadingUx67Guard:
 
     # ---- Track A: grid 卡片三態（A2）----
 
-    def test_grid_img_has_load_and_imgloaded_fade(self):
-        """A2/DoD A-1: grid <img> 含 @load 旗標 + .cover-loaded 淡入 class（綁在 img 上）
-
-        99a-T2：@load 現同時設 _imgLoaded 旗標 + 呼叫 applyCellFocal（load-gated focal
-        object-position 套用，取代舊 :style="focalStyle(video)" reactive binding）。
-        """
-        img = self._grid_img()
-        # [lint-guard: pytest-justified] showcase.html(HTML @load) ↔ state-videos.js(_imgLoaded
-        # 消費) 的跨檔 Alpine binding contract；ESLint 看不到 HTML 側、static_guard_lint 看不到
-        # JS 側的消費，單邊守衛任一邊都測不出接線斷掉。
-        assert 'video._imgLoaded = true' in img, \
-            "grid <img> 缺 video._imgLoaded = true（三態的 loaded 觸發）"
-        assert ":class=\"{ 'cover-loaded': video._imgLoaded }\"" in img, \
-            "grid <img> 缺 :class 淡入綁定（.cover-loaded by _imgLoaded）"
-
     def test_grid_img_first_screen_fetchpriority(self):
         """A2/DoD A-5: grid <img> 首屏前 8 張 eager+high（不可 lazy+high 並存）"""
         img = self._grid_img()
@@ -1848,133 +1833,11 @@ class TestCoverLoadingUx67Guard:
 
     # ---- Track A: hero 卡片三態（A3）----
 
-    def test_hero_img_has_load_and_heroloaded_fade(self):
-        """A3/CD-67-4: hero <img> 含 @load=_heroCardImageLoaded（獨立旗標，不混 video _imgLoaded）"""
-        img = self._hero_img()
-        # [lint-guard: pytest-justified] showcase.html(HTML @load) ↔ state-actress.js
-        # (_heroCardImageLoaded 消費/重置) 的跨檔 Alpine binding contract；ESLint 看不到
-        # HTML 側、static_guard_lint 看不到 JS 側的消費，單邊守衛任一邊都測不出接線斷掉。
-        # 138-T5：@load 現同時設旗標 + 呼叫 applyCellFocal（load-gated focal object-position），
-        # 比照 grid <img> 於 99a-T2 的同一處置——釘「@load 開頭仍是設這個旗標」，
-        # 不釘整串字面（否則任何合法追加都會誤紅）。
-        assert '@load="_heroCardImageLoaded = true' in img, \
-            "hero <img> 的 @load 缺 _heroCardImageLoaded = true（三態的 loaded 觸發）"
-        assert ":class=\"{ 'cover-loaded': _heroCardImageLoaded }\"" in img, \
-            "hero <img> 缺 :class 淡入綁定（.cover-loaded by _heroCardImageLoaded）"
-        assert 'fetchpriority="high"' in img and 'loading="eager"' in img, \
-            "hero <img> 缺首屏 eager+high（CD-67-5）"
-
-    def test_hero_img_xshow_gated_on_photo_url(self):
-        """Codex P2#2: hero <img> x-show 須 gate by _matchedActress?.photo_url（空 photo_url 的 src=""
-        不觸發 @load/@error；若 x-show 只看 !_heroCardImageError 會顯空白框）。no-cover div 對應 gate
-        !photo_url || error 顯破圖 icon（與 grid no-cover 一致）。"""
-        img = self._hero_img()
-        assert 'x-show="_matchedActress?.photo_url && !_heroCardImageError"' in img, \
-            "hero <img> x-show 須含 _matchedActress?.photo_url（防空 photo_url 顯空白框回退，Codex P2#2）"
-        html = self._html()
-        assert "!_matchedActress.photo_url || _heroCardImageError" in html, \
-            "hero no-cover div x-show 須含 !_matchedActress.photo_url || _heroCardImageError（空 photo 或 error 皆顯破圖 icon）"
-
-    def test_actress_js_declares_and_resets_heroloaded(self):
-        """A3/CD-67-4: state-actress.js 宣告 _heroCardImageLoaded + 兩處 lifecycle 重置"""
-        src = SHOWCASE_ACTRESS_JS.read_text(encoding="utf-8")
-        assert "_heroCardImageLoaded: false" in src, \
-            "state-actress.js 缺 _heroCardImageLoaded 宣告"
-        n = src.count("this._heroCardImageLoaded = false")
-        assert n >= 2, \
-            f"state-actress.js _heroCardImageLoaded 重置須 ≥2 處（_clearPreciseMatch + _checkPreciseActressMatch），實際 {n}"
-
     # ---- Track A: JS 旗標初始化/重置（A2）----
-
-    def test_handle_cover_error_marks_loaded(self):
-        """Codex P2 (broken cover): handleCoverError 須同時設 has_cover=false 且 _imgLoaded=true，
-        讓 stale/404 封面換 placeholder 後確定性顯示（grid 淡入規則使 img 預設 opacity:0；不可只依賴
-        placeholder 二次 @load 觸發 _imgLoaded）。抽 handleCoverError body 再斷言，非整檔裸 grep。"""
-        src = SHOWCASE_BASE_JS.read_text(encoding="utf-8")
-        m = re.search(r"handleCoverError\(video, event\)\s*\{(.*?)\n\s*\},", src, re.S)
-        assert m, "state-base.js: 找不到 handleCoverError(video, event) method"
-        body = m.group(1)
-        assert "has_cover = false" in body, "handleCoverError 須設 video.has_cover = false"
-        assert "_imgLoaded = true" in body, \
-            ("handleCoverError 須設 video._imgLoaded = true（Codex P2 broken-cover）：否則 stale/404 封面"
-             "在 grid opacity:0 淡入規則下停在隱形、no-cover 也不顯 → 空白卡")
 
     # ---- Track A: CSS 淡入歸屬 + PRM 退化（A1，DoD A-3/A-4）----
 
-    # [lint-guard: pytest-justified] 兩個頁面各自的 CSS scope compound 是否正確排除對方
-    # （跨檔案 CSS 洩漏契約，Codex P2#1 + TASK-141b-T10），非單純「某字串不該出現」。
-    def test_fade_rule_scoped_to_showcase_container(self):
-        """Codex P2#1 + TASK-141b-T10: 淡入 opacity:0 規則必須各自 compound 正確 scope。
-        showcase.css 那條必須含 .showcase-container；search.css 書籤那條必須含 .wishlist-grid。
-        兩個 scope 都要對，不是「任一 scope 存在即可」（CD-13 禁止放寬成任意 scope）。"""
-        # 🔴 branch review P3-1（Opus 2026-09-03）：用 finditer 逐條驗，不是 search 只驗第一條。
-        # 原本用 re.search ⇒ 只檢查**第一條**匹配的規則。實測：在檔尾追加一條裸的
-        # `.av-card-preview-img img { opacity: 0; }`（正是 CD-13 白紙黑字要防的
-        # 「洩漏到 .search-grid 讓搜尋封面整片隱形」），本測試**仍然綠**。
-        # 「拿掉既有那條的 scope 會轉紅」是成立的，缺的是「新增第二條」這個方向。
-        pat = re.compile(r'([^{}]*?\.av-card-preview-img img)\s*\{[^}]*opacity:\s*0[^}]*\}')
-
-        css = self._css()  # showcase.css，既有
-        css_nc = re.sub(r'/\*.*?\*/', '', css, flags=re.S)
-        matches = list(pat.finditer(css_nc))
-        assert matches, "showcase.css 找不到 opacity:0 的 .av-card-preview-img img 淡入規則"
-        for m in matches:
-            assert ".showcase-container" in m.group(1), (
-                "showcase.css 淡入規則未 compound .showcase-container：" + m.group(1).strip()
-            )
-        # TASK-141b-T10 新增：search.css 書籤那條的對應檢查
-        search_css = SEARCH_CSS.read_text(encoding="utf-8")
-        search_css_nc = re.sub(r'/\*.*?\*/', '', search_css, flags=re.S)
-        matches2 = list(pat.finditer(search_css_nc))
-        assert matches2, "search.css 找不到書籤封面 opacity:0 淡入規則（TASK-141b-T10）"
-        m2 = matches2[0]
-        for mm in matches2:
-            assert ".wishlist-grid" in mm.group(1), (
-                "search.css 書籤淡入規則未 compound .wishlist-grid（會洩漏到 .search-grid 讓搜尋封面隱形）："
-                + mm.group(1).strip()
-            )
-        # 🔴 Opus 2026-09-03 追加：連 :is() compound 一起鎖。
-        # 沒有這一條的話，有人把選擇器「簡化」成裸 .wishlist-grid .av-card-preview-img img
-        # （specificity 0,2,1）會輸給 theme.css:1084 的
-        # :is(#ds-gallery-components, .ds-gallery-composition) .av-card-preview-img img（1,1,1，
-        # :is() 取引數清單最高特異度、#ds-gallery-components 是 ID）——
-        # 那條宣告的是 transition: transform，會把我們的 transition: opacity 整個吃掉。
-        # 後果：opacity 照樣 0→1，但**沒有過渡** ⇒ 淡入變成瞬間出現 ＝ 我們要消除的白閃本身，
-        # 而 opacity:0 那條斷言、node:test、check.sh 全部照樣綠。只有 owner 真機驗收看得到。
-        for mm in matches2:
-            assert ":is(#ds-gallery-components" in mm.group(1), (
-                "search.css 書籤淡入規則未 compound :is(#ds-gallery-components, .ds-gallery-composition)："
-                "特異度會輸給 theme.css:1084 的同名 transition 宣告，淡入被靜默吃掉（見本測試上方註解）："
-                + mm.group(1).strip()
-            )
-
-    def test_prm_degrades_shimmer_and_fade(self):
-        """A1/DoD A-4: reduced-motion 下 shimmer animation:none + 淡入 transition:none/opacity:1 皆退化"""
-        css = self._css()
-        assert "prefers-reduced-motion: reduce" in css, \
-            "showcase.css 缺 @media (prefers-reduced-motion: reduce) guard"
-        shimmer_rules = re.findall(r'(?<![\w-])\.shimmer\s*\{([^}]*)\}', css)
-        assert any("animation: shimmer" in b for b in shimmer_rules), \
-            "showcase.css 缺 .shimmer 基礎 animation"
-        assert any("animation: none" in b for b in shimmer_rules), \
-            "showcase.css PRM 缺 .shimmer { animation: none }（DoD A-4）"
-        fade_rules = re.findall(r'\.av-card-preview-img img\s*\{([^}]*)\}', css)
-        assert any("transition: none" in b and "opacity: 1" in b for b in fade_rules), \
-            "showcase.css PRM 缺淡入退化（.av-card-preview-img img { transition: none; opacity: 1 }，DoD A-4）"
-
     # ---- Track B: unload 已遷 pagehide（B2，eslint 也擋；此處正向確認 pagehide 在位）----
-
-    def test_pagehide_skips_cleanup_on_bfcache_persist(self):
-        """Codex P2 (bfcache): pagehide handler 須在 event.persisted（進 bfcache）時跳過 cleanup，
-        否則 Back 還原（不重跑 module init）後頁面缺 SSE/abort/resize listener。抽 pagehide handler
-        callback body 再斷言含 persisted 短路，不整檔裸 grep。"""
-        src = PAGE_LIFECYCLE_JS.read_text(encoding="utf-8")
-        m = re.search(r"addEventListener\('pagehide',\s*function\s*\([^)]*\)\s*\{(.*?)\}\s*\)", src, re.S)
-        assert m, "page-lifecycle.js: 找不到 pagehide handler callback"
-        body = m.group(1)
-        assert "persisted" in body, \
-            ("pagehide handler 未檢查 event.persisted（Codex P2 bfcache）：進 bfcache 時無條件 cleanup "
-             "會讓 Back 還原的頁面缺 listener/resource。需 `if (e.persisted) return;`")
 
     # ---- 71-T6: 燈箱封面 blur-up（thumb 底層秒出 → 原圖淡入）----
 
@@ -1994,124 +1857,8 @@ class TestCoverLoadingUx67Guard:
         assert m, "showcase.html .lightbox-cover 內缺 overlay <img class=\"lb-full\">（blur-up 原圖層）"
         return m.group(0)
 
-    def test_lb_base_img_keeps_cover_url_and_error(self):
-        """71-T6: 底層 <img> 保留 x-ref/cover_url/@error 三態（base 撐容器 + 破圖偵測沿用 base）"""
-        block = self._lightbox_cover_block()
-        m = re.search(r'<img x-ref="lightboxCoverImg"[^>]*>', block, re.S)
-        assert m, "showcase.html .lightbox-cover 缺 base <img x-ref=\"lightboxCoverImg\">"
-        base = m.group(0)
-        assert ':src="currentLightboxVideo?.cover_url"' in base, \
-            "base <img> 須綁 :src=\"currentLightboxVideo?.cover_url\"（快取開啟=小 webp 秒出）"
-        assert '@error="handleCoverError(currentLightboxVideo, $event)"' in base, \
-            "base <img> 須保留 @error=\"handleCoverError\"（破圖三態留 base，不移 overlay）"
-
-    def test_lb_overlay_img_binds_cover_full_url(self):
-        """71-T6: overlay <img class=\"lb-full\"> 須綁 :src=\"currentLightboxVideo?.cover_full_url\"（原圖層）"""
-        overlay = self._lb_overlay_img()
-        assert ':src="currentLightboxVideo?.cover_full_url"' in overlay, \
-            "overlay <img class=\"lb-full\"> 須綁 :src=\"currentLightboxVideo?.cover_full_url\"（原圖載完淡入）"
-
-    def test_lb_overlay_img_load_sets_flag(self):
-        """71-T6: overlay <img> 須含 @load=\"_lbFullLoaded=true\"（原圖載完翻旗標觸發淡入）"""
-        overlay = self._lb_overlay_img()
-        assert re.search(r'@load="_lbFullLoaded\s*=\s*true"', overlay), \
-            "overlay <img class=\"lb-full\"> 須含 @load=\"_lbFullLoaded=true\"（原圖載完觸發淡入）"
-
-    def test_lb_overlay_img_class_binds_shown(self):
-        """71-T6: overlay <img> 須 :class 綁 lb-full-shown（opacity 0→1 淡入，非 x-show/display:none）"""
-        overlay = self._lb_overlay_img()
-        assert re.search(r":class=\"\{\s*'lb-full-shown'\s*:\s*_lbFullLoaded\s*\}\"", overlay), \
-            "overlay <img class=\"lb-full\"> 須 :class=\"{'lb-full-shown':_lbFullLoaded}\"（CSS opacity 淡入）"
-        assert "x-show" not in overlay, \
-            "overlay <img class=\"lb-full\"> 不得用 x-show（display:none 的 img 不載入、@load 永不 fire）"
-
-    def test_lb_full_css_opacity_transition_with_token(self):
-        """71-T6: showcase.css .lb-full 用 opacity:0 + fluent token transition（非裸 .3s）；.lb-full-shown opacity:1"""
-        css = self._css()
-        m = re.search(r'\.lb-full\s*\{([^}]*)\}', css)
-        assert m, "showcase.css 缺 .lb-full 規則"
-        body = m.group(1)
-        assert "position: absolute" in body and "opacity: 0" in body, \
-            ".lb-full 須 position:absolute + opacity:0（疊在 base 上、預設隱藏）"
-        assert "pointer-events: none" in body, \
-            ".lb-full 須 pointer-events:none（overlay 不擋 cover-actions/sparkle 點擊）"
-        assert re.search(r'transition:\s*opacity\s+var\(--fluent-duration-', body), \
-            ".lb-full transition 須用 fluent duration token（不寫裸 .3s magic number）"
-        assert re.search(r'var\(--fluent-ease-(decel|standard)\)', body), \
-            ".lb-full transition 須用 fluent ease token（decel/standard）"
-        shown = re.search(r'\.lb-full-shown\s*\{([^}]*)\}', css)
-        assert shown and "opacity: 1" in shown.group(1), \
-            "showcase.css 缺 .lb-full-shown { opacity: 1 }（淡入終態）"
-
-    def test_lb_full_reduced_motion_no_transition(self):
-        """71-T6: prefers-reduced-motion 內 .lb-full { transition: none }（瞬切，鏡像既有 PRM 範式）"""
-        css = self._css()
-        prm_blocks = re.findall(r'@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{(.*?)\n\}', css, re.S)
-        assert any(re.search(r'\.lb-full\s*\{[^}]*transition:\s*none', b) for b in prm_blocks), \
-            "showcase.css 缺 @media (prefers-reduced-motion: reduce) .lb-full { transition: none }（reduced-motion 瞬切）"
-
-    def test_lightbox_js_declares_and_resets_lbfullloaded(self):
-        """71-T6/71c-P2: state-lightbox.js 宣告 _lbFullLoaded stub（Alpine 3 ReferenceError 防護）+
-        _refreshLbFullBlurUp helper 含 reset（71c-P2 抽 helper 後邏輯在 helper 而非 inline _setLightboxIndex）"""
-        src = SHOWCASE_LIGHTBOX_JS.read_text(encoding="utf-8")
-        assert "_lbFullLoaded: false" in src, \
-            "state-lightbox.js 缺 _lbFullLoaded: false 宣告（Alpine 3 未宣告丟 ReferenceError，x||fallback 擋不住）"
-        # 71c-P2：reset 邏輯抽至 _refreshLbFullBlurUp helper，確認 helper 含 this._lbFullLoaded = false
-        helper_m = re.search(r'_refreshLbFullBlurUp\(\)\s*\{(.*?)\n\s{8}\}', src, re.S)
-        assert helper_m, "state-lightbox.js 找不到 _refreshLbFullBlurUp() helper（71c-P2 blur-up 共用 helper）"
-        assert "this._lbFullLoaded = false" in helper_m.group(1), \
-            "_refreshLbFullBlurUp helper 缺 this._lbFullLoaded = false（開燈箱/prev-next/slip-through 每次重走 blur-up）"
-        # _setLightboxIndex 仍須委託 helper（不可 inline 走樣）
-        set_m = re.search(r'_setLightboxIndex\(idx\)\s*\{(.*?)\n\s{8}\}', src, re.S)
-        assert set_m, "state-lightbox.js: 找不到 _setLightboxIndex(idx) 方法"
-        assert "_refreshLbFullBlurUp" in set_m.group(1), \
-            "_setLightboxIndex 未委託 _refreshLbFullBlurUp（71c-P2 抽 helper 後應呼叫 helper 不可 inline）"
-
 
 # ── TASK-141b-T10: 書籤牆封面淡入 + 骨架 + 首屏優先 + 空狀態淡入 ──
-
-class TestWishlistCoverFadeGuard:
-    """TASK-141b-T10（CD-13／CD-19／CD-11）：書籤牆封面淡入 ＋ 骨架 ＋ 首屏優先 ＋ 空狀態淡入。
-    候選 (a)（番號為 key 的 state，wishlist.js 宣告，loadWishlist() 不碰）已用 Alpine 3.15.12
-    原始碼證實會觸發重新求值（見 card「B. Alpine 3.15.12 原始碼查證」）。
-    """
-
-    SEARCH_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "search.html"
-    WISHLIST_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "state" / "wishlist.js"
-
-    def _html(self):
-        return self.SEARCH_HTML.read_text(encoding="utf-8")
-
-    def _wishlist_img(self):
-        """抽出書籤卡封面 <img :src="`/api/wishlist/cover?number=…`" …>（唯一含這個 endpoint 字面的 img tag）"""
-        html = self._html()
-        # branch review P2-1 之後 :src 前面多了 item.created_at 三元閘（樂觀 unshift 那一筆
-        # 沒有 created_at ⇒ src 為 null ⇒ 不發那個必定 404 的請求），錨點不能寫死從反引號開頭。
-        # ⚠️ 但也不能只放寬成「src 裡含該端點」——**書籤燈箱那張大圖用同一個端點**
-        # （search.html:279），放寬之後 re.search 會先抓到它，斷言就變成在驗錯的元素。
-        # 正解：先扣住書籤卡的 x-for 模板區塊，再在裡面找那個 img。
-        tpl = re.search(
-            r'<template x-for="\(item, index\) in wishlistItems".*?</template>', html, re.S)
-        assert tpl, "search.html: 書籤卡的 x-for 模板不存在"
-        m = re.search(r'<img :src="[^"]*/api/wishlist/cover\?number=.*?>', tpl.group(0), re.S)
-        assert m, "search.html: 書籤卡封面 <img :src=\"`/api/wishlist/cover?number=…\"> 不存在"
-        return m.group(0)
-
-    def test_wishlist_img_has_load_and_covererror_fade(self):
-        """DoD 1/CD-19: 書籤卡 <img> 用番號 key 的 state（非 item._imgLoaded/_imgError）驅動淡入/破圖"""
-        img = self._wishlist_img()
-        # [lint-guard: pytest-justified] search.html(HTML @load/@error) ↔ wishlist.js
-        # (_wishlistCoverLoaded/_wishlistCoverError 宣告) 的跨檔 Alpine binding contract；
-        # ESLint 看不到 HTML 側、static_guard_lint 看不到 JS 側的宣告，單邊守衛任一邊都測不出
-        # 接線斷掉或退回 item._imgLoaded/_imgError（CD-19 明文禁止的形狀）。
-        assert '_wishlistCoverLoaded[item.number] = true' in img, \
-            "書籤卡 <img> 缺 @load=\"_wishlistCoverLoaded[item.number] = true\"（CD-19 落點）"
-        assert '_wishlistCoverError[item.number] = true' in img, \
-            "書籤卡 <img> 缺 @error=\"_wishlistCoverError[item.number] = true\"（CD-19 落點）"
-        assert ":class=\"{ 'cover-loaded': _wishlistCoverLoaded[item.number] }\"" in img, \
-            "書籤卡 <img> 缺 :class 淡入綁定（.cover-loaded by _wishlistCoverLoaded[item.number]）"
-        assert 'item._imgError' not in img and 'item._imgLoaded' not in img, \
-            "CD-19 禁止形狀：書籤卡 <img> 仍殘留 item._imgError/item._imgLoaded（掛在整包覆蓋的元素物件上，切分頁再切回會讓封面全部消失）"
 
     # ── 以下五條純字串掃描已於 2026-09-03 搬去 lint（Codex PR review BLOCKER）──────────
     # CLAUDE.md「Lint 守衛規則」north-star：能用 lint 機械處理的就不該進 pytest。
@@ -2140,18 +1887,6 @@ _LOCALES_ROOT_70 = Path(__file__).parent.parent.parent / "locales"
 
 class TestJavlibraryCfFlowT6Guard:
     """70-T6: CF flow 前端靜態守衛。"""
-
-    # (1) state-rescrape.js factory 宣告 rescrapeCfWaiting
-    def test_state_rescrape_declares_rescrapeCfWaiting(self):
-        js = _STATE_RESCRAPE_JS.read_text(encoding="utf-8")
-        assert "rescrapeCfWaiting" in js, \
-            "70-T6 違規：state-rescrape.js factory 未宣告 rescrapeCfWaiting"
-
-    # (2) state-rescrape.js factory 宣告 _cfPollHandle
-    def test_state_rescrape_declares_cfPollHandle(self):
-        js = _STATE_RESCRAPE_JS.read_text(encoding="utf-8")
-        assert "_cfPollHandle" in js, \
-            "70-T6 違規：state-rescrape.js factory 未宣告 _cfPollHandle"
 
     # (3) state-rescrape.js 定義 _pollCfThenRetry
     def test_state_rescrape_has_pollCfThenRetry(self):

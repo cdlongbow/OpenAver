@@ -2847,6 +2847,105 @@ const RULES = [
   // ==== 162c：自 frontend_contracts／test_frontend_lint.py 搬入（按批分子區段）====
   // ---- 162c-B11 起 ----
   // （162c-B11 專屬子區段：只在此兩行之間追加）
+
+  // 162c: TestCoverLoadingUx67Guard — fade / PRM / lb-full CSS
+  {
+    id: 'CG-162C-B11-01',
+    file: SHOWCASE_FULL,
+    kind: 'fn',
+    check(ctx) {
+      const pat = /([^{}]*?\.av-card-preview-img img)\s*\{[^}]*opacity:\s*0[^}]*\}/g;
+      const scNc = ctx.text;
+      const scMatches = [...scNc.matchAll(pat)];
+      if (!scMatches.length) {
+        ctx.fail('CG-162C-B11-01: showcase 找不到 opacity:0 的 .av-card-preview-img img 淡入規則 — 遷自 test_fade_rule_scoped_to_showcase_container');
+        return;
+      }
+      for (const m of scMatches) {
+        if (!m[1].includes('.showcase-container')) {
+          ctx.fail(`CG-162C-B11-01: showcase 淡入規則未 compound .showcase-container：${m[1].trim()} — 遷自 test_fade_rule_scoped_to_showcase_container`);
+        }
+      }
+      const searchNc = ctx.load('pages/search.css').text;
+      const seMatches = [...searchNc.matchAll(pat)];
+      if (!seMatches.length) {
+        ctx.fail('CG-162C-B11-01: search.css 找不到書籤封面 opacity:0 淡入規則 — 遷自 test_fade_rule_scoped_to_showcase_container');
+        return;
+      }
+      for (const m of seMatches) {
+        if (!m[1].includes('.wishlist-grid')) {
+          ctx.fail(`CG-162C-B11-01: search.css 書籤淡入規則未 compound .wishlist-grid：${m[1].trim()} — 遷自 test_fade_rule_scoped_to_showcase_container`);
+        }
+        if (!m[1].includes(':is(#ds-gallery-components')) {
+          ctx.fail(`CG-162C-B11-01: search.css 書籤淡入規則未 compound :is(#ds-gallery-components)：${m[1].trim()} — 遷自 test_fade_rule_scoped_to_showcase_container`);
+        }
+      }
+    },
+  },
+  {
+    id: 'CG-162C-B11-02',
+    file: SHOWCASE_FULL,
+    kind: 'fn',
+    check(ctx) {
+      const css = ctx.raw;
+      if (!css.includes('prefers-reduced-motion: reduce')) {
+        ctx.fail('CG-162C-B11-02: showcase.css 缺 @media (prefers-reduced-motion: reduce) — 遷自 test_prm_degrades_shimmer_and_fade');
+      }
+      const shimmerRules = [...css.matchAll(/(?<![\w-])\.shimmer\s*\{([^}]*)\}/g)].map((m) => m[1]);
+      if (!shimmerRules.some((b) => b.includes('animation: shimmer'))) {
+        ctx.fail('CG-162C-B11-02: showcase.css 缺 .shimmer 基礎 animation — 遷自 test_prm_degrades_shimmer_and_fade');
+      }
+      if (!shimmerRules.some((b) => b.includes('animation: none'))) {
+        ctx.fail('CG-162C-B11-02: showcase.css PRM 缺 .shimmer { animation: none } — 遷自 test_prm_degrades_shimmer_and_fade');
+      }
+      const fadeRules = [...css.matchAll(/\.av-card-preview-img img\s*\{([^}]*)\}/g)].map((m) => m[1]);
+      if (!fadeRules.some((b) => b.includes('transition: none') && b.includes('opacity: 1'))) {
+        ctx.fail('CG-162C-B11-02: showcase.css PRM 缺淡入退化（transition: none; opacity: 1） — 遷自 test_prm_degrades_shimmer_and_fade');
+      }
+    },
+  },
+  {
+    id: 'CG-162C-B11-03',
+    file: SHOWCASE_FULL,
+    kind: 'fn',
+    check(ctx) {
+      const css = ctx.raw;
+      const m = css.match(/\.lb-full\s*\{([^}]*)\}/);
+      if (!m) {
+        ctx.fail('CG-162C-B11-03: showcase.css 缺 .lb-full 規則 — 遷自 test_lb_full_css_opacity_transition_with_token');
+        return;
+      }
+      const body = m[1];
+      if (!body.includes('position: absolute') || !body.includes('opacity: 0')) {
+        ctx.fail('CG-162C-B11-03: .lb-full 須 position:absolute + opacity:0 — 遷自 test_lb_full_css_opacity_transition_with_token');
+      }
+      if (!body.includes('pointer-events: none')) {
+        ctx.fail('CG-162C-B11-03: .lb-full 須 pointer-events:none — 遷自 test_lb_full_css_opacity_transition_with_token');
+      }
+      if (!/transition:\s*opacity\s+var\(--fluent-duration-/.test(body)) {
+        ctx.fail('CG-162C-B11-03: .lb-full transition 須用 fluent duration token — 遷自 test_lb_full_css_opacity_transition_with_token');
+      }
+      if (!/var\(--fluent-ease-(decel|standard)\)/.test(body)) {
+        ctx.fail('CG-162C-B11-03: .lb-full transition 須用 fluent ease token — 遷自 test_lb_full_css_opacity_transition_with_token');
+      }
+      const shown = css.match(/\.lb-full-shown\s*\{([^}]*)\}/);
+      if (!shown || !shown[1].includes('opacity: 1')) {
+        ctx.fail('CG-162C-B11-03: showcase.css 缺 .lb-full-shown { opacity: 1 } — 遷自 test_lb_full_css_opacity_transition_with_token');
+      }
+    },
+  },
+  {
+    id: 'CG-162C-B11-04',
+    file: SHOWCASE_FULL,
+    kind: 'fn',
+    check(ctx) {
+      const css = ctx.raw;
+      const prmBlocks = [...css.matchAll(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{(.*?)\n\}/gs)].map((m) => m[1]);
+      if (!prmBlocks.some((b) => /\.lb-full\s*\{[^}]*transition:\s*none/.test(b))) {
+        ctx.fail('CG-162C-B11-04: PRM 缺 .lb-full { transition: none } — 遷自 test_lb_full_reduced_motion_no_transition');
+      }
+    },
+  },
   // ---- 162c-B11 迄 ----
   //
   //

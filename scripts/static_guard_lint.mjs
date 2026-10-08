@@ -5592,6 +5592,135 @@ const RULES = [
   //
   // ---- 162c-B11 起 ----
   // （162c-B11 專屬子區段：只在此兩行之間追加）
+
+  // 162c: TestCoverLoadingUx67Guard
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: [
+      'video._imgLoaded = true',
+      ":class=\"{ 'cover-loaded': video._imgLoaded }\"",
+    ],
+    scope: /<template x-for="\(video, index\) in paginatedVideos"[\s\S]*?(<img\s(?:[^>"']|"[^"]*"|'[^']*')*>)/,
+    note: '[lint-guard 162c-test_grid_img_has_load_and_imgloaded_fade] 格狀牆封面 <img> 須綁 _imgLoaded 與 cover-loaded 淡入 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: [
+      '@load="_heroCardImageLoaded = true',
+      ":class=\"{ 'cover-loaded': _heroCardImageLoaded }\"",
+      'fetchpriority="high"',
+      'loading="eager"',
+    ],
+    scope: /(<img :src="_matchedActress\?\.photo_url \|\| ''"[\s\S]*?>)/,
+    note: '[lint-guard 162c-test_hero_img_has_load_and_heroloaded_fade] hero 女優照片須綁 _heroCardImageLoaded 淡入與 eager+high — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'x-show="_matchedActress?.photo_url && !_heroCardImageError"',
+    scope: /(<img :src="_matchedActress\?\.photo_url \|\| ''"[\s\S]*?>)/,
+    note: '[lint-guard 162c-test_hero_img_xshow_gated_on_photo_url] hero <img> x-show 須 gate by photo_url（防空 url 空白框） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: '!_matchedActress.photo_url || _heroCardImageError',
+    note: '[lint-guard 162c-test_hero_img_xshow_gated_on_photo_url] hero no-cover 須對空 photo_url 或 error 顯破圖 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: '_heroCardImageLoaded: false',
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_actress_js_declares_and_resets_heroloaded] state-actress.js 須宣告 _heroCardImageLoaded — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'structure-count',
+    pattern: 'this._heroCardImageLoaded = false',
+    min: 2,
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_actress_js_declares_and_resets_heroloaded] state-actress.js _heroCardImageLoaded 重置須 ≥2 處 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
+    pattern: ['has_cover = false', '_imgLoaded = true'],
+    scope: { anchor: /handleCoverError\s*\(\s*video\s*,\s*event\s*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_handle_cover_error_marks_loaded] handleCoverError 須同時設 has_cover=false 與 _imgLoaded=true — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/components/page-lifecycle.js', kind: 'required-string',
+    pattern: 'persisted',
+    scope: /addEventListener\('pagehide',\s*function\s*\([^)]*\)\s*\{([\s\S]*?)\}\s*\)/,
+    note: '[lint-guard 162c-test_pagehide_skips_cleanup_on_bfcache_persist] pagehide callback 須檢查 event.persisted 跳過 cleanup — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: /<img x-ref="lightboxCoverImg"(?=[^>]*:src="currentLightboxVideo\?\.cover_url")(?=[^>]*@error="handleCoverError\(currentLightboxVideo, \$event\)")[^>]*>/,
+    scope: /<div class="lightbox-cover"[^>]*has-cover[^>]*>[\s\S]*?<\/div>[\s\S]*?<!-- Metadata Panel/,
+    note: '[lint-guard 162c-test_lb_base_img_keeps_cover_url_and_error] 燈箱 base <img> 須綁 cover_url 與 handleCoverError — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
+    tagName: 'img', className: 'lb-full',
+    required: [':src="currentLightboxVideo?.cover_full_url"'],
+    note: '[lint-guard 162c-test_lb_overlay_img_binds_cover_full_url] overlay img.lb-full 須綁 cover_full_url — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
+    tagName: 'img', className: 'lb-full',
+    required: [/@load="_lbFullLoaded\s*=\s*true"/],
+    note: '[lint-guard 162c-test_lb_overlay_img_load_sets_flag] overlay img.lb-full 須 @load 翻 _lbFullLoaded — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
+    tagName: 'img', className: 'lb-full',
+    required: [/:class="\{\s*'lb-full-shown'\s*:\s*_lbFullLoaded\s*\}"/],
+    forbidden: ['x-show'],
+    note: '[lint-guard 162c-test_lb_overlay_img_class_binds_shown] overlay img.lb-full 須 :class lb-full-shown 且不得 x-show — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: '_lbFullLoaded: false',
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_lightbox_js_declares_and_resets_lbfullloaded] state-lightbox.js 須宣告 _lbFullLoaded — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: 'this._lbFullLoaded = false',
+    scope: { anchor: /_refreshLbFullBlurUp\(\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_lightbox_js_declares_and_resets_lbfullloaded] _refreshLbFullBlurUp 須重置 _lbFullLoaded — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: '_refreshLbFullBlurUp',
+    scope: { anchor: /_setLightboxIndex\(idx\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_lightbox_js_declares_and_resets_lbfullloaded] _setLightboxIndex 須委託 _refreshLbFullBlurUp — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestWishlistCoverFadeGuard
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: [
+      '_wishlistCoverLoaded[item.number] = true',
+      '_wishlistCoverError[item.number] = true',
+      ":class=\"{ 'cover-loaded': _wishlistCoverLoaded[item.number] }\"",
+    ],
+    scope: /<template x-for="\(item, index\) in wishlistItems"(?:(?!<\/template>)[\s\S])*?(<img :src="[^"]*\/api\/wishlist\/cover\?number=[^>]*>)/,
+    note: '[lint-guard 162c-test_wishlist_img_has_load_and_covererror_fade] 書籤卡 <img> 須用番號 key 的 loaded／error／cover-loaded 綁定 — 遷自 test_frontend_lint.py',
+  },
+  // forbidden item._imgError／item._imgLoaded 已由既有 [TestWishlistCoverFadeGuard] 涵蓋；不另加以免共覆蓋
+
+  // 162c: TestJavlibraryCfFlowT6Guard
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: 'rescrapeCfWaiting',
+    note: '[lint-guard 162c-test_state_rescrape_declares_rescrapeCfWaiting] state-rescrape.js 須含 rescrapeCfWaiting 識別字 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    pattern: '_cfPollHandle',
+    note: '[lint-guard 162c-test_state_rescrape_declares_cfPollHandle] state-rescrape.js 須含 _cfPollHandle 識別字 — 遷自 test_frontend_lint.py',
+  },
   // ---- 162c-B11 迄 ----
   //
   //
