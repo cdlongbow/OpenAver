@@ -247,24 +247,6 @@ class TestPickerIntegrationGuard:
             Path(__file__).parent.parent.parent.parent / "web" / "static",
         )
 
-    def test_picker_html_contains(self):
-        """showcase.html 含 picker button、overlay 結構"""
-        html = self._html()
-        for expected in [
-            "bi-arrow-clockwise",
-            "showcase.actress.change_photo",
-            "currentLightboxActress?.is_favorite",
-            "actress-picker-overlay",
-            "picker-candidates-grid",
-            "picker-source-badge",
-            "picker-loading",
-            "picker-empty",
-        ]:
-            assert expected in html, f"showcase.html missing: {expected!r}"
-        # T1: actress-picker-area must be renamed
-        assert "actress-picker-area" not in html, \
-            "showcase.html should not contain: 'actress-picker-area'"
-
     def test_picker_js_contains(self):
         """core.js 含 picker state、methods、params、SSE handler 等必要字串"""
         js = self._core_js()
@@ -312,100 +294,6 @@ class TestPickerIntegrationGuard:
         # _burstAllPickerCandidates ≥ 4 occurrences
         assert js.count("_burstAllPickerCandidates") >= 4, \
             "_burstAllPickerCandidates must appear ≥4 times (def + done/timeout/error)"
-
-    def test_picker_overlay_is_showcase_lightbox_direct_child(self):
-        """49c-T1: actress-picker-overlay 必須為 .showcase-lightbox 的直接 child"""
-        import html.parser as _html_parser
-
-        html_text = self._html()
-        assert "actress-picker-overlay" in html_text, \
-            "showcase.html missing: 'actress-picker-overlay'"
-
-        class _DivStackParser(_html_parser.HTMLParser):
-            def __init__(self):
-                super().__init__()
-                self.div_stack = []
-                self.overlay_ancestors = None
-                self.found_overlay_in_lightbox_content = False
-
-            def handle_starttag(self, tag, attrs):
-                if tag != "div":
-                    return
-                attr_dict = dict(attrs)
-                classes = set(attr_dict.get("class", "").split())
-                if "actress-picker-overlay" in classes:
-                    if self.overlay_ancestors is None:
-                        self.overlay_ancestors = [s.copy() for s in self.div_stack]
-                    if any("lightbox-content" in s for s in self.div_stack):
-                        self.found_overlay_in_lightbox_content = True
-                self.div_stack.append(classes)
-
-            def handle_endtag(self, tag):
-                if tag != "div":
-                    return
-                if self.div_stack:
-                    self.div_stack.pop()
-
-        parser = _DivStackParser()
-        parser.feed(html_text)
-        assert parser.overlay_ancestors is not None, \
-            "actress-picker-overlay not found in markup"
-        assert not parser.found_overlay_in_lightbox_content, \
-            "actress-picker-overlay should not be inside lightbox-content"
-        assert "showcase-lightbox" in parser.overlay_ancestors[-1], \
-            "actress-picker-overlay direct parent should have showcase-lightbox class"
-
-
-class TestUS5PosterCropGhostCrossfade:
-    """TASK-75b-T7：poster 格開燈箱的 cover→contain 溶接（Codex 視覺 bug2）。
-
-    契約：state-lightbox.js 依「≤480px ∩ 非女優模式 ∩ 非 hero」算 posterCrop 並傳給
-    playGridToLightbox；ghost-fly.js 在 posterCrop 下對齊縮圖右裁（objectPosition right center）
-    並於落地 crossfade（coverEl 淡入 + ghost 淡出 0.12s）取代硬切 cleanupGhost。
-    三問：刪 posterCrop 傳遞 → 紅；刪 objectPosition 對齊 → 紅；把 crossfade 改回硬切 → 紅。
-    """
-
-    def _grid_to_lightbox_body(self) -> str:
-        js = GHOST_FLY_JS.read_text(encoding="utf-8")
-        start = js.find("playGridToLightbox: function")
-        assert start >= 0, "ghost-fly.js 找不到 playGridToLightbox"
-        end = js.find("playLightboxToGrid: function", start)
-        assert end > start, "ghost-fly.js 找不到 playGridToLightbox 結束邊界"
-        return js[start:end]
-
-    def test_state_lightbox_threads_poster_crop(self):
-        js = STATE_LIGHTBOX_JS.read_text(encoding="utf-8")
-        # 計算條件三要素
-        assert "posterCrop" in js, "state-lightbox.js 應計算 posterCrop"
-        # T11（US-10）：門檻由 ≤480 擴到 ≤899（共用常數 POSTER_CROP_MAX_W，對齊守衛 TestPosterCropThresholdAlignment）。
-        assert "window.innerWidth <= POSTER_CROP_MAX_W" in js, "posterCrop 應 gate ≤POSTER_CROP_MAX_W"
-        assert "showFavoriteActresses" in js, "posterCrop 應排除女優模式"
-        assert "hero-card" in js, "posterCrop 應排除 hero 卡（女優入口）"
-        # 傳入 playGridToLightbox 的 options
-        assert "posterCrop: posterCrop" in js, (
-            "state-lightbox.js 應把 posterCrop 傳入 playGridToLightbox options"
-        )
-
-    def test_ghost_fly_consumes_and_aligns_crop(self):
-        body = self._grid_to_lightbox_body()
-        assert "options.posterCrop" in body, "playGridToLightbox 應消費 options.posterCrop"
-        # (A) 對齊縮圖右裁
-        assert "objectPosition = 'right center'" in body, (
-            "posterCrop 下 ghost 應對齊縮圖 objectPosition right center（消起飛 pan）"
-        )
-
-    def test_ghost_fly_landing_crossfade(self):
-        body = self._grid_to_lightbox_body()
-        # (D) 落地 crossfade：coverEl 淡入 + ghost 淡出，且綁在 posterCrop 分支
-        assert "posterCrop && coverEl" in body, (
-            "落地 crossfade 應 gate 在 posterCrop（非 poster 路徑維持硬切 cleanupGhost）"
-        )
-        assert "opacity: 1, duration: 0.12" in body, "coverEl 應 0.12s 淡入（contain 真圖浮現）"
-        assert "opacity: 0, duration: 0.12" in body, "ghost 應 0.12s 淡出（溶接 cover→contain）"
-        # 非 poster 仍走硬切 cleanupGhost
-        assert "cleanupGhost(ghost, coverEl)" in body, (
-            "非 posterCrop 路徑應保留硬切 cleanupGhost（桌面零回歸）"
-        )
 
 
 class TestMobileSimilarPanelContractGuard:
@@ -457,82 +345,11 @@ class TestMobileSimilarPanelContractGuard:
 
     # ── 1. CSS default-hidden + .show visible ──────────────────────────────
 
-    def test_mobile_panel_default_hidden(self):
-        """.similar-mobile-panel 存在於 HTML；CSS 含 default-hidden（opacity:0/visibility:hidden/
-        pointer-events:none）+ .show block（opacity:1/visibility:visible/pointer-events:auto）。"""
-        html = self._html()
-        assert 'class="similar-mobile-panel"' in html, \
-            "showcase.html 缺 .similar-mobile-panel div"
-        css = self._css()
-        # default-hidden block（strip CSS comment 後查，commented-out 行也應 RED）
-        m_panel = re.search(r'\.similar-mobile-panel\s*\{([^}]+)\}', css, re.DOTALL)
-        assert m_panel, "showcase.css 缺 .similar-mobile-panel default-hidden block"
-        block = re.sub(r'/\*.*?\*/', '', m_panel.group(1), flags=re.DOTALL)
-        assert "opacity: 0" in block, \
-            ".similar-mobile-panel block 缺 opacity: 0（FOUC 防護）"
-        assert "visibility: hidden" in block, \
-            ".similar-mobile-panel block 缺 visibility: hidden"
-        assert "pointer-events: none" in block, \
-            ".similar-mobile-panel block 缺 pointer-events: none"
-        # .show block
-        m_show = re.search(r'\.similar-mobile-panel\.show\s*\{([^}]+)\}', css, re.DOTALL)
-        assert m_show, "showcase.css 缺 .similar-mobile-panel.show block"
-        show_block = re.sub(r'/\*.*?\*/', '', m_show.group(1), flags=re.DOTALL)
-        assert "opacity: 1" in show_block, \
-            ".similar-mobile-panel.show 缺 opacity: 1"
-        assert "visibility: visible" in show_block, \
-            ".similar-mobile-panel.show 缺 visibility: visible"
-        assert "pointer-events: auto" in show_block, \
-            ".similar-mobile-panel.show 缺 pointer-events: auto"
-
     # ── 2. Desktop safety net ───────────────────────────────────────────────
-
-    def test_mobile_panel_desktop_safety_net(self):
-        """showcase.css @media (min-width:960px) 內含 similar-mobile-panel + display:none（桌面安全網）。"""
-        css = self._css()
-        # 找含 similar-mobile-panel 的那個 @media (min-width:960px) block（可能有多個同斷點）
-        found = False
-        for m in re.finditer(r'@media\s*\(\s*min-width\s*:\s*960px\s*\)', css):
-            window = css[m.start():m.start() + 500]
-            if "similar-mobile-panel" in window and "display: none" in window:
-                found = True
-                break
-        assert found, (
-            "showcase.css 缺含 similar-mobile-panel + display:none 的 @media (min-width: 960px) block"
-            "（桌面安全網缺失，面板在桌面可能顯示）"
-        )
 
     # ── 3. HTML x-trap ─────────────────────────────────────────────────────
 
-    def test_mobile_panel_has_x_trap(self):
-        """showcase.html .similar-mobile-panel block 含 x-trap.inert=\"similarModeMobileOpen\"。"""
-        html = self._html()
-        # 找 .similar-mobile-panel div 開始的 block
-        m = re.search(r'class="similar-mobile-panel"[^>]*>(.*?)</div>', html, re.DOTALL)
-        # 寬鬆：直接全文搜尋（similar-mobile-panel 唯一，不會誤中）
-        idx_panel = html.find('class="similar-mobile-panel"')
-        assert idx_panel != -1, "showcase.html 缺 similar-mobile-panel"
-        # x-trap 必須在 panel div 開啟標籤附近（同一 tag attribute）
-        panel_tag_end = html.index('>', idx_panel)
-        panel_opening_tag = html[idx_panel:panel_tag_end + 1]
-        assert 'x-trap.inert="similarModeMobileOpen"' in panel_opening_tag, \
-            "similar-mobile-panel div 開啟標籤缺 x-trap.inert=\"similarModeMobileOpen\""
-
     # ── 4. Lightbox trap yields to mobile panel ─────────────────────────────
-
-    def test_mobile_panel_lightbox_trap_yields(self):
-        """showcase.html lightbox x-trap.inert 含 similarModeMobileOpen 條件（!similarModeMobileOpen）。
-        面板開時 trap 釋放給面板（防焦點被困在 lightbox）。
-        """
-        html = self._html()
-        # 錨定含 deleteVideoModalOpen 的那條（lightbox x-trap，T2 rewrite 後的錨點）
-        m = re.search(r'x-trap\.inert="([^"]*deleteVideoModalOpen[^"]*)"', html)
-        assert m, "showcase.html 缺含 deleteVideoModalOpen 的 x-trap.inert 行（lightbox trap）"
-        expr = m.group(1)
-        assert "similarModeMobileOpen" in expr, \
-            f"lightbox x-trap.inert 未含 similarModeMobileOpen: {expr!r}"
-        assert "!similarModeMobileOpen" in expr, \
-            f"lightbox x-trap.inert 缺 !similarModeMobileOpen（面板開時 trap 未釋放）: {expr!r}"
 
     # ── 5. Burst card CSS ───────────────────────────────────────────────────
 

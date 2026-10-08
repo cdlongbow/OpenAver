@@ -5539,6 +5539,43 @@ const RULES = [
   //
   // ---- 162c-B17 起 ----
   // （162c-B17 專屬子區段：只在此兩行之間追加）
+  // 162c: TestPickerIntegrationGuard
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'bi-arrow-clockwise', note: '[lint-guard 162c-test_picker_html_contains] 使用者在女優燈箱按「換照片」→ 候選面板（或按鈕）不出現，換不了照片 — 遷自 test_contract_animation.py' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'showcase.actress.change_photo', note: '[lint-guard 162c-test_picker_html_contains] 使用者在女優燈箱按「換照片」→ 候選面板（或按鈕）不出現，換不了照片 — 遷自 test_contract_animation.py' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'currentLightboxActress?.is_favorite', note: '[lint-guard 162c-test_picker_html_contains] 使用者在女優燈箱按「換照片」→ 候選面板（或按鈕）不出現，換不了照片 — 遷自 test_contract_animation.py' },
+  // actress-picker-overlay 存在性改由 test_picker_overlay_is_showcase_lightbox_direct_child 的 nested-count 覆蓋（同字面剪斷會共覆蓋）
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'picker-candidates-grid', note: '[lint-guard 162c-test_picker_html_contains] 使用者在女優燈箱按「換照片」→ 候選面板（或按鈕）不出現，換不了照片 — 遷自 test_contract_animation.py' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'picker-source-badge', note: '[lint-guard 162c-test_picker_html_contains] 使用者在女優燈箱按「換照片」→ 候選面板（或按鈕）不出現，換不了照片 — 遷自 test_contract_animation.py' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'picker-loading', note: '[lint-guard 162c-test_picker_html_contains] 使用者在女優燈箱按「換照片」→ 候選面板（或按鈕）不出現，換不了照片 — 遷自 test_contract_animation.py' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'class="picker-empty">', note: '[lint-guard 162c-test_picker_html_contains] 使用者在女優燈箱按「換照片」→ 候選面板（或按鈕）不出現，換不了照片 — 遷自 test_contract_animation.py' },
+  { file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: 'actress-picker-area', note: '[lint-guard 162c-test_picker_html_contains] 使用者在女優燈箱按「換照片」→ 候選面板（或按鈕）不出現，換不了照片 — 遷自 test_contract_animation.py' },
+  {
+    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'nested-count',
+    outerAnchor: /<div class="showcase-lightbox"/,
+    outerTagName: 'div', innerToken: 'actress-picker-overlay', expected: 1,
+    note: '[lint-guard 162c-test_picker_overlay_is_showcase_lightbox_direct_child] 換照片面板被包進 lightbox-content 的 transform 祖先 → position:fixed 失效、面板跑位或被裁切 — 遷自 test_contract_animation.py',
+  },
+  // 162c: TestUS5PosterCropGhostCrossfade
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'posterCrop', note: '[lint-guard 162c-test_state_lightbox_threads_poster_crop] 手機點海報格開燈箱 → 縮圖右裁與燈箱 contain 比例不同，封面落地時硬切變形 — 遷自 test_contract_animation.py' },
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'window.innerWidth <= POSTER_CROP_MAX_W', note: '[lint-guard 162c-test_state_lightbox_threads_poster_crop] 手機點海報格開燈箱 → 縮圖右裁與燈箱 contain 比例不同，封面落地時硬切變形 — 遷自 test_contract_animation.py' },
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'showFavoriteActresses', note: '[lint-guard 162c-test_state_lightbox_threads_poster_crop] 手機點海報格開燈箱 → 縮圖右裁與燈箱 contain 比例不同，封面落地時硬切變形 — 遷自 test_contract_animation.py' },
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'hero-card', note: '[lint-guard 162c-test_state_lightbox_threads_poster_crop] 手機點海報格開燈箱 → 縮圖右裁與燈箱 contain 比例不同，封面落地時硬切變形 — 遷自 test_contract_animation.py' },
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'posterCrop: posterCrop', note: '[lint-guard 162c-test_state_lightbox_threads_poster_crop] 手機點海報格開燈箱 → 縮圖右裁與燈箱 contain 比例不同，封面落地時硬切變形 — 遷自 test_contract_animation.py' },
+  { file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string', pattern: 'options.posterCrop', scope: /playGridToLightbox: function([\s\S]*?)playLightboxToGrid: function/, note: '[lint-guard 162c-test_ghost_fly_consumes_and_aligns_crop] 落地前 ghost 沒對齊縮圖右裁，起飛時畫面橫向跳一下 — 遷自 test_contract_animation.py' },
+  { file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string', pattern: "objectPosition = 'right center'", scope: /playGridToLightbox: function([\s\S]*?)playLightboxToGrid: function/, note: '[lint-guard 162c-test_ghost_fly_consumes_and_aligns_crop] 落地前 ghost 沒對齊縮圖右裁，起飛時畫面橫向跳一下 — 遷自 test_contract_animation.py' },
+  { file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string', pattern: 'posterCrop && coverEl', scope: /playGridToLightbox: function([\s\S]*?)playLightboxToGrid: function/, note: '[lint-guard 162c-test_ghost_fly_landing_crossfade] 落地改回硬切，封面 cover→contain 瞬間變形 — 遷自 test_contract_animation.py' },
+  { file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string', pattern: 'opacity: 1, duration: 0.12', scope: /playGridToLightbox: function([\s\S]*?)playLightboxToGrid: function/, note: '[lint-guard 162c-test_ghost_fly_landing_crossfade] 落地改回硬切，封面 cover→contain 瞬間變形 — 遷自 test_contract_animation.py' },
+  { file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string', pattern: 'opacity: 0, duration: 0.12', scope: /playGridToLightbox: function([\s\S]*?)playLightboxToGrid: function/, note: '[lint-guard 162c-test_ghost_fly_landing_crossfade] 落地改回硬切，封面 cover→contain 瞬間變形 — 遷自 test_contract_animation.py' },
+  { file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string', pattern: 'cleanupGhost(ghost, coverEl)', scope: /playGridToLightbox: function([\s\S]*?)playLightboxToGrid: function/, note: '[lint-guard 162c-test_ghost_fly_landing_crossfade] 落地改回硬切，封面 cover→contain 瞬間變形 — 遷自 test_contract_animation.py' },
+  // 162c: TestMobileSimilarPanelContractGuard
+  // class="similar-mobile-panel" 存在性改由 test_mobile_panel_has_x_trap 的 class-tag 覆蓋（刪 class 行會共覆蓋）
+  {
+    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
+    tagName: 'div', className: 'similar-mobile-panel',
+    required: ['x-trap.inert="similarModeMobileOpen"'],
+    note: '[lint-guard 162c-test_mobile_panel_has_x_trap] 鍵盤／螢幕閱讀器開手機相似面板 → Tab 跑到被遮住的燈箱按鈕 — 遷自 test_contract_animation.py',
+  },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '!similarModeMobileOpen', scope: /x-trap\.inert="([^"]*deleteVideoModalOpen[^"]*)"/, note: '[lint-guard 162c-test_mobile_panel_lightbox_trap_yields] 鍵盤開手機相似面板 → 燈箱焦點陷阱沒釋放，焦點卡在燈箱 — 遷自 test_contract_animation.py' },
   // ---- 162c-B17 迄 ----
   //
   //

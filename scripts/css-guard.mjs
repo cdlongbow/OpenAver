@@ -2853,6 +2853,54 @@ const RULES = [
   //
   // ---- 162c-B17 起 ----
   // （162c-B17 專屬子區段：只在此兩行之間追加）
+  // 162c: TestMobileSimilarPanelContractGuard
+  {
+    id: 'CG-162C-B17-01',
+    file: SHOWCASE_FULL,
+    kind: 'fn',
+    msg: '[lint-guard 162c-test_mobile_panel_default_hidden] 手機開燈箱 → 相似面板預設蓋住且擋住點擊 — 遷自 test_contract_animation.py',
+    check(ctx) {
+      const css = ctx.text;
+      const mPanel = css.match(/\.similar-mobile-panel\s*\{([^}]+)\}/);
+      if (!mPanel) {
+        ctx.fail('CG-162C-B17-01: 找不到 .similar-mobile-panel default-hidden block');
+        return;
+      }
+      const block = mPanel[1];
+      if (!block.includes('opacity: 0')) ctx.fail('CG-162C-B17-01: .similar-mobile-panel block 缺 opacity: 0');
+      if (!block.includes('visibility: hidden')) ctx.fail('CG-162C-B17-01: .similar-mobile-panel block 缺 visibility: hidden');
+      if (!block.includes('pointer-events: none')) ctx.fail('CG-162C-B17-01: .similar-mobile-panel block 缺 pointer-events: none');
+      const mShow = css.match(/\.similar-mobile-panel\.show\s*\{([^}]+)\}/);
+      if (!mShow) {
+        ctx.fail('CG-162C-B17-01: 找不到 .similar-mobile-panel.show block');
+        return;
+      }
+      const showBlock = mShow[1];
+      if (!showBlock.includes('opacity: 1')) ctx.fail('CG-162C-B17-01: .similar-mobile-panel.show 缺 opacity: 1');
+      if (!showBlock.includes('visibility: visible')) ctx.fail('CG-162C-B17-01: .similar-mobile-panel.show 缺 visibility: visible');
+      if (!showBlock.includes('pointer-events: auto')) ctx.fail('CG-162C-B17-01: .similar-mobile-panel.show 缺 pointer-events: auto');
+    },
+  },
+  {
+    id: 'CG-162C-B17-02',
+    file: SHOWCASE_FULL,
+    kind: 'fn',
+    msg: '[lint-guard 162c-test_mobile_panel_desktop_safety_net] 桌面 @media(min-width:960px) 須含 similar-mobile-panel + display:none 安全網 — 遷自 test_contract_animation.py',
+    check(ctx) {
+      const css = ctx.raw;
+      let found = false;
+      for (const m of css.matchAll(/@media\s*\(\s*min-width\s*:\s*960px\s*\)/g)) {
+        const window = css.slice(m.index, m.index + 500);
+        if (window.includes('similar-mobile-panel') && window.includes('display: none')) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        ctx.fail('CG-162C-B17-02: 視窗缺 display: none（@media min-width:960px 含 similar-mobile-panel 的桌面安全網）');
+      }
+    },
+  },
   // ---- 162c-B17 迄 ----
   //
   //
