@@ -6295,6 +6295,115 @@ const RULES = [
   //
   // ---- 162c-B18 起 ----
   // （162c-B18 專屬子區段：只在此兩行之間追加）
+  // 162c: TestMobileSimilarPanelContractGuard
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'order',
+    scope: { anchor: /async\s+onMobileDrillClick\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    items: [
+      { pattern: 'similarModeAnimating = true' },
+      { pattern: /(?<![A-Za-z0-9_$-])\bawait\b/ },
+    ],
+    note: '[lint-guard 162c-test_mobile_drill_lock_before_await] 使用者在手機相似面板快速連點同一張卡兩次 → 兩個請求並發進入，面板內容錯亂或卡住（連點競態，無聲） — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'forbidden-string',
+    pattern: 'closeSimilarMode',
+    scope: { anchor: /async\s+closeMobilePanel\s*\(\s*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_mobile_panel_no_call_desktop_closeSimilarMode] 使用者關閉手機相似面板 → 呼叫到桌面的 closeSimilarMode，await playExit 永不 resolve，面板卡住關不掉（凍結） — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string',
+    pattern: 'slice(0, 6)',
+    scope: { anchor: /async\s+_openMobilePanel\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_mobile_burst_card_count_6] _openMobilePanel 須 slice(0, 6) 固定 6 張 — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string',
+    pattern: ['_MOBILE_PICKER_PARAMS', /const\s+_MOBILE_PICKER_PARAMS/],
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_mobile_uses_own_picker_params] 使用者開手機相似面板 → 裸引用他檔私有 _PICKER_PARAMS 丟 ReferenceError，面板打不開（按了沒反應） — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'forbidden-string',
+    pattern: /(?<!_MOBILE)_PICKER_PARAMS/,
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_mobile_uses_own_picker_params] 使用者開手機相似面板 → 裸引用他檔私有 _PICKER_PARAMS 丟 ReferenceError，面板打不開（按了沒反應） — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
+    pattern: ['matchMedia', '960', 'similarModeMobileOpen', 'closeMobilePanel'],
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_mobile_panel_matchmedia_960] 手機使用者旋轉成平板寬度（≥960px）時行動面板沒被收掉 → flag 殘留卡住燈箱焦點陷阱，鍵盤焦點出不來 — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/shared/burst-picker.js', kind: 'required-string',
+    pattern: ['back.out', 'arcOvershoot'],
+    note: '[lint-guard 162c-test_burst_picker_back_out_exists_no_1_7_pinned] burst-picker.js 須含 back.out 與 arcOvershoot（不 pin 1.7） — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: ['similarModeMobileOpen', 'closeMobilePanel'],
+    scope: { anchor: /handleKeydown\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_mobile_panel_keydown_intercept] 外接鍵盤使用者在手機相似面板開著時按 Esc／方向鍵 → 面板底下的燈箱被關掉、或影片被切到下一片（看到錯的片） — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string',
+    pattern: ['closeLightbox', 'prevLightboxVideo', 'nextLightboxVideo'],
+    scope: { anchor: /if\s*\(\s*this\.similarModeMobileOpen\s*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_mobile_panel_keydown_intercept] 外接鍵盤使用者在手機相似面板開著時按 Esc／方向鍵 → 面板底下的燈箱被關掉、或影片被切到下一片（看到錯的片） — 遷自 test_contract_animation.py',
+  },
+  // 162c: TestMobilePanelT3Guards
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string',
+    pattern: [
+      'playMobilePanelEnter',
+      'playMobilePanelExit',
+      /playMobilePanelEnter\s*:\s*playMobilePanelEnter/,
+      /playMobilePanelExit\s*:\s*playMobilePanelExit/,
+    ],
+    note: '[lint-guard 162c-test_mobile_panel_enter_exit_functions_exported] 使用者開手機相似面板 → helper 缺失丟 TypeError，面板開不起來（按了沒反應） — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string',
+    pattern: 'createCoverGhost',
+    scope: { anchor: /function\s+playMobilePanelEnter\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_mobile_enter_uses_create_cover_ghost_not_constellation] playMobilePanelEnter 須直接用 createCoverGhost，不可包裝桌面禁區函式 — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'forbidden-string',
+    pattern: 'play56cConstellationEnter',
+    scope: { anchor: /function\s+playMobilePanelEnter\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_mobile_enter_uses_create_cover_ghost_not_constellation] playMobilePanelEnter 須直接用 createCoverGhost，不可包裝桌面禁區函式 — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string',
+    pattern: ['DURATION.medium', '0.333', 'fluent-decel'],
+    scope: { anchor: /function\s+playMobilePanelEnter\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_mobile_transition_tokenized] playMobilePanelEnter／Exit 須用 DURATION.medium token＋fluent ease，禁裸 duration 數字 — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string',
+    pattern: ['DURATION.medium', '0.333', 'fluent-accel'],
+    scope: { anchor: /function\s+playMobilePanelExit\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_mobile_transition_tokenized] playMobilePanelEnter／Exit 須用 DURATION.medium token＋fluent ease，禁裸 duration 數字 — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'forbidden-string',
+    pattern: /\bduration\s*:\s*\d+(\.\d+)?/,
+    scope: { anchor: /function\s+playMobilePanelEnter\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_mobile_transition_tokenized] playMobilePanelEnter／Exit 須用 DURATION.medium token＋fluent ease，禁裸 duration 數字 — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'forbidden-string',
+    pattern: /\bduration\s*:\s*\d+(\.\d+)?/,
+    scope: { anchor: /function\s+playMobilePanelExit\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_mobile_transition_tokenized] playMobilePanelEnter／Exit 須用 DURATION.medium token＋fluent ease，禁裸 duration 數字 — 遷自 test_contract_animation.py',
+  },
   // ---- 162c-B18 迄 ----
   //
   //

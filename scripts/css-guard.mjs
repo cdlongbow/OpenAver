@@ -3006,6 +3006,68 @@ const RULES = [
   //
   // ---- 162c-B18 起 ----
   // （162c-B18 專屬子區段：只在此兩行之間追加）
+  // 162c: TestMobileSimilarPanelContractGuard
+  {
+    id: 'CG-162C-B18-01',
+    file: SHOWCASE_FULL,
+    kind: 'fn',
+    msg: '[lint-guard 162c-test_mobile_burst_card_class_exists] .similar-mobile-burst-card 須含 opacity:0／position:relative／transition:none — 遷自 test_contract_animation.py',
+    check(ctx) {
+      const css = ctx.text;
+      const m = css.match(/\.similar-mobile-burst-card\s*\{([^}]+)\}/);
+      if (!m) {
+        ctx.fail('CG-162C-B18-01: 找不到 .similar-mobile-burst-card block');
+        return;
+      }
+      const block = m[1];
+      if (!block.includes('opacity: 0')) ctx.fail('CG-162C-B18-01: block 缺 opacity: 0');
+      if (!block.includes('position: relative')) ctx.fail('CG-162C-B18-01: block 缺 position: relative');
+      if (!block.includes('transition: none')) ctx.fail('CG-162C-B18-01: block 缺 transition: none');
+    },
+  },
+  {
+    id: 'CG-162C-B18-02',
+    file: SHOWCASE_FULL,
+    kind: 'fn',
+    msg: '[lint-guard 162c-test_mobile_burst_card_img_poster_crop] .similar-mobile-burst-card img 須用 var(--poster-crop-ratio)＋右裁，禁硬編碼 4/5 — 遷自 test_contract_animation.py',
+    check(ctx) {
+      const css = ctx.text;
+      const m = css.match(/\.similar-mobile-burst-card\s+img\s*\{([^}]+)\}/);
+      if (!m) {
+        ctx.fail('CG-162C-B18-02: 找不到 .similar-mobile-burst-card img block');
+        return;
+      }
+      const block = m[1];
+      if (!block.includes('aspect-ratio: var(--poster-crop-ratio)')) {
+        ctx.fail('CG-162C-B18-02: img block 缺 aspect-ratio');
+      }
+      if (block.includes('4/5')) ctx.fail('CG-162C-B18-02: img block 不得含硬編碼 4/5');
+      if (!block.includes('object-position: right center')) {
+        ctx.fail('CG-162C-B18-02: img block 缺 object-position: right center');
+      }
+    },
+  },
+  {
+    id: 'CG-162C-B18-03',
+    file: SHOWCASE_FULL,
+    kind: 'fn',
+    msg: '[lint-guard 162c-test_mobile_panel_scrim_blur_token] .similar-mobile-scrim 須用 var(--fluent-blur) 並含 -webkit-backdrop-filter — 遷自 test_contract_animation.py',
+    check(ctx) {
+      const css = ctx.text;
+      const m = css.match(/\.similar-mobile-scrim\s*\{([^}]+)\}/);
+      if (!m) {
+        ctx.fail('CG-162C-B18-03: 找不到 .similar-mobile-scrim block');
+        return;
+      }
+      const block = m[1];
+      if (!block.includes('var(--fluent-blur)')) {
+        ctx.fail('CG-162C-B18-03: scrim block 缺 var(--fluent-blur)');
+      }
+      if (!block.includes('-webkit-backdrop-filter')) {
+        ctx.fail('CG-162C-B18-03: scrim block 缺 -webkit-backdrop-filter');
+      }
+    },
+  },
   // ---- 162c-B18 迄 ----
   //
   //
