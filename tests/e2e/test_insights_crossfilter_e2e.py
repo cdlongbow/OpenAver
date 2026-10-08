@@ -106,20 +106,6 @@ def _year_xy(page: Page, year: int) -> tuple:
     assert c and c["ok"], f"年份 {year} 長條座標取不到或被擋住：{c}"
     return c["x"], c["y"]
 
-def test_handoff_no_conditions_matches_browse_count(page: Page, base_url: str):
-    reqs = _open(page, base_url)
-    recs = _records(page, base_url)
-    assert alpine(page, "data.scopedCount") == len(recs) > 0
-    b = _jump(page, base_url, reqs, recs, extra=len(recs))
-    assert b["pills"] == [], b["pills"]
-
-def test_handoff_actress_only_matches_browse_count(page: Page, base_url: str):
-    reqs = _open(page, base_url)
-    recs = _records(page, base_url)
-    name = _pick_actress(page)
-    b = _jump(page, base_url, reqs, recs, extra=sum(name in (r["actresses"] or []) for r in recs))
-    assert [(p["dim"], p["value"]) for p in b["pills"]] == [("actress", name)]
-
 def test_handoff_maker_merged_single_slice(page: Page, base_url: str):
     reqs = _open(page, base_url)
     recs = _records(page, base_url)

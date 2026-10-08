@@ -129,6 +129,108 @@ class TestShowcaseVideosUserTags:
         assert video_no_tags["user_tags"] == []
 
 
+class TestShowcaseResponseShape:
+    """GET /api/showcase/videos 回應形狀契約（162a T4：取代 unit 20 支）"""
+
+    def test_videos_response_shape_and_values(self, client, tmp_path, mocker):
+        """兩支影片（全欄位／空欄位）：key 集合、值、型別、sample_images URL 轉換"""
+        EXPECTED_KEYS = {
+            "path", "title", "original_title", "actresses", "number", "maker", "release_date", "tags",
+            "size", "cover_url", "cover_full_url", "mtime", "director", "duration", "series", "label",
+            "sample_images", "user_tags", "user_rating", "has_cover", "has_nfo", "auto_focal", "crop_mode",
+            "part_tokens",
+        }
+        video_dir = tmp_path / "videos"
+        video_dir.mkdir()
+        fan_dir = tmp_path / "extrafanart"
+        fan_dir.mkdir()
+        img1 = fan_dir / "fanart1.jpg"
+        img1.write_bytes(b"img")
+        img2 = fan_dir / "fanart2.jpg"
+        img2.write_bytes(b"img")
+
+        full_uri = to_file_uri(str(video_dir / "full.mp4"), {})
+        empty_uri = to_file_uri(str(video_dir / "empty.mp4"), {})
+        db_path = tmp_path / "shape.db"
+        init_db(db_path)
+        VideoRepository(db_path).upsert_batch([
+            Video(
+                path=full_uri, number="ABC-123", title="Full Title", original_title="フルタイトル",
+                actresses=["坂道みる", "深田えいみ"], maker="Full Maker", release_date="2024-03-05",
+                tags=["単体作品", "ハイビジョン", "独占配信"], size_bytes=2147483648,
+                mtime=1705276800.0, director="山田太郎", duration=120, series="素人シリーズ",
+                label="S1",
+                sample_images=[to_file_uri(str(img1)), to_file_uri(str(img2))],
+            ),
+            Video(
+                path=empty_uri, number="FC2-PPV-001", title="Empty Title", original_title="",
+                actresses=[], maker="", release_date="", tags=[], size_bytes=0, mtime=0.0,
+                director="", duration=None, series=None, label="", sample_images=[],
+            ),
+        ])
+        config = {
+            "gallery": {"directories": [str(video_dir)], "path_mappings": {},
+                        "min_size_mb": 0, "thumbnail_width": 400},
+            "scraper": {"video_extensions": [".mp4"], "image_extensions": [".jpg"]},
+            "database": {"path": ":memory:"},
+            "translate": {"provider": "ollama", "ollama_model": "llama3"},
+        }
+        mocker.patch("web.routers.showcase.get_db_path", return_value=db_path)
+        mocker.patch("web.routers.showcase.load_config", return_value=config)
+
+        response = client.get("/api/showcase/videos")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["total"] == 2
+        assert len(data["videos"]) == 2
+        by_number = {v["number"]: v for v in data["videos"]}
+        full = by_number["ABC-123"]
+        empty = by_number["FC2-PPV-001"]
+
+        assert set(full.keys()) == EXPECTED_KEYS
+        assert set(empty.keys()) == EXPECTED_KEYS
+        assert full["path"].startswith("file:///")
+        assert empty["path"].startswith("file:///")
+
+        # 全欄位影片
+        assert full["title"] == "Full Title"
+        assert full["original_title"] == "フルタイトル"
+        assert full["maker"] == "Full Maker"
+        assert full["release_date"] == "2024-03-05"
+        assert full["actresses"] == "坂道みる,深田えいみ"
+        assert full["tags"] == "単体作品,ハイビジョン,独占配信"
+        assert full["size"] == 2147483648
+        assert full["mtime"] == 1705276800 and type(full["mtime"]) is int
+        assert full["director"] == "山田太郎"
+        assert full["duration"] == 120 and type(full["duration"]) is int
+        assert full["series"] == "素人シリーズ"
+        assert full["label"] == "S1"
+        assert full["part_tokens"] == []
+        assert len(full["sample_images"]) == 2
+        for url, name in zip(full["sample_images"], ["fanart1.jpg", "fanart2.jpg"], strict=True):
+            assert url.startswith("/api/gallery/image?path=")
+            assert name in url
+
+        # 空欄位影片
+        assert empty["title"] == "Empty Title"
+        assert empty["original_title"] == ""
+        assert empty["maker"] == ""
+        assert empty["release_date"] == ""
+        assert empty["actresses"] == ""
+        assert empty["tags"] == ""
+        assert empty["size"] == 0
+        assert empty["cover_url"] == ""
+        assert empty["mtime"] == 0 and type(empty["mtime"]) is int
+        assert empty["director"] == ""
+        assert empty["series"] == ""
+        assert empty["label"] == ""
+        assert empty["duration"] is None
+        assert empty["sample_images"] == []
+        assert empty["part_tokens"] == []
+
+
 class TestShowcaseUserRatingField:
     """測試 GET /api/showcase/videos 無條件輸出 user_rating 欄位（TASK-123-T2，FE-ALPINE-06）。
 

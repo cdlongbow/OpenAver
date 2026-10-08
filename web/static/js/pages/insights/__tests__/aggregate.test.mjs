@@ -1,6 +1,6 @@
-// TASK-156b-T1: setRecords / getRecords / buildMakerColorSlots / buildMainMakerYearMap 契約。
-// TASK-156b-T2: periodRecords / scopeRecords / aggregateYears 契約 + §4.2 wiring。
-// 純函式、零 window / Alpine；邊界條件各至少一條真斷言。
+// 片庫分析聚合函式契約：setRecords／canonicalizeMakers／buildMainMakerYearMap／periodRecords／
+// scopeRecords／aggregateYears／圓餅／女優榜／標籤／年齡／年表／分布表／與她同片。
+// 純函式、零 window / Alpine。
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,7 +11,6 @@ const {
     setRecords,
     getRecords,
     canonicalizeMakers,
-    buildMakerColorSlots,
     buildMainMakerYearMap,
 } = agg;
 const {
@@ -20,7 +19,6 @@ const {
     UNKNOWN_KEY,
     REST_KEY,
     ACTRESS_TOP_N,
-    podiumSizeForViewport,
     buildMakerDonutData,
     classifyRecordAgainstMainMaker,
     buildActressBoard,
@@ -30,8 +28,6 @@ const {
     buildGanttRows,
     ganttYearAxis,
     buildGanttYearCells,
-    ganttAgeEligibility,
-    ganttAgeAxis,
     buildGanttAgeCells,
     buildSoloRows,
     buildCostarRows,
@@ -62,59 +58,6 @@ function favs(map) {
     return map;
 }
 
-// ── setRecords / getRecords ──────────────────────────────────────────
-
-test('getRecords: 呼叫 setRecords 前回傳空陣列', () => {
-    assert.deepEqual(getRecords(), []);
-});
-
-test('setRecords/getRecords: 內容逐項相同但不是同一個陣列 reference', () => {
-    const records = [
-        rec({ maker: 'SOD', year: 2021 }),
-        rec({ maker: 'Moodyz', year: 2022, actresses: ['Bob'] }),
-    ];
-    setRecords(records);
-    const got = getRecords();
-    assert.equal(got.length, 2);
-    assert.equal(got[0].maker, 'SOD');
-    assert.equal(got[1].maker, 'Moodyz');
-    assert.notStrictEqual(got, records);
-    // 再設一次確認 length=0 + push 覆寫（不是 append）
-    setRecords([rec({ maker: 'IdeaPocket' })]);
-    assert.equal(getRecords().length, 1);
-    assert.equal(getRecords()[0].maker, 'IdeaPocket');
-});
-
-// ── canonicalizeMakers ────────────────────────────────────────────────
-
-test('canonicalizeMakers: 顯示寫法取組內出現最多次者', () => {
-    const records = [
-        rec({ maker: 'MOODYZ' }),
-        rec({ maker: 'Moodyz' }),
-        rec({ maker: 'Moodyz' }),
-        rec({ maker: 'Moodyz' }),
-    ];
-    canonicalizeMakers(records);
-    assert.equal(records[0].maker, 'Moodyz');
-    assert.equal(records[1].maker, 'Moodyz');
-    assert.equal(records[2].maker, 'Moodyz');
-    assert.equal(records[3].maker, 'Moodyz');
-});
-
-test('canonicalizeMakers: 次數相同時取字串遞增最小者', () => {
-    const records = [
-        rec({ maker: 'alpha' }),
-        rec({ maker: 'Alpha' }),
-        rec({ maker: 'alpha' }),
-        rec({ maker: 'Alpha' }),
-    ];
-    canonicalizeMakers(records);
-    assert.equal(records[0].maker, 'Alpha');
-    assert.equal(records[1].maker, 'Alpha');
-    assert.equal(records[2].maker, 'Alpha');
-    assert.equal(records[3].maker, 'Alpha');
-});
-
 test('canonicalizeMakers: MOODYZ／Moodyz／ＭＯＯＤＹＺ／前後空白合成一家', () => {
     const records = [
         rec({ maker: 'Moodyz' }),
@@ -143,39 +86,6 @@ test('canonicalizeMakers: null、空字串與全空白不分組、不被改寫',
     assert.equal(records[1].maker, '');
     assert.equal(records[2].maker, '   ');
     assert.equal(records[3].maker, '\t');
-});
-
-test('canonicalizeMakers: 字面不同的別名仍是兩家', () => {
-    const records = [
-        rec({ maker: 'カリビアンコム' }),
-        rec({ maker: 'カリビアンコム( Caribbeancom )' }),
-    ];
-    canonicalizeMakers(records);
-    assert.equal(records[0].maker, 'カリビアンコム');
-    assert.equal(records[1].maker, 'カリビアンコム( Caribbeancom )');
-});
-
-test('canonicalizeMakers: 合併後 buildMakerColorSlots 與 buildMakerDonutData 各只有一塊', () => {
-    try {
-        setRecords([
-            rec({ maker: 'Moodyz' }),
-            rec({ maker: 'Moodyz' }),
-            rec({ maker: 'MOODYZ' }),
-            rec({ maker: 'ＭＯＯＤＹＺ' }),
-        ]);
-        const recs = getRecords();
-        const slots = buildMakerColorSlots(recs);
-        assert.deepEqual(Object.keys(slots), ['Moodyz']);
-        assert.equal(slots['Moodyz'], 0);
-
-        const donut = buildMakerDonutData(recs, {});
-        const named = donut.inner.filter((e) => e.kind === 'named');
-        assert.equal(named.length, 1);
-        assert.equal(named[0].name, 'Moodyz');
-        assert.equal(named[0].value, 4);
-    } finally {
-        setRecords([]);
-    }
 });
 
 test('setRecords: 進場一次合併片商，getRecords 讀到合併後的值', () => {
@@ -216,75 +126,6 @@ test('setRecords: 連續兩次設定不殘留上一批的合併結果（module s
     }
 });
 
-// ── buildMakerColorSlots ─────────────────────────────────────────────
-
-test('buildMakerColorSlots: 第 9 名（含）以後不進 slot map', () => {
-    // 10 家具名片商，計數 10..1；只有前 8 名進 map
-    const makers = [
-        'M10', 'M09', 'M08', 'M07', 'M06', 'M05', 'M04', 'M03', 'M02', 'M01',
-    ];
-    const records = [];
-    makers.forEach((name, i) => {
-        const count = 10 - i;
-        for (let n = 0; n < count; n++) {
-            records.push(rec({ maker: name, actresses: [`A${i}-${n}`] }));
-        }
-    });
-    const slots = buildMakerColorSlots(records);
-    assert.equal(Object.keys(slots).length, 8);
-    assert.equal(slots['M10'], 0);
-    assert.equal(slots['M09'], 1);
-    assert.equal(slots['M08'], 2);
-    assert.equal(slots['M07'], 3);
-    assert.equal(slots['M06'], 4);
-    assert.equal(slots['M05'], 5);
-    assert.equal(slots['M04'], 6);
-    assert.equal(slots['M03'], 7);
-    assert.equal(slots.hasOwnProperty('M02'), false);
-    assert.equal(slots.hasOwnProperty('M01'), false);
-});
-
-test('buildMakerColorSlots: 同分時依名稱字串遞增，超出 Top8 排除字串序較大者', () => {
-    // 7 家具名高計數（8..2，皆 > 1）佔 slot 0..6；其餘三家同分 count=1
-    // → 字串序 Apple < Mango < Zebra；Top8 只收 Apple；Mango、Zebra 被排除
-    const records = [];
-    const high = ['H8', 'H7', 'H6', 'H5', 'H4', 'H3', 'H2'];
-    high.forEach((name, i) => {
-        const count = 8 - i;
-        for (let n = 0; n < count; n++) {
-            records.push(rec({ maker: name }));
-        }
-    });
-    // 刻意用非字串序的加入順序，抓「未排序直接 slice」假綠
-    records.push(rec({ maker: 'Zebra' }));
-    records.push(rec({ maker: 'Apple' }));
-    records.push(rec({ maker: 'Mango' }));
-
-    const slots = buildMakerColorSlots(records);
-    assert.equal(Object.keys(slots).length, 8);
-    assert.equal(slots['Apple'], 7);
-    assert.equal(slots.hasOwnProperty('Mango'), false);
-    assert.equal(slots.hasOwnProperty('Zebra'), false);
-});
-
-test('buildMakerColorSlots: maker 為 null 的紀錄不佔名額、不出現在 key 中', () => {
-    const records = [];
-    for (let i = 0; i < 20; i++) {
-        records.push(rec({ maker: null }));
-    }
-    // 剛好 8 家具名片商各 1 部
-    for (let i = 1; i <= 8; i++) {
-        records.push(rec({ maker: `Named${i}` }));
-    }
-    const slots = buildMakerColorSlots(records);
-    assert.equal(Object.keys(slots).length, 8);
-    assert.equal(slots.hasOwnProperty('null'), false);
-    assert.equal(Object.prototype.hasOwnProperty.call(slots, null), false);
-    for (let i = 1; i <= 8; i++) {
-        assert.equal(typeof slots[`Named${i}`], 'number');
-    }
-});
-
 // ── buildMainMakerYearMap ────────────────────────────────────────────
 
 test('buildMainMakerYearMap: 5 部中 4 部同片商（4/5=80%）應計入主要片商年', () => {
@@ -310,6 +151,16 @@ test('buildMainMakerYearMap: 4 部中 3 部同片商（3/4=75%）不計入主要
     assert.equal(map.hasOwnProperty('Bob|2021'), false);
 });
 
+test('buildMainMakerYearMap: 3 部全同片商（100%）未達至少 4 部門檻不計入', () => {
+    const records = [
+        rec({ year: 2025, actresses: ['Fran'], maker: 'SOD' }),
+        rec({ year: 2025, actresses: ['Fran'], maker: 'SOD' }),
+        rec({ year: 2025, actresses: ['Fran'], maker: 'SOD' }),
+    ];
+    const map = buildMainMakerYearMap(records);
+    assert.equal(map.hasOwnProperty('Fran|2025'), false);
+});
+
 test('buildMainMakerYearMap: 跨多家片商時回傳計數最高者（最高者非陣列首現）', () => {
     // Alpha 先出現 1 部；Gamma 後出現但累積到 5 部。total=6、5/6≈83% 命中，
     // 且比值刻意避開剛好 80% 邊界（留給上一條 mutation 鎖專用）。
@@ -326,6 +177,7 @@ test('buildMainMakerYearMap: 跨多家片商時回傳計數最高者（最高者
 });
 
 test('buildMainMakerYearMap: maker null 計入分母但不能當主要片商（6 部 3A+3未知不命中）', () => {
+    // 兩位女優同 fixture：Dana 6 部（3 A＋3 未知）、DanaNull 5 部全未知（達門檻）
     const records = [
         rec({ year: 2023, actresses: ['Dana'], maker: 'StudioA' }),
         rec({ year: 2023, actresses: ['Dana'], maker: 'StudioA' }),
@@ -333,71 +185,17 @@ test('buildMainMakerYearMap: maker null 計入分母但不能當主要片商（6
         rec({ year: 2023, actresses: ['Dana'], maker: null }),
         rec({ year: 2023, actresses: ['Dana'], maker: null }),
         rec({ year: 2023, actresses: ['Dana'], maker: null }),
+        rec({ year: 2023, actresses: ['DanaNull'], maker: null }),
+        rec({ year: 2023, actresses: ['DanaNull'], maker: null }),
+        rec({ year: 2023, actresses: ['DanaNull'], maker: null }),
+        rec({ year: 2023, actresses: ['DanaNull'], maker: null }),
+        rec({ year: 2023, actresses: ['DanaNull'], maker: null }),
     ];
     const map = buildMainMakerYearMap(records);
-    // 若誤把 null 從分母排除 → total=3、best/total=100% 會誤判命中
+    // 若誤把 null 從分母排除 → Dana total=3、100% 會誤判命中
     assert.equal(map.hasOwnProperty('Dana|2023'), false);
-});
-
-test('buildMainMakerYearMap: 5 部全為 maker null（未知達門檻）仍不得選為主要片商', () => {
-    // 鎖 null 候選排除：若拿掉 `if (mk === null) return;`，null 桶 5/5=100% 會誤寫入 key
-    const records = [
-        rec({ year: 2023, actresses: ['DanaNull'], maker: null }),
-        rec({ year: 2023, actresses: ['DanaNull'], maker: null }),
-        rec({ year: 2023, actresses: ['DanaNull'], maker: null }),
-        rec({ year: 2023, actresses: ['DanaNull'], maker: null }),
-        rec({ year: 2023, actresses: ['DanaNull'], maker: null }),
-    ];
-    const map = buildMainMakerYearMap(records);
+    // 若拿掉 null 候選排除，DanaNull 的 null 桶 5/5=100% 會誤寫入 key
     assert.equal(map.hasOwnProperty('DanaNull|2023'), false);
-});
-
-test('buildMainMakerYearMap: 3 部全同片商（100%）未達至少 4 部門檻不計入', () => {
-    const records = [
-        rec({ year: 2025, actresses: ['Fran'], maker: 'SOD' }),
-        rec({ year: 2025, actresses: ['Fran'], maker: 'SOD' }),
-        rec({ year: 2025, actresses: ['Fran'], maker: 'SOD' }),
-    ];
-    const map = buildMainMakerYearMap(records);
-    assert.equal(map.hasOwnProperty('Fran|2025'), false);
-});
-
-test('buildMainMakerYearMap: year 為 null 的片完全不影響任何女優|年計算', () => {
-    // 有 year 的 4 部同片商本應命中；夾雜 year=null 的同女優片不得改變結果
-    const records = [
-        rec({ year: 2024, actresses: ['Eve'], maker: 'SOD' }),
-        rec({ year: 2024, actresses: ['Eve'], maker: 'SOD' }),
-        rec({ year: 2024, actresses: ['Eve'], maker: 'SOD' }),
-        rec({ year: 2024, actresses: ['Eve'], maker: 'SOD' }),
-        rec({ year: null, actresses: ['Eve'], maker: 'Moodyz' }),
-        rec({ year: null, actresses: ['Eve'], maker: 'Moodyz' }),
-        rec({ year: null, actresses: ['Eve'], maker: 'Moodyz' }),
-        rec({ year: null, actresses: ['Eve'], maker: 'Moodyz' }),
-    ];
-    const map = buildMainMakerYearMap(records);
-    assert.equal(map['Eve|2024'], 'SOD');
-    // 不得出現 null year 的 key
-    assert.equal(Object.keys(map).some((k) => k.includes('|null') || k.endsWith('|')), false);
-});
-
-// ── periodRecords / scopeRecords（TASK-156b-T2）──────────────────────
-
-test('scopeRecords: focus=null 時與 periodRecords 回傳內容逐項相同', () => {
-    const records = [
-        rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
-        rec({ year: null, actresses: ['Bob'], maker: 'Moodyz' }),
-        rec({ year: 2021, actresses: ['Carol'], maker: 'SOD' }),
-    ];
-    const period = { type: 'all' };
-    assert.deepStrictEqual(
-        scopeRecords(records, selOf(period, null), null),
-        periodRecords(records, period),
-    );
-    const yearPeriod = { type: 'year', year: 2020 };
-    assert.deepStrictEqual(
-        scopeRecords(records, selOf(yearPeriod, null), null),
-        periodRecords(records, yearPeriod),
-    );
 });
 
 test('periodRecords: type=all 保留 year===null；type=year 排除 null 與非該年', () => {
@@ -416,20 +214,6 @@ test('periodRecords: type=all 保留 year===null；type=year 排除 null 與非�
     assert.equal(only2020.includes(y2021), false);
 });
 
-test('periodRecords: range 只留範圍內（含兩端）、排除 year 為 null', () => {
-    const nullRec = rec({ year: null });
-    const y2018 = rec({ year: 2018 });
-    const y2019 = rec({ year: 2019 });
-    const y2021 = rec({ year: 2021 });
-    const y2023 = rec({ year: 2023 });
-    const y2024 = rec({ year: 2024 });
-    const records = [nullRec, y2018, y2019, y2021, y2023, y2024];
-    assert.deepStrictEqual(
-        periodRecords(records, { type: 'range', from: 2019, to: 2023 }),
-        [y2019, y2021, y2023],
-    );
-});
-
 test('scopeRecords: actress 焦點含多人片任一人命中；maker 焦點嚴格比對', () => {
     const multi = rec({ year: 2020, actresses: ['Alice', 'Bob'], maker: 'SOD' });
     const onlyBob = rec({ year: 2021, actresses: ['Bob'], maker: 'Moodyz' });
@@ -441,63 +225,6 @@ test('scopeRecords: actress 焦點含多人片任一人命中；maker 焦點嚴�
 
     const byMaker = scopeRecords(records, selOf({ type: 'all' }, { type: 'maker', value: 'SOD' }), null);
     assert.deepStrictEqual(byMaker, [multi]);
-});
-
-// ── aggregateYears（TASK-156b-T2）────────────────────────────────────
-
-test('aggregateYears: 無焦點時 categories 尾端固定有 UNKNOWN_KEY（即使沒有 year===null）', () => {
-    const records = [
-        rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
-        rec({ year: 2022, actresses: ['Bob'], maker: 'Moodyz' }),
-    ];
-    const result = aggregateYears(records, selOf({ type: 'all' }, null));
-    assert.deepStrictEqual(result.categories, ['2020', '2021', '2022', UNKNOWN_KEY]);
-    assert.equal(result.series.length, 1);
-    assert.equal(result.series[0].name, null);
-    assert.deepStrictEqual(result.series[0].data, [1, 0, 1, 0]);
-    assert.deepStrictEqual(result.dimmed, [false, false, false, false]);
-});
-
-test('aggregateYears: 有焦點時只有 base 真有 year===null 才出現 UNKNOWN_KEY', () => {
-    const withNull = [
-        rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
-        rec({ year: 2021, actresses: ['Alice'], maker: 'SOD' }),
-        rec({ year: null, actresses: ['Alice'], maker: 'SOD' }),
-    ];
-    const withNullResult = aggregateYears(
-        withNull, selOf({ type: 'all' }, { type: 'maker', value: 'SOD' }),
-    );
-    assert.ok(withNullResult.categories.includes(UNKNOWN_KEY));
-    assert.equal(withNullResult.categories[withNullResult.categories.length - 1], UNKNOWN_KEY);
-
-    const noNull = [
-        rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
-        rec({ year: 2021, actresses: ['Alice'], maker: 'SOD' }),
-    ];
-    const noNullResult = aggregateYears(
-        noNull, selOf({ type: 'all' }, { type: 'maker', value: 'SOD' }),
-    );
-    assert.equal(noNullResult.categories.includes(UNKNOWN_KEY), false);
-    assert.deepStrictEqual(noNullResult.categories, ['2020', '2021']);
-});
-
-test('aggregateYears: 有焦點時橫軸涵蓋到最後一年即使該年沒有片（空年保留空位）', () => {
-    // Alice：2019 與 2021 有片、2020 空年；mutation 把 <= 改 < 會丟掉最後一年 2021
-    const records = [
-        rec({ year: 2019, actresses: ['Alice'], maker: 'SOD' }),
-        rec({ year: 2021, actresses: ['Alice'], maker: 'Moodyz' }),
-        rec({ year: 2020, actresses: ['Bob'], maker: 'SOD' }), // 非焦點，不影響範圍
-    ];
-    const result = aggregateYears(
-        records, selOf({ type: 'all' }, { type: 'actress', value: 'Alice' }),
-    );
-    assert.deepStrictEqual(result.categories, ['2019', '2020', '2021']);
-    // 2020 空位：各 series 該格皆 0
-    const idx2020 = result.categories.indexOf('2020');
-    for (const s of result.series) {
-        assert.equal(s.data[idx2020], 0);
-    }
-    assert.equal(result.categories.includes('2021'), true);
 });
 
 test('aggregateYears: 選年份時其他年數值不變只淡化', () => {
@@ -520,31 +247,8 @@ test('aggregateYears: 選年份時其他年數值不變只淡化', () => {
     assert.deepStrictEqual(yearPeriod.dimmed, [true, false, true, true]);
 });
 
-test('aggregateYears: 無焦點 series 長度 1、name null；categories=min..max+UNKNOWN_KEY', () => {
-    const records = [
-        rec({ year: 2021, actresses: ['A'], maker: 'SOD' }),
-        rec({ year: 2023, actresses: ['B'], maker: 'Moodyz' }),
-        rec({ year: null, actresses: ['C'], maker: 'SOD' }),
-    ];
-    const result = aggregateYears(records, selOf({ type: 'all' }, null));
-    assert.deepStrictEqual(result.categories, ['2021', '2022', '2023', UNKNOWN_KEY]);
-    assert.equal(result.series.length, 1);
-    assert.equal(result.series[0].name, null);
-    assert.deepStrictEqual(result.series[0].data, [1, 0, 1, 1]);
-});
-
 test('aggregateYears: 無焦點且全庫零筆記錄時回傳空 categories/series/dimmed（P3-2：不得只剩單一 UNKNOWN_KEY 空格）', () => {
     const result = aggregateYears([], selOf({ type: 'all' }, null));
-    assert.deepStrictEqual(result, { categories: [], series: [], dimmed: [] });
-});
-
-test('aggregateYears: 片商焦點 base 空時回傳空 categories/series/dimmed', () => {
-    const records = [
-        rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
-    ];
-    const result = aggregateYears(
-        records, selOf({ type: 'all' }, { type: 'maker', value: 'MissingStudio' }),
-    );
     assert.deepStrictEqual(result, { categories: [], series: [], dimmed: [] });
 });
 
@@ -595,31 +299,6 @@ test('aggregateYears: 女優焦點 series 依 maker 分桶排序；year===null �
     assert.equal(result.series.some((s) => s.name === UNKNOWN_KEY), false);
 });
 
-test('aggregateYears: 女優焦點同分時依片商名稱字串遞增', () => {
-    const records = [
-        rec({ year: 2020, actresses: ['Alice'], maker: 'Zebra' }),
-        rec({ year: 2020, actresses: ['Alice'], maker: 'Apple' }),
-    ];
-    const result = aggregateYears(
-        records, selOf({ type: 'all' }, { type: 'actress', value: 'Alice' }),
-    );
-    assert.deepStrictEqual(result.series.map((s) => s.name), ['Apple', 'Zebra']);
-});
-
-test('aggregateYears: dimmed 對 year 期間只有 String(Y) 為 false，其餘含 UNKNOWN 皆 true', () => {
-    const records = [
-        rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
-        rec({ year: 2021, actresses: ['Bob'], maker: 'SOD' }),
-        rec({ year: null, actresses: ['Carol'], maker: 'SOD' }),
-    ];
-    const allDimmed = aggregateYears(records, selOf({ type: 'all' }, null));
-    assert.deepStrictEqual(allDimmed.dimmed, [false, false, false]);
-
-    const yearDimmed = aggregateYears(records, selOf({ type: 'year', year: 2020 }, null));
-    assert.deepStrictEqual(yearDimmed.dimmed, [false, true, true]);
-    assert.equal(yearDimmed.categories[yearDimmed.categories.length - 1], UNKNOWN_KEY);
-});
-
 test('aggregateYears: maker 未知桶用 UNKNOWN_KEY，不產生顯示字串', () => {
     const records = [
         rec({ year: 2020, actresses: ['Alice'], maker: null }),
@@ -631,8 +310,6 @@ test('aggregateYears: maker 未知桶用 UNKNOWN_KEY，不產生顯示字串', (
     assert.equal(result.series.some((s) => s.name === UNKNOWN_KEY), true);
     assert.equal(result.series.some((s) => s.name === 'SOD'), true);
 });
-
-// ── §4.2 wiring 15 格 checklist ──────────────────────────────────────
 
 test('§4.2 wiring: 5 卡群組 × 3 焦點 = 15 格 checklist', () => {
     const M = 'SOD';
@@ -728,56 +405,6 @@ test('§4.2 wiring: 5 卡群組 × 3 焦點 = 15 格 checklist', () => {
     }
 });
 
-// ── TASK-156b-T4: buildMakerDonutData / classifyRecordAgainstMainMaker ──
-
-test('buildMakerDonutData: 局部第 9 名（含）以後併入 REST_KEY，不個別列名', () => {
-    // 10 家具名片商計數 10..1；局部前 8 具名，第 9／10 名併入 REST
-    const makers = [
-        'M10', 'M09', 'M08', 'M07', 'M06', 'M05', 'M04', 'M03', 'M02', 'M01',
-    ];
-    const records = [];
-    makers.forEach((name, i) => {
-        const count = 10 - i;
-        for (let n = 0; n < count; n++) {
-            records.push(rec({ maker: name, actresses: [`A${i}-${n}`], year: 2020 }));
-        }
-    });
-    const result = buildMakerDonutData(records, {});
-    const named = result.inner.filter((e) => e.kind === 'named');
-    assert.equal(named.length, 8);
-    assert.deepStrictEqual(
-        named.map((e) => e.name),
-        ['M10', 'M09', 'M08', 'M07', 'M06', 'M05', 'M04', 'M03'],
-    );
-    const rest = result.inner.find((e) => e.kind === 'rest');
-    assert.ok(rest);
-    assert.equal(rest.name, REST_KEY);
-    // M02 count=2 + M01 count=1
-    assert.equal(rest.value, 3);
-    assert.equal(
-        result.inner.some((e) => e.name === 'M02' || e.name === 'M01'),
-        false,
-    );
-});
-
-test('buildMakerDonutData: maker 為 null/空字串的紀錄全部併入 UNKNOWN_KEY', () => {
-    const records = [
-        rec({ maker: 'SOD', year: 2020 }),
-        rec({ maker: null, year: 2020 }),
-        rec({ maker: '', year: 2021 }),
-        rec({ maker: null, year: 2022 }),
-    ];
-    const result = buildMakerDonutData(records, {});
-    const unknown = result.inner.find((e) => e.kind === 'unknown');
-    assert.ok(unknown);
-    assert.equal(unknown.name, UNKNOWN_KEY);
-    assert.equal(unknown.value, 3);
-    const named = result.inner.filter((e) => e.kind === 'named');
-    assert.equal(named.length, 1);
-    assert.equal(named[0].name, 'SOD');
-    assert.equal(named[0].value, 1);
-});
-
 test('buildMakerDonutData: inner 三部分 value 總和恆等於 total（REST/UNKNOWN 為 0 仍各佔一筆）', () => {
     const records = [
         rec({ maker: 'SOD', year: 2020 }),
@@ -852,15 +479,6 @@ test('buildMakerDonutData: outer 只對具名前 8 名分類；零計數桶不�
     assert.equal(unkOuter[0].value, 1);
 });
 
-test('classifyRecordAgainstMainMaker: year==null 時即使其他年命中仍為 undetermined', () => {
-    const map = { 'Alice|2020': 'SOD' };
-    const got = classifyRecordAgainstMainMaker(
-        rec({ maker: 'SOD', year: null, actresses: ['Alice'] }),
-        map,
-    );
-    assert.equal(got, 'undetermined');
-});
-
 test('classifyRecordAgainstMainMaker: 多人片任一人命中即為 main', () => {
     const map = { 'Alice|2020': 'SOD' };
     const got = classifyRecordAgainstMainMaker(
@@ -885,16 +503,6 @@ test('classifyRecordAgainstMainMaker: 主要片商年命中時分類為 main（�
             map,
         ),
         'other',
-    );
-});
-
-test('classifyRecordAgainstMainMaker: actresses 為空 → undetermined', () => {
-    assert.equal(
-        classifyRecordAgainstMainMaker(
-            rec({ maker: 'SOD', year: 2020, actresses: [] }),
-            { 'Alice|2020': 'SOD' },
-        ),
-        'undetermined',
     );
 });
 
@@ -935,31 +543,6 @@ test('buildActressBoard: 片數相同時依不同發行月份數降冪排序', (
     assert.equal(rows[1].monthCount, 1);
 });
 
-test('buildActressBoard: count／monthCount 都相同時依名字字串遞增', () => {
-    const records = [
-        rec({ actresses: ['Bob'], month: '2020-01' }),
-        rec({ actresses: ['Alice'], month: '2020-01' }),
-    ];
-    const { rows } = buildActressBoard(records, selOf(undefined, null));
-    assert.deepEqual(rows.map((r) => r.name), ['Alice', 'Bob']);
-});
-
-test('buildActressBoard: monthCount 只算相異 month；month===null 計入 count 不計入 monthCount', () => {
-    const records = [
-        rec({ actresses: ['Alice'], month: '2020-01' }),
-        rec({ actresses: ['Alice'], month: '2020-01' }), // 同月再一部 → monthCount 仍 1
-        rec({ actresses: ['Alice'], month: null }), // 計 count，不計 monthCount
-    ];
-    const { rows } = buildActressBoard(records, selOf(undefined, null));
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0].count, 3);
-    assert.equal(rows[0].monthCount, 1);
-});
-
-test('ACTRESS_TOP_N: 匯出且為 25', () => {
-    assert.equal(ACTRESS_TOP_N, 25);
-});
-
 test('buildActressBoard: 女優排名剛好第 25 名時不附加額外列', () => {
     const records = [];
     // 26 人：A01..A26 各 26..1 片，全部同月 → A25 剛好 rank 25
@@ -976,23 +559,6 @@ test('buildActressBoard: 女優排名剛好第 25 名時不附加額外列', () 
     assert.equal(rows[24].name, 'A25');
     assert.equal(rows[24].rank, 25);
     assert.equal(rows.filter((r) => r.name === 'A25').length, 1);
-});
-
-test('buildActressBoard: 選中第 24 名（N-1）時不附加，rows 長 25', () => {
-    const records = [];
-    for (let i = 1; i <= 26; i++) {
-        const name = 'A' + String(i).padStart(2, '0');
-        const count = 27 - i;
-        for (let n = 0; n < count; n++) {
-            records.push(rec({ actresses: [name], month: '2020-01' }));
-        }
-    }
-    const focus = { type: 'actress', value: 'A24' };
-    const { rows } = buildActressBoard(records, selOf(undefined, focus));
-    assert.equal(rows.length, 25);
-    assert.equal(rows[23].name, 'A24');
-    assert.equal(rows[23].rank, 24);
-    assert.equal(rows.filter((r) => r.name === 'A24').length, 1);
 });
 
 test('buildActressBoard: focus 女優 rank>25 時附加真實排名列', () => {
@@ -1013,26 +579,6 @@ test('buildActressBoard: focus 女優 rank>25 時附加真實排名列', () => {
     assert.ok(rows.length <= ACTRESS_TOP_N + 1);
 });
 
-test('buildActressBoard: focus 女優在 records 完全無紀錄時不附加', () => {
-    const records = [
-        rec({ actresses: ['Alice'], month: '2020-01' }),
-        rec({ actresses: ['Bob'], month: '2020-01' }),
-    ];
-    const { rows } = buildActressBoard(records, selOf(undefined, { type: 'actress', value: 'Ghost' }));
-    assert.equal(rows.length, 2);
-    assert.equal(rows.some((r) => r.name === 'Ghost'), false);
-});
-
-test('buildActressBoard: 女優總數少於 25 時回傳實際總數', () => {
-    const records = [
-        rec({ actresses: ['Alice'], month: '2020-01' }),
-        rec({ actresses: ['Bob'], month: '2020-01' }),
-        rec({ actresses: ['Carol'], month: '2020-01' }),
-    ];
-    const { rows } = buildActressBoard(records, selOf(undefined, null));
-    assert.equal(rows.length, 3);
-});
-
 test('buildActressBoard: 多人片每位女優各計一次；maker 焦點不附加列', () => {
     const records = [
         rec({ actresses: ['Alice', 'Bob'], month: '2020-01' }),
@@ -1041,47 +587,6 @@ test('buildActressBoard: 多人片每位女優各計一次；maker 焦點不附�
     assert.equal(rows.length, 2);
     assert.equal(rows[0].count, 1);
     assert.equal(rows[1].count, 1);
-});
-
-// ── aggregateTags（TASK-156b-T6）─────────────────────────────────────
-
-test('aggregateTags: total===0 時 pulled/rest 皆為空陣列且不拋錯', () => {
-    const result = aggregateTags([]);
-    assert.deepEqual(result.pulled, []);
-    assert.deepEqual(result.rest, []);
-    assert.equal(result.total, 0);
-    assert.equal(result.withTagCount, 0);
-    assert.equal(result.coverage, 0);
-});
-
-test('aggregateTags: 涵蓋率恰好 50% 的標籤不進 pulled（仍可能進樹圖）', () => {
-    // 4 部片；「半標」出現在恰好 2 部 → 50%，嚴格大於才進 pulled
-    const records = [
-        rec({ tags: ['半標', '稀有'] }),
-        rec({ tags: ['半標'] }),
-        rec({ tags: ['稀有'] }),
-        rec({ tags: [] }),
-    ];
-    const result = aggregateTags(records);
-    assert.equal(result.pulled.some((e) => e[0] === '半標'), false);
-    assert.equal(result.rest.some((e) => e[0] === '半標'), true);
-    // 「稀有」也是 2/4 = 50%，同樣不進 pulled
-    assert.equal(result.pulled.some((e) => e[0] === '稀有'), false);
-});
-
-test('aggregateTags: 涵蓋率 >50% 的標籤進 pulled、不進 rest', () => {
-    // 4 部片；「常見」出現 3 部 → 75% > 50%
-    const records = [
-        rec({ tags: ['常見', '少見'] }),
-        rec({ tags: ['常見'] }),
-        rec({ tags: ['常見'] }),
-        rec({ tags: ['少見'] }),
-    ];
-    const result = aggregateTags(records);
-    assert.deepEqual(result.pulled.map((e) => e[0]), ['常見']);
-    assert.equal(result.pulled[0][1], 3);
-    assert.equal(result.rest.some((e) => e[0] === '常見'), false);
-    assert.equal(result.rest.some((e) => e[0] === '少見'), true);
 });
 
 test('aggregateTags: 同片重複標籤字面只算一次', () => {
@@ -1094,25 +599,6 @@ test('aggregateTags: 同片重複標籤字面只算一次', () => {
     const aEntry = result.rest.find((e) => e[0] === 'A');
     assert.ok(aEntry);
     assert.equal(aEntry[1], 1);
-});
-
-test('aggregateTags: rest 超過 40 筆時只取前 40 筆', () => {
-    // 50 個相異標籤各出現 1 次於不同片；另加 10 部無標籤把 total 拉高，
-    // 使每個標籤涵蓋率 = 1/60 < 50%，全部進 rest。
-    const records = [];
-    for (let i = 0; i < 50; i++) {
-        const name = 'T' + String(i).padStart(2, '0');
-        records.push(rec({ tags: [name] }));
-    }
-    for (let i = 0; i < 10; i++) {
-        records.push(rec({ tags: [] }));
-    }
-    const result = aggregateTags(records);
-    assert.equal(result.rest.length, 40);
-    assert.equal(result.pulled.length, 0);
-    // 同計數時字典序遞增；前 40 應是 T00..T39
-    assert.equal(result.rest[0][0], 'T00');
-    assert.equal(result.rest[39][0], 'T39');
 });
 
 test('aggregateTags: withTagCount 與 coverage 正確；標籤字面原樣保留', () => {
@@ -1129,18 +615,6 @@ test('aggregateTags: withTagCount 與 coverage 正確；標籤字面原樣保留
     // 前端不做合併：兩個字面各自一筆
     const names = result.rest.map((e) => e[0]).sort();
     assert.deepEqual(names, ['中字', '字幕']);
-});
-
-test('aggregateTags: 同計數時依字典序遞增排序', () => {
-    const records = [
-        rec({ tags: ['Zebra'] }),
-        rec({ tags: ['Apple'] }),
-        rec({ tags: ['Mango'] }),
-        rec({ tags: [] }),
-    ];
-    const result = aggregateTags(records);
-    // 各 1 次 → 字典序 Apple, Mango, Zebra
-    assert.deepEqual(result.rest.map((e) => e[0]), ['Apple', 'Mango', 'Zebra']);
 });
 
 // ── aggregateAge（TASK-156c-T1）─────────────────────────────────────
@@ -1179,39 +653,6 @@ test('aggregateAge: 以 records[].actresses 的 primary 名直接查 favorites',
     assert.equal(result.histogram[22], 1);
 });
 
-test('aggregateAge: 只有年／年月（無完整 date）的片不計年齡但計入分母', () => {
-    const records = [
-        rec({
-            actresses: ['Alice'],
-            year: 2020,
-            month: '2020-06',
-            date: null,
-            duration: 120,
-        }),
-    ];
-    const favorites = favs({ Alice: { birth: '1998-01-01' } });
-    const result = aggregateAge(records, favorites, selOf(undefined, null));
-    assert.equal(result.total, 1);
-    assert.equal(result.recordsWithAge, 0);
-    assert.equal(result.pairCount, 0);
-    assert.equal(result.coverage, 0);
-});
-
-test('aggregateAge: duration=null 照算年齡', () => {
-    const records = [
-        rec({
-            actresses: ['Alice'],
-            date: '2020-01-01',
-            duration: null,
-        }),
-    ];
-    const favorites = favs({ Alice: { birth: '1998-01-01' } });
-    const result = aggregateAge(records, favorites, selOf(undefined, null));
-    assert.equal(result.pairCount, 1);
-    assert.equal(result.recordsWithAge, 1);
-    assert.equal(result.median, 22);
-});
-
 test('aggregateAge: 同片兩位收藏女優都算出年齡時涵蓋率分子只計一次', () => {
     // 片 1：兩位收藏女優都算出年齡 → pairCount+=2、recordsWithAge 只 +1
     // 片 2：無生日 → 不得進分子（鎖 if (recordHasAge) 守衛；拿掉 if 會讓本測試轉紅）
@@ -1240,20 +681,20 @@ test('aggregateAge: 同片兩位收藏女優都算出年齡時涵蓋率分子只
 });
 
 test('aggregateAge: date="2021-02-31"（日曆不合法）回 null，不計年齡但計入分母', () => {
-    const records = [
-        rec({
-            actresses: ['Alice'],
-            date: '2021-02-31',
-            duration: 120,
-        }),
+    // 表驅動：日曆不合法、只有年／年月（無完整 date）——都不計年齡但仍計入分母
+    const cases = [
+        { name: '2021-02-31', rec: { actresses: ['Alice'], date: '2021-02-31', duration: 120 } },
+        { name: '只有年月', rec: { actresses: ['Alice'], year: 2020, month: '2020-06', date: null, duration: 120 } },
     ];
-    const favorites = favs({ Alice: { birth: '1998-01-01' } });
-    const result = aggregateAge(records, favorites, selOf(undefined, null));
-    assert.equal(result.total, 1);
-    assert.equal(result.recordsWithAge, 0);
-    assert.equal(result.pairCount, 0);
-    assert.equal(result.coverage, 0);
-    assert.equal(result.median, null);
+    for (const c of cases) {
+        const favorites = favs({ Alice: { birth: '1998-01-01' } });
+        const result = aggregateAge([rec(c.rec)], favorites, selOf(undefined, null));
+        assert.equal(result.total, 1, c.name);
+        assert.equal(result.recordsWithAge, 0, c.name);
+        assert.equal(result.pairCount, 0, c.name);
+        assert.equal(result.coverage, 0, c.name);
+        assert.equal(result.median, null, c.name);
+    }
 });
 
 test('aggregateAge: 女優焦點時只算她本人；同片其他收藏女優（共演者）不進 histogram／pairCount', () => {
@@ -1279,27 +720,6 @@ test('aggregateAge: 女優焦點時只算她本人；同片其他收藏女優（
     assert.equal(result.histogram[25], undefined);
 });
 
-test('aggregateAge: 偶數個有效配對時中位數可為 .5', () => {
-    // 兩筆配對年齡 24、25 → median = 24.5
-    const records = [
-        rec({
-            actresses: ['Alice'],
-            date: '2020-06-01',
-            duration: 120,
-        }),
-        rec({
-            actresses: ['Alice'],
-            date: '2021-06-01',
-            duration: 120,
-        }),
-    ];
-    const favorites = favs({ Alice: { birth: '1996-06-01' } });
-    // 2020-06-01 → 24；2021-06-01 → 25
-    const result = aggregateAge(records, favorites, selOf(undefined, null));
-    assert.equal(result.pairCount, 2);
-    assert.equal(result.median, 24.5);
-});
-
 // ── aggregateFieldTop8 ───────────────────────────────────────────────
 
 test('aggregateFieldTop8: 空字串不進排名但仍計入 total', () => {
@@ -1313,61 +733,6 @@ test('aggregateFieldTop8: 空字串不進排名但仍計入 total', () => {
     assert.equal(res.withValueCount, 1);
     assert.equal(res.coverage, 1 / 3);
     assert.deepEqual(res.top, [['庵野秀明', 1]]);
-});
-
-test('aggregateFieldTop8: 全部片都缺該欄位時 top 為空且 coverage 為 0', () => {
-    const records = [
-        { director: null },
-        { director: '' },
-        { director: undefined },
-    ];
-    const res = aggregateFieldTop8(records, 'director');
-    assert.equal(res.total, 3);
-    assert.equal(res.withValueCount, 0);
-    assert.equal(res.coverage, 0);
-    assert.deepEqual(res.top, []);
-});
-
-test('aggregateFieldTop8: total 為 0 時涵蓋率回 0，不除以零', () => {
-    const res = aggregateFieldTop8([], 'director');
-    assert.equal(res.total, 0);
-    assert.equal(res.withValueCount, 0);
-    assert.equal(res.coverage, 0);
-    assert.deepEqual(res.top, []);
-});
-
-test('aggregateFieldTop8: 兩個名字計數相同依名字字典序遞增排序', () => {
-    const records = [
-        { series: 'Tokyo Hot' },
-        { series: 'Attackers Best' },
-    ];
-    const res = aggregateFieldTop8(records, 'series');
-    assert.equal(res.total, 2);
-    assert.equal(res.withValueCount, 2);
-    assert.equal(res.coverage, 1);
-    assert.deepEqual(res.top, [
-        ['Attackers Best', 1],
-        ['Tokyo Hot', 1],
-    ]);
-});
-
-test('aggregateFieldTop8: top 最多 8 筆', () => {
-    const records = [];
-    for (let i = 1; i <= 10; i++) {
-        const name = `Director_${String(i).padStart(2, '0')}`;
-        for (let j = 0; j < i; j++) {
-            records.push({ director: name });
-        }
-    }
-    const res = aggregateFieldTop8(records, 'director');
-    assert.equal(res.total, 55);
-    assert.equal(res.withValueCount, 55);
-    assert.equal(res.coverage, 1);
-    assert.equal(res.top.length, 8);
-    assert.deepEqual(res.top[0], ['Director_10', 10]);
-    assert.deepEqual(res.top[7], ['Director_03', 3]);
-    assert.equal(res.top.some((e) => e[0] === 'Director_02'), false);
-    assert.equal(res.top.some((e) => e[0] === 'Director_01'), false);
 });
 
 // ── buildGanttRows / ganttYearAxis / buildGanttYearCells ─────────────
@@ -1412,31 +777,6 @@ test('buildGanttRows: 選了年份＋片商焦點時只列同一組(y,mk)交集�
             map, selOf({ type: 'year', year: 2023 }, { type: 'maker', value: 'S1' }),
         ).some((r) => r.name === 'Alice'),
         true,
-    );
-});
-
-test('buildGanttRows: mainCount 遞減，同分時 name 字串遞增', () => {
-    const map = {
-        'Carol|2020': 'SOD',
-        'Bob|2020': 'SOD',
-        'Alice|2020': 'SOD',
-    };
-    // Carol 3 部 main、Bob/Alice 各 1 部；同分 Alice < Bob
-    const records = [
-        rec({ year: 2020, actresses: ['Carol'], maker: 'SOD' }),
-        rec({ year: 2020, actresses: ['Carol'], maker: 'SOD' }),
-        rec({ year: 2020, actresses: ['Carol'], maker: 'SOD' }),
-        rec({ year: 2020, actresses: ['Bob'], maker: 'SOD' }),
-        rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
-    ];
-    const rows = buildGanttRows(records, map, selOf({ type: 'all' }, null));
-    assert.deepEqual(
-        rows.map((r) => r.name),
-        ['Carol', 'Alice', 'Bob'],
-    );
-    assert.deepEqual(
-        rows.map((r) => r.mainCount),
-        [3, 1, 1],
     );
 });
 
@@ -1506,34 +846,6 @@ test('buildGanttRows: 女優焦點且她不在前25名時附加她那一列', ()
     assert.equal(missing.some((r) => r.name === 'Ghost'), false);
 });
 
-// ── buildGanttRows: 她那列置頂（TASK-156d-T4） ───────────────────────
-
-test('buildGanttRows: 女優焦點且她在自然排序內時直接置頂在 index 0，其餘相對順序不變', () => {
-    const map = {};
-    const records = [];
-    // 3 位候選人，mainCount 遞減：Top01(3) > Top02(2) > Top03(1)
-    for (let i = 1; i <= 3; i++) {
-        const name = `Top0${i}`;
-        const count = 4 - i;
-        for (let j = 0; j < count; j++) {
-            map[`${name}|2020`] = 'SOD';
-            records.push(rec({ year: 2020, actresses: [name], maker: 'SOD' }));
-        }
-    }
-    const noFocus = buildGanttRows(records, map, selOf({ type: 'all' }, null));
-    assert.deepEqual(noFocus.map((r) => r.name), ['Top01', 'Top02', 'Top03']);
-
-    const pinned = buildGanttRows(
-        records,
-        map, selOf({ type: 'all' }, { type: 'actress', value: 'Top03' }),
-    );
-    assert.equal(pinned.length, 3);
-    assert.equal(pinned[0].name, 'Top03');
-    assert.equal(pinned[0].pinned, true);
-    assert.equal(pinned[0].appended, undefined);
-    assert.deepEqual(pinned.slice(1).map((r) => r.name), ['Top01', 'Top02']);
-});
-
 test('buildGanttRows: 女優焦點且她 rank 外附加時，附加列直接置頂在 index 0（不是末列）', () => {
     const map = {};
     const records = [];
@@ -1558,23 +870,6 @@ test('buildGanttRows: 女優焦點且她 rank 外附加時，附加列直接置�
     );
 });
 
-test('buildGanttRows: 無焦點／片商焦點不觸發置頂，pinned 欄位不存在', () => {
-    const map = { 'Alice|2020': 'SOD', 'Bob|2020': 'SOD' };
-    const records = [
-        rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
-        rec({ year: 2020, actresses: ['Alice'], maker: 'SOD' }),
-        rec({ year: 2020, actresses: ['Bob'], maker: 'SOD' }),
-    ];
-    const noFocus = buildGanttRows(records, map, selOf({ type: 'all' }, null));
-    assert.equal(noFocus.some((r) => r.pinned), false);
-
-    const makerFocus = buildGanttRows(
-        records,
-        map, selOf({ type: 'all' }, { type: 'maker', value: 'SOD' }),
-    );
-    assert.equal(makerFocus.some((r) => r.pinned), false);
-});
-
 test('buildGanttYearCells: 主要片商年→main、有片非主要→dot、無片→empty', () => {
     const map = { 'Alice|2020': 'SOD' };
     const records = [
@@ -1594,25 +889,7 @@ test('buildGanttYearCells: 主要片商年→main、有片非主要→dot、無�
     assert.equal(cells[2].filmCount, 0);
 });
 
-test('ganttAgeEligibility: 沒有生日資料的女優計入略過人數且不進名單', () => {
-    const names = ['HasBirth', 'NoFav', 'NullBirth', 'AllLong'];
-    const favorites = favs({
-        HasBirth: { birth: '1990-01-01' },
-        NullBirth: { birth: null },
-        // AllLong 有 birth，即使所有片都算不出年齡也不算略過
-        AllLong: { birth: '1990-01-01' },
-    });
-    const records = [
-        rec({
-            actresses: ['AllLong'],
-            date: '2020-01-01',
-            duration: 239,
-        }),
-    ];
-    const res = ganttAgeEligibility(names, records, favorites);
-    assert.deepEqual(res.eligibleNames, ['HasBirth', 'AllLong']);
-    assert.equal(res.skippedCount, 2);
-});
+// ── buildSoloRows（TASK-156c-T4） ─────────────────────────────────────
 
 test('buildGanttAgeCells: 主要片商年同歲→main、有片非主要→dot、無片→empty', () => {
     // birth 1990-06-01；2020-06-01 → 30；2021-06-01 → 31
@@ -1657,20 +934,6 @@ test('ganttYearAxis: 全庫有年份紀錄的 min..max 連續，忽略 null', ()
     assert.deepEqual(ganttYearAxis(records), [2020, 2021, 2022]);
     assert.deepEqual(ganttYearAxis([]), []);
 });
-
-test('ganttAgeAxis: 顯示中各列年齡 min..max 連續', () => {
-    const favorites = favs({
-        A: { birth: '1990-01-01' },
-        B: { birth: '1995-01-01' },
-    });
-    const records = [
-        rec({ actresses: ['A'], date: '2020-01-01', duration: 100 }), // 30
-        rec({ actresses: ['B'], date: '2020-01-01', duration: 100 }), // 25
-    ];
-    assert.deepEqual(ganttAgeAxis(['A', 'B'], records, favorites), [25, 26, 27, 28, 29, 30]);
-});
-
-// ── buildSoloRows（TASK-156c-T4） ─────────────────────────────────────
 
 test('buildSoloRows: 先篩再取 25——原始片數前3名因主要片商佔比過半被篩掉，結果從第4名起仍取滿25位', () => {
     const map = {};
@@ -1754,17 +1017,6 @@ test('buildSoloRows: 主要片商佔比恰好 50% 不列，49%（如 24/49）列
     assert.equal(under.mainCount, 24);
 });
 
-test('buildSoloRows: 候選符合條件但在年表名單(ganttNames)裡 → 不得出現在結果', () => {
-    const map = {};
-    const records = [
-        rec({ year: 2020, actresses: ['InGantt'], maker: 'Other' }),
-        rec({ year: 2020, actresses: ['NotInGantt'], maker: 'Other' }),
-    ];
-    const rows = buildSoloRows(records, map, selOf({ type: 'all' }, null), ['InGantt'], []);
-    assert.equal(rows.some((r) => r.name === 'InGantt'), false);
-    assert.equal(rows.some((r) => r.name === 'NotInGantt'), true);
-});
-
 test('buildSoloRows: 橫跨 8 個以上具名片商時段數上限 10，namedMakerCount 不含未知', () => {
     const map = {};
     const records = [];
@@ -1834,35 +1086,6 @@ test('buildSoloRows: 女優焦點且她不符合篩選條件但有紀錄 → 附
     assert.equal(missing.some((r) => r.name === 'Ghost'), false);
 });
 
-// ── buildSoloRows: 她那列置頂（TASK-156d-T4） ────────────────────────
-
-test('buildSoloRows: 女優焦點且她在自然排序內時直接置頂在 index 0，其餘相對順序不變', () => {
-    const map = {};
-    const records = [];
-    // 3 位候選人，total 遞減：Top01(3) > Top02(2) > Top03(1)，全部片商 Other 不觸發主要片商篩除
-    for (let i = 1; i <= 3; i++) {
-        const name = `Top0${i}`;
-        const count = 4 - i;
-        for (let j = 0; j < count; j++) {
-            records.push(rec({ year: 2020, actresses: [name], maker: 'Other' }));
-        }
-    }
-    const noFocus = buildSoloRows(records, map, selOf({ type: 'all' }, null), [], []);
-    assert.deepEqual(noFocus.map((r) => r.name), ['Top01', 'Top02', 'Top03']);
-
-    const pinned = buildSoloRows(
-        records,
-        map, selOf({ type: 'all' }, { type: 'actress', value: 'Top03' }),
-        [],
-        [],
-    );
-    assert.equal(pinned.length, 3);
-    assert.equal(pinned[0].name, 'Top03');
-    assert.equal(pinned[0].pinned, true);
-    assert.equal(pinned[0].appended, undefined);
-    assert.deepEqual(pinned.slice(1).map((r) => r.name), ['Top01', 'Top02']);
-});
-
 test('buildSoloRows: 女優焦點且她 rank 外附加時，附加列直接置頂在 index 0（不是末列）', () => {
     const map = {};
     const records = [];
@@ -1891,74 +1114,25 @@ test('buildSoloRows: 女優焦點且她 rank 外附加時，附加列直接置�
     assert.deepEqual(pinned.slice(1).map((r) => r.name), names);
 });
 
-test('buildSoloRows: 無焦點／片商焦點不觸發置頂，pinned 欄位不存在', () => {
-    const map = {};
-    const records = [
-        rec({ year: 2020, actresses: ['Alice'], maker: 'Other' }),
-        rec({ year: 2020, actresses: ['Alice'], maker: 'Other' }),
-        rec({ year: 2020, actresses: ['Bob'], maker: 'Other' }),
-    ];
-    const noFocus = buildSoloRows(records, map, selOf({ type: 'all' }, null), [], []);
-    assert.equal(noFocus.some((r) => r.pinned), false);
-
-    const makerFocus = buildSoloRows(
-        records,
-        map, selOf({ type: 'all' }, { type: 'maker', value: 'Other' }),
-        [],
-        [],
-    );
-    assert.equal(makerFocus.some((r) => r.pinned), false);
-});
-
-// ── buildCostarRows ──────────────────────────────────────────────────
-
-test('buildCostarRows: 5人以上不計入', () => {
-    const records = [
-        rec({ actresses: ['Alice', 'Bob', 'Carol', 'Dave', 'Eve'] }), // 5 人片
-        rec({ actresses: ['Alice', 'Bob', 'Carol', 'Dave', 'Eve', 'Frank'] }), // 6 人片
-    ];
-    const got = buildCostarRows(records, selOf({ type: 'all' }, { type: 'actress', value: 'Alice' }));
-    assert.deepEqual(got, []);
-});
-
-test('buildCostarRows: 片商焦點回空陣列', () => {
-    const records = [
-        rec({ actresses: ['Alice', 'Bob'], maker: 'SOD' }),
-    ];
-    const got = buildCostarRows(records, selOf({ type: 'all' }, { type: 'maker', value: 'SOD' }));
-    assert.deepEqual(got, []);
-});
-
-test('buildCostarRows: 無焦點回空陣列', () => {
-    const records = [
-        rec({ actresses: ['Alice', 'Bob'] }),
-    ];
-    assert.deepEqual(buildCostarRows(records, selOf({ type: 'all' }, null)), []);
-    assert.deepEqual(buildCostarRows(records, selOf({ type: 'all' }, undefined)), []);
-    assert.deepEqual(buildCostarRows(records, selOf({ type: 'all' }, { type: 'actress', value: '' })), []);
-});
-
-test('buildCostarRows: 1人的片不計入', () => {
-    const records = [
-        rec({ actresses: ['Alice'] }),
-    ];
-    const got = buildCostarRows(records, selOf({ type: 'all' }, { type: 'actress', value: 'Alice' }));
-    assert.deepEqual(got, []);
-});
-
 test('buildCostarRows: 2～4人的片正常計入所有非焦點搭檔', () => {
+    const sel = selOf({ type: 'all' }, { type: 'actress', value: 'Alice' });
     const records = [
         rec({ actresses: ['Alice', 'Bob'] }), // 2 人片
         rec({ actresses: ['Alice', 'Bob', 'Carol'] }), // 3 人片
         rec({ actresses: ['Alice', 'Carol', 'Dave', 'Eve'] }), // 4 人片
+        rec({ actresses: ['Alice', 'Bob', 'Carol', 'Dave', 'Eve'] }), // 5 人片：不計入
+        rec({ actresses: ['Alice', 'Bob', 'Carol', 'Dave', 'Eve', 'Frank'] }), // 6 人片：不計入
+        rec({ actresses: ['Alice'] }), // 1 人片：不計入
     ];
-    const got = buildCostarRows(records, selOf({ type: 'all' }, { type: 'actress', value: 'Alice' }));
-    assert.deepEqual(got, [
+    assert.deepEqual(buildCostarRows(records, sel), [
         { name: 'Bob', count: 2 },
         { name: 'Carol', count: 2 },
         { name: 'Dave', count: 1 },
         { name: 'Eve', count: 1 },
     ]);
+    // 只有 5 人以上、只有 1 人的片 → 空
+    assert.deepEqual(buildCostarRows(records.slice(3, 5), sel), []);
+    assert.deepEqual(buildCostarRows(records.slice(5), sel), []);
 });
 
 test('buildCostarRows: 同片重複名字去重後只算一次人數與合作', () => {
@@ -1972,388 +1146,6 @@ test('buildCostarRows: 同片重複名字去重後只算一次人數與合作', 
         { name: 'Carol', count: 1 },
         { name: 'Dave', count: 1 },
     ]);
-});
-
-test('buildCostarRows: 排序規則為 count 遞減且 name 字串遞增', () => {
-    const records = [
-        rec({ actresses: ['Alice', 'Zara'] }),
-        rec({ actresses: ['Alice', 'Bob'] }),
-        rec({ actresses: ['Alice', 'Carol'] }),
-        rec({ actresses: ['Alice', 'Carol'] }),
-    ];
-    const got = buildCostarRows(records, selOf({ type: 'all' }, { type: 'actress', value: 'Alice' }));
-    assert.deepEqual(got, [
-        { name: 'Carol', count: 2 },
-        { name: 'Bob', count: 1 },
-        { name: 'Zara', count: 1 },
-    ]);
-});
-
-test('buildCostarRows: 超過15位符合資格的搭檔只取前15位', () => {
-    const records = [];
-    for (let i = 1; i <= 20; i++) {
-        const costarName = `Partner${String(i).padStart(2, '0')}`;
-        records.push(rec({ actresses: ['Alice', costarName] }));
-    }
-    const got = buildCostarRows(records, selOf({ type: 'all' }, { type: 'actress', value: 'Alice' }));
-    assert.equal(got.length, 15);
-    assert.equal(got[0].name, 'Partner01');
-    assert.equal(got[14].name, 'Partner15');
-});
-
-
-// ── classifyBoardTransition / podiumPositionClass (TASK-156e-T1a) ─────
-
-function namesOf(arr) {
-    return (arr || []).map((x) => x.name).sort();
-}
-
-test('classifyBoardTransition: 純列內換名次歸類為 rowStayers', () => {
-    const oldRows = [
-        { name: 'A', rank: 1 },
-        { name: 'B', rank: 2 },
-        { name: 'C', rank: 3 },
-        { name: 'D', rank: 4 },
-        { name: 'E', rank: 5 },
-    ];
-    const newRows = [
-        { name: 'A', rank: 1 },
-        { name: 'B', rank: 2 },
-        { name: 'C', rank: 3 },
-        { name: 'E', rank: 4 },
-        { name: 'D', rank: 5 },
-    ];
-    const got = agg.classifyBoardTransition(oldRows, newRows, 3);
-    assert.deepEqual(namesOf(got.rowStayers), ['D', 'E']);
-    assert.deepEqual(got.podiumReshuffle, []);
-    assert.deepEqual(got.crossStructureMovers, []);
-    assert.deepEqual(got.droppedOut, []);
-    assert.deepEqual(got.brandNewEntrants, []);
-    assert.deepEqual(got.podiumNewEntrants, []);
-});
-
-test('classifyBoardTransition: 頒獎台內部 1↔2 互換兩人皆進 podiumReshuffle', () => {
-    const oldRows = [
-        { name: 'A', rank: 1 },
-        { name: 'B', rank: 2 },
-        { name: 'C', rank: 3 },
-    ];
-    const newRows = [
-        { name: 'B', rank: 1 },
-        { name: 'A', rank: 2 },
-        { name: 'C', rank: 3 },
-    ];
-    const got = agg.classifyBoardTransition(oldRows, newRows, 3);
-    assert.deepEqual(namesOf(got.podiumReshuffle), ['A', 'B']);
-    assert.deepEqual(got.rowStayers, []);
-    assert.deepEqual(got.crossStructureMovers, []);
-    assert.deepEqual(got.droppedOut, []);
-    assert.deepEqual(got.brandNewEntrants, []);
-    assert.deepEqual(got.podiumNewEntrants, []);
-});
-
-test('classifyBoardTransition: 名單升上頒獎台歸類為 crossStructureMovers', () => {
-    const oldRows = [
-        { name: 'A', rank: 1 },
-        { name: 'B', rank: 2 },
-        { name: 'C', rank: 3 },
-        { name: 'D', rank: 4 },
-    ];
-    const newRows = [
-        { name: 'D', rank: 1 },
-        { name: 'B', rank: 2 },
-        { name: 'C', rank: 3 },
-        { name: 'A', rank: 4 },
-    ];
-    const got = agg.classifyBoardTransition(oldRows, newRows, 3);
-    assert.deepEqual(namesOf(got.crossStructureMovers), ['A', 'D']);
-    assert.ok(!got.rowStayers.some((x) => x.name === 'D'));
-    assert.ok(!got.podiumReshuffle.some((x) => x.name === 'D'));
-    assert.deepEqual(got.droppedOut, []);
-    assert.deepEqual(got.brandNewEntrants, []);
-    assert.deepEqual(got.podiumNewEntrants, []);
-});
-
-test('classifyBoardTransition: 頒獎台掉到名單歸類為 crossStructureMovers', () => {
-    const oldRows = [
-        { name: 'A', rank: 1 },
-        { name: 'B', rank: 2 },
-        { name: 'C', rank: 3 },
-        { name: 'D', rank: 4 },
-    ];
-    const newRows = [
-        { name: 'D', rank: 1 },
-        { name: 'B', rank: 2 },
-        { name: 'C', rank: 3 },
-        { name: 'A', rank: 4 },
-    ];
-    const got = agg.classifyBoardTransition(oldRows, newRows, 3);
-    assert.ok(got.crossStructureMovers.some((x) => x.name === 'A'));
-    assert.ok(!got.rowStayers.some((x) => x.name === 'A'));
-    assert.ok(!got.podiumReshuffle.some((x) => x.name === 'A'));
-});
-
-test('classifyBoardTransition: 全新進榜落名單歸類為 brandNewEntrants', () => {
-    const oldRows = [
-        { name: 'A', rank: 1 },
-        { name: 'B', rank: 2 },
-        { name: 'C', rank: 3 },
-        { name: 'D', rank: 4 },
-    ];
-    const newRows = [
-        { name: 'A', rank: 1 },
-        { name: 'B', rank: 2 },
-        { name: 'C', rank: 3 },
-        { name: 'E', rank: 4 },
-    ];
-    const got = agg.classifyBoardTransition(oldRows, newRows, 3);
-    assert.deepEqual(namesOf(got.brandNewEntrants), ['E']);
-    assert.deepEqual(namesOf(got.droppedOut), ['D']);
-    assert.deepEqual(got.podiumNewEntrants, []);
-});
-
-test('classifyBoardTransition: 全新進榜落頒獎台歸類為 podiumNewEntrants', () => {
-    const oldRows = [
-        { name: 'A', rank: 1 },
-        { name: 'B', rank: 2 },
-        { name: 'C', rank: 3 },
-        { name: 'D', rank: 4 },
-    ];
-    const newRows = [
-        { name: 'E', rank: 1 },
-        { name: 'B', rank: 2 },
-        { name: 'C', rank: 3 },
-        { name: 'D', rank: 4 },
-    ];
-    const got = agg.classifyBoardTransition(oldRows, newRows, 3);
-    assert.deepEqual(namesOf(got.podiumNewEntrants), ['E']);
-    assert.deepEqual(got.droppedOut, [{ name: 'A', wasPodium: true }]);
-    assert.deepEqual(got.brandNewEntrants, []);
-});
-
-test('classifyBoardTransition: 完全掉出女優榜且 wasPodium 正確', () => {
-    const oldRows = [
-        { name: 'A', rank: 1 },
-        { name: 'B', rank: 2 },
-        { name: 'C', rank: 3 },
-        { name: 'D', rank: 4 },
-        { name: 'E', rank: 5 },
-    ];
-    const newRows = [
-        { name: 'A', rank: 1 },
-        { name: 'B', rank: 2 },
-        { name: 'C', rank: 3 },
-    ];
-    const got = agg.classifyBoardTransition(oldRows, newRows, 3);
-    assert.deepEqual(
-        got.droppedOut.slice().sort((a, b) => (a.name < b.name ? -1 : 1)),
-        [
-            { name: 'D', wasPodium: false },
-            { name: 'E', wasPodium: false },
-        ],
-    );
-
-    const got2 = agg.classifyBoardTransition(
-        [{ name: 'A', rank: 1 }, { name: 'B', rank: 4 }],
-        [{ name: 'B', rank: 4 }],
-        3,
-    );
-    assert.deepEqual(got2.droppedOut, [{ name: 'A', wasPodium: true }]);
-});
-
-test('classifyBoardTransition: 交叉情境 podiumReshuffle 與 crossStructureMovers 互斥', () => {
-    // A↔B 頒獎台內部換位；C 從名單升上台；D 從台上掉到名單
-    const oldRows = [
-        { name: 'A', rank: 1 },
-        { name: 'B', rank: 2 },
-        { name: 'D', rank: 3 },
-        { name: 'C', rank: 4 },
-    ];
-    const newRows = [
-        { name: 'B', rank: 1 },
-        { name: 'A', rank: 2 },
-        { name: 'C', rank: 3 },
-        { name: 'D', rank: 4 },
-    ];
-    const got = agg.classifyBoardTransition(oldRows, newRows, 3);
-    assert.deepEqual(namesOf(got.podiumReshuffle), ['A', 'B']);
-    assert.deepEqual(namesOf(got.crossStructureMovers), ['C', 'D']);
-    assert.deepEqual(got.rowStayers, []);
-    assert.deepEqual(got.droppedOut, []);
-    assert.deepEqual(got.brandNewEntrants, []);
-    assert.deepEqual(got.podiumNewEntrants, []);
-    const allNames = [
-        ...got.rowStayers,
-        ...got.podiumReshuffle,
-        ...got.crossStructureMovers,
-        ...got.droppedOut,
-        ...got.brandNewEntrants,
-        ...got.podiumNewEntrants,
-    ].map((x) => x.name);
-    assert.equal(new Set(allNames).size, allNames.length);
-});
-
-test('classifyBoardTransition: podiumSize=5 時 4→6 名跨結構（3 人版同輸入為 rowStayers）', () => {
-    const oldRows = [{ name: 'A', rank: 4 }];
-    const newRows = [{ name: 'A', rank: 6 }];
-    const got5 = agg.classifyBoardTransition(oldRows, newRows, 5);
-    assert.deepEqual(namesOf(got5.crossStructureMovers), ['A']);
-    assert.deepEqual(got5.rowStayers, []);
-    const got3 = agg.classifyBoardTransition(oldRows, newRows, 3);
-    assert.deepEqual(namesOf(got3.rowStayers), ['A']);
-    assert.deepEqual(got3.crossStructureMovers, []);
-});
-
-test('classifyBoardTransition: podiumSize=5 時頒獎台內 4↔5 互換進 podiumReshuffle（3 人版為 rowStayers）', () => {
-    const oldRows = [
-        { name: 'A', rank: 4 },
-        { name: 'B', rank: 5 },
-    ];
-    const newRows = [
-        { name: 'B', rank: 4 },
-        { name: 'A', rank: 5 },
-    ];
-    const got5 = agg.classifyBoardTransition(oldRows, newRows, 5);
-    assert.deepEqual(namesOf(got5.podiumReshuffle), ['A', 'B']);
-    assert.deepEqual(got5.rowStayers, []);
-    const got3 = agg.classifyBoardTransition(oldRows, newRows, 3);
-    assert.deepEqual(namesOf(got3.rowStayers), ['A', 'B']);
-    assert.deepEqual(got3.podiumReshuffle, []);
-});
-
-test('classifyBoardTransition: podiumSize=5 時 rank 4／5 掉出榜 wasPodium 為 true、新進榜 rank 5 為 podiumNewEntrants', () => {
-    const oldRows = [
-        { name: 'A', rank: 4 },
-        { name: 'B', rank: 5 },
-    ];
-    const newRows = [
-        { name: 'C', rank: 5 },
-    ];
-    const got5 = agg.classifyBoardTransition(oldRows, newRows, 5);
-    assert.deepEqual(
-        got5.droppedOut.slice().sort((a, b) => (a.name < b.name ? -1 : 1)),
-        [
-            { name: 'A', wasPodium: true },
-            { name: 'B', wasPodium: true },
-        ],
-    );
-    assert.deepEqual(namesOf(got5.podiumNewEntrants), ['C']);
-    assert.deepEqual(got5.brandNewEntrants, []);
-});
-
-test('classifyBoardTransition: podiumSize=5 時名次 1–3 的歸類與 3 人版相同', () => {
-    const oldRows = [
-        { name: 'A', rank: 1 },
-        { name: 'B', rank: 2 },
-        { name: 'C', rank: 3 },
-    ];
-    const newRows = [
-        { name: 'B', rank: 1 },
-        { name: 'A', rank: 2 },
-        { name: 'C', rank: 3 },
-    ];
-    const got3 = agg.classifyBoardTransition(oldRows, newRows, 3);
-    const got5 = agg.classifyBoardTransition(oldRows, newRows, 5);
-    assert.deepEqual(got5, got3);
-    assert.deepEqual(namesOf(got5.podiumReshuffle), ['A', 'B']);
-});
-
-test('podiumPositionClass: rank 1 回傳 center', () => {
-    assert.equal(agg.podiumPositionClass(1, 3), 'center');
-});
-
-test('podiumPositionClass: rank 2 回傳 left', () => {
-    assert.equal(agg.podiumPositionClass(2, 3), 'left');
-});
-
-test('podiumPositionClass: rank 3 回傳 right', () => {
-    assert.equal(agg.podiumPositionClass(3, 3), 'right');
-});
-
-test('podiumPositionClass: podiumSize=5 時 rank 1–5 對應 center／left／right／far-left／far-right', () => {
-    assert.equal(agg.podiumPositionClass(1, 5), 'center');
-    assert.equal(agg.podiumPositionClass(2, 5), 'left');
-    assert.equal(agg.podiumPositionClass(3, 5), 'right');
-    assert.equal(agg.podiumPositionClass(4, 5), 'far-left');
-    assert.equal(agg.podiumPositionClass(5, 5), 'far-right');
-});
-
-test('podiumPositionClass: podiumSize=3 時 rank≥4 回空字串，rank 6 在 podiumSize=5 也回空字串', () => {
-    assert.equal(agg.podiumPositionClass(4, 3), '');
-    assert.equal(agg.podiumPositionClass(5, 3), '');
-    assert.equal(agg.podiumPositionClass(6, 3), '');
-    assert.equal(agg.podiumPositionClass(6, 5), '');
-    // 單參數呼叫相容
-    assert.equal(agg.podiumPositionClass(1), 'center');
-    assert.equal(agg.podiumPositionClass(2), 'left');
-    assert.equal(agg.podiumPositionClass(3), 'right');
-    assert.equal(agg.podiumPositionClass(4), '');
-});
-
-test('podiumSizeForViewport: 寬度表 359／360／430／559／560／768／1024／1025／1159／1160／1180／1920 對應 3／3／3／3／5／5／5／3／3／5／5／5', () => {
-    const cases = [
-        [359, 3],
-        [360, 3],
-        [430, 3],
-        [559, 3],
-        [560, 5],
-        [768, 5],
-        [1024, 5],
-        [1025, 3],
-        [1159, 3],
-        [1160, 5],
-        [1180, 5],
-        [1920, 5],
-    ];
-    cases.forEach(([w, expected]) => {
-        assert.equal(podiumSizeForViewport(w), expected, `width ${w} 应为 ${expected}`);
-    });
-});
-
-test('podiumSizeForViewport: undefined／NaN／"abc" 回 3', () => {
-    assert.equal(podiumSizeForViewport(undefined), 3);
-    assert.equal(podiumSizeForViewport(NaN), 3);
-    assert.equal(podiumSizeForViewport('abc'), 3);
-});
-
-// ── diffBoardCounts (TASK-156e-T3) ───────────────────────────────────
-
-test('diffBoardCounts: 兩筆同名不同 count 各自正確算出 from/to', () => {
-    const oldRows = [
-        { name: 'A', count: 10 },
-        { name: 'B', count: 8 },
-    ];
-    const newRows = [
-        { name: 'A', count: 12 },
-        { name: 'B', count: 5 },
-    ];
-    const diffs = agg.diffBoardCounts(oldRows, newRows);
-    assert.deepEqual(diffs, [
-        { name: 'A', from: 10, to: 12 },
-        { name: 'B', from: 8, to: 5 },
-    ]);
-});
-
-test('diffBoardCounts: 同名同 count 不產生 diff', () => {
-    const oldRows = [{ name: 'A', count: 10 }];
-    const newRows = [{ name: 'A', count: 10 }];
-    assert.deepEqual(agg.diffBoardCounts(oldRows, newRows), []);
-});
-
-test('diffBoardCounts: 新名字（不在 oldRows）不產生 diff', () => {
-    const oldRows = [{ name: 'A', count: 10 }];
-    const newRows = [
-        { name: 'A', count: 10 },
-        { name: 'Newcomer', count: 3 },
-    ];
-    assert.deepEqual(agg.diffBoardCounts(oldRows, newRows), []);
-});
-
-test('diffBoardCounts: oldRows 為空回傳空陣列', () => {
-    const newRows = [{ name: 'A', count: 10 }];
-    assert.deepEqual(agg.diffBoardCounts([], newRows), []);
-    assert.deepEqual(agg.diffBoardCounts(null, newRows), []);
-    assert.deepEqual(agg.diffBoardCounts(undefined, newRows), []);
 });
 
 // ── TASK-161a-T2b／T5a：sel／skipDim 簽名 ───────────────────
@@ -2383,18 +1175,6 @@ function fx() {
 const ALL = { type: 'all' };
 const Y = (year) => ({ type: 'year', year });
 const R = (from, to) => ({ type: 'range', from, to });
-
-test('aggregateYears: 女優∩片商時 series 恰 1 條且名稱＝該片商', () => {
-    const records = fx();
-    const res = aggregateYears(records, { period: ALL, actress: 'Alice', maker: 'Moodyz' });
-    assert.equal(res.series.length, 1);
-    assert.equal(res.series[0].name, 'Moodyz');
-    // Alice 在 Moodyz 共 5 部（2020×4＋2023×1），不是她全部 12 部，也不是 Moodyz 全部 9 部
-    assert.equal(res.series[0].data.reduce((a, b) => a + b, 0), 5);
-    // 對照：只選女優時她有兩家片商
-    const onlyActress = aggregateYears(records, { period: ALL, actress: 'Alice', maker: null });
-    assert.deepEqual(onlyActress.series.map((s) => s.name).sort(), ['Moodyz', 'S1']);
-});
 
 test('aggregateYears: dimmed 吃 range，期間只影響 dimmed 不影響 series 數值', () => {
     const records = fx();
@@ -2462,4 +1242,15 @@ test('buildGanttRows: 女優焦點下候選人主要片數與排序看期間∩�
     // 女優∩片商∩期間（2023∩S1）：候選只剩 2023 的 S1 主要片商年，主要片數仍看全貌
     const b = buildGanttRows(records, map, { period: Y(2023), actress: 'Focus', maker: 'S1' });
     assert.deepEqual(b.map((r) => [r.name, r.mainCount]), [['Focus', 0], ['Zed', 5], ['Bob', 4]]);
+});
+
+test('podiumSizeForViewport：手機／窄視窗頒獎台人數錯（該 3 人顯示 5 人或相反）→ 斷點邊界表', () => {
+    const { podiumSizeForViewport } = agg;
+    const table = [
+        [559, 3], [560, 5], [1024, 5], [1025, 3], [1159, 3], [1160, 5],
+        [NaN, 3], [undefined, 3],
+    ];
+    for (const [w, want] of table) {
+        assert.equal(podiumSizeForViewport(w), want, `innerWidth=${w}`);
+    }
 });

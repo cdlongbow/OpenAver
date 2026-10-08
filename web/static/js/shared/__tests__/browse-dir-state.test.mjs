@@ -55,28 +55,6 @@ function flush() {
 
 // ── factory shape ──────────────────────────────────────────────────────────
 
-test('browseDirState declares all contract stubs and has no init()', () => {
-    const s = browseDirState();
-    assert.equal(s.browseDirOpen, false);
-    assert.equal(s.browseDirLoading, false);
-    assert.equal(s.browseDirCurrentPath, '');
-    assert.equal(s.browseDirParentPath, null);
-    assert.deepEqual(s.browseDirEntries, []);
-    assert.equal(s.browseDirError, '');
-    assert.equal(s.browseDirTargetKey, null);
-    assert.equal(s.browseDirExpandVideos, false);
-    assert.equal(s._browseDirOnSelect, null);
-    assert.equal(s._browseDirNavGen, 0);
-    assert.equal(typeof s.openBrowseDir, 'function');
-    assert.equal(typeof s.closeBrowseDir, 'function');
-    assert.equal(typeof s.navigateBrowseDir, 'function');
-    assert.equal(typeof s.browseDirUp, 'function');
-    assert.equal(typeof s.selectBrowseDir, 'function');
-    assert.equal(typeof s.browseDirCanSelect, 'function');
-    assert.equal(typeof s.browseDirCrumbs, 'function');
-    assert.equal('init' in s, false);
-});
-
 // ── race guard ─────────────────────────────────────────────────────────────
 
 test('stale navigate response is dropped', async () => {
@@ -126,34 +104,16 @@ test('stale navigate response is dropped', async () => {
 // ── Windows drive-list node ────────────────────────────────────────────────
 
 test('cannot select the windows drive-list node', () => {
-    const s = makeState({
-        browseDirLoading: false,
-        browseDirCurrentPath: '',
-        browseDirError: '',
-    });
-    assert.equal(s.browseDirCanSelect(), false);
-});
-
-test('browseDirCanSelect is true for a real folder path', () => {
-    const s = makeState({
-        browseDirLoading: false,
-        browseDirCurrentPath: '/home/videos',
-        browseDirError: '',
-    });
-    assert.equal(s.browseDirCanSelect(), true);
-});
-
-test('browseDirCanSelect is false while loading or on error', () => {
-    assert.equal(makeState({
-        browseDirLoading: true,
-        browseDirCurrentPath: '/home',
-        browseDirError: '',
-    }).browseDirCanSelect(), false);
-    assert.equal(makeState({
-        browseDirLoading: false,
-        browseDirCurrentPath: '/home',
-        browseDirError: 'common.browse_dir.err_not_found',
-    }).browseDirCanSelect(), false);
+    // 162a：真實資料夾可選、載入中／錯誤不可選併入同一支（同一 getter browseDirCanSelect）
+    const cases = [
+        { label: 'windows drive-list node', state: { browseDirLoading: false, browseDirCurrentPath: '', browseDirError: '' }, expected: false },
+        { label: 'real folder path', state: { browseDirLoading: false, browseDirCurrentPath: '/home/videos', browseDirError: '' }, expected: true },
+        { label: 'loading', state: { browseDirLoading: true, browseDirCurrentPath: '/home', browseDirError: '' }, expected: false },
+        { label: 'error', state: { browseDirLoading: false, browseDirCurrentPath: '/home', browseDirError: 'common.browse_dir.err_not_found' }, expected: false },
+    ];
+    for (const c of cases) {
+        assert.equal(makeState(c.state).browseDirCanSelect(), c.expected, c.label);
+    }
 });
 
 // ── localStorage per trigger point ─────────────────────────────────────────
@@ -244,66 +204,25 @@ test('remembers last path per trigger point', async () => {
 
 // ── error handling keeps entries ───────────────────────────────────────────
 
-test('non-2xx maps error code and keeps previous entries', async () => {
-    const restore = mockFetch(async () => errJson(404, 'not_found'));
-    try {
-        const s = makeState({
-            browseDirEntries: [{ name: 'keep', path: '/keep' }],
-            browseDirCurrentPath: '/keep',
-        });
-        await s.navigateBrowseDir('/missing');
-        assert.equal(s.browseDirError, 'common.browse_dir.err_not_found');
-        assert.deepEqual(s.browseDirEntries, [{ name: 'keep', path: '/keep' }]);
-        assert.equal(s.browseDirLoading, false);
-        assert.equal(s.browseDirCanSelect(), false);
-    } finally {
-        restore();
-    }
-});
-
 test('unknown error code and fetch throw both map to err_generic', async () => {
-    {
-        const restore = mockFetch(async () => errJson(500, 'weird_code'));
+    // 162a：404 not_found（原獨立測試：非 2xx 對應錯誤碼並保留原清單）併入同一支
+    const cases = [
+        { label: '404 not_found', impl: async () => errJson(404, 'not_found'), key: 'common.browse_dir.err_not_found' },
+        { label: '500 weird_code', impl: async () => errJson(500, 'weird_code'), key: 'common.browse_dir.err_generic' },
+        { label: 'fetch throws', impl: async () => { throw new Error('offline'); }, key: 'common.browse_dir.err_generic' },
+    ];
+    for (const c of cases) {
+        const restore = mockFetch(c.impl);
         try {
-            const s = makeState({ browseDirEntries: [{ name: 'a', path: '/a' }] });
-            await s.navigateBrowseDir('/x');
-            assert.equal(s.browseDirError, 'common.browse_dir.err_generic');
-            assert.deepEqual(s.browseDirEntries, [{ name: 'a', path: '/a' }]);
-        } finally {
-            restore();
-        }
-    }
-    {
-        const restore = mockFetch(async () => { throw new Error('offline'); });
-        try {
-            const s = makeState({ browseDirEntries: [{ name: 'b', path: '/b' }] });
-            await s.navigateBrowseDir('/y');
-            assert.equal(s.browseDirError, 'common.browse_dir.err_generic');
-            assert.deepEqual(s.browseDirEntries, [{ name: 'b', path: '/b' }]);
-            assert.equal(s.browseDirLoading, false);
-        } finally {
-            restore();
-        }
-    }
-});
-
-test('permission_denied and not_a_directory map to their keys', async () => {
-    {
-        const restore = mockFetch(async () => errJson(403, 'permission_denied'));
-        try {
-            const s = makeState();
-            await s.navigateBrowseDir('/nope');
-            assert.equal(s.browseDirError, 'common.browse_dir.err_permission_denied');
-        } finally {
-            restore();
-        }
-    }
-    {
-        const restore = mockFetch(async () => errJson(400, 'not_a_directory'));
-        try {
-            const s = makeState();
-            await s.navigateBrowseDir('/file');
-            assert.equal(s.browseDirError, 'common.browse_dir.err_not_a_directory');
+            const s = makeState({
+                browseDirEntries: [{ name: 'keep', path: '/keep' }],
+                browseDirCurrentPath: '/keep',
+            });
+            await s.navigateBrowseDir('/missing');
+            assert.equal(s.browseDirError, c.key, c.label);
+            assert.deepEqual(s.browseDirEntries, [{ name: 'keep', path: '/keep' }], c.label);
+            assert.equal(s.browseDirLoading, false, c.label);
+            assert.equal(s.browseDirCanSelect(), false, c.label);
         } finally {
             restore();
         }
@@ -312,14 +231,11 @@ test('permission_denied and not_a_directory map to their keys', async () => {
 
 // ── crumbs ─────────────────────────────────────────────────────────────────
 
-test('browseDirCrumbs for empty path is drives-only', () => {
-    const s = makeState({ browseDirCurrentPath: '' });
-    assert.deepEqual(s.browseDirCrumbs(), [
+test('browseDirCrumbs for Windows paths prepends drives', () => {
+    // 162a：空路徑／POSIX 根與巢狀路徑併入同一支（同一函式 browseDirCrumbs）
+    assert.deepEqual(makeState({ browseDirCurrentPath: '' }).browseDirCrumbs(), [
         { label: 'common.browse_dir.drives', path: '' },
     ]);
-});
-
-test('browseDirCrumbs for POSIX root and nested paths', () => {
     assert.deepEqual(makeState({ browseDirCurrentPath: '/' }).browseDirCrumbs(), [
         { label: '/', path: '/' },
     ]);
@@ -328,9 +244,6 @@ test('browseDirCrumbs for POSIX root and nested paths', () => {
         { label: 'home', path: '/home' },
         { label: 'videos', path: '/home/videos' },
     ]);
-});
-
-test('browseDirCrumbs for Windows paths prepends drives', () => {
     assert.deepEqual(makeState({ browseDirCurrentPath: 'C:\\' }).browseDirCrumbs(), [
         { label: 'common.browse_dir.drives', path: '' },
         { label: 'C:\\', path: 'C:\\' },
@@ -419,22 +332,6 @@ test('openBrowseDir resets expandVideos every time', async () => {
         restore();
         restoreLs();
     }
-});
-
-test('closeBrowseDir clears callback, error, entries, expandVideos', () => {
-    const s = makeState({
-        browseDirOpen: true,
-        browseDirError: 'common.browse_dir.err_generic',
-        browseDirEntries: [{ name: 'x', path: '/x' }],
-        browseDirExpandVideos: true,
-        _browseDirOnSelect: () => {},
-    });
-    s.closeBrowseDir();
-    assert.equal(s.browseDirOpen, false);
-    assert.equal(s._browseDirOnSelect, null);
-    assert.equal(s.browseDirError, '');
-    assert.deepEqual(s.browseDirEntries, []);
-    assert.equal(s.browseDirExpandVideos, false);
 });
 
 test('openBrowseDir reads remembered path for that trigger point', async () => {

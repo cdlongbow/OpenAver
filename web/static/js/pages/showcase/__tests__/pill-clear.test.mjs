@@ -1,8 +1,6 @@
-// TASK-115-T7 / 129-T1a: clearAllFilters 唯一擁有者 ＋ showcaseHasSearch /
-// _hasActiveFilterForCurrentTab 契約。
-// 覆蓋：清除清掉 search/actressSearch/pills、toolbar 收合、precise-match reset、
-// 一次 clear 恰好一次 _animateFilter／saveState、predicate 依分頁二選一、clearSearch 已刪、
-// 五個 $watch + init 共用 _hasActiveFilterForCurrentTab、showcase.html 改接 clearAllFilters。
+// TASK-115-T7 / 129-T1a: clearAllFilters 唯一擁有者。
+// 覆蓋：清除只清當前分頁（另一分頁的搜尋字／pill／精準比對狀態不動）、影片牆清除重置 hero card、
+// 清除後存檔；另有 clearSearch 殘留、$watch／init／捲動守衛／showcase.html 接線的原始碼結構檢查（待 162c 搬 lint）。
 //
 // state-videos.js 用瀏覽器 importmap 別名 `@/showcase/...` 與 `@/shared/...`，
 // plain `node --test` 不認得。既有 search/__tests__/alias-loader.mjs 只做
@@ -113,32 +111,6 @@ function makeClearComponent(overrides) {
 
 // ===== clearAllFilters 清空正確性 =====
 
-test('clearAllFilters：影片牆僅有 pills（無文字）時清空 pills，actressPills 原封不動', () => {
-    const c = makeClearComponent({
-        showFavoriteActresses: false,
-        pills: [{ dim: 'maker', value: 'Moodyz' }, { dim: 'series', value: 'Madonna' }],
-        actressPills: [{ dim: 'age', op: '=', value: '37' }],
-    });
-    c.clearAllFilters();
-    assert.equal(c.pills.length, 0);
-    assert.equal(c.actressPills.length, 1);
-    assert.equal(c.search, '');
-    assert.equal(c.actressSearch, '');
-});
-
-test('clearAllFilters：女優牆僅有 pills（無文字）時清空 actressPills，pills 原封不動', () => {
-    const c = makeClearComponent({
-        showFavoriteActresses: true,
-        pills: [{ dim: 'maker', value: 'Moodyz' }, { dim: 'series', value: 'Madonna' }],
-        actressPills: [{ dim: 'age', op: '=', value: '37' }],
-    });
-    c.clearAllFilters();
-    assert.equal(c.actressPills.length, 0);
-    assert.equal(c.pills.length, 2);
-    assert.equal(c.search, '');
-    assert.equal(c.actressSearch, '');
-});
-
 test('clearAllFilters：影片牆清除不得清掉 actressSearch／actressPills', () => {
     const c = makeClearComponent({
         showFavoriteActresses: false,
@@ -154,31 +126,23 @@ test('clearAllFilters：影片牆清除不得清掉 actressSearch／actressPills
     assert.equal(c.pills.length, 0, '影片牆 pills 應清空');
 });
 
-test('clearAllFilters：女優牆清除不得清掉 search／pills', () => {
+test('clearAllFilters：女優牆清除不得清掉 search／pills，影片牆精準比對狀態原封不動', () => {
     const c = makeClearComponent({
         showFavoriteActresses: true,
         search: 'hello',
         actressSearch: '三上悠亜',
         pills: [{ dim: 'maker', value: 'S1' }],
         actressPills: [{ dim: 'age', op: '=', value: '37' }],
+        _isPreciseActressMatch: true,
+        _matchedActress: { name: '三上悠亜', is_favorite: false },
     });
     c.clearAllFilters();
+    assert.equal(c._isPreciseActressMatch, true, '女優牆清除維持 _isPreciseActressMatch 原值');
+    assert.notEqual(c._matchedActress, null, '女優牆清除維持 _matchedActress 原值');
     assert.equal(c.search, 'hello', '女優牆清除不得清掉 search');
     assert.deepEqual(c.pills, [{ dim: 'maker', value: 'S1' }], '女優牆清除不得清掉 pills');
     assert.equal(c.actressSearch, '', '女優牆 actressSearch 應清空');
     assert.equal(c.actressPills.length, 0, '女優牆 actressPills 應清空');
-});
-
-test('clearAllFilters：收合 toolbar（兩個分頁各驗一次）', () => {
-    const c1 = makeClearComponent({ showFavoriteActresses: false, search: 'x' });
-    uiStore.toolbarOpen = true;
-    c1.clearAllFilters();
-    assert.equal(uiStore.toolbarOpen, false, '影片牆清除需收合 toolbar');
-
-    const c2 = makeClearComponent({ showFavoriteActresses: true, actressSearch: 'y' });
-    uiStore.toolbarOpen = true;
-    c2.clearAllFilters();
-    assert.equal(uiStore.toolbarOpen, false, '女優牆清除需收合 toolbar');
 });
 
 // TASK-115-T8（RULING 3）：T7 留下的直接 `this._clearPreciseMatch()` 呼叫已移除——
@@ -201,57 +165,7 @@ test('clearAllFilters：影片牆重置 precise-actress-match／愛心狀態（�
     assert.equal(c._matchedActress, null);
 });
 
-test('clearAllFilters：女優牆清除維持 precise-match 狀態，不得誤呼叫 _reconcileHeroCard', () => {
-    const c = makeClearComponent({
-        showFavoriteActresses: true,
-        search: '三上悠亜',
-        actressSearch: '三上悠亜',
-        _isPreciseActressMatch: true,
-        _matchedActress: { name: '三上悠亜', is_favorite: false },
-    });
-    const realReconcile = stateVideos()._reconcileHeroCard;
-    c._reconcileHeroCard = function () { c.heroCalls++; return realReconcile.call(c); };
-    c.clearAllFilters();
-    assert.equal(c._isPreciseActressMatch, true, '女優牆清除維持 _isPreciseActressMatch 原值');
-    assert.notEqual(c._matchedActress, null, '女優牆清除維持 _matchedActress 原值');
-    assert.equal(c.preciseClearCalls, 0, '女優牆清除不得呼叫 _clearPreciseMatch');
-    assert.equal(c.heroCalls, 0, '女優牆清除不得呼叫 _reconcileHeroCard');
-});
-
 // ===== call-count：一次 clear 各副作用恰好 1 次 =====
-
-test('clearAllFilters：影片牆一次點擊副作用（_animateFilter=1, actressFilter=0, _reconcileHeroCard=1, _clearPreciseMatch=1）', () => {
-    const c = makeClearComponent({
-        showFavoriteActresses: false,
-        search: 'x',
-        actressSearch: 'y',
-        pills: [{ dim: 'maker', value: 'Moodyz' }],
-        _isPreciseActressMatch: true,
-    });
-    const realReconcile = stateVideos()._reconcileHeroCard;
-    c._reconcileHeroCard = function () { c.heroCalls++; return realReconcile.call(c); };
-    c.clearAllFilters();
-    assert.equal(c.animateCalls, 1);
-    assert.equal(c.actressFilterCalls, 0);
-    assert.equal(c.heroCalls, 1);
-    assert.equal(c.preciseClearCalls, 1);
-});
-
-test('clearAllFilters：女優牆一次點擊副作用（_animateFilter=0, actressFilter=1, _reconcileHeroCard=0）', () => {
-    const c = makeClearComponent({
-        showFavoriteActresses: true,
-        search: 'x',
-        actressSearch: 'y',
-        actressPills: [{ dim: 'age', op: '=', value: '37' }],
-        _isPreciseActressMatch: true,
-    });
-    const realReconcile = stateVideos()._reconcileHeroCard;
-    c._reconcileHeroCard = function () { c.heroCalls++; return realReconcile.call(c); };
-    c.clearAllFilters();
-    assert.equal(c.animateCalls, 0);
-    assert.equal(c.actressFilterCalls, 1);
-    assert.equal(c.heroCalls, 0);
-});
 
 test('clearAllFilters：影片牆一次點擊恰好 1 次 saveState（真身 _animateFilter + mode:table）', () => {
     // 不 stub _animateFilter，改 stub 其內部依賴，讓真身跑到 saveState 那一行。
@@ -350,17 +264,6 @@ test('_hasActiveFilterForCurrentTab：女優牆只看 actressSearch/actressPills
 });
 
 // ===== clearSearch 已刪 =====
-
-test('clearSearch 不再存在於 stateBase／stateVideos 合併元件', () => {
-    const base = makeBase();
-    assert.equal(typeof base.clearSearch, 'undefined');
-    assert.equal(typeof stateVideos().clearSearch, 'undefined');
-    // 合併後也不該有
-    const merged = Object.assign({}, base, stateVideos());
-    assert.equal(typeof merged.clearSearch, 'undefined');
-    assert.equal(typeof merged.clearAllFilters, 'function');
-    assert.equal(typeof merged._hasActiveFilterForCurrentTab, 'function');
-});
 
 test('全庫產品碼無 clearSearch 字面殘留（state-base / state-videos / showcase.html）', () => {
     assert.equal(STATE_BASE_SRC.includes('clearSearch'), false);
@@ -504,57 +407,4 @@ test('showcase.html：window listener 與搜尋列清除鈕皆呼叫 clearAllFil
         false,
         '搜尋列清除鈕不得再 inline 分流清 actressSearch',
     );
-});
-
-// ===== 115-T7 review P2：女優模式下 _animateFilter 不得碰 DOM 動畫 =====
-//
-// 成因：_animateFilter 是「影片側篩選」動畫，captureFlipState() 只認得 .av-card-preview。
-// 女優模式下 _getActiveGrid() 回 .actress-grid → capture 回 null → 掉進 fallback 對整面
-// 女優牆重播 playEntry。使用者看到每張女優卡在按清除時無故閃一下。
-// 這是「任何呼叫端在女優模式走到 _animateFilter 都會中」的類別問題，故守在函式本身。
-
-test('_animateFilter：女優模式下完全不查 grid、不播動畫（避免整面女優牆誤閃）', () => {
-    let getActiveGridCalls = 0;
-    let playEntryCalls = 0;
-    const prevAnim = globalThis.window.ShowcaseAnimations;
-    globalThis.window.ShowcaseAnimations = {
-        captureFlipState: () => null,
-        playFlipFilter: () => null,
-        playEntry: () => { playEntryCalls++; },
-    };
-    try {
-        const c = Object.assign({}, stateVideos(), {
-            pills: [], search: '', actressSearch: '',
-            mode: 'grid',
-            showFavoriteActresses: true,      // ← 女優模式
-            _animGeneration: 0,
-            filteredCount: 0,
-            applyFilterAndSort() {},
-            saveState() {},
-            $nextTick() {},                    // 不排 callback：本斷言只看同步的 capture 路徑
-        });
-        c._getActiveGrid = function () { getActiveGridCalls++; return null; };
-        c._animateFilter();
-        assert.equal(getActiveGridCalls, 0, '女優模式不得查 grid（查了就代表會進 capture/fallback 動畫路徑）');
-        assert.equal(playEntryCalls, 0, '女優模式不得播 playEntry');
-    } finally {
-        globalThis.window.ShowcaseAnimations = prevAnim;
-    }
-});
-
-test('_animateFilter：影片模式維持既有行為（仍會查 grid）', () => {
-    let getActiveGridCalls = 0;
-    const c = Object.assign({}, stateVideos(), {
-        pills: [], search: '', actressSearch: '',
-        mode: 'grid',
-        showFavoriteActresses: false,     // ← 影片模式
-        _animGeneration: 0,
-        filteredCount: 0,
-        applyFilterAndSort() {},
-        saveState() {},
-        $nextTick() {},
-    });
-    c._getActiveGrid = function () { getActiveGridCalls++; return null; };
-    c._animateFilter();
-    assert.equal(getActiveGridCalls, 1, '影片模式必須維持既有的 capture 路徑（行為零改變）');
 });

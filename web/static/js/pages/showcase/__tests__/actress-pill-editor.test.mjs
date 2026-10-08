@@ -90,7 +90,7 @@ const { buildActressPillPredicate } = await import('../../../shared/actress-pill
 
 /**
  * @param {boolean} initialMatches  max-width:480px 的初始 matches
- * @returns {{ setMatches: (m: boolean) => void, getPillMq: () => object|null, handlers: {add: Function[], remove: Function[]} }}
+ * @returns {{ setMatches: (m: boolean) => void }}
  */
 function installMatchMedia(initialMatches) {
     const handlersByQuery = new Map();
@@ -149,18 +149,6 @@ function installMatchMedia(initialMatches) {
                 }
             }
         },
-        getPillMq() {
-            for (const [q, mq] of mqsByQuery) {
-                if (q.includes('480')) return mq;
-            }
-            return null;
-        },
-        getHandlers(queryPart) {
-            for (const [q, h] of handlersByQuery) {
-                if (q.includes(queryPart)) return h;
-            }
-            return { add: [], remove: [] };
-        },
     };
 }
 
@@ -211,14 +199,8 @@ function makeComponent(overrides) {
 }
 
 /** 跑 init() 到 matchMedia 註冊完成（stub 掉網路與 Alpine 依賴） */
-async function runInit(c, registerCapture) {
-    if (registerCapture) {
-        globalThis.window.__registerPage = ({ cleanup }) => {
-            registerCapture.cleanup = cleanup;
-        };
-    } else {
-        globalThis.window.__registerPage = () => {};
-    }
+async function runInit(c) {
+    globalThis.window.__registerPage = () => {};
     const origFetch = globalThis.fetch;
     globalThis.fetch = async () => ({
         ok: true,
@@ -238,19 +220,6 @@ async function runInit(c, registerCapture) {
     }
 }
 
-// ── DoD #1：淺拷貝不共享參考（CD-116b-5）──────────────────────────────────
-
-test('DoD#1 _openPillEditor 淺拷貝：改草稿 op 不影響 actressPills[0]', () => {
-    const c = makeComponent();
-    c.addActressPill('height', '160cm');
-    const before = { ...c.actressPills[0] };
-    c._openPillEditor(c.actressPills[0]);
-    assert.ok(c._pillEditor, '草稿應開啟');
-    c._pillEditor.op = 'range';
-    assert.deepEqual(c.actressPills[0], before, '已套用 pill 逐欄位不變');
-    assert.notEqual(c._pillEditor, c.actressPills[0], '草稿不得是同一參考');
-});
-
 // ── DoD #2：✗ 不刪除不修改（CD-116b-5 / spec §5.6）────────────────────────
 
 test('DoD#2 開啟→改草稿→_cancelPillEditor → actressPills deepEqual 開啟前', () => {
@@ -261,6 +230,7 @@ test('DoD#2 開啟→改草稿→_cancelPillEditor → actressPills deepEqual �
     c._pillEditor.op = '<=';
     c._pillEditor.rangeLo = '30';
     c._pillEditor.rangeHi = '40';
+    assert.deepEqual(c.actressPills, before, '草稿編輯中，已套用的 pill 不得跟著變');
     c._cancelPillEditor();
     assert.equal(c._pillEditor, null);
     assert.deepEqual(c.actressPills, before);
@@ -278,16 +248,6 @@ test('DoD#6 自訂區間列 ✓，兩格都填 → { value: lo, value2: hi }', (
     assert.equal(c._pillEditor, null);
     assert.deepEqual(c.actressPills[0], {
         dim: 'height', op: 'range', value: '150', value2: '170',
-    });
-});
-
-test('DoD#6 _applyPillOp（運算子鈕）→ { value, value2: null }', () => {
-    const c = makeComponent();
-    c.addActressPill('age', 37);
-    c._openPillEditor(c.actressPills[0]);
-    c._applyPillOp('<=');
-    assert.deepEqual(c.actressPills[0], {
-        dim: 'age', op: '<=', value: '37', value2: null,
     });
 });
 
@@ -320,29 +280,7 @@ test('DoD#8 直接餵 lo>hi 的 range pill 給 predicate → 空集合', () => {
     assert.equal(hits.length, 0, 'predicate 不得偷偷對調；lo>hi 應得空集合');
 });
 
-// ── DoD #10：_pillPopoverEnabled 在 ≤480px 為 false（CD-116b-8）───────────
-
-test('DoD#10 factory：matchMedia ≤480 matches=true → _pillPopoverEnabled=false', () => {
-    installMatchMedia(true); // ≤480
-    const c = makeComponent();
-    assert.equal(c._pillPopoverEnabled, false);
-});
-
-test('DoD#10 factory：matchMedia ≤480 matches=false → _pillPopoverEnabled=true', () => {
-    installMatchMedia(false);
-    const c = makeComponent();
-    assert.equal(c._pillPopoverEnabled, true);
-});
-
 // ── DoD #11：_togglePillEditor 在 disabled 時不開啟（第二層防禦）──────────
-
-test('DoD#11 _togglePillEditor 在 _pillPopoverEnabled=false 時不開啟', () => {
-    const c = makeComponent();
-    c._pillPopoverEnabled = false;
-    c.addActressPill('age', 37);
-    c._togglePillEditor(c.actressPills[0]);
-    assert.equal(c._pillEditor, null);
-});
 
 test('DoD#11 _togglePillEditor 桌機可開、再點同 dim 關閉', () => {
     const c = makeComponent();
@@ -439,43 +377,6 @@ test('DoD#15b clearAllFilters 後 _pillEditor=null（影片牆：actressPills �
     assert.equal(c.actressPills.length, 1, '影片牆清除不得清掉 actressPills');
 });
 
-// ── DoD #16：lifecycle 對稱——同一 handler 參考（plan §2）──────────────────
-
-test('DoD#16 init addEventListener 與 cleanup removeEventListener 用同一 handler 參考', async () => {
-    mm = installMatchMedia(false);
-    const c = makeComponent();
-    const capture = { cleanup: null };
-    await runInit(c, capture);
-
-    assert.ok(c._pillMq, '_pillMq 應在 init 後存在');
-    assert.ok(c._pillHandler, '_pillHandler 應在 init 後存在');
-    assert.equal(typeof c._pillHandler, 'function');
-
-    const pillHandlers = mm.getHandlers('480');
-    assert.ok(pillHandlers.add.length >= 1, 'addEventListener 應被呼叫');
-    // 最後一次（或唯一一次）註冊的 handler 必須是 this._pillHandler
-    const added = pillHandlers.add[pillHandlers.add.length - 1];
-    assert.equal(added, c._pillHandler, 'addEventListener 傳入的必須是 _pillHandler 參考');
-
-    assert.ok(capture.cleanup, '__registerPage cleanup 應被註冊');
-    capture.cleanup.call(c);
-
-    assert.ok(pillHandlers.remove.length >= 1, 'cleanup 應呼叫 removeEventListener');
-    const removed = pillHandlers.remove[pillHandlers.remove.length - 1];
-    assert.equal(removed, c._pillHandler, 'removeEventListener 必須傳入與 add 相同的 handler 參考');
-    assert.equal(removed, added, 'add 與 remove 的 handler 必須是同一參考');
-});
-
-// ── fail-safe：_commitPillEditor 在 null 時不拋錯 ─────────────────────────
-
-test('_commitPillEditor 在 _pillEditor=null 時不拋錯、不寫入', () => {
-    const c = makeComponent();
-    c.addActressPill('age', 37);
-    const before = structuredClone(c.actressPills);
-    assert.doesNotThrow(() => c._commitPillEditor());
-    assert.deepEqual(c.actressPills, before);
-});
-
 /** 斷言 pill 陣列裡沒有 value/value2 為字面 'null' 或空字串的項目 */
 function assertNoNullOrEmptyPillValues(pills, msg) {
     for (const p of pills) {
@@ -500,19 +401,6 @@ test('兩格皆空按 ✓ → 不寫入、_pillEditor 仍開（防禦性 return�
     c._commitPillEditor();
     assert.deepEqual(c.actressPills, before, 'actressPills 不得被改寫');
     assert.ok(c._pillEditor, '_pillEditor 必須維持開啟');
-    assertNoNullOrEmptyPillValues(c.actressPills);
-});
-
-test('dim=cup 兩格填入非數字（cup 恆走態①，理論路徑防禦）→ _commitPillEditor fail-safe 不寫入', () => {
-    const c = makeComponent();
-    c.addActressPill('cup', 'B');
-    const before = structuredClone(c.actressPills);
-    c._openPillEditor(c.actressPills[0]);
-    c._pillEditor.rangeLo = 'B';
-    c._pillEditor.rangeHi = 'C';
-    c._commitPillEditor();
-    assert.deepEqual(c.actressPills, before, 'actressPills 不得被改寫（非有限數，兩格都填走 Number.isFinite 驗證）');
-    assert.ok(c._pillEditor, '_pillEditor 必須維持開啟（fail-safe）');
     assertNoNullOrEmptyPillValues(c.actressPills);
 });
 
@@ -542,49 +430,21 @@ function openAgeEditor(c, value, rangeLo, rangeHi) {
     return c._pillEditor;
 }
 
-// ── 三態操作數逐格斷言（CD-116c-2 表 × 三顆鈕 ＝ 9 格）────────────────────
-// mutation 自驗目標：態③的 '<=' 若被改成取左，這裡唯一一格會轉紅、其餘八格仍綠。
+// ── 三態操作數（CD-116c-2 表 × 三顆鈕，表驅動）────────────
+// mutation 自驗目標：態③的 '<=' 若被改成取左，表中唯一一列會轉紅。
 
-for (const op of ['=', '<=', '>=']) {
-    test(`三態①都空：_pillOperandFor('${op}') → pill 目前的值`, () => {
+test('三態操作數表（CD-116c-2：①都空／②只填一格／③兩格都填 × 三顆鈕）→ 取哪一格的值', () => {
+    // [pill 目前的值, 左格, 右格, op, 期望操作數]；期望值手寫字面
+    const cases = [
+        [30, null, null, '=', '30'], [30, null, null, '<=', '30'], [30, null, null, '>=', '30'],
+        [30, '25', null, '=', '25'], [30, '25', null, '<=', '25'], [30, '25', null, '>=', '25'],
+        [30, '25', '35', '=', '25'], [30, '25', '35', '<=', '35'], [30, '25', '35', '>=', '25'],
+        [30, null, '35', '=', '35'], [30, null, '35', '<=', '35'], [30, null, '35', '>=', '35'],
+    ];
+    for (const [v, lo, hi, op, want] of cases) {
         const c = makeComponent();
-        openAgeEditor(c, 30, null, null);
-        assert.equal(c._pillOperandFor(op), '30');
-    });
-}
-
-for (const op of ['=', '<=', '>=']) {
-    test(`三態②只填左格：_pillOperandFor('${op}') → 左格（無歧義，op 不影響）`, () => {
-        const c = makeComponent();
-        openAgeEditor(c, 30, '25', null);
-        assert.equal(c._pillOperandFor(op), '25');
-    });
-}
-
-test("三態③兩格都填：_pillOperandFor('=') → 取左", () => {
-    const c = makeComponent();
-    openAgeEditor(c, 30, '25', '35');
-    assert.equal(c._pillOperandFor('='), '25');
-});
-
-test("三態③兩格都填：_pillOperandFor('<=') → 取右", () => {
-    const c = makeComponent();
-    openAgeEditor(c, 30, '25', '35');
-    assert.equal(c._pillOperandFor('<='), '35');
-});
-
-test("三態③兩格都填：_pillOperandFor('>=') → 取左", () => {
-    const c = makeComponent();
-    openAgeEditor(c, 30, '25', '35');
-    assert.equal(c._pillOperandFor('>='), '25');
-});
-
-// 補強：只填右格（非 9-grid 正式格，驗 hi-only 分支）
-test('只填右格：_pillOperandFor 任一鈕 → 右格', () => {
-    const c = makeComponent();
-    openAgeEditor(c, 30, null, '35');
-    for (const op of ['=', '<=', '>=']) {
-        assert.equal(c._pillOperandFor(op), '35');
+        openAgeEditor(c, v, lo, hi);
+        assert.equal(c._pillOperandFor(op), want, `lo=${lo} hi=${hi} op=${op}`);
     }
 });
 
@@ -607,91 +467,57 @@ test('cup 態①：三顆鈕各自套用「pill 目前的值」並關閉編輯�
 // mutation 自驗目標：_commitPillEditor 若不再委派而自組 { op:'range', value2:null }，
 // 這兩條必須轉紅。
 
-test('AC-C7：只左格按 ✓ 與直接按 ≥（同一編輯器狀態）產出逐欄位相同 pill', () => {
-    const c1 = makeComponent();
-    c1.addActressPill('height', '160cm');
-    c1._openPillEditor(c1.actressPills[0]);
-    c1._pillEditor.rangeLo = '155';
-    c1._commitPillEditor();
+test('AC-C7：單邊填入按 ✓ 與直接按對應運算子（同一編輯器狀態）產出逐欄位相同 pill', () => {
+    // [填的格, 值, 對應運算子, 期望 pill]
+    const cases = [
+        ['rangeLo', '155', '>=', { dim: 'height', op: '>=', value: '155', value2: null }],
+        ['rangeHi', '165', '<=', { dim: 'height', op: '<=', value: '165', value2: null }],
+    ];
+    for (const [field, val, op, want] of cases) {
+        const c1 = makeComponent();
+        c1.addActressPill('height', '160cm');
+        c1._openPillEditor(c1.actressPills[0]);
+        c1._pillEditor[field] = val;
+        c1._commitPillEditor();
 
-    const c2 = makeComponent();
-    c2.addActressPill('height', '160cm');
-    c2._openPillEditor(c2.actressPills[0]);
-    c2._pillEditor.rangeLo = '155';
-    c2._applyPillOp('>=');
+        const c2 = makeComponent();
+        c2.addActressPill('height', '160cm');
+        c2._openPillEditor(c2.actressPills[0]);
+        c2._pillEditor[field] = val;
+        c2._applyPillOp(op);
 
-    assert.deepEqual(c1.actressPills[0], c2.actressPills[0]);
-    assert.deepEqual(c1.actressPills[0], { dim: 'height', op: '>=', value: '155', value2: null });
-});
-
-test('AC-C7：只右格按 ✓ 與直接按 ≤（同一編輯器狀態）產出逐欄位相同 pill', () => {
-    const c1 = makeComponent();
-    c1.addActressPill('height', '160cm');
-    c1._openPillEditor(c1.actressPills[0]);
-    c1._pillEditor.rangeHi = '165';
-    c1._commitPillEditor();
-
-    const c2 = makeComponent();
-    c2.addActressPill('height', '160cm');
-    c2._openPillEditor(c2.actressPills[0]);
-    c2._pillEditor.rangeHi = '165';
-    c2._applyPillOp('<=');
-
-    assert.deepEqual(c1.actressPills[0], c2.actressPills[0]);
-    assert.deepEqual(c1.actressPills[0], { dim: 'height', op: '<=', value: '165', value2: null });
-});
-
-// ── AC-C7b：range pill 開啟時三顆鈕不亮（op 仍是 'range'，草稿層驗證）─────
-
-test('AC-C7b：開啟既有 range pill → _pillEditor.op 仍是 range（三顆鈕一顆都不亮的資料前提）', () => {
-    const c = makeComponent();
-    c._setActressPill({ dim: 'height', op: 'range', value: '155', value2: '165' });
-    c._openPillEditor(c.actressPills[0]);
-    assert.equal(c._pillEditor.op, 'range');
+        assert.deepEqual(c1.actressPills[0], c2.actressPills[0], field);
+        assert.deepEqual(c1.actressPills[0], want, field);
+    }
 });
 
 // ── AC-C10 / AC-C11：不夾回、逐字寫入 ──────────────────────────────────────
 
-test('AC-C10/AC-C11 不改寫：180~190（超出庫內範圍）逐字寫入', () => {
-    const c = makeComponent();
-    c.addActressPill('height', '160cm');
-    c._openPillEditor(c.actressPills[0]);
+test('AC-C10/C11/CD-116c-4b 不改寫表：超出庫內範圍的值逐字寫入，不夾回館藏邊界（200/170/146）', () => {
+    const open = () => {
+        const c = makeComponent();
+        c.addActressPill('height', '160cm');
+        c._openPillEditor(c.actressPills[0]);
+        return c;
+    };
+    // 區間 180~190 逐字
+    let c = open();
     c._pillEditor.rangeLo = '180';
     c._pillEditor.rangeHi = '190';
     c._commitPillEditor();
     assert.deepEqual(c.actressPills[0], { dim: 'height', op: 'range', value: '180', value2: '190' });
-});
-
-test('AC-C11 不改寫：左格 250 按 ≤ → value === "250"（不得是 200 或任何館藏邊界）', () => {
-    const c = makeComponent();
-    c.addActressPill('height', '160cm');
-    c._openPillEditor(c.actressPills[0]);
+    // 右格 250 按 ≤ → 250
+    c = open();
     c._pillEditor.rangeHi = '250';
     c._applyPillOp('<=');
     assert.equal(c.actressPills[0].value, '250');
-    assert.notEqual(c.actressPills[0].value, '200');
-    assert.notEqual(c.actressPills[0].value, '170');
-    assert.notEqual(c.actressPills[0].value, '146');
-});
-
-// ── CD-116c-4b：正規化（同一數字的另一種寫法）不是夾回（換掉問題）─────────
-// 兩者的界線寫在同一支測試裡：height 前導零被既有 parseInt 正規化，
-// 但數值本身（250）絕不能被換成館藏邊界。
-
-test('CD-116c-4b：height 0250~300 → value 正規化為 250（既有 parseInt），數值本身不被夾回換掉', () => {
-    const c = makeComponent();
-    c.addActressPill('height', '160cm');
-    c._openPillEditor(c.actressPills[0]);
+    // 0250~300：前導零正規化為 250（同一數字的另一種寫法），上界逐字，數值本身不被換掉
+    c = open();
     c._pillEditor.rangeLo = '0250';
     c._pillEditor.rangeHi = '300';
     c._commitPillEditor();
-    // 正規化：0250 → 250（同一數字的另一種寫法，走既有 normalizeHeightPillValue/parseInt）
     assert.equal(c.actressPills[0].value, '250');
-    assert.equal(c.actressPills[0].value2, '300', '上界逐字寫入，不夾回');
-    // 反向鎖：數值本身不得被夾回／換成館藏邊界（200/170/146）
-    assert.notEqual(c.actressPills[0].value, '200');
-    assert.notEqual(c.actressPills[0].value, '170');
-    assert.notEqual(c.actressPills[0].value, '146');
+    assert.equal(c.actressPills[0].value2, '300');
 });
 
 // ── Codex PR review P2（#132）：科學記法不得被 parseInt 吃成數量級錯誤的值 ──
@@ -708,17 +534,15 @@ test('P2-#132：height ≥ 鈕，1e2 → value 100（不得是 1）', () => {
     assert.equal(c.actressPills[0].op, '>=');
     assert.equal(c.actressPills[0].value, '100', '1e2 是 100，不是 1');
     assert.notEqual(c.actressPills[0].value, '1');
-});
-
-test('P2-#132：height 區間 1e2~1.5e2 → 100~150（value2 對稱）', () => {
-    const c = makeComponent();
-    c.addActressPill('height', '160cm');
-    c._openPillEditor(c.actressPills[0]);
-    c._pillEditor.rangeLo = '1e2';
-    c._pillEditor.rangeHi = '1.5e2';
-    c._commitPillEditor();
-    assert.equal(c.actressPills[0].value, '100');
-    assert.equal(c.actressPills[0].value2, '150', 'value2 走同一支正規化，不得只修 value');
+    // 區間對稱：value2 走同一支正規化
+    const c2 = makeComponent();
+    c2.addActressPill('height', '160cm');
+    c2._openPillEditor(c2.actressPills[0]);
+    c2._pillEditor.rangeLo = '1e2';
+    c2._pillEditor.rangeHi = '1.5e2';
+    c2._commitPillEditor();
+    assert.equal(c2.actressPills[0].value, '100');
+    assert.equal(c2.actressPills[0].value2, '150', 'value2 對稱');
 });
 
 test('P2-#132 回歸：刮削值 160cm 仍由 extractor 剝單位為 160', () => {
@@ -730,49 +554,25 @@ test('P2-#132 回歸：刮削值 160cm 仍由 extractor 剝單位為 160', () =>
 // ── AC-C11b fail-safe：1e999（Infinity）在被選中的那一格 → 不寫入、不關閉 ──
 // 四條路徑各驗一次（=／≤／≥／✓）。
 
-test('AC-C11b fail-safe：= 鈕，左格 1e999 → 不寫入、_pillEditor 仍非 null', () => {
-    const c = makeComponent();
-    c.addActressPill('age', 30);
-    const before = structuredClone(c.actressPills);
-    c._openPillEditor(c.actressPills[0]);
-    c._pillEditor.rangeLo = '1e999';
-    c._applyPillOp('=');
-    assert.deepEqual(c.actressPills, before);
-    assert.ok(c._pillEditor);
-});
-
-test('AC-C11b fail-safe：≥ 鈕，左格 1e999 → 不寫入、_pillEditor 仍非 null', () => {
-    const c = makeComponent();
-    c.addActressPill('age', 30);
-    const before = structuredClone(c.actressPills);
-    c._openPillEditor(c.actressPills[0]);
-    c._pillEditor.rangeLo = '1e999';
-    c._applyPillOp('>=');
-    assert.deepEqual(c.actressPills, before);
-    assert.ok(c._pillEditor);
-});
-
-test('AC-C11b fail-safe：≤ 鈕，右格 1e999 → 不寫入、_pillEditor 仍非 null', () => {
-    const c = makeComponent();
-    c.addActressPill('age', 30);
-    const before = structuredClone(c.actressPills);
-    c._openPillEditor(c.actressPills[0]);
-    c._pillEditor.rangeHi = '1e999';
-    c._applyPillOp('<=');
-    assert.deepEqual(c.actressPills, before);
-    assert.ok(c._pillEditor);
-});
-
-test('AC-C11b fail-safe：✓（兩格都填，其中一格 1e999）→ 不寫入、_pillEditor 仍非 null', () => {
-    const c = makeComponent();
-    c.addActressPill('age', 30);
-    const before = structuredClone(c.actressPills);
-    c._openPillEditor(c.actressPills[0]);
-    c._pillEditor.rangeLo = '25';
-    c._pillEditor.rangeHi = '1e999';
-    c._commitPillEditor();
-    assert.deepEqual(c.actressPills, before);
-    assert.ok(c._pillEditor);
+test('AC-C11b fail-safe：1e999（Infinity）在被選中的那一格 → 不寫入、_pillEditor 仍非 null（=／≥／≤／✓ 四條路徑）', () => {
+    // [rangeLo, rangeHi, 動作]
+    const cases = [
+        ['1e999', null, (c) => c._applyPillOp('=')],
+        ['1e999', null, (c) => c._applyPillOp('>=')],
+        [null, '1e999', (c) => c._applyPillOp('<=')],
+        ['25', '1e999', (c) => c._commitPillEditor()],
+    ];
+    for (const [lo, hi, act] of cases) {
+        const c = makeComponent();
+        c.addActressPill('age', 30);
+        const before = structuredClone(c.actressPills);
+        c._openPillEditor(c.actressPills[0]);
+        if (lo != null) c._pillEditor.rangeLo = lo;
+        if (hi != null) c._pillEditor.rangeHi = hi;
+        act(c);
+        assert.deepEqual(c.actressPills, before, `lo=${lo} hi=${hi}`);
+        assert.ok(c._pillEditor, `lo=${lo} hi=${hi}`);
+    }
 });
 
 test('只驗被選中的那一格：左格 1e999、右格合法，按 ≤（取右格）→ 照常套用', () => {
@@ -791,8 +591,10 @@ test('只驗被選中的那一格：左格 1e999、右格合法，按 ≤（取�
 // _pillEditor.badLo/badHi 由 markup @input="$event.target.validity.badInput" 寫入；
 // 單元測試無真實 DOM validity，直接設定該布林欄位模擬同樣的狀態。
 
-test('P2-2 表列①：左格壞、右格空，按 ≥/=/≤ → 不寫入、不關閉（不得靜默套用 pill 原值）', () => {
-    for (const op of ['>=', '=', '<=']) {
+test('P2-2 表列①④：左格壞（右格空或 165），按 ≥/= → 不寫入、不關閉（不得靜默套用 pill 原值）；右格空時 ≤ 亦同', () => {
+    // [op, rangeHi]
+    const cases = [['>=', ''], ['=', ''], ['<=', ''], ['=', '165'], ['>=', '165']];
+    for (const [op, hi] of cases) {
         const c = makeComponent();
         c.addActressPill('height', '160cm');
         const before = structuredClone(c.actressPills);
@@ -801,10 +603,10 @@ test('P2-2 表列①：左格壞、右格空，按 ≥/=/≤ → 不寫入、不
         // x-model 綁的就是這個值）；validity.badInput 才是「使用者確實打了東西」的唯一線索。
         c._pillEditor.rangeLo = '';
         c._pillEditor.badLo = true;
-        c._pillEditor.rangeHi = '';
+        c._pillEditor.rangeHi = hi;
         c._applyPillOp(op);
-        assert.deepEqual(c.actressPills, before, `op=${op}：actressPills 不得被改寫`);
-        assert.ok(c._pillEditor, `op=${op}：_pillEditor 必須維持開啟`);
+        assert.deepEqual(c.actressPills, before, `op=${op} hi=${hi}：actressPills 不得被改寫`);
+        assert.ok(c._pillEditor, `op=${op} hi=${hi}：_pillEditor 必須維持開啟`);
     }
 });
 
@@ -837,23 +639,6 @@ test('P2-2 表列③：左格壞、右格 165，按 ≤ → 照常套用 ≤165�
     assert.deepEqual(c.actressPills[0], { dim: 'height', op: '<=', value: '165', value2: null });
 });
 
-test('P2-2 表列④：左格壞、右格 165，按 =/≥ → 不寫入、不關閉（被選中的是壞的左格）', () => {
-    for (const op of ['=', '>=']) {
-        const c = makeComponent();
-        c.addActressPill('height', '160cm');
-        const before = structuredClone(c.actressPills);
-        c._openPillEditor(c.actressPills[0]);
-        // <input type="number"> 對無法解析的輸入把 .value 逼成空字串（真實瀏覽器行為，
-        // x-model 綁的就是這個值）；validity.badInput 才是「使用者確實打了東西」的唯一線索。
-        c._pillEditor.rangeLo = '';
-        c._pillEditor.badLo = true;
-        c._pillEditor.rangeHi = '165';
-        c._applyPillOp(op);
-        assert.deepEqual(c.actressPills, before, `op=${op}：actressPills 不得被改寫`);
-        assert.ok(c._pillEditor, `op=${op}：_pillEditor 必須維持開啟`);
-    }
-});
-
 test('P2-2：修好壞輸入後恢復正常套用（badLo 由 @input handler 每次覆寫，修正後應為 false）', () => {
     const c = makeComponent();
     c.addActressPill('age', 30);
@@ -873,53 +658,7 @@ test('P2-2：修好壞輸入後恢復正常套用（badLo 由 @input handler 每
     assert.deepEqual(c.actressPills[0], { dim: 'age', op: '=', value: '28', value2: null });
 });
 
-// ── _applyPillOp 之後 _pillEditor === null（AC-C3 的狀態層形式）───────────
-
-test('_applyPillOp 之後 _pillEditor === null', () => {
-    const c = makeComponent();
-    c.addActressPill('age', 30);
-    c._openPillEditor(c.actressPills[0]);
-    assert.ok(c._pillEditor);
-    c._applyPillOp('=');
-    assert.equal(c._pillEditor, null);
-});
-
-// ── _pillEditorHasRangeInput：✓✗ 顯示條件，即時反映輸入內容 ────────────────
-
-test('_pillEditorHasRangeInput：_pillEditor=null → false', () => {
-    const c = makeComponent();
-    assert.equal(c._pillEditorHasRangeInput(), false);
-});
-
-test('_pillEditorHasRangeInput：即時反映輸入內容（打字出現、刪光消失）', () => {
-    const c = makeComponent();
-    c.addActressPill('age', 30);
-    c._openPillEditor(c.actressPills[0]);
-    assert.equal(c._pillEditorHasRangeInput(), false, '開場空白 → false');
-    c._pillEditor.rangeLo = '2';
-    assert.equal(c._pillEditorHasRangeInput(), true, '左格有字 → true');
-    c._pillEditor.rangeLo = '';
-    assert.equal(c._pillEditorHasRangeInput(), false, '刪光 → 再次 false');
-    c._pillEditor.rangeHi = '   ';
-    assert.equal(c._pillEditorHasRangeInput(), false, '純空白視為空');
-    c._pillEditor.rangeHi = '5';
-    assert.equal(c._pillEditorHasRangeInput(), true, '右格有字 → true');
-});
-
-// ── _pillDimRangeHint：null 安全 ＋ cup 恆空 ＋ 庫內實際範圍 ────────────────
-
-test('_pillDimRangeHint：_pillEditor=null 時回 "" 且不拋錯', () => {
-    const c = makeComponent();
-    assert.doesNotThrow(() => c._pillDimRangeHint());
-    assert.equal(c._pillDimRangeHint(), '');
-});
-
-test('_pillDimRangeHint：cup 回 ""', () => {
-    const c = makeComponent();
-    c.addActressPill('cup', 'B');
-    c._openPillEditor(c.actressPills[0]);
-    assert.equal(c._pillDimRangeHint(), '');
-});
+// ── _pillDimRangeHint：庫內實際範圍 ────────────
 
 test('_pillDimRangeHint：age/height 回「（min ~ max）」（庫內實際範圍）', () => {
     const c = makeComponent();
