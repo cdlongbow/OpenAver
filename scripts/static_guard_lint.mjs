@@ -7289,6 +7289,15 @@ const RULES = [
   //
   // ---- 162c-B28 起 ----
   // （162c-B28 專屬子區段：只在此兩行之間追加）
+
+  // 162c: TestHelpUpdateButtonGuard
+  { file: 'web/templates/help.html', kind: 'required-string',
+    pattern: 'showUpdateModal',
+    note: '[lint-guard 162c-test_update_modal_x_show_binding_exists] 桌面版使用者按「更新」→ modal 沒綁 showUpdateModal 永不出現 → 看不到確認框、更新流程卡死 — 遷自 test_contract_desktop.py' },
+  { file: 'web/templates/help.html', kind: 'required-string',
+    pattern: ['confirmUpdate()', 'cancelUpdate()'],
+    note: '[lint-guard 162c-test_update_modal_has_confirm_and_cancel] 桌面版使用者在更新確認框 → 缺確認或取消按鈕呼叫 → 沒辦法確認更新或沒辦法關掉框 — 遷自 test_contract_desktop.py' },
+
   // ---- 162c-B28 迄 ----
   //
   //
