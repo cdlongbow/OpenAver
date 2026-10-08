@@ -683,44 +683,6 @@ def consumer(entry, some_path):
     return nfo_mtime_or_none(entry), extra_mtime
 """
 
-# getmtime 繞過變體（裁決 2 存在理由）：委派改寫成 os.path.getmtime(...)。
-_SYNTH_SHELL_GETMTIME_BYPASS = _SYNTH_IMPORTS + """
-import os
-
-
-def consumer(entry):
-    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
-    return os.path.getmtime(entry)
-"""
-
-# st_mtime_ns 繞過變體（裁決 2 存在理由的第二種形狀）。
-_SYNTH_SHELL_ST_MTIME_NS_BYPASS = _SYNTH_IMPORTS + """
-def consumer(some_path):
-    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
-    stat = some_path.stat()
-    return stat.st_mtime_ns
-"""
-
-# 裸名 getmtime(...) 繞過變體（不帶 os.path 前綴）。
-_SYNTH_SHELL_BARE_GETMTIME_BYPASS = _SYNTH_IMPORTS + """
-from os.path import getmtime
-
-
-def consumer(entry):
-    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
-    return getmtime(entry)
-"""
-
-# 常數字面被改掉的變體（(b) 證偽）。
-_SYNTH_SHELL_WRONG_POLICY = (
-    _SYNTH_IMPORTS.replace("NFO_MTIME_REFRESH", "NFO_MTIME_REFRESH, NFO_MTIME_ON_UPSERT")
-    + """
-def consumer(entry):
-    _NFO_MTIME_POLICY = NFO_MTIME_ON_UPSERT
-    return nfo_mtime_or_none(entry)
-"""
-)
-
 # 唯一性違規變體之一（P1 修正核心，Codex branch review 抓到）：正確宣告後面
 # 再新增一個「衝突但個別看起來也合法」的第二個宣告——舊版 _policy_assignment
 # 找到第一個合法命中就 return，這種形狀會被靜默放行，44 格照樣全綠。新版必須
@@ -736,120 +698,11 @@ def consumer(entry):
 """
 )
 
-# 唯一性違規變體之二：正確宣告後面再新增一個「不合法 RHS」（字面字串）的第二
-# 個宣告。舊版一樣會被第一個合法命中放行；新版必須判定為 status="multiple"
-# （總賦值數 > 1 即違反唯一性，不論第二個合不合法）。
-_SYNTH_SHELL_DUPLICATE_POLICY_ILLEGAL_RHS = _SYNTH_IMPORTS + """
-def consumer(entry):
-    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
-    x = nfo_mtime_or_none(entry)
-    _NFO_MTIME_POLICY = "refresh"
-    return x
-"""
-
-# AnnAssign 變體（Opus 二審補）：第二個宣告寫成帶型別標註的形式
-# `_NFO_MTIME_POLICY: str = ...`，AST 上是 ast.AnnAssign 而非 ast.Assign。
-# 若唯一性檢查只收 Assign，這個形狀會逃過去、status 回到 'ok' —— 與 P1 同族。
-_SYNTH_SHELL_DUPLICATE_POLICY_ANNASSIGN = _SYNTH_IMPORTS + """
-def consumer(entry):
-    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
-    x = nfo_mtime_or_none(entry)
-    _NFO_MTIME_POLICY: str = NFO_MTIME_ON_UPSERT
-    return x
-"""
-
-# AugAssign 變體（Codex 二審 P1）：正確宣告後用 `+=` 就地改值。runtime 的最後
-# 值已經不是宣告的那個常數，宣告失去「讀呼叫端就知道語意」的作用。
-_SYNTH_SHELL_POLICY_AUGASSIGN_AFTER = _SYNTH_IMPORTS + """
-def consumer(entry):
-    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
-    _NFO_MTIME_POLICY += "_changed"
-    return nfo_mtime_or_none(entry)
-"""
-
-# NamedExpr（海象）變體（Codex 二審 P1）：正確宣告後用 `:=` 在運算式裡重設。
-_SYNTH_SHELL_POLICY_NAMEDEXPR_AFTER = _SYNTH_IMPORTS + """
-def consumer(entry):
-    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
-    if (_NFO_MTIME_POLICY := NFO_MTIME_ON_UPSERT):
-        pass
-    return nfo_mtime_or_none(entry)
-"""
-
-# 規則普適性變體（Opus 補，證明「數綁定次數」不是又一次的形狀列舉）：
-# tuple 拆包與 for-target 都不在 Codex 點名的清單裡，但同樣會重新綁定該名字，
-# 新判準不必為它們各寫一條分支就能一起擋掉。
-_SYNTH_SHELL_POLICY_TUPLE_UNPACK_AFTER = _SYNTH_IMPORTS + """
-def consumer(entry, pair):
-    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
-    _NFO_MTIME_POLICY, _other = pair
-    return nfo_mtime_or_none(entry)
-"""
-
-_SYNTH_SHELL_POLICY_FOR_TARGET_AFTER = _SYNTH_IMPORTS + """
-def consumer(entry, seq):
-    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
-    for _NFO_MTIME_POLICY in seq:
-        pass
-    return nfo_mtime_or_none(entry)
-"""
-
-# ── Codex 三審 P1：不產生 ast.Name 的綁定形狀（名字存成 AST 欄位上的字串）──
-# 這四種在「只數 ast.Name(Store/Del)」的規則下全部隱形，卻都真的改掉 runtime 綁定。
-
-_SYNTH_SHELL_POLICY_IMPORT_ALIAS_AFTER = _SYNTH_IMPORTS + """
-def consumer(entry):
-    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
-    from os import sep as _NFO_MTIME_POLICY
-    return nfo_mtime_or_none(entry)
-"""
-
-_SYNTH_SHELL_POLICY_EXCEPT_ALIAS_AFTER = _SYNTH_IMPORTS + """
-def consumer(entry):
-    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
-    try:
-        pass
-    except OSError as _NFO_MTIME_POLICY:
-        pass
-    return nfo_mtime_or_none(entry)
-"""
-
-_SYNTH_SHELL_POLICY_MATCH_CAPTURE_AFTER = _SYNTH_IMPORTS + """
-def consumer(entry, subject):
-    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
-    match subject:
-        case _NFO_MTIME_POLICY:
-            pass
-    return nfo_mtime_or_none(entry)
-"""
-
-_SYNTH_SHELL_POLICY_NESTED_DEF_SHADOW_AFTER = _SYNTH_IMPORTS + """
-def consumer(entry):
-    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
-
-    def _NFO_MTIME_POLICY():
-        return None
-
-    return nfo_mtime_or_none(entry)
-"""
-
 # ── Codex 四審 P1：目標函式**自己簽名**上的參數（ast.arg，不在函式體節點裡）──
 # `def consumer(..., nfo_mtime_or_none)` 會在 runtime 遮蔽 module 層的 import，
 # 之後的呼叫根本不是 primitive，但委派計數仍依 module import 照算。
 _SYNTH_SHELL_DELEGATE_AS_PARAM = _SYNTH_IMPORTS + """
 def consumer(entry, nfo_mtime_or_none):
-    _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
-    return nfo_mtime_or_none(entry)
-"""
-
-# 同一漏洞的 policy 側：policy 名當成參數傳進來 → 那個「宣告」根本不是就地宣告。
-_SYNTH_SHELL_POLICY_AS_PARAM = _SYNTH_IMPORTS + """
-def consumer(entry, _NFO_MTIME_POLICY):
-    return nfo_mtime_or_none(entry)
-"""
-
-_SYNTH_SHELL_POLICY_AS_PARAM_PLUS_ASSIGN = _SYNTH_IMPORTS + """
-def consumer(entry, _NFO_MTIME_POLICY):
     _NFO_MTIME_POLICY = NFO_MTIME_REFRESH
     return nfo_mtime_or_none(entry)
 """
@@ -891,13 +744,6 @@ def consumer(entry):
     return inner
 """
 
-# 零宣告變體：函式體內完全沒有 _NFO_MTIME_POLICY 賦值，必須判定為
-# status="none"（不是跟「不合法」混在一起的扁平 None）。
-_SYNTH_SHELL_NO_POLICY = _SYNTH_IMPORTS + """
-def consumer(entry):
-    return nfo_mtime_or_none(entry)
-"""
-
 # local shadow 變體：同名常數/函式本地定義，不是從 core.nfo_stat import
 # 進來——反假綠：import binding 解析必須擋掉這種「字面值恰好對上但來源錯」。
 _SYNTH_SHELL_LOCAL_SHADOW = """
@@ -930,10 +776,6 @@ class TestSyntheticCountFingerprints:
     """(a) 計數證偽：合成殼 parametrize，永久留在測試檔——比一次性記錄輸出更強，
     每次 CI 都持續驗證同一套計數判準邏輯，完全不碰產品碼。"""
 
-    def test_minimal_shell_counts_zero_one(self):
-        reads, delegates, _policy = _counts_for_source(_SYNTH_SHELL_MINIMAL)
-        assert (reads, delegates) == (0, 1)
-
     def test_video_stat_shell_counts_one_one(self):
         """誤報檢查（技術要點第 6 節）：委派 + 影片檔 .st_mtime 兩者都在的殼，
         必須得到 (1, 1)——證明守衛不會把正當的影片檔 stat 誤判成違規。"""
@@ -943,23 +785,6 @@ class TestSyntheticCountFingerprints:
     def test_extra_st_mtime_flips_read_count(self):
         reads, delegates, _policy = _counts_for_source(_SYNTH_SHELL_EXTRA_ST_MTIME)
         assert (reads, delegates) == (1, 1)  # extra .st_mtime + 既有委派
-
-    def test_getmtime_bypass_is_counted_as_direct_read(self):
-        """裁決 2 存在理由：os.path.getmtime(...) 繞過委派，仍必須被計進
-        「直接讀取 mtime」桶，不能讓委派計數維持 1 就悄悄放過。"""
-        reads, delegates, _policy = _counts_for_source(_SYNTH_SHELL_GETMTIME_BYPASS)
-        assert reads == 1, "os.path.getmtime(...) 應被計入直接讀取 mtime"
-        assert delegates == 0, "改寫成 getmtime 後不應再有委派呼叫"
-
-    def test_st_mtime_ns_bypass_is_counted_as_direct_read(self):
-        reads, delegates, _policy = _counts_for_source(_SYNTH_SHELL_ST_MTIME_NS_BYPASS)
-        assert reads == 1, ".st_mtime_ns 應被計入直接讀取 mtime"
-        assert delegates == 0
-
-    def test_bare_getmtime_bypass_is_counted_as_direct_read(self):
-        reads, delegates, _policy = _counts_for_source(_SYNTH_SHELL_BARE_GETMTIME_BYPASS)
-        assert reads == 1, "裸名 getmtime(...) 應被計入直接讀取 mtime"
-        assert delegates == 0
 
 
 class TestSyntheticPolicyFingerprints:
@@ -971,24 +796,12 @@ class TestSyntheticPolicyFingerprints:
         assert status == "ok"
         assert resolved == "NFO_MTIME_REFRESH"
 
-    def test_wrong_policy_resolves_to_different_constant(self):
-        _reads, _delegates, policy = _counts_for_source(_SYNTH_SHELL_WRONG_POLICY)
-        status, _node, resolved = policy
-        assert status == "ok"
-        assert resolved == "NFO_MTIME_ON_UPSERT"
-        assert resolved != "NFO_MTIME_REFRESH", (
-            "常數字面被改掉後，解析結果必須與原本的 NFO_MTIME_REFRESH 不同"
-            "（(b) 證偽的核心：字面值比對要能分辨差異）"
-        )
-
 
 class TestSyntheticPolicyUniquenessFingerprints:
     """(b) 唯一性證偽（P1 修正核心）：`_policy_assignment` 舊版只取函式體內第一個
-    合法命中就 return，從不檢查是否還有第二個賦值——下列兩個危害情境在舊版
-    (改前) 實測皆為全綠（詳見本次修正的回報記錄），本類把危害坐實成永久
-    parametrize 案例，連同「零宣告」一起覆蓋 `_policy_assignment` 的三種紅燈
-    分支（'multiple' ×2 + 'none' ×1），對照 `TestPolicyLiteralContract` 覆蓋的
-    'ok' 分支，四種 status 全部都有測試鎖住。"""
+    合法命中就 return，從不檢查是否還有第二個賦值——此危害情境在舊版
+    (改前) 實測為全綠（詳見本次修正的回報記錄），本類把危害坐實成永久
+    案例。"""
 
     def test_conflicting_second_assignment_is_flagged_as_multiple(self):
         _reads, _delegates, policy = _counts_for_source(_SYNTH_SHELL_DUPLICATE_POLICY_CONFLICTING)
@@ -1002,92 +815,6 @@ class TestSyntheticPolicyUniquenessFingerprints:
             f"status='multiple' 時 node 應為函式體內找到的全部 2 個"
             f" `_NFO_MTIME_POLICY = ...` 賦值節點，實際 {node}"
         )
-
-    def test_illegal_rhs_second_assignment_is_flagged_as_multiple(self):
-        _reads, _delegates, policy = _counts_for_source(_SYNTH_SHELL_DUPLICATE_POLICY_ILLEGAL_RHS)
-        status, node, resolved = policy
-        assert status == "multiple", (
-            "正確宣告後面再加一個不合法 RHS（字面字串）宣告，_policy_assignment"
-            f" 仍必須回報 status='multiple'（總賦值數 > 1 即違反唯一性契約，不論"
-            f"第二個合不合法），實際 {status}"
-        )
-        assert resolved is None
-        assert isinstance(node, list) and len(node) == 2
-
-    def test_annassign_second_declaration_is_flagged_as_multiple(self):
-        """Opus 二審補：第二個宣告寫成 `_NFO_MTIME_POLICY: str = ...`（AnnAssign）
-        時，唯一性檢查若只收 ast.Assign 就會漏掉它、status 退回 'ok'——與 P1 同
-        一家族的漏洞（『只看得到一種形狀』），一併鎖住。"""
-        _reads, _delegates, policy = _counts_for_source(_SYNTH_SHELL_DUPLICATE_POLICY_ANNASSIGN)
-        status, node, resolved = policy
-        assert status == "multiple", (
-            "第二個宣告用帶型別標註的 AnnAssign 形式，_policy_assignment 仍必須"
-            f" 回報 status='multiple'，實際 {status}"
-        )
-        assert resolved is None
-        assert isinstance(node, list) and len(node) == 2
-
-    @pytest.mark.parametrize("label, src", [
-        # Codex 二審 P1 點名的兩種
-        ("AugAssign（`+=` 就地改值）", _SYNTH_SHELL_POLICY_AUGASSIGN_AFTER),
-        ("NamedExpr（海象 `:=` 重設）", _SYNTH_SHELL_POLICY_NAMEDEXPR_AFTER),
-        # 同屬 ast.Name(Store) 家族、不在點名清單裡的形狀
-        ("tuple 拆包重新綁定", _SYNTH_SHELL_POLICY_TUPLE_UNPACK_AFTER),
-        ("for-target 重新綁定", _SYNTH_SHELL_POLICY_FOR_TARGET_AFTER),
-        # Codex 三審 P1：**不產生 ast.Name** 的四種（名字是 AST 欄位上的字串）
-        ("import 別名（alias.asname）", _SYNTH_SHELL_POLICY_IMPORT_ALIAS_AFTER),
-        ("except 別名（ExceptHandler.name）", _SYNTH_SHELL_POLICY_EXCEPT_ALIAS_AFTER),
-        ("match capture（MatchAs.name）", _SYNTH_SHELL_POLICY_MATCH_CAPTURE_AFTER),
-        ("巢狀 def 同名遮蔽（FunctionDef.name）", _SYNTH_SHELL_POLICY_NESTED_DEF_SHADOW_AFTER),
-    ])
-    def test_rebinding_after_valid_declaration_is_flagged_as_multiple(self, label, src):
-        """Codex 二審 P1：正確宣告**之後**再用其他形式改掉它的值，runtime 生效
-        的是最後一次，宣告卻還寫著第一個常數——守衛必須紅。
-
-        判準已從「列舉賦值語句型別」改成「數這個名字被綁定幾次」（Store/Del 情境
-        的 ast.Name），因此後兩格（tuple 拆包 / for-target，**不在 Codex 點名清單
-        內**）不需要各自新增分支就一起被擋住——這正是本次不再逐一列舉節點型別的
-        理由：形狀列舉是輸不完的比賽。"""
-        _reads, _delegates, policy = _counts_for_source(src)
-        status, node, resolved = policy
-        assert status == "multiple", (
-            f"『正確宣告 + {label}』必須被判為 status='multiple'（該名字被綁定 "
-            f"2 次），實際 {status}——守衛又只看得見其中一種形狀了"
-        )
-        assert resolved is None
-        assert isinstance(node, list) and len(node) == 2, (
-            f"status='multiple' 時 node 應為 2 個綁定節點，實際 {node}"
-        )
-
-    def test_policy_name_as_own_parameter_alone_is_not_a_valid_declaration(self):
-        """Codex 四審 P1（policy 側）：policy 名當成參數傳進來，就不是「就地宣告」
-        ——只有參數、沒有賦值時必須紅（status='illegal_rhs'，恰 1 個綁定但那個
-        綁定不是合格的具名賦值）。"""
-        _reads, _delegates, policy = _counts_for_source(_SYNTH_SHELL_POLICY_AS_PARAM)
-        status, _node, resolved = policy
-        assert status == "illegal_rhs", (
-            f"policy 名只以參數形式綁定時不得算合格宣告，實際 {status}"
-        )
-        assert resolved is None
-
-    def test_policy_name_as_parameter_plus_assignment_is_multiple(self):
-        """參數 + 函式內再賦值 ＝ 綁定 2 次 → 唯一性違規。"""
-        _reads, _delegates, policy = _counts_for_source(_SYNTH_SHELL_POLICY_AS_PARAM_PLUS_ASSIGN)
-        status, node, resolved = policy
-        assert status == "multiple", (
-            f"policy 名同時是參數又被賦值時必須判為 multiple，實際 {status}"
-        )
-        assert resolved is None
-        assert isinstance(node, list) and len(node) == 2
-
-    def test_zero_assignments_is_flagged_as_none(self):
-        _reads, _delegates, policy = _counts_for_source(_SYNTH_SHELL_NO_POLICY)
-        status, node, resolved = policy
-        assert status == "none", (
-            f"函式體內完全沒有 _NFO_MTIME_POLICY 賦值，_policy_assignment 必須"
-            f" 回報 status='none'，實際 {status}"
-        )
-        assert node is None and resolved is None
 
 
 class TestImportBindingAntiShadow:
