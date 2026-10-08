@@ -634,8 +634,8 @@ SCAN_TARGETS = _scan_targets()  # 本卡實測 110 支
 
 
 def test_scan_targets_is_nonempty_and_each_root_contributes():
-    """反假綠第三條路：SCAN_ROOTS 打錯字、或 rglob 因故回傳空清單，會讓所有
-    parametrize case 消失、pytest 顯示「0 個 case 卻整體 PASS」，看起來像是
+    """反假綠第三條路：SCAN_ROOTS 打錯字、或 rglob 因故回傳空清單，會讓聚合
+    掃描的迴圈零次迭代、pytest 顯示 PASS，看起來像是
     通過但其實什麼都沒掃到。這裡直接鎖住 core/web/windows 三個根目錄都至少
     貢獻 1 支檔案，且總數量在合理量級（本卡實測 110 支，抓寬鬆下限防止未來
     刪檔導致的漂移誤判成 bug）。"""
@@ -651,18 +651,19 @@ def test_scan_targets_is_nonempty_and_each_root_contributes():
 
 
 # ============================================================
-# (a) 主斷言：每檔獨立 parametrize，逐格可單獨轉紅（技術要點第 4 節）
+# (a) 主斷言：單支聚合掃描全部 SCAN_TARGETS，失敗訊息列出所有違規檔（技術要點第 4 節）
 # ============================================================
 
-@pytest.mark.parametrize(
-    "py_file", SCAN_TARGETS, ids=[str(p.relative_to(REPO_ROOT)) for p in SCAN_TARGETS]
-)
-def test_no_bare_replace_or_mkstemp_outside_primitive(py_file):
-    violations = _find_violations(py_file)
-    assert violations == [], (
-        f"{py_file}: 裸 os.replace/mkstemp 呼叫（{violations}）必須改走 "
-        f"core.atomic_write.atomic_write()，不得繞過 primitive"
-    )
+def test_no_bare_replace_or_mkstemp_outside_primitive():
+    failures = []
+    for py_file in SCAN_TARGETS:
+        violations = _find_violations(py_file)
+        if violations != []:
+            failures.append(
+                f"{py_file}: 裸 os.replace/mkstemp 呼叫（{violations}）必須改走 "
+                f"core.atomic_write.atomic_write()，不得繞過 primitive"
+            )
+    assert failures == [], "\n".join(failures)
 
 
 # ============================================================
@@ -814,7 +815,7 @@ def test_relative_import_does_not_raise_or_misjudge():
 # `.replace(` 呼叫中，除 core/atomic_write.py 內 2 處真呼叫外，其餘一律不誤判——
 # 由上方主斷言（test_no_bare_replace_or_mkstemp_outside_primitive）對 110 支
 # SCAN_TARGETS 全綠即為此條的完整證明，此處另外挑幾個代表性檔案做具名回歸釘點，
-# 讓失敗訊息能直接點出「哪個代表性檔案破了規則」而不必等全量 parametrize 掃過。
+# 讓失敗訊息能直接點出「哪個代表性檔案破了規則」而不必讀聚合掃描的整串訊息。
 # ============================================================
 
 REPRESENTATIVE_REPLACE_FILES = [
