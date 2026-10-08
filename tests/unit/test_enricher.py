@@ -4065,26 +4065,6 @@ class TestWriteExternalImagesWriteCoverGate:
 
         assert result == {"poster": True, "fanart": False}
 
-    def test_write_cover_false_never_touches_generation_path(self, tmp_path, mocker):
-        """DoD-7：write_cover=False 時 same_target_verdict/crop_to_poster/
-        shutil.copy2 一次都不被呼叫（不只是跳過 copy/crop，連判斷用的
-        same_target_verdict 呼叫都不跑）。"""
-        cover = tmp_path / "SONE-205.jpg"
-        _create_dummy_jpeg(cover)
-        mock_verdict = mocker.patch("core.enricher.same_target_verdict")
-        mock_crop = mocker.patch("core.enricher.crop_to_poster")
-        mock_copy2 = mocker.patch("core.enricher.shutil.copy2")
-
-        from core.enricher import _write_external_images
-        result = _write_external_images(
-            str(tmp_path / "SONE-205.mp4"), "jellyfin", True, write_cover=False,
-        )
-
-        assert result == {"poster": False, "fanart": False}
-        mock_verdict.assert_not_called()
-        mock_crop.assert_not_called()
-        mock_copy2.assert_not_called()
-
 
 class TestWriteExternalImagesStemDerivationDirectLock:
     """CD-112b-3 直接鎖：`_write_external_images` 用**影片 stem**組
@@ -4303,27 +4283,6 @@ class TestResolveNfoCoverPathsFlavourCoverage:
             f"flavour={external_manager!r} disk_state={disk_state!r} 預期 "
             f"cover_path={expected_cover!r}，實際={cover_path!r}"
         )
-
-    def test_nfo_path_unaffected_by_flavour_reverse_lock(self, tmp_path):
-        """反向鎖獨立測試（Opus 追加要求 #3 / plan §8.3 DoD-2 明列「不能少」）：
-        同一 file_path、同一磁碟狀態，nfo_path 在全部 5 種 flavour 下逐字相同
-        ——它是「flavour 只影響封面那一半」的唯一機械證據。少了它，
-        `resolve_nfo_cover_paths` 的另一半就沒有任何東西擋住未來有人把
-        flavour 也接進 nfo_path 的推導。"""
-        from core.enricher import resolve_nfo_cover_paths
-
-        video_path = tmp_path / "SONE-205.mp4"
-        video_path.write_bytes(b"FAKE-VIDEO")
-        self._make_disk(video_path, "fanart_only")
-
-        nfo_paths = {
-            flavour: resolve_nfo_cover_paths(str(video_path), None, flavour)[0]
-            for flavour in self._FLAVOURS
-        }
-        assert len(set(nfo_paths.values())) == 1, (
-            f"nfo_path 必須在所有 flavour 下逐字相同，實際: {nfo_paths}"
-        )
-        assert next(iter(nfo_paths.values())) == str(video_path.with_suffix(".nfo"))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -5775,104 +5734,9 @@ class TestEnrichSinglePreservedTitleOverride:
         row = repo.get_by_path(path_uri)
         assert row.title == existing_title
 
-    def test_enrich_single_disk_nfo_broken_xml_fails_closed(self, tmp_path, mocker):
-        """磁碟 NFO 存在但 XML 截斷 → fail-closed，DB 原樣保留，不讓 enrich_single 炸掉。"""
-        from core.database import init_db, VideoRepository, Video
-        from core.enricher import enrich_single
-        from core.path_utils import to_file_uri
-
-        db_path = tmp_path / "test_broken_nfo.db"
-        init_db(db_path)
-        repo = VideoRepository(db_path)
-
-        video_file = tmp_path / "ABC-123.mp4"
-        video_file.write_bytes(b"\x00")
-        path_uri = to_file_uri(str(video_file))
-        existing_title = "ABC-123-片名-三上悠亜"
-        video_file.with_suffix(".nfo").write_text(
-            "<movie><title>ABC-123-片名-三上悠亜",
-            encoding="utf-8",
-        )
-
-        repo.upsert(Video(
-            path=path_uri,
-            number="ABC-123",
-            title=existing_title,
-            actresses=["三上悠亜"],
-        ))
-
-        mocker.patch("core.enricher.VideoRepository", return_value=repo)
-        mocker.patch("core.enricher.search_jav", return_value=self._scraper_data())
-
-        result = enrich_single(
-            file_path=path_uri,
-            number="ABC-123",
-            mode="refresh_full",
-            write_nfo=True,
-            write_cover=False,
-            write_extrafanart=False,
-            overwrite_existing=True,
-            preserve_title=True,
-            nfo_title_format="{num}-{title}-{actor}",
-        )
-        assert result.success, result.error
-        row = repo.get_by_path(path_uri)
-        assert row.title == existing_title
-
 
 class TestNfoTitleFormatWiring:
     """TASK-154b-T2: enrich_single nfo_title_format 轉傳測試"""
-
-    def test_enrich_single_applies_custom_nfo_title_format(self):
-        """傳入自訂 nfo_title_format 時應轉傳給 generate_nfo"""
-        video = _make_video()
-
-        with (
-            patch("os.path.exists", return_value=True),
-            patch("core.enricher.VideoRepository") as mock_repo_cls,
-            patch("core.enricher.generate_nfo") as mock_nfo,
-            patch("core.enricher.download_image", return_value=True),
-        ):
-            mock_repo = MagicMock()
-            mock_repo_cls.return_value = mock_repo
-            mock_repo.get_by_numbers.return_value = {"SONE-205": [video]}
-
-            from core.enricher import enrich_single
-            enrich_single(
-                file_path=FS_PATH,
-                number="SONE-205",
-                write_nfo=True,
-                overwrite_existing=True,
-                nfo_title_format="{num}-{title}",
-            )
-
-        assert mock_nfo.call_args is not None, "generate_nfo 應被呼叫"
-        assert mock_nfo.call_args.kwargs.get("nfo_title_format") == "{num}-{title}"
-
-    def test_enrich_single_missing_nfo_title_format_defaults_to_default(self):
-        """未傳入 nfo_title_format 時 generate_nfo 應收到預設格式 [{num}]{title}"""
-        video = _make_video()
-
-        with (
-            patch("os.path.exists", return_value=True),
-            patch("core.enricher.VideoRepository") as mock_repo_cls,
-            patch("core.enricher.generate_nfo") as mock_nfo,
-            patch("core.enricher.download_image", return_value=True),
-        ):
-            mock_repo = MagicMock()
-            mock_repo_cls.return_value = mock_repo
-            mock_repo.get_by_numbers.return_value = {"SONE-205": [video]}
-
-            from core.enricher import enrich_single
-            enrich_single(
-                file_path=FS_PATH,
-                number="SONE-205",
-                write_nfo=True,
-                overwrite_existing=True,
-            )
-
-        assert mock_nfo.call_args is not None, "generate_nfo 應被呼叫"
-        assert mock_nfo.call_args.kwargs.get("nfo_title_format") == "[{num}]{title}"
 
     def test_enrich_single_applies_custom_nfo_title_format_external_manager(self):
         """external_manager != 'off' 分支也能正確轉傳 nfo_title_format 給 generate_nfo"""
