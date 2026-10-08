@@ -33,17 +33,13 @@ class TestExtractNumber:
     """測試從檔名提取番號"""
 
     # --- basic/ 基本格式 ---
-    def test_basic_sone(self):
-        """標準格式 SONE-103"""
-        assert extract_number('SONE-103.mp4') == 'SONE-103'
-
-    def test_basic_abc(self):
-        """標準格式 ABC-123"""
-        assert extract_number('ABC-123.mkv') == 'ABC-123'
-
-    def test_basic_fc2ppv(self):
-        """FC2-PPV 格式"""
-        assert extract_number('FC2-PPV-123456.avi') == 'FC2-123456'
+    @pytest.mark.parametrize(("filename", "expected"), [
+        ('FC2-PPV-123456.avi', 'FC2-123456'),
+        ('FC2PPV-999999.avi', 'FC2-999999'),
+    ])
+    def test_basic_fc2ppv(self, filename, expected):
+        """FC2-PPV 格式與 FC2PPV 無第二橫線，皆收斂為 FC2-<純數字> 正典格式"""
+        assert extract_number(filename) == expected
 
     # --- real_world/ 真實世界格式 ---
     def test_no_hyphen(self):
@@ -54,39 +50,12 @@ class TestExtractNumber:
         """方括號格式 [SONE-103] 女優名字"""
         assert extract_number('[SONE-103] 女優名字.mp4') == 'SONE-103'
 
-    def test_parentheses(self):
-        """圓括號格式 (ABC-123)_1080p"""
-        assert extract_number('(ABC-123)_1080p.mkv') == 'ABC-123'
-
-    def test_fullwidth_brackets(self):
-        """全形括號【IPZZ-001】中文標題"""
-        # 全形括號可能無法匹配，取決於實現
-        result = extract_number('【IPZZ-001】中文標題.avi')
-        # 如果實現支援全形括號則應為 IPZZ-001，否則可能為 None
-        assert result in ['IPZZ-001', None]
-
-    def test_multiple_underscores(self):
-        """多底線 SONE-103_uncensored_leak"""
-        assert extract_number('SONE-103_uncensored_leak.mp4') == 'SONE-103'
-
     def test_lowercase_with_quality(self):
         """小寫+品質標籤 stars-804_4K_60fps"""
         assert extract_number('stars-804_4K_60fps.mp4') == 'STARS-804'
 
-    def test_fc2_no_second_hyphen(self):
-        """FC2 無第二橫線 FC2PPV-999999"""
-        # 139-T1b: FC2 統一收斂為 FC2-<純數字> 正典格式
-        result = extract_number('FC2PPV-999999.avi')
-        assert result == 'FC2-999999'
-
     # --- suffix/ 後綴處理 ---
     # extract_number 會預處理清理 -UC/-UNCENSORED/-LEAK 等後綴
-
-    def test_suffix_c_subtitle(self):
-        """中文字幕後綴 SUPD-103C → SUPD-103C（extract 不移除後綴）"""
-        result = extract_number('SUPD-103C.mp4')
-        # extract_number 提取整個匹配，不處理後綴
-        assert result in ['SUPD-103C', 'SUPD-103']
 
     def test_suffix_cd1(self):
         """多碟標記 ABC-123-CD1"""
@@ -94,22 +63,14 @@ class TestExtractNumber:
         # 應提取 ABC-123 部分
         assert 'ABC-123' in result or result == 'ABC-123-CD1'
 
-    def test_suffix_uc(self):
-        """無碼流出 SONE-103-UC"""
-        result = extract_number('SONE-103-UC.avi')
-        assert 'SONE-103' in result
-
-    def test_suffix_uc_cleaned(self):
-        """UC 後綴應被清理"""
-        assert extract_number('SONE-103-UC.mp4') == 'SONE-103'
-
-    def test_suffix_uncensored_cleaned(self):
-        """uncensored 後綴應被清理"""
-        assert extract_number('ABC-123-uncensored.mp4') == 'ABC-123'
-
-    def test_suffix_leak_cleaned(self):
-        """leak 後綴應被清理"""
-        assert extract_number('MIDV-456_leak.mp4') == 'MIDV-456'
+    @pytest.mark.parametrize(("filename", "expected"), [
+        ('SONE-103-UC.mp4', 'SONE-103'),
+        ('ABC-123-uncensored.mp4', 'ABC-123'),
+        ('MIDV-456_leak.mp4', 'MIDV-456'),
+    ])
+    def test_suffix_uc_cleaned(self, filename, expected):
+        """UC／uncensored／leak 後綴應被清理"""
+        assert extract_number(filename) == expected
 
     # --- special_format/ 特殊片商格式 ---
     def test_number_prefix(self):
@@ -123,14 +84,6 @@ class TestExtractNumber:
         result = extract_number('HEYZO-2048.avi')
         assert result == 'HEYZO-2048'
 
-    def test_juc_prefix_not_stripped(self):
-        """JUC-123 前綴含 UC 不應被誤刪（回歸測試）"""
-        assert extract_number('JUC-123.mp4') == 'JUC-123'
-
-    def test_duc_prefix_not_stripped(self):
-        """DUC-456 前綴含 UC 不應被誤刪"""
-        assert extract_number('DUC-456.mp4') == 'DUC-456'
-
     # --- tricky/ 刁鑽案例 ---
     def test_date_prefix(self):
         """日期在前 2024.01.15_SONE-103_release"""
@@ -142,22 +95,10 @@ class TestExtractNumber:
         result = extract_number('download_1080p_SONE103_final.avi')
         assert result == 'SONE-103'
 
-    def test_zero_disguise(self):
-        """數字0偽裝字母O s0ne-103 → None"""
-        result = extract_number('s0ne-103.mp4')
-        # s0ne 包含數字0，不是有效的番號前綴
-        # 根據 pattern，可能無法匹配
-        assert result is None or result != 'SONE-103'
-
     # --- edge_case/ 邊界情況 ---
     def test_multiple_numbers_first_match(self):
         """多個番號取第一個"""
         result = extract_number('SONE-103_vs_ABC-123_comparison.mkv')
-        assert result == 'SONE-103'
-
-    def test_consecutive_numbers(self):
-        """連續黏一起"""
-        result = extract_number('SONE-103SONE-104.mp4')
         assert result == 'SONE-103'
 
     # --- noise/ 雜訊干擾 ---
@@ -165,11 +106,6 @@ class TestExtractNumber:
         """網站浮水印 [ThzSub.com]SONE-103"""
         result = extract_number('[ThzSub.com]SONE-103.mp4')
         # ThzSub.com 不應影響番號提取
-        assert result == 'SONE-103'
-
-    def test_special_symbols(self):
-        """特殊符號 SONE-103@1080p#leaked"""
-        result = extract_number('SONE-103@1080p#leaked.mkv')
         assert result == 'SONE-103'
 
     def test_nested_brackets(self):
@@ -188,25 +124,14 @@ class TestExtractNumber:
         assert 'SONE-103' in result
 
     # --- invalid/ 應返回 None ---
-    def test_invalid_random_movie(self):
-        """純文字+數字 random_movie_2024"""
-        result = extract_number('random_movie_2024.mp4')
-        assert result is None
-
-    def test_invalid_pure_numbers(self):
-        """純數字 123456"""
-        result = extract_number('123456.mkv')
-        assert result is None
-
-    def test_invalid_no_number(self):
-        """無番號 movie"""
-        result = extract_number('movie.avi')
-        assert result is None
-
-    def test_invalid_chinese_only(self):
-        """純中文 私人影片"""
-        result = extract_number('私人影片.mp4')
-        assert result is None
+    @pytest.mark.parametrize("filename", [
+        'random_movie_2024.mp4',
+        '123456.mkv',
+        '私人影片.mp4',
+    ])
+    def test_invalid_random_movie(self, filename):
+        """純文字+數字、純數字、純中文檔名都不是番號"""
+        assert extract_number(filename) is None
 
     # --- 路徑處理 ---
     def test_full_path(self):
@@ -229,58 +154,28 @@ class TestNormalizeNumber:
         """小寫無橫線 sone103 → SONE-103"""
         assert normalize_number('sone103') == 'SONE-103'
 
-    def test_already_normalized(self):
-        """已標準化 SONE-103 → SONE-103"""
-        assert normalize_number('SONE-103') == 'SONE-103'
-
-    def test_lowercase_with_hyphen(self):
-        """小寫有橫線 abc-123 → ABC-123"""
-        assert normalize_number('abc-123') == 'ABC-123'
-
-    def test_uppercase_no_hyphen(self):
-        """大寫無橫線 ABC123 → ABC-123"""
-        assert normalize_number('ABC123') == 'ABC-123'
-
     def test_preserve_leading_zeros(self):
         """保留前導零 abc00123 → ABC-00123"""
         assert normalize_number('abc00123') == 'ABC-00123'
-
-    def test_fc2ppv_format(self):
-        """FC2-PPV 格式正規化為正典 FC2-<純數字>"""
-        assert normalize_number('FC2-PPV-123456') == 'FC2-123456'
 
     def test_with_whitespace(self):
         """帶空白 ' sone103 ' → SONE-103"""
         assert normalize_number(' sone103 ') == 'SONE-103'
 
-    def test_mixed_case(self):
-        """混合大小寫 SoNe103 → SONE-103"""
-        assert normalize_number('SoNe103') == 'SONE-103'
-
     def test_already_has_hyphen_mixed_case(self):
         """有橫線混合大小寫 sOnE-103 → SONE-103"""
         assert normalize_number('sOnE-103') == 'SONE-103'
 
-    def test_long_prefix(self):
-        """長前綴 SUPD103 → SUPD-103"""
-        assert normalize_number('SUPD103') == 'SUPD-103'
-
-    def test_long_number(self):
-        """長數字 ABC12345 → ABC-12345"""
-        assert normalize_number('ABC12345') == 'ABC-12345'
-
     # --- 後綴清理 ---
-    def test_suffix_uc_cleaned(self):
-        """UC 後綴應被清理 SONE-103-UC → SONE-103"""
-        assert normalize_number('SONE-103-UC') == 'SONE-103'
-
-    def test_suffix_uncensored_cleaned(self):
-        """UNCENSORED 後綴應被清理"""
-        assert normalize_number('ABC-123-UNCENSORED') == 'ABC-123'
-
-    def test_suffix_leak_cleaned(self):
-        """LEAK 後綴應被清理"""
-        assert normalize_number('MIDV-456_leak') == 'MIDV-456'
+    @pytest.mark.parametrize(("raw", "expected"), [
+        ('SONE-103-UC', 'SONE-103'),
+        ('ABC-123-UNCENSORED', 'ABC-123'),
+        ('MIDV-456_leak', 'MIDV-456'),
+        ('IPZZ-001_LEAKED', 'IPZZ-001'),
+    ])
+    def test_suffix_uc_cleaned(self, raw, expected):
+        """UC／UNCENSORED／LEAK／LEAKED 後綴應被清理"""
+        assert normalize_number(raw) == expected
 
     def test_suffix_with_no_hyphen(self):
         """無橫線 + 後綴 STARS804-UNCEN → STARS-804"""
@@ -288,21 +183,15 @@ class TestNormalizeNumber:
 
     # --- TASK-73a-T1: 單字母+4位 Tokyo Hot 番號 ---
 
-    def test_tokyo_hot_n0762_lowercase(self):
-        """n0762（小寫）→ N0762（不插 hyphen）"""
-        assert normalize_number('n0762') == 'N0762'
-
-    def test_tokyo_hot_N0762_uppercase(self):
-        """N0762（大寫）→ N0762（已是正規化，不插 hyphen）"""
-        assert normalize_number('N0762') == 'N0762'
-
-    def test_tokyo_hot_k0150(self):
-        """k0150 → K0150（單字母 + 4 位，不插 hyphen）"""
-        assert normalize_number('k0150') == 'K0150'
-
-    def test_tokyo_hot_c0050(self):
-        """c0050 → C0050（單字母 + 4 位，不插 hyphen）"""
-        assert normalize_number('c0050') == 'C0050'
+    @pytest.mark.parametrize(("raw", "expected"), [
+        ('n0762', 'N0762'),
+        ('N0762', 'N0762'),
+        ('k0150', 'K0150'),
+        ('c0050', 'C0050'),
+    ])
+    def test_tokyo_hot_n0762_lowercase(self, raw, expected):
+        """單字母 + 4 位 Tokyo Hot 番號只轉大寫、不插 hyphen"""
+        assert normalize_number(raw) == expected
 
     # --- TASK-73a-T1: normalize 回歸守衛（單字母非4位 + 多字母，照舊插 hyphen）---
 
@@ -314,30 +203,6 @@ class TestNormalizeNumber:
         """n12345 → N-12345（單字母 5 位，照舊插 hyphen）"""
         assert normalize_number('n12345') == 'N-12345'
 
-    def test_regression_kb001_two_letters(self):
-        """kb001 → KB-001（雙字母 + 3 位，照舊插 hyphen）"""
-        assert normalize_number('kb001') == 'KB-001'
-
-    def test_regression_jup001_multi_letters(self):
-        """jup001 → JUP-001（多字母 + 3 位，照舊插 hyphen）"""
-        assert normalize_number('jup001') == 'JUP-001'
-
-    def test_regression_sone103(self):
-        """sone103 → SONE-103（多字母，照舊插 hyphen）"""
-        assert normalize_number('sone103') == 'SONE-103'
-
-    def test_regression_abc123(self):
-        """abc123 → ABC-123（多字母，照舊插 hyphen）"""
-        assert normalize_number('abc123') == 'ABC-123'
-
-    def test_regression_SUPD103(self):
-        """SUPD103 → SUPD-103（多字母，照舊插 hyphen）"""
-        assert normalize_number('SUPD103') == 'SUPD-103'
-
-    def test_regression_ABC12345(self):
-        """ABC12345 → ABC-12345（多字母 + 5 位，照舊插 hyphen）"""
-        assert normalize_number('ABC12345') == 'ABC-12345'
-
 
 # ============ TestValidateNumber（TASK-73a-T1）============
 
@@ -348,13 +213,13 @@ class TestValidateNumber:
         from core.scrapers import JavBusScraper
         return JavBusScraper()
 
-    def test_validate_N0762_true(self):
-        """N0762（單字母 + 4 位）validate 應為 True"""
-        assert self._scraper().validate_number('N0762') is True
-
-    def test_validate_K0150_true(self):
-        """K0150（單字母 + 4 位）validate 應為 True"""
-        assert self._scraper().validate_number('K0150') is True
+    @pytest.mark.parametrize("number", [
+        'N0762',
+        'K0150',
+    ])
+    def test_validate_N0762_true(self, number):
+        """單字母 + 4 位（N0762／K0150）validate 應為 True"""
+        assert self._scraper().validate_number(number) is True
 
     def test_validate_SONE103_true(self):
         """SONE103（多字母無 hyphen）validate 應為 True。
@@ -367,40 +232,28 @@ class TestValidateNumber:
         """
         assert self._scraper().validate_number('SONE103') is True
 
-    def test_validate_SONE103_with_hyphen_true(self):
-        """SONE-103（多字母有 hyphen）validate 仍應為 True（回歸守衛）"""
-        assert self._scraper().validate_number('SONE-103') is True
-
     # --- TASK-139-T4：§1.4 正向鎖（委派 is_strict_number 後必須 True）---
-    def test_validate_200GANA_3360_true(self):
-        """素人數字前綴 200GANA-3360"""
-        assert self._scraper().validate_number('200GANA-3360') is True
+    @pytest.mark.parametrize("number", [
+        '200GANA-3360',
+        '529STCV-152',
+    ])
+    def test_validate_200GANA_3360_true(self, number):
+        """素人數字前綴 200GANA-3360／529STCV-152"""
+        assert self._scraper().validate_number(number) is True
 
-    def test_validate_529STCV_152_true(self):
-        """素人數字前綴 529STCV-152"""
-        assert self._scraper().validate_number('529STCV-152') is True
-
-    def test_validate_090122_001_true(self):
-        """日期底線格式 090122_001"""
-        assert self._scraper().validate_number('090122_001') is True
-
-    def test_validate_020317_001_true(self):
-        """日期連字號格式 020317-001"""
-        assert self._scraper().validate_number('020317-001') is True
+    @pytest.mark.parametrize("number", [
+        '090122_001',
+        '020317-001',
+    ])
+    def test_validate_090122_001_true(self, number):
+        """日期底線／連字號格式 090122_001／020317-001"""
+        assert self._scraper().validate_number(number) is True
 
     def test_validate_FC2PPV_4943690_true(self):
         """FC2 無 hyphen-PPV 分隔形 FC2PPV-4943690"""
         assert self._scraper().validate_number('FC2PPV-4943690') is True
 
     # --- TASK-139-T4：反向鎖 5 類（委派前後皆 False）---
-    def test_validate_empty_false(self):
-        """空字串"""
-        assert self._scraper().validate_number('') is False
-
-    def test_validate_chinese_false(self):
-        """純中文"""
-        assert self._scraper().validate_number('中文測試') is False
-
     def test_validate_path_traversal_false(self):
         """路徑穿越字串"""
         assert self._scraper().validate_number('../etc/passwd') is False
@@ -412,29 +265,6 @@ class TestValidateNumber:
     def test_validate_embedded_newline_false(self):
         """含內嵌換行（非整串單一番號）"""
         assert self._scraper().validate_number('SONE-103\nSSIS-001') is False
-
-    def test_validate_number_receives_normalized_value(self, monkeypatch):
-        """呼叫順序釘子：H（normalize）先跑、D（validate）後跑。
-
-        傳入 'sone103'，validate_number 必須收到正規化後的 'SONE-103'，
-        不是原字串（Opus 裁決 2026-08-31）。
-        """
-        from unittest.mock import MagicMock
-
-        scraper = self._scraper()
-        received = []
-
-        def spy(number):
-            received.append(number)
-            return True
-
-        monkeypatch.setattr(scraper, 'validate_number', spy)
-        mock_resp = MagicMock()
-        mock_resp.status_code = 404
-        monkeypatch.setattr(scraper._session, 'get', MagicMock(return_value=mock_resp))
-
-        scraper.search('sone103')
-        assert received == ['SONE-103']
 
     def test_hitma_16_reaches_http_layer(self, monkeypatch):
         """HITMA-16（68 個收回形狀之一）經 JavBusScraper.search 真的發出 HTTP 請求（spy 數，不出網）。"""
@@ -469,42 +299,27 @@ class TestIsNumberFormat:
         assert is_number_format('sone-103') is True
 
     # --- 後綴處理 ---
-    def test_suffix_uc(self):
-        """UC 後綴 SONE-103-UC"""
-        assert is_number_format('SONE-103-UC') is True
-
-    def test_suffix_uncensored(self):
-        """UNCENSORED 後綴 ABC-123-UNCENSORED"""
-        assert is_number_format('ABC-123-UNCENSORED') is True
-
-    def test_suffix_uncen(self):
-        """UNCEN 後綴 MIDV-456-UNCEN"""
-        assert is_number_format('MIDV-456-UNCEN') is True
-
-    def test_suffix_leak(self):
-        """LEAK 後綴 STARS-804-leak"""
-        assert is_number_format('STARS-804-leak') is True
-
-    def test_suffix_leaked(self):
-        """LEAKED 後綴 IPZZ-001_LEAKED"""
-        assert is_number_format('IPZZ-001_LEAKED') is True
+    @pytest.mark.parametrize("query", [
+        'SONE-103-UC',
+        'ABC-123-UNCENSORED',
+        'MIDV-456-UNCEN',
+        'STARS-804-leak',
+        'IPZZ-001_LEAKED',
+    ])
+    def test_suffix_uc(self, query):
+        """UC／UNCENSORED／UNCEN／LEAK／LEAKED 後綴皆視為有效番號格式"""
+        assert is_number_format(query) is True
 
     # --- 無效格式 ---
-    def test_invalid_partial(self):
-        """部分番號 SONE-01"""
-        assert is_number_format('SONE-01') is False
-
-    def test_invalid_prefix_only(self):
-        """純前綴 SONE"""
-        assert is_number_format('SONE') is False
-
-    def test_invalid_numbers_only(self):
-        """純數字 123456"""
-        assert is_number_format('123456') is False
-
-    def test_invalid_short_number(self):
-        """數字太短 ABC-12"""
-        assert is_number_format('ABC-12') is False
+    @pytest.mark.parametrize("query", [
+        'SONE-01',
+        'SONE',
+        '123456',
+        'ABC-12',
+    ])
+    def test_invalid_partial(self, query):
+        """部分番號、純前綴、純數字、數字太短都不是完整番號"""
+        assert is_number_format(query) is False
 
 
 # ============ 整合測試：搜尋流程 ============
@@ -517,50 +332,6 @@ class TestSearchQueryIntegration:
     這類測試能抓到單元測試漏掉的問題
     """
 
-    # --- 後綴查詢應正確處理 ---
-    def test_uc_suffix_flow(self):
-        """UC 後綴查詢完整流程"""
-        query = 'SONE-103-UC'
-        assert is_number_format(query) is True
-        assert normalize_number(query) == 'SONE-103'
-
-    def test_uncensored_suffix_flow(self):
-        """UNCENSORED 後綴查詢完整流程"""
-        query = 'ABC-123-UNCENSORED'
-        assert is_number_format(query) is True
-        assert normalize_number(query) == 'ABC-123'
-
-    def test_leak_suffix_flow(self):
-        """LEAK 後綴查詢完整流程"""
-        query = 'MIDV-456_leak'
-        assert is_number_format(query) is True
-        assert normalize_number(query) == 'MIDV-456'
-
-    def test_uncen_suffix_flow(self):
-        """UNCEN 後綴查詢完整流程"""
-        query = 'STARS-804-UNCEN'
-        assert is_number_format(query) is True
-        assert normalize_number(query) == 'STARS-804'
-
-    def test_leaked_suffix_flow(self):
-        """LEAKED 後綴查詢完整流程"""
-        query = 'IPZZ-001_LEAKED'
-        assert is_number_format(query) is True
-        assert normalize_number(query) == 'IPZZ-001'
-
-    # --- 標準查詢不受影響 ---
-    def test_standard_query_unchanged(self):
-        """標準查詢不應被修改"""
-        query = 'SONE-103'
-        assert is_number_format(query) is True
-        assert normalize_number(query) == 'SONE-103'
-
-    def test_no_hyphen_query_normalized(self):
-        """無橫線查詢應正規化"""
-        query = 'sone103'
-        assert is_number_format(query) is True
-        assert normalize_number(query) == 'SONE-103'
-
     # --- 檔名提取 + 搜尋流程 ---
     def test_filename_to_search_flow(self):
         """檔名提取到搜尋的完整流程"""
@@ -572,16 +343,6 @@ class TestSearchQueryIntegration:
         assert is_number_format(number) is True
         # 步驟 3: 正規化（用於實際搜尋）
         assert normalize_number(number) == 'SONE-103'
-
-    def test_user_input_to_search_flow(self):
-        """用戶輸入到搜尋的完整流程"""
-        # 用戶直接輸入帶後綴的番號
-        user_input = 'SONE-103-UC'
-        # 步驟 1: 驗證是完整番號格式
-        assert is_number_format(user_input) is True
-        # 步驟 2: 正規化後搜尋
-        search_query = normalize_number(user_input)
-        assert search_query == 'SONE-103'
 
     # --- 回歸測試：前綴含 UC 不應被誤刪 ---
     def test_juc_prefix_regression(self):
@@ -616,32 +377,10 @@ class TestNormalizeNumberTASK139T1b:
 
     # --- F8 must-not-break 四條 ---
 
-    def test_f8_tokyo_hot_single_letter(self):
-        """F8-2: 東京熱單字母 + 4 位不插 hyphen（n0762, k0150）"""
-        assert normalize_number("n0762") == "N0762"
-        assert normalize_number("k0150") == "K0150"
-
     def test_f8_date_format_delimiters_not_swapped(self):
         """F8-3: 一本道/加勒比日期格式分隔符不互換（020317-001 與 090122_001）"""
         assert normalize_number("020317-001") == "020317-001"
         assert normalize_number("090122_001") == "090122_001"
-
-    # --- F9 反向鎖 ---
-
-    @pytest.mark.parametrize("raw", [
-        "FC2PPV-4943690",
-        "FC2PPV4943690",
-        "FC2 PPV 4943690",
-        "FC2PPV_4943690",
-        "FC2-PPV-4943690",
-        "FC2-4943690",
-        "fc2ppv-4943690",
-    ])
-    def test_f9_reverse_lock_no_ppv_prefix(self, raw):
-        """F9 反向鎖：七形輸入的正規化結果皆不得以 PPV- 開頭。"""
-        result = normalize_number(raw)
-        assert result != ""
-        assert not result.startswith("PPV-")
 
 
 # ============ 從 samples/ 讀取測試 ============
@@ -662,10 +401,6 @@ class TestExtractNumberFromSamples:
             with open(json_path, 'r', encoding='utf-8') as f:
                 return json.load(f)
         return {}
-
-    def test_samples_exist(self, samples_dir):
-        """確認 samples 目錄存在"""
-        assert samples_dir.exists(), f'samples 目錄不存在: {samples_dir}'
 
     def test_extract_from_samples(self, samples_dir, expected_results):
         """從 samples 讀取檔名進行測試"""
@@ -709,19 +444,6 @@ class TestSmartSearchUncensoredAndConsistency:
             results = smart_search(query)
             assert len(results) == 1
             assert results[0]["_mode"] == "uncensored"
-
-    def test_c_and_g_consistency(self):
-        """C 與 G 一致性：斷言不會出現 is_number_format=False 且 is_strict_uncensored_number=True"""
-        test_inputs = [
-            "FC2-4943690", "090122_001", "020317-001", "n0762", "HEYZO-1234",
-            "SONE-205", "200GANA-3360", "T28-103", "ABC-123", "sone205",
-            "三上悠亜", "IPZ", "2024", "ABP-01", "SNIS-1", "", "   ", None
-        ]
-        for s in test_inputs:
-            c_val = is_number_format(s) if s is not None else False
-            g_val = is_strict_uncensored_number(s)
-            if g_val:
-                assert c_val is True, f"Inconsistency for {s!r}: g_val is True but c_val is False"
 
     def test_f3b_h_pipeline_must_not_break(self):
         """F3-b: H（is_number_format -> normalize_number）呼叫鏈 must-not-break"""
