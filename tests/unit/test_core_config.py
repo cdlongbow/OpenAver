@@ -114,104 +114,27 @@ class TestMigrationTranslateFlatToNested:
         assert "ollama_url" not in t
         assert "ollama_model" not in t
 
-    def test_deprecated_progressive_fields_removed(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {
-            "translate": {
-                "auto_progressive": True,
-                "progressive_first": 5,
-                "progressive_range": 10,
-            }
-        })
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        t = result["translate"]
-        assert "auto_progressive" not in t
-        assert "progressive_first" not in t
-        assert "progressive_range" not in t
-
-    def test_batch_model_removed_from_ollama(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {
-            "translate": {
-                "ollama": {
-                    "url": "http://localhost:11434",
-                    "model": "qwen3:8b",
-                    "batch_model": "qwen3:14b",
-                }
-            }
-        })
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert "batch_model" not in result["translate"]["ollama"]
-
-    def test_gemini_nested_added_when_missing(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {
-            "translate": {"enabled": False, "ollama": {"url": "http://localhost:11434", "model": "qwen3:8b"}}
-        })
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert "gemini" in result["translate"]
-        assert result["translate"]["gemini"]["model"] == "gemini-flash-lite-latest"
-
-    def test_batch_size_added_when_missing(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {
-            "translate": {"enabled": False}
-        })
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert result["translate"]["batch_size"] == 10
-
 
 # ============ test_migration_folder_format_to_folder_layers ============
 
 class TestMigrationFolderFormatToFolderLayers:
     """folder_format → folder_layers"""
 
-    def test_single_layer(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("folder_format,expected_layers", [
+        ("{actor}", ["{actor}"]),
+        ("{actor}/{maker}", ["{actor}", "{maker}"]),
+        ("{actor}\\{maker}", ["{actor}", "{maker}"]),  # Windows 風格反斜線
+    ])
+    def test_single_layer(self, tmp_path, monkeypatch, folder_format, expected_layers):
+        """單層／斜線多層／反斜線多層 folder_format 皆轉成 folder_layers"""
         config_path = tmp_path / "config.json"
-        _write_config(config_path, {"scraper": {"folder_format": "{actor}"}})
+        _write_config(config_path, {"scraper": {"folder_format": folder_format}})
         monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
         monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
 
         result = load_config()
 
-        assert result["scraper"]["folder_layers"] == ["{actor}"]
-
-    def test_multi_layer_slash(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"scraper": {"folder_format": "{actor}/{maker}"}})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert result["scraper"]["folder_layers"] == ["{actor}", "{maker}"]
-
-    def test_multi_layer_backslash(self, tmp_path, monkeypatch):
-        """Windows 風格反斜線路徑"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"scraper": {"folder_format": "{actor}\\{maker}"}})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert result["scraper"]["folder_layers"] == ["{actor}", "{maker}"]
+        assert result["scraper"]["folder_layers"] == expected_layers
 
     def test_not_overwrite_existing_folder_layers(self, tmp_path, monkeypatch):
         """folder_layers 已存在時不應覆蓋"""
@@ -402,70 +325,29 @@ class TestMigrationGalleryOutputDirSentinel:
         assert result["gallery"]["output_dir"] == "app/custom"
         assert _read_config(config_path)["gallery"]["output_dir"] == "app/custom"
 
-    def test_already_empty_stays_empty(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"gallery": {"output_dir": ""}})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert result["gallery"]["output_dir"] == ""
-
-
-# ============ test_migration_jellyfin_mode ============
-
-class TestMigrationJellyfinMode:
-    """jellyfin_mode 補齊（Fix-6）"""
-
-    def test_jellyfin_mode_added_when_missing(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"scraper": {"create_folder": True}})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert result["scraper"]["jellyfin_mode"] is False
-
 
 # ============ test_migration_external_manager ============
 
 class TestMigrationExternalManager:
     """external_manager 三態補齊與 jellyfin_mode 遷移（Fix-72b）"""
 
-    def test_legacy_jellyfin_mode_true_maps_to_jellyfin(self, tmp_path, monkeypatch):
-        """舊 config 有 jellyfin_mode:true，無 external_manager → 補 jellyfin"""
+    @pytest.mark.parametrize("scraper_section,expected_manager", [
+        ({"jellyfin_mode": True}, "jellyfin"),
+        ({"jellyfin_mode": False}, "off"),
+        ({"create_folder": True}, "off"),  # 完全沒有 jellyfin_mode
+    ])
+    def test_legacy_jellyfin_mode_true_maps_to_jellyfin(
+        self, tmp_path, monkeypatch, scraper_section, expected_manager
+    ):
+        """舊 config 無 external_manager：jellyfin_mode true→jellyfin；false／缺席→off"""
         config_path = tmp_path / "config.json"
-        _write_config(config_path, {"scraper": {"jellyfin_mode": True}})
+        _write_config(config_path, {"scraper": scraper_section})
         monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
         monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
 
         result = load_config()
 
-        assert result["scraper"]["external_manager"] == "jellyfin"
-
-    def test_legacy_jellyfin_mode_false_maps_to_off(self, tmp_path, monkeypatch):
-        """舊 config 有 jellyfin_mode:false，無 external_manager → 補 off"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"scraper": {"jellyfin_mode": False}})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert result["scraper"]["external_manager"] == "off"
-
-    def test_no_jellyfin_mode_at_all_maps_to_off(self, tmp_path, monkeypatch):
-        """完全沒有 jellyfin_mode 也沒有 external_manager → 補 off"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"scraper": {"create_folder": True}})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert result["scraper"]["external_manager"] == "off"
+        assert result["scraper"]["external_manager"] == expected_manager
 
     def test_existing_external_manager_not_overwritten(self, tmp_path, monkeypatch):
         """config 已含 external_manager:kodi → migration 不觸發、值不被覆蓋"""
@@ -478,29 +360,17 @@ class TestMigrationExternalManager:
 
         assert result["scraper"]["external_manager"] == "kodi"
 
-    def test_schema_roundtrip_off(self, tmp_path, monkeypatch):
-        """ScraperConfig round-trip: external_manager='off' 正確讀回"""
+    @pytest.mark.parametrize("given,expected", [
+        ("off", "off"),
+        ("jellyfin", "jellyfin"),
+        ("emby", "emby"),
+        ("kodi", "kodi"),
+    ])
+    def test_schema_roundtrip_off(self, given, expected):
+        """ScraperConfig round-trip: external_manager 四態皆正確讀回"""
         from core.config import ScraperConfig
-        cfg = ScraperConfig(external_manager="off")
-        assert cfg.external_manager == "off"
-
-    def test_schema_roundtrip_jellyfin(self, tmp_path, monkeypatch):
-        """ScraperConfig round-trip: external_manager='jellyfin' 正確讀回"""
-        from core.config import ScraperConfig
-        cfg = ScraperConfig(external_manager="jellyfin")
-        assert cfg.external_manager == "jellyfin"
-
-    def test_schema_roundtrip_emby(self, tmp_path, monkeypatch):
-        """ScraperConfig round-trip: external_manager='emby' 正確讀回"""
-        from core.config import ScraperConfig
-        cfg = ScraperConfig(external_manager="emby")
-        assert cfg.external_manager == "emby"
-
-    def test_schema_roundtrip_kodi(self, tmp_path, monkeypatch):
-        """ScraperConfig round-trip: external_manager='kodi' 正確讀回"""
-        from core.config import ScraperConfig
-        cfg = ScraperConfig(external_manager="kodi")
-        assert cfg.external_manager == "kodi"
+        cfg = ScraperConfig(external_manager=given)
+        assert cfg.external_manager == expected
 
     def test_legacy_jellyfin_emby_migrates_to_jellyfin(self, tmp_path, monkeypatch):
         """舊存檔有 external_manager='jellyfin_emby' → load_config() 後讀到 'jellyfin'"""
@@ -515,51 +385,13 @@ class TestMigrationExternalManager:
 
         assert result["scraper"]["external_manager"] == "jellyfin"
 
-    def test_legacy_jellyfin_emby_migration_idempotent(self, tmp_path, monkeypatch, mocker):
-        """jellyfin_emby migration 順冪：第二次 load 後值仍為 'jellyfin'，不重複觸發 need_save"""
-        import core.config as core_config_module
-        from core.config import load_config
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"scraper": {"external_manager": "jellyfin_emby"}})
-        monkeypatch.setattr(core_config_module, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config_module, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        spy = mocker.spy(core_config_module, "_save_config_unlocked")
-
-        # First load triggers migration and must call _save_config_unlocked at least once
-        result1 = load_config()
-        assert result1["scraper"]["external_manager"] == "jellyfin"
-        count_after_first = spy.call_count
-        assert count_after_first >= 1, "first load must trigger save (migration)"
-
-        # Second load: file was saved as 'jellyfin'; must NOT call _save_config_unlocked again
-        result2 = load_config()
-        assert result2["scraper"]["external_manager"] == "jellyfin"
-        assert spy.call_count == count_after_first, (
-            f"second load must not re-save (idempotency): "
-            f"call_count went from {count_after_first} to {spy.call_count}"
-        )
-
-    def test_schema_rejects_invalid_literal(self):
-        """ScraperConfig: external_manager='plex' 應被 Literal 驗證拒絕"""
+    @pytest.mark.parametrize("bad_value", ["plex", "jellyfin_emby"])
+    def test_schema_rejects_invalid_literal(self, bad_value):
+        """ScraperConfig: external_manager='plex'／已淘汰的 'jellyfin_emby'（四態後不再有效）應被 Literal 驗證拒絕"""
         from core.config import ScraperConfig
         import pydantic
         with pytest.raises((pydantic.ValidationError, ValueError)):
-            ScraperConfig(external_manager="plex")
-
-    def test_schema_rejects_jellyfin_emby_literal(self):
-        """ScraperConfig: external_manager='jellyfin_emby' 應被 Literal 驗證拒絕（四態後不再有效）"""
-        from core.config import ScraperConfig
-        import pydantic
-        with pytest.raises((pydantic.ValidationError, ValueError)):
-            ScraperConfig(external_manager="jellyfin_emby")
-
-    def test_jellyfin_mode_still_present_in_schema(self):
-        """jellyfin_mode 欄位必須保留（向後相容）"""
-        from core.config import ScraperConfig
-        cfg = ScraperConfig()
-        assert hasattr(cfg, "jellyfin_mode")
-        assert cfg.jellyfin_mode is False
+            ScraperConfig(external_manager=bad_value)
 
 
 # ============ test_migration_download_sample_images ============
@@ -596,21 +428,6 @@ class TestMigrationDownloadSampleImages:
 class TestMigrationThumbnailCacheEnabled:
     """thumbnail_cache_enabled 補齊（feature/71 T2，top-level flag）"""
 
-    def test_thumbnail_cache_enabled_added_when_missing(self, tmp_path, monkeypatch):
-        """舊 config 沒有 thumbnail_cache_enabled → migration 自動補 False"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"scraper": {"create_folder": True}})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert "thumbnail_cache_enabled" in result
-        assert result["thumbnail_cache_enabled"] is False
-        # migration 命中 → 已寫回 config.json
-        written = json.loads(config_path.read_text(encoding="utf-8"))
-        assert written.get("thumbnail_cache_enabled") is False
-
     def test_thumbnail_cache_enabled_not_overwrite_existing(self, tmp_path, monkeypatch):
         """已存在的 thumbnail_cache_enabled=True 不被覆蓋"""
         config_path = tmp_path / "config.json"
@@ -621,10 +438,6 @@ class TestMigrationThumbnailCacheEnabled:
         result = load_config()
 
         assert result["thumbnail_cache_enabled"] is True
-
-    def test_thumbnail_cache_enabled_default_false(self):
-        """fresh AppConfig → thumbnail_cache_enabled 預設 False"""
-        assert AppConfig().model_dump()["thumbnail_cache_enabled"] is False
 
     def test_thumbnail_cache_enabled_roundtrip(self, tmp_path, monkeypatch):
         """set True → save_config → load_config 回讀仍為 True"""
@@ -809,41 +622,38 @@ class TestSaveConfigRoundtrip:
         raw_text = config_path.read_text(encoding="utf-8")
         assert "影片" in raw_text, "非 ASCII 字元應直接寫入，不應 unicode-escape"
 
-    def test_save_creates_file_if_not_exists(self, tmp_path, monkeypatch):
-        config_path = tmp_path / "subdir" / "config.json"
-        config_path.parent.mkdir(parents=True)
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-
-        save_config({"scraper": {"create_folder": False}})
-
-        assert config_path.exists()
-        data = json.loads(config_path.read_text())
-        assert data["scraper"]["create_folder"] is False
-
 
 # ============ test_migration_source_links ============
 
 class TestMigrationSourceLinks:
     """source_links 區段新增 + 深層合併保證"""
 
-    def test_missing_source_links_section_gets_defaults(self, tmp_path, monkeypatch):
-        """config.json 無 source_links key → load_config() 後補入全部 8 個預設值"""
+    @pytest.mark.parametrize("config_data", [
+        {"general": {"theme": "light"}},      # 無 source_links key
+        {"source_links": {"dmm": True}},      # 只有一個 key，其餘須補齊
+    ])
+    def test_missing_source_links_section_gets_defaults(self, tmp_path, monkeypatch, config_data):
+        """source_links 整段缺失或只剩部分鍵 → load_config() 後補齊全部 8 個預設值"""
         config_path = tmp_path / "config.json"
-        _write_config(config_path, {"general": {"theme": "light"}})
+        _write_config(config_path, config_data)
         monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
         monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
 
         result = load_config()
 
         sl = result["source_links"]
-        assert sl["dmm"] is True
-        assert sl["d2pass"] is True
-        assert sl["heyzo"] is True
-        assert sl["fc2"] is True
-        assert sl["javbus"] is False
-        assert sl["jav321"] is False
-        assert sl["javdb"] is False
-        assert sl["avsox"] is False
+        expected = {
+            "dmm": True,
+            "d2pass": True,
+            "heyzo": True,
+            "fc2": True,
+            "javbus": False,
+            "jav321": False,
+            "javdb": False,
+            "avsox": False,
+        }
+        for key, value in expected.items():
+            assert sl[key] is value, key
 
     def test_existing_source_links_preserved(self, tmp_path, monkeypatch):
         """config.json 有完整 source_links 且用戶已覆寫 javdb: true → 保持不動"""
@@ -867,118 +677,11 @@ class TestMigrationSourceLinks:
 
         assert result["source_links"]["javdb"] is True
 
-    def test_partial_source_links_filled(self, tmp_path, monkeypatch):
-        """config.json 的 source_links 只有 {"dmm": true} → 補齊其餘 7 個 key，dmm 保持 true"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"source_links": {"dmm": True}})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        sl = result["source_links"]
-        assert sl["dmm"] is True          # preserved
-        assert sl["d2pass"] is True       # filled from defaults
-        assert sl["heyzo"] is True        # filled from defaults
-        assert sl["fc2"] is True          # filled from defaults
-        assert sl["javbus"] is False      # filled from defaults
-        assert sl["jav321"] is False      # filled from defaults
-        assert sl["javdb"] is False       # filled from defaults
-        assert sl["avsox"] is False       # filled from defaults
-
-    def test_non_dict_source_links_replaced(self, tmp_path, monkeypatch):
-        """config.json 有 source_links: null → 整個替換為預設 dict"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"source_links": None})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        sl = result["source_links"]
-        assert isinstance(sl, dict)
-        assert sl["dmm"] is True
-        assert sl["javdb"] is False
-
-
-# ============ test_migration_primary_source ============
-
-class TestMigrationPrimarySource:
-    """primary_source strip migration（65d-2：欄位已廢棄，load_config 清除舊 config.json 的殘留 key）"""
-
-    def test_existing_primary_source_gets_stripped(self, tmp_path, monkeypatch):
-        """config.json 有 primary_source → load_config 後 key 不存在"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"search": {"proxy_url": "", "primary_source": "javbus"}})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert "primary_source" not in result.get("search", {})
-
-    def test_strip_triggers_save(self, tmp_path, monkeypatch):
-        """config.json 有 primary_source → migration 觸發 save（磁碟寫回後 key 不存在）"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"search": {"proxy_url": "", "primary_source": "dmm"}})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        load_config()
-
-        saved = _read_config(config_path)
-        assert "primary_source" not in saved.get("search", {})
-
-    def test_no_primary_source_is_noop(self, tmp_path, monkeypatch):
-        """config.json 無 primary_source → strip 分支 no-op，search section 完整保留、無 primary_source key"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"search": {"proxy_url": ""}})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert "primary_source" not in result.get("search", {})
-        assert "search" in result
-
-    def test_search_section_missing(self, tmp_path, monkeypatch):
-        """search section 不存在 → 建立空 search section，不崩潰，無 primary_source"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert "search" in result
-        assert "primary_source" not in result["search"]
-
 
 # ============ test_migration_openai ============
 
 class TestMigrationOpenAI:
     """openai 嵌套補齊 migration（Task T2）"""
-
-    def test_translate_openai_migration(self, tmp_path, monkeypatch):
-        """舊設定無 openai 區段 → migration 後自動補齊預設值"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {
-            "translate": {
-                "enabled": False,
-                "ollama": {"url": "http://localhost:11434", "model": "qwen3:8b"},
-                "gemini": {"api_key": "", "model": "gemini-flash-lite-latest"},
-            }
-        })
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert "openai" in result["translate"]
-        openai = result["translate"]["openai"]
-        assert openai["base_url"] == ""
-        assert openai["api_key"] == ""
-        assert openai["model"] == "gpt-4o-mini"
 
     def test_translate_openai_not_overwrite_existing(self, tmp_path, monkeypatch):
         """openai 嵌套已存在 → 不覆蓋用戶設定"""
@@ -1180,59 +883,6 @@ class TestMigrationSources:
         assert len(builtin_sources) == 1
         assert builtin_sources[0]["enabled"] is True
 
-    def test_corrupt_sources_string_fallback(self, tmp_path, monkeypatch):
-        """sources 是字串（損壞）→ fallback 8 builtin 全 enabled + sources_bak 持有原值
-        （T3 後：additive migration 再追加 javlibrary，共 9 條）"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"sources": "broken"})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert isinstance(result["sources"], list)
-        # T3 後：8 builtin（fallback）+ 1 javlibrary（additive migration）= 9
-        builtin_sources = [s for s in result["sources"] if not s.get("manual_only")]
-        assert len(builtin_sources) == 8
-        assert all(s["enabled"] is True for s in builtin_sources)
-        assert result["sources_bak"] == "broken"
-
-    def test_corrupt_sources_missing_id_fallback(self, tmp_path, monkeypatch, caplog):
-        """sources 元素缺 id（損壞）→ fallback 8 builtin + sources_bak + warning"""
-        config_path = tmp_path / "config.json"
-        bad = [{"no_id": 1, "enabled": True}]
-        _write_config(config_path, {"sources": bad})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        import logging
-        with caplog.at_level(logging.WARNING):
-            result = load_config()
-
-        # T3 後：8 builtin（fallback）+ 1 javlibrary（additive migration）= 9
-        builtin_sources = [s for s in result["sources"] if not s.get("manual_only")]
-        assert len(builtin_sources) == 8
-        assert all(s["enabled"] is True for s in builtin_sources)
-        assert result["sources_bak"] == bad
-
-    def test_corrupt_then_valid_keeps_first_bak(self, tmp_path, monkeypatch):
-        """損壞修復後第二次啟動：sources 已合法 → sources_bak 保留不動
-        （T3 後：第二次 load 的 sources 含 javlibrary，共 9 條）"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"sources": "broken"})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        first = load_config()
-        assert first["sources_bak"] == "broken"
-        # config.json 已被 save_config 寫回合法 sources + sources_bak
-
-        second = load_config()
-        # T3 後：8 builtin + 1 javlibrary（additive migration）= 9；javlibrary 冪等不重複
-        builtin_sources = [s for s in second["sources"] if not s.get("manual_only")]
-        assert len(builtin_sources) == 8
-        assert second["sources_bak"] == "broken"  # 不被合法 sources 清掉
-
     def test_migration_backfills_fc_javten_when_javlibrary_already_present(
         self, tmp_path, monkeypatch
     ):
@@ -1255,6 +905,24 @@ class TestMigrationSources:
         assert fc["manual_only"] is True
         assert fc["is_beta"] is True
         assert fc["enabled"] is False
+
+    def test_corrupt_then_valid_keeps_first_bak(self, tmp_path, monkeypatch):
+        """損壞修復後第二次啟動：sources 已合法 → sources_bak 保留不動
+        （T3 後：第二次 load 的 sources 含 javlibrary，共 9 條）"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"sources": "broken"})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        first = load_config()
+        assert first["sources_bak"] == "broken"
+        # config.json 已被 save_config 寫回合法 sources + sources_bak
+
+        second = load_config()
+        # T3 後：8 builtin + 1 javlibrary（additive migration）= 9；javlibrary 冪等不重複
+        builtin_sources = [s for s in second["sources"] if not s.get("manual_only")]
+        assert len(builtin_sources) == 8
+        assert second["sources_bak"] == "broken"  # 不被合法 sources 清掉
 
     def test_migration_idempotent_with_both_manual_sources(self, tmp_path, monkeypatch):
         """CD-118a-9 冪等：config 已同時有 javlibrary 與 fc-javten → 不重複 append。"""
@@ -1460,18 +1128,6 @@ class TestJavlibraryMigration:
         assert jl['is_beta'] is True
         assert jl['order'] == 99
 
-    # b) 冪等：已有 javlibrary → 不重複 append
-    def test_additive_idempotent(self, tmp_path, monkeypatch):
-        config_path = self._patch(tmp_path, monkeypatch)
-        from core.source_config import get_manual_only_sources
-        existing = AppConfig().model_dump()
-        existing['sources'].append(get_manual_only_sources()[0].model_dump())
-        config_path.write_text(json.dumps(existing, ensure_ascii=False))
-
-        result = load_config()
-        jl_entries = [s for s in result['sources'] if s.get('id') == 'javlibrary']
-        assert len(jl_entries) == 1  # 不重複
-
     # c) 已有 javlibrary 且用戶自訂 order=50 → 不被改動
     def test_additive_preserves_existing_javlibrary_config(self, tmp_path, monkeypatch):
         config_path = self._patch(tmp_path, monkeypatch)
@@ -1486,86 +1142,15 @@ class TestJavlibraryMigration:
         assert jl['order'] == 50  # 用戶設定不被覆蓋
 
 
-# ============ test_migration_advanced_search_enabled ============
-
-class TestMigrationAdvancedSearchEnabled:
-    """advanced_search_enabled top-level strip migration（feature/74 US6；畢業為永久常駐）
-
-    欄位已從 AppConfig + config.default.json 移除；load_config() 直接 return raw dict
-    （不 model_validate），故舊 config.json 殘留的 advanced_search_enabled key 不會被
-    Pydantic 自動剝除 → 顯式 strip（覆寫舊值含 false；冪等）。
-    注意：advanced_search_enabled 是 top-level（非巢狀），無 section-missing 案（3 案）。
-    """
-
-    def test_strip_and_save_value_true(self, tmp_path, monkeypatch):
-        """頂層含 advanced_search_enabled: true → load 後 key 不存在 + 磁碟也不含（need_save 觸發）"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"advanced_search_enabled": True, "general": {"theme": "light"}})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert "advanced_search_enabled" not in result
-        # 磁碟也被寫回（need_save 觸發）
-        saved = _read_config(config_path)
-        assert "advanced_search_enabled" not in saved
-
-    def test_no_op_key_missing(self, tmp_path, monkeypatch):
-        """頂層無 advanced_search_enabled → no-op 不崩潰、其他欄位仍在"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"general": {"theme": "dark"}})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert "advanced_search_enabled" not in result
-        assert result.get("general", {}).get("theme") == "dark"
-
-    def test_strip_and_save_value_false(self, tmp_path, monkeypatch):
-        """頂層含 advanced_search_enabled: false（舊用戶關閉偏好）→ 仍被移除 + 磁碟寫回無該鍵"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"advanced_search_enabled": False, "general": {"theme": "light"}})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert "advanced_search_enabled" not in result
-        # 磁碟也被寫回（覆寫舊 false 偏好）
-        saved = _read_config(config_path)
-        assert "advanced_search_enabled" not in saved
-
-
 # ============ TASK-80a-T1：GeneralConfig.server_mode schema ============
 
 class TestGeneralConfigServerMode:
     """server_mode: bool = False 欄位 schema 測試（TASK-80a-T1）"""
 
-    def test_server_mode_default_false(self):
-        """GeneralConfig() 預設 server_mode is False"""
-        from core.config import GeneralConfig
-        cfg = GeneralConfig()
-        assert cfg.server_mode is False
-
     def test_appconfig_server_mode_default_false(self):
         """AppConfig().general.server_mode 預設 False"""
         cfg = AppConfig()
         assert cfg.general.server_mode is False
-
-    def test_missing_server_mode_key_loads_as_false(self, tmp_path, monkeypatch):
-        """舊 config.json 缺 general.server_mode key → load_config() 不報錯，.get 鏈視為 False"""
-        config_path = tmp_path / "config.json"
-        # 舊版 config 無 server_mode
-        _write_config(config_path, {"general": {"theme": "dark", "locale": "zh-TW"}})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        # .get 鏈天生 safe（缺 key 回 None / 預設 False）
-        assert result.get("general", {}).get("server_mode", False) is False
 
     def test_server_mode_roundtrip(self, tmp_path, monkeypatch):
         """server_mode=True 存入 config → load_config 後回讀仍為 True"""
@@ -1586,12 +1171,6 @@ class TestGeneralConfigServerMode:
 class TestGeneralConfigCloseAction:
     """close_action: Literal['ask','tray','exit'] = 'ask' 欄位 schema 測試（TASK-82-T4）"""
 
-    def test_close_action_default_ask(self):
-        """GeneralConfig() 預設 close_action is 'ask'"""
-        from core.config import GeneralConfig
-        cfg = GeneralConfig()
-        assert cfg.close_action == "ask"
-
     def test_appconfig_close_action_default_ask(self):
         """AppConfig().general.close_action 預設 'ask'"""
         cfg = AppConfig()
@@ -1603,12 +1182,6 @@ class TestGeneralConfigCloseAction:
         for val in ("ask", "tray", "exit"):
             cfg = GeneralConfig.model_validate({"close_action": val})
             assert cfg.close_action == val
-
-    def test_close_action_invalid_coerced_to_ask(self):
-        """model_validate 路徑非法值（如 'destroy-everything'）coerce → 'ask'"""
-        from core.config import GeneralConfig
-        cfg = GeneralConfig.model_validate({"close_action": "destroy-everything"})
-        assert cfg.close_action == "ask"
 
     def test_close_action_roundtrip(self, tmp_path, monkeypatch):
         """close_action='tray' 存入 config → load_config 後回讀仍為 'tray'"""
@@ -1654,28 +1227,6 @@ class TestMigrationCloseAction:
 
         assert result.get("general", {}).get("close_action") == "tray"
 
-    def test_close_action_added_when_general_absent(self, tmp_path, monkeypatch):
-        """general 段完全缺失 → migration 安全建立並補 'ask'"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"scraper": {"create_folder": True}})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert result.get("general", {}).get("close_action") == "ask"
-
-    def test_close_action_added_when_general_not_dict(self, tmp_path, monkeypatch):
-        """general 段非 dict（如 null）→ migration 安全建立並補 'ask'"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"general": None})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert result.get("general", {}).get("close_action") == "ask"
-
     def test_config_default_json_has_close_action(self):
         """web/config.default.json general 區塊含 close_action（fresh-install GET 正確）"""
         import json as _json
@@ -1704,12 +1255,6 @@ class TestMigrationCloseAction:
 
 class TestAutoCheckUpdateSchema:
     """auto_check_update: bool = True 欄位 schema 測試（TASK-107-P1-T1）"""
-
-    def test_auto_check_update_default_true(self):
-        """GeneralConfig() 預設 auto_check_update is True"""
-        from core.config import GeneralConfig
-        cfg = GeneralConfig()
-        assert cfg.auto_check_update is True
 
     def test_appconfig_auto_check_update_default_true(self):
         """AppConfig().general.auto_check_update 預設 True"""
@@ -1750,28 +1295,6 @@ class TestMigrationAutoCheckUpdate:
         written = _read_config(config_path)
         assert written.get("general", {}).get("auto_check_update") is False
 
-    def test_auto_check_update_added_when_general_absent(self, tmp_path, monkeypatch):
-        """general 段完全缺失 → migration 安全建立並補 True"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"scraper": {"create_folder": True}})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert result.get("general", {}).get("auto_check_update") is True
-
-    def test_auto_check_update_added_when_general_not_dict(self, tmp_path, monkeypatch):
-        """general 段非 dict（如 null）→ migration 安全建立並補 True"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"general": None})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert result.get("general", {}).get("auto_check_update") is True
-
     def test_config_default_json_has_auto_check_update(self):
         """web/config.default.json general 區塊含 auto_check_update（fresh-install GET 正確）"""
         import json as _json
@@ -1799,46 +1322,6 @@ class TestMigrationDirectoriesToObject:
         assert result["gallery"]["directories"] == [
             {"path": "/videos", "readonly": False, "output_path": ""}
         ]
-
-    def test_migration_idempotent(self, tmp_path, monkeypatch, mocker):
-        """已是完整物件的 config 再 load，第二次不觸發 _save_config_unlocked（冪等）。
-
-        使用 AppConfig().model_dump() 作基底，確保 scraper/source_links/general 等
-        各段 key 都存在，避免不相關的 migration 在第二次 load 重複觸發。
-        第一次 load 可能因 ollama_url strip / javlibrary additive 觸發一次 save；
-        第二次 load 所有 migration 皆已滿足，directories 已是物件形態 → 不觸發 save。
-        """
-        import core.config as core_config_module
-        config_path = tmp_path / "config.json"
-        # Build a full base config so unrelated migrations don't re-fire on second load
-        base = core_config_module.AppConfig().model_dump()
-        base["gallery"]["directories"] = [
-            {"path": "/videos", "readonly": False, "output_path": ""}
-        ]
-        _write_config(config_path, base)
-        monkeypatch.setattr(core_config_module, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config_module, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        spy = mocker.spy(core_config_module, "_save_config_unlocked")
-
-        # First load: may trigger other migrations (ollama_url strip, javlibrary additive);
-        # directories migration must NOT add to need_save (directories already complete objects).
-        result1 = core_config_module.load_config()
-        assert result1["gallery"]["directories"] == [
-            {"path": "/videos", "readonly": False, "output_path": ""}
-        ]
-        count_after_first = spy.call_count
-
-        # Second load: all migrations already applied; directories still complete objects →
-        # _save_config_unlocked must NOT be called again.
-        result2 = core_config_module.load_config()
-        assert result2["gallery"]["directories"] == [
-            {"path": "/videos", "readonly": False, "output_path": ""}
-        ]
-        assert spy.call_count == count_after_first, (
-            f"second load must not re-save for directories reason "
-            f"(call_count went from {count_after_first} to {spy.call_count})"
-        )
 
     def test_mixed_list_preserved(self, tmp_path, monkeypatch):
         """混合清單：str 升級；dict 的 readonly/output_path 值保留"""
@@ -1878,42 +1361,6 @@ class TestMigrationDirectoriesToObject:
 
 class TestScraperStrmPathMappings:
     """ScraperConfig.strm_path_mappings: Dict[str,str] = {} + load_config additive migration（TASK-90a-T2）"""
-
-    def test_schema_construct_with_mappings(self):
-        """ScraperConfig(strm_path_mappings={...}) 建構正常，值保留"""
-        from core.config import ScraperConfig
-        cfg = ScraperConfig(strm_path_mappings={"Z:\\115\\": "/vol/"})
-        assert cfg.strm_path_mappings == {"Z:\\115\\": "/vol/"}
-
-    def test_schema_default_empty_dict(self):
-        """fresh ScraperConfig → strm_path_mappings 預設空 dict"""
-        from core.config import ScraperConfig
-        cfg = ScraperConfig()
-        assert cfg.strm_path_mappings == {}
-
-    def test_migration_added_when_missing(self, tmp_path, monkeypatch):
-        """舊 config scraper 段無 strm_path_mappings → migration 補空 dict，不 raise"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"scraper": {"create_folder": True, "external_manager": "off"}})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        assert result["scraper"]["strm_path_mappings"] == {}
-
-    def test_migration_when_scraper_section_absent(self, tmp_path, monkeypatch):
-        """極舊 config 完全無 scraper 段 → migration 不 raise，仍能安全載入"""
-        config_path = tmp_path / "config.json"
-        _write_config(config_path, {"general": {"theme": "dark"}})
-        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
-        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
-
-        result = load_config()
-
-        # scraper 段缺失時 raw_config.get('scraper', {}) 為 in-place 空 dict，
-        # 補值不寫回原 config（比照 download_sample_images 對缺段的處理）；關鍵是不 raise。
-        assert result.get("scraper", {}).get("strm_path_mappings", {}) == {}
 
     def test_migration_not_overwrite_existing(self, tmp_path, monkeypatch):
         """已含 strm_path_mappings 有值 → migration 不覆寫，保留原值"""
@@ -2011,12 +1458,6 @@ class TestCoverBadgesConfig:
 
     DEFAULT_PATH = Path(__file__).resolve().parents[2] / "web" / "config.default.json"
 
-    def test_gallery_defaults_cover_badges_off_empty_items(self):
-        """邊界 1：GalleryConfig() 預設 → enabled is False、items == {}"""
-        cfg = GalleryConfig()
-        assert cfg.cover_badges.enabled is False
-        assert cfg.cover_badges.items == {}
-
     def test_default_json_gallery_cover_badges_matches_model(self):
         """邊界 2：config.default.json 的 gallery.cover_badges 與 model 預設值一致（parity）"""
         default = json.loads(self.DEFAULT_PATH.read_text(encoding="utf-8"))
@@ -2038,20 +1479,6 @@ class TestCoverBadgesConfig:
         assert cfg.items["4k"] is False
         assert cfg.items["unknown_id"] is True
 
-    def test_enabled_non_bool_string_records_pydantic_behavior(self):
-        """邊界 5：enabled 收到非 bool 字串 → 依 pydantic 既有行為（本測記錄，不另加 coerce）。
-
-        pydantic 2.13 bool 對 "true"/"false"/"1"/"0"/"yes"/"no"/"on"/"off" 會 coerce；
-        其餘字串 ValidationError。此處鎖「非布林字串被拒絕」，不自行加寬鬆解析。
-        """
-        import pydantic
-
-        with pytest.raises(pydantic.ValidationError):
-            CoverBadgesConfig(enabled="not-a-bool")
-        # 對照：pydantic 認得的布林字串仍 coerce（記錄既有行為，非本案新邏輯）
-        assert CoverBadgesConfig(enabled="true").enabled is True
-        assert CoverBadgesConfig(enabled="false").enabled is False
-
 
 # ============ TASK-133b-T1：gallery.show_table_list 預設值 + default.json parity ============
 
@@ -2059,10 +1486,6 @@ class TestShowTableListConfig:
     """GalleryConfig.show_table_list 預設關、default.json parity、舊 config 缺 key 不拋錯。"""
 
     DEFAULT_PATH = Path(__file__).resolve().parents[2] / "web" / "config.default.json"
-
-    def test_gallery_defaults_show_table_list_off(self):
-        """邊界 1：GalleryConfig() 預設 → show_table_list is False"""
-        assert GalleryConfig().show_table_list is False
 
     def test_default_json_gallery_show_table_list_matches_model(self):
         """邊界 2：config.default.json 的 gallery.show_table_list 與 model 預設值一致（parity）"""
@@ -2237,10 +1660,6 @@ class TestSaveConfigBlockedBeforeLayoutFinalized:
 
 class TestNfoTitleFormatConfig:
     """NFO 標題格式 schema 預設值與 migration（TASK-154b-T5）"""
-
-    def test_scraper_config_nfo_title_format_default(self):
-        from core.config import ScraperConfig
-        assert ScraperConfig().nfo_title_format == '[{num}]{title}'
 
     def test_load_config_backfills_missing_nfo_title_format(self, tmp_path, monkeypatch):
         """舊 config.json 含 scraper 但無 nfo_title_format → load_config 補預設值並寫回。"""

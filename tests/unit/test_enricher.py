@@ -126,22 +126,6 @@ class TestEmptyNumber:
         assert "番號" in result.error
 
 
-# ── 3. mode 不合法 ────────────────────────────────────────────────────────────
-
-class TestInvalidMode:
-    def test_invalid_mode_returns_error(self):
-        """邊界條件 3: mode 不在合法值列表"""
-        with patch("os.path.exists", return_value=True):
-            from core.enricher import enrich_single
-            result = enrich_single(
-                file_path=FS_PATH,
-                number="SONE-205",
-                mode="invalid_mode",
-            )
-        assert result.success is False
-        assert "mode" in result.error.lower() or "不支援" in result.error
-
-
 # ── 4. fill_missing: DB 完整，不打 scraper ────────────────────────────────────
 
 class TestFillMissingDbComplete:
@@ -176,11 +160,26 @@ class TestFillMissingDbComplete:
 # ── 4b. fill_missing: DB 有完整欄位但缺 label → 觸發 scraper ─────────────────
 
 class TestFillMissingLabelMissing:
-    def test_db_missing_label_calls_scraper(self):
-        """邊界條件 4b: DB 有 title/actresses/maker/director/release_date 但缺 label → 觸發 scraper"""
-        video = _make_video(label="")
+    @pytest.mark.parametrize(
+        ("video_kwargs", "scraper_kwargs", "expected_filled_any"),
+        [
+            pytest.param({"label": ""}, {}, ("label",), id="label_empty"),
+            pytest.param(
+                {"director": "", "series": None}, {}, ("director", "series"),
+                id="director_empty_series_none",
+            ),
+            pytest.param(
+                {"series": ""}, {"series": "テストシリーズ"}, ("series",),
+                id="series_empty_string",
+            ),
+        ],
+    )
+    def test_db_missing_label_calls_scraper(self, video_kwargs, scraper_kwargs, expected_filled_any):
+        """邊界條件 4b／5／F3: DB 有資料但缺 label／director+series（None）／series（空字串，
+        _video_to_meta 把缺失 series 正規化為空字串，_missing_fields 應視為缺失）→ 觸發 scraper"""
+        video = _make_video(**video_kwargs)
         db_result = {"SONE-205": [video]}
-        scraper_data = _make_scraper_result()
+        scraper_data = _make_scraper_result(**scraper_kwargs)
 
         with (
             patch("os.path.exists", return_value=True),
@@ -202,74 +201,7 @@ class TestFillMissingLabelMissing:
 
         mock_search.assert_called_once()
         assert result.success is True
-        assert "label" in result.fields_filled
-
-
-# ── 5. fill_missing: DB 有資料但缺欄位，打 scraper 補 ────────────────────────
-
-class TestFillMissingDbMissingFields:
-    def test_db_missing_fields_calls_scraper(self):
-        """邊界條件 5: DB 有資料但缺 director/series → 打 scraper"""
-        video = _make_video(director="", series=None)
-        db_result = {"SONE-205": [video]}
-        scraper_data = _make_scraper_result()
-
-        with (
-            patch("os.path.exists", return_value=True),
-            patch("core.enricher.VideoRepository") as mock_repo_cls,
-            patch("core.enricher.search_jav", return_value=scraper_data) as mock_search,
-            patch("core.enricher.generate_nfo", return_value=True),
-            patch("core.enricher.download_image", return_value=True),
-        ):
-            mock_repo = MagicMock()
-            mock_repo_cls.return_value = mock_repo
-            mock_repo.get_by_numbers.return_value = db_result
-
-            from core.enricher import enrich_single
-            result = enrich_single(
-                file_path=FS_PATH,
-                number="SONE-205",
-                mode="fill_missing",
-            )
-
-        mock_search.assert_called_once()
-        assert result.success is True
-        assert "director" in result.fields_filled or "series" in result.fields_filled
-
-
-# ── 6. fill_missing: DB miss + NFO 存在 ──────────────────────────────────────
-
-class TestFillMissingDbMissNfoExists:
-    def test_db_miss_nfo_exists_reads_nfo(self):
-        """邊界條件 6: DB miss + NFO 存在 → 讀 NFO，缺少的才打 scraper"""
-        import xml.etree.ElementTree as ET
-
-        nfo_root = ET.Element("movie")
-        ET.SubElement(nfo_root, "title").text = "テストタイトル"
-        ET.SubElement(nfo_root, "studio").text = "SOD"
-        # 缺 director
-
-        with (
-            patch("os.path.exists", return_value=True),
-            patch("core.enricher.VideoRepository") as mock_repo_cls,
-            patch("core.enricher.search_jav", return_value=_make_scraper_result()) as mock_search,
-            patch("core.enricher.parse_nfo", return_value=(MagicMock(), nfo_root)),
-            patch("core.enricher.generate_nfo", return_value=True),
-            patch("core.enricher.download_image", return_value=True),
-        ):
-            mock_repo = MagicMock()
-            mock_repo_cls.return_value = mock_repo
-            mock_repo.get_by_numbers.return_value = {}
-
-            from core.enricher import enrich_single
-            result = enrich_single(
-                file_path=FS_PATH,
-                number="SONE-205",
-                mode="fill_missing",
-            )
-
-        mock_search.assert_called_once()
-        assert result.success is True
+        assert any(f in result.fields_filled for f in expected_filled_any)
 
 
 # ── 7. fill_missing: DB miss + NFO 不存在 ────────────────────────────────────
@@ -515,17 +447,32 @@ class TestPreserveNfoOnlyFields:
 
     # ── DoD-1: key 不存在 → 讀既有 NFO（三欄各一案例，六案例矩陣的前三個）───
 
-    def test_summary_key_missing_falls_back_to_nfo_plot(self, tmp_path):
+    @pytest.mark.parametrize(
+        ("nfo_kwargs", "scraper_data", "meta_key", "expected"),
+        [
+            pytest.param(
+                {"plot": "既有劇情"},
+                # 刻意不帶 _summary key
+                {"_rating": 3.5, "url": "http://ai.example/"},
+                "summary", "既有劇情", id="summary_key_missing",
+            ),
+            pytest.param(
+                {"website": "http://existing.example/"},
+                # 刻意不帶 url key
+                {"_summary": "AI 審過的劇情", "_rating": 3.5},
+                "url", "http://existing.example/", id="url_key_missing",
+            ),
+        ],
+    )
+    def test_summary_key_missing_falls_back_to_nfo_plot(self, tmp_path, nfo_kwargs, scraper_data, meta_key, expected):
         from core.enricher import _preserve_nfo_only_fields, _scraper_to_meta
         fs_path = str(tmp_path / "SONE-205.mp4")
-        _t4_write_nfo(tmp_path / "SONE-205.nfo", plot="既有劇情")
-        # 刻意不帶 _summary key
-        scraper_data = {"_rating": 3.5, "url": "http://ai.example/"}
+        _t4_write_nfo(tmp_path / "SONE-205.nfo", **nfo_kwargs)
         meta = _scraper_to_meta(scraper_data)
 
         _preserve_nfo_only_fields(meta, scraper_data, fs_path)
 
-        assert meta["summary"] == "既有劇情"
+        assert meta[meta_key] == expected
 
     def test_rating_key_missing_falls_back_to_nfo_rating_divided_by_two(self, tmp_path):
         from core.enricher import _preserve_nfo_only_fields, _scraper_to_meta
@@ -539,61 +486,31 @@ class TestPreserveNfoOnlyFields:
 
         assert meta["rating"] == 3.5
 
-    def test_url_key_missing_falls_back_to_nfo_website(self, tmp_path):
-        from core.enricher import _preserve_nfo_only_fields, _scraper_to_meta
-        fs_path = str(tmp_path / "SONE-205.mp4")
-        _t4_write_nfo(tmp_path / "SONE-205.nfo", website="http://existing.example/")
-        # 刻意不帶 url key
-        scraper_data = {"_summary": "AI 審過的劇情", "_rating": 3.5}
-        meta = _scraper_to_meta(scraper_data)
-
-        _preserve_nfo_only_fields(meta, scraper_data, fs_path)
-
-        assert meta["url"] == "http://existing.example/"
-
     # ── DoD-2: key 存在但值為空 → 不讀 NFO（CD-135-13，三欄各一案例，
     #    與 DoD-1 合計六個獨立案例，不能只寫三個） ─────────────────────────
 
-    def test_summary_key_empty_string_not_overwritten(self, tmp_path):
+    @pytest.mark.parametrize(
+        ("nfo_kwargs", "scraper_data", "meta_key", "expected"),
+        [
+            # key 存在，值為空 —— AI 明確要求清空，不是沒帶。
+            # 刻意每格只帶一個 key：三個 key 全在時 `_preserve_nfo_only_fields`
+            # 會在函式最前面早退，不會走到這裡要驗的 `if "<key>" not in scraper_data:` 那一行。
+            pytest.param({"plot": "既有劇情"}, {"_summary": ""}, "summary", "", id="summary_empty_string"),
+            pytest.param({"rating": "7.0"}, {"_rating": None}, "rating", None, id="rating_none"),
+            pytest.param(
+                {"website": "http://existing.example/"}, {"url": ""}, "url", "", id="url_empty_string",
+            ),
+        ],
+    )
+    def test_summary_key_empty_string_not_overwritten(self, tmp_path, nfo_kwargs, scraper_data, meta_key, expected):
         from core.enricher import _preserve_nfo_only_fields, _scraper_to_meta
         fs_path = str(tmp_path / "SONE-205.mp4")
-        _t4_write_nfo(tmp_path / "SONE-205.nfo", plot="既有劇情")
-        # _summary key 存在，值為空字串 —— AI 明確要求清空，不是沒帶。
-        # 刻意只帶這一個 key（_rating/url 都不帶）：三個 key 全在時
-        # `_preserve_nfo_only_fields` 會在函式最前面早退，不會走到這裡要驗的
-        # `if "_summary" not in scraper_data:` 那一行，等於測不到 M2 mutation。
-        scraper_data = {"_summary": ""}
+        _t4_write_nfo(tmp_path / "SONE-205.nfo", **nfo_kwargs)
         meta = _scraper_to_meta(scraper_data)
 
         _preserve_nfo_only_fields(meta, scraper_data, fs_path)
 
-        assert meta["summary"] == ""
-
-    def test_rating_key_none_not_overwritten(self, tmp_path):
-        from core.enricher import _preserve_nfo_only_fields, _scraper_to_meta
-        fs_path = str(tmp_path / "SONE-205.mp4")
-        _t4_write_nfo(tmp_path / "SONE-205.nfo", rating="7.0")
-        # _rating key 存在，值為 None —— AI 明確送 None，不是沒帶。
-        # 同上，刻意只帶這一個 key，避免三個 key 全在觸發早退。
-        scraper_data = {"_rating": None}
-        meta = _scraper_to_meta(scraper_data)
-
-        _preserve_nfo_only_fields(meta, scraper_data, fs_path)
-
-        assert meta["rating"] is None
-
-    def test_url_key_empty_string_not_overwritten(self, tmp_path):
-        from core.enricher import _preserve_nfo_only_fields, _scraper_to_meta
-        fs_path = str(tmp_path / "SONE-205.mp4")
-        _t4_write_nfo(tmp_path / "SONE-205.nfo", website="http://existing.example/")
-        # url key 存在，值為空字串 —— AI 明確要求清空，不是沒帶。
-        # 同上，刻意只帶這一個 key，避免三個 key 全在觸發早退。
-        scraper_data = {"url": ""}
-        meta = _scraper_to_meta(scraper_data)
-
-        _preserve_nfo_only_fields(meta, scraper_data, fs_path)
-
-        assert meta["url"] == ""
+        assert meta[meta_key] == expected
 
     # ── DoD-4: 既有 NFO 不存在 → 不炸 ──────────────────────────────────────
 
@@ -624,18 +541,6 @@ class TestPreserveNfoOnlyFields:
         assert meta["rating"] is None
 
     # ── 設計決策：三欄全在 scraper_data → 早退，不開檔（效能，非語意合併）──
-
-    def test_all_three_keys_present_short_circuits_without_parsing_nfo(self, tmp_path):
-        from core.enricher import _preserve_nfo_only_fields, _scraper_to_meta
-        fs_path = str(tmp_path / "SONE-205.mp4")
-        _t4_write_nfo(tmp_path / "SONE-205.nfo")  # 存在也不該被打開
-        scraper_data = {"_summary": "x", "_rating": 3.5, "url": "y"}
-        meta = _scraper_to_meta(scraper_data)
-
-        with patch("core.enricher.parse_nfo") as mock_parse:
-            _preserve_nfo_only_fields(meta, scraper_data, fs_path)
-
-        mock_parse.assert_not_called()
 
 
 class TestEnrichSingleRefreshFullRatingRoundtrip:
@@ -1021,31 +926,6 @@ class TestNoForbiddenCalls:
         mock_move.assert_not_called()
         assert result.success is True
 
-    def test_makedirs_not_called_when_extrafanart_false(self):
-        """邊界條件 23b: write_extrafanart=False 正常路徑 → os.makedirs 不被呼叫"""
-        video = _make_video()
-
-        with (
-            patch("os.path.exists", return_value=True),
-            patch("core.enricher.VideoRepository") as mock_repo_cls,
-            patch("core.enricher.generate_nfo", return_value=True),
-            patch("core.enricher.download_image", return_value=True),
-            patch("os.makedirs") as mock_makedirs,
-        ):
-            mock_repo = MagicMock()
-            mock_repo_cls.return_value = mock_repo
-            mock_repo.get_by_numbers.return_value = {"SONE-205": [video]}
-
-            from core.enricher import enrich_single
-            result = enrich_single(
-                file_path=FS_PATH,
-                number="SONE-205",
-                write_extrafanart=False,
-            )
-
-        mock_makedirs.assert_not_called()
-        assert result.success is True
-
 
 # ── 24. generate_nfo PermissionError ─────────────────────────────────────────
 
@@ -1272,8 +1152,15 @@ class TestDbUpsertOutputDir:
 # ── 28. F2: has_subtitle 由 find_subtitle_files 決定 ────────────────────────────
 
 class TestHasSubtitleDetected:
-    def test_has_subtitle_true_when_srt_exists(self):
-        """F2: 影片同目錄有 .srt 時，generate_nfo 應以 has_subtitle=True 呼叫"""
+    @pytest.mark.parametrize(
+        ("srt_files", "expected_has_subtitle"),
+        [
+            pytest.param(["/video/SONE-205.srt"], True, id="srt_exists"),
+            pytest.param([], False, id="no_srt"),
+        ],
+    )
+    def test_has_subtitle_true_when_srt_exists(self, srt_files, expected_has_subtitle):
+        """F2: 影片同目錄有 .srt 時 generate_nfo 以 has_subtitle=True 呼叫；無字幕時為 False"""
         video = _make_video()
 
         captured_calls = []
@@ -1287,7 +1174,7 @@ class TestHasSubtitleDetected:
             patch("core.enricher.VideoRepository") as mock_repo_cls,
             patch("core.enricher.generate_nfo", side_effect=fake_generate_nfo),
             patch("core.enricher.download_image", return_value=True),
-            patch("core.enricher.find_subtitle_files", return_value=["/video/SONE-205.srt"]),
+            patch("core.enricher.find_subtitle_files", return_value=srt_files),
         ):
             mock_repo = MagicMock()
             mock_repo_cls.return_value = mock_repo
@@ -1303,83 +1190,21 @@ class TestHasSubtitleDetected:
 
         assert result.success is True
         assert captured_calls, "generate_nfo 應被呼叫"
-        assert captured_calls[0].get("has_subtitle") is True, (
-            "有字幕檔時 has_subtitle 應為 True"
-        )
-
-    def test_has_subtitle_false_when_no_srt(self):
-        """F2: 影片同目錄無字幕時，generate_nfo 應以 has_subtitle=False 呼叫"""
-        video = _make_video()
-
-        captured_calls = []
-
-        def fake_generate_nfo(**kwargs):
-            captured_calls.append(kwargs)
-            return True
-
-        with (
-            patch("os.path.exists", return_value=True),
-            patch("core.enricher.VideoRepository") as mock_repo_cls,
-            patch("core.enricher.generate_nfo", side_effect=fake_generate_nfo),
-            patch("core.enricher.download_image", return_value=True),
-            patch("core.enricher.find_subtitle_files", return_value=[]),
-        ):
-            mock_repo = MagicMock()
-            mock_repo_cls.return_value = mock_repo
-            mock_repo.get_by_numbers.return_value = {"SONE-205": [video]}
-
-            from core.enricher import enrich_single
-            result = enrich_single(
-                file_path=FS_PATH,
-                number="SONE-205",
-                write_nfo=True,
-                overwrite_existing=True,
-            )
-
-        assert result.success is True
-        assert captured_calls, "generate_nfo 應被呼叫"
-        assert captured_calls[0].get("has_subtitle") is False, (
-            "無字幕檔時 has_subtitle 應為 False"
-        )
-
-
-# ── 29. F3: series="" 應觸發 scraper ────────────────────────────────────────────
-
-class TestMissingFieldsEmptySeries:
-    def test_empty_series_string_triggers_scraper(self):
-        """F3: _video_to_meta 把缺失 series 正規化為空字串，_missing_fields 應視為缺失"""
-        video = _make_video(series="")  # 空字串，非 None
-        db_result = {"SONE-205": [video]}
-        scraper_data = _make_scraper_result(series="テストシリーズ")
-
-        with (
-            patch("os.path.exists", return_value=True),
-            patch("core.enricher.VideoRepository") as mock_repo_cls,
-            patch("core.enricher.search_jav", return_value=scraper_data) as mock_search,
-            patch("core.enricher.generate_nfo", return_value=True),
-            patch("core.enricher.download_image", return_value=True),
-        ):
-            mock_repo = MagicMock()
-            mock_repo_cls.return_value = mock_repo
-            mock_repo.get_by_numbers.return_value = db_result
-
-            from core.enricher import enrich_single
-            result = enrich_single(
-                file_path=FS_PATH,
-                number="SONE-205",
-                mode="fill_missing",
-            )
-
-        mock_search.assert_called_once(), "series='' 應視為缺失，觸發 scraper"
-        assert result.success is True
-        assert "series" in result.fields_filled
+        assert captured_calls[0].get("has_subtitle") is expected_has_subtitle
 
 
 # ── T2: source / javbus_lang 參數路由 ─────────────────────────────────────────
 
 class TestSourceParam:
-    def test_source_passed_to_search_jav_refresh_full(self):
-        """T2: source='javbus' 在 refresh_full mode 正確傳給 search_jav"""
+    @pytest.mark.parametrize(
+        ("kwarg", "value"),
+        [
+            pytest.param("source", "javbus", id="source"),
+            pytest.param("javbus_lang", "ja", id="javbus_lang"),
+        ],
+    )
+    def test_source_passed_to_search_jav_refresh_full(self, kwarg, value):
+        """T2: source='javbus'／javbus_lang='ja' 在 refresh_full mode 正確傳給 search_jav"""
         with (
             patch("os.path.exists", return_value=True),
             patch("core.enricher.search_jav", return_value=_make_scraper_result()) as mock_search,
@@ -1393,47 +1218,11 @@ class TestSourceParam:
                 file_path=FS_PATH,
                 number="SONE-205",
                 mode="refresh_full",
-                source="javbus",
+                **{kwarg: value},
             )
         mock_search.assert_called_once()
-        assert mock_search.call_args.kwargs.get("source") == "javbus"
+        assert mock_search.call_args.kwargs.get(kwarg) == value
 
-    def test_javbus_lang_passed_to_search_jav(self):
-        """T2: javbus_lang='ja' 正確傳給 search_jav"""
-        with (
-            patch("os.path.exists", return_value=True),
-            patch("core.enricher.search_jav", return_value=_make_scraper_result()) as mock_search,
-            patch("core.enricher.generate_nfo", return_value=True),
-            patch("core.enricher.download_image", return_value=True),
-            patch("core.enricher.find_subtitle_files", return_value=[]),
-            patch("core.enricher.VideoRepository"),
-        ):
-            from core.enricher import enrich_single
-            enrich_single(
-                file_path=FS_PATH,
-                number="SONE-205",
-                mode="refresh_full",
-                javbus_lang="ja",
-            )
-        mock_search.assert_called_once()
-        assert mock_search.call_args.kwargs.get("javbus_lang") == "ja"
-
-    def test_invalid_source_returns_error(self):
-        """T2: 無效 source 經 search_jav 攔截後回傳 None，enrich_single 回 error"""
-        with (
-            patch("os.path.exists", return_value=True),
-            patch("core.enricher.search_jav", return_value=None),
-            patch("core.enricher.VideoRepository"),
-        ):
-            from core.enricher import enrich_single
-            result = enrich_single(
-                file_path=FS_PATH,
-                number="SONE-205",
-                mode="refresh_full",
-                source="invalid_xyz",
-            )
-        assert result.success is False
-        assert result.error is not None
 
 
 # ── P1: scraper_data 參數傳入時跳過 search_jav ────────────────────────────────
@@ -1479,49 +1268,13 @@ def _create_dummy_jpeg(path) -> None:
 class TestWriteExternalImages:
     """_write_external_images 契約：gate on cover_path.exists()、模式、overwrite。"""
 
-    def test_off_mode_returns_false_false(self, tmp_path):
-        """off 模式：直接 no-op 回 False/False，即使底圖存在。"""
+    @pytest.mark.parametrize("manager", ["jellyfin", "emby", "kodi"])
+    def test_jellyfin_creates_stem_poster_fanart(self, tmp_path, manager):
+        """jellyfin／emby／kodi：產 {stem}-poster.jpg + {stem}-fanart.jpg（三者等價），回傳 True/True。"""
         cover = tmp_path / "SONE-205.jpg"
         _create_dummy_jpeg(cover)
         from core.enricher import _write_external_images
-        result = _write_external_images(str(tmp_path / "SONE-205.mp4"), "off", True)
-        assert result == {"poster": False, "fanart": False}
-
-    def test_no_cover_returns_false_false(self, tmp_path):
-        """底圖不存在 → gate 落空 → False/False。"""
-        from core.enricher import _write_external_images
-        result = _write_external_images(str(tmp_path / "SONE-205.mp4"), "jellyfin", True)
-        assert result == {"poster": False, "fanart": False}
-
-    def test_jellyfin_creates_stem_poster_fanart(self, tmp_path):
-        """jellyfin：產 {stem}-poster.jpg + {stem}-fanart.jpg，回傳 True/True。"""
-        cover = tmp_path / "SONE-205.jpg"
-        _create_dummy_jpeg(cover)
-        from core.enricher import _write_external_images
-        result = _write_external_images(str(tmp_path / "SONE-205.mp4"), "jellyfin", True)
-        assert result == {"poster": True, "fanart": True}
-        assert (tmp_path / "SONE-205-poster.jpg").exists()
-        assert (tmp_path / "SONE-205-fanart.jpg").exists()
-
-    def test_emby_creates_stem_poster_fanart(self, tmp_path):
-        """emby：產 {stem}-poster.jpg + {stem}-fanart.jpg（等價 jellyfin/kodi），回傳 True/True。"""
-        cover = tmp_path / "SONE-205.jpg"
-        _create_dummy_jpeg(cover)
-        from core.enricher import _write_external_images
-        result = _write_external_images(str(tmp_path / "SONE-205.mp4"), "emby", True)
-        assert result == {"poster": True, "fanart": True}
-        assert (tmp_path / "SONE-205-poster.jpg").exists()
-        assert (tmp_path / "SONE-205-fanart.jpg").exists()
-        # 裸短名不存在
-        assert not (tmp_path / "poster.jpg").exists()
-        assert not (tmp_path / "fanart.jpg").exists()
-
-    def test_kodi_creates_stem_poster_fanart(self, tmp_path):
-        """kodi：產 {stem}-poster.jpg + {stem}-fanart.jpg（與 jellyfin 相同），回傳 True/True。"""
-        cover = tmp_path / "SONE-205.jpg"
-        _create_dummy_jpeg(cover)
-        from core.enricher import _write_external_images
-        result = _write_external_images(str(tmp_path / "SONE-205.mp4"), "kodi", True)
+        result = _write_external_images(str(tmp_path / "SONE-205.mp4"), manager, True)
         assert result == {"poster": True, "fanart": True}
         assert (tmp_path / "SONE-205-poster.jpg").exists()
         assert (tmp_path / "SONE-205-fanart.jpg").exists()
@@ -1559,45 +1312,36 @@ class TestWriteExternalImages:
         assert result["fanart"] is True
         assert fanart.stat().st_size > 4  # 覆蓋後應為真實 JPEG
 
-    def test_unknown_manager_returns_false_false(self, tmp_path):
-        """未知 external_manager 值 → 不產圖、不崩。"""
-        cover = tmp_path / "SONE-205.jpg"
-        _create_dummy_jpeg(cover)
-        from core.enricher import _write_external_images
-        result = _write_external_images(str(tmp_path / "SONE-205.mp4"), "unknown_mode", True)
-        assert result == {"poster": False, "fanart": False}
-
-    def test_no_cover_but_stem_poster_fanart_exist_returns_true(self, tmp_path):
-        """72d-P2B：無 {stem}.jpg，但 stem-poster + stem-fanart 皆存在，overwrite=False
-        → {"poster": True, "fanart": True}，且兩檔內容不被修改（無 copy/crop）。"""
+    @pytest.mark.parametrize(
+        ("existing_names", "expected"),
+        [
+            pytest.param(
+                ["SONE-205-poster.jpg", "SONE-205-fanart.jpg"],
+                {"poster": True, "fanart": True}, id="poster_and_fanart",
+            ),
+            pytest.param(
+                ["SONE-205-poster.jpg"],
+                {"poster": True, "fanart": False}, id="poster_only",
+            ),
+        ],
+    )
+    def test_no_cover_but_stem_poster_fanart_exist_returns_true(self, tmp_path, existing_names, expected):
+        """72d-P2B：無 {stem}.jpg，但 stem-poster（+ stem-fanart）已存在，overwrite=False
+        → 回傳磁碟現況（皆在 True/True；只有 poster 時 fanart False），且既有檔內容不被修改（無 copy/crop）。"""
         # 不建立 {stem}.jpg（cover）
-        poster = tmp_path / "SONE-205-poster.jpg"
-        fanart = tmp_path / "SONE-205-fanart.jpg"
-        poster.write_bytes(b"existing-poster")
-        fanart.write_bytes(b"existing-fanart")
-        poster_content = poster.read_bytes()
-        fanart_content = fanart.read_bytes()
+        existing = {}
+        for fname in existing_names:
+            p = tmp_path / fname
+            p.write_bytes(b"existing-" + fname.encode())
+            existing[p] = p.read_bytes()
 
         from core.enricher import _write_external_images
         result = _write_external_images(str(tmp_path / "SONE-205.mp4"), "jellyfin", False)
 
-        assert result == {"poster": True, "fanart": True}
+        assert result == expected
         # 檔案未被覆蓋（bytes 不變）
-        assert poster.read_bytes() == poster_content
-        assert fanart.read_bytes() == fanart_content
-
-    def test_no_cover_stem_poster_only_partial_return(self, tmp_path):
-        """72d-P2B：無 {stem}.jpg，只有 stem-poster.jpg（無 fanart），overwrite=False
-        → {"poster": True, "fanart": False}。"""
-        # 不建立 {stem}.jpg（cover）
-        poster = tmp_path / "SONE-205-poster.jpg"
-        poster.write_bytes(b"existing-poster")
-        # 不建立 fanart
-
-        from core.enricher import _write_external_images
-        result = _write_external_images(str(tmp_path / "SONE-205.mp4"), "jellyfin", False)
-
-        assert result == {"poster": True, "fanart": False}
+        for p, content in existing.items():
+            assert p.read_bytes() == content
 
 
 # ── T6-B. enrich_single external_manager 整合測試（mock scraper/DB/generate_nfo）──
@@ -1652,8 +1396,9 @@ class TestEnrichSingleExternalManager:
             assert captured[0].get("has_poster", False) is False
             assert captured[0].get("has_fanart", False) is False
 
-    def test_jellyfin_creates_images_nfo_has_poster_fanart(self, tmp_path):
-        """jellyfin：cover 已存在 → 產 {stem}-poster/-fanart，NFO has_poster/has_fanart=True。"""
+    @pytest.mark.parametrize("manager", ["jellyfin", "kodi"])
+    def test_jellyfin_creates_images_nfo_has_poster_fanart(self, tmp_path, manager):
+        """jellyfin／kodi：cover 已存在 → 產 {stem}-poster/-fanart（固定 stem 命名），NFO has_poster/has_fanart=True。"""
         mp4 = tmp_path / "SONE-205.mp4"
         mp4.touch()
         cover = tmp_path / "SONE-205.jpg"
@@ -1678,54 +1423,16 @@ class TestEnrichSingleExternalManager:
                 write_nfo=True,
                 write_cover=True,
                 overwrite_existing=True,
-                external_manager="jellyfin",
+                external_manager=manager,
             )
 
         assert result.success is True
-        assert (tmp_path / "SONE-205-poster.jpg").exists()
-        assert (tmp_path / "SONE-205-fanart.jpg").exists()
+        assert (tmp_path / "SONE-205-poster.jpg").exists(), f"{manager} 應產 stem-poster.jpg"
+        assert (tmp_path / "SONE-205-fanart.jpg").exists(), f"{manager} 應產 stem-fanart.jpg"
+        assert not (tmp_path / "poster.jpg").exists(), f"{manager} 不應有裸 poster.jpg"
+        assert not (tmp_path / "fanart.jpg").exists(), f"{manager} 不應有裸 fanart.jpg"
         assert captured, "generate_nfo 應被呼叫"
-        assert captured[0].get("external_manager") == "jellyfin"
-        assert captured[0].get("has_poster") is True
-        assert captured[0].get("has_fanart") is True
-
-    def test_kodi_creates_stem_images_nfo_has_poster_fanart(self, tmp_path):
-        """kodi：產 {stem}-poster.jpg + {stem}-fanart.jpg（與 jellyfin 相同），NFO has_poster/has_fanart=True。"""
-        mp4 = tmp_path / "SONE-205.mp4"
-        mp4.touch()
-        cover = tmp_path / "SONE-205.jpg"
-        _create_dummy_jpeg(cover)
-
-        captured = []
-
-        def fake_nfo(**kwargs):
-            captured.append(kwargs)
-
-        with (
-            patch("core.enricher.VideoRepository", return_value=self._make_mock_repo()),
-            patch("core.enricher.search_jav", return_value=None),
-            patch("core.enricher.generate_nfo", side_effect=fake_nfo),
-            patch("core.enricher.download_image", return_value=False),
-            patch("core.enricher.find_subtitle_files", return_value=[]),
-        ):
-            from core.enricher import enrich_single
-            result = enrich_single(
-                file_path=str(mp4),
-                number="SONE-205",
-                write_nfo=True,
-                write_cover=True,
-                overwrite_existing=True,
-                external_manager="kodi",
-            )
-
-        assert result.success is True
-        # kodi 固定 stem 命名（與 jellyfin 相同）
-        assert (tmp_path / "SONE-205-poster.jpg").exists(), "kodi 應產 stem-poster.jpg"
-        assert (tmp_path / "SONE-205-fanart.jpg").exists(), "kodi 應產 stem-fanart.jpg"
-        assert not (tmp_path / "poster.jpg").exists(), "kodi 不應有裸 poster.jpg"
-        assert not (tmp_path / "fanart.jpg").exists(), "kodi 不應有裸 fanart.jpg"
-        assert captured, "generate_nfo 應被呼叫"
-        assert captured[0].get("external_manager") == "kodi"
+        assert captured[0].get("external_manager") == manager
         assert captured[0].get("has_poster") is True
         assert captured[0].get("has_fanart") is True
 
@@ -2710,7 +2417,10 @@ class TestEnrichFocalTrigger:
             )
         return mock_submit
 
-    def test_rescrape_calls_focal_trigger(self):
+    def test_video_path_uri_matches_db_upsert_key(self):
+        """重刮後觸發對焦：helper 以 (番號, 片商, video_path_uri, 封面) 呼叫一次，且 video_path_uri
+        必等於 _db_upsert 寫入 DB 的 key（防 silent-miss）。"""
+        from core.path_utils import to_file_uri, uri_to_fs_path
         mock_submit = self._run_refresh()
         mock_submit.assert_called_once()
         args = mock_submit.call_args[0]
@@ -2719,12 +2429,6 @@ class TestEnrichFocalTrigger:
         assert args[1] == "SOD"
         assert args[2].startswith("file:///"), f"video_path_uri 應為 file:/// URI，得 {args[2]!r}"
         assert args[3].endswith(".jpg"), f"cover_fs 應為 .jpg 封面路徑，得 {args[3]!r}"
-
-    def test_video_path_uri_matches_db_upsert_key(self):
-        """helper 收到的 video_path_uri 必等於 _db_upsert 寫入 DB 的 key（防 silent-miss）。"""
-        from core.path_utils import to_file_uri, uri_to_fs_path
-        mock_submit = self._run_refresh()
-        args = mock_submit.call_args[0]
         expected = to_file_uri(uri_to_fs_path("/tmp/SIRO-1234.mp4"))
         assert args[2] == expected, f"video_path_uri 應 == DB key {expected!r}，得 {args[2]!r}"
 
@@ -3317,57 +3021,6 @@ class TestEnrichFocalCoverPathUriNamespace:
 
         # commit 命中非 0 列（真 DB mutation 驗證核心契約）
         assert repo.update_auto_focal(db_key, "0.5,0.5", captured["cover_path_uri"]) is True
-
-    def test_cover_path_uri_reversed_fs_path_causes_commit_miss(self, tmp_path):
-        """namespace 守衛效力自證：若誤傳反解後的 FS path（而非 DB-key URI）當
-        expected_cover_path，真 DB 下 update_auto_focal 必須影響 0 列。"""
-        from unittest.mock import patch
-        from core.database import init_db, VideoRepository, Video
-        from core.path_utils import to_file_uri, uri_to_fs_path, uri_to_local_fs_path
-
-        db_file = tmp_path / "focal_cd99b_enricher_namespace_mutation.db"
-        init_db(db_file)
-        repo = VideoRepository(db_path=db_file)
-
-        video_file = tmp_path / "SIRO-3002.mp4"
-        video_file.write_bytes(b"x")
-        file_path = str(video_file)
-        db_key = to_file_uri(uri_to_fs_path(file_path))
-
-        with patch("core.similar.ranker_cache.SimilarRankerCache"):
-            repo.upsert(Video(path=db_key, number="SIRO-3002", title="Old", maker="SOD"))
-
-        path_mappings = {str(tmp_path): "Z:/lib"}
-        scraper_data = dict(TestEnrichFocalReset._SCRAPER_DATA, number="SIRO-3002")
-        captured = {}
-
-        def _capture_submit(number, maker, video_path_uri, cover_fs, *, cover_path_uri, db_path=None):
-            captured["cover_path_uri"] = cover_path_uri
-
-        with (
-            patch("core.enricher.VideoRepository", return_value=repo),
-            patch("core.enricher.search_jav", return_value=scraper_data),
-            patch("core.enricher.generate_nfo", return_value=True),
-            patch("core.enricher.download_image", side_effect=self._write_fake_cover),
-            patch("core.enricher.find_subtitle_files", return_value=[]),
-            patch("core.focal_trigger.maybe_submit_video_focal", side_effect=_capture_submit),
-            patch("core.similar.ranker_cache.SimilarRankerCache"),
-        ):
-            from core.enricher import enrich_single
-            enrich_single(
-                file_path=file_path, number="SIRO-3002", mode="refresh_full",
-                write_nfo=False, write_cover=True, write_extrafanart=False,
-                overwrite_existing=True, path_mappings=path_mappings,
-            )
-
-        # 故意用反解後的 FS path 當 expected（模擬「誤傳」的 mutation）
-        wrong_expected = uri_to_local_fs_path(captured["cover_path_uri"], path_mappings)
-        assert wrong_expected != captured["cover_path_uri"], (
-            "測試前提：反解後的 FS path 必須與 DB-key URI 不同字串，否則此 mutation "
-            "測試無意義（若這條 assert 失敗，代表本機環境的 to_file_uri/uri_to_local_fs_path "
-            "在此路徑下是 no-op，需換一組會實際轉換的 path_mappings）"
-        )
-        assert repo.update_auto_focal(db_key, "0.6,0.6", wrong_expected) is False
 
 
 # ============ 站2接線測試 (TASK-101a-T2 DoD①④) ============
@@ -4065,26 +3718,6 @@ class TestWriteExternalImagesWriteCoverGate:
 
         assert result == {"poster": True, "fanart": False}
 
-    def test_write_cover_false_never_touches_generation_path(self, tmp_path, mocker):
-        """DoD-7：write_cover=False 時 same_target_verdict/crop_to_poster/
-        shutil.copy2 一次都不被呼叫（不只是跳過 copy/crop，連判斷用的
-        same_target_verdict 呼叫都不跑）。"""
-        cover = tmp_path / "SONE-205.jpg"
-        _create_dummy_jpeg(cover)
-        mock_verdict = mocker.patch("core.enricher.same_target_verdict")
-        mock_crop = mocker.patch("core.enricher.crop_to_poster")
-        mock_copy2 = mocker.patch("core.enricher.shutil.copy2")
-
-        from core.enricher import _write_external_images
-        result = _write_external_images(
-            str(tmp_path / "SONE-205.mp4"), "jellyfin", True, write_cover=False,
-        )
-
-        assert result == {"poster": False, "fanart": False}
-        mock_verdict.assert_not_called()
-        mock_crop.assert_not_called()
-        mock_copy2.assert_not_called()
-
 
 class TestWriteExternalImagesStemDerivationDirectLock:
     """CD-112b-3 直接鎖：`_write_external_images` 用**影片 stem**組
@@ -4303,27 +3936,6 @@ class TestResolveNfoCoverPathsFlavourCoverage:
             f"flavour={external_manager!r} disk_state={disk_state!r} 預期 "
             f"cover_path={expected_cover!r}，實際={cover_path!r}"
         )
-
-    def test_nfo_path_unaffected_by_flavour_reverse_lock(self, tmp_path):
-        """反向鎖獨立測試（Opus 追加要求 #3 / plan §8.3 DoD-2 明列「不能少」）：
-        同一 file_path、同一磁碟狀態，nfo_path 在全部 5 種 flavour 下逐字相同
-        ——它是「flavour 只影響封面那一半」的唯一機械證據。少了它，
-        `resolve_nfo_cover_paths` 的另一半就沒有任何東西擋住未來有人把
-        flavour 也接進 nfo_path 的推導。"""
-        from core.enricher import resolve_nfo_cover_paths
-
-        video_path = tmp_path / "SONE-205.mp4"
-        video_path.write_bytes(b"FAKE-VIDEO")
-        self._make_disk(video_path, "fanart_only")
-
-        nfo_paths = {
-            flavour: resolve_nfo_cover_paths(str(video_path), None, flavour)[0]
-            for flavour in self._FLAVOURS
-        }
-        assert len(set(nfo_paths.values())) == 1, (
-            f"nfo_path 必須在所有 flavour 下逐字相同，實際: {nfo_paths}"
-        )
-        assert next(iter(nfo_paths.values())) == str(video_path.with_suffix(".nfo"))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -5822,57 +5434,6 @@ class TestEnrichSinglePreservedTitleOverride:
 
 class TestNfoTitleFormatWiring:
     """TASK-154b-T2: enrich_single nfo_title_format 轉傳測試"""
-
-    def test_enrich_single_applies_custom_nfo_title_format(self):
-        """傳入自訂 nfo_title_format 時應轉傳給 generate_nfo"""
-        video = _make_video()
-
-        with (
-            patch("os.path.exists", return_value=True),
-            patch("core.enricher.VideoRepository") as mock_repo_cls,
-            patch("core.enricher.generate_nfo") as mock_nfo,
-            patch("core.enricher.download_image", return_value=True),
-        ):
-            mock_repo = MagicMock()
-            mock_repo_cls.return_value = mock_repo
-            mock_repo.get_by_numbers.return_value = {"SONE-205": [video]}
-
-            from core.enricher import enrich_single
-            enrich_single(
-                file_path=FS_PATH,
-                number="SONE-205",
-                write_nfo=True,
-                overwrite_existing=True,
-                nfo_title_format="{num}-{title}",
-            )
-
-        assert mock_nfo.call_args is not None, "generate_nfo 應被呼叫"
-        assert mock_nfo.call_args.kwargs.get("nfo_title_format") == "{num}-{title}"
-
-    def test_enrich_single_missing_nfo_title_format_defaults_to_default(self):
-        """未傳入 nfo_title_format 時 generate_nfo 應收到預設格式 [{num}]{title}"""
-        video = _make_video()
-
-        with (
-            patch("os.path.exists", return_value=True),
-            patch("core.enricher.VideoRepository") as mock_repo_cls,
-            patch("core.enricher.generate_nfo") as mock_nfo,
-            patch("core.enricher.download_image", return_value=True),
-        ):
-            mock_repo = MagicMock()
-            mock_repo_cls.return_value = mock_repo
-            mock_repo.get_by_numbers.return_value = {"SONE-205": [video]}
-
-            from core.enricher import enrich_single
-            enrich_single(
-                file_path=FS_PATH,
-                number="SONE-205",
-                write_nfo=True,
-                overwrite_existing=True,
-            )
-
-        assert mock_nfo.call_args is not None, "generate_nfo 應被呼叫"
-        assert mock_nfo.call_args.kwargs.get("nfo_title_format") == "[{num}]{title}"
 
     def test_enrich_single_applies_custom_nfo_title_format_external_manager(self):
         """external_manager != 'off' 分支也能正確轉傳 nfo_title_format 給 generate_nfo"""

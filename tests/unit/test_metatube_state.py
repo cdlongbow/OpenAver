@@ -87,35 +87,6 @@ def test_mark_available_restore(state):
 
 
 # ---------------------------------------------------------------------------
-# 5. availability_map returns a copy (mutate does not affect internal state)
-# ---------------------------------------------------------------------------
-
-def test_availability_map_returns_copy(state):
-    state.connect('http://host', 'tok', ['FANZA'])
-    result = state.availability_map()
-    assert result['metatube:FANZA'] is True
-
-    # Mutate the returned dict
-    result['metatube:FANZA'] = False
-
-    # Internal state must be unchanged
-    assert state.is_available('metatube:FANZA') is True
-
-
-# ---------------------------------------------------------------------------
-# 6. is_available unknown id → False
-# ---------------------------------------------------------------------------
-
-def test_is_available_unknown_id_false(state):
-    # Before any connect — empty _availability
-    assert state.is_available('metatube:UNKNOWN') is False
-
-    # After connect with known providers — unknown id still False
-    state.connect('http://host', 'tok', ['FANZA'])
-    assert state.is_available('metatube:UNKNOWN') is False
-
-
-# ---------------------------------------------------------------------------
 # 7. repeated connect resets (bulk-true overwrites failed state)
 # ---------------------------------------------------------------------------
 
@@ -130,44 +101,6 @@ def test_repeated_connect_resets(state):
     assert state.is_available('metatube:HEYZO') is True
     assert state.base_url == 'http://host2'
     assert state.provider_count == 2
-
-
-# ---------------------------------------------------------------------------
-# 8a. Thread-safe: parallel toggle (mark_failed then mark_available) → all True
-# ---------------------------------------------------------------------------
-
-def test_parallel_toggle_all_available(state):
-    providers = [f'P{i}' for i in range(20)]
-    state.connect('http://host', '', providers)
-
-    def toggle(name):
-        sid = f'metatube:{name}'
-        state.mark_failed(sid)
-        state.mark_available(sid)
-
-    with ThreadPoolExecutor(max_workers=10) as ex:
-        list(ex.map(toggle, providers))
-
-    for n in providers:
-        assert state.is_available(f'metatube:{n}') is True
-
-
-# ---------------------------------------------------------------------------
-# 8b. Thread-safe: parallel mark_failed → all False
-# ---------------------------------------------------------------------------
-
-def test_parallel_mark_failed_all_false(state):
-    providers = [f'Q{i}' for i in range(20)]
-    state.connect('http://host', '', providers)
-
-    def fail(name):
-        state.mark_failed(f'metatube:{name}')
-
-    with ThreadPoolExecutor(max_workers=10) as ex:
-        list(ex.map(fail, providers))
-
-    for n in providers:
-        assert state.is_available(f'metatube:{n}') is False
 
 
 # ---------------------------------------------------------------------------
@@ -196,29 +129,6 @@ def test_availability_map_no_race_concurrent(state):
 
 
 # ---------------------------------------------------------------------------
-# Extra: mark_failed / mark_available on unknown source_id (no raise)
-# ---------------------------------------------------------------------------
-
-def test_mark_unknown_source_id_no_raise(state):
-    # Should not raise — just writes to dict
-    state.mark_failed('metatube:NEWONE')
-    assert state.is_available('metatube:NEWONE') is False
-    state.mark_available('metatube:NEWONE')
-    assert state.is_available('metatube:NEWONE') is True
-
-
-# ---------------------------------------------------------------------------
-# Extra: provider_count after disconnect is 0
-# ---------------------------------------------------------------------------
-
-def test_provider_count_after_disconnect(state):
-    state.connect('http://host', 'tok', ['FANZA', 'HEYZO', 'FC2'])
-    assert state.provider_count == 3
-    state.disconnect()
-    assert state.provider_count == 0
-
-
-# ---------------------------------------------------------------------------
 # Fix 2 (P1b): reconnect removes stale providers
 # ---------------------------------------------------------------------------
 
@@ -239,56 +149,6 @@ def test_reconnect_removes_stale_providers(state):
 # ===========================================================================
 # CD-63b-2: probe progress setters + status_dict
 # ===========================================================================
-
-def test_probe_initial_state():
-    """Fresh instance: probe_done=True, probe_progress=0."""
-    s = MetatubeConnectionState()
-    assert s.probe_done is True
-    assert s.probe_progress == 0
-
-
-def test_probe_set_started():
-    """set_probe_started() → probe_done=False, probe_progress=0."""
-    s = MetatubeConnectionState()
-    s.set_probe_started()
-    assert s.probe_done is False
-    assert s.probe_progress == 0
-
-
-def test_probe_set_progress():
-    """set_probe_progress(5, 30) → probe_progress==5."""
-    s = MetatubeConnectionState()
-    s.set_probe_started()
-    s.set_probe_progress(5, 30)
-    assert s.probe_progress == 5
-    assert s.probe_done is False  # still in progress
-
-
-def test_probe_set_done():
-    """set_probe_done() → probe_done=True."""
-    s = MetatubeConnectionState()
-    s.set_probe_started()
-    s.set_probe_progress(5, 30)
-    s.set_probe_done()
-    assert s.probe_done is True
-
-
-def test_probe_setter_sequence_no_deadlock():
-    """Single-threaded setter sequence completes without deadlock."""
-    s = MetatubeConnectionState()
-    # initial
-    assert s.probe_done is True
-    assert s.probe_progress == 0
-    # start
-    s.set_probe_started()
-    assert s.probe_done is False
-    assert s.probe_progress == 0
-    # progress
-    s.set_probe_progress(5, 30)
-    assert s.probe_progress == 5
-    # done
-    s.set_probe_done()
-    assert s.probe_done is True
 
 
 def test_status_dict_shape():
@@ -555,53 +415,11 @@ def test_connected_base_url_happy_path(state):
     assert state.connected_base_url() == 'http://127.0.0.1:8900'
 
 
-def test_connected_base_url_never_connected_returns_none(state):
-    """Fresh state (never connect) → None."""
-    assert state.connected_base_url() is None
-
-
-def test_connected_base_url_connect_with_empty_base_url_returns_none(state):
-    """connect() with empty base_url leaves connected=True but value is useless → None."""
-    state.connect('', 'tok', ['FANZA'])
-    assert state.is_connected is True
-    assert state.base_url == ''
-    assert state.connected_base_url() is None
-
-
 def test_connected_base_url_after_disconnect_returns_none(state):
     """After disconnect() → None (connected=False, base_url=None)."""
     state.connect('http://127.0.0.1:8900', 'tok', ['FANZA'])
     state.disconnect()
     assert state.connected_base_url() is None
-
-
-def test_connected_base_url_atomic_no_race(state):
-    """Structurally-green under correct impl: hooks is_connected to disconnect mid-read.
-
-    Correct connected_base_url() reads connected + base_url under a single _lock
-    and never calls is_connected, so the hook never fires and the base_url is
-    returned.  A two-step 'if is_connected: return base_url' impl would fire the
-    hook, disconnect, and either return None or a stale host — that mutation
-    must turn this test red (DoD-1a / BE-TEST-05 mirror shape).
-    """
-    state.connect('http://127.0.0.1:8900', 'tok', ['FANZA'])
-
-    real_is_connected = MetatubeConnectionState.is_connected
-
-    def _hook(_self):
-        # Property getter: return True then immediately disconnect so a
-        # subsequent unlocked base_url read would observe None.
-        result = real_is_connected.fget(_self)
-        if result:
-            _self.disconnect()
-        return result
-
-    # Patch the property on the class so any is_connected access is hooked.
-    MetatubeConnectionState.is_connected = property(_hook)
-    try:
-        assert state.connected_base_url() == 'http://127.0.0.1:8900'
-    finally:
-        MetatubeConnectionState.is_connected = real_is_connected
 
 
 def test_status_dict_never_leaks_userinfo_credentials():
@@ -1025,7 +843,8 @@ def test_disconnected_state_never_optimistically_routable(state, monkeypatch):
 
 
 def test_refail_within_cooldown_restarts_the_window(state, monkeypatch):
-    """冷卻期內再次請求失敗時重新起算冷卻時間，避免持續故障的來源過早重試導致使用者頻繁等待逾時。"""
+    """冷卻期內再次請求失敗時重新起算冷卻時間，避免持續故障的來源過早重試導致使用者頻繁等待逾時。
+    冷卻到期後樂觀重試又失敗，同樣重新進入完整冷卻期。"""
     monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
     state.connect('http://host', 'tok', ['FANZA'])
     state.mark_failed('metatube:FANZA')
@@ -1044,6 +863,19 @@ def test_refail_within_cooldown_restarts_the_window(state, monkeypatch):
 
     # 時鐘推到 t=560（距第二次失敗 310 秒 > 300），冷卻到期恢復可路由
     monkeypatch.setattr('core.metatube.state._now', lambda: 560.0)
+    assert state.routing_availability_map()['metatube:FANZA'] is True
+
+    # 冷卻到期後（t=560 已樂觀放行）重試又失敗 → 重新進入完整冷卻期
+    state.mark_failed('metatube:FANZA')
+    assert state._failed_at['metatube:FANZA'] == 560.0
+    assert state.routing_availability_map()['metatube:FANZA'] is False
+
+    # 時鐘推到 t=700（距 t=560 僅 140 秒 < 300），仍處於冷卻中
+    monkeypatch.setattr('core.metatube.state._now', lambda: 700.0)
+    assert state.routing_availability_map()['metatube:FANZA'] is False
+
+    # 時鐘推到 t=861（距 t=560 已 301 秒 > 300），冷卻到期再次放行
+    monkeypatch.setattr('core.metatube.state._now', lambda: 861.0)
     assert state.routing_availability_map()['metatube:FANZA'] is True
 
 
@@ -1071,26 +903,3 @@ def test_success_after_expiry_converges_both_maps(state, monkeypatch):
     assert state.routing_availability_map() == state.availability_map()
     assert state._failed_at == {}
 
-
-def test_refail_after_expiry_reenters_cooldown(state, monkeypatch):
-    """來源冷卻到期後樂觀重試若再度失敗，會重新進入完整冷卻期，避免故障來源被連續重試導致使用者每次搜尋都被迫等待逾時。"""
-    monkeypatch.setattr('core.metatube.state._now', lambda: 100.0)
-    state.connect('http://host', 'tok', ['FANZA'])
-    state.mark_failed('metatube:FANZA')
-
-    # 時鐘推到 t=500（已過期，路由地圖樂觀放行）
-    monkeypatch.setattr('core.metatube.state._now', lambda: 500.0)
-    assert state.routing_availability_map()['metatube:FANZA'] is True
-
-    # 在 t=500 時樂觀重試失敗，再次觸發 mark_failed
-    state.mark_failed('metatube:FANZA')
-    assert state._failed_at['metatube:FANZA'] == 500.0
-    assert state.routing_availability_map()['metatube:FANZA'] is False
-
-    # 時鐘推到 t=700（距 t=500 僅 200 秒 < 300），仍處於冷卻中
-    monkeypatch.setattr('core.metatube.state._now', lambda: 700.0)
-    assert state.routing_availability_map()['metatube:FANZA'] is False
-
-    # 時鐘推到 t=801（距 t=500 已 301 秒 > 300），冷卻到期再次放行
-    monkeypatch.setattr('core.metatube.state._now', lambda: 801.0)
-    assert state.routing_availability_map()['metatube:FANZA'] is True

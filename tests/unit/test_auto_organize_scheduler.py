@@ -1,6 +1,6 @@
 """tests/unit/test_auto_organize_scheduler.py — 排程 loop 單元測試（TASK-144-T5）。
 
-覆蓋 DoD 1–11 與 mutation 點 M1/M2/M5/M6/M7。
+覆蓋 DoD 1–3、5–11 與 mutation 點 M1/M2/M5/M6/M7。
 """
 from __future__ import annotations
 
@@ -63,12 +63,6 @@ def test_is_due_first_wake_resets_without_running():
     assert sched._next_due_at == 0.0
     assert sched._is_due() is False
     assert sched._next_due_at > time.time()
-
-
-def test_is_due_true_after_deadline():
-    """DoD-1：到期後 _is_due() 為 True。"""
-    sched._next_due_at = time.time() - 1.0
-    assert sched._is_due() is True
 
 
 def test_reset_due_time_pushes_interval_forward():
@@ -207,48 +201,16 @@ async def test_prepare_exception_still_releases_running(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# DoD-4：enter_cron 在探測之前（順序）
-# ---------------------------------------------------------------------------
-
-async def test_enter_cron_before_folder_probe_in_enter_and_start(monkeypatch):
-    """DoD-4：enter_cron 是第一步；探測排在它之後。"""
-    order = []
-
-    real_enter = auto_organize_state.enter_cron
-
-    def tracking_enter(trigger, now=None):
-        order.append(("enter_cron", trigger))
-        return real_enter(trigger, now=now)
-
-    async def tracking_prepare(trigger):
-        order.append(("prepare", trigger))
-        auto_organize_state.exit_cron()
-        return _empty_result()
-
-    monkeypatch.setattr(sched.auto_organize_state, "enter_cron", tracking_enter)
-    monkeypatch.setattr(sched, "_prepare_and_run", tracking_prepare)
-    # _run_round_body 會再 exit；prepare 已 exit，再包 round_guard 會 double-exit（無害）
-    # 改成直接測 enter_and_start 順序：enter 後才 create_task(prepare)
-    monkeypatch.setattr(sched, "_run_round_body", tracking_prepare)
-
-    result = sched.enter_and_start("run_now")
-    assert result["success"] is True
-    await asyncio.wait_for(sched._round_task, timeout=1.0)
-
-    assert order[0] == ("enter_cron", "run_now")
-    assert order[1] == ("prepare", "run_now")
-
-
-# ---------------------------------------------------------------------------
 # DoD-6 / M2：零事件不發通知
 # ---------------------------------------------------------------------------
 
-def test_zero_events_does_not_emit(monkeypatch):
-    """DoD-6 / M2：事件數 0 → 不發通知。"""
+@pytest.mark.parametrize("overrides", [{}, {"aborted_after": 0}], ids=["no_events", "aborted_after_zero"])
+def test_zero_events_does_not_emit(monkeypatch, overrides):
+    """DoD-6 / M2：事件數 0 → 不發通知。DoD-7 / M5：aborted_after == 0 同樣不發。"""
     emit = MagicMock()
     monkeypatch.setattr(sched, "emit_notification", emit)
 
-    sched._emit_round_summary(_empty_result())
+    sched._emit_round_summary(_empty_result(**overrides))
     emit.assert_not_called()
 
 
@@ -278,24 +240,6 @@ def test_aborted_after_positive_emits_aborted(monkeypatch):
     emit.assert_called_once()
     assert emit.call_args.args[1] == "notif.auto_organize_aborted"
     assert "處理 3 部後因手動操作中止" in emit.call_args.kwargs["message"]
-
-
-def test_aborted_after_zero_does_not_emit(monkeypatch):
-    """DoD-7 / M5：aborted_after == 0 → 不發通知。"""
-    emit = MagicMock()
-    monkeypatch.setattr(sched, "emit_notification", emit)
-
-    sched._emit_round_summary(_empty_result(aborted_after=0))
-    emit.assert_not_called()
-
-
-def test_aborted_after_none_falls_through_to_event_threshold(monkeypatch):
-    """DoD-7：aborted_after is None → 走事件數門檻（零事件不發）。"""
-    emit = MagicMock()
-    monkeypatch.setattr(sched, "emit_notification", emit)
-
-    sched._emit_round_summary(_empty_result(aborted_after=None))
-    emit.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

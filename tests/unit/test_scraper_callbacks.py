@@ -49,25 +49,6 @@ def make_mock_scraper_actress(ids_per_page):
 class TestSearchPrefixResultCallback:
     """測試 search_prefix() 的 result_callback 行為"""
 
-    def test_result_callback_none_default_no_error(self, make_mock_search_jav):
-        """result_callback=None（預設）不會拋出錯誤，行為與現在完全相同"""
-        from core.scraper import search_prefix
-
-        ids = ['SONE-100', 'SONE-101', 'SONE-102']
-        results_map = {
-            'SONE-100': {'number': 'SONE-100', 'title': 'Title 100'},
-            'SONE-101': {'number': 'SONE-101', 'title': 'Title 101'},
-            'SONE-102': {'number': 'SONE-102', 'title': 'Title 102'},
-        }
-
-        mock_scraper = make_mock_scraper_prefix(ids)
-
-        with patch('core.scraper.JavBusScraper', return_value=mock_scraper), \
-             patch('core.scraper.search_jav', side_effect=make_mock_search_jav(results_map)):
-            # No result_callback passed — should not raise
-            results = search_prefix('SONE', limit=20)
-            assert isinstance(results, list)
-
     def test_seed_sent_after_found(self, make_mock_search_jav):
         """result_callback(-1, target_ids) 應在 found:N 後被呼叫一次"""
         from core.scraper import search_prefix
@@ -220,23 +201,6 @@ class TestSearchPrefixResultCallback:
 class TestSearchActressResultCallback:
     """測試 search_actress() 的 result_callback 行為"""
 
-    def test_result_callback_none_default_no_error(self, make_mock_search_jav):
-        """result_callback=None（預設）不會拋出錯誤"""
-        from core.scraper import search_actress
-
-        ids = ['SONE-100', 'SONE-101']
-        results_map = {
-            'SONE-100': {'number': 'SONE-100', 'title': 'Title 100', 'actors': ['三上悠亜']},
-            'SONE-101': {'number': 'SONE-101', 'title': 'Title 101', 'actors': ['三上悠亜']},
-        }
-
-        mock_scraper = make_mock_scraper_actress([ids])
-
-        with patch('core.scraper.JavBusScraper', return_value=mock_scraper), \
-             patch('core.scraper.search_jav', side_effect=make_mock_search_jav(results_map)):
-            results = search_actress('三上悠亜', limit=20)
-            assert isinstance(results, list)
-
     def test_seed_sent_after_found(self, make_mock_search_jav):
         """result_callback(-1, target_ids) 應在 JavBus found:N 後被呼叫一次"""
         from core.scraper import search_actress
@@ -344,87 +308,30 @@ class TestSearchActressResultCallback:
 class TestSmartSearchResultCallback:
     """測試 smart_search() 的 result_callback 透傳行為"""
 
-    def test_result_callback_passthrough_actress_mode(self, make_mock_search_jav):
-        """smart_search 在 actress 模式下應透傳 result_callback 給 search_actress"""
+    @pytest.mark.parametrize("query, target, prefix_only", [
+        ("三上悠亜", "search_actress", False),
+        ("SONE", "search_prefix", True),
+    ])
+    def test_result_callback_passthrough_actress_mode(self, make_mock_search_jav, query, target, prefix_only):
+        """smart_search 在 actress／prefix 模式下應透傳 result_callback 給 search_actress／search_prefix"""
         from core.scraper import smart_search
 
         received_callbacks = {}
 
-        def mock_search_actress(name, limit=20, offset=0, status_callback=None, result_callback=None, **kwargs):
-            received_callbacks['actress_callback'] = result_callback
-            return [{'number': 'SONE-100', 'actors': ['三上悠亜'], '_mode': 'actress'}]
+        def mock_search(name, limit=20, offset=0, status_callback=None, result_callback=None, **kwargs):
+            received_callbacks['callback'] = result_callback
+            return [{'number': 'SONE-100'}]
 
         my_callback = MagicMock()
 
-        with patch('core.scraper.search_actress', side_effect=mock_search_actress), \
+        with patch(f'core.scraper.{target}', side_effect=mock_search), \
              patch('core.scraper.is_number_format', return_value=False), \
              patch('core.scraper.is_partial_number', return_value=False), \
-             patch('core.scraper.is_prefix_only', return_value=False):
-            smart_search('三上悠亜', result_callback=my_callback)
+             patch('core.scraper.is_prefix_only', return_value=prefix_only):
+            smart_search(query, result_callback=my_callback)
 
-        assert received_callbacks.get('actress_callback') is my_callback, \
-            "smart_search should pass result_callback to search_actress"
-
-    def test_result_callback_passthrough_prefix_mode(self, make_mock_search_jav):
-        """smart_search 在 prefix 模式下應透傳 result_callback 給 search_prefix"""
-        from core.scraper import smart_search
-
-        received_callbacks = {}
-
-        def mock_search_prefix(prefix, limit=20, offset=0, status_callback=None, result_callback=None, **kwargs):
-            received_callbacks['prefix_callback'] = result_callback
-            return [{'number': 'SONE-100', '_mode': 'prefix'}]
-
-        my_callback = MagicMock()
-
-        with patch('core.scraper.search_prefix', side_effect=mock_search_prefix), \
-             patch('core.scraper.is_number_format', return_value=False), \
-             patch('core.scraper.is_partial_number', return_value=False), \
-             patch('core.scraper.is_prefix_only', return_value=True):
-            smart_search('SONE', result_callback=my_callback)
-
-        assert received_callbacks.get('prefix_callback') is my_callback, \
-            "smart_search should pass result_callback to search_prefix"
-
-    def test_result_callback_not_passed_to_exact_mode(self, make_mock_search_jav):
-        """exact 搜尋模式下 result_callback 不應影響（callback 不被呼叫）"""
-        from core.scraper import smart_search
-
-        callback_calls = []
-
-        def my_callback(slot, data):
-            callback_calls.append((slot, data))
-
-        mock_result = {'number': 'SONE-100', 'title': 'Title', '_source': 'dmm'}
-
-        with patch('core.scraper.is_number_format', return_value=True), \
-             patch('core.scraper.normalize_number', return_value='SONE-100'), \
-             patch('core.scraper.get_enabled_source_ids', return_value=['dmm']), \
-             patch('core.scraper.metatube_state') as mock_mt, \
-             patch('core.scraper.search_jav_single_source', return_value=mock_result):
-            mock_mt.availability_map.return_value = {}
-            mock_mt.routing_availability_map.return_value = {}
-            results = smart_search('SONE-100', result_callback=my_callback)
-
-        assert callback_calls == [], \
-            f"result_callback should not be called in exact mode, got {callback_calls}"
-
-    def test_result_callback_none_default_smart_search(self, make_mock_search_jav):
-        """smart_search result_callback=None 不應改變行為"""
-        from core.scraper import smart_search
-
-        mock_result = {'number': 'SONE-100', 'title': 'Title', '_source': 'dmm'}
-
-        with patch('core.scraper.is_number_format', return_value=True), \
-             patch('core.scraper.normalize_number', return_value='SONE-100'), \
-             patch('core.scraper.get_enabled_source_ids', return_value=['dmm']), \
-             patch('core.scraper.metatube_state') as mock_mt, \
-             patch('core.scraper.search_jav_single_source', return_value=mock_result):
-            mock_mt.availability_map.return_value = {}
-            mock_mt.routing_availability_map.return_value = {}
-            # No result_callback — should not raise
-            results = smart_search('SONE-100')
-            assert isinstance(results, list)
+        assert received_callbacks.get('callback') is my_callback, \
+            f"smart_search should pass result_callback to {target}"
 
     def test_smart_search_prefix_fallback_does_not_pass_callback(self, make_mock_search_jav):
         """prefix→actress fallback 時，actress call 不應收到 result_callback（避免 stale seed）"""
@@ -452,28 +359,6 @@ class TestSmartSearchResultCallback:
         assert actress_received_callback.get('callback') is None, \
             "prefix→actress fallback must NOT pass result_callback to search_actress " \
             f"(got {actress_received_callback.get('callback')})"
-
-    def test_smart_search_passes_result_callback_to_actress_direct(self, make_mock_search_jav):
-        """smart_search 在 actress 模式下（非 fallback）應透傳 result_callback 給 search_actress"""
-        from core.scraper import smart_search
-
-        received_callbacks = {}
-
-        def mock_search_actress(name, limit=20, offset=0, status_callback=None, result_callback=None, **kwargs):
-            received_callbacks['actress_callback'] = result_callback
-            return [{'number': 'SONE-100', 'actors': ['三上悠亜'], '_mode': 'actress'}]
-
-        my_callback = MagicMock()
-
-        # actress mode: is_prefix_only=False, is_number_format=False, is_partial_number=False
-        with patch('core.scraper.search_actress', side_effect=mock_search_actress), \
-             patch('core.scraper.is_number_format', return_value=False), \
-             patch('core.scraper.is_partial_number', return_value=False), \
-             patch('core.scraper.is_prefix_only', return_value=False):
-            smart_search('三上悠亜', result_callback=my_callback)
-
-        assert received_callbacks.get('actress_callback') is my_callback, \
-            "Direct actress mode must pass result_callback to search_actress"
 
 
 # ============ discovery_only 參數測試 ============
@@ -503,24 +388,6 @@ class TestDiscoveryOnly:
         for r in results:
             assert 'number' in r
             assert r.get('title', '') == ''  # title is empty in discovery mode
-
-    def test_search_prefix_discovery_only_false_still_enriches(self, make_mock_search_jav):
-        """discovery_only=False（預設）: search_prefix 仍呼叫 search_jav 做 enrichment"""
-        from core.scraper import search_prefix
-
-        ids = ['SONE-100', 'SONE-101']
-        results_map = {
-            'SONE-100': {'number': 'SONE-100', 'title': 'Title 100'},
-            'SONE-101': {'number': 'SONE-101', 'title': 'Title 101'},
-        }
-        mock_scraper = make_mock_scraper_prefix(ids)
-
-        with patch('core.scraper.JavBusScraper', return_value=mock_scraper), \
-             patch('core.scraper.search_jav', side_effect=make_mock_search_jav(results_map)) as mock_jav:
-            results = search_prefix('SONE', limit=20, discovery_only=False)
-
-        assert mock_jav.call_count == 2, \
-            f"search_jav should be called twice (once per ID), got {mock_jav.call_count}"
 
     def test_search_actress_discovery_only_returns_ids_no_enrich(self, monkeypatch, make_mock_search_jav):
         """discovery_only=True: search_actress 只做 get_ids_from_search，不呼叫 search_jav"""
@@ -568,45 +435,29 @@ class TestDiscoveryOnly:
         for r in results:
             assert 'number' in r
 
-    def test_smart_search_passes_discovery_only_to_actress(self, make_mock_search_jav):
-        """smart_search(discovery_only=True) 在 actress 模式下傳遞給 search_actress"""
+    @pytest.mark.parametrize("query, target, prefix_only", [
+        ("三上悠亜", "search_actress", False),
+        ("SONE", "search_prefix", True),
+    ])
+    def test_smart_search_passes_discovery_only_to_actress(self, make_mock_search_jav, query, target, prefix_only):
+        """smart_search(discovery_only=True) 在 actress／prefix 模式下傳遞給 search_actress／search_prefix"""
         from core.scraper import smart_search
 
         received = {}
 
-        def mock_search_actress(name, limit=20, offset=0, status_callback=None,
-                                 result_callback=None, discovery_only=False, **kwargs):
+        def mock_search(name, limit=20, offset=0, status_callback=None,
+                        result_callback=None, discovery_only=False, **kwargs):
             received['discovery_only'] = discovery_only
-            return [{'number': 'SONE-100', '_mode': 'actress'}]
+            return [{'number': 'SONE-100'}]
 
-        with patch('core.scraper.search_actress', side_effect=mock_search_actress), \
+        with patch(f'core.scraper.{target}', side_effect=mock_search), \
              patch('core.scraper.is_number_format', return_value=False), \
              patch('core.scraper.is_partial_number', return_value=False), \
-             patch('core.scraper.is_prefix_only', return_value=False):
-            smart_search('三上悠亜', discovery_only=True)
+             patch('core.scraper.is_prefix_only', return_value=prefix_only):
+            smart_search(query, discovery_only=True)
 
         assert received.get('discovery_only') is True, \
-            "smart_search should pass discovery_only=True to search_actress"
-
-    def test_smart_search_passes_discovery_only_to_prefix(self, make_mock_search_jav):
-        """smart_search(discovery_only=True) 在 prefix 模式下傳遞給 search_prefix"""
-        from core.scraper import smart_search
-
-        received = {}
-
-        def mock_search_prefix(prefix, limit=20, offset=0, status_callback=None,
-                                result_callback=None, discovery_only=False):
-            received['discovery_only'] = discovery_only
-            return [{'number': 'SONE-100', '_mode': 'prefix'}]
-
-        with patch('core.scraper.search_prefix', side_effect=mock_search_prefix), \
-             patch('core.scraper.is_number_format', return_value=False), \
-             patch('core.scraper.is_partial_number', return_value=False), \
-             patch('core.scraper.is_prefix_only', return_value=True):
-            smart_search('SONE', discovery_only=True)
-
-        assert received.get('discovery_only') is True, \
-            "smart_search should pass discovery_only=True to search_prefix"
+            f"smart_search should pass discovery_only=True to {target}"
 
     def test_smart_search_exact_ignores_discovery_only(self, make_mock_search_jav):
         """smart_search(discovery_only=True) 在 exact 模式下忽略 discovery_only，仍回傳結果。

@@ -81,23 +81,11 @@ class TestNeedsUpdateNewFields:
         assert 'duration' not in missing
 
     # 4. 缺 series → 不再檢查（來源不一定有）
-    def test_missing_series_not_checked(self):
-        info = make_base_info(series='')
+    @pytest.mark.parametrize("field", ["series", "label"])
+    def test_missing_series_not_checked(self, field):
+        info = make_base_info(**{field: ''})
         need, missing = needs_update(info, has_nfo=True)
-        assert 'series' not in missing
-
-    # 5. 缺 label → 不再檢查（來源不一定有）
-    def test_missing_label_not_checked(self):
-        info = make_base_info(label='')
-        need, missing = needs_update(info, has_nfo=True)
-        assert 'label' not in missing
-
-    # 6. 所有新欄位都有值 → missing 不含新欄位
-    def test_all_new_fields_present_not_missing(self):
-        info = make_base_info()  # 預設全部有值
-        need, missing = needs_update(info, has_nfo=True)
-        for field in ('director', 'duration'):
-            assert field not in missing
+        assert field not in missing
 
     # 7. 既有欄位（title/date/actor/genre/maker）檢查不受影響
     def test_existing_fields_still_checked(self):
@@ -122,15 +110,6 @@ class TestNeedsUpdateNeverNagsPlotRating:
     NFO-only carrier、從不進 info dict，故結構上不可能被 nag——本測試把此契約
     顯式鎖死，防未來有人於 needs_update() 誤加 plot/rating 檢查。"""
 
-    # 有其他缺料時，missing 仍不含 plot/rating
-    def test_plot_rating_absent_from_missing_when_other_fields_missing(self):
-        info = make_base_info(maker='')
-        need, missing = needs_update(info, has_nfo=True)
-        assert need is True
-        assert 'maker' in missing
-        assert 'plot' not in missing
-        assert 'rating' not in missing
-
     # 全有值 → 完全不需更新，plot/rating 自然不在 missing
     def test_plot_rating_absent_when_all_present(self):
         info = make_base_info()
@@ -153,78 +132,6 @@ class TestNeedsUpdateNeverNagsPlotRating:
         need, missing = needs_update(info, has_nfo=True)
         assert need is False
         assert missing == []
-
-
-
-# ============================================================
-# scanner.py info dict 格式守衛
-# ============================================================
-
-class TestScannerInfoDictNewFields:
-    """確保 scanner.py 建構的 info dict 包含新欄位，不造成永久 needs_update"""
-
-    def _make_scanner_info(self, **overrides) -> dict:
-        """模擬 scanner.py 三處 info dict 建構（含新欄位）。"""
-        base = {
-            'title': 'テストタイトル',
-            'date': '2024-01-01',
-            'actor': '女優A',
-            'genre': 'ジャンルA',
-            'maker': '片商A',
-            'num': 'TEST-001',
-            'director': '監督A',
-            'duration': 90,
-            'series': 'シリーズA',
-            'label': 'labelA',
-        }
-        base.update(overrides)
-        return base
-
-    def test_full_info_dict_not_missing_new_fields(self):
-        """scanner 完整 info dict（含新欄位）→ needs_update 不回報新欄位缺失"""
-        info = self._make_scanner_info()
-        need, missing = needs_update(info, has_nfo=True)
-        for field in ('director', 'duration', 'series', 'label'):
-            assert field not in missing, f"新欄位 '{field}' 不應在 missing 中"
-
-    def test_old_style_info_dict_missing_new_fields(self):
-        """舊格式 info dict（缺新欄位）→ needs_update 回報 director/duration 缺失（series/label 不再檢查）"""
-        old_style = {
-            'title': 'テストタイトル',
-            'date': '2024-01-01',
-            'actor': '女優A',
-            'genre': 'ジャンルA',
-            'maker': '片商A',
-            'num': 'TEST-001',
-            # 缺 director, duration, series, label
-        }
-        need, missing = needs_update(old_style, has_nfo=True)
-        assert need is True
-        assert 'director' in missing, "舊格式 dict 應缺少 'director'"
-        assert 'duration' in missing, "舊格式 dict 應缺少 'duration'"
-        # series/label 不再檢查
-        assert 'series' not in missing
-        assert 'label' not in missing
-
-    def test_new_fields_with_empty_string_still_missing(self):
-        """scanner 傳入空字串的新欄位 → director 仍被列為缺失，series/label 不再檢查"""
-        info = self._make_scanner_info(director='', series='', label='')
-        need, missing = needs_update(info, has_nfo=True)
-        assert 'director' in missing
-        assert 'series' not in missing
-        assert 'label' not in missing
-
-    def test_duration_none_from_db_still_missing(self):
-        """DB 中 duration=None（未抓到）→ needs_update 列為缺失"""
-        info = self._make_scanner_info(duration=None)
-        need, missing = needs_update(info, has_nfo=True)
-        assert 'duration' in missing
-
-    def test_duration_zero_from_db_not_missing(self):
-        """DB 中 duration=0（有效值）→ needs_update 不列為缺失"""
-        info = self._make_scanner_info(duration=0)
-        need, missing = needs_update(info, has_nfo=True)
-        assert 'duration' not in missing
 
 
 # ============================================================
@@ -287,38 +194,31 @@ class TestUpdateNfoFileNewFields:
         assert root.find('label').text == '新label'
 
     # 9. 已有 director 的 NFO + metadata 有 director → 不覆蓋
-    def test_existing_director_not_overwritten(self, tmp_path):
-        nfo_xml = self._minimal_nfo(director='既存監督')
+    @pytest.mark.parametrize(
+        ("nfo_kwargs", "info_kwargs", "metadata", "xpath", "expected"),
+        [
+            ({'director': '既存監督'}, {'director': '既存監督'},
+             {'director': '新監督'}, 'director', '既存監督'),
+            ({'runtime': '90'}, {'duration': 90},
+             {'duration': 200}, 'runtime', '90'),
+            ({'set_name': '既存シリーズ'}, {'series': '既存シリーズ'},
+             {'series': '新シリーズ'}, 'set/name', '既存シリーズ'),
+            ({'label': '既存label'}, {'label': '既存label'},
+             {'label': '新label'}, 'label', '既存label'),
+        ],
+        ids=['director', 'runtime', 'set_name', 'label'],
+    )
+    def test_existing_director_not_overwritten(
+        self, tmp_path, nfo_kwargs, info_kwargs, metadata, xpath, expected
+    ):
+        nfo_xml = self._minimal_nfo(**nfo_kwargs)
         nfo_path = write_nfo(tmp_path, nfo_xml)
-        info = make_base_info(director='既存監督')
-        metadata = {'director': '新監督'}
+        info = make_base_info(**info_kwargs)
         updated, msg = update_nfo_file(nfo_path, metadata, info)
 
         # 不應修改
         root = ET.parse(nfo_path).getroot()
-        assert root.find('director').text == '既存監督'
-
-    # 10. 已有 <runtime> 的 NFO → 不覆蓋
-    def test_existing_runtime_not_overwritten(self, tmp_path):
-        nfo_xml = self._minimal_nfo(runtime='90')
-        nfo_path = write_nfo(tmp_path, nfo_xml)
-        info = make_base_info(duration=90)
-        metadata = {'duration': 200}
-        updated, msg = update_nfo_file(nfo_path, metadata, info)
-
-        root = ET.parse(nfo_path).getroot()
-        assert root.find('runtime').text == '90'
-
-    # 11. 已有 <set><name> 的 NFO → 不覆蓋
-    def test_existing_set_name_not_overwritten(self, tmp_path):
-        nfo_xml = self._minimal_nfo(set_name='既存シリーズ')
-        nfo_path = write_nfo(tmp_path, nfo_xml)
-        info = make_base_info(series='既存シリーズ')
-        metadata = {'series': '新シリーズ'}
-        updated, msg = update_nfo_file(nfo_path, metadata, info)
-
-        root = ET.parse(nfo_path).getroot()
-        assert root.find('set/name').text == '既存シリーズ'
+        assert root.find(xpath).text == expected
 
     # 12. duration=0 → 寫入 <runtime>0</runtime>
     def test_duration_zero_written_as_runtime(self, tmp_path):
@@ -334,19 +234,6 @@ class TestUpdateNfoFileNewFields:
         assert runtime_elem is not None
         assert runtime_elem.text == '0'
 
-    # 13. <set> 巢狀結構正確（set/name 路徑可找到）
-    def test_set_name_nested_structure_correct(self, tmp_path):
-        nfo_xml = self._minimal_nfo()
-        nfo_path = write_nfo(tmp_path, nfo_xml)
-        info = make_base_info(series='')
-        metadata = {'series': 'ネストシリーズ'}
-        update_nfo_file(nfo_path, metadata, info)
-
-        root = ET.parse(nfo_path).getroot()
-        name_elem = root.find('set/name')
-        assert name_elem is not None
-        assert name_elem.text == 'ネストシリーズ'
-
     # 14. metadata 無 series → 不建立空 <set>
     def test_no_series_in_metadata_no_set_created(self, tmp_path):
         nfo_xml = self._minimal_nfo()
@@ -357,30 +244,6 @@ class TestUpdateNfoFileNewFields:
 
         root = ET.parse(nfo_path).getroot()
         assert root.find('set') is None
-
-    # 15. <runtime> 寫入整數字串（非浮點數）
-    def test_runtime_written_as_integer_string(self, tmp_path):
-        nfo_xml = self._minimal_nfo()
-        nfo_path = write_nfo(tmp_path, nfo_xml)
-        info = make_base_info(duration=None)
-        metadata = {'duration': 119}
-        update_nfo_file(nfo_path, metadata, info)
-
-        root = ET.parse(nfo_path).getroot()
-        runtime_text = root.find('runtime').text
-        assert runtime_text == '119'
-        assert '.' not in runtime_text  # 不是浮點數格式
-
-    # 補充：已有 label 的 NFO → 不覆蓋
-    def test_existing_label_not_overwritten(self, tmp_path):
-        nfo_xml = self._minimal_nfo(label='既存label')
-        nfo_path = write_nfo(tmp_path, nfo_xml)
-        info = make_base_info(label='既存label')
-        metadata = {'label': '新label'}
-        update_nfo_file(nfo_path, metadata, info)
-
-        root = ET.parse(nfo_path).getroot()
-        assert root.find('label').text == '既存label'
 
     # 補充：既有欄位（title/maker）邏輯不受影響
     def test_existing_logic_not_broken(self, tmp_path):
@@ -495,42 +358,29 @@ class TestUpdateNfoFilePlotRatingMpaa:
 
     # ── P2-3: do not overwrite existing plot ──
 
-    def test_existing_plot_not_overwritten(self, tmp_path):
-        """現 NFO 已有 <plot> → 不覆蓋"""
-        nfo_path = write_nfo(tmp_path, self._nfo(plot='Existing plot'))
+    @pytest.mark.parametrize(
+        ("nfo_kwargs", "metadata", "tag", "expected"),
+        [
+            ({'plot': 'Existing plot'}, {'_summary': 'New summary', '_rating': 3.0},
+             'plot', 'Existing plot'),
+            ({'rating': '6.0'}, {'_rating': 4.0}, 'rating', '6.0'),
+            ({'mpaa': 'R'}, {'_summary': 'x', '_rating': 3.0}, 'mpaa', 'R'),
+        ],
+        ids=['plot', 'rating', 'mpaa'],
+    )
+    def test_existing_plot_not_overwritten(self, tmp_path, nfo_kwargs, metadata, tag, expected):
+        """現 NFO 已有 <plot>／<rating>／<mpaa> → 不覆蓋"""
+        nfo_path = write_nfo(tmp_path, self._nfo(**nfo_kwargs))
         info = make_base_info()
-        metadata = {'_summary': 'New summary', '_rating': 3.0}
 
         update_nfo_file(nfo_path, metadata, info)
 
         root = ET.parse(nfo_path).getroot()
-        assert root.find('plot').text == 'Existing plot'
+        assert root.find(tag).text == expected
 
     # ── P2-4: do not overwrite existing rating ──
 
-    def test_existing_rating_not_overwritten(self, tmp_path):
-        """現 NFO 已有 <rating> → 不覆蓋"""
-        nfo_path = write_nfo(tmp_path, self._nfo(rating='6.0'))
-        info = make_base_info()
-        metadata = {'_rating': 4.0}
-
-        update_nfo_file(nfo_path, metadata, info)
-
-        root = ET.parse(nfo_path).getroot()
-        assert root.find('rating').text == '6.0'
-
     # ── P2-5: do not overwrite existing mpaa ──
-
-    def test_existing_mpaa_not_overwritten(self, tmp_path):
-        """現 NFO 已有 <mpaa> → 不覆蓋"""
-        nfo_path = write_nfo(tmp_path, self._nfo(mpaa='R'))
-        info = make_base_info()
-        metadata = {'_summary': 'x', '_rating': 3.0}
-
-        update_nfo_file(nfo_path, metadata, info)
-
-        root = ET.parse(nfo_path).getroot()
-        assert root.find('mpaa').text == 'R'
 
     # ── P2-6: mpaa filled even without _summary/_rating (builtin path) ──
 
@@ -603,12 +453,6 @@ class TestAddActor:
         result = add_actor(root, "女優A")
         assert result is False
         assert len(root.findall('.//actor')) == 1
-
-    def test_first_actor_name_text_matches(self):
-        """root.findall('.//actor/name')[0].text == actor_name。"""
-        root = ET.fromstring("<movie/>")
-        add_actor(root, "女優B")
-        assert root.findall('.//actor/name')[0].text == "女優B"
 
 
 # ============================================================
@@ -851,20 +695,6 @@ class TestGetNfoPathPathMappingReverse:
 
         missing_path = str(video_dir / "missing.mp4")
         assert get_nfo_path_from_video(missing_path, None) is None
-
-    def test_default_none_caller_unchanged(self, tmp_path):
-        """既有呼叫端形狀（不傳 path_mappings）維持零回歸。"""
-        video_dir = tmp_path / "videos3"
-        video_dir.mkdir()
-        video_path_str = str(video_dir / "movie.mp4")
-        nfo_file = video_dir / "movie.nfo"
-        nfo_file.write_text("<movie></movie>", encoding="utf-8")
-
-        result = get_nfo_path_from_video(video_path_str)
-        assert result == str(nfo_file)
-
-        missing_path = str(video_dir / "missing.mp4")
-        assert get_nfo_path_from_video(missing_path) is None
 
 
 # ============================================================

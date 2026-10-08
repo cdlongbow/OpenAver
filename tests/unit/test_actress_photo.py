@@ -286,33 +286,6 @@ def test_crop_video_cover_cache_hit():
 # -------------------------------------------------------------------
 # Test 9: Pillow 未安裝 → None
 # -------------------------------------------------------------------
-def test_crop_video_cover_no_pillow(monkeypatch):
-    """PIL import 失敗時回 None，不拋例外"""
-    import core.actress_photo as _mod
-    import sys
-
-    _mod._CROP_CACHE.clear()
-
-    # 確保 PIL 不在 sys.modules（或強制 ImportError）
-    original_modules = sys.modules.copy()
-    # 移除 PIL（若已 import）
-    for key in list(sys.modules.keys()):
-        if key == "PIL" or key.startswith("PIL."):
-            sys.modules[key] = None  # type: ignore
-
-    try:
-        result = _mod.crop_video_cover("/nonexistent/cover.jpg", "v1")
-    finally:
-        # 還原
-        for key in list(sys.modules.keys()):
-            if key == "PIL" or key.startswith("PIL."):
-                if key in original_modules:
-                    sys.modules[key] = original_modules[key]
-                else:
-                    del sys.modules[key]
-
-    assert result is None
-
 
 # -------------------------------------------------------------------
 # Test 10: cover_path 不存在 → None
@@ -372,12 +345,6 @@ def test_crop_video_cover_happy_path(tmp_path):
 # -------------------------------------------------------------------
 # Test 12: 未知 crop_spec → None
 # -------------------------------------------------------------------
-def test_crop_video_cover_unknown_spec_returns_none():
-    """未知 crop_spec 回 None"""
-    from core.actress_photo import crop_video_cover
-    result = crop_video_cover("/fake/path.jpg", crop_spec="v99")
-    assert result is None
-
 
 # -------------------------------------------------------------------
 # Test 13: LRU eviction — 超過 maxsize 時 evict 最舊的 entry

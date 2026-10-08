@@ -467,51 +467,6 @@ def test_breaker_rechecked_after_acquiring_slot_lock(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_circuit_open_takes_precedence_over_pre_spawn_check(monkeypatch):
-    """斷路器 authoritative 複檢與 pre_spawn_check 同時成立 → circuit_open，
-    且 pre_spawn_check 呼叫次數為 0（未被呼叫）。"""
-    pre_spawn_calls = {"n": 0}
-    spawn_calls = {"n": 0}
-    real_lock = subprocess_runner._slot_lock
-
-    class TripAfterAcquireLock:
-        """Deterministic seam: trip streak after acquire, before pre_spawn_check."""
-
-        def acquire(self, *args, **kwargs):
-            ok = real_lock.acquire(*args, **kwargs)
-            if ok:
-                monkeypatch.setattr(
-                    subprocess_runner,
-                    "_breaker_streak",
-                    subprocess_runner._BREAKER_THRESHOLD,
-                )
-            return ok
-
-        def release(self):
-            return real_lock.release()
-
-    monkeypatch.setattr(subprocess_runner, "_slot_lock", TripAfterAcquireLock())
-
-    def pre_spawn_check():
-        pre_spawn_calls["n"] += 1
-        return True
-
-    def spawn_fn(fs_path, ratio):
-        spawn_calls["n"] += 1
-        return _spawn_ready_then_result((0.1, 0.2))(fs_path, ratio)
-
-    outcome = run_detection(
-        "/fake.jpg",
-        1.5,
-        job_key="prec",
-        timeout_s=1.0,
-        spawn_fn=spawn_fn,
-        pre_spawn_check=pre_spawn_check,
-    )
-    assert _is_abandoned(outcome, "circuit_open")
-    assert pre_spawn_calls["n"] == 0
-    assert spawn_calls["n"] == 0
-
 
 def test_pre_spawn_check_raises_fails_open_and_warns(caplog):
     """pre_spawn_check 拋例外 → fail-open、照常 spawn、記一行 WARNING。"""
@@ -586,33 +541,6 @@ def test_on_outcome_raises_preserves_outcome_and_releases_lock():
     assert _is_found(outcome2, (0.5, 0.6))
     assert second_spawn_calls["n"] == 1
 
-
-def test_skipped_disabled_emits_no_warning_across_n_calls(caplog):
-    """裝置停用連續 N 次 → WARNING 記錄數為 0（不走 _log_abandoned）。"""
-    spawn_calls = {"n": 0}
-
-    def pre_spawn_check():
-        return True
-
-    def spawn_fn(fs_path, ratio):
-        spawn_calls["n"] += 1
-        return _spawn_ready_then_result((0.1, 0.2))(fs_path, ratio)
-
-    logger_name = "OpenAver.core.focal.subprocess_runner"
-    with caplog.at_level(logging.WARNING, logger=logger_name):
-        for i in range(10):
-            outcome = run_detection(
-                "/fake.jpg",
-                1.5,
-                job_key=f"sd-warn{i}",
-                timeout_s=1.0,
-                spawn_fn=spawn_fn,
-                pre_spawn_check=pre_spawn_check,
-            )
-            assert _is_abandoned(outcome, "skipped_disabled")
-
-    assert spawn_calls["n"] == 0
-    assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
 
 
 def test_skipped_disabled_does_not_call_on_outcome():

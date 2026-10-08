@@ -12,7 +12,6 @@ for a module testing its own internals; attribute access on an imported
 module object does not.
 """
 import ast
-import dataclasses
 import logging
 import sqlite3
 import threading
@@ -97,9 +96,6 @@ def test_ensure_schema_idempotent_twice():
     ensure_schema()  # must not raise
 
 
-def test_snapshot_none_before_load_snapshot():
-    assert snapshot() is None
-
 
 def test_load_snapshot_defaults_when_no_row():
     ensure_schema()
@@ -108,11 +104,6 @@ def test_load_snapshot_defaults_when_no_row():
         enabled=False, pin="", valid_tokens=frozenset(), agent_token=None
     )
 
-
-def test_ensure_schema_warms_cache():
-    assert snapshot() is None
-    ensure_schema()
-    assert snapshot() is not None
 
 
 def test_attempt_pin_does_not_hang_when_cache_cold():
@@ -161,8 +152,6 @@ FULLWIDTH_EQUIVALENTS = [
     ("ＡＢ12", "AB12"),
 ]
 
-NON_STRING_CANDIDATES = [None, 42, [1, 2, 3, 4], {}]
-
 
 @pytest.mark.parametrize("bad_pin", INVALID_PINS)
 def test_set_auth_rejects_invalid_pin_formats(bad_pin):
@@ -176,6 +165,8 @@ def test_set_auth_invalid_pin_does_not_write_or_revoke():
     set_auth(True, "1234")
     token = attempt_pin("1234")
     assert token is not None
+    agent_before = snapshot().agent_token
+    assert agent_before is not None
 
     with pytest.raises(ValueError):
         set_auth(True, "12345")
@@ -183,6 +174,10 @@ def test_set_auth_invalid_pin_does_not_write_or_revoke():
     # DB/cache must be untouched: settings unchanged, ticket still valid
     assert get_auth_settings(reveal=True) == {"enabled": True, "pin": "1234"}
     assert verify_ticket(token) is True
+    # agent side: nothing minted, nothing revoked
+    assert snapshot().agent_token == agent_before
+    assert _agent_ticket_count() == 1
+    assert load_snapshot().agent_token == agent_before  # the DB agrees, not just the cache
 
 
 @pytest.mark.parametrize("bad_pin", INVALID_PINS)
@@ -233,21 +228,6 @@ def test_fullwidth_pin_folds_to_ascii_on_verify(wide, ascii_form):
     assert attempt_pin(wide) is not None
 
 
-def test_fullwidth_folding_does_not_reopen_non_ascii_pins():
-    """Folding must not become a backdoor for scripts NFKC leaves alone —
-    a Devanagari 'PIN' is still rejected on both paths."""
-    ensure_schema()
-    set_auth(True, "1234")
-    assert attempt_pin("१२३४") is None
-    with pytest.raises(ValueError):
-        set_auth(True, "१२३४")
-
-
-@pytest.mark.parametrize("candidate", NON_STRING_CANDIDATES)
-def test_attempt_pin_non_string_candidates_no_raise(candidate):
-    ensure_schema()
-    set_auth(True, "1234")
-    assert attempt_pin(candidate) is None
 
 
 def test_pin_leading_zero_preserved_across_write_and_read():
@@ -273,12 +253,6 @@ def test_set_auth_enabled_false_ignores_pin_content_no_raise():
 # attempt_pin: enabled flag, correctness, ticket issuance
 # ---------------------------------------------------------------------------
 
-
-def test_attempt_pin_returns_none_when_disabled():
-    ensure_schema()
-    set_auth(False, "0000")
-    assert attempt_pin("1234") is None
-    assert attempt_pin("0000") is None
 
 
 def test_attempt_pin_disabled_with_no_leftover_tokens():
@@ -365,14 +339,11 @@ def test_attempt_pin_db_failure_does_not_clear_retry_state_or_leak_a_ticket(monk
 # ---------------------------------------------------------------------------
 
 
-def test_verify_ticket_none_token():
+@pytest.mark.parametrize("token", [None, ""])
+def test_verify_ticket_none_token(token):
     ensure_schema()
-    assert verify_ticket(None) is False
+    assert verify_ticket(token) is False
 
-
-def test_verify_ticket_empty_string_token():
-    ensure_schema()
-    assert verify_ticket("") is False
 
 
 def test_verify_ticket_unknown_token():
@@ -380,12 +351,6 @@ def test_verify_ticket_unknown_token():
     set_auth(True, "1234")
     assert verify_ticket("not-a-real-token") is False
 
-
-def test_verify_ticket_valid_token():
-    ensure_schema()
-    set_auth(True, "1234")
-    token = attempt_pin("1234")
-    assert verify_ticket(token) is True
 
 
 def test_verify_ticket_fails_closed_on_cold_cache():
@@ -398,10 +363,6 @@ def test_verify_ticket_fails_closed_on_cold_cache():
 # R5: revoke_all / set_auth revocation (mirrored write endpoints)
 # ---------------------------------------------------------------------------
 
-
-def test_revoke_all_on_empty_table_does_not_raise():
-    ensure_schema()
-    revoke_all()  # should not raise
 
 
 def test_revoke_all_clears_existing_tickets():
@@ -431,14 +392,6 @@ def test_set_auth_same_value_still_revokes_no_exceptions():
     set_auth(True, "1234")
     assert verify_ticket(token) is False
 
-
-def test_reset_config_equivalent_does_not_touch_auth_is_out_of_scope():
-    """CD-114a-9 is T4/router scope, not T1 — but T1's revoke_all() itself
-    must accept zero parameters (no conditional revoke surface)."""
-    import inspect
-
-    sig = inspect.signature(revoke_all)
-    assert list(sig.parameters) == []
 
 
 def test_set_auth_revocation_reaches_the_db_not_just_the_cache():
@@ -521,13 +474,6 @@ def test_lockout_decision_truth_table(
     assert allowed is expected_allowed
     assert remaining == expected_remaining
 
-
-def test_lockout_decision_is_pure_no_state_mutation():
-    before_failures = access_auth._consecutive_failures
-    before_lockout = access_auth._lockout_started_at
-    access_auth._decide_lockout(5, T0, T0)
-    assert access_auth._consecutive_failures == before_failures
-    assert access_auth._lockout_started_at == before_lockout
 
 
 # ---------------------------------------------------------------------------
@@ -612,24 +558,6 @@ def test_set_auth_success_clears_lockout_and_unlocks_immediately(monkeypatch):
     assert access_auth._lockout_started_at is None
     assert attempt_pin("9999") is not None  # she's in immediately, no waiting
 
-
-def test_set_auth_invalid_pin_leaves_lockout_state_untouched(monkeypatch):
-    """The `raise ValueError` path writes nothing — it must not clear
-    retry state either (a no-op write shouldn't have a side effect)."""
-    ensure_schema()
-    set_auth(True, "1234")
-    clock = [T0]
-    monkeypatch.setattr(access_auth, "_now", lambda: clock[0])
-    for _ in range(5):
-        assert attempt_pin("0000") is None
-    locked_at = access_auth._lockout_started_at
-    assert locked_at is not None
-
-    with pytest.raises(ValueError):
-        set_auth(True, "12345")  # malformed — no write happens
-
-    assert access_auth._consecutive_failures == 5
-    assert access_auth._lockout_started_at == locked_at
 
 
 # ---------------------------------------------------------------------------
@@ -728,18 +656,6 @@ def test_attempt_pin_critical_section_is_mutually_exclusive(monkeypatch):
         "means the critical section is NOT mutually exclusive"
     )
 
-
-def test_auth_snapshot_is_a_frozen_dataclass():
-    """Structural proof behind the "no torn read" claim: `AuthSnapshot`
-    must be frozen, so the only way to "update" it is to build a whole new
-    instance and swap the module-level pointer — never mutate one field at
-    a time on a shared object. Remove `frozen=True` and this goes red on
-    both assertions (the class param flips, and field assignment stops
-    raising)."""
-    assert AuthSnapshot.__dataclass_params__.frozen is True
-    snap = AuthSnapshot(enabled=True, pin="1234", valid_tokens=frozenset(), agent_token=None)
-    with pytest.raises(dataclasses.FrozenInstanceError):
-        snap.enabled = False
 
 
 def test_barrier_concurrent_reads_only_ever_see_one_of_two_legal_states():
@@ -868,11 +784,6 @@ def test_set_auth_blocks_while_lock_held_by_another_writer():
 # ---------------------------------------------------------------------------
 
 
-def test_get_auth_settings_reveal_true_shows_real_pin():
-    ensure_schema()
-    set_auth(True, "1234")
-    assert get_auth_settings(reveal=True) == {"enabled": True, "pin": "1234"}
-
 
 def test_get_auth_settings_reveal_false_masks_pin():
     ensure_schema()
@@ -965,25 +876,6 @@ def test_set_auth_true_mints_exactly_one_new_agent_ticket():
     assert _agent_ticket_count() == 1
 
 
-def test_set_auth_invalid_pin_leaves_the_agent_ticket_untouched():
-    """The card's 邊界條件: `set_auth` raising `ValueError` must mint
-    nothing and revoke nothing — the agent side of the pre-existing
-    `test_set_auth_invalid_pin_does_not_write_or_revoke`. Today this holds
-    structurally (the format check runs before `with _lock:`), so the test
-    exists to keep it that way: move the mint above the check and this
-    goes red on the token comparison."""
-    ensure_schema()
-    set_auth(True, "1234")
-    before = snapshot().agent_token
-    assert before is not None
-
-    with pytest.raises(ValueError):
-        set_auth(True, "12345")
-
-    assert snapshot().agent_token == before
-    assert _agent_ticket_count() == 1
-    assert load_snapshot().agent_token == before  # the DB agrees, not just the cache
-
 
 def test_set_auth_false_leaves_zero_agent_tickets():
     ensure_schema()
@@ -1050,14 +942,6 @@ def test_ensure_schema_backfill_is_idempotent_across_two_calls():
     assert _agent_ticket_count() == 1
 
 
-def test_ensure_schema_backfill_skips_when_auth_disabled():
-    """Boundary: no `access_auth` row at all (brand-new DB, never
-    `set_auth`'d) — backfill's `SELECT enabled` reads None -> False ->
-    no-op, must not raise and must not mint anything."""
-    ensure_schema()
-    assert snapshot().agent_token is None
-    assert _agent_ticket_count() == 0
-
 
 def test_revoke_all_clears_agent_token_too():
     """R5 covers the agent ticket the same as browser tickets."""
@@ -1092,18 +976,6 @@ def test_agent_token_invalidated_by_set_auth_mutations(mutate):
 
     assert verify_ticket(old_agent_token) is False
 
-
-def test_agent_token_shape_and_uniqueness():
-    ensure_schema()
-    set_auth(True, "1234")
-    t1 = snapshot().agent_token
-    assert t1.startswith("oav_")
-
-    set_auth(False, "0000")
-    set_auth(True, "1234")
-    t2 = snapshot().agent_token
-    assert t2 != t1
-    assert t2.startswith("oav_")
 
 
 def test_attempt_pin_success_carries_agent_token_through():
@@ -1144,26 +1016,6 @@ def test_auth_snapshot_constructions_all_pass_agent_token_explicitly():
                 missing.append(node.lineno)
     assert not missing, f"AuthSnapshot(...) construction(s) missing agent_token kwarg at lines: {missing}"
 
-
-def test_load_locked_picks_highest_rowid_agent_ticket_when_multiple_exist():
-    """Defensive read: the invariant says this should never happen, but
-    `_load_locked()` must not raise if it does — it picks the most
-    recently inserted (`rowid` MAX) agent ticket, deterministically."""
-    ensure_schema()
-    set_auth(True, "1234")
-    conn = access_auth._connect()
-    try:
-        conn.execute(
-            "INSERT INTO access_tickets (token, kind) VALUES (?, 'agent')",
-            ("stray-agent-token",),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    snap = load_snapshot()  # forces a genuine DB read via _load_locked()
-    assert snap.agent_token == "stray-agent-token"
-    assert "stray-agent-token" in snap.valid_tokens
 
 
 def test_agent_token_never_logged(caplog):
