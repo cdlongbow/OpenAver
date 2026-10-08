@@ -684,3 +684,42 @@ def test_period_change_syncs_costar_card_for_focused_actress(
     )
     assert back_state["showBoardInRow3"] is False, "與她同片卡顯示時 row3 左半格不應同時顯示女優榜"
     assert back_state["costarEl"]["display"] != "none", "與她同片卡應可見"
+
+
+def test_switch_costar_to_no_costar_mid_tween_matches_direct_set(
+    page: Page, base_url: str
+) -> None:
+    """使用者剛點有共演的女優、卡片還在淡入時馬上改點沒共演的女優，
+    「與她同片」卡不該停在半透明，也不該留下空卡（CD-156d-10b）。
+    settle 後 state／幾何必須等同 reload 後直接點 B；另粗顆粒確認女優
+    focus 時 row4 排在 row3 之前（CD-156d-10c）。
+    """
+    names = _load_ready(page, base_url, slow=True)
+    with_costar, without_costar = _classify_by_costar(
+        page, names, need_with=1, need_without=1
+    )
+    _skip_if_insufficient(with_costar, 1)
+    _skip_if_insufficient(without_costar, 1)
+    a, b = with_costar[0], without_costar[0]
+
+    _click_gantt_actress_raw(page, a)
+    _click_mid_tween(page, "costarEl", b)
+    _wait_settled(page)
+    switched_state = _snapshot(page)
+    switched_geo = _geometry(page)
+    tops = page.evaluate(
+        "() => ({r3: document.querySelector('.row3').getBoundingClientRect().top,"
+        " r4: document.querySelector('.row4').getBoundingClientRect().top})"
+    )
+
+    _load_ready(page, base_url)
+    _click_gantt_actress_raw(page, b)
+    _wait_settled(page)
+    reference_state = _snapshot(page)
+    reference_geo = _geometry(page)
+
+    assert switched_state["focus"] == {"type": "actress", "value": b}
+    assert switched_state["showCostar"] is False, "零共演女優不應顯示空的與她同片卡"
+    _assert_state_equal(switched_state, reference_state, "A進場中途切成零共演B")
+    _assert_geometry_equal(switched_geo, reference_geo)
+    assert tops["r4"] < tops["r3"], f"女優 focus 時 row4 應在 row3 之前：{tops!r}"
