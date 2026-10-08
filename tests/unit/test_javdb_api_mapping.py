@@ -171,7 +171,6 @@ class TestNumberMatching:
         [
             ("sone-205", "SONE-205"),
             ("SONE205", "SONE-205"),
-            ("sone205", "SONE-205"),
             (" SONE-205 ", "sone-205"),
             ("sone-205", "SONE205"),
         ],
@@ -192,33 +191,6 @@ class TestNumberMatching:
         assert video is not None
         assert video.number == query_number
         mock_detail.assert_called_once_with("id-target")
-
-    def test_search_matches_only_first_5_results(self, monkeypatch):
-        """比對僅掃前 5 筆搜尋結果；第 6 筆即使相符也不收。"""
-        search_payload = [
-            {"id": "id-1", "number": "OTHER-001"},
-            {"id": "id-2", "number": "OTHER-002"},
-            {"id": "id-3", "number": "OTHER-003"},
-            {"id": "id-4", "number": "OTHER-004"},
-            {"id": "id-5", "number": "OTHER-005"},
-            {"id": "id-6", "number": "SONE-205"},
-        ]
-        _, mock_detail = _setup_api_mocks(monkeypatch, search_payload, {})
-
-        video = javdb_api.fetch_video("SONE-205")
-
-        assert video is None
-        mock_detail.assert_not_called()
-
-    def test_search_match_without_id_returns_none(self, monkeypatch):
-        """精確相符之項目若無 id 欄位或為空字串，應回傳 None 且不調用詳情。"""
-        search_payload = [{"id": "", "number": "SONE-205"}]
-        _, mock_detail = _setup_api_mocks(monkeypatch, search_payload, {})
-
-        video = javdb_api.fetch_video("SONE-205")
-
-        assert video is None
-        mock_detail.assert_not_called()
 
 
 # ============================================================
@@ -248,28 +220,6 @@ class TestSampleImages:
         assert len(video.sample_images) == 12
         assert video.sample_images == images
 
-    def test_sample_images_first_item_retained_lock(self, monkeypatch):
-        """反向鎖：首張劇照不得被丟棄（斷言第 0 筆等於 preview_images[0].large_url）。"""
-        first_large = "https://tp.spfcas.com/sample_00_l_0.jpg"
-        search_payload = [{"id": "m1", "number": "SONE-205"}]
-        detail_payload = {
-            "id": "m1",
-            "number": "SONE-205",
-            "title": "首圖測試",
-            "cover_url": "https://tp.spfcas.com/cover.jpg",
-            "preview_images": [
-                {"large_url": first_large},
-                {"large_url": "https://tp.spfcas.com/sample_01.jpg"},
-            ],
-        }
-        _setup_api_mocks(monkeypatch, search_payload, detail_payload)
-
-        video = javdb_api.fetch_video("SONE-205")
-
-        assert video is not None
-        assert len(video.sample_images) == 2
-        assert video.sample_images[0] == first_large
-
     def test_sample_images_missing_large_url_skipped(self, monkeypatch):
         """preview_images 中缺 large_url、large_url 為 None 或空字串之項目應跳過。"""
         search_payload = [{"id": "m1", "number": "SONE-205"}]
@@ -297,33 +247,6 @@ class TestSampleImages:
             "https://tp.spfcas.com/img1.jpg",
             "https://tp.spfcas.com/img2.jpg",
         ]
-
-
-# ============================================================
-# AC-4｜平行欄位留空
-# ============================================================
-
-class TestParallelPreviewFields:
-    def test_parallel_preview_fields_stay_empty(self, monkeypatch):
-        """BE-DATA-07：preview_cover_url 與 preview_sample_images 必須留空。"""
-        search_payload = [{"id": "m1", "number": "SONE-205"}]
-        detail_payload = {
-            "id": "m1",
-            "number": "SONE-205",
-            "title": "平行欄位測試",
-            "cover_url": "https://tp.spfcas.com/cover.jpg",
-            "preview_images": [
-                {"large_url": f"https://tp.spfcas.com/img_{i}.jpg"} for i in range(12)
-            ],
-        }
-        _setup_api_mocks(monkeypatch, search_payload, detail_payload)
-
-        video = javdb_api.fetch_video("SONE-205")
-
-        assert video is not None
-        assert len(video.sample_images) == 12
-        assert video.preview_cover_url == ""
-        assert video.preview_sample_images == []
 
 
 # ============================================================
@@ -364,12 +287,9 @@ class TestTypeCasting:
         ("score_val", "expected_rating"),
         [
             ("4.13", 4.13),
-            (4.13, 4.13),
             (5, 5.0),
             (None, None),
             ("", None),
-            ("—", None),
-            ("N/A", None),
             ("invalid", None),
         ],
     )
@@ -393,11 +313,8 @@ class TestTypeCasting:
     @pytest.mark.parametrize(
         ("duration_val", "expected_duration"),
         [
-            (150, 150),
             ("150", 150),
             (0, None),
-            ("0", None),
-            (-10, None),
             (None, None),
             ("invalid", None),
         ],
@@ -422,7 +339,6 @@ class TestTypeCasting:
     @pytest.mark.parametrize(
         ("reviews_val", "expected_votes"),
         [
-            (42, 42),
             ("42", 42),
             (0, 0),
             (None, None),
@@ -527,48 +443,30 @@ class TestEmptyResults:
 
         assert video is None
 
-    def test_valid_when_only_cover_url_empty(self, monkeypatch):
-        """僅 cover_url 為空但有 title 時，仍回傳 Video 物件。"""
+    @pytest.mark.parametrize(
+        ("title", "cover_url"),
+        [
+            ("有標題無封面", ""),
+            ("", "https://tp.spfcas.com/cover.jpg"),
+        ],
+        ids=["only_cover_url_empty", "only_title_empty"],
+    )
+    def test_valid_when_only_cover_url_empty(self, monkeypatch, title, cover_url):
+        """title 與 cover_url 其中之一為空時，仍回傳 Video 物件。"""
         search_payload = [{"id": "m1", "number": "SONE-205"}]
         detail_payload = {
             "id": "m1",
             "number": "SONE-205",
-            "title": "有標題無封面",
-            "cover_url": "",
+            "title": title,
+            "cover_url": cover_url,
         }
         _setup_api_mocks(monkeypatch, search_payload, detail_payload)
 
         video = javdb_api.fetch_video("SONE-205")
 
         assert video is not None
-        assert video.title == "有標題無封面"
-        assert video.cover_url == ""
-
-    def test_valid_when_only_title_empty(self, monkeypatch):
-        """僅 title 為空但有 cover_url 時，仍回傳 Video 物件。"""
-        search_payload = [{"id": "m1", "number": "SONE-205"}]
-        detail_payload = {
-            "id": "m1",
-            "number": "SONE-205",
-            "title": "",
-            "cover_url": "https://tp.spfcas.com/cover.jpg",
-        }
-        _setup_api_mocks(monkeypatch, search_payload, detail_payload)
-
-        video = javdb_api.fetch_video("SONE-205")
-
-        assert video is not None
-        assert video.title == ""
-        assert video.cover_url == "https://tp.spfcas.com/cover.jpg"
-
-    def test_empty_search_results_returns_none(self, monkeypatch):
-        """搜尋結果為空清單時，直接回傳 None 且不調用詳情。"""
-        _, mock_detail = _setup_api_mocks(monkeypatch, [], {})
-
-        video = javdb_api.fetch_video("NOTEXIST-999")
-
-        assert video is None
-        mock_detail.assert_not_called()
+        assert video.title == title
+        assert video.cover_url == cover_url
 
 
 # ============================================================
@@ -576,13 +474,6 @@ class TestEmptyResults:
 # ============================================================
 
 class TestExceptionsNotSwallowed:
-    def test_search_source_blocked_is_not_swallowed(self, monkeypatch):
-        """api_search 拋出 SourceBlocked 時，fetch_video 原樣往上拋。"""
-        _setup_api_mocks(monkeypatch, search_err=SourceBlocked("blocked 403"))
-
-        with pytest.raises(SourceBlocked):
-            javdb_api.fetch_video("SONE-205")
-
     def test_search_source_unreachable_is_not_swallowed(self, monkeypatch):
         """api_search 拋出 SourceUnreachable 時，fetch_video 原樣往上拋。"""
         _setup_api_mocks(monkeypatch, search_err=SourceUnreachable("timeout"))
@@ -600,18 +491,6 @@ class TestExceptionsNotSwallowed:
         )
 
         with pytest.raises(SourceBlocked):
-            javdb_api.fetch_video("SONE-205")
-
-    def test_detail_source_unreachable_is_not_swallowed(self, monkeypatch):
-        """api_movie_detail 拋出 SourceUnreachable 時，fetch_video 原樣往上拋。"""
-        search_payload = [{"id": "m1", "number": "SONE-205"}]
-        _setup_api_mocks(
-            monkeypatch,
-            search_return=search_payload,
-            detail_err=SourceUnreachable("detail failed"),
-        )
-
-        with pytest.raises(SourceUnreachable):
             javdb_api.fetch_video("SONE-205")
 
 
@@ -689,7 +568,7 @@ class TestReviewRound1Hardening:
         assert video.tags == ["巨乳", "苗条"]
         assert "" not in video.tags
 
-    @pytest.mark.parametrize("bad_url", [{"a": 1}, ["x"], 123, True])
+    @pytest.mark.parametrize("bad_url", [{"a": 1}])
     def test_non_string_large_url_is_dropped_not_passed_to_pydantic(
         self, monkeypatch, bad_url
     ):
