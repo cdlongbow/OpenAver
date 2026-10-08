@@ -5289,7 +5289,7 @@ const RULES = [
       'showFavoriteActresses === true',
       'state.actressSort',
       'state.actressOrder',
-    ], note: '[lint-guard 162c-TestShowcaseActressState.test_actress_js_contains] 使用者切到女優模式/排序後重新整理 → 缺 saveState 的 persist 寫入就回到預設、每次要重切；其餘為女優模式 state/method 識別字清單 — 遷自 test_frontend_lint.py' },
+    ], stripLineComments: true, note: '[lint-guard 162c-TestShowcaseActressState.test_actress_js_contains] 使用者切到女優模式/排序後重新整理 → 缺 saveState 的 persist 寫入就回到預設、每次要重切；其餘為女優模式 state/method 識別字清單 — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string', pattern: [
       'actressCount',
       'filteredActressCount',
@@ -5315,7 +5315,7 @@ const RULES = [
       'nextActressLightbox',
       '_setActressLightboxIndex',
       'actressCupValue',
-    ], note: '[lint-guard 162c-TestShowcaseActressState.test_actress_js_contains] 使用者切到女優模式/排序後重新整理 → 缺 saveState 的 persist 寫入就回到預設、每次要重切；其餘為女優模式 state/method 識別字清單 — 遷自 test_frontend_lint.py' },
+    ], stripLineComments: true, note: '[lint-guard 162c-TestShowcaseActressState.test_actress_js_contains] 使用者切到女優模式/排序後重新整理 → 缺 saveState 的 persist 寫入就回到預設、每次要重切；其餘為女優模式 state/method 識別字清單 — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: [
       '_videoChipsExpanded',
       'currentLightboxActress = null',
@@ -5343,14 +5343,14 @@ const RULES = [
       '_clearPreciseMatch',
       'capturedTerm',
       'addFavoriteFromSearch',
-    ], note: '[lint-guard 162c-TestShowcasePreciseMatchState.test_actress_js_contains] 使用者在影片搜尋框打女優名 → 英雄卡/愛心要出現、切模式要清掉；缺 stale guard/清除則殘留錯的卡或愛心 — 遷自 test_frontend_lint.py' },
-  { file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string', anyOf: true, pattern: ['_actressesLoaded = true', '_setActressesLoaded(true)'], note: '[lint-guard 162c-TestShowcasePreciseMatchState.test_actress_js_contains] 使用者在影片搜尋框打女優名 → 英雄卡/愛心要出現、切模式要清掉；缺 stale guard/清除則殘留錯的卡或愛心 — 遷自 test_frontend_lint.py' },
+    ], stripLineComments: true, note: '[lint-guard 162c-TestShowcasePreciseMatchState.test_actress_js_contains] 使用者在影片搜尋框打女優名 → 英雄卡/愛心要出現、切模式要清掉；缺 stale guard/清除則殘留錯的卡或愛心 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string', anyOf: true, pattern: ['_actressesLoaded = true', '_setActressesLoaded(true)'], stripLineComments: true, note: '[lint-guard 162c-TestShowcasePreciseMatchState.test_actress_js_contains] 使用者在影片搜尋框打女優名 → 英雄卡/愛心要出現、切模式要清掉；缺 stale guard/清除則殘留錯的卡或愛心 — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string', pattern: '_favoriteHeartLoading', scope: { anchor: /addFavoriteFromSearch/, window: 2000 }, note: '[lint-guard 162c-TestShowcasePreciseMatchState.test_actress_js_contains] 使用者在影片搜尋框打女優名 → 英雄卡/愛心要出現、切模式要清掉；缺 stale guard/清除則殘留錯的卡或愛心 — 遷自 test_frontend_lint.py' },
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'addFavoriteFromSearch()', note: '[lint-guard 162c-test_actress_html_contains] 使用者在影片搜尋框搜出女優後按愛心 → 缺 addFavoriteFromSearch() 接線則加不了收藏 — 遷自 test_frontend_lint.py' },
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '_isPreciseActressMatch', note: '[lint-guard 162c-test_actress_html_contains] 使用者在影片搜尋框搜出女優後按愛心 → 缺 addFavoriteFromSearch() 接線則加不了收藏 — 遷自 test_frontend_lint.py' },
 
   // 162c: TestLoadMoreButton
-  { file: 'web/templates/search.html', kind: 'required-string', pattern: '@click="gridLoadMore()"', note: '[lint-guard 162c-test_html_and_js_contains] 使用者在搜尋結果按「載入更多」→ 按鈕要保持顯示且接上 loadMore；缺綁定則按了沒有後續結果 — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/search.html', kind: 'required-string', pattern: /(?<![\w:-])@click="gridLoadMore\(\)"/, note: '[lint-guard 162c-test_html_and_js_contains] 使用者在搜尋結果按「載入更多」→ 按鈕要保持顯示且接上 loadMore；缺綁定則按了沒有後續結果 — 遷自 test_frontend_lint.py' },
   { file: 'web/templates/search.html', kind: 'required-string', pattern: "t('search.button.load_more')", note: '[lint-guard 162c-test_html_and_js_contains] 使用者在搜尋結果按「載入更多」→ 按鈕要保持顯示且接上 loadMore；缺綁定則按了沒有後續結果 — 遷自 test_frontend_lint.py' },
   { file: 'web/templates/search.html', kind: 'required-string', pattern: "hasMoreResults && displayMode === 'grid'", note: '[lint-guard 162c-test_html_and_js_contains] 使用者在搜尋結果按「載入更多」→ 按鈕要保持顯示且接上 loadMore；缺綁定則按了沒有後續結果 — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: 'hasMoreResults', note: '[lint-guard 162c-test_html_and_js_contains] 使用者在搜尋結果按「載入更多」→ 按鈕要保持顯示且接上 loadMore；缺綁定則按了沒有後續結果 — 遷自 test_frontend_lint.py' },
@@ -5385,7 +5385,7 @@ const RULES = [
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: ['showcase.video.delete_modal.title', 'confirmDeleteVideo()', 'cancelDeleteVideo()'], scope: /<dialog\b[^>]*deleteVideoModalOpen[^>]*>([\s\S]*?)<\/dialog>/, note: '[lint-guard 162c-test_t7_delete_modal_contract] 使用者按垃圾桶 → 刪除確認視窗必須有標題/確認/取消 handler；缺了則無法完成或放棄刪除 — 遷自 test_frontend_lint.py' },
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'fluent-modal', scope: /<dialog\b[^>]*deleteVideoModalOpen[^>]*>/, note: '[lint-guard 162c-test_t7_delete_modal_contract] 使用者按垃圾桶 → 刪除確認視窗必須有標題/確認/取消 handler；缺了則無法完成或放棄刪除 — 遷自 test_frontend_lint.py' },
 
-  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: /x-trap\.inert="lightboxOpen[^"]*deleteVideoModalOpen[^"]*"/, note: '[lint-guard 162c-test_t7_xtrap_releases_on_delete_modal] 使用者在燈箱按垃圾桶開刪除視窗 → 燈箱 x-trap 必須釋放給 modal；否則焦點被拉回燈箱、modal 按鈕按不到 — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: /(?<![\w:-])x-trap\.inert="lightboxOpen[^"]*deleteVideoModalOpen[^"]*"/, note: '[lint-guard 162c-test_t7_xtrap_releases_on_delete_modal] 使用者在燈箱按垃圾桶開刪除視窗 → 燈箱 x-trap 必須釋放給 modal；否則焦點被拉回燈箱、modal 按鈕按不到 — 遷自 test_frontend_lint.py' },
 
   // 162c: TestTutorialSkipPersistsGuard
   { file: 'web/static/js/components/tutorial.js', kind: 'forbidden-string', pattern: /complete\(\s*false\s*\)/, scope: /\bskip\s*\(\s*\)\s*\{([\s\S]*?)\}/, note: '[lint-guard 162c-test_skip_persists_and_shares_entry] 使用者按教學「跳過」→ 下次進 /scanner 又彈教學、必須重按(issue #63) — 遷自 test_frontend_lint.py' },
@@ -5453,7 +5453,7 @@ const RULES = [
   // （162c-B04 專屬子區段：只在此兩行之間追加）
 
   // 162c: TestIMEGuard
-  { file: 'web/templates/search.html', kind: 'required-string', pattern: ['isComposing', 'preventDefault()'], scope: /<input\b[^>]*\bid="searchQuery"[^>]*@keydown\.enter(?:\.prevent)?="([^"]*)"/, note: '[lint-guard 162c-test_search_html_ime_guard] 使用者用注音/日文輸入法在搜尋框選字按 Enter → 缺 isComposing 守衛時選字被當成送出搜尋、送出半截字 — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/search.html', kind: 'required-string', pattern: ['isComposing', 'preventDefault()'], scope: /<input\b[^>]*(?<![\w:-])id="searchQuery"[^>]*@keydown\.enter(?:\.prevent)?="([^"]*)"/, note: '[lint-guard 162c-test_search_html_ime_guard] 使用者用注音/日文輸入法在搜尋框選字按 Enter → 缺 isComposing 守衛時選字被當成送出搜尋、送出半截字 — 遷自 test_frontend_lint.py' },
 
   // 162c: TestGhostFlyInFlightGuard
   { file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string', pattern: /typeof\s+window\.GhostFly\??\.?playActressToHeroCard\s*!==\s*['"]function['"]/, scope: { anchor: /(?:async\s+)?searchActressFilms\s*\([^)]*\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-test_search_actress_films_explicit_ghost_fly_availability_check] 使用者按相機鈕搜該女優作品而 GhostFly 載入缺失 → flag 永久為 true、兩顆相機鈕永遠 disabled 按不了 — 遷自 test_frontend_lint.py' },
@@ -5510,7 +5510,7 @@ const RULES = [
     note: '[lint-guard 162c-test_jellyfin_toggle_in_settings] 使用者在設定頁選外部管理器（Jellyfin／Emby／Kodi）→ 點了沒切換、說明文字不跟著變、或切換時沒跳破壞性確認（segmented 綁定被改回舊直寫） — 遷自 test_frontend_lint.py' },
   // segmented 容器存在（整檔；頁面另有 header／batchbar 同 class，舊守衛亦只斷存在）
   { file: 'web/templates/settings.html', kind: 'required-string',
-    pattern: 'class="settings-sources-segmented"',
+    pattern: /(?<![\w:-])class="settings-sources-segmented"/,
     note: '[lint-guard 162c-test_jellyfin_toggle_in_settings] 使用者在設定頁選外部管理器（Jellyfin／Emby／Kodi）→ 點了沒切換、說明文字不跟著變、或切換時沒跳破壞性確認（segmented 綁定被改回舊直寫） — 遷自 test_frontend_lint.py' },
   // 四態 is-on + requestExternalManagerChange（scope＝外部管理器 row 內首個 segmented role=group 區塊）
   { file: 'web/templates/settings.html', kind: 'required-string',
@@ -5524,7 +5524,7 @@ const RULES = [
       /(?<![\w:-])@click="requestExternalManagerChange\('emby'\)"/,
       /(?<![\w:-])@click="requestExternalManagerChange\('kodi'\)"/,
     ],
-    scope: /settings-form-row--external-manager[\s\S]*?(class="settings-sources-segmented" role="group"[\s\S]*?<\/div>)/,
+    scope: /settings-form-row--external-manager[\s\S]*?((?<![\w:-])class="settings-sources-segmented" role="group"[\s\S]*?<\/div>)/,
     note: '[lint-guard 162c-test_jellyfin_toggle_in_settings] 使用者在設定頁選外部管理器（Jellyfin／Emby／Kodi）→ 點了沒切換、說明文字不跟著變、或切換時沒跳破壞性確認（segmented 綁定被改回舊直寫） — 遷自 test_frontend_lint.py' },
   // 禁直寫 @click form.externalManager='…'（同 scope）
   { file: 'web/templates/settings.html', kind: 'forbidden-string',
@@ -5534,7 +5534,7 @@ const RULES = [
       /(?<![\w:-])@click="form\.externalManager = 'emby'"/,
       /(?<![\w:-])@click="form\.externalManager = 'kodi'"/,
     ],
-    scope: /settings-form-row--external-manager[\s\S]*?(class="settings-sources-segmented" role="group"[\s\S]*?<\/div>)/,
+    scope: /settings-form-row--external-manager[\s\S]*?((?<![\w:-])class="settings-sources-segmented" role="group"[\s\S]*?<\/div>)/,
     note: '[lint-guard 162c-test_jellyfin_toggle_in_settings] 使用者在設定頁選外部管理器（Jellyfin／Emby／Kodi）→ 點了沒切換、說明文字不跟著變、或切換時沒跳破壞性確認（segmented 綁定被改回舊直寫） — 遷自 test_frontend_lint.py' },
   // 四態 hint x-show（整檔）
   { file: 'web/templates/settings.html', kind: 'required-string',
@@ -5654,7 +5654,7 @@ const RULES = [
   { file: 'web/templates/help.html', kind: 'required-string', pattern: ['helpPage', 'checkUpdate', 'hero-terminal', 'help.hero.ai_instruction'], note: '[lint-guard 162c-test_help_html_contains] 使用者開說明頁 → 「檢查更新」鈕或 AI 終端機卡不出現／說明頁整頁不初始化（helpPage 掛載點、hero-terminal 或 help.js script 被改壞，或 help.js 被載入兩次） — 遷自 test_frontend_lint.py' },
   { file: 'web/templates/help.html', kind: 'structure-count', pattern: /<script[^>]*help\.js[^>]*>/, count: 1, note: '[lint-guard 162c-test_help_html_contains] 使用者開說明頁 → 「檢查更新」鈕或 AI 終端機卡不出現／說明頁整頁不初始化（helpPage 掛載點、hero-terminal 或 help.js script 被改壞，或 help.js 被載入兩次） — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/help.js', kind: 'required-string', pattern: ['copyCurlCommand', 'execCommand'], note: '[lint-guard 162c-test_help_js_contains] 使用者在說明頁按「複製 curl 指令」鈕 → 沒有複製到東西（copyCurlCommand 或 execCommand 後備路徑被改壞） — 遷自 test_frontend_lint.py' },
-  { file: 'web/templates/help.html', kind: 'tag-scan', mode: 'class-tag', tagPattern: /<[a-z]+\b(?=[^>]*class="[^"]*(?<![\w-])hero-terminal(?![\w-])[^"]*")[^>]*>/, required: ['data-capabilities-base'], note: '[lint-guard 162c-test_help_hero_terminal_has_capabilities_base] 使用者在本機開說明頁、複製 curl 給別台裝置的 AI 用 → 複製出 127.0.0.1／localhost 網址，別台連不到（server-aware base_url 來源 data-capabilities-base 被移除） — 遷自 test_frontend_lint.py' },
+  { file: 'web/templates/help.html', kind: 'tag-scan', mode: 'class-tag', tagPattern: /<[a-z]+\b(?=[^>]*(?<![\w:-])class="[^"]*(?<![\w-])hero-terminal(?![\w-])[^"]*")[^>]*>/, required: ['data-capabilities-base'], note: '[lint-guard 162c-test_help_hero_terminal_has_capabilities_base] 使用者在本機開說明頁、複製 curl 給別台裝置的 AI 用 → 複製出 127.0.0.1／localhost 網址，別台連不到（server-aware base_url 來源 data-capabilities-base 被移除） — 遷自 test_frontend_lint.py' },
   { file: 'web/templates/help.html', kind: 'tag-scan', mode: 'class-tag', tagName: 'button', className: 'terminal-copy-btn', required: [/(?<![\w-])(?::)?aria-label="[^"]*help\.hero\.copy_curl/], note: '[lint-guard 162c-test_help_copy_button_has_aria_label] 使用螢幕閱讀器的使用者在說明頁 → curl 複製鈕只有圖示、沒有可讀名稱，唸不出它是做什麼的（aria-label 被移除或改引用別 key） — 遷自 test_frontend_lint.py' },
   { file: 'web/templates/help.html', kind: 'required-string', pattern: 'bi-clipboard', scope: /<button[^>]*terminal-copy-btn[\s\S]*?<\/button>/, note: '[lint-guard 162c-test_help_copy_button_has_aria_label] 使用螢幕閱讀器的使用者在說明頁 → curl 複製鈕只有圖示、沒有可讀名稱，唸不出它是做什麼的（aria-label 被移除或改引用別 key） — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/help.js', kind: 'required-string', pattern: ['capabilitiesBase', '${base}'], note: '[lint-guard 162c-test_help_js_copy_uses_capabilities_base_dataset] 使用者在本機開說明頁複製 curl → 複製出 window.location.origin（localhost）而不是 server 給的對外網址（help.js 不再讀 data-capabilities-base） — 遷自 test_frontend_lint.py' },
@@ -5662,7 +5662,7 @@ const RULES = [
   // 162c: TestStreamState
   { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: ['streamSlots', 'streamComplete', 'isStreaming'], stripLineComments: true, note: '[lint-guard 162c-test_base_js_core_stream_state] 使用者搜尋番號 → 骨架格／漸進結果出不來或頁面報錯（base.js 少宣告 streamSlots／streamComplete／isStreaming，Alpine 表達式取不到） — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: ['streamBuffer', 'streamBurstTimer', 'streamBurstedSlots', 'stagingVisible'], stripLineComments: true, note: '[lint-guard 162c-test_base_js_staging_buffer_state] 使用者搜尋番號 → 串流來的結果進不了暫存／分批顯示，結果卡片不出現（base.js 少宣告 streamBuffer 等批次狀態） — 遷自 test_frontend_lint.py' },
-  { file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string', pattern: ['streamBuffer', 'streamBurstTimer', 'stagingCover', 'stagingNumber'], stripLineComments: true, note: '[lint-guard 162c-test_result_item_uses_stream_buffer] 使用者搜尋番號 → 串流結果沒走分批暫存而一筆筆直接塞進結果列，卡片一次次整列重畫、可能卡頓或順序亂（result-item handler 不再推入 streamBuffer） — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string', pattern: ['this.streamBuffer.push', 'streamBurstTimer', 'stagingCover', 'stagingNumber'], stripLineComments: true, note: '[lint-guard 162c-test_result_item_uses_stream_buffer] 使用者搜尋番號 → 串流結果沒走分批暫存而一筆筆直接塞進結果列，卡片一次次整列重畫、可能卡頓或順序亂（result-item handler 不再推入 streamBuffer） — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string', pattern: ["data.type === 'seed'", "data.type === 'result-item'", "data.type === 'result-complete'"], note: '[lint-guard 162c-test_search_flow_handles_seed_event] 使用者搜尋番號 → 串流事件不被處理，骨架格不出現、結果永遠載入中（seed／result-item／result-complete 任一 handler 被改掉） — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string', pattern: 'this.streamComplete', note: '[lint-guard 162c-test_search_flow_has_stream_guard] 使用者搜尋番號 → 串流已逐筆顯示好的結果，最後一個總結事件把整份結果列覆蓋掉，畫面上已看的結果閃一下或被換成別筆（漸進路徑 result 缺 streamComplete 守衛） — 遷自 test_frontend_lint.py' },
   // ---- 162c-B07 迄 ----
@@ -5678,14 +5678,15 @@ const RULES = [
   { file: 'web/static/js/pages/search/animations.js', kind: 'required-string', pattern: 'av-card-full-info', scope: { anchor: /playSlideIn: function/, window: 800 }, note: '[lint-guard 162c-test_play_slide_in_kills_child_tweens] 使用者在詳情頁連續切上一部／下一部 → 子元素殘留上一輪動畫，封面或資訊區閃爍、停在半透明位置（playSlideIn 沒一併打斷封面／資訊的子 tween） — 遷自 test_frontend_lint.py' },
 
   // 162c: TestFailedSlotC30Guard
-  { file: 'web/static/js/pages/search/state/navigation.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /navigate\s*\(/, window: 500 }, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
-  { file: 'web/static/js/pages/search/state/grid-mode.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /prevLightboxVideo\s*\(/, window: 800 }, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
-  { file: 'web/static/js/pages/search/state/grid-mode.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /nextLightboxVideo\s*\(/, window: 800 }, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
-  { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /navIndicatorText\s*\(/, window: 500 }, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
-  { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /canGoPrev\s*\(/, window: 300 }, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
-  { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /canGoNext\s*\(/, window: 300 }, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
-  { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /showNavigation\s*\(/, window: 300 }, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
-  { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /fileCountText\s*\(/, window: 500 }, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/navigation.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /navigate\s*\(/, window: 500 }, stripLineComments: true, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
+  // CD-162c-19：prev/nextLightboxVideo、canGoPrev/Next 的 window 切在真 ._failed 之前（只吃到註解）→ braceBalanced + stripLineComments
+  { file: 'web/static/js/pages/search/state/grid-mode.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /prevLightboxVideo\s*\(\s*\)\s*\{/, braceBalanced: true }, stripLineComments: true, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/grid-mode.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /nextLightboxVideo\s*\(\s*\)\s*\{/, braceBalanced: true }, stripLineComments: true, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /navIndicatorText\s*\(/, window: 500 }, stripLineComments: true, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /canGoPrev\s*\(\s*\)\s*\{/, braceBalanced: true }, stripLineComments: true, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /canGoNext\s*\(\s*\)\s*\{/, braceBalanced: true }, stripLineComments: true, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /showNavigation\s*\(/, window: 300 }, stripLineComments: true, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: '_failed', scope: { anchor: /fileCountText\s*\(/, window: 500 }, stripLineComments: true, note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
   { file: 'web/templates/search.html', kind: 'required-string', pattern: ['hasVisiblePrev()', 'hasVisibleNext()'], note: '[lint-guard 162c-test_failed_slot_method_bodies_contain_failed] 使用者搜尋番號、其中某幾筆抓取失敗（空白項）→ 按上一部／下一部會停在空白項、導航箭頭與「第 N／共 M 筆」計數把失敗項也算進去 — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string', anyOf: true, pattern: ['currentResult', 'this.searchResults[this.currentIndex]'], scope: /([\s\S]{0,200}firstValid[\s\S]{0,200})/, note: '[lint-guard 162c-test_repoint_is_conditional] 使用者搜尋多筆番號、串流中途已自行點選某筆有效結果 → 串流結束時被無條件拉回第一筆（或原停在失敗空白項卻沒被導向有效項），看到錯的那一筆 — 遷自 test_frontend_lint.py' },
 
@@ -5780,7 +5781,7 @@ const RULES = [
   },
   {
     file: 'web/templates/search.html', kind: 'forbidden-string',
-    pattern: ['class="sample-lightbox"', 'lb-meta-extra'],
+    pattern: [/(?<![\w:-])class="sample-lightbox"/, 'lb-meta-extra'],
     note: '[lint-guard 162c-test_sample_gallery_template_html_contains] search.html 不得殘留舊 sample-lightbox／lb-meta-extra — 遷自 test_frontend_lint.py',
   },
   {
@@ -5792,7 +5793,7 @@ const RULES = [
     file: 'web/templates/search.html', kind: 'order',
     items: [
       { pattern: 'x-data="searchPage"' },
-      { pattern: 'class="sample-gallery"' },
+      { pattern: /(?<![\w:-])class="sample-gallery"/ },
     ],
     note: '[lint-guard 162c-test_sample_gallery_template_structure] .sample-gallery 須在 searchPage scope 之後 — 遷自 test_frontend_lint.py',
   },
@@ -5816,7 +5817,7 @@ const RULES = [
   {
     file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string',
     pattern: ['playSampleGallerySwitch', 'killTweensOf', 'gsap-animating', 'clearProps'],
-    note: '[lint-guard 162c-test_showcase_sample_gallery_js_contains] animations.js 須含 playSampleGallerySwitch 完整實作字面 — 遷自 test_frontend_lint.py',
+    stripLineComments: true, note: '[lint-guard 162c-test_showcase_sample_gallery_js_contains] animations.js 須含 playSampleGallerySwitch 完整實作字面 — 遷自 test_frontend_lint.py',
   },
   {
     file: 'web/templates/showcase.html', kind: 'order',
@@ -5863,7 +5864,7 @@ const RULES = [
   {
     file: 'web/static/js/pages/scanner/state-batch.js', kind: 'required-string',
     pattern: ['missingPillVisible', 'missingItems', 'resumePillVisible', 'runMissingEnrich', 'checkMissing'],
-    note: '[lint-guard 162c-test_scanner_contains] state-batch.js 須含 missing pill 狀態與方法 — 遷自 test_frontend_lint.py',
+    stripLineComments: true, note: '[lint-guard 162c-test_scanner_contains] state-batch.js 須含 missing pill 狀態與方法 — 遷自 test_frontend_lint.py',
   },
   {
     file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string',
@@ -5908,7 +5909,7 @@ const RULES = [
     file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
     pattern: 'manual_only',
     scope: { anchor: /rescrapeEntryPoint\s*===\s*['"]search['"]/, window: 400 },
-    note: '[lint-guard 162c-test_search_javlib_does_not_early_return_advancedSearch] search 入口 early return 須依 manual_only 分流 — 遷自 test_frontend_lint.py',
+    stripLineComments: true, note: '[lint-guard 162c-test_search_javlib_does_not_early_return_advancedSearch] search 入口 early return 須依 manual_only 分流 — 遷自 test_frontend_lint.py',
   },
   {
     file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
@@ -5987,7 +5988,7 @@ const RULES = [
   {
     file: 'web/templates/settings.html', kind: 'required-string',
     pattern: /(?<![\w:-])x-model="form\.downloadSampleImages"/,
-    scope: /class="settings-quick-toggle-row"([\s\S]*?)id="sec-search"/,
+    scope: /(?<![\w:-])class="settings-quick-toggle-row"([\s\S]*?)(?<![\w:-])id="sec-search"/,
     note: '[lint-guard 162c-test_download_sample_images_in_quick_toggle_row] 下載劇照開關須在 quick-toggle 列內 — 遷自 test_frontend_lint.py',
   },
   {
@@ -6001,19 +6002,19 @@ const RULES = [
   {
     file: 'web/templates/settings.html', kind: 'required-string',
     pattern: /(?<![\w:-])x-model="form\.thumbnailCacheEnabled"/,
-    scope: /class="settings-quick-toggle-row"([\s\S]*?)id="sec-search"/,
+    scope: /(?<![\w:-])class="settings-quick-toggle-row"([\s\S]*?)(?<![\w:-])id="sec-search"/,
     note: '[lint-guard 162c-test_thumbnail_cache_enabled_in_quick_toggle_row] 縮圖快取開關須在 quick-toggle 列內 — 遷自 test_frontend_lint.py',
   },
   {
     file: 'web/templates/settings.html', kind: 'required-string',
-    pattern: ['x-data="helpPopover"', 'class="help-popover"'],
-    scope: /(<div class="settings-form-group popover-anchor"(?:(?!<div class="settings-form-group popover-anchor")[\s\S])*?x-model="form\.thumbnailCacheEnabled"(?:(?!<div class="settings-form-group popover-anchor"|id="sec-search")[\s\S])*)/,
+    pattern: ['x-data="helpPopover"', /(?<![\w:-])class="help-popover"/],
+    scope: /(<div class="settings-form-group popover-anchor"(?:(?!<div class="settings-form-group popover-anchor")[\s\S])*?(?<![\w:-])x-model="form\.thumbnailCacheEnabled"(?:(?!<div class="settings-form-group popover-anchor"|(?<![\w:-])id="sec-search")[\s\S])*)/,
     note: '[lint-guard 162c-test_thumbnail_cache_has_help_popover_state] 縮圖快取 wrapper 須自帶 helpPopover — 遷自 test_frontend_lint.py',
   },
   {
     file: 'web/templates/settings.html', kind: 'required-string',
     pattern: /<input\b(?=[^>]*(?<![\w:-])@change="onThumbCacheToggleChange\(\)")(?=[^>]*(?<![\w:-])x-model="form\.thumbnailCacheEnabled")[^>]*>/,
-    scope: /class="settings-quick-toggle-row"([\s\S]*?)id="sec-search"/,
+    scope: /(?<![\w:-])class="settings-quick-toggle-row"([\s\S]*?)(?<![\w:-])id="sec-search"/,
     note: '[lint-guard 162c-test_thumbnail_cache_toggle_has_change_interceptor] 縮圖快取 toggle 同 input 須綁 @change=onThumbCacheToggleChange — 遷自 test_frontend_lint.py',
   },
   {
@@ -6072,10 +6073,10 @@ const RULES = [
   {
     file: 'web/templates/settings.html', kind: 'order',
     items: [
-      { pattern: 'id="sec-search"' },
+      { pattern: /(?<![\w:-])id="sec-search"/ },
       { pattern: /(?<![\w:-])x-model="form\.proxyUrl"/ },
-      { pattern: 'id="sec-gallery"' },
-      { pattern: 'class="collapsible-content"' },
+      { pattern: /(?<![\w:-])id="sec-gallery"/ },
+      { pattern: /(?<![\w:-])class="collapsible-content"/ },
     ],
     pairs: [[0, 1], [1, 2], [1, 3]],
     note: '[lint-guard 162c-test_proxy_url_x_model_in_sources_card] proxy x-model 須在 sec-search 內、sec-gallery／摺疊前 — 遷自 test_frontend_lint.py',
@@ -6092,7 +6093,7 @@ const RULES = [
     file: 'web/templates/showcase.html', kind: 'required-string',
     pattern: [
       'video._imgLoaded = true',
-      ":class=\"{ 'cover-loaded': video._imgLoaded }\"",
+      /(?<![\w:-]):class="\{ 'cover-loaded': video\._imgLoaded \}"/,
     ],
     scope: /<template x-for="\(video, index\) in paginatedVideos"[\s\S]*?(<img\s(?:[^>"']|"[^"]*"|'[^']*')*>)/,
     note: '[lint-guard 162c-test_grid_img_has_load_and_imgloaded_fade] 格狀牆封面 <img> 須綁 _imgLoaded 與 cover-loaded 淡入 — 遷自 test_frontend_lint.py',
@@ -6100,8 +6101,8 @@ const RULES = [
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
     pattern: [
-      '@load="_heroCardImageLoaded = true',
-      ":class=\"{ 'cover-loaded': _heroCardImageLoaded }\"",
+      /(?<![\w:-])@load="_heroCardImageLoaded = true/,
+      /(?<![\w:-]):class="\{ 'cover-loaded': _heroCardImageLoaded \}"/,
       'fetchpriority="high"',
       'loading="eager"',
     ],
@@ -6110,7 +6111,7 @@ const RULES = [
   },
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
-    pattern: 'x-show="_matchedActress?.photo_url && !_heroCardImageError"',
+    pattern: /(?<![\w:-])x-show="_matchedActress\?\.photo_url && !_heroCardImageError"/,
     scope: /(<img :src="_matchedActress\?\.photo_url \|\| ''"[\s\S]*?>)/,
     note: '[lint-guard 162c-test_hero_img_xshow_gated_on_photo_url] hero <img> x-show 須 gate by photo_url（防空 url 空白框） — 遷自 test_frontend_lint.py',
   },
@@ -6143,30 +6144,30 @@ const RULES = [
     file: 'web/static/js/components/page-lifecycle.js', kind: 'required-string',
     pattern: 'persisted',
     scope: /addEventListener\('pagehide',\s*function\s*\([^)]*\)\s*\{([\s\S]*?)\}\s*\)/,
-    note: '[lint-guard 162c-test_pagehide_skips_cleanup_on_bfcache_persist] pagehide callback 須檢查 event.persisted 跳過 cleanup — 遷自 test_frontend_lint.py',
+    stripLineComments: true, note: '[lint-guard 162c-test_pagehide_skips_cleanup_on_bfcache_persist] pagehide callback 須檢查 event.persisted 跳過 cleanup — 遷自 test_frontend_lint.py',
   },
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
-    pattern: /<img x-ref="lightboxCoverImg"(?=[^>]*:src="currentLightboxVideo\?\.cover_url")(?=[^>]*@error="handleCoverError\(currentLightboxVideo, \$event\)")[^>]*>/,
+    pattern: /<img x-ref="lightboxCoverImg"(?=[^>]*(?<![\w:-]):src="currentLightboxVideo\?\.cover_url")(?=[^>]*(?<![\w:-])@error="handleCoverError\(currentLightboxVideo, \$event\)")[^>]*>/,
     scope: /<div class="lightbox-cover"[^>]*has-cover[^>]*>[\s\S]*?<\/div>[\s\S]*?<!-- Metadata Panel/,
     note: '[lint-guard 162c-test_lb_base_img_keeps_cover_url_and_error] 燈箱 base <img> 須綁 cover_url 與 handleCoverError — 遷自 test_frontend_lint.py',
   },
   {
     file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
     tagName: 'img', className: 'lb-full',
-    required: [':src="currentLightboxVideo?.cover_full_url"'],
+    required: [/(?<![\w:-]):src="currentLightboxVideo\?\.cover_full_url"/],
     note: '[lint-guard 162c-test_lb_overlay_img_binds_cover_full_url] overlay img.lb-full 須綁 cover_full_url — 遷自 test_frontend_lint.py',
   },
   {
     file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
     tagName: 'img', className: 'lb-full',
-    required: [/@load="_lbFullLoaded\s*=\s*true"/],
+    required: [/(?<![\w:-])@load="_lbFullLoaded\s*=\s*true"/],
     note: '[lint-guard 162c-test_lb_overlay_img_load_sets_flag] overlay img.lb-full 須 @load 翻 _lbFullLoaded — 遷自 test_frontend_lint.py',
   },
   {
     file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
     tagName: 'img', className: 'lb-full',
-    required: [/:class="\{\s*'lb-full-shown'\s*:\s*_lbFullLoaded\s*\}"/],
+    required: [/(?<![\w:-]):class="\{\s*'lb-full-shown'\s*:\s*_lbFullLoaded\s*\}"/],
     forbidden: ['x-show'],
     note: '[lint-guard 162c-test_lb_overlay_img_class_binds_shown] overlay img.lb-full 須 :class lb-full-shown 且不得 x-show — 遷自 test_frontend_lint.py',
   },
@@ -6197,7 +6198,7 @@ const RULES = [
     pattern: [
       '_wishlistCoverLoaded[item.number] = true',
       '_wishlistCoverError[item.number] = true',
-      ":class=\"{ 'cover-loaded': _wishlistCoverLoaded[item.number] }\"",
+      /(?<![\w:-]):class="\{ 'cover-loaded': _wishlistCoverLoaded\[item\.number\] \}"/,
     ],
     scope: /<template x-for="\(item, index\) in wishlistItems"(?:(?!<\/template>)[\s\S])*?(<img :src="[^"]*\/api\/wishlist\/cover\?number=[^>]*>)/,
     note: '[lint-guard 162c-test_wishlist_img_has_load_and_covererror_fade] 書籤卡 <img> 須用番號 key 的 loaded／error／cover-loaded 綁定 — 遷自 test_frontend_lint.py',
@@ -6404,7 +6405,7 @@ const RULES = [
   },
   {
     file: 'web/templates/search.html', kind: 'required-string',
-    pattern: /x-show=\\?["'][^"']*canReopenSourcePick\(\)/,
+    pattern: /(?<![\w:-])x-show=\\?["'][^"']*canReopenSourcePick\(\)/,
     scope: /source_pill\((?:[^()]|\([^()]*\))*search-auto-pill(?:[^()]|\([^()]*\))*\)/s,
     note: '[lint-guard 162c-test_auto_pill_xshow_contains_can_reopen_source_pick] 使用者採用 JavLibrary 版本後想再開來源選單 → 若 x-show 少了 canReopenSourcePick()，膠囊消失、無法再換版本／來源 — 遷自 test_frontend_lint.py',
   },
@@ -6412,7 +6413,7 @@ const RULES = [
     file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string',
     pattern: ['listMode', "'search'", 'pageState', "'result'", "'exact'", 'searchQuery'],
     scope: { anchor: /canReopenSourcePick\s*\(\s*\)\s*\{/, braceBalanced: true },
-    note: '[lint-guard 162c-test_can_reopen_source_pick_defined_in_search_flow_js] 使用者在檔案／批次模式看某片結果 → 若 canReopenSourcePick 少了 listMode===\'search\' 等條件，頂部膠囊會帶舊番號開窗，重刮到別的片 — 遷自 test_frontend_lint.py',
+    stripLineComments: true, note: '[lint-guard 162c-test_can_reopen_source_pick_defined_in_search_flow_js] 使用者在檔案／批次模式看某片結果 → 若 canReopenSourcePick 少了 listMode===\'search\' 等條件，頂部膠囊會帶舊番號開窗，重刮到別的片 — 遷自 test_frontend_lint.py',
   },
 
   // 162c: TestResultSourcePill
@@ -6444,7 +6445,7 @@ const RULES = [
   },
   {
     file: 'web/templates/base.html', kind: 'tag-scan', mode: 'class-tag',
-    tagPattern: /<button\b[^>]*class="navbar-search-btn[^>]*>/,
+    tagPattern: /<button\b[^>]*(?<![\w:-])class="navbar-search-btn[^>]*>/,
     required: [
       // lg:hidden 限 class 屬性值（搬到 data-x 不算）
       /(?<![\w:-=\'"])class="[^"]*\blg:hidden\b[^"]*"/,
@@ -6457,7 +6458,7 @@ const RULES = [
   },
   {
     file: 'web/templates/base.html', kind: 'structure-count',
-    pattern: 'class="navbar-search-btn',
+    pattern: /(?<![\w:-])class="navbar-search-btn/,
     count: 1,
     note: '[lint-guard 162c-test_navbar_search_button] 使用者在手機 showcase 點 navbar 搜尋 icon → 若 @click 的收合／清除分支缺失，icon 按了不收合工具列或有搜尋時無法一鍵清除 — 遷自 test_frontend_lint.py',
   },
@@ -6480,14 +6481,14 @@ const RULES = [
   },
   {
     file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
-    tagPattern: /<div\b[^>]*class="showcase-toolbar"[^>]*>/,
+    tagPattern: /<div\b[^>]*(?<![\w:-])class="showcase-toolbar"[^>]*>/,
     // (?<![\w:-=\'"]) 排除 data-y=':class="…"' 把綁定字面餵進開標籤 substring
     required: [/(?<![\w:-=\'"]):class="\{\s*'mobile-toolbar-open':\s*\$store\.ui\.toolbarOpen\s*\}"/],
     note: '[lint-guard 162c-test_showcase_toolbar_class_binding] 使用者在手機 showcase 點 navbar 搜尋 icon → 若工具列沒綁 mobile-toolbar-open，點了工具列不展開、搜尋框用不到 — 遷自 test_frontend_lint.py',
   },
   {
     file: 'web/templates/search.html', kind: 'tag-scan', mode: 'class-tag',
-    tagPattern: /<div\b[^>]*class="search-bar"[^>]*>/,
+    tagPattern: /<div\b[^>]*(?<![\w:-])class="search-bar"[^>]*>/,
     forbidden: ['mobile-toolbar-open'],
     note: '[lint-guard 162c-test_search_bar_not_bound] 使用者在手機搜尋頁 → 若 .search-bar 被誤綁 mobile-toolbar-open，搜尋框被收進 navbar icon 內預設隱藏，搜尋頁找不到輸入框 — 遷自 test_frontend_lint.py',
   },
@@ -6524,13 +6525,13 @@ const RULES = [
   },
   {
     file: 'web/templates/showcase.html', kind: 'structure-count',
-    pattern: 'class="mobile-toolbar-backdrop"',
+    pattern: /(?<![\w:-])class="mobile-toolbar-backdrop"/,
     count: 1,
     note: '[lint-guard 162c-test_backdrop_dom] 使用者在手機展開工具列後點外面 → 若 backdrop 的 x-show／@click 沒綁 store，點外面收不起來；缺 x-cloak 載入瞬間 backdrop 閃現擋住點擊 — 遷自 test_frontend_lint.py',
   },
   {
     file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
-    tagPattern: /<div\b[^>]*class="mobile-toolbar-backdrop"[^>]*>/,
+    tagPattern: /<div\b[^>]*(?<![\w:-])class="mobile-toolbar-backdrop"[^>]*>/,
     required: [
       /(?<![\w:-])x-show="\$store\.ui\.toolbarOpen"/,
       /(?<![\w:-])@click="[^"]*\$store\.ui\.toolbarOpen\s*=\s*false[^"]*"/,
@@ -6548,7 +6549,7 @@ const RULES = [
   // 162c: TestMobileToolbarAutoCollapse
   {
     file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
-    tagPattern: /<button\b[^>]*title="\{\{ t\('showcase\.action\.search'\) \}\}"[^>]*>/,
+    tagPattern: /<button\b[^>]*(?<![\w:-])title="\{\{ t\('showcase\.action\.search'\) \}\}"[^>]*>/,
     required: [
       /(?<![\w:-])@click="[^"]*SearchChange\(\)[^"]*"/,
       /(?<![\w:-])@click="[^"]*\$store\.ui\.toolbarOpen\s*=\s*false[^"]*"/,
@@ -6730,17 +6731,17 @@ const RULES = [
   // 162c: TestSimilarMobilePanelT4Guard
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
-    pattern: 'class="similar-mobile-play-btn"',
+    pattern: /(?<![\w:-])class="similar-mobile-play-btn"/,
     scope: /<div class="similar-mobile-stage">([\s\S]*?)<\/div>\s*<!-- 右上/,
     note: '[lint-guard 162c-test_mobile_play_btn_exists_in_stage] 相似面板 stage 內須有播放鈕 — 遷自 test_frontend_lint.py',
   },
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
     pattern: [
-      '@click.stop="playVideo(currentLightboxVideo?.path)"',
-      'x-show="!!currentLightboxVideo?.path"',
-      ':disabled="similarModeAnimating"',
-      ":aria-label=\"t('showcase.action.play')\"",
+      /(?<![\w:-])@click\.stop="playVideo\(currentLightboxVideo\?\.path\)"/,
+      /(?<![\w:-])x-show="!!currentLightboxVideo\?\.path"/,
+      /(?<![\w:-]):disabled="similarModeAnimating"/,
+      /(?<![\w:-]):aria-label="t\('showcase\.action\.play'\)"/,
     ],
     scope: /<button class="similar-mobile-play-btn"[^>]*>/,
     note: '[lint-guard 162c-test_mobile_play_btn_handlers] 播放鈕須有 stop／path guard／disabled／aria-label — 遷自 test_frontend_lint.py',
@@ -7008,7 +7009,7 @@ const RULES = [
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'picker-candidates-grid', note: '[lint-guard 162c-test_picker_html_contains] 使用者在女優燈箱按「換照片」→ 候選面板（或按鈕）不出現，換不了照片 — 遷自 test_contract_animation.py' },
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'picker-source-badge', note: '[lint-guard 162c-test_picker_html_contains] 使用者在女優燈箱按「換照片」→ 候選面板（或按鈕）不出現，換不了照片 — 遷自 test_contract_animation.py' },
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'picker-loading', note: '[lint-guard 162c-test_picker_html_contains] 使用者在女優燈箱按「換照片」→ 候選面板（或按鈕）不出現，換不了照片 — 遷自 test_contract_animation.py' },
-  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'class="picker-empty">', note: '[lint-guard 162c-test_picker_html_contains] 使用者在女優燈箱按「換照片」→ 候選面板（或按鈕）不出現，換不了照片 — 遷自 test_contract_animation.py' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: /(?<![\w:-])class="picker-empty">/, note: '[lint-guard 162c-test_picker_html_contains] 使用者在女優燈箱按「換照片」→ 候選面板（或按鈕）不出現，換不了照片 — 遷自 test_contract_animation.py' },
   { file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: 'actress-picker-area', note: '[lint-guard 162c-test_picker_html_contains] 使用者在女優燈箱按「換照片」→ 候選面板（或按鈕）不出現，換不了照片 — 遷自 test_contract_animation.py' },
   {
     file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'nested-count',
@@ -7020,7 +7021,7 @@ const RULES = [
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'posterCrop', note: '[lint-guard 162c-test_state_lightbox_threads_poster_crop] 手機點海報格開燈箱 → 縮圖右裁與燈箱 contain 比例不同，封面落地時硬切變形 — 遷自 test_contract_animation.py' },
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'window.innerWidth <= POSTER_CROP_MAX_W', note: '[lint-guard 162c-test_state_lightbox_threads_poster_crop] 手機點海報格開燈箱 → 縮圖右裁與燈箱 contain 比例不同，封面落地時硬切變形 — 遷自 test_contract_animation.py' },
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'showFavoriteActresses', note: '[lint-guard 162c-test_state_lightbox_threads_poster_crop] 手機點海報格開燈箱 → 縮圖右裁與燈箱 contain 比例不同，封面落地時硬切變形 — 遷自 test_contract_animation.py' },
-  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'hero-card', note: '[lint-guard 162c-test_state_lightbox_threads_poster_crop] 手機點海報格開燈箱 → 縮圖右裁與燈箱 contain 比例不同，封面落地時硬切變形 — 遷自 test_contract_animation.py' },
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'hero-card', stripLineComments: true, note: '[lint-guard 162c-test_state_lightbox_threads_poster_crop] 手機點海報格開燈箱 → 縮圖右裁與燈箱 contain 比例不同，封面落地時硬切變形 — 遷自 test_contract_animation.py' },
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'posterCrop: posterCrop', note: '[lint-guard 162c-test_state_lightbox_threads_poster_crop] 手機點海報格開燈箱 → 縮圖右裁與燈箱 contain 比例不同，封面落地時硬切變形 — 遷自 test_contract_animation.py' },
   { file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string', pattern: 'options.posterCrop', scope: /playGridToLightbox: function([\s\S]*?)playLightboxToGrid: function/, note: '[lint-guard 162c-test_ghost_fly_consumes_and_aligns_crop] 落地前 ghost 沒對齊縮圖右裁，起飛時畫面橫向跳一下 — 遷自 test_contract_animation.py' },
   { file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string', pattern: "objectPosition = 'right center'", scope: /playGridToLightbox: function([\s\S]*?)playLightboxToGrid: function/, note: '[lint-guard 162c-test_ghost_fly_consumes_and_aligns_crop] 落地前 ghost 沒對齊縮圖右裁，起飛時畫面橫向跳一下 — 遷自 test_contract_animation.py' },
@@ -7033,10 +7034,10 @@ const RULES = [
   {
     file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
     tagName: 'div', className: 'similar-mobile-panel',
-    required: ['x-trap.inert="similarModeMobileOpen"'],
+    required: [/(?<![\w:-])x-trap\.inert="similarModeMobileOpen"/],
     note: '[lint-guard 162c-test_mobile_panel_has_x_trap] 鍵盤／螢幕閱讀器開手機相似面板 → Tab 跑到被遮住的燈箱按鈕 — 遷自 test_contract_animation.py',
   },
-  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '!similarModeMobileOpen', scope: /x-trap\.inert="([^"]*deleteVideoModalOpen[^"]*)"/, note: '[lint-guard 162c-test_mobile_panel_lightbox_trap_yields] 鍵盤開手機相似面板 → 燈箱焦點陷阱沒釋放，焦點卡在燈箱 — 遷自 test_contract_animation.py' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '!similarModeMobileOpen', scope: /(?<![\w:-])x-trap\.inert="([^"]*deleteVideoModalOpen[^"]*)"/, note: '[lint-guard 162c-test_mobile_panel_lightbox_trap_yields] 鍵盤開手機相似面板 → 燈箱焦點陷阱沒釋放，焦點卡在燈箱 — 遷自 test_contract_animation.py' },
   // ---- 162c-B17 迄 ----
   //
   //
@@ -7112,7 +7113,7 @@ const RULES = [
       /playMobilePanelEnter\s*:\s*playMobilePanelEnter/,
       /playMobilePanelExit\s*:\s*playMobilePanelExit/,
     ],
-    note: '[lint-guard 162c-test_mobile_panel_enter_exit_functions_exported] 使用者開手機相似面板 → helper 缺失丟 TypeError，面板開不起來（按了沒反應） — 遷自 test_contract_animation.py',
+    stripLineComments: true, note: '[lint-guard 162c-test_mobile_panel_enter_exit_functions_exported] 使用者開手機相似面板 → helper 缺失丟 TypeError，面板開不起來（按了沒反應） — 遷自 test_contract_animation.py',
   },
   {
     file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string',
@@ -7240,7 +7241,7 @@ const RULES = [
   {
     file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string',
     pattern: '.similar-main-anchor',
-    note: '[lint-guard 162c-test_desktop_constellation_byte_identical_anchor] 桌面星座進場 → ghost-fly.js 須保留 .similar-main-anchor — 遷自 test_contract_animation.py',
+    stripLineComments: true, note: '[lint-guard 162c-test_desktop_constellation_byte_identical_anchor] 桌面星座進場 → ghost-fly.js 須保留 .similar-main-anchor — 遷自 test_contract_animation.py',
   },
   {
     file: 'web/static/js/shared/ghost-fly.js', kind: 'forbidden-string',
@@ -7291,9 +7292,9 @@ const RULES = [
   {
     file: 'web/templates/search.html', kind: 'required-string',
     pattern: [
-      'x-show="editingTitle && canEditFile()"',
-      'x-show="editingChineseTitle && canEditFile()"',
-      'x-show="editingActors && canEditFile()"',
+      /(?<![\w:-])x-show="editingTitle && canEditFile\(\)"/,
+      /(?<![\w:-])x-show="editingChineseTitle && canEditFile\(\)"/,
+      /(?<![\w:-])x-show="editingActors && canEditFile\(\)"/,
     ],
     note: '[lint-guard 162c-test_search_html_edit_divs_gated_by_can_edit_file] 編輯中切關鍵字搜尋 → 三編輯 div 須以 x-show=\"editing* && canEditFile()\" 閘 — 遷自 test_contract_api_routes.py',
   },
@@ -7373,7 +7374,7 @@ const RULES = [
       'rescrapeBuiltinSources',
       'rescrapeMetatubeSources',
     ],
-    note: '[lint-guard 162c-test_defines_all_methods] 使用者在重刮彈窗預覽步驟按「回上一步」→ 若 rescrapeBackToPick 被拿掉，按鈕沒反應，只能關窗重來 — 遷自 test_contract_api_routes.py',
+    stripLineComments: true, note: '[lint-guard 162c-test_defines_all_methods] 使用者在重刮彈窗預覽步驟按「回上一步」→ 若 rescrapeBackToPick 被拿掉，按鈕沒反應，只能關窗重來 — 遷自 test_contract_api_routes.py',
   },
   {
     file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
@@ -7414,8 +7415,8 @@ const RULES = [
   // 162c: TestServerModeToggleGuard
   {
     file: 'web/templates/settings.html', kind: 'tag-scan', mode: 'class-tag',
-    tagPattern: /<div\b[^>]*\bid="settings-components"[^>]*>/,
-    required: [/\bdata-lan-ip=/],
+    tagPattern: /<div\b[^>]*(?<![\w:-])id="settings-components"[^>]*>/,
+    required: [/(?<![\w:-])data-lan-ip=/],
     note: '[lint-guard 162c-test_settings_root_has_data_lan_ip] 使用者開設定頁切到伺服器模式 → 若根節點沒帶 data-lan-ip，橫條永遠說「取不到 IP」，看不到別台裝置要連的網址 — 遷自 test_contract_api_routes.py',
   },
 
@@ -7429,9 +7430,9 @@ const RULES = [
   // 162c: TestServerModeToggleGuard
   { file: 'web/templates/settings.html', kind: 'required-string',
     pattern: [
-      '@click="requestServerModeChange(false)"',
-      '@click="requestServerModeChange(true)"',
-      'class="settings-server-mode"',
+      /(?<![\w:-])@click="requestServerModeChange\(false\)"/,
+      /(?<![\w:-])@click="requestServerModeChange\(true\)"/,
+      /(?<![\w:-])class="settings-server-mode"/,
       '<h4',
     ],
     scope: /<div class="settings-header-left">([\s\S]*?)<div class="settings-header-actions">/,
@@ -7441,12 +7442,12 @@ const RULES = [
     scope: /<div class="settings-header-left">([\s\S]*?)<div class="settings-header-actions">/,
     note: '[lint-guard 162c-test_settings_server_mode_segmented_in_header] 使用者想切伺服器模式 → 單機|伺服器 膠囊的兩顆按鈕若沒接 requestServerModeChange(false/true)，點了沒反應，無法開關區網存取 — 遷自 test_contract_api_routes.py' },
   { file: 'web/templates/settings.html', kind: 'forbidden-string',
-    pattern: 'class="settings-server-mode"',
+    pattern: /(?<![\w:-])class="settings-server-mode"/,
     scope: /<div class="settings-header-actions">([\s\S]*)/,
     note: '[lint-guard 162c-test_settings_server_mode_segmented_in_header] 使用者想切伺服器模式 → 單機|伺服器 膠囊的兩顆按鈕若沒接 requestServerModeChange(false/true)，點了沒反應，無法開關區網存取 — 遷自 test_contract_api_routes.py' },
 
   { file: 'web/templates/settings.html', kind: 'structure-count',
-    pattern: 'class="settings-server-inline"', count: 1,
+    pattern: /(?<![\w:-])class="settings-server-inline"/, count: 1,
     note: '[lint-guard 162c-test_settings_server_info_banner_xshow_xcloak] 使用者在單機模式 → 若區網連線橫條沒被 x-show="serverMode" 管住，會看到不該有的區網網址（誤導成已對外開放）；少 x-cloak 則開頁瞬間閃一下 — 遷自 test_contract_api_routes.py' },
   { file: 'web/templates/settings.html', kind: 'tag-scan', mode: 'class-tag',
     tagName: 'div', className: 'settings-server-inline',
@@ -7460,10 +7461,10 @@ const RULES = [
   { file: 'web/templates/settings.html', kind: 'required-string',
     pattern: [
       'settings.server_info.listener_down',
-      'x-if="!serverUrl() && lanIp"',
+      /(?<![\w:-])x-if="!serverUrl\(\) && lanIp"/,
       'settings.server_info.no_lan_ip_with_port',
-      'x-if="!serverUrl() && !lanIp && lanPort"',
-      'x-if="!serverUrl() && !lanIp && !lanPort"',
+      /(?<![\w:-])x-if="!serverUrl\(\) && !lanIp && lanPort"/,
+      /(?<![\w:-])x-if="!serverUrl\(\) && !lanIp && !lanPort"/,
     ],
     note: '[lint-guard 162c-test_settings_server_info_distinguishes_listener_down_from_no_ip] 使用者的區網 listener 沒起來（自動啟動失敗）→ 若橫條誤報「取不到 IP」，會去查網路而不是重啟，白排查 — 遷自 test_contract_api_routes.py' },
 
@@ -7610,15 +7611,15 @@ const RULES = [
   },
   {
     file: 'web/templates/scanner.html', kind: 'required-string',
-    pattern: '@click="checkJellyfinImages()"',
+    pattern: /(?<![\w:-])@click="checkJellyfinImages\(\)"/,
     note: '[lint-guard 162c-test_trigger_button_click_handler] 使用者想補 Jellyfin 圖 → 自動觸發已拿掉，按鈕若沒接 @click 就完全無法啟動檢查，補圖功能變不可用 — 遷自 test_contract_api_routes.py',
   },
   {
     file: 'web/templates/scanner.html', kind: 'tag-scan', mode: 'class-tag',
-    tagPattern: /<div\b(?=[^>]*class="[^"]*\bnfo-update-row\b)(?=[^>]*x-show="[^"]*jellyfinImageVisible)(?=[^>]*x-show="[^"]*config)[^>]*>/,
+    tagPattern: /<div\b(?=[^>]*(?<![\w:-])class="[^"]*\bnfo-update-row\b)(?=[^>]*(?<![\w:-])x-show="[^"]*jellyfinImageVisible)(?=[^>]*(?<![\w:-])x-show="[^"]*config)[^>]*>/,
     required: [
-      /\sx-show="[^"]*\['jellyfin', 'emby', 'kodi'\]\.includes\(config\?\.scraper\?\.external_manager\)[^"]*"/,
-      /\sx-show="[^"]*!jellyfinImageVisible[^"]*"/,
+      /\s(?<![\w:-])x-show="[^"]*\['jellyfin', 'emby', 'kodi'\]\.includes\(config\?\.scraper\?\.external_manager\)[^"]*"/,
+      /\s(?<![\w:-])x-show="[^"]*!jellyfinImageVisible[^"]*"/,
     ],
     note: '[lint-guard 162c-test_trigger_row_xshow_uses_jellyfin_image_visible] 使用者沒設 Jellyfin／Emby／Kodi（或設定尚未載入）→ 若觸發列用 fail-open 條件，仍看到「檢查 Jellyfin 圖」鈕，按下去打不存在的流程 — 遷自 test_contract_api_routes.py',
   },
@@ -7809,7 +7810,7 @@ const RULES = [
     note: '[lint-guard 162c-test_search_js_contains] handleKeydown 須先關 sampleGallery 再處理 lightbox — 遷自 test_contract_code_shape.py' },
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
     pattern: ['_killLightboxTimelines', 'playLightboxSwitch'],
-    note: '[lint-guard 162c-test_showcase_js_contains] 影片牆燈箱須有 _killLightboxTimelines 與 playLightboxSwitch — 遷自 test_contract_code_shape.py' },
+    stripLineComments: true, note: '[lint-guard 162c-test_showcase_js_contains] 影片牆燈箱須有 _killLightboxTimelines 與 playLightboxSwitch — 遷自 test_contract_code_shape.py' },
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
     pattern: /lightboxIndex\s*===\s*index/,
     scope: { anchor: /^\s*openLightbox\s*\([^)]*\)\s*\{/m, braceBalanced: true },
@@ -7991,7 +7992,7 @@ const RULES = [
       /(?<![\w:-])@click="requestExternalManagerChange\('emby'\)"/,
       /(?<![\w:-])@click="requestExternalManagerChange\('kodi'\)"/,
     ],
-    scope: /settings-form-row--external-manager[\s\S]*?class="settings-sources-segmented" role="group"([\s\S]*?)<\/div>/,
+    scope: /settings-form-row--external-manager[\s\S]*?(?<![\w:-])class="settings-sources-segmented" role="group"([\s\S]*?)<\/div>/,
     note: '[lint-guard 162c-test_segmented_buttons_call_request_method] 使用者在設定頁切換 Jellyfin／Emby／Kodi／預設模式 → 按鈕必須走攔截方法跳確認；若直接寫 form，有離線來源時不經警告就移除唯讀來源與其媒體卡 — 遷自 test_contract_code_shape.py' },
   { file: 'web/templates/settings.html', kind: 'forbidden-string',
     pattern: [
@@ -8000,7 +8001,7 @@ const RULES = [
       /(?<![\w:-])@click="form\.externalManager = 'emby'"/,
       /(?<![\w:-])@click="form\.externalManager = 'kodi'"/,
     ],
-    scope: /settings-form-row--external-manager[\s\S]*?class="settings-sources-segmented" role="group"([\s\S]*?)<\/div>/,
+    scope: /settings-form-row--external-manager[\s\S]*?(?<![\w:-])class="settings-sources-segmented" role="group"([\s\S]*?)<\/div>/,
     note: '[lint-guard 162c-test_segmented_buttons_call_request_method] 使用者在設定頁切換 Jellyfin／Emby／Kodi／預設模式 → 按鈕必須走攔截方法跳確認；若直接寫 form，有離線來源時不經警告就移除唯讀來源與其媒體卡 — 遷自 test_contract_code_shape.py' },
   { file: 'web/templates/settings.html', kind: 'required-string',
     pattern: /<dialog[^>]*?(?<![\w:-])@keydown\.escape\.window="[^"]*switchModeConfirmOpen[^"]*cancelSwitchMode\(\)[^"]*"/,
@@ -8374,7 +8375,7 @@ const RULES = [
   { file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
     pattern: 'cancelCfPoll',
     scope: { anchor: /data\.unavailable/, window: 200 },
-    note: '[lint-guard 162c-test_poll_calls_cancel_cf_poll_on_unavailable] unavailable 分支須呼叫 cancelCfPoll 停輪詢 — 遷自 test_contract_desktop.py' },
+    stripLineComments: true, note: '[lint-guard 162c-test_poll_calls_cancel_cf_poll_on_unavailable] unavailable 分支須呼叫 cancelCfPoll 停輪詢 — 遷自 test_contract_desktop.py' },
   { file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
     pattern: ['data.unavailable', 'cancelCfPoll'],
     scope: { anchor: /\b_pollCfThenRetry\s*\(\s*\w+\s*,\s*\w+\s*\)\s*\{/, braceBalanced: true },
@@ -8623,7 +8624,7 @@ const RULES = [
 
   // 162c: TestShowcaseHeaderSearchIcon
   { file: 'web/templates/showcase.html', kind: 'required-string',
-    pattern: 'showcase:clear-search',
+    pattern: /(?<![\w:-])(?:@|x-on:)showcase:clear-search\b/,
     note: '[lint-guard 162c-test_showcase_has_window_listener] 按 header ✕ → showcase 頁須接 clear-search 事件才能清掉搜尋 — 遷自 test_showcase_mobile_search.py' },
   {
     file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
