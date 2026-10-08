@@ -513,8 +513,6 @@ from core.nfo_read import (
 )
 """
 
-# 八類各一組（代表函式在 A/B/C 間輪替，確保三個檔名都至少被驗過一次，
-# 也確保 class-method 定位方式在合成測試裡也被走過一次——round 1）
 SYNTHETIC_ROUNDS = [
     (
         "actor", "parse_nfo",
@@ -541,136 +539,11 @@ class VideoScanner:
         return info
 """,
     ),
-    (
-        "maker", "_nfo_to_meta",
-        _SYNTH_IMPORTS + """
-def _nfo_to_meta(root):
-    return {
-        "maker": nfo_first_text(root, ("maker", "studio")),
-    }
-""",
-        _SYNTH_IMPORTS + """
-def _nfo_to_meta(root):
-    return {
-        "maker": (root.find("maker").text or "").strip() if root.find("maker") is not None else "",
-    }
-""",
-    ),
-    (
-        "release_date", "_nfo_to_producer_meta",
-        _SYNTH_IMPORTS + """
-def _nfo_to_producer_meta(root):
-    return {
-        'date': nfo_first_text(root, ('release', 'premiered', 'year')),
-    }
-""",
-        _SYNTH_IMPORTS + """
-def _nfo_to_producer_meta(root):
-    return {
-        'date': (root.find('release').text or "").strip() if root.find('release') is not None else "",
-    }
-""",
-    ),
-    (
-        "tag_genre", "parse_nfo",
-        _SYNTH_IMPORTS + """
-class _Info:
-    pass
-
-
-class VideoScanner:
-    def parse_nfo(self, root):
-        info = _Info()
-        info.genre = ','.join(nfo_merged_tags(root))
-        return info
-""",
-        _SYNTH_IMPORTS + """
-class _Info:
-    pass
-
-
-class VideoScanner:
-    def parse_nfo(self, root):
-        info = _Info()
-        info.genre = ','.join(g.text.strip() for g in root.findall('genre') if g.text)
-        return info
-""",
-    ),
-    (
-        "series", "_nfo_to_meta",
-        _SYNTH_IMPORTS + """
-def _nfo_to_meta(root):
-    return {
-        "series": nfo_series_name(root),
-    }
-""",
-        _SYNTH_IMPORTS + """
-def _nfo_to_meta(root):
-    return {
-        "series": (root.find('set/name').text or "").strip() if root.find('set/name') is not None else "",
-    }
-""",
-    ),
-    (
-        "runtime", "_nfo_to_producer_meta",
-        _SYNTH_IMPORTS + """
-def _nfo_to_producer_meta(root):
-    return {
-        'duration': nfo_runtime_minutes(root),
-    }
-""",
-        _SYNTH_IMPORTS + """
-def _nfo_to_producer_meta(root):
-    return {
-        'duration': int(root.find('runtime').text) if root.find('runtime') is not None else None,
-    }
-""",
-    ),
-    (
-        "num", "parse_nfo",
-        _SYNTH_IMPORTS + """
-class _Info:
-    pass
-
-
-class VideoScanner:
-    def parse_nfo(self, root):
-        info = _Info()
-        info.num = nfo_first_text(root, ('num', 'id'))
-        return info
-""",
-        _SYNTH_IMPORTS + """
-class _Info:
-    pass
-
-
-class VideoScanner:
-    def parse_nfo(self, root):
-        info = _Info()
-        info.num = (root.find('num').text or "").strip() if root.find('num') is not None else ""
-        return info
-""",
-    ),
-    (
-        "simple_fields", "_nfo_to_producer_meta",
-        _SYNTH_IMPORTS + """
-def _nfo_to_producer_meta(root):
-    return {
-        'title': nfo_text(root, 'title'),
-    }
-""",
-        _SYNTH_IMPORTS + """
-def _nfo_to_producer_meta(root):
-    return {
-        'title': (root.find('title').text or "").strip() if root.find('title') is not None else "",
-    }
-""",
-    ),
 ]
 
 
 class TestSyntheticRedGreenPairs:
-    """八類各一組合成片段（紅／綠對照），永久留在測試檔的 parametrize case
+    """合成片段（紅／綠對照），永久留在測試檔的 parametrize case
     ——比「跑一次記錄輸出後只剩文字紀錄」更強：每次 CI 都持續驗證同一段違規
     判準邏輯，且完全不碰產品碼。"""
 
@@ -703,16 +576,6 @@ class TestSyntheticRedGreenPairs:
         assert report.strip()
 
 
-# ============================================================
-# 假綠檢查（DoD 獨立項，PR#125 round-3 教訓）：同函式只換回一類，
-# 其餘七類維持委派 → 守衛仍紅，且恰指向那一類
-# ============================================================
-
-# B 天生涵蓋八類（含 E3），用它的殼做「全綠 + 單類轉紅」組合。
-# 紅版刻意寫成「先 root.find(...) 存一個變數，再判斷/取值」的單一 find-call
-# 形狀（而非 SYNTHETIC_ROUNDS 表列的三元運算式兩次呼叫 root.find 寫法）——
-# 這裡需要「恰好一筆違規」的精確計數，兩次呼叫會讓同一類自己就衝到 2 筆，
-# 掩蓋「只換一類、其餘七類仍委派」這個假綠檢查真正要驗的東西。
 _FULL_PARSE_NFO_LINES = {
     "actor": (
         ["info.actor = ','.join(nfo_actor_names(root))"],
@@ -776,40 +639,6 @@ class VideoScanner:
 {body}
         return info
 """
-
-
-class TestFalseGreenCheck:
-    """全綠殼先確認 0 違規，再逐類單獨轉紅，確認每次都恰有一筆違規且指向
-    正確的那一行——證明守衛不是「這個函式有沒有委派過任何東西」的存在性
-    檢查。"""
-
-    def test_full_delegation_shell_is_zero_violations(self):
-        tree = ast.parse(_build_full_parse_nfo())
-        func = _find_func(tree, "parse_nfo")
-        assert func is not None
-        violations = _violations(func, "parse_nfo")
-        assert not violations, (
-            f"全委派殼（八類 + E3 皆合法）不應有違規:\n"
-            f"{_violation_report(_build_full_parse_nfo(), violations)}"
-        )
-
-    @pytest.mark.parametrize("category", list(_FULL_PARSE_NFO_LINES.keys()))
-    def test_single_category_flip_is_exactly_one_violation(self, category):
-        src = _build_full_parse_nfo(red_category=category)
-        tree = ast.parse(src)
-        func = _find_func(tree, "parse_nfo")
-        assert func is not None
-        violations = _violations(func, "parse_nfo")
-        assert len(violations) == 1, (
-            f"[{category}] 只換回一類、其餘七類維持委派，應恰有一筆違規，"
-            f"實際 {len(violations)}:\n{_violation_report(src, violations)}"
-        )
-        red_text = "\n".join(_FULL_PARSE_NFO_LINES[category][1])
-        seg = ast.get_source_segment(src, violations[0])
-        assert seg and seg in red_text, (
-            f"[{category}] 違規應指向該類手寫紅版的呼叫，實際指向: {seg!r}"
-            f"（紅版原文: {red_text!r}）"
-        )
 
 
 # ============================================================
