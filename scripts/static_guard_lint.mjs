@@ -5317,7 +5317,180 @@ const RULES = [
   //
   //
   // ---- 162c-B09 起 ----
-  // （162c-B09 專屬子區段：只在此兩行之間追加）
+  // 162c: TestGridPerPageGuard
+  {
+    file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string',
+    pattern: /['"]grid['"]/,
+    scope: { anchor: /updatePagination\s*\(\s*\)\s*\{/, window: 800 },
+    note: '[lint-guard 162c-test_grid_per_page_method_bodies_contain_guard] 格狀每頁筆數保護：updatePagination 窗內須含 grid — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string',
+    pattern: /perPage\s*=\s*120/,
+    scope: { anchor: /updatePagination\s*\(\s*\)\s*\{/, window: 800 },
+    note: '[lint-guard 162c-test_grid_per_page_method_bodies_contain_guard] 格狀每頁筆數保護：updatePagination 窗內須含 perPage = 120 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
+    pattern: /['"]grid['"]/,
+    scope: { anchor: /restoreState\s*\(\s*\)\s*\{/, window: 2500 },
+    note: '[lint-guard 162c-test_grid_per_page_method_bodies_contain_guard] 格狀每頁筆數保護：restoreState 窗內須含 grid — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
+    pattern: /perPage\s*=\s*120/,
+    scope: { anchor: /restoreState\s*\(\s*\)\s*\{/, window: 2500 },
+    note: '[lint-guard 162c-test_grid_per_page_method_bodies_contain_guard] 格狀每頁筆數保護：restoreState 窗內須含 perPage = 120 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string',
+    pattern: /['"]grid['"]/,
+    scope: { anchor: /switchMode\s*\(\s*m\s*\)\s*\{/, window: 600 },
+    note: '[lint-guard 162c-test_grid_per_page_method_bodies_contain_guard] 格狀每頁筆數保護：switchMode 窗內須含 grid — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string',
+    pattern: /perPage\s*=\s*120/,
+    scope: { anchor: /switchMode\s*\(\s*m\s*\)\s*\{/, window: 600 },
+    note: '[lint-guard 162c-test_grid_per_page_method_bodies_contain_guard] 格狀每頁筆數保護：switchMode 窗內須含 perPage = 120 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
+    pattern: /items_per_page\s*\?\?\s*\d+/,
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_guard5_items_per_page_uses_nullish_coalescing] items_per_page 預設須用 ?? 保留 0（showcase） — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: /items_per_page\s*\?\?\s*\d+/,
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_guard5_items_per_page_uses_nullish_coalescing] items_per_page 預設須用 ?? 保留 0（settings） — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestScannerDeleteAliasGroupNoNativeConfirm
+  {
+    file: 'web/static/js/pages/scanner/state-alias.js', kind: 'required-string',
+    pattern: ['openDeleteAliasGroupModal', 'confirmDeleteAliasGroup', 'cancelDeleteAliasGroupModal'],
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_scanner_has_delete_alias_group_modal_methods] 掃描頁刪除別名組三個 modal method 須存在 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/scanner.html', kind: 'required-string',
+    pattern: 'deleteAliasGroupModalOpen && cancelDeleteAliasGroupModal',
+    note: '[lint-guard 162c-test_scanner_html_escape_ladder_includes_delete_alias_group] scanner.html Esc 階梯須串接 deleteAliasGroupModal cancel — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestSampleGalleryTemplateGuard
+  {
+    file: 'web/templates/base.html', kind: 'required-string',
+    pattern: ['sampleGalleryOpen', 'sampleGalleryImages', 'sampleGalleryIndex'],
+    note: '[lint-guard 162c-test_sample_gallery_template_html_contains] base.html 須含 sampleGallery* 預設 state — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: ['sampleGalleryOpen', 'sampleGalleryImages', 'sampleGalleryIndex', 'lb-header'],
+    note: '[lint-guard 162c-test_sample_gallery_template_html_contains] search.html 須含 sampleGallery* state 與 lb-header — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string',
+    pattern: ['class="sample-lightbox"', 'lb-meta-extra'],
+    note: '[lint-guard 162c-test_sample_gallery_template_html_contains] search.html 不得殘留舊 sample-lightbox／lb-meta-extra — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: { dir: 'web/templates', ext: ['.html'], recursive: true }, kind: 'forbidden-string',
+    pattern: /sampleLightboxOpen|sampleLightboxIndex/,
+    note: '[lint-guard 162c-test_sample_gallery_template_structure] 全模板不得殘留舊 sampleLightbox* state — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'order',
+    items: [
+      { pattern: 'x-data="searchPage"' },
+      { pattern: 'class="sample-gallery"' },
+    ],
+    note: '[lint-guard 162c-test_sample_gallery_template_structure] .sample-gallery 須在 searchPage scope 之後 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: 'sg-open-btn',
+    scope: { anchor: /<div class="lb-header">/, window: 500 },
+    note: '[lint-guard 162c-test_sample_gallery_template_structure] sg-open-btn 須在 lb-header 窗內 — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestShowcaseSampleGalleryGuard
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox-samples.js', kind: 'required-string',
+    pattern: [
+      'sampleGalleryOpen', 'sampleGalleryImages', 'sampleGalleryIndex',
+      'openSampleGallery', 'closeSampleGallery', 'prevSampleGallery',
+      'nextSampleGallery', 'jumpSampleGallery',
+    ],
+    note: '[lint-guard 162c-test_showcase_sample_gallery_js_contains] showcase samples state／methods 須齊全 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string',
+    pattern: ['playSampleGallerySwitch', 'killTweensOf', 'gsap-animating', 'clearProps'],
+    note: '[lint-guard 162c-test_showcase_sample_gallery_js_contains] animations.js 須含 playSampleGallerySwitch 完整實作字面 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'order',
+    items: [
+      { pattern: 'x-data="showcase"' },
+      { pattern: 'sample-gallery' },
+    ],
+    note: '[lint-guard 162c-test_showcase_sample_gallery_html_structure] .sample-gallery 須在 showcase scope 之後 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: [
+      'sg-open-btn',
+      'openSampleGallery(',
+      'lb-header',
+      "'sg-thumb-active': idx === sampleGalleryIndex",
+    ],
+    note: '[lint-guard 162c-test_showcase_sample_gallery_html_structure] showcase 劇照集 bindings／lb-header／縮圖高亮須存在 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'sampleGalleryOpen',
+    scope: { anchor: /<div class="sample-gallery"/, window: 600 },
+    note: '[lint-guard 162c-test_showcase_sample_gallery_html_structure] .sample-gallery 附近須綁 sampleGalleryOpen — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'forbidden-string',
+    pattern: 'lb-meta-extra',
+    note: '[lint-guard 162c-test_showcase_sample_gallery_html_structure] showcase.html 不得含 lb-meta-extra — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'sg-open-btn',
+    scope: { anchor: /<div class="lb-header">/, window: 1800 },
+    note: '[lint-guard 162c-test_showcase_sample_gallery_html_structure] sg-open-btn 須在 lb-header 窗內 — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestScannerMissingPillGuard
+  {
+    file: 'web/templates/scanner.html', kind: 'required-string',
+    pattern: ['missingPillVisible', 'resumePillVisible'],
+    note: '[lint-guard 162c-test_scanner_contains] scanner.html 須含 missing／resume pill 可見綁定 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-batch.js', kind: 'required-string',
+    pattern: ['missingPillVisible', 'missingItems', 'resumePillVisible', 'runMissingEnrich', 'checkMissing'],
+    note: '[lint-guard 162c-test_scanner_contains] state-batch.js 須含 missing pill 狀態與方法 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string',
+    pattern: ['enriching', 'missingPillVisible'],
+    note: '[lint-guard 162c-test_scanner_contains] state-scan.js 須含 enriching／missingPillVisible — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestRescrapeVersionStateGuard
+  {
+    file: 'web/static/js/pages/search/state/advanced-picker.js', kind: 'required-string',
+    pattern: /_commitSearchResults\s*\(\s*payload\s*\)\s*\{/,
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_commit_search_results_helper_exists] advanced-picker.js 須有 _commitSearchResults(payload) { 定義 — 遷自 test_frontend_lint.py',
+  },
   // ---- 162c-B09 迄 ----
   //
   //
