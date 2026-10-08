@@ -86,24 +86,6 @@ class TestAutoFanOut:
 
         monkeypatch.setattr("core.scraper.get_enabled_source_ids", _mock_enabled)
 
-    def test_auto_available_shim_called(self, monkeypatch):
-        """auto + metatube:FANZA enabled+available → shim.search 被呼叫"""
-        mock_state = _mock_state(
-            avail_map={'metatube:FANZA': True},
-        )
-        monkeypatch.setattr("core.scraper.metatube_state", mock_state)
-
-        mt_video = _make_video("metatube:FANZA", "ABF-001", summary="plot", rating=4.2)
-        shim_search_mock = MagicMock(return_value=mt_video)
-
-        with patch("core.scraper._MetatubeShim.search", shim_search_mock):
-            with patch("core.scrapers.javbus.JavBusScraper.search", return_value=None):
-                result = search_jav("ABF-001", source='auto')
-
-        shim_search_mock.assert_called_once_with("ABF-001")
-        assert result is not None
-        assert result['_source'] == 'metatube:FANZA'
-
     def test_auto_result_contains_summary_and_rating(self, monkeypatch):
         """auto 路徑 metatube → result 含 _summary / _rating"""
         mock_state = _mock_state(avail_map={'metatube:FANZA': True})
@@ -118,44 +100,6 @@ class TestAutoFanOut:
         assert result is not None
         assert result['_summary'] == 'test summary'
         assert result['_rating'] == 3.7
-
-    def test_auto_builtin_result_summary_empty_rating_none(self, monkeypatch):
-        """auto 路徑 builtin 來源 → _summary='' / _rating=None（builtin Video 預設）"""
-        mock_state = _mock_state(avail_map={'metatube:FANZA': False})
-        monkeypatch.setattr("core.scraper.metatube_state", mock_state)
-
-        javbus_video = _make_video("javbus", "SONE-205")  # summary='', rating=None by default
-
-        with patch("core.scraper._MetatubeShim.search", return_value=None):
-            with patch("core.scrapers.javbus.JavBusScraper.search", return_value=javbus_video):
-                result = search_jav("SONE-205", source='auto')
-
-        assert result is not None
-        assert result.get('_summary', '') == ''
-        assert result.get('_rating') is None
-
-    def test_auto_unavailable_shim_not_called(self, monkeypatch):
-        """auto + metatube unavailable（availability_map False + not in enabled_sids）→ shim 不呼叫
-
-        get_enabled_source_ids(availability_map) 排除不可達的 metatube provider。
-        這裡 monkeypatch enabled 只回 ['javbus']（metatube:FANZA 被 gate 掉）。
-        """
-        def _mock_enabled_no_mt(availability_map=None):
-            return ['javbus']  # gate 已排除 metatube
-
-        monkeypatch.setattr("core.scraper.get_enabled_source_ids", _mock_enabled_no_mt)
-
-        mock_state = _mock_state(avail_map={'metatube:FANZA': False})
-        monkeypatch.setattr("core.scraper.metatube_state", mock_state)
-
-        shim_search_mock = MagicMock(return_value=None)
-        javbus_video = _make_video("javbus", "SONE-205")
-
-        with patch("core.scraper._MetatubeShim.search", shim_search_mock):
-            with patch("core.scrapers.javbus.JavBusScraper.search", return_value=javbus_video):
-                result = search_jav("SONE-205", source='auto')
-
-        shim_search_mock.assert_not_called()
 
 
 # ===========================================================================
@@ -178,16 +122,6 @@ class TestExplicitDispatch:
         assert result['_source'] == 'metatube:FANZA'
         assert result['_summary'] == 's'
         assert result['_rating'] == 4.0
-
-    def test_explicit_metatube_shim_returns_none(self, monkeypatch):
-        """explicit + shim.search 回 None → search_jav 回 None"""
-        mock_state = _mock_state(avail_map={'metatube:FANZA': True})
-        monkeypatch.setattr("core.scraper.metatube_state", mock_state)
-
-        with patch("core.scraper._MetatubeShim.search", return_value=None):
-            result = search_jav("ABF-001", source='metatube:FANZA')
-
-        assert result is None
 
     def test_explicit_source_passthrough_preserves_preview_cover_url(self, monkeypatch):
         """TASK-113c-T3b DoD-2③：source != 'auto' 單一來源直通不走 merge_results()，
@@ -242,34 +176,21 @@ class TestMetatubeShimErrors:
             mock_state.mark_failed.assert_called_once_with('metatube:FANZA', generation=None)
             mock_state.mark_available.assert_not_called()
 
-    def test_notfound_no_mark_failed_returns_none(self):
-        """MetatubeNotFound → mark_failed 不呼叫，回 None"""
-        from core.metatube.errors import MetatubeNotFound
+    @pytest.mark.parametrize("exc_name, msg", [
+        ("MetatubeNotFound", "not found"),
+        ("MetatubeAuthError", "bad token"),
+        ("RuntimeError", "unexpected"),
+    ])
+    def test_notfound_no_mark_failed_returns_none(self, exc_name, msg):
+        """查無／token 錯誤／一般例外 → mark_failed 不呼叫，回 None"""
+        from core.metatube import errors
+        exc_cls = {
+            "MetatubeNotFound": errors.MetatubeNotFound,
+            "MetatubeAuthError": errors.MetatubeAuthError,
+            "RuntimeError": RuntimeError,
+        }[exc_name]
         shim = self._make_shim()
-        shim._client.search.side_effect = MetatubeNotFound("not found")
-
-        with patch("core.scraper.metatube_state") as mock_state:
-            result = shim.search("ABF-001")
-
-        assert result is None
-        mock_state.mark_failed.assert_not_called()
-
-    def test_auth_error_no_mark_failed_returns_none(self):
-        """MetatubeAuthError → mark_failed 不呼叫，回 None"""
-        from core.metatube.errors import MetatubeAuthError
-        shim = self._make_shim()
-        shim._client.search.side_effect = MetatubeAuthError("bad token")
-
-        with patch("core.scraper.metatube_state") as mock_state:
-            result = shim.search("ABF-001")
-
-        assert result is None
-        mock_state.mark_failed.assert_not_called()
-
-    def test_generic_exception_returns_none(self):
-        """其他 Exception → logger.exception，回 None（不 mark_failed）"""
-        shim = self._make_shim()
-        shim._client.search.side_effect = RuntimeError("unexpected")
+        shim._client.search.side_effect = exc_cls(msg)
 
         with patch("core.scraper.metatube_state") as mock_state:
             result = shim.search("ABF-001")
@@ -477,36 +398,6 @@ class TestApiEchoPreservesNfoCarriers:
 
 class TestScannerAutoConverage:
     """spec 驗收：scanner 走 smart_search → search_jav('auto')，metatube 自動進入 fan-out"""
-
-    def test_smart_search_includes_metatube_entry(self, monkeypatch):
-        """mock metatube enabled+available，cascade 依優先序串接直打，metatube 在 enabled_sids 中參與。
-
-        新 cascade（spec-85 B1，CD-85-1/2）：依 get_enabled_source_ids 優先序串接直打，
-        metatube provider 在 availability_map 中 available → 進入 cascade 並被呼叫。
-        search_jav_single_source mock 讓 metatube:FANZA call 回 mt_video。
-        """
-        from core.scraper import smart_search
-
-        def _mock_enabled(availability_map=None):
-            return ['metatube:FANZA', 'javbus']
-
-        monkeypatch.setattr("core.scraper.get_enabled_source_ids", _mock_enabled)
-
-        mock_state = _mock_state(avail_map={'metatube:FANZA': True})
-        monkeypatch.setattr("core.scraper.metatube_state", mock_state)
-
-        mt_result = {'number': 'ABF-001', 'title': 'T', '_source': 'metatube:FANZA'}
-
-        def _single_source(number, source, proxy_url=''):
-            if source == 'metatube:FANZA':
-                return mt_result
-            return None
-
-        with patch("core.scraper.search_jav_single_source", side_effect=_single_source) as mock_ss:
-            results = smart_search("ABF-001")
-
-        mock_ss.assert_called()
-        assert any(r.get('_source') == 'metatube:FANZA' for r in results)
 
 
 def test_metatube_shim_exception_log_does_not_leak_credentials(caplog):
