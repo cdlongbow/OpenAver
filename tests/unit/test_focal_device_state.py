@@ -348,6 +348,23 @@ class TestNotificationSinkTransition:
         assert device_state.record_outcome(_abandoned("detect_timeout")) is False
         assert calls == []
 
+    def test_found_scan_never_notifies(self, tmp_path, monkeypatch):
+        """DoD：全庫有碼片掃描完成（只有 FOUND/NO_FACE，從未超時）→ 零通知。"""
+        from core.focal import device_state
+        from core.version import VERSION
+
+        _patch_config_paths(tmp_path, monkeypatch)
+        _seed_focal_device(judged_at_version=VERSION)
+        calls: list[tuple] = []
+        monkeypatch.setattr(
+            device_state, "_notification_sink",
+            lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+
+        for _ in range(5):
+            assert device_state.record_outcome(_found()) is False
+        assert calls == []
+
     def test_notification_copy_has_no_numbers_and_mentions_manual_escape_hatch(self):
         """DoD：文案不含張數／具體耗時數字、含手動拖曳逃生口（F6）。"""
         import json
