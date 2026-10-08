@@ -5695,9 +5695,8 @@ const RULES = [
   { file: 'web/static/js/pages/search/state/grid-mode.js', kind: 'required-string', pattern: /if\s*\(\s*!this\.actressProfile\s*\)\s*return/, scope: { anchor: /openActressLightbox\s*\(\s*\)/, window: 300 }, note: '[lint-guard 162c-test_lightbox_mode_normalization_contains] 使用者在女優（hero）搜尋頁重新整理 → 還原後燈箱殘留開著，或打開女優燈箱時沒有女優資料（空白燈箱、關不掉或內容錯） — 遷自 test_frontend_lint.py' },
 
   // 162c: TestShowcaseAnimationsGuard
-  // FIX6：原「整檔 exact 2 ＋ 函式體 exact 2」會把函式內合法增減 timeline 誤報；改為「函式體前」「函式體後」兩段各 forbidden（函式外零容忍不變；函式體內不再計數）
-  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'forbidden-string', pattern: 'gsap.getById(', scope: /^([\s\S]*?)export function _killLightboxTimelines\s*\(/, note: '[lint-guard 162c-test_core_js_no_direct_gsap_getById] showcase core 不得在 _killLightboxTimelines 之外（函式體前）直接呼叫 gsap.getById — 遷自 test_frontend_lint.py' },
-  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'forbidden-string', pattern: 'gsap.getById(', scope: /export function _killLightboxTimelines\s*\([^)]*\)\s*\{[\s\S]*?\n\}\n([\s\S]*)$/, note: '[lint-guard 162c-test_core_js_no_direct_gsap_getById] showcase core 不得在 _killLightboxTimelines 之外（函式體後，含 stateBase）直接呼叫 gsap.getById — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'structure-count', pattern: 'gsap.getById(', count: 2, note: '[lint-guard 162c-test_core_js_no_direct_gsap_getById] showcase core 不得在 _killLightboxTimelines 之外直接呼叫 gsap.getById（整檔 exact 2＝函式體內兩處） — 遷自 test_frontend_lint.py' },
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'structure-count', pattern: 'gsap.getById(', count: 2, scope: { anchor: /export function _killLightboxTimelines\s*\(options\)\s*\{/, braceBalanced: true }, note: '[lint-guard 162c-test_core_js_no_direct_gsap_getById] showcase core 不得在 _killLightboxTimelines 之外直接呼叫 gsap.getById（函式體內 exact 2） — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'forbidden-string', pattern: 'gsap.getById(', note: '[lint-guard 162c-test_core_js_no_direct_gsap_getById] showcase state-videos.js 不得直接呼叫 gsap.getById( — 遷自 test_frontend_lint.py' },
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: 'gsap.getById(', note: '[lint-guard 162c-test_core_js_no_direct_gsap_getById] showcase state-lightbox.js 不得直接呼叫 gsap.getById( — 遷自 test_frontend_lint.py' },
 
@@ -8009,11 +8008,8 @@ const RULES = [
     note: '[lint-guard 162c-test_lightbox_close_increments_generation] 使用者關燈箱／離開頁面／點 metadata 搜尋 → 必須讓排隊中的動畫 callback 失效，否則殘留 callback 之後把燈箱鎖死 — 遷自 test_contract_code_shape.py' },
 
   // 162c: TestShowcaseReactiveScopeGuard
-  // FIX6：改為只掃各 state 模組「頂層 return {…}」物件本體（原整檔掃會把 helper 內合法的 videos: 欄位誤報）；
-  // animations.js／main.js 非 state 模組（無 state return 物件）排除
-  { file: { dir: 'web/static/js/pages/showcase', ext: ['.js'], exclude: ['animations.js', 'main.js'] }, kind: 'forbidden-string',
+  { file: { dir: 'web/static/js/pages/showcase', ext: ['.js'] }, kind: 'forbidden-string',
     pattern: /^\s*(?:videos|filteredVideos)\s*:/m,
-    scope: { anchor: /^[ \t]*return\s*\{(?=[ \t]*$)/m, braceBalanced: true },
     stripLineComments: true,
     note: '[lint-guard 162c-test_guard1_no_videos_in_return_object] 使用者開影片牆（數千部片的片庫）→ 大陣列若放進 Alpine 響應式物件，載入與篩選明顯變慢甚至卡頓 — 遷自 test_contract_code_shape.py' },
   { file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
@@ -8706,7 +8702,7 @@ const RULES = [
   {
     file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
     pattern: "Alpine.store('ui').showcaseHasSearch = this._hasActiveFilterForCurrentTab();",
-    scope: /\$watch\('showFavoriteActresses'[\s\S]*?\}\)([\s\S]{0,400})/, stripLineComments: true,
+    scope: { anchor: /T2 init sync/, window: 260 },
     note: '[lint-guard 162c-test_init_sync_showcase_has_search_after_watchers] init 須同步 showcaseHasSearch 初始值，否則只靠 $watch 會漏掉 restoreState 後的清除鈕 — 遷自 test_showcase_mobile_search.py',
   },
 
@@ -8780,7 +8776,7 @@ const RULES = [
     pattern: /\bPOSTER_CROP_MAX_W\s*=\s*899\b/, stripLineComments: true,
     note: '[lint-guard 162c-test_breakpoint_const_is_899] 使用者把視窗拉到 801–899px → JS 的 POSTER_CROP_MAX_W 須與 CSS 899px 斷點一致，否則焦點 icon 不出現、飛行動畫比例對不上 — 遷自 tests/unit/test_frontend_lint.py（TestPosterCropThresholdAlignment；本地實剪驗證補回）' },
   { file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string',
-    pattern: /^[ \t]*jellyfinCheckState:\s*'idle'/m, stripLineComments: true,
+    pattern: /^[ \t]*jellyfinCheckState:\s*['\"]idle['\"]/m, stripLineComments: true,
     note: '[lint-guard 162c-test_jellyfin_check_state_declared] 使用者開掃描頁（尚未按檢查補圖）→ jellyfinCheckState 須有初值 idle，否則 idle／checking／done 三態文案求值失敗而同時顯示、主控台報錯 — 遷自 tests/unit/test_frontend_lint.py（TestJellyfinCheckManualGuard；本地實剪驗證補回）' },
   // 甲-C（verify-mov-1）
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
