@@ -6199,6 +6199,142 @@ const RULES = [
   //
   // ---- 162c-B22 起 ----
   // （162c-B22 專屬子區段：只在此兩行之間追加）
+
+  // 162c: TestServerModeToggleGuard
+  {
+    file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: 'result.lan_ip ?? null',
+    note: '[lint-guard 162c-test_set_server_mode_lan_ip_nullish_uses_null_not_stale] 使用者開啟後偵測不到 IP → 橫條若仍顯示舊 IP，使用者複製到失效網址 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/pages/settings/state-config.js', kind: 'forbidden-string',
+    pattern: 'result.lan_ip ?? this.lanIp',
+    note: '[lint-guard 162c-test_set_server_mode_lan_ip_nullish_uses_null_not_stale] 使用者開啟後偵測不到 IP → 橫條若仍顯示舊 IP，使用者複製到失效網址 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string',
+    pattern: 'j.lan_ip ?? null',
+    note: '[lint-guard 162c-test_load_config_lan_ip_nullish_uses_null_not_stale] 使用者重新整理後偵測不到 IP → 橫條若仍顯示舊 IP，使用者複製到失效網址 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/pages/settings/state-config.js', kind: 'forbidden-string',
+    pattern: 'j.lan_ip ?? this.lanIp',
+    note: '[lint-guard 162c-test_load_config_lan_ip_nullish_uses_null_not_stale] 使用者重新整理後偵測不到 IP → 橫條若仍顯示舊 IP，使用者複製到失效網址 — 遷自 test_contract_api_routes.py',
+  },
+
+  // 162c: TestScannerClearCache
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string',
+    pattern: ['clearCache()', '/api/gallery/cache', /method:\s*'DELETE'/],
+    note: '[lint-guard 162c-test_scanner_clear_cache_js_contains] 使用者在掃描頁按「清除快取」確認 → 若沒打到後端 DELETE /api/gallery/cache，快取沒清，縮圖仍是舊的要再按 — 遷自 test_contract_api_routes.py',
+  },
+
+  // 162c: TestAliasLiveQueryGuard
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: /async\s+_fetchLiveAliases\s*\([^)]*\)\s*\{/,
+    note: '[lint-guard 162c-test_fetch_live_aliases_method_exists] 使用者開女優燈箱 → 別名若沒即時重抓，看到的是舊快照別名 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: '/api/actress-aliases/',
+    scope: { anchor: /(?:^|\n)\s*(?:async\s+)?_fetchLiveAliases\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_fetch_live_aliases_method_exists] 使用者開女優燈箱 → 別名若沒即時重抓，看到的是舊快照別名 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: [
+      /(?:resp|response)\.status\s*===\s*200/,
+      /Object\.assign\s*\(/,
+      /aliases\s*:/,
+    ],
+    scope: { anchor: /(?:^|\n)\s*(?:async\s+)?_fetchLiveAliases\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_200_branch_uses_object_assign] 使用者看別名時 live 結果回來 → 若不用 Object.assign 產生新物件，燈箱別名欄不更新（Alpine 反應性），仍是舊別名 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: [
+      /\btry\s*\{/,
+      /\bcatch\s*\(/,
+      /if\s*\(\s*(?:resp|response)\.status\s*===\s*200\s*\)\s*\{[^}]*?Object\.assign/,
+    ],
+    scope: { anchor: /(?:^|\n)\s*(?:async\s+)?_fetchLiveAliases\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_fallback_preserves_snapshot_on_error] 使用者查別名逾時／404 → 若覆蓋了快照，燈箱別名欄變空，別名「不見」 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'structure-count',
+    pattern: /_fetchLiveAliases\s*\(/,
+    min: 2,
+    scope: { anchor: /(?:^|\n)\s*(?:async\s+)?openActressLightbox\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_callsites_in_open_actress_and_hero] 使用者開女優燈箱（首次進入或切換女優、或從 hero card 進）→ 若少了即時重抓呼叫，別名不更新 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: /_fetchLiveAliases\s*\(/,
+    scope: { anchor: /(?:^|\n)\s*(?:async\s+)?openHeroCardLightbox\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_callsites_in_open_actress_and_hero] 使用者開女優燈箱（首次進入或切換女優、或從 hero card 進）→ 若少了即時重抓呼叫，別名不更新 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: /_fetchLiveAliases\s*\(/,
+    scope: { anchor: /(?:^|\n)\s*(?:async\s+)?prevActressLightbox\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_prev_next_actress_lightbox_refetch_aliases] 使用者用方向鍵切換女優 → 若不重抓別名，看到的是上一位的舊快照 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: /_fetchLiveAliases\s*\(/,
+    scope: { anchor: /(?:^|\n)\s*(?:async\s+)?nextActressLightbox\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_prev_next_actress_lightbox_refetch_aliases] 使用者用方向鍵切換女優 → 若不重抓別名，看到的是上一位的舊快照 — 遷自 test_contract_api_routes.py',
+  },
+
+  // 162c: TestJellyfinCheckManualGuard
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'forbidden-string',
+    pattern: /this\.loadStats\(\);\s*this\.checkJellyfinImages\(\)/,
+    note: '[lint-guard 162c-test_no_auto_trigger_in_init] 使用者開掃描頁／生成列表完成 → 若又自動跑 Jellyfin 圖檢查，大片庫被掃一輪（慢、佔 NAS）（test_no_auto_trigger_after_generate） — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/templates/scanner.html', kind: 'required-string',
+    pattern: '@click="checkJellyfinImages()"',
+    note: '[lint-guard 162c-test_trigger_button_click_handler] 使用者想補 Jellyfin 圖 → 自動觸發已拿掉，按鈕若沒接 @click 就完全無法啟動檢查，補圖功能變不可用 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/templates/scanner.html', kind: 'tag-scan', mode: 'class-tag',
+    tagPattern: /<div\b(?=[^>]*class="[^"]*\bnfo-update-row\b)(?=[^>]*x-show="[^"]*jellyfinImageVisible)(?=[^>]*x-show="[^"]*config)[^>]*>/,
+    required: [
+      /\sx-show="[^"]*\['jellyfin', 'emby', 'kodi'\]\.includes\(config\?\.scraper\?\.external_manager\)[^"]*"/,
+      /\sx-show="[^"]*!jellyfinImageVisible[^"]*"/,
+    ],
+    note: '[lint-guard 162c-test_trigger_row_xshow_uses_jellyfin_image_visible] 使用者沒設 Jellyfin／Emby／Kodi（或設定尚未載入）→ 若觸發列用 fail-open 條件，仍看到「檢查 Jellyfin 圖」鈕，按下去打不存在的流程 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/templates/scanner.html', kind: 'forbidden-string',
+    pattern: [
+      "=== 'jellyfin_emby'",
+      "config?.scraper?.external_manager !== 'off' && !jellyfinImageVisible",
+      "config?.scraper?.jellyfin_mode && !jellyfinImageVisible",
+    ],
+    note: '[lint-guard 162c-test_trigger_row_xshow_uses_jellyfin_image_visible] 使用者沒設 Jellyfin／Emby／Kodi（或設定尚未載入）→ 若觸發列用 fail-open 條件，仍看到「檢查 Jellyfin 圖」鈕，按下去打不存在的流程 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string',
+    pattern: [
+      'async checkJellyfinImages()',
+      "!['jellyfin', 'emby', 'kodi'].includes(this.config?.scraper?.external_manager)",
+    ],
+    note: '[lint-guard 162c-test_check_jellyfin_method_gate_is_fail_closed] 使用者沒設外部管理器或設定尚未載入就觸發 → 若方法端 gate 是 fail-open，會對沒有 Jellyfin 的環境打 /jellyfin-check 而報錯 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'forbidden-string',
+    pattern: "this.config?.scraper?.external_manager === 'off'",
+    note: '[lint-guard 162c-test_check_jellyfin_method_gate_is_fail_closed] 使用者沒設外部管理器或設定尚未載入就觸發 → 若方法端 gate 是 fail-open，會對沒有 Jellyfin 的環境打 /jellyfin-check 而報錯 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/templates/scanner.html', kind: 'required-string',
+    pattern: ["jellyfinCheckState === 'done'", 'jellyfin_check_done_ok'],
+    note: '[lint-guard 162c-test_trigger_row_done_state_text_present] 使用者按檢查且全部沒問題 → 若 done 狀態沒有「已檢查沒問題」文字，畫面像沒反應，不知檢查完沒 — 遷自 test_contract_api_routes.py',
+  },
+
   // ---- 162c-B22 迄 ----
   //
   //
