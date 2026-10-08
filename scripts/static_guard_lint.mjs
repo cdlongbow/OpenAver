@@ -7860,6 +7860,86 @@ const RULES = [
   //
   // ---- 162c-B30 起 ----
   // （162c-B30 專屬子區段：只在此兩行之間追加）
+
+  // 162c: TestShowcaseScrollCollapse
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string', anyOf: true,
+    pattern: ["addEventListener('scroll'", 'addEventListener("scroll"'],
+    note: '[lint-guard 162c-test_scroll_listener_registered] 手機往下捲須登記 passive scroll listener 才能自動收合工具列 — 遷自 test_showcase_mobile_search.py' },
+  {
+    file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
+    pattern: "const isOpen = Alpine.store('ui').toolbarOpen",
+    scope: { anchor: /const _scrollHandler = \(\) => \{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_scroll_collapse_checks_toolbar_open] scroll handler 須讀 toolbarOpen 才能在未展開時提早 return — 遷自 test_showcase_mobile_search.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
+    pattern: 'this._hasActiveFilterForCurrentTab()',
+    scope: { anchor: /const _scrollHandler = \(\) => \{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_scroll_collapse_checks_empty_search] 手機搜尋中往下捲 → scroll handler 須檢查啟用中篩選，否則工具列被收起但篩選仍在、使用者以為那就是全庫 — 遷自 test_showcase_mobile_search.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
+    pattern: 'actressSearch',
+    scope: { anchor: /_hasActiveFilterForCurrentTab\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_scroll_collapse_checks_actress_search] 女優牆手機搜尋後往下捲 → 判準須含 actressSearch，否則工具列被收、搜尋框不見但篩選仍在 — 遷自 test_showcase_mobile_search.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
+    pattern: 'window.scrollY - _toolbarOpenY',
+    scope: { anchor: /const _scrollHandler = \(\) => \{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_scroll_collapse_uses_relative_threshold] 使用者已捲到下方才展開工具列 → handler 須用相對基準 _toolbarOpenY，否則一展開就被收回 — 遷自 test_showcase_mobile_search.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
+    pattern: '_toolbarOpenY = null',
+    scope: { anchor: /toolbarOpen = false/, window: 140 },
+    note: '[lint-guard 162c-test_scroll_collapse_resets_baseline_on_auto_close] 自動收合後再點開 → 基準 Y 須立即重置，否則剛展開就用舊基準再度被收 — 遷自 test_showcase_mobile_search.py',
+  },
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
+    pattern: "window.removeEventListener('scroll', this._scrollHideHandler)",
+    note: '[lint-guard 162c-test_scroll_listener_cleanup] 離開 showcase 頁須移除 scroll 監聽，否則舊 handler 仍改 toolbarOpen — 遷自 test_showcase_mobile_search.py' },
+
+  // 162c: TestShowcaseHeaderSearchIcon
+  { file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'showcase:clear-search',
+    note: '[lint-guard 162c-test_showcase_has_window_listener] 按 header ✕ → showcase 頁須接 clear-search 事件才能清掉搜尋 — 遷自 test_showcase_mobile_search.py' },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: 'addPill(',
+    scope: { anchor: /searchFromMetadata\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_search_from_metadata_delegates_to_add_pill] 燈箱點導演／系列／女優名 → searchFromMetadata 須委派 addPill，否則牆未依該維度篩選 — 遷自 test_showcase_mobile_search.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string',
+    pattern: 'this.search = ',
+    scope: { anchor: /searchFromMetadata\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_search_from_metadata_delegates_to_add_pill] 燈箱點導演／系列／女優名 → searchFromMetadata 不得直接寫 this.search（須走 addPill） — 遷自 test_showcase_mobile_search.py',
+  },
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string', anyOf: true,
+    pattern: ["$watch('search'", '$watch("search"'],
+    note: '[lint-guard 162c-test_watch_search_updates_showcase_has_search] 手機輸入搜尋 → 須有 $watch(\'search\') 更新旗標，否則 header 不變 ✕、無法一鍵清除 — 遷自 test_showcase_mobile_search.py' },
+  { file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string', anyOf: true,
+    pattern: ["$watch('actressSearch'", '$watch("actressSearch"'],
+    note: '[lint-guard 162c-test_watch_actress_search_updates_showcase_has_search] 女優牆輸入搜尋 → 須有 $watch(\'actressSearch\') 更新旗標，否則 header 不變 ✕ — 遷自 test_showcase_mobile_search.py' },
+  {
+    file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
+    pattern: 'pills.length',
+    scope: { anchor: /_hasActiveFilterForCurrentTab\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_init_sync_showcase_has_search_after_watchers] 用 pill 篩選時清除 ✕ 須涵蓋 pills.length，否則看著被篩過的牆卻沒有清除鈕 — 遷自 test_showcase_mobile_search.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
+    pattern: 'showFavoriteActresses',
+    scope: { anchor: /_hasActiveFilterForCurrentTab\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_init_sync_showcase_has_search_after_watchers] 切換影片／女優分頁時判準須含 showFavoriteActresses，否則清除鈕不分頁化 — 遷自 test_showcase_mobile_search.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string',
+    pattern: "Alpine.store('ui').showcaseHasSearch = this._hasActiveFilterForCurrentTab();",
+    scope: { anchor: /T2 init sync/, window: 260 },
+    note: '[lint-guard 162c-test_init_sync_showcase_has_search_after_watchers] init 須同步 showcaseHasSearch 初始值，否則只靠 $watch 會漏掉 restoreState 後的清除鈕 — 遷自 test_showcase_mobile_search.py',
+  },
+
   // ---- 162c-B30 迄 ----
   //
   //
