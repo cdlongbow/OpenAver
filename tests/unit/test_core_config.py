@@ -12,7 +12,7 @@ import pytest
 from pathlib import Path
 
 import core.config as core_config
-from core.config import AppConfig, GalleryConfig, load_config, save_config
+from core.config import AppConfig, CoverBadgesConfig, GalleryConfig, load_config, save_config
 
 
 # ============ helpers ============
@@ -398,6 +398,18 @@ class TestMigrationExternalManager:
 
 class TestMigrationDownloadSampleImages:
     """download_sample_images 補齊（Task 38e）"""
+
+    def test_download_sample_images_added_when_missing(self, tmp_path, monkeypatch):
+        """舊 config 沒有 download_sample_images → migration 自動補 False"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"scraper": {"create_folder": True, "jellyfin_mode": False}})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert "download_sample_images" in result["scraper"]
+        assert result["scraper"]["download_sample_images"] is False
 
     def test_download_sample_images_not_overwrite_existing(self, tmp_path, monkeypatch):
         """已存在的 download_sample_images=True 不被覆蓋"""
@@ -1442,6 +1454,12 @@ class TestCoverBadgesConfig:
         cfg = GalleryConfig.model_validate({"items_per_page": 90})
         assert cfg.cover_badges.enabled is False
         assert cfg.cover_badges.items == {}
+
+    def test_items_keeps_false_and_tolerates_unknown_id(self):
+        """邊界 4：items 收到 {"4k": false} 保留；{"unknown_id": true} 不拋錯"""
+        cfg = CoverBadgesConfig(items={"4k": False, "unknown_id": True})
+        assert cfg.items["4k"] is False
+        assert cfg.items["unknown_id"] is True
 
 
 # ============ TASK-133b-T1：gallery.show_table_list 預設值 + default.json parity ============
