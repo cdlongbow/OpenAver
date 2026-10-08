@@ -8720,6 +8720,21 @@ const RULES = [
     note: '[lint-guard 162c-test_state_config_defines_methods_and_stubs] 使用者在設定頁切外部管理器模式 → 確認窗按確認須有 confirmSwitchMode，否則丟 TypeError、視窗關不掉只能重整 — 遷自 tests/unit/frontend_contracts/test_contract_code_shape.py（本地實剪驗證補回）' },
   // ---- 162c-FIX4 迄 ----
 
+  // ---- 162c-FIX5（PR#219 Codex P2：重新刮削確認防連點） ----
+  { file: 'web/static/js/shared/state-rescrape.js', kind: 'order',
+    scope: { anchor: /async\s+rescrapeConfirm\s*\(\s*\)\s*\{/, braceBalanced: true }, stripLineComments: true,
+    items: [
+      { pattern: /if\s*\(\s*this\._rescraping\s*\)\s*return\b/ },
+      { pattern: /this\._rescraping\s*=\s*true\b/ },
+      { pattern: /await\s+fetch\(/ },
+    ],
+    note: '[lint-guard 162c-test_rescraping_guard_present] 使用者在重刮確認窗連點 ✓ → 入口須先擋重入、且在第一個 await 前設 _rescraping=true，否則同一片同時送兩個覆寫請求（/api/enrich-single 無鎖、封面兩條執行緒同寫一檔）→ 封面或 NFO 可能寫壞，要再重刮 — 遷自 test_contract_api_routes.py（PR#219 Codex P2 補回）' },
+  { file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string',
+    scope: { anchor: /async\s+rescrapeConfirm\s*\(\s*\)\s*\{/, braceBalanced: true }, stripLineComments: true,
+    pattern: /finally\s*\{\s*this\._rescraping\s*=\s*false\b/,
+    note: '[lint-guard 162c-test_rescraping_guard_present] 使用者重刮確認失敗後 → finally 須把 _rescraping 設回 false，否則之後再按 ✓ 永遠被入口擋掉、只能關窗重開 — 遷自 test_contract_api_routes.py（PR#219 Codex P2 補回）' },
+  // ---- 162c-FIX5 迄 ----
+
 ];
 
 // ---- helpers ----
