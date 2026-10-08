@@ -6492,6 +6492,19 @@ const RULES = [
     forbidden: ['mobile-toolbar-open'],
     note: '[lint-guard 162c-test_search_bar_not_bound] 使用者在手機搜尋頁 → 若 .search-bar 被誤綁 mobile-toolbar-open，搜尋框被收進 navbar icon 內預設隱藏，搜尋頁找不到輸入框 — 遷自 test_frontend_lint.py',
   },
+  // 162c: TestResultSourcePill（T5 Codex P2 補回）
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: /(?<![\w:-])loading_expr\s*=\s*['"]isSwitchingSource['"]/,
+    scope: /source_pill\((?:(?!source_pill\().)*?result-source-pill.*?\)\s*\}\}/s,
+    note: '[lint-guard 162c-test_result_pill_loading_bound_to_switching] 自動切換來源進行中膠囊要鎖住，否則再選別的來源會被舊流程覆蓋並存檔 — 遷自 test_frontend_lint.py（T5 二審刪除後 Codex P2 補回）',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: /(?<![\w:-]):disabled\s*=\s*\\?["']isSwitchingSource\\?["']/,
+    scope: /source_pill\((?:(?!source_pill\().)*?result-source-pill.*?\)\s*\}\}/s,
+    note: '[lint-guard 162c-test_result_pill_loading_bound_to_switching] 自動切換來源進行中膠囊要鎖住，否則再選別的來源會被舊流程覆蓋並存檔 — 遷自 test_frontend_lint.py（T5 二審刪除後 Codex P2 補回）',
+  },
   // ---- 162c-B13 迄 ----
   //
   //
