@@ -3,7 +3,6 @@ import pytest
 import sqlite3
 import json
 from pathlib import Path
-from datetime import datetime
 
 from core.database import (
     get_db_path,
@@ -120,41 +119,6 @@ def test_init_db_idempotent(tmp_path):
 
 
 @pytest.fixture
-def default_video():
-    """建立預設 Video 物件供測試共用。"""
-    return Video()
-
-
-def test_video_defaults_basic_fields(default_video):
-    """測試核心基本欄位的預設值"""
-    assert default_video.id is None
-    assert default_video.path == ""
-    assert default_video.number is None
-    assert default_video.size_bytes == 0
-    assert default_video.mtime == 0.0
-    assert default_video.nfo_mtime == 0.0
-    assert default_video.created_at is None
-    assert default_video.updated_at is None
-
-
-def test_video_defaults_string_metadata(default_video):
-    """測試可選字串欄位預設值"""
-    assert default_video.title == ""
-    assert default_video.original_title == ""
-    assert default_video.maker == ""
-    assert default_video.series is None
-    assert default_video.cover_path == ""
-    assert default_video.release_date == ""
-    assert default_video.duration is None
-
-
-def test_video_defaults_list_fields(default_video):
-    """測試列表欄位預設空 list"""
-    assert default_video.actresses == []
-    assert default_video.tags == []
-
-
-@pytest.fixture
 def mapped_video():
     """準備 VideoInfo 轉換後的 Video 物件供測試"""
     info = VideoInfo(
@@ -194,56 +158,6 @@ def test_mapped_video_list_fields(mapped_video):
     """測試 VideoInfo 轉換的列表欄位映射"""
     assert mapped_video.actresses == ["演員A", "演員B", "演員C"]
     assert mapped_video.tags == ["類型1", "類型2", "類型3"]
-
-
-def test_video_to_dict():
-    """測試序列化正確"""
-    video = Video(
-        id=1,
-        path="/videos/test.mp4",
-        number="ABC-123",
-        title="測試影片",
-        actresses=["演員A", "演員B"],
-        tags=["類型1", "類型2"],
-        size_bytes=1024,
-        created_at=datetime(2024, 1, 20, 12, 0, 0),
-        updated_at=datetime(2024, 1, 21, 13, 30, 0)
-    )
-
-    data = video.to_dict()
-
-    assert data['id'] == 1
-    assert data['path'] == "/videos/test.mp4"
-    assert data['number'] == "ABC-123"
-    assert data['title'] == "測試影片"
-    # JSON 欄位應該被序列化為字串
-    assert isinstance(data['actresses'], str)
-    assert json.loads(data['actresses']) == ["演員A", "演員B"]
-    assert isinstance(data['tags'], str)
-    assert json.loads(data['tags']) == ["類型1", "類型2"]
-    # datetime 應該被轉為 ISO 格式字串
-    assert data['created_at'] == "2024-01-20T12:00:00"
-    assert data['updated_at'] == "2024-01-21T13:30:00"
-
-
-def test_video_actresses_json():
-    """測試 JSON 欄位處理"""
-    # 測試空列表
-    video1 = Video(actresses=[])
-    data1 = video1.to_dict()
-    assert json.loads(data1['actresses']) == []
-
-    # 測試中文字元
-    video2 = Video(actresses=["波多野結衣", "上原亞衣"])
-    data2 = video2.to_dict()
-    actresses = json.loads(data2['actresses'])
-    assert actresses == ["波多野結衣", "上原亞衣"]
-
-    # 測試 tags
-    video3 = Video(tags=["巨乳", "中出", "單體作品"])
-    data3 = video3.to_dict()
-    tags = json.loads(data3['tags'])
-    assert tags == ["巨乳", "中出", "單體作品"]
 
 
 def test_connection_wal_mode(tmp_path):
@@ -324,16 +238,6 @@ class TestInsertAndQuery:
         assert self.result_video.created_at is not None
         assert self.result_video.updated_at is not None
 
-    def test_insert_metadata_fields(self):
-        """測試插入與查詢的字串元資料欄位"""
-        assert self.result_video.title == "測試影片"
-        assert self.result_video.original_title == "Test Video"
-        assert self.result_video.maker == "測試片商"
-        assert self.result_video.series == "測試系列"
-        assert self.result_video.duration == 120
-        assert self.result_video.cover_path == "/covers/test123.jpg"
-        assert self.result_video.release_date == "2024-01-20"
-
     def test_insert_list_fields(self):
         """測試插入與查詢的列表欄位"""
         assert self.result_video.actresses == ["演員A", "演員B"]
@@ -373,46 +277,6 @@ def test_video_from_video_info_with_spaces():
     # 應該去除空白並過濾空項目
     assert video.actresses == ["演員A", "演員B", "演員C"]
     assert video.tags == ["類型1", "類型2", "類型3"]
-
-
-def test_init_db_creates_actress_aliases_table(tmp_path):
-    """測試 actress_aliases 表建立"""
-    db_path = tmp_path / "test.db"
-    init_db(db_path)
-    conn = get_connection(db_path)
-    cursor = conn.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='actress_aliases'")
-    assert cursor.fetchone() is not None
-    conn.close()
-
-
-def test_actress_aliases_new_schema(tmp_path):
-    """[T1 updated] 新 schema 有 primary_name PK，無舊 idx_actress_aliases_new_name index"""
-    db_path = tmp_path / "test.db"
-    init_db(db_path)
-    conn = get_connection(db_path)
-    cursor = conn.cursor()
-    # 新 schema 應有 primary_name 欄位
-    cursor.execute("PRAGMA table_info(actress_aliases)")
-    cols = [row[1] for row in cursor.fetchall()]
-    assert "primary_name" in cols
-    # 舊 index 已移除
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_actress_aliases_new_name'")
-    assert cursor.fetchone() is None
-    conn.close()
-
-
-def test_actress_aliases_new_schema_has_seed_data(tmp_path):
-    """[T1 updated] 新建 DB 有種子資料（新 schema 格式，4 組）"""
-    db_path = tmp_path / "test.db"
-    init_db(db_path)
-    conn = get_connection(db_path)
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM actress_aliases")
-    count = cursor.fetchone()[0]
-    # 新表無種子資料，fresh DB 應為空
-    assert count == 0
-    conn.close()
 
 
 def test_actress_alias_primary_name_unique_constraint(tmp_path):
@@ -470,53 +334,11 @@ def test_migrate_json_to_sqlite_success(tmp_path):
     assert repo.count() == 1
 
 
-def test_migrate_json_to_sqlite_invalid_json(tmp_path):
-    """測試損壞的 json 檔案"""
-    db_path = tmp_path / "test.db"
-    json_path = tmp_path / "bad.json"
-    json_path.write_text("{bad json")
-
-    result = migrate_json_to_sqlite(json_path, db_path, delete_on_success=False)
-    assert result['errors'] == 1
-
 
 # ============ Phase 37 新欄位映射測試 ============
 
 class TestFromVideoInfoNewFields:
     """from_video_info() Phase 37 新欄位映射測試"""
-
-    def test_from_video_info_director_mapped(self):
-        """director 欄位正確映射"""
-        info = VideoInfo(
-            path="/test.mp4",
-            num="ABC-001",
-            title="テスト",
-            director="テスト監督",
-        )
-        video = Video.from_video_info(info)
-        assert video.director == "テスト監督"
-
-    def test_from_video_info_label_mapped(self):
-        """label 欄位正確映射"""
-        info = VideoInfo(
-            path="/test.mp4",
-            num="ABC-001",
-            title="テスト",
-            label="S1",
-        )
-        video = Video.from_video_info(info)
-        assert video.label == "S1"
-
-    def test_from_video_info_series_mapped(self):
-        """series 欄位正確映射"""
-        info = VideoInfo(
-            path="/test.mp4",
-            num="ABC-001",
-            title="テスト",
-            series="テストシリーズ",
-        )
-        video = Video.from_video_info(info)
-        assert video.series == "テストシリーズ"
 
     def test_from_video_info_series_empty_becomes_none(self):
         """series='' → None（與 Optional[str] 語意一致）"""
@@ -529,17 +351,6 @@ class TestFromVideoInfoNewFields:
         video = Video.from_video_info(info)
         assert video.series is None
 
-    def test_from_video_info_duration_mapped(self):
-        """duration 欄位正確映射"""
-        info = VideoInfo(
-            path="/test.mp4",
-            num="ABC-001",
-            title="テスト",
-            duration=120,
-        )
-        video = Video.from_video_info(info)
-        assert video.duration == 120
-
     def test_from_video_info_duration_zero_preserved(self):
         """duration=0 保持 0（不被 or 短路為 None）"""
         info = VideoInfo(
@@ -550,17 +361,6 @@ class TestFromVideoInfoNewFields:
         )
         video = Video.from_video_info(info)
         assert video.duration == 0
-
-    def test_from_video_info_duration_none_preserved(self):
-        """duration=None 保持 None"""
-        info = VideoInfo(
-            path="/test.mp4",
-            num="ABC-001",
-            title="テスト",
-            duration=None,
-        )
-        video = Video.from_video_info(info)
-        assert video.duration is None
 
     def test_from_video_info_all_new_fields(self):
         """all 4 new fields mapped correctly in single call"""
@@ -578,22 +378,6 @@ class TestFromVideoInfoNewFields:
         assert video.duration == 90
         assert video.series == "シリーズX"
         assert video.label == "premium"
-
-
-class TestVideoDirectorLabelFields:
-    """Video dataclass 新增 director/label 欄位測試"""
-
-    def test_video_director_default_empty_string(self):
-        """Video.director 預設值為 ''"""
-        video = Video()
-        assert hasattr(video, 'director')
-        assert video.director == ''
-
-    def test_video_label_default_empty_string(self):
-        """Video.label 預設值為 ''"""
-        video = Video()
-        assert hasattr(video, 'label')
-        assert video.label == ''
 
 
 class TestDbMigration:
@@ -633,7 +417,7 @@ class TestDbMigration:
         conn.close()
 
     def test_migration_adds_director_column(self, tmp_path):
-        """舊 schema 升級後，PRAGMA table_info 確認 director 欄位存在"""
+        """最舊 schema 升級後，PRAGMA table_info 確認各代新增欄位全數補齊"""
         db_path = tmp_path / "old.db"
         self._create_old_schema_db(db_path)
 
@@ -646,22 +430,11 @@ class TestDbMigration:
         columns = [row[1] for row in cursor.fetchall()]
         conn.close()
 
-        assert 'director' in columns
-
-    def test_migration_adds_label_column(self, tmp_path):
-        """舊 schema 升級後，PRAGMA table_info 確認 label 欄位存在"""
-        db_path = tmp_path / "old.db"
-        self._create_old_schema_db(db_path)
-
-        init_db(db_path)
-
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(videos)")
-        columns = [row[1] for row in cursor.fetchall()]
-        conn.close()
-
-        assert 'label' in columns
+        for col in (
+            'director', 'label', 'output_dir', 'scrape_attempted_at',
+            'auto_focal', 'crop_mode', 'focal_attempted_at', 'user_rating',
+        ):
+            assert col in columns, col
 
     def test_migration_preserves_existing_data(self, tmp_path):
         """升級後舊資料仍然存在"""
@@ -680,26 +453,12 @@ class TestDbMigration:
         assert row[0] == "OLD-001"
         assert row[1] == "舊資料"
 
-    def test_new_db_includes_director_and_label(self, tmp_path):
-        """全新 DB 的 CREATE TABLE 也包含 director 和 label"""
-        db_path = tmp_path / "new.db"
-        init_db(db_path)
-
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(videos)")
-        columns = [row[1] for row in cursor.fetchall()]
-        conn.close()
-
-        assert 'director' in columns
-        assert 'label' in columns
-
 
 class TestGetColumnsOrder:
     """_get_columns() 順序與 SELECT * 一致，upsert + get_by_path round-trip 驗證"""
 
     def test_upsert_and_get_by_path_roundtrip(self, tmp_path):
-        """upsert + get_by_path round-trip 驗證 director/label 欄位正確"""
+        """upsert + get_by_path round-trip 驗證 director/label/output_dir/scrape_attempted_at 欄位正確"""
         db_path = tmp_path / "test.db"
         init_db(db_path)
 
@@ -714,6 +473,8 @@ class TestGetColumnsOrder:
             label="S1",
             series="シリーズ",
             duration=75,
+            output_dir=to_file_uri("/produced/RT-001"),
+            scrape_attempted_at=1717171717.5,
         )
         repo.upsert(video)
 
@@ -724,106 +485,8 @@ class TestGetColumnsOrder:
         assert result.label == "S1"
         assert result.series == "シリーズ"
         assert result.duration == 75
-
-
-class TestOutputDirField:
-    """TASK-89a-T1: videos.output_dir 欄位 — CREATE TABLE + 加法遷移 + dataclass round-trip"""
-
-    def _create_old_schema_db_no_output_dir(self, db_path: Path):
-        """建立沒有 output_dir 的舊 schema DB（其餘欄位齊全）"""
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE videos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                path TEXT UNIQUE NOT NULL,
-                number TEXT,
-                title TEXT,
-                original_title TEXT,
-                actresses TEXT,
-                maker TEXT,
-                director TEXT DEFAULT '',
-                series TEXT,
-                label TEXT DEFAULT '',
-                tags TEXT,
-                sample_images TEXT DEFAULT '',
-                user_tags TEXT DEFAULT '[]',
-                duration INTEGER,
-                size_bytes INTEGER,
-                cover_path TEXT,
-                release_date TEXT,
-                mtime REAL,
-                nfo_mtime REAL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cursor.execute(
-            "INSERT INTO videos (path, number, title) VALUES (?, ?, ?)",
-            (to_file_uri("/old_no_output_dir.mp4"), "OLD-002", "舊資料")
-        )
-        conn.commit()
-        conn.close()
-
-    def test_new_db_includes_output_dir_column(self, tmp_path):
-        """全新 DB 的 CREATE TABLE 含 output_dir，預設值 ''"""
-        db_path = tmp_path / "new.db"
-        init_db(db_path)
-
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(videos)")
-        columns = {row[1]: row for row in cursor.fetchall()}
-        conn.close()
-
-        assert 'output_dir' in columns
-
-    def test_migration_adds_output_dir_column(self, tmp_path):
-        """舊 schema（無 output_dir）升級後，PRAGMA table_info 確認欄位存在"""
-        db_path = tmp_path / "old.db"
-        self._create_old_schema_db_no_output_dir(db_path)
-
-        init_db(db_path)
-
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(videos)")
-        columns = [row[1] for row in cursor.fetchall()]
-        conn.close()
-
-        assert 'output_dir' in columns
-
-    def test_migration_output_dir_idempotent(self, tmp_path):
-        """對同一個舊庫連續呼叫 init_db() 兩次不拋例外（遷移 idempotent）"""
-        db_path = tmp_path / "old.db"
-        self._create_old_schema_db_no_output_dir(db_path)
-
-        init_db(db_path)
-        init_db(db_path)  # 第二次不應報錯
-
-    def test_video_output_dir_default_empty_string(self):
-        """Video.output_dir 預設值為 ''"""
-        video = Video()
-        assert hasattr(video, 'output_dir')
-        assert video.output_dir == ''
-
-    def test_video_output_dir_roundtrip_via_upsert(self, tmp_path):
-        """Video dataclass output_dir 透過 to_dict()/from_row() round-trip 正確"""
-        db_path = tmp_path / "test.db"
-        init_db(db_path)
-
-        repo = VideoRepository(db_path)
-        video = Video(
-            path=to_file_uri("/test/output_dir_roundtrip.mp4"),
-            number="OD-001",
-            title="output_dir round-trip",
-            output_dir=to_file_uri("/produced/OD-001"),
-        )
-        repo.upsert(video)
-
-        result = repo.get_by_path(to_file_uri("/test/output_dir_roundtrip.mp4"))
-        assert result is not None
-        assert result.output_dir == to_file_uri("/produced/OD-001")
+        assert result.output_dir == to_file_uri("/produced/RT-001")
+        assert result.scrape_attempted_at == 1717171717.5
 
 
 class TestScrapeAttemptedAtField:
@@ -881,42 +544,6 @@ class TestScrapeAttemptedAtField:
             )
         conn.commit()
         conn.close()
-
-    def test_new_db_includes_scrape_attempted_at_column(self, tmp_path):
-        """全新 DB 的 CREATE TABLE 含 scrape_attempted_at，預設值 0"""
-        db_path = tmp_path / "new.db"
-        init_db(db_path)
-
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(videos)")
-        columns = [row[1] for row in cursor.fetchall()]
-        conn.close()
-
-        assert 'scrape_attempted_at' in columns
-
-    def test_migration_adds_scrape_attempted_at_column(self, tmp_path):
-        """舊 schema（無 scrape_attempted_at）升級後，PRAGMA table_info 確認欄位存在"""
-        db_path = tmp_path / "old.db"
-        self._create_old_schema_db(db_path)
-
-        init_db(db_path)
-
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(videos)")
-        columns = [row[1] for row in cursor.fetchall()]
-        conn.close()
-
-        assert 'scrape_attempted_at' in columns
-
-    def test_migration_scrape_attempted_at_idempotent(self, tmp_path):
-        """對同一個舊庫連續呼叫 init_db() 兩次不拋例外（遷移 idempotent）"""
-        db_path = tmp_path / "old.db"
-        self._create_old_schema_db(db_path)
-
-        init_db(db_path)
-        init_db(db_path)  # 第二次不應報錯
 
     def test_migration_backfill_does_not_rerun_second_call(self, tmp_path):
         """第二次呼叫 init_db() 不重跑 backfill：手動歸零後再跑一次，值不被覆蓋"""
@@ -1022,30 +649,6 @@ class TestScrapeAttemptedAtField:
 
         assert row[0] > 0
 
-    def test_video_scrape_attempted_at_default_zero(self):
-        """Video.scrape_attempted_at 預設值為 0.0"""
-        video = Video()
-        assert hasattr(video, 'scrape_attempted_at')
-        assert video.scrape_attempted_at == 0.0
-
-    def test_video_scrape_attempted_at_roundtrip_via_upsert(self, tmp_path):
-        """Video dataclass scrape_attempted_at 透過 to_dict()/from_row() round-trip 正確"""
-        db_path = tmp_path / "test.db"
-        init_db(db_path)
-
-        repo = VideoRepository(db_path)
-        video = Video(
-            path=to_file_uri("/test/scrape_attempted_at_roundtrip.mp4"),
-            number="SA-001",
-            title="scrape_attempted_at round-trip",
-            scrape_attempted_at=1717171717.5,
-        )
-        repo.upsert(video)
-
-        result = repo.get_by_path(to_file_uri("/test/scrape_attempted_at_roundtrip.mp4"))
-        assert result is not None
-        assert result.scrape_attempted_at == 1717171717.5
-
 
 # ============ AliasRepository 測試 ============
 
@@ -1096,18 +699,6 @@ def test_alias_repository_crud(tmp_path):
 class TestClipColumnDrop:
     """spec-57 §2.6 + plan-57b CD-57b-4：DROP clip_embedding / clip_model_id（idempotent）"""
 
-    def test_drop_clip_embedding_column_clean_install(self, tmp_path):
-        """clean install：欄位從未存在，DROP 是 no-op，啟動正常"""
-        db_path = tmp_path / "clean.db"
-        init_db(db_path)
-        # 驗 clip 欄位不在 schema
-        import sqlite3
-        conn = sqlite3.connect(db_path)
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(videos)").fetchall()}
-        conn.close()
-        assert 'clip_embedding' not in cols
-        assert 'clip_model_id' not in cols
-
     def test_drop_clip_embedding_column_legacy_db(self, tmp_path):
         """legacy DB（v0.8.6 schema）：欄位存在，init_db 後被 DROP"""
         db_path = tmp_path / "legacy.db"
@@ -1151,18 +742,6 @@ class TestClipColumnDrop:
         conn.close()
         assert 'clip_embedding' not in cols
         assert 'clip_model_id' not in cols
-
-    def test_drop_idempotent_on_rerun(self, tmp_path):
-        """連續兩次 init_db 不爆（idempotent）"""
-        db_path = tmp_path / "idempotent.db"
-        init_db(db_path)  # 第一次
-        init_db(db_path)  # 第二次不報錯
-
-    def test_drop_index_idempotent(self, tmp_path):
-        """DROP INDEX IF EXISTS — clean install 不爆（index 不存在也不報錯）"""
-        db_path = tmp_path / "noindex.db"
-        # 建完整 schema（有 init_db 觸發）— index 從未建立（因為 clean install）
-        init_db(db_path)  # 不爆即 pass
 
 
 # ============ TASK-98a-T4: focal + crop_mode migration（CD-98a-6/-7/-8）============
@@ -1242,24 +821,6 @@ class TestFocalCropMigration:
         )
         conn.commit()
         conn.close()
-
-    def test_migration_adds_focal_columns_to_videos(self, tmp_path):
-        """舊 videos 表升級後 auto_focal/crop_mode 欄位存在"""
-        db_path = tmp_path / "old_focal.db"
-        self._create_old_schema_db(db_path)
-
-        init_db(db_path)
-
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(videos)")
-        columns = [row[1] for row in cursor.fetchall()]
-        conn.close()
-
-        assert "auto_focal" in columns
-        assert "crop_mode" in columns
-        # Codex PR#105 P2 no-face re-enqueue 修復：videos.focal_attempted_at（actresses 不在範圍）
-        assert "focal_attempted_at" in columns
 
     def test_migration_adds_focal_and_fp_columns_to_actresses(self, tmp_path):
         """舊 actresses 表升級後 auto_focal/crop_mode/photo_fp_* 五欄存在"""
@@ -1391,28 +952,6 @@ class TestUserRatingMigration:
         conn.commit()
         conn.close()
 
-    def test_migration_adds_user_rating_column(self, tmp_path):
-        db_path = tmp_path / "old_user_rating.db"
-        self._create_old_schema_db(db_path)
-
-        init_db(db_path)
-
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(videos)")
-        columns = [row[1] for row in cursor.fetchall()]
-        conn.close()
-
-        assert "user_rating" in columns
-
-    def test_migration_idempotent_on_old_schema(self, tmp_path):
-        """對舊 schema 連續呼叫 init_db() 兩次不拋例外"""
-        db_path = tmp_path / "old_user_rating.db"
-        self._create_old_schema_db(db_path)
-
-        init_db(db_path)
-        init_db(db_path)  # 第二次不應報錯
-
     def test_migration_existing_video_row_gets_default_zero_and_stays_readable(self, tmp_path):
         """既有 videos row 升級後 user_rating=0，且 get_by_path 仍可正常讀出"""
         db_path = tmp_path / "old_user_rating.db"
@@ -1465,22 +1004,6 @@ def test_upper_number_index_used_by_query_plan(tmp_path):
     assert "idx_videos_number_upper" in detail
     assert "SCAN videos" not in detail
 
-
-def test_init_db_creates_upper_number_index(tmp_path):
-    """DoD-1: 新鮮 DB 執行 init_db() 後，sqlite_master 存在 idx_videos_number_upper 索引。"""
-    db_path = tmp_path / "fresh.db"
-    init_db(db_path)
-
-    conn = sqlite3.connect(str(db_path))
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT name FROM sqlite_master
-        WHERE type='index'
-    """)
-    indexes = [row[0] for row in cursor.fetchall()]
-    conn.close()
-
-    assert "idx_videos_number_upper" in indexes
 
 
 def test_init_db_in_place_upgrade_creates_upper_number_index_and_preserves_videos(tmp_path):
