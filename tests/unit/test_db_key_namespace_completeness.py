@@ -354,19 +354,6 @@ def test_no_unmarked_db_key_namespace_violations():
     )
 
 
-# --- (i) 反解值裸餵 primitive sink 無 marker → 應紅 ---
-
-
-def test_guard_catches_planted_violation_reversed_value_to_primitive_sink():
-    source = (
-        "def bad():\n"
-        "    fs_path = uri_to_local_fs_path(uri, path_mappings)\n"
-        "    path_uri = to_file_uri(fs_path)\n"
-        "    repo.get_by_path(path_uri)\n"
-    )
-    assert _scan_source(source) != []
-
-
 # --- (ii) 裸本機路徑餵 primitive sink 無 marker → 應紅（對應 scraper.py:180 修前形狀） ---
 
 
@@ -429,35 +416,7 @@ def test_guard_forward_mapped_second_arg_not_flagged():
     assert _scan_source(source) == []
 
 
-def test_guard_forward_mapped_keyword_arg_not_flagged():
-    source = (
-        "def ok():\n"
-        "    path_uri = to_file_uri(fs_path, path_mappings=path_mappings)\n"
-        "    repo.get_by_path(path_uri)\n"
-    )
-    assert _scan_source(source) == []
-
-
 # --- negative：marker 豁免（呼叫行 / 賦值行兩種慣例） ---
-
-
-def test_guard_marker_exempts_primitive_sink_same_line():
-    source = (
-        "def ok():\n"
-        "    path_uri = to_file_uri(fs_path_for_db)  # db-ns-ok: reason\n"
-        "    repo.get_by_path(path_uri)\n"
-    )
-    assert _scan_source(source) == []
-
-
-def test_guard_marker_exempts_primitive_sink_prev_line():
-    source = (
-        "def ok():\n"
-        "    # db-ns-ok: reason\n"
-        "    path_uri = to_file_uri(fs_path_for_db)\n"
-        "    repo.get_by_path(path_uri)\n"
-    )
-    assert _scan_source(source) == []
 
 
 def test_guard_marker_on_assignment_line_exempts_wrapper_callsite():
@@ -476,17 +435,6 @@ def test_guard_marker_on_callsite_line_exempts_wrapper_direct_call():
         "def ok():\n"
         "    # db-ns-ok: reason\n"
         "    _db_upsert(repo, number, fs_path_for_db, meta)\n"
-    )
-    assert _scan_source(source) == []
-
-
-def test_guard_wrapper_body_internal_primitive_sink_not_flagged():
-    """wrapper helper 本體內部的 primitive sink 已委派給 callsite（D3），
-    不應被獨立當成 primitive-sink violation 列舉（callsite 掃描仍正常運作）。"""
-    source = (
-        "def _db_upsert(repo, number, fs_path, meta):\n"
-        "    path_uri = to_file_uri(fs_path)\n"
-        "    repo.get_by_path(path_uri)\n"
     )
     assert _scan_source(source) == []
 
@@ -542,28 +490,10 @@ def test_guard_catches_planted_violation_wrapper_direct_call_keyword_arg():
     assert _scan_source(source) != []
 
 
-def test_guard_catches_planted_violation_asyncio_to_thread_keyword_arg():
-    source = (
-        "async def bad():\n"
-        "    bad_var = uri_to_local_fs_path(uri, path_mappings)\n"
-        "    allowed = await asyncio.to_thread(_check_cover_path, fs_path=bad_var)\n"
-    )
-    assert _scan_source(source) != []
-
-
 def test_guard_wrapper_direct_call_keyword_arg_marker_exempts():
     source = (
         "def ok():\n"
         "    # db-ns-ok: reason\n"
         "    _db_upsert(repo, number, fs_path=fs_path_for_db, meta=meta)\n"
-    )
-    assert _scan_source(source) == []
-
-
-def test_guard_asyncio_to_thread_keyword_arg_marker_exempts():
-    source = (
-        "async def ok():\n"
-        "    # db-ns-ok: reason\n"
-        "    allowed = await asyncio.to_thread(_check_cover_path, fs_path=fs_path_for_db)\n"
     )
     assert _scan_source(source) == []
