@@ -906,6 +906,24 @@ class TestMigrationSources:
         assert fc["is_beta"] is True
         assert fc["enabled"] is False
 
+    def test_corrupt_then_valid_keeps_first_bak(self, tmp_path, monkeypatch):
+        """損壞修復後第二次啟動：sources 已合法 → sources_bak 保留不動
+        （T3 後：第二次 load 的 sources 含 javlibrary，共 9 條）"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"sources": "broken"})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        first = load_config()
+        assert first["sources_bak"] == "broken"
+        # config.json 已被 save_config 寫回合法 sources + sources_bak
+
+        second = load_config()
+        # T3 後：8 builtin + 1 javlibrary（additive migration）= 9；javlibrary 冪等不重複
+        builtin_sources = [s for s in second["sources"] if not s.get("manual_only")]
+        assert len(builtin_sources) == 8
+        assert second["sources_bak"] == "broken"  # 不被合法 sources 清掉
+
     def test_migration_idempotent_with_both_manual_sources(self, tmp_path, monkeypatch):
         """CD-118a-9 冪等：config 已同時有 javlibrary 與 fc-javten → 不重複 append。"""
         from core.source_config import get_manual_only_sources
