@@ -5496,6 +5496,65 @@ const RULES = [
   //
   // ---- 162c-B05 起 ----
   // （162c-B05 專屬子區段：只在此兩行之間追加）
+
+  // 162c: TestJellyfinFrontend
+  // test_jellyfin_toggle_in_settings — forbidden dead bindings（整檔）×5
+  { file: 'web/templates/settings.html', kind: 'forbidden-string',
+    pattern: [
+      /(?<![\w:-])x-model="form\.jellyfinMode"/,
+      /(?<![\w:-]):checked="form\.externalManager === 'jellyfin_emby'"/,
+      /(?<![\w:-])@change="form\.externalManager = \$event\.target\.checked/,
+      "'is-on': form.externalManager === 'jellyfin_emby'",
+      /(?<![\w:-])@click="form\.externalManager = 'jellyfin_emby'"/,
+    ],
+    note: '[lint-guard 162c-test_jellyfin_toggle_in_settings] 使用者在設定頁選外部管理器（Jellyfin／Emby／Kodi）→ 點了沒切換、說明文字不跟著變、或切換時沒跳破壞性確認（segmented 綁定被改回舊直寫） — 遷自 test_frontend_lint.py' },
+  // segmented 容器存在（整檔；頁面另有 header／batchbar 同 class，舊守衛亦只斷存在）
+  { file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: 'class="settings-sources-segmented"',
+    note: '[lint-guard 162c-test_jellyfin_toggle_in_settings] 使用者在設定頁選外部管理器（Jellyfin／Emby／Kodi）→ 點了沒切換、說明文字不跟著變、或切換時沒跳破壞性確認（segmented 綁定被改回舊直寫） — 遷自 test_frontend_lint.py' },
+  // 四態 is-on + requestExternalManagerChange（scope＝外部管理器 row 內首個 segmented role=group 區塊）
+  { file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: [
+      "'is-on': form.externalManager === 'off'",
+      "'is-on': form.externalManager === 'jellyfin'",
+      "'is-on': form.externalManager === 'emby'",
+      "'is-on': form.externalManager === 'kodi'",
+      /(?<![\w:-])@click="requestExternalManagerChange\('off'\)"/,
+      /(?<![\w:-])@click="requestExternalManagerChange\('jellyfin'\)"/,
+      /(?<![\w:-])@click="requestExternalManagerChange\('emby'\)"/,
+      /(?<![\w:-])@click="requestExternalManagerChange\('kodi'\)"/,
+    ],
+    scope: /settings-form-row--external-manager[\s\S]*?(class="settings-sources-segmented" role="group"[\s\S]*?<\/div>)/,
+    note: '[lint-guard 162c-test_jellyfin_toggle_in_settings] 使用者在設定頁選外部管理器（Jellyfin／Emby／Kodi）→ 點了沒切換、說明文字不跟著變、或切換時沒跳破壞性確認（segmented 綁定被改回舊直寫） — 遷自 test_frontend_lint.py' },
+  // 禁直寫 @click form.externalManager='…'（同 scope）
+  { file: 'web/templates/settings.html', kind: 'forbidden-string',
+    pattern: [
+      /(?<![\w:-])@click="form\.externalManager = 'off'"/,
+      /(?<![\w:-])@click="form\.externalManager = 'jellyfin'"/,
+      /(?<![\w:-])@click="form\.externalManager = 'emby'"/,
+      /(?<![\w:-])@click="form\.externalManager = 'kodi'"/,
+    ],
+    scope: /settings-form-row--external-manager[\s\S]*?(class="settings-sources-segmented" role="group"[\s\S]*?<\/div>)/,
+    note: '[lint-guard 162c-test_jellyfin_toggle_in_settings] 使用者在設定頁選外部管理器（Jellyfin／Emby／Kodi）→ 點了沒切換、說明文字不跟著變、或切換時沒跳破壞性確認（segmented 綁定被改回舊直寫） — 遷自 test_frontend_lint.py' },
+  // 四態 hint x-show（整檔）
+  { file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: [
+      /(?<![\w:-])x-show="form\.externalManager === 'off'"/,
+      /(?<![\w:-])x-show="form\.externalManager === 'jellyfin'"/,
+      /(?<![\w:-])x-show="form\.externalManager === 'emby'"/,
+      /(?<![\w:-])x-show="form\.externalManager === 'kodi'"/,
+    ],
+    note: '[lint-guard 162c-test_jellyfin_toggle_in_settings] 使用者在設定頁選外部管理器（Jellyfin／Emby／Kodi）→ 點了沒切換、說明文字不跟著變、或切換時沒跳破壞性確認（segmented 綁定被改回舊直寫） — 遷自 test_frontend_lint.py' },
+  // i18n key 引用
+  { file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: ['external_manager_off_hint', 'external_manager_emby_hint'],
+    note: '[lint-guard 162c-test_jellyfin_toggle_in_settings] 使用者在設定頁選外部管理器（Jellyfin／Emby／Kodi）→ 點了沒切換、說明文字不跟著變、或切換時沒跳破壞性確認（segmented 綁定被改回舊直寫） — 遷自 test_frontend_lint.py' },
+
+  // test_jellyfin_update_in_scanner — 整檔存在 runJellyfinImageUpdate（舊弱點：定義＋log 字串皆命中）
+  { file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string',
+    pattern: 'runJellyfinImageUpdate',
+    note: '[lint-guard 162c-test_jellyfin_update_in_scanner] 使用者在掃描頁按「補齊 Jellyfin 圖片」→ 按鈕按了沒反應（runJellyfinImageUpdate 函式不見，scanner.html:371 仍呼叫它） — 遷自 test_frontend_lint.py' },
+
   // ---- 162c-B05 迄 ----
   //
   //
