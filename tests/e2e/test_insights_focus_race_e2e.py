@@ -723,3 +723,22 @@ def test_switch_costar_to_no_costar_mid_tween_matches_direct_set(
     _assert_state_equal(switched_state, reference_state, "A進場中途切成零共演B")
     _assert_geometry_equal(switched_geo, reference_geo)
     assert tops["r4"] < tops["r3"], f"女優 focus 時 row4 應在 row3 之前：{tops!r}"
+
+
+def test_interrupt_during_fade_out_matches_direct_set(page: Page, base_url: str) -> None:
+    """使用者點有共演的女優、榜單淡出到一半就再點一次取消，焦點已清掉，畫面卻停在
+    「與她同片」卡或透明榜單。settle 後 state／幾何必須等同從未點擊的基準。
+    """
+    names = _load_ready(page, base_url, slow=True)
+    with_costar, _ = _classify_by_costar(page, names, need_with=1)
+    _skip_if_insufficient(with_costar, 1)
+    baseline_state = _snapshot(page)
+    baseline_geo = _geometry(page)
+
+    target = with_costar[0]
+    _click_gantt_actress_raw(page, target)
+    _click_mid_tween(page, "boardRow3El", target)  # 淡出中途點同一位＝清除
+    _wait_settled(page)
+
+    _assert_state_equal(_snapshot(page), baseline_state, "淡出中中斷")
+    _assert_geometry_equal(_geometry(page), baseline_geo)
