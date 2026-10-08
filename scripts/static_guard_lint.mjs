@@ -6715,18 +6715,6 @@ const RULES = [
   },
   {
     file: 'web/static/css/pages/search.css', kind: 'required-string',
-    pattern: /min-height\s*:\s*[1-9]\d*/,
-    scope: { anchor: /\.search-container\s+\.av-card-full-cover-wrapper:has\([^{]*cover-error-placeholder[^{]*\)\s*\{/, braceBalanced: true },
-    note: '[lint-guard 162c-test_d4_error_placeholder_min_height_fallback] 無圖佔位 :has(error) 須非零 min-height fallback — 遷自 test_frontend_lint.py',
-  },
-  {
-    file: 'web/static/css/pages/search.css', kind: 'required-string',
-    pattern: /min-height\s*:\s*[1-9]\d*/,
-    scope: { anchor: /\.search-container\s+\.av-card-full-cover-wrapper:has\([^{]*cover-loading-placeholder[^{]*\)\s*\{/, braceBalanced: true },
-    note: '[lint-guard 162c-test_d4b_loading_placeholder_min_height_fallback] 載入中佔位 :has(loading) 須非零 min-height fallback — 遷自 test_frontend_lint.py',
-  },
-  {
-    file: 'web/static/css/pages/search.css', kind: 'required-string',
     pattern: /^\s*overflow:\s*visible\s*;/m,
     scope: {
       anchor: /@media\s*\(\s*max-width\s*:\s*(?:1024|1023\.98)px\s*\)\s*\{[\s\S]*?\.search-container\s+\.av-card-full-cover(?![-\w])\s*\{/,
@@ -6926,6 +6914,13 @@ const RULES = [
   },
 
   // 162c: TestModeToggleFadeOutGuard
+  {
+    file: 'web/static/js/pages/showcase/state-actress.js', kind: 'required-string',
+    pattern: /(?<![\w$.])onOldFadeComplete\s*:\s*flipAndFadeIn(?![\w$])/,
+    scope: { anchor: /(?:^|\n)\s*(?:async\s+)?toggleActressMode\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_toggle_actress_mode_uses_callback] 使用者按影片／女優模式切換 → 動畫存在卻找不到 onOldFadeComplete，模式旗標不翻轉，切換做不完 — 遷自 test_contract_animation.py（Codex pre-merge P2 補回）',
+  },
   {
     file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string',
     pattern: /playModeCrossfade\s*:\s*function\s*\(\s*oldMode\s*,\s*newMode\s*,\s*params\s*,\s*callbacks\s*\)/,
@@ -7711,6 +7706,10 @@ const RULES = [
     note: '[lint-guard 162c-test_next_lightbox_js_contains] 搜尋燈箱 nextLightboxVideo 兩條越界路徑皆須 loadMore 並更新 index — 遷自 test_contract_code_shape.py' },
 
   // 162c: TestCoverStateGuard
+  { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string',
+    pattern: /^[ \t]*_coverRequestId\s*:\s*0\s*,/m,
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_base_has_cover_request_id_field] 使用者切換沿用同封面 URL 的候選 → 計數器初值遺失成 NaN，快取補救 callback 提早返回，封面一直被 loading 遮住 — 遷自 test_contract_code_shape.py（Codex pre-merge P2 補回）' },
   { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string',
     pattern: '_coverRequestId++',
     scope: { anchor: /_resetCoverState\s*\(\s*\)\s*\{/, braceBalanced: true },
