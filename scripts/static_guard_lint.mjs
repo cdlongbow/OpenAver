@@ -5733,6 +5733,108 @@ const RULES = [
   //
   // ---- 162c-B13 起 ----
   // （162c-B13 專屬子區段：只在此兩行之間追加）
+  // 162c: TestSearchAutoSourcePill
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: /openRescrape\(null,\s*\\?'search\\?'\)/,
+    scope: /source_pill\((?:[^()]|\([^()]*\))*search-auto-pill(?:[^()]|\([^()]*\))*\)/s,
+    note: '[lint-guard 162c-test_auto_pill_click_opens_rescrape_with_prefill] 使用者點搜尋列「自動」膠囊挑來源 → 若沒預填番號，開窗後挑源就跳出「找不到」→ 必須重打番號 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: 'rescrapeNumber =',
+    scope: /source_pill\((?:[^()]|\([^()]*\))*search-auto-pill(?:[^()]|\([^()]*\))*\)/s,
+    note: '[lint-guard 162c-test_auto_pill_click_opens_rescrape_with_prefill] 使用者點搜尋列「自動」膠囊挑來源 → 若沒預填番號，開窗後挑源就跳出「找不到」→ 必須重打番號 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: /x-show=\\?["'][^"']*canReopenSourcePick\(\)/,
+    scope: /source_pill\((?:[^()]|\([^()]*\))*search-auto-pill(?:[^()]|\([^()]*\))*\)/s,
+    note: '[lint-guard 162c-test_auto_pill_xshow_contains_can_reopen_source_pick] 使用者採用 JavLibrary 版本後想再開來源選單 → 若 x-show 少了 canReopenSourcePick()，膠囊消失、無法再換版本／來源 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string',
+    pattern: ['listMode', "'search'", 'pageState', "'result'", "'exact'", 'searchQuery'],
+    scope: { anchor: /canReopenSourcePick\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_can_reopen_source_pick_defined_in_search_flow_js] 使用者在檔案／批次模式看某片結果 → 若 canReopenSourcePick 少了 listMode===\'search\' 等條件，頂部膠囊會帶舊番號開窗，重刮到別的片 — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestResultSourcePill
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: 'openSwitchSourcePicker()',
+    scope: /source_pill\((?:(?!source_pill\().)*?result-source-pill.*?\)\s*\}\}/s,
+    note: '[lint-guard 162c-test_result_pill_click_opens_switch_picker] 使用者點結果面板「目前來源」膠囊想換來源 → 若 @click 沒綁 openSwitchSourcePicker()，按了沒反應、換不了源 — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestUS9SearchGridMobileFix
+  {
+    file: 'web/static/js/pages/search/state/grid-mode.js', kind: 'required-string',
+    pattern: ['posterCrop', 'window.innerWidth <= POSTER_CROP_MAX_W', 'hero-card', 'posterCrop: posterCrop'],
+    note: '[lint-guard 162c-test_search_grid_mode_threads_poster_crop] 手機搜尋格開燈箱 → grid-mode 未把 posterCrop 傳入 playGridToLightbox，ghost 右裁與落地比例錯位 — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestMobileToolbarToggle
+  {
+    file: 'web/templates/base.html', kind: 'required-string',
+    pattern: [
+      'alpine:init',
+      "Alpine.store('ui'",
+      'toolbarOpen',
+      'showcaseHasSearch',
+      /alpine:init['"]\s*,\s*\(\)\s*=>\s*\{\s*Alpine\.store\(\s*['"]ui['"]\s*,\s*\{\s*toolbarOpen:\s*false/,
+    ],
+    note: '[lint-guard 162c-test_store_registered_in_alpine_init] 使用者在手機 showcase 點 navbar 搜尋 icon → 若 $store.ui 沒註冊，icon 按了沒反應、工具列叫不出來也無法清除搜尋 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/base.html', kind: 'tag-scan', mode: 'class-tag',
+    tagPattern: /<button\b[^>]*class="navbar-search-btn[^>]*>/,
+    required: [
+      // lg:hidden 限 class 屬性值（搬到 data-x 不算）
+      /(?<![\w:-=\'"])class="[^"]*\blg:hidden\b[^"]*"/,
+      // 三字面必須落在真 @click="…" 屬性值（舊 btn.get("@click")）；整開標籤 substring 會被 data-x 餵飽
+      /(?<![\w:-=\'"])@click="[^"]*\$store\.ui\.showcaseHasSearch[^"]*"/,
+      /(?<![\w:-=\'"])@click="[^"]*showcase:clear-search[^"]*"/,
+      /(?<![\w:-=\'"])@click="[^"]*\$store\.ui\.toolbarOpen[^"]*"/,
+    ],
+    note: '[lint-guard 162c-test_navbar_search_button] 使用者在手機 showcase 點 navbar 搜尋 icon → 若 @click 的收合／清除分支缺失，icon 按了不收合工具列或有搜尋時無法一鍵清除 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/base.html', kind: 'structure-count',
+    pattern: 'class="navbar-search-btn',
+    count: 1,
+    note: '[lint-guard 162c-test_navbar_search_button] 使用者在手機 showcase 點 navbar 搜尋 icon → 若 @click 的收合／清除分支缺失，icon 按了不收合工具列或有搜尋時無法一鍵清除 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/base.html', kind: 'required-string',
+    pattern: 'bi-search',
+    scope: /<button[^>]*navbar-search-btn[^>]*>(.*?)<\/button>/s,
+    note: '[lint-guard 162c-test_navbar_search_button] 使用者在手機 showcase 點 navbar 搜尋 icon → 若 @click 的收合／清除分支缺失，icon 按了不收合工具列或有搜尋時無法一鍵清除 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/base.html', kind: 'required-string',
+    pattern: /\{%\s*if\s+page\s*==\s*['"]showcase['"]\s*%\}/,
+    note: '[lint-guard 162c-test_navbar_search_button_jinja_gated] 使用者在手機開搜尋頁（Spotlight）→ 若 navbar 搜尋 icon 沒被限定只在 showcase 渲染，搜尋頁也出現一顆按了不會動作的 icon — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/base.html', kind: 'required-string',
+    pattern: 'navbar-search-btn',
+    scope: /\{%\s*if\s+page\s*==\s*['"]showcase['"]\s*%\}(.*?)\{%\s*endif\s*%\}/s,
+    note: '[lint-guard 162c-test_navbar_search_button_jinja_gated] 使用者在手機開搜尋頁（Spotlight）→ 若 navbar 搜尋 icon 沒被限定只在 showcase 渲染，搜尋頁也出現一顆按了不會動作的 icon — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
+    tagPattern: /<div\b[^>]*class="showcase-toolbar"[^>]*>/,
+    // (?<![\w:-=\'"]) 排除 data-y=':class="…"' 把綁定字面餵進開標籤 substring
+    required: [/(?<![\w:-=\'"]):class="\{\s*'mobile-toolbar-open':\s*\$store\.ui\.toolbarOpen\s*\}"/],
+    note: '[lint-guard 162c-test_showcase_toolbar_class_binding] 使用者在手機 showcase 點 navbar 搜尋 icon → 若工具列沒綁 mobile-toolbar-open，點了工具列不展開、搜尋框用不到 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'tag-scan', mode: 'class-tag',
+    tagPattern: /<div\b[^>]*class="search-bar"[^>]*>/,
+    forbidden: ['mobile-toolbar-open'],
+    note: '[lint-guard 162c-test_search_bar_not_bound] 使用者在手機搜尋頁 → 若 .search-bar 被誤綁 mobile-toolbar-open，搜尋框被收進 navbar icon 內預設隱藏，搜尋頁找不到輸入框 — 遷自 test_frontend_lint.py',
+  },
   // ---- 162c-B13 迄 ----
   //
   //

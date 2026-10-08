@@ -2264,63 +2264,6 @@ class TestSearchAutoSourcePill:
             f"search-auto-pill x-show 缺 isComposing()；x-show: {xshow_m.group(1)!r}"
         )
 
-    def test_auto_pill_click_opens_rescrape_with_prefill(self):
-        """自動膠囊 @click 含 openRescrape(null, 'search') 且預填 rescrapeNumber =。
-
-        刪任一子表達式 → 此斷言紅（漏 rescrapeNumber 預填會在挑源時觸發 rescrapeNotFound，
-        state-rescrape.js:163）。
-        """
-        call = self._auto_pill_call()
-        # raw template 內單引號被 Jinja 字串轉義（\'search\'），故 regex 容忍可選反斜線
-        assert re.search(r"openRescrape\(null,\s*\\?'search\\?'\)", call), (
-            f"search-auto-pill 呼叫缺 openRescrape(null, 'search')；call: {call!r}"
-        )
-        assert "rescrapeNumber =" in call, (
-            f"search-auto-pill @click 缺 rescrapeNumber = 預填；call: {call!r}"
-        )
-
-    def test_auto_pill_xshow_contains_can_reopen_source_pick(self):
-        """自動膠囊 x-show 含 canReopenSourcePick()（CD-86-P2 修正：exact 結果頁再開入口）。
-
-        JavLibrary 採用後 searchQuery == currentQuery → isComposing() false，
-        需要 canReopenSourcePick() 讓 pill 在 exact 結果時常駐。
-        mutation：把 x-show 改回只 isComposing() → 此斷言紅。
-        """
-        call = self._auto_pill_call()
-        xshow_m = re.search(r'x-show=\\?["\']([^"\']*)', call)
-        assert xshow_m, f"search-auto-pill 呼叫缺 x-show binding；call: {call!r}"
-        assert "canReopenSourcePick()" in xshow_m.group(1), (
-            f"search-auto-pill x-show 缺 canReopenSourcePick()；x-show: {xshow_m.group(1)!r}"
-        )
-
-    def test_can_reopen_source_pick_defined_in_search_flow_js(self):
-        """search-flow.js 定義 canReopenSourcePick()，且包含 listMode + exact + pageState + searchQuery 四條件。
-
-        listMode==='search' gate（CD-86-P2 副作用修正）：file/batch mode 也進 result+exact，但 searchQuery
-        切檔不同步，頂部再入口會帶舊番號 → 限定 search workflow。
-        mutation：移除 method 或刪任一條件（含 listMode）→ 此斷言紅。
-        """
-        js_path = (
-            SEARCH_HTML.parent.parent
-            / "static" / "js" / "pages" / "search" / "state" / "search-flow.js"
-        )
-        js = js_path.read_text(encoding="utf-8")
-        m = re.search(r"canReopenSourcePick\s*\(\s*\)\s*\{(.*?)\n    \},", js, re.DOTALL)
-        assert m, "search-flow.js 找不到 canReopenSourcePick() method 定義"
-        body = m.group(1)
-        assert "listMode" in body and "'search'" in body, (
-            f"canReopenSourcePick body 缺 listMode === 'search' 條件；body: {body!r}"
-        )
-        assert "pageState" in body and "'result'" in body, (
-            f"canReopenSourcePick body 缺 pageState === 'result' 條件；body: {body!r}"
-        )
-        assert "'exact'" in body, (
-            f"canReopenSourcePick body 缺 currentMode === 'exact' 條件；body: {body!r}"
-        )
-        assert "searchQuery" in body, (
-            f"canReopenSourcePick body 缺 searchQuery 非空條件；body: {body!r}"
-        )
-
 
 class TestResultSourcePill:
     """TASK-74a-T3: 結果面板「目前來源膠囊」macro 呼叫 DOM contract（call-site-bound）。
@@ -2348,13 +2291,6 @@ class TestResultSourcePill:
         )
         assert m, "search.html 找不到 extra_classes='result-source-pill' 的 source_pill(...) 呼叫"
         return m.group(0)
-
-    def test_result_pill_click_opens_switch_picker(self):
-        """目前來源膠囊 @click 含 openSwitchSourcePicker()（沿用既有換源入口）。"""
-        call = self._result_pill_call()
-        assert "openSwitchSourcePicker()" in call, (
-            f"result-source-pill 呼叫缺 openSwitchSourcePicker()（@click）；call: {call!r}"
-        )
 
     def test_result_pill_loading_bound_to_switching(self):
         """目前來源膠囊 loading 綁 isSwitchingSource（:disabled + :class is-loading 驅動 spinner）。"""
@@ -2404,28 +2340,6 @@ STATE_LIGHTBOX_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js
 # Port of showcase T4/T5/T7/T8 — all search-specific rules live in search.css (決策 ②)
 # ============================================================================
 
-class TestUS9SearchGridMobileFix:
-    """TASK-75b-T9：search grid ≤480px 三欄 poster + 燈箱 letterbox 消除守衛。
-
-    [lint-guard: pytest-justified] 6 個純-CSS 子測（T4 3-col / T5 poster-crop scope+caption+coarse footer /
-    T8 cover-fit + showcase 回歸護欄）已遷 css-guard CG-PC-04（scripts/css-guard.mjs，search.css 靜態掃描）。
-    此殘餘子測為跨檔 JS↔CSS posterCrop 穿線（grid-mode.js 計算並傳入 playGridToLightbox），非純 CSS
-    靜態掃描、屬源碼語意契約，故保留 pytest（同 TestUS5PosterCropGhostCrossfade KEEP 型）。
-    """
-
-    def test_search_grid_mode_threads_poster_crop(self):
-        """T7：grid-mode.js openLightbox 計算 posterCrop 並傳入 playGridToLightbox。
-        三問：刪 posterCrop 計算 → 紅；刪傳遞 → 紅；拔 hero-card 判斷 → 紅。
-        """
-        js = GRID_MODE_JS.read_text(encoding="utf-8")
-        assert "posterCrop" in js, "grid-mode.js 應計算 posterCrop"
-        # T11（US-10）：門檻由 ≤480 擴到 ≤899（共用常數 POSTER_CROP_MAX_W，對齊守衛 TestPosterCropThresholdAlignment）。
-        assert "window.innerWidth <= POSTER_CROP_MAX_W" in js, "posterCrop 應 gate ≤POSTER_CROP_MAX_W"
-        assert "hero-card" in js, "posterCrop 應排除 hero 卡（防禦性 guard）"
-        assert "posterCrop: posterCrop" in js, (
-            "grid-mode.js 應把 posterCrop 傳入 playGridToLightbox options"
-        )
-
 
 # ─── 90c-T5: external_manager switch-mode destructive confirm frontend guards ─
 
@@ -2433,98 +2347,6 @@ class TestUS9SearchGridMobileFix:
 # ─── 80a-T3: Server Mode toggle + info banner frontend guards ───────────────
 
 SETTINGS_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "settings.css"
-
-
-class TestMobileToolbarToggle:
-    """feature/81 T2（US-1 / CD-1·CD-2·CD-4）：行動搜尋 store + navbar icon + toolbar 綁定。
-
-    純靜態守衛（bs4 + 字串）。斷言：
-    - base.html alpine:init 註冊 Alpine.store('ui', { toolbarOpen:false })。
-    - navbar 搜尋 button：navbar-search-btn + lg:hidden + bi-search + @click 翻轉 $store.ui.toolbarOpen。
-    - 該 button 被 {% if page == 'showcase' %} Jinja gate（**僅 showcase**；owner 2026-06-22
-      拍板 search 頁 Spotlight 中央輸入維持原樣、不收進 navbar icon）。
-    - showcase.toolbar 綁 :class mobile-toolbar-open ← $store.ui.toolbarOpen；search.search-bar **不**綁。
-    動畫/收合/CSS gate 屬 T3/T4，不在此守衛。
-    """
-
-    def _base(self):
-        return BASE_HTML_T76.read_text(encoding="utf-8")
-
-    def test_store_registered_in_alpine_init(self):
-        """base.html 在 alpine:init 監聽內註冊 Alpine.store('ui', { toolbarOpen: false, showcaseHasSearch: false })。"""
-        html = self._base()
-        assert "alpine:init" in html, "base.html missing alpine:init listener"
-        assert "Alpine.store('ui'" in html, "base.html missing Alpine.store('ui') registration"
-        assert "toolbarOpen" in html, "base.html missing toolbarOpen store field"
-        # T2: showcaseHasSearch 欄位必須在同一 store 定義內
-        assert "showcaseHasSearch" in html, "base.html missing showcaseHasSearch store field"
-        # 註冊字串與 alpine:init 監聽同段（store 註冊掛在 alpine:init callback 內）
-        assert re.search(
-            r"alpine:init['\"]\s*,\s*\(\)\s*=>\s*\{\s*Alpine\.store\(\s*['\"]ui['\"]\s*,\s*\{\s*toolbarOpen:\s*false",
-            html,
-        ), "base.html: Alpine.store('ui', { toolbarOpen: false ... }) 須在 alpine:init callback 內註冊"
-
-    def test_navbar_search_button(self):
-        """navbar 搜尋 button：navbar-search-btn + lg:hidden + bi-search + @click 條件分支（T2）。"""
-        from bs4 import BeautifulSoup
-        html = self._base()
-        btns = BeautifulSoup(html, "html.parser").select("button.navbar-search-btn")
-        assert len(btns) == 1, f"base.html 須有且僅有 1 個 button.navbar-search-btn（實得 {len(btns)}）"
-        btn = btns[0]
-        classes = btn.get("class", [])
-        assert "lg:hidden" in classes, "navbar-search-btn 須有 lg:hidden（≤1023px gate）"
-        # T2: icon 改為 Alpine 動態 :class 綁定，BS4 CSS selector 無法匹配；改用字串檢查
-        btn_html = str(btn)
-        assert "bi-search" in btn_html, "navbar-search-btn 內須包含 bi-search（靜態 class 或動態 :class 均可）"
-        click = btn.get("@click", "")
-        # T2: @click 改為條件分支 — showcaseHasSearch 判斷 + dispatch + toolbarOpen 仍在 else 分支
-        assert "$store.ui.showcaseHasSearch" in click, \
-            f"navbar-search-btn @click 須包含 $store.ui.showcaseHasSearch 條件（實得 {click!r}）"
-        assert "showcase:clear-search" in click, \
-            f"navbar-search-btn @click 須 dispatch showcase:clear-search（實得 {click!r}）"
-        assert "$store.ui.toolbarOpen" in click, \
-            f"navbar-search-btn @click 須包含 $store.ui.toolbarOpen（else 分支保留舊行為，實得 {click!r}）"
-
-    def test_navbar_search_button_jinja_gated(self):
-        """搜尋 button 被 {% if page == 'showcase' %} Jinja gate（僅 showcase 渲染，不含 search）。"""
-        html = self._base()
-        # 容忍引號/空白變體
-        assert re.search(
-            r"\{%\s*if\s+page\s*==\s*['\"]showcase['\"]\s*%\}",
-            html,
-        ), "base.html: navbar 搜尋 button 須被 {% if page == 'showcase' %} gate"
-        # button 落在該 gate 與其 endif 之間
-        m = re.search(
-            r"\{%\s*if\s+page\s*==\s*['\"]showcase['\"]\s*%\}(.*?)\{%\s*endif\s*%\}",
-            html, re.DOTALL,
-        )
-        assert m and "navbar-search-btn" in m.group(1), \
-            "navbar-search-btn 須落在 {% if page == 'showcase' %} … {% endif %} 區段內"
-
-    def test_showcase_toolbar_class_binding(self):
-        """showcase.html .showcase-toolbar 綁 :class mobile-toolbar-open ← $store.ui.toolbarOpen。"""
-        from bs4 import BeautifulSoup
-        html = SHOWCASE_HTML.read_text(encoding="utf-8")
-        divs = BeautifulSoup(html, "html.parser").select("div.showcase-toolbar")
-        assert divs, "showcase.html missing div.showcase-toolbar"
-        binding = divs[0].get(":class", "")
-        assert "mobile-toolbar-open" in binding and "$store.ui.toolbarOpen" in binding, \
-            f".showcase-toolbar :class 須含 mobile-toolbar-open ← $store.ui.toolbarOpen（實得 {binding!r}）"
-
-    def test_search_bar_not_bound(self):
-        """search.html .search-bar（Spotlight 中央輸入）**不**綁 mobile-toolbar-open。
-
-        owner 2026-06-22 拍板：US-1 navbar 收合只作用 showcase；search 頁的
-        .search-bar 即 Spotlight 中央搜尋輸入（該頁唯一搜尋框），必須永遠可見、
-        維持原樣（spec §3.1 末句優先於 CD-4）。守衛防回退把搜尋框收進 navbar icon。
-        """
-        from bs4 import BeautifulSoup
-        html = SEARCH_HTML.read_text(encoding="utf-8")
-        divs = BeautifulSoup(html, "html.parser").select("div.search-bar")
-        assert divs, "search.html missing div.search-bar"
-        binding = divs[0].get(":class", "")
-        assert "mobile-toolbar-open" not in binding, \
-            f".search-bar 不可綁 mobile-toolbar-open（search Spotlight 維持原樣，實得 {binding!r}）"
 
 
 class TestMobileToolbarCss:
