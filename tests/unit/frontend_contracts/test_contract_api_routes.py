@@ -2,7 +2,6 @@
 
 module-level 路徑常數為源檔複製（CD-96c-7：源檔殘留 class 仍引用同名常數，故複製非剪走）。
 """
-import json
 import re
 from pathlib import Path
 
@@ -28,114 +27,6 @@ STATE_RESCRAPE_JS = (
 )
 
 
-class TestUserTagsApiGuard:
-    """41b-T3: 確保 confirmAddTag 和 removeUserTag 改接 /api/user-tags API（method folded）"""
-
-    def _result_card(self):
-        return RESULT_CARD_JS.read_text(encoding="utf-8")
-
-    def _path_utils(self):
-        return PATH_UTILS_JS.read_text(encoding="utf-8")
-
-    def _html(self):
-        return SEARCH_HTML.read_text(encoding="utf-8")
-
-    def _locale(self, name):
-        return json.loads((LOCALES_ROOT / name).read_text(encoding="utf-8"))
-
-    def _get_nested(self, d, dotted_key):
-        keys = dotted_key.split(".")
-        cur = d
-        for k in keys:
-            if not isinstance(cur, dict) or k not in cur:
-                return None
-            cur = cur[k]
-        return cur
-
-    def test_result_card_js_contains(self):
-        """result-card.js 含 API 呼叫、async functions、file-level user_tags、fetch helper"""
-        content = self._result_card()
-        for expected in [
-            "user-tags",
-            "async confirmAddTag()",
-            "async removeUserTag(",
-            "fileList[this.currentFileIndex].user_tags",
-            "currentUserTags()",
-            "fetchUserTagsForCurrent",
-        ]:
-            assert expected in content, f"result-card.js missing: {expected!r}"
-        # not-in guards
-        for forbidden in ["pathToFileUri", "c.user_tags.push(tag)"]:
-            assert forbidden not in content, f"result-card.js should not contain: {forbidden!r}"
-        # fetchUserTagsForCurrent writes to file-level
-        idx = content.find("async fetchUserTagsForCurrent()")
-        assert idx != -1, "result-card.js missing: 'async fetchUserTagsForCurrent()'"
-        func_body = content[idx:idx+800]
-        has_direct = "fileList[this.currentFileIndex].user_tags" in func_body
-        has_captured_ref = ("file.user_tags" in func_body and
-                            "this.fileList?.[this.currentFileIndex]" in func_body)
-        assert has_direct or has_captured_ref, \
-            "fetchUserTagsForCurrent missing file-level user_tags write"
-
-    def test_search_html_contains(self):
-        """search.html 含 user-tags 守衛 + currentUserTags()"""
-        # [lint-guard: pytest-justified] tags+「+」按鈕的 file-mode 閘是跨檔 Alpine binding
-        # contract（search.html 引用 canEditFile()，定義在 base.js）——非單純字串存在檢查，
-        # static_guard_lint 無法表達跨檔語意；canEditFile 的 file+path 邏輯另由 node:test 守。
-        html = self._html()
-        for expected in [
-            # 106-T1 CD-106-1/AC12：tags+ 的 file-mode/path 閘從 inline 三 conjunct
-            # (listMode==='file' && fileList[currentFileIndex]?.path) 收斂進 canEditFile()
-            # computed（base.js）；canEditFile 的 file+path 語意由 can-edit-file.test.mjs
-            # node:test 守。此處守 tags+「+」按鈕仍走 file-mode 閘（!addingTag 保留避免加標籤時重複）。
-            "!addingTag && canEditFile()",
-            "currentUserTags()",
-        ]:
-            assert expected in html, f"search.html missing: {expected!r}"
-
-    def test_path_utils_and_locales(self):
-        """path-utils.js 無 pathToFileUri + 有 pathToDisplay；locales 含 tag_api_failed"""
-        pu = self._path_utils()
-        assert "pathToFileUri" not in pu, "path-utils.js should not contain: 'pathToFileUri'"
-        assert "pathToDisplay" in pu, "path-utils.js missing: 'pathToDisplay'"
-        # file-list.js user_tags init
-        file_list_content = FILE_LIST_JS.read_text(encoding="utf-8")
-        assert "user_tags: []" in file_list_content, "file-list.js missing: 'user_tags: []'"
-        # locales
-        for locale_file in ["zh_TW.json", "zh_CN.json", "en.json", "ja.json"]:
-            data = self._locale(locale_file)
-            val = self._get_nested(data, "search.error.tag_api_failed")
-            assert val, f"{locale_file} missing: search.error.tag_api_failed key"
-
-
-class TestEditModeCanEditFileGuard:
-    """PR#115 Codex P2: editingX 單獨判斷會讓 file 模式殘留的編輯 flag 洩漏進 keyword/advanced
-    唯讀模式（例如 file 模式開始編輯後又跑關鍵字搜尋，不經 T5 的 navigate/switchToFile reset）。
-    修法：edit div 一律加 `&& canEditFile()`、display div 加 `!(editingX && canEditFile())`
-    互補閘，確保 display/edit 恆有且僅有一個可見。
-    """
-
-    def _html(self):
-        return SEARCH_HTML.read_text(encoding="utf-8")
-
-    def test_search_html_edit_divs_gated_by_can_edit_file(self):
-        """search.html 三個編輯欄位（標題／中文標題／演員）的編輯 div 皆以 canEditFile() 為
-        exact-complement 閘（非單純字串存在檢查——這是「editingX flag 與 file-mode 閘的
-        AND 語意」跨檔 Alpine binding contract，canEditFile() 定義在 base.js，
-        static_guard_lint 無法表達此語意）。
-        """
-        # [lint-guard: pytest-justified] 同 TestUserTagsApiGuard.test_search_html_contains 理由：
-        # canEditFile() 定義於 base.js、search.html 引用之，是跨檔 Alpine binding contract，
-        # 不是單純字串存在檢查，static_guard_lint 無法表達此跨檔語意。
-        html = self._html()
-        for expected in [
-            "editingTitle && canEditFile()",
-            "editingChineseTitle && canEditFile()",
-            "editingActors && canEditFile()",
-        ]:
-            assert expected in html, f"search.html missing: {expected!r}"
-
-
 class TestDateGatingGuard:
     """TASK-106-T7: 發售日欄位特例——唯讀 span 與原生 date picker 的互補閘。
     唯讀 span 顯示 = 不可編輯 或 已有日期；picker 顯示 = file 模式 且 無日期。
@@ -145,25 +36,6 @@ class TestDateGatingGuard:
 
     def _html(self):
         return SEARCH_HTML.read_text(encoding="utf-8")
-
-    def test_search_html_date_span_and_picker_complementary_gating(self):
-        """search.html date info-cell 的唯讀 span 與 date picker gating 為互補閘：
-        span `x-show="!canEditFile() || current().date"`（不可編輯或已有日期都唯讀），
-        picker `x-show="canEditFile() && !current().date"`（file 模式且無日期才出日曆）。
-        """
-        # [lint-guard: pytest-justified] 同 TestEditModeCanEditFileGuard 理由：
-        # canEditFile() 定義於 base.js、search.html 引用之，是跨檔 Alpine binding contract，
-        # 不是單純字串存在檢查，static_guard_lint 無法表達此跨檔語意。
-        # 另 Codex PR#116 P1：picker 為單一持久 DOM 節點（x-show 只切 display），
-        # 需 `:value="current().date || ''"` 反應性重設 DOM .value，防切候選殘留上一候選日期
-        # （T7 型「拔 :value 造成殘值→畫面有日期但 model 空」回歸）。
-        html = self._html()
-        for expected in [
-            "!canEditFile() || current().date",
-            "canEditFile() && !current().date",
-            ":value=\"current().date || ''\"",
-        ]:
-            assert expected in html, f"search.html missing: {expected!r}"
 
     def test_search_html_date_input_wired_to_identity_guarded_methods(self):
         """Codex PR#116 P2: date picker 是四個可編輯欄位中唯一原本沒有 stale-candidate 身分

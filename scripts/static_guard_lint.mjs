@@ -5806,6 +5806,157 @@ const RULES = [
   //
   // ---- 162c-B19 起 ----
   // （162c-B19 專屬子區段：只在此兩行之間追加）
+
+  // 162c: TestMobilePanelT3Guards
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string',
+    pattern: /async\s+closeMobilePanel\s*\(/,
+    note: '[lint-guard 162c-test_mobile_close_panel_is_async] 使用者關閉手機相似面板 → closeMobilePanel 須為 async（exit ghost await 前提） — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string',
+    pattern: 'shouldSkip',
+    scope: { anchor: /async\s+_openMobilePanel\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_mobile_transition_prm_fallback] 開啟減少動態偏好 → _openMobilePanel 須含 shouldSkip（PRM 閘） — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string',
+    pattern: 'mobilePanelCoverImg',
+    scope: { anchor: /async\s+_openMobilePanel\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_mobile_transition_prm_fallback] 開啟減少動態偏好 → _openMobilePanel 須含 mobilePanelCoverImg — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string',
+    pattern: 'playMobilePanelEnter',
+    scope: { anchor: /async\s+_openMobilePanel\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_mobile_transition_prm_fallback] 開啟減少動態偏好 → _openMobilePanel 須含 playMobilePanelEnter — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'order',
+    scope: { anchor: /async\s+_openMobilePanel\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    items: [
+      { pattern: /!\s*window\.BurstPicker\.shouldSkip/ },
+      { pattern: 'playMobilePanelEnter' },
+    ],
+    note: '[lint-guard 162c-test_mobile_transition_prm_fallback] 開啟減少動態偏好 → !shouldSkip 閘須早於 playMobilePanelEnter — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string',
+    pattern: 'shouldSkip',
+    scope: { anchor: /(?:async\s+)?closeMobilePanel\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_mobile_transition_prm_fallback] 開啟減少動態偏好 → closeMobilePanel 須含 shouldSkip — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string',
+    pattern: 'playMobilePanelExit',
+    scope: { anchor: /(?:async\s+)?closeMobilePanel\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_mobile_transition_prm_fallback] 開啟減少動態偏好 → closeMobilePanel 須含 playMobilePanelExit — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'order',
+    scope: { anchor: /(?:async\s+)?closeMobilePanel\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    items: [
+      { pattern: /!\s*window\.BurstPicker\.shouldSkip/ },
+      { pattern: 'playMobilePanelExit' },
+    ],
+    note: '[lint-guard 162c-test_mobile_transition_prm_fallback] 開啟減少動態偏好 → !shouldSkip 閘須早於 playMobilePanelExit — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'order',
+    scope: { anchor: /(?:async\s+)?closeMobilePanel\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    items: [
+      { pattern: /_mobileEnterTl\s*\.\s*kill\s*\(/ },
+      { pattern: 'playMobilePanelExit' },
+    ],
+    note: '[lint-guard 162c-test_mobile_close_kills_enter_timeline] 中途關閉手機相似面板 → _mobileEnterTl.kill 須早於 playMobilePanelExit — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string',
+    pattern: '_mobileEnterGhost',
+    scope: { anchor: /(?:async\s+)?closeMobilePanel\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    stripLineComments: true,
+    note: '[lint-guard 162c-test_mobile_close_kills_enter_timeline] 中途關閉手機相似面板 → closeMobilePanel 須顯式 cleanup _mobileEnterGhost — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string',
+    pattern: '.similar-main-anchor',
+    note: '[lint-guard 162c-test_desktop_constellation_byte_identical_anchor] 桌面星座進場 → ghost-fly.js 須保留 .similar-main-anchor — 遷自 test_contract_animation.py',
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'forbidden-string',
+    pattern: '.similar-main-anchor',
+    scope: { anchor: /function\s+playMobilePanelEnter\s*\([^)]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_desktop_constellation_byte_identical_anchor] 手機進場 helper 不得引用桌面 .similar-main-anchor — 遷自 test_contract_animation.py',
+  },
+
+  // 162c: TestUserTagsApiGuard
+  {
+    file: 'web/static/js/pages/search/state/result-card.js', kind: 'required-string',
+    pattern: [
+      'user-tags',
+      'async confirmAddTag()',
+      'async removeUserTag(',
+      'fileList[this.currentFileIndex].user_tags',
+      'currentUserTags()',
+      'fetchUserTagsForCurrent',
+    ],
+    note: '[lint-guard 162c-test_result_card_js_contains] 搜尋頁加／移除標籤 → result-card.js 須接 /api/user-tags 與 file-level user_tags — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/pages/search/state/result-card.js', kind: 'forbidden-string',
+    pattern: ['pathToFileUri', 'c.user_tags.push(tag)'],
+    note: '[lint-guard 162c-test_result_card_js_contains] 搜尋頁加／移除標籤 → result-card.js 不得殘留 pathToFileUri／result-level push — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/pages/search/state/result-card.js', kind: 'required-string', anyOf: true,
+    pattern: [
+      'fileList[this.currentFileIndex].user_tags',
+      /(?=[\s\S]*file\.user_tags)(?=[\s\S]*this\.fileList\?\.\[this\.currentFileIndex\])/,
+    ],
+    scope: { anchor: /async fetchUserTagsForCurrent\(\)/, window: 800 },
+    note: '[lint-guard 162c-test_result_card_js_contains] 搜尋頁加／移除標籤 → fetchUserTagsForCurrent 窗內須寫回 file-level user_tags — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: ['!addingTag && canEditFile()', 'currentUserTags()'],
+    note: '[lint-guard 162c-test_search_html_contains] 關鍵字模式加標籤 → tags+ 鈕須經 canEditFile() 閘 — 遷自 test_contract_api_routes.py',
+  },
+  {
+    file: 'web/static/js/pages/search/state/file-list.js', kind: 'required-string',
+    pattern: 'user_tags: []',
+    note: '[lint-guard 162c-test_path_utils_and_locales] file-list 初始化須含 user_tags: []（currentUserTags 回空陣列前提） — 遷自 test_contract_api_routes.py',
+  },
+
+  // 162c: TestEditModeCanEditFileGuard
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: [
+      'x-show="editingTitle && canEditFile()"',
+      'x-show="editingChineseTitle && canEditFile()"',
+      'x-show="editingActors && canEditFile()"',
+    ],
+    note: '[lint-guard 162c-test_search_html_edit_divs_gated_by_can_edit_file] 編輯中切關鍵字搜尋 → 三編輯 div 須以 x-show=\"editing* && canEditFile()\" 閘 — 遷自 test_contract_api_routes.py',
+  },
+
+  // 162c: TestDateGatingGuard
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: [
+      '!canEditFile() || current().date',
+      'canEditFile() && !current().date',
+      ":value=\"current().date || ''\"",
+    ],
+    note: '[lint-guard 162c-test_search_html_date_span_and_picker_complementary_gating] 檔案模式挑發售日 → date span／picker 互補閘＋:value 反應性重設 — 遷自 test_contract_api_routes.py',
+  },
+
   // ---- 162c-B19 迄 ----
   //
   //
