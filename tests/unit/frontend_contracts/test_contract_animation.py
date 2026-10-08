@@ -20,6 +20,7 @@ class TestPickerIntegrationGuard:
         return SHOWCASE_LIGHTBOX_PICKER_JS.read_text(encoding="utf-8")
 
 
+    # 162c 模糊留：二審未定（A：capturedName 防寫錯女優＋減少動態偏好；B：未複判）
     def test_picker_js_contains(self):
         """core.js 含 picker state、methods、params、SSE handler 等必要字串"""
         js = self._core_js()
