@@ -5968,7 +5968,176 @@ const RULES = [
   //
   //
   // ---- 162c-B15 起 ----
-  // （162c-B15 專屬子區段：只在此兩行之間追加）
+  // 162c: TestSearchLightboxModalHugContract
+  {
+    file: 'web/static/js/pages/search/state/grid-mode.js', kind: 'required-string',
+    pattern: ['_setCoverAspect', "closest('.lightbox-cover')", "setProperty('--lb-cover-ar'"],
+    note: '[lint-guard 162c-test_s7_grid_mode_js_set_cover_aspect] 搜尋燈箱 grid-mode 須有量比例函式與 --lb-cover-ar 設定 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/search.css', kind: 'required-string',
+    pattern: /overflow-y\s*:\s*hidden/,
+    scope: { anchor: /\.search-container\s+\.lightbox-content\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_s8_search_lightbox_content_overflow_hidden] 搜尋燈箱外框須 overflow-y:hidden 避免整框捲動 — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestSearchDetailCoverFixContract
+  {
+    file: 'web/static/css/pages/search.css', kind: 'required-string',
+    pattern: /^\s*min-height:\s*0\s*;/m,
+    scope: { anchor: /\.search-container\s+\.av-card-full-cover(?![-\w])\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_d1_cover_min_height_zero] 詳情封面欄須 min-height:0 清 theme 地板 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/search.css', kind: 'required-string',
+    pattern: /^\s*min-height:\s*0\s*;/m,
+    scope: { anchor: /\.search-container\s+\.av-card-full-cover-wrapper(?![-\w])\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_d2_wrapper_min_height_zero] 詳情封面容器須 min-height:0 清 400px 地板 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/search.css', kind: 'required-string',
+    pattern: /^\s*height:\s*auto\s*;/m,
+    scope: { anchor: /\.search-container\s+\.av-card-full-cover-img(?![-\w])\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_d3_cover_img_height_auto] 詳情封面圖須 height:auto 由 AR 推導 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/search.css', kind: 'required-string',
+    pattern: /min-height\s*:\s*[1-9]\d*/,
+    scope: { anchor: /\.search-container\s+\.av-card-full-cover-wrapper:has\([^{]*cover-error-placeholder[^{]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_d4_error_placeholder_min_height_fallback] 無圖佔位 :has(error) 須非零 min-height fallback — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/search.css', kind: 'required-string',
+    pattern: /min-height\s*:\s*[1-9]\d*/,
+    scope: { anchor: /\.search-container\s+\.av-card-full-cover-wrapper:has\([^{]*cover-loading-placeholder[^{]*\)\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_d4b_loading_placeholder_min_height_fallback] 載入中佔位 :has(loading) 須非零 min-height fallback — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/search.css', kind: 'required-string',
+    pattern: /^\s*overflow:\s*visible\s*;/m,
+    scope: {
+      anchor: /@media\s*\(\s*max-width\s*:\s*(?:1024|1023\.98)px\s*\)\s*\{[\s\S]*?\.search-container\s+\.av-card-full-cover(?![-\w])\s*\{/,
+      braceBalanced: true,
+    },
+    note: '[lint-guard 162c-test_d5_mobile_cover_overflow_visible] 平板／手機 media 內封面須 overflow:visible 免截劇照列 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/search.css', kind: 'structure-count',
+    pattern: /@media\s*\(\s*max-width\s*:\s*(?:1024|1023\.98)px\s*\)\s*\{(?:(?!@media)[\s\S])*?\.search-container\s+\.av-card-full-cover(?![-\w])\s*\{/,
+    count: 1,
+    note: '[lint-guard 162c-test_d5_mobile_cover_overflow_visible] 平板／手機 media 內封面規則恰 1 條（拒歧義） — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestSimilarMobilePanelT4Guard
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'class="similar-mobile-play-btn"',
+    scope: /<div class="similar-mobile-stage">([\s\S]*?)<\/div>\s*<!-- 右上/,
+    note: '[lint-guard 162c-test_mobile_play_btn_exists_in_stage] 相似面板 stage 內須有播放鈕 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: [
+      '@click.stop="playVideo(currentLightboxVideo?.path)"',
+      'x-show="!!currentLightboxVideo?.path"',
+      ':disabled="similarModeAnimating"',
+      ":aria-label=\"t('showcase.action.play')\"",
+    ],
+    scope: /<button class="similar-mobile-play-btn"[^>]*>/,
+    note: '[lint-guard 162c-test_mobile_play_btn_handlers] 播放鈕須有 stop／path guard／disabled／aria-label — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/showcase/06-responsive-and-lists.css', kind: 'required-string',
+    pattern: ['var(--overlay-control)', 'var(--fluent-blur-light)', '-webkit-backdrop-filter', 'border-radius: 50%'],
+    scope: { anchor: /\.similar-mobile-play-btn\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_mobile_play_btn_css_tokens] 播放鈕 CSS 須用 Fluent token 與圓形 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/showcase/06-responsive-and-lists.css', kind: 'required-string',
+    pattern: '.similar-mobile-play-btn',
+    scope: { anchor: /@media\s*\(max-width:\s*959px\)[^{]*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_mobile_play_btn_css_tokens] 播放鈕規則須在 max-width:959px media 內 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/showcase/06-responsive-and-lists.css', kind: 'required-string',
+    pattern: 'img[data-ghost-hidden] ~ .similar-mobile-play-btn',
+    note: '[lint-guard 162c-test_mobile_play_btn_ghost_hide] 須有 ghost-hide 選擇器隱藏飛行中播放鈕 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/css/pages/showcase/06-responsive-and-lists.css', kind: 'required-string',
+    pattern: [/opacity:\s*0\s*;/, 'pointer-events: none'],
+    scope: { anchor: /img\[data-ghost-hidden\]\s*~\s*\.similar-mobile-play-btn\s*\{/, braceBalanced: true },
+    note: '[lint-guard 162c-test_mobile_play_btn_ghost_hide] ghost-hide 塊須 opacity:0 與 pointer-events:none — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestDirPathHelperGuard
+  {
+    file: 'web/static/js/shared/dir-path.js', kind: 'required-string',
+    pattern: 'export function dirPath',
+    note: '[lint-guard 162c-test_dir_path_js_exists_and_exports] shared/dir-path.js 須 export function dirPath — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string',
+    pattern: "import { dirPath } from '@/shared/dir-path.js'",
+    note: '[lint-guard 162c-test_state_scan_imports_dir_path] state-scan.js 須 import dirPath — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/settings/state-ui.js', kind: 'required-string',
+    pattern: "import { dirPath } from '@/shared/dir-path.js'",
+    note: '[lint-guard 162c-test_state_ui_imports_dir_path] state-ui.js 須 import dirPath — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string',
+    pattern: /^\s+dirPath,\s*$/m,
+    note: '[lint-guard 162c-test_state_scan_exposes_dir_path_on_state] state-scan.js 須把 dirPath 揭露成 state 屬性 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/static/js/pages/settings/state-ui.js', kind: 'required-string',
+    pattern: /^\s+dirPath,\s*$/m,
+    note: '[lint-guard 162c-test_state_ui_exposes_dir_path_on_state] state-ui.js 須把 dirPath 揭露成 state 屬性 — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/scanner.html', kind: 'required-string',
+    pattern: /(?<![\w:-])x-text="dirPath\(dir\)"/,
+    note: '[lint-guard 162c-test_scanner_html_uses_dir_path] scanner.html 資料夾列須用 dirPath(dir) — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/scanner.html', kind: 'forbidden-string',
+    pattern: /(?<![\w:-])x-text="dir"/,
+    note: '[lint-guard 162c-test_scanner_html_no_bare_xtext_dir] scanner.html 不得殘留裸 x-text="dir" — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: /(?<![\w:-]):key="dirPath\(dir\)"/,
+    note: '[lint-guard 162c-test_settings_html_key_uses_dir_path] settings.html :key 須用 dirPath(dir) — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'forbidden-string',
+    pattern: /(?<![\w:-]):key="dir"/,
+    note: '[lint-guard 162c-test_settings_html_no_bare_key_dir] settings.html 不得殘留裸 :key="dir" — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: /(?<![\w:-]):title="dirPath\(dir\)"/,
+    note: '[lint-guard 162c-test_settings_html_title_uses_dir_path] settings.html :title 須用 dirPath(dir) — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: /(?<![\w:-])@click="pickScannerDirectory\(dirPath\(dir\)\)"/,
+    note: '[lint-guard 162c-test_settings_html_click_uses_dir_path] settings.html @click 須傳 dirPath(dir) — 遷自 test_frontend_lint.py',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string',
+    pattern: /(?<![\w:-])x-text="dirPath\(dir\)"/,
+    note: '[lint-guard 162c-test_settings_html_xtext_uses_dir_path] settings.html x-text 須用 dirPath(dir) — 遷自 test_frontend_lint.py',
+  },
+
+  // 162c: TestDirReadonlyUIGuard
+  {
+    file: 'web/templates/scanner.html', kind: 'required-string',
+    pattern: /(?<![\w:-])x-model="dir\.output_path"/,
+    note: '[lint-guard 162c-test_scanner_html_output_path_input] scanner.html 輸出夾須綁 x-model="dir.output_path" — 遷自 test_frontend_lint.py',
+  },
   // ---- 162c-B15 迄 ----
   //
   //
